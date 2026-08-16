@@ -4736,6 +4736,31 @@ export function App({ onGoHome }: AppProps) {
     [],
   );
 
+  const sessionListReloadTimerRef = useRef<number | null>(null);
+
+  // WS 高频事件（session.done / ws.reconnected / session.imported / session.created）都会触发会话列表全量重拉，
+  // 合并 300ms 窗口内的多次调用为最后一次，避免 agent 密集工具调用时连发 /api/sessions。
+  const scheduleSessionListReload = useCallback(
+    (
+      rootID: string,
+      options?: {
+        beforeTime?: string;
+        afterTime?: string;
+        replace?: boolean;
+        force?: boolean;
+      },
+    ) => {
+      if (sessionListReloadTimerRef.current) {
+        window.clearTimeout(sessionListReloadTimerRef.current);
+      }
+      sessionListReloadTimerRef.current = window.setTimeout(() => {
+        sessionListReloadTimerRef.current = null;
+        void loadSessionsForRoot(rootID, options);
+      }, 300);
+    },
+    [loadSessionsForRoot],
+  );
+
   const loadChildSessionsForParent = useCallback(
     async (
       parent: SessionItem,
@@ -5424,6 +5449,15 @@ export function App({ onGoHome }: AppProps) {
       return true;
     },
     [handleSelectSession, isMobile, rootSessionKey, bumpCacheVersion],
+  );
+
+  // 稳定回调：SessionList/SessionCard 的 memo 依赖 props 引用稳定（onSelect 之前是 inline 箭头，每次父渲染都变）。
+  const handleSelectSessionAndClose = useCallback(
+    (session: SessionItem) => {
+      void handleSelectSession(session);
+      if (isMobile) setIsRightOpen(false);
+    },
+    [handleSelectSession, isMobile],
   );
 
   const handleDeleteSession = useCallback(
@@ -6474,7 +6508,7 @@ export function App({ onGoHome }: AppProps) {
         currentRoot: activeRoot,
         selection,
         pluginCatalog:
-          effectiveMode === "plugin" ? getViewModeSystemPrompt() : undefined,
+          effectiveMode === "plugin" ? await getViewModeSystemPrompt() : undefined,
       });
       let outgoingMessage = message;
       const applyPendingPlanPrefix = pendingPlanMode && !sendSessionKey;
@@ -9574,7 +9608,7 @@ export function App({ onGoHome }: AppProps) {
           void refreshManagedRoots();
           if (currentRootIdRef.current) {
             const newest = sessionsRef.current[0]?.updated_at || "";
-            void loadSessionsForRoot(
+            void scheduleSessionListReload(
               currentRootIdRef.current,
               newest ? { afterTime: newest } : { replace: true },
             );
@@ -9593,7 +9627,7 @@ export function App({ onGoHome }: AppProps) {
           void refreshManagedRoots();
           if (currentRootIdRef.current) {
             const newest = sessionsRef.current[0]?.updated_at || "";
-            void loadSessionsForRoot(
+            void scheduleSessionListReload(
               currentRootIdRef.current,
               newest ? { afterTime: newest } : { replace: true },
             );
@@ -9648,7 +9682,7 @@ export function App({ onGoHome }: AppProps) {
             break;
           }
           if (rootID === currentRootIdRef.current) {
-            void loadSessionsForRoot(rootID, { replace: true });
+            void scheduleSessionListReload(rootID, { replace: true });
             if (
               sessionListModeRef.current === "import" &&
               agentSessionID &&
@@ -9687,7 +9721,7 @@ export function App({ onGoHome }: AppProps) {
           const rootID =
             typeof payload?.root_id === "string" ? payload.root_id : "";
           if (rootID && rootID === currentRootIdRef.current) {
-            void loadSessionsForRoot(rootID, { replace: true });
+            void scheduleSessionListReload(rootID, { replace: true });
           }
           if (rootID && multiProjectSessionsEnabled) {
             void loadMultiProjectSessionGroups();
@@ -9876,7 +9910,7 @@ export function App({ onGoHome }: AppProps) {
             setMultiProjectSessionPending(rootID, sessionKey, false);
             handleSessionStreamDone(rootID, sessionKey);
             const newest = sessionsRef.current[0]?.updated_at || "";
-            void loadSessionsForRoot(
+            void scheduleSessionListReload(
               rootID,
               newest ? { afterTime: newest } : { replace: true },
             );
@@ -9885,7 +9919,7 @@ export function App({ onGoHome }: AppProps) {
             }
           } else if (currentRootIdRef.current) {
             const newest = sessionsRef.current[0]?.updated_at || "";
-            void loadSessionsForRoot(
+            void scheduleSessionListReload(
               currentRootIdRef.current,
               newest ? { afterTime: newest } : { replace: true },
             );
@@ -10309,6 +10343,10 @@ export function App({ onGoHome }: AppProps) {
     void loadSessionsForRoot(currentRootId, { replace: true });
     return () => {
       cancelled = true;
+      if (sessionListReloadTimerRef.current) {
+        window.clearTimeout(sessionListReloadTimerRef.current);
+        sessionListReloadTimerRef.current = null;
+      }
       unsubscribeEvents();
     };
   }, [
@@ -10316,6 +10354,7 @@ export function App({ onGoHome }: AppProps) {
     loadExternalSessions,
     loadMultiProjectSessionGroups,
     loadSessionsForRoot,
+    scheduleSessionListReload,
     multiProjectSessionsEnabled,
     refreshMultiProjectReplyingSessions,
     rootSessionKey,
@@ -13782,10 +13821,7 @@ export function App({ onGoHome }: AppProps) {
           setSessionSearchResults([]);
           setSessionSearchLoading(false);
         }}
-        onSelect={(s) => {
-          handleSelectSession(s);
-          if (isMobile) setIsRightOpen(false);
-        }}
+        onSelect={handleSelectSessionAndClose}
         onSync={handleSyncSession}
         onPin={handlePinSession}
         onRename={handleRenameSession}
@@ -13868,10 +13904,7 @@ export function App({ onGoHome }: AppProps) {
           setSessionSearchLoading(false);
           setSessionSearchOpen(false);
         }}
-        onSelect={(s) => {
-          handleSelectSession(s);
-          if (isMobile) setIsRightOpen(false);
-        }}
+        onSelect={handleSelectSessionAndClose}
         onSync={handleSyncSession}
         onPin={handlePinSession}
         onRename={handleRenameSession}

@@ -1,4 +1,4 @@
-import React from "react";
+import React, { memo } from "react";
 import { rootBadgeStyle } from "./rootBadgeStyle";
 import { openExternalURL } from "../services/platformNavigation";
 import { isNativeShellRuntime, shouldEnablePWAInstall } from "../services/runtime";
@@ -1307,7 +1307,10 @@ const agentConfigIconButtonStyle = (disabled: boolean): React.CSSProperties => (
   flexShrink: 0,
 });
 
-export function FileTree({
+// memo 化：父组件（App）高频重渲染时，若 FileTree 数据 props 未变则跳过整棵目录树重渲染。
+// 注：回调 props 多为 inline 箭头，浅比较下仍会触发重渲染；但文件树数据 props（entries/expanded 等）
+// 稳定时（如仅 status/toast 变化）可避免昂贵的递归渲染。
+function FileTreeInner({
   entries,
   childrenByPath,
   expanded,
@@ -3775,3 +3778,5 @@ export function FileTree({
     </div>
   );
 }
+
+export const FileTree = memo(FileTreeInner);

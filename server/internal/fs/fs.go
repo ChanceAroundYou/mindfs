@@ -224,6 +224,15 @@ func (r RootInfo) ReadMetaFile(path string) ([]byte, error) {
 	return data, apperr.Wrap("read", resolved, err)
 }
 
+func (r RootInfo) StatMetaFile(path string) (os.FileInfo, error) {
+	resolved, err := r.resolveMetaPath(path)
+	if err != nil {
+		return nil, err
+	}
+	info, err := os.Stat(resolved)
+	return info, apperr.Wrap("stat", resolved, err)
+}
+
 func (r RootInfo) WriteMetaFile(path string, data []byte) error {
 	resolved, err := r.resolveMetaPath(path)
 	if err != nil {

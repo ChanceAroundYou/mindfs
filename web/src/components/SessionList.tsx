@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { memo, useEffect, useMemo, useRef, useState } from "react";
 import { AgentIcon } from "./AgentIcon";
 import { ModeIcon } from "./ModeIcon";
 import { rootBadgeButtonStyle, rootBadgeStyle } from "./rootBadgeStyle";
@@ -679,7 +679,7 @@ export function SessionList({
               }
               const session = row.session;
               return (
-                <SessionCard
+                <SessionCardMemo
                   key={session.key}
                   session={session}
                   sessionByKey={sessionByKey}
@@ -1153,7 +1153,7 @@ export function MultiProjectSessionList({
                       const session = row.session;
                       const sessionRoot = session.root_id || group.rootId;
                       return (
-                        <SessionCard
+                        <SessionCardMemo
                           key={`${sessionRoot}:${session.key}`}
                           session={{ ...session, root_id: sessionRoot }}
                           sessionByKey={sessionByKey}
@@ -2054,6 +2054,10 @@ function ForkSessionIcon() {
     </svg>
   );
 }
+
+// memo 化 SessionCard：父组件（SessionList / MultiProjectSessionList）重渲染时，
+// 若 props 引用未变则跳过整卡重渲染（含 useI18n / parseForkSessionSource / 多个 useEffect）。
+const SessionCardMemo = memo(SessionCard);
 
 const menuItemStyle: React.CSSProperties = {
   width: "100%",

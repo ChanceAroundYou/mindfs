@@ -414,6 +414,14 @@ function MarkdownCodeBlock({
   );
 }
 
+// memo 化代码块：rawContent/language 不变时跳过整块重渲染（含 Prism.highlight 与复制按钮状态）。
+// 忽略 sourceLineProps（data-source-line 属性对象每次新建，不影响内容）。
+const MarkdownCodeBlockMemo = memo(MarkdownCodeBlock, (prev, next) =>
+  prev.className === next.className &&
+  prev.rawContent === next.rawContent &&
+  prev.language === next.language,
+);
+
 function normalizePosixPath(input: string): string {
   const absolute = input.startsWith("/");
   const parts = input.split("/").filter((part) => part && part !== ".");
@@ -832,7 +840,7 @@ function MarkdownViewerInner({
             }
 
             return (
-              <MarkdownCodeBlock
+              <MarkdownCodeBlockMemo
                 className={className}
                 rawContent={rawContent}
                 language={language}
