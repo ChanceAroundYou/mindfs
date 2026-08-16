@@ -282,6 +282,13 @@ func (m *Manager) Get(_ context.Context, key string, afterSeq int) (*Session, er
 	return m.getSessionUnsafe(key, afterSeq)
 }
 
+// GetMeta 只加载 SQLite meta（不含 exchanges 文件），用于列表/名称查询等不需要完整会话的场景。
+func (m *Manager) GetMeta(_ context.Context, key string) (*Session, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.getSessionMetaWithBindingsUnsafe(key)
+}
+
 func (m *Manager) GetExchangeAux(_ context.Context, key string, afterSeq int) (map[int][]ExchangeAux, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1948,7 +1955,18 @@ func openSessionMetaDB(dbFile string) (db *sql.DB, err error) {
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(1)
+	// WAL：读写不互相阻塞，避免高频读（列表/搜索/Get）阻塞低频写；busy_timeout 处理写锁竞争。
+	// 多读连接：列表/搜索等读操作可并发，写仍由 SQLite 锁 + busy_timeout 保证串行。
+	db.SetMaxOpenConns(4)
+	db.SetMaxIdleConns(4)
+	if _, err := db.Exec(`PRAGMA journal_mode=WAL`); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if _, err := db.Exec(`PRAGMA busy_timeout=5000`); err != nil {
+		db.Close()
+		return nil, err
+	}
 	if _, err := db.Exec(sessionTableSchema); err != nil {
 		db.Close()
 		return nil, err

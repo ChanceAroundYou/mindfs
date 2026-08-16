@@ -540,7 +540,8 @@ func (h *HTTPHandler) handleReplyingSessions(w http.ResponseWriter, r *http.Requ
 			}
 			if sessionTitle == "" {
 				if manager, err := h.AppContext.GetSessionManager(item.RootID); err == nil {
-					if sess, err := manager.Get(r.Context(), item.SessionKey, 0); err == nil && sess != nil {
+					// 只需 name，走 SQLite meta-only，避免全量加载 JSONL（agent 活跃时该端点高频轮询）。
+					if sess, err := manager.GetMeta(r.Context(), item.SessionKey); err == nil && sess != nil {
 						sessionTitle = sess.Name
 					}
 				}
