@@ -1,4 +1,4 @@
-import React, { memo, useEffect, useMemo, useRef, useState } from "react";
+import React, { memo, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -609,7 +609,13 @@ function MarkdownViewerInner({
     if (!targetLine || targetLine < 1) return "";
     return "[data-source-line]";
   }, [targetLine]);
-  const normalizedContent = useMemo(() => normalizeMarkdownMathDelimiters(content), [content]);
+  // 流式 chunk 高频更新时让 markdown 解析管线走低优先级（React 19 并发特性），
+  // 保证输入/滚动等交互不被阻塞；内容静止后自动补渲染最新帧。
+  const deferredContent = useDeferredValue(content);
+  const normalizedContent = useMemo(
+    () => normalizeMarkdownMathDelimiters(deferredContent),
+    [deferredContent],
+  );
 
   useEffect(() => {
     onFileClickRef.current = onFileClick;

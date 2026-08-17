@@ -3012,6 +3012,23 @@ export function App({ onGoHome }: AppProps) {
     [],
   );
   const bumpCacheVersion = useCallback(() => setCacheVersion((v) => v + 1), []);
+  // 流式高频 bump 合并：30ms 窗口内多次 bump 只触发一次 setState（渲染 1 次而非 N 次）。
+  const bumpCacheVersionDebouncedRef = useRef<number | null>(null);
+  const bumpCacheVersionDebounced = useCallback(() => {
+    if (bumpCacheVersionDebouncedRef.current !== null) return;
+    bumpCacheVersionDebouncedRef.current = window.setTimeout(() => {
+      bumpCacheVersionDebouncedRef.current = null;
+      bumpCacheVersion();
+    }, 30);
+  }, [bumpCacheVersion]);
+  useEffect(
+    () => () => {
+      if (bumpCacheVersionDebouncedRef.current !== null) {
+        window.clearTimeout(bumpCacheVersionDebouncedRef.current);
+      }
+    },
+    [],
+  );
   const clearRootScopedClientState = useCallback((rootID: string, options?: { removeLastRoot?: boolean }) => {
     const root = String(rootID || "").trim();
     if (!root) {
@@ -4024,9 +4041,9 @@ export function App({ onGoHome }: AppProps) {
 	        exchanges: nextList,
         updated_at: new Date().toISOString(),
       } as Session;
-      bumpCacheVersion();
+      bumpCacheVersionDebounced();
     },
-    [rootSessionKey, resolveRuntimeMetaForSession, bumpCacheVersion],
+    [rootSessionKey, resolveRuntimeMetaForSession, bumpCacheVersionDebounced],
   );
 
   const appendThoughtChunkForSession = useCallback(
@@ -4090,9 +4107,9 @@ export function App({ onGoHome }: AppProps) {
         exchanges: nextList,
         updated_at: new Date().toISOString(),
       } as Session;
-      bumpCacheVersion();
+      bumpCacheVersionDebounced();
     },
-    [rootSessionKey, bumpCacheVersion],
+    [rootSessionKey, bumpCacheVersionDebounced],
   );
 
   const appendToolCallForSession = useCallback(
@@ -4109,15 +4126,20 @@ export function App({ onGoHome }: AppProps) {
         const isUserShellStream =
           incomingMeta.source === "userShell" && incomingMeta.phase === "stream";
         if (isUserShellStream) {
-          const mergedContent = [
-            ...((existing?.content || []) as any[]),
-            ...((incoming?.content || []) as any[]),
-          ];
-          const totalText = mergedContent.map((item) => item?.text || "").join("");
+          // 后端每帧只推增量 chunk.Text。这里合并成单条累积 text（与后端
+          // coalesceUserShellStreamEvent 对齐），避免 content 数组无限增长 +
+          // 每帧全量 map/join 的 O(n²)（命令长输出流式时旧实现逐帧放大）。
+          const existingText = (existing?.content || [])
+            .map((item: any) => item?.text || "")
+            .join("");
+          const incomingText = (incoming?.content || [])
+            .map((item: any) => item?.text || "")
+            .join("");
+          const totalText = existingText + incomingText;
           if (totalText.length > 256 * 1024) {
             merged.content = [{ type: "text", text: totalText.slice(-256 * 1024) }];
           } else {
-            merged.content = mergedContent;
+            merged.content = totalText ? [{ type: "text", text: totalText }] : [];
           }
           merged.meta = { ...(existing?.meta || {}), ...incomingMeta };
         }
@@ -4182,9 +4204,9 @@ export function App({ onGoHome }: AppProps) {
         exchanges: nextList,
         updated_at: new Date().toISOString(),
       } as Session;
-      bumpCacheVersion();
+      bumpCacheVersionDebounced();
     },
-    [rootSessionKey, bumpCacheVersion],
+    [rootSessionKey, bumpCacheVersionDebounced],
   );
 
   const appendTodoUpdateForSession = useCallback(
@@ -4226,9 +4248,9 @@ export function App({ onGoHome }: AppProps) {
         exchanges: nextList,
         updated_at: new Date().toISOString(),
       } as Session;
-      bumpCacheVersion();
+      bumpCacheVersionDebounced();
     },
-    [rootSessionKey, bumpCacheVersion],
+    [rootSessionKey, bumpCacheVersionDebounced],
   );
 
   const appendPlanUpdateForSession = useCallback(
@@ -4291,9 +4313,9 @@ export function App({ onGoHome }: AppProps) {
         exchanges: updateList(((base as any).exchanges || []) as Exchange[]),
         updated_at: new Date().toISOString(),
       } as Session;
-      bumpCacheVersion();
+      bumpCacheVersionDebounced();
     },
-    [rootSessionKey, bumpCacheVersion],
+    [rootSessionKey, bumpCacheVersionDebounced],
   );
 
   const appendCompactNoticeForSession = useCallback(
@@ -4336,9 +4358,9 @@ export function App({ onGoHome }: AppProps) {
         exchanges: updateList(((base as any).exchanges || []) as Exchange[]),
         updated_at: new Date().toISOString(),
       } as Session;
-      bumpCacheVersion();
+      bumpCacheVersionDebounced();
     },
-    [rootSessionKey, bumpCacheVersion],
+    [rootSessionKey, bumpCacheVersionDebounced],
   );
 
   const attachContextWindowToLatestAssistant = useCallback(
@@ -4412,9 +4434,29 @@ export function App({ onGoHome }: AppProps) {
           },
         } as Session);
       }
+      // 列表 state 同步：message_done 直推的 context_window 只进了 cache/drawer/selected，
+      // 会话列表项没有数据源（列表接口不含该字段），不补这里则徽标停在旧值，直到全量重拉。
+      setSessions((prev) =>
+        prev.map((item) => {
+          const itemKey = item.key || item.session_key;
+          if (
+            itemKey !== sessionKey ||
+            (item.root_id as string | undefined) !== rootID
+          ) {
+            return item;
+          }
+          return {
+            ...item,
+            context_window: {
+              totalTokens,
+              modelContextWindow,
+            },
+          };
+        }),
+      );
       bumpCacheVersion();
     },
-    [bumpCacheVersion, rootSessionKey],
+    [bumpCacheVersion, rootSessionKey, setSessions],
   );
 
   const normalizeTreeResponse = useCallback((payload: any) => {
@@ -4725,7 +4767,26 @@ export function App({ onGoHome }: AppProps) {
         if (!options?.force && currentRootIdRef.current !== rootID) return;
         setHasMoreSessions(payload.totalCount > payload.items.length);
         if (options?.replace || (!options?.beforeTime && !options?.afterTime)) {
-          setSessions(applyPinnedSnapshotToSessions(mergeSessionItems([], next), rootID, payload.pinnedKeys));
+          // 服务端列表接口不含 context_window，全量重拉会把它清掉（WS message_done 已同步进本地列表）。
+          // 用 setSessions 回调继承旧列表的 context_window，避免徽标闪没。
+          setSessions((prev) => {
+            const prevContext = new Map(
+              prev
+                .filter((item) => item.context_window)
+                .map((item) => [
+                  String(item.key || item.session_key || ""),
+                  item.context_window,
+                ]),
+            );
+            const merged = mergeSessionItems([], next).map((item) => {
+              const itemKey = String(item.key || item.session_key || "");
+              const inherited = prevContext.get(itemKey);
+              return inherited
+                ? { ...item, context_window: inherited }
+                : item;
+            });
+            return applyPinnedSnapshotToSessions(merged, rootID, payload.pinnedKeys);
+          });
           return;
         }
         setSessions((prev) =>
@@ -6679,19 +6740,31 @@ export function App({ onGoHome }: AppProps) {
   const markSessionPending = useCallback(
     (rootID: string, sessionKey: string) => {
       if (!rootID || !sessionKey) return;
-      const now = new Date().toISOString();
+      // 幂等：流式期间每 chunk 调用一次，已在 pending 则只更新缓存 ref，不再重复 setState。
       const cacheKey = rootSessionKey(rootID, sessionKey);
       const cached = sessionCacheRef.current[cacheKey];
+      const drawer = drawerSessionByRootRef.current[rootID];
+      const alreadyPending =
+        !!(cached as any)?.pending &&
+        !!(drawer as any)?.pending &&
+        (selectedSessionRef.current?.key || selectedSessionRef.current?.session_key) ===
+          sessionKey &&
+        !!(selectedSessionRef.current as any)?.pending;
+      const now = new Date().toISOString();
       if (cached) {
         sessionCacheRef.current[cacheKey] = {
           ...(cached as any),
           pending: true,
           updated_at: now,
         } as Session;
+      }
+      if (alreadyPending) {
+        return;
+      }
+      if (cached) {
         bumpCacheVersion();
       }
       setSelectedPendingByKey(sessionKey, true);
-      const drawer = drawerSessionByRootRef.current[rootID];
       if (drawer && (drawer.key || (drawer as any).session_key) === sessionKey) {
         setDrawerSessionForRoot(rootID, {
           ...(drawer as any),
@@ -9167,27 +9240,19 @@ export function App({ onGoHome }: AppProps) {
       }
       const event = payload.event;
       if (!event?.type) return;
+      // message_chunk/thought_chunk 是最高频事件：首次进 pending 用幂等
+      // markSessionPending（内部已在 pending 时只更新 ref 不 setState），
+      // 缓存版本 bump 走 30ms debounce —— 100 token/s 时渲染次数从 100/s 降到 ~33/s。
       const markStreamPending = () => {
         if (event.type === "message_done" || event.type === "error") return;
         markSessionPending(activeRoot, streamKey);
       };
-      const updateDrawerIfShowingStream = () => {
-        const drawerKey = drawerSessionByRootRef.current[activeRoot]?.key || "";
-        if (
-          drawerKey !== streamKey &&
-          (!pending?.tempKey || drawerKey !== pending.tempKey)
-        ) {
-          return;
-        }
-        const latest = sessionCacheRef.current[ck];
-        if (latest) {
-          setDrawerSessionForRoot(activeRoot, {
-            ...(latest as any),
-            pending: true,
-          } as Session);
-        }
-      };
       markStreamPending();
+      const isStreamingChunk =
+        event.type === "message_chunk" || event.type === "thought_chunk";
+      if (!isStreamingChunk) {
+        bumpCacheVersion();
+      }
       switch (event.type) {
         case "message_chunk":
           appendAgentChunkForSession(
@@ -9204,7 +9269,6 @@ export function App({ onGoHome }: AppProps) {
 	                }
               : undefined,
           );
-          updateDrawerIfShowingStream();
           break;
         case "thought_chunk":
           appendThoughtChunkForSession(
@@ -9213,7 +9277,6 @@ export function App({ onGoHome }: AppProps) {
             event.data?.content || "",
             event.data?.id || "",
           );
-          updateDrawerIfShowingStream();
           break;
         case "tool_call":
           appendToolCallForSession(
@@ -9222,7 +9285,6 @@ export function App({ onGoHome }: AppProps) {
             event.data || {},
             false,
           );
-          updateDrawerIfShowingStream();
           break;
         case "tool_call_update":
           appendToolCallForSession(
@@ -9231,7 +9293,6 @@ export function App({ onGoHome }: AppProps) {
             event.data || {},
             true,
           );
-          updateDrawerIfShowingStream();
           break;
         case "todo_update":
           appendTodoUpdateForSession(
@@ -9239,7 +9300,6 @@ export function App({ onGoHome }: AppProps) {
             streamKey,
             event.data || {},
           );
-          updateDrawerIfShowingStream();
           break;
         case "plan_update":
           appendPlanUpdateForSession(
@@ -9247,7 +9307,6 @@ export function App({ onGoHome }: AppProps) {
             streamKey,
             event.data || {},
           );
-          updateDrawerIfShowingStream();
           break;
         case "compact_notice":
           appendCompactNoticeForSession(
@@ -9255,7 +9314,6 @@ export function App({ onGoHome }: AppProps) {
             streamKey,
             event.data || {},
           );
-          updateDrawerIfShowingStream();
           break;
         case "message_done":
           attachContextWindowToLatestAssistant(
@@ -9909,20 +9967,17 @@ export function App({ onGoHome }: AppProps) {
             }
             setMultiProjectSessionPending(rootID, sessionKey, false);
             handleSessionStreamDone(rootID, sessionKey);
-            const newest = sessionsRef.current[0]?.updated_at || "";
-            void scheduleSessionListReload(
-              rootID,
-              newest ? { afterTime: newest } : { replace: true },
-            );
+            // 会话刚结束，服务端 updated_at/context_window 已持久化。
+            // afterTime 增量会被"updated_at 严格大于旧 newest"排除刚结束的会话（竞态），
+            // 必须 replace 全量重拉才能带上最新 meta。频率低 + 300ms debounce，成本可接受。
+            void scheduleSessionListReload(rootID, { replace: true });
             if (multiProjectSessionsEnabled) {
               void loadMultiProjectSessionGroups();
             }
           } else if (currentRootIdRef.current) {
-            const newest = sessionsRef.current[0]?.updated_at || "";
-            void scheduleSessionListReload(
-              currentRootIdRef.current,
-              newest ? { afterTime: newest } : { replace: true },
-            );
+            void scheduleSessionListReload(currentRootIdRef.current, {
+              replace: true,
+            });
             if (multiProjectSessionsEnabled) {
               void refreshMultiProjectReplyingSessions();
               void loadMultiProjectSessionGroups();

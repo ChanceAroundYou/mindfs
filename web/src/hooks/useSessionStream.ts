@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   sessionService,
   type CompactNotice,
@@ -463,6 +463,17 @@ export function useSessionStream(
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamVersion, setStreamVersion] = useState(0);
   const [streamStatusText, setStreamStatusText] = useState("");
+  // 流式 chunk（message_chunk/thought_chunk）高频到达时合并 streamVersion 更新，
+  // 避免每 chunk 一次 setState → SessionViewer 重渲染风暴（与 App.tsx 的
+  // bumpCacheVersionDebounced 同思路）。滚动跟随用 30ms 粒度视觉无差异。
+  const chunkVersionTimerRef = useRef<number | null>(null);
+  const bumpStreamVersion = () => {
+    if (chunkVersionTimerRef.current !== null) return;
+    chunkVersionTimerRef.current = window.setTimeout(() => {
+      chunkVersionTimerRef.current = null;
+      setStreamVersion((value) => value + 1);
+    }, 30);
+  };
 
   const baseTimeline = useMemo(
     () =>
@@ -486,7 +497,11 @@ export function useSessionStream(
 
     const unsubscribe = sessionService.subscribe(sessionKey, {
       onStream: (event) => {
-        setStreamVersion((value) => value + 1);
+        if (event.type === "message_chunk" || event.type === "thought_chunk") {
+          bumpStreamVersion();
+        } else {
+          setStreamVersion((value) => value + 1);
+        }
         if (event.type === "recovery") {
           setStreamStatusText(event.data?.message || translateNow("session.recovering"));
           setIsStreaming(true);
@@ -517,6 +532,10 @@ export function useSessionStream(
 
     return () => {
       unsubscribe();
+      if (chunkVersionTimerRef.current !== null) {
+        window.clearTimeout(chunkVersionTimerRef.current);
+        chunkVersionTimerRef.current = null;
+      }
     };
   }, [sessionKey, sessionPending]);
 

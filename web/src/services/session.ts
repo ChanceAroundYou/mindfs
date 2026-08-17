@@ -117,6 +117,8 @@ export type Session = {
   related_files?: RelatedFile[];
   related_worktree?: RelatedWorktree | null;
   pinned_at?: string | null;
+  /** 持久化缓存截断标记：true 表示缓存只含最近 N 条 exchanges，读取方应全量拉取补段 */
+  truncated?: boolean;
   exchange_aux?: Record<string, ExchangeAux[]>;
   exchanges?: Array<{
     seq?: number;
@@ -1755,16 +1757,49 @@ function cloneSession(session: Session): Session {
   };
 }
 
+const SESSION_CACHE_MAX_EXCHANGES = 500;
+const SESSION_CACHE_MAX_TEXT = 200 * 1024;
+
+/**
+ * 截断到 meta + 最近 N 条（含文本上限）——避免每次打开大 session 把整份
+ * JSONL（可达 MB 级）全量写进 IndexedDB 卡主线程。截断时置 truncated 标记，
+ * 读取方下次以全量拉取补段（见 syncSession）。
+ */
 function toPersistentSession(session: Session): Session {
+  const exchanges = Array.isArray(session.exchanges)
+    ? session.exchanges.filter((exchange) => {
+        const seq = Number((exchange as any)?.seq || 0);
+        return Number.isFinite(seq) && seq > 0;
+      })
+    : [];
+  const exchange_aux = toPersistentExchangeAux(session.exchange_aux);
+  if (exchanges.length <= SESSION_CACHE_MAX_EXCHANGES) {
+    let text = 0;
+    for (const exchange of exchanges) {
+      text += String((exchange as any)?.content || "").length;
+    }
+    if (text <= SESSION_CACHE_MAX_TEXT) {
+      return { ...session, exchanges, exchange_aux };
+    }
+  }
+  const truncatedCount = exchanges.length - SESSION_CACHE_MAX_EXCHANGES;
+  const tail = exchanges.slice(Math.max(0, truncatedCount));
+  let text = 0;
+  let extraSliced = 0;
+  for (let i = tail.length - 1; i >= 0; i -= 1) {
+    const itemText = String((tail as any)[i]?.content || "").length;
+    if (text + itemText > SESSION_CACHE_MAX_TEXT) {
+      extraSliced += 1;
+      continue;
+    }
+    text += itemText;
+  }
+  const kept = extraSliced > 0 ? tail.slice(0, tail.length - extraSliced) : tail;
   return {
     ...session,
-    exchanges: Array.isArray(session.exchanges)
-      ? session.exchanges.filter((exchange) => {
-          const seq = Number((exchange as any)?.seq || 0);
-          return Number.isFinite(seq) && seq > 0;
-        })
-      : [],
-    exchange_aux: toPersistentExchangeAux(session.exchange_aux),
+    truncated: true,
+    exchanges: kept,
+    exchange_aux,
   };
 }
 
@@ -1799,13 +1834,19 @@ export async function syncSession(
   options?: { full?: boolean },
 ): Promise<SyncSessionResult> {
   const base = await getCachedSession(rootId, sessionKey);
-  const seq = getSessionMaxSeq(base);
-  const incoming = options?.full
-    ? await sessionService.syncExternalSession(rootId, sessionKey, seq)
-    : await sessionService.getSession(rootId, sessionKey, seq);
+  // 缓存被截断（truncated）时 base 缺中间段：丢弃 base 走全量拉取，否则 UI 会缺消息。
+  const baseTruncated = !!(base as any)?.truncated;
+  const seq = baseTruncated ? 0 : getSessionMaxSeq(base);
+  // truncated 只需轻量 GET 全量（非 syncExternalSession 的手动转录同步重端点）。
+  const incoming = baseTruncated
+    ? await sessionService.getSession(rootId, sessionKey, 0)
+    : options?.full
+      ? await sessionService.syncExternalSession(rootId, sessionKey, seq)
+      : await sessionService.getSession(rootId, sessionKey, seq);
   if (!incoming) {
     return { session: base, hasDelta: false };
   }
+  const effectiveBase = baseTruncated ? null : base;
   const incomingExchanges = Array.isArray(incoming.exchanges)
     ? incoming.exchanges
     : [];
@@ -1816,7 +1857,7 @@ export async function syncSession(
   const transientTail = incomingExchanges.filter(
     (exchange) => Number((exchange as any)?.seq || 0) === 0,
   );
-  const persistedSession = appendSessionDelta(base, {
+  const persistedSession = appendSessionDelta(effectiveBase, {
     ...incoming,
     key: sessionKey,
     exchanges: persistedDelta,
