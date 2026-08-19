@@ -511,6 +511,9 @@ export function useSessionStream(
           setStreamStatusText("");
         }
         if (event.type === "message_done") {
+          // 一轮消息已完成：立即清除流式标记，避免"正在生成"卡到下个事件。
+          setStreamStatusText("");
+          setIsStreaming(false);
           return;
         }
         if (event.type === "error") {
