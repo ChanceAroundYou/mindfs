@@ -1,25 +1,10 @@
 import { appPath } from "./base";
 import { e2eeService, type E2EEState } from "./e2ee";
 
-export type RelayStatusPayload = {
-  relay_bound?: boolean;
-  no_relayer?: boolean;
-  token_station_bound?: boolean;
-  pending_code?: string;
-  node_name?: string;
-  node_id?: string;
-  e2ee_node_id?: string;
-  relay_base_url?: string;
-  node_url?: string;
-  last_error?: string;
-  e2ee_required?: boolean;
-};
-
 export type BootstrapPhase = "idle" | "pending" | "needs_pairing" | "ready" | "error";
 
 export type BootstrapState = {
   phase: BootstrapPhase;
-  relayStatus: RelayStatusPayload | null;
   e2ee: E2EEState;
   error: string;
 };
@@ -29,7 +14,6 @@ type BootstrapListener = (state: BootstrapState) => void;
 class BootstrapService {
   private state: BootstrapState = {
     phase: "idle",
-    relayStatus: null,
     e2ee: e2eeService.snapshot(),
     error: "",
   };
@@ -86,22 +70,6 @@ class BootstrapService {
     }
   }
 
-  async refreshRelayStatus(): Promise<RelayStatusPayload | null> {
-    const status = await fetchRelayStatus();
-    if (status) {
-      this.applyRelayStatus(status);
-    }
-    return status;
-  }
-
-  async startRelayBinding(): Promise<RelayStatusPayload | null> {
-    const status = await postRelayBindStart();
-    if (status) {
-      this.applyRelayStatus(status);
-    }
-    return status;
-  }
-
   async submitPairingSecret(secret: string): Promise<BootstrapState> {
     const trimmed = String(secret || "").trim();
     if (!trimmed) {
@@ -110,7 +78,7 @@ class BootstrapService {
     e2eeService.setSecret(trimmed);
     try {
       await e2eeService.ensureSession();
-      await this.refreshRelayStatus();
+      await this.refreshE2EEConfig();
       this.setState({ phase: "ready", error: "" });
       return this.snapshot();
     } catch (err) {
@@ -128,14 +96,13 @@ class BootstrapService {
   private async runStart(): Promise<BootstrapState> {
     this.setState({ phase: "pending", error: "" });
     try {
-      const status = await fetchRelayStatus();
-      this.applyRelayStatus(status);
+      await this.refreshE2EEConfig();
       const e2ee = e2eeService.snapshot();
       if (e2ee.required && !e2ee.unlocked) {
         if (e2ee.secretPresent) {
           try {
             await e2eeService.ensureSession();
-            await this.refreshRelayStatus();
+            await this.refreshE2EEConfig();
             this.setState({ phase: "ready", error: "" });
           } catch (err) {
             if (err instanceof Error && err.message === "e2ee_proof_invalid") {
@@ -161,12 +128,21 @@ class BootstrapService {
     }
   }
 
-  private applyRelayStatus(status: RelayStatusPayload | null) {
-    const nextStatus = status || null;
-    const nodeId = String(nextStatus?.e2ee_node_id || "").trim();
-    const required = nextStatus?.e2ee_required === true;
-    e2eeService.configure(required, nodeId);
-    this.setState({ relayStatus: nextStatus });
+  private async refreshE2EEConfig(): Promise<void> {
+    // 状态接口是 e2ee 配置的引导来源：从中取 e2ee_required / e2ee_node_id。
+    // （公网访问/relay 的 UI 已移除，仅保留 e2ee 配置链路。）
+    const target = appPath("/api/relay/status");
+    const response = e2eeService.isRequired() && e2eeService.hasSecret()
+      ? await e2eeService.protectedFetch(target)
+      : await fetch(target);
+    if (!response.ok) {
+      return;
+    }
+    const status = await e2eeService.parseProtectedJSONResponse<{
+      e2ee_required?: boolean;
+      e2ee_node_id?: string;
+    }>(response);
+    e2eeService.configure(status?.e2ee_required === true, String(status?.e2ee_node_id || "").trim());
   }
 
   private setState(patch: Partial<BootstrapState>) {
@@ -182,31 +158,6 @@ class BootstrapService {
     const snapshot = this.snapshot();
     this.listeners.forEach((listener) => listener(snapshot));
   }
-}
-
-async function fetchRelayStatus(): Promise<RelayStatusPayload | null> {
-  const target = appPath("/api/relay/status");
-  const response = e2eeService.isRequired() && e2eeService.hasSecret()
-    ? await e2eeService.protectedFetch(target)
-    : await fetch(target);
-  if (!response.ok) {
-    throw new Error(`relay_status_failed_${response.status}`);
-  }
-  return e2eeService.parseProtectedJSONResponse<RelayStatusPayload>(response);
-}
-
-async function postRelayBindStart(): Promise<RelayStatusPayload | null> {
-  const target = appPath("/api/relay/bind/start");
-  const init: RequestInit = {
-    method: "POST",
-  };
-  const response = e2eeService.isRequired()
-    ? await e2eeService.protectedFetch(target, init)
-    : await fetch(target, init);
-  if (!response.ok) {
-    throw new Error(`relay_bind_start_failed_${response.status}`);
-  }
-  return e2eeService.parseProtectedJSONResponse<RelayStatusPayload>(response);
 }
 
 export const bootstrapService = new BootstrapService();

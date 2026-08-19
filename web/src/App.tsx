@@ -26,14 +26,7 @@ import { e2eeService, type E2EEState } from "./services/e2ee";
 import {
   bootstrapService,
   type BootstrapState,
-  type RelayStatusPayload,
 } from "./services/bootstrap";
-import {
-  fetchTokenStationInfo,
-  startTokenStationBinding,
-  type TokenStationInfo,
-} from "./services/tokenStation";
-import { syncAgentAPIProviders } from "./services/agentConfig";
 import { syncNativeReplyPollerE2EE } from "./services/replyPoller";
 import {
   ProtectedAPIError,
@@ -97,7 +90,7 @@ import {
   readTrustedPluginSet,
   saveTrustedPluginSet,
 } from "./plugins/trust";
-import { appPath, appURL, isRelayNodePage } from "./services/base";
+import { appPath, appURL } from "./services/base";
 import { useRefreshSpin } from "./hooks";
 import { copyText } from "./services/clipboard";
 import { triggerUpdate, type UpdateState } from "./services/update";
@@ -105,8 +98,6 @@ import {
   cancelScheduledWebViewCacheClear,
   scheduleWebViewCacheClearOnNextLaunch,
 } from "./services/nativeCacheControl";
-import { storeRelayNodes } from "./services/launcherNodeSync";
-import { isNativeShellRuntime } from "./services/runtime";
 import {
   applyPinnedSnapshotToSessions,
   mergeSessionItems,
@@ -180,14 +171,6 @@ const MULTI_PROJECT_SESSION_LIMIT = 6;
 const SESSION_PAGE_SIZE = 50;
 const MULTI_PROJECT_SESSION_STORAGE_KEY = "mindfs-multi-project-session-list";
 const APP_DOCUMENT_TITLE = "MindFS";
-
-function formatDocumentTitle(relayStatus: RelayStatusPayload | null): string {
-  if (!isRelayNodePage()) {
-    return APP_DOCUMENT_TITLE;
-  }
-  const nodeName = String(relayStatus?.node_name || "").trim();
-  return nodeName ? `${nodeName} - ${APP_DOCUMENT_TITLE}` : APP_DOCUMENT_TITLE;
-}
 
 function isTopLevelSessionItem(session: SessionItem): boolean {
   return !String(session?.parent_session_key || "").trim();
@@ -650,7 +633,6 @@ function managedDirAddErrorMessage(error: unknown, fallback: string, t: (key: Me
   return message || fallback;
 }
 
-const RELAY_LAST_NODE_ID_STORAGE_KEY = "mindfs.relay.last_node_id";
 const PLUGIN_QUERY_STORAGE_PREFIX = "vp-progress:";
 const TREE_SORT_STORAGE_KEY = "mindfs-tree-sort-mode";
 const DIRECTORY_SORT_OVERRIDES_STORAGE_KEY = "mindfs-directory-sort-overrides";
@@ -742,117 +724,6 @@ function buildFileScrollKey(
 
 function hasSessionExchanges(session: Session | null | undefined): boolean {
   return Array.isArray(session?.exchanges) && session.exchanges.length > 0;
-}
-
-function openPendingPopup(): Window | null {
-  if (typeof window === "undefined") {
-    return null;
-  }
-  const popup = window.open("", "_blank");
-  if (!popup) {
-    return null;
-  }
-  try {
-    popup.document.title = "Opening Relayer...";
-    popup.document.body.innerHTML =
-      '<p style="font-family: system-ui, sans-serif; padding: 16px; color: #111827;">Opening Relayer...</p>';
-  } catch {}
-  return popup;
-}
-
-function navigatePopup(popup: Window | null, url: string): void {
-  if (!popup || popup.closed) {
-    window.open(url, "_blank", "noopener,noreferrer");
-    return;
-  }
-  try {
-    popup.opener = null;
-  } catch {}
-  try {
-    popup.location.replace(url);
-  } catch {
-    popup.location.href = url;
-  }
-}
-
-function relayNodeIdFromPathname(pathname: string): string {
-  const match = /^\/n\/([^/]+)/.exec(String(pathname || ""));
-  return match?.[1] || "";
-}
-
-function isStandaloneDisplayMode(): boolean {
-  if (typeof window === "undefined") {
-    return false;
-  }
-  const navigatorWithStandalone = navigator as Navigator & {
-    standalone?: boolean;
-  };
-  return (
-    window.matchMedia?.("(display-mode: standalone)")?.matches === true ||
-    navigatorWithStandalone.standalone === true
-  );
-}
-
-function isRelayPWAContext(): boolean {
-  if (typeof window === "undefined") {
-    return false;
-  }
-  return (
-    isStandaloneDisplayMode() &&
-    (/^\/n\/[^/]+/.test(window.location.pathname) ||
-      window.location.pathname === "/nodes" ||
-      window.location.pathname === "/login")
-  );
-}
-
-function isRelayNodesPage(): boolean {
-  if (typeof window === "undefined") {
-    return false;
-  }
-  return (window.location.pathname.replace(/\/+$/, "") || "/") === "/nodes";
-}
-
-function relayNodeURL(rootID: string): string {
-  if (typeof window === "undefined") {
-    return "";
-  }
-  const trimmed = String(rootID || "").trim();
-  if (!trimmed) {
-    return "";
-  }
-  return new URL(`/n/${encodeURIComponent(trimmed)}/`, window.location.origin).toString();
-}
-
-function syncRelayNodesToNative(dirs: ManagedRootPayload[]): void {
-  if ((!isNativeShellRuntime() && !isRelayPWAContext()) || !isRelayNodesPage()) {
-    return;
-  }
-  const nodes = dirs
-    .map((dir) => {
-      const id = String(dir.id || "").trim();
-      const url = relayNodeURL(id);
-      const name = String(
-        dir.display_name || dir.root_path?.split("/").filter(Boolean).pop() || id,
-      ).trim();
-      if (!id || !url || !name) {
-        return null;
-      }
-      return { name, url };
-    })
-    .filter((node): node is { name: string; url: string } => node !== null);
-  void storeRelayNodes(nodes);
-}
-
-function extractHTTPStatusFromErrorMessage(message: string): number | null {
-  const match = /status=(\d{3})|(?:^|:\s)(\d{3})\s[A-Z]/.exec(
-    String(message || ""),
-  );
-  const raw = match?.[1] || match?.[2];
-  if (!raw) {
-    return null;
-  }
-  const parsed = Number.parseInt(raw, 10);
-  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function loadPersistedFileScrollPositions(): Record<string, number> {
@@ -1285,85 +1156,6 @@ function loadStringBooleanRecord(key: string): Record<string, Record<string, boo
   }
 }
 
-const NEW_API_QUOTA_PER_UNIT = 500000;
-
-function formatTokenStationBalance(info: TokenStationInfo | null): string {
-  const data = info?.data;
-  if (!info?.success || !data) {
-    return "--";
-  }
-  const text = data.balance_text || data.quota_display_text || "";
-  const formattedText = formatBalanceText(text);
-  if (formattedText) {
-    return formattedText;
-  }
-  const raw = typeof data.balance === "number" ? data.balance : data.quota;
-  if (typeof raw === "number" && Number.isFinite(raw)) {
-    return (raw / NEW_API_QUOTA_PER_UNIT).toFixed(2);
-  }
-  return text || "--";
-}
-
-function parseTokenStationBalance(info: TokenStationInfo | null): number {
-  const data = info?.data;
-  if (!info?.success || !data) {
-    return 0;
-  }
-  const text = data.balance_text || data.quota_display_text || "";
-  const parsed = parseFirstNumber(text);
-  if (parsed !== null) {
-    return parsed;
-  }
-  const raw = typeof data.balance === "number" ? data.balance : data.quota;
-  return typeof raw === "number" && Number.isFinite(raw)
-    ? raw / NEW_API_QUOTA_PER_UNIT
-    : 0;
-}
-
-function formatBalanceText(text: string): string {
-  const value = String(text || "").trim();
-  if (!value) {
-    return "";
-  }
-  const match = value.match(/(-?\d+(?:\.\d+)?)/);
-  if (!match || match.index === undefined) {
-    return "";
-  }
-  const parsed = Number(match[1]);
-  if (!Number.isFinite(parsed)) {
-    return "";
-  }
-  return `${value.slice(0, match.index)}${parsed.toFixed(2)}${value.slice(match.index + match[1].length)}`;
-}
-
-function parseFirstNumber(text: string): number | null {
-  const match = String(text || "").match(/-?\d+(?:\.\d+)?/);
-  if (!match) {
-    return null;
-  }
-  const parsed = Number(match[0]);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function tokenStationWalletURL(baseURL: string): string {
-  const fallback = "http://localhost:3000";
-  const trimmed = String(baseURL || "").trim().replace(/\/+$/, "");
-  const target = `${trimmed || fallback}/wallet`;
-  try {
-    return new URL(target).toString();
-  } catch {
-    return `${fallback}/wallet`;
-  }
-}
-
-function normalizeTokenStationAPIKey(value: string): string {
-  const apiKey = String(value || "").trim();
-  if (!apiKey) {
-    return "";
-  }
-  return apiKey.toLowerCase().startsWith("sk-") ? apiKey : `sk-${apiKey}`;
-}
-
 function hasExplicitFileContext(message: string): boolean {
   return FILE_TOKEN_PATTERN.test(message);
 }
@@ -1531,7 +1323,6 @@ export function App({ onGoHome }: AppProps) {
   const pluginsLoadingByRootRef = useRef<Record<string, Promise<void>>>({});
   const pluginsTrustPendingByRootRef = useRef<Record<string, boolean>>({});
   const didInitRef = useRef(false);
-  const relayWSAuthCheckRef = useRef(false);
   const managedRootsRequestRef = useRef<Promise<ManagedRootPayload[] | null> | null>(null);
   const handleSelectSessionRef = useRef<
     ((session: any) => Promise<void>) | null
@@ -2381,18 +2172,8 @@ export function App({ onGoHome }: AppProps) {
     done: false,
     error: "",
   });
-  const [relayStatus, setRelayStatus] = useState<RelayStatusPayload | null>(
-    null,
-  );
-  const [tokenStationInfo, setTokenStationInfo] =
-    useState<TokenStationInfo | null>(null);
-  const [tokenStationLoading, setTokenStationLoading] = useState(false);
-  const [tokenStationBusy, setTokenStationBusy] = useState(false);
-  const [tokenStationApplyBusy, setTokenStationApplyBusy] = useState(false);
-  const [tokenStationErrorOpen, setTokenStationErrorOpen] = useState(false);
   const [agentConfigSwitchRequest, setAgentConfigSwitchRequest] =
     useState<AgentConfigSwitchRequest | null>(null);
-  const tokenStationRefreshRef = useRef<(() => void) | null>(null);
   const [bootstrapState, setBootstrapState] = useState<BootstrapState>(() =>
     bootstrapService.snapshot(),
   );
@@ -2924,88 +2705,6 @@ export function App({ onGoHome }: AppProps) {
     setIsLeftOpen(showingSidebar);
     setIsRightOpen(showingSessions);
   }, [currentRootId, handleMainContentViewChange, isMobile, replaceURLState]);
-
-  const redirectToRelayLogin = useCallback(() => {
-    const next = encodeURIComponent(
-      `${window.location.pathname}${window.location.search}`,
-    );
-    window.location.replace(`/login?next=${next}`);
-  }, []);
-
-  const redirectToRelayNodes = useCallback(() => {
-    window.location.replace("/nodes");
-  }, []);
-
-  const handleRelayWebSocketClosed = useCallback(async () => {
-    if (!isRelayNodePage() || relayWSAuthCheckRef.current) {
-      return;
-    }
-    relayWSAuthCheckRef.current = true;
-    try {
-      const response = await fetch("/api/auth/me", { cache: "no-cache" });
-      if (!response.ok) {
-        redirectToRelayLogin();
-        return;
-      }
-      const nodeID = relayNodeIdFromPathname(window.location.pathname);
-      if (!nodeID) {
-        return;
-      }
-      const nodeResponse = await fetch(`/n/${encodeURIComponent(nodeID)}/`, {
-        cache: "no-cache",
-        headers: {
-          Accept: "application/json",
-        },
-      });
-      if (
-        nodeResponse.status === 403 ||
-        nodeResponse.status === 404 ||
-        nodeResponse.status === 502 ||
-        nodeResponse.status === 503
-      ) {
-        redirectToRelayNodes();
-      }
-    } catch {
-      // Network failures and connector outages also close the socket. Keep the
-      // normal reconnect path unless the auth probe can prove the session died.
-    } finally {
-      relayWSAuthCheckRef.current = false;
-    }
-  }, [redirectToRelayLogin, redirectToRelayNodes]);
-
-  const handleRelayNavigationFailure = useCallback(
-    async (status: number, errorCode?: string | null) => {
-      if (!isRelayPWAContext()) {
-        return false;
-      }
-      const code = String(errorCode || "").trim();
-      if (status === 401 || code === "unauthorized") {
-        try {
-          const response = await fetch("/api/auth/me");
-          if (response.ok) {
-            return false;
-          }
-        } catch {}
-        redirectToRelayLogin();
-        return true;
-      }
-      if (
-        status === 403 ||
-        status === 404 ||
-        status === 502 ||
-        status === 503 ||
-        code === "forbidden" ||
-        code === "node_not_found" ||
-        code === "node_offline" ||
-        code === "connector_unavailable"
-      ) {
-        redirectToRelayNodes();
-        return true;
-      }
-      return false;
-    },
-    [redirectToRelayLogin, redirectToRelayNodes],
-  );
 
   const rootSessionKey = useCallback(
     (rootId: string, sessionKey: string) => `${rootId}::${sessionKey}`,
@@ -7210,12 +6909,6 @@ export function App({ onGoHome }: AppProps) {
           setDrawerOpenForRoot(root, false);
           if (isMobile) setIsLeftOpen(false);
         } catch (err) {
-          const status = extractHTTPStatusFromErrorMessage(
-            (err as Error)?.message || "",
-          );
-          if (status && (await handleRelayNavigationFailure(status, ""))) {
-            return;
-          }
           console.error("[file.open] failed", { root, path, cursor, err });
         }
       },
@@ -7314,14 +7007,6 @@ export function App({ onGoHome }: AppProps) {
             if (!isToggle && isMobile) setIsLeftOpen(false);
           } catch (error) {
             if (error instanceof ProtectedAPIError) {
-              if (
-                await handleRelayNavigationFailure(
-                  error.status,
-                  typeof error.payload?.error === "string" ? error.payload.error : "",
-                )
-              ) {
-                return;
-              }
               const message = formatDirectoryLoadError(
                 typeof error.payload?.error === "string" ? error.payload.error : "",
               );
@@ -7384,7 +7069,6 @@ export function App({ onGoHome }: AppProps) {
       },
     }),
     [
-      handleRelayNavigationFailure,
       isMobile,
       normalizeTreeResponse,
       setMainViewPreferenceForRoot,
@@ -7497,18 +7181,7 @@ export function App({ onGoHome }: AppProps) {
       try {
         const dirs = await apiProtectedJSON<ManagedRootPayload[]>(appPath("/api/dirs"));
         return Array.isArray(dirs) ? dirs : [];
-      } catch (error) {
-        if (!(error instanceof ProtectedAPIError)) {
-          return null;
-        }
-        if (
-          await handleRelayNavigationFailure(
-            error.status,
-            typeof error.payload?.error === "string" ? error.payload.error : "",
-          )
-        ) {
-          return null;
-        }
+      } catch {
         return null;
       }
     })().finally(() => {
@@ -7516,7 +7189,7 @@ export function App({ onGoHome }: AppProps) {
     });
     managedRootsRequestRef.current = request;
     return request;
-  }, [bootstrapState.phase, handleRelayNavigationFailure]);
+  }, [bootstrapState.phase]);
 
   const refreshManagedRoots = useCallback(async () => {
     const dirs = await loadManagedRootPayloads();
@@ -7524,7 +7197,6 @@ export function App({ onGoHome }: AppProps) {
       return;
     }
     const nextDirs = Array.isArray(dirs) ? dirs : [];
-    syncRelayNodesToNative(nextDirs);
     const nextRootIds = nextDirs.map((dir) => dir.id).filter(Boolean);
     const previousRootById = managedRootByIdRef.current;
     const nextRootById = Object.fromEntries(
@@ -7740,10 +7412,6 @@ export function App({ onGoHome }: AppProps) {
     },
     [],
   );
-
-  const startRelayBinding = useCallback(async () => {
-    return bootstrapService.startRelayBinding();
-  }, []);
 
   const normalizeComparableRootPath = useCallback((value: string): string => {
     let normalized = String(value || "").trim().replace(/\\/g, "/").replace(/\/+$/, "");
@@ -9321,7 +8989,6 @@ export function App({ onGoHome }: AppProps) {
             streamKey,
             event.data?.contextWindow,
           );
-          tokenStationRefreshRef.current?.();
           setCodexRateLimitsRefreshToken((value) => value + 1);
           break;
         case "error":
@@ -9698,7 +9365,6 @@ export function App({ onGoHome }: AppProps) {
           break;
         case "ws.closed":
           setStatus(currentRootIdRef.current ? "reconnecting" : "disconnected");
-          void handleRelayWebSocketClosed();
           break;
         case "root.changed":
           if (
@@ -10430,7 +10096,6 @@ export function App({ onGoHome }: AppProps) {
     setDrawerSessionForRoot,
     setMultiProjectSessionPending,
     refreshManagedRoots,
-    handleRelayWebSocketClosed,
     invalidatePluginsForRoot,
     refreshTreeDir,
     refreshCurrentFileContent,
@@ -10481,15 +10146,6 @@ export function App({ onGoHome }: AppProps) {
     didInitRef.current = true;
     let cancelled = false;
     let settled = false;
-    if (isRelayPWAContext() && !isRelayNodePage()) {
-      const lastNodeID = window.localStorage.getItem(
-        RELAY_LAST_NODE_ID_STORAGE_KEY,
-      );
-      if (lastNodeID) {
-        window.location.replace(`/n/${lastNodeID}/`);
-        return;
-      }
-    }
     void (async () => {
       try {
         const bootstrap = await bootstrapService.start();
@@ -10505,7 +10161,6 @@ export function App({ onGoHome }: AppProps) {
           return;
         }
         const nextDirs = dirs as ManagedRootPayload[];
-        syncRelayNodesToNative(nextDirs);
         const ids = nextDirs.map((d) => d.id);
         managedRootByIdRef.current = Object.fromEntries(
           nextDirs.filter((dir) => !!dir.id).map((dir) => [dir.id, dir]),
@@ -10578,7 +10233,6 @@ export function App({ onGoHome }: AppProps) {
     };
   }, [
     ensurePluginsLoaded,
-    handleRelayNavigationFailure,
     loadManagedRootPayloads,
     loadSessionsForRoot,
     refreshTreeDir,
@@ -10589,14 +10243,13 @@ export function App({ onGoHome }: AppProps) {
   useEffect(() => {
     return bootstrapService.subscribe((state) => {
       setBootstrapState(state);
-      setRelayStatus(state.relayStatus);
       setE2eeState(state.e2ee);
     });
   }, []);
 
   useEffect(() => {
-    document.title = formatDocumentTitle(relayStatus);
-  }, [relayStatus]);
+    document.title = APP_DOCUMENT_TITLE;
+  }, []);
 
   useEffect(() => {
     return e2eeService.subscribe((state) => {
@@ -10673,17 +10326,6 @@ export function App({ onGoHome }: AppProps) {
       setE2eePromptBusy(false);
     }
   }, [describeE2EEPromptError, e2eeSecretInput, t]);
-
-  useEffect(() => {
-    if (!isRelayPWAContext()) {
-      return;
-    }
-    const nodeID = relayNodeIdFromPathname(window.location.pathname);
-    if (!nodeID) {
-      return;
-    }
-    window.localStorage.setItem(RELAY_LAST_NODE_ID_STORAGE_KEY, nodeID);
-  }, []);
 
   useEffect(() => {
     function handlePopState() {
@@ -13554,177 +13196,6 @@ export function App({ onGoHome }: AppProps) {
     });
   }, [file, actionHandlers]);
 
-  const handleRelayAction = useCallback(async () => {
-    if (!currentRootId) {
-      return;
-    }
-    const pendingPopup = openPendingPopup();
-    const latestStatus = await startRelayBinding();
-    const nextStatus = latestStatus || relayStatus;
-    if (!nextStatus) {
-      pendingPopup?.close();
-      return;
-    }
-    const nodeURL = String(nextStatus?.node_url || "");
-    if (nextStatus?.relay_bound && nodeURL) {
-      const target = new URL(nodeURL, window.location.origin);
-      target.searchParams.set("root", currentRootId);
-      navigatePopup(pendingPopup, target.toString());
-      return;
-    }
-    const pendingCode = String(nextStatus?.pending_code || "");
-    const nodeName = String(nextStatus?.node_name || "");
-    const relayBaseURL = String(nextStatus?.relay_base_url || "");
-    if (!pendingCode || !relayBaseURL) {
-      pendingPopup?.close();
-      return;
-    }
-    const target = new URL("/bind", relayBaseURL);
-    target.searchParams.set("code", pendingCode);
-    target.searchParams.set("root", currentRootId);
-    if (nodeName) {
-      target.searchParams.set("node_name", nodeName);
-    }
-    navigatePopup(pendingPopup, target.toString());
-  }, [currentRootId, startRelayBinding, relayStatus]);
-
-  const refreshTokenStationInfo = useCallback(async () => {
-    setTokenStationLoading(true);
-    setTokenStationErrorOpen(false);
-    try {
-      const info = await fetchTokenStationInfo();
-      setTokenStationInfo(info);
-    } catch (error) {
-      setTokenStationInfo({
-        success: false,
-        message: error instanceof Error ? error.message : "token_station_failed",
-      });
-    } finally {
-      setTokenStationLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    tokenStationRefreshRef.current = () => {
-      void refreshTokenStationInfo();
-    };
-    return () => {
-      tokenStationRefreshRef.current = null;
-    };
-  }, [refreshTokenStationInfo]);
-
-  useEffect(() => {
-    if (!bootstrapService.canUseProtectedAPI()) {
-      return;
-    }
-    void refreshTokenStationInfo();
-  }, [refreshTokenStationInfo, bootstrapState.phase]);
-
-  useEffect(() => {
-    if (!bootstrapService.canUseProtectedAPI() || !selectedSession?.updated_at) {
-      return;
-    }
-    void refreshTokenStationInfo();
-  }, [refreshTokenStationInfo, selectedSession?.updated_at]);
-
-  const handleTokenStationAction = useCallback(async () => {
-    setTokenStationErrorOpen(false);
-    const topupURL = String(tokenStationInfo?.data?.topup_url || "http://localhost:3000");
-    const walletURL = tokenStationWalletURL(topupURL);
-    if (relayStatus?.relay_bound || relayStatus?.token_station_bound) {
-      window.open(walletURL, "_blank", "noopener,noreferrer");
-      return;
-    }
-    const pendingPopup = openPendingPopup();
-    setTokenStationBusy(true);
-    try {
-      const status = await startTokenStationBinding();
-      if (status.bound) {
-        window.open(tokenStationWalletURL(String(status.topup_url || topupURL)), "_blank", "noopener,noreferrer");
-        pendingPopup?.close();
-        return;
-      }
-      const pendingCode = String(status.pending_code || "");
-      const relayBaseURL = String(status.relay_base_url || relayStatus?.relay_base_url || "");
-      if (!pendingCode || !relayBaseURL) {
-        pendingPopup?.close();
-        return;
-      }
-      const target = new URL("/bind", relayBaseURL);
-      target.searchParams.set("code", pendingCode);
-      target.searchParams.set("purpose", "token_station");
-      navigatePopup(pendingPopup, target.toString());
-    } finally {
-      setTokenStationBusy(false);
-    }
-  }, [relayStatus, tokenStationInfo]);
-
-  const handleTokenStationApply = useCallback(async () => {
-    setTokenStationErrorOpen(false);
-    setTokenStationApplyBusy(true);
-    try {
-      const info = await fetchTokenStationInfo("apply");
-      setTokenStationInfo(info);
-      if (!info.success) {
-        setTokenStationInfo({
-          ...info,
-          message: info.message || t("tokenStation.loadFailed"),
-        });
-        setTokenStationErrorOpen(true);
-        return;
-      }
-      const topupURL = String(info.data?.topup_url || tokenStationInfo?.data?.topup_url || "").trim();
-      const byName = new Map<string, { name: string; baseUrl: string; apiKey: string }>();
-      for (const item of info.data?.api_keys || []) {
-        const name = String(item?.name || "").trim();
-        const apiKey = normalizeTokenStationAPIKey(String(item?.api_key || ""));
-        if (!name || !apiKey || !topupURL) {
-          continue;
-        }
-        if (!byName.has(name)) {
-          byName.set(name, { name, baseUrl: topupURL, apiKey });
-        }
-      }
-      const providers = Array.from(byName.values());
-      if (providers.length === 0) {
-        setTokenStationInfo({
-          ...info,
-          success: false,
-          message: t("tokenStation.noAPIKey"),
-        });
-        setTokenStationErrorOpen(true);
-        return;
-      }
-      const result = await syncAgentAPIProviders(providers);
-      setAgentConfigSwitchRequest({
-        nonce: Date.now(),
-        providerIDs: (result.providers || []).map((provider) => provider.id),
-      });
-    } catch (error) {
-      setTokenStationInfo({
-        success: false,
-        message: error instanceof Error ? error.message : t("tokenStation.applyFailed"),
-      });
-      setTokenStationErrorOpen(true);
-    } finally {
-      setTokenStationApplyBusy(false);
-    }
-  }, [tokenStationInfo, t]);
-
-  const relayActionLabel = useMemo(() => {
-    if (isRelayNodePage()) {
-      return null;
-    }
-    if (relayStatus?.no_relayer) {
-      return null;
-    }
-    return t("relay.publicAccess");
-  }, [relayStatus, t]);
-
-  const relayActionDisabled =
-    !currentRootId ||
-    (!relayStatus?.relay_bound &&
-      !relayStatus?.relay_base_url);
   const showUpdateButton = shouldShowUpdateButton(updateState);
   const updateBusy =
     updateSubmitting ||
@@ -13986,166 +13457,6 @@ export function App({ onGoHome }: AppProps) {
         }
       />
     );
-  const tokenStationBalanceText = tokenStationLoading
-    ? t("tokenStation.reading")
-    : formatTokenStationBalance(tokenStationInfo);
-  const canApplyTokenStationConfig =
-    tokenStationInfo?.success === true && parseTokenStationBalance(tokenStationInfo) > 0;
-  const tokenStationCard = (
-      <section
-        aria-label={t("tokenStation.title")}
-        style={{
-          position: "relative",
-          width: "100%",
-          height: 36,
-          display: "flex",
-          alignItems: "center",
-          gap: 6,
-          border: "1px solid var(--panel-border)",
-          background: "var(--panel-bg)",
-          backdropFilter: "blur(14px)",
-          boxShadow: "var(--panel-shadow)",
-          borderRadius: 8,
-          boxSizing: "border-box",
-          padding: "0 5px 0 8px",
-          color: "var(--text-primary)",
-        }}
-      >
-        {tokenStationInfo?.success === false && tokenStationErrorOpen ? (
-          <div
-            role="status"
-            style={{
-              position: "absolute",
-              left: 0,
-              bottom: 42,
-              width: "100%",
-              border:
-                "1px solid color-mix(in srgb, var(--mindfs-launcher-error-text) 24%, transparent)",
-              background: "var(--mindfs-launcher-error-bg)",
-              color: "var(--mindfs-launcher-error-text)",
-              borderRadius: 8,
-              boxShadow: "var(--panel-shadow)",
-              padding: "7px 9px",
-              fontSize: 11,
-              lineHeight: "15px",
-              wordBreak: "break-word",
-            }}
-          >
-            {tokenStationInfo.message || t("tokenStation.unbound")}
-          </div>
-        ) : null}
-        <div
-          style={{
-            width: "100%",
-            height: 28,
-            display: "flex",
-            alignItems: "center",
-            gap: 5,
-            minWidth: 0,
-          }}
-        >
-          <svg
-            aria-hidden="true"
-            width="1em"
-            height="1em"
-            viewBox="0 0 24 24"
-            style={{
-              flex: "0 0 auto",
-              width: 21,
-              height: 21,
-              color: "#f97316",
-            }}
-          >
-            <path d="M0 0h24v24H0z" fill="none" />
-            <path
-              fill="currentColor"
-              d="M3 21a1 1 0 0 1 0-2V6a3 3 0 0 1 3-3h6a3 3 0 0 1 3 3v4a3 3 0 0 1 3 3v3a.5.5 0 1 0 1 0v-6a2 2 0 0 1-2-2v-.585l-.707-.708a1 1 0 0 1-.083-1.32l.083-.094a1 1 0 0 1 1.414 0l3.003 3.002l.095.112l.028.04l.044.073l.052.11l.031.09l.02.076l.012.078L21 9v7a2.5 2.5 0 1 1-5 0v-3a1 1 0 0 0-1-1v7a1 1 0 0 1 0 2zm9-16H6a1 1 0 0 0-1 1v4h8V6a1 1 0 0 0-1-1"
-            />
-          </svg>
-          <span
-            title={
-              tokenStationInfo?.success
-                ? tokenStationBalanceText
-                : tokenStationInfo?.message || t("tokenStation.unbound")
-            }
-            style={{
-              minWidth: "max-content",
-              flex: "1 0 auto",
-              overflow: "visible",
-              whiteSpace: "nowrap",
-              fontSize: tokenStationBalanceText.length > 9 ? 11 : 12,
-              fontWeight: 700,
-              lineHeight: "18px",
-              fontVariantNumeric: "tabular-nums",
-            }}
-          >
-            {tokenStationBalanceText}
-          </span>
-          {canApplyTokenStationConfig ? (
-            <button
-              type="button"
-              onClick={() => void handleTokenStationApply()}
-              disabled={tokenStationApplyBusy}
-              style={{
-                flex: "0 0 auto",
-                height: 23,
-                border: "1px solid var(--accent-color)",
-                borderRadius: 6,
-                background: "transparent",
-                color: "var(--accent-color)",
-                fontSize: 11,
-                fontWeight: 650,
-                cursor: tokenStationApplyBusy ? "default" : "pointer",
-                opacity: tokenStationApplyBusy ? 0.65 : 1,
-                padding: "0 4px",
-                whiteSpace: "nowrap",
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 4,
-              }}
-            >
-              {tokenStationApplyBusy ? (
-                <svg
-                  aria-hidden="true"
-                  width="12"
-                  height="12"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="3"
-                  strokeLinecap="round"
-                  style={{ animation: "mindfs-update-spin 0.9s linear infinite" }}
-                >
-                  <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-                </svg>
-              ) : null}
-              <span style={{ fontSize: isTablet ? 10 : 11 }}>{t("tokenStation.apply")}</span>
-            </button>
-          ) : null}
-          <button
-            type="button"
-            onClick={() => void handleTokenStationAction()}
-            disabled={tokenStationBusy}
-            style={{
-              flex: "0 0 auto",
-              height: 23,
-              border: "none",
-              borderRadius: 6,
-              background: "var(--accent-color)",
-              color: "#fff",
-              fontSize: 11,
-              fontWeight: 650,
-              cursor: tokenStationBusy ? "default" : "pointer",
-              opacity: tokenStationBusy ? 0.65 : 1,
-              padding: "0 5px",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {tokenStationBusy ? t("tokenStation.processing") : t("tokenStation.topUp")}
-          </button>
-        </div>
-      </section>
-  );
 
   return (
     <>
@@ -14222,13 +13533,6 @@ export function App({ onGoHome }: AppProps) {
               }
             }}
             onProjectTreeTabChange={setProjectTreeTab}
-            relayActionLabel={relayActionLabel}
-            relayActionDisabled={relayActionDisabled}
-            relayActionHelp={null}
-            onRelayAction={handleRelayAction}
-            relayNodeId={relayStatus?.node_id || ""}
-            relayBaseURL={relayStatus?.relay_base_url || ""}
-            relayNoRelayer={relayStatus?.no_relayer === true}
             updateActionLabel={showUpdateButton ? updateLabel : null}
             updateActionDisabled={updateBusy}
             updateActionHelp={showUpdateButton ? updateHelp : ""}
@@ -14237,7 +13541,6 @@ export function App({ onGoHome }: AppProps) {
             onUpdateAction={() => {
               void handleStartUpdate();
             }}
-            footerTopContent={tokenStationCard}
             showEnterKeySendOption={isMobile}
             enterKeySends={mobileEnterKeySends}
             onEnterKeySendsChange={setMobileEnterKeySends}

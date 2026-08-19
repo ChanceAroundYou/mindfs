@@ -1,6 +1,5 @@
 import React, { memo } from "react";
 import { rootBadgeStyle } from "./rootBadgeStyle";
-import { openExternalURL } from "../services/platformNavigation";
 import { isNativeShellRuntime, shouldEnablePWAInstall } from "../services/runtime";
 import {
   DIRECTORY_SORT_OPTIONS,
@@ -8,8 +7,6 @@ import {
   type FileEntry,
   sortDirectoryEntries,
 } from "../services/directorySort";
-import { appPath } from "../services/base";
-import { protectedJSON } from "../services/api";
 import { bootstrapService } from "../services/bootstrap";
 import {
   APPEARANCE_CHANGE_EVENT,
@@ -23,7 +20,6 @@ import { AgentMenuList } from "./AgentMenuList";
 import { AgentIcon } from "./AgentIcon";
 import { AgentSelector } from "./AgentSelector";
 import { SymlinkBadge } from "./SymlinkBadge";
-import { RelayLocalServicesDialog } from "./RelayLocalServicesDialog";
 import { fetchAgentCatalog, fetchAgents, type AgentStatus } from "../services/agents";
 import {
   createAgentAPIProvider,
@@ -57,7 +53,6 @@ type BeforeInstallPromptEvent = Event & {
 };
 
 const PWA_INSTALL_STATE_KEY = "mindfs-pwa-installed";
-const RELAYER_AD_DISMISS_STORAGE_KEY = "mindfs-relayer-ad-dismissed";
 
 const APPEARANCE_OPTIONS: Array<{ value: AppearanceMode; labelKey: MessageKey }> = [
   { value: "dark", labelKey: "appearance.dark" },
@@ -79,18 +74,6 @@ const DIRECTORY_SORT_LABEL_KEYS: Partial<Record<DirectorySortMode, MessageKey>> 
   "mtime-asc": "sort.mtimeAsc",
   "size-desc": "sort.sizeDesc",
   "size-asc": "sort.sizeAsc",
-};
-
-type RelayTip = {
-  id: string;
-  badge?: string;
-  eyebrow?: string;
-  title: string;
-  description?: string;
-  cta_label?: string;
-  href?: string;
-  target?: "_blank" | "_self";
-  dismissible?: boolean;
 };
 
 type FileMeta = {
@@ -153,13 +136,6 @@ type FileTreeProps = {
   onCreateRootSubmit?: () => void;
   onCreateRootCancel?: () => void;
   projectAddOverlay?: React.ReactNode;
-  relayActionLabel?: string | null;
-  relayActionDisabled?: boolean;
-  relayActionHelp?: string | null;
-  onRelayAction?: () => void;
-  relayNodeId?: string;
-  relayBaseURL?: string;
-  relayNoRelayer?: boolean;
   updateActionLabel?: string | null;
   updateActionDisabled?: boolean;
   updateActionHelp?: string | null;
@@ -1346,13 +1322,6 @@ function FileTreeInner({
   onCreateRootSubmit,
   onCreateRootCancel,
   projectAddOverlay,
-  relayActionLabel = null,
-  relayActionDisabled = false,
-  relayActionHelp = null,
-  onRelayAction,
-  relayNodeId = "",
-  relayBaseURL = "",
-  relayNoRelayer = false,
   updateActionLabel = null,
   updateActionDisabled = false,
   updateActionHelp = null,
@@ -1411,11 +1380,9 @@ function FileTreeInner({
   const [deferredInstallPrompt, setDeferredInstallPrompt] = React.useState<BeforeInstallPromptEvent | null>(null);
   const [isInstalled, setIsInstalled] = React.useState(false);
   const [isInstallCapable, setIsInstallCapable] = React.useState(false);
-  const [relayTips, setRelayTips] = React.useState<RelayTip[]>([]);
   const [protectedAPIReady, setProtectedAPIReady] = React.useState(() =>
     bootstrapService.canUseProtectedAPI(),
   );
-  const [activeRelayTipIndex, setActiveRelayTipIndex] = React.useState(0);
   const [agentConfigFlow, setAgentConfigFlow] = React.useState<AgentConfigFlow | null>(null);
   const [agentConfigStep, setAgentConfigStep] = React.useState<AgentConfigStep>("agent");
   const [agentConfigAgents, setAgentConfigAgents] = React.useState<AgentStatus[]>([]);
@@ -1439,39 +1406,13 @@ function FileTreeInner({
   const [agentConfigRestartingAgent, setAgentConfigRestartingAgent] = React.useState("");
   const [agentConfigError, setAgentConfigError] = React.useState("");
   const [agentLifecycleOpen, setAgentLifecycleOpen] = React.useState(false);
-  const [relayServicesOpen, setRelayServicesOpen] = React.useState(false);
-  const [relayServicesEditing, setRelayServicesEditing] = React.useState(false);
   const [agentLifecycleAgents, setAgentLifecycleAgents] = React.useState<AgentStatus[]>([]);
   const [agentLifecycleBusy, setAgentLifecycleBusy] = React.useState(false);
   const [agentLifecycleRunningAgent, setAgentLifecycleRunningAgent] = React.useState("");
   const [agentLifecycleError, setAgentLifecycleError] = React.useState("");
-  const [dismissedRelayTipIds, setDismissedRelayTipIds] = React.useState<string[]>(() => {
-    if (typeof window === "undefined") {
-      return [];
-    }
-    try {
-      const raw = window.localStorage.getItem(RELAYER_AD_DISMISS_STORAGE_KEY);
-      if (!raw) {
-        return [];
-      }
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        return parsed.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
-      }
-      return typeof parsed === "string" && parsed.trim().length > 0 ? [parsed] : [];
-    } catch {
-      try {
-        const legacy = window.localStorage.getItem(RELAYER_AD_DISMISS_STORAGE_KEY);
-        return legacy && legacy.trim().length > 0 ? [legacy] : [];
-      } catch {
-        return [];
-      }
-    }
-  });
   const menuRef = React.useRef<HTMLDivElement | null>(null);
   const agentConfigPopoverRef = React.useRef<HTMLDivElement | null>(null);
   const agentLifecyclePopoverRef = React.useRef<HTMLDivElement | null>(null);
-  const relayServicesPopoverRef = React.useRef<HTMLDivElement | null>(null);
   const updateNotesRef = React.useRef<HTMLDivElement | null>(null);
   const createInputRef = React.useRef<HTMLInputElement | null>(null);
   const previousCreatingRootNameRef = React.useRef<string | null>(null);
@@ -1690,61 +1631,13 @@ function FileTreeInner({
 
   const shouldShowInstallButton = !isNativeApp && !isKnownInstalled && !(isAndroidChrome && !deferredInstallPrompt);
   const shouldShowInstallHelp = !isNativeApp && (!!installHelp) && (isKnownInstalled || isIOS || isMacSafari || isDesktopChromium || deferredInstallPrompt !== null || (isAndroidChrome && !deferredInstallPrompt));
-  const visibleRelayTips = React.useMemo(
-    () => relayTips.filter((tip) => tip.id && tip.title && !dismissedRelayTipIds.includes(tip.id)),
-    [dismissedRelayTipIds, relayTips],
-  );
-  const relayTip = visibleRelayTips.length > 0
-    ? visibleRelayTips[((activeRelayTipIndex % visibleRelayTips.length) + visibleRelayTips.length) % visibleRelayTips.length]
-    : null;
-  const shouldShowRelayTip = Boolean(relayTip);
-  const shouldShowNextRelayTip = visibleRelayTips.length > 1;
   const hasFooterContent =
     !!updateActionLabel ||
     !!updateActionHelp ||
     !!footerTopContent ||
-    !!relayActionLabel ||
-    !!relayActionHelp ||
-    shouldShowRelayTip ||
     (isNativeApp && !!onGoHome) ||
     shouldShowInstallButton ||
     shouldShowInstallHelp;
-
-  const dismissRelayTip = React.useCallback(() => {
-    if (!relayTip?.id) {
-      return;
-    }
-    setDismissedRelayTipIds((current) => {
-      if (current.includes(relayTip.id)) {
-        return current;
-      }
-      const next = [...current, relayTip.id];
-      if (typeof window !== "undefined") {
-        try {
-          window.localStorage.setItem(RELAYER_AD_DISMISS_STORAGE_KEY, JSON.stringify(next));
-        } catch {
-        }
-      }
-      return next;
-    });
-    setActiveRelayTipIndex((current) => {
-      if (visibleRelayTips.length <= 1) {
-        return 0;
-      }
-      return current % (visibleRelayTips.length - 1);
-    });
-  }, [relayTip, visibleRelayTips.length]);
-
-  const openRelayTip = React.useCallback(() => {
-    if (typeof window === "undefined" || !relayTip?.href) {
-      return;
-    }
-    if (relayTip.target === "_self") {
-      window.location.assign(relayTip.href);
-      return;
-    }
-    openExternalURL(relayTip.href);
-  }, [relayTip]);
 
   const handleInstall = React.useCallback(async () => {
     if (isKnownInstalled) {
@@ -1802,39 +1695,6 @@ function FileTreeInner({
       setProtectedAPIReady(bootstrapService.canUseProtectedAPI());
     });
   }, []);
-
-  React.useEffect(() => {
-    let cancelled = false;
-    const controller = new AbortController();
-
-    const loadRelayTip = async () => {
-      if (!protectedAPIReady) {
-        setRelayTips([]);
-        return;
-      }
-      try {
-        const payload = await protectedJSON<RelayTip | RelayTip[] | null>(appPath("/api/relay/tips"), { signal: controller.signal });
-        if (!cancelled) {
-          const nextTips = Array.isArray(payload)
-            ? payload.filter((tip): tip is RelayTip => Boolean(tip?.id && tip?.title))
-            : payload && payload.id && payload.title
-              ? [payload]
-              : [];
-          setRelayTips(nextTips);
-        }
-      } catch {
-        if (!cancelled) {
-          setRelayTips([]);
-        }
-      }
-    };
-
-    loadRelayTip();
-    return () => {
-      cancelled = true;
-      controller.abort();
-    };
-  }, [protectedAPIReady]);
 
   React.useEffect(() => {
     if (!isUpdateNotesOpen || typeof document === "undefined") {
@@ -1909,7 +1769,6 @@ function FileTreeInner({
   const openSessionNaming = React.useCallback(() => {
     setAgentConfigFlow(null);
     setAgentLifecycleOpen(false);
-    setRelayServicesOpen(false);
     setIsMenuOpen(false);
     setSessionNamingOpen(true);
     setSessionNamingBusy(true);
@@ -2043,27 +1902,6 @@ function FileTreeInner({
     document.addEventListener("mousedown", handlePointerDown);
     return () => document.removeEventListener("mousedown", handlePointerDown);
   }, [agentLifecycleOpen, closeAgentLifecycleFlow]);
-
-  React.useEffect(() => {
-    if (!relayServicesOpen) {
-      return;
-    }
-    const handlePointerDown = (event: MouseEvent) => {
-      if (relayServicesEditing) {
-        return;
-      }
-      if (!relayServicesPopoverRef.current?.contains(event.target as Node)) {
-        setRelayServicesOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handlePointerDown);
-    return () => document.removeEventListener("mousedown", handlePointerDown);
-  }, [relayServicesEditing, relayServicesOpen]);
-
-  const closeRelayServices = React.useCallback(() => {
-    setRelayServicesOpen(false);
-    setRelayServicesEditing(false);
-  }, []);
 
   const runAgentLifecycleCommand = React.useCallback(async (agent: AgentStatus, action: AgentLifecycleCommandAction) => {
     const commands = action === "install" ? agent.install_commands || [] : agent.update_commands || [];
@@ -2286,21 +2124,6 @@ function FileTreeInner({
     setSelectedAgentConfigID("");
     setAgentConfigSwitchSelection(id ? { type: "api_provider", id } : null);
   }, []);
-
-  React.useEffect(() => {
-    if (visibleRelayTips.length === 0) {
-      setActiveRelayTipIndex(0);
-      return;
-    }
-    setActiveRelayTipIndex((current) => current % visibleRelayTips.length);
-  }, [visibleRelayTips.length]);
-
-  const showNextRelayTip = React.useCallback(() => {
-    if (visibleRelayTips.length <= 1) {
-      return;
-    }
-    setActiveRelayTipIndex((current) => (current + 1) % visibleRelayTips.length);
-  }, [visibleRelayTips.length]);
 
   const childKeyFor = (entry: FileEntry, entryRoot: string) => {
     if (entry.is_root) return `${entry.path}:.`;
@@ -2795,28 +2618,6 @@ function FileTreeInner({
                     <path d="m17 16 2 2 3-4" />
                   </svg>
                   <span>{t("fileTree.sessionNamingAgent")}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setRelayServicesOpen(true);
-                    setRelayServicesEditing(false);
-                    closeAgentConfigFlow();
-                    setAgentLifecycleOpen(false);
-                    setIsMenuOpen(false);
-                    setIsAppearanceMenuOpen(false);
-                    setIsLocaleMenuOpen(false);
-                    setIsSortMenuOpen(false);
-                  }}
-                  style={fileTreeMenuButtonStyle}
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <path d="M4 17V7a2 2 0 0 1 2-2h6" />
-                    <path d="M8 21h8a2 2 0 0 0 2-2v-6" />
-                    <path d="M14 3h7v7" />
-                    <path d="m21 3-9 9" />
-                  </svg>
-                  <span>{t("fileTree.relayLocalServices")}</span>
                 </button>
                 {!isNativeApp ? <WebPushMenuItem /> : null}
                 <div style={{ height: "1px", background: "var(--border-color)", margin: "6px 4px" }} />
@@ -3317,27 +3118,6 @@ function FileTreeInner({
             </div>
           </div>
         ) : null}
-        {relayServicesOpen ? (
-          <div
-            ref={relayServicesPopoverRef}
-            style={{
-              position: "absolute",
-              top: "calc(100% + 6px)",
-              left: "8px",
-              right: "3px",
-              zIndex: 35,
-            }}
-          >
-            <RelayLocalServicesDialog
-              open={relayServicesOpen}
-              nodeId={relayNodeId}
-              relayBaseURL={relayBaseURL}
-              noRelayer={relayNoRelayer}
-              onCancel={closeRelayServices}
-              onEditingChange={setRelayServicesEditing}
-            />
-          </div>
-        ) : null}
         {agentLifecycleOpen ? (
           <div
             ref={agentLifecyclePopoverRef}
@@ -3513,201 +3293,8 @@ function FileTreeInner({
             {updateActionHelp}
           </div>
         ) : null}
-        {shouldShowRelayTip && relayTip ? (
-          <div
-            style={{
-              position: "relative",
-              border:
-                "1px solid color-mix(in srgb, var(--accent-color) 18%, var(--border-color))",
-              background:
-                "linear-gradient(180deg, color-mix(in srgb, var(--sidebar-bg) 94%, var(--accent-color) 6%), color-mix(in srgb, var(--sidebar-bg) 88%, var(--accent-color) 12%))",
-              boxShadow:
-                "0 8px 24px color-mix(in srgb, var(--accent-color) 10%, transparent)",
-              borderRadius: "8px",
-              padding: "10px",
-              display: "flex",
-              flexDirection: "column",
-              gap: "10px",
-              overflow: "hidden",
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "10px" }}>
-              <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: "4px", flex: 1, paddingRight: relayTip.dismissible !== false ? "14px" : 0 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap", minWidth: 0, flex: 1 }}>
-                    {relayTip.badge ? (
-                      <span
-                        style={{
-                          padding: "2px 6px",
-                          borderRadius: "999px",
-                          background:
-                            "color-mix(in srgb, var(--accent-color) 14%, transparent)",
-                          color: "var(--accent-color)",
-                          fontSize: "10px",
-                          fontWeight: 700,
-                          lineHeight: 1.4,
-                        }}
-                      >
-                        {relayTip.badge}
-                      </span>
-                    ) : null}
-                    {relayTip.eyebrow ? (
-                      <span style={{ fontSize: "10px", fontWeight: 700, color: "var(--text-secondary)", lineHeight: 1.4 }}>
-                        {relayTip.eyebrow}
-                      </span>
-                    ) : null}
-                </div>
-                <div style={{ fontSize: "12px", fontWeight: 700, color: "var(--text-primary)", lineHeight: 1.35 }}>
-                  {relayTip.title}
-                </div>
-                {relayTip.description ? (
-                  <div style={{ fontSize: "11px", color: "var(--text-secondary)", lineHeight: 1.45 }}>
-                    {relayTip.description}
-                  </div>
-                ) : null}
-              </div>
-              {relayTip.dismissible !== false ? (
-                <button
-                  type="button"
-                  aria-label={t("fileTree.closeAd")}
-                  onClick={dismissRelayTip}
-                  style={{
-                    position: "absolute",
-                    top: "6px",
-                    right: "6px",
-                    border: "none",
-                    background: "transparent",
-                    color: "var(--text-secondary)",
-                    width: "20px",
-                    height: "20px",
-                    borderRadius: "6px",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    cursor: "pointer",
-                    flexShrink: 0,
-                    padding: 0,
-                  }}
-                >
-                  ×
-                </button>
-              ) : null}
-            </div>
-            {(relayTip.href && relayTip.cta_label) || shouldShowNextRelayTip ? (
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px" }}>
-                <div>
-                  {relayTip.href && relayTip.cta_label ? (
-                    <button
-                      type="button"
-                      onClick={openRelayTip}
-                      style={{
-                        alignSelf: "flex-start",
-                        border: "none",
-                        background: "transparent",
-                        color: "var(--accent-color)",
-                        borderRadius: "6px",
-                        padding: "0",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        gap: "4px",
-                        cursor: "pointer",
-                        fontSize: "11px",
-                        fontWeight: 600,
-                        lineHeight: 1,
-                      }}
-                    >
-                      <span>{relayTip.cta_label}</span>
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                        <path d="M5 12h14" />
-                        <path d="m13 5 7 7-7 7" />
-                      </svg>
-                    </button>
-                  ) : null}
-                </div>
-                {shouldShowNextRelayTip ? (
-                  <button
-                    type="button"
-                    aria-label={t("fileTree.nextTip")}
-                    onClick={showNextRelayTip}
-                    style={{
-                      border: "none",
-                      background: "transparent",
-                      color: "var(--accent-color)",
-                      display: "inline-flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      gap: "4px",
-                      cursor: "pointer",
-                      flexShrink: 0,
-                      padding: 0,
-                    }}
-                  >
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                      <path d="M5 12h14" />
-                      <path d="m13 5 7 7-7 7" />
-                    </svg>
-                  </button>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
-        ) : null}
         {footerTopContent ? (
           <div style={{ width: "100%" }}>{footerTopContent}</div>
-        ) : null}
-        {shouldShowInstallButton ? (
-          relayActionLabel ? (
-            <button
-              type="button"
-              disabled={relayActionDisabled}
-              onClick={() => onRelayAction?.()}
-              style={{
-                width: "100%",
-                border: "1px solid var(--border-color)",
-                background: relayActionDisabled ? "rgba(148, 163, 184, 0.2)" : "var(--accent-color)",
-                color: relayActionDisabled ? "var(--text-secondary)" : "#fff",
-                borderRadius: "10px",
-                padding: "10px 12px",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: "8px",
-                cursor: relayActionDisabled ? "not-allowed" : "pointer",
-                fontSize: "12px",
-                fontWeight: 600,
-              }}
-            >
-              <span>{relayActionLabel}</span>
-            </button>
-          ) : null
-        ) : relayActionLabel ? (
-          <button
-            type="button"
-            disabled={relayActionDisabled}
-            onClick={() => onRelayAction?.()}
-            style={{
-              width: "100%",
-              border: "1px solid var(--border-color)",
-              background: relayActionDisabled ? "rgba(148, 163, 184, 0.2)" : "var(--accent-color)",
-              color: relayActionDisabled ? "var(--text-secondary)" : "#fff",
-              borderRadius: "10px",
-              padding: "10px 12px",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: "8px",
-              cursor: relayActionDisabled ? "not-allowed" : "pointer",
-              fontSize: "12px",
-              fontWeight: 600,
-            }}
-          >
-            <span>{relayActionLabel}</span>
-          </button>
-        ) : null}
-        {relayActionHelp ? (
-          <div style={{ fontSize: "11px", color: "var(--text-secondary)", lineHeight: 1.5, textAlign: "center" }}>
-            {relayActionHelp}
-          </div>
         ) : null}
         {isNativeApp && onGoHome ? (
           <button
