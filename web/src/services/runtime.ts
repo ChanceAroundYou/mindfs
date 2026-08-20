@@ -1,4 +1,5 @@
 import { getStoredApiBaseURL, getStoredWsBaseURL } from "./storage";
+import { getActiveNode, getNodeById } from "./nodeRegistry";
 
 export type NativePlatform = "web" | "android" | "harmony" | "native";
 
@@ -111,7 +112,19 @@ function deriveOriginBaseURL(): string {
   return sanitizeBaseURL(window.location.origin);
 }
 
-export function getApiBaseURL(): string {
+function resolveNodeBaseURL(nodeId?: string): string {
+  if (nodeId) {
+    const node = getNodeById(nodeId);
+    if (node?.url) return sanitizeBaseURL(node.url);
+  }
+  const active = getActiveNode();
+  if (active?.url) return sanitizeBaseURL(active.url);
+  return "";
+}
+
+export function getApiBaseURL(nodeId?: string): string {
+  const nodeURL = resolveNodeBaseURL(nodeId);
+  if (nodeURL) return nodeURL;
   const configured = readStorage("mindfs_api_base_url") || readMeta("mindfs-api-base-url");
   if (configured) {
     return configured;
@@ -122,12 +135,33 @@ export function getApiBaseURL(): string {
   return deriveOriginBaseURL();
 }
 
-export function getWsBaseURL(): string {
+export function getWsBaseURL(nodeId?: string): string {
+  // ws base derived from api base when no explicit ws storage
+  const nodeWs = (() => {
+    if (nodeId) {
+      const node = getNodeById(nodeId);
+      if (node?.url) {
+        const u = sanitizeBaseURL(node.url);
+        if (u.startsWith("https://")) return `wss://${u.slice("https://".length)}`;
+        if (u.startsWith("http://")) return `ws://${u.slice("http://".length)}`;
+        return u;
+      }
+    }
+    const active = getActiveNode();
+    if (active?.url) {
+      const u = sanitizeBaseURL(active.url);
+      if (u.startsWith("https://")) return `wss://${u.slice("https://".length)}`;
+      if (u.startsWith("http://")) return `ws://${u.slice("http://".length)}`;
+      return u;
+    }
+    return "";
+  })();
+  if (nodeWs) return nodeWs;
   const configured = readStorage("mindfs_ws_base_url") || readMeta("mindfs-ws-base-url");
   if (configured) {
     return configured;
   }
-  const apiBaseURL = getApiBaseURL();
+  const apiBaseURL = getApiBaseURL(nodeId);
   if (!apiBaseURL) {
     return "";
   }

@@ -106,6 +106,8 @@ import {
 import { AppShell } from "./layout/AppShell";
 import { ModeIcon } from "./components/ModeIcon";
 import { FileTree, type AgentConfigSwitchRequest } from "./components/FileTree";
+import { NodeSwitcher } from "./components/NodeSwitcher";
+import { getActiveNode, getAggregated, getNodes, migrateLegacySingleBase } from "./services/nodeRegistry";
 import { FileViewer } from "./components/FileViewer";
 import { GitDiffViewer } from "./components/GitDiffViewer";
 import { GitHistoryPanel } from "./components/GitHistoryPanel";
@@ -1092,14 +1094,20 @@ function basenameOfPath(path: string): string {
 }
 
 function mapManagedRootsToEntries(dirs: ManagedRootPayload[]): FileEntry[] {
-  return dirs.map((dir) => ({
-    name: dir.display_name || dir.id.split("/").filter(Boolean).pop() || dir.id,
-    path: dir.id,
-    is_dir: true,
-    is_root: true,
-    size: typeof dir.size === "number" ? dir.size : undefined,
-    mtime: typeof dir.mtime === "string" ? dir.mtime : undefined,
-  }));
+  return dirs.map((dir) => {
+    const d = dir as any;
+    return {
+      name: dir.display_name || dir.id.split("/").filter(Boolean).pop() || dir.id,
+      path: dir.id,
+      is_dir: true,
+      is_root: true,
+      size: typeof dir.size === "number" ? dir.size : undefined,
+      mtime: typeof dir.mtime === "string" ? dir.mtime : undefined,
+      // ponytail: 多节点着色由 FileTree 通过 rootEntries 扩展字段渲染
+      _nodeColor: d._nodeColor as string | undefined,
+      _nodeName: d._nodeName as string | undefined,
+    } as FileEntry & { _nodeColor?: string; _nodeName?: string };
+  });
 }
 
 function comparableManagedRootPath(value: string | undefined): string {
@@ -2201,6 +2209,7 @@ export function App({ onGoHome }: AppProps) {
     }
   }, [isMobile, onboardingOpen]);
   const [e2eeSecretInput, setE2eeSecretInput] = useState("");
+  useEffect(() => { try { migrateLegacySingleBase(); } catch {} }, []);
   const [e2eePromptError, setE2eePromptError] = useState("");
   const [e2eePromptBusy, setE2eePromptBusy] = useState(false);
   const [editDraftRequest, setEditDraftRequest] = useState<{
@@ -7179,8 +7188,26 @@ export function App({ onGoHome }: AppProps) {
     }
     const request = (async () => {
       try {
-        const dirs = await apiProtectedJSON<ManagedRootPayload[]>(appPath("/api/dirs"));
-        return Array.isArray(dirs) ? dirs : [];
+        try { migrateLegacySingleBase(); } catch {}
+        const nodes = getNodes();
+        const active = getActiveNode();
+        const aggregated = getAggregated();
+        const targets = aggregated && nodes.length ? nodes : (active ? [active] : nodes);
+        if (!targets.length) {
+          const dirs = await apiProtectedJSON<ManagedRootPayload[]>(appPath("/api/dirs"));
+          return Array.isArray(dirs) ? dirs : [];
+        }
+        const results = await Promise.all(targets.map(async (n) => {
+          try {
+            const dirs = await apiProtectedJSON<ManagedRootPayload[]>(appPath("/api/dirs", n.id));
+            return (Array.isArray(dirs) ? dirs : []).map((d: any) => ({ ...d, _nodeId: (d as any)._nodeId || n.id, _nodeColor: n.color, _nodeName: n.name }));
+          } catch { return [] as ManagedRootPayload[]; }
+        }));
+        const flat = results.flat() as ManagedRootPayload[];
+        const seen = new Set<string>();
+        const deduped: ManagedRootPayload[] = [];
+        for (const d of flat) { const id = String((d as any).id || ""); if (!id || seen.has(id)) continue; seen.add(id); deduped.push(d); }
+        return deduped;
       } catch {
         return null;
       }
@@ -7649,8 +7676,9 @@ export function App({ onGoHome }: AppProps) {
     }));
     try {
       const params = trimmed ? new URLSearchParams({ path: trimmed }) : undefined;
+      const targetNodeId = getActiveNode()?.id;
       const payload = await apiProtectedJSON<LocalDirsPayload>(
-        appURL("/api/local_dirs", params),
+        appURL("/api/local_dirs", params, targetNodeId),
       );
       setLocalDirState({
         path: String(payload.path || trimmed),
@@ -13469,7 +13497,10 @@ export function App({ onGoHome }: AppProps) {
         onOpenLeft={() => setIsLeftOpen(true)}
         onOpenRight={() => setIsRightOpen(true)}
         sidebar={
-          <FileTree
+          <div style={{ display: "flex", flexDirection: "column", minHeight: 0, flex: 1 }}>
+            <NodeSwitcher onChanged={() => { void refreshManagedRoots(); }} />
+            <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+              <FileTree
             entries={rootEntries}
             childrenByPath={entriesByPath}
             expanded={expanded}
@@ -13554,6 +13585,8 @@ export function App({ onGoHome }: AppProps) {
             onRestartAgent={handleRestartAgent}
             onGoHome={onGoHome}
           />
+            </div>
+          </div>
         }
         rightSidebar={sessionSidebar}
         main={

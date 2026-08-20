@@ -8,27 +8,25 @@ function joinURL(baseURL: string, path: string): string {
   return `${baseURL.replace(/\/+$/, "")}${ensureLeadingSlash(path)}`;
 }
 
-export function appPath(path: string): string {
+export function appPath(path: string, nodeId?: string): string {
   const pathname = ensureLeadingSlash(path);
-  // In Capacitor runtime, relative paths won't resolve to the MindFS backend.
-  // Return a full URL so fetch(appPath(...)) works the same as fetch(appURL(...)).
-  const apiBaseURL = getApiBaseURL();
+  const apiBaseURL = getApiBaseURL(nodeId);
   if (apiBaseURL) {
     return joinURL(apiBaseURL, pathname);
   }
   return pathname;
 }
 
-export function appURL(path: string, params?: URLSearchParams): string {
-  const target = appPath(path);
+export function appURL(path: string, params?: URLSearchParams, nodeId?: string): string {
+  const target = appPath(path, nodeId);
   if (!params || !params.toString()) {
     return target;
   }
   return `${target}?${params.toString()}`;
 }
 
-export function wsURL(path: string, params?: URLSearchParams): string {
-  const wsBaseURL = getWsBaseURL();
+export function wsURL(path: string, params?: URLSearchParams, nodeId?: string): string {
+  const wsBaseURL = getWsBaseURL(nodeId);
   const pathname = ensureLeadingSlash(path);
   let target = wsBaseURL ? joinURL(wsBaseURL, pathname) : pathname;
   if (!wsBaseURL && isBrowserRuntime()) {

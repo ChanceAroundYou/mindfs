@@ -159,57 +159,9 @@ func (w *protectedResponseWriter) Write(payload []byte) (int, error) {
 }
 
 func (h *HTTPHandler) protectedEndpoint(next http.HandlerFunc) http.HandlerFunc {
+	// ponytail: 鉴权/e2ee 已移除，保留包装仅为兼容，直通
 	return func(w http.ResponseWriter, r *http.Request) {
-		if h.isLocalCLIRequest(r) {
-			next(w, r)
-			return
-		}
-		sess, protected, err := h.requireProtectedHTTPSession(r)
-		if !protected {
-			next(w, r)
-			return
-		}
-		if err != nil {
-			respondError(w, http.StatusUnauthorized, err)
-			return
-		}
-		sess, err = h.requireRequestProof(r)
-		if err != nil {
-			respondError(w, http.StatusUnauthorized, err)
-			return
-		}
-		if r.Body != nil && r.ContentLength != 0 && r.Method != http.MethodGet && r.Method != http.MethodHead {
-			var envelope e2ee.CipherEnvelope
-			if err := json.NewDecoder(io.LimitReader(r.Body, maxUploadRequestBytes)).Decode(&envelope); err != nil {
-				respondError(w, http.StatusBadRequest, errInvalidRequest("invalid protected payload"))
-				return
-			}
-			plaintext, err := e2ee.DecryptBytes(sess.Key, &envelope)
-			if err != nil {
-				respondError(w, http.StatusBadRequest, errInvalidRequest("e2ee_proof_invalid"))
-				return
-			}
-			r.Body = io.NopCloser(bytes.NewReader(plaintext))
-			r.ContentLength = int64(len(plaintext))
-		}
-		recorder := &protectedResponseWriter{ResponseWriter: w}
-		next(recorder, r)
-		if recorder.status == 0 {
-			recorder.status = http.StatusOK
-		}
-		if recorder.status == http.StatusNoContent || recorder.status == http.StatusNotModified || recorder.body.Len() == 0 {
-			w.WriteHeader(recorder.status)
-			return
-		}
-		var payload any
-		if err := json.Unmarshal(recorder.body.Bytes(), &payload); err != nil {
-			respondError(w, http.StatusServiceUnavailable, err)
-			return
-		}
-		if err := writeProtectedJSON(w, recorder.status, sess.Key, payload); err != nil {
-			respondError(w, http.StatusServiceUnavailable, err)
-			return
-		}
+		next(w, r)
 	}
 }
 
@@ -274,9 +226,25 @@ func (h *HTTPHandler) broadcastRootChanged(action, rootID string, extra ...map[s
 	})
 }
 
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
+		w.Header().Set("Access-Control-Max-Age", "86400")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(204)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // Routes constructs the chi router with all endpoints.
 func (h *HTTPHandler) Routes() http.Handler {
 	r := chi.NewRouter()
+	r.Use(corsMiddleware)
+	r.Options("/*", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) })
 	r.Get("/", h.handleFrontend)
 	r.Get("/health", h.handleHealth)
 	r.Get("/api/tree", h.protectedEndpoint(h.handleTree))
