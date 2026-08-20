@@ -105,20 +105,64 @@ function readStorage(key: string): string {
   }
 }
 
+// 反代子路径前缀：当前页面本身挂在子路径下（如 /mindfs）时，节点 URL 若是裸 origin，
+// 应补上该前缀，请求才落到 host.domain/mindfs/api/...。
+// 例：页面在 https://home.xiaokubao.space/mindfs/ 加载 → prefix = "/mindfs"。
+function detectReverseProxyPrefix(): string {
+  if (!isBrowserRuntime()) {
+    return "";
+  }
+  const pathname = window.location.pathname || "/";
+  const segments = pathname.split("/").filter(Boolean);
+  if (segments.length === 0) {
+    return "";
+  }
+  // 取第一段作为反代前缀（/mindfs/... → /mindfs）
+  const prefix = `/${segments[0]}`;
+  return prefix;
+}
+
+function parseOriginHost(input: string): { origin: string; path: string } {
+  try {
+    const u = new URL(input);
+    let path = u.pathname.replace(/\/+$/, "");
+    if (path === "") path = "";
+    return { origin: u.origin, path };
+  } catch {
+    return { origin: input, path: "" };
+  }
+}
+
+// 将节点/基础 URL 统一到反代子路径：若它是裸 origin（无路径），但当前页面有反代前缀，
+// 则补上前缀，保证 host/xxx/api 而不再 404 为 host/api。
+export function normalizeBaseURLWithPrefix(input: string): string {
+  const base = sanitizeBaseURL(input);
+  if (!base) return "";
+  const { path } = parseOriginHost(base);
+  if (path) {
+    return base;
+  }
+  const prefix = detectReverseProxyPrefix();
+  if (!prefix) {
+    return base;
+  }
+  return `${base.replace(/\/+$/, "")}${prefix}`;
+}
+
 function deriveOriginBaseURL(): string {
   if (!isBrowserRuntime()) {
     return "";
   }
-  return sanitizeBaseURL(window.location.origin);
+  return normalizeBaseURLWithPrefix(sanitizeBaseURL(window.location.origin));
 }
 
 function resolveNodeBaseURL(nodeId?: string): string {
   if (nodeId) {
     const node = getNodeById(nodeId);
-    if (node?.url) return sanitizeBaseURL(node.url);
+    if (node?.url) return normalizeBaseURLWithPrefix(node.url);
   }
   const active = getActiveNode();
-  if (active?.url) return sanitizeBaseURL(active.url);
+  if (active?.url) return normalizeBaseURLWithPrefix(active.url);
   return "";
 }
 
@@ -138,18 +182,15 @@ export function getApiBaseURL(nodeId?: string): string {
 export function getWsBaseURL(nodeId?: string): string {
   // ws base derived from api base when no explicit ws storage
   const nodeWs = (() => {
+    let u = "";
     if (nodeId) {
       const node = getNodeById(nodeId);
-      if (node?.url) {
-        const u = sanitizeBaseURL(node.url);
-        if (u.startsWith("https://")) return `wss://${u.slice("https://".length)}`;
-        if (u.startsWith("http://")) return `ws://${u.slice("http://".length)}`;
-        return u;
-      }
+      if (node?.url) u = normalizeBaseURLWithPrefix(node.url);
+    } else {
+      const active = getActiveNode();
+      if (active?.url) u = normalizeBaseURLWithPrefix(active.url);
     }
-    const active = getActiveNode();
-    if (active?.url) {
-      const u = sanitizeBaseURL(active.url);
+    if (u) {
       if (u.startsWith("https://")) return `wss://${u.slice("https://".length)}`;
       if (u.startsWith("http://")) return `ws://${u.slice("http://".length)}`;
       return u;

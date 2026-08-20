@@ -9,31 +9,31 @@ export type NativeE2EESession = { required: boolean; nodeId: string; clientId: s
 export type CipherEnvelope = { nonce: string; ciphertext: string };
 class StubE2EE {
   snapshot(): E2EEState { return { configured: true, required: false, nodeId: "", secretPresent: false, unlocked: false }; }
-  subscribe(listener: (s: E2EEState) => void) { listener(this.snapshot()); return () => {}; }
-  configure() {}
-  setClientId() {}
-  hasSecret() { return false; }
-  getSecret() { return ""; }
-  setSecret() {}
-  clearSession() {}
-  clearSecret() {}
-  async ensureSession() { return null as any; }
-  async encryptEnvelope() { return null as any; }
-  async decryptEnvelope<T>(): Promise<T> { throw new Error("e2ee_removed"); }
-  async encodeProtectedJSON() { throw new Error("e2ee_removed"); }
-  async decodeProtectedJSON<T>(): Promise<T> { throw new Error("e2ee_removed"); }
+  subscribe(listener: (s: E2EEState) => void) { try { listener(this.snapshot()); } catch {} return () => {}; }
+  configure(..._args: any[]) {}
+  setClientId(..._args: any[]) {}
+  hasSecret(..._args: any[]) { return false; }
+  getSecret(..._args: any[]) { return ""; }
+  setSecret(..._args: any[]) {}
+  clearSession(..._args: any[]) {}
+  clearSecret(..._args: any[]) {}
+  async ensureSession(..._args: any[]) { return null as any; }
+  async encryptEnvelope(..._args: any[]) { return null as any; }
+  async decryptEnvelope<T>(..._args: any[]): Promise<T> { throw new Error("e2ee_removed"); }
+  async encodeProtectedJSON(..._args: any[]) { throw new Error("e2ee_removed"); }
+  async decodeProtectedJSON<T>(..._args: any[]): Promise<T> { throw new Error("e2ee_removed"); }
   async encodeWSMessage(v: unknown) { return JSON.stringify(v); }
   async decodeWSMessage<T>(raw: string): Promise<T> { return JSON.parse(raw) as T; }
-  async wsProofParams() { return new URLSearchParams(); }
+  async wsProofParams(..._args: any[]) { return new URLSearchParams(); }
   sessionProtectedHeaders(h?: HeadersInit) { return new Headers(h); }
   async fileProofHeaders(_m: string, _p: string, h?: HeadersInit) { return new Headers(h); }
-  isProtectedJSONResponse() { return false; }
+  isProtectedJSONResponse(..._args: any[]) { return false; }
   async parseProtectedJSONResponse<T>(r: Response): Promise<T> { return r.json() as Promise<T>; }
   async protectedFetch(input: RequestInfo | URL, init?: RequestInit) { return fetch(input, init); }
   async protectedJSON<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> { const res = await fetch(input, init); return res.json() as Promise<T>; }
-  isRequired() { return false; }
-  currentClientId() { return ""; }
+  isRequired(..._args: any[]) { return false; }
+  currentClientId(..._args: any[]) { return ""; }
   nativeSession(): NativeE2EESession { return { required: false, nodeId: "", clientId: "", transportKey: "" }; }
-  handleServerError() { return false; }
+  handleServerError(..._args: any[]) { return false; }
 }
 export const e2eeService = new StubE2EE();

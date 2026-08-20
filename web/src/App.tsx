@@ -10353,7 +10353,7 @@ export function App({ onGoHome }: AppProps) {
     } finally {
       setE2eePromptBusy(false);
     }
-  }, [describeE2EEPromptError, e2eeSecretInput, t]);
+  }, [describeE2EEPromptError, e2eeSecretInput, t]); // ponytail: e2ee removed, pairing dead code kept for type compat
 
   useEffect(() => {
     function handlePopState() {

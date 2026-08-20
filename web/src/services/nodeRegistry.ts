@@ -21,6 +21,40 @@ function sanitizeURL(value: string): string {
   return String(value || "").trim().replace(/\/+$/, "");
 }
 
+// 反代子路径前缀：当前页面挂在子路径下（如 /mindfs）时，裸 origin 的节点 URL 补上前缀，
+// 使请求落到 host.domain/mindfs/api/... 而非 404 的 host.domain/api/...
+function detectReverseProxyPrefix(): string {
+  if (typeof window === "undefined") return "";
+  try {
+    const segments = (window.location.pathname || "/").split("/").filter(Boolean);
+    return segments.length ? `/${segments[0]}` : "";
+  } catch {
+    return "";
+  }
+}
+
+function hasURIPath(input: string): boolean {
+  try {
+    const u = new URL(input);
+    return u.pathname.replace(/\/+$/, "") !== "";
+  } catch {
+    return false;
+  }
+}
+
+function normalizeNodeURL(input: string): string {
+  const base = sanitizeURL(input);
+  if (!base) return "";
+  if (hasURIPath(base)) {
+    return base;
+  }
+  const prefix = detectReverseProxyPrefix();
+  if (!prefix) {
+    return base;
+  }
+  return `${base}${prefix}`;
+}
+
 function nextColor(existing: NodeConnection[]): string {
   return PALETTE[existing.length % PALETTE.length];
 }
@@ -38,17 +72,26 @@ export function getNodes(): NodeConnection[] {
   try {
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed
+    let changed = false;
+    const nodes = parsed
       .map((item: any): NodeConnection | null => {
         if (!item || typeof item !== "object") return null;
         const id = String(item.id || "").trim();
         const name = String(item.name || "").trim();
-        const url = sanitizeURL(String(item.url || ""));
+        const rawURL = sanitizeURL(String(item.url || ""));
+        const url = normalizeNodeURL(rawURL);
+        if (url !== rawURL) changed = true;
         const color = String(item.color || "").trim() || "";
         if (!id || !name || !url) return null;
         return { id, name, url, color: color || "#3b82f6" };
       })
       .filter((x: any): x is NodeConnection => !!x);
+    if (changed && canUseStorage()) {
+      setStoredString(NODES_KEY, JSON.stringify(nodes));
+      // 让其它实例/订阅同步
+      try { window.dispatchEvent(new CustomEvent("mindfs:nodes-changed")); } catch {}
+    }
+    return nodes;
   } catch {
     return [];
   }
@@ -85,7 +128,7 @@ export function getNodeById(id: string): NodeConnection | null {
 
 export function addNode(input: { name: string; url: string; color?: string }): NodeConnection {
   const nodes = getNodes();
-  const url = sanitizeURL(input.url);
+  const url = normalizeNodeURL(input.url);
   const name = String(input.name || "").trim() || new URL(url).hostname || url;
   const node: NodeConnection = {
     id: genId(),
@@ -109,7 +152,7 @@ export function updateNode(id: string, patch: Partial<Pick<NodeConnection, "name
   const next: NodeConnection = {
     ...cur,
     name: patch.name !== undefined ? String(patch.name).trim() || cur.name : cur.name,
-    url: patch.url !== undefined ? sanitizeURL(String(patch.url)) || cur.url : cur.url,
+    url: patch.url !== undefined ? normalizeNodeURL(String(patch.url)) || cur.url : cur.url,
     color: patch.color !== undefined ? String(patch.color).trim() || cur.color : cur.color,
   };
   nodes[idx] = next;
@@ -145,7 +188,7 @@ export function migrateLegacySingleBase(): NodeConnection | null {
   let legacyURL = "";
   let legacyName = "";
   try {
-    legacyURL = sanitizeURL(String(window.localStorage.getItem("mindfs_api_base_url") || "").trim());
+    legacyURL = normalizeNodeURL(String(window.localStorage.getItem("mindfs_api_base_url") || "").trim());
   } catch {}
   if (!legacyURL) {
     try {
@@ -153,17 +196,15 @@ export function migrateLegacySingleBase(): NodeConnection | null {
       if (raw) {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed) && parsed[0]?.url) {
-          legacyURL = sanitizeURL(String(parsed[0].url));
+          legacyURL = normalizeNodeURL(String(parsed[0].url));
           legacyName = String(parsed[0].name || "").trim();
         }
       }
     } catch {}
   }
   if (!legacyURL) {
-    // fallback to origin if nothing legacy (single-node default)
-    try {
-      legacyURL = sanitizeURL(window.location.origin);
-    } catch {}
+    // fallback to origin-with-prefix if nothing legacy (single-node default)
+    legacyURL = normalizeNodeURL(sanitizeURL(window.location.origin));
   }
   if (!legacyURL) return null;
   const node: NodeConnection = {
