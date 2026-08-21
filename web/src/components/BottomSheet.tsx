@@ -154,6 +154,7 @@ export function BottomSheet({
             justifyContent: "center",
             alignItems: "center",
             cursor: "ns-resize",
+            touchAction: "none",
             flexShrink: 0,
           }}
           onPointerDown={handlePointerDown}
