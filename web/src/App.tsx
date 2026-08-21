@@ -159,7 +159,7 @@ import {
 import { shouldApplyTaskDetail } from "./services/taskDetailOrder";
 import { mergeRelatedFileGroups, taskIdsForUpdatedSession } from "./services/taskRelatedFiles";
 import {
-  normalizeSessionLockKey,
+
   resolveLockedSessionKey,
   shouldResetSessionLockForRootChange,
 } from "./services/sessionLock";
