@@ -90,13 +90,17 @@ export function BottomSheet({
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
-    const release = cancelled
-      ? "half"
-      : resolveBottomSheetRelease({
-          clientY: lastYRef.current,
-          viewportHeight: window.innerHeight,
-          dragged: isDragging,
-        });
+    if (cancelled) {
+      pointerIdRef.current = null;
+      setIsDragging(false);
+      setSheetHeightPx(null);
+      return;
+    }
+    const release = resolveBottomSheetRelease({
+      clientY: lastYRef.current,
+      viewportHeight: window.innerHeight,
+      dragged: isDragging,
+    });
     pointerIdRef.current = null;
     setIsDragging(false);
     if (release === "expand") {
