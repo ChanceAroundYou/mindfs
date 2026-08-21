@@ -45,3 +45,21 @@ assert.doesNotMatch(sheet, /onClick=\{onExpand\}/);
 assert.match(sheet, /contentRef\?: React\.RefObject<HTMLDivElement \| null>/);
 
 console.log("bottom-sheet-model source contracts OK");
+const viewer = fs.readFileSync(path.resolve("src/components/SessionViewer.tsx"), "utf8");
+const app = fs.readFileSync(path.resolve("src/App.tsx"), "utf8");
+
+assert.match(
+  viewer,
+  /scrollContainerRef\?: React\.RefObject<HTMLDivElement \| null>/,
+  "drawer-mode SessionViewer must receive the real sheet scroller",
+);
+assert.match(
+  viewer,
+  /const activeScrollRef = interactionMode === "drawer" \? scrollContainerRef : scrollRef;/,
+  "stick-to-bottom must target the outer drawer scroller in drawer mode",
+);
+assert.match(app, /const drawerScrollRef = useRef<HTMLDivElement \| null>\(null\);/);
+assert.match(app, /<BottomSheet[\s\S]*contentRef=\{drawerScrollRef\}/);
+assert.match(app, /<SessionViewer[\s\S]*scrollContainerRef=\{drawerScrollRef\}/);
+
+console.log("drawer scroll handoff contracts OK");

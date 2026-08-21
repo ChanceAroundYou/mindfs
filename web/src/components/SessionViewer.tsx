@@ -93,6 +93,7 @@ type SessionViewerProps = {
   targetSeqRequestKey?: string | number;
   agents?: AgentStatus[];
   composerOverlayInset?: number;
+  scrollContainerRef?: React.RefObject<HTMLDivElement | null>;
 };
 
 type AskUserQuestionOption = {
@@ -1020,6 +1021,7 @@ function SessionViewerInner({
   onForkAgentMessage,
   agents,
   composerOverlayInset = 0,
+  scrollContainerRef,
 }: SessionViewerProps) {
   const { locale, t } = useI18n();
   const [showAllFiles, setShowAllFiles] = useState(false);
@@ -1039,6 +1041,7 @@ function SessionViewerInner({
   const scrollEndRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const useInnerScrollContainer = interactionMode !== "drawer";
+  const activeScrollRef = interactionMode === "drawer" ? scrollContainerRef : scrollRef;
   const onFileClickRef = useRef(onFileClick);
   const copyResetTimersRef = useRef<Record<string, number>>({});
   const relatedFilesDefaultStateRef = useRef<string>("");
@@ -1075,7 +1078,7 @@ function SessionViewerInner({
   };
 
   const stickSessionToBottom = (behavior: ScrollBehavior = "auto") => {
-    const container = scrollRef.current;
+    const container = activeScrollRef?.current;
     if (!container) {
       return;
     }
@@ -1129,7 +1132,7 @@ function SessionViewerInner({
   const userSummaryOpen = userSummaryHoverOpen || userSummaryPinnedOpen;
 
   const readCurrentUserMessageIndex = useCallback(() => {
-    const container = scrollRef.current;
+    const container = activeScrollRef?.current;
     if (!container) {
       return 0;
     }
@@ -1179,7 +1182,7 @@ function SessionViewerInner({
   }, [readCurrentUserMessageIndex]);
 
   const scrollToUserMessageSummary = (index: number) => {
-    const container = scrollRef.current;
+    const container = activeScrollRef?.current;
     if (!container) {
       return;
     }
@@ -1267,8 +1270,15 @@ function SessionViewerInner({
   }, []);
 
   useEffect(() => {
-    const container = scrollRef.current;
-if (useInnerScrollContainer && !container) {
+    const container = activeScrollRef?.current;
+    if (!container) {
+      if (interactionMode === "drawer" && shouldStickToBottomRef.current) {
+        const frame = window.requestAnimationFrame(() => {
+          const retry = activeScrollRef?.current;
+          if (retry && shouldStickToBottomRef.current) stickSessionToBottom("auto");
+        });
+        return () => window.cancelAnimationFrame(frame);
+      }
       return;
     }
     if (!scrollEndRef.current) {
@@ -1286,8 +1296,8 @@ if (useInnerScrollContainer && !container) {
   }, [sessionKey, timeline, isStreaming, streamVersion, slashCommandResult, useInnerScrollContainer]);
 
   useEffect(() => {
-    const container = scrollRef.current;
-    if (!useInnerScrollContainer || !container || typeof window === "undefined") {
+    const container = activeScrollRef?.current;
+    if (!container || typeof window === "undefined") {
       return;
     }
     const queueStickToBottom = () => {
@@ -1320,8 +1330,8 @@ if (useInnerScrollContainer && !container) {
   }, [sessionKey, useInnerScrollContainer]);
 
   useEffect(() => {
-    const el = scrollRef.current;
-    if (!useInnerScrollContainer || !el) {
+    const el = activeScrollRef?.current;
+    if (!el) {
       shouldStickToBottomRef.current = true;
       setShowJumpToLatest(false);
       return;
@@ -1363,7 +1373,7 @@ if (useInnerScrollContainer && !container) {
     if (targetSeqScrollKeyRef.current === scrollKey) {
       return;
     }
-    const container = scrollRef.current;
+    const container = activeScrollRef?.current;
     if (!container || !timeline.length) {
       return;
     }
@@ -1377,7 +1387,7 @@ if (useInnerScrollContainer && !container) {
     shouldStickToBottomRef.current = false;
     cancelTargetSeqScroll();
     const scrollToNode = () => {
-      const latestContainer = scrollRef.current;
+      const latestContainer = activeScrollRef?.current;
       const latestNode = latestContainer?.querySelector<HTMLElement>(
         `[data-session-seq="${targetSeq}"]`,
       );

@@ -1323,6 +1323,7 @@ export function App({ onGoHome }: AppProps) {
     Record<string, "session" | "file" | "directory" | "git-diff">
   >({});
   const drawerOpenByRootRef = useRef<Record<string, boolean>>({});
+  const drawerScrollRef = useRef<HTMLDivElement | null>(null);
   const fileCursorRef = useRef<number>(0);
   const fileScrollPositionsRef = useRef<Record<string, number>>(
     loadPersistedFileScrollPositions(),
@@ -13842,6 +13843,7 @@ export function App({ onGoHome }: AppProps) {
         drawer={
           <BottomSheet
             isOpen={isDrawerOpen}
+            contentRef={drawerScrollRef}
             onClose={() => {
               interactionModeRef.current = "main";
               setInteractionMode("main");
@@ -13870,6 +13872,7 @@ export function App({ onGoHome }: AppProps) {
                   null
                 }
                 interactionMode="drawer"
+                scrollContainerRef={drawerScrollRef}
                 gitFileStatsByPath={gitFileStatsByPath}
                 onFileClick={handleDrawerSessionFileClick}
                 onRootClick={(root) => {

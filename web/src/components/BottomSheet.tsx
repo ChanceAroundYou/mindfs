@@ -1,4 +1,8 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
+import {
+  BOTTOM_SHEET_DRAG_START_PX,
+  resolveBottomSheetRelease,
+} from "../services/bottomSheetModel";
 
 type BottomSheetProps = {
   isOpen: boolean;
@@ -6,6 +10,7 @@ type BottomSheetProps = {
   children: React.ReactNode;
   footer?: React.ReactNode;
   onExpand?: () => void;
+  contentRef?: React.RefObject<HTMLDivElement | null>;
 };
 
 export function BottomSheet({
@@ -14,9 +19,15 @@ export function BottomSheet({
   children,
   footer,
   onExpand,
+  contentRef,
 }: BottomSheetProps) {
   const [isAnimating, setIsAnimating] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  const startYRef = useRef(0);
+  const lastYRef = useRef(0);
+  const pointerIdRef = useRef<number | null>(null);
+  const [dragOffsetY, setDragOffsetY] = useState(0);
+  const [isDragging, setIsDragging] = useState(false);
 
   useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth < 768);
@@ -26,6 +37,53 @@ export function BottomSheet({
   }, [isOpen]);
 
   if (!isOpen && !isAnimating) return null;
+
+  const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    pointerIdRef.current = event.pointerId;
+    startYRef.current = event.clientY;
+    lastYRef.current = event.clientY;
+    setIsDragging(false);
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (pointerIdRef.current !== event.pointerId) return;
+    const deltaY = event.clientY - startYRef.current;
+    if (!isDragging && Math.abs(deltaY) >= BOTTOM_SHEET_DRAG_START_PX) {
+      setIsDragging(true);
+    }
+    if (Math.abs(deltaY) >= BOTTOM_SHEET_DRAG_START_PX) {
+      lastYRef.current = event.clientY;
+      setDragOffsetY(deltaY);
+    }
+  };
+
+  const finishPointer = (
+    event: React.PointerEvent<HTMLDivElement>,
+    cancelled: boolean,
+  ) => {
+    if (pointerIdRef.current !== event.pointerId) return;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    const release = cancelled
+      ? "half"
+      : resolveBottomSheetRelease({
+          clientY: lastYRef.current,
+          viewportHeight: window.innerHeight,
+          dragged: isDragging,
+        });
+    pointerIdRef.current = null;
+    setDragOffsetY(0);
+    setIsDragging(false);
+    if (release === "expand") onExpand?.();
+    if (release === "close") onClose();
+  };
+
+  const handlePointerUp = (event: React.PointerEvent<HTMLDivElement>) => finishPointer(event, false);
+  const handlePointerCancel = (event: React.PointerEvent<HTMLDivElement>) => finishPointer(event, true);
+
+  const dragTransform = isDragging ? `translateY(${dragOffsetY}px)` : undefined;
 
   const pcStyles: React.CSSProperties = {
     position: "absolute",
@@ -37,7 +95,7 @@ export function BottomSheet({
     borderRadius: "16px 16px 0 0",
     opacity: isOpen ? 1 : 0,
     pointerEvents: isOpen ? "auto" : "none",
-    transform: isOpen ? "translateY(0)" : "translateY(20px)",
+    transform: dragTransform ?? (isOpen ? "translateY(0)" : "translateY(20px)"),
   };
 
   const mobileStyles: React.CSSProperties = {
@@ -49,7 +107,7 @@ export function BottomSheet({
     height: "75vh",
     borderTopLeftRadius: "20px",
     borderTopRightRadius: "20px",
-    transform: isOpen ? "translateY(0)" : "translateY(100%)",
+    transform: dragTransform ?? (isOpen ? "translateY(0)" : "translateY(100%)"),
   };
 
   return (
@@ -78,7 +136,7 @@ export function BottomSheet({
           zIndex: 1001,
           display: "flex",
           flexDirection: "column",
-          transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+          transition: isDragging ? "none" : "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
           overflow: "hidden",
           border: "none",
           ...(isMobile ? mobileStyles : pcStyles),
@@ -98,13 +156,16 @@ export function BottomSheet({
             cursor: "ns-resize",
             flexShrink: 0,
           }}
-          onClick={onExpand}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onPointerCancel={handlePointerCancel}
         >
           <div style={{ width: "64px", height: "3px", background: "#2563eb", borderRadius: "999px" }} />
         </div>
 
         {/* Content */}
-        <div style={{ flex: 1, overflow: "auto", WebkitOverflowScrolling: "touch", minHeight: 0 }}>
+        <div ref={contentRef} style={{ flex: 1, overflow: "auto", WebkitOverflowScrolling: "touch", minHeight: 0 }}>
           {children}
         </div>
 
