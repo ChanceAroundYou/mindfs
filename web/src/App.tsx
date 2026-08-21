@@ -5071,11 +5071,6 @@ export function App({ onGoHome }: AppProps) {
       });
       selectedSessionByRootRef.current[targetRoot] = key;
       const cacheKey = rootSessionKey(targetRoot, key);
-      const wasStale = isSessionStale(targetRoot, key);
-      const hadInMemoryState =
-        !!pendingBySessionRef.current[cacheKey] ||
-        hasSessionExchanges(sessionCacheRef.current[cacheKey]);
-      const shouldSyncHistory = wasStale || !hadInMemoryState;
       setSelectedSessionLoading(true);
       setSelectedSession(
         toSessionItem(targetRoot, {
@@ -5134,25 +5129,16 @@ export function App({ onGoHome }: AppProps) {
           bumpCacheVersion();
         }
       };
+      // 先即时渲染本地缓存（快），再始终同步到最新：
+      // 移除原"已缓存/已加载就跳过 sync"的短路，避免陈旧缓存导致历史加载/更新滞后（#sync-lag）。
       const cached = sessionCacheRef.current[cacheKey];
       if (cached) {
         applySession(cached);
-        if (!shouldSyncHistory && hasSessionExchanges(cached)) {
-          loadedSessionRef.current[cacheKey] = true;
-          return;
-        }
       } else {
         const persisted = await getCachedSession(targetRoot, key);
         if (persisted) {
           applySession(persisted);
-          if (!shouldSyncHistory && hasSessionExchanges(persisted)) {
-            loadedSessionRef.current[cacheKey] = true;
-            return;
-          }
         }
-      }
-      if (!shouldSyncHistory && loadedSessionRef.current[cacheKey]) {
-        return;
       }
       try {
         const restored = await restoreActiveSession(targetRoot, key);
