@@ -241,10 +241,39 @@ func corsMiddleware(next http.Handler) http.Handler {
 }
 
 // Routes constructs the chi router with all endpoints.
+func stripMindfsPrefix(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/mindfs/") {
+			r2 := r.Clone(r.Context())
+			u2 := *r.URL
+			r2.URL = &u2
+			r2.URL.Path = strings.TrimPrefix(r.URL.Path, "/mindfs")
+			if r2.URL.Path == "" {
+				r2.URL.Path = "/"
+			}
+			next.ServeHTTP(w, r2)
+			return
+		}
+		if r.URL.Path == "/mindfs" {
+			r2 := r.Clone(r.Context())
+			u2 := *r.URL
+			r2.URL = &u2
+			r2.URL.Path = "/"
+			next.ServeHTTP(w, r2)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+
 func (h *HTTPHandler) Routes() http.Handler {
 	r := chi.NewRouter()
+	r.Use(stripMindfsPrefix)
 	r.Use(corsMiddleware)
 	r.Options("/*", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) })
+	r.NotFound(h.handleNotFound)
+	r.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) { h.handleNotFound(w, r) })
 	r.Get("/", h.handleFrontend)
 	r.Get("/health", h.handleHealth)
 	r.Get("/api/tree", h.protectedEndpoint(h.handleTree))
@@ -1556,7 +1585,20 @@ func pathForStaticAsset(requestPath string) string {
 	if cleaned == "/" {
 		return ""
 	}
-	return strings.TrimPrefix(cleaned, "/")
+	trimmed := strings.TrimPrefix(cleaned, "/")
+	// 反代把 /mindfs 前缀透传到后端时，静态资源会以 /mindfs/assets/... 到达，
+	// 后端实际挂在 /，需剥掉第一段前缀后再找文件。仅对已知静态资源前缀剥离，
+	// 避免误把 /mindfs 当成 API 调用。
+	if strings.HasPrefix(trimmed, "mindfs/") {
+		remainder := strings.TrimPrefix(trimmed, "mindfs/")
+		if remainder == "" || remainder == "index.html" || strings.HasPrefix(remainder, "assets/") ||
+			strings.HasPrefix(remainder, "favicon.") || strings.HasPrefix(remainder, "manifest.") ||
+			strings.HasPrefix(remainder, "service-worker") || strings.HasPrefix(remainder, "pwa-") ||
+			strings.HasPrefix(remainder, "offline.") {
+			return remainder
+		}
+	}
+	return trimmed
 }
 
 func (h *HTTPHandler) handleTree(w http.ResponseWriter, r *http.Request) {

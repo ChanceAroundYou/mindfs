@@ -71,6 +71,7 @@ type SessionViewerProps = {
   } | null;
   rootId?: string | null;
   rootPath?: string | null;
+  rootColor?: string | null;
   interactionMode?: "main" | "drawer";
   targetSeq?: number;
   gitFileStatsByPath?: Record<
@@ -1006,6 +1007,7 @@ function SessionViewerInner({
   slashCommandResult = null,
   rootId,
   rootPath,
+  rootColor,
   interactionMode = "main",
   targetSeq = 0,
   targetSeqRequestKey = "",
@@ -2386,6 +2388,8 @@ if (useInnerScrollContainer && !container) {
                 onClick={() => onRootClick?.(rootId)}
                 style={{
                   ...rootBadgeButtonStyle,
+                  background: "var(--node-badge-bg)",
+                  color: String(rootColor || "").trim() || "var(--root-badge-text)",
                   flexShrink: 0,
                   cursor: onRootClick ? "pointer" : "default",
                 }}

@@ -237,11 +237,11 @@ export function snapshotFromPluginSources(bundle: PluginSourceBundle): PluginSou
   };
 }
 
-export async function scanPluginSources(rootId: string, rootPath = ""): Promise<PluginSourceBundle> {
+export async function scanPluginSources(rootId: string, rootPath = "", nodeId?: string): Promise<PluginSourceBundle> {
   let treePayload: any;
   try {
     treePayload = await protectedJSON<any>(
-      appURL("/api/tree", new URLSearchParams({ root: rootId, dir: ".mindfs/plugins" })),
+      appURL("/api/tree", new URLSearchParams({ root: rootId, dir: ".mindfs/plugins" }), nodeId),
     );
   } catch {
     return { rootPath, plugins: [] };
@@ -263,6 +263,7 @@ export async function scanPluginSources(rootId: string, rootPath = ""): Promise<
         rootId,
         path: file.path,
         readMode: "full",
+        nodeId,
       });
       const content = payload?.content;
       if (typeof content !== "string") continue;

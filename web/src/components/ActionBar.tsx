@@ -3,6 +3,7 @@ import { type SessionMode } from "./ModeSelector";
 import { ModeSelector } from "./ModeSelector";
 import { AgentSelector } from "./AgentSelector";
 import { fetchAgents, fetchShells, restartAgent, type AgentStatus, type ShellStatus } from "../services/agents";
+import { getRootNodeId } from "../services/rootNode";
 import { fetchCandidates, type CandidateItem } from "../services/candidates";
 import { reportError } from "../services/error";
 import { isUploadAbortError, uploadFiles, type UploadProgress } from "../services/upload";
@@ -578,13 +579,14 @@ export function ActionBar({
   }, [createWorktree, currentRootId, currentRootIsGitRepo, currentSession, mode, t]);
 
   useEffect(() => {
-    Promise.all([fetchAgents(true), fetchShells(true)])
+    const nid = getRootNodeId(currentRootId || "") as any;
+    Promise.all([fetchAgents(true, nid), fetchShells(true, nid)])
       .then(([nextAgents, nextShells]) => {
         setAgents(nextAgents);
         setShells(nextShells);
       })
       .catch((err) => console.error("Failed to fetch agents:", err));
-  }, [agentsVersion]);
+  }, [agentsVersion, currentRootId]);
 
   useEffect(() => {
     if (mode !== "command" || shells.length === 0) {
@@ -1456,7 +1458,7 @@ export function ActionBar({
 					</>
 				  ) : null}
 				</div>
-				<div style={{ pointerEvents: "auto" }}><CodexRateLimitIndicator agent={agent} refreshToken={codexRateLimitsRefreshToken} /></div>
+				<div style={{ pointerEvents: "auto" }}><CodexRateLimitIndicator agent={agent} refreshToken={codexRateLimitsRefreshToken} nodeId={getRootNodeId(currentRootId || "") as any} /></div>
 			  </div>
 			) : null}
 	            <TokenEditor
@@ -1695,8 +1697,9 @@ export function ActionBar({
                     fastService={fastService}
                     onFastServiceChange={(nextFastService) => setFastService(nextFastService || "")}
                     onAgentRestart={async (targetAgent) => {
-                      await restartAgent(targetAgent);
-                      const items = await fetchAgents(true);
+                      const nid2 = getRootNodeId(currentRootId || "") as any;
+                      await restartAgent(targetAgent, nid2);
+                      const items = await fetchAgents(true, nid2);
                       setAgents(items);
                     }}
                     compact={true}

@@ -1,5 +1,6 @@
 import React, { memo } from "react";
 import { rootBadgeStyle } from "./rootBadgeStyle";
+import { NodeBadgeHeader } from "./NodeBadgeHeader";
 import { isNativeShellRuntime, shouldEnablePWAInstall } from "../services/runtime";
 import {
   DIRECTORY_SORT_OPTIONS,
@@ -16,11 +17,14 @@ import {
 } from "../services/appearance";
 import { useI18n, type Locale, type MessageKey } from "../i18n";
 import { useRefreshSpin } from "../hooks";
+import { addNode, getNodes, LOCAL_NODE_ID, removeNode, updateNode, getNodeById } from "../services/nodeRegistry";
+import { normalizeBaseURLWithPrefix } from "../services/runtime";
 import { AgentMenuList } from "./AgentMenuList";
 import { AgentIcon } from "./AgentIcon";
 import { AgentSelector } from "./AgentSelector";
 import { SymlinkBadge } from "./SymlinkBadge";
 import { fetchAgentCatalog, fetchAgents, type AgentStatus } from "../services/agents";
+import { getRootNodeId } from "../services/rootNode";
 import {
   createAgentAPIProvider,
   createAgentConfigBackup,
@@ -1355,6 +1359,17 @@ function FileTreeInner({
   }, [t]);
   const expandedSet = new Set(expanded);
   const [isMenuOpen, setIsMenuOpen] = React.useState(false);
+  const [nodeAddOpen, setNodeAddOpen] = React.useState(false);
+  const [nodeAddName, setNodeAddName] = React.useState("");
+  const [nodeAddUrl, setNodeAddUrl] = React.useState("");
+  const [nodeAddBusy, setNodeAddBusy] = React.useState(false);
+  const [nodeAddError, setNodeAddError] = React.useState("");
+  const [nodeRemoveOpen, setNodeRemoveOpen] = React.useState(false);
+  const [nodeRemoveError, setNodeRemoveError] = React.useState("");
+  const [nodeEditOpen, setNodeEditOpen] = React.useState(false);
+  const [nodeEditName, setNodeEditName] = React.useState("");
+  const [nodeEditUrl, setNodeEditUrl] = React.useState("");
+  const [nodeEditError, setNodeEditError] = React.useState("");
   const [projectTreeTab, setProjectTreeTab] = React.useState<ProjectTreeTab>(() => {
     if (typeof window === "undefined") {
       return "files";
@@ -1411,6 +1426,9 @@ function FileTreeInner({
   const [agentLifecycleRunningAgent, setAgentLifecycleRunningAgent] = React.useState("");
   const [agentLifecycleError, setAgentLifecycleError] = React.useState("");
   const menuRef = React.useRef<HTMLDivElement | null>(null);
+  const nodeAddRef = React.useRef<HTMLDivElement | null>(null);
+  const nodeRemoveRef = React.useRef<HTMLDivElement | null>(null);
+  const nodeEditRef = React.useRef<HTMLDivElement | null>(null);
   const agentConfigPopoverRef = React.useRef<HTMLDivElement | null>(null);
   const agentLifecyclePopoverRef = React.useRef<HTMLDivElement | null>(null);
   const updateNotesRef = React.useRef<HTMLDivElement | null>(null);
@@ -1732,6 +1750,23 @@ function FileTreeInner({
     return () => document.removeEventListener("mousedown", handlePointerDown);
   }, [isMenuOpen]);
 
+  React.useEffect(() => {
+    if (!nodeAddOpen && !nodeRemoveOpen && !nodeEditOpen) return;
+    const h = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (nodeAddOpen && !nodeAddRef.current?.contains(t)) setNodeAddOpen(false);
+      if (nodeRemoveOpen && !nodeRemoveRef.current?.contains(t)) setNodeRemoveOpen(false);
+      if (nodeEditOpen && !nodeEditRef.current?.contains(t)) setNodeEditOpen(false);
+    };
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, [nodeAddOpen, nodeRemoveOpen, nodeEditOpen]);
+
+  React.useEffect(() => {
+    if (!nodeEditOpen) return;
+    try { const n = getNodeById(LOCAL_NODE_ID); setNodeEditName(n?.name || "local"); setNodeEditUrl(n?.url || ""); setNodeEditError(""); } catch {}
+  }, [nodeEditOpen]);
+
   const openAgentConfigFlow = React.useCallback((flow: AgentConfigFlow) => {
     setAgentLifecycleOpen(false);
     setAgentConfigFlow(flow);
@@ -1756,7 +1791,7 @@ function FileTreeInner({
     setAgentConfigRestartingAgent("");
     setIsMenuOpen(false);
     setAgentConfigBusy(true);
-    fetchAgents(true)
+    fetchAgents(true, getRootNodeId(rootId || "") as any)
       .then((items) => {
         setAgentConfigAgents(items.filter((item) => item.installed));
       })
@@ -1764,7 +1799,7 @@ function FileTreeInner({
         setAgentConfigError(error instanceof Error ? error.message : t("agentConfig.loadAgentFailed"));
       })
       .finally(() => setAgentConfigBusy(false));
-  }, [t]);
+  }, [t, rootId]);
 
   const openSessionNaming = React.useCallback(() => {
     setAgentConfigFlow(null);
@@ -1773,7 +1808,7 @@ function FileTreeInner({
     setSessionNamingOpen(true);
     setSessionNamingBusy(true);
     setSessionNamingError("");
-    Promise.all([fetchAgents(true), fetchSessionNamingPreference()])
+    Promise.all([fetchAgents(true, getRootNodeId(rootId || "") as any), fetchSessionNamingPreference()])
       .then(([items, preference]) => {
         const installed = items.filter((item) => item.installed);
         setSessionNamingAgents(installed);
@@ -1835,7 +1870,7 @@ function FileTreeInner({
     setAgentConfigRestartingAgent("");
     setIsMenuOpen(false);
     setAgentConfigBusy(true);
-    fetchAgents(true)
+    fetchAgents(true, getRootNodeId(rootId || "") as any)
       .then((items) => {
         setAgentConfigAgents(items.filter((item) => item.installed));
       })
@@ -1843,7 +1878,7 @@ function FileTreeInner({
         setAgentConfigError(error instanceof Error ? error.message : t("agentConfig.loadAgentFailed"));
       })
       .finally(() => setAgentConfigBusy(false));
-  }, [agentConfigSwitchRequest?.nonce, t]);
+  }, [agentConfigSwitchRequest?.nonce, rootId, t]);
 
   const closeAgentConfigFlow = React.useCallback(() => {
     setAgentConfigFlow(null);
@@ -1861,7 +1896,7 @@ function FileTreeInner({
     setIsMenuOpen(false);
     setAgentLifecycleError("");
     setAgentLifecycleBusy(true);
-    fetchAgentCatalog(true)
+    fetchAgentCatalog(true, getRootNodeId(rootId || "") as any)
       .then((items) => {
         setAgentLifecycleAgents(items);
       })
@@ -1869,7 +1904,7 @@ function FileTreeInner({
         setAgentLifecycleError(error instanceof Error ? error.message : t("agentConfig.loadAgentFailed"));
       })
       .finally(() => setAgentLifecycleBusy(false));
-  }, [t]);
+  }, [rootId, t]);
 
   const closeAgentLifecycleFlow = React.useCallback(() => {
     setAgentLifecycleOpen(false);
@@ -2140,7 +2175,7 @@ function FileTreeInner({
     return hiddenFiltered.filter((entry) => !!rootId && entry.path === rootId);
   }, [projectTreeTab, rootId, showHiddenFiles]);
 
-  const renderEntries = (items: FileEntry[], depth: number, branchRoot: string) => (
+  const renderEntries = (items: FileEntry[], depth: number, branchRoot: string, groupColor?: string) => (
     <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
       {depth === 0 && creatingRootName !== null ? (
         <li key="__draft_root__">
@@ -2255,6 +2290,10 @@ function FileTreeInner({
             ? isCurrentRootNode || selectedDirKey === expandedKey
             : entry.path === selectedPath && entryRoot === rootId;
 
+        // 选中态中性灰条 + 节点色文字：文件/目录选中时文字用所属项目节点色
+        const selectedNodeColor = String((entry as any)._nodeColor || "").trim();
+        const effectiveSelectedColor = isSelected ? (selectedNodeColor || String(groupColor || "").trim() || "") : "";
+
         const meta = fileMetas[entry.path];
         const hasSessionLink = !entry.is_dir && meta?.source_session;
         const isFromActiveSession = hasSessionLink && meta.source_session === activeSessionKey;
@@ -2300,7 +2339,7 @@ function FileTreeInner({
               onClick={handleEntryClick}
               style={{
                 border: "none",
-                background: isSelected ? "var(--selection-bg)" : "transparent",
+                background: isSelected ? "var(--node-row-selected-bg)" : "transparent",
                 cursor: "pointer",
                 padding: "6px 8px",
                 paddingLeft: PROJECT_TREE_ROOT_PADDING_LEFT + depth * PROJECT_TREE_INDENT,
@@ -2309,7 +2348,7 @@ function FileTreeInner({
                 gap: "4px",
                 width: "100%",
                 textAlign: "left",
-                color: isSelected ? "var(--accent-color)" : "var(--text-primary)",
+                color: isSelected ? (effectiveSelectedColor || "var(--accent-color)") : "var(--text-primary)",
                 fontSize: "13px",
                 borderRadius: "6px",
                 transition: "all 0.1s",
@@ -2341,16 +2380,26 @@ function FileTreeInner({
                   marginLeft: "4px",
                 }}
               >
-                <span
-                  style={{
-                    ...(isManagedRootNode ? rootBadgeStyle : {}),
-                    maxWidth: "100%",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                  }}
-                >
-                  {entry.name}
-                </span>
+                {(() => {
+                  const exAny = entry as any;
+                  const nodeColor = String(exAny._nodeColor || "#6d5bcf").trim() || "#6d5bcf";
+                  const styleForRoot = isManagedRootNode
+                    ? { ...rootBadgeStyle, background: "var(--node-badge-bg)", color: nodeColor, fontWeight: 600 as const }
+                    : {};
+                  return (
+                    <span
+                      style={{
+                        ...styleForRoot,
+                        maxWidth: "100%",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        fontWeight: 600,
+                      }}
+                    >
+                      {entry.name}
+                    </span>
+                  );
+                })()}
               </span>
               {showRootIndicator ? (
                 <span
@@ -2377,7 +2426,7 @@ function FileTreeInner({
                 </span>
               )}
             </button>
-            {entry.is_dir && isOpen && shouldRenderChildren && children.length > 0 ? renderEntries(children, depth + 1, entryRoot) : null}
+            {entry.is_dir && isOpen && shouldRenderChildren && children.length > 0 ? renderEntries(children, depth + 1, entryRoot, groupColor || (entry as any)._nodeColor || (isManagedRootNode ? String((entry as any)._nodeColor || "") : groupColor)) : null}
             {entry.is_dir && isOpen && rootExtraContent ? (
               <div style={{ padding: `2px 4px 8px ${PROJECT_TREE_INDENT}px` }}>
                 {rootExtraContent}
@@ -2582,6 +2631,20 @@ function FileTreeInner({
                   </svg>
                   <span>{t("fileTree.addProject")}</span>
                 </button>
+                <div style={{ height: "1px", background: "var(--border-color)", margin: "6px 4px" }} />
+                <button type="button" onClick={() => { setIsMenuOpen(false); setNodeAddOpen(true); }} style={fileTreeMenuButtonStyle}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+                  <span>添加节点</span>
+                </button>
+                <button type="button" onClick={() => { setIsMenuOpen(false); setNodeRemoveOpen(true); setNodeRemoveError(""); }} style={fileTreeMenuButtonStyle}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>
+                  <span>删除节点</span>
+                </button>
+                <button type="button" onClick={() => { setIsMenuOpen(false); setNodeEditOpen(true); }} style={fileTreeMenuButtonStyle}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                  <span>编辑 local</span>
+                </button>
+                <div style={{ height: "1px", background: "var(--border-color)", margin: "6px 4px" }} />
                 <button
                   type="button"
                   onClick={() => openAgentConfigFlow("backup")}
@@ -2968,6 +3031,66 @@ function FileTreeInner({
             </div>
           ) : null}
         </div>
+        {nodeAddOpen ? (
+          <div ref={nodeAddRef} style={{ position: "absolute", top: "calc(100% + 6px)", left: "8px", right: "8px", zIndex: 35, padding: "12px", borderRadius: "12px", border: "1px solid var(--border-color)", background: "var(--menu-bg)", boxShadow: "0 12px 30px rgba(15,23,42,0.14)", display: "flex", flexDirection: "column", gap: 10 }}>
+            <div style={{ fontWeight: 700, fontSize: 12 }}>添加节点</div>
+            <input value={nodeAddName} onChange={e=>setNodeAddName(e.target.value)} placeholder="节点名称" style={{ width:"100%", borderRadius:8, border:"1px solid var(--border-color)", padding:"8px 10px", fontSize:12, boxSizing:"border-box" }} />
+            <input value={nodeAddUrl} onChange={e=>setNodeAddUrl(e.target.value)} placeholder="https://host/mindfs" style={{ width:"100%", borderRadius:8, border:"1px solid var(--border-color)", padding:"8px 10px", fontSize:12, boxSizing:"border-box" }} />
+            {nodeAddError ? <div style={{ color:"#dc2626", fontSize:12 }}>{nodeAddError}</div> : null}
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+              <button type="button" onClick={()=>setNodeAddOpen(false)} style={{ border:"1px solid var(--border-color)", background:"transparent", borderRadius:8, padding:"8px 10px", fontSize:12, cursor:"pointer" }}>取消</button>
+              <button type="button" disabled={nodeAddBusy} onClick={async()=>{
+                const name=String(nodeAddName||"").trim(); const rawUrl=String(nodeAddUrl||"").trim();
+                if(!name){ setNodeAddError("请输入节点名称"); return; }
+                if(!rawUrl){ setNodeAddError("请输入节点地址"); return; }
+                let normalized="";
+                try { const withScheme = /^[a-z]+:\/\//i.test(rawUrl)?rawUrl:`https://${rawUrl}`; const u=new URL(withScheme); u.hash=""; normalized=u.toString().replace(/\/+$/,""); } catch { setNodeAddError("地址格式不正确"); return; }
+                const testUrl = normalizeBaseURLWithPrefix(normalized);
+                setNodeAddBusy(true); setNodeAddError("");
+                try {
+                  const controller=new AbortController(); const to=setTimeout(()=>controller.abort(),5000);
+                  const r=await fetch(`${testUrl.replace(/\/+$/,"")}/api/agents`,{ signal: controller.signal });
+                  clearTimeout(to);
+                  if(!r.ok) throw new Error(`联通失败: ${r.status}`);
+                  addNode({ name, url: normalized }); window.dispatchEvent(new CustomEvent("mindfs:nodes-changed")); setNodeAddOpen(false); setNodeAddName(""); setNodeAddUrl("");
+                } catch (e:any) { setNodeAddError(e?.name==="AbortError"?"联通超时，请检查地址": String(e?.message||e)); } finally { setNodeAddBusy(false); }
+              }} style={{ border:"none", background:"var(--accent-color)", color:"#fff", borderRadius:8, padding:"8px 10px", fontSize:12, cursor: nodeAddBusy?"not-allowed":"pointer", opacity: nodeAddBusy?0.6:1 }}>{nodeAddBusy?"检测中…":"添加"}</button>
+            </div>
+          </div>
+        ) : null}
+        {nodeRemoveOpen ? (
+          <div ref={nodeRemoveRef} style={{ position: "absolute", top: "calc(100% + 6px)", left: "8px", right: "8px", zIndex: 35, padding: "12px", borderRadius: "12px", border: "1px solid var(--border-color)", background: "var(--menu-bg)", boxShadow: "0 12px 30px rgba(15,23,42,0.14)", display:"flex", flexDirection:"column", gap:8, maxHeight:260, overflow:"auto" }}>
+            <div style={{ fontWeight:700, fontSize:12 }}>删除节点</div>
+            {getNodes().filter(n=>n.id!==LOCAL_NODE_ID).length===0 ? <div style={{ fontSize:12, color:"var(--text-secondary)" }}>暂无可删除节点（local 不可删）</div> : getNodes().filter(n=>n.id!==LOCAL_NODE_ID).map(n=>(
+              <div key={n.id} style={{ display:"flex", alignItems:"center", gap:8, border:"1px solid var(--border-color)", borderRadius:8, padding:"8px 10px" }}>
+                <span style={{ width:8, height:8, borderRadius:"50%", background:n.color, display:"inline-block" }} />
+                <span style={{ flex:1, fontSize:12, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{n.name} — {n.url}</span>
+                <button type="button" onClick={()=>{
+                  if(!confirm(`删除节点 ${n.name} ? 仅前端移除，不会删除后端数据`)) return;
+                  try { removeNode(n.id); window.dispatchEvent(new CustomEvent("mindfs:nodes-changed")); setNodeRemoveOpen(false); } catch (e:any){ setNodeRemoveError(String(e?.message||e)); }
+                }} style={{ border:"none", background:"transparent", color:"#dc2626", cursor:"pointer", fontSize:12 }}>删除</button>
+              </div>
+            ))}
+            {nodeRemoveError ? <div style={{ color:"#dc2626", fontSize:12 }}>{nodeRemoveError}</div> : null}
+          </div>
+        ) : null}
+        {nodeEditOpen ? (
+          <div ref={nodeEditRef} style={{ position:"absolute", top:"calc(100% + 6px)", left:"8px", right:"8px", zIndex:35, padding:"12px", borderRadius:"12px", border:"1px solid var(--border-color)", background:"var(--menu-bg)", boxShadow:"0 12px 30px rgba(15,23,42,0.14)", display:"flex", flexDirection:"column", gap:10 }}>
+            <div style={{ fontWeight:700, fontSize:12 }}>编辑 local</div>
+            <input value={nodeEditName} onChange={e=>setNodeEditName(e.target.value)} placeholder="名称" style={{ width:"100%", borderRadius:8, border:"1px solid var(--border-color)", padding:"8px 10px", fontSize:12, boxSizing:"border-box" }} />
+            <input value={nodeEditUrl} onChange={e=>setNodeEditUrl(e.target.value)} placeholder="https://host/mindfs" style={{ width:"100%", borderRadius:8, border:"1px solid var(--border-color)", padding:"8px 10px", fontSize:12, boxSizing:"border-box" }} />
+            {nodeEditError ? <div style={{ color:"#dc2626", fontSize:12 }}>{nodeEditError}</div> : null}
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+              <button type="button" onClick={()=>setNodeEditOpen(false)} style={{ border:"1px solid var(--border-color)", background:"transparent", borderRadius:8, padding:"8px 10px", fontSize:12, cursor:"pointer" }}>取消</button>
+              <button type="button" onClick={()=>{
+                const nm=String(nodeEditName||"").trim(); const ru=String(nodeEditUrl||"").trim();
+                if(!nm){ setNodeEditError("名称不能为空"); return; }
+                if(!ru){ setNodeEditError("地址不能为空"); return; }
+                try { updateNode(LOCAL_NODE_ID,{ name:nm, url: ru }); window.dispatchEvent(new CustomEvent("mindfs:nodes-changed")); setNodeEditOpen(false); } catch(e:any){ setNodeEditError(String(e?.message||e)); }
+              }} style={{ border:"none", background:"var(--accent-color)", color:"#fff", borderRadius:8, padding:"8px 10px", fontSize:12, cursor:"pointer" }}>保存</button>
+            </div>
+          </div>
+        ) : null}
         {agentConfigFlow ? (
           <div
             ref={agentConfigPopoverRef}
@@ -3142,7 +3265,25 @@ function FileTreeInner({
         ) : null}
       </div>
       <div style={{ padding: "8px", flex: 1, minHeight: 0, overflow: "auto", display: "flex", flexDirection: "column" }}>
-        {entries.length === 0 && creatingRootName === null ? (
+        {(() => {
+          const groups = (() => {
+            const m = new Map<string, { color: string; name: string; items: typeof entries }>();
+            for (const e of entries) {
+              const ex = e as any;
+              const key = String(ex._nodeName || ex._nodeId || "local");
+              const color = String(ex._nodeColor || "#6d5bcf");
+              const name = String(ex._nodeName || key);
+              if (!m.has(key)) m.set(key, { color, name, items: [] });
+              m.get(key)!.items.push(e);
+            }
+            try {
+              const order = new Map(getNodes().map((n,i)=>[String(n.name), i] as const));
+              const arr = Array.from(m.entries());
+              arr.sort((a,b)=> (order.get(String(a[0])) ?? 99) - (order.get(String(b[0])) ?? 99));
+              return arr.map(([,v])=>v);
+            } catch { return Array.from(m.values()); }
+          })();
+          if (entries.length === 0 && creatingRootName === null) return (
           <div
             style={{
               flex: 1,
@@ -3160,9 +3301,18 @@ function FileTreeInner({
           >
             {t("fileTree.emptyProjectHint")}
           </div>
-        ) : (
-          renderEntries(entries, 0, rootId || "")
-        )}
+          );
+          return (
+            <>
+              {groups.map((g) => (
+                <div key={g.name}>
+                  <NodeBadgeHeader color={g.color} label={g.name} />
+                  {renderEntries(g.items, 0, rootId || "", g.color)}
+                </div>
+              ))}
+            </>
+          );
+        })()}
       </div>
       <div
         data-mindfs-filetree-footer="1"

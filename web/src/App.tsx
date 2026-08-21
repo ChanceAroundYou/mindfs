@@ -41,6 +41,7 @@ import {
   invalidateFileCache,
   type FilePayload,
 } from "./services/file";
+import { setRootNodeMap } from "./services/rootNode";
 import {
   buildGitDiffCacheSignature,
   checkoutGitBranch,
@@ -106,8 +107,8 @@ import {
 import { AppShell } from "./layout/AppShell";
 import { ModeIcon } from "./components/ModeIcon";
 import { FileTree, type AgentConfigSwitchRequest } from "./components/FileTree";
-import { NodeSwitcher } from "./components/NodeSwitcher";
-import { getActiveNode, getAggregated, getNodes, migrateLegacySingleBase } from "./services/nodeRegistry";
+
+import { getActiveNode, getNodes, LOCAL_NODE_ID, migrateLegacySingleBase } from "./services/nodeRegistry";
 import { FileViewer } from "./components/FileViewer";
 import { GitDiffViewer } from "./components/GitDiffViewer";
 import { GitHistoryPanel } from "./components/GitHistoryPanel";
@@ -352,6 +353,9 @@ type MultiProjectSessionGroup = {
   latestSessionTime: string;
   sessions: SessionItem[];
   totalCount: number;
+  _nodeId?: string;
+  _nodeColor?: string;
+  _nodeName?: string;
 };
 
 type SlashCommandResult = {
@@ -1104,9 +1108,10 @@ function mapManagedRootsToEntries(dirs: ManagedRootPayload[]): FileEntry[] {
       size: typeof dir.size === "number" ? dir.size : undefined,
       mtime: typeof dir.mtime === "string" ? dir.mtime : undefined,
       // ponytail: 多节点着色由 FileTree 通过 rootEntries 扩展字段渲染
+      _nodeId: (d as any)._nodeId as string | undefined,
       _nodeColor: d._nodeColor as string | undefined,
       _nodeName: d._nodeName as string | undefined,
-    } as FileEntry & { _nodeColor?: string; _nodeName?: string };
+    } as FileEntry & { _nodeId?: string; _nodeColor?: string; _nodeName?: string };
   });
 }
 
@@ -1628,6 +1633,7 @@ export function App({ onGoHome }: AppProps) {
         query: taskInlineActiveToken.query,
         agent: taskInlineActiveToken.type === "slash" ? agent : undefined,
         signal: controller.signal,
+        nodeId: getNodeIdForRoot(currentRootId),
       })
         .then((items) => {
           setTaskInlineCandidates(items);
@@ -1711,12 +1717,12 @@ export function App({ onGoHome }: AppProps) {
         applyTaskDetails(targetRoot, cached, false);
       }
       const meta = await getCachedTaskMeta(targetRoot);
-      const details = await fetchTaskDetails(targetRoot, force ? undefined : { after: meta?.newestUpdatedAt || "" });
+      const details = await fetchTaskDetails(targetRoot, force ? undefined : { after: meta?.newestUpdatedAt || "" }, getNodeIdForRoot(targetRoot));
       if (details.length > 0) {
         applyTaskDetails(targetRoot, details);
       }
       if (!force && meta?.newestUpdatedAt) {
-        const recent = await fetchTaskDetails(targetRoot, { limit: 20 });
+        const recent = await fetchTaskDetails(targetRoot, { limit: 20 }, getNodeIdForRoot(targetRoot));
         applyTaskDetails(targetRoot, recent);
       }
     } catch (err) {
@@ -1765,7 +1771,7 @@ export function App({ onGoHome }: AppProps) {
       reason = input.trim();
     }
     try {
-      const detail = await moveTask(rootId, task.id, action, reason);
+      const detail = await moveTask(rootId, task.id, action, reason, getNodeIdForRoot(rootId));
       applyTaskDetails(rootId, [detail]);
       if (detail.task.worktree_path) {
         void refreshTaskWorktree(rootId, detail.task.worktree_path);
@@ -1817,7 +1823,7 @@ export function App({ onGoHome }: AppProps) {
     setTaskWorktreeBranchesLoading(true);
     setTaskWorktreeBranchError("");
     try {
-      setTaskWorktreeBranches(await fetchGitBranches(rootId));
+      setTaskWorktreeBranches(await fetchGitBranches(rootId, getNodeIdForRoot(rootId)));
     } catch (error) {
       setTaskWorktreeBranches({ branches: [] });
       setTaskWorktreeBranchError(error instanceof Error ? error.message : t("worktree.loadBranchFailed"));
@@ -1977,7 +1983,7 @@ export function App({ onGoHome }: AppProps) {
     setWorktreeLoadingByRoot((prev) => ({ ...prev, [normalizedRootId]: true }));
     setWorktreeErrorByRoot((prev) => ({ ...prev, [normalizedRootId]: "" }));
     try {
-      const payload = await fetchGitWorktrees(normalizedRootId);
+      const payload = await fetchGitWorktrees(normalizedRootId, getNodeIdForRoot(normalizedRootId));
       (payload.items || []).forEach((item) => {
         if (item.path) {
           knownTaskWorktreePathsRef.current.add(item.path);
@@ -1998,7 +2004,7 @@ export function App({ onGoHome }: AppProps) {
     }
     setWorktreeStatusLoadingByPath((prev) => ({ ...prev, [normalizedWorktreePath]: true }));
     try {
-      const status = await fetchGitStatusByPath(normalizedWorktreePath);
+      const status = await fetchGitStatusByPath(normalizedWorktreePath, getNodeIdForRoot(normalizedRootId));
       setWorktreeStatusByPath((prev) => ({ ...prev, [normalizedWorktreePath]: status }));
     } catch {
       setWorktreeStatusByPath((prev) => ({ ...prev, [normalizedWorktreePath]: null }));
@@ -2023,6 +2029,7 @@ export function App({ onGoHome }: AppProps) {
           files: edit.attachments.map((attachment) => attachment.file),
           onProgress: setTaskInlineUploadProgress,
           signal: uploadAbort.signal,
+          nodeId: getNodeIdForRoot(rootId),
         });
         attachmentTokens = uploaded.map((file) => `[file: ${file.path}]`).join("\n");
       }
@@ -2037,8 +2044,9 @@ export function App({ onGoHome }: AppProps) {
             edit.canToggleWorktree ? createWorktree : undefined,
             edit.canToggleWorktree && createWorktree ? edit.worktreeBranchMode : undefined,
             edit.canToggleWorktree && createWorktree ? edit.worktreeBranch : undefined,
+            getNodeIdForRoot(rootId),
           )
-        : await createTask(rootId, edit.templateId, payload, createWorktree, edit.worktreeBranchMode, edit.worktreeBranch);
+        : await createTask(rootId, edit.templateId, payload, createWorktree, edit.worktreeBranchMode, edit.worktreeBranch, getNodeIdForRoot(rootId));
       applyTaskDetails(rootId, [detail]);
       if (detail.task.worktree_path) {
         void refreshTaskWorktree(rootId, detail.task.worktree_path);
@@ -2139,6 +2147,13 @@ export function App({ onGoHome }: AppProps) {
 
   const [managedRootIds, setManagedRootIds] = useState<string[]>([]);
   const managedRootByIdRef = useRef<Record<string, ManagedRootPayload>>({});
+
+  const getNodeIdForRoot = useCallback((rootId: string): string | undefined => {
+    const entry = (managedRootByIdRef.current as Record<string, any>)[String(rootId || "")];
+    const nid = String(entry?._nodeId || "").trim();
+    return nid || undefined;
+  }, []);
+
   const [rootEntries, setRootEntries] = useState<FileEntry[]>([]);
   const [creatingRootName, setCreatingRootName] = useState<string | null>(null);
   const [creatingRootParentPath, setCreatingRootParentPath] = useState<string | null>(null);
@@ -2159,6 +2174,9 @@ export function App({ onGoHome }: AppProps) {
   const [projectAddMode, setProjectAddMode] = useState<ProjectAddMode | null>(
     null,
   );
+  const [projectAddNodeId, setProjectAddNodeId] = useState<string>(() => {
+    try { const n = getActiveNode(); return n?.id || LOCAL_NODE_ID; } catch { return LOCAL_NODE_ID; }
+  });
   const [localDirState, setLocalDirState] = useState<LocalDirBrowserState>({
     path: "",
     parent: "",
@@ -2442,7 +2460,7 @@ export function App({ onGoHome }: AppProps) {
     if (!e2eeState.configured || (e2eeState.required && !e2eeState.unlocked)) {
       return;
     }
-    fetchAgents(true)
+    fetchAgents(true, getNodeIdForRoot(currentRootId || "") as any)
       .then((items) => {
         if (cancelled) return;
         setAvailableAgents(items);
@@ -2451,7 +2469,7 @@ export function App({ onGoHome }: AppProps) {
     return () => {
       cancelled = true;
     };
-  }, [agentsVersion, e2eeState.configured, e2eeState.required, e2eeState.unlocked]);
+  }, [agentsVersion, currentRootId, e2eeState.configured, e2eeState.required, e2eeState.unlocked]);
   useEffect(() => {
     if (!importMenuOpen) return;
     const handlePointerDown = (event: MouseEvent) => {
@@ -3170,7 +3188,7 @@ export function App({ onGoHome }: AppProps) {
       const inflight = loadingSessionRef.current[cacheKey];
       const request =
         inflight ||
-        syncSession(resolvedRoot, resolvedKey).finally(() => {
+        syncSession(resolvedRoot, resolvedKey, { nodeId: getNodeIdForRoot(resolvedRoot) }).finally(() => {
           delete loadingSessionRef.current[cacheKey];
         });
       if (!inflight) {
@@ -4200,7 +4218,7 @@ export function App({ onGoHome }: AppProps) {
     async (rootID: string, dirPath: string, syncMain: boolean) => {
       try {
         const payload = await apiProtectedJSON<any>(
-          appURL("/api/tree", new URLSearchParams({ root: rootID, dir: dirPath })),
+          appURL("/api/tree", new URLSearchParams({ root: rootID, dir: dirPath }), getNodeIdForRoot(rootID)),
         );
         const parsed = normalizeTreeResponse(payload);
         invalidTreeCacheKeysRef.current.delete(treeCacheKey(rootID, dirPath));
@@ -4241,6 +4259,7 @@ export function App({ onGoHome }: AppProps) {
         const next = await fetchFile({
           rootId: rootID,
           path: changedPath,
+          nodeId: getNodeIdForRoot(String(rootID)),
           readMode,
           cursor: fileCursorRef.current || 0,
         });
@@ -4298,7 +4317,7 @@ export function App({ onGoHome }: AppProps) {
       setGitStatusLoading(true);
     }
     try {
-      const next = await fetchGitStatus(rootID);
+      const next = await fetchGitStatus(rootID, getNodeIdForRoot(rootID));
       setGitStatusByRoot((prev) => ({ ...prev, [rootID]: next }));
       if (shouldApply()) {
         setGitStatus(next);
@@ -4339,15 +4358,15 @@ export function App({ onGoHome }: AppProps) {
         }
         const newest = cachedHead.items[0]?.hash || "";
         if (newest) {
-          void fetchGitHistory(rootID, { afterCommit: newest })
+          void fetchGitHistory(rootID, { afterCommit: newest, nodeId: getNodeIdForRoot(rootID) })
             .then((next) => {
               if (next.commit_missing) {
                 clearGitHistoryCache(rootID);
-                return fetchGitHistory(rootID, { force: true });
+                return fetchGitHistory(rootID, { force: true, nodeId: getNodeIdForRoot(rootID) });
               }
               if ((next.items || []).length > 0) {
                 clearGitHistoryCache(rootID);
-                return fetchGitHistory(rootID, { force: true });
+                return fetchGitHistory(rootID, { force: true, nodeId: getNodeIdForRoot(rootID) });
               }
               return getCachedGitHistoryHead(rootID) || next;
             })
@@ -4369,10 +4388,10 @@ export function App({ onGoHome }: AppProps) {
       setGitHistoryLoading(true);
     }
     try {
-      const next = await fetchGitHistory(rootID, { force: options?.force });
+      const next = await fetchGitHistory(rootID, { force: options?.force, nodeId: getNodeIdForRoot(rootID) });
       if (next.commit_missing) {
         clearGitHistoryCache(rootID);
-        const fresh = await fetchGitHistory(rootID, { force: true });
+        const fresh = await fetchGitHistory(rootID, { force: true, nodeId: getNodeIdForRoot(rootID) });
         setGitHistoryByRoot((prev) => ({ ...prev, [rootID]: fresh }));
         if (currentRootIdRef.current === rootID) {
           setGitHistory(fresh);
@@ -4413,10 +4432,10 @@ export function App({ onGoHome }: AppProps) {
     }
     setGitHistoryLoadingMore(true);
     try {
-      const next = await fetchGitHistory(rootID, { beforeCommit });
+      const next = await fetchGitHistory(rootID, { beforeCommit, nodeId: getNodeIdForRoot(rootID) });
       if (next.commit_missing) {
         clearGitHistoryCache(rootID);
-        const fresh = await fetchGitHistory(rootID, { force: true });
+        const fresh = await fetchGitHistory(rootID, { force: true, nodeId: getNodeIdForRoot(rootID) });
         setGitHistoryByRoot((prev) => ({ ...prev, [rootID]: fresh }));
         if (currentRootIdRef.current === rootID) {
           setGitHistory(fresh);
@@ -4464,7 +4483,9 @@ export function App({ onGoHome }: AppProps) {
       },
     ) => {
       try {
+        const _nid = getNodeIdForRoot(rootID);
         const payload = await sessionService.fetchSessions(rootID, {
+          nodeId: _nid,
           beforeTime: options?.beforeTime,
           afterTime: options?.afterTime,
         });
@@ -4574,10 +4595,23 @@ export function App({ onGoHome }: AppProps) {
     }
     setMultiProjectSessionsLoading(true);
     try {
-      const groups = await sessionService.fetchMultiRootSessions(MULTI_PROJECT_SESSION_LIMIT);
+      const nodeIds = Array.from(new Set(Object.values(managedRootByIdRef.current as Record<string, any>).map((v) => String((v as any)?._nodeId || "")).filter(Boolean)));
+      const allGroups: MultiRootSessionGroup[] = [];
+      if (nodeIds.length === 0) {
+        const groups = await sessionService.fetchMultiRootSessions(MULTI_PROJECT_SESSION_LIMIT);
+        allGroups.push(...groups);
+      } else {
+        const results = await Promise.all(nodeIds.map((nid) => sessionService.fetchMultiRootSessions(MULTI_PROJECT_SESSION_LIMIT, nid).catch(() => [] as MultiRootSessionGroup[])));
+        for (const groups of results) allGroups.push(...groups);
+      }
+      const dedup = new Map<string, MultiRootSessionGroup>();
+      for (const g of allGroups) { const prev = dedup.get(g.rootId); if (!prev || String((g as any).latestSessionTime || "") > String((prev as any).latestSessionTime || "")) dedup.set(g.rootId, g); }
+      const groups = Array.from(dedup.values());
       const nextGroups = groups.map((group: MultiRootSessionGroup): MultiProjectSessionGroup => ({
         rootId: group.rootId,
-        rootName: group.rootName || managedRootByIdRef.current[group.rootId]?.display_name || group.rootId,
+        rootName: group.rootName || (managedRootByIdRef.current as Record<string,any>)[group.rootId]?.display_name || group.rootId,
+        _nodeColor: ((managedRootByIdRef.current as Record<string,any>)[group.rootId]?._nodeColor as string | undefined),
+        _nodeId: ((managedRootByIdRef.current as Record<string,any>)[group.rootId]?._nodeId as string | undefined),
         latestSessionTime: group.latestSessionTime,
         sessions: applyPinnedSnapshotToSessions(
           mergeSessionItems(
@@ -4609,6 +4643,7 @@ export function App({ onGoHome }: AppProps) {
       }
       const previousLoaded = topLevelSessions.length;
       const payload = await sessionService.fetchSessions(group.rootId, {
+        nodeId: getNodeIdForRoot(group.rootId),
         beforeTime: oldest,
         limit: SESSION_PAGE_SIZE,
         topLevel: true,
@@ -4696,6 +4731,7 @@ export function App({ onGoHome }: AppProps) {
     void sessionService
       .searchSessions(currentRootId, sessionSearchAppliedQuery, 20, {
         multiRoot: searchAcrossRoots,
+        nodeId: searchAcrossRoots ? undefined : getNodeIdForRoot(currentRootId),
       })
       .then((hits) => {
         if (cancelled) return;
@@ -4756,7 +4792,7 @@ export function App({ onGoHome }: AppProps) {
         pluginQuery: {},
       });
       try {
-        const next = await fetchGitDiff(rootID, item.path, {
+        const next = await fetchGitDiff(rootID, item.path, { nodeId: getNodeIdForRoot(rootID) as string | undefined,
           cacheSignature: buildGitDiffCacheSignature(item),
           repoPath: options?.repoPath,
         });
@@ -4794,7 +4830,7 @@ export function App({ onGoHome }: AppProps) {
         pluginQuery: {},
       });
       try {
-        const next = await fetchGitCommitDiff(rootID, commit.hash, item);
+        const next = await fetchGitCommitDiff(rootID, commit.hash, item, getNodeIdForRoot(rootID));
         setGitDiff(next);
         if (currentRootIdRef.current !== rootID) {
           setCurrentRootId(rootID);
@@ -4966,6 +5002,7 @@ export function App({ onGoHome }: AppProps) {
           files,
           onProgress: setDirectoryUploadProgress,
           signal: uploadAbort.signal,
+          nodeId: getNodeIdForRoot(rootID),
         });
         uploaded.forEach((item) => {
           if (typeof item?.path === "string" && item.path) {
@@ -5236,7 +5273,7 @@ export function App({ onGoHome }: AppProps) {
         (session?.root_id as string | undefined) || currentRootIdRef.current;
       if (!rootID || !sessionKey) return;
 
-      const deleted = await sessionService.deleteSession(rootID, sessionKey);
+      const deleted = await sessionService.deleteSession(rootID, sessionKey, getNodeIdForRoot(rootID));
       if (!deleted) {
         reportError("session.delete_failed", t("session.deleteFailed"));
         return;
@@ -5347,6 +5384,7 @@ export function App({ onGoHome }: AppProps) {
         rootID,
         sessionKey,
         trimmedName,
+        getNodeIdForRoot(rootID),
       );
       if (!renamed) {
         reportError("session.rename_failed", t("session.renameFailed"));
@@ -5428,7 +5466,7 @@ export function App({ onGoHome }: AppProps) {
         (session?.root_id as string | undefined) || currentRootIdRef.current;
       if (!rootID || !sessionKey) return false;
 
-      const updated = await sessionService.setSessionPinned(rootID, sessionKey, pinned);
+      const updated = await sessionService.setSessionPinned(rootID, sessionKey, pinned, getNodeIdForRoot(rootID));
       if (!updated) {
         reportError("session.pin_failed", t("session.pinFailed"));
         return false;
@@ -5500,7 +5538,7 @@ export function App({ onGoHome }: AppProps) {
         return next;
       });
       try {
-        const result = await syncSession(rootID, sessionKey, { full: true });
+        const result = await syncSession(rootID, sessionKey, { full: true, nodeId: getNodeIdForRoot(rootID) });
         const synced = result.session;
         if (!synced) {
           reportError("session.sync_failed", t("session.syncFailed"));
@@ -5572,7 +5610,7 @@ export function App({ onGoHome }: AppProps) {
         reportError("session.sync_failed", t("session.forkMissing"));
         return;
       }
-      const result = await sessionService.forkSession(resolvedRoot, resolvedKey, seq);
+      const result = await sessionService.forkSession(resolvedRoot, resolvedKey, seq, getNodeIdForRoot(resolvedRoot));
       const forked = result?.session;
       const forkedKey = String(result?.session_key || forked?.key || "").trim();
       if (!forkedKey) {
@@ -5639,6 +5677,7 @@ export function App({ onGoHome }: AppProps) {
             afterTime: options?.afterTime,
             filterBound: externalFilterBound,
             limit: 50,
+            nodeId: getNodeIdForRoot(rootID),
           },
         )) as SessionItem[];
         setExternalSessionsError("");
@@ -5802,7 +5841,7 @@ export function App({ onGoHome }: AppProps) {
       if (failedKeys.size === 0) {
         exitImportMode();
       }
-      const payload = await sessionService.fetchSessions(rootID, {});
+      const payload = await sessionService.fetchSessions(rootID, { nodeId: getNodeIdForRoot(rootID) });
       const next = [...payload.items, ...payload.pinnedItems]
         .map((item) => toSessionItem(rootID, item))
         .filter((item): item is SessionItem => !!item);
@@ -6423,8 +6462,9 @@ export function App({ onGoHome }: AppProps) {
   );
 
   const handleRestartAgent = useCallback(async (agentName: string) => {
-    await restartAgent(agentName);
-    const items = await fetchAgents(true);
+    const nid = getNodeIdForRoot(currentRootIdRef.current || "") as any;
+    await restartAgent(agentName, nid);
+    const items = await fetchAgents(true, nid);
     setAvailableAgents(items);
     setAgentsVersion((v) => v + 1);
   }, []);
@@ -6819,6 +6859,7 @@ export function App({ onGoHome }: AppProps) {
                 appURL(
                   "/api/tree",
                   new URLSearchParams({ root: String(root), dir }),
+                  getNodeIdForRoot(String(root)),
                 ),
               );
               const parsed = normalizeTreeResponse(payload);
@@ -6840,6 +6881,7 @@ export function App({ onGoHome }: AppProps) {
             fetchFile({
               rootId: String(root),
               path: String(path),
+              nodeId: getNodeIdForRoot(String(root)),
               readMode: mode,
               cursor,
               timeoutMs,
@@ -6994,7 +7036,7 @@ export function App({ onGoHome }: AppProps) {
           }
           try {
             const payload = await apiProtectedJSON<any>(
-              appURL("/api/tree", new URLSearchParams({ root, dir: apiDir })),
+              appURL("/api/tree", new URLSearchParams({ root, dir: apiDir }), getNodeIdForRoot(root)),
             );
             const parsed = normalizeTreeResponse(payload);
             invalidTreeCacheKeysRef.current.delete(cacheKey);
@@ -7132,7 +7174,7 @@ export function App({ onGoHome }: AppProps) {
         pluginQuery: {},
       });
       try {
-        const next = await fetchGitRelatedFileDiff(rootID, file);
+        const next = await fetchGitRelatedFileDiff(rootID, file, getNodeIdForRoot(rootID));
         const rootPath = managedRootByIdRef.current[rootID]?.root_path;
         const repoPath = String(file?.repo_path || "").trim();
         const displayPath = repoPath
@@ -7190,9 +7232,7 @@ export function App({ onGoHome }: AppProps) {
       try {
         try { migrateLegacySingleBase(); } catch {}
         const nodes = getNodes();
-        const active = getActiveNode();
-        const aggregated = getAggregated();
-        const targets = aggregated && nodes.length ? nodes : (active ? [active] : nodes);
+        const targets = nodes;
         if (!targets.length) {
           const dirs = await apiProtectedJSON<ManagedRootPayload[]>(appPath("/api/dirs"));
           return Array.isArray(dirs) ? dirs : [];
@@ -7245,6 +7285,7 @@ export function App({ onGoHome }: AppProps) {
       }
     }
     managedRootByIdRef.current = nextRootById;
+    setRootNodeMap(nextRootById as Record<string, any>);
     if (clearedRootScopedState && multiProjectSessionsEnabled) {
       void refreshMultiProjectReplyingSessions();
       void loadMultiProjectSessionGroups();
@@ -7306,6 +7347,12 @@ export function App({ onGoHome }: AppProps) {
     replaceURLState,
   ]);
 
+  useEffect(() => {
+    const h = () => { void refreshManagedRoots(); };
+    window.addEventListener("mindfs:nodes-changed", h);
+    return () => window.removeEventListener("mindfs:nodes-changed", h);
+  }, [refreshManagedRoots]);
+
   const applyManagedRootRename = useCallback(
     (oldRootID: string, rootPayload: ManagedRootPayload | null | undefined) => {
       const oldID = String(oldRootID || "").trim();
@@ -7328,6 +7375,7 @@ export function App({ onGoHome }: AppProps) {
       delete nextRootById[oldID];
       nextRootById[nextID] = nextRoot;
       managedRootByIdRef.current = nextRootById;
+      setRootNodeMap(nextRootById as Record<string, any>);
 
       const moveRecordKey = <T,>(record: Record<string, T>) => {
         if (oldID === nextID || !(oldID in record)) {
@@ -7483,7 +7531,7 @@ export function App({ onGoHome }: AppProps) {
     setWorktreeBranchesLoading(true);
     setWorktreeBranchError("");
     try {
-      const payload = await fetchGitBranches(rootID);
+      const payload = await fetchGitBranches(rootID, getNodeIdForRoot(rootID));
       setWorktreeBranches(payload);
     } catch (error) {
       setWorktreeBranches({ branches: [] });
@@ -7497,7 +7545,7 @@ export function App({ onGoHome }: AppProps) {
     setWorktreeSwitchLoading(true);
     setWorktreeSwitchError("");
     try {
-      const payload = await fetchGitWorktrees(rootID);
+      const payload = await fetchGitWorktrees(rootID, getNodeIdForRoot(rootID));
       setWorktreeSwitchItems(payload.items || []);
     } catch (error) {
       setWorktreeSwitchItems([]);
@@ -7514,7 +7562,7 @@ export function App({ onGoHome }: AppProps) {
     setWorktreeLoadingByRoot((prev) => ({ ...prev, [rootID]: true }));
     setWorktreeErrorByRoot((prev) => ({ ...prev, [rootID]: "" }));
     try {
-      const payload = await fetchGitWorktrees(rootID);
+      const payload = await fetchGitWorktrees(rootID, getNodeIdForRoot(rootID));
       (payload.items || []).forEach((item) => {
         if (item.path) {
           knownTaskWorktreePathsRef.current.add(item.path);
@@ -7535,13 +7583,13 @@ export function App({ onGoHome }: AppProps) {
     }
   }, [t]);
 
-  const loadProjectTreeWorktreeStatus = useCallback(async (worktreePath: string) => {
+  const loadProjectTreeWorktreeStatus = useCallback(async (worktreePath: string, rootId?: string) => {
     if (!worktreePath) {
       return;
     }
     setWorktreeStatusLoadingByPath((prev) => ({ ...prev, [worktreePath]: true }));
     try {
-      const status = await fetchGitStatusByPath(worktreePath);
+      const status = await fetchGitStatusByPath(worktreePath, getNodeIdForRoot(String(rootId || "")) as string | undefined);
       setWorktreeStatusByPath((prev) => ({ ...prev, [worktreePath]: status }));
     } catch (error) {
       console.error("[git.worktree.status] failed", { worktreePath, error });
@@ -7665,7 +7713,7 @@ export function App({ onGoHome }: AppProps) {
     return parts.slice(0, -1).join("/");
   }, []);
 
-  const loadLocalDirs = useCallback(async (path: string) => {
+  const loadLocalDirs = useCallback(async (path: string, nodeId?: string) => {
     const trimmed = String(path || "").trim();
     setLocalDirState((prev) => ({
       ...prev,
@@ -7676,7 +7724,7 @@ export function App({ onGoHome }: AppProps) {
     }));
     try {
       const params = trimmed ? new URLSearchParams({ path: trimmed }) : undefined;
-      const targetNodeId = getActiveNode()?.id;
+      const targetNodeId = (nodeId || projectAddNodeId || getActiveNode()?.id || LOCAL_NODE_ID);
       const payload = await apiProtectedJSON<LocalDirsPayload>(
         appURL("/api/local_dirs", params, targetNodeId),
       );
@@ -7713,7 +7761,7 @@ export function App({ onGoHome }: AppProps) {
         error: error instanceof Error ? error.message : t("directory.loadFailed"),
       }));
     }
-  }, [t]);
+  }, [projectAddNodeId, t]);
 
   const openDirectoryPicker = useCallback((nextMode: ProjectAddMode) => {
     const rootID = currentRootIdRef.current;
@@ -7743,6 +7791,8 @@ export function App({ onGoHome }: AppProps) {
   }, [inferParentPath, loadLocalDirs, t]);
 
   const handleOpenLocalProjectAdd = useCallback(() => {
+    // reset to active/local when opening
+    try { const n = getActiveNode(); if (n?.id) setProjectAddNodeId(n.id); } catch {}
     void openDirectoryPicker("local");
   }, [openDirectoryPicker]);
 
@@ -7860,7 +7910,8 @@ export function App({ onGoHome }: AppProps) {
         creatingRootParentPath && creatingRootParentPath.trim()
           ? `${creatingRootParentPath.replace(/[\\/]+$/, "")}/${name}`
           : name;
-      const payload = await apiProtectedJSON<any>(appPath("/api/dirs"), {
+      const targetCreateNodeId = projectAddNodeId || getActiveNode()?.id || LOCAL_NODE_ID;
+      const payload = await apiProtectedJSON<any>(appPath("/api/dirs", targetCreateNodeId), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ path: targetPath, create: true }),
@@ -7983,7 +8034,8 @@ export function App({ onGoHome }: AppProps) {
     }
     setLocalDirState((prev) => ({ ...prev, adding: true, error: "" }));
     try {
-      const payload = await apiProtectedJSON<any>(appPath("/api/dirs"), {
+      const targetAddNodeId = projectAddNodeId || getActiveNode()?.id || LOCAL_NODE_ID;
+      const payload = await apiProtectedJSON<any>(appPath("/api/dirs", targetAddNodeId), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ path, create: false }),
@@ -8034,7 +8086,8 @@ export function App({ onGoHome }: AppProps) {
       message: "",
     }));
     try {
-      const payload = await apiProtectedJSON<any>(appPath("/api/imports/github"), {
+      const targetImportNodeId = projectAddNodeId || getActiveNode()?.id || LOCAL_NODE_ID;
+      const payload = await apiProtectedJSON<any>(appPath("/api/imports/github", targetImportNodeId), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url, parent_path: parentPath }),
@@ -8071,8 +8124,13 @@ export function App({ onGoHome }: AppProps) {
         onSelectGitHub={handleOpenGitHubProjectAdd}
         onSelectBlank={handleSelectBlankProject}
         localState={localDirState}
+        selectedNodeId={projectAddNodeId}
+        onSelectedNodeChange={(id) => {
+          setProjectAddNodeId(id);
+          void loadLocalDirs("", id);
+        }}
         onLocalNavigate={(path) => {
-          void loadLocalDirs(path);
+          void loadLocalDirs(path, projectAddNodeId);
         }}
         onLocalSelect={handleLocalDirSelect}
         onLocalAdd={() => {
@@ -8119,7 +8177,7 @@ export function App({ onGoHome }: AppProps) {
     }
     try {
       await apiProtectedJSON<any>(
-        appURL("/api/dirs", new URLSearchParams({ path: rootPath })),
+        appURL("/api/dirs", new URLSearchParams({ path: rootPath }), getNodeIdForRoot(rootID)),
         {
           method: "DELETE",
         },
@@ -8167,7 +8225,7 @@ export function App({ onGoHome }: AppProps) {
       return;
     }
     setPluginLoading(true);
-    const request = scanPluginSources(rootId, managedRootByIdRef.current[rootId]?.root_path || rootId)
+    const request = scanPluginSources(rootId, managedRootByIdRef.current[rootId]?.root_path || rootId, getNodeIdForRoot(rootId))
       .then(async (bundle) => {
         const snapshot = snapshotFromPluginSources(bundle);
         if (bundle.plugins.length > 0 && !isPluginSnapshotTrusted(snapshot, readTrustedPluginSet(rootId))) {
@@ -8461,7 +8519,7 @@ export function App({ onGoHome }: AppProps) {
 	    if (!root || !taskId || keys.length === 0) return;
 	    const relatedFileGroups = await Promise.all(
 	      keys.map(async (sessionKey) => {
-	        const relatedFiles = await sessionService.getSessionRelatedFiles(root, sessionKey);
+	        const relatedFiles = await sessionService.getSessionRelatedFiles(root, sessionKey, getNodeIdForRoot(root));
 	        await setCachedSessionRelatedFiles(root, sessionKey, relatedFiles);
 	        updateSessionRelatedFilesForKey(root, sessionKey, relatedFiles);
 	        return relatedFiles;
@@ -8604,7 +8662,7 @@ export function App({ onGoHome }: AppProps) {
 
   useEffect(() => {
     if (!currentRootId) return;
-    sessionService.connect(currentRootId);
+    sessionService.connect(currentRootId, getNodeIdForRoot(currentRootId));
   }, [currentRootId]);
 
   useEffect(() => {
@@ -8740,6 +8798,7 @@ export function App({ onGoHome }: AppProps) {
       const relatedFiles = await sessionService.getSessionRelatedFiles(
         rootID,
         sessionKey,
+        getNodeIdForRoot(rootID),
       );
       if (cancelled) return;
       await setCachedSessionRelatedFiles(rootID, sessionKey, relatedFiles);
@@ -10154,6 +10213,7 @@ export function App({ onGoHome }: AppProps) {
     try {
       const payload = await sessionService.fetchSessions(rootID, {
         beforeTime: oldest,
+        nodeId: getNodeIdForRoot(rootID),
       });
       const next = [...payload.items, ...payload.pinnedItems]
         .map((item) => toSessionItem(rootID, item))
@@ -10165,7 +10225,7 @@ export function App({ onGoHome }: AppProps) {
     } finally {
       setLoadingOlderSessions(false);
     }
-  }, [loadingOlderSessions]);
+  }, [getNodeIdForRoot, loadingOlderSessions]);
 
   useEffect(() => {
     if (didInitRef.current) {
@@ -10193,6 +10253,7 @@ export function App({ onGoHome }: AppProps) {
         managedRootByIdRef.current = Object.fromEntries(
           nextDirs.filter((dir) => !!dir.id).map((dir) => [dir.id, dir]),
         );
+        setRootNodeMap(managedRootByIdRef.current as Record<string, any>);
         managedRootIdsRef.current = new Set(ids);
         setManagedRootIds(ids);
         setRootEntries(mapManagedRootsToEntries(nextDirs));
@@ -10812,6 +10873,7 @@ export function App({ onGoHome }: AppProps) {
       const relatedFiles = await sessionService.getSessionRelatedFiles(
         resolvedRoot,
         resolvedKey,
+        getNodeIdForRoot(resolvedRoot),
       );
       await setCachedSessionRelatedFiles(resolvedRoot, resolvedKey, relatedFiles);
       updateSessionRelatedFilesForKey(resolvedRoot, resolvedKey, relatedFiles);
@@ -11075,6 +11137,7 @@ export function App({ onGoHome }: AppProps) {
       composerOverlayInset={sessionViewerComposerOverlayInset}
       loading={selectedSessionLoading}
       rootId={selectedSession?.root_id || currentRootId}
+      rootColor={(managedRootByIdRef.current as any)[String(selectedSession?.root_id || currentRootId || "")]?._nodeColor || null}
       rootPath={
         managedRootByIdRef.current[
           selectedSession?.root_id || currentRootId || ""
@@ -11347,7 +11410,7 @@ export function App({ onGoHome }: AppProps) {
 	      }
 	      return { ...prev, [rootID]: worktreePath };
     });
-    void loadProjectTreeWorktreeStatus(worktreePath);
+    void loadProjectTreeWorktreeStatus(worktreePath, rootID);
   }, [
     loadProjectTreeWorktreeStatus,
     projectTreeTab,
@@ -11415,7 +11478,7 @@ export function App({ onGoHome }: AppProps) {
                     return;
                   }
                   setExpandedWorktreeByRoot((prev) => ({ ...prev, [root]: item.path }));
-                  await loadProjectTreeWorktreeStatus(item.path);
+                  await loadProjectTreeWorktreeStatus(item.path, root);
                 }}
                 style={{
                   width: "100%",
@@ -13498,7 +13561,6 @@ export function App({ onGoHome }: AppProps) {
         onOpenRight={() => setIsRightOpen(true)}
         sidebar={
           <div style={{ display: "flex", flexDirection: "column", minHeight: 0, flex: 1 }}>
-            <NodeSwitcher onChanged={() => { void refreshManagedRoots(); }} />
             <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
               <FileTree
             entries={rootEntries}
@@ -13734,6 +13796,7 @@ export function App({ onGoHome }: AppProps) {
                 targetSeqRequestKey={currentSession?.search_target_id}
                 loading={false}
                 rootId={currentRootId}
+                rootColor={(managedRootByIdRef.current as any)[String(currentRootId || "")]?._nodeColor || null}
                 rootPath={
                   managedRootByIdRef.current[currentRootId || ""]?.root_path ||
                   null

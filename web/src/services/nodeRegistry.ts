@@ -1,6 +1,8 @@
 import { getStoredString, setStoredString, removeStoredString } from "./storage";
 
-export const PALETTE = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#06b6d4"] as const;
+export const PALETTE = ["#7c6bd6", "#c9b84a", "#6a8dc2", "#c66a7a", "#8a8f99", "#7aae8a"] as const;
+const OLD_PALETTE = ["#6d5bcf", "#0ea5a0", "#e07a2f", "#2f8f4e", "#d9466a", "#7a9a3a"] as const;
+export const LOCAL_NODE_ID = "local";
 
 export type NodeConnection = {
   id: string;
@@ -59,6 +61,74 @@ function nextColor(existing: NodeConnection[]): string {
   return PALETTE[existing.length % PALETTE.length];
 }
 
+function localBaseURL(): string {
+  try {
+    const origin = typeof window !== "undefined" ? window.location.origin : "";
+    if (origin) return normalizeNodeURL(sanitizeURL(origin));
+  } catch {}
+  return "";
+}
+
+function makeLocalNode(): NodeConnection {
+  return { id: LOCAL_NODE_ID, name: "local", url: localBaseURL(), color: PALETTE[0] };
+}
+
+export function ensureLocalNode(): NodeConnection {
+  const nodes = getNodesRaw();
+  let local = nodes.find((n) => n.id === LOCAL_NODE_ID) || null;
+  if (!local) {
+    local = makeLocalNode();
+    nodes.unshift(local);
+    setNodes(nodes);
+  } else if (!local.url) {
+    local.url = localBaseURL();
+    setNodes(nodes);
+  }
+  return local;
+}
+
+
+function nodeOriginKey(url: string): string {
+  try {
+    const u = new URL(url);
+    return `${u.protocol}//${u.host}`.toLowerCase();
+  } catch { return url.toLowerCase(); }
+}
+function dedupNodesByOrigin(nodes: NodeConnection[]): NodeConnection[] {
+  const seen = new Map<string, NodeConnection>();
+  for (const n of nodes) {
+    const key = nodeOriginKey(n.url);
+    const prev = seen.get(key);
+    if (!prev) { seen.set(key, n); continue; }
+    // keep local over non-local, otherwise keep first
+    if (prev.id === LOCAL_NODE_ID) continue;
+    if (n.id === LOCAL_NODE_ID) seen.set(key, n);
+  }
+  return Array.from(seen.values());
+}
+function getNodesRaw(): NodeConnection[] {
+  const raw = getStoredString(NODES_KEY);
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((item: any): NodeConnection | null => {
+        if (!item || typeof item !== "object") return null;
+        const id = String(item.id || "").trim();
+        const name = String(item.name || "").trim();
+        const rawURL = sanitizeURL(String(item.url || ""));
+        const url = normalizeNodeURL(rawURL);
+        const color = String(item.color || "").trim() || "";
+        if (!id || !name || !url) return null;
+        return { id, name, url, color: color || PALETTE[0] };
+      })
+      .filter((x: any): x is NodeConnection => !!x);
+  } catch {
+    return [];
+  }
+}
+
 function genId(): string {
   try {
     if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
@@ -68,33 +138,70 @@ function genId(): string {
 
 export function getNodes(): NodeConnection[] {
   const raw = getStoredString(NODES_KEY);
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    let changed = false;
-    const nodes = parsed
-      .map((item: any): NodeConnection | null => {
-        if (!item || typeof item !== "object") return null;
-        const id = String(item.id || "").trim();
-        const name = String(item.name || "").trim();
-        const rawURL = sanitizeURL(String(item.url || ""));
-        const url = normalizeNodeURL(rawURL);
-        if (url !== rawURL) changed = true;
-        const color = String(item.color || "").trim() || "";
-        if (!id || !name || !url) return null;
-        return { id, name, url, color: color || "#3b82f6" };
-      })
-      .filter((x: any): x is NodeConnection => !!x);
-    if (changed && canUseStorage()) {
-      setStoredString(NODES_KEY, JSON.stringify(nodes));
-      // 让其它实例/订阅同步
-      try { window.dispatchEvent(new CustomEvent("mindfs:nodes-changed")); } catch {}
+  let parsed: any[] | null = null;
+  if (raw) {
+    try {
+      const p = JSON.parse(raw);
+      parsed = Array.isArray(p) ? p : null;
+    } catch {
+      parsed = null;
     }
-    return nodes;
-  } catch {
-    return [];
   }
+  if (parsed === null) {
+    // 首次：写入 local
+    const local = makeLocalNode();
+    if (local.url) {
+      setStoredString(NODES_KEY, JSON.stringify([local]));
+      try { window.dispatchEvent(new CustomEvent("mindfs:nodes-changed")); } catch {}
+      return [local];
+    }
+    return [local];
+  }
+  let changed = false;
+  let nodes = parsed
+    .map((item: any): NodeConnection | null => {
+      if (!item || typeof item !== "object") return null;
+      const id = String(item.id || "").trim();
+      const name = String(item.name || "").trim();
+      const rawURL = sanitizeURL(String(item.url || ""));
+      const url = normalizeNodeURL(rawURL);
+      if (url !== rawURL) changed = true;
+      let color = String(item.color || "").trim() || "";
+      if (!color) color = PALETTE[0];
+      else {
+        const idx = OLD_PALETTE.findIndex((c) => c.toLowerCase() === color.toLowerCase());
+        if (idx >= 0 && PALETTE[idx]?.toLowerCase() !== color.toLowerCase()) {
+          color = PALETTE[idx]!;
+          changed = true;
+        }
+      }
+      if (!id || !name || !url) return null;
+      return { id, name, url, color };
+    })
+    .filter((x: any): x is NodeConnection => !!x);
+  // 去重：同 origin 的节点仅保留 local 优先的一条
+  const beforeDedupLen = nodes.length;
+  nodes = dedupNodesByOrigin(nodes as NodeConnection[]);
+  if (nodes.length !== beforeDedupLen) changed = true;
+  // 保证 local 首位存在，不可删
+  const hasLocal = nodes.some((n) => n.id === LOCAL_NODE_ID);
+  if (!hasLocal) {
+    nodes = [makeLocalNode(), ...nodes];
+    changed = true;
+  } else {
+    // local 固定首位
+    const idx = nodes.findIndex((n) => n.id === LOCAL_NODE_ID);
+    if (idx > 0) {
+      const [local] = nodes.splice(idx, 1);
+      nodes.unshift(local!);
+      changed = true;
+    }
+  }
+  if (changed && canUseStorage()) {
+    setStoredString(NODES_KEY, JSON.stringify(nodes));
+    try { window.dispatchEvent(new CustomEvent("mindfs:nodes-changed")); } catch {}
+  }
+  return nodes;
 }
 
 export function setNodes(nodes: NodeConnection[]): void {
@@ -136,8 +243,8 @@ export function addNode(input: { name: string; url: string; color?: string }): N
     url,
     color: String(input.color || "").trim() || nextColor(nodes),
   };
-  // dedup by url
-  if (nodes.some((n) => n.url === url)) throw new Error("node_url_exists");
+  // dedup by origin (same host/port -> same backend)
+  if (nodes.some((n) => nodeOriginKey(n.url) === nodeOriginKey(url))) throw new Error("node_url_exists");
   const next = [...nodes, node];
   setNodes(next);
   if (!getActiveNodeId()) setActiveNodeId(node.id);
@@ -161,11 +268,13 @@ export function updateNode(id: string, patch: Partial<Pick<NodeConnection, "name
 }
 
 export function removeNode(id: string): void {
+  const normalized = String(id || "").trim();
+  if (normalized === LOCAL_NODE_ID) throw new Error("cannot_remove_local");
   const nodes = getNodes();
-  const next = nodes.filter((n) => n.id !== String(id || "").trim());
+  const next = nodes.filter((n) => n.id !== normalized);
   setNodes(next);
   const activeId = getActiveNodeId();
-  if (activeId === String(id || "").trim()) {
+  if (activeId === normalized) {
     setActiveNodeId(next[0]?.id || null);
   }
 }
@@ -181,10 +290,14 @@ export function setAggregated(value: boolean): void {
   setStoredString(AGGREGATED_KEY, value ? "1" : "0");
 }
 
-// 迁移旧单节点配置：mindfs_api_base_url / mindfs_launcher_nodes
+// 迁移旧单节点配置：mindfs_api_base_url / mindfs_launcher_nodes → 保留为非 local 节点
 export function migrateLegacySingleBase(): NodeConnection | null {
-  if (!canUseStorage()) return null;
-  if (getNodes().length > 0) return getActiveNode();
+  if (!canUseStorage()) return ensureLocalNode();
+  // 保证 local 存在
+  ensureLocalNode();
+  // 仅当除 local 外无节点时，尝试把旧单节点迁移为第二节点
+  const nodes = getNodes();
+  if (nodes.length > 1) return getActiveNode();
   let legacyURL = "";
   let legacyName = "";
   try {
@@ -202,19 +315,17 @@ export function migrateLegacySingleBase(): NodeConnection | null {
       }
     } catch {}
   }
-  if (!legacyURL) {
-    // fallback to origin-with-prefix if nothing legacy (single-node default)
-    legacyURL = normalizeNodeURL(sanitizeURL(window.location.origin));
-  }
-  if (!legacyURL) return null;
+  if (!legacyURL) return getActiveNode();
+  const localURL = makeLocalNode().url;
+  if (nodeOriginKey(legacyURL) === nodeOriginKey(localURL)) return getActiveNode();
+  if (nodes.some((n) => nodeOriginKey(n.url) === nodeOriginKey(legacyURL))) return getActiveNode();
   const node: NodeConnection = {
     id: genId(),
     name: legacyName || (() => { try { return new URL(legacyURL).hostname; } catch { return legacyURL; } })(),
     url: legacyURL,
-    color: PALETTE[0],
+    color: PALETTE[nodes.length % PALETTE.length],
   };
-  setNodes([node]);
-  setActiveNodeId(node.id);
+  setNodes([...nodes, node]);
   return node;
 }
 
