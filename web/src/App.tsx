@@ -158,6 +158,11 @@ import {
 } from "./services/tasks";
 import { shouldApplyTaskDetail } from "./services/taskDetailOrder";
 import { mergeRelatedFileGroups, taskIdsForUpdatedSession } from "./services/taskRelatedFiles";
+import {
+  normalizeSessionLockKey,
+  resolveLockedSessionKey,
+  shouldResetSessionLockForRootChange,
+} from "./services/sessionLock";
 import { useI18n, type MessageKey, type MessageParams } from "./i18n";
 import {
   completeOnboarding,
@@ -2653,6 +2658,36 @@ export function App({ onGoHome }: AppProps) {
     [],
   );
 
+  const resetSessionLockForRoot = useCallback(
+    (rootID: string | null | undefined) => {
+      const root = String(rootID || "").trim();
+      if (!root) return;
+      setBoundSessionForRoot(root, null);
+      setDrawerSessionForRoot(root, null);
+      selectedSessionByRootRef.current[root] = null;
+      setDrawerOpenForRoot(root, false);
+      if (currentRootIdRef.current === root) {
+        selectedSessionRef.current = null;
+        setSelectedSession(null);
+        setSelectedSessionLoading(false);
+        interactionModeRef.current = "main";
+        setInteractionMode("main");
+      }
+    },
+    [setBoundSessionForRoot, setDrawerOpenForRoot, setDrawerSessionForRoot],
+  );
+
+  const resetLocksForRootTransition = useCallback(
+    (targetRoot: string | null | undefined) => {
+      const sourceRoot = currentRootIdRef.current;
+      if (shouldResetSessionLockForRootChange(sourceRoot, targetRoot)) {
+        resetSessionLockForRoot(sourceRoot);
+        resetSessionLockForRoot(targetRoot);
+      }
+    },
+    [resetSessionLockForRoot],
+  );
+
   const setMainViewPreferenceForRoot = useCallback(
     (
       rootID: string | null | undefined,
@@ -4822,6 +4857,7 @@ export function App({ onGoHome }: AppProps) {
           repoPath: options?.repoPath,
         });
         setGitDiff(next);
+        resetLocksForRootTransition(rootID);
         if (currentRootIdRef.current !== rootID) {
           setCurrentRootId(rootID);
         }
@@ -4832,7 +4868,7 @@ export function App({ onGoHome }: AppProps) {
         console.error("[git.diff] failed", { rootID, path: item.path, err });
       }
     },
-    [isMobile, replaceURLState, setMainViewPreferenceForRoot],
+    [isMobile, replaceURLState, resetLocksForRootTransition, setMainViewPreferenceForRoot],
   );
 
   const openGitCommitDiff = useCallback(
@@ -4857,6 +4893,7 @@ export function App({ onGoHome }: AppProps) {
       try {
         const next = await fetchGitCommitDiff(rootID, commit.hash, item, getNodeIdForRoot(rootID));
         setGitDiff(next);
+        resetLocksForRootTransition(rootID);
         if (currentRootIdRef.current !== rootID) {
           setCurrentRootId(rootID);
         }
@@ -4872,7 +4909,7 @@ export function App({ onGoHome }: AppProps) {
         });
       }
     },
-    [isMobile, replaceURLState, setMainViewPreferenceForRoot],
+    [isMobile, replaceURLState, resetLocksForRootTransition, setMainViewPreferenceForRoot],
   );
 
   const switchGitBranch = useCallback(
@@ -5070,6 +5107,8 @@ export function App({ onGoHome }: AppProps) {
       const targetRoot =
         (session?.root_id as string | undefined) || currentRootIdRef.current;
       if (!targetRoot || !key) return;
+      setBoundSessionForRoot(targetRoot, key);
+      setDrawerSessionForRoot(targetRoot, toSessionItem(targetRoot, session));
       if (currentRootIdRef.current !== targetRoot) {
         setCurrentRootId(targetRoot);
       }
@@ -5319,7 +5358,7 @@ export function App({ onGoHome }: AppProps) {
       }
 
       if (deletedKeys.has(boundSessionByRootRef.current[rootID] || "")) {
-        setBoundSessionForRoot(rootID, null);
+        resetSessionLockForRoot(rootID);
       }
       if (deletedKeys.has(selectedSessionByRootRef.current[rootID] || "")) {
         selectedSessionByRootRef.current[rootID] = null;
@@ -5376,6 +5415,7 @@ export function App({ onGoHome }: AppProps) {
       setDrawerOpenForRoot,
       setDrawerSessionForRoot,
       setMultiProjectSessionPending,
+      resetSessionLockForRoot,
     ],
   );
 
@@ -5912,14 +5952,8 @@ export function App({ onGoHome }: AppProps) {
         (selected?.root_id as string | undefined) || activeRoot;
       const currentBoundSessionKey =
         boundSessionByRootRef.current[activeRoot] || null;
-      const isMainSessionView =
-        interactionModeRef.current !== "drawer" &&
-        !!selectedKey &&
-        selectedRoot === activeRoot;
-      let sendSessionKey: string | null | undefined =
-        isMainSessionView && selectedKey && !selectedKey.startsWith("pending-")
-          ? selectedKey
-          : currentBoundSessionKey;
+      const resolvedBoundKey = resolveLockedSessionKey(currentBoundSessionKey);
+      let sendSessionKey: string | null | undefined = resolvedBoundKey;
       let session: Session | null = null;
       if (sendSessionKey) {
         session =
@@ -5932,18 +5966,6 @@ export function App({ onGoHome }: AppProps) {
         }
         if (!session && selectedKey === sendSessionKey) {
           session = { ...(selected as any), key: sendSessionKey } as Session;
-        }
-      } else {
-        if (
-          selectedRoot === activeRoot &&
-          selectedKey &&
-          !selectedKey.startsWith("pending-")
-        ) {
-          sendSessionKey = selectedKey;
-          session =
-            sessionCacheRef.current[
-              rootSessionKey(activeRoot, sendSessionKey)
-            ] || ({ ...selected, key: selectedKey } as Session);
         }
       }
       let effectiveMode = mode,
@@ -6582,13 +6604,14 @@ export function App({ onGoHome }: AppProps) {
       const selectedRoot =
         (selected?.root_id as string | undefined) || activeRoot || "";
       const selectedKey = selected?.key || selected?.session_key || "";
+      const resolvedSelected = resolveLockedSessionKey(selectedKey);
+      const boundKey = boundSessionByRootRef.current[activeRoot || ""] || null;
       const sessionKey =
         interactionModeRef.current !== "drawer" &&
         selectedRoot === activeRoot &&
-        selectedKey &&
-        !selectedKey.startsWith("pending-")
-          ? selectedKey
-          : boundSessionByRootRef.current[activeRoot || ""] || "";
+        resolvedSelected
+          ? resolvedSelected
+          : (resolveLockedSessionKey(boundKey) ?? "");
       if (!activeRoot || !sessionKey || !queueId) return;
       await sessionService.removeQueuedMessage(activeRoot, sessionKey, queueId);
     },
@@ -6602,13 +6625,14 @@ export function App({ onGoHome }: AppProps) {
       const selectedRoot =
         (selected?.root_id as string | undefined) || activeRoot || "";
       const selectedKey = selected?.key || selected?.session_key || "";
+      const resolvedSelected = resolveLockedSessionKey(selectedKey);
+      const boundKey = boundSessionByRootRef.current[activeRoot || ""] || null;
       const sessionKey =
         interactionModeRef.current !== "drawer" &&
         selectedRoot === activeRoot &&
-        selectedKey &&
-        !selectedKey.startsWith("pending-")
-          ? selectedKey
-          : boundSessionByRootRef.current[activeRoot || ""] || "";
+        resolvedSelected
+          ? resolvedSelected
+          : (resolveLockedSessionKey(boundKey) ?? "");
       if (!activeRoot || !sessionKey || !queueId || !content.trim()) return;
       await sessionService.updateQueuedMessage(activeRoot, sessionKey, queueId, content);
     },
@@ -6622,13 +6646,14 @@ export function App({ onGoHome }: AppProps) {
       const selectedRoot =
         (selected?.root_id as string | undefined) || activeRoot || "";
       const selectedKey = selected?.key || selected?.session_key || "";
+      const resolvedSelected = resolveLockedSessionKey(selectedKey);
+      const boundKey = boundSessionByRootRef.current[activeRoot || ""] || null;
       const sessionKey =
         interactionModeRef.current !== "drawer" &&
         selectedRoot === activeRoot &&
-        selectedKey &&
-        !selectedKey.startsWith("pending-")
-          ? selectedKey
-          : boundSessionByRootRef.current[activeRoot || ""] || "";
+        resolvedSelected
+          ? resolvedSelected
+          : (resolveLockedSessionKey(boundKey) ?? "");
       if (!activeRoot || !sessionKey || !queueId) return;
       const cacheKey = rootSessionKey(activeRoot, sessionKey);
       const previousQueue = queuedMessagesBySessionRef.current[cacheKey] || [];
@@ -6664,14 +6689,9 @@ export function App({ onGoHome }: AppProps) {
     if (rootID) {
       selectedSessionByRootRef.current[rootID] = null;
     }
-    setBoundSessionForRoot(rootID, null);
-    setDrawerSessionForRoot(rootID, null);
-    setInteractionMode("main");
-    setDrawerOpenForRoot(rootID, false);
+    resetSessionLockForRoot(rootID);
   }, [
-    setBoundSessionForRoot,
-    setDrawerOpenForRoot,
-    setDrawerSessionForRoot,
+    resetSessionLockForRoot,
     setMainViewPreferenceForRoot,
   ]);
 
@@ -6840,6 +6860,7 @@ export function App({ onGoHome }: AppProps) {
           // preserve the existing scroll position and DOM state until fresh content arrives.
           setFile(null);
         }
+        resetLocksForRootTransition(root);
         if (currentRootIdRef.current !== root) {
           setCurrentRootId(root);
         }
@@ -7030,6 +7051,7 @@ export function App({ onGoHome }: AppProps) {
         ) => {
           const apiDir = targetIsRoot ? "." : targetPath;
           const cacheKey = treeCacheKey(root, apiDir);
+          resetLocksForRootTransition(root);
           if (currentRootIdRef.current !== root) {
             setCurrentRootId(root);
           }
@@ -7131,6 +7153,7 @@ export function App({ onGoHome }: AppProps) {
           return;
         }
         if (isActuallyRoot) {
+          resetLocksForRootTransition(path);
           setCurrentRootId(path);
           if (!suppressTreeExpand) {
             setExpanded((prev) => Array.from(new Set([...prev, path])));
@@ -7164,6 +7187,7 @@ export function App({ onGoHome }: AppProps) {
       treeCacheKey,
       tryShowBoundSessionForRoot,
       loadSessionsForRoot,
+      resetLocksForRootTransition,
     ],
   );
   const actionHandlersRef = useRef(actionHandlers);
@@ -7219,6 +7243,7 @@ export function App({ onGoHome }: AppProps) {
           next.display_path = displayPath;
         }
         setGitDiff(next);
+        resetLocksForRootTransition(rootID);
         if (currentRootIdRef.current !== rootID) {
           setCurrentRootId(rootID);
         }
@@ -7253,6 +7278,7 @@ export function App({ onGoHome }: AppProps) {
       openGitDiff,
       replaceURLState,
       setMainViewPreferenceForRoot,
+      resetLocksForRootTransition,
     ],
   );
 
@@ -10528,6 +10554,15 @@ export function App({ onGoHome }: AppProps) {
     !!selectedSession && !!currentRootId && selectedRoot === currentRootId;
   const selectedKey =
     selectedSession?.key || selectedSession?.session_key || "";
+  const lockedSessionKey = resolveLockedSessionKey(activeBoundSessionKey);
+  const lockedSessionSnapshot = lockedSessionKey && currentRootId
+    ? getSessionSnapshot(
+        currentRootId,
+        drawerSessionByRootRef.current[currentRootId] ||
+          sessionCacheRef.current[rootSessionKey(currentRootId, lockedSessionKey)] ||
+          null,
+      )
+    : null;
   const boundFromSelected =
     selectedInCurrentRoot && selectedKey === activeBoundSessionKey
       ? (selectedSession as any)
@@ -10544,10 +10579,13 @@ export function App({ onGoHome }: AppProps) {
     !!selectedKey &&
     selectedKey !== activeBoundSessionKey &&
     interactionMode !== "drawer";
-  const actionBarSession = activeBoundSessionKey
+  const actionBarSession = lockedSessionKey
     ? isDetachedMainSessionTarget
       ? (selectedSession as any)
-      : (currentSession as any) || boundFromCache || boundFromSelected
+      : (lockedSessionSnapshot as any) ||
+        (currentSession as any) ||
+        boundFromCache ||
+        boundFromSelected
     : selectedInCurrentRoot
       ? (selectedSession as any)
       : null;
@@ -13460,8 +13498,8 @@ export function App({ onGoHome }: AppProps) {
     ) : multiProjectSessionsEnabled && !sessionSearchOpen && !sessionSearchResultsMode ? (
       <MultiProjectSessionList
         groups={multiProjectSessionGroups}
-        selectedKey={selectedSession?.key}
-        selectedRootId={(selectedSession?.root_id as string | undefined) || currentRootId || ""}
+        selectedKey={activeBoundSessionKey || ""}
+        selectedRootId={currentRootId || ""}
         headerAction={sessionImportMenu}
         loading={multiProjectSessionsLoading}
         emptyText={t("externalImport.empty")}
@@ -13498,7 +13536,7 @@ export function App({ onGoHome }: AppProps) {
             ? sessionSearchResults
             : sessions
         }
-        selectedKey={selectedSession?.key}
+        selectedKey={activeBoundSessionKey || ""}
         headerAction={sessionImportMenu}
         searchOpen={sessionSearchOpen}
         searchResultsMode={sessionSearchResultsMode}
