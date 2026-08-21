@@ -5,6 +5,17 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
+/**
+ * 每次构建生成唯一构建戳，注入所有 JS chunk + SW version。
+ * 目的：Vite 内容哈希在源码未变时产物文件名不变 → SW 缓存名不变 →
+ * service-worker.js 字节不变 → 浏览器永不重装 SW → SHELL_CACHE 永远返回旧 bundle。
+ * 注入随机 stamp 后：chunk 字节必变 → 内容哈希必变 → 文件名必变 → SW 缓存名必变 →
+ * SW 字节必变 → 浏览器重装 SW → activate 清理旧缓存，缓存死锁被打破。
+ */
+function buildStamp(): string {
+  return process.env.MFS_BUILD_STAMP || crypto.randomBytes(8).toString("hex");
+}
+
 function listPublicAssets(publicDir: string): string[] {
   if (!fs.existsSync(publicDir)) {
     return [];
@@ -52,6 +63,19 @@ const RUNTIME_CACHE = "mindfs-runtime-${version}";
 const OFFLINE_URL = new URL("./offline.html", self.location.href).toString();
 const INDEX_URL = new URL("./index.html", self.location.href).toString();
 const PRECACHE_URLS = ${JSON.stringify(precacheUrls, null, 2)};
+
+// Strip the deploy sub-path scope prefix (e.g. /mindfs/) so API detection
+// works when MindFS is served under a sub-path behind nginx.
+function scopeRelativePathname(pathname) {
+  const scopeBase = new URL(self.registration.scope).pathname.replace(/\\/$/, "");
+  if (scopeBase && pathname.startsWith(scopeBase + "/")) {
+    return pathname.slice(scopeBase.length) || "/";
+  }
+  if (scopeBase && pathname === scopeBase) {
+    return "/";
+  }
+  return pathname;
+}
 
 function normalizedPathname(pathname) {
   const relayPrefixMatch = pathname.match(/^\\/n\\/[^/]+(?=\\/|$)/);
@@ -139,7 +163,7 @@ self.addEventListener("fetch", (event) => {
   if (url.origin !== self.location.origin) {
     return;
   }
-  const pathname = normalizedPathname(url.pathname);
+  const pathname = scopeRelativePathname(normalizedPathname(url.pathname));
   if (pathname.startsWith("/mindfs-assets/")) {
     return;
   }
@@ -295,9 +319,29 @@ function autoPrecachePlugin() {
   };
 }
 
+/**
+ * 构建戳插件：给每个 JS chunk 注入随机构建戳。
+ * 改写 chunk 字节 → Vite 内容哈希必变 → 产物文件名必变 → precacheUrls 必变
+ * → SW version 必变 → service-worker.js 字节必变 → 浏览器重装 SW 清旧缓存。
+ */
+function buildStampPlugin() {
+  const stamp = buildStamp();
+  return {
+    name: "mindfs-build-stamp",
+    apply: "build" as const,
+    renderChunk(code: string, chunk: { fileName: string }) {
+      if (!chunk.fileName.endsWith(".js")) {
+        return null;
+      }
+      const banner = `globalThis.__MFS_BUILD_STAMP__="${stamp}";`;
+      return { code: banner + code, map: null };
+    },
+  };
+}
+
 export default defineConfig({
   base: "./",
-  plugins: [tailwindcss(), react(), appShellHTMLPlugin(), appShellExcludeAssetsPlugin(), autoPrecachePlugin()],
+  plugins: [tailwindcss(), react(), appShellHTMLPlugin(), appShellExcludeAssetsPlugin(), autoPrecachePlugin(), buildStampPlugin()],
   server: {
     host: "0.0.0.0",
     proxy: {
