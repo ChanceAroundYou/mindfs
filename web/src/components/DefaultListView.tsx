@@ -1,5 +1,5 @@
 import React from "react";
-import { rootBadgeStyle } from "./rootBadgeStyle";
+import { rootBadgeButtonStyle } from "./rootBadgeStyle";
 import { SymlinkBadge } from "./SymlinkBadge";
 import {
   DIRECTORY_SORT_OPTIONS,
@@ -359,13 +359,15 @@ function Breadcrumbs({
               </button>
             </span>
           ) : (
-            <span
+            <button
+              type="button"
               data-onboarding="project-home"
               onClick={() => onPathClick?.(".")}
               style={{
-                ...rootBadgeStyle,
+                ...rootBadgeButtonStyle,
+                background: "var(--node-badge-bg)",
+                color: String(rootColor || "").trim() || "var(--node-badge-text, var(--root-badge-text))",
                 cursor: "pointer",
-                color: String(rootColor || "").trim() || "var(--root-badge-text)",
               }}
               onMouseEnter={(e) => {
                 e.currentTarget.style.textDecoration = "underline";
@@ -375,7 +377,7 @@ function Breadcrumbs({
               }}
             >
               {root}
-            </span>
+            </button>
           )}
           {parts.length > 0 && (
             <span style={{ opacity: 0.4, fontSize: "10px", flexShrink: 0 }}>

@@ -19,7 +19,15 @@ assert.match(
 // paletteIndex 覆盖 PREVIOUS_PALETTE 与 OLD_PALETTE 两个历史调色板
 assert.match(nodeRegistry, /const paletteIndex = \[PREVIOUS_PALETTE, OLD_PALETTE\]/);
 assert.match(defaultList, /rootColor\?: string/);
-assert.match(defaultList, /data-onboarding="project-home"[\s\S]*color: String\(rootColor \|\| ""\)\.trim\(\) \|\| "var\(--root-badge-text\)"/);
+assert.match(defaultList, /rootBadgeButtonStyle/);
+assert.match(
+  defaultList,
+  /<button[\s\S]*data-onboarding="project-home"[\s\S]*rootBadgeButtonStyle[\s\S]*background: "var\(--node-badge-bg\)"[\s\S]*color: String\(rootColor \|\| ""\)\.trim\(\) \|\|/,
+);
+assert.doesNotMatch(
+  defaultList,
+  /<span[\s\S]*data-onboarding="project-home"[\s\S]*rootBadgeStyle/,
+);
 assert.match(fileTree, /fontWeight: isManagedRootNode \? 600 : 400/);
 assert.doesNotMatch(fileTree, /fileTree\.onboarding/);
 assert.doesNotMatch(fileTree, /fileTree\.showHiddenFiles/);
