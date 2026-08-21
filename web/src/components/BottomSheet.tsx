@@ -25,8 +25,10 @@ export function BottomSheet({
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   const startYRef = useRef(0);
   const lastYRef = useRef(0);
+  const startHeightRef = useRef(0);
   const pointerIdRef = useRef<number | null>(null);
-  const [dragOffsetY, setDragOffsetY] = useState(0);
+  const sheetRef = useRef<HTMLDivElement | null>(null);
+  const [sheetHeightPx, setSheetHeightPx] = useState<number | null>(null);
   const [isDragging, setIsDragging] = useState(false);
 
   useEffect(() => {
@@ -36,12 +38,33 @@ export function BottomSheet({
     return () => window.removeEventListener("resize", handleResize);
   }, [isOpen]);
 
+  // Default half is always 50% of the middle panel (desktop and mobile unified).
+  // When a custom height exists (after dragging), keep it until close/expand.
+  useEffect(() => {
+    if (!isOpen) {
+      // Reset to default on close so next open starts at 50% again
+      setSheetHeightPx(null);
+      setIsDragging(false);
+    }
+  }, [isOpen]);
+
   if (!isOpen && !isAnimating) return null;
+
+  const clampHeight = (h: number) => {
+    const vh = window.innerHeight || 800;
+    // Allow arbitrary hover but keep a usable range; avoid fully collapsed invisible sheet
+    const min = 120;
+    const max = Math.max(min + 1, vh - 24);
+    return Math.min(max, Math.max(min, h));
+  };
 
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     pointerIdRef.current = event.pointerId;
     startYRef.current = event.clientY;
     lastYRef.current = event.clientY;
+    const rectH = sheetRef.current?.getBoundingClientRect().height;
+    // If no custom height yet, derive start height from rendered size (which is 50% default)
+    startHeightRef.current = sheetHeightPx ?? rectH ?? window.innerHeight * 0.5;
     setIsDragging(false);
     event.currentTarget.setPointerCapture(event.pointerId);
   };
@@ -54,7 +77,8 @@ export function BottomSheet({
     }
     if (Math.abs(deltaY) >= BOTTOM_SHEET_DRAG_START_PX) {
       lastYRef.current = event.clientY;
-      setDragOffsetY(deltaY);
+      const nextH = clampHeight(startHeightRef.current - deltaY);
+      setSheetHeightPx(nextH);
     }
   };
 
@@ -74,16 +98,25 @@ export function BottomSheet({
           dragged: isDragging,
         });
     pointerIdRef.current = null;
-    setDragOffsetY(0);
     setIsDragging(false);
-    if (release === "expand") onExpand?.();
-    if (release === "close") onClose();
+    if (release === "expand") {
+      setSheetHeightPx(null);
+      onExpand?.();
+      return;
+    }
+    if (release === "close") {
+      setSheetHeightPx(null);
+      onClose();
+      return;
+    }
+    // Otherwise keep the arbitrary hover height (no snap back to 50%)
   };
 
   const handlePointerUp = (event: React.PointerEvent<HTMLDivElement>) => finishPointer(event, false);
   const handlePointerCancel = (event: React.PointerEvent<HTMLDivElement>) => finishPointer(event, true);
 
-  const dragTransform = isDragging ? `translateY(${dragOffsetY}px)` : undefined;
+  const defaultHeight = "50%";
+  const computedHeight = sheetHeightPx != null ? `${sheetHeightPx}px` : defaultHeight;
 
   const pcStyles: React.CSSProperties = {
     position: "absolute",
@@ -91,11 +124,11 @@ export function BottomSheet({
     right: 0,
     bottom: 0,
     width: "100%",
-    height: "75vh",
+    height: computedHeight,
     borderRadius: "16px 16px 0 0",
     opacity: isOpen ? 1 : 0,
     pointerEvents: isOpen ? "auto" : "none",
-    transform: dragTransform ?? (isOpen ? "translateY(0)" : "translateY(20px)"),
+    transform: isOpen ? "translateY(0)" : "translateY(20px)",
   };
 
   const mobileStyles: React.CSSProperties = {
@@ -104,10 +137,10 @@ export function BottomSheet({
     right: 0,
     bottom: 0,
     width: "100%",
-    height: "75vh",
+    height: computedHeight,
     borderTopLeftRadius: "20px",
     borderTopRightRadius: "20px",
-    transform: dragTransform ?? (isOpen ? "translateY(0)" : "translateY(100%)"),
+    transform: isOpen ? "translateY(0)" : "translateY(100%)",
   };
 
   return (
@@ -128,6 +161,7 @@ export function BottomSheet({
 
       {/* Drawer Panel */}
       <div
+        ref={sheetRef}
         style={{
           background: "var(--panel-bg, #ffffff)",
           color: "var(--text-primary)",
