@@ -117,7 +117,6 @@ type FileTreeProps = {
   fileMetas?: Record<string, FileMeta>;
   activeSessionKey?: string | null;
   onSortModeChange?: (mode: DirectorySortMode) => void;
-  onShowHiddenFilesChange?: (show: boolean) => void;
   onRefresh?: () => void | Promise<void>;
   onSelectFile?: (entry: FileEntry, rootId: string) => void;
   onSelectRoot?: (entry: FileEntry, rootId: string) => void;
@@ -135,7 +134,6 @@ type FileTreeProps = {
   creatingRootSubmitOnBlur?: boolean;
   onCreateRootStart?: () => void;
   onOpenProjectAdd?: () => void;
-  onStartOnboarding?: () => void;
   onCreateRootNameChange?: (name: string) => void;
   onCreateRootSubmit?: () => void;
   onCreateRootCancel?: () => void;
@@ -149,12 +147,8 @@ type FileTreeProps = {
   showEnterKeySendOption?: boolean;
   enterKeySends?: boolean;
   onEnterKeySendsChange?: (enabled: boolean) => void;
-  sidebarsSwapped?: boolean;
-  onSidebarsSwappedChange?: (enabled: boolean) => void;
   gitDiffSideBySide?: boolean;
   onGitDiffSideBySideChange?: (enabled: boolean) => void;
-  multiProjectSessionsEnabled?: boolean;
-  onMultiProjectSessionsChange?: (enabled: boolean) => void;
   onRunAgentLifecycleCommand?: (agentName: string, action: AgentLifecycleCommandAction, commands: string[]) => void | Promise<void>;
   onRestartAgent?: (agentName: string) => void | Promise<void>;
   onGoHome?: () => void;
@@ -1303,7 +1297,6 @@ function FileTreeInner({
   fileMetas = {},
   activeSessionKey,
   onSortModeChange,
-  onShowHiddenFilesChange,
   onRefresh,
   onSelectFile,
   onSelectRoot,
@@ -1321,7 +1314,6 @@ function FileTreeInner({
   creatingRootSubmitOnBlur = true,
   onCreateRootStart,
   onOpenProjectAdd,
-  onStartOnboarding,
   onCreateRootNameChange,
   onCreateRootSubmit,
   onCreateRootCancel,
@@ -1335,12 +1327,8 @@ function FileTreeInner({
   showEnterKeySendOption = false,
   enterKeySends = false,
   onEnterKeySendsChange,
-  sidebarsSwapped = false,
-  onSidebarsSwappedChange,
   gitDiffSideBySide = false,
   onGitDiffSideBySideChange,
-  multiProjectSessionsEnabled = false,
-  onMultiProjectSessionsChange,
   onRunAgentLifecycleCommand,
   onRestartAgent,
   onGoHome,
@@ -2352,7 +2340,7 @@ function FileTreeInner({
                 fontSize: "13px",
                 borderRadius: "6px",
                 transition: "all 0.1s",
-                fontWeight: isSelected ? 600 : 400,
+                fontWeight: isManagedRootNode ? 600 : 400,
                 outline: "none",
               }}
               onMouseEnter={(e) => { if (!isSelected) e.currentTarget.style.background = "rgba(0,0,0,0.04)"; }}
@@ -2393,7 +2381,7 @@ function FileTreeInner({
                         maxWidth: "100%",
                         overflow: "hidden",
                         textOverflow: "ellipsis",
-                        fontWeight: 600,
+                        fontWeight: isManagedRootNode ? 600 : 400,
                       }}
                     >
                       {entry.name}
@@ -2873,97 +2861,6 @@ function FileTreeInner({
                 );
               }) : null}
               <div style={{ height: "1px", background: "var(--border-color)", margin: "6px 4px" }} />
-              {onStartOnboarding ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    onStartOnboarding();
-                    setIsMenuOpen(false);
-                    setIsAppearanceMenuOpen(false);
-                    setIsLocaleMenuOpen(false);
-                    setIsSortMenuOpen(false);
-                  }}
-                  style={fileTreeMenuButtonStyle}
-                >
-                  <OnboardingGuideIcon />
-                  <span>{t("onboarding.menu")}</span>
-                </button>
-              ) : null}
-              <button
-                type="button"
-                onClick={() => {
-                  onShowHiddenFilesChange?.(!showHiddenFiles);
-                  setIsAppearanceMenuOpen(false);
-                  setIsSortMenuOpen(false);
-                }}
-                style={{
-                  width: "100%",
-                  border: "none",
-                  background: showHiddenFiles ? "var(--selection-bg)" : "transparent",
-                  color: showHiddenFiles ? "var(--accent-color)" : "var(--text-primary)",
-                  borderRadius: "8px",
-                  padding: "8px 10px",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  textAlign: "left",
-                  cursor: "pointer",
-                  fontSize: "12px",
-                }}
-              >
-                <span>{t("fileTree.showHiddenFiles")}</span>
-                <span style={{ fontSize: "11px", opacity: showHiddenFiles ? 1 : 0 }}>✓</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  onMultiProjectSessionsChange?.(!multiProjectSessionsEnabled);
-                  setIsAppearanceMenuOpen(false);
-                  setIsSortMenuOpen(false);
-                }}
-                style={{
-                  width: "100%",
-                  border: "none",
-                  background: multiProjectSessionsEnabled ? "var(--selection-bg)" : "transparent",
-                  color: multiProjectSessionsEnabled ? "var(--accent-color)" : "var(--text-primary)",
-                  borderRadius: "8px",
-                  padding: "8px 10px",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  textAlign: "left",
-                  cursor: "pointer",
-                  fontSize: "12px",
-                }}
-              >
-                <span>{t("fileTree.multiProjectSessions")}</span>
-                <span style={{ fontSize: "11px", opacity: multiProjectSessionsEnabled ? 1 : 0 }}>✓</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  onSidebarsSwappedChange?.(!sidebarsSwapped);
-                  setIsAppearanceMenuOpen(false);
-                  setIsSortMenuOpen(false);
-                }}
-                style={{
-                  width: "100%",
-                  border: "none",
-                  background: sidebarsSwapped ? "var(--selection-bg)" : "transparent",
-                  color: sidebarsSwapped ? "var(--accent-color)" : "var(--text-primary)",
-                  borderRadius: "8px",
-                  padding: "8px 10px",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  textAlign: "left",
-                  cursor: "pointer",
-                  fontSize: "12px",
-                }}
-              >
-                <span>{t("fileTree.swapSidebars")}</span>
-                <span style={{ fontSize: "11px", opacity: sidebarsSwapped ? 1 : 0 }}>✓</span>
-              </button>
               <button
                 type="button"
                 onClick={() => {

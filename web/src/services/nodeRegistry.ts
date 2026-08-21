@@ -1,7 +1,9 @@
 import { getStoredString, setStoredString, removeStoredString } from "./storage";
 
-export const PALETTE = ["#7c6bd6", "#c9b84a", "#6a8dc2", "#c66a7a", "#8a8f99", "#7aae8a"] as const;
+export const PALETTE = ["#3b82f6", "#f59e0b", "#7c6bd6", "#c66a7a", "#8a8f99", "#7aae8a"] as const;
+const PREVIOUS_PALETTE = ["#7c6bd6", "#c9b84a", "#6a8dc2", "#c66a7a", "#8a8f99", "#7aae8a"] as const;
 const OLD_PALETTE = ["#6d5bcf", "#0ea5a0", "#e07a2f", "#2f8f4e", "#d9466a", "#7a9a3a"] as const;
+const paletteIndex = [PREVIOUS_PALETTE, OLD_PALETTE] as const;
 export const LOCAL_NODE_ID = "local";
 
 export type NodeConnection = {
@@ -168,11 +170,15 @@ export function getNodes(): NodeConnection[] {
       if (url !== rawURL) changed = true;
       let color = String(item.color || "").trim() || "";
       if (!color) color = PALETTE[0];
-      else {
-        const idx = OLD_PALETTE.findIndex((c) => c.toLowerCase() === color.toLowerCase());
-        if (idx >= 0 && PALETTE[idx]?.toLowerCase() !== color.toLowerCase()) {
-          color = PALETTE[idx]!;
-          changed = true;
+      else if (!PALETTE.some((c) => c.toLowerCase() === color.toLowerCase())) {
+        // 已是当前调色板色（如 #7c6bd6）则保留；否则按历史调色板位置迁移
+        for (const p of paletteIndex) {
+          const idx = p.findIndex((c) => c.toLowerCase() === color.toLowerCase());
+          if (idx >= 0) {
+            color = PALETTE[idx]!;
+            changed = true;
+            break;
+          }
         }
       }
       if (!id || !name || !url) return null;

@@ -172,7 +172,6 @@ type WSStatus = "connecting" | "connected" | "reconnecting" | "disconnected";
 const CHILD_SESSION_PAGE_SIZE = 100;
 const MULTI_PROJECT_SESSION_LIMIT = 6;
 const SESSION_PAGE_SIZE = 50;
-const MULTI_PROJECT_SESSION_STORAGE_KEY = "mindfs-multi-project-session-list";
 const APP_DOCUMENT_TITLE = "MindFS";
 
 function isTopLevelSessionItem(session: SessionItem): boolean {
@@ -1343,10 +1342,7 @@ export function App({ onGoHome }: AppProps) {
 
   const [sessions, setSessions] = useState<SessionItem[]>([]);
   const sessionsRef = useRef<SessionItem[]>([]);
-  const [multiProjectSessionsEnabled, setMultiProjectSessionsEnabled] = useState(() => {
-    if (typeof window === "undefined") return false;
-    return window.localStorage.getItem(MULTI_PROJECT_SESSION_STORAGE_KEY) === "1";
-  });
+  const multiProjectSessionsEnabled = true;
   const [multiProjectSessionGroups, setMultiProjectSessionGroups] = useState<MultiProjectSessionGroup[]>([]);
   const [multiProjectSessionsLoading, setMultiProjectSessionsLoading] = useState(false);
   const [multiProjectPendingByKey, setMultiProjectPendingByKey] = useState<Record<string, boolean>>({});
@@ -2312,7 +2308,7 @@ export function App({ onGoHome }: AppProps) {
   const pluginQueryRef = useRef<Record<string, string>>(
     readURLState().pluginQuery,
   );
-  const [showHiddenFiles, setShowHiddenFiles] = useState(false);
+  const showHiddenFiles = true;
   const [projectTreeTabRequest, setProjectTreeTabRequest] = useState<{
     tab: "files" | "git" | "worktrees" | "related";
     nonce: number;
@@ -2544,12 +2540,6 @@ export function App({ onGoHome }: AppProps) {
   useEffect(() => {
     multiProjectPendingRef.current = multiProjectPendingByKey;
   }, [multiProjectPendingByKey]);
-  useEffect(() => {
-    window.localStorage.setItem(
-      MULTI_PROJECT_SESSION_STORAGE_KEY,
-      multiProjectSessionsEnabled ? "1" : "0",
-    );
-  }, [multiProjectSessionsEnabled]);
   useEffect(() => {
     sessionListModeRef.current = sessionListMode;
     if (sessionListMode !== "local") {
@@ -13197,6 +13187,7 @@ export function App({ onGoHome }: AppProps) {
             : actionHandlers.open({ path: e.path })
         }
         onPathClick={handleDirectoryPathClick}
+        rootColor={(managedRootByIdRef.current as any)[String(currentRootId || "")]?._nodeColor || null}
       />
     );
   }
@@ -13555,7 +13546,6 @@ export function App({ onGoHome }: AppProps) {
             sortMode={treeSortMode}
             showHiddenFiles={showHiddenFiles}
             onSortModeChange={setTreeSortMode}
-            onShowHiddenFilesChange={setShowHiddenFiles}
             onRefresh={() => {
               if (currentRootId) {
                 const dir = selectedDirRef.current === currentRootId ? "." : (selectedDirRef.current || ".");
@@ -13571,7 +13561,6 @@ export function App({ onGoHome }: AppProps) {
             }
             creatingRootBusy={creatingRootBusy}
             onOpenProjectAdd={handleOpenProjectAdd}
-            onStartOnboarding={isMobile ? undefined : () => setOnboardingOpen(true)}
             onCreateRootStart={handleCreateRootStart}
             onCreateRootNameChange={setCreatingRootName}
             onCreateRootSubmit={() => {
@@ -13623,12 +13612,8 @@ export function App({ onGoHome }: AppProps) {
             showEnterKeySendOption={isMobile}
             enterKeySends={mobileEnterKeySends}
             onEnterKeySendsChange={setMobileEnterKeySends}
-            sidebarsSwapped={sidebarsSwapped}
-            onSidebarsSwappedChange={setSidebarsSwapped}
             gitDiffSideBySide={gitDiffSideBySide}
             onGitDiffSideBySideChange={setGitDiffSideBySide}
-            multiProjectSessionsEnabled={multiProjectSessionsEnabled}
-            onMultiProjectSessionsChange={setMultiProjectSessionsEnabled}
             onRunAgentLifecycleCommand={handleRunAgentLifecycleCommand}
             onRestartAgent={handleRestartAgent}
             onGoHome={onGoHome}

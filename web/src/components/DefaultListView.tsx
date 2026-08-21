@@ -72,6 +72,7 @@ type DefaultListViewProps = {
   currentViewMode?: MainContentViewMode;
   onViewModeChange?: (mode: MainContentViewMode) => void;
   menuOverlay?: React.ReactNode;
+  rootColor?: string | null;
 };
 
 function formatCompactTime(value?: string): string {
@@ -201,6 +202,7 @@ function Breadcrumbs({
   onRootDraftChange,
   onRootRenameSubmit,
   onRootRenameCancel,
+  rootColor = null,
 }: {
   root?: string;
   path: string;
@@ -212,6 +214,7 @@ function Breadcrumbs({
   onRootDraftChange?: (value: string) => void;
   onRootRenameSubmit?: () => void;
   onRootRenameCancel?: () => void;
+  rootColor?: string | null;
 }) {
   const { t } = useI18n();
   const normalizedPath =
@@ -362,6 +365,7 @@ function Breadcrumbs({
               style={{
                 ...rootBadgeStyle,
                 cursor: "pointer",
+                color: String(rootColor || "").trim() || "var(--root-badge-text)",
               }}
               onMouseEnter={(e) => {
                 e.currentTarget.style.textDecoration = "underline";
@@ -442,6 +446,7 @@ export function DefaultListView({
   currentViewMode = "task-kanban",
   onViewModeChange,
   menuOverlay = null,
+  rootColor = null,
 }: DefaultListViewProps) {
   const { t } = useI18n();
   const inputRef = React.useRef<HTMLInputElement>(null);
@@ -569,6 +574,7 @@ export function DefaultListView({
             root={root}
             path={path || ""}
             onPathClick={onPathClick}
+            rootColor={rootColor}
             editingRoot={editingRoot}
             rootDraft={rootDraft}
             rootRenaming={rootRenaming}
