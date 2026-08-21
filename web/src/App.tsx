@@ -1345,6 +1345,8 @@ export function App({ onGoHome }: AppProps) {
   const multiProjectSessionsEnabled = true;
   const [multiProjectSessionGroups, setMultiProjectSessionGroups] = useState<MultiProjectSessionGroup[]>([]);
   const [multiProjectSessionsLoading, setMultiProjectSessionsLoading] = useState(false);
+  // 多项目列表全量重拉竞态守卫：只应用最后一次发起的请求结果，避免旧响应覆盖新数据
+  const multiProjectLoadSeqRef = useRef(0);
   const [multiProjectPendingByKey, setMultiProjectPendingByKey] = useState<Record<string, boolean>>({});
   const multiProjectPendingRef = useRef<Record<string, boolean>>({});
   const [sessionSearchOpen, setSessionSearchOpen] = useState(false);
@@ -3588,6 +3590,35 @@ export function App({ onGoHome }: AppProps) {
         );
       }
 
+      // pending 会话 promote 为真实会话时，同步替换右侧多项目列表中的临时条目
+      setMultiProjectSessionGroups((prev) =>
+        prev.map((group) => {
+          if (group.rootId !== rootID) {
+            return group;
+          }
+          const sessions = group.sessions.map((item) => {
+            const itemKey = item.key || item.session_key;
+            if (itemKey !== pendingKey) {
+              return item;
+            }
+            return {
+              ...(item as any),
+              ...(latestReal as any),
+              key: sessionKey,
+              session_key: sessionKey,
+              root_id: rootID,
+              name:
+                (typeof (latestReal as any)?.name === "string" &&
+                (latestReal as any).name
+                  ? (latestReal as any).name
+                  : "") || pendingName,
+              pending: true,
+            } as SessionItem;
+          });
+          return { ...group, sessions: mergeSessionItems(sessions, []) };
+        }),
+      );
+
       setSelectedSession((prev) => {
         const prevKey = prev?.key || prev?.session_key;
         const prevRoot =
@@ -4583,6 +4614,7 @@ export function App({ onGoHome }: AppProps) {
     if (!multiProjectSessionsEnabled || !protectedAPIReady()) {
       return;
     }
+    const seq = ++multiProjectLoadSeqRef.current;
     setMultiProjectSessionsLoading(true);
     try {
       const nodeIds = Array.from(new Set(Object.values(managedRootByIdRef.current as Record<string, any>).map((v) => String((v as any)?._nodeId || "")).filter(Boolean)));
@@ -4616,11 +4648,14 @@ export function App({ onGoHome }: AppProps) {
           .filter((item): item is SessionItem => !!item),
         totalCount: group.totalCount,
       }));
+      if (seq !== multiProjectLoadSeqRef.current) return; // 丢弃过期响应
       setMultiProjectSessionGroups(
         applyPendingToMultiProjectGroups(nextGroups, multiProjectPendingRef.current),
       );
     } finally {
-      setMultiProjectSessionsLoading(false);
+      if (seq === multiProjectLoadSeqRef.current) {
+        setMultiProjectSessionsLoading(false);
+      }
     }
   }, [applyPendingToMultiProjectGroups, multiProjectSessionsEnabled]);
 
@@ -6259,6 +6294,30 @@ export function App({ onGoHome }: AppProps) {
           });
           if (draftItem) {
             setSessions((prev) => mergeSessionItems(prev, [draftItem]));
+            // 新建会话立即同步进右侧多项目列表，避免依赖 WS 重拉（断连/竞态时永不出现）
+            setMultiProjectSessionGroups((prev) => {
+              const existing = prev.find((g) => g.rootId === activeRoot);
+              if (existing) {
+                return prev.map((g) =>
+                  g.rootId === activeRoot
+                    ? { ...g, sessions: mergeSessionItems(g.sessions, [draftItem]) }
+                    : g,
+                );
+              }
+              const rootName =
+                (managedRootByIdRef.current as Record<string, any>)[activeRoot]?.display_name ||
+                activeRoot;
+              return [
+                {
+                  rootId: activeRoot,
+                  rootName,
+                  latestSessionTime: draftItem.updated_at || now,
+                  sessions: [draftItem],
+                  totalCount: 1,
+                },
+                ...prev,
+              ];
+            });
           }
           bumpCacheVersion();
         }
