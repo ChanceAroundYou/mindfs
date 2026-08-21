@@ -113,13 +113,14 @@ function normalizeAgentStatus(input: unknown): AgentStatus | null {
   };
 }
 
-let cachedAgents: AgentStatus[] = [];
-let cachedAgentCatalog: AgentStatus[] = [];
-let cachedShells: ShellStatus[] = [];
-let lastFetch = 0;
-let lastCatalogFetch = 0;
-let inFlightAgents: Promise<{ agents: AgentStatus[]; shells: ShellStatus[] }> | null = null;
-let inFlightCatalog: Promise<{ agents: AgentStatus[]; shells: ShellStatus[] }> | null = null;
+type AgentCache = { agents: AgentStatus[]; shells: ShellStatus[]; at: number };
+const agentCacheByNode = new Map<string, AgentCache>();
+const catalogCacheByNode = new Map<string, AgentCache>();
+const inflightByNode = new Map<string, Promise<{ agents: AgentStatus[]; shells: ShellStatus[] }>>();
+const inflightCatalogByNode = new Map<string, Promise<{ agents: AgentStatus[]; shells: ShellStatus[] }>>();
+function cacheKey(nodeId?: string) {
+  return String(nodeId || "__local__");
+}
 const CACHE_TTL = 30000; // 30 seconds
 
 function normalizeShellStatus(input: unknown): ShellStatus | null {
@@ -143,79 +144,74 @@ function normalizeShellStatus(input: unknown): ShellStatus | null {
   };
 }
 
-async function fetchAgentRuntime(force = false, includeAll = false): Promise<{ agents: AgentStatus[]; shells: ShellStatus[] }> {
-  const now = Date.now();
-  const agentCache = includeAll ? cachedAgentCatalog : cachedAgents;
-  const agentLastFetch = includeAll ? lastCatalogFetch : lastFetch;
-  const inFlight = includeAll ? inFlightCatalog : inFlightAgents;
-  if (!force && agentCache.length > 0 && now - agentLastFetch < CACHE_TTL) {
-    if (includeAll) {
-      return { agents: cachedAgentCatalog, shells: cachedShells };
-    }
-    return { agents: cachedAgents, shells: cachedShells };
+async function fetchAgentRuntime(force = false, includeAll = false, nodeId?: string): Promise<{ agents: AgentStatus[]; shells: ShellStatus[] }> {
+  const key = cacheKey(nodeId);
+  const cached = (includeAll ? catalogCacheByNode : agentCacheByNode).get(key);
+  const agentCache = cached?.agents || [];
+  const agentLastFetch = cached?.at || 0;
+  const inFlight = (includeAll ? inflightCatalogByNode : inflightByNode).get(key) || null;
+  if (!force && agentCache.length > 0 && Date.now() - agentLastFetch < CACHE_TTL) {
+    return { agents: agentCache, shells: cached?.shells || [] };
   }
   if (inFlight) {
     return inFlight;
   }
   if (!protectedAPIReady()) {
-    return { agents: agentCache, shells: cachedShells };
+    return { agents: agentCache, shells: cached?.shells || [] };
   }
 
   const request = (async () => {
-    const data = await protectedJSON<any>(appPath(includeAll ? "/api/agents?all=1" : "/api/agents"));
+    const now = Date.now();
+    const data = await protectedJSON<any>(appPath(includeAll ? "/api/agents?all=1" : "/api/agents", nodeId));
     const agentItems: unknown[] = Array.isArray(data) ? data : Array.isArray(data?.agents) ? data.agents : [];
     const shellItems: unknown[] = Array.isArray(data?.shells) ? data.shells : [];
     const nextAgents = agentItems
       ? agentItems.map(normalizeAgentStatus).filter((item): item is AgentStatus => item !== null)
       : [];
-    if (includeAll) {
-      cachedAgentCatalog = nextAgents;
-      lastCatalogFetch = now;
-    } else {
-      cachedAgents = nextAgents;
-      lastFetch = now;
-    }
-    cachedShells = shellItems.map(normalizeShellStatus).filter((item): item is ShellStatus => item !== null);
-    return { agents: nextAgents, shells: cachedShells };
+    const nextShells = shellItems.map(normalizeShellStatus).filter((item): item is ShellStatus => item !== null);
+    const entry = { agents: nextAgents, shells: nextShells, at: now };
+    if (includeAll) catalogCacheByNode.set(key, entry);
+    else agentCacheByNode.set(key, entry);
+    return { agents: nextAgents, shells: nextShells };
   })();
   if (includeAll) {
-    inFlightCatalog = request;
+    inflightCatalogByNode.set(key, request);
   } else {
-    inFlightAgents = request;
+    inflightByNode.set(key, request);
   }
   try {
     return await request;
   } catch (err) {
     console.error("Failed to fetch agents:", err);
-    return { agents: agentCache, shells: cachedShells };
+    return { agents: agentCache, shells: cached?.shells || [] };
   } finally {
     if (includeAll) {
-      inFlightCatalog = null;
+      inflightCatalogByNode.delete(key);
     } else {
-      inFlightAgents = null;
+      inflightByNode.delete(key);
     }
   }
 }
 
-export async function fetchAgents(force = false): Promise<AgentStatus[]> {
-  const data = await fetchAgentRuntime(force);
+export async function fetchAgents(force = false, nodeId?: string): Promise<AgentStatus[]> {
+  const data = await fetchAgentRuntime(force, false, nodeId);
   return data.agents;
 }
 
-export async function fetchAgentCatalog(force = false): Promise<AgentStatus[]> {
-  const data = await fetchAgentRuntime(force, true);
+export async function fetchAgentCatalog(force = false, nodeId?: string): Promise<AgentStatus[]> {
+  const data = await fetchAgentRuntime(force, true, nodeId);
   return data.agents;
 }
 
-export async function restartAgent(agent: string): Promise<{ restarting: boolean; agent: string }> {
-  return protectedJSON<{ restarting: boolean; agent: string }>(appPath("/api/agents/restart"), {
+export async function restartAgent(agent: string, nodeId?: string): Promise<{ restarting: boolean; agent: string }> {
+  return protectedJSON<{ restarting: boolean; agent: string }>(appPath("/api/agents/restart", nodeId), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ agent }),
   });
 }
 
-export async function fetchShells(force = false): Promise<ShellStatus[]> {
-  const data = await fetchAgentRuntime(force);
+export async function fetchShells(force = false, nodeId?: string): Promise<ShellStatus[]> {
+  const data = await fetchAgentRuntime(force, false, nodeId);
   return data.shells;
 }

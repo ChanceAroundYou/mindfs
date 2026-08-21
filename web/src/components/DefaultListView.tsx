@@ -1,5 +1,5 @@
 import React from "react";
-import { rootBadgeStyle } from "./rootBadgeStyle";
+import { rootBadgeButtonStyle } from "./rootBadgeStyle";
 import { SymlinkBadge } from "./SymlinkBadge";
 import {
   DIRECTORY_SORT_OPTIONS,
@@ -72,6 +72,7 @@ type DefaultListViewProps = {
   currentViewMode?: MainContentViewMode;
   onViewModeChange?: (mode: MainContentViewMode) => void;
   menuOverlay?: React.ReactNode;
+  rootColor?: string | null;
 };
 
 function formatCompactTime(value?: string): string {
@@ -201,6 +202,7 @@ function Breadcrumbs({
   onRootDraftChange,
   onRootRenameSubmit,
   onRootRenameCancel,
+  rootColor = null,
 }: {
   root?: string;
   path: string;
@@ -212,6 +214,7 @@ function Breadcrumbs({
   onRootDraftChange?: (value: string) => void;
   onRootRenameSubmit?: () => void;
   onRootRenameCancel?: () => void;
+  rootColor?: string | null;
 }) {
   const { t } = useI18n();
   const normalizedPath =
@@ -356,11 +359,14 @@ function Breadcrumbs({
               </button>
             </span>
           ) : (
-            <span
+            <button
+              type="button"
               data-onboarding="project-home"
               onClick={() => onPathClick?.(".")}
               style={{
-                ...rootBadgeStyle,
+                ...rootBadgeButtonStyle,
+                background: "var(--node-badge-bg)",
+                color: String(rootColor || "").trim() || "var(--node-badge-text, var(--root-badge-text))",
                 cursor: "pointer",
               }}
               onMouseEnter={(e) => {
@@ -371,7 +377,7 @@ function Breadcrumbs({
               }}
             >
               {root}
-            </span>
+            </button>
           )}
           {parts.length > 0 && (
             <span style={{ opacity: 0.4, fontSize: "10px", flexShrink: 0 }}>
@@ -442,6 +448,7 @@ export function DefaultListView({
   currentViewMode = "task-kanban",
   onViewModeChange,
   menuOverlay = null,
+  rootColor = null,
 }: DefaultListViewProps) {
   const { t } = useI18n();
   const inputRef = React.useRef<HTMLInputElement>(null);
@@ -569,6 +576,7 @@ export function DefaultListView({
             root={root}
             path={path || ""}
             onPathClick={onPathClick}
+            rootColor={rootColor}
             editingRoot={editingRoot}
             rootDraft={rootDraft}
             rootRenaming={rootRenaming}

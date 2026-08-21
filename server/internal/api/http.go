@@ -159,57 +159,9 @@ func (w *protectedResponseWriter) Write(payload []byte) (int, error) {
 }
 
 func (h *HTTPHandler) protectedEndpoint(next http.HandlerFunc) http.HandlerFunc {
+	// ponytail: 鉴权/e2ee 已移除，保留包装仅为兼容，直通
 	return func(w http.ResponseWriter, r *http.Request) {
-		if h.isLocalCLIRequest(r) {
-			next(w, r)
-			return
-		}
-		sess, protected, err := h.requireProtectedHTTPSession(r)
-		if !protected {
-			next(w, r)
-			return
-		}
-		if err != nil {
-			respondError(w, http.StatusUnauthorized, err)
-			return
-		}
-		sess, err = h.requireRequestProof(r)
-		if err != nil {
-			respondError(w, http.StatusUnauthorized, err)
-			return
-		}
-		if r.Body != nil && r.ContentLength != 0 && r.Method != http.MethodGet && r.Method != http.MethodHead {
-			var envelope e2ee.CipherEnvelope
-			if err := json.NewDecoder(io.LimitReader(r.Body, maxUploadRequestBytes)).Decode(&envelope); err != nil {
-				respondError(w, http.StatusBadRequest, errInvalidRequest("invalid protected payload"))
-				return
-			}
-			plaintext, err := e2ee.DecryptBytes(sess.Key, &envelope)
-			if err != nil {
-				respondError(w, http.StatusBadRequest, errInvalidRequest("e2ee_proof_invalid"))
-				return
-			}
-			r.Body = io.NopCloser(bytes.NewReader(plaintext))
-			r.ContentLength = int64(len(plaintext))
-		}
-		recorder := &protectedResponseWriter{ResponseWriter: w}
-		next(recorder, r)
-		if recorder.status == 0 {
-			recorder.status = http.StatusOK
-		}
-		if recorder.status == http.StatusNoContent || recorder.status == http.StatusNotModified || recorder.body.Len() == 0 {
-			w.WriteHeader(recorder.status)
-			return
-		}
-		var payload any
-		if err := json.Unmarshal(recorder.body.Bytes(), &payload); err != nil {
-			respondError(w, http.StatusServiceUnavailable, err)
-			return
-		}
-		if err := writeProtectedJSON(w, recorder.status, sess.Key, payload); err != nil {
-			respondError(w, http.StatusServiceUnavailable, err)
-			return
-		}
+		next(w, r)
 	}
 }
 
@@ -274,9 +226,54 @@ func (h *HTTPHandler) broadcastRootChanged(action, rootID string, extra ...map[s
 	})
 }
 
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
+		w.Header().Set("Access-Control-Max-Age", "86400")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(204)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // Routes constructs the chi router with all endpoints.
+func stripMindfsPrefix(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/mindfs/") {
+			r2 := r.Clone(r.Context())
+			u2 := *r.URL
+			r2.URL = &u2
+			r2.URL.Path = strings.TrimPrefix(r.URL.Path, "/mindfs")
+			if r2.URL.Path == "" {
+				r2.URL.Path = "/"
+			}
+			next.ServeHTTP(w, r2)
+			return
+		}
+		if r.URL.Path == "/mindfs" {
+			r2 := r.Clone(r.Context())
+			u2 := *r.URL
+			r2.URL = &u2
+			r2.URL.Path = "/"
+			next.ServeHTTP(w, r2)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+
 func (h *HTTPHandler) Routes() http.Handler {
 	r := chi.NewRouter()
+	r.Use(stripMindfsPrefix)
+	r.Use(corsMiddleware)
+	r.Options("/*", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) })
+	r.NotFound(h.handleNotFound)
+	r.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) { h.handleNotFound(w, r) })
 	r.Get("/", h.handleFrontend)
 	r.Get("/health", h.handleHealth)
 	r.Get("/api/tree", h.protectedEndpoint(h.handleTree))
@@ -540,7 +537,8 @@ func (h *HTTPHandler) handleReplyingSessions(w http.ResponseWriter, r *http.Requ
 			}
 			if sessionTitle == "" {
 				if manager, err := h.AppContext.GetSessionManager(item.RootID); err == nil {
-					if sess, err := manager.Get(r.Context(), item.SessionKey, 0); err == nil && sess != nil {
+					// 只需 name，走 SQLite meta-only，避免全量加载 JSONL（agent 活跃时该端点高频轮询）。
+					if sess, err := manager.GetMeta(r.Context(), item.SessionKey); err == nil && sess != nil {
 						sessionTitle = sess.Name
 					}
 				}
@@ -1587,7 +1585,20 @@ func pathForStaticAsset(requestPath string) string {
 	if cleaned == "/" {
 		return ""
 	}
-	return strings.TrimPrefix(cleaned, "/")
+	trimmed := strings.TrimPrefix(cleaned, "/")
+	// 反代把 /mindfs 前缀透传到后端时，静态资源会以 /mindfs/assets/... 到达，
+	// 后端实际挂在 /，需剥掉第一段前缀后再找文件。仅对已知静态资源前缀剥离，
+	// 避免误把 /mindfs 当成 API 调用。
+	if strings.HasPrefix(trimmed, "mindfs/") {
+		remainder := strings.TrimPrefix(trimmed, "mindfs/")
+		if remainder == "" || remainder == "index.html" || strings.HasPrefix(remainder, "assets/") ||
+			strings.HasPrefix(remainder, "favicon.") || strings.HasPrefix(remainder, "manifest.") ||
+			strings.HasPrefix(remainder, "service-worker") || strings.HasPrefix(remainder, "pwa-") ||
+			strings.HasPrefix(remainder, "offline.") {
+			return remainder
+		}
+	}
+	return trimmed
 }
 
 func (h *HTTPHandler) handleTree(w http.ResponseWriter, r *http.Request) {
@@ -1598,6 +1609,11 @@ func (h *HTTPHandler) handleTree(w http.ResponseWriter, r *http.Request) {
 		Dir:    r.URL.Query().Get("dir"),
 	})
 	if err != nil {
+		// 目录不存在时返回空树，而非 400：前端会轮询 .mindfs/plugins 等可选目录
+		if errors.Is(err, os.ErrNotExist) {
+			respondJSON(w, http.StatusOK, map[string]any{"entries": []any{}})
+			return
+		}
 		respondError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -1644,7 +1660,12 @@ func (h *HTTPHandler) handleFile(w http.ResponseWriter, r *http.Request) {
 			Path:   path,
 		})
 		if err != nil {
-			respondError(w, http.StatusBadRequest, err)
+			// 文件不存在 → 404（资源不存在语义），而非 400
+			status := http.StatusBadRequest
+			if errors.Is(err, os.ErrNotExist) {
+				status = http.StatusNotFound
+			}
+			respondError(w, status, err)
 			return
 		}
 		defer rawOut.File.Close()
@@ -1668,7 +1689,11 @@ func (h *HTTPHandler) handleFile(w http.ResponseWriter, r *http.Request) {
 			Path:   path,
 		})
 		if err != nil {
-			respondError(w, http.StatusBadRequest, err)
+			status := http.StatusBadRequest
+			if errors.Is(err, os.ErrNotExist) {
+				status = http.StatusNotFound
+			}
+			respondError(w, status, err)
 			return
 		}
 		if info.MTime.Equal(cachedMTime) {
@@ -1684,7 +1709,11 @@ func (h *HTTPHandler) handleFile(w http.ResponseWriter, r *http.Request) {
 		ReadMode: readMode,
 	})
 	if err != nil {
-		respondError(w, http.StatusBadRequest, err)
+		status := http.StatusBadRequest
+		if errors.Is(err, os.ErrNotExist) {
+			status = http.StatusNotFound
+		}
+		respondError(w, status, err)
 		return
 	}
 	payload := map[string]any{

@@ -1,7 +1,8 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { memo, useEffect, useMemo, useRef, useState } from "react";
 import { AgentIcon } from "./AgentIcon";
 import { ModeIcon } from "./ModeIcon";
-import { rootBadgeButtonStyle, rootBadgeStyle } from "./rootBadgeStyle";
+import { NodeBadgeHeader } from "./NodeBadgeHeader";
+import { PALETTE } from "../services/nodeRegistry";
 import { useI18n, type Locale } from "../i18n";
 
 export type SessionType = "chat" | "plugin" | "command";
@@ -679,7 +680,7 @@ export function SessionList({
               }
               const session = row.session;
               return (
-                <SessionCard
+                <SessionCardMemo
                   key={session.key}
                   session={session}
                   sessionByKey={sessionByKey}
@@ -1035,52 +1036,11 @@ export function MultiProjectSessionList({
               const projectLoading = !!loadingProjects[group.rootId];
               return (
                 <section key={group.rootId} style={{ minWidth: 0 }}>
-                  <div
-                    style={{
-                      minWidth: 0,
-                      height: "22px",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      gap: "8px",
-                      padding: "0 24px 0 2px",
-                      background: "transparent",
-                      boxSizing: "border-box",
-                      position: "relative",
-                    }}
-                  >
-                    <span
-                      aria-hidden="true"
-                      style={{
-                        height: "1px",
-                        flex: 1,
-                        minWidth: "12px",
-                        background: "var(--border-color)",
-                      }}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => onProjectClick?.(group.rootId)}
-                      style={{
-                        ...rootBadgeButtonStyle,
-                        flexShrink: 1,
-                        maxWidth: "100%",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                        cursor: onProjectClick ? "pointer" : "default",
-                      }}
-                    >
-                      {group.rootName || group.rootId}
-                    </button>
-                    <span
-                      aria-hidden="true"
-                      style={{
-                        height: "1px",
-                        flex: 1,
-                        minWidth: "12px",
-                        background: "var(--border-color)",
-                      }}
+                  <div style={{ position: "relative" }}>
+                    <NodeBadgeHeader
+                      color={String((group as any)._nodeColor || PALETTE[0])}
+                      label={group.rootName || group.rootId}
+                      onClick={onProjectClick ? () => onProjectClick(group.rootId) : undefined}
                     />
                     <button
                       type="button"
@@ -1152,10 +1112,12 @@ export function MultiProjectSessionList({
                       }
                       const session = row.session;
                       const sessionRoot = session.root_id || group.rootId;
+                      const groupColor = String((group as any)._nodeColor || "").trim();
                       return (
-                        <SessionCard
+                        <SessionCardMemo
                           key={`${sessionRoot}:${session.key}`}
                           session={{ ...session, root_id: sessionRoot }}
+                          nodeColor={groupColor}
                           sessionByKey={sessionByKey}
                           selected={session.key === selectedKey && sessionRoot === selectedRootId}
                           parentHighlighted={false}
@@ -1214,6 +1176,7 @@ function SessionCard({
   session,
   sessionByKey,
   selected,
+  nodeColor,
   parentHighlighted,
   highlightQuery,
   syncing = false,
@@ -1227,6 +1190,7 @@ function SessionCard({
   session: SessionItem;
   sessionByKey: Map<string, SessionItem>;
   selected: boolean;
+  nodeColor?: string;
   parentHighlighted?: boolean;
   highlightQuery?: string;
   syncing?: boolean;
@@ -1253,8 +1217,9 @@ function SessionCard({
   const [editing, setEditing] = useState(false);
   const [draftName, setDraftName] = useState(storedName);
   const [saving, setSaving] = useState(false);
+  const effectiveNodeColor = String(nodeColor || (session as any)?._nodeColor || "").trim();
   const rowBackground = selected
-    ? "rgba(59, 130, 246, 0.1)"
+    ? "var(--node-row-selected-bg)"
     : parentHighlighted
       ? "rgba(0,0,0,0.03)"
       : "transparent";
@@ -1532,7 +1497,7 @@ function SessionCard({
               padding: 0,
               cursor: "pointer",
               textAlign: "left",
-              color: selected ? "var(--accent-color)" : "var(--text-primary)",
+              color: selected ? (effectiveNodeColor || "var(--accent-color)") : "var(--text-primary)",
             }}
             onMouseEnter={(e) => {
               const container = e.currentTarget.parentElement;
@@ -1558,7 +1523,7 @@ function SessionCard({
               }}
             >
               {renderHighlightedText(displayName, highlightQuery, {
-                color: selected ? "var(--accent-color)" : "var(--text-primary)",
+                color: selected ? (effectiveNodeColor || "var(--accent-color)") : "var(--text-primary)",
               })}
             </span>
             {snippet ? (
@@ -2054,6 +2019,10 @@ function ForkSessionIcon() {
     </svg>
   );
 }
+
+// memo 化 SessionCard：父组件（SessionList / MultiProjectSessionList）重渲染时，
+// 若 props 引用未变则跳过整卡重渲染（含 useI18n / parseForkSessionSource / 多个 useEffect）。
+const SessionCardMemo = memo(SessionCard);
 
 const menuItemStyle: React.CSSProperties = {
   width: "100%",

@@ -1,4 +1,4 @@
-import React, { memo, useEffect, useMemo, useRef, useState } from "react";
+import React, { memo, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -59,6 +59,19 @@ async function ensureMermaidInitialized() {
   mermaidInitialized = true;
 }
 
+/**
+ * mermaid 11.x 无法解析 flowchart 节点标签里的裸竖线（`B[|μ|]` 会报
+ * "Syntax error in text"，`|` 被当成边标签分隔符）。这里仅对 flowchart/graph
+ * 中未加引号的 `[]` 标签做引号包裹；已引号/含引号/其他图类型的输入原样保留。
+ */
+function makeMermaidSafe(source: string): string {
+  if (!/^\s*(flowchart|graph)\b/m.test(source)) return source;
+  return source.replace(
+    /\b([A-Za-z_][\w-]*)\[([^\[\]"]*\|[^\[\]"]*)\]/g,
+    (_, id, label) => `${id}["${label}"]`,
+  );
+}
+
 function MermaidBlock({ chart }: { chart: string }) {
   const [svg, setSvg] = useState("");
   const [error, setError] = useState("");
@@ -67,7 +80,7 @@ function MermaidBlock({ chart }: { chart: string }) {
     let cancelled = false;
 
     const renderChart = async () => {
-      const source = chart.trim();
+      const source = makeMermaidSafe(chart.trim());
       if (!source) {
         setSvg("");
         setError("");
@@ -401,6 +414,14 @@ function MarkdownCodeBlock({
   );
 }
 
+// memo 化代码块：rawContent/language 不变时跳过整块重渲染（含 Prism.highlight 与复制按钮状态）。
+// 忽略 sourceLineProps（data-source-line 属性对象每次新建，不影响内容）。
+const MarkdownCodeBlockMemo = memo(MarkdownCodeBlock, (prev, next) =>
+  prev.className === next.className &&
+  prev.rawContent === next.rawContent &&
+  prev.language === next.language,
+);
+
 function normalizePosixPath(input: string): string {
   const absolute = input.startsWith("/");
   const parts = input.split("/").filter((part) => part && part !== ".");
@@ -588,7 +609,13 @@ function MarkdownViewerInner({
     if (!targetLine || targetLine < 1) return "";
     return "[data-source-line]";
   }, [targetLine]);
-  const normalizedContent = useMemo(() => normalizeMarkdownMathDelimiters(content), [content]);
+  // 流式 chunk 高频更新时让 markdown 解析管线走低优先级（React 19 并发特性），
+  // 保证输入/滚动等交互不被阻塞；内容静止后自动补渲染最新帧。
+  const deferredContent = useDeferredValue(content);
+  const normalizedContent = useMemo(
+    () => normalizeMarkdownMathDelimiters(deferredContent),
+    [deferredContent],
+  );
 
   useEffect(() => {
     onFileClickRef.current = onFileClick;
@@ -819,7 +846,7 @@ function MarkdownViewerInner({
             }
 
             return (
-              <MarkdownCodeBlock
+              <MarkdownCodeBlockMemo
                 className={className}
                 rawContent={rawContent}
                 language={language}

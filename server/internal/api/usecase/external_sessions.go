@@ -75,6 +75,13 @@ type SyncExternalSessionDeltaOutput struct {
 
 var externalSessionSyncLocks sync.Map
 
+// externalSessionSyncTimes 记录每个 (rootID,key) 最近一次 best-effort 同步时间，用于节流。
+// externalSyncThrottle 内重复的非 Full 同步直接跳过，避免 handleSessionGet 高频轮询重复磁盘扫描。
+// ponytail: 无清理（外部会话绑定数量有限），若会话海量需换成带 TTL 的 map。
+var externalSessionSyncTimes sync.Map
+
+const externalSyncThrottle = 2 * time.Second
+
 func (s *Service) ListExternalSessions(ctx context.Context, in ListExternalSessionsInput) (ListExternalSessionsOutput, error) {
 	if err := s.ensureRegistry(); err != nil {
 		return ListExternalSessionsOutput{}, err
@@ -272,6 +279,18 @@ func (s *Service) SyncExternalSessionDelta(ctx context.Context, in SyncExternalS
 	lock := externalSessionSyncLock(in.RootID, in.Key)
 	lock.Lock()
 	defer lock.Unlock()
+
+	// 节流：非 Full 的 best-effort 同步（每次 handleSessionGet 都会触发）在时间窗内直接跳过，
+	// 避免高频轮询重复跑磁盘扫描 + SQLite 查询。Full 同步（用户主动 sync）不受限。
+	if !in.Full {
+		lockKey := externalSyncLockKey(in.RootID, in.Key)
+		if last, ok := externalSessionSyncTimes.Load(lockKey); ok {
+			if elapsed := time.Since(last.(time.Time)); elapsed < externalSyncThrottle {
+				return out, nil
+			}
+		}
+		externalSessionSyncTimes.Store(lockKey, time.Now().UTC())
+	}
 
 	root, err := s.Registry.GetRoot(in.RootID)
 	if err != nil {
@@ -534,9 +553,12 @@ func (s *Service) resolveExternalSessionImporter(agentName string) (agenttypes.E
 	return importer, nil
 }
 
+func externalSyncLockKey(rootID, key string) string {
+	return strings.TrimSpace(rootID) + ":" + strings.TrimSpace(key)
+}
+
 func externalSessionSyncLock(rootID, key string) *sync.Mutex {
-	lockKey := strings.TrimSpace(rootID) + ":" + strings.TrimSpace(key)
-	lock, _ := externalSessionSyncLocks.LoadOrStore(lockKey, &sync.Mutex{})
+	lock, _ := externalSessionSyncLocks.LoadOrStore(externalSyncLockKey(rootID, key), &sync.Mutex{})
 	return lock.(*sync.Mutex)
 }
 

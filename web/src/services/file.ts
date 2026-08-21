@@ -1,5 +1,6 @@
 import { appURL } from "./base";
 import { e2eeService } from "./e2ee";
+import { getRootNodeId } from "./rootNode";
 
 export type ReadMode = "full" | "incremental";
 
@@ -26,6 +27,7 @@ type FetchFileParams = {
   readMode?: ReadMode;
   cursor?: number;
   timeoutMs?: number;
+  nodeId?: string;
 };
 
 type CachedFileRecord = {
@@ -396,7 +398,7 @@ async function persistExactCache(
   void pruneCache();
 }
 
-function buildFileURL(rootId: string, path: string, readMode: ReadMode, cursor: number, mtime?: string): string {
+function buildFileURL(rootId: string, path: string, readMode: ReadMode, cursor: number, mtime?: string, nodeId?: string): string {
   const queryParams = new URLSearchParams({
     root: rootId,
     path,
@@ -408,7 +410,7 @@ function buildFileURL(rootId: string, path: string, readMode: ReadMode, cursor: 
   if (mtime) {
     queryParams.set("mtime", mtime);
   }
-  return appURL("/api/file", queryParams);
+  return appURL("/api/file", queryParams, nodeId);
 }
 
 function createFetchOptions(timeoutMs?: number): {
@@ -533,6 +535,7 @@ export async function setCachedGitDiff(
 }
 
 export async function fetchFile(params: FetchFileParams): Promise<FilePayload | null> {
+  params = { ...params, nodeId: params.nodeId || getRootNodeId(params.rootId) };
   const readMode = params.readMode || "incremental";
   const cursor = normalizeCursor(params.cursor);
   const cacheKey = buildCacheKey(params.rootId, params.path, readMode, cursor);
@@ -549,7 +552,7 @@ export async function fetchFile(params: FetchFileParams): Promise<FilePayload | 
   const request = createFetchOptions(params.timeoutMs);
 
   try {
-    const requestURL = buildFileURL(params.rootId, params.path, readMode, cursor, validationMTime || undefined);
+    const requestURL = buildFileURL(params.rootId, params.path, readMode, cursor, validationMTime || undefined, params.nodeId);
     const headers = e2eeService.isRequired()
       ? await e2eeService.fileProofHeaders("GET", requestURL)
       : undefined;
@@ -567,7 +570,7 @@ export async function fetchFile(params: FetchFileParams): Promise<FilePayload | 
         writeMemoryCache(cacheKey, record!.file);
         return record!.file;
       }
-      const retryURL = buildFileURL(params.rootId, params.path, readMode, cursor);
+      const retryURL = buildFileURL(params.rootId, params.path, readMode, cursor, undefined, params.nodeId);
       const retry = await fetchResponse(
         retryURL,
         {
@@ -614,14 +617,54 @@ export async function fetchFile(params: FetchFileParams): Promise<FilePayload | 
   }
 }
 
-export async function fetchProofProtectedBlob(params: {
+// 404 失败缓存：避免对同一缺失路径（如已删除的图片）在组件重挂载时反复请求。
+// 短 TTL，成功后清除，不影响文件后续被创建的情况。
+const rawFileFailures = new Map<string, number>();
+const RAW_FILE_FAILURE_TTL_MS = 60_000;
+
+// 成功 blob 缓存：多图 Markdown 中同一路径的图片在组件重挂载/重复渲染时复用，避免重复请求。
+// 缓存的是 Promise（并发去重：同 key 同时发起只打一次网络），LRU 上限逐出；页面刷新即清空。
+// ponytail: 无 TTL，文件内容更新后同路径在缓存逐出前仍返回旧图；如需要可加时间戳失效。
+const rawFileBlobCache = new Map<string, Promise<Blob>>();
+const RAW_FILE_BLOB_CACHE_MAX = 100;
+
+export function fetchProofProtectedBlob(params: {
   rootId: string;
   path: string;
   timeoutMs?: number;
+  nodeId?: string;
 }): Promise<Blob> {
+  params = { ...params, nodeId: params.nodeId || getRootNodeId(params.rootId) };
+  const cacheKey = `${params.rootId}:${params.path}:${params.nodeId || ""}`;
+  const cached = rawFileBlobCache.get(cacheKey);
+  if (cached) return cached;
+  const promise = doFetchProofProtectedBlob(params, cacheKey);
+  rawFileBlobCache.set(cacheKey, promise);
+  if (rawFileBlobCache.size > RAW_FILE_BLOB_CACHE_MAX) {
+    const oldestKey = rawFileBlobCache.keys().next().value;
+    if (oldestKey !== undefined) {
+      rawFileBlobCache.delete(oldestKey);
+    }
+  }
+  promise.catch(() => {
+    if (rawFileBlobCache.get(cacheKey) === promise) {
+      rawFileBlobCache.delete(cacheKey);
+    }
+  });
+  return promise;
+}
+
+async function doFetchProofProtectedBlob(
+  params: { rootId: string; path: string; timeoutMs?: number; nodeId?: string },
+  cacheKey: string,
+): Promise<Blob> {
   const request = createFetchOptions(params.timeoutMs);
   try {
-    const baseURL = buildFileURL(params.rootId, params.path, "full", 0);
+    const failedAt = rawFileFailures.get(cacheKey);
+    if (failedAt !== undefined && Date.now() - failedAt < RAW_FILE_FAILURE_TTL_MS) {
+      throw new Error("open raw file failed: status=404 (cached)");
+    }
+    const baseURL = buildFileURL(params.rootId, params.path, "full", 0, undefined, params.nodeId);
     const rawURL = withRawFlag(
       baseURL,
     );
@@ -630,14 +673,18 @@ export async function fetchProofProtectedBlob(params: {
       : undefined;
     const response = await fetchResponse(rawURL, { ...request.init, headers });
     if (!response.ok) {
+      if (response.status === 404) {
+        rawFileFailures.set(cacheKey, Date.now());
+      }
       if (response.status === 401 && e2eeService.isRequired()) {
         const payload = (await response.json().catch(() => ({}))) as { error?: string };
         if (e2eeService.handleServerError(String(payload.error || ""))) {
-          return fetchProofProtectedBlob(params);
+          return doFetchProofProtectedBlob(params, cacheKey);
         }
       }
       throw new Error(`open raw file failed: status=${response.status}`);
     }
+    rawFileFailures.delete(cacheKey);
     return response.blob();
   } finally {
     if (request.timer !== null) {

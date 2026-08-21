@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/url"
 	"os"
@@ -31,6 +32,8 @@ const (
 	sessionDBLinkExt = ".link"
 	exchangeFileTpl  = "sessions/%s.jsonl"
 	auxFileTpl       = "sessions/%s.aux.jsonl"
+	// maxExchangeLineBytes 单条 JSONL 上限（tool call 大 content），bufio.Scanner 兜底。
+	maxExchangeLineBytes = 64 << 20
 	selectSessionSQL = `
 	SELECT key, type, parent_session_key, parent_tool_call_id, source, task_id, model, shell, plan_mode, name, related_files_json, related_worktree_json, last_context_window_total_tokens, last_context_window_model_context_window, pinned_at, created_at, updated_at, closed_at
 	FROM sessions`
@@ -101,6 +104,9 @@ INSERT INTO session_agent_bindings (
 ON CONFLICT(session_key, agent) DO UPDATE SET
 	agent_session_id = excluded.agent_session_id,
 	agent_ctx_seq = excluded.agent_ctx_seq`
+	selectAllAgentBindingsSQL = `
+SELECT session_key, agent, agent_session_id, agent_ctx_seq, external_source_path, external_source_offset, external_source_mtime_ns
+FROM session_agent_bindings`
 	selectAgentBindingSQL = `
 SELECT session_key, agent, agent_session_id, agent_ctx_seq, external_source_path, external_source_offset, external_source_mtime_ns
 FROM session_agent_bindings
@@ -122,12 +128,22 @@ var openSQLiteDB = func(path string) (*sql.DB, error) {
 
 var mindFSConfigDir = configpkg.MindFSConfigDir
 
+// exchangeFileCursor 记录 exchanges/aux JSONL 文件的读取游标，用于增量读取：
+// 文件 (size, mtime) 未变 → 复用内存缓存；追加 → 从 Offset 续读尾部，避免每次全量读盘+反序列化。
+type exchangeFileCursor struct {
+	Offset    int64
+	Size      int64
+	ModTimeNs int64
+	MaxSeq    int
+}
+
 type Manager struct {
 	root             fs.RootInfo
 	mu               sync.Mutex
 	loopOnce         sync.Once
 	db               *sql.DB
 	sessions         map[string]*Session
+	exchangeCursors  map[string]exchangeFileCursor
 	pendingToolCalls map[string]map[string]agenttypes.ToolCall
 	now              func() time.Time
 	idleInterval     time.Duration
@@ -176,6 +192,7 @@ func NewManager(root fs.RootInfo, opts ...Option) *Manager {
 	m := &Manager{
 		root:             root,
 		sessions:         make(map[string]*Session),
+		exchangeCursors:  make(map[string]exchangeFileCursor),
 		pendingToolCalls: make(map[string]map[string]agenttypes.ToolCall),
 		now:              time.Now,
 		idleInterval:     1 * time.Minute,
@@ -263,6 +280,13 @@ func (m *Manager) Get(_ context.Context, key string, afterSeq int) (*Session, er
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.getSessionUnsafe(key, afterSeq)
+}
+
+// GetMeta 只加载 SQLite meta（不含 exchanges 文件），用于列表/名称查询等不需要完整会话的场景。
+func (m *Manager) GetMeta(_ context.Context, key string) (*Session, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.getSessionMetaWithBindingsUnsafe(key)
 }
 
 func (m *Manager) GetExchangeAux(_ context.Context, key string, afterSeq int) (map[int][]ExchangeAux, error) {
@@ -1096,6 +1120,7 @@ func (m *Manager) deleteSessionUnsafe(key string) error {
 	if err != nil {
 		return err
 	}
+	delete(m.exchangeCursors, path)
 	metaDir, err := m.root.EnsureMetaDir()
 	if err != nil {
 		return err
@@ -1107,6 +1132,7 @@ func (m *Manager) deleteSessionUnsafe(key string) error {
 	if err != nil {
 		return err
 	}
+	delete(m.exchangeCursors, auxPath)
 	if err := os.Remove(filepath.Join(metaDir, filepath.FromSlash(auxPath))); err != nil && !os.IsNotExist(err) {
 		return err
 	}
@@ -1252,12 +1278,18 @@ WHERE key = ?`, key)
 }
 
 func (m *Manager) listSessionMetasUnsafe() ([]*Session, error) {
+	return m.querySessionMetasUnsafe(selectSessionSQL+`
+ORDER BY updated_at DESC`, nil)
+}
+
+// querySessionMetasUnsafe 一次拉取 session meta（不含 exchanges 文件），并单次 JOIN 填充 agent bindings。
+// 列表/搜索只需 meta；此前逐 key 调 getSessionUnsafe 会导致每个会话全量读 JSONL。
+func (m *Manager) querySessionMetasUnsafe(query string, args []any) ([]*Session, error) {
 	db, err := m.ensureSessionMetaDBUnsafe()
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(selectSessionSQL + `
-ORDER BY updated_at DESC`)
+	rows, err := db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1265,6 +1297,7 @@ ORDER BY updated_at DESC`)
 	for rows.Next() {
 		item, err := scanSessionMetaRow(rows)
 		if err != nil {
+			rows.Close()
 			return nil, err
 		}
 		items = append(items, item)
@@ -1276,28 +1309,54 @@ ORDER BY updated_at DESC`)
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
-	for _, item := range items {
-		bindings, err := m.listAgentBindingsUnsafe(item.Key)
-		if err != nil {
+	if len(items) > 0 {
+		if err := m.fillSessionBindingsUnsafe(items); err != nil {
 			return nil, err
 		}
-		for _, binding := range bindings {
+	}
+	return items, nil
+}
+
+// fillSessionBindingsUnsafe 用单个 IN 查询拉取一批 session 的 bindings，替代逐 session N+1 查询。
+func (m *Manager) fillSessionBindingsUnsafe(items []*Session) error {
+	db, err := m.ensureSessionMetaDBUnsafe()
+	if err != nil {
+		return err
+	}
+	keys := make([]any, 0, len(items))
+	for _, item := range items {
+		keys = append(keys, item.Key)
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(keys)), ",")
+	rows, err := db.Query(selectAllAgentBindingsSQL+` WHERE session_key IN (`+placeholders+`)`, keys...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	byKey := make(map[string][]AgentBinding, len(items))
+	for rows.Next() {
+		var binding AgentBinding
+		if err := scanAgentBinding(rows, &binding); err != nil {
+			return err
+		}
+		byKey[binding.SessionKey] = append(byKey[binding.SessionKey], binding)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, item := range items {
+		for _, binding := range byKey[item.Key] {
 			if strings.TrimSpace(binding.Agent) == "" {
 				continue
 			}
 			item.AgentCtxSeq[binding.Agent] = binding.AgentCtxSeq
 		}
 	}
-	return items, nil
+	return nil
 }
 
 func (m *Manager) listSessionsUnsafe(opts ListOptions) ([]*Session, error) {
-	db, err := m.ensureSessionMetaDBUnsafe()
-	if err != nil {
-		return nil, err
-	}
-	query := `
-SELECT key FROM sessions`
+	query := selectSessionSQL
 	where, args := sessionListWhere(opts)
 	if len(where) > 0 {
 		query += `
@@ -1310,40 +1369,11 @@ ORDER BY updated_at DESC`
 LIMIT ?`
 		args = append(args, opts.Limit)
 	}
-	rows, err := db.Query(query, args...)
-	if err != nil {
-		return nil, err
-	}
-	keys := make([]string, 0)
-	for rows.Next() {
-		var key string
-		if err := rows.Scan(&key); err != nil {
-			return nil, err
-		}
-		keys = append(keys, key)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	items := make([]*Session, 0, len(keys))
-	for _, key := range keys {
-		session, err := m.getSessionUnsafe(key, 0)
-		if err != nil {
-			return nil, err
-		}
-		items = append(items, session)
-	}
-	return items, nil
+	return m.querySessionMetasUnsafe(query, args)
 }
 
 func (m *Manager) listPinnedSessionsUnsafe(opts ListOptions) ([]*Session, error) {
-	db, err := m.ensureSessionMetaDBUnsafe()
-	if err != nil {
-		return nil, err
-	}
-	query := `
-SELECT key FROM sessions`
+	query := selectSessionSQL
 	where, args := sessionListWhere(ListOptions{
 		ParentSessionKey: opts.ParentSessionKey,
 		TopLevelOnly:     opts.TopLevelOnly,
@@ -1355,32 +1385,7 @@ WHERE ` + strings.Join(where, " AND ")
 	}
 	query += `
 ORDER BY pinned_at DESC, updated_at DESC`
-	rows, err := db.Query(query, args...)
-	if err != nil {
-		return nil, err
-	}
-	keys := make([]string, 0)
-	for rows.Next() {
-		var key string
-		if err := rows.Scan(&key); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		keys = append(keys, key)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	items := make([]*Session, 0, len(keys))
-	for _, key := range keys {
-		session, err := m.getSessionUnsafe(key, 0)
-		if err != nil {
-			return nil, err
-		}
-		items = append(items, session)
-	}
-	return items, nil
+	return m.querySessionMetasUnsafe(query, args)
 }
 
 func (m *Manager) countSessionsUnsafe(opts ListOptions) (int, error) {
@@ -1422,6 +1427,20 @@ func sessionListWhere(opts ListOptions) ([]string, []any) {
 }
 
 func (m *Manager) loadSessionUnsafe(key string, afterSeq int) (*Session, error) {
+	meta, err := m.getSessionMetaWithBindingsUnsafe(key)
+	if err != nil {
+		return nil, err
+	}
+	exchanges, _, err := m.loadExchanges(key, afterSeq)
+	if err != nil {
+		return nil, err
+	}
+	meta.Exchanges = exchanges
+	return meta, nil
+}
+
+// getSessionMetaWithBindingsUnsafe 只加载 SQLite meta + bindings，不读 exchanges 文件。
+func (m *Manager) getSessionMetaWithBindingsUnsafe(key string) (*Session, error) {
 	meta, err := m.getSessionMetaUnsafe(key)
 	if err != nil {
 		return nil, err
@@ -1430,20 +1449,12 @@ func (m *Manager) loadSessionUnsafe(key string, afterSeq int) (*Session, error) 
 	if err != nil {
 		return nil, err
 	}
-	if meta.AgentCtxSeq == nil {
-		meta.AgentCtxSeq = map[string]int{}
-	}
 	for _, binding := range bindings {
 		if strings.TrimSpace(binding.Agent) == "" {
 			continue
 		}
 		meta.AgentCtxSeq[binding.Agent] = binding.AgentCtxSeq
 	}
-	exchanges, _, err := m.loadExchanges(key, afterSeq)
-	if err != nil {
-		return nil, err
-	}
-	meta.Exchanges = exchanges
 	return meta, nil
 }
 
@@ -1472,6 +1483,56 @@ func (m *Manager) loadExchanges(key string, afterSeq int) ([]Exchange, int, erro
 	if err != nil {
 		return nil, 0, err
 	}
+
+	// 增量快路径：文件与游标一致 → 直接过滤内存缓存；追加 → 尾部增量读，避免全量读盘+反序列化。
+	if cached, ok := m.sessions[key]; ok && cached != nil && len(cached.Exchanges) > 0 {
+		if cursor, has := m.exchangeCursors[path]; has && cursor.Offset > 0 {
+			if info, statErr := m.root.StatMetaFile(path); statErr == nil {
+				size := info.Size()
+				mtimeNs := info.ModTime().UnixNano()
+				switch {
+				case size == cursor.Size && mtimeNs == cursor.ModTimeNs:
+					return filterExchanges(cached.Exchanges, afterSeq), cursor.MaxSeq, nil
+				case size > cursor.Offset && mtimeNs != cursor.ModTimeNs:
+					// 写路径（AddExchangeForAgent 等）会同步更新缓存但 cursor 不前进，
+					// 以缓存 max seq 为基准去重，避免重复追加已读条目。
+					baseSeq := cursor.MaxSeq
+					if cachedMax := maxExchangeSeq(cached.Exchanges); cachedMax > baseSeq {
+						baseSeq = cachedMax
+					}
+					added, maxSeq, ok := m.readExchangeTail(path, cursor.Offset, baseSeq)
+					if ok {
+						if len(added) > 0 {
+							cached.Exchanges = append(cached.Exchanges, added...)
+						}
+						m.exchangeCursors[path] = exchangeFileCursor{Offset: size, Size: size, ModTimeNs: mtimeNs, MaxSeq: maxSeq}
+						return filterExchanges(cached.Exchanges, afterSeq), maxSeq, nil
+					}
+				}
+			}
+		}
+	}
+
+	// 全量读（兜底：首读/文件被重写/尾部解析失败）
+	exchanges, total, err := m.readExchangesFull(path)
+	if err != nil {
+		return nil, 0, err
+	}
+	if info, statErr := m.root.StatMetaFile(path); statErr == nil {
+		m.exchangeCursors[path] = exchangeFileCursor{
+			Offset:    info.Size(),
+			Size:      info.Size(),
+			ModTimeNs: info.ModTime().UnixNano(),
+			MaxSeq:    total,
+		}
+	}
+	if cached, ok := m.sessions[key]; ok && cached != nil {
+		cached.Exchanges = exchanges
+	}
+	return filterExchanges(exchanges, afterSeq), total, nil
+}
+
+func (m *Manager) readExchangesFull(path string) ([]Exchange, int, error) {
 	payload, err := m.root.ReadMetaFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -1497,15 +1558,78 @@ func (m *Manager) loadExchanges(key string, afterSeq int) ([]Exchange, int, erro
 		if entry.Seq > total {
 			total = entry.Seq
 		}
-		if afterSeq > 0 && entry.Seq <= afterSeq {
-			continue
-		}
 		exchanges = append(exchanges, entry)
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, 0, err
 	}
 	return exchanges, total, nil
+}
+
+// readExchangeTail 从 offset 续读追加的 JSONL 行。跳过 seq <= baseSeq 的条目（缓存已包含），
+// 返回真正新增的 exchanges 与新的 maxSeq。解析失败/读取错误返回 ok=false，由调用方回退全量读。
+func (m *Manager) readExchangeTail(path string, offset int64, baseSeq int) ([]Exchange, int, bool) {
+	file, err := m.root.OpenMetaFile(path)
+	if err != nil {
+		return nil, baseSeq, false
+	}
+	defer file.Close()
+	if _, err := file.Seek(offset, io.SeekStart); err != nil {
+		return nil, baseSeq, false
+	}
+	total := baseSeq
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64*1024), maxExchangeLineBytes)
+	added := make([]Exchange, 0, 8)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var entry Exchange
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			continue
+		}
+		if entry.Seq <= 0 {
+			entry.Seq = total + 1
+		}
+		if entry.Seq > total {
+			total = entry.Seq
+		}
+		if entry.Seq <= baseSeq {
+			continue
+		}
+		added = append(added, entry)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, baseSeq, false
+	}
+	return added, total, true
+}
+
+func maxExchangeSeq(exchanges []Exchange) int {
+	max := 0
+	for _, e := range exchanges {
+		if e.Seq > max {
+			max = e.Seq
+		}
+	}
+	return max
+}
+
+func filterExchanges(all []Exchange, afterSeq int) []Exchange {
+	if afterSeq <= 0 {
+		out := make([]Exchange, len(all))
+		copy(out, all)
+		return out
+	}
+	out := make([]Exchange, 0, len(all))
+	for _, e := range all {
+		if e.Seq > afterSeq {
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 func (m *Manager) appendExchange(key string, exchange Exchange) error {
@@ -1549,6 +1673,44 @@ func (m *Manager) loadExchangeAuxEntries(key string, afterSeq int) ([]ExchangeAu
 	if err != nil {
 		return nil, err
 	}
+
+	// 增量快路径：仅 afterSeq>0 适用。afterSeq=0 需要全部 aux（如 GetFullToolCall 查找 callID），
+	// aux 无内存缓存，必须全量读。增量场景文件未变 → 无新 aux；追加 → 尾部增量读。
+	if afterSeq > 0 {
+		if cursor, has := m.exchangeCursors[path]; has && cursor.Offset > 0 {
+			if info, statErr := m.root.StatMetaFile(path); statErr == nil {
+				size := info.Size()
+				mtimeNs := info.ModTime().UnixNano()
+				switch {
+				case size == cursor.Size && mtimeNs == cursor.ModTimeNs:
+					return []ExchangeAux{}, nil
+				case size > cursor.Offset && mtimeNs != cursor.ModTimeNs:
+					if items, ok := m.readAuxTail(path, cursor.Offset, afterSeq); ok {
+						m.exchangeCursors[path] = exchangeFileCursor{Offset: size, Size: size, ModTimeNs: mtimeNs, MaxSeq: cursor.MaxSeq}
+						return items, nil
+					}
+				}
+			}
+		}
+	}
+
+	// 全量读（兜底 / afterSeq=0）
+	items, err := m.readAuxFile(path, afterSeq)
+	if err != nil {
+		return nil, err
+	}
+	if info, statErr := m.root.StatMetaFile(path); statErr == nil {
+		m.exchangeCursors[path] = exchangeFileCursor{
+			Offset:    info.Size(),
+			Size:      info.Size(),
+			ModTimeNs: info.ModTime().UnixNano(),
+			MaxSeq:    0,
+		}
+	}
+	return items, nil
+}
+
+func (m *Manager) readAuxFile(path string, afterSeq int) ([]ExchangeAux, error) {
 	payload, err := m.root.ReadMetaFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -1579,6 +1741,41 @@ func (m *Manager) loadExchangeAuxEntries(key string, afterSeq int) ([]ExchangeAu
 		return nil, err
 	}
 	return items, nil
+}
+
+func (m *Manager) readAuxTail(path string, offset int64, afterSeq int) ([]ExchangeAux, bool) {
+	file, err := m.root.OpenMetaFile(path)
+	if err != nil {
+		return nil, false
+	}
+	defer file.Close()
+	if _, err := file.Seek(offset, io.SeekStart); err != nil {
+		return nil, false
+	}
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64*1024), maxExchangeLineBytes)
+	items := make([]ExchangeAux, 0, 8)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var entry ExchangeAux
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			continue
+		}
+		if entry.Seq <= 0 {
+			continue
+		}
+		if afterSeq > 0 && entry.Seq <= afterSeq {
+			continue
+		}
+		items = append(items, entry)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, false
+	}
+	return items, true
 }
 
 func mergeToolCall(base, next agenttypes.ToolCall) agenttypes.ToolCall {
@@ -1758,12 +1955,32 @@ func openSessionMetaDB(dbFile string) (db *sql.DB, err error) {
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(1)
+	// WAL：读写不互相阻塞，避免高频读（列表/搜索/Get）阻塞低频写；busy_timeout 处理写锁竞争。
+	// 多读连接：列表/搜索等读操作可并发，写仍由 SQLite 锁 + busy_timeout 保证串行。
+	db.SetMaxOpenConns(4)
+	db.SetMaxIdleConns(4)
+	if _, err := db.Exec(`PRAGMA journal_mode=WAL`); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if _, err := db.Exec(`PRAGMA busy_timeout=5000`); err != nil {
+		db.Close()
+		return nil, err
+	}
 	if _, err := db.Exec(sessionTableSchema); err != nil {
 		db.Close()
 		return nil, err
 	}
 	if _, err := db.Exec(agentBindingTableSchema); err != nil {
+		db.Close()
+		return nil, err
+	}
+	// 列表/搜索按 updated_at DESC 排序，无索引时全表排序。
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_sessions_updated_at ON sessions(updated_at DESC)`); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_sessions_pinned_at ON sessions(pinned_at, updated_at DESC)`); err != nil {
 		db.Close()
 		return nil, err
 	}

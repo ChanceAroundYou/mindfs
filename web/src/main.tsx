@@ -6,6 +6,7 @@ import { registerServiceWorker } from "./registerServiceWorker";
 import { applyAppearanceMode, getAppearanceMode } from "./services/appearance";
 import { isHarmonyRuntime, isNativeShellRuntime } from "./services/runtime";
 import { Login } from "./components/Login";
+import { addNode, getNodes, setActiveNodeId } from "./services/nodeRegistry";
 import { I18nProvider, translateNow } from "./i18n";
 
 applyAppearanceMode();
@@ -604,7 +605,19 @@ function AppRoot() {
   }, []);
 
   if (!ready) {
-    return <Login onOpenNode={(nodeURL) => window.location.assign(nodeURL)} />;
+    return <Login onOpenNode={(nodeURL) => {
+      try {
+        const url = String(nodeURL || "").trim().replace(/\/+$/, "");
+        if (!url) return;
+        const name = (() => { try { return new URL(url).hostname; } catch { return url; }})();
+        const nodes = getNodes();
+        const existing = nodes.find((n) => n.url === url);
+        if (existing) { setActiveNodeId(existing.id); window.dispatchEvent(new CustomEvent("mindfs:nodes-changed")); return; }
+        const node = addNode({ name, url });
+        setActiveNodeId(node.id);
+        window.dispatchEvent(new CustomEvent("mindfs:nodes-changed"));
+      } catch { window.location.assign(nodeURL); }
+    }} />;
   }
   return <App onGoHome={goToLauncher} />;
 }

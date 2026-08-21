@@ -150,6 +150,7 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 	mux := http.NewServeMux()
 	mux.Handle("/", httpHandler.Routes())
 	mux.Handle("/ws", wsHandler)
+	mux.Handle("/mindfs/ws", wsHandler)
 
 	handler := api.LoggingMiddleware(api.CORSMiddleware(mux))
 

@@ -483,7 +483,9 @@ func (h *WSHandler) handleWSRequest(ctx context.Context, conn *websocket.Conn, c
 	case "session.ready":
 		go h.handleSessionReady(clientID, req)
 	case "session.cancel":
-		h.handleSessionCancel(ctx, conn, clientID, req)
+		// 异步处理：中断可能阻塞等待 CLI 确认（无超时），同步派发会卡死整个
+		// 连接读循环，使后续 stop/消息都无法送达，表现为"停止按钮有时没反应"。
+		go h.handleSessionCancel(ctx, conn, clientID, req)
 	case "session.queue.remove":
 		h.handleSessionQueueRemove(ctx, conn, clientID, req)
 	case "session.queue.update":

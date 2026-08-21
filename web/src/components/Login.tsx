@@ -5,7 +5,6 @@ import {
   type LauncherNode,
 } from "../services/storage";
 import {
-  consumePendingRelayNodes,
   getNativeLauncherNodes,
   setNativeLauncherNodes,
 } from "../services/launcherNodeSync";
@@ -23,7 +22,6 @@ type LoginProps = {
   onOpenNode: (nodeURL: string) => void;
 };
 
-const RELAY_URL = "https://relay.a9gent.com/nodes";
 const LAUNCHER_BG =
   "radial-gradient(circle at top left, rgba(91, 125, 184, 0.07), transparent 22%), radial-gradient(circle at right 18%, rgba(148, 163, 184, 0.18), transparent 24%), linear-gradient(180deg, #f8fafc 0%, #edf2f7 100%)";
 const SURFACE = "var(--mindfs-launcher-surface)";
@@ -47,9 +45,7 @@ function normalizeNodeURL(value: string): string {
       return "";
     }
     parsed.hash = "";
-    const relayNodePath = /^\/n\/[^/]+\/?$/.test(parsed.pathname);
-    const normalized = parsed.toString().replace(/\/+$/, "");
-    return relayNodePath ? `${normalized}/` : normalized;
+    return parsed.toString().replace(/\/+$/, "");
   } catch {
     return "";
   }
@@ -261,39 +257,14 @@ export function Login({ onOpenNode }: LoginProps): ReactElement {
     const timers: number[] = [];
 
     const syncLauncherNodes = async (): Promise<void> => {
-      const [nativeNodes, pendingNodes] = await Promise.all([
-        getNativeLauncherNodes(),
-        consumePendingRelayNodes(),
-      ]);
+      const nativeNodes = await getNativeLauncherNodes();
       if (cancelled) {
         return;
       }
 
       const existingNodes = getStoredLauncherNodes();
-      const restoredNodes = mergeLauncherNodes(existingNodes, nativeNodes);
-      const existingURLSet = new Set(
-        restoredNodes.map((item) => normalizeNodeURL(item.url)).filter(Boolean),
-      );
-      const createdAt = new Date().toISOString();
-      const importedNodes: LauncherNode[] = [];
-
-      for (const item of pendingNodes) {
-        const name = String(item?.name || "").trim();
-        const url = normalizeNodeURL(String(item?.url || ""));
-        if (!name || !url || existingURLSet.has(url)) {
-          continue;
-        }
-        existingURLSet.add(url);
-        importedNodes.push({
-          id: buildNodeID(),
-          name,
-          url,
-          createdAt,
-        });
-      }
-
-      const nextNodes = mergeLauncherNodes(importedNodes, restoredNodes);
-      if (nextNodes.length === existingNodes.length && importedNodes.length === 0) {
+      const nextNodes = mergeLauncherNodes(existingNodes, nativeNodes);
+      if (nextNodes.length === existingNodes.length) {
         return;
       }
 
@@ -400,48 +371,6 @@ export function Login({ onOpenNode }: LoginProps): ReactElement {
           gap: "8px",
         }}
       >
-        <button
-          type="button"
-          onClick={() => onOpenNode(RELAY_URL)}
-          style={{
-            width: "100%",
-            textAlign: "left",
-            border: `1px solid ${BORDER}`,
-            borderRadius: "20px",
-            background: SURFACE_STRONG,
-            padding: "18px",
-            fontSize: "18px",
-            fontWeight: 500,
-            color: TEXT,
-            cursor: "pointer",
-            boxShadow: SHADOW,
-            backdropFilter: "blur(20px)",
-          }}
-        >
-          <div style={{ minWidth: 0, display: "grid", gap: "4px" }}>
-            <div
-              style={{
-                fontSize: "18px",
-                fontWeight: 500,
-                color: TEXT,
-                lineHeight: 1.2,
-              }}
-            >
-              mindfs relayer
-            </div>
-            <div
-              style={{
-                fontSize: "12px",
-                lineHeight: 1.5,
-                color: MUTED,
-                wordBreak: "break-word",
-              }}
-            >
-              {RELAY_URL}
-            </div>
-          </div>
-        </button>
-
         {nodes.map((node) => (
           <div
             key={node.id}

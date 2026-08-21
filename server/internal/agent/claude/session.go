@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"mindfs/server/internal/agent/logs"
 	types "mindfs/server/internal/agent/types"
@@ -510,7 +511,12 @@ func (s *session) CancelCurrentTurn() error {
 		s.turn.Cancel()
 		return nil
 	}
-	if err := s.stream.Interrupt(context.Background()); err == nil {
+	// Interrupt 会阻塞等待 CLI 确认（SDK 内部用 Background ctx，无超时）。
+	// 若 CLI 正卡在长工具调用里迟迟不 ack，这里会永久挂起，卡死整个会话。
+	// 用短超时包住，3s 没确认就退化为取消 turn 上下文（结束本轮）。
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := s.stream.Interrupt(ctx); err == nil {
 		s.markTurnInterrupted()
 		return nil
 	}
