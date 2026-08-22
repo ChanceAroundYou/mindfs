@@ -90,6 +90,8 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE TABLE IF NOT EXISTS session_name_aliases (
 	key TEXT PRIMARY KEY,
 	name TEXT NOT NULL,
+	agent TEXT NOT NULL DEFAULT '',
+	agent_session_id TEXT NOT NULL DEFAULT '',
 	updated_at TEXT NOT NULL
 );`
 	agentBindingTableSchema = `
@@ -128,9 +130,11 @@ WHERE agent = ? AND agent_session_id = ?
 LIMIT 1`
 	selectSessionNameAliasSQL = `
 SELECT name FROM session_name_aliases WHERE key = ?`
+	selectSessionNameAliasByAgentSQL = `
+SELECT name FROM session_name_aliases WHERE agent = ? AND agent_session_id = ? LIMIT 1`
 	upsertSessionNameAliasSQL = `
-INSERT INTO session_name_aliases (key, name, updated_at) VALUES (?, ?, ?)
-ON CONFLICT(key) DO UPDATE SET name = excluded.name, updated_at = excluded.updated_at`
+INSERT INTO session_name_aliases (key, name, agent, agent_session_id, updated_at) VALUES (?, ?, ?, ?, ?)
+ON CONFLICT(key) DO UPDATE SET name = excluded.name, agent = excluded.agent, agent_session_id = excluded.agent_session_id, updated_at = excluded.updated_at`
 )
 
 var openSQLiteDB = func(path string) (*sql.DB, error) {
@@ -284,6 +288,11 @@ func (m *Manager) Create(_ context.Context, input CreateInput) (*Session, error)
 		return nil, err
 	}
 	m.sessions[session.Key] = session
+	// Persist custom name so delete+reimport can resume it via LookupAliasForAgent.
+	// Default "New Session" is omitted to avoid alias pollution.
+	if trimmed := strings.TrimSpace(name); trimmed != "" && trimmed != "New Session" {
+		_ = m.upsertSessionNameAliasUnsafe(session.Key, trimmed)
+	}
 	return session, nil
 }
 
@@ -943,7 +952,22 @@ func (m *Manager) upsertAgentBindingUnsafe(binding AgentBinding) error {
 		strings.TrimSpace(binding.AgentSessionID),
 		agentCtxSeq,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	// Rename may have happened before the first agent binding existed, leaving the alias
+	// stored with empty agent identity. Backfill it now so a later delete+reimport via
+	// LookupAliasForAgent still finds the manual name.
+	if key := strings.TrimSpace(binding.SessionKey); key != "" {
+		_, _ = db.Exec(
+			`UPDATE session_name_aliases SET agent = ?, agent_session_id = ?, updated_at = ? WHERE key = ?`,
+			strings.TrimSpace(binding.Agent),
+			strings.TrimSpace(binding.AgentSessionID),
+			m.now().UTC().Format(time.RFC3339Nano),
+			key,
+		)
+	}
+	return nil
 }
 
 func (m *Manager) Close(ctx context.Context, key string) (*Session, error) {
@@ -1508,8 +1532,44 @@ func (m *Manager) upsertSessionNameAliasUnsafe(key, name string) error {
 	if err != nil {
 		return err
 	}
-	_, err = db.Exec(upsertSessionNameAliasSQL, key, name, m.now().UTC().Format(time.RFC3339Nano))
+	// Persist alias keyed by internal key, plus best-known agent external identity
+	// so a later re-import (new key, same agent_session_id) still resumes the alias.
+	agent := ""
+	agentSessionID := ""
+	if rows, qErr := db.Query(`SELECT agent, agent_session_id FROM session_agent_bindings WHERE session_key = ? LIMIT 1`, key); qErr == nil {
+		if rows.Next() {
+			_ = rows.Scan(&agent, &agentSessionID)
+		}
+		_ = rows.Close()
+	}
+	_, err = db.Exec(upsertSessionNameAliasSQL, key, name, strings.TrimSpace(agent), strings.TrimSpace(agentSessionID), m.now().UTC().Format(time.RFC3339Nano))
 	return err
+}
+
+func (m *Manager) lookupSessionAliasForAgentUnsafe(agent, agentSessionID string) (string, bool) {
+	agent = strings.TrimSpace(agent)
+	agentSessionID = strings.TrimSpace(agentSessionID)
+	if agent == "" || agentSessionID == "" {
+		return "", false
+	}
+	db, err := m.ensureSessionMetaDBUnsafe()
+	if err != nil {
+		return "", false
+	}
+	var name string
+	if err := db.QueryRow(selectSessionNameAliasByAgentSQL, agent, agentSessionID).Scan(&name); err != nil {
+		return "", false
+	}
+	if strings.TrimSpace(name) == "" {
+		return "", false
+	}
+	return strings.TrimSpace(name), true
+}
+
+func (m *Manager) LookupAliasForAgent(agent, agentSessionID string) (string, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.lookupSessionAliasForAgentUnsafe(agent, agentSessionID)
 }
 
 func (m *Manager) applySessionNameAliasesUnsafe(items []*Session) error {
@@ -1548,6 +1608,26 @@ func (m *Manager) applySessionNameAliasesUnsafe(items []*Session) error {
 			it.Name = v
 		}
 	}
+	// Also overlay aliases that were stored by agent_session_id for re-imported sessions
+	// whose internal key changed. If an alias exists for this session's external identity
+	// but not for its current key, surface it.
+	for _, it := range items {
+		if strings.TrimSpace(it.Name) != "" && byKey[strings.TrimSpace(it.Key)] != "" {
+			continue
+		}
+		// Prefer bindings already loaded by fillSessionBindingsUnsafe; fallback to DB lookup
+		agent := InferAgentFromSession(it)
+		var agentSessionID string
+		if rows2, qErr := db.Query(`SELECT agent_session_id FROM session_agent_bindings WHERE session_key = ? LIMIT 1`, it.Key); qErr == nil {
+			if rows2.Next() {
+				_ = rows2.Scan(&agentSessionID)
+			}
+			_ = rows2.Close()
+		}
+		if v, ok := m.lookupSessionAliasForAgentUnsafe(agent, agentSessionID); ok {
+			it.Name = v
+		}
+	}
 	return nil
 }
 
@@ -1561,13 +1641,24 @@ func (m *Manager) applySessionNameAliasSingleUnsafe(s *Session) error {
 	}
 	var alias string
 	err = db.QueryRow(selectSessionNameAliasSQL, strings.TrimSpace(s.Key)).Scan(&alias)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+	if err == nil {
+		if v := strings.TrimSpace(alias); v != "" {
+			s.Name = v
 			return nil
 		}
+	} else if !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	if v := strings.TrimSpace(alias); v != "" {
+	// Fallback: alias was stored under external identity (re-import after delete retains manual name)
+	agent := InferAgentFromSession(s)
+	var agentSessionID string
+	if rows, qErr := db.Query(`SELECT agent_session_id FROM session_agent_bindings WHERE session_key = ? LIMIT 1`, s.Key); qErr == nil {
+		if rows.Next() {
+			_ = rows.Scan(&agentSessionID)
+		}
+		_ = rows.Close()
+	}
+	if v, ok := m.lookupSessionAliasForAgentUnsafe(agent, agentSessionID); ok {
 		s.Name = v
 	}
 	return nil
@@ -2107,6 +2198,8 @@ func openSessionMetaDB(dbFile string) (db *sql.DB, err error) {
 		`ALTER TABLE session_agent_bindings ADD COLUMN external_source_path TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE session_agent_bindings ADD COLUMN external_source_offset INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE session_agent_bindings ADD COLUMN external_source_mtime_ns INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE session_name_aliases ADD COLUMN agent TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE session_name_aliases ADD COLUMN agent_session_id TEXT NOT NULL DEFAULT ''`,
 	} {
 		if _, err := db.Exec(stmt); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
 			db.Close()
