@@ -194,7 +194,7 @@ func (s *Service) ListMultiRootSessions(ctx context.Context, in ListMultiRootSes
 		}
 		groups = append(groups, SessionRootGroup{
 			RootID:            root.ID,
-			RootName:          root.Name,
+			RootName:          root.EffectiveName(),
 			LatestSessionTime: latest,
 			Sessions:          items,
 			PinnedSessions:    pinnedItems,

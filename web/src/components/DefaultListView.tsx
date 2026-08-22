@@ -45,6 +45,7 @@ const ChevronRight = ({ isOpen }: { isOpen: boolean }) => (
 
 type DefaultListViewProps = {
   root?: string;
+  rootDisplayName?: string;
   path?: string;
   entries: FileEntry[];
   errorMessage?: string;
@@ -193,6 +194,7 @@ function GitBranchMenuIcon({
 // 路径导航组件
 function Breadcrumbs({
   root,
+  rootDisplayName,
   path,
   onPathClick,
   editingRoot = false,
@@ -205,6 +207,7 @@ function Breadcrumbs({
   rootColor = null,
 }: {
   root?: string;
+  rootDisplayName?: string;
   path: string;
   onPathClick?: (path: string) => void;
   editingRoot?: boolean;
@@ -323,6 +326,42 @@ function Breadcrumbs({
               <button
                 type="button"
                 onMouseDown={(event) => event.preventDefault()}
+                onClick={onRootRenameSubmit}
+                disabled={rootRenaming}
+                aria-label={t("sessionList.confirmRename")}
+                style={{
+                  width: "22px",
+                  height: "22px",
+                  borderRadius: "6px",
+                  border: "none",
+                  background: "transparent",
+                  color: "var(--accent-color)",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  cursor: rootRenaming ? "default" : "pointer",
+                  opacity: rootRenaming ? 0.6 : 1,
+                  padding: 0,
+                  flexShrink: 0,
+                }}
+              >
+                <svg
+                  width="13"
+                  height="13"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                onMouseDown={(event) => event.preventDefault()}
                 onClick={onRootRenameCancel}
                 disabled={rootRenaming}
                 aria-label={t("directory.cancelRename")}
@@ -376,7 +415,7 @@ function Breadcrumbs({
                 e.currentTarget.style.textDecoration = "none";
               }}
             >
-              {root}
+              {rootDisplayName || root}
             </button>
           )}
           {parts.length > 0 && (
@@ -421,6 +460,7 @@ function Breadcrumbs({
 
 export function DefaultListView({
   root,
+  rootDisplayName,
   path = "",
   entries,
   errorMessage,
@@ -458,7 +498,7 @@ export function DefaultListView({
   const [isSortMenuOpen, setIsSortMenuOpen] = React.useState(false);
   const [isViewMenuOpen, setIsViewMenuOpen] = React.useState(false);
   const [editingRoot, setEditingRoot] = React.useState(false);
-  const [rootDraft, setRootDraft] = React.useState(root || "");
+  const [rootDraft, setRootDraft] = React.useState(rootDisplayName || root || "");
   const [rootRenaming, setRootRenaming] = React.useState(false);
   const sortedEntries = React.useMemo(() => {
     const visibleEntries = showHiddenFiles
@@ -483,9 +523,9 @@ export function DefaultListView({
 
   React.useEffect(() => {
     if (!editingRoot) {
-      setRootDraft(root || "");
+      setRootDraft(rootDisplayName || root || "");
     }
-  }, [editingRoot, root]);
+  }, [editingRoot, root, rootDisplayName]);
 
   React.useEffect(() => {
     if (!editingRoot) {
@@ -511,15 +551,15 @@ export function DefaultListView({
   const cancelRootRename = React.useCallback(() => {
     setEditingRoot(false);
     setRootRenaming(false);
-    setRootDraft(root || "");
-  }, [root]);
+    setRootDraft(rootDisplayName || root || "");
+  }, [root, rootDisplayName]);
 
   const submitRootRename = React.useCallback(async () => {
     if (rootRenaming) {
       return;
     }
     const trimmed = rootDraft.trim();
-    if (!trimmed || trimmed === String(root || "").trim()) {
+    if (!trimmed || trimmed === String(rootDisplayName || root || "").trim()) {
       cancelRootRename();
       return;
     }
@@ -539,7 +579,7 @@ export function DefaultListView({
     } finally {
       setRootRenaming(false);
     }
-  }, [cancelRootRename, onRenameRoot, root, rootDraft, rootRenaming]);
+  }, [cancelRootRename, onRenameRoot, root, rootDisplayName, rootDraft, rootRenaming]);
 
   return (
     <div
@@ -574,6 +614,7 @@ export function DefaultListView({
         >
           <Breadcrumbs
             root={root}
+            rootDisplayName={rootDisplayName || root}
             path={path || ""}
             onPathClick={onPathClick}
             rootColor={rootColor}
@@ -1069,7 +1110,7 @@ export function DefaultListView({
                     <button
                       type="button"
                       onClick={() => {
-                        setRootDraft(root || "");
+                        setRootDraft(rootDisplayName || root || "");
                         setEditingRoot(true);
                         setIsMenuOpen(false);
                       }}

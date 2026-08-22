@@ -645,6 +645,13 @@ func (s *AppContext) RenameRoot(rootID, name, rootPath string) (fs.RootInfo, err
 	return dir, nil
 }
 
+func (s *AppContext) UpdateDisplayName(rootID, displayName string) (fs.RootInfo, error) {
+	if s.Dirs == nil {
+		return fs.RootInfo{}, errors.New("registry not configured")
+	}
+	return s.Dirs.UpdateDisplayName(rootID, displayName)
+}
+
 func (s *AppContext) ListRoots() []fs.RootInfo {
 	if s.Dirs == nil {
 		return []fs.RootInfo{}
@@ -1058,7 +1065,7 @@ func (s *AppContext) rootTitle(rootID string) string {
 	if !ok {
 		return strings.TrimSpace(rootID)
 	}
-	return firstNonBlank(root.Name, root.ID)
+	return firstNonBlank(root.EffectiveName(), root.Name, root.ID)
 }
 
 func (s *AppContext) sessionTitle(rootID, sessionKey string) string {

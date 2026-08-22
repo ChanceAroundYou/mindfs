@@ -324,6 +324,10 @@ func (r *syncDeltaTestRegistry) RenameRoot(string, string, string) (fs.RootInfo,
 	return fs.RootInfo{}, errors.New("not implemented")
 }
 
+func (r *syncDeltaTestRegistry) UpdateDisplayName(string, string) (fs.RootInfo, error) {
+	return fs.RootInfo{}, errors.New("not implemented")
+}
+
 func (r *syncDeltaTestRegistry) ListRoots() []fs.RootInfo { return nil }
 
 func (r *syncDeltaTestRegistry) GetAgentPool() *agent.Pool { return nil }

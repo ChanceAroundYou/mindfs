@@ -343,6 +343,7 @@ func (h *HTTPHandler) Routes() http.Handler {
 	r.Get("/api/dirs", h.protectedEndpoint(h.handleDirs))
 	r.Post("/api/dirs", h.protectedEndpoint(h.handleAddDir))
 	r.Post("/api/dirs/{id}/rename", h.protectedEndpoint(h.handleRenameDir))
+	r.Post("/api/dirs/{id}/display-name", h.protectedEndpoint(h.handleUpdateDirDisplayName))
 	r.Delete("/api/dirs", h.protectedEndpoint(h.handleRemoveDir))
 	r.Get("/api/local_dirs", h.protectedEndpoint(h.handleLocalDirs))
 	r.Get("/api/relay/status", h.handleRelayStatus)
@@ -1179,9 +1180,20 @@ func (h *HTTPHandler) commandShellForResponse(s *session.Session, aux map[int][]
 }
 
 func externalSessionListResponse(s agenttypes.ExternalSessionSummary) map[string]any {
+	// Title already overlaid with manual alias or stripped 20-char prefix in ListExternalSessions;
+	// never expose raw REPLY_TIPS to clients — fall back to stripped firstUserText only.
 	name := strings.TrimSpace(s.Title)
 	if name == "" {
-		name = strings.TrimSpace(s.FirstUserText)
+		name = shortExternalSessionTitleForAPI(s.FirstUserText)
+	}
+	if name == "" {
+		cleaned := strings.TrimSpace(stripReplyTipsPrefixForAPI(stripExternalSessionPrefixForAPI(s.FirstUserText)))
+		if cleaned != "" {
+			if idx := strings.Index(cleaned, "\n"); idx >= 0 {
+				cleaned = strings.TrimSpace(cleaned[:idx])
+			}
+			name = cleaned
+		}
 	}
 	if name == "" {
 		name = s.AgentSessionID
@@ -1198,6 +1210,49 @@ func externalSessionListResponse(s agenttypes.ExternalSessionSummary) map[string
 		"closed_at":        nil,
 		"agent_session_id": s.AgentSessionID,
 	}
+}
+
+func stripReplyTipsPrefixForAPI(text string) string {
+	text = strings.TrimSpace(text)
+	if strings.HasPrefix(text, "[REPLY_TIPS]") {
+		if idx := strings.Index(text, "[USER_PROMPT]"); idx >= 0 {
+			return strings.TrimSpace(text[idx+len("[USER_PROMPT]"):])
+		}
+		if idx := strings.Index(text, "\n\n"); idx >= 0 {
+			return strings.TrimSpace(text[idx:])
+		}
+	}
+	return text
+}
+
+func shortExternalSessionTitleForAPI(text string) string {
+	text = strings.TrimSpace(stripReplyTipsPrefixForAPI(stripExternalSessionPrefixForAPI(text)))
+	if text == "" {
+		return ""
+	}
+	if idx := strings.Index(text, "\n"); idx >= 0 {
+		text = strings.TrimSpace(text[:idx])
+	}
+	runes := []rune(text)
+	if len(runes) > 20 {
+		text = string(runes[:20])
+	}
+	return strings.TrimSpace(text)
+}
+
+func stripExternalSessionPrefixForAPI(text string) string {
+	text = strings.TrimSpace(text)
+	const prefix = "This session was migrated from elsewhere. Your context may lag behind this session;"
+	const tail = "Only if reading fails, output a brief error and stop."
+	normalized := strings.ReplaceAll(text, "\\n", "\n")
+	if !strings.HasPrefix(normalized, prefix) {
+		return text
+	}
+	idx := strings.Index(normalized, tail)
+	if idx < 0 {
+		return text
+	}
+	return strings.TrimSpace(normalized[idx+len(tail):])
 }
 
 func (h *HTTPHandler) handleAgentsList(w http.ResponseWriter, r *http.Request) {
@@ -2320,6 +2375,41 @@ func (h *HTTPHandler) handleRenameDir(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, managedDirResponse(out.Dir))
 }
 
+func (h *HTTPHandler) handleUpdateDirDisplayName(w http.ResponseWriter, r *http.Request) {
+	rootID := strings.TrimSpace(chi.URLParam(r, "id"))
+	var req struct {
+		DisplayName string `json:"display_name"`
+		Name        string `json:"name"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("invalid json"))
+		return
+	}
+	displayName := strings.TrimSpace(req.DisplayName)
+	if displayName == "" {
+		displayName = strings.TrimSpace(req.Name)
+	}
+	uc := h.service()
+	out, err := uc.UpdateRootDisplayName(r.Context(), usecase.UpdateRootDisplayNameInput{
+		RootID:      rootID,
+		DisplayName: displayName,
+	})
+	if err != nil {
+		status := http.StatusBadRequest
+		if strings.Contains(err.Error(), "root not found") {
+			status = http.StatusNotFound
+		}
+		respondError(w, status, err)
+		return
+	}
+	if h.AppContext != nil {
+		h.broadcastRootChanged("display_name_changed", out.Dir.ID, map[string]any{
+			"root": managedDirResponse(out.Dir),
+		})
+	}
+	respondJSON(w, http.StatusOK, managedDirResponse(out.Dir))
+}
+
 func (h *HTTPHandler) handleRemoveDir(w http.ResponseWriter, r *http.Request) {
 	path := readManagedDirPath(r)
 	uc := h.service()
@@ -2513,9 +2603,11 @@ func (h *HTTPHandler) handleE2EEOpen(w http.ResponseWriter, r *http.Request) {
 }
 
 func managedDirResponse(dir fs.RootInfo) map[string]any {
+	effectiveName := dir.EffectiveName()
 	resp := map[string]any{
 		"id":           dir.ID,
-		"display_name": dir.Name,
+		"display_name": effectiveName,
+		"display_name_raw": dir.DisplayName,
 		"root_path":    dir.RootPath,
 		"created_at":   dir.CreatedAt,
 		"updated_at":   dir.UpdatedAt,

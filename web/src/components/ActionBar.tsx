@@ -78,6 +78,7 @@ type ActionBarProps = {
   currentRootIsGitRepo?: boolean;
   currentSession?: SessionInfo | null;
   pendingPlanMode?: boolean;
+  rootColor?: string | null;
   attachedFileContext?: AttachedFileContext | null;
   canOpenSessionDrawer?: boolean;
   sessionDrawerOpen?: boolean;
@@ -405,6 +406,7 @@ export function ActionBar({
   currentRootIsGitRepo = false,
   currentSession,
   pendingPlanMode = false,
+  rootColor = null,
   attachedFileContext,
   canOpenSessionDrawer = false,
   sessionDrawerOpen = false,
@@ -478,11 +480,21 @@ export function ActionBar({
   const isConnected = status === "connected";
   const connectionMeta = wsStatusMeta(status, t);
   const DRAG_THRESHOLD = -40;
-  const boundRingColor = detachedBoundSession ? "#f59e0b" : "#2563eb";
+  function appAccentHexToRgba(hex: string, alpha: number): string {
+    const h = String(hex || "").trim().replace(/^#/, "");
+    const fallback = `rgba(37, 99, 235, ${alpha})`;
+    if (h.length === 3) { const r = parseInt(h[0] + h[0], 16); const g = parseInt(h[1] + h[1], 16); const b = parseInt(h[2] + h[2], 16); if (Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b)) return `rgba(${r}, ${g}, ${b}, ${alpha})`; return fallback; }
+    if (h.length === 6) { const r = parseInt(h.slice(0, 2), 16); const g = parseInt(h.slice(2, 4), 16); const b = parseInt(h.slice(4, 6), 16); if (Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b)) return `rgba(${r}, ${g}, ${b}, ${alpha})`; }
+    if (/^rgba?\(/.test(String(hex || ""))) return String(hex);
+    return fallback;
+  }
+  const accentColorRaw = String(rootColor || "").trim() || "var(--accent-color)";
+  const accentHex = String(rootColor || "").trim() || "#2563eb";
+  const boundRingColor = detachedBoundSession ? "#f59e0b" : accentHex;
   const boundRingShadow = detachedBoundSession
     ? "0 0 0 1px rgba(245,158,11,0.18)"
-    : "0 0 0 1px rgba(37,99,235,0.08)";
-  const boundArrowColor = detachedBoundSession ? "#f59e0b" : "#2563eb";
+    : `0 0 0 1px ${appAccentHexToRgba(accentHex, 0.08)}`;
+  const boundArrowColor = detachedBoundSession ? "#f59e0b" : accentHex;
 
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
@@ -1267,7 +1279,7 @@ export function ActionBar({
                   gap: "6px",
                   minHeight: "28px",
                   padding: "2px 3px 2px 9px",
-                  border: "1px solid color-mix(in srgb, var(--accent-color) 32%, transparent)",
+                  border: `1px solid color-mix(in srgb, ${accentColorRaw} 32%, transparent)`,
                   borderRadius: "8px",
                   background: "var(--panel-bg)",
                   boxShadow: isMobile ? "none" : "var(--panel-shadow)",
@@ -1331,7 +1343,7 @@ export function ActionBar({
                         onMouseDown={(event) => event.preventDefault()}
                         onClick={() => void saveEditQueuedMessage()}
                         disabled={!editingQueueText.trim()}
-                        style={{ width: "28px", height: "28px", border: "none", borderRadius: "7px", background: "transparent", color: editingQueueText.trim() ? "var(--accent-color)" : "var(--text-secondary)", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: editingQueueText.trim() ? "pointer" : "not-allowed", opacity: editingQueueText.trim() ? 1 : 0.45 }}
+                        style={{ width: "28px", height: "28px", border: "none", borderRadius: "7px", background: "transparent", color: editingQueueText.trim() ? accentColorRaw : "var(--text-secondary)", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: editingQueueText.trim() ? "pointer" : "not-allowed", opacity: editingQueueText.trim() ? 1 : 0.45 }}
                       >
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                           <path d="M20 6 9 17l-5-5" />
@@ -1422,12 +1434,12 @@ export function ActionBar({
               style={{
                 background: "var(--panel-bg)",
                 border: isFocused
-                  ? "1px solid var(--accent-color)"
+                  ? `1px solid ${accentColorRaw}`
                   : "1px solid var(--panel-border)",
                 borderRadius: isMobile ? "10px" : "12px",
                 boxShadow: isMobile
                   ? "none"
-                  : (isFocused ? "var(--panel-focus-shadow)" : "var(--panel-shadow)"),
+                  : (isFocused ? `0 0 0 3px ${appAccentHexToRgba(accentHex, isDark ? 0.2 : 0.1)}` : "var(--panel-shadow)"),
                 display: "flex",
                 alignItems: "center",
                 position: "relative",
@@ -1442,7 +1454,7 @@ export function ActionBar({
 			  <div style={{ position: "absolute", left: isMobile ? "4px" : "2px", right: isMobile ? "4px" : "8px", bottom: "calc(100% + 4px)", zIndex: 7, minWidth: 0, display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: "8px", pointerEvents: "none" }}>
 				<div style={{ display: "flex", alignItems: "center", gap: "6px", minWidth: 0, pointerEvents: "auto" }}>
 				  {planModeActive ? (
-					<div style={{ display: "inline-flex", alignItems: "center", gap: "5px", height: "20px", padding: "0 5px 0 8px", borderRadius: "999px", border: "1px solid rgba(37, 99, 235, 0.22)", background: "linear-gradient(rgba(37, 99, 235, 0.10), rgba(37, 99, 235, 0.10)), var(--mobile-overlay-bg)", color: "#2563eb", fontSize: "11px", fontWeight: 700, lineHeight: 1, flexShrink: 0 }}>
+					<div style={{ display: "inline-flex", alignItems: "center", gap: "5px", height: "20px", padding: "0 5px 0 8px", borderRadius: "999px", border: `1px solid ${appAccentHexToRgba(accentHex, 0.22)}`, background: `linear-gradient(${appAccentHexToRgba(accentHex, 0.10)}, ${appAccentHexToRgba(accentHex, 0.10)}), var(--mobile-overlay-bg)`, color: accentHex, fontSize: "11px", fontWeight: 700, lineHeight: 1, flexShrink: 0 }}>
 					  <span>Plan</span>
 					  <button type="button" aria-label={t("action.closePlanMode")} title={t("action.closePlanMode")} onMouseDown={(event) => event.preventDefault()} onClick={() => void onSetPlanMode?.(false, planSessionKey, planRootId)} style={{ width: "14px", height: "14px", border: "none", borderRadius: "999px", background: "transparent", color: "currentColor", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer", fontSize: "14px", lineHeight: 1, padding: 0 }}>
 						<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" aria-hidden="true"><path d="M0 0h24v24H0z" fill="none" /><path fill="currentColor" fillRule="evenodd" d="M21 12a9 9 0 1 1-18 0a9 9 0 0 1 18 0M7.293 16.707a1 1 0 0 1 0-1.414L10.586 12L7.293 8.707a1 1 0 0 1 1.414-1.414L12 10.586l3.293-3.293a1 1 0 1 1 1.414 1.414L13.414 12l3.293 3.293a1 1 0 0 1-1.414 1.414L12 13.414l-3.293 3.293a1 1 0 0 1-1.414 0" clipRule="evenodd" /></svg>
@@ -1667,14 +1679,14 @@ export function ActionBar({
                   </svg>
                 ) : null}
                 {isDragging && dragX < -10 ? (
-                  <div style={{ position: "absolute", right: "100%", top: "50%", transform: "translateY(-50%)", marginRight: "8px", fontSize: "10px", fontWeight: 600, color: dragX <= DRAG_THRESHOLD ? "var(--accent-color)" : "#9ca3af", whiteSpace: "nowrap", opacity: Math.min(1, Math.abs(dragX) / 20), pointerEvents: "none" }}>
+                  <div style={{ position: "absolute", right: "100%", top: "50%", transform: "translateY(-50%)", marginRight: "8px", fontSize: "10px", fontWeight: 600, color: dragX <= DRAG_THRESHOLD ? accentColorRaw : "#9ca3af", whiteSpace: "nowrap", opacity: Math.min(1, Math.abs(dragX) / 20), pointerEvents: "none" }}>
                     {dragX <= DRAG_THRESHOLD ? t("action.releaseNewSession") : t("action.swipeNewSession")}
                   </div>
                 ) : null}
               </div>
 
               <>
-                <ModeSelector mode={mode} onModeChange={setMode} compact={true} disabled={isModeLocked} onboardingId="mode-selector" />
+                <ModeSelector mode={mode} onModeChange={setMode} compact={true} disabled={isModeLocked} onboardingId="mode-selector" accentColor={accentHex} />
                 {mode !== "command" ? (
                   <div>
                     <AgentSelector
@@ -1730,10 +1742,10 @@ export function ActionBar({
                   borderRadius: "8px",
                   border: "none",
                   background: pendingAttachments.length > 0
-                    ? "rgba(59,130,246,0.14)"
+                    ? appAccentHexToRgba(accentHex, 0.14)
                     : "transparent",
                   color: pendingAttachments.length > 0
-                    ? "var(--accent-color)"
+                    ? accentColorRaw
                     : "var(--text-secondary)",
                   display: "flex",
                   alignItems: "center",
@@ -1754,7 +1766,7 @@ export function ActionBar({
                 type="button"
                 onClick={showCancel ? handleCancel : handleSend}
                 disabled={showCancel ? cancelling : !canSend}
-                style={{ width: "28px", height: "28px", borderRadius: "8px", border: "none", background: showCancel ? "rgba(239,68,68,0.14)" : (canSend ? "var(--accent-color)" : "transparent"), color: showCancel ? "#ef4444" : (canSend ? "#fff" : "var(--text-secondary)"), display: "flex", alignItems: "center", justifyContent: "center", cursor: showCancel ? (cancelling ? "wait" : "pointer") : (canSend ? "pointer" : "not-allowed"), transition: "all 0.2s", opacity: showCancel ? 1 : (canSend ? 1 : 0.3) }}
+                style={{ width: "28px", height: "28px", borderRadius: "8px", border: "none", background: showCancel ? "rgba(239,68,68,0.14)" : (canSend ? accentColorRaw : "transparent"), color: showCancel ? "#ef4444" : (canSend ? "#fff" : "var(--text-secondary)"), display: "flex", alignItems: "center", justifyContent: "center", cursor: showCancel ? (cancelling ? "wait" : "pointer") : (canSend ? "pointer" : "not-allowed"), transition: "all 0.2s", opacity: showCancel ? 1 : (canSend ? 1 : 0.3) }}
               >
                 {sending || cancelling ? (
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" style={{ animation: "spin 1s linear infinite" }}><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
@@ -1795,7 +1807,7 @@ export function ActionBar({
                 maxWidth: "100%",
                 padding: "4px 8px",
                 borderRadius: "999px",
-                background: isDark ? "rgba(59,130,246,0.14)" : "rgba(59,130,246,0.08)",
+                background: isDark ? appAccentHexToRgba(accentHex, 0.14) : appAccentHexToRgba(accentHex, 0.08),
                 color: "var(--text-primary)",
                 fontSize: "12px",
               }}
@@ -1903,7 +1915,7 @@ export function ActionBar({
                   maxWidth: "220px",
                   padding: "4px 8px",
                   borderRadius: "999px",
-                  background: isDark ? "rgba(59,130,246,0.14)" : "rgba(59,130,246,0.08)",
+                  background: isDark ? appAccentHexToRgba(accentHex, 0.14) : appAccentHexToRgba(accentHex, 0.08),
                   color: "var(--text-primary)",
                   fontSize: "12px",
                 }}

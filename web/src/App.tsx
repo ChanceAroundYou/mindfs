@@ -2151,6 +2151,15 @@ export function App({ onGoHome }: AppProps) {
 
   const [managedRootIds, setManagedRootIds] = useState<string[]>([]);
   const managedRootByIdRef = useRef<Record<string, ManagedRootPayload>>({});
+  const getRootDisplayName = useCallback((rootId: string | null | undefined): string => {
+    const id = String(rootId || "").trim();
+    if (!id) return "";
+    const entry: any = managedRootByIdRef.current[id];
+    const dn = String(entry?.display_name || "").trim();
+    if (dn) return dn;
+    return String(entry?.id || id);
+  }, []);
+  const currentRootDisplayName = getRootDisplayName(currentRootId);
 
   const getNodeIdForRoot = useCallback((rootId: string): string | undefined => {
     const entry = (managedRootByIdRef.current as Record<string, any>)[String(rootId || "")];
@@ -8015,26 +8024,43 @@ export function App({ onGoHome }: AppProps) {
       if (!rootID || !trimmedName) {
         return false;
       }
-      if (trimmedName === rootID) {
+      const currentDisplayName = String((managedRootByIdRef.current[rootID] as any)?.display_name || managedRootByIdRef.current[rootID]?.id || "").trim();
+      if (trimmedName === currentDisplayName) {
         return true;
       }
       try {
         const renamed = await apiProtectedJSON<ManagedRootPayload>(
-          appPath(`/api/dirs/${encodeURIComponent(rootID)}/rename`),
+          appPath(`/api/dirs/${encodeURIComponent(rootID)}/display-name`),
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ name: trimmedName }),
+            body: JSON.stringify({ display_name: trimmedName }),
           },
         );
-        applyManagedRootRename(rootID, renamed);
-        if (renamed?.id) {
+        // Display-name rename never changes id/path: patch local map in place via refresh; keep compatibility with physical rename helper
+        if (String(renamed?.id || "").trim() && String(renamed.id).trim() !== rootID) {
+          applyManagedRootRename(rootID, renamed);
           await actionHandlersRef.current.open_dir({
             path: renamed.id,
             root: renamed.id,
             isRoot: true,
             forceDirectory: true,
           });
+        } else {
+          // Same id: merge display_name in place without shuffling per-root caches (session keys stay valid)
+          const merged = { ...(managedRootByIdRef.current[rootID] || {} as ManagedRootPayload), ...(renamed || {}), id: rootID } as ManagedRootPayload;
+          const nextById = { ...managedRootByIdRef.current, [rootID]: merged };
+          managedRootByIdRef.current = nextById as Record<string, ManagedRootPayload>;
+          setRootNodeMap(nextById as Record<string, any>);
+          const ids = Array.from(managedRootIdsRef.current);
+          setRootEntries(mapManagedRootsToEntries(ids.map((id) => nextById[id]).filter(Boolean) as ManagedRootPayload[]));
+          setMultiProjectSessionGroups((prev) =>
+            prev.map((g) =>
+              g.rootId === rootID
+                ? { ...g, rootName: String((merged as any)?.display_name || (merged as any)?.id || g.rootName || rootID) }
+                : g,
+            ),
+          );
         }
         return true;
       } catch (err) {
@@ -9538,6 +9564,33 @@ export function App({ onGoHome }: AppProps) {
                 preservePluginQuery: true,
               });
             }
+            break;
+          }
+          if (
+            payload?.action === "display_name_changed" &&
+            typeof payload?.root_id === "string"
+          ) {
+            const rootId = String(payload.root_id).trim();
+            const rootPayload =
+              payload?.root && typeof payload.root === "object"
+                ? ({ ...(payload.root as ManagedRootPayload), id: rootId } as ManagedRootPayload)
+                : null;
+            if (!rootPayload || !rootId) {
+              break;
+            }
+            const merged = { ...(managedRootByIdRef.current[rootId] || {} as ManagedRootPayload), ...rootPayload, id: rootId } as ManagedRootPayload;
+            const nextById = { ...managedRootByIdRef.current, [rootId]: merged };
+            managedRootByIdRef.current = nextById as Record<string, ManagedRootPayload>;
+            setRootNodeMap(nextById as Record<string, any>);
+            const ids = Array.from(managedRootIdsRef.current);
+            setRootEntries(mapManagedRootsToEntries(ids.map((id) => nextById[id]).filter(Boolean) as ManagedRootPayload[]));
+            setMultiProjectSessionGroups((prev) =>
+              prev.map((g) =>
+                g.rootId === rootId
+                  ? { ...g, rootName: String((merged as any)?.display_name || (merged as any)?.id || g.rootName || rootId) }
+                  : g,
+              ),
+            );
             break;
           }
           void refreshManagedRoots();
@@ -11211,6 +11264,7 @@ export function App({ onGoHome }: AppProps) {
       composerOverlayInset={sessionViewerComposerOverlayInset}
       loading={selectedSessionLoading}
       rootId={selectedSession?.root_id || currentRootId}
+      rootDisplayName={getRootDisplayName(selectedSession?.root_id || currentRootId)}
       rootColor={(managedRootByIdRef.current as any)[String(selectedSession?.root_id || currentRootId || "")]?._nodeColor || null}
       rootPath={
         managedRootByIdRef.current[
@@ -12173,6 +12227,7 @@ export function App({ onGoHome }: AppProps) {
           >
             {(() => {
               const active = isAllTaskTemplateFilter;
+              const kanbanAllBg = String((managedRootByIdRef.current as Record<string, any>)[String(currentRootId || "")]?._nodeColor || "").trim() || "#2563eb";
               return (
                 <button
                   type="button"
@@ -12185,7 +12240,7 @@ export function App({ onGoHome }: AppProps) {
                   style={{
                     border: "none",
                     borderRadius: "6px",
-                    background: active ? "var(--accent-color)" : "transparent",
+                    background: active ? kanbanAllBg : "transparent",
                     color: active ? "#fff" : "var(--text-secondary)",
                     padding: "3px 7px",
                     fontSize: "11px",
@@ -12193,7 +12248,7 @@ export function App({ onGoHome }: AppProps) {
                     lineHeight: "14px",
                     cursor: "pointer",
                     whiteSpace: "nowrap",
-                    boxShadow: active ? "0 1px 3px rgba(37, 99, 235, 0.28)" : "none",
+                    boxShadow: active ? `0 1px 3px ${hexToRgbaApp(kanbanAllBg, 0.28)}` : "none",
                   }}
                 >
                   {t("task.all")}
@@ -12237,19 +12292,22 @@ export function App({ onGoHome }: AppProps) {
                       setTaskTemplateFilter(templateId);
                       setTaskTemplateActionMenuOpen(false);
                     }}
-                    style={{
-                      border: "none",
-                      borderRadius: "6px",
-                      background: active ? "var(--accent-color)" : "transparent",
-                      color: active ? "#fff" : "var(--text-secondary)",
-                      padding: "3px 7px",
-                      fontSize: "11px",
-                      fontWeight: 700,
-                      lineHeight: "14px",
-                      cursor: "pointer",
-                      whiteSpace: "nowrap",
-                      boxShadow: active ? "0 1px 3px rgba(37, 99, 235, 0.28)" : "none",
-                  }}
+                    style={(() => {
+                      const bg = String((managedRootByIdRef.current as Record<string, any>)[String(currentRootId || "")]?._nodeColor || "").trim() || "#2563eb";
+                      return {
+                        border: "none",
+                        borderRadius: "6px",
+                        background: active ? bg : "transparent",
+                        color: active ? "#fff" : "var(--text-secondary)",
+                        padding: "3px 7px",
+                        fontSize: "11px",
+                        fontWeight: 700,
+                        lineHeight: "14px",
+                        cursor: "pointer",
+                        whiteSpace: "nowrap",
+                        boxShadow: active ? `0 1px 3px ${hexToRgbaApp(bg, 0.28)}` : "none",
+                      };
+                    })()}
                 >
                   <span>{template.name || t("task.unnamedTemplate")}</span>
                 </button>
@@ -12603,6 +12661,7 @@ export function App({ onGoHome }: AppProps) {
                       : task.main_session_key
                         ? [task.main_session_key]
                         : [];
+                    const taskKanbanNodeColor = String((managedRootByIdRef.current as Record<string, any>)[String(task.root_id || "")]?._nodeColor || "").trim() || String((managedRootByIdRef.current as Record<string, any>)[String(currentRootId || "")]?._nodeColor || "").trim() || "";
                     const taskSessionPending = taskSessionKeys.some((key) => !!sessionByKey[key]?.pending);
                     const taskQueued = task.status === "queued";
                     const taskBlockedByConcurrency = taskQueued && !task.scheduler_admitted && !taskSessionKeys.length;
@@ -12611,7 +12670,7 @@ export function App({ onGoHome }: AppProps) {
                     const taskSessionErrorDetails = parseTaskSessionErrorDetails(auxFlags.session_error);
                     const taskAuxBadges = [
                       auxFlags.ask_user_waiting ? { key: "ask_user", label: t("task.waitingUser"), icon: renderToolIcon("ask_user"), attention: true } : null,
-                      auxFlags.has_plan ? { key: "plan", label: t("task.hasPlan"), icon: <TaskPlanAuxIcon />, attention: false } : null,
+                      auxFlags.has_plan ? { key: "plan", label: t("task.hasPlan"), icon: <TaskPlanAuxIcon color={taskKanbanNodeColor || undefined} />, attention: false } : null,
                       auxFlags.has_todos ? { key: "todos", label: t("task.hasTodos"), icon: renderToolIcon("todo"), attention: false } : null,
                       auxFlags.has_task ? { key: "task", label: t("task.hasTask"), icon: renderToolIcon("task"), attention: false } : null,
                     ].filter((item): item is { key: string; label: string; icon: React.ReactNode; attention: boolean } => Boolean(item));
@@ -12646,7 +12705,7 @@ export function App({ onGoHome }: AppProps) {
                           <span
                             aria-label={t("task.replying")}
                             title={t("task.replying")}
-                            style={taskReplyPulseStyle()}
+                            style={taskReplyPulseStyle(taskKanbanNodeColor || undefined)}
                           />
                         ) : null}
                         {isAllTaskTemplateFilter ? (
@@ -13052,6 +13111,8 @@ export function App({ onGoHome }: AppProps) {
       <GitDiffViewer
         diff={gitDiff}
         root={currentRootId}
+        rootDisplayName={currentRootDisplayName}
+        rootColor={(managedRootByIdRef.current as any)[String(currentRootId || "")]?._nodeColor || null}
         sideBySide={gitDiffSideBySide}
         onPathClick={handleGitDiffPathClick}
         onSessionClick={(sessionKey) =>
@@ -13207,7 +13268,9 @@ export function App({ onGoHome }: AppProps) {
           ) : null}
           <FileViewer
             file={file}
+            rootDisplayName={getRootDisplayName(file?.root || currentRootId)}
             isVisible={!selectedSession}
+            rootColor={(managedRootByIdRef.current as any)[String(file?.root || currentRootId || "")]?._nodeColor || null}
             onSelectionChange={handleViewerSelectionChange}
             initialScrollTop={
               fileScrollPositionsRef.current[currentFileScrollKey] || 0
@@ -13233,6 +13296,7 @@ export function App({ onGoHome }: AppProps) {
     workspaceView = (
       <DefaultListView
         root={currentRootId || undefined}
+        rootDisplayName={currentRootDisplayName || undefined}
         path={selectedDir || ""}
         entries={currentMainContentView === "file-browser" ? visibleMainEntries : []}
         errorMessage={currentMainContentView === "file-browser" ? mainDirectoryError : ""}
@@ -13653,6 +13717,7 @@ export function App({ onGoHome }: AppProps) {
             selectedDirKey={selectedDirKey}
             selectedPath={file?.path}
             rootId={currentRootId}
+            rootColor={(managedRootByIdRef.current as Record<string, any>)[String(currentRootId || "")]?._nodeColor || null}
             rootSessionIndicators={rootSessionIndicators}
             creatingRootName={
               creatingRootKind === "worktree" ? null : creatingRootName
@@ -13797,6 +13862,7 @@ export function App({ onGoHome }: AppProps) {
               currentRootIsGitRepo={managedRootByIdRef.current[currentRootId || ""]?.is_git_repo === true}
               currentSession={actionBarSession}
               pendingPlanMode={pendingPlanMode}
+              rootColor={(managedRootByIdRef.current as any)[String(currentRootId || "")]?._nodeColor || null}
               attachedFileContext={attachedFileContext}
               canOpenSessionDrawer={canOpenSessionDrawer}
               sessionDrawerOpen={isDrawerOpen}
@@ -14748,7 +14814,28 @@ function taskWorktreeTagStyle(enabled: boolean): React.CSSProperties {
   };
 }
 
-function taskReplyPulseStyle(): React.CSSProperties {
+function hexToRgbaApp(hex: string, alpha: number): string {
+  const h = String(hex || "").trim().replace(/^#/, "");
+  const fallback = `rgba(37, 99, 235, ${alpha})`;
+  if (h.length === 3) {
+    const r = parseInt(h[0] + h[0], 16);
+    const g = parseInt(h[1] + h[1], 16);
+    const b = parseInt(h[2] + h[2], 16);
+    if (Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b)) return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    return fallback;
+  }
+  if (h.length === 6) {
+    const r = parseInt(h.slice(0, 2), 16);
+    const g = parseInt(h.slice(2, 4), 16);
+    const b = parseInt(h.slice(4, 6), 16);
+    if (Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b)) return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+  if (/^rgba?\(/.test(String(hex || ""))) return String(hex);
+  return fallback;
+}
+
+function taskReplyPulseStyle(color?: string | null): React.CSSProperties {
+  const c = String(color || "#2563eb").trim() || "#2563eb";
   return {
     position: "absolute",
     top: "6px",
@@ -14757,19 +14844,20 @@ function taskReplyPulseStyle(): React.CSSProperties {
     height: "8px",
     borderRadius: "999px",
     boxSizing: "border-box",
-    border: "1.5px solid #2563eb",
-    background: "#2563eb",
+    border: `1.5px solid ${c}`,
+    background: c,
     animation: "mindfs-bound-pulse 2.2s ease-in-out infinite",
-    boxShadow: "0 0 0 1.5px rgba(37,99,235,0.14)",
+    boxShadow: `0 0 0 1.5px ${hexToRgbaApp(c, 0.14)}`,
     pointerEvents: "none",
   };
 }
 
-function TaskPlanAuxIcon() {
+function TaskPlanAuxIcon({ color }: { color?: string } = {}) {
+  const c = String(color || "#2563eb").trim() || "#2563eb";
   return (
     <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path d="M7 6h10M7 12h10M7 18h6" stroke="#2563eb" strokeWidth="2" strokeLinecap="round" />
-      <path d="M4 6h.01M4 12h.01M4 18h.01" stroke="#2563eb" strokeWidth="3" strokeLinecap="round" />
+      <path d="M7 6h10M7 12h10M7 18h6" stroke={c} strokeWidth="2" strokeLinecap="round" />
+      <path d="M4 6h.01M4 12h.01M4 18h.01" stroke={c} strokeWidth="3" strokeLinecap="round" />
     </svg>
   );
 }

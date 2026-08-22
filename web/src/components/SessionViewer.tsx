@@ -70,6 +70,7 @@ type SessionViewerProps = {
     };
   } | null;
   rootId?: string | null;
+  rootDisplayName?: string | null;
   rootPath?: string | null;
   rootColor?: string | null;
   interactionMode?: "main" | "drawer";
@@ -1007,6 +1008,7 @@ function SessionViewerInner({
   loading = false,
   slashCommandResult = null,
   rootId,
+  rootDisplayName,
   rootPath,
   rootColor,
   interactionMode = "main",
@@ -2404,7 +2406,7 @@ function SessionViewerInner({
                   cursor: onRootClick ? "pointer" : "default",
                 }}
               >
-                {rootId}
+                {rootDisplayName || rootId}
               </button>
             ) : null}
             <span
@@ -2473,31 +2475,34 @@ function SessionViewerInner({
               ),
             )}
             {renderSlashCommandResult()}
-            {(isAwaiting || isStreaming) && (
-              <div
-                style={{
-                  marginTop: "16px",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "6px",
-                  fontSize: "12px",
-                  color: "var(--text-secondary)",
-                }}
-              >
-                <span
+            {(isAwaiting || isStreaming) && (() => {
+              const awaitingColor = String(rootColor || "").trim() || "var(--accent-color)";
+              return (
+                <div
                   style={{
-                    width: "8px",
-                    height: "8px",
-                    borderRadius: "50%",
-                    background: "var(--accent-color)",
-                    animation: "pulse 1s infinite",
+                    marginTop: "16px",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "6px",
+                    fontSize: "12px",
+                    color: "var(--text-secondary)",
                   }}
-                />
+                >
+                  <span
+                    style={{
+                      width: "8px",
+                      height: "8px",
+                      borderRadius: "50%",
+                      background: awaitingColor,
+                      animation: "pulse 1s infinite",
+                    }}
+                  />
                 {isStreaming
                   ? streamStatusText || t("session.generating")
                   : t("session.sentWaiting")}
               </div>
-            )}
+              );
+            })()}
 
             {relatedFiles.length > 0 && (
               <div

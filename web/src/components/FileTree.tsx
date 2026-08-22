@@ -85,6 +85,26 @@ type FileMeta = {
   session_name?: string;
 };
 
+function fileTreeHexToRgba(hex: string, alpha: number): string {
+  const h = String(hex || "").trim().replace(/^#/, "");
+  const fallback = `rgba(37, 99, 235, ${alpha})`;
+  if (h.length === 3) {
+    const r = parseInt(h[0] + h[0], 16);
+    const g = parseInt(h[1] + h[1], 16);
+    const b = parseInt(h[2] + h[2], 16);
+    if (Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b)) return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    return fallback;
+  }
+  if (h.length === 6) {
+    const r = parseInt(h.slice(0, 2), 16);
+    const g = parseInt(h.slice(2, 4), 16);
+    const b = parseInt(h.slice(4, 6), 16);
+    if (Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b)) return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+  if (/^rgba?\(/.test(String(hex || ""))) return String(hex);
+  return fallback;
+}
+
 type RootSessionIndicator = {
   bound?: boolean;
   pending?: boolean;
@@ -113,6 +133,7 @@ type FileTreeProps = {
   selectedDirKey?: string | null;
   selectedPath?: string | null;
   rootId?: string | null;
+  rootColor?: string | null;
   rootSessionIndicators?: Record<string, RootSessionIndicator>;
   fileMetas?: Record<string, FileMeta>;
   activeSessionKey?: string | null;
@@ -1293,6 +1314,7 @@ function FileTreeInner({
   selectedDirKey,
   selectedPath,
   rootId,
+  rootColor = null,
   rootSessionIndicators = {},
   fileMetas = {},
   activeSessionKey,
@@ -2399,17 +2421,17 @@ function FileTreeInner({
                     borderRadius: "999px",
                     flexShrink: 0,
                     boxSizing: "border-box",
-                    border: "1.5px solid #2563eb",
-                    background: isRootPending ? "#2563eb" : "transparent",
+                    border: `1.5px solid ${String(groupColor || (entry as any)?._nodeColor || "#2563eb").trim() || "#2563eb"}`,
+                    background: isRootPending ? (String(groupColor || (entry as any)?._nodeColor || "#2563eb").trim() || "#2563eb") : "transparent",
                     animation: isRootPending ? "mindfs-bound-pulse 2.2s ease-in-out infinite" : "none",
                     boxShadow: isRootPending
-                      ? "0 0 0 1.5px rgba(37,99,235,0.14)"
-                      : "0 0 0 1px rgba(37,99,235,0.10)",
+                      ? `0 0 0 1.5px ${fileTreeHexToRgba(String(groupColor || (entry as any)?._nodeColor || "#2563eb").trim() || "#2563eb", 0.14)}`
+                      : `0 0 0 1px ${fileTreeHexToRgba(String(groupColor || (entry as any)?._nodeColor || "#2563eb").trim() || "#2563eb", 0.10)}`,
                   }}
                 />
               ) : null}
               {hasSessionLink && (
-                <span style={{ fontSize: "10px", color: isFromActiveSession ? "#3b82f6" : "#9ca3af" }}>
+                <span style={{ fontSize: "10px", color: isFromActiveSession ? (String(groupColor || (entry as any)?._nodeColor || "#3b82f6").trim() || "#3b82f6") : "#9ca3af" }}>
                   {isFromActiveSession ? "◆" : "◇"}
                 </span>
               )}
@@ -2454,6 +2476,7 @@ function FileTreeInner({
             ] as const).map(([value, label], index) => {
               const active = projectTreeTab === value;
               const flexGrow = value === "related" ? 1.45 : value === "worktrees" ? 1.15 : 0.85;
+              const tabAccent = String(rootColor || "").trim() || String((entries as any[])?.[0] ? String(((entries as any[])[0] as any)?._nodeColor || "").trim() : "").trim() || String((() => { try { const ns = getNodes(); const cur = ns.find(n => n.id === String(rootId || "").trim()) || ns[0]; return cur?.color || ""; } catch { return ""; } })()) || "#2563eb";
               return (
                 <React.Fragment key={value}>
                   {index > 0 ? (
@@ -2476,7 +2499,7 @@ function FileTreeInner({
                     style={{
                       border: "none",
                       borderRadius: "6px",
-                      background: active ? "var(--accent-color)" : "transparent",
+                      background: active ? tabAccent : "transparent",
                       color: active ? "#fff" : "var(--text-secondary)",
                       padding: "3px 5px",
                       fontSize: "11px",
@@ -2486,7 +2509,7 @@ function FileTreeInner({
                       whiteSpace: "nowrap",
                       minWidth: 0,
                       flex: `${flexGrow} 1 auto`,
-                      boxShadow: active ? "0 1px 3px rgba(37, 99, 235, 0.28)" : "none",
+                      boxShadow: active ? `0 1px 3px ${fileTreeHexToRgba(tabAccent, 0.28)}` : "none",
                     }}
                   >
                     {label}
