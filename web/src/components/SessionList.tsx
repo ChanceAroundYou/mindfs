@@ -258,23 +258,6 @@ function parseForkSessionSource(source?: string): ForkSessionSource | null {
   }
 }
 
-function forkSessionDisplayName(
-  storedName: string,
-  source: ForkSessionSource | null,
-  sessionByKey: Map<string, SessionItem>,
-  rootId?: string,
-): string {
-  if (!source) return storedName;
-  const parentName = String(
-    sessionByKey.get(rootId ? `${rootId}:${source.sessionKey}` : source.sessionKey)?.name ||
-      sessionByKey.get(source.sessionKey)?.name ||
-      "",
-  ).trim();
-  const fallbackName = storedName.replace(/\s+fork\s+@\d+\s*$/i, "").trim();
-  const base = parentName || fallbackName || storedName;
-  return source.seq > 0 ? `${base}#${source.seq}` : base;
-}
-
 function isSessionSyncing(
   session: SessionItem,
   syncingSessionKeys?: Set<string>,
@@ -326,21 +309,66 @@ export function SessionList({
   const [loadingChildren, setLoadingChildren] = useState<Record<string, boolean>>({});
   const [childrenHasMore, setChildrenHasMore] = useState<Record<string, boolean>>({});
   const visibleSessions = useMemo(() => {
-    // Fork sessions are now independent top-level items; flatten all sessions
-    // instead of nesting by parent_session_key.
-    return sessions.map((session): VisibleSessionRow => ({ type: "session", session }));
-  }, [searchResultsMode, sessions]);
-  const childCountByParent = useMemo(() => {
-    const counts = new Map<string, number>();
+    if (searchResultsMode) {
+      return sessions.map((session): VisibleSessionRow => ({ type: "session", session }));
+    }
+    const isForkItem = (item: SessionItem) => !!parseForkSessionSource(item.source);
+    const childrenByParent = new Map<string, SessionItem[]>();
+    const topLevel: SessionItem[] = [];
     const keys = new Set(sessions.map((item) => item.key));
+    const parentByKey = new Map<string, string>();
     for (const item of sessions) {
+      if (isForkItem(item)) {
+        topLevel.push(item);
+        continue;
+      }
       const parentKey = String(item.parent_session_key || "").trim();
       if (parentKey && keys.has(parentKey)) {
-        counts.set(parentKey, (counts.get(parentKey) || 0) + 1);
+        const children = childrenByParent.get(parentKey) || [];
+        children.push(item);
+        childrenByParent.set(parentKey, children);
+        parentByKey.set(item.key, parentKey);
+      } else {
+        topLevel.push(item);
       }
     }
-    return counts;
-  }, [sessions]);
+    const activeParentKeys = new Set<string>();
+    if (selectedKey) {
+      activeParentKeys.add(selectedKey);
+      let parentKey = parentByKey.get(selectedKey) || "";
+      while (parentKey) {
+        activeParentKeys.add(parentKey);
+        parentKey = parentByKey.get(parentKey) || "";
+      }
+    }
+    const out: VisibleSessionRow[] = [];
+    const append = (item: SessionItem) => {
+      out.push({ type: "session", session: item });
+      const children = childrenByParent.get(item.key) || [];
+      const active = activeParentKeys.has(item.key);
+      const expanded = !!expandedChildren[item.key];
+      const visibleChildren = active
+        ? expanded
+          ? children
+          : children.slice(0, COLLAPSED_CHILD_SESSION_LIMIT)
+        : [];
+      for (const child of visibleChildren) {
+        append(child);
+      }
+      const hiddenCount = Math.max(0, children.length - COLLAPSED_CHILD_SESSION_LIMIT);
+      if (active && (children.length > COLLAPSED_CHILD_SESSION_LIMIT || expanded || childrenHasMore[item.key])) {
+        out.push({
+          type: "child-toggle",
+          parent: item,
+          loadedChildCount: children.length,
+          hiddenCount,
+          expanded,
+        });
+      }
+    };
+    topLevel.forEach((item) => append(item));
+    return out;
+  }, [childrenHasMore, expandedChildren, searchResultsMode, selectedKey, sessions]);
   const selectedParentKey = useMemo(() => {
     if (!selectedKey) return "";
     return sessions.find((item) => item.key === selectedKey)?.parent_session_key || "";
@@ -637,7 +665,6 @@ export function SessionList({
                   parentHighlighted={!!selectedParentKey && session.key === selectedParentKey}
                   highlightQuery={searchResultsMode ? searchQuery : ""}
                   syncing={isSessionSyncing(session, syncingSessionKeys)}
-                  childCount={childCountByParent.get(session.key) || 0}
                   onSelect={onSelect}
                   onSync={onSync}
                   onPin={onPin}
@@ -787,8 +814,64 @@ export function MultiProjectSessionList({
   };
 
   const buildRows = (sessions: SessionItem[], fallbackRootId: string): VisibleSessionRow[] => {
-    // Flatten: fork/children are independent sessions
-    return sessions.map((session): VisibleSessionRow => ({ type: "session", session }));
+    if (sessions.length === 0) return [];
+    const isForkItem = (item: SessionItem) => !!parseForkSessionSource(item.source);
+    const childrenByParent = new Map<string, SessionItem[]>();
+    const topLevel: SessionItem[] = [];
+    const keys = new Set(sessions.map((item) => item.key));
+    const parentByKey = new Map<string, string>();
+    for (const item of sessions) {
+      if (isForkItem(item)) {
+        topLevel.push(item);
+        continue;
+      }
+      const parentKey = String(item.parent_session_key || "").trim();
+      if (parentKey && keys.has(parentKey)) {
+        const children = childrenByParent.get(parentKey) || [];
+        children.push(item);
+        childrenByParent.set(parentKey, children);
+        parentByKey.set(item.key, parentKey);
+      } else {
+        topLevel.push(item);
+      }
+    }
+    const activeParentKeys = new Set<string>();
+    if (selectedKey && selectedRootId === fallbackRootId) {
+      activeParentKeys.add(selectedKey);
+      let parentKey = parentByKey.get(selectedKey) || "";
+      while (parentKey) {
+        activeParentKeys.add(parentKey);
+        parentKey = parentByKey.get(parentKey) || "";
+      }
+    }
+    const out: VisibleSessionRow[] = [];
+    const append = (item: SessionItem) => {
+      out.push({ type: "session", session: item });
+      const children = childrenByParent.get(item.key) || [];
+      const stateKey = childStateKey(item, fallbackRootId);
+      const active = activeParentKeys.has(item.key);
+      const expanded = !!expandedChildren[stateKey];
+      const visibleChildren = active
+        ? expanded
+          ? children
+          : children.slice(0, COLLAPSED_CHILD_SESSION_LIMIT)
+        : [];
+      for (const child of visibleChildren) {
+        append(child);
+      }
+      const hiddenCount = Math.max(0, children.length - COLLAPSED_CHILD_SESSION_LIMIT);
+      if (active && (children.length > COLLAPSED_CHILD_SESSION_LIMIT || expanded || childrenHasMore[stateKey])) {
+        out.push({
+          type: "child-toggle",
+          parent: item,
+          loadedChildCount: children.length,
+          hiddenCount,
+          expanded,
+        });
+      }
+    };
+    topLevel.forEach((item) => append(item));
+    return out;
   };
 
   const handleChildToggle = async (
@@ -923,14 +1006,6 @@ export function MultiProjectSessionList({
                 ? group.sessions
                 : sessionsForTopLevelLimit(group.sessions, MULTI_PROJECT_VISIBLE_LIMIT);
               const rows = buildRows(sessions, group.rootId);
-              const childCountByParent = new Map<string, number>();
-              const sessionKeys = new Set(group.sessions.map((item) => item.key));
-              for (const item of group.sessions) {
-                const parentKey = String(item.parent_session_key || "").trim();
-                if (parentKey && sessionKeys.has(parentKey)) {
-                  childCountByParent.set(parentKey, (childCountByParent.get(parentKey) || 0) + 1);
-                }
-              }
               const remaining = Math.max(0, group.totalCount - topLevelSessions.length);
               const projectLoading = !!loadingProjects[group.rootId];
               return (
@@ -1022,7 +1097,6 @@ export function MultiProjectSessionList({
                           parentHighlighted={false}
                           highlightQuery=""
                           syncing={isSessionSyncing({ ...session, root_id: sessionRoot }, syncingSessionKeys)}
-                          childCount={childCountByParent.get(session.key) || 0}
                           onSelect={onSelect}
                           onSync={onSync}
                           onPin={onPin}
@@ -1079,7 +1153,6 @@ function SessionCard({
   parentHighlighted,
   highlightQuery,
   syncing = false,
-  childCount = 0,
   onSelect,
   onSync,
   onPin,
@@ -1093,7 +1166,6 @@ function SessionCard({
   parentHighlighted?: boolean;
   highlightQuery?: string;
   syncing?: boolean;
-  childCount?: number;
   onSelect?: (session: SessionItem) => void;
   onSync?: (session: SessionItem) => Promise<void> | void;
   onPin?: (session: SessionItem, pinned: boolean) => Promise<boolean> | boolean;
@@ -1103,13 +1175,9 @@ function SessionCard({
   const { locale, t } = useI18n();
   const isClosed = !!session.closed_at;
   const isPinned = !!session.pinned_at;
-  const isSubagent = !!session.parent_session_key;
-  const forkSource = parseForkSessionSource(session.source);
-  const isForkSession = !!forkSource;
+  const isSubagent = !!session.parent_session_key && !parseForkSessionSource(session.source);
   const storedName = session.name || `Session ${session.key.slice(0, 8)}`;
-  const displayName = isForkSession
-    ? forkSessionDisplayName(storedName, forkSource, sessionByKey, session.root_id)
-    : storedName;
+  const displayName = storedName;
   const snippet = (session.search_snippet || "").trim();
   const isSearchResult = !!session.search_match_type;
   const [menuOpen, setMenuOpen] = useState(false);
@@ -1237,19 +1305,7 @@ function SessionCard({
               justifyContent: "center",
             }}
           >
-            {isSubagent ? (
-              isForkSession ? (
-                <ForkSessionIcon />
-              ) : (
-                <SubSessionIcon />
-              )
-            ) : (
-              isForkSession ? (
-                <ForkSessionIcon />
-              ) : (
-                <ModeIcon type={session.task_id ? "task" : session.type || "chat"} size={16} />
-              )
-            )}
+            {isSubagent ? <SubSessionIcon /> : <ModeIcon type={session.task_id ? "task" : session.type || "chat"} size={16} />}
             {!isSubagent && session.type === "command" ? (
               <span
                 title={session.shell || "shell"}
@@ -1300,33 +1356,6 @@ function SessionCard({
                   agentName={session.agent || ""}
                   style={{ width: "10px", height: "10px", display: "block" }}
                 />
-              </span>
-            ) : null}
-            {!isSubagent && childCount > 0 ? (
-              <span
-                title={t("sessionList.childCount", { count: childCount })}
-                style={{
-                  position: "absolute",
-                  right: "-7px",
-                  top: "-7px",
-                  minWidth: "14px",
-                  height: "14px",
-                  padding: "0 3px",
-                  borderRadius: "999px",
-                  background: "var(--accent-color)",
-                  border: "1px solid var(--content-bg, #fff)",
-                  color: "#fff",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  boxSizing: "border-box",
-                  fontSize: "9px",
-                  fontWeight: 700,
-                  lineHeight: 1,
-                  letterSpacing: 0,
-                }}
-              >
-                {childCount > 99 ? "99+" : childCount}
               </span>
             ) : null}
           </span>
@@ -1891,36 +1920,8 @@ function SubSessionIcon() {
   );
 }
 
-function ForkSessionIcon() {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      width="22"
-      height="22"
-      viewBox="0 0 24 24"
-      aria-hidden="true"
-      style={{
-        color: "var(--accent-color)",
-        display: "block",
-        transform: "rotate(180deg) scaleX(-1)",
-      }}
-    >
-      <path d="M0 0h24v24H0z" fill="none" />
-      <path
-        fill="none"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth="1.8"
-        d="M17 7a2 2 0 1 0 0-4a2 2 0 0 0 0 4M7 7a2 2 0 1 0 0-4a2 2 0 0 0 0 4m0 14a2 2 0 1 0 0-4a2 2 0 0 0 0 4M7 7v10M17 7v1c0 2.5-2 3-2 3l-6 2s-2 .5-2 3v1"
-      />
-      <circle cx="17" cy="5" r="2" fill="currentColor" />
-    </svg>
-  );
-}
-
 // memo 化 SessionCard：父组件（SessionList / MultiProjectSessionList）重渲染时，
-// 若 props 引用未变则跳过整卡重渲染（含 useI18n / parseForkSessionSource / 多个 useEffect）。
+// 若 props 引用未变则跳过整卡重渲染（含 useI18n / 多个 useEffect）。
 const SessionCardMemo = memo(SessionCard);
 
 const menuItemStyle: React.CSSProperties = {
