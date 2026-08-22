@@ -86,6 +86,12 @@ CREATE TABLE IF NOT EXISTS sessions (
 	updated_at TEXT NOT NULL,
 	closed_at TEXT
 );`
+	sessionNameAliasTableSchema = `
+CREATE TABLE IF NOT EXISTS session_name_aliases (
+	key TEXT PRIMARY KEY,
+	name TEXT NOT NULL,
+	updated_at TEXT NOT NULL
+);`
 	agentBindingTableSchema = `
 CREATE TABLE IF NOT EXISTS session_agent_bindings (
 	session_key TEXT NOT NULL,
@@ -120,6 +126,11 @@ SELECT session_key, agent, agent_session_id, agent_ctx_seq, external_source_path
 FROM session_agent_bindings
 WHERE agent = ? AND agent_session_id = ?
 LIMIT 1`
+	selectSessionNameAliasSQL = `
+SELECT name FROM session_name_aliases WHERE key = ?`
+	upsertSessionNameAliasSQL = `
+INSERT INTO session_name_aliases (key, name, updated_at) VALUES (?, ?, ?)
+ON CONFLICT(key) DO UPDATE SET name = excluded.name, updated_at = excluded.updated_at`
 )
 
 var openSQLiteDB = func(path string) (*sql.DB, error) {
@@ -959,11 +970,16 @@ func (m *Manager) Rename(_ context.Context, key, name string) (*Session, error) 
 		return nil, err
 	}
 	if session.Name == trimmed {
+		// Still persist to alias so a prior alias from an earlier rename survives
+		_ = m.upsertSessionNameAliasUnsafe(key, trimmed)
 		return session, nil
 	}
 	session.Name = trimmed
 	session.UpdatedAt = m.now().UTC()
 	if err := m.upsertSessionMetaUnsafe(session); err != nil {
+		return nil, err
+	}
+	if err := m.upsertSessionNameAliasUnsafe(key, trimmed); err != nil {
 		return nil, err
 	}
 	return session, nil
@@ -1313,6 +1329,9 @@ func (m *Manager) querySessionMetasUnsafe(query string, args []any) ([]*Session,
 		if err := m.fillSessionBindingsUnsafe(items); err != nil {
 			return nil, err
 		}
+		if err := m.applySessionNameAliasesUnsafe(items); err != nil {
+			return nil, err
+		}
 	}
 	return items, nil
 }
@@ -1455,6 +1474,7 @@ func (m *Manager) getSessionMetaWithBindingsUnsafe(key string) (*Session, error)
 		}
 		meta.AgentCtxSeq[binding.Agent] = binding.AgentCtxSeq
 	}
+	_ = m.applySessionNameAliasSingleUnsafe(meta)
 	return meta, nil
 }
 
@@ -1474,6 +1494,81 @@ func (m *Manager) upsertSessionMetaUnsafe(session *Session) error {
 	_, err = db.Exec(upsertSessionMetaSQL, args...)
 	if err != nil {
 		return err
+	}
+	return nil
+}
+
+func (m *Manager) upsertSessionNameAliasUnsafe(key, name string) error {
+	key = strings.TrimSpace(key)
+	name = strings.TrimSpace(name)
+	if key == "" || name == "" {
+		return nil
+	}
+	db, err := m.ensureSessionMetaDBUnsafe()
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(upsertSessionNameAliasSQL, key, name, m.now().UTC().Format(time.RFC3339Nano))
+	return err
+}
+
+func (m *Manager) applySessionNameAliasesUnsafe(items []*Session) error {
+	if len(items) == 0 {
+		return nil
+	}
+	db, err := m.ensureSessionMetaDBUnsafe()
+	if err != nil {
+		return err
+	}
+	keys := make([]any, 0, len(items))
+	for _, it := range items {
+		keys = append(keys, it.Key)
+	}
+	ph := strings.TrimSuffix(strings.Repeat("?,", len(keys)), ",")
+	rows, err := db.Query(`SELECT key, name FROM session_name_aliases WHERE key IN (`+ph+`)`, keys...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	byKey := make(map[string]string, len(items))
+	for rows.Next() {
+		var k, n string
+		if err := rows.Scan(&k, &n); err != nil {
+			return err
+		}
+		if v := strings.TrimSpace(n); v != "" {
+			byKey[strings.TrimSpace(k)] = v
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, it := range items {
+		if v := byKey[strings.TrimSpace(it.Key)]; v != "" {
+			it.Name = v
+		}
+	}
+	return nil
+}
+
+func (m *Manager) applySessionNameAliasSingleUnsafe(s *Session) error {
+	if s == nil || strings.TrimSpace(s.Key) == "" {
+		return nil
+	}
+	db, err := m.ensureSessionMetaDBUnsafe()
+	if err != nil {
+		return err
+	}
+	var alias string
+	err = db.QueryRow(selectSessionNameAliasSQL, strings.TrimSpace(s.Key)).Scan(&alias)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return err
+	}
+	if v := strings.TrimSpace(alias); v != "" {
+		s.Name = v
 	}
 	return nil
 }
@@ -1972,6 +2067,10 @@ func openSessionMetaDB(dbFile string) (db *sql.DB, err error) {
 		return nil, err
 	}
 	if _, err := db.Exec(agentBindingTableSchema); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if _, err := db.Exec(sessionNameAliasTableSchema); err != nil {
 		db.Close()
 		return nil, err
 	}

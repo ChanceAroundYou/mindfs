@@ -12,15 +12,20 @@ const compiled = ts.transpileModule(source, {
 const sandbox = { exports: {}, module: { exports: {} } };
 vm.runInNewContext(compiled, sandbox, { filename: sourcePath });
 
-const { BOTTOM_SHEET_DRAG_START_PX, BOTTOM_SHEET_EDGE_RATIO, resolveBottomSheetRelease } =
+const { BOTTOM_SHEET_DRAG_START_PX, BOTTOM_SHEET_TOP_EDGE_RATIO, BOTTOM_SHEET_BOTTOM_EDGE_RATIO, resolveBottomSheetRelease } =
   sandbox.exports;
 
 assert.equal(BOTTOM_SHEET_DRAG_START_PX, 8);
-assert.equal(BOTTOM_SHEET_EDGE_RATIO, 0.2);
+assert.equal(BOTTOM_SHEET_TOP_EDGE_RATIO, 0.1);
+assert.equal(BOTTOM_SHEET_BOTTOM_EDGE_RATIO, 0.2);
 
 assert.equal(
-  resolveBottomSheetRelease({ clientY: 150, viewportHeight: 1000, dragged: true }),
+  resolveBottomSheetRelease({ clientY: 80, viewportHeight: 1000, dragged: true }),
   "expand",
+);
+assert.equal(
+  resolveBottomSheetRelease({ clientY: 150, viewportHeight: 1000, dragged: true }),
+  "half",
 );
 assert.equal(
   resolveBottomSheetRelease({ clientY: 850, viewportHeight: 1000, dragged: true }),

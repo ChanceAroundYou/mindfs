@@ -326,61 +326,10 @@ export function SessionList({
   const [loadingChildren, setLoadingChildren] = useState<Record<string, boolean>>({});
   const [childrenHasMore, setChildrenHasMore] = useState<Record<string, boolean>>({});
   const visibleSessions = useMemo(() => {
-    if (searchResultsMode) {
-      return sessions.map((session): VisibleSessionRow => ({ type: "session", session }));
-    }
-    const childrenByParent = new Map<string, SessionItem[]>();
-    const topLevel: SessionItem[] = [];
-    const keys = new Set(sessions.map((item) => item.key));
-    const parentByKey = new Map<string, string>();
-    for (const item of sessions) {
-      const parentKey = String(item.parent_session_key || "").trim();
-      if (parentKey && keys.has(parentKey)) {
-        const children = childrenByParent.get(parentKey) || [];
-        children.push(item);
-        childrenByParent.set(parentKey, children);
-        parentByKey.set(item.key, parentKey);
-      } else {
-        topLevel.push(item);
-      }
-    }
-    const activeParentKeys = new Set<string>();
-    if (selectedKey) {
-      activeParentKeys.add(selectedKey);
-      let parentKey = parentByKey.get(selectedKey) || "";
-      while (parentKey) {
-        activeParentKeys.add(parentKey);
-        parentKey = parentByKey.get(parentKey) || "";
-      }
-    }
-    const out: VisibleSessionRow[] = [];
-    const append = (item: SessionItem) => {
-      out.push({ type: "session", session: item });
-      const children = childrenByParent.get(item.key) || [];
-      const active = activeParentKeys.has(item.key);
-      const expanded = !!expandedChildren[item.key];
-      const visibleChildren = active
-        ? expanded
-          ? children
-          : children.slice(0, COLLAPSED_CHILD_SESSION_LIMIT)
-        : [];
-      for (const child of visibleChildren) {
-        append(child);
-      }
-      const hiddenCount = Math.max(0, children.length - COLLAPSED_CHILD_SESSION_LIMIT);
-      if (active && (children.length > COLLAPSED_CHILD_SESSION_LIMIT || expanded || childrenHasMore[item.key])) {
-        out.push({
-          type: "child-toggle",
-          parent: item,
-          loadedChildCount: children.length,
-          hiddenCount,
-          expanded,
-        });
-      }
-    };
-    topLevel.forEach((item) => append(item));
-    return out;
-  }, [childrenHasMore, expandedChildren, searchResultsMode, selectedKey, sessions]);
+    // Fork sessions are now independent top-level items; flatten all sessions
+    // instead of nesting by parent_session_key.
+    return sessions.map((session): VisibleSessionRow => ({ type: "session", session }));
+  }, [searchResultsMode, sessions]);
   const childCountByParent = useMemo(() => {
     const counts = new Map<string, number>();
     const keys = new Set(sessions.map((item) => item.key));
@@ -838,58 +787,8 @@ export function MultiProjectSessionList({
   };
 
   const buildRows = (sessions: SessionItem[], fallbackRootId: string): VisibleSessionRow[] => {
-    const childrenByParent = new Map<string, SessionItem[]>();
-    const topLevel: SessionItem[] = [];
-    const keys = new Set(sessions.map((item) => item.key));
-    const parentByKey = new Map<string, string>();
-    for (const item of sessions) {
-      const parentKey = String(item.parent_session_key || "").trim();
-      if (parentKey && keys.has(parentKey)) {
-        const children = childrenByParent.get(parentKey) || [];
-        children.push(item);
-        childrenByParent.set(parentKey, children);
-        parentByKey.set(item.key, parentKey);
-      } else {
-        topLevel.push(item);
-      }
-    }
-    const activeParentKeys = new Set<string>();
-    if (selectedKey && selectedRootId === fallbackRootId) {
-      activeParentKeys.add(selectedKey);
-      let parentKey = parentByKey.get(selectedKey) || "";
-      while (parentKey) {
-        activeParentKeys.add(parentKey);
-        parentKey = parentByKey.get(parentKey) || "";
-      }
-    }
-    const out: VisibleSessionRow[] = [];
-    const append = (item: SessionItem) => {
-      out.push({ type: "session", session: item });
-      const children = childrenByParent.get(item.key) || [];
-      const stateKey = childStateKey(item, fallbackRootId);
-      const active = activeParentKeys.has(item.key);
-      const expanded = !!expandedChildren[stateKey];
-      const visibleChildren = active
-        ? expanded
-          ? children
-          : children.slice(0, COLLAPSED_CHILD_SESSION_LIMIT)
-        : [];
-      for (const child of visibleChildren) {
-        append(child);
-      }
-      const hiddenCount = Math.max(0, children.length - COLLAPSED_CHILD_SESSION_LIMIT);
-      if (active && (children.length > COLLAPSED_CHILD_SESSION_LIMIT || expanded || childrenHasMore[stateKey])) {
-        out.push({
-          type: "child-toggle",
-          parent: item,
-          loadedChildCount: children.length,
-          hiddenCount,
-          expanded,
-        });
-      }
-    };
-    topLevel.forEach((item) => append(item));
-    return out;
+    // Flatten: fork/children are independent sessions
+    return sessions.map((session): VisibleSessionRow => ({ type: "session", session }));
   };
 
   const handleChildToggle = async (
