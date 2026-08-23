@@ -8,6 +8,7 @@ import { isHarmonyRuntime, isNativeShellRuntime } from "./services/runtime";
 import { Login } from "./components/Login";
 import { addNode, getNodes, setActiveNodeId } from "./services/nodeRegistry";
 import { I18nProvider, translateNow } from "./i18n";
+import { DEPLOY_PREFIX, RELAY_ASSETS_PREFIX } from "./services/prefix";
 
 applyAppearanceMode();
 if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
@@ -48,14 +49,23 @@ function mindFSAssetPath(raw: string): string {
       return "";
     }
     const pathname = url.pathname;
+    // relay 别名前缀（RELAY_ASSETS_PREFIX）下的资源一律视为前端资源
+    if (pathname.startsWith(RELAY_ASSETS_PREFIX)) {
+      return `${pathname}${url.search}`;
+    }
+    // 部署前缀下所有静态资源挂在 DEPLOY_PREFIX/ 之下（空前缀即根 /）
+    const assetRoot = DEPLOY_PREFIX === "" ? "/" : `${DEPLOY_PREFIX}/`;
+    if (!pathname.startsWith(assetRoot)) {
+      return "";
+    }
+    const rest = pathname.slice(assetRoot.length);
     const knownAsset =
-      pathname.startsWith("/assets/") ||
-      pathname.startsWith("/mindfs-assets/") ||
-      pathname === "/favicon.svg" ||
-      pathname === "/manifest.webmanifest" ||
-      pathname === "/apple-touch-icon.png" ||
-      pathname === "/service-worker.js" ||
-      /^\/pwa(?:-|_).*\.(?:png|svg)$/i.test(pathname);
+      /^assets\/[^/]+\.(?:js|css)$/i.test(rest) ||
+      /^(?:pwa(?:-|_)[^/]*|favicon)\.(?:png|svg)$/i.test(rest) ||
+      rest === "manifest.webmanifest" ||
+      rest === "apple-touch-icon.png" ||
+      rest === "service-worker.js" ||
+      rest === "offline.html";
     if (!knownAsset) {
       return "";
     }
@@ -605,7 +615,7 @@ function AppRoot() {
   }, []);
 
   if (!ready) {
-    return <Login onOpenNode={(nodeURL) => {
+    return <Login onOpenNode={async (nodeURL) => {
       try {
         const url = String(nodeURL || "").trim().replace(/\/+$/, "");
         if (!url) return;
@@ -613,7 +623,7 @@ function AppRoot() {
         const nodes = getNodes();
         const existing = nodes.find((n) => n.url === url);
         if (existing) { setActiveNodeId(existing.id); window.dispatchEvent(new CustomEvent("mindfs:nodes-changed")); return; }
-        const node = addNode({ name, url });
+        const node = await addNode({ name, url });
         setActiveNodeId(node.id);
         window.dispatchEvent(new CustomEvent("mindfs:nodes-changed"));
       } catch { window.location.assign(nodeURL); }

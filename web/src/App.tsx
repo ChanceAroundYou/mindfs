@@ -108,7 +108,7 @@ import { AppShell } from "./layout/AppShell";
 import { ModeIcon } from "./components/ModeIcon";
 import { FileTree, type AgentConfigSwitchRequest } from "./components/FileTree";
 
-import { getActiveNode, getNodes, LOCAL_NODE_ID, migrateLegacySingleBase } from "./services/nodeRegistry";
+import { applyNodesFromServer, getActiveNode, getNodes, LOCAL_NODE_ID, migrateLegacySingleBase, syncNodesFromServer } from "./services/nodeRegistry";
 import { FileViewer } from "./components/FileViewer";
 import { GitDiffViewer } from "./components/GitDiffViewer";
 import { GitHistoryPanel } from "./components/GitHistoryPanel";
@@ -2240,7 +2240,7 @@ export function App({ onGoHome }: AppProps) {
     }
   }, [isMobile, onboardingOpen]);
   const [e2eeSecretInput, setE2eeSecretInput] = useState("");
-  useEffect(() => { try { migrateLegacySingleBase(); } catch {} }, []);
+  useEffect(() => { syncNodesFromServer().catch(()=>{}); }, []);
   const [e2eePromptError, setE2eePromptError] = useState("");
   const [e2eePromptBusy, setE2eePromptBusy] = useState(false);
   const [editDraftRequest, setEditDraftRequest] = useState<{
@@ -9540,6 +9540,10 @@ export function App({ onGoHome }: AppProps) {
           break;
         case "ws.closed":
           setStatus(currentRootIdRef.current ? "reconnecting" : "disconnected");
+          break;
+        case "nodes.changed":
+          void syncNodesFromServer().then((ns) => { try { applyNodesFromServer(ns as any); } catch {} }).catch(() => {});
+          void loadManagedRootPayloads().catch(() => {});
           break;
         case "root.changed":
           if (

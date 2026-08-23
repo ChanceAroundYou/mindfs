@@ -437,6 +437,8 @@ export const enUS = {
   "agent.fastMode": "Fast mode",
   "agent.enabled": "On",
   "agent.disabled": "Off",
+  "agent.longContext": "1M",
+  "agent.longContextHint": "Use 1M context variant when enabled",
   "session.recovering": "An error occurred. Retrying...",
 
   "directory.cancelRename": "Cancel project rename",

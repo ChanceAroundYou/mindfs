@@ -18,7 +18,6 @@ import {
 import { useI18n, type Locale, type MessageKey } from "../i18n";
 import { useRefreshSpin } from "../hooks";
 import { addNode, getNodes, LOCAL_NODE_ID, removeNode, updateNode, getNodeById } from "../services/nodeRegistry";
-import { normalizeBaseURLWithPrefix } from "../services/runtime";
 import { AgentMenuList } from "./AgentMenuList";
 import { AgentIcon } from "./AgentIcon";
 import { AgentSelector } from "./AgentSelector";
@@ -2965,14 +2964,14 @@ function FileTreeInner({
                 if(!rawUrl){ setNodeAddError("请输入节点地址"); return; }
                 let normalized="";
                 try { const withScheme = /^[a-z]+:\/\//i.test(rawUrl)?rawUrl:`https://${rawUrl}`; const u=new URL(withScheme); u.hash=""; normalized=u.toString().replace(/\/+$/,""); } catch { setNodeAddError("地址格式不正确"); return; }
-                const testUrl = normalizeBaseURLWithPrefix(normalized);
+                const testUrl = normalized;
                 setNodeAddBusy(true); setNodeAddError("");
                 try {
                   const controller=new AbortController(); const to=setTimeout(()=>controller.abort(),5000);
                   const r=await fetch(`${testUrl.replace(/\/+$/,"")}/api/agents`,{ signal: controller.signal });
                   clearTimeout(to);
                   if(!r.ok) throw new Error(`联通失败: ${r.status}`);
-                  addNode({ name, url: normalized }); window.dispatchEvent(new CustomEvent("mindfs:nodes-changed")); setNodeAddOpen(false); setNodeAddName(""); setNodeAddUrl("");
+                  await addNode({ name, url: normalized }); setNodeAddOpen(false); setNodeAddName(""); setNodeAddUrl("");
                 } catch (e:any) { setNodeAddError(e?.name==="AbortError"?"联通超时，请检查地址": String(e?.message||e)); } finally { setNodeAddBusy(false); }
               }} style={{ border:"none", background:"var(--accent-color)", color:"#fff", borderRadius:8, padding:"8px 10px", fontSize:12, cursor: nodeAddBusy?"not-allowed":"pointer", opacity: nodeAddBusy?0.6:1 }}>{nodeAddBusy?"检测中…":"添加"}</button>
             </div>
@@ -2985,9 +2984,9 @@ function FileTreeInner({
               <div key={n.id} style={{ display:"flex", alignItems:"center", gap:8, border:"1px solid var(--border-color)", borderRadius:8, padding:"8px 10px" }}>
                 <span style={{ width:8, height:8, borderRadius:"50%", background:n.color, display:"inline-block" }} />
                 <span style={{ flex:1, fontSize:12, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{n.name} — {n.url}</span>
-                <button type="button" onClick={()=>{
+                <button type="button" onClick={async ()=>{
                   if(!confirm(`删除节点 ${n.name} ? 仅前端移除，不会删除后端数据`)) return;
-                  try { removeNode(n.id); window.dispatchEvent(new CustomEvent("mindfs:nodes-changed")); setNodeRemoveOpen(false); } catch (e:any){ setNodeRemoveError(String(e?.message||e)); }
+                  try { await removeNode(n.id); setNodeRemoveOpen(false); } catch (e:any){ setNodeRemoveError(String(e?.message||e)); }
                 }} style={{ border:"none", background:"transparent", color:"#dc2626", cursor:"pointer", fontSize:12 }}>删除</button>
               </div>
             ))}
@@ -3002,11 +3001,11 @@ function FileTreeInner({
             {nodeEditError ? <div style={{ color:"#dc2626", fontSize:12 }}>{nodeEditError}</div> : null}
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
               <button type="button" onClick={()=>setNodeEditOpen(false)} style={{ border:"1px solid var(--border-color)", background:"transparent", borderRadius:8, padding:"8px 10px", fontSize:12, cursor:"pointer" }}>取消</button>
-              <button type="button" onClick={()=>{
+              <button type="button" onClick={async ()=>{
                 const nm=String(nodeEditName||"").trim(); const ru=String(nodeEditUrl||"").trim();
                 if(!nm){ setNodeEditError("名称不能为空"); return; }
                 if(!ru){ setNodeEditError("地址不能为空"); return; }
-                try { updateNode(LOCAL_NODE_ID,{ name:nm, url: ru }); window.dispatchEvent(new CustomEvent("mindfs:nodes-changed")); setNodeEditOpen(false); } catch(e:any){ setNodeEditError(String(e?.message||e)); }
+                try { await updateNode(LOCAL_NODE_ID,{ name:nm, url: ru }); setNodeEditOpen(false); } catch(e:any){ setNodeEditError(String(e?.message||e)); }
               }} style={{ border:"none", background:"var(--accent-color)", color:"#fff", borderRadius:8, padding:"8px 10px", fontSize:12, cursor:"pointer" }}>保存</button>
             </div>
           </div>

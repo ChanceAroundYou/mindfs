@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { getActiveNodeId, getNodes, setActiveNodeId, type NodeConnection } from "../services/nodeRegistry";
+import { getActiveNodeId, getNodes, setActiveNodeId, syncNodesFromServer, type NodeConnection } from "../services/nodeRegistry";
 
 export function useNodeRegistry() {
   const [nodes, setNodes] = useState<NodeConnection[]>(() => getNodes());

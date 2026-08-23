@@ -1,4 +1,5 @@
 import { getApiBaseURL, getWsBaseURL, isBrowserRuntime } from "./runtime";
+import { DEPLOY_PREFIX, withDeployPrefix } from "./prefix";
 
 function ensureLeadingSlash(path: string): string {
   return path.startsWith("/") ? path : `/${path}`;
@@ -14,6 +15,8 @@ export function appPath(path: string, nodeId?: string): string {
   if (apiBaseURL) {
     return joinURL(apiBaseURL, pathname);
   }
+  // under /mindfs even when no base URL (e.g. native shell fallback or relative)
+  if (DEPLOY_PREFIX) return withDeployPrefix(pathname);
   return pathname;
 }
 
@@ -28,7 +31,7 @@ export function appURL(path: string, params?: URLSearchParams, nodeId?: string):
 export function wsURL(path: string, params?: URLSearchParams, nodeId?: string): string {
   const wsBaseURL = getWsBaseURL(nodeId);
   const pathname = ensureLeadingSlash(path);
-  let target = wsBaseURL ? joinURL(wsBaseURL, pathname) : pathname;
+  let target = wsBaseURL ? joinURL(wsBaseURL, pathname) : (DEPLOY_PREFIX ? withDeployPrefix(pathname) : pathname);
   if (!wsBaseURL && isBrowserRuntime()) {
     const { protocol, origin } = window.location;
     if (protocol === "https:") {

@@ -172,6 +172,44 @@ const MOBILE_BREAKPOINT = 768;
 const IME_ENTER_GUARD_MS = 120;
 const CANDIDATE_FETCH_DEBOUNCE_MS = 512;
 
+function isClaudeAgentName(name?: string | null) {
+  return String(name || "").trim().toLowerCase() === "claude";
+}
+
+function resolveClaudeBaseAlias(base: string): string {
+  const trimmed = String(base || "").trim();
+  if (!trimmed) return "";
+  const lower = trimmed.toLowerCase();
+  if (lower === "fable") return "of";
+  if (lower === "opus") return "op";
+  if (lower === "sonnet") return "os";
+  if (lower === "haiku") return "ok";
+  if (lower === "of" || lower === "op" || lower === "os" || lower === "ok") return lower;
+  return trimmed;
+}
+
+function strip1MSuffix(model: string): string {
+  const trimmed = String(model || "").trim();
+  return trimmed.toLowerCase().endsWith("[1m]") ? trimmed.slice(0, -4).trim() : trimmed;
+}
+
+function has1MSuffix(model: string): boolean {
+  return String(model || "").trim().toLowerCase().endsWith("[1m]");
+}
+
+function with1MSuffix(model: string, enabled: boolean): string {
+  const base = strip1MSuffix(model);
+  if (!base) return "";
+  const alias = resolveClaudeBaseAlias(base);
+  if (!alias) return "";
+  return enabled ? `${alias}[1m]` : alias;
+}
+
+function modelBaseForAgent(agentName: string | undefined, model: string): string {
+  const base = strip1MSuffix(model);
+  return isClaudeAgentName(agentName) ? resolveClaudeBaseAlias(base) : base;
+}
+
 function getAgentDefaults(agent?: AgentStatus | null) {
   return {
     model: agent?.default_model_id || agent?.current_model_id || "",
@@ -436,6 +474,7 @@ export function ActionBar({
   const [agentMode, setAgentMode] = useState("");
   const [effort, setEffort] = useState("");
   const [fastService, setFastService] = useState<"" | "on" | "off">("");
+  const [longContext, setLongContext] = useState(false);
   const [agents, setAgents] = useState<AgentStatus[]>([]);
   const [shells, setShells] = useState<ShellStatus[]>([]);
   const [shell, setShell] = useState("");
@@ -532,7 +571,8 @@ export function ActionBar({
     const nextAgentMode = currentSession.mode || "";
     const nextEffort = currentSession.effort || "";
     const nextFastService = (currentSession.fast_service || "") as "" | "on" | "off";
-    const signature = `${sessionKey || ""}::${nextMode}::${nextAgent}::${nextModel}::${nextShell}::${nextAgentMode}::${nextEffort}::${nextFastService}`;
+    const nextLongContext = isClaudeAgentName(currentSession.agent) && has1MSuffix(currentSession.model || "");
+    const signature = `${sessionKey || ""}::${nextMode}::${nextAgent}::${nextModel}::${nextShell}::${nextAgentMode}::${nextEffort}::${nextFastService}::${nextLongContext ? "1m" : ""}`;
     if (syncedSessionSignatureRef.current === signature) {
       return;
     }
@@ -544,6 +584,7 @@ export function ActionBar({
     setAgentMode(nextAgentMode);
     setEffort(nextEffort);
     setFastService(nextFastService);
+    setLongContext(nextLongContext);
   }, [currentSession]);
 
   useEffect(() => {
@@ -634,23 +675,32 @@ export function ActionBar({
     if (!selectedAgent) {
       return;
     }
-    const hasModel = (selectedAgent.models ?? []).some((item) => item.id === model);
+    const hasModel = (selectedAgent.models ?? []).some(
+      (item) => modelBaseForAgent(selectedAgent.name, item.id) === modelBaseForAgent(selectedAgent.name, model),
+    );
     if (!hasModel) {
       setModel("");
+      if (isClaudeAgentName(selectedAgent.name) && longContext) {
+        setLongContext(false);
+      }
     }
-  }, [agent, model, agents]);
+  }, [agent, longContext, model, agents]);
 
   const selectedAgent = agents.find((item) => item.name === agent);
   const selectedModelInfo =
-    (selectedAgent?.models ?? []).find((item) => item.id === model)
+    (selectedAgent?.models ?? []).find(
+      (item) => modelBaseForAgent(selectedAgent?.name, item.id) === modelBaseForAgent(selectedAgent?.name, model),
+    )
     || (selectedAgent?.models ?? []).find(
-      (item) => item.id === (selectedAgent?.default_model_id || selectedAgent?.current_model_id),
+      (item) => modelBaseForAgent(selectedAgent?.name, item.id) === modelBaseForAgent(selectedAgent?.name, selectedAgent?.default_model_id || selectedAgent?.current_model_id || ""),
     );
   const availableEfforts = selectedModelInfo?.efforts ?? selectedAgent?.efforts ?? [];
   const isCodexEffortAgent = selectedAgent?.name === "codex";
   const supportsEffort =
     availableEfforts.length > 0 && !!selectedModelInfo?.supportEffort;
   const supportsServiceTier = !!selectedAgent?.supports_fast_service;
+  const supportsLongContext = isClaudeAgentName(selectedAgent?.name);
+  const effectiveModelForSend = supportsLongContext ? with1MSuffix(model, longContext) : model;
   const planModeActive = (!!currentSession?.plan_mode || pendingPlanMode) && mode !== "command";
   const planSessionKey = currentSession?.key || currentSession?.session_key || "";
   const planRootId = currentSession?.root_id || currentRootId || "";
@@ -676,6 +726,12 @@ export function ActionBar({
       setFastService(getAgentDefaults(selectedAgent).fastService);
     }
   }, [supportsServiceTier, fastService, selectedAgent]);
+
+  useEffect(() => {
+    if (!supportsLongContext && longContext) {
+      setLongContext(false);
+    }
+  }, [supportsLongContext, longContext]);
 
   useEffect(() => {
     setInputHistoryIndex(null);
@@ -959,7 +1015,7 @@ export function ActionBar({
         payload,
         mode,
         mode === "command" ? "" : agent,
-        model || undefined,
+        effectiveModelForSend || undefined,
         agentMode || undefined,
         supportsEffort ? effort || undefined : undefined,
         supportsServiceTier ? fastService : undefined,
@@ -1006,7 +1062,7 @@ export function ActionBar({
         requestAnimationFrame(() => editorRef.current?.focus());
       }
     }
-  }, [serializedInput, pendingAttachments, isConnected, sending, mode, agent, currentRootId, planSessionKey, planRootId, onSetPlanMode, isMobile, model, agentMode, onSendMessage, supportsEffort, effort, supportsServiceTier, fastService, shell, t, currentSession, currentRootIsGitRepo, createWorktree, worktreeBranchMode, worktreeBranch]);
+  }, [serializedInput, pendingAttachments, isConnected, sending, mode, agent, currentRootId, planSessionKey, planRootId, onSetPlanMode, isMobile, model, effectiveModelForSend, agentMode, onSendMessage, supportsEffort, effort, supportsServiceTier, fastService, shell, t, currentSession, currentRootIsGitRepo, createWorktree, worktreeBranchMode, worktreeBranch]);
 
   const handleCancel = useCallback(async () => {
     const sessionKey = currentSession?.key;
@@ -1157,6 +1213,7 @@ export function ActionBar({
     setAgentMode("");
     setEffort(defaults.effort);
     setFastService(defaults.fastService);
+    setLongContext(has1MSuffix(defaults.model));
     syncedSessionSignatureRef.current = "";
   }, [agent, agents]);
 
@@ -1694,18 +1751,26 @@ export function ActionBar({
                     model={model}
                     mode={agentMode}
                     effort={effort}
+                    longContext={longContext}
                     agents={agents}
                     onAgentChange={(nextAgent, nextModel) => {
                       const nextStatus = agents.find((item) => item.name === nextAgent);
                       const defaults = getAgentDefaults(nextStatus);
+                      const explicitModel = String(nextModel || "").trim();
                       setAgent(nextAgent);
-                      setModel(nextModel || defaults.model);
+                      setModel(explicitModel || defaults.model);
                       setAgentMode("");
                       setEffort(defaults.effort);
                       setFastService(defaults.fastService);
+                      if (explicitModel) {
+                        setLongContext(isClaudeAgentName(nextAgent) && has1MSuffix(explicitModel));
+                      } else {
+                        setLongContext(isClaudeAgentName(nextAgent) && has1MSuffix(defaults.model));
+                      }
                     }}
                     onModeChange={(nextAgentMode) => setAgentMode(nextAgentMode || "")}
                     onEffortChange={(nextEffort) => setEffort(nextEffort || "")}
+                    onLongContextChange={(next) => setLongContext(!!next)}
                     fastService={fastService}
                     onFastServiceChange={(nextFastService) => setFastService(nextFastService || "")}
                     onAgentRestart={async (targetAgent) => {

@@ -435,6 +435,8 @@ export const zhCN = {
   "agent.fastMode": "Fast 模式",
   "agent.enabled": "开启",
   "agent.disabled": "关闭",
+  "agent.longContext": "1M",
+  "agent.longContextHint": "开启后使用 1M 上下文变体",
   "session.recovering": "遇到错误，重试中...",
 
   "directory.cancelRename": "取消项目重命名",

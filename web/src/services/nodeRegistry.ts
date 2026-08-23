@@ -1,5 +1,6 @@
 import { getStoredString, setStoredString, removeStoredString } from "./storage";
-
+import { deriveLocalNodeBase, normalizeExplicitNodeBase, repairDuplicateDeployPrefix } from "./nodeBase";
+import { DEPLOY_PREFIX } from "./prefix";
 export const PALETTE = ["#3b82f6", "#f59e0b", "#7c6bd6", "#c66a7a", "#8a8f99", "#7aae8a"] as const;
 const PREVIOUS_PALETTE = ["#7c6bd6", "#c9b84a", "#6a8dc2", "#c66a7a", "#8a8f99", "#7aae8a"] as const;
 const OLD_PALETTE = ["#6d5bcf", "#0ea5a0", "#e07a2f", "#2f8f4e", "#d9466a", "#7a9a3a"] as const;
@@ -13,50 +14,16 @@ export type NodeConnection = {
   color: string;
 };
 
-const NODES_KEY = "mindfs_nodes";
 const ACTIVE_ID_KEY = "mindfs_active_node_id";
 const AGGREGATED_KEY = "mindfs_aggregated";
-
-function canUseStorage(): boolean {
-  return typeof window !== "undefined";
-}
+const LEGACY_NODES_KEY = "mindfs_nodes";
 
 function sanitizeURL(value: string): string {
-  return String(value || "").trim().replace(/\/+$/, "");
-}
-
-// 反代子路径前缀：当前页面挂在子路径下（如 /mindfs）时，裸 origin 的节点 URL 补上前缀，
-// 使请求落到 host.domain/mindfs/api/... 而非 404 的 host.domain/api/...
-function detectReverseProxyPrefix(): string {
-  if (typeof window === "undefined") return "";
-  try {
-    const segments = (window.location.pathname || "/").split("/").filter(Boolean);
-    return segments.length ? `/${segments[0]}` : "";
-  } catch {
-    return "";
-  }
-}
-
-function hasURIPath(input: string): boolean {
-  try {
-    const u = new URL(input);
-    return u.pathname.replace(/\/+$/, "") !== "";
-  } catch {
-    return false;
-  }
+  return normalizeExplicitNodeBase(value);
 }
 
 function normalizeNodeURL(input: string): string {
-  const base = sanitizeURL(input);
-  if (!base) return "";
-  if (hasURIPath(base)) {
-    return base;
-  }
-  const prefix = detectReverseProxyPrefix();
-  if (!prefix) {
-    return base;
-  }
-  return `${base}${prefix}`;
+  return sanitizeURL(input);
 }
 
 function nextColor(existing: NodeConnection[]): string {
@@ -66,7 +33,7 @@ function nextColor(existing: NodeConnection[]): string {
 function localBaseURL(): string {
   try {
     const origin = typeof window !== "undefined" ? window.location.origin : "";
-    if (origin) return normalizeNodeURL(sanitizeURL(origin));
+    return deriveLocalNodeBase(origin, DEPLOY_PREFIX);
   } catch {}
   return "";
 }
@@ -74,21 +41,6 @@ function localBaseURL(): string {
 function makeLocalNode(): NodeConnection {
   return { id: LOCAL_NODE_ID, name: "local", url: localBaseURL(), color: PALETTE[0] };
 }
-
-export function ensureLocalNode(): NodeConnection {
-  const nodes = getNodesRaw();
-  let local = nodes.find((n) => n.id === LOCAL_NODE_ID) || null;
-  if (!local) {
-    local = makeLocalNode();
-    nodes.unshift(local);
-    setNodes(nodes);
-  } else if (!local.url) {
-    local.url = localBaseURL();
-    setNodes(nodes);
-  }
-  return local;
-}
-
 
 function nodeOriginKey(url: string): string {
   try {
@@ -102,116 +54,169 @@ function dedupNodesByOrigin(nodes: NodeConnection[]): NodeConnection[] {
     const key = nodeOriginKey(n.url);
     const prev = seen.get(key);
     if (!prev) { seen.set(key, n); continue; }
-    // keep local over non-local, otherwise keep first
     if (prev.id === LOCAL_NODE_ID) continue;
     if (n.id === LOCAL_NODE_ID) seen.set(key, n);
   }
   return Array.from(seen.values());
 }
-function getNodesRaw(): NodeConnection[] {
-  const raw = getStoredString(NODES_KEY);
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .map((item: any): NodeConnection | null => {
-        if (!item || typeof item !== "object") return null;
-        const id = String(item.id || "").trim();
-        const name = String(item.name || "").trim();
-        const rawURL = sanitizeURL(String(item.url || ""));
-        const url = normalizeNodeURL(rawURL);
-        const color = String(item.color || "").trim() || "";
-        if (!id || !name || !url) return null;
-        return { id, name, url, color: color || PALETTE[0] };
-      })
-      .filter((x: any): x is NodeConnection => !!x);
-  } catch {
-    return [];
-  }
-}
 
-function genId(): string {
-  try {
-    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
-  } catch {}
-  return `node_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-}
+// ---- in-memory only, server is source of truth (no localStorage cache for nodes) ----
+let cache: NodeConnection[] | null = null;
+let cachePromise: Promise<NodeConnection[]> | null = null;
+let writeQueue: Promise<void> = Promise.resolve();
 
-export function getNodes(): NodeConnection[] {
-  const raw = getStoredString(NODES_KEY);
-  let parsed: any[] | null = null;
-  if (raw) {
-    try {
-      const p = JSON.parse(raw);
-      parsed = Array.isArray(p) ? p : null;
-    } catch {
-      parsed = null;
+function normalizeRecord(item: any): NodeConnection | null {
+  if (!item || typeof item !== "object") return null;
+  const id = String(item.id || "").trim();
+  const name = String(item.name || "").trim();
+  const rawURL = sanitizeURL(String(item.url || ""));
+  const url = repairDuplicateDeployPrefix(normalizeNodeURL(rawURL), DEPLOY_PREFIX);
+  let color = String(item.color || "").trim() || "";
+  if (!color) color = PALETTE[0];
+  else if (!PALETTE.some((c) => c.toLowerCase() === color.toLowerCase())) {
+    for (const p of paletteIndex) {
+      const idx = p.findIndex((c) => c.toLowerCase() === color.toLowerCase());
+      if (idx >= 0) { color = PALETTE[idx]!; break; }
     }
   }
-  if (parsed === null) {
-    // 首次：写入 local
-    const local = makeLocalNode();
-    if (local.url) {
-      setStoredString(NODES_KEY, JSON.stringify([local]));
-      try { window.dispatchEvent(new CustomEvent("mindfs:nodes-changed")); } catch {}
-      return [local];
-    }
-    return [local];
-  }
-  let changed = false;
-  let nodes = parsed
-    .map((item: any): NodeConnection | null => {
-      if (!item || typeof item !== "object") return null;
-      const id = String(item.id || "").trim();
-      const name = String(item.name || "").trim();
-      const rawURL = sanitizeURL(String(item.url || ""));
-      const url = normalizeNodeURL(rawURL);
-      if (url !== rawURL) changed = true;
-      let color = String(item.color || "").trim() || "";
-      if (!color) color = PALETTE[0];
-      else if (!PALETTE.some((c) => c.toLowerCase() === color.toLowerCase())) {
-        // 已是当前调色板色（如 #7c6bd6）则保留；否则按历史调色板位置迁移
-        for (const p of paletteIndex) {
-          const idx = p.findIndex((c) => c.toLowerCase() === color.toLowerCase());
-          if (idx >= 0) {
-            color = PALETTE[idx]!;
-            changed = true;
-            break;
-          }
-        }
-      }
-      if (!id || !name || !url) return null;
-      return { id, name, url, color };
-    })
-    .filter((x: any): x is NodeConnection => !!x);
-  // 去重：同 origin 的节点仅保留 local 优先的一条
-  const beforeDedupLen = nodes.length;
+  if (!id || !name || !url) return null;
+  return { id, name, url, color };
+}
+
+function normalizeAndDedup(list: any[]): NodeConnection[] {
+  let nodes = (Array.isArray(list) ? list : []).map(normalizeRecord).filter((x: any): x is NodeConnection => !!x);
   nodes = dedupNodesByOrigin(nodes as NodeConnection[]);
-  if (nodes.length !== beforeDedupLen) changed = true;
-  // 保证 local 首位存在，不可删
   const hasLocal = nodes.some((n) => n.id === LOCAL_NODE_ID);
   if (!hasLocal) {
     nodes = [makeLocalNode(), ...nodes];
-    changed = true;
   } else {
-    // local 固定首位
     const idx = nodes.findIndex((n) => n.id === LOCAL_NODE_ID);
     if (idx > 0) {
       const [local] = nodes.splice(idx, 1);
       nodes.unshift(local!);
-      changed = true;
     }
   }
-  if (changed && canUseStorage()) {
-    setStoredString(NODES_KEY, JSON.stringify(nodes));
-    try { window.dispatchEvent(new CustomEvent("mindfs:nodes-changed")); } catch {}
-  }
+  const local = nodes.find((n) => n.id === LOCAL_NODE_ID);
+  if (local && !local.url) local.url = localBaseURL();
   return nodes;
 }
 
-export function setNodes(nodes: NodeConnection[]): void {
-  setStoredString(NODES_KEY, JSON.stringify(nodes));
+function writeCache(next: NodeConnection[]) {
+  cache = next;
+  try { window.dispatchEvent(new CustomEvent("mindfs:nodes-changed")); } catch {}
+}
+
+function nodesApiPath(): string {
+  return DEPLOY_PREFIX ? `${DEPLOY_PREFIX}/api/nodes` : "/api/nodes";
+}
+
+async function pushToServer(next: NodeConnection[]): Promise<void> {
+  const res = await fetch(nodesApiPath(), {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(next),
+  });
+  if (!res.ok) throw new Error(`put nodes failed: ${res.status}`);
+}
+
+function enqueueServerWrite(next: NodeConnection[]): Promise<void> {
+  const snapshot = next.map((node) => ({ ...node }));
+  const write = writeQueue.then(() => pushToServer(snapshot));
+  writeQueue = write.catch(() => {});
+  return write;
+}
+
+function readLegacyLocalNodes(): NodeConnection[] | null {
+  try {
+    const raw = window.localStorage.getItem(LEGACY_NODES_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return null;
+    const list = parsed.map(normalizeRecord).filter((x: any): x is NodeConnection => !!x) as NodeConnection[];
+    return list.length ? list : null;
+  } catch { return null; }
+}
+function clearLegacyLocalNodes() {
+  try { window.localStorage.removeItem(LEGACY_NODES_KEY); } catch {}
+  try { window.localStorage.removeItem("mindfs_nodes_synced"); } catch {}
+}
+
+export async function syncNodesFromServer(): Promise<NodeConnection[]> {
+  if (cachePromise) return cachePromise;
+  cachePromise = (async () => {
+    const cacheAtStart = cache;
+    try {
+      const res = await fetch(nodesApiPath(), { cache: "no-store" });
+      if (!res.ok) throw new Error(`fetch nodes failed: ${res.status}`);
+      const remote = await res.json();
+      const list = Array.isArray(remote) ? remote : [];
+      const repairedRemoteURL = list.some((item) => {
+        const rawURL = normalizeExplicitNodeBase(String(item?.url || ""));
+        return rawURL !== repairDuplicateDeployPrefix(rawURL, DEPLOY_PREFIX);
+      });
+      let nodes = normalizeAndDedup(list);
+      if (cache !== cacheAtStart) return cache || nodes;
+      // one-time migration: server empty but old localStorage has nodes -> push once then clear legacy
+      if (!list.length) {
+        const legacy = readLegacyLocalNodes();
+        if (legacy && legacy.length) {
+          const merged = normalizeAndDedup([...nodes, ...legacy.filter((n) => n.id !== LOCAL_NODE_ID)]);
+          try {
+            await enqueueServerWrite(merged);
+            nodes = merged;
+            clearLegacyLocalNodes();
+          } catch (error) {
+            console.warn("[nodes] failed to migrate legacy nodes", error);
+          }
+        } else {
+          // ensure at least local node is persisted so other devices see the same empty state
+          try { await enqueueServerWrite(nodes); } catch (error) { console.warn("[nodes] failed to initialize server nodes", error); }
+        }
+      } else {
+        if (repairedRemoteURL) await enqueueServerWrite(nodes);
+        // server has data -> legacy cache is stale, drop it
+        clearLegacyLocalNodes();
+      }
+      if (cache !== cacheAtStart) return cache || nodes;
+      writeCache(nodes);
+      return nodes;
+    } catch (error) {
+      console.warn("[nodes] failed to sync server nodes", error);
+      if (cache) return cache;
+      const local = [makeLocalNode()];
+      writeCache(local);
+      return local;
+    } finally {
+      cachePromise = null;
+    }
+  })();
+  return cachePromise;
+}
+
+export function ensureLocalNode(): NodeConnection {
+  const nodes = getNodes();
+  let local = nodes.find((n) => n.id === LOCAL_NODE_ID) || null;
+  if (!local) {
+    local = makeLocalNode();
+    nodes.unshift(local);
+    void setNodes(nodes);
+  } else if (!local.url) {
+    local.url = localBaseURL();
+    void setNodes(nodes);
+  }
+  return local;
+}
+
+export function getNodes(): NodeConnection[] {
+  if (cache) return [...cache];
+  // no localStorage cache: before first sync, show ephemeral local node only
+  return [makeLocalNode()];
+}
+
+export async function setNodes(nodes: NodeConnection[]): Promise<void> {
+  const normalized = normalizeAndDedup(nodes as any);
+  writeCache(normalized);
+  await enqueueServerWrite(normalized);
 }
 
 export function getActiveNodeId(): string | null {
@@ -239,25 +244,24 @@ export function getNodeById(id: string): NodeConnection | null {
   return getNodes().find((n) => n.id === String(id || "").trim()) || null;
 }
 
-export function addNode(input: { name: string; url: string; color?: string }): NodeConnection {
+export async function addNode(input: { name: string; url: string; color?: string }): Promise<NodeConnection> {
   const nodes = getNodes();
   const url = normalizeNodeURL(input.url);
-  const name = String(input.name || "").trim() || new URL(url).hostname || url;
+  const name = String(input.name || "").trim() || (() => { try { return new URL(url).hostname; } catch { return url; } })();
   const node: NodeConnection = {
     id: genId(),
     name,
     url,
     color: String(input.color || "").trim() || nextColor(nodes),
   };
-  // dedup by origin (same host/port -> same backend)
   if (nodes.some((n) => nodeOriginKey(n.url) === nodeOriginKey(url))) throw new Error("node_url_exists");
   const next = [...nodes, node];
-  setNodes(next);
+  await setNodes(next);
   if (!getActiveNodeId()) setActiveNodeId(node.id);
   return node;
 }
 
-export function updateNode(id: string, patch: Partial<Pick<NodeConnection, "name" | "url" | "color">>): NodeConnection | null {
+export async function updateNode(id: string, patch: Partial<Pick<NodeConnection, "name" | "url" | "color">>): Promise<NodeConnection | null> {
   const nodes = getNodes();
   const idx = nodes.findIndex((n) => n.id === String(id || "").trim());
   if (idx < 0) return null;
@@ -269,16 +273,16 @@ export function updateNode(id: string, patch: Partial<Pick<NodeConnection, "name
     color: patch.color !== undefined ? String(patch.color).trim() || cur.color : cur.color,
   };
   nodes[idx] = next;
-  setNodes(nodes);
+  await setNodes(nodes);
   return next;
 }
 
-export function removeNode(id: string): void {
+export async function removeNode(id: string): Promise<void> {
   const normalized = String(id || "").trim();
   if (normalized === LOCAL_NODE_ID) throw new Error("cannot_remove_local");
   const nodes = getNodes();
   const next = nodes.filter((n) => n.id !== normalized);
-  setNodes(next);
+  await setNodes(next);
   const activeId = getActiveNodeId();
   if (activeId === normalized) {
     setActiveNodeId(next[0]?.id || null);
@@ -289,53 +293,28 @@ export function getAggregated(): boolean {
   const v = getStoredString(AGGREGATED_KEY);
   if (v === "0" || v === "false") return false;
   if (v === "1" || v === "true") return true;
-  return true; // default aggregated
+  return true;
 }
 
 export function setAggregated(value: boolean): void {
   setStoredString(AGGREGATED_KEY, value ? "1" : "0");
 }
 
-// 迁移旧单节点配置：mindfs_api_base_url / mindfs_launcher_nodes → 保留为非 local 节点
 export function migrateLegacySingleBase(): NodeConnection | null {
-  if (!canUseStorage()) return ensureLocalNode();
-  // 保证 local 存在
-  ensureLocalNode();
-  // 仅当除 local 外无节点时，尝试把旧单节点迁移为第二节点
-  const nodes = getNodes();
-  if (nodes.length > 1) return getActiveNode();
-  let legacyURL = "";
-  let legacyName = "";
-  try {
-    legacyURL = normalizeNodeURL(String(window.localStorage.getItem("mindfs_api_base_url") || "").trim());
-  } catch {}
-  if (!legacyURL) {
-    try {
-      const raw = window.localStorage.getItem("mindfs_launcher_nodes");
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed[0]?.url) {
-          legacyURL = normalizeNodeURL(String(parsed[0].url));
-          legacyName = String(parsed[0].name || "").trim();
-        }
-      }
-    } catch {}
-  }
-  if (!legacyURL) return getActiveNode();
-  const localURL = makeLocalNode().url;
-  if (nodeOriginKey(legacyURL) === nodeOriginKey(localURL)) return getActiveNode();
-  if (nodes.some((n) => nodeOriginKey(n.url) === nodeOriginKey(legacyURL))) return getActiveNode();
-  const node: NodeConnection = {
-    id: genId(),
-    name: legacyName || (() => { try { return new URL(legacyURL).hostname; } catch { return legacyURL; } })(),
-    url: legacyURL,
-    color: PALETTE[nodes.length % PALETTE.length],
-  };
-  setNodes([...nodes, node]);
-  return node;
+  try { void syncNodesFromServer(); } catch {}
+  return getActiveNode();
 }
 
-export function cleanupLegacyKeys(): void {
-  // keep legacy keys for now; caller can remove after migration verified
-  // e2ee secrets are cleaned in bootstrap removal phase
+export function cleanupLegacyKeys(): void {}
+
+export function applyNodesFromServer(list: any[]): void {
+  const nodes = normalizeAndDedup(Array.isArray(list) ? list : []);
+  writeCache(nodes);
+}
+
+function genId(): string {
+  try {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  } catch {}
+  return `node_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
