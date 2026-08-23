@@ -70,7 +70,7 @@ func (r *Runtime) OpenSession(ctx context.Context, opts OpenOptions) (types.Sess
 
 	s := &session{
 		sessionKey:    opts.SessionKey,
-		model:         strings.TrimSpace(opts.Model),
+		model:         canonicalClaudeModel(opts.Model),
 		planMode:      opts.PlanMode,
 		agentDebugLog: logs.NewAgentLogger(opts.RootPath, opts.SessionKey, opts.AgentName),
 		questionWaits: make(map[string]chan askUserAnswerResult),
@@ -112,7 +112,7 @@ func (r *Runtime) OpenSession(ctx context.Context, opts OpenOptions) (types.Sess
 		optionList = append(optionList, claudeagent.WithResumeSessionAt(resumeMessageID))
 	}
 	if strings.TrimSpace(opts.Model) != "" {
-		optionList = append(optionList, claudeagent.WithModel(strings.TrimSpace(opts.Model)))
+		optionList = append(optionList, claudeagent.WithModel(canonicalClaudeModel(opts.Model)))
 	}
 	if strings.TrimSpace(opts.Effort) != "" {
 		optionList = append(optionList, claudeagent.WithEffort(claudeagent.EffortLevel(strings.TrimSpace(opts.Effort))))
@@ -131,10 +131,10 @@ func (r *Runtime) OpenSession(ctx context.Context, opts OpenOptions) (types.Sess
 		return nil, err
 	}
 
-	selectedModel := strings.TrimSpace(opts.Model)
+	selectedModel := canonicalClaudeModel(opts.Model)
 	if selectedModel == "" && opts.ResumeSessionID == "" {
 		if candidate, ok := claudeFirstAvailableModel(client); ok {
-			selectedModel = candidate
+			selectedModel = canonicalClaudeModel(candidate)
 		}
 	}
 	if selectedModel != "" {
@@ -370,7 +370,7 @@ func (s *session) SetModel(ctx context.Context, model string) error {
 	if s == nil || s.stream == nil {
 		return errors.New("claude session not initialized")
 	}
-	trimmed := strings.TrimSpace(model)
+	trimmed := canonicalClaudeModel(model)
 	if err := s.stream.SetModel(ctx, trimmed); err != nil {
 		return err
 	}
@@ -397,6 +397,84 @@ func (s *session) SetPlanMode(ctx context.Context, enabled bool) error {
 	return nil
 }
 
+func resolveClaudeBaseAlias(base string) string {
+	trimmed := strings.TrimSpace(base)
+	if trimmed == "" {
+		return ""
+	}
+	lower := strings.ToLower(trimmed)
+	switch lower {
+	case "fable":
+		return "of"
+	case "opus":
+		return "op"
+	case "sonnet":
+		return "os"
+	case "haiku":
+		return "ok"
+	case "of", "op", "os", "ok":
+		return lower
+	default:
+		return trimmed
+	}
+}
+
+func canonicalClaudeModel(model string) string {
+	trimmed := strings.TrimSpace(model)
+	if trimmed == "" {
+		return ""
+	}
+	if strings.EqualFold(trimmed, "default") {
+		return trimmed
+	}
+	has := has1MSuffix(trimmed)
+	base := strip1MSuffix(trimmed)
+	alias := resolveClaudeBaseAlias(base)
+	if alias == "" {
+		return ""
+	}
+	if has {
+		return alias + "[1m]"
+	}
+	return alias
+}
+
+func strip1MSuffix(model string) string {
+	trimmed := strings.TrimSpace(model)
+	if len(trimmed) >= 4 && strings.EqualFold(trimmed[len(trimmed)-4:], "[1m]") {
+		return strings.TrimSpace(trimmed[:len(trimmed)-4])
+	}
+	return trimmed
+}
+
+func has1MSuffix(model string) bool {
+	trimmed := strings.TrimSpace(model)
+	return len(trimmed) >= 4 && strings.EqualFold(trimmed[len(trimmed)-4:], "[1m]")
+}
+
+func with1MSuffix(model string, enabled bool) string {
+	base := strip1MSuffix(model)
+	if base == "" {
+		return ""
+	}
+	alias := resolveClaudeBaseAlias(base)
+	if alias == "" {
+		return ""
+	}
+	if enabled {
+		return alias + "[1m]"
+	}
+	return alias
+}
+
+func isHiddenClaudeModel(value, displayName, description string) bool {
+	joined := strings.ToLower(strings.TrimSpace(value) + " " + strings.TrimSpace(displayName) + " " + strings.TrimSpace(description))
+	if strings.Contains(joined, "sonnet") && (strings.Contains(joined, "4.5") || strings.Contains(joined, "4-5")) {
+		return true
+	}
+	return false
+}
+
 func (s *session) ListModels(ctx context.Context) (types.ModelList, error) {
 	_ = ctx
 	if s.client == nil {
@@ -405,6 +483,9 @@ func (s *session) ListModels(ctx context.Context) (types.ModelList, error) {
 	supported := s.client.SupportedModelsFromInit()
 	models := make([]types.ModelInfo, 0, len(supported))
 	for index, model := range supported {
+		if isHiddenClaudeModel(model.Value, model.DisplayName, model.Description) {
+			continue
+		}
 		name := strings.TrimSpace(model.DisplayName)
 		if name == "" {
 			name = strings.TrimSpace(model.Value)
@@ -414,14 +495,16 @@ func (s *session) ListModels(ctx context.Context) (types.ModelList, error) {
 			Name:          name,
 			Description:   model.Description,
 			SupportEffort: claudeModelSupportsEffortAt(supported, index),
+			Hidden:        false,
 		})
 	}
 	log.Printf("[agent/claude] models.cached session=%s count=%d", s.sessionKey, len(models))
 	currentModelID := ""
 	if selected := strings.TrimSpace(s.model); selected != "" {
+		baseSelected := resolveClaudeBaseAlias(strip1MSuffix(selected))
 		for _, item := range models {
-			if strings.TrimSpace(item.ID) == selected {
-				currentModelID = selected
+			if strings.TrimSpace(item.ID) == selected || resolveClaudeBaseAlias(strip1MSuffix(item.ID)) == baseSelected {
+				currentModelID = strings.TrimSpace(item.ID)
 				break
 			}
 		}
@@ -454,7 +537,7 @@ func claudeModelSupportsEffortAt(models []claudeagent.ModelInfo, index int) bool
 
 func claudeModelSupportsEffort(id, name, description string) bool {
 	joined := strings.ToLower(strings.TrimSpace(id) + " " + strings.TrimSpace(name) + " " + strings.TrimSpace(description))
-	return strings.Contains(joined, "sonnet") || strings.Contains(joined, "opus")
+	return strings.Contains(joined, "sonnet") || strings.Contains(joined, "opus") || strings.Contains(joined, "fable") || strings.Contains(joined, "haiku")
 }
 
 func (s *session) SetMode(_ context.Context, _ string) error {
@@ -2355,6 +2438,19 @@ func (s *session) setSessionID(sessionID string) {
 }
 
 func (s *session) updateContextWindow(msg claudeagent.ResultMessage) {
+	selectedModel := s.CurrentModel()
+	if selectedModel != "" {
+		for model, usage := range msg.ModelUsage {
+			if strings.EqualFold(strings.TrimSpace(model), selectedModel) && usage.ContextWindow > 0 {
+				log.Printf("[agent/claude] context_window session=%s model=%q window=%d source=current_model", s.sessionKey, model, usage.ContextWindow)
+				s.mu.Lock()
+				s.context.ModelContextWindow = usage.ContextWindow
+				s.mu.Unlock()
+				return
+			}
+		}
+	}
+
 	modelContextWindow := 0
 	switch len(msg.ModelUsage) {
 	case 0:

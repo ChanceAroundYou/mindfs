@@ -10,6 +10,32 @@ import (
 	"mindfs/server/internal/agent/types"
 )
 
+func TestClaudeListModelsResolvesOneMModelAlias(t *testing.T) {
+	if got := resolveClaudeBaseAlias(strip1MSuffix("of[1m]")); got != "of" {
+		t.Fatalf("base alias = %q, want of", got)
+	}
+	if got := resolveClaudeBaseAlias(strip1MSuffix("fable")); got != "of" {
+		t.Fatalf("advertised alias = %q, want of", got)
+	}
+}
+
+func TestClaudeContextWindowPrefersCurrentModelUsage(t *testing.T) {
+	s := &session{model: "of[1m]"}
+
+	s.updateContextWindow(claudeagent.ResultMessage{ModelUsage: map[string]claudeagent.ModelUsage{
+		"of":     {InputTokens: 130053, OutputTokens: 1645, ContextWindow: 200000},
+		"of[1m]": {InputTokens: 66991, OutputTokens: 344, ContextWindow: 1000000},
+	}})
+
+	contextWindow, err := s.ContextWindow(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contextWindow.ModelContextWindow != 1000000 {
+		t.Fatalf("context window = %d, want 1000000", contextWindow.ModelContextWindow)
+	}
+}
+
 func TestClaudeCompactBoundaryEmitsCompactNotice(t *testing.T) {
 	var got types.Event
 	s := &session{sessionID: "claude-session", onUpdate: func(event types.Event) { got = event }}

@@ -34,7 +34,7 @@ const (
 	auxFileTpl       = "sessions/%s.aux.jsonl"
 	// maxExchangeLineBytes 单条 JSONL 上限（tool call 大 content），bufio.Scanner 兜底。
 	maxExchangeLineBytes = 64 << 20
-	selectSessionSQL = `
+	selectSessionSQL     = `
 	SELECT key, type, parent_session_key, parent_tool_call_id, source, task_id, model, shell, plan_mode, name, related_files_json, related_worktree_json, last_context_window_total_tokens, last_context_window_model_context_window, pinned_at, created_at, updated_at, closed_at
 	FROM sessions`
 	deleteSessionSQL = `
@@ -94,6 +94,14 @@ CREATE TABLE IF NOT EXISTS session_name_aliases (
 	agent_session_id TEXT NOT NULL DEFAULT '',
 	updated_at TEXT NOT NULL
 );`
+	sessionExternalNameTableSchema = `
+CREATE TABLE IF NOT EXISTS session_external_names (
+	agent TEXT NOT NULL,
+	agent_session_id TEXT NOT NULL,
+	name TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	PRIMARY KEY (agent, agent_session_id)
+);`
 	agentBindingTableSchema = `
 CREATE TABLE IF NOT EXISTS session_agent_bindings (
 	session_key TEXT NOT NULL,
@@ -135,6 +143,13 @@ SELECT name FROM session_name_aliases WHERE agent = ? AND agent_session_id = ? L
 	upsertSessionNameAliasSQL = `
 INSERT INTO session_name_aliases (key, name, agent, agent_session_id, updated_at) VALUES (?, ?, ?, ?, ?)
 ON CONFLICT(key) DO UPDATE SET name = excluded.name, agent = excluded.agent, agent_session_id = excluded.agent_session_id, updated_at = excluded.updated_at`
+	upsertExternalSessionNameSQL = `
+INSERT INTO session_external_names (agent, agent_session_id, name, updated_at) VALUES (?, ?, ?, ?)
+ON CONFLICT(agent, agent_session_id) DO UPDATE SET
+	name = excluded.name,
+	updated_at = excluded.updated_at`
+	selectExternalSessionNameSQL = `
+SELECT name FROM session_external_names WHERE agent = ? AND agent_session_id = ?`
 )
 
 var openSQLiteDB = func(path string) (*sql.DB, error) {
@@ -803,12 +818,15 @@ func (m *Manager) UpdateAgentState(_ context.Context, session *Session, agent st
 	if strings.TrimSpace(agentSessionID) == "" {
 		return nil
 	}
-	return m.upsertAgentBindingUnsafe(AgentBinding{
+	if err := m.upsertAgentBindingUnsafe(AgentBinding{
 		SessionKey:     strings.TrimSpace(session.Key),
 		Agent:          strings.TrimSpace(agent),
 		AgentSessionID: strings.TrimSpace(agentSessionID),
 		AgentCtxSeq:    lastCtxSeq,
-	})
+	}); err != nil {
+		return err
+	}
+	return m.upsertExternalSessionNameUnsafe(agent, agentSessionID, session.Name)
 }
 
 func (m *Manager) UpsertAgentBinding(_ context.Context, binding AgentBinding) error {
@@ -823,7 +841,14 @@ func (m *Manager) UpsertAgentBinding(_ context.Context, binding AgentBinding) er
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.upsertAgentBindingUnsafe(binding)
+	if err := m.upsertAgentBindingUnsafe(binding); err != nil {
+		return err
+	}
+	current, err := m.getSessionUnsafe(binding.SessionKey, 0)
+	if err != nil {
+		return err
+	}
+	return m.upsertExternalSessionNameUnsafe(binding.Agent, binding.AgentSessionID, current.Name)
 }
 
 func (m *Manager) UpdateExternalSessionCursor(_ context.Context, sessionKey, agent string, cursor agenttypes.ExternalSessionCursor) error {
@@ -994,8 +1019,15 @@ func (m *Manager) Rename(_ context.Context, key, name string) (*Session, error) 
 		return nil, err
 	}
 	if session.Name == trimmed {
-		// Still persist to alias so a prior alias from an earlier rename survives
-		_ = m.upsertSessionNameAliasUnsafe(key, trimmed)
+		// Still persist to alias so a prior alias from an earlier rename survives.
+		if err := m.upsertSessionNameAliasUnsafe(key, trimmed); err != nil {
+			return nil, err
+		}
+		for agent, agentSessionID := range m.agentSessionIDsUnsafe(session.Key) {
+			if err := m.upsertExternalSessionNameUnsafe(agent, agentSessionID, trimmed); err != nil {
+				return nil, err
+			}
+		}
 		return session, nil
 	}
 	session.Name = trimmed
@@ -1005,6 +1037,11 @@ func (m *Manager) Rename(_ context.Context, key, name string) (*Session, error) 
 	}
 	if err := m.upsertSessionNameAliasUnsafe(key, trimmed); err != nil {
 		return nil, err
+	}
+	for agent, agentSessionID := range m.agentSessionIDsUnsafe(session.Key) {
+		if err := m.upsertExternalSessionNameUnsafe(agent, agentSessionID, trimmed); err != nil {
+			return nil, err
+		}
 	}
 	return session, nil
 }
@@ -1546,6 +1583,45 @@ func (m *Manager) upsertSessionNameAliasUnsafe(key, name string) error {
 	return err
 }
 
+func (m *Manager) upsertExternalSessionNameUnsafe(agent, agentSessionID, name string) error {
+	agent = strings.TrimSpace(agent)
+	agentSessionID = strings.TrimSpace(agentSessionID)
+	name = strings.TrimSpace(name)
+	if agent == "" || agentSessionID == "" || name == "" || name == "New Session" {
+		return nil
+	}
+	db, err := m.ensureSessionMetaDBUnsafe()
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(upsertExternalSessionNameSQL, agent, agentSessionID, name, m.now().UTC().Format(time.RFC3339Nano))
+	return err
+}
+
+func (m *Manager) agentSessionIDsUnsafe(key string) map[string]string {
+	db, err := m.ensureSessionMetaDBUnsafe()
+	if err != nil {
+		return nil
+	}
+	rows, err := db.Query(`SELECT agent, agent_session_id FROM session_agent_bindings WHERE session_key = ?`, strings.TrimSpace(key))
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	ids := make(map[string]string)
+	for rows.Next() {
+		var agent, agentSessionID string
+		if err := rows.Scan(&agent, &agentSessionID); err != nil {
+			return nil
+		}
+		ids[strings.TrimSpace(agent)] = strings.TrimSpace(agentSessionID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil
+	}
+	return ids
+}
+
 func (m *Manager) lookupSessionAliasForAgentUnsafe(agent, agentSessionID string) (string, bool) {
 	agent = strings.TrimSpace(agent)
 	agentSessionID = strings.TrimSpace(agentSessionID)
@@ -1557,7 +1633,7 @@ func (m *Manager) lookupSessionAliasForAgentUnsafe(agent, agentSessionID string)
 		return "", false
 	}
 	var name string
-	if err := db.QueryRow(selectSessionNameAliasByAgentSQL, agent, agentSessionID).Scan(&name); err != nil {
+	if err := db.QueryRow(selectExternalSessionNameSQL, agent, agentSessionID).Scan(&name); err != nil {
 		return "", false
 	}
 	if strings.TrimSpace(name) == "" {
@@ -1609,10 +1685,9 @@ func (m *Manager) applySessionNameAliasesUnsafe(items []*Session) error {
 		}
 	}
 	// Also overlay aliases that were stored by agent_session_id for re-imported sessions
-	// whose internal key changed. If an alias exists for this session's external identity
-	// but not for its current key, surface it.
+	// whose internal key changed, but never overwrite an existing session name.
 	for _, it := range items {
-		if strings.TrimSpace(it.Name) != "" && byKey[strings.TrimSpace(it.Key)] != "" {
+		if byKey[strings.TrimSpace(it.Key)] != "" || strings.TrimSpace(it.Name) != "" {
 			continue
 		}
 		// Prefer bindings already loaded by fillSessionBindingsUnsafe; fallback to DB lookup
@@ -2165,6 +2240,10 @@ func openSessionMetaDB(dbFile string) (db *sql.DB, err error) {
 		db.Close()
 		return nil, err
 	}
+	if _, err := db.Exec(sessionExternalNameTableSchema); err != nil {
+		db.Close()
+		return nil, err
+	}
 	// 列表/搜索按 updated_at DESC 排序，无索引时全表排序。
 	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_sessions_updated_at ON sessions(updated_at DESC)`); err != nil {
 		db.Close()
@@ -2206,7 +2285,89 @@ func openSessionMetaDB(dbFile string) (db *sql.DB, err error) {
 			return nil, err
 		}
 	}
+	if normalized, err := normalizeForkParentLinks(db); err != nil {
+		db.Close()
+		return nil, err
+	} else if normalized > 0 {
+		log.Printf("[session/store] normalized fork parent links db=%s count=%d", dbFile, normalized)
+	}
+	if err := normalizeExternalSessionNames(db); err != nil {
+		db.Close()
+		return nil, err
+	}
 	return db, nil
+}
+
+func normalizeExternalSessionNames(db *sql.DB) error {
+	_, err := db.Exec(`
+		INSERT INTO session_external_names (agent, agent_session_id, name, updated_at)
+		SELECT b.agent, b.agent_session_id,
+			COALESCE(NULLIF(TRIM(a.name), ''), s.name), s.updated_at
+		FROM session_agent_bindings b
+		JOIN sessions s ON s.key = b.session_key
+		LEFT JOIN session_name_aliases a ON a.key = s.key
+		WHERE TRIM(b.agent) != ''
+			AND TRIM(b.agent_session_id) != ''
+			AND TRIM(COALESCE(NULLIF(TRIM(a.name), ''), s.name)) != ''
+			AND TRIM(COALESCE(NULLIF(TRIM(a.name), ''), s.name)) != 'New Session'
+		ORDER BY s.updated_at, s.key
+		ON CONFLICT(agent, agent_session_id) DO UPDATE SET
+			name = excluded.name,
+			updated_at = excluded.updated_at
+		WHERE excluded.updated_at >= session_external_names.updated_at`)
+	return err
+}
+
+func normalizeForkParentLinks(db *sql.DB) (int, error) {
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer func() {
+		if tx != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	rows, err := tx.Query(`
+		SELECT key, source
+		FROM sessions
+		WHERE parent_session_key != '' OR parent_tool_call_id != ''`)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	keys := make([]string, 0)
+	for rows.Next() {
+		var key, source string
+		if err := rows.Scan(&key, &source); err != nil {
+			return 0, err
+		}
+		var metadata struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal([]byte(source), &metadata) == nil && metadata.Type == "fork" {
+			keys = append(keys, key)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	if err := rows.Close(); err != nil {
+		return 0, err
+	}
+	for _, key := range keys {
+		if _, err := tx.Exec(`
+			UPDATE sessions
+			SET parent_session_key = '', parent_tool_call_id = ''
+			WHERE key = ?`, key); err != nil {
+			return 0, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	tx = nil
+	return len(keys), nil
 }
 
 func readSessionDBLink(linkFile string) (string, bool, error) {

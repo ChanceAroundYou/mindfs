@@ -499,6 +499,47 @@ func TestDeleteSessionDeletesSubSessionTree(t *testing.T) {
 	}
 }
 
+func TestDeleteSessionKeepsForkSession(t *testing.T) {
+	ctx := context.Background()
+	root := rootfs.NewRootInfo("mindfs", "mindfs", t.TempDir())
+	manager := session.NewManager(root)
+	service := Service{Registry: &commandTestRegistry{root: root, manager: manager}}
+
+	parent, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, Name: "parent"})
+	if err != nil {
+		t.Fatalf("create parent: %v", err)
+	}
+	fork, err := manager.Create(ctx, session.CreateInput{
+		Type:   session.TypeChat,
+		Source: `{"type":"fork"}`,
+		Name:   "fork",
+	})
+	if err != nil {
+		t.Fatalf("create fork: %v", err)
+	}
+	subagent, err := manager.Create(ctx, session.CreateInput{
+		Type:             session.TypeChat,
+		ParentSessionKey: parent.Key,
+		Name:             "subagent",
+	})
+	if err != nil {
+		t.Fatalf("create subagent: %v", err)
+	}
+
+	if err := service.DeleteSession(ctx, DeleteSessionInput{RootID: root.ID, Key: parent.Key}); err != nil {
+		t.Fatalf("delete parent: %v", err)
+	}
+	if _, err := manager.Get(ctx, parent.Key, 0); err == nil {
+		t.Fatal("parent still exists")
+	}
+	if _, err := manager.Get(ctx, fork.Key, 0); err != nil {
+		t.Fatalf("fork should remain: %v", err)
+	}
+	if _, err := manager.Get(ctx, subagent.Key, 0); err == nil {
+		t.Fatal("subagent still exists")
+	}
+}
+
 func TestSubSessionSyntheticDonePersistsPartialResponse(t *testing.T) {
 	ctx := context.Background()
 	rootDir := t.TempDir()

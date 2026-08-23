@@ -964,7 +964,7 @@ func inferAgentEfforts(models []agenttypes.ModelInfo) []string {
 			appendEffort(effort)
 		}
 		joined := strings.ToLower(strings.TrimSpace(model.ID) + " " + strings.TrimSpace(model.Name))
-		if strings.Contains(joined, "sonnet") || strings.Contains(joined, "opus") {
+		if strings.Contains(joined, "sonnet") || strings.Contains(joined, "opus") || strings.Contains(joined, "fable") || strings.Contains(joined, "haiku") {
 			looksLikeClaude = true
 		}
 	}

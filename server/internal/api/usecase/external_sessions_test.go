@@ -272,6 +272,73 @@ func TestImportExternalSessionPersistsPlanAux(t *testing.T) {
 	}
 }
 
+func TestListExternalSessionsUsesPersistentMindFSName(t *testing.T) {
+	ctx := context.Background()
+	root := fs.NewRootInfo("root", "Root", t.TempDir())
+	manager := session.NewManager(root)
+	created, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, Agent: "claude", Name: "Initial import title"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.UpdateAgentState(ctx, created, "claude", 0, "external-1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Rename(ctx, created.Key, "MindFS display name"); err != nil {
+		t.Fatal(err)
+	}
+	importer := &listExternalSessionsTestImporter{items: []agenttypes.ExternalSessionSummary{{
+		Agent:          "claude",
+		AgentSessionID: "external-1",
+		Cwd:            root.RootPath,
+		FirstUserText:  "[REPLY_TIPS]\\nlarge startup prompt",
+	}}}
+	svc := &Service{Registry: &syncDeltaTestRegistry{root: root, manager: manager, importer: importer}}
+
+	out, err := svc.ListExternalSessions(ctx, ListExternalSessionsInput{RootID: root.ID, Agent: "claude", FilterBound: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Items) != 0 {
+		t.Fatalf("filter-bound items = %#v, want no currently bound session", out.Items)
+	}
+
+	out, err = svc.ListExternalSessions(ctx, ListExternalSessionsInput{RootID: root.ID, Agent: "claude"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Items) != 1 || out.Items[0].Title != "MindFS display name" {
+		t.Fatalf("unfiltered item = %#v, want persistent MindFS name", out.Items)
+	}
+
+	if err := manager.Delete(ctx, created.Key); err != nil {
+		t.Fatal(err)
+	}
+	out, err = svc.ListExternalSessions(ctx, ListExternalSessionsInput{RootID: root.ID, Agent: "claude"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Items) != 1 {
+		t.Fatalf("items = %#v, want one", out.Items)
+	}
+	if got := out.Items[0].Title; got != "MindFS display name" {
+		t.Fatalf("title = %q, want persistent MindFS name", got)
+	}
+}
+
+type listExternalSessionsTestImporter struct {
+	items []agenttypes.ExternalSessionSummary
+}
+
+func (i *listExternalSessionsTestImporter) AgentName() string { return "claude" }
+
+func (i *listExternalSessionsTestImporter) ListExternalSessions(context.Context, agenttypes.ListExternalSessionsInput) (agenttypes.ListExternalSessionsResult, error) {
+	return agenttypes.ListExternalSessionsResult{Items: i.items}, nil
+}
+
+func (i *listExternalSessionsTestImporter) ImportExternalSession(context.Context, agenttypes.ImportExternalSessionInput) (agenttypes.ImportedExternalSession, error) {
+	return agenttypes.ImportedExternalSession{}, errors.New("not implemented")
+}
+
 type syncDeltaTestImporter struct {
 	input     agenttypes.ImportExternalSessionInput
 	exchanges []agenttypes.ImportedExchange

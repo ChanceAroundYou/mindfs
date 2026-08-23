@@ -493,13 +493,12 @@ func (s *Service) ForkSession(ctx context.Context, in ForkSessionInput) (ForkSes
 		return ForkSessionOutput{}, err
 	}
 	created, err := manager.Create(ctx, session.CreateInput{
-		Type:             session.TypeChat,
-		ParentSessionKey: current.Key,
-		Source:           string(sourceJSON),
-		Agent:            agentName,
-		Model:            resolveForkModel(current, target),
-		Name:             buildForkSessionName(current, target.Seq),
-		PlanMode:         current.PlanMode,
+		Type:     session.TypeChat,
+		Source:   string(sourceJSON),
+		Agent:    agentName,
+		Model:    resolveForkModel(current, target),
+		Name:     buildForkSessionName(current, target.Seq),
+		PlanMode: current.PlanMode,
 	})
 	if err != nil {
 		return ForkSessionOutput{}, err
@@ -3797,11 +3796,72 @@ func normalizeDiffRef(root pathNormalizer, ref string) (string, bool) {
 	return prefix + normalized, true
 }
 
+func canonicalClaudeModelForValidate(model string) string {
+	trimmed := strings.TrimSpace(model)
+	if trimmed == "" {
+		return ""
+	}
+	if strings.EqualFold(trimmed, "default") {
+		return trimmed
+	}
+	has := len(trimmed) >= 4 && strings.EqualFold(trimmed[len(trimmed)-4:], "[1m]")
+	base := trimmed
+	if has {
+		base = strings.TrimSpace(trimmed[:len(trimmed)-4])
+	}
+	lower := strings.ToLower(strings.TrimSpace(base))
+	switch lower {
+	case "fable":
+		lower = "of"
+	case "opus":
+		lower = "op"
+	case "sonnet":
+		lower = "os"
+	case "haiku":
+		lower = "ok"
+	}
+	if has {
+		return lower + "[1m]"
+	}
+	return lower
+}
+
+func claudeModelBaseForValidate(model string) string {
+	trimmed := strings.TrimSpace(model)
+	if trimmed == "" {
+		return ""
+	}
+	if strings.EqualFold(trimmed, "default") {
+		return "default"
+	}
+	has := len(trimmed) >= 4 && strings.EqualFold(trimmed[len(trimmed)-4:], "[1m]")
+	base := trimmed
+	if has {
+		base = strings.TrimSpace(trimmed[:len(trimmed)-4])
+	}
+	lower := strings.ToLower(strings.TrimSpace(base))
+	switch lower {
+	case "fable":
+		lower = "of"
+	case "opus":
+		lower = "op"
+	case "sonnet":
+		lower = "os"
+	case "haiku":
+		lower = "ok"
+	}
+	return lower
+}
+
 func (s *Service) validateAgentModel(agentName, model string) error {
 	agentName = strings.TrimSpace(agentName)
 	model = strings.TrimSpace(model)
 	if agentName == "" || model == "" || s.Registry == nil {
 		return nil
+	}
+	isClaude := strings.EqualFold(agentName, "claude")
+	if isClaude {
+		model = canonicalClaudeModelForValidate(model)
 	}
 	prober := s.Registry.GetProber()
 	if prober == nil {
@@ -3812,7 +3872,17 @@ func (s *Service) validateAgentModel(agentName, model string) error {
 		return nil
 	}
 	for _, item := range status.Models {
-		if strings.TrimSpace(item.ID) == model {
+		candidate := strings.TrimSpace(item.ID)
+		if isClaude {
+			candidate = canonicalClaudeModelForValidate(candidate)
+		}
+		if candidate == model {
+			return nil
+		}
+		// 1M suffix is an explicit user toggle, not a separate model entry.
+		// Prober advertises base aliases (fable/of, opus/op …) without [1m],
+		// so "of" and "of[1m]" must be considered the same base model.
+		if isClaude && claudeModelBaseForValidate(candidate) != "" && claudeModelBaseForValidate(candidate) == claudeModelBaseForValidate(model) {
 			return nil
 		}
 	}
