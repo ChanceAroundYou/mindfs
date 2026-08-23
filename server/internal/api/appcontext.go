@@ -23,6 +23,7 @@ import (
 	"mindfs/server/internal/kanban"
 	"mindfs/server/internal/notify"
 	"mindfs/server/internal/notifyscript"
+	"mindfs/server/internal/nodes"
 	"mindfs/server/internal/preferences"
 	"mindfs/server/internal/relay"
 	"mindfs/server/internal/scheduled"
@@ -49,6 +50,7 @@ type AppContext struct {
 	WebPush   *webpush.Service
 	Notify    *notifyscript.Service
 	Prefs     *preferences.Store
+	Nodes     *nodes.Store
 	Scheduled *scheduled.Service
 	Kanban    *kanban.Service
 

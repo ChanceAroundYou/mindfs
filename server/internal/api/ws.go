@@ -290,6 +290,8 @@ func wsProofPath(r *http.Request) string {
 	query.Del(wsTSQuery)
 	query.Del(wsProofQuery)
 	next.RawQuery = query.Encode()
+	// 客户端按完整（含部署前缀）请求 URL 计算 proof，剥离前缀后需用原始路径对齐。
+	next.Path = OriginalPath(r)
 	if next.RawQuery == "" {
 		return next.Path
 	}

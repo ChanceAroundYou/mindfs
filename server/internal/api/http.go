@@ -241,35 +241,10 @@ func corsMiddleware(next http.Handler) http.Handler {
 }
 
 // Routes constructs the chi router with all endpoints.
-func stripMindfsPrefix(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/mindfs/") {
-			r2 := r.Clone(r.Context())
-			u2 := *r.URL
-			r2.URL = &u2
-			r2.URL.Path = strings.TrimPrefix(r.URL.Path, "/mindfs")
-			if r2.URL.Path == "" {
-				r2.URL.Path = "/"
-			}
-			next.ServeHTTP(w, r2)
-			return
-		}
-		if r.URL.Path == "/mindfs" {
-			r2 := r.Clone(r.Context())
-			u2 := *r.URL
-			r2.URL = &u2
-			r2.URL.Path = "/"
-			next.ServeHTTP(w, r2)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-
+// The deployment prefix is stripped once at the top-level mux (StripDeployPrefix),
+// so every route here is registered prefix-free.
 func (h *HTTPHandler) Routes() http.Handler {
 	r := chi.NewRouter()
-	r.Use(stripMindfsPrefix)
 	r.Use(corsMiddleware)
 	r.Options("/*", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) })
 	r.NotFound(h.handleNotFound)
@@ -345,6 +320,10 @@ func (h *HTTPHandler) Routes() http.Handler {
 	r.Post("/api/dirs/{id}/rename", h.protectedEndpoint(h.handleRenameDir))
 	r.Post("/api/dirs/{id}/display-name", h.protectedEndpoint(h.handleUpdateDirDisplayName))
 	r.Delete("/api/dirs", h.protectedEndpoint(h.handleRemoveDir))
+	r.Get("/api/nodes", h.protectedEndpoint(h.handleNodesList))
+	r.Put("/api/nodes", h.protectedEndpoint(h.handleNodesPut))
+	r.Post("/api/nodes", h.protectedEndpoint(h.handleNodesPost))
+	r.Delete("/api/nodes/{id}", h.protectedEndpoint(h.handleNodesDelete))
 	r.Get("/api/local_dirs", h.protectedEndpoint(h.handleLocalDirs))
 	r.Get("/api/relay/status", h.handleRelayStatus)
 	r.Post("/api/relay/bind/start", h.protectedEndpoint(h.handleRelayBindStart))
@@ -1534,8 +1513,14 @@ func cleanFrontendResourcePath(raw string) string {
 	if idx := strings.IndexAny(value, "?#"); idx >= 0 {
 		value = value[:idx]
 	}
+	value = strings.TrimSpace(value)
 	value = strings.TrimPrefix(value, "./")
 	value = strings.TrimPrefix(value, "/")
+	// vite 以部署前缀为 base 时，index.html 引用形如 /<prefix>/assets/... /<prefix>/favicon.svg，
+	// 需剥掉前缀再判本地文件是否存在，与 pathForStaticAsset 同构。空前缀（根部署）无需剥离。
+	if prefix := normalizedDeployPrefix(); prefix != "" {
+		value = strings.TrimPrefix(value, strings.TrimPrefix(prefix, "/")+"/")
+	}
 	value = filepath.Clean(value)
 	if value == "." || strings.HasPrefix(value, ".."+string(filepath.Separator)) || value == ".." || filepath.IsAbs(value) {
 		return ""
@@ -1559,6 +1544,8 @@ func renderFallbackFrontend(content, notice string) string {
 		noticeHTML = `<div class="notice is-visible">` + htmpl.HTMLEscapeString(notice) + `</div>`
 	}
 	out = strings.ReplaceAll(out, "__FALLBACK_NOTICE__", noticeHTML)
+	// 兜底页文档 URL 由反代前缀决定（与运行时部署前缀一致）。
+	out = strings.ReplaceAll(out, "/api/tree?", DeployPrefixedPath("/api/tree")+"?")
 	return out
 }
 
@@ -1579,7 +1566,9 @@ func isRelayedRequest(r *http.Request) bool {
 }
 
 func (h *HTTPHandler) shouldRewriteRelayedAssets(r *http.Request) bool {
-	return isRelayedRequest(r) && isStandardReleaseVersion(h.Version)
+	// 仅由 relay 反代标记决定：被代理的前端需要绝对化资源引用。
+	// 不再与发布版本号耦合——本地直连本就不会带 X-MindFS-Relayed。
+	return isRelayedRequest(r)
 }
 
 func isStandardReleaseVersion(version string) bool {
@@ -1615,7 +1604,9 @@ func shouldRewriteRelayedStaticAsset(cleanPath string) bool {
 }
 
 func rewriteRelayedFrontendContent(content string) string {
-	return strings.ReplaceAll(content, "./assets/", "/mindfs-assets/")
+	// relay 反代下，前端文档 URL 与后端不在同域/同路径，需把相对资源引用
+	// 改写为随部署前缀派生的绝对别名（见 relayAssetsAlias）。
+	return strings.ReplaceAll(content, "./assets/", relayAssetsAlias())
 }
 
 func serveRewrittenStaticAsset(w http.ResponseWriter, r *http.Request, assetPath string) {
@@ -1636,24 +1627,13 @@ func serveRewrittenStaticAsset(w http.ResponseWriter, r *http.Request, assetPath
 func pathForStaticAsset(requestPath string) string {
 	// requestPath 是 URL path，分隔符固定为正斜杠。这里不能用 filepath，
 	// 否则 Windows 会把前导 // 当成 UNC 路径，最终泄漏成 web/// 这类路径。
+	// 部署前缀已在顶层 mux 统一剥离（StripDeployPrefix），此处收到的已是
+	// /assets/...、/index.html 等去前缀路径。
 	cleaned := stdpath.Clean("/" + requestPath)
 	if cleaned == "/" {
 		return ""
 	}
-	trimmed := strings.TrimPrefix(cleaned, "/")
-	// 反代把 /mindfs 前缀透传到后端时，静态资源会以 /mindfs/assets/... 到达，
-	// 后端实际挂在 /，需剥掉第一段前缀后再找文件。仅对已知静态资源前缀剥离，
-	// 避免误把 /mindfs 当成 API 调用。
-	if strings.HasPrefix(trimmed, "mindfs/") {
-		remainder := strings.TrimPrefix(trimmed, "mindfs/")
-		if remainder == "" || remainder == "index.html" || strings.HasPrefix(remainder, "assets/") ||
-			strings.HasPrefix(remainder, "favicon.") || strings.HasPrefix(remainder, "manifest.") ||
-			strings.HasPrefix(remainder, "service-worker") || strings.HasPrefix(remainder, "pwa-") ||
-			strings.HasPrefix(remainder, "offline.") {
-			return remainder
-		}
-	}
-	return trimmed
+	return strings.TrimPrefix(cleaned, "/")
 }
 
 func (h *HTTPHandler) handleTree(w http.ResponseWriter, r *http.Request) {
@@ -2605,12 +2585,12 @@ func (h *HTTPHandler) handleE2EEOpen(w http.ResponseWriter, r *http.Request) {
 func managedDirResponse(dir fs.RootInfo) map[string]any {
 	effectiveName := dir.EffectiveName()
 	resp := map[string]any{
-		"id":           dir.ID,
-		"display_name": effectiveName,
+		"id":               dir.ID,
+		"display_name":     effectiveName,
 		"display_name_raw": dir.DisplayName,
-		"root_path":    dir.RootPath,
-		"created_at":   dir.CreatedAt,
-		"updated_at":   dir.UpdatedAt,
+		"root_path":        dir.RootPath,
+		"created_at":       dir.CreatedAt,
+		"updated_at":       dir.UpdatedAt,
 	}
 	if info, err := dir.StatRoot(); err == nil {
 		resp["size"] = info.Size()
