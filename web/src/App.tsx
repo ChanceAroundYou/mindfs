@@ -558,6 +558,7 @@ type PendingSend = {
   mode: SessionMode;
   agent: string;
   model?: string;
+  model_display_name?: string;
   agentMode?: string;
   effort?: string;
   fastService?: "" | "on" | "off";
@@ -3730,7 +3731,7 @@ export function App({ onGoHome }: AppProps) {
           : null,
       ];
 
-      const pickText = (field: "agent" | "model" | "mode" | "effort") => {
+      const pickText = (field: "agent" | "model" | "model_display_name" | "mode" | "effort") => {
         for (const item of candidates) {
           const value = `${item?.[field] || ""}`.trim();
           if (value) return value;
@@ -3747,6 +3748,7 @@ export function App({ onGoHome }: AppProps) {
 	      return {
 	        agent: pickText("agent"),
 	        model: pickText("model"),
+	        model_display_name: pickText("model_display_name"),
 	        mode: pickText("mode"),
 	        effort: pickText("effort"),
 	        fast_service: pickFastService(),
@@ -3784,6 +3786,8 @@ export function App({ onGoHome }: AppProps) {
             ...last,
             agent: runtimeMeta.agent || last.agent,
             model: runtimeMeta.model || last.model,
+            model_display_name:
+              runtimeMeta.model_display_name || last.model_display_name,
 	            mode: runtimeMeta.mode || last.mode,
 	            effort: runtimeMeta.effort || last.effort,
 	            fast_service: runtimeMeta.fast_service || last.fast_service,
@@ -3796,6 +3800,7 @@ export function App({ onGoHome }: AppProps) {
           role: "agent",
           agent: runtimeMeta.agent,
           model: runtimeMeta.model,
+          model_display_name: runtimeMeta.model_display_name,
 	          mode: runtimeMeta.mode,
 	          effort: runtimeMeta.effort,
 	          fast_service: runtimeMeta.fast_service,
@@ -9726,6 +9731,10 @@ export function App({ onGoHome }: AppProps) {
               ...pending,
               timestamp: acceptedTimestamp,
               sessionKey: acceptedSessionKey,
+              model_display_name:
+                typeof payload?.model_display_name === "string"
+                  ? payload.model_display_name
+                  : "",
             };
             setMultiProjectSessionPending(pending.rootId, pending.tempKey, false);
             setMultiProjectSessionPending(pending.rootId, acceptedSessionKey, true);
@@ -9752,6 +9761,11 @@ export function App({ onGoHome }: AppProps) {
                         ...exchange,
                         timestamp: acceptedTimestamp,
                         pending_ack: false,
+                        model_display_name:
+                          exchange.model_display_name ||
+                          (typeof payload?.model_display_name === "string"
+                            ? payload.model_display_name
+                            : ""),
                       }
                     : exchange,
                 )
@@ -9759,6 +9773,11 @@ export function App({ onGoHome }: AppProps) {
             return {
               ...(sess as any),
               exchanges,
+              model_display_name:
+                (sess as any).model_display_name ||
+                (typeof payload?.model_display_name === "string"
+                  ? payload.model_display_name
+                  : ""),
               updated_at: acceptedTimestamp,
             } as Session;
           };
@@ -9913,12 +9932,45 @@ export function App({ onGoHome }: AppProps) {
             const prevExchanges = Array.isArray((cached as any).exchanges)
               ? ((cached as any).exchanges as Exchange[])
               : [];
-            const duplicate = prevExchanges.some(
+            const duplicateIndex = prevExchanges.findIndex(
               (item) =>
                 item.role === "user" &&
                 item.content === exchange?.content &&
                 item.timestamp === exchange?.timestamp,
             );
+            const pushExchange = {
+              role: "user",
+              agent: exchange?.agent || "",
+              model: exchange?.model || "",
+              model_display_name: exchange?.model_display_name || "",
+	              mode: exchange?.mode || "",
+	              effort: exchange?.effort || "",
+	              fast_service: exchange?.fast_service || "",
+	              content: exchange?.content || "",
+              timestamp:
+                exchange?.timestamp || new Date().toISOString(),
+              pending_ack: false,
+            } as Exchange;
+            const nextExchanges =
+              duplicateIndex >= 0
+                ? [
+                    ...prevExchanges.slice(0, duplicateIndex),
+                    {
+                      ...prevExchanges[duplicateIndex],
+                      model: exchange?.model || prevExchanges[duplicateIndex].model,
+                      model_display_name:
+                        exchange?.model_display_name ||
+                        prevExchanges[duplicateIndex].model_display_name,
+                      mode: exchange?.mode || prevExchanges[duplicateIndex].mode,
+                      effort:
+                        exchange?.effort || prevExchanges[duplicateIndex].effort,
+                      fast_service:
+                        exchange?.fast_service ||
+                        prevExchanges[duplicateIndex].fast_service,
+                    },
+                    ...prevExchanges.slice(duplicateIndex + 1),
+                  ]
+                : [...prevExchanges, pushExchange];
             sessionCacheRef.current[cacheKey] = {
               ...(cached as any),
               ...(sessionMeta || {}),
@@ -9951,23 +10003,12 @@ export function App({ onGoHome }: AppProps) {
 	                typeof sessionMeta?.plan_mode === "boolean"
 	                  ? sessionMeta.plan_mode
 	                  : !!(cached as any).plan_mode,
-              exchanges: duplicate
-                ? prevExchanges
-                : [
-                    ...prevExchanges,
-                    {
-                      role: "user",
-                      agent: exchange?.agent || "",
-                      model: exchange?.model || "",
-	                      mode: exchange?.mode || "",
-	                      effort: exchange?.effort || "",
-	                      fast_service: exchange?.fast_service || "",
-	                      content: exchange?.content || "",
-                      timestamp:
-                        exchange?.timestamp || new Date().toISOString(),
-                      pending_ack: false,
-                    },
-                  ],
+              exchanges: nextExchanges,
+              model_display_name:
+                sessionMeta?.model_display_name ||
+                exchange?.model_display_name ||
+                (cached as any).model_display_name ||
+                "",
               updated_at:
                 sessionMeta?.updated_at ||
                 exchange?.timestamp ||

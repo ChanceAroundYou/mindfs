@@ -257,7 +257,7 @@ func TestStreamHubSetPendingUserAtUsesProvidedTimestamp(t *testing.T) {
 	hub := NewStreamHub(nil)
 	want := time.Date(2026, 7, 29, 10, 0, 0, int(456*time.Millisecond), time.UTC)
 
-	pending := hub.SetPendingUserAt("root", "session", "Session", "codex", "gpt-test", "", "", "", false, "hello", want)
+	pending := hub.SetPendingUserAt("root", "session", "Session", "codex", "gpt-test", "", "", "", "", false, "hello", want)
 
 	if pending == nil {
 		t.Fatal("SetPendingUserAt returned nil")

@@ -5,6 +5,7 @@ import path from "node:path";
 const root = path.resolve(import.meta.dirname, "..");
 const actionBar = fs.readFileSync(path.join(root, "src/components/ActionBar.tsx"), "utf8");
 const selector = fs.readFileSync(path.join(root, "src/components/AgentSelector.tsx"), "utf8");
+const app = fs.readFileSync(path.join(root, "src/App.tsx"), "utf8");
 
 assert.match(actionBar, /function modelBaseForAgent\(agentName: string \| undefined, model: string\)/, "ActionBar must compare Claude aliases on their canonical base");
 assert.match(actionBar, /modelBaseForAgent\(selectedAgent\.name, item\.id\) === modelBaseForAgent\(selectedAgent\.name, model\)/, "ActionBar must retain of[1m] when the advertised model is fable");
@@ -12,3 +13,20 @@ assert.match(selector, /function claudeModelBase\(model: string\)/, "AgentSelect
 assert.match(actionBar, /if \(explicitModel\) \{\s*setLongContext\(isClaudeAgentName\(nextAgent\) && has1MSuffix\(explicitModel\)\);\s*\}/s, "choosing a concrete model must not retain a stale 1M toggle");
 
 console.log("claude-model-1m.test.mjs: OK");
+
+// Third-party / generic models must NOT be rewritten to op/os alias, but MUST support generic [1m].
+assert.match(actionBar, /function isClaudeAliasModel\(model: string\)/, "ActionBar must guard alias family");
+assert.match(actionBar, /if \(isClaudeAliasModel\(base\)\) \{/, "ActionBar with1MSuffix must be generic (alias branch + generic branch)");
+assert.match(actionBar, /return enabled \? `\$\{base\}\[1m\]` : base;/, "ActionBar with1MSuffix must append [1m] for generic models");
+assert.match(selector, /function isClaudeAliasModelName\(model: string\)/, "AgentSelector must guard alias family");
+assert.match(selector, /if \(!isClaudeAliasModelName\(model\)\) return strip1MSuffix\(model\);/, "AgentSelector claudeModelBase must passthrough non-alias models");
+assert.match(selector, /if \(isClaudeAliasModelName\(targetModel\)\)/, "AgentSelector submenu fallback must only alias-match inside family");
+assert.match(selector, /strip1MSuffix\(item\.id\) === strip1MSuffix\(targetModel\)/, "AgentSelector must handle generic [1m] fallback");
+
+// Realtime optimistic display must carry model_display_name from backend (user_message push + accepted ack + chunk merge).
+assert.match(app, /model_display_name:\s*exchange\?\.model_display_name/, "App must store model_display_name from session.user_message WS push");
+assert.match(app, /model_display_name: pickText\("model_display_name"\)/, "App runtime meta must resolve model_display_name like model");
+assert.match(app, /runtimeMeta\.model_display_name \|\| last\.model_display_name/, "App chunk merge must carry realtime model_display_name");
+assert.match(app, /payload\?\.model_display_name/, "App session.accepted must backfill realtime model_display_name");
+
+console.log("claude-model-1m-realtime-display.test.mjs: OK");

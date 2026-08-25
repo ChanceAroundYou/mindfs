@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"mindfs/server/internal/agent/claude"
 	agenttypes "mindfs/server/internal/agent/types"
 	configpkg "mindfs/server/internal/config"
 )
@@ -92,6 +93,8 @@ type Prober struct {
 	probeInterval time.Duration
 	stopCh        chan struct{}
 	listeners     []func(Status)
+	// claudeSettingsMtimes 记录 ~/.claude/settings.json 的 mtime（cc-switch 改写 detect），mu 保护。
+	claudeSettingsMtimes map[string]time.Time
 }
 
 func NewProber(cfg *Config, pool *Pool, probeInterval time.Duration) *Prober {
@@ -103,13 +106,14 @@ func NewProber(cfg *Config, pool *Pool, probeInterval time.Duration) *Prober {
 		log.Printf("[agent/probe] probe_session_store.init_error err=%v", err)
 	}
 	p := &Prober{
-		cfg:           cfg,
-		pool:          pool,
-		probeSessions: probeSessions,
-		statuses:      make(map[string]Status),
-		inFlight:      make(map[string]struct{}),
-		probeInterval: probeInterval,
-		stopCh:        make(chan struct{}),
+		cfg:                  cfg,
+		pool:                 pool,
+		probeSessions:        probeSessions,
+		statuses:             make(map[string]Status),
+		inFlight:             make(map[string]struct{}),
+		probeInterval:        probeInterval,
+		stopCh:               make(chan struct{}),
+		claudeSettingsMtimes: make(map[string]time.Time),
 	}
 	// Seed configured agents so API can return stable list before first probe completes.
 	if cfg != nil {
@@ -277,6 +281,7 @@ func (p *Prober) Start(ctx context.Context) {
 			select {
 			case <-ticker.C:
 				p.probeMissingCommands()
+				p.probeChangedConfigAgents()
 			case <-p.stopCh:
 				return
 			case <-ctx.Done():
@@ -1211,4 +1216,74 @@ func VerifySessionInteraction(ctx context.Context, sess agenttypes.Session) erro
 		return errors.New("response was empty")
 	}
 	return nil
+}
+
+
+// SanitizeDefaultModelID 修正过期默认模型：不在当前模型目录内（含 [1m]/家族等价）时
+// 回退到目录中第一个非 default 条目。cc-switch 切换 provider 后，旧默认模型（of/os 等）
+// 已不可通，继续使用只会让新建会话直接 400。
+func SanitizeDefaultModelID(status Status) Status {
+	fallback := firstSelectableModelID(status.Models)
+	if fallback == "" {
+		// 目录不可得（探活未完成），保持现状。
+		return status
+	}
+	id := strings.TrimSpace(status.DefaultModelID)
+	if id != "" && modelInStatusModels(status.Models, id) {
+		return status
+	}
+	status.DefaultModelID = fallback
+	return status
+}
+
+func modelInStatusModels(models []agenttypes.ModelInfo, id string) bool {
+	key := claude.TierKey(claude.Strip1MSuffix(id))
+	for _, model := range models {
+		if claude.TierKey(claude.Strip1MSuffix(model.ID)) == key || strings.EqualFold(strings.TrimSpace(model.ID), strings.TrimSpace(id)) {
+			return true
+		}
+	}
+	return false
+}
+
+func firstSelectableModelID(models []agenttypes.ModelInfo) string {
+	for _, model := range models {
+		id := strings.TrimSpace(model.ID)
+		if id == "" || strings.EqualFold(id, "default") {
+			continue
+		}
+		return id
+	}
+	return ""
+}
+
+// probeChangedConfigAgents 检测外部改写（cc-switch）的 ~/.claude/settings.json mtime，
+// 变化则对 claude 触发一次 recovery 探测，无需重启 MindFS 即可刷新模型目录。
+func (p *Prober) probeChangedConfigAgents() {
+	if p == nil || p.cfg == nil {
+		return
+	}
+	for _, def := range p.cfg.Agents {
+		if agentDefinitionProtocol(def.Name, def) != ProtocolClaudeSDK {
+			continue
+		}
+		path, err := claude.ClaudeSettingsPath()
+		if err != nil {
+			continue
+		}
+		info, statErr := os.Stat(path)
+		if statErr != nil {
+			continue
+		}
+		p.mu.Lock()
+		prev := p.claudeSettingsMtimes[def.Name]
+		p.claudeSettingsMtimes[def.Name] = info.ModTime()
+		p.mu.Unlock()
+		if prev.IsZero() || !info.ModTime().After(prev) {
+			continue
+		}
+		log.Printf("[agent/probe] claude_settings.changed agent=%s mtime=%s action=reprobe", def.Name, info.ModTime().Format(time.RFC3339))
+		status := safeProbeConfiguredAgentWithPool(context.Background(), def.Name, def, p.pool, p.probeSessions, probePhaseRecovery)
+		p.setStatus(status)
+	}
 }

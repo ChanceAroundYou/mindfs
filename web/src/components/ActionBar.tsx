@@ -176,6 +176,12 @@ function isClaudeAgentName(name?: string | null) {
   return String(name || "").trim().toLowerCase() === "claude";
 }
 
+function isClaudeAliasModel(model: string): boolean {
+  const base = strip1MSuffix(model);
+  const lower = String(base || "").trim().toLowerCase();
+  return lower === "fable" || lower === "opus" || lower === "sonnet" || lower === "haiku" || lower === "of" || lower === "op" || lower === "os" || lower === "ok" || lower === "default";
+}
+
 function resolveClaudeBaseAlias(base: string): string {
   const trimmed = String(base || "").trim();
   if (!trimmed) return "";
@@ -200,14 +206,18 @@ function has1MSuffix(model: string): boolean {
 function with1MSuffix(model: string, enabled: boolean): string {
   const base = strip1MSuffix(model);
   if (!base) return "";
-  const alias = resolveClaudeBaseAlias(base);
-  if (!alias) return "";
-  return enabled ? `${alias}[1m]` : alias;
+  if (isClaudeAliasModel(base)) {
+    const alias = resolveClaudeBaseAlias(base);
+    if (!alias) return "";
+    return enabled ? `${alias}[1m]` : alias;
+  }
+  return enabled ? `${base}[1m]` : base;
 }
 
 function modelBaseForAgent(agentName: string | undefined, model: string): string {
   const base = strip1MSuffix(model);
-  return isClaudeAgentName(agentName) ? resolveClaudeBaseAlias(base) : base;
+  if (!isClaudeAgentName(agentName) || !isClaudeAliasModel(base)) return base;
+  return resolveClaudeBaseAlias(base);
 }
 
 function getAgentDefaults(agent?: AgentStatus | null) {

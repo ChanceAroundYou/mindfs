@@ -61,7 +61,13 @@ function strip1MSuffix(model: string): string {
   return trimmed.toLowerCase().endsWith("[1m]") ? trimmed.slice(0, -4).trim() : trimmed;
 }
 
+function isClaudeAliasModelName(model: string): boolean {
+  const base = strip1MSuffix(model).trim().toLowerCase();
+  return base === "fable" || base === "opus" || base === "sonnet" || base === "haiku" || base === "of" || base === "op" || base === "os" || base === "ok" || base === "default";
+}
+
 function claudeModelBase(model: string): string {
+  if (!isClaudeAliasModelName(model)) return strip1MSuffix(model);
   const base = strip1MSuffix(model);
   switch (base.toLowerCase()) {
     case "fable": return "of";
@@ -226,7 +232,12 @@ export function AgentSelector({
     const models = submenuAgentStatus.models ?? [];
     const exact = models.find((item) => item.id === targetModel);
     if (exact) return exact;
-    return models.find((item) => claudeModelBase(item.id) === claudeModelBase(targetModel)) ?? null;
+    // Generic [1m]: probe advertises base ids without suffix, UI may hold base[1m].
+    // Alias family uses canonical alias bases, otherwise stripped bases.
+    if (isClaudeAliasModelName(targetModel)) {
+      return models.find((item) => isClaudeAliasModelName(item.id) && claudeModelBase(item.id) === claudeModelBase(targetModel)) ?? null;
+    }
+    return models.find((item) => strip1MSuffix(item.id) === strip1MSuffix(targetModel)) ?? null;
   }, [submenuAgentStatus, agent, model]);
   const submenuEfforts = useMemo(
     () => submenuSelectedModel?.efforts ?? submenuAgentStatus?.efforts ?? [],

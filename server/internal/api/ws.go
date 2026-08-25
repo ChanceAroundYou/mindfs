@@ -583,7 +583,7 @@ func (h *WSHandler) handleSessionMessage(ctx context.Context, conn *websocket.Co
 		reservedAt, reserved := h.reserveClientRequest(requestID)
 		userTimestamp = reservedAt
 		if !reserved {
-			h.sendWSAcceptedAt(conn, clientID, requestID, rootID, key, userTimestamp)
+			h.sendWSAcceptedAt(conn, clientID, requestID, rootID, key, userTimestamp, "")
 			return
 		}
 	}
@@ -686,22 +686,27 @@ func (h *WSHandler) handleSessionMessage(ctx context.Context, conn *websocket.Co
 			}
 		}
 	}
+	modelDisplayName := ""
+	if uc != nil {
+		modelDisplayName = uc.ResolveModelDisplayName(agentName, model, runtimeRootPath)
+	}
 	if requestID != "" {
-		h.sendWSAcceptedAt(conn, clientID, requestID, rootID, key, userTimestamp)
+		h.sendWSAcceptedAt(conn, clientID, requestID, rootID, key, userTimestamp, modelDisplayName)
 	}
 	if h.AppContext != nil {
 		streamHub.BindSessionClient(key, clientID)
 	}
 	clientCtx := parseClientContext(req.Payload, rootID)
 	userMessage := PendingUserMessage{
-		Agent:       agentName,
-		Model:       model,
-		Mode:        agentMode,
-		Effort:      effort,
-		FastService: fastService,
-		PlanMode:    planMode,
-		Content:     content,
-		Timestamp:   userTimestamp,
+		Agent:            agentName,
+		Model:            model,
+		ModelDisplayName: modelDisplayName,
+		Mode:             agentMode,
+		Effort:           effort,
+		FastService:      fastService,
+		PlanMode:         planMode,
+		Content:          content,
+		Timestamp:        userTimestamp,
 	}
 	job := sessionMessageJob{
 		RootID:          rootID,
@@ -911,7 +916,7 @@ func (h *WSHandler) runSessionMessage(job sessionMessageJob) {
 		ClientCtx:       job.ClientCtx,
 		OnStart: func(start usecase.MessageStart) {
 			h.AppContext.ClearTaskAuxFlagsForSession(rootID, key)
-			streamHub.BroadcastSessionUserMessageAt(rootID, key, job.SessionType, job.SessionName, job.User.Agent, start.Model, start.Mode, start.Effort, start.FastService, job.User.PlanMode, job.User.Content, job.User.Timestamp, job.ExcludeClientID, job.Queued)
+			streamHub.BroadcastSessionUserMessageAt(rootID, key, job.SessionType, job.SessionName, job.User.Agent, start.Model, start.ModelDisplayName, start.Mode, start.Effort, start.FastService, job.User.PlanMode, job.User.Content, job.User.Timestamp, job.ExcludeClientID, job.Queued)
 		},
 		OnUpdate: func(update agenttypes.Event) {
 			updateTracker.Begin()
@@ -1145,10 +1150,10 @@ func (h *WSHandler) sendE2EEError(conn *websocket.Conn, id, code string) {
 }
 
 func (h *WSHandler) sendWSAccepted(conn *websocket.Conn, clientID, requestID, rootID, sessionKey string) {
-	h.sendWSAcceptedAt(conn, clientID, requestID, rootID, sessionKey, time.Time{})
+	h.sendWSAcceptedAt(conn, clientID, requestID, rootID, sessionKey, time.Time{}, "")
 }
 
-func (h *WSHandler) sendWSAcceptedAt(conn *websocket.Conn, clientID, requestID, rootID, sessionKey string, timestamp time.Time) {
+func (h *WSHandler) sendWSAcceptedAt(conn *websocket.Conn, clientID, requestID, rootID, sessionKey string, timestamp time.Time, modelDisplayName string) {
 	payload := map[string]any{
 		"request_id":  requestID,
 		"root_id":     rootID,
@@ -1156,6 +1161,9 @@ func (h *WSHandler) sendWSAcceptedAt(conn *websocket.Conn, clientID, requestID, 
 	}
 	if !timestamp.IsZero() {
 		payload["timestamp"] = timestamp.UTC()
+	}
+	if strings.TrimSpace(modelDisplayName) != "" {
+		payload["model_display_name"] = modelDisplayName
 	}
 	resp := WSResponse{
 		ID:      requestID,
