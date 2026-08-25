@@ -936,9 +936,12 @@ export function MultiProjectSessionList({
   const topLevelSessionsForGroup = (sessions: SessionItem[]) =>
     sessions.filter((session) => !String(session.parent_session_key || "").trim());
 
+  const groupIsCurrentNode = (group: ProjectSessionGroup) =>
+    String((group as any)?._nodeId || "").trim() === String(selectedNodeId || "").trim();
+
   const handleProjectToggle = async (group: ProjectSessionGroup) => {
     const groupKey = groupScopeKey(group);
-    const expanded = expandedProjects[groupKey] !== false;
+    const expanded = expandedProjects[groupKey] ?? groupIsCurrentNode(group);
     const topLevelCount = topLevelSessionsForGroup(group.sessions).length;
     const remaining = Math.max(0, group.totalCount - topLevelCount);
     if (!expanded) {
@@ -971,7 +974,7 @@ export function MultiProjectSessionList({
 
   const handleProjectHeaderToggle = async (group: ProjectSessionGroup) => {
     const key = groupScopeKey(group);
-    const expanded = expandedProjects[key] !== false;
+    const expanded = expandedProjects[key] ?? groupIsCurrentNode(group);
     if (expanded) {
       setExpandedProjects((prev) => ({ ...prev, [key]: false }));
       return;
@@ -1048,7 +1051,7 @@ export function MultiProjectSessionList({
             {orderedGroups.map((group) => {
               const groupKey = groupScopeKey(group);
               const groupNodeId = String((group as any)?._nodeId || "").trim();
-              const expanded = expandedProjects[groupKey] !== false;
+              const expanded = expandedProjects[groupKey] ?? groupIsCurrentNode(group);
               const pinned = !!pinnedProjects[groupKey];
               const topLevelSessions = topLevelSessionsForGroup(group.sessions);
               const sessions = expanded ? group.sessions : [];
@@ -1353,7 +1356,7 @@ function SessionCard({
               justifyContent: "center",
             }}
           >
-            {isSubagent ? <SubSessionIcon /> : <ModeIcon type={session.task_id ? "task" : session.type || "chat"} size={16} color={effectiveNodeColor || undefined} />}
+            {isSubagent ? <SubSessionIcon color={effectiveNodeColor || undefined} /> : <ModeIcon type={session.task_id ? "task" : session.type || "chat"} size={16} color={effectiveNodeColor || undefined} />}
             {!isSubagent && session.type === "command" ? (
               <span
                 title={session.shell || "shell"}
@@ -1949,7 +1952,8 @@ function ChevronLeftIcon() {
   );
 }
 
-function SubSessionIcon() {
+function SubSessionIcon({ color }: { color?: string }) {
+  const c = String(color || "").trim() || "var(--accent-color)";
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
@@ -1957,7 +1961,7 @@ function SubSessionIcon() {
       height="18"
       viewBox="0 0 32 32"
       aria-hidden="true"
-      style={{ color: "var(--accent-color)", display: "block" }}
+      style={{ color: c, display: "block" }}
     >
       <path d="M0 0h32v32H0z" fill="none" />
       <path
