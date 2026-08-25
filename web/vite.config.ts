@@ -257,9 +257,11 @@ function appShellHTMLPlugin(opts: {
   const { deployPrefix, assetRoot, relayAliasPrefix } = opts;
   // 构建期按同一规范化部署前缀生成主包匹配正则：覆盖 /<prefix>/assets/index-* 与
   // relay 别名 /<prefix>-assets/index-*，避免硬编码 /mindfs-assets。
+  // 注意：正则字面量内的 "/" 必须转义为 "\/"，否则注入后成为非法 flags（SyntaxError）。
   const assetRootNoSlash = assetRoot.replace(/\/+$/, "");
   const relayNoSlash = relayAliasPrefix.replace(/\/+$/, "");
-  const mainAssetReSource = `^\\/(?:${escapeRegex(relayNoSlash)}|${escapeRegex(assetRootNoSlash)}\\/assets)\\/index-[^/]+\\.(?:js|css)$`;
+  const escLiteral = (value: string) => escapeRegex(value).replace(/\//g, "\\/");
+  const mainAssetReSource = `^\\/(?:${escLiteral(relayNoSlash)}|${escLiteral(assetRootNoSlash)}\\/assets)\\/index-[^/]+\\.(?:js|css)$`;
   return {
     name: "mindfs-app-shell-html",
     transformIndexHtml(html: string) {

@@ -7,10 +7,12 @@ function badgeBg(_color: string): string {
 export function NodeBadgeHeader({
   color,
   label,
+  collapsed = false,
   onClick,
 }: {
   color: string;
   label: string;
+  collapsed?: boolean;
   onClick?: () => void;
 }) {
   const c = String(color || "#6d5bcf").trim() || "#6d5bcf";
@@ -43,8 +45,30 @@ export function NodeBadgeHeader({
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
             cursor: "pointer",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "5px",
           }}
         >
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+            style={{
+              flexShrink: 0,
+              transform: collapsed ? "rotate(0deg)" : "rotate(90deg)",
+              transition: "transform 0.15s cubic-bezier(0.4, 0, 0.2, 1)",
+              color: c,
+            }}
+          >
+            <polyline points="9 18 15 12 9 6" />
+          </svg>
           <span style={{ color: c, fontWeight: 600 }}>{label}</span>
         </button>
       ) : (

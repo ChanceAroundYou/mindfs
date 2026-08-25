@@ -18,6 +18,7 @@ import {
 import { useI18n, type Locale, type MessageKey } from "../i18n";
 import { useRefreshSpin } from "../hooks";
 import { addNode, getNodes, LOCAL_NODE_ID, removeNode, updateNode, getNodeById } from "../services/nodeRegistry";
+import { scopeKey, treeKey } from "../services/scope";
 import { AgentMenuList } from "./AgentMenuList";
 import { AgentIcon } from "./AgentIcon";
 import { AgentSelector } from "./AgentSelector";
@@ -132,6 +133,7 @@ type FileTreeProps = {
   selectedDirKey?: string | null;
   selectedPath?: string | null;
   rootId?: string | null;
+  rootNodeId?: string | null;
   rootColor?: string | null;
   rootSessionIndicators?: Record<string, RootSessionIndicator>;
   fileMetas?: Record<string, FileMeta>;
@@ -1314,6 +1316,7 @@ function FileTreeInner({
   selectedPath,
   rootId,
   rootColor = null,
+  rootNodeId = null,
   rootSessionIndicators = {},
   fileMetas = {},
   activeSessionKey,
@@ -2169,9 +2172,9 @@ function FileTreeInner({
     setAgentConfigSwitchSelection(id ? { type: "api_provider", id } : null);
   }, []);
 
-  const childKeyFor = (entry: FileEntry, entryRoot: string) => {
-    if (entry.is_root) return `${entry.path}:.`;
-    return `${entryRoot}:${entry.path}`;
+  const childKeyFor = (entry: FileEntry, entryRoot: string, sectionNodeId: string) => {
+    if (entry.is_root) return treeKey(sectionNodeId, entry.path, ".");
+    return treeKey(sectionNodeId, entryRoot, entry.path);
   };
 
   const visibleEntries = React.useCallback((items: FileEntry[], depth = 0) => {
@@ -2184,7 +2187,7 @@ function FileTreeInner({
     return hiddenFiltered.filter((entry) => !!rootId && entry.path === rootId);
   }, [projectTreeTab, rootId, showHiddenFiles]);
 
-  const renderEntries = (items: FileEntry[], depth: number, branchRoot: string, groupColor?: string) => (
+  const renderEntries = (items: FileEntry[], depth: number, branchRoot: string, groupColor?: string, sectionNodeId?: string) => (
     <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
       {depth === 0 && creatingRootName !== null ? (
         <li key="__draft_root__">
@@ -2286,18 +2289,32 @@ function FileTreeInner({
       {sortDirectoryEntries(visibleEntries(items, depth), sortMode).map((entry) => {
         const isManagedRootNode = entry.is_root === true;
         const entryRoot = isManagedRootNode ? entry.path : branchRoot;
-        const expandedKey = isManagedRootNode ? entry.path : `${entryRoot}:${entry.path}`;
+        // 多节点：条目节点取所属分组注入的 sectionNodeId（root 条目带回 _nodeId 时优先自身）
+        const entryNodeId = String(
+          (entry as any)?._nodeId || sectionNodeId || "",
+        ).trim();
+        const expandedKey = isManagedRootNode
+          ? scopeKey(entryNodeId, entry.path)
+          : treeKey(entryNodeId, entryRoot, entry.path);
         const isOpen = expandedSet.has(expandedKey);
 
-        const cKey = childKeyFor(entry, entryRoot);
+        const cKey = childKeyFor(entry, entryRoot, entryNodeId);
         const children = childrenByPath[cKey] ?? [];
 
-        const isCurrentRootNode = isManagedRootNode && entry.path === rootId;
+        const isCurrentRootNode =
+          isManagedRootNode &&
+          entry.path === rootId &&
+          String((entry as any)._nodeId || "") === String(rootNodeId || "");
+        const isSelectedNode =
+          String((entry as any)._nodeId || "") === String(rootNodeId || "");
         // 普通目录沿用 selectedDirKey；当前 managed root 永远跟随 current root 高亮。
+        // 多节点同名项目：selectedDirKey 为裸 rootId，须叠加节点匹配，避免两侧同时高亮。
         const isSelected =
           entry.is_dir
-            ? isCurrentRootNode || selectedDirKey === expandedKey
-            : entry.path === selectedPath && entryRoot === rootId;
+            ? isCurrentRootNode || (isSelectedNode && selectedDirKey === expandedKey)
+            : entry.path === selectedPath &&
+              entryRoot === rootId &&
+              String(entryNodeId) === String(rootNodeId || "");
 
         // 选中态中性灰条 + 节点色文字：文件/目录选中时文字用所属项目节点色
         const selectedNodeColor = String((entry as any)._nodeColor || "").trim();
@@ -2307,7 +2324,7 @@ function FileTreeInner({
         const hasSessionLink = !entry.is_dir && meta?.source_session;
         const isFromActiveSession = hasSessionLink && meta.source_session === activeSessionKey;
         const rootIndicator = isManagedRootNode
-          ? rootSessionIndicators[entry.path] || {}
+          ? rootSessionIndicators[scopeKey(entryNodeId, entry.path)] || {}
           : null;
         const showRootIndicator = !!rootIndicator?.bound;
         const isRootPending = !!rootIndicator?.pending;
@@ -2435,7 +2452,7 @@ function FileTreeInner({
                 </span>
               )}
             </button>
-            {entry.is_dir && isOpen && shouldRenderChildren && children.length > 0 ? renderEntries(children, depth + 1, entryRoot, groupColor || (entry as any)._nodeColor || (isManagedRootNode ? String((entry as any)._nodeColor || "") : groupColor)) : null}
+            {entry.is_dir && isOpen && shouldRenderChildren && children.length > 0 ? renderEntries(children, depth + 1, entryRoot, groupColor || (entry as any)._nodeColor || (isManagedRootNode ? String((entry as any)._nodeColor || "") : groupColor), entryNodeId) : null}
             {entry.is_dir && isOpen && rootExtraContent ? (
               <div style={{ padding: `2px 4px 8px ${PROJECT_TREE_INDENT}px` }}>
                 {rootExtraContent}
@@ -3186,13 +3203,14 @@ function FileTreeInner({
       <div style={{ padding: "8px", flex: 1, minHeight: 0, overflow: "auto", display: "flex", flexDirection: "column" }}>
         {(() => {
           const groups = (() => {
-            const m = new Map<string, { color: string; name: string; items: typeof entries }>();
+            const m = new Map<string, { color: string; name: string; nid: string; items: typeof entries }>();
             for (const e of entries) {
               const ex = e as any;
               const key = String(ex._nodeName || ex._nodeId || "local");
               const color = String(ex._nodeColor || "#6d5bcf");
               const name = String(ex._nodeName || key);
-              if (!m.has(key)) m.set(key, { color, name, items: [] });
+              const nid = String(ex._nodeId || "").trim();
+              if (!m.has(key)) m.set(key, { color, name, nid, items: [] });
               m.get(key)!.items.push(e);
             }
             try {
@@ -3226,7 +3244,7 @@ function FileTreeInner({
               {groups.map((g) => (
                 <div key={g.name}>
                   <NodeBadgeHeader color={g.color} label={g.name} />
-                  {renderEntries(g.items, 0, rootId || "", g.color)}
+                  {renderEntries(g.items, 0, rootId || "", g.color, g.nid)}
                 </div>
               ))}
             </>

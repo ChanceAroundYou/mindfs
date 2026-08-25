@@ -3,6 +3,7 @@ import { AgentIcon } from "./AgentIcon";
 import { ModeIcon } from "./ModeIcon";
 import { NodeBadgeHeader } from "./NodeBadgeHeader";
 import { PALETTE } from "../services/nodeRegistry";
+import { scopeKey } from "../services/scope";
 import { useI18n, type Locale } from "../i18n";
 
 function hexToRgba(hex: string, alpha: number): string {
@@ -108,6 +109,7 @@ type ProjectSessionListProps = {
   groups: ProjectSessionGroup[];
   selectedKey?: string;
   selectedRootId?: string;
+  selectedNodeId?: string;
   headerAction?: React.ReactNode;
   loading?: boolean;
   emptyText?: React.ReactNode;
@@ -118,7 +120,6 @@ type ProjectSessionListProps = {
   onPin?: (session: SessionItem, pinned: boolean) => Promise<boolean> | boolean;
   onRename?: (session: SessionItem, nextName: string) => Promise<boolean> | boolean;
   onDelete?: (session: SessionItem) => void;
-  onProjectClick?: (rootId: string) => void;
   onLoadMoreProject?: (group: ProjectSessionGroup) => Promise<void> | void;
   onLoadChildren?: (
     session: SessionItem,
@@ -290,9 +291,11 @@ function isSessionSyncing(
     return false;
   }
   const rootId = session.root_id || "";
+  const nodeId = String((session as any)?._nodeId || "").trim();
   return (
     syncingSessionKeys.has(key) ||
-    (!!rootId && syncingSessionKeys.has(`${rootId}::${key}`))
+    (!!rootId && syncingSessionKeys.has(`${rootId}::${key}`)) ||
+    (!!rootId && !!nodeId && syncingSessionKeys.has(`${nodeId}::${rootId}::${key}`))
   );
 }
 
@@ -743,7 +746,7 @@ export function MultiProjectSessionList({
   onPin,
   onRename,
   onDelete,
-  onProjectClick,
+  selectedNodeId = "",
   onLoadMoreProject,
   onLoadChildren,
 }: ProjectSessionListProps) {
@@ -781,11 +784,13 @@ export function MultiProjectSessionList({
     }
     window.localStorage.setItem(PINNED_PROJECTS_STORAGE_KEY, JSON.stringify(pinnedProjects));
   }, [pinnedProjects]);
+  const groupScopeKey = (group: ProjectSessionGroup) =>
+    scopeKey(String((group as any)?._nodeId || "").trim(), group.rootId);
   const orderedGroups = useMemo(
     () =>
       groups.slice().sort((left, right) => {
-        const leftPinnedAt = pinnedProjects[left.rootId] || 0;
-        const rightPinnedAt = pinnedProjects[right.rootId] || 0;
+        const leftPinnedAt = pinnedProjects[groupScopeKey(left)] || 0;
+        const rightPinnedAt = pinnedProjects[groupScopeKey(right)] || 0;
         if (leftPinnedAt || rightPinnedAt) {
           if (leftPinnedAt !== rightPinnedAt) {
             return rightPinnedAt - leftPinnedAt;
@@ -795,13 +800,14 @@ export function MultiProjectSessionList({
       }),
     [groups, pinnedProjects],
   );
-  const togglePinnedProject = (rootId: string) => {
+  const togglePinnedProject = (group: ProjectSessionGroup) => {
+    const key = groupScopeKey(group);
     setPinnedProjects((prev) => {
       const next = { ...prev };
-      if (next[rootId]) {
-        delete next[rootId];
+      if (next[key]) {
+        delete next[key];
       } else {
-        next[rootId] = Date.now();
+        next[key] = Date.now();
       }
       return next;
     });
@@ -811,13 +817,19 @@ export function MultiProjectSessionList({
     for (const group of groups) {
       for (const item of group.sessions) {
         const sessionRoot = item.root_id || group.rootId;
+        const itemNodeId = String((item as any)?._nodeId || (group as any)?._nodeId || "").trim();
         byKey.set(`${sessionRoot}:${item.key}`, item);
+        byKey.set(scopeKey(itemNodeId, sessionRoot ? `${sessionRoot}:${item.key}` : item.key), item);
         byKey.set(item.key, item);
       }
     }
     return byKey;
   }, [groups]);
-  const childStateKey = (session: SessionItem, fallbackRootId = "") => `${session.root_id || fallbackRootId}:${session.key}`;
+  const childStateKey = (session: SessionItem, fallbackRootId = "", fallbackNodeId = "") => {
+    const rootId = session.root_id || fallbackRootId;
+    const nodeId = String((session as any)?._nodeId || fallbackNodeId || "").trim();
+    return `${scopeKey(nodeId, rootId)}:${session.key}`;
+  };
 
   const loadChildren = async (parent: SessionItem, beforeTime?: string) => {
     const stateKey = childStateKey(parent);
@@ -833,7 +845,7 @@ export function MultiProjectSessionList({
     }
   };
 
-  const buildRows = (sessions: SessionItem[], fallbackRootId: string): VisibleSessionRow[] => {
+  const buildRows = (sessions: SessionItem[], fallbackRootId: string, fallbackNodeId = ""): VisibleSessionRow[] => {
     if (sessions.length === 0) return [];
     const isForkItem = (item: SessionItem) => !!parseForkSessionSource(item.source);
     const childrenByParent = new Map<string, SessionItem[]>();
@@ -856,7 +868,11 @@ export function MultiProjectSessionList({
       }
     }
     const activeParentKeys = new Set<string>();
-    if (selectedKey && selectedRootId === fallbackRootId) {
+    if (
+      selectedKey &&
+      selectedRootId === fallbackRootId &&
+      String(selectedNodeId || "") === String(fallbackNodeId || "")
+    ) {
       activeParentKeys.add(selectedKey);
       let parentKey = parentByKey.get(selectedKey) || "";
       while (parentKey) {
@@ -898,9 +914,10 @@ export function MultiProjectSessionList({
     row: Extract<VisibleSessionRow, { type: "child-toggle" }>,
     groupSessions: SessionItem[],
     fallbackRootId: string,
+    fallbackNodeId = "",
   ) => {
     const parentKey = row.parent.key;
-    const stateKey = childStateKey(row.parent, fallbackRootId);
+    const stateKey = childStateKey(row.parent, fallbackRootId, fallbackNodeId);
     if (!row.expanded) {
       setExpandedChildren((prev) => ({ ...prev, [stateKey]: true }));
       await loadChildren(row.parent);
@@ -917,34 +934,54 @@ export function MultiProjectSessionList({
   };
 
   const handleProjectToggle = async (group: ProjectSessionGroup) => {
-    const expanded = !!expandedProjects[group.rootId];
+    const groupKey = groupScopeKey(group);
+    const expanded = !!expandedProjects[groupKey];
     const remaining = Math.max(0, group.totalCount - group.sessions.length);
     if (!expanded) {
-      setExpandedProjects((prev) => ({ ...prev, [group.rootId]: true }));
+      setExpandedProjects((prev) => ({ ...prev, [groupKey]: true }));
       if (remaining > 0 && onLoadMoreProject) {
-        setLoadingProjects((prev) => ({ ...prev, [group.rootId]: true }));
+        setLoadingProjects((prev) => ({ ...prev, [groupKey]: true }));
         try {
           await onLoadMoreProject(group);
         } finally {
-          setLoadingProjects((prev) => ({ ...prev, [group.rootId]: false }));
+          setLoadingProjects((prev) => ({ ...prev, [groupKey]: false }));
         }
       }
       return;
     }
     if (remaining > 0 && onLoadMoreProject) {
-      setLoadingProjects((prev) => ({ ...prev, [group.rootId]: true }));
+      setLoadingProjects((prev) => ({ ...prev, [groupKey]: true }));
       try {
         await onLoadMoreProject(group);
       } finally {
-        setLoadingProjects((prev) => ({ ...prev, [group.rootId]: false }));
+        setLoadingProjects((prev) => ({ ...prev, [groupKey]: false }));
       }
     } else {
-      setExpandedProjects((prev) => ({ ...prev, [group.rootId]: false }));
+      setExpandedProjects((prev) => ({ ...prev, [groupKey]: false }));
     }
   };
 
-  const handleProjectCollapse = (rootId: string) => {
-    setExpandedProjects((prev) => ({ ...prev, [rootId]: false }));
+  const handleProjectCollapse = (group: ProjectSessionGroup) => {
+    setExpandedProjects((prev) => ({ ...prev, [groupScopeKey(group)]: false }));
+  };
+
+  const handleProjectHeaderToggle = async (group: ProjectSessionGroup) => {
+    const key = groupScopeKey(group);
+    const expanded = !!expandedProjects[key];
+    if (expanded) {
+      setExpandedProjects((prev) => ({ ...prev, [key]: false }));
+      return;
+    }
+    setExpandedProjects((prev) => ({ ...prev, [key]: true }));
+    const remaining = Math.max(0, group.totalCount - group.sessions.length);
+    if (remaining > 0 && onLoadMoreProject) {
+      setLoadingProjects((prev) => ({ ...prev, [key]: true }));
+      try {
+        await onLoadMoreProject(group);
+      } finally {
+        setLoadingProjects((prev) => ({ ...prev, [key]: false }));
+      }
+    }
   };
 
   const topLevelSessionsForGroup = (sessions: SessionItem[]) =>
@@ -1019,28 +1056,31 @@ export function MultiProjectSessionList({
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: "9px" }}>
             {orderedGroups.map((group) => {
-              const expanded = !!expandedProjects[group.rootId];
-              const pinned = !!pinnedProjects[group.rootId];
+              const groupKey = groupScopeKey(group);
+              const groupNodeId = String((group as any)?._nodeId || "").trim();
+              const expanded = !!expandedProjects[groupKey];
+              const pinned = !!pinnedProjects[groupKey];
               const topLevelSessions = topLevelSessionsForGroup(group.sessions);
               const sessions = expanded
                 ? group.sessions
                 : sessionsForTopLevelLimit(group.sessions, MULTI_PROJECT_VISIBLE_LIMIT);
-              const rows = buildRows(sessions, group.rootId);
+              const rows = buildRows(sessions, group.rootId, groupNodeId);
               const remaining = Math.max(0, group.totalCount - topLevelSessions.length);
-              const projectLoading = !!loadingProjects[group.rootId];
+              const projectLoading = !!loadingProjects[groupKey];
               return (
-                <section key={group.rootId} style={{ minWidth: 0 }}>
+                <section key={`${(group as any)._nodeId || ""}::${group.rootId}`} style={{ minWidth: 0 }}>
                   <div style={{ position: "relative" }}>
                     <NodeBadgeHeader
                       color={String((group as any)._nodeColor || PALETTE[0])}
                       label={group.rootName || group.rootId}
-                      onClick={onProjectClick ? () => onProjectClick(group.rootId) : undefined}
+                      collapsed={!expanded}
+                      onClick={() => void handleProjectHeaderToggle(group)}
                     />
                     <button
                       type="button"
                       aria-label={pinned ? t("sessionList.unpinProject") : t("sessionList.pinProject")}
                       title={pinned ? t("sessionList.unpin") : t("sessionList.pin")}
-                      onClick={() => togglePinnedProject(group.rootId)}
+                      onClick={() => togglePinnedProject(group)}
                       style={{
                         position: "absolute",
                         right: 0,
@@ -1094,11 +1134,11 @@ export function MultiProjectSessionList({
                             showExpandIcon={!loadingChild && (!row.expanded || hasMoreChildren)}
                             showCollapseIcon={!loadingChild && row.expanded}
                             marginLeft={SUB_SESSION_ICON_OFFSET}
-                            onClick={() => void handleChildToggle(row, group.sessions, group.rootId)}
+                            onClick={() => void handleChildToggle(row, group.sessions, group.rootId, groupNodeId)}
                             onCollapse={() =>
                               setExpandedChildren((prev) => ({
                                 ...prev,
-                                [childStateKey(row.parent, group.rootId)]: false,
+                                [childStateKey(row.parent, group.rootId, groupNodeId)]: false,
                               }))
                             }
                           />
@@ -1113,7 +1153,7 @@ export function MultiProjectSessionList({
                           session={{ ...session, root_id: sessionRoot }}
                           nodeColor={groupColor}
                           sessionByKey={sessionByKey}
-                          selected={session.key === selectedKey && sessionRoot === selectedRootId}
+                          selected={session.key === selectedKey && sessionRoot === selectedRootId && String((group as any)._nodeId || "") === String(selectedNodeId || "")}
                           parentHighlighted={false}
                           highlightQuery=""
                           syncing={isSessionSyncing({ ...session, root_id: sessionRoot }, syncingSessionKeys)}
@@ -1141,7 +1181,7 @@ export function MultiProjectSessionList({
                         showCollapseIcon={!projectLoading && expanded}
                         marginLeft={MAIN_SESSION_ICON_OFFSET}
                         onClick={() => void handleProjectToggle(group)}
-                        onCollapse={() => handleProjectCollapse(group.rootId)}
+                        onCollapse={() => handleProjectCollapse(group)}
                       />
                     ) : null}
                   </div>

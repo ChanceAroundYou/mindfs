@@ -1,5 +1,6 @@
 import { appURL, wsURL } from "./base";
 import { getRootNodeId } from "./rootNode";
+import { scopeSessionKey } from "./scope";
 import { protectedFetch, protectedJSON } from "./api";
 import { e2eeService } from "./e2ee";
 
@@ -1524,6 +1525,7 @@ export const sessionService = new SessionService();
 type CachedSessionRecord = {
   cacheKey: string;
   rootId: string;
+  nodeId?: string;
   sessionKey: string;
   touchedAt: number;
   session: Session;
@@ -1534,8 +1536,12 @@ const SESSION_CACHE_STORE = "sessions";
 const SESSION_CACHE_VERSION = 2;
 let sessionDBPromise: Promise<IDBDatabase> | null = null;
 
-function buildSessionCacheKey(rootId: string, sessionKey: string): string {
-  return `${rootId}::${sessionKey}`;
+function buildSessionCacheKey(
+  rootId: string,
+  sessionKey: string,
+  nodeId?: string,
+): string {
+  return scopeSessionKey(String(nodeId || "").trim(), rootId, sessionKey);
 }
 
 function openSessionDB(): Promise<IDBDatabase> {
@@ -1728,11 +1734,12 @@ function appendSessionDelta(
 async function loadCachedSession(
   rootId: string,
   sessionKey: string,
+  nodeId?: string,
 ): Promise<Session | null> {
   try {
     const record = await withSessionStore("readonly", (store) =>
       sessionRequestToPromise(
-        store.get(buildSessionCacheKey(rootId, sessionKey)) as IDBRequest<
+        store.get(buildSessionCacheKey(rootId, sessionKey, nodeId)) as IDBRequest<
           CachedSessionRecord | undefined
         >,
       ),
@@ -1746,14 +1753,16 @@ async function loadCachedSession(
 async function saveCachedSession(
   rootId: string,
   session: Session | null | undefined,
+  nodeId?: string,
 ): Promise<void> {
   if (!rootId || !session?.key) {
     return;
   }
   const persistentSession = toPersistentSession(session);
   const record: CachedSessionRecord = {
-    cacheKey: buildSessionCacheKey(rootId, session.key),
+    cacheKey: buildSessionCacheKey(rootId, session.key, nodeId),
     rootId,
+    nodeId: String(nodeId || "").trim() || undefined,
     sessionKey: session.key,
     touchedAt: Date.now(),
     session: persistentSession,
@@ -1768,20 +1777,25 @@ async function saveCachedSession(
 export async function deleteCachedSession(
   rootId: string,
   sessionKey: string,
+  nodeId?: string,
 ): Promise<void> {
   try {
     await withSessionStore("readwrite", (store) =>
       sessionRequestToPromise(
-        store.delete(buildSessionCacheKey(rootId, sessionKey)),
+        store.delete(buildSessionCacheKey(rootId, sessionKey, nodeId)),
       ),
     );
   } catch {}
 }
 
-export async function clearCachedSessionsForRoot(rootId: string): Promise<void> {
+export async function clearCachedSessionsForRoot(
+  rootId: string,
+  nodeId?: string,
+): Promise<void> {
   if (!rootId) {
     return;
   }
+  const nid = String(nodeId || "").trim();
   try {
     await withSessionStore("readwrite", async (store) => {
       const entries =
@@ -1790,7 +1804,13 @@ export async function clearCachedSessionsForRoot(rootId: string): Promise<void> 
         )) || [];
       await Promise.all(
         entries
-          .filter((record) => record.rootId === rootId)
+          // 未传 nodeId 时清整棵 root（历史行为）；传了则只清该节点，
+          // 并顺带删除遗留的 node-blind 旧键（无 nodeId 字段的记录）
+          .filter(
+            (record) =>
+              record.rootId === rootId &&
+              (!nid || record.nodeId === nid || !record.nodeId),
+          )
           .map((record) => sessionRequestToPromise(store.delete(record.cacheKey))),
       );
     });
@@ -1857,8 +1877,9 @@ function toPersistentSession(session: Session): Session {
 export async function getCachedSession(
   rootId: string,
   sessionKey: string,
+  nodeId?: string,
 ): Promise<Session | null> {
-  const cached = await loadCachedSession(rootId, sessionKey);
+  const cached = await loadCachedSession(rootId, sessionKey, nodeId);
   return cached ? cloneSession(cached) : null;
 }
 
@@ -1866,8 +1887,9 @@ export async function setCachedSessionRelatedFiles(
   rootId: string,
   sessionKey: string,
   relatedFiles: RelatedFile[],
+  nodeId?: string,
 ): Promise<Session | null> {
-  const cached = await loadCachedSession(rootId, sessionKey);
+  const cached = await loadCachedSession(rootId, sessionKey, nodeId);
   if (!cached) {
     return null;
   }
@@ -1875,7 +1897,7 @@ export async function setCachedSessionRelatedFiles(
     ...cached,
     related_files: Array.isArray(relatedFiles) ? [...relatedFiles] : [],
   };
-  await saveCachedSession(rootId, next);
+  await saveCachedSession(rootId, next, nodeId);
   return cloneSession(next);
 }
 
@@ -1884,7 +1906,7 @@ export async function syncSession(
   sessionKey: string,
   options?: { full?: boolean; nodeId?: string },
 ): Promise<SyncSessionResult> {
-  const base = await getCachedSession(rootId, sessionKey);
+  const base = await getCachedSession(rootId, sessionKey, options?.nodeId);
   // 缓存被截断（truncated）时 base 缺中间段：丢弃 base 走全量拉取，否则 UI 会缺消息。
   const baseTruncated = !!(base as any)?.truncated;
   const seq = baseTruncated ? 0 : getSessionMaxSeq(base);
@@ -1917,7 +1939,7 @@ export async function syncSession(
   if (!persistedSession) {
     return { session: null, hasDelta: false };
   }
-  await saveCachedSession(rootId, persistedSession);
+  await saveCachedSession(rootId, persistedSession, options?.nodeId);
   const displaySession = withSessionMeta(persistedSession, {
     ...incoming,
     key: sessionKey,
