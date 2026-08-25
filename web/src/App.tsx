@@ -4850,8 +4850,9 @@ export function App({ onGoHome }: AppProps) {
         return;
       }
       const previousLoaded = topLevelSessions.length;
+      const groupNid = String((group as any)._nodeId || "").trim();
       const payload = await sessionService.fetchSessions(group.rootId, {
-        nodeId: String((group as any)._nodeId || "") || getNodeIdForRoot(group.rootId),
+        nodeId: groupNid || getNodeIdForRoot(group.rootId),
         beforeTime: oldest,
         limit: SESSION_PAGE_SIZE,
         topLevel: true,
@@ -4859,12 +4860,12 @@ export function App({ onGoHome }: AppProps) {
       });
       const nextItems = payload.items
         .concat(payload.pinnedItems)
-        .map((item) => toSessionItem(group.rootId, { ...(item as any), root_id: group.rootId }))
+        .map((item) => toSessionItem(group.rootId, { ...(item as any), root_id: group.rootId, _nodeId: groupNid }))
         .filter((item): item is SessionItem => !!item);
       setMultiProjectSessionGroups((prev) =>
         applyPendingToMultiProjectGroups(
           prev.map((current) => {
-            if (current.rootId !== group.rootId) {
+            if (String((current as any)._nodeId || "").trim() !== groupNid || current.rootId !== group.rootId) {
               return current;
             }
             const sessions = applyPinnedSnapshotToSessions(

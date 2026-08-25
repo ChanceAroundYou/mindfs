@@ -933,10 +933,14 @@ export function MultiProjectSessionList({
     }
   };
 
+  const topLevelSessionsForGroup = (sessions: SessionItem[]) =>
+    sessions.filter((session) => !String(session.parent_session_key || "").trim());
+
   const handleProjectToggle = async (group: ProjectSessionGroup) => {
     const groupKey = groupScopeKey(group);
-    const expanded = !!expandedProjects[groupKey];
-    const remaining = Math.max(0, group.totalCount - group.sessions.length);
+    const expanded = expandedProjects[groupKey] !== false;
+    const topLevelCount = topLevelSessionsForGroup(group.sessions).length;
+    const remaining = Math.max(0, group.totalCount - topLevelCount);
     if (!expanded) {
       setExpandedProjects((prev) => ({ ...prev, [groupKey]: true }));
       if (remaining > 0 && onLoadMoreProject) {
@@ -967,13 +971,14 @@ export function MultiProjectSessionList({
 
   const handleProjectHeaderToggle = async (group: ProjectSessionGroup) => {
     const key = groupScopeKey(group);
-    const expanded = !!expandedProjects[key];
+    const expanded = expandedProjects[key] !== false;
     if (expanded) {
       setExpandedProjects((prev) => ({ ...prev, [key]: false }));
       return;
     }
     setExpandedProjects((prev) => ({ ...prev, [key]: true }));
-    const remaining = Math.max(0, group.totalCount - group.sessions.length);
+    const topLevelCount = topLevelSessionsForGroup(group.sessions).length;
+    const remaining = Math.max(0, group.totalCount - topLevelCount);
     if (remaining > 0 && onLoadMoreProject) {
       setLoadingProjects((prev) => ({ ...prev, [key]: true }));
       try {
@@ -982,21 +987,6 @@ export function MultiProjectSessionList({
         setLoadingProjects((prev) => ({ ...prev, [key]: false }));
       }
     }
-  };
-
-  const topLevelSessionsForGroup = (sessions: SessionItem[]) =>
-    sessions.filter((session) => !String(session.parent_session_key || "").trim());
-
-  const sessionsForTopLevelLimit = (sessions: SessionItem[], limit: number) => {
-    const topLevel = topLevelSessionsForGroup(sessions);
-    if (limit >= topLevel.length) {
-      return sessions;
-    }
-    const visibleParentKeys = new Set(topLevel.slice(0, limit).map((session) => session.key));
-    return sessions.filter((session) => {
-      const parentKey = String(session.parent_session_key || "").trim();
-      return !parentKey ? visibleParentKeys.has(session.key) : visibleParentKeys.has(parentKey);
-    });
   };
 
   return (
@@ -1058,12 +1048,10 @@ export function MultiProjectSessionList({
             {orderedGroups.map((group) => {
               const groupKey = groupScopeKey(group);
               const groupNodeId = String((group as any)?._nodeId || "").trim();
-              const expanded = !!expandedProjects[groupKey];
+              const expanded = expandedProjects[groupKey] !== false;
               const pinned = !!pinnedProjects[groupKey];
               const topLevelSessions = topLevelSessionsForGroup(group.sessions);
-              const sessions = expanded
-                ? group.sessions
-                : sessionsForTopLevelLimit(group.sessions, MULTI_PROJECT_VISIBLE_LIMIT);
+              const sessions = expanded ? group.sessions : [];
               const rows = buildRows(sessions, group.rootId, groupNodeId);
               const remaining = Math.max(0, group.totalCount - topLevelSessions.length);
               const projectLoading = !!loadingProjects[groupKey];
@@ -1165,7 +1153,7 @@ export function MultiProjectSessionList({
                         />
                       );
                     })}
-                    {group.totalCount > MULTI_PROJECT_VISIBLE_LIMIT ? (
+                    {expanded && group.totalCount > MULTI_PROJECT_VISIBLE_LIMIT ? (
                       <ToggleRowButton
                         loading={projectLoading}
                         label={
