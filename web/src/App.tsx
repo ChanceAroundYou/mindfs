@@ -3360,6 +3360,11 @@ export function App({ onGoHome }: AppProps) {
         return null;
       }
       const cacheKey = rootSessionKey(resolvedRoot, resolvedKey);
+      const cachedBeforeSync = sessionCacheRef.current[cacheKey];
+      const resumeCursor = sessionService.getEventCursor(
+        resolvedRoot,
+        resolvedKey,
+      );
       const inflight = loadingSessionRef.current[cacheKey];
       const request =
         inflight ||
@@ -3370,9 +3375,35 @@ export function App({ onGoHome }: AppProps) {
         loadingSessionRef.current[cacheKey] = request;
       }
       const syncResult = await request;
-      const fullSession = syncResult?.session;
+      let fullSession = syncResult?.session;
       if (!fullSession) {
         return null;
+      }
+      if (resumeCursor) {
+        const incomingExchanges = Array.isArray((fullSession as any).exchanges)
+          ? ((fullSession as any).exchanges as Exchange[])
+          : [];
+        const hasPendingTurn = incomingExchanges.some(
+          (exchange) => Number((exchange as any)?.seq || 0) === 0,
+        );
+        const localTransient = Array.isArray((cachedBeforeSync as any)?.exchanges)
+          ? (((cachedBeforeSync as any).exchanges as Exchange[]).filter(
+              (exchange) => Number((exchange as any)?.seq || 0) === 0,
+            ))
+          : [];
+        if (hasPendingTurn && localTransient.length > 0) {
+          fullSession = {
+            ...(fullSession as any),
+            exchanges: [
+              ...incomingExchanges.filter(
+                (exchange) => Number((exchange as any)?.seq || 0) > 0,
+              ),
+              ...localTransient,
+            ],
+          } as Session;
+        } else {
+          sessionService.clearEventCursor(resolvedRoot, resolvedKey);
+        }
       }
       const serverPending =
         typeof (fullSession as any)?.pending === "boolean"
@@ -4060,22 +4091,32 @@ export function App({ onGoHome }: AppProps) {
         const isUserShellStream =
           incomingMeta.source === "userShell" && incomingMeta.phase === "stream";
         if (isUserShellStream) {
-          // 后端每帧只推增量 chunk.Text。这里合并成单条累积 text（与后端
-          // coalesceUserShellStreamEvent 对齐），避免 content 数组无限增长 +
-          // 每帧全量 map/join 的 O(n²)（命令长输出流式时旧实现逐帧放大）。
-          const existingText = (existing?.content || [])
-            .map((item: any) => item?.text || "")
-            .join("");
-          const incomingText = (incoming?.content || [])
-            .map((item: any) => item?.text || "")
-            .join("");
-          const totalText = existingText + incomingText;
+          // replaySnapshot 时后端已做全量覆盖，前端不再与旧 text 叠加。
+          if (incomingMeta.replaySnapshot === true) {
+            const incomingText = (incoming?.content || [])
+              .map((item: any) => item?.text || "")
+              .join("");
+            if (incomingText.length > 256 * 1024) {
+              merged.content = [{ type: "text", text: incomingText.slice(-256 * 1024) }];
+            } else {
+              merged.content = incomingText ? [{ type: "text", text: incomingText }] : [];
+            }
+            merged.meta = { ...(existing?.meta || {}), ...incomingMeta };
+          } else {
+            const existingText = (existing?.content || [])
+              .map((item: any) => item?.text || "")
+              .join("");
+            const incomingText = (incoming?.content || [])
+              .map((item: any) => item?.text || "")
+              .join("");
+            const totalText = existingText + incomingText;
           if (totalText.length > 256 * 1024) {
             merged.content = [{ type: "text", text: totalText.slice(-256 * 1024) }];
           } else {
             merged.content = totalText ? [{ type: "text", text: totalText }] : [];
+            }
+            merged.meta = { ...(existing?.meta || {}), ...incomingMeta };
           }
-          merged.meta = { ...(existing?.meta || {}), ...incomingMeta };
         }
         if (!incoming.kind && existing?.kind) merged.kind = existing.kind;
         if (!incoming.title && existing?.title) merged.title = existing.title;
