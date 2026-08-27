@@ -799,6 +799,26 @@ func claudeEffortLevels() []string {
 	return []string{"low", "medium", "high", "xhigh", "max"}
 }
 
+func claudeModelSupportsEffortAt(models []claudeagent.ModelInfo, index int) bool {
+	if index < 0 || index >= len(models) {
+		return false
+	}
+	model := models[index]
+	if claudeModelSupportsEffort(model.Value, model.DisplayName, model.Description) {
+		return true
+	}
+	if !strings.EqualFold(strings.TrimSpace(model.Value), "default") {
+		return false
+	}
+	for _, candidate := range models {
+		if strings.EqualFold(strings.TrimSpace(candidate.Value), "default") {
+			continue
+		}
+		return claudeModelSupportsEffort(candidate.Value, candidate.DisplayName, candidate.Description)
+	}
+	return false
+}
+
 func claudeModelSupportsEffort(id, name, description string) bool {
 	joined := strings.ToLower(strings.TrimSpace(id) + " " + strings.TrimSpace(name) + " " + strings.TrimSpace(description))
 	return strings.Contains(joined, "sonnet") || strings.Contains(joined, "opus") || strings.Contains(joined, "fable") || strings.Contains(joined, "haiku")

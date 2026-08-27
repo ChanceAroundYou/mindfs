@@ -83,7 +83,7 @@ func TestAppendReplyEventResetsSummaryAfterAuxiliaryEvent(t *testing.T) {
 
 func TestAppendReplyEventBuildsCompositeCursor(t *testing.T) {
 	hub := NewStreamHub(nil)
-	hub.SetPendingUserAt("root", "sess-1", "title", "codex", "", "", "", "", false, "prompt", time.Now(), 8)
+	hub.SetPendingUserAt("root", "sess-1", "title", "codex", "", "", "", "", "", false, "prompt", time.Now(), 8)
 
 	first := hub.AppendReplyEvent("sess-1", StreamEvent{
 		Type: string(agenttypes.EventTypeMessageChunk),
@@ -101,7 +101,7 @@ func TestAppendReplyEventBuildsCompositeCursor(t *testing.T) {
 
 func TestReplayPendingStartsAfterCompositeCursor(t *testing.T) {
 	hub := NewStreamHub(nil)
-	hub.SetPendingUserAt("root", "sess-1", "title", "codex", "", "", "", "", false, "prompt", time.Now(), 8)
+	hub.SetPendingUserAt("root", "sess-1", "title", "codex", "", "", "", "", "", false, "prompt", time.Now(), 8)
 	hub.AppendReplyEvent("sess-1", StreamEvent{Type: string(agenttypes.EventTypeMessageChunk), Data: agenttypes.MessageChunk{Content: "first"}})
 	hub.AppendReplyEvent("sess-1", StreamEvent{Type: string(agenttypes.EventTypeMessageChunk), Data: agenttypes.MessageChunk{Content: "second"}})
 	hub.AppendReplyEvent("sess-1", StreamEvent{Type: string(agenttypes.EventTypeMessageChunk), Data: agenttypes.MessageChunk{Content: "third"}})
@@ -118,7 +118,7 @@ func TestReplayPendingStartsAfterCompositeCursor(t *testing.T) {
 
 func TestCoalescedToolStreamAdvancesCursor(t *testing.T) {
 	hub := NewStreamHub(nil)
-	hub.SetPendingUserAt("root", "sess-1", "title", "", "", "", "", "", false, "command", time.Now(), 4)
+	hub.SetPendingUserAt("root", "sess-1", "title", "", "", "", "", "", "", false, "command", time.Now(), 4)
 	toolUpdate := func(text string) StreamEvent {
 		return StreamEvent{
 			Type: string(agenttypes.EventTypeToolUpdate),
