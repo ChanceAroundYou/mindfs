@@ -48,9 +48,12 @@ import {
 } from "../services/webPush";
 import {
   fetchIdleSessionResourceReleasePreference,
+  fetchNewProjectMetaLocationPreference,
   fetchSessionNamingPreference,
   updateIdleSessionResourceReleasePreference,
+  updateNewProjectMetaLocationPreference,
   updateSessionNamingPreference,
+  type NewProjectMetaLocation,
 } from "../services/preferences";
 
 type BeforeInstallPromptEvent = Event & {
@@ -1413,6 +1416,8 @@ function FileTreeInner({
   const [idleReleaseHours, setIdleReleaseHours] = React.useState("72");
   const [idleReleaseBusy, setIdleReleaseBusy] = React.useState(false);
   const [idleReleaseError, setIdleReleaseError] = React.useState("");
+  const [newProjectMetaLocation, setNewProjectMetaLocation] = React.useState<NewProjectMetaLocation>("project");
+  const [newProjectMetaLocationBusy, setNewProjectMetaLocationBusy] = React.useState(false);
   const [appearanceMode, setAppearanceModeState] = React.useState<AppearanceMode>(() => getAppearanceMode());
   const [isUpdateNotesOpen, setIsUpdateNotesOpen] = React.useState(false);
   const [deferredInstallPrompt, setDeferredInstallPrompt] = React.useState<BeforeInstallPromptEvent | null>(null);
@@ -1796,6 +1801,11 @@ function FileTreeInner({
     fetchIdleSessionResourceReleasePreference()
       .then((preference) => {
         if (!cancelled) setIdleReleaseHours(String(preference.hours));
+      })
+      .catch(() => {});
+    fetchNewProjectMetaLocationPreference()
+      .then((location) => {
+        if (!cancelled) setNewProjectMetaLocation(location);
       })
       .catch(() => {});
     return () => {
@@ -2690,7 +2700,8 @@ function FileTreeInner({
                 position: "absolute",
                 top: "calc(100% + 6px)",
                 right: 0,
-                minWidth: "164px",
+                width: "var(--mindfs-file-menu-width, 182px)",
+                maxWidth: "calc(100vw - 16px)",
                 padding: "6px",
                 borderRadius: "10px",
                 border: "1px solid var(--border-color)",
@@ -3027,6 +3038,41 @@ function FileTreeInner({
                   <span style={{ fontSize: "11px", opacity: enterKeySends ? 1 : 0 }}>✓</span>
                 </button>
               ) : null}
+              <button
+                type="button"
+                disabled={newProjectMetaLocationBusy}
+                onClick={() => {
+                  if (newProjectMetaLocationBusy) return;
+                  const previous = newProjectMetaLocation;
+                  const next = previous === "home" ? "project" : "home";
+                  setNewProjectMetaLocation(next);
+                  setNewProjectMetaLocationBusy(true);
+                  updateNewProjectMetaLocationPreference(next)
+                    .then(setNewProjectMetaLocation)
+                    .catch(() => setNewProjectMetaLocation(previous))
+                    .finally(() => setNewProjectMetaLocationBusy(false));
+                }}
+                style={{
+                  width: "100%",
+                  border: "none",
+                  background: "transparent",
+                  color: "var(--text-primary)",
+                  borderRadius: "8px",
+                  padding: "8px 10px",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px",
+                  textAlign: "left",
+                  cursor: newProjectMetaLocationBusy ? "default" : "pointer",
+                  fontSize: "12px",
+                  opacity: newProjectMetaLocationBusy ? 0.65 : 1,
+                }}
+              >
+                <span style={{ flex: 1 }}>{t("fileTree.newProjectMetaLocation")}</span>
+                <span style={{ color: "var(--text-secondary)", fontSize: "11px" }}>
+                  {t(newProjectMetaLocation === "home" ? "fileTree.metaLocationHome" : "fileTree.metaLocationProject")}
+                </span>
+              </button>
             </div>
           ) : null}
           {projectAddOverlay ? (
