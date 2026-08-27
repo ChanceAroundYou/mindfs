@@ -345,8 +345,6 @@ export const zhCN = {
   "session.restore": "恢复",
   "session.history": "对话历史",
   "session.user": "用户",
-  "session.more": "更多",
-  "session.less": "收起",
   "session.loginFailed": "登录失败",
   "session.commandFailed": "命令执行失败",
   "session.resumeFailed": "会话处理失败，请稍后重试",

@@ -5287,11 +5287,17 @@ export function App({ onGoHome }: AppProps) {
   );
 
   const handleSelectSession = useCallback(
-    async (session: any) => {
+    async (
+      session: any,
+      options?: { preserveTaskSelection?: boolean },
+    ) => {
       const key = session?.key || session?.session_key;
       const targetRoot =
         (session?.root_id as string | undefined) || currentRootIdRef.current;
       if (!targetRoot || !key) return;
+      if (!options?.preserveTaskSelection) {
+        setSelectedKanbanTaskId("");
+      }
       // 多节点同名项目：会话归属节点优先于当前选中节点（跨节点切换会清理旧会话态）
       const sessionNode = String((session as any)?._nodeId || "").trim();
       const nextNode =
@@ -14364,7 +14370,11 @@ export function App({ onGoHome }: AppProps) {
               setDrawerOpenForRoot(currentRootIdRef.current, false);
             }}
             onExpand={() => {
-              handleSelectSession(currentSession);
+              handleSelectSession(currentSession, {
+                preserveTaskSelection:
+                  !!currentSession?.task_id &&
+                  currentSession.task_id === selectedKanbanTaskId,
+              });
               setDrawerOpenForRoot(currentRootIdRef.current, false);
             }}
           >

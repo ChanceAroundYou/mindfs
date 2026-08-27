@@ -347,8 +347,6 @@ export const enUS = {
   "session.restore": "Restore",
   "session.history": "Conversation history",
   "session.user": "User",
-  "session.more": "More",
-  "session.less": "Less",
   "session.loginFailed": "Login failed",
   "session.commandFailed": "Command failed",
   "session.resumeFailed": "Session processing failed. Try again later.",
