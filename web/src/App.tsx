@@ -107,7 +107,11 @@ import {
 // 直接导入标准组件
 import { AppShell } from "./layout/AppShell";
 import { ModeIcon } from "./components/ModeIcon";
-import { FileTree, type AgentConfigSwitchRequest } from "./components/FileTree";
+import {
+  FileTree,
+  type AgentConfigSwitchRequest,
+  type ProjectTreeTab,
+} from "./components/FileTree";
 
 import { applyNodesFromServer, getActiveNode, getNodes, LOCAL_NODE_ID, migrateLegacySingleBase, syncNodesFromServer } from "./services/nodeRegistry";
 import { FileViewer } from "./components/FileViewer";
@@ -2438,10 +2442,10 @@ export function App({ onGoHome }: AppProps) {
   );
   const showHiddenFiles = true;
   const [projectTreeTabRequest, setProjectTreeTabRequest] = useState<{
-    tab: "files" | "git" | "worktrees" | "related";
+    tab: ProjectTreeTab;
     nonce: number;
   } | null>(null);
-  const [projectTreeTab, setProjectTreeTab] = useState<"files" | "git" | "worktrees" | "related">("files");
+  const [projectTreeTab, setProjectTreeTab] = useState<ProjectTreeTab>("files");
   const [worktreeItemsByRoot, setWorktreeItemsByRoot] = useState<Record<string, GitWorktreeItem[]>>({});
   const [worktreeLoadingByRoot, setWorktreeLoadingByRoot] = useState<Record<string, boolean>>({});
   const [worktreeErrorByRoot, setWorktreeErrorByRoot] = useState<Record<string, string>>({});
@@ -4544,7 +4548,10 @@ export function App({ onGoHome }: AppProps) {
     }
   }, []);
 
-  const refreshGitHistory = useCallback(async (rootID: string, options?: { force?: boolean }) => {
+  const refreshGitHistory = useCallback(async (
+    rootID: string,
+    options?: { force?: boolean; waitForIncremental?: boolean },
+  ) => {
     if (!rootID) {
       setGitHistory(null);
       setGitHistoryLoading(false);
@@ -4559,27 +4566,33 @@ export function App({ onGoHome }: AppProps) {
         }
         const newest = cachedHead.items[0]?.hash || "";
         if (newest) {
-          void fetchGitHistory(rootID, { afterCommit: newest, nodeId: getNodeIdForRoot(rootID) })
-            .then((next) => {
-              if (next.commit_missing) {
+          const refreshAfterNewest = async () => {
+            try {
+              const next = await fetchGitHistory(rootID, { afterCommit: newest, nodeId: getNodeIdForRoot(rootID) });
+              if (next.commit_missing || (next.items || []).length > 0) {
                 clearGitHistoryCache(rootID);
-                return fetchGitHistory(rootID, { force: true, nodeId: getNodeIdForRoot(rootID) });
+                const fresh = await fetchGitHistory(rootID, { force: true, nodeId: getNodeIdForRoot(rootID) });
+                setGitHistoryByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: fresh }));
+                if (currentRootIdRef.current === rootID) {
+                  setGitHistory(fresh);
+                }
+                return fresh;
               }
-              if ((next.items || []).length > 0) {
-                clearGitHistoryCache(rootID);
-                return fetchGitHistory(rootID, { force: true, nodeId: getNodeIdForRoot(rootID) });
-              }
-              return getCachedGitHistoryHead(rootID) || next;
-            })
-            .then((fresh) => {
+              const fresh = getCachedGitHistoryHead(rootID) || next;
               setGitHistoryByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: fresh }));
               if (currentRootIdRef.current === rootID) {
                 setGitHistory(fresh);
               }
-            })
-            .catch((err) => {
+              return fresh;
+            } catch (err) {
               console.error("[git.history.after] failed", { rootID, afterCommit: newest, err });
-            });
+              return cachedHead;
+            }
+          };
+          if (options?.waitForIncremental) {
+            return refreshAfterNewest();
+          }
+          void refreshAfterNewest();
         }
         return cachedHead;
       }
@@ -7882,9 +7895,9 @@ export function App({ onGoHome }: AppProps) {
     }
   }, [t]);
 
-  const loadProjectTreeWorktrees = useCallback(async (rootID: string) => {
+  const loadProjectTreeWorktrees = useCallback(async (rootID: string): Promise<GitWorktreeItem[]> => {
     if (!rootID) {
-      return;
+      return [];
     }
     setWorktreeLoadingByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: true }));
     setWorktreeErrorByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: "" }));
@@ -7895,16 +7908,19 @@ export function App({ onGoHome }: AppProps) {
           knownTaskWorktreePathsRef.current.add(item.path);
         }
       });
+      const items = (payload.items || []).filter((item) => !!item.branch);
       setWorktreeItemsByRoot((prev) => ({
         ...prev,
-        [scopedRootKey(rootID)]: (payload.items || []).filter((item) => !!item.branch),
+        [scopedRootKey(rootID)]: items,
       }));
+      return items;
     } catch (error) {
       setWorktreeItemsByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: [] }));
       setWorktreeErrorByRoot((prev) => ({
         ...prev,
         [scopedRootKey(rootID)]: error instanceof Error ? error.message : t("worktree.loadFailed"),
       }));
+      return [];
     } finally {
       setWorktreeLoadingByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: false }));
     }
@@ -11855,24 +11871,103 @@ export function App({ onGoHome }: AppProps) {
     gitHistoryLoading || (gitHistoryAvailable && (gitHistory?.items.length || 0) > 0);
   const activePendingPluginTrust =
     pendingPluginTrust && pendingPluginTrust.rootId === currentRootId ? pendingPluginTrust : null;
-	  const relatedSessionSnapshot =
-	    selectedKanbanTaskSessionSnapshot ||
-	    selectedSessionSnapshot ||
-	    drawerSessionSnapshot ||
-	    lastMainSessionSnapshotRef.current;
-	  const relatedSessionRootId =
-	    (relatedSessionSnapshot?.root_id as string | undefined) ||
-	    selectedKanbanTask?.root_id ||
-	    (selectedSession?.root_id as string | undefined) ||
-	    currentRootId;
-	  const relatedSessionKey = relatedSessionSnapshot?.key || relatedSessionSnapshot?.session_key;
-	  const relatedSelectedPath = gitDiff?.path || file?.path || "";
-	  const relatedWorktree = selectedKanbanTask?.worktree_path
-	    ? {
-	        root_id: selectedKanbanTask.root_id,
-	        path: selectedKanbanTask.worktree_path,
-	      }
-	    : relatedSessionSnapshot?.related_worktree || null;
+  const relatedSessionSnapshot =
+    selectedKanbanTaskSessionSnapshot ||
+    selectedSessionSnapshot ||
+    drawerSessionSnapshot ||
+    lastMainSessionSnapshotRef.current;
+  const relatedSessionRootId =
+    (relatedSessionSnapshot?.root_id as string | undefined) ||
+    selectedKanbanTask?.root_id ||
+    (selectedSession?.root_id as string | undefined) ||
+    currentRootId;
+  const relatedSessionKey = relatedSessionSnapshot?.key || relatedSessionSnapshot?.session_key;
+  const relatedSelectedPath = gitDiff?.path || file?.path || "";
+  const relatedWorktree = selectedKanbanTask?.worktree_path
+    ? {
+        root_id: selectedKanbanTask.root_id,
+        path: selectedKanbanTask.worktree_path,
+      }
+    : relatedSessionSnapshot?.related_worktree || null;
+
+  const refreshProjectTreeRelatedFiles = useCallback(async () => {
+    try {
+      if (selectedKanbanTask) {
+        const root = selectedKanbanTask.root_id || relatedSessionRootId || currentRootId || "";
+        const taskId = String(selectedKanbanTask.id || "");
+        const sessionKeys = Array.from(new Set(
+          [
+            ...(taskSessionKeysByIdRef.current[taskId] || []),
+            selectedKanbanTask.main_session_key,
+          ]
+            .map((key) => String(key || "").trim())
+            .filter(Boolean),
+        ));
+        if (root && taskId && sessionKeys.length > 0) {
+          await refreshTaskRelatedFiles(root, taskId, sessionKeys);
+        }
+        return;
+      }
+      const root = relatedSessionRootId || currentRootId || "";
+      const sessionKey = String(relatedSessionKey || "").trim();
+      if (!root || !sessionKey) {
+        return;
+      }
+      const relatedFiles = await sessionService.getSessionRelatedFiles(root, sessionKey);
+      await setCachedSessionRelatedFiles(root, sessionKey, relatedFiles);
+      updateSessionRelatedFilesForKey(root, sessionKey, relatedFiles);
+    } catch (error) {
+      console.error("[session.related_files] manual refresh failed", { error });
+    }
+  }, [
+    currentRootId,
+    refreshTaskRelatedFiles,
+    relatedSessionKey,
+    relatedSessionRootId,
+    selectedKanbanTask,
+    updateSessionRelatedFilesForKey,
+  ]);
+
+  const handleProjectTreeRefresh = useCallback(async (tab: ProjectTreeTab) => {
+    const root = currentRootIdRef.current;
+    if (!root) {
+      return;
+    }
+    switch (tab) {
+      case "files": {
+        const dir = selectedDirRef.current === root ? "." : (selectedDirRef.current || ".");
+        await refreshTreeDir(root, dir, true);
+        return;
+      }
+      case "git":
+        await Promise.all([
+          refreshGitStatus(root),
+          refreshGitHistory(root, { waitForIncremental: true }),
+        ]);
+        return;
+      case "worktrees": {
+        const items = await loadProjectTreeWorktrees(root);
+        const expandedPath = expandedWorktreeByRoot[root] || "";
+        if (expandedPath && items.some((item) => item.path === expandedPath)) {
+          await loadProjectTreeWorktreeStatus(expandedPath);
+        }
+        return;
+      }
+      case "related":
+        await Promise.all([
+          refreshProjectTreeRelatedFiles(),
+          refreshGitStatus(root),
+        ]);
+    }
+  }, [
+    expandedWorktreeByRoot,
+    loadProjectTreeWorktreeStatus,
+    loadProjectTreeWorktrees,
+    refreshGitHistory,
+    refreshGitStatus,
+    refreshProjectTreeRelatedFiles,
+    refreshTreeDir,
+  ]);
 
   useEffect(() => {
     const rootID = String(relatedWorktree?.root_id || "");
@@ -12542,7 +12637,7 @@ export function App({ onGoHome }: AppProps) {
 	          display: "flex",
           alignItems: "center",
 	          justifyContent: "space-between",
-	          gap: "10px",
+	          gap: 0,
 	          padding: "0 0 8px",
 	          flexShrink: 0,
 	        }}
@@ -12794,6 +12889,7 @@ export function App({ onGoHome }: AppProps) {
         </div>
         <button
           type="button"
+          data-onboarding="task-refresh"
           title={t("task.refresh")}
           aria-label={t("task.refresh")}
           onClick={() => void kanbanRefreshSpin.handleClick()}
@@ -12801,23 +12897,36 @@ export function App({ onGoHome }: AppProps) {
           onMouseUp={() => kanbanRefreshSpin.setPressed(false)}
           onMouseLeave={() => kanbanRefreshSpin.setPressed(false)}
           style={{
-            width: "28px",
+            width: "22px",
             height: "28px",
             borderRadius: "8px",
             border: "none",
-            background: kanbanRefreshSpin.pressed || kanbanRefreshSpin.refreshing ? "rgba(0, 0, 0, 0.06)" : "transparent",
+            background: "transparent",
             color: "var(--text-color)",
             display: "inline-flex",
             alignItems: "center",
-            justifyContent: "center",
+            justifyContent: "flex-end",
             cursor: "pointer",
             flexShrink: 0,
             padding: 0,
           }}
         >
-          <SyncIcon
-            style={kanbanRefreshSpin.refreshing ? { animation: "mindfs-update-spin 0.8s linear infinite" } : undefined}
-          />
+          <span
+            data-task-refresh-visual
+            style={{
+              width: "18px",
+              height: "28px",
+              borderRadius: "8px",
+              background: kanbanRefreshSpin.pressed || kanbanRefreshSpin.refreshing ? "rgba(0, 0, 0, 0.06)" : "transparent",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <SyncIcon
+              style={kanbanRefreshSpin.refreshing ? { animation: "mindfs-update-spin 0.8s linear infinite" } : undefined}
+            />
+          </span>
         </button>
         <div ref={taskCreateTemplateMenuRef} style={{ position: "relative", flexShrink: 0 }}>
           <button
@@ -14049,12 +14158,8 @@ export function App({ onGoHome }: AppProps) {
             sortMode={treeSortMode}
             showHiddenFiles={showHiddenFiles}
             onSortModeChange={setTreeSortMode}
-            onRefresh={() => {
-              if (currentRootId) {
-                const dir = selectedDirRef.current === currentRootId ? "." : (selectedDirRef.current || ".");
-                void refreshTreeDir(currentRootId, dir, true);
-              }
-            }}
+            onShowHiddenFilesChange={setShowHiddenFiles}
+            onRefresh={handleProjectTreeRefresh}
             selectedDirKey={selectedDirKey}
             selectedPath={file?.path}
             rootId={currentRootId}
