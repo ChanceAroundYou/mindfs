@@ -631,11 +631,6 @@ export async function fetchFile(params: FetchFileParams): Promise<FilePayload | 
   }
 }
 
-// 404 失败缓存：避免对同一缺失路径（如已删除的图片）在组件重挂载时反复请求。
-// 短 TTL，成功后清除，不影响文件后续被创建的情况。
-const rawFileFailures = new Map<string, number>();
-const RAW_FILE_FAILURE_TTL_MS = 60_000;
-
 // 成功 blob 缓存：多图 Markdown 中同一路径的图片在组件重挂载/重复渲染时复用，避免重复请求。
 // 缓存的是 Promise（并发去重：同 key 同时发起只打一次网络），LRU 上限逐出；页面刷新即清空。
 // ponytail: 无 TTL，文件内容更新后同路径在缓存逐出前仍返回旧图；如需要可加时间戳失效。
