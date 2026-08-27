@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"mindfs/internal/deploy"
 	"mindfs/server/internal/agent"
 	"mindfs/server/internal/api"
 	"mindfs/server/internal/e2ee"
@@ -160,9 +161,9 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 	inner := http.NewServeMux()
 	inner.Handle("/", httpHandler.Routes())
 	inner.Handle("/ws", wsHandler)
-	mux.Handle("/", api.StripDeployPrefix(api.NormalizedDeployPrefix(), inner))
+	mux.Handle("/", api.StripDeployPrefix(deploy.NormalizedPrefix(), inner))
 
-	handler := api.LoggingMiddleware(api.CORSMiddleware(mux))
+	handler := api.LoggingMiddleware(mux)
 
 	server := &http.Server{
 		Addr:              addr,

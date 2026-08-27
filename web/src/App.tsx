@@ -4795,11 +4795,26 @@ export function App({ onGoHome }: AppProps) {
     const seq = ++multiProjectLoadSeqRef.current;
     setMultiProjectSessionsLoading(true);
     try {
-      const nodeIds = Array.from(new Set(Object.values(managedRootByKeyRef.current as Record<string, any>).map((v) => String((v as any)?._nodeId || "")).filter(Boolean)));
+      const nodeIdsFromNodes = getNodes()
+        .map((n) => String((n as any)?.id || "").trim())
+        .filter(Boolean);
+      const nodeIdsFromRoots = Array.from(
+        new Set(
+          Object.values(managedRootByKeyRef.current as Record<string, any>)
+            .map((v) => String((v as any)?._nodeId || "").trim())
+            .filter(Boolean),
+        ),
+      );
+      const nodeIds = Array.from(new Set([...nodeIdsFromNodes, ...nodeIdsFromRoots]));
       const allGroups: Array<MultiRootSessionGroup & { _nodeId?: string }> = [];
       if (nodeIds.length === 0) {
+        // managedRootByKeyRef 未就绪（初始化竞态）：以当前激活节点回退打标，
+        // 避免首批分组 _nodeId 为空串、与 selectRootNode 后的 currentRootNodeId 不等而全部收起
+        const fallbackNodeId =
+          getNodeIdForRoot(String(currentRootIdRef.current || "")) ||
+          String(getActiveNode()?.id || "").trim();
         const groups = await sessionService.fetchMultiRootSessions(MULTI_PROJECT_SESSION_LIMIT);
-        for (const g of groups) allGroups.push({ ...g, _nodeId: "" });
+        for (const g of groups) allGroups.push({ ...g, _nodeId: fallbackNodeId });
       } else {
         const results = await Promise.all(nodeIds.map(async (nid) => {
           try { const gs = await sessionService.fetchMultiRootSessions(MULTI_PROJECT_SESSION_LIMIT, nid); return gs.map((g) => ({ ...g, _nodeId: nid })); } catch { return [] as Array<MultiRootSessionGroup & { _nodeId?: string }>; }
@@ -7478,16 +7493,25 @@ export function App({ onGoHome }: AppProps) {
     ],
   );
 
-  const loadManagedRootPayloads = useCallback(async () => {
+  const loadManagedRootPayloads = useCallback(async (opts?: { force?: boolean }) => {
     if (bootstrapService.snapshot().phase !== "ready") {
       return null;
     }
-    if (managedRootsRequestRef.current) {
+    if (!opts?.force && managedRootsRequestRef.current) {
       return managedRootsRequestRef.current;
+    }
+    if (opts?.force) {
+      managedRootsRequestRef.current = null;
     }
     const request = (async () => {
       try {
         try { migrateLegacySingleBase(); } catch {}
+        // 冷启动时 getNodes() 首屏只有 local，需等待服务端节点同步后再取全量
+        try {
+          if (!opts?.force) {
+            await syncNodesFromServer().catch(() => {});
+          }
+        } catch {}
         const nodes = getNodes();
         const targets = nodes;
         if (!targets.length) {
@@ -7548,7 +7572,9 @@ export function App({ onGoHome }: AppProps) {
       currentRootNodeIdRef.current || undefined,
     );
     setRootNodeMap(managedRootByIdRef.current as Record<string, any>);
-    if (clearedRootScopedState && multiProjectSessionsEnabled) {
+    // 任何索引变化（新增节点/项目/路径）都应重拉多节点会话，确保 PC 等远端分组首屏即出现
+    // 之前仅在 cleared/keySetChanged 时触发，导致清缓存冷启动 PC 迟迟不出现、需点会话才补齐
+    if (multiProjectSessionsEnabled) {
       void refreshMultiProjectReplyingSessions();
       void loadMultiProjectSessionGroups();
     }
@@ -9773,7 +9799,12 @@ export function App({ onGoHome }: AppProps) {
           break;
         case "nodes.changed":
           void syncNodesFromServer().then((ns) => { try { applyNodesFromServer(ns as any); } catch {} }).catch(() => {});
-          void loadManagedRootPayloads().catch(() => {});
+          void loadManagedRootPayloads().then(() => {
+            if (multiProjectSessionsEnabled) {
+              void refreshMultiProjectReplyingSessions();
+              void loadMultiProjectSessionGroups();
+            }
+          }).catch(() => {});
           break;
         case "root.changed":
           if (
@@ -10665,6 +10696,10 @@ export function App({ onGoHome }: AppProps) {
           preferredRoot,
           urlNode || (preferredDir as any)?._nodeId || undefined,
         );
+        // 初始化竞态兜底：refs 就绪后补一次多项目会话加载，覆盖首屏早期空/回退 _nodeId 批次
+        if (multiProjectSessionsEnabled) {
+          void loadMultiProjectSessionGroups();
+        }
         setPluginQuery(urlState.pluginQuery);
         if (urlState.session) {
           if (cancelled) return;
@@ -10722,6 +10757,7 @@ export function App({ onGoHome }: AppProps) {
   }, [
     ensurePluginsLoaded,
     loadManagedRootPayloads,
+    loadMultiProjectSessionGroups,
     loadSessionsForRoot,
     refreshTreeDir,
     tryShowBoundSessionForRoot,

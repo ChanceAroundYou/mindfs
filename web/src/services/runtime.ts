@@ -75,30 +75,26 @@ export function isHarmonyRuntime(): boolean {
   return getNativePlatform() === "harmony";
 }
 
-function sanitizeBaseURL(value: string | null | undefined): string {
-  return normalizeExplicitNodeBase(value || "");
-}
-
 function readMeta(name: string): string {
   if (typeof document === "undefined") {
     return "";
   }
   const node = document.querySelector<HTMLMetaElement>(`meta[name="${name}"]`);
-  return sanitizeBaseURL(node?.content);
+  return normalizeExplicitNodeBase(node?.content || "");
 }
 
 function readStorage(key: string): string {
   if (key === "mindfs_api_base_url") {
-    return sanitizeBaseURL(getStoredApiBaseURL());
+    return normalizeExplicitNodeBase(getStoredApiBaseURL() || "");
   }
   if (key === "mindfs_ws_base_url") {
-    return sanitizeBaseURL(getStoredWsBaseURL());
+    return normalizeExplicitNodeBase(getStoredWsBaseURL() || "");
   }
   if (!isBrowserRuntime()) {
     return "";
   }
   try {
-    return sanitizeBaseURL(window.localStorage.getItem(key));
+    return normalizeExplicitNodeBase(window.localStorage.getItem(key) || "");
   } catch {
     return "";
   }
@@ -114,10 +110,10 @@ function deriveOriginBaseURL(): string {
 function resolveNodeBaseURL(nodeId?: string): string {
   if (nodeId) {
     const node = getNodeById(nodeId);
-    if (node?.url) return sanitizeBaseURL(node.url);
+    if (node?.url) return normalizeExplicitNodeBase(node.url);
   }
   const active = getActiveNode();
-  if (active?.url) return sanitizeBaseURL(active.url);
+  if (active?.url) return normalizeExplicitNodeBase(active.url);
   return "";
 }
 
@@ -140,10 +136,10 @@ export function getWsBaseURL(nodeId?: string): string {
     let u = "";
     if (nodeId) {
       const node = getNodeById(nodeId);
-      if (node?.url) u = sanitizeBaseURL(node.url);
+      if (node?.url) u = normalizeExplicitNodeBase(node.url);
     } else {
       const active = getActiveNode();
-      if (active?.url) u = sanitizeBaseURL(active.url);
+      if (active?.url) u = normalizeExplicitNodeBase(active.url);
     }
     if (u) {
       if (u.startsWith("https://")) return `wss://${u.slice("https://".length)}`;

@@ -30,19 +30,27 @@ export function BottomSheet({
   const sheetRef = useRef<HTMLDivElement | null>(null);
   const [sheetHeightPx, setSheetHeightPx] = useState<number | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const pendingHeightRef = useRef<number | null>(null);
+  const heightFrameRef = useRef<number | null>(null);
 
   useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth < 768);
     window.addEventListener("resize", handleResize);
     if (isOpen) setIsAnimating(true);
-    return () => window.removeEventListener("resize", handleResize);
+    return () => {
+      window.removeEventListener("resize", handleResize);
+      if (heightFrameRef.current != null) {
+        window.cancelAnimationFrame(heightFrameRef.current);
+        heightFrameRef.current = null;
+      }
+    };
   }, [isOpen]);
 
-  // Default half is always 50% of the middle panel (desktop and mobile unified).
+  // Default height is 70% of the viewport (desktop and mobile unified).
   // When a custom height exists (after dragging), keep it until close/expand.
   useEffect(() => {
     if (!isOpen) {
-      // Reset to default on close so next open starts at 50% again
+      // Reset to default on close so next open starts at 70% again
       setSheetHeightPx(null);
       setIsDragging(false);
     }
@@ -63,7 +71,7 @@ export function BottomSheet({
     startYRef.current = event.clientY;
     lastYRef.current = event.clientY;
     const rectH = sheetRef.current?.getBoundingClientRect().height;
-    // If no custom height yet, derive start height from rendered size (which is 50% default)
+    // If no custom height yet, derive start height from rendered size (which is 70% default)
     startHeightRef.current = sheetHeightPx ?? rectH ?? window.innerHeight * 0.5;
     setIsDragging(false);
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -77,8 +85,16 @@ export function BottomSheet({
     }
     if (Math.abs(deltaY) >= BOTTOM_SHEET_DRAG_START_PX) {
       lastYRef.current = event.clientY;
-      const nextH = clampHeight(startHeightRef.current - deltaY);
-      setSheetHeightPx(nextH);
+      pendingHeightRef.current = clampHeight(startHeightRef.current - deltaY);
+      if (heightFrameRef.current == null) {
+        heightFrameRef.current = window.requestAnimationFrame(() => {
+          heightFrameRef.current = null;
+          if (pendingHeightRef.current != null) {
+            setSheetHeightPx(pendingHeightRef.current);
+            pendingHeightRef.current = null;
+          }
+        });
+      }
     }
   };
 
@@ -87,6 +103,11 @@ export function BottomSheet({
     cancelled: boolean,
   ) => {
     if (pointerIdRef.current !== event.pointerId) return;
+    if (heightFrameRef.current != null) {
+      window.cancelAnimationFrame(heightFrameRef.current);
+      heightFrameRef.current = null;
+    }
+    pendingHeightRef.current = null;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
@@ -119,7 +140,7 @@ export function BottomSheet({
   const handlePointerUp = (event: React.PointerEvent<HTMLDivElement>) => finishPointer(event, false);
   const handlePointerCancel = (event: React.PointerEvent<HTMLDivElement>) => finishPointer(event, true);
 
-  const defaultHeight = "50%";
+  const defaultHeight = "70%";
   const computedHeight = sheetHeightPx != null ? `${sheetHeightPx}px` : defaultHeight;
 
   const pcStyles: React.CSSProperties = {
@@ -167,14 +188,18 @@ export function BottomSheet({
       <div
         ref={sheetRef}
         style={{
-          background: "var(--panel-bg, #ffffff)",
+          background: "var(--content-bg, var(--panel-bg, #ffffff))",
           color: "var(--text-primary)",
           boxShadow: "0 -4px 24px rgba(0,0,0,0.08)",
           borderTop: "1px solid rgba(148, 163, 184, 0.22)",
           zIndex: 1001,
           display: "flex",
           flexDirection: "column",
-          transition: isDragging ? "none" : "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+          transition: isDragging
+            ? "none"
+            : "height 0.24s cubic-bezier(0.4, 0, 0.2, 1), transform 0.24s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.24s cubic-bezier(0.4, 0, 0.2, 1)",
+          willChange: isDragging ? "height" : undefined,
+          contain: "layout paint",
           overflow: "hidden",
           border: "none",
           ...(isMobile ? mobileStyles : pcStyles),
@@ -183,11 +208,11 @@ export function BottomSheet({
           if (!isOpen) setIsAnimating(false);
         }}
       >
-        {/* Handle Area (Compressed) */}
+        {/* Handle Area */}
         <div
           style={{
             width: "100%",
-            height: "8px",
+            height: "16px",
             display: "flex",
             justifyContent: "center",
             alignItems: "center",
@@ -199,8 +224,12 @@ export function BottomSheet({
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
           onPointerCancel={handlePointerCancel}
+          title="双击全屏"
+          onDoubleClick={() => {
+            if (!isDragging) onExpand?.();
+          }}
         >
-          <div style={{ width: "64px", height: "3px", background: "#2563eb", borderRadius: "999px" }} />
+          <div style={{ width: "96px", height: "5px", background: "#2563eb", borderRadius: "999px" }} />
         </div>
 
         {/* Content */}
@@ -210,7 +239,7 @@ export function BottomSheet({
 
         {/* Optional Footer */}
         {footer && (
-          <div style={{ borderTop: "1px solid var(--border-color)", background: "var(--panel-bg, #ffffff)" }}>
+          <div style={{ borderTop: "1px solid var(--border-color)", background: "var(--content-bg, var(--panel-bg, #ffffff))" }}>
             {footer}
           </div>
         )}

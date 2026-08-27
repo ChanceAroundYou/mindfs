@@ -45,7 +45,7 @@ export const enUS = {
   "fileTree.menu.open": "Open file tree menu",
   "fileTree.addProject": "Add project",
   "fileTree.addAgentConfig": "Add Agent config",
-  "fileTree.switchAgentConfig": "Agent config switch & restart",
+  "fileTree.switchAgentConfig": "Switch and restart Agent config",
   "fileTree.agentInstallUpdate": "Install and update Agent",
   "fileTree.sessionNamingAgent": "Session rename settings",
   "fileTree.notificationStatusFailed": "Failed to read notification status",

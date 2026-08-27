@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useRef, useState, useEffect } from "react";
 import { useI18n } from "../i18n";
 
 type AppShellProps = {
@@ -18,6 +18,18 @@ type AppShellProps = {
 
 const MOBILE_BREAKPOINT = 768;
 const TABLET_BREAKPOINT = 1024;
+const SIDEBAR_MIN_WIDTH = 180;
+const SIDEBAR_MAX_WIDTH = 480;
+
+type RailSide = "left" | "right";
+
+type RailDragState = {
+  side: RailSide;
+  startX: number;
+  startWidth: number;
+  open: boolean;
+  dragged: boolean;
+};
 
 function useResponsive() {
   const [isMobile, setIsMobile] = useState(false);
@@ -101,8 +113,116 @@ export function AppShell({
   const { t } = useI18n();
   const { isMobile, isTablet } = useResponsive();
 
-  const sidebarWidth = isMobile ? "0px" : (isTablet ? "200px" : "260px");
-  const rightWidth = isMobile ? "0px" : (rightSidebar ? (isTablet ? "240px" : "280px") : "0px");
+  const [sidebarWidthPx, setSidebarWidthPx] = useState(() =>
+    typeof window === "undefined" ? 260 : window.innerWidth < TABLET_BREAKPOINT ? 200 : 260
+  );
+  const [rightWidthPx, setRightWidthPx] = useState(() =>
+    typeof window === "undefined" ? 280 : rightSidebar ? (window.innerWidth < TABLET_BREAKPOINT ? 240 : 280) : 0
+  );
+
+  const [isResizing, setIsResizing] = useState(false);
+  const railDragRef = useRef<RailDragState | null>(null);
+  const resizePendingRef = useRef<{ side: RailSide; width: number } | null>(null);
+  const resizeRafRef = useRef(0);
+
+  useEffect(
+    () => () => {
+      if (resizeRafRef.current) cancelAnimationFrame(resizeRafRef.current);
+    },
+    []
+  );
+
+  const getRailWidth = (side: RailSide): number => {
+    if (side === "left") return sidebarsSwapped ? rightWidthPx : sidebarWidthPx;
+    return sidebarsSwapped ? sidebarWidthPx : rightWidthPx;
+  };
+
+  const setRailWidth = (side: RailSide, width: number) => {
+    if (side === "left") {
+      if (sidebarsSwapped) setRightWidthPx(width);
+      else setSidebarWidthPx(width);
+    } else if (sidebarsSwapped) {
+      setSidebarWidthPx(width);
+    } else {
+      setRightWidthPx(width);
+    }
+  };
+
+  const toggleRail = (side: RailSide) => {
+    if (side === "left") (physicalLeftOpen ? physicalLeftClose : physicalLeftOpenHandler)?.();
+    else (physicalRightOpen ? physicalRightClose : physicalRightOpenHandler)?.();
+  };
+
+  const handleRailPointerDown = (side: RailSide) => (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      /* pointer already released */
+    }
+    railDragRef.current = {
+      side,
+      startX: e.clientX,
+      startWidth: getRailWidth(side),
+      open: side === "left" ? physicalLeftOpen : physicalRightOpen,
+      dragged: false,
+    };
+  };
+
+  const handleRailPointerMove = (e: React.PointerEvent<HTMLButtonElement>) => {
+    const st = railDragRef.current;
+    if (!st?.open) return;
+    const dx = e.clientX - st.startX;
+    if (!st.dragged) {
+      if (Math.abs(dx) < 5) return;
+      st.dragged = true;
+      setIsResizing(true);
+    }
+    const raw = st.startWidth + (st.side === "left" ? dx : -dx);
+    const next = Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, raw));
+    resizePendingRef.current = { side: st.side, width: next };
+    if (!resizeRafRef.current) {
+      resizeRafRef.current = requestAnimationFrame(() => {
+        resizeRafRef.current = 0;
+        const pending = resizePendingRef.current;
+        resizePendingRef.current = null;
+        if (pending) setRailWidth(pending.side, pending.width);
+      });
+    }
+  };
+
+  const handleRailPointerEnd = (e: React.PointerEvent<HTMLButtonElement>, allowToggle: boolean) => {
+    const st = railDragRef.current;
+    railDragRef.current = null;
+    if (!st) return;
+    if (resizeRafRef.current) {
+      cancelAnimationFrame(resizeRafRef.current);
+      resizeRafRef.current = 0;
+    }
+    const pending = resizePendingRef.current;
+    resizePendingRef.current = null;
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {
+      /* capture may already be released */
+    }
+    if (st.dragged) {
+      if (pending) setRailWidth(pending.side, pending.width);
+      setIsResizing(false);
+    } else if (allowToggle) {
+      toggleRail(st.side);
+    }
+  };
+
+  const handleRailKeyDown = (side: RailSide) => (e: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      toggleRail(side);
+    }
+  };
+
+  const sidebarWidth = isMobile ? "0px" : `${sidebarWidthPx}px`;
+  const rightWidth = isMobile ? "0px" : (rightSidebar ? `${rightWidthPx}px` : "0px");
   const mobileHeight = "var(--mindfs-viewport-height, 100dvh)";
   const physicalLeftOpen = sidebarsSwapped ? rightOpen : leftOpen;
   const physicalRightOpen = sidebarsSwapped ? leftOpen : rightOpen;
@@ -138,7 +258,11 @@ export function AppShell({
     overflow: "hidden",
     isolation: "isolate",
     boxSizing: "border-box",
-    transition: "grid-template-columns 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+    transition: isResizing
+      ? "none"
+      : "grid-template-columns 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+    willChange: isResizing ? "grid-template-columns" : undefined,
+    userSelect: isResizing ? "none" : undefined,
     "--mindfs-actionbar-bottom-padding": "calc(var(--mindfs-safe-area-bottom) + 12px)",
   };
 
@@ -240,24 +364,32 @@ export function AppShell({
           <button
             type="button"
             className={`mindfs-sidebar-resize-rail mindfs-sidebar-resize-rail--left${physicalLeftOpen ? " is-open" : " is-closed"}`}
-            onClick={physicalLeftOpen ? physicalLeftClose : physicalLeftOpenHandler}
+            onPointerDown={handleRailPointerDown("left")}
+            onPointerMove={handleRailPointerMove}
+            onPointerUp={(e) => handleRailPointerEnd(e, true)}
+            onPointerCancel={(e) => handleRailPointerEnd(e, false)}
+            onKeyDown={handleRailKeyDown("left")}
             aria-label={physicalLeftOpen ? t("sidebar.collapse", { label: physicalLeftLabel }) : t("sidebar.expand", { label: physicalLeftLabel })}
             title={physicalLeftOpen ? t("sidebar.collapse", { label: physicalLeftLabel }) : t("sidebar.expand", { label: physicalLeftLabel })}
             style={{
               left: physicalLeftOpen ? `calc(${physicalLeftWidth} - 6px)` : 0,
-              cursor: physicalLeftOpen ? "w-resize" : "e-resize",
+              cursor: physicalLeftOpen ? "col-resize" : "e-resize",
             }}
           />
           {physicalRightContent ? (
             <button
               type="button"
               className={`mindfs-sidebar-resize-rail mindfs-sidebar-resize-rail--right${physicalRightOpen ? " is-open" : " is-closed"}`}
-              onClick={physicalRightOpen ? physicalRightClose : physicalRightOpenHandler}
+              onPointerDown={handleRailPointerDown("right")}
+              onPointerMove={handleRailPointerMove}
+              onPointerUp={(e) => handleRailPointerEnd(e, true)}
+              onPointerCancel={(e) => handleRailPointerEnd(e, false)}
+              onKeyDown={handleRailKeyDown("right")}
               aria-label={physicalRightOpen ? t("sidebar.collapse", { label: physicalRightLabel }) : t("sidebar.expand", { label: physicalRightLabel })}
               title={physicalRightOpen ? t("sidebar.collapse", { label: physicalRightLabel }) : t("sidebar.expand", { label: physicalRightLabel })}
               style={{
                 right: physicalRightOpen ? `calc(${physicalRightWidth} - 6px)` : 0,
-                cursor: physicalRightOpen ? "e-resize" : "w-resize",
+                cursor: physicalRightOpen ? "col-resize" : "w-resize",
               }}
             />
           ) : null}

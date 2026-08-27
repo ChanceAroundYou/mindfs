@@ -309,7 +309,7 @@ func TestRelayAssetsAliasRoutesThroughStrictPrefix(t *testing.T) {
 	defer func() { deploy.Prefix = prev }()
 
 	var got string
-	handler := StripDeployPrefix(NormalizedDeployPrefix(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := StripDeployPrefix(deploy.NormalizedPrefix(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		got = r.URL.Path
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -326,51 +326,6 @@ func TestRelayAssetsAliasRoutesThroughStrictPrefix(t *testing.T) {
 	handler.ServeHTTP(bareRec, bareReq)
 	if bareRec.Code != http.StatusNotFound {
 		t.Fatalf("bare asset status = %d, want 404", bareRec.Code)
-	}
-}
-
-func TestRelayAssetsAlias(t *testing.T) {
-	tests := []struct {
-		prefix string
-		want   string
-	}{
-		{prefix: "/mindfs", want: "/mindfs-assets/"},
-		{prefix: "/app", want: "/app-assets/"},
-		{prefix: "", want: "/assets/"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.prefix, func(t *testing.T) {
-			prev := deploy.Prefix
-			deploy.Prefix = tt.prefix
-			defer func() { deploy.Prefix = prev }()
-			if got := relayAssetsAlias(); got != tt.want {
-				t.Fatalf("relayAssetsAlias() = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestNormalizedDeployPrefix(t *testing.T) {
-	tests := []struct {
-		in   string
-		want string
-	}{
-		{in: "/mindfs", want: "/mindfs"},
-		{in: "/mindfs/", want: "/mindfs"},
-		{in: "mindfs", want: "/mindfs"},
-		{in: "/", want: ""},
-		{in: "", want: ""},
-		{in: "  /x/  ", want: "/x"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.in, func(t *testing.T) {
-			prev := deploy.Prefix
-			deploy.Prefix = tt.in
-			defer func() { deploy.Prefix = prev }()
-			if got := NormalizedDeployPrefix(); got != tt.want {
-				t.Fatalf("NormalizedDeployPrefix() = %q, want %q", got, tt.want)
-			}
-		})
 	}
 }
 

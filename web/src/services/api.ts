@@ -1,3 +1,6 @@
+import { bootstrapService } from "./bootstrap";
+import { e2eeService } from "./e2ee";
+
 export class APIError extends Error {
   status: number;
   payload: any;
@@ -27,15 +30,25 @@ export async function fetchMaybeJSON<T>(input: RequestInfo | URL, init: RequestI
   return payload as T;
 }
 
-// 旧接口兼容：protectedJSON / protectedFetch 直通 fetch（e2ee 已移除）
+export function protectedAPIReady(): boolean {
+  return bootstrapService.canUseProtectedAPI();
+}
+
 export async function protectedFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
-  return fetch(input, init);
+  if (!protectedAPIReady()) {
+    throw new Error("api_not_ready");
+  }
+  return e2eeService.protectedFetch(input, init);
 }
 
 export async function protectedJSON<T>(input: RequestInfo | URL, init: RequestInit = {}): Promise<T> {
-  return fetchJSON<T>(input, init);
-}
-
-export function protectedAPIReady(): boolean {
-  return true;
+  if (!protectedAPIReady()) {
+    throw new Error("api_not_ready");
+  }
+  const response = await e2eeService.protectedFetch(input, init);
+  const payload = await e2eeService.parseProtectedJSONResponse<any>(response).catch(() => ({} as any));
+  if (!response.ok) {
+    throw new APIError(response.status, payload, `request failed: ${response.status}`);
+  }
+  return payload as T;
 }

@@ -936,8 +936,12 @@ export function MultiProjectSessionList({
   const topLevelSessionsForGroup = (sessions: SessionItem[]) =>
     sessions.filter((session) => !String(session.parent_session_key || "").trim());
 
-  const groupIsCurrentNode = (group: ProjectSessionGroup) =>
-    String((group as any)?._nodeId || "").trim() === String(selectedNodeId || "").trim();
+  // 两端皆空视为节点信息未就绪：避免空串互等把全部分组误展开
+  const groupIsCurrentNode = (group: ProjectSessionGroup) => {
+    const groupNodeId = String((group as any)?._nodeId || "").trim();
+    const selectedNid = String(selectedNodeId || "").trim();
+    return !!groupNodeId && !!selectedNid && groupNodeId === selectedNid;
+  };
 
   const handleProjectToggle = async (group: ProjectSessionGroup) => {
     const groupKey = groupScopeKey(group);
@@ -1356,7 +1360,7 @@ function SessionCard({
               justifyContent: "center",
             }}
           >
-            {isSubagent ? <SubSessionIcon color={effectiveNodeColor || undefined} /> : <ModeIcon type={session.task_id ? "task" : session.type || "chat"} size={16} color={effectiveNodeColor || undefined} />}
+            {isSubagent ? <SubSessionIcon color={effectiveNodeColor ? `color-mix(in srgb, ${effectiveNodeColor} 78%, var(--text-secondary))` : undefined} /> : <ModeIcon type={session.task_id ? "task" : session.type || "chat"} size={16} color={effectiveNodeColor || undefined} />}
             {!isSubagent && session.type === "command" ? (
               <span
                 title={session.shell || "shell"}

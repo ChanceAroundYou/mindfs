@@ -1049,6 +1049,7 @@ function SessionViewerInner({
   const relatedFilesDefaultStateRef = useRef<string>("");
   const userSummaryRootRef = useRef<HTMLDivElement | null>(null);
   const userSummaryListRef = useRef<HTMLDivElement | null>(null);
+  const relatedFilesDividerRef = useRef<HTMLDivElement | null>(null);
   const sessionKey = session?.key || session?.session_key || null;
   const exchanges = Array.isArray(session?.exchanges) ? session.exchanges : [];
   const isAwaiting = !!(session as any)?.pending;
@@ -1277,7 +1278,7 @@ function SessionViewerInner({
       if (interactionMode === "drawer" && shouldStickToBottomRef.current) {
         const frame = window.requestAnimationFrame(() => {
           const retry = activeScrollRef?.current;
-          if (retry && shouldStickToBottomRef.current) stickSessionToBottom("auto");
+          if (retry && shouldStickToBottomRef.current) scrollToRelatedFilesDivider("auto");
         });
         return () => window.cancelAnimationFrame(frame);
       }
@@ -1293,7 +1294,7 @@ function SessionViewerInner({
       shouldStickToBottomRef.current = true;
     }
     if (shouldStickToBottomRef.current) {
-      stickSessionToBottom("auto");
+      scrollToRelatedFilesDivider("auto");
     }
   }, [sessionKey, timeline, isStreaming, streamVersion, slashCommandResult, useInnerScrollContainer]);
 
@@ -1453,6 +1454,25 @@ function SessionViewerInner({
       return { path, name, head, repo_path: repoPath, repo_name: repoName, repo_kind: repoKind, root_id: rootID };
     })
     .filter((f) => f.path);
+  const scrollToRelatedFilesDivider = (behavior: ScrollBehavior = "auto") => {
+    const container = activeScrollRef?.current;
+    if (!container) {
+      return;
+    }
+    const maxTop = Math.max(0, container.scrollHeight - container.clientHeight);
+    let top = maxTop;
+    const divider =
+      interactionMode === "drawer" ? relatedFilesDividerRef.current : null;
+    if (divider && relatedFiles.length > 0 && !relatedFilesCollapsed) {
+      const dividerTop =
+        divider.getBoundingClientRect().top -
+        container.getBoundingClientRect().top +
+        container.scrollTop;
+      const target = dividerTop - container.clientHeight * 0.08;
+      top = Math.max(0, Math.min(maxTop, target));
+    }
+    container.scrollTo({ top, behavior });
+  };
   const activeAskUserCallId = (() => {
     if (!isAwaiting) {
       return "";
@@ -1580,6 +1600,10 @@ function SessionViewerInner({
     session.session_key ||
     "Session";
   const hasVisibleTimeline = timeline.length > 0;
+  const themeColor = String(rootColor || "").trim() || "var(--accent-color)";
+  // 四横主按钮：浅且暗的 muted 变体（同色相、混灰降明度）；徽标保持纯主题色
+  const themeMuted = `color-mix(in srgb, ${themeColor} 56%, #94a3b8)`;
+  const themeMutedBorder = `color-mix(in srgb, ${themeColor} 20%, transparent)`;
   const userMetaButtonStyle: React.CSSProperties = {
     width: "18px",
     height: "18px",
@@ -1587,7 +1611,7 @@ function SessionViewerInner({
     background: "transparent",
     padding: 0,
     margin: 0,
-    color: "#2563eb",
+    color: themeColor,
     cursor: "pointer",
     fontSize: "14px",
     fontWeight: 800,
@@ -1889,7 +1913,7 @@ function SessionViewerInner({
                 aria-label={t("session.editMessage")}
                 title={t("session.editMessage")}
               >
-                {renderToolIcon("edit")}
+                {renderToolIcon("edit", themeColor)}
               </button>
               {promptSaved ? (
                 <span
@@ -1897,7 +1921,7 @@ function SessionViewerInner({
                   title={t("session.promptSaved")}
                   style={{
                     ...userMetaButtonStyle,
-                    color: "#2563eb",
+                    color: themeColor,
                     fontSize: "13px",
                   }}
                 >
@@ -1989,7 +2013,7 @@ function SessionViewerInner({
                 {copySucceeded ? (
                   <span
                     aria-hidden="true"
-                    style={{ fontSize: "13px", fontWeight: 800, lineHeight: 1 }}
+                    style={{ fontSize: "13px", fontWeight: 800, lineHeight: 1, color: themeColor }}
                   >
                     ✓
                   </span>
@@ -2102,6 +2126,7 @@ function SessionViewerInner({
                         fontSize: "13px",
                         fontWeight: 800,
                         lineHeight: 1,
+                        color: themeColor,
                       }}
                     >
                       ✓
@@ -2307,7 +2332,7 @@ function SessionViewerInner({
                 {loginCodeCopied ? (
                   <span
                     aria-hidden="true"
-                    style={{ fontSize: "13px", fontWeight: 800, lineHeight: 1 }}
+                    style={{ fontSize: "13px", fontWeight: 800, lineHeight: 1, color: themeColor }}
                   >
                     ✓
                   </span>
@@ -2504,8 +2529,9 @@ function SessionViewerInner({
               );
             })()}
 
-            {relatedFiles.length > 0 && (
+            {relatedFiles.length > 0 && interactionMode !== "drawer" && (
               <div
+                ref={relatedFilesDividerRef}
                 style={{
                   marginTop: "18px",
                   paddingTop: "14px",
@@ -2830,8 +2856,8 @@ function SessionViewerInner({
                   alignItems: "center",
                   gap: "6px",
                   height: "34px",
-                  border: "1px solid rgba(37,99,235,0.35)",
-                  background: "#2563eb",
+                  border: `1px solid color-mix(in srgb, ${themeColor} 35%, transparent)`,
+                  background: themeColor,
                   color: "#ffffff",
                   borderRadius: "999px",
                   padding: "0 12px",
@@ -2962,10 +2988,10 @@ function SessionViewerInner({
                     position: "relative",
                     width: "34px",
                     height: "34px",
-                    border: "none",
+                    border: userSummaryOpen ? `1px solid ${themeMuted}` : `1px solid ${themeMutedBorder}`,
                     borderRadius: "8px",
-                    background: userSummaryOpen ? "var(--accent-color)" : "var(--menu-bg)",
-                    color: userSummaryOpen ? "#ffffff" : "var(--text-secondary)",
+                    background: userSummaryOpen ? themeMuted : "var(--menu-bg)",
+                    color: userSummaryOpen ? "#ffffff" : themeMuted,
                     boxShadow: "0 10px 24px rgba(15, 23, 42, 0.16)",
                     display: "inline-flex",
                     alignItems: "center",
@@ -2985,7 +3011,7 @@ function SessionViewerInner({
                       height: "18px",
                       padding: "0 5px",
                       borderRadius: "999px",
-                      background: "#2563eb",
+                      background: themeColor,
                       color: "#ffffff",
                       border: "2px solid var(--menu-bg)",
                       fontSize: "10px",

@@ -18,14 +18,6 @@ const ACTIVE_ID_KEY = "mindfs_active_node_id";
 const AGGREGATED_KEY = "mindfs_aggregated";
 const LEGACY_NODES_KEY = "mindfs_nodes";
 
-function sanitizeURL(value: string): string {
-  return normalizeExplicitNodeBase(value);
-}
-
-function normalizeNodeURL(input: string): string {
-  return sanitizeURL(input);
-}
-
 function nextColor(existing: NodeConnection[]): string {
   return PALETTE[existing.length % PALETTE.length];
 }
@@ -69,8 +61,8 @@ function normalizeRecord(item: any): NodeConnection | null {
   if (!item || typeof item !== "object") return null;
   const id = String(item.id || "").trim();
   const name = String(item.name || "").trim();
-  const rawURL = sanitizeURL(String(item.url || ""));
-  const url = repairDuplicateDeployPrefix(normalizeNodeURL(rawURL), DEPLOY_PREFIX);
+  const rawURL = normalizeExplicitNodeBase(String(item.url || ""));
+  const url = repairDuplicateDeployPrefix(normalizeExplicitNodeBase(rawURL), DEPLOY_PREFIX);
   let color = String(item.color || "").trim() || "";
   if (!color) color = PALETTE[0];
   else if (!PALETTE.some((c) => c.toLowerCase() === color.toLowerCase())) {
@@ -246,7 +238,7 @@ export function getNodeById(id: string): NodeConnection | null {
 
 export async function addNode(input: { name: string; url: string; color?: string }): Promise<NodeConnection> {
   const nodes = getNodes();
-  const url = normalizeNodeURL(input.url);
+  const url = normalizeExplicitNodeBase(input.url);
   const name = String(input.name || "").trim() || (() => { try { return new URL(url).hostname; } catch { return url; } })();
   const node: NodeConnection = {
     id: genId(),
@@ -269,7 +261,7 @@ export async function updateNode(id: string, patch: Partial<Pick<NodeConnection,
   const next: NodeConnection = {
     ...cur,
     name: patch.name !== undefined ? String(patch.name).trim() || cur.name : cur.name,
-    url: patch.url !== undefined ? normalizeNodeURL(String(patch.url)) || cur.url : cur.url,
+    url: patch.url !== undefined ? normalizeExplicitNodeBase(String(patch.url)) || cur.url : cur.url,
     color: patch.color !== undefined ? String(patch.color).trim() || cur.color : cur.color,
   };
   nodes[idx] = next;

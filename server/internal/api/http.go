@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"mindfs/internal/deploy"
 	"mindfs/server/internal/agent"
 	agenttypes "mindfs/server/internal/agent/types"
 	"mindfs/server/internal/api/usecase"
@@ -126,10 +127,11 @@ func requestProofPath(r *http.Request) string {
 	if r == nil || r.URL == nil {
 		return ""
 	}
+	path := OriginalPath(r)
 	if r.URL.RawQuery == "" {
-		return r.URL.Path
+		return path
 	}
-	return r.URL.Path + "?" + r.URL.RawQuery
+	return path + "?" + r.URL.RawQuery
 }
 
 func writeProtectedJSON(w http.ResponseWriter, status int, key []byte, value any) error {
@@ -159,9 +161,57 @@ func (w *protectedResponseWriter) Write(payload []byte) (int, error) {
 }
 
 func (h *HTTPHandler) protectedEndpoint(next http.HandlerFunc) http.HandlerFunc {
-	// ponytail: 鉴权/e2ee 已移除，保留包装仅为兼容，直通
 	return func(w http.ResponseWriter, r *http.Request) {
-		next(w, r)
+		if h.isLocalCLIRequest(r) {
+			next(w, r)
+			return
+		}
+		sess, protected, err := h.requireProtectedHTTPSession(r)
+		if !protected {
+			next(w, r)
+			return
+		}
+		if err != nil {
+			respondError(w, http.StatusUnauthorized, err)
+			return
+		}
+		sess, err = h.requireRequestProof(r)
+		if err != nil {
+			respondError(w, http.StatusUnauthorized, err)
+			return
+		}
+		if r.Body != nil && r.ContentLength != 0 && r.Method != http.MethodGet && r.Method != http.MethodHead {
+			var envelope e2ee.CipherEnvelope
+			if err := json.NewDecoder(io.LimitReader(r.Body, maxUploadRequestBytes)).Decode(&envelope); err != nil {
+				respondError(w, http.StatusBadRequest, errInvalidRequest("invalid protected payload"))
+				return
+			}
+			plaintext, err := e2ee.DecryptBytes(sess.Key, &envelope)
+			if err != nil {
+				respondError(w, http.StatusBadRequest, errInvalidRequest("e2ee_proof_invalid"))
+				return
+			}
+			r.Body = io.NopCloser(bytes.NewReader(plaintext))
+			r.ContentLength = int64(len(plaintext))
+		}
+		recorder := &protectedResponseWriter{ResponseWriter: w}
+		next(recorder, r)
+		if recorder.status == 0 {
+			recorder.status = http.StatusOK
+		}
+		if recorder.status == http.StatusNoContent || recorder.status == http.StatusNotModified || recorder.body.Len() == 0 {
+			w.WriteHeader(recorder.status)
+			return
+		}
+		var payload any
+		if err := json.Unmarshal(recorder.body.Bytes(), &payload); err != nil {
+			respondError(w, http.StatusServiceUnavailable, err)
+			return
+		}
+		if err := writeProtectedJSON(w, recorder.status, sess.Key, payload); err != nil {
+			respondError(w, http.StatusServiceUnavailable, err)
+			return
+		}
 	}
 }
 
@@ -226,12 +276,24 @@ func (h *HTTPHandler) broadcastRootChanged(action, rootID string, extra ...map[s
 	})
 }
 
-func corsMiddleware(next http.Handler) http.Handler {
+func (h *HTTPHandler) corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
-		w.Header().Set("Access-Control-Max-Age", "86400")
+		// Local plaintext mode (E2EE disabled) stays same-origin: emit no
+		// Access-Control-Allow-Origin so the browser never treats responses as
+		// cross-origin. Cross-origin browser pairing is only enabled in E2EE
+		// mode, where the pairing secret gates access.
+		if manager := h.AppContext.GetE2EEManager(); manager != nil && manager.Enabled() {
+			origin := strings.TrimSpace(r.Header.Get("Origin"))
+			if origin != "" {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Set("Vary", "Origin")
+				w.Header().Set("Access-Control-Allow-Credentials", "true")
+				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-MindFS-E2EE, X-MindFS-Client-ID, X-MindFS-Proof, X-MindFS-TS, X-MindFS-Local-CLI-Token, Authorization, X-Requested-With")
+				w.Header().Set("Access-Control-Max-Age", "86400")
+				w.Header().Set("Access-Control-Allow-Private-Network", "true")
+			}
+		}
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(204)
 			return
@@ -245,7 +307,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 // so every route here is registered prefix-free.
 func (h *HTTPHandler) Routes() http.Handler {
 	r := chi.NewRouter()
-	r.Use(corsMiddleware)
+	r.Use(h.corsMiddleware)
 	r.Options("/*", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) })
 	r.NotFound(h.handleNotFound)
 	r.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) { h.handleNotFound(w, r) })
@@ -1518,7 +1580,7 @@ func cleanFrontendResourcePath(raw string) string {
 	value = strings.TrimPrefix(value, "/")
 	// vite 以部署前缀为 base 时，index.html 引用形如 /<prefix>/assets/... /<prefix>/favicon.svg，
 	// 需剥掉前缀再判本地文件是否存在，与 pathForStaticAsset 同构。空前缀（根部署）无需剥离。
-	if prefix := normalizedDeployPrefix(); prefix != "" {
+	if prefix := deploy.NormalizedPrefix(); prefix != "" {
 		value = strings.TrimPrefix(value, strings.TrimPrefix(prefix, "/")+"/")
 	}
 	value = filepath.Clean(value)
@@ -1545,7 +1607,7 @@ func renderFallbackFrontend(content, notice string) string {
 	}
 	out = strings.ReplaceAll(out, "__FALLBACK_NOTICE__", noticeHTML)
 	// 兜底页文档 URL 由反代前缀决定（与运行时部署前缀一致）。
-	out = strings.ReplaceAll(out, "/api/tree?", DeployPrefixedPath("/api/tree")+"?")
+	out = strings.ReplaceAll(out, "/api/tree?", deploy.PrefixedPath("/api/tree")+"?")
 	return out
 }
 
@@ -1605,8 +1667,8 @@ func shouldRewriteRelayedStaticAsset(cleanPath string) bool {
 
 func rewriteRelayedFrontendContent(content string) string {
 	// relay 反代下，前端文档 URL 与后端不在同域/同路径，需把相对资源引用
-	// 改写为随部署前缀派生的绝对别名（见 relayAssetsAlias）。
-	return strings.ReplaceAll(content, "./assets/", relayAssetsAlias())
+	// 改写为随部署前缀派生的绝对别名（见 deploy.RelayAssetsAlias）。
+	return strings.ReplaceAll(content, "./assets/", deploy.RelayAssetsAlias())
 }
 
 func serveRewrittenStaticAsset(w http.ResponseWriter, r *http.Request, assetPath string) {

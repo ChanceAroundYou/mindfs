@@ -4,7 +4,8 @@ import path from "node:path";
 import ts from "typescript";
 import vm from "node:vm";
 
-const sourcePath = path.resolve("src/services/bottomSheetModel.ts");
+const webRoot = path.resolve(import.meta.dirname, "..");
+const sourcePath = path.resolve(webRoot, "src/services/bottomSheetModel.ts");
 const source = fs.readFileSync(sourcePath, "utf8");
 const compiled = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
@@ -41,7 +42,7 @@ assert.equal(
 );
 
 // Source contracts that must initially fail until Task 4 wires BottomSheet.tsx.
-const sheet = fs.readFileSync(path.resolve("src/components/BottomSheet.tsx"), "utf8");
+const sheet = fs.readFileSync(path.resolve(webRoot, "src/components/BottomSheet.tsx"), "utf8");
 assert.match(sheet, /onPointerDown=\{handlePointerDown\}/);
 assert.match(sheet, /onPointerMove=\{handlePointerMove\}/);
 assert.match(sheet, /onPointerUp=\{handlePointerUp\}/);
@@ -50,8 +51,8 @@ assert.doesNotMatch(sheet, /onClick=\{onExpand\}/);
 assert.match(sheet, /contentRef\?: React\.RefObject<HTMLDivElement \| null>/);
 
 console.log("bottom-sheet-model source contracts OK");
-const viewer = fs.readFileSync(path.resolve("src/components/SessionViewer.tsx"), "utf8");
-const app = fs.readFileSync(path.resolve("src/App.tsx"), "utf8");
+const viewer = fs.readFileSync(path.resolve(webRoot, "src/components/SessionViewer.tsx"), "utf8");
+const app = fs.readFileSync(path.resolve(webRoot, "src/App.tsx"), "utf8");
 
 assert.match(
   viewer,

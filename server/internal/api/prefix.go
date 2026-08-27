@@ -8,30 +8,6 @@ import (
 	"mindfs/internal/deploy"
 )
 
-// normalizedDeployPrefix returns the deployment prefix normalized to a single
-// leading slash with no trailing slash. An empty string means root deployment.
-func normalizedDeployPrefix() string {
-	return deploy.NormalizedPrefix()
-}
-
-// NormalizedDeployPrefix exposes the deployment prefix (see normalizedDeployPrefix).
-func NormalizedDeployPrefix() string {
-	return normalizedDeployPrefix()
-}
-
-// DeployPrefixedPath joins a prefix-free app path with the deployment prefix.
-func DeployPrefixedPath(p string) string {
-	return deploy.PrefixedPath(p)
-}
-
-// relayAssetsAlias returns the absolute asset path used for relayed (proxied)
-// frontends, derived from the deployment prefix so it stays in sync with the
-// configured base path. e.g. prefix "/mindfs" -> "/mindfs-assets/".
-// Root deployment has no alias and falls back to "/assets/".
-func relayAssetsAlias() string {
-	return deploy.RelayAssetsAlias()
-}
-
 type deployPrefixContextKey string
 
 const originalPathKey deployPrefixContextKey = "mindfs.original_path"
