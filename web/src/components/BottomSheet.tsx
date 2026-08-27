@@ -188,7 +188,7 @@ export function BottomSheet({
       <div
         ref={sheetRef}
         style={{
-          background: "var(--content-bg, var(--panel-bg, #ffffff))",
+          background: "var(--panel-bg, #ffffff)",
           color: "var(--text-primary)",
           boxShadow: "0 -4px 24px rgba(0,0,0,0.08)",
           borderTop: "1px solid rgba(148, 163, 184, 0.22)",
@@ -239,7 +239,7 @@ export function BottomSheet({
 
         {/* Optional Footer */}
         {footer && (
-          <div style={{ borderTop: "1px solid var(--border-color)", background: "var(--content-bg, var(--panel-bg, #ffffff))" }}>
+          <div style={{ borderTop: "1px solid var(--border-color)", background: "var(--panel-bg, #ffffff)" }}>
             {footer}
           </div>
         )}
