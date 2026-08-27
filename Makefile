@@ -32,6 +32,15 @@ help:
 		"  make release TAG=v1.2.3  # publish notes, build-all, then create GitHub release" \
 		"  make release TAG=v1.2.3 RELEASE_ANDROID=1  # include Android APK"
 
+# 部署前缀：前端 VITE_MIND_FS_BASE 与后端 DeployPrefix 必须一致。
+# 直接包含 web/.env，优先取环境/命令行的 MIND_FS_BASE；未配置时回退 /mindfs。
+# 根部署通过显式 MIND_FS_BASE=/ make build 选择，避免将空环境变量和未配置混淆。
+-include $(WEB_DIR)/.env
+MIND_FS_BASE ?= $(VITE_MIND_FS_BASE)
+ifeq ($(strip $(MIND_FS_BASE)),)
+MIND_FS_BASE := /mindfs
+endif
+
 dev:
 	$(GO) run ./cli/cmd -addr $(ADDR) $(ROOT)
 
@@ -42,10 +51,10 @@ dev-web:
 	cd $(WEB_DIR) && $(NPM) run dev
 
 build-web:
-	cd $(WEB_DIR) && $(NPM) run build
+	cd $(WEB_DIR) && VITE_MIND_FS_BASE="$(MIND_FS_BASE)" $(NPM) run build
 
 build: build-web
-	$(GO) build -ldflags "-X main.version=$(VERSION)" -o mindfs ./cli/cmd
+	$(GO) build -ldflags "-X main.version=$(VERSION) -X mindfs/internal/deploy.Prefix=$(MIND_FS_BASE)" -o mindfs ./cli/cmd
 
 install: build
 	install -d "$(PREFIX)/bin"
@@ -107,7 +116,7 @@ PLATFORMS := \
 	windows/arm64
 
 build-all: build-web
-	@bash scripts/build-all.sh "$(VERSION)" "$(DIST_DIR)"
+	@MIND_FS_BASE="$(MIND_FS_BASE)" bash scripts/build-all.sh "$(VERSION)" "$(DIST_DIR)"
 
 build-android:
 	cd $(WEB_DIR) && $(NPM) run build:android

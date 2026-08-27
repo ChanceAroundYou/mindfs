@@ -15,10 +15,6 @@ import { copyText } from "../services/clipboard";
 import type { AgentStatus } from "../services/agents";
 import { useI18n, type Locale } from "../i18n";
 import { formatSessionDuration } from "../services/sessionDuration";
-import {
-  relatedFileStatKey,
-  useRelatedFileStats,
-} from "../hooks/useRelatedFileStats";
 
 type SessionItem = {
   key?: string;
@@ -74,7 +70,9 @@ type SessionViewerProps = {
     };
   } | null;
   rootId?: string | null;
+  rootDisplayName?: string | null;
   rootPath?: string | null;
+  rootColor?: string | null;
   interactionMode?: "main" | "drawer";
   targetSeq?: number;
   gitFileStatsByPath?: Record<
@@ -96,6 +94,7 @@ type SessionViewerProps = {
   targetSeqRequestKey?: string | number;
   agents?: AgentStatus[];
   composerOverlayInset?: number;
+  scrollContainerRef?: React.RefObject<HTMLDivElement | null>;
 };
 
 type AskUserQuestionOption = {
@@ -1009,7 +1008,9 @@ function SessionViewerInner({
   loading = false,
   slashCommandResult = null,
   rootId,
+  rootDisplayName,
   rootPath,
+  rootColor,
   interactionMode = "main",
   targetSeq = 0,
   targetSeqRequestKey = "",
@@ -1022,8 +1023,10 @@ function SessionViewerInner({
   onForkAgentMessage,
   agents,
   composerOverlayInset = 0,
+  scrollContainerRef,
 }: SessionViewerProps) {
   const { locale, t } = useI18n();
+  const [showAllFiles, setShowAllFiles] = useState(false);
   const [relatedFilesCollapsed, setRelatedFilesCollapsed] = useState(false);
   const [isMobile, setIsMobile] = useState(() => {
     if (typeof window === "undefined") {
@@ -1039,11 +1042,14 @@ function SessionViewerInner({
   >({});
   const scrollEndRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const useInnerScrollContainer = interactionMode !== "drawer";
+  const activeScrollRef = interactionMode === "drawer" ? scrollContainerRef : scrollRef;
   const onFileClickRef = useRef(onFileClick);
   const copyResetTimersRef = useRef<Record<string, number>>({});
   const relatedFilesDefaultStateRef = useRef<string>("");
   const userSummaryRootRef = useRef<HTMLDivElement | null>(null);
   const userSummaryListRef = useRef<HTMLDivElement | null>(null);
+  const relatedFilesDividerRef = useRef<HTMLDivElement | null>(null);
   const sessionKey = session?.key || session?.session_key || null;
   const exchanges = Array.isArray(session?.exchanges) ? session.exchanges : [];
   const isAwaiting = !!(session as any)?.pending;
@@ -1075,7 +1081,7 @@ function SessionViewerInner({
   };
 
   const stickSessionToBottom = (behavior: ScrollBehavior = "auto") => {
-    const container = scrollRef.current;
+    const container = activeScrollRef?.current;
     if (!container) {
       return;
     }
@@ -1113,7 +1119,7 @@ function SessionViewerInner({
       window.clearTimeout(timer),
     );
     copyResetTimersRef.current = {};
-  }, [sessionKey]);
+  }, [sessionKey, useInnerScrollContainer]);
 
   const userMessageSummaries = useMemo(
     () =>
@@ -1129,7 +1135,7 @@ function SessionViewerInner({
   const userSummaryOpen = userSummaryHoverOpen || userSummaryPinnedOpen;
 
   const readCurrentUserMessageIndex = useCallback(() => {
-    const container = scrollRef.current;
+    const container = activeScrollRef?.current;
     if (!container) {
       return 0;
     }
@@ -1179,7 +1185,7 @@ function SessionViewerInner({
   }, [readCurrentUserMessageIndex]);
 
   const scrollToUserMessageSummary = (index: number) => {
-    const container = scrollRef.current;
+    const container = activeScrollRef?.current;
     if (!container) {
       return;
     }
@@ -1267,8 +1273,15 @@ function SessionViewerInner({
   }, []);
 
   useEffect(() => {
-    const container = scrollRef.current;
+    const container = activeScrollRef?.current;
     if (!container) {
+      if (interactionMode === "drawer" && shouldStickToBottomRef.current) {
+        const frame = window.requestAnimationFrame(() => {
+          const retry = activeScrollRef?.current;
+          if (retry && shouldStickToBottomRef.current) scrollToRelatedFilesDivider("auto");
+        });
+        return () => window.cancelAnimationFrame(frame);
+      }
       return;
     }
     if (!scrollEndRef.current) {
@@ -1281,12 +1294,12 @@ function SessionViewerInner({
       shouldStickToBottomRef.current = true;
     }
     if (shouldStickToBottomRef.current) {
-      stickSessionToBottom("auto");
+      scrollToRelatedFilesDivider("auto");
     }
-  }, [sessionKey, timeline, isStreaming, streamVersion, slashCommandResult]);
+  }, [sessionKey, timeline, isStreaming, streamVersion, slashCommandResult, useInnerScrollContainer]);
 
   useEffect(() => {
-    const container = scrollRef.current;
+    const container = activeScrollRef?.current;
     if (!container || typeof window === "undefined") {
       return;
     }
@@ -1317,10 +1330,10 @@ function SessionViewerInner({
         viewportStickFrameRef.current = null;
       }
     };
-  }, [sessionKey]);
+  }, [sessionKey, useInnerScrollContainer]);
 
   useEffect(() => {
-    const el = scrollRef.current;
+    const el = activeScrollRef?.current;
     if (!el) {
       shouldStickToBottomRef.current = true;
       setShowJumpToLatest(false);
@@ -1352,7 +1365,7 @@ function SessionViewerInner({
     return () => {
       el.removeEventListener("scroll", updateStickiness);
     };
-  }, [refreshCurrentUserMessageIndex, sessionKey]);
+  }, [refreshCurrentUserMessageIndex, sessionKey, useInnerScrollContainer]);
 
   useEffect(() => {
     if (!targetSeq) {
@@ -1363,7 +1376,7 @@ function SessionViewerInner({
     if (targetSeqScrollKeyRef.current === scrollKey) {
       return;
     }
-    const container = scrollRef.current;
+    const container = activeScrollRef?.current;
     if (!container || !timeline.length) {
       return;
     }
@@ -1377,7 +1390,7 @@ function SessionViewerInner({
     shouldStickToBottomRef.current = false;
     cancelTargetSeqScroll();
     const scrollToNode = () => {
-      const latestContainer = scrollRef.current;
+      const latestContainer = activeScrollRef?.current;
       const latestNode = latestContainer?.querySelector<HTMLElement>(
         `[data-session-seq="${targetSeq}"]`,
       );
@@ -1441,15 +1454,25 @@ function SessionViewerInner({
       return { path, name, head, repo_path: repoPath, repo_name: repoName, repo_kind: repoKind, root_id: rootID };
     })
     .filter((f) => f.path);
-  const gitStatsRefreshKey = Object.entries(gitFileStatsByPath)
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([path, stats]) => `${path}:${stats.status}:${stats.additions}:${stats.deletions}`)
-    .join("|");
-  const relatedFileStatsByKey = useRelatedFileStats(
-    rootId,
-    relatedFiles,
-    gitStatsRefreshKey,
-  );
+  const scrollToRelatedFilesDivider = (behavior: ScrollBehavior = "auto") => {
+    const container = activeScrollRef?.current;
+    if (!container) {
+      return;
+    }
+    const maxTop = Math.max(0, container.scrollHeight - container.clientHeight);
+    let top = maxTop;
+    const divider =
+      interactionMode === "drawer" ? relatedFilesDividerRef.current : null;
+    if (divider && relatedFiles.length > 0 && !relatedFilesCollapsed) {
+      const dividerTop =
+        divider.getBoundingClientRect().top -
+        container.getBoundingClientRect().top +
+        container.scrollTop;
+      const target = dividerTop - container.clientHeight * 0.08;
+      top = Math.max(0, Math.min(maxTop, target));
+    }
+    container.scrollTo({ top, behavior });
+  };
   const activeAskUserCallId = (() => {
     if (!isAwaiting) {
       return "";
@@ -1509,7 +1532,7 @@ function SessionViewerInner({
     );
   }
 
-  const displayFiles = relatedFiles;
+  const displayFiles = showAllFiles ? relatedFiles : relatedFiles.slice(0, 10);
   const displayFileGroups = (() => {
     const currentRootPath = String(rootPath || "").replace(/[\\/]+$/, "");
     const repoGroups = displayFiles.reduce<
@@ -1569,6 +1592,7 @@ function SessionViewerInner({
       })),
     );
   })();
+  const hasMoreFiles = relatedFiles.length > 10;
   const displayName =
     session.name ||
     session.purpose ||
@@ -1576,6 +1600,10 @@ function SessionViewerInner({
     session.session_key ||
     "Session";
   const hasVisibleTimeline = timeline.length > 0;
+  const themeColor = String(rootColor || "").trim() || "var(--accent-color)";
+  // 四横主按钮：浅且暗的 muted 变体（同色相、混灰降明度）；徽标保持纯主题色
+  const themeMuted = `color-mix(in srgb, ${themeColor} 56%, #94a3b8)`;
+  const themeMutedBorder = `color-mix(in srgb, ${themeColor} 20%, transparent)`;
   const userMetaButtonStyle: React.CSSProperties = {
     width: "18px",
     height: "18px",
@@ -1583,7 +1611,7 @@ function SessionViewerInner({
     background: "transparent",
     padding: 0,
     margin: 0,
-    color: "#2563eb",
+    color: themeColor,
     cursor: "pointer",
     fontSize: "14px",
     fontWeight: 800,
@@ -1885,7 +1913,7 @@ function SessionViewerInner({
                 aria-label={t("session.editMessage")}
                 title={t("session.editMessage")}
               >
-                {renderToolIcon("edit")}
+                {renderToolIcon("edit", themeColor)}
               </button>
               {promptSaved ? (
                 <span
@@ -1893,7 +1921,7 @@ function SessionViewerInner({
                   title={t("session.promptSaved")}
                   style={{
                     ...userMetaButtonStyle,
-                    color: "#2563eb",
+                    color: themeColor,
                     fontSize: "13px",
                   }}
                 >
@@ -1985,7 +2013,7 @@ function SessionViewerInner({
                 {copySucceeded ? (
                   <span
                     aria-hidden="true"
-                    style={{ fontSize: "13px", fontWeight: 800, lineHeight: 1 }}
+                    style={{ fontSize: "13px", fontWeight: 800, lineHeight: 1, color: themeColor }}
                   >
                     ✓
                   </span>
@@ -2098,6 +2126,7 @@ function SessionViewerInner({
                         fontSize: "13px",
                         fontWeight: 800,
                         lineHeight: 1,
+                        color: themeColor,
                       }}
                     >
                       ✓
@@ -2303,7 +2332,7 @@ function SessionViewerInner({
                 {loginCodeCopied ? (
                   <span
                     aria-hidden="true"
-                    style={{ fontSize: "13px", fontWeight: 800, lineHeight: 1 }}
+                    style={{ fontSize: "13px", fontWeight: 800, lineHeight: 1, color: themeColor }}
                   >
                     ✓
                   </span>
@@ -2396,11 +2425,13 @@ function SessionViewerInner({
                 onClick={() => onRootClick?.(rootId)}
                 style={{
                   ...rootBadgeButtonStyle,
+                  background: "var(--node-badge-bg)",
+                  color: String(rootColor || "").trim() || "var(--root-badge-text)",
                   flexShrink: 0,
                   cursor: onRootClick ? "pointer" : "default",
                 }}
               >
-                {rootId}
+                {rootDisplayName || rootId}
               </button>
             ) : null}
             <span
@@ -2419,7 +2450,7 @@ function SessionViewerInner({
 
       {/* 滚动容器 */}
       <div style={{ flex: 1, minHeight: 0, minWidth: 0, position: "relative" }}>
-        <div ref={scrollRef} style={{ flex: 1, minHeight: 0, minWidth: 0, height: "100%", overflowY: "auto", overflowX: "hidden", position: "relative", WebkitOverflowScrolling: "touch" }}>
+        <div ref={scrollRef} style={{ flex: 1, minHeight: 0, minWidth: 0, height: "100%", overflowY: useInnerScrollContainer ? "auto" : "visible", overflowX: "hidden", position: "relative", WebkitOverflowScrolling: "touch" }}>
           <div style={{
             width: "100%",
             minWidth: 0,
@@ -2469,34 +2500,38 @@ function SessionViewerInner({
               ),
             )}
             {renderSlashCommandResult()}
-            {(isAwaiting || isStreaming) && (
-              <div
-                style={{
-                  marginTop: "16px",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "6px",
-                  fontSize: "12px",
-                  color: "var(--text-secondary)",
-                }}
-              >
-                <span
+            {(isAwaiting || isStreaming) && (() => {
+              const awaitingColor = String(rootColor || "").trim() || "var(--accent-color)";
+              return (
+                <div
                   style={{
-                    width: "8px",
-                    height: "8px",
-                    borderRadius: "50%",
-                    background: "var(--accent-color)",
-                    animation: "pulse 1s infinite",
+                    marginTop: "16px",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "6px",
+                    fontSize: "12px",
+                    color: "var(--text-secondary)",
                   }}
-                />
+                >
+                  <span
+                    style={{
+                      width: "8px",
+                      height: "8px",
+                      borderRadius: "50%",
+                      background: awaitingColor,
+                      animation: "pulse 1s infinite",
+                    }}
+                  />
                 {isStreaming
                   ? streamStatusText || t("session.generating")
                   : t("session.sentWaiting")}
               </div>
-            )}
+              );
+            })()}
 
-            {relatedFiles.length > 0 && (
+            {relatedFiles.length > 0 && interactionMode !== "drawer" && (
               <div
+                ref={relatedFilesDividerRef}
                 style={{
                   marginTop: "18px",
                   paddingTop: "14px",
@@ -2537,6 +2572,25 @@ function SessionViewerInner({
                       gap: "10px",
                     }}
                   >
+                    {hasMoreFiles ? (
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setShowAllFiles(!showAllFiles);
+                        }}
+                        style={{
+                          background: "none",
+                          border: "none",
+                          padding: 0,
+                          cursor: "pointer",
+                          color: "var(--text-secondary)",
+                          fontSize: "11px",
+                        }}
+                      >
+                        {showAllFiles ? t("session.less") : t("session.more")}
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       onClick={(event) => {
@@ -2639,11 +2693,7 @@ function SessionViewerInner({
                                   : group.repoName || t("session.currentProject")}
                             </div>
                           ) : null}
-                          {group.files.map((file) => {
-                            const stats =
-                              relatedFileStatsByKey[relatedFileStatKey(file)] ||
-                              gitFileStatsByPath[file.path];
-                            return (
+                          {group.files.map((file) => (
                           <div
                             key={`${file.head || "legacy"}:${file.path}`}
                             style={{
@@ -2706,7 +2756,7 @@ function SessionViewerInner({
                               >
                                 {file.name}
                               </div>
-                              {stats ? (
+                              {gitFileStatsByPath[file.path] ? (
                                 <div
                                   style={{
                                     display: "inline-flex",
@@ -2723,7 +2773,7 @@ function SessionViewerInner({
                                       fontVariantNumeric: "tabular-nums",
                                     }}
                                   >
-                                    +{stats.additions}
+                                    +{gitFileStatsByPath[file.path].additions}
                                   </span>
                                   <span
                                     style={{
@@ -2731,7 +2781,7 @@ function SessionViewerInner({
                                       fontVariantNumeric: "tabular-nums",
                                     }}
                                   >
-                                    -{stats.deletions}
+                                    -{gitFileStatsByPath[file.path].deletions}
                                   </span>
                                 </div>
                               ) : null}
@@ -2763,8 +2813,7 @@ function SessionViewerInner({
                               x
                             </button>
                           </div>
-                            );
-                          })}
+                          ))}
                         </div>
                       );
                     })}
@@ -2776,7 +2825,7 @@ function SessionViewerInner({
           </div>
           </div>
         </div>
-        {userMessageSummaries.length > 0 || showJumpToLatest ? (
+        {interactionMode !== "drawer" && (userMessageSummaries.length > 0 || showJumpToLatest) ? (
           <div
             style={{
               position: "absolute",
@@ -2807,8 +2856,8 @@ function SessionViewerInner({
                   alignItems: "center",
                   gap: "6px",
                   height: "34px",
-                  border: "1px solid rgba(37,99,235,0.35)",
-                  background: "#2563eb",
+                  border: `1px solid color-mix(in srgb, ${themeColor} 35%, transparent)`,
+                  background: themeColor,
                   color: "#ffffff",
                   borderRadius: "999px",
                   padding: "0 12px",
@@ -2939,10 +2988,10 @@ function SessionViewerInner({
                     position: "relative",
                     width: "34px",
                     height: "34px",
-                    border: "none",
+                    border: userSummaryOpen ? `1px solid ${themeMuted}` : `1px solid ${themeMutedBorder}`,
                     borderRadius: "8px",
-                    background: userSummaryOpen ? "var(--accent-color)" : "var(--menu-bg)",
-                    color: userSummaryOpen ? "#ffffff" : "var(--text-secondary)",
+                    background: userSummaryOpen ? themeMuted : "var(--menu-bg)",
+                    color: userSummaryOpen ? "#ffffff" : themeMuted,
                     boxShadow: "0 10px 24px rgba(15, 23, 42, 0.16)",
                     display: "inline-flex",
                     alignItems: "center",
@@ -2962,7 +3011,7 @@ function SessionViewerInner({
                       height: "18px",
                       padding: "0 5px",
                       borderRadius: "999px",
-                      background: "#2563eb",
+                      background: themeColor,
                       color: "#ffffff",
                       border: "2px solid var(--menu-bg)",
                       fontSize: "10px",

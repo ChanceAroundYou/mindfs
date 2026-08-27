@@ -16,11 +16,13 @@ type AgentSelectorProps = {
   model?: string;
   mode?: string;
   effort?: string;
+  longContext?: boolean;
   fastService?: "" | "on" | "off";
   agents: AgentStatus[];
   onAgentChange: (agent: string, model?: string) => void;
   onModeChange?: (mode?: string) => void;
   onEffortChange?: (effort?: string) => void;
+  onLongContextChange?: (enabled: boolean) => void;
   onFastServiceChange?: (fastService?: "" | "on" | "off") => void;
   onAgentRestart?: (agent: string) => void | Promise<void>;
   compact?: boolean;
@@ -54,13 +56,38 @@ function AgentMenuPortal({
   return <>{children}</>;
 }
 
+function strip1MSuffix(model: string): string {
+  const trimmed = String(model || "").trim();
+  return trimmed.toLowerCase().endsWith("[1m]") ? trimmed.slice(0, -4).trim() : trimmed;
+}
+
+function isClaudeAliasModelName(model: string): boolean {
+  const base = strip1MSuffix(model).trim().toLowerCase();
+  return base === "fable" || base === "opus" || base === "sonnet" || base === "haiku" || base === "of" || base === "op" || base === "os" || base === "ok" || base === "default";
+}
+
+function claudeModelBase(model: string): string {
+  if (!isClaudeAliasModelName(model)) return strip1MSuffix(model);
+  const base = strip1MSuffix(model);
+  switch (base.toLowerCase()) {
+    case "fable": return "of";
+    case "opus": return "op";
+    case "sonnet": return "os";
+    case "haiku": return "ok";
+    case "of": case "op": case "os": case "ok": return base.toLowerCase();
+    default: return base;
+  }
+}
+
 function hasAgentOptions(agent?: AgentStatus): boolean {
+  const isClaude = String(agent?.name || "").trim().toLowerCase() === "claude";
   return !!(
     agent &&
     ((agent.models?.length ?? 0) > 0 ||
       (agent.modes?.length ?? 0) > 0 ||
       (agent.efforts?.length ?? 0) > 0 ||
-      agent.supports_fast_service)
+      agent.supports_fast_service ||
+      isClaude)
   );
 }
 
@@ -143,11 +170,13 @@ export function AgentSelector({
   model = "",
   mode = "",
   effort = "",
+  longContext = false,
   fastService = "",
   agents,
   onAgentChange,
   onModeChange,
   onEffortChange,
+  onLongContextChange,
   onFastServiceChange,
   onAgentRestart,
   compact = false,
@@ -200,11 +229,15 @@ export function AgentSelector({
       submenuAgentStatus.name === agent
         ? model || fallbackModel
         : fallbackModel;
-    return (
-      (submenuAgentStatus.models ?? []).find(
-        (item) => item.id === targetModel,
-      ) ?? null
-    );
+    const models = submenuAgentStatus.models ?? [];
+    const exact = models.find((item) => item.id === targetModel);
+    if (exact) return exact;
+    // Generic [1m]: probe advertises base ids without suffix, UI may hold base[1m].
+    // Alias family uses canonical alias bases, otherwise stripped bases.
+    if (isClaudeAliasModelName(targetModel)) {
+      return models.find((item) => isClaudeAliasModelName(item.id) && claudeModelBase(item.id) === claudeModelBase(targetModel)) ?? null;
+    }
+    return models.find((item) => strip1MSuffix(item.id) === strip1MSuffix(targetModel)) ?? null;
   }, [submenuAgentStatus, agent, model]);
   const submenuEfforts = useMemo(
     () => submenuSelectedModel?.efforts ?? submenuAgentStatus?.efforts ?? [],
@@ -228,6 +261,10 @@ export function AgentSelector({
   );
   const submenuSupportsServiceTier =
     !!submenuAgentStatus?.supports_fast_service;
+  const submenuSupportsLongContext =
+    String(submenuAgentStatus?.name || "").trim().toLowerCase() === "claude";
+  const longContextEnabled =
+    submenuAgentStatus?.name === agent ? !!longContext : false;
   const fallbackEffort = submenuAgentStatus?.default_effort || "";
   const displayedEffort = submenuIsCodex
     ? effort || fallbackEffort || "Auto"
@@ -370,11 +407,13 @@ export function AgentSelector({
   );
 
   const handleSubmenuToggle = useCallback((entry: AgentStatus) => {
+    const isClaude = String(entry.name || "").trim().toLowerCase() === "claude";
     if (
       (entry.models?.length ?? 0) === 0 &&
       (entry.modes?.length ?? 0) === 0 &&
       (entry.efforts?.length ?? 0) === 0 &&
-      !entry.supports_fast_service
+      !entry.supports_fast_service &&
+      !isClaude
     ) {
       return;
     }
@@ -439,6 +478,10 @@ export function AgentSelector({
     },
     [onModeChange],
   );
+
+  const handleLongContextToggle = useCallback(() => {
+    onLongContextChange?.(!longContextEnabled);
+  }, [onLongContextChange, longContextEnabled]);
 
   const handleAgentRestart = useCallback(
     async (targetAgent: string) => {
@@ -1081,6 +1124,67 @@ export function AgentSelector({
                       </>
                     ) : null}
                   </>
+                ) : null}
+                {submenuSupportsLongContext ? (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      handleLongContextToggle();
+                    }}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: "12px",
+                      width: "100%",
+                      padding: "10px 12px",
+                      border: "none",
+                      borderTop:
+                        modelSectionExpanded ||
+                        submenuModels.length > 0 ||
+                        !!submenuSelectedModel?.id ||
+                        submenuModes.length > 0 ||
+                        submenuSupportsEffort
+                          ? "1px solid var(--menu-divider)"
+                          : "none",
+                      background: "transparent",
+                      cursor: "pointer",
+                      textAlign: "left",
+                    }}
+                  >
+                    <span style={{ fontSize: "11px", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-secondary)" }}>
+                      {t("agent.longContext")}
+                    </span>
+                    <span
+                      aria-hidden="true"
+                      style={{
+                        flex: "0 0 auto",
+                        width: "36px",
+                        height: "20px",
+                        borderRadius: "999px",
+                        padding: "2px",
+                        boxSizing: "border-box",
+                        background: longContextEnabled ? "#3b82f6" : "rgba(0,0,0,0.18)",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: longContextEnabled ? "flex-end" : "flex-start",
+                        transition: "background 0.18s ease",
+                      }}
+                    >
+                      <span
+                        style={{
+                          width: "16px",
+                          height: "16px",
+                          borderRadius: "50%",
+                          background: "#fff",
+                          boxShadow: "0 1px 3px rgba(0,0,0,0.2)",
+                          transition: "transform 0.18s ease",
+                        }}
+                      />
+                    </span>
+                  </button>
                 ) : null}
                 {submenuSupportsServiceTier ? (
                   <>

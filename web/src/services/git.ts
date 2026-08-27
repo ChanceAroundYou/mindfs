@@ -1,4 +1,5 @@
 import { appURL } from "./base";
+import { getRootNodeId } from "./rootNode";
 import { protectedJSON } from "./api";
 import { getCachedGitDiff, setCachedGitDiff, type CachedGitDiffPayload } from "./file";
 
@@ -98,13 +99,14 @@ function normalizeGitActionPayload(payload: any): GitActionPayload {
   };
 }
 
-export async function fetchGitStatus(rootId: string): Promise<GitStatusPayload> {
-  const payload = await protectedJSON<any>(appURL("/api/git/status", new URLSearchParams({ root: rootId })));
+export async function fetchGitStatus(rootId: string, nodeId?: string): Promise<GitStatusPayload> {
+  nodeId = nodeId || getRootNodeId(rootId);
+  const payload = await protectedJSON<any>(appURL("/api/git/status", new URLSearchParams({ root: rootId }), nodeId));
   return normalizeGitStatusPayload(payload);
 }
 
-export async function fetchGitStatusByPath(path: string): Promise<GitStatusPayload> {
-  const payload = await protectedJSON<any>(appURL("/api/git/status", new URLSearchParams({ path })));
+export async function fetchGitStatusByPath(path: string, nodeId?: string): Promise<GitStatusPayload> {
+  const payload = await protectedJSON<any>(appURL("/api/git/status", new URLSearchParams({ path }), nodeId));
   return normalizeGitStatusPayload(payload);
 }
 
@@ -292,8 +294,9 @@ export function clearGitHistoryCache(rootId?: string): void {
 
 export async function fetchGitHistory(
   rootId: string,
-  options?: { beforeCommit?: string; afterCommit?: string; limit?: number; force?: boolean },
+  options?: { beforeCommit?: string; afterCommit?: string; limit?: number; force?: boolean; nodeId?: string },
 ): Promise<GitHistoryPayload> {
+  options = { ...options, nodeId: options?.nodeId || getRootNodeId(rootId) } as any;
   const limit = options?.limit || DEFAULT_HISTORY_LIMIT;
   const beforeCommit = options?.beforeCommit || "";
   const afterCommit = options?.afterCommit || "";
@@ -330,6 +333,7 @@ export async function fetchGitHistory(
         ...(beforeCommit ? { before_commit: beforeCommit } : {}),
         ...(afterCommit ? { after_commit: afterCommit } : {}),
       }),
+      options?.nodeId,
     ),
   ).then((payload) => {
     const normalized = normalizeGitHistoryPayload(payload);
@@ -371,7 +375,8 @@ export async function fetchGitHistory(
   return promise;
 }
 
-export async function fetchGitCommitFiles(rootId: string, commit: string): Promise<GitCommitFilesPayload> {
+export async function fetchGitCommitFiles(rootId: string, commit: string, nodeId?: string): Promise<GitCommitFilesPayload> {
+  nodeId = nodeId || getRootNodeId(rootId);
   const key = `${rootId}:${commit}`;
   const cached = gitCommitFilesCache.get(key);
   if (cached) {
@@ -387,7 +392,7 @@ export async function fetchGitCommitFiles(rootId: string, commit: string): Promi
     return inflight;
   }
   const promise = protectedJSON<any>(
-    appURL("/api/git/commit/files", new URLSearchParams({ root: rootId, commit })),
+    appURL("/api/git/commit/files", new URLSearchParams({ root: rootId, commit }), nodeId),
   ).then((payload) => {
     const normalized = {
       commit: typeof payload?.commit === "string" ? payload.commit : commit,
@@ -403,8 +408,9 @@ export async function fetchGitCommitFiles(rootId: string, commit: string): Promi
   return promise;
 }
 
-export async function fetchGitBranches(rootId: string): Promise<GitBranchesPayload> {
-  const payload = await protectedJSON<any>(appURL("/api/git/branches", new URLSearchParams({ root: rootId })));
+export async function fetchGitBranches(rootId: string, nodeId?: string): Promise<GitBranchesPayload> {
+  nodeId = nodeId || getRootNodeId(rootId);
+  const payload = await protectedJSON<any>(appURL("/api/git/branches", new URLSearchParams({ root: rootId }), nodeId));
   return {
     current: typeof payload?.current === "string" ? payload.current : undefined,
     branches: Array.isArray(payload?.branches)
@@ -418,8 +424,9 @@ export async function fetchGitBranches(rootId: string): Promise<GitBranchesPaylo
   };
 }
 
-export async function checkoutGitBranch(rootId: string, branch: string): Promise<GitStatusPayload> {
-  const payload = await protectedJSON<any>(appURL("/api/git/checkout"), {
+export async function checkoutGitBranch(rootId: string, branch: string, nodeId?: string): Promise<GitStatusPayload> {
+  nodeId = nodeId || getRootNodeId(rootId);
+  const payload = await protectedJSON<any>(appURL("/api/git/checkout", undefined, nodeId), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ root: rootId, branch }),
@@ -427,8 +434,9 @@ export async function checkoutGitBranch(rootId: string, branch: string): Promise
   return normalizeGitStatusPayload(payload?.status || {});
 }
 
-export async function pullGit(rootId: string): Promise<GitActionPayload> {
-  const payload = await protectedJSON<any>(appURL("/api/git/pull"), {
+export async function pullGit(rootId: string, nodeId?: string): Promise<GitActionPayload> {
+  nodeId = nodeId || getRootNodeId(rootId);
+  const payload = await protectedJSON<any>(appURL("/api/git/pull", undefined, nodeId), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ root: rootId }),
@@ -436,8 +444,9 @@ export async function pullGit(rootId: string): Promise<GitActionPayload> {
   return normalizeGitActionPayload(payload);
 }
 
-export async function pushGit(rootId: string): Promise<GitActionPayload> {
-  const payload = await protectedJSON<any>(appURL("/api/git/push"), {
+export async function pushGit(rootId: string, nodeId?: string): Promise<GitActionPayload> {
+  nodeId = nodeId || getRootNodeId(rootId);
+  const payload = await protectedJSON<any>(appURL("/api/git/push", undefined, nodeId), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ root: rootId }),
@@ -445,8 +454,9 @@ export async function pushGit(rootId: string): Promise<GitActionPayload> {
   return normalizeGitActionPayload(payload);
 }
 
-export async function commitGit(rootId: string, message: string): Promise<GitActionPayload> {
-  const payload = await protectedJSON<any>(appURL("/api/git/commit"), {
+export async function commitGit(rootId: string, message: string, nodeId?: string): Promise<GitActionPayload> {
+  nodeId = nodeId || getRootNodeId(rootId);
+  const payload = await protectedJSON<any>(appURL("/api/git/commit", undefined, nodeId), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ root: rootId, message }),
@@ -454,8 +464,9 @@ export async function commitGit(rootId: string, message: string): Promise<GitAct
   return normalizeGitActionPayload(payload);
 }
 
-export async function stageGitItem(rootId: string, item: Pick<GitStatusItem, "path">): Promise<GitActionPayload> {
-  const payload = await protectedJSON<any>(appURL("/api/git/stage"), {
+export async function stageGitItem(rootId: string, item: Pick<GitStatusItem, "path">, nodeId?: string): Promise<GitActionPayload> {
+  nodeId = nodeId || getRootNodeId(rootId);
+  const payload = await protectedJSON<any>(appURL("/api/git/stage", undefined, nodeId), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ root: rootId, path: item.path }),
@@ -463,8 +474,9 @@ export async function stageGitItem(rootId: string, item: Pick<GitStatusItem, "pa
   return normalizeGitActionPayload(payload);
 }
 
-export async function unstageGitItem(rootId: string, item: Pick<GitStatusItem, "path">): Promise<GitActionPayload> {
-  const payload = await protectedJSON<any>(appURL("/api/git/unstage"), {
+export async function unstageGitItem(rootId: string, item: Pick<GitStatusItem, "path">, nodeId?: string): Promise<GitActionPayload> {
+  nodeId = nodeId || getRootNodeId(rootId);
+  const payload = await protectedJSON<any>(appURL("/api/git/unstage", undefined, nodeId), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ root: rootId, path: item.path }),
@@ -472,8 +484,9 @@ export async function unstageGitItem(rootId: string, item: Pick<GitStatusItem, "
   return normalizeGitActionPayload(payload);
 }
 
-export async function discardGitItem(rootId: string, item: Pick<GitStatusItem, "path" | "status">): Promise<GitActionPayload> {
-  const payload = await protectedJSON<any>(appURL("/api/git/discard"), {
+export async function discardGitItem(rootId: string, item: Pick<GitStatusItem, "path" | "status">, nodeId?: string): Promise<GitActionPayload> {
+  nodeId = nodeId || getRootNodeId(rootId);
+  const payload = await protectedJSON<any>(appURL("/api/git/discard", undefined, nodeId), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ root: rootId, path: item.path, status: item.status }),
@@ -481,8 +494,9 @@ export async function discardGitItem(rootId: string, item: Pick<GitStatusItem, "
   return normalizeGitActionPayload(payload);
 }
 
-export async function fetchGitWorktrees(rootId: string): Promise<GitWorktreesPayload> {
-  const payload = await protectedJSON<any>(appURL("/api/git/worktrees", new URLSearchParams({ root: rootId })));
+export async function fetchGitWorktrees(rootId: string, nodeId?: string): Promise<GitWorktreesPayload> {
+  nodeId = nodeId || getRootNodeId(rootId);
+  const payload = await protectedJSON<any>(appURL("/api/git/worktrees", new URLSearchParams({ root: rootId }), nodeId));
   return {
     items: Array.isArray(payload?.items)
       ? payload.items
@@ -503,8 +517,9 @@ export async function createGitWorktree(input: {
   name: string;
   branchMode: "new" | "existing";
   branch?: string;
+  nodeId?: string;
 }): Promise<any> {
-  return protectedJSON<any>(appURL("/api/git/worktrees"), {
+  return protectedJSON<any>(appURL("/api/git/worktrees", undefined, input.nodeId), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -517,8 +532,9 @@ export async function createGitWorktree(input: {
   });
 }
 
-export async function removeGitWorktree(rootId: string): Promise<any> {
-  return protectedJSON<any>(appURL("/api/git/worktrees"), {
+export async function removeGitWorktree(rootId: string, nodeId?: string): Promise<any> {
+  nodeId = nodeId || getRootNodeId(rootId);
+  return protectedJSON<any>(appURL("/api/git/worktrees", undefined, nodeId), {
     method: "DELETE",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ root: rootId }),
@@ -540,8 +556,9 @@ export function buildGitDiffCacheSignature(item?: Partial<GitStatusItem> | null)
 export async function fetchGitDiff(
   rootId: string,
   path: string,
-  options?: { cacheSignature?: string; repoPath?: string },
+  options?: { cacheSignature?: string; repoPath?: string; nodeId?: string },
 ): Promise<GitDiffPayload> {
+  options = { ...options, nodeId: options?.nodeId || getRootNodeId(rootId) } as any;
   const cacheSignature = options?.cacheSignature || "";
   const repoPath = String(options?.repoPath || "").trim();
   if (!repoPath) {
@@ -555,7 +572,7 @@ export async function fetchGitDiff(
   if (repoPath) {
     params.set("repo_path", repoPath);
   }
-  const payload = await protectedJSON<any>(appURL("/api/git/diff", params));
+  const payload = await protectedJSON<any>(appURL("/api/git/diff", params, options?.nodeId));
   const diff = {
     path: typeof payload?.path === "string" ? payload.path : path,
     display_path: typeof payload?.display_path === "string" ? payload.display_path : undefined,
@@ -577,7 +594,9 @@ export async function fetchGitCommitDiff(
   rootId: string,
   commit: string,
   item: Pick<GitStatusItem, "path" | "old_path" | "status" | "additions" | "deletions">,
+  nodeId?: string,
 ): Promise<GitDiffPayload> {
+  nodeId = nodeId || getRootNodeId(rootId);
   const path = item.path;
   const key = `${rootId}:${commit}:${item.old_path || ""}:${path}`;
   const cached = gitCommitDiffCache.get(key);
@@ -594,7 +613,7 @@ export async function fetchGitCommitDiff(
     return inflight;
   }
   const promise = protectedJSON<any>(
-    appURL("/api/git/commit/diff", new URLSearchParams({ root: rootId, commit, path })),
+    appURL("/api/git/commit/diff", new URLSearchParams({ root: rootId, commit, path }), nodeId),
   ).then((payload) => {
     const diff = {
     path: typeof payload?.path === "string" ? payload.path : path,
@@ -621,7 +640,9 @@ export async function fetchGitCommitDiff(
 export async function fetchGitRelatedFileDiff(
   rootId: string,
   file: { path: string; head?: string; repo_path?: string; repo_kind?: string },
+  nodeId?: string,
 ): Promise<GitDiffPayload> {
+  nodeId = nodeId || getRootNodeId(rootId);
   const path = file.path;
   const head = file.head || "";
   const params = new URLSearchParams({ root: rootId, path });
@@ -634,7 +655,7 @@ export async function fetchGitRelatedFileDiff(
   if (file.repo_kind) {
     params.set("repo_kind", file.repo_kind);
   }
-  const payload = await protectedJSON<any>(appURL("/api/git/related-file/diff", params));
+  const payload = await protectedJSON<any>(appURL("/api/git/related-file/diff", params, nodeId));
   return {
     path: typeof payload?.path === "string" ? payload.path : path,
     display_path: typeof payload?.display_path === "string" ? payload.display_path : undefined,

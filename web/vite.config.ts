@@ -1,9 +1,35 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { defineConfig } from "vite";
+import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+
+/**
+ * 单一规范化：与 web/src/services/prefix.ts 的 normalizePrefix 保持同一规则。
+ * 从 VITE_MIND_FS_BASE 得到“无尾斜杠、以 / 开头或空字符串”的规范化部署前缀。
+ * 空字符串 / "/" / "" → ""（根部署）；"mindfs" / "/mindfs/" → "/mindfs"。
+ */
+function normalizeBase(raw: string): string {
+  const v = String(raw || "").trim().replace(/\/+$/, "");
+  if (!v || v === "/") return "";
+  return v.startsWith("/") ? v : `/${v}`;
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * 每次构建生成唯一构建戳，注入所有 JS chunk + SW version。
+ * 目的：Vite 内容哈希在源码未变时产物文件名不变 → SW 缓存名不变 →
+ * service-worker.js 字节不变 → 浏览器永不重装 SW → SHELL_CACHE 永远返回旧 bundle。
+ * 注入随机 stamp 后：chunk 字节必变 → 内容哈希必变 → 文件名必变 → SW 缓存名必变 →
+ * SW 字节必变 → 浏览器重装 SW → activate 清理旧缓存，缓存死锁被打破。
+ */
+function buildStamp(): string {
+  return process.env.MFS_BUILD_STAMP || crypto.randomBytes(8).toString("hex");
+}
 
 function listPublicAssets(publicDir: string): string[] {
   if (!fs.existsSync(publicDir)) {
@@ -46,12 +72,26 @@ function listShellBundleAssets(bundle: Record<string, BundleItem>): string[] {
     .sort();
 }
 
-function buildServiceWorker(precacheUrls: string[], version: string): string {
+function buildServiceWorker(precacheUrls: string[], version: string, relayAliasPrefix: string): string {
   return `const SHELL_CACHE = "mindfs-shell-${version}";
+const RELAY_ALIAS = ${JSON.stringify(relayAliasPrefix)};
 const RUNTIME_CACHE = "mindfs-runtime-${version}";
 const OFFLINE_URL = new URL("./offline.html", self.location.href).toString();
 const INDEX_URL = new URL("./index.html", self.location.href).toString();
 const PRECACHE_URLS = ${JSON.stringify(precacheUrls, null, 2)};
+
+// Strip the deploy sub-path scope prefix (e.g. /mindfs/) so API detection
+// works when MindFS is served under a sub-path behind nginx.
+function scopeRelativePathname(pathname) {
+  const scopeBase = new URL(self.registration.scope).pathname.replace(/\\/$/, "");
+  if (scopeBase && pathname.startsWith(scopeBase + "/")) {
+    return pathname.slice(scopeBase.length) || "/";
+  }
+  if (scopeBase && pathname === scopeBase) {
+    return "/";
+  }
+  return pathname;
+}
 
 function normalizedPathname(pathname) {
   const relayPrefixMatch = pathname.match(/^\\/n\\/[^/]+(?=\\/|$)/);
@@ -139,8 +179,8 @@ self.addEventListener("fetch", (event) => {
   if (url.origin !== self.location.origin) {
     return;
   }
-  const pathname = normalizedPathname(url.pathname);
-  if (pathname.startsWith("/mindfs-assets/")) {
+  const pathname = scopeRelativePathname(normalizedPathname(url.pathname));
+  if (pathname.startsWith(RELAY_ALIAS)) {
     return;
   }
   if (pathname.startsWith("/api/") || pathname === "/api" || pathname === "/ws" || pathname === "/health") {
@@ -209,13 +249,25 @@ async function handleStaticRequest(request) {
 `;
 }
 
-function appShellHTMLPlugin() {
+function appShellHTMLPlugin(opts: {
+  deployPrefix: string;
+  assetRoot: string;
+  relayAliasPrefix: string;
+}) {
+  const { deployPrefix, assetRoot, relayAliasPrefix } = opts;
+  // 构建期按同一规范化部署前缀生成主包匹配正则：覆盖 /<prefix>/assets/index-* 与
+  // relay 别名 /<prefix>-assets/index-*，避免硬编码 /mindfs-assets。
+  // 注意：正则字面量内的 "/" 必须转义为 "\/"，否则注入后成为非法 flags（SyntaxError）。
+  const assetRootNoSlash = assetRoot.replace(/\/+$/, "");
+  const relayNoSlash = relayAliasPrefix.replace(/\/+$/, "");
+  const escLiteral = (value: string) => escapeRegex(value).replace(/\//g, "\\/");
+  const mainAssetReSource = `^\\/(?:${escLiteral(relayNoSlash)}|${escLiteral(assetRootNoSlash)}\\/assets)\\/index-[^/]+\\.(?:js|css)$`;
   return {
     name: "mindfs-app-shell-html",
     transformIndexHtml(html: string) {
       const pwaLinks = [
-        '    <link rel="manifest" href="/manifest.webmanifest" />',
-        '    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />',
+        `    <link rel="manifest" href="${deployPrefix}/manifest.webmanifest" />`,
+        `    <link rel="apple-touch-icon" href="${deployPrefix}/apple-touch-icon.png" />`,
       ].join("\n");
       const pwaMeta = [
         '    <meta name="apple-mobile-web-app-capable" content="yes" />',
@@ -225,6 +277,8 @@ function appShellHTMLPlugin() {
       ].join("\n");
       const appShell = process.env.VITE_APP_SHELL === "1";
       return html
+        .replace("<!--MINDFS_FAVICON_HREF-->", `${deployPrefix}/favicon.svg`)
+        .replace("/<__MINDFS_MAIN_ASSET_RE__>/", `/${mainAssetReSource}/i`)
         .replace("<!--APP_SHELL_PWA_LINKS-->", appShell ? "" : pwaLinks)
         .replace("<!--APP_SHELL_PWA_META-->", appShell ? "" : pwaMeta);
     },
@@ -266,7 +320,7 @@ function appShellExcludeAssetsPlugin() {
   };
 }
 
-function autoPrecachePlugin() {
+function autoPrecachePlugin(relayAliasPrefix: string) {
   return {
     name: "mindfs-auto-precache",
     apply: "build" as const,
@@ -289,23 +343,72 @@ function autoPrecachePlugin() {
       this.emitFile({
         type: "asset",
         fileName: "service-worker.js",
-        source: buildServiceWorker(precacheUrls, version),
+        source: buildServiceWorker(precacheUrls, version, relayAliasPrefix),
       });
     },
   };
 }
 
-export default defineConfig({
-  base: "./",
-  plugins: [tailwindcss(), react(), appShellHTMLPlugin(), appShellExcludeAssetsPlugin(), autoPrecachePlugin()],
-  server: {
-    host: "0.0.0.0",
-    proxy: {
-      "/api": "http://localhost:7331",
-      "/ws": {
-        target: "ws://localhost:7331",
-        ws: true,
-      },
+/**
+ * 构建戳插件：给每个 JS chunk 注入随机构建戳。
+ * 改写 chunk 字节 → Vite 内容哈希必变 → 产物文件名必变 → precacheUrls 必变
+ * → SW version 必变 → service-worker.js 字节必变 → 浏览器重装 SW 清旧缓存。
+ */
+function buildStampPlugin() {
+  const stamp = buildStamp();
+  return {
+    name: "mindfs-build-stamp",
+    apply: "build" as const,
+    renderChunk(code: string, chunk: { fileName: string }) {
+      if (!chunk.fileName.endsWith(".js")) {
+        return null;
+      }
+      const banner = `globalThis.__MFS_BUILD_STAMP__="${stamp}";`;
+      return { code: banner + code, map: null };
     },
-  },
+  };
+}
+
+export default defineConfig(({ mode }) => {
+  // 单一真源：从 VITE_MIND_FS_BASE 得到的规范化部署前缀驱动 base / HTML 注入 / SW / 代理。
+  const env = loadEnv(mode, process.cwd(), "");
+  const rawBase = process.env.VITE_MIND_FS_BASE ?? env.VITE_MIND_FS_BASE ?? "/mindfs";
+  const deployPrefix = normalizeBase(rawBase); // 无尾斜杠、以 / 开头或空字符串
+  const viteBase = deployPrefix === "" ? "/" : `${deployPrefix}/`;
+  const assetRoot = deployPrefix === "" ? "/" : `${deployPrefix}/`;
+  const relayAliasPrefix = deployPrefix === "" ? "/assets/" : `${deployPrefix}-assets/`;
+
+  // 代理键也来自同一部署前缀：/mindfs/api、/mindfs/ws，根部署退化为 /api、/ws。
+  const proxy: Record<string, unknown> = {};
+  if (deployPrefix) {
+    proxy[`${deployPrefix}/api`] = {
+      target: "http://localhost:7331",
+      changeOrigin: true,
+      rewrite: (p: string) => p.replace(new RegExp(`^${escapeRegex(deployPrefix)}`), ""),
+    };
+    proxy[`${deployPrefix}/ws`] = {
+      target: "ws://localhost:7331",
+      ws: true,
+      rewriteWsOrigin: true,
+    };
+  } else {
+    proxy["/api"] = "http://localhost:7331";
+    proxy["/ws"] = { target: "ws://localhost:7331", ws: true };
+  }
+
+  return {
+    base: viteBase,
+    plugins: [
+      tailwindcss(),
+      react(),
+      appShellHTMLPlugin({ deployPrefix, assetRoot, relayAliasPrefix }),
+      appShellExcludeAssetsPlugin(),
+      autoPrecachePlugin(relayAliasPrefix),
+      buildStampPlugin(),
+    ],
+    server: {
+      host: "0.0.0.0",
+      proxy,
+    },
+  };
 });

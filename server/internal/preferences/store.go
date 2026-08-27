@@ -251,6 +251,10 @@ func (s *Store) ApplyAgentDefaults(statuses []agent.Status) []agent.Status {
 		defaults := s.data.Agents[strings.TrimSpace(out[i].Name)]
 		if defaults.Model != "" {
 			out[i].DefaultModelID = defaults.Model
+			// 过期默认模型回归：provider 切换（cc-switch）后旧模型（of/os 等）
+			// 不在当前网关目录内，回退到目录模型避免新建会话直接 400。
+			// 存储保留原值，切回原 provider 时自动恢复。
+			out[i] = agent.SanitizeDefaultModelID(out[i])
 		}
 		if defaults.Effort != "" {
 			out[i].DefaultEffort = defaults.Effort

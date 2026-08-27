@@ -4,7 +4,7 @@ import path from "node:path";
 import ts from "typescript";
 import vm from "node:vm";
 
-const sourcePath = path.resolve("src/services/sessionListMerge.ts");
+const sourcePath = path.resolve(import.meta.dirname, "../src/services/sessionListMerge.ts");
 const source = fs.readFileSync(sourcePath, "utf8");
 const compiled = ts.transpileModule(source, {
   compilerOptions: {

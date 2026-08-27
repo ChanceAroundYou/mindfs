@@ -1,4 +1,6 @@
 import { appURL, wsURL } from "./base";
+import { getRootNodeId } from "./rootNode";
+import { scopeSessionKey } from "./scope";
 import { protectedFetch, protectedJSON } from "./api";
 import { e2eeService } from "./e2ee";
 
@@ -117,6 +119,8 @@ export type Session = {
   related_files?: RelatedFile[];
   related_worktree?: RelatedWorktree | null;
   pinned_at?: string | null;
+  /** 持久化缓存截断标记：true 表示缓存只含最近 N 条 exchanges，读取方应全量拉取补段 */
+  truncated?: boolean;
   exchange_aux?: Record<string, ExchangeAux[]>;
   exchanges?: Array<{
     seq?: number;
@@ -306,6 +310,7 @@ class SessionService {
   private reconnectDelayMs = 1000;
   private fastReconnectUntil = 0;
   private rootId: string | null = null;
+  private nodeId: string | null = null;
   private hasConnected = false;
   private readonly clientId = this.generateClientId();
   private readonly maxReconnectDelayMs = 30000;
@@ -344,26 +349,43 @@ class SessionService {
     return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
   }
 
-  private async buildWSUrl(): Promise<string> {
+  private async buildWSUrl(nodeId?: string): Promise<string> {
     const params = new URLSearchParams({ client_id: this.clientId });
-    const proofTarget = wsURL("/ws", params);
+    const proofTarget = wsURL("/ws", params, nodeId);
     if (e2eeService.isRequired()) {
       const proofParams = await e2eeService.wsProofParams("GET", proofTarget);
       for (const [key, value] of proofParams) {
         params.set(key, value);
       }
     }
-    return wsURL("/ws", params);
+    return wsURL("/ws", params, nodeId);
   }
 
-  connect(rootId: string) {
+  connect(rootId: string, nodeId?: string) {
+    const nextNodeId = nodeId !== undefined ? (nodeId || null) : this.nodeId;
+    const nodeIdChanged = nextNodeId !== this.nodeId;
     this.rootId = rootId;
+    if (nodeId !== undefined) this.nodeId = nextNodeId;
     if (this.ws?.readyState === WebSocket.OPEN) {
-      this.emit({ type: this.hasConnected ? "ws.reconnected" : "ws.connected" });
-      this.hasConnected = true;
+      if (!nodeIdChanged) {
+        this.emit({ type: this.hasConnected ? "ws.reconnected" : "ws.connected" });
+        this.hasConnected = true;
+        return;
+      }
+      this.clearReconnectTimer();
+      this.closeSocket();
+      this.emit({ type: this.hasConnected ? "ws.reconnecting" : "ws.connecting" });
+      void this.openSocket();
       return;
     }
     if (this.openingSocket || this.ws?.readyState === WebSocket.CONNECTING) {
+      if (nodeIdChanged) {
+        this.clearReconnectTimer();
+        this.closeSocket();
+        this.emit({ type: this.hasConnected ? "ws.reconnecting" : "ws.connecting" });
+        void this.openSocket();
+        return;
+      }
       if (
         this.connectingStartedAt > 0 &&
         Date.now() - this.connectingStartedAt > this.connectTimeoutMs
@@ -389,7 +411,7 @@ class SessionService {
     this.openingSocket = true;
     let target = "";
     try {
-      target = await this.buildWSUrl();
+      target = await this.buildWSUrl(this.nodeId || undefined);
     } catch (err) {
       this.openingSocket = false;
       console.error("[Session] Failed to prepare WebSocket proof:", err);
@@ -545,17 +567,19 @@ class SessionService {
     ) {
       this.reconnectNow();
     }
+    this.probeConnection();
   }
 
   private reconnectNow() {
     if (!this.rootId) return;
     const rootId = this.rootId;
+    const nodeId = this.nodeId || undefined;
     this.clearReconnectTimer();
     this.clearProbe();
     this.closeSocket();
     this.reconnectDelayMs = 1000;
     this.fastReconnectUntil = Date.now() + this.fastReconnectWindowMs;
-    this.connect(rootId);
+    this.connect(rootId, nodeId);
   }
 
   private probeConnection() {
@@ -629,7 +653,7 @@ class SessionService {
     this.reconnectTimer = window.setTimeout(() => {
       this.reconnectTimer = null;
       if (this.rootId) {
-        this.connect(this.rootId);
+        this.connect(this.rootId, this.nodeId || undefined);
       }
     }, delay);
   }
@@ -1075,9 +1099,10 @@ class SessionService {
 
   async fetchSessions(
     rootId: string,
-    options?: FetchSessionsOptions,
+    options?: FetchSessionsOptions & { nodeId?: string },
   ): Promise<SessionListPayload> {
     try {
+      (options as any).nodeId = (options as any)?.nodeId || getRootNodeId(rootId);
       const params = new URLSearchParams({ root: rootId });
       if (options?.beforeTime) {
         params.set("before_time", options.beforeTime);
@@ -1094,7 +1119,7 @@ class SessionService {
       if (options?.includeChildren) {
         params.set("include_children", "1");
       }
-      const data = await protectedJSON<any>(appURL("/api/sessions", params));
+      const data = await protectedJSON<any>(appURL("/api/sessions", params, (options as any)?.nodeId));
       if (Array.isArray(data)) {
         return { items: data, pinnedItems: [], pinnedKeys: [], totalCount: data.length };
       }
@@ -1111,13 +1136,13 @@ class SessionService {
     }
   }
 
-  async fetchMultiRootSessions(limitPerRoot = 6): Promise<MultiRootSessionGroup[]> {
+  async fetchMultiRootSessions(limitPerRoot = 6, nodeId?: string): Promise<MultiRootSessionGroup[]> {
     try {
       const params = new URLSearchParams({ multi_root: "1" });
       if (limitPerRoot > 0) {
         params.set("limit_per_root", String(limitPerRoot));
       }
-      const data = await protectedJSON<any>(appURL("/api/sessions", params));
+      const data = await protectedJSON<any>(appURL("/api/sessions", params, (nodeId as any)));
       const groups = Array.isArray(data?.groups) ? data.groups : [];
       return groups.map((group: any) => ({
         rootId: String(group?.root_id || group?.rootId || ""),
@@ -1144,9 +1169,10 @@ class SessionService {
   async fetchChildSessions(
     rootId: string,
     parentSessionKey: string,
-    options?: { beforeTime?: string; limit?: number },
+    options?: { beforeTime?: string; limit?: number; nodeId?: string },
   ): Promise<Session[]> {
     try {
+      (options as any).nodeId = (options as any)?.nodeId || getRootNodeId(rootId);
       const params = new URLSearchParams({
         root: rootId,
         parent_session_key: parentSessionKey,
@@ -1157,7 +1183,7 @@ class SessionService {
       if (typeof options?.limit === "number" && options.limit > 0) {
         params.set("limit", String(options.limit));
       }
-      const data = await protectedJSON<any[]>(appURL("/api/sessions/children", params));
+      const data = await protectedJSON<any[]>(appURL("/api/sessions/children", params, (options as any)?.nodeId));
       return Array.isArray(data) ? data : [];
     } catch (err) {
       console.error("[Session] Failed to fetch child sessions:", err);
@@ -1169,9 +1195,10 @@ class SessionService {
     rootId: string,
     query: string,
     limit?: number,
-    options?: { multiRoot?: boolean },
+    options?: { multiRoot?: boolean; nodeId?: string },
   ): Promise<SessionSearchHit[]> {
     try {
+      (options as any).nodeId = (options as any)?.nodeId || getRootNodeId(rootId);
       const trimmed = query.trim();
       if ((!rootId && !options?.multiRoot) || !trimmed) {
         return [];
@@ -1185,7 +1212,7 @@ class SessionService {
       if (typeof limit === "number" && limit > 0) {
         params.set("limit", String(limit));
       }
-      const data = await protectedJSON<any>(appURL("/api/sessions/search", params));
+      const data = await protectedJSON<any>(appURL("/api/sessions/search", params, (options as any)?.nodeId));
       return Array.isArray(data?.items)
         ? (data.items as SessionSearchHit[])
         : [];
@@ -1199,14 +1226,16 @@ class SessionService {
     rootId: string,
     sessionKey: string,
     seq?: number,
+    nodeId?: string,
   ): Promise<Session | null> {
     try {
+      nodeId = nodeId || getRootNodeId(rootId);
       const params = new URLSearchParams({ root: rootId });
       if (typeof seq === "number" && seq > 0) {
         params.set("seq", String(seq));
       }
       const data = await protectedJSON<Session>(
-        appURL(`/api/sessions/${encodeURIComponent(sessionKey)}`, params),
+        appURL(`/api/sessions/${encodeURIComponent(sessionKey)}`, params, nodeId),
       );
       return data as Session;
     } catch (err) {
@@ -1219,14 +1248,16 @@ class SessionService {
     rootId: string,
     sessionKey: string,
     seq?: number,
+    nodeId?: string,
   ): Promise<Session | null> {
     try {
+      nodeId = nodeId || getRootNodeId(rootId);
       const params = new URLSearchParams({ root: rootId });
       if (typeof seq === "number" && seq > 0) {
         params.set("seq", String(seq));
       }
       const data = await protectedJSON<Session>(
-        appURL(`/api/sessions/${encodeURIComponent(sessionKey)}/sync`, params),
+        appURL(`/api/sessions/${encodeURIComponent(sessionKey)}/sync`, params, nodeId),
         { method: "POST" },
       );
       return data as Session;
@@ -1240,14 +1271,17 @@ class SessionService {
     rootId: string,
     sessionKey: string,
     callId: string,
+    nodeId?: string,
   ): Promise<ToolCall | null> {
     try {
       if (!rootId || !sessionKey || !callId) return null;
+      nodeId = nodeId || getRootNodeId(rootId);
       const params = new URLSearchParams({ root: rootId });
       const data = await protectedJSON<{ toolcall?: ToolCall; toolCall?: ToolCall } | ToolCall>(
         appURL(
           `/api/sessions/${encodeURIComponent(sessionKey)}/toolcalls/${encodeURIComponent(callId)}`,
           params,
+          nodeId,
         ),
       );
       const wrapped = data as { toolcall?: ToolCall; toolCall?: ToolCall };
@@ -1264,8 +1298,10 @@ class SessionService {
   async getSessionRelatedFiles(
     rootId: string,
     sessionKey: string,
+    nodeId?: string,
   ): Promise<RelatedFile[]> {
     try {
+      nodeId = nodeId || getRootNodeId(rootId);
       const params = new URLSearchParams({
         root: rootId,
       });
@@ -1273,6 +1309,7 @@ class SessionService {
         appURL(
           `/api/sessions/${encodeURIComponent(sessionKey)}/related-files`,
           params,
+          nodeId,
         ),
       );
       return Array.isArray(data) ? (data as RelatedFile[]) : [];
@@ -1289,8 +1326,10 @@ class SessionService {
     head = "",
     repoPath = "",
     repoKind = "",
+    nodeId?: string,
   ): Promise<boolean> {
     try {
+      nodeId = nodeId || getRootNodeId(rootId);
       const params = new URLSearchParams({ root: rootId, path });
       if (head) {
         params.set("head", head);
@@ -1305,6 +1344,7 @@ class SessionService {
         appURL(
           `/api/sessions/${encodeURIComponent(sessionKey)}/related-files`,
           params,
+          nodeId,
         ),
         { method: "DELETE" },
       );
@@ -1318,11 +1358,12 @@ class SessionService {
     }
   }
 
-  async deleteSession(rootId: string, sessionKey: string): Promise<boolean> {
+  async deleteSession(rootId: string, sessionKey: string, nodeId?: string): Promise<boolean> {
     try {
+      nodeId = nodeId || getRootNodeId(rootId);
       const params = new URLSearchParams({ root: rootId });
       const res = await protectedFetch(
-        appURL(`/api/sessions/${encodeURIComponent(sessionKey)}`, params),
+        appURL(`/api/sessions/${encodeURIComponent(sessionKey)}`, params, nodeId),
         { method: "DELETE" },
       );
       if (!res.ok) {
@@ -1339,13 +1380,16 @@ class SessionService {
     rootId: string,
     sessionKey: string,
     name: string,
+    nodeId?: string,
   ): Promise<Session | null> {
     try {
+      nodeId = nodeId || getRootNodeId(rootId);
       const params = new URLSearchParams({ root: rootId });
       const data = await protectedJSON<Session>(
         appURL(
           `/api/sessions/${encodeURIComponent(sessionKey)}/rename`,
           params,
+          nodeId,
         ),
         {
           method: "POST",
@@ -1366,13 +1410,16 @@ class SessionService {
     rootId: string,
     sessionKey: string,
     pinned: boolean,
+    nodeId?: string,
   ): Promise<Session | null> {
     try {
+      nodeId = nodeId || getRootNodeId(rootId);
       const params = new URLSearchParams({ root: rootId });
       const data = await protectedJSON<Session>(
         appURL(
           `/api/sessions/${encodeURIComponent(sessionKey)}/pin`,
           params,
+          nodeId,
         ),
         {
           method: "POST",
@@ -1393,13 +1440,15 @@ class SessionService {
     rootId: string,
     sessionKey: string,
     seq: number,
+    nodeId?: string,
   ): Promise<{ session_key: string; session?: Session } | null> {
     try {
       if (!rootId || !sessionKey || !seq) {
         return null;
       }
+      nodeId = nodeId || getRootNodeId(rootId);
       return await protectedJSON<{ session_key: string; session?: Session }>(
-        appURL("/api/sessions/fork"),
+        appURL("/api/sessions/fork", undefined, nodeId),
         {
           method: "POST",
           headers: {
@@ -1421,11 +1470,12 @@ class SessionService {
   async fetchExternalSessions(
     rootId: string,
     agent: string,
-    options?: FetchExternalSessionsOptions,
+    options?: FetchExternalSessionsOptions & { nodeId?: string },
   ): Promise<Session[]> {
     if (!rootId || !agent) {
       return [];
     }
+    (options as any).nodeId = (options as any)?.nodeId || getRootNodeId(rootId);
     const params = new URLSearchParams({ root: rootId, agent });
     if (options?.beforeTime) {
       params.set("before_time", options.beforeTime);
@@ -1439,7 +1489,7 @@ class SessionService {
     if (typeof options?.limit === "number" && options.limit > 0) {
       params.set("limit", String(options.limit));
     }
-    const data = await protectedJSON<any[]>(appURL("/api/sessions/external", params));
+    const data = await protectedJSON<any[]>(appURL("/api/sessions/external", params, (options as any)?.nodeId));
     return Array.isArray(data) ? data : [];
   }
 
@@ -1447,9 +1497,11 @@ class SessionService {
     rootId: string,
     agent: string,
     agentSessionId: string,
+    nodeId?: string,
   ): Promise<{ session_key: string } | null> {
     try {
-      return await protectedJSON<{ session_key: string }>(appURL("/api/sessions/import"), {
+      nodeId = nodeId || getRootNodeId(rootId);
+      return await protectedJSON<{ session_key: string }>(appURL("/api/sessions/import", undefined, nodeId), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1470,6 +1522,7 @@ class SessionService {
     rootId: string,
     agent: string,
     agentSessionIds: string[],
+    nodeId?: string,
   ): Promise<{
     items: Array<{
       agent_session_id: string;
@@ -1484,7 +1537,8 @@ class SessionService {
     }>;
   } | null> {
     try {
-      return await protectedJSON(appURL("/api/sessions/import/batch"), {
+      nodeId = nodeId || getRootNodeId(rootId);
+      return await protectedJSON(appURL("/api/sessions/import/batch", undefined, nodeId), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1507,6 +1561,7 @@ export const sessionService = new SessionService();
 type CachedSessionRecord = {
   cacheKey: string;
   rootId: string;
+  nodeId?: string;
   sessionKey: string;
   touchedAt: number;
   session: Session;
@@ -1525,8 +1580,12 @@ const SESSION_CACHE_VERSION = 3;
 const MULTI_ROOT_SESSION_LIST_CACHE_KEY = "multi-root";
 let sessionDBPromise: Promise<IDBDatabase> | null = null;
 
-function buildSessionCacheKey(rootId: string, sessionKey: string): string {
-  return `${rootId}::${sessionKey}`;
+function buildSessionCacheKey(
+  rootId: string,
+  sessionKey: string,
+  nodeId?: string,
+): string {
+  return scopeSessionKey(String(nodeId || "").trim(), rootId, sessionKey);
 }
 
 function openSessionDB(): Promise<IDBDatabase> {
@@ -1795,11 +1854,12 @@ function appendSessionDelta(
 async function loadCachedSession(
   rootId: string,
   sessionKey: string,
+  nodeId?: string,
 ): Promise<Session | null> {
   try {
     const record = await withSessionStore("readonly", (store) =>
       sessionRequestToPromise(
-        store.get(buildSessionCacheKey(rootId, sessionKey)) as IDBRequest<
+        store.get(buildSessionCacheKey(rootId, sessionKey, nodeId)) as IDBRequest<
           CachedSessionRecord | undefined
         >,
       ),
@@ -1813,14 +1873,16 @@ async function loadCachedSession(
 async function saveCachedSession(
   rootId: string,
   session: Session | null | undefined,
+  nodeId?: string,
 ): Promise<void> {
   if (!rootId || !session?.key) {
     return;
   }
   const persistentSession = toPersistentSession(session);
   const record: CachedSessionRecord = {
-    cacheKey: buildSessionCacheKey(rootId, session.key),
+    cacheKey: buildSessionCacheKey(rootId, session.key, nodeId),
     rootId,
+    nodeId: String(nodeId || "").trim() || undefined,
     sessionKey: session.key,
     touchedAt: Date.now(),
     session: persistentSession,
@@ -1835,20 +1897,25 @@ async function saveCachedSession(
 export async function deleteCachedSession(
   rootId: string,
   sessionKey: string,
+  nodeId?: string,
 ): Promise<void> {
   try {
     await withSessionStore("readwrite", (store) =>
       sessionRequestToPromise(
-        store.delete(buildSessionCacheKey(rootId, sessionKey)),
+        store.delete(buildSessionCacheKey(rootId, sessionKey, nodeId)),
       ),
     );
   } catch {}
 }
 
-export async function clearCachedSessionsForRoot(rootId: string): Promise<void> {
+export async function clearCachedSessionsForRoot(
+  rootId: string,
+  nodeId?: string,
+): Promise<void> {
   if (!rootId) {
     return;
   }
+  const nid = String(nodeId || "").trim();
   try {
     await withSessionStore("readwrite", async (store) => {
       const entries =
@@ -1857,7 +1924,13 @@ export async function clearCachedSessionsForRoot(rootId: string): Promise<void> 
         )) || [];
       await Promise.all(
         entries
-          .filter((record) => record.rootId === rootId)
+          // 未传 nodeId 时清整棵 root（历史行为）；传了则只清该节点，
+          // 并顺带删除遗留的 node-blind 旧键（无 nodeId 字段的记录）
+          .filter(
+            (record) =>
+              record.rootId === rootId &&
+              (!nid || record.nodeId === nid || !record.nodeId),
+          )
           .map((record) => sessionRequestToPromise(store.delete(record.cacheKey))),
       );
     });
@@ -1878,24 +1951,58 @@ function cloneSession(session: Session): Session {
   };
 }
 
+const SESSION_CACHE_MAX_EXCHANGES = 500;
+const SESSION_CACHE_MAX_TEXT = 200 * 1024;
+
+/**
+ * 截断到 meta + 最近 N 条（含文本上限）——避免每次打开大 session 把整份
+ * JSONL（可达 MB 级）全量写进 IndexedDB 卡主线程。截断时置 truncated 标记，
+ * 读取方下次以全量拉取补段（见 syncSession）。
+ */
 function toPersistentSession(session: Session): Session {
+  const exchanges = Array.isArray(session.exchanges)
+    ? session.exchanges.filter((exchange) => {
+        const seq = Number((exchange as any)?.seq || 0);
+        return Number.isFinite(seq) && seq > 0;
+      })
+    : [];
+  const exchange_aux = toPersistentExchangeAux(session.exchange_aux);
+  if (exchanges.length <= SESSION_CACHE_MAX_EXCHANGES) {
+    let text = 0;
+    for (const exchange of exchanges) {
+      text += String((exchange as any)?.content || "").length;
+    }
+    if (text <= SESSION_CACHE_MAX_TEXT) {
+      return { ...session, exchanges, exchange_aux };
+    }
+  }
+  const truncatedCount = exchanges.length - SESSION_CACHE_MAX_EXCHANGES;
+  const tail = exchanges.slice(Math.max(0, truncatedCount));
+  let text = 0;
+  let extraSliced = 0;
+  for (let i = tail.length - 1; i >= 0; i -= 1) {
+    const itemText = String((tail as any)[i]?.content || "").length;
+    if (text + itemText > SESSION_CACHE_MAX_TEXT) {
+      extraSliced += 1;
+      continue;
+    }
+    text += itemText;
+  }
+  const kept = extraSliced > 0 ? tail.slice(0, tail.length - extraSliced) : tail;
   return {
     ...session,
-    exchanges: Array.isArray(session.exchanges)
-      ? session.exchanges.filter((exchange) => {
-          const seq = Number((exchange as any)?.seq || 0);
-          return Number.isFinite(seq) && seq > 0;
-        })
-      : [],
-    exchange_aux: toPersistentExchangeAux(session.exchange_aux),
+    truncated: true,
+    exchanges: kept,
+    exchange_aux,
   };
 }
 
 export async function getCachedSession(
   rootId: string,
   sessionKey: string,
+  nodeId?: string,
 ): Promise<Session | null> {
-  const cached = await loadCachedSession(rootId, sessionKey);
+  const cached = await loadCachedSession(rootId, sessionKey, nodeId);
   return cached ? cloneSession(cached) : null;
 }
 
@@ -1903,8 +2010,9 @@ export async function setCachedSessionRelatedFiles(
   rootId: string,
   sessionKey: string,
   relatedFiles: RelatedFile[],
+  nodeId?: string,
 ): Promise<Session | null> {
-  const cached = await loadCachedSession(rootId, sessionKey);
+  const cached = await loadCachedSession(rootId, sessionKey, nodeId);
   if (!cached) {
     return null;
   }
@@ -1912,23 +2020,29 @@ export async function setCachedSessionRelatedFiles(
     ...cached,
     related_files: Array.isArray(relatedFiles) ? [...relatedFiles] : [],
   };
-  await saveCachedSession(rootId, next);
+  await saveCachedSession(rootId, next, nodeId);
   return cloneSession(next);
 }
 
 export async function syncSession(
   rootId: string,
   sessionKey: string,
-  options?: { full?: boolean },
+  options?: { full?: boolean; nodeId?: string },
 ): Promise<SyncSessionResult> {
-  const base = await getCachedSession(rootId, sessionKey);
-  const seq = getSessionMaxSeq(base);
-  const incoming = options?.full
-    ? await sessionService.syncExternalSession(rootId, sessionKey, seq)
-    : await sessionService.getSession(rootId, sessionKey, seq);
+  const base = await getCachedSession(rootId, sessionKey, options?.nodeId);
+  // 缓存被截断（truncated）时 base 缺中间段：丢弃 base 走全量拉取，否则 UI 会缺消息。
+  const baseTruncated = !!(base as any)?.truncated;
+  const seq = baseTruncated ? 0 : getSessionMaxSeq(base);
+  // truncated 只需轻量 GET 全量（非 syncExternalSession 的手动转录同步重端点）。
+  const incoming = baseTruncated
+    ? await sessionService.getSession(rootId, sessionKey, 0, options?.nodeId)
+    : options?.full
+      ? await sessionService.syncExternalSession(rootId, sessionKey, seq, options?.nodeId)
+      : await sessionService.getSession(rootId, sessionKey, seq, options?.nodeId);
   if (!incoming) {
     return { session: base, hasDelta: false };
   }
+  const effectiveBase = baseTruncated ? null : base;
   const incomingExchanges = Array.isArray(incoming.exchanges)
     ? incoming.exchanges
     : [];
@@ -1939,7 +2053,7 @@ export async function syncSession(
   const transientTail = incomingExchanges.filter(
     (exchange) => Number((exchange as any)?.seq || 0) === 0,
   );
-  const persistedSession = appendSessionDelta(base, {
+  const persistedSession = appendSessionDelta(effectiveBase, {
     ...incoming,
     key: sessionKey,
     exchanges: persistedDelta,
@@ -1948,7 +2062,7 @@ export async function syncSession(
   if (!persistedSession) {
     return { session: null, hasDelta: false };
   }
-  await saveCachedSession(rootId, persistedSession);
+  await saveCachedSession(rootId, persistedSession, options?.nodeId);
   const displaySession = withSessionMeta(persistedSession, {
     ...incoming,
     key: sessionKey,

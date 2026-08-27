@@ -25,6 +25,9 @@ LDFLAGS="-s -w -X main.version=${VERSION}"
 if [[ -n "${MINDFS_RELEASE_PUBLIC_KEY:-}" ]]; then
   LDFLAGS="${LDFLAGS} -X mindfs/server/internal/update.releaseManifestPublicKey=${MINDFS_RELEASE_PUBLIC_KEY}"
 fi
+# 与前端 VITE_MIND_FS_BASE 保持一致的后端部署前缀
+MIND_FS_BASE="${MIND_FS_BASE:-/mindfs}"
+LDFLAGS="${LDFLAGS} -X mindfs/internal/deploy.Prefix=${MIND_FS_BASE}"
 
 built_dirs=()
 for PLATFORM in "${PLATFORMS[@]}"; do

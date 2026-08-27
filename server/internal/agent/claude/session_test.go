@@ -2,6 +2,8 @@ package claude
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -36,6 +38,32 @@ func TestAppendClaudeDeveloperInstructionsUsesCLIAppendSystemPrompt(t *testing.T
 	value, ok := options.ExtraArgs["append-system-prompt"]
 	if !ok || value == nil || *value != "render markdown" {
 		t.Fatalf("append-system-prompt extra arg = %#v", value)
+	}
+}
+
+func TestClaudeListModelsResolvesOneMModelAlias(t *testing.T) {
+	if got := resolveClaudeBaseAlias(strip1MSuffix("of[1m]")); got != "of" {
+		t.Fatalf("base alias = %q, want of", got)
+	}
+	if got := resolveClaudeBaseAlias(strip1MSuffix("fable")); got != "of" {
+		t.Fatalf("advertised alias = %q, want of", got)
+	}
+}
+
+func TestClaudeContextWindowPrefersCurrentModelUsage(t *testing.T) {
+	s := &session{model: "of[1m]"}
+
+	s.updateContextWindow(claudeagent.ResultMessage{ModelUsage: map[string]claudeagent.ModelUsage{
+		"of":     {InputTokens: 130053, OutputTokens: 1645, ContextWindow: 200000},
+		"of[1m]": {InputTokens: 66991, OutputTokens: 344, ContextWindow: 1000000},
+	}})
+
+	contextWindow, err := s.ContextWindow(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contextWindow.ModelContextWindow != 1000000 {
+		t.Fatalf("context window = %d, want 1000000", contextWindow.ModelContextWindow)
 	}
 }
 
@@ -451,5 +479,143 @@ func TestToolResultUpdateFallsBackToOnlyPendingTool(t *testing.T) {
 	}
 	if len(update.Content) != 1 || !strings.Contains(update.Content[0].Text, "command output") {
 		t.Fatalf("content = %#v, want command output", update.Content)
+	}
+}
+
+func TestClaudeThirdPartyModelPassthrough(t *testing.T) {
+	if got := canonicalClaudeModel("deepseek-v4-pro"); got != "deepseek-v4-pro" {
+		t.Fatalf("canonical third-party = %q, want deepseek-v4-pro", got)
+	}
+	if got := canonicalClaudeModel("DeepSeek-V4-Pro"); got != "DeepSeek-V4-Pro" {
+		t.Fatalf("canonical case preserved = %q, want DeepSeek-V4-Pro", got)
+	}
+	if got := with1MSuffix("deepseek-v4-pro", true); got != "deepseek-v4-pro[1m]" {
+		t.Fatalf("with1M third-party enabled = %q, want deepseek-v4-pro[1m]", got)
+	}
+	if got := with1MSuffix("deepseek-v4-pro", false); got != "deepseek-v4-pro" {
+		t.Fatalf("with1M third-party disabled = %q, want deepseek-v4-pro", got)
+	}
+	// alias family still canonicalizes
+	if got := canonicalClaudeModel("fable"); got != "of" {
+		t.Fatalf("canonical fable = %q, want of", got)
+	}
+	if got := canonicalClaudeModel("of[1m]"); got != "of[1m]" {
+		t.Fatalf("canonical of[1m] = %q, want of[1m]", got)
+	}
+	if got := with1MSuffix("of", true); got != "of[1m]" {
+		t.Fatalf("with1M alias = %q, want of[1m]", got)
+	}
+	if got := with1MSuffix("os[1m]", false); got != "os" {
+		t.Fatalf("with1M strip alias = %q, want os", got)
+	}
+	if isClaudeAliasModel("deepseek-v4-pro") {
+		t.Fatalf("deepseek should not be alias model")
+	}
+	if isClaudeAliasModel("glm-4") || isClaudeAliasModel("glm-4-plus") {
+		t.Fatalf("glm should not be alias model")
+	}
+	if got := canonicalClaudeModel("glm-4"); got != "glm-4" {
+		t.Fatalf("canonical glm = %q, want glm-4", got)
+	}
+	if got := canonicalClaudeModel("GLM-4-Plus"); got != "GLM-4-Plus" {
+		t.Fatalf("canonical glm case preserved = %q, want GLM-4-Plus", got)
+	}
+	if got := with1MSuffix("glm-4", true); got != "glm-4[1m]" {
+		t.Fatalf("with1M glm enabled = %q, want glm-4[1m]", got)
+	}
+	if got := with1MSuffix("glm-4[1m]", false); got != "glm-4" {
+		t.Fatalf("with1M glm strip = %q, want glm-4", got)
+	}
+	if !isClaudeAliasModel("of") || !isClaudeAliasModel("fable[1m]") {
+		t.Fatalf("alias family should be detected")
+	}
+}
+
+func TestResolveClaudeModelArg(t *testing.T) {
+	// cc-switch 切到 DeepSeek 上游时写入的 env 形态：
+	// ANTHROPIC_DEFAULT_SONNET_MODEL = "deepseek-v4-flash[1M]"，ANTHROPIC_MODEL = "sonnet"。
+	fullEnv := map[string]string{
+		"ANTHROPIC_MODEL":                "sonnet",
+		"ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-flash[1M]",
+		"ANTHROPIC_DEFAULT_OPUS_MODEL":   "deepseek-v4-pro[1M]",
+		"ANTHROPIC_DEFAULT_FABLE_MODEL":  "of",
+	}
+
+	cases := []struct {
+		name   string
+		model  string
+		env    map[string]string
+		expect string
+	}{
+		{"empty", "", fullEnv, ""},
+		{"alias no toggle -> env stripped", "os", fullEnv, "deepseek-v4-flash"},
+		{"alias toggle lower -> env as-is", "os[1m]", fullEnv, "deepseek-v4-flash[1M]"},
+		{"alias toggle upper variant -> env as-is", "os[1M]", fullEnv, "deepseek-v4-flash[1M]"},
+		{"fable alias -> fable env", "fable", fullEnv, "of"},
+		{"fable display of -> fable env", "of", fullEnv, "of"},
+		{"opus alias -> opus env stripped", "op", fullEnv, "deepseek-v4-pro"},
+		{"default no ANTHROPIC_MODEL -> default", "default", map[string]string{}, "default"},
+		{"default[1m] no env -> default toggle", "default[1m]", map[string]string{}, "default[1m]"},
+		{"default -> recursive env(sonnet) result", "default", fullEnv, "deepseek-v4-flash"},
+		{"default[1m] -> recursive toggle preserved", "default[1m]", fullEnv, "deepseek-v4-flash[1M]"},
+		{"missing env -> fallback tier name", "op", map[string]string{"ANTHROPIC_DEFAULT_SONNET_MODEL": "x"}, "opus"},
+		{"missing env toggle -> tier name toggle", "op[1m]", map[string]string{"ANTHROPIC_DEFAULT_SONNET_MODEL": "x"}, "opus[1m]"},
+		{"third-party passthrough", "d4p", fullEnv, "d4p"},
+		{"third-party with toggle -> passthrough", "d4p[1m]", fullEnv, "d4p[1m]"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ResolveClaudeModelArg(tc.model, tc.env); got != tc.expect {
+				t.Fatalf("ResolveClaudeModelArg(%q) = %q, want %q", tc.model, got, tc.expect)
+			}
+		})
+	}
+}
+
+func TestClaudeEffectiveEnv(t *testing.T) {
+	dir := t.TempDir()
+	userDir := filepath.Join(dir, "user")
+	projectDir := filepath.Join(dir, "project")
+	if err := os.MkdirAll(filepath.Join(userDir, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(projectDir, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	userSettings := filepath.Join(userDir, ".claude", "settings.json")
+	projectSettings := filepath.Join(projectDir, ".claude", "settings.json")
+	writeFile := func(path, content string) {
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// 用户 settings 提供 MINDTEST_USER / MINDTEST_SHARED；项目 settings 同 key 覆盖。
+	writeFile(userSettings, `{"env":{"MINDTEST_USER":"user","MINDTEST_SHARED":"user"}}`)
+	writeFile(projectSettings, `{"env":{"MINDTEST_USER":"project","MINDTEST_PROJECT":"project"}}`)
+
+	t.Setenv("HOME", userDir)
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+
+	baseEnv := map[string]string{"MINDTEST_BASE": "base", "MINDTEST_SHARED": "base"}
+
+	merged := claudeEffectiveEnv(baseEnv, projectDir)
+
+	if got := merged["MINDTEST_USER"]; got != "project" {
+		t.Fatalf("project should override user: got %q", got)
+	}
+	// 分层顺序 os.Environ → baseEnv → 用户 settings → 项目 settings，后者覆盖前者。
+	if got := merged["MINDTEST_SHARED"]; got != "user" {
+		t.Fatalf("user settings should override baseEnv: got %q", got)
+	}
+	if got := merged["MINDTEST_PROJECT"]; got != "project" {
+		t.Fatalf("project settings should apply: got %q", got)
+	}
+	if got := merged["MINDTEST_BASE"]; got != "base" {
+		t.Fatalf("baseEnv should apply: got %q", got)
+	}
+	// rootDir 为空时不读项目 settings。
+	if got := claudeEffectiveEnv(baseEnv, "")[ "MINDTEST_PROJECT"]; got != "" {
+		t.Fatalf("empty rootDir should skip project settings: got %q", got)
 	}
 }

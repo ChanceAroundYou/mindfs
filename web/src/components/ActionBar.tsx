@@ -3,6 +3,7 @@ import { type SessionMode } from "./ModeSelector";
 import { ModeSelector } from "./ModeSelector";
 import { AgentSelector } from "./AgentSelector";
 import { fetchAgents, fetchShells, restartAgent, type AgentStatus, type ShellStatus } from "../services/agents";
+import { getRootNodeId } from "../services/rootNode";
 import { fetchCandidates, type CandidateItem } from "../services/candidates";
 import { reportError } from "../services/error";
 import { isUploadAbortError, uploadFiles, type UploadProgress } from "../services/upload";
@@ -78,6 +79,7 @@ type ActionBarProps = {
   currentRootIsGitRepo?: boolean;
   currentSession?: SessionInfo | null;
   pendingPlanMode?: boolean;
+  rootColor?: string | null;
   attachedFileContext?: AttachedFileContext | null;
   canOpenSessionDrawer?: boolean;
   sessionDrawerOpen?: boolean;
@@ -170,6 +172,54 @@ const chatBlurPlaceholderKeys: MessageKey[] = [
 const MOBILE_BREAKPOINT = 768;
 const IME_ENTER_GUARD_MS = 120;
 const CANDIDATE_FETCH_DEBOUNCE_MS = 512;
+
+function isClaudeAgentName(name?: string | null) {
+  return String(name || "").trim().toLowerCase() === "claude";
+}
+
+function isClaudeAliasModel(model: string): boolean {
+  const base = strip1MSuffix(model);
+  const lower = String(base || "").trim().toLowerCase();
+  return lower === "fable" || lower === "opus" || lower === "sonnet" || lower === "haiku" || lower === "of" || lower === "op" || lower === "os" || lower === "ok" || lower === "default";
+}
+
+function resolveClaudeBaseAlias(base: string): string {
+  const trimmed = String(base || "").trim();
+  if (!trimmed) return "";
+  const lower = trimmed.toLowerCase();
+  if (lower === "fable") return "of";
+  if (lower === "opus") return "op";
+  if (lower === "sonnet") return "os";
+  if (lower === "haiku") return "ok";
+  if (lower === "of" || lower === "op" || lower === "os" || lower === "ok") return lower;
+  return trimmed;
+}
+
+function strip1MSuffix(model: string): string {
+  const trimmed = String(model || "").trim();
+  return trimmed.toLowerCase().endsWith("[1m]") ? trimmed.slice(0, -4).trim() : trimmed;
+}
+
+function has1MSuffix(model: string): boolean {
+  return String(model || "").trim().toLowerCase().endsWith("[1m]");
+}
+
+function with1MSuffix(model: string, enabled: boolean): string {
+  const base = strip1MSuffix(model);
+  if (!base) return "";
+  if (isClaudeAliasModel(base)) {
+    const alias = resolveClaudeBaseAlias(base);
+    if (!alias) return "";
+    return enabled ? `${alias}[1m]` : alias;
+  }
+  return enabled ? `${base}[1m]` : base;
+}
+
+function modelBaseForAgent(agentName: string | undefined, model: string): string {
+  const base = strip1MSuffix(model);
+  if (!isClaudeAgentName(agentName) || !isClaudeAliasModel(base)) return base;
+  return resolveClaudeBaseAlias(base);
+}
 
 function getAgentDefaults(agent?: AgentStatus | null) {
   return {
@@ -405,6 +455,7 @@ export function ActionBar({
   currentRootIsGitRepo = false,
   currentSession,
   pendingPlanMode = false,
+  rootColor = null,
   attachedFileContext,
   canOpenSessionDrawer = false,
   sessionDrawerOpen = false,
@@ -434,6 +485,7 @@ export function ActionBar({
   const [agentMode, setAgentMode] = useState("");
   const [effort, setEffort] = useState("");
   const [fastService, setFastService] = useState<"" | "on" | "off">("");
+  const [longContext, setLongContext] = useState(false);
   const [agents, setAgents] = useState<AgentStatus[]>([]);
   const [shells, setShells] = useState<ShellStatus[]>([]);
   const [shell, setShell] = useState("");
@@ -484,11 +536,21 @@ export function ActionBar({
   const isConnected = status === "connected";
   const connectionMeta = wsStatusMeta(status, t);
   const DRAG_THRESHOLD = -40;
-  const boundRingColor = detachedBoundSession ? "#f59e0b" : "#2563eb";
+  function appAccentHexToRgba(hex: string, alpha: number): string {
+    const h = String(hex || "").trim().replace(/^#/, "");
+    const fallback = `rgba(37, 99, 235, ${alpha})`;
+    if (h.length === 3) { const r = parseInt(h[0] + h[0], 16); const g = parseInt(h[1] + h[1], 16); const b = parseInt(h[2] + h[2], 16); if (Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b)) return `rgba(${r}, ${g}, ${b}, ${alpha})`; return fallback; }
+    if (h.length === 6) { const r = parseInt(h.slice(0, 2), 16); const g = parseInt(h.slice(2, 4), 16); const b = parseInt(h.slice(4, 6), 16); if (Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b)) return `rgba(${r}, ${g}, ${b}, ${alpha})`; }
+    if (/^rgba?\(/.test(String(hex || ""))) return String(hex);
+    return fallback;
+  }
+  const accentColorRaw = String(rootColor || "").trim() || "var(--accent-color)";
+  const accentHex = String(rootColor || "").trim() || "#2563eb";
+  const boundRingColor = detachedBoundSession ? "#f59e0b" : accentHex;
   const boundRingShadow = detachedBoundSession
     ? "0 0 0 1px rgba(245,158,11,0.18)"
-    : "0 0 0 1px rgba(37,99,235,0.08)";
-  const boundArrowColor = detachedBoundSession ? "#f59e0b" : "#2563eb";
+    : `0 0 0 1px ${appAccentHexToRgba(accentHex, 0.08)}`;
+  const boundArrowColor = detachedBoundSession ? "#f59e0b" : accentHex;
 
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
@@ -526,7 +588,8 @@ export function ActionBar({
     const nextAgentMode = currentSession.mode || "";
     const nextEffort = currentSession.effort || "";
     const nextFastService = (currentSession.fast_service || "") as "" | "on" | "off";
-    const signature = `${sessionKey || ""}::${nextMode}::${nextAgent}::${nextModel}::${nextShell}::${nextAgentMode}::${nextEffort}::${nextFastService}`;
+    const nextLongContext = isClaudeAgentName(currentSession.agent) && has1MSuffix(currentSession.model || "");
+    const signature = `${sessionKey || ""}::${nextMode}::${nextAgent}::${nextModel}::${nextShell}::${nextAgentMode}::${nextEffort}::${nextFastService}::${nextLongContext ? "1m" : ""}`;
     if (syncedSessionSignatureRef.current === signature) {
       return;
     }
@@ -538,6 +601,7 @@ export function ActionBar({
     setAgentMode(nextAgentMode);
     setEffort(nextEffort);
     setFastService(nextFastService);
+    setLongContext(nextLongContext);
   }, [currentSession]);
 
   useEffect(() => {
@@ -585,13 +649,14 @@ export function ActionBar({
   }, [createWorktree, currentRootId, currentRootIsGitRepo, currentSession, mode, t]);
 
   useEffect(() => {
-    Promise.all([fetchAgents(true), fetchShells(true)])
+    const nid = getRootNodeId(currentRootId || "") as any;
+    Promise.all([fetchAgents(true, nid), fetchShells(true, nid)])
       .then(([nextAgents, nextShells]) => {
         setAgents(nextAgents);
         setShells(nextShells);
       })
       .catch((err) => console.error("Failed to fetch agents:", err));
-  }, [agentsVersion]);
+  }, [agentsVersion, currentRootId]);
 
   useEffect(() => {
     if (mode !== "command" || shells.length === 0) {
@@ -627,23 +692,32 @@ export function ActionBar({
     if (!selectedAgent) {
       return;
     }
-    const hasModel = (selectedAgent.models ?? []).some((item) => item.id === model);
+    const hasModel = (selectedAgent.models ?? []).some(
+      (item) => modelBaseForAgent(selectedAgent.name, item.id) === modelBaseForAgent(selectedAgent.name, model),
+    );
     if (!hasModel) {
       setModel("");
+      if (isClaudeAgentName(selectedAgent.name) && longContext) {
+        setLongContext(false);
+      }
     }
-  }, [agent, model, agents]);
+  }, [agent, longContext, model, agents]);
 
   const selectedAgent = agents.find((item) => item.name === agent);
   const selectedModelInfo =
-    (selectedAgent?.models ?? []).find((item) => item.id === model)
+    (selectedAgent?.models ?? []).find(
+      (item) => modelBaseForAgent(selectedAgent?.name, item.id) === modelBaseForAgent(selectedAgent?.name, model),
+    )
     || (selectedAgent?.models ?? []).find(
-      (item) => item.id === (selectedAgent?.default_model_id || selectedAgent?.current_model_id),
+      (item) => modelBaseForAgent(selectedAgent?.name, item.id) === modelBaseForAgent(selectedAgent?.name, selectedAgent?.default_model_id || selectedAgent?.current_model_id || ""),
     );
   const availableEfforts = selectedModelInfo?.efforts ?? selectedAgent?.efforts ?? [];
   const isCodexEffortAgent = selectedAgent?.name === "codex";
   const supportsEffort =
     availableEfforts.length > 0 && !!selectedModelInfo?.supportEffort;
   const supportsServiceTier = !!selectedAgent?.supports_fast_service;
+  const supportsLongContext = isClaudeAgentName(selectedAgent?.name);
+  const effectiveModelForSend = supportsLongContext ? with1MSuffix(model, longContext) : model;
   const planModeActive = (!!currentSession?.plan_mode || pendingPlanMode) && mode !== "command";
   const planSessionKey = currentSession?.key || currentSession?.session_key || "";
   const planRootId = currentSession?.root_id || currentRootId || "";
@@ -669,6 +743,12 @@ export function ActionBar({
       setFastService(getAgentDefaults(selectedAgent).fastService);
     }
   }, [supportsServiceTier, fastService, selectedAgent]);
+
+  useEffect(() => {
+    if (!supportsLongContext && longContext) {
+      setLongContext(false);
+    }
+  }, [supportsLongContext, longContext]);
 
   useEffect(() => {
     setInputHistoryIndex(null);
@@ -1003,7 +1083,7 @@ export function ActionBar({
         payload,
         mode,
         mode === "command" ? "" : agent,
-        model || undefined,
+        effectiveModelForSend || undefined,
         agentMode || undefined,
         supportsEffort ? effort || undefined : undefined,
         supportsServiceTier ? fastService : undefined,
@@ -1050,7 +1130,7 @@ export function ActionBar({
         requestAnimationFrame(() => editorRef.current?.focus());
       }
     }
-  }, [serializedInput, pendingAttachments, isConnected, sending, mode, agent, currentRootId, planSessionKey, planRootId, onSetPlanMode, isMobile, model, agentMode, onSendMessage, supportsEffort, effort, supportsServiceTier, fastService, shell, t, currentSession, currentRootIsGitRepo, createWorktree, worktreeBranchMode, worktreeBranch]);
+  }, [serializedInput, pendingAttachments, isConnected, sending, mode, agent, currentRootId, planSessionKey, planRootId, onSetPlanMode, isMobile, model, effectiveModelForSend, agentMode, onSendMessage, supportsEffort, effort, supportsServiceTier, fastService, shell, t, currentSession, currentRootIsGitRepo, createWorktree, worktreeBranchMode, worktreeBranch]);
 
   const handleCancel = useCallback(async () => {
     const sessionKey = currentSession?.key;
@@ -1201,6 +1281,7 @@ export function ActionBar({
     setAgentMode("");
     setEffort(defaults.effort);
     setFastService(defaults.fastService);
+    setLongContext(has1MSuffix(defaults.model));
     syncedSessionSignatureRef.current = "";
   }, [agent, agents]);
 
@@ -1370,7 +1451,7 @@ export function ActionBar({
                   gap: "6px",
                   minHeight: "28px",
                   padding: "2px 3px 2px 9px",
-                  border: "1px solid color-mix(in srgb, var(--accent-color) 32%, transparent)",
+                  border: `1px solid color-mix(in srgb, ${accentColorRaw} 32%, transparent)`,
                   borderRadius: "8px",
                   background: "var(--panel-bg)",
                   boxShadow: isMobile ? "none" : "var(--panel-shadow)",
@@ -1434,7 +1515,7 @@ export function ActionBar({
                         onMouseDown={(event) => event.preventDefault()}
                         onClick={() => void saveEditQueuedMessage()}
                         disabled={!editingQueueText.trim()}
-                        style={{ width: "28px", height: "28px", border: "none", borderRadius: "7px", background: "transparent", color: editingQueueText.trim() ? "var(--accent-color)" : "var(--text-secondary)", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: editingQueueText.trim() ? "pointer" : "not-allowed", opacity: editingQueueText.trim() ? 1 : 0.45 }}
+                        style={{ width: "28px", height: "28px", border: "none", borderRadius: "7px", background: "transparent", color: editingQueueText.trim() ? accentColorRaw : "var(--text-secondary)", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: editingQueueText.trim() ? "pointer" : "not-allowed", opacity: editingQueueText.trim() ? 1 : 0.45 }}
                       >
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                           <path d="M20 6 9 17l-5-5" />
@@ -1525,12 +1606,12 @@ export function ActionBar({
               style={{
                 background: "var(--panel-bg)",
                 border: isFocused
-                  ? "1px solid var(--accent-color)"
+                  ? `1px solid ${accentColorRaw}`
                   : "1px solid var(--panel-border)",
                 borderRadius: isMobile ? "10px" : "12px",
                 boxShadow: isMobile
                   ? "none"
-                  : (isFocused ? "var(--panel-focus-shadow)" : "var(--panel-shadow)"),
+                  : (isFocused ? `0 0 0 3px ${appAccentHexToRgba(accentHex, isDark ? 0.2 : 0.1)}` : "var(--panel-shadow)"),
                 display: "flex",
                 alignItems: "center",
                 position: "relative",
@@ -1541,6 +1622,29 @@ export function ActionBar({
                 overflow: "visible",
               }}
             >
+			{planModeActive || (!currentSession && currentRootIsGitRepo && mode !== "command") || (mode !== "command" && agent === "codex") ? (
+			  <div style={{ position: "absolute", left: isMobile ? "4px" : "2px", right: isMobile ? "4px" : "8px", bottom: "calc(100% + 4px)", zIndex: 7, minWidth: 0, display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: "8px", pointerEvents: "none" }}>
+				<div style={{ display: "flex", alignItems: "center", gap: "6px", minWidth: 0, pointerEvents: "auto" }}>
+				  {planModeActive ? (
+					<div style={{ display: "inline-flex", alignItems: "center", gap: "5px", height: "20px", padding: "0 5px 0 8px", borderRadius: "999px", border: `1px solid ${appAccentHexToRgba(accentHex, 0.22)}`, background: `linear-gradient(${appAccentHexToRgba(accentHex, 0.10)}, ${appAccentHexToRgba(accentHex, 0.10)}), var(--mobile-overlay-bg)`, color: accentHex, fontSize: "11px", fontWeight: 700, lineHeight: 1, flexShrink: 0 }}>
+					  <span>Plan</span>
+					  <button type="button" aria-label={t("action.closePlanMode")} title={t("action.closePlanMode")} onMouseDown={(event) => event.preventDefault()} onClick={() => void onSetPlanMode?.(false, planSessionKey, planRootId)} style={{ width: "14px", height: "14px", border: "none", borderRadius: "999px", background: "transparent", color: "currentColor", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer", fontSize: "14px", lineHeight: 1, padding: 0 }}>
+						<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" aria-hidden="true"><path d="M0 0h24v24H0z" fill="none" /><path fill="currentColor" fillRule="evenodd" d="M21 12a9 9 0 1 1-18 0a9 9 0 0 1 18 0M7.293 16.707a1 1 0 0 1 0-1.414L10.586 12L7.293 8.707a1 1 0 0 1 1.414-1.414L12 10.586l3.293-3.293a1 1 0 1 1 1.414 1.414L13.414 12l3.293 3.293a1 1 0 0 1-1.414 1.414L12 13.414l-3.293 3.293a1 1 0 0 1-1.414 0" clipRule="evenodd" /></svg>
+					  </button>
+					</div>
+				  ) : null}
+				  {!currentSession && currentRootIsGitRepo ? (
+					<>
+					<button type="button" onClick={() => setCreateWorktree((value) => !value)} disabled={sending} aria-label={createWorktree ? t("task.worktreeTitle") : t("task.noWorktreeTitle")} title={createWorktree ? t("task.worktreeTitle") : t("task.noWorktreeTitle")} style={{ height: "24px", borderRadius: "6px", border: createWorktree ? "1px solid rgba(22, 163, 74, 0.28)" : "1px solid var(--border-color)", background: createWorktree ? "linear-gradient(rgba(22, 163, 74, 0.08), rgba(22, 163, 74, 0.08)), var(--mobile-overlay-bg)" : "linear-gradient(rgba(100, 116, 139, 0.10), rgba(100, 116, 139, 0.10)), var(--mobile-overlay-bg)", color: createWorktree ? "#15803d" : "var(--text-secondary)", padding: createWorktree ? "0 8px" : "0 8px 0 5px", fontSize: "11px", fontWeight: 800, cursor: sending ? "not-allowed" : "pointer", whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: "3px" }}>
+					  {createWorktree ? "worktree" : <><NoWorktreeIcon size={12} />worktree</>}
+					</button>
+					{createWorktree ? <><WorktreeBranchSelector branchMode={worktreeBranchMode} branch={worktreeBranch} branches={worktreeBranches.branches} disabled={sending} maxWidth={isMobile ? 150 : 240} menuAlign={isMobile ? "left" : "right"} menuPlacement="top" onChange={(nextMode, nextBranch) => { setWorktreeBranchMode(nextMode); setWorktreeBranch(nextBranch); }} />{worktreeBranchesLoading ? <span style={{ fontSize: "11px", color: "var(--text-secondary)", whiteSpace: "nowrap" }}>{t("common.loading")}</span> : worktreeBranchError ? <span title={worktreeBranchError} style={{ fontSize: "11px", color: "#b45309", whiteSpace: "nowrap" }}>{t("common.loadingFailed")}</span> : null}</> : null}
+					</>
+				  ) : null}
+				</div>
+				<div style={{ pointerEvents: "auto" }}><CodexRateLimitIndicator agent={agent} refreshToken={codexRateLimitsRefreshToken} nodeId={getRootNodeId(currentRootId || "") as any} /></div>
+			  </div>
+			) : null}
 	            <TokenEditor
 	              ref={editorRef}
 	              placeholder={inputPlaceholder}
@@ -1892,14 +1996,14 @@ export function ActionBar({
                   </svg>
                 ) : null}
                 {isDragging && dragX < -10 ? (
-                  <div style={{ position: "absolute", right: "100%", top: "50%", transform: "translateY(-50%)", marginRight: "8px", fontSize: "10px", fontWeight: 600, color: dragX <= DRAG_THRESHOLD ? "var(--accent-color)" : "#9ca3af", whiteSpace: "nowrap", opacity: Math.min(1, Math.abs(dragX) / 20), pointerEvents: "none" }}>
+                  <div style={{ position: "absolute", right: "100%", top: "50%", transform: "translateY(-50%)", marginRight: "8px", fontSize: "10px", fontWeight: 600, color: dragX <= DRAG_THRESHOLD ? accentColorRaw : "#9ca3af", whiteSpace: "nowrap", opacity: Math.min(1, Math.abs(dragX) / 20), pointerEvents: "none" }}>
                     {dragX <= DRAG_THRESHOLD ? t("action.releaseNewSession") : t("action.swipeNewSession")}
                   </div>
                 ) : null}
               </div>
 
               <>
-                <ModeSelector mode={mode} onModeChange={setMode} compact={true} disabled={isModeLocked} onboardingId="mode-selector" />
+                <ModeSelector mode={mode} onModeChange={setMode} compact={true} disabled={isModeLocked} onboardingId="mode-selector" accentColor={accentHex} />
                 {mode !== "command" ? (
                   <div>
                     <AgentSelector
@@ -1907,23 +2011,32 @@ export function ActionBar({
                     model={model}
                     mode={agentMode}
                     effort={effort}
+                    longContext={longContext}
                     agents={agents}
                     onAgentChange={(nextAgent, nextModel) => {
                       const nextStatus = agents.find((item) => item.name === nextAgent);
                       const defaults = getAgentDefaults(nextStatus);
+                      const explicitModel = String(nextModel || "").trim();
                       setAgent(nextAgent);
-                      setModel(nextModel || defaults.model);
+                      setModel(explicitModel || defaults.model);
                       setAgentMode("");
                       setEffort(defaults.effort);
                       setFastService(defaults.fastService);
+                      if (explicitModel) {
+                        setLongContext(isClaudeAgentName(nextAgent) && has1MSuffix(explicitModel));
+                      } else {
+                        setLongContext(isClaudeAgentName(nextAgent) && has1MSuffix(defaults.model));
+                      }
                     }}
                     onModeChange={(nextAgentMode) => setAgentMode(nextAgentMode || "")}
                     onEffortChange={(nextEffort) => setEffort(nextEffort || "")}
+                    onLongContextChange={(next) => setLongContext(!!next)}
                     fastService={fastService}
                     onFastServiceChange={(nextFastService) => setFastService(nextFastService || "")}
                     onAgentRestart={async (targetAgent) => {
-                      await restartAgent(targetAgent);
-                      const items = await fetchAgents(true);
+                      const nid2 = getRootNodeId(currentRootId || "") as any;
+                      await restartAgent(targetAgent, nid2);
+                      const items = await fetchAgents(true, nid2);
                       setAgents(items);
                     }}
                     compact={true}
@@ -1954,10 +2067,10 @@ export function ActionBar({
                   borderRadius: "8px",
                   border: "none",
                   background: pendingAttachments.length > 0
-                    ? "rgba(59,130,246,0.14)"
+                    ? appAccentHexToRgba(accentHex, 0.14)
                     : "transparent",
                   color: pendingAttachments.length > 0
-                    ? "var(--accent-color)"
+                    ? accentColorRaw
                     : "var(--text-secondary)",
                   display: "flex",
                   alignItems: "center",
@@ -1978,7 +2091,7 @@ export function ActionBar({
                 type="button"
                 onClick={showCancel ? handleCancel : handleSend}
                 disabled={showCancel ? cancelling : !canSend}
-                style={{ width: "28px", height: "28px", borderRadius: "8px", border: "none", background: showCancel ? "rgba(239,68,68,0.14)" : (canSend ? "var(--accent-color)" : "transparent"), color: showCancel ? "#ef4444" : (canSend ? "#fff" : "var(--text-secondary)"), display: "flex", alignItems: "center", justifyContent: "center", cursor: showCancel ? (cancelling ? "wait" : "pointer") : (canSend ? "pointer" : "not-allowed"), transition: "all 0.2s", opacity: showCancel ? 1 : (canSend ? 1 : 0.3) }}
+                style={{ width: "28px", height: "28px", borderRadius: "8px", border: "none", background: showCancel ? "rgba(239,68,68,0.14)" : (canSend ? accentColorRaw : "transparent"), color: showCancel ? "#ef4444" : (canSend ? "#fff" : "var(--text-secondary)"), display: "flex", alignItems: "center", justifyContent: "center", cursor: showCancel ? (cancelling ? "wait" : "pointer") : (canSend ? "pointer" : "not-allowed"), transition: "all 0.2s", opacity: showCancel ? 1 : (canSend ? 1 : 0.3) }}
               >
                 {sending || cancelling ? (
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" style={{ animation: "spin 1s linear infinite" }}><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
@@ -2019,7 +2132,7 @@ export function ActionBar({
                 maxWidth: "100%",
                 padding: "4px 8px",
                 borderRadius: "999px",
-                background: isDark ? "rgba(59,130,246,0.14)" : "rgba(59,130,246,0.08)",
+                background: isDark ? appAccentHexToRgba(accentHex, 0.14) : appAccentHexToRgba(accentHex, 0.08),
                 color: "var(--text-primary)",
                 fontSize: "12px",
               }}
@@ -2127,7 +2240,7 @@ export function ActionBar({
                   maxWidth: "220px",
                   padding: "4px 8px",
                   borderRadius: "999px",
-                  background: isDark ? "rgba(59,130,246,0.14)" : "rgba(59,130,246,0.08)",
+                  background: isDark ? appAccentHexToRgba(accentHex, 0.14) : appAccentHexToRgba(accentHex, 0.08),
                   color: "var(--text-primary)",
                   fontSize: "12px",
                 }}

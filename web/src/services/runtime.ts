@@ -1,4 +1,7 @@
 import { getStoredApiBaseURL, getStoredWsBaseURL } from "./storage";
+import { getActiveNode, getNodeById } from "./nodeRegistry";
+import { deriveLocalNodeBase, normalizeExplicitNodeBase } from "./nodeBase";
+import { DEPLOY_PREFIX } from "./prefix";
 
 export type NativePlatform = "web" | "android" | "harmony" | "native";
 
@@ -72,33 +75,26 @@ export function isHarmonyRuntime(): boolean {
   return getNativePlatform() === "harmony";
 }
 
-function sanitizeBaseURL(value: string | null | undefined): string {
-  if (!value) {
-    return "";
-  }
-  return value.trim().replace(/\/+$/, "");
-}
-
 function readMeta(name: string): string {
   if (typeof document === "undefined") {
     return "";
   }
   const node = document.querySelector<HTMLMetaElement>(`meta[name="${name}"]`);
-  return sanitizeBaseURL(node?.content);
+  return normalizeExplicitNodeBase(node?.content || "");
 }
 
 function readStorage(key: string): string {
   if (key === "mindfs_api_base_url") {
-    return sanitizeBaseURL(getStoredApiBaseURL());
+    return normalizeExplicitNodeBase(getStoredApiBaseURL() || "");
   }
   if (key === "mindfs_ws_base_url") {
-    return sanitizeBaseURL(getStoredWsBaseURL());
+    return normalizeExplicitNodeBase(getStoredWsBaseURL() || "");
   }
   if (!isBrowserRuntime()) {
     return "";
   }
   try {
-    return sanitizeBaseURL(window.localStorage.getItem(key));
+    return normalizeExplicitNodeBase(window.localStorage.getItem(key) || "");
   } catch {
     return "";
   }
@@ -108,10 +104,22 @@ function deriveOriginBaseURL(): string {
   if (!isBrowserRuntime()) {
     return "";
   }
-  return sanitizeBaseURL(window.location.origin);
+  return deriveLocalNodeBase(window.location.origin, DEPLOY_PREFIX);
 }
 
-export function getApiBaseURL(): string {
+function resolveNodeBaseURL(nodeId?: string): string {
+  if (nodeId) {
+    const node = getNodeById(nodeId);
+    if (node?.url) return normalizeExplicitNodeBase(node.url);
+  }
+  const active = getActiveNode();
+  if (active?.url) return normalizeExplicitNodeBase(active.url);
+  return "";
+}
+
+export function getApiBaseURL(nodeId?: string): string {
+  const nodeURL = resolveNodeBaseURL(nodeId);
+  if (nodeURL) return nodeURL;
   const configured = readStorage("mindfs_api_base_url") || readMeta("mindfs-api-base-url");
   if (configured) {
     return configured;
@@ -122,12 +130,30 @@ export function getApiBaseURL(): string {
   return deriveOriginBaseURL();
 }
 
-export function getWsBaseURL(): string {
+export function getWsBaseURL(nodeId?: string): string {
+  // ws base derived from api base when no explicit ws storage
+  const nodeWs = (() => {
+    let u = "";
+    if (nodeId) {
+      const node = getNodeById(nodeId);
+      if (node?.url) u = normalizeExplicitNodeBase(node.url);
+    } else {
+      const active = getActiveNode();
+      if (active?.url) u = normalizeExplicitNodeBase(active.url);
+    }
+    if (u) {
+      if (u.startsWith("https://")) return `wss://${u.slice("https://".length)}`;
+      if (u.startsWith("http://")) return `ws://${u.slice("http://".length)}`;
+      return u;
+    }
+    return "";
+  })();
+  if (nodeWs) return nodeWs;
   const configured = readStorage("mindfs_ws_base_url") || readMeta("mindfs-ws-base-url");
   if (configured) {
     return configured;
   }
-  const apiBaseURL = getApiBaseURL();
+  const apiBaseURL = getApiBaseURL(nodeId);
   if (!apiBaseURL) {
     return "";
   }

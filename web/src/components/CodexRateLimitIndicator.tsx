@@ -12,6 +12,7 @@ const FOCUS_REFRESH_MAX_AGE_MS = 30 * 60 * 1000;
 type Props = {
   agent: string;
   refreshToken?: number;
+  nodeId?: string;
   onStatusChange?: (status: CodexRateLimitStatus | null) => void;
 };
 
@@ -42,7 +43,7 @@ function formatResetCountdown(unixSeconds: number | undefined, nowMs: number): s
   return `${minutes}m`;
 }
 
-export function CodexRateLimitIndicator({ agent, refreshToken = 0, onStatusChange }: Props) {
+export function CodexRateLimitIndicator({ agent, refreshToken = 0, nodeId, onStatusChange }: Props) {
   const { t } = useI18n();
   const [status, setStatus] = useState<CodexRateLimitStatus | null>(null);
   const [loading, setLoading] = useState(false);
@@ -63,7 +64,7 @@ export function CodexRateLimitIndicator({ agent, refreshToken = 0, onStatusChang
     setLoading(true);
     setError("");
     try {
-      const next = await fetchCodexRateLimits(agent);
+      const next = await fetchCodexRateLimits(agent, nodeId);
       if (request !== requestRef.current) return;
       lastSuccessfulFetchAtRef.current = Date.now();
       setStatus(next);
@@ -92,7 +93,7 @@ export function CodexRateLimitIndicator({ agent, refreshToken = 0, onStatusChang
     void refresh();
     // Keep the message_done-triggered refresh in addition to focus-based staleness checks.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agent, refreshToken]);
+  }, [agent, refreshToken, nodeId]);
 
   useEffect(() => {
     if (agent !== "codex") return;
@@ -147,6 +148,7 @@ export function CodexRateLimitIndicator({ agent, refreshToken = 0, onStatusChang
         idempotencyKeyRef.current,
         firstCredit?.id,
         agent,
+        nodeId,
       );
       setStatus(result.status);
       onStatusChange?.(result.status);

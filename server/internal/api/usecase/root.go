@@ -16,6 +16,7 @@ type Registry interface {
 	UpsertRoot(path string) (fs.RootInfo, error)
 	RemoveRoot(path string) (fs.RootInfo, error)
 	RenameRoot(rootID, name, rootPath string) (fs.RootInfo, error)
+	UpdateDisplayName(rootID, displayName string) (fs.RootInfo, error)
 	ListRoots() []fs.RootInfo
 	GetAgentPool() *agent.Pool
 	GetPreferences() *preferences.Store
