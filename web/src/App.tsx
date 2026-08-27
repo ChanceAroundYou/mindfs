@@ -14158,7 +14158,6 @@ export function App({ onGoHome }: AppProps) {
             sortMode={treeSortMode}
             showHiddenFiles={showHiddenFiles}
             onSortModeChange={setTreeSortMode}
-            onShowHiddenFilesChange={setShowHiddenFiles}
             onRefresh={handleProjectTreeRefresh}
             selectedDirKey={selectedDirKey}
             selectedPath={file?.path}

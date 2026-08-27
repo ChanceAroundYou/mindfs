@@ -48,7 +48,7 @@ assert.match(
 );
 assert.match(
   app,
-  /fetchGitHistory\(rootID, \{ afterCommit: newest \}\)[\s\S]*?options\?\.waitForIncremental[\s\S]*?return refreshAfterNewest\(\)/,
+  /fetchGitHistory\(rootID, \{ afterCommit: newest(?:, nodeId: [^}]+)? \}\)[\s\S]*?options\?\.waitForIncremental[\s\S]*?return refreshAfterNewest\(\)/,
   "manual history refresh should await the existing after_commit probe",
 );
 assert.match(
