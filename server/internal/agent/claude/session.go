@@ -737,22 +737,11 @@ func (s *session) ListModels(ctx context.Context) (types.ModelList, error) {
 	}
 	supported := s.client.SupportedModelsFromInit()
 	models := make([]types.ModelInfo, 0, len(supported))
-	for index, model := range supported {
+	for _, model := range supported {
 		if isHiddenClaudeModel(model.Value, model.DisplayName, model.Description) {
 			continue
 		}
-		name := strings.TrimSpace(model.DisplayName)
-		if name == "" {
-			name = strings.TrimSpace(model.Value)
-		}
-		models = append(models, types.ModelInfo{
-			ID:            model.Value,
-			Name:          name,
-			Description:   model.Description,
-			SupportEffort: claudeModelSupportsEffortAt(supported, index),
-			Hidden:        false,
-		})
-
+		models = append(models, claudeModelInfo(model))
 	}
 	log.Printf("[agent/claude] models.cached session=%s count=%d", s.sessionKey, len(models))
 	currentModelID := ""
@@ -797,31 +786,6 @@ func claudeModelInfo(model claudeagent.ModelInfo) types.ModelInfo {
 
 func claudeEffortLevels() []string {
 	return []string{"low", "medium", "high", "xhigh", "max"}
-}
-
-func claudeModelSupportsEffortAt(models []claudeagent.ModelInfo, index int) bool {
-	if index < 0 || index >= len(models) {
-		return false
-	}
-	model := models[index]
-	if claudeModelSupportsEffort(model.Value, model.DisplayName, model.Description) {
-		return true
-	}
-	if !strings.EqualFold(strings.TrimSpace(model.Value), "default") {
-		return false
-	}
-	for _, candidate := range models {
-		if strings.EqualFold(strings.TrimSpace(candidate.Value), "default") {
-			continue
-		}
-		return claudeModelSupportsEffort(candidate.Value, candidate.DisplayName, candidate.Description)
-	}
-	return false
-}
-
-func claudeModelSupportsEffort(id, name, description string) bool {
-	joined := strings.ToLower(strings.TrimSpace(id) + " " + strings.TrimSpace(name) + " " + strings.TrimSpace(description))
-	return strings.Contains(joined, "sonnet") || strings.Contains(joined, "opus") || strings.Contains(joined, "fable") || strings.Contains(joined, "haiku")
 }
 
 func (s *session) SetMode(_ context.Context, _ string) error {
