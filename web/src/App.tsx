@@ -10,7 +10,11 @@ import { Renderer } from "./renderer/Renderer";
 import {
   clearCachedSessionsForRoot,
   deleteCachedSession,
+  getCachedMultiRootSessionList,
   getCachedSession,
+  getCachedSessionList,
+  saveCachedMultiRootSessionList,
+  saveCachedSessionList,
   sessionService,
   setCachedSessionRelatedFiles,
   syncSession,
@@ -1781,14 +1785,19 @@ export function App({ onGoHome }: AppProps) {
       const cached = await getCachedTaskDetails(targetRoot);
       if (cached.length > 0) {
         applyTaskDetails(targetRoot, cached, false);
+        setKanbanTasksLoading(false);
       }
       const meta = await getCachedTaskMeta(targetRoot);
-      const details = await fetchTaskDetails(targetRoot, force ? undefined : { after: meta?.newestUpdatedAt || "" }, getNodeIdForRoot(targetRoot));
+      const [details, recent] = await Promise.all([
+        fetchTaskDetails(targetRoot, force ? undefined : { after: meta?.newestUpdatedAt || "" }, getNodeIdForRoot(targetRoot)),
+        !force && meta?.newestUpdatedAt
+          ? fetchTaskDetails(targetRoot, { limit: 20 }, getNodeIdForRoot(targetRoot))
+          : Promise.resolve([] as TaskDetail[]),
+      ]);
       if (details.length > 0) {
         applyTaskDetails(targetRoot, details);
       }
-      if (!force && meta?.newestUpdatedAt) {
-        const recent = await fetchTaskDetails(targetRoot, { limit: 20 }, getNodeIdForRoot(targetRoot));
+      if (recent.length > 0) {
         applyTaskDetails(targetRoot, recent);
       }
     } catch (err) {
@@ -4743,6 +4752,23 @@ export function App({ onGoHome }: AppProps) {
     ) => {
       try {
         const _nid = getNodeIdForRoot(rootID);
+        const shouldReplace = options?.replace || (!options?.beforeTime && !options?.afterTime);
+        if (shouldReplace) {
+          const cached = await getCachedSessionList(rootID);
+          if (cached && (options?.force || currentRootIdRef.current === rootID)) {
+            const cachedItems = [...cached.items, ...cached.pinnedItems]
+              .map((item) => toSessionItem(rootID, item))
+              .filter((item): item is SessionItem => !!item);
+            setHasMoreSessions(cached.totalCount > cached.items.length);
+            setSessions(
+              applyPinnedSnapshotToSessions(
+                mergeSessionItems([], cachedItems),
+                rootID,
+                cached.pinnedKeys,
+              ),
+            );
+          }
+        }
         const payload = await sessionService.fetchSessions(rootID, {
           nodeId: _nid,
           beforeTime: options?.beforeTime,
@@ -4754,7 +4780,7 @@ export function App({ onGoHome }: AppProps) {
         ].map((item) => toSessionItem(rootID, item)).filter((item): item is SessionItem => !!item);
         if (!options?.force && currentRootIdRef.current !== rootID) return;
         setHasMoreSessions(payload.totalCount > payload.items.length);
-        if (options?.replace || (!options?.beforeTime && !options?.afterTime)) {
+        if (shouldReplace) {
           // 服务端列表接口不含 context_window，全量重拉会把它清掉（WS message_done 已同步进本地列表）。
           // 用 setSessions 回调继承旧列表的 context_window，避免徽标闪没。
           setSessions((prev) => {
@@ -4775,6 +4801,7 @@ export function App({ onGoHome }: AppProps) {
             });
             return applyPinnedSnapshotToSessions(merged, rootID, payload.pinnedKeys);
           });
+          void saveCachedSessionList(rootID, payload);
           return;
         }
         setSessions((prev) =>
@@ -4856,6 +4883,30 @@ export function App({ onGoHome }: AppProps) {
     const seq = ++multiProjectLoadSeqRef.current;
     setMultiProjectSessionsLoading(true);
     try {
+      const cachedGroups = await getCachedMultiRootSessionList();
+      if (cachedGroups?.length) {
+        setMultiProjectSessionGroups(
+          applyPendingToMultiProjectGroups(
+            cachedGroups.map((group): MultiProjectSessionGroup => ({
+              rootId: group.rootId,
+              rootName: group.rootName || managedRootByIdRef.current[group.rootId]?.display_name || group.rootId,
+              latestSessionTime: group.latestSessionTime,
+              sessions: applyPinnedSnapshotToSessions(
+                mergeSessionItems(
+                  [],
+                  [...group.items, ...group.pinnedItems]
+                    .map((item) => toSessionItem(group.rootId, { ...(item as any), root_id: group.rootId }))
+                    .filter((item): item is SessionItem => !!item),
+                ),
+                group.rootId,
+                group.pinnedKeys,
+              ),
+              totalCount: group.totalCount,
+            })),
+            multiProjectPendingRef.current,
+          ),
+        );
+      }
       const nodeIdsFromNodes = getNodes()
         .map((n) => String((n as any)?.id || "").trim())
         .filter(Boolean);
@@ -4911,6 +4962,7 @@ export function App({ onGoHome }: AppProps) {
       setMultiProjectSessionGroups(
         applyPendingToMultiProjectGroups(nextGroups, multiProjectPendingRef.current),
       );
+      void saveCachedMultiRootSessionList(groups);
     } finally {
       if (seq === multiProjectLoadSeqRef.current) {
         setMultiProjectSessionsLoading(false);
