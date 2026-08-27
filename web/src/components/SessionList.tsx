@@ -2,9 +2,10 @@ import React, { memo, useEffect, useMemo, useRef, useState } from "react";
 import { AgentIcon } from "./AgentIcon";
 import { ModeIcon } from "./ModeIcon";
 import { NodeBadgeHeader } from "./NodeBadgeHeader";
-import { PALETTE } from "../services/nodeRegistry";
+import { getNodes, PALETTE } from "../services/nodeRegistry";
 import { scopeKey } from "../services/scope";
 import { useI18n, type Locale } from "../i18n";
+import { type DirectorySortMode, sortDirectoryEntries } from "../services/directorySort";
 
 function hexToRgba(hex: string, alpha: number): string {
   const h = String(hex || "").trim().replace(/^#/, "");
@@ -113,6 +114,7 @@ type ProjectSessionListProps = {
   headerAction?: React.ReactNode;
   loading?: boolean;
   emptyText?: React.ReactNode;
+  projectSortMode?: DirectorySortMode;
   syncingSessionKeys?: Set<string>;
   onSearchToggle?: () => void;
   onSelect?: (session: SessionItem) => void;
@@ -739,6 +741,7 @@ export function MultiProjectSessionList({
   headerAction,
   loading = false,
   emptyText = "",
+  projectSortMode = "name-asc",
   syncingSessionKeys,
   onSearchToggle,
   onSelect,
@@ -786,20 +789,44 @@ export function MultiProjectSessionList({
   }, [pinnedProjects]);
   const groupScopeKey = (group: ProjectSessionGroup) =>
     scopeKey(String((group as any)?._nodeId || "").trim(), group.rootId);
-  const orderedGroups = useMemo(
-    () =>
-      groups.slice().sort((left, right) => {
-        const leftPinnedAt = pinnedProjects[groupScopeKey(left)] || 0;
-        const rightPinnedAt = pinnedProjects[groupScopeKey(right)] || 0;
-        if (leftPinnedAt || rightPinnedAt) {
-          if (leftPinnedAt !== rightPinnedAt) {
-            return rightPinnedAt - leftPinnedAt;
-          }
-        }
-        return 0;
-      }),
-    [groups, pinnedProjects],
-  );
+  // 右侧多项目列表：与左侧 FileTree 保持一致的分层排序
+  // 层级：节点时序(按 getNodes() 添加顺序) > 同节点内项目置顶 > 同节点内项目设置排序(默认 name-asc)
+  // 项目置顶不跨节点越位，修复 hbsn 跑到其他节点上方的问题；项目内会话由 sessionListMerge 负责置顶在前+时间降序
+  const orderedGroups = useMemo(() => {
+    const nodes = getNodes();
+    const orderById = new Map(nodes.map((n, i) => [String(n.id), i] as const));
+    const orderByName = new Map(nodes.map((n, i) => [String(n.name), i] as const));
+    const nodeIndex = (group: ProjectSessionGroup): number => {
+      const nid = String((group as any)?._nodeId || "").trim();
+      if (nid && orderById.has(nid)) return orderById.get(nid)!;
+      const nname = String((group as any)?._nodeName || "").trim();
+      if (nname && orderByName.has(nname)) return orderByName.get(nname)!;
+      return 99;
+    };
+    // 同节点内的项目按 DirectorySort 规则排；复用左侧同款比较，避免两处分叉
+    const compareByProjectSort = (a: ProjectSessionGroup, b: ProjectSessionGroup): number => {
+      const ea = { name: a.rootName || a.rootId, path: a.rootId, is_dir: true } as Parameters<typeof sortDirectoryEntries>[0][number];
+      const eb = { name: b.rootName || b.rootId, path: b.rootId, is_dir: true } as Parameters<typeof sortDirectoryEntries>[0][number];
+      const sorted = sortDirectoryEntries([ea, eb], projectSortMode);
+      if (sorted[0] === ea && sorted[1] === eb) return -1;
+      if (sorted[0] === eb && sorted[1] === ea) return 1;
+      return 0;
+    };
+    return groups.slice().sort((left, right) => {
+      const li = nodeIndex(left);
+      const ri = nodeIndex(right);
+      if (li !== ri) return li - ri;
+      const leftPinnedAt = pinnedProjects[groupScopeKey(left)] || 0;
+      const rightPinnedAt = pinnedProjects[groupScopeKey(right)] || 0;
+      const leftPinned = leftPinnedAt > 0;
+      const rightPinned = rightPinnedAt > 0;
+      if (leftPinned !== rightPinned) return rightPinned ? 1 : -1;
+      if (leftPinned && rightPinned && leftPinnedAt !== rightPinnedAt) {
+        return rightPinnedAt - leftPinnedAt;
+      }
+      return compareByProjectSort(left, right);
+    });
+  }, [groups, pinnedProjects, projectSortMode]);
   const togglePinnedProject = (group: ProjectSessionGroup) => {
     const key = groupScopeKey(group);
     setPinnedProjects((prev) => {

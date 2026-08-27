@@ -13896,6 +13896,7 @@ export function App({ onGoHome }: AppProps) {
         selectedKey={activeBoundSessionKey || ""}
         selectedRootId={currentRootId || ""}
         selectedNodeId={currentRootNodeId || ""}
+        projectSortMode={currentDirectorySortMode}
         headerAction={sessionImportMenu}
         loading={multiProjectSessionsLoading}
         emptyText={t("externalImport.empty")}
