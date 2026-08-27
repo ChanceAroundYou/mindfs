@@ -2795,6 +2795,27 @@ function FileTreeInner({
                   </svg>
                   <span>{t("fileTree.sessionNamingAgent")}</span>
                 </button>
+                <button
+                  type="button"
+                  onClick={openIdleSessionResourceRelease}
+                  style={fileTreeMenuButtonStyle}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <circle cx="12" cy="12" r="9" />
+                    <path d="M12 7v5l3 2" />
+                  </svg>
+                  <span>{t("fileTree.idleSessionResourceRelease")}</span>
+                  <span
+                    style={{
+                      marginLeft: "auto",
+                      color: "var(--text-secondary)",
+                      fontSize: "11px",
+                      fontVariantNumeric: "tabular-nums",
+                    }}
+                  >
+                    {idleReleaseHours || "72"}h
+                  </span>
+                </button>
                 {!isNativeApp ? <WebPushMenuItem /> : null}
                 <div style={{ height: "1px", background: "var(--border-color)", margin: "6px 4px" }} />
                 <button
