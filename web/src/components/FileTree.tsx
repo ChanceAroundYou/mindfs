@@ -47,7 +47,9 @@ import {
   type WebPushStatus,
 } from "../services/webPush";
 import {
+  fetchIdleSessionResourceReleasePreference,
   fetchSessionNamingPreference,
+  updateIdleSessionResourceReleasePreference,
   updateSessionNamingPreference,
 } from "../services/preferences";
 
@@ -1407,6 +1409,10 @@ function FileTreeInner({
   const [sessionNamingModel, setSessionNamingModel] = React.useState("");
   const [sessionNamingBusy, setSessionNamingBusy] = React.useState(false);
   const [sessionNamingError, setSessionNamingError] = React.useState("");
+  const [idleReleaseOpen, setIdleReleaseOpen] = React.useState(false);
+  const [idleReleaseHours, setIdleReleaseHours] = React.useState("72");
+  const [idleReleaseBusy, setIdleReleaseBusy] = React.useState(false);
+  const [idleReleaseError, setIdleReleaseError] = React.useState("");
   const [appearanceMode, setAppearanceModeState] = React.useState<AppearanceMode>(() => getAppearanceMode());
   const [isUpdateNotesOpen, setIsUpdateNotesOpen] = React.useState(false);
   const [deferredInstallPrompt, setDeferredInstallPrompt] = React.useState<BeforeInstallPromptEvent | null>(null);
@@ -1784,7 +1790,21 @@ function FileTreeInner({
     try { const n = getNodeById(LOCAL_NODE_ID); setNodeEditName(n?.name || "local"); setNodeEditUrl(n?.url || ""); setNodeEditError(""); } catch {}
   }, [nodeEditOpen]);
 
+  React.useEffect(() => {
+    if (!protectedAPIReady) return;
+    let cancelled = false;
+    fetchIdleSessionResourceReleasePreference()
+      .then((preference) => {
+        if (!cancelled) setIdleReleaseHours(String(preference.hours));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [protectedAPIReady]);
+
   const openAgentConfigFlow = React.useCallback((flow: AgentConfigFlow) => {
+    setIdleReleaseOpen(false);
     setAgentLifecycleOpen(false);
     setAgentConfigFlow(flow);
     setAgentConfigStep("agent");
@@ -1819,6 +1839,7 @@ function FileTreeInner({
   }, [t, rootId]);
 
   const openSessionNaming = React.useCallback(() => {
+    setIdleReleaseOpen(false);
     setAgentConfigFlow(null);
     setAgentLifecycleOpen(false);
     setIsMenuOpen(false);
@@ -1856,6 +1877,41 @@ function FileTreeInner({
       setSessionNamingBusy(false);
     }
   }, [sessionNamingAgent, sessionNamingBusy, sessionNamingModel, t]);
+
+  const openIdleSessionResourceRelease = React.useCallback(() => {
+    setAgentConfigFlow(null);
+    setAgentLifecycleOpen(false);
+    setIsMenuOpen(false);
+    setIdleReleaseOpen(true);
+    setIdleReleaseBusy(true);
+    setIdleReleaseError("");
+    fetchIdleSessionResourceReleasePreference()
+      .then((preference) => setIdleReleaseHours(String(preference.hours)))
+      .catch((error) => {
+        setIdleReleaseError(error instanceof Error ? error.message : t("idleSessionResourceRelease.loadFailed"));
+      })
+      .finally(() => setIdleReleaseBusy(false));
+  }, [t]);
+
+  const saveIdleSessionResourceRelease = React.useCallback(async () => {
+    if (idleReleaseBusy) return;
+    const hours = Number(idleReleaseHours);
+    if (!Number.isInteger(hours) || hours <= 0) {
+      setIdleReleaseError(t("idleSessionResourceRelease.invalidHours"));
+      return;
+    }
+    setIdleReleaseBusy(true);
+    setIdleReleaseError("");
+    try {
+      const preference = await updateIdleSessionResourceReleasePreference({ hours });
+      setIdleReleaseHours(String(preference.hours));
+      setIdleReleaseOpen(false);
+    } catch (error) {
+      setIdleReleaseError(error instanceof Error ? error.message : t("idleSessionResourceRelease.saveFailed"));
+    } finally {
+      setIdleReleaseBusy(false);
+    }
+  }, [idleReleaseBusy, idleReleaseHours, t]);
 
   React.useEffect(() => {
     if (!agentConfigSwitchRequest) {
@@ -3117,6 +3173,89 @@ function FileTreeInner({
               }}
               onCancel={closeAgentConfigFlow}
             />
+          </div>
+        ) : null}
+        {idleReleaseOpen ? (
+          <div
+            style={{
+              position: "absolute",
+              top: "calc(100% + 6px)",
+              left: "8px",
+              right: "3px",
+              zIndex: 40,
+              padding: "14px",
+              borderRadius: "12px",
+              border: "1px solid var(--border-color)",
+              background: "var(--menu-bg)",
+              boxShadow: "0 16px 36px rgba(15, 23, 42, 0.18)",
+            }}
+          >
+            <div style={{ fontSize: "13px", fontWeight: 700, color: "var(--text-primary)" }}>
+              {t("idleSessionResourceRelease.title")}
+            </div>
+            <div style={{ marginTop: "6px", fontSize: "11px", lineHeight: 1.5, color: "var(--text-secondary)" }}>
+              {t("idleSessionResourceRelease.description")}
+            </div>
+            <label
+              style={{
+                marginTop: "12px",
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+                color: "var(--text-primary)",
+                fontSize: "12px",
+              }}
+            >
+              <input
+                type="number"
+                min="1"
+                step="1"
+                inputMode="numeric"
+                value={idleReleaseHours}
+                disabled={idleReleaseBusy}
+                onChange={(event) => setIdleReleaseHours(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    void saveIdleSessionResourceRelease();
+                  }
+                }}
+                style={{
+                  width: "96px",
+                  boxSizing: "border-box",
+                  padding: "8px 10px",
+                  borderRadius: "8px",
+                  border: "1px solid var(--border-color)",
+                  background: "var(--content-bg)",
+                  color: "var(--text-primary)",
+                  outline: "none",
+                }}
+              />
+              <span>{t("idleSessionResourceRelease.hours")}</span>
+            </label>
+            {idleReleaseError ? (
+              <div style={{ marginTop: "8px", color: "#dc2626", fontSize: "11px", lineHeight: 1.4 }}>
+                {idleReleaseError}
+              </div>
+            ) : null}
+            <div style={{ ...agentConfigActionRowStyle, marginTop: "12px" }}>
+              <button
+                type="button"
+                disabled={idleReleaseBusy}
+                onClick={() => setIdleReleaseOpen(false)}
+                style={agentConfigSecondaryButtonStyle(idleReleaseBusy)}
+              >
+                {t("common.cancel")}
+              </button>
+              <button
+                type="button"
+                disabled={idleReleaseBusy}
+                onClick={() => void saveIdleSessionResourceRelease()}
+                style={agentConfigPrimaryButtonStyle(idleReleaseBusy)}
+              >
+                {idleReleaseBusy ? t("common.saving") : t("common.save")}
+              </button>
+            </div>
           </div>
         ) : null}
         {sessionNamingOpen ? (
