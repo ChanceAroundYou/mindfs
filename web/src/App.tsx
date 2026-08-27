@@ -74,6 +74,10 @@ import {
   type GitWorktreeItem,
 } from "./services/git";
 import {
+  relatedFileStatKey,
+  useRelatedFileStats,
+} from "./hooks/useRelatedFileStats";
+import {
   DEFAULT_DIRECTORY_SORT_MODE,
   type DirectorySortMode,
   type FileEntry,
@@ -12257,6 +12261,19 @@ export function App({ onGoHome }: AppProps) {
     },
     [currentRootId, relatedSessionRootId, selectedSessionRelatedFiles],
   );
+  const gitStatsRefreshKey = useMemo(
+    () =>
+      Object.entries(gitFileStatsByPath)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([path, stats]) => `${path}:${stats.status}:${stats.additions}:${stats.deletions}`)
+        .join("|"),
+    [gitFileStatsByPath],
+  );
+  const selectedRelatedFileStatsByKey = useRelatedFileStats(
+    relatedSessionRootId || currentRootId,
+    selectedSessionRelatedFiles,
+    gitStatsRefreshKey,
+  );
   const renderRootRelatedContent = (root: string): React.ReactNode => {
     if (!root || root !== currentRootId || root !== relatedSessionRootId) {
       return null;
@@ -12305,7 +12322,7 @@ export function App({ onGoHome }: AppProps) {
                 </div>
               ) : null}
               {group.files.map((file) => {
-          const stats = gitFileStatsByPath[file.path];
+          const stats = selectedRelatedFileStatsByKey[relatedFileStatKey(file)] || gitFileStatsByPath[file.path];
           const fileSelectionKey = relatedFileSelectionKey(file);
           const isSelected = relatedSelectedFileKey
             ? fileSelectionKey === relatedSelectedFileKey
