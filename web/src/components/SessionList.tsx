@@ -3,6 +3,7 @@ import { AgentIcon } from "./AgentIcon";
 import { ModeIcon } from "./ModeIcon";
 import { NodeBadgeHeader } from "./NodeBadgeHeader";
 import { getNodes, PALETTE } from "../services/nodeRegistry";
+import { resolveGroupColor } from "../services/sessionGroupDisplay";
 import { scopeKey } from "../services/scope";
 import { useI18n, type Locale } from "../i18n";
 import { type DirectorySortMode, sortDirectoryEntries } from "../services/directorySort";
@@ -682,7 +683,7 @@ export function SessionList({
               const session = row.session;
               return (
                 <SessionCardMemo
-                  key={session.key}
+                  key={`${String((session as any)._nodeId || "")}::${session.key}`}
                   session={session}
                   sessionByKey={sessionByKey}
                   selected={session.key === selectedKey}
@@ -786,6 +787,19 @@ export function MultiProjectSessionList({
     }
     window.localStorage.setItem(PINNED_PROJECTS_STORAGE_KEY, JSON.stringify(pinnedProjects));
   }, [pinnedProjects]);
+  // 渲染侧审计：仅 groups 数组变化时打一条（不随帧刷屏），标记缺色回退的分组
+  useEffect(() => {
+    try {
+      const fallbackCount = groups.filter((g) => !String((g as any)?._nodeColor || "").trim()).length;
+      console.info("[session-list] render", {
+        n: groups.length,
+        fallbackCount,
+        groups: groups
+          .map((g) => `${String((g as any)?._nodeId || "")}:${String(g.rootName || g.rootId || "")}:${String((g as any)?._nodeColor || "FALLBACK")}`)
+          .slice(0, 20),
+      });
+    } catch {}
+  }, [groups]);
   const groupScopeKey = (group: ProjectSessionGroup) =>
     scopeKey(String((group as any)?._nodeId || "").trim(), group.rootId);
   // 右侧多项目列表：与左侧 FileTree 保持一致的分层排序
@@ -1092,7 +1106,7 @@ export function MultiProjectSessionList({
                 <section key={`${(group as any)._nodeId || ""}::${group.rootId}`} style={{ minWidth: 0 }}>
                   <div style={{ position: "relative" }}>
                     <NodeBadgeHeader
-                      color={String((group as any)._nodeColor || PALETTE[0])}
+                      color={String((group as any)._nodeColor || resolveGroupColor(group as any, {}, getNodes() as any) || PALETTE[0])}
                       label={group.rootName || group.rootId}
                       collapsed={!expanded}
                       onClick={() => void handleProjectHeaderToggle(group)}
@@ -1170,7 +1184,7 @@ export function MultiProjectSessionList({
                       const groupColor = String((group as any)._nodeColor || "").trim();
                       return (
                         <SessionCardMemo
-                          key={`${sessionRoot}:${session.key}`}
+                          key={`${String((group as any)._nodeId || "")}::${sessionRoot}:${session.key}`}
                           session={{ ...session, root_id: sessionRoot }}
                           nodeColor={groupColor}
                           sessionByKey={sessionByKey}
@@ -1265,7 +1279,16 @@ function SessionCard({
   const [editing, setEditing] = useState(false);
   const [draftName, setDraftName] = useState(storedName);
   const [saving, setSaving] = useState(false);
-  const effectiveNodeColor = String(nodeColor || (session as any)?._nodeColor || "").trim();
+  const effectiveNodeColor = String(
+    nodeColor ||
+    (session as any)?._nodeColor ||
+    resolveGroupColor(
+      { rootId: String((session as any)?.root_id || ""), _nodeId: String((session as any)?._nodeId || "") },
+      {},
+      getNodes() as any,
+    ) ||
+    "",
+  ).trim();
   const rowBackground = selected
     ? "var(--node-row-selected-bg)"
     : parentHighlighted
@@ -1668,10 +1691,10 @@ function SessionCard({
                 borderRadius: "999px",
                 flexShrink: 0,
                 boxSizing: "border-box",
-                border: `1.5px solid ${effectiveNodeColor || "#2563eb"}`,
-                background: effectiveNodeColor || "#2563eb",
+                border: `1.5px solid ${effectiveNodeColor || "var(--accent-color)"}`,
+                background: effectiveNodeColor || "var(--accent-color)",
                 animation: "mindfs-bound-pulse 2.2s ease-in-out infinite",
-                boxShadow: `0 0 0 1.5px ${hexToRgba(effectiveNodeColor || "#2563eb", 0.14)}`,
+                boxShadow: `0 0 0 1.5px ${hexToRgba(effectiveNodeColor || "var(--accent-color)", 0.14)}`,
               }}
             />
           ) : (

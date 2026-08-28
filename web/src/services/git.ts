@@ -158,24 +158,32 @@ function removeStorageByPrefix(prefix: string): void {
   }
 }
 
-function historyListStorageKey(rootId: string): string {
-  return `${HISTORY_LIST_STORAGE_PREFIX}${encodeURIComponent(rootId)}`;
+function gitScopedRoot(rootId: string, nodeId?: string): string {
+  const nid = String(nodeId || "").trim();
+  const rid = String(rootId || "").trim();
+  return nid ? `${nid}::${rid}` : rid;
 }
 
-function commitFilesStorageKey(rootId: string, commit: string): string {
-  return `${COMMIT_FILES_STORAGE_PREFIX}${encodeURIComponent(rootId)}:${encodeURIComponent(commit)}`;
+function historyListStorageKey(rootId: string, nodeId?: string): string {
+  return `${HISTORY_LIST_STORAGE_PREFIX}${encodeURIComponent(gitScopedRoot(rootId, nodeId))}`;
 }
 
-function commitDiffStorageKey(rootId: string, commit: string, oldPath: string, path: string): string {
-  return `${COMMIT_DIFF_STORAGE_PREFIX}${encodeURIComponent(rootId)}:${encodeURIComponent(commit)}:${encodeURIComponent(oldPath)}:${encodeURIComponent(path)}`;
+function commitFilesStorageKey(rootId: string, commit: string, nodeId?: string): string {
+  return `${COMMIT_FILES_STORAGE_PREFIX}${encodeURIComponent(gitScopedRoot(rootId, nodeId))}:${encodeURIComponent(commit)}`;
 }
 
-function getHistoryCacheEntry(rootId: string): GitHistoryCacheEntry | null {
-  const cached = gitHistoryListCache.get(rootId);
+function commitDiffStorageKey(rootId: string, commit: string, oldPath: string, path: string, nodeId?: string): string {
+  return `${COMMIT_DIFF_STORAGE_PREFIX}${encodeURIComponent(gitScopedRoot(rootId, nodeId))}:${encodeURIComponent(commit)}:${encodeURIComponent(oldPath)}:${encodeURIComponent(path)}`;
+}
+
+function getHistoryCacheEntry(rootId: string, nodeId?: string): GitHistoryCacheEntry | null {
+  const nid = String(nodeId || "").trim();
+  const scoped = gitScopedRoot(rootId, nid);
+  const cached = gitHistoryListCache.get(scoped);
   if (cached) {
     return cached;
   }
-  const persisted = readStorageJSON<GitHistoryCacheEntry>(historyListStorageKey(rootId));
+  const persisted = readStorageJSON<GitHistoryCacheEntry>(historyListStorageKey(rootId, nid || undefined));
   if (persisted && Array.isArray(persisted.items)) {
     const normalized = {
       items: persisted.items.filter((item) => !!item?.hash),
@@ -183,15 +191,41 @@ function getHistoryCacheEntry(rootId: string): GitHistoryCacheEntry | null {
       remoteHead: typeof persisted.remoteHead === "string" ? persisted.remoteHead : undefined,
     };
     normalized.items = applyRemoteHead(normalized.items, normalized.remoteHead);
-    gitHistoryListCache.set(rootId, normalized);
+    gitHistoryListCache.set(scoped, normalized);
     return normalized;
+  }
+  // 兼容裸键迁移：旧数据以裸 rootId 存，命中后以新键重写并删除裸键避免第二节点继承
+  if (nid) {
+    const bareKey = String(rootId || "").trim();
+    const bare = gitHistoryListCache.get(bareKey);
+    if (bare) {
+      gitHistoryListCache.set(scoped, bare);
+      writeStorageJSON(historyListStorageKey(rootId, nid), bare);
+      gitHistoryListCache.delete(bareKey);
+      if (canUseStorage()) window.localStorage.removeItem(historyListStorageKey(rootId));
+      return bare;
+    }
+    const barePersisted = readStorageJSON<GitHistoryCacheEntry>(historyListStorageKey(rootId));
+    if (barePersisted && Array.isArray(barePersisted.items)) {
+      const normalized = {
+        items: barePersisted.items.filter((item) => !!item?.hash),
+        hasMore: barePersisted.hasMore === true,
+        remoteHead: typeof barePersisted.remoteHead === "string" ? barePersisted.remoteHead : undefined,
+      };
+      normalized.items = applyRemoteHead(normalized.items, normalized.remoteHead);
+      gitHistoryListCache.set(scoped, normalized);
+      writeStorageJSON(historyListStorageKey(rootId, nid), normalized);
+      if (canUseStorage()) window.localStorage.removeItem(historyListStorageKey(rootId));
+      return normalized;
+    }
   }
   return null;
 }
 
-function setHistoryCacheEntry(rootId: string, entry: GitHistoryCacheEntry): void {
-  gitHistoryListCache.set(rootId, entry);
-  writeStorageJSON(historyListStorageKey(rootId), entry);
+function setHistoryCacheEntry(rootId: string, entry: GitHistoryCacheEntry, nodeId?: string): void {
+  const scoped = gitScopedRoot(rootId, nodeId);
+  gitHistoryListCache.set(scoped, entry);
+  writeStorageJSON(historyListStorageKey(rootId, String(nodeId || "").trim() || undefined), entry);
 }
 
 function normalizeGitHistoryPayload(payload: any): GitHistoryPayload {
@@ -238,8 +272,9 @@ function mergeHistoryItems(existing: GitHistoryItem[], next: GitHistoryItem[]): 
   return merged;
 }
 
-export function getCachedGitHistory(rootId: string): GitHistoryPayload | null {
-  const cached = getHistoryCacheEntry(rootId);
+export function getCachedGitHistory(rootId: string, nodeId?: string): GitHistoryPayload | null {
+  const nid = String(nodeId ?? getRootNodeId(rootId) ?? "").trim();
+  const cached = getHistoryCacheEntry(rootId, nid || undefined);
   if (!cached) {
     return null;
   }
@@ -251,27 +286,53 @@ export function getCachedGitHistory(rootId: string): GitHistoryPayload | null {
   };
 }
 
-export function getCachedGitHistoryHead(rootId: string, limit = DEFAULT_HISTORY_LIMIT): GitHistoryPayload | null {
-  const cached = getHistoryCacheEntry(rootId);
+export function getCachedGitHistoryHead(rootId: string, limit: number | string = DEFAULT_HISTORY_LIMIT, nodeId?: string): GitHistoryPayload | null {
+  // 兼容旧调用：getCachedGitHistoryHead(rootId, nodeIdString)
+  if (typeof limit === "string") {
+    nodeId = limit as unknown as string;
+    limit = DEFAULT_HISTORY_LIMIT;
+  }
+  const nid = String(nodeId ?? getRootNodeId(rootId) ?? "").trim();
+  const cached = getHistoryCacheEntry(rootId, nid || undefined);
   if (!cached) {
     return null;
   }
   return {
     available: true,
-    items: cached.items.slice(0, limit),
-    has_more: cached.items.length > limit || cached.hasMore,
+    items: (cached.items as GitHistoryItem[]).slice(0, limit as number),
+    has_more: cached.items.length > (limit as number) || cached.hasMore,
     remote_head: cached.remoteHead,
   };
 }
 
-export function clearGitHistoryCache(rootId?: string): void {
-  if (rootId) {
-    gitHistoryListCache.delete(rootId);
-    if (canUseStorage()) {
-      window.localStorage.removeItem(historyListStorageKey(rootId));
+export function clearGitHistoryCache(rootId?: string, nodeId?: string): void {
+  const nid = String(nodeId ?? "").trim();
+  const rid = String(rootId ?? "").trim();
+  if (rid) {
+    if (nid) {
+      const scoped = gitScopedRoot(rid, nid);
+      gitHistoryListCache.delete(scoped);
+      if (canUseStorage()) window.localStorage.removeItem(historyListStorageKey(rid, nid));
+      removeStorageByPrefix(`${COMMIT_FILES_STORAGE_PREFIX}${encodeURIComponent(scoped)}:`);
+      removeStorageByPrefix(`${COMMIT_DIFF_STORAGE_PREFIX}${encodeURIComponent(scoped)}:`);
+    } else {
+      // 清该 root 在所有节点下的历史（含旧裸键与新 nid:: 键）
+      for (const k of Array.from(gitHistoryListCache.keys())) {
+        if (k === rid || k.endsWith(`::${rid}`)) gitHistoryListCache.delete(k);
+      }
+      if (canUseStorage()) {
+        window.localStorage.removeItem(historyListStorageKey(rid));
+        for (const k of Array.from({ length: window.localStorage.length }, (_, i) => window.localStorage.key(i)).filter(Boolean) as string[]) {
+          if (k.startsWith(HISTORY_LIST_STORAGE_PREFIX) && (k === `${HISTORY_LIST_STORAGE_PREFIX}${encodeURIComponent(rid)}` || k.includes(encodeURIComponent(`::${rid}`)))) {
+            window.localStorage.removeItem(k);
+          }
+          if ((k.startsWith(COMMIT_FILES_STORAGE_PREFIX) || k.startsWith(COMMIT_DIFF_STORAGE_PREFIX)) && k.includes(encodeURIComponent(rid))) {
+            // commit 缓存键形如 prefix + encode(nid::rid) + :commit，是否含 rid 即属该 root
+            window.localStorage.removeItem(k);
+          }
+        }
+      }
     }
-    removeStorageByPrefix(`${COMMIT_FILES_STORAGE_PREFIX}${encodeURIComponent(rootId)}:`);
-    removeStorageByPrefix(`${COMMIT_DIFF_STORAGE_PREFIX}${encodeURIComponent(rootId)}:`);
   } else {
     gitHistoryListCache.clear();
     removeStorageByPrefix(HISTORY_LIST_STORAGE_PREFIX);
@@ -280,8 +341,12 @@ export function clearGitHistoryCache(rootId?: string): void {
   }
   const clearMap = (cache: Map<string, unknown>) => {
     for (const key of Array.from(cache.keys())) {
-      if (!rootId || key.startsWith(`${rootId}:`)) {
-        cache.delete(key);
+      if (!rid) { cache.delete(key); continue; }
+      if (!nid) {
+        if (key === rid || key.startsWith(`${rid}:`) || key.includes(`::${rid}:`) || key.endsWith(`::${rid}`) || key.includes(`::${rid}::`)) cache.delete(key);
+      } else {
+        const scoped = gitScopedRoot(rid, nid);
+        if (key === scoped || key.startsWith(`${scoped}:`) || key.startsWith(`${nid}::${rid}:`)) cache.delete(key);
       }
     }
   };
@@ -297,10 +362,11 @@ export async function fetchGitHistory(
   options?: { beforeCommit?: string; afterCommit?: string; limit?: number; force?: boolean; nodeId?: string },
 ): Promise<GitHistoryPayload> {
   options = { ...options, nodeId: options?.nodeId || getRootNodeId(rootId) } as any;
+  const nid = String((options as any)?.nodeId || "").trim();
   const limit = options?.limit || DEFAULT_HISTORY_LIMIT;
   const beforeCommit = options?.beforeCommit || "";
   const afterCommit = options?.afterCommit || "";
-  const cached = getHistoryCacheEntry(rootId);
+  const cached = getHistoryCacheEntry(rootId, nid || undefined);
   if (!options?.force && !beforeCommit && !afterCommit && cached) {
     return {
       available: true,
@@ -319,7 +385,7 @@ export async function fetchGitHistory(
     }
   }
 
-  const key = `${rootId}:${beforeCommit}:${afterCommit}:${limit}`;
+  const key = `${nid ? `${nid}::` : ""}${rootId}:${beforeCommit}:${afterCommit}:${limit}`;
   const inflight = gitHistoryInflight.get(key);
   if (inflight) {
     return inflight;
@@ -338,10 +404,10 @@ export async function fetchGitHistory(
   ).then((payload) => {
     const normalized = normalizeGitHistoryPayload(payload);
     if (normalized.commit_missing) {
-      clearGitHistoryCache(rootId);
+      clearGitHistoryCache(rootId, nid || undefined);
       return normalized;
     }
-    const existing = getHistoryCacheEntry(rootId);
+    const existing = getHistoryCacheEntry(rootId, nid || undefined);
     if (!normalized.available) {
       return normalized;
     }
@@ -351,14 +417,14 @@ export async function fetchGitHistory(
         items: applyRemoteHead(normalized.items.slice(), remoteHead),
         hasMore: normalized.has_more,
         remoteHead,
-      });
+      }, nid || undefined);
     } else if (beforeCommit) {
       const remoteHead = normalized.remote_head || existing?.remoteHead;
       setHistoryCacheEntry(rootId, {
         items: applyRemoteHead(mergeHistoryItems(existing?.items || [], normalized.items), remoteHead),
         hasMore: normalized.has_more,
         remoteHead,
-      });
+      }, nid || undefined);
     } else if (afterCommit) {
       // afterCommit is a change probe. A reset/rebase can leave afterCommit as an
       // existing object that is no longer in the current HEAD history, so blindly
@@ -377,12 +443,14 @@ export async function fetchGitHistory(
 
 export async function fetchGitCommitFiles(rootId: string, commit: string, nodeId?: string): Promise<GitCommitFilesPayload> {
   nodeId = nodeId || getRootNodeId(rootId);
-  const key = `${rootId}:${commit}`;
+  const nid = String(nodeId || "").trim();
+  const scoped = gitScopedRoot(rootId, nid || undefined);
+  const key = `${scoped}:${commit}`;
   const cached = gitCommitFilesCache.get(key);
   if (cached) {
     return cached;
   }
-  const persisted = readStorageJSON<GitCommitFilesPayload>(commitFilesStorageKey(rootId, commit));
+  const persisted = readStorageJSON<GitCommitFilesPayload>(commitFilesStorageKey(rootId, commit, nid || undefined));
   if (persisted && Array.isArray(persisted.items)) {
     gitCommitFilesCache.set(key, persisted);
     return persisted;
@@ -399,7 +467,7 @@ export async function fetchGitCommitFiles(rootId: string, commit: string, nodeId
       items: Array.isArray(payload?.items) ? payload.items as GitStatusItem[] : [],
     };
     gitCommitFilesCache.set(key, normalized);
-    writeStorageJSON(commitFilesStorageKey(rootId, commit), normalized);
+    writeStorageJSON(commitFilesStorageKey(rootId, commit, nid || undefined), normalized);
     return normalized;
   }).finally(() => {
     gitCommitFilesInflight.delete(key);
@@ -562,7 +630,7 @@ export async function fetchGitDiff(
   const cacheSignature = options?.cacheSignature || "";
   const repoPath = String(options?.repoPath || "").trim();
   if (!repoPath) {
-    const cached = await getCachedGitDiff(rootId, path, cacheSignature);
+    const cached = await getCachedGitDiff(rootId, path, cacheSignature, options?.nodeId);
     if (cached) {
       return cached as GitDiffPayload;
     }
@@ -585,7 +653,7 @@ export async function fetchGitDiff(
     source: "worktree" as const,
   };
   if (!repoPath) {
-    await setCachedGitDiff(rootId, path, diff, cacheSignature);
+    await setCachedGitDiff(rootId, path, diff, cacheSignature, options?.nodeId);
   }
   return diff;
 }
@@ -597,13 +665,15 @@ export async function fetchGitCommitDiff(
   nodeId?: string,
 ): Promise<GitDiffPayload> {
   nodeId = nodeId || getRootNodeId(rootId);
+  const nid = String(nodeId || "").trim();
+  const scoped = gitScopedRoot(rootId, nid || undefined);
   const path = item.path;
-  const key = `${rootId}:${commit}:${item.old_path || ""}:${path}`;
+  const key = `${scoped}:${commit}:${item.old_path || ""}:${path}`;
   const cached = gitCommitDiffCache.get(key);
   if (cached) {
     return cached;
   }
-  const persisted = readStorageJSON<GitDiffPayload>(commitDiffStorageKey(rootId, commit, item.old_path || "", path));
+  const persisted = readStorageJSON<GitDiffPayload>(commitDiffStorageKey(rootId, commit, item.old_path || "", path, nid || undefined));
   if (persisted && typeof persisted.content === "string") {
     gitCommitDiffCache.set(key, persisted);
     return persisted;
@@ -628,7 +698,7 @@ export async function fetchGitCommitDiff(
       source: "commit" as const,
     };
     gitCommitDiffCache.set(key, diff);
-    writeStorageJSON(commitDiffStorageKey(rootId, commit, item.old_path || "", path), diff);
+    writeStorageJSON(commitDiffStorageKey(rootId, commit, item.old_path || "", path, nid || undefined), diff);
     return diff;
   }).finally(() => {
     gitCommitDiffInflight.delete(key);

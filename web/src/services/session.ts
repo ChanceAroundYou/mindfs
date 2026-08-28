@@ -244,6 +244,29 @@ export type SyncSessionResult = {
   hasDelta: boolean;
 };
 
+/** 服务端窗口化加载的元数据（方案 B：超长会话按需加载）。 */
+export type SessionWindowMeta = {
+  total: number;
+  hasMore: boolean;
+  minSeq: number;
+  maxSeq: number;
+};
+
+/** 单窗口的会话数据 + 窗口元数据，供 SessionViewer 渐进式渲染。 */
+export type SessionWindow = {
+  session: Session | any;
+  meta: SessionWindowMeta;
+  raw?: any;
+};
+
+/** getSessionWindow 的可选参数。before_seq 与 latest 互斥，由后端校验。 */
+export type SessionWindowOptions = {
+  beforeSeq?: number;
+  limit?: number;
+  latest?: number;
+  nodeId?: string;
+};
+
 type SessionEventHandler = {
   onStream?: (event: StreamEvent) => void;
   onDone?: () => void;
@@ -351,6 +374,7 @@ class SessionService {
 
   private async buildWSUrl(nodeId?: string): Promise<string> {
     const params = new URLSearchParams({ client_id: this.clientId });
+    if (nodeId) params.set("node_id", nodeId);
     const proofTarget = wsURL("/ws", params, nodeId);
     if (e2eeService.isRequired()) {
       const proofParams = await e2eeService.wsProofParams("GET", proofTarget);
@@ -694,7 +718,12 @@ class SessionService {
     payload: Record<string, unknown>,
     msg: any,
   ) {
-    const nextPayload = { ...payload };
+    const nextPayload: Record<string, unknown> = { ...payload };
+    // 前端传输级打标：后端暂不发 _nodeId 时，以当前 socket 归属节点兜底，使 App 侧守卫生效
+    const socketNid = String((this as any).nodeId || "").trim();
+    if (socketNid && !nextPayload["_nodeId"] && !nextPayload["nodeId"]) {
+      (nextPayload as any)["_nodeId"] = socketNid;
+    }
     this.emit({ type, sessionKey, payload: nextPayload });
 
     if (!sessionKey) return;
@@ -1245,6 +1274,55 @@ class SessionService {
     }
   }
 
+  /**
+   * 窗口化拉取单段会话数据（方案 B）。before_seq/limit 取历史窗口，
+   * latest 取尾部窗口；互斥由后端校验。透传 nodeId（缺省按 root 解析）。
+   * 响应兼容顶层 `window_meta` 或嵌入 `session.window_meta`。
+   */
+  async getSessionWindow(
+    rootId: string,
+    sessionKey: string,
+    opts?: SessionWindowOptions,
+  ): Promise<SessionWindow | null> {
+    try {
+      const nodeId = opts?.nodeId || getRootNodeId(rootId);
+      const params = new URLSearchParams({ root: rootId });
+      if (typeof opts?.beforeSeq === "number" && opts.beforeSeq > 0) {
+        params.set("before_seq", String(opts.beforeSeq));
+      }
+      if (typeof opts?.latest === "number" && opts.latest > 0) {
+        params.set("latest", String(opts.latest));
+      }
+      const limit = Number(opts?.limit || 0);
+      if (limit > 0) {
+        params.set("limit", String(limit));
+      }
+      const raw = await protectedJSON<any>(
+        appURL(`/api/sessions/${encodeURIComponent(sessionKey)}`, params, nodeId),
+      );
+      const session = (raw?.session as Session | any) || (raw as Session | any);
+      const meta = (raw?.window_meta || session?.window_meta) as SessionWindowMeta;
+      if (!meta) {
+        console.error("[Session] getSessionWindow: missing window_meta", raw);
+        return null;
+      }
+      return { session, meta, raw };
+    } catch (err) {
+      console.error("[Session] Failed to get session window:", err);
+      return null;
+    }
+  }
+
+  // 显式别名：现有 getSession 的增量语义（?seq=N 取 seq>N），供流式尾部追加复用。
+  async getSessionIncrement(
+    rootId: string,
+    sessionKey: string,
+    seq?: number,
+    nodeId?: string,
+  ): Promise<Session | null> {
+    return this.getSession(rootId, sessionKey, seq, nodeId);
+  }
+
   async syncExternalSession(
     rootId: string,
     sessionKey: string,
@@ -1709,7 +1787,6 @@ export function getCachedSessionList(rootId: string, nodeId?: string): Promise<S
   const primary = buildSessionListCacheKey(rootId, nid || undefined);
   return readCachedSessionList<SessionListPayload>(primary).then((hit) => {
     if (hit) return hit;
-    if (nid) return readCachedSessionList<SessionListPayload>(buildSessionListCacheKey(rootId));
     return null;
   });
 }
@@ -1727,12 +1804,25 @@ export function saveCachedMultiRootSessionList(groups: MultiRootSessionGroup[]):
   return writeCachedSessionList(MULTI_ROOT_SESSION_LIST_CACHE_KEY, groups);
 }
 
-function getSessionMaxSeq(session: Session | null | undefined): number {
+export function getSessionMaxSeq(session: Session | null | undefined): number {
   const exchanges = Array.isArray(session?.exchanges) ? session.exchanges : [];
   return exchanges.reduce((max, exchange) => {
     const seq = Number((exchange as any)?.seq || 0);
     return Number.isFinite(seq) && seq > max ? seq : max;
   }, 0);
+}
+
+// 窗口内最小持久化 seq（seq>0），向上翻页时作为 beforeSeq 边界判定。
+export function getSessionMinSeq(session: Session | null | undefined): number {
+  const exchanges = Array.isArray(session?.exchanges) ? session.exchanges : [];
+  let min = 0;
+  for (const exchange of exchanges) {
+    const seq = Number((exchange as any)?.seq || 0);
+    if (Number.isFinite(seq) && seq > 0) {
+      min = min === 0 ? seq : Math.min(min, seq);
+    }
+  }
+  return min;
 }
 
 function cloneExchangeAux(
@@ -1882,11 +1972,12 @@ async function saveCachedSession(
   rootId: string,
   session: Session | null | undefined,
   nodeId?: string,
+  opts?: { forceNoTruncate?: boolean },
 ): Promise<void> {
   if (!rootId || !session?.key) {
     return;
   }
-  const persistentSession = toPersistentSession(session);
+  const persistentSession = toPersistentSession(session, opts?.forceNoTruncate);
   const record: CachedSessionRecord = {
     cacheKey: buildSessionCacheKey(rootId, session.key, nodeId),
     rootId,
@@ -1979,7 +2070,10 @@ const SESSION_CACHE_MAX_TEXT = 200 * 1024;
  * JSONL（可达 MB 级）全量写进 IndexedDB 卡主线程。截断时置 truncated 标记，
  * 读取方下次以全量拉取补段（见 syncSession）。
  */
-function toPersistentSession(session: Session): Session {
+function toPersistentSession(
+  session: Session,
+  forceNoTruncate?: boolean,
+): Session {
   const exchanges = Array.isArray(session.exchanges)
     ? session.exchanges.filter((exchange) => {
         const seq = Number((exchange as any)?.seq || 0);
@@ -2011,7 +2105,7 @@ function toPersistentSession(session: Session): Session {
   const kept = extraSliced > 0 ? tail.slice(0, tail.length - extraSliced) : tail;
   return {
     ...session,
-    truncated: true,
+    truncated: forceNoTruncate ? false : true,
     exchanges: kept,
     exchange_aux,
   };
@@ -2044,14 +2138,39 @@ export async function setCachedSessionRelatedFiles(
   return cloneSession(next);
 }
 
+/**
+ * 窗口化视图内存标记（方案 B）。SessionViewer 进入窗口视图时置位，
+ * 使 syncSession 走增量复用、跳过 truncated 全量回补、且不写 truncated 标记。
+ * 清标记即回退全量路径（见 3.3 / 8 灰度回滚）。
+ */
+const windowedViewKeys = new Set<string>();
+
+export function isWindowedView(sessionKey: string): boolean {
+  return windowedViewKeys.has(sessionKey);
+}
+
+export function setWindowedView(sessionKey: string, on = true): void {
+  if (on) {
+    windowedViewKeys.add(sessionKey);
+  } else {
+    windowedViewKeys.delete(sessionKey);
+  }
+}
+
+export function clearWindowedView(sessionKey: string): void {
+  windowedViewKeys.delete(sessionKey);
+}
+
 export async function syncSession(
   rootId: string,
   sessionKey: string,
-  options?: { full?: boolean; nodeId?: string },
+  options?: { full?: boolean; nodeId?: string; windowedView?: boolean },
 ): Promise<SyncSessionResult> {
   const base = await getCachedSession(rootId, sessionKey, options?.nodeId);
-  // 缓存被截断（truncated）时 base 缺中间段：丢弃 base 走全量拉取，否则 UI 会缺消息。
-  const baseTruncated = !!(base as any)?.truncated;
+  // 窗口化视图（内存标记或显式选项）以增量复用为主：跳过 truncated 全量回补，
+  // 也不写 truncated 标记（见 3.3 / 8 灰度回滚）。全量路径仍保留 truncated→全量拉取。
+  const windowed = isWindowedView(sessionKey) || !!options?.windowedView;
+  const baseTruncated = windowed ? false : !!(base as any)?.truncated;
   const seq = baseTruncated ? 0 : getSessionMaxSeq(base);
   // truncated 只需轻量 GET 全量（非 syncExternalSession 的手动转录同步重端点）。
   const incoming = baseTruncated
@@ -2082,7 +2201,12 @@ export async function syncSession(
   if (!persistedSession) {
     return { session: null, hasDelta: false };
   }
-  await saveCachedSession(rootId, persistedSession, options?.nodeId);
+  await saveCachedSession(
+    rootId,
+    persistedSession,
+    options?.nodeId,
+    windowed ? { forceNoTruncate: true } : undefined,
+  );
   const displaySession = withSessionMeta(persistedSession, {
     ...incoming,
     key: sessionKey,
@@ -2093,4 +2217,23 @@ export async function syncSession(
     session: displaySession ? cloneSession(displaySession) : null,
     hasDelta: persistedDelta.length > 0,
   };
+}
+
+/** 窗口化拉取单段会话数据（方案 B）。委托给 sessionService.getSessionWindow。 */
+export async function getSessionWindow(
+  rootId: string,
+  sessionKey: string,
+  opts?: SessionWindowOptions,
+): Promise<SessionWindow | null> {
+  return sessionService.getSessionWindow(rootId, sessionKey, opts);
+}
+
+/** 增量语义别名：即现有 getSession(?seq 增量)。供 SessionViewer 跨窗口流式追加复用。 */
+export async function getSessionIncrement(
+  rootId: string,
+  sessionKey: string,
+  seq?: number,
+  nodeId?: string,
+): Promise<Session | null> {
+  return sessionService.getSession(rootId, sessionKey, seq, nodeId);
 }

@@ -7,7 +7,16 @@ import { AgentIcon } from "./AgentIcon";
 import { InlineTokenText } from "./InlineTokenText";
 import { MarkdownViewer } from "./MarkdownViewer";
 import { fetchProofProtectedBlob } from "../services/file";
-import type { ExchangeAux, RelatedFile, ToolCall } from "../services/session";
+import { getRootNodeId } from "../services/rootNode";
+import {
+  clearWindowedView,
+  getSessionWindow,
+  setWindowedView,
+  type ExchangeAux,
+  type RelatedFile,
+  type SessionWindowMeta,
+  type ToolCall,
+} from "../services/session";
 import { savePrompt } from "../services/prompts";
 import { reportError } from "../services/error";
 import { rootBadgeButtonStyle } from "./rootBadgeStyle";
@@ -53,6 +62,8 @@ type SessionItem = {
   related_files?: RelatedFile[];
   exchange_aux?: Record<string, ExchangeAux[]>;
 };
+
+type ExchangeArray = NonNullable<SessionItem["exchanges"]>;
 
 type SessionViewerProps = {
   session: SessionItem | null;
@@ -135,7 +146,7 @@ function AttachmentImage({
     let objectURL = "";
     async function run() {
       try {
-        const blob = await fetchProofProtectedBlob({ rootId, path });
+        const blob = await fetchProofProtectedBlob({ rootId, path, nodeId: String(getRootNodeId(rootId) || "").trim() || undefined });
         if (cancelled) return;
         objectURL = URL.createObjectURL(blob);
         setURL(objectURL);
@@ -974,14 +985,8 @@ function timelineItemSpacing(
   return "16px";
 }
 
-function shouldDefaultCollapseRelatedFiles(
-  isMobile: boolean,
-  relatedFileCount: number,
-): boolean {
-  if (isMobile) {
-    return relatedFileCount > 0;
-  }
-  return relatedFileCount > 5;
+function shouldDefaultCollapseRelatedFiles(_isMobile?: boolean, _relatedFileCount?: number): boolean {
+  return true;
 }
 
 const USER_MESSAGE_SUMMARY_LENGTH = 48;
@@ -1030,7 +1035,7 @@ function SessionViewerInner({
   scrollContainerRef,
 }: SessionViewerProps) {
   const { locale, t } = useI18n();
-  const [relatedFilesCollapsed, setRelatedFilesCollapsed] = useState(false);
+  const [relatedFilesCollapsed, setRelatedFilesCollapsed] = useState(true);
   const [isMobile, setIsMobile] = useState(() => {
     if (typeof window === "undefined") {
       return false;
@@ -1055,12 +1060,28 @@ function SessionViewerInner({
   const userSummaryListRef = useRef<HTMLDivElement | null>(null);
   const relatedFilesDividerRef = useRef<HTMLDivElement | null>(null);
   const sessionKey = session?.key || session?.session_key || null;
-  const exchanges = Array.isArray(session?.exchanges) ? session.exchanges : [];
+  // 方案 B（超长会话窗口化）：可视数据以可见窗口为准，初始用全量/窗口做首帧，
+  // 随后由 getSessionWindow({latest:50}) 覆盖（见下方初始化 effect）。
+  const [visibleExchanges, setVisibleExchanges] = useState<ExchangeArray>(
+    () => (Array.isArray(session?.exchanges) ? session.exchanges : []),
+  );
+  const [visibleAux, setVisibleAux] = useState<Record<string, ExchangeAux[]>>(
+    () => session?.exchange_aux || {},
+  );
+  const [windowMeta, setWindowMeta] = useState<SessionWindowMeta>({
+    total: 0,
+    hasMore: false,
+    minSeq: 0,
+    maxSeq: 0,
+  });
+  const [loadingMore, setLoadingMore] = useState(false);
+  const topSentinelRef = useRef<HTMLDivElement>(null);
+  const isPrependingRef = useRef(false);
   const isAwaiting = !!(session as any)?.pending;
   const { timeline, isStreaming, streamVersion, streamStatusText } = useSessionStream(
     sessionKey,
-    exchanges,
-    session?.exchange_aux || {},
+    visibleExchanges,
+    visibleAux,
     session?.context_window,
     isAwaiting,
   );
@@ -1124,6 +1145,179 @@ function SessionViewerInner({
     );
     copyResetTimersRef.current = {};
   }, [sessionKey]);
+
+  // 方案 B：从窗口响应中提取 exchanges/aux/meta（后端 window_meta 透传 total/hasMore/minSeq/maxSeq）。
+  const applyWindow = useCallback(
+    (res: { session: any; meta: SessionWindowMeta } | null) => {
+      if (!res) return false;
+      const winSession = res.session as any;
+      const winExchanges = Array.isArray(winSession?.exchanges)
+        ? (winSession.exchanges as ExchangeArray)
+        : [];
+      const winAux =
+        (winSession?.exchange_aux as Record<string, ExchangeAux[]>) || {};
+      setVisibleExchanges(winExchanges);
+      setVisibleAux(winAux);
+      setWindowMeta(res.meta);
+      return true;
+    },
+    [],
+  );
+
+  // 初始化：会话切换时拉取尾部 50 条窗口，复位置底；拉取失败回退到 props 传入的全量/窗口。
+  useEffect(() => {
+    let cancelled = false;
+    setLoadingMore(false);
+    if (!sessionKey) {
+      setVisibleExchanges([]);
+      setVisibleAux({});
+      setWindowMeta({ total: 0, hasMore: false, minSeq: 0, maxSeq: 0 });
+      return;
+    }
+    // 进入窗口化视图，隔离 syncSession 的 truncated 全量回补（见 session.ts windowedView 标记）。
+    setWindowedView(sessionKey, true);
+    // 方案 B 首帧按需：避免先用全量做首帧导致长对话从头刷到尾。
+    // 若外层传入的是全量（可能来自 App 旧缓存或网络全量兜底），此处仅取尾部 50 作首帧，
+    // 随后 getSessionWindow({latest:50}) 会以服务端窗口覆盖，保持首帧 O(50)。
+    const incomingExs = Array.isArray(session?.exchanges) ? (session.exchanges as ExchangeArray) : ([] as ExchangeArray);
+    const incomingAux = (session?.exchange_aux || {}) as Record<string, ExchangeAux[]>;
+    if (incomingExs.length > 50) {
+      const tail = incomingExs.slice(-50) as ExchangeArray;
+      const tailSeqs = new Set<number>();
+      for (const ex of tail) {
+        const s = Number((ex as any)?.seq || 0);
+        if (s > 0) tailSeqs.add(s);
+      }
+      const tailAux: Record<string, ExchangeAux[]> = {};
+      for (const [k, v] of Object.entries(incomingAux)) {
+        if (tailSeqs.has(Number(k))) tailAux[k] = v;
+      }
+      setVisibleExchanges(tail);
+      setVisibleAux(tailAux);
+    } else {
+      setVisibleExchanges(incomingExs as ExchangeArray);
+      setVisibleAux(incomingAux);
+    }
+    getSessionWindow(rootId || "", sessionKey, { latest: 50 })
+      .then((res) => {
+        if (cancelled) return;
+        applyWindow(res);
+        if (res) {
+          shouldStickToBottomRef.current = true;
+          setShowJumpToLatest(false);
+          window.requestAnimationFrame(() => stickSessionToBottom("auto"));
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+      clearWindowedView(sessionKey);
+    };
+  }, [sessionKey, rootId, applyWindow]);
+
+  // 向上翻页：锚定 scrollHeight-scrollTop，请求 beforeSeq=minSeq 的历史段，
+  // 函数式前置合并并 RAF 回补滚动位置，避免视口跳动。
+  const loadMore = useCallback(() => {
+    const container = activeScrollRef?.current;
+    if (!container || loadingMore || !windowMeta.hasMore || !sessionKey) {
+      return;
+    }
+    const anchor = container.scrollHeight - container.scrollTop;
+    setLoadingMore(true);
+    isPrependingRef.current = true;
+    getSessionWindow(rootId || "", sessionKey, {
+        beforeSeq: windowMeta.minSeq,
+        limit: 50,
+      })
+      .then((res) => {
+        if (!res) {
+          setLoadingMore(false);
+          return;
+        }
+        const winSession = res.session as any;
+        const winExchanges = Array.isArray(winSession?.exchanges)
+          ? (winSession.exchanges as ExchangeArray)
+          : [];
+        const winAux =
+          (winSession?.exchange_aux as Record<string, ExchangeAux[]>) || {};
+        setVisibleExchanges((prev) => [...winExchanges, ...prev]);
+        setVisibleAux((prev) => ({ ...prev, ...winAux }));
+        setWindowMeta(res.meta);
+        setLoadingMore(false);
+        window.requestAnimationFrame(() => {
+          const el = activeScrollRef?.current;
+          if (el) {
+            el.scrollTop = el.scrollHeight - anchor;
+          }
+          isPrependingRef.current = false;
+        });
+      })
+      .catch(() => setLoadingMore(false));
+  }, [loadingMore, windowMeta, sessionKey, rootId]);
+
+  // 顶部哨兵：进入视口（rootMargin 200px）触发 loadMore，hasMore 耗尽后自动不观察。
+  useEffect(() => {
+    const sentinel = topSentinelRef.current;
+    const root = scrollRef.current;
+    if (!sentinel || !root || !windowMeta.hasMore) {
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          loadMore();
+        }
+      },
+      { root, rootMargin: "200px 0px 0px 0px", threshold: 0 },
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [windowMeta.hasMore, loadMore]);
+
+  // 流式尾部追加（方案 B 3.6）：窗口模式下仅把超出窗口 maxSeq 的新尾部 exchange/aux 并入
+  // 可视窗口（与 loadMore 的头部扩展正交，函数式更新避免覆盖）；非窗口（hasMore=false，含全量
+  // 兜底/小会话）则直接镜像 props 的 exchanges/aux，保证流式更新始终可见。
+  useEffect(() => {
+    const incoming = Array.isArray(session?.exchanges) ? session.exchanges : [];
+    if (incoming.length === 0) return;
+    setVisibleExchanges((prev) => {
+      if (!windowMeta.hasMore) {
+        const prevMax = prev.length
+          ? prev.reduce((m, e) => Math.max(m, Number((e as any)?.seq || 0)), 0)
+          : 0;
+        const incMax = incoming.length
+          ? incoming.reduce((m, e) => Math.max(m, Number((e as any)?.seq || 0)), 0)
+          : 0;
+        if (prev.length === incoming.length && prevMax === incMax) {
+          return prev;
+        }
+        return incoming as ExchangeArray;
+      }
+      const seen = new Set(prev.map((e) => Number((e as any)?.seq || 0)));
+      const fresh = incoming.filter((e) => {
+        const s = Number((e as any)?.seq || 0);
+        return s > 0 && s > windowMeta.maxSeq && !seen.has(s);
+      });
+      if (!fresh.length) return prev;
+      return [...prev, ...fresh].sort(
+        (a, b) => Number((a as any)?.seq || 0) - Number((b as any)?.seq || 0),
+      );
+    });
+    setVisibleAux((prev) => {
+      const src = (session?.exchange_aux || {}) as Record<string, ExchangeAux[]>;
+      if (!windowMeta.hasMore) {
+        return src;
+      }
+      const next = { ...prev };
+      for (const [seq, items] of Object.entries(src)) {
+        const s = Number(seq);
+        if (s > windowMeta.maxSeq) {
+          next[seq] = items;
+        }
+      }
+      return next;
+    });
+  }, [session?.exchanges, session?.exchange_aux, windowMeta]);
 
   const userMessageSummaries = useMemo(
     () =>
@@ -1277,6 +1471,10 @@ function SessionViewerInner({
   }, []);
 
   useEffect(() => {
+    if (isPrependingRef.current) {
+      // 顶部插入（loadMore 历史段）不触发底部跟随，视口由 loadMore 的 rAF 回补。
+      return;
+    }
     const container = activeScrollRef?.current;
     if (!container) {
       if (interactionMode === "drawer" && shouldStickToBottomRef.current) {
@@ -1376,6 +1574,9 @@ function SessionViewerInner({
       targetSeqScrollKeyRef.current = "";
       return;
     }
+    if (!sessionKey) {
+      return;
+    }
     const scrollKey = `${sessionKey || ""}:${targetSeq}:${targetSeqRequestKey}`;
     if (targetSeqScrollKeyRef.current === scrollKey) {
       return;
@@ -1387,48 +1588,93 @@ function SessionViewerInner({
     const node = container.querySelector<HTMLElement>(
       `[data-session-seq="${targetSeq}"]`,
     );
-    if (!node) {
-      return;
-    }
-    targetSeqScrollKeyRef.current = scrollKey;
-    shouldStickToBottomRef.current = false;
-    cancelTargetSeqScroll();
-    const scrollToNode = () => {
-      const latestContainer = activeScrollRef?.current;
-      const latestNode = latestContainer?.querySelector<HTMLElement>(
-        `[data-session-seq="${targetSeq}"]`,
-      );
-      if (!latestContainer || !latestNode) {
-        return;
-      }
+    const inRange =
+      windowMeta.minSeq > 0 &&
+      targetSeq >= windowMeta.minSeq &&
+      targetSeq <= windowMeta.maxSeq;
+    if (node && inRange) {
+      targetSeqScrollKeyRef.current = scrollKey;
       shouldStickToBottomRef.current = false;
-      const nextTop = Math.max(
-        0,
-        latestNode.offsetTop -
-          latestContainer.clientHeight / 2 +
-          latestNode.offsetHeight / 2,
-      );
-      latestContainer.scrollTo({ top: nextTop, behavior: "auto" });
-    };
-    targetSeqFrameRef.current = window.requestAnimationFrame(() => {
-      targetSeqFrameRef.current = window.requestAnimationFrame(() => {
-        targetSeqFrameRef.current = null;
-        scrollToNode();
-      });
-    });
-    [80, 220, 480].forEach((delay) => {
-      const timer = window.setTimeout(() => {
-        targetSeqTimerRefs.current = targetSeqTimerRefs.current.filter(
-          (item) => item !== timer,
+      cancelTargetSeqScroll();
+      const scrollToNode = () => {
+        const latestContainer = activeScrollRef?.current;
+        const latestNode = latestContainer?.querySelector<HTMLElement>(
+          `[data-session-seq="${targetSeq}"]`,
         );
-        if (targetSeqScrollKeyRef.current !== scrollKey) {
+        if (!latestContainer || !latestNode) {
           return;
         }
-        scrollToNode();
-      }, delay);
-      targetSeqTimerRefs.current.push(timer);
-    });
-  }, [sessionKey, targetSeq, targetSeqRequestKey, timeline]);
+        shouldStickToBottomRef.current = false;
+        const nextTop = Math.max(
+          0,
+          latestNode.offsetTop -
+            latestContainer.clientHeight / 2 +
+            latestNode.offsetHeight / 2,
+        );
+        latestContainer.scrollTo({ top: nextTop, behavior: "auto" });
+      };
+      targetSeqFrameRef.current = window.requestAnimationFrame(() => {
+        targetSeqFrameRef.current = window.requestAnimationFrame(() => {
+          targetSeqFrameRef.current = null;
+          scrollToNode();
+        });
+      });
+      [80, 220, 480].forEach((delay) => {
+        const timer = window.setTimeout(() => {
+          targetSeqTimerRefs.current = targetSeqTimerRefs.current.filter(
+            (item) => item !== timer,
+          );
+          if (targetSeqScrollKeyRef.current !== scrollKey) {
+            return;
+          }
+          scrollToNode();
+        }, delay);
+        targetSeqTimerRefs.current.push(timer);
+      });
+      return;
+    }
+    // 跨窗口：targetSeq 不在当前可见窗口内，拉取以 targetSeq 为中心的窗口再滚动。
+    if (targetSeq > 0 && !inRange) {
+      targetSeqScrollKeyRef.current = scrollKey;
+      shouldStickToBottomRef.current = false;
+      cancelTargetSeqScroll();
+      getSessionWindow(rootId || "", sessionKey, {
+          beforeSeq: targetSeq + 25,
+          limit: 50,
+        })
+        .then((res) => {
+          if (!res) return;
+          const winSession = res.session as any;
+          const winExchanges = Array.isArray(winSession?.exchanges)
+            ? (winSession.exchanges as ExchangeArray)
+            : [];
+          const winAux =
+            (winSession?.exchange_aux as Record<string, ExchangeAux[]>) || {};
+          setVisibleExchanges(winExchanges);
+          setVisibleAux(winAux);
+          setWindowMeta(res.meta);
+          window.requestAnimationFrame(() => {
+            const el = activeScrollRef?.current;
+            const targetNode = el?.querySelector<HTMLElement>(
+              `[data-session-seq="${targetSeq}"]`,
+            );
+            if (el && targetNode) {
+              shouldStickToBottomRef.current = false;
+              el.scrollTo({
+                top: Math.max(
+                  0,
+                  targetNode.offsetTop -
+                    el.clientHeight / 2 +
+                    targetNode.offsetHeight / 2,
+                ),
+                behavior: "auto",
+              });
+            }
+          });
+        })
+        .catch(() => {});
+    }
+  }, [sessionKey, targetSeq, targetSeqRequestKey, timeline, windowMeta]);
 
   const rawRelated = session?.related_files || (session as any)?.outputs || [];
   const relatedFiles = (Array.isArray(rawRelated) ? rawRelated : [])
@@ -2472,6 +2718,28 @@ function SessionViewerInner({
             overflowX: "hidden",
           }} data-mindfs-session-content-width="1">
           <div style={{ width: "100%", minWidth: 0, margin: "0", display: "flex", flexDirection: "column" }}>
+            {/* 方案 B：顶部哨兵，进入视口触发历史段加载（IntersectionObserver） */}
+            <div ref={topSentinelRef} style={{ height: 1 }} aria-hidden="true" />
+            {loadingMore ? (
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "center",
+                  padding: "8px 0",
+                }}
+              >
+                <span
+                  style={{
+                    width: "14px",
+                    height: "14px",
+                    border: "2px solid var(--border-color)",
+                    borderTopColor: "var(--accent-color)",
+                    borderRadius: "50%",
+                    animation: "spin 0.8s linear infinite",
+                  }}
+                />
+              </div>
+            ) : null}
             {loading && !hasVisibleTimeline ? (
               <div
                 style={{
@@ -2912,6 +3180,19 @@ function SessionViewerInner({
                         boxSizing: "border-box",
                       }}
                     >
+                      {windowMeta.total > 0 ? (
+                        <div
+                          style={{
+                            fontSize: "11px",
+                            lineHeight: "16px",
+                            color: "var(--text-secondary)",
+                            padding: "2px 8px 6px",
+                            borderBottom: "1px solid var(--menu-border)",
+                          }}
+                        >
+                          已加载 {visibleExchanges.length} / 共 {windowMeta.total}
+                        </div>
+                      ) : null}
                       <div
                         ref={userSummaryListRef}
                         style={{ display: "flex", flexDirection: "column", gap: "2px" }}

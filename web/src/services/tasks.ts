@@ -198,7 +198,6 @@ export async function getCachedTaskDetails(rootId: string, nodeId?: string): Pro
     return await withTaskStore("readonly", async ({ tasks }) => {
       const index = tasks.index("rootId");
       const records = await taskRequest(index.getAll(rootId) as IDBRequest<CachedTaskRecord[]>);
-      // 节点隔离：有 nid 时优先取 nid:: 前缀，命中则忽略旧裸键以避免旧节点覆盖新节点
       if (nid) {
         const scoped = records.filter((r) => String(r.cacheKey || "").startsWith(`${nid}::`));
         if (scoped.length > 0) {
@@ -212,7 +211,7 @@ export async function getCachedTaskDetails(rootId: string, nodeId?: string): Pro
             .filter((detail) => detail?.task?.id)
             .sort((a, b) => String(b.task.updated_at || "").localeCompare(String(a.task.updated_at || "")));
         }
-        // 首次迁移：旧裸键作为回退（仍按 taskId 去重取最新）
+        return [];
       }
       const byId = new Map<string, CachedTaskRecord>();
       for (const rec of records) {

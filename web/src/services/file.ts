@@ -457,28 +457,17 @@ export async function getCachedFile(params: Omit<FetchFileParams, "timeoutMs">):
   const cursor = normalizeCursor(params.cursor);
   const nid = String((params as any).nodeId || getRootNodeId(params.rootId) || "").trim();
   const cacheKey = buildCacheKey(params.rootId, params.path, readMode, cursor, nid || undefined);
-  // 兼容旧裸键：新键 miss 则回退旧键（首次迁移）
-  const fallbackKey = nid ? buildCacheKey(params.rootId, params.path, readMode, cursor) : cacheKey;
-
-  const inMemory = readMemoryCache(cacheKey) || (nid ? readMemoryCache(fallbackKey) : null);
-  if (inMemory) {
-    return inMemory;
+  if (nid) {
+    const inMemory = readMemoryCache(cacheKey);
+    if (inMemory) return inMemory;
+    const record = await loadCachedRecord(cacheKey);
+    if (!record?.file) return null;
+    return record.file;
   }
-
+  const inMemory = readMemoryCache(cacheKey);
+  if (inMemory) return inMemory;
   let record = await loadCachedRecord(cacheKey);
-  if (!record?.file && nid) record = await loadCachedRecord(fallbackKey);
-  if (!record?.file) {
-    return null;
-  }
-
-  // 命中旧键则迁移到新键
-  const effectiveKey = record.key === fallbackKey && nid ? cacheKey : record.key;
-  writeMemoryCache(effectiveKey, record.file);
-  void saveCachedRecord({
-    ...record,
-    key: effectiveKey,
-    touchedAt: Date.now(),
-  });
+  if (!record?.file) return null;
   return record.file;
 }
 
@@ -546,25 +535,17 @@ export async function getCachedGitDiff(
 ): Promise<CachedGitDiffPayload | null> {
   const nid = String(nodeId || getRootNodeId(rootId) || "").trim();
   const cacheKey = buildGitDiffCacheKey(rootId, path, signature, nid || undefined);
-  const fallbackKey = nid ? buildGitDiffCacheKey(rootId, path, signature) : cacheKey;
-  const inMemory = gitDiffMemoryCache.get(cacheKey) || (nid ? gitDiffMemoryCache.get(fallbackKey) : undefined);
-  if (inMemory) {
-    return inMemory;
+  if (nid) {
+    const inMemory = gitDiffMemoryCache.get(cacheKey);
+    if (inMemory) return inMemory;
+    const record = await loadCachedGitDiffRecord(cacheKey);
+    if (!record?.diff) return null;
+    return record.diff;
   }
-
+  const inMemory = gitDiffMemoryCache.get(cacheKey);
+  if (inMemory) return inMemory;
   let record = await loadCachedGitDiffRecord(cacheKey);
-  if (!record?.diff && nid) record = await loadCachedGitDiffRecord(fallbackKey);
-  if (!record?.diff) {
-    return null;
-  }
-
-  const effectiveKey = record.key === fallbackKey && nid ? cacheKey : record.key;
-  gitDiffMemoryCache.set(effectiveKey, record.diff);
-  void saveCachedGitDiffRecord({
-    ...record,
-    key: effectiveKey,
-    touchedAt: Date.now(),
-  });
+  if (!record?.diff) return null;
   return record.diff;
 }
 
@@ -600,7 +581,8 @@ export async function fetchFile(params: FetchFileParams): Promise<FilePayload | 
     path: params.path,
     readMode,
     cursor,
-  });
+    nodeId: params.nodeId,
+  } as any);
   const validationMTime =
     hasUsableCachedContent(cachedFile) && typeof cachedFile?.mtime === "string" && cachedFile.mtime
       ? cachedFile.mtime
