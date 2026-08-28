@@ -98,3 +98,26 @@ export async function updateIdleSessionResourceReleasePreference(
     }),
   );
 }
+
+export type CORSPreference = { mode: string; allowOrigins: string[] };
+
+function normalizeCORSPreference(value: unknown): CORSPreference {
+  const input = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  const mode = typeof input.mode === "string" ? String(input.mode).trim().toLowerCase() || "open" : "open";
+  const raw = Array.isArray(input.allow_origins) ? input.allow_origins : Array.isArray(input.allowOrigins) ? input.allowOrigins : [];
+  return { mode, allowOrigins: (raw as unknown[]).map((v) => String(v || "").trim()).filter(Boolean) };
+}
+
+export async function fetchCORSPreference(): Promise<CORSPreference> {
+  return normalizeCORSPreference(await protectedJSON(appPath("/api/preferences/cors")));
+}
+
+export async function updateCORSPreference(preference: CORSPreference): Promise<CORSPreference> {
+  return normalizeCORSPreference(
+    await protectedJSON(appPath("/api/preferences/cors"), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: preference.mode, allow_origins: preference.allowOrigins }),
+    }),
+  );
+}

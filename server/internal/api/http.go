@@ -279,21 +279,40 @@ func (h *HTTPHandler) broadcastRootChanged(action, rootID string, extra ...map[s
 
 func (h *HTTPHandler) corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Local plaintext mode (E2EE disabled) stays same-origin: emit no
-		// Access-Control-Allow-Origin so the browser never treats responses as
-		// cross-origin. Cross-origin browser pairing is only enabled in E2EE
-		// mode, where the pairing secret gates access.
+		origin := strings.TrimSpace(r.Header.Get("Origin"))
+		shouldEmit := false
+		emitOrigin := origin
 		if manager := h.AppContext.GetE2EEManager(); manager != nil && manager.Enabled() {
-			origin := strings.TrimSpace(r.Header.Get("Origin"))
-			if origin != "" {
-				w.Header().Set("Access-Control-Allow-Origin", origin)
-				w.Header().Set("Vary", "Origin")
-				w.Header().Set("Access-Control-Allow-Credentials", "true")
-				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-MindFS-E2EE, X-MindFS-Client-ID, X-MindFS-Proof, X-MindFS-TS, X-MindFS-Local-CLI-Token, Authorization, X-Requested-With")
-				w.Header().Set("Access-Control-Max-Age", "86400")
-				w.Header().Set("Access-Control-Allow-Private-Network", "true")
+			shouldEmit = origin != ""
+		} else {
+			prefs := h.AppContext.GetPreferences()
+			mode := ""
+			if prefs != nil {
+				mode = prefs.CORSMode()
 			}
+			if mode == "" {
+				mode = "open"
+			}
+			mode = strings.ToLower(strings.TrimSpace(mode))
+			switch mode {
+			case "open", "auto", "allow_all", "all", "*":
+				shouldEmit = origin != ""
+			case "allowlist", "whitelist":
+				shouldEmit = prefs != nil && prefs.IsCORSOriginAllowed(origin)
+			case "disabled", "off", "closed", "same_origin":
+				shouldEmit = false
+			default:
+				shouldEmit = origin != ""
+			}
+		}
+		if shouldEmit && emitOrigin != "" {
+			w.Header().Set("Access-Control-Allow-Origin", emitOrigin)
+			w.Header().Set("Vary", "Origin")
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-MindFS-E2EE, X-MindFS-Client-ID, X-MindFS-Proof, X-MindFS-TS, X-MindFS-Local-CLI-Token, Authorization, X-Requested-With")
+			w.Header().Set("Access-Control-Max-Age", "86400")
+			w.Header().Set("Access-Control-Allow-Private-Network", "true")
 		}
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(204)
@@ -344,6 +363,8 @@ func (h *HTTPHandler) Routes() http.Handler {
 	r.Put("/api/preferences/idle-session-resource-release", h.protectedEndpoint(h.handleIdleSessionResourceReleasePreferencePut))
 	r.Get("/api/preferences/new-project-meta-location", h.protectedEndpoint(h.handleNewProjectMetaLocationPreferenceGet))
 	r.Put("/api/preferences/new-project-meta-location", h.protectedEndpoint(h.handleNewProjectMetaLocationPreferencePut))
+	r.Get("/api/preferences/cors", h.protectedEndpoint(h.handleCORSPreferenceGet))
+	r.Put("/api/preferences/cors", h.protectedEndpoint(h.handleCORSPreferencePut))
 	r.Get("/api/replying-sessions", h.protectedEndpoint(h.handleReplyingSessions))
 	r.Get("/api/sessions/search", h.protectedEndpoint(h.handleSessionSearch))
 	r.Get("/api/sessions/children", h.protectedEndpoint(h.handleSessionChildren))
@@ -1476,6 +1497,52 @@ func (h *HTTPHandler) handleSessionNamingPreferencePut(w http.ResponseWriter, r 
 	respondJSON(w, http.StatusOK, map[string]any{
 		"agent": req.Agent,
 		"model": req.Model,
+	})
+}
+
+type corsPreferenceRequest struct {
+	Mode         string   `json:"mode"`
+	AllowOrigins []string `json:"allow_origins"`
+}
+
+func (h *HTTPHandler) handleCORSPreferenceGet(w http.ResponseWriter, _ *http.Request) {
+	if h.AppContext == nil || h.AppContext.GetPreferences() == nil {
+		respondError(w, http.StatusServiceUnavailable, errInvalidRequest("preferences not configured"))
+		return
+	}
+	prefs := h.AppContext.GetPreferences()
+	mode := prefs.CORSMode()
+	if mode == "" {
+		mode = "open"
+	}
+	respondJSON(w, http.StatusOK, map[string]any{
+		"mode":          mode,
+		"allow_origins": prefs.CORSAllowOrigins(),
+	})
+}
+
+func (h *HTTPHandler) handleCORSPreferencePut(w http.ResponseWriter, r *http.Request) {
+	if h.AppContext == nil || h.AppContext.GetPreferences() == nil {
+		respondError(w, http.StatusServiceUnavailable, errInvalidRequest("preferences not configured"))
+		return
+	}
+	var req corsPreferenceRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, errInvalidRequest(err.Error()))
+		return
+	}
+	if err := h.AppContext.GetPreferences().UpdateCORSPreferences(req.Mode, req.AllowOrigins); err != nil {
+		respondError(w, http.StatusBadRequest, errInvalidRequest(err.Error()))
+		return
+	}
+	prefs := h.AppContext.GetPreferences()
+	mode := prefs.CORSMode()
+	if mode == "" {
+		mode = "open"
+	}
+	respondJSON(w, http.StatusOK, map[string]any{
+		"mode":          mode,
+		"allow_origins": prefs.CORSAllowOrigins(),
 	})
 }
 

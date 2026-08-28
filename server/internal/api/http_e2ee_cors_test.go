@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"mindfs/server/internal/e2ee"
+	"mindfs/server/internal/preferences"
 )
 
 // openE2EESessionForTest bootstraps an in-memory E2EE session and returns the
@@ -151,7 +152,80 @@ func TestProtectedEndpointRoundTripWhenE2EEEnabled(t *testing.T) {
 }
 
 func TestCORSLocalModeEmitsNoACAO(t *testing.T) {
-	handler := &HTTPHandler{AppContext: &AppContext{E2EE: e2ee.NewManager(e2ee.Config{Enabled: false})}}
+	// default plaintext mode is now "open" (emit ACAO) so multi-node home↔pc works;
+	// disabled mode is the explicit same-origin lock.
+	for _, tc := range []struct {
+		name string
+		mode string
+		want string
+	}{
+		{"open", "open", "https://cross.example"},
+		{"allowlist_miss", "allowlist", ""},
+		{"disabled", "disabled", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prefs := &preferences.Store{}
+			if tc.mode == "allowlist" {
+				_ = prefs.UpdateCORSPreferences("allowlist", []string{"https://other.example"})
+			} else {
+				_ = prefs.UpdateCORSPreferences(tc.mode, nil)
+			}
+			// empty mode defaults to open -> reflect origin
+			if tc.name == "open" {
+				prefs2 := &preferences.Store{}
+				// nil mode => middleware treats as open
+				handler := &HTTPHandler{AppContext: &AppContext{E2EE: e2ee.NewManager(e2ee.Config{Enabled: false}), Prefs: prefs2}}
+				r := chi.NewRouter()
+				r.Use(handler.corsMiddleware)
+				r.Get("/api/x", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+				req := httptest.NewRequest(http.MethodGet, "/api/x", nil)
+				req.Header.Set("Origin", "https://cross.example")
+				rec := httptest.NewRecorder()
+				r.ServeHTTP(rec, req)
+				if got := rec.Header().Get("Access-Control-Allow-Origin"); got != tc.want {
+					t.Fatalf("ACAO = %q, want %q", got, tc.want)
+				}
+				return
+			}
+			handler := &HTTPHandler{AppContext: &AppContext{E2EE: e2ee.NewManager(e2ee.Config{Enabled: false}), Prefs: prefs}}
+			r := chi.NewRouter()
+			r.Use(handler.corsMiddleware)
+			r.Get("/api/x", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+			req := httptest.NewRequest(http.MethodGet, "/api/x", nil)
+			req.Header.Set("Origin", "https://cross.example")
+			rec := httptest.NewRecorder()
+			r.ServeHTTP(rec, req)
+			if got := rec.Header().Get("Access-Control-Allow-Origin"); got != tc.want {
+				t.Fatalf("mode=%s ACAO = %q, want %q", tc.mode, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCORSOptionsPreflight(t *testing.T) {
+	prefs := &preferences.Store{}
+	_ = prefs.UpdateCORSPreferences("open", nil)
+	handler := &HTTPHandler{AppContext: &AppContext{E2EE: e2ee.NewManager(e2ee.Config{Enabled: false}), Prefs: prefs}}
+	r := chi.NewRouter()
+	r.Use(handler.corsMiddleware)
+	r.Get("/api/x", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	req := httptest.NewRequest(http.MethodOptions, "/api/x", nil)
+	req.Header.Set("Origin", "https://cross.example")
+	req.Header.Set("Access-Control-Request-Method", "GET")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	if rec.Code != 204 {
+		t.Fatalf("preflight code = %d, want 204", rec.Code)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "https://cross.example" {
+		t.Fatalf("preflight ACAO = %q, want https://cross.example", got)
+	}
+}
+
+func TestCORSAllowlistHit(t *testing.T) {
+	prefs := &preferences.Store{}
+	_ = prefs.UpdateCORSPreferences("allowlist", []string{"https://cross.example"})
+	handler := &HTTPHandler{AppContext: &AppContext{E2EE: e2ee.NewManager(e2ee.Config{Enabled: false}), Prefs: prefs}}
 	r := chi.NewRouter()
 	r.Use(handler.corsMiddleware)
 	r.Get("/api/x", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
@@ -159,8 +233,8 @@ func TestCORSLocalModeEmitsNoACAO(t *testing.T) {
 	req.Header.Set("Origin", "https://cross.example")
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
-	if rec.Header().Get("Access-Control-Allow-Origin") != "" {
-		t.Fatal("local plaintext mode must not emit Access-Control-Allow-Origin")
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "https://cross.example" {
+		t.Fatalf("allowlist hit ACAO = %q, want https://cross.example", got)
 	}
 }
 
