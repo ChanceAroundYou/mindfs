@@ -54,9 +54,9 @@ assert.match(app, /getCachedSessionList/, "8e7d857 App should prefetch getCached
 assert.match(app, /saveCachedSessionList/, "8e7d857 App should persist saveCachedSessionList");
 assert.match(app, /getCachedMultiRootSessionList/, "8e7d857 App should prefetch multi-root cache");
 assert.match(app, /saveCachedMultiRootSessionList/, "8e7d857 App should persist multi-root cache");
-assert.match(app, /Promise\.all\(\[[\s\S]*?fetchTaskDetails\(targetRoot,[\s\S]*?getNodeIdForRoot\(targetRoot\)\)/, "8e7d857 loadKanbanTasks should fetch in parallel with nodeId");
+assert.match(app, /Promise\.all\(\[[\s\S]*?fetchTaskDetails\(targetRoot,[\s\S]*?(?:getNodeIdForRoot|resolveNodeId)\(targetRoot\)\)/, "8e7d857 loadKanbanTasks should fetch in parallel with nodeId");
 assert.match(app, /const shouldReplace = options\?\.replace \|\|/, "8e7d857 App should share shouldReplace gate");
-assert.match(app, /void saveCachedSessionList\(rootID, payload\);/, "8e7d857 App should save session-list after replace with context_window preserved");
+assert.match(app, /void saveCachedSessionList\(rootID, payload(?:,\s*[^)]+)?\);/, "8e7d857 App should save session-list after replace with context_window preserved");
 
 // single assertion for fileService raw 404 + blob dedup sanity (from 33c190/466b21e overlap covers 633c190 zone too)
 assert.match(fileService, /rawFileFailures/, "file.ts raw 404 cache should exist");

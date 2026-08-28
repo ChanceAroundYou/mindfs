@@ -130,13 +130,16 @@ const TASK_CACHE_VERSION = 1;
 const TASK_STORE = "tasks";
 const TASK_META_STORE = "meta";
 
-function taskCacheKey(rootId: string, taskId: string): string {
-  return `${rootId}::${taskId}`;
+function taskCacheKey(rootId: string, taskId: string, nodeId?: string): string {
+  const nid = String(nodeId || "").trim();
+  return nid ? `${nid}::${rootId}::${taskId}` : `${rootId}::${taskId}`;
 }
 
-function taskMetaKey(rootId: string): string {
-  return `root::${rootId}`;
+function taskMetaKey(rootId: string, nodeId?: string): string {
+  const nid = String(nodeId || "").trim();
+  return nid ? `${nid}::root::${rootId}` : `root::${rootId}`;
 }
+
 
 function taskRequest<T>(request: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -189,12 +192,34 @@ async function withTaskStore<T>(
   }
 }
 
-export async function getCachedTaskDetails(rootId: string): Promise<TaskDetail[]> {
+export async function getCachedTaskDetails(rootId: string, nodeId?: string): Promise<TaskDetail[]> {
+  const nid = String(nodeId || "").trim();
   try {
     return await withTaskStore("readonly", async ({ tasks }) => {
       const index = tasks.index("rootId");
       const records = await taskRequest(index.getAll(rootId) as IDBRequest<CachedTaskRecord[]>);
-      return (records || [])
+      // 节点隔离：有 nid 时优先取 nid:: 前缀，命中则忽略旧裸键以避免旧节点覆盖新节点
+      if (nid) {
+        const scoped = records.filter((r) => String(r.cacheKey || "").startsWith(`${nid}::`));
+        if (scoped.length > 0) {
+          const byId = new Map<string, CachedTaskRecord>();
+          for (const rec of scoped) {
+            const prev = byId.get(rec.taskId);
+            if (!prev || String(rec.updatedAt || "") > String(prev.updatedAt || "")) byId.set(rec.taskId, rec);
+          }
+          return Array.from(byId.values())
+            .map((record) => record.detail)
+            .filter((detail) => detail?.task?.id)
+            .sort((a, b) => String(b.task.updated_at || "").localeCompare(String(a.task.updated_at || "")));
+        }
+        // 首次迁移：旧裸键作为回退（仍按 taskId 去重取最新）
+      }
+      const byId = new Map<string, CachedTaskRecord>();
+      for (const rec of records) {
+        const prev = byId.get(rec.taskId);
+        if (!prev || String(rec.updatedAt || "") > String(prev.updatedAt || "")) byId.set(rec.taskId, rec);
+      }
+      return Array.from(byId.values())
         .map((record) => record.detail)
         .filter((detail) => detail?.task?.id)
         .sort((a, b) => String(b.task.updated_at || "").localeCompare(String(a.task.updated_at || "")));
@@ -204,9 +229,14 @@ export async function getCachedTaskDetails(rootId: string): Promise<TaskDetail[]
   }
 }
 
-export async function getCachedTaskMeta(rootId: string): Promise<CachedTaskMeta | null> {
+export async function getCachedTaskMeta(rootId: string, nodeId?: string): Promise<CachedTaskMeta | null> {
+  const nid = String(nodeId || "").trim();
   try {
     return await withTaskStore("readonly", async ({ meta }) => {
+      if (nid) {
+        const scoped = await taskRequest(meta.get(taskMetaKey(rootId, nid)) as IDBRequest<CachedTaskMeta | undefined>);
+        if (scoped) return scoped;
+      }
       const value = await taskRequest(meta.get(taskMetaKey(rootId)) as IDBRequest<CachedTaskMeta | undefined>);
       return value || null;
     });
@@ -215,19 +245,21 @@ export async function getCachedTaskMeta(rootId: string): Promise<CachedTaskMeta 
   }
 }
 
-export async function upsertCachedTaskDetails(rootId: string, details: TaskDetail[]): Promise<void> {
+export async function upsertCachedTaskDetails(rootId: string, details: TaskDetail[], nodeId?: string): Promise<void> {
   const valid = details.filter((detail) => detail?.task?.id);
   if (valid.length === 0) return;
+  const nid = String(nodeId || "").trim();
   try {
     await withTaskStore("readwrite", async ({ tasks, meta }) => {
-      let currentMeta = await taskRequest(meta.get(taskMetaKey(rootId)) as IDBRequest<CachedTaskMeta | undefined>);
+      const metaKey = taskMetaKey(rootId, nid || undefined);
+      let currentMeta = await taskRequest(meta.get(metaKey) as IDBRequest<CachedTaskMeta | undefined>);
       const updatedValues = valid
         .map((detail) => String(detail.task.updated_at || ""))
         .filter(Boolean);
       for (const detail of valid) {
         const taskId = detail.task.id;
         await taskRequest(tasks.put({
-          cacheKey: taskCacheKey(rootId, taskId),
+          cacheKey: taskCacheKey(rootId, taskId, nid || undefined),
           rootId,
           taskId,
           updatedAt: String(detail.task.updated_at || ""),
@@ -237,7 +269,7 @@ export async function upsertCachedTaskDetails(rootId: string, details: TaskDetai
       const newest = updatedValues.reduce((max, value) => value > max ? value : max, currentMeta?.newestUpdatedAt || "");
       const oldest = updatedValues.reduce((min, value) => !min || value < min ? value : min, currentMeta?.oldestUpdatedAt || "");
       currentMeta = {
-        key: taskMetaKey(rootId),
+        key: metaKey,
         rootId,
         newestUpdatedAt: newest,
         oldestUpdatedAt: oldest,

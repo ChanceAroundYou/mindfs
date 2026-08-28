@@ -1486,6 +1486,10 @@ export function App({ onGoHome }: AppProps) {
 	  const [taskWorktreeBranchesLoading, setTaskWorktreeBranchesLoading] = useState(false);
 	  const [taskWorktreeBranchError, setTaskWorktreeBranchError] = useState("");
 	  const [kanbanTasksLoading, setKanbanTasksLoading] = useState(false);
+	  const kanbanLoadSeqRef = useRef(0);
+	  const kanbanAbortRef = useRef<AbortController | null>(null);
+	  const sessionListLoadSeqRef = useRef(0);
+	  const sessionListAbortRef = useRef<AbortController | null>(null);
   const [taskTemplateFilter, setTaskTemplateFilter] = useState("");
   const [taskTemplateActionMenuOpen, setTaskTemplateActionMenuOpen] = useState(false);
   const [taskTemplateConcurrencyOpen, setTaskTemplateConcurrencyOpen] = useState(false);
@@ -1543,6 +1547,11 @@ export function App({ onGoHome }: AppProps) {
   const onboardingAutoStartRef = useRef(false);
   const [currentRootId, setCurrentRootId] = useState<string | null>(null);
   const currentRootIdRef = useRef<string | null>(null);
+  const [currentRootNodeId, setCurrentRootNodeId] = useState<string | null>(null);
+  const currentRootNodeIdRef = useRef<string | null>(null);
+  const managedRootByIdRef = useRef<Record<string, ManagedRootPayload>>({});
+  // 多节点同名项目的完整索引：nodeId::rootId → payload（byId 回退表只保留一份）
+  const managedRootByKeyRef = useRef<Record<string, ManagedRootPayload>>({});
 
   const loadTaskTemplates = useCallback(async () => {
     if (!protectedAPIReady()) {
@@ -1723,6 +1732,19 @@ export function App({ onGoHome }: AppProps) {
   }, [currentRootId, taskInlineActiveToken, taskTemplateFilter, taskTemplates]);
 
   const applyTaskDetails = useCallback((rootId: string, details: TaskDetail[], persist = true) => {
+    const curNid = String(currentRootNodeIdRef.current || "").trim();
+    const curRoot = String(currentRootIdRef.current || "");
+    // 节点隔离：当前根的旧节点数据不污染视图（旧请求迟到或 WS 跨节点）
+    // 不直接依赖 getNodeIdForRoot（前向引用），改用 ref + 回退表
+    const sid = rootId === curRoot ? curNid : String((managedRootByIdRef.current as Record<string, any>)[rootId]?._nodeId || getRootNodeId(rootId) || "").trim();
+    if (sid && curNid && sid !== curNid && rootId === curRoot) {
+      const filteredByNode = details.filter((d) => {
+        const did = String((d.task as any)?._nodeId || "").trim();
+        return !did || did === sid;
+      });
+      if (filteredByNode.length === 0) return;
+      details = filteredByNode;
+    }
     const accepted = details.filter(
       (detail) =>
         detail?.task?.id &&
@@ -1763,7 +1785,8 @@ export function App({ onGoHome }: AppProps) {
       return Array.from(byId.values()).sort((a, b) => String(b.updated_at || "").localeCompare(String(a.updated_at || "")));
     });
     if (persist) {
-      void upsertCachedTaskDetails(rootId, accepted);
+      const persistNode = String(currentRootNodeIdRef.current || "").trim() || String((managedRootByIdRef.current as Record<string, any>)[rootId]?._nodeId || getRootNodeId(rootId) || "").trim() || undefined;
+      void upsertCachedTaskDetails(rootId, accepted, persistNode);
     }
   }, []);
 
@@ -1780,20 +1803,40 @@ export function App({ onGoHome }: AppProps) {
       setTaskSessionKeysById({});
       return;
     }
+    // 不直接依赖 getNodeIdForRoot（前向引用），内联解析避免 TSC 提前引用
+    const resolveNodeId = (rid: string): string | undefined => {
+      const r = String(rid || "").trim();
+      if (!r) return undefined;
+      if (r === String(currentRootIdRef.current || "")) {
+        const nid = String(currentRootNodeIdRef.current || "").trim();
+        if (nid) return nid;
+      }
+      const entry = (managedRootByIdRef.current as Record<string, any>)[r];
+      const enid = String(entry?._nodeId || "").trim();
+      if (enid) return enid;
+      return String(getRootNodeId(r) || "").trim() || undefined;
+    };
+    const snapNode = resolveNodeId(targetRoot) || null;
+    const seq = ++kanbanLoadSeqRef.current;
+    kanbanAbortRef.current?.abort();
+    const controller = new AbortController();
+    kanbanAbortRef.current = controller;
     setKanbanTasksLoading(true);
     try {
-      const cached = await getCachedTaskDetails(targetRoot);
-      if (cached.length > 0) {
+      const cached = await getCachedTaskDetails(targetRoot, snapNode || undefined);
+      if (cached.length > 0 && seq === kanbanLoadSeqRef.current && !controller.signal.aborted && (resolveNodeId(targetRoot) || null) === snapNode) {
         applyTaskDetails(targetRoot, cached, false);
-        setKanbanTasksLoading(false);
+        if (seq === kanbanLoadSeqRef.current) setKanbanTasksLoading(false);
       }
-      const meta = await getCachedTaskMeta(targetRoot);
+      const meta = await getCachedTaskMeta(targetRoot, snapNode || undefined);
       const [details, recent] = await Promise.all([
-        fetchTaskDetails(targetRoot, force ? undefined : { after: meta?.newestUpdatedAt || "" }, getNodeIdForRoot(targetRoot)),
+        fetchTaskDetails(targetRoot, force ? undefined : { after: meta?.newestUpdatedAt || "" }, resolveNodeId(targetRoot)),
         !force && meta?.newestUpdatedAt
-          ? fetchTaskDetails(targetRoot, { limit: 20 }, getNodeIdForRoot(targetRoot))
+          ? fetchTaskDetails(targetRoot, { limit: 20 }, resolveNodeId(targetRoot))
           : Promise.resolve([] as TaskDetail[]),
       ]);
+      if (controller.signal.aborted || seq !== kanbanLoadSeqRef.current) return;
+      if ((resolveNodeId(targetRoot) || null) !== snapNode) return;
       if (details.length > 0) {
         applyTaskDetails(targetRoot, details);
       }
@@ -1801,9 +1844,11 @@ export function App({ onGoHome }: AppProps) {
         applyTaskDetails(targetRoot, recent);
       }
     } catch (err) {
+      if ((err as any)?.name === "AbortError") return;
+      if (kanbanAbortRef.current?.signal.aborted) return;
       reportError("file.write_failed", String((err as Error)?.message || t("task.loadFailed")));
     } finally {
-      setKanbanTasksLoading(false);
+      if (seq === kanbanLoadSeqRef.current && !controller.signal.aborted) setKanbanTasksLoading(false);
     }
   }, [applyTaskDetails, t]);
 
@@ -1811,7 +1856,7 @@ export function App({ onGoHome }: AppProps) {
 
 	  useEffect(() => {
 	    void loadKanbanTasks(currentRootId);
-	  }, [currentRootId, loadKanbanTasks]);
+	  }, [currentRootId, currentRootNodeId, loadKanbanTasks]);
 
 	  useEffect(() => {
 	    const allTasks = Object.values(taskDetailsById)
@@ -2221,11 +2266,6 @@ export function App({ onGoHome }: AppProps) {
   }, [gitDiffSideBySide]);
 
   const [managedRootIds, setManagedRootIds] = useState<string[]>([]);
-  const managedRootByIdRef = useRef<Record<string, ManagedRootPayload>>({});
-  // 多节点同名项目的完整索引：nodeId::rootId → payload（byId 回退表只保留一份）
-  const managedRootByKeyRef = useRef<Record<string, ManagedRootPayload>>({});
-  const [currentRootNodeId, setCurrentRootNodeId] = useState<string | null>(null);
-  const currentRootNodeIdRef = useRef<string | null>(null);
   const getRootDisplayName = useCallback((rootId: string | null | undefined): string => {
     const id = String(rootId || "").trim();
     if (!id) return "";
@@ -2268,6 +2308,15 @@ export function App({ onGoHome }: AppProps) {
     if (!rid) return;
     const nid = String(nodeId || "").trim();
     const prevNid = String(currentRootNodeIdRef.current || "").trim();
+    if (prevNid && nid && prevNid !== nid && rid === String(currentRootIdRef.current || "")) {
+      // 同名项目跨节点切换：取消上一节点的防抖重拉与请求守卫，避免旧定时器覆盖新节点
+      if (sessionListReloadTimerRef.current) {
+        window.clearTimeout(sessionListReloadTimerRef.current);
+        sessionListReloadTimerRef.current = null;
+      }
+      sessionListAbortRef.current?.abort();
+      kanbanAbortRef.current?.abort();
+    }
     currentRootNodeIdRef.current = nid || null;
     setCurrentRootNodeId(nid || null);
     // 无条件更新模块级 root→node 映射，保证路由/作用域解析在任何时机都正确
@@ -4750,11 +4799,19 @@ export function App({ onGoHome }: AppProps) {
         force?: boolean;
       },
     ) => {
+      const _nid = getNodeIdForRoot(rootID);
+      const snapNode = String(_nid || "").trim();
+      const snapRoot = String(rootID || "").trim();
+      const seq = ++sessionListLoadSeqRef.current;
+      sessionListAbortRef.current?.abort();
+      const controller = new AbortController();
+      sessionListAbortRef.current = controller;
       try {
-        const _nid = getNodeIdForRoot(rootID);
         const shouldReplace = options?.replace || (!options?.beforeTime && !options?.afterTime);
         if (shouldReplace) {
-          const cached = await getCachedSessionList(rootID);
+          const cached = await getCachedSessionList(rootID, _nid);
+          if (controller.signal.aborted || seq !== sessionListLoadSeqRef.current) return;
+          if ((String(getNodeIdForRoot(rootID) || "").trim()) !== snapNode) return;
           if (cached && (options?.force || currentRootIdRef.current === rootID)) {
             const cachedItems = [...cached.items, ...cached.pinnedItems]
               .map((item) => toSessionItem(rootID, item))
@@ -4774,11 +4831,16 @@ export function App({ onGoHome }: AppProps) {
           beforeTime: options?.beforeTime,
           afterTime: options?.afterTime,
         });
+        if (controller.signal.aborted || seq !== sessionListLoadSeqRef.current) return;
+        if ((String(getNodeIdForRoot(rootID) || "").trim()) !== snapNode) return;
+        if (String(currentRootIdRef.current || "").trim() !== snapRoot && !options?.force) return;
         const next = [
           ...payload.items,
           ...payload.pinnedItems,
         ].map((item) => toSessionItem(rootID, item)).filter((item): item is SessionItem => !!item);
         if (!options?.force && currentRootIdRef.current !== rootID) return;
+        // 迟到覆盖已在 seq/snap 校验后再次用 currentRootId 守卫
+        if (!options?.force && String(currentRootIdRef.current || "").trim() !== snapRoot) return;
         setHasMoreSessions(payload.totalCount > payload.items.length);
         if (shouldReplace) {
           // 服务端列表接口不含 context_window，全量重拉会把它清掉（WS message_done 已同步进本地列表）。
@@ -4801,15 +4863,18 @@ export function App({ onGoHome }: AppProps) {
             });
             return applyPinnedSnapshotToSessions(merged, rootID, payload.pinnedKeys);
           });
-          void saveCachedSessionList(rootID, payload);
+          void saveCachedSessionList(rootID, payload, _nid);
           return;
         }
         setSessions((prev) =>
           applyPinnedSnapshotToSessions(mergeSessionItems(prev, next), rootID, payload.pinnedKeys),
         );
-      } catch {}
+      } catch (err) {
+        if ((err as any)?.name === "AbortError") return;
+        if (controller.signal.aborted) return;
+      }
     },
-    [],
+    [getNodeIdForRoot],
   );
 
   const sessionListReloadTimerRef = useRef<number | null>(null);
@@ -9144,7 +9209,7 @@ export function App({ onGoHome }: AppProps) {
   useEffect(() => {
     if (!currentRootId) return;
     sessionService.connect(currentRootId, getNodeIdForRoot(currentRootId));
-  }, [currentRootId]);
+  }, [currentRootId, currentRootNodeId]);
 
   useEffect(() => {
     if (sessionListMode !== "import") return;
@@ -10442,6 +10507,10 @@ export function App({ onGoHome }: AppProps) {
             payload.root_id === currentRootIdRef.current &&
             typeof payload?.task?.id === "string"
           ) {
+            // 跨节点隔离：同名项目在另一节点的任务推送不污染当前视图
+            const payloadNid = String((payload as any)?.nodeId || (payload as any)?._nodeId || (payload as any)?.task?._nodeId || "").trim();
+            const curNid = String(currentRootNodeIdRef.current || "").trim();
+            if (payloadNid && curNid && payloadNid !== curNid) break;
             const nextTask = payload.task as KanbanTask;
             const detail = payload.detail as TaskDetail | undefined;
             if (detail?.task?.id) {

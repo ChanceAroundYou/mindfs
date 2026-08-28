@@ -810,7 +810,8 @@ class SessionService {
 
   private eventCursorKey(rootId: string, sessionKey: string): string {
     if (!rootId || !sessionKey) return "";
-    return `${rootId}::${sessionKey}`;
+    const nid = String(this.nodeId || "").trim();
+    return nid ? `${nid}::${rootId}::${sessionKey}` : `${rootId}::${sessionKey}`;
   }
 
   getEventCursor(rootId: string, sessionKey: string): string {
@@ -1672,8 +1673,9 @@ function withSessionListStore<T>(
   });
 }
 
-function buildSessionListCacheKey(rootId: string): string {
-  return `root::${rootId}`;
+function buildSessionListCacheKey(rootId: string, nodeId?: string): string {
+  const nid = String(nodeId || "").trim();
+  return nid ? `${nid}::${rootId}` : `root::${rootId}`;
 }
 
 async function readCachedSessionList<T>(cacheKey: string): Promise<T | null> {
@@ -1701,14 +1703,20 @@ async function writeCachedSessionList<T>(cacheKey: string, payload: T): Promise<
   } catch {}
 }
 
-export function getCachedSessionList(rootId: string): Promise<SessionListPayload | null> {
+export function getCachedSessionList(rootId: string, nodeId?: string): Promise<SessionListPayload | null> {
   if (!rootId) return Promise.resolve(null);
-  return readCachedSessionList<SessionListPayload>(buildSessionListCacheKey(rootId));
+  const nid = String(nodeId || "").trim();
+  const primary = buildSessionListCacheKey(rootId, nid || undefined);
+  return readCachedSessionList<SessionListPayload>(primary).then((hit) => {
+    if (hit) return hit;
+    if (nid) return readCachedSessionList<SessionListPayload>(buildSessionListCacheKey(rootId));
+    return null;
+  });
 }
 
-export function saveCachedSessionList(rootId: string, payload: SessionListPayload): Promise<void> {
+export function saveCachedSessionList(rootId: string, payload: SessionListPayload, nodeId?: string): Promise<void> {
   if (!rootId) return Promise.resolve();
-  return writeCachedSessionList(buildSessionListCacheKey(rootId), payload);
+  return writeCachedSessionList(buildSessionListCacheKey(rootId, nodeId), payload);
 }
 
 export function getCachedMultiRootSessionList(): Promise<MultiRootSessionGroup[] | null> {
@@ -1934,9 +1942,21 @@ export async function clearCachedSessionsForRoot(
           .map((record) => sessionRequestToPromise(store.delete(record.cacheKey))),
       );
     });
-    await withSessionListStore("readwrite", (store) =>
-      sessionRequestToPromise(store.delete(buildSessionListCacheKey(rootId))),
-    );
+    await withSessionListStore("readwrite", async (store) => {
+      if (nid) {
+        try { await sessionRequestToPromise(store.delete(buildSessionListCacheKey(rootId, nid))); } catch {}
+        try { await sessionRequestToPromise(store.delete(buildSessionListCacheKey(rootId))); } catch {}
+      } else {
+        const entries = (await sessionRequestToPromise(store.getAll() as IDBRequest<CachedSessionListRecord<any>[]>) ) || [];
+        for (const entry of entries) {
+          const key = String(entry?.cacheKey || "");
+          if (key === `root::${rootId}` || key.endsWith(`::${rootId}`)) {
+            try { await sessionRequestToPromise(store.delete(key)); } catch {}
+          }
+        }
+        try { await sessionRequestToPromise(store.delete(buildSessionListCacheKey(rootId))); } catch {}
+      }
+    });
   } catch {}
 }
 

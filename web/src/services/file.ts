@@ -89,23 +89,33 @@ const rawFileFailures = new Map<string, number>();
 const RAW_FILE_FAILURE_TTL_MS = 60_000;
 let dbPromise: Promise<IDBDatabase> | null = null;
 
-function buildCacheKey(rootId: string, path: string, readMode: ReadMode, cursor: number): string {
-  return [rootId, path, readMode, String(cursor)].join("::");
+function buildCacheKey(rootId: string, path: string, readMode: ReadMode, cursor: number, nodeId?: string): string {
+  const nid = String(nodeId || "").trim();
+  const base = [rootId, path, readMode, String(cursor)].join("::");
+  return nid ? `${nid}::${base}` : base;
 }
 
-function buildGitDiffCacheKey(rootId: string, path: string, signature?: string): string {
-  return ["git-diff", GIT_DIFF_CACHE_VERSION, rootId, path, signature || ""].join("::");
+function buildGitDiffCacheKey(rootId: string, path: string, signature?: string, nodeId?: string): string {
+  const nid = String(nodeId || "").trim();
+  const base = ["git-diff", GIT_DIFF_CACHE_VERSION, rootId, path, signature || ""].join("::");
+  return nid ? `${nid}::${base}` : base;
 }
 
-function buildGitDiffCacheKeyPrefix(rootId: string, path: string): string {
+function buildGitDiffCacheKeyPrefix(rootId: string, path: string, nodeId?: string): string {
+  const nid = String(nodeId || "").trim();
+  if (nid) return `${nid}::git-diff::${GIT_DIFF_CACHE_VERSION}::${rootId}::${path}::`;
   return `git-diff::${GIT_DIFF_CACHE_VERSION}::${rootId}::${path}::`;
 }
 
-function buildCacheKeyPrefix(rootId: string, path: string): string {
+function buildCacheKeyPrefix(rootId: string, path: string, nodeId?: string): string {
+  const nid = String(nodeId || "").trim();
+  if (nid) return `${nid}::${rootId}::${path}::`;
   return `${rootId}::${path}::`;
 }
 
-function buildRawFileFailureKey(rootId: string, path: string): string {
+function buildRawFileFailureKey(rootId: string, path: string, nodeId?: string): string {
+  const nid = String(nodeId || "").trim();
+  if (nid) return `${nid}::${rootId}::${path}`;
   return `${rootId}::${path}`;
 }
 
@@ -445,21 +455,28 @@ async function fetchResponse(url: string, init?: RequestInit): Promise<Response>
 export async function getCachedFile(params: Omit<FetchFileParams, "timeoutMs">): Promise<FilePayload | null> {
   const readMode = params.readMode || "incremental";
   const cursor = normalizeCursor(params.cursor);
-  const cacheKey = buildCacheKey(params.rootId, params.path, readMode, cursor);
+  const nid = String((params as any).nodeId || getRootNodeId(params.rootId) || "").trim();
+  const cacheKey = buildCacheKey(params.rootId, params.path, readMode, cursor, nid || undefined);
+  // 兼容旧裸键：新键 miss 则回退旧键（首次迁移）
+  const fallbackKey = nid ? buildCacheKey(params.rootId, params.path, readMode, cursor) : cacheKey;
 
-  const inMemory = readMemoryCache(cacheKey);
+  const inMemory = readMemoryCache(cacheKey) || (nid ? readMemoryCache(fallbackKey) : null);
   if (inMemory) {
     return inMemory;
   }
 
-  const record = await loadCachedRecord(cacheKey);
+  let record = await loadCachedRecord(cacheKey);
+  if (!record?.file && nid) record = await loadCachedRecord(fallbackKey);
   if (!record?.file) {
     return null;
   }
 
-  writeMemoryCache(cacheKey, record.file);
+  // 命中旧键则迁移到新键
+  const effectiveKey = record.key === fallbackKey && nid ? cacheKey : record.key;
+  writeMemoryCache(effectiveKey, record.file);
   void saveCachedRecord({
     ...record,
+    key: effectiveKey,
     touchedAt: Date.now(),
   });
   return record.file;
@@ -509,21 +526,27 @@ export async function getCachedGitDiff(
   rootId: string,
   path: string,
   signature?: string,
+  nodeId?: string,
 ): Promise<CachedGitDiffPayload | null> {
-  const cacheKey = buildGitDiffCacheKey(rootId, path, signature);
-  const inMemory = gitDiffMemoryCache.get(cacheKey);
+  const nid = String(nodeId || getRootNodeId(rootId) || "").trim();
+  const cacheKey = buildGitDiffCacheKey(rootId, path, signature, nid || undefined);
+  const fallbackKey = nid ? buildGitDiffCacheKey(rootId, path, signature) : cacheKey;
+  const inMemory = gitDiffMemoryCache.get(cacheKey) || (nid ? gitDiffMemoryCache.get(fallbackKey) : undefined);
   if (inMemory) {
     return inMemory;
   }
 
-  const record = await loadCachedGitDiffRecord(cacheKey);
+  let record = await loadCachedGitDiffRecord(cacheKey);
+  if (!record?.diff && nid) record = await loadCachedGitDiffRecord(fallbackKey);
   if (!record?.diff) {
     return null;
   }
 
-  gitDiffMemoryCache.set(cacheKey, record.diff);
+  const effectiveKey = record.key === fallbackKey && nid ? cacheKey : record.key;
+  gitDiffMemoryCache.set(effectiveKey, record.diff);
   void saveCachedGitDiffRecord({
     ...record,
+    key: effectiveKey,
     touchedAt: Date.now(),
   });
   return record.diff;
@@ -534,8 +557,10 @@ export async function setCachedGitDiff(
   path: string,
   diff: CachedGitDiffPayload,
   signature?: string,
+  nodeId?: string,
 ): Promise<void> {
-  const cacheKey = buildGitDiffCacheKey(rootId, path, signature);
+  const nid = String(nodeId || getRootNodeId(rootId) || "").trim();
+  const cacheKey = buildGitDiffCacheKey(rootId, path, signature, nid || undefined);
   gitDiffMemoryCache.set(cacheKey, diff);
   await saveCachedGitDiffRecord({
     type: "git-diff",
@@ -552,7 +577,8 @@ export async function fetchFile(params: FetchFileParams): Promise<FilePayload | 
   params = { ...params, nodeId: params.nodeId || getRootNodeId(params.rootId) };
   const readMode = params.readMode || "incremental";
   const cursor = normalizeCursor(params.cursor);
-  const cacheKey = buildCacheKey(params.rootId, params.path, readMode, cursor);
+  const nid = String(params.nodeId || "").trim();
+  const cacheKey = buildCacheKey(params.rootId, params.path, readMode, cursor, nid || undefined);
   const cachedFile = await getCachedFile({
     rootId: params.rootId,
     path: params.path,
