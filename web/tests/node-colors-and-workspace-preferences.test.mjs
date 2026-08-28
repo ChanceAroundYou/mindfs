@@ -37,6 +37,6 @@ assert.match(app, /const showHiddenFiles = true;/);
 assert.match(app, /const multiProjectSessionsEnabled = true;/);
 assert.doesNotMatch(app, /setShowHiddenFiles/);
 assert.doesNotMatch(app, /setMultiProjectSessionsEnabled/);
-assert.match(app, /<DefaultListView[\s\S]*rootColor=\{[^}]*\._nodeColor \|\| null\}/);
+assert.match(app, /<DefaultListView[\s\S]*rootColor=\{[^}]*(getDisplayNodeColor|\._nodeColor)[^}]*\}/);
 assert.match(vite, /defineConfig\(/);
 assert.doesNotMatch(vite, /entryFileNames:\s*[^\n]*Date\.now/);

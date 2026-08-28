@@ -60,3 +60,12 @@ const unpinned = applyPinnedSnapshotToSessions(merged, "root", ["pin-a"]);
 
 assert.equal(unpinned.find((item) => item.key === "pin-b")?.pinned_at, undefined);
 assert.equal(JSON.stringify(unpinned.map((item) => item.key)), JSON.stringify(["pin-a", "new", "pin-b", "old"]));
+
+// 跨节点同 key 会话不得互相覆盖（C3：归并键需按 _nodeId 作用域）
+const crossNode = mergeSessionItems(
+  [{ key: "s1", session_key: "s1", root_id: "proj", _nodeId: "local", updated_at: "2026-07-30T10:00:00.000Z" }],
+  [{ key: "s1", session_key: "s1", root_id: "proj", _nodeId: "pc", updated_at: "2026-07-30T11:00:00.000Z" }],
+);
+assert.equal(crossNode.length, 2, "local/pc 同 key 会话应各自保留，不得互相覆盖");
+assert.ok(crossNode.some((item) => item._nodeId === "local"));
+assert.ok(crossNode.some((item) => item._nodeId === "pc"));
