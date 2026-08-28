@@ -24,6 +24,7 @@ type StreamHub struct {
 	e2eeManager     *e2ee.Manager
 	clients         map[string]*websocket.Conn
 	connLocks       map[*websocket.Conn]*sync.Mutex
+	clientNodes     map[string]string
 	sessionClients  map[string]map[string]struct{}
 	pendingSessions map[string]*SessionPendingState
 	replayStates    map[string]*ClientReplayState
@@ -109,6 +110,7 @@ func NewStreamHub(e2eeManager *e2ee.Manager) *StreamHub {
 		e2eeManager:     e2eeManager,
 		clients:         make(map[string]*websocket.Conn),
 		connLocks:       make(map[*websocket.Conn]*sync.Mutex),
+		clientNodes:     make(map[string]string),
 		sessionClients:  make(map[string]map[string]struct{}),
 		pendingSessions: make(map[string]*SessionPendingState),
 		replayStates:    make(map[string]*ClientReplayState),
@@ -277,6 +279,29 @@ func (h *StreamHub) RegisterClient(clientID string, conn *websocket.Conn) {
 	h.mu.Unlock()
 }
 
+func (h *StreamHub) RegisterClientWithNode(clientID string, conn *websocket.Conn, nodeID string) {
+	if blank(clientID) || conn == nil {
+		return
+	}
+	nodeID = h.normalizeNodeID(nodeID)
+	h.mu.Lock()
+	h.clients[clientID] = conn
+	if _, ok := h.connLocks[conn]; !ok {
+		h.connLocks[conn] = &sync.Mutex{}
+	}
+	if nodeID != "" {
+		if h.clientNodes == nil {
+			h.clientNodes = make(map[string]string)
+		}
+		h.clientNodes[clientID] = nodeID
+	}
+	h.mu.Unlock()
+}
+
+func (h *StreamHub) normalizeNodeID(v string) string {
+	return strings.TrimSpace(v)
+}
+
 func (h *StreamHub) UnregisterClient(clientID string, conn *websocket.Conn) {
 	if blank(clientID) {
 		return
@@ -289,6 +314,7 @@ func (h *StreamHub) UnregisterClient(clientID string, conn *websocket.Conn) {
 	}
 	delete(h.clients, clientID)
 	delete(h.connLocks, conn)
+	delete(h.clientNodes, clientID)
 	for sessionKey, clientSet := range h.sessionClients {
 		delete(clientSet, clientID)
 		if len(clientSet) == 0 {

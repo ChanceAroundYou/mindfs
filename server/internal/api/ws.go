@@ -167,6 +167,7 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "client_id required", http.StatusBadRequest)
 		return
 	}
+	nodeID := strings.TrimSpace(r.URL.Query().Get("node_id"))
 	if err := h.requireWSProof(r, clientID); err != nil {
 		respondError(w, http.StatusUnauthorized, err)
 		return
@@ -175,9 +176,13 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	log.Printf("[ws] connected client=%s remote=%s path=%s", clientID, r.RemoteAddr, r.URL.Path)
+	log.Printf("[ws] connected client=%s remote=%s path=%s node=%s", clientID, r.RemoteAddr, r.URL.Path, nodeID)
 	if h.AppContext != nil {
-		h.AppContext.GetSessionStreamHub().RegisterClient(clientID, conn)
+		if nodeID != "" {
+			h.AppContext.GetSessionStreamHub().RegisterClientWithNode(clientID, conn, nodeID)
+		} else {
+			h.AppContext.GetSessionStreamHub().RegisterClient(clientID, conn)
+		}
 		h.pushInitialAppUpdate(clientID)
 		h.pushInitialGitHubImports(clientID)
 	}
@@ -185,7 +190,7 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if h.AppContext != nil {
 			h.AppContext.GetSessionStreamHub().UnregisterClient(clientID, conn)
 		}
-		log.Printf("[ws] disconnected client=%s remote=%s path=%s", clientID, r.RemoteAddr, r.URL.Path)
+		log.Printf("[ws] disconnected client=%s remote=%s path=%s node=%s", clientID, r.RemoteAddr, r.URL.Path, nodeID)
 		conn.Close()
 	}()
 
@@ -664,7 +669,7 @@ func (h *WSHandler) handleSessionMessage(ctx context.Context, conn *websocket.Co
 				h.broadcastSessionMetaUpdated(rootID, updated)
 			}(rootID, key, agentName, content)
 		}
-	} else if current, err := uc.GetSession(ctx, usecase.GetSessionInput{RootID: rootID, Key: key}); err == nil && current != nil {
+	} else if current, _, err := uc.GetSession(ctx, usecase.GetSessionInput{RootID: rootID, Key: key}); err == nil && current != nil {
 		sessionName = current.Name
 		planMode = current.PlanMode
 		runtimeRootPath = sessionRuntimeRootPath(current)
@@ -982,7 +987,7 @@ func (h *WSHandler) startNextQueuedSessionMessage(rootID, key string) {
 	shell := ""
 	runtimeRootPath := ""
 	uc := &usecase.Service{Registry: h.AppContext}
-	if current, err := uc.GetSession(context.Background(), usecase.GetSessionInput{RootID: rootID, Key: key}); err == nil && current != nil {
+	if current, _, err := uc.GetSession(context.Background(), usecase.GetSessionInput{RootID: rootID, Key: key}); err == nil && current != nil {
 		sessionType = current.Type
 		sessionName = current.Name
 		shell = current.Shell
