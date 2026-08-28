@@ -41,6 +41,7 @@ import { reportError } from "./services/error";
 import {
   fetchFile,
   clearFileCacheForRoot,
+  clearFileMemoryCacheForView,
   getCachedFile,
   invalidateFileCache,
   type FilePayload,
@@ -1822,11 +1823,15 @@ export function App({ onGoHome }: AppProps) {
     const controller = new AbortController();
     kanbanAbortRef.current = controller;
     setKanbanTasksLoading(true);
+    console.info("[node-switch] loadKanban start", { seq, targetRoot, snapNode, curNid: String(currentRootNodeIdRef.current || "").trim(), force });
     try {
       const cached = await getCachedTaskDetails(targetRoot, snapNode || undefined);
       if (cached.length > 0 && seq === kanbanLoadSeqRef.current && !controller.signal.aborted && (resolveNodeId(targetRoot) || null) === snapNode) {
+        console.info("[node-switch] loadKanban cached-hit", { seq, targetRoot, snapNode, cached: cached.length });
         applyTaskDetails(targetRoot, cached, false);
         if (seq === kanbanLoadSeqRef.current) setKanbanTasksLoading(false);
+      } else if (cached.length > 0) {
+        console.info("[node-switch] loadKanban cached-drop", { seq, targetRoot, snapNode, curNid: String(currentRootNodeIdRef.current || "").trim(), cached: cached.length, seqNow: kanbanLoadSeqRef.current, aborted: controller.signal.aborted, snapNow: (resolveNodeId(targetRoot) || null) });
       }
       const meta = await getCachedTaskMeta(targetRoot, snapNode || undefined);
       const [details, recent] = await Promise.all([
@@ -1835,8 +1840,9 @@ export function App({ onGoHome }: AppProps) {
           ? fetchTaskDetails(targetRoot, { limit: 20 }, resolveNodeId(targetRoot))
           : Promise.resolve([] as TaskDetail[]),
       ]);
-      if (controller.signal.aborted || seq !== kanbanLoadSeqRef.current) return;
-      if ((resolveNodeId(targetRoot) || null) !== snapNode) return;
+      console.info("[node-switch] loadKanban fetch-done", { seq, targetRoot, snapNode, curNid: String(currentRootNodeIdRef.current || "").trim(), details: details.length, recent: recent.length });
+      if (controller.signal.aborted || seq !== kanbanLoadSeqRef.current) { console.info("[node-switch] loadKanban drop@seq", { seq, seqNow: kanbanLoadSeqRef.current, aborted: controller.signal.aborted }); return; }
+      if ((resolveNodeId(targetRoot) || null) !== snapNode) { console.info("[node-switch] loadKanban drop@node", { seq, snapNode, snapNow: (resolveNodeId(targetRoot) || null) }); return; }
       if (details.length > 0) {
         applyTaskDetails(targetRoot, details);
       }
@@ -2308,7 +2314,8 @@ export function App({ onGoHome }: AppProps) {
     if (!rid) return;
     const nid = String(nodeId || "").trim();
     const prevNid = String(currentRootNodeIdRef.current || "").trim();
-    if (prevNid && nid && prevNid !== nid && rid === String(currentRootIdRef.current || "")) {
+    const isSameRootSwitch = rid === String(currentRootIdRef.current || "");
+    if (prevNid && nid && prevNid !== nid && isSameRootSwitch) {
       // 同名项目跨节点切换：取消上一节点的防抖重拉与请求守卫，避免旧定时器覆盖新节点
       if (sessionListReloadTimerRef.current) {
         window.clearTimeout(sessionListReloadTimerRef.current);
@@ -2316,6 +2323,10 @@ export function App({ onGoHome }: AppProps) {
       }
       sessionListAbortRef.current?.abort();
       kanbanAbortRef.current?.abort();
+      // 递增序号使旧 in-flight 请求的 seq 校验直接失效
+      kanbanLoadSeqRef.current += 1;
+      sessionListLoadSeqRef.current += 1;
+      console.info("[node-switch] selectRootNode abort", { rid, prevNid, nid, kanbanSeq: kanbanLoadSeqRef.current, sessionSeq: sessionListLoadSeqRef.current });
     }
     currentRootNodeIdRef.current = nid || null;
     setCurrentRootNodeId(nid || null);
@@ -2331,6 +2342,19 @@ export function App({ onGoHome }: AppProps) {
       const prefix = scopeSessionKey(nid, rid, "");
       for (const k of Object.keys(sessionCacheRef.current)) {
         if (k.startsWith(prefix)) delete sessionCacheRef.current[k];
+      }
+      if (isSameRootSwitch) {
+        // 同名项目跨节点：清空 Kanban/文件视图残留，避免旧节点 incrementally merged 的 taskDetailsById 串台
+        console.info("[node-switch] selectRootNode clear-view", { rid, prevNid, nid });
+        taskDetailsByIdRef.current = {};
+        setTaskDetailsById({});
+        setTaskFirstInputById({});
+        setTaskSessionKeysById({});
+        setTaskRelatedFilesById({});
+        setKanbanTasks([]);
+        setKanbanTaskCountItems([]);
+        setKanbanTasksLoading(true);
+        clearFileMemoryCacheForView();
       }
     }
     // 让按裸 rootId 的 payload 读取命中当前选中节点的数据
@@ -4806,12 +4830,13 @@ export function App({ onGoHome }: AppProps) {
       sessionListAbortRef.current?.abort();
       const controller = new AbortController();
       sessionListAbortRef.current = controller;
+      console.info("[node-switch] loadSessions start", { seq, snapRoot, snapNode, curNid: String(currentRootNodeIdRef.current || "").trim(), force: !!options?.force, replace: !!options?.replace });
       try {
         const shouldReplace = options?.replace || (!options?.beforeTime && !options?.afterTime);
         if (shouldReplace) {
           const cached = await getCachedSessionList(rootID, _nid);
-          if (controller.signal.aborted || seq !== sessionListLoadSeqRef.current) return;
-          if ((String(getNodeIdForRoot(rootID) || "").trim()) !== snapNode) return;
+          if (controller.signal.aborted || seq !== sessionListLoadSeqRef.current) { console.info("[node-switch] loadSessions drop@seq cached", { seq, seqNow: sessionListLoadSeqRef.current, aborted: controller.signal.aborted }); return; }
+          if ((String(getNodeIdForRoot(rootID) || "").trim()) !== snapNode) { console.info("[node-switch] loadSessions drop@node cached", { seq, snapNode, snapNow: String(getNodeIdForRoot(rootID) || "").trim() }); return; }
           if (cached && (options?.force || currentRootIdRef.current === rootID)) {
             const cachedItems = [...cached.items, ...cached.pinnedItems]
               .map((item) => toSessionItem(rootID, item))
@@ -4831,9 +4856,10 @@ export function App({ onGoHome }: AppProps) {
           beforeTime: options?.beforeTime,
           afterTime: options?.afterTime,
         });
-        if (controller.signal.aborted || seq !== sessionListLoadSeqRef.current) return;
-        if ((String(getNodeIdForRoot(rootID) || "").trim()) !== snapNode) return;
-        if (String(currentRootIdRef.current || "").trim() !== snapRoot && !options?.force) return;
+        console.info("[node-switch] loadSessions fetch-done", { seq, snapRoot, snapNode, curNid: String(currentRootNodeIdRef.current || "").trim(), total: payload.totalCount, items: payload.items.length });
+        if (controller.signal.aborted || seq !== sessionListLoadSeqRef.current) { console.info("[node-switch] loadSessions drop@seq", { seq, seqNow: sessionListLoadSeqRef.current, aborted: controller.signal.aborted }); return; }
+        if ((String(getNodeIdForRoot(rootID) || "").trim()) !== snapNode) { console.info("[node-switch] loadSessions drop@node", { seq, snapNode, snapNow: String(getNodeIdForRoot(rootID) || "").trim() }); return; }
+        if (String(currentRootIdRef.current || "").trim() !== snapRoot && !options?.force) { console.info("[node-switch] loadSessions drop@root", { seq, snapRoot, curRoot: String(currentRootIdRef.current || "").trim() }); return; }
         const next = [
           ...payload.items,
           ...payload.pinnedItems,
@@ -10510,7 +10536,8 @@ export function App({ onGoHome }: AppProps) {
             // 跨节点隔离：同名项目在另一节点的任务推送不污染当前视图
             const payloadNid = String((payload as any)?.nodeId || (payload as any)?._nodeId || (payload as any)?.task?._nodeId || "").trim();
             const curNid = String(currentRootNodeIdRef.current || "").trim();
-            if (payloadNid && curNid && payloadNid !== curNid) break;
+            if (payloadNid && curNid && payloadNid !== curNid) { console.info("[node-switch] task.updated drop@node", { taskId: String(payload.task.id), root_id: payload.root_id, payloadNid, curNid }); break; }
+            console.info("[node-switch] task.updated accept", { taskId: String(payload.task.id), root_id: payload.root_id, payloadNid: payloadNid || "(empty)", curNid: curNid || "(empty)" });
             const nextTask = payload.task as KanbanTask;
             const detail = payload.detail as TaskDetail | undefined;
             if (detail?.task?.id) {

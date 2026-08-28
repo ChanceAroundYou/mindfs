@@ -372,9 +372,9 @@ async function pruneCache(): Promise<void> {
 }
 
 function clearSiblingMemoryCaches(rootId: string, path: string, keepKey: string): void {
-  const prefix = buildCacheKeyPrefix(rootId, path);
   for (const key of memoryCache.keys()) {
-    if (key !== keepKey && key.startsWith(prefix)) {
+    if (key === keepKey) continue;
+    if (key.startsWith(`${rootId}::${path}::`) || key.includes(`::${rootId}::${path}::`)) {
       memoryCache.delete(key);
     }
   }
@@ -483,17 +483,21 @@ export async function getCachedFile(params: Omit<FetchFileParams, "timeoutMs">):
 }
 
 export function invalidateFileCache(rootId: string, path: string): void {
+  rawFileFailures.delete(buildRawFileFailureKey(rootId, path));
+  // 跨节点隔离：同时清掉 nid:: 前缀的残留
+  for (const key of Array.from(rawFileFailures.keys())) {
+    if (key.endsWith(`::${rootId}::${path}`)) rawFileFailures.delete(key);
+  }
   const prefix = buildCacheKeyPrefix(rootId, path);
   const diffPrefix = buildGitDiffCacheKeyPrefix(rootId, path);
-  rawFileFailures.delete(buildRawFileFailureKey(rootId, path));
-  for (const key of memoryCache.keys()) {
-    if (key.startsWith(prefix)) {
+  for (const key of Array.from(memoryCache.keys())) {
+    if (key.startsWith(prefix) || key.includes(`::${rootId}::${path}::`)) {
       memoryCache.delete(key);
       removeCachedRecordFromLocalStorage(key);
     }
   }
-  for (const key of gitDiffMemoryCache.keys()) {
-    if (key.startsWith(diffPrefix)) {
+  for (const key of Array.from(gitDiffMemoryCache.keys())) {
+    if (key.startsWith(diffPrefix) || key.includes(`::${rootId}::${path}::`)) {
       gitDiffMemoryCache.delete(key);
     }
   }
@@ -504,22 +508,34 @@ export function clearFileCacheForRoot(rootId: string): void {
   const prefix = `${rootId}::`;
   const diffPrefix = `git-diff::${GIT_DIFF_CACHE_VERSION}::${rootId}::`;
   for (const key of rawFileFailures.keys()) {
-    if (key.startsWith(prefix)) {
+    if (key.startsWith(prefix) || key.includes(`::${rootId}::`)) {
       rawFileFailures.delete(key);
     }
   }
   for (const key of memoryCache.keys()) {
-    if (key.startsWith(prefix)) {
+    if (key.startsWith(prefix) || key.includes(`::${rootId}::`)) {
       memoryCache.delete(key);
       removeCachedRecordFromLocalStorage(key);
     }
   }
   for (const key of gitDiffMemoryCache.keys()) {
-    if (key.startsWith(diffPrefix)) {
+    if (key.startsWith(diffPrefix) || key.includes(`::${rootId}::`)) {
       gitDiffMemoryCache.delete(key);
     }
   }
   void deleteCachedRecords((record) => record.rootId === rootId);
+}
+
+export function clearFileMemoryCacheForView(): void {
+  for (const key of Array.from(memoryCache.keys())) {
+    memoryCache.delete(key);
+    removeCachedRecordFromLocalStorage(key);
+  }
+  for (const key of Array.from(gitDiffMemoryCache.keys())) {
+    gitDiffMemoryCache.delete(key);
+  }
+  rawFileFailures.clear();
+  rawFileBlobCache.clear();
 }
 
 export async function getCachedGitDiff(
