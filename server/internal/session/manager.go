@@ -291,6 +291,51 @@ func (m *Manager) Get(_ context.Context, key string, afterSeq int) (*Session, er
 	return m.getSessionUnsafe(key, afterSeq)
 }
 
+type SessionWindowMeta struct {
+	Total   int  `json:"total"`
+	HasMore bool `json:"hasMore"`
+	MinSeq  int  `json:"minSeq"`
+	MaxSeq  int  `json:"maxSeq"`
+}
+
+func (m *Manager) GetWindow(_ context.Context, key string, beforeSeq, limit, latest int) (*Session, *SessionWindowMeta, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.getSessionWindowUnsafe(key, beforeSeq, limit, latest)
+}
+
+func (m *Manager) CountExchanges(key string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if strings.TrimSpace(key) == "" {
+		return 0, errors.New("session key required")
+	}
+	path, err := m.exchangePath(key)
+	if err != nil {
+		return 0, err
+	}
+	if cached, ok := m.sessions[key]; ok && cached != nil && len(cached.Exchanges) > 0 {
+		if cursor, has := m.exchangeCursors[path]; has && cursor.MaxSeq > 0 {
+			if info, statErr := m.root.StatMetaFile(path); statErr == nil {
+				if info.Size() == cursor.Size && info.ModTime().UnixNano() == cursor.ModTimeNs {
+					return len(cached.Exchanges), nil
+				}
+			}
+		}
+	}
+	exchanges, _, err := m.readExchangesFull(path)
+	if err != nil {
+		return 0, err
+	}
+	return len(exchanges), nil
+}
+
+func (m *Manager) GetExchangeAuxWindow(_ context.Context, key string, seqSet map[int]bool) (map[int][]ExchangeAux, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.loadExchangeAuxWindow(key, seqSet)
+}
+
 // GetMeta 只加载 SQLite meta（不含 exchanges 文件），用于列表/名称查询等不需要完整会话的场景。
 func (m *Manager) GetMeta(_ context.Context, key string) (*Session, error) {
 	m.mu.Lock()
@@ -1270,6 +1315,98 @@ func (m *Manager) getSessionUnsafe(key string, afterSeq int) (*Session, error) {
 	return loaded, nil
 }
 
+// getSessionWindowUnsafe 返回按窗口切片后的 Session 与窗口元信息。
+// beforeSeq>0：取 seq<beforeSeq 的尾部 limit 条（二分定位 idx=首个 seq>=beforeSeq，窗口 all[max(0,idx-limit):idx]，hasMore=idx-limit>0）；
+// latest>0：取尾部 limit 条；两者皆 0：默认尾部 limit 条（等价于 latest=limit）。
+// 复用 readExchangesFull 全量读后在内存倒序切片；不写入 m.sessions 全量缓存，避免污染 afterSeq<=0 缓存分支。
+func (m *Manager) getSessionWindowUnsafe(key string, beforeSeq, limit, latest int) (*Session, *SessionWindowMeta, error) {
+	if strings.TrimSpace(key) == "" {
+		return nil, nil, errors.New("session key required")
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+
+	meta, err := m.getSessionMetaWithBindingsUnsafe(key)
+	if err != nil {
+		return nil, nil, err
+	}
+	path, err := m.exchangePath(key)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	all := []Exchange{}
+	if cached, ok := m.sessions[key]; ok && cached != nil && len(cached.Exchanges) > 0 {
+		all = cached.Exchanges
+	} else {
+		read, _, rErr := m.readExchangesFull(path)
+		if rErr != nil {
+			return nil, nil, rErr
+		}
+		all = read
+	}
+
+	total := len(all)
+	var window []Exchange
+	hasMore := false
+	switch {
+	case latest > 0:
+		start := total - latest
+		if start < 0 {
+			start = 0
+		}
+		window = all[start:]
+		hasMore = start > 0
+	case beforeSeq > 0:
+		idx := firstIndexWhereSeq(all, beforeSeq)
+		start := idx - limit
+		if start < 0 {
+			start = 0
+		}
+		window = all[start:idx]
+		hasMore = start > 0
+	default:
+		start := total - limit
+		if start < 0 {
+			start = 0
+		}
+		window = all[start:]
+		hasMore = start > 0
+	}
+
+	meta.Exchanges = window
+
+	minSeq, maxSeq := 0, 0
+	if len(window) > 0 {
+		minSeq = window[0].Seq
+		maxSeq = window[len(window)-1].Seq
+	}
+	return meta, &SessionWindowMeta{
+		Total:   total,
+		HasMore: hasMore,
+		MinSeq:  minSeq,
+		MaxSeq:  maxSeq,
+	}, nil
+}
+
+// firstIndexWhereSeq 在按 Seq 升序的 exchanges 中二分定位首个 Seq>=target 的下标（lower_bound）。
+func firstIndexWhereSeq(all []Exchange, target int) int {
+	lo, hi := 0, len(all)
+	for lo < hi {
+		mid := int(uint(lo+hi) >> 1)
+		if all[mid].Seq >= target {
+			hi = mid
+		} else {
+			lo = mid + 1
+		}
+	}
+	return lo
+}
+
 func (m *Manager) getSessionMetaUnsafe(key string) (*Session, error) {
 	if strings.TrimSpace(key) == "" {
 		return nil, errors.New("session key required")
@@ -1858,6 +1995,29 @@ func (m *Manager) loadExchangeAux(key string, afterSeq int) (map[int][]ExchangeA
 	for _, entry := range entries {
 		compacted, ok := CompactExchangeAux(entry)
 		if !ok {
+			continue
+		}
+		items[compacted.Seq] = append(items[compacted.Seq], compacted)
+	}
+	return items, nil
+}
+
+// loadExchangeAuxWindow 按窗口 seqSet 过滤 aux：全量读取后仅保留 seq∈seqSet 的条目，避免 aux.line 错位。
+func (m *Manager) loadExchangeAuxWindow(key string, seqSet map[int]bool) (map[int][]ExchangeAux, error) {
+	if len(seqSet) == 0 {
+		return map[int][]ExchangeAux{}, nil
+	}
+	entries, err := m.loadExchangeAuxEntries(key, 0)
+	if err != nil {
+		return nil, err
+	}
+	items := make(map[int][]ExchangeAux)
+	for _, entry := range entries {
+		compacted, ok := CompactExchangeAux(entry)
+		if !ok {
+			continue
+		}
+		if !seqSet[compacted.Seq] {
 			continue
 		}
 		items[compacted.Seq] = append(items[compacted.Seq], compacted)

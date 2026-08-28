@@ -858,6 +858,31 @@ func (h *HTTPHandler) handleSessionGet(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, errInvalidRequest("seq must be a positive integer"))
 		return
 	}
+	beforeSeq, err := parsePositiveIntQuery(r, "before_seq")
+	if err != nil {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("before_seq must be a positive integer"))
+		return
+	}
+	latest, err := parsePositiveIntQuery(r, "latest")
+	if err != nil {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("latest must be a positive integer"))
+		return
+	}
+	// seq 与 before_seq/latest 互斥：增量语义与窗口语义不可同时请求
+	if afterSeq > 0 && (beforeSeq > 0 || latest > 0) {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("seq 与 before_seq/latest 互斥"))
+		return
+	}
+	limit, err := parsePositiveIntQuery(r, "limit")
+	if err != nil {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("limit must be a positive integer"))
+		return
+	}
+	if limit <= 0 {
+		limit = 50
+	} else if limit > 200 {
+		limit = 200
+	}
 	uc := h.service()
 	var pendingUser *session.Exchange
 	if h.AppContext != nil {
@@ -871,10 +896,13 @@ func (h *HTTPHandler) handleSessionGet(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[session/sync] external delta best-effort failed root=%s session=%s err=%v", strings.TrimSpace(rootID), strings.TrimSpace(key), err)
 		}
 	}
-	out, err := uc.GetSession(r.Context(), usecase.GetSessionInput{
-		RootID: rootID,
-		Key:    key,
-		Seq:    afterSeq,
+	out, windowMeta, err := uc.GetSession(r.Context(), usecase.GetSessionInput{
+		RootID:    rootID,
+		Key:       key,
+		Seq:       afterSeq,
+		BeforeSeq: beforeSeq,
+		Limit:     limit,
+		Latest:    latest,
 	})
 	if err != nil {
 		respondError(w, http.StatusNotFound, err)
@@ -889,7 +917,7 @@ func (h *HTTPHandler) handleSessionGet(w http.ResponseWriter, r *http.Request) {
 		Key:    key,
 		Seq:    afterSeq,
 	})
-	respondJSON(w, http.StatusOK, h.sessionResponse(out, pendingUser, contextWindow, exchangeAux))
+	respondJSON(w, http.StatusOK, h.sessionResponse(out, pendingUser, contextWindow, exchangeAux, windowMeta))
 }
 
 func (h *HTTPHandler) handleSessionSync(w http.ResponseWriter, r *http.Request) {
@@ -904,6 +932,31 @@ func (h *HTTPHandler) handleSessionSync(w http.ResponseWriter, r *http.Request) 
 		respondError(w, http.StatusBadRequest, errInvalidRequest("seq must be a positive integer"))
 		return
 	}
+	// 窗口参数与 handleSessionGet 同义，透传至 usecase；与 seq 互斥
+	beforeSeq, err := parsePositiveIntQuery(r, "before_seq")
+	if err != nil {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("before_seq must be a positive integer"))
+		return
+	}
+	latest, err := parsePositiveIntQuery(r, "latest")
+	if err != nil {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("latest must be a positive integer"))
+		return
+	}
+	if afterSeq > 0 && (beforeSeq > 0 || latest > 0) {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("seq 与 before_seq/latest 互斥"))
+		return
+	}
+	limit, err := parsePositiveIntQuery(r, "limit")
+	if err != nil {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("limit must be a positive integer"))
+		return
+	}
+	if limit <= 0 {
+		limit = 50
+	} else if limit > 200 {
+		limit = 200
+	}
 	uc := h.service()
 	if _, err := uc.SyncExternalSessionDelta(r.Context(), usecase.SyncExternalSessionDeltaInput{
 		RootID: rootID,
@@ -913,10 +966,13 @@ func (h *HTTPHandler) handleSessionSync(w http.ResponseWriter, r *http.Request) 
 		respondError(w, http.StatusBadRequest, err)
 		return
 	}
-	out, err := uc.GetSession(r.Context(), usecase.GetSessionInput{
-		RootID: rootID,
-		Key:    key,
-		Seq:    afterSeq,
+	out, windowMeta, err := uc.GetSession(r.Context(), usecase.GetSessionInput{
+		RootID:    rootID,
+		Key:       key,
+		Seq:       afterSeq,
+		BeforeSeq: beforeSeq,
+		Limit:     limit,
+		Latest:    latest,
 	})
 	if err != nil {
 		respondError(w, http.StatusNotFound, err)
@@ -931,7 +987,8 @@ func (h *HTTPHandler) handleSessionSync(w http.ResponseWriter, r *http.Request) 
 		Key:    key,
 		Seq:    afterSeq,
 	})
-	respondJSON(w, http.StatusOK, h.sessionResponse(out, nil, contextWindow, exchangeAux))
+	// 注：sync 先做全量外部增量拉取（Full:true），再按窗口切片，保证窗口数据最新
+	respondJSON(w, http.StatusOK, h.sessionResponse(out, nil, contextWindow, exchangeAux, windowMeta))
 }
 
 func (h *HTTPHandler) handleSessionToolCallGet(w http.ResponseWriter, r *http.Request) {
@@ -1050,7 +1107,7 @@ func (h *HTTPHandler) handleSessionFork(w http.ResponseWriter, r *http.Request) 
 	}
 	respondJSON(w, http.StatusOK, map[string]any{
 		"session_key": out.Session.Key,
-		"session":     h.sessionResponse(out.Session, nil, agenttypes.ContextWindow{}, nil),
+		"session":     h.sessionResponse(out.Session, nil, agenttypes.ContextWindow{}, nil, nil),
 	})
 }
 
@@ -1158,6 +1215,7 @@ func (h *HTTPHandler) sessionResponse(
 	pendingUser *session.Exchange,
 	contextWindow agenttypes.ContextWindow,
 	exchangeAux map[int][]session.ExchangeAux,
+	windowMeta *session.SessionWindowMeta,
 ) map[string]any {
 	if s == nil {
 		return map[string]any{}
@@ -1168,13 +1226,32 @@ func (h *HTTPHandler) sessionResponse(
 		exchanges = append(exchanges, *pendingUser)
 	}
 	auxPayload := make(map[string][]session.ExchangeAux, len(exchangeAux))
-	for seq, items := range exchangeAux {
-		if seq <= 0 || len(items) == 0 {
-			continue
+	if windowMeta != nil {
+		// 窗口模式：仅保留窗口内 exchange 的 aux，避免 aux.line 错位
+		windowSeqs := make(map[int]struct{}, len(exchanges))
+		for _, ex := range exchanges {
+			if ex.Seq > 0 {
+				windowSeqs[ex.Seq] = struct{}{}
+			}
 		}
-		auxPayload[strconv.Itoa(seq)] = append([]session.ExchangeAux(nil), items...)
+		for seq, items := range exchangeAux {
+			if seq <= 0 || len(items) == 0 {
+				continue
+			}
+			if _, ok := windowSeqs[seq]; !ok {
+				continue
+			}
+			auxPayload[strconv.Itoa(seq)] = append([]session.ExchangeAux(nil), items...)
+		}
+	} else {
+		for seq, items := range exchangeAux {
+			if seq <= 0 || len(items) == 0 {
+				continue
+			}
+			auxPayload[strconv.Itoa(seq)] = append([]session.ExchangeAux(nil), items...)
+		}
 	}
-	return map[string]any{
+	resp := map[string]any{
 		"key":                 s.Key,
 		"type":                s.Type,
 		"parent_session_key":  s.ParentSessionKey,
@@ -1199,6 +1276,10 @@ func (h *HTTPHandler) sessionResponse(
 		"updated_at":          s.UpdatedAt,
 		"closed_at":           s.ClosedAt,
 	}
+	if windowMeta != nil {
+		resp["window_meta"] = windowMeta
+	}
+	return resp
 }
 
 func (h *HTTPHandler) sessionListResponse(s *session.Session) map[string]any {

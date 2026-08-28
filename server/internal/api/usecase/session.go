@@ -695,20 +695,30 @@ func copyForkHistory(ctx context.Context, manager *session.Manager, from, to *se
 }
 
 type GetSessionInput struct {
-	RootID string
-	Key    string
-	Seq    int
+	RootID     string
+	Key        string
+	Seq        int
+	BeforeSeq  int
+	Limit      int
+	Latest     int
 }
 
-func (s *Service) GetSession(ctx context.Context, in GetSessionInput) (*session.Session, error) {
+// GetSession returns the session. When BeforeSeq>0 or Latest>0 it serves a
+// windowed slice via manager.GetWindow and the returned SessionWindowMeta is
+// non-nil; otherwise it serves a seq-incremental (Seq>0) or full (Seq<=0) view.
+func (s *Service) GetSession(ctx context.Context, in GetSessionInput) (*session.Session, *session.SessionWindowMeta, error) {
 	if err := s.ensureRegistry(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	manager, err := s.Registry.GetSessionManager(in.RootID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return manager.Get(ctx, in.Key, in.Seq)
+	if in.BeforeSeq > 0 || in.Latest > 0 {
+		return manager.GetWindow(ctx, in.Key, in.BeforeSeq, in.Limit, in.Latest)
+	}
+	out, err := manager.Get(ctx, in.Key, in.Seq)
+	return out, nil, err
 }
 
 type GetSessionExchangeAuxInput struct {
