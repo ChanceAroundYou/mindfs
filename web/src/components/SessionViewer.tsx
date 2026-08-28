@@ -2461,7 +2461,7 @@ function SessionViewerInner({
 
       {/* 滚动容器 */}
       <div style={{ flex: 1, minHeight: 0, minWidth: 0, position: "relative" }}>
-        <div ref={scrollRef} style={{ flex: 1, minHeight: 0, minWidth: 0, height: "100%", overflowY: useInnerScrollContainer ? "auto" : "visible", overflowX: "hidden", position: "relative", WebkitOverflowScrolling: "touch" }}>
+        <div ref={scrollRef} style={{ flex: 1, minHeight: 0, minWidth: 0, height: "100%", overflowY: "auto", overflowX: "hidden", position: "relative", WebkitOverflowScrolling: "touch" }}>
           <div style={{
             width: "100%",
             minWidth: 0,
@@ -2822,7 +2822,7 @@ function SessionViewerInner({
           </div>
           </div>
         </div>
-        {interactionMode !== "drawer" && (userMessageSummaries.length > 0 || showJumpToLatest) ? (
+        {userMessageSummaries.length > 0 || showJumpToLatest ? (
           <div
             style={{
               position: "absolute",
