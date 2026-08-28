@@ -201,7 +201,7 @@ html {
     --mobile-sidebar-bg: #0f172a;
     --content-bg: #020617;
     --mobile-overlay-bg: #020617;
-    --panel-bg: #0f172a;
+    --panel-bg: #020617;
     --panel-border: rgba(148, 163, 184, 0.2);
     --panel-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
     --panel-focus-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
@@ -265,7 +265,7 @@ html {
   --mobile-sidebar-bg: #0f172a;
   --content-bg: #020617;
   --mobile-overlay-bg: #020617;
-  --panel-bg: #0f172a;
+  --panel-bg: #020617;
   --panel-border: rgba(148, 163, 184, 0.2);
   --panel-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
   --panel-focus-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);

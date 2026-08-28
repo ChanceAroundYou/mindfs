@@ -61,8 +61,8 @@ assert.match(
 );
 assert.match(
   viewer,
-  /const activeScrollRef = interactionMode === "drawer" \? scrollContainerRef : scrollRef;/,
-  "stick-to-bottom must target the outer drawer scroller in drawer mode",
+  /const activeScrollRef = scrollRef;/,
+  "drawer now uses inner scroll container per upstream 6247756 (BottomSheet overflow:hidden)",
 );
 assert.match(app, /const drawerScrollRef = useRef<HTMLDivElement \| null>\(null\);/);
 assert.match(app, /<BottomSheet[\s\S]*contentRef=\{drawerScrollRef\}/);

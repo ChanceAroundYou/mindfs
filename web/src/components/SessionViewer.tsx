@@ -1045,8 +1045,9 @@ function SessionViewerInner({
   >({});
   const scrollEndRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const useInnerScrollContainer = interactionMode !== "drawer";
-  const activeScrollRef = interactionMode === "drawer" ? scrollContainerRef : scrollRef;
+  // ponytail: drawer now uses inner scroll container (upstream 6247756: BottomSheet overflow:hidden, inner overflow:auto)
+  // outer drawerScrollRef is kept for BottomSheet sizing only, not for stick-to-bottom.
+  const activeScrollRef = scrollRef;
   const onFileClickRef = useRef(onFileClick);
   const copyResetTimersRef = useRef<Record<string, number>>({});
   const relatedFilesDefaultStateRef = useRef<string>("");
@@ -1122,7 +1123,7 @@ function SessionViewerInner({
       window.clearTimeout(timer),
     );
     copyResetTimersRef.current = {};
-  }, [sessionKey, useInnerScrollContainer]);
+  }, [sessionKey]);
 
   const userMessageSummaries = useMemo(
     () =>
@@ -1299,7 +1300,7 @@ function SessionViewerInner({
     if (shouldStickToBottomRef.current) {
       scrollToRelatedFilesDivider("auto");
     }
-  }, [sessionKey, timeline, isStreaming, streamVersion, slashCommandResult, useInnerScrollContainer]);
+  }, [sessionKey, timeline, isStreaming, streamVersion, slashCommandResult]);
 
   useEffect(() => {
     const container = activeScrollRef?.current;
@@ -1333,7 +1334,7 @@ function SessionViewerInner({
         viewportStickFrameRef.current = null;
       }
     };
-  }, [sessionKey, useInnerScrollContainer]);
+  }, [sessionKey]);
 
   useEffect(() => {
     const el = activeScrollRef?.current;
@@ -1368,7 +1369,7 @@ function SessionViewerInner({
     return () => {
       el.removeEventListener("scroll", updateStickiness);
     };
-  }, [refreshCurrentUserMessageIndex, sessionKey, useInnerScrollContainer]);
+  }, [refreshCurrentUserMessageIndex, sessionKey]);
 
   useEffect(() => {
     if (!targetSeq) {
