@@ -520,6 +520,8 @@ export function ActionBar({
   const [worktreeBranches, setWorktreeBranches] = useState<GitBranchesPayload>({ branches: [] });
   const [worktreeBranchesLoading, setWorktreeBranchesLoading] = useState(false);
   const [worktreeBranchError, setWorktreeBranchError] = useState("");
+  const [agentSelectorOpen, setAgentSelectorOpen] = useState(false);
+  const [modeSelectorOpen, setModeSelectorOpen] = useState(false);
   const dragStartRef = useRef(0);
   const syncedSessionSignatureRef = useRef<string>("");
   const editorRef = useRef<TokenEditorHandle>(null);
@@ -1576,7 +1578,7 @@ export function ActionBar({
               }}
             >
 			{planModeActive || (!currentSession && currentRootIsGitRepo && mode !== "command") || (mode !== "command" && agent === "codex") ? (
-			  <div style={{ position: "absolute", left: isMobile ? "4px" : "2px", right: isMobile ? "4px" : "8px", bottom: "calc(100% + 4px)", zIndex: 7, minWidth: 0, display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: "8px", pointerEvents: "none" }}>
+			  <div style={{ position: "absolute", left: isMobile ? "4px" : "2px", right: isMobile ? "4px" : "8px", bottom: "calc(100% + 4px)", zIndex: 7, minWidth: 0, display: (agentSelectorOpen || modeSelectorOpen) ? "none" : "flex", alignItems: "flex-end", justifyContent: "space-between", gap: "8px", pointerEvents: "none" }}>
 				<div style={{ display: "flex", alignItems: "center", gap: "6px", minWidth: 0, pointerEvents: "auto" }}>
 				  {planModeActive ? (
 					<div style={{ display: "inline-flex", alignItems: "center", gap: "5px", height: "20px", padding: "0 5px 0 8px", borderRadius: "999px", border: `1px solid ${appAccentHexToRgba(accentHex, 0.22)}`, background: `linear-gradient(${appAccentHexToRgba(accentHex, 0.10)}, ${appAccentHexToRgba(accentHex, 0.10)}), var(--mobile-overlay-bg)`, color: accentHex, fontSize: "11px", fontWeight: 700, lineHeight: 1, flexShrink: 0 }}>
@@ -1586,7 +1588,7 @@ export function ActionBar({
 					  </button>
 					</div>
 				  ) : null}
-				  {!currentSession && currentRootIsGitRepo ? (
+				  {!agentSelectorOpen && !modeSelectorOpen && !currentSession && currentRootIsGitRepo ? (
 					<>
 					<button type="button" onClick={() => setCreateWorktree((value) => !value)} disabled={sending} aria-label={createWorktree ? t("task.worktreeTitle") : t("task.noWorktreeTitle")} title={createWorktree ? t("task.worktreeTitle") : t("task.noWorktreeTitle")} style={{ height: "24px", borderRadius: "6px", border: createWorktree ? "1px solid rgba(22, 163, 74, 0.28)" : "1px solid var(--border-color)", background: createWorktree ? "linear-gradient(rgba(22, 163, 74, 0.08), rgba(22, 163, 74, 0.08)), var(--mobile-overlay-bg)" : "linear-gradient(rgba(100, 116, 139, 0.10), rgba(100, 116, 139, 0.10)), var(--mobile-overlay-bg)", color: createWorktree ? "#15803d" : "var(--text-secondary)", padding: createWorktree ? "0 8px" : "0 8px 0 5px", fontSize: "11px", fontWeight: 800, cursor: sending ? "not-allowed" : "pointer", whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: "3px" }}>
 					  {createWorktree ? "worktree" : <><NoWorktreeIcon size={12} />worktree</>}
@@ -1956,7 +1958,7 @@ export function ActionBar({
               </div>
 
               <>
-                <ModeSelector mode={mode} onModeChange={setMode} compact={true} disabled={isModeLocked} onboardingId="mode-selector" accentColor={accentHex} />
+                <ModeSelector mode={mode} onModeChange={setMode} compact={true} disabled={isModeLocked} onboardingId="mode-selector" accentColor={accentHex} onOpenChange={setModeSelectorOpen} />
                 {mode !== "command" ? (
                   <div>
                     <AgentSelector
@@ -1996,6 +1998,7 @@ export function ActionBar({
                     warnUnavailable={isSelectedAgentUnavailable}
                     defaultExpandOptions
                     onboardingId="agent-selector"
+                    onOpenChange={setAgentSelectorOpen}
                     />
                   </div>
                 ) : (

@@ -33,6 +33,7 @@ type AgentSelectorProps = {
   onboardingId?: string;
   viewportMenu?: boolean;
   allowDefaultModel?: boolean;
+  onOpenChange?: (open: boolean) => void;
 };
 
 const AGENT_MENU_MAX_BODY_HEIGHT = 344;
@@ -187,6 +188,7 @@ export function AgentSelector({
   onboardingId,
   viewportMenu = false,
   allowDefaultModel = false,
+  onOpenChange,
 }: AgentSelectorProps) {
   const { t } = useI18n();
   const [isOpen, setIsOpen] = useState(false);
@@ -282,6 +284,10 @@ export function AgentSelector({
     }
     return undefined;
   }, [agent, model, t, warnUnavailable]);
+
+  useEffect(() => {
+    onOpenChange?.(isOpen);
+  }, [isOpen, onOpenChange]);
 
   useEffect(() => {
     const handlePointerOutside = (e: PointerEvent) => {

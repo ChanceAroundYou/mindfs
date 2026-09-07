@@ -11,6 +11,7 @@ type ModeSelectorProps = {
   disabled?: boolean;
   onboardingId?: string;
   accentColor?: string | null;
+  onOpenChange?: (open: boolean) => void;
 };
 
 const modeLabelKeys: Record<SessionMode, MessageKey> = {
@@ -26,6 +27,7 @@ export function ModeSelector({
   disabled = false,
   onboardingId,
   accentColor = null,
+  onOpenChange,
 }: ModeSelectorProps) {
   const { t } = useI18n();
   const accentHex = String(accentColor || "").trim() || "#3b82f6";
@@ -45,6 +47,10 @@ export function ModeSelector({
       setIsOpen(false);
     }
   }, [disabled]);
+
+  useEffect(() => {
+    onOpenChange?.(isOpen);
+  }, [isOpen, onOpenChange]);
 
   useEffect(() => {
     const handlePointerOutside = (e: PointerEvent) => {
