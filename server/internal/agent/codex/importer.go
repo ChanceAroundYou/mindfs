@@ -305,7 +305,7 @@ func (i *Importer) ResolveForkPointByAgentTurnIndex(ctx context.Context, in agen
 			return agenttypes.ResolveForkPointOutput{}, err
 		}
 		for _, candidate := range files {
-			if candidate.AgentSessionID == targetID && normalizeComparablePath(candidate.Cwd) == rootPath {
+			if candidate.AgentSessionID == targetID && cwdMatchesRoot(candidate.Cwd, rootPath) {
 				file = candidate
 				ok = true
 				break
@@ -451,10 +451,21 @@ func (i *Importer) lookupSessionFile(sessionID, rootPath string) (codexSessionFi
 	if !ok {
 		return codexSessionFile{}, false
 	}
-	if normalizeComparablePath(item.Cwd) != normalizeComparablePath(rootPath) {
+	if !cwdMatchesRoot(item.Cwd, rootPath) {
 		return codexSessionFile{}, false
 	}
 	return item, true
+}
+
+// cwdMatchesRoot 报告转录文件记录的 cwd 是否归属该托管目录：根目录本身，
+// 或其 .worktree/* 下的工作树（转录按 spawn cwd 归档，worktree 会话的 cwd 是工作树路径）。
+func cwdMatchesRoot(cwd, rootPath string) bool {
+	cwd = normalizeComparablePath(cwd)
+	rootPath = normalizeComparablePath(rootPath)
+	if cwd == rootPath {
+		return true
+	}
+	return strings.HasPrefix(cwd, rootPath+"/.worktree/")
 }
 
 func readCodexSessionTitles(path string) map[string]string {
