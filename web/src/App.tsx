@@ -1385,6 +1385,8 @@ export function App({ onGoHome }: AppProps) {
   const loadingSessionRef = useRef<Partial<Record<string, Promise<SyncSessionResult>>>>({});
   const staleSessionKeysRef = useRef<Set<string>>(new Set());
   const invalidTreeCacheKeysRef = useRef<Set<string>>(new Set());
+  // 目录树刷新并发守卫：按缓存键记录最后发起的请求序号，旧响应后到时直接丢弃
+  const treeFetchSeqRef = useRef<Record<string, number>>({});
   const boundSessionByRootRef = useRef<Record<string, string | null>>({});
   const suppressedAutoBindSessionByRootRef = useRef<Record<string, string | null>>({});
   const drawerSessionByRootRef = useRef<Record<string, SessionItem | null>>({});
@@ -4642,23 +4644,49 @@ export function App({ onGoHome }: AppProps) {
 
   const refreshTreeDir = useCallback(
     async (rootID: string, dirPath: string, syncMain: boolean) => {
+      const cacheKey = treeCacheKey(rootID, dirPath);
+      // 并发守卫：同目录并发刷新（按钮 × WS 事件 × 导航）时只让最后发起的请求生效，
+      // 防止先发起的旧响应后返回覆盖新数据（“点了刷新仍显示旧内容”的来源之一）。
+      treeFetchSeqRef.current[cacheKey] = (treeFetchSeqRef.current[cacheKey] || 0) + 1;
+      const seq = treeFetchSeqRef.current[cacheKey];
+      // syncMain 时须仍在查看该目录才允许回写主视图，防止导航后旧响应覆盖新视图
+      const matchesView = () =>
+        rootID === currentRootIdRef.current &&
+        (selectedDirRef.current === rootID ? "." : selectedDirRef.current || ".") === dirPath;
       try {
         const payload = await apiProtectedJSON<any>(
           appURL("/api/tree", new URLSearchParams({ root: rootID, dir: dirPath }), getNodeIdForRoot(rootID)),
         );
+        if (treeFetchSeqRef.current[cacheKey] !== seq) {
+          return; // 旧响应已过时，丢弃
+        }
         const parsed = normalizeTreeResponse(payload);
-        invalidTreeCacheKeysRef.current.delete(treeCacheKey(rootID, dirPath));
-        setMainDirectoryError("");
+        invalidTreeCacheKeysRef.current.delete(cacheKey);
         setEntriesByPath((prev) => ({
           ...prev,
-          [treeCacheKey(rootID, dirPath)]: parsed.entries,
+          [cacheKey]: parsed.entries,
         }));
-        if (syncMain) {
+        if (syncMain && matchesView()) {
+          setMainDirectoryError("");
           setMainEntries(parsed.entries);
         }
-      } catch {}
+      } catch (error) {
+        if (treeFetchSeqRef.current[cacheKey] !== seq) {
+          return; // 已被更新的请求取代，错误也一并丢弃
+        }
+        // 失败后不信任旧缓存：标记该目录缓存失效，下次查看/刷新强制重拉真实状态
+        invalidTreeCacheKeysRef.current.add(cacheKey);
+        if (syncMain && matchesView()) {
+          const message = String(
+            (error as any)?.payload?.error || (error as any)?.payload?.message || (error as Error)?.message || "",
+          );
+          const display = formatDirectoryLoadError(message);
+          setMainDirectoryError(display);
+          reportError("file.read_failed", display, { severity: "warning", recoverable: true });
+        }
+      }
     },
-    [normalizeTreeResponse, treeCacheKey],
+    [formatDirectoryLoadError, getNodeIdForRoot, treeCacheKey],
   );
 
   const refreshCurrentFileContent = useCallback(
@@ -12325,8 +12353,25 @@ export function App({ onGoHome }: AppProps) {
     }
     switch (tab) {
       case "files": {
-        const dir = selectedDirRef.current === root ? "." : (selectedDirRef.current || ".");
-        await refreshTreeDir(root, dir, true);
+        // 强制拉取真实状态：当前目录 + 侧边栏已加载（展开/访问过）的所有目录全部重拉，
+        // 而非仅刷新选中目录——展开的子目录若不重拉，刷新后仍显示旧条目。
+        const selDir = selectedDirRef.current === root ? "." : (selectedDirRef.current || ".");
+        const treeBase = scopeKey(getNodeIdForRoot(root) ?? "", root);
+        const targets = new Set<string>([selDir]);
+        for (const key of Object.keys(entriesByPathRef.current)) {
+          if (key === treeBase) {
+            targets.add(".");
+          } else if (key.startsWith(`${treeBase}:`)) {
+            targets.add(key.slice(treeBase.length + 1));
+          }
+        }
+        await Promise.all(
+          [...targets].map((dir) => refreshTreeDir(root, dir, dir === selDir)),
+        );
+        if (fileRef.current?.path) {
+          // 主视图正打开文件时，刷新同时强制重读该文件内容（WS 断开时唯一的重读入口）
+          void refreshCurrentFileContent(root, fileRef.current.path);
+        }
         return;
       }
       case "git":
@@ -12351,8 +12396,10 @@ export function App({ onGoHome }: AppProps) {
     }
   }, [
     expandedWorktreeByRoot,
+    getNodeIdForRoot,
     loadProjectTreeWorktreeStatus,
     loadProjectTreeWorktrees,
+    refreshCurrentFileContent,
     refreshGitHistory,
     refreshGitStatus,
     refreshProjectTreeRelatedFiles,

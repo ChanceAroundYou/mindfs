@@ -477,6 +477,10 @@ export function invalidateFileCache(rootId: string, path: string): void {
   for (const key of Array.from(rawFileFailures.keys())) {
     if (key.endsWith(`::${rootId}::${path}`)) rawFileFailures.delete(key);
   }
+  // raw blob 缓存（图片等）无 TTL，文件更新后必须随失效流程清除，否则同路径旧图持续复用
+  for (const key of Array.from(rawFileBlobCache.keys())) {
+    if (key.startsWith(`${rootId}:${path}:`)) rawFileBlobCache.delete(key);
+  }
   const prefix = buildCacheKeyPrefix(rootId, path);
   const diffPrefix = buildGitDiffCacheKeyPrefix(rootId, path);
   for (const key of Array.from(memoryCache.keys())) {
