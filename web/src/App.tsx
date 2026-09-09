@@ -1499,6 +1499,8 @@ export function App({ onGoHome }: AppProps) {
 	  const kanbanAbortRef = useRef<AbortController | null>(null);
 	  const sessionListLoadSeqRef = useRef(0);
 	  const sessionListAbortRef = useRef<AbortController | null>(null);
+  // 列表拉取失败告警冷却：断网/抖动时重拉被多个事件反复触发，避免告警刷屏。
+  const listLoadErrorAtRef = useRef(0);
   const [taskTemplateFilter, setTaskTemplateFilter] = useState("");
   const [taskTemplateActionMenuOpen, setTaskTemplateActionMenuOpen] = useState(false);
   const [taskTemplateConcurrencyOpen, setTaskTemplateConcurrencyOpen] = useState(false);
@@ -5022,12 +5024,15 @@ export function App({ onGoHome }: AppProps) {
         if ((err as any)?.name === "AbortError") return;
         if (controller.signal.aborted) return;
         // 列表拉取失败不再静默：WS 抖动时列表会停留旧状态（2026-09-09 排查），
-        // 可见告警让用户知道需要手动同步。
-        reportError(
-          "session.list_load_failed",
-          String((err as Error)?.message || err),
-          { severity: "warning", recoverable: true },
-        );
+        // 可见告警让用户知道需要手动同步；10s 冷却防断网期间刷屏。
+        if (Date.now() - listLoadErrorAtRef.current > 10000) {
+          listLoadErrorAtRef.current = Date.now();
+          reportError(
+            "session.list_load_failed",
+            String((err as Error)?.message || err),
+            { severity: "warning", recoverable: true },
+          );
+        }
       }
     },
     [getNodeIdForRoot],
@@ -10563,6 +10568,18 @@ export function App({ onGoHome }: AppProps) {
             }
             setMultiProjectSessionPending(rootID, sessionKey, false);
             handleSessionStreamDone(rootID, sessionKey);
+            // done 后重锚定（仅正在查看/绑定的会话）：restoreActiveSession 以服务端持久化窗口
+            // 替换缓存。持久化完成后服务端窗口不含 seq=0（JSONL 在生成结束时写入），restore
+            // 的 localTransient 合并不回填，缓存里的瞬时尾巴随之清除——否则窗口化合并（F1）
+            // 会把已持久化的轮次以 seq=0 形式重复追加在窗口后面。同时自愈断连间隙丢的 chunk。
+            // 队列续轮（仍在流式）跳过，等它自己的 done；非查看中的会话不重载（避免覆盖
+            // 其它标签页正在流式写入的同一缓存）。
+            if (
+              getReplayTargetsForRoot(rootID).includes(sessionKey) &&
+              !sessionService.isSessionStreaming(sessionKey)
+            ) {
+              void reloadSessionForReplay(rootID, sessionKey);
+            }
             // 会话刚结束，服务端 updated_at/context_window 已持久化。
             // afterTime 增量会被"updated_at 严格大于旧 newest"排除刚结束的会话（竞态），
             // 必须 replace 全量重拉才能带上最新 meta。频率低 + 300ms debounce，成本可接受。

@@ -51,7 +51,7 @@ assert.match(runtimeSource, /function resolveNodeBaseURL\(nodeId\?: string\): st
 // 会话窗口拉取与关联文件 diff 按会话归属节点路由（同名根跨节点重名时裸 rootId 查表会串节点）。
 const sessionViewer = fs.readFileSync(path.join(root, "src/components/SessionViewer.tsx"), "utf8");
 assert.match(sessionViewer, /const sessionNodeId =\s*String\(\(session as any\)\?\._nodeId \|\| ""\)\.trim\(\) \|\| undefined;/, "SessionViewer must resolve the session's owning node");
-assert.equal(sessionViewer.match(/getSessionWindow\(\s*rootId \|\| "",\s*sessionKey,\s*\{[^}]*nodeId: sessionNodeId/g)?.length, 4, "all getSessionWindow calls (latest/beforeSeq×2/settle re-anchor) must carry the session node");
+assert.equal(sessionViewer.match(/getSessionWindow\(\s*rootId \|\| "",\s*sessionKey,\s*\{[^}]*nodeId: sessionNodeId/g)?.length, 3, "all three getSessionWindow calls (latest/beforeSeq×2) must carry the session node");
 assert.match(sessionViewer, /useRelatedFileStats\(\s*rootId,\s*relatedFiles,\s*gitStatsRefreshKey,\s*sessionNodeId,/, "related-file stats must route by the session node");
 
 const relatedHook = fs.readFileSync(path.join(root, "src/hooks/useRelatedFileStats.ts"), "utf8");

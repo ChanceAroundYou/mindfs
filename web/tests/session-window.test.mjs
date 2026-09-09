@@ -187,20 +187,19 @@ const { mergeWindowedTail } = mergeSandbox.exports;
   assert.equal(r.exchanges.map((e) => e.content).join("|"), "a3|t");
 }
 
-// ── F2: done 后窗口重锚定 ──────────────────────────────────────────────
+// ── F2: done 后重锚定（App 级，走既有 restoreActiveSession 路径）────────
+// 注意：不能只在 SessionViewer 视图内重拉窗口——applyWindow 替换可视数据后，App 缓存里
+// 残留的 seq=0 瞬时轮次会被合并 effect 重新追加 → 最后一轮显示两次。必须在 App 层经
+// restoreActiveSession 替换缓存（服务端窗口无 seq=0 时 localTransient 不回填，瞬时被清）。
+const appSrc = fs.readFileSync(path.resolve(import.meta.dirname, "../src/App.tsx"), "utf8");
 assert.match(
-  viewerSrc,
-  /streamingEdgeRef\.current = \{ key: sessionKey, value: isStreaming \}/,
-  "F2 streaming edge tracking missing",
+  appSrc,
+  /getReplayTargetsForRoot\(rootID\)\.includes\(sessionKey\) &&\s*\n\s*!sessionService\.isSessionStreaming\(sessionKey\)\s*\n\s*\) \{\s*\n\s*void reloadSessionForReplay\(rootID, sessionKey\);/,
+  "F2 done-path re-anchor (viewing-sessions only, guarded) missing",
 );
-assert.match(
-  viewerSrc,
-  /if \(sessionService\.isSessionStreaming\(sessionKey\)\) \{/,
-  "F2 active-stream guard missing",
-);
+assert.doesNotMatch(viewerSrc, /streamingEdgeRef/, "F2 must not re-anchor inside SessionViewer (would duplicate the persisted turn)");
 
 // ── F3: meta.updated 新 key → replace 重拉 ─────────────────────────────
-const appSrc = fs.readFileSync(path.resolve(import.meta.dirname, "../src/App.tsx"), "utf8");
 assert.match(appSrc, /const listHasKey = sessionsRef\.current\.some\(/, "F3 listHasKey missing");
 assert.match(
   appSrc,
@@ -208,11 +207,11 @@ assert.match(
   "F3 new-key replace branch missing",
 );
 
-// ── F4: 列表拉取失败可见 ───────────────────────────────────────────────
+// ── F4: 列表拉取失败可见（10s 冷却防刷屏）──────────────────────────────
 assert.match(
   appSrc,
-  /reportError\(\s*\n\s*"session\.list_load_failed"/,
-  "F4 reportError missing",
+  /if \(Date\.now\(\) - listLoadErrorAtRef\.current > 10000\) \{\s*\n\s*listLoadErrorAtRef\.current = Date\.now\(\);\s*\n\s*reportError\(\s*\n\s*"session\.list_load_failed"/,
+  "F4 reportError with 10s cooldown missing",
 );
 const zhSrc = fs.readFileSync(path.resolve(import.meta.dirname, "../src/i18n/locales/zh-CN.ts"), "utf8");
 const enSrc = fs.readFileSync(path.resolve(import.meta.dirname, "../src/i18n/locales/en-US.ts"), "utf8");

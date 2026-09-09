@@ -11,7 +11,6 @@ import { getRootNodeId } from "../services/rootNode";
 import {
   clearWindowedView,
   getSessionWindow,
-  sessionService,
   setWindowedView,
   type ExchangeAux,
   type RelatedFile,
@@ -1318,6 +1317,8 @@ function SessionViewerInner({
         return src;
       }
       const next = { ...prev };
+      // aux 只在服务端持久化后按 seq 键下发（流式期的工具调用/thinking 是 exchange 而非 aux），
+      // 故此处不收 seq=0——与 F1 的 exchange 合并刻意不同。
       for (const [seq, items] of Object.entries(src)) {
         const s = Number(seq);
         if (s > windowMeta.maxSeq) {
@@ -1327,38 +1328,6 @@ function SessionViewerInner({
       return next;
     });
   }, [session?.exchanges, session?.exchange_aux, windowMeta]);
-
-  // done 后窗口重锚定（方案 B）：isStreaming 真→假（message_done）时整窗重拉一次，把瞬时
-  // 尾巴换成持久化版本（无重复），断连间隙丢的 chunk 一并自愈。切会话/首轮渲染不触发；
-  // 队列消息下一轮已开始（isSessionStreaming）则跳过，避免与新轮次的流式状态竞态。
-  const streamingEdgeRef = useRef<{ key: string | null; value: boolean }>({
-    key: null,
-    value: false,
-  });
-  useEffect(() => {
-    const prevEdge = streamingEdgeRef.current;
-    streamingEdgeRef.current = { key: sessionKey, value: isStreaming };
-    const sameKey = prevEdge.key === sessionKey;
-    if (!sameKey || prevEdge.value === isStreaming) {
-      return;
-    }
-    if (isStreaming || !sessionKey) {
-      return;
-    }
-    if (sessionService.isSessionStreaming(sessionKey)) {
-      return;
-    }
-    let cancelled = false;
-    getSessionWindow(rootId || "", sessionKey, { latest: 50, nodeId: sessionNodeId })
-      .then((res) => {
-        if (cancelled || !res) return;
-        applyWindow(res);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [isStreaming, sessionKey, rootId, sessionNodeId, applyWindow]);
 
   const userMessageSummaries = useMemo(
     () =>
