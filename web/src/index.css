@@ -51,6 +51,8 @@
   --root-badge-bg: rgba(99, 102, 241, 0.14);
   --root-badge-border: rgba(99, 102, 241, 0.24);
   --root-badge-text: #4f46e5;
+  --node-badge-bg: rgba(148, 163, 184, 0.14);
+  --node-row-selected-bg: rgba(148, 163, 184, 0.16);
 }
 
 /* Region font preferences preserve the existing type hierarchy while scaling text only. */
@@ -268,7 +270,7 @@ html {
     --mobile-sidebar-bg: #0f172a;
     --content-bg: #020617;
     --mobile-overlay-bg: #020617;
-    --panel-bg: #0f172a;
+    --panel-bg: #020617;
     --panel-border: rgba(148, 163, 184, 0.2);
     --panel-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
     --panel-focus-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
@@ -285,6 +287,8 @@ html {
     --root-badge-bg: rgba(129, 140, 248, 0.22);
     --root-badge-border: rgba(165, 180, 252, 0.34);
     --root-badge-text: #c7d2fe;
+    --node-badge-bg: rgba(148, 163, 184, 0.18);
+    --node-row-selected-bg: rgba(148, 163, 184, 0.20);
   }
 
   /* 仅修正语法高亮代码块，避免全局 pre/code 叠出双层边框 */
@@ -330,7 +334,7 @@ html {
   --mobile-sidebar-bg: #0f172a;
   --content-bg: #020617;
   --mobile-overlay-bg: #020617;
-  --panel-bg: #0f172a;
+  --panel-bg: #020617;
   --panel-border: rgba(148, 163, 184, 0.2);
   --panel-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
   --panel-focus-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
@@ -347,6 +351,8 @@ html {
   --root-badge-bg: rgba(129, 140, 248, 0.22);
   --root-badge-border: rgba(165, 180, 252, 0.34);
   --root-badge-text: #c7d2fe;
+  --node-badge-bg: rgba(148, 163, 184, 0.18);
+  --node-row-selected-bg: rgba(148, 163, 184, 0.20);
 }
 
 :root[data-theme="dark"] pre[class*="language-"],
@@ -428,6 +434,8 @@ html {
   --root-badge-bg: rgba(198, 151, 56, 0.22);
   --root-badge-border: rgba(198, 151, 56, 0.32);
   --root-badge-text: #7a561b;
+  --node-badge-bg: rgba(148, 163, 184, 0.14);
+  --node-row-selected-bg: rgba(148, 163, 184, 0.16);
 }
 
 :root[data-theme="meadow"] #root {
@@ -530,6 +538,8 @@ html {
   --root-badge-bg: rgba(116, 133, 91, 0.18);
   --root-badge-border: rgba(116, 133, 91, 0.30);
   --root-badge-text: #44512f;
+  --node-badge-bg: rgba(148, 163, 184, 0.14);
+  --node-row-selected-bg: rgba(148, 163, 184, 0.16);
 }
 
 :root[data-theme="moss"] #root {

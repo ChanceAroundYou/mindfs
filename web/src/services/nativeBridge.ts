@@ -33,8 +33,6 @@ export type NativeBridge = {
   consumeRelayNodes?: () => Promise<{ nodes?: unknown[]; count?: number } | unknown[] | string> | { nodes?: unknown[]; count?: number } | unknown[] | string;
   getLauncherNodes?: () => Promise<{ nodes?: LauncherNode[]; count?: number } | LauncherNode[] | string> | { nodes?: LauncherNode[]; count?: number } | LauncherNode[] | string;
   setLauncherNodes?: (input: { nodes: LauncherNode[] } | string) => Promise<{ stored?: boolean; count?: number } | void> | { stored?: boolean; count?: number } | void;
-  storeRelayNodes?: (input: unknown[] | string) => Promise<{ stored?: boolean; count?: number } | string | void> | { stored?: boolean; count?: number } | string | void;
-  syncRelayNodesFromRelayer?: () => Promise<{ scheduled?: boolean } | string | void> | { scheduled?: boolean } | string | void;
   writeClipboardText?: (text: string) => Promise<boolean | void> | boolean | void;
 };
 
@@ -59,11 +57,8 @@ function hasCallableNativeMethod(bridge: NativeBridge): boolean {
     bridge.openExternalURL,
     bridge.getAppInfo,
     bridge.configureReplyPoller,
-    bridge.consumeRelayNodes,
     bridge.getLauncherNodes,
     bridge.setLauncherNodes,
-    bridge.storeRelayNodes,
-    bridge.syncRelayNodesFromRelayer,
     bridge.writeClipboardText,
   ].some((method) => typeof method === "function");
 }

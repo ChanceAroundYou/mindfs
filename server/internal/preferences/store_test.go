@@ -3,6 +3,9 @@ package preferences
 import (
 	"path/filepath"
 	"testing"
+
+	"mindfs/server/internal/agent"
+	agenttypes "mindfs/server/internal/agent/types"
 )
 
 func TestSessionNamingDefaultsPersistAndReload(t *testing.T) {
@@ -91,5 +94,38 @@ func TestNewProjectMetaLocationDefaultAndPersist(t *testing.T) {
 	}
 	if err := store.UpdateNewProjectMetaLocation("other"); err == nil {
 		t.Fatal("invalid location unexpectedly accepted")
+	}
+}
+
+func TestApplyAgentDefaultsStaleModelFallback(t *testing.T) {
+	models := []agenttypes.ModelInfo{
+		{ID: "default"},
+		{ID: "d4p"},
+		{ID: "d4"},
+	}
+	statuses := []agent.Status{{Name: "claude", DefaultModelID: "of", Models: models}}
+
+	// 过期默认模型（of，provider 切换前遗留）回退到目录第一个非 default。
+	store := &Store{
+		path: filepath.Join(t.TempDir(), preferencesFileName),
+		data: UserPreferences{Agents: map[string]AgentDefaults{
+			"claude": {Model: "of"},
+		}},
+	}
+	out := store.ApplyAgentDefaults(statuses)
+	if out[0].DefaultModelID != "d4p" {
+		t.Fatalf("stale default = %q, want d4p", out[0].DefaultModelID)
+	}
+
+	// 目录内模型保持，不被回退。
+	validStore := &Store{
+		path: filepath.Join(t.TempDir(), preferencesFileName),
+		data: UserPreferences{Agents: map[string]AgentDefaults{
+			"claude": {Model: "d4p"},
+		}},
+	}
+	out = validStore.ApplyAgentDefaults(statuses)
+	if out[0].DefaultModelID != "d4p" {
+		t.Fatalf("valid default = %q, want d4p", out[0].DefaultModelID)
 	}
 }

@@ -17,6 +17,7 @@ import (
 	"unicode"
 
 	"mindfs/server/internal/agent"
+	"mindfs/server/internal/agent/claude"
 	agenttypes "mindfs/server/internal/agent/types"
 	"mindfs/server/internal/commandexec"
 	"mindfs/server/internal/fs"
@@ -194,7 +195,7 @@ func (s *Service) ListMultiRootSessions(ctx context.Context, in ListMultiRootSes
 		}
 		groups = append(groups, SessionRootGroup{
 			RootID:            root.ID,
-			RootName:          root.Name,
+			RootName:          root.EffectiveName(),
 			LatestSessionTime: latest,
 			Sessions:          items,
 			PinnedSessions:    pinnedItems,
@@ -493,13 +494,12 @@ func (s *Service) ForkSession(ctx context.Context, in ForkSessionInput) (ForkSes
 		return ForkSessionOutput{}, err
 	}
 	created, err := manager.Create(ctx, session.CreateInput{
-		Type:             session.TypeChat,
-		ParentSessionKey: current.Key,
-		Source:           string(sourceJSON),
-		Agent:            agentName,
-		Model:            resolveForkModel(current, target),
-		Name:             buildForkSessionName(current, target.Seq),
-		PlanMode:         current.PlanMode,
+		Type:     session.TypeChat,
+		Source:   string(sourceJSON),
+		Agent:    agentName,
+		Model:    resolveForkModel(current, target),
+		Name:     buildForkSessionName(current, target.Seq),
+		PlanMode: current.PlanMode,
 	})
 	if err != nil {
 		return ForkSessionOutput{}, err
@@ -697,20 +697,30 @@ func copyForkHistory(ctx context.Context, manager *session.Manager, from, to *se
 }
 
 type GetSessionInput struct {
-	RootID string
-	Key    string
-	Seq    int
+	RootID    string
+	Key       string
+	Seq       int
+	BeforeSeq int
+	Limit     int
+	Latest    int
 }
 
-func (s *Service) GetSession(ctx context.Context, in GetSessionInput) (*session.Session, error) {
+// GetSession returns the session. When BeforeSeq>0 or Latest>0 it serves a
+// windowed slice via manager.GetWindow and the returned SessionWindowMeta is
+// non-nil; otherwise it serves a seq-incremental (Seq>0) or full (Seq<=0) view.
+func (s *Service) GetSession(ctx context.Context, in GetSessionInput) (*session.Session, *session.SessionWindowMeta, error) {
 	if err := s.ensureRegistry(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	manager, err := s.Registry.GetSessionManager(in.RootID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return manager.Get(ctx, in.Key, in.Seq)
+	if in.BeforeSeq > 0 || in.Latest > 0 {
+		return manager.GetWindow(ctx, in.Key, in.BeforeSeq, in.Limit, in.Latest)
+	}
+	out, err := manager.Get(ctx, in.Key, in.Seq)
+	return out, nil, err
 }
 
 type GetSessionExchangeAuxInput struct {
@@ -1117,11 +1127,12 @@ type SendMessageInput struct {
 }
 
 type MessageStart struct {
-	Model           string
-	Mode            string
-	Effort          string
-	FastService     string
-	BaseExchangeSeq int
+	Model            string
+	ModelDisplayName string
+	Mode             string
+	Effort           string
+	FastService      string
+	BaseExchangeSeq  int
 }
 
 func applyMessageRuntimeDefaultsFromStatus(
@@ -1985,11 +1996,40 @@ func resolveRuntimeModel(current *session.Session, runtime agenttypes.Session, r
 	return strings.TrimSpace(current.Model)
 }
 
-func (s *Service) resolveExchangeModelDisplayName(agentName, model string) string {
+func (s *Service) resolveExchangeModelDisplayName(agentName, model string, rootDir string) string {
 	agentName = strings.TrimSpace(agentName)
 	model = strings.TrimSpace(model)
 	if agentName != "claude" || model == "" || s == nil || s.Registry == nil {
 		return ""
+	}
+	// 同分层 env 解析：display(alias) → effective(真实上游模型)，与 session.go 发送边界同源。
+	if claudeName := strings.TrimSpace(agentName); claudeName == "claude" {
+		env := s.claudeEnvForExchange(rootDir)
+		if effective := claude.ResolveClaudeModelArg(model, env); effective != "" {
+			if claude.TierKey(effective) != claude.TierKey(model) {
+				return effective // 第三方：直接展示真实上游 ID（如 deepseek-v4-flash[1M]）
+			}
+			// Anthropic 原生：effective 仍为 tier 名，回退到目录 Name 保持可读（如 Sonnet）
+			if prober := s.Registry.GetProber(); prober != nil {
+				if status, ok := prober.GetStatus(agentName); ok {
+					for _, item := range status.Models {
+						if strings.TrimSpace(item.ID) == model {
+							if name := strings.TrimSpace(item.Name); name != "" {
+								return name
+							}
+						}
+					}
+					for _, item := range status.Models {
+						if claude.TierKey(item.ID) == claude.TierKey(model) {
+							if name := strings.TrimSpace(item.Name); name != "" {
+								return name
+							}
+						}
+					}
+				}
+			}
+			return effective
+		}
 	}
 	prober := s.Registry.GetProber()
 	if prober == nil {
@@ -2005,6 +2045,30 @@ func (s *Service) resolveExchangeModelDisplayName(agentName, model string) strin
 		}
 	}
 	return ""
+}
+
+func (s *Service) ResolveModelDisplayName(agentName, model, rootDir string) string {
+	return s.resolveExchangeModelDisplayName(agentName, model, rootDir)
+}
+
+func (s *Service) claudeEnvForExchange(rootDir string) map[string]string {
+	if s == nil || s.Registry == nil {
+		return nil
+	}
+	var baseEnv map[string]string
+	if pool := s.Registry.GetAgentPool(); pool != nil {
+		if def, ok := pool.Config().GetAgent("claude"); ok {
+			baseEnv = def.Env
+		}
+	}
+	if strings.TrimSpace(rootDir) == "" {
+		if roots := s.Registry.ListRoots(); len(roots) > 0 {
+			if dir, err := roots[0].RootDir(); err == nil {
+				rootDir = dir
+			}
+		}
+	}
+	return claude.ClaudeEffectiveEnv(baseEnv, rootDir)
 }
 
 func resolveRuntimeEffort(_ string, current *session.Session, requested string) string {
@@ -2092,15 +2156,22 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 			return err
 		}
 	}
+	root := manager.Root()
+	managedRootAbs, _ := root.RootDir()
+	rootAbs := managedRootAbs
+	if runtimeRootPath := strings.TrimSpace(in.RuntimeRootPath); runtimeRootPath != "" {
+		rootAbs = filepath.Clean(runtimeRootPath)
+	}
 	resolvedMode := resolveRuntimeMode(current, in.Mode)
 	resolvedFastService := resolveRuntimeFastService(in.Agent, current, in.FastService)
 	if in.OnStart != nil {
 		in.OnStart(MessageStart{
-			Model:           in.Model,
-			Mode:            resolvedMode,
-			Effort:          in.Effort,
-			FastService:     resolvedFastService,
-			BaseExchangeSeq: len(current.Exchanges),
+			Model:            in.Model,
+			ModelDisplayName: s.resolveExchangeModelDisplayName(in.Agent, in.Model, rootAbs),
+			Mode:             resolvedMode,
+			Effort:           in.Effort,
+			FastService:      resolvedFastService,
+			BaseExchangeSeq:  len(current.Exchanges),
 		})
 	}
 	if current.Type == session.TypeCommand {
@@ -2119,12 +2190,6 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 	if watcher != nil {
 		watcher.RegisterSession(current.Key)
 		watcher.MarkSessionActive(current.Key)
-	}
-	root := manager.Root()
-	managedRootAbs, _ := root.RootDir()
-	rootAbs := managedRootAbs
-	if runtimeRootPath := strings.TrimSpace(in.RuntimeRootPath); runtimeRootPath != "" {
-		rootAbs = filepath.Clean(runtimeRootPath)
 	}
 	planMode := current != nil && current.PlanMode
 
@@ -2373,7 +2438,7 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 			}
 		}
 	}
-	modelDisplayName := s.resolveExchangeModelDisplayName(in.Agent, resolvedModel)
+	modelDisplayName := s.resolveExchangeModelDisplayName(in.Agent, resolvedModel, rootAbs)
 	exchangeCtx := session.WithExchangeModelDisplayName(ctx, modelDisplayName)
 	agentExchangeCtx := session.WithExchangeTokenUsage(exchangeCtx, turnTokenUsage)
 	if err := manager.UpdateModel(ctx, current, resolvedModel); err != nil {
@@ -3829,11 +3894,97 @@ func normalizeDiffRef(root pathNormalizer, ref string) (string, bool) {
 	return prefix + normalized, true
 }
 
+func isClaudeAliasModelForValidate(model string) bool {
+	trimmed := strings.TrimSpace(model)
+	if trimmed == "" {
+		return false
+	}
+	has := len(trimmed) >= 4 && strings.EqualFold(trimmed[len(trimmed)-4:], "[1m]")
+	base := trimmed
+	if has {
+		base = strings.TrimSpace(trimmed[:len(trimmed)-4])
+	}
+	lower := strings.ToLower(strings.TrimSpace(base))
+	switch lower {
+	case "fable", "opus", "sonnet", "haiku", "of", "op", "os", "ok", "default":
+		return true
+	default:
+		return false
+	}
+}
+
+func canonicalClaudeModelForValidate(model string) string {
+	trimmed := strings.TrimSpace(model)
+	if trimmed == "" {
+		return ""
+	}
+	if strings.EqualFold(trimmed, "default") {
+		return trimmed
+	}
+	if !isClaudeAliasModelForValidate(trimmed) {
+		return trimmed
+	}
+	has := len(trimmed) >= 4 && strings.EqualFold(trimmed[len(trimmed)-4:], "[1m]")
+	base := trimmed
+	if has {
+		base = strings.TrimSpace(trimmed[:len(trimmed)-4])
+	}
+	lower := strings.ToLower(strings.TrimSpace(base))
+	switch lower {
+	case "fable":
+		lower = "of"
+	case "opus":
+		lower = "op"
+	case "sonnet":
+		lower = "os"
+	case "haiku":
+		lower = "ok"
+	}
+	if has {
+		return lower + "[1m]"
+	}
+	return lower
+}
+
+func claudeModelBaseForValidate(model string) string {
+	trimmed := strings.TrimSpace(model)
+	if trimmed == "" {
+		return ""
+	}
+	if strings.EqualFold(trimmed, "default") {
+		return "default"
+	}
+	has := len(trimmed) >= 4 && strings.EqualFold(trimmed[len(trimmed)-4:], "[1m]")
+	base := trimmed
+	if has {
+		base = strings.TrimSpace(trimmed[:len(trimmed)-4])
+	}
+	if !isClaudeAliasModelForValidate(trimmed) {
+		return strings.TrimSpace(base)
+	}
+	lower := strings.ToLower(strings.TrimSpace(base))
+	switch lower {
+	case "fable":
+		lower = "of"
+	case "opus":
+		lower = "op"
+	case "sonnet":
+		lower = "os"
+	case "haiku":
+		lower = "ok"
+	}
+	return lower
+}
+
 func (s *Service) validateAgentModel(agentName, model string) error {
 	agentName = strings.TrimSpace(agentName)
 	model = strings.TrimSpace(model)
 	if agentName == "" || model == "" || s.Registry == nil {
 		return nil
+	}
+	isClaude := strings.EqualFold(agentName, "claude")
+	if isClaude {
+		model = canonicalClaudeModelForValidate(model)
 	}
 	prober := s.Registry.GetProber()
 	if prober == nil {
@@ -3844,11 +3995,30 @@ func (s *Service) validateAgentModel(agentName, model string) error {
 		return nil
 	}
 	for _, item := range status.Models {
-		if strings.TrimSpace(item.ID) == model {
+		candidate := strings.TrimSpace(item.ID)
+		if isClaude {
+			candidate = canonicalClaudeModelForValidate(candidate)
+		}
+		if candidate == model {
+			return nil
+		}
+		// 1M suffix is an explicit user toggle, not a separate model entry.
+		// Prober advertises base ids without [1m] (both Anthropic aliases and generic provider ids like glm-*/deepseek-*),
+		// so base and base[1m] are the same model.
+		if isClaude && claudeModelBaseForValidate(candidate) != "" && claudeModelBaseForValidate(candidate) == claudeModelBaseForValidate(model) {
 			return nil
 		}
 	}
-	return fmt.Errorf("model %q is not supported by agent %q", model, agentName)
+	supported := make([]string, 0, len(status.Models))
+	for i, item := range status.Models {
+		if i >= 12 {
+			break
+		}
+		if id := strings.TrimSpace(item.ID); id != "" {
+			supported = append(supported, id)
+		}
+	}
+	return fmt.Errorf("model %q is not supported by agent %q (supported models: %s)", model, agentName, strings.Join(supported, ", "))
 }
 
 func (s *Service) CancelSessionTurn(ctx context.Context, in CancelSessionTurnInput) error {

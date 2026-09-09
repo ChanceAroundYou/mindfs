@@ -28,6 +28,12 @@ type UserPreferences struct {
 	SessionNaming                   SessionNamingDefaults    `json:"session_naming,omitempty"`
 	IdleSessionResourceReleaseHours int                      `json:"idle_session_resource_release_hours,omitempty"`
 	NewProjectMetaLocation          string                   `json:"new_project_meta_location,omitempty"`
+	CORS                            CORSPreferences          `json:"cors,omitempty"`
+}
+
+type CORSPreferences struct {
+	Mode         string   `json:"mode,omitempty"`
+	AllowOrigins []string `json:"allow_origins,omitempty"`
 }
 
 func (s *Store) NewProjectMetaLocation() string {
@@ -85,6 +91,124 @@ func (s *Store) UpdateIdleSessionResourceReleaseHours(hours int) error {
 	}
 	s.data.IdleSessionResourceReleaseHours = hours
 	return s.saveLocked()
+}
+
+func (s *Store) CORSMode() string {
+	if s == nil {
+		return ""
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return strings.TrimSpace(s.data.CORS.Mode)
+}
+
+func (s *Store) CORSAllowOrigins() []string {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]string, len(s.data.CORS.AllowOrigins))
+	copy(out, s.data.CORS.AllowOrigins)
+	return out
+}
+
+func (s *Store) IsCORSOriginAllowed(origin string) bool {
+	if s == nil {
+		return false
+	}
+	origin = strings.TrimSpace(origin)
+	if origin == "" {
+		return false
+	}
+	// ponytail: exact origin match (scheme+host+port), case-insensitive; "*" means allow all
+	allowed := s.CORSAllowOrigins()
+	for _, entry := range allowed {
+		e := strings.TrimSpace(entry)
+		if e == "*" {
+			return true
+		}
+		if strings.EqualFold(e, origin) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Store) CORSPreferences() CORSPreferences {
+	if s == nil {
+		return CORSPreferences{}
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	cp := s.data.CORS
+	out := make([]string, len(cp.AllowOrigins))
+	copy(out, cp.AllowOrigins)
+	cp.AllowOrigins = out
+	return cp
+}
+
+func (s *Store) UpdateCORSPreferences(mode string, allowOrigins []string) error {
+	if s == nil {
+		return nil
+	}
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode == "" {
+		mode = "open"
+	}
+	switch mode {
+	case "open", "auto", "allow_all", "all", "*", "allowlist", "whitelist", "disabled", "off", "closed", "same_origin":
+	default:
+		return errors.New("invalid cors mode: use open/auto/allowlist/disabled")
+	}
+	normalized := make([]string, 0, len(allowOrigins))
+	seen := map[string]struct{}{}
+	for _, raw := range allowOrigins {
+		v := strings.TrimSpace(raw)
+		if v == "" {
+			continue
+		}
+		if v != "*" {
+			// basic origin shape check: must parse as URL with scheme+host
+			// allow bare origin like https://host or https://host:port
+			if !strings.Contains(v, "://") {
+				return errors.New("allow_origins must be origins like https://host or *")
+			}
+		}
+		low := strings.ToLower(v)
+		if _, ok := seen[low]; ok {
+			continue
+		}
+		seen[low] = struct{}{}
+		if v == "*" {
+			normalized = []string{"*"}
+			break
+		}
+		normalized = append(normalized, v)
+	}
+	if (mode == "allowlist" || mode == "whitelist") && len(normalized) == 0 {
+		return errors.New("allowlist mode requires at least one allow_origins entry")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	next := CORSPreferences{Mode: mode, AllowOrigins: normalized}
+	if s.data.CORS.Mode == next.Mode && equalStringSlices(s.data.CORS.AllowOrigins, next.AllowOrigins) {
+		return nil
+	}
+	s.data.CORS = next
+	return s.saveLocked()
+}
+
+func equalStringSlices(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 type SessionNamingDefaults struct {
@@ -253,6 +377,10 @@ func (s *Store) ApplyAgentDefaults(statuses []agent.Status) []agent.Status {
 		defaults := s.data.Agents[strings.TrimSpace(out[i].Name)]
 		if defaults.Model != "" {
 			out[i].DefaultModelID = defaults.Model
+			// 过期默认模型回归：provider 切换（cc-switch）后旧模型（of/os 等）
+			// 不在当前网关目录内，回退到目录模型避免新建会话直接 400。
+			// 存储保留原值，切回原 provider 时自动恢复。
+			out[i] = agent.SanitizeDefaultModelID(out[i])
 		}
 		if defaults.Effort != "" {
 			out[i].DefaultEffort = defaults.Effort

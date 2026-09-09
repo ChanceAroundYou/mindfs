@@ -21,16 +21,25 @@ export function mergeSessionItems<T extends PinAwareSessionItem>(
   const byKey = new Map<string, T>();
   for (const item of current) {
     const key = sessionKey(item);
-    if (key) {
-      byKey.set(key, item);
-    }
+    if (!key) continue;
+    // C3: 归并键按 _nodeId 作用域，跨节点同 key 会话各自保留，不互相覆盖
+    byKey.set(`${String((item as any)?._nodeId || "").trim()}::${key}`, item);
   }
   for (const item of incoming) {
     const key = sessionKey(item);
     if (!key) {
       continue;
     }
-    byKey.set(key, { ...(byKey.get(key) || ({} as T)), ...item });
+    const scopedKey = `${String((item as any)?._nodeId || "").trim()}::${key}`;
+    const prevItem = byKey.get(scopedKey);
+    if (prevItem) {
+      const prevNid = String((prevItem as any)?._nodeId || "").trim();
+      const incomingNid = String((item as any)?._nodeId || "").trim();
+      if (prevNid && incomingNid && prevNid !== incomingNid) {
+        console.info("[session-list] merge override", { key, prevNid, incomingNid });
+      }
+    }
+    byKey.set(scopedKey, { ...(byKey.get(scopedKey) || ({} as T)), ...item });
   }
   return Array.from(byKey.values()).sort(compareSessionItems);
 }

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"mindfs/internal/deploy"
 	"mindfs/server/internal/e2ee"
 	"mindfs/server/internal/relay"
 )
@@ -76,6 +77,10 @@ func TestServeFrontendIndexRewritesRelayedAssetRefsForReleaseVersion(t *testing.
 		t.Fatal(err)
 	}
 
+	prev := deploy.Prefix
+	deploy.Prefix = "/mindfs"
+	defer func() { deploy.Prefix = prev }()
+
 	handler := &HTTPHandler{StaticDir: staticDir, Version: "v0.3.5"}
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.Header.Set("X-MindFS-Relayed", "1")
@@ -92,7 +97,7 @@ func TestServeFrontendIndexRewritesRelayedAssetRefsForReleaseVersion(t *testing.
 	}
 }
 
-func TestServeFrontendIndexKeepsLocalAssetRefsForDevVersion(t *testing.T) {
+func TestServeFrontendIndexKeepsLocalAssetRefsWhenNotRelayed(t *testing.T) {
 	staticDir := t.TempDir()
 	if err := os.Mkdir(filepath.Join(staticDir, "assets"), 0o755); err != nil {
 		t.Fatal(err)
@@ -106,19 +111,23 @@ func TestServeFrontendIndexKeepsLocalAssetRefsForDevVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	prev := deploy.Prefix
+	deploy.Prefix = "/mindfs"
+	defer func() { deploy.Prefix = prev }()
+
 	handler := &HTTPHandler{StaticDir: staticDir, Version: "v0.3.5-9-g92b8c85-dirty"}
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.Header.Set("X-MindFS-Relayed", "1")
+	// 直连（无 X-MindFS-Relayed）时不做绝对化改写，沿用本地相对引用。
 	resp := httptest.NewRecorder()
 
 	handler.serveFrontendIndex(resp, req, staticDir, indexPath)
 
 	body := resp.Body.String()
 	if !strings.Contains(body, "./assets/index-test.js") {
-		t.Fatalf("body should keep local asset path for dev version: %s", body)
+		t.Fatalf("body should keep local asset path when not relayed: %s", body)
 	}
 	if strings.Contains(body, "/mindfs-assets/") {
-		t.Fatalf("body should not contain relayed asset path for dev version: %s", body)
+		t.Fatalf("body should not contain relayed asset path when not relayed: %s", body)
 	}
 }
 
@@ -265,5 +274,93 @@ func TestPublicRelayStatusRedactsSensitiveRelayFields(t *testing.T) {
 	}
 	if status.PendingCode != "" || status.NodeID != "" || status.NodeURL != "" || status.RelayBaseURL != "" || status.NodeName != "" || status.LastError != "" {
 		t.Fatalf("public status leaked sensitive fields: %+v", status)
+	}
+}
+
+func TestStripDeployPrefixStripsAndRejects(t *testing.T) {
+	tests := []struct {
+		name         string
+		prefix       string
+		path         string
+		wantStatus   int
+		wantStripped string
+	}{
+		{name: "exact prefix", prefix: "/mindfs", path: "/mindfs", wantStatus: http.StatusOK, wantStripped: "/"},
+		{name: "under prefix", prefix: "/mindfs", path: "/mindfs/api/tree", wantStatus: http.StatusOK, wantStripped: "/api/tree"},
+		{name: "prefix slash", prefix: "/mindfs", path: "/mindfs/", wantStatus: http.StatusOK, wantStripped: "/"},
+		{name: "bare rejected", prefix: "/mindfs", path: "/api/tree", wantStatus: http.StatusNotFound, wantStripped: ""},
+		{name: "double prefix rejected", prefix: "/mindfs", path: "/mindfs/mindfs/api", wantStatus: http.StatusNotFound, wantStripped: ""},
+		{name: "other path rejected", prefix: "/mindfs", path: "/health", wantStatus: http.StatusNotFound, wantStripped: ""},
+		{name: "root deploy passes through", prefix: "", path: "/api/tree", wantStatus: http.StatusOK, wantStripped: "/api/tree"},
+		{name: "root deploy root passes", prefix: "", path: "/", wantStatus: http.StatusOK, wantStripped: "/"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got string
+			inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				got = r.URL.Path
+				w.WriteHeader(http.StatusOK)
+			})
+			handler := StripDeployPrefix(tt.prefix, inner)
+			req := httptest.NewRequest(http.MethodGet, tt.path, nil)
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+
+			if rec.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d", rec.Code, tt.wantStatus)
+			}
+			if tt.wantStatus == http.StatusOK && got != tt.wantStripped {
+				t.Fatalf("stripped path = %q, want %q", got, tt.wantStripped)
+			}
+		})
+	}
+}
+
+func TestRelayAssetsAliasRoutesThroughStrictPrefix(t *testing.T) {
+	prev := deploy.Prefix
+	deploy.Prefix = "/mindfs"
+	defer func() { deploy.Prefix = prev }()
+
+	var got string
+	handler := StripDeployPrefix(deploy.NormalizedPrefix(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.URL.Path
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	aliasReq := httptest.NewRequest(http.MethodGet, "/mindfs-assets/index.js", nil)
+	aliasRec := httptest.NewRecorder()
+	handler.ServeHTTP(aliasRec, aliasReq)
+	if aliasRec.Code != http.StatusOK || got != "/assets/index.js" {
+		t.Fatalf("relay alias status/path = %d/%q, want 200/%q", aliasRec.Code, got, "/assets/index.js")
+	}
+
+	bareReq := httptest.NewRequest(http.MethodGet, "/assets/index.js", nil)
+	bareRec := httptest.NewRecorder()
+	handler.ServeHTTP(bareRec, bareReq)
+	if bareRec.Code != http.StatusNotFound {
+		t.Fatalf("bare asset status = %d, want 404", bareRec.Code)
+	}
+}
+
+func TestCleanFrontendResourcePathUsesDeployPrefix(t *testing.T) {
+	prev := deploy.Prefix
+	deploy.Prefix = "/mindfs"
+	defer func() { deploy.Prefix = prev }()
+
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{in: "/mindfs/assets/app.js", want: "assets/app.js"},
+		{in: "/assets/app.js", want: "assets/app.js"},
+		{in: "/mindfs", want: "mindfs"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			if got := cleanFrontendResourcePath(tt.in); got != tt.want {
+				t.Fatalf("cleanFrontendResourcePath(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
 	}
 }

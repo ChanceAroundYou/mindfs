@@ -7,7 +7,17 @@ import { AgentIcon } from "./AgentIcon";
 import { InlineTokenText } from "./InlineTokenText";
 import { MarkdownViewer } from "./MarkdownViewer";
 import { fetchProofProtectedBlob } from "../services/file";
-import type { ExchangeAux, RelatedFile, TokenUsage, ToolCall } from "../services/session";
+import { getRootNodeId } from "../services/rootNode";
+import {
+  clearWindowedView,
+  getSessionWindow,
+  type TokenUsage,
+  setWindowedView,
+  type ExchangeAux,
+  type RelatedFile,
+  type SessionWindowMeta,
+  type ToolCall,
+} from "../services/session";
 import { savePrompt } from "../services/prompts";
 import { reportError } from "../services/error";
 import { rootBadgeButtonStyle } from "./rootBadgeStyle";
@@ -55,6 +65,8 @@ type SessionItem = {
   exchange_aux?: Record<string, ExchangeAux[]>;
 };
 
+type ExchangeArray = NonNullable<SessionItem["exchanges"]>;
+
 type SessionViewerProps = {
   session: SessionItem | null;
   loading?: boolean;
@@ -75,7 +87,9 @@ type SessionViewerProps = {
     };
   } | null;
   rootId?: string | null;
+  rootDisplayName?: string | null;
   rootPath?: string | null;
+  rootColor?: string | null;
   interactionMode?: "main" | "drawer";
   targetSeq?: number;
   gitFileStatsByPath?: Record<
@@ -97,6 +111,7 @@ type SessionViewerProps = {
   targetSeqRequestKey?: string | number;
   agents?: AgentStatus[];
   composerOverlayInset?: number;
+  scrollContainerRef?: React.RefObject<HTMLDivElement | null>;
 };
 
 type AskUserQuestionOption = {
@@ -133,7 +148,7 @@ function AttachmentImage({
     let objectURL = "";
     async function run() {
       try {
-        const blob = await fetchProofProtectedBlob({ rootId, path });
+        const blob = await fetchProofProtectedBlob({ rootId, path, nodeId: String(getRootNodeId(rootId) || "").trim() || undefined });
         if (cancelled) return;
         objectURL = URL.createObjectURL(blob);
         setURL(objectURL);
@@ -1023,14 +1038,8 @@ function timelineItemSpacing(
   return "16px";
 }
 
-function shouldDefaultCollapseRelatedFiles(
-  isMobile: boolean,
-  relatedFileCount: number,
-): boolean {
-  if (isMobile) {
-    return relatedFileCount > 0;
-  }
-  return relatedFileCount > 5;
+function shouldDefaultCollapseRelatedFiles(_isMobile?: boolean, _relatedFileCount?: number): boolean {
+  return true;
 }
 
 const USER_MESSAGE_SUMMARY_LENGTH = 48;
@@ -1061,7 +1070,9 @@ function SessionViewerInner({
   loading = false,
   slashCommandResult = null,
   rootId,
+  rootDisplayName,
   rootPath,
+  rootColor,
   interactionMode = "main",
   targetSeq = 0,
   targetSeqRequestKey = "",
@@ -1074,9 +1085,10 @@ function SessionViewerInner({
   onForkAgentMessage,
   agents,
   composerOverlayInset = 0,
+  scrollContainerRef,
 }: SessionViewerProps) {
   const { locale, t } = useI18n();
-  const [relatedFilesCollapsed, setRelatedFilesCollapsed] = useState(false);
+  const [relatedFilesCollapsed, setRelatedFilesCollapsed] = useState(true);
   const [isMobile, setIsMobile] = useState(() => {
     if (typeof window === "undefined") {
       return false;
@@ -1091,18 +1103,55 @@ function SessionViewerInner({
   >({});
   const scrollEndRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  // ponytail: drawer now uses inner scroll container (upstream 6247756: BottomSheet overflow:hidden, inner overflow:auto)
+  // outer drawerScrollRef is kept for BottomSheet sizing only, not for stick-to-bottom.
+  const activeScrollRef = scrollRef;
   const onFileClickRef = useRef(onFileClick);
   const copyResetTimersRef = useRef<Record<string, number>>({});
   const relatedFilesDefaultStateRef = useRef<string>("");
   const userSummaryRootRef = useRef<HTMLDivElement | null>(null);
   const userSummaryListRef = useRef<HTMLDivElement | null>(null);
+  const relatedFilesDividerRef = useRef<HTMLDivElement | null>(null);
   const sessionKey = session?.key || session?.session_key || null;
-  const exchanges = Array.isArray(session?.exchanges) ? session.exchanges : [];
+  // 会话归属节点：窗口拉取/图片等请求须路由到会话所在节点。同名根（如两台机器都有
+  // root "mindfs"）仅凭裸 rootId 查裸键映射会串到另一节点（实测窗口 GET 404）。
+  const sessionNodeId =
+    String((session as any)?._nodeId || "").trim() || undefined;
+  // 方案 B（超长会话窗口化）：可视数据以可见窗口为准，初始用全量/窗口做首帧，
+  // 随后由 getSessionWindow({latest:50}) 覆盖（见下方初始化 effect）。
+  const [visibleExchanges, setVisibleExchanges] = useState<ExchangeArray>(
+    () => (Array.isArray(session?.exchanges) ? session.exchanges : []),
+  );
+  const [visibleAux, setVisibleAux] = useState<Record<string, ExchangeAux[]>>(
+    () => session?.exchange_aux || {},
+  );
+  const [windowMeta, setWindowMeta] = useState<SessionWindowMeta>({
+    total: 0,
+    hasMore: false,
+    minSeq: 0,
+    maxSeq: 0,
+  });
+  const [loadingMore, setLoadingMore] = useState(false);
+  const topSentinelRef = useRef<HTMLDivElement>(null);
+  const isPrependingRef = useRef(false);
   const isAwaiting = !!(session as any)?.pending;
+  // 方案 C：overlay 尾巴 = App 缓存的 seq=0 瞬时尾部（在途轮次：用户消息/thinking/流式文本/
+  // 工具调用 exchange），只读派生、永不合并回窗口。窗口是唯一持久化源，只在 init 拉取 /
+  // 翻页前插 / 重锚定（_windowMeta）时整体替换——全流程无 seq 合并，杜绝挡尾与重复两类回归。
+  const tailOverlay = useMemo(() => {
+    const exs = Array.isArray(session?.exchanges)
+      ? (session.exchanges as ExchangeArray)
+      : ([] as ExchangeArray);
+    return exs.filter((e) => Number((e as any)?.seq || 0) === 0);
+  }, [session?.exchanges]);
+  const composedExchanges = useMemo(
+    () => [...visibleExchanges, ...tailOverlay],
+    [visibleExchanges, tailOverlay],
+  );
   const { timeline, isStreaming, streamVersion, streamStatusText } = useSessionStream(
     sessionKey,
-    exchanges,
-    session?.exchange_aux || {},
+    composedExchanges,
+    visibleAux,
     session?.context_window,
     isAwaiting,
   );
@@ -1127,7 +1176,7 @@ function SessionViewerInner({
   };
 
   const stickSessionToBottom = (behavior: ScrollBehavior = "auto") => {
-    const container = scrollRef.current;
+    const container = activeScrollRef?.current;
     if (!container) {
       return;
     }
@@ -1167,6 +1216,151 @@ function SessionViewerInner({
     copyResetTimersRef.current = {};
   }, [sessionKey]);
 
+  // 方案 B：从窗口响应中提取 exchanges/aux/meta（后端 window_meta 透传 total/hasMore/minSeq/maxSeq）。
+  const applyWindow = useCallback(
+    (res: { session: any; meta: SessionWindowMeta } | null) => {
+      if (!res) return false;
+      const winSession = res.session as any;
+      const winExchanges = Array.isArray(winSession?.exchanges)
+        ? (winSession.exchanges as ExchangeArray)
+        : [];
+      const winAux =
+        (winSession?.exchange_aux as Record<string, ExchangeAux[]>) || {};
+      setVisibleExchanges(winExchanges);
+      setVisibleAux(winAux);
+      setWindowMeta(res.meta);
+      return true;
+    },
+    [],
+  );
+
+  // 初始化：会话切换时拉取尾部 50 条窗口，复位置底；拉取失败回退到 props 传入的全量/窗口。
+  useEffect(() => {
+    let cancelled = false;
+    setLoadingMore(false);
+    if (!sessionKey) {
+      setVisibleExchanges([]);
+      setVisibleAux({});
+      setWindowMeta({ total: 0, hasMore: false, minSeq: 0, maxSeq: 0 });
+      return;
+    }
+    // 进入窗口化视图，隔离 syncSession 的 truncated 全量回补（见 session.ts windowedView 标记）。
+    setWindowedView(sessionKey, true);
+    // 方案 B 首帧按需：避免先用全量做首帧导致长对话从头刷到尾。
+    // 若外层传入的是全量（可能来自 App 旧缓存或网络全量兜底），此处仅取尾部 50 作首帧，
+    // 随后 getSessionWindow({latest:50}) 会以服务端窗口覆盖，保持首帧 O(50)。
+    // 首帧种子只取持久化部分（seq>0）尾部 50；seq=0 瞬时尾巴由 overlay 派生展示，
+    // 避免种子与 overlay 重复显示同一轮次。
+    const incomingExs = Array.isArray(session?.exchanges) ? (session.exchanges as ExchangeArray) : ([] as ExchangeArray);
+    const persistedSeed = incomingExs.filter((e) => Number((e as any)?.seq || 0) > 0);
+    const seedExs = (persistedSeed.length > 50 ? persistedSeed.slice(-50) : persistedSeed) as ExchangeArray;
+    const seedAux: Record<string, ExchangeAux[]> = {};
+    const seedSeqs = new Set(seedExs.map((e) => Number((e as any)?.seq || 0)));
+    for (const [k, v] of Object.entries((session?.exchange_aux || {}) as Record<string, ExchangeAux[]>)) {
+      if (seedSeqs.has(Number(k))) seedAux[k] = v;
+    }
+    setVisibleExchanges(seedExs);
+    setVisibleAux(seedAux);
+    getSessionWindow(rootId || "", sessionKey, { latest: 50, nodeId: sessionNodeId })
+      .then((res) => {
+        if (cancelled) return;
+        applyWindow(res);
+        if (res) {
+          shouldStickToBottomRef.current = true;
+          setShowJumpToLatest(false);
+          window.requestAnimationFrame(() => stickSessionToBottom("auto"));
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+      clearWindowedView(sessionKey);
+    };
+  }, [sessionKey, rootId, applyWindow]);
+
+  // 向上翻页：锚定 scrollHeight-scrollTop，请求 beforeSeq=minSeq 的历史段，
+  // 函数式前置合并并 RAF 回补滚动位置，避免视口跳动。
+  const loadMore = useCallback(() => {
+    const container = activeScrollRef?.current;
+    if (!container || loadingMore || !windowMeta.hasMore || !sessionKey) {
+      return;
+    }
+    const anchor = container.scrollHeight - container.scrollTop;
+    setLoadingMore(true);
+    isPrependingRef.current = true;
+    getSessionWindow(rootId || "", sessionKey, {
+        beforeSeq: windowMeta.minSeq,
+        limit: 50,
+        nodeId: sessionNodeId,
+      })
+      .then((res) => {
+        if (!res) {
+          setLoadingMore(false);
+          return;
+        }
+        const winSession = res.session as any;
+        const winExchanges = Array.isArray(winSession?.exchanges)
+          ? (winSession.exchanges as ExchangeArray)
+          : [];
+        const winAux =
+          (winSession?.exchange_aux as Record<string, ExchangeAux[]>) || {};
+        setVisibleExchanges((prev) => [...winExchanges, ...prev]);
+        setVisibleAux((prev) => ({ ...prev, ...winAux }));
+        setWindowMeta(res.meta);
+        setLoadingMore(false);
+        window.requestAnimationFrame(() => {
+          const el = activeScrollRef?.current;
+          if (el) {
+            el.scrollTop = el.scrollHeight - anchor;
+          }
+          isPrependingRef.current = false;
+        });
+      })
+      .catch(() => setLoadingMore(false));
+  }, [loadingMore, windowMeta, sessionKey, rootId]);
+
+  // 顶部哨兵：进入视口（rootMargin 200px）触发 loadMore，hasMore 耗尽后自动不观察。
+  useEffect(() => {
+    const sentinel = topSentinelRef.current;
+    const root = scrollRef.current;
+    if (!sentinel || !root || !windowMeta.hasMore) {
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          loadMore();
+        }
+      },
+      { root, rootMargin: "200px 0px 0px 0px", threshold: 0 },
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [windowMeta.hasMore, loadMore]);
+
+  // 方案 C 重锚定（done/重连）：App 侧 restoreActiveSession 替换缓存并附 _windowMeta/_anchoredAt；
+  // 此处按锚点一次性原子换窗——窗口整体替换，overlay 尾巴自然清空（缓存尾巴已被 App 清掉）。
+  // 旧锚点不重复应用（App 的 spread 会把 _windowMeta 带到后续 cache 对象上）。
+  const lastAppliedAnchorRef = useRef<{ key: string | null; at: number }>({
+    key: null,
+    at: -1,
+  });
+  useEffect(() => {
+    const anchorAt = Number((session as any)?._anchoredAt || 0);
+    const anchorMeta = (session as any)?._windowMeta as
+      | SessionWindowMeta
+      | undefined;
+    if (!anchorAt || !anchorMeta || !sessionKey) {
+      return;
+    }
+    const last = lastAppliedAnchorRef.current;
+    if (last.key === sessionKey && last.at >= anchorAt) {
+      return;
+    }
+    lastAppliedAnchorRef.current = { key: sessionKey, at: anchorAt };
+    applyWindow({ session, meta: anchorMeta });
+  }, [session, sessionKey, applyWindow]);
+
   const userMessageSummaries = useMemo(
     () =>
       timeline
@@ -1181,7 +1375,7 @@ function SessionViewerInner({
   const userSummaryOpen = userSummaryHoverOpen || userSummaryPinnedOpen;
 
   const readCurrentUserMessageIndex = useCallback(() => {
-    const container = scrollRef.current;
+    const container = activeScrollRef?.current;
     if (!container) {
       return 0;
     }
@@ -1231,7 +1425,7 @@ function SessionViewerInner({
   }, [readCurrentUserMessageIndex]);
 
   const scrollToUserMessageSummary = (index: number) => {
-    const container = scrollRef.current;
+    const container = activeScrollRef?.current;
     if (!container) {
       return;
     }
@@ -1319,8 +1513,19 @@ function SessionViewerInner({
   }, []);
 
   useEffect(() => {
-    const container = scrollRef.current;
+    if (isPrependingRef.current) {
+      // 顶部插入（loadMore 历史段）不触发底部跟随，视口由 loadMore 的 rAF 回补。
+      return;
+    }
+    const container = activeScrollRef?.current;
     if (!container) {
+      if (interactionMode === "drawer" && shouldStickToBottomRef.current) {
+        const frame = window.requestAnimationFrame(() => {
+          const retry = activeScrollRef?.current;
+          if (retry && shouldStickToBottomRef.current) scrollToRelatedFilesDivider("auto");
+        });
+        return () => window.cancelAnimationFrame(frame);
+      }
       return;
     }
     if (!scrollEndRef.current) {
@@ -1333,12 +1538,12 @@ function SessionViewerInner({
       shouldStickToBottomRef.current = true;
     }
     if (shouldStickToBottomRef.current) {
-      stickSessionToBottom("auto");
+      scrollToRelatedFilesDivider("auto");
     }
   }, [sessionKey, timeline, isStreaming, streamVersion, slashCommandResult]);
 
   useEffect(() => {
-    const container = scrollRef.current;
+    const container = activeScrollRef?.current;
     if (!container || typeof window === "undefined") {
       return;
     }
@@ -1372,7 +1577,7 @@ function SessionViewerInner({
   }, [sessionKey]);
 
   useEffect(() => {
-    const el = scrollRef.current;
+    const el = activeScrollRef?.current;
     if (!el) {
       shouldStickToBottomRef.current = true;
       setShowJumpToLatest(false);
@@ -1411,59 +1616,108 @@ function SessionViewerInner({
       targetSeqScrollKeyRef.current = "";
       return;
     }
+    if (!sessionKey) {
+      return;
+    }
     const scrollKey = `${sessionKey || ""}:${targetSeq}:${targetSeqRequestKey}`;
     if (targetSeqScrollKeyRef.current === scrollKey) {
       return;
     }
-    const container = scrollRef.current;
+    const container = activeScrollRef?.current;
     if (!container || !timeline.length) {
       return;
     }
     const node = container.querySelector<HTMLElement>(
       `[data-session-seq="${targetSeq}"]`,
     );
-    if (!node) {
-      return;
-    }
-    targetSeqScrollKeyRef.current = scrollKey;
-    shouldStickToBottomRef.current = false;
-    cancelTargetSeqScroll();
-    const scrollToNode = () => {
-      const latestContainer = scrollRef.current;
-      const latestNode = latestContainer?.querySelector<HTMLElement>(
-        `[data-session-seq="${targetSeq}"]`,
-      );
-      if (!latestContainer || !latestNode) {
-        return;
-      }
+    const inRange =
+      windowMeta.minSeq > 0 &&
+      targetSeq >= windowMeta.minSeq &&
+      targetSeq <= windowMeta.maxSeq;
+    if (node && inRange) {
+      targetSeqScrollKeyRef.current = scrollKey;
       shouldStickToBottomRef.current = false;
-      const nextTop = Math.max(
-        0,
-        latestNode.offsetTop -
-          latestContainer.clientHeight / 2 +
-          latestNode.offsetHeight / 2,
-      );
-      latestContainer.scrollTo({ top: nextTop, behavior: "auto" });
-    };
-    targetSeqFrameRef.current = window.requestAnimationFrame(() => {
-      targetSeqFrameRef.current = window.requestAnimationFrame(() => {
-        targetSeqFrameRef.current = null;
-        scrollToNode();
-      });
-    });
-    [80, 220, 480].forEach((delay) => {
-      const timer = window.setTimeout(() => {
-        targetSeqTimerRefs.current = targetSeqTimerRefs.current.filter(
-          (item) => item !== timer,
+      cancelTargetSeqScroll();
+      const scrollToNode = () => {
+        const latestContainer = activeScrollRef?.current;
+        const latestNode = latestContainer?.querySelector<HTMLElement>(
+          `[data-session-seq="${targetSeq}"]`,
         );
-        if (targetSeqScrollKeyRef.current !== scrollKey) {
+        if (!latestContainer || !latestNode) {
           return;
         }
-        scrollToNode();
-      }, delay);
-      targetSeqTimerRefs.current.push(timer);
-    });
-  }, [sessionKey, targetSeq, targetSeqRequestKey, timeline]);
+        shouldStickToBottomRef.current = false;
+        const nextTop = Math.max(
+          0,
+          latestNode.offsetTop -
+            latestContainer.clientHeight / 2 +
+            latestNode.offsetHeight / 2,
+        );
+        latestContainer.scrollTo({ top: nextTop, behavior: "auto" });
+      };
+      targetSeqFrameRef.current = window.requestAnimationFrame(() => {
+        targetSeqFrameRef.current = window.requestAnimationFrame(() => {
+          targetSeqFrameRef.current = null;
+          scrollToNode();
+        });
+      });
+      [80, 220, 480].forEach((delay) => {
+        const timer = window.setTimeout(() => {
+          targetSeqTimerRefs.current = targetSeqTimerRefs.current.filter(
+            (item) => item !== timer,
+          );
+          if (targetSeqScrollKeyRef.current !== scrollKey) {
+            return;
+          }
+          scrollToNode();
+        }, delay);
+        targetSeqTimerRefs.current.push(timer);
+      });
+      return;
+    }
+    // 跨窗口：targetSeq 不在当前可见窗口内，拉取以 targetSeq 为中心的窗口再滚动。
+    if (targetSeq > 0 && !inRange) {
+      targetSeqScrollKeyRef.current = scrollKey;
+      shouldStickToBottomRef.current = false;
+      cancelTargetSeqScroll();
+      getSessionWindow(rootId || "", sessionKey, {
+          beforeSeq: targetSeq + 25,
+          limit: 50,
+          nodeId: sessionNodeId,
+        })
+        .then((res) => {
+          if (!res) return;
+          const winSession = res.session as any;
+          const winExchanges = Array.isArray(winSession?.exchanges)
+            ? (winSession.exchanges as ExchangeArray)
+            : [];
+          const winAux =
+            (winSession?.exchange_aux as Record<string, ExchangeAux[]>) || {};
+          setVisibleExchanges(winExchanges);
+          setVisibleAux(winAux);
+          setWindowMeta(res.meta);
+          window.requestAnimationFrame(() => {
+            const el = activeScrollRef?.current;
+            const targetNode = el?.querySelector<HTMLElement>(
+              `[data-session-seq="${targetSeq}"]`,
+            );
+            if (el && targetNode) {
+              shouldStickToBottomRef.current = false;
+              el.scrollTo({
+                top: Math.max(
+                  0,
+                  targetNode.offsetTop -
+                    el.clientHeight / 2 +
+                    targetNode.offsetHeight / 2,
+                ),
+                behavior: "auto",
+              });
+            }
+          });
+        })
+        .catch(() => {});
+    }
+  }, [sessionKey, targetSeq, targetSeqRequestKey, timeline, windowMeta]);
 
   const rawRelated = session?.related_files || (session as any)?.outputs || [];
   const relatedFiles = (Array.isArray(rawRelated) ? rawRelated : [])
@@ -1501,7 +1755,27 @@ function SessionViewerInner({
     rootId,
     relatedFiles,
     gitStatsRefreshKey,
+    sessionNodeId,
   );
+  const scrollToRelatedFilesDivider = (behavior: ScrollBehavior = "auto") => {
+    const container = activeScrollRef?.current;
+    if (!container) {
+      return;
+    }
+    const maxTop = Math.max(0, container.scrollHeight - container.clientHeight);
+    let top = maxTop;
+    const divider =
+      interactionMode === "drawer" ? relatedFilesDividerRef.current : null;
+    if (divider && relatedFiles.length > 0 && !relatedFilesCollapsed) {
+      const dividerTop =
+        divider.getBoundingClientRect().top -
+        container.getBoundingClientRect().top +
+        container.scrollTop;
+      const target = dividerTop - container.clientHeight * 0.08;
+      top = Math.max(0, Math.min(maxTop, target));
+    }
+    container.scrollTo({ top, behavior });
+  };
   const activeAskUserCallId = (() => {
     if (!isAwaiting) {
       return "";
@@ -1628,6 +1902,10 @@ function SessionViewerInner({
     session.session_key ||
     "Session";
   const hasVisibleTimeline = timeline.length > 0;
+  const themeColor = String(rootColor || "").trim() || "var(--accent-color)";
+  // 四横主按钮：浅且暗的 muted 变体（同色相、混灰降明度）；徽标保持纯主题色
+  const themeMuted = `color-mix(in srgb, ${themeColor} 56%, #94a3b8)`;
+  const themeMutedBorder = `color-mix(in srgb, ${themeColor} 20%, transparent)`;
   const userMetaButtonStyle: React.CSSProperties = {
     width: "18px",
     height: "18px",
@@ -1635,7 +1913,7 @@ function SessionViewerInner({
     background: "transparent",
     padding: 0,
     margin: 0,
-    color: "#2563eb",
+    color: themeColor,
     cursor: "pointer",
     fontSize: "14px",
     fontWeight: 800,
@@ -1937,7 +2215,7 @@ function SessionViewerInner({
                 aria-label={t("session.editMessage")}
                 title={t("session.editMessage")}
               >
-                {renderToolIcon("edit")}
+                {renderToolIcon("edit", themeColor)}
               </button>
               {promptSaved ? (
                 <span
@@ -1945,7 +2223,7 @@ function SessionViewerInner({
                   title={t("session.promptSaved")}
                   style={{
                     ...userMetaButtonStyle,
-                    color: "#2563eb",
+                    color: themeColor,
                     fontSize: "13px",
                   }}
                 >
@@ -2037,7 +2315,7 @@ function SessionViewerInner({
                 {copySucceeded ? (
                   <span
                     aria-hidden="true"
-                    style={{ fontSize: "13px", fontWeight: 800, lineHeight: 1 }}
+                    style={{ fontSize: "13px", fontWeight: 800, lineHeight: 1, color: themeColor }}
                   >
                     ✓
                   </span>
@@ -2161,6 +2439,7 @@ function SessionViewerInner({
                           fontSize: "13px",
                           fontWeight: 800,
                           lineHeight: 1,
+                          color: themeColor,
                         }}
                       >
                         ✓
@@ -2425,7 +2704,7 @@ function SessionViewerInner({
                 {loginCodeCopied ? (
                   <span
                     aria-hidden="true"
-                    style={{ fontSize: "13px", fontWeight: 800, lineHeight: 1 }}
+                    style={{ fontSize: "13px", fontWeight: 800, lineHeight: 1, color: themeColor }}
                   >
                     ✓
                   </span>
@@ -2518,11 +2797,13 @@ function SessionViewerInner({
                 onClick={() => onRootClick?.(rootId)}
                 style={{
                   ...rootBadgeButtonStyle,
+                  background: "var(--node-badge-bg)",
+                  color: String(rootColor || "").trim() || "var(--root-badge-text)",
                   flexShrink: 0,
                   cursor: onRootClick ? "pointer" : "default",
                 }}
               >
-                {rootId}
+                {rootDisplayName || rootId}
               </button>
             ) : null}
             <span
@@ -2551,6 +2832,28 @@ function SessionViewerInner({
             overflowX: "hidden",
           }} data-mindfs-session-content-width="1">
           <div style={{ width: "100%", minWidth: 0, margin: "0", display: "flex", flexDirection: "column" }}>
+            {/* 方案 B：顶部哨兵，进入视口触发历史段加载（IntersectionObserver） */}
+            <div ref={topSentinelRef} style={{ height: 1 }} aria-hidden="true" />
+            {loadingMore ? (
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "center",
+                  padding: "8px 0",
+                }}
+              >
+                <span
+                  style={{
+                    width: "14px",
+                    height: "14px",
+                    border: "2px solid var(--border-color)",
+                    borderTopColor: "var(--accent-color)",
+                    borderRadius: "50%",
+                    animation: "spin 0.8s linear infinite",
+                  }}
+                />
+              </div>
+            ) : null}
             {loading && !hasVisibleTimeline ? (
               <div
                 style={{
@@ -2591,34 +2894,38 @@ function SessionViewerInner({
               ),
             )}
             {renderSlashCommandResult()}
-            {(isAwaiting || isStreaming) && (
-              <div
-                style={{
-                  marginTop: "16px",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "6px",
-                  fontSize: "12px",
-                  color: "var(--text-secondary)",
-                }}
-              >
-                <span
+            {(isAwaiting || isStreaming) && (() => {
+              const awaitingColor = String(rootColor || "").trim() || "var(--accent-color)";
+              return (
+                <div
                   style={{
-                    width: "8px",
-                    height: "8px",
-                    borderRadius: "50%",
-                    background: "var(--accent-color)",
-                    animation: "pulse 1s infinite",
+                    marginTop: "16px",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "6px",
+                    fontSize: "12px",
+                    color: "var(--text-secondary)",
                   }}
-                />
+                >
+                  <span
+                    style={{
+                      width: "8px",
+                      height: "8px",
+                      borderRadius: "50%",
+                      background: awaitingColor,
+                      animation: "pulse 1s infinite",
+                    }}
+                  />
                 {isStreaming
                   ? streamStatusText || t("session.generating")
                   : t("session.sentWaiting")}
               </div>
-            )}
+              );
+            })()}
 
-            {relatedFiles.length > 0 && (
+            {relatedFiles.length > 0 && interactionMode !== "drawer" && (
               <div
+                ref={relatedFilesDividerRef}
                 style={{
                   marginTop: "18px",
                   paddingTop: "14px",
@@ -2929,8 +3236,8 @@ function SessionViewerInner({
                   alignItems: "center",
                   gap: "6px",
                   height: "34px",
-                  border: "1px solid rgba(37,99,235,0.35)",
-                  background: "#2563eb",
+                  border: `1px solid color-mix(in srgb, ${themeColor} 35%, transparent)`,
+                  background: themeColor,
                   color: "#ffffff",
                   borderRadius: "999px",
                   padding: "0 12px",
@@ -2987,6 +3294,19 @@ function SessionViewerInner({
                         boxSizing: "border-box",
                       }}
                     >
+                      {windowMeta.total > 0 ? (
+                        <div
+                          style={{
+                            fontSize: "11px",
+                            lineHeight: "16px",
+                            color: "var(--text-secondary)",
+                            padding: "2px 8px 6px",
+                            borderBottom: "1px solid var(--menu-border)",
+                          }}
+                        >
+                          已加载 {visibleExchanges.length} / 共 {windowMeta.total}
+                        </div>
+                      ) : null}
                       <div
                         ref={userSummaryListRef}
                         style={{ display: "flex", flexDirection: "column", gap: "2px" }}
@@ -3061,10 +3381,10 @@ function SessionViewerInner({
                     position: "relative",
                     width: "34px",
                     height: "34px",
-                    border: "none",
+                    border: userSummaryOpen ? `1px solid ${themeMuted}` : `1px solid ${themeMutedBorder}`,
                     borderRadius: "8px",
-                    background: userSummaryOpen ? "var(--accent-color)" : "var(--menu-bg)",
-                    color: userSummaryOpen ? "#ffffff" : "var(--text-secondary)",
+                    background: userSummaryOpen ? themeMuted : "var(--menu-bg)",
+                    color: userSummaryOpen ? "#ffffff" : themeMuted,
                     boxShadow: "0 10px 24px rgba(15, 23, 42, 0.16)",
                     display: "inline-flex",
                     alignItems: "center",
@@ -3084,7 +3404,7 @@ function SessionViewerInner({
                       height: "18px",
                       padding: "0 5px",
                       borderRadius: "999px",
-                      background: "#2563eb",
+                      background: themeColor,
                       color: "#ffffff",
                       border: "2px solid var(--menu-bg)",
                       fontSize: "10px",

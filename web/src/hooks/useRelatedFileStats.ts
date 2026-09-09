@@ -27,6 +27,7 @@ export function useRelatedFileStats(
   rootId: string | null | undefined,
   files: RelatedFileStatTarget[],
   refreshKey = "",
+  nodeId?: string,
 ): Record<string, RelatedFileStat> {
   const filesSignature = useMemo(
     () =>
@@ -63,7 +64,9 @@ export function useRelatedFileStats(
     void Promise.all(
       targets.map(async ([key, file]) => {
         try {
-          const diff = await fetchGitRelatedFileDiff(rootId, file);
+          // 关联文件按其所属会话的节点路由：同名根在多节点上重名时，裸 rootId 查表
+          // 会把其它节点文件的 diff 请求串到当前节点（实测 400：repo_path 是另一台机器路径）
+          const diff = await fetchGitRelatedFileDiff(rootId, file, nodeId || undefined);
           return [
             key,
             {
@@ -90,7 +93,7 @@ export function useRelatedFileStats(
     return () => {
       cancelled = true;
     };
-  }, [filesSignature, refreshKey, rootId]);
+  }, [filesSignature, refreshKey, rootId, nodeId]);
 
   return statsByKey;
 }

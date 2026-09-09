@@ -1,4 +1,4 @@
-import React, { memo, useEffect, useMemo, useRef, useState } from "react";
+import React, { memo, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -416,6 +416,14 @@ function MarkdownCodeBlock({
   );
 }
 
+// memo 化代码块：rawContent/language 不变时跳过整块重渲染（含 Prism.highlight 与复制按钮状态）。
+// 忽略 sourceLineProps（data-source-line 属性对象每次新建，不影响内容）。
+const MarkdownCodeBlockMemo = memo(MarkdownCodeBlock, (prev, next) =>
+  prev.className === next.className &&
+  prev.rawContent === next.rawContent &&
+  prev.language === next.language,
+);
+
 function normalizePosixPath(input: string): string {
   const absolute = input.startsWith("/");
   const parts = input.split("/").filter((part) => part && part !== ".");
@@ -612,7 +620,13 @@ function MarkdownViewerInner({
     if (!targetLine || targetLine < 1) return "";
     return "[data-source-line]";
   }, [targetLine]);
-  const normalizedContent = useMemo(() => normalizeMarkdownMathDelimiters(content), [content]);
+  // 流式 chunk 高频更新时让 markdown 解析管线走低优先级（React 19 并发特性），
+  // 保证输入/滚动等交互不被阻塞；内容静止后自动补渲染最新帧。
+  const deferredContent = useDeferredValue(content);
+  const normalizedContent = useMemo(
+    () => normalizeMarkdownMathDelimiters(deferredContent),
+    [deferredContent],
+  );
   const outline = useMemo(
     () => (showOutline ? extractMarkdownOutline(normalizedContent) : []),
     [normalizedContent, showOutline],
@@ -936,7 +950,7 @@ function MarkdownViewerInner({
             }
 
             return (
-              <MarkdownCodeBlock
+              <MarkdownCodeBlockMemo
                 className={className}
                 rawContent={rawContent}
                 language={language}

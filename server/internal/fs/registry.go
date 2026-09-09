@@ -261,3 +261,24 @@ func (r *Registry) Rename(id, name, rootPath string) (RootInfo, error) {
 	}
 	return dir, nil
 }
+
+func (r *Registry) UpdateDisplayName(id, displayName string) (RootInfo, error) {
+	id = strings.TrimSpace(id)
+	displayName = strings.TrimSpace(displayName)
+	if id == "" {
+		return RootInfo{}, errors.New("root id required")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	dir, ok := r.dirs[id]
+	if !ok {
+		return RootInfo{}, errors.New("root not found")
+	}
+	dir.DisplayName = displayName
+	dir.UpdatedAt = time.Now().UTC()
+	r.dirs[id] = dir
+	if err := r.saveLocked(); err != nil {
+		return RootInfo{}, err
+	}
+	return dir, nil
+}

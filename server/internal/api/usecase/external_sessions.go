@@ -75,6 +75,13 @@ type SyncExternalSessionDeltaOutput struct {
 
 var externalSessionSyncLocks sync.Map
 
+// externalSessionSyncTimes 记录每个 (rootID,key) 最近一次 best-effort 同步时间，用于节流。
+// externalSyncThrottle 内重复的非 Full 同步直接跳过，避免 handleSessionGet 高频轮询重复磁盘扫描。
+// ponytail: 无清理（外部会话绑定数量有限），若会话海量需换成带 TTL 的 map。
+var externalSessionSyncTimes sync.Map
+
+const externalSyncThrottle = 2 * time.Second
+
 func (s *Service) ListExternalSessions(ctx context.Context, in ListExternalSessionsInput) (ListExternalSessionsOutput, error) {
 	if err := s.ensureRegistry(); err != nil {
 		return ListExternalSessionsOutput{}, err
@@ -120,6 +127,14 @@ func (s *Service) ListExternalSessions(ctx context.Context, in ListExternalSessi
 			}
 		}
 		item.FirstUserText = stripExternalSessionPrefix(item.FirstUserText)
+		if alias, ok := manager.LookupAliasForAgent(in.Agent, item.AgentSessionID); ok {
+			item.Title = alias
+		} else if strings.TrimSpace(item.Title) == "" {
+			// No alias & no claude resume title: use stripped lastUserText front 20 chars (no REPLY_TIPS).
+			if short := shortExternalSessionTitle(item.FirstUserText); short != "" {
+				item.Title = short
+			}
+		}
 		items = append(items, item)
 		return len(items) < limit, nil
 	}
@@ -186,6 +201,9 @@ func (s *Service) ImportExternalSession(ctx context.Context, in ImportExternalSe
 	}
 
 	name := buildImportedSessionName(imported)
+	if alias, ok := manager.LookupAliasForAgent(in.Agent, imported.AgentSessionID); ok {
+		name = alias
+	}
 	created, err := manager.Create(ctx, session.CreateInput{
 		Type:  session.TypeChat,
 		Agent: in.Agent,
@@ -272,6 +290,18 @@ func (s *Service) SyncExternalSessionDelta(ctx context.Context, in SyncExternalS
 	lock := externalSessionSyncLock(in.RootID, in.Key)
 	lock.Lock()
 	defer lock.Unlock()
+
+	// 节流：非 Full 的 best-effort 同步（每次 handleSessionGet 都会触发）在时间窗内直接跳过，
+	// 避免高频轮询重复跑磁盘扫描 + SQLite 查询。Full 同步（用户主动 sync）不受限。
+	if !in.Full {
+		lockKey := externalSyncLockKey(in.RootID, in.Key)
+		if last, ok := externalSessionSyncTimes.Load(lockKey); ok {
+			if elapsed := time.Since(last.(time.Time)); elapsed < externalSyncThrottle {
+				return out, nil
+			}
+		}
+		externalSessionSyncTimes.Store(lockKey, time.Now().UTC())
+	}
 
 	root, err := s.Registry.GetRoot(in.RootID)
 	if err != nil {
@@ -413,6 +443,9 @@ func syncImportedSubagentSessions(
 				if name == "" {
 					name = "Subagent"
 				}
+				if alias, ok := manager.LookupAliasForAgent(agentName, agentSessionID); ok {
+					name = alias
+				}
 				child, err = manager.Create(ctx, session.CreateInput{
 					Type:             session.TypeChat,
 					ParentSessionKey: parent.Key,
@@ -536,9 +569,12 @@ func (s *Service) resolveExternalSessionImporter(agentName string) (agenttypes.E
 	return importer, nil
 }
 
+func externalSyncLockKey(rootID, key string) string {
+	return strings.TrimSpace(rootID) + ":" + strings.TrimSpace(key)
+}
+
 func externalSessionSyncLock(rootID, key string) *sync.Mutex {
-	lockKey := strings.TrimSpace(rootID) + ":" + strings.TrimSpace(key)
-	lock, _ := externalSessionSyncLocks.LoadOrStore(lockKey, &sync.Mutex{})
+	lock, _ := externalSessionSyncLocks.LoadOrStore(externalSyncLockKey(rootID, key), &sync.Mutex{})
 	return lock.(*sync.Mutex)
 }
 
@@ -559,24 +595,30 @@ func buildImportedSessionName(imported agenttypes.ImportedExternalSession) strin
 		}
 		return title
 	}
-	preview := ""
-	for _, item := range imported.Exchanges {
-		if item.Role != "user" {
+	// Use last user message (剥离 REPLY_TIPS) 的前20，满足导入后短标题需求；无内容回退到 Imported agent
+	var last string
+	for i := len(imported.Exchanges) - 1; i >= 0; i-- {
+		if strings.TrimSpace(imported.Exchanges[i].Role) != "user" {
 			continue
 		}
-		preview = strings.TrimSpace(item.Content)
-		if preview != "" {
-			break
+		c := strings.TrimSpace(imported.Exchanges[i].Content)
+		if c == "" {
+			continue
 		}
+		last = c
+		break
 	}
-	if preview == "" {
-		return "Imported " + strings.TrimSpace(imported.Agent)
+	if short := shortExternalSessionTitle(last); short != "" {
+		return short
 	}
-	runes := []rune(preview)
-	if len(runes) > 40 {
-		preview = string(runes[:40])
+	if preview := strings.TrimSpace(last); preview != "" {
+		runes := []rune(preview)
+		if len(runes) > 20 {
+			preview = string(runes[:20])
+		}
+		return preview
 	}
-	return preview
+	return "Imported " + strings.TrimSpace(imported.Agent)
 }
 
 func normalizeExternalSessionPath(path string) string {
@@ -592,6 +634,36 @@ func normalizeExternalSessionPath(path string) string {
 		clean = abs
 	}
 	return filepath.Clean(clean)
+}
+
+func stripReplyTipsPrefix(text string) string {
+	text = strings.TrimSpace(text)
+	if strings.HasPrefix(text, "[REPLY_TIPS]") {
+		if idx := strings.Index(text, "[USER_PROMPT]"); idx >= 0 {
+			return strings.TrimSpace(text[idx+len("[USER_PROMPT]"):])
+		}
+		// No USER_PROMPT marker: fallback to tail after replyTips block
+		if idx := strings.Index(text, "\n\n"); idx >= 0 {
+			return strings.TrimSpace(text[idx:])
+		}
+	}
+	return text
+}
+
+func shortExternalSessionTitle(text string) string {
+	text = strings.TrimSpace(stripReplyTipsPrefix(stripExternalSessionPrefix(text)))
+	if text == "" {
+		return ""
+	}
+	// 取首行/首段，避免跨行长尾
+	if idx := strings.Index(text, "\n"); idx >= 0 {
+		text = strings.TrimSpace(text[:idx])
+	}
+	runes := []rune(text)
+	if len(runes) > 20 {
+		text = string(runes[:20])
+	}
+	return strings.TrimSpace(text)
 }
 
 func stripExternalSessionPrefix(text string) string {

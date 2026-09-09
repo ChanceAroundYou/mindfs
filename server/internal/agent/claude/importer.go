@@ -123,15 +123,20 @@ func (i *Importer) ImportExternalSession(_ context.Context, in agenttypes.Import
 	if file, ok := i.lookupSessionFile(targetID, rootPath); ok {
 		return i.importSessionFile(file, in.AfterTimestamp, in.Cursor)
 	}
-	files, err := i.scanSessionFiles(context.Background(), rootPath, time.Time{}, time.Time{}, int(^uint(0)>>1), nil)
-	if err != nil {
-		return agenttypes.ImportedExternalSession{}, err
-	}
-	for _, file := range files {
-		if file.AgentSessionID != targetID {
-			continue
+	// 主目录未命中时继续扫描根目录下 .worktree/* 的转录目录：Agent 转录按 spawn cwd
+	// 归档（Claude Code: ~/.claude/projects/<slug(cwd)>），worktree 会话落在各自的
+	// slug 目录，仅扫主仓库目录会漏掉全部 worktree 会话（同步报 external session not found）。
+	for _, candidateRoot := range worktreeCandidateRoots(rootPath) {
+		files, err := i.scanSessionFiles(context.Background(), candidateRoot, time.Time{}, time.Time{}, int(^uint(0)>>1), nil)
+		if err != nil {
+			return agenttypes.ImportedExternalSession{}, err
 		}
-		return i.importSessionFile(file, in.AfterTimestamp, in.Cursor)
+		for _, file := range files {
+			if file.AgentSessionID != targetID {
+				continue
+			}
+			return i.importSessionFile(file, in.AfterTimestamp, in.Cursor)
+		}
 	}
 	return agenttypes.ImportedExternalSession{}, errors.New("external session not found")
 }
@@ -354,14 +359,20 @@ func (i *Importer) ResolveForkPointByAgentTurnIndex(ctx context.Context, in agen
 	}
 	file, ok := i.lookupSessionFile(targetID, rootPath)
 	if !ok {
-		files, err := i.scanSessionFiles(ctx, rootPath, time.Time{}, time.Time{}, int(^uint(0)>>1), nil)
-		if err != nil {
-			return agenttypes.ResolveForkPointOutput{}, err
-		}
-		for _, candidate := range files {
-			if candidate.AgentSessionID == targetID {
-				file = candidate
-				ok = true
+		// 同 ImportExternalSession：worktree 会话转录目录按 spawn cwd 归档，需一并扫描
+		for _, candidateRoot := range worktreeCandidateRoots(rootPath) {
+			files, err := i.scanSessionFiles(ctx, candidateRoot, time.Time{}, time.Time{}, int(^uint(0)>>1), nil)
+			if err != nil {
+				return agenttypes.ResolveForkPointOutput{}, err
+			}
+			for _, candidate := range files {
+				if candidate.AgentSessionID == targetID {
+					file = candidate
+					ok = true
+					break
+				}
+			}
+			if ok {
 				break
 			}
 		}
@@ -586,10 +597,38 @@ func (i *Importer) lookupSessionFile(sessionID, rootPath string) (claudeSessionF
 	if !ok {
 		return claudeSessionFile{}, false
 	}
-	if normalizeComparablePath(item.Cwd) != normalizeComparablePath(rootPath) {
+	if !cwdMatchesRoot(item.Cwd, rootPath) {
 		return claudeSessionFile{}, false
 	}
 	return item, true
+}
+
+// worktreeCandidateRoots 列出 rootPath 本身及其下 .worktree/* 托管工作树目录。
+// mindfs 工作树固定创建在 <root>/.worktree/<name>（appcontext.CreateTaskWorktree）。
+func worktreeCandidateRoots(rootPath string) []string {
+	roots := []string{rootPath}
+	parent := filepath.Join(rootPath, ".worktree")
+	entries, err := os.ReadDir(parent)
+	if err != nil {
+		return roots
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			roots = append(roots, filepath.Join(parent, entry.Name()))
+		}
+	}
+	return roots
+}
+
+// cwdMatchesRoot 报告转录文件记录的 cwd 是否归属该托管目录：根目录本身，
+// 或其 .worktree/* 下的工作树（转录按 spawn cwd 归档，worktree 会话的 cwd 是工作树路径）。
+func cwdMatchesRoot(cwd, rootPath string) bool {
+	cwd = normalizeComparablePath(cwd)
+	rootPath = normalizeComparablePath(rootPath)
+	if cwd == rootPath {
+		return true
+	}
+	return strings.HasPrefix(cwd, rootPath+"/.worktree/")
 }
 
 func inspectClaudeSessionFile(path string) (claudeSessionFile, bool, error) {

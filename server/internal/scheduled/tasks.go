@@ -27,8 +27,8 @@ const tasksMetaFile = "scheduled-agent-tasks.json"
 type SessionActivityBroadcaster interface {
 	BroadcastSessionMetaUpdated(rootID string, sess *session.Session)
 	SetSessionPendingReply(rootID, sessionKey, sessionTitle string)
-	BroadcastSessionUserMessage(rootID, sessionKey, sessionType, sessionName, agentName, model, mode, effort, fastService string, planMode bool, content string)
-	BroadcastSessionUserMessageAt(rootID, sessionKey, sessionType, sessionName, agentName, model, mode, effort, fastService string, planMode bool, content string, timestamp time.Time, baseExchangeSeq ...int)
+	BroadcastSessionUserMessage(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService string, planMode bool, content string)
+	BroadcastSessionUserMessageAt(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService string, planMode bool, content string, timestamp time.Time, baseExchangeSeq ...int)
 	BroadcastSessionUpdate(rootID, sessionKey string, update agenttypes.Event)
 	BroadcastSessionError(rootID, sessionKey, message string)
 	BroadcastSessionDone(rootID, sessionKey, requestID string)
@@ -494,7 +494,7 @@ func (s *Service) runTask(ctx context.Context, task Task, force bool) error {
 			CurrentRoot: current.RootID,
 		},
 		OnStart: func(start usecase.MessageStart) {
-			broadcaster.BroadcastSessionUserMessageAt(current.RootID, sessionKey, session.TypeChat, sessionName, current.Agent, start.Model, start.Mode, start.Effort, start.FastService, false, current.Prompt, userTimestamp, start.BaseExchangeSeq)
+			broadcaster.BroadcastSessionUserMessageAt(current.RootID, sessionKey, session.TypeChat, sessionName, current.Agent, start.Model, start.ModelDisplayName, start.Mode, start.Effort, start.FastService, false, current.Prompt, userTimestamp, start.BaseExchangeSeq)
 		},
 		OnUpdate: func(update agenttypes.Event) {
 			broadcaster.BroadcastSessionUpdate(current.RootID, sessionKey, update)

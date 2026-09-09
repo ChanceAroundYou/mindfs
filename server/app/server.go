@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"mindfs/internal/deploy"
 	"mindfs/server/internal/agent"
 	"mindfs/server/internal/api"
 	"mindfs/server/internal/e2ee"
@@ -20,6 +21,7 @@ import (
 	"mindfs/server/internal/githubimport"
 	"mindfs/server/internal/gitview"
 	"mindfs/server/internal/kanban"
+	"mindfs/server/internal/nodes"
 	"mindfs/server/internal/notifyscript"
 	"mindfs/server/internal/preferences"
 	"mindfs/server/internal/relay"
@@ -108,6 +110,10 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 		}
 		return time.Duration(hours) * time.Hour
 	})
+	nodesStore, err := nodes.NewStore()
+	if err != nil {
+		log.Printf("[nodes] init.error err=%v", err)
+	}
 	webPushStore, err := webpush.NewStore()
 	if err != nil {
 		log.Printf("[webpush] init.error err=%v", err)
@@ -126,6 +132,7 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 		Prober: agentProber,
 		Update: updateSvc,
 		Prefs:  prefs,
+		Nodes:  nodesStore,
 		E2EE: e2ee.NewManager(e2ee.Config{
 			Enabled:       opts.E2EEConfig.Enabled,
 			NodeID:        opts.E2EEConfig.NodeID,
@@ -135,6 +142,9 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 		Notify:  notifyscript.NewService(notifyscript.Config{Script: opts.NotifyScript}),
 	}
 	services.Scheduled = scheduled.NewService(services, services)
+	if err := normalizeRegisteredForkSessions(ctx, services); err != nil {
+		return err
+	}
 	services.Scheduled.Start(ctx)
 	taskTemplates, err := kanban.NewTemplateStore()
 	if err != nil {
@@ -155,10 +165,12 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 	wsHandler := &api.WSHandler{AppContext: services}
 
 	mux := http.NewServeMux()
-	mux.Handle("/", httpHandler.Routes())
-	mux.Handle("/ws", wsHandler)
+	inner := http.NewServeMux()
+	inner.Handle("/", httpHandler.Routes())
+	inner.Handle("/ws", wsHandler)
+	mux.Handle("/", api.StripDeployPrefix(deploy.NormalizedPrefix(), inner))
 
-	handler := api.LoggingMiddleware(api.CORSMiddleware(mux))
+	handler := api.LoggingMiddleware(mux)
 
 	server := &http.Server{
 		Addr:              addr,
@@ -205,6 +217,19 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 		return server.ServeTLS(listener, opts.CertFile, opts.KeyFile)
 	}
 	return server.Serve(listener)
+}
+
+func normalizeRegisteredForkSessions(ctx context.Context, services *api.AppContext) error {
+	for _, root := range services.ListRoots() {
+		manager, err := services.GetSessionManager(root.ID)
+		if err != nil {
+			return fmt.Errorf("initialize session store for root %s: %w", root.ID, err)
+		}
+		if _, err := manager.ListMetas(ctx); err != nil {
+			return fmt.Errorf("normalize fork sessions for root %s: %w", root.ID, err)
+		}
+	}
+	return nil
 }
 
 func startHostedAgentConfigLoop(ctx context.Context, relayBaseURL string, localConfig agent.Config, pool *agent.Pool, prober *agent.Prober) {

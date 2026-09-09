@@ -1,6 +1,5 @@
-import React, { memo, useMemo } from "react";
-import { JSONUIProvider, Renderer as JsonRenderer } from "@json-render/react";
-import { registry } from "./registry";
+import React, { lazy, memo, Suspense, useEffect, useMemo, useState } from "react";
+import { getRegistry } from "./registry";
 
 type RendererProps = {
   tree: {
@@ -28,12 +27,39 @@ function normalizeTreeSpec(tree: RendererProps["tree"]): RendererProps["tree"] {
   return { ...tree, elements: normalized };
 }
 
+// @json-render 渲染组件懒加载，首次渲染 JSON UI 时才拉取对应 chunk。
+const JsonRenderer = lazy(() =>
+  import("@json-render/react").then((m) => ({ default: m.Renderer })),
+);
+const JSONUIProvider = lazy(() =>
+  import("@json-render/react").then((m) => ({ default: m.JSONUIProvider })),
+);
+
 function RendererInner({ tree, initialState = {}, handlers = {} }: RendererProps) {
   const spec = useMemo(() => normalizeTreeSpec(tree), [tree]);
+  const [registry, setRegistry] = useState<unknown>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getRegistry()
+      .then((r) => {
+        if (!cancelled) setRegistry(r);
+      })
+      .catch(() => {
+        if (!cancelled) setRegistry(undefined);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (!registry) return null;
   return (
-    <JSONUIProvider registry={registry} initialState={initialState} handlers={handlers}>
-      <JsonRenderer spec={spec as any} registry={registry} />
-    </JSONUIProvider>
+    <Suspense fallback={null}>
+      <JSONUIProvider registry={registry as any} initialState={initialState} handlers={handlers}>
+        <JsonRenderer spec={spec as any} registry={registry as any} />
+      </JSONUIProvider>
+    </Suspense>
   );
 }
 

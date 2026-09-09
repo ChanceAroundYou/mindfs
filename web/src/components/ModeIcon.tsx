@@ -6,24 +6,27 @@ type ModeIconProps = {
   type: ModeIconType;
   size?: number | string;
   style?: React.CSSProperties;
+  color?: string;
 };
 
-export function ModeIcon({ type, size = "1em", style }: ModeIconProps) {
+export function ModeIcon({ type, size = "1em", style, color }: ModeIconProps) {
+  const themedStyle = color ? { ...style, color: String(color).trim() || String((style as any)?.color || "#3b82f6") } : style;
   if (type === "plugin") {
-    return <PluginIcon size={size} style={style} />;
+    return <PluginIcon size={size} style={themedStyle} />;
   }
   if (type === "command") {
-    return <CommandIcon size={size} style={style} />;
+    return <CommandIcon size={size} style={themedStyle} />;
   }
   if (type === "task") {
-    return <TaskIcon size={size} style={style} />;
+    return <TaskIcon size={size} style={themedStyle || { color: "#3b82f6" }} />;
   }
-  return <ChatIcon size={size} style={style} />;
+  return <ChatIcon size={size} style={style} color={color} />;
 }
 
-function ChatIcon({ size, style }: Omit<ModeIconProps, "type">) {
+function ChatIcon({ size, style, color }: Omit<ModeIconProps, "type">) {
+  const c = String(color || (style as any)?.color || "#3b82f6").trim() || "#3b82f6";
   return (
-    <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 12 12" style={{ color: "#3b82f6", ...style }} aria-hidden="true">
+    <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 12 12" style={{ ...style, color: c }} aria-hidden="true">
       <path d="M0 0h12v12H0z" fill="none" />
       <path
         fill="currentColor"
@@ -73,7 +76,7 @@ function CommandIcon({ size, style }: Omit<ModeIconProps, "type">) {
 
 function TaskIcon({ size, style }: Omit<ModeIconProps, "type">) {
   return (
-    <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" style={{ color: "#0082c9", ...style }} aria-hidden="true">
+    <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" style={style} aria-hidden="true">
       <path d="M0 0h24v24H0z" fill="none" />
       <path fill="currentColor" d="M12 22c.8 0 1.6-.1 2.3-.3c-.4-.5-.8-1.1-1-1.8c-.4.1-.9.1-1.3.1c-4.4 0-8-3.6-8-8s3.6-8 8-8c.8 0 1.5.1 2.2.3l1.6-1.6C14.6 2.3 13.3 2 12 2C6.5 2 2 6.5 2 12s4.5 10 10 10M6.5 11.5l1.4-1.4l3.1 3.1l8.6-8.6L21 6L11 16zM19 14l-1.26 2.75L15 18l2.74 1.26L19 22l1.25-2.74L23 18l-2.75-1.25z" />
     </svg>

@@ -49,10 +49,18 @@ func metaFileLock(path string) *sync.Mutex {
 type RootInfo struct {
 	ID           string    `json:"id"`
 	Name         string    `json:"name"`
+	DisplayName  string    `json:"display_name,omitempty"`
 	RootPath     string    `json:"root_path"`
 	MetaLocation string    `json:"meta_location,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+func (r RootInfo) EffectiveName() string {
+	if v := strings.TrimSpace(r.DisplayName); v != "" {
+		return v
+	}
+	return r.Name
 }
 
 func NewRootInfo(id, name, rootPath string) RootInfo {
@@ -366,6 +374,15 @@ func (r RootInfo) ReadMetaFile(path string) ([]byte, error) {
 	}
 	data, err := os.ReadFile(resolved)
 	return data, apperr.Wrap("read", resolved, err)
+}
+
+func (r RootInfo) StatMetaFile(path string) (os.FileInfo, error) {
+	resolved, err := r.resolveMetaPath(path)
+	if err != nil {
+		return nil, err
+	}
+	info, err := os.Stat(resolved)
+	return info, apperr.Wrap("stat", resolved, err)
 }
 
 func (r RootInfo) WriteMetaFile(path string, data []byte) error {

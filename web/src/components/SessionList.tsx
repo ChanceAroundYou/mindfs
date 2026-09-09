@@ -1,8 +1,32 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { memo, useEffect, useMemo, useRef, useState } from "react";
 import { AgentIcon } from "./AgentIcon";
 import { ModeIcon } from "./ModeIcon";
-import { rootBadgeButtonStyle, rootBadgeStyle } from "./rootBadgeStyle";
+import { NodeBadgeHeader } from "./NodeBadgeHeader";
+import { getNodes, PALETTE } from "../services/nodeRegistry";
+import { resolveGroupColor } from "../services/sessionGroupDisplay";
+import { scopeKey } from "../services/scope";
 import { useI18n, type Locale } from "../i18n";
+import { type DirectorySortMode, sortDirectoryEntries } from "../services/directorySort";
+
+function hexToRgba(hex: string, alpha: number): string {
+  const h = String(hex || "").trim().replace(/^#/, "");
+  const fallback = `rgba(37, 99, 235, ${alpha})`;
+  if (h.length === 3) {
+    const r = parseInt(h[0] + h[0], 16);
+    const g = parseInt(h[1] + h[1], 16);
+    const b = parseInt(h[2] + h[2], 16);
+    if (Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b)) return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    return fallback;
+  }
+  if (h.length === 6) {
+    const r = parseInt(h.slice(0, 2), 16);
+    const g = parseInt(h.slice(2, 4), 16);
+    const b = parseInt(h.slice(4, 6), 16);
+    if (Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b)) return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+  if (/^rgba?\(/.test(String(hex || ""))) return String(hex);
+  return fallback;
+}
 
 export type SessionType = "chat" | "plugin" | "command";
 
@@ -86,9 +110,11 @@ type ProjectSessionListProps = {
   groups: ProjectSessionGroup[];
   selectedKey?: string;
   selectedRootId?: string;
+  selectedNodeId?: string;
   headerAction?: React.ReactNode;
   loading?: boolean;
   emptyText?: React.ReactNode;
+  projectSortMode?: DirectorySortMode;
   syncingSessionKeys?: Set<string>;
   onSearchToggle?: () => void;
   onSelect?: (session: SessionItem) => void;
@@ -96,7 +122,6 @@ type ProjectSessionListProps = {
   onPin?: (session: SessionItem, pinned: boolean) => Promise<boolean> | boolean;
   onRename?: (session: SessionItem, nextName: string) => Promise<boolean> | boolean;
   onDelete?: (session: SessionItem) => void;
-  onProjectClick?: (rootId: string) => void;
   onLoadMoreProject?: (group: ProjectSessionGroup) => Promise<void> | void;
   onLoadChildren?: (
     session: SessionItem,
@@ -256,23 +281,6 @@ function parseForkSessionSource(source?: string): ForkSessionSource | null {
   }
 }
 
-function forkSessionDisplayName(
-  storedName: string,
-  source: ForkSessionSource | null,
-  sessionByKey: Map<string, SessionItem>,
-  rootId?: string,
-): string {
-  if (!source) return storedName;
-  const parentName = String(
-    sessionByKey.get(rootId ? `${rootId}:${source.sessionKey}` : source.sessionKey)?.name ||
-      sessionByKey.get(source.sessionKey)?.name ||
-      "",
-  ).trim();
-  const fallbackName = storedName.replace(/\s+fork\s+@\d+\s*$/i, "").trim();
-  const base = parentName || fallbackName || storedName;
-  return source.seq > 0 ? `${base}#${source.seq}` : base;
-}
-
 function isSessionSyncing(
   session: SessionItem,
   syncingSessionKeys?: Set<string>,
@@ -285,9 +293,11 @@ function isSessionSyncing(
     return false;
   }
   const rootId = session.root_id || "";
+  const nodeId = String((session as any)?._nodeId || "").trim();
   return (
     syncingSessionKeys.has(key) ||
-    (!!rootId && syncingSessionKeys.has(`${rootId}::${key}`))
+    (!!rootId && syncingSessionKeys.has(`${rootId}::${key}`)) ||
+    (!!rootId && !!nodeId && syncingSessionKeys.has(`${nodeId}::${rootId}::${key}`))
   );
 }
 
@@ -327,11 +337,16 @@ export function SessionList({
     if (searchResultsMode) {
       return sessions.map((session): VisibleSessionRow => ({ type: "session", session }));
     }
+    const isForkItem = (item: SessionItem) => !!parseForkSessionSource(item.source);
     const childrenByParent = new Map<string, SessionItem[]>();
     const topLevel: SessionItem[] = [];
     const keys = new Set(sessions.map((item) => item.key));
     const parentByKey = new Map<string, string>();
     for (const item of sessions) {
+      if (isForkItem(item)) {
+        topLevel.push(item);
+        continue;
+      }
       const parentKey = String(item.parent_session_key || "").trim();
       if (parentKey && keys.has(parentKey)) {
         const children = childrenByParent.get(parentKey) || [];
@@ -379,17 +394,6 @@ export function SessionList({
     topLevel.forEach((item) => append(item));
     return out;
   }, [childrenHasMore, expandedChildren, searchResultsMode, selectedKey, sessions]);
-  const childCountByParent = useMemo(() => {
-    const counts = new Map<string, number>();
-    const keys = new Set(sessions.map((item) => item.key));
-    for (const item of sessions) {
-      const parentKey = String(item.parent_session_key || "").trim();
-      if (parentKey && keys.has(parentKey)) {
-        counts.set(parentKey, (counts.get(parentKey) || 0) + 1);
-      }
-    }
-    return counts;
-  }, [sessions]);
   const selectedParentKey = useMemo(() => {
     if (!selectedKey) return "";
     return sessions.find((item) => item.key === selectedKey)?.parent_session_key || "";
@@ -678,15 +682,14 @@ export function SessionList({
               }
               const session = row.session;
               return (
-                <SessionCard
-                  key={session.key}
+                <SessionCardMemo
+                  key={`${String((session as any)._nodeId || "")}::${session.key}`}
                   session={session}
                   sessionByKey={sessionByKey}
                   selected={session.key === selectedKey}
                   parentHighlighted={!!selectedParentKey && session.key === selectedParentKey}
                   highlightQuery={searchResultsMode ? searchQuery : ""}
                   syncing={isSessionSyncing(session, syncingSessionKeys)}
-                  childCount={childCountByParent.get(session.key) || 0}
                   onSelect={onSelect}
                   onSync={onSync}
                   onPin={onPin}
@@ -738,6 +741,7 @@ export function MultiProjectSessionList({
   headerAction,
   loading = false,
   emptyText = "",
+  projectSortMode = "name-asc",
   syncingSessionKeys,
   onSearchToggle,
   onSelect,
@@ -745,7 +749,7 @@ export function MultiProjectSessionList({
   onPin,
   onRename,
   onDelete,
-  onProjectClick,
+  selectedNodeId = "",
   onLoadMoreProject,
   onLoadChildren,
 }: ProjectSessionListProps) {
@@ -783,27 +787,67 @@ export function MultiProjectSessionList({
     }
     window.localStorage.setItem(PINNED_PROJECTS_STORAGE_KEY, JSON.stringify(pinnedProjects));
   }, [pinnedProjects]);
-  const orderedGroups = useMemo(
-    () =>
-      groups.slice().sort((left, right) => {
-        const leftPinnedAt = pinnedProjects[left.rootId] || 0;
-        const rightPinnedAt = pinnedProjects[right.rootId] || 0;
-        if (leftPinnedAt || rightPinnedAt) {
-          if (leftPinnedAt !== rightPinnedAt) {
-            return rightPinnedAt - leftPinnedAt;
-          }
-        }
-        return 0;
-      }),
-    [groups, pinnedProjects],
-  );
-  const togglePinnedProject = (rootId: string) => {
+  // 渲染侧审计：仅 groups 数组变化时打一条（不随帧刷屏），标记缺色回退的分组
+  useEffect(() => {
+    try {
+      const fallbackCount = groups.filter((g) => !String((g as any)?._nodeColor || "").trim()).length;
+      console.info("[session-list] render", {
+        n: groups.length,
+        fallbackCount,
+        groups: groups
+          .map((g) => `${String((g as any)?._nodeId || "")}:${String(g.rootName || g.rootId || "")}:${String((g as any)?._nodeColor || "FALLBACK")}`)
+          .slice(0, 20),
+      });
+    } catch {}
+  }, [groups]);
+  const groupScopeKey = (group: ProjectSessionGroup) =>
+    scopeKey(String((group as any)?._nodeId || "").trim(), group.rootId);
+  // 右侧多项目列表：与左侧 FileTree 保持一致的分层排序
+  // 层级：节点时序(按 getNodes() 添加顺序) > 同节点内项目置顶 > 同节点内项目设置排序(默认 name-asc)
+  // 项目置顶不跨节点越位，修复 hbsn 跑到其他节点上方的问题；项目内会话由 sessionListMerge 负责置顶在前+时间降序
+  const orderedGroups = useMemo(() => {
+    const nodes = getNodes();
+    const orderById = new Map(nodes.map((n, i) => [String(n.id), i] as const));
+    const orderByName = new Map(nodes.map((n, i) => [String(n.name), i] as const));
+    const nodeIndex = (group: ProjectSessionGroup): number => {
+      const nid = String((group as any)?._nodeId || "").trim();
+      if (nid && orderById.has(nid)) return orderById.get(nid)!;
+      const nname = String((group as any)?._nodeName || "").trim();
+      if (nname && orderByName.has(nname)) return orderByName.get(nname)!;
+      return 99;
+    };
+    // 同节点内的项目按 DirectorySort 规则排；复用左侧同款比较，避免两处分叉
+    const compareByProjectSort = (a: ProjectSessionGroup, b: ProjectSessionGroup): number => {
+      const ea = { name: a.rootName || a.rootId, path: a.rootId, is_dir: true } as Parameters<typeof sortDirectoryEntries>[0][number];
+      const eb = { name: b.rootName || b.rootId, path: b.rootId, is_dir: true } as Parameters<typeof sortDirectoryEntries>[0][number];
+      const sorted = sortDirectoryEntries([ea, eb], projectSortMode);
+      if (sorted[0] === ea && sorted[1] === eb) return -1;
+      if (sorted[0] === eb && sorted[1] === ea) return 1;
+      return 0;
+    };
+    return groups.slice().sort((left, right) => {
+      const li = nodeIndex(left);
+      const ri = nodeIndex(right);
+      if (li !== ri) return li - ri;
+      const leftPinnedAt = pinnedProjects[groupScopeKey(left)] || 0;
+      const rightPinnedAt = pinnedProjects[groupScopeKey(right)] || 0;
+      const leftPinned = leftPinnedAt > 0;
+      const rightPinned = rightPinnedAt > 0;
+      if (leftPinned !== rightPinned) return rightPinned ? 1 : -1;
+      if (leftPinned && rightPinned && leftPinnedAt !== rightPinnedAt) {
+        return rightPinnedAt - leftPinnedAt;
+      }
+      return compareByProjectSort(left, right);
+    });
+  }, [groups, pinnedProjects, projectSortMode]);
+  const togglePinnedProject = (group: ProjectSessionGroup) => {
+    const key = groupScopeKey(group);
     setPinnedProjects((prev) => {
       const next = { ...prev };
-      if (next[rootId]) {
-        delete next[rootId];
+      if (next[key]) {
+        delete next[key];
       } else {
-        next[rootId] = Date.now();
+        next[key] = Date.now();
       }
       return next;
     });
@@ -813,13 +857,19 @@ export function MultiProjectSessionList({
     for (const group of groups) {
       for (const item of group.sessions) {
         const sessionRoot = item.root_id || group.rootId;
+        const itemNodeId = String((item as any)?._nodeId || (group as any)?._nodeId || "").trim();
         byKey.set(`${sessionRoot}:${item.key}`, item);
+        byKey.set(scopeKey(itemNodeId, sessionRoot ? `${sessionRoot}:${item.key}` : item.key), item);
         byKey.set(item.key, item);
       }
     }
     return byKey;
   }, [groups]);
-  const childStateKey = (session: SessionItem, fallbackRootId = "") => `${session.root_id || fallbackRootId}:${session.key}`;
+  const childStateKey = (session: SessionItem, fallbackRootId = "", fallbackNodeId = "") => {
+    const rootId = session.root_id || fallbackRootId;
+    const nodeId = String((session as any)?._nodeId || fallbackNodeId || "").trim();
+    return `${scopeKey(nodeId, rootId)}:${session.key}`;
+  };
 
   const loadChildren = async (parent: SessionItem, beforeTime?: string) => {
     const stateKey = childStateKey(parent);
@@ -835,12 +885,18 @@ export function MultiProjectSessionList({
     }
   };
 
-  const buildRows = (sessions: SessionItem[], fallbackRootId: string): VisibleSessionRow[] => {
+  const buildRows = (sessions: SessionItem[], fallbackRootId: string, fallbackNodeId = ""): VisibleSessionRow[] => {
+    if (sessions.length === 0) return [];
+    const isForkItem = (item: SessionItem) => !!parseForkSessionSource(item.source);
     const childrenByParent = new Map<string, SessionItem[]>();
     const topLevel: SessionItem[] = [];
     const keys = new Set(sessions.map((item) => item.key));
     const parentByKey = new Map<string, string>();
     for (const item of sessions) {
+      if (isForkItem(item)) {
+        topLevel.push(item);
+        continue;
+      }
       const parentKey = String(item.parent_session_key || "").trim();
       if (parentKey && keys.has(parentKey)) {
         const children = childrenByParent.get(parentKey) || [];
@@ -852,7 +908,11 @@ export function MultiProjectSessionList({
       }
     }
     const activeParentKeys = new Set<string>();
-    if (selectedKey && selectedRootId === fallbackRootId) {
+    if (
+      selectedKey &&
+      selectedRootId === fallbackRootId &&
+      String(selectedNodeId || "") === String(fallbackNodeId || "")
+    ) {
       activeParentKeys.add(selectedKey);
       let parentKey = parentByKey.get(selectedKey) || "";
       while (parentKey) {
@@ -894,9 +954,10 @@ export function MultiProjectSessionList({
     row: Extract<VisibleSessionRow, { type: "child-toggle" }>,
     groupSessions: SessionItem[],
     fallbackRootId: string,
+    fallbackNodeId = "",
   ) => {
     const parentKey = row.parent.key;
-    const stateKey = childStateKey(row.parent, fallbackRootId);
+    const stateKey = childStateKey(row.parent, fallbackRootId, fallbackNodeId);
     if (!row.expanded) {
       setExpandedChildren((prev) => ({ ...prev, [stateKey]: true }));
       await loadChildren(row.parent);
@@ -912,50 +973,67 @@ export function MultiProjectSessionList({
     }
   };
 
+  const topLevelSessionsForGroup = (sessions: SessionItem[]) =>
+    sessions.filter((session) => !String(session.parent_session_key || "").trim());
+
+  // 两端皆空视为节点信息未就绪：避免空串互等把全部分组误展开
+  const groupIsCurrentNode = (group: ProjectSessionGroup) => {
+    const groupNodeId = String((group as any)?._nodeId || "").trim();
+    const selectedNid = String(selectedNodeId || "").trim();
+    return !!groupNodeId && !!selectedNid && groupNodeId === selectedNid;
+  };
+
   const handleProjectToggle = async (group: ProjectSessionGroup) => {
-    const expanded = !!expandedProjects[group.rootId];
-    const remaining = Math.max(0, group.totalCount - group.sessions.length);
+    const groupKey = groupScopeKey(group);
+    const expanded = expandedProjects[groupKey] ?? groupIsCurrentNode(group);
+    const topLevelCount = topLevelSessionsForGroup(group.sessions).length;
+    const remaining = Math.max(0, group.totalCount - topLevelCount);
     if (!expanded) {
-      setExpandedProjects((prev) => ({ ...prev, [group.rootId]: true }));
+      setExpandedProjects((prev) => ({ ...prev, [groupKey]: true }));
       if (remaining > 0 && onLoadMoreProject) {
-        setLoadingProjects((prev) => ({ ...prev, [group.rootId]: true }));
+        setLoadingProjects((prev) => ({ ...prev, [groupKey]: true }));
         try {
           await onLoadMoreProject(group);
         } finally {
-          setLoadingProjects((prev) => ({ ...prev, [group.rootId]: false }));
+          setLoadingProjects((prev) => ({ ...prev, [groupKey]: false }));
         }
       }
       return;
     }
     if (remaining > 0 && onLoadMoreProject) {
-      setLoadingProjects((prev) => ({ ...prev, [group.rootId]: true }));
+      setLoadingProjects((prev) => ({ ...prev, [groupKey]: true }));
       try {
         await onLoadMoreProject(group);
       } finally {
-        setLoadingProjects((prev) => ({ ...prev, [group.rootId]: false }));
+        setLoadingProjects((prev) => ({ ...prev, [groupKey]: false }));
       }
     } else {
-      setExpandedProjects((prev) => ({ ...prev, [group.rootId]: false }));
+      setExpandedProjects((prev) => ({ ...prev, [groupKey]: false }));
     }
   };
 
-  const handleProjectCollapse = (rootId: string) => {
-    setExpandedProjects((prev) => ({ ...prev, [rootId]: false }));
+  const handleProjectCollapse = (group: ProjectSessionGroup) => {
+    setExpandedProjects((prev) => ({ ...prev, [groupScopeKey(group)]: false }));
   };
 
-  const topLevelSessionsForGroup = (sessions: SessionItem[]) =>
-    sessions.filter((session) => !String(session.parent_session_key || "").trim());
-
-  const sessionsForTopLevelLimit = (sessions: SessionItem[], limit: number) => {
-    const topLevel = topLevelSessionsForGroup(sessions);
-    if (limit >= topLevel.length) {
-      return sessions;
+  const handleProjectHeaderToggle = async (group: ProjectSessionGroup) => {
+    const key = groupScopeKey(group);
+    const expanded = expandedProjects[key] ?? groupIsCurrentNode(group);
+    if (expanded) {
+      setExpandedProjects((prev) => ({ ...prev, [key]: false }));
+      return;
     }
-    const visibleParentKeys = new Set(topLevel.slice(0, limit).map((session) => session.key));
-    return sessions.filter((session) => {
-      const parentKey = String(session.parent_session_key || "").trim();
-      return !parentKey ? visibleParentKeys.has(session.key) : visibleParentKeys.has(parentKey);
-    });
+    setExpandedProjects((prev) => ({ ...prev, [key]: true }));
+    const topLevelCount = topLevelSessionsForGroup(group.sessions).length;
+    const remaining = Math.max(0, group.totalCount - topLevelCount);
+    if (remaining > 0 && onLoadMoreProject) {
+      setLoadingProjects((prev) => ({ ...prev, [key]: true }));
+      try {
+        await onLoadMoreProject(group);
+      } finally {
+        setLoadingProjects((prev) => ({ ...prev, [key]: false }));
+      }
+    }
   };
 
   return (
@@ -1015,77 +1093,29 @@ export function MultiProjectSessionList({
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: "9px" }}>
             {orderedGroups.map((group) => {
-              const expanded = !!expandedProjects[group.rootId];
-              const pinned = !!pinnedProjects[group.rootId];
+              const groupKey = groupScopeKey(group);
+              const groupNodeId = String((group as any)?._nodeId || "").trim();
+              const expanded = expandedProjects[groupKey] ?? groupIsCurrentNode(group);
+              const pinned = !!pinnedProjects[groupKey];
               const topLevelSessions = topLevelSessionsForGroup(group.sessions);
-              const sessions = expanded
-                ? group.sessions
-                : sessionsForTopLevelLimit(group.sessions, MULTI_PROJECT_VISIBLE_LIMIT);
-              const rows = buildRows(sessions, group.rootId);
-              const childCountByParent = new Map<string, number>();
-              const sessionKeys = new Set(group.sessions.map((item) => item.key));
-              for (const item of group.sessions) {
-                const parentKey = String(item.parent_session_key || "").trim();
-                if (parentKey && sessionKeys.has(parentKey)) {
-                  childCountByParent.set(parentKey, (childCountByParent.get(parentKey) || 0) + 1);
-                }
-              }
+              const sessions = expanded ? group.sessions : [];
+              const rows = buildRows(sessions, group.rootId, groupNodeId);
               const remaining = Math.max(0, group.totalCount - topLevelSessions.length);
-              const projectLoading = !!loadingProjects[group.rootId];
+              const projectLoading = !!loadingProjects[groupKey];
               return (
-                <section key={group.rootId} style={{ minWidth: 0 }}>
-                  <div
-                    style={{
-                      minWidth: 0,
-                      height: "22px",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      gap: "8px",
-                      padding: "0 24px 0 2px",
-                      background: "transparent",
-                      boxSizing: "border-box",
-                      position: "relative",
-                    }}
-                  >
-                    <span
-                      aria-hidden="true"
-                      style={{
-                        height: "1px",
-                        flex: 1,
-                        minWidth: "12px",
-                        background: "var(--border-color)",
-                      }}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => onProjectClick?.(group.rootId)}
-                      style={{
-                        ...rootBadgeButtonStyle,
-                        flexShrink: 1,
-                        maxWidth: "100%",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                        cursor: onProjectClick ? "pointer" : "default",
-                      }}
-                    >
-                      {group.rootName || group.rootId}
-                    </button>
-                    <span
-                      aria-hidden="true"
-                      style={{
-                        height: "1px",
-                        flex: 1,
-                        minWidth: "12px",
-                        background: "var(--border-color)",
-                      }}
+                <section key={`${(group as any)._nodeId || ""}::${group.rootId}`} style={{ minWidth: 0 }}>
+                  <div style={{ position: "relative" }}>
+                    <NodeBadgeHeader
+                      color={String((group as any)._nodeColor || resolveGroupColor(group as any, {}, getNodes() as any) || PALETTE[0])}
+                      label={group.rootName || group.rootId}
+                      collapsed={!expanded}
+                      onClick={() => void handleProjectHeaderToggle(group)}
                     />
                     <button
                       type="button"
                       aria-label={pinned ? t("sessionList.unpinProject") : t("sessionList.pinProject")}
                       title={pinned ? t("sessionList.unpin") : t("sessionList.pin")}
-                      onClick={() => togglePinnedProject(group.rootId)}
+                      onClick={() => togglePinnedProject(group)}
                       style={{
                         position: "absolute",
                         right: 0,
@@ -1139,11 +1169,11 @@ export function MultiProjectSessionList({
                             showExpandIcon={!loadingChild && (!row.expanded || hasMoreChildren)}
                             showCollapseIcon={!loadingChild && row.expanded}
                             marginLeft={SUB_SESSION_ICON_OFFSET}
-                            onClick={() => void handleChildToggle(row, group.sessions, group.rootId)}
+                            onClick={() => void handleChildToggle(row, group.sessions, group.rootId, groupNodeId)}
                             onCollapse={() =>
                               setExpandedChildren((prev) => ({
                                 ...prev,
-                                [childStateKey(row.parent, group.rootId)]: false,
+                                [childStateKey(row.parent, group.rootId, groupNodeId)]: false,
                               }))
                             }
                           />
@@ -1151,16 +1181,17 @@ export function MultiProjectSessionList({
                       }
                       const session = row.session;
                       const sessionRoot = session.root_id || group.rootId;
+                      const groupColor = String((group as any)._nodeColor || "").trim();
                       return (
-                        <SessionCard
-                          key={`${sessionRoot}:${session.key}`}
+                        <SessionCardMemo
+                          key={`${String((group as any)._nodeId || "")}::${sessionRoot}:${session.key}`}
                           session={{ ...session, root_id: sessionRoot }}
+                          nodeColor={groupColor}
                           sessionByKey={sessionByKey}
-                          selected={session.key === selectedKey && sessionRoot === selectedRootId}
+                          selected={session.key === selectedKey && sessionRoot === selectedRootId && String((group as any)._nodeId || "") === String(selectedNodeId || "")}
                           parentHighlighted={false}
                           highlightQuery=""
                           syncing={isSessionSyncing({ ...session, root_id: sessionRoot }, syncingSessionKeys)}
-                          childCount={childCountByParent.get(session.key) || 0}
                           onSelect={onSelect}
                           onSync={onSync}
                           onPin={onPin}
@@ -1169,7 +1200,7 @@ export function MultiProjectSessionList({
                         />
                       );
                     })}
-                    {group.totalCount > MULTI_PROJECT_VISIBLE_LIMIT ? (
+                    {expanded && group.totalCount > MULTI_PROJECT_VISIBLE_LIMIT ? (
                       <ToggleRowButton
                         loading={projectLoading}
                         label={
@@ -1185,7 +1216,7 @@ export function MultiProjectSessionList({
                         showCollapseIcon={!projectLoading && expanded}
                         marginLeft={MAIN_SESSION_ICON_OFFSET}
                         onClick={() => void handleProjectToggle(group)}
-                        onCollapse={() => handleProjectCollapse(group.rootId)}
+                        onCollapse={() => handleProjectCollapse(group)}
                       />
                     ) : null}
                   </div>
@@ -1213,10 +1244,10 @@ function SessionCard({
   session,
   sessionByKey,
   selected,
+  nodeColor,
   parentHighlighted,
   highlightQuery,
   syncing = false,
-  childCount = 0,
   onSelect,
   onSync,
   onPin,
@@ -1226,10 +1257,10 @@ function SessionCard({
   session: SessionItem;
   sessionByKey: Map<string, SessionItem>;
   selected: boolean;
+  nodeColor?: string;
   parentHighlighted?: boolean;
   highlightQuery?: string;
   syncing?: boolean;
-  childCount?: number;
   onSelect?: (session: SessionItem) => void;
   onSync?: (session: SessionItem) => Promise<void> | void;
   onPin?: (session: SessionItem, pinned: boolean) => Promise<boolean> | boolean;
@@ -1239,21 +1270,27 @@ function SessionCard({
   const { locale, t } = useI18n();
   const isClosed = !!session.closed_at;
   const isPinned = !!session.pinned_at;
-  const isSubagent = !!session.parent_session_key;
-  const forkSource = parseForkSessionSource(session.source);
-  const isForkSession = !!forkSource;
+  const isSubagent = !!session.parent_session_key && !parseForkSessionSource(session.source);
   const storedName = session.name || `Session ${session.key.slice(0, 8)}`;
-  const displayName = isForkSession
-    ? forkSessionDisplayName(storedName, forkSource, sessionByKey, session.root_id)
-    : storedName;
+  const displayName = storedName;
   const snippet = (session.search_snippet || "").trim();
   const isSearchResult = !!session.search_match_type;
   const [menuOpen, setMenuOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draftName, setDraftName] = useState(storedName);
   const [saving, setSaving] = useState(false);
+  const effectiveNodeColor = String(
+    nodeColor ||
+    (session as any)?._nodeColor ||
+    resolveGroupColor(
+      { rootId: String((session as any)?.root_id || ""), _nodeId: String((session as any)?._nodeId || "") },
+      {},
+      getNodes() as any,
+    ) ||
+    "",
+  ).trim();
   const rowBackground = selected
-    ? "rgba(59, 130, 246, 0.1)"
+    ? "var(--node-row-selected-bg)"
     : parentHighlighted
       ? "rgba(0,0,0,0.03)"
       : "transparent";
@@ -1372,19 +1409,7 @@ function SessionCard({
               justifyContent: "center",
             }}
           >
-            {isSubagent ? (
-              isForkSession ? (
-                <ForkSessionIcon />
-              ) : (
-                <SubSessionIcon />
-              )
-            ) : (
-              isForkSession ? (
-                <ForkSessionIcon />
-              ) : (
-                <ModeIcon type={session.task_id ? "task" : session.type || "chat"} size={16} />
-              )
-            )}
+            {isSubagent ? <SubSessionIcon color={effectiveNodeColor ? `color-mix(in srgb, ${effectiveNodeColor} 78%, var(--text-secondary))` : undefined} /> : <ModeIcon type={session.task_id ? "task" : session.type || "chat"} size={16} color={effectiveNodeColor || undefined} />}
             {!isSubagent && session.type === "command" ? (
               <span
                 title={session.shell || "shell"}
@@ -1435,33 +1460,6 @@ function SessionCard({
                   agentName={session.agent || ""}
                   style={{ width: "10px", height: "10px", display: "block" }}
                 />
-              </span>
-            ) : null}
-            {!isSubagent && childCount > 0 ? (
-              <span
-                title={t("sessionList.childCount", { count: childCount })}
-                style={{
-                  position: "absolute",
-                  right: "-7px",
-                  top: "-7px",
-                  minWidth: "14px",
-                  height: "14px",
-                  padding: "0 3px",
-                  borderRadius: "999px",
-                  background: "var(--accent-color)",
-                  border: "1px solid var(--content-bg, #fff)",
-                  color: "#fff",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  boxSizing: "border-box",
-                  fontSize: "9px",
-                  fontWeight: 700,
-                  lineHeight: 1,
-                  letterSpacing: 0,
-                }}
-              >
-                {childCount > 99 ? "99+" : childCount}
               </span>
             ) : null}
           </span>
@@ -1531,7 +1529,7 @@ function SessionCard({
               padding: 0,
               cursor: "pointer",
               textAlign: "left",
-              color: selected ? "var(--accent-color)" : "var(--text-primary)",
+              color: selected ? (effectiveNodeColor || "var(--accent-color)") : "var(--text-primary)",
             }}
             onMouseEnter={(e) => {
               const container = e.currentTarget.parentElement;
@@ -1557,7 +1555,7 @@ function SessionCard({
               }}
             >
               {renderHighlightedText(displayName, highlightQuery, {
-                color: selected ? "var(--accent-color)" : "var(--text-primary)",
+                color: selected ? (effectiveNodeColor || "var(--accent-color)") : "var(--text-primary)",
               })}
             </span>
             {snippet ? (
@@ -1693,10 +1691,10 @@ function SessionCard({
                 borderRadius: "999px",
                 flexShrink: 0,
                 boxSizing: "border-box",
-                border: "1.5px solid #2563eb",
-                background: "#2563eb",
+                border: `1.5px solid ${effectiveNodeColor || "var(--accent-color)"}`,
+                background: effectiveNodeColor || "var(--accent-color)",
                 animation: "mindfs-bound-pulse 2.2s ease-in-out infinite",
-                boxShadow: "0 0 0 1.5px rgba(37,99,235,0.14)",
+                boxShadow: `0 0 0 1.5px ${hexToRgba(effectiveNodeColor || "var(--accent-color)", 0.14)}`,
               }}
             />
           ) : (
@@ -2007,7 +2005,8 @@ function ChevronLeftIcon() {
   );
 }
 
-function SubSessionIcon() {
+function SubSessionIcon({ color }: { color?: string }) {
+  const c = String(color || "").trim() || "var(--accent-color)";
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
@@ -2015,7 +2014,7 @@ function SubSessionIcon() {
       height="18"
       viewBox="0 0 32 32"
       aria-hidden="true"
-      style={{ color: "var(--accent-color)", display: "block" }}
+      style={{ color: c, display: "block" }}
     >
       <path d="M0 0h32v32H0z" fill="none" />
       <path
@@ -2026,33 +2025,9 @@ function SubSessionIcon() {
   );
 }
 
-function ForkSessionIcon() {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      width="22"
-      height="22"
-      viewBox="0 0 24 24"
-      aria-hidden="true"
-      style={{
-        color: "var(--accent-color)",
-        display: "block",
-        transform: "rotate(180deg) scaleX(-1)",
-      }}
-    >
-      <path d="M0 0h24v24H0z" fill="none" />
-      <path
-        fill="none"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth="1.8"
-        d="M17 7a2 2 0 1 0 0-4a2 2 0 0 0 0 4M7 7a2 2 0 1 0 0-4a2 2 0 0 0 0 4m0 14a2 2 0 1 0 0-4a2 2 0 0 0 0 4M7 7v10M17 7v1c0 2.5-2 3-2 3l-6 2s-2 .5-2 3v1"
-      />
-      <circle cx="17" cy="5" r="2" fill="currentColor" />
-    </svg>
-  );
-}
+// memo 化 SessionCard：父组件（SessionList / MultiProjectSessionList）重渲染时，
+// 若 props 引用未变则跳过整卡重渲染（含 useI18n / 多个 useEffect）。
+const SessionCardMemo = memo(SessionCard);
 
 const menuItemStyle: React.CSSProperties = {
   width: "100%",

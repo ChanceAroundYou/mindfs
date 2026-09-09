@@ -500,6 +500,47 @@ func TestDeleteSessionDeletesSubSessionTree(t *testing.T) {
 	}
 }
 
+func TestDeleteSessionKeepsForkSession(t *testing.T) {
+	ctx := context.Background()
+	root := rootfs.NewRootInfo("mindfs", "mindfs", t.TempDir())
+	manager := session.NewManager(root)
+	service := Service{Registry: &commandTestRegistry{root: root, manager: manager}}
+
+	parent, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, Name: "parent"})
+	if err != nil {
+		t.Fatalf("create parent: %v", err)
+	}
+	fork, err := manager.Create(ctx, session.CreateInput{
+		Type:   session.TypeChat,
+		Source: `{"type":"fork"}`,
+		Name:   "fork",
+	})
+	if err != nil {
+		t.Fatalf("create fork: %v", err)
+	}
+	subagent, err := manager.Create(ctx, session.CreateInput{
+		Type:             session.TypeChat,
+		ParentSessionKey: parent.Key,
+		Name:             "subagent",
+	})
+	if err != nil {
+		t.Fatalf("create subagent: %v", err)
+	}
+
+	if err := service.DeleteSession(ctx, DeleteSessionInput{RootID: root.ID, Key: parent.Key}); err != nil {
+		t.Fatalf("delete parent: %v", err)
+	}
+	if _, err := manager.Get(ctx, parent.Key, 0); err == nil {
+		t.Fatal("parent still exists")
+	}
+	if _, err := manager.Get(ctx, fork.Key, 0); err != nil {
+		t.Fatalf("fork should remain: %v", err)
+	}
+	if _, err := manager.Get(ctx, subagent.Key, 0); err == nil {
+		t.Fatal("subagent still exists")
+	}
+}
+
 func TestSubSessionSyntheticDonePersistsPartialResponse(t *testing.T) {
 	ctx := context.Background()
 	rootDir := t.TempDir()
@@ -2038,6 +2079,10 @@ func (uploadTestRegistry) RemoveRoot(string) (rootfs.RootInfo, error) {
 	return rootfs.RootInfo{}, nil
 }
 
+func (uploadTestRegistry) UpdateDisplayName(string, string) (rootfs.RootInfo, error) {
+	return rootfs.RootInfo{}, errors.New("not implemented")
+}
+
 func (uploadTestRegistry) RenameRoot(string, string, string) (rootfs.RootInfo, error) {
 	return rootfs.RootInfo{}, nil
 }
@@ -2181,6 +2226,10 @@ func (r *commandTestRegistry) RemoveRoot(string) (rootfs.RootInfo, error) {
 	return rootfs.RootInfo{}, nil
 }
 
+func (r *commandTestRegistry) UpdateDisplayName(string, string) (rootfs.RootInfo, error) {
+	return rootfs.RootInfo{}, errors.New("not implemented")
+}
+
 func (r *commandTestRegistry) RenameRoot(string, string, string) (rootfs.RootInfo, error) {
 	return rootfs.RootInfo{}, nil
 }
@@ -2245,6 +2294,10 @@ func (r *multiRootSearchTestRegistry) RemoveRoot(string) (rootfs.RootInfo, error
 	return rootfs.RootInfo{}, nil
 }
 
+func (r *multiRootSearchTestRegistry) UpdateDisplayName(string, string) (rootfs.RootInfo, error) {
+	return rootfs.RootInfo{}, errors.New("not implemented")
+}
+
 func (r *multiRootSearchTestRegistry) RenameRoot(string, string, string) (rootfs.RootInfo, error) {
 	return rootfs.RootInfo{}, nil
 }
@@ -2303,6 +2356,10 @@ func (*renameManagedDirTestRegistry) UpsertRoot(string) (rootfs.RootInfo, error)
 
 func (*renameManagedDirTestRegistry) RemoveRoot(string) (rootfs.RootInfo, error) {
 	return rootfs.RootInfo{}, nil
+}
+
+func (r *renameManagedDirTestRegistry) UpdateDisplayName(string, string) (rootfs.RootInfo, error) {
+	return rootfs.RootInfo{}, errors.New("not implemented")
 }
 
 func (r *renameManagedDirTestRegistry) RenameRoot(rootID, name, rootPath string) (rootfs.RootInfo, error) {
