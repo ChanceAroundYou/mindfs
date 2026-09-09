@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import ts from "typescript";
+import vm from "node:vm";
 
 const sessionServicePath = path.resolve(import.meta.dirname, "../src/services/session.ts");
 const sessionViewerPath = path.resolve(import.meta.dirname, "../src/components/SessionViewer.tsx");
@@ -115,5 +117,106 @@ assert.equal(getSessionMaxSeq({ exchanges: [] }), 0);
   setWindowedView("k2", false);
   assert.equal(isWindowedView("k2"), false);
 }
+
+// ── F1: mergeWindowedTail 真行为断言（2026-09-09 窗口化回归修复）────────
+// 旧过滤条件 s>0 && s>maxSeq 把没有 seq 的在途轮次挡在窗外：长会话生成中用户消息/thinking/
+// 流式文本不显示，点同步才见（commit ebcfc39 引入的窗口化回归）。
+const mergeSrc = fs.readFileSync(
+  path.resolve(import.meta.dirname, "../src/services/sessionWindowMerge.ts"),
+  "utf8",
+);
+assert.match(mergeSrc, /export function mergeWindowedTail\(/, "mergeWindowedTail missing");
+const compiledMerge = ts.transpileModule(mergeSrc, {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
+}).outputText;
+const mergeSandbox = { exports: {}, module: { exports: {} } };
+vm.runInNewContext(compiledMerge, mergeSandbox, { filename: "sessionWindowMerge.ts" });
+const { mergeWindowedTail } = mergeSandbox.exports;
+
+// 1) 瞬时尾巴（seq=0）并入，排在持久化部分之后
+{
+  const prev = [{ seq: 1, content: "u1" }, { seq: 2, content: "a1" }];
+  const incoming = [
+    { seq: 1, content: "u1" }, { seq: 2, content: "a1" },
+    { seq: 0, content: "user2" }, { seq: 0, content: "thinking2" }, { seq: 0, content: "agent2" },
+  ];
+  const r = mergeWindowedTail(prev, incoming, 2);
+  assert.equal(r.changed, true);
+  assert.equal(
+    r.exchanges.map((e) => e.content).join("|"),
+    "u1|a1|user2|thinking2|agent2",
+  );
+}
+// 2) 内容增长：瞬时尾巴整体替换（不重复、不乱序）
+{
+  const prev = [{ seq: 1, content: "u1" }, { seq: 2, content: "a1" }, { seq: 0, content: "agent2-partial" }];
+  const incoming = [
+    { seq: 1, content: "u1" }, { seq: 2, content: "a1" },
+    { seq: 0, content: "agent2-partial+more" },
+  ];
+  const r = mergeWindowedTail(prev, incoming, 2);
+  assert.equal(
+    r.exchanges.map((e) => e.content).join("|"),
+    "u1|a1|agent2-partial+more",
+  );
+}
+// 3) 重连回放的持久化补齐（seq>maxSeq）归并 + 瞬时在末尾
+{
+  const prev = [{ seq: 3, content: "a3" }, { seq: 0, content: "stale-transient" }];
+  const incoming = [
+    { seq: 4, content: "u4" }, { seq: 5, content: "a5" },
+    { seq: 0, content: "live" },
+  ];
+  const r = mergeWindowedTail(prev, incoming, 3);
+  assert.equal(
+    r.exchanges.map((e) => e.content).join("|"),
+    "a3|u4|a5|live",
+  );
+}
+// 4) 无新内容：changed=false 且返回原数组
+{
+  const prev = [{ seq: 1 }, { seq: 2 }];
+  const r = mergeWindowedTail(prev, [{ seq: 1 }, { seq: 2 }], 2);
+  assert.equal(r.changed, false);
+  assert.equal(r.exchanges, prev);
+}
+// 5) 已见 seq 不重复并入；stale transient 被丢弃
+{
+  const prev = [{ seq: 3, content: "a3" }];
+  const r = mergeWindowedTail(prev, [{ seq: 3, content: "a3" }, { seq: 0, content: "t" }], 3);
+  assert.equal(r.exchanges.map((e) => e.content).join("|"), "a3|t");
+}
+
+// ── F2: done 后窗口重锚定 ──────────────────────────────────────────────
+assert.match(
+  viewerSrc,
+  /streamingEdgeRef\.current = \{ key: sessionKey, value: isStreaming \}/,
+  "F2 streaming edge tracking missing",
+);
+assert.match(
+  viewerSrc,
+  /if \(sessionService\.isSessionStreaming\(sessionKey\)\) \{/,
+  "F2 active-stream guard missing",
+);
+
+// ── F3: meta.updated 新 key → replace 重拉 ─────────────────────────────
+const appSrc = fs.readFileSync(path.resolve(import.meta.dirname, "../src/App.tsx"), "utf8");
+assert.match(appSrc, /const listHasKey = sessionsRef\.current\.some\(/, "F3 listHasKey missing");
+assert.match(
+  appSrc,
+  /\} else \{\s*\n\s*void loadSessionsForRoot\(rootID, \{ replace: true \}\);\s*\n\s*\}\s*\n\s*if \(multiProjectSessionsEnabled\) \{/,
+  "F3 new-key replace branch missing",
+);
+
+// ── F4: 列表拉取失败可见 ───────────────────────────────────────────────
+assert.match(
+  appSrc,
+  /reportError\(\s*\n\s*"session\.list_load_failed"/,
+  "F4 reportError missing",
+);
+const zhSrc = fs.readFileSync(path.resolve(import.meta.dirname, "../src/i18n/locales/zh-CN.ts"), "utf8");
+const enSrc = fs.readFileSync(path.resolve(import.meta.dirname, "../src/i18n/locales/en-US.ts"), "utf8");
+assert.ok(zhSrc.includes("error.session.listLoadFailed"), "zh locale key missing");
+assert.ok(enSrc.includes("error.session.listLoadFailed"), "en locale key missing");
 
 console.log("session-window.test.mjs: OK");

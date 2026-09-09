@@ -745,6 +745,7 @@ export const enUS = {
   "error.session.renameFailed": "Failed to rename session",
   "error.session.pinFailed": "Failed to update session pin",
   "error.session.syncFailed": "Failed to sync session",
+  "error.session.listLoadFailed": "Failed to refresh session list",
   "error.session.slashCommandFailed": "Command failed",
   "error.app.initFailed": "Initialization failed",
   "error.root.createFailed": "Failed to create project",

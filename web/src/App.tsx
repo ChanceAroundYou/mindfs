@@ -5021,6 +5021,13 @@ export function App({ onGoHome }: AppProps) {
       } catch (err) {
         if ((err as any)?.name === "AbortError") return;
         if (controller.signal.aborted) return;
+        // 列表拉取失败不再静默：WS 抖动时列表会停留旧状态（2026-09-09 排查），
+        // 可见告警让用户知道需要手动同步。
+        reportError(
+          "session.list_load_failed",
+          String((err as Error)?.message || err),
+          { severity: "warning", recoverable: true },
+        );
       }
     },
     [getNodeIdForRoot],
@@ -10927,11 +10934,22 @@ export function App({ onGoHome }: AppProps) {
             if (relatedWorktreePath) {
               void refreshTaskWorktree(rootID, relatedWorktreePath, false);
             }
-            const newest = sessionsRef.current[0]?.updated_at || "";
-            void loadSessionsForRoot(
-              rootID,
-              newest ? { afterTime: newest } : { replace: true },
+            // afterTime 增量按 updated_at 严格大于排除刚创建/刚更新的会话（乐观项 timestamp 与
+            // 服务端 updated_at 的竞态，session.done 处有同款注释）：新 key 首次经 WS 露面时
+            // 必须 replace 全量重拉，否则要等手动同步才出现在列表里。
+            const listHasKey = sessionsRef.current.some(
+              (item) =>
+                String(item.key || item.session_key || "") === sessionKey,
             );
+            if (listHasKey) {
+              const newest = sessionsRef.current[0]?.updated_at || "";
+              void loadSessionsForRoot(
+                rootID,
+                newest ? { afterTime: newest } : { replace: true },
+              );
+            } else {
+              void loadSessionsForRoot(rootID, { replace: true });
+            }
             if (multiProjectSessionsEnabled) {
               void loadMultiProjectSessionGroups();
             }

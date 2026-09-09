@@ -12,6 +12,7 @@ export type ErrorCode =
   | "session.rename_failed"
   | "session.pin_failed"
   | "session.sync_failed"
+  | "session.list_load_failed"
   | "session.slash_command_failed"
   | "app.init_failed"
   // Root/project errors
@@ -163,6 +164,11 @@ class ErrorService {
       "session.sync_failed": {
         messageKey: "error.session.syncFailed",
         severity: "error",
+        recoverable: true,
+      },
+      "session.list_load_failed": {
+        messageKey: "error.session.listLoadFailed",
+        severity: "warning",
         recoverable: true,
       },
       "session.slash_command_failed": {

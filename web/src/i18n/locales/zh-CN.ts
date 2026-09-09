@@ -743,6 +743,7 @@ export const zhCN = {
   "error.session.renameFailed": "重命名会话失败",
   "error.session.pinFailed": "更新会话置顶失败",
   "error.session.syncFailed": "同步会话失败",
+  "error.session.listLoadFailed": "会话列表刷新失败",
   "error.session.slashCommandFailed": "命令执行失败",
   "error.app.initFailed": "初始化失败",
   "error.root.createFailed": "创建项目失败",

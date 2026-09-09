@@ -11,12 +11,17 @@ import { getRootNodeId } from "../services/rootNode";
 import {
   clearWindowedView,
   getSessionWindow,
+  sessionService,
   setWindowedView,
   type ExchangeAux,
   type RelatedFile,
   type SessionWindowMeta,
   type ToolCall,
 } from "../services/session";
+import {
+  mergeWindowedTail,
+  type MergeableExchange,
+} from "../services/sessionWindowMerge";
 import { savePrompt } from "../services/prompts";
 import { reportError } from "../services/error";
 import { rootBadgeButtonStyle } from "./rootBadgeStyle";
@@ -1298,15 +1303,14 @@ function SessionViewerInner({
         }
         return incoming as ExchangeArray;
       }
-      const seen = new Set(prev.map((e) => Number((e as any)?.seq || 0)));
-      const fresh = incoming.filter((e) => {
-        const s = Number((e as any)?.seq || 0);
-        return s > 0 && s > windowMeta.maxSeq && !seen.has(s);
-      });
-      if (!fresh.length) return prev;
-      return [...prev, ...fresh].sort(
-        (a, b) => Number((a as any)?.seq || 0) - Number((b as any)?.seq || 0),
+      // 瞬时尾部（seq=0，在途轮次：用户消息/thinking/流式文本）在窗口模式下同样必须可见，
+      // 否则长会话生成过程中整个在途轮次被挡在窗外、点同步才见（见 sessionWindowMerge.ts 注释）。
+      const merged = mergeWindowedTail(
+        prev as MergeableExchange[],
+        incoming as MergeableExchange[],
+        windowMeta.maxSeq,
       );
+      return merged.changed ? (merged.exchanges as ExchangeArray) : prev;
     });
     setVisibleAux((prev) => {
       const src = (session?.exchange_aux || {}) as Record<string, ExchangeAux[]>;
@@ -1323,6 +1327,38 @@ function SessionViewerInner({
       return next;
     });
   }, [session?.exchanges, session?.exchange_aux, windowMeta]);
+
+  // done 后窗口重锚定（方案 B）：isStreaming 真→假（message_done）时整窗重拉一次，把瞬时
+  // 尾巴换成持久化版本（无重复），断连间隙丢的 chunk 一并自愈。切会话/首轮渲染不触发；
+  // 队列消息下一轮已开始（isSessionStreaming）则跳过，避免与新轮次的流式状态竞态。
+  const streamingEdgeRef = useRef<{ key: string | null; value: boolean }>({
+    key: null,
+    value: false,
+  });
+  useEffect(() => {
+    const prevEdge = streamingEdgeRef.current;
+    streamingEdgeRef.current = { key: sessionKey, value: isStreaming };
+    const sameKey = prevEdge.key === sessionKey;
+    if (!sameKey || prevEdge.value === isStreaming) {
+      return;
+    }
+    if (isStreaming || !sessionKey) {
+      return;
+    }
+    if (sessionService.isSessionStreaming(sessionKey)) {
+      return;
+    }
+    let cancelled = false;
+    getSessionWindow(rootId || "", sessionKey, { latest: 50, nodeId: sessionNodeId })
+      .then((res) => {
+        if (cancelled || !res) return;
+        applyWindow(res);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [isStreaming, sessionKey, rootId, sessionNodeId, applyWindow]);
 
   const userMessageSummaries = useMemo(
     () =>
