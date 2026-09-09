@@ -1138,12 +1138,31 @@ function SessionViewerInner({
   // 方案 C：overlay 尾巴 = App 缓存的 seq=0 瞬时尾部（在途轮次：用户消息/thinking/流式文本/
   // 工具调用 exchange），只读派生、永不合并回窗口。窗口是唯一持久化源，只在 init 拉取 /
   // 翻页前插 / 重锚定（_windowMeta）时整体替换——全流程无 seq 合并，杜绝挡尾与重复两类回归。
+  // 自愈裁剪（陈旧 overlay）：切走期间轮次已持久化（窗口 maxSeq 前进到 N）而缓存仍持 seq=0
+  // 拷贝（错过 done 重锚定：手机后台错过 WS done / 非查看会话的 done 不重载缓存）时，
+  // 窗口与 overlay 会显示同一轮次两次。按位次丢弃 overlay 头部 K 条
+  // （K = windowMeta.maxSeq - cacheMaxSeq）：seq 严格递增，K>0 即缓存落后服务端 K 个已
+  // 持久化轮次，其 seq=0 尾巴前 K 条恰为陈旧拷贝；正常流式中 K=0 不动。只读派生不写回
+  // 缓存，避免覆盖其它标签页可能正在流式写入的持久化缓存。
+  const cacheMaxSeq = useMemo(() => {
+    let max = 0;
+    const exs = Array.isArray(session?.exchanges)
+      ? (session.exchanges as ExchangeArray)
+      : ([] as ExchangeArray);
+    for (const ex of exs) {
+      const seq = Number((ex as any)?.seq || 0);
+      if (seq > max) max = seq;
+    }
+    return max;
+  }, [session?.exchanges]);
   const tailOverlay = useMemo(() => {
     const exs = Array.isArray(session?.exchanges)
       ? (session.exchanges as ExchangeArray)
       : ([] as ExchangeArray);
-    return exs.filter((e) => Number((e as any)?.seq || 0) === 0);
-  }, [session?.exchanges]);
+    const transient = exs.filter((e) => Number((e as any)?.seq || 0) === 0);
+    const staleCount = Math.max(0, windowMeta.maxSeq - cacheMaxSeq);
+    return staleCount > 0 ? transient.slice(staleCount) : transient;
+  }, [session?.exchanges, windowMeta.maxSeq, cacheMaxSeq]);
   const composedExchanges = useMemo(
     () => [...visibleExchanges, ...tailOverlay],
     [visibleExchanges, tailOverlay],

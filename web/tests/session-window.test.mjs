@@ -139,6 +139,17 @@ assert.match(
   /const composedExchanges = useMemo\(\s*\n\s*\(\) => \[\.\.\.visibleExchanges, \.\.\.tailOverlay\],/,
   "composed window+overlay input missing",
 );
+// 自愈裁剪：切走期间完成→窗口 seq=N vs 缓存 seq=0 拷贝并存 → 按位次丢弃 overlay 头部 K 条
+assert.match(
+  viewerSrc,
+  /const staleCount = Math\.max\(0, windowMeta\.maxSeq - cacheMaxSeq\);/,
+  "stale overlay trim (windowMeta.maxSeq vs cacheMaxSeq) missing",
+);
+assert.match(
+  viewerSrc,
+  /transient\.slice\(staleCount\)/,
+  "overlay trim must drop first K stale transient items",
+);
 // init 种子只取持久化部分，避免与 overlay 重复
 assert.match(
   viewerSrc,
