@@ -30,8 +30,18 @@ function localBaseURL(): string {
   return "";
 }
 
+// "local" 节点 = “当前设备”节点：其 URL 必须按当前设备推导，共享列表里持久化的 local URL
+// 是某台设备写入的，对其它设备必然错误（实测：手机写入 local→home URL，PC 端解析
+// nodeId="local" 全部路由到 home 服务器）。web 用当前 origin；原生壳 origin（capacitor://…）
+// 不可直接 fetch，留空走相对路径/原生代理，天然指向当前连接的服务器。
+function deviceLocalNodeURL(): string {
+  const base = localBaseURL();
+  if (!base || !/^https?:\/\//i.test(base)) return "";
+  return base;
+}
+
 function makeLocalNode(): NodeConnection {
-  return { id: LOCAL_NODE_ID, name: "local", url: localBaseURL(), color: PALETTE[0] };
+  return { id: LOCAL_NODE_ID, name: "local", url: deviceLocalNodeURL(), color: PALETTE[0] };
 }
 
 function nodeOriginKey(url: string): string {
@@ -89,7 +99,8 @@ function normalizeAndDedup(list: any[]): NodeConnection[] {
     }
   }
   const local = nodes.find((n) => n.id === LOCAL_NODE_ID);
-  if (local && !local.url) local.url = localBaseURL();
+  // 读取时强制按当前设备推导（见 deviceLocalNodeURL）：共享列表持久化的 local URL 不可信
+  if (local) local.url = deviceLocalNodeURL();
   return nodes;
 }
 
@@ -193,7 +204,7 @@ export function ensureLocalNode(): NodeConnection {
     nodes.unshift(local);
     void setNodes(nodes);
   } else if (!local.url) {
-    local.url = localBaseURL();
+    local.url = deviceLocalNodeURL();
     void setNodes(nodes);
   }
   return local;

@@ -111,6 +111,11 @@ function resolveNodeBaseURL(nodeId?: string): string {
   if (nodeId) {
     const node = getNodeById(nodeId);
     if (node?.url) return normalizeExplicitNodeBase(node.url);
+    // 显式 nodeId 解析失败（节点被删/重加后旧 id、注册表未同步完成）时不回退 active node：
+    // 静默回退会把请求发给错误节点（实测：其它节点会话的窗口拉取/关联文件 diff 串到当前节点）。
+    // 返回空串让调用链落到“当前连接服务器”（origin/原生代理路径），与 UI 连接上下文一致。
+    console.warn("[node-routing] explicit nodeId unresolvable, falling back to connected server", { nodeId });
+    return "";
   }
   const active = getActiveNode();
   if (active?.url) return normalizeExplicitNodeBase(active.url);

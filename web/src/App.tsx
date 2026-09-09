@@ -12300,6 +12300,8 @@ export function App({ onGoHome }: AppProps) {
     (selectedSession?.root_id as string | undefined) ||
     currentRootId;
   const relatedSessionKey = relatedSessionSnapshot?.key || relatedSessionSnapshot?.session_key;
+  const relatedSessionNodeId =
+    String((relatedSessionSnapshot as any)?._nodeId || "").trim() || undefined;
   const relatedSelectedPath = gitDiff?.path || file?.path || "";
   const relatedWorktree = selectedKanbanTask?.worktree_path
     ? {
@@ -12700,6 +12702,7 @@ export function App({ onGoHome }: AppProps) {
     relatedSessionRootId || currentRootId,
     selectedSessionRelatedFiles,
     gitStatsRefreshKey,
+    relatedSessionNodeId,
   );
   const renderRootRelatedContent = (root: string): React.ReactNode => {
     if (!root || root !== currentRootId || root !== relatedSessionRootId) {

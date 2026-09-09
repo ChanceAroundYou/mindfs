@@ -1060,6 +1060,10 @@ function SessionViewerInner({
   const userSummaryListRef = useRef<HTMLDivElement | null>(null);
   const relatedFilesDividerRef = useRef<HTMLDivElement | null>(null);
   const sessionKey = session?.key || session?.session_key || null;
+  // 会话归属节点：窗口拉取/图片等请求须路由到会话所在节点。同名根（如两台机器都有
+  // root "mindfs"）仅凭裸 rootId 查裸键映射会串到另一节点（实测窗口 GET 404）。
+  const sessionNodeId =
+    String((session as any)?._nodeId || "").trim() || undefined;
   // 方案 B（超长会话窗口化）：可视数据以可见窗口为准，初始用全量/窗口做首帧，
   // 随后由 getSessionWindow({latest:50}) 覆盖（见下方初始化 effect）。
   const [visibleExchanges, setVisibleExchanges] = useState<ExchangeArray>(
@@ -1198,7 +1202,7 @@ function SessionViewerInner({
       setVisibleExchanges(incomingExs as ExchangeArray);
       setVisibleAux(incomingAux);
     }
-    getSessionWindow(rootId || "", sessionKey, { latest: 50 })
+    getSessionWindow(rootId || "", sessionKey, { latest: 50, nodeId: sessionNodeId })
       .then((res) => {
         if (cancelled) return;
         applyWindow(res);
@@ -1228,6 +1232,7 @@ function SessionViewerInner({
     getSessionWindow(rootId || "", sessionKey, {
         beforeSeq: windowMeta.minSeq,
         limit: 50,
+        nodeId: sessionNodeId,
       })
       .then((res) => {
         if (!res) {
@@ -1641,6 +1646,7 @@ function SessionViewerInner({
       getSessionWindow(rootId || "", sessionKey, {
           beforeSeq: targetSeq + 25,
           limit: 50,
+          nodeId: sessionNodeId,
         })
         .then((res) => {
           if (!res) return;
@@ -1712,6 +1718,7 @@ function SessionViewerInner({
     rootId,
     relatedFiles,
     gitStatsRefreshKey,
+    sessionNodeId,
   );
   const scrollToRelatedFilesDivider = (behavior: ScrollBehavior = "auto") => {
     const container = activeScrollRef?.current;
