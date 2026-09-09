@@ -3465,6 +3465,9 @@ export function App({ onGoHome }: AppProps) {
     [rootSessionKey],
   );
 
+  // 方案 C 重锚定序号：每次 restoreActiveSession 换窗时递增，viewer 按 _anchoredAt 一次性应用。
+  const anchorSeqRef = useRef(0);
+
   const restoreActiveSession = useCallback(
     async (
       rootID: string | null | undefined,
@@ -3533,7 +3536,14 @@ export function App({ onGoHome }: AppProps) {
               serverPending === false
                 ? false
                 : resolvePendingForSession(resolvedRoot, resolvedKey, !!serverPending);
-            const toCache = { ...sess, key: resolvedKey, pending } as Session;
+            const anchorAt = ++anchorSeqRef.current;
+            const toCache = {
+              ...sess,
+              key: resolvedKey,
+              pending,
+              _windowMeta: win.meta,
+              _anchoredAt: anchorAt,
+            } as Session;
             sessionCacheRef.current[cacheKey] = toCache;
             bumpCacheVersion();
             await sessionService.markSessionReady(resolvedRoot, resolvedKey);
@@ -3589,10 +3599,24 @@ export function App({ onGoHome }: AppProps) {
           serverPending === false
             ? false
             : resolvePendingForSession(resolvedRoot, resolvedKey, !!serverPending);
+        const anchorAt = ++anchorSeqRef.current;
+        const anchoredExs = Array.isArray((fullSession as any)?.exchanges)
+          ? ((fullSession as any).exchanges as any[])
+          : [];
+        const anchoredMeta = {
+          total: anchoredExs.length,
+          hasMore: false,
+          minSeq: anchoredExs.length ? Number(anchoredExs[0]?.seq || 0) : 0,
+          maxSeq: anchoredExs.length
+            ? Number(anchoredExs[anchoredExs.length - 1]?.seq || 0)
+            : 0,
+        };
         sessionCacheRef.current[cacheKey] = {
           ...(fullSession as any),
           key: resolvedKey,
           pending,
+          _windowMeta: anchoredMeta as any,
+          _anchoredAt: anchorAt,
         } as Session;
         bumpCacheVersion();
         await sessionService.markSessionReady(resolvedRoot, resolvedKey);
@@ -3600,6 +3624,8 @@ export function App({ onGoHome }: AppProps) {
           ...(fullSession as any),
           key: resolvedKey,
           pending,
+          _windowMeta: anchoredMeta as any,
+          _anchoredAt: anchorAt,
         } as Session;
       })();
       loadingSessionRef.current[cacheKey] = promise as any;

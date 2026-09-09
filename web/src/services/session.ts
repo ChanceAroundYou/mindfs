@@ -328,6 +328,8 @@ class SessionService {
   private connectTimeoutTimer: number | null = null;
   private probeTimeoutTimer: number | null = null;
   private activeProbeId: string | null = null;
+  // 连续 probe 超时计数：达到 2 次才强断重连；收到任何消息即清零（handleMessage 顶部）。
+  private probeFailures = 0;
   private connectingStartedAt = 0;
   private openingSocket = false;
   private reconnectDelayMs = 1000;
@@ -340,7 +342,7 @@ class SessionService {
   private readonly fastReconnectDelayMs = 1000;
   private readonly fastReconnectWindowMs = 10000;
   private readonly connectTimeoutMs = 5000;
-  private readonly probeTimeoutMs = 2000;
+  private readonly probeTimeoutMs = 8000;
   private readonly reconnectWatchdogMs = 3000;
   private contextCache = new Map<string, { selectionKey: string }>();
 
@@ -623,9 +625,18 @@ class SessionService {
     });
     this.probeTimeoutTimer = window.setTimeout(() => {
       if (this.activeProbeId !== probeId) return;
-      console.warn("[Session] WebSocket probe timed out, reconnecting");
+      // 连续 2 次 probe 超时才强断重连：上游 2s 一票否决在手机路径（5G/端口转发）上
+      // 造成 1005 churn 与死亡间隙（journal 2026-09-09）。收到任何消息即清零。
+      this.probeFailures += 1;
+      console.warn(
+        "[Session] WebSocket probe timed out",
+        { failures: this.probeFailures },
+      );
       this.clearProbe();
-      this.reconnectNow();
+      if (this.probeFailures >= 2) {
+        this.probeFailures = 0;
+        this.reconnectNow();
+      }
     }, this.probeTimeoutMs);
   }
 
@@ -683,6 +694,12 @@ class SessionService {
   }
 
   private handleMessage(msg: any) {
+    // 收到任何消息（含 pong）即证明连接存活：清零 probe 失败计数并取消在途 probe 超时，
+    // probe 放宽（8s+连续 2 次）才重连。journal 实证上游 2s 一票否决在手机路径上抖动严重。
+    this.probeFailures = 0;
+    if (this.activeProbeId) {
+      this.clearProbe();
+    }
     const type = msg.type as string;
     const payload = msg.payload || {};
     if (type === "pong") {

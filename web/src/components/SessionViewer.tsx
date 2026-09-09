@@ -17,10 +17,6 @@ import {
   type SessionWindowMeta,
   type ToolCall,
 } from "../services/session";
-import {
-  mergeWindowedTail,
-  type MergeableExchange,
-} from "../services/sessionWindowMerge";
 import { savePrompt } from "../services/prompts";
 import { reportError } from "../services/error";
 import { rootBadgeButtonStyle } from "./rootBadgeStyle";
@@ -1086,9 +1082,22 @@ function SessionViewerInner({
   const topSentinelRef = useRef<HTMLDivElement>(null);
   const isPrependingRef = useRef(false);
   const isAwaiting = !!(session as any)?.pending;
+  // 方案 C：overlay 尾巴 = App 缓存的 seq=0 瞬时尾部（在途轮次：用户消息/thinking/流式文本/
+  // 工具调用 exchange），只读派生、永不合并回窗口。窗口是唯一持久化源，只在 init 拉取 /
+  // 翻页前插 / 重锚定（_windowMeta）时整体替换——全流程无 seq 合并，杜绝挡尾与重复两类回归。
+  const tailOverlay = useMemo(() => {
+    const exs = Array.isArray(session?.exchanges)
+      ? (session.exchanges as ExchangeArray)
+      : ([] as ExchangeArray);
+    return exs.filter((e) => Number((e as any)?.seq || 0) === 0);
+  }, [session?.exchanges]);
+  const composedExchanges = useMemo(
+    () => [...visibleExchanges, ...tailOverlay],
+    [visibleExchanges, tailOverlay],
+  );
   const { timeline, isStreaming, streamVersion, streamStatusText } = useSessionStream(
     sessionKey,
-    visibleExchanges,
+    composedExchanges,
     visibleAux,
     session?.context_window,
     isAwaiting,
@@ -1187,25 +1196,18 @@ function SessionViewerInner({
     // 方案 B 首帧按需：避免先用全量做首帧导致长对话从头刷到尾。
     // 若外层传入的是全量（可能来自 App 旧缓存或网络全量兜底），此处仅取尾部 50 作首帧，
     // 随后 getSessionWindow({latest:50}) 会以服务端窗口覆盖，保持首帧 O(50)。
+    // 首帧种子只取持久化部分（seq>0）尾部 50；seq=0 瞬时尾巴由 overlay 派生展示，
+    // 避免种子与 overlay 重复显示同一轮次。
     const incomingExs = Array.isArray(session?.exchanges) ? (session.exchanges as ExchangeArray) : ([] as ExchangeArray);
-    const incomingAux = (session?.exchange_aux || {}) as Record<string, ExchangeAux[]>;
-    if (incomingExs.length > 50) {
-      const tail = incomingExs.slice(-50) as ExchangeArray;
-      const tailSeqs = new Set<number>();
-      for (const ex of tail) {
-        const s = Number((ex as any)?.seq || 0);
-        if (s > 0) tailSeqs.add(s);
-      }
-      const tailAux: Record<string, ExchangeAux[]> = {};
-      for (const [k, v] of Object.entries(incomingAux)) {
-        if (tailSeqs.has(Number(k))) tailAux[k] = v;
-      }
-      setVisibleExchanges(tail);
-      setVisibleAux(tailAux);
-    } else {
-      setVisibleExchanges(incomingExs as ExchangeArray);
-      setVisibleAux(incomingAux);
+    const persistedSeed = incomingExs.filter((e) => Number((e as any)?.seq || 0) > 0);
+    const seedExs = (persistedSeed.length > 50 ? persistedSeed.slice(-50) : persistedSeed) as ExchangeArray;
+    const seedAux: Record<string, ExchangeAux[]> = {};
+    const seedSeqs = new Set(seedExs.map((e) => Number((e as any)?.seq || 0)));
+    for (const [k, v] of Object.entries((session?.exchange_aux || {}) as Record<string, ExchangeAux[]>)) {
+      if (seedSeqs.has(Number(k))) seedAux[k] = v;
     }
+    setVisibleExchanges(seedExs);
+    setVisibleAux(seedAux);
     getSessionWindow(rootId || "", sessionKey, { latest: 50, nodeId: sessionNodeId })
       .then((res) => {
         if (cancelled) return;
@@ -1283,51 +1285,28 @@ function SessionViewerInner({
     return () => observer.disconnect();
   }, [windowMeta.hasMore, loadMore]);
 
-  // 流式尾部追加（方案 B 3.6）：窗口模式下仅把超出窗口 maxSeq 的新尾部 exchange/aux 并入
-  // 可视窗口（与 loadMore 的头部扩展正交，函数式更新避免覆盖）；非窗口（hasMore=false，含全量
-  // 兜底/小会话）则直接镜像 props 的 exchanges/aux，保证流式更新始终可见。
+  // 方案 C 重锚定（done/重连）：App 侧 restoreActiveSession 替换缓存并附 _windowMeta/_anchoredAt；
+  // 此处按锚点一次性原子换窗——窗口整体替换，overlay 尾巴自然清空（缓存尾巴已被 App 清掉）。
+  // 旧锚点不重复应用（App 的 spread 会把 _windowMeta 带到后续 cache 对象上）。
+  const lastAppliedAnchorRef = useRef<{ key: string | null; at: number }>({
+    key: null,
+    at: -1,
+  });
   useEffect(() => {
-    const incoming = Array.isArray(session?.exchanges) ? session.exchanges : [];
-    if (incoming.length === 0) return;
-    setVisibleExchanges((prev) => {
-      if (!windowMeta.hasMore) {
-        const prevMax = prev.length
-          ? prev.reduce((m, e) => Math.max(m, Number((e as any)?.seq || 0)), 0)
-          : 0;
-        const incMax = incoming.length
-          ? incoming.reduce((m, e) => Math.max(m, Number((e as any)?.seq || 0)), 0)
-          : 0;
-        if (prev.length === incoming.length && prevMax === incMax) {
-          return prev;
-        }
-        return incoming as ExchangeArray;
-      }
-      // 瞬时尾部（seq=0，在途轮次：用户消息/thinking/流式文本）在窗口模式下同样必须可见，
-      // 否则长会话生成过程中整个在途轮次被挡在窗外、点同步才见（见 sessionWindowMerge.ts 注释）。
-      const merged = mergeWindowedTail(
-        prev as MergeableExchange[],
-        incoming as MergeableExchange[],
-        windowMeta.maxSeq,
-      );
-      return merged.changed ? (merged.exchanges as ExchangeArray) : prev;
-    });
-    setVisibleAux((prev) => {
-      const src = (session?.exchange_aux || {}) as Record<string, ExchangeAux[]>;
-      if (!windowMeta.hasMore) {
-        return src;
-      }
-      const next = { ...prev };
-      // aux 只在服务端持久化后按 seq 键下发（流式期的工具调用/thinking 是 exchange 而非 aux），
-      // 故此处不收 seq=0——与 F1 的 exchange 合并刻意不同。
-      for (const [seq, items] of Object.entries(src)) {
-        const s = Number(seq);
-        if (s > windowMeta.maxSeq) {
-          next[seq] = items;
-        }
-      }
-      return next;
-    });
-  }, [session?.exchanges, session?.exchange_aux, windowMeta]);
+    const anchorAt = Number((session as any)?._anchoredAt || 0);
+    const anchorMeta = (session as any)?._windowMeta as
+      | SessionWindowMeta
+      | undefined;
+    if (!anchorAt || !anchorMeta || !sessionKey) {
+      return;
+    }
+    const last = lastAppliedAnchorRef.current;
+    if (last.key === sessionKey && last.at >= anchorAt) {
+      return;
+    }
+    lastAppliedAnchorRef.current = { key: sessionKey, at: anchorAt };
+    applyWindow({ session, meta: anchorMeta });
+  }, [session, sessionKey, applyWindow]);
 
   const userMessageSummaries = useMemo(
     () =>

@@ -44,7 +44,7 @@ assert.match(viewerSrc, /const \[visibleAux, setVisibleAux\]/, "visibleAux state
 assert.match(viewerSrc, /const \[windowMeta, setWindowMeta\]/, "windowMeta state missing");
 assert.match(viewerSrc, /const \[loadingMore, setLoadingMore\]/, "loadingMore state missing");
 assert.match(viewerSrc, /const topSentinelRef = useRef/, "topSentinelRef missing");
-assert.match(viewerSrc, /useSessionStream\(\s*\n?\s*sessionKey,\s*\n?\s*visibleExchanges,\s*\n?\s*visibleAux/, "useSessionStream should consume visibleExchanges/visibleAux");
+assert.match(viewerSrc, /useSessionStream\(\s*\n?\s*sessionKey,\s*\n?\s*composedExchanges,\s*\n?\s*visibleAux/, "useSessionStream should consume composed window+overlay");
 assert.match(viewerSrc, /getSessionWindow/, "initial window fetch missing");
 assert.match(viewerSrc, /latest:\s*50/, "latest:50 window fetch missing");
 assert.match(viewerSrc, /const loadMore = useCallback/, "loadMore callback missing");
@@ -118,80 +118,91 @@ assert.equal(getSessionMaxSeq({ exchanges: [] }), 0);
   assert.equal(isWindowedView("k2"), false);
 }
 
-// ── F1: mergeWindowedTail 真行为断言（2026-09-09 窗口化回归修复）────────
-// 旧过滤条件 s>0 && s>maxSeq 把没有 seq 的在途轮次挡在窗外：长会话生成中用户消息/thinking/
-// 流式文本不显示，点同步才见（commit ebcfc39 引入的窗口化回归）。
-const mergeSrc = fs.readFileSync(
-  path.resolve(import.meta.dirname, "../src/services/sessionWindowMerge.ts"),
-  "utf8",
+// ── 方案 C：单窗口 + 只读尾巴 overlay（2026-09-09 重构，替代 seq 合并模型）────
+// 数据流：视图 = [窗口（唯一持久化源，只整体替换：init/翻页/重锚定）]
+//        + [overlay 尾巴（App 缓存 seq=0 瞬时尾部，只读派生）]。全流程无 seq 合并。
+// mergeWindowedTail 已删除；不得回归为 seq 过滤合并模型。
+const appSrc = fs.readFileSync(path.resolve(import.meta.dirname, "../src/App.tsx"), "utf8");
+assert.ok(
+  !fs.existsSync(path.resolve(import.meta.dirname, "../src/services/sessionWindowMerge.ts")),
+  "sessionWindowMerge.ts must stay deleted",
 );
-assert.match(mergeSrc, /export function mergeWindowedTail\(/, "mergeWindowedTail missing");
-const compiledMerge = ts.transpileModule(mergeSrc, {
-  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
-}).outputText;
-const mergeSandbox = { exports: {}, module: { exports: {} } };
-vm.runInNewContext(compiledMerge, mergeSandbox, { filename: "sessionWindowMerge.ts" });
-const { mergeWindowedTail } = mergeSandbox.exports;
+assert.doesNotMatch(viewerSrc, /mergeWindowedTail/, "seq merge model must not return");
+// overlay 尾巴派生 + 组合输入
+assert.match(
+  viewerSrc,
+  /const tailOverlay = useMemo\(\(\) => \{[\s\S]*?exs\.filter\(\(e\) => Number\(\(e as any\)\?\.seq \|\| 0\) === 0\)/,
+  "tail overlay (seq=0 derived from cache) missing",
+);
+assert.match(
+  viewerSrc,
+  /const composedExchanges = useMemo\(\s*\n\s*\(\) => \[\.\.\.visibleExchanges, \.\.\.tailOverlay\],/,
+  "composed window+overlay input missing",
+);
+// init 种子只取持久化部分，避免与 overlay 重复
+assert.match(
+  viewerSrc,
+  /const persistedSeed = incomingExs\.filter\(\(e\) => Number\(\(e as any\)\?\.seq \|\| 0\) > 0\);/,
+  "init seed must be persisted-only (overlay owns the seq=0 tail)",
+);
+// 重锚定：App 附锚点，viewer 一次性原子换窗
+assert.match(
+  viewerSrc,
+  /const anchorAt = Number\(\(session as any\)\?._anchoredAt \|\| 0\);/,
+  "anchor effect (_anchoredAt) missing",
+);
+assert.match(
+  viewerSrc,
+  /lastAppliedAnchorRef\.current = \{ key: sessionKey, at: anchorAt \};/,
+  "anchor one-shot guard missing",
+);
+assert.match(
+  appSrc,
+  /_windowMeta: win\.meta,/,
+  "App window path must attach _windowMeta",
+);
+assert.match(
+  appSrc,
+  /_anchoredAt: anchorAt,/,
+  "App must attach _anchoredAt",
+);
+assert.match(
+  appSrc,
+  /const anchorSeqRef = useRef\(0\);/,
+  "App anchor counter missing",
+);
+assert.match(
+  appSrc,
+  /_windowMeta: anchoredMeta as any,/,
+  "App fallback path must attach locally-computed meta",
+);
 
-// 1) 瞬时尾巴（seq=0）并入，排在持久化部分之后
-{
-  const prev = [{ seq: 1, content: "u1" }, { seq: 2, content: "a1" }];
-  const incoming = [
-    { seq: 1, content: "u1" }, { seq: 2, content: "a1" },
-    { seq: 0, content: "user2" }, { seq: 0, content: "thinking2" }, { seq: 0, content: "agent2" },
-  ];
-  const r = mergeWindowedTail(prev, incoming, 2);
-  assert.equal(r.changed, true);
-  assert.equal(
-    r.exchanges.map((e) => e.content).join("|"),
-    "u1|a1|user2|thinking2|agent2",
-  );
-}
-// 2) 内容增长：瞬时尾巴整体替换（不重复、不乱序）
-{
-  const prev = [{ seq: 1, content: "u1" }, { seq: 2, content: "a1" }, { seq: 0, content: "agent2-partial" }];
-  const incoming = [
-    { seq: 1, content: "u1" }, { seq: 2, content: "a1" },
-    { seq: 0, content: "agent2-partial+more" },
-  ];
-  const r = mergeWindowedTail(prev, incoming, 2);
-  assert.equal(
-    r.exchanges.map((e) => e.content).join("|"),
-    "u1|a1|agent2-partial+more",
-  );
-}
-// 3) 重连回放的持久化补齐（seq>maxSeq）归并 + 瞬时在末尾
-{
-  const prev = [{ seq: 3, content: "a3" }, { seq: 0, content: "stale-transient" }];
-  const incoming = [
-    { seq: 4, content: "u4" }, { seq: 5, content: "a5" },
-    { seq: 0, content: "live" },
-  ];
-  const r = mergeWindowedTail(prev, incoming, 3);
-  assert.equal(
-    r.exchanges.map((e) => e.content).join("|"),
-    "a3|u4|a5|live",
-  );
-}
-// 4) 无新内容：changed=false 且返回原数组
-{
-  const prev = [{ seq: 1 }, { seq: 2 }];
-  const r = mergeWindowedTail(prev, [{ seq: 1 }, { seq: 2 }], 2);
-  assert.equal(r.changed, false);
-  assert.equal(r.exchanges, prev);
-}
-// 5) 已见 seq 不重复并入；stale transient 被丢弃
-{
-  const prev = [{ seq: 3, content: "a3" }];
-  const r = mergeWindowedTail(prev, [{ seq: 3, content: "a3" }, { seq: 0, content: "t" }], 3);
-  assert.equal(r.exchanges.map((e) => e.content).join("|"), "a3|t");
-}
+// ── R4: probe 放宽（8s + 连续 2 次失败才强断，收消息清零）────────────────
+assert.match(
+  sessionSrc,
+  /private readonly probeTimeoutMs = 8000;/,
+  "probeTimeoutMs must be relaxed to 8s (2s one-strike caused 1005 churn)",
+);
+assert.match(
+  sessionSrc,
+  /private probeFailures = 0;/,
+  "consecutive probe failure counter missing",
+);
+assert.match(
+  sessionSrc,
+  /if \(this\.probeFailures >= 2\) \{[\s\S]*?this\.reconnectNow\(\);/,
+  "reconnect only after 2 consecutive probe failures",
+);
+assert.match(
+  sessionSrc,
+  /this\.probeFailures = 0;\s*\n\s*if \(this\.activeProbeId\) \{\s*\n\s*this\.clearProbe\(\);/,
+  "handleMessage must reset probe failures on any message",
+);
 
 // ── F2: done 后重锚定（App 级，走既有 restoreActiveSession 路径）────────
 // 注意：不能只在 SessionViewer 视图内重拉窗口——applyWindow 替换可视数据后，App 缓存里
 // 残留的 seq=0 瞬时轮次会被合并 effect 重新追加 → 最后一轮显示两次。必须在 App 层经
 // restoreActiveSession 替换缓存（服务端窗口无 seq=0 时 localTransient 不回填，瞬时被清）。
-const appSrc = fs.readFileSync(path.resolve(import.meta.dirname, "../src/App.tsx"), "utf8");
 assert.match(
   appSrc,
   /getReplayTargetsForRoot\(rootID\)\.includes\(sessionKey\) &&\s*\n\s*!sessionService\.isSessionStreaming\(sessionKey\)\s*\n\s*\) \{\s*\n\s*void reloadSessionForReplay\(rootID, sessionKey\);/,
