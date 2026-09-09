@@ -1,10 +1,28 @@
 # MindFS 上游定制清单与评估（改动级互斥）
 
+> **当前基准：`v0.5.1`（2026-09-10 合并，`56d130f` 双 parent）。** 本文档 §1-§3 分组为 v0.4.7→v0.4.9 时代沉淀，机制仍适用；v0.5.1 合并记录见 §0。
+>
 > 基准: `upstream/main` 标签 `v0.4.7` — `18b10cab75e2f72af24666c6de7ae4a411f63daa`（2026-08-13 update readme）
 > 对比: `HEAD = 0591238`（2026-08-26）/ `origin/main = 3d3417a`
 > 口径: `git log --reverse 18b10ca..HEAD` 共 **44** 可达提交（含 1 merge `64f96e8`），`git diff 18b10ca...HEAD` 110 文件 `+8333/-4249`；未提交 6 文件 `+286/-45`
 > 分组原则: **按 hunk 归类**——同一提交、同一文件不同行可归不同组；每行改动仅属一组，组间互斥、全体完备。
 > 判定: `git show --numstat/--stat` 逐提交核验 + `git diff HEAD` 逐 hunk 归类，`git cherry -v` 校验上游等价。
+
+---
+
+## 0. v0.5.1 合并记录（2026-09-10）
+
+- **Merge commit `56d130f`**（双 parent：本地 `5841704` × 上游 `4f0c762`），merge-base `v0.4.9` → `v0.5.1`（`b06dab6`）。上游 21 commits / 69 files。
+- 13 个冲突文件逐 hunk 并集（**无 `--theirs`**），本地定制 132 files `+12527/-3865`（`git diff upstream/main...HEAD`）。
+- 关键取舍：
+  - `App.tsx`：onboarding mainContentView 并集 + `scopedRootKey` 化；上游 11 props 全保留但删 `multiProjectSessionsEnabled`/`onMultiProjectSessionsChange` 两 props（本地硬编码 `const multiProjectSessionsEnabled = true`，无 setter）。
+  - `FileTree.tsx`：6 hunks 全并集（fontSizePreferences/sendShortcut/node 菜单/prefetch/双菜单按钮）；丢弃 `relayServicesPopoverRef` 与 `setRelayServicesOpen`（上游 Relay 服务入口，本地已裁剪 G-H）。
+  - `SessionViewer.tsx`：assistant meta 区取上游侧 + 完整 copy 按钮 + ✓ span 补回 `themeColor`（本地主题色透传）。
+  - `session.ts`：probe 计数器统一上游命名 `consecutiveProbeFailures`。
+  - `prefix.go`：`OriginalPath` 走 `r.URL.EscapedPath()`（E2EE 签名证明与转义路径一致）。
+- 测试正则适配本地约定（保功能）：`main-content-view-memory.test.mjs`（scopedRootKey）、`session-window.test.mjs`（`consecutiveProbeFailures` 字段名）。
+- 门禁全绿：go vet/test、tsc 0 err、node tests 27/27、make build；`mergeWindowedTail` 红线无回归。
+- 部署：VM `make install` 完成待用户重启；WSL rsync+restart 已生效（v0.5.1-82-g56d130f）。
 
 ---
 
