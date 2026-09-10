@@ -709,6 +709,12 @@ func readClaudeImportedExchangeLocators(path string, after time.Time) ([]importe
 
 	items := make([]importedExchangeLocator, 0)
 	toolLocations := make(map[string]importedToolLocation)
+	// 按条目 uuid 去重：同一 uuid 的条目在转录里可能整段重复出现——实测本机某会话
+	// 6336 条 assistant 条目中有 1712 条 uuid 重复（重复区间相隔上万行，uuid/时间戳/
+	// 内容三者完全相同）。这类远距离重复无法被「相邻同角色才合并」
+	// （appendMergedClaudeExchangeLocator）吃掉，会各自成为一个条目被反复落库，
+	// 表现为同一段助手文本在会话里出现两次以上。此处同一条目只处理一次。
+	seenUUIDs := make(map[string]struct{})
 	err = forEachJSONLLine(file, func(line string) error {
 		line = strings.TrimSpace(line)
 		if line == "" {
@@ -723,6 +729,12 @@ func readClaudeImportedExchangeLocators(path string, after time.Time) ([]importe
 			return nil
 		}
 		uuid := strings.TrimSpace(asString(raw["uuid"]))
+		if uuid != "" {
+			if _, ok := seenUUIDs[uuid]; ok {
+				return nil
+			}
+			seenUUIDs[uuid] = struct{}{}
+		}
 		message, _ := raw["message"].(map[string]any)
 		if message == nil {
 			return nil

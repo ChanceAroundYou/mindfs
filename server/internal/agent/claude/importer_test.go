@@ -34,6 +34,73 @@ func TestExtractClaudeImportedUserTextDropsOnlyInjectedBlocks(t *testing.T) {
 	}
 }
 
+func TestReadClaudeImportedExchangesDedupesRepeatedUUIDs(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.jsonl")
+	// 转录里同一批条目可能整段重复出现（实测某会话 1712/6336 条 uuid 重复，重复区间
+	// 相隔上万行）。这些重复相隔很远，无法被「相邻同角色才合并」吃掉，必须按 uuid 去重，
+	// 否则同一段助手文本会被落库两次以上。
+	content := `{"type":"user","uuid":"u1","timestamp":"2026-08-27T02:15:00Z","message":{"content":[{"type":"text","text":"question"}]}}
+{"type":"assistant","uuid":"a1","timestamp":"2026-08-27T02:15:08Z","message":{"content":[{"type":"text","text":"answer"}]}}
+{"type":"user","uuid":"u2","timestamp":"2026-08-27T02:16:00Z","message":{"content":[{"type":"text","text":"next"}]}}
+{"type":"assistant","uuid":"a2","timestamp":"2026-08-27T02:16:05Z","message":{"content":[{"type":"text","text":"second"}]}}
+{"type":"user","uuid":"u1","timestamp":"2026-08-27T02:15:00Z","message":{"content":[{"type":"text","text":"question"}]}}
+{"type":"assistant","uuid":"a1","timestamp":"2026-08-27T02:15:08Z","message":{"content":[{"type":"text","text":"answer"}]}}
+{"type":"user","uuid":"u2","timestamp":"2026-08-27T02:16:00Z","message":{"content":[{"type":"text","text":"next"}]}}
+{"type":"assistant","uuid":"a2","timestamp":"2026-08-27T02:16:05Z","message":{"content":[{"type":"text","text":"second"}]}}
+`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	items, err := readClaudeImportedExchanges(path, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 4 {
+		got := make([]string, 0, len(items))
+		for _, item := range items {
+			got = append(got, item.Role+":"+item.Content)
+		}
+		t.Fatalf("len(items) = %d, want 4 (重复 uuid 必须去重): %v", len(items), got)
+	}
+	for i, want := range []string{"question", "answer", "next", "second"} {
+		if items[i].Content != want {
+			t.Fatalf("items[%d].Content = %q, want %q", i, items[i].Content, want)
+		}
+	}
+}
+
+func TestReadClaudeImportedExchangesDedupesUUIDsWithToolResults(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.jsonl")
+	// 重复区块里的 tool_result 也不得被二次应用（否则同一 aux 会被重复挂到工具面板）。
+	content := `{"type":"user","uuid":"u1","timestamp":"2026-08-27T02:15:00Z","message":{"content":[{"type":"text","text":"run it"}]}}
+{"type":"assistant","uuid":"a1","timestamp":"2026-08-27T02:15:01Z","message":{"content":[{"type":"tool_use","id":"tool-1","name":"Bash","input":{"command":"ls"}}]}}
+{"type":"user","uuid":"u2","timestamp":"2026-08-27T02:15:02Z","message":{"content":[{"type":"tool_result","tool_use_id":"tool-1","content":"ok"}]}}
+{"type":"user","uuid":"u1","timestamp":"2026-08-27T02:15:00Z","message":{"content":[{"type":"text","text":"run it"}]}}
+{"type":"assistant","uuid":"a1","timestamp":"2026-08-27T02:15:01Z","message":{"content":[{"type":"tool_use","id":"tool-1","name":"Bash","input":{"command":"ls"}}]}}
+{"type":"user","uuid":"u2","timestamp":"2026-08-27T02:15:02Z","message":{"content":[{"type":"tool_result","tool_use_id":"tool-1","content":"ok"}]}}
+`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	items, err := readClaudeImportedExchanges(path, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("len(items) = %d, want 2 (user + 带 aux 的 agent)", len(items))
+	}
+	if items[0].Role != "user" || items[0].Content != "run it" {
+		t.Fatalf("items[0] = %#v", items[0])
+	}
+	if items[1].Role != "agent" || len(items[1].Aux) != 1 {
+		t.Fatalf("items[1] = %#v, want 恰好 1 个 aux（tool_result 不得二次应用）", items[1])
+	}
+}
+
 func TestReadClaudeImportedExchangesIgnoresUnsupportedToolCall(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "session.jsonl")
