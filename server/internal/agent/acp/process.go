@@ -509,7 +509,7 @@ func (p *Process) Initialize(ctx context.Context) error {
 	resp, err := p.conn.Initialize(ctx, acp.InitializeRequest{
 		ProtocolVersion: acp.ProtocolVersionNumber,
 		ClientCapabilities: acp.ClientCapabilities{
-			Terminal: true,
+			Terminal: false,
 		},
 		ClientInfo: &acp.Implementation{
 			Name:    "mindfs",
