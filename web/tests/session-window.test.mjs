@@ -46,14 +46,18 @@ assert.match(viewerSrc, /const \[loadingMore, setLoadingMore\]/, "loadingMore st
 assert.match(viewerSrc, /const topSentinelRef = useRef/, "topSentinelRef missing");
 assert.match(viewerSrc, /useSessionStream\(\s*\n?\s*sessionKey,\s*\n?\s*composedExchanges,\s*\n?\s*visibleAux/, "useSessionStream should consume composed window+overlay");
 assert.match(viewerSrc, /getSessionWindow/, "initial window fetch missing");
-assert.match(viewerSrc, /latest:\s*50/, "latest:50 window fetch missing");
+assert.match(viewerSrc, /latest:\s*SESSION_WINDOW_SIZE/, "window fetch must use the shared SESSION_WINDOW_SIZE");
 assert.match(viewerSrc, /const loadMore = useCallback/, "loadMore callback missing");
 assert.match(viewerSrc, /scrollHeight - container\.scrollTop/, "scroll anchoring (scrollHeight - scrollTop) missing");
 assert.match(viewerSrc, /beforeSeq: windowMeta\.minSeq/, "loadMore beforeSeq: windowMeta.minSeq missing");
 assert.match(viewerSrc, /IntersectionObserver/, "IntersectionObserver sentinel missing");
 assert.match(viewerSrc, /rootMargin: "200px/, "IntersectionObserver rootMargin 200px missing");
 assert.match(viewerSrc, /windowMeta\.hasMore/, "hasMore guard missing");
-assert.match(viewerSrc, /targetSeq \+ 25/, "targetSeq cross-window fetch (targetSeq+25) missing");
+assert.match(
+  viewerSrc,
+  /beforeSeq: targetSeq \+ Math\.floor\(SESSION_WINDOW_SIZE \/ 2\)/,
+  "targetSeq cross-window fetch (centered on the constant) missing",
+);
 assert.match(viewerSrc, /topSentinelRef/, "topSentinelRef wiring missing");
 assert.match(viewerSrc, /已加载/, "loaded/total indicator missing");
 assert.match(viewerSrc, /windowMeta\.total/, "windowMeta.total usage missing");
@@ -131,24 +135,51 @@ assert.doesNotMatch(viewerSrc, /mergeWindowedTail/, "seq merge model must not re
 // overlay 尾巴派生 + 组合输入
 assert.match(
   viewerSrc,
-  /const tailOverlay = useMemo\(\(\) => \{[\s\S]*?exs\.filter\(\(e\) => Number\(\(e as any\)\?\.seq \|\| 0\) === 0\)/,
-  "tail overlay (seq=0 derived from cache) missing",
+  /const tailOverlay = useMemo\(\(\) => \{[\s\S]*?const exs = Array\.isArray\(session\?\.exchanges\)/,
+  "tail overlay derivation from cache missing",
 );
 assert.match(
   viewerSrc,
   /const composedExchanges = useMemo\(\s*\n\s*\(\) => \[\.\.\.visibleExchanges, \.\.\.tailOverlay\],/,
   "composed window+overlay input missing",
 );
-// 自愈裁剪：切走期间完成→窗口 seq=N vs 缓存 seq=0 拷贝并存 → 按位次丢弃 overlay 头部 K 条
+// 判定不再依赖 windowMeta（loadMore/targetSeq 会把它覆盖成旧窗口的 meta）：
+// 已持久化条目按 latestSeq（只增、按会话键绑定）判定；seq=0 的用户条目按内容与窗口计数消抵；
+// 非用户瞬时项（流式文本/思考/工具）一律保留。
 assert.match(
   viewerSrc,
-  /const staleCount = Math\.max\(0, windowMeta\.maxSeq - cacheMaxSeq\);/,
-  "stale overlay trim (windowMeta.maxSeq vs cacheMaxSeq) missing",
+  /const latestSeq = latestSeqState\.key === sessionKey \? latestSeqState\.max : 0;/,
+  "per-session latestSeq derivation missing",
 );
 assert.match(
   viewerSrc,
-  /transient\.slice\(staleCount\)/,
-  "overlay trim must drop first K stale transient items",
+  /noteLatestSeq\(sessionKey, res\.meta\);/,
+  "applyWindow must report the latest-window maxSeq (loadMore/targetSeq must not)",
+);
+assert.match(
+  viewerSrc,
+  /const \[latestSeqState, setLatestSeqState\] = useState<\{ key: string; max: number \}>/,
+  "latestSeq must be monotonic and keyed by session",
+);
+assert.match(
+  viewerSrc,
+  /const visibleSeqSet = useMemo\(\(\) => \{/,
+  "visible window seq set missing",
+);
+assert.match(
+  viewerSrc,
+  /const windowUserCounts = useMemo\(\(\) => \{/,
+  "window user content counts (for overlay de-dup) missing",
+);
+assert.match(
+  viewerSrc,
+  /const covered = windowUserCounts\.get\(content\) \|\| 0;/,
+  "seq=0 user entry must be offset by the window's same-content count",
+);
+assert.doesNotMatch(
+  viewerSrc,
+  /staleCount|windowMeta\.maxSeq - cacheMaxSeq/,
+  "positional stale trim must not return (it ate live streaming items)",
 );
 // init 种子只取持久化部分，避免与 overlay 重复
 assert.match(
@@ -239,5 +270,103 @@ const zhSrc = fs.readFileSync(path.resolve(import.meta.dirname, "../src/i18n/loc
 const enSrc = fs.readFileSync(path.resolve(import.meta.dirname, "../src/i18n/locales/en-US.ts"), "utf8");
 assert.ok(zhSrc.includes("error.session.listLoadFailed"), "zh locale key missing");
 assert.ok(enSrc.includes("error.session.listLoadFailed"), "en locale key missing");
+
+// ── 聊天窗口尺寸：单一常量，杜绝散落 magic number ────────────────────────
+assert.match(
+  sessionSrc,
+  /export const SESSION_WINDOW_SIZE = 20;/,
+  "shared chat window size constant missing",
+);
+assert.match(viewerSrc, /latest:\s*SESSION_WINDOW_SIZE/, "viewer init fetch must use the constant");
+assert.match(viewerSrc, /limit:\s*SESSION_WINDOW_SIZE/, "viewer page step must use the constant");
+assert.match(
+  viewerSrc,
+  /persistedSeed\.slice\(-SESSION_WINDOW_SIZE\)/,
+  "viewer first-frame seed must use the constant",
+);
+assert.match(
+  appSrc,
+  /latest:\s*SESSION_WINDOW_SIZE,/,
+  "App restoreActiveSession must use the constant",
+);
+
+// ── overlay 判定（与 SessionViewer.tailOverlay 同构）：窗口是权威持久化源 ───
+// ①窗口已含的 seq 不重复渲染 ②实时流式项永不丢 ③陈旧乐观用户拷贝被丢弃
+// ④真正的重复发言仍显示 ⑤刚发出(seq>latestSeq)的条目保留 ⑥未锚定时不灌历史
+function buildTailOverlay(cacheExchanges, visibleExchanges, latestSeq) {
+  const visibleSeqSet = new Set();
+  const windowUserCounts = new Map();
+  for (const ex of visibleExchanges) {
+    const seq = Number(ex?.seq || 0);
+    if (seq > 0) visibleSeqSet.add(seq);
+    if (String(ex?.role || "").toLowerCase() === "user") {
+      const content = String(ex?.content || "");
+      windowUserCounts.set(content, (windowUserCounts.get(content) || 0) + 1);
+    }
+  }
+  const consumed = new Map();
+  const out = [];
+  for (const ex of cacheExchanges) {
+    const seq = Number(ex?.seq || 0);
+    if (seq > 0) {
+      if (visibleSeqSet.has(seq)) continue;
+      if (latestSeq === 0 || seq <= latestSeq) continue;
+      out.push(ex);
+      continue;
+    }
+    if (String(ex?.role || "").toLowerCase() === "user") {
+      const content = String(ex?.content || "");
+      const covered = windowUserCounts.get(content) || 0;
+      const used = consumed.get(content) || 0;
+      if (used < covered) {
+        consumed.set(content, used + 1);
+        continue;
+      }
+    }
+    out.push(ex);
+  }
+  return out;
+}
+const win = [
+  { role: "user", content: "A", seq: 9 },
+  { role: "assistant", content: "R9", seq: 10 },
+];
+assert.equal(
+  buildTailOverlay([{ role: "user", content: "A", seq: 9 }], win, 10).length,
+  0,
+  "① cache entry already present in the window must not re-render",
+);
+assert.equal(
+  buildTailOverlay([{ role: "assistant", content: "streaming..." }], win, 10).length,
+  1,
+  "② live streaming items must never be trimmed",
+);
+assert.equal(
+  buildTailOverlay([{ role: "user", content: "A" }], win, 10).length,
+  0,
+  "③ stale optimistic user copy must be dropped once the window has the same content",
+);
+assert.equal(
+  buildTailOverlay(
+    [
+      { role: "user", content: "继续" },
+      { role: "user", content: "继续" },
+    ],
+    [{ role: "user", content: "继续", seq: 9 }],
+    9,
+  ).length,
+  1,
+  "④ a genuinely repeated message must still show",
+);
+assert.equal(
+  buildTailOverlay([{ role: "user", content: "新", seq: 11 }], win, 10).length,
+  1,
+  "⑤ just-sent message beyond the window's latest seq must stay visible",
+);
+assert.equal(
+  buildTailOverlay([{ role: "user", content: "旧", seq: 3 }], win, 0).length,
+  0,
+  "⑥ before anchoring, cached persisted entries must not flood the overlay",
+);
 
 console.log("session-window.test.mjs: OK");

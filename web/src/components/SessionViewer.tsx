@@ -9,6 +9,7 @@ import { MarkdownViewer } from "./MarkdownViewer";
 import { fetchProofProtectedBlob } from "../services/file";
 import { getRootNodeId } from "../services/rootNode";
 import {
+  SESSION_WINDOW_SIZE,
   clearWindowedView,
   getSessionWindow,
   type TokenUsage,
@@ -1118,7 +1119,7 @@ function SessionViewerInner({
   const sessionNodeId =
     String((session as any)?._nodeId || "").trim() || undefined;
   // 方案 B（超长会话窗口化）：可视数据以可见窗口为准，初始用全量/窗口做首帧，
-  // 随后由 getSessionWindow({latest:50}) 覆盖（见下方初始化 effect）。
+  // 随后由 getSessionWindow({ latest: SESSION_WINDOW_SIZE }) 覆盖（见下方初始化 effect）。
   const [visibleExchanges, setVisibleExchanges] = useState<ExchangeArray>(
     () => (Array.isArray(session?.exchanges) ? session.exchanges : []),
   );
@@ -1135,34 +1136,83 @@ function SessionViewerInner({
   const topSentinelRef = useRef<HTMLDivElement>(null);
   const isPrependingRef = useRef(false);
   const isAwaiting = !!(session as any)?.pending;
-  // 方案 C：overlay 尾巴 = App 缓存的 seq=0 瞬时尾部（在途轮次：用户消息/thinking/流式文本/
-  // 工具调用 exchange），只读派生、永不合并回窗口。窗口是唯一持久化源，只在 init 拉取 /
-  // 翻页前插 / 重锚定（_windowMeta）时整体替换——全流程无 seq 合并，杜绝挡尾与重复两类回归。
-  // 自愈裁剪（陈旧 overlay）：切走期间轮次已持久化（窗口 maxSeq 前进到 N）而缓存仍持 seq=0
-  // 拷贝（错过 done 重锚定：手机后台错过 WS done / 非查看会话的 done 不重载缓存）时，
-  // 窗口与 overlay 会显示同一轮次两次。按位次丢弃 overlay 头部 K 条
-  // （K = windowMeta.maxSeq - cacheMaxSeq）：seq 严格递增，K>0 即缓存落后服务端 K 个已
-  // 持久化轮次，其 seq=0 尾巴前 K 条恰为陈旧拷贝；正常流式中 K=0 不动。只读派生不写回
-  // 缓存，避免覆盖其它标签页可能正在流式写入的持久化缓存。
-  const cacheMaxSeq = useMemo(() => {
-    let max = 0;
-    const exs = Array.isArray(session?.exchanges)
-      ? (session.exchanges as ExchangeArray)
-      : ([] as ExchangeArray);
-    for (const ex of exs) {
+  // 方案 C：overlay 尾巴 = App 缓存里「窗口尚未覆盖」的条目，只读派生、永不合并回窗口。
+  // 窗口是唯一持久化源，只在 init 拉取 / 翻页前插 / 重锚定（_windowMeta）时整体替换。
+  //
+  // 判定刻意不依赖 windowMeta：loadMore 与 targetSeq 取窗都会用旧/中段窗口的 meta 覆盖
+  // windowMeta，拿它当「会话最新 seq」会塌回旧值（曾导致按位次裁剪错算并把实时流式内容
+  // 一起 slice 掉）。改为三个规则：
+  //   - seq>0：由 latestSeq 界定。latestSeq 只增不减、按会话键绑定，且仅在 init/anchor 这类
+  //     「最新窗口」经 applyWindow 更新（loadMore / targetSeq 不碰）。seq<=latestSeq → 窗口已含
+  //     或即将含，丢弃；seq>latestSeq → 刚发出、窗口还没追上，保留（自己发的消息立即出现）。
+  //   - seq==0 且 role=user：按 content 与窗口计数消抵——窗口里同内容出现 covered 次，就丢弃
+  //     缓存中同内容的前 covered 个，其余保留。这是跨端丢事件（手机后台 / WS 断连）时的兜底，
+  //     不依赖时间戳（客户端 ISO 毫秒 vs 服务端 RFC3339Nano 永不相等）。
+  //   - seq==0 且非 user（流式文本 / 思考 / 工具）：一律保留 → 流式内容实时。
+  // 只读派生不写回缓存，避免覆盖其它标签页可能正在流式写入的持久化缓存。
+  const [latestSeqState, setLatestSeqState] = useState<{ key: string; max: number }>(
+    { key: "", max: 0 },
+  );
+  const noteLatestSeq = useCallback(
+    (key: string | null, meta: SessionWindowMeta | null | undefined) => {
+      const max = Number(meta?.maxSeq || 0);
+      if (!key || max <= 0) return;
+      setLatestSeqState((prev) =>
+        prev.key === key ? (max > prev.max ? { key, max } : prev) : { key, max },
+      );
+    },
+    [],
+  );
+  const latestSeq = latestSeqState.key === sessionKey ? latestSeqState.max : 0;
+  const visibleSeqSet = useMemo(() => {
+    const set = new Set<number>();
+    for (const ex of visibleExchanges) {
       const seq = Number((ex as any)?.seq || 0);
-      if (seq > max) max = seq;
+      if (seq > 0) set.add(seq);
     }
-    return max;
-  }, [session?.exchanges]);
+    return set;
+  }, [visibleExchanges]);
+  const windowUserCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const ex of visibleExchanges) {
+      if (String((ex as any)?.role || "").toLowerCase() !== "user") continue;
+      const content = String((ex as any)?.content || "");
+      counts.set(content, (counts.get(content) || 0) + 1);
+    }
+    return counts;
+  }, [visibleExchanges]);
   const tailOverlay = useMemo(() => {
     const exs = Array.isArray(session?.exchanges)
       ? (session.exchanges as ExchangeArray)
       : ([] as ExchangeArray);
-    const transient = exs.filter((e) => Number((e as any)?.seq || 0) === 0);
-    const staleCount = Math.max(0, windowMeta.maxSeq - cacheMaxSeq);
-    return staleCount > 0 ? transient.slice(staleCount) : transient;
-  }, [session?.exchanges, windowMeta.maxSeq, cacheMaxSeq]);
+    const consumed = new Map<string, number>();
+    const out: ExchangeArray = [];
+    for (const ex of exs) {
+      const seq = Number((ex as any)?.seq || 0);
+      if (seq > 0) {
+        // 已持久化条目：窗口已含（visibleSeqSet）或已被最新窗口的 seq 范围覆盖 → 不重复渲染。
+        if (visibleSeqSet.has(seq)) continue;
+        if (latestSeq === 0 || seq <= latestSeq) continue;
+        out.push(ex);
+        continue;
+      }
+      if (String((ex as any)?.role || "").toLowerCase() === "user") {
+        const content = String((ex as any)?.content || "");
+        const covered = windowUserCounts.get(content) || 0;
+        const used = consumed.get(content) || 0;
+        // ponytail: 同内容重复发言时按出现次序消抵，若窗口只回填了后发的那条（跨窗口滚动
+        // 只载尾巴），可能抵消错那一条（显示成"后发的在窗口、先发的在 overlay"——条数仍对，
+        // 归属可能错位）。升到"按 seq 区间匹配"可消除，但需要窗口的 minSeq/maxSeq 参与判断，
+        // 收益极小（需同内容 + 两条同时在途 + 跨窗滚动），暂留此天花板。
+        if (used < covered) {
+          consumed.set(content, used + 1);
+          continue;
+        }
+      }
+      out.push(ex);
+    }
+    return out;
+  }, [session?.exchanges, latestSeq, visibleSeqSet, windowUserCounts]);
   const composedExchanges = useMemo(
     () => [...visibleExchanges, ...tailOverlay],
     [visibleExchanges, tailOverlay],
@@ -1248,12 +1298,15 @@ function SessionViewerInner({
       setVisibleExchanges(winExchanges);
       setVisibleAux(winAux);
       setWindowMeta(res.meta);
+      // applyWindow 只服务「最新窗口」（init / anchor）——loadMore 与 targetSeq 取窗直接
+      // setWindowMeta，不经过这里，因此 latestSeq 不会被旧/中段窗口的 maxSeq 污染。
+      noteLatestSeq(sessionKey, res.meta);
       return true;
     },
-    [],
+    [noteLatestSeq, sessionKey],
   );
 
-  // 初始化：会话切换时拉取尾部 50 条窗口，复位置底；拉取失败回退到 props 传入的全量/窗口。
+  // 初始化：会话切换时拉取尾部窗口，复位置底；拉取失败回退到 props 传入的全量/窗口。
   useEffect(() => {
     let cancelled = false;
     setLoadingMore(false);
@@ -1266,13 +1319,15 @@ function SessionViewerInner({
     // 进入窗口化视图，隔离 syncSession 的 truncated 全量回补（见 session.ts windowedView 标记）。
     setWindowedView(sessionKey, true);
     // 方案 B 首帧按需：避免先用全量做首帧导致长对话从头刷到尾。
-    // 若外层传入的是全量（可能来自 App 旧缓存或网络全量兜底），此处仅取尾部 50 作首帧，
-    // 随后 getSessionWindow({latest:50}) 会以服务端窗口覆盖，保持首帧 O(50)。
-    // 首帧种子只取持久化部分（seq>0）尾部 50；seq=0 瞬时尾巴由 overlay 派生展示，
+    // 若外层传入的是全量（可能来自 App 旧缓存或网络全量兜底），此处仅取尾部
+    // SESSION_WINDOW_SIZE 条作首帧，随后 getSessionWindow({ latest: SESSION_WINDOW_SIZE })
+    // 会以服务端窗口覆盖，保持首帧 O(SESSION_WINDOW_SIZE)。
     // 避免种子与 overlay 重复显示同一轮次。
     const incomingExs = Array.isArray(session?.exchanges) ? (session.exchanges as ExchangeArray) : ([] as ExchangeArray);
     const persistedSeed = incomingExs.filter((e) => Number((e as any)?.seq || 0) > 0);
-    const seedExs = (persistedSeed.length > 50 ? persistedSeed.slice(-50) : persistedSeed) as ExchangeArray;
+    const seedExs = (persistedSeed.length > SESSION_WINDOW_SIZE
+      ? persistedSeed.slice(-SESSION_WINDOW_SIZE)
+      : persistedSeed) as ExchangeArray;
     const seedAux: Record<string, ExchangeAux[]> = {};
     const seedSeqs = new Set(seedExs.map((e) => Number((e as any)?.seq || 0)));
     for (const [k, v] of Object.entries((session?.exchange_aux || {}) as Record<string, ExchangeAux[]>)) {
@@ -1280,7 +1335,7 @@ function SessionViewerInner({
     }
     setVisibleExchanges(seedExs);
     setVisibleAux(seedAux);
-    getSessionWindow(rootId || "", sessionKey, { latest: 50, nodeId: sessionNodeId })
+    getSessionWindow(rootId || "", sessionKey, { latest: SESSION_WINDOW_SIZE, nodeId: sessionNodeId })
       .then((res) => {
         if (cancelled) return;
         applyWindow(res);
@@ -1309,7 +1364,7 @@ function SessionViewerInner({
     isPrependingRef.current = true;
     getSessionWindow(rootId || "", sessionKey, {
         beforeSeq: windowMeta.minSeq,
-        limit: 50,
+        limit: SESSION_WINDOW_SIZE,
         nodeId: sessionNodeId,
       })
       .then((res) => {
@@ -1700,8 +1755,8 @@ function SessionViewerInner({
       shouldStickToBottomRef.current = false;
       cancelTargetSeqScroll();
       getSessionWindow(rootId || "", sessionKey, {
-          beforeSeq: targetSeq + 25,
-          limit: 50,
+          beforeSeq: targetSeq + Math.floor(SESSION_WINDOW_SIZE / 2),
+          limit: SESSION_WINDOW_SIZE,
           nodeId: sessionNodeId,
         })
         .then((res) => {

@@ -1133,6 +1133,10 @@ type MessageStart struct {
 	Effort           string
 	FastService      string
 	BaseExchangeSeq  int
+	// UserExchangeSeq 是本轮用户消息即将获得的持久化 seq（= BaseExchangeSeq+1，
+	// 与后续 AddExchangeForAgentAt 的 nextSeq 同式）。仅用于下发给客户端做本地
+	// 乐观条目的收敛；0 表示未知，此时不要下发。
+	UserExchangeSeq int
 }
 
 func applyMessageRuntimeDefaultsFromStatus(
@@ -2164,6 +2168,9 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 	}
 	resolvedMode := resolveRuntimeMode(current, in.Mode)
 	resolvedFastService := resolveRuntimeFastService(in.Agent, current, in.FastService)
+	// 本轮用户消息的持久化 seq：紧随其后的 AddExchangeForAgentAt 会取 len(exchanges)+1
+	// （见 manager.addExchangeForAgentAt 的 nextSeq），此处预先算出供客户端收敛乐观条目。
+	baseExchangeSeq := len(current.Exchanges)
 	if in.OnStart != nil {
 		in.OnStart(MessageStart{
 			Model:            in.Model,
@@ -2171,7 +2178,8 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 			Mode:             resolvedMode,
 			Effort:           in.Effort,
 			FastService:      resolvedFastService,
-			BaseExchangeSeq:  len(current.Exchanges),
+			BaseExchangeSeq:  baseExchangeSeq,
+			UserExchangeSeq:  baseExchangeSeq + 1,
 		})
 	}
 	if current.Type == session.TypeCommand {

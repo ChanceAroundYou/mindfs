@@ -253,6 +253,14 @@ export type SyncSessionResult = {
   hasDelta: boolean;
 };
 
+/**
+ * 聊天消息窗口尺寸（首屏拉取条数 / 上翻步长）。会话窗口化的唯一尺寸来源：
+ * SessionViewer 的 init `latest:`、首帧种子截断、loadMore 步长、targetSeq 取窗步长，
+ * 以及 App 的 restoreActiveSession 都引此常量，避免散落的 magic number。
+ * 服务端 SessionWindowMeta 的默认值/上限（50/200）是安全网，客户端始终显式传值。
+ */
+export const SESSION_WINDOW_SIZE = 20;
+
 /** 服务端窗口化加载的元数据（方案 B：超长会话按需加载）。 */
 export type SessionWindowMeta = {
   total: number;

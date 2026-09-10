@@ -20,6 +20,7 @@ import {
   sessionService,
   setCachedSessionRelatedFiles,
   setWindowedView,
+  SESSION_WINDOW_SIZE,
   syncSession,
   type MultiRootSessionGroup,
   type SyncSessionResult,
@@ -3555,7 +3556,7 @@ export function App({ onGoHome }: AppProps) {
         try {
           setWindowedView(resolvedKey, true);
           const win = await getSessionWindow(resolvedRoot, resolvedKey, {
-            latest: 50,
+            latest: SESSION_WINDOW_SIZE,
             nodeId: getNodeIdForRoot(resolvedRoot),
           });
           if (win && (win as any).session) {
@@ -10554,6 +10555,9 @@ export function App({ onGoHome }: AppProps) {
             sess: Session | SessionItem | null | undefined,
           ): Session | null => {
             if (!sess) return null;
+            // 服务端若在 accepted 里带了 seq（当前版本不带，OnStart 之后才可知），
+            // 一并写入，使乐观条目立即成为「已持久化条目」。
+            const acceptedSeq = Number((payload as any)?.seq || 0);
             const exchanges = Array.isArray((sess as any).exchanges)
               ? ((sess as any).exchanges as Exchange[]).map((exchange) =>
                   exchange.pending_ack === true &&
@@ -10563,6 +10567,7 @@ export function App({ onGoHome }: AppProps) {
                         ...exchange,
                         timestamp: acceptedTimestamp,
                         pending_ack: false,
+                        ...(acceptedSeq > 0 ? { seq: acceptedSeq } : {}),
                         model_display_name:
                           exchange.model_display_name ||
                           (typeof payload?.model_display_name === "string"
@@ -10758,43 +10763,68 @@ export function App({ onGoHome }: AppProps) {
             const prevExchanges = Array.isArray((cached as any).exchanges)
               ? ((cached as any).exchanges as Exchange[])
               : [];
-            const duplicateIndex = prevExchanges.findIndex(
-              (item) =>
-                item.role === "user" &&
-                item.content === exchange?.content &&
-                item.timestamp === exchange?.timestamp,
-            );
+            const incomingUserSeq = Number((exchange as any)?.seq || 0);
+            // 服务端下发的 seq 是「该用户消息已持久化」的权威标记。跨端时间戳永不相等
+            // （客户端 ISO 毫秒 vs 服务端 RFC3339Nano），故不能按时间戳判重：
+            //   1) 已有同 seq 条目 → 幂等就地更新（重连重放等）；
+            //   2) 已有同 role+content 且尚无 seq 的乐观条目 → 就地转正（写入 seq）；
+            //   3) 都没有 → 追加（带 seq 即已持久化条目，无 seq 则仍作瞬时项由 overlay 渲染）。
+            const seqIndex =
+              incomingUserSeq > 0
+                ? prevExchanges.findIndex(
+                    (item) => Number((item as any)?.seq || 0) === incomingUserSeq,
+                  )
+                : -1;
+            let mergeIndex = seqIndex;
+            if (mergeIndex < 0) {
+              for (let i = prevExchanges.length - 1; i >= 0; i -= 1) {
+                const item = prevExchanges[i];
+                if (
+                  item.role === "user" &&
+                  item.content === exchange?.content &&
+                  !Number((item as any)?.seq || 0)
+                ) {
+                  mergeIndex = i;
+                  break;
+                }
+              }
+            }
             const pushExchange = {
               role: "user",
               agent: exchange?.agent || "",
               model: exchange?.model || "",
               model_display_name: exchange?.model_display_name || "",
-	              mode: exchange?.mode || "",
-	              effort: exchange?.effort || "",
-	              fast_service: exchange?.fast_service || "",
-	              content: exchange?.content || "",
+              mode: exchange?.mode || "",
+              effort: exchange?.effort || "",
+              fast_service: exchange?.fast_service || "",
+              content: exchange?.content || "",
               timestamp:
                 exchange?.timestamp || new Date().toISOString(),
               pending_ack: false,
+              ...(incomingUserSeq > 0 ? { seq: incomingUserSeq } : {}),
             } as Exchange;
             const nextExchanges =
-              duplicateIndex >= 0
+              mergeIndex >= 0
                 ? [
-                    ...prevExchanges.slice(0, duplicateIndex),
+                    ...prevExchanges.slice(0, mergeIndex),
                     {
-                      ...prevExchanges[duplicateIndex],
-                      model: exchange?.model || prevExchanges[duplicateIndex].model,
+                      ...prevExchanges[mergeIndex],
+                      ...(incomingUserSeq > 0 ? { seq: incomingUserSeq } : {}),
+                      timestamp:
+                        exchange?.timestamp || prevExchanges[mergeIndex].timestamp,
+                      model: exchange?.model || prevExchanges[mergeIndex].model,
                       model_display_name:
                         exchange?.model_display_name ||
-                        prevExchanges[duplicateIndex].model_display_name,
-                      mode: exchange?.mode || prevExchanges[duplicateIndex].mode,
+                        prevExchanges[mergeIndex].model_display_name,
+                      mode: exchange?.mode || prevExchanges[mergeIndex].mode,
                       effort:
-                        exchange?.effort || prevExchanges[duplicateIndex].effort,
+                        exchange?.effort || prevExchanges[mergeIndex].effort,
                       fast_service:
                         exchange?.fast_service ||
-                        prevExchanges[duplicateIndex].fast_service,
+                        prevExchanges[mergeIndex].fast_service,
+                      pending_ack: false,
                     },
-                    ...prevExchanges.slice(duplicateIndex + 1),
+                    ...prevExchanges.slice(mergeIndex + 1),
                   ]
                 : [...prevExchanges, pushExchange];
             sessionCacheRef.current[cacheKey] = {

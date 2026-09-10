@@ -196,7 +196,7 @@ func buildSlashCommandDoneResponse(rootID, sessionKey, command, requestID string
 	}
 }
 
-func buildSessionUserMessageResponse(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService string, planMode bool, content string, timestamp time.Time, queued bool) WSResponse {
+func buildSessionUserMessageResponse(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService string, planMode bool, content string, timestamp time.Time, queued bool, userExchangeSeq int) WSResponse {
 	queueState := "active"
 	if queued {
 		queueState = "dequeued"
@@ -217,25 +217,32 @@ func buildSessionUserMessageResponse(rootID, sessionKey, sessionType, sessionNam
 	if strings.TrimSpace(sessionName) != "" {
 		sessionPayload["name"] = sessionName
 	}
+	exchangePayload := map[string]any{
+		"role":               "user",
+		"agent":              agentName,
+		"model":              model,
+		"model_display_name": modelDisplayName,
+		"mode":               mode,
+		"effort":             effort,
+		"fast_service":       fastService,
+		"content":            content,
+		"timestamp":          timestamp,
+		"queued":             queued,
+		"queue_state":        queueState,
+	}
+	// seq 是「本轮用户消息已持久化」的权威标记：客户端据此把本地乐观条目（无 seq）
+	// 收敛为已持久化条目，避免它与窗口取回的同一条消息重复渲染。未知时不下发，
+	// 客户端保持原行为（作为瞬时项渲染）。
+	if userExchangeSeq > 0 {
+		exchangePayload["seq"] = userExchangeSeq
+	}
 	return WSResponse{
 		Type: "session.user_message",
 		Payload: map[string]any{
 			"root_id":     rootID,
 			"session_key": sessionKey,
 			"session":     sessionPayload,
-			"exchange": map[string]any{
-				"role":               "user",
-				"agent":              agentName,
-				"model":              model,
-				"model_display_name": modelDisplayName,
-				"mode":               mode,
-				"effort":             effort,
-				"fast_service":       fastService,
-				"content":            content,
-				"timestamp":          timestamp,
-				"queued":             queued,
-				"queue_state":        queueState,
-			},
+			"exchange":    exchangePayload,
 		},
 	}
 }
@@ -908,7 +915,7 @@ func (h *StreamHub) BroadcastSessionUserMessage(
 	excludeClientID string,
 	queued bool,
 ) {
-	h.BroadcastSessionUserMessageAt(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService, planMode, content, time.Now().UTC(), excludeClientID, queued)
+	h.BroadcastSessionUserMessageAt(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService, planMode, content, time.Now().UTC(), 0, excludeClientID, queued)
 }
 
 func (h *StreamHub) BroadcastSessionUserMessageAt(
@@ -925,14 +932,15 @@ func (h *StreamHub) BroadcastSessionUserMessageAt(
 	planMode bool,
 	content string,
 	timestamp time.Time,
+	userExchangeSeq int,
 	excludeClientID string,
 	queued bool,
 	baseExchangeSeq ...int,
 ) {
 	pendingUser := h.SetPendingUserAt(rootID, sessionKey, sessionName, agentName, model, modelDisplayName, mode, effort, fastService, planMode, content, timestamp, baseExchangeSeq...)
-	resp := buildSessionUserMessageResponse(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService, planMode, content, pendingUser.Timestamp, queued)
+	resp := buildSessionUserMessageResponse(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService, planMode, content, pendingUser.Timestamp, queued, userExchangeSeq)
 	for _, clientID := range h.GetSessionClientIDs(sessionKey, false) {
-		if clientID == excludeClientID {
+		if excludeClientID != "" && clientID == excludeClientID {
 			continue
 		}
 		h.SendToClient(clientID, resp)

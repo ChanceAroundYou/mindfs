@@ -736,7 +736,11 @@ func (h *WSHandler) handleSessionMessage(ctx context.Context, conn *websocket.Co
 		TerminalCols:    terminalCols,
 		User:            userMessage,
 		ClientCtx:       clientCtx,
-		ExcludeClientID: clientID,
+		// 有意不排除发送方：session.user_message 现在携带用户消息的持久化 seq，
+		// 发送方需要它把本地乐观条目（无 seq）收敛为已持久化条目，否则该条目会
+		// 以「瞬时项」身份与窗口取回的同一条消息重复渲染。客户端按 role+content
+		// 合并，收到自己的回显是幂等的。
+		ExcludeClientID: "",
 	}
 	if streamHub.IsSessionReplying(key) && sessionType != session.TypeCommand {
 		queue := streamHub.EnqueueSessionMessage(rootID, key, sessionName, QueuedUserMessage{
@@ -933,7 +937,7 @@ func (h *WSHandler) runSessionMessage(job sessionMessageJob) {
 		ClientCtx:       job.ClientCtx,
 		OnStart: func(start usecase.MessageStart) {
 			h.AppContext.ClearTaskAuxFlagsForSession(rootID, key)
-			streamHub.BroadcastSessionUserMessageAt(rootID, key, job.SessionType, job.SessionName, job.User.Agent, start.Model, start.ModelDisplayName, start.Mode, start.Effort, start.FastService, job.User.PlanMode, job.User.Content, job.User.Timestamp, job.ExcludeClientID, job.Queued, start.BaseExchangeSeq)
+			streamHub.BroadcastSessionUserMessageAt(rootID, key, job.SessionType, job.SessionName, job.User.Agent, start.Model, start.ModelDisplayName, start.Mode, start.Effort, start.FastService, job.User.PlanMode, job.User.Content, job.User.Timestamp, start.UserExchangeSeq, job.ExcludeClientID, job.Queued, start.BaseExchangeSeq)
 		},
 		OnUpdate: func(update agenttypes.Event) {
 			updateTracker.Begin()
