@@ -121,7 +121,7 @@ func (i *Importer) ImportExternalSession(_ context.Context, in agenttypes.Import
 		return agenttypes.ImportedExternalSession{}, errors.New("agent session id required")
 	}
 	if file, ok := i.lookupSessionFile(targetID, rootPath); ok {
-		return i.importSessionFile(file, in.AfterTimestamp, in.Cursor)
+		return i.importSessionFile(file, in.AfterTimestamp, in.Cursor, in.ForceRead)
 	}
 	files, err := i.scanSessionFiles(context.Background(), time.Time{}, time.Time{}, int(^uint(0)>>1), nil)
 	if err != nil {
@@ -131,17 +131,17 @@ func (i *Importer) ImportExternalSession(_ context.Context, in agenttypes.Import
 		if file.AgentSessionID != targetID {
 			continue
 		}
-		return i.importSessionFile(file, in.AfterTimestamp, in.Cursor)
+		return i.importSessionFile(file, in.AfterTimestamp, in.Cursor, in.ForceRead)
 	}
 	return agenttypes.ImportedExternalSession{}, errors.New("external session not found")
 }
 
-func (i *Importer) importSessionFile(file codexSessionFile, after time.Time, previous agenttypes.ExternalSessionCursor) (agenttypes.ImportedExternalSession, error) {
+func (i *Importer) importSessionFile(file codexSessionFile, after time.Time, previous agenttypes.ExternalSessionCursor, forceRead bool) (agenttypes.ImportedExternalSession, error) {
 	cursor, unchanged, err := externalSessionFileCursor(file.Path, previous)
 	if err != nil {
 		return agenttypes.ImportedExternalSession{}, err
 	}
-	if unchanged {
+	if unchanged && !forceRead {
 		return agenttypes.ImportedExternalSession{Agent: i.agentName, AgentSessionID: file.AgentSessionID, Cwd: file.Cwd, Title: file.Title, Cursor: cursor}, nil
 	}
 	exchanges, err := readCodexImportedExchanges(file.Path, after)

@@ -172,6 +172,11 @@ type ImportExternalSessionInput struct {
 	AgentSessionID string
 	AfterTimestamp time.Time
 	Cursor         ExternalSessionCursor
+	// ForceRead 为 true 时禁用「源文件未变即整个跳过导入」的快速路径，强制重新读取。
+	// 有子代理会话的会话必须置 true：子代理转录可能在 root 文件不变的情况下增长，
+	// 跳过会漏掉它们。注意它与 Cursor 是两件事——Cursor 提供增量起点（byte offset），
+	// 二者不可混淆（曾因此让增量读失效、每次全量解析数十 MB 转录）。
+	ForceRead bool
 }
 
 type ExternalSessionCursor struct {

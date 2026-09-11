@@ -349,9 +349,13 @@ func (s *Service) SyncExternalSessionDelta(ctx context.Context, in SyncExternalS
 	}
 	if !in.Full {
 		importInput.AfterTimestamp = lastTimestamp
-		if len(children) == 0 {
-			importInput.Cursor = binding.ExternalCursor()
-		}
+		// 始终传字节游标：root 转录据此从上次结束位置增量读，而非每次全量解析
+		// （实测某会话转录 72MB，全量解析 3.6s，而实际只落后 76KB）。
+		importInput.Cursor = binding.ExternalCursor()
+		// 有子会话时额外强制重读：子代理转录可能在 root 文件不变的情况下增长，
+		// 「未变即跳过」会漏掉它们。这与游标是两件事——原先二者被同一个
+		// `len(children)==0` 条件捆在一起，导致有子会话的会话连增量读也一并失效。
+		importInput.ForceRead = len(children) > 0
 	}
 	imported, err := importer.ImportExternalSession(ctx, importInput)
 	if err != nil {

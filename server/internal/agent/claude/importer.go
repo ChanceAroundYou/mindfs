@@ -121,7 +121,7 @@ func (i *Importer) ImportExternalSession(_ context.Context, in agenttypes.Import
 		return agenttypes.ImportedExternalSession{}, errors.New("agent session id required")
 	}
 	if file, ok := i.lookupSessionFile(targetID, rootPath); ok {
-		return i.importSessionFile(file, in.AfterTimestamp, in.Cursor)
+		return i.importSessionFile(file, in.AfterTimestamp, in.Cursor, in.ForceRead)
 	}
 	// 主目录未命中时继续扫描根目录下 .worktree/* 的转录目录：Agent 转录按 spawn cwd
 	// 归档（Claude Code: ~/.claude/projects/<slug(cwd)>），worktree 会话落在各自的
@@ -135,18 +135,18 @@ func (i *Importer) ImportExternalSession(_ context.Context, in agenttypes.Import
 			if file.AgentSessionID != targetID {
 				continue
 			}
-			return i.importSessionFile(file, in.AfterTimestamp, in.Cursor)
+			return i.importSessionFile(file, in.AfterTimestamp, in.Cursor, in.ForceRead)
 		}
 	}
 	return agenttypes.ImportedExternalSession{}, errors.New("external session not found")
 }
 
-func (i *Importer) importSessionFile(file claudeSessionFile, after time.Time, previous agenttypes.ExternalSessionCursor) (agenttypes.ImportedExternalSession, error) {
+func (i *Importer) importSessionFile(file claudeSessionFile, after time.Time, previous agenttypes.ExternalSessionCursor, forceRead bool) (agenttypes.ImportedExternalSession, error) {
 	cursor, unchanged, err := externalSessionFileCursor(file.Path, previous)
 	if err != nil {
 		return agenttypes.ImportedExternalSession{}, err
 	}
-	if unchanged {
+	if unchanged && !forceRead {
 		return agenttypes.ImportedExternalSession{Agent: i.agentName, AgentSessionID: file.AgentSessionID, Cwd: file.Cwd, Cursor: cursor}, nil
 	}
 	exchanges, err := readClaudeImportedExchanges(file.Path, after, previous.Offset)
