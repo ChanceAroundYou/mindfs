@@ -299,20 +299,10 @@ type SessionWindowMeta struct {
 	MaxSeq  int  `json:"maxSeq"`
 }
 
-// perfTraceThreshold 是临时性能插桩的阈值：超过它才打一行分段耗时日志，
-// 便于定位「窗口加载慢」到底花在等锁还是实际工作（定位完成后连同插桩一并移除）。
-const perfTraceThreshold = 300 * time.Millisecond
-
 func (m *Manager) GetWindow(_ context.Context, key string, beforeSeq, limit, latest int) (*Session, *SessionWindowMeta, error) {
-	start := time.Now()
 	m.mu.Lock()
-	waited := time.Since(start)
 	defer m.mu.Unlock()
-	sess, meta, err := m.getSessionWindowUnsafe(key, beforeSeq, limit, latest)
-	if total := time.Since(start); total > perfTraceThreshold {
-		log.Printf("[perf] GetWindow key=%s wait_lock=%v work=%v total=%v", key, waited, total-waited, total)
-	}
-	return sess, meta, err
+	return m.getSessionWindowUnsafe(key, beforeSeq, limit, latest)
 }
 
 func (m *Manager) CountExchanges(key string) (int, error) {
@@ -342,15 +332,9 @@ func (m *Manager) CountExchanges(key string) (int, error) {
 }
 
 func (m *Manager) GetExchangeAuxWindow(_ context.Context, key string, seqSet map[int]bool) (map[int][]ExchangeAux, error) {
-	start := time.Now()
 	m.mu.Lock()
-	waited := time.Since(start)
 	defer m.mu.Unlock()
-	out, err := m.loadExchangeAuxWindow(key, seqSet)
-	if total := time.Since(start); total > perfTraceThreshold {
-		log.Printf("[perf] GetExchangeAuxWindow key=%s seqs=%d wait_lock=%v work=%v total=%v", key, len(seqSet), waited, total-waited, total)
-	}
-	return out, err
+	return m.loadExchangeAuxWindow(key, seqSet)
 }
 
 // GetMeta 只加载 SQLite meta（不含 exchanges 文件），用于列表/名称查询等不需要完整会话的场景。
@@ -361,15 +345,9 @@ func (m *Manager) GetMeta(_ context.Context, key string) (*Session, error) {
 }
 
 func (m *Manager) GetExchangeAux(_ context.Context, key string, afterSeq int) (map[int][]ExchangeAux, error) {
-	start := time.Now()
 	m.mu.Lock()
-	waited := time.Since(start)
 	defer m.mu.Unlock()
-	out, err := m.loadExchangeAux(key, afterSeq)
-	if total := time.Since(start); total > perfTraceThreshold {
-		log.Printf("[perf] GetExchangeAux key=%s afterSeq=%d entries=%d wait_lock=%v work=%v total=%v", key, afterSeq, len(out), waited, total-waited, total)
-	}
-	return out, err
+	return m.loadExchangeAux(key, afterSeq)
 }
 
 func (m *Manager) GetFullToolCall(_ context.Context, key, callID string) (*agenttypes.ToolCall, error) {

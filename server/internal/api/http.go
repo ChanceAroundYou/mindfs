@@ -196,9 +196,7 @@ func (h *HTTPHandler) protectedEndpoint(next http.HandlerFunc) http.HandlerFunc 
 			r.ContentLength = int64(len(plaintext))
 		}
 		recorder := &protectedResponseWriter{ResponseWriter: w}
-		perfMw := time.Now()
 		next(recorder, r)
-		perfHandler := time.Since(perfMw)
 		if recorder.status == 0 {
 			recorder.status = http.StatusOK
 		}
@@ -206,22 +204,14 @@ func (h *HTTPHandler) protectedEndpoint(next http.HandlerFunc) http.HandlerFunc 
 			w.WriteHeader(recorder.status)
 			return
 		}
-		perfBody := recorder.body.Len()
 		var payload any
 		if err := json.Unmarshal(recorder.body.Bytes(), &payload); err != nil {
 			respondError(w, http.StatusServiceUnavailable, err)
 			return
 		}
-		perfUnmarshal := time.Since(perfMw) - perfHandler
-		perfEncStart := time.Now()
 		if err := writeProtectedJSON(w, recorder.status, sess.Key, payload); err != nil {
 			respondError(w, http.StatusServiceUnavailable, err)
 			return
-		}
-		// 临时性能插桩：区分「handler 内耗时」与「E2EE 中间件耗时」（解密/反序列化/加密/写出）。
-		if perfEncStart.Sub(perfMw) > 500*time.Millisecond {
-			log.Printf("[perf] e2ee path=%s handler=%v body_bytes=%d unmarshal=%v encrypt_write=%v",
-				r.URL.Path, perfHandler, perfBody, perfUnmarshal, time.Since(perfEncStart))
 		}
 	}
 }
@@ -896,14 +886,10 @@ func (h *HTTPHandler) handleSessionGet(w http.ResponseWriter, r *http.Request) {
 		limit = 200
 	}
 	uc := h.service()
-	// 临时性能插桩：从 handler 入口起分段（pendingUser 在 GetSession 之前且取 StreamHub 锁，
-	// 若流式广播持锁会在此阻塞——上一轮插桩起点在它之后，故漏掉了这段）。
-	perfEntry := time.Now()
 	var pendingUser *session.Exchange
 	if h.AppContext != nil {
 		pendingUser = h.AppContext.GetSessionStreamHub().GetPendingUserExchange(key)
 	}
-	perfPending := time.Since(perfEntry)
 	if pendingUser == nil {
 		if _, err := uc.SyncExternalSessionDelta(r.Context(), usecase.SyncExternalSessionDeltaInput{
 			RootID: rootID,
@@ -912,9 +898,6 @@ func (h *HTTPHandler) handleSessionGet(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[session/sync] external delta best-effort failed root=%s session=%s err=%v", strings.TrimSpace(rootID), strings.TrimSpace(key), err)
 		}
 	}
-	perfSync := time.Since(perfEntry) - perfPending
-	// 临时性能插桩：定位「窗口加载慢」的耗时分布（定位完成后连同 manager 侧插桩一并移除）。
-	perfStart := time.Now()
 	out, windowMeta, err := uc.GetSession(r.Context(), usecase.GetSessionInput{
 		RootID:    rootID,
 		Key:       key,
@@ -927,12 +910,10 @@ func (h *HTTPHandler) handleSessionGet(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusNotFound, err)
 		return
 	}
-	perfGet := time.Since(perfStart)
 	contextWindow, _ := uc.GetSessionContextWindow(r.Context(), usecase.GetSessionContextWindowInput{
 		RootID: rootID,
 		Key:    key,
 	})
-	perfCtx := time.Since(perfStart) - perfGet
 	// 窗口请求只需窗口内 seq 的 aux：原先传 Seq=0 会让 manager 全量读整个 aux 文件
 	// （实测某会话 11.8MB/约 300ms 且持 m.mu），再在下面按 windowSeqs 过滤掉绝大部分。
 	var exchangeAux map[int][]session.ExchangeAux
@@ -955,14 +936,7 @@ func (h *HTTPHandler) handleSessionGet(w http.ResponseWriter, r *http.Request) {
 			Seq:    afterSeq,
 		})
 	}
-	perfAux := time.Since(perfStart) - perfGet - perfCtx
-	resp := h.sessionResponse(out, pendingUser, contextWindow, exchangeAux, windowMeta)
-	perfBuild := time.Since(perfStart) - perfGet - perfCtx - perfAux
-	if total := time.Since(perfEntry); total > 500*time.Millisecond {
-		log.Printf("[perf] session-get key=%s latest=%d before=%d pending_user=%v sync=%v get_window=%v ctx=%v aux=%v build=%v respond=%v 合计=%v",
-			key, latest, beforeSeq, perfPending, perfSync, perfGet, perfCtx, perfAux, perfBuild, time.Since(perfStart), total)
-	}
-	respondJSON(w, http.StatusOK, resp)
+	respondJSON(w, http.StatusOK, h.sessionResponse(out, pendingUser, contextWindow, exchangeAux, windowMeta))
 }
 
 func (h *HTTPHandler) handleSessionSync(w http.ResponseWriter, r *http.Request) {
