@@ -2,6 +2,7 @@ package session
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"database/sql"
@@ -1286,9 +1287,13 @@ func (m *Manager) ExchangeLogPath(key string) string {
 
 func (m *Manager) ExchangeLogAbsolutePath(key string) string {
 	path, err := m.exchangePath(key)
-	if err != nil { return "" }
+	if err != nil {
+		return ""
+	}
 	metaDir := m.root.MetaDir()
-	if metaDir == "" { return "" }
+	if metaDir == "" {
+		return ""
+	}
 	return filepath.Join(metaDir, filepath.FromSlash(path))
 }
 
@@ -2024,14 +2029,31 @@ func (m *Manager) loadExchangeAux(key string, afterSeq int) (map[int][]ExchangeA
 	return items, nil
 }
 
-// loadExchangeAuxWindow 按窗口 seqSet 过滤 aux：全量读取后仅保留 seq∈seqSet 的条目，避免 aux.line 错位。
+// loadExchangeAuxWindow 按窗口 seqSet 过滤 aux：仅保留 seq∈seqSet 的条目，避免 aux.line 错位。
 func (m *Manager) loadExchangeAuxWindow(key string, seqSet map[int]bool) (map[int][]ExchangeAux, error) {
 	if len(seqSet) == 0 {
 		return map[int][]ExchangeAux{}, nil
 	}
-	entries, err := m.loadExchangeAuxEntries(key, 0)
+	// 窗口只覆盖尾部若干 seq，而 aux 按写入顺序（seq 升序）追加，故只需从文件尾反向读。
+	// 全量读在实测会话上是 11.8MB/281ms 且持 m.mu（阻塞实时流式写入），而窗口真正要的
+	// 只有 ~2MB 中的一小段，属纯浪费。
+	minSeq := 0
+	for seq := range seqSet {
+		if minSeq == 0 || seq < minSeq {
+			minSeq = seq
+		}
+	}
+	path, err := m.auxPath(key)
 	if err != nil {
 		return nil, err
+	}
+	entries, ok := m.readAuxWindowTail(path, minSeq)
+	if !ok {
+		// 尾部扫描不可用（文件不可 seek / 读取异常）→ 回退全量读，保证正确性。
+		entries, err = m.loadExchangeAuxEntries(key, 0)
+		if err != nil {
+			return nil, err
+		}
 	}
 	items := make(map[int][]ExchangeAux)
 	for _, entry := range entries {
@@ -2087,6 +2109,99 @@ func (m *Manager) loadExchangeAuxEntries(key string, afterSeq int) ([]ExchangeAu
 		}
 	}
 	return items, nil
+}
+
+// readAuxWindowTail 从 aux 文件尾部反向分块读取 seq>=minSeq 的条目。
+// aux 按写入顺序（seq 升序）追加，因此尾部即最新 seq；窗口只覆盖尾部若干 seq，
+// 无需全量读（实测某会话 aux 11.8MB/281ms 且持 m.mu，而窗口要的只是一小段）。
+// 返回 ok=false 表示无法可靠完成（不可 seek / 读取异常），由调用方回退全量读。
+func (m *Manager) readAuxWindowTail(path string, minSeq int) ([]ExchangeAux, bool) {
+	if minSeq <= 0 {
+		return nil, false
+	}
+	file, err := m.root.OpenMetaFile(path)
+	if err != nil {
+		// 文件缺失等价于「无 aux」，不是失败。
+		if errors.Is(err, os.ErrNotExist) {
+			return []ExchangeAux{}, true
+		}
+		return nil, false
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, false
+	}
+	size := info.Size()
+	if size == 0 {
+		return []ExchangeAux{}, true
+	}
+
+	const chunk = int64(512 << 10)
+	// 即使已看到 seq<minSeq 也再多读两块：aux 的写入顺序不保证跨轮严格单调
+	// （子代理等可能在稍后追加较小 seq），留出余量避免漏条目。
+	const safetyChunks = 2
+	var rawLines [][]byte
+	end := size
+	safety := 0
+	for end > 0 {
+		start := end - chunk
+		if start < 0 {
+			start = 0
+		}
+		buf := make([]byte, int(end-start))
+		if _, err := file.ReadAt(buf, start); err != nil && !errors.Is(err, io.EOF) {
+			return nil, false
+		}
+		if start > 0 {
+			// 非文件头：首行可能是半行，丢弃到第一个换行为止。
+			idx := bytes.IndexByte(buf, '\n')
+			if idx < 0 {
+				buf = nil
+			} else {
+				buf = buf[idx+1:]
+			}
+		}
+		below := false
+		part := make([][]byte, 0, 64)
+		for _, raw := range bytes.Split(buf, []byte{'\n'}) {
+			raw = bytes.TrimSpace(raw)
+			if len(raw) == 0 {
+				continue
+			}
+			part = append(part, raw)
+			var probe struct {
+				Seq int `json:"seq"`
+			}
+			if json.Unmarshal(raw, &probe) == nil && probe.Seq > 0 && probe.Seq < minSeq {
+				below = true
+			}
+		}
+		rawLines = append(part, rawLines...)
+		if below {
+			safety++
+			if safety >= safetyChunks {
+				break
+			}
+		}
+		if start == 0 {
+			break
+		}
+		end = start
+	}
+
+	items := make([]ExchangeAux, 0, len(rawLines))
+	for _, raw := range rawLines {
+		var entry ExchangeAux
+		if err := json.Unmarshal(raw, &entry); err != nil {
+			continue
+		}
+		if entry.Seq <= 0 || entry.Seq < minSeq {
+			continue
+		}
+		items = append(items, entry)
+	}
+	return items, true
 }
 
 func (m *Manager) readAuxFile(path string, afterSeq int) ([]ExchangeAux, error) {
