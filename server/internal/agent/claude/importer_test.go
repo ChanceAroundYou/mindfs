@@ -223,7 +223,7 @@ func TestReadClaudeImportedSubagentsLinksAgentToolCall(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(subagentDir, "agent-child-1.jsonl"), []byte(child), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	items, err := readClaudeImportedSubagents(parentPath)
+	items, err := NewImporter(ImporterOptions{}).readClaudeImportedSubagents(parentPath, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
