@@ -898,6 +898,8 @@ func (h *HTTPHandler) handleSessionGet(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[session/sync] external delta best-effort failed root=%s session=%s err=%v", strings.TrimSpace(rootID), strings.TrimSpace(key), err)
 		}
 	}
+	// 临时性能插桩：定位「窗口加载慢」的耗时分布（定位完成后连同 manager 侧插桩一并移除）。
+	perfStart := time.Now()
 	out, windowMeta, err := uc.GetSession(r.Context(), usecase.GetSessionInput{
 		RootID:    rootID,
 		Key:       key,
@@ -910,16 +912,25 @@ func (h *HTTPHandler) handleSessionGet(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusNotFound, err)
 		return
 	}
+	perfGet := time.Since(perfStart)
 	contextWindow, _ := uc.GetSessionContextWindow(r.Context(), usecase.GetSessionContextWindowInput{
 		RootID: rootID,
 		Key:    key,
 	})
+	perfCtx := time.Since(perfStart) - perfGet
 	exchangeAux, _ := uc.GetSessionExchangeAux(r.Context(), usecase.GetSessionExchangeAuxInput{
 		RootID: rootID,
 		Key:    key,
 		Seq:    afterSeq,
 	})
-	respondJSON(w, http.StatusOK, h.sessionResponse(out, pendingUser, contextWindow, exchangeAux, windowMeta))
+	perfAux := time.Since(perfStart) - perfGet - perfCtx
+	resp := h.sessionResponse(out, pendingUser, contextWindow, exchangeAux, windowMeta)
+	perfBuild := time.Since(perfStart) - perfGet - perfCtx - perfAux
+	if total := time.Since(perfStart); total > time.Second {
+		log.Printf("[perf] session-get key=%s latest=%d before=%d get_window=%v ctx=%v aux=%v build=%v 合计=%v (不含加密写出)",
+			key, latest, beforeSeq, perfGet, perfCtx, perfAux, perfBuild, total)
+	}
+	respondJSON(w, http.StatusOK, resp)
 }
 
 func (h *HTTPHandler) handleSessionSync(w http.ResponseWriter, r *http.Request) {
