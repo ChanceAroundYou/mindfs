@@ -361,9 +361,15 @@ func (m *Manager) GetMeta(_ context.Context, key string) (*Session, error) {
 }
 
 func (m *Manager) GetExchangeAux(_ context.Context, key string, afterSeq int) (map[int][]ExchangeAux, error) {
+	start := time.Now()
 	m.mu.Lock()
+	waited := time.Since(start)
 	defer m.mu.Unlock()
-	return m.loadExchangeAux(key, afterSeq)
+	out, err := m.loadExchangeAux(key, afterSeq)
+	if total := time.Since(start); total > perfTraceThreshold {
+		log.Printf("[perf] GetExchangeAux key=%s afterSeq=%d entries=%d wait_lock=%v work=%v total=%v", key, afterSeq, len(out), waited, total-waited, total)
+	}
+	return out, err
 }
 
 func (m *Manager) GetFullToolCall(_ context.Context, key, callID string) (*agenttypes.ToolCall, error) {

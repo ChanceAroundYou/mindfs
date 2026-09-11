@@ -196,7 +196,9 @@ func (h *HTTPHandler) protectedEndpoint(next http.HandlerFunc) http.HandlerFunc 
 			r.ContentLength = int64(len(plaintext))
 		}
 		recorder := &protectedResponseWriter{ResponseWriter: w}
+		perfMw := time.Now()
 		next(recorder, r)
+		perfHandler := time.Since(perfMw)
 		if recorder.status == 0 {
 			recorder.status = http.StatusOK
 		}
@@ -204,14 +206,22 @@ func (h *HTTPHandler) protectedEndpoint(next http.HandlerFunc) http.HandlerFunc 
 			w.WriteHeader(recorder.status)
 			return
 		}
+		perfBody := recorder.body.Len()
 		var payload any
 		if err := json.Unmarshal(recorder.body.Bytes(), &payload); err != nil {
 			respondError(w, http.StatusServiceUnavailable, err)
 			return
 		}
+		perfUnmarshal := time.Since(perfMw) - perfHandler
+		perfEncStart := time.Now()
 		if err := writeProtectedJSON(w, recorder.status, sess.Key, payload); err != nil {
 			respondError(w, http.StatusServiceUnavailable, err)
 			return
+		}
+		// 临时性能插桩：区分「handler 内耗时」与「E2EE 中间件耗时」（解密/反序列化/加密/写出）。
+		if perfEncStart.Sub(perfMw) > time.Second {
+			log.Printf("[perf] e2ee path=%s handler=%v body_bytes=%d unmarshal=%v encrypt_write=%v",
+				r.URL.Path, perfHandler, perfBody, perfUnmarshal, time.Since(perfEncStart))
 		}
 	}
 }
@@ -918,11 +928,28 @@ func (h *HTTPHandler) handleSessionGet(w http.ResponseWriter, r *http.Request) {
 		Key:    key,
 	})
 	perfCtx := time.Since(perfStart) - perfGet
-	exchangeAux, _ := uc.GetSessionExchangeAux(r.Context(), usecase.GetSessionExchangeAuxInput{
-		RootID: rootID,
-		Key:    key,
-		Seq:    afterSeq,
-	})
+	// 窗口请求只需窗口内 seq 的 aux：原先传 Seq=0 会让 manager 全量读整个 aux 文件
+	// （实测某会话 11.8MB/约 300ms 且持 m.mu），再在下面按 windowSeqs 过滤掉绝大部分。
+	var exchangeAux map[int][]session.ExchangeAux
+	if windowMeta != nil {
+		windowSeqs := make(map[int]bool, len(out.Exchanges))
+		for _, ex := range out.Exchanges {
+			if ex.Seq > 0 {
+				windowSeqs[ex.Seq] = true
+			}
+		}
+		exchangeAux, _ = uc.GetSessionExchangeAuxWindow(r.Context(), usecase.GetSessionExchangeAuxWindowInput{
+			RootID: rootID,
+			Key:    key,
+			Seqs:   windowSeqs,
+		})
+	} else {
+		exchangeAux, _ = uc.GetSessionExchangeAux(r.Context(), usecase.GetSessionExchangeAuxInput{
+			RootID: rootID,
+			Key:    key,
+			Seq:    afterSeq,
+		})
+	}
 	perfAux := time.Since(perfStart) - perfGet - perfCtx
 	resp := h.sessionResponse(out, pendingUser, contextWindow, exchangeAux, windowMeta)
 	perfBuild := time.Since(perfStart) - perfGet - perfCtx - perfAux

@@ -740,6 +740,26 @@ func (s *Service) GetSessionExchangeAux(ctx context.Context, in GetSessionExchan
 	return manager.GetExchangeAux(ctx, in.Key, in.Seq)
 }
 
+// GetSessionExchangeAuxWindow 只取窗口内 seq 的 aux。窗口请求原先经 GetSessionExchangeAux(Seq=0)
+// 全量读取整个 aux 文件再按窗口过滤（实测某会话 11.8MB/~300ms），纯属浪费；此处按窗口 seqSet
+// 走尾部读（见 Manager.readAuxWindowTail）。
+func (s *Service) GetSessionExchangeAuxWindow(ctx context.Context, in GetSessionExchangeAuxWindowInput) (map[int][]session.ExchangeAux, error) {
+	if err := s.ensureRegistry(); err != nil {
+		return nil, err
+	}
+	manager, err := s.Registry.GetSessionManager(in.RootID)
+	if err != nil {
+		return nil, err
+	}
+	return manager.GetExchangeAuxWindow(ctx, in.Key, in.Seqs)
+}
+
+type GetSessionExchangeAuxWindowInput struct {
+	RootID string
+	Key    string
+	Seqs   map[int]bool
+}
+
 type GetSessionToolCallInput struct {
 	RootID string
 	Key    string
