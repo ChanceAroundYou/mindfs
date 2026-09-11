@@ -219,7 +219,7 @@ func (h *HTTPHandler) protectedEndpoint(next http.HandlerFunc) http.HandlerFunc 
 			return
 		}
 		// 临时性能插桩：区分「handler 内耗时」与「E2EE 中间件耗时」（解密/反序列化/加密/写出）。
-		if perfEncStart.Sub(perfMw) > time.Second {
+		if perfEncStart.Sub(perfMw) > 500*time.Millisecond {
 			log.Printf("[perf] e2ee path=%s handler=%v body_bytes=%d unmarshal=%v encrypt_write=%v",
 				r.URL.Path, perfHandler, perfBody, perfUnmarshal, time.Since(perfEncStart))
 		}
@@ -896,10 +896,14 @@ func (h *HTTPHandler) handleSessionGet(w http.ResponseWriter, r *http.Request) {
 		limit = 200
 	}
 	uc := h.service()
+	// 临时性能插桩：从 handler 入口起分段（pendingUser 在 GetSession 之前且取 StreamHub 锁，
+	// 若流式广播持锁会在此阻塞——上一轮插桩起点在它之后，故漏掉了这段）。
+	perfEntry := time.Now()
 	var pendingUser *session.Exchange
 	if h.AppContext != nil {
 		pendingUser = h.AppContext.GetSessionStreamHub().GetPendingUserExchange(key)
 	}
+	perfPending := time.Since(perfEntry)
 	if pendingUser == nil {
 		if _, err := uc.SyncExternalSessionDelta(r.Context(), usecase.SyncExternalSessionDeltaInput{
 			RootID: rootID,
@@ -908,6 +912,7 @@ func (h *HTTPHandler) handleSessionGet(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[session/sync] external delta best-effort failed root=%s session=%s err=%v", strings.TrimSpace(rootID), strings.TrimSpace(key), err)
 		}
 	}
+	perfSync := time.Since(perfEntry) - perfPending
 	// 临时性能插桩：定位「窗口加载慢」的耗时分布（定位完成后连同 manager 侧插桩一并移除）。
 	perfStart := time.Now()
 	out, windowMeta, err := uc.GetSession(r.Context(), usecase.GetSessionInput{
@@ -953,9 +958,9 @@ func (h *HTTPHandler) handleSessionGet(w http.ResponseWriter, r *http.Request) {
 	perfAux := time.Since(perfStart) - perfGet - perfCtx
 	resp := h.sessionResponse(out, pendingUser, contextWindow, exchangeAux, windowMeta)
 	perfBuild := time.Since(perfStart) - perfGet - perfCtx - perfAux
-	if total := time.Since(perfStart); total > time.Second {
-		log.Printf("[perf] session-get key=%s latest=%d before=%d get_window=%v ctx=%v aux=%v build=%v 合计=%v (不含加密写出)",
-			key, latest, beforeSeq, perfGet, perfCtx, perfAux, perfBuild, total)
+	if total := time.Since(perfEntry); total > 500*time.Millisecond {
+		log.Printf("[perf] session-get key=%s latest=%d before=%d pending_user=%v sync=%v get_window=%v ctx=%v aux=%v build=%v respond=%v 合计=%v",
+			key, latest, beforeSeq, perfPending, perfSync, perfGet, perfCtx, perfAux, perfBuild, time.Since(perfStart), total)
 	}
 	respondJSON(w, http.StatusOK, resp)
 }

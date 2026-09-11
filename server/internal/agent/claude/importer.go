@@ -149,7 +149,7 @@ func (i *Importer) importSessionFile(file claudeSessionFile, after time.Time, pr
 	if unchanged {
 		return agenttypes.ImportedExternalSession{Agent: i.agentName, AgentSessionID: file.AgentSessionID, Cwd: file.Cwd, Cursor: cursor}, nil
 	}
-	exchanges, err := readClaudeImportedExchanges(file.Path, after)
+	exchanges, err := readClaudeImportedExchanges(file.Path, after, previous.Offset)
 	if err != nil {
 		log.Printf("[agent/claude/importer] import session read failed session_id=%s path=%s err=%v", file.AgentSessionID, file.Path, err)
 		return agenttypes.ImportedExternalSession{}, err
@@ -236,7 +236,7 @@ func readClaudeImportedSubagents(parentPath string) ([]agenttypes.ImportedSubage
 			if relation.ParentAgentID != "" && !added[relation.ParentAgentID] {
 				continue
 			}
-			exchanges, err := readClaudeImportedExchanges(pathsByAgentID[agentID], time.Time{})
+			exchanges, err := readClaudeImportedExchanges(pathsByAgentID[agentID], time.Time{}, 0)
 			if err != nil {
 				return nil, err
 			}
@@ -380,7 +380,7 @@ func (i *Importer) ResolveForkPointByAgentTurnIndex(ctx context.Context, in agen
 	if !ok {
 		return agenttypes.ResolveForkPointOutput{}, errors.New("external session not found")
 	}
-	items, err := readClaudeImportedExchangeLocators(file.Path, time.Time{})
+	items, err := readClaudeImportedExchangeLocators(file.Path, time.Time{}, 0)
 	if err != nil {
 		return agenttypes.ResolveForkPointOutput{}, err
 	}
@@ -688,8 +688,11 @@ func inspectClaudeSessionFile(path string) (claudeSessionFile, bool, error) {
 	}, true, nil
 }
 
-func readClaudeImportedExchanges(path string, after time.Time) ([]agenttypes.ImportedExchange, error) {
-	locators, err := readClaudeImportedExchangeLocators(path, after)
+// readClaudeImportedExchanges 从 startOffset 起读取增量条目。
+// startOffset<=0 表示全量读；>0 时只解析该字节位置之后的内容，避免每次同步都全量
+// 解析整个转录（实测某会话转录 67MB，全量读+解析 1.5-3.3s，而每次打开会话都会触发同步）。
+func readClaudeImportedExchanges(path string, after time.Time, startOffset int64) ([]agenttypes.ImportedExchange, error) {
+	locators, err := readClaudeImportedExchangeLocators(path, after, startOffset)
 	if err != nil {
 		return nil, err
 	}
@@ -700,12 +703,32 @@ func readClaudeImportedExchanges(path string, after time.Time) ([]agenttypes.Imp
 	return items, nil
 }
 
-func readClaudeImportedExchangeLocators(path string, after time.Time) ([]importedExchangeLocator, error) {
+// importSeekBackWindow 是从 startOffset 往前多读的字节数。转录的交换按轮次成组，
+// 上次已读位置通常落在轮次边界，多读一小段是为覆盖「上次同步正好落在轮次中间」的边缘
+// 情况，保证该轮仍能被合并成一条而非拆成两条。代价极小（64KB vs 数十 MB）。
+const importSeekBackWindow = 64 << 10
+
+func readClaudeImportedExchangeLocators(path string, after time.Time, startOffset int64) ([]importedExchangeLocator, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, apperr.Wrap("open", path, err)
 	}
 	defer file.Close()
+	if startOffset > 0 {
+		pos := startOffset - importSeekBackWindow
+		if pos < 0 {
+			pos = 0
+		}
+		if _, err := file.Seek(pos, io.SeekStart); err != nil {
+			return nil, apperr.Wrap("seek", path, err)
+		}
+		if pos > 0 {
+			// 非文件头：丢弃可能被截断的首行。
+			if _, err := bufio.NewReader(file).ReadBytes('\n'); err != nil && !errors.Is(err, io.EOF) {
+				return nil, apperr.Wrap("seek_align", path, err)
+			}
+		}
+	}
 
 	items := make([]importedExchangeLocator, 0)
 	toolLocations := make(map[string]importedToolLocation)

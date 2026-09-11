@@ -53,7 +53,7 @@ func TestReadClaudeImportedExchangesDedupesRepeatedUUIDs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	items, err := readClaudeImportedExchanges(path, time.Time{})
+	items, err := readClaudeImportedExchanges(path, time.Time{}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ func TestReadClaudeImportedExchangesDedupesUUIDsWithToolResults(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	items, err := readClaudeImportedExchanges(path, time.Time{})
+	items, err := readClaudeImportedExchanges(path, time.Time{}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestReadClaudeImportedExchangesIgnoresUnsupportedToolCall(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	items, err := readClaudeImportedExchanges(path, time.Time{})
+	items, err := readClaudeImportedExchanges(path, time.Time{}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +139,7 @@ func TestReadClaudeImportedExchangesMarksFailedToolResult(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	items, err := readClaudeImportedExchanges(path, time.Time{})
+	items, err := readClaudeImportedExchanges(path, time.Time{}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +163,7 @@ func TestReadClaudeImportedExchangesIncludesPlanToolCall(t *testing.T) {
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	items, err := readClaudeImportedExchanges(path, time.Time{})
+	items, err := readClaudeImportedExchanges(path, time.Time{}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +184,7 @@ func TestReadClaudeImportedExchangesIncludesAskUserToolCall(t *testing.T) {
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	items, err := readClaudeImportedExchanges(path, time.Time{})
+	items, err := readClaudeImportedExchanges(path, time.Time{}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -369,5 +369,75 @@ func TestCwdMatchesRoot(t *testing.T) {
 		if got := cwdMatchesRoot(tc.cwd, root); got != tc.want {
 			t.Fatalf("cwdMatchesRoot(%q, %q) = %v, want %v", tc.cwd, root, got, tc.want)
 		}
+	}
+}
+
+// 增量读（按上次游标字节位置续读）只应产出新增内容，且不得因截断而丢条目。
+// 这是「窗口加载全量解析 69MB 转录」修复的正确性底线。
+func TestReadClaudeImportedExchangesIncremental(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "s.jsonl")
+	head := `{"type":"user","uuid":"u1","timestamp":"2026-08-27T02:15:00Z","message":{"content":[{"type":"text","text":"q1"}]}}
+{"type":"assistant","uuid":"a1","timestamp":"2026-08-27T02:15:08Z","message":{"content":[{"type":"text","text":"r1"}]}}
+`
+	if err := os.WriteFile(path, []byte(head), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	first, err := readClaudeImportedExchanges(path, time.Time{}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first) != 2 {
+		t.Fatalf("首轮应产出 2 条，得到 %d", len(first))
+	}
+
+	// 追加一轮，然后从上次结束位置续读：只应拿到新增那一轮。
+	tail := `{"type":"user","uuid":"u2","timestamp":"2026-08-27T02:16:00Z","message":{"content":[{"type":"text","text":"q2"}]}}
+{"type":"assistant","uuid":"a2","timestamp":"2026-08-27T02:16:05Z","message":{"content":[{"type":"text","text":"r2"}]}}
+`
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(tail); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	inc, err := readClaudeImportedExchanges(path, time.Time{}, int64(len(head)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 允许回看窗口内重复产出上一轮的尾部（由 after 时间戳过滤兜底），
+	// 但绝不允许漏掉新增轮次，也不允许把新增轮次算两次。
+	var sawQ2, sawR2 int
+	for _, item := range inc {
+		switch strings.TrimSpace(item.Content) {
+		case "q2":
+			sawQ2++
+		case "r2":
+			sawR2++
+		}
+	}
+	if sawQ2 != 1 || sawR2 != 1 {
+		t.Fatalf("增量应恰好产出新增一轮（q2=%d r2=%d），共 %d 条", sawQ2, sawR2, len(inc))
+	}
+	_ = info
+
+	// 稳态：已读到 EOF 时，续读虽会回看一小段（小文件即全文），但经 after 过滤后应为空——
+	// 这正是「不会重复追加」的依据（沿用既有时间戳过滤，非本次新引入的机制）。
+	lastTS, err := time.Parse(time.RFC3339, "2026-08-27T02:16:05Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	eof, err := readClaudeImportedExchanges(path, lastTS, info.Size())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(eof) != 0 {
+		t.Fatalf("EOF 处续读经 after 过滤后应为空，得到 %d 条", len(eof))
 	}
 }
