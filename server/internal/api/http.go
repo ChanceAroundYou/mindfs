@@ -367,6 +367,8 @@ func (h *HTTPHandler) Routes() http.Handler {
 	r.Put("/api/preferences/new-project-meta-location", h.protectedEndpoint(h.handleNewProjectMetaLocationPreferencePut))
 	r.Get("/api/preferences/cors", h.protectedEndpoint(h.handleCORSPreferenceGet))
 	r.Put("/api/preferences/cors", h.protectedEndpoint(h.handleCORSPreferencePut))
+	r.Get("/api/preferences/session-project-pins", h.protectedEndpoint(h.handleSessionProjectPinsGet))
+	r.Put("/api/preferences/session-project-pins", h.protectedEndpoint(h.handleSessionProjectPinsPut))
 	r.Get("/api/replying-sessions", h.protectedEndpoint(h.handleReplyingSessions))
 	r.Get("/api/sessions/search", h.protectedEndpoint(h.handleSessionSearch))
 	r.Get("/api/sessions/children", h.protectedEndpoint(h.handleSessionChildren))
@@ -1652,6 +1654,39 @@ func (h *HTTPHandler) handleCORSPreferencePut(w http.ResponseWriter, r *http.Req
 	respondJSON(w, http.StatusOK, map[string]any{
 		"mode":          mode,
 		"allow_origins": prefs.CORSAllowOrigins(),
+	})
+}
+
+func (h *HTTPHandler) handleSessionProjectPinsGet(w http.ResponseWriter, _ *http.Request) {
+	if h.AppContext == nil || h.AppContext.GetPreferences() == nil {
+		respondError(w, http.StatusServiceUnavailable, errInvalidRequest("preferences not configured"))
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{
+		"pins": h.AppContext.GetPreferences().SessionProjectPins(),
+	})
+}
+
+type sessionProjectPinsRequest struct {
+	Pins map[string]int64 `json:"pins"`
+}
+
+func (h *HTTPHandler) handleSessionProjectPinsPut(w http.ResponseWriter, r *http.Request) {
+	if h.AppContext == nil || h.AppContext.GetPreferences() == nil {
+		respondError(w, http.StatusServiceUnavailable, errInvalidRequest("preferences not configured"))
+		return
+	}
+	var req sessionProjectPinsRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, errInvalidRequest(err.Error()))
+		return
+	}
+	if err := h.AppContext.GetPreferences().UpdateSessionProjectPins(req.Pins); err != nil {
+		respondError(w, http.StatusInternalServerError, errInvalidRequest(err.Error()))
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{
+		"pins": h.AppContext.GetPreferences().SessionProjectPins(),
 	})
 }
 

@@ -5,6 +5,7 @@ import { NodeBadgeHeader } from "./NodeBadgeHeader";
 import { getNodes, PALETTE } from "../services/nodeRegistry";
 import { resolveGroupColor } from "../services/sessionGroupDisplay";
 import { scopeKey } from "../services/scope";
+import { fetchSessionProjectPins, updateSessionProjectPins } from "../services/preferences";
 import { useI18n, type Locale } from "../i18n";
 import { type DirectorySortMode, sortDirectoryEntries } from "../services/directorySort";
 
@@ -760,33 +761,32 @@ export function MultiProjectSessionList({
   const [expandedChildren, setExpandedChildren] = useState<Record<string, boolean>>({});
   const [loadingChildren, setLoadingChildren] = useState<Record<string, boolean>>({});
   const [childrenHasMore, setChildrenHasMore] = useState<Record<string, boolean>>({});
-  const [pinnedProjects, setPinnedProjects] = useState<Record<string, number>>(() => {
-    if (typeof window === "undefined") {
-      return {};
-    }
-    try {
-      const parsed = JSON.parse(window.localStorage.getItem(PINNED_PROJECTS_STORAGE_KEY) || "{}");
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        return {};
-      }
-      const next: Record<string, number> = {};
-      for (const [key, value] of Object.entries(parsed)) {
-        const timestamp = Number(value);
-        if (key && Number.isFinite(timestamp) && timestamp > 0) {
-          next[key] = timestamp;
-        }
-      }
-      return next;
-    } catch {
-      return {};
-    }
-  });
+  const [pinnedProjects, setPinnedProjects] = useState<Record<string, number>>({});
+  // 项目置顶持久化到服务端偏好（跨设备/清缓存不丢）；加载失败回退本地 localStorage 旧数据
   useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    window.localStorage.setItem(PINNED_PROJECTS_STORAGE_KEY, JSON.stringify(pinnedProjects));
-  }, [pinnedProjects]);
+    let cancelled = false;
+    fetchSessionProjectPins()
+      .then((pins) => {
+        if (!cancelled) setPinnedProjects(pins);
+      })
+      .catch(() => {
+        if (typeof window === "undefined") return;
+        try {
+          const parsed = JSON.parse(window.localStorage.getItem(PINNED_PROJECTS_STORAGE_KEY) || "{}");
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            const next: Record<string, number> = {};
+            for (const [key, value] of Object.entries(parsed)) {
+              const timestamp = Number(value);
+              if (key && Number.isFinite(timestamp) && timestamp > 0) next[key] = timestamp;
+            }
+            if (!cancelled && Object.keys(next).length > 0) setPinnedProjects(next);
+          }
+        } catch {}
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   // 渲染侧审计：仅 groups 数组变化时打一条（不随帧刷屏），标记缺色回退的分组
   useEffect(() => {
     try {
@@ -842,15 +842,15 @@ export function MultiProjectSessionList({
   }, [groups, pinnedProjects, projectSortMode]);
   const togglePinnedProject = (group: ProjectSessionGroup) => {
     const key = groupScopeKey(group);
-    setPinnedProjects((prev) => {
-      const next = { ...prev };
-      if (next[key]) {
-        delete next[key];
-      } else {
-        next[key] = Date.now();
-      }
-      return next;
-    });
+    const next = { ...pinnedProjects };
+    if (next[key]) {
+      delete next[key];
+    } else {
+      next[key] = Date.now();
+    }
+    setPinnedProjects(next);
+    // 置顶状态写服务端偏好；失败只回退本地 UI，下次拉取会纠正
+    void updateSessionProjectPins(next).catch(() => {});
   };
   const sessionByKey = useMemo(() => {
     const byKey = new Map<string, SessionItem>();
@@ -983,9 +983,13 @@ export function MultiProjectSessionList({
     return !!groupNodeId && !!selectedNid && groupNodeId === selectedNid;
   };
 
+  // 默认折叠态：当前节点 + 被图钉置顶的项目展开
+  const groupDefaultExpanded = (group: ProjectSessionGroup) =>
+    groupIsCurrentNode(group) || !!pinnedProjects[groupScopeKey(group)];
+
   const handleProjectToggle = async (group: ProjectSessionGroup) => {
     const groupKey = groupScopeKey(group);
-    const expanded = expandedProjects[groupKey] ?? groupIsCurrentNode(group);
+    const expanded = expandedProjects[groupKey] ?? groupDefaultExpanded(group);
     const topLevelCount = topLevelSessionsForGroup(group.sessions).length;
     const remaining = Math.max(0, group.totalCount - topLevelCount);
     if (!expanded) {
@@ -1018,7 +1022,7 @@ export function MultiProjectSessionList({
 
   const handleProjectHeaderToggle = async (group: ProjectSessionGroup) => {
     const key = groupScopeKey(group);
-    const expanded = expandedProjects[key] ?? groupIsCurrentNode(group);
+    const expanded = expandedProjects[key] ?? groupDefaultExpanded(group);
     if (expanded) {
       setExpandedProjects((prev) => ({ ...prev, [key]: false }));
       return;
@@ -1095,7 +1099,7 @@ export function MultiProjectSessionList({
             {orderedGroups.map((group) => {
               const groupKey = groupScopeKey(group);
               const groupNodeId = String((group as any)?._nodeId || "").trim();
-              const expanded = expandedProjects[groupKey] ?? groupIsCurrentNode(group);
+              const expanded = expandedProjects[groupKey] ?? groupDefaultExpanded(group);
               const pinned = !!pinnedProjects[groupKey];
               const topLevelSessions = topLevelSessionsForGroup(group.sessions);
               const sessions = expanded ? group.sessions : [];

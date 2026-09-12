@@ -29,6 +29,7 @@ type UserPreferences struct {
 	IdleSessionResourceReleaseHours int                      `json:"idle_session_resource_release_hours,omitempty"`
 	NewProjectMetaLocation          string                   `json:"new_project_meta_location,omitempty"`
 	CORS                            CORSPreferences          `json:"cors,omitempty"`
+	SessionProjectPins              map[string]int64         `json:"session_project_pins,omitempty"`
 }
 
 type CORSPreferences struct {
@@ -393,6 +394,53 @@ func (s *Store) ApplyAgentDefaults(statuses []agent.Status) []agent.Status {
 		}
 	}
 	return out
+}
+
+// SessionProjectPins: 右侧会话栏项目置顶时间戳（key=scopeKey，value=置顶时间 ms，0 表示未置顶）。
+func (s *Store) SessionProjectPins() map[string]int64 {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make(map[string]int64, len(s.data.SessionProjectPins))
+	for k, v := range s.data.SessionProjectPins {
+		out[k] = v
+	}
+	return out
+}
+
+func (s *Store) UpdateSessionProjectPins(pins map[string]int64) error {
+	if s == nil {
+		return nil
+	}
+	if pins == nil {
+		pins = map[string]int64{}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(pins) == len(s.data.SessionProjectPins) {
+		same := true
+		for k, v := range pins {
+			if s.data.SessionProjectPins[k] != v {
+				same = false
+				break
+			}
+		}
+		if same {
+			return nil
+		}
+	}
+	next := make(map[string]int64, len(pins))
+	for k, v := range pins {
+		k = strings.TrimSpace(k)
+		if k == "" {
+			continue
+		}
+		next[k] = v
+	}
+	s.data.SessionProjectPins = next
+	return s.saveLocked()
 }
 
 func (s *Store) saveLocked() error {
