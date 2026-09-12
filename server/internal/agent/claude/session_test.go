@@ -639,3 +639,104 @@ func TestClaudeEffectiveEnv(t *testing.T) {
 		t.Fatalf("empty rootDir should skip project settings: got %q", got)
 	}
 }
+
+// 复现 2026-09-12 症状 1 的双重发射：SDK 对同一次 AskUserQuestion 会走两条路径
+// （CanUseTool → awaitAskUserQuestion，以及 AssistantMessage 的 tool_use 块），
+// 两者 CallID 相同、来自不同 goroutine、次序不定。claimAskUserEmit 保证只有先到者
+// 发射，后者跳过 —— 否则同一张 ask_user 卡会渲染两份。
+func TestClaimAskUserEmitOnlyFirstWins(t *testing.T) {
+	s := &session{}
+
+	if !s.claimAskUserEmit("call_abc") {
+		t.Fatal("first claim should win")
+	}
+	if s.claimAskUserEmit("call_abc") {
+		t.Fatal("second claim for same callID must lose")
+	}
+
+	// 不同 callID 互不影响
+	if !s.claimAskUserEmit("call_def") {
+		t.Fatal("different callID should win")
+	}
+
+	// 空 callID 不做去重（无 ID 可判，放行以免丢卡）
+	if !s.claimAskUserEmit("") || !s.claimAskUserEmit("") {
+		t.Fatal("empty callID should always pass through")
+	}
+}
+
+// 并发场景：模拟两条路径同时到达，必须恰好一个赢。
+func TestClaimAskUserEmitConcurrentExactlyOneWinner(t *testing.T) {
+	s := &session{}
+	const racers = 8
+	results := make(chan bool, racers)
+	for i := 0; i < racers; i++ {
+		go func() { results <- s.claimAskUserEmit("call_race") }()
+	}
+	winners := 0
+	for i := 0; i < racers; i++ {
+		if <-results {
+			winners++
+		}
+	}
+	if winners != 1 {
+		t.Fatalf("winners = %d, want exactly 1", winners)
+	}
+}
+
+// 复现 2026-09-12 症状 1：子代理报告被当成卡片标题。
+// SDK 的 TaskNotificationMessage 没有 Description 字段，只有 Summary（报告正文）。
+// 旧代码把 msg.Summary 当 description 传给 claudeTaskToolCall，后者
+// `title := strings.TrimSpace(description)` 于是把报告全文提升成标题，UI 上表现为
+// 「一段没有思考的裸文本工具卡」，并与同 line 锚点的 ask_user 卡相邻渲染，
+// 看起来像提问被重复了一遍。真正的任务描述在 trackTaskInfo 里。
+func TestClaudeTaskNotificationKeepsReportOutOfTitle(t *testing.T) {
+	const (
+		description = "Explore sync + reload ordering"
+		report      = "Now I have all the data needed to produce the final report. " +
+			"Here is the complete analysis across the four areas requested."
+	)
+	events := make([]types.Event, 0, 1)
+	s := &session{sessionID: "claude-session", onUpdate: func(event types.Event) {
+		events = append(events, event)
+	}}
+	s.trackTaskInfo("task-1", claudeTaskInfo{
+		ToolUseID:    "tool-1",
+		TaskType:     "local_agent",
+		Description:  description,
+		SubagentType: "Explore",
+	})
+
+	s.handleTaskNotificationMessage(claudeagent.TaskNotificationMessage{
+		Subtype:   "task_notification",
+		TaskID:    "task-1",
+		ToolUseID: "tool-1",
+		Status:    claudeagent.TaskNotificationStatusCompleted,
+		Summary:   report,
+	})
+
+	if len(events) != 1 {
+		t.Fatalf("events = %#v, want one terminal update", events)
+	}
+	toolCall, ok := events[0].Data.(types.ToolCall)
+	if !ok {
+		t.Fatalf("event data = %T, want ToolCall", events[0].Data)
+	}
+	if toolCall.Title == report || strings.Contains(toolCall.Title, "I have all the data needed") {
+		t.Fatalf("title = %q, want task description, not the subagent report", toolCall.Title)
+	}
+	if toolCall.Title != description {
+		t.Fatalf("title = %q, want %q", toolCall.Title, description)
+	}
+	if got := stringMeta(toolCall.Meta, "taskDescription"); got == report || got != description {
+		t.Fatalf("meta.taskDescription = %q, want %q (report must not leak into it)", got, description)
+	}
+	// 报告本身不能丢：它应当作为正文 content 渲染。
+	var body string
+	for _, item := range toolCall.Content {
+		body += item.Text
+	}
+	if !strings.Contains(body, "Here is the complete analysis") {
+		t.Fatalf("content = %q, want the subagent report preserved as body", body)
+	}
+}

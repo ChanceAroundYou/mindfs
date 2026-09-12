@@ -1008,8 +1008,14 @@ func (h *HTTPHandler) handleSessionSync(w http.ResponseWriter, r *http.Request) 
 		Key:    key,
 		Seq:    afterSeq,
 	})
-	// 注：sync 先做全量外部增量拉取（Full:true），再按窗口切片，保证窗口数据最新
-	respondJSON(w, http.StatusOK, h.sessionResponse(out, nil, contextWindow, exchangeAux, windowMeta))
+	// 注：sync 先做全量外部增量拉取（Full:true），再按窗口切片，保证窗口数据最新。
+	// pendingUser 必须与 GET 路径同样带上：否则点「同步」会丢掉正在等待回答的
+	// ask_user 卡（seq=0 条目，实测 2026-09-12 症状 2）。
+	var pendingUser *session.Exchange
+	if h.AppContext != nil {
+		pendingUser = h.AppContext.GetSessionStreamHub().GetPendingUserExchange(key)
+	}
+	respondJSON(w, http.StatusOK, h.sessionResponse(out, pendingUser, contextWindow, exchangeAux, windowMeta))
 }
 
 func (h *HTTPHandler) handleSessionToolCallGet(w http.ResponseWriter, r *http.Request) {

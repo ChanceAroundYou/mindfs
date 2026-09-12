@@ -6277,9 +6277,53 @@ export function App({ onGoHome }: AppProps) {
           reportError("session.sync_failed", t("session.syncFailed"));
           return;
         }
+        // 点「同步」必须保住「正在等待回答的 ask_user 卡」。
+        // 该卡是纯瞬时态：只存在于前端内存缓存（WS tool_call 追加的 seq=0 role=tool 条目）
+        // 与服务端内存（manager.pendingToolCalls）里，两边都不会经 HTTP 下发
+        // （session.Exchange 结构体没有 ToolCall 字段）。syncSession 以 IDB 缓存为 base，
+        // 而 IDB 里从来没有这些瞬时条目，于是同步后卡片凭空消失（实测 2026-09-12 症状 2）。
+        // 这里从内存缓存按 callId 去重后把它们合并回来；落盘后同一 callId 会出现在窗口 aux
+        // 中，SessionViewer 的 overlay 对账（windowToolCallIds）会自然让位，不会重复渲染。
+        const localToolTransient = (() => {
+          const cachedExchanges = Array.isArray(
+            (sessionCacheRef.current[cacheKey] as any)?.exchanges,
+          )
+            ? ((sessionCacheRef.current[cacheKey] as any).exchanges as any[])
+            : [];
+          const present = new Set<string>();
+          const syncedExchanges = Array.isArray((synced as any)?.exchanges)
+            ? ((synced as any).exchanges as any[])
+            : [];
+          for (const ex of syncedExchanges) {
+            const callId = `${(ex as any)?.toolCall?.callId || ""}`.trim();
+            if (callId) present.add(callId);
+          }
+          const syncedAux = ((synced as any)?.exchange_aux || {}) as Record<
+            string,
+            any[]
+          >;
+          for (const items of Object.values(syncedAux)) {
+            for (const aux of items || []) {
+              const callId = `${(aux as any)?.toolcall?.callId || ""}`.trim();
+              if (callId) present.add(callId);
+            }
+          }
+          return cachedExchanges.filter((ex) => {
+            if (Number((ex as any)?.seq || 0) !== 0) return false;
+            if (String((ex as any)?.role || "").toLowerCase() !== "tool") {
+              return false;
+            }
+            const callId = `${(ex as any)?.toolCall?.callId || ""}`.trim();
+            return !callId || !present.has(callId);
+          });
+        })();
+        const syncedExchanges = Array.isArray((synced as any)?.exchanges)
+          ? ((synced as any).exchanges as any[])
+          : [];
         const normalized = {
           ...(synced as any),
           key: sessionKey,
+          exchanges: [...syncedExchanges, ...localToolTransient],
         } as Session;
         sessionCacheRef.current[cacheKey] = normalized;
         loadedSessionRef.current[cacheKey] = true;

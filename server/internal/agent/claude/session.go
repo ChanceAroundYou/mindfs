@@ -76,6 +76,7 @@ func (r *Runtime) OpenSession(ctx context.Context, opts OpenOptions) (types.Sess
 		planMode:      opts.PlanMode,
 		agentDebugLog: logs.NewAgentLogger(opts.RootPath, opts.SessionKey, opts.AgentName),
 		questionWaits: make(map[string]chan askUserAnswerResult),
+		emittedAskUsers: make(map[string]struct{}),
 		rootPath:      opts.RootPath,
 		baseEnv:       cloneEnv(opts.Env),
 	}
@@ -227,6 +228,12 @@ type session struct {
 
 	questionMu    sync.Mutex
 	questionWaits map[string]chan askUserAnswerResult
+	// emittedAskUsers 记录已经发过 tool_call 的 AskUserQuestion callID。
+	// SDK 会对同一次提问走两条独立路径（CanUseTool 回调 → awaitAskUserQuestion，
+	// 以及 AssistantMessage 的 tool_use 块 → handleAssistantMessage），两者 CallID
+	// 相同但来自不同 goroutine、先后次序不定。谁先到谁发射，后者跳过，避免同一张
+	// ask_user 卡被发两次（实测 2026-09-12 症状 1：卡片与推理文本各出现两份）。
+	emittedAskUsers map[string]struct{}
 }
 
 func (s *session) ProcessID() int {
@@ -234,6 +241,26 @@ func (s *session) ProcessID() int {
 		return 0
 	}
 	return s.client.ProcessID()
+}
+
+// claimAskUserEmit 为一次 AskUserQuestion 的发证：首次调用返回 true（调用方负责发射），
+// 重复调用返回 false。SDK 的两条路径（CanUseTool / AssistantMessage）都可能触发，
+// 用集合让「先到者发射、后到者跳过」，不依赖两条路径的先后次序。
+func (s *session) claimAskUserEmit(callID string) bool {
+	callID = strings.TrimSpace(callID)
+	if callID == "" {
+		return true
+	}
+	s.questionMu.Lock()
+	defer s.questionMu.Unlock()
+	if s.emittedAskUsers == nil {
+		s.emittedAskUsers = make(map[string]struct{})
+	}
+	if _, exists := s.emittedAskUsers[callID]; exists {
+		return false
+	}
+	s.emittedAskUsers[callID] = struct{}{}
+	return true
 }
 
 type askUserAnswerResult struct {
@@ -1124,6 +1151,14 @@ func (s *session) handleAssistantMessage(msg claudeagent.AssistantMessage, sawDe
 				continue
 			}
 			s.trackPendingToolCall(toolCall)
+			// AskUserQuestion 已由 CanUseTool 回调（awaitAskUserQuestion）发过带完整
+			// meta.questions 的 tool_call；此处是 SDK 的同一次提问的第二条路径，
+			// 跳过以免同一张卡出现两份。
+			if mapToolKind(block.Name) == types.ToolKindAskUser {
+				if !s.claimAskUserEmit(block.ID) {
+					continue
+				}
+			}
 			s.emit(types.Event{
 				Type:      types.EventTypeToolCall,
 				SessionID: s.SessionID(),
@@ -1358,16 +1393,24 @@ func (s *session) handleTaskNotificationMessage(msg claudeagent.TaskNotification
 	if strings.TrimSpace(msg.Summary) != "" {
 		extra["summary"] = msg.Summary
 	}
+	// 注意：description 参数会成为卡片标题（见 claudeTaskToolCall 的 title := description）。
+	// SDK 的 TaskNotificationMessage 没有 Description 字段，只有 Summary —— 而 Summary 是
+	// 子代理的报告正文。过去这里直接把 msg.Summary 当 description 传，导致报告全文被提升成
+	// 卡片标题，UI 上出现「一段没有思考的裸文本工具卡」（实测 2026-09-12：与同 line 锚点的
+	// ask_user 卡相邻渲染，看起来像提问被重复了一遍，实际是子代理报告卡）。
+	// 真正的任务描述在 trackTaskInfo 里（task_started/progress 写入），这里取它；
+	// 拿不到时退到子代理类型，也不退到报告正文。
+	description := firstNonEmpty(info.Description, info.TaskDescription, info.SubagentType, "task")
 	toolCall := claudeTaskToolCall(
 		firstNonEmpty(msg.ToolUseID, info.ToolUseID, msg.TaskID),
 		status,
-		msg.Summary,
+		description,
 		msg.Summary,
 		subagentMeta{
 			ParentToolUseID: firstNonEmpty(msg.ToolUseID, info.ToolUseID),
 			TaskID:          msg.TaskID,
 			SubagentType:    info.SubagentType,
-			TaskDescription: msg.Summary,
+			TaskDescription: description,
 		},
 		extra,
 	)
@@ -1399,11 +1442,14 @@ func (s *session) awaitAskUserQuestion(ctx context.Context, qs claudeagent.Quest
 
 	toolCall := askUserQuestionToolCall(qs)
 	s.trackPendingToolCall(toolCall)
-	s.emit(types.Event{
-		Type:      types.EventTypeToolCall,
-		SessionID: s.SessionID(),
-		Data:      toolCall,
-	})
+	// 与 handleAssistantMessage 的 tool_use 分支二选一发射：谁先到谁发，避免重复卡片。
+	if s.claimAskUserEmit(callID) {
+		s.emit(types.Event{
+			Type:      types.EventTypeToolCall,
+			SessionID: s.SessionID(),
+			Data:      toolCall,
+		})
+	}
 
 	select {
 	case result := <-waiter:

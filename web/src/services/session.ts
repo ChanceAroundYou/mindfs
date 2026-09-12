@@ -1995,10 +1995,13 @@ function appendSessionDelta(
         (exchange) => Number((exchange as any)?.seq || 0) > 0,
       )
     : [];
+  // incoming 不过滤 seq=0：sync/GET 会以 seq=0 下发「尚未落库的 pending 条目」。
+  // 注意：正在等待回答的 ask_user 卡**不在此列** —— 它是纯内存态（服务端
+  // manager.pendingToolCalls + 前端 sessionCacheRef），服务端从不经 HTTP 下发
+  // （session.Exchange 结构体没有 ToolCall 字段）。它由调用方在 handleSyncSession /
+  // loadSession 里从内存缓存合并回来，见 App.tsx 的 localTransient 逻辑。
   const incomingExchanges = Array.isArray(incoming?.exchanges)
-    ? incoming.exchanges.filter(
-        (exchange) => Number((exchange as any)?.seq || 0) > 0,
-      )
+    ? (incoming.exchanges as any[])
     : [];
   const baseExchangeAux = toPersistentExchangeAux(base?.exchange_aux);
   const incomingExchangeAux = toPersistentExchangeAux(incoming?.exchange_aux);
@@ -2134,20 +2137,21 @@ function toPersistentSession(
   session: Session,
   forceNoTruncate?: boolean,
 ): Session {
-  const exchanges = Array.isArray(session.exchanges)
-    ? session.exchanges.filter((exchange) => {
+  const persistent = stripAnchorBookkeeping(session);
+  const exchanges = Array.isArray(persistent.exchanges)
+    ? persistent.exchanges.filter((exchange) => {
         const seq = Number((exchange as any)?.seq || 0);
         return Number.isFinite(seq) && seq > 0;
       })
     : [];
-  const exchange_aux = toPersistentExchangeAux(session.exchange_aux);
+  const exchange_aux = toPersistentExchangeAux(persistent.exchange_aux);
   if (exchanges.length <= SESSION_CACHE_MAX_EXCHANGES) {
     let text = 0;
     for (const exchange of exchanges) {
       text += String((exchange as any)?.content || "").length;
     }
     if (text <= SESSION_CACHE_MAX_TEXT) {
-      return { ...session, exchanges, exchange_aux };
+      return { ...persistent, exchanges, exchange_aux };
     }
   }
   const truncatedCount = exchanges.length - SESSION_CACHE_MAX_EXCHANGES;
@@ -2164,11 +2168,31 @@ function toPersistentSession(
   }
   const kept = extraSliced > 0 ? tail.slice(0, tail.length - extraSliced) : tail;
   return {
-    ...session,
+    ...persistent,
     truncated: forceNoTruncate ? false : true,
     exchanges: kept,
     exchange_aux,
   };
+}
+
+// stripAnchorBookkeeping 丢弃 SessionViewer 的重锚定簿记字段，避免其落 IndexedDB。
+//
+// _windowMeta/_anchoredAt 只在内存里对「当前会话实例」有意义（App 换窗时递增 _anchoredAt，
+// 视图侧按它做一次性原子换窗）。一旦持久化，冷启动时 SessionViewer 的 lastAppliedAnchorRef
+// 从 {key:null, at:-1} 开始，陈旧的 _anchoredAt 会通过守卫（at >= -1）被误当成新锚点应用，
+// 而 applyWindow 是把 session.exchanges **原样**当作窗口渲染的 —— 于是「持久化下来的旧
+// exchange 集」被当成当前窗口显示，表现为刷新后旧内容出现在当前位置（实测 2026-09-12 症状 3）。
+//
+// 只剥离这两个字段：_nodeId 仍要保留（SessionViewer 取窗口时用它做节点路由）。
+function stripAnchorBookkeeping(session: Session): Session {
+  const raw = session as any;
+  if (!("_windowMeta" in raw) && !("_anchoredAt" in raw)) {
+    return session;
+  }
+  const { _windowMeta, _anchoredAt, ...rest } = raw;
+  void _windowMeta;
+  void _anchoredAt;
+  return rest as Session;
 }
 
 export async function getCachedSession(

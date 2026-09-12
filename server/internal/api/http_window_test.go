@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"mindfs/server/internal/fs"
 	"mindfs/server/internal/session"
@@ -245,5 +246,50 @@ func TestHandleSessionSyncWindow(t *testing.T) {
 	rec2 := doSessionSync(t, h, rootID, s.Key, "&seq=1&latest=1")
 	if rec2.Code != http.StatusBadRequest {
 		t.Fatalf("sync mutual exclusion status = %d, want 400", rec2.Code)
+	}
+}
+
+// 复现 2026-09-12 症状 2：点「同步」后正在等待回答的 ask_user 卡（pending, seq=0）消失。
+// GET 路径会取 GetPendingUserExchange（http.go:891-894），但 sync 路径硬编码传 nil
+// （http.go:1012），于是 sync 响应里没有这条 seq=0 条目 → 前端同步后卡片消失。
+func TestHandleSessionSyncCarriesPendingUser(t *testing.T) {
+	app, rootID, manager := newWindowTestApp(t)
+	ctx := context.Background()
+	s, _ := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, Name: "SyncPending"})
+	if err := manager.AddExchangeForAgent(ctx, s, "user", "hi", "claude", "", "", ""); err != nil {
+		t.Fatalf("AddExchange: %v", err)
+	}
+	// 模拟一轮正在等待 ask_user 回答：hub 里挂着一条尚未落库的 pending user 消息
+	app.GetSessionStreamHub().SetPendingUserAt(
+		rootID, s.Key, "SyncPending", "claude", "test-model", "", "", "", "", false,
+		"pending question", time.Now().UTC(),
+	)
+	h := &HTTPHandler{AppContext: app}
+
+	rec := doSessionSync(t, h, rootID, s.Key, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("sync status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v body=%s", err, rec.Body.String())
+	}
+	exchanges, _ := body["exchanges"].([]any)
+	if len(exchanges) == 0 {
+		t.Fatalf("exchanges empty: %s", rec.Body.String())
+	}
+	// pending user 必须以 seq=0 出现在响应里（与 GET 路径同语义）
+	foundPending := false
+	for _, raw := range exchanges {
+		item, _ := raw.(map[string]any)
+		if item == nil {
+			continue
+		}
+		if int(item["seq"].(float64)) == 0 && item["content"] == "pending question" {
+			foundPending = true
+		}
+	}
+	if !foundPending {
+		t.Fatalf("sync response missing pending user (seq=0): %s", rec.Body.String())
 	}
 }

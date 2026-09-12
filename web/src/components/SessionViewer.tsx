@@ -1181,6 +1181,20 @@ function SessionViewerInner({
     }
     return counts;
   }, [visibleExchanges]);
+  // 窗口侧已渲染的 tool callId 集合：role=tool 的瞬时条目若其 callId 已存在于窗口的
+  // exchange_aux 里，说明同一张卡会由 buildAssistantTimeline 从 aux 渲染一次 —— overlay
+  // 必须让位，否则同一 callId 从两个数据源各渲染一份（实测 2026-09-12 症状 1：ask_user
+  // 卡与推理文本各出现两份，且库里并没有重复数据）。
+  const windowToolCallIds = useMemo(() => {
+    const set = new Set<string>();
+    for (const items of Object.values(visibleAux || {})) {
+      for (const aux of items || []) {
+        const callId = (aux as any)?.toolcall?.callId;
+        if (typeof callId === "string" && callId) set.add(callId);
+      }
+    }
+    return set;
+  }, [visibleAux]);
   const tailOverlay = useMemo(() => {
     const exs = Array.isArray(session?.exchanges)
       ? (session.exchanges as ExchangeArray)
@@ -1192,8 +1206,29 @@ function SessionViewerInner({
       if (seq > 0) {
         // 已持久化条目：窗口已含（visibleSeqSet）或已被最新窗口的 seq 范围覆盖 → 不重复渲染。
         if (visibleSeqSet.has(seq)) continue;
-        if (latestSeq === 0 || seq <= latestSeq) continue;
+        if (latestSeq === 0 || seq <= latestSeq) {
+          // 探针（2026-09-12 症状 4）：自己刚发出的消息已入库(seq>0)但不在当前窗口，
+          // 又被这里丢弃 → 气泡不显示，刷新重锚定后才出现。保留日志以便定位是哪个分支吃掉。
+          console.info("[overlay] drop persisted not-in-window", {
+            sessionKey,
+            seq,
+            role: String((ex as any)?.role || ""),
+            latestSeq,
+            windowSize: visibleSeqSet.size,
+          });
+          continue;
+        }
         out.push(ex);
+        continue;
+      }
+      // seq=0 的 tool 瞬时条目：窗口 aux 已含同 callId → 让位给窗口侧渲染。
+      const transientCallId = (ex as any)?.toolCall?.callId;
+      if (
+        String((ex as any)?.role || "").toLowerCase() === "tool" &&
+        typeof transientCallId === "string" &&
+        transientCallId &&
+        windowToolCallIds.has(transientCallId)
+      ) {
         continue;
       }
       if (String((ex as any)?.role || "").toLowerCase() === "user") {
@@ -1212,7 +1247,7 @@ function SessionViewerInner({
       out.push(ex);
     }
     return out;
-  }, [session?.exchanges, latestSeq, visibleSeqSet, windowUserCounts]);
+  }, [session?.exchanges, latestSeq, visibleSeqSet, windowUserCounts, windowToolCallIds]);
   const composedExchanges = useMemo(
     () => [...visibleExchanges, ...tailOverlay],
     [visibleExchanges, tailOverlay],
