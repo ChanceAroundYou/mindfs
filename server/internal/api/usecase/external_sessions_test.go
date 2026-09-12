@@ -100,6 +100,145 @@ func TestSyncExternalSessionDeltaFastDoesNotApplyCtxSeqToFilteredImport(t *testi
 	}
 }
 
+// 复现 2026-09-12 WSL 端「点同步后整段重放」：live 路径写入的轮次已被增量同步以
+// ImportedCount=0 跳过（ts 相同被 after 过滤），导致 agent_ctx_seq 停在旧值；
+// 随后一次 Full 同步按 ctx_seq 切片，把库内已有的历史尾段整块重放（时间戳是历史
+// 原值，还有 aux 缺失签名）。修复方向：入库幂等护栏 + ctx_seq 恒刷新。
+func TestSyncExternalSessionDeltaFullDoesNotReplayHistoryInSession(t *testing.T) {
+	ctx := context.Background()
+	root := fs.NewRootInfo("root", "Root", t.TempDir())
+	manager := session.NewManager(root)
+	created, err := manager.Create(context.Background(), session.CreateInput{
+		Type:  session.TypeChat,
+		Agent: "codex",
+		Name:  "Imported",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Date(2026, 9, 12, 10, 0, 0, 0, time.UTC)
+	live := []agenttypes.ImportedExchange{
+		{Role: "user", Content: "u1", Timestamp: base},
+		{Role: "agent", Content: "a1", Timestamp: base.Add(time.Minute)},
+		{Role: "user", Content: "u2", Timestamp: base.Add(2 * time.Minute)},
+		{Role: "agent", Content: "a2", Timestamp: base.Add(3 * time.Minute)},
+	}
+	for _, item := range live {
+		if err := manager.AddExchangeForAgentAt(ctx, created, item.Role, item.Content, "codex", "", "", "", item.Timestamp); err != nil {
+			t.Fatal(err)
+		}
+	}
+	current, err := manager.Get(ctx, created.Key, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// ctx_seq 停在 2：live 尾段（u2/a2）写入后没有再发生过 ImportedCount>0 的同步
+	if err := manager.UpdateAgentState(ctx, current, "codex", 2, "external-1"); err != nil {
+		t.Fatal(err)
+	}
+	importer := &syncDeltaTestImporter{
+		// Full 全量重读：历史 4 条 + 一条真正的新消息
+		exchanges: append(append([]agenttypes.ImportedExchange(nil), live...),
+			agenttypes.ImportedExchange{Role: "user", Content: "u3", Timestamp: base.Add(5 * time.Minute)}),
+	}
+	svc := &Service{Registry: &syncDeltaTestRegistry{root: root, manager: manager, importer: importer}}
+	out, err := svc.SyncExternalSessionDelta(ctx, SyncExternalSessionDeltaInput{
+		RootID: root.ID,
+		Key:    created.Key,
+		Full:   true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.ImportedCount != 1 {
+		t.Fatalf("ImportedCount = %d, want 1 (历史尾段不得重放)", out.ImportedCount)
+	}
+	latest, err := manager.Get(ctx, created.Key, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(latest.Exchanges) != 5 {
+		contents := make([]string, 0, len(latest.Exchanges))
+		for _, ex := range latest.Exchanges {
+			contents = append(contents, ex.Role+":"+ex.Content)
+		}
+		t.Fatalf("len(exchanges) = %d, want 5: %v", len(latest.Exchanges), contents)
+	}
+	if got := latest.Exchanges[4].Content; got != "u3" {
+		t.Fatalf("exchange[4] = %q, want u3", got)
+	}
+}
+
+// 正常增量同步即便 ImportedCount=0（全部被 after 过滤）也必须把 agent_ctx_seq
+// 刷新到当前库长度，防止下次 Full 同步按陈旧游标重放尾段。顺带保证用户过后真实
+// 重发同内容消息（时间戳远晚于库内已有）不会被幂等护栏误伤。
+func TestSyncExternalSessionDeltaIncrementalRefreshesCtxSeq(t *testing.T) {
+	ctx := context.Background()
+	root := fs.NewRootInfo("root", "Root", t.TempDir())
+	manager := session.NewManager(root)
+	created, err := manager.Create(context.Background(), session.CreateInput{
+		Type:  session.TypeChat,
+		Agent: "codex",
+		Name:  "Imported",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Date(2026, 9, 12, 10, 0, 0, 0, time.UTC)
+	if err := manager.AddExchangeForAgentAt(ctx, created, "user", "u1", "codex", "", "", "", base); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.AddExchangeForAgentAt(ctx, created, "agent", "a1", "codex", "", "", "", base.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.AddExchangeForAgentAt(ctx, created, "user", "ok", "codex", "", "", "", base.Add(2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	current, err := manager.Get(ctx, created.Key, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.UpdateAgentState(ctx, current, "codex", 1, "external-1"); err != nil {
+		t.Fatal(err)
+	}
+	// 增量同步无可导入内容（live 写入已在库内，被 after 过滤吞掉 → count=0）
+	importer := &syncDeltaTestImporter{exchanges: nil}
+	svc := &Service{Registry: &syncDeltaTestRegistry{root: root, manager: manager, importer: importer}}
+	if _, err := svc.SyncExternalSessionDelta(ctx, SyncExternalSessionDeltaInput{
+		RootID: root.ID,
+		Key:    created.Key,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	binding, err := manager.FindAgentBinding(ctx, created.Key, "codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if binding == nil || binding.AgentCtxSeq != 3 {
+		t.Fatalf("binding.AgentCtxSeq = %+v, want 3 (count=0 也要刷游标)", binding)
+	}
+
+	// 反向底线：隔一小时真实重发同内容 "ok"，必须照常入库，不得被幂等护栏吞掉
+	// （先清 2s 节流表，否则背靠背的第二次同步被节流直接跳过）
+	externalSessionSyncTimes.Delete(externalSyncLockKey(root.ID, created.Key))
+	importer.exchanges = []agenttypes.ImportedExchange{
+		{Role: "user", Content: "ok", Timestamp: base.Add(time.Hour)},
+	}
+	if _, err := svc.SyncExternalSessionDelta(ctx, SyncExternalSessionDeltaInput{
+		RootID: root.ID,
+		Key:    created.Key,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	latest, err := manager.Get(ctx, created.Key, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(latest.Exchanges) != 4 {
+		t.Fatalf("len(exchanges) = %d, want 4 (重发的 ok 不得被吞)", len(latest.Exchanges))
+	}
+}
+
 func TestImportExternalSessionOnlyPersistsSelectedAuxKinds(t *testing.T) {
 	root := fs.NewRootInfo("root", "Root", t.TempDir())
 	manager := session.NewManager(root)

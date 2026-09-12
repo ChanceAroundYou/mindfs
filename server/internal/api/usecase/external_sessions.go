@@ -376,19 +376,19 @@ func (s *Service) SyncExternalSessionDelta(ctx context.Context, in SyncExternalS
 			importedCount++
 		}
 	}
-	latest := current
-	if importedCount > 0 {
-		latest, err = manager.Get(ctx, current.Key, 0)
-		if err != nil {
-			return out, err
-		}
-		agentSessionID := strings.TrimSpace(imported.AgentSessionID)
-		if agentSessionID == "" {
-			agentSessionID = binding.AgentSessionID
-		}
-		if err := manager.UpdateAgentState(ctx, latest, agentName, len(latest.Exchanges), agentSessionID); err != nil {
-			return out, err
-		}
+	// 即使本轮 ImportedCount=0 也要刷新 agent_ctx_seq：live 写入与 count=0 的增量
+	// 会让 ctx_seq 落后于库长度，下次 Full 同步按陈旧游标切片就会重放尾段（实测
+	// 「点同步整段重放 count=13」根因之一）。幂等护栏只挡重放，刷游标消根因。
+	latest, err := manager.Get(ctx, current.Key, 0)
+	if err != nil {
+		return out, err
+	}
+	agentSessionID := strings.TrimSpace(imported.AgentSessionID)
+	if agentSessionID == "" {
+		agentSessionID = binding.AgentSessionID
+	}
+	if err := manager.UpdateAgentState(ctx, latest, agentName, len(latest.Exchanges), agentSessionID); err != nil {
+		return out, err
 	}
 	subagentCount, err := syncImportedSubagentSessions(ctx, manager, latest, agentName, imported.Subagents)
 	if err != nil {
@@ -515,6 +515,25 @@ func appendImportedExchange(
 	}
 	if role == "user" && strings.TrimSpace(exchange.Content) == "" {
 		return false, nil
+	}
+	// 幂等护栏：Full 同步按 ctx_seq 切片，而 ctx_seq 在「live 写入 + ImportedCount=0
+	// 的增量（ts 相同被 after 过滤）」期间不会推进，点「同步」时会把库内已有的
+	// 历史尾段整块重放（2026-09-12 WSL 实测：count=13 重放、old 时间戳、字段缺
+	// model_display_name/effort）。这里按库内已有交换做 role+内容+时间窗去重：
+	// 只挡时间戳落在窗口内的重放，不吞用户隔了较久真实重发的相同内容（红线：
+	// 「继续」「ok」这类合法重复必须保留）。
+	// ponytail: 时间窗 5s——实测重放 ts 与库内 ts 差异是纳秒级（同一 transcript 行）；
+	// 若发现更大偏差需要放宽，先确认不是上游写了两条不同 transcript 行再调。
+	const importedRepeatTolerance = 5 * time.Second
+	if !exchange.Timestamp.IsZero() {
+		for _, ex := range target.Exchanges {
+			if ex.Role != role || ex.Content != exchange.Content || ex.Timestamp.IsZero() {
+				continue
+			}
+			if diff := ex.Timestamp.Sub(exchange.Timestamp); diff > -importedRepeatTolerance && diff < importedRepeatTolerance {
+				return false, nil
+			}
+		}
 	}
 	if err := manager.AddExchangeForAgentAt(
 		ctx,
