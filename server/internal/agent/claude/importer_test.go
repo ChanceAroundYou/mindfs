@@ -53,7 +53,7 @@ func TestReadClaudeImportedExchangesDedupesRepeatedUUIDs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	items, err := readClaudeImportedExchanges(path, time.Time{}, 0)
+	items, _, err := readClaudeImportedExchanges(path, 0, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,12 +81,13 @@ func TestReadClaudeImportedExchangesDedupesUUIDsWithToolResults(t *testing.T) {
 {"type":"user","uuid":"u1","timestamp":"2026-08-27T02:15:00Z","message":{"content":[{"type":"text","text":"run it"}]}}
 {"type":"assistant","uuid":"a1","timestamp":"2026-08-27T02:15:01Z","message":{"content":[{"type":"tool_use","id":"tool-1","name":"Bash","input":{"command":"ls"}}]}}
 {"type":"user","uuid":"u2","timestamp":"2026-08-27T02:15:02Z","message":{"content":[{"type":"tool_result","tool_use_id":"tool-1","content":"ok"}]}}
+{"type":"assistant","uuid":"a2","timestamp":"2026-08-27T02:15:03Z","message":{"content":[{"type":"text","text":"done"}]}}
 `
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	items, err := readClaudeImportedExchanges(path, time.Time{}, 0)
+	items, _, err := readClaudeImportedExchanges(path, 0, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +114,7 @@ func TestReadClaudeImportedExchangesIgnoresUnsupportedToolCall(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	items, err := readClaudeImportedExchanges(path, time.Time{}, 0)
+	items, _, err := readClaudeImportedExchanges(path, 0, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,12 +135,13 @@ func TestReadClaudeImportedExchangesMarksFailedToolResult(t *testing.T) {
 	content := `{"type":"user","uuid":"u1","timestamp":"2026-07-28T01:00:00Z","message":{"content":"run"}}
 {"type":"assistant","uuid":"a1","timestamp":"2026-07-28T01:00:01Z","message":{"content":[{"type":"text","text":"running"},{"type":"tool_use","id":"tool-2","name":"Bash","input":{"command":"false"}}]}}
 {"type":"user","uuid":"u2","timestamp":"2026-07-28T01:00:02Z","message":{"content":[{"type":"tool_result","tool_use_id":"tool-2","is_error":true,"content":"exit status 1"}]}}
+{"type":"assistant","uuid":"a2","timestamp":"2026-07-28T01:00:03Z","message":{"content":[{"type":"text","text":"收尾"}]}}
 `
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	items, err := readClaudeImportedExchanges(path, time.Time{}, 0)
+	items, _, err := readClaudeImportedExchanges(path, 0, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,11 +161,12 @@ func TestReadClaudeImportedExchangesIncludesPlanToolCall(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "session.jsonl")
 	content := `{"type":"assistant","timestamp":"2026-07-28T01:00:01Z","message":{"content":[{"type":"tool_use","id":"plan-1","name":"EnterPlanMode","input":{}}]}}
 {"type":"user","timestamp":"2026-07-28T01:00:02Z","message":{"content":[{"type":"tool_result","tool_use_id":"plan-1","content":"entered plan mode"}]}}
+{"type":"assistant","timestamp":"2026-07-28T01:00:03Z","message":{"content":[{"type":"text","text":"收尾"}]}}
 `
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	items, err := readClaudeImportedExchanges(path, time.Time{}, 0)
+	items, _, err := readClaudeImportedExchanges(path, 0, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,11 +183,12 @@ func TestReadClaudeImportedExchangesIncludesAskUserToolCall(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "session.jsonl")
 	content := `{"type":"assistant","timestamp":"2026-07-28T01:00:01Z","message":{"content":[{"type":"tool_use","id":"ask-1","name":"AskUserQuestion","input":{"questions":[{"question":"Continue?","options":[{"label":"Yes"}]}]}}]}}
 {"type":"user","timestamp":"2026-07-28T01:00:02Z","message":{"content":[{"type":"tool_result","tool_use_id":"ask-1","content":"Yes"}]},"toolUseResult":{"questions":[{"question":"Continue?"}],"answers":{"Continue?":"Yes"}}}
+{"type":"assistant","timestamp":"2026-07-28T01:00:03Z","message":{"content":[{"type":"text","text":"收尾"}]}}
 `
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	items, err := readClaudeImportedExchanges(path, time.Time{}, 0)
+	items, _, err := readClaudeImportedExchanges(path, 0, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -372,8 +376,10 @@ func TestCwdMatchesRoot(t *testing.T) {
 	}
 }
 
-// 增量读（按上次游标字节位置续读）只应产出新增内容，且不得因截断而丢条目。
-// 这是「窗口加载全量解析 69MB 转录」修复的正确性底线。
+// 增量读按「已提交字节偏移」续读，只应产出新增内容。
+// 判据从「item.Timestamp 是否比上次新」换成「item.StartOffset 是否在已提交位置之后」：
+// 前者会被 applyClaudeToolResults 对每条 tool_result 持续改写，导致同一轮被反复当成
+// 新内容落库（实测受损会话 seq 317-321 是同一轮的 6 份副本）。
 func TestReadClaudeImportedExchangesIncremental(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "s.jsonl")
 	head := `{"type":"user","uuid":"u1","timestamp":"2026-08-27T02:15:00Z","message":{"content":[{"type":"text","text":"q1"}]}}
@@ -382,15 +388,18 @@ func TestReadClaudeImportedExchangesIncremental(t *testing.T) {
 	if err := os.WriteFile(path, []byte(head), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	first, err := readClaudeImportedExchanges(path, time.Time{}, 0)
+	first, committed, err := readClaudeImportedExchanges(path, 0, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(first) != 2 {
 		t.Fatalf("首轮应产出 2 条，得到 %d", len(first))
 	}
+	if committed != int64(len(head)) {
+		t.Fatalf("尾部已收尾时应提交到文件末尾，得到 %d（文件 %d 字节）", committed, len(head))
+	}
 
-	// 追加一轮，然后从上次结束位置续读：只应拿到新增那一轮。
+	// 追加一轮，然后从已提交位置续读：只应拿到新增那一轮。
 	tail := `{"type":"user","uuid":"u2","timestamp":"2026-08-27T02:16:00Z","message":{"content":[{"type":"text","text":"q2"}]}}
 {"type":"assistant","uuid":"a2","timestamp":"2026-08-27T02:16:05Z","message":{"content":[{"type":"text","text":"r2"}]}}
 `
@@ -402,20 +411,17 @@ func TestReadClaudeImportedExchangesIncremental(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.Close()
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
 
-	inc, err := readClaudeImportedExchanges(path, time.Time{}, int64(len(head)))
+	inc, committed2, err := readClaudeImportedExchanges(path, committed, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 允许回看窗口内重复产出上一轮的尾部（由 after 时间戳过滤兜底），
-	// 但绝不允许漏掉新增轮次，也不允许把新增轮次算两次。
+	// 新判据下不存在「回看窗口内重复产出上一轮」：已提交的条目一律不再产出。
 	var sawQ2, sawR2 int
 	for _, item := range inc {
 		switch strings.TrimSpace(item.Content) {
+		case "q1", "r1":
+			t.Fatalf("已提交过的条目不得再次产出：%q", item.Content)
 		case "q2":
 			sawQ2++
 		case "r2":
@@ -425,19 +431,72 @@ func TestReadClaudeImportedExchangesIncremental(t *testing.T) {
 	if sawQ2 != 1 || sawR2 != 1 {
 		t.Fatalf("增量应恰好产出新增一轮（q2=%d r2=%d），共 %d 条", sawQ2, sawR2, len(inc))
 	}
-	_ = info
 
-	// 稳态：已读到 EOF 时，续读虽会回看一小段（小文件即全文），但经 after 过滤后应为空——
-	// 这正是「不会重复追加」的依据（沿用既有时间戳过滤，非本次新引入的机制）。
-	lastTS, err := time.Parse(time.RFC3339, "2026-08-27T02:16:05Z")
-	if err != nil {
-		t.Fatal(err)
-	}
-	eof, err := readClaudeImportedExchanges(path, lastTS, info.Size())
+	// 稳态：文件无新增时续读应为空——「不会重复追加」的依据。
+	eof, committed3, err := readClaudeImportedExchanges(path, committed2, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(eof) != 0 {
-		t.Fatalf("EOF 处续读经 after 过滤后应为空，得到 %d 条", len(eof))
+		t.Fatalf("无新增时续读应为空，得到 %d 条", len(eof))
+	}
+	if committed3 != committed2 {
+		t.Fatalf("无新增时提交位置不应变化：%d → %d", committed2, committed3)
+	}
+}
+
+// 尾轮还在进行（最后一条相关条目带 tool_use，正等工具结果）时不得提交：它的内容会继续
+// 变，落了就是半成品，而且下次同步会把它当成新内容再落一遍。这是「同一轮落库 6 次」的
+// 直接回归测试。
+func TestReadClaudeImportedExchangesHoldsOpenTail(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "s.jsonl")
+	head := `{"type":"user","uuid":"u1","timestamp":"2026-08-27T02:15:00Z","message":{"content":[{"type":"text","text":"q1"}]}}
+{"type":"assistant","uuid":"a1","timestamp":"2026-08-27T02:15:08Z","message":{"content":[{"type":"text","text":"先查一下"}]}}
+{"type":"assistant","uuid":"a2","timestamp":"2026-08-27T02:15:09Z","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"ls"}}]}}
+`
+	if err := os.WriteFile(path, []byte(head), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	open, committed, err := readClaudeImportedExchanges(path, 0, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 用户条目照常提交；未收尾的助手轮留在原地。
+	if len(open) != 1 || strings.TrimSpace(open[0].Content) != "q1" {
+		t.Fatalf("未收尾的尾轮不应提交，只应产出用户条目，得到 %d 条", len(open))
+	}
+	if committed >= int64(len(head)) {
+		t.Fatalf("提交位置应停在未收尾轮的起点，得到 %d（文件 %d 字节）", committed, len(head))
+	}
+
+	// 工具结果回来、助手收尾后：这一轮被完整提交一次，内容为最终态。
+	done := head + `{"type":"user","uuid":"u2","timestamp":"2026-08-27T02:15:20Z","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}}
+{"type":"assistant","uuid":"a3","timestamp":"2026-08-27T02:15:30Z","message":{"content":[{"type":"text","text":"查完了"}]}}
+`
+	if err := os.WriteFile(path, []byte(done), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	closed, committed2, err := readClaudeImportedExchanges(path, committed, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(closed) != 1 {
+		t.Fatalf("收尾后应恰好提交 1 条，得到 %d 条", len(closed))
+	}
+	got := strings.TrimSpace(closed[0].Content)
+	if !strings.Contains(got, "先查一下") || !strings.Contains(got, "查完了") {
+		t.Fatalf("提交内容应为该轮最终态，得到 %q", got)
+	}
+	if len(closed[0].Aux) != 1 {
+		t.Fatalf("该轮的 aux 应只含 1 份工具调用，得到 %d 份", len(closed[0].Aux))
+	}
+
+	// 再同步一次不得重复提交。
+	again, _, err := readClaudeImportedExchanges(path, committed2, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(again) != 0 {
+		t.Fatalf("已提交的轮次不得重复产出，得到 %d 条", len(again))
 	}
 }

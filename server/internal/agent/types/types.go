@@ -180,9 +180,15 @@ type ImportExternalSessionInput struct {
 }
 
 type ExternalSessionCursor struct {
-	SourcePath      string
+	SourcePath string
+	// Offset 是上次读取时的**文件长度**，只用于「文件没变就跳过」的判据。
 	Offset          int64
 	ModTimeUnixNano int64
+	// CommittedOffset 是**已提交给 MindFS 的字节位置**，也是下次增量读的起点。
+	// 它必须落在 item 边界上：轮次还在进行时不推进，避免把半成品当成一条 exchange 落库，
+	// 也避免同一轮被反复当作「新内容」追加（旧实现用会被 tool_result 持续改写的 Timestamp
+	// 当判据，实测同一轮落库 6 次）。
+	CommittedOffset int64
 }
 
 type ImportedExchange struct {

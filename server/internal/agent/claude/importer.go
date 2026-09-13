@@ -61,6 +61,10 @@ type sessionFileCandidate struct {
 type importedExchangeLocator struct {
 	agenttypes.ImportedExchange
 	ClaudeLastMessageUUID string
+	// StartOffset 是这条 item 第一条相关条目在转录文件里的字节偏移。增量提交以它为界：
+	// 它之前的都已落库，之后的才算新内容（取代了原先「拿会被 tool_result 持续改写的
+	// Timestamp 当判据」的做法）。
+	StartOffset int64
 }
 
 type importedTurn struct {
@@ -160,14 +164,22 @@ func (i *Importer) importSessionFile(file claudeSessionFile, after time.Time, pr
 	if err != nil {
 		return agenttypes.ImportedExternalSession{}, err
 	}
+	// 已提交位置决定从哪儿读。旧游标只记了 Offset（=「已读到」），首次升级时沿用之，
+	// 否则会被当成「什么都没提交过」而把整份转录重放一遍。
+	committed := previous.CommittedOffset
+	if committed <= 0 {
+		committed = previous.Offset
+	}
 	if unchanged && !forceRead {
+		cursor.CommittedOffset = committed
 		return agenttypes.ImportedExternalSession{Agent: i.agentName, AgentSessionID: file.AgentSessionID, Cwd: file.Cwd, Cursor: cursor}, nil
 	}
-	exchanges, err := readClaudeImportedExchanges(file.Path, after, previous.Offset)
+	exchanges, nextCommitted, err := readClaudeImportedExchanges(file.Path, committed, after)
 	if err != nil {
 		log.Printf("[agent/claude/importer] import session read failed session_id=%s path=%s err=%v", file.AgentSessionID, file.Path, err)
 		return agenttypes.ImportedExternalSession{}, err
 	}
+	cursor.CommittedOffset = nextCommitted
 	subagents, err := i.readClaudeImportedSubagents(file.Path, previous.Offset)
 	if err != nil {
 		log.Printf("[agent/claude/importer] import subagents failed session_id=%s path=%s err=%v", file.AgentSessionID, file.Path, err)
@@ -273,7 +285,7 @@ func (i *Importer) readClaudeImportedSubagents(parentPath string, parentStartOff
 			if relation.ParentAgentID != "" && !added[relation.ParentAgentID] {
 				continue
 			}
-			exchanges, err := readClaudeImportedExchanges(pathsByAgentID[agentID], time.Time{}, 0)
+			exchanges, _, err := readClaudeImportedExchanges(pathsByAgentID[agentID], 0, time.Time{})
 			if err != nil {
 				return nil, err
 			}
@@ -307,7 +319,7 @@ func inspectClaudeSubagentID(path string) (string, error) {
 	}
 	defer file.Close()
 	var agentID string
-	err = forEachJSONLLine(file, func(line string) error {
+	err = forEachJSONLLine(file, func(_ int64, line string) error {
 		var raw map[string]any
 		if json.Unmarshal([]byte(line), &raw) == nil {
 			agentID = strings.TrimSpace(asString(raw["agentId"]))
@@ -325,6 +337,11 @@ func inspectClaudeSubagentID(path string) (string, error) {
 
 // collectClaudeSubagentRelations 扫描转录，收集「子代理 → 其 Task 调用」的映射。
 // startOffset>0 时只读该字节位置之后的内容（父转录按轮次追加，新关系只出现在新行），
+// subagentRelationSeekBack 是从父转录已读位置往前多读的字节数。子代理与其父 Task 调用的
+// 归属关系可能跨越上次同步的读取边界，多读一小段保证关系仍能被识别出来。
+// 关系一旦产生即进缓存，代价极小（64KB vs 数十 MB）。
+const subagentRelationSeekBack = 64 << 10
+
 // 避免每次同步都全量重读父转录。
 func collectClaudeSubagentRelations(path, parentAgentID string, relations map[string]claudeSubagentRelation, startOffset int64) error {
 	file, err := os.Open(path)
@@ -333,7 +350,7 @@ func collectClaudeSubagentRelations(path, parentAgentID string, relations map[st
 	}
 	defer file.Close()
 	if startOffset > 0 {
-		pos := startOffset - importSeekBackWindow
+		pos := startOffset - subagentRelationSeekBack
 		if pos < 0 {
 			pos = 0
 		}
@@ -347,7 +364,7 @@ func collectClaudeSubagentRelations(path, parentAgentID string, relations map[st
 		}
 	}
 	callDetails := make(map[string]claudeSubagentRelation)
-	return forEachJSONLLine(file, func(line string) error {
+	return forEachJSONLLine(file, func(_ int64, line string) error {
 		var raw map[string]any
 		if json.Unmarshal([]byte(line), &raw) != nil {
 			return nil
@@ -434,7 +451,7 @@ func (i *Importer) ResolveForkPointByAgentTurnIndex(ctx context.Context, in agen
 	if !ok {
 		return agenttypes.ResolveForkPointOutput{}, errors.New("external session not found")
 	}
-	items, err := readClaudeImportedExchangeLocators(file.Path, time.Time{}, 0)
+	items, _, err := readClaudeImportedExchangeLocators(file.Path, 0, time.Time{})
 	if err != nil {
 		return agenttypes.ResolveForkPointOutput{}, err
 	}
@@ -697,7 +714,7 @@ func inspectClaudeSessionFile(path string) (claudeSessionFile, bool, error) {
 		return claudeSessionFile{}, false, err
 	}
 	var sessionID, cwd, firstUserText string
-	err = forEachJSONLLine(file, func(line string) error {
+	err = forEachJSONLLine(file, func(_ int64, line string) error {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			return nil
@@ -745,42 +762,51 @@ func inspectClaudeSessionFile(path string) (claudeSessionFile, bool, error) {
 // readClaudeImportedExchanges 从 startOffset 起读取增量条目。
 // startOffset<=0 表示全量读；>0 时只解析该字节位置之后的内容，避免每次同步都全量
 // 解析整个转录（实测某会话转录 67MB，全量读+解析 1.5-3.3s，而每次打开会话都会触发同步）。
-func readClaudeImportedExchanges(path string, after time.Time, startOffset int64) ([]agenttypes.ImportedExchange, error) {
-	locators, err := readClaudeImportedExchangeLocators(path, after, startOffset)
+// committedOffset 是「已提交给 MindFS 的字节位置」，从该处往后解析。
+// 返回的第二个值是**本次提交之后**的新位置：只有完整、已结束的轮次才会被提交，
+// 仍在进行的尾轮留在它自己的起点上等下一轮同步。
+//
+// committedOffset<=0 表示该会话从未同步过（库里 229/232 个绑定都是这种，游标为空），
+// 此时不知道已读到哪，退回到 bootstrapAfter 时间戳判据：只取比库内最新一条更新的回合。
+// 本次同步会把游标建起来，之后一律走字节偏移。
+func readClaudeImportedExchanges(path string, committedOffset int64, bootstrapAfter time.Time) ([]agenttypes.ImportedExchange, int64, error) {
+	locators, committed, err := readClaudeImportedExchangeLocators(path, committedOffset, bootstrapAfter)
 	if err != nil {
-		return nil, err
+		return nil, committedOffset, err
 	}
 	items := make([]agenttypes.ImportedExchange, 0, len(locators))
 	for _, item := range locators {
 		items = append(items, item.ImportedExchange)
 	}
-	return items, nil
+	return items, committed, nil
 }
 
-// importSeekBackWindow 是从 startOffset 往前多读的字节数。转录的交换按轮次成组，
-// 上次已读位置通常落在轮次边界，多读一小段是为覆盖「上次同步正好落在轮次中间」的边缘
-// 情况，保证该轮仍能被合并成一条而非拆成两条。代价极小（64KB vs 数十 MB）。
-const importSeekBackWindow = 64 << 10
+// claudeTranscriptTailClosed 判定转录尾部这一轮是否已经走完。
+// Claude Code 的回合以「不含 tool_use 的助手条目」收尾：最后一条相关条目还带 tool_use
+// （在等工具结果）、或尾部停在 tool_result / 用户条目上，都说明这一轮还在进行。
+// 只有「助手条目带正文且不带 tool_use」才算收尾——纯 thinking 条目不算。
+func claudeTranscriptTailClosed(lastRole string, lastHadToolUse, lastHadText bool) bool {
+	return lastRole == "assistant" && !lastHadToolUse && lastHadText
+}
 
-func readClaudeImportedExchangeLocators(path string, after time.Time, startOffset int64) ([]importedExchangeLocator, error) {
+func readClaudeImportedExchangeLocators(path string, committedOffset int64, bootstrapAfter time.Time) ([]importedExchangeLocator, int64, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return nil, apperr.Wrap("open", path, err)
+		return nil, committedOffset, apperr.Wrap("open", path, err)
 	}
 	defer file.Close()
-	if startOffset > 0 {
-		pos := startOffset - importSeekBackWindow
-		if pos < 0 {
-			pos = 0
-		}
-		if _, err := file.Seek(pos, io.SeekStart); err != nil {
-			return nil, apperr.Wrap("seek", path, err)
-		}
-		if pos > 0 {
-			// 非文件头：丢弃可能被截断的首行。
-			if _, err := bufio.NewReader(file).ReadBytes('\n'); err != nil && !errors.Is(err, io.EOF) {
-				return nil, apperr.Wrap("seek_align", path, err)
-			}
+	info, err := file.Stat()
+	if err != nil {
+		return nil, committedOffset, apperr.Wrap("stat", path, err)
+	}
+	size := info.Size()
+	if committedOffset < 0 || committedOffset > size {
+		// 转录被截断/轮转：游标作废，退回全量读。
+		committedOffset = 0
+	}
+	if committedOffset > 0 {
+		if _, err := file.Seek(committedOffset, io.SeekStart); err != nil {
+			return nil, committedOffset, apperr.Wrap("seek", path, err)
 		}
 	}
 
@@ -792,7 +818,13 @@ func readClaudeImportedExchangeLocators(path string, after time.Time, startOffse
 	// （appendMergedClaudeExchangeLocator）吃掉，会各自成为一个条目被反复落库，
 	// 表现为同一段助手文本在会话里出现两次以上。此处同一条目只处理一次。
 	seenUUIDs := make(map[string]struct{})
-	err = forEachJSONLLine(file, func(line string) error {
+	lastRole := ""
+	lastHadToolUse := false
+	lastHadText := false
+	err = forEachJSONLLine(file, func(lineOffset int64, line string) error {
+		// forEachJSONLLine 从当前文件位置起算，而我们已 seek 到 committedOffset，
+		// 所以这里要补回基准才是转录里的绝对字节偏移。
+		lineOffset += committedOffset
 		line = strings.TrimSpace(line)
 		if line == "" {
 			return nil
@@ -818,18 +850,42 @@ func readClaudeImportedExchangeLocators(path string, after time.Time, startOffse
 		}
 		ts := parseTimeRFC3339(asString(raw["timestamp"]))
 		if role == "user" {
+			lastRole, lastHadToolUse, lastHadText = "user", false, false
 			applyClaudeToolResults(items, toolLocations, message["content"], raw["toolUseResult"], ts)
 			text := extractClaudeImportedUserText(message["content"])
 			if text != "" && isMeaningfulClaudeUserText(text) {
+				before := len(items)
 				items, _, _ = appendMergedClaudeExchangeLocator(items, "user", text, ts, uuid, nil)
+				if len(items) > before {
+					items[before].StartOffset = lineOffset
+				}
 			}
 			return nil
+		}
+		lastRole = "assistant"
+		lastHadToolUse, lastHadText = false, false
+		if blocks, ok := message["content"].([]any); ok {
+			for _, block := range blocks {
+				item, _ := block.(map[string]any)
+				if item == nil {
+					continue
+				}
+				switch strings.TrimSpace(asString(item["type"])) {
+				case "tool_use":
+					lastHadToolUse = true
+				case "text":
+					if strings.TrimSpace(asString(item["text"])) != "" {
+						lastHadText = true
+					}
+				}
+			}
 		}
 		text := strings.TrimSpace(extractClaudeMessageText(message["content"]))
 		aux := extractClaudeToolUseAux(message["content"])
 		if text == "" && len(aux) == 0 {
 			return nil
 		}
+		before := len(items)
 		var exchangeIndex, auxStart int
 		items, exchangeIndex, auxStart = appendMergedClaudeExchangeLocator(
 			items,
@@ -839,6 +895,9 @@ func readClaudeImportedExchangeLocators(path string, after time.Time, startOffse
 			uuid,
 			aux,
 		)
+		if len(items) > before {
+			items[before].StartOffset = lineOffset
+		}
 		for index := auxStart; index < len(items[exchangeIndex].Aux); index++ {
 			toolCall := items[exchangeIndex].Aux[index].ToolCall
 			if toolCall == nil || strings.TrimSpace(toolCall.CallID) == "" {
@@ -852,31 +911,58 @@ func readClaudeImportedExchangeLocators(path string, after time.Time, startOffse
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, committedOffset, err
 	}
-	if after.IsZero() {
-		return items, nil
+	// 已提交位置：只有在转录尾部已收尾时才推进过最后一条 item。
+	// 尾轮还在进行（正在跑工具 / 刚拿到结果还没续写）就先不落库 —— 它的内容会继续变，
+	// 落了就是半成品，而且下次同步会因为它「又变了」而被当成新内容再落一遍。
+	committed := size
+	if n := len(items); n > 0 {
+		tail := items[n-1]
+		if tail.Role == "agent" && !claudeTranscriptTailClosed(lastRole, lastHadToolUse, lastHadText) {
+			if tail.StartOffset > committedOffset {
+				committed = tail.StartOffset
+			} else {
+				committed = committedOffset
+			}
+			items = items[:n-1]
+		}
 	}
 	filtered := make([]importedExchangeLocator, 0, len(items))
+	if committedOffset > 0 {
+		for _, item := range items {
+			if item.StartOffset < committedOffset {
+				continue
+			}
+			filtered = append(filtered, item)
+		}
+		return filtered, committed, nil
+	}
+	// 引导：该会话还没有游标，用库内最新时间戳兜底（旧行为，只此一次）。
+	if bootstrapAfter.IsZero() {
+		return items, committed, nil
+	}
 	for _, item := range items {
-		if item.Timestamp.IsZero() || !item.Timestamp.After(after) {
+		if item.Timestamp.IsZero() || !item.Timestamp.After(bootstrapAfter) {
 			continue
 		}
 		filtered = append(filtered, item)
 	}
-	return filtered, nil
+	return filtered, committed, nil
 }
 
 var errStopJSONL = errors.New("stop jsonl")
 
-func forEachJSONLLine(file *os.File, fn func(string) error) error {
+func forEachJSONLLine(file *os.File, fn func(offset int64, line string) error) error {
 	reader := bufio.NewReader(file)
+	var offset int64
 	for {
 		line, err := reader.ReadBytes('\n')
 		if len(line) > 0 {
-			if callErr := fn(string(line)); callErr != nil {
+			if callErr := fn(offset, string(line)); callErr != nil {
 				return callErr
 			}
+			offset += int64(len(line))
 		}
 		if err == nil {
 			continue

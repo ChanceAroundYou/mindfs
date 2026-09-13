@@ -112,6 +112,7 @@ CREATE TABLE IF NOT EXISTS session_agent_bindings (
 	external_source_path TEXT NOT NULL DEFAULT '',
 	external_source_offset INTEGER NOT NULL DEFAULT 0,
 	external_source_mtime_ns INTEGER NOT NULL DEFAULT 0,
+	external_source_committed_offset INTEGER NOT NULL DEFAULT 0,
 	PRIMARY KEY (session_key, agent)
 );`
 	upsertAgentBindingSQL = `
@@ -122,18 +123,18 @@ ON CONFLICT(session_key, agent) DO UPDATE SET
 	agent_session_id = excluded.agent_session_id,
 	agent_ctx_seq = excluded.agent_ctx_seq`
 	selectAllAgentBindingsSQL = `
-SELECT session_key, agent, agent_session_id, agent_ctx_seq, external_source_path, external_source_offset, external_source_mtime_ns
+SELECT session_key, agent, agent_session_id, agent_ctx_seq, external_source_path, external_source_offset, external_source_mtime_ns, external_source_committed_offset
 FROM session_agent_bindings`
 	selectAgentBindingSQL = `
-SELECT session_key, agent, agent_session_id, agent_ctx_seq, external_source_path, external_source_offset, external_source_mtime_ns
+SELECT session_key, agent, agent_session_id, agent_ctx_seq, external_source_path, external_source_offset, external_source_mtime_ns, external_source_committed_offset
 FROM session_agent_bindings
 WHERE session_key = ? AND agent = ?`
 	selectAgentBindingsBySessionSQL = `
-SELECT session_key, agent, agent_session_id, agent_ctx_seq, external_source_path, external_source_offset, external_source_mtime_ns
+SELECT session_key, agent, agent_session_id, agent_ctx_seq, external_source_path, external_source_offset, external_source_mtime_ns, external_source_committed_offset
 FROM session_agent_bindings
 WHERE session_key = ?`
 	selectBindingByAgentSessionSQL = `
-SELECT session_key, agent, agent_session_id, agent_ctx_seq, external_source_path, external_source_offset, external_source_mtime_ns
+SELECT session_key, agent, agent_session_id, agent_ctx_seq, external_source_path, external_source_offset, external_source_mtime_ns, external_source_committed_offset
 FROM session_agent_bindings
 WHERE agent = ? AND agent_session_id = ?
 LIMIT 1`
@@ -200,10 +201,18 @@ type AgentBinding struct {
 	ExternalSourcePath    string `json:"external_source_path,omitempty"`
 	ExternalSourceOffset  int64  `json:"external_source_offset,omitempty"`
 	ExternalSourceMtimeNS int64  `json:"external_source_mtime_ns,omitempty"`
+	// ExternalSourceCommittedOffset 是已提交给 MindFS 的字节位置（见 ExternalSessionCursor）。
+	// 0 表示该会话从未按偏移同步过，导入器会退回时间戳引导。
+	ExternalSourceCommittedOffset int64 `json:"external_source_committed_offset,omitempty"`
 }
 
 func (b AgentBinding) ExternalCursor() agenttypes.ExternalSessionCursor {
-	return agenttypes.ExternalSessionCursor{SourcePath: b.ExternalSourcePath, Offset: b.ExternalSourceOffset, ModTimeUnixNano: b.ExternalSourceMtimeNS}
+	return agenttypes.ExternalSessionCursor{
+		SourcePath:      b.ExternalSourcePath,
+		Offset:          b.ExternalSourceOffset,
+		ModTimeUnixNano: b.ExternalSourceMtimeNS,
+		CommittedOffset: b.ExternalSourceCommittedOffset,
+	}
 }
 
 type ListOptions struct {
@@ -900,8 +909,8 @@ func (m *Manager) UpdateExternalSessionCursor(_ context.Context, sessionKey, age
 	if err != nil {
 		return err
 	}
-	_, err = db.Exec(`UPDATE session_agent_bindings SET external_source_path = ?, external_source_offset = ?, external_source_mtime_ns = ? WHERE session_key = ? AND agent = ?`,
-		strings.TrimSpace(cursor.SourcePath), cursor.Offset, cursor.ModTimeUnixNano, strings.TrimSpace(sessionKey), strings.TrimSpace(agent))
+	_, err = db.Exec(`UPDATE session_agent_bindings SET external_source_path = ?, external_source_offset = ?, external_source_mtime_ns = ?, external_source_committed_offset = ? WHERE session_key = ? AND agent = ?`,
+		strings.TrimSpace(cursor.SourcePath), cursor.Offset, cursor.ModTimeUnixNano, cursor.CommittedOffset, strings.TrimSpace(sessionKey), strings.TrimSpace(agent))
 	return err
 }
 
@@ -1000,7 +1009,7 @@ func (m *Manager) listAgentBindingsUnsafe(sessionKey string) ([]AgentBinding, er
 }
 
 func scanAgentBinding(scanner rowScanner, binding *AgentBinding) error {
-	return scanner.Scan(&binding.SessionKey, &binding.Agent, &binding.AgentSessionID, &binding.AgentCtxSeq, &binding.ExternalSourcePath, &binding.ExternalSourceOffset, &binding.ExternalSourceMtimeNS)
+	return scanner.Scan(&binding.SessionKey, &binding.Agent, &binding.AgentSessionID, &binding.AgentCtxSeq, &binding.ExternalSourcePath, &binding.ExternalSourceOffset, &binding.ExternalSourceMtimeNS, &binding.ExternalSourceCommittedOffset)
 }
 
 func (m *Manager) upsertAgentBindingUnsafe(binding AgentBinding) error {
@@ -2510,6 +2519,7 @@ func openSessionMetaDB(dbFile string) (db *sql.DB, err error) {
 		`ALTER TABLE session_agent_bindings ADD COLUMN external_source_path TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE session_agent_bindings ADD COLUMN external_source_offset INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE session_agent_bindings ADD COLUMN external_source_mtime_ns INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE session_agent_bindings ADD COLUMN external_source_committed_offset INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE session_name_aliases ADD COLUMN agent TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE session_name_aliases ADD COLUMN agent_session_id TEXT NOT NULL DEFAULT ''`,
 	} {
