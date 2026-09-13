@@ -4442,6 +4442,35 @@ export function App({ onGoHome }: AppProps) {
       const nextList = updateList(
         ((base as any).exchanges || []) as Exchange[],
       );
+      // 诊断锚点（ask 重复）—「出现」入口。ask/task 卡若被服务端发两次（handleAssistantMessage
+      // 与 awaitAskUserQuestion 双路径），这里会打出两条同 callId 记录；occurrences 是写入缓存后
+      // 该 callId 在 role=tool 条目中的份数（updateList 按 callId 合并，正常恒为 1）。
+      const probeKind = `${toolCall?.kind || ""}`.toLowerCase();
+      if (probeKind === "ask_user" || probeKind === "task") {
+        const probeCallId =
+          toolCall.callId || toolCall.toolCallId || toolCall.tool_call_id || "";
+        let occurrences = 0;
+        for (const item of nextList) {
+          if (
+            item?.role === "tool" &&
+            (item as any)?.toolCall?.callId === probeCallId
+          ) {
+            occurrences += 1;
+          }
+        }
+        console.info("[ask/probe] ingest", {
+          sessionKey,
+          callId: probeCallId,
+          kind: probeKind,
+          update,
+          occurrences,
+          questions: Array.isArray(toolCall?.meta?.questions)
+            ? toolCall.meta.questions.length
+            : 0,
+          title: `${toolCall?.title || ""}`.slice(0, 40),
+          listLen: nextList.length,
+        });
+      }
       sessionCacheRef.current[cacheKey] = {
         ...(base as any),
         exchanges: nextList,
@@ -10724,7 +10753,13 @@ export function App({ onGoHome }: AppProps) {
             // 会把已持久化的轮次以 seq=0 形式重复追加在窗口后面。同时自愈断连间隙丢的 chunk。
             // 队列续轮（仍在流式）跳过，等它自己的 done；非查看中的会话不重载（避免覆盖
             // 其它标签页正在流式写入的同一缓存）。
+            // replay=true 的 done 不重载：它是服务端对 session.ready 的一次性回执（「你离线期间
+            // 这一轮结束了」），而 restoreActiveSession 自己又会发 session.ready，于是
+            // done → restore → ready → done 形成自持闭环（实测空转 18 次/秒、每轮一次 ?latest=20）。
+            // 断连恢复不依赖这条路径：ws.reconnected 的 replayTargetsForAllRoots 已经重载过窗口，
+            // 且服务端窗口自带 pending 状态。这里只保留「真·回合结束」的 done 触发重锚定。
             if (
+              payload?.replay !== true &&
               getReplayTargetsForRoot(rootID).includes(sessionKey) &&
               !sessionService.isSessionStreaming(sessionKey)
             ) {

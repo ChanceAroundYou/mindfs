@@ -105,8 +105,16 @@ function normalizeAndDedup(list: any[]): NodeConnection[] {
 }
 
 function writeCache(next: NodeConnection[]) {
+  const prev = cache;
   cache = next;
-  try { window.dispatchEvent(new CustomEvent("mindfs:nodes-changed")); } catch {}
+  try {
+    // 只在列表真的变了才广播。syncNodesFromServer 每次都无条件走到这里，而 App 的
+    // mindfs:nodes-changed 监听会重跑 refreshManagedRoots → syncNodesFromServer ——
+    // 无脑广播会让两件事自激成死循环：控制台被 [session-list]/[managed-roots] 刷屏，
+    // 且每轮都顺带打一次 /api/replying-sessions 与 /api/sessions?multi_root=1。
+    if (prev && JSON.stringify(prev) === JSON.stringify(next)) return;
+    window.dispatchEvent(new CustomEvent("mindfs:nodes-changed"));
+  } catch {}
 }
 
 function nodesApiPath(): string {

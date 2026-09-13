@@ -1223,12 +1223,23 @@ function SessionViewerInner({
       }
       // seq=0 的 tool 瞬时条目：窗口 aux 已含同 callId → 让位给窗口侧渲染。
       const transientCallId = (ex as any)?.toolCall?.callId;
+      const transientKind = `${(ex as any)?.toolCall?.kind || ""}`.toLowerCase();
       if (
         String((ex as any)?.role || "").toLowerCase() === "tool" &&
         typeof transientCallId === "string" &&
         transientCallId &&
         windowToolCallIds.has(transientCallId)
       ) {
+        // 诊断锚点（ask 重复）：overlay 让位说明窗口 aux 已渲染同一张卡 —— 若 ask 仍出现两次，
+        // 说明重复来自窗口侧自身（同一 callId 在 aux 里跨多 seq），而不是 overlay 这一路。
+        if (transientKind === "ask_user" || transientKind === "task") {
+          console.info("[ask/probe] overlay-yield", {
+            sessionKey,
+            callId: transientCallId,
+            kind: transientKind,
+            windowToolCallIds: windowToolCallIds.size,
+          });
+        }
         continue;
       }
       if (String((ex as any)?.role || "").toLowerCase() === "user") {
@@ -1244,10 +1255,21 @@ function SessionViewerInner({
           continue;
         }
       }
+      // 诊断锚点（ask 重复）：overlay 保留说明它自己会渲染这张卡；与 overlay-yield 成对读，
+      // 就能判定 UI 上的那张卡到底由窗口侧还是 overlay 侧产出。
+      if (transientKind === "ask_user" || transientKind === "task") {
+        console.info("[ask/probe] overlay-keep", {
+          sessionKey,
+          callId: `${transientCallId || ""}`,
+          kind: transientKind,
+          seq,
+          windowToolCallIds: windowToolCallIds.size,
+        });
+      }
       out.push(ex);
     }
     return out;
-  }, [session?.exchanges, latestSeq, visibleSeqSet, windowUserCounts, windowToolCallIds]);
+  }, [session?.exchanges, sessionKey, latestSeq, visibleSeqSet, windowUserCounts, windowToolCallIds]);
   const composedExchanges = useMemo(
     () => [...visibleExchanges, ...tailOverlay],
     [visibleExchanges, tailOverlay],
@@ -1259,6 +1281,59 @@ function SessionViewerInner({
     session?.context_window,
     isAwaiting,
   );
+  // 诊断锚点（ask 重复）—「渲染」终局。渲染面唯一的真相在这里：timeline 里有几张 ask 卡、
+  // 每张的 callId/状态/问题数，以及当时窗口与 overlay 的规模。配合 [ask/probe] ingest
+  // （服务端发了几次）与 tool-source-dup（aux/tool 两条来源各几份）即可三方对齐。
+  // timeline 每次渲染都是新数组，用签名去重，只在 ask 集合真的变化时打一行。
+  const lastAskRenderSigRef = useRef("");
+  useEffect(() => {
+    const asks = timeline.filter(
+      (item) =>
+        item.type === "tool" &&
+        `${(item as any).toolCall?.kind || ""}`.toLowerCase() === "ask_user",
+    );
+    const signature = JSON.stringify([
+      sessionKey,
+      visibleExchanges.length,
+      tailOverlay.length,
+      asks.map((item) => [
+        (item as any).toolCall?.callId || item.id,
+        (item as any).toolCall?.status || "",
+      ]),
+    ]);
+    if (signature === lastAskRenderSigRef.current) return;
+    lastAskRenderSigRef.current = signature;
+    console.info("[ask/probe] render", {
+      sessionKey,
+      askCards: asks.length,
+      cards: asks.map((item) => ({
+        callId: (item as any).toolCall?.callId || item.id,
+        status: (item as any).toolCall?.status || "",
+        questions: Array.isArray((item as any).toolCall?.meta?.questions)
+          ? (item as any).toolCall.meta.questions.length
+          : 0,
+      })),
+      windowExchanges: visibleExchanges.length,
+      overlayExchanges: tailOverlay.length,
+      windowAuxSeqs: Object.keys(visibleAux || {}).length,
+      timelineLen: timeline.length,
+      cachedExchanges: Array.isArray((session as any)?.exchanges)
+        ? ((session as any).exchanges as unknown[]).length
+        : -1,
+      maxCachedSeq: Array.isArray((session as any)?.exchanges)
+        ? ((session as any).exchanges as any[]).reduce(
+            (m, e) => Math.max(m, Number((e as any)?.seq || 0)),
+            0,
+          )
+        : -1,
+    });
+  }, [
+    timeline,
+    sessionKey,
+    visibleExchanges.length,
+    tailOverlay.length,
+    visibleAux,
+  ]);
   const shouldStickToBottomRef = useRef(true);
   const lastSessionKeyRef = useRef<string | null>(null);
   const targetSeqScrollKeyRef = useRef("");
@@ -1322,7 +1397,10 @@ function SessionViewerInner({
 
   // 方案 B：从窗口响应中提取 exchanges/aux/meta（后端 window_meta 透传 total/hasMore/minSeq/maxSeq）。
   const applyWindow = useCallback(
-    (res: { session: any; meta: SessionWindowMeta } | null) => {
+    (
+      res: { session: any; meta: SessionWindowMeta } | null,
+      opts?: { keepOlder?: boolean },
+    ) => {
       if (!res) return false;
       const winSession = res.session as any;
       const winExchanges = Array.isArray(winSession?.exchanges)
@@ -1330,8 +1408,23 @@ function SessionViewerInner({
         : [];
       const winAux =
         (winSession?.exchange_aux as Record<string, ExchangeAux[]>) || {};
-      setVisibleExchanges(winExchanges);
-      setVisibleAux(winAux);
+      setVisibleExchanges((prev) => {
+        if (!opts?.keepOlder) return winExchanges;
+        // 重锚定换窗时保住用户已翻上去的历史：窗口只覆盖 [minSeq, maxSeq]，
+        // 比 minSeq 更老的条目是 loadMore 一页页取回来的，整体替换会把它们扔掉
+        // —— 表现为「翻上去加载出来了、闪一下又回到 20 条」，而且顶部哨兵再次可见
+        // 又触发 loadMore，形成 40↔20 的无限抖动。
+        const winMinSeq = Number(res.meta?.minSeq || 0);
+        if (!winMinSeq) return winExchanges;
+        const older = prev.filter((ex) => {
+          const seq = Number((ex as any)?.seq || 0);
+          return seq > 0 && seq < winMinSeq;
+        });
+        return older.length ? [...older, ...winExchanges] : winExchanges;
+      });
+      setVisibleAux((prev) =>
+        opts?.keepOlder ? { ...prev, ...winAux } : winAux,
+      );
       setWindowMeta(res.meta);
       // applyWindow 只服务「最新窗口」（init / anchor）——loadMore 与 targetSeq 取窗直接
       // setWindowMeta，不经过这里，因此 latestSeq 不会被旧/中段窗口的 maxSeq 污染。
@@ -1467,7 +1560,7 @@ function SessionViewerInner({
       return;
     }
     lastAppliedAnchorRef.current = { key: sessionKey, at: anchorAt };
-    applyWindow({ session, meta: anchorMeta });
+    applyWindow({ session, meta: anchorMeta }, { keepOlder: true });
   }, [session, sessionKey, applyWindow]);
 
   const userMessageSummaries = useMemo(
