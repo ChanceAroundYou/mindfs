@@ -67,6 +67,9 @@ export function useRelatedFileStats(
           // 关联文件按其所属会话的节点路由：同名根在多节点上重名时，裸 rootId 查表
           // 会把其它节点文件的 diff 请求串到当前节点（实测 400：repo_path 是另一台机器路径）
           const diff = await fetchGitRelatedFileDiff(rootId, file, nodeId || undefined);
+          // 后端判定「自记录基线以来该文件没有任何变更」时 source=none、status 为空，
+          // 此时不该显示 +0 -0 徽标。
+          if (!diff.status) return null;
           return [
             key,
             {
