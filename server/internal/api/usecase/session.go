@@ -2155,6 +2155,31 @@ func resolveSessionExchangeMode(current *session.Session) string {
 	return ""
 }
 
+// userExchangeRepeatTolerance：同一轮用户条目的两个写入者之间的时间窗。
+// 外部转录同步会在回合进行中先导入一条（ts 带 Z、来自 transcript），回合结束时
+// SendMessage 再写一条（ts 无 Z、time.Now()），实测差 21ms。落在窗内且 role+内容
+// 相同 → 判为同一轮重复，不再落库。
+// ponytail: 5s 窗。只挡同一次发言的双写，不吞用户隔久了的真实重发（「继续」「ok」必须保留），
+// 也不按内容批量去重存量数据。
+const userExchangeRepeatTolerance = 5 * time.Second
+
+// exchangeAlreadyRecorded 判定 target 里是否已有同 role+内容、且时间戳落在
+// ±userExchangeRepeatTolerance 内的条目。导入侧与发送侧共用，保证两个写入者判据对称。
+func exchangeAlreadyRecorded(target *session.Session, role, content string, ts time.Time) bool {
+	if target == nil || ts.IsZero() {
+		return false
+	}
+	for _, ex := range target.Exchanges {
+		if ex.Role != role || ex.Content != content || ex.Timestamp.IsZero() {
+			continue
+		}
+		if diff := ex.Timestamp.Sub(ts); diff > -userExchangeRepeatTolerance && diff < userExchangeRepeatTolerance {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 	if err := s.ensureRegistry(); err != nil {
 		return err
@@ -2472,7 +2497,12 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 	if err := manager.UpdateModel(ctx, current, resolvedModel); err != nil {
 		return err
 	}
-	if err := manager.AddExchangeForAgentAt(exchangeCtx, current, "user", in.Content, in.Agent, resolvedMode, resolvedEffort, resolvedFastService, userTimestamp); err != nil {
+	// 转录同步可能在回合进行中就先把这条用户消息导进来（导入器在 15:15:08 写 seq=57），
+	// 而这里要等回合结束才写（15:15:11 写 seq=58）——判据不对称时同一句话就落两条。
+	// 用与导入侧同一个 exchangeAlreadyRecorded 收口。
+	if exchangeAlreadyRecorded(current, "user", in.Content, userTimestamp) {
+		log.Printf("[session] persist.user.skip-duplicate root=%s session=%s agent=%s", in.RootID, current.Key, in.Agent)
+	} else if err := manager.AddExchangeForAgentAt(exchangeCtx, current, "user", in.Content, in.Agent, resolvedMode, resolvedEffort, resolvedFastService, userTimestamp); err != nil {
 		log.Printf("[session] persist.user.error root=%s session=%s agent=%s err=%v", in.RootID, current.Key, in.Agent, err)
 		return err
 	}
@@ -3415,8 +3445,11 @@ func configuredShells(registry Registry) []commandexec.ShellSpec {
 }
 
 func persistCommandTurn(ctx context.Context, manager *session.Manager, current *session.Session, command string, final agenttypes.ToolCall, plannedAssistantSeq int, userTimestamp time.Time) error {
-	if err := manager.AddExchangeForAgentAt(ctx, current, "user", command, "", "", "", "", userTimestamp); err != nil {
-		return err
+	// 与 SendMessage 同一个双写风险：斜杠命令同样会被转录同步先导入一份。
+	if !exchangeAlreadyRecorded(current, "user", command, userTimestamp) {
+		if err := manager.AddExchangeForAgentAt(ctx, current, "user", command, "", "", "", "", userTimestamp); err != nil {
+			return err
+		}
 	}
 	if err := manager.AddExchangeForAgent(ctx, current, "agent", "", "", "", "", ""); err != nil {
 		return err

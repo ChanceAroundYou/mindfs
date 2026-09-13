@@ -519,21 +519,11 @@ func appendImportedExchange(
 	// 幂等护栏：Full 同步按 ctx_seq 切片，而 ctx_seq 在「live 写入 + ImportedCount=0
 	// 的增量（ts 相同被 after 过滤）」期间不会推进，点「同步」时会把库内已有的
 	// 历史尾段整块重放（2026-09-12 WSL 实测：count=13 重放、old 时间戳、字段缺
-	// model_display_name/effort）。这里按库内已有交换做 role+内容+时间窗去重：
-	// 只挡时间戳落在窗口内的重放，不吞用户隔了较久真实重发的相同内容（红线：
-	// 「继续」「ok」这类合法重复必须保留）。
-	// ponytail: 时间窗 5s——实测重放 ts 与库内 ts 差异是纳秒级（同一 transcript 行）；
-	// 若发现更大偏差需要放宽，先确认不是上游写了两条不同 transcript 行再调。
-	const importedRepeatTolerance = 5 * time.Second
-	if !exchange.Timestamp.IsZero() {
-		for _, ex := range target.Exchanges {
-			if ex.Role != role || ex.Content != exchange.Content || ex.Timestamp.IsZero() {
-				continue
-			}
-			if diff := ex.Timestamp.Sub(exchange.Timestamp); diff > -importedRepeatTolerance && diff < importedRepeatTolerance {
-				return false, nil
-			}
-		}
+	// model_display_name/effort）。
+	// 判据与发送侧共用（exchangeAlreadyRecorded）：同一轮的用户条目本来就由这个导入器
+	// 和回合结束的 SendMessage 两个人写，护栏必须对称，否则后写的那个照样落重复。
+	if exchangeAlreadyRecorded(target, role, exchange.Content, exchange.Timestamp) {
+		return false, nil
 	}
 	if err := manager.AddExchangeForAgentAt(
 		ctx,
