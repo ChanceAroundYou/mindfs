@@ -13,7 +13,6 @@ export type SessionGroupLike = {
 
 export type NodeColorEntry = { id: string; name: string; color: string };
 
-export const SESSION_GROUP_FALLBACK_BLUE = "#3b82f6";
 
 export function resolveGroupColor(
   group: SessionGroupLike,
@@ -37,21 +36,4 @@ export function resolveGroupColor(
     if (byName?.color) return byName.color;
   }
   return null;
-}
-
-export function summarizeGroupsForLog(
-  groups: SessionGroupLike[],
-  byKey: Record<string, { _nodeColor?: string }>,
-  nodes: NodeColorEntry[],
-): Array<{ rootId: string; rootName: string; nid: string; color: string; sessions: number }> {
-  return (groups || []).map((g) => {
-    const color = resolveGroupColor(g, byKey, nodes);
-    return {
-      rootId: String(g?.rootId || "").trim(),
-      rootName: String(g?.rootName || g?.rootId || "").trim(),
-      nid: String(g?._nodeId || "").trim(),
-      color: color || `FALLBACK${SESSION_GROUP_FALLBACK_BLUE}`,
-      sessions: Array.isArray(g?.sessions) ? g!.sessions!.length : 0,
-    };
-  });
 }

@@ -121,38 +121,15 @@ function normalizeToolCall(input: ToolCall): ToolCall {
 // 摆到错误的位置（实测 2026-09-13：ask 卡出现在窗口内真实位置之外的地方）。
 // composedExchanges 是「窗口在前、overlay 在后」，所以保留首个 = 保留已持久化那份，
 // 符合「窗口是唯一持久化源」的既有约定。
-function dedupeToolCards(
-  items: TimelineItem[],
-  auxiliaryCallIds: Set<string>,
-  onDrop?: (info: {
-    callId: string;
-    kind: string;
-    from: string;
-    keptIndex: number;
-    droppedIndex: number;
-    total: number;
-  }) => void,
-): TimelineItem[] {
-  const seen = new Map<string, number>();
+function dedupeToolCards(items: TimelineItem[]): TimelineItem[] {
+  const seen = new Set<string>();
   const out: TimelineItem[] = [];
-  for (let index = 0; index < items.length; index += 1) {
-    const item = items[index];
+  for (const item of items) {
     if (item.type === "tool") {
       const callId = item.toolCall.callId;
       if (callId) {
-        const kept = seen.get(callId);
-        if (kept !== undefined) {
-          onDrop?.({
-            callId,
-            kind: `${item.toolCall.kind || ""}`,
-            from: auxiliaryCallIds.has(callId) ? "aux" : "exchange",
-            keptIndex: kept,
-            droppedIndex: index,
-            total: items.length,
-          });
-          continue;
-        }
-        seen.set(callId, index);
+        if (seen.has(callId)) continue;
+        seen.add(callId);
       }
     }
     out.push(item);
@@ -534,73 +511,6 @@ export function useSessionStream(
     [exchanges, exchangeAux, sessionContextWindow],
   );
 
-  // 诊断锚点（ask 重复）—「渲染源」对账。同一 callId 可能同时躺在
-  //   ① 窗口的 exchange_aux（buildAssistantTimeline 按 aux.toolcall 渲染一张卡）
-  //   ② 缓存的 role=tool 条目（buildBaseTimeline 的 role==="tool" 分支再渲染一张）
-  // 两侧各渲染一次且互不去重，UI 上就是同一张 ask 出现两次。另有第三种：同一 callId
-  // 在 aux 里跨多个 seq 重复出现（aux 不保证跨轮唯一），而 Set 化的 windowToolCallIds
-  // 会把它并成一条、掩盖份数。只在重复特征变化时打一行，避免每次重渲染刷屏。
-  const lastToolDupSigRef = useRef("");
-  useEffect(() => {
-    if (!sessionKey) return;
-    const auxSites = new Map<
-      string,
-      { n: number; kind: string; seqs: number[]; lines: number[] }
-    >();
-    for (const [seqKey, items] of Object.entries(exchangeAux || {})) {
-      for (const aux of items || []) {
-        const tool = (aux as any)?.toolcall;
-        const callId = typeof tool?.callId === "string" ? tool.callId : "";
-        if (!callId) continue;
-        const entry =
-          auxSites.get(callId) ||
-          { n: 0, kind: `${tool?.kind || ""}`, seqs: [], lines: [] };
-        entry.n += 1;
-        entry.seqs.push(Number(seqKey));
-        entry.lines.push(Number((aux as any)?.line || 0));
-        auxSites.set(callId, entry);
-      }
-    }
-    const exchangeSites = new Map<string, number>();
-    for (const ex of exchanges) {
-      if (String((ex as any)?.role || "").toLowerCase() !== "tool") continue;
-      const callId = String((ex as any)?.toolCall?.callId || "");
-      if (callId) {
-        exchangeSites.set(callId, (exchangeSites.get(callId) || 0) + 1);
-      }
-    }
-    const duplicatedInAux = [...auxSites.entries()].filter(([, v]) => v.n > 1);
-    const inBothSources = [...auxSites.keys()].filter((id) =>
-      exchangeSites.has(id),
-    );
-    if (!duplicatedInAux.length && !inBothSources.length) {
-      lastToolDupSigRef.current = "";
-      return;
-    }
-    const signature = JSON.stringify([
-      duplicatedInAux.map(([id, v]) => [id, v.n, v.seqs]),
-      inBothSources.map((id) => [id, exchangeSites.get(id)]),
-    ]);
-    if (signature === lastToolDupSigRef.current) return;
-    lastToolDupSigRef.current = signature;
-    console.warn("[ask/probe] tool-source-dup", {
-      sessionKey,
-      auxSeqs: Object.keys(exchangeAux || {}).length,
-      duplicatedInAux: duplicatedInAux.map(([callId, v]) => ({
-        callId,
-        kind: v.kind,
-        copies: v.n,
-        seqs: v.seqs,
-        lines: v.lines,
-      })),
-      inBothSources: inBothSources.map((callId) => ({
-        callId,
-        kind: auxSites.get(callId)?.kind || "",
-        exchangeCopies: exchangeSites.get(callId) || 0,
-      })),
-    });
-  }, [sessionKey, exchangeAux, exchanges]);
-
   useEffect(() => {
     setStreamVersion(0);
     setStreamStatusText("");
@@ -659,18 +569,10 @@ export function useSessionStream(
     };
   }, [sessionKey, sessionPending]);
 
-  const settledTimeline = useMemo(() => {
-    const auxiliaryCallIds = new Set<string>();
-    for (const items of Object.values(exchangeAux || {})) {
-      for (const aux of items || []) {
-        const callId = (aux as any)?.toolcall?.callId;
-        if (typeof callId === "string" && callId) auxiliaryCallIds.add(callId);
-      }
-    }
-    return dedupeToolCards(settleRunningTools(baseTimeline), auxiliaryCallIds, (info) => {
-      console.warn("[ask/probe] dedupe-tool-card", { sessionKey, ...info });
-    });
-  }, [baseTimeline, exchangeAux, sessionKey]);
+  const settledTimeline = useMemo(
+    () => dedupeToolCards(settleRunningTools(baseTimeline)),
+    [baseTimeline],
+  );
 
   return {
     timeline: settledTimeline,

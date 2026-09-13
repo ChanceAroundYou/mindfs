@@ -31,14 +31,6 @@ export function mergeSessionItems<T extends PinAwareSessionItem>(
       continue;
     }
     const scopedKey = `${String((item as any)?._nodeId || "").trim()}::${key}`;
-    const prevItem = byKey.get(scopedKey);
-    if (prevItem) {
-      const prevNid = String((prevItem as any)?._nodeId || "").trim();
-      const incomingNid = String((item as any)?._nodeId || "").trim();
-      if (prevNid && incomingNid && prevNid !== incomingNid) {
-        console.info("[session-list] merge override", { key, prevNid, incomingNid });
-      }
-    }
     byKey.set(scopedKey, { ...(byKey.get(scopedKey) || ({} as T)), ...item });
   }
   return Array.from(byKey.values()).sort(compareSessionItems);

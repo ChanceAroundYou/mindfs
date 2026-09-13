@@ -5,6 +5,7 @@ const read = (file) => fs.readFileSync(new URL(`../src/${file}`, import.meta.url
 const nodeRegistry = read("services/nodeRegistry.ts");
 const defaultList = read("components/DefaultListView.tsx");
 const fileTree = read("components/FileTree.tsx");
+const sessionList = read("components/SessionList.tsx");
 const app = read("App.tsx");
 const vite = fs.readFileSync(new URL("../vite.config.ts", import.meta.url), "utf8");
 
@@ -40,3 +41,6 @@ assert.doesNotMatch(app, /setMultiProjectSessionsEnabled/);
 assert.match(app, /<DefaultListView[\s\S]*rootColor=\{[^}]*(getDisplayNodeColor|\._nodeColor)[^}]*\}/);
 assert.match(vite, /defineConfig\(/);
 assert.doesNotMatch(vite, /entryFileNames:\s*[^\n]*Date\.now/);
+// 右面板分组头的颜色回退链必须走 resolveGroupColor（不再裸 PALETTE[0]/#2563eb 蓝回退）
+assert.match(sessionList, /_nodeColor \|\| resolveGroupColor/);
+assert.match(sessionList, /resolveGroupColor\(\s*\{ rootId[\s\S]*_nodeId/);

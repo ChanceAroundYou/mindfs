@@ -138,8 +138,9 @@ import {
 } from "./components/FileTree";
 
 import { applyNodesFromServer, getActiveNode, getNodes, LOCAL_NODE_ID, migrateLegacySingleBase, syncNodesFromServer } from "./services/nodeRegistry";
-import { resolveGroupColor, summarizeGroupsForLog } from "./services/sessionGroupDisplay";
+
 import { FileViewer } from "./components/FileViewer";
+import { resolveGroupColor } from "./services/sessionGroupDisplay";
 import { GitDiffViewer } from "./components/GitDiffViewer";
 import { GitHistoryPanel } from "./components/GitHistoryPanel";
 import { GitStatusPanel } from "./components/GitStatusPanel";
@@ -1280,8 +1281,6 @@ type AppProps = {
   onGoHome?: () => void;
 };
 
-// 可观测层轮次标记：随每次日志插桩更新，用于区分浏览器陈旧缓存（旧 index.html 跑旧 JS）
-const SESSION_LIST_OBS_TAG = "e5";
 const MOBILE_ENTER_KEY_SEND_STORAGE_KEY = "mindfs-mobile-enter-key-sends";
 const SIDEBARS_SWAPPED_STORAGE_KEY = "mindfs-sidebars-swapped";
 const GIT_DIFF_SIDE_BY_SIDE_STORAGE_KEY = "mindfs-git-diff-side-by-side";
@@ -1862,15 +1861,11 @@ export function App({ onGoHome }: AppProps) {
     const controller = new AbortController();
     kanbanAbortRef.current = controller;
     setKanbanTasksLoading(true);
-    console.info("[node-switch] loadKanban start", { seq, targetRoot, snapNode, curNid: String(currentRootNodeIdRef.current || "").trim(), force });
     try {
       const cached = await getCachedTaskDetails(targetRoot, snapNode || undefined);
       if (cached.length > 0 && seq === kanbanLoadSeqRef.current && !controller.signal.aborted && (resolveNodeId(targetRoot) || null) === snapNode) {
-        console.info("[node-switch] loadKanban cached-hit", { seq, targetRoot, snapNode, cached: cached.length });
         applyTaskDetails(targetRoot, cached, false);
         if (seq === kanbanLoadSeqRef.current) setKanbanTasksLoading(false);
-      } else if (cached.length > 0) {
-        console.info("[node-switch] loadKanban cached-drop", { seq, targetRoot, snapNode, curNid: String(currentRootNodeIdRef.current || "").trim(), cached: cached.length, seqNow: kanbanLoadSeqRef.current, aborted: controller.signal.aborted, snapNow: (resolveNodeId(targetRoot) || null) });
       }
       const meta = await getCachedTaskMeta(targetRoot, snapNode || undefined);
       const [details, recent] = await Promise.all([
@@ -1879,9 +1874,8 @@ export function App({ onGoHome }: AppProps) {
           ? fetchTaskDetails(targetRoot, { limit: 20 }, resolveNodeId(targetRoot))
           : Promise.resolve([] as TaskDetail[]),
       ]);
-      console.info("[node-switch] loadKanban fetch-done", { seq, targetRoot, snapNode, curNid: String(currentRootNodeIdRef.current || "").trim(), details: details.length, recent: recent.length });
-      if (controller.signal.aborted || seq !== kanbanLoadSeqRef.current) { console.info("[node-switch] loadKanban drop@seq", { seq, seqNow: kanbanLoadSeqRef.current, aborted: controller.signal.aborted }); return; }
-      if ((resolveNodeId(targetRoot) || null) !== snapNode) { console.info("[node-switch] loadKanban drop@node", { seq, snapNode, snapNow: (resolveNodeId(targetRoot) || null) }); return; }
+      if (controller.signal.aborted || seq !== kanbanLoadSeqRef.current) { return; }
+      if ((resolveNodeId(targetRoot) || null) !== snapNode) { return; }
       const tagDetails = (arr: TaskDetail[]) => { for (const d of arr) (d.task as any)._nodeId = (d.task as any)._nodeId || snapNode; };
       if (details.length > 0) { tagDetails(details); applyTaskDetails(targetRoot, details); }
       if (recent.length > 0) { tagDetails(recent); applyTaskDetails(targetRoot, recent); }
@@ -2388,13 +2382,11 @@ export function App({ onGoHome }: AppProps) {
       // 递增序号使旧 in-flight 请求的 seq 校验直接失效
       kanbanLoadSeqRef.current += 1;
       sessionListLoadSeqRef.current += 1;
-      console.info("[node-switch] selectRootNode abort", { rid, prevNid, nid, kanbanSeq: kanbanLoadSeqRef.current, sessionSeq: sessionListLoadSeqRef.current });
     }
     currentRootNodeIdRef.current = nid || null;
     setCurrentRootNodeId(nid || null);
     // 无条件更新模块级 root→node 映射，保证路由/作用域解析在任何时机都正确
     setRootNodeId(rid, nid || undefined);
-    console.info("[session-list] node-switch", { rid, prevNid, nid, curRoot: String(currentRootIdRef.current || "").trim(), multiGroups: multiProjectSessionGroups.length });
     if (prevNid && nid && prevNid !== nid) {
       // 同名项目跨节点切换：清掉该 root 的会话选择状态，避免把另一节点的会话恢复到错误节点
       const scopedRid = scopeKey(nid, rid);
@@ -2408,7 +2400,6 @@ export function App({ onGoHome }: AppProps) {
       }
       if (isSameRootSwitch) {
         // 同名项目跨节点：清空 Kanban/文件/git 历史/会话视图残留，避免旧节点 incrementally merged 的 taskDetailsById/旧历史/旧会话串台
-        console.info("[node-switch] selectRootNode clear-view", { rid, prevNid, nid });
         taskDetailsByIdRef.current = {};
         setTaskDetailsById({});
         setTaskFirstInputById({});
@@ -2513,7 +2504,6 @@ export function App({ onGoHome }: AppProps) {
   }, [isMobile, onboardingOpen]);
   const [e2eeSecretInput, setE2eeSecretInput] = useState("");
   useEffect(() => { syncNodesFromServer().catch(()=>{}); }, []);
-  useEffect(() => { console.info("[session-list] boot", { build: SESSION_LIST_OBS_TAG }); }, []);
   const [e2eePromptError, setE2eePromptError] = useState("");
   const [e2eePromptBusy, setE2eePromptBusy] = useState(false);
   const [editDraftRequest, setEditDraftRequest] = useState<{
@@ -4442,35 +4432,6 @@ export function App({ onGoHome }: AppProps) {
       const nextList = updateList(
         ((base as any).exchanges || []) as Exchange[],
       );
-      // 诊断锚点（ask 重复）—「出现」入口。ask/task 卡若被服务端发两次（handleAssistantMessage
-      // 与 awaitAskUserQuestion 双路径），这里会打出两条同 callId 记录；occurrences 是写入缓存后
-      // 该 callId 在 role=tool 条目中的份数（updateList 按 callId 合并，正常恒为 1）。
-      const probeKind = `${toolCall?.kind || ""}`.toLowerCase();
-      if (probeKind === "ask_user" || probeKind === "task") {
-        const probeCallId =
-          toolCall.callId || toolCall.toolCallId || toolCall.tool_call_id || "";
-        let occurrences = 0;
-        for (const item of nextList) {
-          if (
-            item?.role === "tool" &&
-            (item as any)?.toolCall?.callId === probeCallId
-          ) {
-            occurrences += 1;
-          }
-        }
-        console.info("[ask/probe] ingest", {
-          sessionKey,
-          callId: probeCallId,
-          kind: probeKind,
-          update,
-          occurrences,
-          questions: Array.isArray(toolCall?.meta?.questions)
-            ? toolCall.meta.questions.length
-            : 0,
-          title: `${toolCall?.title || ""}`.slice(0, 40),
-          listLen: nextList.length,
-        });
-      }
       sessionCacheRef.current[cacheKey] = {
         ...(base as any),
         exchanges: nextList,
@@ -5084,13 +5045,12 @@ export function App({ onGoHome }: AppProps) {
       sessionListAbortRef.current?.abort();
       const controller = new AbortController();
       sessionListAbortRef.current = controller;
-      console.info("[node-switch] loadSessions start", { seq, snapRoot, snapNode, curNid: String(currentRootNodeIdRef.current || "").trim(), force: !!options?.force, replace: !!options?.replace });
       try {
         const shouldReplace = options?.replace || (!options?.beforeTime && !options?.afterTime);
         if (shouldReplace) {
           const cached = await getCachedSessionList(rootID, _nid);
-          if (controller.signal.aborted || seq !== sessionListLoadSeqRef.current) { console.info("[node-switch] loadSessions drop@seq cached", { seq, seqNow: sessionListLoadSeqRef.current, aborted: controller.signal.aborted }); return; }
-          if ((String(getNodeIdForRoot(rootID) || "").trim()) !== snapNode) { console.info("[node-switch] loadSessions drop@node cached", { seq, snapNode, snapNow: String(getNodeIdForRoot(rootID) || "").trim() }); return; }
+          if (controller.signal.aborted || seq !== sessionListLoadSeqRef.current) { return; }
+          if ((String(getNodeIdForRoot(rootID) || "").trim()) !== snapNode) { return; }
           if (cached && (options?.force || currentRootIdRef.current === rootID)) {
             const cachedItems = [...cached.items, ...cached.pinnedItems]
               .map((item) => toSessionItem(rootID, { ...(item as any), _nodeId: (item as any)._nodeId || snapNode }))
@@ -5110,10 +5070,9 @@ export function App({ onGoHome }: AppProps) {
           beforeTime: options?.beforeTime,
           afterTime: options?.afterTime,
         });
-        console.info("[node-switch] loadSessions fetch-done", { seq, snapRoot, snapNode, curNid: String(currentRootNodeIdRef.current || "").trim(), total: payload.totalCount, items: payload.items.length });
-        if (controller.signal.aborted || seq !== sessionListLoadSeqRef.current) { console.info("[node-switch] loadSessions drop@seq", { seq, seqNow: sessionListLoadSeqRef.current, aborted: controller.signal.aborted }); return; }
-        if ((String(getNodeIdForRoot(rootID) || "").trim()) !== snapNode) { console.info("[node-switch] loadSessions drop@node", { seq, snapNode, snapNow: String(getNodeIdForRoot(rootID) || "").trim() }); return; }
-        if (String(currentRootIdRef.current || "").trim() !== snapRoot && !options?.force) { console.info("[node-switch] loadSessions drop@root", { seq, snapRoot, curRoot: String(currentRootIdRef.current || "").trim() }); return; }
+        if (controller.signal.aborted || seq !== sessionListLoadSeqRef.current) { return; }
+        if ((String(getNodeIdForRoot(rootID) || "").trim()) !== snapNode) { return; }
+        if (String(currentRootIdRef.current || "").trim() !== snapRoot && !options?.force) { return; }
         const next = [
           ...payload.items,
           ...payload.pinnedItems,
@@ -5238,7 +5197,6 @@ export function App({ onGoHome }: AppProps) {
     }
     const seq = ++multiProjectLoadSeqRef.current;
     setMultiProjectSessionsLoading(true);
-    console.info("[session-list] groups load", { seq, enabled: multiProjectSessionsEnabled });
     try {
       const cachedGroups = await getCachedMultiRootSessionList();
       if (cachedGroups?.length) {
@@ -5269,9 +5227,6 @@ export function App({ onGoHome }: AppProps) {
           ),
         );
       }
-      if (cachedGroups?.length) {
-        console.info("[session-list] groups cache-apply", { seq, size: cachedGroups.length, groups: summarizeGroupsForLog(cachedGroups as any, managedRootByKeyRef.current as any, getNodes() as any) });
-      }
       const nodeIdsFromNodes = getNodes()
         .map((n) => String((n as any)?.id || "").trim())
         .filter(Boolean);
@@ -5296,7 +5251,7 @@ export function App({ onGoHome }: AppProps) {
       } else {
         nodeFetchResults = await Promise.all(nodeIds.map(async (nid) => {
           try { const gs = await sessionService.fetchMultiRootSessions(MULTI_PROJECT_SESSION_LIMIT, nid); return gs.map((g) => ({ ...g, _nodeId: nid })); }
-          catch (err) { console.info("[session-list] groups fetch-node-fail", { seq, nid, err: String((err as any)?.message || err) }); return [] as Array<MultiRootSessionGroup & { _nodeId?: string }>; }
+          catch (err) { return [] as Array<MultiRootSessionGroup & { _nodeId?: string }>; }
         }));
         for (const groups of nodeFetchResults) allGroups.push(...groups);
       }
@@ -5306,7 +5261,6 @@ export function App({ onGoHome }: AppProps) {
       const nextGroups = groups.map((group: MultiRootSessionGroup): MultiProjectSessionGroup => {
         const gNid = String((group as any)._nodeId || "").trim();
         const gMeta = (managedRootByKeyRef.current as Record<string, any>)[rootNodeKey(gNid, group.rootId)];
-        if (!gMeta) { console.info("[session-list] color-missing", { seq, rootId: String(group.rootId || "").trim(), nid: gNid }); }
         return {
         rootId: group.rootId,
         rootName: group.rootName || gMeta?.display_name || group.rootId,
@@ -5327,10 +5281,6 @@ export function App({ onGoHome }: AppProps) {
         totalCount: group.totalCount,
       }});
       if (seq !== multiProjectLoadSeqRef.current) return; // 丢弃过期响应
-      {
-        const failedNodes = nodeIds.filter((nid, i) => (nodeFetchResults[i] || []).length === 0).map((nid) => ({ nid, groups: 0 }));
-        console.info("[session-list] groups fetch-done", { seq, size: groups.length, failedNodes, groups: summarizeGroupsForLog(nextGroups as any, managedRootByKeyRef.current as any, getNodes() as any) });
-      }
       // C2: 按 nid::rootId 逐组合并（保留本次未返回节点的上次分组），消除整体替换造成的项目消失/穿插帧
       setMultiProjectSessionGroups((prev) => {
         const prevList = Array.isArray(prev) ? prev : [];
@@ -6293,8 +6243,6 @@ export function App({ onGoHome }: AppProps) {
       if (!rootID || !sessionKey || sessionKey.startsWith("pending-")) return;
 
       const cacheKey = rootSessionKey(rootID, sessionKey);
-      // 同步前的缓存快照（await 期间可能被流式更新，必须先取）
-      const cacheBeforeSync = sessionCacheRef.current[cacheKey] as any;
       setSyncingSessionKeys((prev) => {
         const next = new Set(prev);
         next.add(cacheKey);
@@ -6378,28 +6326,6 @@ export function App({ onGoHome }: AppProps) {
         sessionCacheRef.current[cacheKey] = normalized;
         loadedSessionRef.current[cacheKey] = true;
         clearSessionStale(rootID, sessionKey);
-
-        // 诊断锚点（2026-09-13「点同步后正文消失」）：记录同步对缓存做了什么。
-        // 若这里 result 条数没少而界面空了，问题就在渲染/滚动，不在同步本身。
-        {
-          const prevCache = cacheBeforeSync;
-          const prevEx = Array.isArray(prevCache?.exchanges) ? prevCache.exchanges : [];
-          const maxSeq = (list: any[]) =>
-            list.reduce((m: number, e: any) => Math.max(m, Number(e?.seq || 0)), 0);
-          console.info("[sync/probe] apply", {
-            sessionKey,
-            cacheBefore: prevEx.length,
-            cacheBeforeMaxSeq: maxSeq(prevEx),
-            cacheBeforeTransient: prevEx.filter(
-              (e: any) => Number(e?.seq || 0) === 0,
-            ).length,
-            syncedExchanges: syncedExchanges.length,
-            syncedMaxSeq: maxSeq(syncedExchanges),
-            keptTransient: localTransientTail.length,
-            result: (normalized.exchanges || []).length,
-            resultMaxSeq: maxSeq(normalized.exchanges || []),
-          });
-        }
 
         const nextItem = toSessionItem(rootID, normalized);
         if (nextItem) {
@@ -8137,10 +8063,8 @@ export function App({ onGoHome }: AppProps) {
         const results = await Promise.all(targets.map(async (n) => {
           try {
             const dirs = await apiProtectedJSON<ManagedRootPayload[]>(appPath("/api/dirs", n.id));
-            console.info("[managed-roots] fetch", { node: String(n.id || ""), nodeName: String(n.name || ""), ok: (Array.isArray(dirs) ? dirs : []).length, fail: 0 });
             return (Array.isArray(dirs) ? dirs : []).map((d: any) => ({ ...d, _nodeId: (d as any)._nodeId || n.id, _nodeColor: n.color, _nodeName: n.name }));
           } catch (err) {
-            console.info("[managed-roots] fetch", { node: String(n.id || ""), nodeName: String(n.name || ""), ok: 0, fail: 1, err: String((err as any)?.message || err) });
             return [] as ManagedRootPayload[];
           }
         }));
@@ -8201,7 +8125,6 @@ export function App({ onGoHome }: AppProps) {
       const curRid = String(currentRootIdRef.current || "").trim();
       const curNid = String(currentRootNodeIdRef.current || "").trim();
       const curSlot = curRid && curNid ? `${curNid}::${curRid}` : "(none)";
-      console.info("[managed-roots] refresh", { byKey: Object.keys(managedRootByKeyRef.current as Record<string, any>).length, byId: Object.keys(nextRootById).length, currentSlot: curSlot, currentSlotColor: curSlot === "(none)" ? "(none)" : (String((managedRootByKeyRef.current as any)[curSlot]?._nodeColor || "") || "(missing)") });
     }
     // 任何索引变化（新增节点/项目/路径）都应重拉多节点会话，确保 PC 等远端分组首屏即出现
     // 之前仅在 cleared/keySetChanged 时触发，导致清缓存冷启动 PC 迟迟不出现、需点会话才补齐
@@ -9884,7 +9807,7 @@ export function App({ onGoHome }: AppProps) {
     const handleSessionStream = (payload: any) => {
       const wsNid = String((payload as any)?._nodeId || (payload as any)?.nodeId || "").trim();
       const curNid = String(currentRootNodeIdRef.current || "").trim();
-      if (wsNid && curNid && wsNid !== curNid) { console.info("[node-switch] session.stream drop@node", { streamKey: String(payload?.session_key || ""), rootID: String(payload?.root_id || ""), wsNid, curNid }); return; }
+      if (wsNid && curNid && wsNid !== curNid) { return; }
       const streamKey =
         typeof payload?.session_key === "string" ? payload.session_key : "";
       const activeRoot =
@@ -10094,7 +10017,7 @@ export function App({ onGoHome }: AppProps) {
     const handleSlashCommandStream = (payload: any) => {
       const wsNid2 = String((payload as any)?._nodeId || (payload as any)?.nodeId || "").trim();
       const curNid2 = String(currentRootNodeIdRef.current || "").trim();
-      if (wsNid2 && curNid2 && wsNid2 !== curNid2) { console.info("[node-switch] slash.stream drop@node", { wsNid: wsNid2, curNid: curNid2 }); return; }
+      if (wsNid2 && curNid2 && wsNid2 !== curNid2) { return; }
       const sessionKey =
         typeof payload?.session_key === "string" ? payload.session_key : "";
       const rootID =
@@ -10626,7 +10549,7 @@ export function App({ onGoHome }: AppProps) {
           {
             const wsPayloadNid = String((payload as any)?._nodeId || (payload as any)?.nodeId || "").trim();
             const wsCurNid = String(currentRootNodeIdRef.current || "").trim();
-            if (wsPayloadNid && wsCurNid && wsPayloadNid !== wsCurNid) { console.info("[node-switch] session.accepted drop@node", { requestId: String(payload?.request_id || ""), payloadNid: wsPayloadNid, curNid: wsCurNid }); break; }
+            if (wsPayloadNid && wsCurNid && wsPayloadNid !== wsCurNid) { break; }
           }
           const requestId =
             typeof payload?.request_id === "string" ? payload.request_id : "";
@@ -10732,7 +10655,7 @@ export function App({ onGoHome }: AppProps) {
           {
             const wsPayloadNid = String((payload as any)?._nodeId || (payload as any)?.nodeId || "").trim();
             const wsCurNid = String(currentRootNodeIdRef.current || "").trim();
-            if (wsPayloadNid && wsCurNid && wsPayloadNid !== wsCurNid) { console.info("[node-switch] session.error drop@node", { requestId: String(payload?.request_id || ""), payloadNid: wsPayloadNid, curNid: wsCurNid }); break; }
+            if (wsPayloadNid && wsCurNid && wsPayloadNid !== wsCurNid) { break; }
           }
           const requestId =
             typeof payload?.request_id === "string" ? payload.request_id : "";
@@ -10774,8 +10697,7 @@ export function App({ onGoHome }: AppProps) {
         case "session.done": {
           const wsPayloadNid = String((payload as any)?._nodeId || (payload as any)?.nodeId || (payload as any)?.session?._nodeId || "").trim();
           const wsCurNid = String(currentRootNodeIdRef.current || "").trim();
-          if (wsPayloadNid && wsCurNid && wsPayloadNid !== wsCurNid) { console.info("[node-switch] session.done drop@node", { sessionKey: String(payload?.session_key || ""), rootID: String(payload?.root_id || ""), payloadNid: wsPayloadNid, curNid: wsCurNid }); break; }
-          if (!wsPayloadNid && wsCurNid) { console.info("[node-switch] session.done missing-nid", { sessionKey: String(payload?.session_key || ""), rootID: String(payload?.root_id || ""), curNid: wsCurNid }); }
+          if (wsPayloadNid && wsCurNid && wsPayloadNid !== wsCurNid) { break; }
           const sessionKey =
             typeof payload?.session_key === "string" ? payload.session_key : "";
           const rootID =
@@ -10829,7 +10751,7 @@ export function App({ onGoHome }: AppProps) {
         case "session.user_message": {
           const wsPayloadNid2 = String((payload as any)?._nodeId || (payload as any)?.nodeId || (payload as any)?.session?._nodeId || "").trim();
           const wsCurNid2 = String(currentRootNodeIdRef.current || "").trim();
-          if (wsPayloadNid2 && wsCurNid2 && wsPayloadNid2 !== wsCurNid2) { console.info("[node-switch] session.user_message drop@node", { sessionKey: String(payload?.session_key || ""), rootID: String(payload?.root_id || ""), payloadNid: wsPayloadNid2, curNid: wsCurNid2 }); break; }
+          if (wsPayloadNid2 && wsCurNid2 && wsPayloadNid2 !== wsCurNid2) { break; }
           if (
             typeof payload?.session_key === "string" &&
             typeof payload?.root_id === "string"
@@ -11029,9 +10951,7 @@ export function App({ onGoHome }: AppProps) {
             // 跨节点隔离：同名项目在另一节点的任务推送不污染当前视图
             const payloadNid = String((payload as any)?.nodeId || (payload as any)?._nodeId || (payload as any)?.task?._nodeId || "").trim();
             const curNid = String(currentRootNodeIdRef.current || "").trim();
-            if (payloadNid && curNid && payloadNid !== curNid) { console.info("[node-switch] task.updated drop@node", { taskId: String(payload.task.id), root_id: payload.root_id, payloadNid, curNid }); break; }
-            if (!payloadNid && curNid) { console.info("[node-switch] task.updated missing-nid", { taskId: String(payload.task.id), root_id: payload.root_id, curNid }); }
-            console.info("[node-switch] task.updated accept", { taskId: String(payload.task.id), root_id: payload.root_id, payloadNid: payloadNid || "(empty)", curNid: curNid || "(empty)" });
+            if (payloadNid && curNid && payloadNid !== curNid) { break; }
             const nextTask = payload.task as KanbanTask;
             const detail = payload.detail as TaskDetail | undefined;
             if (detail?.task?.id) {
@@ -11304,7 +11224,6 @@ export function App({ onGoHome }: AppProps) {
         }
       }
     });
-    console.info("[node-switch] flat-reload", { rootId: String(currentRootId || "").trim(), nid: String(currentRootNodeId || "").trim() });
     void loadSessionsForRoot(currentRootId, { replace: true });
     return () => {
       cancelled = true;

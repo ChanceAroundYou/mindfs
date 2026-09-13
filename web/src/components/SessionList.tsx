@@ -787,19 +787,6 @@ export function MultiProjectSessionList({
       cancelled = true;
     };
   }, []);
-  // 渲染侧审计：仅 groups 数组变化时打一条（不随帧刷屏），标记缺色回退的分组
-  useEffect(() => {
-    try {
-      const fallbackCount = groups.filter((g) => !String((g as any)?._nodeColor || "").trim()).length;
-      console.info("[session-list] render", {
-        n: groups.length,
-        fallbackCount,
-        groups: groups
-          .map((g) => `${String((g as any)?._nodeId || "")}:${String(g.rootName || g.rootId || "")}:${String((g as any)?._nodeColor || "FALLBACK")}`)
-          .slice(0, 20),
-      });
-    } catch {}
-  }, [groups]);
   const groupScopeKey = (group: ProjectSessionGroup) =>
     scopeKey(String((group as any)?._nodeId || "").trim(), group.rootId);
   // 右侧多项目列表：与左侧 FileTree 保持一致的分层排序

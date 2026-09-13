@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { resolveGroupColor, summarizeGroupsForLog } from "../src/services/sessionGroupDisplay.ts";
+import { resolveGroupColor } from "../src/services/sessionGroupDisplay.ts";
 
 // byKey 命中：优先 nid::rid 复合键的 _nodeColor
 const byKey = {
@@ -21,17 +21,3 @@ assert.equal(resolveGroupColor({ rootId: "proj-y", _nodeId: "pc", _nodeName: "PC
 // 全部缺失：null（由调用方决定回退，日志标记 FALLBACK）
 assert.equal(resolveGroupColor({ rootId: "proj-z", _nodeId: "ghost" }, {}, nodes), null);
 assert.equal(resolveGroupColor({ rootId: "", _nodeId: "" }, {}, nodes), null);
-
-// 日志摘要三元组：rootId / rootName / nid / color / sessions
-const summary = summarizeGroupsForLog(
-  [
-    { rootId: "proj-a", rootName: "A", _nodeId: "pc", sessions: [1, 2, 3] },
-    { rootId: "proj-z", rootName: "Z", _nodeId: "ghost", sessions: [] },
-  ],
-  byKey,
-  nodes,
-);
-assert.deepEqual(summary, [
-  { rootId: "proj-a", rootName: "A", nid: "pc", color: "#c9b84a", sessions: 3 },
-  { rootId: "proj-z", rootName: "Z", nid: "ghost", color: "FALLBACK#3b82f6", sessions: 0 },
-]);
