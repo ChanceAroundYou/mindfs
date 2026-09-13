@@ -360,6 +360,12 @@ func resolveActionPath(ctx context.Context, rootPath, relPath string) (repoConte
 
 func ListWorktrees(ctx context.Context, rootPath string) (WorktreeListResult, error) {
 	if _, err := loadRepoContext(ctx, rootPath); err != nil {
+		if isNotRepoError(err) {
+			// 与 ListStatus/ListHistory 一致：非 git 根不是错误，只是没有 worktree。
+			// 曾经这里直接把 git 的报错抛成 400，前端把
+			// "exit status 128: fatal: not a git repository" 原样渲染到面板上。
+			return WorktreeListResult{}, nil
+		}
 		return WorktreeListResult{}, err
 	}
 	output, err := runGit(ctx, rootPath, "worktree", "list", "--porcelain")

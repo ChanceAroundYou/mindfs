@@ -53,6 +53,22 @@ func TestReadRelatedFileDiffUsesNextCommitAfterBase(t *testing.T) {
 	}
 }
 
+func TestListWorktreesOnNonRepoReturnsEmpty(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := loadRepoContext(context.Background(), dir); err == nil {
+		t.Skip("temp dir resolves inside a git repo")
+	}
+	// 非 git 根（如 ~/projects/llmux 这类 plain 根）不该报错，只是没有 worktree。
+	// 曾经这里抛 400，前端把 git 的原始报错渲染到面板上。
+	result, err := ListWorktrees(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("ListWorktrees on non-repo should not error: %v", err)
+	}
+	if len(result.Items) != 0 {
+		t.Fatalf("Items = %+v, want empty", result.Items)
+	}
+}
+
 func TestReadRelatedFileDiffSkipsUntouchedCommits(t *testing.T) {
 	root := initTestRepo(t)
 	writeTestFile(t, root, "note.txt", "before\n")

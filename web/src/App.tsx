@@ -12633,6 +12633,15 @@ export function App({ onGoHome }: AppProps) {
   ]);
 
   const renderRootWorktreeContent = (root: string): React.ReactNode => {
+    // 与 renderRootGitContent 同一判据：非 git 根没有 worktree，别把 git 的原始报错
+    // （"fatal: not a git repository"）当错误渲染出来。
+    if (managedRootByIdRef.current[root]?.is_git_repo !== true) {
+      return (
+        <div style={{ padding: "8px 4px", fontSize: "12px", color: "var(--text-secondary)" }}>
+          {t("git.notRepository")}
+        </div>
+      );
+    }
     const relatedPath =
       relatedWorktree?.root_id === root ? String(relatedWorktree?.path || "") : "";
     const items = [...(worktreeItemsByRoot[scopedRootKey(root)] || [])].sort((left, right) => {
