@@ -1315,6 +1315,10 @@ function SessionViewerInner({
       })),
       windowExchanges: visibleExchanges.length,
       overlayExchanges: tailOverlay.length,
+      // 诊断锚点（2026-09-13「点同步后正文消失」）：条目数没少却看着空了的话，
+      // 大概率是滚动位置/高度变化而非内容被丢，带上这两个数就能区分。
+      scrollTop: scrollRef.current?.scrollTop ?? -1,
+      scrollHeight: scrollRef.current?.scrollHeight ?? -1,
       windowAuxSeqs: Object.keys(visibleAux || {}).length,
       timelineLen: timeline.length,
       cachedExchanges: Array.isArray((session as any)?.exchanges)
