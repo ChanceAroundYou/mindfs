@@ -94,6 +94,39 @@ func TestReadClaudeImportedExchangesDropsAutoContinuePair(t *testing.T) {
 	}
 }
 
+func TestReadClaudeImportedExchangesDropsInterruptMarker(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.jsonl")
+	// CLI 把「用户按了中断」写成一条独立 user 条目（29 字、isMeta 为 None，所以
+	// isMeta 过滤拦不住），下一条才是真人正文；导入器的「相邻同角色合并」会把两者
+	// 粘成 '[Request interrupted by user]\n\n正文'。正文此前已被实时路径写过一次，
+	// 而粘连版多 31 字前缀、既非相等也非前缀包含，判重放行 → 落成第二条。
+	// 实测 2026-09-14 17:21 的本会话：seq 136（正文）与 seq 138（标记+正文）并存。
+	content := `{"type":"user","uuid":"u0","timestamp":"2026-09-14T09:21:03Z","message":{"content":[{"type":"text","text":"[Request interrupted by user]"}]}}
+{"type":"user","uuid":"u1","timestamp":"2026-09-14T09:21:45Z","message":{"content":[{"type":"text","text":"先把 v1 那三个数字反推一下"}]}}
+{"type":"assistant","uuid":"a1","timestamp":"2026-09-14T09:21:52Z","message":{"content":[{"type":"text","text":"好。"}]}}
+`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	items, _, err := readClaudeImportedExchanges(path, 0, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 2 || items[0].Content != "先把 v1 那三个数字反推一下" {
+		got := make([]string, 0, len(items))
+		for _, item := range items {
+			got = append(got, item.Role+":"+item.Content)
+		}
+		t.Fatalf("中断标记不该被并进正文, got %v", got)
+	}
+	for _, item := range items {
+		if strings.Contains(item.Content, "[Request interrupted") {
+			t.Fatalf("标记应整条不发射: %q", item.Content)
+		}
+	}
+}
+
 func TestReadClaudeImportedExchangesDedupesRepeatedUUIDs(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "session.jsonl")

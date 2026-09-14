@@ -1200,9 +1200,16 @@ func isAutoContinueAck(text string) bool {
 	return strings.TrimSuffix(normalized, ".") == "no response requested"
 }
 
+// 中断标记等 CLI 自注入内容的名单与剥离逻辑见 agenttypes.TranscriptNoisePrefixes：
+// 一侧定义、导入侧与判重侧共用，避免名单走散。
 func isMeaningfulClaudeUserText(text string) bool {
 	text = strings.TrimSpace(strings.ReplaceAll(text, "\r\n", "\n"))
 	if text == "" {
+		return false
+	}
+	// 整条就是 CLI 标记 → 不是用户输入，整条不发射。标记若与真人正文粘在同一条目里，
+	// 剥完不会为空，这里会保留（整条丢掉会连正文一起丢）。
+	if agenttypes.IsTranscriptNoiseEntry(text) {
 		return false
 	}
 	lower := strings.ToLower(text)

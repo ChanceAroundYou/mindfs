@@ -2219,19 +2219,21 @@ func sameRecordedExchangeContent(role, a, b string) bool {
 	return strings.HasPrefix(na, nb) || strings.HasPrefix(nb, na)
 }
 
-// normalizeExchangeContent 抹掉所有空白，用于「同一条消息的两种渲染」比较。
+// normalizeExchangeContent 用于「同一条消息的两种渲染」比较：先剥掉 CLI 自注入的标记
+// （名单见 agenttypes.TranscriptNoisePrefixes，与导入侧共用），再抹掉所有空白。
 //
-// 折叠成单空格是错的：实时路径会把 \n\n 插进 Markdown 标记内部（实测
-// `**支具\n\n+康复总市场**` vs 导入版 `**支具+康复总市场**`），折叠后前者多一个空格，
-// 仍判不相等。抹掉空白两边才对齐；代价是 "a b" 与 "ab" 视为相同，但这只发生在
-// ±5s 容忍窗内，同一轮的两个写入者本来就该是同一条。
+// 抹掉而不是折叠：折叠成单空格是错的 —— 实时路径会把 \n\n 插进 Markdown 标记内部
+// （实测 `**支具\n\n+康复总市场**` vs 导入版 `**支具+康复总市场**`），折叠后前者多一个
+// 空格，仍判不相等。代价是 "a b" 与 "ab" 视为相同，但这只发生在 ±5s 容忍窗内，
+// 同一轮的两个写入者本来就该是同一条。
 func normalizeExchangeContent(s string) string {
+	stripped := agenttypes.StripTranscriptNoisePrefixes(s)
 	return strings.Map(func(r rune) rune {
 		if unicode.IsSpace(r) {
 			return -1
 		}
 		return r
-	}, s)
+	}, stripped)
 }
 
 func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {

@@ -2,6 +2,7 @@ package types
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -177,6 +178,49 @@ type ImportExternalSessionInput struct {
 	// 跳过会漏掉它们。注意它与 Cursor 是两件事——Cursor 提供增量起点（byte offset），
 	// 二者不可混淆（曾因此让增量读失效、每次全量解析数十 MB 转录）。
 	ForceRead bool
+}
+
+// TranscriptNoisePrefixes 是 Claude CLI 自己写进转录、比较时应忽略的标记（小写）。
+//
+// 它们与 <local-command-caveat> 那批同类：不是用户输入，但 isMeta 为 None（实测），
+// 所以按 isMeta 过滤拦不住，只能按内容认。标记通常是**独立的一条 user 条目**，
+// 紧跟着才是真人正文，而「相邻同角色合并」会把两者粘成 "[请求标记]\n\n正文" ——
+// 正文此前已被实时路径写过一次，粘连版多 31 字前缀、与干净版既不相等也不构成前缀
+// 关系，判重于是放行、落成第二条。实测 2026-09-14 17:21 的会话 1789190353：
+// seq 136（干净正文）与 seq 138（标记+正文）并存，后者还排在助手回复之后。
+//
+// 导入侧用它判定「剥完什么都不剩 = 整条是噪声」，判重侧用它剥掉粘连的标记。
+// 一侧定义、两侧共用，避免名单走散。
+var TranscriptNoisePrefixes = []string{
+	"[request interrupted by user]",
+	"[request interrupted by user for tool use]",
+	"[request interrupted for tool use]",
+	"[your previous response had no visible output. please continue and produce a user-visible response.]",
+}
+
+// StripTranscriptNoisePrefixes 反复剥掉开头的已知标记（可叠加出现），
+// 并去掉首尾空白。剥完为空说明整条就是标记。
+func StripTranscriptNoisePrefixes(s string) string {
+	for {
+		trimmed := strings.TrimSpace(s)
+		lower := strings.ToLower(trimmed)
+		matched := ""
+		for _, prefix := range TranscriptNoisePrefixes {
+			if strings.HasPrefix(lower, prefix) {
+				matched = prefix
+				break
+			}
+		}
+		if matched == "" {
+			return trimmed
+		}
+		s = trimmed[len(matched):]
+	}
+}
+
+// IsTranscriptNoiseEntry 判断整条内容是否只是 CLI 标记（剥完为空）。
+func IsTranscriptNoiseEntry(s string) bool {
+	return strings.TrimSpace(s) != "" && StripTranscriptNoisePrefixes(s) == ""
 }
 
 type ExternalSessionCursor struct {

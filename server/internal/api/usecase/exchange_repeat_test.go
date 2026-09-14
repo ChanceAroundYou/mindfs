@@ -86,6 +86,14 @@ func TestExchangeAlreadyRecordedToleratesAgentPrefixSnapshot(t *testing.T) {
 			base.Add(360 * time.Millisecond), true},
 		{"用户侧同样按空白归一化判重", user("第一段\n\n第二段"), "user", "第一段\n第二段", base.Add(time.Millisecond), true},
 		{"用户侧不吃前缀容忍：「继续」vs「继续吧」", user("继续"), "user", "继续吧", base.Add(time.Millisecond), false},
+		// 加固：即使别处又把 CLI 标记粘进正文，比较前剥掉标记也能拦住。
+		// 实测 2026-09-14 17:21 本会话：同一段正文存了 seq 136（干净）与 seq 138（带标记）。
+		{"带中断标记的版本应按剥标记后判重", user("先把 v1 那三个数字反推一下，看它们各自隐含了什么假设"),
+			"user", "[Request interrupted by user]\n\n先把 v1 那三个数字反推一下，看它们各自隐含了什么假设",
+			base.Add(20 * time.Millisecond), true},
+		{"工具中断标记同理", user("如果只是 v1/v1 的问题你就不要处理了"),
+			"user", "[Request interrupted by user for tool use]  如果只是 v1/v1 的问题你就不要处理了",
+			base.Add(20 * time.Millisecond), true},
 		{"助手侧短应答不做前缀判定：「好」vs「好的，我这就去处理这件事」",
 			agent("好"), "agent", "好的，我这就去处理这件事", base.Add(time.Millisecond), false},
 		{"空内容不参与前缀判定", agent(""), "agent", live, base.Add(time.Millisecond), false},
