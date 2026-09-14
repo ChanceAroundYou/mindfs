@@ -78,6 +78,13 @@ func TestExchangeAlreadyRecordedToleratesAgentPrefixSnapshot(t *testing.T) {
 		{"库里是实时短版，导入的长版应判重", agent(live), "agent", full, base.Add(330 * time.Millisecond), true},
 		{"反向：库里是长版，导入短版也判重", agent(full), "agent", live, base.Add(-330 * time.Millisecond), true},
 		{"前缀关系超出容忍窗口仍是两条", agent(live), "agent", full, base.Add(10 * time.Second), false},
+		// 真实形状（2026-09-14 16:18 实测）：实时路径把 \n\n 插进了 Markdown 粗体标记内部，
+		// 导入版是连着的。折叠成单空格会留下一个多余空格，必须抹掉空白才能对齐。
+		{"只差空行（实测实时 1765 字 vs 导入 1761 字）", agent("治疗端给**支具\n\n+康复总市场**。\n\n模型跑通了。"), "agent",
+			"治疗端给**支具+康复总市场**。\n\n模型跑通了。", base.Add(360 * time.Millisecond), true},
+		{"表格行内的空行差异", agent("| **3.04 亿**\n\n |\n| 基准 |"), "agent", "| **3.04 亿** |\n| 基准 |",
+			base.Add(360 * time.Millisecond), true},
+		{"用户侧同样按空白归一化判重", user("第一段\n\n第二段"), "user", "第一段\n第二段", base.Add(time.Millisecond), true},
 		{"用户侧不吃前缀容忍：「继续」vs「继续吧」", user("继续"), "user", "继续吧", base.Add(time.Millisecond), false},
 		{"助手侧短应答不做前缀判定：「好」vs「好的，我这就去处理这件事」",
 			agent("好"), "agent", "好的，我这就去处理这件事", base.Add(time.Millisecond), false},

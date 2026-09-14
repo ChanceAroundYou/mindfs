@@ -2184,26 +2184,54 @@ func exchangeAlreadyRecorded(target *session.Session, role, content string, ts t
 }
 
 // sameRecordedExchangeContent 判断两条同角色内容是否「同一条」。
-// 默认要求完全相等；助手侧额外容忍前缀关系 —— 同一轮助手消息由实时路径与转录导入
-// 各写一次，两边抓到的快照长度可能不同（实测：实时写 21 字 seq=128，转录导入 556 字
-// seq=129＝前者 + "\n\nAPI Error: 502 …"），只按相等判会留下一模一样的重复气泡。
-// 用户侧不吃这条容忍：「继续」是「继续吧」的前缀，但那是两句不同的话。
-// 前缀关系还要求较短一侧够长（≥16 字），避免「好」/「好的，我这就去…」这种短应答误判。
+// 默认要求完全相等；另容忍两类双写差异（同一轮由实时路径与转录导入各写一次）：
+//
+//  1. 空白归一化后相等 —— 两个写入者对段落空行的处理不同。实测 2026-09-14 16:18 的
+//     一轮：实时版 1765 字、导入版 1761 字，逐字符 diff 只有 2 处 "\n\n" 之差
+//     （相似度 0.9989），只比字面量必然漏判。
+//  2. 助手侧的前缀关系 —— 两边抓到的快照长度可能差很多（实测实时 21 字 seq=128、
+//     转录导入 556 字 seq=129＝前者 + "\n\nAPI Error: 502 …"）。
+//
+// 用户侧不吃前缀容忍：「继续」是「继续吧」的前缀，但那是两句不同的话。前缀关系还要求
+// 较短一侧够长（≥16 字），避免「好」/「好的，我这就去…」这种短应答误判。
+// 两条判据都只在 ±5s 容忍窗内生效（见 exchangeAlreadyRecorded）。
 func sameRecordedExchangeContent(role, a, b string) bool {
 	if a == b {
 		return true
 	}
-	if role != "agent" || a == "" || b == "" {
+	if a == "" || b == "" {
 		return false
 	}
-	shorter := a
-	if len([]rune(b)) < len([]rune(shorter)) {
-		shorter = b
+	na, nb := normalizeExchangeContent(a), normalizeExchangeContent(b)
+	if na == nb {
+		return true
+	}
+	if role != "agent" {
+		return false
+	}
+	shorter := na
+	if len([]rune(nb)) < len([]rune(shorter)) {
+		shorter = nb
 	}
 	if len([]rune(shorter)) < 16 {
 		return false
 	}
-	return strings.HasPrefix(a, b) || strings.HasPrefix(b, a)
+	return strings.HasPrefix(na, nb) || strings.HasPrefix(nb, na)
+}
+
+// normalizeExchangeContent 抹掉所有空白，用于「同一条消息的两种渲染」比较。
+//
+// 折叠成单空格是错的：实时路径会把 \n\n 插进 Markdown 标记内部（实测
+// `**支具\n\n+康复总市场**` vs 导入版 `**支具+康复总市场**`），折叠后前者多一个空格，
+// 仍判不相等。抹掉空白两边才对齐；代价是 "a b" 与 "ab" 视为相同，但这只发生在
+// ±5s 容忍窗内，同一轮的两个写入者本来就该是同一条。
+func normalizeExchangeContent(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsSpace(r) {
+			return -1
+		}
+		return r
+	}, s)
 }
 
 func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
