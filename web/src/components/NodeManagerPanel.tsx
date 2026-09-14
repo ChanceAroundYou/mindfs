@@ -344,35 +344,29 @@ export function NodeManagerPanel({ onClose, onRefreshAll }: NodeManagerPanelProp
               padding: "8px 10px",
             }}
           >
-            {/* 点这段文本即进入编辑：展示文本原地换成以当前值为默认的输入框 */}
-            <div
-              onClick={editing ? undefined : () => startEdit(node)}
-              title={editing ? undefined : t("common.edit")}
-              style={{ display: "flex", flexDirection: "column", gap: 8, cursor: editing ? "default" : "pointer" }}
-            >
+            {/* 编辑态：名称与路径的纯文本在这一行原地换成输入框，不再另起一组重复输入框 */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <span
                   style={{ width: 8, height: 8, borderRadius: "50%", background: node.color, display: "inline-block", flex: "0 0 auto" }}
                 />
-                <span style={{ flex: 1, fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {node.name}
-                </span>
+                {editing ? (
+                  <input
+                    value={draftName}
+                    onChange={(e) => setDraftName(e.target.value)}
+                    placeholder={t("login.nodeNamePlaceholder")}
+                    autoFocus
+                    style={{ ...INPUT_STYLE, flex: 1, minWidth: 0, padding: "4px 8px" }}
+                  />
+                ) : (
+                  <span style={{ flex: 1, fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {node.name}
+                  </span>
+                )}
                 <span style={{ fontSize: 11, color: status.color, whiteSpace: "nowrap" }}>{status.text}</span>
               </div>
 
-              <div style={{ fontSize: 11, color: "var(--text-secondary)", overflowWrap: "anywhere" }}>
-                {node.url || t("nodeManager.thisDevice")}
-              </div>
-            </div>
-
-            {editing ? (
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                <input
-                  value={draftName}
-                  onChange={(e) => setDraftName(e.target.value)}
-                  placeholder={t("login.nodeNamePlaceholder")}
-                  style={INPUT_STYLE}
-                />
+              {editing ? (
                 <input
                   value={draftUrl}
                   onChange={(e) => setDraftUrl(e.target.value)}
@@ -380,10 +374,21 @@ export function NodeManagerPanel({ onClose, onRefreshAll }: NodeManagerPanelProp
                   disabled={isLocal}
                   style={{
                     ...INPUT_STYLE,
+                    fontSize: 11,
+                    padding: "4px 8px",
                     opacity: isLocal ? 0.6 : 1,
                     cursor: isLocal ? "not-allowed" : "text",
                   }}
                 />
+              ) : (
+                <div style={{ fontSize: 11, color: "var(--text-secondary)", overflowWrap: "anywhere" }}>
+                  {node.url || t("nodeManager.thisDevice")}
+                </div>
+              )}
+            </div>
+
+            {editing ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                   <span style={{ fontSize: 11, color: "var(--text-secondary)" }}>{t("nodeManager.color")}</span>
                   {PALETTE.map((color) => (
