@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"mindfs/server/internal/session"
 )
@@ -40,11 +41,12 @@ func SessionProjectionEnabled() bool {
 //
 // 只折叠「可证明」的重复，其余一律保留：
 //
-//	规则 A（精确来源）：一侧 source=live、另一侧 source=import，内容在剥掉 CLI 噪声前缀并
-//	  抹掉空白后相等 → 保留 live，隐藏 import。配对是一对一的（每条 live 只吸收一条
-//	  import），避免把「用户真的重发过两次」的那条也吞掉。
+//	规则 A（来源对决）：一侧算「实时路径写的」、另一侧不算，内容在剥掉 CLI 噪声前缀并
+//	  抹掉空白后相等 → 保留实时那侧，隐藏另一侧。新数据靠显式 source 标注判定，
+//	  老数据靠实时路径独有字段兜底（否则历史会话里的重复永远折叠不掉）。
+//	  配对是一对一的（每条实时行只吸收一条），避免把「用户真的重发过两次」也吞掉。
 //	规则 B（铁证）：同角色 + 归一化内容相同 + 时间戳**同一时刻** → 保留首条。真实重发
-//	  不可能共享同一时间戳，这条对老数据（source 为空）也生效。
+//	  不可能共享同一时间戳。
 //
 // 返回保留后的序列、隐藏映射（隐藏 seq → 保留 seq），以及其中由「时间戳铁证」判定的那部分
 // （ruleB）；hidden 减去 ruleB 就是规则 A 判定的那些。aux 以 seq 为键，调用方用隐藏映射把
@@ -58,26 +60,26 @@ func ProjectExchanges(exchanges []session.Exchange) ([]session.Exchange, map[int
 
 	hidden := make([]bool, len(exchanges))
 
-	// 规则 A：live 吸收 import，一对一。
-	liveByKey := map[projectKey][]int{}
+	// 规则 A：带「实时标记」的行吸收不带标记的孪生行，一对一。
+	markedByKey := map[projectKey][]int{}
 	for index, exchange := range exchanges {
-		if exchange.Source != session.ExchangeSourceLive {
+		if !isLiveMarkedExchange(exchange) {
 			continue
 		}
 		if key, ok := projectRowKey(exchange); ok {
-			liveByKey[key] = append(liveByKey[key], index)
+			markedByKey[key] = append(markedByKey[key], index)
 		}
 	}
 	consumed := map[projectKey]int{}
 	for index, exchange := range exchanges {
-		if exchange.Source != session.ExchangeSourceImport {
+		if isLiveMarkedExchange(exchange) {
 			continue
 		}
 		key, ok := projectRowKey(exchange)
 		if !ok {
 			continue
 		}
-		candidates := liveByKey[key]
+		candidates := markedByKey[key]
 		offset := consumed[key]
 		if offset >= len(candidates) {
 			continue
@@ -85,6 +87,64 @@ func ProjectExchanges(exchanges []session.Exchange) ([]session.Exchange, map[int
 		consumed[key] = offset + 1
 		hidden[index] = true
 		hiddenToKept[exchange.Seq] = exchanges[candidates[offset]].Seq
+	}
+
+	// 规则 A2：一侧内容整体包含另一侧 —— 实时路径写的是流式快照（写短了），导入器拿到的是
+	// 最终全文（写全了），或反之。来源不同 + 时间相近时保留**更长**的那条：它包含被隐藏行的
+	// 全部内容，不丢信息。窗口是必要的：同一句话在几十小时后的另一次出现也可能是前缀关系
+	// （实测 1787758959 里 17-20 与 166 相隔 32 小时），那不是重复。
+	// 按「角色 + 归一化内容前 64 字符」分桶，避免 O(n²)（会话可达 3000+ 行）。
+	const prefixWindow = 600 * time.Second
+	type prefixKey struct {
+		role string
+		head string
+	}
+	buckets := map[prefixKey][]int{}
+	for index, exchange := range exchanges {
+		if hidden[index] || exchange.Timestamp.IsZero() {
+			continue
+		}
+		content := normalizeExchangeContent(exchange.Content)
+		if len(content) < 40 {
+			continue
+		}
+		head := content
+		if len(head) > 64 {
+			head = head[:64]
+		}
+		key := prefixKey{role: strings.ToLower(strings.TrimSpace(exchange.Role)), head: head}
+		buckets[key] = append(buckets[key], index)
+	}
+	for _, bucket := range buckets {
+		for i := 0; i < len(bucket); i++ {
+			for j := i + 1; j < len(bucket); j++ {
+				shorter, longer := bucket[i], bucket[j]
+				shortContent := normalizeExchangeContent(exchanges[shorter].Content)
+				longContent := normalizeExchangeContent(exchanges[longer].Content)
+				if len(shortContent) > len(longContent) {
+					shorter, longer = longer, shorter
+					shortContent, longContent = longContent, shortContent
+				}
+				if hidden[shorter] || hidden[longer] || shortContent == longContent {
+					continue
+				}
+				if !strings.HasPrefix(longContent, shortContent) {
+					continue
+				}
+				if isLiveMarkedExchange(exchanges[shorter]) == isLiveMarkedExchange(exchanges[longer]) {
+					continue
+				}
+				gap := exchanges[shorter].Timestamp.Sub(exchanges[longer].Timestamp)
+				if gap < 0 {
+					gap = -gap
+				}
+				if gap > prefixWindow {
+					continue
+				}
+				hidden[shorter] = true
+				hiddenToKept[exchanges[shorter].Seq] = exchanges[longer].Seq
+			}
+		}
 	}
 
 	// 规则 B：同一时刻写下的同一行（老数据唯一的铁证）。
@@ -123,7 +183,21 @@ func ProjectExchanges(exchanges []session.Exchange) ([]session.Exchange, map[int
 	if len(kept) == len(exchanges) {
 		return exchanges, hiddenToKept, provenToKept
 	}
-	return kept, hiddenToKept, provenToKept
+	// 收尾：把隐藏映射解成「一跳到底」。规则之间会串成链——实测 BP 会话里 A 把 32→30、
+	// A2 又把 30→33，调用方拿着 32→30 去重挂 aux 会落空（30 自己也被隐藏了）。
+	resolved := make(map[int]int, len(hiddenToKept))
+	for hiddenSeq, keptSeq := range hiddenToKept {
+		final := keptSeq
+		for depth := 0; depth < 16; depth++ {
+			next, ok := hiddenToKept[final]
+			if !ok || next == final {
+				break
+			}
+			final = next
+		}
+		resolved[hiddenSeq] = final
+	}
+	return kept, resolved, provenToKept
 }
 
 // projectKey 是「同一句话」的归一化键。
@@ -139,6 +213,20 @@ func projectRowKey(exchange session.Exchange) (projectKey, bool) {
 		return projectKey{}, false
 	}
 	return projectKey{role: strings.ToLower(strings.TrimSpace(exchange.Role)), content: content}, true
+}
+
+// isLiveMarkedExchange 报告这一行是否算「实时路径写的」：
+// 显式标了 source=live 的按标记算，标了 source=import 的不算；**老数据没有 source 标注**，
+// 用实时路径独有的字段兜底（见 session.ExchangeHasLiveSignature）——没有这一条，2026-09
+// 之前的历史会话里的双写重复就永远折叠不掉（实测本会话 6.4s 那对、1789390688 的 15.6s 那对）。
+func isLiveMarkedExchange(exchange session.Exchange) bool {
+	switch exchange.Source {
+	case session.ExchangeSourceLive:
+		return true
+	case session.ExchangeSourceImport:
+		return false
+	}
+	return session.ExchangeHasLiveSignature(exchange)
 }
 
 // RemapExchangeAux 把被隐藏行的 aux 重挂到保留行上（同 seq 的 aux 直接追加）。
