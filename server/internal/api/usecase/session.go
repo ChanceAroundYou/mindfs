@@ -2170,7 +2170,10 @@ func exchangeAlreadyRecorded(target *session.Session, role, content string, ts t
 		return false
 	}
 	for _, ex := range target.Exchanges {
-		if ex.Role != role || ex.Content != content || ex.Timestamp.IsZero() {
+		if ex.Role != role || ex.Timestamp.IsZero() {
+			continue
+		}
+		if !sameRecordedExchangeContent(role, ex.Content, content) {
 			continue
 		}
 		if diff := ex.Timestamp.Sub(ts); diff > -userExchangeRepeatTolerance && diff < userExchangeRepeatTolerance {
@@ -2178,6 +2181,29 @@ func exchangeAlreadyRecorded(target *session.Session, role, content string, ts t
 		}
 	}
 	return false
+}
+
+// sameRecordedExchangeContent 判断两条同角色内容是否「同一条」。
+// 默认要求完全相等；助手侧额外容忍前缀关系 —— 同一轮助手消息由实时路径与转录导入
+// 各写一次，两边抓到的快照长度可能不同（实测：实时写 21 字 seq=128，转录导入 556 字
+// seq=129＝前者 + "\n\nAPI Error: 502 …"），只按相等判会留下一模一样的重复气泡。
+// 用户侧不吃这条容忍：「继续」是「继续吧」的前缀，但那是两句不同的话。
+// 前缀关系还要求较短一侧够长（≥16 字），避免「好」/「好的，我这就去…」这种短应答误判。
+func sameRecordedExchangeContent(role, a, b string) bool {
+	if a == b {
+		return true
+	}
+	if role != "agent" || a == "" || b == "" {
+		return false
+	}
+	shorter := a
+	if len([]rune(b)) < len([]rune(shorter)) {
+		shorter = b
+	}
+	if len([]rune(shorter)) < 16 {
+		return false
+	}
+	return strings.HasPrefix(a, b) || strings.HasPrefix(b, a)
 }
 
 func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {

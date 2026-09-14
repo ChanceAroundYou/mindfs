@@ -51,6 +51,48 @@ func TestExchangeAlreadyRecorded(t *testing.T) {
 	}
 }
 
+// 助手侧的双写现场（2026-09-14 实测）：同一轮助手消息由实时路径与转录导入各写一次，
+// 两边抓到的快照长度不同 —— 实时写 21 字（seq=128，纳秒 ts），转录导入 556 字
+// （seq=129，毫秒 ts）＝ 前者 + "\n\nAPI Error: 502 Provider returned 429 …"。
+// 只按完全相等判会留下一模一样的重复气泡。
+func TestExchangeAlreadyRecordedToleratesAgentPrefixSnapshot(t *testing.T) {
+	base := time.Date(2026, 9, 14, 6, 51, 35, 0, time.UTC)
+	live := "重启确认，全库也干净了。现在做浏览器实测。"
+	full := live + "\n\nAPI Error: 502 Provider returned 429 Too Many Requests"
+
+	agent := func(content string) *session.Session {
+		return &session.Session{Exchanges: []session.Exchange{{Role: "agent", Content: content, Timestamp: base}}}
+	}
+	user := func(content string) *session.Session {
+		return &session.Session{Exchanges: []session.Exchange{{Role: "user", Content: content, Timestamp: base}}}
+	}
+
+	cases := []struct {
+		name    string
+		target  *session.Session
+		role    string
+		content string
+		ts      time.Time
+		want    bool
+	}{
+		{"库里是实时短版，导入的长版应判重", agent(live), "agent", full, base.Add(330 * time.Millisecond), true},
+		{"反向：库里是长版，导入短版也判重", agent(full), "agent", live, base.Add(-330 * time.Millisecond), true},
+		{"前缀关系超出容忍窗口仍是两条", agent(live), "agent", full, base.Add(10 * time.Second), false},
+		{"用户侧不吃前缀容忍：「继续」vs「继续吧」", user("继续"), "user", "继续吧", base.Add(time.Millisecond), false},
+		{"助手侧短应答不做前缀判定：「好」vs「好的，我这就去处理这件事」",
+			agent("好"), "agent", "好的，我这就去处理这件事", base.Add(time.Millisecond), false},
+		{"空内容不参与前缀判定", agent(""), "agent", live, base.Add(time.Millisecond), false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := exchangeAlreadyRecorded(tc.target, tc.role, tc.content, tc.ts); got != tc.want {
+				t.Fatalf("exchangeAlreadyRecorded(role=%q content=%q) = %v, want %v", tc.role, tc.content, got, tc.want)
+			}
+		})
+	}
+}
+
 // 端到端复刻 2026-09-13 的双写现场（真实 manager + 真实落盘）：
 //
 //	15:14:55.826Z  转录同步的导入器先写 seq=57（用户行在转录里先出现）
