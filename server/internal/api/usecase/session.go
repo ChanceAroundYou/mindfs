@@ -670,6 +670,7 @@ func copyForkHistory(ctx context.Context, manager *session.Manager, from, to *se
 		}
 		exchangeCtx := session.WithExchangeModelDisplayName(ctx, exchange.ModelDisplayName)
 		exchangeCtx = session.WithExchangeTokenUsage(exchangeCtx, exchange.TokenUsage)
+		exchangeCtx = session.WithExchangeSource(exchangeCtx, exchange.Source)
 		if err := manager.AddExchangeForAgentAt(exchangeCtx, to, exchange.Role, exchange.Content, agentName, exchange.Mode, exchange.Effort, exchange.FastService, exchange.Timestamp); err != nil {
 			return copied, err
 		}
@@ -2269,9 +2270,11 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 	}
 	resolvedMode := resolveRuntimeMode(current, in.Mode)
 	resolvedFastService := resolveRuntimeFastService(in.Agent, current, in.FastService)
-	// 本轮用户消息的持久化 seq：紧随其后的 AddExchangeForAgentAt 会取 len(exchanges)+1
-	// （见 manager.addExchangeForAgentAt 的 nextSeq），此处预先算出供客户端收敛乐观条目。
-	baseExchangeSeq := len(current.Exchanges)
+	// 本轮用户消息的持久化 seq：与 manager.addExchangeForAgentAt 的 nextSeq 同式
+	//（max(seq)+1，不是 len+1）——文件与缓存漂移时长度会与最大 seq 不等，按长度预测会错位。
+	// 另：从这一刻起这个会话的持久化归实时路径（"谁驱动，谁落盘"），导入器不再常规增量
+	// 同步——判据是推导的，见 session.SessionIsLiveOwned。
+	baseExchangeSeq := session.MaxExchangeSeq(current.Exchanges)
 	if in.OnStart != nil {
 		in.OnStart(MessageStart{
 			Model:            in.Model,
@@ -2329,7 +2332,9 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 	sawAssistantChunk := false
 	var lastContextWindow agenttypes.ContextWindow
 	var turnTokenUsage *agenttypes.TokenUsage
-	plannedAssistantSeq := len(current.Exchanges) + 2
+	// 与 addExchangeForAgentAt 的 nextSeq 同式：max(seq)+2（用户行 +1、助手行 +2）。
+	// 文件与缓存漂移时长度 ≠ 最大 seq，按长度预测会把 aux 挂到别的 exchange 上。
+	plannedAssistantSeq := session.MaxExchangeSeq(current.Exchanges) + 2
 	auxBuffer := make([]session.ExchangeAux, 0, 8)
 	defer manager.ClearPendingExchangeAux(context.Background(), current.Key)
 	var thoughtBuffer strings.Builder
@@ -2549,6 +2554,7 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 	}
 	modelDisplayName := s.resolveExchangeModelDisplayName(in.Agent, resolvedModel, rootAbs)
 	exchangeCtx := session.WithExchangeModelDisplayName(ctx, modelDisplayName)
+	exchangeCtx = session.WithExchangeSource(exchangeCtx, session.ExchangeSourceLive)
 	agentExchangeCtx := session.WithExchangeTokenUsage(exchangeCtx, turnTokenUsage)
 	if err := manager.UpdateModel(ctx, current, resolvedModel); err != nil {
 		return err
@@ -3136,7 +3142,7 @@ func (s *Service) startSubagentSubscription(in subagentSessionInput, child *sess
 
 func attachBackgroundSessionUpdates(ctx context.Context, in subagentSessionInput, child *session.Session, runtime agenttypes.Session) func() {
 	var responseText string
-	plannedAssistantSeq := len(child.Exchanges) + 1
+	plannedAssistantSeq := session.MaxExchangeSeq(child.Exchanges) + 1
 	auxBuffer := make([]session.ExchangeAux, 0, 8)
 	var thoughtBuffer strings.Builder
 	lastResponseUpdateType := ""
@@ -3168,6 +3174,7 @@ func attachBackgroundSessionUpdates(ctx context.Context, in subagentSessionInput
 		}
 		doneSent = true
 		doneMu.Unlock()
+		ctx = session.WithExchangeSource(ctx, session.ExchangeSourceLive)
 		defer in.Manager.ClearPendingExchangeAux(context.Background(), child.Key)
 		flushThought()
 		if err := in.Manager.AddExchangeForAgent(ctx, child, "agent", responseText, in.Agent, in.Mode, in.Effort, in.FastService); err != nil {
@@ -3284,7 +3291,7 @@ func (s *Service) sendCommandMessage(ctx context.Context, in SendMessageInput, m
 		return err
 	}
 	callID := "cmd-" + strconv.FormatInt(time.Now().UnixNano(), 36)
-	plannedAssistantSeq := len(current.Exchanges) + 2
+	plannedAssistantSeq := session.MaxExchangeSeq(current.Exchanges) + 2
 	startTool := agenttypes.ToolCall{
 		CallID:  callID,
 		Title:   in.Content,
@@ -3501,6 +3508,7 @@ func configuredShells(registry Registry) []commandexec.ShellSpec {
 }
 
 func persistCommandTurn(ctx context.Context, manager *session.Manager, current *session.Session, command string, final agenttypes.ToolCall, plannedAssistantSeq int, userTimestamp time.Time) error {
+	ctx = session.WithExchangeSource(ctx, session.ExchangeSourceLive)
 	// 与 SendMessage 同一个双写风险：斜杠命令同样会被转录同步先导入一份。
 	if !exchangeAlreadyRecorded(current, "user", command, userTimestamp) {
 		if err := manager.AddExchangeForAgentAt(ctx, current, "user", command, "", "", "", "", userTimestamp); err != nil {

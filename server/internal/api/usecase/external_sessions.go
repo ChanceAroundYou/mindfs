@@ -75,6 +75,10 @@ type SyncExternalSessionDeltaOutput struct {
 
 var externalSessionSyncLocks sync.Map
 
+// externalSyncRecovered 记录本进程启动后已经做过一次「兜底补齐」的会话。
+// live-owned 会话平时不让导入器碰，只在启动后允许补一次被中断的尾轮；进程重启即重置。
+var externalSyncRecovered sync.Map
+
 // externalSessionSyncTimes 记录每个 (rootID,key) 最近一次 best-effort 同步时间，用于节流。
 // externalSyncThrottle 内重复的非 Full 同步直接跳过，避免 handleSessionGet 高频轮询重复磁盘扫描。
 // ponytail: 无清理（外部会话绑定数量有限），若会话海量需换成带 TTL 的 map。
@@ -332,6 +336,19 @@ func (s *Service) SyncExternalSessionDelta(ctx context.Context, in SyncExternalS
 	}
 	out.LastTimestamp = lastTimestamp
 
+	// 所有权守卫：MindFS 自己在驱动的会话由实时路径独占持久化，导入器不再做常规增量同步。
+	// 双写（同一轮两个写入者各落一行）是 2026-04-29 自动同步上线时的副作用，判重只能靠
+	// 「内容相似 + ±5 秒」猜，实测 6.4s / 15.6s / 36.7s 的差值全会漏——根子是两个写入者
+	// 的时间戳取自不同事件。这里把「谁驱动，谁落盘」变成可判定的属性，从源头断掉。
+	// 仍然保留两个例外：① 用户手动点「同步」（Full）；② 进程启动后每个会话一次兜底补齐
+	// （内存集合去重，重启即重置）——用来补进程重启时被中断的那一轮。
+	if !in.Full && session.SessionIsLiveOwned(current.Exchanges) {
+		if _, done := externalSyncRecovered.LoadOrStore(in.Key, struct{}{}); done {
+			return out, nil
+		}
+		log.Printf("[session/sync] live-owned root=%s session=%s 本次为进程启动后唯一一次兜底补齐，此后常规增量同步直接跳过", strings.TrimSpace(in.RootID), strings.TrimSpace(in.Key))
+	}
+
 	importer, err := s.resolveExternalSessionImporter(agentName)
 	if err != nil {
 		return out, err
@@ -526,7 +543,7 @@ func appendImportedExchange(
 		return false, nil
 	}
 	if err := manager.AddExchangeForAgentAt(
-		ctx,
+		session.WithExchangeSource(ctx, session.ExchangeSourceImport),
 		target,
 		role,
 		exchange.Content,
@@ -538,7 +555,8 @@ func appendImportedExchange(
 	); err != nil {
 		return false, err
 	}
-	seq := len(target.Exchanges)
+	// aux 以 seq 为键：必须取刚落下那行的真实 seq（max+1 分配下 len ≠ seq）
+	seq := session.MaxExchangeSeq(target.Exchanges)
 	for _, importedAux := range exchange.Aux {
 		if importedAux.Plan != nil {
 			plan := *importedAux.Plan

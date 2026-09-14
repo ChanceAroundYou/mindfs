@@ -512,6 +512,7 @@ type syncDeltaTestImporter struct {
 	input     agenttypes.ImportExternalSessionInput
 	exchanges []agenttypes.ImportedExchange
 	subagents []agenttypes.ImportedSubagentSession
+	calls     int
 }
 
 func (i *syncDeltaTestImporter) AgentName() string { return "codex" }
@@ -522,6 +523,7 @@ func (i *syncDeltaTestImporter) ListExternalSessions(context.Context, agenttypes
 
 func (i *syncDeltaTestImporter) ImportExternalSession(_ context.Context, in agenttypes.ImportExternalSessionInput) (agenttypes.ImportedExternalSession, error) {
 	i.input = in
+	i.calls++
 	return agenttypes.ImportedExternalSession{
 		Agent:          i.AgentName(),
 		AgentSessionID: in.AgentSessionID,
@@ -583,3 +585,93 @@ func (r *syncDeltaTestRegistry) GetFileWatcher(string, *session.Manager) (*fs.Sh
 }
 
 func (r *syncDeltaTestRegistry) ReleaseFileWatcher(string, string) {}
+
+// live-owned 会话（MindFS 自己驱动）：导入器不做常规增量同步，只在进程启动后允许一次
+// 兜底补齐；用户手点「同步」（Full）始终可用。这是"谁驱动，谁落盘"的写入侧守卫。
+func TestSyncExternalSessionDeltaSkipsLiveOwnedSession(t *testing.T) {
+	root := fs.NewRootInfo("root", "Root", t.TempDir())
+	manager := session.NewManager(root)
+	created, err := manager.Create(context.Background(), session.CreateInput{Type: session.TypeChat, Agent: "codex", Name: "LiveOwned"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stamp := time.Date(2026, 6, 27, 10, 0, 0, 0, time.UTC)
+	liveCtx := session.WithExchangeSource(context.Background(), session.ExchangeSourceLive)
+	if err := manager.AddExchangeForAgentAt(liveCtx, created, "user", "old", "codex", "", "", "", stamp); err != nil {
+		t.Fatal(err)
+	}
+	current, err := manager.Get(context.Background(), created.Key, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.UpdateAgentState(context.Background(), current, "codex", 1, "external-1"); err != nil {
+		t.Fatal(err)
+	}
+	importer := &syncDeltaTestImporter{exchanges: []agenttypes.ImportedExchange{
+		{Role: "user", Content: "from transcript", Timestamp: stamp.Add(time.Minute)},
+	}}
+	svc := &Service{Registry: &syncDeltaTestRegistry{root: root, manager: manager, importer: importer}}
+
+	// 启动后第一次：允许一次兜底补齐（补进程重启时被中断的尾轮）
+	if _, err := svc.SyncExternalSessionDelta(context.Background(), SyncExternalSessionDeltaInput{RootID: root.ID, Key: created.Key}); err != nil {
+		t.Fatal(err)
+	}
+	if importer.calls == 0 {
+		t.Fatalf("启动后首次应当允许兜底补齐（读一次转录）")
+	}
+
+	// 之后：常规增量同步必须被守卫拦下。先把 2 秒节流抹掉，确保不是节流挡的。
+	externalSessionSyncTimes.Store(externalSyncLockKey(root.ID, created.Key), time.Now().Add(-time.Hour))
+	importer.calls = 0
+	if _, err := svc.SyncExternalSessionDelta(context.Background(), SyncExternalSessionDeltaInput{RootID: root.ID, Key: created.Key}); err != nil {
+		t.Fatal(err)
+	}
+	if importer.calls != 0 {
+		t.Fatalf("live-owned 会话的常规增量同步应当被拦下，实际读了转录 %d 次", importer.calls)
+	}
+
+	// 用户手点「同步」：始终允许
+	externalSessionSyncTimes.Store(externalSyncLockKey(root.ID, created.Key), time.Now().Add(-time.Hour))
+	if _, err := svc.SyncExternalSessionDelta(context.Background(), SyncExternalSessionDeltaInput{RootID: root.ID, Key: created.Key, Full: true}); err != nil {
+		t.Fatal(err)
+	}
+	if importer.calls == 0 {
+		t.Fatalf("用户手点同步（Full）必须仍然可用")
+	}
+}
+
+// 纯导入会话（从未被 MindFS 驱动）不受守卫影响：导入器照常跟进。
+func TestSyncExternalSessionDeltaKeepsImportOwnedSession(t *testing.T) {
+	root := fs.NewRootInfo("root", "Root", t.TempDir())
+	manager := session.NewManager(root)
+	created, err := manager.Create(context.Background(), session.CreateInput{Type: session.TypeChat, Agent: "codex", Name: "ImportOwned"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stamp := time.Date(2026, 6, 27, 10, 0, 0, 0, time.UTC)
+	importCtx := session.WithExchangeSource(context.Background(), session.ExchangeSourceImport)
+	if err := manager.AddExchangeForAgentAt(importCtx, created, "user", "old", "codex", "", "", "", stamp); err != nil {
+		t.Fatal(err)
+	}
+	current, err := manager.Get(context.Background(), created.Key, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.UpdateAgentState(context.Background(), current, "codex", 1, "external-2"); err != nil {
+		t.Fatal(err)
+	}
+	importer := &syncDeltaTestImporter{exchanges: []agenttypes.ImportedExchange{
+		{Role: "user", Content: "next from transcript", Timestamp: stamp.Add(time.Minute)},
+	}}
+	svc := &Service{Registry: &syncDeltaTestRegistry{root: root, manager: manager, importer: importer}}
+	for attempt := 0; attempt < 2; attempt++ {
+		externalSessionSyncTimes.Store(externalSyncLockKey(root.ID, created.Key), time.Now().Add(-time.Hour))
+		importer.calls = 0
+		if _, err := svc.SyncExternalSessionDelta(context.Background(), SyncExternalSessionDeltaInput{RootID: root.ID, Key: created.Key}); err != nil {
+			t.Fatal(err)
+		}
+		if importer.calls == 0 {
+			t.Fatalf("第 %d 次：纯导入会话必须继续被同步", attempt+1)
+		}
+	}
+}
