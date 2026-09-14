@@ -52,3 +52,24 @@ export async function protectedJSON<T>(input: RequestInfo | URL, init: RequestIn
   }
   return payload as T;
 }
+
+const NODE_RETRY_DELAYS_MS = [400, 1200];
+
+// 每个节点按域名直连，域名可能同时挂着多个 A 记录（实测：其中一个网卡离线后地址仍被广播，
+// 浏览器撞上去要等好几秒才回退）。单次失败会让该节点的项目/会话整块缺席，而重拉只在
+// WS 重连或用户操作时才发生——实测能长时间不恢复。这里对同一节点补几次重试，
+// 让浏览器重新建连、重新挑地址；服务端明确回 4xx 时不重试。
+export async function withNodeRetry<T>(run: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await run();
+    } catch (err) {
+      const retryable =
+        err instanceof APIError
+          ? err.status >= 500
+          : String((err as Error)?.message || "") !== "api_not_ready";
+      if (!retryable || attempt >= NODE_RETRY_DELAYS_MS.length) throw err;
+      await new Promise((resolve) => setTimeout(resolve, NODE_RETRY_DELAYS_MS[attempt]));
+    }
+  }
+}

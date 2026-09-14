@@ -41,6 +41,7 @@ import {
   ProtectedAPIError,
   protectedAPIReady,
   protectedJSON as apiProtectedJSON,
+  withNodeRetry,
 } from "./services/api";
 import { reportError } from "./services/error";
 import {
@@ -137,7 +138,7 @@ import {
   type ProjectTreeTab,
 } from "./components/FileTree";
 
-import { applyNodesFromServer, getActiveNode, getNodes, LOCAL_NODE_ID, migrateLegacySingleBase, syncNodesFromServer } from "./services/nodeRegistry";
+import { applyNodesFromServer, getActiveNode, getNodeById, getNodes, LOCAL_NODE_ID, migrateLegacySingleBase, syncNodesFromServer } from "./services/nodeRegistry";
 
 import { FileViewer } from "./components/FileViewer";
 import { resolveGroupColor } from "./services/sessionGroupDisplay";
@@ -1409,6 +1410,11 @@ export function App({ onGoHome }: AppProps) {
   const loadingSessionRef = useRef<Partial<Record<string, Promise<SyncSessionResult>>>>({});
   const staleSessionKeysRef = useRef<Set<string>>(new Set());
   const invalidTreeCacheKeysRef = useRef<Set<string>>(new Set());
+  // 上一轮跨节点抓取里失败的节点。refreshManagedRoots 消费它：提示用户 + 给出重试入口。
+  // 跨节点失败原本被静默吞成 []，整个节点凭空缺席且无人重拉（实测可长时间不恢复）。
+  const nodeLoadFailuresRef = useRef<Array<{ id: string; name: string }>>([]);
+  const notifiedNodeFailuresRef = useRef<Set<string>>(new Set());
+  const notifyNodeLoadFailedRef = useRef<(node: { id: string; name: string }) => void>(() => {});
   // 目录树刷新并发守卫：按缓存键记录最后发起的请求序号，旧响应后到时直接丢弃
   const treeFetchSeqRef = useRef<Record<string, number>>({});
   const boundSessionByRootRef = useRef<Record<string, string | null>>({});
@@ -5252,12 +5258,25 @@ export function App({ onGoHome }: AppProps) {
         const fallbackNodeId =
           getNodeIdForRoot(String(currentRootIdRef.current || "")) ||
           String(getActiveNode()?.id || "").trim();
-        const groups = await sessionService.fetchMultiRootSessions(MULTI_PROJECT_SESSION_LIMIT);
-        for (const g of groups) allGroups.push({ ...g, _nodeId: fallbackNodeId });
+        try {
+          const groups = await sessionService.fetchMultiRootSessions(MULTI_PROJECT_SESSION_LIMIT);
+          for (const g of groups) allGroups.push({ ...g, _nodeId: fallbackNodeId });
+        } catch {
+          notifyNodeLoadFailedRef.current({
+            id: fallbackNodeId,
+            name: String(getActiveNode()?.name || fallbackNodeId),
+          });
+        }
       } else {
         nodeFetchResults = await Promise.all(nodeIds.map(async (nid) => {
           try { const gs = await sessionService.fetchMultiRootSessions(MULTI_PROJECT_SESSION_LIMIT, nid); return gs.map((g) => ({ ...g, _nodeId: nid })); }
-          catch (err) { return [] as Array<MultiRootSessionGroup & { _nodeId?: string }>; }
+          catch (err) {
+            notifyNodeLoadFailedRef.current({
+              id: String(nid),
+              name: String(getNodeById(String(nid))?.name || nid),
+            });
+            return [] as Array<MultiRootSessionGroup & { _nodeId?: string }>;
+          }
         }));
         for (const groups of nodeFetchResults) allGroups.push(...groups);
       }
@@ -8070,6 +8089,7 @@ export function App({ onGoHome }: AppProps) {
       managedRootsRequestRef.current = null;
     }
     const request = (async () => {
+      nodeLoadFailuresRef.current = [];
       try {
         try { migrateLegacySingleBase(); } catch {}
         // 冷启动时 getNodes() 首屏只有 local，需等待服务端节点同步后再取全量
@@ -8084,14 +8104,17 @@ export function App({ onGoHome }: AppProps) {
           const dirs = await apiProtectedJSON<ManagedRootPayload[]>(appPath("/api/dirs"));
           return Array.isArray(dirs) ? dirs : [];
         }
+        const nodeFailures: Array<{ id: string; name: string }> = [];
         const results = await Promise.all(targets.map(async (n) => {
           try {
-            const dirs = await apiProtectedJSON<ManagedRootPayload[]>(appPath("/api/dirs", n.id));
+            const dirs = await withNodeRetry(() => apiProtectedJSON<ManagedRootPayload[]>(appPath("/api/dirs", n.id)));
             return (Array.isArray(dirs) ? dirs : []).map((d: any) => ({ ...d, _nodeId: (d as any)._nodeId || n.id, _nodeColor: n.color, _nodeName: n.name }));
           } catch (err) {
+            nodeFailures.push({ id: String(n.id), name: String(n.name || n.id) });
             return [] as ManagedRootPayload[];
           }
         }));
+        nodeLoadFailuresRef.current = nodeFailures;
         const flat = results.flat() as ManagedRootPayload[];
         const seen = new Set<string>();
         const deduped: ManagedRootPayload[] = [];
@@ -8111,6 +8134,14 @@ export function App({ onGoHome }: AppProps) {
     const dirs = await loadManagedRootPayloads();
     if (!dirs) {
       return;
+    }
+    // 抓取失败的节点：提示 + 给重试入口。恢复后清掉记录，下次再失败能重新提示。
+    const failedNodeIds = new Set(nodeLoadFailuresRef.current.map((f) => f.id));
+    for (const id of Array.from(notifiedNodeFailuresRef.current)) {
+      if (!failedNodeIds.has(id)) notifiedNodeFailuresRef.current.delete(id);
+    }
+    for (const failed of nodeLoadFailuresRef.current) {
+      notifyNodeLoadFailedRef.current(failed);
     }
     const nextDirs = Array.isArray(dirs) ? dirs : [];
     const nextRootIds = nextDirs.map((dir) => dir.id).filter(Boolean);
@@ -8225,6 +8256,27 @@ export function App({ onGoHome }: AppProps) {
     window.addEventListener("mindfs:nodes-changed", h);
     return () => window.removeEventListener("mindfs:nodes-changed", h);
   }, [refreshManagedRoots]);
+
+  // 同一节点在一次故障里只提示一次（刷新很频繁，每次都弹会淹掉界面）。
+  const notifyNodeLoadFailed = useCallback(
+    (node: { id: string; name: string }) => {
+      if (notifiedNodeFailuresRef.current.has(node.id)) return;
+      notifiedNodeFailuresRef.current.add(node.id);
+      reportError("node.load_failed", t("error.node.loadFailed", { name: node.name }), {
+        severity: "warning",
+        recoverable: true,
+        details: { nodeId: node.id },
+        retryAction: async () => {
+          notifiedNodeFailuresRef.current.delete(node.id);
+          await refreshManagedRoots();
+        },
+      });
+    },
+    [refreshManagedRoots, t],
+  );
+  useEffect(() => {
+    notifyNodeLoadFailedRef.current = notifyNodeLoadFailed;
+  }, [notifyNodeLoadFailed]);
 
   const applyManagedRootRename = useCallback(
     (oldRootID: string, rootPayload: ManagedRootPayload | null | undefined) => {
@@ -12576,6 +12628,14 @@ export function App({ onGoHome }: AppProps) {
     updateSessionRelatedFilesForKey,
   ]);
 
+  // 「管理节点」面板的刷新：先拉节点注册表（拿别的设备改过的节点），
+  // 再让 refreshManagedRoots 逐节点重拉 dirs 并触发多项目会话/回复态重载。
+  // 不要再额外调 loadManagedRootPayloads({force:true})——refreshManagedRoots 内部已经会调它。
+  const handleNodeManagerRefresh = useCallback(async () => {
+    await syncNodesFromServer().catch(() => {});
+    await refreshManagedRoots();
+  }, [refreshManagedRoots]);
+
   const handleProjectTreeRefresh = useCallback(async (tab: ProjectTreeTab) => {
     const root = currentRootIdRef.current;
     if (!root) {
@@ -14848,6 +14908,7 @@ export function App({ onGoHome }: AppProps) {
             showHiddenFiles={showHiddenFiles}
             onSortModeChange={setTreeSortMode}
             onRefresh={handleProjectTreeRefresh}
+            onNodeManagerRefresh={handleNodeManagerRefresh}
             selectedDirKey={selectedDirKey}
             selectedPath={file?.path}
             rootId={currentRootId}

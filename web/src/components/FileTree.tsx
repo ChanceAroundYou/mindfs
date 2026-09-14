@@ -17,7 +17,8 @@ import {
 } from "../services/appearance";
 import { useI18n, type Locale, type MessageKey } from "../i18n";
 import { useRefreshSpin } from "../hooks";
-import { addNode, getNodes, LOCAL_NODE_ID, removeNode, updateNode, getNodeById } from "../services/nodeRegistry";
+import { getNodes } from "../services/nodeRegistry";
+import { NodeManagerPanel } from "./NodeManagerPanel";
 import { scopeKey, treeKey } from "../services/scope";
 import { AgentMenuList } from "./AgentMenuList";
 import { AgentIcon } from "./AgentIcon";
@@ -158,6 +159,7 @@ type FileTreeProps = {
   onSortModeChange?: (mode: DirectorySortMode) => void;
   onShowHiddenFilesChange?: (show: boolean) => void;
   onRefresh?: (tab: ProjectTreeTab) => void | Promise<void>;
+  onNodeManagerRefresh?: () => Promise<void>;
   onSelectFile?: (entry: FileEntry, rootId: string) => void;
   onSelectRoot?: (entry: FileEntry, rootId: string) => void;
   onToggleDir?: (entry: FileEntry, rootId: string) => void;
@@ -1364,6 +1366,7 @@ function FileTreeInner({
   activeSessionKey,
   onSortModeChange,
   onRefresh,
+  onNodeManagerRefresh,
   onSelectFile,
   onSelectRoot,
   onToggleDir,
@@ -1416,17 +1419,7 @@ function FileTreeInner({
   }, [t]);
   const expandedSet = new Set(expanded);
   const [isMenuOpen, setIsMenuOpen] = React.useState(false);
-  const [nodeAddOpen, setNodeAddOpen] = React.useState(false);
-  const [nodeAddName, setNodeAddName] = React.useState("");
-  const [nodeAddUrl, setNodeAddUrl] = React.useState("");
-  const [nodeAddBusy, setNodeAddBusy] = React.useState(false);
-  const [nodeAddError, setNodeAddError] = React.useState("");
-  const [nodeRemoveOpen, setNodeRemoveOpen] = React.useState(false);
-  const [nodeRemoveError, setNodeRemoveError] = React.useState("");
-  const [nodeEditOpen, setNodeEditOpen] = React.useState(false);
-  const [nodeEditName, setNodeEditName] = React.useState("");
-  const [nodeEditUrl, setNodeEditUrl] = React.useState("");
-  const [nodeEditError, setNodeEditError] = React.useState("");
+  const [nodeManagerOpen, setNodeManagerOpen] = React.useState(false);
   const [projectTreeTab, setProjectTreeTab] = React.useState<ProjectTreeTab>(() => {
     if (typeof window === "undefined") {
       return "files";
@@ -1504,9 +1497,6 @@ function FileTreeInner({
   const [agentLifecycleRunningAgent, setAgentLifecycleRunningAgent] = React.useState("");
   const [agentLifecycleError, setAgentLifecycleError] = React.useState("");
   const menuRef = React.useRef<HTMLDivElement | null>(null);
-  const nodeAddRef = React.useRef<HTMLDivElement | null>(null);
-  const nodeRemoveRef = React.useRef<HTMLDivElement | null>(null);
-  const nodeEditRef = React.useRef<HTMLDivElement | null>(null);
   const agentConfigPopoverRef = React.useRef<HTMLDivElement | null>(null);
   const agentLifecyclePopoverRef = React.useRef<HTMLDivElement | null>(null);
   const sendShortcutPopoverRef = React.useRef<HTMLDivElement | null>(null);
@@ -1839,23 +1829,6 @@ function FileTreeInner({
     document.addEventListener("mousedown", handlePointerDown);
     return () => document.removeEventListener("mousedown", handlePointerDown);
   }, [sendShortcutOpen]);
-
-  React.useEffect(() => {
-    if (!nodeAddOpen && !nodeRemoveOpen && !nodeEditOpen) return;
-    const h = (e: MouseEvent) => {
-      const t = e.target as Node;
-      if (nodeAddOpen && !nodeAddRef.current?.contains(t)) setNodeAddOpen(false);
-      if (nodeRemoveOpen && !nodeRemoveRef.current?.contains(t)) setNodeRemoveOpen(false);
-      if (nodeEditOpen && !nodeEditRef.current?.contains(t)) setNodeEditOpen(false);
-    };
-    document.addEventListener("mousedown", h);
-    return () => document.removeEventListener("mousedown", h);
-  }, [nodeAddOpen, nodeRemoveOpen, nodeEditOpen]);
-
-  React.useEffect(() => {
-    if (!nodeEditOpen) return;
-    try { const n = getNodeById(LOCAL_NODE_ID); setNodeEditName(n?.name || "local"); setNodeEditUrl(n?.url || ""); setNodeEditError(""); } catch {}
-  }, [nodeEditOpen]);
 
   React.useEffect(() => {
     if (!protectedAPIReady) return;
@@ -2833,17 +2806,14 @@ function FileTreeInner({
                   <span>{t("fileTree.addProject")}</span>
                 </button>
                 <div style={{ height: "1px", background: "var(--border-color)", margin: "6px 4px" }} />
-                <button type="button" onClick={() => { setIsMenuOpen(false); setNodeAddOpen(true); }} style={fileTreeMenuButtonStyle}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
-                  <span>添加节点</span>
-                </button>
-                <button type="button" onClick={() => { setIsMenuOpen(false); setNodeRemoveOpen(true); setNodeRemoveError(""); }} style={fileTreeMenuButtonStyle}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>
-                  <span>删除节点</span>
-                </button>
-                <button type="button" onClick={() => { setIsMenuOpen(false); setNodeEditOpen(true); }} style={fileTreeMenuButtonStyle}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-                  <span>编辑 local</span>
+                <button type="button" onClick={() => { setIsMenuOpen(false); setNodeManagerOpen(true); }} style={fileTreeMenuButtonStyle}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="3" width="18" height="7" rx="2" />
+                    <rect x="3" y="14" width="18" height="7" rx="2" />
+                    <path d="M7 6.5h.01" />
+                    <path d="M7 17.5h.01" />
+                  </svg>
+                  <span>{t("nodeManager.title")}</span>
                 </button>
                 <div style={{ height: "1px", background: "var(--border-color)", margin: "6px 4px" }} />
                 <button
@@ -3297,65 +3267,11 @@ function FileTreeInner({
             </div>
           ) : null}
         </div>
-        {nodeAddOpen ? (
-          <div ref={nodeAddRef} style={{ position: "absolute", top: "calc(100% + 6px)", left: "8px", right: "8px", zIndex: 35, padding: "12px", borderRadius: "12px", border: "1px solid var(--border-color)", background: "var(--menu-bg)", boxShadow: "0 12px 30px rgba(15,23,42,0.14)", display: "flex", flexDirection: "column", gap: 10 }}>
-            <div style={{ fontWeight: 700, fontSize: 12 }}>添加节点</div>
-            <input value={nodeAddName} onChange={e=>setNodeAddName(e.target.value)} placeholder="节点名称" style={{ width:"100%", borderRadius:8, border:"1px solid var(--border-color)", padding:"8px 10px", fontSize:12, boxSizing:"border-box" }} />
-            <input value={nodeAddUrl} onChange={e=>setNodeAddUrl(e.target.value)} placeholder="https://host/mindfs" style={{ width:"100%", borderRadius:8, border:"1px solid var(--border-color)", padding:"8px 10px", fontSize:12, boxSizing:"border-box" }} />
-            {nodeAddError ? <div style={{ color:"#dc2626", fontSize:12 }}>{nodeAddError}</div> : null}
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
-              <button type="button" onClick={()=>setNodeAddOpen(false)} style={{ border:"1px solid var(--border-color)", background:"transparent", borderRadius:8, padding:"8px 10px", fontSize:12, cursor:"pointer" }}>取消</button>
-              <button type="button" disabled={nodeAddBusy} onClick={async()=>{
-                const name=String(nodeAddName||"").trim(); const rawUrl=String(nodeAddUrl||"").trim();
-                if(!name){ setNodeAddError("请输入节点名称"); return; }
-                if(!rawUrl){ setNodeAddError("请输入节点地址"); return; }
-                let normalized="";
-                try { const withScheme = /^[a-z]+:\/\//i.test(rawUrl)?rawUrl:`https://${rawUrl}`; const u=new URL(withScheme); u.hash=""; normalized=u.toString().replace(/\/+$/,""); } catch { setNodeAddError("地址格式不正确"); return; }
-                const testUrl = normalized;
-                setNodeAddBusy(true); setNodeAddError("");
-                try {
-                  const controller=new AbortController(); const to=setTimeout(()=>controller.abort(),5000);
-                  const r=await fetch(`${testUrl.replace(/\/+$/,"")}/api/agents`,{ signal: controller.signal });
-                  clearTimeout(to);
-                  if(!r.ok) throw new Error(`联通失败: ${r.status}`);
-                  await addNode({ name, url: normalized }); setNodeAddOpen(false); setNodeAddName(""); setNodeAddUrl("");
-                } catch (e:any) { setNodeAddError(e?.name==="AbortError"?"联通超时，请检查地址": String(e?.message||e)); } finally { setNodeAddBusy(false); }
-              }} style={{ border:"none", background:"var(--accent-color)", color:"#fff", borderRadius:8, padding:"8px 10px", fontSize:12, cursor: nodeAddBusy?"not-allowed":"pointer", opacity: nodeAddBusy?0.6:1 }}>{nodeAddBusy?"检测中…":"添加"}</button>
-            </div>
-          </div>
-        ) : null}
-        {nodeRemoveOpen ? (
-          <div ref={nodeRemoveRef} style={{ position: "absolute", top: "calc(100% + 6px)", left: "8px", right: "8px", zIndex: 35, padding: "12px", borderRadius: "12px", border: "1px solid var(--border-color)", background: "var(--menu-bg)", boxShadow: "0 12px 30px rgba(15,23,42,0.14)", display:"flex", flexDirection:"column", gap:8, maxHeight:260, overflow:"auto" }}>
-            <div style={{ fontWeight:700, fontSize:12 }}>删除节点</div>
-            {getNodes().filter(n=>n.id!==LOCAL_NODE_ID).length===0 ? <div style={{ fontSize:12, color:"var(--text-secondary)" }}>暂无可删除节点（local 不可删）</div> : getNodes().filter(n=>n.id!==LOCAL_NODE_ID).map(n=>(
-              <div key={n.id} style={{ display:"flex", alignItems:"center", gap:8, border:"1px solid var(--border-color)", borderRadius:8, padding:"8px 10px" }}>
-                <span style={{ width:8, height:8, borderRadius:"50%", background:n.color, display:"inline-block" }} />
-                <span style={{ flex:1, fontSize:12, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{n.name} — {n.url}</span>
-                <button type="button" onClick={async ()=>{
-                  if(!confirm(`删除节点 ${n.name} ? 仅前端移除，不会删除后端数据`)) return;
-                  try { await removeNode(n.id); setNodeRemoveOpen(false); } catch (e:any){ setNodeRemoveError(String(e?.message||e)); }
-                }} style={{ border:"none", background:"transparent", color:"#dc2626", cursor:"pointer", fontSize:12 }}>删除</button>
-              </div>
-            ))}
-            {nodeRemoveError ? <div style={{ color:"#dc2626", fontSize:12 }}>{nodeRemoveError}</div> : null}
-          </div>
-        ) : null}
-        {nodeEditOpen ? (
-          <div ref={nodeEditRef} style={{ position:"absolute", top:"calc(100% + 6px)", left:"8px", right:"8px", zIndex:35, padding:"12px", borderRadius:"12px", border:"1px solid var(--border-color)", background:"var(--menu-bg)", boxShadow:"0 12px 30px rgba(15,23,42,0.14)", display:"flex", flexDirection:"column", gap:10 }}>
-            <div style={{ fontWeight:700, fontSize:12 }}>编辑 local</div>
-            <input value={nodeEditName} onChange={e=>setNodeEditName(e.target.value)} placeholder="名称" style={{ width:"100%", borderRadius:8, border:"1px solid var(--border-color)", padding:"8px 10px", fontSize:12, boxSizing:"border-box" }} />
-            <input value={nodeEditUrl} onChange={e=>setNodeEditUrl(e.target.value)} placeholder="https://host/mindfs" style={{ width:"100%", borderRadius:8, border:"1px solid var(--border-color)", padding:"8px 10px", fontSize:12, boxSizing:"border-box" }} />
-            {nodeEditError ? <div style={{ color:"#dc2626", fontSize:12 }}>{nodeEditError}</div> : null}
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
-              <button type="button" onClick={()=>setNodeEditOpen(false)} style={{ border:"1px solid var(--border-color)", background:"transparent", borderRadius:8, padding:"8px 10px", fontSize:12, cursor:"pointer" }}>取消</button>
-              <button type="button" onClick={async ()=>{
-                const nm=String(nodeEditName||"").trim(); const ru=String(nodeEditUrl||"").trim();
-                if(!nm){ setNodeEditError("名称不能为空"); return; }
-                if(!ru){ setNodeEditError("地址不能为空"); return; }
-                try { await updateNode(LOCAL_NODE_ID,{ name:nm, url: ru }); setNodeEditOpen(false); } catch(e:any){ setNodeEditError(String(e?.message||e)); }
-              }} style={{ border:"none", background:"var(--accent-color)", color:"#fff", borderRadius:8, padding:"8px 10px", fontSize:12, cursor:"pointer" }}>保存</button>
-            </div>
-          </div>
+        {nodeManagerOpen ? (
+          <NodeManagerPanel
+            onClose={() => setNodeManagerOpen(false)}
+            onRefreshAll={onNodeManagerRefresh}
+          />
         ) : null}
         {agentConfigFlow ? (
           <div

@@ -1,7 +1,7 @@
 import { appURL, wsURL } from "./base";
 import { getRootNodeId } from "./rootNode";
 import { scopeSessionKey } from "./scope";
-import { protectedFetch, protectedJSON } from "./api";
+import { protectedFetch, protectedJSON, withNodeRetry } from "./api";
 import { e2eeService } from "./e2ee";
 
 // Session service for managing agent sessions
@@ -1232,7 +1232,7 @@ class SessionService {
       if (limitPerRoot > 0) {
         params.set("limit_per_root", String(limitPerRoot));
       }
-      const data = await protectedJSON<any>(appURL("/api/sessions", params, (nodeId as any)));
+      const data = await withNodeRetry(() => protectedJSON<any>(appURL("/api/sessions", params, (nodeId as any))));
       const groups = Array.isArray(data?.groups) ? data.groups : [];
       return groups.map((group: any) => ({
         rootId: String(group?.root_id || group?.rootId || ""),
@@ -1252,7 +1252,9 @@ class SessionService {
         return [];
       }
       console.error("[Session] Failed to fetch multi-root sessions:", err);
-      return [];
+      // 抛出而非吞成 []：调用方要能区分"这个节点没项目"和"这个节点没拉到"，
+      // 否则该节点会静默缺席，且没有任何东西会重试（实测可长时间不恢复）
+      throw err;
     }
   }
 

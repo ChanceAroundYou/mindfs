@@ -42,7 +42,9 @@ export type ErrorCode =
   | "skill.execute_failed"
   // Network errors
   | "network.disconnected"
-  | "network.timeout";
+  | "network.timeout"
+  // Remote node errors
+  | "node.load_failed";
 
 export type ErrorSeverity = "info" | "warning" | "error" | "fatal";
 
@@ -283,6 +285,11 @@ class ErrorService {
       },
       "network.timeout": {
         messageKey: "error.network.timeout",
+        severity: "warning",
+        recoverable: true,
+      },
+      "node.load_failed": {
+        messageKey: "error.node.loadFailed",
         severity: "warning",
         recoverable: true,
       },
