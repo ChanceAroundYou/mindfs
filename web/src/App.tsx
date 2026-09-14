@@ -2141,7 +2141,8 @@ export function App({ onGoHome }: AppProps) {
       return;
     }
     knownTaskWorktreePathsRef.current.add(normalizedWorktreePath);
-    setExpandedWorktreeByRoot((prev) => ({ ...prev, [scopedRootKey(normalizedRootId)]: normalizedWorktreePath }));
+    // 同一时间只展开一个工作树：整对象写入会清掉其它已展开项
+    setExpandedWorktreeByRoot({ [scopedRootKey(normalizedRootId)]: normalizedWorktreePath });
     setWorktreeLoadingByRoot((prev) => ({ ...prev, [scopedRootKey(normalizedRootId)]: true }));
     setWorktreeErrorByRoot((prev) => ({ ...prev, [scopedRootKey(normalizedRootId)]: "" }));
     try {
@@ -12618,12 +12619,8 @@ export function App({ onGoHome }: AppProps) {
     if (projectTreeTab !== "worktrees" || !rootID || !worktreePath) {
       return;
     }
-	    setExpandedWorktreeByRoot((prev) => {
-	      if (prev[scopedRootKey(rootID)] === worktreePath) {
-	        return prev;
-	      }
-	      return { ...prev, [scopedRootKey(rootID)]: worktreePath };
-    });
+	    // 同一时间只展开一个工作树：整对象写入会清掉其它已展开项
+    setExpandedWorktreeByRoot({ [scopedRootKey(rootID)]: worktreePath });
     void loadProjectTreeWorktreeStatus(worktreePath, rootID);
   }, [
     loadProjectTreeWorktreeStatus,
@@ -12700,7 +12697,7 @@ export function App({ onGoHome }: AppProps) {
                     setExpandedWorktreeByRoot((prev) => ({ ...prev, [scopedRootKey(root)]: "" }));
                     return;
                   }
-                  setExpandedWorktreeByRoot((prev) => ({ ...prev, [scopedRootKey(root)]: item.path }));
+                  setExpandedWorktreeByRoot({ [scopedRootKey(root)]: item.path });
                   await loadProjectTreeWorktreeStatus(item.path, root);
                 }}
                 style={{
@@ -14818,7 +14815,7 @@ export function App({ onGoHome }: AppProps) {
         onOpenLeft={() => setIsLeftOpen(true)}
         onOpenRight={() => setIsRightOpen(true)}
         sidebar={
-          <div style={{ display: "flex", flexDirection: "column", minHeight: 0, flex: 1 }}>
+          <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
             <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
               <FileTree
             entries={rootEntries}
