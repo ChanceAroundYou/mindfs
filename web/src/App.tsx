@@ -7921,10 +7921,13 @@ export function App({ onGoHome }: AppProps) {
           if (!suppressTreeExpand) {
             setExpanded((prev) => {
               const kept = prev.filter((k) => !otherRootKeys.has(k));
-              const next = Array.from(
-                new Set([...kept, expandKey(resolvedNodeId, path, path, true)]),
-              );
-              return prev.length === next.length ? prev : next;
+              const rootKey = expandKey(resolvedNodeId, path, path, true);
+              // 换根是「减一个加一个」：长度可能不变，必须按内容判断是否已就位，
+              // 不能用 prev.length===next.length 当 identity 守卫（会吞掉换根更新）。
+              if (kept.length === prev.length && kept.includes(rootKey)) {
+                return prev;
+              }
+              return Array.from(new Set([...kept, rootKey]));
             });
           } else {
             setExpanded((prev) => {
@@ -14874,7 +14877,8 @@ export function App({ onGoHome }: AppProps) {
                 path: e.path,
                 root: r,
                 isRoot: e.is_root === true,
-                suppressTreeExpand: true,
+                // 点根行即展开该项目根的树（配合根树互斥，其它根自动收起）
+                toggle: false,
                 nodeId: (e as any)._nodeId,
               })
             }
