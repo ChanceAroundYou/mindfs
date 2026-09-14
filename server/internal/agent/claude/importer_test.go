@@ -34,6 +34,66 @@ func TestExtractClaudeImportedUserTextDropsOnlyInjectedBlocks(t *testing.T) {
 	}
 }
 
+func TestReadClaudeImportedExchangesDropsMetaUserEntries(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.jsonl")
+	// 转录自带 isMeta 标记，标明「这条不是用户输入」（CLI 注入的 skill 正文、自动续跑、
+	// 命令回显等）。实测 139712 条 user/assistant 条目里 1420 条 isMeta=true，其中约
+	// 1030 条连 isMeaningfulClaudeUserText 也认不出来 —— 落库后就是用户没发过的气泡。
+	content := `{"type":"user","uuid":"u1","isMeta":true,"timestamp":"2026-09-13T12:26:39Z","message":{"content":[{"type":"text","text":"Base directory for this skill: /home/xiaokubao/.claude/skills/plan-only"}]}}
+{"type":"user","uuid":"u2","timestamp":"2026-09-13T12:26:41Z","message":{"content":[{"type":"text","text":"怎么不继续了"}]}}
+{"type":"assistant","uuid":"a2","timestamp":"2026-09-13T12:26:48Z","message":{"content":[{"type":"text","text":"继续。"}]}}
+`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	items, _, err := readClaudeImportedExchanges(path, 0, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 2 || items[0].Role != "user" || items[0].Content != "怎么不继续了" ||
+		items[1].Role != "agent" || items[1].Content != "继续。" {
+		got := make([]string, 0, len(items))
+		for _, item := range items {
+			got = append(got, item.Role+":"+item.Content)
+		}
+		t.Fatalf("isMeta 条目不该落库, got %v", got)
+	}
+}
+
+func TestReadClaudeImportedExchangesDropsAutoContinuePair(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.jsonl")
+	// CLI 在会话空闲时会自己插一问一答。提问侧 isMeta=true 已被挡；应答侧实测
+	// assistant 的 isMeta 恒为 false，必须单独挡，否则它会被当成一轮助手发言，
+	// 合并进相邻文本或单独成条 —— 实测 llmux/1789241416 的 seq 58(12:26) 就排在
+	// seq 57(12:34) 之后，界面上看就是时间倒挂。
+	content := `{"type":"user","uuid":"u1","isMeta":true,"timestamp":"2026-09-13T12:26:39Z","message":{"content":[{"type":"text","text":"Continue from where you left off."}]}}
+{"type":"assistant","uuid":"a1","timestamp":"2026-09-13T12:26:39Z","message":{"content":[{"type":"text","text":"No response requested."}]}}
+{"type":"user","uuid":"u2","timestamp":"2026-09-13T12:26:41Z","message":{"content":[{"type":"text","text":"怎么不继续了"}]}}
+{"type":"assistant","uuid":"a2","timestamp":"2026-09-13T12:26:48Z","message":{"content":[{"type":"text","text":"继续。"}]}}
+`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	items, _, err := readClaudeImportedExchanges(path, 0, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 2 || items[0].Content != "怎么不继续了" || items[1].Content != "继续。" {
+		got := make([]string, 0, len(items))
+		for _, item := range items {
+			got = append(got, item.Role+":"+item.Content)
+		}
+		t.Fatalf("自动续跑一问一答不该落库, got %v", got)
+	}
+	for _, item := range items {
+		if strings.Contains(item.Content, "No response requested") {
+			t.Fatalf("应答不该被合并进相邻助手文本: %q", item.Content)
+		}
+	}
+}
+
 func TestReadClaudeImportedExchangesDedupesRepeatedUUIDs(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "session.jsonl")

@@ -852,6 +852,13 @@ func readClaudeImportedExchangeLocators(path string, committedOffset int64, boot
 		if role == "user" {
 			lastRole, lastHadToolUse, lastHadText = "user", false, false
 			applyClaudeToolResults(items, toolLocations, message["content"], raw["toolUseResult"], ts)
+			// 转录自带 isMeta 标记，标明「这条不是用户输入」（CLI 注入的 skill 正文、自动
+			// 续跑、命令回显等）。实测 139712 条 user/assistant 条目里 1420 条 isMeta=true，
+			// 其中约 1030 条 isMeaningfulClaudeUserText 认不出来。漏进来就是用户没发过的
+			// 气泡，还会被「相邻同角色合并」并进相邻的真人消息里。
+			if isMeta, _ := raw["isMeta"].(bool); isMeta {
+				return nil
+			}
 			text := extractClaudeImportedUserText(message["content"])
 			if text != "" && isMeaningfulClaudeUserText(text) {
 				before := len(items)
@@ -881,6 +888,12 @@ func readClaudeImportedExchangeLocators(path string, committedOffset int64, boot
 			}
 		}
 		text := strings.TrimSpace(extractClaudeMessageText(message["content"]))
+		if isAutoContinueAck(text) {
+			// 自动续跑一问一答的应答侧。提问侧靠 isMeta 挡住，应答侧没有 isMeta
+			// （实测 assistant 条目 isMeta 恒为 false），只能按内容判；不挡就会被
+			// 「相邻同角色合并」并进紧邻的真助手文本里。
+			text = ""
+		}
 		aux := extractClaudeToolUseAux(message["content"])
 		if text == "" && len(aux) == 0 {
 			return nil
@@ -1177,6 +1190,14 @@ func importedAssistantLine(content string) int {
 		return 0
 	}
 	return strings.Count(content, "\n") + 1
+}
+
+// isAutoContinueAck 判定自动续跑一问一答的应答侧：CLI 在会话空闲时自己插
+// 「Continue from where you left off.」→「No response requested.」。提问侧由 isMeta
+// 挡掉，应答侧没有 isMeta（assistant 条目的 isMeta 恒为 false），只能按内容判。
+func isAutoContinueAck(text string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(strings.ReplaceAll(text, "\r\n", "\n")))
+	return strings.TrimSuffix(normalized, ".") == "no response requested"
 }
 
 func isMeaningfulClaudeUserText(text string) bool {
