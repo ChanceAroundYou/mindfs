@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -954,5 +955,217 @@ func TestManagerMarkPendingAskUserAnsweredMergesAnswers(t *testing.T) {
 	}
 	if toolCall.Meta["answeredAt"] != answeredAt.Format(time.RFC3339Nano) {
 		t.Fatalf("answeredAt = %#v, want %s", toolCall.Meta["answeredAt"], answeredAt.Format(time.RFC3339Nano))
+	}
+}
+
+func TestExchangeSourceComesFromContext(t *testing.T) {
+	root := rootfs.NewRootInfo("mindfs", "mindfs", t.TempDir())
+	manager := NewManager(root)
+	created, err := manager.Create(context.Background(), CreateInput{Type: TypeChat, Name: "Source"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 无 ctx 标注 = 历史数据，Source 必须为空（投影只按「时间戳逐字节相同」处理）
+	if err := manager.AddExchangeForAgent(context.Background(), created, "user", "legacy", "", "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	liveCtx := WithExchangeSource(context.Background(), ExchangeSourceLive)
+	if err := manager.AddExchangeForAgent(liveCtx, created, "agent", "live", "", "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	importCtx := WithExchangeSource(context.Background(), ExchangeSourceImport)
+	if err := manager.AddExchangeForAgentAt(importCtx, created, "user", "imported", "", "", "", "", time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+
+	payload, err := os.ReadFile(filepath.Join(root.MetaDir(), "sessions", created.Key+".jsonl"))
+	if err != nil {
+		t.Fatalf("read session file: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(payload)), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("lines = %d, want 3", len(lines))
+	}
+	wantSources := []string{"", ExchangeSourceLive, ExchangeSourceImport}
+	for index, line := range lines {
+		var entry Exchange
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			t.Fatalf("unmarshal line %d: %v", index, err)
+		}
+		if entry.Source != wantSources[index] {
+			t.Fatalf("line %d source = %q, want %q", index, entry.Source, wantSources[index])
+		}
+	}
+}
+
+func writeExchangeFile(t *testing.T, root rootfs.RootInfo, key string, lines []string) string {
+	t.Helper()
+	path := filepath.Join(root.MetaDir(), "sessions", key+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir sessions: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatalf("write exchanges: %v", err)
+	}
+	return path
+}
+
+func exchangeJSON(t *testing.T, seq int, content string) string {
+	t.Helper()
+	payload, err := json.Marshal(Exchange{Seq: seq, Role: "user", Content: content, Timestamp: time.Date(2026, 9, 14, 10, 0, seq, 0, time.UTC)})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return string(payload)
+}
+
+// seq 有洞时按「最大 seq + 1」分配，不按缓存长度：否则下一次写入会撞上已存在的 seq，
+// 前端按 seq 合并 → 消息直接不显示。
+func TestNextSeqUsesMaxSeqNotLength(t *testing.T) {
+	root := rootfs.NewRootInfo("mindfs", "mindfs", t.TempDir())
+	manager := NewManager(root)
+	created, err := manager.Create(context.Background(), CreateInput{Type: TypeChat, Name: "Gap"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeExchangeFile(t, root, created.Key, []string{
+		exchangeJSON(t, 1, "a"), exchangeJSON(t, 2, "b"), exchangeJSON(t, 3, "c"), exchangeJSON(t, 5, "e"),
+	})
+	loaded, err := manager.Get(context.Background(), created.Key, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.Exchanges) != 4 || maxExchangeSeq(loaded.Exchanges) != 5 {
+		t.Fatalf("setup = %d rows max=%d", len(loaded.Exchanges), maxExchangeSeq(loaded.Exchanges))
+	}
+	if err := manager.AddExchangeForAgent(context.Background(), loaded, "user", "new", "claude", "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	after, err := manager.Get(context.Background(), created.Key, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if last := after.Exchanges[len(after.Exchanges)-1]; last.Seq != 6 {
+		t.Fatalf("new seq = %d, want 6（旧的 len+1 会给 5，与已有行撞号）", last.Seq)
+	}
+}
+
+// 行首被 NUL 零填充的损坏行（外部/并发写入留下的空洞）必须能被还原，不能当坏行丢掉。
+func TestReadExchangesRepairsNulFilledLine(t *testing.T) {
+	root := rootfs.NewRootInfo("mindfs", "mindfs", t.TempDir())
+	manager := NewManager(root)
+	created, err := manager.Create(context.Background(), CreateInput{Type: TypeChat, Name: "Nul"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeExchangeFile(t, root, created.Key, []string{
+		exchangeJSON(t, 1, "a"),
+		strings.Repeat("\x00", 64) + exchangeJSON(t, 2, "b"),
+	})
+	loaded, err := manager.Get(context.Background(), created.Key, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.Exchanges) != 2 {
+		t.Fatalf("rows = %d, want 2（NUL 行应被还原）", len(loaded.Exchanges))
+	}
+	if loaded.Exchanges[1].Content != "b" {
+		t.Fatalf("repaired content = %q, want %q", loaded.Exchanges[1].Content, "b")
+	}
+}
+
+// 文件在盘上被外部改动后，缓存不能当真相继续用：下一次读必须看到新行。
+func TestGetSessionRefreshesStaleCache(t *testing.T) {
+	root := rootfs.NewRootInfo("mindfs", "mindfs", t.TempDir())
+	manager := NewManager(root)
+	created, err := manager.Create(context.Background(), CreateInput{Type: TypeChat, Name: "External"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := writeExchangeFile(t, root, created.Key, []string{exchangeJSON(t, 1, "a")})
+	if _, err := manager.Get(context.Background(), created.Key, 0); err != nil {
+		t.Fatal(err)
+	}
+	// 模拟外部写入者（另一个进程 / 手工修文件）追加一行
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.WriteString(exchangeJSON(t, 2, "b") + "\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := manager.Get(context.Background(), created.Key, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.Exchanges) != 2 {
+		t.Fatalf("rows = %d, want 2（陈旧缓存必须被刷新）", len(loaded.Exchanges))
+	}
+}
+
+func TestSessionIsLiveOwned(t *testing.T) {
+	cases := []struct {
+		name      string
+		exchanges []Exchange
+		want      bool
+	}{
+		{"空会话", nil, false},
+		{"只有导入行", []Exchange{{Source: ExchangeSourceImport, Content: "x"}, {Source: ExchangeSourceImport, Content: "y"}}, false},
+		{"有实时行", []Exchange{{Source: ExchangeSourceImport, Content: "x"}, {Source: ExchangeSourceLive, Content: "y"}}, true},
+		// 老数据（无 Source 标注）用实时路径独有签名兜底
+		{"老数据带 model_display_name", []Exchange{{ModelDisplayName: "Sonnet 4.5", Content: "x"}}, true},
+		{"老数据带 token_usage", []Exchange{{TokenUsage: &agenttypes.TokenUsage{InputTokens: 1}, Content: "x"}}, true},
+		{"老数据无签名", []Exchange{{Content: "x"}, {Content: "y"}}, false},
+		// 明确标了 import 的行不参与签名兜底（避免把导入行误判成实时行）
+		{"导入行带残留字段", []Exchange{{Source: ExchangeSourceImport, ModelDisplayName: "Sonnet 4.5", Content: "x"}}, false},
+	}
+	for _, tc := range cases {
+		if got := SessionIsLiveOwned(tc.exchanges); got != tc.want {
+			t.Fatalf("%s: SessionIsLiveOwned = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestAuditSessionReportsGapsDamagedAndAuxOrphans(t *testing.T) {
+	root := rootfs.NewRootInfo("mindfs", "mindfs", t.TempDir())
+	manager := NewManager(root)
+	created, err := manager.Create(context.Background(), CreateInput{Type: TypeChat, Name: "Audit"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeExchangeFile(t, root, created.Key, []string{
+		exchangeJSON(t, 1, "a"),
+		exchangeJSON(t, 3, "c"), // seq 2 缺失 → 空洞
+		strings.Repeat("\x00", 32) + exchangeJSON(t, 4, "d"),
+		"{ 这不是 JSON", // 坏行
+	})
+	auxPath := filepath.Join(root.MetaDir(), "sessions", created.Key+".aux.jsonl")
+	if err := os.WriteFile(auxPath, []byte(strings.Join([]string{
+		`{"seq":1,"line":0}`, // 有对应 exchange
+		`{"seq":9,"line":0}`, // 悬空
+	}, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	audit, err := manager.AuditSession(created.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if audit.Rows != 3 {
+		t.Fatalf("rows = %d, want 3", audit.Rows)
+	}
+	if len(audit.SeqGaps) != 1 || audit.SeqGaps[0] != 2 {
+		t.Fatalf("seq gaps = %v, want [2]", audit.SeqGaps)
+	}
+	if audit.DamagedLines != 1 {
+		t.Fatalf("damaged = %d, want 1", audit.DamagedLines)
+	}
+	if audit.NulRepairedLines != 1 {
+		t.Fatalf("nul repaired = %d, want 1", audit.NulRepairedLines)
+	}
+	if len(audit.AuxOrphanSeqs) != 1 || audit.AuxOrphanSeqs[0] != 9 {
+		t.Fatalf("aux orphans = %v, want [9]", audit.AuxOrphanSeqs)
 	}
 }

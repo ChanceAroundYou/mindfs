@@ -13,6 +13,36 @@ const (
 	TypeCommand = "command"
 )
 
+// Exchange.Source 取值：谁写的这一行。
+// 实时路径（MindFS 自己在驱动会话）写 live，转录导入器写 import；老数据为空。
+// 用途见 usecase 的投影：同一轮被两个写入者各写一行时，投影保留 live、隐藏 import。
+const (
+	ExchangeSourceLive   = "live"
+	ExchangeSourceImport = "import"
+)
+
+// SessionIsLiveOwned 报告这个会话的持久化是否归实时路径（"谁驱动，谁落盘"）。
+//
+// 判据是**推导**出来的，不落字段：会话里存在实时路径写的行（Source=live）就算被 MindFS
+// 驱动过；老数据（2026-09 之前没有 Source 标注）用实时路径独有的签名兜底
+// （model_display_name / token_usage 只有实时路径会填，导入器恒定留空）。
+// 推导而不是存字段的好处：所有权可以随"第一次从 MindFS 发消息"自动翻转，不需要回填、
+// 也不会与 Session.Source（fork 用来存来源描述）冲突。
+func SessionIsLiveOwned(exchanges []Exchange) bool {
+	for _, exchange := range exchanges {
+		if exchange.Source == ExchangeSourceLive {
+			return true
+		}
+		if exchange.Source != "" {
+			continue
+		}
+		if strings.TrimSpace(exchange.ModelDisplayName) != "" || exchange.TokenUsage != nil {
+			return true
+		}
+	}
+	return false
+}
+
 type Session struct {
 	Key               string                   `json:"key"`
 	Type              string                   `json:"type"`
@@ -38,6 +68,7 @@ type Session struct {
 type Exchange struct {
 	Seq              int                    `json:"seq"`
 	Role             string                 `json:"role"`
+	Source           string                 `json:"source,omitempty"`
 	Agent            string                 `json:"agent,omitempty"`
 	Model            string                 `json:"model,omitempty"`
 	ModelDisplayName string                 `json:"model_display_name,omitempty"`

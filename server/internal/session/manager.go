@@ -565,6 +565,25 @@ func (m *Manager) Search(_ context.Context, opts SearchOptions) ([]SearchHit, er
 
 type exchangeModelDisplayNameContextKey struct{}
 type exchangeTokenUsageContextKey struct{}
+type exchangeSourceContextKey struct{}
+
+// WithExchangeSource 标注这一行由哪个写入者落盘（ExchangeSourceLive / ExchangeSourceImport）。
+// 不传则 Source 为空 = 历史数据，投影时只按「时间戳逐字节相同」这条铁证处理。
+func WithExchangeSource(ctx context.Context, source string) context.Context {
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, exchangeSourceContextKey{}, source)
+}
+
+func exchangeSourceFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	value, _ := ctx.Value(exchangeSourceContextKey{}).(string)
+	return strings.TrimSpace(value)
+}
 
 func WithExchangeModelDisplayName(ctx context.Context, displayName string) context.Context {
 	displayName = strings.TrimSpace(displayName)
@@ -603,14 +622,14 @@ func exchangeTokenUsageFromContext(ctx context.Context) *agenttypes.TokenUsage {
 }
 
 func (m *Manager) AddExchangeForAgent(ctx context.Context, session *Session, role, content, agent, mode, effort, fastService string) error {
-	return m.addExchangeForAgentAt(session, role, content, agent, exchangeModelDisplayNameFromContext(ctx), exchangeTokenUsageFromContext(ctx), mode, effort, fastService, time.Time{})
+	return m.addExchangeForAgentAt(session, role, content, agent, exchangeModelDisplayNameFromContext(ctx), exchangeTokenUsageFromContext(ctx), exchangeSourceFromContext(ctx), mode, effort, fastService, time.Time{})
 }
 
 func (m *Manager) AddExchangeForAgentAt(ctx context.Context, session *Session, role, content, agent, mode, effort, fastService string, timestamp time.Time) error {
-	return m.addExchangeForAgentAt(session, role, content, agent, exchangeModelDisplayNameFromContext(ctx), exchangeTokenUsageFromContext(ctx), mode, effort, fastService, timestamp)
+	return m.addExchangeForAgentAt(session, role, content, agent, exchangeModelDisplayNameFromContext(ctx), exchangeTokenUsageFromContext(ctx), exchangeSourceFromContext(ctx), mode, effort, fastService, timestamp)
 }
 
-func (m *Manager) addExchangeForAgentAt(session *Session, role, content, agent, modelDisplayName string, tokenUsage *agenttypes.TokenUsage, mode, effort, fastService string, timestamp time.Time) error {
+func (m *Manager) addExchangeForAgentAt(session *Session, role, content, agent, modelDisplayName string, tokenUsage *agenttypes.TokenUsage, source, mode, effort, fastService string, timestamp time.Time) error {
 	if session == nil || strings.TrimSpace(session.Key) == "" {
 		return errors.New("session required")
 	}
@@ -629,7 +648,9 @@ func (m *Manager) addExchangeForAgentAt(session *Session, role, content, agent, 
 		session.ClosedAt = nil
 	}
 	resolvedAgent := strings.TrimSpace(agent)
-	nextSeq := len(session.Exchanges) + 1
+	// seq 按「最大 seq + 1」分配，不按缓存长度：文件与缓存一旦漂移（外部写入、手工修文件、
+	// 缓存陈旧），长度+1 会撞上已有 seq（前端按 seq 合并 → 消息直接不显示）。
+	nextSeq := maxExchangeSeq(session.Exchanges) + 1
 	ts := timestamp.UTC()
 	if ts.IsZero() {
 		ts = m.now().UTC()
@@ -637,6 +658,7 @@ func (m *Manager) addExchangeForAgentAt(session *Session, role, content, agent, 
 	record := Exchange{
 		Seq:              nextSeq,
 		Role:             role,
+		Source:           source,
 		Agent:            resolvedAgent,
 		Model:            session.Model,
 		ModelDisplayName: strings.TrimSpace(modelDisplayName),
@@ -1338,7 +1360,12 @@ func (m *Manager) createSessionUnsafe(session *Session) error {
 func (m *Manager) getSessionUnsafe(key string, afterSeq int) (*Session, error) {
 	if afterSeq <= 0 {
 		if cached, ok := m.sessions[key]; ok && cached != nil {
-			return cached, nil
+			if m.sessionCacheFreshUnsafe(key) {
+				return cached, nil
+			}
+			// 文件在盘上变了（外部写入 / 手工修文件 / 同步冲突）→ 别拿陈旧缓存当真相：
+			// 写路径的 seq 与判重都基于这份缓存（实测 2026-09-14 手工改文件后不重启，
+			// 缓存与文件错位 → 重复 seq / 空洞）。交给 loadExchanges 走增量或全量读。
 		}
 	}
 	loaded, err := m.loadSessionUnsafe(key, afterSeq)
@@ -1349,6 +1376,30 @@ func (m *Manager) getSessionUnsafe(key string, afterSeq int) (*Session, error) {
 		m.sessions[key] = loaded
 	}
 	return loaded, nil
+}
+
+// sessionCacheFreshUnsafe 报告内存缓存是否仍然与磁盘一致。
+// 只有「stat 成功且 size/mtime 与读盘游标不符」才判定为陈旧；没游标（从未读过盘）或
+// stat 失败一律返回 true —— 保持既有行为，不用一次偶发失败去清掉缓存。
+func (m *Manager) sessionCacheFreshUnsafe(key string) bool {
+	path, err := m.exchangePath(key)
+	if err != nil {
+		return true
+	}
+	cursor, ok := m.exchangeCursors[path]
+	if !ok || cursor.Offset <= 0 {
+		// 没有读盘基线（例如会话是刚 Create 出来的内存缓存）：文件里已经有内容，就说明
+		// 缓存可能是空的或陈旧的 —— 读一次盘建立基线，代价只在这一次。
+		if info, statErr := m.root.StatMetaFile(path); statErr == nil && info.Size() > 0 {
+			return false
+		}
+		return true
+	}
+	info, err := m.root.StatMetaFile(path)
+	if err != nil {
+		return true
+	}
+	return info.Size() == cursor.Size && info.ModTime().UnixNano() == cursor.ModTimeNs
 }
 
 // getSessionWindowUnsafe 返回按窗口切片后的 Session 与窗口元信息。
@@ -1902,6 +1953,23 @@ func (m *Manager) loadExchanges(key string, afterSeq int) ([]Exchange, int, erro
 	return filterExchanges(exchanges, afterSeq), total, nil
 }
 
+// parseExchangeLine 解析一行 exchange。
+// 行首可能被 NUL 零填充（并发/外部写入留下的空洞：实测 2026-09-14 AIS/docs 会话有
+// ~4100 字节 NUL + 一段完整 JSON），剥掉前缀后仍可完整还原，故先按原样解析，失败再剥。
+// 返回 (entry, 是否解析成功, 是否修复了 NUL 前缀)。
+func parseExchangeLine(line string) (Exchange, bool, bool) {
+	var entry Exchange
+	if err := json.Unmarshal([]byte(line), &entry); err == nil {
+		return entry, true, false
+	}
+	if trimmed := strings.TrimLeft(line, "\x00"); trimmed != line {
+		if err := json.Unmarshal([]byte(trimmed), &entry); err == nil {
+			return entry, true, true
+		}
+	}
+	return Exchange{}, false, false
+}
+
 func (m *Manager) readExchangesFull(path string) ([]Exchange, int, error) {
 	payload, err := m.root.ReadMetaFile(path)
 	if err != nil {
@@ -1912,15 +1980,20 @@ func (m *Manager) readExchangesFull(path string) ([]Exchange, int, error) {
 	}
 	exchanges := make([]Exchange, 0)
 	total := 0
+	skipped, repaired := 0, 0
 	scanner := jsonlScanner(payload)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
 			continue
 		}
-		var entry Exchange
-		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+		entry, ok, fixed := parseExchangeLine(line)
+		if !ok {
+			skipped++
 			continue
+		}
+		if fixed {
+			repaired++
 		}
 		if entry.Seq <= 0 {
 			entry.Seq = total + 1
@@ -1932,6 +2005,9 @@ func (m *Manager) readExchangesFull(path string) ([]Exchange, int, error) {
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, 0, err
+	}
+	if skipped > 0 || repaired > 0 {
+		log.Printf("[session/store] parse.damaged path=%s skipped=%d nul_repaired=%d", path, skipped, repaired)
 	}
 	return exchanges, total, nil
 }
@@ -1951,14 +2027,19 @@ func (m *Manager) readExchangeTail(path string, offset int64, baseSeq int) ([]Ex
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 0, 64*1024), maxExchangeLineBytes)
 	added := make([]Exchange, 0, 8)
+	skipped, repaired := 0, 0
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
 			continue
 		}
-		var entry Exchange
-		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+		entry, ok, fixed := parseExchangeLine(line)
+		if !ok {
+			skipped++
 			continue
+		}
+		if fixed {
+			repaired++
 		}
 		if entry.Seq <= 0 {
 			entry.Seq = total + 1
@@ -1974,7 +2055,16 @@ func (m *Manager) readExchangeTail(path string, offset int64, baseSeq int) ([]Ex
 	if err := scanner.Err(); err != nil {
 		return nil, baseSeq, false
 	}
+	if skipped > 0 || repaired > 0 {
+		log.Printf("[session/store] parse.damaged path=%s skipped=%d nul_repaired=%d tail=true", path, skipped, repaired)
+	}
 	return added, total, true
+}
+
+// MaxExchangeSeq 返回序列里的最大 seq（空序列返回 0）。写入路径用它分配下一个 seq，
+// 调用方（如乐观合并的 seq 预测）也必须用它，不能再用 len(exchanges)+1。
+func MaxExchangeSeq(exchanges []Exchange) int {
+	return maxExchangeSeq(exchanges)
 }
 
 func maxExchangeSeq(exchanges []Exchange) int {
@@ -2019,7 +2109,27 @@ func (m *Manager) appendExchange(key string, exchange Exchange) error {
 	if _, err := file.Write(append(payload, '\n')); err != nil {
 		return err
 	}
+	// 写路径推进读盘游标：否则缓存新鲜度校验会永远判定为陈旧，每次读都多跑一次尾部读。
+	m.advanceExchangeCursorUnsafe(path, file, exchange.Seq)
 	return nil
+}
+
+// advanceExchangeCursorUnsafe 把读盘游标推到刚写入的位置（仅在持 m.mu 时调用）。
+func (m *Manager) advanceExchangeCursorUnsafe(path string, file *os.File, seq int) {
+	info, err := file.Stat()
+	if err != nil {
+		return
+	}
+	maxSeq := seq
+	if cursor, ok := m.exchangeCursors[path]; ok && cursor.MaxSeq > maxSeq {
+		maxSeq = cursor.MaxSeq
+	}
+	m.exchangeCursors[path] = exchangeFileCursor{
+		Offset:    info.Size(),
+		Size:      info.Size(),
+		ModTimeNs: info.ModTime().UnixNano(),
+		MaxSeq:    maxSeq,
+	}
 }
 
 func (m *Manager) loadExchangeAux(key string, afterSeq int) (map[int][]ExchangeAux, error) {
