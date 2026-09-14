@@ -2431,6 +2431,11 @@ export function App({ onGoHome }: AppProps) {
   }, []);
 
   const [rootEntries, setRootEntries] = useState<FileEntry[]>([]);
+  // open_dir 回调需要根列表做根展开互斥，经 ref 引用避免依赖抖动
+  const rootEntriesRef = useRef<FileEntry[]>([]);
+  useEffect(() => {
+    rootEntriesRef.current = rootEntries;
+  }, [rootEntries]);
   const [creatingRootName, setCreatingRootName] = useState<string | null>(null);
   const [creatingRootParentPath, setCreatingRootParentPath] = useState<string | null>(null);
   const [creatingRootKind, setCreatingRootKind] = useState<"root" | "worktree">("root");
@@ -7905,12 +7910,27 @@ export function App({ onGoHome }: AppProps) {
         if (isActuallyRoot) {
           resetLocksForRootTransition(path);
           setCurrentRootId(path);
-          if (!suppressTreeExpand) {
-            setExpanded((prev) =>
-              Array.from(
-                new Set([...prev, expandKey(resolvedNodeId, path, path, true)]),
+          // 根树互斥：打开/激活一个根，收起其它根的展开树（只保留根自身键，子目录键原样保留）
+          const otherRootKeys = new Set(
+            rootEntriesRef.current
+              .filter((entry) => entry.is_root === true && entry.path !== root)
+              .map((entry) =>
+                expandKey(String((entry as any)._nodeId || ""), entry.path, entry.path, true),
               ),
-            );
+          );
+          if (!suppressTreeExpand) {
+            setExpanded((prev) => {
+              const kept = prev.filter((k) => !otherRootKeys.has(k));
+              const next = Array.from(
+                new Set([...kept, expandKey(resolvedNodeId, path, path, true)]),
+              );
+              return prev.length === next.length ? prev : next;
+            });
+          } else {
+            setExpanded((prev) => {
+              const next = prev.filter((k) => !otherRootKeys.has(k));
+              return prev.length === next.length ? prev : next;
+            });
           }
           if (!forceDirectory) {
             const restored = await tryShowBoundSessionForRoot(path, {
