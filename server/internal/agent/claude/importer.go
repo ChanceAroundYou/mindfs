@@ -1217,6 +1217,10 @@ func isMeaningfulClaudeUserText(text string) bool {
 		strings.HasPrefix(lower, "<command-name>") ||
 		strings.HasPrefix(lower, "<local-command-stdout>") ||
 		strings.HasPrefix(lower, "<local-command-stderr>") ||
+		// CLI 的子代理完成通知：整块由 CLI 注入（isMeta 为空，前面那道闸拦不住），
+		// 正文是子代理的报告。子代理转录已作为子会话导入（parent_tool_call_id 指向
+		// Task 调用），这里再落一条就是「用户气泡里装着助手正文」的乱格式块。
+		strings.HasPrefix(lower, "<task-notification>") ||
 		strings.HasPrefix(lower, "this session was migrated from elsewhere.") ||
 		strings.HasPrefix(lower, "this session is being continued from a previous conversation") {
 		return false

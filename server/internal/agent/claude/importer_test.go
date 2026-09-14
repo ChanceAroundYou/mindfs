@@ -127,6 +127,41 @@ func TestReadClaudeImportedExchangesDropsInterruptMarker(t *testing.T) {
 	}
 }
 
+func TestReadClaudeImportedExchangesDropsTaskNotification(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.jsonl")
+	// CLI 的子代理完成通知：转录里是一条 role=user、isMeta 为空的整块条目，正文是
+	// 子代理的报告。子代理自己的转录已经作为子会话导入（parent_tool_call_id 指向
+	// Task 调用），这条再落库就是「用户气泡里装着助手正文」的乱格式块。
+	// 实测 AIS/docs 的 BP 会话里有 38 条，最后一条 10704 字。
+	content := `{"type":"user","uuid":"u1","timestamp":"2026-09-14T11:03:23Z","message":{"content":[{"type":"text","text":"康复侧的市场你去做查询"}]}}
+{"type":"assistant","uuid":"a1","timestamp":"2026-09-14T11:06:08Z","message":{"content":[{"type":"text","text":"我派研究员去查。"}]}}
+{"type":"user","uuid":"u2","timestamp":"2026-09-14T11:09:18Z","message":{"content":[{"type":"text","text":"<task-notification>\n<task-id>a34e59580e68c4492</task-id>\n<status>completed</status>\n<summary>Agent \"研究支具佩戴周期与费用\" finished</summary>\n<result>## 1. 佩戴时长\n\n结论：2-4 年。\n</result>\n<usage><subagent_tokens>0</subagent_tokens></usage>\n</task-notification>"}]}}
+{"type":"assistant","uuid":"a2","timestamp":"2026-09-14T11:11:02Z","message":{"content":[{"type":"text","text":"报告回来了，重跑模型。"}]}}
+`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	items, _, err := readClaudeImportedExchanges(path, 0, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 通知整条不发射；前后两条助手正文照常按「相邻同角色合并」并成一条。
+	if len(items) != 2 || items[0].Role != "user" || items[0].Content != "康复侧的市场你去做查询" ||
+		items[1].Role != "agent" || !strings.Contains(items[1].Content, "报告回来了，重跑模型。") {
+		got := make([]string, 0, len(items))
+		for _, item := range items {
+			got = append(got, item.Role+":"+item.Content)
+		}
+		t.Fatalf("task-notification 不该落成用户气泡, got %v", got)
+	}
+	for _, item := range items {
+		if strings.Contains(item.Content, "<task-notification>") {
+			t.Fatalf("通知正文不得出现在会话里: %q", item.Content)
+		}
+	}
+}
+
 func TestReadClaudeImportedExchangesDedupesRepeatedUUIDs(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "session.jsonl")
