@@ -675,3 +675,60 @@ func TestSyncExternalSessionDeltaKeepsImportOwnedSession(t *testing.T) {
 		}
 	}
 }
+
+// 手动「同步」（Full）在 live-owned 会话上依然可用：子代理的转录（含 user 行与多回合）
+// 会被完整导进来。这正是"实时路径看不到的子代理内容不会永久失去"的证据。
+func TestSyncExternalSessionDeltaFullImportsSubagentTurns(t *testing.T) {
+	root := fs.NewRootInfo("root", "Root", t.TempDir())
+	manager := session.NewManager(root)
+	ctx := context.Background()
+	parent, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, Agent: "codex", Name: "Parent"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stamp := time.Date(2026, 6, 27, 10, 0, 0, 0, time.UTC)
+	liveCtx := session.WithExchangeSource(ctx, session.ExchangeSourceLive)
+	if err := manager.AddExchangeForAgentAt(liveCtx, parent, "user", "parent turn", "codex", "", "", "", stamp); err != nil {
+		t.Fatal(err)
+	}
+	current, err := manager.Get(ctx, parent.Key, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.UpdateAgentState(ctx, current, "codex", 1, "external-parent"); err != nil {
+		t.Fatal(err)
+	}
+	importer := &syncDeltaTestImporter{subagents: []agenttypes.ImportedSubagentSession{{
+		AgentSessionID:   "claude-subagent:abc",
+		Title:            "Child",
+		ParentToolCallID: "call-1",
+		Exchanges: []agenttypes.ImportedExchange{
+			// 实时路径从不写子代理的 user 行（工具结果 / 系统注入），只有转录有
+			{Role: "user", Content: "tool result", Timestamp: stamp},
+			{Role: "agent", Content: "child turn 1", Timestamp: stamp.Add(time.Second)},
+			{Role: "agent", Content: "child turn 2", Timestamp: stamp.Add(2 * time.Second)},
+		},
+	}}}
+	svc := &Service{Registry: &syncDeltaTestRegistry{root: root, manager: manager, importer: importer}}
+	if _, err := svc.SyncExternalSessionDelta(ctx, SyncExternalSessionDeltaInput{RootID: root.ID, Key: parent.Key, Full: true}); err != nil {
+		t.Fatal(err)
+	}
+	children, err := manager.List(ctx, session.ListOptions{ParentSessionKey: parent.Key, Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(children) != 1 {
+		t.Fatalf("子会话数 = %d, want 1", len(children))
+	}
+	child, err := manager.Get(ctx, children[0].Key, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roles := map[string]int{}
+	for _, exchange := range child.Exchanges {
+		roles[exchange.Role]++
+	}
+	if roles["user"] != 1 || roles["agent"] != 2 {
+		t.Fatalf("子会话行构成 = %v, want {user:1 agent:2}（多回合 + user 行都应当被同步进来）", roles)
+	}
+}
