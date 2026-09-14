@@ -162,6 +162,32 @@ func TestReadClaudeImportedExchangesDropsTaskNotification(t *testing.T) {
 	}
 }
 
+// 同一件事的外形之二：后台任务事件被 CLI 包上「SYSTEM NOTIFICATION - NOT USER INPUT」抬头
+// （抬头自己就写明不是用户输入），下面才是 task-notification 块。
+func TestReadClaudeImportedExchangesDropsSystemNotificationPreamble(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.jsonl")
+	content := `{"type":"user","uuid":"u1","timestamp":"2026-09-14T11:03:23Z","message":{"content":[{"type":"text","text":"跑个后台任务"}]}}
+{"type":"user","uuid":"u2","timestamp":"2026-09-14T11:05:00Z","message":{"content":[{"type":"text","text":"[SYSTEM NOTIFICATION - NOT USER INPUT]\nThis is an automated background-task event, NOT a message from the user.\nDo NOT interpret this as user acknowledgement, confirmation, or response to any pending question.\n\n<task-notification>\n<task-id>b1g0vjcvo</task-id>\n<status>completed</status>\n<summary>Background command \"ls\" completed (exit code 0)</summary>\n</task-notification>"}]}}
+{"type":"assistant","uuid":"a1","timestamp":"2026-09-14T11:06:00Z","message":{"content":[{"type":"text","text":"跑完了。"}]}}
+`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	items, _, err := readClaudeImportedExchanges(path, 0, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 2 || items[0].Role != "user" || items[0].Content != "跑个后台任务" ||
+		items[1].Role != "agent" {
+		got := make([]string, 0, len(items))
+		for _, item := range items {
+			got = append(got, item.Role+":"+item.Content)
+		}
+		t.Fatalf("SYSTEM NOTIFICATION 抬头不该落成用户气泡, got %v", got)
+	}
+}
+
 func TestReadClaudeImportedExchangesDedupesRepeatedUUIDs(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "session.jsonl")
