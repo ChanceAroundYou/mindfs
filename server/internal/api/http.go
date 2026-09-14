@@ -22,6 +22,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"mindfs/internal/deploy"
@@ -379,6 +380,7 @@ func (h *HTTPHandler) Routes() http.Handler {
 	r.Get("/api/sessions/{key}/toolcalls/{callID}", h.protectedEndpoint(h.handleSessionToolCallGet))
 	r.Post("/api/sessions/{key}/sync", h.protectedEndpoint(h.handleSessionSync))
 	r.Get("/api/sessions/{key}", h.protectedEndpoint(h.handleSessionGet))
+	r.Get("/api/sessions/{key}/audit", h.protectedEndpoint(h.handleSessionAudit))
 	r.Get("/api/sessions/{key}/related-files", h.protectedEndpoint(h.handleSessionRelatedFilesGet))
 	r.Post("/api/sessions/{key}/pin", h.protectedEndpoint(h.handleSessionPin))
 	r.Post("/api/sessions/{key}/rename", h.protectedEndpoint(h.handleSessionRename))
@@ -938,7 +940,24 @@ func (h *HTTPHandler) handleSessionGet(w http.ResponseWriter, r *http.Request) {
 			Seq:    afterSeq,
 		})
 	}
-	respondJSON(w, http.StatusOK, h.sessionResponse(out, pendingUser, contextWindow, exchangeAux, windowMeta))
+	respondJSON(w, http.StatusOK, h.sessionResponse(out, pendingUser, contextWindow, projectSessionExchangesForResponse(out, exchangeAux), windowMeta))
+}
+
+// handleSessionAudit 只读体检：文件层（seq 空洞/重复、坏行、aux 悬空）+ 投影层的重复分类。
+// 只报告不修：清理必须先看这份报告再人工决定（红线：不可按内容批量去重）。
+func (h *HTTPHandler) handleSessionAudit(w http.ResponseWriter, r *http.Request) {
+	rootID := r.URL.Query().Get("root")
+	key := chi.URLParam(r, "key")
+	if strings.TrimSpace(key) == "" {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("session key required"))
+		return
+	}
+	out, err := h.service().AuditSession(r.Context(), usecase.AuditSessionInput{RootID: rootID, Key: key})
+	if err != nil {
+		respondError(w, http.StatusNotFound, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, out)
 }
 
 func (h *HTTPHandler) handleSessionSync(w http.ResponseWriter, r *http.Request) {
@@ -1008,6 +1027,7 @@ func (h *HTTPHandler) handleSessionSync(w http.ResponseWriter, r *http.Request) 
 		Key:    key,
 		Seq:    afterSeq,
 	})
+	exchangeAux = projectSessionExchangesForResponse(out, exchangeAux)
 	// 注：sync 先做全量外部增量拉取（Full:true），再按窗口切片，保证窗口数据最新。
 	// pendingUser 必须与 GET 路径同样带上：否则点「同步」会丢掉正在等待回答的
 	// ask_user 卡（seq=0 条目，实测 2026-09-12 症状 2）。
@@ -1236,6 +1256,33 @@ func (h *HTTPHandler) handleSessionDelete(w http.ResponseWriter, r *http.Request
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// projectSessionExchangesForResponse 折叠「同一轮被多个写入者各写一份」的重复行，并把被
+// 隐藏行的 aux 重挂到保留行（aux 以 seq 为键；重挂后由前端已有的按 callId 去重收口）。
+//
+// ⚠ 只许在响应边界调用：SendMessage 的判重正是读同一份 Exchanges（session.go 的
+// exchangeAlreadyRecorded），若在 manager 层投影，被隐藏的行会被当成「没写过」而重复落盘。
+func projectSessionExchangesForResponse(s *session.Session, exchangeAux map[int][]session.ExchangeAux) map[int][]session.ExchangeAux {
+	if s == nil || len(s.Exchanges) < 2 || !usecase.SessionProjectionEnabled() {
+		return exchangeAux
+	}
+	kept, hidden, _ := usecase.ProjectExchanges(s.Exchanges)
+	if len(hidden) == 0 {
+		return exchangeAux
+	}
+	if _, seen := projectedSessions.LoadOrStore(s.Key, struct{}{}); !seen {
+		log.Printf("[session/projection] session=%s hidden=%d（同一轮被两个写入者各写一份，已折叠展示；文件里的数据一行未删）", s.Key, len(hidden))
+	}
+	keptSeqs := make(map[int]bool, len(kept))
+	for _, exchange := range kept {
+		keptSeqs[exchange.Seq] = true
+	}
+	s.Exchanges = kept
+	return usecase.RemapExchangeAux(exchangeAux, hidden, keptSeqs)
+}
+
+// projectedSessions 只为让投影日志每个会话最多打一次（读路径调用频繁，不能每请求一条）。
+var projectedSessions sync.Map
 
 func (h *HTTPHandler) sessionResponse(
 	s *session.Session,

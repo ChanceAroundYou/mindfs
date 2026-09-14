@@ -293,3 +293,55 @@ func TestHandleSessionSyncCarriesPendingUser(t *testing.T) {
 		t.Fatalf("sync response missing pending user (seq=0): %s", rec.Body.String())
 	}
 }
+
+// 双写重复行必须在 API 读取出口折叠：保留实时路径那条，导入那条隐藏；且导入行的 aux
+// 要重挂到保留行上（aux 以 seq 为键，丢了工具卡就没了）。
+func TestHandleSessionGetProjectsDuplicateExchanges(t *testing.T) {
+	app, rootID, manager := newWindowTestApp(t)
+	ctx := context.Background()
+	s, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, Name: "Dup"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	stamp := time.Date(2026, 9, 14, 15, 39, 24, 0, time.UTC)
+	liveCtx := session.WithExchangeSource(ctx, session.ExchangeSourceLive)
+	importCtx := session.WithExchangeSource(ctx, session.ExchangeSourceImport)
+	if err := manager.AddExchangeForAgentAt(liveCtx, s, "user", "同一句话", "claude", "", "", "", stamp); err != nil {
+		t.Fatalf("add live: %v", err)
+	}
+	// 转录那份晚 6.4 秒、还带中断标记 —— 写入侧 ±5s 判重正是这样漏的
+	if err := manager.AddExchangeForAgentAt(importCtx, s, "user", "[Request interrupted by user]\n\n同一句话", "claude", "", "", "", stamp.Add(6400*time.Millisecond)); err != nil {
+		t.Fatalf("add import: %v", err)
+	}
+	if err := manager.AddExchangeAux(ctx, s.Key, session.ExchangeAux{
+		Seq:      2,
+		ToolCall: &agenttypes.ToolCall{CallID: "call-import", Kind: agenttypes.ToolKindExecute, Status: "success"},
+	}); err != nil {
+		t.Fatalf("add aux: %v", err)
+	}
+
+	h := &HTTPHandler{AppContext: app}
+	rec := doSessionGet(t, h, rootID, s.Key, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var payload struct {
+		Exchanges []session.Exchange               `json:"exchanges"`
+		Aux       map[string][]session.ExchangeAux `json:"exchange_aux"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(payload.Exchanges) != 1 {
+		t.Fatalf("exchanges = %d, want 1: %+v", len(payload.Exchanges), payload.Exchanges)
+	}
+	if payload.Exchanges[0].Source != session.ExchangeSourceLive {
+		t.Fatalf("保留的必须是实时路径写的行: %+v", payload.Exchanges[0])
+	}
+	if len(payload.Aux["1"]) == 0 {
+		t.Fatalf("导入行的 aux 必须重挂到保留行 seq=1: %+v", payload.Aux)
+	}
+	if _, ok := payload.Aux["2"]; ok {
+		t.Fatalf("被隐藏行的 aux 键不应再出现: %+v", payload.Aux)
+	}
+}
