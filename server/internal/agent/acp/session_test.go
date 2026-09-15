@@ -23,10 +23,10 @@ func TestIsExpectedStreamCloseError(t *testing.T) {
 	}
 }
 
-func TestACPTokenUsagePreservesPromptUsage(t *testing.T) {
+func TestACPDSHTokenUsagePreservesPromptUsage(t *testing.T) {
 	state := &sessionState{}
 	firstRead, firstWrite := 4_000, 1_000
-	first := state.tokenUsageForPrompt(&acpsdk.Usage{
+	first := state.tokenUsageForPrompt("dsh", &acpsdk.Usage{
 		InputTokens:       5_500,
 		OutputTokens:      500,
 		CachedReadTokens:  &firstRead,
@@ -37,7 +37,7 @@ func TestACPTokenUsagePreservesPromptUsage(t *testing.T) {
 	}
 
 	secondRead, secondWrite := 12_000, 1_500
-	second := state.tokenUsageForPrompt(&acpsdk.Usage{
+	second := state.tokenUsageForPrompt("dsh", &acpsdk.Usage{
 		InputTokens:       14_000,
 		OutputTokens:      1_600,
 		CachedReadTokens:  &secondRead,
@@ -51,6 +51,57 @@ func TestACPTokenUsagePreservesPromptUsage(t *testing.T) {
 	}
 	if second.CacheWriteTokens == nil || *second.CacheWriteTokens != 1_500 {
 		t.Fatalf("second cache write = %#v", second.CacheWriteTokens)
+	}
+}
+
+func TestACPTokenUsageConvertsCumulativeCountersToTurnDelta(t *testing.T) {
+	for _, agentName := range []string{"copilot", "unknown", "deepseek", ""} {
+		t.Run(agentName, func(t *testing.T) {
+			state := &sessionState{}
+			firstRead, firstWrite := 4_000, 1_000
+			first := state.tokenUsageForPrompt(agentName, &acpsdk.Usage{
+				InputTokens:       5_500,
+				OutputTokens:      500,
+				CachedReadTokens:  &firstRead,
+				CachedWriteTokens: &firstWrite,
+			})
+			if first == nil || first.InputTokens != 5_500 || first.OutputTokens != 500 {
+				t.Fatalf("first usage = %#v", first)
+			}
+
+			secondRead, secondWrite := 12_000, 1_500
+			second := state.tokenUsageForPrompt(agentName, &acpsdk.Usage{
+				InputTokens:       14_000,
+				OutputTokens:      1_600,
+				CachedReadTokens:  &secondRead,
+				CachedWriteTokens: &secondWrite,
+			})
+			if second == nil || second.InputTokens != 8_500 || second.OutputTokens != 1_100 {
+				t.Fatalf("second usage = %#v", second)
+			}
+			if second.CacheReadTokens == nil || *second.CacheReadTokens != 8_000 {
+				t.Fatalf("second cache read = %#v", second.CacheReadTokens)
+			}
+			if second.CacheWriteTokens == nil || *second.CacheWriteTokens != 500 {
+				t.Fatalf("second cache write = %#v", second.CacheWriteTokens)
+			}
+		})
+	}
+}
+
+func TestACPTokenUsageCounterResetAndMissingUsage(t *testing.T) {
+	for _, agentName := range []string{"dsh", "copilot"} {
+		t.Run(agentName, func(t *testing.T) {
+			state := &sessionState{}
+			state.tokenUsageForPrompt(agentName, &acpsdk.Usage{InputTokens: 1000, OutputTokens: 100})
+			if got := state.tokenUsageForPrompt(agentName, nil); got != nil {
+				t.Fatalf("missing usage = %#v", got)
+			}
+			got := state.tokenUsageForPrompt(agentName, &acpsdk.Usage{InputTokens: 500, OutputTokens: 50})
+			if got == nil || got.InputTokens != 500 || got.OutputTokens != 50 {
+				t.Fatalf("usage after counter reset = %#v", got)
+			}
+		})
 	}
 }
 

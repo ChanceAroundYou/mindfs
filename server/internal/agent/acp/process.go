@@ -79,8 +79,16 @@ type sessionState struct {
 	commands               []acp.AvailableCommand
 	contextWindow          types.ContextWindow
 	contextUsageUpdateSeen bool
+	lastUsage              cumulativeTokenUsage
 	onUpdate               func(SessionUpdate)
 	mu                     sync.RWMutex
+}
+
+type cumulativeTokenUsage struct {
+	inputTokens      int
+	outputTokens     int
+	cacheReadTokens  int
+	cacheWriteTokens int
 }
 
 type qwenSlashCommandNotification struct {
@@ -187,24 +195,44 @@ func (s *sessionState) hasContextUsageUpdate() bool {
 	return s.contextUsageUpdateSeen
 }
 
-// tokenUsageForPrompt normalizes the usage returned by one ACP prompt.
-// PromptResponse.Usage is scoped to the completed prompt; it is not a
-// session-wide counter and must not be differenced against an earlier prompt.
-func (s *sessionState) tokenUsageForPrompt(usage *acp.Usage) *types.TokenUsage {
+func (s *sessionState) tokenUsageForPrompt(agentName string, usage *acp.Usage) *types.TokenUsage {
 	if usage == nil {
 		return nil
 	}
-	result := &types.TokenUsage{
-		InputTokens:  max(0, usage.InputTokens),
-		OutputTokens: max(0, usage.OutputTokens),
+	current := cumulativeTokenUsage{
+		inputTokens:  max(0, usage.InputTokens),
+		outputTokens: max(0, usage.OutputTokens),
 	}
 	if usage.CachedReadTokens != nil {
-		value := max(0, *usage.CachedReadTokens)
+		current.cacheReadTokens = max(0, *usage.CachedReadTokens)
+	}
+	if usage.CachedWriteTokens != nil {
+		current.cacheWriteTokens = max(0, *usage.CachedWriteTokens)
+	}
+
+	// DSH's ACP adapter resets usage for every prompt. Other agents retain
+	// the existing cumulative-counter behavior until their semantics are verified.
+	var previous cumulativeTokenUsage
+	if agentName != "dsh" {
+		s.mu.Lock()
+		previous = s.lastUsage
+		s.lastUsage = current
+		s.mu.Unlock()
+	}
+
+	inputTokens := cumulativeCounterDelta(current.inputTokens, previous.inputTokens)
+	outputTokens := cumulativeCounterDelta(current.outputTokens, previous.outputTokens)
+	result := &types.TokenUsage{
+		InputTokens:  inputTokens,
+		OutputTokens: outputTokens,
+	}
+	if usage.CachedReadTokens != nil {
+		value := cumulativeCounterDelta(current.cacheReadTokens, previous.cacheReadTokens)
 		result.CacheReadTokens = &value
 		result.InputTokens = max(result.InputTokens, value)
 	}
 	if usage.CachedWriteTokens != nil {
-		value := max(0, *usage.CachedWriteTokens)
+		value := cumulativeCounterDelta(current.cacheWriteTokens, previous.cacheWriteTokens)
 		result.CacheWriteTokens = &value
 		result.InputTokens = max(result.InputTokens, value)
 	}
@@ -212,6 +240,13 @@ func (s *sessionState) tokenUsageForPrompt(usage *acp.Usage) *types.TokenUsage {
 		return nil
 	}
 	return result
+}
+
+func cumulativeCounterDelta(current, previous int) int {
+	if current < previous {
+		return current
+	}
+	return current - previous
 }
 
 // SessionUpdate is the internal session update type.
@@ -648,7 +683,7 @@ func (p *Process) SendMessage(ctx context.Context, sessionKey, content string) e
 			current.TotalTokens = max(0, resp.Usage.TotalTokens)
 			sess.setContextWindow(current)
 		}
-		tokenUsage = sess.tokenUsageForPrompt(resp.Usage)
+		tokenUsage = sess.tokenUsageForPrompt(p.agentName, resp.Usage)
 	}
 
 	// Signal completion
