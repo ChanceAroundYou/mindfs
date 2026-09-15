@@ -28,10 +28,13 @@ assert.equal(repairDuplicateDeployPrefix("https://pc.example/mindfs/mindfs/api",
 assert.equal(repairDuplicateDeployPrefix("https://pc.example/mindfs/api/mindfs", "/mindfs"), "https://pc.example/mindfs/api/mindfs");
 assert.equal(repairDuplicateDeployPrefix("https://pc.example/other", "/mindfs"), "https://pc.example/other");
 
-const fileTree = fs.readFileSync(path.join(root, "src/components/FileTree.tsx"), "utf8");
 const registry = fs.readFileSync(path.join(root, "src/services/nodeRegistry.ts"), "utf8");
-assert.match(fileTree, /const testUrl = normalized;/, "node probe must use the explicit remote base");
-assert.doesNotMatch(fileTree, /normalizeBaseURLWithPrefix\(normalized\)/, "node probe must not inherit the local prefix");
+// 节点连通性探测已从 FileTree 的「添加节点」popover 搬到 NodeManagerPanel（添加 + 改地址共用
+// probeCandidateUrl）；守卫跟着代码搬家，意图不变：候选地址必须用显式远端 base 直接拼，
+// 不得继承本地部署前缀，否则探测打到的是本机、连通性检查形同虚设。
+const nodeManager = fs.readFileSync(path.join(root, "src/components/NodeManagerPanel.tsx"), "utf8");
+assert.match(nodeManager, /fetch\(`\$\{normalizedUrl\}\/api\/agents`/, "node probe must use the explicit remote base");
+assert.doesNotMatch(nodeManager, /normalizeBaseURLWithPrefix\(/, "node probe must not inherit the local prefix");
 assert.match(registry, /const cacheAtStart = cache;/, "initial sync must detect a concurrent local write");
 assert.match(registry, /if \(cache !== cacheAtStart\) return cache \|\| nodes;/, "initial sync must not overwrite a concurrent local write");
 assert.match(registry, /await enqueueServerWrite\(merged\);\s*nodes = merged;\s*clearLegacyLocalNodes\(\);/s, "legacy nodes must only be cleared after a successful server write");
