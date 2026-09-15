@@ -21,11 +21,22 @@ const (
 	ExchangeSourceImport = "import"
 )
 
+// ExchangeHasLiveSignature 报告这一行是否带「实时路径」独有字段。
+// 老数据（2026-09 之前）没有 source 标注，只能靠这些字段认：转录导入器写行时
+// mode / effort / fast_service 恒为空串、model_display_name 与 token_usage 也不填，
+// 而实时路径会带上。
+func ExchangeHasLiveSignature(exchange Exchange) bool {
+	return strings.TrimSpace(exchange.ModelDisplayName) != "" ||
+		exchange.TokenUsage != nil ||
+		strings.TrimSpace(exchange.Mode) != "" ||
+		strings.TrimSpace(exchange.Effort) != "" ||
+		strings.TrimSpace(exchange.FastService) != ""
+}
+
 // SessionIsLiveOwned 报告这个会话的持久化是否归实时路径（"谁驱动，谁落盘"）。
 //
-// 判据是**推导**出来的，不落字段：会话里存在实时路径写的行（Source=live）就算被 MindFS
-// 驱动过；老数据（2026-09 之前没有 Source 标注）用实时路径独有的签名兜底
-// （model_display_name / token_usage 只有实时路径会填，导入器恒定留空）。
+// 判据是**推导**出来的，不落字段：会话里存在实时路径写的行（Source=live，老数据用
+// ExchangeHasLiveSignature 兜底）就算被 MindFS 驱动过。
 // 推导而不是存字段的好处：所有权可以随"第一次从 MindFS 发消息"自动翻转，不需要回填、
 // 也不会与 Session.Source（fork 用来存来源描述）冲突。
 func SessionIsLiveOwned(exchanges []Exchange) bool {
@@ -36,7 +47,7 @@ func SessionIsLiveOwned(exchanges []Exchange) bool {
 		if exchange.Source != "" {
 			continue
 		}
-		if strings.TrimSpace(exchange.ModelDisplayName) != "" || exchange.TokenUsage != nil {
+		if ExchangeHasLiveSignature(exchange) {
 			return true
 		}
 	}
