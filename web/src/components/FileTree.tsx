@@ -1,4 +1,5 @@
 import React from "react";
+import { ProviderModelSelect } from "./ProviderModelSelect";
 import { rootBadgeStyle } from "./rootBadgeStyle";
 import { openExternalURL } from "../services/platformNavigation";
 import { isNativeShellRuntime, shouldEnablePWAInstall } from "../services/runtime";
@@ -543,9 +544,9 @@ function AgentInstallIcon() {
   );
 }
 
-function TrashIcon() {
+function TrashIcon({ size = 13 }: { size?: number }) {
   return (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M3 6h18" />
       <path d="M8 6V4h8v2" />
       <path d="M19 6l-1 14H6L5 6" />
@@ -1073,7 +1074,6 @@ function AgentConfigPopover({
 	                <div style={agentConfigHintStyle}>{t("agentConfig.noAPIProviders")}</div>
               ) : apiProviders.map((item) => {
                 const selected = item.id === selectedAPIProviderID;
-                const summary = (item.modelFamilies || []).join(", ");
                 const testBusy = providerTestBusyID === item.id;
                 const testResult = providerTestResults[item.id] || "";
                 const models = item.models || [];
@@ -1086,29 +1086,13 @@ function AgentConfigPopover({
                       background: selected ? "var(--selection-bg)" : "transparent",
                       color: selected ? "var(--accent-color)" : "var(--text-primary)",
                       borderRadius: "8px",
-                      padding: "8px 10px",
+                      padding: "6px 8px",
                       textAlign: "left",
                       cursor: "pointer",
                     }}
                   >
                     <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                      <div style={{ minWidth: 0, flex: 1 }}>
-                        <div style={{ fontSize: "12px", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.name}</div>
-                        <div style={{ marginTop: "4px", fontSize: "11px", color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{summary}</div>
-                      </div>
-                      <button
-                        type="button"
-                        aria-label={t("agentConfig.testModel", { name: item.name })}
-                        title={t("agentConfig.testModel", { name: item.name })}
-                        disabled={busy || testBusy || models.length === 0}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          onTestProviderModel(item.id, providerTestModels[item.id] || models[0] || "");
-                        }}
-                        style={agentConfigIconButtonStyle(busy || testBusy)}
-                      >
-                        {testBusy ? "…" : t("agentConfig.testModelShort")}
-                      </button>
+                      <div title={item.name} style={{ minWidth: 0, flex: 1, fontSize: "12px", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.name}</div>
                       <button
                         type="button"
                         aria-label={t("agentConfig.deleteAPIProvider", { name: item.name })}
@@ -1120,35 +1104,34 @@ function AgentConfigPopover({
                         }}
                         style={agentConfigIconButtonStyle(busy)}
                       >
-                        <TrashIcon />
+                        <TrashIcon size={18} />
                       </button>
                     </div>
                     {models.length > 0 ? (
-                      <select
-                        value={providerTestModels[item.id] || models[0] || ""}
-                        onClick={(event) => event.stopPropagation()}
-                        onChange={(event) => {
-                          event.stopPropagation();
-                          onProviderTestModelChange(item.id, event.target.value);
-                        }}
-                        style={{
-                          marginTop: "6px",
-                          width: "100%",
-                          fontSize: "11px",
-                          padding: "3px 6px",
-                          border: "1px solid var(--border-color)",
-                          borderRadius: "6px",
-                          background: "var(--menu-bg)",
-                          color: "var(--text-primary)",
-                        }}
-                      >
-                        {models.map((model) => (
-                          <option key={model} value={model}>{model}</option>
-                        ))}
-                      </select>
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "4px", minWidth: 0 }}>
+                        <ProviderModelSelect
+                          models={models}
+                          value={providerTestModels[item.id] || models[0] || ""}
+                          label={t("agentConfig.testModel", { name: item.name })}
+                          onChange={(model) => onProviderTestModelChange(item.id, model)}
+                        />
+                        <button
+                          type="button"
+                          aria-label={t("agentConfig.testModel", { name: item.name })}
+                          title={t("agentConfig.testModel", { name: item.name })}
+                          disabled={busy || testBusy}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onTestProviderModel(item.id, providerTestModels[item.id] || models[0] || "");
+                          }}
+                          style={{ ...agentConfigSecondaryButtonStyle(busy || testBusy), flex: "0 0 auto", height: "22px", minHeight: 0, boxSizing: "border-box", padding: "0 8px", lineHeight: "18px", fontSize: "11px", whiteSpace: "nowrap" }}
+                        >
+                          {testBusy ? "…" : t("agentConfig.testModelShort")}
+                        </button>
+                      </div>
                     ) : null}
                     {testResult ? (
-                      <div style={{ marginTop: "6px", fontSize: "11px", color: "var(--text-secondary)", whiteSpace: "normal", overflowWrap: "anywhere", wordBreak: "break-word" }}>
+                      <div style={{ marginTop: "4px", fontSize: "11px", color: "var(--text-secondary)", whiteSpace: "normal", overflowWrap: "anywhere", wordBreak: "break-word" }}>
                         {testResult}
                       </div>
                     ) : null}
@@ -1596,6 +1579,7 @@ export function FileTree({
   const [agentConfigRestartingAgent, setAgentConfigRestartingAgent] = React.useState("");
   const [agentConfigError, setAgentConfigError] = React.useState("");
   const [agentConfigNotice, setAgentConfigNotice] = React.useState("");
+  const agentConfigFlowVersion = React.useRef(0);
   const [providerSyncBusy, setProviderSyncBusy] = React.useState(false);
   const [providerTestBusyID, setProviderTestBusyID] = React.useState("");
   const [providerTestResults, setProviderTestResults] = React.useState<Record<string, string>>({});
@@ -2067,6 +2051,8 @@ export function FileTree({
   const openAgentConfigFlow = React.useCallback((flow: AgentConfigFlow) => {
 	setIdleReleaseOpen(false);
     setAgentLifecycleOpen(false);
+    agentConfigFlowVersion.current += 1;
+    setAgentConfigNotice("");
     setAgentConfigFlow(flow);
     setAgentConfigStep("agent");
     setAgentConfigAgent("");
@@ -2101,6 +2087,8 @@ export function FileTree({
 
   const openSessionNaming = React.useCallback(() => {
 	setIdleReleaseOpen(false);
+    agentConfigFlowVersion.current += 1;
+    setAgentConfigNotice("");
     setAgentConfigFlow(null);
     setAgentLifecycleOpen(false);
     setRelayServicesOpen(false);
@@ -2143,6 +2131,8 @@ export function FileTree({
   }, [sessionNamingAgent, sessionNamingBusy, sessionNamingDisabled, sessionNamingModel, t]);
 
   const openIdleSessionResourceRelease = React.useCallback(() => {
+    agentConfigFlowVersion.current += 1;
+    setAgentConfigNotice("");
     setAgentConfigFlow(null);
     setAgentLifecycleOpen(false);
     setRelayServicesOpen(false);
@@ -2160,6 +2150,8 @@ export function FileTree({
   }, [t]);
 
   const openSendShortcut = React.useCallback(() => {
+    agentConfigFlowVersion.current += 1;
+    setAgentConfigNotice("");
     setAgentConfigFlow(null);
     setAgentLifecycleOpen(false);
     setRelayServicesOpen(false);
@@ -2204,6 +2196,8 @@ export function FileTree({
       .map((id) => String(id || "").trim())
       .filter(Boolean);
     setAgentLifecycleOpen(false);
+    agentConfigFlowVersion.current += 1;
+    setAgentConfigNotice("");
     setAgentConfigFlow("switch");
     setAgentConfigStep("agent");
     setAgentConfigAgent("");
@@ -2237,6 +2231,8 @@ export function FileTree({
   }, [agentConfigSwitchRequest?.nonce, t]);
 
   const closeAgentConfigFlow = React.useCallback(() => {
+    agentConfigFlowVersion.current += 1;
+    setAgentConfigNotice("");
     setAgentConfigFlow(null);
     setAgentConfigStep("agent");
     setAgentConfigError("");
@@ -2247,6 +2243,8 @@ export function FileTree({
   }, []);
 
   const openAgentLifecycleFlow = React.useCallback(() => {
+    agentConfigFlowVersion.current += 1;
+    setAgentConfigNotice("");
     setAgentConfigFlow(null);
     setAgentLifecycleOpen(true);
     setIsMenuOpen(false);
@@ -2526,14 +2524,16 @@ export function FileTree({
   }, [agentAPIProviders, selectedAgentAPIProviderID, t]);
 
   const syncAllAgentAPIProviderModels = React.useCallback(async () => {
+    const flowVersion = agentConfigFlowVersion.current;
     setProviderSyncBusy(true);
     setAgentConfigError("");
     setAgentConfigNotice("");
     try {
       const result = await syncAllAgentAPIProviders();
+      invalidateAgentAPIProvidersCache();
+      if (flowVersion !== agentConfigFlowVersion.current) return;
       const providers = result.providers || [];
       setAgentAPIProviders(providers);
-      invalidateAgentAPIProvidersCache();
       const results = result.results || [];
       const failed = results.filter((item) => !item.success);
       const succeeded = results.filter((item) => item.success);
@@ -2570,6 +2570,7 @@ export function FileTree({
       }
       setAgentConfigNotice(sections.join("\n"));
     } catch (error) {
+      if (flowVersion !== agentConfigFlowVersion.current) return;
       // 同步失败时后端保留旧模型列表，这里提示错误即可。
       setAgentConfigError(error instanceof Error ? error.message : t("agentConfig.syncProvidersFailed"));
     } finally {

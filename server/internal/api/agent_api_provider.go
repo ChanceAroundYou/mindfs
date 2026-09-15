@@ -385,7 +385,7 @@ func syncAllAgentAPIProviders(ctx context.Context, prefs *preferences.Store) ([]
 				ID:         provider.ID,
 				Name:       provider.Name,
 				Success:    false,
-				Error:      sanitizeAPIProviderError(err.Error()),
+				Error:      sanitizeAPIProviderError(err.Error(), provider.APIKey),
 				ModelCount: len(provider.Models),
 			})
 			continue
@@ -437,7 +437,7 @@ func reapplySyncedProvider(prefs *preferences.Store, provider agentAPIProvider) 
 		err := applyAgentAPIProvider(name, provider, nil)
 		result := agentAPIProviderSyncAgentResult{Agent: name, Success: err == nil}
 		if err != nil {
-			result.Error = sanitizeAPIProviderError(err.Error())
+			result.Error = sanitizeAPIProviderError(err.Error(), provider.APIKey)
 		}
 		results = append(results, result)
 	}
@@ -489,7 +489,7 @@ func testAgentAPIProviderModel(ctx context.Context, req agentAPIProviderTestRequ
 		Protocol:  chosen,
 	}
 	if err != nil {
-		result.Error = sanitizeAPIProviderError(err.Error())
+		result.Error = sanitizeAPIProviderError(err.Error(), target.APIKey)
 		return result, nil
 	}
 	result.Response = truncateAPIProviderResponse(response)
@@ -520,7 +520,17 @@ func runAPIProviderModelTest(ctx context.Context, protocol, baseURL, apiKey, mod
 const apiProviderTestTimeout = 30 * time.Second
 const apiProviderTestMaxTokens = 32
 
-func sanitizeAPIProviderError(message string) string {
+func sanitizeAPIProviderError(message string, secrets ...string) string {
+	// Redact before truncating so a key crossing the length limit cannot leak.
+	for _, secret := range secrets {
+		if secret == "" {
+			continue
+		}
+		encoded, _ := json.Marshal(secret)
+		for _, value := range []string{string(encoded[1 : len(encoded)-1]), url.QueryEscape(secret), url.PathEscape(secret), secret} {
+			message = strings.ReplaceAll(message, value, "[REDACTED]")
+		}
+	}
 	message = strings.TrimSpace(message)
 	if message == "" {
 		return "unknown error"
@@ -629,14 +639,9 @@ func testGeminiCompatibleModel(ctx context.Context, baseURL, apiKey, model, prom
 			"maxOutputTokens": apiProviderTestMaxTokens,
 		},
 	}
-	endpoint, err := url.Parse(geminiGenerateURL(baseURL, model))
-	if err != nil {
-		return "", err
-	}
-	q := endpoint.Query()
-	q.Set("key", apiKey)
-	endpoint.RawQuery = q.Encode()
-	data, err := postAPIProviderJSON(ctx, endpoint.String(), body)
+	data, err := postAPIProviderJSON(ctx, geminiGenerateURL(baseURL, model), body, map[string]string{
+		"x-goog-api-key": apiKey,
+	})
 	if err != nil {
 		return "", err
 	}
@@ -673,7 +678,7 @@ func testGeminiCompatibleModel(ctx context.Context, baseURL, apiKey, model, prom
 }
 
 func openAIChatURL(baseURL string) string {
-	return strings.TrimRight(baseURL, "/") + "/chat/completions"
+	return openAIModelsBaseURL(baseURL) + "/chat/completions"
 }
 
 func anthropicMessagesURL(baseURL string) string {
@@ -718,7 +723,7 @@ func postAPIProviderJSON(ctx context.Context, endpoint string, body map[string]a
 		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("status %d %s", resp.StatusCode, sanitizeAPIProviderError(string(data)))
+		return nil, fmt.Errorf("status %d %s", resp.StatusCode, string(data))
 	}
 	return data, nil
 }
@@ -1691,8 +1696,9 @@ func doModelProbe(req *http.Request, target any) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("status %d %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		return fmt.Errorf("status %d %s", resp.StatusCode, sanitizeAPIProviderError(string(body),
+			strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer "), req.Header.Get("x-api-key"), req.URL.Query().Get("key")))
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(target); err != nil {
 		return err
