@@ -735,6 +735,31 @@ export function SessionList({
   );
 }
 
+// 项目置顶的本地缓存：右栏每次打开都重挂载本组件，同步读 localStorage 起始态，
+// 避免「先按无置顶渲染、偏好到达后重排」的闪动；服务端偏好仍是事实源
+function readLocalProjectPins(): Record<string, number> {
+  if (typeof window === "undefined") return {};
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(PINNED_PROJECTS_STORAGE_KEY) || "{}");
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const next: Record<string, number> = {};
+      for (const [key, value] of Object.entries(parsed)) {
+        const timestamp = Number(value);
+        if (key && Number.isFinite(timestamp) && timestamp > 0) next[key] = timestamp;
+      }
+      return next;
+    }
+  } catch {}
+  return {};
+}
+
+function writeLocalProjectPins(pins: Record<string, number>): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(PINNED_PROJECTS_STORAGE_KEY, JSON.stringify(pins));
+  } catch {}
+}
+
 export function MultiProjectSessionList({
   groups,
   selectedKey = "",
@@ -761,27 +786,18 @@ export function MultiProjectSessionList({
   const [expandedChildren, setExpandedChildren] = useState<Record<string, boolean>>({});
   const [loadingChildren, setLoadingChildren] = useState<Record<string, boolean>>({});
   const [childrenHasMore, setChildrenHasMore] = useState<Record<string, boolean>>({});
-  const [pinnedProjects, setPinnedProjects] = useState<Record<string, number>>({});
-  // 项目置顶持久化到服务端偏好（跨设备/清缓存不丢）；加载失败回退本地 localStorage 旧数据
+  const [pinnedProjects, setPinnedProjects] = useState<Record<string, number>>(readLocalProjectPins);
+  // 项目置顶持久化到服务端偏好（跨设备/清缓存不丢）；本地缓存先出帧，服务端返回后校正并回写
   useEffect(() => {
     let cancelled = false;
     fetchSessionProjectPins()
       .then((pins) => {
-        if (!cancelled) setPinnedProjects(pins);
+        if (cancelled) return;
+        setPinnedProjects(pins);
+        writeLocalProjectPins(pins);
       })
       .catch(() => {
-        if (typeof window === "undefined") return;
-        try {
-          const parsed = JSON.parse(window.localStorage.getItem(PINNED_PROJECTS_STORAGE_KEY) || "{}");
-          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-            const next: Record<string, number> = {};
-            for (const [key, value] of Object.entries(parsed)) {
-              const timestamp = Number(value);
-              if (key && Number.isFinite(timestamp) && timestamp > 0) next[key] = timestamp;
-            }
-            if (!cancelled && Object.keys(next).length > 0) setPinnedProjects(next);
-          }
-        } catch {}
+        if (!cancelled) setPinnedProjects(readLocalProjectPins());
       });
     return () => {
       cancelled = true;
@@ -836,6 +852,7 @@ export function MultiProjectSessionList({
       next[key] = Date.now();
     }
     setPinnedProjects(next);
+    writeLocalProjectPins(next);
     // 置顶状态写服务端偏好；失败只回退本地 UI，下次拉取会纠正
     void updateSessionProjectPins(next).catch(() => {});
   };
@@ -1088,6 +1105,7 @@ export function MultiProjectSessionList({
               const groupNodeId = String((group as any)?._nodeId || "").trim();
               const expanded = expandedProjects[groupKey] ?? groupDefaultExpanded(group);
               const pinned = !!pinnedProjects[groupKey];
+              const groupColor = String((group as any)._nodeColor || resolveGroupColor(group as any, {}, getNodes() as any) || PALETTE[0]);
               const topLevelSessions = topLevelSessionsForGroup(group.sessions);
               const sessions = expanded ? group.sessions : [];
               const rows = buildRows(sessions, group.rootId, groupNodeId);
@@ -1097,7 +1115,7 @@ export function MultiProjectSessionList({
                 <section key={`${(group as any)._nodeId || ""}::${group.rootId}`} style={{ minWidth: 0 }}>
                   <div style={{ position: "relative" }}>
                     <NodeBadgeHeader
-                      color={String((group as any)._nodeColor || resolveGroupColor(group as any, {}, getNodes() as any) || PALETTE[0])}
+                      color={groupColor}
                       label={group.rootName || group.rootId}
                       collapsed={!expanded}
                       onClick={() => void handleProjectHeaderToggle(group)}
@@ -1118,7 +1136,7 @@ export function MultiProjectSessionList({
                         borderRadius: "6px",
                         padding: 0,
                         background: "transparent",
-                        color: pinned ? "#4b5563" : "var(--text-secondary)",
+                        color: pinned ? groupColor : "var(--text-secondary)",
                         display: "inline-flex",
                         alignItems: "center",
                         justifyContent: "center",
