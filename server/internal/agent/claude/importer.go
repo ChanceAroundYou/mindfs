@@ -139,7 +139,7 @@ func (i *Importer) ImportExternalSession(_ context.Context, in agenttypes.Import
 		return agenttypes.ImportedExternalSession{}, errors.New("agent session id required")
 	}
 	if file, ok := i.lookupSessionFile(targetID, rootPath); ok {
-		return i.importSessionFile(file, in.AfterTimestamp, in.Cursor, in.ForceRead)
+		return i.importSessionFile(file, in.AfterTimestamp, in.TimestampFloor, in.Cursor, in.ForceRead)
 	}
 	// 主目录未命中时继续扫描根目录下 .worktree/* 的转录目录：Agent 转录按 spawn cwd
 	// 归档（Claude Code: ~/.claude/projects/<slug(cwd)>），worktree 会话落在各自的
@@ -153,13 +153,13 @@ func (i *Importer) ImportExternalSession(_ context.Context, in agenttypes.Import
 			if file.AgentSessionID != targetID {
 				continue
 			}
-			return i.importSessionFile(file, in.AfterTimestamp, in.Cursor, in.ForceRead)
+			return i.importSessionFile(file, in.AfterTimestamp, in.TimestampFloor, in.Cursor, in.ForceRead)
 		}
 	}
 	return agenttypes.ImportedExternalSession{}, errors.New("external session not found")
 }
 
-func (i *Importer) importSessionFile(file claudeSessionFile, after time.Time, previous agenttypes.ExternalSessionCursor, forceRead bool) (agenttypes.ImportedExternalSession, error) {
+func (i *Importer) importSessionFile(file claudeSessionFile, after, floor time.Time, previous agenttypes.ExternalSessionCursor, forceRead bool) (agenttypes.ImportedExternalSession, error) {
 	cursor, unchanged, err := externalSessionFileCursor(file.Path, previous)
 	if err != nil {
 		return agenttypes.ImportedExternalSession{}, err
@@ -174,7 +174,7 @@ func (i *Importer) importSessionFile(file claudeSessionFile, after time.Time, pr
 		cursor.CommittedOffset = committed
 		return agenttypes.ImportedExternalSession{Agent: i.agentName, AgentSessionID: file.AgentSessionID, Cwd: file.Cwd, Cursor: cursor}, nil
 	}
-	exchanges, nextCommitted, err := readClaudeImportedExchanges(file.Path, committed, after)
+	exchanges, nextCommitted, err := readClaudeImportedExchanges(file.Path, committed, after, floor)
 	if err != nil {
 		log.Printf("[agent/claude/importer] import session read failed session_id=%s path=%s err=%v", file.AgentSessionID, file.Path, err)
 		return agenttypes.ImportedExternalSession{}, err
@@ -285,7 +285,7 @@ func (i *Importer) readClaudeImportedSubagents(parentPath string, parentStartOff
 			if relation.ParentAgentID != "" && !added[relation.ParentAgentID] {
 				continue
 			}
-			exchanges, _, err := readClaudeImportedExchanges(pathsByAgentID[agentID], 0, time.Time{})
+			exchanges, _, err := readClaudeImportedExchanges(pathsByAgentID[agentID], 0, time.Time{}, time.Time{})
 			if err != nil {
 				return nil, err
 			}
@@ -451,7 +451,7 @@ func (i *Importer) ResolveForkPointByAgentTurnIndex(ctx context.Context, in agen
 	if !ok {
 		return agenttypes.ResolveForkPointOutput{}, errors.New("external session not found")
 	}
-	items, _, err := readClaudeImportedExchangeLocators(file.Path, 0, time.Time{})
+	items, _, err := readClaudeImportedExchangeLocators(file.Path, 0, time.Time{}, time.Time{})
 	if err != nil {
 		return agenttypes.ResolveForkPointOutput{}, err
 	}
@@ -769,8 +769,8 @@ func inspectClaudeSessionFile(path string) (claudeSessionFile, bool, error) {
 // committedOffset<=0 表示该会话从未同步过（库里 229/232 个绑定都是这种，游标为空），
 // 此时不知道已读到哪，退回到 bootstrapAfter 时间戳判据：只取比库内最新一条更新的回合。
 // 本次同步会把游标建起来，之后一律走字节偏移。
-func readClaudeImportedExchanges(path string, committedOffset int64, bootstrapAfter time.Time) ([]agenttypes.ImportedExchange, int64, error) {
-	locators, committed, err := readClaudeImportedExchangeLocators(path, committedOffset, bootstrapAfter)
+func readClaudeImportedExchanges(path string, committedOffset int64, bootstrapAfter, floor time.Time) ([]agenttypes.ImportedExchange, int64, error) {
+	locators, committed, err := readClaudeImportedExchangeLocators(path, committedOffset, bootstrapAfter, floor)
 	if err != nil {
 		return nil, committedOffset, err
 	}
@@ -789,7 +789,7 @@ func claudeTranscriptTailClosed(lastRole string, lastHadToolUse, lastHadText boo
 	return lastRole == "assistant" && !lastHadToolUse && lastHadText
 }
 
-func readClaudeImportedExchangeLocators(path string, committedOffset int64, bootstrapAfter time.Time) ([]importedExchangeLocator, int64, error) {
+func readClaudeImportedExchangeLocators(path string, committedOffset int64, bootstrapAfter, floor time.Time) ([]importedExchangeLocator, int64, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, committedOffset, apperr.Wrap("open", path, err)
@@ -942,9 +942,21 @@ func readClaudeImportedExchangeLocators(path string, committedOffset int64, boot
 		}
 	}
 	filtered := make([]importedExchangeLocator, 0, len(items))
+	// floor 是给「live-owned 会话的兜底补齐」用的：那种会话的游标冻结已久，只按偏移读会把
+	// 早已落库的回合整段重导（实测 2026-09-16 BP 会话重导了 09-14 的内容，与实时路径写的
+	// 行并排显示成重复）。有地板时：游标决定从哪开始读，地板决定读到的东西算不算数。
+	passesFloor := func(item importedExchangeLocator) bool {
+		if floor.IsZero() {
+			return true
+		}
+		return !item.Timestamp.IsZero() && item.Timestamp.After(floor)
+	}
 	if committedOffset > 0 {
 		for _, item := range items {
 			if item.StartOffset < committedOffset {
+				continue
+			}
+			if !passesFloor(item) {
 				continue
 			}
 			filtered = append(filtered, item)
@@ -956,7 +968,7 @@ func readClaudeImportedExchangeLocators(path string, committedOffset int64, boot
 		return items, committed, nil
 	}
 	for _, item := range items {
-		if item.Timestamp.IsZero() || !item.Timestamp.After(bootstrapAfter) {
+		if item.Timestamp.IsZero() || !item.Timestamp.After(bootstrapAfter) || !passesFloor(item) {
 			continue
 		}
 		filtered = append(filtered, item)

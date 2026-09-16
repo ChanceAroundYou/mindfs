@@ -47,7 +47,7 @@ func TestReadClaudeImportedExchangesDropsMetaUserEntries(t *testing.T) {
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	items, _, err := readClaudeImportedExchanges(path, 0, time.Time{})
+	items, _, err := readClaudeImportedExchanges(path, 0, time.Time{}, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +76,7 @@ func TestReadClaudeImportedExchangesDropsAutoContinuePair(t *testing.T) {
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	items, _, err := readClaudeImportedExchanges(path, 0, time.Time{})
+	items, _, err := readClaudeImportedExchanges(path, 0, time.Time{}, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func TestReadClaudeImportedExchangesDropsInterruptMarker(t *testing.T) {
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	items, _, err := readClaudeImportedExchanges(path, 0, time.Time{})
+	items, _, err := readClaudeImportedExchanges(path, 0, time.Time{}, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +142,7 @@ func TestReadClaudeImportedExchangesDropsTaskNotification(t *testing.T) {
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	items, _, err := readClaudeImportedExchanges(path, 0, time.Time{})
+	items, _, err := readClaudeImportedExchanges(path, 0, time.Time{}, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,7 @@ func TestReadClaudeImportedExchangesDropsSystemNotificationPreamble(t *testing.T
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	items, _, err := readClaudeImportedExchanges(path, 0, time.Time{})
+	items, _, err := readClaudeImportedExchanges(path, 0, time.Time{}, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +207,7 @@ func TestReadClaudeImportedExchangesDedupesRepeatedUUIDs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	items, _, err := readClaudeImportedExchanges(path, 0, time.Time{})
+	items, _, err := readClaudeImportedExchanges(path, 0, time.Time{}, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -241,7 +241,7 @@ func TestReadClaudeImportedExchangesDedupesUUIDsWithToolResults(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	items, _, err := readClaudeImportedExchanges(path, 0, time.Time{})
+	items, _, err := readClaudeImportedExchanges(path, 0, time.Time{}, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -268,7 +268,7 @@ func TestReadClaudeImportedExchangesIgnoresUnsupportedToolCall(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	items, _, err := readClaudeImportedExchanges(path, 0, time.Time{})
+	items, _, err := readClaudeImportedExchanges(path, 0, time.Time{}, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -295,7 +295,7 @@ func TestReadClaudeImportedExchangesMarksFailedToolResult(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	items, _, err := readClaudeImportedExchanges(path, 0, time.Time{})
+	items, _, err := readClaudeImportedExchanges(path, 0, time.Time{}, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -320,7 +320,7 @@ func TestReadClaudeImportedExchangesIncludesPlanToolCall(t *testing.T) {
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	items, _, err := readClaudeImportedExchanges(path, 0, time.Time{})
+	items, _, err := readClaudeImportedExchanges(path, 0, time.Time{}, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -342,7 +342,7 @@ func TestReadClaudeImportedExchangesIncludesAskUserToolCall(t *testing.T) {
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	items, _, err := readClaudeImportedExchanges(path, 0, time.Time{})
+	items, _, err := readClaudeImportedExchanges(path, 0, time.Time{}, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -542,7 +542,7 @@ func TestReadClaudeImportedExchangesIncremental(t *testing.T) {
 	if err := os.WriteFile(path, []byte(head), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	first, committed, err := readClaudeImportedExchanges(path, 0, time.Time{})
+	first, committed, err := readClaudeImportedExchanges(path, 0, time.Time{}, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -566,7 +566,7 @@ func TestReadClaudeImportedExchangesIncremental(t *testing.T) {
 	}
 	f.Close()
 
-	inc, committed2, err := readClaudeImportedExchanges(path, committed, time.Time{})
+	inc, committed2, err := readClaudeImportedExchanges(path, committed, time.Time{}, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -587,7 +587,7 @@ func TestReadClaudeImportedExchangesIncremental(t *testing.T) {
 	}
 
 	// 稳态：文件无新增时续读应为空——「不会重复追加」的依据。
-	eof, committed3, err := readClaudeImportedExchanges(path, committed2, time.Time{})
+	eof, committed3, err := readClaudeImportedExchanges(path, committed2, time.Time{}, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -611,7 +611,7 @@ func TestReadClaudeImportedExchangesHoldsOpenTail(t *testing.T) {
 	if err := os.WriteFile(path, []byte(head), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	open, committed, err := readClaudeImportedExchanges(path, 0, time.Time{})
+	open, committed, err := readClaudeImportedExchanges(path, 0, time.Time{}, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -630,7 +630,7 @@ func TestReadClaudeImportedExchangesHoldsOpenTail(t *testing.T) {
 	if err := os.WriteFile(path, []byte(done), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	closed, committed2, err := readClaudeImportedExchanges(path, committed, time.Time{})
+	closed, committed2, err := readClaudeImportedExchanges(path, committed, time.Time{}, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -646,11 +646,60 @@ func TestReadClaudeImportedExchangesHoldsOpenTail(t *testing.T) {
 	}
 
 	// 再同步一次不得重复提交。
-	again, _, err := readClaudeImportedExchanges(path, committed2, time.Time{})
+	again, _, err := readClaudeImportedExchanges(path, committed2, time.Time{}, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(again) != 0 {
 		t.Fatalf("已提交的轮次不得重复产出，得到 %d 条", len(again))
+	}
+}
+
+// 时间地板（TimestampFloor）：live-owned 会话的游标冻结已久，重启后的兜底补齐若只按偏移读，
+// 会把早已落库的旧回合整段重导一遍——那些重导行因为「相邻同角色合并」内容并不逐字相同，
+// 写入侧判重和读取投影都折叠不掉。加了地板之后：游标决定从哪开始读，地板决定读到的东西
+// 算不算数，兜底补齐只拿「比库里最新一条更新」的尾轮。
+func TestReadClaudeImportedExchangesHonorsTimestampFloor(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	body := `{"type":"user","uuid":"u1","timestamp":"2026-09-14T01:00:00Z","message":{"content":[{"type":"text","text":"老旧的一轮"}]}}
+{"type":"assistant","uuid":"a1","timestamp":"2026-09-14T01:00:05Z","message":{"content":[{"type":"text","text":"老旧的回复"}]}}
+{"type":"user","uuid":"u2","timestamp":"2026-09-16T01:04:16Z","message":{"content":[{"type":"text","text":"刚被中断的那一轮"}]}}
+{"type":"assistant","uuid":"a2","timestamp":"2026-09-16T01:04:20Z","message":{"content":[{"type":"text","text":"尾轮回复"}]}}
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// 游标停在文件开头（模拟冻结的旧游标），地板设为 09-15
+	floor := time.Date(2026, 9, 15, 0, 0, 0, 0, time.UTC)
+	items, _, err := readClaudeImportedExchanges(path, 1, time.Time{}, floor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("地板应滤掉 09-14 的两条，只留 09-16 的两条，得到 %d 条: %+v", len(items), items)
+	}
+	for _, item := range items {
+		if item.Timestamp.Before(floor) {
+			t.Fatalf("地板以下的条目不该被导出: %+v", item)
+		}
+	}
+	// 没有地板时行为不变（既有的导入器路径不受影响）：老条目会照常出现在结果里。
+	// 注意末尾那条可能被「尾轮未收尾就先不落库」扣住，所以这里只断言"比有地板时多，
+	// 且确实带上了 09-14 的老条目"，不去咬死具体条数。
+	all, _, err := readClaudeImportedExchanges(path, 1, time.Time{}, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) <= len(items) {
+		t.Fatalf("不给地板时应带上老条目（多于 %d 条），得到 %d 条", len(items), len(all))
+	}
+	var sawOld bool
+	for _, item := range all {
+		if item.Timestamp.Before(floor) {
+			sawOld = true
+		}
+	}
+	if !sawOld {
+		t.Fatalf("不给地板时应能看到 09-14 的老条目: %+v", all)
 	}
 }

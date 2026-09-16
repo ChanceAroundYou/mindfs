@@ -75,10 +75,6 @@ type SyncExternalSessionDeltaOutput struct {
 
 var externalSessionSyncLocks sync.Map
 
-// externalSyncRecovered 记录本进程启动后已经做过一次「兜底补齐」的会话。
-// live-owned 会话平时不让导入器碰，只在启动后允许补一次被中断的尾轮；进程重启即重置。
-var externalSyncRecovered sync.Map
-
 // externalSessionSyncTimes 记录每个 (rootID,key) 最近一次 best-effort 同步时间，用于节流。
 // externalSyncThrottle 内重复的非 Full 同步直接跳过，避免 handleSessionGet 高频轮询重复磁盘扫描。
 // ponytail: 无清理（外部会话绑定数量有限），若会话海量需换成带 TTL 的 map。
@@ -336,17 +332,20 @@ func (s *Service) SyncExternalSessionDelta(ctx context.Context, in SyncExternalS
 	}
 	out.LastTimestamp = lastTimestamp
 
-	// 所有权守卫：MindFS 自己在驱动的会话由实时路径独占持久化，导入器不再做常规增量同步。
-	// 双写（同一轮两个写入者各落一行）是 2026-04-29 自动同步上线时的副作用，判重只能靠
-	// 「内容相似 + ±5 秒」猜，实测 6.4s / 15.6s / 36.7s 的差值全会漏——根子是两个写入者
-	// 的时间戳取自不同事件。这里把「谁驱动，谁落盘」变成可判定的属性，从源头断掉。
-	// 仍然保留两个例外：① 用户手动点「同步」（Full）；② 进程启动后每个会话一次兜底补齐
-	// （内存集合去重，重启即重置）——用来补进程重启时被中断的那一轮。
+	// 所有权守卫：MindFS 自己在驱动的会话由实时路径独占持久化，导入器**一律不做自动增量
+	// 同步**。双写（同一轮两个写入者各落一行）是 2026-04-29 自动同步上线时的副作用，判重
+	// 只能靠「内容相似 + ±5 秒」猜，实测 6.4s / 15.6s / 36.7s 的差值全会漏。
+	//
+	// 这里曾经留过「进程启动后每会话一次兜底补齐」的例外，2026-09-16 被真实事故证伪并撤掉：
+	// live-owned 会话的字节游标是**冻结**的（导入器平时不跑），拿它当起点会把早已落库的旧
+	// 回合整段重导；而导入器会把相邻同角色条目**合并**，重导出来的行与实时路径写的行并不
+	// 逐字相同 —— 写入侧判重（±5s）和读取投影（内容相等 / 600s 前缀窗）都折叠不掉，于是
+	// 用户看到「ask 下面又渲染了一轮出现过的文字」（AIS/docs 的 BP 会话，重导了 09-14 的内容）。
+	//
+	// 需要补历史时走用户手点的「同步」（Full）：那是显式意图，且带时间地板（见下），
+	// 只会补「比库里最新一条更新」的部分。
 	if !in.Full && session.SessionIsLiveOwned(current.Exchanges) {
-		if _, done := externalSyncRecovered.LoadOrStore(in.Key, struct{}{}); done {
-			return out, nil
-		}
-		log.Printf("[session/sync] live-owned root=%s session=%s 本次为进程启动后唯一一次兜底补齐，此后常规增量同步直接跳过", strings.TrimSpace(in.RootID), strings.TrimSpace(in.Key))
+		return out, nil
 	}
 
 	importer, err := s.resolveExternalSessionImporter(agentName)
@@ -357,6 +356,15 @@ func (s *Service) SyncExternalSessionDelta(ctx context.Context, in SyncExternalS
 		RootPath:       root.RootPath,
 		Agent:          agentName,
 		AgentSessionID: binding.AgentSessionID,
+	}
+	// live-owned 会话的游标是**冻结**的（导入器平时不跑），只按偏移读会把早已落库的旧回合
+	// 整段重导一遍——实测 2026-09-16：BP 会话被重导了 09-14 的内容，且因为导入器会把相邻
+	// 同角色条目合并，那些重导行的内容与实时路径写的行并不逐字相同，写入侧判重和读取投影
+	// 都折叠不掉，用户看到「ask 下面又渲染了一轮出现过的文字」。
+	// 所以给这种会话一道时间地板：只接受比库里最新一条更新的条目，兜底补齐真正要的
+	// 只是「进程重启时被中断的那一轮」。
+	if session.SessionIsLiveOwned(current.Exchanges) {
+		importInput.TimestampFloor = lastTimestamp
 	}
 	// Child-agent JSONL files may keep growing without changing the root file.
 	// Keep the root cursor fast path only when there are no imported children.

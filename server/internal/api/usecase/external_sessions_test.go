@@ -612,22 +612,14 @@ func TestSyncExternalSessionDeltaSkipsLiveOwnedSession(t *testing.T) {
 	}}
 	svc := &Service{Registry: &syncDeltaTestRegistry{root: root, manager: manager, importer: importer}}
 
-	// 启动后第一次：允许一次兜底补齐（补进程重启时被中断的尾轮）
-	if _, err := svc.SyncExternalSessionDelta(context.Background(), SyncExternalSessionDeltaInput{RootID: root.ID, Key: created.Key}); err != nil {
-		t.Fatal(err)
-	}
-	if importer.calls == 0 {
-		t.Fatalf("启动后首次应当允许兜底补齐（读一次转录）")
-	}
-
-	// 之后：常规增量同步必须被守卫拦下。先把 2 秒节流抹掉，确保不是节流挡的。
+	// 常规增量同步（非 Full）：一律拦下，**没有**启动例外。曾经的「进程启动后补一次」
+	// 在 2026-09-16 被真实事故证伪：冻结游标会把早已落库的旧回合整段重导。
 	externalSessionSyncTimes.Store(externalSyncLockKey(root.ID, created.Key), time.Now().Add(-time.Hour))
-	importer.calls = 0
 	if _, err := svc.SyncExternalSessionDelta(context.Background(), SyncExternalSessionDeltaInput{RootID: root.ID, Key: created.Key}); err != nil {
 		t.Fatal(err)
 	}
 	if importer.calls != 0 {
-		t.Fatalf("live-owned 会话的常规增量同步应当被拦下，实际读了转录 %d 次", importer.calls)
+		t.Fatalf("live-owned 会话的常规增量同步应当一律拦下，实际读了转录 %d 次", importer.calls)
 	}
 
 	// 用户手点「同步」：始终允许
@@ -730,5 +722,60 @@ func TestSyncExternalSessionDeltaFullImportsSubagentTurns(t *testing.T) {
 	}
 	if roles["user"] != 1 || roles["agent"] != 2 {
 		t.Fatalf("子会话行构成 = %v, want {user:1 agent:2}（多回合 + user 行都应当被同步进来）", roles)
+	}
+}
+
+// live-owned 会话的导入必须带时间地板：游标是冻结的旧值，只按偏移读会把早就落库的回合
+// 整段重导（2026-09-16 BP 会话的真实事故）。import-owned 会话不受影响。
+func TestSyncExternalSessionDeltaSetsFloorForLiveOwnedOnly(t *testing.T) {
+	root := fs.NewRootInfo("root", "Root", t.TempDir())
+	manager := session.NewManager(root)
+	ctx := context.Background()
+	stamp := time.Date(2026, 9, 15, 12, 47, 25, 0, time.UTC)
+
+	liveOwned, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, Agent: "codex", Name: "Live"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	liveCtx := session.WithExchangeSource(ctx, session.ExchangeSourceLive)
+	if err := manager.AddExchangeForAgentAt(liveCtx, liveOwned, "agent", "实时写的末尾一行", "codex", "", "", "", stamp); err != nil {
+		t.Fatal(err)
+	}
+	importOwned, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, Agent: "codex", Name: "Import"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	importCtx := session.WithExchangeSource(ctx, session.ExchangeSourceImport)
+	if err := manager.AddExchangeForAgentAt(importCtx, importOwned, "agent", "导入写的末尾一行", "codex", "", "", "", stamp); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{liveOwned.Key, importOwned.Key} {
+		current, err := manager.Get(ctx, key, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := manager.UpdateAgentState(ctx, current, "codex", len(current.Exchanges), "external-"+key[:4]); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	importer := &syncDeltaTestImporter{}
+	svc := &Service{Registry: &syncDeltaTestRegistry{root: root, manager: manager, importer: importer}}
+
+	externalSessionSyncTimes.Store(externalSyncLockKey(root.ID, liveOwned.Key), time.Now().Add(-time.Hour))
+	if _, err := svc.SyncExternalSessionDelta(ctx, SyncExternalSessionDeltaInput{RootID: root.ID, Key: liveOwned.Key, Full: true}); err != nil {
+		t.Fatal(err)
+	}
+	if !importer.input.TimestampFloor.Equal(stamp) {
+		t.Fatalf("live-owned 会话的地板 = %v，want %v（库里最新一条的时间戳）", importer.input.TimestampFloor, stamp)
+	}
+
+	externalSessionSyncTimes.Store(externalSyncLockKey(root.ID, importOwned.Key), time.Now().Add(-time.Hour))
+	importer.input = agenttypes.ImportExternalSessionInput{}
+	if _, err := svc.SyncExternalSessionDelta(ctx, SyncExternalSessionDeltaInput{RootID: root.ID, Key: importOwned.Key, Full: true}); err != nil {
+		t.Fatal(err)
+	}
+	if !importer.input.TimestampFloor.IsZero() {
+		t.Fatalf("import-owned 会话不该带地板，得到 %v", importer.input.TimestampFloor)
 	}
 }
