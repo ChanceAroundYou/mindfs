@@ -22,7 +22,7 @@ func TestReplayRealTranscriptOpenTail(t *testing.T) {
 	if path == "" {
 		t.Skip("set MIND_FS_REPLAY_TRANSCRIPT")
 	}
-	items, committed, err := readClaudeImportedExchanges(path, 0, time.Time{})
+	items, committed, err := readClaudeImportedExchanges(path, 0, time.Time{}, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
