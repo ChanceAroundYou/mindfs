@@ -24,10 +24,28 @@ func NewPromptStore() (*PromptStore, error) {
 	if err != nil {
 		return nil, err
 	}
+	return NewPromptStoreAt(configDir)
+}
+
+// NewPromptStoreAt 把提示词库放在指定目录（多账户：每个账户一套）。
+func NewPromptStoreAt(configDir string) (*PromptStore, error) {
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		return nil, err
 	}
 	return &PromptStore{filePath: filepath.Join(configDir, "prompts.json")}, nil
+}
+
+// OpenPromptStore 按账户配置目录打开提示词库；目录为空落回默认（单账户）路径。
+func OpenPromptStore(configDir string) (*PromptStore, error) {
+	if strings.TrimSpace(configDir) == "" {
+		return NewPromptStore()
+	}
+	return NewPromptStoreAt(configDir)
+}
+
+// promptStore 打开本账户的提示词库。
+func (s *Service) promptStore() (*PromptStore, error) {
+	return OpenPromptStore(accountConfigDir(s.Registry))
 }
 
 func (s *PromptStore) Load() ([]string, error) {
@@ -161,7 +179,7 @@ func (s *Service) SavePrompt(_ context.Context, in SavePromptInput) (SavePromptO
 	if strings.TrimSpace(in.Text) == "" {
 		return SavePromptOutput{}, errors.New("prompt text required")
 	}
-	store, err := NewPromptStore()
+	store, err := s.promptStore()
 	if err != nil {
 		return SavePromptOutput{}, err
 	}
@@ -184,7 +202,7 @@ func (s *Service) DeletePrompt(_ context.Context, in DeletePromptInput) (DeleteP
 	if strings.TrimSpace(in.Text) == "" {
 		return DeletePromptOutput{}, errors.New("prompt text required")
 	}
-	store, err := NewPromptStore()
+	store, err := s.promptStore()
 	if err != nil {
 		return DeletePromptOutput{}, err
 	}

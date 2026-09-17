@@ -236,6 +236,11 @@ func NewStore() (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	return NewStoreAt(configDir)
+}
+
+// NewStoreAt 把偏好放在指定目录（多账户：每个账户一套偏好）。
+func NewStoreAt(configDir string) (*Store, error) {
 	store := &Store{
 		path: filepath.Join(configDir, preferencesFileName),
 		data: UserPreferences{Agents: map[string]AgentDefaults{}},

@@ -28,9 +28,18 @@ type Store struct {
 
 func NewStore() (*Store, error) {
 	configDir, err := config.MindFSConfigDir()
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
+	return NewStoreAt(configDir)
+}
+
+// NewStoreAt 把节点表放在指定目录（多账户：每个账户一套节点）。
+func NewStoreAt(configDir string) (*Store, error) {
 	store := &Store{path: filepath.Join(configDir, nodesFileName)}
-	if err := store.load(); err != nil { return nil, err }
+	if err := store.load(); err != nil {
+		return nil, err
+	}
 	return store, nil
 }
 

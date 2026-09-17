@@ -41,6 +41,15 @@ func accountMetaRoot(registry Registry) string {
 	return provider.MetaRoot()
 }
 
+// accountConfigDir 取本账户私有的配置目录（主账户/测试替身 → 空串，落回默认目录）。
+func accountConfigDir(registry Registry) string {
+	provider, ok := registry.(interface{ ConfigDir() string })
+	if !ok {
+		return ""
+	}
+	return provider.ConfigDir()
+}
+
 func (s *Service) ensureRegistry() error {
 	if s == nil || s.Registry == nil {
 		return errors.New("services not configured")

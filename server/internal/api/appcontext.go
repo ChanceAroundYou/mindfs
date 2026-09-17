@@ -49,6 +49,9 @@ type AppContext struct {
 	GitHub    *githubimport.Service
 	E2EE      *e2ee.Manager
 	Auth      *auth.Store
+	// AccountDir 是本账户私有的配置目录（registry/preferences/nodes/prompts/看板模板）。
+	// 主账户为空串时，各 store 会落回进程默认目录。
+	AccountDir string
 	WebPush   *webpush.Service
 	Notify    *notifyscript.Service
 	Prefs     *preferences.Store
@@ -584,6 +587,14 @@ func (s *AppContext) MetaRoot() string {
 		return ""
 	}
 	return s.Dirs.MetaRoot()
+}
+
+// ConfigDir 是本账户私有的配置目录（usecase 侧按账户打开 prompts 等按需 store 用）。
+func (s *AppContext) ConfigDir() string {
+	if s == nil {
+		return ""
+	}
+	return s.AccountDir
 }
 
 func (s *AppContext) UpsertRoot(path string) (fs.RootInfo, error) {
@@ -1164,7 +1175,7 @@ func (s *AppContext) GetCandidateRegistry() *usecase.CandidateRegistry {
 	if s.candidateRegistry == nil {
 		registry := usecase.NewCandidateRegistry()
 		registry.Register(usecase.NewFileCandidateProvider())
-		if store, err := usecase.NewPromptStore(); err == nil {
+		if store, err := usecase.OpenPromptStore(s.ConfigDir()); err == nil {
 			registry.Register(usecase.NewPromptCandidateProvider(store))
 		}
 		registry.Register(usecase.NewSkillCandidateProvider())

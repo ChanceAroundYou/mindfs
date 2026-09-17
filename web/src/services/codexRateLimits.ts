@@ -1,5 +1,5 @@
 import { protectedJSON } from "./api";
-import { appPath } from "./base";
+import { appPath, appendQuery } from "./base";
 
 export type CodexRateLimitWindow = {
   used_percent: number;
@@ -34,7 +34,7 @@ export type ConsumeCodexRateLimitResetResult = {
 export async function fetchCodexRateLimits(agent = "codex", nodeId?: string): Promise<CodexRateLimitStatus> {
   const params = new URLSearchParams({ agent });
   return protectedJSON<CodexRateLimitStatus>(
-    `${appPath("/api/agents/codex/rate-limits", nodeId)}?${params.toString()}`,
+    appendQuery(appPath("/api/agents/codex/rate-limits", nodeId), params),
   );
 }
 

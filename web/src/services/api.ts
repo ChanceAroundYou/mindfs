@@ -1,5 +1,6 @@
 import { bootstrapService } from "./bootstrap";
 import { e2eeService } from "./e2ee";
+import { logout } from "./authGate";
 
 export class APIError extends Error {
   status: number;
@@ -15,10 +16,34 @@ export class APIError extends Error {
 // 兼容旧名：保留导出，避免一次性改动过大遗漏处崩溃
 export const ProtectedAPIError = APIError;
 
+let accountResetInFlight = false;
+
+/**
+ * 服务端说「这个账户不存在」（多半是账户被删/转移后前端还存着旧 id）。
+ * 清掉本地账户并回到登录页，否则整页会一直 404。
+ */
+function handleAccountGone(status: number, payload: any): void {
+  if (status !== 404 || accountResetInFlight) {
+    return;
+  }
+  const code = String(payload?.error || "");
+  if (!code.startsWith("unknown_user")) {
+    return;
+  }
+  accountResetInFlight = true;
+  logout();
+  if (typeof window !== "undefined") {
+    window.location.reload();
+  }
+}
+
 export async function fetchJSON<T>(input: RequestInfo | URL, init: RequestInit = {}): Promise<T> {
   const response = await fetch(input, init);
   const payload = await response.json().catch(() => ({} as any));
-  if (!response.ok) throw new APIError(response.status, payload, `request failed: ${response.status}`);
+  if (!response.ok) {
+    handleAccountGone(response.status, payload);
+    throw new APIError(response.status, payload, `request failed: ${response.status}`);
+  }
   return payload as T;
 }
 
@@ -26,7 +51,10 @@ export async function fetchMaybeJSON<T>(input: RequestInfo | URL, init: RequestI
   const response = await fetch(input, init);
   if (response.status === 204 || response.status === 304) return null as T;
   const payload = await response.json().catch(() => ({} as any));
-  if (!response.ok) throw new APIError(response.status, payload, `request failed: ${response.status}`);
+  if (!response.ok) {
+    handleAccountGone(response.status, payload);
+    throw new APIError(response.status, payload, `request failed: ${response.status}`);
+  }
   return payload as T;
 }
 

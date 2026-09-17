@@ -1,4 +1,4 @@
-import { appPath } from "./base";
+import { appPath, appendQuery } from "./base";
 import { getRootNodeId } from "./rootNode";
 import { protectedJSON } from "./api";
 
@@ -43,7 +43,7 @@ export type ScheduledAgentTaskInput = {
 
 function taskURL(rootId: string, nodeId?: string): string {
   const params = new URLSearchParams({ root: rootId });
-  return `${appPath("/api/scheduled-agent-tasks", nodeId)}?${params.toString()}`;
+  return appendQuery(appPath("/api/scheduled-agent-tasks", nodeId), params);
 }
 
 function taskItemURL(rootId: string, id: string, suffix = "", nodeId?: string): string {

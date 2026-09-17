@@ -48,6 +48,8 @@ var (
 	ErrLastAdmin = errors.New("last_admin")
 	// ErrUserNotFound 账户不存在
 	ErrUserNotFound = errors.New("user_not_found")
+	// ErrPrimaryUser 主账户不允许删除（它拥有迁移前的存量数据）
+	ErrPrimaryUser = errors.New("primary_user_protected")
 )
 
 // User 是一条账户记录。密码只以 bcrypt 哈希落盘。
@@ -67,6 +69,8 @@ type PublicUser struct {
 	Role      string `json:"role"`
 	CreatedAt string `json:"created_at"`
 	Disabled  bool   `json:"disabled"`
+	// Primary 标记主账户：它的数据根是 <cfg>/ 与项目内 .mindfs/（存量数据归属）
+	Primary bool `json:"primary,omitempty"`
 }
 
 // Public 是回给前端的投影（无口令哈希）。任何出网响应都必须走这里。
@@ -82,13 +86,17 @@ func (u User) Public() PublicUser {
 
 type usersFile struct {
 	Users []User `json:"users"`
+	// PrimaryUserID 是「主账户」：它的数据根是 <cfg>/ 与项目内 .mindfs/（迁移前的存量数据），
+	// 其余账户的数据根是 <cfg>/users/<id>/。见 docs/multi-user-prd.md §3.3。
+	PrimaryUserID string `json:"primary_user_id,omitempty"`
 }
 
 // Store 持有账户表。落盘为 <configDir>/users.json（0600）。
 type Store struct {
-	mu    sync.Mutex
-	path  string
-	users []User
+	mu        sync.Mutex
+	path      string
+	users     []User
+	primaryID string
 }
 
 // DefaultConfigPath 返回账户表路径。
@@ -113,39 +121,88 @@ func EnsureStore() (*Store, error) {
 // 迁移用的 login.json 取同目录下的同名文件。
 func EnsureStoreAt(path string) (*Store, error) {
 	store := &Store{path: path}
-	users, err := loadUsers(path)
+	file, err := loadUsers(path)
 	if err != nil {
 		return nil, err
 	}
-	if len(users) == 0 {
-		users, err = migrateFromLegacy(path)
+	if len(file.Users) == 0 {
+		file.Users, err = migrateFromLegacy(path)
 		if err != nil {
 			return nil, err
 		}
-		if err := writeUsers(path, users); err != nil {
+		if err := writeUsers(path, file.Users, file.PrimaryUserID); err != nil {
 			return nil, err
 		}
-		if len(users) > 0 {
-			log.Printf("[auth] 已从 %s 迁移出管理员账户 %q", filepath.Join(filepath.Dir(path), legacyLogin), users[0].Username)
+		if len(file.Users) > 0 {
+			log.Printf("[auth] 已从 %s 迁移出管理员账户 %q", filepath.Join(filepath.Dir(path), legacyLogin), file.Users[0].Username)
 		}
 	}
-	store.users = users
-	log.Printf("[auth] 账户表已加载：%d 个账户（%s）", len(users), path)
+	store.users = file.Users
+	store.primaryID = strings.TrimSpace(file.PrimaryUserID)
+
+	// 主账户缺省：迁移出来的第一个管理员；旧文件没有该字段时在这里补齐并落盘
+	if store.indexLocked(store.primaryID) < 0 {
+		if id := store.firstAdminLocked(); id != "" {
+			store.primaryID = id
+			if err := writeUsers(path, store.users, store.primaryID); err != nil {
+				return nil, err
+			}
+			log.Printf("[auth] 主账户（存量数据归属）判定为 %q", store.users[store.indexLocked(id)].Username)
+		}
+	}
+	log.Printf("[auth] 账户表已加载：%d 个账户（%s）", len(store.users), path)
 	return store, nil
 }
 
-// loadUsers 读账户表；文件不存在返回空列表而非错误。
-func loadUsers(path string) ([]User, error) {
+func (s *Store) firstAdminLocked() string {
+	for _, u := range s.users {
+		if u.Role == RoleAdmin {
+			return u.ID
+		}
+	}
+	return ""
+}
+
+// PrimaryUserID 返回主账户 id（空串表示账户表为空）。
+func (s *Store) PrimaryUserID() string {
+	if s == nil {
+		return ""
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.primaryID
+}
+
+// SetPrimary 转移主账户身份（存量数据的归属）。只允许指向启用中的管理员。
+func (s *Store) SetPrimary(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	idx := s.indexLocked(id)
+	if idx < 0 {
+		return ErrUserNotFound
+	}
+	if s.users[idx].Role != RoleAdmin || s.users[idx].Disabled {
+		return errors.New("主账户必须是一个启用中的管理员")
+	}
+	if err := writeUsers(s.path, s.users, s.users[idx].ID); err != nil {
+		return err
+	}
+	s.primaryID = s.users[idx].ID
+	return nil
+}
+
+// loadUsers 读账户表；文件不存在返回空表而非错误。
+func loadUsers(path string) (usersFile, error) {
 	payload, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil
+			return usersFile{}, nil
 		}
-		return nil, err
+		return usersFile{}, err
 	}
 	var parsed usersFile
 	if err := json.Unmarshal(payload, &parsed); err != nil {
-		return nil, fmt.Errorf("解析账户表失败 %s: %w", path, err)
+		return usersFile{}, fmt.Errorf("解析账户表失败 %s: %w", path, err)
 	}
 	out := make([]User, 0, len(parsed.Users))
 	for _, u := range parsed.Users {
@@ -158,15 +215,15 @@ func loadUsers(path string) ([]User, error) {
 		}
 		out = append(out, u)
 	}
-	return out, nil
+	return usersFile{Users: out, PrimaryUserID: strings.TrimSpace(parsed.PrimaryUserID)}, nil
 }
 
 // writeUsers 原子落盘（临时文件 + rename），避免半截 JSON 毁掉账户表。
-func writeUsers(path string, users []User) error {
+func writeUsers(path string, users []User, primaryID string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	payload, err := json.MarshalIndent(usersFile{Users: users}, "", "  ")
+	payload, err := json.MarshalIndent(usersFile{Users: users, PrimaryUserID: primaryID}, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -274,7 +331,7 @@ func (s *Store) List() []PublicUser {
 func (s *Store) listLocked() []PublicUser {
 	out := make([]PublicUser, 0, len(s.users))
 	for _, u := range s.users {
-		out = append(out, u.Public())
+		out = append(out, s.publicLocked(u))
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if (out[i].Role == RoleAdmin) != (out[j].Role == RoleAdmin) {
@@ -283,6 +340,12 @@ func (s *Store) listLocked() []PublicUser {
 		return out[i].Username < out[j].Username
 	})
 	return out
+}
+
+func (s *Store) publicLocked(u User) PublicUser {
+	public := u.Public()
+	public.Primary = s.primaryID != "" && u.ID == s.primaryID
+	return public
 }
 
 // Get 按 id 取账户。
@@ -296,7 +359,7 @@ func (s *Store) Get(id string) (PublicUser, error) {
 	if idx < 0 {
 		return PublicUser{}, ErrUserNotFound
 	}
-	return s.users[idx].Public(), nil
+	return s.publicLocked(s.users[idx]), nil
 }
 
 // Exists 判断账户 id 是否存在（供按账户分区使用）。
@@ -361,11 +424,11 @@ func (s *Store) Create(username, password, role string) (PublicUser, error) {
 		CreatedAt:    time.Now().UTC().Format(time.RFC3339),
 	}
 	next := append(append([]User{}, s.users...), user)
-	if err := writeUsers(s.path, next); err != nil {
+	if err := writeUsers(s.path, next, s.primaryID); err != nil {
 		return PublicUser{}, err
 	}
 	s.users = next
-	return user.Public(), nil
+	return s.publicLocked(user), nil
 }
 
 // UpdateInput 描述一次修改；指针为 nil 表示该字段不动。
@@ -426,11 +489,11 @@ func (s *Store) Update(id string, in UpdateInput) (PublicUser, error) {
 		cur.Disabled = *in.Disabled
 	}
 	next[idx] = cur
-	if err := writeUsers(s.path, next); err != nil {
+	if err := writeUsers(s.path, next, s.primaryID); err != nil {
 		return PublicUser{}, err
 	}
 	s.users = next
-	return cur.Public(), nil
+	return s.publicLocked(cur), nil
 }
 
 // Delete 删账户。拒绝删掉最后一个启用中的管理员。
@@ -444,10 +507,15 @@ func (s *Store) Delete(id string) error {
 	if s.users[idx].Role == RoleAdmin && s.countAdminsLocked() <= 1 {
 		return ErrLastAdmin
 	}
+	// 主账户拥有迁移前的存量数据（<cfg>/ 与项目内 .mindfs/），删了那些数据就没有归属了。
+	// 要删就先 SetPrimary 转移出去。
+	if s.primaryID != "" && s.users[idx].ID == s.primaryID {
+		return ErrPrimaryUser
+	}
 	next := make([]User, 0, len(s.users)-1)
 	next = append(next, s.users[:idx]...)
 	next = append(next, s.users[idx+1:]...)
-	if err := writeUsers(s.path, next); err != nil {
+	if err := writeUsers(s.path, next, s.primaryID); err != nil {
 		return err
 	}
 	s.users = next

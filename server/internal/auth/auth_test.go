@@ -153,19 +153,80 @@ func TestLastAdminIsProtected(t *testing.T) {
 		t.Fatalf("disable last admin err = %v, want ErrLastAdmin", err)
 	}
 
-	// 有第二个管理员后，第一位才允许被删/降级
+	// 有第二个管理员后，第一位才允许被删/降级——但它同时是主账户（存量数据归属），
+	// 得先转移主账户身份才能删。
 	second, err := store.Create("ops", "ops-secret", RoleAdmin)
 	if err != nil {
 		t.Fatalf("create second admin: %v", err)
 	}
+	if err := store.Delete(admin.ID); err != ErrPrimaryUser {
+		t.Fatalf("delete primary err = %v, want ErrPrimaryUser", err)
+	}
+	if err := store.SetPrimary(second.ID); err != nil {
+		t.Fatalf("SetPrimary: %v", err)
+	}
+	if store.PrimaryUserID() != second.ID {
+		t.Fatalf("primary = %q, want %q", store.PrimaryUserID(), second.ID)
+	}
 	if err := store.Delete(admin.ID); err != nil {
-		t.Fatalf("delete with a second admin present: %v", err)
+		t.Fatalf("delete after transferring primacy: %v", err)
 	}
 	if _, err := store.Get(second.ID); err != nil {
 		t.Fatalf("second admin vanished: %v", err)
 	}
 	if err := store.Delete(second.ID); err != ErrLastAdmin {
 		t.Fatalf("delete final admin err = %v, want ErrLastAdmin", err)
+	}
+}
+
+func TestPrimaryUserGuards(t *testing.T) {
+	store, _ := newTestStore(t, "root-secret")
+	admin := store.List()[0]
+
+	if !admin.Primary {
+		t.Fatal("migrated admin should be the primary account")
+	}
+	if store.PrimaryUserID() != admin.ID {
+		t.Fatalf("PrimaryUserID = %q, want %q", store.PrimaryUserID(), admin.ID)
+	}
+
+	// 迁移出来的 admin 就是主账户；普通人不能当主账户
+	plain, err := store.Create("bob", "bob-secret", RoleUser)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := store.SetPrimary(plain.ID); err == nil {
+		t.Fatal("a plain user must not be allowed to become primary")
+	}
+	if err := store.SetPrimary("u_missing"); err != ErrUserNotFound {
+		t.Fatalf("SetPrimary unknown err = %v, want ErrUserNotFound", err)
+	}
+
+	// 主账户标记要跟着 List/Get 走
+	listed := store.List()
+	for _, u := range listed {
+		if u.ID == admin.ID && !u.Primary {
+			t.Fatal("List lost the primary flag")
+		}
+		if u.ID == plain.ID && u.Primary {
+			t.Fatal("List marked a plain user as primary")
+		}
+	}
+	got, err := store.Get(admin.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !got.Primary {
+		t.Fatal("Get lost the primary flag")
+	}
+
+	// 主账户身份要落盘，重载后仍然有效
+	reloaded, err := EnsureStoreAt(store.path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if reloaded.PrimaryUserID() != admin.ID {
+		t.Fatalf("primary did not survive reload: %q", reloaded.PrimaryUserID())
 	}
 }
 
