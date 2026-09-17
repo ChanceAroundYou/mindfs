@@ -29,6 +29,31 @@ export function appendQuery(url: string, params?: URLSearchParams | string): str
 }
 
 /**
+ * 判断目标 URL 是否与当前页面同源。
+ *
+ * 不能直接比 `URL.origin`：WebSocket 的 origin 是 `ws://host:port`，
+ * 而页面是 `http://host:port`，字符串永不相等——那会把本机自己的 WS 误判成
+ * 跨节点，于是丢掉 user=，所有连接都落到主账户的 hub 上（实测踩过）。
+ */
+function isSameOriginAsPage(url: string): boolean {
+  if (typeof window === "undefined") {
+    return false;
+  }
+  try {
+    const target = new URL(url, window.location.href);
+    const page = new URL(window.location.href);
+    const normalize = (protocol: string) =>
+      protocol === "ws:" ? "http:" : protocol === "wss:" ? "https:" : protocol;
+    return (
+      normalize(target.protocol) === normalize(page.protocol) &&
+      target.host === page.host
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
  * 给请求打到「当前登录账户」的分区上。
  *
  * 服务端按这个参数分区存储、不做鉴权（见 docs/multi-user-prd.md §1.1），
@@ -46,15 +71,8 @@ function withAccountUser(url: string): string {
   if (!user?.id) {
     return url;
   }
-  if (typeof window !== "undefined") {
-    try {
-      const target = new URL(url, window.location.href);
-      if (target.origin !== window.location.origin) {
-        return url;
-      }
-    } catch {
-      return url;
-    }
+  if (!isSameOriginAsPage(url)) {
+    return url;
   }
   const queryIndex = url.indexOf("?");
   const query = queryIndex >= 0 ? url.slice(queryIndex + 1) : "";
