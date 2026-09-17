@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { fetchAuthStatus, loginWithPassword } from "../services/authGate";
+import { currentUser, fetchAuthStatus, loginWithPassword } from "../services/authGate";
 import { useI18n } from "../i18n";
 
 /**
@@ -9,6 +9,7 @@ import { useI18n } from "../i18n";
 export function AuthGate({ children }: { children: React.ReactNode }) {
   const { t } = useI18n();
   const [state, setState] = useState<"checking" | "locked" | "open">("checking");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -16,11 +17,18 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     aliveRef.current = true;
+    // 登录态由前端自己持有：本地已有账户就直接放行，不必再问服务端
+    if (currentUser()) {
+      setState("open");
+      return () => {
+        aliveRef.current = false;
+      };
+    }
     void fetchAuthStatus().then((status) => {
       if (!aliveRef.current) {
         return;
       }
-      setState(!status.required || status.authed ? "open" : "locked");
+      setState(status.required ? "locked" : "open");
     });
     return () => {
       aliveRef.current = false;
@@ -37,15 +45,20 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   }
 
   const submit = async () => {
-    const trimmed = password.trim();
-    if (!trimmed) {
+    const name = username.trim();
+    const secret = password;
+    if (!name) {
+      setError(t("login.usernameRequired"));
+      return;
+    }
+    if (!secret) {
       setError(t("login.passwordRequired"));
       return;
     }
     setBusy(true);
     setError("");
     try {
-      await loginWithPassword(trimmed);
+      await loginWithPassword(name, secret);
       if (aliveRef.current) {
         setPassword("");
         setState("open");
@@ -55,12 +68,29 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
         return;
       }
       const code = err instanceof Error ? err.message : "";
-      setError(code === "invalid_password" ? t("login.invalidPassword") : t("login.failed"));
+      if (code === "invalid_credentials") {
+        setError(t("login.invalidCredentials"));
+      } else if (code === "user_disabled") {
+        setError(t("login.userDisabled"));
+      } else {
+        setError(t("login.failed"));
+      }
     } finally {
       if (aliveRef.current) {
         setBusy(false);
       }
     }
+  };
+
+  const fieldStyle: React.CSSProperties = {
+    width: "100%",
+    borderRadius: "14px",
+    border: "1px solid var(--mindfs-launcher-border-strong)",
+    background: "var(--mindfs-launcher-input-bg)",
+    color: "var(--mindfs-launcher-text)",
+    padding: "14px 16px",
+    fontSize: "14px",
+    outline: "none",
   };
 
   return (
@@ -95,6 +125,26 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
           {t("login.subtitle")}
         </div>
         <input
+          type="text"
+          value={username}
+          onChange={(event) => {
+            setUsername(event.target.value);
+            if (error) {
+              setError("");
+            }
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !busy) {
+              void submit();
+            }
+          }}
+          placeholder={t("login.usernamePlaceholder")}
+          autoFocus
+          autoComplete="username"
+          spellCheck={false}
+          style={fieldStyle}
+        />
+        <input
           type="password"
           value={password}
           onChange={(event) => {
@@ -108,20 +158,10 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
               void submit();
             }
           }}
-          placeholder={t("login.placeholder")}
-          autoFocus
+          placeholder={t("login.passwordPlaceholder")}
           autoComplete="current-password"
           spellCheck={false}
-          style={{
-            width: "100%",
-            borderRadius: "14px",
-            border: "1px solid var(--mindfs-launcher-border-strong)",
-            background: "var(--mindfs-launcher-input-bg)",
-            color: "var(--mindfs-launcher-text)",
-            padding: "14px 16px",
-            fontSize: "14px",
-            outline: "none",
-          }}
+          style={fieldStyle}
         />
         {error ? (
           <div style={{ color: "var(--mindfs-launcher-error-text)", fontSize: "13px" }}>{error}</div>

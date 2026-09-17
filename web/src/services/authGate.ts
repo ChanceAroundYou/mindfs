@@ -1,14 +1,26 @@
 /**
  * 主页面登录闸门（页面级，不是 API 鉴权）。
  *
- * 服务端只回答两件事：这个浏览器要不要登录、这个 token 还算不算数。
- * 所有 REST/WS 依旧匿名可访问——REST 会保持这样，别在这里加拦截。
+ * 服务端只回答「有没有账户表」和「这组用户名口令对不对」；登录态由前端自己持有。
+ * 这是刻意的：API 保持匿名，账户只用于前端分区——详见 docs/multi-user-prd.md §1.1，
+ * 密码是装饰性的，改 URL 里的 user= 就能读到别人的数据。别把它当隔离用。
  */
 import { DEPLOY_PREFIX } from "./prefix";
 import { deriveLocalNodeBase } from "./nodeBase";
 import { getStoredString, setStoredString, removeStoredString } from "./storage";
 
-const TOKEN_KEY = "mindfs.login.token";
+const USER_KEY = "mindfs.current_user";
+
+export type AuthUser = {
+  id: string;
+  username: string;
+  role: string;
+};
+
+export type AuthStatus = {
+  /** 服务端是否配了账户表 */
+  required: boolean;
+};
 
 /** 闸门必须打「发这个页面的服务器」，不能打当前选中的节点。 */
 function authBaseURL(): string {
@@ -18,24 +30,33 @@ function authBaseURL(): string {
   return deriveLocalNodeBase(window.location.origin, DEPLOY_PREFIX);
 }
 
-type StatusPayload = {
-  required?: boolean;
-  authed?: boolean;
-};
-
-export type AuthStatus = {
-  /** 服务端是否启用了登录闸门 */
-  required: boolean;
-  /** 本地 token 是否仍然有效 */
-  authed: boolean;
-};
-
-export function readAuthToken(): string {
-  return String(getStoredString(TOKEN_KEY) || "").trim();
+export function currentUser(): AuthUser | null {
+  const raw = String(getStoredString(USER_KEY) || "").trim();
+  if (!raw) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(raw) as Partial<AuthUser>;
+    const username = String(parsed?.username || "").trim();
+    if (!username) {
+      return null;
+    }
+    return {
+      id: String(parsed?.id || "").trim(),
+      username,
+      role: String(parsed?.role || "user").trim(),
+    };
+  } catch {
+    return null;
+  }
 }
 
-export function clearAuthToken(): void {
-  removeStoredString(TOKEN_KEY);
+export function isAdmin(): boolean {
+  return currentUser()?.role === "admin";
+}
+
+export function logout(): void {
+  removeStoredString(USER_KEY);
 }
 
 /**
@@ -45,45 +66,48 @@ export function clearAuthToken(): void {
 export async function fetchAuthStatus(): Promise<AuthStatus> {
   const base = authBaseURL();
   if (!base) {
-    return { required: false, authed: true };
+    return { required: false };
   }
-  const token = readAuthToken();
-  const query = token ? `?token=${encodeURIComponent(token)}` : "";
   try {
-    const response = await fetch(`${base}/api/auth/status${query}`, {
+    const response = await fetch(`${base}/api/auth/status`, {
       headers: { Accept: "application/json" },
     });
     if (!response.ok) {
-      return { required: false, authed: true };
+      return { required: false };
     }
-    const payload = (await response.json()) as StatusPayload;
-    if (payload.required !== true) {
-      return { required: false, authed: true };
-    }
-    return { required: true, authed: payload.authed === true };
+    const payload = (await response.json()) as { required?: boolean };
+    return { required: payload.required === true };
   } catch {
-    return { required: false, authed: true };
+    return { required: false };
   }
 }
 
-/** 密码正确则落地 token，否则抛错（错误码 invalid_password）。 */
-export async function loginWithPassword(password: string): Promise<void> {
+/** 凭证正确则落地账户记录，否则抛错（错误码见服务端 auth 包）。 */
+export async function loginWithPassword(
+  username: string,
+  password: string,
+): Promise<AuthUser> {
   const response = await fetch(`${authBaseURL()}/api/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ password }),
+    body: JSON.stringify({ username, password }),
   });
   const payload = (await response.json().catch(() => ({}))) as {
-    token?: string;
+    user?: AuthUser;
     error?: string;
   };
   if (!response.ok) {
     throw new Error(String(payload.error || `login_failed_${response.status}`));
   }
-  const token = String(payload.token || "").trim();
-  if (!token) {
+  const user = payload.user;
+  if (!user || !String(user.username || "").trim()) {
     throw new Error("login_invalid_response");
   }
-  clearAuthToken();
-  setStoredString(TOKEN_KEY, token);
+  const normalized: AuthUser = {
+    id: String(user.id || "").trim(),
+    username: String(user.username).trim(),
+    role: String(user.role || "user").trim(),
+  };
+  setStoredString(USER_KEY, JSON.stringify(normalized));
+  return normalized;
 }
