@@ -2056,6 +2056,7 @@ export function ActionBar({
                 <button
                 data-onboarding="attachment-action"
                 type="button"
+                onMouseDown={(event) => event.preventDefault()}
                 onClick={() => attachmentInputRef.current?.click()}
                 disabled={!currentRootId || sending}
                 style={{
@@ -2086,6 +2087,7 @@ export function ActionBar({
                 <button
                 data-onboarding="send-action"
                 type="button"
+                onMouseDown={(event) => event.preventDefault()}
                 onClick={showCancel ? handleCancel : handleSend}
                 disabled={showCancel ? cancelling : !canSend}
                 style={{ width: "28px", height: "28px", borderRadius: "8px", border: "none", background: showCancel ? "rgba(239,68,68,0.14)" : (canSend ? accentColorRaw : "transparent"), color: showCancel ? "#ef4444" : (canSend ? "#fff" : "var(--text-secondary)"), display: "flex", alignItems: "center", justifyContent: "center", cursor: showCancel ? (cancelling ? "wait" : "pointer") : (canSend ? "pointer" : "not-allowed"), transition: "all 0.2s", opacity: showCancel ? 1 : (canSend ? 1 : 0.3) }}

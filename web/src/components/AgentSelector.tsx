@@ -202,6 +202,7 @@ export function AgentSelector({
   const [restartingAgent, setRestartingAgent] = useState<string | null>(null);
   const [menuBodyHeight, setMenuBodyHeight] = useState<number | null>(null);
   const [menuHorizontalOffset, setMenuHorizontalOffset] = useState(0);
+  const [positionTick, setPositionTick] = useState(0);
   const [viewportMenuPosition, setViewportMenuPosition] = useState<{
     top: number;
     left: number;
@@ -288,6 +289,17 @@ export function AgentSelector({
   useEffect(() => {
     onOpenChange?.(isOpen);
   }, [isOpen, onOpenChange]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const recompute = () => setPositionTick((t) => t + 1);
+    window.visualViewport?.addEventListener("resize", recompute);
+    window.addEventListener("resize", recompute);
+    return () => {
+      window.visualViewport?.removeEventListener("resize", recompute);
+      window.removeEventListener("resize", recompute);
+    };
+  }, [isOpen]);
 
   useEffect(() => {
     const handlePointerOutside = (e: PointerEvent) => {
@@ -390,6 +402,7 @@ export function AgentSelector({
     menuPlacement,
     submenuAgent,
     viewportMenu,
+    positionTick,
   ]);
 
   const handleAgentSelect = useCallback(
@@ -522,6 +535,7 @@ export function AgentSelector({
       `}</style>
       <button
         type="button"
+        onMouseDown={(e) => e.preventDefault()}
         onClick={() => {
           setViewportMenuPosition(null);
           setIsOpen((prev) => {
@@ -623,6 +637,7 @@ export function AgentSelector({
         <AgentMenuPortal enabled={viewportMenu}>
           <div
             ref={menuRef}
+            onMouseDown={(e) => e.preventDefault()}
             style={{
             position: viewportMenu ? "fixed" : "absolute",
             ...(viewportMenu
