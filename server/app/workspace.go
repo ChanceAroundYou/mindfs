@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"time"
 
 	"mindfs/server/internal/agent"
 	"mindfs/server/internal/api"
@@ -29,7 +28,12 @@ import (
 )
 
 // sharedServices 是进程级共享、不随账户变化的部分。
-// 每个账户一套的（registry/prefs/nodes/agent 池/看板/订阅/定时）不在这里。
+//
+// 共享用**同一份实例**，不是"同一份文件两份实例"：对带调度/后台循环的服务，
+// 后者会让同一个任务被跑两次。
+//
+// 按账户分的只有三样：项目列表（registry）、项目工作状态（meta：会话/任务/上传/文件批注）、
+// 以及按本账户项目调度的看板与定时任务服务实例。
 type sharedServices struct {
 	agentConfig  agent.Config
 	relayBaseURL string
@@ -37,9 +41,16 @@ type sharedServices struct {
 	auth         *auth.Store
 	e2ee         *e2ee.Manager
 	notify       *notifyscript.Service
-	webPushCfg   webpush.Config
 	relay        *relay.Manager
 	relayTips    *relay.TipsService
+
+	// 共享设置与资源
+	prefs     *preferences.Store
+	nodes     *nodes.Store
+	webPush   *webpush.Service
+	templates *kanban.TemplateStore
+	pool      *agent.Pool
+	prober    *agent.Prober
 }
 
 type workspaceEntry struct {
@@ -50,10 +61,17 @@ type workspaceEntry struct {
 
 // workspaceManager 按账户惰性构建并缓存 AppContext。
 //
-// 数据根的划分（见 docs/multi-user-prd.md §3.3）：
-//   - 主账户：<cfg>/ + 项目内 .mindfs/，即迁移前的存量数据，行为零变化
-//   - 其余账户：<cfg>/users/<id>/，meta 一律落 <cfg>/users/<id>/meta/<rootID>，
-//     永不触碰项目里的 .mindfs，因此不可能与他人串号
+// **共享范围**（用户 2026-09-17 定）：只有「加载的项目」和「项目里的会话」按账户分，
+// 其余（偏好/节点/订阅/提示词/agent 配置/agent 进程池/看板模板）全部共享同一份实例。
+//
+//   - 项目列表：主账户 <cfg>/registry.json；其余 <cfg>/users/<id>/registry.json
+//   - 项目工作状态（meta：会话库/任务库/上传/文件批注）：
+//     主账户沿用项目内 .mindfs/ 或 ~/.mindfs/<rootID>；其余 <cfg>/users/<id>/meta/<rootID>
+//   - 其余一律指向共享实例，因此两个账户改偏好/加节点/装订阅是同一份
+//
+// 为什么不把 meta 也共享、只拆出会话：任务库共享后两个账户各有一个调度实例读同一份文件，
+// 同一个定时任务会跑两次；而 scheduled 执行时要用 registry.GetSessionManager 跑本账户的会话，
+// 共享实例说不清该用谁的会话。所以项目工作状态整块按账户分。
 type workspaceManager struct {
 	ctx       context.Context
 	baseDir   string // <cfg>/users
@@ -177,47 +195,32 @@ func (m *workspaceManager) build(userID string) (*api.AppContext, error) {
 		return nil, err
 	}
 
-	registry := fs.NewRegistryAt(filepath.Join(configDir, "registry.json"), metaRoot)
+	// 项目列表按账户分（各看各的项目），其余设置一律共享。
+	// 共享用同一份实例而不是"同一份文件两份实例"——后者对调度类服务会双跑同一个任务。
+	registryPath := filepath.Join(configDir, "registry.json")
+	if accountDir != "" {
+		registryPath = filepath.Join(accountDir, "registry.json")
+	}
+	registry := fs.NewRegistryAt(registryPath, metaRoot)
 	if err := registry.Load(); err != nil {
 		return nil, err
 	}
-	prefs, prefsErr := preferences.NewStoreAt(configDir)
-	if prefsErr != nil {
-		log.Printf("[preferences] init.error user=%s err=%v", userID, prefsErr)
-	}
+	prefs := m.shared.prefs
 	autoAddExternalProjectRoots(registry, prefs)
 	startExternalProjectDiscoveryLoop(m.ctx, registry, prefs)
-
-	pool := agent.NewPool(m.shared.agentConfig)
-	prober := agent.NewProber(&m.shared.agentConfig, pool, 5*time.Minute)
-	prober.Start(m.ctx)
-	startHostedAgentConfigLoop(m.ctx, m.shared.relayBaseURL, m.shared.agentConfig, pool, prober)
-	pool.StartIdleReleaseLoop(m.ctx, func() time.Duration {
-		hours := preferences.DefaultIdleSessionResourceReleaseHours
-		if prefs != nil {
-			hours = prefs.IdleSessionResourceReleaseHours()
-		}
-		return time.Duration(hours) * time.Hour
-	})
-
-	nodesStore, err := nodes.NewStoreAt(configDir)
-	if err != nil {
-		log.Printf("[nodes] init.error user=%s err=%v", userID, err)
-	}
-	webPushStore := webpush.NewStoreAt(configDir)
 
 	services := &api.AppContext{
 		Dirs:       registry,
 		Prefs:      prefs,
-		Nodes:      nodesStore,
-		Agents:     pool,
-		Prober:     prober,
-		AccountDir: accountDir,
+		Nodes:      m.shared.nodes,
+		Agents:     m.shared.pool,
+		Prober:     m.shared.prober,
+		AccountDir: configDir,
 		Update:     m.shared.update,
 		Auth:       m.shared.auth,
 		E2EE:       m.shared.e2ee,
 		Notify:     m.shared.notify,
-		WebPush:    webpush.NewService(m.shared.webPushCfg, webPushStore),
+		WebPush:    m.shared.webPush,
 		Relay:      m.shared.relay,
 		RelayTips:  m.shared.relayTips,
 	}
@@ -227,8 +230,10 @@ func (m *workspaceManager) build(userID string) (*api.AppContext, error) {
 	}
 	services.Scheduled.Start(m.ctx)
 
-	templates := kanban.NewTemplateStoreAt(configDir)
-	services.Kanban = kanban.NewService(templates, services)
+	// 看板与定时任务必须每账户一个实例：它们按「本账户的项目」调度，
+	// 并在执行时用本账户的 session manager 跑（scheduled/tasks.go 用 registry.GetSessionManager）。
+	// 共享实例会让同一个任务被两边各跑一次。
+	services.Kanban = kanban.NewService(m.shared.templates, services)
 	services.Kanban.SetRunner(services)
 	githubImportSvc, err := githubimport.NewService(services)
 	if err != nil {
@@ -239,6 +244,7 @@ func (m *workspaceManager) build(userID string) (*api.AppContext, error) {
 		services.Kanban.Schedule(root.ID)
 	}
 
-	log.Printf("[workspace] 已就绪 user=%s primary=%v dir=%s", userID, primary, configDir)
+	log.Printf("[workspace] 已就绪 user=%s primary=%v projects=%s meta=%s",
+		userID, primary, filepath.Dir(registryPath), metaRoot)
 	return services, nil
 }

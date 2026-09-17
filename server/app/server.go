@@ -21,6 +21,8 @@ import (
 	"mindfs/server/internal/e2ee"
 	"mindfs/server/internal/fs"
 	"mindfs/server/internal/gitview"
+	"mindfs/server/internal/kanban"
+	"mindfs/server/internal/nodes"
 	"mindfs/server/internal/notifyscript"
 	"mindfs/server/internal/preferences"
 	"mindfs/server/internal/relay"
@@ -109,6 +111,32 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 	}
 	relayTips := relay.NewTipsService(relayMgr)
 
+	// 共享设置与资源：建一次，所有账户共用同一份实例
+	sharedPrefs, prefsErr := preferences.NewStore()
+	if prefsErr != nil {
+		log.Printf("[preferences] init.error err=%v", prefsErr)
+	}
+	sharedNodes, err := nodes.NewStore()
+	if err != nil {
+		log.Printf("[nodes] init.error err=%v", err)
+	}
+	sharedWebPush := webpush.NewService(webPushConfig, webpush.NewStoreAt(configDir))
+	sharedTemplates, err := kanban.NewTemplateStore()
+	if err != nil {
+		return err
+	}
+	sharedPool := agent.NewPool(agentConfig)
+	sharedProber := agent.NewProber(&agentConfig, sharedPool, 5*time.Minute)
+	sharedProber.Start(ctx)
+	startHostedAgentConfigLoop(ctx, relayBaseURL, agentConfig, sharedPool, sharedProber)
+	sharedPool.StartIdleReleaseLoop(ctx, func() time.Duration {
+		hours := preferences.DefaultIdleSessionResourceReleaseHours
+		if sharedPrefs != nil {
+			hours = sharedPrefs.IdleSessionResourceReleaseHours()
+		}
+		return time.Duration(hours) * time.Hour
+	})
+
 	workspaces := newWorkspaceManager(ctx, sharedServices{
 		agentConfig:  agentConfig,
 		relayBaseURL: relayBaseURL,
@@ -120,9 +148,14 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 			PairingSecret: opts.E2EEConfig.PairingSecret,
 		}),
 		notify:     notifyscript.NewService(notifyscript.Config{Script: opts.NotifyScript}),
-		webPushCfg: webPushConfig,
 		relay:      relayMgr,
 		relayTips:  relayTips,
+		prefs:      sharedPrefs,
+		nodes:      sharedNodes,
+		webPush:    sharedWebPush,
+		templates:  sharedTemplates,
+		pool:       sharedPool,
+		prober:     sharedProber,
 	})
 	workspaces.SetBaseDir(filepath.Join(configDir, "users"))
 

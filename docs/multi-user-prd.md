@@ -91,23 +91,37 @@
 - 前端**单点注入**：`services/base.ts` 的 `appPath()` 是全部 fetch / WS / 资源 URL 的唯一汇聚点，
   在那里挂 `user=` 即可，12 处裸 fetch 与所有 `appURL/wsURL` 自动覆盖
 
-### 3.3 每用户状态 = 每用户 config 目录
+### 3.3 共享范围（2026-09-17 修订）
+
+**只有「加载的项目」和「项目里的会话」按账户分，其余一律共享。**
+
+| 按账户分 | 全账户共享 |
+|---|---|
+| 项目列表 `registry.json` | 偏好、节点表、WebPush 订阅、提示词、看板模板 |
+| 项目工作状态 meta（会话库、任务库、上传、文件批注） | agent 配置、agent 进程池、探针、relay / update / e2ee / auth / notify |
+| 看板与定时任务的**服务实例**（按本账户项目调度） | |
 
 ```
 <cfg>/
-  users.json
-  users/<userID>/
-    registry.json  preferences.json  nodes.json  web-push-subscriptions.json
-    <rootID>/session-list.db
-    tasks/task-kanban.db
+  registry.json          ← 主账户的项目列表（其余账户在 users/<id>/registry.json）
+  preferences.json  nodes.json  web-push-subscriptions.json  prompts.json   ← 共享
+  users/<id>/
+    registry.json        ← 该账户的项目列表
+    meta/<rootID>/       ← 该账户的项目工作状态（会话/任务/上传/文件批注）
 ```
 
-**不复用 `user_id` 列**：十几张表逐个加列再逐个过滤，漏一处就是串号。
-把目录做成账户的函数，store 逻辑一行不改。
+两条实现约束（都会造成"看起来共享、实际出 bug"）：
 
-代价：`fs.NewDefaultRegistry()` / `preferences.NewStore()` / `nodes.NewStore()` /
-`kanban.*` / `webpush.*` / `scheduled.*` / `agent.NewPool()` 等构造函数需**显式接受目录参数**
-（现为内部硬调 `MindFSConfigDir()`）。机械但必须做全——漏一处 = 两账户共用状态。
+1. **共享必须用同一份实例，不是"同一份文件两份实例"。**
+   带调度/后台循环的服务各起一份读同一份文件 → 同一个定时任务被跑两次。
+2. **看板与定时任务必须每账户一个实例。**
+   它们按「本账户的项目」调度，且执行时要用本账户的 session manager
+   （`scheduled/tasks.go` 用 `registry.GetSessionManager`），共享实例说不清该跑谁的会话。
+
+**为什么不把 meta 也共享、只把会话拆出来**：任务库共享后，两个账户各自的调度器读同一份任务库 →
+同一个任务双跑；而"谁执行"又取决于会话归属，语义无法自洽。所以项目工作状态整块按账户分。
+
+共享契约由 `server/app/workspace_test.go` 守住（共享必须是同一实例、项目与会话必须分开）。
 
 ### 3.4 请求路由
 
