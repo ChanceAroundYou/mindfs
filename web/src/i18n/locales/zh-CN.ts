@@ -578,6 +578,7 @@ export const zhCN = {
   "account.savePassword": "保存密码",
   "account.passwordChanged": "密码已更新",
   "account.manage": "账户管理",
+  "account.newAccount": "新建账户",
   "account.username": "用户名",
   "account.password": "密码",
   "account.create": "新建",

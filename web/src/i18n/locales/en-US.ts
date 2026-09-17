@@ -580,6 +580,7 @@ export const enUS = {
   "account.savePassword": "Save password",
   "account.passwordChanged": "Password updated",
   "account.manage": "Accounts",
+  "account.newAccount": "New account",
   "account.username": "Username",
   "account.password": "Password",
   "account.create": "Create",
