@@ -213,3 +213,64 @@ func TestLastAdminCannotBeDeletedViaRoute(t *testing.T) {
 		t.Fatal("last admin was removed")
 	}
 }
+
+func TestPrimaryUserRoutes(t *testing.T) {
+	store := newAuthTestStore(t)
+	handler := newAuthTestHandler(t, store)
+
+	rec := doJSON(t, handler, http.MethodGet, "/api/users", "")
+	var listed struct {
+		Users []auth.PublicUser `json:"users"`
+	}
+	decodeInto(t, rec, &listed)
+	if len(listed.Users) != 1 || !listed.Users[0].Primary {
+		t.Fatalf("迁移出的管理员应是主账户: %#v", listed.Users)
+	}
+	primaryID := listed.Users[0].ID
+
+	// 主账户删不掉：它拥有迁移前的存量数据
+	if rec := doJSON(t, handler, http.MethodDelete, "/api/users/"+primaryID, ""); rec.Code != http.StatusConflict {
+		t.Fatalf("delete primary = %d, want 409 (%s)", rec.Code, rec.Body.String())
+	}
+
+	// 转移主账户到一个普通用户应被拒（必须是启用中的管理员）
+	rec = doJSON(t, handler, http.MethodPost, "/api/users", `{"username":"bob","password":"bob-secret","role":"user"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create bob = %d, want 200", rec.Code)
+	}
+	var created struct {
+		User auth.PublicUser `json:"user"`
+	}
+	decodeInto(t, rec, &created)
+	if rec := doJSON(t, handler, http.MethodPost, "/api/users/"+created.User.ID+"/primary", ""); rec.Code != http.StatusBadRequest {
+		t.Fatalf("promote plain user to primary = %d, want 400", rec.Code)
+	}
+
+	// 提升为管理员后可以转移；转移后原主账户才允许删除
+	if rec := doJSON(t, handler, http.MethodPut, "/api/users/"+created.User.ID, `{"role":"admin"}`); rec.Code != http.StatusOK {
+		t.Fatalf("promote bob to admin = %d, want 200", rec.Code)
+	}
+	rec = doJSON(t, handler, http.MethodPost, "/api/users/"+created.User.ID+"/primary", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("set primary = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		PrimaryUserID string `json:"primary_user_id"`
+	}
+	decodeInto(t, rec, &out)
+	if out.PrimaryUserID != created.User.ID {
+		t.Fatalf("primary_user_id = %q, want %q", out.PrimaryUserID, created.User.ID)
+	}
+	if store.PrimaryUserID() != created.User.ID {
+		t.Fatalf("store primary = %q, want %q", store.PrimaryUserID(), created.User.ID)
+	}
+
+	if rec := doJSON(t, handler, http.MethodDelete, "/api/users/"+primaryID, ""); rec.Code != http.StatusNoContent {
+		t.Fatalf("delete former primary after transfer = %d, want 204 (%s)", rec.Code, rec.Body.String())
+	}
+
+	// 未知 id
+	if rec := doJSON(t, handler, http.MethodPost, "/api/users/u_missing/primary", ""); rec.Code != http.StatusNotFound {
+		t.Fatalf("set primary for unknown user = %d, want 404", rec.Code)
+	}
+}

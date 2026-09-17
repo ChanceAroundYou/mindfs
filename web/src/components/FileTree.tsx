@@ -19,6 +19,7 @@ import { useI18n, type Locale, type MessageKey } from "../i18n";
 import { useRefreshSpin } from "../hooks";
 import { getNodes } from "../services/nodeRegistry";
 import { NodeManagerPanel } from "./NodeManagerPanel";
+import { AccountPanel } from "./AccountPanel";
 import { scopeKey, treeKey } from "../services/scope";
 import { AgentMenuList } from "./AgentMenuList";
 import { AgentIcon } from "./AgentIcon";
@@ -1420,6 +1421,7 @@ function FileTreeInner({
   const expandedSet = new Set(expanded);
   const [isMenuOpen, setIsMenuOpen] = React.useState(false);
   const [nodeManagerOpen, setNodeManagerOpen] = React.useState(false);
+  const [accountPanelOpen, setAccountPanelOpen] = React.useState(false);
   const [projectTreeTab, setProjectTreeTab] = React.useState<ProjectTreeTab>(() => {
     if (typeof window === "undefined") {
       return "files";
@@ -2815,6 +2817,13 @@ function FileTreeInner({
                   </svg>
                   <span>{t("nodeManager.title")}</span>
                 </button>
+                <button type="button" onClick={() => { setIsMenuOpen(false); setAccountPanelOpen(true); }} style={fileTreeMenuButtonStyle}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                    <circle cx="12" cy="7" r="4" />
+                  </svg>
+                  <span>{t("account.title")}</span>
+                </button>
                 <div style={{ height: "1px", background: "var(--border-color)", margin: "6px 4px" }} />
                 <button
                   type="button"
@@ -3272,6 +3281,9 @@ function FileTreeInner({
             onClose={() => setNodeManagerOpen(false)}
             onRefreshAll={onNodeManagerRefresh}
           />
+        ) : null}
+        {accountPanelOpen ? (
+          <AccountPanel onClose={() => setAccountPanelOpen(false)} />
         ) : null}
         {agentConfigFlow ? (
           <div

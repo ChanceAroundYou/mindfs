@@ -160,3 +160,18 @@ func (h *HTTPHandler) handleUserDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// handleUserSetPrimary 转移主账户身份（存量数据的归属）。
+// 主账户删不掉，要删就得先把身份转给另一个管理员。
+func (h *HTTPHandler) handleUserSetPrimary(w http.ResponseWriter, r *http.Request) {
+	store := h.AppContext.GetAuthStore()
+	if store == nil {
+		writeAuthError(w, errServiceUnavailable("auth store not configured"))
+		return
+	}
+	if err := store.SetPrimary(chi.URLParam(r, "id")); err != nil {
+		writeAuthError(w, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"primary_user_id": store.PrimaryUserID()})
+}

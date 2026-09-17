@@ -340,6 +340,7 @@ func (h *HTTPHandler) Routes() http.Handler {
 	r.Get("/api/users", h.handleUsersList)
 	r.Post("/api/users", h.handleUserCreate)
 	r.Put("/api/users/{id}", h.handleUserUpdate)
+	r.Post("/api/users/{id}/primary", h.handleUserSetPrimary)
 	r.Delete("/api/users/{id}", h.handleUserDelete)
 	r.Get("/api/tree", h.protectedEndpoint(h.handleTree))
 	r.Get("/api/file", h.handleFile)
