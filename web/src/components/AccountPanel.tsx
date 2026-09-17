@@ -10,7 +10,6 @@ import {
   isAdminAccount,
   listAccounts,
   setPrimaryAccount,
-  updateAccount,
   type Account,
 } from "../services/accounts";
 
@@ -23,11 +22,13 @@ type AccountPanelProps = {
 // 锚定在文件树顶栏下方的下拉面板（沿用 NodeManagerPanel 的观感）。
 // 必须 portal 到 body：侧栏 <aside> 带 transform / will-change（移动端抽屉），
 // 会把 position:fixed 的包含块锁死在侧栏内 —— 面板被压成 ~220px 且被裁切。
-// portal 之后包含块回到视口，面板才敢比 260px 的侧栏宽，不至于挤成一团。
-const MAX_WIDTH = 460;
+// portal 之后包含块回到视口，宽度由自己说了算。
+// 宽度不越出左侧栏：面板右缘对齐侧栏右缘（侧栏可拖拽，所以按实测算而不是写死 260）。
+const MENU_BAR_TOP = 44; // 顶栏 36px + 6px 间距 + 2
 const GUTTER = 8;
-const GAP = 6;
+const MIN_WIDTH = 200; // 侧栏被拖到极窄时的下限，再窄就没法看了
 const MAX_HEIGHT = 560;
+const SIDEBAR_SELECTOR = '[data-mindfs-font-scale-region="sidebar"]';
 
 const FIELD_STYLE: React.CSSProperties = {
   border: "1px solid var(--border-color)",
@@ -58,6 +59,35 @@ const PRIMARY_BUTTON_STYLE: React.CSSProperties = {
   background: "var(--accent-color)",
   color: "#fff",
 };
+
+/** 删除：红色垃圾桶图标按钮 */
+const TRASH_BUTTON_STYLE: React.CSSProperties = {
+  ...BUTTON_STYLE,
+  color: "var(--danger-color, #dc2626)",
+  display: "inline-flex",
+  alignItems: "center",
+};
+
+function TrashIcon(): React.ReactElement {
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M3 6h18" />
+      <path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2" />
+      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+      <path d="M10 11v6M14 11v6" />
+    </svg>
+  );
+}
 
 const SECTION_STYLE: React.CSSProperties = {
   display: "flex",
@@ -120,15 +150,18 @@ export function AccountPanel({ onClose, anchorRef }: AccountPanelProps): React.R
 
   const admin = isAdminAccount(me);
 
-  // 贴住锚点，并夹在视口里（窄屏不能越界，否则又变成"显示不全"）
+  // 贴住顶栏、右缘对齐左侧栏右缘（不越出侧栏），并夹在视口里
   React.useLayoutEffect(() => {
     const place = () => {
-      const rect = anchorRef?.current?.getBoundingClientRect();
+      const sidebar =
+        anchorRef?.current?.closest(SIDEBAR_SELECTOR) ?? document.querySelector(SIDEBAR_SELECTOR);
+      const rect = sidebar?.getBoundingClientRect();
       const vw = window.innerWidth;
       const vh = window.innerHeight;
-      const width = Math.min(MAX_WIDTH, vw - GUTTER * 2);
-      const left = Math.max(GUTTER, Math.min(rect ? rect.left : GUTTER, vw - width - GUTTER));
-      const top = Math.max(GUTTER, Math.min(rect ? rect.bottom + GAP : 44, vh - GUTTER));
+      const available = rect ? rect.width - GUTTER * 2 : vw - GUTTER * 2;
+      const width = Math.max(MIN_WIDTH, Math.min(available, vw - GUTTER * 2));
+      const left = Math.max(GUTTER, Math.min(rect ? rect.left + GUTTER : GUTTER, vw - width - GUTTER));
+      const top = Math.max(GUTTER, Math.min(MENU_BAR_TOP, vh - GUTTER));
       setBox({ top, left, width, maxHeight: Math.max(160, Math.min(MAX_HEIGHT, vh - top - GUTTER)) });
     };
     place();
@@ -270,10 +303,34 @@ export function AccountPanel({ onClose, anchorRef }: AccountPanelProps): React.R
       }}
     >
       <div style={{ ...ROW_STYLE, flexWrap: "wrap" }}>
-        <span style={{ fontSize: 12, fontWeight: 700, flex: 1 }}>{t("account.title")}</span>
-        <button type="button" onClick={onClose} style={BUTTON_STYLE}>
-          {t("common.close")}
-        </button>
+        <span style={{ fontSize: 12, fontWeight: 700 }}>{t("account.title")}</span>
+        {/* 关掉面板靠点外部 / Esc；右上角让给改密码与退出 */}
+        <div style={{ display: "flex", gap: 8, marginLeft: "auto", flexWrap: "wrap" }}>
+          {me ? (
+            <>
+              <button
+                type="button"
+                style={BUTTON_STYLE}
+                onClick={() => {
+                  setPasswordNotice("");
+                  setPasswordOpen((v) => !v);
+                }}
+              >
+                {t("account.changePassword")}
+              </button>
+              <button
+                type="button"
+                style={BUTTON_STYLE}
+                onClick={() => {
+                  logout();
+                  window.location.reload();
+                }}
+              >
+                {t("account.signOut")}
+              </button>
+            </>
+          ) : null}
+        </div>
       </div>
 
       {me ? (
@@ -285,27 +342,6 @@ export function AccountPanel({ onClose, anchorRef }: AccountPanelProps): React.R
           {accounts.some((a) => a.id === me.id && a.primary) ? (
             <span style={badgeStyle(true)}>{t("account.primary")}</span>
           ) : null}
-          <span style={{ flex: 1 }} />
-          <button
-            type="button"
-            style={BUTTON_STYLE}
-            onClick={() => {
-              setPasswordNotice("");
-              setPasswordOpen((v) => !v);
-            }}
-          >
-            {t("account.changePassword")}
-          </button>
-          <button
-            type="button"
-            style={BUTTON_STYLE}
-            onClick={() => {
-              logout();
-              window.location.reload();
-            }}
-          >
-            {t("account.signOut")}
-          </button>
         </div>
       ) : null}
 
@@ -447,21 +483,13 @@ export function AccountPanel({ onClose, anchorRef }: AccountPanelProps): React.R
                 ) : null}
                 <button
                   type="button"
-                  disabled={busy || account.id === me?.id}
-                  style={BUTTON_STYLE}
-                  onClick={() =>
-                    void run(async () => {
-                      await updateAccount(account.id, { disabled: !account.disabled });
-                    })
-                  }
-                >
-                  {t(account.disabled ? "account.enable" : "account.disable")}
-                </button>
-                <button
-                  type="button"
                   disabled={busy || account.primary}
-                  title={account.primary ? t("account.deletePrimaryHint") : ""}
-                  style={BUTTON_STYLE}
+                  aria-label={t("account.delete")}
+                  title={account.primary ? t("account.deletePrimaryHint") : t("account.delete")}
+                  style={{
+                    ...TRASH_BUTTON_STYLE,
+                    opacity: busy || account.primary ? 0.45 : 1,
+                  }}
                   onClick={() => {
                     if (!window.confirm(t("account.confirmDelete", { name: account.username }))) return;
                     void run(async () => {
@@ -469,7 +497,7 @@ export function AccountPanel({ onClose, anchorRef }: AccountPanelProps): React.R
                     });
                   }}
                 >
-                  {t("account.delete")}
+                  <TrashIcon />
                 </button>
               </div>
             </div>
