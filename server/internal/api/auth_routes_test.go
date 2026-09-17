@@ -90,6 +90,11 @@ func TestLoginWithUsernameAndPassword(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("login = %d, want 200 (%s)", rec.Code, rec.Body.String())
 	}
+	// 断言原始 body：解码进 PublicUser 会静默丢掉多余字段，那样测不出泄漏
+	body := rec.Body.String()
+	if strings.Contains(body, "password_hash") || strings.Contains(body, "$2a$") {
+		t.Fatalf("login response leaks the password hash: %s", body)
+	}
 	var ok struct {
 		User auth.PublicUser `json:"user"`
 	}
@@ -106,6 +111,30 @@ func TestLoginWithUsernameAndPassword(t *testing.T) {
 	}
 	if rec := doJSON(t, handler, http.MethodPost, "/api/auth/login", "not json"); rec.Code != http.StatusBadRequest {
 		t.Fatalf("malformed body = %d, want 400", rec.Code)
+	}
+}
+
+func TestNoAccountRouteLeaksPasswordHash(t *testing.T) {
+	store := newAuthTestStore(t)
+	handler := newAuthTestHandler(t, store)
+
+	created, err := store.Create("alice", "alice-secret", auth.RoleUser)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	cases := []struct {
+		method, target, body string
+	}{
+		{http.MethodGet, "/api/users", ""},
+		{http.MethodPost, "/api/users", `{"username":"bob","password":"bob-secret"}`},
+		{http.MethodPut, "/api/users/" + created.ID, `{"password":"alice-2nd"}`},
+		{http.MethodPost, "/api/auth/login", `{"username":"alice","password":"alice-2nd"}`},
+	}
+	for _, tc := range cases {
+		rec := doJSON(t, handler, tc.method, tc.target, tc.body)
+		if got := rec.Body.String(); strings.Contains(got, "password_hash") || strings.Contains(got, "$2a$") {
+			t.Fatalf("%s %s leaks the password hash: %s", tc.method, tc.target, got)
+		}
 	}
 }
 

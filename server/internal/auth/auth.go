@@ -69,7 +69,8 @@ type PublicUser struct {
 	Disabled  bool   `json:"disabled"`
 }
 
-func (u User) public() PublicUser {
+// Public 是回给前端的投影（无口令哈希）。任何出网响应都必须走这里。
+func (u User) Public() PublicUser {
 	return PublicUser{
 		ID:        u.ID,
 		Username:  u.Username,
@@ -273,7 +274,7 @@ func (s *Store) List() []PublicUser {
 func (s *Store) listLocked() []PublicUser {
 	out := make([]PublicUser, 0, len(s.users))
 	for _, u := range s.users {
-		out = append(out, u.public())
+		out = append(out, u.Public())
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if (out[i].Role == RoleAdmin) != (out[j].Role == RoleAdmin) {
@@ -295,7 +296,7 @@ func (s *Store) Get(id string) (PublicUser, error) {
 	if idx < 0 {
 		return PublicUser{}, ErrUserNotFound
 	}
-	return s.users[idx].public(), nil
+	return s.users[idx].Public(), nil
 }
 
 // Exists 判断账户 id 是否存在（供按账户分区使用）。
@@ -364,7 +365,7 @@ func (s *Store) Create(username, password, role string) (PublicUser, error) {
 		return PublicUser{}, err
 	}
 	s.users = next
-	return user.public(), nil
+	return user.Public(), nil
 }
 
 // UpdateInput 描述一次修改；指针为 nil 表示该字段不动。
@@ -429,7 +430,7 @@ func (s *Store) Update(id string, in UpdateInput) (PublicUser, error) {
 		return PublicUser{}, err
 	}
 	s.users = next
-	return cur.public(), nil
+	return cur.Public(), nil
 }
 
 // Delete 删账户。拒绝删掉最后一个启用中的管理员。

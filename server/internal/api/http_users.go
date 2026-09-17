@@ -83,7 +83,8 @@ func (h *HTTPHandler) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		writeAuthError(w, err)
 		return
 	}
-	respondJSON(w, http.StatusOK, map[string]any{"user": user})
+	// 必须走投影：User 带 password_hash，直接序列化会把哈希发给客户端
+	respondJSON(w, http.StatusOK, map[string]any{"user": user.Public()})
 }
 
 func (h *HTTPHandler) handleUsersList(w http.ResponseWriter, _ *http.Request) {
