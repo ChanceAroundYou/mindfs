@@ -16,6 +16,7 @@ import (
 	"mindfs/internal/deploy"
 	"mindfs/server/internal/agent"
 	"mindfs/server/internal/api"
+	"mindfs/server/internal/auth"
 	"mindfs/server/internal/e2ee"
 	"mindfs/server/internal/fs"
 	"mindfs/server/internal/githubimport"
@@ -126,6 +127,12 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 	updateSvc := update.NewService("a9gent/mindfs", opts.Version, executable, opts.Args, 10*time.Minute)
 	updateSvc.Start(ctx)
 
+	// 主页面登录闸门：只挡页面，不参与 API 鉴权。
+	authStore, err := auth.EnsureStore()
+	if err != nil {
+		log.Printf("[auth] init.error err=%v", err)
+	}
+
 	services := &api.AppContext{
 		Dirs:   registry,
 		Agents: agentPool,
@@ -133,6 +140,7 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 		Update: updateSvc,
 		Prefs:  prefs,
 		Nodes:  nodesStore,
+		Auth:   authStore,
 		E2EE: e2ee.NewManager(e2ee.Config{
 			Enabled:       opts.E2EEConfig.Enabled,
 			NodeID:        opts.E2EEConfig.NodeID,

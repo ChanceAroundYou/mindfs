@@ -6,6 +6,7 @@ import { registerServiceWorker } from "./registerServiceWorker";
 import { applyAppearanceMode, getAppearanceMode } from "./services/appearance";
 import { isHarmonyRuntime, isNativeShellRuntime } from "./services/runtime";
 import { Login } from "./components/Login";
+import { AuthGate } from "./components/AuthGate";
 import { addNode, getNodes, setActiveNodeId } from "./services/nodeRegistry";
 import { I18nProvider, translateNow } from "./i18n";
 import { DEPLOY_PREFIX, RELAY_ASSETS_PREFIX } from "./services/prefix";
@@ -629,7 +630,11 @@ function AppRoot() {
       } catch { window.location.assign(nodeURL); }
     }} />;
   }
-  return <App onGoHome={goToLauncher} />;
+  return (
+    <AuthGate>
+      <App onGoHome={goToLauncher} />
+    </AuthGate>
+  );
 }
 
 const container = document.getElementById("root");

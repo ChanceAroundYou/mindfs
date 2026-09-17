@@ -15,6 +15,7 @@ import (
 	"mindfs/server/internal/agent"
 	agenttypes "mindfs/server/internal/agent/types"
 	"mindfs/server/internal/api/usecase"
+	"mindfs/server/internal/auth"
 	"mindfs/server/internal/commandexec"
 	"mindfs/server/internal/e2ee"
 	"mindfs/server/internal/fs"
@@ -47,6 +48,7 @@ type AppContext struct {
 	Update    *update.Service
 	GitHub    *githubimport.Service
 	E2EE      *e2ee.Manager
+	Auth      *auth.Store
 	WebPush   *webpush.Service
 	Notify    *notifyscript.Service
 	Prefs     *preferences.Store
@@ -570,6 +572,10 @@ func (s *AppContext) GetGitHubImportService() *githubimport.Service {
 
 func (s *AppContext) GetE2EEManager() *e2ee.Manager {
 	return s.E2EE
+}
+
+func (s *AppContext) GetAuthStore() *auth.Store {
+	return s.Auth
 }
 
 func (s *AppContext) UpsertRoot(path string) (fs.RootInfo, error) {

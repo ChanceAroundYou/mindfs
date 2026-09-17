@@ -334,6 +334,9 @@ func (h *HTTPHandler) Routes() http.Handler {
 	r.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) { h.handleNotFound(w, r) })
 	r.Get("/", h.handleFrontend)
 	r.Get("/health", h.handleHealth)
+	// 主页面登录闸门：公开端点，不参与 protectedEndpoint / e2ee。
+	r.Get("/api/auth/status", h.handleAuthStatus)
+	r.Post("/api/auth/login", h.handleAuthLogin)
 	r.Get("/api/tree", h.protectedEndpoint(h.handleTree))
 	r.Get("/api/file", h.handleFile)
 	r.Get("/api/git/status", h.protectedEndpoint(h.handleGitStatus))
@@ -1823,6 +1826,45 @@ func (h *HTTPHandler) handleFrontend(w http.ResponseWriter, r *http.Request) {
 func (h *HTTPHandler) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("ok"))
+}
+
+// handleAuthStatus 是登录闸门的事实来源，前端启动时问一次。
+// 服务端没有 Auth store（静态托管 / 测试）时回报 required=false，前端直接放行。
+func (h *HTTPHandler) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
+	store := h.AppContext.GetAuthStore()
+	if store == nil {
+		respondJSON(w, http.StatusOK, map[string]any{"required": false, "authed": true})
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{
+		"required": true,
+		"authed":   store.Valid(strings.TrimSpace(r.URL.Query().Get("token"))),
+	})
+}
+
+func (h *HTTPHandler) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
+	store := h.AppContext.GetAuthStore()
+	if store == nil {
+		respondJSON(w, http.StatusOK, map[string]any{"token": ""})
+		return
+	}
+	var payload struct {
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<10)).Decode(&payload); err != nil {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("invalid payload"))
+		return
+	}
+	if !store.Verify(payload.Password) {
+		respondError(w, http.StatusUnauthorized, errInvalidRequest("invalid_password"))
+		return
+	}
+	token, err := store.Issue()
+	if err != nil {
+		respondError(w, http.StatusServiceUnavailable, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"token": token})
 }
 
 func (h *HTTPHandler) handleNotFound(w http.ResponseWriter, r *http.Request) {
