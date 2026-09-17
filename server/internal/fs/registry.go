@@ -172,10 +172,8 @@ func (r *Registry) UpsertWithMetaLocation(root, metaLocation string) (RootInfo, 
 			return RootInfo{}, err
 		}
 		dir = NewRootInfo(name, name, root)
-		// 账户私有 meta 恒为 home 语义，不落项目内 .mindfs
-		if r.metaRoot != "" {
-			metaLocation = MetaLocationHome
-		}
+		// MetaLocation 决定「共享 meta」（上传/文件批注）落在项目内还是 ~/.mindfs，
+		// 两个账户必须算出一致结果，所以按正常的偏好走，不因账户而改。
 		dir.MetaLocation = metaLocation
 		dir.CreatedAt = now
 		r.order = append(r.order, name)

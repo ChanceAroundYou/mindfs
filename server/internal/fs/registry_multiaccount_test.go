@@ -60,8 +60,81 @@ func TestAccountRegistriesNeverShareMetaForSameProject(t *testing.T) {
 			t.Fatalf("account %s meta = %q, want %q", c.name, c.meta, want)
 		}
 	}
-	if rootA.MetaLocation != MetaLocationHome || rootB.MetaLocation != MetaLocationHome {
-		t.Fatalf("account roots must be stamped home meta: A=%q B=%q", rootA.MetaLocation, rootB.MetaLocation)
+
+	// 但「共享 meta」（上传文件 / 文件批注）两个账户必须算出同一个：
+	// 只有会话库和任务库按账户分，上传与批注是共用的。
+	sharedA, sharedB := rootA.SharedMetaDir(), rootB.SharedMetaDir()
+	if sharedA == "" || sharedA != sharedB {
+		t.Fatalf("共享 meta 必须全账户一致: A=%q B=%q", sharedA, sharedB)
+	}
+	if sharedA == metaA || sharedA == metaB {
+		t.Fatalf("共享 meta 与账户 meta 混为一谈: shared=%q metaA=%q metaB=%q", sharedA, metaA, metaB)
+	}
+}
+
+// 主账户的 MetaDir 与 SharedMetaDir 必须一致（它没有账户隔离，两者是同一处）。
+func TestPrimaryMetaAndSharedMetaAgree(t *testing.T) {
+	project := t.TempDir()
+	reg := NewRegistry(filepath.Join(t.TempDir(), "registry.json"))
+	root, err := reg.Upsert(project)
+	if err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if root.MetaDir() != root.SharedMetaDir() {
+		t.Fatalf("主账户两者应相同: meta=%q shared=%q", root.MetaDir(), root.SharedMetaDir())
+	}
+}
+
+// 上传的文件与文件批注必须落在**同一处**——两个账户共用一个项目时，
+// 一方上传的文件另一方要能打开、阅读位置也要共享。会话库与任务库才按账户分。
+func TestAccountUploadsAndFileMetaAreShared(t *testing.T) {
+	project := t.TempDir()
+	acctA, acctB := t.TempDir(), t.TempDir()
+	rootA, err := NewRegistryAt(filepath.Join(acctA, "registry.json"), filepath.Join(acctA, "meta")).Upsert(project)
+	if err != nil {
+		t.Fatalf("upsert A: %v", err)
+	}
+	rootB, err := NewRegistryAt(filepath.Join(acctB, "registry.json"), filepath.Join(acctB, "meta")).Upsert(project)
+	if err != nil {
+		t.Fatalf("upsert B: %v", err)
+	}
+
+	// 文件批注（file-meta.json）必须解析到同一处
+	metaA, err := rootA.resolveMetaPath("file-meta.json")
+	if err != nil {
+		t.Fatalf("resolve A: %v", err)
+	}
+	metaB, err := rootB.resolveMetaPath("file-meta.json")
+	if err != nil {
+		t.Fatalf("resolve B: %v", err)
+	}
+	if metaA != metaB {
+		t.Fatalf("文件批注必须共享: A=%q B=%q", metaA, metaB)
+	}
+	// 默认是项目内 meta，所以落在项目自己的 .mindfs 下
+	if want := filepath.Join(project, metaDirName, "file-meta.json"); metaA != want {
+		t.Fatalf("文件批注位置 = %q, want %q", metaA, want)
+	}
+
+	// 上传目录同理
+	upA, err := rootA.ResolvePath(filepath.ToSlash(filepath.Join(metaDirName, "upload", "2026-01-01", "a.png")))
+	if err != nil {
+		t.Fatalf("upload path A: %v", err)
+	}
+	upB, err := rootB.ResolvePath(filepath.ToSlash(filepath.Join(metaDirName, "upload", "2026-01-01", "a.png")))
+	if err != nil {
+		t.Fatalf("upload path B: %v", err)
+	}
+	if upA != upB {
+		t.Fatalf("上传目录必须共享: A=%q B=%q", upA, upB)
+	}
+	if !strings.HasPrefix(upA, filepath.Join(project, metaDirName)) {
+		t.Fatalf("上传目录应在项目的 .mindfs 下: %q", upA)
+	}
+
+	// 而会话库与任务库必须分开
+	if rootA.MetaDir() == rootB.MetaDir() {
+		t.Fatalf("会话/任务 meta 必须按账户分: %q", rootA.MetaDir())
 	}
 }
 

@@ -91,15 +91,15 @@
 - 前端**单点注入**：`services/base.ts` 的 `appPath()` 是全部 fetch / WS / 资源 URL 的唯一汇聚点，
   在那里挂 `user=` 即可，12 处裸 fetch 与所有 `appURL/wsURL` 自动覆盖
 
-### 3.3 共享范围（2026-09-17 修订）
+### 3.3 共享范围（2026-09-17 修订，用户定）
 
 **只有「加载的项目」和「项目里的会话」按账户分，其余一律共享。**
 
 | 按账户分 | 全账户共享 |
 |---|---|
 | 项目列表 `registry.json` | 偏好、节点表、WebPush 订阅、提示词、看板模板 |
-| 项目工作状态 meta（会话库、任务库、上传、文件批注） | agent 配置、agent 进程池、探针、relay / update / e2ee / auth / notify |
-| 看板与定时任务的**服务实例**（按本账户项目调度） | |
+| **会话库**（`MetaDir()`：会话 DB + exchange/aux 文件） | **上传的文件、文件批注**（`SharedMetaDir()`） |
+| **看板任务库**、定时任务 | agent 配置、agent 进程池、探针、relay / update / e2ee / auth / notify |
 
 ```
 <cfg>/
@@ -107,7 +107,8 @@
   preferences.json  nodes.json  web-push-subscriptions.json  prompts.json   ← 共享
   users/<id>/
     registry.json        ← 该账户的项目列表
-    meta/<rootID>/       ← 该账户的项目工作状态（会话/任务/上传/文件批注）
+    meta/<rootID>/       ← 该账户的会话库与任务库
+<项目>/.mindfs/          ← 共享：upload/ 与 file-meta.json（按 MetaLocation 决定是否在 ~/.mindfs）
 ```
 
 两条实现约束（都会造成"看起来共享、实际出 bug"）：
@@ -118,10 +119,20 @@
    它们按「本账户的项目」调度，且执行时要用本账户的 session manager
    （`scheduled/tasks.go` 用 `registry.GetSessionManager`），共享实例说不清该跑谁的会话。
 
-**为什么不把 meta 也共享、只把会话拆出来**：任务库共享后，两个账户各自的调度器读同一份任务库 →
-同一个任务双跑；而"谁执行"又取决于会话归属，语义无法自洽。所以项目工作状态整块按账户分。
+**两个 meta 解析器必须分清**：
 
-共享契约由 `server/app/workspace_test.go` 守住（共享必须是同一实例、项目与会话必须分开）。
+| | 用途 | 非主账户取值 |
+|---|---|---|
+| `RootInfo.MetaDir()` | 会话库、看板任务库、定时任务 | `<cfg>/users/<id>/meta/<rootID>`（账户私有） |
+| `RootInfo.SharedMetaDir()` | 上传文件、文件批注 | 按 `MetaLocation` 正常算（项目内 `.mindfs` 或 `~/.mindfs/<rootID>`），**不看账户** |
+
+`SharedMetaDir()` 必须由两个账户算出**同一个答案**，所以它只看注册表里记的 `MetaLocation`
+（而 `MetaLocation` 由共享的偏好决定），不受 `MetaRoot` 影响。主账户两者相同。
+
+**为什么会话库和任务库按账户分、上传不按**：任务库若共享，两个账户各自的调度器读同一份文件会双跑，
+且"该用谁的会话去跑"无法自洽；上传与批注没有这层耦合，共享就是所见即所得。
+
+共享契约由 `server/app/workspace_test.go` 与 `server/internal/fs/registry_multiaccount_test.go` 守住。
 
 ### 3.4 请求路由
 
