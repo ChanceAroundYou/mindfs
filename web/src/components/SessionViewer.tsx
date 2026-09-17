@@ -493,6 +493,20 @@ function isAuxiliaryTimelineItem(item: TimelineItem | null): boolean {
   );
 }
 
+// overlay 对账用的归一化：只去空白。服务端落盘时会在相邻文本块之间补 "\n\n"
+// （usecase.appendResponseChunk），而流式 message_chunk 不带，所以同一轮的
+// 「缓存瞬时拷贝」与「落盘正文」只差空白 —— 逐字比较认不出来，去空白才认得出。
+function normalizeOverlayText(value: string): string {
+  return value.replace(/\s+/g, "");
+}
+
+// 只在窗口最新这几条持久化行里找陈旧拷贝：它必然是「刚落盘那一轮」的副本。
+// 跟更早的历史比会误伤（同一句工程套话在不同轮次重复出现是正常的）。
+const OVERLAY_TAIL_ROWS = 3;
+// ponytail: 短文本不参与让位判定。长度地板挡掉「好的」「继续」这类合法重复；
+// 代价是落盘后残留的短片段（<32 字）仍会多显示一次，等窗口重锚定自愈。
+const OVERLAY_DUP_MIN_CHARS = 32;
+
 function PlanUpdateCard({ content, rootId }: { content: string; rootId?: string | null }) {
   return (
     <div
@@ -1148,7 +1162,10 @@ function SessionViewerInner({
   //   - seq==0 且 role=user：按 content 与窗口计数消抵——窗口里同内容出现 covered 次，就丢弃
   //     缓存中同内容的前 covered 个，其余保留。这是跨端丢事件（手机后台 / WS 断连）时的兜底，
   //     不依赖时间戳（客户端 ISO 毫秒 vs 服务端 RFC3339Nano 永不相等）。
-  //   - seq==0 且非 user（流式文本 / 思考 / 工具）：一律保留 → 流式内容实时。
+  //   - seq==0 且 role=tool：callId 已出现在窗口 aux → 让位（见 windowToolCallIds）。
+  //   - seq==0 的其它（流式文本 / 思考）：默认保留（流式内容要实时可见），但若窗口最新几条
+  //     持久化行里已经包含它（去空白后判定），说明这一轮已落盘、这份是陈旧拷贝 → 让位。
+  //     这是 2026-09-17 的缺口：以前这里「一律保留」，于是 ask 前后被渲染成两块一样的正文。
   // 只读派生不写回缓存，避免覆盖其它标签页可能正在流式写入的持久化缓存。
   const [latestSeqState, setLatestSeqState] = useState<{ key: string; max: number }>(
     { key: "", max: 0 },
@@ -1195,6 +1212,17 @@ function SessionViewerInner({
     }
     return set;
   }, [visibleAux]);
+  const windowTailTexts = useMemo(() => {
+    const texts: string[] = [];
+    const persisted = visibleExchanges.filter(
+      (ex) => Number((ex as any)?.seq || 0) > 0,
+    );
+    for (const ex of persisted.slice(-OVERLAY_TAIL_ROWS)) {
+      const text = normalizeOverlayText(String((ex as any)?.content || ""));
+      if (text) texts.push(text);
+    }
+    return texts;
+  }, [visibleExchanges]);
   const tailOverlay = useMemo(() => {
     const exs = Array.isArray(session?.exchanges)
       ? (session.exchanges as ExchangeArray)
@@ -1236,10 +1264,22 @@ function SessionViewerInner({
           continue;
         }
       }
+      // seq==0 的直播正文/思考：同一轮若已落盘（窗口最新几条持久化行里已有包含它的），
+      // 缓存里这份就是陈旧拷贝 → 让位。若不让位，「窗口渲染一份 + overlay 再渲染一份」
+      // 会把同一轮显示两次，ask 卡上下各一块分析文本（实测 2026-09-17，库里并无重复数据）。
+      const transientText = normalizeOverlayText(
+        String((ex as any)?.content || ""),
+      );
+      if (
+        transientText.length >= OVERLAY_DUP_MIN_CHARS &&
+        windowTailTexts.some((text) => text.includes(transientText))
+      ) {
+        continue;
+      }
       out.push(ex);
     }
     return out;
-  }, [session?.exchanges, sessionKey, latestSeq, visibleSeqSet, windowUserCounts, windowToolCallIds]);
+  }, [session?.exchanges, sessionKey, latestSeq, visibleSeqSet, windowUserCounts, windowToolCallIds, windowTailTexts]);
   const composedExchanges = useMemo(
     () => [...visibleExchanges, ...tailOverlay],
     [visibleExchanges, tailOverlay],

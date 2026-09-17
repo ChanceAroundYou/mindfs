@@ -145,7 +145,8 @@ assert.match(
 );
 // 判定不再依赖 windowMeta（loadMore/targetSeq 会把它覆盖成旧窗口的 meta）：
 // 已持久化条目按 latestSeq（只增、按会话键绑定）判定；seq=0 的用户条目按内容与窗口计数消抵；
-// 非用户瞬时项（流式文本/思考/工具）一律保留。
+// seq=0 的直播正文/思考默认保留，但窗口最新持久化行已包含它（去空白判定）时让位——否则
+// 同一轮会在 ask 卡上下各渲染一块（实测 2026-09-17）。
 assert.match(
   viewerSrc,
   /const latestSeq = latestSeqState\.key === sessionKey \? latestSeqState\.max : 0;/,
@@ -180,6 +181,22 @@ assert.doesNotMatch(
   viewerSrc,
   /staleCount|windowMeta\.maxSeq - cacheMaxSeq/,
   "positional stale trim must not return (it ate live streaming items)",
+);
+// seq=0 的直播正文也要能对账：窗口最新持久化行已包含它 → 让位（去空白后判定）
+assert.match(
+  viewerSrc,
+  /const windowTailTexts = useMemo\(\(\) => \{/,
+  "window tail texts (for live-copy reconciliation) missing",
+);
+assert.match(
+  viewerSrc,
+  /windowTailTexts\.some\(\(text\) => text\.includes\(transientText\)\)/,
+  "seq=0 live text must yield once the window already contains it",
+);
+assert.match(
+  viewerSrc,
+  /function normalizeOverlayText\(value: string\): string \{/,
+  "whitespace-insensitive overlay comparison helper missing",
 );
 // init 种子只取持久化部分，避免与 overlay 重复
 assert.match(
@@ -305,6 +322,13 @@ function buildTailOverlay(cacheExchanges, visibleExchanges, latestSeq) {
     }
   }
   const consumed = new Map();
+  const windowTailTexts = [];
+  for (const ex of visibleExchanges
+    .filter((e) => Number(e?.seq || 0) > 0)
+    .slice(-3)) {
+    const text = String(ex?.content || "").replace(/\s+/g, "");
+    if (text) windowTailTexts.push(text);
+  }
   const out = [];
   for (const ex of cacheExchanges) {
     const seq = Number(ex?.seq || 0);
@@ -322,6 +346,13 @@ function buildTailOverlay(cacheExchanges, visibleExchanges, latestSeq) {
         consumed.set(content, used + 1);
         continue;
       }
+    }
+    const transientText = String(ex?.content || "").replace(/\s+/g, "");
+    if (
+      transientText.length >= 32 &&
+      windowTailTexts.some((text) => text.includes(transientText))
+    ) {
+      continue;
     }
     out.push(ex);
   }
@@ -367,6 +398,44 @@ assert.equal(
   buildTailOverlay([{ role: "user", content: "旧", seq: 3 }], win, 0).length,
   0,
   "⑥ before anchoring, cached persisted entries must not flood the overlay",
+);
+
+// ⑦⑧⑨ 缺口回归（2026-09-17）：同一轮的直播拷贝与落盘正文只差空白，必须让位。
+// 服务端 appendResponseChunk 在相邻文本块之间补 "\n\n"，流式 chunk 不带。
+const askTurnText =
+  "竞品对比页的信息我核对了一下：仓库里的竞品档案只把 Moiré 当作一种「传统模态」记录，没有香港的具体机型。先查一下：";
+const askWin = [
+  { role: "user", content: "推进竞品对比", seq: 21 },
+  {
+    role: "assistant",
+    content:
+      "竞品对比页的信息我核对了一下：仓库里的竞品档案只把 Moiré 当作一种「传统模态」记录，\n\n没有香港的具体机型。先查一下：\n\n明白了——布局不动。",
+    seq: 22,
+  },
+];
+assert.equal(
+  buildTailOverlay([{ role: "agent", content: askTurnText }], askWin, 22).length,
+  0,
+  "⑦ live copy of a turn already persisted in the window must yield (ask 上下各一块的根因)",
+);
+assert.equal(
+  buildTailOverlay(
+    [
+      {
+        role: "agent",
+        content: `${askTurnText}下面是窗口里还没有的一段全新输出，仍在流式。`,
+      },
+    ],
+    askWin,
+    22,
+  ).length,
+  1,
+  "⑧ live text the window does not contain yet must stay visible",
+);
+assert.equal(
+  buildTailOverlay([{ role: "agent", content: "好的" }], askWin, 22).length,
+  1,
+  "⑨ short fragments must not be reconciled away (真·合法重复发言)",
 );
 
 console.log("session-window.test.mjs: OK");
