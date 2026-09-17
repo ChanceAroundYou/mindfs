@@ -31,6 +31,16 @@ type Service struct {
 	Registry Registry
 }
 
+// accountMetaRoot 取本账户私有的 meta 根（主账户/测试替身没有这个能力 → 空串）。
+// 做成可选能力而不是 Registry 接口方法：只有真正按账户分区的实现才需要提供它。
+func accountMetaRoot(registry Registry) string {
+	provider, ok := registry.(interface{ MetaRoot() string })
+	if !ok {
+		return ""
+	}
+	return provider.MetaRoot()
+}
+
 func (s *Service) ensureRegistry() error {
 	if s == nil || s.Registry == nil {
 		return errors.New("services not configured")

@@ -578,6 +578,14 @@ func (s *AppContext) GetAuthStore() *auth.Store {
 	return s.Auth
 }
 
+// MetaRoot 是本账户私有的 meta 根（会话库/任务库/文件元数据），主账户为空串。
+func (s *AppContext) MetaRoot() string {
+	if s == nil || s.Dirs == nil {
+		return ""
+	}
+	return s.Dirs.MetaRoot()
+}
+
 func (s *AppContext) UpsertRoot(path string) (fs.RootInfo, error) {
 	return s.UpsertRootWithMetaLocation(path, fs.MetaLocationProject)
 }

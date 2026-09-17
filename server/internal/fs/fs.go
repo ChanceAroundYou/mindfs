@@ -54,6 +54,11 @@ type RootInfo struct {
 	MetaLocation string    `json:"meta_location,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
+
+	// MetaRoot 非空表示这是某个非主账户的根：meta 一律落在该账户私有目录下
+	// （MetaRoot/<rootID>），绝不碰项目里的 .mindfs。由 Registry 在装载时按账户盖章，
+	// 不持久化（同一个项目被不同账户添加时路径必须不同）。
+	MetaRoot string `json:"-"`
 }
 
 func (r RootInfo) EffectiveName() string {
@@ -100,6 +105,11 @@ func (r RootInfo) resolveRelativePath(relPath string) (string, error) {
 }
 
 func (r RootInfo) effectiveMetaLocation() string {
+	// 非主账户的 meta 恒为「账户私有目录」，语义等同 home（0o700 + 身份文件），
+	// 这样项目里的 .mindfs 永远不被第二个人碰到。
+	if strings.TrimSpace(r.MetaRoot) != "" {
+		return MetaLocationHome
+	}
 	if strings.TrimSpace(r.MetaLocation) == MetaLocationHome {
 		return MetaLocationHome
 	}
@@ -195,6 +205,15 @@ func (r RootInfo) NormalizePath(path string) (string, error) {
 }
 
 func (r RootInfo) MetaDir() string {
+	// 非主账户：meta 落在账户私有目录里，与其他账户、与项目内的 .mindfs 都无关。
+	// 会话库 / 看板任务库 / 命令历史 / 插件目录 / 文件监听全部经由这里，
+	// 改这一处即覆盖全部按根存放的账户状态。
+	if metaRoot := strings.TrimSpace(r.MetaRoot); metaRoot != "" {
+		if !validRootID(r.ID) {
+			return ""
+		}
+		return filepath.Join(metaRoot, r.ID)
+	}
 	if r.effectiveMetaLocation() == MetaLocationHome {
 		metaDir, err := homeMetaDir(r.ID)
 		if err != nil {
