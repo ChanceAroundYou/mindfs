@@ -140,7 +140,7 @@ assert.match(
 );
 assert.match(
   viewerSrc,
-  /const composedExchanges = useMemo\(\s*\n\s*\(\) => \[\.\.\.visibleExchanges, \.\.\.tailOverlay\],/,
+  /const composedExchanges = useMemo\(\(\) => \{[\s\S]*?return \[\.\.\.visibleExchanges, \.\.\.extra\]/,
   "composed window+overlay input missing",
 );
 // 判定不再依赖 windowMeta（loadMore/targetSeq 会把它覆盖成旧窗口的 meta）：

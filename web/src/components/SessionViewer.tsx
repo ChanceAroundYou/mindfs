@@ -1293,10 +1293,14 @@ function SessionViewerInner({
     }
     return out;
   }, [session?.exchanges, sessionKey, latestSeq, visibleSeqSet, windowUserCounts, windowToolCallIds, windowTailTexts]);
-  const composedExchanges = useMemo(
-    () => [...visibleExchanges, ...tailOverlay],
-    [visibleExchanges, tailOverlay],
-  );
+  // 窗口态与 overlay 是两条独立来源，同一个 exchange 对象可能两边都在（重锚定会把整份
+  // 缓存装进窗口态时就发生过）。按对象同一性取差集，保证同一份 exchange 只渲染一次 ——
+  // 与 dedupeToolCards 同一条约定，只是这里对所有类型生效（thought/正文没有 callId 可去重）。
+  const composedExchanges = useMemo(() => {
+    const inWindow = new Set(visibleExchanges as unknown[]);
+    const extra = tailOverlay.filter((ex) => !inWindow.has(ex));
+    return [...visibleExchanges, ...extra] as ExchangeArray;
+  }, [visibleExchanges, tailOverlay]);
   const { timeline, isStreaming, streamVersion, streamStatusText } = useSessionStream(
     sessionKey,
     composedExchanges,
@@ -1530,7 +1534,21 @@ function SessionViewerInner({
       return;
     }
     lastAppliedAnchorRef.current = { key: sessionKey, at: anchorAt };
-    applyWindow({ session, meta: anchorMeta }, { keepOlder: true });
+    // 锚点载荷是 App 的整份缓存：持久化行 + 直播瞬时行（seq=0，见 App.loadSession 的
+    // [...incoming.filter(seq>0), ...localTransient]）。窗口态只能装持久化行 ——
+    // 瞬时行归 overlay 管，混进窗口后 overlay 会再输出一遍，同一段正文渲染两次
+    // （实测 2026-09-17：ask 触发后 ask 上下各一块同样的分析文本，重开会话必现）。
+    const anchorExchanges = (Array.isArray((session as any)?.exchanges)
+      ? ((session as any).exchanges as ExchangeArray)
+      : ([] as ExchangeArray)
+    ).filter((ex) => Number((ex as any)?.seq || 0) > 0);
+    applyWindow(
+      {
+        session: { ...(session as any), exchanges: anchorExchanges },
+        meta: anchorMeta,
+      },
+      { keepOlder: true },
+    );
   }, [session, sessionKey, applyWindow]);
 
   const userMessageSummaries = useMemo(
