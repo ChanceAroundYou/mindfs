@@ -1502,6 +1502,7 @@ function FileTreeInner({
   const agentConfigPopoverRef = React.useRef<HTMLDivElement | null>(null);
   const agentLifecyclePopoverRef = React.useRef<HTMLDivElement | null>(null);
   const sendShortcutPopoverRef = React.useRef<HTMLDivElement | null>(null);
+  const accountButtonRef = React.useRef<HTMLButtonElement | null>(null);
   const updateNotesRef = React.useRef<HTMLDivElement | null>(null);
   const createInputRef = React.useRef<HTMLInputElement | null>(null);
   const previousCreatingRootNameRef = React.useRef<string | null>(null);
@@ -2817,7 +2818,7 @@ function FileTreeInner({
                   </svg>
                   <span>{t("nodeManager.title")}</span>
                 </button>
-                <button type="button" onClick={() => { setIsMenuOpen(false); setAccountPanelOpen(true); }} style={fileTreeMenuButtonStyle}>
+                <button type="button" ref={accountButtonRef} onClick={() => { setIsMenuOpen(false); setAccountPanelOpen(true); }} style={fileTreeMenuButtonStyle}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
                     <circle cx="12" cy="7" r="4" />
@@ -3283,7 +3284,7 @@ function FileTreeInner({
           />
         ) : null}
         {accountPanelOpen ? (
-          <AccountPanel onClose={() => setAccountPanelOpen(false)} />
+          <AccountPanel onClose={() => setAccountPanelOpen(false)} anchorRef={accountButtonRef} />
         ) : null}
         {agentConfigFlow ? (
           <div
