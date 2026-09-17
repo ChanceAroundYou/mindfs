@@ -1227,6 +1227,19 @@ function SessionViewerInner({
     const exs = Array.isArray(session?.exchanges)
       ? (session.exchanges as ExchangeArray)
       : ([] as ExchangeArray);
+    // 「已经会被渲染的持久化正文」全集 = 窗口最新几行（windowTailTexts）+ 本函数自己
+    // 要渲染的 seq>latestSeq 缓存条目。后者不能漏：重锚定还没把刚落盘的行拉进窗口时，
+    // 那一行由 overlay 侧渲染（下面 seq>0 分支），若只跟窗口比，seq=0 的直播拷贝就找不到
+    // 「已经显示过的那一份」，重复照旧（实测 2026-09-17 20:16，ask 上下各一整轮）。
+    const renderedPersistedTexts = windowTailTexts.slice();
+    for (const ex of exs) {
+      const seq = Number((ex as any)?.seq || 0);
+      if (seq <= 0) continue;
+      if (visibleSeqSet.has(seq)) continue;
+      if (latestSeq === 0 || seq <= latestSeq) continue;
+      const text = normalizeOverlayText(String((ex as any)?.content || ""));
+      if (text) renderedPersistedTexts.push(text);
+    }
     const consumed = new Map<string, number>();
     const out: ExchangeArray = [];
     for (const ex of exs) {
@@ -1264,15 +1277,15 @@ function SessionViewerInner({
           continue;
         }
       }
-      // seq==0 的直播正文/思考：同一轮若已落盘（窗口最新几条持久化行里已有包含它的），
-      // 缓存里这份就是陈旧拷贝 → 让位。若不让位，「窗口渲染一份 + overlay 再渲染一份」
-      // 会把同一轮显示两次，ask 卡上下各一块分析文本（实测 2026-09-17，库里并无重复数据）。
+      // seq==0 的直播正文/思考：同一轮若已落盘（本次会被渲染的持久化正文里已有包含它的），
+      // 缓存里这份就是陈旧拷贝 → 让位。若不让位，「窗口/overlay 渲染一份 + 直播再渲染一份」
+      // 会把同一轮显示两次，ask 卡上下各一整轮（实测 2026-09-17，库里并无重复数据）。
       const transientText = normalizeOverlayText(
         String((ex as any)?.content || ""),
       );
       if (
         transientText.length >= OVERLAY_DUP_MIN_CHARS &&
-        windowTailTexts.some((text) => text.includes(transientText))
+        renderedPersistedTexts.some((text) => text.includes(transientText))
       ) {
         continue;
       }

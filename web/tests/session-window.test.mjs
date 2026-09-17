@@ -190,8 +190,13 @@ assert.match(
 );
 assert.match(
   viewerSrc,
-  /windowTailTexts\.some\(\(text\) => text\.includes\(transientText\)\)/,
-  "seq=0 live text must yield once the window already contains it",
+  /renderedPersistedTexts\.some\(\(text\) => text\.includes\(transientText\)\)/,
+  "seq=0 live text must yield once the rendered persisted text already contains it",
+);
+assert.match(
+  viewerSrc,
+  /const renderedPersistedTexts = windowTailTexts\.slice\(\);/,
+  "the corpus must also include the persisted rows the overlay itself renders",
 );
 assert.match(
   viewerSrc,
@@ -329,6 +334,16 @@ function buildTailOverlay(cacheExchanges, visibleExchanges, latestSeq) {
     const text = String(ex?.content || "").replace(/\s+/g, "");
     if (text) windowTailTexts.push(text);
   }
+  // 已落盘但还没进窗口的条目由 overlay 自己渲染 —— 它们也算「已经显示过的一份」
+  const renderedPersistedTexts = windowTailTexts.slice();
+  for (const ex of cacheExchanges) {
+    const seq = Number(ex?.seq || 0);
+    if (seq <= 0) continue;
+    if (visibleSeqSet.has(seq)) continue;
+    if (latestSeq === 0 || seq <= latestSeq) continue;
+    const text = String(ex?.content || "").replace(/\s+/g, "");
+    if (text) renderedPersistedTexts.push(text);
+  }
   const out = [];
   for (const ex of cacheExchanges) {
     const seq = Number(ex?.seq || 0);
@@ -350,7 +365,7 @@ function buildTailOverlay(cacheExchanges, visibleExchanges, latestSeq) {
     const transientText = String(ex?.content || "").replace(/\s+/g, "");
     if (
       transientText.length >= 32 &&
-      windowTailTexts.some((text) => text.includes(transientText))
+      renderedPersistedTexts.some((text) => text.includes(transientText))
     ) {
       continue;
     }
@@ -436,6 +451,35 @@ assert.equal(
   buildTailOverlay([{ role: "agent", content: "好的" }], askWin, 22).length,
   1,
   "⑨ short fragments must not be reconciled away (真·合法重复发言)",
+);
+
+// ⑩ 实测 2026-09-17 20:16（PC 节点「为 MindFS 添加登录功能」）：刚落盘那一行还没被重锚定
+// 拉进窗口（latestSeq 仍是上一轮），由 overlay 的 seq>0 分支渲染；seq=0 的直播拷贝必须照样
+// 让位，否则整轮渲染两次——ask 卡上下各一整轮。
+const liveTurnText =
+  "看完了现有链路，先把关键事实说清楚（避免重复造轮子）：- 现在**没有**任何登录。";
+const persistedRow = {
+  role: "agent",
+  seq: 2,
+  // 落盘正文：服务端 appendResponseChunk 在文本块之间补了 "\n\n"，直播 chunk 不带
+  content:
+    "I'll explore the codebase first to understand what's already there before proposing anything.\n\n" +
+    "看完了现有链路，先把关键事实说清楚（避免重复造轮子）：\n\n" +
+    "- 现在**没有**任何登录。",
+};
+assert.equal(
+  buildTailOverlay(
+    [
+      { role: "user", content: "请给 mindfs 加上登录功能", seq: 1 },
+      persistedRow,
+      { role: "agent", content: liveTurnText },
+    ],
+    // 窗口还停在上一轮：不含 seq=2
+    [{ role: "user", content: "请给 mindfs 加上登录功能", seq: 1 }],
+    1,
+  ).length,
+  1,
+  "⑩ a persisted row rendered by the overlay itself must also claim the live copy",
 );
 
 console.log("session-window.test.mjs: OK");
