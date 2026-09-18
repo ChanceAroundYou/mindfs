@@ -62,10 +62,15 @@ const PRIMARY_BUTTON_STYLE: React.CSSProperties = {
 
 /** 删除：红色垃圾桶图标按钮 */
 const TRASH_BUTTON_STYLE: React.CSSProperties = {
-  ...BUTTON_STYLE,
+  border: "none",
+  background: "transparent",
   color: "var(--danger-color, #dc2626)",
+  padding: "4px",
+  borderRadius: 6,
+  cursor: "pointer",
   display: "inline-flex",
   alignItems: "center",
+  justifyContent: "center",
 };
 
 function TrashIcon(): React.ReactElement {
@@ -464,6 +469,25 @@ export function AccountPanel({ onClose, anchorRef }: AccountPanelProps): React.R
                 {account.disabled ? (
                   <span style={{ ...badgeStyle(false), opacity: 0.7 }}>{t("account.disable")}</span>
                 ) : null}
+                <button
+                  type="button"
+                  disabled={busy || account.primary}
+                  aria-label={t("account.delete")}
+                  title={account.primary ? t("account.deletePrimaryHint") : t("account.delete")}
+                  style={{
+                    ...TRASH_BUTTON_STYLE,
+                    marginLeft: "auto",
+                    opacity: busy || account.primary ? 0.45 : 1,
+                  }}
+                  onClick={() => {
+                    if (!window.confirm(t("account.confirmDelete", { name: account.username }))) return;
+                    void run(async () => {
+                      await deleteAccount(account.id);
+                    });
+                  }}
+                >
+                  <TrashIcon />
+                </button>
               </div>
               <div style={{ ...ROW_STYLE, flexWrap: "wrap" }}>
                 {!account.primary ? (
@@ -481,24 +505,6 @@ export function AccountPanel({ onClose, anchorRef }: AccountPanelProps): React.R
                     {t("account.makePrimary")}
                   </button>
                 ) : null}
-                <button
-                  type="button"
-                  disabled={busy || account.primary}
-                  aria-label={t("account.delete")}
-                  title={account.primary ? t("account.deletePrimaryHint") : t("account.delete")}
-                  style={{
-                    ...TRASH_BUTTON_STYLE,
-                    opacity: busy || account.primary ? 0.45 : 1,
-                  }}
-                  onClick={() => {
-                    if (!window.confirm(t("account.confirmDelete", { name: account.username }))) return;
-                    void run(async () => {
-                      await deleteAccount(account.id);
-                    });
-                  }}
-                >
-                  <TrashIcon />
-                </button>
               </div>
             </div>
           ))}
