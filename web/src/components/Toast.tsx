@@ -18,7 +18,11 @@ export function ToastContainer(): React.ReactElement {
       if (error.severity === "fatal") return;
 
       const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      const duration = error.severity === "error" ? 5000 : 3000;
+      // 「该节点没有你的账户」不是一闪而过的网络抖动：它是那次刷新里**唯一**的解释
+      // （该项目因此整个消失）。3s 自动消失等于没提示——实测采样都抓不到。
+      // 给到 12s，让用户来得及看见并点「在此节点创建账户」。
+      const longLived = error.code === "node.account_missing";
+      const duration = longLived ? 12000 : error.severity === "error" ? 5000 : 3000;
 
       setToasts((prev) => [
         ...prev,

@@ -5278,7 +5278,26 @@ export function App({ onGoHome }: AppProps) {
           });
         }
       } else {
-        nodeFetchResults = await Promise.all(nodeIds.map(async (nid) => {
+        // 与项目列表同一条规矩：对方没有我这个用户名的账户，就不要拉它的会话——
+        // 不带 user= 会拿到对方**主账户**的会话，等于把别人机器上的对话混进来。
+        const meForSessions = currentUser();
+        const sessionNodeIds: string[] = [];
+        await Promise.all(nodeIds.map(async (nid) => {
+          const id = String(nid);
+          if (id === LOCAL_NODE_ID || !meForSessions?.username) { sessionNodeIds.push(id); return; }
+          try {
+            if (await nodeHasAccount(id, meForSessions.username)) sessionNodeIds.push(id);
+            else {
+              const missing = { id, name: String(getNodeById(id)?.name || id) };
+              missingAccountNodesRef.current = [
+                ...missingAccountNodesRef.current.filter((x) => x.id !== missing.id),
+                missing,
+              ];
+              notifyNodeAccountMissingRef.current(missing);
+            }
+          } catch { /* 查不到就整块跳过，宁可少显示也不串号 */ }
+        }));
+        nodeFetchResults = await Promise.all(sessionNodeIds.map(async (nid) => {
           try { const gs = await sessionService.fetchMultiRootSessions(MULTI_PROJECT_SESSION_LIMIT, nid); return gs.map((g) => ({ ...g, _nodeId: nid })); }
           catch (err) {
             // 该节点没有本账户 → 报「缺账户」，不要报成「加载失败」：
@@ -8128,13 +8147,30 @@ export function App({ onGoHome }: AppProps) {
         }
         const nodeFailures: Array<{ id: string; name: string }> = [];
         const missingAccountNodes: Array<{ id: string; name: string }> = [];
+        const me = currentUser();
+        // 跨机器请求**不带 user=**（本机账户 id 在对方那儿不存在），于是对方服务端
+        // 回落到**它自己的主账户**，把别人机器上的项目当成你的返回回来——不报错、不提示。
+        // 所以先问一句「那台机器有没有我这个用户名」：没有就整块跳过，
+        // 绝不让它的主账户数据渲染成你的项目。
+        // 用用户名而不是 id：两台机器的用户 id 必然不同（各自 users.json 随机生成）。
+        const allowed = new Set<string>();
+        await Promise.all(targets.map(async (n) => {
+          if (n.id === LOCAL_NODE_ID) { allowed.add(String(n.id)); return; }
+          if (!me?.username) { allowed.add(String(n.id)); return; }
+          try {
+            if (await nodeHasAccount(String(n.id), me.username)) allowed.add(String(n.id));
+            else missingAccountNodes.push({ id: String(n.id), name: String(n.name || n.id) });
+          } catch {
+            // 查不到（断网/对方 5xx）：按「暂时不显示」处理，不让对方主账户数据漏过来。
+            missingAccountNodes.push({ id: String(n.id), name: String(n.name || n.id) });
+          }
+        }));
         const results = await Promise.all(targets.map(async (n) => {
+          if (!allowed.has(String(n.id))) return [] as ManagedRootPayload[];
           try {
             const dirs = await withNodeRetry(() => apiProtectedJSON<ManagedRootPayload[]>(appPath("/api/dirs", n.id)));
             return (Array.isArray(dirs) ? dirs : []).map((d: any) => ({ ...d, _nodeId: (d as any)._nodeId || n.id, _nodeColor: n.color, _nodeName: n.name }));
           } catch (err) {
-            // 该节点没有当前账户：这是「它没有你的数据」，不是故障。
-            // 单独记账，既不提示加载失败，也绝不让它回落显示对方主账户的项目。
             if (isUnknownUserError(err)) {
               missingAccountNodes.push({ id: String(n.id), name: String(n.name || n.id) });
               return [] as ManagedRootPayload[];
