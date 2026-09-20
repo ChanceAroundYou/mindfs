@@ -8321,31 +8321,50 @@ export function App({ onGoHome }: AppProps) {
       if (!account) return;
       // 跨机器靠**用户名**认人（两边的用户 id 必然不同）。先确认对方真没有这个名字再提示，
       // 避免已经建好了还一直弹。
-      void nodeHasAccount(node.id, account).then((exists) => {
-        if (exists || notifiedMissingAccountRef.current.has(node.id)) return;
-        notifiedMissingAccountRef.current.add(node.id);
-        reportError(
-          "node.account_missing",
-          t("error.node.accountMissing", { name: node.name, account }),
-          {
-            severity: "warning",
-            recoverable: true,
-            details: { nodeId: node.id },
-            retryAction: async () => {
-              // 密码登录后就不再留存（authGate 只存 id/username/role），所以这里现问一次。
-              // 不把口令常驻浏览器是刻意的：共享设备或一次 XSS 就能拿走。
-              const pwd = window.prompt(
-                t("node.createAccountTitle", { name: node.name, account }),
-                "",
-              );
-              if (!pwd) return;
-              await createAccountOnNode(node.id, account, pwd, "user");
-              notifiedMissingAccountRef.current.delete(node.id);
-              await refreshManagedRoots();
+      void nodeHasAccount(node.id, account)
+        .catch(() => {
+          // 查不到（断网/对方 5xx）不能当成「没有这个账户」，否则会误报「缺账户」，
+          // 用户照着去建号会撞 username_taken。这一轮就不提示了。
+          return true;
+        })
+        .then((exists) => {
+          if (exists || notifiedMissingAccountRef.current.has(node.id)) return;
+          notifiedMissingAccountRef.current.add(node.id);
+          reportError(
+            "node.account_missing",
+            t("error.node.accountMissing", { name: node.name, account }),
+            {
+              severity: "warning",
+              recoverable: true,
+              details: { nodeId: node.id },
+              retryAction: async () => {
+                // 密码登录后就不再留存（authGate 只存 id/username/role），所以这里现问一次。
+                // 不把口令常驻浏览器是刻意的：共享设备或一次 XSS 就能拿走。
+                const pwd = window.prompt(
+                  t("node.createAccountTitle", { name: node.name, account }),
+                  "",
+                );
+                if (!pwd) return;
+                try {
+                  await createAccountOnNode(node.id, account, pwd, "user");
+                } catch (err) {
+                  // 建号失败（重名 / 密码太短 / 对方不可达）要说出来，
+                  // 否则点完「重试」什么都不发生，像是按钮坏了。
+                  const code = String((err as Error)?.message || "");
+                  notifiedMissingAccountRef.current.delete(node.id);
+                  reportError(
+                    "node.account_missing",
+                    t("error.node.accountMissing", { name: node.name, account }),
+                    { severity: "error", recoverable: true, details: { nodeId: node.id, code } },
+                  );
+                  return;
+                }
+                notifiedMissingAccountRef.current.delete(node.id);
+                await refreshManagedRoots();
+              },
             },
-          },
-        );
-      });
+          );
+        });
     },
     [refreshManagedRoots, t],
   );

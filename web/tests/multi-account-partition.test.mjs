@@ -71,6 +71,20 @@ assert.ok(
   "api.ts 应把「这条请求打的是不是本机」判在 targetsPageServer 里",
 );
 
+// 2d) 三个 JSON helper 必须**都**走 handleAccountGone。
+//     protectedJSON 曾漏掉：本机账户被删时它不登出，整页卡在 404 出不来，
+//     而 /api/dirs 恰好走的就是它。
+for (const fn of ["fetchJSON", "fetchMaybeJSON", "protectedJSON"]) {
+  const start = apiSrc.indexOf(`export async function ${fn}<`);
+  assert.ok(start >= 0, `api.ts 应导出 ${fn}`);
+  const next = apiSrc.indexOf("\nexport ", start + 1);
+  const body = apiSrc.slice(start, next < 0 ? undefined : next);
+  assert.ok(
+    body.includes("handleAccountGone"),
+    `${fn} 必须走 handleAccountGone——漏了会让本机账户被删后整页卡在 404`,
+  );
+}
+
 // 3) 跨节点不带本机账户 id：账户表每台机器独立，带过去会让对方 404。
 assert.ok(
   /if \(!isSameServerAsPage\(url\)\) \{\s*return url;/.test(baseSrc),

@@ -110,6 +110,9 @@ export async function protectedJSON<T>(input: RequestInfo | URL, init: RequestIn
   const response = await e2eeService.protectedFetch(input, init);
   const payload = await e2eeService.parseProtectedJSONResponse<any>(response).catch(() => ({} as any));
   if (!response.ok) {
+    // 和其它两个 helper 一致：本机账户被删时也要登出，否则整页卡在 404。
+    // （这条以前漏了，而 /api/dirs 正是走它。）
+    handleAccountGone(response.status, payload, input);
     throw new APIError(response.status, payload, `request failed: ${response.status}`);
   }
   return payload as T;
