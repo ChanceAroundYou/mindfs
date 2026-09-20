@@ -59,12 +59,17 @@ export function isSameServerAsPage(url: string): boolean {
  * 服务端按这个参数分区存储、不做鉴权（见 docs/multi-user-prd.md §1.1），
  * 所以它等价于「我这次请求算哪个账户的」。缺省时服务端回落到主账户。
  *
- * 只给**同源**请求带账户 id：账户表是每台机器独立的，把本机账户 id 塞给另一个节点
- * 会让那边查不到而 404。跨节点请求由那台机器自己决定用哪个账户（回落到它的主账户），
- * 想在别的节点上用别的账户，就直连那台机器的页面登录。
+ * **同源**（本机）：带账户 id，最精确。
  *
- * 注：跨节点回落对方主账户会**显示别人的项目**且不报错。前端现在靠
- * `isUnknownUserError` 把「该节点没有本账户」单独标出来，不再假装那是你的数据。
+ * **跨机器**：id 不能带——账户表每台机器独立，id 是各自随机生成的
+ * （实测本机 u_pc_admin、另一台 u_2d_hoAd3ZMEimSSH），带过去必然 404。
+ * 但**用户名**是同一个人的稳定标识（两边都叫 xiaokubao），所以跨机器改带
+ * `user=<用户名>`，由对方按用户名解析到**它本地**的那个账户。
+ *
+ * 不带的话对方会回落到**它自己的主账户**，把别人机器上的项目当成你的返回回来——
+ * 不报错、不提示（这是实测踩过的坑，比 404 危险得多）。
+ *
+ * 对方没有这个用户名时服务端回 404 unknown_user，由调用方按节点处理（见 api.ts）。
  */
 function withAccountUser(url: string): string {
   if (!url) {
@@ -74,15 +79,20 @@ function withAccountUser(url: string): string {
   if (!user?.id) {
     return url;
   }
-  if (!isSameServerAsPage(url)) {
-    return url;
-  }
   const queryIndex = url.indexOf("?");
   const query = queryIndex >= 0 ? url.slice(queryIndex + 1) : "";
   if (new URLSearchParams(query).has("user")) {
     return url;
   }
-  return appendQuery(url, `user=${encodeURIComponent(user.id)}`);
+  if (isSameServerAsPage(url)) {
+    return appendQuery(url, `user=${encodeURIComponent(user.id)}`);
+  }
+  // 跨机器：id 带不过去，改带用户名
+  const name = String(user.username || "").trim();
+  if (!name) {
+    return url;
+  }
+  return appendQuery(url, `user=${encodeURIComponent(name)}`);
 }
 
 /** 不带账户参数的基础路径；appURL/wsURL 复用它，避免 user= 被塞到参数前面。 */

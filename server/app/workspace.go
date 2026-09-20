@@ -137,7 +137,12 @@ func (m *workspaceManager) Workspace(userID string) (*api.AppContext, error) {
 	if id == "" {
 		return nil, errors.New("账户表为空")
 	}
-	if !m.shared.auth.Exists(id) {
+	// 客户端可能给的是**用户名**（跨机器时唯一能对齐的东西，见 auth.Store.Resolve）。
+	// 解析成本机 id 再用，否则会按用户名去查 id 而 404，
+	// 也会让同一个账户因为 id/用户名两种写法各建一份 AppContext。
+	if resolved := m.shared.auth.Resolve(id); resolved != "" {
+		id = resolved
+	} else {
 		return nil, fmt.Errorf("%w: %s", api.ErrUnknownUser, id)
 	}
 

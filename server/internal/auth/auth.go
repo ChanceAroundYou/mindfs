@@ -362,10 +362,38 @@ func (s *Store) Get(id string) (PublicUser, error) {
 	return s.publicLocked(s.users[idx]), nil
 }
 
-// Exists 判断账户 id 是否存在（供按账户分区使用）。
+// Resolve 把客户端声明的身份解析成**本机**的账户 id。
+//
+// 为什么需要它：账户表每台机器独立，用户 id 是各自随机生成的（实测本机
+// u_pc_admin、另一台 u_2d_hoAd3ZMEimSSH），所以客户端没法把别处的 id 带过来用；
+// 跨机器能对齐的只有**用户名**（同一个人在两边都叫 xiaokubao）。
+// 先按 id 认，认不到再按用户名认（不区分大小写，与建号时的重名校验一致）。
+//
+// 找不到返回空串——调用方据此判定「本机没有这个账户」，**不要**回落到主账户，
+// 否则会把别人机器上的数据当成当前用户的返回回去。
+func (s *Store) Resolve(who string) string {
+	want := strings.TrimSpace(who)
+	if want == "" || s == nil {
+		return ""
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.users {
+		if s.users[i].ID == want {
+			return s.users[i].ID
+		}
+	}
+	for i := range s.users {
+		if strings.EqualFold(strings.TrimSpace(s.users[i].Username), want) {
+			return s.users[i].ID
+		}
+	}
+	return ""
+}
+
+// Exists 判断账户是否存在，接受 id 或用户名（见 Resolve）。
 func (s *Store) Exists(id string) bool {
-	_, err := s.Get(id)
-	return err == nil
+	return s.Resolve(id) != ""
 }
 
 func (s *Store) indexLocked(id string) int {

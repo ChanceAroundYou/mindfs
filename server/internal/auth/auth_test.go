@@ -251,3 +251,57 @@ func TestUnknownUserAndNilStore(t *testing.T) {
 		t.Fatal("nil store must report nothing")
 	}
 }
+
+// 跨机器只能靠用户名认人：两台机器的用户 id 是各自随机生成的
+// （实测本机 u_pc_admin、另一台 u_2d_hoAd3ZMEimSSH），id 带过去必然认不出。
+func TestResolveAcceptsIDAndUsername(t *testing.T) {
+	store, _ := newTestStore(t, "Xkb111717!")
+
+	admin, err := store.Authenticate("admin", "Xkb111717!")
+	if err != nil {
+		t.Fatalf("authenticate admin: %v", err)
+	}
+	other, err := store.Create("xingxingbao", "secret123", RoleUser)
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"按 id", admin.ID, admin.ID},
+		{"按用户名", "admin", admin.ID},
+		{"按用户名（大小写不同）", "Admin", admin.ID},
+		{"按用户名（首尾空格）", "  admin  ", admin.ID},
+		{"另一个账户按用户名", "xingxingbao", other.ID},
+		{"不存在的名字", "nobody", ""},
+		{"空串", "   ", ""},
+		{"本机没有的 id（对方机器的账户）", "u_2d_hoAd3ZMEimSSH", ""},
+	}
+	for _, c := range cases {
+		if got := store.Resolve(c.in); got != c.want {
+			t.Errorf("%s: Resolve(%q) = %q, want %q", c.name, c.in, got, c.want)
+		}
+	}
+}
+
+// Exists 是老接口，必须跟着接受用户名——工作区构建用它做闸门，
+// 只认 id 的话按用户名来的跨机器请求会被判成未知账户而 404。
+func TestExistsAcceptsUsername(t *testing.T) {
+	store, _ := newTestStore(t, "Xkb111717!")
+	admin, err := store.Authenticate("admin", "Xkb111717!")
+	if err != nil {
+		t.Fatalf("authenticate: %v", err)
+	}
+	if !store.Exists("admin") {
+		t.Error("Exists(用户名) = false, want true")
+	}
+	if !store.Exists(admin.ID) {
+		t.Error("Exists(id) = false, want true")
+	}
+	if store.Exists("u_not_here") {
+		t.Error("Exists(不存在的 id) = true, want false")
+	}
+}

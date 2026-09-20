@@ -85,10 +85,21 @@ for (const fn of ["fetchJSON", "fetchMaybeJSON", "protectedJSON"]) {
   );
 }
 
-// 3) 跨节点不带本机账户 id：账户表每台机器独立，带过去会让对方 404。
+// 3) 跨机器：**带用户名、不带 id**。
+//    不带的话对方服务端回落到它**自己的主账户**，把别人机器上的项目当成你的返回回来，
+//    不报错不提示（实测踩过，比 404 危险）。
+//    带 id 也不行：账户表每台机器独立、id 随机生成，对方必然 404。
 assert.ok(
-  /if \(!isSameServerAsPage\(url\)\) \{\s*return url;/.test(baseSrc),
-  "非当前服务器发来的请求不得携带本机账户 id",
+  /if \(isSameServerAsPage\(url\)\) \{\s*return appendQuery\(url, `user=\$\{encodeURIComponent\(user\.id\)\}`\);/m.test(baseSrc),
+  "同源请求应带账户 id",
+);
+assert.ok(
+  baseSrc.includes("const name = String(user.username || \"\").trim();"),
+  "跨机器应改带用户名——服务端按用户名解析到它本地的同名账户",
+);
+assert.ok(
+  /user=\$\{encodeURIComponent\(name\)\}/.test(baseSrc),
+  "跨机器要真的把用户名写进 user=",
 );
 
 // 4) 账户态的唯一来源是 authGate，避免各处理散落的第二真源。
