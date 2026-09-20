@@ -863,4 +863,10 @@ export const zhCN = {
   "error.network.disconnected": "网络连接断开",
   "error.network.timeout": "网络请求超时",
   "error.node.loadFailed": "节点「{name}」加载失败，它的项目与会话暂时不会显示",
+  "error.node.accountMissing": "节点「{name}」上没有账户「{account}」，因此不显示任何项目",
+  "node.createAccountHere": "在此节点创建同名账户",
+  "node.createAccountTitle": "在「{name}」上创建账户「{account}」",
+  "node.createAccountHint": "两台机器的账户表相互独立，同一份密码也可以在两台机器上使用，但各自独立存储。",
+  "node.createAccountSubmit": "创建",
+  "node.createAccountDone": "已在「{name}」上创建账户「{account}」",
 } as const;

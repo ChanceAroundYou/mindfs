@@ -1,6 +1,7 @@
 import { bootstrapService } from "./bootstrap";
 import { e2eeService } from "./e2ee";
 import { logout } from "./authGate";
+import { isSameServerAsPage } from "./base";
 
 export class APIError extends Error {
   status: number;
@@ -19,15 +20,39 @@ export const ProtectedAPIError = APIError;
 let accountResetInFlight = false;
 
 /**
- * 服务端说「这个账户不存在」（多半是账户被删/转移后前端还存着旧 id）。
- * 清掉本地账户并回到登录页，否则整页会一直 404。
+ * 这条请求打的是不是**发这个页面的那台服务器**。
+ *
+ * 必需，因为 `unknown_user` 有两种含义，处理方式相反：
+ *   ① 本机账户被删/被转移 —— 该登出，否则整页一直 404；
+ *   ② 另一台机器上没有这个账户（账户表每台机器独立）—— **绝不能登出**，
+ *      那只是那台节点不该给你看东西，本机账户还好好的。
+ * 旧代码把两者都当成 ①，于是访问一个没有本账户的节点会直接把用户踢下线。
  */
-function handleAccountGone(status: number, payload: any): void {
+function targetsPageServer(input: RequestInfo | URL): boolean {
+  try {
+    const raw = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    return isSameServerAsPage(raw);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 服务端说「这个账户不存在」。
+ *
+ * 只有**当前服务器**说这话才代表账户真没了（见 targetsPageServer）。
+ * 跨机器的那份不是错误，是「该节点没有你的账户」——交给调用方按节点展示。
+ */
+function handleAccountGone(status: number, payload: any, input: RequestInfo | URL): void {
   if (status !== 404 || accountResetInFlight) {
     return;
   }
   const code = String(payload?.error || "");
   if (!code.startsWith("unknown_user")) {
+    return;
+  }
+  // 别的节点没有这个账户：不动登录态，也不重载页面
+  if (!targetsPageServer(input)) {
     return;
   }
   accountResetInFlight = true;
@@ -37,11 +62,20 @@ function handleAccountGone(status: number, payload: any): void {
   }
 }
 
+/** 该错误是否表示「目标节点不认识当前账户」。 */
+export function isUnknownUserError(err: unknown): boolean {
+  return (
+    err instanceof APIError &&
+    err.status === 404 &&
+    String(err.payload?.error || "").startsWith("unknown_user")
+  );
+}
+
 export async function fetchJSON<T>(input: RequestInfo | URL, init: RequestInit = {}): Promise<T> {
   const response = await fetch(input, init);
   const payload = await response.json().catch(() => ({} as any));
   if (!response.ok) {
-    handleAccountGone(response.status, payload);
+    handleAccountGone(response.status, payload, input);
     throw new APIError(response.status, payload, `request failed: ${response.status}`);
   }
   return payload as T;
@@ -52,7 +86,7 @@ export async function fetchMaybeJSON<T>(input: RequestInfo | URL, init: RequestI
   if (response.status === 204 || response.status === 304) return null as T;
   const payload = await response.json().catch(() => ({} as any));
   if (!response.ok) {
-    handleAccountGone(response.status, payload);
+    handleAccountGone(response.status, payload, input);
     throw new APIError(response.status, payload, `request failed: ${response.status}`);
   }
   return payload as T;

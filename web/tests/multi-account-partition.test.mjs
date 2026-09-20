@@ -10,6 +10,7 @@ const read = (p) => fs.readFileSync(path.join(root, p), "utf8");
 
 const baseSrc = read("src/services/base.ts");
 const authGateSrc = read("src/services/authGate.ts");
+const apiSrc = read("src/services/api.ts");
 
 // 1) 账户参数必须由 base.ts 注入——它是全部 fetch / WS / 资源 URL 的唯一汇聚点。
 //    漏了它，文件与图片的 src 会读到别的账户的数据。
@@ -33,8 +34,8 @@ for (const fn of ["appPath", "appURL", "wsURL"]) {
 //    直接用 origin 比较会让 `ws://host` 永不等于 `http://host`，
 //    于是本机自己的 WS 被误判成跨节点、丢掉 user=，跨账户实时串流。
 assert.ok(
-  baseSrc.includes("isSameOriginAsPage"),
-  "base.ts 应把同源判定收在 isSameOriginAsPage 里",
+  baseSrc.includes("isSameServerAsPage"),
+  "base.ts 应把同源判定收在 isSameServerAsPage 里",
 );
 assert.ok(
   /protocol === "ws:"\s*\?\s*"http:"/.test(baseSrc) && /protocol === "wss:"\s*\?\s*"https:"/.test(baseSrc),
@@ -45,9 +46,34 @@ assert.ok(
   "不要再退回裸 origin 比较（ws 与 http 永不相等）",
 );
 
+// 2b) 绝不能把「本机节点表里的地址」当成同源。
+//     实测 home 与 pc 是**两台不同的机器**，各自的节点表里恰好都有指向对方的条目；
+//     按表放宽会把本机账户 id 发给没有该账户的机器 → 对方 404 → 该项目全空。
+//     （这条曾真的写错过，靠 API 实测才发现，见 memory/cross-machine-account-identity）
+assert.ok(
+  !/getNodes\(\)\.some/.test(baseSrc) && !/isCurrentServerOrigin/.test(baseSrc),
+  "base.ts 不得用本机节点表放宽同源判定——表里的远端条目正是别的机器",
+);
+
+// 2c) 跨机器的 unknown_user 不得触发登出。
+//     `unknown_user` 有两种含义：① 本机账户被删（该登出）② 对方机器没有这个账户（不该登出）。
+//     旧代码把两者都当①，于是访问一个没有本账户的节点会直接把用户踢下线。
+assert.ok(
+  apiSrc.includes("isUnknownUserError"),
+  "api.ts 应导出 isUnknownUserError 供调用方按节点区分处理",
+);
+assert.ok(
+  /if \(!targetsPageServer\(input\)\) \{\s*return;/.test(apiSrc),
+  "非本机服务器返回的 unknown_user 不得清登录态（否则换个节点就被踢下线）",
+);
+assert.ok(
+  apiSrc.includes("targetsPageServer"),
+  "api.ts 应把「这条请求打的是不是本机」判在 targetsPageServer 里",
+);
+
 // 3) 跨节点不带本机账户 id：账户表每台机器独立，带过去会让对方 404。
 assert.ok(
-  /if \(!isSameOriginAsPage\(url\)\) \{\s*return url;/.test(baseSrc),
+  /if \(!isSameServerAsPage\(url\)\) \{\s*return url;/.test(baseSrc),
   "非当前服务器发来的请求不得携带本机账户 id",
 );
 
@@ -72,5 +98,12 @@ assert.ok(sameOrigin("ws://127.0.0.1:7331/ws", "http://127.0.0.1:7331/mindfs/"),
 assert.ok(!sameOrigin("https://wsl.example.com/mindfs/ws", page), "别的节点应判为跨源");
 assert.ok(!sameOrigin("wss://pc.example.com:8443/ws", page), "端口不同应判为跨源");
 assert.ok(!sameOrigin("http://pc.example.com/mindfs/ws", page), "协议降级应判为跨源");
+
+// 6) 相对路径必须解析成「同机」。handleAccountGone 靠在它上面判断该不该登出：
+//    本机账户被删时请求常是相对路径，若误判成跨机就永远不登出、整页卡在 404。
+assert.ok(sameOrigin("/mindfs/api/dirs?user=u_x", page), "相对路径应解析为同机");
+assert.ok(sameOrigin("", page), "空串（当前页）应解析为同机");
+// 绝对跨机地址在任意页面下都判跨机
+assert.ok(!sameOrigin("https://other.example.com/mindfs/api/dirs", page), "绝对跨机地址应判跨机");
 
 console.log("multi-account-partition: ok");

@@ -44,7 +44,8 @@ export type ErrorCode =
   | "network.disconnected"
   | "network.timeout"
   // Remote node errors
-  | "node.load_failed";
+  | "node.load_failed"
+  | "node.account_missing";
 
 export type ErrorSeverity = "info" | "warning" | "error" | "fatal";
 
@@ -290,6 +291,11 @@ class ErrorService {
       },
       "node.load_failed": {
         messageKey: "error.node.loadFailed",
+        severity: "warning",
+        recoverable: true,
+      },
+      "node.account_missing": {
+        messageKey: "error.node.accountMissing",
         severity: "warning",
         recoverable: true,
       },

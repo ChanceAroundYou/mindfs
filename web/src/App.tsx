@@ -39,11 +39,14 @@ import {
 import { syncNativeReplyPollerE2EE } from "./services/replyPoller";
 import {
   ProtectedAPIError,
+  isUnknownUserError,
   protectedAPIReady,
   protectedJSON as apiProtectedJSON,
   withNodeRetry,
 } from "./services/api";
 import { reportError } from "./services/error";
+import { createAccountOnNode, nodeHasAccount } from "./services/accounts";
+import { currentUser } from "./services/authGate";
 import {
   loadSendShortcut,
   persistSendShortcut,
@@ -1415,6 +1418,13 @@ export function App({ onGoHome }: AppProps) {
   const nodeLoadFailuresRef = useRef<Array<{ id: string; name: string }>>([]);
   const notifiedNodeFailuresRef = useRef<Set<string>>(new Set());
   const notifyNodeLoadFailedRef = useRef<(node: { id: string; name: string }) => void>(() => {});
+  // 上一轮跨节点抓取里「该节点没有当前账户」的节点。与 loadFailures 分开：
+  // 那不是故障（网断了/服务挂了），是那台机器本来就没有这个账户。
+  // 旧行为是把这类节点静默当成「没有 user=」，于是回落显示**对方主账户**的项目——
+  // 看起来像自己的数据，其实不是。现在单独标注并给「在此节点创建账户」入口。
+  const missingAccountNodesRef = useRef<Array<{ id: string; name: string }>>([]);
+  const notifiedMissingAccountRef = useRef<Set<string>>(new Set());
+  const notifyNodeAccountMissingRef = useRef<(node: { id: string; name: string }) => void>(() => {});
   // 目录树刷新并发守卫：按缓存键记录最后发起的请求序号，旧响应后到时直接丢弃
   const treeFetchSeqRef = useRef<Record<string, number>>({});
   const boundSessionByRootRef = useRef<Record<string, string | null>>({});
@@ -8105,16 +8115,24 @@ export function App({ onGoHome }: AppProps) {
           return Array.isArray(dirs) ? dirs : [];
         }
         const nodeFailures: Array<{ id: string; name: string }> = [];
+        const missingAccountNodes: Array<{ id: string; name: string }> = [];
         const results = await Promise.all(targets.map(async (n) => {
           try {
             const dirs = await withNodeRetry(() => apiProtectedJSON<ManagedRootPayload[]>(appPath("/api/dirs", n.id)));
             return (Array.isArray(dirs) ? dirs : []).map((d: any) => ({ ...d, _nodeId: (d as any)._nodeId || n.id, _nodeColor: n.color, _nodeName: n.name }));
           } catch (err) {
+            // 该节点没有当前账户：这是「它没有你的数据」，不是故障。
+            // 单独记账，既不提示加载失败，也绝不让它回落显示对方主账户的项目。
+            if (isUnknownUserError(err)) {
+              missingAccountNodes.push({ id: String(n.id), name: String(n.name || n.id) });
+              return [] as ManagedRootPayload[];
+            }
             nodeFailures.push({ id: String(n.id), name: String(n.name || n.id) });
             return [] as ManagedRootPayload[];
           }
         }));
         nodeLoadFailuresRef.current = nodeFailures;
+        missingAccountNodesRef.current = missingAccountNodes;
         const flat = results.flat() as ManagedRootPayload[];
         const seen = new Set<string>();
         const deduped: ManagedRootPayload[] = [];
@@ -8142,6 +8160,10 @@ export function App({ onGoHome }: AppProps) {
     }
     for (const failed of nodeLoadFailuresRef.current) {
       notifyNodeLoadFailedRef.current(failed);
+    }
+    // 该节点没有当前账户：明确告知，别让它看起来像「你的项目怎么少了」。
+    for (const missing of missingAccountNodesRef.current) {
+      notifyNodeAccountMissingRef.current(missing);
     }
     const nextDirs = Array.isArray(dirs) ? dirs : [];
     const nextRootIds = nextDirs.map((dir) => dir.id).filter(Boolean);
@@ -8277,6 +8299,47 @@ export function App({ onGoHome }: AppProps) {
   useEffect(() => {
     notifyNodeLoadFailedRef.current = notifyNodeLoadFailed;
   }, [notifyNodeLoadFailed]);
+
+  // 同一节点在一次「缺账户」里只提示一次。与 loadFailed 不同：这条不是故障，
+  // 重试不会变好，唯一出路是去那台机器建个同名账户。
+  const notifyNodeAccountMissing = useCallback(
+    (node: { id: string; name: string }) => {
+      if (notifiedMissingAccountRef.current.has(node.id)) return;
+      const account = String(currentUser()?.username || "");
+      if (!account) return;
+      // 跨机器靠**用户名**认人（两边的用户 id 必然不同）。先确认对方真没有这个名字再提示，
+      // 避免已经建好了还一直弹。
+      void nodeHasAccount(node.id, account).then((exists) => {
+        if (exists || notifiedMissingAccountRef.current.has(node.id)) return;
+        notifiedMissingAccountRef.current.add(node.id);
+        reportError(
+          "node.account_missing",
+          t("error.node.accountMissing", { name: node.name, account }),
+          {
+            severity: "warning",
+            recoverable: true,
+            details: { nodeId: node.id },
+            retryAction: async () => {
+              // 密码登录后就不再留存（authGate 只存 id/username/role），所以这里现问一次。
+              // 不把口令常驻浏览器是刻意的：共享设备或一次 XSS 就能拿走。
+              const pwd = window.prompt(
+                t("node.createAccountTitle", { name: node.name, account }),
+                "",
+              );
+              if (!pwd) return;
+              await createAccountOnNode(node.id, account, pwd, "user");
+              notifiedMissingAccountRef.current.delete(node.id);
+              await refreshManagedRoots();
+            },
+          },
+        );
+      });
+    },
+    [refreshManagedRoots, t],
+  );
+  useEffect(() => {
+    notifyNodeAccountMissingRef.current = notifyNodeAccountMissing;
+  }, [notifyNodeAccountMissing]);
 
   const applyManagedRootRename = useCallback(
     (oldRootID: string, rootPayload: ManagedRootPayload | null | undefined) => {

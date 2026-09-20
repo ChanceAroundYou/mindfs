@@ -865,4 +865,10 @@ export const enUS = {
   "error.network.disconnected": "Network disconnected",
   "error.network.timeout": "Network request timed out",
   "error.node.loadFailed": "Failed to load node \"{name}\" — its projects and sessions are hidden for now",
+  "error.node.accountMissing": "Node \"{name}\" has no account \"{account}\", so no projects are shown",
+  "node.createAccountHere": "Create this account on that node",
+  "node.createAccountTitle": "Create account \"{account}\" on \"{name}\"",
+  "node.createAccountHint": "Each machine keeps its own account table. The same password can be used on both, but they are stored independently.",
+  "node.createAccountSubmit": "Create",
+  "node.createAccountDone": "Created account \"{account}\" on \"{name}\"",
 } satisfies Messages;
