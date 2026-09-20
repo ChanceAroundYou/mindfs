@@ -5281,10 +5281,22 @@ export function App({ onGoHome }: AppProps) {
         nodeFetchResults = await Promise.all(nodeIds.map(async (nid) => {
           try { const gs = await sessionService.fetchMultiRootSessions(MULTI_PROJECT_SESSION_LIMIT, nid); return gs.map((g) => ({ ...g, _nodeId: nid })); }
           catch (err) {
-            notifyNodeLoadFailedRef.current({
-              id: String(nid),
-              name: String(getNodeById(String(nid))?.name || nid),
-            });
+            // 该节点没有本账户 → 报「缺账户」，不要报成「加载失败」：
+            // 后者会让人以为网断了去反复重试，而重试永远不会好。
+            if (isUnknownUserError(err)) {
+              const missing = { id: String(nid), name: String(getNodeById(String(nid))?.name || nid) };
+              missingAccountNodesRef.current = [
+                ...missingAccountNodesRef.current.filter((x) => x.id !== missing.id),
+                missing,
+              ];
+              // 这条路径不经过 refreshManagedRoots，直接提示（去重由 notified 集合兜底）
+              notifyNodeAccountMissingRef.current(missing);
+            } else {
+              notifyNodeLoadFailedRef.current({
+                id: String(nid),
+                name: String(getNodeById(String(nid))?.name || nid),
+              });
+            }
             return [] as Array<MultiRootSessionGroup & { _nodeId?: string }>;
           }
         }));
