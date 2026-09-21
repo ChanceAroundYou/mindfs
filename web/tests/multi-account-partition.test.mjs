@@ -11,6 +11,7 @@ const read = (p) => fs.readFileSync(path.join(root, p), "utf8");
 const baseSrc = read("src/services/base.ts");
 const authGateSrc = read("src/services/authGate.ts");
 const apiSrc = read("src/services/api.ts");
+const appSrc = read("src/App.tsx");
 
 // 1) 账户参数必须由 base.ts 注入——它是全部 fetch / WS / 资源 URL 的唯一汇聚点。
 //    漏了它，文件与图片的 src 会读到别的账户的数据。
@@ -55,13 +56,9 @@ assert.ok(
   "base.ts 不得用本机节点表放宽同源判定——表里的远端条目正是别的机器",
 );
 
-// 2c) 跨机器的 unknown_user 不得触发登出。
-//     `unknown_user` 有两种含义：① 本机账户被删（该登出）② 对方机器没有这个账户（不该登出）。
-//     旧代码把两者都当①，于是访问一个没有本账户的节点会直接把用户踢下线。
-assert.ok(
-  apiSrc.includes("isUnknownUserError"),
-  "api.ts 应导出 isUnknownUserError 供调用方按节点区分处理",
-);
+// 2c) 跨机器的 unknown_user 不得触发登出；本机账户被删时必须登出。
+//     `unknown_user` 只该由**本机**产生（对方机器没有本账户时回的是空列表，见 2e），
+//     所以这里只剩「本机账户被删」一种含义：必须登出，否则整页卡在 404。
 assert.ok(
   /if \(!targetsPageServer\(input\)\) \{\s*return;/.test(apiSrc),
   "非本机服务器返回的 unknown_user 不得清登录态（否则换个节点就被踢下线）",
@@ -69,6 +66,23 @@ assert.ok(
 assert.ok(
   apiSrc.includes("targetsPageServer"),
   "api.ts 应把「这条请求打的是不是本机」判在 targetsPageServer 里",
+);
+
+// 2e) 「对方机器没有这个账户」是**空列表**，不是 404。
+//     账户只是可见性设置，按账户的数据本来就是物理隔离的（各账户各自的
+//     registry.json / meta 目录），所以未知账户等价于「它的目录里没有数据」。
+//     服务端因此照常构建工作区，读者自然拿到空——前端不需要任何特殊分支。
+assert.ok(
+  !apiSrc.includes("isUnknownUserError"),
+  "不应再有 isUnknownUserError：跨机器缺账户已改为空列表，前端无需按节点区分",
+);
+assert.ok(
+  !appSrc.includes("account_missing"),
+  "App.tsx 不应再有「缺账户」提示/隐藏节点/一键建号那套（账户不是身份）",
+);
+assert.ok(
+  !/nodeHasAccount|createAccountOnNode/.test(appSrc),
+  "App.tsx 不应再做「对方有没有这个账户」的客户端预判——判定收归服务端数据本身",
 );
 
 // 2d) 三个 JSON helper 必须**都**走 handleAccountGone。

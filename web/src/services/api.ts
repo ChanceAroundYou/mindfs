@@ -62,15 +62,6 @@ function handleAccountGone(status: number, payload: any, input: RequestInfo | UR
   }
 }
 
-/** 该错误是否表示「目标节点不认识当前账户」。 */
-export function isUnknownUserError(err: unknown): boolean {
-  return (
-    err instanceof APIError &&
-    err.status === 404 &&
-    String(err.payload?.error || "").startsWith("unknown_user")
-  );
-}
-
 export async function fetchJSON<T>(input: RequestInfo | URL, init: RequestInit = {}): Promise<T> {
   const response = await fetch(input, init);
   const payload = await response.json().catch(() => ({} as any));

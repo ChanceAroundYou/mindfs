@@ -19,8 +19,10 @@ func (f *fakeWorkspaceProvider) Workspace(userID string) (*AppContext, error) {
 	}
 	ctx, ok := f.contexts[userID]
 	if !ok {
-		// 必须包 ErrUnknownUser：ScopedRouter 靠它把「账户不存在」映射成 404，
-		// 否则前端拿到 500 就不知道要重新登录。真实 provider 同样要包。
+		// 必须包 ErrUnknownUser：ScopedRouter 靠它把「账户不存在」映射成 404。
+		// 真实 provider（server/app/workspace.go）只在**本机账户被删**时才包它
+		// （有数据目录但不在账户表）；单纯是别的机器的账户会返回空工作区，
+		// 不是 404——别把两者混起来。
 		return nil, fmt.Errorf("%w: %s", ErrUnknownUser, userID)
 	}
 	return ctx, nil

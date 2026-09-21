@@ -49,30 +49,33 @@ for (const s of SERVERS) {
     check(`${s.name}: 已知账户 ${u.username} 可访问`, r.status === 200, `HTTP ${r.status}`);
   }
 
-  // 2) 不存在的账户必须 404 且带 unknown_user
+  // 2) 不存在的账户 = **空列表**，不是 404。
+  //    账户只是可见性设置；按账户的数据本来就是物理隔离的（各账户各自的
+  //    registry.json / meta 目录），所以「本机没这个账户」等价于「它的目录里没有数据」。
+  //    返回 404 会让前端把一个空节点显示成一串报错，而用户要的只是「空的」。
   const bogus = "u_DOES_NOT_EXIST_ON_THIS_MACHINE";
   assert.ok(!ids.has(bogus));
   const miss = await dirs(s.base, bogus);
-  check(`${s.name}: 未知账户 -> 404`, miss.status === 404, `HTTP ${miss.status}`);
+  check(`${s.name}: 未知账户 -> 200 空列表`, miss.status === 200, `HTTP ${miss.status}`);
   check(
-    `${s.name}: 未知账户错误码是 unknown_user`,
-    String(miss.body?.error || "").startsWith("unknown_user"),
-    JSON.stringify(miss.body),
+    `${s.name}: 未知账户返回空数组`,
+    Array.isArray(miss.body) && miss.body.length === 0,
+    JSON.stringify(miss.body).slice(0, 120),
   );
 
-  // 3) 不带 user= 会落到主账户 —— 这正是「看到别人项目」的来源，必须能被识别出来
+  // 3) 不带 user= 会落到主账户 —— 这正是「看到别人项目」的来源；前端现在总会带上身份
   const noUser = await dirs(s.base, "");
   check(`${s.name}: 不带 user= 落到主账户`, noUser.status === 200, `HTTP ${noUser.status}`);
 
-  // 4) 同一台机器上，另一个账户的 id 是**未知账户**（账户表独立的关键证据）
+  // 4) 另一台机器的账户 id 在本机也是空列表（账户表独立的关键证据）
   const other = SERVERS.find((x) => x.name !== s.name);
   const otherUsers = await accounts(other.base);
   for (const u of otherUsers) {
     if (ids.has(String(u.id))) continue; // 恰好同名同 id 才跳过
     const r = await dirs(s.base, String(u.id));
     check(
-      `${s.name}: 对方(${other.name})的账户 ${u.username} 在本机是未知账户`,
-      r.status === 404,
+      `${s.name}: 对方(${other.name})的账户 ${u.username} 在本机是空的`,
+      r.status === 200 && Array.isArray(r.body),
       `HTTP ${r.status}`,
     );
   }
