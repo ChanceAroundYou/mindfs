@@ -5212,6 +5212,8 @@ export function App({ onGoHome }: AppProps) {
     try {
       const cachedGroups = await getCachedMultiRootSessionList();
       if (cachedGroups?.length) {
+        // 缓存先渲染（避免闪空），但**必须整体替换**而不是merge：这份缓存是按账户存的，
+        // 换账户后它就是空的，若还往里合并就会把上一账户的会话留在屏上。
         setMultiProjectSessionGroups(
           applyPendingToMultiProjectGroups(
             cachedGroups.map((group): MultiProjectSessionGroup => {
@@ -5252,6 +5254,9 @@ export function App({ onGoHome }: AppProps) {
       const nodeIds = Array.from(new Set([...nodeIdsFromNodes, ...nodeIdsFromRoots]));
       const allGroups: Array<MultiRootSessionGroup & { _nodeId?: string }> = [];
       let nodeFetchResults: Array<Array<MultiRootSessionGroup & { _nodeId?: string }>> = [];
+      // 只有**真的请求失败**的节点才保留旧分组（网络抖动时不清屏）；
+      // 成功但为空 = 该账户在这个节点下确实没有会话，必须让空结果生效。
+      let failedNids = new Set<string>();
       if (nodeIds.length === 0) {
         // managedRootByKeyRef 未就绪（初始化竞态）：以当前激活节点回退打标，
         // 避免首批分组 _nodeId 为空串、与 selectRootNode 后的 currentRootNodeId 不等而全部收起
@@ -5270,9 +5275,16 @@ export function App({ onGoHome }: AppProps) {
       } else {
         // 跨机器也带 user=（用户名），服务端解析到对方本地的账户；对方没有这个账户时
         // 回 **200 空列表**，所以这里不需要「缺账户」分支——空就是空。
-        nodeFetchResults = await Promise.all(nodeIds.map(async (nid) => {
-          try { const gs = await sessionService.fetchMultiRootSessions(MULTI_PROJECT_SESSION_LIMIT, nid); return gs.map((g) => ({ ...g, _nodeId: nid })); }
-          catch (err) {
+        // 但要区分「拉取失败」与「成功但为空」：两者都是 []，混为一谈会让下面把**上一个账户**
+        // 的分组当成「该节点本次没返回」保留下来，于是新账户看到旧账户的全部会话（实测踩过）。
+        const failed: boolean[] = [];
+        nodeFetchResults = await Promise.all(nodeIds.map(async (nid, i) => {
+          try {
+            const gs = await sessionService.fetchMultiRootSessions(MULTI_PROJECT_SESSION_LIMIT, nid);
+            failed[i] = false;
+            return gs.map((g) => ({ ...g, _nodeId: nid }));
+          } catch (err) {
+            failed[i] = true;
             notifyNodeLoadFailedRef.current({
               id: String(nid),
               name: String(getNodeById(String(nid))?.name || nid),
@@ -5280,6 +5292,7 @@ export function App({ onGoHome }: AppProps) {
             return [] as Array<MultiRootSessionGroup & { _nodeId?: string }>;
           }
         }));
+        failedNids = new Set(nodeIds.filter((_, i) => failed[i]));
         for (const groups of nodeFetchResults) allGroups.push(...groups);
       }
       const dedup = new Map<string, MultiRootSessionGroup & { _nodeId?: string }>();
@@ -5308,15 +5321,15 @@ export function App({ onGoHome }: AppProps) {
         totalCount: group.totalCount,
       }});
       if (seq !== multiProjectLoadSeqRef.current) return; // 丢弃过期响应
-      // C2: 按 nid::rootId 逐组合并（保留本次未返回节点的上次分组），消除整体替换造成的项目消失/穿插帧
+      // C2: 按 nid::rootId 逐组合并（保留本次未返回节点的上次分组），消除整体替换造成的项目消失/穿插帧。
+      // 换账户后必须清掉旧账户的分组：凡本轮**成功**拉取过的节点，其旧分组一律不得保留——
+      // 空结果（该账户在此节点没有会话）同样是有效答案，不是「没拉到」。
       setMultiProjectSessionGroups((prev) => {
         const prevList = Array.isArray(prev) ? prev : [];
         const scopeOf = (g: any) => `${String(g?._nodeId || "").trim()}::${String(g?.rootId || "")}`;
-        const failedNids = new Set(
-          nodeIds.filter((nid, i) => (nodeFetchResults[i] || []).length === 0),
-        );
         const nextMap = new Map(nextGroups.map((g) => [scopeOf(g), g]));
         const ridSet = new Set(nextGroups.map((g) => String(g.rootId || "")).filter(Boolean));
+        const queriedNids = new Set(nodeIds); // 本轮实际请求过的节点
         const merged: MultiProjectSessionGroup[] = [];
         const seen = new Set<string>();
         for (const g of prevList) {
@@ -5331,6 +5344,7 @@ export function App({ onGoHome }: AppProps) {
             seen.add(k);
             continue;
           }
+          if (queriedNids.has(nid)) continue; // 成功拉取却未返回此分组 → 该账户下确实没有，清掉
           if (!nid && ridSet.has(String(g.rootId || ""))) continue; // 节点盲缓存组：被新数据取代
           merged.push(g);
         }

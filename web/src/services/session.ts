@@ -1,4 +1,5 @@
 import { appURL, wsURL } from "./base";
+import { currentUser } from "./authGate";
 import { getRootNodeId } from "./rootNode";
 import { scopeSessionKey } from "./scope";
 import { protectedFetch, protectedJSON, withNodeRetry } from "./api";
@@ -1718,7 +1719,17 @@ const SESSION_CACHE_DB = "mindfs-session-cache";
 const SESSION_CACHE_STORE = "sessions";
 const SESSION_LIST_CACHE_STORE = "session-lists";
 const SESSION_CACHE_VERSION = 3;
-const MULTI_ROOT_SESSION_LIST_CACHE_KEY = "multi-root";
+
+// 多项目会话列表的缓存键必须带账户：这是「跨账户串号」的入口。
+// 换账户后这里若仍是常量，上一账户的全量会话会在发请求前先被渲染出来
+// （App.tsx loadMultiProjectSessionGroups 先 setMultiProjectSessionGroups(缓存)），
+// 而账户作用域请求回来的空 groups 只是合并进 prev、并不清空它 → 新账户看到旧账户的全部会话。
+// 用 username 而非 id：同源与跨机器两种情形下它都是稳定且可读的那个标识。
+function multiRootSessionListCacheKey(): string {
+  const name = String(currentUser()?.username || "").trim();
+  return name ? `multi-root::${name}` : "multi-root";
+}
+
 let sessionDBPromise: Promise<IDBDatabase> | null = null;
 
 function buildSessionCacheKey(
@@ -1813,9 +1824,17 @@ function withSessionListStore<T>(
   });
 }
 
+// 单项目列表缓存同理必须带账户（见 multiRootSessionListCacheKey 的说明）：
+// 不带的话「A 账户看过 P 项目 → 切到 B 账户 → 点开 P」会先渲染出 A 的会话列表。
+function sessionListCacheScope(): string {
+  const name = String(currentUser()?.username || "").trim();
+  return name ? `${name}::` : "";
+}
+
 function buildSessionListCacheKey(rootId: string, nodeId?: string): string {
   const nid = String(nodeId || "").trim();
-  return nid ? `${nid}::${rootId}` : `root::${rootId}`;
+  const scope = sessionListCacheScope();
+  return nid ? `${scope}${nid}::${rootId}` : `${scope}root::${rootId}`;
 }
 
 async function readCachedSessionList<T>(cacheKey: string): Promise<T | null> {
@@ -1859,11 +1878,11 @@ export function saveCachedSessionList(rootId: string, payload: SessionListPayloa
 }
 
 export function getCachedMultiRootSessionList(): Promise<MultiRootSessionGroup[] | null> {
-  return readCachedSessionList<MultiRootSessionGroup[]>(MULTI_ROOT_SESSION_LIST_CACHE_KEY);
+  return readCachedSessionList<MultiRootSessionGroup[]>(multiRootSessionListCacheKey());
 }
 
 export function saveCachedMultiRootSessionList(groups: MultiRootSessionGroup[]): Promise<void> {
-  return writeCachedSessionList(MULTI_ROOT_SESSION_LIST_CACHE_KEY, groups);
+  return writeCachedSessionList(multiRootSessionListCacheKey(), groups);
 }
 
 export function getSessionMaxSeq(session: Session | null | undefined): number {

@@ -116,6 +116,37 @@ assert.ok(
   "跨机器要真的把用户名写进 user=",
 );
 
+// 3b) **缓存必须按账户分区**。
+//     服务端分区正确不代表看不到别人的东西：多项目会话列表是「先渲染 IndexedDB 缓存、
+//     再补发账户作用域请求」，若缓存键不含账户，切到新账户时会先把上一账户的全量会话画出来，
+//     而后到的空结果只是 merge 进 prev、并不清空它（实测：项目列表已空、会话列表仍是全部）。
+//     同一个坑对单项目列表缓存同样成立。
+const sessionSrc = read("src/services/session.ts");
+assert.ok(
+  /function multiRootSessionListCacheKey\(\)[\s\S]{0,400}currentUser\(\)\?\.username/.test(sessionSrc),
+  "多项目会话缓存键必须带账户——常量键会让新账户看到旧账户的全部会话",
+);
+assert.ok(
+  !/MULTI_ROOT_SESSION_LIST_CACHE_KEY/.test(sessionSrc),
+  "不应再有账户无关的 MULTI_ROOT_SESSION_LIST_CACHE_KEY 常量",
+);
+assert.ok(
+  /function buildSessionListCacheKey[\s\S]{0,400}sessionListCacheScope\(\)/.test(sessionSrc),
+  "单项目列表缓存键也必须带账户",
+);
+
+// 3c) 「拉取失败」与「成功但为空」不能混为一谈。
+//     两者都得到 []，若把空结果当失败，合并逻辑会保留该节点**上一次（另一个账户的）**分组。
+//     真正该保留旧分组的只有请求抛错的情况。
+assert.ok(
+  /failed\[i\] = true;/.test(appSrc) && /failed\[i\] = false;/.test(appSrc),
+  "多项目会话加载必须分别记录成功为空与请求失败",
+);
+assert.ok(
+  !/nodeFetchResults\[i\] \|\| \[\]\)\.length === 0/.test(appSrc),
+  "不得再用「返回长度为 0」判定节点失败——空是合法结果",
+);
+
 // 4) 账户态的唯一来源是 authGate，避免各处理散落的第二真源。
 assert.ok(authGateSrc.includes("mindfs.current_user"), "账户态应存 mindfs.current_user");
 assert.ok(
