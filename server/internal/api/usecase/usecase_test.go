@@ -1456,6 +1456,37 @@ func TestListLocalDirsDefaultsEmptyPathToHome(t *testing.T) {
 	}
 }
 
+func TestListLocalDirsIncludesSymlinkedDirectory(t *testing.T) {
+	baseDir := t.TempDir()
+	targetDir := filepath.Join(baseDir, "outside", "target")
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+		t.Fatalf("mkdir target: %v", err)
+	}
+	mustWriteFile(t, filepath.Join(baseDir, "file.txt"), "x")
+	if err := os.Symlink(targetDir, filepath.Join(baseDir, "linked-dir")); err != nil {
+		t.Skipf("Symlink unavailable: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(baseDir, "file.txt"), filepath.Join(baseDir, "linked-file")); err != nil {
+		t.Fatalf("symlink file: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(baseDir, "missing"), filepath.Join(baseDir, "broken-link")); err != nil {
+		t.Fatalf("symlink broken: %v", err)
+	}
+
+	service := Service{Registry: uploadTestRegistry{}}
+	out, err := service.ListLocalDirs(context.Background(), ListLocalDirsInput{Path: baseDir})
+	if err != nil {
+		t.Fatalf("ListLocalDirs returned error: %v", err)
+	}
+	names := make([]string, 0, len(out.Items))
+	for _, item := range out.Items {
+		names = append(names, item.Name)
+	}
+	if strings.Join(names, ",") != "linked-dir,outside" {
+		t.Fatalf("items = %q, want linked-dir,outside", strings.Join(names, ","))
+	}
+}
+
 func TestCommandCandidatesFromStatus(t *testing.T) {
 	provider := NewSlashCommandCandidateProvider(func(agentName string) (agent.Status, bool) {
 		if agentName != "claude" {

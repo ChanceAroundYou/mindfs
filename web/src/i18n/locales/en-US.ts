@@ -513,6 +513,7 @@ export const enUS = {
   "sort.sizeAsc": "Size ↑",
 
   "projectAdd.selectVolume": "Select drive",
+  "projectAdd.goUp": "Parent directory",
   "projectAdd.blankProject": "Blank project",
   "projectAdd.localDirectory": "Add local directory",
   "projectAdd.githubImport": "Import from GitHub",

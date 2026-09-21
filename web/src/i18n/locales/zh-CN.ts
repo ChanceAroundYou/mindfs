@@ -511,6 +511,7 @@ export const zhCN = {
   "sort.sizeAsc": "大小 ↑",
 
   "projectAdd.selectVolume": "选择盘符",
+  "projectAdd.goUp": "上一级",
   "projectAdd.blankProject": "空白项目",
   "projectAdd.localDirectory": "加入本地目录",
   "projectAdd.githubImport": "从 GitHub 导入",

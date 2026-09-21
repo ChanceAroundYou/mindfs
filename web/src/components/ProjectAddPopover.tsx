@@ -103,7 +103,27 @@ function PathBreadcrumb({
   const segments = normalized.split("/").filter(Boolean);
   const [volumeMenuOpen, setVolumeMenuOpen] = React.useState(false);
   if (segments.length === 0) {
-    return null;
+    // Posix root ("/"): keep a clickable anchor so the browser can navigate back down.
+    if (isWindowsPath || !path.startsWith("/")) {
+      return null;
+    }
+    return (
+      <button
+        type="button"
+        onClick={() => onNavigate("/")}
+        style={{
+          border: "none",
+          background: "transparent",
+          padding: 0,
+          color: "var(--text-primary)",
+          fontSize: "13px",
+          fontWeight: 600,
+          cursor: "pointer",
+        }}
+      >
+        /
+      </button>
+    );
   }
   const volumeItems = Array.isArray(volumes) ? volumes : [];
   const visibleSegments =
@@ -438,7 +458,38 @@ function LocalPanel({
           })}
         </div>
       ) : null}
-      <div style={{ display: "flex", alignItems: "center", minWidth: 0 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 4, minWidth: 0 }}>
+        <button
+          type="button"
+          disabled={!localState.parent}
+          onClick={() => onLocalNavigate(localState.parent || "")}
+          aria-label={t("projectAdd.goUp")}
+          title={t("projectAdd.goUp")}
+          style={{
+            border: "none",
+            background: "transparent",
+            padding: 0,
+            color: "var(--text-secondary)",
+            cursor: localState.parent ? "pointer" : "default",
+            opacity: localState.parent ? 1 : 0.35,
+            display: "inline-flex",
+            alignItems: "center",
+            flexShrink: 0,
+          }}
+        >
+          <svg
+            width="13"
+            height="13"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <polyline points="18 15 12 9 6 15" />
+          </svg>
+        </button>
         <PathBreadcrumb
           path={localState.path}
           volumes={volumes}
