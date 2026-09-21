@@ -147,6 +147,37 @@ assert.ok(
   "不得再用「返回长度为 0」判定节点失败——空是合法结果",
 );
 
+// 3d) 「上次打开的项目」也必须按账户存。
+//     它不分区的话，换账户后会恢复**上一个账户**的项目为当前项目，
+//     随后拿它去请求会话/看板 → 新账户根本没这个项目 → 登录后直接报错（实测踩过）。
+assert.ok(
+  /function accountScopedKey\(base: string\)[\s\S]{0,300}currentUser\(\)\?\.username/.test(appSrc),
+  "last-root 存储键必须带账户",
+);
+assert.ok(
+  !/localStorage\.setItem\(LAST_ROOT_STORAGE_KEY/.test(appSrc) &&
+    !/localStorage\.getItem\(LAST_ROOT_STORAGE_KEY\)/.test(appSrc),
+  "不得再直接读写裸的 LAST_ROOT_STORAGE_KEY（必须走 accountScopedKey）",
+);
+
+// 3e) 账户管理必须打**页面服务器**，不能跟随当前选中的节点。
+//     账户表每台机器一份，而登录走的是页面服务器（authGate.authBaseURL）。
+//     跟随节点的话，「登录到 home、当前节点是 pc」会让面板列出 pc 的账户，
+//     在 home 建的账户看起来就"消失"了，而身份其实还在 home。
+const accountsSrc = read("src/services/accounts.ts");
+assert.ok(
+  accountsSrc.includes("pageServerPath"),
+  "账户管理应走 pageServerPath（页面服务器），而不是跟随当前节点的 appPath",
+);
+assert.ok(
+  !/appPath\(/.test(accountsSrc),
+  "accounts.ts 不应再用 appPath——它跟随当前节点，会列错机器的账户",
+);
+assert.ok(
+  /export function pageServerPath\(path: string\)[\s\S]{0,600}withAccountUser/.test(baseSrc),
+  "pageServerPath 也必须走 withAccountUser（账户参数唯一汇聚点）",
+);
+
 // 4) 账户态的唯一来源是 authGate，避免各处理散落的第二真源。
 assert.ok(authGateSrc.includes("mindfs.current_user"), "账户态应存 mindfs.current_user");
 assert.ok(

@@ -206,16 +206,37 @@ func validAccountID(id string) bool {
 //
 // 刻意**不**走 build：build 会 MkdirAll 账户目录并为看板/定时任务起 goroutine，
 // 而 user= 是客户端自由填的——随便造值就能顺手建目录、占内存。
-// 这里只挂一个空的注册表（无项目、无 meta），读路径自然得到空列表，
-// 与「账户存在但还没加过项目」表现一致。
+//
+// 但**必须把共享服务挂上**：只给 Dirs 的话，凡是依赖 Kanban/Scheduled/Agents 的端点
+// 都会回 "kanban service not configured" 这类**配置错误**，而正确的语义是「这个账户没有数据」。
+// 实测踩过：登录后看板直接报错。共享服务是同一份实例（无额外 goroutine），
+// Kanban/Scheduled/GitHub 的构造函数本身也不起后台循环——不起 Start/Schedule 就没有副作用，
+// 而空注册表下本来也没有 root 可调度。
 func (m *workspaceManager) emptyWorkspace() (*api.AppContext, error) {
 	registry := fs.NewRegistryAt("", "")
-	return &api.AppContext{
-		Dirs:  registry,
-		Prefs: m.shared.prefs,
-		Nodes: m.shared.nodes,
-		Auth:  m.shared.auth,
-	}, nil
+	services := &api.AppContext{
+		Dirs:      registry,
+		Prefs:     m.shared.prefs,
+		Nodes:     m.shared.nodes,
+		Agents:    m.shared.pool,
+		Prober:    m.shared.prober,
+		Update:    m.shared.update,
+		Auth:      m.shared.auth,
+		E2EE:      m.shared.e2ee,
+		Notify:    m.shared.notify,
+		WebPush:   m.shared.webPush,
+		Relay:     m.shared.relay,
+		RelayTips: m.shared.relayTips,
+	}
+	services.Scheduled = scheduled.NewService(services, services)
+	services.Kanban = kanban.NewService(m.shared.templates, services)
+	services.Kanban.SetRunner(services)
+	githubImportSvc, err := githubimport.NewService(services)
+	if err != nil {
+		return nil, err
+	}
+	services.GitHub = githubImportSvc
+	return services, nil
 }
 
 // NewHTTPHandler 为账户构建 HTTP handler（供 api.ScopedRouter 使用）。

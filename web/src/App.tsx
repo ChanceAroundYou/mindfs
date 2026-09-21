@@ -129,6 +129,7 @@ import {
   applyPinnedSnapshotToSessions,
   mergeSessionItems,
 } from "./services/sessionListMerge";
+import { currentUser } from "./services/authGate";
 // 直接导入标准组件
 import { AppShell } from "./layout/AppShell";
 import { ModeIcon } from "./components/ModeIcon";
@@ -690,6 +691,14 @@ const DIRECTORY_SORT_OVERRIDES_STORAGE_KEY = "mindfs-directory-sort-overrides";
 const FILE_SCROLL_STORAGE_KEY = "mindfs-file-scroll-positions";
 const LAST_ROOT_STORAGE_KEY = "mindfs-last-root-id";
 const LAST_ROOT_NODE_STORAGE_KEY = "mindfs-last-root-node";
+
+// 「上次打开的项目」必须按账户存：它是账户作用域的（项目列表按账户分），
+// 不分区的话换账户后会恢复**上一个账户**的项目为当前项目，随后拿它去请求
+// 会话/看板 → 该账户根本没有这个项目 → 报错（实测踩过：登录后看板报错）。
+function accountScopedKey(base: string): string {
+  const name = String(currentUser()?.username || "").trim();
+  return name ? `${base}::${name}` : base;
+}
 const GIT_STATUS_EXPANDED_STORAGE_KEY = "mindfs-git-status-expanded";
 const GIT_HISTORY_EXPANDED_STORAGE_KEY = "mindfs-git-history-expanded";
 const TASK_TEMPLATE_SELECTION_STORAGE_KEY = "mindfs-task-template-selection";
@@ -1190,14 +1199,14 @@ function loadLastRootId(): string {
   if (typeof window === "undefined") {
     return "";
   }
-  return window.localStorage.getItem(LAST_ROOT_STORAGE_KEY) || "";
+  return window.localStorage.getItem(accountScopedKey(LAST_ROOT_STORAGE_KEY)) || "";
 }
 
 function loadLastRootNodeId(): string {
   if (typeof window === "undefined") {
     return "";
   }
-  return window.localStorage.getItem(LAST_ROOT_NODE_STORAGE_KEY) || "";
+  return window.localStorage.getItem(accountScopedKey(LAST_ROOT_NODE_STORAGE_KEY)) || "";
 }
 
 // 多节点同名项目：以 nodeId::rootId 复合键区分同一 root 在不同节点的副本
@@ -2791,8 +2800,8 @@ export function App({ onGoHome }: AppProps) {
       return;
     }
     if (currentRootId) {
-      window.localStorage.setItem(LAST_ROOT_STORAGE_KEY, currentRootId);
-      window.localStorage.setItem(LAST_ROOT_NODE_STORAGE_KEY, currentRootNodeId || "");
+      window.localStorage.setItem(accountScopedKey(LAST_ROOT_STORAGE_KEY), currentRootId);
+      window.localStorage.setItem(accountScopedKey(LAST_ROOT_NODE_STORAGE_KEY), currentRootNodeId || "");
     }
   }, [currentRootId, currentRootNodeId]);
   useEffect(() => {
@@ -3232,10 +3241,10 @@ export function App({ onGoHome }: AppProps) {
     if (
       options?.removeLastRoot === true &&
       typeof window !== "undefined" &&
-      window.localStorage.getItem(LAST_ROOT_STORAGE_KEY) === root
+      window.localStorage.getItem(accountScopedKey(LAST_ROOT_STORAGE_KEY)) === root
     ) {
-      window.localStorage.removeItem(LAST_ROOT_STORAGE_KEY);
-      window.localStorage.removeItem(LAST_ROOT_NODE_STORAGE_KEY);
+      window.localStorage.removeItem(accountScopedKey(LAST_ROOT_STORAGE_KEY));
+      window.localStorage.removeItem(accountScopedKey(LAST_ROOT_NODE_STORAGE_KEY));
     }
 
     bumpCacheVersion();

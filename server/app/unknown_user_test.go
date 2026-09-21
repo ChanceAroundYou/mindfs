@@ -40,6 +40,40 @@ func TestWorkspaceForUnknownAccountIsEmpty(t *testing.T) {
 	}
 }
 
+// 空工作区必须**挂上共享服务**，否则凡是依赖它们的端点都会回配置错误而不是空数据。
+// 实测踩过：登录后看板直接报 "kanban service not configured"——语义应是「这个账户没有数据」。
+// 注意这里只断言「服务在」，不起 Start/Schedule（空注册表下也没有 root 可调度）。
+func TestEmptyWorkspaceHasServicesWired(t *testing.T) {
+	dir := t.TempDir()
+	store, err := auth.EnsureStoreAt(dir + "/users.json")
+	if err != nil {
+		t.Fatalf("store: %v", err)
+	}
+	m := &workspaceManager{
+		baseDir: dir + "/users",
+		entries: map[string]*workspaceEntry{},
+		shared:  sharedServices{auth: store},
+	}
+
+	ctx, err := m.Workspace("u_nobody_here")
+	if err != nil {
+		t.Fatalf("Workspace: %v", err)
+	}
+	if _, err := ctx.GetKanbanService(); err != nil {
+		t.Errorf("空工作区必须有 Kanban 服务（否则看板端点回 503 而不是空列表）: %v", err)
+	}
+	if ctx.Scheduled == nil {
+		t.Error("空工作区必须有 Scheduled 服务（否则定时任务端点回 503）")
+	}
+	if ctx.GitHub == nil {
+		t.Error("空工作区必须有 GitHub 服务")
+	}
+	// 共享实例必须是同一份，不是各建各的
+	if ctx.Auth != m.shared.auth {
+		t.Error("空工作区的 Auth 应指向共享实例")
+	}
+}
+
 // 路径穿越必须被拒（user= 由客户端自由填写），且同样返回空工作区而非报错。
 func TestWorkspaceRejectsPathTraversal(t *testing.T) {
 	dir := t.TempDir()

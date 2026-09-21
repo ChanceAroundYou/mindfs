@@ -1,5 +1,6 @@
 import { getApiBaseURL, getWsBaseURL, isBrowserRuntime } from "./runtime";
 import { DEPLOY_PREFIX, withDeployPrefix } from "./prefix";
+import { deriveLocalNodeBase } from "./nodeBase";
 import { currentUser } from "./authGate";
 
 function ensureLeadingSlash(path: string): string {
@@ -105,6 +106,23 @@ function basePath(path: string, nodeId?: string): string {
   // under /mindfs even when no base URL (e.g. native shell fallback or relative)
   if (DEPLOY_PREFIX) return withDeployPrefix(pathname);
   return pathname;
+}
+
+/**
+ * 打「发这个页面的服务器」的路径——不跟随当前选中的节点。
+ *
+ * appPath 会跟随当前节点（getApiBaseURL(undefined) 取 active node），这对文件/会话是对的：
+ * 你要看哪个节点的数据就打哪个节点。但**账户管理**不行：账户表每台机器一份，
+ * 而登录走的是页面服务器（authGate.authBaseURL）。用 appPath 时，「登录到 home、
+ * 当前节点是 pc」会让面板列出 pc 的账户，在 home 建的账户看起来就消失了。
+ * 身份在哪台机器，账户管理就在哪台机器。
+ */
+export function pageServerPath(path: string): string {
+  if (typeof window === "undefined") {
+    return withAccountUser(ensureLeadingSlash(path));
+  }
+  const base = deriveLocalNodeBase(window.location.origin, DEPLOY_PREFIX);
+  return withAccountUser(joinURL(base, ensureLeadingSlash(path)));
 }
 
 export function appPath(path: string, nodeId?: string): string {

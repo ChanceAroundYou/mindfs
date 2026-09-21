@@ -4,7 +4,7 @@
  * 服务端这些端点全部匿名可访问（见 docs/multi-user-prd.md §1.1）：账户只用于
  * 按账户分区，不是权限边界。所以「先验当前密码」只是防手滑的 UX 提示，不是安全校验。
  */
-import { appPath } from "./base";
+import { pageServerPath } from "./base";
 import { fetchJSON, fetchMaybeJSON } from "./api";
 
 export type Account = {
@@ -22,12 +22,12 @@ export function isAdminAccount(account: Account | null | undefined): boolean {
 }
 
 export async function listAccounts(): Promise<Account[]> {
-  const payload = await fetchJSON<{ users?: Account[] }>(appPath("/api/users"));
+  const payload = await fetchJSON<{ users?: Account[] }>(pageServerPath("/api/users"));
   return Array.isArray(payload?.users) ? payload.users : [];
 }
 
 export async function createAccount(username: string, password: string, role: string): Promise<Account> {
-  const payload = await fetchJSON<{ user: Account }>(appPath("/api/users"), {
+  const payload = await fetchJSON<{ user: Account }>(pageServerPath("/api/users"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username, password, role }),
@@ -40,7 +40,7 @@ export async function updateAccount(
   patch: { username?: string; password?: string; role?: string; disabled?: boolean },
 ): Promise<Account> {
   const payload = await fetchJSON<{ user: Account }>(
-    appPath(`/api/users/${encodeURIComponent(id)}`),
+    pageServerPath(`/api/users/${encodeURIComponent(id)}`),
     {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -51,12 +51,12 @@ export async function updateAccount(
 }
 
 export async function deleteAccount(id: string): Promise<void> {
-  await fetchMaybeJSON(appPath(`/api/users/${encodeURIComponent(id)}`), { method: "DELETE" });
+  await fetchMaybeJSON(pageServerPath(`/api/users/${encodeURIComponent(id)}`), { method: "DELETE" });
 }
 
 /** 转移主账户身份（存量数据的归属）。目标必须是启用中的管理员。 */
 export async function setPrimaryAccount(id: string): Promise<void> {
-  await fetchJSON(appPath(`/api/users/${encodeURIComponent(id)}/primary`), { method: "POST" });
+  await fetchJSON(pageServerPath(`/api/users/${encodeURIComponent(id)}/primary`), { method: "POST" });
 }
 
 /**
@@ -68,7 +68,7 @@ export async function changePassword(
   currentPassword: string,
   newPassword: string,
 ): Promise<void> {
-  const verify = await fetch(appPath("/api/auth/login"), {
+  const verify = await fetch(pageServerPath("/api/auth/login"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username: account.username, password: currentPassword }),
