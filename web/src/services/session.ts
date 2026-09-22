@@ -1,5 +1,8 @@
 import { appURL, wsURL } from "./base";
-import { protectedFetch, protectedJSON } from "./api";
+import { currentUser } from "./authGate";
+import { getRootNodeId } from "./rootNode";
+import { scopeSessionKey } from "./scope";
+import { protectedFetch, protectedJSON, withNodeRetry } from "./api";
 import { e2eeService } from "./e2ee";
 
 // Session service for managing agent sessions
@@ -124,6 +127,8 @@ export type Session = {
   related_files?: RelatedFile[];
   related_worktree?: RelatedWorktree | null;
   pinned_at?: string | null;
+  /** 持久化缓存截断标记：true 表示缓存只含最近 N 条 exchanges，读取方应全量拉取补段 */
+  truncated?: boolean;
   exchange_aux?: Record<string, ExchangeAux[]>;
   exchanges?: Array<{
     seq?: number;
@@ -249,6 +254,37 @@ export type SyncSessionResult = {
   hasDelta: boolean;
 };
 
+/**
+ * 聊天消息窗口尺寸（首屏拉取条数 / 上翻步长）。会话窗口化的唯一尺寸来源：
+ * SessionViewer 的 init `latest:`、首帧种子截断、loadMore 步长、targetSeq 取窗步长，
+ * 以及 App 的 restoreActiveSession 都引此常量，避免散落的 magic number。
+ * 服务端 SessionWindowMeta 的默认值/上限（50/200）是安全网，客户端始终显式传值。
+ */
+export const SESSION_WINDOW_SIZE = 20;
+
+/** 服务端窗口化加载的元数据（方案 B：超长会话按需加载）。 */
+export type SessionWindowMeta = {
+  total: number;
+  hasMore: boolean;
+  minSeq: number;
+  maxSeq: number;
+};
+
+/** 单窗口的会话数据 + 窗口元数据，供 SessionViewer 渐进式渲染。 */
+export type SessionWindow = {
+  session: Session | any;
+  meta: SessionWindowMeta;
+  raw?: any;
+};
+
+/** getSessionWindow 的可选参数。before_seq 与 latest 互斥，由后端校验。 */
+export type SessionWindowOptions = {
+  beforeSeq?: number;
+  limit?: number;
+  latest?: number;
+  nodeId?: string;
+};
+
 type SessionEventHandler = {
   onStream?: (event: StreamEvent) => void;
   onDone?: () => void;
@@ -311,12 +347,14 @@ class SessionService {
   private probeTimeoutTimer: number | null = null;
   private lifecycleCheckTimer: number | null = null;
   private activeProbeId: string | null = null;
+  // 连续 probe 超时计数：达到 2 次才强断重连；收到任何消息即清零（handleMessage 顶部）。
   private consecutiveProbeFailures = 0;
   private connectingStartedAt = 0;
   private openingSocket = false;
   private reconnectDelayMs = 1000;
   private fastReconnectUntil = 0;
   private rootId: string | null = null;
+  private nodeId: string | null = null;
   private hasConnected = false;
   private readonly clientId = this.generateClientId();
   private readonly maxReconnectDelayMs = 30000;
@@ -357,26 +395,44 @@ class SessionService {
     return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
   }
 
-  private async buildWSUrl(): Promise<string> {
+  private async buildWSUrl(nodeId?: string): Promise<string> {
     const params = new URLSearchParams({ client_id: this.clientId });
-    const proofTarget = wsURL("/ws", params);
+    if (nodeId) params.set("node_id", nodeId);
+    const proofTarget = wsURL("/ws", params, nodeId);
     if (e2eeService.isRequired()) {
       const proofParams = await e2eeService.wsProofParams("GET", proofTarget);
       for (const [key, value] of proofParams) {
         params.set(key, value);
       }
     }
-    return wsURL("/ws", params);
+    return wsURL("/ws", params, nodeId);
   }
 
-  connect(rootId: string) {
+  connect(rootId: string, nodeId?: string) {
+    const nextNodeId = nodeId !== undefined ? (nodeId || null) : this.nodeId;
+    const nodeIdChanged = nextNodeId !== this.nodeId;
     this.rootId = rootId;
+    if (nodeId !== undefined) this.nodeId = nextNodeId;
     if (this.ws?.readyState === WebSocket.OPEN) {
-      this.emit({ type: this.hasConnected ? "ws.reconnected" : "ws.connected" });
-      this.hasConnected = true;
+      if (!nodeIdChanged) {
+        this.emit({ type: this.hasConnected ? "ws.reconnected" : "ws.connected" });
+        this.hasConnected = true;
+        return;
+      }
+      this.clearReconnectTimer();
+      this.closeSocket();
+      this.emit({ type: this.hasConnected ? "ws.reconnecting" : "ws.connecting" });
+      void this.openSocket();
       return;
     }
     if (this.openingSocket || this.ws?.readyState === WebSocket.CONNECTING) {
+      if (nodeIdChanged) {
+        this.clearReconnectTimer();
+        this.closeSocket();
+        this.emit({ type: this.hasConnected ? "ws.reconnecting" : "ws.connecting" });
+        void this.openSocket();
+        return;
+      }
       if (
         this.connectingStartedAt > 0 &&
         Date.now() - this.connectingStartedAt > this.connectTimeoutMs
@@ -402,7 +458,7 @@ class SessionService {
     this.openingSocket = true;
     let target = "";
     try {
-      target = await this.buildWSUrl();
+      target = await this.buildWSUrl(this.nodeId || undefined);
     } catch (err) {
       this.openingSocket = false;
       console.error("[Session] Failed to prepare WebSocket proof:", err);
@@ -579,17 +635,19 @@ class SessionService {
     ) {
       this.reconnectNow();
     }
+    this.probeConnection();
   }
 
   private reconnectNow() {
     if (!this.rootId) return;
     const rootId = this.rootId;
+    const nodeId = this.nodeId || undefined;
     this.clearReconnectTimer();
     this.clearProbe();
     this.closeSocket();
     this.reconnectDelayMs = 1000;
     this.fastReconnectUntil = Date.now() + this.fastReconnectWindowMs;
-    this.connect(rootId);
+    this.connect(rootId, nodeId);
   }
 
   private probeConnection() {
@@ -674,12 +732,18 @@ class SessionService {
     this.reconnectTimer = window.setTimeout(() => {
       this.reconnectTimer = null;
       if (this.rootId) {
-        this.connect(this.rootId);
+        this.connect(this.rootId, this.nodeId || undefined);
       }
     }, delay);
   }
 
   private handleMessage(msg: any) {
+    // 收到任何消息（含 pong）即证明连接存活：清零 probe 失败计数并取消在途 probe 超时，
+    // probe 放宽（8s+连续 2 次）才重连。journal 实证上游 2s 一票否决在手机路径上抖动严重。
+    this.consecutiveProbeFailures = 0;
+    if (this.activeProbeId) {
+      this.clearProbe();
+    }
     const type = msg.type as string;
     const payload = msg.payload || {};
     if (type === "pong") {
@@ -715,7 +779,12 @@ class SessionService {
     payload: Record<string, unknown>,
     msg: any,
   ) {
-    const nextPayload = { ...payload };
+    const nextPayload: Record<string, unknown> = { ...payload };
+    // 前端传输级打标：后端暂不发 _nodeId 时，以当前 socket 归属节点兜底，使 App 侧守卫生效
+    const socketNid = String((this as any).nodeId || "").trim();
+    if (socketNid && !nextPayload["_nodeId"] && !nextPayload["nodeId"]) {
+      (nextPayload as any)["_nodeId"] = socketNid;
+    }
     this.emit({ type, sessionKey, payload: nextPayload });
 
     if (!sessionKey) return;
@@ -831,7 +900,8 @@ class SessionService {
 
   private eventCursorKey(rootId: string, sessionKey: string): string {
     if (!rootId || !sessionKey) return "";
-    return `${rootId}::${sessionKey}`;
+    const nid = String(this.nodeId || "").trim();
+    return nid ? `${nid}::${rootId}::${sessionKey}` : `${rootId}::${sessionKey}`;
   }
 
   getEventCursor(rootId: string, sessionKey: string): string {
@@ -1120,9 +1190,10 @@ class SessionService {
 
   async fetchSessions(
     rootId: string,
-    options?: FetchSessionsOptions,
+    options?: FetchSessionsOptions & { nodeId?: string },
   ): Promise<SessionListPayload> {
     try {
+      (options as any).nodeId = (options as any)?.nodeId || getRootNodeId(rootId);
       const params = new URLSearchParams({ root: rootId });
       if (options?.beforeTime) {
         params.set("before_time", options.beforeTime);
@@ -1139,7 +1210,7 @@ class SessionService {
       if (options?.includeChildren) {
         params.set("include_children", "1");
       }
-      const data = await protectedJSON<any>(appURL("/api/sessions", params));
+      const data = await protectedJSON<any>(appURL("/api/sessions", params, (options as any)?.nodeId));
       if (Array.isArray(data)) {
         return { items: data, pinnedItems: [], pinnedKeys: [], totalCount: data.length };
       }
@@ -1156,13 +1227,13 @@ class SessionService {
     }
   }
 
-  async fetchMultiRootSessions(limitPerRoot = 6): Promise<MultiRootSessionGroup[]> {
+  async fetchMultiRootSessions(limitPerRoot = 6, nodeId?: string): Promise<MultiRootSessionGroup[]> {
     try {
       const params = new URLSearchParams({ multi_root: "1" });
       if (limitPerRoot > 0) {
         params.set("limit_per_root", String(limitPerRoot));
       }
-      const data = await protectedJSON<any>(appURL("/api/sessions", params));
+      const data = await withNodeRetry(() => protectedJSON<any>(appURL("/api/sessions", params, (nodeId as any))));
       const groups = Array.isArray(data?.groups) ? data.groups : [];
       return groups.map((group: any) => ({
         rootId: String(group?.root_id || group?.rootId || ""),
@@ -1182,16 +1253,19 @@ class SessionService {
         return [];
       }
       console.error("[Session] Failed to fetch multi-root sessions:", err);
-      return [];
+      // 抛出而非吞成 []：调用方要能区分"这个节点没项目"和"这个节点没拉到"，
+      // 否则该节点会静默缺席，且没有任何东西会重试（实测可长时间不恢复）
+      throw err;
     }
   }
 
   async fetchChildSessions(
     rootId: string,
     parentSessionKey: string,
-    options?: { beforeTime?: string; limit?: number },
+    options?: { beforeTime?: string; limit?: number; nodeId?: string },
   ): Promise<Session[]> {
     try {
+      (options as any).nodeId = (options as any)?.nodeId || getRootNodeId(rootId);
       const params = new URLSearchParams({
         root: rootId,
         parent_session_key: parentSessionKey,
@@ -1202,7 +1276,7 @@ class SessionService {
       if (typeof options?.limit === "number" && options.limit > 0) {
         params.set("limit", String(options.limit));
       }
-      const data = await protectedJSON<any[]>(appURL("/api/sessions/children", params));
+      const data = await protectedJSON<any[]>(appURL("/api/sessions/children", params, (options as any)?.nodeId));
       return Array.isArray(data) ? data : [];
     } catch (err) {
       console.error("[Session] Failed to fetch child sessions:", err);
@@ -1214,9 +1288,10 @@ class SessionService {
     rootId: string,
     query: string,
     limit?: number,
-    options?: { multiRoot?: boolean },
+    options?: { multiRoot?: boolean; nodeId?: string },
   ): Promise<SessionSearchHit[]> {
     try {
+      (options as any).nodeId = (options as any)?.nodeId || getRootNodeId(rootId);
       const trimmed = query.trim();
       if ((!rootId && !options?.multiRoot) || !trimmed) {
         return [];
@@ -1230,7 +1305,7 @@ class SessionService {
       if (typeof limit === "number" && limit > 0) {
         params.set("limit", String(limit));
       }
-      const data = await protectedJSON<any>(appURL("/api/sessions/search", params));
+      const data = await protectedJSON<any>(appURL("/api/sessions/search", params, (options as any)?.nodeId));
       return Array.isArray(data?.items)
         ? (data.items as SessionSearchHit[])
         : [];
@@ -1244,14 +1319,16 @@ class SessionService {
     rootId: string,
     sessionKey: string,
     seq?: number,
+    nodeId?: string,
   ): Promise<Session | null> {
     try {
+      nodeId = nodeId || getRootNodeId(rootId);
       const params = new URLSearchParams({ root: rootId });
       if (typeof seq === "number" && seq > 0) {
         params.set("seq", String(seq));
       }
       const data = await protectedJSON<Session>(
-        appURL(`/api/sessions/${encodeURIComponent(sessionKey)}`, params),
+        appURL(`/api/sessions/${encodeURIComponent(sessionKey)}`, params, nodeId),
       );
       return data as Session;
     } catch (err) {
@@ -1260,18 +1337,69 @@ class SessionService {
     }
   }
 
+  /**
+   * 窗口化拉取单段会话数据（方案 B）。before_seq/limit 取历史窗口，
+   * latest 取尾部窗口；互斥由后端校验。透传 nodeId（缺省按 root 解析）。
+   * 响应兼容顶层 `window_meta` 或嵌入 `session.window_meta`。
+   */
+  async getSessionWindow(
+    rootId: string,
+    sessionKey: string,
+    opts?: SessionWindowOptions,
+  ): Promise<SessionWindow | null> {
+    try {
+      const nodeId = opts?.nodeId || getRootNodeId(rootId);
+      const params = new URLSearchParams({ root: rootId });
+      if (typeof opts?.beforeSeq === "number" && opts.beforeSeq > 0) {
+        params.set("before_seq", String(opts.beforeSeq));
+      }
+      if (typeof opts?.latest === "number" && opts.latest > 0) {
+        params.set("latest", String(opts.latest));
+      }
+      const limit = Number(opts?.limit || 0);
+      if (limit > 0) {
+        params.set("limit", String(limit));
+      }
+      const raw = await protectedJSON<any>(
+        appURL(`/api/sessions/${encodeURIComponent(sessionKey)}`, params, nodeId),
+      );
+      const session = (raw?.session as Session | any) || (raw as Session | any);
+      const meta = (raw?.window_meta || session?.window_meta) as SessionWindowMeta;
+      if (!meta) {
+        console.error("[Session] getSessionWindow: missing window_meta", raw);
+        return null;
+      }
+      return { session, meta, raw };
+    } catch (err) {
+      console.error("[Session] Failed to get session window:", err);
+      return null;
+    }
+  }
+
+  // 显式别名：现有 getSession 的增量语义（?seq=N 取 seq>N），供流式尾部追加复用。
+  async getSessionIncrement(
+    rootId: string,
+    sessionKey: string,
+    seq?: number,
+    nodeId?: string,
+  ): Promise<Session | null> {
+    return this.getSession(rootId, sessionKey, seq, nodeId);
+  }
+
   async syncExternalSession(
     rootId: string,
     sessionKey: string,
     seq?: number,
+    nodeId?: string,
   ): Promise<Session | null> {
     try {
+      nodeId = nodeId || getRootNodeId(rootId);
       const params = new URLSearchParams({ root: rootId });
       if (typeof seq === "number" && seq > 0) {
         params.set("seq", String(seq));
       }
       const data = await protectedJSON<Session>(
-        appURL(`/api/sessions/${encodeURIComponent(sessionKey)}/sync`, params),
+        appURL(`/api/sessions/${encodeURIComponent(sessionKey)}/sync`, params, nodeId),
         { method: "POST" },
       );
       return data as Session;
@@ -1285,14 +1413,17 @@ class SessionService {
     rootId: string,
     sessionKey: string,
     callId: string,
+    nodeId?: string,
   ): Promise<ToolCall | null> {
     try {
       if (!rootId || !sessionKey || !callId) return null;
+      nodeId = nodeId || getRootNodeId(rootId);
       const params = new URLSearchParams({ root: rootId });
       const data = await protectedJSON<{ toolcall?: ToolCall; toolCall?: ToolCall } | ToolCall>(
         appURL(
           `/api/sessions/${encodeURIComponent(sessionKey)}/toolcalls/${encodeURIComponent(callId)}`,
           params,
+          nodeId,
         ),
       );
       const wrapped = data as { toolcall?: ToolCall; toolCall?: ToolCall };
@@ -1309,8 +1440,10 @@ class SessionService {
   async getSessionRelatedFiles(
     rootId: string,
     sessionKey: string,
+    nodeId?: string,
   ): Promise<RelatedFile[]> {
     try {
+      nodeId = nodeId || getRootNodeId(rootId);
       const params = new URLSearchParams({
         root: rootId,
       });
@@ -1318,6 +1451,7 @@ class SessionService {
         appURL(
           `/api/sessions/${encodeURIComponent(sessionKey)}/related-files`,
           params,
+          nodeId,
         ),
       );
       return Array.isArray(data) ? (data as RelatedFile[]) : [];
@@ -1334,8 +1468,10 @@ class SessionService {
     head = "",
     repoPath = "",
     repoKind = "",
+    nodeId?: string,
   ): Promise<boolean> {
     try {
+      nodeId = nodeId || getRootNodeId(rootId);
       const params = new URLSearchParams({ root: rootId, path });
       if (head) {
         params.set("head", head);
@@ -1350,6 +1486,7 @@ class SessionService {
         appURL(
           `/api/sessions/${encodeURIComponent(sessionKey)}/related-files`,
           params,
+          nodeId,
         ),
         { method: "DELETE" },
       );
@@ -1363,11 +1500,12 @@ class SessionService {
     }
   }
 
-  async deleteSession(rootId: string, sessionKey: string): Promise<boolean> {
+  async deleteSession(rootId: string, sessionKey: string, nodeId?: string): Promise<boolean> {
     try {
+      nodeId = nodeId || getRootNodeId(rootId);
       const params = new URLSearchParams({ root: rootId });
       const res = await protectedFetch(
-        appURL(`/api/sessions/${encodeURIComponent(sessionKey)}`, params),
+        appURL(`/api/sessions/${encodeURIComponent(sessionKey)}`, params, nodeId),
         { method: "DELETE" },
       );
       if (!res.ok) {
@@ -1384,13 +1522,16 @@ class SessionService {
     rootId: string,
     sessionKey: string,
     name: string,
+    nodeId?: string,
   ): Promise<Session | null> {
     try {
+      nodeId = nodeId || getRootNodeId(rootId);
       const params = new URLSearchParams({ root: rootId });
       const data = await protectedJSON<Session>(
         appURL(
           `/api/sessions/${encodeURIComponent(sessionKey)}/rename`,
           params,
+          nodeId,
         ),
         {
           method: "POST",
@@ -1411,13 +1552,16 @@ class SessionService {
     rootId: string,
     sessionKey: string,
     pinned: boolean,
+    nodeId?: string,
   ): Promise<Session | null> {
     try {
+      nodeId = nodeId || getRootNodeId(rootId);
       const params = new URLSearchParams({ root: rootId });
       const data = await protectedJSON<Session>(
         appURL(
           `/api/sessions/${encodeURIComponent(sessionKey)}/pin`,
           params,
+          nodeId,
         ),
         {
           method: "POST",
@@ -1438,13 +1582,15 @@ class SessionService {
     rootId: string,
     sessionKey: string,
     seq: number,
+    nodeId?: string,
   ): Promise<{ session_key: string; session?: Session } | null> {
     try {
       if (!rootId || !sessionKey || !seq) {
         return null;
       }
+      nodeId = nodeId || getRootNodeId(rootId);
       return await protectedJSON<{ session_key: string; session?: Session }>(
-        appURL("/api/sessions/fork"),
+        appURL("/api/sessions/fork", undefined, nodeId),
         {
           method: "POST",
           headers: {
@@ -1466,11 +1612,12 @@ class SessionService {
   async fetchExternalSessions(
     rootId: string,
     agent: string,
-    options?: FetchExternalSessionsOptions,
+    options?: FetchExternalSessionsOptions & { nodeId?: string },
   ): Promise<Session[]> {
     if (!rootId || !agent) {
       return [];
     }
+    (options as any).nodeId = (options as any)?.nodeId || getRootNodeId(rootId);
     const params = new URLSearchParams({ root: rootId, agent });
     if (options?.beforeTime) {
       params.set("before_time", options.beforeTime);
@@ -1484,7 +1631,7 @@ class SessionService {
     if (typeof options?.limit === "number" && options.limit > 0) {
       params.set("limit", String(options.limit));
     }
-    const data = await protectedJSON<any[]>(appURL("/api/sessions/external", params));
+    const data = await protectedJSON<any[]>(appURL("/api/sessions/external", params, (options as any)?.nodeId));
     return Array.isArray(data) ? data : [];
   }
 
@@ -1492,9 +1639,11 @@ class SessionService {
     rootId: string,
     agent: string,
     agentSessionId: string,
+    nodeId?: string,
   ): Promise<{ session_key: string } | null> {
     try {
-      return await protectedJSON<{ session_key: string }>(appURL("/api/sessions/import"), {
+      nodeId = nodeId || getRootNodeId(rootId);
+      return await protectedJSON<{ session_key: string }>(appURL("/api/sessions/import", undefined, nodeId), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1515,6 +1664,7 @@ class SessionService {
     rootId: string,
     agent: string,
     agentSessionIds: string[],
+    nodeId?: string,
   ): Promise<{
     items: Array<{
       agent_session_id: string;
@@ -1529,7 +1679,8 @@ class SessionService {
     }>;
   } | null> {
     try {
-      return await protectedJSON(appURL("/api/sessions/import/batch"), {
+      nodeId = nodeId || getRootNodeId(rootId);
+      return await protectedJSON(appURL("/api/sessions/import/batch", undefined, nodeId), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1552,6 +1703,7 @@ export const sessionService = new SessionService();
 type CachedSessionRecord = {
   cacheKey: string;
   rootId: string;
+  nodeId?: string;
   sessionKey: string;
   touchedAt: number;
   session: Session;
@@ -1567,11 +1719,25 @@ const SESSION_CACHE_DB = "mindfs-session-cache";
 const SESSION_CACHE_STORE = "sessions";
 const SESSION_LIST_CACHE_STORE = "session-lists";
 const SESSION_CACHE_VERSION = 3;
-const MULTI_ROOT_SESSION_LIST_CACHE_KEY = "multi-root";
+
+// 多项目会话列表的缓存键必须带账户：这是「跨账户串号」的入口。
+// 换账户后这里若仍是常量，上一账户的全量会话会在发请求前先被渲染出来
+// （App.tsx loadMultiProjectSessionGroups 先 setMultiProjectSessionGroups(缓存)），
+// 而账户作用域请求回来的空 groups 只是合并进 prev、并不清空它 → 新账户看到旧账户的全部会话。
+// 用 username 而非 id：同源与跨机器两种情形下它都是稳定且可读的那个标识。
+function multiRootSessionListCacheKey(): string {
+  const name = String(currentUser()?.username || "").trim();
+  return name ? `multi-root::${name}` : "multi-root";
+}
+
 let sessionDBPromise: Promise<IDBDatabase> | null = null;
 
-function buildSessionCacheKey(rootId: string, sessionKey: string): string {
-  return `${rootId}::${sessionKey}`;
+function buildSessionCacheKey(
+  rootId: string,
+  sessionKey: string,
+  nodeId?: string,
+): string {
+  return scopeSessionKey(String(nodeId || "").trim(), rootId, sessionKey);
 }
 
 function openSessionDB(): Promise<IDBDatabase> {
@@ -1658,8 +1824,17 @@ function withSessionListStore<T>(
   });
 }
 
-function buildSessionListCacheKey(rootId: string): string {
-  return `root::${rootId}`;
+// 单项目列表缓存同理必须带账户（见 multiRootSessionListCacheKey 的说明）：
+// 不带的话「A 账户看过 P 项目 → 切到 B 账户 → 点开 P」会先渲染出 A 的会话列表。
+function sessionListCacheScope(): string {
+  const name = String(currentUser()?.username || "").trim();
+  return name ? `${name}::` : "";
+}
+
+function buildSessionListCacheKey(rootId: string, nodeId?: string): string {
+  const nid = String(nodeId || "").trim();
+  const scope = sessionListCacheScope();
+  return nid ? `${scope}${nid}::${rootId}` : `${scope}root::${rootId}`;
 }
 
 async function readCachedSessionList<T>(cacheKey: string): Promise<T | null> {
@@ -1687,30 +1862,48 @@ async function writeCachedSessionList<T>(cacheKey: string, payload: T): Promise<
   } catch {}
 }
 
-export function getCachedSessionList(rootId: string): Promise<SessionListPayload | null> {
+export function getCachedSessionList(rootId: string, nodeId?: string): Promise<SessionListPayload | null> {
   if (!rootId) return Promise.resolve(null);
-  return readCachedSessionList<SessionListPayload>(buildSessionListCacheKey(rootId));
+  const nid = String(nodeId || "").trim();
+  const primary = buildSessionListCacheKey(rootId, nid || undefined);
+  return readCachedSessionList<SessionListPayload>(primary).then((hit) => {
+    if (hit) return hit;
+    return null;
+  });
 }
 
-export function saveCachedSessionList(rootId: string, payload: SessionListPayload): Promise<void> {
+export function saveCachedSessionList(rootId: string, payload: SessionListPayload, nodeId?: string): Promise<void> {
   if (!rootId) return Promise.resolve();
-  return writeCachedSessionList(buildSessionListCacheKey(rootId), payload);
+  return writeCachedSessionList(buildSessionListCacheKey(rootId, nodeId), payload);
 }
 
 export function getCachedMultiRootSessionList(): Promise<MultiRootSessionGroup[] | null> {
-  return readCachedSessionList<MultiRootSessionGroup[]>(MULTI_ROOT_SESSION_LIST_CACHE_KEY);
+  return readCachedSessionList<MultiRootSessionGroup[]>(multiRootSessionListCacheKey());
 }
 
 export function saveCachedMultiRootSessionList(groups: MultiRootSessionGroup[]): Promise<void> {
-  return writeCachedSessionList(MULTI_ROOT_SESSION_LIST_CACHE_KEY, groups);
+  return writeCachedSessionList(multiRootSessionListCacheKey(), groups);
 }
 
-function getSessionMaxSeq(session: Session | null | undefined): number {
+export function getSessionMaxSeq(session: Session | null | undefined): number {
   const exchanges = Array.isArray(session?.exchanges) ? session.exchanges : [];
   return exchanges.reduce((max, exchange) => {
     const seq = Number((exchange as any)?.seq || 0);
     return Number.isFinite(seq) && seq > max ? seq : max;
   }, 0);
+}
+
+// 窗口内最小持久化 seq（seq>0），向上翻页时作为 beforeSeq 边界判定。
+export function getSessionMinSeq(session: Session | null | undefined): number {
+  const exchanges = Array.isArray(session?.exchanges) ? session.exchanges : [];
+  let min = 0;
+  for (const exchange of exchanges) {
+    const seq = Number((exchange as any)?.seq || 0);
+    if (Number.isFinite(seq) && seq > 0) {
+      min = min === 0 ? seq : Math.min(min, seq);
+    }
+  }
+  return min;
 }
 
 function cloneExchangeAux(
@@ -1823,10 +2016,13 @@ function appendSessionDelta(
         (exchange) => Number((exchange as any)?.seq || 0) > 0,
       )
     : [];
+  // incoming 不过滤 seq=0：sync/GET 会以 seq=0 下发「尚未落库的 pending 条目」。
+  // 注意：正在等待回答的 ask_user 卡**不在此列** —— 它是纯内存态（服务端
+  // manager.pendingToolCalls + 前端 sessionCacheRef），服务端从不经 HTTP 下发
+  // （session.Exchange 结构体没有 ToolCall 字段）。它由调用方在 handleSyncSession /
+  // loadSession 里从内存缓存合并回来，见 App.tsx 的 localTransient 逻辑。
   const incomingExchanges = Array.isArray(incoming?.exchanges)
-    ? incoming.exchanges.filter(
-        (exchange) => Number((exchange as any)?.seq || 0) > 0,
-      )
+    ? (incoming.exchanges as any[])
     : [];
   const baseExchangeAux = toPersistentExchangeAux(base?.exchange_aux);
   const incomingExchangeAux = toPersistentExchangeAux(incoming?.exchange_aux);
@@ -1840,11 +2036,12 @@ function appendSessionDelta(
 async function loadCachedSession(
   rootId: string,
   sessionKey: string,
+  nodeId?: string,
 ): Promise<Session | null> {
   try {
     const record = await withSessionStore("readonly", (store) =>
       sessionRequestToPromise(
-        store.get(buildSessionCacheKey(rootId, sessionKey)) as IDBRequest<
+        store.get(buildSessionCacheKey(rootId, sessionKey, nodeId)) as IDBRequest<
           CachedSessionRecord | undefined
         >,
       ),
@@ -1858,14 +2055,17 @@ async function loadCachedSession(
 async function saveCachedSession(
   rootId: string,
   session: Session | null | undefined,
+  nodeId?: string,
+  opts?: { forceNoTruncate?: boolean },
 ): Promise<void> {
   if (!rootId || !session?.key) {
     return;
   }
-  const persistentSession = toPersistentSession(session);
+  const persistentSession = toPersistentSession(session, opts?.forceNoTruncate);
   const record: CachedSessionRecord = {
-    cacheKey: buildSessionCacheKey(rootId, session.key),
+    cacheKey: buildSessionCacheKey(rootId, session.key, nodeId),
     rootId,
+    nodeId: String(nodeId || "").trim() || undefined,
     sessionKey: session.key,
     touchedAt: Date.now(),
     session: persistentSession,
@@ -1880,20 +2080,25 @@ async function saveCachedSession(
 export async function deleteCachedSession(
   rootId: string,
   sessionKey: string,
+  nodeId?: string,
 ): Promise<void> {
   try {
     await withSessionStore("readwrite", (store) =>
       sessionRequestToPromise(
-        store.delete(buildSessionCacheKey(rootId, sessionKey)),
+        store.delete(buildSessionCacheKey(rootId, sessionKey, nodeId)),
       ),
     );
   } catch {}
 }
 
-export async function clearCachedSessionsForRoot(rootId: string): Promise<void> {
+export async function clearCachedSessionsForRoot(
+  rootId: string,
+  nodeId?: string,
+): Promise<void> {
   if (!rootId) {
     return;
   }
+  const nid = String(nodeId || "").trim();
   try {
     await withSessionStore("readwrite", async (store) => {
       const entries =
@@ -1902,13 +2107,31 @@ export async function clearCachedSessionsForRoot(rootId: string): Promise<void> 
         )) || [];
       await Promise.all(
         entries
-          .filter((record) => record.rootId === rootId)
+          // 未传 nodeId 时清整棵 root（历史行为）；传了则只清该节点，
+          // 并顺带删除遗留的 node-blind 旧键（无 nodeId 字段的记录）
+          .filter(
+            (record) =>
+              record.rootId === rootId &&
+              (!nid || record.nodeId === nid || !record.nodeId),
+          )
           .map((record) => sessionRequestToPromise(store.delete(record.cacheKey))),
       );
     });
-    await withSessionListStore("readwrite", (store) =>
-      sessionRequestToPromise(store.delete(buildSessionListCacheKey(rootId))),
-    );
+    await withSessionListStore("readwrite", async (store) => {
+      if (nid) {
+        try { await sessionRequestToPromise(store.delete(buildSessionListCacheKey(rootId, nid))); } catch {}
+        try { await sessionRequestToPromise(store.delete(buildSessionListCacheKey(rootId))); } catch {}
+      } else {
+        const entries = (await sessionRequestToPromise(store.getAll() as IDBRequest<CachedSessionListRecord<any>[]>) ) || [];
+        for (const entry of entries) {
+          const key = String(entry?.cacheKey || "");
+          if (key === `root::${rootId}` || key.endsWith(`::${rootId}`)) {
+            try { await sessionRequestToPromise(store.delete(key)); } catch {}
+          }
+        }
+        try { await sessionRequestToPromise(store.delete(buildSessionListCacheKey(rootId))); } catch {}
+      }
+    });
   } catch {}
 }
 
@@ -1923,24 +2146,82 @@ function cloneSession(session: Session): Session {
   };
 }
 
-function toPersistentSession(session: Session): Session {
+const SESSION_CACHE_MAX_EXCHANGES = 500;
+const SESSION_CACHE_MAX_TEXT = 200 * 1024;
+
+/**
+ * 截断到 meta + 最近 N 条（含文本上限）——避免每次打开大 session 把整份
+ * JSONL（可达 MB 级）全量写进 IndexedDB 卡主线程。截断时置 truncated 标记，
+ * 读取方下次以全量拉取补段（见 syncSession）。
+ */
+function toPersistentSession(
+  session: Session,
+  forceNoTruncate?: boolean,
+): Session {
+  const persistent = stripAnchorBookkeeping(session);
+  const exchanges = Array.isArray(persistent.exchanges)
+    ? persistent.exchanges.filter((exchange) => {
+        const seq = Number((exchange as any)?.seq || 0);
+        return Number.isFinite(seq) && seq > 0;
+      })
+    : [];
+  const exchange_aux = toPersistentExchangeAux(persistent.exchange_aux);
+  if (exchanges.length <= SESSION_CACHE_MAX_EXCHANGES) {
+    let text = 0;
+    for (const exchange of exchanges) {
+      text += String((exchange as any)?.content || "").length;
+    }
+    if (text <= SESSION_CACHE_MAX_TEXT) {
+      return { ...persistent, exchanges, exchange_aux };
+    }
+  }
+  const truncatedCount = exchanges.length - SESSION_CACHE_MAX_EXCHANGES;
+  const tail = exchanges.slice(Math.max(0, truncatedCount));
+  let text = 0;
+  let extraSliced = 0;
+  for (let i = tail.length - 1; i >= 0; i -= 1) {
+    const itemText = String((tail as any)[i]?.content || "").length;
+    if (text + itemText > SESSION_CACHE_MAX_TEXT) {
+      extraSliced += 1;
+      continue;
+    }
+    text += itemText;
+  }
+  const kept = extraSliced > 0 ? tail.slice(0, tail.length - extraSliced) : tail;
   return {
-    ...session,
-    exchanges: Array.isArray(session.exchanges)
-      ? session.exchanges.filter((exchange) => {
-          const seq = Number((exchange as any)?.seq || 0);
-          return Number.isFinite(seq) && seq > 0;
-        })
-      : [],
-    exchange_aux: toPersistentExchangeAux(session.exchange_aux),
+    ...persistent,
+    truncated: forceNoTruncate ? false : true,
+    exchanges: kept,
+    exchange_aux,
   };
+}
+
+// stripAnchorBookkeeping 丢弃 SessionViewer 的重锚定簿记字段，避免其落 IndexedDB。
+//
+// _windowMeta/_anchoredAt 只在内存里对「当前会话实例」有意义（App 换窗时递增 _anchoredAt，
+// 视图侧按它做一次性原子换窗）。一旦持久化，冷启动时 SessionViewer 的 lastAppliedAnchorRef
+// 从 {key:null, at:-1} 开始，陈旧的 _anchoredAt 会通过守卫（at >= -1）被误当成新锚点应用，
+// 而 applyWindow 是把 session.exchanges **原样**当作窗口渲染的 —— 于是「持久化下来的旧
+// exchange 集」被当成当前窗口显示，表现为刷新后旧内容出现在当前位置（实测 2026-09-12 症状 3）。
+//
+// 只剥离这两个字段：_nodeId 仍要保留（SessionViewer 取窗口时用它做节点路由）。
+function stripAnchorBookkeeping(session: Session): Session {
+  const raw = session as any;
+  if (!("_windowMeta" in raw) && !("_anchoredAt" in raw)) {
+    return session;
+  }
+  const { _windowMeta, _anchoredAt, ...rest } = raw;
+  void _windowMeta;
+  void _anchoredAt;
+  return rest as Session;
 }
 
 export async function getCachedSession(
   rootId: string,
   sessionKey: string,
+  nodeId?: string,
 ): Promise<Session | null> {
-  const cached = await loadCachedSession(rootId, sessionKey);
+  const cached = await loadCachedSession(rootId, sessionKey, nodeId);
   return cached ? cloneSession(cached) : null;
 }
 
@@ -1948,8 +2229,9 @@ export async function setCachedSessionRelatedFiles(
   rootId: string,
   sessionKey: string,
   relatedFiles: RelatedFile[],
+  nodeId?: string,
 ): Promise<Session | null> {
-  const cached = await loadCachedSession(rootId, sessionKey);
+  const cached = await loadCachedSession(rootId, sessionKey, nodeId);
   if (!cached) {
     return null;
   }
@@ -1957,23 +2239,54 @@ export async function setCachedSessionRelatedFiles(
     ...cached,
     related_files: Array.isArray(relatedFiles) ? [...relatedFiles] : [],
   };
-  await saveCachedSession(rootId, next);
+  await saveCachedSession(rootId, next, nodeId);
   return cloneSession(next);
+}
+
+/**
+ * 窗口化视图内存标记（方案 B）。SessionViewer 进入窗口视图时置位，
+ * 使 syncSession 走增量复用、跳过 truncated 全量回补、且不写 truncated 标记。
+ * 清标记即回退全量路径（见 3.3 / 8 灰度回滚）。
+ */
+const windowedViewKeys = new Set<string>();
+
+export function isWindowedView(sessionKey: string): boolean {
+  return windowedViewKeys.has(sessionKey);
+}
+
+export function setWindowedView(sessionKey: string, on = true): void {
+  if (on) {
+    windowedViewKeys.add(sessionKey);
+  } else {
+    windowedViewKeys.delete(sessionKey);
+  }
+}
+
+export function clearWindowedView(sessionKey: string): void {
+  windowedViewKeys.delete(sessionKey);
 }
 
 export async function syncSession(
   rootId: string,
   sessionKey: string,
-  options?: { full?: boolean },
+  options?: { full?: boolean; nodeId?: string; windowedView?: boolean },
 ): Promise<SyncSessionResult> {
-  const base = await getCachedSession(rootId, sessionKey);
-  const seq = getSessionMaxSeq(base);
-  const incoming = options?.full
-    ? await sessionService.syncExternalSession(rootId, sessionKey, seq)
-    : await sessionService.getSession(rootId, sessionKey, seq);
+  const base = await getCachedSession(rootId, sessionKey, options?.nodeId);
+  // 窗口化视图（内存标记或显式选项）以增量复用为主：跳过 truncated 全量回补，
+  // 也不写 truncated 标记（见 3.3 / 8 灰度回滚）。全量路径仍保留 truncated→全量拉取。
+  const windowed = isWindowedView(sessionKey) || !!options?.windowedView;
+  const baseTruncated = windowed ? false : !!(base as any)?.truncated;
+  const seq = baseTruncated ? 0 : getSessionMaxSeq(base);
+  // truncated 只需轻量 GET 全量（非 syncExternalSession 的手动转录同步重端点）。
+  const incoming = baseTruncated
+    ? await sessionService.getSession(rootId, sessionKey, 0, options?.nodeId)
+    : options?.full
+      ? await sessionService.syncExternalSession(rootId, sessionKey, seq, options?.nodeId)
+      : await sessionService.getSession(rootId, sessionKey, seq, options?.nodeId);
   if (!incoming) {
     return { session: base, hasDelta: false };
   }
+  const effectiveBase = baseTruncated ? null : base;
   const incomingExchanges = Array.isArray(incoming.exchanges)
     ? incoming.exchanges
     : [];
@@ -1984,7 +2297,7 @@ export async function syncSession(
   const transientTail = incomingExchanges.filter(
     (exchange) => Number((exchange as any)?.seq || 0) === 0,
   );
-  const persistedSession = appendSessionDelta(base, {
+  const persistedSession = appendSessionDelta(effectiveBase, {
     ...incoming,
     key: sessionKey,
     exchanges: persistedDelta,
@@ -1993,7 +2306,12 @@ export async function syncSession(
   if (!persistedSession) {
     return { session: null, hasDelta: false };
   }
-  await saveCachedSession(rootId, persistedSession);
+  await saveCachedSession(
+    rootId,
+    persistedSession,
+    options?.nodeId,
+    windowed ? { forceNoTruncate: true } : undefined,
+  );
   const displaySession = withSessionMeta(persistedSession, {
     ...incoming,
     key: sessionKey,
@@ -2004,4 +2322,23 @@ export async function syncSession(
     session: displaySession ? cloneSession(displaySession) : null,
     hasDelta: persistedDelta.length > 0,
   };
+}
+
+/** 窗口化拉取单段会话数据（方案 B）。委托给 sessionService.getSessionWindow。 */
+export async function getSessionWindow(
+  rootId: string,
+  sessionKey: string,
+  opts?: SessionWindowOptions,
+): Promise<SessionWindow | null> {
+  return sessionService.getSessionWindow(rootId, sessionKey, opts);
+}
+
+/** 增量语义别名：即现有 getSession(?seq 增量)。供 SessionViewer 跨窗口流式追加复用。 */
+export async function getSessionIncrement(
+  rootId: string,
+  sessionKey: string,
+  seq?: number,
+  nodeId?: string,
+): Promise<Session | null> {
+  return sessionService.getSession(rootId, sessionKey, seq, nodeId);
 }

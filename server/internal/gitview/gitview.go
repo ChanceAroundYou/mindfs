@@ -360,6 +360,12 @@ func resolveActionPath(ctx context.Context, rootPath, relPath string) (repoConte
 
 func ListWorktrees(ctx context.Context, rootPath string) (WorktreeListResult, error) {
 	if _, err := loadRepoContext(ctx, rootPath); err != nil {
+		if isNotRepoError(err) {
+			// 与 ListStatus/ListHistory 一致：非 git 根不是错误，只是没有 worktree。
+			// 曾经这里直接把 git 的报错抛成 400，前端把
+			// "exit status 128: fatal: not a git repository" 原样渲染到面板上。
+			return WorktreeListResult{}, nil
+		}
 		return WorktreeListResult{}, err
 	}
 	output, err := runGit(ctx, rootPath, "worktree", "list", "--porcelain")
@@ -519,6 +525,10 @@ func RemoveWorktree(ctx context.Context, rootPath string) error {
 	return nil
 }
 
+// errDiffNotFound 表示该路径当前没有任何可显示的改动（未跟踪/被忽略/工作区干净）。
+// 对「关联文件」而言这是「无变更」而非错误，调用方据此回空结果。
+var errDiffNotFound = errors.New("git diff not found for path")
+
 func ReadDiff(ctx context.Context, rootPath, relPath string) (DiffResult, error) {
 	repo, err := loadRepoContext(ctx, rootPath)
 	if err != nil {
@@ -536,7 +546,7 @@ func ReadDiff(ctx context.Context, rootPath, relPath string) (DiffResult, error)
 		}
 	}
 	if matched == nil {
-		return DiffResult{}, errors.New("git diff not found for path")
+		return DiffResult{}, errDiffNotFound
 	}
 	content, err := repo.diffContent(ctx, *matched)
 	if err != nil {
@@ -697,6 +707,17 @@ func ReadCommitDiff(ctx context.Context, rootPath, commit, relPath string) (Diff
 	}, nil
 }
 
+// emptyRelatedFileDiff 表示「这个文件自记录的基线以来没有任何变更可显示」：
+// base 之后没有提交碰过它，工作区也没有改动（或被 git 忽略/已删除）。
+// 这是空结果而非错误，回 200 空 diff 让前端渲染空面板，不要污染日志。
+// Status 故意留空，前端据此判断「无可显示的增删统计」。
+func emptyRelatedFileDiff(path string) RelatedFileDiffResult {
+	return RelatedFileDiffResult{
+		DiffResult: DiffResult{Path: path},
+		Source:     "none",
+	}
+}
+
 func ReadRelatedFileDiff(ctx context.Context, rootPath, baseHead, relPath string) (RelatedFileDiffResult, error) {
 	repo, err := loadRepoContext(ctx, rootPath)
 	if err != nil {
@@ -705,6 +726,9 @@ func ReadRelatedFileDiff(ctx context.Context, rootPath, baseHead, relPath string
 	baseHead = strings.TrimSpace(baseHead)
 	if baseHead == "" {
 		diff, err := ReadDiff(ctx, rootPath, relPath)
+		if errors.Is(err, errDiffNotFound) {
+			return emptyRelatedFileDiff(relPath), nil
+		}
 		if err != nil {
 			return RelatedFileDiffResult{}, err
 		}
@@ -720,12 +744,15 @@ func ReadRelatedFileDiff(ctx context.Context, rootPath, baseHead, relPath string
 	if path == "" {
 		return RelatedFileDiffResult{}, errors.New("path required")
 	}
-	nextHead, err := repo.nextCommitAfter(ctx, baseHead)
+	nextHead, err := repo.nextCommitTouching(ctx, baseHead, repo.toRepoPath(path))
 	if err != nil {
 		return RelatedFileDiffResult{}, err
 	}
 	if strings.TrimSpace(nextHead) == "" {
 		diff, err := ReadDiff(ctx, rootPath, path)
+		if errors.Is(err, errDiffNotFound) {
+			return emptyRelatedFileDiff(path), nil
+		}
 		if err != nil {
 			return RelatedFileDiffResult{}, err
 		}
@@ -966,8 +993,15 @@ func (r repoContext) commitInCurrentHistory(ctx context.Context, commit string) 
 	return err == nil
 }
 
-func (r repoContext) nextCommitAfter(ctx context.Context, commit string) (string, error) {
-	output, err := runGit(ctx, r.repoRoot, "rev-list", "--reverse", "--ancestry-path", commit+"..HEAD")
+// nextCommitTouching 返回 base..HEAD 中第一个改动了 repoRelPath 的提交。
+// 记录的 base 是「文件被改动那一刻的 HEAD」，真正带上这笔改动的提交与它之间
+// 常常夹着若干没碰过该文件的提交，所以不能取紧接着的那一个。
+func (r repoContext) nextCommitTouching(ctx context.Context, commit, repoRelPath string) (string, error) {
+	args := []string{"rev-list", "--reverse", "--ancestry-path", commit + "..HEAD"}
+	if strings.TrimSpace(repoRelPath) != "" {
+		args = append(args, "--", repoRelPath)
+	}
+	output, err := runGit(ctx, r.repoRoot, args...)
 	if err != nil {
 		return "", err
 	}
@@ -1002,7 +1036,7 @@ func (r repoContext) diffBetweenCommits(ctx context.Context, base, target, relPa
 		}
 	}
 	if matched == nil {
-		return DiffResult{}, errors.New("git related file diff not found for path")
+		return DiffResult{}, errDiffNotFound
 	}
 	contentBytes, err := runGitBytes(ctx, r.repoRoot, "diff", "--no-ext-diff", "--find-renames", base, target, "--", repoPath)
 	if err != nil {

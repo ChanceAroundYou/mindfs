@@ -12,6 +12,8 @@ type ModeSelectorProps = {
   disabled?: boolean;
   onboardingId?: string;
   viewportMenu?: boolean;
+  accentColor?: string | null;
+  onOpenChange?: (open: boolean) => void;
 };
 
 const modeLabelKeys: Record<SessionMode, MessageKey> = {
@@ -27,18 +29,45 @@ export function ModeSelector({
   disabled = false,
   onboardingId,
   viewportMenu = false,
+  accentColor = null,
+  onOpenChange,
 }: ModeSelectorProps) {
   const { t } = useI18n();
+  const accentHex = String(accentColor || "").trim() || "#3b82f6";
+  const accentApplied = String(accentColor || "").trim() || "#3b82f6";
+  function hexToRgba(hex: string, alpha: number): string {
+    const h = String(hex || "").trim().replace(/^#/, "");
+    const fb = `rgba(59, 130, 246, ${alpha})`;
+    if (h.length === 3) { const r = parseInt(h[0] + h[0], 16); const g = parseInt(h[1] + h[1], 16); const b = parseInt(h[2] + h[2], 16); if (Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b)) return `rgba(${r}, ${g}, ${b}, ${alpha})`; return fb; }
+    if (h.length === 6) { const r = parseInt(h.slice(0, 2), 16); const g = parseInt(h.slice(2, 4), 16); const b = parseInt(h.slice(4, 6), 16); if (Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b)) return `rgba(${r}, ${g}, ${b}, ${alpha})`; }
+    return fb;
+  }
   const [isOpen, setIsOpen] = useState(false);
   const [viewportMenuPosition, setViewportMenuPosition] = useState<{ top: number; left: number } | null>(null);
+  const [positionTick, setPositionTick] = useState(0);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const recompute = () => setPositionTick((t) => t + 1);
+    window.visualViewport?.addEventListener("resize", recompute);
+    window.addEventListener("resize", recompute);
+    return () => {
+      window.visualViewport?.removeEventListener("resize", recompute);
+      window.removeEventListener("resize", recompute);
+    };
+  }, [isOpen]);
 
   useEffect(() => {
     if (disabled) {
       setIsOpen(false);
     }
   }, [disabled]);
+
+  useEffect(() => {
+    onOpenChange?.(isOpen);
+  }, [isOpen, onOpenChange]);
 
   useEffect(() => {
     const handlePointerOutside = (e: PointerEvent) => {
@@ -73,7 +102,7 @@ export function ModeSelector({
     );
     const top = Math.max(viewportTop + margin, anchor.top - menu.height - 8);
     setViewportMenuPosition({ top, left });
-  }, [isOpen, viewportMenu]);
+  }, [isOpen, viewportMenu, positionTick]);
 
   const handleModeSelect = useCallback(
     (newMode: SessionMode) => {
@@ -86,6 +115,7 @@ export function ModeSelector({
   const renderMenu = () => (
     <div
       ref={menuRef}
+      onMouseDown={(e) => e.preventDefault()}
       style={{
         position: viewportMenu ? "fixed" : "absolute",
         ...(viewportMenu
@@ -110,7 +140,7 @@ export function ModeSelector({
         {t("mode.title")}
       </div>
       {(["chat", "plugin", "command"] as SessionMode[]).map((m) => (
-        <button key={m} type="button" onClick={() => handleModeSelect(m)} style={{ display: "flex", alignItems: "center", gap: "8px", width: "100%", padding: "10px 12px", border: "none", background: m === mode ? "rgba(59, 130, 246, 0.08)" : "transparent", cursor: "pointer", fontSize: "13px", color: m === mode ? "#3b82f6" : "var(--text-primary)", fontWeight: m === mode ? 500 : 400, textAlign: "left", whiteSpace: "nowrap" }}>
+        <button key={m} type="button" onClick={() => handleModeSelect(m)} style={{ display: "flex", alignItems: "center", gap: "8px", width: "100%", padding: "10px 12px", border: "none", background: m === mode ? hexToRgba(accentHex, 0.08) : "transparent", cursor: "pointer", fontSize: "13px", color: m === mode ? accentHex : "var(--text-primary)", fontWeight: m === mode ? 500 : 400, textAlign: "left", whiteSpace: "nowrap" }}>
           <ModeIcon type={m} size={18} style={m === "chat" && m !== mode ? { color: "#64748b" } : undefined} />
           <span>{t(modeLabelKeys[m])}</span>
         </button>
@@ -122,6 +152,7 @@ export function ModeSelector({
     <div ref={dropdownRef} data-onboarding={onboardingId} style={{ position: "relative" }}>
       <button
         type="button"
+        onMouseDown={(e) => e.preventDefault()}
         onClick={() => {
           if (!disabled) {
             setViewportMenuPosition(null);
@@ -151,7 +182,7 @@ export function ModeSelector({
         }}
       >
         <div style={{ width: "18px", height: "18px", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <ModeIcon type={mode} size={18} />
+          <ModeIcon type={mode} size={18} color={mode === "chat" ? accentApplied : undefined} />
         </div>
       </button>
 

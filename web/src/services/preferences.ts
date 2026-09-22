@@ -100,3 +100,53 @@ export async function updateIdleSessionResourceReleasePreference(
     }),
   );
 }
+
+export type CORSPreference = { mode: string; allowOrigins: string[] };
+function normalizeCORSPreference(value: unknown): CORSPreference {
+  const input = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  const mode = typeof input.mode === "string" ? String(input.mode).trim().toLowerCase() || "open" : "open";
+  const raw = Array.isArray(input.allow_origins) ? input.allow_origins : Array.isArray(input.allowOrigins) ? input.allowOrigins : [];
+  return { mode, allowOrigins: (raw as unknown[]).map((v) => String(v || "").trim()).filter(Boolean) };
+}
+
+export async function fetchCORSPreference(): Promise<CORSPreference> {
+  return normalizeCORSPreference(await protectedJSON(appPath("/api/preferences/cors")));
+}
+
+export async function updateCORSPreference(preference: CORSPreference): Promise<CORSPreference> {
+  return normalizeCORSPreference(
+    await protectedJSON(appPath("/api/preferences/cors"), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: preference.mode, allow_origins: preference.allowOrigins }),
+    }),
+  );
+}
+
+export type SessionProjectPins = Record<string, number>;
+
+function normalizeSessionProjectPins(value: unknown): SessionProjectPins {
+  const input = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  const pins: SessionProjectPins = {};
+  for (const [key, raw] of Object.entries(input.pins ?? input)) {
+    const ts = Number(raw);
+    if (key && Number.isFinite(ts) && ts > 0) {
+      pins[key] = ts;
+    }
+  }
+  return pins;
+}
+
+export async function fetchSessionProjectPins(): Promise<SessionProjectPins> {
+  return normalizeSessionProjectPins(await protectedJSON(appPath("/api/preferences/session-project-pins")));
+}
+
+export async function updateSessionProjectPins(pins: SessionProjectPins): Promise<SessionProjectPins> {
+  return normalizeSessionProjectPins(
+    await protectedJSON(appPath("/api/preferences/session-project-pins"), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pins }),
+    }),
+  );
+}

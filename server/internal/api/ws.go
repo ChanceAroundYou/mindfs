@@ -168,6 +168,7 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "client_id required", http.StatusBadRequest)
 		return
 	}
+	nodeID := strings.TrimSpace(r.URL.Query().Get("node_id"))
 	if err := h.requireWSProof(r, clientID); err != nil {
 		respondError(w, http.StatusUnauthorized, err)
 		return
@@ -176,9 +177,14 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	log.Printf("[ws] connected client=%s remote=%s path=%s", clientID, r.RemoteAddr, r.URL.Path)
+	log.Printf("[ws] connected client=%s remote=%s path=%s node=%s", clientID, r.RemoteAddr, r.URL.Path, nodeID)
 	if h.AppContext != nil {
-		previous := h.AppContext.GetSessionStreamHub().RegisterClient(clientID, conn)
+		var previous *websocket.Conn
+		if nodeID != "" {
+			previous = h.AppContext.GetSessionStreamHub().RegisterClientWithNode(clientID, conn, nodeID)
+		} else {
+			previous = h.AppContext.GetSessionStreamHub().RegisterClient(clientID, conn)
+		}
 		if previous != nil {
 			log.Printf("[ws] superseded client=%s remote=%s path=%s", clientID, r.RemoteAddr, r.URL.Path)
 			_ = previous.WriteControl(
@@ -195,7 +201,7 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if h.AppContext != nil {
 			h.AppContext.GetSessionStreamHub().UnregisterClient(clientID, conn)
 		}
-		log.Printf("[ws] disconnected client=%s remote=%s path=%s", clientID, r.RemoteAddr, r.URL.Path)
+		log.Printf("[ws] disconnected client=%s remote=%s path=%s node=%s", clientID, r.RemoteAddr, r.URL.Path, nodeID)
 		conn.Close()
 	}()
 
@@ -301,6 +307,8 @@ func wsProofPath(r *http.Request) string {
 	query.Del(wsTSQuery)
 	query.Del(wsProofQuery)
 	next.RawQuery = query.Encode()
+	// 客户端按完整（含部署前缀）请求 URL 计算 proof，剥离前缀后需用原始路径对齐。
+	next.Path = OriginalPath(r)
 	if next.RawQuery == "" {
 		return next.Path
 	}
@@ -494,7 +502,9 @@ func (h *WSHandler) handleWSRequest(ctx context.Context, conn *websocket.Conn, c
 	case "session.ready":
 		go h.handleSessionReady(clientID, req)
 	case "session.cancel":
-		h.handleSessionCancel(ctx, conn, clientID, req)
+		// 异步处理：中断可能阻塞等待 CLI 确认（无超时），同步派发会卡死整个
+		// 连接读循环，使后续 stop/消息都无法送达，表现为"停止按钮有时没反应"。
+		go h.handleSessionCancel(ctx, conn, clientID, req)
 	case "session.queue.remove":
 		h.handleSessionQueueRemove(ctx, conn, clientID, req)
 	case "session.queue.update":
@@ -590,7 +600,7 @@ func (h *WSHandler) handleSessionMessage(ctx context.Context, conn *websocket.Co
 		reservedAt, reserved := h.reserveClientRequest(requestID)
 		userTimestamp = reservedAt
 		if !reserved {
-			h.sendWSAcceptedAt(conn, clientID, requestID, rootID, key, userTimestamp)
+			h.sendWSAcceptedAt(conn, clientID, requestID, rootID, key, userTimestamp, "")
 			return
 		}
 	}
@@ -670,7 +680,7 @@ func (h *WSHandler) handleSessionMessage(ctx context.Context, conn *websocket.Co
 				h.broadcastSessionMetaUpdated(rootID, updated)
 			}(rootID, key, agentName, content)
 		}
-	} else if current, err := uc.GetSession(ctx, usecase.GetSessionInput{RootID: rootID, Key: key}); err == nil && current != nil {
+	} else if current, _, err := uc.GetSession(ctx, usecase.GetSessionInput{RootID: rootID, Key: key}); err == nil && current != nil {
 		sessionName = current.Name
 		planMode = current.PlanMode
 		runtimeRootPath = sessionRuntimeRootPath(current)
@@ -693,22 +703,27 @@ func (h *WSHandler) handleSessionMessage(ctx context.Context, conn *websocket.Co
 			}
 		}
 	}
+	modelDisplayName := ""
+	if uc != nil {
+		modelDisplayName = uc.ResolveModelDisplayName(agentName, model, runtimeRootPath)
+	}
 	if requestID != "" {
-		h.sendWSAcceptedAt(conn, clientID, requestID, rootID, key, userTimestamp)
+		h.sendWSAcceptedAt(conn, clientID, requestID, rootID, key, userTimestamp, modelDisplayName)
 	}
 	if h.AppContext != nil {
 		streamHub.BindSessionClient(key, clientID)
 	}
 	clientCtx := parseClientContext(req.Payload, rootID)
 	userMessage := PendingUserMessage{
-		Agent:       agentName,
-		Model:       model,
-		Mode:        agentMode,
-		Effort:      effort,
-		FastService: fastService,
-		PlanMode:    planMode,
-		Content:     content,
-		Timestamp:   userTimestamp,
+		Agent:            agentName,
+		Model:            model,
+		ModelDisplayName: modelDisplayName,
+		Mode:             agentMode,
+		Effort:           effort,
+		FastService:      fastService,
+		PlanMode:         planMode,
+		Content:          content,
+		Timestamp:        userTimestamp,
 	}
 	job := sessionMessageJob{
 		RootID:          rootID,
@@ -721,7 +736,11 @@ func (h *WSHandler) handleSessionMessage(ctx context.Context, conn *websocket.Co
 		TerminalCols:    terminalCols,
 		User:            userMessage,
 		ClientCtx:       clientCtx,
-		ExcludeClientID: clientID,
+		// 有意不排除发送方：session.user_message 现在携带用户消息的持久化 seq，
+		// 发送方需要它把本地乐观条目（无 seq）收敛为已持久化条目，否则该条目会
+		// 以「瞬时项」身份与窗口取回的同一条消息重复渲染。客户端按 role+content
+		// 合并，收到自己的回显是幂等的。
+		ExcludeClientID: "",
 	}
 	if streamHub.IsSessionReplying(key) && sessionType != session.TypeCommand {
 		queue := streamHub.EnqueueSessionMessage(rootID, key, sessionName, QueuedUserMessage{
@@ -918,7 +937,7 @@ func (h *WSHandler) runSessionMessage(job sessionMessageJob) {
 		ClientCtx:       job.ClientCtx,
 		OnStart: func(start usecase.MessageStart) {
 			h.AppContext.ClearTaskAuxFlagsForSession(rootID, key)
-			streamHub.BroadcastSessionUserMessageAt(rootID, key, job.SessionType, job.SessionName, job.User.Agent, start.Model, start.Mode, start.Effort, start.FastService, job.User.PlanMode, job.User.Content, job.User.Timestamp, job.ExcludeClientID, job.Queued, start.BaseExchangeSeq)
+			streamHub.BroadcastSessionUserMessageAt(rootID, key, job.SessionType, job.SessionName, job.User.Agent, start.Model, start.ModelDisplayName, start.Mode, start.Effort, start.FastService, job.User.PlanMode, job.User.Content, job.User.Timestamp, start.UserExchangeSeq, job.ExcludeClientID, job.Queued, start.BaseExchangeSeq)
 		},
 		OnUpdate: func(update agenttypes.Event) {
 			updateTracker.Begin()
@@ -983,7 +1002,7 @@ func (h *WSHandler) startNextQueuedSessionMessage(rootID, key string) {
 	shell := ""
 	runtimeRootPath := ""
 	uc := &usecase.Service{Registry: h.AppContext}
-	if current, err := uc.GetSession(context.Background(), usecase.GetSessionInput{RootID: rootID, Key: key}); err == nil && current != nil {
+	if current, _, err := uc.GetSession(context.Background(), usecase.GetSessionInput{RootID: rootID, Key: key}); err == nil && current != nil {
 		sessionType = current.Type
 		sessionName = current.Name
 		shell = current.Shell
@@ -1153,10 +1172,10 @@ func (h *WSHandler) sendE2EEError(conn *websocket.Conn, id, code string) {
 }
 
 func (h *WSHandler) sendWSAccepted(conn *websocket.Conn, clientID, requestID, rootID, sessionKey string) {
-	h.sendWSAcceptedAt(conn, clientID, requestID, rootID, sessionKey, time.Time{})
+	h.sendWSAcceptedAt(conn, clientID, requestID, rootID, sessionKey, time.Time{}, "")
 }
 
-func (h *WSHandler) sendWSAcceptedAt(conn *websocket.Conn, clientID, requestID, rootID, sessionKey string, timestamp time.Time) {
+func (h *WSHandler) sendWSAcceptedAt(conn *websocket.Conn, clientID, requestID, rootID, sessionKey string, timestamp time.Time, modelDisplayName string) {
 	payload := map[string]any{
 		"request_id":  requestID,
 		"root_id":     rootID,
@@ -1164,6 +1183,9 @@ func (h *WSHandler) sendWSAcceptedAt(conn *websocket.Conn, clientID, requestID, 
 	}
 	if !timestamp.IsZero() {
 		payload["timestamp"] = timestamp.UTC()
+	}
+	if strings.TrimSpace(modelDisplayName) != "" {
+		payload["model_display_name"] = modelDisplayName
 	}
 	resp := WSResponse{
 		ID:      requestID,

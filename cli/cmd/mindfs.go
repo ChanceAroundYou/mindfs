@@ -23,6 +23,7 @@ import (
 	"syscall"
 	"time"
 
+	"mindfs/internal/deploy"
 	"mindfs/server/app"
 )
 
@@ -775,7 +776,7 @@ func newHTTPClient(useTLS bool, timeout time.Duration) *http.Client {
 }
 
 func serverRunning(addr string, useTLS bool) bool {
-	url := addrToURL(addr, "/health", useTLS)
+	url := addrToURL(addr, deploy.PrefixedPath("/health"), useTLS)
 	client := newHTTPClient(useTLS, 800*time.Millisecond)
 	resp, err := client.Get(url)
 	if err != nil {

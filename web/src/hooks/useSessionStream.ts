@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   sessionService,
   type CompactNotice,
@@ -113,6 +113,28 @@ function normalizeToolCall(input: ToolCall): ToolCall {
     callId,
     status: normalizeToolCallStatus(raw.status),
   };
+}
+
+// 同一 callId 只允许渲染一张工具卡。窗口侧（exchange_aux[seq].toolcall）与 overlay 侧
+// （缓存里的 role=tool 瞬时条目）是两条独立来源，两边都会给出同一个 callId；一旦同时命中，
+// 列表里就出现两个 id 相同的 item —— 既重复渲染，又制造 React 重复 key，后者会让卡片被
+// 摆到错误的位置（实测 2026-09-13：ask 卡出现在窗口内真实位置之外的地方）。
+// composedExchanges 是「窗口在前、overlay 在后」，所以保留首个 = 保留已持久化那份，
+// 符合「窗口是唯一持久化源」的既有约定。
+function dedupeToolCards(items: TimelineItem[]): TimelineItem[] {
+  const seen = new Set<string>();
+  const out: TimelineItem[] = [];
+  for (const item of items) {
+    if (item.type === "tool") {
+      const callId = item.toolCall.callId;
+      if (callId) {
+        if (seen.has(callId)) continue;
+        seen.add(callId);
+      }
+    }
+    out.push(item);
+  }
+  return out;
 }
 
 function settleRunningTools(items: TimelineItem[]): TimelineItem[] {
@@ -468,6 +490,17 @@ export function useSessionStream(
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamVersion, setStreamVersion] = useState(0);
   const [streamStatusText, setStreamStatusText] = useState("");
+  // 流式 chunk（message_chunk/thought_chunk）高频到达时合并 streamVersion 更新，
+  // 避免每 chunk 一次 setState → SessionViewer 重渲染风暴（与 App.tsx 的
+  // bumpCacheVersionDebounced 同思路）。滚动跟随用 30ms 粒度视觉无差异。
+  const chunkVersionTimerRef = useRef<number | null>(null);
+  const bumpStreamVersion = () => {
+    if (chunkVersionTimerRef.current !== null) return;
+    chunkVersionTimerRef.current = window.setTimeout(() => {
+      chunkVersionTimerRef.current = null;
+      setStreamVersion((value) => value + 1);
+    }, 30);
+  };
 
   const baseTimeline = useMemo(
     () =>
@@ -491,7 +524,11 @@ export function useSessionStream(
 
     const unsubscribe = sessionService.subscribe(sessionKey, {
       onStream: (event) => {
-        setStreamVersion((value) => value + 1);
+        if (event.type === "message_chunk" || event.type === "thought_chunk") {
+          bumpStreamVersion();
+        } else {
+          setStreamVersion((value) => value + 1);
+        }
         if (event.type === "recovery") {
           setStreamStatusText(event.data?.message || translateNow("session.recovering"));
           setIsStreaming(true);
@@ -501,6 +538,9 @@ export function useSessionStream(
           setStreamStatusText("");
         }
         if (event.type === "message_done") {
+          // 一轮消息已完成：立即清除流式标记，避免"正在生成"卡到下个事件。
+          setStreamStatusText("");
+          setIsStreaming(false);
           return;
         }
         if (event.type === "error") {
@@ -522,11 +562,20 @@ export function useSessionStream(
 
     return () => {
       unsubscribe();
+      if (chunkVersionTimerRef.current !== null) {
+        window.clearTimeout(chunkVersionTimerRef.current);
+        chunkVersionTimerRef.current = null;
+      }
     };
   }, [sessionKey, sessionPending]);
 
+  const settledTimeline = useMemo(
+    () => dedupeToolCards(settleRunningTools(baseTimeline)),
+    [baseTimeline],
+  );
+
   return {
-    timeline: settleRunningTools(baseTimeline),
+    timeline: settledTimeline,
     isStreaming,
     streamVersion,
     streamStatusText,

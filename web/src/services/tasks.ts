@@ -1,4 +1,5 @@
 import { appURL } from "./base";
+import { getRootNodeId } from "./rootNode";
 import { protectedJSON } from "./api";
 
 export type StageRole = "user" | "agent";
@@ -129,13 +130,16 @@ const TASK_CACHE_VERSION = 1;
 const TASK_STORE = "tasks";
 const TASK_META_STORE = "meta";
 
-function taskCacheKey(rootId: string, taskId: string): string {
-  return `${rootId}::${taskId}`;
+function taskCacheKey(rootId: string, taskId: string, nodeId?: string): string {
+  const nid = String(nodeId || "").trim();
+  return nid ? `${nid}::${rootId}::${taskId}` : `${rootId}::${taskId}`;
 }
 
-function taskMetaKey(rootId: string): string {
-  return `root::${rootId}`;
+function taskMetaKey(rootId: string, nodeId?: string): string {
+  const nid = String(nodeId || "").trim();
+  return nid ? `${nid}::root::${rootId}` : `root::${rootId}`;
 }
+
 
 function taskRequest<T>(request: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -188,12 +192,33 @@ async function withTaskStore<T>(
   }
 }
 
-export async function getCachedTaskDetails(rootId: string): Promise<TaskDetail[]> {
+export async function getCachedTaskDetails(rootId: string, nodeId?: string): Promise<TaskDetail[]> {
+  const nid = String(nodeId || "").trim();
   try {
     return await withTaskStore("readonly", async ({ tasks }) => {
       const index = tasks.index("rootId");
       const records = await taskRequest(index.getAll(rootId) as IDBRequest<CachedTaskRecord[]>);
-      return (records || [])
+      if (nid) {
+        const scoped = records.filter((r) => String(r.cacheKey || "").startsWith(`${nid}::`));
+        if (scoped.length > 0) {
+          const byId = new Map<string, CachedTaskRecord>();
+          for (const rec of scoped) {
+            const prev = byId.get(rec.taskId);
+            if (!prev || String(rec.updatedAt || "") > String(prev.updatedAt || "")) byId.set(rec.taskId, rec);
+          }
+          return Array.from(byId.values())
+            .map((record) => record.detail)
+            .filter((detail) => detail?.task?.id)
+            .sort((a, b) => String(b.task.updated_at || "").localeCompare(String(a.task.updated_at || "")));
+        }
+        return [];
+      }
+      const byId = new Map<string, CachedTaskRecord>();
+      for (const rec of records) {
+        const prev = byId.get(rec.taskId);
+        if (!prev || String(rec.updatedAt || "") > String(prev.updatedAt || "")) byId.set(rec.taskId, rec);
+      }
+      return Array.from(byId.values())
         .map((record) => record.detail)
         .filter((detail) => detail?.task?.id)
         .sort((a, b) => String(b.task.updated_at || "").localeCompare(String(a.task.updated_at || "")));
@@ -203,9 +228,14 @@ export async function getCachedTaskDetails(rootId: string): Promise<TaskDetail[]
   }
 }
 
-export async function getCachedTaskMeta(rootId: string): Promise<CachedTaskMeta | null> {
+export async function getCachedTaskMeta(rootId: string, nodeId?: string): Promise<CachedTaskMeta | null> {
+  const nid = String(nodeId || "").trim();
   try {
     return await withTaskStore("readonly", async ({ meta }) => {
+      if (nid) {
+        const scoped = await taskRequest(meta.get(taskMetaKey(rootId, nid)) as IDBRequest<CachedTaskMeta | undefined>);
+        if (scoped) return scoped;
+      }
       const value = await taskRequest(meta.get(taskMetaKey(rootId)) as IDBRequest<CachedTaskMeta | undefined>);
       return value || null;
     });
@@ -214,19 +244,21 @@ export async function getCachedTaskMeta(rootId: string): Promise<CachedTaskMeta 
   }
 }
 
-export async function upsertCachedTaskDetails(rootId: string, details: TaskDetail[]): Promise<void> {
+export async function upsertCachedTaskDetails(rootId: string, details: TaskDetail[], nodeId?: string): Promise<void> {
   const valid = details.filter((detail) => detail?.task?.id);
   if (valid.length === 0) return;
+  const nid = String(nodeId || "").trim();
   try {
     await withTaskStore("readwrite", async ({ tasks, meta }) => {
-      let currentMeta = await taskRequest(meta.get(taskMetaKey(rootId)) as IDBRequest<CachedTaskMeta | undefined>);
+      const metaKey = taskMetaKey(rootId, nid || undefined);
+      let currentMeta = await taskRequest(meta.get(metaKey) as IDBRequest<CachedTaskMeta | undefined>);
       const updatedValues = valid
         .map((detail) => String(detail.task.updated_at || ""))
         .filter(Boolean);
       for (const detail of valid) {
         const taskId = detail.task.id;
         await taskRequest(tasks.put({
-          cacheKey: taskCacheKey(rootId, taskId),
+          cacheKey: taskCacheKey(rootId, taskId, nid || undefined),
           rootId,
           taskId,
           updatedAt: String(detail.task.updated_at || ""),
@@ -236,7 +268,7 @@ export async function upsertCachedTaskDetails(rootId: string, details: TaskDetai
       const newest = updatedValues.reduce((max, value) => value > max ? value : max, currentMeta?.newestUpdatedAt || "");
       const oldest = updatedValues.reduce((min, value) => !min || value < min ? value : min, currentMeta?.oldestUpdatedAt || "");
       currentMeta = {
-        key: taskMetaKey(rootId),
+        key: metaKey,
         rootId,
         newestUpdatedAt: newest,
         oldestUpdatedAt: oldest,
@@ -247,41 +279,41 @@ export async function upsertCachedTaskDetails(rootId: string, details: TaskDetai
   } catch {}
 }
 
-export async function fetchStageTemplates(): Promise<StageTemplate[]> {
-  const payload = await protectedJSON<any>(appURL("/api/task-stage-templates"));
+export async function fetchStageTemplates(nodeId?: string): Promise<StageTemplate[]> {
+  const payload = await protectedJSON<any>(appURL("/api/task-stage-templates", undefined, nodeId));
   return Array.isArray(payload?.items) ? payload.items : [];
 }
 
-export async function saveStageTemplate(template: StageTemplate): Promise<StageTemplate> {
-  return protectedJSON<StageTemplate>(appURL("/api/task-stage-templates"), {
+export async function saveStageTemplate(template: StageTemplate, nodeId?: string): Promise<StageTemplate> {
+  return protectedJSON<StageTemplate>(appURL("/api/task-stage-templates", undefined, nodeId), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(template),
   });
 }
 
-export async function deleteStageTemplate(id: string): Promise<void> {
-  await protectedJSON(appURL(`/api/task-stage-templates/${encodeURIComponent(id)}`), {
+export async function deleteStageTemplate(id: string, nodeId?: string): Promise<void> {
+  await protectedJSON(appURL(`/api/task-stage-templates/${encodeURIComponent(id)}`, undefined, nodeId), {
     method: "DELETE",
   });
 }
 
-export async function fetchTaskTemplates(): Promise<TaskTemplate[]> {
-  const payload = await protectedJSON<any>(appURL("/api/task-templates"));
+export async function fetchTaskTemplates(nodeId?: string): Promise<TaskTemplate[]> {
+  const payload = await protectedJSON<any>(appURL("/api/task-templates", undefined, nodeId));
   return Array.isArray(payload?.items) ? payload.items : [];
 }
 
-export async function saveTaskTemplate(template: TaskTemplate): Promise<TaskTemplate> {
+export async function saveTaskTemplate(template: TaskTemplate, nodeId?: string): Promise<TaskTemplate> {
   const path = template.id ? `/api/task-templates/${encodeURIComponent(template.id)}` : "/api/task-templates";
-  return protectedJSON<TaskTemplate>(appURL(path), {
+  return protectedJSON<TaskTemplate>(appURL(path, undefined, nodeId), {
     method: template.id ? "PUT" : "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(template),
   });
 }
 
-export async function deleteTaskTemplate(id: string): Promise<void> {
-  await protectedJSON(appURL(`/api/task-templates/${encodeURIComponent(id)}`), {
+export async function deleteTaskTemplate(id: string, nodeId?: string): Promise<void> {
+  await protectedJSON(appURL(`/api/task-templates/${encodeURIComponent(id)}`, undefined, nodeId), {
     method: "DELETE",
   });
 }
@@ -293,7 +325,7 @@ export async function fetchTaskDetails(rootId: string, filters?: {
   after?: string;
   before?: string;
   limit?: number;
-}): Promise<TaskDetail[]> {
+}, nodeId?: string): Promise<TaskDetail[]> {
   const params = new URLSearchParams({ root: rootId });
   if (filters?.templateId) params.set("template_id", filters.templateId);
   if (filters?.status) params.set("status", filters.status);
@@ -301,7 +333,8 @@ export async function fetchTaskDetails(rootId: string, filters?: {
   if (filters?.after) params.set("after", filters.after);
   if (filters?.before) params.set("before", filters.before);
   if (typeof filters?.limit === "number" && filters.limit > 0) params.set("limit", String(filters.limit));
-  const payload = await protectedJSON<any>(appURL("/api/tasks", params));
+  nodeId = nodeId || getRootNodeId(rootId);
+  const payload = await protectedJSON<any>(appURL("/api/tasks", params, nodeId));
   return Array.isArray(payload?.items) ? payload.items : [];
 }
 
@@ -312,8 +345,10 @@ export async function createTask(
   createWorktree = false,
   worktreeBranchMode: "new" | "existing" = "new",
   worktreeBranch = "",
+  nodeId?: string,
 ): Promise<TaskDetail> {
-  return protectedJSON<TaskDetail>(appURL("/api/tasks"), {
+  nodeId = nodeId || getRootNodeId(rootId);
+  return protectedJSON<TaskDetail>(appURL("/api/tasks", undefined, nodeId), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -334,8 +369,10 @@ export async function updateTaskInput(
   createWorktree?: boolean,
   worktreeBranchMode?: "new" | "existing",
   worktreeBranch?: string,
+  nodeId?: string,
 ): Promise<TaskDetail> {
-  return protectedJSON<TaskDetail>(appURL(`/api/tasks/${encodeURIComponent(taskId)}/input`), {
+  nodeId = nodeId || getRootNodeId(rootId);
+  return protectedJSON<TaskDetail>(appURL(`/api/tasks/${encodeURIComponent(taskId)}/input`, undefined, nodeId), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -348,8 +385,8 @@ export async function updateTaskInput(
   });
 }
 
-export async function moveTask(rootId: string, taskId: string, action: "next" | "run-now" | "prev" | "pause" | "resume" | "complete" | "cancel" | "fail", reason = ""): Promise<TaskDetail> {
-  return protectedJSON<TaskDetail>(appURL(`/api/tasks/${encodeURIComponent(taskId)}/${action}`), {
+export async function moveTask(rootId: string, taskId: string, action: "next" | "run-now" | "prev" | "pause" | "resume" | "complete" | "cancel" | "fail", reason = "", nodeId?: string): Promise<TaskDetail> {
+  return protectedJSON<TaskDetail>(appURL(`/api/tasks/${encodeURIComponent(taskId)}/${action}`, undefined, nodeId), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ root_id: rootId, reason }),

@@ -780,6 +780,8 @@ func (s *Service) AddManagedDir(_ context.Context, in AddManagedDirInput) (AddMa
 	}
 	pending := fs.NewRootInfo(name, name, abs)
 	pending.MetaLocation = location
+	// 非主账户：pending 也要带账户 meta 根，否则下面这行会在项目里建出 .mindfs
+	pending.MetaRoot = accountMetaRoot(s.Registry)
 	if _, err := pending.EnsureMetaDir(); err != nil {
 		return AddManagedDirOutput{}, err
 	}
@@ -1005,6 +1007,35 @@ func (s *Service) RenameManagedDir(_ context.Context, in RenameManagedDirInput) 
 		return RenameManagedDirOutput{}, err
 	}
 	return RenameManagedDirOutput{OldRootID: rootID, Dir: dir}, nil
+}
+
+type UpdateRootDisplayNameInput struct {
+	RootID      string
+	DisplayName string
+}
+
+type UpdateRootDisplayNameOutput struct {
+	Dir fs.RootInfo
+}
+
+func (s *Service) UpdateRootDisplayName(_ context.Context, in UpdateRootDisplayNameInput) (UpdateRootDisplayNameOutput, error) {
+	if err := s.ensureRegistry(); err != nil {
+		return UpdateRootDisplayNameOutput{}, err
+	}
+	rootID := strings.TrimSpace(in.RootID)
+	displayName := strings.TrimSpace(in.DisplayName)
+	if rootID == "" {
+		return UpdateRootDisplayNameOutput{}, errors.New("root id required")
+	}
+	if _, err := s.Registry.GetRoot(rootID); err != nil {
+		return UpdateRootDisplayNameOutput{}, err
+	}
+	// Empty displayName means clear alias and fall back to Name
+	dir, err := s.Registry.UpdateDisplayName(rootID, displayName)
+	if err != nil {
+		return UpdateRootDisplayNameOutput{}, err
+	}
+	return UpdateRootDisplayNameOutput{Dir: dir}, nil
 }
 
 func (s *Service) ensureFileWatcher(rootID, dir string) {

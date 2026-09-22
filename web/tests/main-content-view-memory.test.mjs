@@ -15,7 +15,7 @@ assert.match(
 );
 assert.match(
   app,
-  /const currentMainContentView: MainContentViewMode =[\s\S]*?mainContentViewByRoot\[currentRootId\]\)\s*\|\|\s*defaultMainContentView/,
+  /const currentMainContentView: MainContentViewMode =[\s\S]*?mainContentViewByRoot\[scopedRootKey\(currentRootId\)\]\)\s*\|\|\s*defaultMainContentView/,
   "a project-specific choice should win while untouched projects inherit the remembered default",
 );
 assert.match(

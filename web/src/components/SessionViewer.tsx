@@ -7,7 +7,18 @@ import { AgentIcon } from "./AgentIcon";
 import { InlineTokenText } from "./InlineTokenText";
 import { MarkdownViewer } from "./MarkdownViewer";
 import { fetchProofProtectedBlob } from "../services/file";
-import type { ExchangeAux, RelatedFile, TokenUsage, ToolCall } from "../services/session";
+import { getRootNodeId } from "../services/rootNode";
+import {
+  SESSION_WINDOW_SIZE,
+  clearWindowedView,
+  getSessionWindow,
+  type TokenUsage,
+  setWindowedView,
+  type ExchangeAux,
+  type RelatedFile,
+  type SessionWindowMeta,
+  type ToolCall,
+} from "../services/session";
 import { savePrompt } from "../services/prompts";
 import { reportError } from "../services/error";
 import { rootBadgeButtonStyle } from "./rootBadgeStyle";
@@ -55,6 +66,8 @@ type SessionItem = {
   exchange_aux?: Record<string, ExchangeAux[]>;
 };
 
+type ExchangeArray = NonNullable<SessionItem["exchanges"]>;
+
 type SessionViewerProps = {
   session: SessionItem | null;
   loading?: boolean;
@@ -75,7 +88,9 @@ type SessionViewerProps = {
     };
   } | null;
   rootId?: string | null;
+  rootDisplayName?: string | null;
   rootPath?: string | null;
+  rootColor?: string | null;
   interactionMode?: "main" | "drawer";
   targetSeq?: number;
   gitFileStatsByPath?: Record<
@@ -97,6 +112,7 @@ type SessionViewerProps = {
   targetSeqRequestKey?: string | number;
   agents?: AgentStatus[];
   composerOverlayInset?: number;
+  scrollContainerRef?: React.RefObject<HTMLDivElement | null>;
 };
 
 type AskUserQuestionOption = {
@@ -133,7 +149,7 @@ function AttachmentImage({
     let objectURL = "";
     async function run() {
       try {
-        const blob = await fetchProofProtectedBlob({ rootId, path });
+        const blob = await fetchProofProtectedBlob({ rootId, path, nodeId: String(getRootNodeId(rootId) || "").trim() || undefined });
         if (cancelled) return;
         objectURL = URL.createObjectURL(blob);
         setURL(objectURL);
@@ -476,6 +492,20 @@ function isAuxiliaryTimelineItem(item: TimelineItem | null): boolean {
     item?.type === "compact"
   );
 }
+
+// overlay 对账用的归一化：只去空白。服务端落盘时会在相邻文本块之间补 "\n\n"
+// （usecase.appendResponseChunk），而流式 message_chunk 不带，所以同一轮的
+// 「缓存瞬时拷贝」与「落盘正文」只差空白 —— 逐字比较认不出来，去空白才认得出。
+function normalizeOverlayText(value: string): string {
+  return value.replace(/\s+/g, "");
+}
+
+// 只在窗口最新这几条持久化行里找陈旧拷贝：它必然是「刚落盘那一轮」的副本。
+// 跟更早的历史比会误伤（同一句工程套话在不同轮次重复出现是正常的）。
+const OVERLAY_TAIL_ROWS = 3;
+// ponytail: 短文本不参与让位判定。长度地板挡掉「好的」「继续」这类合法重复；
+// 代价是落盘后残留的短片段（<32 字）仍会多显示一次，等窗口重锚定自愈。
+const OVERLAY_DUP_MIN_CHARS = 32;
 
 function PlanUpdateCard({ content, rootId }: { content: string; rootId?: string | null }) {
   return (
@@ -1023,14 +1053,8 @@ function timelineItemSpacing(
   return "16px";
 }
 
-function shouldDefaultCollapseRelatedFiles(
-  isMobile: boolean,
-  relatedFileCount: number,
-): boolean {
-  if (isMobile) {
-    return relatedFileCount > 0;
-  }
-  return relatedFileCount > 5;
+function shouldDefaultCollapseRelatedFiles(_isMobile?: boolean, _relatedFileCount?: number): boolean {
+  return true;
 }
 
 const USER_MESSAGE_SUMMARY_LENGTH = 48;
@@ -1061,7 +1085,9 @@ function SessionViewerInner({
   loading = false,
   slashCommandResult = null,
   rootId,
+  rootDisplayName,
   rootPath,
+  rootColor,
   interactionMode = "main",
   targetSeq = 0,
   targetSeqRequestKey = "",
@@ -1074,9 +1100,10 @@ function SessionViewerInner({
   onForkAgentMessage,
   agents,
   composerOverlayInset = 0,
+  scrollContainerRef,
 }: SessionViewerProps) {
   const { locale, t } = useI18n();
-  const [relatedFilesCollapsed, setRelatedFilesCollapsed] = useState(false);
+  const [relatedFilesCollapsed, setRelatedFilesCollapsed] = useState(true);
   const [isMobile, setIsMobile] = useState(() => {
     if (typeof window === "undefined") {
       return false;
@@ -1091,18 +1118,193 @@ function SessionViewerInner({
   >({});
   const scrollEndRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  // ponytail: drawer now uses inner scroll container (upstream 6247756: BottomSheet overflow:hidden, inner overflow:auto)
+  // outer drawerScrollRef is kept for BottomSheet sizing only, not for stick-to-bottom.
+  const activeScrollRef = scrollRef;
   const onFileClickRef = useRef(onFileClick);
   const copyResetTimersRef = useRef<Record<string, number>>({});
   const relatedFilesDefaultStateRef = useRef<string>("");
   const userSummaryRootRef = useRef<HTMLDivElement | null>(null);
   const userSummaryListRef = useRef<HTMLDivElement | null>(null);
+  const relatedFilesDividerRef = useRef<HTMLDivElement | null>(null);
   const sessionKey = session?.key || session?.session_key || null;
-  const exchanges = Array.isArray(session?.exchanges) ? session.exchanges : [];
+  // 会话归属节点：窗口拉取/图片等请求须路由到会话所在节点。同名根（如两台机器都有
+  // root "mindfs"）仅凭裸 rootId 查裸键映射会串到另一节点（实测窗口 GET 404）。
+  const sessionNodeId =
+    String((session as any)?._nodeId || "").trim() || undefined;
+  // 方案 B（超长会话窗口化）：可视数据以可见窗口为准，初始用全量/窗口做首帧，
+  // 随后由 getSessionWindow({ latest: SESSION_WINDOW_SIZE }) 覆盖（见下方初始化 effect）。
+  const [visibleExchanges, setVisibleExchanges] = useState<ExchangeArray>(
+    () => (Array.isArray(session?.exchanges) ? session.exchanges : []),
+  );
+  const [visibleAux, setVisibleAux] = useState<Record<string, ExchangeAux[]>>(
+    () => session?.exchange_aux || {},
+  );
+  const [windowMeta, setWindowMeta] = useState<SessionWindowMeta>({
+    total: 0,
+    hasMore: false,
+    minSeq: 0,
+    maxSeq: 0,
+  });
+  const [loadingMore, setLoadingMore] = useState(false);
+  const topSentinelRef = useRef<HTMLDivElement>(null);
+  const isPrependingRef = useRef(false);
   const isAwaiting = !!(session as any)?.pending;
+  // 方案 C：overlay 尾巴 = App 缓存里「窗口尚未覆盖」的条目，只读派生、永不合并回窗口。
+  // 窗口是唯一持久化源，只在 init 拉取 / 翻页前插 / 重锚定（_windowMeta）时整体替换。
+  //
+  // 判定刻意不依赖 windowMeta：loadMore 与 targetSeq 取窗都会用旧/中段窗口的 meta 覆盖
+  // windowMeta，拿它当「会话最新 seq」会塌回旧值（曾导致按位次裁剪错算并把实时流式内容
+  // 一起 slice 掉）。改为三个规则：
+  //   - seq>0：由 latestSeq 界定。latestSeq 只增不减、按会话键绑定，且仅在 init/anchor 这类
+  //     「最新窗口」经 applyWindow 更新（loadMore / targetSeq 不碰）。seq<=latestSeq → 窗口已含
+  //     或即将含，丢弃；seq>latestSeq → 刚发出、窗口还没追上，保留（自己发的消息立即出现）。
+  //   - seq==0 且 role=user：按 content 与窗口计数消抵——窗口里同内容出现 covered 次，就丢弃
+  //     缓存中同内容的前 covered 个，其余保留。这是跨端丢事件（手机后台 / WS 断连）时的兜底，
+  //     不依赖时间戳（客户端 ISO 毫秒 vs 服务端 RFC3339Nano 永不相等）。
+  //   - seq==0 且 role=tool：callId 已出现在窗口 aux → 让位（见 windowToolCallIds）。
+  //   - seq==0 的其它（流式文本 / 思考）：默认保留（流式内容要实时可见），但若窗口最新几条
+  //     持久化行里已经包含它（去空白后判定），说明这一轮已落盘、这份是陈旧拷贝 → 让位。
+  //     这是 2026-09-17 的缺口：以前这里「一律保留」，于是 ask 前后被渲染成两块一样的正文。
+  // 只读派生不写回缓存，避免覆盖其它标签页可能正在流式写入的持久化缓存。
+  const [latestSeqState, setLatestSeqState] = useState<{ key: string; max: number }>(
+    { key: "", max: 0 },
+  );
+  const noteLatestSeq = useCallback(
+    (key: string | null, meta: SessionWindowMeta | null | undefined) => {
+      const max = Number(meta?.maxSeq || 0);
+      if (!key || max <= 0) return;
+      setLatestSeqState((prev) =>
+        prev.key === key ? (max > prev.max ? { key, max } : prev) : { key, max },
+      );
+    },
+    [],
+  );
+  const latestSeq = latestSeqState.key === sessionKey ? latestSeqState.max : 0;
+  const visibleSeqSet = useMemo(() => {
+    const set = new Set<number>();
+    for (const ex of visibleExchanges) {
+      const seq = Number((ex as any)?.seq || 0);
+      if (seq > 0) set.add(seq);
+    }
+    return set;
+  }, [visibleExchanges]);
+  const windowUserCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const ex of visibleExchanges) {
+      if (String((ex as any)?.role || "").toLowerCase() !== "user") continue;
+      const content = String((ex as any)?.content || "");
+      counts.set(content, (counts.get(content) || 0) + 1);
+    }
+    return counts;
+  }, [visibleExchanges]);
+  // 窗口侧已渲染的 tool callId 集合：role=tool 的瞬时条目若其 callId 已存在于窗口的
+  // exchange_aux 里，说明同一张卡会由 buildAssistantTimeline 从 aux 渲染一次 —— overlay
+  // 必须让位，否则同一 callId 从两个数据源各渲染一份（实测 2026-09-12 症状 1：ask_user
+  // 卡与推理文本各出现两份，且库里并没有重复数据）。
+  const windowToolCallIds = useMemo(() => {
+    const set = new Set<string>();
+    for (const items of Object.values(visibleAux || {})) {
+      for (const aux of items || []) {
+        const callId = (aux as any)?.toolcall?.callId;
+        if (typeof callId === "string" && callId) set.add(callId);
+      }
+    }
+    return set;
+  }, [visibleAux]);
+  const windowTailTexts = useMemo(() => {
+    const texts: string[] = [];
+    const persisted = visibleExchanges.filter(
+      (ex) => Number((ex as any)?.seq || 0) > 0,
+    );
+    for (const ex of persisted.slice(-OVERLAY_TAIL_ROWS)) {
+      const text = normalizeOverlayText(String((ex as any)?.content || ""));
+      if (text) texts.push(text);
+    }
+    return texts;
+  }, [visibleExchanges]);
+  const tailOverlay = useMemo(() => {
+    const exs = Array.isArray(session?.exchanges)
+      ? (session.exchanges as ExchangeArray)
+      : ([] as ExchangeArray);
+    // 「已经会被渲染的持久化正文」全集 = 窗口最新几行（windowTailTexts）+ 本函数自己
+    // 要渲染的 seq>latestSeq 缓存条目。后者不能漏：重锚定还没把刚落盘的行拉进窗口时，
+    // 那一行由 overlay 侧渲染（下面 seq>0 分支），若只跟窗口比，seq=0 的直播拷贝就找不到
+    // 「已经显示过的那一份」，重复照旧（实测 2026-09-17 20:16，ask 上下各一整轮）。
+    const renderedPersistedTexts = windowTailTexts.slice();
+    for (const ex of exs) {
+      const seq = Number((ex as any)?.seq || 0);
+      if (seq <= 0) continue;
+      if (visibleSeqSet.has(seq)) continue;
+      if (latestSeq === 0 || seq <= latestSeq) continue;
+      const text = normalizeOverlayText(String((ex as any)?.content || ""));
+      if (text) renderedPersistedTexts.push(text);
+    }
+    const consumed = new Map<string, number>();
+    const out: ExchangeArray = [];
+    for (const ex of exs) {
+      const seq = Number((ex as any)?.seq || 0);
+      if (seq > 0) {
+        // 已持久化条目：窗口已含（visibleSeqSet）或已被最新窗口的 seq 范围覆盖 → 不重复渲染。
+        if (visibleSeqSet.has(seq)) continue;
+        if (latestSeq === 0 || seq <= latestSeq) {
+          // 已入库但落在窗口之外的持久化条目由窗口侧负责渲染，这里不再重复渲染。
+          continue;
+        }
+        out.push(ex);
+        continue;
+      }
+      // seq=0 的 tool 瞬时条目：窗口 aux 已含同 callId → 让位给窗口侧渲染。
+      const transientCallId = (ex as any)?.toolCall?.callId;
+      if (
+        String((ex as any)?.role || "").toLowerCase() === "tool" &&
+        typeof transientCallId === "string" &&
+        transientCallId &&
+        windowToolCallIds.has(transientCallId)
+      ) {
+        continue;
+      }
+      if (String((ex as any)?.role || "").toLowerCase() === "user") {
+        const content = String((ex as any)?.content || "");
+        const covered = windowUserCounts.get(content) || 0;
+        const used = consumed.get(content) || 0;
+        // ponytail: 同内容重复发言时按出现次序消抵，若窗口只回填了后发的那条（跨窗口滚动
+        // 只载尾巴），可能抵消错那一条（显示成"后发的在窗口、先发的在 overlay"——条数仍对，
+        // 归属可能错位）。升到"按 seq 区间匹配"可消除，但需要窗口的 minSeq/maxSeq 参与判断，
+        // 收益极小（需同内容 + 两条同时在途 + 跨窗滚动），暂留此天花板。
+        if (used < covered) {
+          consumed.set(content, used + 1);
+          continue;
+        }
+      }
+      // seq==0 的直播正文/思考：同一轮若已落盘（本次会被渲染的持久化正文里已有包含它的），
+      // 缓存里这份就是陈旧拷贝 → 让位。若不让位，「窗口/overlay 渲染一份 + 直播再渲染一份」
+      // 会把同一轮显示两次，ask 卡上下各一整轮（实测 2026-09-17，库里并无重复数据）。
+      const transientText = normalizeOverlayText(
+        String((ex as any)?.content || ""),
+      );
+      if (
+        transientText.length >= OVERLAY_DUP_MIN_CHARS &&
+        renderedPersistedTexts.some((text) => text.includes(transientText))
+      ) {
+        continue;
+      }
+      out.push(ex);
+    }
+    return out;
+  }, [session?.exchanges, sessionKey, latestSeq, visibleSeqSet, windowUserCounts, windowToolCallIds, windowTailTexts]);
+  // 窗口态与 overlay 是两条独立来源，同一个 exchange 对象可能两边都在（重锚定会把整份
+  // 缓存装进窗口态时就发生过）。按对象同一性取差集，保证同一份 exchange 只渲染一次 ——
+  // 与 dedupeToolCards 同一条约定，只是这里对所有类型生效（thought/正文没有 callId 可去重）。
+  const composedExchanges = useMemo(() => {
+    const inWindow = new Set(visibleExchanges as unknown[]);
+    const extra = tailOverlay.filter((ex) => !inWindow.has(ex));
+    return [...visibleExchanges, ...extra] as ExchangeArray;
+  }, [visibleExchanges, tailOverlay]);
   const { timeline, isStreaming, streamVersion, streamStatusText } = useSessionStream(
     sessionKey,
-    exchanges,
-    session?.exchange_aux || {},
+    composedExchanges,
+    visibleAux,
     session?.context_window,
     isAwaiting,
   );
@@ -1127,7 +1329,7 @@ function SessionViewerInner({
   };
 
   const stickSessionToBottom = (behavior: ScrollBehavior = "auto") => {
-    const container = scrollRef.current;
+    const container = activeScrollRef?.current;
     if (!container) {
       return;
     }
@@ -1167,6 +1369,188 @@ function SessionViewerInner({
     copyResetTimersRef.current = {};
   }, [sessionKey]);
 
+  // 方案 B：从窗口响应中提取 exchanges/aux/meta（后端 window_meta 透传 total/hasMore/minSeq/maxSeq）。
+  const applyWindow = useCallback(
+    (
+      res: { session: any; meta: SessionWindowMeta } | null,
+      opts?: { keepOlder?: boolean },
+    ) => {
+      if (!res) return false;
+      const winSession = res.session as any;
+      const winExchanges = Array.isArray(winSession?.exchanges)
+        ? (winSession.exchanges as ExchangeArray)
+        : [];
+      const winAux =
+        (winSession?.exchange_aux as Record<string, ExchangeAux[]>) || {};
+      setVisibleExchanges((prev) => {
+        if (!opts?.keepOlder) return winExchanges;
+        // 重锚定换窗时保住用户已翻上去的历史：窗口只覆盖 [minSeq, maxSeq]，
+        // 比 minSeq 更老的条目是 loadMore 一页页取回来的，整体替换会把它们扔掉
+        // —— 表现为「翻上去加载出来了、闪一下又回到 20 条」，而且顶部哨兵再次可见
+        // 又触发 loadMore，形成 40↔20 的无限抖动。
+        const winMinSeq = Number(res.meta?.minSeq || 0);
+        if (!winMinSeq) return winExchanges;
+        const older = prev.filter((ex) => {
+          const seq = Number((ex as any)?.seq || 0);
+          return seq > 0 && seq < winMinSeq;
+        });
+        return older.length ? [...older, ...winExchanges] : winExchanges;
+      });
+      setVisibleAux((prev) =>
+        opts?.keepOlder ? { ...prev, ...winAux } : winAux,
+      );
+      setWindowMeta(res.meta);
+      // applyWindow 只服务「最新窗口」（init / anchor）——loadMore 与 targetSeq 取窗直接
+      // setWindowMeta，不经过这里，因此 latestSeq 不会被旧/中段窗口的 maxSeq 污染。
+      noteLatestSeq(sessionKey, res.meta);
+      return true;
+    },
+    [noteLatestSeq, sessionKey],
+  );
+
+  // 初始化：会话切换时拉取尾部窗口，复位置底；拉取失败回退到 props 传入的全量/窗口。
+  useEffect(() => {
+    let cancelled = false;
+    setLoadingMore(false);
+    if (!sessionKey) {
+      setVisibleExchanges([]);
+      setVisibleAux({});
+      setWindowMeta({ total: 0, hasMore: false, minSeq: 0, maxSeq: 0 });
+      return;
+    }
+    // 进入窗口化视图，隔离 syncSession 的 truncated 全量回补（见 session.ts windowedView 标记）。
+    setWindowedView(sessionKey, true);
+    // 方案 B 首帧按需：避免先用全量做首帧导致长对话从头刷到尾。
+    // 若外层传入的是全量（可能来自 App 旧缓存或网络全量兜底），此处仅取尾部
+    // SESSION_WINDOW_SIZE 条作首帧，随后 getSessionWindow({ latest: SESSION_WINDOW_SIZE })
+    // 会以服务端窗口覆盖，保持首帧 O(SESSION_WINDOW_SIZE)。
+    // 避免种子与 overlay 重复显示同一轮次。
+    const incomingExs = Array.isArray(session?.exchanges) ? (session.exchanges as ExchangeArray) : ([] as ExchangeArray);
+    const persistedSeed = incomingExs.filter((e) => Number((e as any)?.seq || 0) > 0);
+    const seedExs = (persistedSeed.length > SESSION_WINDOW_SIZE
+      ? persistedSeed.slice(-SESSION_WINDOW_SIZE)
+      : persistedSeed) as ExchangeArray;
+    const seedAux: Record<string, ExchangeAux[]> = {};
+    const seedSeqs = new Set(seedExs.map((e) => Number((e as any)?.seq || 0)));
+    for (const [k, v] of Object.entries((session?.exchange_aux || {}) as Record<string, ExchangeAux[]>)) {
+      if (seedSeqs.has(Number(k))) seedAux[k] = v;
+    }
+    setVisibleExchanges(seedExs);
+    setVisibleAux(seedAux);
+    getSessionWindow(rootId || "", sessionKey, { latest: SESSION_WINDOW_SIZE, nodeId: sessionNodeId })
+      .then((res) => {
+        if (cancelled) return;
+        applyWindow(res);
+        if (res) {
+          shouldStickToBottomRef.current = true;
+          setShowJumpToLatest(false);
+          window.requestAnimationFrame(() => stickSessionToBottom("auto"));
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+      clearWindowedView(sessionKey);
+    };
+  }, [sessionKey, rootId, applyWindow]);
+
+  // 向上翻页：锚定 scrollHeight-scrollTop，请求 beforeSeq=minSeq 的历史段，
+  // 函数式前置合并并 RAF 回补滚动位置，避免视口跳动。
+  const loadMore = useCallback(() => {
+    const container = activeScrollRef?.current;
+    if (!container || loadingMore || !windowMeta.hasMore || !sessionKey) {
+      return;
+    }
+    const anchor = container.scrollHeight - container.scrollTop;
+    setLoadingMore(true);
+    isPrependingRef.current = true;
+    getSessionWindow(rootId || "", sessionKey, {
+        beforeSeq: windowMeta.minSeq,
+        limit: SESSION_WINDOW_SIZE,
+        nodeId: sessionNodeId,
+      })
+      .then((res) => {
+        if (!res) {
+          setLoadingMore(false);
+          return;
+        }
+        const winSession = res.session as any;
+        const winExchanges = Array.isArray(winSession?.exchanges)
+          ? (winSession.exchanges as ExchangeArray)
+          : [];
+        const winAux =
+          (winSession?.exchange_aux as Record<string, ExchangeAux[]>) || {};
+        setVisibleExchanges((prev) => [...winExchanges, ...prev]);
+        setVisibleAux((prev) => ({ ...prev, ...winAux }));
+        setWindowMeta(res.meta);
+        setLoadingMore(false);
+        window.requestAnimationFrame(() => {
+          const el = activeScrollRef?.current;
+          if (el) {
+            el.scrollTop = el.scrollHeight - anchor;
+          }
+          isPrependingRef.current = false;
+        });
+      })
+      .catch(() => setLoadingMore(false));
+  }, [loadingMore, windowMeta, sessionKey, rootId]);
+
+  // 顶部哨兵：进入视口（rootMargin 200px）触发 loadMore，hasMore 耗尽后自动不观察。
+  useEffect(() => {
+    const sentinel = topSentinelRef.current;
+    const root = scrollRef.current;
+    if (!sentinel || !root || !windowMeta.hasMore) {
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          loadMore();
+        }
+      },
+      { root, rootMargin: "200px 0px 0px 0px", threshold: 0 },
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [windowMeta.hasMore, loadMore]);
+
+  // 方案 C 重锚定（done/重连）：App 侧 restoreActiveSession 替换缓存并附 _windowMeta/_anchoredAt；
+  // 此处按锚点一次性原子换窗——窗口整体替换，overlay 尾巴自然清空（缓存尾巴已被 App 清掉）。
+  // 旧锚点不重复应用（App 的 spread 会把 _windowMeta 带到后续 cache 对象上）。
+  const lastAppliedAnchorRef = useRef<{ key: string | null; at: number }>({
+    key: null,
+    at: -1,
+  });
+  useEffect(() => {
+    const anchorAt = Number((session as any)?._anchoredAt || 0);
+    const anchorMeta = (session as any)?._windowMeta as
+      | SessionWindowMeta
+      | undefined;
+    if (!anchorAt || !anchorMeta || !sessionKey) {
+      return;
+    }
+    const last = lastAppliedAnchorRef.current;
+    if (last.key === sessionKey && last.at >= anchorAt) {
+      return;
+    }
+    lastAppliedAnchorRef.current = { key: sessionKey, at: anchorAt };
+    // 锚点载荷是 App 的整份缓存：持久化行 + 直播瞬时行（seq=0，见 App.loadSession 的
+    // [...incoming.filter(seq>0), ...localTransient]）。窗口态只能装持久化行 ——
+    // 瞬时行归 overlay 管，混进窗口后 overlay 会再输出一遍，同一段正文渲染两次
+    // （实测 2026-09-17：ask 触发后 ask 上下各一块同样的分析文本，重开会话必现）。
+    const anchorExchanges = (Array.isArray((session as any)?.exchanges)
+      ? ((session as any).exchanges as ExchangeArray)
+      : ([] as ExchangeArray)
+    ).filter((ex) => Number((ex as any)?.seq || 0) > 0);
+    applyWindow(
+      {
+        session: { ...(session as any), exchanges: anchorExchanges },
+        meta: anchorMeta,
+      },
+      { keepOlder: true },
+    );
+  }, [session, sessionKey, applyWindow]);
+
   const userMessageSummaries = useMemo(
     () =>
       timeline
@@ -1181,7 +1565,7 @@ function SessionViewerInner({
   const userSummaryOpen = userSummaryHoverOpen || userSummaryPinnedOpen;
 
   const readCurrentUserMessageIndex = useCallback(() => {
-    const container = scrollRef.current;
+    const container = activeScrollRef?.current;
     if (!container) {
       return 0;
     }
@@ -1231,7 +1615,7 @@ function SessionViewerInner({
   }, [readCurrentUserMessageIndex]);
 
   const scrollToUserMessageSummary = (index: number) => {
-    const container = scrollRef.current;
+    const container = activeScrollRef?.current;
     if (!container) {
       return;
     }
@@ -1319,8 +1703,19 @@ function SessionViewerInner({
   }, []);
 
   useEffect(() => {
-    const container = scrollRef.current;
+    if (isPrependingRef.current) {
+      // 顶部插入（loadMore 历史段）不触发底部跟随，视口由 loadMore 的 rAF 回补。
+      return;
+    }
+    const container = activeScrollRef?.current;
     if (!container) {
+      if (interactionMode === "drawer" && shouldStickToBottomRef.current) {
+        const frame = window.requestAnimationFrame(() => {
+          const retry = activeScrollRef?.current;
+          if (retry && shouldStickToBottomRef.current) scrollToRelatedFilesDivider("auto");
+        });
+        return () => window.cancelAnimationFrame(frame);
+      }
       return;
     }
     if (!scrollEndRef.current) {
@@ -1333,12 +1728,12 @@ function SessionViewerInner({
       shouldStickToBottomRef.current = true;
     }
     if (shouldStickToBottomRef.current) {
-      stickSessionToBottom("auto");
+      scrollToRelatedFilesDivider("auto");
     }
   }, [sessionKey, timeline, isStreaming, streamVersion, slashCommandResult]);
 
   useEffect(() => {
-    const container = scrollRef.current;
+    const container = activeScrollRef?.current;
     if (!container || typeof window === "undefined") {
       return;
     }
@@ -1372,7 +1767,7 @@ function SessionViewerInner({
   }, [sessionKey]);
 
   useEffect(() => {
-    const el = scrollRef.current;
+    const el = activeScrollRef?.current;
     if (!el) {
       shouldStickToBottomRef.current = true;
       setShowJumpToLatest(false);
@@ -1411,59 +1806,108 @@ function SessionViewerInner({
       targetSeqScrollKeyRef.current = "";
       return;
     }
+    if (!sessionKey) {
+      return;
+    }
     const scrollKey = `${sessionKey || ""}:${targetSeq}:${targetSeqRequestKey}`;
     if (targetSeqScrollKeyRef.current === scrollKey) {
       return;
     }
-    const container = scrollRef.current;
+    const container = activeScrollRef?.current;
     if (!container || !timeline.length) {
       return;
     }
     const node = container.querySelector<HTMLElement>(
       `[data-session-seq="${targetSeq}"]`,
     );
-    if (!node) {
-      return;
-    }
-    targetSeqScrollKeyRef.current = scrollKey;
-    shouldStickToBottomRef.current = false;
-    cancelTargetSeqScroll();
-    const scrollToNode = () => {
-      const latestContainer = scrollRef.current;
-      const latestNode = latestContainer?.querySelector<HTMLElement>(
-        `[data-session-seq="${targetSeq}"]`,
-      );
-      if (!latestContainer || !latestNode) {
-        return;
-      }
+    const inRange =
+      windowMeta.minSeq > 0 &&
+      targetSeq >= windowMeta.minSeq &&
+      targetSeq <= windowMeta.maxSeq;
+    if (node && inRange) {
+      targetSeqScrollKeyRef.current = scrollKey;
       shouldStickToBottomRef.current = false;
-      const nextTop = Math.max(
-        0,
-        latestNode.offsetTop -
-          latestContainer.clientHeight / 2 +
-          latestNode.offsetHeight / 2,
-      );
-      latestContainer.scrollTo({ top: nextTop, behavior: "auto" });
-    };
-    targetSeqFrameRef.current = window.requestAnimationFrame(() => {
-      targetSeqFrameRef.current = window.requestAnimationFrame(() => {
-        targetSeqFrameRef.current = null;
-        scrollToNode();
-      });
-    });
-    [80, 220, 480].forEach((delay) => {
-      const timer = window.setTimeout(() => {
-        targetSeqTimerRefs.current = targetSeqTimerRefs.current.filter(
-          (item) => item !== timer,
+      cancelTargetSeqScroll();
+      const scrollToNode = () => {
+        const latestContainer = activeScrollRef?.current;
+        const latestNode = latestContainer?.querySelector<HTMLElement>(
+          `[data-session-seq="${targetSeq}"]`,
         );
-        if (targetSeqScrollKeyRef.current !== scrollKey) {
+        if (!latestContainer || !latestNode) {
           return;
         }
-        scrollToNode();
-      }, delay);
-      targetSeqTimerRefs.current.push(timer);
-    });
-  }, [sessionKey, targetSeq, targetSeqRequestKey, timeline]);
+        shouldStickToBottomRef.current = false;
+        const nextTop = Math.max(
+          0,
+          latestNode.offsetTop -
+            latestContainer.clientHeight / 2 +
+            latestNode.offsetHeight / 2,
+        );
+        latestContainer.scrollTo({ top: nextTop, behavior: "auto" });
+      };
+      targetSeqFrameRef.current = window.requestAnimationFrame(() => {
+        targetSeqFrameRef.current = window.requestAnimationFrame(() => {
+          targetSeqFrameRef.current = null;
+          scrollToNode();
+        });
+      });
+      [80, 220, 480].forEach((delay) => {
+        const timer = window.setTimeout(() => {
+          targetSeqTimerRefs.current = targetSeqTimerRefs.current.filter(
+            (item) => item !== timer,
+          );
+          if (targetSeqScrollKeyRef.current !== scrollKey) {
+            return;
+          }
+          scrollToNode();
+        }, delay);
+        targetSeqTimerRefs.current.push(timer);
+      });
+      return;
+    }
+    // 跨窗口：targetSeq 不在当前可见窗口内，拉取以 targetSeq 为中心的窗口再滚动。
+    if (targetSeq > 0 && !inRange) {
+      targetSeqScrollKeyRef.current = scrollKey;
+      shouldStickToBottomRef.current = false;
+      cancelTargetSeqScroll();
+      getSessionWindow(rootId || "", sessionKey, {
+          beforeSeq: targetSeq + Math.floor(SESSION_WINDOW_SIZE / 2),
+          limit: SESSION_WINDOW_SIZE,
+          nodeId: sessionNodeId,
+        })
+        .then((res) => {
+          if (!res) return;
+          const winSession = res.session as any;
+          const winExchanges = Array.isArray(winSession?.exchanges)
+            ? (winSession.exchanges as ExchangeArray)
+            : [];
+          const winAux =
+            (winSession?.exchange_aux as Record<string, ExchangeAux[]>) || {};
+          setVisibleExchanges(winExchanges);
+          setVisibleAux(winAux);
+          setWindowMeta(res.meta);
+          window.requestAnimationFrame(() => {
+            const el = activeScrollRef?.current;
+            const targetNode = el?.querySelector<HTMLElement>(
+              `[data-session-seq="${targetSeq}"]`,
+            );
+            if (el && targetNode) {
+              shouldStickToBottomRef.current = false;
+              el.scrollTo({
+                top: Math.max(
+                  0,
+                  targetNode.offsetTop -
+                    el.clientHeight / 2 +
+                    targetNode.offsetHeight / 2,
+                ),
+                behavior: "auto",
+              });
+            }
+          });
+        })
+        .catch(() => {});
+    }
+  }, [sessionKey, targetSeq, targetSeqRequestKey, timeline, windowMeta]);
 
   const rawRelated = session?.related_files || (session as any)?.outputs || [];
   const relatedFiles = (Array.isArray(rawRelated) ? rawRelated : [])
@@ -1501,7 +1945,27 @@ function SessionViewerInner({
     rootId,
     relatedFiles,
     gitStatsRefreshKey,
+    sessionNodeId,
   );
+  const scrollToRelatedFilesDivider = (behavior: ScrollBehavior = "auto") => {
+    const container = activeScrollRef?.current;
+    if (!container) {
+      return;
+    }
+    const maxTop = Math.max(0, container.scrollHeight - container.clientHeight);
+    let top = maxTop;
+    const divider =
+      interactionMode === "drawer" ? relatedFilesDividerRef.current : null;
+    if (divider && relatedFiles.length > 0 && !relatedFilesCollapsed) {
+      const dividerTop =
+        divider.getBoundingClientRect().top -
+        container.getBoundingClientRect().top +
+        container.scrollTop;
+      const target = dividerTop - container.clientHeight * 0.08;
+      top = Math.max(0, Math.min(maxTop, target));
+    }
+    container.scrollTo({ top, behavior });
+  };
   const activeAskUserCallId = (() => {
     if (!isAwaiting) {
       return "";
@@ -1628,6 +2092,10 @@ function SessionViewerInner({
     session.session_key ||
     "Session";
   const hasVisibleTimeline = timeline.length > 0;
+  const themeColor = String(rootColor || "").trim() || "var(--accent-color)";
+  // 四横主按钮：浅且暗的 muted 变体（同色相、混灰降明度）；徽标保持纯主题色
+  const themeMuted = `color-mix(in srgb, ${themeColor} 56%, #94a3b8)`;
+  const themeMutedBorder = `color-mix(in srgb, ${themeColor} 20%, transparent)`;
   const userMetaButtonStyle: React.CSSProperties = {
     width: "18px",
     height: "18px",
@@ -1635,7 +2103,7 @@ function SessionViewerInner({
     background: "transparent",
     padding: 0,
     margin: 0,
-    color: "#2563eb",
+    color: themeColor,
     cursor: "pointer",
     fontSize: "14px",
     fontWeight: 800,
@@ -1937,7 +2405,7 @@ function SessionViewerInner({
                 aria-label={t("session.editMessage")}
                 title={t("session.editMessage")}
               >
-                {renderToolIcon("edit")}
+                {renderToolIcon("edit", themeColor)}
               </button>
               {promptSaved ? (
                 <span
@@ -1945,7 +2413,7 @@ function SessionViewerInner({
                   title={t("session.promptSaved")}
                   style={{
                     ...userMetaButtonStyle,
-                    color: "#2563eb",
+                    color: themeColor,
                     fontSize: "13px",
                   }}
                 >
@@ -2037,7 +2505,7 @@ function SessionViewerInner({
                 {copySucceeded ? (
                   <span
                     aria-hidden="true"
-                    style={{ fontSize: "13px", fontWeight: 800, lineHeight: 1 }}
+                    style={{ fontSize: "13px", fontWeight: 800, lineHeight: 1, color: themeColor }}
                   >
                     ✓
                   </span>
@@ -2161,6 +2629,7 @@ function SessionViewerInner({
                           fontSize: "13px",
                           fontWeight: 800,
                           lineHeight: 1,
+                          color: themeColor,
                         }}
                       >
                         ✓
@@ -2425,7 +2894,7 @@ function SessionViewerInner({
                 {loginCodeCopied ? (
                   <span
                     aria-hidden="true"
-                    style={{ fontSize: "13px", fontWeight: 800, lineHeight: 1 }}
+                    style={{ fontSize: "13px", fontWeight: 800, lineHeight: 1, color: themeColor }}
                   >
                     ✓
                   </span>
@@ -2518,11 +2987,13 @@ function SessionViewerInner({
                 onClick={() => onRootClick?.(rootId)}
                 style={{
                   ...rootBadgeButtonStyle,
+                  background: "var(--node-badge-bg)",
+                  color: String(rootColor || "").trim() || "var(--root-badge-text)",
                   flexShrink: 0,
                   cursor: onRootClick ? "pointer" : "default",
                 }}
               >
-                {rootId}
+                {rootDisplayName || rootId}
               </button>
             ) : null}
             <span
@@ -2551,6 +3022,28 @@ function SessionViewerInner({
             overflowX: "hidden",
           }} data-mindfs-session-content-width="1">
           <div style={{ width: "100%", minWidth: 0, margin: "0", display: "flex", flexDirection: "column" }}>
+            {/* 方案 B：顶部哨兵，进入视口触发历史段加载（IntersectionObserver） */}
+            <div ref={topSentinelRef} style={{ height: 1 }} aria-hidden="true" />
+            {loadingMore ? (
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "center",
+                  padding: "8px 0",
+                }}
+              >
+                <span
+                  style={{
+                    width: "14px",
+                    height: "14px",
+                    border: "2px solid var(--border-color)",
+                    borderTopColor: "var(--accent-color)",
+                    borderRadius: "50%",
+                    animation: "spin 0.8s linear infinite",
+                  }}
+                />
+              </div>
+            ) : null}
             {loading && !hasVisibleTimeline ? (
               <div
                 style={{
@@ -2591,34 +3084,38 @@ function SessionViewerInner({
               ),
             )}
             {renderSlashCommandResult()}
-            {(isAwaiting || isStreaming) && (
-              <div
-                style={{
-                  marginTop: "16px",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "6px",
-                  fontSize: "12px",
-                  color: "var(--text-secondary)",
-                }}
-              >
-                <span
+            {(isAwaiting || isStreaming) && (() => {
+              const awaitingColor = String(rootColor || "").trim() || "var(--accent-color)";
+              return (
+                <div
                   style={{
-                    width: "8px",
-                    height: "8px",
-                    borderRadius: "50%",
-                    background: "var(--accent-color)",
-                    animation: "pulse 1s infinite",
+                    marginTop: "16px",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "6px",
+                    fontSize: "12px",
+                    color: "var(--text-secondary)",
                   }}
-                />
+                >
+                  <span
+                    style={{
+                      width: "8px",
+                      height: "8px",
+                      borderRadius: "50%",
+                      background: awaitingColor,
+                      animation: "pulse 1s infinite",
+                    }}
+                  />
                 {isStreaming
                   ? streamStatusText || t("session.generating")
                   : t("session.sentWaiting")}
               </div>
-            )}
+              );
+            })()}
 
-            {relatedFiles.length > 0 && (
+            {relatedFiles.length > 0 && interactionMode !== "drawer" && (
               <div
+                ref={relatedFilesDividerRef}
                 style={{
                   marginTop: "18px",
                   paddingTop: "14px",
@@ -2929,8 +3426,8 @@ function SessionViewerInner({
                   alignItems: "center",
                   gap: "6px",
                   height: "34px",
-                  border: "1px solid rgba(37,99,235,0.35)",
-                  background: "#2563eb",
+                  border: `1px solid color-mix(in srgb, ${themeColor} 35%, transparent)`,
+                  background: themeColor,
                   color: "#ffffff",
                   borderRadius: "999px",
                   padding: "0 12px",
@@ -2987,6 +3484,19 @@ function SessionViewerInner({
                         boxSizing: "border-box",
                       }}
                     >
+                      {windowMeta.total > 0 ? (
+                        <div
+                          style={{
+                            fontSize: "11px",
+                            lineHeight: "16px",
+                            color: "var(--text-secondary)",
+                            padding: "2px 8px 6px",
+                            borderBottom: "1px solid var(--menu-border)",
+                          }}
+                        >
+                          已加载 {visibleExchanges.length} / 共 {windowMeta.total}
+                        </div>
+                      ) : null}
                       <div
                         ref={userSummaryListRef}
                         style={{ display: "flex", flexDirection: "column", gap: "2px" }}
@@ -3061,10 +3571,10 @@ function SessionViewerInner({
                     position: "relative",
                     width: "34px",
                     height: "34px",
-                    border: "none",
+                    border: userSummaryOpen ? `1px solid ${themeMuted}` : `1px solid ${themeMutedBorder}`,
                     borderRadius: "8px",
-                    background: userSummaryOpen ? "var(--accent-color)" : "var(--menu-bg)",
-                    color: userSummaryOpen ? "#ffffff" : "var(--text-secondary)",
+                    background: userSummaryOpen ? themeMuted : "var(--menu-bg)",
+                    color: userSummaryOpen ? "#ffffff" : themeMuted,
                     boxShadow: "0 10px 24px rgba(15, 23, 42, 0.16)",
                     display: "inline-flex",
                     alignItems: "center",
@@ -3084,7 +3594,7 @@ function SessionViewerInner({
                       height: "18px",
                       padding: "0 5px",
                       borderRadius: "999px",
-                      background: "#2563eb",
+                      background: themeColor,
                       color: "#ffffff",
                       border: "2px solid var(--menu-bg)",
                       fontSize: "10px",

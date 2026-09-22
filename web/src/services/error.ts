@@ -12,6 +12,7 @@ export type ErrorCode =
   | "session.rename_failed"
   | "session.pin_failed"
   | "session.sync_failed"
+  | "session.list_load_failed"
   | "session.slash_command_failed"
   | "app.init_failed"
   // Root/project errors
@@ -41,7 +42,9 @@ export type ErrorCode =
   | "skill.execute_failed"
   // Network errors
   | "network.disconnected"
-  | "network.timeout";
+  | "network.timeout"
+  // Remote node errors
+  | "node.load_failed";
 
 export type ErrorSeverity = "info" | "warning" | "error" | "fatal";
 
@@ -165,6 +168,11 @@ class ErrorService {
         severity: "error",
         recoverable: true,
       },
+      "session.list_load_failed": {
+        messageKey: "error.session.listLoadFailed",
+        severity: "warning",
+        recoverable: true,
+      },
       "session.slash_command_failed": {
         messageKey: "error.session.slashCommandFailed",
         severity: "error",
@@ -277,6 +285,11 @@ class ErrorService {
       },
       "network.timeout": {
         messageKey: "error.network.timeout",
+        severity: "warning",
+        recoverable: true,
+      },
+      "node.load_failed": {
+        messageKey: "error.node.loadFailed",
         severity: "warning",
         recoverable: true,
       },

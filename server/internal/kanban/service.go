@@ -363,6 +363,37 @@ func (s *Service) UpdateFirstInput(ctx context.Context, in UpdateTaskInput) (Tas
 }
 
 func (s *Service) Next(ctx context.Context, in MoveInput) (TaskDetail, error) {
+	store, err := s.taskStore(in.RootID)
+	if err != nil {
+		return TaskDetail{}, err
+	}
+	task, err := store.GetTask(ctx, in.TaskID)
+	if err != nil {
+		return TaskDetail{}, err
+	}
+	if isTerminalStatus(task.Status) {
+		return store.GetDetail(ctx, task.ID)
+	}
+	tmpl, err := s.Templates.GetTaskTemplate(task.TaskTemplateID)
+	if err != nil {
+		return TaskDetail{}, err
+	}
+	// 最后一阶段没有"下一步"：等待用户＝收尾，直接完成而不是报 stage out of range。
+	if task.Status == StatusWaitingUser && task.CurrentStageIndex == len(tmpl.Stages)-1 {
+		if latest, latestErr := store.LatestStageRun(ctx, task.ID, task.CurrentStageIndex); latestErr == nil {
+			if latest.Status != StageStatusSuccess {
+				_ = store.UpdateStageRunStatus(ctx, latest.ID, StageStatusApproved)
+			}
+		}
+		if err := s.finishTask(ctx, store, task, StatusSuccess, "completed", in.Reason); err != nil {
+			return TaskDetail{}, err
+		}
+		detail, err := store.GetDetail(ctx, task.ID)
+		if err == nil {
+			s.Schedule(task.RootID)
+		}
+		return detail, err
+	}
 	detail, err := s.moveRelative(ctx, in, 1, "user_approved", StageStatusApproved)
 	if err == nil {
 		s.Schedule(in.RootID)

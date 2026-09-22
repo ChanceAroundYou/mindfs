@@ -31,6 +31,18 @@ type Importer struct {
 	baseDir   string
 	mu        sync.RWMutex
 	index     map[string]claudeSessionFile
+	// subagentRelations 缓存「子代理 → 其 Task 调用」的映射。该映射一旦产生即不再变化，
+	// 故可跨同步复用：配合增量扫描父转录，避免每次同步都全量重读数十 MB 父转录
+	// （实测 72MB 父转录的关系扫描 1.33s/次）。
+	subagentRelations map[string]claudeSubagentRelation
+	// subagentFileCursors 记录各子代理转录的 (size, mtime)，未变则跳过重读
+	// （实测该会话 87 个子代理文件全量重读 0.77s/次）。
+	subagentFileCursors map[string]subagentFileStamp
+}
+
+type subagentFileStamp struct {
+	Size      int64
+	ModTimeNs int64
 }
 
 type claudeSessionFile struct {
@@ -49,6 +61,10 @@ type sessionFileCandidate struct {
 type importedExchangeLocator struct {
 	agenttypes.ImportedExchange
 	ClaudeLastMessageUUID string
+	// StartOffset 是这条 item 第一条相关条目在转录文件里的字节偏移。增量提交以它为界：
+	// 它之前的都已落库，之后的才算新内容（取代了原先「拿会被 tool_result 持续改写的
+	// Timestamp 当判据」的做法）。
+	StartOffset int64
 }
 
 type importedTurn struct {
@@ -64,9 +80,11 @@ type importedToolLocation struct {
 func NewImporter(opts ImporterOptions) *Importer {
 	home, _ := os.UserHomeDir()
 	return &Importer{
-		agentName: strings.TrimSpace(opts.AgentName),
-		baseDir:   filepath.Join(strings.TrimSpace(home), ".claude", "projects"),
-		index:     make(map[string]claudeSessionFile),
+		agentName:           strings.TrimSpace(opts.AgentName),
+		baseDir:             filepath.Join(strings.TrimSpace(home), ".claude", "projects"),
+		index:               make(map[string]claudeSessionFile),
+		subagentRelations:   make(map[string]claudeSubagentRelation),
+		subagentFileCursors: make(map[string]subagentFileStamp),
 	}
 }
 
@@ -121,35 +139,48 @@ func (i *Importer) ImportExternalSession(_ context.Context, in agenttypes.Import
 		return agenttypes.ImportedExternalSession{}, errors.New("agent session id required")
 	}
 	if file, ok := i.lookupSessionFile(targetID, rootPath); ok {
-		return i.importSessionFile(file, in.AfterTimestamp, in.Cursor)
+		return i.importSessionFile(file, in.AfterTimestamp, in.TimestampFloor, in.Cursor, in.ForceRead)
 	}
-	files, err := i.scanSessionFiles(context.Background(), rootPath, time.Time{}, time.Time{}, int(^uint(0)>>1), nil)
-	if err != nil {
-		return agenttypes.ImportedExternalSession{}, err
-	}
-	for _, file := range files {
-		if file.AgentSessionID != targetID {
-			continue
+	// 主目录未命中时继续扫描根目录下 .worktree/* 的转录目录：Agent 转录按 spawn cwd
+	// 归档（Claude Code: ~/.claude/projects/<slug(cwd)>），worktree 会话落在各自的
+	// slug 目录，仅扫主仓库目录会漏掉全部 worktree 会话（同步报 external session not found）。
+	for _, candidateRoot := range worktreeCandidateRoots(rootPath) {
+		files, err := i.scanSessionFiles(context.Background(), candidateRoot, time.Time{}, time.Time{}, int(^uint(0)>>1), nil)
+		if err != nil {
+			return agenttypes.ImportedExternalSession{}, err
 		}
-		return i.importSessionFile(file, in.AfterTimestamp, in.Cursor)
+		for _, file := range files {
+			if file.AgentSessionID != targetID {
+				continue
+			}
+			return i.importSessionFile(file, in.AfterTimestamp, in.TimestampFloor, in.Cursor, in.ForceRead)
+		}
 	}
 	return agenttypes.ImportedExternalSession{}, errors.New("external session not found")
 }
 
-func (i *Importer) importSessionFile(file claudeSessionFile, after time.Time, previous agenttypes.ExternalSessionCursor) (agenttypes.ImportedExternalSession, error) {
+func (i *Importer) importSessionFile(file claudeSessionFile, after, floor time.Time, previous agenttypes.ExternalSessionCursor, forceRead bool) (agenttypes.ImportedExternalSession, error) {
 	cursor, unchanged, err := externalSessionFileCursor(file.Path, previous)
 	if err != nil {
 		return agenttypes.ImportedExternalSession{}, err
 	}
-	if unchanged {
+	// 已提交位置决定从哪儿读。旧游标只记了 Offset（=「已读到」），首次升级时沿用之，
+	// 否则会被当成「什么都没提交过」而把整份转录重放一遍。
+	committed := previous.CommittedOffset
+	if committed <= 0 {
+		committed = previous.Offset
+	}
+	if unchanged && !forceRead {
+		cursor.CommittedOffset = committed
 		return agenttypes.ImportedExternalSession{Agent: i.agentName, AgentSessionID: file.AgentSessionID, Cwd: file.Cwd, Cursor: cursor}, nil
 	}
-	exchanges, err := readClaudeImportedExchanges(file.Path, after)
+	exchanges, nextCommitted, err := readClaudeImportedExchanges(file.Path, committed, after, floor)
 	if err != nil {
 		log.Printf("[agent/claude/importer] import session read failed session_id=%s path=%s err=%v", file.AgentSessionID, file.Path, err)
 		return agenttypes.ImportedExternalSession{}, err
 	}
-	subagents, err := readClaudeImportedSubagents(file.Path)
+	cursor.CommittedOffset = nextCommitted
+	subagents, err := i.readClaudeImportedSubagents(file.Path, previous.Offset)
 	if err != nil {
 		log.Printf("[agent/claude/importer] import subagents failed session_id=%s path=%s err=%v", file.AgentSessionID, file.Path, err)
 		return agenttypes.ImportedExternalSession{}, err
@@ -182,7 +213,11 @@ type claudeSubagentRelation struct {
 	Model            string
 }
 
-func readClaudeImportedSubagents(parentPath string) ([]agenttypes.ImportedSubagentSession, error) {
+// readClaudeImportedSubagents 发现子代理会话及其与父会话 Task 调用的关系。
+// parentStartOffset>0 时父转录只读游标之后的新行：关系映射一旦产生即不变，配合
+// i.subagentRelations 缓存即可复用，避免每次同步都全量重读父转录（实测 72MB 父转录
+// 的关系扫描 1.33s/次，占本函数总耗时的 67%）。
+func (i *Importer) readClaudeImportedSubagents(parentPath string, parentStartOffset int64) ([]agenttypes.ImportedSubagentSession, error) {
 	dir := filepath.Join(strings.TrimSuffix(parentPath, filepath.Ext(parentPath)), "subagents")
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, os.ErrNotExist) {
@@ -208,14 +243,33 @@ func readClaudeImportedSubagents(parentPath string) ([]agenttypes.ImportedSubage
 	if len(pathsByAgentID) == 0 {
 		return nil, nil
 	}
-	relations := make(map[string]claudeSubagentRelation)
-	if err := collectClaudeSubagentRelations(parentPath, "", relations); err != nil {
+	i.mu.Lock()
+	if i.subagentRelations == nil {
+		i.subagentRelations = make(map[string]claudeSubagentRelation)
+	}
+	relations := i.subagentRelations
+	i.mu.Unlock()
+	if err := collectClaudeSubagentRelations(parentPath, "", relations, parentStartOffset); err != nil {
 		return nil, err
 	}
 	for agentID, path := range pathsByAgentID {
-		if err := collectClaudeSubagentRelations(path, agentID, relations); err != nil {
+		// 子代理转录未变则跳过重读：其关系已在上次扫描时并入 relations 缓存。
+		stamp := subagentFileStamp{}
+		if info, statErr := os.Stat(path); statErr == nil {
+			stamp = subagentFileStamp{Size: info.Size(), ModTimeNs: info.ModTime().UnixNano()}
+			i.mu.RLock()
+			prev, seen := i.subagentFileCursors[path]
+			i.mu.RUnlock()
+			if seen && prev == stamp {
+				continue
+			}
+		}
+		if err := collectClaudeSubagentRelations(path, agentID, relations, 0); err != nil {
 			return nil, err
 		}
+		i.mu.Lock()
+		i.subagentFileCursors[path] = stamp
+		i.mu.Unlock()
 	}
 	items := make([]agenttypes.ImportedSubagentSession, 0, len(relations))
 	remaining := make(map[string]claudeSubagentRelation, len(relations))
@@ -231,7 +285,7 @@ func readClaudeImportedSubagents(parentPath string) ([]agenttypes.ImportedSubage
 			if relation.ParentAgentID != "" && !added[relation.ParentAgentID] {
 				continue
 			}
-			exchanges, err := readClaudeImportedExchanges(pathsByAgentID[agentID], time.Time{})
+			exchanges, _, err := readClaudeImportedExchanges(pathsByAgentID[agentID], 0, time.Time{}, time.Time{})
 			if err != nil {
 				return nil, err
 			}
@@ -265,7 +319,7 @@ func inspectClaudeSubagentID(path string) (string, error) {
 	}
 	defer file.Close()
 	var agentID string
-	err = forEachJSONLLine(file, func(line string) error {
+	err = forEachJSONLLine(file, func(_ int64, line string) error {
 		var raw map[string]any
 		if json.Unmarshal([]byte(line), &raw) == nil {
 			agentID = strings.TrimSpace(asString(raw["agentId"]))
@@ -281,14 +335,36 @@ func inspectClaudeSubagentID(path string) (string, error) {
 	return agentID, err
 }
 
-func collectClaudeSubagentRelations(path, parentAgentID string, relations map[string]claudeSubagentRelation) error {
+// collectClaudeSubagentRelations 扫描转录，收集「子代理 → 其 Task 调用」的映射。
+// startOffset>0 时只读该字节位置之后的内容（父转录按轮次追加，新关系只出现在新行），
+// subagentRelationSeekBack 是从父转录已读位置往前多读的字节数。子代理与其父 Task 调用的
+// 归属关系可能跨越上次同步的读取边界，多读一小段保证关系仍能被识别出来。
+// 关系一旦产生即进缓存，代价极小（64KB vs 数十 MB）。
+const subagentRelationSeekBack = 64 << 10
+
+// 避免每次同步都全量重读父转录。
+func collectClaudeSubagentRelations(path, parentAgentID string, relations map[string]claudeSubagentRelation, startOffset int64) error {
 	file, err := os.Open(path)
 	if err != nil {
 		return apperr.Wrap("open", path, err)
 	}
 	defer file.Close()
+	if startOffset > 0 {
+		pos := startOffset - subagentRelationSeekBack
+		if pos < 0 {
+			pos = 0
+		}
+		if _, err := file.Seek(pos, io.SeekStart); err != nil {
+			return apperr.Wrap("seek", path, err)
+		}
+		if pos > 0 {
+			if _, err := bufio.NewReader(file).ReadBytes('\n'); err != nil && !errors.Is(err, io.EOF) {
+				return apperr.Wrap("seek_align", path, err)
+			}
+		}
+	}
 	callDetails := make(map[string]claudeSubagentRelation)
-	return forEachJSONLLine(file, func(line string) error {
+	return forEachJSONLLine(file, func(_ int64, line string) error {
 		var raw map[string]any
 		if json.Unmarshal([]byte(line), &raw) != nil {
 			return nil
@@ -354,14 +430,20 @@ func (i *Importer) ResolveForkPointByAgentTurnIndex(ctx context.Context, in agen
 	}
 	file, ok := i.lookupSessionFile(targetID, rootPath)
 	if !ok {
-		files, err := i.scanSessionFiles(ctx, rootPath, time.Time{}, time.Time{}, int(^uint(0)>>1), nil)
-		if err != nil {
-			return agenttypes.ResolveForkPointOutput{}, err
-		}
-		for _, candidate := range files {
-			if candidate.AgentSessionID == targetID {
-				file = candidate
-				ok = true
+		// 同 ImportExternalSession：worktree 会话转录目录按 spawn cwd 归档，需一并扫描
+		for _, candidateRoot := range worktreeCandidateRoots(rootPath) {
+			files, err := i.scanSessionFiles(ctx, candidateRoot, time.Time{}, time.Time{}, int(^uint(0)>>1), nil)
+			if err != nil {
+				return agenttypes.ResolveForkPointOutput{}, err
+			}
+			for _, candidate := range files {
+				if candidate.AgentSessionID == targetID {
+					file = candidate
+					ok = true
+					break
+				}
+			}
+			if ok {
 				break
 			}
 		}
@@ -369,7 +451,7 @@ func (i *Importer) ResolveForkPointByAgentTurnIndex(ctx context.Context, in agen
 	if !ok {
 		return agenttypes.ResolveForkPointOutput{}, errors.New("external session not found")
 	}
-	items, err := readClaudeImportedExchangeLocators(file.Path, time.Time{})
+	items, _, err := readClaudeImportedExchangeLocators(file.Path, 0, time.Time{}, time.Time{})
 	if err != nil {
 		return agenttypes.ResolveForkPointOutput{}, err
 	}
@@ -586,10 +668,38 @@ func (i *Importer) lookupSessionFile(sessionID, rootPath string) (claudeSessionF
 	if !ok {
 		return claudeSessionFile{}, false
 	}
-	if normalizeComparablePath(item.Cwd) != normalizeComparablePath(rootPath) {
+	if !cwdMatchesRoot(item.Cwd, rootPath) {
 		return claudeSessionFile{}, false
 	}
 	return item, true
+}
+
+// worktreeCandidateRoots 列出 rootPath 本身及其下 .worktree/* 托管工作树目录。
+// mindfs 工作树固定创建在 <root>/.worktree/<name>（appcontext.CreateTaskWorktree）。
+func worktreeCandidateRoots(rootPath string) []string {
+	roots := []string{rootPath}
+	parent := filepath.Join(rootPath, ".worktree")
+	entries, err := os.ReadDir(parent)
+	if err != nil {
+		return roots
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			roots = append(roots, filepath.Join(parent, entry.Name()))
+		}
+	}
+	return roots
+}
+
+// cwdMatchesRoot 报告转录文件记录的 cwd 是否归属该托管目录：根目录本身，
+// 或其 .worktree/* 下的工作树（转录按 spawn cwd 归档，worktree 会话的 cwd 是工作树路径）。
+func cwdMatchesRoot(cwd, rootPath string) bool {
+	cwd = normalizeComparablePath(cwd)
+	rootPath = normalizeComparablePath(rootPath)
+	if cwd == rootPath {
+		return true
+	}
+	return strings.HasPrefix(cwd, rootPath+"/.worktree/")
 }
 
 func inspectClaudeSessionFile(path string) (claudeSessionFile, bool, error) {
@@ -604,7 +714,7 @@ func inspectClaudeSessionFile(path string) (claudeSessionFile, bool, error) {
 		return claudeSessionFile{}, false, err
 	}
 	var sessionID, cwd, firstUserText string
-	err = forEachJSONLLine(file, func(line string) error {
+	err = forEachJSONLLine(file, func(_ int64, line string) error {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			return nil
@@ -649,28 +759,72 @@ func inspectClaudeSessionFile(path string) (claudeSessionFile, bool, error) {
 	}, true, nil
 }
 
-func readClaudeImportedExchanges(path string, after time.Time) ([]agenttypes.ImportedExchange, error) {
-	locators, err := readClaudeImportedExchangeLocators(path, after)
+// readClaudeImportedExchanges 从 startOffset 起读取增量条目。
+// startOffset<=0 表示全量读；>0 时只解析该字节位置之后的内容，避免每次同步都全量
+// 解析整个转录（实测某会话转录 67MB，全量读+解析 1.5-3.3s，而每次打开会话都会触发同步）。
+// committedOffset 是「已提交给 MindFS 的字节位置」，从该处往后解析。
+// 返回的第二个值是**本次提交之后**的新位置：只有完整、已结束的轮次才会被提交，
+// 仍在进行的尾轮留在它自己的起点上等下一轮同步。
+//
+// committedOffset<=0 表示该会话从未同步过（库里 229/232 个绑定都是这种，游标为空），
+// 此时不知道已读到哪，退回到 bootstrapAfter 时间戳判据：只取比库内最新一条更新的回合。
+// 本次同步会把游标建起来，之后一律走字节偏移。
+func readClaudeImportedExchanges(path string, committedOffset int64, bootstrapAfter, floor time.Time) ([]agenttypes.ImportedExchange, int64, error) {
+	locators, committed, err := readClaudeImportedExchangeLocators(path, committedOffset, bootstrapAfter, floor)
 	if err != nil {
-		return nil, err
+		return nil, committedOffset, err
 	}
 	items := make([]agenttypes.ImportedExchange, 0, len(locators))
 	for _, item := range locators {
 		items = append(items, item.ImportedExchange)
 	}
-	return items, nil
+	return items, committed, nil
 }
 
-func readClaudeImportedExchangeLocators(path string, after time.Time) ([]importedExchangeLocator, error) {
+// claudeTranscriptTailClosed 判定转录尾部这一轮是否已经走完。
+// Claude Code 的回合以「不含 tool_use 的助手条目」收尾：最后一条相关条目还带 tool_use
+// （在等工具结果）、或尾部停在 tool_result / 用户条目上，都说明这一轮还在进行。
+// 只有「助手条目带正文且不带 tool_use」才算收尾——纯 thinking 条目不算。
+func claudeTranscriptTailClosed(lastRole string, lastHadToolUse, lastHadText bool) bool {
+	return lastRole == "assistant" && !lastHadToolUse && lastHadText
+}
+
+func readClaudeImportedExchangeLocators(path string, committedOffset int64, bootstrapAfter, floor time.Time) ([]importedExchangeLocator, int64, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return nil, apperr.Wrap("open", path, err)
+		return nil, committedOffset, apperr.Wrap("open", path, err)
 	}
 	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, committedOffset, apperr.Wrap("stat", path, err)
+	}
+	size := info.Size()
+	if committedOffset < 0 || committedOffset > size {
+		// 转录被截断/轮转：游标作废，退回全量读。
+		committedOffset = 0
+	}
+	if committedOffset > 0 {
+		if _, err := file.Seek(committedOffset, io.SeekStart); err != nil {
+			return nil, committedOffset, apperr.Wrap("seek", path, err)
+		}
+	}
 
 	items := make([]importedExchangeLocator, 0)
 	toolLocations := make(map[string]importedToolLocation)
-	err = forEachJSONLLine(file, func(line string) error {
+	// 按条目 uuid 去重：同一 uuid 的条目在转录里可能整段重复出现——实测本机某会话
+	// 6336 条 assistant 条目中有 1712 条 uuid 重复（重复区间相隔上万行，uuid/时间戳/
+	// 内容三者完全相同）。这类远距离重复无法被「相邻同角色才合并」
+	// （appendMergedClaudeExchangeLocator）吃掉，会各自成为一个条目被反复落库，
+	// 表现为同一段助手文本在会话里出现两次以上。此处同一条目只处理一次。
+	seenUUIDs := make(map[string]struct{})
+	lastRole := ""
+	lastHadToolUse := false
+	lastHadText := false
+	err = forEachJSONLLine(file, func(lineOffset int64, line string) error {
+		// forEachJSONLLine 从当前文件位置起算，而我们已 seek 到 committedOffset，
+		// 所以这里要补回基准才是转录里的绝对字节偏移。
+		lineOffset += committedOffset
 		line = strings.TrimSpace(line)
 		if line == "" {
 			return nil
@@ -684,24 +838,67 @@ func readClaudeImportedExchangeLocators(path string, after time.Time) ([]importe
 			return nil
 		}
 		uuid := strings.TrimSpace(asString(raw["uuid"]))
+		if uuid != "" {
+			if _, ok := seenUUIDs[uuid]; ok {
+				return nil
+			}
+			seenUUIDs[uuid] = struct{}{}
+		}
 		message, _ := raw["message"].(map[string]any)
 		if message == nil {
 			return nil
 		}
 		ts := parseTimeRFC3339(asString(raw["timestamp"]))
 		if role == "user" {
+			lastRole, lastHadToolUse, lastHadText = "user", false, false
 			applyClaudeToolResults(items, toolLocations, message["content"], raw["toolUseResult"], ts)
+			// 转录自带 isMeta 标记，标明「这条不是用户输入」（CLI 注入的 skill 正文、自动
+			// 续跑、命令回显等）。实测 139712 条 user/assistant 条目里 1420 条 isMeta=true，
+			// 其中约 1030 条 isMeaningfulClaudeUserText 认不出来。漏进来就是用户没发过的
+			// 气泡，还会被「相邻同角色合并」并进相邻的真人消息里。
+			if isMeta, _ := raw["isMeta"].(bool); isMeta {
+				return nil
+			}
 			text := extractClaudeImportedUserText(message["content"])
 			if text != "" && isMeaningfulClaudeUserText(text) {
+				before := len(items)
 				items, _, _ = appendMergedClaudeExchangeLocator(items, "user", text, ts, uuid, nil)
+				if len(items) > before {
+					items[before].StartOffset = lineOffset
+				}
 			}
 			return nil
 		}
+		lastRole = "assistant"
+		lastHadToolUse, lastHadText = false, false
+		if blocks, ok := message["content"].([]any); ok {
+			for _, block := range blocks {
+				item, _ := block.(map[string]any)
+				if item == nil {
+					continue
+				}
+				switch strings.TrimSpace(asString(item["type"])) {
+				case "tool_use":
+					lastHadToolUse = true
+				case "text":
+					if strings.TrimSpace(asString(item["text"])) != "" {
+						lastHadText = true
+					}
+				}
+			}
+		}
 		text := strings.TrimSpace(extractClaudeMessageText(message["content"]))
+		if isAutoContinueAck(text) {
+			// 自动续跑一问一答的应答侧。提问侧靠 isMeta 挡住，应答侧没有 isMeta
+			// （实测 assistant 条目 isMeta 恒为 false），只能按内容判；不挡就会被
+			// 「相邻同角色合并」并进紧邻的真助手文本里。
+			text = ""
+		}
 		aux := extractClaudeToolUseAux(message["content"])
 		if text == "" && len(aux) == 0 {
 			return nil
 		}
+		before := len(items)
 		var exchangeIndex, auxStart int
 		items, exchangeIndex, auxStart = appendMergedClaudeExchangeLocator(
 			items,
@@ -711,6 +908,9 @@ func readClaudeImportedExchangeLocators(path string, after time.Time) ([]importe
 			uuid,
 			aux,
 		)
+		if len(items) > before {
+			items[before].StartOffset = lineOffset
+		}
 		for index := auxStart; index < len(items[exchangeIndex].Aux); index++ {
 			toolCall := items[exchangeIndex].Aux[index].ToolCall
 			if toolCall == nil || strings.TrimSpace(toolCall.CallID) == "" {
@@ -724,31 +924,70 @@ func readClaudeImportedExchangeLocators(path string, after time.Time) ([]importe
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, committedOffset, err
 	}
-	if after.IsZero() {
-		return items, nil
+	// 已提交位置：只有在转录尾部已收尾时才推进过最后一条 item。
+	// 尾轮还在进行（正在跑工具 / 刚拿到结果还没续写）就先不落库 —— 它的内容会继续变，
+	// 落了就是半成品，而且下次同步会因为它「又变了」而被当成新内容再落一遍。
+	committed := size
+	if n := len(items); n > 0 {
+		tail := items[n-1]
+		if tail.Role == "agent" && !claudeTranscriptTailClosed(lastRole, lastHadToolUse, lastHadText) {
+			if tail.StartOffset > committedOffset {
+				committed = tail.StartOffset
+			} else {
+				committed = committedOffset
+			}
+			items = items[:n-1]
+		}
 	}
 	filtered := make([]importedExchangeLocator, 0, len(items))
+	// floor 是给「live-owned 会话的兜底补齐」用的：那种会话的游标冻结已久，只按偏移读会把
+	// 早已落库的回合整段重导（实测 2026-09-16 BP 会话重导了 09-14 的内容，与实时路径写的
+	// 行并排显示成重复）。有地板时：游标决定从哪开始读，地板决定读到的东西算不算数。
+	passesFloor := func(item importedExchangeLocator) bool {
+		if floor.IsZero() {
+			return true
+		}
+		return !item.Timestamp.IsZero() && item.Timestamp.After(floor)
+	}
+	if committedOffset > 0 {
+		for _, item := range items {
+			if item.StartOffset < committedOffset {
+				continue
+			}
+			if !passesFloor(item) {
+				continue
+			}
+			filtered = append(filtered, item)
+		}
+		return filtered, committed, nil
+	}
+	// 引导：该会话还没有游标，用库内最新时间戳兜底（旧行为，只此一次）。
+	if bootstrapAfter.IsZero() {
+		return items, committed, nil
+	}
 	for _, item := range items {
-		if item.Timestamp.IsZero() || !item.Timestamp.After(after) {
+		if item.Timestamp.IsZero() || !item.Timestamp.After(bootstrapAfter) || !passesFloor(item) {
 			continue
 		}
 		filtered = append(filtered, item)
 	}
-	return filtered, nil
+	return filtered, committed, nil
 }
 
 var errStopJSONL = errors.New("stop jsonl")
 
-func forEachJSONLLine(file *os.File, fn func(string) error) error {
+func forEachJSONLLine(file *os.File, fn func(offset int64, line string) error) error {
 	reader := bufio.NewReader(file)
+	var offset int64
 	for {
 		line, err := reader.ReadBytes('\n')
 		if len(line) > 0 {
-			if callErr := fn(string(line)); callErr != nil {
+			if callErr := fn(offset, string(line)); callErr != nil {
 				return callErr
 			}
+			offset += int64(len(line))
 		}
 		if err == nil {
 			continue
@@ -965,9 +1204,24 @@ func importedAssistantLine(content string) int {
 	return strings.Count(content, "\n") + 1
 }
 
+// isAutoContinueAck 判定自动续跑一问一答的应答侧：CLI 在会话空闲时自己插
+// 「Continue from where you left off.」→「No response requested.」。提问侧由 isMeta
+// 挡掉，应答侧没有 isMeta（assistant 条目的 isMeta 恒为 false），只能按内容判。
+func isAutoContinueAck(text string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(strings.ReplaceAll(text, "\r\n", "\n")))
+	return strings.TrimSuffix(normalized, ".") == "no response requested"
+}
+
+// 中断标记等 CLI 自注入内容的名单与剥离逻辑见 agenttypes.TranscriptNoisePrefixes：
+// 一侧定义、导入侧与判重侧共用，避免名单走散。
 func isMeaningfulClaudeUserText(text string) bool {
 	text = strings.TrimSpace(strings.ReplaceAll(text, "\r\n", "\n"))
 	if text == "" {
+		return false
+	}
+	// 整条就是 CLI 标记 → 不是用户输入，整条不发射。标记若与真人正文粘在同一条目里，
+	// 剥完不会为空，这里会保留（整条丢掉会连正文一起丢）。
+	if agenttypes.IsTranscriptNoiseEntry(text) {
 		return false
 	}
 	lower := strings.ToLower(text)
@@ -975,6 +1229,13 @@ func isMeaningfulClaudeUserText(text string) bool {
 		strings.HasPrefix(lower, "<command-name>") ||
 		strings.HasPrefix(lower, "<local-command-stdout>") ||
 		strings.HasPrefix(lower, "<local-command-stderr>") ||
+		// CLI 的子代理完成通知：整块由 CLI 注入（isMeta 为空，前面那道闸拦不住），
+		// 正文是子代理的报告。子代理转录已作为子会话导入（parent_tool_call_id 指向
+		// Task 调用），这里再落一条就是「用户气泡里装着助手正文」的乱格式块。
+		// 同一件事还有一种带前言的外形：后台任务事件会被包上「SYSTEM NOTIFICATION - NOT
+		// USER INPUT」抬头（它自己就写明不是用户输入）。
+		strings.HasPrefix(lower, "<task-notification>") ||
+		strings.HasPrefix(lower, "[system notification - not user input]") ||
 		strings.HasPrefix(lower, "this session was migrated from elsewhere.") ||
 		strings.HasPrefix(lower, "this session is being continued from a previous conversation") {
 		return false

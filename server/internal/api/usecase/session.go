@@ -17,6 +17,7 @@ import (
 	"unicode"
 
 	"mindfs/server/internal/agent"
+	"mindfs/server/internal/agent/claude"
 	agenttypes "mindfs/server/internal/agent/types"
 	"mindfs/server/internal/commandexec"
 	"mindfs/server/internal/fs"
@@ -194,7 +195,7 @@ func (s *Service) ListMultiRootSessions(ctx context.Context, in ListMultiRootSes
 		}
 		groups = append(groups, SessionRootGroup{
 			RootID:            root.ID,
-			RootName:          root.Name,
+			RootName:          root.EffectiveName(),
 			LatestSessionTime: latest,
 			Sessions:          items,
 			PinnedSessions:    pinnedItems,
@@ -493,13 +494,12 @@ func (s *Service) ForkSession(ctx context.Context, in ForkSessionInput) (ForkSes
 		return ForkSessionOutput{}, err
 	}
 	created, err := manager.Create(ctx, session.CreateInput{
-		Type:             session.TypeChat,
-		ParentSessionKey: current.Key,
-		Source:           string(sourceJSON),
-		Agent:            agentName,
-		Model:            resolveForkModel(current, target),
-		Name:             buildForkSessionName(current, target.Seq),
-		PlanMode:         current.PlanMode,
+		Type:     session.TypeChat,
+		Source:   string(sourceJSON),
+		Agent:    agentName,
+		Model:    resolveForkModel(current, target),
+		Name:     buildForkSessionName(current, target.Seq),
+		PlanMode: current.PlanMode,
 	})
 	if err != nil {
 		return ForkSessionOutput{}, err
@@ -670,6 +670,7 @@ func copyForkHistory(ctx context.Context, manager *session.Manager, from, to *se
 		}
 		exchangeCtx := session.WithExchangeModelDisplayName(ctx, exchange.ModelDisplayName)
 		exchangeCtx = session.WithExchangeTokenUsage(exchangeCtx, exchange.TokenUsage)
+		exchangeCtx = session.WithExchangeSource(exchangeCtx, exchange.Source)
 		if err := manager.AddExchangeForAgentAt(exchangeCtx, to, exchange.Role, exchange.Content, agentName, exchange.Mode, exchange.Effort, exchange.FastService, exchange.Timestamp); err != nil {
 			return copied, err
 		}
@@ -697,20 +698,30 @@ func copyForkHistory(ctx context.Context, manager *session.Manager, from, to *se
 }
 
 type GetSessionInput struct {
-	RootID string
-	Key    string
-	Seq    int
+	RootID    string
+	Key       string
+	Seq       int
+	BeforeSeq int
+	Limit     int
+	Latest    int
 }
 
-func (s *Service) GetSession(ctx context.Context, in GetSessionInput) (*session.Session, error) {
+// GetSession returns the session. When BeforeSeq>0 or Latest>0 it serves a
+// windowed slice via manager.GetWindow and the returned SessionWindowMeta is
+// non-nil; otherwise it serves a seq-incremental (Seq>0) or full (Seq<=0) view.
+func (s *Service) GetSession(ctx context.Context, in GetSessionInput) (*session.Session, *session.SessionWindowMeta, error) {
 	if err := s.ensureRegistry(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	manager, err := s.Registry.GetSessionManager(in.RootID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return manager.Get(ctx, in.Key, in.Seq)
+	if in.BeforeSeq > 0 || in.Latest > 0 {
+		return manager.GetWindow(ctx, in.Key, in.BeforeSeq, in.Limit, in.Latest)
+	}
+	out, err := manager.Get(ctx, in.Key, in.Seq)
+	return out, nil, err
 }
 
 type GetSessionExchangeAuxInput struct {
@@ -728,6 +739,26 @@ func (s *Service) GetSessionExchangeAux(ctx context.Context, in GetSessionExchan
 		return nil, err
 	}
 	return manager.GetExchangeAux(ctx, in.Key, in.Seq)
+}
+
+// GetSessionExchangeAuxWindow 只取窗口内 seq 的 aux。窗口请求原先经 GetSessionExchangeAux(Seq=0)
+// 全量读取整个 aux 文件再按窗口过滤（实测某会话 11.8MB/~300ms），纯属浪费；此处按窗口 seqSet
+// 走尾部读（见 Manager.readAuxWindowTail）。
+func (s *Service) GetSessionExchangeAuxWindow(ctx context.Context, in GetSessionExchangeAuxWindowInput) (map[int][]session.ExchangeAux, error) {
+	if err := s.ensureRegistry(); err != nil {
+		return nil, err
+	}
+	manager, err := s.Registry.GetSessionManager(in.RootID)
+	if err != nil {
+		return nil, err
+	}
+	return manager.GetExchangeAuxWindow(ctx, in.Key, in.Seqs)
+}
+
+type GetSessionExchangeAuxWindowInput struct {
+	RootID string
+	Key    string
+	Seqs   map[int]bool
 }
 
 type GetSessionToolCallInput struct {
@@ -1117,11 +1148,16 @@ type SendMessageInput struct {
 }
 
 type MessageStart struct {
-	Model           string
-	Mode            string
-	Effort          string
-	FastService     string
-	BaseExchangeSeq int
+	Model            string
+	ModelDisplayName string
+	Mode             string
+	Effort           string
+	FastService      string
+	BaseExchangeSeq  int
+	// UserExchangeSeq 是本轮用户消息即将获得的持久化 seq（= BaseExchangeSeq+1，
+	// 与后续 AddExchangeForAgentAt 的 nextSeq 同式）。仅用于下发给客户端做本地
+	// 乐观条目的收敛；0 表示未知，此时不要下发。
+	UserExchangeSeq int
 }
 
 func applyMessageRuntimeDefaultsFromStatus(
@@ -1985,11 +2021,40 @@ func resolveRuntimeModel(current *session.Session, runtime agenttypes.Session, r
 	return strings.TrimSpace(current.Model)
 }
 
-func (s *Service) resolveExchangeModelDisplayName(agentName, model string) string {
+func (s *Service) resolveExchangeModelDisplayName(agentName, model string, rootDir string) string {
 	agentName = strings.TrimSpace(agentName)
 	model = strings.TrimSpace(model)
 	if agentName != "claude" || model == "" || s == nil || s.Registry == nil {
 		return ""
+	}
+	// 同分层 env 解析：display(alias) → effective(真实上游模型)，与 session.go 发送边界同源。
+	if claudeName := strings.TrimSpace(agentName); claudeName == "claude" {
+		env := s.claudeEnvForExchange(rootDir)
+		if effective := claude.ResolveClaudeModelArg(model, env); effective != "" {
+			if claude.TierKey(effective) != claude.TierKey(model) {
+				return effective // 第三方：直接展示真实上游 ID（如 deepseek-v4-flash[1M]）
+			}
+			// Anthropic 原生：effective 仍为 tier 名，回退到目录 Name 保持可读（如 Sonnet）
+			if prober := s.Registry.GetProber(); prober != nil {
+				if status, ok := prober.GetStatus(agentName); ok {
+					for _, item := range status.Models {
+						if strings.TrimSpace(item.ID) == model {
+							if name := strings.TrimSpace(item.Name); name != "" {
+								return name
+							}
+						}
+					}
+					for _, item := range status.Models {
+						if claude.TierKey(item.ID) == claude.TierKey(model) {
+							if name := strings.TrimSpace(item.Name); name != "" {
+								return name
+							}
+						}
+					}
+				}
+			}
+			return effective
+		}
 	}
 	prober := s.Registry.GetProber()
 	if prober == nil {
@@ -2005,6 +2070,30 @@ func (s *Service) resolveExchangeModelDisplayName(agentName, model string) strin
 		}
 	}
 	return ""
+}
+
+func (s *Service) ResolveModelDisplayName(agentName, model, rootDir string) string {
+	return s.resolveExchangeModelDisplayName(agentName, model, rootDir)
+}
+
+func (s *Service) claudeEnvForExchange(rootDir string) map[string]string {
+	if s == nil || s.Registry == nil {
+		return nil
+	}
+	var baseEnv map[string]string
+	if pool := s.Registry.GetAgentPool(); pool != nil {
+		if def, ok := pool.Config().GetAgent("claude"); ok {
+			baseEnv = def.Env
+		}
+	}
+	if strings.TrimSpace(rootDir) == "" {
+		if roots := s.Registry.ListRoots(); len(roots) > 0 {
+			if dir, err := roots[0].RootDir(); err == nil {
+				rootDir = dir
+			}
+		}
+	}
+	return claude.ClaudeEffectiveEnv(baseEnv, rootDir)
 }
 
 func resolveRuntimeEffort(_ string, current *session.Session, requested string) string {
@@ -2067,6 +2156,87 @@ func resolveSessionExchangeMode(current *session.Session) string {
 	return ""
 }
 
+// userExchangeRepeatTolerance：同一轮用户条目的两个写入者之间的时间窗。
+// 外部转录同步会在回合进行中先导入一条（ts 带 Z、来自 transcript），回合结束时
+// SendMessage 再写一条（ts 无 Z、time.Now()），实测差 21ms。落在窗内且 role+内容
+// 相同 → 判为同一轮重复，不再落库。
+// ponytail: 5s 窗。只挡同一次发言的双写，不吞用户隔久了的真实重发（「继续」「ok」必须保留），
+// 也不按内容批量去重存量数据。
+const userExchangeRepeatTolerance = 5 * time.Second
+
+// exchangeAlreadyRecorded 判定 target 里是否已有同 role+内容、且时间戳落在
+// ±userExchangeRepeatTolerance 内的条目。导入侧与发送侧共用，保证两个写入者判据对称。
+func exchangeAlreadyRecorded(target *session.Session, role, content string, ts time.Time) bool {
+	if target == nil || ts.IsZero() {
+		return false
+	}
+	for _, ex := range target.Exchanges {
+		if ex.Role != role || ex.Timestamp.IsZero() {
+			continue
+		}
+		if !sameRecordedExchangeContent(role, ex.Content, content) {
+			continue
+		}
+		if diff := ex.Timestamp.Sub(ts); diff > -userExchangeRepeatTolerance && diff < userExchangeRepeatTolerance {
+			return true
+		}
+	}
+	return false
+}
+
+// sameRecordedExchangeContent 判断两条同角色内容是否「同一条」。
+// 默认要求完全相等；另容忍两类双写差异（同一轮由实时路径与转录导入各写一次）：
+//
+//  1. 空白归一化后相等 —— 两个写入者对段落空行的处理不同。实测 2026-09-14 16:18 的
+//     一轮：实时版 1765 字、导入版 1761 字，逐字符 diff 只有 2 处 "\n\n" 之差
+//     （相似度 0.9989），只比字面量必然漏判。
+//  2. 助手侧的前缀关系 —— 两边抓到的快照长度可能差很多（实测实时 21 字 seq=128、
+//     转录导入 556 字 seq=129＝前者 + "\n\nAPI Error: 502 …"）。
+//
+// 用户侧不吃前缀容忍：「继续」是「继续吧」的前缀，但那是两句不同的话。前缀关系还要求
+// 较短一侧够长（≥16 字），避免「好」/「好的，我这就去…」这种短应答误判。
+// 两条判据都只在 ±5s 容忍窗内生效（见 exchangeAlreadyRecorded）。
+func sameRecordedExchangeContent(role, a, b string) bool {
+	if a == b {
+		return true
+	}
+	if a == "" || b == "" {
+		return false
+	}
+	na, nb := normalizeExchangeContent(a), normalizeExchangeContent(b)
+	if na == nb {
+		return true
+	}
+	if role != "agent" {
+		return false
+	}
+	shorter := na
+	if len([]rune(nb)) < len([]rune(shorter)) {
+		shorter = nb
+	}
+	if len([]rune(shorter)) < 16 {
+		return false
+	}
+	return strings.HasPrefix(na, nb) || strings.HasPrefix(nb, na)
+}
+
+// normalizeExchangeContent 用于「同一条消息的两种渲染」比较：先剥掉 CLI 自注入的标记
+// （名单见 agenttypes.TranscriptNoisePrefixes，与导入侧共用），再抹掉所有空白。
+//
+// 抹掉而不是折叠：折叠成单空格是错的 —— 实时路径会把 \n\n 插进 Markdown 标记内部
+// （实测 `**支具\n\n+康复总市场**` vs 导入版 `**支具+康复总市场**`），折叠后前者多一个
+// 空格，仍判不相等。代价是 "a b" 与 "ab" 视为相同，但这只发生在 ±5s 容忍窗内，
+// 同一轮的两个写入者本来就该是同一条。
+func normalizeExchangeContent(s string) string {
+	stripped := agenttypes.StripTranscriptNoisePrefixes(s)
+	return strings.Map(func(r rune) rune {
+		if unicode.IsSpace(r) {
+			return -1
+		}
+		return r
+	}, stripped)
+}
+
 func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 	if err := s.ensureRegistry(); err != nil {
 		return err
@@ -2092,15 +2262,28 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 			return err
 		}
 	}
+	root := manager.Root()
+	managedRootAbs, _ := root.RootDir()
+	rootAbs := managedRootAbs
+	if runtimeRootPath := strings.TrimSpace(in.RuntimeRootPath); runtimeRootPath != "" {
+		rootAbs = filepath.Clean(runtimeRootPath)
+	}
 	resolvedMode := resolveRuntimeMode(current, in.Mode)
 	resolvedFastService := resolveRuntimeFastService(in.Agent, current, in.FastService)
+	// 本轮用户消息的持久化 seq：与 manager.addExchangeForAgentAt 的 nextSeq 同式
+	//（max(seq)+1，不是 len+1）——文件与缓存漂移时长度会与最大 seq 不等，按长度预测会错位。
+	// 另：从这一刻起这个会话的持久化归实时路径（"谁驱动，谁落盘"），导入器不再常规增量
+	// 同步——判据是推导的，见 session.SessionIsLiveOwned。
+	baseExchangeSeq := session.MaxExchangeSeq(current.Exchanges)
 	if in.OnStart != nil {
 		in.OnStart(MessageStart{
-			Model:           in.Model,
-			Mode:            resolvedMode,
-			Effort:          in.Effort,
-			FastService:     resolvedFastService,
-			BaseExchangeSeq: len(current.Exchanges),
+			Model:            in.Model,
+			ModelDisplayName: s.resolveExchangeModelDisplayName(in.Agent, in.Model, rootAbs),
+			Mode:             resolvedMode,
+			Effort:           in.Effort,
+			FastService:      resolvedFastService,
+			BaseExchangeSeq:  baseExchangeSeq,
+			UserExchangeSeq:  baseExchangeSeq + 1,
 		})
 	}
 	if current.Type == session.TypeCommand {
@@ -2119,12 +2302,6 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 	if watcher != nil {
 		watcher.RegisterSession(current.Key)
 		watcher.MarkSessionActive(current.Key)
-	}
-	root := manager.Root()
-	managedRootAbs, _ := root.RootDir()
-	rootAbs := managedRootAbs
-	if runtimeRootPath := strings.TrimSpace(in.RuntimeRootPath); runtimeRootPath != "" {
-		rootAbs = filepath.Clean(runtimeRootPath)
 	}
 	planMode := current != nil && current.PlanMode
 
@@ -2155,7 +2332,9 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 	sawAssistantChunk := false
 	var lastContextWindow agenttypes.ContextWindow
 	var turnTokenUsage *agenttypes.TokenUsage
-	plannedAssistantSeq := len(current.Exchanges) + 2
+	// 与 addExchangeForAgentAt 的 nextSeq 同式：max(seq)+2（用户行 +1、助手行 +2）。
+	// 文件与缓存漂移时长度 ≠ 最大 seq，按长度预测会把 aux 挂到别的 exchange 上。
+	plannedAssistantSeq := session.MaxExchangeSeq(current.Exchanges) + 2
 	auxBuffer := make([]session.ExchangeAux, 0, 8)
 	defer manager.ClearPendingExchangeAux(context.Background(), current.Key)
 	var thoughtBuffer strings.Builder
@@ -2373,13 +2552,19 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 			}
 		}
 	}
-	modelDisplayName := s.resolveExchangeModelDisplayName(in.Agent, resolvedModel)
+	modelDisplayName := s.resolveExchangeModelDisplayName(in.Agent, resolvedModel, rootAbs)
 	exchangeCtx := session.WithExchangeModelDisplayName(ctx, modelDisplayName)
+	exchangeCtx = session.WithExchangeSource(exchangeCtx, session.ExchangeSourceLive)
 	agentExchangeCtx := session.WithExchangeTokenUsage(exchangeCtx, turnTokenUsage)
 	if err := manager.UpdateModel(ctx, current, resolvedModel); err != nil {
 		return err
 	}
-	if err := manager.AddExchangeForAgentAt(exchangeCtx, current, "user", in.Content, in.Agent, resolvedMode, resolvedEffort, resolvedFastService, userTimestamp); err != nil {
+	// 转录同步可能在回合进行中就先把这条用户消息导进来（导入器在 15:15:08 写 seq=57），
+	// 而这里要等回合结束才写（15:15:11 写 seq=58）——判据不对称时同一句话就落两条。
+	// 用与导入侧同一个 exchangeAlreadyRecorded 收口。
+	if exchangeAlreadyRecorded(current, "user", in.Content, userTimestamp) {
+		log.Printf("[session] persist.user.skip-duplicate root=%s session=%s agent=%s", in.RootID, current.Key, in.Agent)
+	} else if err := manager.AddExchangeForAgentAt(exchangeCtx, current, "user", in.Content, in.Agent, resolvedMode, resolvedEffort, resolvedFastService, userTimestamp); err != nil {
 		log.Printf("[session] persist.user.error root=%s session=%s agent=%s err=%v", in.RootID, current.Key, in.Agent, err)
 		return err
 	}
@@ -2957,7 +3142,7 @@ func (s *Service) startSubagentSubscription(in subagentSessionInput, child *sess
 
 func attachBackgroundSessionUpdates(ctx context.Context, in subagentSessionInput, child *session.Session, runtime agenttypes.Session) func() {
 	var responseText string
-	plannedAssistantSeq := len(child.Exchanges) + 1
+	plannedAssistantSeq := session.MaxExchangeSeq(child.Exchanges) + 1
 	auxBuffer := make([]session.ExchangeAux, 0, 8)
 	var thoughtBuffer strings.Builder
 	lastResponseUpdateType := ""
@@ -2989,6 +3174,7 @@ func attachBackgroundSessionUpdates(ctx context.Context, in subagentSessionInput
 		}
 		doneSent = true
 		doneMu.Unlock()
+		ctx = session.WithExchangeSource(ctx, session.ExchangeSourceLive)
 		defer in.Manager.ClearPendingExchangeAux(context.Background(), child.Key)
 		flushThought()
 		if err := in.Manager.AddExchangeForAgent(ctx, child, "agent", responseText, in.Agent, in.Mode, in.Effort, in.FastService); err != nil {
@@ -3105,7 +3291,7 @@ func (s *Service) sendCommandMessage(ctx context.Context, in SendMessageInput, m
 		return err
 	}
 	callID := "cmd-" + strconv.FormatInt(time.Now().UnixNano(), 36)
-	plannedAssistantSeq := len(current.Exchanges) + 2
+	plannedAssistantSeq := session.MaxExchangeSeq(current.Exchanges) + 2
 	startTool := agenttypes.ToolCall{
 		CallID:  callID,
 		Title:   in.Content,
@@ -3322,8 +3508,12 @@ func configuredShells(registry Registry) []commandexec.ShellSpec {
 }
 
 func persistCommandTurn(ctx context.Context, manager *session.Manager, current *session.Session, command string, final agenttypes.ToolCall, plannedAssistantSeq int, userTimestamp time.Time) error {
-	if err := manager.AddExchangeForAgentAt(ctx, current, "user", command, "", "", "", "", userTimestamp); err != nil {
-		return err
+	ctx = session.WithExchangeSource(ctx, session.ExchangeSourceLive)
+	// 与 SendMessage 同一个双写风险：斜杠命令同样会被转录同步先导入一份。
+	if !exchangeAlreadyRecorded(current, "user", command, userTimestamp) {
+		if err := manager.AddExchangeForAgentAt(ctx, current, "user", command, "", "", "", "", userTimestamp); err != nil {
+			return err
+		}
 	}
 	if err := manager.AddExchangeForAgent(ctx, current, "agent", "", "", "", "", ""); err != nil {
 		return err
@@ -3829,11 +4019,97 @@ func normalizeDiffRef(root pathNormalizer, ref string) (string, bool) {
 	return prefix + normalized, true
 }
 
+func isClaudeAliasModelForValidate(model string) bool {
+	trimmed := strings.TrimSpace(model)
+	if trimmed == "" {
+		return false
+	}
+	has := len(trimmed) >= 4 && strings.EqualFold(trimmed[len(trimmed)-4:], "[1m]")
+	base := trimmed
+	if has {
+		base = strings.TrimSpace(trimmed[:len(trimmed)-4])
+	}
+	lower := strings.ToLower(strings.TrimSpace(base))
+	switch lower {
+	case "fable", "opus", "sonnet", "haiku", "of", "op", "os", "ok", "default":
+		return true
+	default:
+		return false
+	}
+}
+
+func canonicalClaudeModelForValidate(model string) string {
+	trimmed := strings.TrimSpace(model)
+	if trimmed == "" {
+		return ""
+	}
+	if strings.EqualFold(trimmed, "default") {
+		return trimmed
+	}
+	if !isClaudeAliasModelForValidate(trimmed) {
+		return trimmed
+	}
+	has := len(trimmed) >= 4 && strings.EqualFold(trimmed[len(trimmed)-4:], "[1m]")
+	base := trimmed
+	if has {
+		base = strings.TrimSpace(trimmed[:len(trimmed)-4])
+	}
+	lower := strings.ToLower(strings.TrimSpace(base))
+	switch lower {
+	case "fable":
+		lower = "of"
+	case "opus":
+		lower = "op"
+	case "sonnet":
+		lower = "os"
+	case "haiku":
+		lower = "ok"
+	}
+	if has {
+		return lower + "[1m]"
+	}
+	return lower
+}
+
+func claudeModelBaseForValidate(model string) string {
+	trimmed := strings.TrimSpace(model)
+	if trimmed == "" {
+		return ""
+	}
+	if strings.EqualFold(trimmed, "default") {
+		return "default"
+	}
+	has := len(trimmed) >= 4 && strings.EqualFold(trimmed[len(trimmed)-4:], "[1m]")
+	base := trimmed
+	if has {
+		base = strings.TrimSpace(trimmed[:len(trimmed)-4])
+	}
+	if !isClaudeAliasModelForValidate(trimmed) {
+		return strings.TrimSpace(base)
+	}
+	lower := strings.ToLower(strings.TrimSpace(base))
+	switch lower {
+	case "fable":
+		lower = "of"
+	case "opus":
+		lower = "op"
+	case "sonnet":
+		lower = "os"
+	case "haiku":
+		lower = "ok"
+	}
+	return lower
+}
+
 func (s *Service) validateAgentModel(agentName, model string) error {
 	agentName = strings.TrimSpace(agentName)
 	model = strings.TrimSpace(model)
 	if agentName == "" || model == "" || s.Registry == nil {
 		return nil
+	}
+	isClaude := strings.EqualFold(agentName, "claude")
+	if isClaude {
+		model = canonicalClaudeModelForValidate(model)
 	}
 	prober := s.Registry.GetProber()
 	if prober == nil {
@@ -3844,11 +4120,30 @@ func (s *Service) validateAgentModel(agentName, model string) error {
 		return nil
 	}
 	for _, item := range status.Models {
-		if strings.TrimSpace(item.ID) == model {
+		candidate := strings.TrimSpace(item.ID)
+		if isClaude {
+			candidate = canonicalClaudeModelForValidate(candidate)
+		}
+		if candidate == model {
+			return nil
+		}
+		// 1M suffix is an explicit user toggle, not a separate model entry.
+		// Prober advertises base ids without [1m] (both Anthropic aliases and generic provider ids like glm-*/deepseek-*),
+		// so base and base[1m] are the same model.
+		if isClaude && claudeModelBaseForValidate(candidate) != "" && claudeModelBaseForValidate(candidate) == claudeModelBaseForValidate(model) {
 			return nil
 		}
 	}
-	return fmt.Errorf("model %q is not supported by agent %q", model, agentName)
+	supported := make([]string, 0, len(status.Models))
+	for i, item := range status.Models {
+		if i >= 12 {
+			break
+		}
+		if id := strings.TrimSpace(item.ID); id != "" {
+			supported = append(supported, id)
+		}
+	}
+	return fmt.Errorf("model %q is not supported by agent %q (supported models: %s)", model, agentName, strings.Join(supported, ", "))
 }
 
 func (s *Service) CancelSessionTurn(ctx context.Context, in CancelSessionTurnInput) error {

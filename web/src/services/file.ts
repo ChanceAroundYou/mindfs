@@ -1,5 +1,6 @@
 import { appURL } from "./base";
 import { e2eeService } from "./e2ee";
+import { getRootNodeId } from "./rootNode";
 
 export type ReadMode = "full" | "incremental";
 
@@ -26,6 +27,7 @@ type FetchFileParams = {
   readMode?: ReadMode;
   cursor?: number;
   timeoutMs?: number;
+  nodeId?: string;
 };
 
 type CachedFileRecord = {
@@ -87,23 +89,33 @@ const rawFileFailures = new Map<string, number>();
 const RAW_FILE_FAILURE_TTL_MS = 60_000;
 let dbPromise: Promise<IDBDatabase> | null = null;
 
-function buildCacheKey(rootId: string, path: string, readMode: ReadMode, cursor: number): string {
-  return [rootId, path, readMode, String(cursor)].join("::");
+function buildCacheKey(rootId: string, path: string, readMode: ReadMode, cursor: number, nodeId?: string): string {
+  const nid = String(nodeId || "").trim();
+  const base = [rootId, path, readMode, String(cursor)].join("::");
+  return nid ? `${nid}::${base}` : base;
 }
 
-function buildGitDiffCacheKey(rootId: string, path: string, signature?: string): string {
-  return ["git-diff", GIT_DIFF_CACHE_VERSION, rootId, path, signature || ""].join("::");
+function buildGitDiffCacheKey(rootId: string, path: string, signature?: string, nodeId?: string): string {
+  const nid = String(nodeId || "").trim();
+  const base = ["git-diff", GIT_DIFF_CACHE_VERSION, rootId, path, signature || ""].join("::");
+  return nid ? `${nid}::${base}` : base;
 }
 
-function buildGitDiffCacheKeyPrefix(rootId: string, path: string): string {
+function buildGitDiffCacheKeyPrefix(rootId: string, path: string, nodeId?: string): string {
+  const nid = String(nodeId || "").trim();
+  if (nid) return `${nid}::git-diff::${GIT_DIFF_CACHE_VERSION}::${rootId}::${path}::`;
   return `git-diff::${GIT_DIFF_CACHE_VERSION}::${rootId}::${path}::`;
 }
 
-function buildCacheKeyPrefix(rootId: string, path: string): string {
+function buildCacheKeyPrefix(rootId: string, path: string, nodeId?: string): string {
+  const nid = String(nodeId || "").trim();
+  if (nid) return `${nid}::${rootId}::${path}::`;
   return `${rootId}::${path}::`;
 }
 
-function buildRawFileFailureKey(rootId: string, path: string): string {
+function buildRawFileFailureKey(rootId: string, path: string, nodeId?: string): string {
+  const nid = String(nodeId || "").trim();
+  if (nid) return `${nid}::${rootId}::${path}`;
   return `${rootId}::${path}`;
 }
 
@@ -360,9 +372,9 @@ async function pruneCache(): Promise<void> {
 }
 
 function clearSiblingMemoryCaches(rootId: string, path: string, keepKey: string): void {
-  const prefix = buildCacheKeyPrefix(rootId, path);
   for (const key of memoryCache.keys()) {
-    if (key !== keepKey && key.startsWith(prefix)) {
+    if (key === keepKey) continue;
+    if (key.startsWith(`${rootId}::${path}::`) || key.includes(`::${rootId}::${path}::`)) {
       memoryCache.delete(key);
     }
   }
@@ -404,7 +416,7 @@ async function persistExactCache(
   void pruneCache();
 }
 
-function buildFileURL(rootId: string, path: string, readMode: ReadMode, cursor: number, mtime?: string): string {
+function buildFileURL(rootId: string, path: string, readMode: ReadMode, cursor: number, mtime?: string, nodeId?: string): string {
   const queryParams = new URLSearchParams({
     root: rootId,
     path,
@@ -416,7 +428,7 @@ function buildFileURL(rootId: string, path: string, readMode: ReadMode, cursor: 
   if (mtime) {
     queryParams.set("mtime", mtime);
   }
-  return appURL("/api/file", queryParams);
+  return appURL("/api/file", queryParams, nodeId);
 }
 
 function createFetchOptions(timeoutMs?: number): {
@@ -443,38 +455,42 @@ async function fetchResponse(url: string, init?: RequestInit): Promise<Response>
 export async function getCachedFile(params: Omit<FetchFileParams, "timeoutMs">): Promise<FilePayload | null> {
   const readMode = params.readMode || "incremental";
   const cursor = normalizeCursor(params.cursor);
-  const cacheKey = buildCacheKey(params.rootId, params.path, readMode, cursor);
-
+  const nid = String((params as any).nodeId || getRootNodeId(params.rootId) || "").trim();
+  const cacheKey = buildCacheKey(params.rootId, params.path, readMode, cursor, nid || undefined);
+  if (nid) {
+    const inMemory = readMemoryCache(cacheKey);
+    if (inMemory) return inMemory;
+    const record = await loadCachedRecord(cacheKey);
+    if (!record?.file) return null;
+    return record.file;
+  }
   const inMemory = readMemoryCache(cacheKey);
-  if (inMemory) {
-    return inMemory;
-  }
-
-  const record = await loadCachedRecord(cacheKey);
-  if (!record?.file) {
-    return null;
-  }
-
-  writeMemoryCache(cacheKey, record.file);
-  void saveCachedRecord({
-    ...record,
-    touchedAt: Date.now(),
-  });
+  if (inMemory) return inMemory;
+  let record = await loadCachedRecord(cacheKey);
+  if (!record?.file) return null;
   return record.file;
 }
 
 export function invalidateFileCache(rootId: string, path: string): void {
+  rawFileFailures.delete(buildRawFileFailureKey(rootId, path));
+  // 跨节点隔离：同时清掉 nid:: 前缀的残留
+  for (const key of Array.from(rawFileFailures.keys())) {
+    if (key.endsWith(`::${rootId}::${path}`)) rawFileFailures.delete(key);
+  }
+  // raw blob 缓存（图片等）无 TTL，文件更新后必须随失效流程清除，否则同路径旧图持续复用
+  for (const key of Array.from(rawFileBlobCache.keys())) {
+    if (key.startsWith(`${rootId}:${path}:`)) rawFileBlobCache.delete(key);
+  }
   const prefix = buildCacheKeyPrefix(rootId, path);
   const diffPrefix = buildGitDiffCacheKeyPrefix(rootId, path);
-  rawFileFailures.delete(buildRawFileFailureKey(rootId, path));
-  for (const key of memoryCache.keys()) {
-    if (key.startsWith(prefix)) {
+  for (const key of Array.from(memoryCache.keys())) {
+    if (key.startsWith(prefix) || key.includes(`::${rootId}::${path}::`)) {
       memoryCache.delete(key);
       removeCachedRecordFromLocalStorage(key);
     }
   }
-  for (const key of gitDiffMemoryCache.keys()) {
-    if (key.startsWith(diffPrefix)) {
+  for (const key of Array.from(gitDiffMemoryCache.keys())) {
+    if (key.startsWith(diffPrefix) || key.includes(`::${rootId}::${path}::`)) {
       gitDiffMemoryCache.delete(key);
     }
   }
@@ -485,45 +501,55 @@ export function clearFileCacheForRoot(rootId: string): void {
   const prefix = `${rootId}::`;
   const diffPrefix = `git-diff::${GIT_DIFF_CACHE_VERSION}::${rootId}::`;
   for (const key of rawFileFailures.keys()) {
-    if (key.startsWith(prefix)) {
+    if (key.startsWith(prefix) || key.includes(`::${rootId}::`)) {
       rawFileFailures.delete(key);
     }
   }
   for (const key of memoryCache.keys()) {
-    if (key.startsWith(prefix)) {
+    if (key.startsWith(prefix) || key.includes(`::${rootId}::`)) {
       memoryCache.delete(key);
       removeCachedRecordFromLocalStorage(key);
     }
   }
   for (const key of gitDiffMemoryCache.keys()) {
-    if (key.startsWith(diffPrefix)) {
+    if (key.startsWith(diffPrefix) || key.includes(`::${rootId}::`)) {
       gitDiffMemoryCache.delete(key);
     }
   }
   void deleteCachedRecords((record) => record.rootId === rootId);
 }
 
+export function clearFileMemoryCacheForView(): void {
+  for (const key of Array.from(memoryCache.keys())) {
+    memoryCache.delete(key);
+    removeCachedRecordFromLocalStorage(key);
+  }
+  for (const key of Array.from(gitDiffMemoryCache.keys())) {
+    gitDiffMemoryCache.delete(key);
+  }
+  rawFileFailures.clear();
+  rawFileBlobCache.clear();
+}
+
 export async function getCachedGitDiff(
   rootId: string,
   path: string,
   signature?: string,
+  nodeId?: string,
 ): Promise<CachedGitDiffPayload | null> {
-  const cacheKey = buildGitDiffCacheKey(rootId, path, signature);
+  const nid = String(nodeId || getRootNodeId(rootId) || "").trim();
+  const cacheKey = buildGitDiffCacheKey(rootId, path, signature, nid || undefined);
+  if (nid) {
+    const inMemory = gitDiffMemoryCache.get(cacheKey);
+    if (inMemory) return inMemory;
+    const record = await loadCachedGitDiffRecord(cacheKey);
+    if (!record?.diff) return null;
+    return record.diff;
+  }
   const inMemory = gitDiffMemoryCache.get(cacheKey);
-  if (inMemory) {
-    return inMemory;
-  }
-
-  const record = await loadCachedGitDiffRecord(cacheKey);
-  if (!record?.diff) {
-    return null;
-  }
-
-  gitDiffMemoryCache.set(cacheKey, record.diff);
-  void saveCachedGitDiffRecord({
-    ...record,
-    touchedAt: Date.now(),
-  });
+  if (inMemory) return inMemory;
+  let record = await loadCachedGitDiffRecord(cacheKey);
+  if (!record?.diff) return null;
   return record.diff;
 }
 
@@ -532,8 +558,10 @@ export async function setCachedGitDiff(
   path: string,
   diff: CachedGitDiffPayload,
   signature?: string,
+  nodeId?: string,
 ): Promise<void> {
-  const cacheKey = buildGitDiffCacheKey(rootId, path, signature);
+  const nid = String(nodeId || getRootNodeId(rootId) || "").trim();
+  const cacheKey = buildGitDiffCacheKey(rootId, path, signature, nid || undefined);
   gitDiffMemoryCache.set(cacheKey, diff);
   await saveCachedGitDiffRecord({
     type: "git-diff",
@@ -547,15 +575,18 @@ export async function setCachedGitDiff(
 }
 
 export async function fetchFile(params: FetchFileParams): Promise<FilePayload | null> {
+  params = { ...params, nodeId: params.nodeId || getRootNodeId(params.rootId) };
   const readMode = params.readMode || "incremental";
   const cursor = normalizeCursor(params.cursor);
-  const cacheKey = buildCacheKey(params.rootId, params.path, readMode, cursor);
+  const nid = String(params.nodeId || "").trim();
+  const cacheKey = buildCacheKey(params.rootId, params.path, readMode, cursor, nid || undefined);
   const cachedFile = await getCachedFile({
     rootId: params.rootId,
     path: params.path,
     readMode,
     cursor,
-  });
+    nodeId: params.nodeId,
+  } as any);
   const validationMTime =
     hasUsableCachedContent(cachedFile) && typeof cachedFile?.mtime === "string" && cachedFile.mtime
       ? cachedFile.mtime
@@ -563,7 +594,7 @@ export async function fetchFile(params: FetchFileParams): Promise<FilePayload | 
   const request = createFetchOptions(params.timeoutMs);
 
   try {
-    const requestURL = buildFileURL(params.rootId, params.path, readMode, cursor, validationMTime || undefined);
+    const requestURL = buildFileURL(params.rootId, params.path, readMode, cursor, validationMTime || undefined, params.nodeId);
     const headers = e2eeService.isRequired()
       ? await e2eeService.fileProofHeaders("GET", requestURL)
       : undefined;
@@ -581,7 +612,7 @@ export async function fetchFile(params: FetchFileParams): Promise<FilePayload | 
         writeMemoryCache(cacheKey, record!.file);
         return record!.file;
       }
-      const retryURL = buildFileURL(params.rootId, params.path, readMode, cursor);
+      const retryURL = buildFileURL(params.rootId, params.path, readMode, cursor, undefined, params.nodeId);
       const retry = await fetchResponse(
         retryURL,
         {
@@ -628,14 +659,44 @@ export async function fetchFile(params: FetchFileParams): Promise<FilePayload | 
   }
 }
 
-export async function fetchProofProtectedBlob(params: {
+// 成功 blob 缓存：多图 Markdown 中同一路径的图片在组件重挂载/重复渲染时复用，避免重复请求。
+// 缓存的是 Promise（并发去重：同 key 同时发起只打一次网络），LRU 上限逐出；页面刷新即清空。
+// ponytail: 无 TTL，文件内容更新后同路径在缓存逐出前仍返回旧图；如需要可加时间戳失效。
+const rawFileBlobCache = new Map<string, Promise<Blob>>();
+const RAW_FILE_BLOB_CACHE_MAX = 100;
+
+export function fetchProofProtectedBlob(params: {
   rootId: string;
   path: string;
   timeoutMs?: number;
+  nodeId?: string;
 }): Promise<Blob> {
+  params = { ...params, nodeId: params.nodeId || getRootNodeId(params.rootId) };
+  const cacheKey = `${params.rootId}:${params.path}:${params.nodeId || ""}`;
+  const cached = rawFileBlobCache.get(cacheKey);
+  if (cached) return cached;
+  const promise = doFetchProofProtectedBlob(params, cacheKey);
+  rawFileBlobCache.set(cacheKey, promise);
+  if (rawFileBlobCache.size > RAW_FILE_BLOB_CACHE_MAX) {
+    const oldestKey = rawFileBlobCache.keys().next().value;
+    if (oldestKey !== undefined) {
+      rawFileBlobCache.delete(oldestKey);
+    }
+  }
+  promise.catch(() => {
+    if (rawFileBlobCache.get(cacheKey) === promise) {
+      rawFileBlobCache.delete(cacheKey);
+    }
+  });
+  return promise;
+}
+
+async function doFetchProofProtectedBlob(
+  params: { rootId: string; path: string; timeoutMs?: number; nodeId?: string },
+  cacheKey: string,
+): Promise<Blob> {
   const request = createFetchOptions(params.timeoutMs);
   try {
-    const cacheKey = buildRawFileFailureKey(params.rootId, params.path);
     const failedAt = rawFileFailures.get(cacheKey);
     if (failedAt !== undefined) {
       if (Date.now() - failedAt < RAW_FILE_FAILURE_TTL_MS) {
@@ -643,7 +704,7 @@ export async function fetchProofProtectedBlob(params: {
       }
       rawFileFailures.delete(cacheKey);
     }
-    const baseURL = buildFileURL(params.rootId, params.path, "full", 0);
+    const baseURL = buildFileURL(params.rootId, params.path, "full", 0, undefined, params.nodeId);
     const rawURL = withRawFlag(
       baseURL,
     );
@@ -658,7 +719,7 @@ export async function fetchProofProtectedBlob(params: {
       if (response.status === 401 && e2eeService.isRequired()) {
         const payload = (await response.json().catch(() => ({}))) as { error?: string };
         if (e2eeService.handleServerError(String(payload.error || ""))) {
-          return fetchProofProtectedBlob(params);
+          return doFetchProofProtectedBlob(params, cacheKey);
         }
       }
       throw new Error(`open raw file failed: status=${response.status}`);

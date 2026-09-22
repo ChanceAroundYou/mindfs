@@ -3,10 +3,34 @@ package main
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"testing"
 	"time"
+
+	"mindfs/internal/deploy"
 )
+
+func TestServerRunningUsesDeployPrefix(t *testing.T) {
+	previous := deploy.Prefix
+	deploy.Prefix = "/mindfs"
+	t.Cleanup(func() { deploy.Prefix = previous })
+
+	var requestedPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestedPath = r.URL.Path
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	if !serverRunning(server.Listener.Addr().String(), false) {
+		t.Fatal("serverRunning() = false, want true for prefixed health endpoint")
+	}
+	if requestedPath != "/mindfs/health" {
+		t.Fatalf("health check path = %q, want /mindfs/health", requestedPath)
+	}
+}
 
 func TestNormalizeTaskRootFirstArgs(t *testing.T) {
 	got := normalizeTaskRootFirstArgs([]string{"mindfs", "-task", "12", "-next"})

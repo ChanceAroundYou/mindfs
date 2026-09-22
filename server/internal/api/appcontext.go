@@ -15,12 +15,14 @@ import (
 	"mindfs/server/internal/agent"
 	agenttypes "mindfs/server/internal/agent/types"
 	"mindfs/server/internal/api/usecase"
+	"mindfs/server/internal/auth"
 	"mindfs/server/internal/commandexec"
 	"mindfs/server/internal/e2ee"
 	"mindfs/server/internal/fs"
 	"mindfs/server/internal/githubimport"
 	"mindfs/server/internal/gitview"
 	"mindfs/server/internal/kanban"
+	"mindfs/server/internal/nodes"
 	"mindfs/server/internal/notify"
 	"mindfs/server/internal/notifyscript"
 	"mindfs/server/internal/preferences"
@@ -46,9 +48,14 @@ type AppContext struct {
 	Update    *update.Service
 	GitHub    *githubimport.Service
 	E2EE      *e2ee.Manager
+	Auth      *auth.Store
+	// AccountDir 是本账户私有的配置目录（registry/preferences/nodes/prompts/看板模板）。
+	// 主账户为空串时，各 store 会落回进程默认目录。
+	AccountDir string
 	WebPush   *webpush.Service
 	Notify    *notifyscript.Service
 	Prefs     *preferences.Store
+	Nodes     *nodes.Store
 	Scheduled *scheduled.Service
 	Kanban    *kanban.Service
 
@@ -334,7 +341,7 @@ func (s *AppContext) RunAgentStage(ctx context.Context, exec kanban.AgentStageEx
 		Content:         exec.Prompt,
 		UserTimestamp:   userTimestamp,
 		OnStart: func(start usecase.MessageStart) {
-			s.BroadcastSessionUserMessageAt(exec.RootID, sessionKey, session.TypeChat, sessionName, exec.Stage.Agent, start.Model, start.Mode, start.Effort, start.FastService, planMode, exec.Prompt, userTimestamp, start.BaseExchangeSeq)
+			s.BroadcastSessionUserMessageAt(exec.RootID, sessionKey, session.TypeChat, sessionName, exec.Stage.Agent, start.Model, start.ModelDisplayName, start.Mode, start.Effort, start.FastService, planMode, exec.Prompt, userTimestamp, start.UserExchangeSeq, start.BaseExchangeSeq)
 		},
 		OnUpdate: func(update agenttypes.Event) {
 			updateTracker.Begin()
@@ -570,6 +577,26 @@ func (s *AppContext) GetE2EEManager() *e2ee.Manager {
 	return s.E2EE
 }
 
+func (s *AppContext) GetAuthStore() *auth.Store {
+	return s.Auth
+}
+
+// MetaRoot 是本账户私有的 meta 根（会话库/任务库/文件元数据），主账户为空串。
+func (s *AppContext) MetaRoot() string {
+	if s == nil || s.Dirs == nil {
+		return ""
+	}
+	return s.Dirs.MetaRoot()
+}
+
+// ConfigDir 是本账户私有的配置目录（usecase 侧按账户打开 prompts 等按需 store 用）。
+func (s *AppContext) ConfigDir() string {
+	if s == nil {
+		return ""
+	}
+	return s.AccountDir
+}
+
 func (s *AppContext) UpsertRoot(path string) (fs.RootInfo, error) {
 	return s.UpsertRootWithMetaLocation(path, fs.MetaLocationProject)
 }
@@ -646,6 +673,13 @@ func (s *AppContext) RenameRoot(rootID, name, rootPath string) (fs.RootInfo, err
 		}
 	}
 	return dir, nil
+}
+
+func (s *AppContext) UpdateDisplayName(rootID, displayName string) (fs.RootInfo, error) {
+	if s.Dirs == nil {
+		return fs.RootInfo{}, errors.New("registry not configured")
+	}
+	return s.Dirs.UpdateDisplayName(rootID, displayName)
 }
 
 func (s *AppContext) ListRoots() []fs.RootInfo {
@@ -838,13 +872,13 @@ func (s *AppContext) SetSessionPendingReply(rootID, sessionKey, sessionTitle str
 	s.GetSessionStreamHub().SetPendingReply(rootID, sessionKey, sessionTitle)
 }
 
-func (s *AppContext) BroadcastSessionUserMessage(rootID, sessionKey, sessionType, sessionName, agentName, model, mode, effort, fastService string, planMode bool, content string) {
-	s.BroadcastSessionUserMessageAt(rootID, sessionKey, sessionType, sessionName, agentName, model, mode, effort, fastService, planMode, content, time.Now().UTC())
+func (s *AppContext) BroadcastSessionUserMessage(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService string, planMode bool, content string) {
+	s.BroadcastSessionUserMessageAt(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService, planMode, content, time.Now().UTC(), 0)
 }
 
-func (s *AppContext) BroadcastSessionUserMessageAt(rootID, sessionKey, sessionType, sessionName, agentName, model, mode, effort, fastService string, planMode bool, content string, timestamp time.Time, baseExchangeSeq ...int) {
+func (s *AppContext) BroadcastSessionUserMessageAt(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService string, planMode bool, content string, timestamp time.Time, userExchangeSeq int, baseExchangeSeq ...int) {
 	s.ClearTaskAuxFlagsForSession(rootID, sessionKey)
-	s.GetSessionStreamHub().BroadcastSessionUserMessageAt(rootID, sessionKey, sessionType, sessionName, agentName, model, mode, effort, fastService, planMode, content, timestamp, "", false, baseExchangeSeq...)
+	s.GetSessionStreamHub().BroadcastSessionUserMessageAt(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService, planMode, content, timestamp, userExchangeSeq, "", false, baseExchangeSeq...)
 }
 
 func (s *AppContext) BroadcastSessionUpdate(rootID, sessionKey string, update agenttypes.Event) {
@@ -1061,7 +1095,7 @@ func (s *AppContext) rootTitle(rootID string) string {
 	if !ok {
 		return strings.TrimSpace(rootID)
 	}
-	return firstNonBlank(root.Name, root.ID)
+	return firstNonBlank(root.EffectiveName(), root.Name, root.ID)
 }
 
 func (s *AppContext) sessionTitle(rootID, sessionKey string) string {
@@ -1141,7 +1175,7 @@ func (s *AppContext) GetCandidateRegistry() *usecase.CandidateRegistry {
 	if s.candidateRegistry == nil {
 		registry := usecase.NewCandidateRegistry()
 		registry.Register(usecase.NewFileCandidateProvider())
-		if store, err := usecase.NewPromptStore(); err == nil {
+		if store, err := usecase.OpenPromptStore(s.ConfigDir()); err == nil {
 			registry.Register(usecase.NewPromptCandidateProvider(store))
 		}
 		registry.Register(usecase.NewSkillCandidateProvider())

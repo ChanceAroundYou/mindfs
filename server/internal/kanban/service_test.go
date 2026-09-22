@@ -268,6 +268,69 @@ func TestCreateTaskAutoAdvanceControlsQueueAdmission(t *testing.T) {
 	}
 }
 
+func TestNextFinishesFinalStageWaitingUser(t *testing.T) {
+	ctx := context.Background()
+	root := fs.NewRootInfo("root", "root", t.TempDir())
+	store := NewTemplateStoreAt(t.TempDir())
+	svc := NewService(store, testRoots{root: root})
+	runner := &fakeRunner{}
+	svc.SetRunner(runner)
+	tmpl, err := store.SaveTaskTemplate(TaskTemplate{
+		Name: "Single stage",
+		Stages: []TaskTemplateStage{{
+			Position: 0,
+			Snapshot: StageTemplate{
+				Name:        "Describe",
+				Role:        RoleUser,
+				AutoAdvance: false,
+			},
+		}, {
+			Position: 1,
+			Snapshot: StageTemplate{
+				Name:               "Do it",
+				Role:               RoleAgent,
+				Agent:              "codex",
+				Model:              "gpt-5",
+				PromptTemplate:     "Do this:\n{previous_input}", // 非空, 才能建任务
+				AutoAdvance:        false,
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("SaveTaskTemplate: %v", err)
+	}
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, TaskTemplateID: tmpl.ID, Input: "hello"})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	_, err = svc.Next(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID})
+	if err != nil {
+		t.Fatalf("Next: %v", err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		detail, err = svc.GetTask(ctx, root.ID, detail.Task.ID)
+		if err == nil && detail.Task.Status == StatusWaitingUser {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if detail.Task.Status != StatusWaitingUser || detail.Task.CurrentStageIndex != 1 {
+		t.Fatalf("status = %s stage = %d, want waiting_user @1", detail.Task.Status, detail.Task.CurrentStageIndex)
+	}
+	// 最后一阶段等待用户时 Next 应完成而不是报 stage out of range。
+	detail, err = svc.Next(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID, Reason: "done"})
+	if err != nil {
+		t.Fatalf("Next at final stage: %v", err)
+	}
+	if detail.Task.Status != StatusSuccess {
+		t.Fatalf("status = %s, want success", detail.Task.Status)
+	}
+}
+
 func TestNextRequiresCurrentUserInputWhenTargetReferencesIt(t *testing.T) {
 	ctx := context.Background()
 	root := fs.NewRootInfo("root", "root", t.TempDir())

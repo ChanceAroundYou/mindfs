@@ -1,7 +1,7 @@
-import React from "react";
+import React, { memo } from "react";
 import { ProviderModelSelect } from "./ProviderModelSelect";
 import { rootBadgeStyle } from "./rootBadgeStyle";
-import { openExternalURL } from "../services/platformNavigation";
+import { NodeBadgeHeader } from "./NodeBadgeHeader";
 import { isNativeShellRuntime, shouldEnablePWAInstall } from "../services/runtime";
 import {
   DIRECTORY_SORT_OPTIONS,
@@ -9,8 +9,6 @@ import {
   type FileEntry,
   sortDirectoryEntries,
 } from "../services/directorySort";
-import { appPath } from "../services/base";
-import { protectedJSON } from "../services/api";
 import { bootstrapService } from "../services/bootstrap";
 import {
   APPEARANCE_CHANGE_EVENT,
@@ -20,12 +18,16 @@ import {
 } from "../services/appearance";
 import { useI18n, type I18nContextValue, type Locale, type MessageKey } from "../i18n";
 import { useRefreshSpin } from "../hooks";
+import { getNodes } from "../services/nodeRegistry";
+import { NodeManagerPanel } from "./NodeManagerPanel";
+import { AccountPanel } from "./AccountPanel";
+import { scopeKey, treeKey } from "../services/scope";
 import { AgentMenuList } from "./AgentMenuList";
 import { AgentIcon } from "./AgentIcon";
 import { AgentSelector } from "./AgentSelector";
 import { SymlinkBadge } from "./SymlinkBadge";
-import { RelayLocalServicesDialog } from "./RelayLocalServicesDialog";
 import { fetchAgentCatalog, fetchAgents, type AgentStatus } from "../services/agents";
+import { getRootNodeId } from "../services/rootNode";
 import {
   createAgentAPIProvider,
   createAgentConfigBackup,
@@ -79,7 +81,6 @@ type BeforeInstallPromptEvent = Event & {
 };
 
 const PWA_INSTALL_STATE_KEY = "mindfs-pwa-installed";
-const RELAYER_AD_DISMISS_STORAGE_KEY = "mindfs-relayer-ad-dismissed";
 
 const APPEARANCE_OPTIONS: Array<{ value: AppearanceMode; labelKey: MessageKey }> = [
   { value: "dark", labelKey: "appearance.dark" },
@@ -103,22 +104,30 @@ const DIRECTORY_SORT_LABEL_KEYS: Partial<Record<DirectorySortMode, MessageKey>> 
   "size-asc": "sort.sizeAsc",
 };
 
-type RelayTip = {
-  id: string;
-  badge?: string;
-  eyebrow?: string;
-  title: string;
-  description?: string;
-  cta_label?: string;
-  href?: string;
-  target?: "_blank" | "_self";
-  dismissible?: boolean;
-};
-
 type FileMeta = {
   source_session?: string;
   session_name?: string;
 };
+
+function fileTreeHexToRgba(hex: string, alpha: number): string {
+  const h = String(hex || "").trim().replace(/^#/, "");
+  const fallback = `rgba(37, 99, 235, ${alpha})`;
+  if (h.length === 3) {
+    const r = parseInt(h[0] + h[0], 16);
+    const g = parseInt(h[1] + h[1], 16);
+    const b = parseInt(h[2] + h[2], 16);
+    if (Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b)) return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    return fallback;
+  }
+  if (h.length === 6) {
+    const r = parseInt(h.slice(0, 2), 16);
+    const g = parseInt(h.slice(2, 4), 16);
+    const b = parseInt(h.slice(4, 6), 16);
+    if (Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b)) return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+  if (/^rgba?\(/.test(String(hex || ""))) return String(hex);
+  return fallback;
+}
 
 type RootSessionIndicator = {
   bound?: boolean;
@@ -148,12 +157,15 @@ type FileTreeProps = {
   selectedDirKey?: string | null;
   selectedPath?: string | null;
   rootId?: string | null;
+  rootNodeId?: string | null;
+  rootColor?: string | null;
   rootSessionIndicators?: Record<string, RootSessionIndicator>;
   fileMetas?: Record<string, FileMeta>;
   activeSessionKey?: string | null;
   onSortModeChange?: (mode: DirectorySortMode) => void;
   onShowHiddenFilesChange?: (show: boolean) => void;
   onRefresh?: (tab: ProjectTreeTab) => void | Promise<void>;
+  onNodeManagerRefresh?: () => Promise<void>;
   onSelectFile?: (entry: FileEntry, rootId: string) => void;
   onSelectRoot?: (entry: FileEntry, rootId: string) => void;
   onToggleDir?: (entry: FileEntry, rootId: string) => void;
@@ -170,18 +182,10 @@ type FileTreeProps = {
   creatingRootSubmitOnBlur?: boolean;
   onCreateRootStart?: () => void;
   onOpenProjectAdd?: () => void;
-  onStartOnboarding?: () => void;
   onCreateRootNameChange?: (name: string) => void;
   onCreateRootSubmit?: () => void;
   onCreateRootCancel?: () => void;
   projectAddOverlay?: React.ReactNode;
-  relayActionLabel?: string | null;
-  relayActionDisabled?: boolean;
-  relayActionHelp?: string | null;
-  onRelayAction?: () => void;
-  relayNodeId?: string;
-  relayBaseURL?: string;
-  relayNoRelayer?: boolean;
   updateActionLabel?: string | null;
   updateActionDisabled?: boolean;
   updateActionHelp?: string | null;
@@ -1430,7 +1434,10 @@ const agentConfigIconButtonStyle = (disabled: boolean): React.CSSProperties => (
   flexShrink: 0,
 });
 
-export function FileTree({
+// memo 化：父组件（App）高频重渲染时，若 FileTree 数据 props 未变则跳过整棵目录树重渲染。
+// 注：回调 props 多为 inline 箭头，浅比较下仍会触发重渲染；但文件树数据 props（entries/expanded 等）
+// 稳定时（如仅 status/toast 变化）可避免昂贵的递归渲染。
+function FileTreeInner({
   entries,
   childrenByPath,
   expanded,
@@ -1439,12 +1446,14 @@ export function FileTree({
   selectedDirKey,
   selectedPath,
   rootId,
+  rootColor = null,
+  rootNodeId = null,
   rootSessionIndicators = {},
   fileMetas = {},
   activeSessionKey,
   onSortModeChange,
-  onShowHiddenFilesChange,
   onRefresh,
+  onNodeManagerRefresh,
   onSelectFile,
   onSelectRoot,
   onToggleDir,
@@ -1461,18 +1470,10 @@ export function FileTree({
   creatingRootSubmitOnBlur = true,
   onCreateRootStart,
   onOpenProjectAdd,
-  onStartOnboarding,
   onCreateRootNameChange,
   onCreateRootSubmit,
   onCreateRootCancel,
   projectAddOverlay,
-  relayActionLabel = null,
-  relayActionDisabled = false,
-  relayActionHelp = null,
-  onRelayAction,
-  relayNodeId = "",
-  relayBaseURL = "",
-  relayNoRelayer = false,
   updateActionLabel = null,
   updateActionDisabled = false,
   updateActionHelp = null,
@@ -1505,6 +1506,8 @@ export function FileTree({
   }, [t]);
   const expandedSet = new Set(expanded);
   const [isMenuOpen, setIsMenuOpen] = React.useState(false);
+  const [nodeManagerOpen, setNodeManagerOpen] = React.useState(false);
+  const [accountPanelOpen, setAccountPanelOpen] = React.useState(false);
   const [projectTreeTab, setProjectTreeTab] = React.useState<ProjectTreeTab>(() => {
     if (typeof window === "undefined") {
       return "files";
@@ -1551,11 +1554,9 @@ export function FileTree({
   const [deferredInstallPrompt, setDeferredInstallPrompt] = React.useState<BeforeInstallPromptEvent | null>(null);
   const [isInstalled, setIsInstalled] = React.useState(false);
   const [isInstallCapable, setIsInstallCapable] = React.useState(false);
-  const [relayTips, setRelayTips] = React.useState<RelayTip[]>([]);
   const [protectedAPIReady, setProtectedAPIReady] = React.useState(() =>
     bootstrapService.canUseProtectedAPI(),
   );
-  const [activeRelayTipIndex, setActiveRelayTipIndex] = React.useState(0);
   const [agentConfigFlow, setAgentConfigFlow] = React.useState<AgentConfigFlow | null>(null);
   const [agentConfigStep, setAgentConfigStep] = React.useState<AgentConfigStep>("agent");
   const [agentConfigAgents, setAgentConfigAgents] = React.useState<AgentStatus[]>([]);
@@ -1585,40 +1586,15 @@ export function FileTree({
   const [providerTestResults, setProviderTestResults] = React.useState<Record<string, string>>({});
   const [providerTestModels, setProviderTestModels] = React.useState<Record<string, string>>({});
   const [agentLifecycleOpen, setAgentLifecycleOpen] = React.useState(false);
-  const [relayServicesOpen, setRelayServicesOpen] = React.useState(false);
-  const [relayServicesEditing, setRelayServicesEditing] = React.useState(false);
   const [agentLifecycleAgents, setAgentLifecycleAgents] = React.useState<AgentStatus[]>([]);
   const [agentLifecycleBusy, setAgentLifecycleBusy] = React.useState(false);
   const [agentLifecycleRunningAgent, setAgentLifecycleRunningAgent] = React.useState("");
   const [agentLifecycleError, setAgentLifecycleError] = React.useState("");
-  const [dismissedRelayTipIds, setDismissedRelayTipIds] = React.useState<string[]>(() => {
-    if (typeof window === "undefined") {
-      return [];
-    }
-    try {
-      const raw = window.localStorage.getItem(RELAYER_AD_DISMISS_STORAGE_KEY);
-      if (!raw) {
-        return [];
-      }
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        return parsed.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
-      }
-      return typeof parsed === "string" && parsed.trim().length > 0 ? [parsed] : [];
-    } catch {
-      try {
-        const legacy = window.localStorage.getItem(RELAYER_AD_DISMISS_STORAGE_KEY);
-        return legacy && legacy.trim().length > 0 ? [legacy] : [];
-      } catch {
-        return [];
-      }
-    }
-  });
   const menuRef = React.useRef<HTMLDivElement | null>(null);
   const agentConfigPopoverRef = React.useRef<HTMLDivElement | null>(null);
   const agentLifecyclePopoverRef = React.useRef<HTMLDivElement | null>(null);
-  const relayServicesPopoverRef = React.useRef<HTMLDivElement | null>(null);
   const sendShortcutPopoverRef = React.useRef<HTMLDivElement | null>(null);
+  const accountButtonRef = React.useRef<HTMLButtonElement | null>(null);
   const updateNotesRef = React.useRef<HTMLDivElement | null>(null);
   const createInputRef = React.useRef<HTMLInputElement | null>(null);
   const previousCreatingRootNameRef = React.useRef<string | null>(null);
@@ -1837,61 +1813,13 @@ export function FileTree({
 
   const shouldShowInstallButton = !isNativeApp && !isKnownInstalled && !(isAndroidChrome && !deferredInstallPrompt);
   const shouldShowInstallHelp = !isNativeApp && (!!installHelp) && (isKnownInstalled || isIOS || isMacSafari || isDesktopChromium || deferredInstallPrompt !== null || (isAndroidChrome && !deferredInstallPrompt));
-  const visibleRelayTips = React.useMemo(
-    () => relayTips.filter((tip) => tip.id && tip.title && !dismissedRelayTipIds.includes(tip.id)),
-    [dismissedRelayTipIds, relayTips],
-  );
-  const relayTip = visibleRelayTips.length > 0
-    ? visibleRelayTips[((activeRelayTipIndex % visibleRelayTips.length) + visibleRelayTips.length) % visibleRelayTips.length]
-    : null;
-  const shouldShowRelayTip = Boolean(relayTip);
-  const shouldShowNextRelayTip = visibleRelayTips.length > 1;
   const hasFooterContent =
     !!updateActionLabel ||
     !!updateActionHelp ||
     !!footerTopContent ||
-    !!relayActionLabel ||
-    !!relayActionHelp ||
-    shouldShowRelayTip ||
     (isNativeApp && !!onGoHome) ||
     shouldShowInstallButton ||
     shouldShowInstallHelp;
-
-  const dismissRelayTip = React.useCallback(() => {
-    if (!relayTip?.id) {
-      return;
-    }
-    setDismissedRelayTipIds((current) => {
-      if (current.includes(relayTip.id)) {
-        return current;
-      }
-      const next = [...current, relayTip.id];
-      if (typeof window !== "undefined") {
-        try {
-          window.localStorage.setItem(RELAYER_AD_DISMISS_STORAGE_KEY, JSON.stringify(next));
-        } catch {
-        }
-      }
-      return next;
-    });
-    setActiveRelayTipIndex((current) => {
-      if (visibleRelayTips.length <= 1) {
-        return 0;
-      }
-      return current % (visibleRelayTips.length - 1);
-    });
-  }, [relayTip, visibleRelayTips.length]);
-
-  const openRelayTip = React.useCallback(() => {
-    if (typeof window === "undefined" || !relayTip?.href) {
-      return;
-    }
-    if (relayTip.target === "_self") {
-      window.location.assign(relayTip.href);
-      return;
-    }
-    openExternalURL(relayTip.href);
-  }, [relayTip]);
 
   const handleInstall = React.useCallback(async () => {
     if (isKnownInstalled) {
@@ -1951,57 +1879,6 @@ export function FileTree({
   }, []);
 
   React.useEffect(() => {
-    if (!protectedAPIReady) return;
-    let cancelled = false;
-    fetchIdleSessionResourceReleasePreference()
-      .then((preference) => {
-        if (!cancelled) setIdleReleaseHours(String(preference.hours));
-      })
-      .catch(() => {});
-    fetchNewProjectMetaLocationPreference()
-      .then((location) => {
-        if (!cancelled) setNewProjectMetaLocation(location);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [protectedAPIReady]);
-
-  React.useEffect(() => {
-    let cancelled = false;
-    const controller = new AbortController();
-
-    const loadRelayTip = async () => {
-      if (!protectedAPIReady) {
-        setRelayTips([]);
-        return;
-      }
-      try {
-        const payload = await protectedJSON<RelayTip | RelayTip[] | null>(appPath("/api/relay/tips"), { signal: controller.signal });
-        if (!cancelled) {
-          const nextTips = Array.isArray(payload)
-            ? payload.filter((tip): tip is RelayTip => Boolean(tip?.id && tip?.title))
-            : payload && payload.id && payload.title
-              ? [payload]
-              : [];
-          setRelayTips(nextTips);
-        }
-      } catch {
-        if (!cancelled) {
-          setRelayTips([]);
-        }
-      }
-    };
-
-    loadRelayTip();
-    return () => {
-      cancelled = true;
-      controller.abort();
-    };
-  }, [protectedAPIReady]);
-
-  React.useEffect(() => {
     if (!isUpdateNotesOpen || typeof document === "undefined") {
       return;
     }
@@ -2048,8 +1925,26 @@ export function FileTree({
     return () => document.removeEventListener("mousedown", handlePointerDown);
   }, [sendShortcutOpen]);
 
+  React.useEffect(() => {
+    if (!protectedAPIReady) return;
+    let cancelled = false;
+    fetchIdleSessionResourceReleasePreference()
+      .then((preference) => {
+        if (!cancelled) setIdleReleaseHours(String(preference.hours));
+      })
+      .catch(() => {});
+    fetchNewProjectMetaLocationPreference()
+      .then((location) => {
+        if (!cancelled) setNewProjectMetaLocation(location);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [protectedAPIReady]);
+
   const openAgentConfigFlow = React.useCallback((flow: AgentConfigFlow) => {
-	setIdleReleaseOpen(false);
+    setIdleReleaseOpen(false);
     setAgentLifecycleOpen(false);
     agentConfigFlowVersion.current += 1;
     setAgentConfigNotice("");
@@ -2075,7 +1970,7 @@ export function FileTree({
     setAgentConfigRestartingAgent("");
     setIsMenuOpen(false);
     setAgentConfigBusy(true);
-    fetchAgents(true)
+    fetchAgents(true, getRootNodeId(rootId || "") as any)
       .then((items) => {
         setAgentConfigAgents(items.filter((item) => item.installed));
       })
@@ -2083,20 +1978,19 @@ export function FileTree({
         setAgentConfigError(error instanceof Error ? error.message : t("agentConfig.loadAgentFailed"));
       })
       .finally(() => setAgentConfigBusy(false));
-  }, [t]);
+  }, [t, rootId]);
 
   const openSessionNaming = React.useCallback(() => {
-	setIdleReleaseOpen(false);
+    setIdleReleaseOpen(false);
     agentConfigFlowVersion.current += 1;
     setAgentConfigNotice("");
     setAgentConfigFlow(null);
     setAgentLifecycleOpen(false);
-    setRelayServicesOpen(false);
     setIsMenuOpen(false);
     setSessionNamingOpen(true);
     setSessionNamingBusy(true);
     setSessionNamingError("");
-    Promise.all([fetchAgents(true), fetchSessionNamingPreference()])
+    Promise.all([fetchAgents(true, getRootNodeId(rootId || "") as any), fetchSessionNamingPreference()])
       .then(([items, preference]) => {
         const installed = items.filter((item) => item.installed);
         setSessionNamingAgents(installed);
@@ -2135,8 +2029,6 @@ export function FileTree({
     setAgentConfigNotice("");
     setAgentConfigFlow(null);
     setAgentLifecycleOpen(false);
-    setRelayServicesOpen(false);
-    setSessionNamingOpen(false);
     setIsMenuOpen(false);
     setIdleReleaseOpen(true);
     setIdleReleaseBusy(true);
@@ -2154,7 +2046,6 @@ export function FileTree({
     setAgentConfigNotice("");
     setAgentConfigFlow(null);
     setAgentLifecycleOpen(false);
-    setRelayServicesOpen(false);
     setSessionNamingOpen(false);
     setIdleReleaseOpen(false);
     setIsMenuOpen(false);
@@ -2220,7 +2111,7 @@ export function FileTree({
     setAgentConfigRestartingAgent("");
     setIsMenuOpen(false);
     setAgentConfigBusy(true);
-    fetchAgents(true)
+    fetchAgents(true, getRootNodeId(rootId || "") as any)
       .then((items) => {
         setAgentConfigAgents(items.filter((item) => item.installed));
       })
@@ -2228,7 +2119,7 @@ export function FileTree({
         setAgentConfigError(error instanceof Error ? error.message : t("agentConfig.loadAgentFailed"));
       })
       .finally(() => setAgentConfigBusy(false));
-  }, [agentConfigSwitchRequest?.nonce, t]);
+  }, [agentConfigSwitchRequest?.nonce, rootId, t]);
 
   const closeAgentConfigFlow = React.useCallback(() => {
     agentConfigFlowVersion.current += 1;
@@ -2250,7 +2141,7 @@ export function FileTree({
     setIsMenuOpen(false);
     setAgentLifecycleError("");
     setAgentLifecycleBusy(true);
-    fetchAgentCatalog(true)
+    fetchAgentCatalog(true, getRootNodeId(rootId || "") as any)
       .then((items) => {
         setAgentLifecycleAgents(items);
       })
@@ -2258,7 +2149,7 @@ export function FileTree({
         setAgentLifecycleError(error instanceof Error ? error.message : t("agentConfig.loadAgentFailed"));
       })
       .finally(() => setAgentLifecycleBusy(false));
-  }, [t]);
+  }, [rootId, t]);
 
   const closeAgentLifecycleFlow = React.useCallback(() => {
     setAgentLifecycleOpen(false);
@@ -2291,27 +2182,6 @@ export function FileTree({
     document.addEventListener("mousedown", handlePointerDown);
     return () => document.removeEventListener("mousedown", handlePointerDown);
   }, [agentLifecycleOpen, closeAgentLifecycleFlow]);
-
-  React.useEffect(() => {
-    if (!relayServicesOpen) {
-      return;
-    }
-    const handlePointerDown = (event: MouseEvent) => {
-      if (relayServicesEditing) {
-        return;
-      }
-      if (!relayServicesPopoverRef.current?.contains(event.target as Node)) {
-        setRelayServicesOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handlePointerDown);
-    return () => document.removeEventListener("mousedown", handlePointerDown);
-  }, [relayServicesEditing, relayServicesOpen]);
-
-  const closeRelayServices = React.useCallback(() => {
-    setRelayServicesOpen(false);
-    setRelayServicesEditing(false);
-  }, []);
 
   const runAgentLifecycleCommand = React.useCallback(async (agent: AgentStatus, action: AgentLifecycleCommandAction) => {
     const commands = action === "install" ? agent.install_commands || [] : agent.update_commands || [];
@@ -2624,24 +2494,9 @@ export function FileTree({
     setProviderTestModels((previous) => ({ ...previous, [trimmedID]: model }));
   }, []);
 
-  React.useEffect(() => {
-    if (visibleRelayTips.length === 0) {
-      setActiveRelayTipIndex(0);
-      return;
-    }
-    setActiveRelayTipIndex((current) => current % visibleRelayTips.length);
-  }, [visibleRelayTips.length]);
-
-  const showNextRelayTip = React.useCallback(() => {
-    if (visibleRelayTips.length <= 1) {
-      return;
-    }
-    setActiveRelayTipIndex((current) => (current + 1) % visibleRelayTips.length);
-  }, [visibleRelayTips.length]);
-
-  const childKeyFor = (entry: FileEntry, entryRoot: string) => {
-    if (entry.is_root) return `${entry.path}:.`;
-    return `${entryRoot}:${entry.path}`;
+  const childKeyFor = (entry: FileEntry, entryRoot: string, sectionNodeId: string) => {
+    if (entry.is_root) return treeKey(sectionNodeId, entry.path, ".");
+    return treeKey(sectionNodeId, entryRoot, entry.path);
   };
 
   const visibleEntries = React.useCallback((items: FileEntry[], depth = 0) => {
@@ -2660,7 +2515,7 @@ export function FileTree({
     { region: "sessionSidebar", labelKey: "fileTree.fontSizeSessionSidebar" },
   ];
 
-  const renderEntries = (items: FileEntry[], depth: number, branchRoot: string) => (
+  const renderEntries = (items: FileEntry[], depth: number, branchRoot: string, groupColor?: string, sectionNodeId?: string) => (
     <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
       {depth === 0 && creatingRootName !== null ? (
         <li key="__draft_root__">
@@ -2762,24 +2617,42 @@ export function FileTree({
       {sortDirectoryEntries(visibleEntries(items, depth), sortMode).map((entry) => {
         const isManagedRootNode = entry.is_root === true;
         const entryRoot = isManagedRootNode ? entry.path : branchRoot;
-        const expandedKey = isManagedRootNode ? entry.path : `${entryRoot}:${entry.path}`;
+        // 多节点：条目节点取所属分组注入的 sectionNodeId（root 条目带回 _nodeId 时优先自身）
+        const entryNodeId = String(
+          (entry as any)?._nodeId || sectionNodeId || "",
+        ).trim();
+        const expandedKey = isManagedRootNode
+          ? scopeKey(entryNodeId, entry.path)
+          : treeKey(entryNodeId, entryRoot, entry.path);
         const isOpen = expandedSet.has(expandedKey);
 
-        const cKey = childKeyFor(entry, entryRoot);
+        const cKey = childKeyFor(entry, entryRoot, entryNodeId);
         const children = childrenByPath[cKey] ?? [];
 
-        const isCurrentRootNode = isManagedRootNode && entry.path === rootId;
+        const isCurrentRootNode =
+          isManagedRootNode &&
+          entry.path === rootId &&
+          String((entry as any)._nodeId || "") === String(rootNodeId || "");
+        const isSelectedNode =
+          String((entry as any)._nodeId || "") === String(rootNodeId || "");
         // 普通目录沿用 selectedDirKey；当前 managed root 永远跟随 current root 高亮。
+        // 多节点同名项目：selectedDirKey 为裸 rootId，须叠加节点匹配，避免两侧同时高亮。
         const isSelected =
           entry.is_dir
-            ? isCurrentRootNode || selectedDirKey === expandedKey
-            : entry.path === selectedPath && entryRoot === rootId;
+            ? isCurrentRootNode || (isSelectedNode && selectedDirKey === expandedKey)
+            : entry.path === selectedPath &&
+              entryRoot === rootId &&
+              String(entryNodeId) === String(rootNodeId || "");
+
+        // 选中态中性灰条 + 节点色文字：文件/目录选中时文字用所属项目节点色
+        const selectedNodeColor = String((entry as any)._nodeColor || "").trim();
+        const effectiveSelectedColor = isSelected ? (selectedNodeColor || String(groupColor || "").trim() || "") : "";
 
         const meta = fileMetas[entry.path];
         const hasSessionLink = !entry.is_dir && meta?.source_session;
         const isFromActiveSession = hasSessionLink && meta.source_session === activeSessionKey;
         const rootIndicator = isManagedRootNode
-          ? rootSessionIndicators[entry.path] || {}
+          ? rootSessionIndicators[scopeKey(entryNodeId, entry.path)] || {}
           : null;
         const showRootIndicator = !!rootIndicator?.bound;
         const isRootPending = !!rootIndicator?.pending;
@@ -2820,7 +2693,7 @@ export function FileTree({
               onClick={handleEntryClick}
               style={{
                 border: "none",
-                background: isSelected ? "var(--selection-bg)" : "transparent",
+                background: isSelected ? "var(--node-row-selected-bg)" : "transparent",
                 cursor: "pointer",
                 padding: "6px 8px",
                 paddingLeft: PROJECT_TREE_ROOT_PADDING_LEFT + depth * PROJECT_TREE_INDENT,
@@ -2829,11 +2702,11 @@ export function FileTree({
                 gap: "4px",
                 width: "100%",
                 textAlign: "left",
-                color: isSelected ? "var(--accent-color)" : "var(--text-primary)",
+                color: isSelected ? (effectiveSelectedColor || "var(--accent-color)") : "var(--text-primary)",
                 fontSize: "13px",
                 borderRadius: "6px",
                 transition: "all 0.1s",
-                fontWeight: isSelected ? 600 : 400,
+                fontWeight: isManagedRootNode ? 600 : 400,
                 outline: "none",
               }}
               onMouseEnter={(e) => { if (!isSelected) e.currentTarget.style.background = "rgba(0,0,0,0.04)"; }}
@@ -2861,16 +2734,26 @@ export function FileTree({
                   marginLeft: "4px",
                 }}
               >
-                <span
-                  style={{
-                    ...(isManagedRootNode ? rootBadgeStyle : {}),
-                    maxWidth: "100%",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                  }}
-                >
-                  {entry.name}
-                </span>
+                {(() => {
+                  const exAny = entry as any;
+                  const nodeColor = String(exAny._nodeColor || "#6d5bcf").trim() || "#6d5bcf";
+                  const styleForRoot = isManagedRootNode
+                    ? { ...rootBadgeStyle, background: "var(--node-badge-bg)", color: nodeColor, fontWeight: 600 as const }
+                    : {};
+                  return (
+                    <span
+                      style={{
+                        ...styleForRoot,
+                        maxWidth: "100%",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        fontWeight: isManagedRootNode ? 600 : 400,
+                      }}
+                    >
+                      {entry.name}
+                    </span>
+                  );
+                })()}
               </span>
               {showRootIndicator ? (
                 <span
@@ -2882,22 +2765,22 @@ export function FileTree({
                     borderRadius: "999px",
                     flexShrink: 0,
                     boxSizing: "border-box",
-                    border: "1.5px solid #2563eb",
-                    background: isRootPending ? "#2563eb" : "transparent",
+                    border: `1.5px solid ${String(groupColor || (entry as any)?._nodeColor || "#2563eb").trim() || "#2563eb"}`,
+                    background: isRootPending ? (String(groupColor || (entry as any)?._nodeColor || "#2563eb").trim() || "#2563eb") : "transparent",
                     animation: isRootPending ? "mindfs-bound-pulse 2.2s ease-in-out infinite" : "none",
                     boxShadow: isRootPending
-                      ? "0 0 0 1.5px rgba(37,99,235,0.14)"
-                      : "0 0 0 1px rgba(37,99,235,0.10)",
+                      ? `0 0 0 1.5px ${fileTreeHexToRgba(String(groupColor || (entry as any)?._nodeColor || "#2563eb").trim() || "#2563eb", 0.14)}`
+                      : `0 0 0 1px ${fileTreeHexToRgba(String(groupColor || (entry as any)?._nodeColor || "#2563eb").trim() || "#2563eb", 0.10)}`,
                   }}
                 />
               ) : null}
               {hasSessionLink && (
-                <span style={{ fontSize: "10px", color: isFromActiveSession ? "#3b82f6" : "#9ca3af" }}>
+                <span style={{ fontSize: "10px", color: isFromActiveSession ? (String(groupColor || (entry as any)?._nodeColor || "#3b82f6").trim() || "#3b82f6") : "#9ca3af" }}>
                   {isFromActiveSession ? "◆" : "◇"}
                 </span>
               )}
             </button>
-            {entry.is_dir && isOpen && shouldRenderChildren && children.length > 0 ? renderEntries(children, depth + 1, entryRoot) : null}
+            {entry.is_dir && isOpen && shouldRenderChildren && children.length > 0 ? renderEntries(children, depth + 1, entryRoot, groupColor || (entry as any)._nodeColor || (isManagedRootNode ? String((entry as any)._nodeColor || "") : groupColor), entryNodeId) : null}
             {entry.is_dir && isOpen && rootExtraContent ? (
               <div style={{ padding: `2px 4px 8px ${PROJECT_TREE_INDENT}px` }}>
                 {rootExtraContent}
@@ -2910,7 +2793,7 @@ export function FileTree({
   );
 
   return (
-    <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+    <div style={{ flex: 1, minHeight: 0, height: "100%", display: "flex", flexDirection: "column" }}>
       <div style={{ position: "relative", height: "36px", padding: "0 3px", borderBottom: "1px solid var(--border-color)", display: "flex", justifyContent: "space-between", alignItems: "center", background: "var(--mindfs-topbar-bg, transparent)", boxSizing: "border-box", flexShrink: 0, gap: 0, overflow: "visible" }}>
         <div style={{ display: "flex", alignItems: "center", minWidth: 0, flex: "1 1 auto", maxWidth: "calc(100% - 56px)", marginRight: "6px" }}>
           <div
@@ -2937,6 +2820,7 @@ export function FileTree({
             ] as const).map(([value, label], index) => {
               const active = projectTreeTab === value;
               const flexGrow = value === "related" ? 1.45 : value === "worktrees" ? 1.15 : 0.85;
+              const tabAccent = String(rootColor || "").trim() || String((entries as any[])?.[0] ? String(((entries as any[])[0] as any)?._nodeColor || "").trim() : "").trim() || String((() => { try { const ns = getNodes(); const cur = ns.find(n => n.id === String(rootId || "").trim()) || ns[0]; return cur?.color || ""; } catch { return ""; } })()) || "#2563eb";
               return (
                 <React.Fragment key={value}>
                   {index > 0 ? (
@@ -2959,7 +2843,7 @@ export function FileTree({
                     style={{
                       border: "none",
                       borderRadius: "6px",
-                      background: active ? "var(--accent-color)" : "transparent",
+                      background: active ? tabAccent : "transparent",
                       color: active ? "#fff" : "var(--text-secondary)",
                       padding: "3px 5px",
                       fontSize: "11px",
@@ -2969,7 +2853,7 @@ export function FileTree({
                       whiteSpace: "nowrap",
                       minWidth: 0,
                       flex: `${flexGrow} 1 auto`,
-                      boxShadow: active ? "0 1px 3px rgba(37, 99, 235, 0.28)" : "none",
+                      boxShadow: active ? `0 1px 3px ${fileTreeHexToRgba(tabAccent, 0.28)}` : "none",
                     }}
                   >
                     {label}
@@ -3078,8 +2962,6 @@ export function FileTree({
                 width: "var(--mindfs-file-menu-width, 182px)",
                 maxWidth: "calc(100vw - 16px)",
                 padding: "6px",
-                boxSizing: "border-box",
-                whiteSpace: "nowrap",
                 borderRadius: "10px",
                 border: "1px solid var(--border-color)",
                 background: "var(--menu-bg)",
@@ -3121,6 +3003,24 @@ export function FileTree({
                   </svg>
                   <span>{t("fileTree.addProject")}</span>
                 </button>
+                <div style={{ height: "1px", background: "var(--border-color)", margin: "6px 4px" }} />
+                <button type="button" onClick={() => { setIsMenuOpen(false); setNodeManagerOpen(true); }} style={fileTreeMenuButtonStyle}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="3" width="18" height="7" rx="2" />
+                    <rect x="3" y="14" width="18" height="7" rx="2" />
+                    <path d="M7 6.5h.01" />
+                    <path d="M7 17.5h.01" />
+                  </svg>
+                  <span>{t("nodeManager.title")}</span>
+                </button>
+                <button type="button" ref={accountButtonRef} onClick={() => { setIsMenuOpen(false); setAccountPanelOpen(true); }} style={fileTreeMenuButtonStyle}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                    <circle cx="12" cy="7" r="4" />
+                  </svg>
+                  <span>{t("account.title")}</span>
+                </button>
+                <div style={{ height: "1px", background: "var(--border-color)", margin: "6px 4px" }} />
                 <button
                   type="button"
                   onClick={() => openAgentConfigFlow("backup")}
@@ -3178,28 +3078,6 @@ export function FileTree({
                   >
                     {idleReleaseHours || "72"}h
                   </span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setRelayServicesOpen(true);
-                    setRelayServicesEditing(false);
-                    closeAgentConfigFlow();
-                    setAgentLifecycleOpen(false);
-                    setIsMenuOpen(false);
-                    setIsAppearanceMenuOpen(false);
-                    setIsLocaleMenuOpen(false);
-                    setIsSortMenuOpen(false);
-                  }}
-                  style={fileTreeMenuButtonStyle}
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <path d="M4 17V7a2 2 0 0 1 2-2h6" />
-                    <path d="M8 21h8a2 2 0 0 0 2-2v-6" />
-                    <path d="M14 3h7v7" />
-                    <path d="m21 3-9 9" />
-                  </svg>
-                  <span>{t("fileTree.relayLocalServices")}</span>
                 </button>
                 {!isNativeApp ? <WebPushMenuItem /> : null}
                 <div style={{ height: "1px", background: "var(--border-color)", margin: "6px 4px" }} />
@@ -3480,132 +3358,6 @@ export function FileTree({
                 );
               }) : null}
               <div style={{ height: "1px", background: "var(--border-color)", margin: "6px 4px" }} />
-              {onStartOnboarding ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    onStartOnboarding();
-                    setIsMenuOpen(false);
-                    setIsAppearanceMenuOpen(false);
-                    setIsLocaleMenuOpen(false);
-                    setIsSortMenuOpen(false);
-                  }}
-                  style={fileTreeMenuButtonStyle}
-                >
-                  <OnboardingGuideIcon />
-                  <span>{t("onboarding.menu")}</span>
-                </button>
-              ) : null}
-              <button
-                type="button"
-                onClick={() => {
-                  onShowHiddenFilesChange?.(!showHiddenFiles);
-                  setIsAppearanceMenuOpen(false);
-                  setIsSortMenuOpen(false);
-                }}
-                style={{
-                  width: "100%",
-                  border: "none",
-                  background: showHiddenFiles ? "var(--selection-bg)" : "transparent",
-                  color: showHiddenFiles ? "var(--accent-color)" : "var(--text-primary)",
-                  borderRadius: "8px",
-                  padding: "8px 10px",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  textAlign: "left",
-                  cursor: "pointer",
-                  fontSize: "12px",
-                }}
-              >
-                <span>{t("fileTree.showHiddenFiles")}</span>
-                <span style={{ fontSize: "11px", opacity: showHiddenFiles ? 1 : 0 }}>✓</span>
-              </button>
-              <button
-                type="button"
-                disabled={newProjectMetaLocationBusy}
-                onClick={() => {
-                  if (newProjectMetaLocationBusy) return;
-                  const previous = newProjectMetaLocation;
-                  const next = previous === "home" ? "project" : "home";
-                  setNewProjectMetaLocation(next);
-                  setNewProjectMetaLocationBusy(true);
-                  updateNewProjectMetaLocationPreference(next)
-                    .then(setNewProjectMetaLocation)
-                    .catch(() => setNewProjectMetaLocation(previous))
-                    .finally(() => setNewProjectMetaLocationBusy(false));
-                }}
-                style={{
-                  width: "100%",
-                  border: "none",
-                  background: "transparent",
-                  color: "var(--text-primary)",
-                  borderRadius: "8px",
-                  padding: "8px 10px",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "8px",
-                  textAlign: "left",
-                  cursor: newProjectMetaLocationBusy ? "default" : "pointer",
-                  fontSize: "12px",
-                  opacity: newProjectMetaLocationBusy ? 0.65 : 1,
-                }}
-              >
-                <span style={{ flex: 1 }}>{t("fileTree.newProjectMetaLocation")}</span>
-                <span style={{ color: "var(--text-secondary)", fontSize: "11px" }}>
-                  {t(newProjectMetaLocation === "home" ? "fileTree.metaLocationHome" : "fileTree.metaLocationProject")}
-                </span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  onMultiProjectSessionsChange?.(!multiProjectSessionsEnabled);
-                  setIsAppearanceMenuOpen(false);
-                  setIsSortMenuOpen(false);
-                }}
-                style={{
-                  width: "100%",
-                  border: "none",
-                  background: multiProjectSessionsEnabled ? "var(--selection-bg)" : "transparent",
-                  color: multiProjectSessionsEnabled ? "var(--accent-color)" : "var(--text-primary)",
-                  borderRadius: "8px",
-                  padding: "8px 10px",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  textAlign: "left",
-                  cursor: "pointer",
-                  fontSize: "12px",
-                }}
-              >
-                <span>{t("fileTree.multiProjectSessions")}</span>
-                <span style={{ fontSize: "11px", opacity: multiProjectSessionsEnabled ? 1 : 0 }}>✓</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  onSidebarsSwappedChange?.(!sidebarsSwapped);
-                  setIsAppearanceMenuOpen(false);
-                  setIsSortMenuOpen(false);
-                }}
-                style={{
-                  width: "100%",
-                  border: "none",
-                  background: sidebarsSwapped ? "var(--selection-bg)" : "transparent",
-                  color: sidebarsSwapped ? "var(--accent-color)" : "var(--text-primary)",
-                  borderRadius: "8px",
-                  padding: "8px 10px",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  textAlign: "left",
-                  cursor: "pointer",
-                  fontSize: "12px",
-                }}
-              >
-                <span>{t("fileTree.swapSidebars")}</span>
-                <span style={{ fontSize: "11px", opacity: sidebarsSwapped ? 1 : 0 }}>✓</span>
-              </button>
               <button
                 type="button"
                 onClick={() => {
@@ -3670,6 +3422,41 @@ export function FileTree({
                   </span>
                 </button>
               ) : null}
+              <button
+                type="button"
+                disabled={newProjectMetaLocationBusy}
+                onClick={() => {
+                  if (newProjectMetaLocationBusy) return;
+                  const previous = newProjectMetaLocation;
+                  const next = previous === "home" ? "project" : "home";
+                  setNewProjectMetaLocation(next);
+                  setNewProjectMetaLocationBusy(true);
+                  updateNewProjectMetaLocationPreference(next)
+                    .then(setNewProjectMetaLocation)
+                    .catch(() => setNewProjectMetaLocation(previous))
+                    .finally(() => setNewProjectMetaLocationBusy(false));
+                }}
+                style={{
+                  width: "100%",
+                  border: "none",
+                  background: "transparent",
+                  color: "var(--text-primary)",
+                  borderRadius: "8px",
+                  padding: "8px 10px",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px",
+                  textAlign: "left",
+                  cursor: newProjectMetaLocationBusy ? "default" : "pointer",
+                  fontSize: "12px",
+                  opacity: newProjectMetaLocationBusy ? 0.65 : 1,
+                }}
+              >
+                <span style={{ flex: 1 }}>{t("fileTree.newProjectMetaLocation")}</span>
+                <span style={{ color: "var(--text-secondary)", fontSize: "11px" }}>
+                  {t(newProjectMetaLocation === "home" ? "fileTree.metaLocationHome" : "fileTree.metaLocationProject")}
+                </span>
+              </button>
             </div>
           ) : null}
           {projectAddOverlay ? (
@@ -3685,6 +3472,15 @@ export function FileTree({
             </div>
           ) : null}
         </div>
+        {nodeManagerOpen ? (
+          <NodeManagerPanel
+            onClose={() => setNodeManagerOpen(false)}
+            onRefreshAll={onNodeManagerRefresh}
+          />
+        ) : null}
+        {accountPanelOpen ? (
+          <AccountPanel onClose={() => setAccountPanelOpen(false)} anchorRef={accountButtonRef} />
+        ) : null}
         {agentConfigFlow ? (
           <div
             ref={agentConfigPopoverRef}
@@ -4032,27 +3828,6 @@ export function FileTree({
             </div>
           </div>
         ) : null}
-        {relayServicesOpen ? (
-          <div
-            ref={relayServicesPopoverRef}
-            style={{
-              position: "absolute",
-              top: "calc(100% + 6px)",
-              left: "8px",
-              right: "3px",
-              zIndex: 35,
-            }}
-          >
-            <RelayLocalServicesDialog
-              open={relayServicesOpen}
-              nodeId={relayNodeId}
-              relayBaseURL={relayBaseURL}
-              noRelayer={relayNoRelayer}
-              onCancel={closeRelayServices}
-              onEditingChange={setRelayServicesEditing}
-            />
-          </div>
-        ) : null}
         {agentLifecycleOpen ? (
           <div
             ref={agentLifecyclePopoverRef}
@@ -4077,7 +3852,26 @@ export function FileTree({
         ) : null}
       </div>
       <div style={{ padding: "8px", flex: 1, minHeight: 0, overflow: "auto", display: "flex", flexDirection: "column" }}>
-        {entries.length === 0 && creatingRootName === null ? (
+        {(() => {
+          const groups = (() => {
+            const m = new Map<string, { color: string; name: string; nid: string; items: typeof entries }>();
+            for (const e of entries) {
+              const ex = e as any;
+              const key = String(ex._nodeName || ex._nodeId || "local");
+              const color = String(ex._nodeColor || "#6d5bcf");
+              const name = String(ex._nodeName || key);
+              const nid = String(ex._nodeId || "").trim();
+              if (!m.has(key)) m.set(key, { color, name, nid, items: [] });
+              m.get(key)!.items.push(e);
+            }
+            try {
+              const order = new Map(getNodes().map((n,i)=>[String(n.name), i] as const));
+              const arr = Array.from(m.entries());
+              arr.sort((a,b)=> (order.get(String(a[0])) ?? 99) - (order.get(String(b[0])) ?? 99));
+              return arr.map(([,v])=>v);
+            } catch { return Array.from(m.values()); }
+          })();
+          if (entries.length === 0 && creatingRootName === null) return (
           <div
             style={{
               flex: 1,
@@ -4095,9 +3889,18 @@ export function FileTree({
           >
             {t("fileTree.emptyProjectHint")}
           </div>
-        ) : (
-          renderEntries(entries, 0, rootId || "")
-        )}
+          );
+          return (
+            <>
+              {groups.map((g) => (
+                <div key={g.name}>
+                  <NodeBadgeHeader color={g.color} label={g.name} />
+                  {renderEntries(g.items, 0, rootId || "", g.color, g.nid)}
+                </div>
+              ))}
+            </>
+          );
+        })()}
       </div>
       <div
         data-mindfs-filetree-footer="1"
@@ -4228,201 +4031,8 @@ export function FileTree({
             {updateActionHelp}
           </div>
         ) : null}
-        {shouldShowRelayTip && relayTip ? (
-          <div
-            style={{
-              position: "relative",
-              border:
-                "1px solid color-mix(in srgb, var(--accent-color) 18%, var(--border-color))",
-              background:
-                "linear-gradient(180deg, color-mix(in srgb, var(--sidebar-bg) 94%, var(--accent-color) 6%), color-mix(in srgb, var(--sidebar-bg) 88%, var(--accent-color) 12%))",
-              boxShadow:
-                "0 8px 24px color-mix(in srgb, var(--accent-color) 10%, transparent)",
-              borderRadius: "8px",
-              padding: "10px",
-              display: "flex",
-              flexDirection: "column",
-              gap: "10px",
-              overflow: "hidden",
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "10px" }}>
-              <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: "4px", flex: 1, paddingRight: relayTip.dismissible !== false ? "14px" : 0 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap", minWidth: 0, flex: 1 }}>
-                    {relayTip.badge ? (
-                      <span
-                        style={{
-                          padding: "2px 6px",
-                          borderRadius: "999px",
-                          background:
-                            "color-mix(in srgb, var(--accent-color) 14%, transparent)",
-                          color: "var(--accent-color)",
-                          fontSize: "10px",
-                          fontWeight: 700,
-                          lineHeight: 1.4,
-                        }}
-                      >
-                        {relayTip.badge}
-                      </span>
-                    ) : null}
-                    {relayTip.eyebrow ? (
-                      <span style={{ fontSize: "10px", fontWeight: 700, color: "var(--text-secondary)", lineHeight: 1.4 }}>
-                        {relayTip.eyebrow}
-                      </span>
-                    ) : null}
-                </div>
-                <div style={{ fontSize: "12px", fontWeight: 700, color: "var(--text-primary)", lineHeight: 1.35 }}>
-                  {relayTip.title}
-                </div>
-                {relayTip.description ? (
-                  <div style={{ fontSize: "11px", color: "var(--text-secondary)", lineHeight: 1.45 }}>
-                    {relayTip.description}
-                  </div>
-                ) : null}
-              </div>
-              {relayTip.dismissible !== false ? (
-                <button
-                  type="button"
-                  aria-label={t("fileTree.closeAd")}
-                  onClick={dismissRelayTip}
-                  style={{
-                    position: "absolute",
-                    top: "6px",
-                    right: "6px",
-                    border: "none",
-                    background: "transparent",
-                    color: "var(--text-secondary)",
-                    width: "20px",
-                    height: "20px",
-                    borderRadius: "6px",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    cursor: "pointer",
-                    flexShrink: 0,
-                    padding: 0,
-                  }}
-                >
-                  ×
-                </button>
-              ) : null}
-            </div>
-            {(relayTip.href && relayTip.cta_label) || shouldShowNextRelayTip ? (
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px" }}>
-                <div>
-                  {relayTip.href && relayTip.cta_label ? (
-                    <button
-                      type="button"
-                      onClick={openRelayTip}
-                      style={{
-                        alignSelf: "flex-start",
-                        border: "none",
-                        background: "transparent",
-                        color: "var(--accent-color)",
-                        borderRadius: "6px",
-                        padding: "0",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        gap: "4px",
-                        cursor: "pointer",
-                        fontSize: "11px",
-                        fontWeight: 600,
-                        lineHeight: 1,
-                      }}
-                    >
-                      <span>{relayTip.cta_label}</span>
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                        <path d="M5 12h14" />
-                        <path d="m13 5 7 7-7 7" />
-                      </svg>
-                    </button>
-                  ) : null}
-                </div>
-                {shouldShowNextRelayTip ? (
-                  <button
-                    type="button"
-                    aria-label={t("fileTree.nextTip")}
-                    onClick={showNextRelayTip}
-                    style={{
-                      border: "none",
-                      background: "transparent",
-                      color: "var(--accent-color)",
-                      display: "inline-flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      gap: "4px",
-                      cursor: "pointer",
-                      flexShrink: 0,
-                      padding: 0,
-                    }}
-                  >
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                      <path d="M5 12h14" />
-                      <path d="m13 5 7 7-7 7" />
-                    </svg>
-                  </button>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
-        ) : null}
         {footerTopContent ? (
           <div style={{ width: "100%" }}>{footerTopContent}</div>
-        ) : null}
-        {shouldShowInstallButton ? (
-          relayActionLabel ? (
-            <button
-              type="button"
-              disabled={relayActionDisabled}
-              onClick={() => onRelayAction?.()}
-              style={{
-                width: "100%",
-                border: "1px solid var(--border-color)",
-                background: relayActionDisabled ? "rgba(148, 163, 184, 0.2)" : "var(--accent-color)",
-                color: relayActionDisabled ? "var(--text-secondary)" : "#fff",
-                borderRadius: "10px",
-                padding: "10px 12px",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: "8px",
-                cursor: relayActionDisabled ? "not-allowed" : "pointer",
-                fontSize: "12px",
-                fontWeight: 600,
-              }}
-            >
-              <span>{relayActionLabel}</span>
-            </button>
-          ) : null
-        ) : relayActionLabel ? (
-          <button
-            type="button"
-            disabled={relayActionDisabled}
-            onClick={() => onRelayAction?.()}
-            style={{
-              width: "100%",
-              border: "1px solid var(--border-color)",
-              background: relayActionDisabled ? "rgba(148, 163, 184, 0.2)" : "var(--accent-color)",
-              color: relayActionDisabled ? "var(--text-secondary)" : "#fff",
-              borderRadius: "10px",
-              padding: "10px 12px",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: "8px",
-              cursor: relayActionDisabled ? "not-allowed" : "pointer",
-              fontSize: "12px",
-              fontWeight: 600,
-            }}
-          >
-            <span>{relayActionLabel}</span>
-          </button>
-        ) : null}
-        {relayActionHelp ? (
-          <div style={{ fontSize: "11px", color: "var(--text-secondary)", lineHeight: 1.5, textAlign: "center" }}>
-            {relayActionHelp}
-          </div>
         ) : null}
         {isNativeApp && onGoHome ? (
           <button
@@ -4493,3 +4103,5 @@ export function FileTree({
     </div>
   );
 }
+
+export const FileTree = memo(FileTreeInner);

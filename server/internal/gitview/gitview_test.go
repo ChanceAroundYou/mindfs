@@ -53,6 +53,75 @@ func TestReadRelatedFileDiffUsesNextCommitAfterBase(t *testing.T) {
 	}
 }
 
+func TestListWorktreesOnNonRepoReturnsEmpty(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := loadRepoContext(context.Background(), dir); err == nil {
+		t.Skip("temp dir resolves inside a git repo")
+	}
+	// 非 git 根（如 ~/projects/llmux 这类 plain 根）不该报错，只是没有 worktree。
+	// 曾经这里抛 400，前端把 git 的原始报错渲染到面板上。
+	result, err := ListWorktrees(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("ListWorktrees on non-repo should not error: %v", err)
+	}
+	if len(result.Items) != 0 {
+		t.Fatalf("Items = %+v, want empty", result.Items)
+	}
+}
+
+func TestReadRelatedFileDiffSkipsUntouchedCommits(t *testing.T) {
+	root := initTestRepo(t)
+	writeTestFile(t, root, "note.txt", "before\n")
+	runTestGit(t, root, "add", "note.txt")
+	runTestGit(t, root, "commit", "-m", "initial")
+	base := strings.TrimSpace(runTestGit(t, root, "rev-parse", "HEAD"))
+
+	// 记录的 base 与真正改动该文件的提交之间夹着无关提交是常态
+	// （实测库内 42/118 条关联文件因此报 400），基线解析必须跳过它们。
+	writeTestFile(t, root, "other.txt", "unrelated\n")
+	runTestGit(t, root, "add", "other.txt")
+	runTestGit(t, root, "commit", "-m", "unrelated")
+
+	writeTestFile(t, root, "note.txt", "after\n")
+	runTestGit(t, root, "add", "note.txt")
+	runTestGit(t, root, "commit", "-m", "update")
+	target := strings.TrimSpace(runTestGit(t, root, "rev-parse", "HEAD"))
+
+	diff, err := ReadRelatedFileDiff(context.Background(), root, base, "note.txt")
+	if err != nil {
+		t.Fatalf("ReadRelatedFileDiff: %v", err)
+	}
+	if diff.TargetHead != target {
+		t.Fatalf("TargetHead = %q, want %q", diff.TargetHead, target)
+	}
+	if diff.Source != "commit_range" {
+		t.Fatalf("Source = %q, want commit_range", diff.Source)
+	}
+	if !strings.Contains(diff.Content, "-before") || !strings.Contains(diff.Content, "+after") {
+		t.Fatalf("diff content does not contain expected change:\n%s", diff.Content)
+	}
+}
+
+func TestReadRelatedFileDiffEmptyWhenNothingChanged(t *testing.T) {
+	root := initTestRepo(t)
+	writeTestFile(t, root, "note.txt", "same\n")
+	runTestGit(t, root, "add", "note.txt")
+	runTestGit(t, root, "commit", "-m", "initial")
+	head := strings.TrimSpace(runTestGit(t, root, "rev-parse", "HEAD"))
+
+	// base 之后既没有提交碰过该文件、工作区也干净 —— 「没有变更可显示」不是客户端错误。
+	diff, err := ReadRelatedFileDiff(context.Background(), root, head, "note.txt")
+	if err != nil {
+		t.Fatalf("ReadRelatedFileDiff should not fail when nothing changed: %v", err)
+	}
+	if diff.Source != "none" {
+		t.Fatalf("Source = %q, want none", diff.Source)
+	}
+	if diff.Content != "" || diff.Additions != 0 || diff.Deletions != 0 {
+		t.Fatalf("expected an empty diff, got %+v", diff)
+	}
+}
+
 func TestReadRelatedFileDiffUsesWorktreeRoot(t *testing.T) {
 	root := initTestRepo(t)
 	writeTestFile(t, root, "note.txt", "base\n")

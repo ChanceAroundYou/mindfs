@@ -1,5 +1,6 @@
 import { registerPlugin } from "@capacitor/core";
 import { appURL } from "./base";
+import { getRootNodeId } from "./rootNode";
 import { e2eeService } from "./e2ee";
 import { fetchProofProtectedBlob } from "./file";
 import { getNativeBridge } from "./nativeBridge";
@@ -10,6 +11,7 @@ type DownloadFileParams = {
   rootId: string;
   path: string;
   name?: string;
+  nodeId?: string;
 };
 
 type NativeDownloadPlugin = {
@@ -43,21 +45,21 @@ function sanitizeDownloadName(path: string, name?: string): string {
   return parts[parts.length - 1] || "download";
 }
 
-function buildDownloadURL(rootId: string, path: string): string {
+function buildDownloadURL(rootId: string, path: string, nodeId?: string): string {
   return appURL("/api/file", new URLSearchParams({
     raw: "1",
     root: rootId,
     path,
     download: "1",
-  }));
+  }), nodeId);
 }
 
-function toAbsoluteDownloadURL(url: string): string {
+function toAbsoluteDownloadURL(url: string, nodeId?: string): string {
   if (/^https?:\/\//i.test(url)) {
     return url;
   }
 
-  const apiBaseURL = getApiBaseURL();
+  const apiBaseURL = getApiBaseURL(nodeId);
   if (apiBaseURL) {
     return new URL(url, `${apiBaseURL.replace(/\/+$/, "")}/`).toString();
   }
@@ -167,15 +169,16 @@ export async function downloadURL(url: string, filename = "download"): Promise<v
   triggerBrowserDownload(absoluteURL, safeFilename);
 }
 
-export async function downloadFile(params: DownloadFileParams): Promise<void> {
+export async function downloadFile(params: DownloadFileParams & { nodeId?: string }): Promise<void> {
+  params.nodeId = params.nodeId || getRootNodeId(params.rootId);
   const filename = sanitizeDownloadName(params.path, params.name);
   if (e2eeService.isRequired()) {
     if (!isNativeShellRuntime()) {
-      const blob = await fetchProofProtectedBlob({ rootId: params.rootId, path: params.path });
+      const blob = await fetchProofProtectedBlob({ rootId: params.rootId, path: params.path, nodeId: params.nodeId });
       triggerBlobDownload(blob, filename);
       return;
     }
-    const blob = await fetchProofProtectedBlob({ rootId: params.rootId, path: params.path });
+    const blob = await fetchProofProtectedBlob({ rootId: params.rootId, path: params.path, nodeId: params.nodeId });
     try {
       await saveBlobWithNativeShell(blob, filename);
     } catch (error) {
@@ -187,6 +190,6 @@ export async function downloadFile(params: DownloadFileParams): Promise<void> {
     }
     return;
   }
-  const url = toAbsoluteDownloadURL(buildDownloadURL(params.rootId, params.path));
+  const url = toAbsoluteDownloadURL(buildDownloadURL(params.rootId, params.path, params.nodeId), params.nodeId);
   await downloadURL(url, filename);
 }

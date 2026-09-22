@@ -129,7 +129,12 @@ func NewStore() (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Store{path: filepath.Join(configDir, subscriptionsFileName)}, nil
+	return NewStoreAt(configDir), nil
+}
+
+// NewStoreAt 把订阅表放在指定目录（多账户：每个账户一套订阅）。
+func NewStoreAt(configDir string) *Store {
+	return &Store{path: filepath.Join(configDir, subscriptionsFileName)}
 }
 
 type SubscriptionKeys struct {

@@ -13,17 +13,19 @@ import (
 	"strings"
 	"time"
 
+	"mindfs/internal/deploy"
 	"mindfs/server/internal/agent"
 	"mindfs/server/internal/api"
+	"mindfs/server/internal/auth"
+	"mindfs/server/internal/config"
 	"mindfs/server/internal/e2ee"
 	"mindfs/server/internal/fs"
-	"mindfs/server/internal/githubimport"
 	"mindfs/server/internal/gitview"
 	"mindfs/server/internal/kanban"
+	"mindfs/server/internal/nodes"
 	"mindfs/server/internal/notifyscript"
 	"mindfs/server/internal/preferences"
 	"mindfs/server/internal/relay"
-	"mindfs/server/internal/scheduled"
 	"mindfs/server/internal/tlsutil"
 	"mindfs/server/internal/update"
 	"mindfs/server/internal/webpush"
@@ -75,20 +77,6 @@ func EnsureE2EEConfig(enabled bool) (E2EEEnsureResult, error) {
 
 // Start boots the HTTP/WS server.
 func Start(ctx context.Context, addr string, opts StartOptions) error {
-	registry, err := fs.NewDefaultRegistry()
-	if err != nil {
-		return err
-	}
-	if err := registry.Load(); err != nil {
-		return err
-	}
-	prefs, prefsErr := preferences.NewStore()
-	if prefsErr != nil {
-		log.Printf("[preferences] init.error err=%v", prefsErr)
-	}
-	autoAddExternalProjectRoots(registry, prefs)
-	startExternalProjectDiscoveryLoop(ctx, registry, prefs)
-
 	agentConfig, err := agent.LoadConfigWithExtra(opts.AgentConfigPath)
 	if err != nil {
 		return err
@@ -97,68 +85,106 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 	if relayBaseURL == "" {
 		relayBaseURL = agentConfig.RelayBaseURL
 	}
-	agentPool := agent.NewPool(agentConfig)
-	agentProber := agent.NewProber(&agentConfig, agentPool, 5*time.Minute)
-	agentProber.Start(ctx)
-	startHostedAgentConfigLoop(ctx, relayBaseURL, agentConfig, agentPool, agentProber)
-	agentPool.StartIdleReleaseLoop(ctx, func() time.Duration {
-		hours := preferences.DefaultIdleSessionResourceReleaseHours
-		if prefs != nil {
-			hours = prefs.IdleSessionResourceReleaseHours()
-		}
-		return time.Duration(hours) * time.Hour
-	})
-	webPushStore, err := webpush.NewStore()
+	executable, _ := os.Executable()
+	updateSvc := update.NewService("a9gent/mindfs", opts.Version, executable, opts.Args, 10*time.Minute)
+	updateSvc.Start(ctx)
+
+	// 主页面登录/账户：只用于按账户分区，不参与 API 鉴权。
+	authStore, err := auth.EnsureStore()
 	if err != nil {
-		log.Printf("[webpush] init.error err=%v", err)
+		log.Printf("[auth] init.error err=%v", err)
+	}
+
+	configDir, err := config.MindFSConfigDir()
+	if err != nil {
+		return err
 	}
 	webPushConfig, err := webpush.EnsureConfig(opts.WebPushEnabled)
 	if err != nil {
 		log.Printf("[webpush] config.error err=%v", err)
 	}
-	executable, _ := os.Executable()
-	updateSvc := update.NewService("a9gent/mindfs", opts.Version, executable, opts.Args, 10*time.Minute)
-	updateSvc.Start(ctx)
 
-	services := &api.AppContext{
-		Dirs:   registry,
-		Agents: agentPool,
-		Prober: agentProber,
-		Update: updateSvc,
-		Prefs:  prefs,
-		E2EE: e2ee.NewManager(e2ee.Config{
+	// relay 是进程级的（一台机器一条隧道），先建好再交给各账户共享
+	relayMgr, err := relay.NewManager(addr, opts.NoRelayer, relayBaseURL, opts.UseTLS)
+	if err != nil {
+		return err
+	}
+	relayTips := relay.NewTipsService(relayMgr)
+
+	// 共享设置与资源：建一次，所有账户共用同一份实例
+	sharedPrefs, prefsErr := preferences.NewStore()
+	if prefsErr != nil {
+		log.Printf("[preferences] init.error err=%v", prefsErr)
+	}
+	sharedNodes, err := nodes.NewStore()
+	if err != nil {
+		log.Printf("[nodes] init.error err=%v", err)
+	}
+	sharedWebPush := webpush.NewService(webPushConfig, webpush.NewStoreAt(configDir))
+	sharedTemplates, err := kanban.NewTemplateStore()
+	if err != nil {
+		return err
+	}
+	sharedPool := agent.NewPool(agentConfig)
+	sharedProber := agent.NewProber(&agentConfig, sharedPool, 5*time.Minute)
+	sharedProber.Start(ctx)
+	startHostedAgentConfigLoop(ctx, relayBaseURL, agentConfig, sharedPool, sharedProber)
+	sharedPool.StartIdleReleaseLoop(ctx, func() time.Duration {
+		hours := preferences.DefaultIdleSessionResourceReleaseHours
+		if sharedPrefs != nil {
+			hours = sharedPrefs.IdleSessionResourceReleaseHours()
+		}
+		return time.Duration(hours) * time.Hour
+	})
+
+	workspaces := newWorkspaceManager(ctx, sharedServices{
+		agentConfig:  agentConfig,
+		relayBaseURL: relayBaseURL,
+		update:       updateSvc,
+		auth:         authStore,
+		e2ee: e2ee.NewManager(e2ee.Config{
 			Enabled:       opts.E2EEConfig.Enabled,
 			NodeID:        opts.E2EEConfig.NodeID,
 			PairingSecret: opts.E2EEConfig.PairingSecret,
 		}),
-		WebPush: webpush.NewService(webPushConfig, webPushStore),
-		Notify:  notifyscript.NewService(notifyscript.Config{Script: opts.NotifyScript}),
-	}
-	services.Scheduled = scheduled.NewService(services, services)
-	services.Scheduled.Start(ctx)
-	taskTemplates, err := kanban.NewTemplateStore()
+		notify:     notifyscript.NewService(notifyscript.Config{Script: opts.NotifyScript}),
+		relay:      relayMgr,
+		relayTips:  relayTips,
+		prefs:      sharedPrefs,
+		nodes:      sharedNodes,
+		webPush:    sharedWebPush,
+		templates:  sharedTemplates,
+		pool:       sharedPool,
+		prober:     sharedProber,
+	})
+	workspaces.SetBaseDir(filepath.Join(configDir, "users"))
+
+	// 主账户先建一次：启动期就把配置问题暴露出来，而不是等第一个请求 500
+	primary, err := workspaces.Workspace("")
 	if err != nil {
 		return err
 	}
-	services.Kanban = kanban.NewService(taskTemplates, services)
-	services.Kanban.SetRunner(services)
-	githubImportSvc, err := githubimport.NewService(services)
+
+	localCLIToken, err := EnsureLocalCLIToken(addr)
 	if err != nil {
 		return err
 	}
-	services.GitHub = githubImportSvc
-	httpHandler := &api.HTTPHandler{
-		AppContext: services,
-		StaticDir:  resolveStaticDir(),
-		Version:    opts.Version,
-	}
-	wsHandler := &api.WSHandler{AppContext: services}
+	workspaces.SetHandlerDefaults(resolveStaticDir(), func() string { return localCLIToken })
+
+	httpRoutes := api.NewScopedRouter(workspaces, func(appCtx *api.AppContext) http.Handler {
+		return workspaces.NewHTTPHandler(appCtx, opts.Version).Routes()
+	})
+	wsRoutes := api.NewScopedRouter(workspaces, func(appCtx *api.AppContext) http.Handler {
+		return &api.WSHandler{AppContext: appCtx}
+	})
 
 	mux := http.NewServeMux()
-	mux.Handle("/", httpHandler.Routes())
-	mux.Handle("/ws", wsHandler)
+	inner := http.NewServeMux()
+	inner.Handle("/", httpRoutes)
+	inner.Handle("/ws", wsRoutes)
+	mux.Handle("/", api.StripDeployPrefix(deploy.NormalizedPrefix(), inner))
 
-	handler := api.LoggingMiddleware(api.CORSMiddleware(mux))
+	handler := api.LoggingMiddleware(mux)
 
 	server := &http.Server{
 		Addr:              addr,
@@ -170,41 +196,44 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 		return err
 	}
 	defer listener.Close()
-	localCLIToken, err := EnsureLocalCLIToken(addr)
-	if err != nil {
-		return err
-	}
-	httpHandler.LocalCLIToken = localCLIToken
 
-	relayMgr, err := relay.NewManager(addr, opts.NoRelayer, relayBaseURL, opts.UseTLS)
-	if err != nil {
-		return err
-	}
-	services.Relay = relayMgr
-	services.RelayTips = relay.NewTipsService(relayMgr)
 	if err := relayMgr.Start(ctx); err != nil {
 		return err
 	}
-	services.RelayTips.Start(ctx)
-	for _, root := range services.ListRoots() {
-		services.Kanban.Schedule(root.ID)
-	}
+	relayTips.Start(ctx)
 
 	go func() {
 		<-ctx.Done()
-		agentProber.Stop()
-		agentPool.CloseAll()
+		if primary.Prober != nil {
+			primary.Prober.Stop()
+		}
+		if primary.Agents != nil {
+			primary.Agents.CloseAll()
+		}
 		server.Shutdown(context.Background())
 	}()
 
-	if services.E2EE != nil {
-		services.E2EE.StartCleanup(ctx.Done())
+	if workspaces.shared.e2ee != nil {
+		workspaces.shared.e2ee.StartCleanup(ctx.Done())
 	}
 
 	if opts.UseTLS {
 		return server.ServeTLS(listener, opts.CertFile, opts.KeyFile)
 	}
 	return server.Serve(listener)
+}
+
+func normalizeRegisteredForkSessions(ctx context.Context, services *api.AppContext) error {
+	for _, root := range services.ListRoots() {
+		manager, err := services.GetSessionManager(root.ID)
+		if err != nil {
+			return fmt.Errorf("initialize session store for root %s: %w", root.ID, err)
+		}
+		if _, err := manager.ListMetas(ctx); err != nil {
+			return fmt.Errorf("normalize fork sessions for root %s: %w", root.ID, err)
+		}
+	}
+	return nil
 }
 
 func startHostedAgentConfigLoop(ctx context.Context, relayBaseURL string, localConfig agent.Config, pool *agent.Pool, prober *agent.Prober) {

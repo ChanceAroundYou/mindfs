@@ -49,10 +49,23 @@ func metaFileLock(path string) *sync.Mutex {
 type RootInfo struct {
 	ID           string    `json:"id"`
 	Name         string    `json:"name"`
+	DisplayName  string    `json:"display_name,omitempty"`
 	RootPath     string    `json:"root_path"`
 	MetaLocation string    `json:"meta_location,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
+
+	// MetaRoot 非空表示这是某个非主账户的根：meta 一律落在该账户私有目录下
+	// （MetaRoot/<rootID>），绝不碰项目里的 .mindfs。由 Registry 在装载时按账户盖章，
+	// 不持久化（同一个项目被不同账户添加时路径必须不同）。
+	MetaRoot string `json:"-"`
+}
+
+func (r RootInfo) EffectiveName() string {
+	if v := strings.TrimSpace(r.DisplayName); v != "" {
+		return v
+	}
+	return r.Name
 }
 
 func NewRootInfo(id, name, rootPath string) RootInfo {
@@ -92,6 +105,18 @@ func (r RootInfo) resolveRelativePath(relPath string) (string, error) {
 }
 
 func (r RootInfo) effectiveMetaLocation() string {
+	// 非主账户的 meta 恒为「账户私有目录」，语义等同 home（0o700 + 身份文件），
+	// 这样会话库/任务库落账户目录，而项目里的 .mindfs 留给共享内容。
+	if strings.TrimSpace(r.MetaRoot) != "" {
+		return MetaLocationHome
+	}
+	return r.persistedMetaLocation()
+}
+
+// persistedMetaLocation 是注册表里记的元数据位置，不看账户。
+// 决定「共享 meta」（上传文件、文件批注）落在哪儿——两个账户必须算出同一个答案，
+// 所以这里只能用共享的偏好与注册表信息，不能受 MetaRoot 影响。
+func (r RootInfo) persistedMetaLocation() string {
 	if strings.TrimSpace(r.MetaLocation) == MetaLocationHome {
 		return MetaLocationHome
 	}
@@ -164,7 +189,8 @@ func (r RootInfo) NormalizePath(path string) (string, error) {
 	cleanPath := filepath.Clean(path)
 	if filepath.IsAbs(cleanPath) {
 		if r.effectiveMetaLocation() == MetaLocationHome {
-			metaDir := r.MetaDir()
+			// 用共享 meta：上传回传的绝对路径两个账户都要能映射回同一个逻辑路径
+			metaDir := r.SharedMetaDir()
 			if metaDir != "" {
 				if rel, err := filepath.Rel(metaDir, cleanPath); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 					return filepath.ToSlash(filepath.Join(metaDirName, rel)), nil
@@ -186,7 +212,38 @@ func (r RootInfo) NormalizePath(path string) (string, error) {
 	return r.relativeFromAbsolute(resolved)
 }
 
+// SharedMetaDir 是**两个账户共用**的 meta 目录：上传的文件与文件批注放这里。
+//
+// 与 MetaDir() 的区别：MetaDir() 对非主账户指向账户私有目录（会话库/任务库按账户分），
+// 而上传与批注要共享，所以这里按「注册表记的元数据位置」算，不受 MetaRoot 影响——
+// 两个账户必须算出同一个答案。
+func (r RootInfo) SharedMetaDir() string {
+	if strings.TrimSpace(r.MetaRoot) == "" {
+		return r.MetaDir() // 主账户两者相同
+	}
+	if r.persistedMetaLocation() == MetaLocationHome {
+		dir, err := homeMetaDir(r.ID)
+		if err != nil {
+			return ""
+		}
+		return dir
+	}
+	rootAbs, err := r.rootDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(rootAbs, metaDirName)
+}
+
 func (r RootInfo) MetaDir() string {
+	// 非主账户：会话库/任务库落在账户私有目录里，与其他账户、与项目内的 .mindfs 都无关。
+	// 上传文件与文件批注**不走这里**（它们要共享），走 sharedMetaDir()。
+	if metaRoot := strings.TrimSpace(r.MetaRoot); metaRoot != "" {
+		if !validRootID(r.ID) {
+			return ""
+		}
+		return filepath.Join(metaRoot, r.ID)
+	}
 	if r.effectiveMetaLocation() == MetaLocationHome {
 		metaDir, err := homeMetaDir(r.ID)
 		if err != nil {
@@ -302,7 +359,8 @@ func (r RootInfo) resolveMetaPath(path string) (string, error) {
 	if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
 		return "", errors.New("path outside metadata directory")
 	}
-	metaDir := r.MetaDir()
+	// 走共享 meta：上传的文件与文件批注两个账户共用一份
+	metaDir := r.SharedMetaDir()
 	if metaDir == "" {
 		return "", errors.New("managed dir required")
 	}
@@ -366,6 +424,15 @@ func (r RootInfo) ReadMetaFile(path string) ([]byte, error) {
 	}
 	data, err := os.ReadFile(resolved)
 	return data, apperr.Wrap("read", resolved, err)
+}
+
+func (r RootInfo) StatMetaFile(path string) (os.FileInfo, error) {
+	resolved, err := r.resolveMetaPath(path)
+	if err != nil {
+		return nil, err
+	}
+	info, err := os.Stat(resolved)
+	return info, apperr.Wrap("stat", resolved, err)
 }
 
 func (r RootInfo) WriteMetaFile(path string, data []byte) error {

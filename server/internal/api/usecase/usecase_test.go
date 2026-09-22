@@ -500,6 +500,47 @@ func TestDeleteSessionDeletesSubSessionTree(t *testing.T) {
 	}
 }
 
+func TestDeleteSessionKeepsForkSession(t *testing.T) {
+	ctx := context.Background()
+	root := rootfs.NewRootInfo("mindfs", "mindfs", t.TempDir())
+	manager := session.NewManager(root)
+	service := Service{Registry: &commandTestRegistry{root: root, manager: manager}}
+
+	parent, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, Name: "parent"})
+	if err != nil {
+		t.Fatalf("create parent: %v", err)
+	}
+	fork, err := manager.Create(ctx, session.CreateInput{
+		Type:   session.TypeChat,
+		Source: `{"type":"fork"}`,
+		Name:   "fork",
+	})
+	if err != nil {
+		t.Fatalf("create fork: %v", err)
+	}
+	subagent, err := manager.Create(ctx, session.CreateInput{
+		Type:             session.TypeChat,
+		ParentSessionKey: parent.Key,
+		Name:             "subagent",
+	})
+	if err != nil {
+		t.Fatalf("create subagent: %v", err)
+	}
+
+	if err := service.DeleteSession(ctx, DeleteSessionInput{RootID: root.ID, Key: parent.Key}); err != nil {
+		t.Fatalf("delete parent: %v", err)
+	}
+	if _, err := manager.Get(ctx, parent.Key, 0); err == nil {
+		t.Fatal("parent still exists")
+	}
+	if _, err := manager.Get(ctx, fork.Key, 0); err != nil {
+		t.Fatalf("fork should remain: %v", err)
+	}
+	if _, err := manager.Get(ctx, subagent.Key, 0); err == nil {
+		t.Fatal("subagent still exists")
+	}
+}
+
 func TestSubSessionSyntheticDonePersistsPartialResponse(t *testing.T) {
 	ctx := context.Background()
 	rootDir := t.TempDir()
@@ -1415,6 +1456,37 @@ func TestListLocalDirsDefaultsEmptyPathToHome(t *testing.T) {
 	}
 }
 
+func TestListLocalDirsIncludesSymlinkedDirectory(t *testing.T) {
+	baseDir := t.TempDir()
+	targetDir := filepath.Join(baseDir, "outside", "target")
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+		t.Fatalf("mkdir target: %v", err)
+	}
+	mustWriteFile(t, filepath.Join(baseDir, "file.txt"), "x")
+	if err := os.Symlink(targetDir, filepath.Join(baseDir, "linked-dir")); err != nil {
+		t.Skipf("Symlink unavailable: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(baseDir, "file.txt"), filepath.Join(baseDir, "linked-file")); err != nil {
+		t.Fatalf("symlink file: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(baseDir, "missing"), filepath.Join(baseDir, "broken-link")); err != nil {
+		t.Fatalf("symlink broken: %v", err)
+	}
+
+	service := Service{Registry: uploadTestRegistry{}}
+	out, err := service.ListLocalDirs(context.Background(), ListLocalDirsInput{Path: baseDir})
+	if err != nil {
+		t.Fatalf("ListLocalDirs returned error: %v", err)
+	}
+	names := make([]string, 0, len(out.Items))
+	for _, item := range out.Items {
+		names = append(names, item.Name)
+	}
+	if strings.Join(names, ",") != "linked-dir,outside" {
+		t.Fatalf("items = %q, want linked-dir,outside", strings.Join(names, ","))
+	}
+}
+
 func TestCommandCandidatesFromStatus(t *testing.T) {
 	provider := NewSlashCommandCandidateProvider(func(agentName string) (agent.Status, bool) {
 		if agentName != "claude" {
@@ -2038,6 +2110,10 @@ func (uploadTestRegistry) RemoveRoot(string) (rootfs.RootInfo, error) {
 	return rootfs.RootInfo{}, nil
 }
 
+func (uploadTestRegistry) UpdateDisplayName(string, string) (rootfs.RootInfo, error) {
+	return rootfs.RootInfo{}, errors.New("not implemented")
+}
+
 func (uploadTestRegistry) RenameRoot(string, string, string) (rootfs.RootInfo, error) {
 	return rootfs.RootInfo{}, nil
 }
@@ -2181,6 +2257,10 @@ func (r *commandTestRegistry) RemoveRoot(string) (rootfs.RootInfo, error) {
 	return rootfs.RootInfo{}, nil
 }
 
+func (r *commandTestRegistry) UpdateDisplayName(string, string) (rootfs.RootInfo, error) {
+	return rootfs.RootInfo{}, errors.New("not implemented")
+}
+
 func (r *commandTestRegistry) RenameRoot(string, string, string) (rootfs.RootInfo, error) {
 	return rootfs.RootInfo{}, nil
 }
@@ -2245,6 +2325,10 @@ func (r *multiRootSearchTestRegistry) RemoveRoot(string) (rootfs.RootInfo, error
 	return rootfs.RootInfo{}, nil
 }
 
+func (r *multiRootSearchTestRegistry) UpdateDisplayName(string, string) (rootfs.RootInfo, error) {
+	return rootfs.RootInfo{}, errors.New("not implemented")
+}
+
 func (r *multiRootSearchTestRegistry) RenameRoot(string, string, string) (rootfs.RootInfo, error) {
 	return rootfs.RootInfo{}, nil
 }
@@ -2303,6 +2387,10 @@ func (*renameManagedDirTestRegistry) UpsertRoot(string) (rootfs.RootInfo, error)
 
 func (*renameManagedDirTestRegistry) RemoveRoot(string) (rootfs.RootInfo, error) {
 	return rootfs.RootInfo{}, nil
+}
+
+func (r *renameManagedDirTestRegistry) UpdateDisplayName(string, string) (rootfs.RootInfo, error) {
+	return rootfs.RootInfo{}, errors.New("not implemented")
 }
 
 func (r *renameManagedDirTestRegistry) RenameRoot(rootID, name, rootPath string) (rootfs.RootInfo, error) {

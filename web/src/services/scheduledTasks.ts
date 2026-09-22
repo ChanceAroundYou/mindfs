@@ -1,4 +1,5 @@
-import { appPath } from "./base";
+import { appPath, appendQuery } from "./base";
+import { getRootNodeId } from "./rootNode";
 import { protectedJSON } from "./api";
 
 export type ScheduledAgentTask = {
@@ -40,23 +41,25 @@ export type ScheduledAgentTaskInput = {
   new_session_cron?: string;
 };
 
-function taskURL(rootId: string): string {
+function taskURL(rootId: string, nodeId?: string): string {
   const params = new URLSearchParams({ root: rootId });
-  return `${appPath("/api/scheduled-agent-tasks")}?${params.toString()}`;
+  return appendQuery(appPath("/api/scheduled-agent-tasks", nodeId), params);
 }
 
-function taskItemURL(rootId: string, id: string, suffix = ""): string {
+function taskItemURL(rootId: string, id: string, suffix = "", nodeId?: string): string {
   const params = new URLSearchParams({ root: rootId });
-  return `${appPath(`/api/scheduled-agent-tasks/${encodeURIComponent(id)}${suffix}`)}?${params.toString()}`;
+  return `${appPath(`/api/scheduled-agent-tasks/${encodeURIComponent(id)}${suffix}`, nodeId)}?${params.toString()}`;
 }
 
-export async function fetchScheduledAgentTasks(rootId: string): Promise<ScheduledAgentTask[]> {
-  const data = await protectedJSON<{ tasks?: ScheduledAgentTask[] }>(taskURL(rootId));
+export async function fetchScheduledAgentTasks(rootId: string, nodeId?: string): Promise<ScheduledAgentTask[]> {
+  nodeId = nodeId || getRootNodeId(rootId);
+  const data = await protectedJSON<{ tasks?: ScheduledAgentTask[] }>(taskURL(rootId, nodeId));
   return Array.isArray(data.tasks) ? data.tasks : [];
 }
 
-export async function createScheduledAgentTask(input: ScheduledAgentTaskInput): Promise<ScheduledAgentTask> {
-  const data = await protectedJSON<{ task: ScheduledAgentTask }>(appPath("/api/scheduled-agent-tasks"), {
+export async function createScheduledAgentTask(input: ScheduledAgentTaskInput, nodeId?: string): Promise<ScheduledAgentTask> {
+  nodeId = nodeId || getRootNodeId(input.root_id);
+  const data = await protectedJSON<{ task: ScheduledAgentTask }>(appPath("/api/scheduled-agent-tasks", nodeId), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
@@ -67,9 +70,11 @@ export async function createScheduledAgentTask(input: ScheduledAgentTaskInput): 
 export async function updateScheduledAgentTask(
   id: string,
   input: ScheduledAgentTaskInput,
+  nodeId?: string,
 ): Promise<ScheduledAgentTask> {
+  nodeId = nodeId || getRootNodeId(input.root_id);
   const data = await protectedJSON<{ task: ScheduledAgentTask }>(
-    appPath(`/api/scheduled-agent-tasks/${encodeURIComponent(id)}`),
+    appPath(`/api/scheduled-agent-tasks/${encodeURIComponent(id)}`, nodeId),
     {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -79,12 +84,14 @@ export async function updateScheduledAgentTask(
   return data.task;
 }
 
-export async function deleteScheduledAgentTask(rootId: string, id: string): Promise<void> {
-  await protectedJSON<{ ok: boolean }>(taskItemURL(rootId, id), { method: "DELETE" });
+export async function deleteScheduledAgentTask(rootId: string, id: string, nodeId?: string): Promise<void> {
+  nodeId = nodeId || getRootNodeId(rootId);
+  await protectedJSON<{ ok: boolean }>(taskItemURL(rootId, id, "", nodeId), { method: "DELETE" });
 }
 
-export async function runScheduledAgentTask(rootId: string, id: string): Promise<ScheduledAgentTask> {
-  const data = await protectedJSON<{ task: ScheduledAgentTask }>(taskItemURL(rootId, id, "/run"), {
+export async function runScheduledAgentTask(rootId: string, id: string, nodeId?: string): Promise<ScheduledAgentTask> {
+  nodeId = nodeId || getRootNodeId(rootId);
+  const data = await protectedJSON<{ task: ScheduledAgentTask }>(taskItemURL(rootId, id, "/run", nodeId), {
     method: "POST",
   });
   return data.task;
