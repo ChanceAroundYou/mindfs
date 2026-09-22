@@ -1,12 +1,29 @@
 # MindFS 上游定制清单与评估（改动级互斥）
 
-> **当前基准：`v0.5.1`（2026-09-10 合并，`56d130f` 双 parent）。** 本文档 §1-§3 分组为 v0.4.7→v0.4.9 时代沉淀，机制仍适用；v0.5.1 合并记录见 §0。
+> **当前基准：`7757ca8`（2026-09-22 合并，`8897fb9` 双 parent）。** 本文档 §1-§3 分组为 v0.4.7→v0.4.9 时代沉淀，机制仍适用；v0.5.1 / 7757ca8 合并记录见 §0。
 >
 > 基准: `upstream/main` 标签 `v0.4.7` — `18b10cab75e2f72af24666c6de7ae4a411f63daa`（2026-08-13 update readme）
 > 对比: `HEAD = 0591238`（2026-08-26）/ `origin/main = 3d3417a`
 > 口径: `git log --reverse 18b10ca..HEAD` 共 **44** 可达提交（含 1 merge `64f96e8`），`git diff 18b10ca...HEAD` 110 文件 `+8333/-4249`；未提交 6 文件 `+286/-45`
 > 分组原则: **按 hunk 归类**——同一提交、同一文件不同行可归不同组；每行改动仅属一组，组间互斥、全体完备。
 > 判定: `git show --numstat/--stat` 逐提交核验 + `git diff HEAD` 逐 hunk 归类，`git cherry -v` 校验上游等价。
+
+---
+
+## 0-A. 7757ca8 合并记录（2026-09-22）
+
+- **Merge commit `8897fb9`**（双 parent：本地 `b6af0fc` × 上游 `7757ca8`），merge-base `v0.5.1`(`4f0c762`) → **`7757ca8`**。上游 11 commits / 21 files。
+- **仅 3 个冲突文件 / 5 段**（上一轮是 13 文件），全部逐 hunk 并集（**无 `--theirs`**）。
+- 上游主题：provider 一键模型同步 + 单模型测试 + 模型搜索（PR #94）、ACP token 计费修正（PR #95）、外部绝对路径文件读取（修 outside-file 404）。
+- 关键取舍：
+  - `App.tsx`：**删除上游 relay 登录/节点重定向块**（本地 G-H 已整体裁剪 Relay，无调用点）；保留上游 `normalizePathForRoot` 迁往 `services/fileNavigation.ts` 的重构（本地仍在用），并去掉随块而来的 `shouldRedirectToRelayNodes` import。
+  - `AgentSelector.tsx`：并集——上游 `AGENT_MODEL_SEARCH_THRESHOLD` 与本地 Claude 别名 helper（`strip1MSuffix`/`isClaudeAliasModelName`/`claudeModelBase`）是同点独立新增，两者都留。
+  - `FileTree.tsx`：3 段并集——`import React, { memo }` + 上游 `ProviderModelSelect`；`openSessionNaming` 保留上游 `agentConfigFlowVersion`/`setAgentConfigNotice`；保留上游 `changeProviderTestModel`，**丢弃 relay 提示轮播块**，`childKeyFor` 取本地 `sectionNodeId`+`treeKey` 版本。
+- 自动合并的重叠文件已逐一语义复核（上游内容全部在位）：`http.go`（sync-all/test 路由与本地 users/nodes 路由并存）、`usecase/fs.go`（上游 `resolveFileReadTarget` 在 90-320 行、本地 `UpdateRootDisplayName` 在 752-1010 行，互不重叠）、`preferences/store.go`（`AgentLastConfigSelections` 纯新增）、i18n zh/en（上游 3 个模型搜索键与本地多账户键并存）。
+- 反向对账（`git diff HEAD..7757ca8 -- <file>`）：21 个上游文件中 13 个为空（完整吸收），8 个差异恰为本地定制所在文件。
+- 门禁全绿：go build/vet、tsc 0 err、node tests 35/35、`make build`+`make install`；`go test ./...` 绿。
+  ⚠️ `server/internal/kanban` 存在 **pre-existing flake**（`attempt to write a readonly database (1032)`，`-count=15` 在 main 上同样复现），**非本次合并引入**，未修。
+- 部署：VM `make install` 完成（`v0.5.1-166-g8897fb9`），待用户重启；WSL 见部署记录。
 
 ---
 
