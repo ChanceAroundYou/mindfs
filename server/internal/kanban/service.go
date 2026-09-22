@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"log"
 	"path/filepath"
-	"reflect"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,18 +25,16 @@ type Service struct {
 	Roots     RootProvider
 	Runner    Runner
 
-	mu           sync.Mutex
-	stores       map[string]*TaskStore
-	scheduleRun  map[string]bool
-	schedulePend map[string]bool
-	taskRun      map[string]bool
-	taskPend     map[string]bool
+	mu       sync.Mutex
+	stores   map[string]*TaskStore
+	taskRun  map[string]bool
+	taskPend map[string]bool
 }
 
 var errStopTaskExecution = errors.New("stop task execution")
 
 func NewService(templates *TemplateStore, roots RootProvider) *Service {
-	return &Service{Templates: templates, Roots: roots, stores: map[string]*TaskStore{}, scheduleRun: map[string]bool{}, schedulePend: map[string]bool{}, taskRun: map[string]bool{}, taskPend: map[string]bool{}}
+	return &Service{Templates: templates, Roots: roots, stores: map[string]*TaskStore{}, taskRun: map[string]bool{}, taskPend: map[string]bool{}}
 }
 
 func (s *Service) SetRunner(runner Runner) {
@@ -52,8 +48,10 @@ func (s *Service) SetRunner(runner Runner) {
 
 type CreateTaskInput struct {
 	RootID             string
-	TaskTemplateID     string
-	Input              string
+	TaskTemplateID     string          // 可选：预设来源，仅记录来自哪个预设；内容在创建时拷进任务
+	Input              string          // 第一段的用户输入
+	Name               string          // 可选：任务名；缺省时前端用输入首行回退
+	Stages             []StageTemplate // 可选：直接给定流水；否则从预设拷贝
 	CreateWorktree     bool
 	WorktreeBranchMode string
 	WorktreeBranch     string
@@ -73,6 +71,22 @@ type UpdateTaskInput struct {
 	CreateWorktree     *bool
 	WorktreeBranchMode string
 	WorktreeBranch     string
+}
+
+// AddStageInput 追加一段 prompt（下一段要执行的内容）。
+// 任务处于等待用户时，追加即自动推进；其他状态排入流水尾。
+type AddStageInput struct {
+	RootID string
+	TaskID string
+	Stage  StageTemplate
+}
+
+// UpdateStageInput 修改任务流水里某一段的定义。
+type UpdateStageInput struct {
+	RootID string
+	TaskID string
+	Index  int
+	Stage  *StageTemplate // 全量替换该段定义
 }
 
 func (s *Service) ListStageTemplates(ctx context.Context) ([]StageTemplate, error) {
@@ -103,12 +117,10 @@ func (s *Service) ListTaskTemplates(ctx context.Context) ([]TaskTemplate, error)
 	return s.Templates.ListTaskTemplates()
 }
 
+// 模板至此只是「预设」：可随时编辑/删除，任务创建时已拷贝快照，与在途任务完全解耦。
 func (s *Service) SaveTaskTemplate(ctx context.Context, in TaskTemplate) (TaskTemplate, error) {
 	if s == nil || s.Templates == nil {
 		return TaskTemplate{}, errors.New("template store not configured")
-	}
-	if err := s.ensureTaskTemplateEditable(ctx, in); err != nil {
-		return TaskTemplate{}, err
 	}
 	return s.Templates.SaveTaskTemplate(in)
 }
@@ -117,80 +129,16 @@ func (s *Service) DeleteTaskTemplate(ctx context.Context, id string) error {
 	if s == nil || s.Templates == nil {
 		return errors.New("template store not configured")
 	}
-	count, err := s.countUnfinishedTasksByTemplate(ctx, strings.TrimSpace(id))
-	if err != nil {
-		return err
-	}
-	if count > 0 {
-		return fmt.Errorf("该模板存在在途任务，删除前请先完成、取消或删除相关任务")
-	}
 	return s.Templates.DeleteTaskTemplate(id)
 }
 
-func (s *Service) ensureTaskTemplateEditable(ctx context.Context, in TaskTemplate) error {
-	id := strings.TrimSpace(in.ID)
-	if id == "" {
-		return nil
+// normalizeTaskStages 展平并规范化任务流水。
+func normalizeTaskStages(in []StageTemplate) []StageTemplate {
+	out := make([]StageTemplate, 0, len(in))
+	for _, st := range in {
+		out = append(out, normalizeStageTemplate(st))
 	}
-	existing, err := s.Templates.GetTaskTemplate(id)
-	if err != nil {
-		return nil
-	}
-	if taskTemplateOnlyConcurrencyChanged(existing, in) {
-		return nil
-	}
-	count, err := s.countUnfinishedTasksByTemplate(ctx, id)
-	if err != nil {
-		return err
-	}
-	if count > 0 {
-		return fmt.Errorf("该模板存在在途任务，编辑前请先完成、取消或删除相关任务")
-	}
-	return nil
-}
-
-func taskTemplateOnlyConcurrencyChanged(existing, next TaskTemplate) bool {
-	left := comparableTaskTemplate(existing)
-	right := comparableTaskTemplate(next)
-	left.MaxConcurrency = 0
-	right.MaxConcurrency = 0
-	return reflect.DeepEqual(left, right)
-}
-
-func comparableTaskTemplate(in TaskTemplate) TaskTemplate {
-	in = normalizeTaskTemplate(in)
-	in.CreatedAt = time.Time{}
-	in.UpdatedAt = time.Time{}
-	sort.SliceStable(in.Stages, func(i, j int) bool { return in.Stages[i].Position < in.Stages[j].Position })
-	for i := range in.Stages {
-		in.Stages[i].Position = i
-		in.Stages[i].Snapshot = normalizeStageTemplate(in.Stages[i].Snapshot)
-		in.Stages[i].Snapshot.CreatedAt = time.Time{}
-		in.Stages[i].Snapshot.UpdatedAt = time.Time{}
-	}
-	return in
-}
-
-func (s *Service) countUnfinishedTasksByTemplate(ctx context.Context, templateID string) (int, error) {
-	if s == nil || s.Roots == nil {
-		return 0, nil
-	}
-	total := 0
-	for _, root := range s.Roots.ListRoots() {
-		if strings.TrimSpace(root.ID) == "" {
-			continue
-		}
-		store, err := s.taskStore(root.ID)
-		if err != nil {
-			return 0, err
-		}
-		count, err := store.CountUnfinishedTasksByTemplate(ctx, templateID)
-		if err != nil {
-			return 0, err
-		}
-		total += count
-	}
-	return total, nil
+	return out
 }
 
 func (s *Service) CreateTask(ctx context.Context, in CreateTaskInput) (TaskDetail, error) {
@@ -202,31 +150,39 @@ func (s *Service) CreateTask(ctx context.Context, in CreateTaskInput) (TaskDetai
 	if err != nil {
 		return TaskDetail{}, err
 	}
-	tmpl, err := s.Templates.GetTaskTemplate(in.TaskTemplateID)
-	if err != nil {
-		return TaskDetail{}, err
+	stages := normalizeTaskStages(in.Stages)
+	name := strings.TrimSpace(in.Name)
+	if len(stages) == 0 && strings.TrimSpace(in.TaskTemplateID) != "" {
+		tmpl, err := s.Templates.GetTaskTemplate(in.TaskTemplateID)
+		if err != nil {
+			return TaskDetail{}, err
+		}
+		for _, ts := range tmpl.Stages {
+			stages = append(stages, normalizeStageTemplate(ts.Snapshot))
+		}
+		if name == "" {
+			name = tmpl.Name
+		}
 	}
-	if len(tmpl.Stages) == 0 || tmpl.Stages[0].Snapshot.Role != RoleUser {
-		return TaskDetail{}, errors.New("task template first stage must be user")
+	if len(stages) == 0 || stages[0].Role != RoleUser {
+		return TaskDetail{}, errors.New("task first stage must be user")
 	}
 	now := time.Now().UTC()
 	branchMode, branch := normalizeTaskWorktreeBranch(in.WorktreeBranchMode, in.WorktreeBranch)
 	taskID := newID("task")
-	first := tmpl.Stages[0].Snapshot
-	status := StatusWaitingUser
-	if first.AutoAdvance {
-		status = StatusQueued
-	}
+	first := stages[0]
 	task := Task{
 		ID:                 taskID,
 		RootID:             rootID,
-		TaskTemplateID:     tmpl.ID,
-		TaskTemplateName:   tmpl.Name,
+		Name:               name,
+		TaskTemplateID:     strings.TrimSpace(in.TaskTemplateID),
+		TaskTemplateName:   templateNameForTask(s, in.TaskTemplateID, name),
+		Stages:             stages,
 		CreateWorktree:     in.CreateWorktree,
 		WorktreeBranchMode: branchMode,
 		WorktreeBranch:     branch,
 		CurrentStageIndex:  0,
-		Status:             status,
+		Status:             StatusWaitingUser,
 		Labels:             []string{},
 		CreatedAt:          now,
 		UpdatedAt:          now,
@@ -242,26 +198,26 @@ func (s *Service) CreateTask(ctx context.Context, in CreateTaskInput) (TaskDetai
 		CreatedAt:  now,
 		UpdatedAt:  now,
 	}
-	if first.AutoAdvance {
-		run.Status = StageStatusApproved
-		run.FinishedAt = now.Format(time.RFC3339Nano)
-	}
 	event := TaskEvent{
 		ID:         newID("event"),
 		TaskID:     taskID,
 		StageRunID: run.ID,
 		Type:       "task_created",
-		Payload:    eventPayload(map[string]any{"input": run.Input, "auto_advance": first.AutoAdvance}),
+		Payload:    eventPayload(map[string]any{"input": run.Input}),
 		CreatedAt:  now,
 	}
 	if _, err := store.CreateTask(ctx, task, run, event); err != nil {
 		return TaskDetail{}, err
 	}
-	detail, err := store.GetDetail(ctx, taskID)
-	if err == nil && first.AutoAdvance {
-		s.Schedule(rootID)
+	return store.GetDetail(ctx, taskID)
+}
+
+func templateNameForTask(s *Service, templateID, fallback string) string {
+	tmpl, err := s.Templates.GetTaskTemplate(templateID)
+	if err != nil {
+		return ""
 	}
-	return detail, err
+	return tmpl.Name
 }
 
 func (s *Service) ListTasks(ctx context.Context, rootID string, opts ListTasksOptions) ([]Task, error) {
@@ -288,12 +244,131 @@ func (s *Service) GetTask(ctx context.Context, rootID, taskID string) (TaskDetai
 	return store.GetDetail(ctx, taskID)
 }
 
+// RenameTask 设置任务名。
+func (s *Service) RenameTask(ctx context.Context, rootID, taskID, name string) (TaskDetail, error) {
+	store, err := s.taskStore(rootID)
+	if err != nil {
+		return TaskDetail{}, err
+	}
+	task, err := store.GetTask(ctx, strings.TrimSpace(taskID))
+	if err != nil {
+		return TaskDetail{}, err
+	}
+	task.Name = strings.TrimSpace(name)
+	task.UpdatedAt = time.Now().UTC()
+	if err := store.UpdateTask(ctx, task); err != nil {
+		return TaskDetail{}, err
+	}
+	detail, err := store.GetDetail(ctx, task.ID)
+	if err == nil && s.Runner != nil {
+		s.Runner.TaskUpdated(task.RootID, detail)
+	}
+	return detail, err
+}
+
+// AddStage 追加下一段 prompt。任务等待用户时追加即推进并执行；其他状态排入流水尾。
+func (s *Service) AddStage(ctx context.Context, in AddStageInput) (TaskDetail, error) {
+	store, err := s.taskStore(in.RootID)
+	if err != nil {
+		return TaskDetail{}, err
+	}
+	task, err := s.ensureServiceTask(ctx, in.RootID, store, strings.TrimSpace(in.TaskID))
+	if err != nil {
+		return TaskDetail{}, err
+	}
+	stage := normalizeStageTemplate(in.Stage)
+	if strings.TrimSpace(stage.PromptTemplate) == "" {
+		return TaskDetail{}, errors.New("stage prompt required")
+	}
+	if task.Status == StatusWaitingUser {
+		stage.Name = defaultStageName(task, len(task.Stages))
+		task.Stages = append(task.Stages, stage)
+		if latest, runErr := store.LatestStageRun(ctx, task.ID, task.CurrentStageIndex); runErr == nil {
+			if latest.Status != StageStatusSuccess {
+				_ = store.UpdateStageRunStatus(ctx, latest.ID, StageStatusApproved)
+			}
+		}
+		detail, err := s.moveTo(ctx, store, task, len(task.Stages)-1, "user_approved", StageStatusApproved, "comment")
+		if err != nil {
+			return TaskDetail{}, err
+		}
+		s.RunTask(detail.Task.RootID, detail.Task.ID)
+		return detail, nil
+	}
+	stage.Name = defaultStageName(task, len(task.Stages))
+	task.Stages = append(task.Stages, stage)
+	task.UpdatedAt = time.Now().UTC()
+	if err := store.UpdateTask(ctx, task); err != nil {
+		return TaskDetail{}, err
+	}
+	detail, err := store.GetDetail(ctx, task.ID)
+	if err == nil && s.Runner != nil {
+		s.Runner.TaskUpdated(task.RootID, detail)
+	}
+	return detail, err
+}
+
+// UpdateStage 修改任务某一段的定义（prompt / agent / model / effort 等）。
+func (s *Service) UpdateStage(ctx context.Context, in UpdateStageInput) (TaskDetail, error) {
+	store, err := s.taskStore(in.RootID)
+	if err != nil {
+		return TaskDetail{}, err
+	}
+	task, err := s.ensureServiceTask(ctx, in.RootID, store, strings.TrimSpace(in.TaskID))
+	if err != nil {
+		return TaskDetail{}, err
+	}
+	idx := in.Index
+	if idx < 0 || idx >= len(task.Stages) {
+		return TaskDetail{}, errors.New("stage_index out of range")
+	}
+	now := time.Now().UTC()
+	if in.Stage != nil {
+		updated := normalizeStageTemplate(*in.Stage)
+		updated.ID = task.Stages[idx].ID
+		updated.CreatedAt = task.Stages[idx].CreatedAt
+		task.Stages[idx] = updated
+	}
+	task.Stages[idx].UpdatedAt = now
+	task.UpdatedAt = now
+	if err := store.UpdateTask(ctx, task); err != nil {
+		return TaskDetail{}, err
+	}
+	detail, err := store.GetDetail(ctx, task.ID)
+	if err == nil && s.Runner != nil {
+		s.Runner.TaskUpdated(task.RootID, detail)
+	}
+	return detail, err
+}
+
+// RerunStage 重新执行某段（任务不在运行中时）：把指针移回此段并触发执行。
+func (s *Service) RerunStage(ctx context.Context, in MoveInput) (TaskDetail, error) {
+	store, task, err := s.loadForMove(ctx, in.RootID, in.TaskID)
+	if err != nil {
+		return TaskDetail{}, err
+	}
+	if running, runErr := store.LatestStageRun(ctx, task.ID, task.CurrentStageIndex); runErr == nil && running.Status == StageStatusRunning && task.Status == StatusRunning {
+		return TaskDetail{}, errors.New("task is running")
+	}
+	if in.StageIndex < 0 || in.StageIndex >= len(task.Stages) {
+		return TaskDetail{}, errors.New("stage_index out of range")
+	}
+	detail, err := s.moveTo(ctx, store, task, in.StageIndex, "stage_rerun", "", in.Reason)
+	if err != nil {
+		return TaskDetail{}, err
+	}
+	if !isTerminalStatus(detail.Task.Status) {
+		s.RunTask(detail.Task.RootID, detail.Task.ID)
+	}
+	return detail, err
+}
+
 func (s *Service) UpdateCurrentInput(ctx context.Context, in UpdateTaskInput) (TaskDetail, error) {
 	store, err := s.taskStore(in.RootID)
 	if err != nil {
 		return TaskDetail{}, err
 	}
-	task, err := store.GetTask(ctx, in.TaskID)
+	task, err := store.GetTask(ctx, strings.TrimSpace(in.TaskID))
 	if err != nil {
 		return TaskDetail{}, err
 	}
@@ -369,19 +444,15 @@ func (s *Service) Next(ctx context.Context, in MoveInput) (TaskDetail, error) {
 	if err != nil {
 		return TaskDetail{}, err
 	}
-	task, err := store.GetTask(ctx, in.TaskID)
+	task, err := store.GetTask(ctx, strings.TrimSpace(in.TaskID))
 	if err != nil {
 		return TaskDetail{}, err
 	}
 	if isTerminalStatus(task.Status) {
 		return store.GetDetail(ctx, task.ID)
 	}
-	tmpl, err := s.Templates.GetTaskTemplate(task.TaskTemplateID)
-	if err != nil {
-		return TaskDetail{}, err
-	}
-	// 最后一阶段没有"下一步"：等待用户＝收尾，直接完成而不是报 stage out of range。
-	if task.Status == StatusWaitingUser && task.CurrentStageIndex == len(tmpl.Stages)-1 {
+	// 末段等待用户＝收尾，直接完成而不是报 stage out of range。
+	if task.Status == StatusWaitingUser && task.CurrentStageIndex >= len(task.Stages)-1 {
 		if latest, latestErr := store.LatestStageRun(ctx, task.ID, task.CurrentStageIndex); latestErr == nil {
 			if latest.Status != StageStatusSuccess {
 				_ = store.UpdateStageRunStatus(ctx, latest.ID, StageStatusApproved)
@@ -391,48 +462,33 @@ func (s *Service) Next(ctx context.Context, in MoveInput) (TaskDetail, error) {
 			return TaskDetail{}, err
 		}
 		detail, err := store.GetDetail(ctx, task.ID)
-		if err == nil {
-			s.Schedule(task.RootID)
+		if err == nil && s.Runner != nil {
+			s.Runner.TaskUpdated(task.RootID, detail)
 		}
 		return detail, err
 	}
 	detail, err := s.moveRelative(ctx, in, 1, "user_approved", StageStatusApproved)
 	if err == nil {
-		s.Schedule(in.RootID)
 		s.RunTask(detail.Task.RootID, detail.Task.ID)
 	}
 	return detail, err
 }
 
+// RunNow：待开始直接开跑；等待用户视同验收推进到下一段。
 func (s *Service) RunNow(ctx context.Context, in MoveInput) (TaskDetail, error) {
 	store, err := s.taskStore(in.RootID)
 	if err != nil {
 		return TaskDetail{}, err
 	}
-	task, err := store.GetTask(ctx, in.TaskID)
+	task, err := store.GetTask(ctx, strings.TrimSpace(in.TaskID))
 	if err != nil {
 		return TaskDetail{}, err
 	}
-	if isTerminalStatus(task.Status) {
+	switch task.Status {
+	case StatusWaitingUser:
+		return s.Next(ctx, in)
+	case StatusRunning, StatusPaused:
 		return store.GetDetail(ctx, task.ID)
-	}
-	if task.Status != StatusQueued {
-		return TaskDetail{}, errors.New("task is not queued")
-	}
-	if task.SchedulerAdmitted {
-		detail, err := store.GetDetail(ctx, task.ID)
-		if err == nil {
-			s.RunTask(detail.Task.RootID, detail.Task.ID)
-		}
-		return detail, err
-	}
-	tmpl, err := s.Templates.GetTaskTemplate(task.TaskTemplateID)
-	if err != nil {
-		_ = s.recordTaskError(ctx, store, task, "", err.Error())
-		return TaskDetail{}, err
-	}
-	if err := s.admitTask(ctx, store, task, tmpl); err != nil {
-		return TaskDetail{}, err
 	}
 	_ = store.AddEvent(ctx, TaskEvent{
 		ID:        newID("event"),
@@ -441,6 +497,12 @@ func (s *Service) RunNow(ctx context.Context, in MoveInput) (TaskDetail, error) 
 		Payload:   eventPayload(map[string]any{"reason": strings.TrimSpace(in.Reason)}),
 		CreatedAt: time.Now().UTC(),
 	})
+	if task.CreateWorktree {
+		if _, werr := s.ensureTaskWorktree(ctx, store, task); werr != nil {
+			_ = s.recordTaskError(ctx, store, task, "", werr.Error())
+			return store.GetDetail(ctx, task.ID)
+		}
+	}
 	detail, err := store.GetDetail(ctx, task.ID)
 	if err == nil {
 		s.RunTask(detail.Task.RootID, detail.Task.ID)
@@ -457,15 +519,15 @@ func (s *Service) Prev(ctx context.Context, in MoveInput) (TaskDetail, error) {
 }
 
 func (s *Service) Jump(ctx context.Context, in MoveInput) (TaskDetail, error) {
-	store, task, tmpl, err := s.loadForMove(ctx, in.RootID, in.TaskID)
+	store, task, err := s.loadForMove(ctx, in.RootID, in.TaskID)
 	if err != nil {
 		return TaskDetail{}, err
 	}
-	if in.StageIndex < 0 || in.StageIndex >= len(tmpl.Stages) {
+	if in.StageIndex < 0 || in.StageIndex >= len(task.Stages) {
 		return TaskDetail{}, errors.New("stage_index out of range")
 	}
-	detail, err := s.moveTo(ctx, store, task, tmpl, in.StageIndex, "moved", "", in.Reason)
-	if err == nil {
+	detail, err := s.moveTo(ctx, store, task, in.StageIndex, "moved", "", in.Reason)
+	if err == nil && !isTerminalStatus(detail.Task.Status) {
 		s.RunTask(detail.Task.RootID, detail.Task.ID)
 	}
 	return detail, err
@@ -476,21 +538,8 @@ func (s *Service) Pause(ctx context.Context, in MoveInput) (TaskDetail, error) {
 }
 
 func (s *Service) Resume(ctx context.Context, in MoveInput) (TaskDetail, error) {
-	store, err := s.taskStore(in.RootID)
-	if err != nil {
-		return TaskDetail{}, err
-	}
-	task, err := store.GetTask(ctx, in.TaskID)
-	if err != nil {
-		return TaskDetail{}, err
-	}
-	status := StatusRunning
-	if !task.SchedulerAdmitted {
-		status = StatusQueued
-	}
-	detail, err := s.setTaskStatus(ctx, in.RootID, in.TaskID, status, "resumed", in.Reason, false)
+	detail, err := s.setTaskStatus(ctx, in.RootID, in.TaskID, StatusRunning, "resumed", in.Reason, false)
 	if err == nil {
-		s.Schedule(in.RootID)
 		s.RunTask(detail.Task.RootID, detail.Task.ID)
 	}
 	return detail, err
@@ -504,24 +553,19 @@ func (s *Service) Cancel(ctx context.Context, in MoveInput) (TaskDetail, error) 
 	return s.setTaskStatus(ctx, in.RootID, in.TaskID, StatusCancelled, "cancelled", in.Reason, true)
 }
 
+// Complete：任何等待用户的状态都可一键完成（不再限制必须停在最后一段）。
 func (s *Service) Complete(ctx context.Context, in MoveInput) (TaskDetail, error) {
-	store, task, tmpl, err := s.loadForMove(ctx, in.RootID, in.TaskID)
+	store, task, err := s.loadForMove(ctx, in.RootID, in.TaskID)
 	if err != nil {
 		return TaskDetail{}, err
 	}
 	if isTerminalStatus(task.Status) {
 		return store.GetDetail(ctx, task.ID)
 	}
-	if task.CurrentStageIndex < 0 || task.CurrentStageIndex >= len(tmpl.Stages) {
-		return TaskDetail{}, errors.New("current stage out of range")
-	}
-	if task.CurrentStageIndex != len(tmpl.Stages)-1 {
-		return TaskDetail{}, errors.New("task is not in final stage")
-	}
 	if task.Status != StatusWaitingUser {
 		return TaskDetail{}, errors.New("task is not waiting for user")
 	}
-	if latest, err := store.LatestStageRun(ctx, task.ID, task.CurrentStageIndex); err == nil {
+	if latest, runErr := store.LatestStageRun(ctx, task.ID, task.CurrentStageIndex); runErr == nil {
 		if latest.Status != StageStatusSuccess {
 			_ = store.UpdateStageRunStatus(ctx, latest.ID, StageStatusApproved)
 		}
@@ -529,56 +573,11 @@ func (s *Service) Complete(ctx context.Context, in MoveInput) (TaskDetail, error
 	if err := s.finishTask(ctx, store, task, StatusSuccess, "completed", in.Reason); err != nil {
 		return TaskDetail{}, err
 	}
-	detail, err := store.GetDetail(ctx, task.ID)
-	if err == nil {
-		s.Schedule(task.RootID)
-	}
-	return detail, err
+	return store.GetDetail(ctx, task.ID)
 }
 
 func (s *Service) Status(ctx context.Context, rootID, taskID string) (TaskDetail, error) {
 	return s.GetTask(ctx, rootID, taskID)
-}
-
-func (s *Service) Schedule(rootID string) {
-	if s == nil || s.Runner == nil {
-		return
-	}
-	rootID = strings.TrimSpace(rootID)
-	if rootID == "" {
-		return
-	}
-	s.mu.Lock()
-	if s.scheduleRun == nil {
-		s.scheduleRun = map[string]bool{}
-	}
-	if s.scheduleRun[rootID] {
-		if s.schedulePend == nil {
-			s.schedulePend = map[string]bool{}
-		}
-		s.schedulePend[rootID] = true
-		s.mu.Unlock()
-		return
-	}
-	s.scheduleRun[rootID] = true
-	s.mu.Unlock()
-	go func() {
-		for {
-			if err := s.schedule(context.Background(), rootID); err != nil {
-				log.Printf("[kanban] schedule.error root=%s err=%v", rootID, err)
-			}
-			s.mu.Lock()
-			pending := s.schedulePend[rootID]
-			if pending {
-				delete(s.schedulePend, rootID)
-				s.mu.Unlock()
-				continue
-			}
-			delete(s.scheduleRun, rootID)
-			s.mu.Unlock()
-			return
-		}
-	}()
 }
 
 func (s *Service) RunTask(rootID, taskID string) {
@@ -590,9 +589,8 @@ func (s *Service) RunTask(rootID, taskID string) {
 	if rootID == "" || taskID == "" {
 		return
 	}
-	// 同一任务同时只允许一个执行体。Next/Resume/RunNow 等处都是「先 Schedule 再 RunTask」，
-	// 调度循环与直调会各起一个 goroutine；两者都读到 pending 阶段时，同一阶段会被跑两次
-	// （重复创建 agent 会话、重复消耗 token）。这里给执行体加锁，重复请求记为待补跑。
+	// 同一任务同时只允许一个执行体。Next/Resume/RunNow 等重复请求不应把同一 agent 阶段跑两次
+	// （重复创建 agent 会话、重复消耗 token）。重复请求记为待补跑。
 	key := rootID + "\x00" + taskID
 	s.mu.Lock()
 	if s.taskRun[key] {
@@ -618,7 +616,37 @@ func (s *Service) RunTask(rootID, taskID string) {
 			s.mu.Unlock()
 			break
 		}
-		s.Schedule(rootID)
+	}()
+}
+
+// KickPending 会启动时进入：仅兜底执行既存任务指针所在段落，不再有排队/槽位语义。
+// 只对 pending/running 且未被任何执行体持有的任务触发一次 RunTask。
+func (s *Service) KickPending(rootID string) {
+	if s == nil || s.Runner == nil {
+		return
+	}
+	rootID = strings.TrimSpace(rootID)
+	if rootID == "" {
+		return
+	}
+	go func() {
+		store, err := s.taskStore(rootID)
+		if err != nil {
+			return
+		}
+		tasks, err := store.ListTasks(context.Background(), ListTasksOptions{})
+		if err != nil {
+			return
+		}
+		for _, task := range tasks {
+			if isTerminalStatus(task.Status) || task.Status == StatusWaitingUser || task.Status == StatusPaused {
+				continue
+			}
+			if strings.TrimSpace(task.AuxFlags.SessionError) != "" {
+				continue
+			}
+			s.RunTask(rootID, task.ID)
+		}
 	}()
 }
 
@@ -678,98 +706,6 @@ func patchPayload(patch TaskAuxFlagsPatch) map[string]any {
 	return out
 }
 
-func (s *Service) schedule(ctx context.Context, rootID string) error {
-	store, err := s.taskStore(rootID)
-	if err != nil {
-		return err
-	}
-	for {
-		all, err := store.ListTasks(ctx, ListTasksOptions{})
-		if err != nil {
-			return err
-		}
-		queued, err := store.ListQueuedTasks(ctx)
-		if err != nil {
-			return err
-		}
-		started := false
-		for _, task := range queued {
-			if task.SchedulerAdmitted || isTerminalStatus(task.Status) || task.Status != StatusQueued || strings.TrimSpace(task.AuxFlags.SessionError) != "" {
-				continue
-			}
-			tmpl, err := s.Templates.GetTaskTemplate(task.TaskTemplateID)
-			if err != nil {
-				_ = s.recordTaskError(ctx, store, task, "", err.Error())
-				continue
-			}
-			if !s.hasSlot(task, tmpl, all) {
-				continue
-			}
-			if err := s.admitTask(ctx, store, task, tmpl); err != nil {
-				log.Printf("[kanban] task.admit.error root=%s task=%s err=%v", rootID, task.ID, err)
-				continue
-			}
-			started = true
-			s.RunTask(rootID, task.ID)
-			break
-		}
-		if !started {
-			return nil
-		}
-	}
-}
-
-func (s *Service) hasSlot(candidate Task, tmpl TaskTemplate, tasks []Task) bool {
-	limit := tmpl.MaxConcurrency
-	if limit <= 0 {
-		limit = 1
-	}
-	if !candidate.CreateWorktree {
-		limit = 1
-	}
-	used := 0
-	for _, task := range tasks {
-		if task.ID == candidate.ID || !task.SchedulerAdmitted || isTerminalStatus(task.Status) {
-			continue
-		}
-		if !candidate.CreateWorktree {
-			if !task.CreateWorktree {
-				used++
-			}
-			continue
-		}
-		if task.CreateWorktree && task.TaskTemplateID == candidate.TaskTemplateID {
-			used++
-		}
-	}
-	return used < limit
-}
-
-func (s *Service) admitTask(ctx context.Context, store *TaskStore, task Task, tmpl TaskTemplate) error {
-	now := time.Now().UTC()
-	task.SchedulerAdmitted = true
-	task.Status = StatusRunning
-	task.UpdatedAt = now
-	if task.CreateWorktree && strings.TrimSpace(task.WorktreePath) == "" {
-		updated, err := s.ensureTaskWorktree(ctx, store, task)
-		if err != nil {
-			return s.failTask(ctx, store, task, "", err)
-		}
-		task = updated
-		task.SchedulerAdmitted = true
-		task.Status = StatusRunning
-		task.UpdatedAt = now
-	}
-	if err := store.UpdateTask(ctx, task); err != nil {
-		return err
-	}
-	detail, err := store.GetDetail(ctx, task.ID)
-	if err == nil && s.Runner != nil {
-		s.Runner.TaskUpdated(task.RootID, detail)
-	}
-	return err
-}
-
 func (s *Service) ensureTaskWorktree(ctx context.Context, store *TaskStore, task Task) (Task, error) {
 	if !task.CreateWorktree || strings.TrimSpace(task.WorktreePath) != "" {
 		return task, nil
@@ -804,6 +740,7 @@ func renderWorktreeName(tpl string, task Task) string {
 		"task_number":   strconv.Itoa(task.TaskNumber),
 		"root_id":       task.RootID,
 		"template_name": task.TaskTemplateName,
+		"task_name":     task.Name,
 	}
 	for key, value := range replacements {
 		name = strings.ReplaceAll(name, "{"+key+"}", value)
@@ -828,28 +765,29 @@ func normalizeTaskWorktreeBranch(mode, branch string) (string, string) {
 }
 
 func (s *Service) executeTask(ctx context.Context, rootID, taskID string) error {
-	store, task, tmpl, err := s.loadForMove(ctx, rootID, taskID)
+	store, task, err := s.loadForMove(ctx, rootID, taskID)
 	if err != nil {
 		return err
 	}
 	for {
-		if task.Status == StatusPaused || task.Status == StatusQueued || isTerminalStatus(task.Status) {
+		if task.Status == StatusPaused || isTerminalStatus(task.Status) {
 			return nil
 		}
-		if task.CurrentStageIndex < 0 || task.CurrentStageIndex >= len(tmpl.Stages) {
-			return s.finishTask(ctx, store, task, StatusSuccess, "completed", "")
+		if task.CurrentStageIndex < 0 || task.CurrentStageIndex >= len(task.Stages) {
+			// 流水被改短（段被删）：停在等待用户，不再静默完成。
+			return s.waitForUserSimpl(ctx, store, task, "stage list truncated")
 		}
-		stage := tmpl.Stages[task.CurrentStageIndex].Snapshot
+		stage := task.Stages[task.CurrentStageIndex]
 		run, err := store.LatestStageRun(ctx, task.ID, task.CurrentStageIndex)
 		if err != nil {
 			return err
 		}
 		if stage.Role == RoleUser {
 			if run.Status == StageStatusApproved || run.Status == StageStatusSuccess {
-				if task.CurrentStageIndex == len(tmpl.Stages)-1 {
+				if task.CurrentStageIndex == len(task.Stages)-1 {
 					return s.finishTask(ctx, store, task, StatusSuccess, "completed", "")
 				}
-				detail, err := s.moveTo(ctx, store, task, tmpl, task.CurrentStageIndex+1, "auto_advanced", "", "")
+				detail, err := s.moveTo(ctx, store, task, task.CurrentStageIndex+1, "auto_advanced", "", "")
 				if err != nil {
 					return err
 				}
@@ -863,10 +801,10 @@ func (s *Service) executeTask(ctx context.Context, rootID, taskID string) error 
 		}
 		if run.Status == StageStatusSuccess {
 			if stage.AutoAdvance {
-				if task.CurrentStageIndex == len(tmpl.Stages)-1 {
+				if task.CurrentStageIndex == len(task.Stages)-1 {
 					return s.finishTask(ctx, store, task, StatusSuccess, "completed", "")
 				}
-				detail, err := s.moveTo(ctx, store, task, tmpl, task.CurrentStageIndex+1, "auto_advanced", "", "")
+				detail, err := s.moveTo(ctx, store, task, task.CurrentStageIndex+1, "auto_advanced", "", "")
 				if err != nil {
 					return err
 				}
@@ -878,7 +816,14 @@ func (s *Service) executeTask(ctx context.Context, rootID, taskID string) error 
 		if run.Status == StageStatusWaitingUser {
 			return nil
 		}
-		if err := s.runAgentStage(ctx, store, task, tmpl, stage, run); err != nil {
+		if task.CreateWorktree && strings.TrimSpace(task.WorktreePath) == "" {
+			updated, werr := s.ensureTaskWorktree(ctx, store, task)
+			if werr != nil {
+				return s.failTask(ctx, store, task, run.ID, werr)
+			}
+			task = updated
+		}
+		if err := s.runAgentStage(ctx, store, task, stage, run); err != nil {
 			if errors.Is(err, errStopTaskExecution) {
 				return nil
 			}
@@ -891,7 +836,29 @@ func (s *Service) executeTask(ctx context.Context, rootID, taskID string) error 
 	}
 }
 
-func (s *Service) runAgentStage(ctx context.Context, store *TaskStore, task Task, tmpl TaskTemplate, stage StageTemplate, run StageRun) error {
+// waitForUserSimpl 在尚未创建 StageRun 时把任务置于等待用户。
+func (s *Service) waitForUserSimpl(ctx context.Context, store *TaskStore, task Task, reason string) error {
+	now := time.Now().UTC()
+	task.Status = StatusWaitingUser
+	task.AuxFlags.SessionError = strings.TrimSpace(reason)
+	task.UpdatedAt = now
+	if err := store.UpdateTask(ctx, task); err != nil {
+		return err
+	}
+	_ = store.AddEvent(ctx, TaskEvent{
+		ID:        newID("event"),
+		TaskID:    task.ID,
+		Type:      "waiting_user",
+		Payload:   eventPayload(map[string]any{"reason": strings.TrimSpace(reason)}),
+		CreatedAt: now,
+	})
+	if detail, err := store.GetDetail(ctx, task.ID); err == nil && s.Runner != nil {
+		s.Runner.TaskUpdated(task.RootID, detail)
+	}
+	return nil
+}
+
+func (s *Service) runAgentStage(ctx context.Context, store *TaskStore, task Task, stage StageTemplate, run StageRun) error {
 	if s.Runner == nil {
 		return errors.New("task runner not configured")
 	}
@@ -899,7 +866,7 @@ func (s *Service) runAgentStage(ctx context.Context, store *TaskStore, task Task
 		return s.failTask(ctx, store, task, run.ID, errors.New("agent stage requires agent"))
 	}
 	now := time.Now().UTC()
-	values := s.promptValues(ctx, store, task, tmpl, stage, run)
+	values := s.promptValues(ctx, store, task, stage, run)
 	prompt := BuildAgentPrompt(stage.PromptTemplate, values, TaskControlPromptContext{
 		RootID:            task.RootID,
 		TaskNumber:        task.TaskNumber,
@@ -1004,7 +971,7 @@ func (s *Service) runAgentStage(ctx context.Context, store *TaskStore, task Task
 	return nil
 }
 
-func (s *Service) promptValues(ctx context.Context, store *TaskStore, task Task, tmpl TaskTemplate, stage StageTemplate, run StageRun) map[string]string {
+func (s *Service) promptValues(ctx context.Context, store *TaskStore, task Task, stage StageTemplate, run StageRun) map[string]string {
 	previousInput := strings.TrimSpace(run.Input)
 	if previousInput == "" && run.StageIndex > 0 {
 		if previous, err := store.LatestStageRun(ctx, task.ID, run.StageIndex-1); err == nil {
@@ -1111,15 +1078,15 @@ func (s *Service) recordTaskError(ctx context.Context, store *TaskStore, task Ta
 }
 
 func (s *Service) moveRelative(ctx context.Context, in MoveInput, delta int, eventType, previousRunStatus string) (TaskDetail, error) {
-	store, task, tmpl, err := s.loadForMove(ctx, in.RootID, in.TaskID)
+	store, task, err := s.loadForMove(ctx, in.RootID, in.TaskID)
 	if err != nil {
 		return TaskDetail{}, err
 	}
 	target := task.CurrentStageIndex + delta
-	if target < 0 || target >= len(tmpl.Stages) {
+	if target < 0 || target >= len(task.Stages) {
 		return TaskDetail{}, errors.New("target stage out of range")
 	}
-	if task.CurrentStageIndex < 0 || task.CurrentStageIndex >= len(tmpl.Stages) {
+	if task.CurrentStageIndex < 0 || task.CurrentStageIndex >= len(task.Stages) {
 		return TaskDetail{}, errors.New("current stage out of range")
 	}
 	latest, latestErr := store.LatestStageRun(ctx, task.ID, task.CurrentStageIndex)
@@ -1129,7 +1096,7 @@ func (s *Service) moveRelative(ctx context.Context, in MoveInput, delta int, eve
 	if delta > 0 && latest.Status == StageStatusRunning {
 		return TaskDetail{}, errors.New("current stage is running")
 	}
-	if delta > 0 && stageRequiresCurrentInput(tmpl.Stages[target].Snapshot, task.CurrentStageIndex) && strings.TrimSpace(latest.Input) == "" {
+	if delta > 0 && stageRequiresCurrentInput(task.Stages[target], task.CurrentStageIndex) && strings.TrimSpace(latest.Input) == "" {
 		return TaskDetail{}, errors.New("current stage input required")
 	}
 	if delta > 0 && task.CreateWorktree && strings.TrimSpace(task.WorktreePath) == "" {
@@ -1145,7 +1112,7 @@ func (s *Service) moveRelative(ctx context.Context, in MoveInput, delta int, eve
 	if previousRunStatus != "" {
 		_ = store.UpdateStageRunStatus(ctx, latest.ID, previousRunStatus)
 	}
-	return s.moveTo(ctx, store, task, tmpl, target, eventType, previousRunStatus, in.Reason)
+	return s.moveTo(ctx, store, task, target, eventType, previousRunStatus, in.Reason)
 }
 
 func stageRequiresCurrentInput(stage StageTemplate, currentStageIndex int) bool {
@@ -1154,16 +1121,12 @@ func stageRequiresCurrentInput(stage StageTemplate, currentStageIndex int) bool 
 		(currentStageIndex == 0 && strings.Contains(prompt, "{task_initial_input}"))
 }
 
-func (s *Service) moveTo(ctx context.Context, store *TaskStore, task Task, tmpl TaskTemplate, target int, eventType, previousRunStatus, reason string) (TaskDetail, error) {
+func (s *Service) moveTo(ctx context.Context, store *TaskStore, task Task, target int, eventType, previousRunStatus, reason string) (TaskDetail, error) {
 	now := time.Now().UTC()
-	stage := tmpl.Stages[target].Snapshot
+	stage := task.Stages[target]
 	status := StatusWaitingUser
-	if stage.Role == RoleAgent || stage.AutoAdvance {
-		if task.SchedulerAdmitted {
-			status = StatusRunning
-		} else {
-			status = StatusQueued
-		}
+	if stage.Role == RoleAgent {
+		status = StatusRunning
 	}
 	task.CurrentStageIndex = target
 	task.Status = status
@@ -1179,7 +1142,7 @@ func (s *Service) moveTo(ctx context.Context, store *TaskStore, task Task, tmpl 
 		CreatedAt:  now,
 		UpdatedAt:  now,
 	}
-	if stage.Role == RoleUser && !stage.AutoAdvance {
+	if stage.Role == RoleUser {
 		run.Status = StageStatusWaitingUser
 	}
 	event := TaskEvent{
@@ -1201,12 +1164,7 @@ func (s *Service) setTaskStatus(ctx context.Context, rootID, taskID, status, eve
 	if err != nil {
 		return TaskDetail{}, err
 	}
-	admitted := (*bool)(nil)
-	if terminal {
-		no := false
-		admitted = &no
-	}
-	if err := store.UpdateTaskStatus(ctx, taskID, status, admitted, terminal); err != nil {
+	if err := store.UpdateTaskStatus(ctx, taskID, status, nil, terminal); err != nil {
 		return TaskDetail{}, err
 	}
 	_ = store.AddEvent(ctx, TaskEvent{
@@ -1216,27 +1174,48 @@ func (s *Service) setTaskStatus(ctx context.Context, rootID, taskID, status, eve
 		Payload:   eventPayload(map[string]any{"reason": strings.TrimSpace(reason)}),
 		CreatedAt: time.Now().UTC(),
 	})
-	detail, err := store.GetDetail(ctx, taskID)
-	if err == nil && terminal {
-		s.Schedule(rootID)
-	}
-	return detail, err
+	return store.GetDetail(ctx, taskID)
 }
 
-func (s *Service) loadForMove(ctx context.Context, rootID, taskID string) (*TaskStore, Task, TaskTemplate, error) {
+// ensureServiceTask 读取任务并回填旧任务快照（详见 loadForMove）；当前任务字段仅服务端推动（如追加段落）。
+func (s *Service) ensureServiceTask(ctx context.Context, rootID string, store *TaskStore, taskID string) (Task, error) {
+	store, task, err := s.loadForMove(ctx, rootID, strings.TrimSpace(taskID))
+	if err != nil {
+		return Task{}, err
+	}
+	return task, nil
+}
+
+func defaultStageName(task Task, index int) string {
+	if index < 0 {
+		index = 0
+	}
+	name := strings.TrimSpace(fmt.Sprintf("阶段 %d", index+1))
+	return name
+}
+
+func (s *Service) loadForMove(ctx context.Context, rootID, taskID string) (*TaskStore, Task, error) {
 	store, err := s.taskStore(rootID)
 	if err != nil {
-		return nil, Task{}, TaskTemplate{}, err
+		return nil, Task{}, err
 	}
 	task, err := store.GetTask(ctx, taskID)
 	if err != nil {
-		return nil, Task{}, TaskTemplate{}, err
+		return nil, Task{}, err
 	}
-	tmpl, err := s.Templates.GetTaskTemplate(task.TaskTemplateID)
-	if err != nil {
-		return nil, Task{}, TaskTemplate{}, err
+	// 兼容：老任务没存任务流水 → 惰性从预设拷贝一次并落盘；此后与模板解耦。
+	if len(task.Stages) == 0 && strings.TrimSpace(task.TaskTemplateID) != "" {
+		if tmpl, err := s.Templates.GetTaskTemplate(task.TaskTemplateID); err == nil {
+			stages := []StageTemplate{}
+			for _, ts := range tmpl.Stages {
+				stages = append(stages, normalizeStageTemplate(ts.Snapshot))
+			}
+			task.Stages = stages
+			task.UpdatedAt = time.Now().UTC()
+			_ = store.UpdateTask(ctx, task)
+		}
 	}
-	return store, task, tmpl, nil
+	return store, task, nil
 }
 
 func (s *Service) taskStore(rootID string) (*TaskStore, error) {
@@ -1273,16 +1252,6 @@ func eventPayload(value map[string]any) string {
 		return "{}"
 	}
 	return string(payload)
-}
-
-func eventReason(payload string) string {
-	var value struct {
-		Reason string `json:"reason"`
-	}
-	if err := json.Unmarshal([]byte(strings.TrimSpace(payload)), &value); err != nil {
-		return ""
-	}
-	return strings.TrimSpace(value.Reason)
 }
 
 type TaskControlPromptContext struct {

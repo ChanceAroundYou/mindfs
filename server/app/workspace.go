@@ -325,7 +325,8 @@ func (m *workspaceManager) build(userID string) (*api.AppContext, error) {
 	}
 	services.GitHub = githubImportSvc
 	for _, root := range services.ListRoots() {
-		services.Kanban.Schedule(root.ID)
+		// 启动时把处于等待用户以外的旧待跑任务补进来跑一次（无调度器语义，仅确保不卡住）。
+		services.Kanban.KickPending(root.ID)
 	}
 
 	log.Printf("[workspace] 已就绪 user=%s primary=%v projects=%s meta=%s",

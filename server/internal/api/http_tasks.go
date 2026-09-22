@@ -165,25 +165,32 @@ func (h *HTTPHandler) handleKanbanTaskCreate(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	var req struct {
-		RootID             string `json:"root_id"`
-		TaskTemplateID     string `json:"task_template_id"`
-		Input              string `json:"input"`
-		CreateWorktree     bool   `json:"create_worktree"`
-		WorktreeBranchMode string `json:"worktree_branch_mode"`
-		WorktreeBranch     string `json:"worktree_branch"`
+		RootID             string                  `json:"root_id"`
+		TaskTemplateID     string                  `json:"task_template_id"`
+		Input              string                  `json:"input"`
+		Name               string                  `json:"name"`
+		Stages             *[]kanban.StageTemplate `json:"stages"`
+		CreateWorktree     bool                    `json:"create_worktree"`
+		WorktreeBranchMode string                  `json:"worktree_branch_mode"`
+		WorktreeBranch     string                  `json:"worktree_branch"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<20)).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, errInvalidRequest("invalid json body"))
 		return
 	}
-	detail, err := svc.CreateTask(r.Context(), kanban.CreateTaskInput{
+	create := kanban.CreateTaskInput{
 		RootID:             req.RootID,
 		TaskTemplateID:     req.TaskTemplateID,
 		Input:              req.Input,
+		Name:               req.Name,
 		CreateWorktree:     req.CreateWorktree,
 		WorktreeBranchMode: req.WorktreeBranchMode,
 		WorktreeBranch:     req.WorktreeBranch,
-	})
+	}
+	if req.Stages != nil {
+		create.Stages = *req.Stages
+	}
+	detail, err := svc.CreateTask(r.Context(), create)
 	if err != nil {
 		respondError(w, http.StatusBadRequest, err)
 		return
@@ -298,6 +305,96 @@ func (h *HTTPHandler) handleKanbanTaskMove(w http.ResponseWriter, r *http.Reques
 	default:
 		err = errInvalidRequest("unsupported task action")
 	}
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err)
+		return
+	}
+	h.broadcastTaskUpdated(req.RootID, detail)
+	respondJSON(w, http.StatusOK, detail)
+}
+
+func (h *HTTPHandler) handleKanbanTaskRename(w http.ResponseWriter, r *http.Request) {
+	svc, ok := h.kanbanService(w)
+	if !ok {
+		return
+	}
+	var req struct {
+		RootID string `json:"root_id"`
+		Name   string `json:"name"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("invalid json body"))
+		return
+	}
+	detail, err := svc.RenameTask(r.Context(), req.RootID, chi.URLParam(r, "id"), req.Name)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err)
+		return
+	}
+	h.broadcastTaskUpdated(req.RootID, detail)
+	respondJSON(w, http.StatusOK, detail)
+}
+
+func (h *HTTPHandler) handleKanbanTaskRerun(w http.ResponseWriter, r *http.Request) {
+	svc, ok := h.kanbanService(w)
+	if !ok {
+		return
+	}
+	var req struct {
+		RootID     string `json:"root_id"`
+		Reason     string `json:"reason"`
+		StageIndex int    `json:"stage_index"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("invalid json body"))
+		return
+	}
+	detail, err := svc.RerunStage(r.Context(), kanban.MoveInput{RootID: req.RootID, TaskID: chi.URLParam(r, "id"), Reason: req.Reason, StageIndex: req.StageIndex})
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err)
+		return
+	}
+	h.broadcastTaskUpdated(req.RootID, detail)
+	respondJSON(w, http.StatusOK, detail)
+}
+
+func (h *HTTPHandler) handleKanbanTaskAddStage(w http.ResponseWriter, r *http.Request) {
+	svc, ok := h.kanbanService(w)
+	if !ok {
+		return
+	}
+	var req struct {
+		RootID string               `json:"root_id"`
+		Stage  kanban.StageTemplate `json:"stage"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<20)).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("invalid json body"))
+		return
+	}
+	detail, err := svc.AddStage(r.Context(), kanban.AddStageInput{RootID: req.RootID, TaskID: chi.URLParam(r, "id"), Stage: req.Stage})
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err)
+		return
+	}
+	h.broadcastTaskUpdated(req.RootID, detail)
+	respondJSON(w, http.StatusOK, detail)
+}
+
+func (h *HTTPHandler) handleKanbanTaskUpdateStage(w http.ResponseWriter, r *http.Request) {
+	svc, ok := h.kanbanService(w)
+	if !ok {
+		return
+	}
+	var req struct {
+		RootID string                `json:"root_id"`
+		Index  int                   `json:"index"`
+		Stage  *kanban.StageTemplate `json:"stage"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<20)).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("invalid json body"))
+		return
+	}
+	detail, err := svc.UpdateStage(r.Context(), kanban.UpdateStageInput{RootID: req.RootID, TaskID: chi.URLParam(r, "id"), Index: req.Index, Stage: req.Stage})
 	if err != nil {
 		respondError(w, http.StatusBadRequest, err)
 		return

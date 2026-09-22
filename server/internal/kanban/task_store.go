@@ -17,7 +17,7 @@ import (
 )
 
 const taskDBMetaPath = "tasks/task-kanban.db"
-const taskSelectColumns = "id, task_number, root_id, task_template_id, task_template_name, template_snapshot_json, create_worktree, worktree_branch_mode, worktree_branch, current_stage_index, status, scheduler_admitted, main_session_key, worktree_root_id, worktree_path, aux_ask_user_waiting, aux_has_plan, aux_has_todos, aux_has_task, aux_session_error, labels_json, created_at, updated_at, completed_at"
+const taskSelectColumns = "id, task_number, root_id, task_template_id, task_template_name, template_snapshot_json, create_worktree, worktree_branch_mode, worktree_branch, current_stage_index, status, scheduler_admitted, main_session_key, worktree_root_id, worktree_path, aux_ask_user_waiting, aux_has_plan, aux_has_todos, aux_has_task, aux_session_error, labels_json, created_at, updated_at, completed_at, name, task_stages_json"
 
 type TaskStore struct {
 	root fs.RootInfo
@@ -144,6 +144,17 @@ CREATE INDEX IF NOT EXISTS idx_task_events_task_created ON task_events(task_id, 
 		return err
 	}
 	if _, err := s.db.Exec(`ALTER TABLE tasks ADD COLUMN aux_session_error TEXT NOT NULL DEFAULT ''`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+		return err
+	}
+	// 任务命名与任务自有流水（阶段快照）；存在任务身上的 stage 定义不再回查模板。
+	if _, err := s.db.Exec(`ALTER TABLE tasks ADD COLUMN name TEXT NOT NULL DEFAULT ''`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+		return err
+	}
+	if _, err := s.db.Exec(`ALTER TABLE tasks ADD COLUMN task_stages_json TEXT NOT NULL DEFAULT '[]'`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+		return err
+	}
+	// 旧数据：颓废状态归入新模型（queued→pending）；旧任务若只有模板无快照，在读取时惰性补齐。
+	if _, err := s.db.Exec(`UPDATE tasks SET status = 'pending' WHERE status = 'queued'`); err != nil {
 		return err
 	}
 	if err := s.backfillTaskNumbers(); err != nil {
@@ -302,47 +313,6 @@ func (s *TaskStore) ListTaskDetails(ctx context.Context, opts ListTasksOptions) 
 		items = append(items, TaskDetail{Task: task, StageRuns: runs, Events: events})
 	}
 	return items, nil
-}
-
-func (s *TaskStore) ListQueuedTasks(ctx context.Context) ([]Task, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT `+taskSelectColumns+` FROM tasks WHERE status = ? ORDER BY created_at ASC`, StatusQueued)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []Task{}
-	for rows.Next() {
-		task, err := scanTask(rows)
-		if err != nil {
-			return nil, err
-		}
-		items = append(items, task)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	rows.Close()
-	for i := range items {
-		s.decorateCurrentStage(ctx, &items[i])
-	}
-	return items, nil
-}
-
-func (s *TaskStore) CountUnfinishedTasksByTemplate(ctx context.Context, templateID string) (int, error) {
-	templateID = strings.TrimSpace(templateID)
-	if templateID == "" {
-		return 0, nil
-	}
-	var count int
-	err := s.db.QueryRowContext(
-		ctx,
-		`SELECT COUNT(*) FROM tasks WHERE task_template_id = ? AND status NOT IN (?, ?, ?)`,
-		templateID,
-		StatusSuccess,
-		StatusFail,
-		StatusCancelled,
-	).Scan(&count)
-	return count, err
 }
 
 func (s *TaskStore) GetTask(ctx context.Context, id string) (Task, error) {
@@ -569,15 +539,17 @@ func (s *TaskStore) decorateCurrentStage(ctx context.Context, task *Task) {
 
 func insertTask(ctx context.Context, tx *sql.Tx, task Task) error {
 	labels, _ := json.Marshal(task.Labels)
-	_, err := tx.ExecContext(ctx, `INSERT INTO tasks (id, task_number, root_id, task_template_id, task_template_name, template_snapshot_json, create_worktree, worktree_branch_mode, worktree_branch, current_stage_index, status, scheduler_admitted, main_session_key, worktree_root_id, worktree_path, aux_ask_user_waiting, aux_has_plan, aux_has_todos, aux_has_task, aux_session_error, labels_json, created_at, updated_at, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		task.ID, task.TaskNumber, task.RootID, task.TaskTemplateID, task.TaskTemplateName, "", boolInt(task.CreateWorktree), task.WorktreeBranchMode, task.WorktreeBranch, task.CurrentStageIndex, task.Status, boolInt(task.SchedulerAdmitted), task.MainSessionKey, task.WorktreeRootID, task.WorktreePath, boolInt(task.AuxFlags.AskUserWaiting), boolInt(task.AuxFlags.HasPlan), boolInt(task.AuxFlags.HasTodos), boolInt(task.AuxFlags.HasTask), strings.TrimSpace(task.AuxFlags.SessionError), string(labels), task.CreatedAt.UTC().Format(time.RFC3339Nano), task.UpdatedAt.UTC().Format(time.RFC3339Nano), task.CompletedAt)
+	stages, _ := json.Marshal(task.Stages)
+	_, err := tx.ExecContext(ctx, `INSERT INTO tasks (id, task_number, root_id, task_template_id, task_template_name, template_snapshot_json, create_worktree, worktree_branch_mode, worktree_branch, current_stage_index, status, scheduler_admitted, main_session_key, worktree_root_id, worktree_path, aux_ask_user_waiting, aux_has_plan, aux_has_todos, aux_has_task, aux_session_error, labels_json, created_at, updated_at, completed_at, name, task_stages_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		task.ID, task.TaskNumber, task.RootID, task.TaskTemplateID, task.TaskTemplateName, "", boolInt(task.CreateWorktree), task.WorktreeBranchMode, task.WorktreeBranch, task.CurrentStageIndex, task.Status, boolInt(task.SchedulerAdmitted), task.MainSessionKey, task.WorktreeRootID, task.WorktreePath, boolInt(task.AuxFlags.AskUserWaiting), boolInt(task.AuxFlags.HasPlan), boolInt(task.AuxFlags.HasTodos), boolInt(task.AuxFlags.HasTask), strings.TrimSpace(task.AuxFlags.SessionError), string(labels), task.CreatedAt.UTC().Format(time.RFC3339Nano), task.UpdatedAt.UTC().Format(time.RFC3339Nano), task.CompletedAt, task.Name, string(stages))
 	return err
 }
 
 func updateTaskCore(ctx context.Context, tx *sql.Tx, task Task) error {
 	labels, _ := json.Marshal(task.Labels)
-	_, err := tx.ExecContext(ctx, `UPDATE tasks SET create_worktree = ?, worktree_branch_mode = ?, worktree_branch = ?, current_stage_index = ?, status = ?, scheduler_admitted = ?, main_session_key = ?, worktree_root_id = ?, worktree_path = ?, aux_ask_user_waiting = ?, aux_has_plan = ?, aux_has_todos = ?, aux_has_task = ?, aux_session_error = ?, labels_json = ?, updated_at = ?, completed_at = ? WHERE id = ?`,
-		boolInt(task.CreateWorktree), task.WorktreeBranchMode, task.WorktreeBranch, task.CurrentStageIndex, task.Status, boolInt(task.SchedulerAdmitted), task.MainSessionKey, task.WorktreeRootID, task.WorktreePath, boolInt(task.AuxFlags.AskUserWaiting), boolInt(task.AuxFlags.HasPlan), boolInt(task.AuxFlags.HasTodos), boolInt(task.AuxFlags.HasTask), strings.TrimSpace(task.AuxFlags.SessionError), string(labels), task.UpdatedAt.UTC().Format(time.RFC3339Nano), task.CompletedAt, task.ID)
+	stages, _ := json.Marshal(task.Stages)
+	_, err := tx.ExecContext(ctx, `UPDATE tasks SET create_worktree = ?, worktree_branch_mode = ?, worktree_branch = ?, current_stage_index = ?, status = ?, scheduler_admitted = ?, main_session_key = ?, worktree_root_id = ?, worktree_path = ?, aux_ask_user_waiting = ?, aux_has_plan = ?, aux_has_todos = ?, aux_has_task = ?, aux_session_error = ?, labels_json = ?, updated_at = ?, completed_at = ?, name = ?, task_stages_json = ? WHERE id = ?`,
+		boolInt(task.CreateWorktree), task.WorktreeBranchMode, task.WorktreeBranch, task.CurrentStageIndex, task.Status, boolInt(task.SchedulerAdmitted), task.MainSessionKey, task.WorktreeRootID, task.WorktreePath, boolInt(task.AuxFlags.AskUserWaiting), boolInt(task.AuxFlags.HasPlan), boolInt(task.AuxFlags.HasTodos), boolInt(task.AuxFlags.HasTask), strings.TrimSpace(task.AuxFlags.SessionError), string(labels), task.UpdatedAt.UTC().Format(time.RFC3339Nano), task.CompletedAt, task.Name, string(stages), task.ID)
 	return err
 }
 
@@ -598,10 +570,10 @@ func scanTask(row scanner) (Task, error) {
 	var task Task
 	var createWorktree, admitted, askUserWaiting, hasPlan, hasTodos, hasTask int
 	var sessionError string
-	var labels string
+	var labels, stagesJSON string
 	var templateSnapshot string
 	var created, updated string
-	if err := row.Scan(&task.ID, &task.TaskNumber, &task.RootID, &task.TaskTemplateID, &task.TaskTemplateName, &templateSnapshot, &createWorktree, &task.WorktreeBranchMode, &task.WorktreeBranch, &task.CurrentStageIndex, &task.Status, &admitted, &task.MainSessionKey, &task.WorktreeRootID, &task.WorktreePath, &askUserWaiting, &hasPlan, &hasTodos, &hasTask, &sessionError, &labels, &created, &updated, &task.CompletedAt); err != nil {
+	if err := row.Scan(&task.ID, &task.TaskNumber, &task.RootID, &task.TaskTemplateID, &task.TaskTemplateName, &templateSnapshot, &createWorktree, &task.WorktreeBranchMode, &task.WorktreeBranch, &task.CurrentStageIndex, &task.Status, &admitted, &task.MainSessionKey, &task.WorktreeRootID, &task.WorktreePath, &askUserWaiting, &hasPlan, &hasTodos, &hasTask, &sessionError, &labels, &created, &updated, &task.CompletedAt, &task.Name, &stagesJSON); err != nil {
 		return Task{}, err
 	}
 	task.CreateWorktree = createWorktree != 0
@@ -614,6 +586,15 @@ func scanTask(row scanner) (Task, error) {
 		SessionError:   strings.TrimSpace(sessionError),
 	}
 	_ = json.Unmarshal([]byte(labels), &task.Labels)
+	if task.Stages == nil {
+		task.Stages = []StageTemplate{}
+	}
+	if strings.TrimSpace(stagesJSON) != "" && stagesJSON != "[]" {
+		_ = json.Unmarshal([]byte(stagesJSON), &task.Stages)
+	}
+	if task.Stages == nil {
+		task.Stages = []StageTemplate{}
+	}
 	task.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
 	task.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updated)
 	return task, nil

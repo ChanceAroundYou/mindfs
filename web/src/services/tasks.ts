@@ -52,8 +52,10 @@ export type KanbanTask = {
   id: string;
   task_number?: number;
   root_id: string;
+  name?: string;
   task_template_id: string;
   task_template_name: string;
+  stages?: StageTemplate[];
   create_worktree?: boolean;
   worktree_branch_mode?: "new" | "existing";
   worktree_branch?: string;
@@ -390,5 +392,47 @@ export async function moveTask(rootId: string, taskId: string, action: "next" | 
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ root_id: rootId, reason }),
+  });
+}
+
+export async function renameTask(rootId: string, taskId: string, name: string, nodeId?: string): Promise<TaskDetail> {
+  nodeId = nodeId || getRootNodeId(rootId);
+  return protectedJSON<TaskDetail>(appURL(`/api/tasks/${encodeURIComponent(taskId)}/rename`, undefined, nodeId), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ root_id: rootId, name }),
+  });
+}
+
+export async function rerunTaskStage(
+  rootId: string,
+  taskId: string,
+  stageIndex: number,
+  reason = "",
+  nodeId?: string,
+): Promise<TaskDetail> {
+  nodeId = nodeId || getRootNodeId(rootId);
+  return protectedJSON<TaskDetail>(appURL(`/api/tasks/${encodeURIComponent(taskId)}/rerun`, undefined, nodeId), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ root_id: rootId, stage_index: stageIndex, reason }),
+  });
+}
+
+export async function addTaskStage(rootId: string, taskId: string, stage: StageTemplate, nodeId?: string): Promise<TaskDetail> {
+  nodeId = nodeId || getRootNodeId(rootId);
+  return protectedJSON<TaskDetail>(appURL(`/api/tasks/${encodeURIComponent(taskId)}/add-stage`, undefined, nodeId), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ root_id: rootId, stage }),
+  });
+}
+
+export async function updateTaskStage(rootId: string, taskId: string, index: number, stage: StageTemplate, nodeId?: string): Promise<TaskDetail> {
+  nodeId = nodeId || getRootNodeId(rootId);
+  return protectedJSON<TaskDetail>(appURL(`/api/tasks/${encodeURIComponent(taskId)}/update-stage`, undefined, nodeId), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ root_id: rootId, index, stage }),
   });
 }
