@@ -22,8 +22,9 @@
 - 自动合并的重叠文件已逐一语义复核（上游内容全部在位）：`http.go`（sync-all/test 路由与本地 users/nodes 路由并存）、`usecase/fs.go`（上游 `resolveFileReadTarget` 在 90-320 行、本地 `UpdateRootDisplayName` 在 752-1010 行，互不重叠）、`preferences/store.go`（`AgentLastConfigSelections` 纯新增）、i18n zh/en（上游 3 个模型搜索键与本地多账户键并存）。
 - 反向对账（`git diff HEAD..7757ca8 -- <file>`）：21 个上游文件中 13 个为空（完整吸收），8 个差异恰为本地定制所在文件。
 - 门禁全绿：go build/vet、tsc 0 err、node tests 35/35、`make build`+`make install`；`go test ./...` 绿。
-  ⚠️ `server/internal/kanban` 存在 **pre-existing flake**（`attempt to write a readonly database (1032)`，`-count=15` 在 main 上同样复现），**非本次合并引入**，未修。
-- 部署：VM `make install` 完成（`v0.5.1-166-g8897fb9`），待用户重启；WSL 见部署记录。
+  `server/internal/kanban` 的 flake（`runner exec count=2` + `readonly database (1032)`）经查是
+  **真 bug**（同一任务的 agent 阶段被并发执行两次），已由 `d90a4c7` 修复，非合并引入。
+- 部署：VM `make install` 完成（`v0.5.1-167-g0b0ef82`），待用户重启；WSL 见部署记录。
 
 ---
 
