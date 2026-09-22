@@ -31,12 +31,14 @@ type Service struct {
 	stores       map[string]*TaskStore
 	scheduleRun  map[string]bool
 	schedulePend map[string]bool
+	taskRun      map[string]bool
+	taskPend     map[string]bool
 }
 
 var errStopTaskExecution = errors.New("stop task execution")
 
 func NewService(templates *TemplateStore, roots RootProvider) *Service {
-	return &Service{Templates: templates, Roots: roots, stores: map[string]*TaskStore{}, scheduleRun: map[string]bool{}, schedulePend: map[string]bool{}}
+	return &Service{Templates: templates, Roots: roots, stores: map[string]*TaskStore{}, scheduleRun: map[string]bool{}, schedulePend: map[string]bool{}, taskRun: map[string]bool{}, taskPend: map[string]bool{}}
 }
 
 func (s *Service) SetRunner(runner Runner) {
@@ -588,9 +590,33 @@ func (s *Service) RunTask(rootID, taskID string) {
 	if rootID == "" || taskID == "" {
 		return
 	}
+	// 同一任务同时只允许一个执行体。Next/Resume/RunNow 等处都是「先 Schedule 再 RunTask」，
+	// 调度循环与直调会各起一个 goroutine；两者都读到 pending 阶段时，同一阶段会被跑两次
+	// （重复创建 agent 会话、重复消耗 token）。这里给执行体加锁，重复请求记为待补跑。
+	key := rootID + "\x00" + taskID
+	s.mu.Lock()
+	if s.taskRun[key] {
+		s.taskPend[key] = true
+		s.mu.Unlock()
+		return
+	}
+	s.taskRun[key] = true
+	s.mu.Unlock()
 	go func() {
-		if err := s.executeTask(context.Background(), rootID, taskID); err != nil {
-			log.Printf("[kanban] task.execute.error root=%s task=%s err=%v", rootID, taskID, err)
+		for {
+			if err := s.executeTask(context.Background(), rootID, taskID); err != nil {
+				log.Printf("[kanban] task.execute.error root=%s task=%s err=%v", rootID, taskID, err)
+			}
+			s.mu.Lock()
+			// 执行期间又有请求进来 → 补跑一次（此时阶段多已 waiting_user，补跑不会重复执行 agent）。
+			if s.taskPend[key] {
+				delete(s.taskPend, key)
+				s.mu.Unlock()
+				continue
+			}
+			delete(s.taskRun, key)
+			s.mu.Unlock()
+			break
 		}
 		s.Schedule(rootID)
 	}()

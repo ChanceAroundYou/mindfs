@@ -36,6 +36,9 @@ type fakeRunner struct {
 	worktreeBranch       string
 	worktreeName         string
 	worktreeCreateCalled bool
+	// gate 非 nil 时 RunAgentStage 记完 exec 后阻塞到 gate 关闭，用来把执行体钉在阶段内部，
+	// 稳定复现并发执行（见 TestRunTaskExecutesStageOnceWhenKickedTwice）。
+	gate chan struct{}
 }
 
 func (r *fakeRunner) CreateTaskWorktree(ctx context.Context, rootID, name, branchMode, branch string) (WorktreeInfo, error) {
@@ -57,9 +60,16 @@ func (r *fakeRunner) EnsureAgentSession(ctx context.Context, exec AgentStageExec
 
 func (r *fakeRunner) RunAgentStage(ctx context.Context, exec AgentStageExecution) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	r.execs = append(r.execs, exec)
 	r.prompts = append(r.prompts, exec.Prompt)
+	r.mu.Unlock()
+	if r.gate != nil {
+		select {
+		case <-r.gate:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	return r.runErr
 }
 
@@ -287,12 +297,12 @@ func TestNextFinishesFinalStageWaitingUser(t *testing.T) {
 		}, {
 			Position: 1,
 			Snapshot: StageTemplate{
-				Name:               "Do it",
-				Role:               RoleAgent,
-				Agent:              "codex",
-				Model:              "gpt-5",
-				PromptTemplate:     "Do this:\n{previous_input}", // 非空, 才能建任务
-				AutoAdvance:        false,
+				Name:           "Do it",
+				Role:           RoleAgent,
+				Agent:          "codex",
+				Model:          "gpt-5",
+				PromptTemplate: "Do this:\n{previous_input}", // 非空, 才能建任务
+				AutoAdvance:    false,
 			},
 		}},
 	})
@@ -662,6 +672,76 @@ func TestTaskWorktreeNameUsesTaskNumber(t *testing.T) {
 	}
 	if runner.execs[0].RuntimeRootPath != filepath.Join(os.TempDir(), "task-1") {
 		t.Fatalf("runtime root path=%q, want task worktree path", runner.execs[0].RuntimeRootPath)
+	}
+}
+
+// Next/Resume/RunNow 等处都是「先 Schedule 再 RunTask」：调度循环与直调会各起一个执行体，
+// 两者都读到 pending 阶段时同一 agent 阶段会被跑两次。这里用一个会阻塞的 runner 把第一个
+// 执行体钉在阶段内部，再补一次 RunTask —— 没有守卫时 exec 会变成 2。
+func TestRunTaskExecutesStageOnceWhenKickedTwice(t *testing.T) {
+	ctx := context.Background()
+	root := fs.NewRootInfo("root", "root", t.TempDir())
+	store := NewTemplateStoreAt(t.TempDir())
+	svc := NewService(store, testRoots{root: root})
+	gate := make(chan struct{})
+	runner := &fakeRunner{gate: gate}
+	svc.SetRunner(runner)
+
+	tmpl, err := store.SaveTaskTemplate(TaskTemplate{
+		Name: "Double Kick",
+		Stages: []TaskTemplateStage{{
+			Position: 0,
+			Snapshot: StageTemplate{Name: "Describe", Role: RoleUser},
+		}, {
+			Position: 1,
+			Snapshot: StageTemplate{Name: "Fix", Role: RoleAgent, Agent: "codex", Model: "gpt-5"},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("SaveTaskTemplate: %v", err)
+	}
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, TaskTemplateID: tmpl.ID, Input: "broken save button"})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if _, err := svc.Next(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err != nil {
+		t.Fatalf("Next: %v", err)
+	}
+	// 等第一个执行体真正进入 agent 阶段（gate 会把它留在里面）。
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		runner.mu.Lock()
+		entered := len(runner.execs) > 0
+		runner.mu.Unlock()
+		if entered {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	runner.mu.Lock()
+	entered := len(runner.execs) > 0
+	runner.mu.Unlock()
+	if !entered {
+		close(gate)
+		t.Fatalf("agent stage never started")
+	}
+	// 第二个执行体：守卫生效时应被挡下。
+	svc.RunTask(root.ID, detail.Task.ID)
+	time.Sleep(50 * time.Millisecond)
+	close(gate)
+
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		got, err := svc.GetTask(ctx, root.ID, detail.Task.ID)
+		if err == nil && got.Task.Status == StatusWaitingUser {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	if len(runner.execs) != 1 {
+		t.Fatalf("runner exec count=%d, want 1（同一阶段被执行了多次）", len(runner.execs))
 	}
 }
 
