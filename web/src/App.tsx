@@ -160,6 +160,7 @@ import { ToastContainer } from "./components/Toast";
 import { BottomSheet } from "./components/BottomSheet";
 import { ScheduledAgentTaskDialog } from "./components/ScheduledAgentTaskDialog";
 import { TaskTemplateDialog } from "./components/TaskTemplateDialog";
+import { TaskDetailPanel } from "./components/TaskDetailPanel";
 import { OnboardingTour } from "./components/OnboardingTour";
 import { WorktreeBranchSelector } from "./components/WorktreeBranchSelector";
 import { NoWorktreeIcon } from "./components/NoWorktreeIcon";
@@ -13320,71 +13321,56 @@ export function App({ onGoHome }: AppProps) {
     if (key) acc[key] = (acc[key] || 0) + 1;
     return acc;
   }, {});
-  const selectedTaskTemplateUnfinishedCount = selectedTaskTemplateForFilter?.id ? unfinishedKanbanTaskCountByTemplate[selectedTaskTemplateForFilter.id] || 0 : 0;
-  const isTaskAtLastKnownStage = (task: KanbanTask) => {
-    const template = taskTemplateById[task.task_template_id || ""];
-    if (!template || template.stages.length === 0) return false;
-    return task.current_stage_index >= template.stages.length - 1;
-  };
-  const kanbanStageColumns = isAllTaskTemplateFilter
-    ? [{
-        index: 0,
-        name: t("task.column.pending"),
-        role: "user" as const,
-        tasks: kanbanTasks.filter((task) => task.current_stage_index === 0 && !isTerminalKanbanTask(task)),
+  // 列 = 全局状态：待开始 / 进行中 / 等待你 / 已完成 / 失败·取消（与后端状态一一对应）。
+  const kanbanStageColumns: Array<{
+    index: number;
+    name: string;
+    role: "user" | "agent";
+    tasks: KanbanTask[];
+    groups?: Array<{ key: string; name: string; tone: "success" | "danger" | "muted"; tasks: KanbanTask[] }>;
+  }> = [
+    {
+      index: 0,
+      name: t("task.column.pending"),
+      role: "user" as const,
+      tasks: kanbanTasks.filter((task) => task.status === "pending"),
+    },
+    {
+      index: 1,
+      name: t("task.column.running"),
+      role: "agent" as const,
+      tasks: kanbanTasks.filter((task) => task.status === "running" || task.status === "queued" || task.status === "paused"),
+    },
+    {
+      index: 2,
+      name: t("task.column.waitingUser"),
+      role: "user" as const,
+      tasks: kanbanTasks.filter((task) => task.status === "waiting_user"),
+    },
+    {
+      index: 3,
+      name: t("task.column.done"),
+      role: "user" as const,
+      tasks: kanbanTasks.filter((task) => task.status === "success"),
+    },
+    {
+      index: 4,
+      name: t("task.column.failed"),
+      role: "user" as const,
+      tasks: kanbanTasks.filter((task) => task.status === "fail" || task.status === "cancelled"),
+      groups: [{
+        key: "fail",
+        name: t("task.group.failed"),
+        tone: "danger" as const,
+        tasks: kanbanTasks.filter((task) => task.status === "fail"),
       }, {
-        index: 1,
-        name: t("task.column.running"),
-        role: "agent" as const,
-        tasks: kanbanTasks.filter((task) => task.current_stage_index !== 0 && !isTerminalKanbanTask(task)),
-      }, {
-        index: 2,
-        name: t("task.column.done"),
-        role: "user" as const,
-        tasks: kanbanTasks.filter(isTerminalKanbanTask),
-        groups: [{
-          key: "success",
-          name: t("task.group.completed"),
-          tone: "success" as const,
-          tasks: kanbanTasks.filter((task) => task.status === "success"),
-        }, {
-          key: "fail",
-          name: t("task.group.failed"),
-          tone: "danger" as const,
-          tasks: kanbanTasks.filter((task) => task.status === "fail"),
-        }, {
-          key: "cancelled",
-          name: t("task.group.cancelled"),
-          tone: "muted" as const,
-          tasks: kanbanTasks.filter((task) => task.status === "cancelled"),
-        }].filter((group) => group.tasks.length > 0),
-      }]
-    : selectedTaskTemplateForFilter
-      ? selectedTaskTemplateForFilter.stages.map((stage, index) => ({
-        index,
-        name: stage.snapshot.name || (stage.snapshot.role === "agent" ? t("task.stage.agent") : t("task.stage.user")),
-        role: stage.snapshot.role,
-        tasks: kanbanTasks.filter((task) => task.current_stage_index === index),
-      }))
-    : [];
-  if (!isAllTaskTemplateFilter) {
-    kanbanTasks.forEach((task) => {
-      if (task.current_stage_index < 0 || task.current_stage_index >= kanbanStageColumns.length) {
-        const existing = kanbanStageColumns.find((column) => column.index === task.current_stage_index);
-        if (existing) {
-          existing.tasks.push(task);
-        } else {
-          kanbanStageColumns.push({
-            index: task.current_stage_index,
-            name: task.current_stage_name || t("task.stageLabel", { index: task.current_stage_index + 1 }),
-            role: "user",
-            tasks: [task],
-          });
-        }
-      }
-    });
-  }
-  kanbanStageColumns.sort((a, b) => a.index - b.index);
+        key: "cancelled",
+        name: t("task.group.cancelled"),
+        tone: "muted" as const,
+        tasks: kanbanTasks.filter((task) => task.status === "cancelled"),
+      }].filter((group) => group.tasks.length > 0),
+    },
+  ];
 	  const kanbanTaskPanel = currentRootId ? (
 	    <div
 	      data-onboarding="task-board"
@@ -13588,65 +13574,19 @@ export function App({ onGoHome }: AppProps) {
                 </button>
                 <button
                   type="button"
-                  disabled={!selectedTaskTemplateForFilter || selectedTaskTemplateUnfinishedCount > 0}
-                  title={!selectedTaskTemplateForFilter ? t("task.selectTemplate") : selectedTaskTemplateUnfinishedCount > 0 ? t("task.deleteBlocked") : t("task.deleteTemplate")}
+                  disabled={!selectedTaskTemplateForFilter}
+                  title={!selectedTaskTemplateForFilter ? t("task.selectTemplate") : t("task.deleteTemplate")}
                   onClick={() => {
-                    if (!selectedTaskTemplateForFilter || selectedTaskTemplateUnfinishedCount > 0) return;
+                    if (!selectedTaskTemplateForFilter) return;
                     setTaskTemplateActionMenuOpen(false);
                     void handleDeleteTaskTemplate(selectedTaskTemplateForFilter);
                   }}
-                  style={taskTemplateMenuItemStyle(!selectedTaskTemplateForFilter || selectedTaskTemplateUnfinishedCount > 0)}
+                  style={taskTemplateMenuItemStyle(!selectedTaskTemplateForFilter)}
                 >
                   <DeleteIcon />
                   <span>{t("task.deleteTemplate")}</span>
                 </button>
                 <div style={{ height: "1px", background: "var(--border-color)", margin: "6px 2px" }} />
-                <button
-                  type="button"
-                  disabled={!selectedTaskTemplateForFilter}
-                  onClick={() => setTaskTemplateConcurrencyOpen((open) => !open)}
-                  style={taskTemplateMenuItemStyle(!selectedTaskTemplateForFilter)}
-                >
-                  <span style={{ flex: 1 }}>{t("task.concurrency")}</span>
-                  <span style={{ fontSize: "12px", fontWeight: 800, color: "var(--text-primary)" }}>
-                    {selectedTaskTemplateForFilter?.max_concurrency || 1}
-                  </span>
-                  <ChevronDownSmallIcon />
-                </button>
-                {taskTemplateConcurrencyOpen && selectedTaskTemplateForFilter ? (
-                  <div style={{ borderTop: "1px solid var(--border-color)", borderBottom: "1px solid var(--border-color)", margin: "2px 2px 6px", padding: "4px 0" }}>
-                    {Array.from({ length: 10 }, (_, index) => index + 1).map((value) => {
-                      const active = (selectedTaskTemplateForFilter.max_concurrency || 1) === value;
-                      return (
-                        <button
-                          key={value}
-                          type="button"
-                          onClick={() => {
-                            void handleTaskTemplateConcurrencyChange(selectedTaskTemplateForFilter.id || "", value);
-                          }}
-                          style={{
-                            width: "100%",
-                            minHeight: "28px",
-                            border: "none",
-                            borderRadius: "6px",
-                            background: active ? "rgba(37, 99, 235, 0.10)" : "transparent",
-                            color: active ? "var(--accent-color)" : "var(--text-primary)",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "space-between",
-                            padding: "5px 8px 5px 24px",
-                            fontSize: "12px",
-                            fontWeight: active ? 800 : 600,
-                            cursor: "pointer",
-                          }}
-                        >
-                          <span>{value}</span>
-                          {active ? <CheckIconSmall /> : null}
-                        </button>
-                      );
-                    })}
-                  </div>
-                ) : null}
               </div>
             ) : null}
           </div>
@@ -13898,9 +13838,9 @@ export function App({ onGoHome }: AppProps) {
                     const inputExpanded = expandedTaskInputIds.has(task.id);
                     const inputNeedsToggle = firstInput.length > 120 || firstInput.split(/\r?\n/).length > 3;
                     const taskTerminal = isTerminalKanbanTask(task);
-                    const taskStageRunning = task.current_stage_status === "running";
-                    const taskCanComplete = !taskTerminal && task.status === "waiting_user" && isTaskAtLastKnownStage(task);
-                    const showTaskAdvanceButton = !taskTerminal && !taskStageRunning && !taskQueued;
+                    const taskStageRunning = task.current_stage_status === "running" && task.status === "running";
+                    const taskCanComplete = !taskTerminal && task.status === "waiting_user";
+                    const showTaskAdvanceButton = !taskTerminal && !taskStageRunning;
                     const taskStatusText = taskStatusLabel(task.status || "", t);
                     const taskWorktreeEnabled = task.create_worktree === true;
 	                    const taskNumberLabel = task.task_number ? `#${task.task_number}` : "";
@@ -13945,8 +13885,8 @@ export function App({ onGoHome }: AppProps) {
                             {taskNumberLabel ? (
                               <span style={{ flex: "0 0 auto", color: "#0ea5e9", fontWeight: 800 }}>{taskNumberLabel}</span>
                             ) : null}
-                            <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                              {task.task_template_name || selectedTaskTemplateForFilter?.name || t("task.unnamedTemplate")}
+                            <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 800, color: "var(--text-color)" }}>
+                              {task.name || task.task_template_name || selectedTaskTemplateForFilter?.name || t("task.unnamedTemplate")}
                             </span>
                             {showStageName ? (
                               <>
@@ -14185,15 +14125,29 @@ export function App({ onGoHome }: AppProps) {
                               {showTaskAdvanceButton ? (
                                 <button
                                   type="button"
-                                  title={taskCanComplete ? t("task.completeShort") : t("task.nextStage")}
-                                  aria-label={taskCanComplete ? t("task.complete") : t("task.nextStage")}
+                                  title={t("task.runNow")}
+                                  aria-label={t("task.runNow")}
 	                                  onClick={(event) => {
 	                                    event.stopPropagation();
-	                                    void handleMoveKanbanTask(task, taskCanComplete ? "complete" : "next");
+	                                    void handleMoveKanbanTask(task, "run-now");
 	                                  }}
-                                  style={taskCardIconButtonStyle(taskCanComplete ? "success" : "accent")}
+                                  style={taskCardIconButtonStyle("accent")}
                                 >
-                                  {taskCanComplete ? <TaskCompleteIcon /> : <RunNowIcon />}
+                                  <RunNowIcon />
+                                </button>
+                              ) : null}
+                              {taskCanComplete ? (
+                                <button
+                                  type="button"
+                                  title={t("task.completeShort")}
+                                  aria-label={t("task.complete")}
+	                                  onClick={(event) => {
+	                                    event.stopPropagation();
+	                                    void handleMoveKanbanTask(task, "complete");
+	                                  }}
+                                  style={taskCardIconButtonStyle("success")}
+                                >
+                                  <TaskCompleteIcon />
                                 </button>
                               ) : null}
 	                              <button type="button" title={t("common.edit")} aria-label={t("task.edit")} onClick={(event) => {
@@ -15827,6 +15781,17 @@ export function App({ onGoHome }: AppProps) {
         onClose={() => setTaskTemplateDialogOpen(false)}
         onSaved={handleTaskTemplateSaved}
       />
+      {selectedKanbanTask ? (
+        <TaskDetailPanel
+          detail={taskDetailsById[selectedKanbanTask.id] || { task: selectedKanbanTask, stage_runs: [], events: [] }}
+          agents={availableAgents}
+          nodeId={currentRootNodeId || undefined}
+          onClose={() => setSelectedKanbanTaskId("")}
+          onOpenSession={(sessionKey) => handleTaskSessionDrawerOpen(sessionKey, selectedKanbanTask.root_id || currentRootIdRef.current, selectedKanbanTask.id)}
+          onEditInput={() => { setSelectedKanbanTaskId(""); void openTaskEditDialog(selectedKanbanTask); }}
+          onMoved={(next) => applyTaskDetails(next.task.root_id || currentRootIdRef.current || "", [next])}
+        />
+      ) : null}
       <ToastContainer />
     </>
   );
