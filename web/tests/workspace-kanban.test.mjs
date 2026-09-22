@@ -9,12 +9,12 @@ const en = readFileSync(new URL("../src/i18n/locales/en-US.ts", import.meta.url)
 // 总面板只在「无项目 + 任务视图」时接管，有项目时仍走项目内看板
 assert.match(
   app,
-  /const workspaceOpen = \(currentMainContentView \|\| ""\) === "task-kanban" && !currentRootId;/,
+  /const workspaceOpen = mainView === "workspace";/,
   "workspace should only own the task view when no project is open",
 );
 assert.match(
   app,
-  /const kanbanTaskPanel = currentRootId \? \([\s\S]*?\n  \) : workspaceOpen \? \(\n    <WorkspaceKanban/,
+  /const kanbanTaskPanel = workspaceOpen \? \(\n    <WorkspaceKanban[\s\S]*?\n  \) : currentRootId \? \(/,
   "project board should win when a project is open; workspace is the no-project fallback",
 );
 
@@ -54,11 +54,11 @@ assert.match(
   "opening a detail should switch project first, then select the task",
 );
 
-// 无项目时也要能切到任务视图，否则总面板无法进入
+// 工作台入口收敛到左栏底部的四态切换器（见 docs/main-view-switching-design.md）
 assert.match(
   app,
-  /const handleMainContentViewChange = useCallback\(\(mode: MainContentViewMode\) => \{[\s\S]*?if \(!rootID\) \{[\s\S]*?setDefaultMainContentView\(mode\);/,
-  "view switching without a project should fall back to the global default view",
+  /<MainViewSwitcher[\s\S]*?onChange=\{switchMainView\}/,
+  "the workspace should be reachable from the sidebar switcher",
 );
 
 // 分区：等待你 / 运行中 / 归档，归档默认只显示最近几条，可切全部

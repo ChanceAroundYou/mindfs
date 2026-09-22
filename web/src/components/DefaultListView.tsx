@@ -71,7 +71,6 @@ type DefaultListViewProps = {
   onRemoveWorktree?: () => void;
   onOpenScheduledAgentTasks?: () => void;
   currentViewMode?: MainContentViewMode;
-  onViewModeChange?: (mode: MainContentViewMode) => void;
   menuOverlay?: React.ReactNode;
   rootColor?: string | null;
 };
@@ -486,7 +485,6 @@ export function DefaultListView({
   onRemoveWorktree,
   onOpenScheduledAgentTasks,
   currentViewMode = "task-kanban",
-  onViewModeChange,
   menuOverlay = null,
   rootColor = null,
 }: DefaultListViewProps) {
@@ -496,7 +494,6 @@ export function DefaultListView({
   const menuRef = React.useRef<HTMLDivElement | null>(null);
   const [isMenuOpen, setIsMenuOpen] = React.useState(false);
   const [isSortMenuOpen, setIsSortMenuOpen] = React.useState(false);
-  const [isViewMenuOpen, setIsViewMenuOpen] = React.useState(false);
   const [editingRoot, setEditingRoot] = React.useState(false);
   const [rootDraft, setRootDraft] = React.useState(rootDisplayName || root || "");
   const [rootRenaming, setRootRenaming] = React.useState(false);
@@ -668,7 +665,6 @@ export function DefaultListView({
                   const nextOpen = !open;
                   if (nextOpen) {
                     setIsSortMenuOpen(false);
-                    setIsViewMenuOpen(false);
                   }
                   return nextOpen;
                 });
@@ -719,7 +715,6 @@ export function DefaultListView({
                   type="button"
                   onClick={() => {
                     setIsSortMenuOpen((open) => !open);
-                    setIsViewMenuOpen(false);
                   }}
                   style={{
                     width: "100%",
@@ -831,86 +826,20 @@ export function DefaultListView({
                     })}
                   </>
                 ) : null}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsViewMenuOpen((open) => !open);
-                    setIsSortMenuOpen(false);
-                  }}
+                {/* 主视图切换已收敛到左栏底部的 MainViewSwitcher（唯一入口），这里只读展示当前模式 */}
+                <div
                   style={{
-                    width: "100%",
-                    border: "none",
-                    background: "transparent",
-                    color: "var(--text-primary)",
-                    borderRadius: "8px",
-                    padding: "8px 10px",
                     display: "flex",
                     alignItems: "center",
                     gap: "8px",
-                    textAlign: "left",
-                    cursor: "pointer",
+                    padding: "8px 10px",
                     fontSize: "12px",
+                    color: "var(--text-secondary)",
                   }}
-                  aria-expanded={isViewMenuOpen}
                 >
                   <span style={{ flex: 1 }}>{t("directory.currentView")}</span>
-                  <span
-                    style={{ color: "var(--text-secondary)", fontSize: "11px" }}
-                  >
-                    {currentViewLabel}
-                  </span>
-                  <ChevronRight isOpen={isViewMenuOpen} />
-                </button>
-                {isViewMenuOpen ? (
-                  <>
-                    {([
-                      ["task-kanban", t("directory.taskKanban")],
-                      ["file-browser", t("directory.fileBrowser")],
-                    ] as const).map(([mode, label]) => {
-                      const active = currentViewMode === mode;
-                      return (
-                        <button
-                          key={mode}
-                          type="button"
-                          onClick={() => {
-                            onViewModeChange?.(mode);
-                            setIsMenuOpen(false);
-                            setIsSortMenuOpen(false);
-                            setIsViewMenuOpen(false);
-                          }}
-                          style={{
-                            width: "100%",
-                            border: "none",
-                            background: active
-                              ? "var(--selection-bg)"
-                              : "transparent",
-                            color: active
-                              ? "var(--accent-color)"
-                              : "var(--text-primary)",
-                            borderRadius: "8px",
-                            padding: "8px 10px",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "space-between",
-                            textAlign: "left",
-                            cursor: "pointer",
-                            fontSize: "12px",
-                          }}
-                        >
-                          <span>{label}</span>
-                          <span
-                            style={{
-                              fontSize: "11px",
-                              opacity: active ? 1 : 0,
-                            }}
-                          >
-                            ✓
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </>
-                ) : null}
+                  <span style={{ fontSize: "11px" }}>{currentViewLabel}</span>
+                </div>
                 <div
                   style={{
                     height: "1px",

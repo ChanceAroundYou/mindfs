@@ -162,6 +162,7 @@ import { ScheduledAgentTaskDialog } from "./components/ScheduledAgentTaskDialog"
 import { TaskTemplateDialog } from "./components/TaskTemplateDialog";
 import { TaskDetailPanel } from "./components/TaskDetailPanel";
 import { WorkspaceKanban } from "./components/WorkspaceKanban";
+import { MainViewSwitcher } from "./components/MainViewSwitcher";
 import { OnboardingTour } from "./components/OnboardingTour";
 import { WorktreeBranchSelector } from "./components/WorktreeBranchSelector";
 import { NoWorktreeIcon } from "./components/NoWorktreeIcon";
@@ -1313,6 +1314,22 @@ function loadMainContentViewByRoot(): Record<string, MainContentViewMode> {
   }
 }
 
+// 主区内容的唯一真相源：workspace(跨项目工作台) / board(项目看板) / files(文件列表) / chat(对话)。
+// 设计见 docs/main-view-switching-design.md —— 除用户显式点击外，任何代码路径都不得改它。
+export type MainViewMode = "workspace" | "board" | "files" | "chat";
+const MAIN_VIEW_STORAGE_KEY = "mindfs-main-view";
+const MAIN_VIEW_MODES: MainViewMode[] = ["workspace", "board", "files", "chat"];
+
+function loadMainView(): MainViewMode {
+  if (typeof window === "undefined") return "board";
+  try {
+    const saved = window.localStorage.getItem(MAIN_VIEW_STORAGE_KEY);
+    return MAIN_VIEW_MODES.includes(saved as MainViewMode) ? (saved as MainViewMode) : "board";
+  } catch {
+    return "board";
+  }
+}
+
 function loadDefaultMainContentView(): MainContentViewMode {
   if (typeof window === "undefined") return "task-kanban";
   try {
@@ -1320,6 +1337,20 @@ function loadDefaultMainContentView(): MainContentViewMode {
     return isMainContentViewMode(saved) ? saved : "task-kanban";
   } catch {
     return "task-kanban";
+  }
+}
+
+// 旧版本按项目记忆主区视图；升级后统一读成新键（看板 → board，文件 → files），只迁移一次。
+function loadLegacyMainView(): MainViewMode | null {
+  if (typeof window === "undefined") return null;
+  if (window.localStorage.getItem(MAIN_VIEW_STORAGE_KEY)) return null;
+  try {
+    const legacy = loadDefaultMainContentView();
+    const migrated: MainViewMode = legacy === "file-browser" ? "files" : "board";
+    window.localStorage.setItem(MAIN_VIEW_STORAGE_KEY, migrated);
+    return migrated;
+  } catch {
+    return null;
   }
 }
 
@@ -1423,9 +1454,6 @@ export function App({ onGoHome }: AppProps) {
   const suppressedAutoBindSessionByRootRef = useRef<Record<string, string | null>>({});
   const drawerSessionByRootRef = useRef<Record<string, SessionItem | null>>({});
   const selectedSessionByRootRef = useRef<Record<string, string | null>>({});
-  const mainViewPreferenceByRootRef = useRef<
-    Record<string, "session" | "file" | "directory" | "git-diff">
-  >({});
   const drawerOpenByRootRef = useRef<Record<string, boolean>>({});
   const drawerScrollRef = useRef<HTMLDivElement | null>(null);
   const fileCursorRef = useRef<number>(0);
@@ -2582,12 +2610,12 @@ export function App({ onGoHome }: AppProps) {
       return {};
     }
   });
-  const [mainContentViewByRoot, setMainContentViewByRoot] = useState<Record<string, MainContentViewMode>>(
-    () => loadMainContentViewByRoot(),
+  const [mainView, setMainView] = useState<MainViewMode>(
+    () => loadLegacyMainView() || loadMainView(),
   );
-  const [defaultMainContentView, setDefaultMainContentView] = useState<MainContentViewMode>(
-    () => loadDefaultMainContentView(),
-  );
+  const mainViewRef = useRef<MainViewMode>(mainView);
+  // 从 chat 返回时回到上一个非 chat 模式（瞬态，不落盘）
+  const lastNonChatViewRef = useRef<MainViewMode>("board");
   const [status, setStatus] = useState<WSStatus>("disconnected");
   const [file, setFile] = useState<FilePayload | null>(null);
   const [viewerSelection, setViewerSelection] =
@@ -2907,20 +2935,8 @@ export function App({ onGoHome }: AppProps) {
     if (typeof window === "undefined") {
       return;
     }
-    window.localStorage.setItem(
-      MAIN_CONTENT_VIEW_STORAGE_KEY,
-      JSON.stringify(mainContentViewByRoot),
-    );
-  }, [mainContentViewByRoot]);
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    window.localStorage.setItem(
-      DEFAULT_MAIN_CONTENT_VIEW_STORAGE_KEY,
-      defaultMainContentView,
-    );
-  }, [defaultMainContentView]);
+    window.localStorage.setItem(MAIN_VIEW_STORAGE_KEY, mainView);
+  }, [mainView]);
   useEffect(() => {
     const rootID = currentRootId;
     if (!rootID) return;
@@ -2993,17 +3009,6 @@ export function App({ onGoHome }: AppProps) {
     [resetSessionLockForRoot],
   );
 
-  const setMainViewPreferenceForRoot = useCallback(
-    (
-      rootID: string | null | undefined,
-      preference: "session" | "file" | "directory" | "git-diff",
-    ) => {
-      if (!rootID) return;
-      mainViewPreferenceByRootRef.current[scopedRootKey(rootID)] = preference;
-    },
-    [],
-  );
-
   const getDirectorySortKey = useCallback(
     (rootID: string | null | undefined, dirPath: string | null | undefined) => {
       if (!rootID) {
@@ -3022,33 +3027,22 @@ export function App({ onGoHome }: AppProps) {
   const currentDirectorySortOverride = currentDirectorySortKey
     ? directorySortOverrides[currentDirectorySortKey]
     : undefined;
+  // 主区内容派生：workspace/board 走看板容器，files 走文件列表；chat 由会话视图占据主区。
   const currentMainContentView: MainContentViewMode =
     currentRootId && onboardingMainContentViewRoot === currentRootId
       ? "task-kanban"
-      : (currentRootId && mainContentViewByRoot[scopedRootKey(currentRootId)]) ||
-        defaultMainContentView;
-  const setMainContentViewForRoot = useCallback(
-    (rootID: string, mode: MainContentViewMode) => {
-      if (!rootID) return;
-      setMainContentViewByRoot((prev) => {
-        if (prev[scopedRootKey(rootID)] === mode) return prev;
-        return { ...prev, [scopedRootKey(rootID)]: mode };
-      });
-    },
-    [],
-  );
-  const handleMainContentViewChange = useCallback((mode: MainContentViewMode) => {
-    const rootID = currentRootIdRef.current;
-    if (!rootID) {
-      // 无项目时仅切换全局默认视图（跨项目工作台即建立在 task-kanban 默认视图上）
-      setOnboardingMainContentViewRoot(null);
-      setDefaultMainContentView(mode);
-      return;
+      : mainView === "files"
+        ? "file-browser"
+        : "task-kanban";
+  // 跨项目工作台是「模式」，不再是「没有打开项目」的副产物（后者会被自动选根冲掉）。
+  const workspaceOpen = mainView === "workspace";
+  const switchMainView = useCallback((mode: MainViewMode) => {
+    if (mode !== "chat") {
+      lastNonChatViewRef.current = mode;
     }
-    setOnboardingMainContentViewRoot(null);
-    setMainContentViewForRoot(rootID, mode);
-    setDefaultMainContentView(mode);
-  }, [setMainContentViewForRoot]);
+    mainViewRef.current = mode;
+    setMainView(mode);
+  }, []);
   const currentDirectorySortMode = currentDirectorySortOverride || treeSortMode;
 
   const replaceURLState = useCallback((next: URLState) => {
@@ -3142,7 +3136,6 @@ export function App({ onGoHome }: AppProps) {
     delete suppressedAutoBindSessionByRootRef.current[scopedRootKey(root)];
     delete drawerSessionByRootRef.current[scopedRootKey(root)];
     delete selectedSessionByRootRef.current[scopedRootKey(root)];
-    delete mainViewPreferenceByRootRef.current[scopedRootKey(root)];
     delete drawerOpenByRootRef.current[scopedRootKey(root)];
     delete pluginsLoadedByRootRef.current[scopedRootKey(root)];
     delete pluginsLoadingByRootRef.current[scopedRootKey(root)];
@@ -3181,13 +3174,6 @@ export function App({ onGoHome }: AppProps) {
       return next;
     });
     setGitHistoryExpandedByRoot((prev) => {
-      const scoped = scopedRootKey(root);
-      if (!(scoped in prev)) return prev;
-      const next = { ...prev };
-      delete next[scoped];
-      return next;
-    });
-    setMainContentViewByRoot((prev) => {
       const scoped = scopedRootKey(root);
       if (!(scoped in prev)) return prev;
       const next = { ...prev };
@@ -5526,7 +5512,7 @@ export function App({ onGoHome }: AppProps) {
       if (!options?.preserveRelatedSelection) {
         setRelatedSelectedFileKey("");
       }
-      setMainViewPreferenceForRoot(rootID, "git-diff");
+      switchMainView("files");
       setSelectedSession(null);
       setSelectedSessionLoading(false);
       setFile(null);
@@ -5555,7 +5541,7 @@ export function App({ onGoHome }: AppProps) {
         console.error("[git.diff] failed", { rootID, path: item.path, err });
       }
     },
-    [isMobile, replaceURLState, resetLocksForRootTransition, setMainViewPreferenceForRoot],
+    [isMobile, replaceURLState, resetLocksForRootTransition, switchMainView],
   );
 
   const openGitCommitDiff = useCallback(
@@ -5565,7 +5551,7 @@ export function App({ onGoHome }: AppProps) {
       }
       fileOpenRequestRef.current += 1;
       setRelatedSelectedFileKey("");
-      setMainViewPreferenceForRoot(rootID, "git-diff");
+      switchMainView("files");
       setSelectedSession(null);
       setSelectedSessionLoading(false);
       setFile(null);
@@ -5596,7 +5582,7 @@ export function App({ onGoHome }: AppProps) {
         });
       }
     },
-    [isMobile, replaceURLState, resetLocksForRootTransition, setMainViewPreferenceForRoot],
+    [isMobile, replaceURLState, resetLocksForRootTransition, switchMainView],
   );
 
   const switchGitBranch = useCallback(
@@ -5827,7 +5813,7 @@ export function App({ onGoHome }: AppProps) {
       setSelectedDirKey(
         buildDirectorySelectionKey(getNodeIdForRoot(targetRoot), targetRoot, targetRoot, true),
       );
-      setMainViewPreferenceForRoot(targetRoot, "session");
+      switchMainView("chat");
       const currentDrawer = drawerSessionByRootRef.current[scopedRootKey(targetRoot)];
       const preservePending =
         currentDrawer?.key === key
@@ -5938,7 +5924,7 @@ export function App({ onGoHome }: AppProps) {
       restoreActiveSession,
       setDrawerOpenForRoot,
       setDrawerSessionForRoot,
-      setMainViewPreferenceForRoot,
+      switchMainView,
       replaceURLState,
     ],
   );
@@ -5955,7 +5941,7 @@ export function App({ onGoHome }: AppProps) {
       if (!resolvedRoot) {
         return false;
       }
-      if (mainViewPreferenceByRootRef.current[scopedRootKey(resolvedRoot)] !== "session") {
+      if (mainViewRef.current !== "chat") {
         return false;
       }
       const selectedKey = String(
@@ -7455,7 +7441,7 @@ export function App({ onGoHome }: AppProps) {
     if (rootID && previousBoundKey && !previousBoundKey.startsWith("pending-")) {
       suppressedAutoBindSessionByRootRef.current[scopedRootKey(rootID)] = previousBoundKey;
     }
-    setMainViewPreferenceForRoot(rootID, "session");
+    switchMainView("chat");
     selectedSessionRef.current = null;
     currentSessionRef.current = null;
     interactionModeRef.current = "main";
@@ -7466,7 +7452,7 @@ export function App({ onGoHome }: AppProps) {
     resetSessionLockForRoot(rootID);
   }, [
     resetSessionLockForRoot,
-    setMainViewPreferenceForRoot,
+    switchMainView,
   ]);
 
   const currentSelectionSource = useMemo(() => {
@@ -7618,7 +7604,7 @@ export function App({ onGoHome }: AppProps) {
           rootInfo?.root_path,
         );
         if (!path || !root) return;
-        setMainViewPreferenceForRoot(String(root), "file");
+        switchMainView("files");
         rememberCurrentFileScroll();
         setGitDiff(null);
         const currentFilePath = fileRef.current?.path || "";
@@ -7854,7 +7840,8 @@ export function App({ onGoHome }: AppProps) {
           if (currentRootIdRef.current !== root) {
             setCurrentRootId(root);
           }
-          setMainViewPreferenceForRoot(root, "directory");
+          // 只有「用户在左树里点目录」才切到文件列表；程序化打开目录一律保持当前模式（避免随手跳变）
+          if (params.switchToFiles === true) switchMainView("files");
           setFile(null);
           setSelectedSession(null);
           setSelectedSessionLoading(false);
@@ -8001,7 +7988,7 @@ export function App({ onGoHome }: AppProps) {
     [
       isMobile,
       normalizeTreeResponse,
-      setMainViewPreferenceForRoot,
+      switchMainView,
       setDrawerOpenForRoot,
       replaceURLState,
       rememberCurrentFileScroll,
@@ -8041,7 +8028,7 @@ export function App({ onGoHome }: AppProps) {
         return;
       }
       fileOpenRequestRef.current += 1;
-      setMainViewPreferenceForRoot(rootID, "git-diff");
+      switchMainView("files");
       setSelectedSession(null);
       setSelectedSessionLoading(false);
       setFile(null);
@@ -8098,7 +8085,7 @@ export function App({ onGoHome }: AppProps) {
       isMobile,
       openGitDiff,
       replaceURLState,
-      setMainViewPreferenceForRoot,
+      switchMainView,
       resetLocksForRootTransition,
     ],
   );
@@ -8350,7 +8337,6 @@ export function App({ onGoHome }: AppProps) {
       moveRecordKey(suppressedAutoBindSessionByRootRef.current);
       moveRecordKey(drawerSessionByRootRef.current);
       moveRecordKey(selectedSessionByRootRef.current);
-      moveRecordKey(mainViewPreferenceByRootRef.current);
       moveRecordKey(drawerOpenByRootRef.current);
       moveRecordKey(pluginsLoadedByRootRef.current);
       moveRecordKey(pluginsLoadingByRootRef.current);
@@ -8370,7 +8356,6 @@ export function App({ onGoHome }: AppProps) {
       };
       setGitStatusExpandedByRoot((prev) => moveStateRecord(prev));
       setGitHistoryExpandedByRoot((prev) => moveStateRecord(prev));
-      setMainContentViewByRoot((prev) => moveStateRecord(prev));
 
       const remapSessionCacheKey = (key: string): string | null => {
         const parts = key.split("::");
@@ -13384,7 +13369,6 @@ export function App({ onGoHome }: AppProps) {
   // 跨项目工作台（无项目展开任务视图时）：拉取全项目任务汇总；任务详情变化（WS 广播/本地操作回包）后自动重拉
   const [workspaceOverview, setWorkspaceOverview] = useState<TaskOverviewItem[]>([]);
   const [workspaceLoading, setWorkspaceLoading] = useState(false);
-  const workspaceOpen = (currentMainContentView || "") === "task-kanban" && !currentRootId;
   useEffect(() => {
     if (!workspaceOpen) return;
     let cancelled = false;
@@ -13397,6 +13381,7 @@ export function App({ onGoHome }: AppProps) {
   }, [workspaceOpen, taskDetailsById]);
   const openWorkspaceProject = useCallback(async (rootId: string) => {
     if (!rootId) return;
+    // R6：工作台里点项目 = 切到该项目并落到「项目看板」，而不是回到文件列表
     await actionHandlersRef.current.open_dir({
       path: rootId,
       root: rootId,
@@ -13404,9 +13389,9 @@ export function App({ onGoHome }: AppProps) {
       nodeId: getNodeIdForRoot(rootId) || undefined,
       preservePluginQuery: true,
     });
-    handleMainContentViewChange("task-kanban");
+    switchMainView("board");
     setTaskTemplateFilter(TASK_TEMPLATE_ALL_FILTER);
-  }, [handleMainContentViewChange, setTaskTemplateFilter]);
+  }, [setTaskTemplateFilter, switchMainView]);
   const handleWorkspaceCreateTask = useCallback(async (rootId: string, input: string) => {
     const text = String(input || "").trim();
     if (!text) return;
@@ -13420,7 +13405,19 @@ export function App({ onGoHome }: AppProps) {
       reportError("file.write_failed", String((err as Error)?.message || t("task.actionFailed")));
     }
   }, [applyTaskDetails, t]);
-	  const kanbanTaskPanel = currentRootId ? (
+	  const kanbanTaskPanel = workspaceOpen ? (
+    <WorkspaceKanban
+      items={workspaceOverview}
+      loading={workspaceLoading}
+      projects={managedRootIds.map((id) => ({ id, name: getRootDisplayName(id) || id }))}
+      onOpenProject={(rootId) => { void openWorkspaceProject(rootId); }}
+      onComplete={(item) => { void handleMoveKanbanTask(item.task, "complete"); }}
+      onRunNow={(item) => { void handleMoveKanbanTask(item.task, "run-now"); }}
+      onOpenSession={(item, sessionKey) => { handleTaskSessionDrawerOpen(sessionKey, item.root_id, item.task.id); }}
+      onOpenDetail={(item) => { void openWorkspaceProject(item.root_id).then(() => setSelectedKanbanTaskId(item.task.id)); }}
+      onCreateTask={(rootId, input) => { void handleWorkspaceCreateTask(rootId, input); }}
+    />
+  ) : currentRootId ? (
 	    <div
 	      data-onboarding="task-board"
 	      style={{
@@ -14241,7 +14238,25 @@ export function App({ onGoHome }: AppProps) {
       onCreateTask={(rootId, input) => { void handleWorkspaceCreateTask(rootId, input); }}
     />
   ) : null;
-  if (activePendingPluginTrust) {
+  if (mainView === "chat" && !selectedSession) {
+    // chat 模式但没有选中会话：给一个明确空态，而不是把看板/文件列表塞回来（否则看起来像「自己跳走了」）
+    workspaceView = (
+      <div
+        style={{
+          flex: 1,
+          minHeight: 0,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: 24,
+          color: "var(--text-secondary)",
+          fontSize: 13,
+        }}
+      >
+        {t("view.chatEmpty")}
+      </div>
+    );
+  } else if (activePendingPluginTrust) {
     workspaceView = (
       <div
         style={{
@@ -14541,7 +14556,6 @@ export function App({ onGoHome }: AppProps) {
         sortMode={currentDirectorySortMode}
         sortControlValue={currentDirectorySortOverride || "inherit"}
         currentViewMode={currentMainContentView}
-        onViewModeChange={handleMainContentViewChange}
         uploadProgress={directoryUploadProgress}
         onCancelUpload={() => directoryUploadAbortRef.current?.abort()}
         onSortModeChange={(nextMode) => {
@@ -14974,6 +14988,8 @@ export function App({ onGoHome }: AppProps) {
                 // 点根行即展开该项目根的树（配合根树互斥，其它根自动收起）
                 toggle: false,
                 nodeId: (e as any)._nodeId,
+                // R3：左树点击 = 看文件（唯一会主动切到 files 的入口）
+                switchToFiles: true,
               })
             }
             onToggleDir={(e, r) =>
@@ -15021,6 +15037,11 @@ export function App({ onGoHome }: AppProps) {
             onGoHome={onGoHome}
           />
             </div>
+            <MainViewSwitcher
+              value={mainView}
+              onChange={switchMainView}
+              accentColor={getDisplayNodeColor(String(currentRootId || "")) || undefined}
+            />
           </div>
         }
         rightSidebar={sessionSidebar}
