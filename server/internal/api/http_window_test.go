@@ -345,3 +345,39 @@ func TestHandleSessionGetProjectsDuplicateExchanges(t *testing.T) {
 		t.Fatalf("被隐藏行的 aux 键不应再出现: %+v", payload.Aux)
 	}
 }
+
+// 「同步」的目的永远是刷新会话视图：外部转录同步失败（转录找不到、导入器不可用等）不得
+// 把整个请求变成 400。GET 路径一直是这个语义，这里曾经把错误直接透传成 400 —— 实测
+// 2026-09-22 会话 1790064991（agent 跑在随后被移除的 .worktree 里，转录仍在残留的 slug
+// 目录下）因此「同步」永久报 external session not found。
+func TestHandleSessionSyncExternalFailureStillReturnsWindow(t *testing.T) {
+	app, rootID, manager := newWindowTestApp(t)
+	ctx := context.Background()
+	s, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, Agent: "claude", Name: "SyncFail"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := manager.AddExchangeForAgent(ctx, s, "user", "hi", "claude", "", "", ""); err != nil {
+		t.Fatalf("AddExchange: %v", err)
+	}
+	current, err := manager.Get(ctx, s.Key, 0)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	// 绑定一个不存在的外部会话：同步必然在外部转录这一步失败。
+	if err := manager.UpdateAgentState(ctx, current, "claude", 0, "no-such-external-session"); err != nil {
+		t.Fatalf("UpdateAgentState: %v", err)
+	}
+	h := &HTTPHandler{AppContext: app}
+	rec := doSessionSync(t, h, rootID, s.Key, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("外部同步失败时 status = %d, want 200 body=%s", rec.Code, rec.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if _, ok := body["exchanges"]; !ok {
+		t.Fatalf("会话内容必须照常返回: %s", rec.Body.String())
+	}
+}

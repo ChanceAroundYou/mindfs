@@ -1018,8 +1018,16 @@ func (h *HTTPHandler) handleSessionSync(w http.ResponseWriter, r *http.Request) 
 		Key:    key,
 		Full:   true,
 	}); err != nil {
-		respondError(w, http.StatusBadRequest, err)
-		return
+		// 外部转录同步只是「尽力而为」的补充，请求的目的是刷新会话视图，不该被它拖垮 ——
+		// GET 路径（handleSessionGet）一直就是这个语义，这里却把错误直接变成 400。
+		// 实测 2026-09-22 会话 1790064991（root=mindfs）：agent 跑在 <root>/.worktree/task-10，
+		// 任务结束后工作树被移除，而转录仍在 ~/.claude/projects/-home-...-mindfs--worktree-task-10/
+		// 下且还在写；worktreeCandidateRoots 只枚举**现存**的 .worktree/* 目录，于是永远找不到
+		// → external session not found → 「同步」按钮永久 400。刷新视图不该因此失败。
+		// 注意这里**不**去修「按残留 slug 目录找转录」：live-owned 会话的字节游标是冻结的
+		// （external_source_* 全空），一旦找到就会从 offset 0 整份重读，正是 2026-09-16 那次
+		// 「ask 下面又渲染了一轮出现过的文字」的成因。找不到反而是安全的。
+		log.Printf("[session/sync] external sync failed root=%s session=%s err=%v", strings.TrimSpace(rootID), strings.TrimSpace(key), err)
 	}
 	out, windowMeta, err := uc.GetSession(r.Context(), usecase.GetSessionInput{
 		RootID:    rootID,
