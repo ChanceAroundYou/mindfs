@@ -348,6 +348,7 @@ export async function createTask(
   worktreeBranchMode: "new" | "existing" = "new",
   worktreeBranch = "",
   nodeId?: string,
+  options?: { name?: string; stages?: StageTemplate[] },
 ): Promise<TaskDetail> {
   nodeId = nodeId || getRootNodeId(rootId);
   return protectedJSON<TaskDetail>(appURL("/api/tasks", undefined, nodeId), {
@@ -360,6 +361,8 @@ export async function createTask(
       create_worktree: createWorktree,
       worktree_branch_mode: worktreeBranchMode,
       worktree_branch: worktreeBranch,
+      ...(options?.name ? { name: options.name } : {}),
+      ...(options?.stages?.length ? { stages: options.stages } : {}),
     }),
   });
 }
@@ -393,6 +396,17 @@ export async function moveTask(rootId: string, taskId: string, action: "next" | 
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ root_id: rootId, reason }),
   });
+}
+
+export type TaskOverviewItem = {
+  root_id: string;
+  root_name: string;
+  task: KanbanTask;
+};
+
+export async function fetchTasksOverview(nodeId?: string): Promise<TaskOverviewItem[]> {
+  const payload = await protectedJSON<any>(appURL("/api/tasks/overview", undefined, nodeId));
+  return Array.isArray(payload?.items) ? payload.items : [];
 }
 
 export async function renameTask(rootId: string, taskId: string, name: string, nodeId?: string): Promise<TaskDetail> {

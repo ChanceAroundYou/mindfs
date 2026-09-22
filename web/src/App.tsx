@@ -161,6 +161,7 @@ import { BottomSheet } from "./components/BottomSheet";
 import { ScheduledAgentTaskDialog } from "./components/ScheduledAgentTaskDialog";
 import { TaskTemplateDialog } from "./components/TaskTemplateDialog";
 import { TaskDetailPanel } from "./components/TaskDetailPanel";
+import { WorkspaceKanban } from "./components/WorkspaceKanban";
 import { OnboardingTour } from "./components/OnboardingTour";
 import { WorktreeBranchSelector } from "./components/WorktreeBranchSelector";
 import { NoWorktreeIcon } from "./components/NoWorktreeIcon";
@@ -179,6 +180,7 @@ import {
   deleteTaskTemplate,
   fetchTaskDetails,
   fetchTaskTemplates,
+  fetchTasksOverview,
   getCachedTaskDetails,
   getCachedTaskMeta,
   moveTask,
@@ -188,6 +190,7 @@ import {
   type KanbanTask,
   type StageRun,
   type TaskDetail,
+  type TaskOverviewItem,
   type StageTemplate,
   type TaskTemplate,
 } from "./services/tasks";
@@ -1925,6 +1928,8 @@ export function App({ onGoHome }: AppProps) {
 	    setSelectedKanbanTaskId("");
 	  }, [kanbanTasks, selectedKanbanTaskId]);
 
+	  // 跨项目工作台状态与逻辑见 kanbanTaskPanel 定义前（workspaceOpen 等）
+
 	  const handleMoveKanbanTask = useCallback(async (task: KanbanTask, action: "next" | "run-now" | "prev" | "pause" | "resume" | "complete" | "cancel") => {
     const rootId = task.root_id || currentRootIdRef.current;
     if (!rootId) return;
@@ -3034,7 +3039,12 @@ export function App({ onGoHome }: AppProps) {
   );
   const handleMainContentViewChange = useCallback((mode: MainContentViewMode) => {
     const rootID = currentRootIdRef.current;
-    if (!rootID) return;
+    if (!rootID) {
+      // 无项目时仅切换全局默认视图（跨项目工作台即建立在 task-kanban 默认视图上）
+      setOnboardingMainContentViewRoot(null);
+      setDefaultMainContentView(mode);
+      return;
+    }
     setOnboardingMainContentViewRoot(null);
     setMainContentViewForRoot(rootID, mode);
     setDefaultMainContentView(mode);
@@ -13371,6 +13381,45 @@ export function App({ onGoHome }: AppProps) {
       }].filter((group) => group.tasks.length > 0),
     },
   ];
+  // 跨项目工作台（无项目展开任务视图时）：拉取全项目任务汇总；任务详情变化（WS 广播/本地操作回包）后自动重拉
+  const [workspaceOverview, setWorkspaceOverview] = useState<TaskOverviewItem[]>([]);
+  const [workspaceLoading, setWorkspaceLoading] = useState(false);
+  const workspaceOpen = (currentMainContentView || "") === "task-kanban" && !currentRootId;
+  useEffect(() => {
+    if (!workspaceOpen) return;
+    let cancelled = false;
+    setWorkspaceLoading(true);
+    fetchTasksOverview(currentRootNodeIdRef.current || undefined)
+      .then((items) => { if (!cancelled) setWorkspaceOverview(Array.isArray(items) ? items : []); })
+      .catch(() => { if (!cancelled) setWorkspaceOverview([]); })
+      .finally(() => { if (!cancelled) setWorkspaceLoading(false); });
+    return () => { cancelled = true; };
+  }, [workspaceOpen, taskDetailsById]);
+  const openWorkspaceProject = useCallback(async (rootId: string) => {
+    if (!rootId) return;
+    await actionHandlersRef.current.open_dir({
+      path: rootId,
+      root: rootId,
+      isRoot: true,
+      nodeId: getNodeIdForRoot(rootId) || undefined,
+      preservePluginQuery: true,
+    });
+    handleMainContentViewChange("task-kanban");
+    setTaskTemplateFilter(TASK_TEMPLATE_ALL_FILTER);
+  }, [handleMainContentViewChange, setTaskTemplateFilter]);
+  const handleWorkspaceCreateTask = useCallback(async (rootId: string, input: string) => {
+    const text = String(input || "").trim();
+    if (!text) return;
+    try {
+      const detail = await createTask(rootId, "", text, false, "new", "", getNodeIdForRoot(rootId), {
+        name: text.length > 60 ? `${text.slice(0, 60)}…` : text,
+        stages: [{ name: "", role: "user" } as StageTemplate],
+      });
+      applyTaskDetails(rootId, [detail]);
+    } catch (err) {
+      reportError("file.write_failed", String((err as Error)?.message || t("task.actionFailed")));
+    }
+  }, [applyTaskDetails, t]);
 	  const kanbanTaskPanel = currentRootId ? (
 	    <div
 	      data-onboarding="task-board"
@@ -14179,6 +14228,18 @@ export function App({ onGoHome }: AppProps) {
         </div>
       )}
     </div>
+  ) : workspaceOpen ? (
+    <WorkspaceKanban
+      items={workspaceOverview}
+      loading={workspaceLoading}
+      projects={managedRootIds.map((id) => ({ id, name: getRootDisplayName(id) || id }))}
+      onOpenProject={(rootId) => { void openWorkspaceProject(rootId); }}
+      onComplete={(item) => { void handleMoveKanbanTask(item.task, "complete"); }}
+      onRunNow={(item) => { void handleMoveKanbanTask(item.task, "run-now"); }}
+      onOpenSession={(item, sessionKey) => { handleTaskSessionDrawerOpen(sessionKey, item.root_id, item.task.id); }}
+      onOpenDetail={(item) => { void openWorkspaceProject(item.root_id).then(() => setSelectedKanbanTaskId(item.task.id)); }}
+      onCreateTask={(rootId, input) => { void handleWorkspaceCreateTask(rootId, input); }}
+    />
   ) : null;
   if (activePendingPluginTrust) {
     workspaceView = (

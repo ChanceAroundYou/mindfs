@@ -236,6 +236,36 @@ func (s *Service) ListTaskDetails(ctx context.Context, rootID string, opts ListT
 	return store.ListTaskDetails(ctx, opts)
 }
 
+// TaskOverviewItem 是跨项目工作台的一行：任务 + 所属项目。
+type TaskOverviewItem struct {
+	RootID   string            `json:"root_id"`
+	RootName string            `json:"root_name"`
+	Task     Task              `json:"task"`
+}
+
+// Overview 汇总所有项目的在途任务（未终态 + 最近完成的少量，供归档区查看）。
+// 只读，不建 store 之外的缓存；单个项目失败时跳过不阻塞全貌。
+func (s *Service) Overview(ctx context.Context) ([]TaskOverviewItem, error) {
+	if s == nil || s.Roots == nil {
+		return nil, errors.New("root provider not configured")
+	}
+	items := []TaskOverviewItem{}
+	for _, root := range s.Roots.ListRoots() {
+		store, err := s.taskStore(root.ID)
+		if err != nil {
+			continue
+		}
+		tasks, err := store.ListTasks(ctx, ListTasksOptions{Limit: 50})
+		if err != nil {
+			continue
+		}
+		for _, task := range tasks {
+			items = append(items, TaskOverviewItem{RootID: root.ID, RootName: root.EffectiveName(), Task: task})
+		}
+	}
+	return items, nil
+}
+
 func (s *Service) GetTask(ctx context.Context, rootID, taskID string) (TaskDetail, error) {
 	store, err := s.taskStore(rootID)
 	if err != nil {

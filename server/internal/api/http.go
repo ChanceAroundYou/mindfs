@@ -407,6 +407,7 @@ func (h *HTTPHandler) Routes() http.Handler {
 	r.Put("/api/task-templates/{id}", h.protectedEndpoint(h.handleTaskTemplateSave))
 	r.Delete("/api/task-templates/{id}", h.protectedEndpoint(h.handleTaskTemplateDelete))
 	r.Get("/api/tasks", h.protectedEndpoint(h.handleKanbanTasksList))
+	r.Get("/api/tasks/overview", h.protectedEndpoint(h.handleKanbanTasksOverview))
 	r.Post("/api/tasks", h.protectedEndpoint(h.handleKanbanTaskCreate))
 	r.Post("/api/tasks/{id}/input", h.protectedEndpoint(h.handleKanbanTaskInputUpdate))
 	r.Post("/api/tasks/{id}/rename", h.protectedEndpoint(h.handleKanbanTaskRename))

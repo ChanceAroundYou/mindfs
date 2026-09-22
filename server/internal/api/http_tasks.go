@@ -313,6 +313,19 @@ func (h *HTTPHandler) handleKanbanTaskMove(w http.ResponseWriter, r *http.Reques
 	respondJSON(w, http.StatusOK, detail)
 }
 
+func (h *HTTPHandler) handleKanbanTasksOverview(w http.ResponseWriter, r *http.Request) {
+	svc, ok := h.kanbanService(w)
+	if !ok {
+		return
+	}
+	items, err := svc.Overview(r.Context())
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
 func (h *HTTPHandler) handleKanbanTaskRename(w http.ResponseWriter, r *http.Request) {
 	svc, ok := h.kanbanService(w)
 	if !ok {
