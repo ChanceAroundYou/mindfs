@@ -80,15 +80,12 @@ export function WorkspaceKanban({ items, loading, projects, onOpenProject, onCom
     return (
       <>
         {status === "waiting_user" ? btn("success", t("task.completeShort"), () => onComplete(item)) : null}
-        {!["waiting_user", "queued"].includes(status) && status !== "success" && status !== "fail" && status !== "cancelled"
+        {status === "waiting_user" || status === "pending"
           ? btn("accent", t("task.runNow"), () => onRunNow(item))
           : null}
-        {status === "pending" ? btn("accent", t("task.runNow"), () => onRunNow(item)) : null}
       </>
     );
   };
-
-  const sessionKeyOf = (item: TaskOverviewItem) => item.task.main_session_key || "";
 
   const rowLine = (item: TaskOverviewItem) => (
     <>
