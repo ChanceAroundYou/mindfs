@@ -15904,7 +15904,6 @@ flexShrink: 0,
           nodeId={currentRootNodeId || undefined}
           onClose={() => setSelectedKanbanTaskId("")}
           onOpenSession={(sessionKey) => handleTaskSessionDrawerOpen(sessionKey, selectedKanbanTask.root_id || currentRootIdRef.current, selectedKanbanTask.id)}
-          onEditInput={() => { setSelectedKanbanTaskId(""); void openTaskEditDialog(selectedKanbanTask); }}
           onMoved={(next) => applyTaskDetails(next.task.root_id || currentRootIdRef.current || "", [next])}
         />
       ) : null}

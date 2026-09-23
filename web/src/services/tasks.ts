@@ -418,21 +418,6 @@ export async function renameTask(rootId: string, taskId: string, name: string, n
   });
 }
 
-export async function rerunTaskStage(
-  rootId: string,
-  taskId: string,
-  stageIndex: number,
-  reason = "",
-  nodeId?: string,
-): Promise<TaskDetail> {
-  nodeId = nodeId || getRootNodeId(rootId);
-  return protectedJSON<TaskDetail>(appURL(`/api/tasks/${encodeURIComponent(taskId)}/rerun`, undefined, nodeId), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ root_id: rootId, stage_index: stageIndex, reason }),
-  });
-}
-
 export async function addTaskStage(rootId: string, taskId: string, stage: StageTemplate, nodeId?: string): Promise<TaskDetail> {
   nodeId = nodeId || getRootNodeId(rootId);
   return protectedJSON<TaskDetail>(appURL(`/api/tasks/${encodeURIComponent(taskId)}/add-stage`, undefined, nodeId), {

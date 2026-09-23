@@ -1,15 +1,16 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { AgentIcon } from "./AgentIcon";
 import { AgentSelector } from "./AgentSelector";
+import { has1MSuffix, with1MSuffix } from "./ActionBar";
+import TokenEditor, { type TokenEditorHandle } from "./editor/TokenEditor";
 import { useI18n, type I18nContextValue } from "../i18n";
 import {
-  renameTask,
-  rerunTaskStage,
   addTaskStage,
+  renameTask,
   updateTaskStage,
   type StageTemplate,
+  type TaskDetail,
 } from "../services/tasks";
-import type { TaskDetail } from "../services/tasks";
 import type { AgentStatus } from "../services/agents";
 import { reportError } from "../services/error";
 
@@ -18,7 +19,6 @@ export type TaskDetailPanelProps = {
   agents: AgentStatus[];
   onClose: () => void;
   onOpenSession: (sessionKey: string) => void;
-  onEditInput: () => void;
   onMoved?: (detail: TaskDetail) => void;
   nodeId?: string;
 };
@@ -36,8 +36,7 @@ const statusColors: Record<string, string> = {
 };
 
 function statusText(status: string, t: (key: Parameters<I18nContextValue["t"]>[0]) => string): string {
-  const key = status;
-  switch (key) {
+  switch (status) {
     case "pending": return t("task.status.pending");
     case "running": return t("task.status.running");
     case "waiting_user": return t("task.status.waitingUser");
@@ -48,71 +47,93 @@ function statusText(status: string, t: (key: Parameters<I18nContextValue["t"]>[0
     case "cancelled": return t("task.status.cancelled");
     case "approved": return t("task.status.approved");
     case "rejected": return t("task.status.rejected");
-    default: return key;
+    default: return status;
   }
 }
 
-export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onEditInput, onMoved, nodeId }: TaskDetailPanelProps) {
+// 只读展示未执行阶段的 prompt：复用 TokenEditor 的排版，但禁输入/禁粘贴，避免 @/#// 候选逻辑介入。
+function ReadOnlyPrompt({ text, dimmed }: { text: string; dimmed: boolean }) {
+  return (
+    <div
+      aria-readonly="true"
+      style={{
+        minHeight: "44px",
+        maxHeight: "240px",
+        overflowY: "auto",
+        borderRadius: "8px",
+        border: "1px solid var(--border-color)",
+        background: dimmed ? "rgba(148, 163, 184, 0.10)" : "var(--input-bg)",
+        color: dimmed ? "var(--text-secondary)" : "var(--text-color)",
+        padding: "10px 14px",
+        fontSize: "14px",
+        lineHeight: "20px",
+        whiteSpace: "pre-wrap",
+        wordBreak: "break-word",
+        userSelect: "text",
+      }}
+    >
+      {text || <span style={{ color: "var(--text-secondary)" }}>—</span>}
+    </div>
+  );
+}
+
+export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMoved, nodeId }: TaskDetailPanelProps) {
   const { t } = useI18n();
   const task = detail?.task || null;
+
+  // 任务改名：文本 ↔ 编辑态，确认后提交
   const [nameDraft, setNameDraft] = useState("");
-  const [commentPrompt, setCommentPrompt] = useState("");
-  const [commentRole, setCommentRole] = useState<StageRoleKey>("agent");
-  const [commentAgent, setCommentAgent] = useState("codex");
-  const [commentModel, setCommentModel] = useState("");
-  const [commentEffort, setCommentEffort] = useState("");
-  const [commentMode, setCommentMode] = useState("");
+  const [editingName, setEditingName] = useState(false);
+  // 阶段卡编辑态：一次改名字+模型+prompt，点发送一起存
   const [editingStage, setEditingStage] = useState(-1);
-  const [editPrompt, setEditPrompt] = useState("");
   const [editName, setEditName] = useState("");
+  const [editPrompt, setEditPrompt] = useState("");
   const [editAgent, setEditAgent] = useState("codex");
   const [editModel, setEditModel] = useState("");
   const [editEffort, setEditEffort] = useState("");
   const [editMode, setEditMode] = useState("");
   const [saving, setSaving] = useState(false);
+  const editPromptRef = useRef<TokenEditorHandle | null>(null);
 
   useEffect(() => {
     setNameDraft(task?.name || "");
-    setCommentPrompt("");
+    setEditingName(false);
     setEditingStage(-1);
   }, [task?.id]);
 
   useEffect(() => {
-    setNameDraft(task?.name || "");
-  }, [task?.name]);
+    if (!editingName) setNameDraft(task?.name || "");
+  }, [task?.name, editingName]);
 
+  useEffect(() => {
+    if (editingStage < 0) return;
+    window.setTimeout(() => editPromptRef.current?.setText(editPrompt), 0);
+    // 仅在切换编辑对象时灌入一次，后续由 TokenEditor 自身维护
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingStage]);
+
+  const stages = useMemo(() => task?.stages || [], [task?.stages]);
   if (!task || !detail) return null;
 
-  const stages = task.stages || [];
   const latestRunFor = (index: number) =>
     (detail.stage_runs || []).filter((run) => run.stage_index === index)
       .sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1))[0] || null;
-  const terminal = task.status === "success" || task.status === "fail" || task.status === "cancelled";
 
   const apply = (next: TaskDetail) => onMoved?.(next);
   const fail = (err: unknown) => reportError("file.write_failed", String((err as Error)?.message || ""));
 
   const saveName = async () => {
     const rootId = task.root_id;
-    if (rootId) {
-      try {
-        const next = await renameTask(rootId, task.id, nameDraft, nodeId);
-        apply(next);
-      } catch (err) { fail(err); }
+    const next = nameDraft.trim();
+    if (!rootId || next === (task.name || "")) {
+      setEditingName(false);
+      setNameDraft(task.name || "");
+      return;
     }
-  };
-
-  const submitComment = async () => {
-    const prompt = commentPrompt.trim();
-    if (!prompt) return;
-    const stage: StageTemplate = commentRole === "user"
-      ? { name: "", role: "user", prompt_template: prompt, auto_advance: false }
-      : { name: "", role: "agent", agent: commentAgent, model: commentModel, effort: commentEffort, mode: commentMode, prompt_template: prompt, auto_advance: false };
     try {
       setSaving(true);
-      const next = await addTaskStage(task.root_id, task.id, stage, nodeId);
-      apply(next);
-      setCommentPrompt("");
+      apply(await renameTask(rootId, task.id, next, nodeId));
+      setEditingName(false);
     } catch (err) { fail(err); } finally { setSaving(false); }
   };
 
@@ -130,6 +151,7 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onEdit
 
   const saveStage = async (index: number) => {
     const original = stages[index];
+    if (!original || !editPrompt.trim()) return;
     const nextStage: StageTemplate = {
       ...original,
       name: editName,
@@ -141,17 +163,26 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onEdit
     };
     try {
       setSaving(true);
-      const next = await updateTaskStage(task.root_id, task.id, index, nextStage, nodeId);
-      apply(next);
+      apply(await updateTaskStage(task.root_id, task.id, index, nextStage, nodeId));
       setEditingStage(-1);
     } catch (err) { fail(err); } finally { setSaving(false); }
   };
 
-  const rerun = async (index: number) => {
+  const appendStage = async () => {
+    const stage: StageTemplate = {
+      name: "",
+      role: "agent",
+      agent: "codex",
+      model: "",
+      mode: "",
+      effort: "",
+      prompt_template: "",
+      auto_advance: false,
+    };
     try {
-      const next = await rerunTaskStage(task.root_id, task.id, index, "", nodeId);
-      apply(next);
-    } catch (err) { fail(err); }
+      setSaving(true);
+      apply(await addTaskStage(task.root_id, task.id, stage, nodeId));
+    } catch (err) { fail(err); } finally { setSaving(false); }
   };
 
   return (
@@ -160,66 +191,108 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onEdit
       onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}
     >
       <section style={{ width: "min(720px, 100%)", maxHeight: "88dvh", overflow: "hidden", borderRadius: "10px", background: "var(--menu-bg)", border: "1px solid var(--border-color)", boxShadow: "0 24px 60px rgba(15, 23, 42, 0.24)", display: "flex", flexDirection: "column" }}>
-        <header style={{ padding: "10px 14px", borderBottom: "1px solid var(--border-color)", display: "flex", alignItems: "center", gap: "10px", flexShrink: 0 }}>
-          <input
-            value={nameDraft}
-            placeholder={task.task_number ? `#${task.task_number} ${t("task.namePlaceholder")}` : t("task.namePlaceholder")}
-            onChange={(event) => setNameDraft(event.target.value)}
-            onBlur={() => { if (nameDraft.trim() !== (task.name || "")) void saveName(); }}
-            style={{ flex: "1 1 auto", minWidth: 0, height: "30px", borderRadius: "6px", border: "1px solid var(--border-color)", background: "transparent", color: "var(--text-color)", padding: "0 8px", fontSize: "14px", fontWeight: 700, outline: "none" }}
-          />
+        <header style={{ padding: "10px 14px", borderBottom: "1px solid var(--border-color)", display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 }}>
+          {editingName ? (
+            <>
+              <input
+                autoFocus
+                value={nameDraft}
+                placeholder={t("task.namePlaceholder")}
+                onChange={(event) => setNameDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") void saveName();
+                  if (event.key === "Escape") { setEditingName(false); setNameDraft(task.name || ""); }
+                }}
+                style={{ flex: "1 1 auto", minWidth: 0, height: "30px", borderRadius: "6px", border: "1px solid var(--accent-color)", background: "var(--input-bg)", color: "var(--text-color)", padding: "0 8px", fontSize: "14px", fontWeight: 700, outline: "none" }}
+              />
+              <button type="button" disabled={saving} onClick={() => void saveName()} style={buttonStyle("primary")}>{t("common.confirm")}</button>
+              <button type="button" onClick={() => { setEditingName(false); setNameDraft(task.name || ""); }} style={buttonStyle("secondary")}>{t("common.cancel")}</button>
+            </>
+          ) : (
+            <>
+              <span style={{ flex: "1 1 auto", minWidth: 0, fontSize: "14px", fontWeight: 700, color: "var(--text-color)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {task.task_number ? `#${task.task_number} ` : ""}{task.name || t("task.namePlaceholder")}
+              </span>
+              <button type="button" aria-label={t("task.renameTask")} title={t("task.renameTask")} onClick={() => setEditingName(true)} style={pencilStyle(false)}>
+                <PencilIcon />
+              </button>
+            </>
+          )}
           <span style={{ fontSize: "12px", fontWeight: 800, color: statusColors[task.status] || "var(--text-secondary)", flexShrink: 0 }}>
             {statusText(task.status, t)}
           </span>
           <button type="button" onClick={onClose} style={iconBtn}>{t("taskTemplate.close")}</button>
         </header>
+
         <div style={{ padding: "12px 14px", overflow: "auto", display: "flex", flexDirection: "column", gap: "10px", minHeight: 0 }}>
-          {/* 流水 */}
           {stages.map((stage, index) => {
             const run = latestRunFor(index);
             const isCurrent = index === task.current_stage_index;
+            const executed = !!run && !["pending"].includes(String(run.status));
             const editing = editingStage === index;
             const isAgent = stage.role === "agent";
+            const shown = executed ? (run?.rendered_prompt || stage.prompt_template || "") : (stage.prompt_template || "");
             return (
               <div key={stage.id || index} style={{ border: isCurrent ? "1px solid var(--accent-color)" : "1px solid var(--border-color)", borderRadius: "8px", background: "var(--panel-bg)", padding: "10px", display: "flex", flexDirection: "column", gap: "8px" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-                  <span style={{ fontWeight: 800, fontSize: "12px", color: isCurrent ? "var(--accent-color)" : "var(--text-color)" }}>
-                    {stage.name || t("task.stageLabel", { index: index + 1 })}
-                  </span>
-                  {isAgent ? (
+                  {editing ? (
+                    <input
+                      value={editName}
+                      onChange={(event) => setEditName(event.target.value)}
+                      placeholder={t("taskTemplate.stageNamePlaceholder")}
+                      style={{ ...inputStyle, height: "26px", width: "180px", flex: "0 0 180px", fontSize: "12px", fontWeight: 800 }}
+                    />
+                  ) : (
                     <>
-                      <span style={tagStyle}><AgentIcon agentName={stage.agent || "codex"} style={{ width: "12px", height: "12px" }} /> {stage.agent || "codex"}{stage.model ? ` · ${stage.model}` : ""}{stage.effort ? ` · ${stage.effort}` : ""}</span>
-                      {stage.auto_advance ? <span style={tagStyle}>{t("taskTemplate.autoAdvance")}</span> : null}
+                      <span style={{ fontWeight: 800, fontSize: "12px", color: isCurrent ? "var(--accent-color)" : "var(--text-color)" }}>
+                        {stage.name || t("task.stageLabel", { index: index + 1 })}
+                      </span>
+                      {!executed ? (
+                        <button type="button" aria-label={t("common.edit")} title={t("common.edit")} onClick={() => startEditStage(index)} style={pencilStyle(false)}>
+                          <PencilIcon />
+                        </button>
+                      ) : null}
                     </>
+                  )}
+                  {isAgent ? (
+                    <span style={tagStyle}><AgentIcon agentName={stage.agent || "codex"} style={{ width: "12px", height: "12px" }} /> {stage.agent || "codex"}{stage.model ? ` · ${stage.model}` : ""}{stage.effort ? ` · ${stage.effort}` : ""}</span>
                   ) : (
                     <span style={tagStyle}>{t("task.stage.user")}</span>
                   )}
-                  {run ? (
-                    <span style={{ fontSize: "11px", fontWeight: 700, color: statusColors[run.status] || "var(--text-secondary)" }}>
-                      {statusText(run.status, t)}
-                    </span>
+                  <span style={{ fontSize: "11px", fontWeight: 700, color: statusColors[run?.status || ""] || "var(--text-secondary)" }}>
+                    {executed ? statusText(run.status, t) : t("task.stage.notExecuted")}
+                  </span>
+                  {run?.session_key ? (
+                    <button type="button" onClick={() => onOpenSession(run.session_key as string)} style={{ ...iconBtn, marginLeft: "auto" }}>
+                      {t("task.sessionTitle")}
+                    </button>
                   ) : null}
-                  <div style={{ marginLeft: "auto", display: "flex", gap: "4px" }}>
-                    <button type="button" disabled={editing || terminal} onClick={() => void rerun(index)} title={t("task.rerunStage")} style={{ ...iconBtn, opacity: editing || terminal ? 0.5 : 1 }}>{t("task.rerun")}</button>
-                    <button type="button" onClick={() => (editing ? setEditingStage(-1) : startEditStage(index))} title={t("common.edit")} style={iconBtn}>{editing ? "×" : t("common.edit")}</button>
-                    {run?.session_key ? (
-                      <button type="button" onClick={() => onOpenSession(run.session_key as string)} title={t("task.openSession", { index: 1 })} style={iconBtn}>
-                        <AgentIcon agentName="" style={{ width: "14px", height: "14px" }} />
-                      </button>
-                    ) : null}
-                  </div>
                 </div>
+
                 {editing ? (
-                  <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-                    <input value={editName} onChange={(event) => setEditName(event.target.value)} placeholder={t("taskTemplate.stageNamePlaceholder")} style={inputStyle} />
-                    {isAgent ? (
-                      <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+                  <div style={{ position: "relative" }}>
+                    <div style={{ minHeight: "44px", border: "1px solid var(--border-color)", borderRadius: "8px", background: "var(--input-bg)", overflow: "auto" }}>
+                      <TokenEditor
+                        ref={editPromptRef}
+                        placeholder={t("taskTemplate.promptTemplate")}
+                        disabled={saving}
+                        isDark={false}
+                        rightInset={42}
+                        topInset={0}
+                        bottomInset={12}
+                        onChange={(payload) => setEditPrompt(payload.serializedText)}
+                      />
+                    </div>
+                    <div style={{ marginTop: "6px", display: "flex", alignItems: "center", gap: "8px" }}>
+                      {isAgent ? (
                         <AgentSelector
                           agent={editAgent}
                           model={editModel}
                           mode={editMode}
                           effort={editEffort}
                           fastService=""
+                          longContext={has1MSuffix(editModel || "")}
+                          onLongContextChange={(enabled) => setEditModel(with1MSuffix(editModel || "", enabled))}
                           agents={agents}
                           compact
                           menuPlacement="top"
@@ -234,18 +307,17 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onEdit
                           onEffortChange={(effort) => setEditEffort(effort || "")}
                           onFastServiceChange={() => {}}
                         />
+                      ) : null}
+                      <div style={{ marginLeft: "auto", display: "flex", gap: "8px" }}>
+                        <button type="button" onClick={() => setEditingStage(-1)} style={buttonStyle("secondary")}>{t("common.cancel")}</button>
+                        <button type="button" disabled={saving || !editPrompt.trim()} onClick={() => void saveStage(index)} style={{ ...buttonStyle("primary"), opacity: !editPrompt.trim() ? 0.5 : 1 }}>
+                          {saving ? t("common.saving") : t("common.save")}
+                        </button>
                       </div>
-                    ) : null}
-                    <textarea value={editPrompt} onChange={(event) => setEditPrompt(event.target.value)} rows={3} placeholder={t("taskTemplate.promptTemplate")} style={{ ...inputStyle, height: "auto", padding: "8px", resize: "vertical" }} />
-                    <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px" }}>
-                      <button type="button" onClick={() => setEditingStage(-1)} style={buttonStyle("secondary")}>{t("taskTemplate.close")}</button>
-                      <button type="button" disabled={saving} onClick={() => void saveStage(index)} style={buttonStyle("primary")}>{saving ? t("common.saving") : t("common.save")}</button>
                     </div>
                   </div>
                 ) : (
-                  <div style={{ fontSize: "12px", lineHeight: "18px", color: "var(--text-color)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-                    {run?.rendered_prompt || stage.prompt_template || <span style={{ color: "var(--text-secondary)" }}>—</span>}
-                  </div>
+                  <ReadOnlyPrompt text={shown} dimmed={executed} />
                 )}
               </div>
             );
@@ -254,68 +326,39 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onEdit
             <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>{t("task.noStages")}</div>
           ) : null}
 
-          {/* 追加 comment 作为下一段 prompt */}
-          {!terminal ? (
-            <div style={{ border: "1px dashed var(--border-color)", borderRadius: "8px", padding: "10px", display: "flex", flexDirection: "column", gap: "6px", background: "var(--panel-bg)" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-                <span style={{ fontSize: "11px", fontWeight: 800, color: "var(--text-secondary)" }}>{t("task.addComment")}</span>
-                <div style={{ height: "26px", borderRadius: "6px", border: "1px solid var(--border-color)", background: "var(--input-bg)", padding: "1px", display: "grid", gridTemplateColumns: "1fr 1fr", marginLeft: "auto" }}>
-                  <button type="button" onClick={() => setCommentRole("user")} style={segment(commentRole === "user")}>{t("task.stage.user")}</button>
-                  <button type="button" onClick={() => setCommentRole("agent")} style={{ ...segment(commentRole === "agent"), display: "flex", alignItems: "center", justifyContent: "center", gap: "3px" }}>
-                    <AgentIcon agentName="codex" style={{ width: "12px", height: "12px", display: "none" }} />
-                    agent
-                  </button>
-                </div>
-                {commentRole === "agent" ? (
-                  <AgentSelector
-                    agent={commentAgent}
-                    model={commentModel}
-                    mode={commentMode}
-                    effort={commentEffort}
-                    fastService=""
-                    agents={agents}
-                    compact
-                    menuPlacement="top"
-                    showChevron
-                    onAgentChange={(agent, model) => {
-                      const status = agents.find((item) => item.name === agent) || null;
-                      setCommentAgent(agent);
-                      setCommentModel(model || "");
-                      setCommentMode(status?.current_mode_id || "");
-                    }}
-                    onModeChange={(mode) => setCommentMode(mode || "")}
-                    onEffortChange={(effort) => setCommentEffort(effort || "")}
-                    onFastServiceChange={() => {}}
-                  />
-                ) : null}
-              </div>
-              <textarea value={commentPrompt} onChange={(event) => setCommentPrompt(event.target.value)} rows={2} placeholder={t("task.commentPlaceholder")} style={{ ...inputStyle, height: "auto", padding: "8px", resize: "vertical" }} />
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px" }}>
-                <button type="button" onClick={onEditInput} style={buttonStyle("secondary")}>{t("task.editInput")}</button>
-                <button type="button" disabled={saving || !commentPrompt.trim()} onClick={() => void submitComment()} style={buttonStyle("primary")}>
-                  {saving ? t("common.saving") : commentPrompt.trim() ? t("task.sendComment") : t("task.commentPlaceholder")}
-                </button>
-              </div>
-            </div>
-          ) : null}
+          <button type="button" disabled={saving} onClick={() => void appendStage()} style={{ ...buttonStyle("secondary"), alignSelf: "flex-start" }}>
+            {t("task.appendStage")}
+          </button>
         </div>
       </section>
     </div>
   );
 }
 
-type StageRoleKey = "user" | "agent";
+function PencilIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+    </svg>
+  );
+}
 
-function segment(active: boolean): React.CSSProperties {
+function pencilStyle(disabled: boolean): React.CSSProperties {
   return {
     border: "none",
-    borderRadius: "5px",
-    background: active ? "var(--accent-color)" : "transparent",
-    color: active ? "#fff" : "var(--text-color)",
-    fontSize: "11px",
-    fontWeight: 800,
-    cursor: "pointer",
-    padding: "0 10px",
+    background: "transparent",
+    color: disabled ? "var(--text-secondary)" : "var(--accent-color)",
+    borderRadius: 6,
+    width: 24,
+    height: 24,
+    padding: 0,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    cursor: disabled ? "not-allowed" : "pointer",
+    flexShrink: 0,
+    opacity: disabled ? 0.4 : 1,
   };
 }
 
