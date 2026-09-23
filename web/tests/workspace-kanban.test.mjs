@@ -94,7 +94,7 @@ assert.match(
 // 每块固定高度 + 完成分组默认展开
 assert.match(
   app,
-  /gridAutoRows: isMobile \? "30dvh" : undefined,/,
+  /gridAutoRows: isMobile \? "36dvh" : undefined,/,
   "mobile blocks should keep a fixed height",
 );
 assert.match(
@@ -130,6 +130,21 @@ assert.match(
   /const isBoundSessionInMain =[\s\S]*?mainView === "chat";/,
   "「session is in the main pane」must require the chat mode, or the files-view drawer becomes unreachable",
 );
+
+// 四块的文案是定死的：未开始 / 执行中 / 待审核 / 已结束，已结束内分 完成 / 取消
+for (const [key, label] of [
+  ["task.column.pending", "未开始"],
+  ["task.column.running", "执行中"],
+  ["task.column.waitingUser", "待审核"],
+  ["task.column.ended", "已结束"],
+  ["task.group.completed", "完成"],
+  ["task.group.cancelled", "取消"],
+]) {
+  assert.ok(
+    zh.includes(`"${key}": "${label}"`),
+    `${key} should read 「${label}」`,
+  );
+}
 
 // 面板文案两端都要有，缺 key 会渲染成空白
 for (const key of [

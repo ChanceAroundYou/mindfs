@@ -13261,7 +13261,7 @@ export function App({ onGoHome }: AppProps) {
     if (key) acc[key] = (acc[key] || 0) + 1;
     return acc;
   }, {});
-  // 列 = 全局状态：待开始 / 进行中 / 等待你 / 已完成 / 失败·取消（与后端状态一一对应）。
+  // 四块 = 未开始 / 执行中 / 待审核 / 已结束（已结束内分 完成、取消；失败并入取消）。
   const kanbanStageColumns: Array<{
     index: number;
     name: string;
@@ -13735,7 +13735,7 @@ export function App({ onGoHome }: AppProps) {
 	              gridAutoFlow: isMobile ? "row" : "column",
 	              gridTemplateColumns: isMobile ? "repeat(2, 1fr)" : undefined,
 	              gridAutoColumns: isMobile ? undefined : "minmax(220px, 1fr)",
-	              gridAutoRows: isMobile ? "30dvh" : undefined,
+	              gridAutoRows: isMobile ? "36dvh" : undefined,
 	              gap: "6px",
 	              minWidth: isMobile ? undefined : `${Math.max(kanbanStageColumns.length, 1) * 220}px`,
 	              alignItems: "start",
@@ -13757,8 +13757,8 @@ export function App({ onGoHome }: AppProps) {
 	                  display: "flex",
 	                  flexDirection: "column",
 	                  minHeight: 0,
-	                  height: isMobile ? (columnCollapsed ? undefined : "30dvh") : undefined,
-                  maxHeight: isMobile ? undefined : "calc(100dvh - 148px)",
+	                  height: isMobile ? (columnCollapsed ? undefined : "36dvh") : undefined,
+                  maxHeight: isMobile ? undefined : "calc(100dvh - 96px)",
 	                }}
 	              >
                 <div
