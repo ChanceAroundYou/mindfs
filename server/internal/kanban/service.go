@@ -330,10 +330,7 @@ func (s *Service) AddStage(ctx context.Context, in AddStageInput) (TaskDetail, e
 		return TaskDetail{}, err
 	}
 	stage := normalizeStageTemplate(in.Stage)
-	if strings.TrimSpace(stage.PromptTemplate) == "" {
-		return TaskDetail{}, errors.New("stage prompt required")
-	}
-	if task.Status == StatusWaitingUser {
+	if task.Status == StatusWaitingUser && strings.TrimSpace(stage.PromptTemplate) != "" {
 		stage.Name = defaultStageName(task, len(task.Stages))
 		task.Stages = append(task.Stages, stage)
 		if latest, runErr := store.LatestStageRun(ctx, task.ID, task.CurrentStageIndex); runErr == nil {

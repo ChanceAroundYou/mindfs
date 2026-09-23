@@ -47,6 +47,7 @@ export type TokenEditorHandle = {
 type TokenEditorProps = {
   placeholder: string;
   disabled?: boolean;
+  readOnly?: boolean;
   isDark?: boolean;
   rightInset?: number;
   topInset?: number;
@@ -466,15 +467,21 @@ function EditorBridge({
   onReady,
   onEnter,
   onDeleteToken,
+  readOnly,
 }: {
   onChange: TokenEditorProps["onChange"];
   onReady: (api: { editor: LexicalEditor; root: HTMLDivElement | null }) => void;
   onEnter?: (event: KeyboardEvent | null) => boolean;
   onDeleteToken: (forward: boolean) => boolean;
+  readOnly?: boolean;
 }) {
   const [editor] = useLexicalComposerContext();
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [rootElement, setRootElement] = useState<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    editor.setEditable(!readOnly);
+  }, [editor, readOnly]);
 
   useEffect(() => {
     return editor.registerRootListener((rootElement) => {
@@ -629,6 +636,7 @@ const TokenEditor = forwardRef<TokenEditorHandle, TokenEditorProps>(function Tok
   {
     placeholder,
     disabled = false,
+    readOnly = false,
     isDark = false,
     rightInset = 120,
     topInset = 0,
@@ -855,6 +863,7 @@ const TokenEditor = forwardRef<TokenEditorHandle, TokenEditorProps>(function Tok
             <ContentEditable
               className="token-editor-input"
               aria-placeholder={placeholder}
+              aria-readonly={readOnly || undefined}
               placeholder={<span></span>}
               spellCheck={false}
               onFocus={() => {
@@ -889,11 +898,12 @@ const TokenEditor = forwardRef<TokenEditorHandle, TokenEditorProps>(function Tok
                 position: "relative",
                 zIndex: 2,
                 pointerEvents: disabled ? "none" : "auto",
+                cursor: readOnly ? "text" : undefined,
               }}
             />
           }
           placeholder={
-            isEmpty && !isFocused ? (
+            !readOnly && isEmpty && !isFocused ? (
               <div
                 style={{
                   position: "absolute",
@@ -919,6 +929,7 @@ const TokenEditor = forwardRef<TokenEditorHandle, TokenEditorProps>(function Tok
         <HistoryPlugin />
         <EditorBridge
           onChange={handleChange}
+          readOnly={readOnly}
           onReady={({ editor, root }) => {
             editorRef.current = editor;
             rootRef.current = root;

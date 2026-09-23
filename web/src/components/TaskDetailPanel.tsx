@@ -1,8 +1,8 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { AgentIcon } from "./AgentIcon";
-import { AgentSelector } from "./AgentSelector";
-import { has1MSuffix, with1MSuffix } from "./ActionBar";
-import TokenEditor, { type TokenEditorHandle } from "./editor/TokenEditor";
+import { ModeIcon } from "./ModeIcon";
+import { with1MSuffix } from "./ActionBar";
+import { PromptEditor } from "./PromptEditor";
 import { useI18n, type I18nContextValue } from "../i18n";
 import {
   addTaskStage,
@@ -51,30 +51,10 @@ function statusText(status: string, t: (key: Parameters<I18nContextValue["t"]>[0
   }
 }
 
-// 只读展示未执行阶段的 prompt：复用 TokenEditor 的排版，但禁输入/禁粘贴，避免 @/#// 候选逻辑介入。
-function ReadOnlyPrompt({ text, dimmed }: { text: string; dimmed: boolean }) {
-  return (
-    <div
-      aria-readonly="true"
-      style={{
-        minHeight: "44px",
-        maxHeight: "240px",
-        overflowY: "auto",
-        borderRadius: "8px",
-        border: "1px solid var(--border-color)",
-        background: dimmed ? "rgba(148, 163, 184, 0.10)" : "var(--input-bg)",
-        color: dimmed ? "var(--text-secondary)" : "var(--text-color)",
-        padding: "10px 14px",
-        fontSize: "14px",
-        lineHeight: "20px",
-        whiteSpace: "pre-wrap",
-        wordBreak: "break-word",
-        userSelect: "text",
-      }}
-    >
-      {text || <span style={{ color: "var(--text-secondary)" }}>—</span>}
-    </div>
-  );
+function latestStageRun(detail: TaskDetail, index: number): TaskDetail["stage_runs"][number] | null {
+  return (detail.stage_runs || [])
+    .filter((run) => run.stage_index === index)
+    .sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1))[0] || null;
 }
 
 export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMoved, nodeId }: TaskDetailPanelProps) {
@@ -84,7 +64,7 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
   // 任务改名：文本 ↔ 编辑态，确认后提交
   const [nameDraft, setNameDraft] = useState("");
   const [editingName, setEditingName] = useState(false);
-  // 阶段卡编辑态：一次改名字+模型+prompt，点发送一起存
+  // 阶段编辑态：名字 + prompt + 模型 一次保存
   const [editingStage, setEditingStage] = useState(-1);
   const [editName, setEditName] = useState("");
   const [editPrompt, setEditPrompt] = useState("");
@@ -93,7 +73,6 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
   const [editEffort, setEditEffort] = useState("");
   const [editMode, setEditMode] = useState("");
   const [saving, setSaving] = useState(false);
-  const editPromptRef = useRef<TokenEditorHandle | null>(null);
 
   useEffect(() => {
     setNameDraft(task?.name || "");
@@ -105,19 +84,13 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
     if (!editingName) setNameDraft(task?.name || "");
   }, [task?.name, editingName]);
 
-  useEffect(() => {
-    if (editingStage < 0) return;
-    window.setTimeout(() => editPromptRef.current?.setText(editPrompt), 0);
-    // 仅在切换编辑对象时灌入一次，后续由 TokenEditor 自身维护
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editingStage]);
-
-  const stages = useMemo(() => task?.stages || [], [task?.stages]);
   if (!task || !detail) return null;
 
-  const latestRunFor = (index: number) =>
-    (detail.stage_runs || []).filter((run) => run.stage_index === index)
-      .sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1))[0] || null;
+  const stages = task.stages || [];
+
+  // 第一段 user 段 = 任务初始输入
+  const initialInput = (latestStageRun(detail, 0)?.input || stages[0]?.prompt_template || "").trim();
+  const bodyStages = stages.slice(1); // 阶段流从 index 1 起
 
   const apply = (next: TaskDetail) => onMoved?.(next);
   const fail = (err: unknown) => reportError("file.write_failed", String((err as Error)?.message || ""));
@@ -185,6 +158,8 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
     } catch (err) { fail(err); } finally { setSaving(false); }
   };
 
+  const numberLabel = task.task_number ? `#${task.task_number}` : "";
+
   return (
     <div
       style={{ position: "fixed", inset: 0, zIndex: 88, background: "rgba(15, 23, 42, 0.36)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px" }}
@@ -210,25 +185,45 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
             </>
           ) : (
             <>
+              <span style={{ fontSize: "12px", fontWeight: 800, color: statusColors[task.status] || "var(--text-secondary)", flexShrink: 0, whiteSpace: "nowrap" }}>
+                {statusText(task.status, t)}
+              </span>
+              <span style={{ fontSize: "12px", fontWeight: 700, color: "var(--text-secondary)", flexShrink: 0, whiteSpace: "nowrap" }}>
+                {task.task_template_name || ""}
+              </span>
+              {numberLabel ? (
+                <span style={{ fontSize: "12px", fontWeight: 800, color: "#0ea5e9", flexShrink: 0, whiteSpace: "nowrap" }}>{numberLabel}</span>
+              ) : null}
               <span style={{ flex: "1 1 auto", minWidth: 0, fontSize: "14px", fontWeight: 700, color: "var(--text-color)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {task.task_number ? `#${task.task_number} ` : ""}{task.name || t("task.namePlaceholder")}
+                {task.name || t("task.namePlaceholder")}
               </span>
               <button type="button" aria-label={t("task.renameTask")} title={t("task.renameTask")} onClick={() => setEditingName(true)} style={pencilStyle(false)}>
                 <PencilIcon />
               </button>
             </>
           )}
-          <span style={{ fontSize: "12px", fontWeight: 800, color: statusColors[task.status] || "var(--text-secondary)", flexShrink: 0 }}>
-            {statusText(task.status, t)}
-          </span>
-          <button type="button" onClick={onClose} style={iconBtn}>{t("taskTemplate.close")}</button>
         </header>
 
         <div style={{ padding: "12px 14px", overflow: "auto", display: "flex", flexDirection: "column", gap: "10px", minHeight: 0 }}>
-          {stages.map((stage, index) => {
-            const run = latestRunFor(index);
+          {/* 任务初始输入：第一段 user 段，只读 */}
+          {initialInput ? (
+            <div style={{ border: "1px dashed var(--border-color)", borderRadius: "8px", padding: "10px", display: "flex", flexDirection: "column", gap: "6px", background: "var(--panel-bg)" }}>
+              <span style={{ fontSize: "11px", fontWeight: 800, color: "var(--text-secondary)" }}>{t("task.initialInput")}</span>
+              <PromptEditor
+                value={initialInput}
+                mode="readonly"
+                role="user"
+                resetKey={task.id}
+                placeholder={t("task.namePlaceholder")}
+              />
+            </div>
+          ) : null}
+
+          {bodyStages.map((stage, i) => {
+            const index = i + 1; // 原始 stage index
+            const run = latestStageRun(detail, index);
             const isCurrent = index === task.current_stage_index;
-            const executed = !!run && !["pending"].includes(String(run.status));
+            const executed = !!run && String(run.status) !== "pending";
             const editing = editingStage === index;
             const isAgent = stage.role === "agent";
             const shown = executed ? (run?.rendered_prompt || stage.prompt_template || "") : (stage.prompt_template || "");
@@ -243,16 +238,9 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
                       style={{ ...inputStyle, height: "26px", width: "180px", flex: "0 0 180px", fontSize: "12px", fontWeight: 800 }}
                     />
                   ) : (
-                    <>
-                      <span style={{ fontWeight: 800, fontSize: "12px", color: isCurrent ? "var(--accent-color)" : "var(--text-color)" }}>
-                        {stage.name || t("task.stageLabel", { index: index + 1 })}
-                      </span>
-                      {!executed ? (
-                        <button type="button" aria-label={t("common.edit")} title={t("common.edit")} onClick={() => startEditStage(index)} style={pencilStyle(false)}>
-                          <PencilIcon />
-                        </button>
-                      ) : null}
-                    </>
+                    <span style={{ fontWeight: 800, fontSize: "12px", color: isCurrent ? "var(--accent-color)" : "var(--text-color)" }}>
+                      {stage.name || t("task.stageLabel", { index })}
+                    </span>
                   )}
                   {isAgent ? (
                     <span style={tagStyle}><AgentIcon agentName={stage.agent || "codex"} style={{ width: "12px", height: "12px" }} /> {stage.agent || "codex"}{stage.model ? ` · ${stage.model}` : ""}{stage.effort ? ` · ${stage.effort}` : ""}</span>
@@ -263,66 +251,54 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
                     {executed ? statusText(run.status, t) : t("task.stage.notExecuted")}
                   </span>
                   {run?.session_key ? (
-                    <button type="button" onClick={() => onOpenSession(run.session_key as string)} style={{ ...iconBtn, marginLeft: "auto" }}>
-                      {t("task.sessionTitle")}
+                    <button
+                      type="button"
+                      title={t("task.openSession", { index: 1 })}
+                      aria-label={t("task.openSession", { index: 1 })}
+                      onClick={() => onOpenSession(run.session_key as string)}
+                      style={sessionIconButtonStyle}
+                    >
+                      <span style={{ position: "relative", width: "18px", height: "18px", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+                        <ModeIcon type="task" size={16} />
+                        <span style={{ position: "absolute", right: "-2px", bottom: "-2px", width: "10px", height: "10px", borderRadius: "999px", background: "var(--content-bg, #fff)", border: "1px solid rgba(255,255,255,0.9)", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
+                          <AgentIcon agentName={stage.agent || ""} style={{ width: "10px", height: "10px", display: "block" }} />
+                        </span>
+                      </span>
                     </button>
                   ) : null}
                 </div>
 
-                {editing ? (
-                  <div style={{ position: "relative" }}>
-                    <div style={{ minHeight: "44px", border: "1px solid var(--border-color)", borderRadius: "8px", background: "var(--input-bg)", overflow: "auto" }}>
-                      <TokenEditor
-                        ref={editPromptRef}
-                        placeholder={t("taskTemplate.promptTemplate")}
-                        disabled={saving}
-                        isDark={false}
-                        rightInset={42}
-                        topInset={0}
-                        bottomInset={12}
-                        onChange={(payload) => setEditPrompt(payload.serializedText)}
-                      />
-                    </div>
-                    <div style={{ marginTop: "6px", display: "flex", alignItems: "center", gap: "8px" }}>
-                      {isAgent ? (
-                        <AgentSelector
-                          agent={editAgent}
-                          model={editModel}
-                          mode={editMode}
-                          effort={editEffort}
-                          fastService=""
-                          longContext={has1MSuffix(editModel || "")}
-                          onLongContextChange={(enabled) => setEditModel(with1MSuffix(editModel || "", enabled))}
-                          agents={agents}
-                          compact
-                          menuPlacement="top"
-                          showChevron
-                          onAgentChange={(agent, model) => {
-                            const status = agents.find((item) => item.name === agent) || null;
-                            setEditAgent(agent);
-                            setEditModel(model || "");
-                            setEditMode(status?.current_mode_id || "");
-                          }}
-                          onModeChange={(mode) => setEditMode(mode || "")}
-                          onEffortChange={(effort) => setEditEffort(effort || "")}
-                          onFastServiceChange={() => {}}
-                        />
-                      ) : null}
-                      <div style={{ marginLeft: "auto", display: "flex", gap: "8px" }}>
-                        <button type="button" onClick={() => setEditingStage(-1)} style={buttonStyle("secondary")}>{t("common.cancel")}</button>
-                        <button type="button" disabled={saving || !editPrompt.trim()} onClick={() => void saveStage(index)} style={{ ...buttonStyle("primary"), opacity: !editPrompt.trim() ? 0.5 : 1 }}>
-                          {saving ? t("common.saving") : t("common.save")}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <ReadOnlyPrompt text={shown} dimmed={executed} />
-                )}
+                <PromptEditor
+                  value={shown}
+                  onChange={(value) => setEditPrompt(value)}
+                  resetKey={`${task.id}-${index}`}
+                  mode={editing ? "editable" : (executed ? "done" : "readonly")}
+                  role={stage.role}
+                  placeholder={t("taskTemplate.promptTemplate")}
+                  onEdit={() => startEditStage(index)}
+                  onSend={() => void saveStage(index)}
+                  sending={saving}
+                  sendDisabled={!editPrompt.trim()}
+                  saveLabel={t("common.save")}
+                  agents={agents}
+                  agent={editAgent}
+                  model={editModel}
+                  effort={editEffort}
+                  mode2={editMode}
+                  onAgentChange={(agent, model) => {
+                    const status = agents.find((item) => item.name === agent) || null;
+                    setEditAgent(agent);
+                    setEditModel(model || "");
+                    setEditMode(status?.current_mode_id || "");
+                  }}
+                  onModeChange={(mode) => setEditMode(mode || "")}
+                  onEffortChange={(effort) => setEditEffort(effort || "")}
+                  onLongContextChange={(enabled) => setEditModel(with1MSuffix(editModel || "", enabled))}
+                />
               </div>
             );
           })}
-          {stages.length === 0 ? (
+          {bodyStages.length === 0 ? (
             <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>{t("task.noStages")}</div>
           ) : null}
 
@@ -362,6 +338,21 @@ function pencilStyle(disabled: boolean): React.CSSProperties {
   };
 }
 
+const sessionIconButtonStyle: React.CSSProperties = {
+  width: "22px",
+  height: "22px",
+  border: "none",
+  borderRadius: "6px",
+  background: "transparent",
+  color: "var(--text-secondary)",
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  cursor: "pointer",
+  padding: 0,
+  marginLeft: "auto",
+};
+
 const tagStyle: React.CSSProperties = {
   display: "inline-flex",
   alignItems: "center",
@@ -372,20 +363,6 @@ const tagStyle: React.CSSProperties = {
   background: "rgba(148, 163, 184, 0.12)",
   borderRadius: "999px",
   padding: "2px 8px",
-};
-
-const iconBtn: React.CSSProperties = {
-  height: "28px",
-  borderRadius: "6px",
-  border: "1px solid var(--border-color)",
-  background: "var(--button-bg)",
-  color: "var(--text-color)",
-  padding: "0 9px",
-  fontSize: "12px",
-  fontWeight: 700,
-  cursor: "pointer",
-  whiteSpace: "nowrap",
-  flexShrink: 0,
 };
 
 const inputStyle: React.CSSProperties = {

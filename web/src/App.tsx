@@ -167,7 +167,8 @@ import { OnboardingTour } from "./components/OnboardingTour";
 import { WorktreeBranchSelector } from "./components/WorktreeBranchSelector";
 import { NoWorktreeIcon } from "./components/NoWorktreeIcon";
 import { renderToolIcon } from "./components/stream/ToolCallCard";
-import TokenEditor, { type TokenEditorHandle } from "./components/editor/TokenEditor";
+import { type TokenEditorHandle } from "./components/editor/TokenEditor";
+import { PromptEditor } from "./components/PromptEditor";
 import {
   type GitHubImportState,
   type LocalDirBrowserState,
@@ -1966,43 +1967,6 @@ export function App({ onGoHome }: AppProps) {
     }
   }, [applyTaskDetails, t]);
 
-  const openTaskEditDialog = useCallback(async (task: KanbanTask, openAttachmentPicker = false) => {
-    const rootId = task.root_id || currentRootIdRef.current;
-    if (!rootId) return;
-    try {
-      const detail = taskDetailsById[task.id];
-      if (!detail) {
-        reportError("file.write_failed", t("task.detailNotSynced"));
-        return;
-      }
-      const firstInput = firstTaskInputFromDetail(detail);
-      const currentInput = currentTaskInputFromDetail(detail);
-	      setTaskInlineEdit({
-	        taskId: task.id,
-	        templateId: task.task_template_id,
-	        templateName: task.task_template_name || t("task.defaultTitle"),
-	        name: "",
-	        text: currentInput,
-	        previousInputs: previousTaskInputsFromDetail(detail, t),
-	        createWorktree: detail.task.create_worktree === true,
-	        worktreeBranchMode: detail.task.worktree_branch_mode === "existing" ? "existing" : "new",
-	        worktreeBranch: detail.task.worktree_branch || "",
-	        canToggleWorktree: detail.task.current_stage_index === 0 && !detail.task.worktree_path,
-	        attachments: [],
-	      });
-      setTaskInlineActiveToken(null);
-      setTaskInlineCandidates([]);
-      setTaskInlineCandidateIndex(0);
-      setTaskFirstInputById((prev) => ({ ...prev, [task.id]: firstInput }));
-      window.setTimeout(() => {
-        if (openAttachmentPicker) {
-          taskInlineAttachmentInputRef.current?.click();
-        }
-      }, 0);
-    } catch (err) {
-      reportError("file.write_failed", String((err as Error)?.message || t("task.editFailed")));
-    }
-  }, [taskDetailsById, t]);
 
   const loadTaskWorktreeBranches = useCallback(async (rootId: string) => {
     if (!rootId) return;
@@ -2131,17 +2095,6 @@ export function App({ onGoHome }: AppProps) {
     event.currentTarget.value = "";
   }, [appendTaskInlineAttachments]);
 
-  const handleTaskInlinePaste = useCallback((event: React.ClipboardEvent<HTMLDivElement>) => {
-    if (taskInlineSaving || !currentRootIdRef.current) return;
-    const clipboardItems = Array.from(event.clipboardData?.items || []);
-    const imageFiles = clipboardItems
-      .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
-      .map((item) => item.getAsFile())
-      .filter((file): file is File => !!file);
-    if (imageFiles.length === 0) return;
-    event.preventDefault();
-    appendTaskInlineAttachments(imageFiles);
-  }, [appendTaskInlineAttachments, taskInlineSaving]);
 
   const removeTaskInlineAttachment = useCallback((id: string) => {
     setTaskInlineEdit((prev) => prev
@@ -2259,46 +2212,7 @@ export function App({ onGoHome }: AppProps) {
     }
   }, [applyTaskDetails, closeTaskEditDialog, taskInlineEdit, t]);
 
-  const handleTaskInlineEditorKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (taskInlineCandidates.length === 0) {
-      return;
-    }
-    if (event.key === "ArrowDown") {
-      event.preventDefault();
-      setTaskInlineCandidateIndex((prev) => (prev + 1) % taskInlineCandidates.length);
-      return;
-    }
-    if (event.key === "ArrowUp") {
-      event.preventDefault();
-      setTaskInlineCandidateIndex((prev) => (prev - 1 + taskInlineCandidates.length) % taskInlineCandidates.length);
-      return;
-    }
-    if (event.key === "Tab") {
-      event.preventDefault();
-      applyTaskInlineCandidate(taskInlineCandidates[taskInlineCandidateIndex] || taskInlineCandidates[0]);
-      return;
-    }
-    if (event.key === "Escape") {
-      event.preventDefault();
-      event.stopPropagation();
-      setTaskInlineCandidates([]);
-      setTaskInlineCandidateIndex(0);
-    }
-  }, [applyTaskInlineCandidate, taskInlineCandidates, taskInlineCandidateIndex]);
 
-  const handleTaskInlineEditorEnter = useCallback((event: KeyboardEvent | null) => {
-    if (event?.shiftKey) {
-      return false;
-    }
-    if (taskInlineCandidates.length > 0) {
-      event?.preventDefault();
-      event?.stopPropagation();
-      applyTaskInlineCandidate(taskInlineCandidates[taskInlineCandidateIndex] || taskInlineCandidates[0]);
-      return true;
-    }
-    void saveTaskInlineEdit();
-    return true;
-  }, [applyTaskInlineCandidate, saveTaskInlineEdit, taskInlineCandidates, taskInlineCandidateIndex]);
 
   useEffect(() => {
     try {
@@ -13995,8 +13909,12 @@ flexShrink: 0,
                                 : {}),
                             }}
                           >
-                            {!isAllTaskTemplateFilter && taskNumberLabel ? (
-                              <span style={{ color: "#0ea5e9", fontWeight: 800, marginRight: "6px" }}>{taskNumberLabel}</span>
+                            {!isAllTaskTemplateFilter && (task.task_template_name || taskNumberLabel || task.name) ? (
+                              <>
+                              	{task.task_template_name ? <span style={{ color: "var(--text-secondary)", fontWeight: 800, marginRight: "4px" }}>{task.task_template_name}</span> : null}
+                              	{taskNumberLabel ? <span style={{ color: "#0ea5e9", fontWeight: 800, marginRight: "4px" }}>{taskNumberLabel}</span> : null}
+                              	{task.name ? <span style={{ color: "var(--text-color)", fontWeight: 800, marginRight: "6px" }}>{task.name}</span> : null}
+                              </>
                             ) : null}
                             {firstInput ? <InlineTokenText content={firstInput} /> : <span>{t("task.noInput")}</span>}
                           </div>
@@ -14183,12 +14101,6 @@ flexShrink: 0,
                                   <TaskCompleteIcon />
                                 </button>
                               ) : null}
-	                              <button type="button" title={t("common.edit")} aria-label={t("task.edit")} onClick={(event) => {
-	                                event.stopPropagation();
-	                                void openTaskEditDialog(task);
-	                              }} style={taskCardIconButtonStyle()}>
-                                {renderToolIcon("edit")}
-                              </button>
 	                              <button type="button" title={t("common.delete")} aria-label={t("task.delete")} onClick={(event) => {
 	                                event.stopPropagation();
 	                                void handleMoveKanbanTask(task, "cancel");
@@ -15429,6 +15341,24 @@ flexShrink: 0,
                     name: taskInlineEdit.templateName || t("task.defaultTitle"),
                   })}
                 </div>
+                {!taskInlineEdit.taskId && taskTemplates.length > 0 ? (
+                  <select
+                    value={taskInlineEdit.templateId}
+                    aria-label={t("task.selectTemplate")}
+                    onChange={(event) => {
+                      const picked = taskTemplates.find((tpl) => tpl.id === event.target.value);
+                      if (!picked) return;
+                      setTaskInlineEdit((prev) => prev ? { ...prev, templateId: picked.id || "", templateName: picked.name, text: firstUserInputTemplate(picked) } : prev);
+                      setTaskInlineActiveToken(null);
+                      setTaskInlineCandidates([]);
+                    }}
+                    style={{ height: "26px", borderRadius: "6px", border: "1px solid var(--border-color)", background: "var(--input-bg)", color: "var(--text-color)", fontSize: "12px", fontWeight: 700, maxWidth: "160px", padding: "0 6px" }}
+                  >
+                    {taskTemplates.map((tpl) => (
+                      <option key={tpl.id} value={tpl.id}>{tpl.name}</option>
+                    ))}
+                  </select>
+                ) : null}
 	                {showTaskWorktreeControls ? (
 	                  <>
 	                    <button
@@ -15548,24 +15478,8 @@ flexShrink: 0,
                   ))}
                 </div>
               ) : null}
-              {!taskInlineEdit.taskId && taskTemplates.length > 0 ? (
+              {!taskInlineEdit.taskId ? (
                 <div style={{ marginBottom: "10px", display: "flex", gap: "8px", flexWrap: "wrap" }}>
-                  <select
-                    value={taskInlineEdit.templateId}
-                    aria-label={t("task.selectTemplate")}
-                    onChange={(event) => {
-                      const picked = taskTemplates.find((tpl) => tpl.id === event.target.value);
-                      if (!picked) return;
-                      setTaskInlineEdit((prev) => prev ? { ...prev, templateId: picked.id || "", templateName: picked.name, text: firstUserInputTemplate(picked) } : prev);
-                      setTaskInlineActiveToken(null);
-                      setTaskInlineCandidates([]);
-                    }}
-                    style={{ height: "30px", borderRadius: "6px", border: "1px solid var(--border-color)", background: "var(--input-bg)", color: "var(--text-color)", fontSize: "12px", fontWeight: 700, maxWidth: "200px", padding: "0 6px" }}
-                  >
-                    {taskTemplates.map((tpl) => (
-                      <option key={tpl.id} value={tpl.id}>{tpl.name}</option>
-                    ))}
-                  </select>
                   <input
                     value={taskInlineEdit.name}
                     onChange={(event) => setTaskInlineEdit((prev) => prev ? { ...prev, name: event.target.value } : prev)}
@@ -15620,72 +15534,20 @@ flexShrink: 0,
                   ))}
                 </div>
               ) : null}
-              <div style={{ position: "relative" }}>
-                <div
-                  style={{
-                    position: "relative",
-                    height: "112px",
-                    border: "1px solid var(--border-color)",
-                    borderRadius: "8px",
-                    background: "var(--input-bg)",
-                    overflow: "auto",
-                  }}
-                >
-                  <TokenEditor
-                    ref={taskInlineEditorRef}
-                    placeholder={t("task.editPlaceholder")}
-                    disabled={taskInlineSaving}
-                    isDark={false}
-                    rightInset={42}
-                    topInset={0}
-                    bottomInset={12}
-                    fillHeight
-                    onChange={(payload) => {
-                      setTaskInlineEdit((prev) => prev ? { ...prev, text: payload.serializedText } : prev);
-                      setTaskInlineActiveToken(payload.activeToken);
-                    }}
-                    onFocusChange={(focused) => {
-                      if (!focused) {
-                        setTaskInlineActiveToken(null);
-                        setTaskInlineCandidates([]);
-                        setTaskInlineCandidateIndex(0);
-                      }
-                    }}
-                    onPaste={handleTaskInlinePaste}
-                    onKeyDown={handleTaskInlineEditorKeyDown}
-                    onEnter={handleTaskInlineEditorEnter}
-                  />
-                </div>
-                <button
-                  type="button"
-                  title={t("task.addAttachment")}
-                  aria-label={t("task.addAttachment")}
-	                  disabled={taskInlineSaving}
-	                  onClick={() => {
-	                    taskInlineAttachmentInputRef.current?.click();
-	                  }}
-                  style={{
-                    position: "absolute",
-                    right: "6px",
-                    bottom: "6px",
-                    zIndex: 3,
-                    width: "28px",
-                    height: "28px",
-                    border: "none",
-                    borderRadius: "8px",
-                    background: "var(--button-bg)",
-                    color: "var(--text-secondary)",
-                    cursor: taskInlineSaving ? "not-allowed" : "pointer",
-                    opacity: taskInlineSaving ? 0.55 : 1,
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    padding: 0,
-                  }}
-                >
-                  <PlusSmallIcon />
-                </button>
-              </div>
+              <PromptEditor
+                ref={taskInlineEditorRef}
+                value={taskInlineEdit.text}
+                onChange={(value) => setTaskInlineEdit((prev) => prev ? { ...prev, text: value } : prev)}
+                mode="editable"
+                role="user"
+                canAttach
+                onAttach={() => taskInlineAttachmentInputRef.current?.click()}
+                onSend={() => void saveTaskInlineEdit()}
+                sending={taskInlineSaving}
+                sendDisabled={!taskInlineEdit.text.trim()}
+                saveLabel={t("common.save")}
+                placeholder={t("task.editPlaceholder")}
+              />
               {taskInlineEdit.attachments.length > 0 || taskInlineUploadProgress ? (
                 <div style={{ marginTop: "10px", display: "flex", flexWrap: "wrap", gap: "8px" }}>
                   {taskInlineEdit.attachments.map((attachment) => attachment.isImage && attachment.previewUrl ? (
@@ -15794,14 +15656,6 @@ flexShrink: 0,
                   style={{ height: "30px", borderRadius: "6px", border: "1px solid var(--border-color)", background: "transparent", color: "var(--text-color)", padding: "0 12px", cursor: taskInlineSaving ? "not-allowed" : "pointer" }}
                 >
                   {t("common.cancel")}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void saveTaskInlineEdit()}
-                  disabled={taskInlineSaving}
-                  style={{ height: "30px", borderRadius: "6px", border: "1px solid var(--accent-color)", background: "var(--accent-color)", color: "#fff", padding: "0 14px", fontWeight: 800, cursor: taskInlineSaving ? "not-allowed" : "pointer", opacity: taskInlineSaving ? 0.7 : 1 }}
-                >
-                  {taskInlineSaving ? t("common.saving") : t("common.save")}
                 </button>
               </div>
             </div>

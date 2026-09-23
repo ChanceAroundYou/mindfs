@@ -800,6 +800,7 @@ export const enUS = {
   "task.renameTask": "Rename task",
   "task.appendStage": "+ Add stage",
   "task.stage.notExecuted": "Not executed",
+  "task.initialInput": "Task initial input",
   "task.noInput": "No input",
   "task.openSession": "Open task session {index}",
   "task.waitingSchedule": "Waiting to schedule",
