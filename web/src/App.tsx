@@ -1543,6 +1543,8 @@ export function App({ onGoHome }: AppProps) {
 	  const [selectedKanbanTaskId, setSelectedKanbanTaskId] = useState("");
 	  const [expandedTaskInputIds, setExpandedTaskInputIds] = useState<Set<string>>(() => new Set());
   const [collapsedTaskCompletionGroups, setCollapsedTaskCompletionGroups] = useState<Set<string>>(() => new Set(["success", "fail", "cancelled"]));
+  // 看板列折叠（移动端多列换行后空间宝贵，长列默认可收起只留表头）。
+  const [collapsedKanbanColumns, setCollapsedKanbanColumns] = useState<Set<string>>(() => new Set());
   const [taskInlineEdit, setTaskInlineEdit] = useState<TaskInlineEditState | null>(null);
   const [taskSessionErrorDialog, setTaskSessionErrorDialog] = useState<{ title: string; message: string; details: string[] } | null>(null);
   const [taskInlineActiveToken, setTaskInlineActiveToken] = useState<{ type: "file" | "slash" | "prompt" | "command"; query: string } | null>(null);
@@ -13768,18 +13770,22 @@ export function App({ onGoHome }: AppProps) {
       ) : !isAllTaskTemplateFilter && !selectedTaskTemplateForFilter ? (
         <div style={{ padding: "12px", fontSize: "12px", color: "var(--text-secondary)" }}>{t("task.createTemplateFirst")}</div>
       ) : (
-	        <div style={{ overflowX: "auto", overflowY: "hidden", padding: "0 0 12px 1px", minHeight: 0 }}>
+	        <div style={{ overflowX: isMobile ? "hidden" : "auto", overflowY: "hidden", padding: "0 0 12px 1px", minHeight: 0 }}>
 	          <div
 	            style={{
 	              display: "grid",
-	              gridAutoFlow: "column",
-	              gridAutoColumns: isMobile ? "calc((100% - 6px) / 2)" : "minmax(220px, 1fr)",
+	              // 移动端横滑空间浪费：列改为换行（每行两列），列内上下滑看卡片。
+	              gridAutoFlow: isMobile ? "row" : "column",
+	              gridTemplateColumns: isMobile ? "repeat(2, 1fr)" : undefined,
+	              gridAutoColumns: isMobile ? undefined : "minmax(220px, 1fr)",
+	              gridAutoRows: isMobile ? "minmax(200px, auto)" : undefined,
 	              gap: "6px",
 	              minWidth: isMobile ? undefined : `${Math.max(kanbanStageColumns.length, 1) * 220}px`,
 	              alignItems: "start",
 	            }}
 	          >
 	            {kanbanStageColumns.map((column) => {
+	              const columnCollapsed = collapsedKanbanColumns.has(String(column.index));
 	              const taskSections = "groups" in column && Array.isArray(column.groups) && column.groups.length > 0
 	                ? column.groups
 	                : [{ key: "tasks", name: "", tone: "default" as const, tasks: column.tasks }];
@@ -13794,7 +13800,7 @@ export function App({ onGoHome }: AppProps) {
 	                  display: "flex",
 	                  flexDirection: "column",
 	                  minHeight: 0,
-	                  maxHeight: "calc(100dvh - 148px)",
+	                  maxHeight: isMobile ? (columnCollapsed ? undefined : "42dvh") : "calc(100dvh - 148px)",
 	                }}
 	              >
                 <div
@@ -13806,16 +13812,27 @@ export function App({ onGoHome }: AppProps) {
                     alignItems: "center",
                     justifyContent: "space-between",
 	                    gap: "8px",
-	                    flexShrink: 0,
-	                  }}
-	                >
+flexShrink: 0,
+                    cursor: "pointer",
+                  }}
+                  onClick={() => {
+                    const key = String(column.index);
+                    setCollapsedKanbanColumns((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(key)) next.delete(key); else next.add(key);
+                      return next;
+                    });
+                  }}
+                >
                   <div style={{ minWidth: 0, display: "flex", alignItems: "center", gap: "6px" }}>
+                    <TaskGroupChevronIcon collapsed={columnCollapsed} />
                     <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: "12px", fontWeight: 800, color: "var(--text-color)" }}>
                       {column.name}
                     </span>
                   </div>
                   <span style={{ fontSize: "11px", fontWeight: 800, color: "var(--text-secondary)" }}>{column.tasks.length}</span>
                 </div>
+	                {columnCollapsed ? null : (
 	                <div style={{ padding: "8px", display: "flex", flexDirection: "column", gap: "8px", overflowY: "auto", minHeight: 0 }}>
 	                  {column.tasks.length === 0 ? (
 	                    <div style={{ padding: "10px 4px", fontSize: "12px", color: "var(--text-secondary)", textAlign: "center" }}>{t("task.empty")}</div>
@@ -14218,6 +14235,7 @@ export function App({ onGoHome }: AppProps) {
                       );
 	                  })}
 	                </div>
+	                )}
 	              </section>
 	              );
 	            })}
