@@ -84,6 +84,8 @@ type ActionBarProps = {
   rootColor?: string | null;
   attachedFileContext?: AttachedFileContext | null;
   canOpenSessionDrawer?: boolean;
+  /** 看板/工作台不是对话语境：不渲染输入区，移动端只留呼出左右侧栏的按钮。 */
+  hideComposer?: boolean;
   sessionDrawerOpen?: boolean;
   detachedBoundSession?: boolean;
   editDraftRequest?: {
@@ -461,6 +463,7 @@ export function ActionBar({
   rootColor = null,
   attachedFileContext,
   canOpenSessionDrawer = false,
+  hideComposer = false,
   sessionDrawerOpen = false,
   detachedBoundSession = false,
   editDraftRequest = null,
@@ -1419,6 +1422,28 @@ export function ActionBar({
       </svg>
     </button>
   ) : null;
+
+  // 看板/工作台：不渲染输入区。移动端仍要保留呼出左右侧栏的按钮，否则进了这两个界面就再也开不出侧栏。
+  if (hideComposer) {
+    return isMobile ? (
+      <div
+        data-onboarding="action-bar"
+        style={{
+          width: "100%",
+          minWidth: 0,
+          padding: "0 0 var(--mindfs-actionbar-bottom-padding, calc(env(safe-area-inset-bottom, 0px) + 2px))",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          boxSizing: "border-box",
+          background: "var(--content-bg)",
+        }}
+      >
+        {sidebarsSwapped ? mobileSessionSidebarButton : mobileFileSidebarButton}
+        {sidebarsSwapped ? mobileFileSidebarButton : mobileSessionSidebarButton}
+      </div>
+    ) : null;
+  }
 
   return (
     <div data-onboarding="action-bar" style={{ width: "100%", minWidth: 0, padding: isMobile ? "0 0 var(--mindfs-actionbar-bottom-padding, calc(env(safe-area-inset-bottom, 0px) + 2px))" : "0 16px 12px", display: "flex", justifyContent: "center", boxSizing: "border-box", background: "var(--content-bg)" }}>

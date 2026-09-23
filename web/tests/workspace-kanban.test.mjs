@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
+const bar = readFileSync(new URL("../src/components/ActionBar.tsx", import.meta.url), "utf8");
 const panel = readFileSync(new URL("../src/components/WorkspaceKanban.tsx", import.meta.url), "utf8");
 const zh = readFileSync(new URL("../src/i18n/locales/zh-CN.ts", import.meta.url), "utf8");
 const en = readFileSync(new URL("../src/i18n/locales/en-US.ts", import.meta.url), "utf8");
@@ -102,11 +103,27 @@ assert.match(
   "completion groups should start expanded",
 );
 
-// 会话界面只在对话态（主区）与文件态（悬浮框）出现；看板/工作台不得有
+// 会话界面只在对话态（主区）与文件态（悬浮框）出现；看板/工作台不得有输入区，
+// 但移动端呼出左右侧栏的按钮必须留下（否则进了这两个界面就再也开不出侧栏）。
 assert.match(
   app,
-  /mainView === "board" \|\| mainView === "workspace" \? null : \(/,
+  /hideComposer=\{mainView === "board" \|\| mainView === "workspace"\}/,
   "the conversation composer must not render in the board or workspace views",
+);
+assert.match(
+  bar,
+  /if \(hideComposer\) \{\s*return isMobile \? \(/,
+  "hiding the composer must still render the mobile sidebar toggles",
+);
+assert.match(
+  bar,
+  /\{sidebarsSwapped \? mobileSessionSidebarButton : mobileFileSidebarButton\}[\s\S]*?\{sidebarsSwapped \? mobileFileSidebarButton : mobileSessionSidebarButton\}/,
+  "both sidebar toggles must survive the composer-less bar",
+);
+assert.match(
+  app,
+  /onSessionClick=\{\(\) => \{[\s\S]*?if \(!canOpenSessionDrawer\) return;/,
+  "the drawer toggle must reuse canOpenSessionDrawer instead of recomputing a narrower predicate",
 );
 assert.match(
   app,

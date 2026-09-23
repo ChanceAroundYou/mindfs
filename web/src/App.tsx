@@ -15090,8 +15090,6 @@ flexShrink: 0,
           </div>
         }
         footer={
-          // 看板/工作台不是对话语境：底部这条对话输入条（含悬浮框蓝环）一并去掉。
-          mainView === "board" || mainView === "workspace" ? null : (
           <div
             style={{
               width: "100%",
@@ -15124,6 +15122,7 @@ flexShrink: 0,
               rootColor={getDisplayNodeColor(String(currentRootId || ""))}
               attachedFileContext={attachedFileContext}
               canOpenSessionDrawer={canOpenSessionDrawer}
+              hideComposer={mainView === "board" || mainView === "workspace"}
               sessionDrawerOpen={isDrawerOpen}
               detachedBoundSession={detachedBoundSession}
               editDraftRequest={editDraftRequest}
@@ -15145,13 +15144,9 @@ flexShrink: 0,
               sidebarsSwapped={sidebarsSwapped}
               onSessionClick={() => {
               const rootID = currentRootIdRef.current;
-              if (!activeBoundSessionKey) return;
-              const selectedKey =
-                selectedSession?.key || selectedSession?.session_key;
-              const isBoundSessionInMain =
-                selectedKey === activeBoundSessionKey &&
-                interactionMode !== "drawer";
-              if (isBoundSessionInMain) return;
+              // 直接用 canOpenSessionDrawer：它已经把「会话是否真的在主区」算全了。
+              // 这里若单独重算一份（漏掉 mainView 前提），文件态会被误判成「已在主区」而点了没反应。
+              if (!canOpenSessionDrawer) return;
               const isDrawerCurrentlyOpen =
                 !!drawerOpenByRootRef.current[scopedRootKey(rootID || "")];
               if (isDrawerCurrentlyOpen) {
@@ -15165,7 +15160,6 @@ flexShrink: 0,
               }}
             />
           </div>
-          )
         }
         drawer={
           <BottomSheet
