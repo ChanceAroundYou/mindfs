@@ -3,11 +3,7 @@ import { AgentSelector } from "./AgentSelector";
 import { has1MSuffix, with1MSuffix } from "./ActionBar";
 import { AgentIcon } from "./AgentIcon";
 import {
-  deleteStageTemplate,
-  fetchStageTemplates,
-  saveStageTemplate,
   saveTaskTemplate,
-  type StageRole,
   type StageTemplate,
   type TaskTemplate,
   type TaskTemplateStage,
@@ -76,54 +72,21 @@ function cloneTemplate(template?: TaskTemplate | null, t?: I18nContextValue["t"]
   };
 }
 
-function stageChangedFromTemplate(stage: StageTemplate, templates: StageTemplate[]): boolean {
-  if (!stage.id) return true;
-  const original = templates.find((item) => item.id === stage.id);
-  if (!original) return true;
-  const comparable = (value: StageTemplate) => JSON.stringify({
-    name: value.name || "",
-    role: value.role,
-    auto_advance: value.auto_advance === true,
-    agent: value.agent || "",
-    model: value.model || "",
-    mode: value.mode || "",
-    effort: value.effort || "",
-    fast_service: value.fast_service || "",
-    plan_mode: value.plan_mode === true,
-    session_reuse_policy: value.session_reuse_policy || "",
-    prompt_template: value.prompt_template || "",
-    agent_can_control_stage: value.agent_can_control_stage === true,
-  });
-  return comparable(stage) !== comparable(original);
-}
-
 function toFastService(value?: string): "" | "on" | "off" {
   return value === "on" || value === "off" ? value : "";
 }
 
 export function TaskTemplateDialog({ open, agents, template, onClose, onSaved }: TaskTemplateDialogProps) {
   const { t } = useI18n();
-  const [stageTemplates, setStageTemplates] = useState<StageTemplate[]>([]);
   const [draft, setDraft] = useState<TaskTemplate>(() => cloneTemplate(template, t));
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [openHelpKey, setOpenHelpKey] = useState("");
-  const [savedStageKeys, setSavedStageKeys] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     if (!open) return;
     setDraft(cloneTemplate(template, t));
-    setSavedStageKeys({});
     setSaveError("");
-    let cancelled = false;
-    fetchStageTemplates()
-      .then((stages) => {
-        if (!cancelled) setStageTemplates(stages);
-      })
-      .catch((err) => reportError("file.write_failed", String((err as Error)?.message || t("taskTemplate.stageTemplateLoadFailed"))));
-    return () => {
-      cancelled = true;
-    };
   }, [open, template, t]);
 
   const title = useMemo(() => (template?.id ? t("taskTemplate.editTitle") : t("taskTemplate.createTitle")), [template?.id, t]);
@@ -139,52 +102,6 @@ export function TaskTemplateDialog({ open, agents, template, onClose, onSaved }:
     }));
   };
 
-  const chooseStageTemplate = (index: number, id: string) => {
-    if (!id) {
-      updateStage(index, { ...(index === 0 ? blankUserStage() : blankAgentStage()), name: draft.stages[index]?.snapshot.name || "" });
-      setDraft((prev) => ({
-        ...prev,
-        stages: normalizeStages(prev.stages.map((stage, i) => (
-          i === index ? { ...stage, stage_template_id: "" } : stage
-        ))),
-      }));
-      return;
-    }
-    const selected = stageTemplates.find((item) => item.id === id);
-    if (!selected) return;
-    setDraft((prev) => ({
-      ...prev,
-      stages: normalizeStages(prev.stages.map((stage, i) => (
-        i === index
-          ? {
-              ...stage,
-              stage_template_id: selected.id,
-              snapshot: { ...selected, role: index === 0 ? "user" : selected.role },
-            }
-          : stage
-      ))),
-    }));
-  };
-
-  const removeStageTemplate = async (id: string) => {
-    const target = stageTemplates.find((item) => item.id === id);
-    if (!target?.id) return;
-    try {
-      await deleteStageTemplate(target.id);
-      setStageTemplates((prev) => prev.filter((item) => item.id !== target.id));
-      setDraft((prev) => ({
-        ...prev,
-        stages: normalizeStages(prev.stages.map((stage) => (
-          stage.stage_template_id === target.id || stage.snapshot.id === target.id
-            ? { ...stage, stage_template_id: "", snapshot: { ...stage.snapshot, id: "" } }
-            : stage
-        ))),
-      }));
-    } catch (err) {
-      reportError("file.write_failed", String((err as Error)?.message || t("taskTemplate.stageTemplateDeleteFailed")));
-    }
-  };
-
   const addStage = () => {
     setDraft((prev) => ({
       ...prev,
@@ -198,37 +115,6 @@ export function TaskTemplateDialog({ open, agents, template, onClose, onSaved }:
       ...prev,
       stages: normalizeStages(prev.stages.filter((_, stageIndex) => stageIndex !== index)),
     }));
-  };
-
-  const confirmSaveStageAsTemplate = async (index: number) => {
-    const name = (draft.stages[index]?.snapshot.name || defaultStageName(index, t)).trim();
-    if (!name) {
-      reportError("file.write_failed", t("taskTemplate.stageTemplateNameRequired"));
-      return;
-    }
-    try {
-      const saved = await saveStageTemplate({ ...draft.stages[index].snapshot, id: "", name });
-      setStageTemplates((prev) => [...prev.filter((item) => item.id !== saved.id), saved]);
-      setDraft((prev) => ({
-        ...prev,
-        stages: normalizeStages(prev.stages.map((stage, i) => (
-          i === index
-            ? { ...stage, stage_template_id: saved.id, snapshot: { ...saved } }
-            : stage
-        ))),
-      }));
-      const key = `${saved.id || index}-${index}`;
-      setSavedStageKeys((prev) => ({ ...prev, [key]: true }));
-      window.setTimeout(() => {
-        setSavedStageKeys((prev) => {
-          const next = { ...prev };
-          delete next[key];
-          return next;
-        });
-      }, 1200);
-    } catch (err) {
-      reportError("file.write_failed", String((err as Error)?.message || t("taskTemplate.stageTemplateSaveFailed")));
-    }
   };
 
   const saveTask = async () => {
@@ -261,7 +147,7 @@ export function TaskTemplateDialog({ open, agents, template, onClose, onSaved }:
 
   return (
     <div className="task-template-overlay" style={{ position: "fixed", inset: 0, zIndex: 90, background: "rgba(15, 23, 42, 0.36)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px" }}>
-      <section className="task-template-dialog" style={{ width: "min(760px, 100%)", maxHeight: "88vh", overflow: "hidden", borderRadius: "10px", background: "var(--menu-bg)", border: "1px solid var(--border-color)", boxShadow: "0 24px 60px rgba(15, 23, 42, 0.24)", display: "flex", flexDirection: "column" }}>
+      <section className="task-template-dialog" style={{ width: "min(760px, 100%)", maxHeight: "88vh", minHeight: "520px", overflow: "hidden", borderRadius: "10px", background: "var(--menu-bg)", border: "1px solid var(--border-color)", boxShadow: "0 24px 60px rgba(15, 23, 42, 0.24)", display: "flex", flexDirection: "column" }}>
         <style>{`
           .task-template-input:focus {
             border-color: var(--accent-color) !important;
@@ -335,21 +221,6 @@ export function TaskTemplateDialog({ open, agents, template, onClose, onSaved }:
             const isAgent = snapshot.role === "agent";
             const selectedAgentStatus = agents.find((item) => item.name === (snapshot.agent || "codex")) || null;
             const planModeDisabled = isAgent && selectedAgentStatus?.protocol === "acp";
-            const changed = stageChangedFromTemplate(snapshot, stageTemplates);
-            const savedStageKey = `${stage.stage_template_id || snapshot.id || stage.id || index}-${index}`;
-            const recentlySaved = savedStageKeys[savedStageKey] === true;
-            const renderSaveTemplateAction = () => (
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "4px", marginLeft: "auto", flex: "0 0 auto" }}>
-                <button
-                  type="button"
-                  disabled={recentlySaved || !changed || !snapshot.name.trim()}
-                  onClick={() => void confirmSaveStageAsTemplate(index)}
-                  style={{ ...buttonStyle("secondary"), minWidth: "72px", justifyContent: "center" }}
-                >
-                  {recentlySaved ? <CheckIcon /> : t("taskTemplate.saveTemplate")}
-                </button>
-              </div>
-            );
             const renderStageMetaActions = () => (
               <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "4px", marginLeft: "auto", flex: "0 0 auto" }}>
                 <button
@@ -379,14 +250,12 @@ export function TaskTemplateDialog({ open, agents, template, onClose, onSaved }:
                 }}
               >
                 <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
-                  <StageTemplateSelect
-                    value={stage.stage_template_id || snapshot.id || ""}
-                    name={snapshot.name || ""}
-                    role={snapshot.role}
-                    templates={stageTemplates}
-                    onNameChange={(name) => updateStage(index, { name })}
-                    onChange={(id) => chooseStageTemplate(index, id)}
-                    onDelete={(id) => void removeStageTemplate(id)}
+                  <input
+                    className="task-template-input task-template-stage-name"
+                    value={snapshot.name || ""}
+                    onChange={(event) => updateStage(index, { name: event.target.value })}
+                    placeholder={t("taskTemplate.stageNamePlaceholder")}
+                    style={{ ...inputStyle, width: "156px", flex: "0 0 156px" }}
                   />
                   <RoleAgentSwitch
                     role={snapshot.role}
@@ -448,11 +317,10 @@ export function TaskTemplateDialog({ open, agents, template, onClose, onSaved }:
 	                      <FieldLabelWithInfo
 	                        label={t("taskTemplate.promptTemplate")}
 	                        info={t("taskTemplate.promptTemplateInfo")}
-	                        helpKey={`prompt-${index}`}
+                        helpKey={`prompt-${index}`}
                         openHelpKey={openHelpKey}
                         setOpenHelpKey={setOpenHelpKey}
                       />
-                      {renderSaveTemplateAction()}
                     </div>
                     <textarea className="task-template-input" value={snapshot.prompt_template || ""} onChange={(event) => updateStage(index, { prompt_template: event.target.value })} rows={4} style={{ ...inputStyle, height: "auto", padding: "8px", resize: "vertical" }} />
                   </div>
@@ -466,7 +334,6 @@ export function TaskTemplateDialog({ open, agents, template, onClose, onSaved }:
                         openHelpKey={openHelpKey}
                         setOpenHelpKey={setOpenHelpKey}
                       />
-                      {renderSaveTemplateAction()}
                     </div>
                     <textarea className="task-template-input" value={snapshot.prompt_template || ""} onChange={(event) => updateStage(index, { prompt_template: event.target.value })} rows={4} style={{ ...inputStyle, height: "auto", padding: "8px", resize: "vertical" }} />
                   </div>
@@ -530,122 +397,6 @@ function FieldLabelWithInfo({ label, info, helpKey, openHelpKey, setOpenHelpKey 
         </span>
       ) : null}
     </span>
-  );
-}
-
-function StageTemplateSelect({ value, name, role, templates, onNameChange, onChange, onDelete }: {
-  value: string;
-  name: string;
-  role: StageRole;
-  templates: StageTemplate[];
-  onNameChange: (name: string) => void;
-  onChange: (id: string) => void;
-  onDelete: (id: string) => void;
-}) {
-  const { t } = useI18n();
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement | null>(null);
-  const visibleTemplates = templates.filter((item) => item.role === role);
-  const selected = visibleTemplates.find((item) => item.id === value) || null;
-
-  useEffect(() => {
-    if (!open) return;
-    const handlePointerDown = (event: PointerEvent) => {
-      if (!ref.current?.contains(event.target as Node)) setOpen(false);
-    };
-    document.addEventListener("pointerdown", handlePointerDown);
-    return () => document.removeEventListener("pointerdown", handlePointerDown);
-  }, [open]);
-
-  return (
-    <div ref={ref} className="task-template-stage-name" style={{ position: "relative", width: "156px", flex: "0 0 156px" }}>
-      <div
-        className="task-template-input"
-        style={{
-          ...inputStyle,
-          width: "100%",
-          padding: 0,
-          display: "grid",
-          gridTemplateColumns: "minmax(0, 1fr) 28px",
-          alignItems: "center",
-          overflow: "hidden",
-        }}
-      >
-        <input
-          value={name}
-          onChange={(event) => onNameChange(event.target.value)}
-          placeholder={t("taskTemplate.stageNamePlaceholder")}
-          style={{
-            minWidth: 0,
-            height: "100%",
-            border: "none",
-            background: "transparent",
-            color: "var(--text-color)",
-            outline: "none",
-            padding: "0 7px",
-            fontSize: "12px",
-            fontWeight: 700,
-          }}
-        />
-        <button
-          type="button"
-          aria-label={t("taskTemplate.selectStageTemplate")}
-          title={selected?.name ? t("taskTemplate.currentStageTemplate", { name: selected.name }) : t("taskTemplate.selectStageTemplate")}
-          onClick={() => setOpen((next) => !next)}
-          style={{
-            width: "28px",
-            height: "28px",
-            border: "none",
-            borderLeft: "1px solid var(--border-color)",
-            background: selected ? "rgba(37, 99, 235, 0.08)" : "transparent",
-            color: selected ? "var(--accent-color)" : "var(--text-secondary)",
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
-            cursor: "pointer",
-            padding: 0,
-          }}
-        >
-          <AgentDropdownChevron />
-        </button>
-      </div>
-      {open ? (
-        <div style={{ ...stageMenuStyle, left: 0, right: "auto", minWidth: "188px" }}>
-          {visibleTemplates.length === 0 ? (
-            <div style={{ padding: "8px 10px", fontSize: "12px", color: "var(--text-secondary)" }}>{t("taskTemplate.noStageTemplates")}</div>
-          ) : visibleTemplates.map((template) => {
-            const active = template.id === value;
-            return (
-              <div key={template.id || template.name} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 26px", alignItems: "center" }}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    onChange(template.id || "");
-                    setOpen(false);
-                  }}
-                  style={{ ...menuRowStyle({ active }), minWidth: 0 }}
-                >
-                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{template.name || t("taskTemplate.unnamedTemplate")}</span>
-                  <span style={menuTrailingCheckStyle(active)}>✓</span>
-                </button>
-                <button
-                  type="button"
-                  aria-label={t("taskTemplate.deleteStageTemplate")}
-                  title={t("taskTemplate.deleteStageTemplate")}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onDelete(template.id || "");
-                  }}
-                  style={{ ...taskIconButtonStyle(false), color: "#dc2626" }}
-                >
-                  <DeleteIcon />
-                </button>
-              </div>
-            );
-          })}
-        </div>
-      ) : null}
-    </div>
   );
 }
 
@@ -1018,13 +769,6 @@ function taskIconButtonStyle(disabled = false): React.CSSProperties {
   };
 }
 
-function CheckIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path d="m5 12 4 4L19 6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
 
 function DeleteIcon() {
   return (

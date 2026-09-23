@@ -182,7 +182,7 @@ func (s *Service) CreateTask(ctx context.Context, in CreateTaskInput) (TaskDetai
 		WorktreeBranchMode: branchMode,
 		WorktreeBranch:     branch,
 		CurrentStageIndex:  0,
-		Status:             StatusWaitingUser,
+		Status:             StatusPending,
 		Labels:             []string{},
 		CreatedAt:          now,
 		UpdatedAt:          now,
@@ -193,7 +193,7 @@ func (s *Service) CreateTask(ctx context.Context, in CreateTaskInput) (TaskDetai
 		StageIndex: 0,
 		StageName:  first.Name,
 		Role:       RoleUser,
-		Status:     StageStatusWaitingUser,
+		Status:     StageStatusPending,
 		Input:      strings.TrimSpace(in.Input),
 		CreatedAt:  now,
 		UpdatedAt:  now,
@@ -692,7 +692,7 @@ func (s *Service) KickPending(rootID string) {
 			return
 		}
 		for _, task := range tasks {
-			if isTerminalStatus(task.Status) || task.Status == StatusWaitingUser || task.Status == StatusPaused {
+			if isTerminalStatus(task.Status) || task.Status == StatusWaitingUser || task.Status == StatusPending || task.Status == StatusPaused {
 				continue
 			}
 			if strings.TrimSpace(task.AuxFlags.SessionError) != "" {

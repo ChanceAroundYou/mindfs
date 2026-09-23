@@ -434,6 +434,7 @@ type TaskInlineEditState = {
   taskId?: string;
   templateId: string;
   templateName: string;
+  name: string;
   text: string;
   previousInputs: Array<{ id: string; label: string; input: string }>;
   createWorktree: boolean;
@@ -1980,6 +1981,7 @@ export function App({ onGoHome }: AppProps) {
 	        taskId: task.id,
 	        templateId: task.task_template_id,
 	        templateName: task.task_template_name || t("task.defaultTitle"),
+	        name: "",
 	        text: currentInput,
 	        previousInputs: previousTaskInputsFromDetail(detail, t),
 	        createWorktree: detail.task.create_worktree === true,
@@ -2057,6 +2059,7 @@ export function App({ onGoHome }: AppProps) {
 	      templateId,
 	      templateName: template?.name || t("task.defaultTitle"),
 	      text: initialText,
+	      name: "",
 	      previousInputs: [],
 	      createWorktree: taskCanCreateWorktree && worktreePref.createWorktree,
 	      worktreeBranchMode: worktreePref.worktreeBranchMode,
@@ -2231,7 +2234,16 @@ export function App({ onGoHome }: AppProps) {
             edit.canToggleWorktree && createWorktree ? edit.worktreeBranch : undefined,
             getNodeIdForRoot(rootId),
           )
-        : await createTask(rootId, edit.templateId, payload, createWorktree, edit.worktreeBranchMode, edit.worktreeBranch, getNodeIdForRoot(rootId));
+        : await createTask(
+            rootId,
+            edit.templateId,
+            payload,
+            createWorktree,
+            edit.worktreeBranchMode,
+            edit.worktreeBranch,
+            getNodeIdForRoot(rootId),
+            edit.name.trim() ? { name: edit.name.trim() } : undefined,
+          );
       applyTaskDetails(rootId, [detail]);
       if (detail.task.worktree_path) {
         void refreshTaskWorktree(rootId, detail.task.worktree_path);
@@ -15390,6 +15402,7 @@ flexShrink: 0,
             style={{
               width: isMobile ? "100%" : "min(640px, 100%)",
               maxHeight: isMobile ? "70dvh" : "82vh",
+              minHeight: isMobile ? undefined : "480px",
               borderRadius: "10px",
               border: "1px solid var(--border-color)",
               background: "var(--menu-bg)",
@@ -15533,6 +15546,32 @@ flexShrink: 0,
                       ) : null}
                     </button>
                   ))}
+                </div>
+              ) : null}
+              {!taskInlineEdit.taskId && taskTemplates.length > 0 ? (
+                <div style={{ marginBottom: "10px", display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                  <select
+                    value={taskInlineEdit.templateId}
+                    aria-label={t("task.selectTemplate")}
+                    onChange={(event) => {
+                      const picked = taskTemplates.find((tpl) => tpl.id === event.target.value);
+                      if (!picked) return;
+                      setTaskInlineEdit((prev) => prev ? { ...prev, templateId: picked.id || "", templateName: picked.name, text: firstUserInputTemplate(picked) } : prev);
+                      setTaskInlineActiveToken(null);
+                      setTaskInlineCandidates([]);
+                    }}
+                    style={{ height: "30px", borderRadius: "6px", border: "1px solid var(--border-color)", background: "var(--input-bg)", color: "var(--text-color)", fontSize: "12px", fontWeight: 700, maxWidth: "200px", padding: "0 6px" }}
+                  >
+                    {taskTemplates.map((tpl) => (
+                      <option key={tpl.id} value={tpl.id}>{tpl.name}</option>
+                    ))}
+                  </select>
+                  <input
+                    value={taskInlineEdit.name}
+                    onChange={(event) => setTaskInlineEdit((prev) => prev ? { ...prev, name: event.target.value } : prev)}
+                    placeholder={t("task.namePlaceholder")}
+                    style={{ flex: "1 1 auto", minWidth: "140px", height: "30px", borderRadius: "6px", border: "1px solid var(--border-color)", background: "var(--input-bg)", color: "var(--text-color)", padding: "0 8px", fontSize: "12px", outline: "none" }}
+                  />
                 </div>
               ) : null}
               {taskInlineEdit.previousInputs.length > 0 ? (
