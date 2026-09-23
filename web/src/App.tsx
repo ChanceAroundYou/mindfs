@@ -1524,7 +1524,7 @@ export function App({ onGoHome }: AppProps) {
 	  const taskSessionKeysByIdRef = useRef<Record<string, string[]>>({});
 	  const [selectedKanbanTaskId, setSelectedKanbanTaskId] = useState("");
 	  const [expandedTaskInputIds, setExpandedTaskInputIds] = useState<Set<string>>(() => new Set());
-  const [collapsedTaskCompletionGroups, setCollapsedTaskCompletionGroups] = useState<Set<string>>(() => new Set(["success", "fail", "cancelled"]));
+  const [collapsedTaskCompletionGroups, setCollapsedTaskCompletionGroups] = useState<Set<string>>(() => new Set());
   // 看板列折叠（移动端多列换行后空间宝贵，长列默认可收起只留表头）。
   const [collapsedKanbanColumns, setCollapsedKanbanColumns] = useState<Set<string>>(() => new Set());
   const [taskInlineEdit, setTaskInlineEdit] = useState<TaskInlineEditState | null>(null);
@@ -11665,10 +11665,13 @@ export function App({ onGoHome }: AppProps) {
       actionBarSession as any,
     ) || (actionBarSession as any),
   );
+  // 「会话就在主区」必须同时满足：主面板确实是对话态。否则在文件态下会话被选中却看不见，
+  // 蓝环会被误判成「已在主区」而隐藏，文件态的悬浮框就再也打不开了。
   const isBoundSessionInMain =
     !!activeBoundSessionKey &&
     selectedKey === activeBoundSessionKey &&
-    interactionMode !== "drawer";
+    interactionMode !== "drawer" &&
+    mainView === "chat";
   const canOpenSessionDrawer = !!activeBoundSessionKey && !isBoundSessionInMain;
   const detachedBoundSession =
     isDetachedMainSessionTarget && !isDrawerOpen;
@@ -13286,25 +13289,20 @@ export function App({ onGoHome }: AppProps) {
     },
     {
       index: 3,
-      name: t("task.column.done"),
+      // 已结束 = 完成 + 取消；失败合并进取消。
+      name: t("task.column.ended"),
       role: "user" as const,
-      tasks: kanbanTasks.filter((task) => task.status === "success"),
-    },
-    {
-      index: 4,
-      name: t("task.column.failed"),
-      role: "user" as const,
-      tasks: kanbanTasks.filter((task) => task.status === "fail" || task.status === "cancelled"),
+      tasks: kanbanTasks.filter((task) => task.status === "success" || task.status === "fail" || task.status === "cancelled"),
       groups: [{
-        key: "fail",
-        name: t("task.group.failed"),
-        tone: "danger" as const,
-        tasks: kanbanTasks.filter((task) => task.status === "fail"),
+        key: "success",
+        name: t("task.group.completed"),
+        tone: "success" as const,
+        tasks: kanbanTasks.filter((task) => task.status === "success"),
       }, {
         key: "cancelled",
         name: t("task.group.cancelled"),
         tone: "muted" as const,
-        tasks: kanbanTasks.filter((task) => task.status === "cancelled"),
+        tasks: kanbanTasks.filter((task) => task.status === "fail" || task.status === "cancelled"),
       }].filter((group) => group.tasks.length > 0),
     },
   ];
@@ -13737,7 +13735,7 @@ export function App({ onGoHome }: AppProps) {
 	              gridAutoFlow: isMobile ? "row" : "column",
 	              gridTemplateColumns: isMobile ? "repeat(2, 1fr)" : undefined,
 	              gridAutoColumns: isMobile ? undefined : "minmax(220px, 1fr)",
-	              gridAutoRows: isMobile ? "minmax(200px, auto)" : undefined,
+	              gridAutoRows: isMobile ? "30dvh" : undefined,
 	              gap: "6px",
 	              minWidth: isMobile ? undefined : `${Math.max(kanbanStageColumns.length, 1) * 220}px`,
 	              alignItems: "start",
@@ -13759,7 +13757,8 @@ export function App({ onGoHome }: AppProps) {
 	                  display: "flex",
 	                  flexDirection: "column",
 	                  minHeight: 0,
-	                  maxHeight: isMobile ? (columnCollapsed ? undefined : "42dvh") : "calc(100dvh - 148px)",
+	                  height: isMobile ? (columnCollapsed ? undefined : "30dvh") : undefined,
+                  maxHeight: isMobile ? undefined : "calc(100dvh - 148px)",
 	                }}
 	              >
                 <div
@@ -13868,7 +13867,7 @@ flexShrink: 0,
 	                    const taskNumberLabel = task.task_number ? `#${task.task_number}` : "";
 	                    const taskStageName = task.current_stage_name || (task.current_stage_index >= 0 ? t("task.stageLabel", { index: task.current_stage_index + 1 }) : "");
 	                    const showStageName = isAllTaskTemplateFilter ? column.name === t("task.column.running") : Boolean(taskStageName);
-	                    const showTaskStatus = isAllTaskTemplateFilter && column.name === t("task.column.done");
+	                    const showTaskStatus = isAllTaskTemplateFilter && column.name === t("task.column.ended");
 	                    const taskSelected = selectedKanbanTaskId === task.id;
 	                    return (
 	                      <article
@@ -15091,6 +15090,8 @@ flexShrink: 0,
           </div>
         }
         footer={
+          // 看板/工作台不是对话语境：底部这条对话输入条（含悬浮框蓝环）一并去掉。
+          mainView === "board" || mainView === "workspace" ? null : (
           <div
             style={{
               width: "100%",
@@ -15164,6 +15165,7 @@ flexShrink: 0,
               }}
             />
           </div>
+          )
         }
         drawer={
           <BottomSheet

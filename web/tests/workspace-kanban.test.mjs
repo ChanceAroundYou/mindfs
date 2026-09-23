@@ -73,6 +73,47 @@ assert.match(
   "archive should default to the most recent entries until switched to all",
 );
 
+// 项目看板四块布局（未开始/执行中/待审核/已结束）—— 末列是「已结束」，失败并入取消。
+// 这段曾被别的改动悄悄拆回 done+failed 两列，加断言钉住。
+assert.match(
+  app,
+  /const kanbanStageColumns:[\s\S]*?t\("task\.column\.pending"\)[\s\S]*?t\("task\.column\.running"\)[\s\S]*?t\("task\.column\.waitingUser"\)[\s\S]*?t\("task\.column\.ended"\)/,
+  "the board should have exactly four blocks, ending with 已结束",
+);
+assert.doesNotMatch(
+  app,
+  /name: t\("task\.column\.failed"\)/,
+  "失败/取消 must be merged into the 已结束 block, not its own column",
+);
+assert.match(
+  app,
+  /t\("task\.column\.ended"\)[\s\S]*?key: "success"[\s\S]*?key: "cancelled"[\s\S]*?task\.status === "fail" \|\| task\.status === "cancelled"/,
+  "已结束 must group 完成 and 取消, with 失败 folded into 取消",
+);
+// 每块固定高度 + 完成分组默认展开
+assert.match(
+  app,
+  /gridAutoRows: isMobile \? "30dvh" : undefined,/,
+  "mobile blocks should keep a fixed height",
+);
+assert.match(
+  app,
+  /const \[collapsedTaskCompletionGroups, setCollapsedTaskCompletionGroups\] = useState<Set<string>>\(\(\) => new Set\(\)\);/,
+  "completion groups should start expanded",
+);
+
+// 会话界面只在对话态（主区）与文件态（悬浮框）出现；看板/工作台不得有
+assert.match(
+  app,
+  /mainView === "board" \|\| mainView === "workspace" \? null : \(/,
+  "the conversation composer must not render in the board or workspace views",
+);
+assert.match(
+  app,
+  /const isBoundSessionInMain =[\s\S]*?mainView === "chat";/,
+  "「session is in the main pane」must require the chat mode, or the files-view drawer becomes unreachable",
+);
+
 // 面板文案两端都要有，缺 key 会渲染成空白
 for (const key of [
   "task.workspaceQuickLaunch",
@@ -83,6 +124,7 @@ for (const key of [
   "task.workspaceNothingWaiting",
   "task.workspaceNothingRunning",
   "task.workspaceNoArchive",
+  "task.column.ended",
 ]) {
   assert.ok(zh.includes(`"${key}"`), `${key} missing in zh-CN`);
   assert.ok(en.includes(`"${key}"`), `${key} missing in en-US`);
