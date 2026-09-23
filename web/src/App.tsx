@@ -9424,97 +9424,30 @@ export function App({ onGoHome }: AppProps) {
 	  const handleTaskSessionDrawerOpen = useCallback(
     (sessionKey: string, rootOverride?: string | null, taskId?: string) => {
       const key = String(sessionKey || "").trim();
-      if (!key) return;
       const root = rootOverride || currentRootIdRef.current;
-      if (!root) return;
+      if (!key || !root) return;
+      // 任务会话就是普通会话：直接走主面板装配（selectedSession + main 模式 + URL + 同步），
+      // 不再走 drawer 浮层——drawer 模式下在会话面板里切换工作台/看板没有全屏语境。
       const matched = sessions.find((item) => (item.key || item.session_key) === key);
-      const cacheKey = rootSessionKey(root, key);
-      const cached = sessionCacheRef.current[cacheKey];
+      const cached = sessionCacheRef.current[rootSessionKey(root, key)];
       const initial = cached || matched || {
         key,
         session_key: key,
         root_id: root,
         task_id: taskId || "",
       };
-      setDrawerLoadingSessionByRoot((prev) => ({
-        ...prev,
-        [root]: hasSessionExchanges(initial) ? "" : key,
-      }));
-      setDrawerSessionForRoot(root, {
-        ...(initial as any),
-        key,
-        session_key: key,
-        root_id: root,
-        task_id: (initial as any)?.task_id || taskId || "",
-      } as SessionItem);
-      setBoundSessionForRoot(root, key);
-      interactionModeRef.current = "drawer";
-      setInteractionMode("drawer");
-      setDrawerOpenForRoot(root, true);
-      const applyDrawerSession = (session: Session) => {
-        const activeDrawer = drawerSessionByRootRef.current[scopedRootKey(root)];
-        if ((activeDrawer?.key || activeDrawer?.session_key) !== key) return;
-        setDrawerLoadingSessionByRoot((prev) =>
-          prev[root] === key ? { ...prev, [root]: "" } : prev,
-        );
-        setDrawerSessionForRoot(root, {
-          ...(activeDrawer as any),
-          ...(session as any),
-          key,
-          session_key: key,
-          root_id: root,
-          task_id: (session as any)?.task_id || taskId || "",
-        } as Session);
-      };
-      void (async () => {
-        const restorePromise = restoreActiveSession(root, key);
-        if (!hasSessionExchanges(cached)) {
-          const persisted = await getCachedSession(root, key, getNodeIdForRoot(root));
-          const latest = sessionCacheRef.current[cacheKey];
-          const immediate = hasSessionExchanges(latest) ? latest : persisted;
-          if (immediate) {
-            sessionCacheRef.current[cacheKey] = {
-              ...(immediate as any),
-              key,
-            } as Session;
-            bumpCacheVersion();
-            applyDrawerSession(immediate);
-          }
-        }
-        const restored = await restorePromise;
-        if (!restored) {
-          setDrawerLoadingSessionByRoot((prev) =>
-            prev[root] === key ? { ...prev, [root]: "" } : prev,
-          );
-          return;
-        }
-        applyDrawerSession(restored);
-        loadedSessionRef.current[cacheKey] = true;
-        clearSessionStale(root, key);
-      })().catch((error) => {
-        setDrawerLoadingSessionByRoot((prev) =>
-          prev[root] === key ? { ...prev, [root]: "" } : prev,
-        );
-        console.error("[task.session] failed to open drawer session", {
-          root,
-          sessionKey: key,
-          error,
-        });
-      });
+      void handleSelectSession(initial as any, { preserveTaskSelection: true });
     },
     [
-      bumpCacheVersion,
-      clearSessionStale,
-      restoreActiveSession,
+      currentRootIdRef,
+      handleSelectSession,
       rootSessionKey,
+      sessionCacheRef,
       sessions,
-      setBoundSessionForRoot,
-      setDrawerOpenForRoot,
-      setDrawerSessionForRoot,
-	    ],
-	  );
+    ],
+  );
 
-	  const refreshTaskRelatedFiles = useCallback(async (
+  const refreshTaskRelatedFiles = useCallback(async (
 	    root: string,
 	    taskId: string,
 	    sessionKeys: string[],
