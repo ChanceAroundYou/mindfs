@@ -168,6 +168,8 @@ type FileTreeProps = {
   onNodeManagerRefresh?: () => Promise<void>;
   onSelectFile?: (entry: FileEntry, rootId: string) => void;
   onSelectRoot?: (entry: FileEntry, rootId: string) => void;
+  /** 点文件夹「名字」= 打开该目录（由 App 决定是否切主面板）；与 onToggleDir 的纯展开收起区分。 */
+  onSelectDir?: (entry: FileEntry, rootId: string) => void;
   onToggleDir?: (entry: FileEntry, rootId: string) => void;
   renderRootExtraContent?: (rootId: string) => React.ReactNode;
   renderRootWorktreeContent?: (rootId: string) => React.ReactNode;
@@ -1456,6 +1458,7 @@ function FileTreeInner({
   onNodeManagerRefresh,
   onSelectFile,
   onSelectRoot,
+  onSelectDir,
   onToggleDir,
   renderRootExtraContent,
   renderRootWorktreeContent,
@@ -2662,7 +2665,8 @@ function FileTreeInner({
               (onSelectRoot || onToggleDir)?.(entry, entryRoot);
               return;
             }
-            onToggleDir?.(entry, entryRoot);
+            // 点目录「名字」= 打开该目录（chevron 才是纯展开收起）
+            (onSelectDir || onToggleDir)?.(entry, entryRoot);
             return;
           }
           onSelectFile?.(entry, entryRoot);

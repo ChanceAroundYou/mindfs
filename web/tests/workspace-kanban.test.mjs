@@ -57,7 +57,7 @@ assert.match(
 // 工作台入口收敛到左栏底部的四态切换器（见 docs/main-view-switching-design.md）
 assert.match(
   app,
-  /<MainViewSwitcher[\s\S]*?onChange=\{switchMainView\}/,
+  /<MainViewSwitcher[\s\S]*?onChange=\{handleMainViewSwitcherChange\}/,
   "the workspace should be reachable from the sidebar switcher",
 );
 

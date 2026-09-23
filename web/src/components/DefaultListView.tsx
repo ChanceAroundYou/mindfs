@@ -511,7 +511,6 @@ export function DefaultListView({
   const isRootView = !!root && (!!path ? path === root : true);
   const showTaskKanban = currentViewMode === "task-kanban";
   const showFileBrowser = currentViewMode === "file-browser";
-  const currentViewLabel = showTaskKanban ? t("directory.taskKanban") : t("directory.fileBrowser");
   const sortLabel = (value: DirectorySortControlValue): string => {
     if (value === "inherit") return t("directory.followGlobal");
     const key = sortLabelKeys[value];
@@ -826,20 +825,7 @@ export function DefaultListView({
                     })}
                   </>
                 ) : null}
-                {/* 主视图切换已收敛到左栏底部的 MainViewSwitcher（唯一入口），这里只读展示当前模式 */}
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "8px",
-                    padding: "8px 10px",
-                    fontSize: "12px",
-                    color: "var(--text-secondary)",
-                  }}
-                >
-                  <span style={{ flex: 1 }}>{t("directory.currentView")}</span>
-                  <span style={{ fontSize: "11px" }}>{currentViewLabel}</span>
-                </div>
+                {/* 主视图切换已收敛到左栏底部的 MainViewSwitcher（唯一入口），此处不再显示模式字样 */}
                 <div
                   style={{
                     height: "1px",

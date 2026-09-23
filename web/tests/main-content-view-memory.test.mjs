@@ -59,7 +59,7 @@ assert.match(
 );
 assert.match(
   app,
-  /<MainViewSwitcher[\s\S]*?value=\{mainView\}[\s\S]*?onChange=\{switchMainView\}/,
+  /<MainViewSwitcher[\s\S]*?value=\{mainView\}[\s\S]*?onChange=\{handleMainViewSwitcherChange\}/,
   "the sidebar switcher should be wired to the single state",
 );
 assert.match(
@@ -82,7 +82,7 @@ assert.match(
   "bound-session auto restore should be gated on the chat mode",
 );
 
-// 只有左树点击会主动切到 files；程序化打开目录保持当前模式
+// 只有左树里点「名字」会主动切到 files；程序化打开目录保持当前模式
 assert.match(
   app,
   /if \(params\.switchToFiles === true\) switchMainView\("files"\);/,
@@ -90,6 +90,53 @@ assert.match(
 );
 assert.match(
   app,
-  /switchToFiles: true,/,
-  "tree root clicks should declare switchToFiles",
+  /onSelectDir=\{\(e, r\) =>[\s\S]*?switchToFiles: true,[\s\S]*?\n            \}/,
+  "folder-name clicks (not project-name clicks) declare switchToFiles",
+);
+assert.doesNotMatch(
+  app,
+  /onSelectRoot=\{[^}]*switchToFiles/,
+  "project-name clicks must not force the files view",
+);
+
+// 会话面板只在对话态显示：判据是 mainView，不是 selectedSession
+// （否则看板/工作台背后还挂着会话面板；而「切面板就清会话」是治标且丢选中）
+assert.match(
+  app,
+  /const showSessionPane = mainView === "chat" && !!selectedSession;/,
+  "the session pane must be gated on the main view, not on merely having a session",
+);
+assert.match(
+  app,
+  /display: showSessionPane \? "flex" : "none",[\s\S]*?\{sessionView\}[\s\S]*?display: showSessionPane \? "none" : "flex",[\s\S]*?\{workspaceView\}/,
+  "both main-area panes must share one predicate so exactly one is visible",
+);
+assert.doesNotMatch(
+  app,
+  /handleMainViewTabChange/,
+  "the session-clearing tab handler must be gone",
+);
+assert.match(
+  app,
+  /const handleMainViewSwitcherChange = useCallback\(\(mode: MainViewMode\) => \{[\s\S]*?setDrawerOpenForRoot\(rootID, false\);[\s\S]*?switchMainView\(mode\);/,
+  "the switcher closes the drawer and switches the pane without touching the selection",
+);
+
+// 悬浮框只属于文件态
+assert.match(
+  app,
+  /isOpen=\{isDrawerOpen && mainView === "files"\}/,
+  "the floating session drawer may only exist in the files view",
+);
+
+// 主面板模式进 URL：按钮高亮与面板显示必须同源恢复
+assert.match(
+  app,
+  /view\?: MainViewMode;/,
+  "URL state should carry the main view",
+);
+assert.match(
+  app,
+  /if \(next\.view\) params\.set\("view", next\.view\);/,
+  "the view must be serialized into the URL",
 );

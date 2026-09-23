@@ -659,6 +659,8 @@ type URLState = {
   session: string;
   cursor: number;
   pluginQuery: Record<string, string>;
+  // 主面板模式也进 URL：按钮高亮与面板显示必须同源恢复（缺省时回落 localStorage）。
+  view?: MainViewMode;
 };
 type ManagedRootPayload = {
   id: string;
@@ -893,6 +895,7 @@ function isDirectorySortMode(
 
 function readURLState(): URLState {
   const params = new URLSearchParams(window.location.search);
+  const view = params.get("view");
   return {
     root: params.get("root") || "",
     node: params.get("node") || "",
@@ -900,6 +903,9 @@ function readURLState(): URLState {
     session: params.get("session") || "",
     cursor: parseCursor(params.get("cursor")),
     pluginQuery: parsePluginQuery(window.location.search),
+    view: MAIN_VIEW_MODES.includes(view as MainViewMode)
+      ? (view as MainViewMode)
+      : undefined,
   };
 }
 
@@ -910,6 +916,7 @@ function buildURLSearch(next: URLState): string {
   if (next.file) params.set("file", next.file);
   if (next.session) params.set("session", next.session);
   if (next.cursor > 0) params.set("cursor", String(next.cursor));
+  if (next.view) params.set("view", next.view);
   Object.entries(next.pluginQuery).forEach(([key, value]) => {
     if (!key) return;
     params.set(`vp_${key}`, String(value));
@@ -1289,30 +1296,11 @@ const MOBILE_ENTER_KEY_SEND_STORAGE_KEY = "mindfs-mobile-enter-key-sends";
 const SIDEBARS_SWAPPED_STORAGE_KEY = "mindfs-sidebars-swapped";
 const GIT_DIFF_SIDE_BY_SIDE_STORAGE_KEY = "mindfs-git-diff-side-by-side";
 const TASK_CREATE_WORKTREE_PREF_STORAGE_KEY = "mindfs-task-create-worktree-pref";
-const MAIN_CONTENT_VIEW_STORAGE_KEY = "mindfs-main-content-view";
-const DEFAULT_MAIN_CONTENT_VIEW_STORAGE_KEY = "mindfs-default-main-content-view";
-
 type TaskCreateWorktreePreference = {
   createWorktree: boolean;
   worktreeBranchMode: "new" | "existing";
   worktreeBranch: string;
 };
-
-function isMainContentViewMode(value: unknown): value is MainContentViewMode {
-  return value === "task-kanban" || value === "file-browser";
-}
-
-function loadMainContentViewByRoot(): Record<string, MainContentViewMode> {
-  if (typeof window === "undefined") return {};
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(MAIN_CONTENT_VIEW_STORAGE_KEY) || "{}") as Record<string, unknown>;
-    return Object.fromEntries(
-      Object.entries(parsed).filter(([, value]) => isMainContentViewMode(value)),
-    ) as Record<string, MainContentViewMode>;
-  } catch {
-    return {};
-  }
-}
 
 // 主区内容的唯一真相源：workspace(跨项目工作台) / board(项目看板) / files(文件列表) / chat(对话)。
 // 设计见 docs/main-view-switching-design.md —— 除用户显式点击外，任何代码路径都不得改它。
@@ -1330,22 +1318,12 @@ function loadMainView(): MainViewMode {
   }
 }
 
-function loadDefaultMainContentView(): MainContentViewMode {
-  if (typeof window === "undefined") return "task-kanban";
-  try {
-    const saved = window.localStorage.getItem(DEFAULT_MAIN_CONTENT_VIEW_STORAGE_KEY);
-    return isMainContentViewMode(saved) ? saved : "task-kanban";
-  } catch {
-    return "task-kanban";
-  }
-}
-
 // 旧版本按项目记忆主区视图；升级后统一读成新键（看板 → board，文件 → files），只迁移一次。
 function loadLegacyMainView(): MainViewMode | null {
   if (typeof window === "undefined") return null;
   if (window.localStorage.getItem(MAIN_VIEW_STORAGE_KEY)) return null;
   try {
-    const legacy = loadDefaultMainContentView();
+    const legacy = window.localStorage.getItem("mindfs-default-main-content-view");
     const migrated: MainViewMode = legacy === "file-browser" ? "files" : "board";
     window.localStorage.setItem(MAIN_VIEW_STORAGE_KEY, migrated);
     return migrated;
@@ -1475,7 +1453,11 @@ export function App({ onGoHome }: AppProps) {
   const didInitRef = useRef(false);
   const managedRootsRequestRef = useRef<Promise<ManagedRootPayload[] | null> | null>(null);
   const handleSelectSessionRef = useRef<
-    ((session: any) => Promise<void>) | null
+    | ((
+        session: any,
+        options?: { preserveTaskSelection?: boolean; preserveMainView?: boolean },
+      ) => Promise<void>)
+    | null
   >(null);
 
   const [sessions, setSessions] = useState<SessionItem[]>([]);
@@ -1542,7 +1524,7 @@ export function App({ onGoHome }: AppProps) {
 	  const taskSessionKeysByIdRef = useRef<Record<string, string[]>>({});
 	  const [selectedKanbanTaskId, setSelectedKanbanTaskId] = useState("");
 	  const [expandedTaskInputIds, setExpandedTaskInputIds] = useState<Set<string>>(() => new Set());
-  const [collapsedTaskCompletionGroups, setCollapsedTaskCompletionGroups] = useState<Set<string>>(() => new Set());
+  const [collapsedTaskCompletionGroups, setCollapsedTaskCompletionGroups] = useState<Set<string>>(() => new Set(["success", "fail", "cancelled"]));
   // 看板列折叠（移动端多列换行后空间宝贵，长列默认可收起只留表头）。
   const [collapsedKanbanColumns, setCollapsedKanbanColumns] = useState<Set<string>>(() => new Set());
   const [taskInlineEdit, setTaskInlineEdit] = useState<TaskInlineEditState | null>(null);
@@ -3038,6 +3020,9 @@ export function App({ onGoHome }: AppProps) {
         : "task-kanban";
   // 跨项目工作台是「模式」，不再是「没有打开项目」的副产物（后者会被自动选根冲掉）。
   const workspaceOpen = mainView === "workspace";
+  // 会话面板只在对话态显示。判据是 mainView 而不是 selectedSession——
+  // 否则看板/文件/工作台态下，仍被选中的会话会盖住主区（切面板不解除选中）。
+  const showSessionPane = mainView === "chat" && !!selectedSession;
   const switchMainView = useCallback((mode: MainViewMode) => {
     if (mode !== "chat") {
       lastNonChatViewRef.current = mode;
@@ -3048,7 +3033,9 @@ export function App({ onGoHome }: AppProps) {
   const currentDirectorySortMode = currentDirectorySortOverride || treeSortMode;
 
   const replaceURLState = useCallback((next: URLState) => {
-    const merged = { ...next };
+    // 主面板模式默认取当前状态：调用点一律紧跟在 switchMainView 之后（或本就不切面板），
+    // 因此这里补默认值即可让 URL 与按钮高亮保持同源，无需逐个调用点传参。
+    const merged: URLState = { view: mainViewRef.current, ...next };
     // 多节点同名项目：URL 始终携带当前选中节点，防止刷新/回退还原到错误节点
     if (
       merged.root &&
@@ -5784,7 +5771,7 @@ export function App({ onGoHome }: AppProps) {
   const handleSelectSession = useCallback(
     async (
       session: any,
-      options?: { preserveTaskSelection?: boolean },
+      options?: { preserveTaskSelection?: boolean; preserveMainView?: boolean },
     ) => {
       const key = session?.key || session?.session_key;
       const targetRoot =
@@ -5815,7 +5802,10 @@ export function App({ onGoHome }: AppProps) {
       setSelectedDirKey(
         buildDirectorySelectionKey(getNodeIdForRoot(targetRoot), targetRoot, targetRoot, true),
       );
-      switchMainView("chat");
+      // 深链恢复时主面板模式以 URL 的 view 为准，不因为「有 session」就把面板硬拉回对话态。
+      if (!options?.preserveMainView) {
+        switchMainView("chat");
+      }
       const currentDrawer = drawerSessionByRootRef.current[scopedRootKey(targetRoot)];
       const preservePending =
         currentDrawer?.key === key
@@ -7784,8 +7774,7 @@ export function App({ onGoHome }: AppProps) {
             });
           }
           fileCursorRef.current = cursor;
-          setSelectedSession(null);
-          setSelectedSessionLoading(false);
+          // 打开文件不解除会话选中：面板切到文件态而已，切回对话仍应看到原来那个会话。
           setDrawerOpenForRoot(root, false);
           if (isMobile) setIsLeftOpen(false);
         } catch (err) {
@@ -7840,13 +7829,17 @@ export function App({ onGoHome }: AppProps) {
           const cacheKey = treeCacheKey(root, apiDir);
           resetLocksForRootTransition(root);
           if (currentRootIdRef.current !== root) {
+            // 换项目也算一次切换操作：关掉旧根的悬浮框，别留在 per-root 记忆里
+            setDrawerOpenForRoot(currentRootIdRef.current, false);
+            interactionModeRef.current = "main";
+            setInteractionMode("main");
             setCurrentRootId(root);
           }
-          // 只有「用户在左树里点目录」才切到文件列表；程序化打开目录一律保持当前模式（避免随手跳变）
+          // 只有「用户在左树里点文件夹/文件名」才切到文件列表；程序化打开目录一律保持当前模式
           if (params.switchToFiles === true) switchMainView("files");
           setFile(null);
-          setSelectedSession(null);
-          setSelectedSessionLoading(false);
+          // 会话选中不在这里清：换根由上面 resetLocksForRootTransition 负责，
+          // 同根内的目录切换必须保持选中（面板切走不解除选中）。
           setMainEntries([]);
           setMainDirectoryError("");
           setPluginQuery(nextPluginQuery);
@@ -7872,8 +7865,6 @@ export function App({ onGoHome }: AppProps) {
               buildDirectorySelectionKey(resolvedNodeId, root, targetPath, targetIsRoot),
             );
             setFile(null);
-            setSelectedSession(null);
-            setSelectedSessionLoading(false);
             fileCursorRef.current = 0;
             setDrawerOpenForRoot(root, false);
             if (!isToggle && isMobile) setIsLeftOpen(false);
@@ -7896,8 +7887,6 @@ export function App({ onGoHome }: AppProps) {
               buildDirectorySelectionKey(resolvedNodeId, root, targetPath, targetIsRoot),
             );
             setFile(null);
-            setSelectedSession(null);
-            setSelectedSessionLoading(false);
             fileCursorRef.current = 0;
             setDrawerOpenForRoot(root, false);
             if (!isToggle && isMobile) setIsLeftOpen(false);
@@ -11385,13 +11374,24 @@ export function App({ onGoHome }: AppProps) {
           void loadMultiProjectSessionGroups();
         }
         setPluginQuery(urlState.pluginQuery);
+        // URL 里的 view 是主面板模式的唯一真相源；没有才回落 localStorage（useState 初值已读）。
+        if (urlState.view) {
+          switchMainView(urlState.view);
+        }
         if (urlState.session) {
           if (cancelled) return;
-          await handleSelectSessionRef.current?.({
-            key: urlState.session,
-            session_key: urlState.session,
-            root_id: preferredRoot,
-          });
+          await handleSelectSessionRef.current?.(
+            {
+              key: urlState.session,
+              session_key: urlState.session,
+              root_id: preferredRoot,
+            },
+            // 深链恢复：URL 明确写了非 chat 的面板时，别被「有 session」拉回对话态
+            {
+              preserveMainView:
+                !!urlState.view && urlState.view !== "chat",
+            },
+          );
         } else if (urlState.file) {
           await ensurePluginsLoaded(preferredRoot);
           if (cancelled) return;
@@ -11543,6 +11543,10 @@ export function App({ onGoHome }: AppProps) {
         selectRootNode(state.root, state.node || undefined);
       }
       setPluginQuery(state.pluginQuery);
+      if (state.view) {
+        // 后退/前进时按钮高亮与面板都从 URL 的 view 恢复，保持同源
+        switchMainView(state.view);
+      }
       if (!state.root) {
         return;
       }
@@ -11559,11 +11563,14 @@ export function App({ onGoHome }: AppProps) {
           state.session !== currentSessionKey ||
           state.root !== currentSessionRoot
         ) {
-          void handleSelectSessionRef.current?.({
-            key: state.session,
-            session_key: state.session,
-            root_id: state.root,
-          });
+          void handleSelectSessionRef.current?.(
+            {
+              key: state.session,
+              session_key: state.session,
+              root_id: state.root,
+            },
+            { preserveMainView: !!state.view && state.view !== "chat" },
+          );
         }
         return;
       }
@@ -13279,20 +13286,25 @@ export function App({ onGoHome }: AppProps) {
     },
     {
       index: 3,
-      // 已结束 = 完成 + 取消；失败合并进取消。
-      name: t("task.column.ended"),
+      name: t("task.column.done"),
       role: "user" as const,
-      tasks: kanbanTasks.filter((task) => task.status === "success" || task.status === "fail" || task.status === "cancelled"),
+      tasks: kanbanTasks.filter((task) => task.status === "success"),
+    },
+    {
+      index: 4,
+      name: t("task.column.failed"),
+      role: "user" as const,
+      tasks: kanbanTasks.filter((task) => task.status === "fail" || task.status === "cancelled"),
       groups: [{
-        key: "success",
-        name: t("task.group.completed"),
-        tone: "success" as const,
-        tasks: kanbanTasks.filter((task) => task.status === "success"),
+        key: "fail",
+        name: t("task.group.failed"),
+        tone: "danger" as const,
+        tasks: kanbanTasks.filter((task) => task.status === "fail"),
       }, {
         key: "cancelled",
         name: t("task.group.cancelled"),
         tone: "muted" as const,
-        tasks: kanbanTasks.filter((task) => task.status === "fail" || task.status === "cancelled"),
+        tasks: kanbanTasks.filter((task) => task.status === "cancelled"),
       }].filter((group) => group.tasks.length > 0),
     },
   ];
@@ -13309,6 +13321,25 @@ export function App({ onGoHome }: AppProps) {
       .finally(() => { if (!cancelled) setWorkspaceLoading(false); });
     return () => { cancelled = true; };
   }, [workspaceOpen, taskDetailsById]);
+  // 左下角四态切换器：只切面板 + 关掉悬浮框。
+  // 会话选中与面板是正交的两条线——切面板一律不解除选中（面板不显示而已）。
+  const handleMainViewSwitcherChange = useCallback((mode: MainViewMode) => {
+    const rootID = currentRootIdRef.current;
+    if (rootID) setDrawerOpenForRoot(rootID, false);
+    interactionModeRef.current = "main";
+    setInteractionMode("main");
+    switchMainView(mode);
+    // 只改 URL 的 view，保留 root/node/session/pluginQuery。
+    // 离开文件态时把 file 摘掉，否则会写出「view=board 且 file=…」的自相矛盾深链。
+    const current = readURLState();
+    replaceURLState({
+      ...current,
+      root: current.root || rootID || "",
+      file: mode === "files" ? current.file : "",
+      view: mode,
+    });
+  }, [replaceURLState, setDrawerOpenForRoot, switchMainView]);
+
   const openWorkspaceProject = useCallback(async (rootId: string) => {
     if (!rootId) return;
     // R6：工作台里点项目 = 切到该项目并落到「项目看板」，而不是回到文件列表
@@ -13706,7 +13737,7 @@ export function App({ onGoHome }: AppProps) {
 	              gridAutoFlow: isMobile ? "row" : "column",
 	              gridTemplateColumns: isMobile ? "repeat(2, 1fr)" : undefined,
 	              gridAutoColumns: isMobile ? undefined : "minmax(220px, 1fr)",
-	              gridAutoRows: isMobile ? "30dvh" : undefined,
+	              gridAutoRows: isMobile ? "minmax(200px, auto)" : undefined,
 	              gap: "6px",
 	              minWidth: isMobile ? undefined : `${Math.max(kanbanStageColumns.length, 1) * 220}px`,
 	              alignItems: "start",
@@ -13728,8 +13759,7 @@ export function App({ onGoHome }: AppProps) {
 	                  display: "flex",
 	                  flexDirection: "column",
 	                  minHeight: 0,
-	                  height: isMobile ? (columnCollapsed ? undefined : "30dvh") : undefined,
-                  maxHeight: isMobile ? undefined : "calc(100dvh - 148px)",
+	                  maxHeight: isMobile ? (columnCollapsed ? undefined : "42dvh") : "calc(100dvh - 148px)",
 	                }}
 	              >
                 <div
@@ -14927,15 +14957,36 @@ flexShrink: 0,
               actionHandlers.open({ path: e.path, root: r, nodeId: (e as any)._nodeId });
               if (isMobile) setIsLeftOpen(false);
             }}
-            onSelectRoot={(e, r) =>
-              actionHandlers.open_dir({
+            onSelectRoot={(e, r) => {
+              // 点项目名不切主面板（工作台除外），只按当前面板语境换内容。
+              const mode = mainViewRef.current;
+              const target = String(r || e.path || "");
+              if (
+                mode === "chat" &&
+                target === String(currentRootIdRef.current || "")
+              ) {
+                // 对话态点本项目名：无动作
+                return;
+              }
+              void actionHandlers.open_dir({
                 path: e.path,
                 root: r,
                 isRoot: e.is_root === true,
                 // 点根行即展开该项目根的树（配合根树互斥，其它根自动收起）
                 toggle: false,
                 nodeId: (e as any)._nodeId,
-                // R3：左树点击 = 看文件（唯一会主动切到 files 的入口）
+              });
+              // 工作台：点任何项目 = 进该项目的项目看板
+              if (mode === "workspace") switchMainView("board");
+            }}
+            onSelectDir={(e, r) =>
+              // 点文件夹名：无条件切到文件面板并显示该目录
+              actionHandlers.open_dir({
+                path: e.path,
+                root: r,
+                toggle: false,
+                isRoot: false,
+                nodeId: (e as any)._nodeId,
                 switchToFiles: true,
               })
             }
@@ -14986,7 +15037,7 @@ flexShrink: 0,
             </div>
             <MainViewSwitcher
               value={mainView}
-              onChange={switchMainView}
+              onChange={handleMainViewSwitcherChange}
               accentColor={getDisplayNodeColor(String(currentRootId || "")) || undefined}
             />
           </div>
@@ -15017,7 +15068,7 @@ flexShrink: 0,
             >
               <div
                 style={{
-                  display: selectedSession ? "flex" : "none",
+                  display: showSessionPane ? "flex" : "none",
                   flex: 1,
                   minHeight: 0,
                   minWidth: 0,
@@ -15027,7 +15078,7 @@ flexShrink: 0,
               </div>
               <div
                 style={{
-                  display: selectedSession ? "none" : "flex",
+                  display: showSessionPane ? "none" : "flex",
                   flex: 1,
                   minHeight: 0,
                   minWidth: 0,
@@ -15116,7 +15167,8 @@ flexShrink: 0,
         }
         drawer={
           <BottomSheet
-            isOpen={isDrawerOpen}
+            // 悬浮框只属于文件态：离开文件态一律不显示。
+            isOpen={isDrawerOpen && mainView === "files"}
             contentRef={drawerScrollRef}
             onClose={() => {
               interactionModeRef.current = "main";
