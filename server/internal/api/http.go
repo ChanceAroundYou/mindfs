@@ -1224,6 +1224,10 @@ func (h *HTTPHandler) handleSessionRename(w http.ResponseWriter, r *http.Request
 			},
 		})
 	}
+	// 任务名与会话名双向绑定：任务主会话改名时同步任务名。
+	if strings.TrimSpace(req.Name) != "" {
+		h.syncTaskNameFromSession(r.Context(), rootID, renamed.Key, strings.TrimSpace(req.Name))
+	}
 	respondJSON(w, http.StatusOK, h.sessionListResponse(renamed))
 }
 

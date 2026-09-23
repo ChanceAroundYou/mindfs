@@ -203,11 +203,11 @@ function strip1MSuffix(model: string): string {
   return trimmed.toLowerCase().endsWith("[1m]") ? trimmed.slice(0, -4).trim() : trimmed;
 }
 
-function has1MSuffix(model: string): boolean {
+export function has1MSuffix(model: string): boolean {
   return String(model || "").trim().toLowerCase().endsWith("[1m]");
 }
 
-function with1MSuffix(model: string, enabled: boolean): string {
+export function with1MSuffix(model: string, enabled: boolean): string {
   const base = strip1MSuffix(model);
   if (!base) return "";
   if (isClaudeAliasModel(base)) {

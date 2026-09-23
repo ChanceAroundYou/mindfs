@@ -296,6 +296,29 @@ func (s *Service) RenameTask(ctx context.Context, rootID, taskID, name string) (
 	return detail, err
 }
 
+// TaskNameFromSession：会话改名时同步到绑定的任务（main_session_key 方向；
+// 与 HTTP 层「任务→会话」同步共同构成任务名 ↔ 会话名双向绑定）。
+// 返回 (detail, true) 表示任务名确实更新；未找到任务或名字未变返回 (_, false)。
+func (s *Service) TaskNameFromSession(ctx context.Context, rootID, sessionKey, name string) (TaskDetail, bool) {
+	store, err := s.taskStore(rootID)
+	if err != nil {
+		return TaskDetail{}, false
+	}
+	taskID, err := store.TaskIDForMainSession(ctx, sessionKey)
+	if err != nil || taskID == "" {
+		return TaskDetail{}, false
+	}
+	task, err := store.GetTask(ctx, taskID)
+	if err != nil || task.Name == strings.TrimSpace(name) {
+		return TaskDetail{}, false
+	}
+	detail, err := s.RenameTask(ctx, rootID, taskID, name)
+	if err != nil {
+		return TaskDetail{}, false
+	}
+	return detail, true
+}
+
 // AddStage 追加下一段 prompt。任务等待用户时追加即推进并执行；其他状态排入流水尾。
 func (s *Service) AddStage(ctx context.Context, in AddStageInput) (TaskDetail, error) {
 	store, err := s.taskStore(in.RootID)

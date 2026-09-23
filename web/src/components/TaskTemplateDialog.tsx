@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { AgentSelector } from "./AgentSelector";
+import { has1MSuffix, with1MSuffix } from "./ActionBar";
 import { AgentIcon } from "./AgentIcon";
 import {
   deleteStageTemplate,
@@ -395,6 +396,8 @@ export function TaskTemplateDialog({ open, agents, template, onClose, onSaved }:
                     mode={snapshot.mode || ""}
                     effort={snapshot.effort || ""}
                     fastService={toFastService(snapshot.fast_service)}
+                    longContext={has1MSuffix(snapshot.model || "")}
+                    onLongContextChange={(enabled) => updateStage(index, { model: with1MSuffix(snapshot.model || "", enabled) })}
                     agents={agents}
                     onUserClick={() => updateStage(index, { ...blankUserStage(), name: snapshot.name || "" })}
                     onAgentActivate={() => {
@@ -811,6 +814,8 @@ function RoleAgentSwitch({
   mode,
   effort,
   fastService,
+  longContext,
+  onLongContextChange,
   agents,
   onUserClick,
   onAgentActivate,
@@ -826,6 +831,8 @@ function RoleAgentSwitch({
   mode: string;
   effort: string;
   fastService: "" | "on" | "off";
+  longContext?: boolean;
+  onLongContextChange?: (enabled: boolean) => void;
   agents: AgentStatus[];
   onUserClick: () => void;
   onAgentActivate: () => void;
@@ -878,6 +885,8 @@ function RoleAgentSwitch({
             mode={mode}
             effort={effort}
             fastService={fastService}
+            longContext={longContext}
+            onLongContextChange={onLongContextChange}
             agents={agents}
             compact
             menuPlacement="bottom"

@@ -325,6 +325,17 @@ func (s *TaskStore) GetTask(ctx context.Context, id string) (Task, error) {
 	return task, nil
 }
 
+// TaskIDForMainSession 反查绑定了该会话的任务（main_session_key 匹配）；无则返回空串。
+func (s *TaskStore) TaskIDForMainSession(ctx context.Context, sessionKey string) (string, error) {
+	var id string
+	err := s.db.QueryRowContext(ctx, `SELECT id FROM tasks WHERE main_session_key = ? LIMIT 1`,
+		strings.TrimSpace(sessionKey)).Scan(&id)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return id, err
+}
+
 func (s *TaskStore) GetDetail(ctx context.Context, id string) (TaskDetail, error) {
 	task, err := s.GetTask(ctx, id)
 	if err != nil {

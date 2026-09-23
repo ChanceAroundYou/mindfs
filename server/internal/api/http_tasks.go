@@ -1,12 +1,15 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
 
+	"mindfs/server/internal/api/usecase"
 	"mindfs/server/internal/kanban"
 
 	"github.com/go-chi/chi/v5"
@@ -345,7 +348,56 @@ func (h *HTTPHandler) handleKanbanTaskRename(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	h.broadcastTaskUpdated(req.RootID, detail)
+	// 任务名与会话名双向绑定：任务改名把名字同步到绑定的全部会话
+	//（请求返回后再同步的小尾巴用 WithoutCancel，避免 response 结束即 ctx 取消）。
+	go h.bindTaskSessionNames(context.WithoutCancel(r.Context()), req.RootID, req.Name, detail)
 	respondJSON(w, http.StatusOK, detail)
+}
+
+// bindTaskSessionNames（任务→会话）：任务绑定到的所有 agent 会话统一改成任务名。
+// 单个会话改名失败（会话被删等）不影响其余，也不让任务改名本身失败。
+func (h *HTTPHandler) bindTaskSessionNames(ctx context.Context, rootID, name string, detail kanban.TaskDetail) {
+	if h == nil || h.AppContext == nil || strings.TrimSpace(name) == "" {
+		return
+	}
+	seen := map[string]bool{}
+	keys := []string{}
+	if key := strings.TrimSpace(detail.Task.MainSessionKey); key != "" {
+		keys = append(keys, key)
+		seen[key] = true
+	}
+	for _, run := range detail.StageRuns {
+		key := strings.TrimSpace(run.SessionKey)
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		keys = append(keys, key)
+	}
+	uc := &usecase.Service{Registry: h.AppContext}
+	for _, key := range keys {
+		renamed, err := uc.RenameSession(ctx, usecase.RenameSessionInput{RootID: rootID, Key: key, Name: name})
+		if err != nil {
+			log.Printf("[task/rename] sync session name skipped root=%s session=%s err=%v", rootID, key, err)
+			continue
+		}
+		h.AppContext.BroadcastSessionMetaUpdated(rootID, renamed)
+	}
+}
+
+// syncTaskNameFromSession（会话→任务）：任务主会话改名时同步任务名。
+func (h *HTTPHandler) syncTaskNameFromSession(ctx context.Context, rootID, sessionKey, name string) {
+	if h == nil || h.AppContext == nil || strings.TrimSpace(name) == "" {
+		return
+	}
+	svc, err := h.AppContext.GetKanbanService()
+	if err != nil {
+		return
+	}
+	detail, changed := svc.TaskNameFromSession(ctx, rootID, sessionKey, name)
+	if changed {
+		h.broadcastTaskUpdated(rootID, detail)
+	}
 }
 
 func (h *HTTPHandler) handleKanbanTaskRerun(w http.ResponseWriter, r *http.Request) {

@@ -1024,6 +1024,46 @@ func TestRenameTask(t *testing.T) {
 	}
 }
 
+// 会话名 ↔ 任务名双向绑定（kanban 侧）：main_session_key 反查任务后改名；
+// 名字相同时不动，避免会话改名触发的回流造成事件抖动。
+func TestTaskNameFromSession(t *testing.T) {
+	ctx := context.Background()
+	svc, root := newTestService(t, nil)
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID: root.ID,
+		Stages: []StageTemplate{userStage("Describe")},
+		Name:   "初名",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	store, err := svc.taskStore(root.ID)
+	if err != nil {
+		t.Fatalf("taskStore: %v", err)
+	}
+	task, err := store.GetTask(ctx, detail.Task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	task.MainSessionKey = "sess-1"
+	if err := store.UpdateTask(ctx, task); err != nil {
+		t.Fatalf("UpdateTask: %v", err)
+	}
+	if _, changed := svc.TaskNameFromSession(ctx, root.ID, "sess-1", "初名"); changed {
+		t.Fatal("same name should be no-op")
+	}
+	got, changed := svc.TaskNameFromSession(ctx, root.ID, "sess-1", "新名")
+	if !changed {
+		t.Fatal("expected task renamed")
+	}
+	if got.Task.Name != "新名" {
+		t.Fatalf("task name=%q", got.Task.Name)
+	}
+	if _, changed := svc.TaskNameFromSession(ctx, root.ID, "sess-other", "再新"); changed {
+		t.Fatal("unbound session must not touch any task")
+	}
+}
+
 // 等待用户时追加 comment：当前段标记 approved、新增段默认命令名并立即进入执行。
 func TestAddStageApprovesAndRunsWhenWaiting(t *testing.T) {
 	ctx := context.Background()
