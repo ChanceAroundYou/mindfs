@@ -102,7 +102,8 @@ func userStage(name string) StageTemplate {
 	return StageTemplate{Name: name, Role: RoleUser}
 }
 
-// waitForCondition 轮询直到 cond 为真或超时。
+// waitForCondition 轮询直到 cond 为真或超时；超时视为失败（静默返回会把真超时
+// 转化成下游莫名其妙的断言失败，反而更难定位）。
 func waitForCondition(t *testing.T, cond func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
@@ -112,6 +113,7 @@ func waitForCondition(t *testing.T, cond func() bool) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+	t.Fatal("waitForCondition: timeout")
 }
 
 func TestTaskTemplateStoreSeedsBundledTemplatesWhenUserFileMissing(t *testing.T) {
@@ -1220,11 +1222,18 @@ func TestRerunStageReexecutesStage(t *testing.T) {
 	if _, err := svc.RerunStage(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID, StageIndex: 1}); err != nil {
 		t.Fatalf("RerunStage: %v", err)
 	}
+	// 等 goroutine 把任务状态落定（RerunStage 失败 → waiting_user），再断言确实执行了第二段。
+	// 不能等 len(runner.execs)==2：那在 goroutine 头几条语句就满足，同步 GetTask 会跑赢
+	// 剩余的 SQLite 落库尾巴，读到中间态（-count=10 下约 9/10 复现）。
 	waitForCondition(t, func() bool {
+		got, err := svc.GetTask(ctx, root.ID, detail.Task.ID)
 		runner := svc.Runner.(*fakeRunner)
-		runner.mu.Lock()
-		defer runner.mu.Unlock()
-		return len(runner.execs) == 2
+		return err == nil && got.Task.Status == StatusWaitingUser &&
+			func() bool {
+				runner.mu.Lock()
+				defer runner.mu.Unlock()
+				return len(runner.execs) == 2
+			}()
 	})
 	// 重跑再次失败后应回到等待用户。
 	got, err := svc.GetTask(ctx, root.ID, detail.Task.ID)
