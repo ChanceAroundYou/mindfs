@@ -1542,7 +1542,7 @@ export function App({ onGoHome }: AppProps) {
 	  const taskSessionKeysByIdRef = useRef<Record<string, string[]>>({});
 	  const [selectedKanbanTaskId, setSelectedKanbanTaskId] = useState("");
 	  const [expandedTaskInputIds, setExpandedTaskInputIds] = useState<Set<string>>(() => new Set());
-  const [collapsedTaskCompletionGroups, setCollapsedTaskCompletionGroups] = useState<Set<string>>(() => new Set(["success", "fail", "cancelled"]));
+  const [collapsedTaskCompletionGroups, setCollapsedTaskCompletionGroups] = useState<Set<string>>(() => new Set());
   // 看板列折叠（移动端多列换行后空间宝贵，长列默认可收起只留表头）。
   const [collapsedKanbanColumns, setCollapsedKanbanColumns] = useState<Set<string>>(() => new Set());
   const [taskInlineEdit, setTaskInlineEdit] = useState<TaskInlineEditState | null>(null);
@@ -13346,25 +13346,20 @@ export function App({ onGoHome }: AppProps) {
     },
     {
       index: 3,
-      name: t("task.column.done"),
+      // 已结束 = 完成 + 取消；失败合并进取消。
+      name: t("task.column.ended"),
       role: "user" as const,
-      tasks: kanbanTasks.filter((task) => task.status === "success"),
-    },
-    {
-      index: 4,
-      name: t("task.column.failed"),
-      role: "user" as const,
-      tasks: kanbanTasks.filter((task) => task.status === "fail" || task.status === "cancelled"),
+      tasks: kanbanTasks.filter((task) => task.status === "success" || task.status === "fail" || task.status === "cancelled"),
       groups: [{
-        key: "fail",
-        name: t("task.group.failed"),
-        tone: "danger" as const,
-        tasks: kanbanTasks.filter((task) => task.status === "fail"),
+        key: "success",
+        name: t("task.group.completed"),
+        tone: "success" as const,
+        tasks: kanbanTasks.filter((task) => task.status === "success"),
       }, {
         key: "cancelled",
         name: t("task.group.cancelled"),
         tone: "muted" as const,
-        tasks: kanbanTasks.filter((task) => task.status === "cancelled"),
+        tasks: kanbanTasks.filter((task) => task.status === "fail" || task.status === "cancelled"),
       }].filter((group) => group.tasks.length > 0),
     },
   ];
@@ -13778,7 +13773,7 @@ export function App({ onGoHome }: AppProps) {
 	              gridAutoFlow: isMobile ? "row" : "column",
 	              gridTemplateColumns: isMobile ? "repeat(2, 1fr)" : undefined,
 	              gridAutoColumns: isMobile ? undefined : "minmax(220px, 1fr)",
-	              gridAutoRows: isMobile ? "minmax(200px, auto)" : undefined,
+	              gridAutoRows: isMobile ? "30dvh" : undefined,
 	              gap: "6px",
 	              minWidth: isMobile ? undefined : `${Math.max(kanbanStageColumns.length, 1) * 220}px`,
 	              alignItems: "start",
@@ -13800,7 +13795,8 @@ export function App({ onGoHome }: AppProps) {
 	                  display: "flex",
 	                  flexDirection: "column",
 	                  minHeight: 0,
-	                  maxHeight: isMobile ? (columnCollapsed ? undefined : "42dvh") : "calc(100dvh - 148px)",
+	                  height: isMobile ? (columnCollapsed ? undefined : "30dvh") : undefined,
+                  maxHeight: isMobile ? undefined : "calc(100dvh - 148px)",
 	                }}
 	              >
                 <div

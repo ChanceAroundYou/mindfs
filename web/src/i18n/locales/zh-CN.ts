@@ -758,6 +758,7 @@ export const zhCN = {
   "task.column.done": "完成",
   "task.column.waitingUser": "等待你",
   "task.column.failed": "失败·取消",
+  "task.column.ended": "已结束",
   "task.group.completed": "已完成",
   "task.group.failed": "失败",
   "task.group.cancelled": "已取消",

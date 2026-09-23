@@ -760,6 +760,7 @@ export const enUS = {
   "task.column.done": "Done",
   "task.column.waitingUser": "Waiting for you",
   "task.column.failed": "Failed / Cancelled",
+  "task.column.ended": "Ended",
   "task.group.completed": "Completed",
   "task.group.failed": "Failed",
   "task.group.cancelled": "Cancelled",
