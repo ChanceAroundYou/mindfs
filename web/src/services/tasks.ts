@@ -435,3 +435,12 @@ export async function updateTaskStage(rootId: string, taskId: string, index: num
     body: JSON.stringify({ root_id: rootId, index, stage }),
   });
 }
+
+export async function removeTaskStage(rootId: string, taskId: string, index: number, nodeId?: string): Promise<TaskDetail> {
+  nodeId = nodeId || getRootNodeId(rootId);
+  return protectedJSON<TaskDetail>(appURL(`/api/tasks/${encodeURIComponent(taskId)}/remove-stage`, undefined, nodeId), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ root_id: rootId, index }),
+  });
+}

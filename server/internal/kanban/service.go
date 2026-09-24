@@ -89,6 +89,13 @@ type UpdateStageInput struct {
 	Stage  *StageTemplate // 全量替换该段定义
 }
 
+// RemoveStageInput 删除任务流水里尚未执行的一段。
+type RemoveStageInput struct {
+	RootID string
+	TaskID string
+	Index  int
+}
+
 func (s *Service) ListStageTemplates(ctx context.Context) ([]StageTemplate, error) {
 	if s == nil || s.Templates == nil {
 		return nil, errors.New("template store not configured")
@@ -384,6 +391,65 @@ func (s *Service) UpdateStage(ctx context.Context, in UpdateStageInput) (TaskDet
 	if err := store.UpdateTask(ctx, task); err != nil {
 		return TaskDetail{}, err
 	}
+	detail, err := store.GetDetail(ctx, task.ID)
+	if err == nil && s.Runner != nil {
+		s.Runner.TaskUpdated(task.RootID, detail)
+	}
+	return detail, err
+}
+
+// RemoveStage 删除任务流水里尚未执行的一段。
+// index 0 是任务初始输入段，不可删；当前指针所在段不可删（执行体正对着它）；
+// 产生过 StageRun 的段也不可删（要改走 UpdateStage）。
+func (s *Service) RemoveStage(ctx context.Context, in RemoveStageInput) (TaskDetail, error) {
+	store, err := s.taskStore(in.RootID)
+	if err != nil {
+		return TaskDetail{}, err
+	}
+	task, err := s.ensureServiceTask(ctx, in.RootID, store, strings.TrimSpace(in.TaskID))
+	if err != nil {
+		return TaskDetail{}, err
+	}
+	idx := in.Index
+	if idx <= 0 || idx >= len(task.Stages) {
+		return TaskDetail{}, errors.New("stage_index out of range")
+	}
+	if idx == task.CurrentStageIndex {
+		return TaskDetail{}, errors.New("current stage cannot be removed")
+	}
+	runs, err := store.ListStageRuns(ctx, task.ID)
+	if err != nil {
+		return TaskDetail{}, err
+	}
+	for _, run := range runs {
+		if run.StageIndex == idx && run.Status != StageStatusPending {
+			return TaskDetail{}, errors.New("stage already executed")
+		}
+	}
+
+	task.Stages = append(task.Stages[:idx], task.Stages[idx+1:]...)
+	if idx < task.CurrentStageIndex {
+		task.CurrentStageIndex--
+	}
+	if task.CurrentStageIndex >= len(task.Stages) {
+		task.CurrentStageIndex = len(task.Stages) - 1
+	}
+	if task.CurrentStageIndex < 0 {
+		task.CurrentStageIndex = 0
+	}
+	now := time.Now().UTC()
+	task.AuxFlags.SessionError = ""
+	task.UpdatedAt = now
+	if err := store.UpdateTask(ctx, task); err != nil {
+		return TaskDetail{}, err
+	}
+	_ = store.AddEvent(ctx, TaskEvent{
+		ID:        newID("event"),
+		TaskID:    task.ID,
+		Type:      "stage_removed",
+		Payload:   eventPayload(map[string]any{"stage_index": idx}),
+		CreatedAt: now,
+	})
 	detail, err := store.GetDetail(ctx, task.ID)
 	if err == nil && s.Runner != nil {
 		s.Runner.TaskUpdated(task.RootID, detail)

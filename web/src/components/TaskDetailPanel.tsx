@@ -3,11 +3,12 @@ import { AgentIcon } from "./AgentIcon";
 import { ModeIcon } from "./ModeIcon";
 import { with1MSuffix } from "./ActionBar";
 import { PromptEditor } from "./PromptEditor";
-import { PencilIcon } from "./composerStyles";
+import { PencilIcon, TrashIcon } from "./composerStyles";
 import { uploadFiles } from "../services/upload";
 import { useI18n, type I18nContextValue } from "../i18n";
 import {
   addTaskStage,
+  removeTaskStage,
   renameTask,
   updateTaskStage,
   type StageTemplate,
@@ -78,16 +79,16 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
   const [editMode, setEditMode] = useState("");
   const [saving, setSaving] = useState(false);
   const stageAttachRef = useRef<HTMLInputElement | null>(null);
-  // 待切换的编辑目标：有未保存修改时先弹确认
-  const [pendingEditIndex, setPendingEditIndex] = useState<number | null>(null);
-  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  // 待确认动作：切换编辑对象会丢草稿 / 删除阶段。共用一个居中确认弹窗。
+  const [pendingConfirm, setPendingConfirm] = useState<
+    { type: "discard"; index: number } | { type: "remove"; index: number } | null
+  >(null);
 
   useEffect(() => {
     setNameDraft(task?.name || "");
     setEditingName(false);
     setEditingStage(-1);
-    setPendingEditIndex(null);
-    setConfirmDiscard(false);
+    setPendingConfirm(null);
   }, [task?.id]);
 
   useEffect(() => {
@@ -96,9 +97,9 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
 
   // Esc：先关确认弹窗，再退出阶段编辑
   useEffect(() => {
-    if (confirmDiscard) {
+    if (pendingConfirm) {
       const onEsc = (event: KeyboardEvent) => {
-        if (event.key === "Escape") { event.preventDefault(); setConfirmDiscard(false); setPendingEditIndex(null); }
+        if (event.key === "Escape") { event.preventDefault(); setPendingConfirm(null); }
       };
       window.addEventListener("keydown", onEsc);
       return () => window.removeEventListener("keydown", onEsc);
@@ -109,7 +110,7 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
     };
     window.addEventListener("keydown", onEsc);
     return () => window.removeEventListener("keydown", onEsc);
-  }, [editingStage, confirmDiscard]);
+  }, [editingStage, pendingConfirm]);
 
   if (!task || !detail) return null;
 
@@ -165,19 +166,29 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
 
   const cancelEditStage = () => {
     setEditingStage(-1);
-    setPendingEditIndex(null);
-    setConfirmDiscard(false);
+    setPendingConfirm(null);
   };
 
   // 点铅笔：有草稿改到别的段时先确认
   const requestEditStage = (index: number) => {
     if (editingStage === index) return;
     if (hasStageDraftChanges(editingStage)) {
-      setPendingEditIndex(index);
-      setConfirmDiscard(true);
+      setPendingConfirm({ type: "discard", index });
       return;
     }
     startEditStage(index);
+  };
+
+  // 点垃圾桶：删除未执行阶段，先确认
+  const requestRemoveStage = (index: number) => {
+    setPendingConfirm({ type: "remove", index });
+  };
+
+  const removeStage = async (index: number) => {
+    try {
+      setSaving(true);
+      apply(await removeTaskStage(task.root_id, task.id, index, nodeId));
+    } catch (err) { fail(err); } finally { setSaving(false); }
   };
 
   const saveStage = async (index: number) => {
@@ -338,6 +349,19 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
                       {t("common.cancel")}
                     </button>
                   ) : null}
+                  {!executed && !isCurrent ? (
+                    <button
+                      type="button"
+                      title={t("task.removeStage")}
+                      aria-label={t("task.removeStage")}
+                      disabled={saving}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => requestRemoveStage(index)}
+                      style={{ ...sessionIconButtonStyle, marginLeft: editing ? 0 : "auto", color: "#dc2626", cursor: saving ? "not-allowed" : "pointer", opacity: saving ? 0.4 : 1 }}
+                    >
+                      <TrashIcon />
+                    </button>
+                  ) : null}
                 </div>
 
                 <PromptEditor
@@ -354,10 +378,11 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
                   accentColor={accentColor}
                   onAttach={editing ? () => stageAttachRef.current?.click() : undefined}
                   agents={agents}
-                  agent={editAgent}
-                  model={editModel}
-                  effort={editEffort}
-                  agentMode={editMode}
+                  // 非编辑态必须显示该阶段自身的 agent/model，否则每张卡都显示打开面板时的默认草稿。
+                  agent={editing ? editAgent : (stage.agent || "codex")}
+                  model={editing ? editModel : (stage.model || "")}
+                  effort={editing ? editEffort : (stage.effort || "")}
+                  agentMode={editing ? editMode : (stage.mode || "")}
                   onAgentChange={(agent, model) => {
                     const status = agents.find((item) => item.name === agent) || null;
                     setEditAgent(agent);
@@ -381,32 +406,40 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
           <input ref={stageAttachRef} type="file" multiple style={{ display: "none" }} onChange={(event) => void handleStageAttach(event)} />
         </div>
       </section>
-      {confirmDiscard ? (
+      {pendingConfirm ? (
         <div
           style={{ position: "fixed", inset: 0, zIndex: 96, background: "rgba(15, 23, 42, 0.28)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px" }}
-          onMouseDown={(event) => { if (event.target === event.currentTarget) { setConfirmDiscard(false); setPendingEditIndex(null); } }}
+          onMouseDown={(event) => { if (event.target === event.currentTarget) setPendingConfirm(null); }}
         >
           <section style={{ width: "min(420px, 100%)", borderRadius: "10px", border: "1px solid var(--border-color)", background: "var(--menu-bg)", boxShadow: "0 24px 60px rgba(15, 23, 42, 0.24)", overflow: "hidden" }}>
             <div style={{ padding: "12px 14px", borderBottom: "1px solid var(--border-color)", display: "flex", alignItems: "center", gap: "10px" }}>
-              <div style={{ minWidth: 0, fontSize: "13px", fontWeight: 800, color: "var(--text-color)" }}>{t("task.discardDraftTitle")}</div>
+              <div style={{ minWidth: 0, fontSize: "13px", fontWeight: 800, color: "var(--text-color)" }}>
+                {pendingConfirm.type === "discard" ? t("task.discardDraftTitle") : t("task.removeStageTitle")}
+              </div>
             </div>
             <div style={{ padding: "14px", display: "flex", flexDirection: "column", gap: "12px" }}>
-              <div style={{ fontSize: "12px", lineHeight: 1.5, color: "var(--text-secondary)" }}>{t("task.discardDraftMessage")}</div>
+              <div style={{ fontSize: "12px", lineHeight: 1.5, color: "var(--text-secondary)" }}>
+                {pendingConfirm.type === "discard" ? t("task.discardDraftMessage") : t("task.removeStageMessage")}
+              </div>
               <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px" }}>
-                <button type="button" onClick={() => { setConfirmDiscard(false); setPendingEditIndex(null); }} style={buttonStyle("secondary")}>
-                  {t("task.keepEditing")}
+                <button type="button" onClick={() => setPendingConfirm(null)} style={buttonStyle("secondary")}>
+                  {pendingConfirm.type === "discard" ? t("task.keepEditing") : t("common.cancel")}
                 </button>
                 <button
                   type="button"
+                  disabled={saving}
                   onClick={() => {
-                    setConfirmDiscard(false);
-                    if (pendingEditIndex !== null) startEditStage(pendingEditIndex);
-                    else setEditingStage(-1);
-                    setPendingEditIndex(null);
+                    const pending = pendingConfirm;
+                    setPendingConfirm(null);
+                    if (pending.type === "discard") startEditStage(pending.index);
+                    else {
+                      setEditingStage(-1);
+                      void removeStage(pending.index);
+                    }
                   }}
                   style={buttonStyle("danger")}
                 >
-                  {t("task.discardDraft")}
+                  {pendingConfirm.type === "discard" ? t("task.discardDraft") : t("common.delete")}
                 </button>
               </div>
             </div>

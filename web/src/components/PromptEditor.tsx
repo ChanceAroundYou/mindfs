@@ -1,4 +1,4 @@
-import React, { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
+import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { AgentSelector } from "./AgentSelector";
 import { has1MSuffix } from "./ActionBar";
 import TokenEditor, { type TokenEditorHandle } from "./editor/TokenEditor";
@@ -72,6 +72,8 @@ export const PromptEditor = forwardRef<TokenEditorHandle, PromptEditorProps>(fun
   const editorRef = useRef<TokenEditorHandle | null>(null);
   const editable = mode === "editable";
   const isUser = role === "user";
+  // 单行时右侧给控件留位；一旦折行就与对话输入框一样铺满整宽，只在底部让出控件高度。
+  const [isMultiLine, setIsMultiLine] = useState(false);
 
   useImperativeHandle(ref, () => ({
     focus: () => editorRef.current?.focus(),
@@ -88,6 +90,18 @@ export const PromptEditor = forwardRef<TokenEditorHandle, PromptEditorProps>(fun
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resetKey, mode]);
 
+  // 灌入后高度会变，重算一次多行标记（否则从长文本切到短文本会一直留着底部留白）。
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      setIsMultiLine((editorRef.current?.getHeight() || 44) > 50);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [value, resetKey, mode]);
+
+  const syncEditorHeight = () => {
+    setIsMultiLine((editorRef.current?.getHeight() || 44) > 50);
+  };
+
   const noop = () => {};
   const canSend = editable && !sending && !sendDisabled;
 
@@ -99,11 +113,18 @@ export const PromptEditor = forwardRef<TokenEditorHandle, PromptEditorProps>(fun
         disabled={sending}
         readOnly={!editable}
         isDark={false}
-        rightInset={96}
+        rightInset={isMultiLine ? 14 : 96}
         topInset={0}
-        bottomInset={12}
+        bottomInset={isMultiLine ? 44 : 12}
         fillHeight
-        onChange={(payload) => onChange?.(payload.serializedText)}
+        onChange={(payload) => {
+          onChange?.(payload.serializedText);
+          if (!payload.displayText.trim()) {
+            setIsMultiLine(false);
+            return;
+          }
+          requestAnimationFrame(syncEditorHeight);
+        }}
       />
       <div style={{ position: "absolute", right: "6px", bottom: "6px", display: "flex", alignItems: "center", gap: "2px", zIndex: 3 }}>
         {!isUser ? (
@@ -127,17 +148,19 @@ export const PromptEditor = forwardRef<TokenEditorHandle, PromptEditorProps>(fun
             onAgentRestart={onRestartAgent}
           />
         ) : null}
-        <button
-          type="button"
-          title={t("task.addAttachment")}
-          aria-label={t("task.addAttachment")}
-          disabled={!editable || sending || !onAttach}
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={onAttach}
-          style={composerIconButtonStyle({ enabled: editable && !sending && !!onAttach })}
-        >
-          <PlusIcon />
-        </button>
+        {onAttach ? (
+          <button
+            type="button"
+            title={t("task.addAttachment")}
+            aria-label={t("task.addAttachment")}
+            disabled={!editable || sending}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={onAttach}
+            style={composerIconButtonStyle({ enabled: editable && !sending })}
+          >
+            <PlusIcon />
+          </button>
+        ) : null}
         {editable ? (
           <button
             type="button"

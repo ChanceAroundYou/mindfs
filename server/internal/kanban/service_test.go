@@ -262,8 +262,9 @@ func TestCreateTaskCopiesTaskStagesAndWaitsForUser(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
-	if detail.Task.Status != StatusWaitingUser {
-		t.Fatalf("task status=%s, want waiting_user（无调度器：新建任务恒等用户输入）", detail.Task.Status)
+	// 新建任务是未开始态：要有用户输入才开跑（用户点「开始」→ RunNow）。
+	if detail.Task.Status != StatusPending {
+		t.Fatalf("task status=%s, want pending（新建任务未开始）", detail.Task.Status)
 	}
 	if detail.Task.Name != "修登录按钮" {
 		t.Fatalf("task name=%q, want 修登录按钮", detail.Task.Name)
@@ -439,8 +440,9 @@ func TestNextRequiresCurrentUserInputWhenTargetReferencesIt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetTask: %v", err)
 	}
-	if detail.Task.CurrentStageIndex != 0 || detail.Task.Status != StatusWaitingUser {
-		t.Fatalf("task stage/status = %d/%s, want 0/%s", detail.Task.CurrentStageIndex, detail.Task.Status, StatusWaitingUser)
+	// 校验失败不改写状态：仍停在未开始态的第 0 段。
+	if detail.Task.CurrentStageIndex != 0 || detail.Task.Status != StatusPending {
+		t.Fatalf("task stage/status = %d/%s, want 0/%s", detail.Task.CurrentStageIndex, detail.Task.Status, StatusPending)
 	}
 	runner := svc.Runner.(*fakeRunner)
 	runner.mu.Lock()
@@ -652,8 +654,12 @@ func TestTaskWorktreeCreateErrorStoredOnTask(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
-	if _, err := svc.Next(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err == nil {
-		t.Fatalf("Next succeeded, want worktree error")
+	if detail.Task.Status != StatusPending {
+		t.Fatalf("task status=%s, want pending（新建任务未开始）", detail.Task.Status)
+	}
+	// 「开始」才真正进执行体；worktree 创建失败在那里被记下。
+	if _, err := svc.RunNow(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err != nil {
+		t.Fatalf("RunNow: %v", err)
 	}
 	waitForCondition(t, func() bool {
 		detail, err = svc.GetTask(ctx, root.ID, detail.Task.ID)
@@ -661,9 +667,6 @@ func TestTaskWorktreeCreateErrorStoredOnTask(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("GetTask: %v", err)
-	}
-	if detail.Task.Status != StatusWaitingUser {
-		t.Fatalf("task status=%s, want waiting_user", detail.Task.Status)
 	}
 	if detail.Task.CurrentStageIndex != 0 {
 		t.Fatalf("current stage=%d, want 0", detail.Task.CurrentStageIndex)
@@ -720,7 +723,7 @@ func TestUpdateCurrentInputKeepsPreviousStageInput(t *testing.T) {
 
 func TestCompleteFinalWaitingTask(t *testing.T) {
 	ctx := context.Background()
-	svc, root := newTestService(t, nil)
+	svc, root := newTestService(t, &fakeRunner{})
 	detail, err := svc.CreateTask(ctx, CreateTaskInput{
 		RootID: root.ID,
 		Stages: []StageTemplate{userStage("Describe")},
@@ -729,9 +732,17 @@ func TestCompleteFinalWaitingTask(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
-	if detail.Task.Status != StatusWaitingUser {
-		t.Fatalf("task status=%s, want waiting_user", detail.Task.Status)
+	if detail.Task.Status != StatusPending {
+		t.Fatalf("task status=%s, want pending（新建任务未开始）", detail.Task.Status)
 	}
+	// Complete 只接受等待用户态；未开始态先「开始」，由执行体把单段 user 任务推到等待用户。
+	if _, err := svc.RunNow(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err != nil {
+		t.Fatalf("RunNow: %v", err)
+	}
+	waitForCondition(t, func() bool {
+		got, err := svc.GetTask(ctx, root.ID, detail.Task.ID)
+		return err == nil && got.Task.Status == StatusWaitingUser
+	})
 	completed, err := svc.Complete(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID, Reason: "approved"})
 	if err != nil {
 		t.Fatalf("Complete: %v", err)
@@ -1076,6 +1087,14 @@ func TestAddStageApprovesAndRunsWhenWaiting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
+	// 新建任务是未开始态 → 先「开始」，让首段被执行体推进到等待用户。
+	if _, err := svc.RunNow(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err != nil {
+		t.Fatalf("RunNow: %v", err)
+	}
+	waitForCondition(t, func() bool {
+		got, err := svc.GetTask(ctx, root.ID, detail.Task.ID)
+		return err == nil && got.Task.Status == StatusWaitingUser
+	})
 	detail, err = svc.AddStage(ctx, AddStageInput{
 		RootID: root.ID,
 		TaskID: detail.Task.ID,
@@ -1237,6 +1256,137 @@ func TestUpdateStageEditsFutureStagePrompt(t *testing.T) {
 	}
 	if got.Task.Stages[1].Name != "Fix improved" {
 		t.Fatalf("stage name not updated: %q", got.Task.Stages[1].Name)
+	}
+}
+
+// 删除未执行段：只允许删尚未产生 StageRun、且不在指针上的段；index 0 与当前段不可删。
+func TestRemoveStageDeletesUnexecutedStage(t *testing.T) {
+	ctx := context.Background()
+	svc, root := newTestService(t, &fakeRunner{})
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID: root.ID,
+		Stages: []StageTemplate{
+			userStage("Describe"),
+			agentStage("Fix", "Fix {previous_input}"),
+			agentStage("Extra", "Extra {previous_input}"),
+		},
+		Input: "input",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	taskID := detail.Task.ID
+
+	// index 0 是任务初始输入段，不可删。
+	if _, err := svc.RemoveStage(ctx, RemoveStageInput{RootID: root.ID, TaskID: taskID, Index: 0}); err == nil {
+		t.Fatal("RemoveStage(index 0) succeeded, want rejection")
+	}
+	// 越界。
+	if _, err := svc.RemoveStage(ctx, RemoveStageInput{RootID: root.ID, TaskID: taskID, Index: 3}); err == nil {
+		t.Fatal("RemoveStage(out of range) succeeded, want rejection")
+	}
+	// 新建任务的指针在 0，index 1/2 都还没跑过 → 指针之外的尾部可删。
+	got, err := svc.RemoveStage(ctx, RemoveStageInput{RootID: root.ID, TaskID: taskID, Index: 2})
+	if err != nil {
+		t.Fatalf("RemoveStage(untouched tail): %v", err)
+	}
+	if len(got.Task.Stages) != 2 {
+		t.Fatalf("stages len=%d, want 2", len(got.Task.Stages))
+	}
+	if got.Task.CurrentStageIndex != 0 {
+		t.Fatalf("current_stage_index=%d, want 0（指针在删除点之前，不动）", got.Task.CurrentStageIndex)
+	}
+
+	// 跑到 index 1 → 等待用户，该段已产生 success 的 StageRun。
+	if _, err := svc.Next(ctx, MoveInput{RootID: root.ID, TaskID: taskID}); err != nil {
+		t.Fatalf("Next: %v", err)
+	}
+	waitForCondition(t, func() bool {
+		got, err := svc.GetTask(ctx, root.ID, taskID)
+		return err == nil && got.Task.Status == StatusWaitingUser && got.Task.CurrentStageIndex == 1
+	})
+	// 已执行段不可删。
+	if _, err := svc.RemoveStage(ctx, RemoveStageInput{RootID: root.ID, TaskID: taskID, Index: 1}); err == nil {
+		t.Fatal("RemoveStage(executed stage) succeeded, want rejection")
+	}
+
+	// 尾段（index 1）现在是当前段：即便被 `Next` 判成末段收尾，也不能删当前指针段。
+	if _, err := svc.RemoveStage(ctx, RemoveStageInput{RootID: root.ID, TaskID: taskID, Index: 1}); err == nil {
+		t.Fatal("RemoveStage(current stage) succeeded, want rejection")
+	}
+
+	// 追加一段空 prompt 的段（UI「+ 新增阶段」就是这种）→ 只入流水尾，不推进。
+	// 然后删掉它：指针仍停在 1。
+	added, err := svc.AddStage(ctx, AddStageInput{
+		RootID: root.ID,
+		TaskID: taskID,
+		Stage:  agentStage("Follow-up", ""),
+	})
+	if err != nil {
+		t.Fatalf("AddStage: %v", err)
+	}
+	if len(added.Task.Stages) != 3 {
+		t.Fatalf("stages len=%d, want 3", len(added.Task.Stages))
+	}
+	if added.Task.CurrentStageIndex != 1 {
+		t.Fatalf("current_stage_index=%d, want 1（空 prompt 追加不推进）", added.Task.CurrentStageIndex)
+	}
+	got, err = svc.RemoveStage(ctx, RemoveStageInput{RootID: root.ID, TaskID: taskID, Index: 2})
+	if err != nil {
+		t.Fatalf("RemoveStage(appended tail): %v", err)
+	}
+	if len(got.Task.Stages) != 2 {
+		t.Fatalf("stages len=%d, want 2", len(got.Task.Stages))
+	}
+	if got.Task.CurrentStageIndex != 1 {
+		t.Fatalf("current_stage_index=%d, want 1", got.Task.CurrentStageIndex)
+	}
+}
+
+// 删掉指针之前的段时，指针要跟着回移，不能指到别的段上。
+func TestRemoveStageBeforeCurrentShiftsPointer(t *testing.T) {
+	ctx := context.Background()
+	svc, root := newTestService(t, &fakeRunner{})
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID: root.ID,
+		Stages: []StageTemplate{
+			userStage("Describe"),
+			agentStage("Fix", "Fix {previous_input}"),
+			userStage("Review"),
+			agentStage("Polish", "Polish {previous_input}"),
+		},
+		Input: "input",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	taskID := detail.Task.ID
+
+	// 走到 index 2（user 段，等待用户）。
+	if _, err := svc.Jump(ctx, MoveInput{RootID: root.ID, TaskID: taskID, StageIndex: 2}); err != nil {
+		t.Fatalf("Jump: %v", err)
+	}
+	before, err := svc.GetTask(ctx, root.ID, taskID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if before.Task.CurrentStageIndex != 2 {
+		t.Fatalf("current_stage_index=%d, want 2", before.Task.CurrentStageIndex)
+	}
+
+	// index 1 在指针之前且未执行 → 可删，指针 2 回移到 1。
+	got, err := svc.RemoveStage(ctx, RemoveStageInput{RootID: root.ID, TaskID: taskID, Index: 1})
+	if err != nil {
+		t.Fatalf("RemoveStage(before current): %v", err)
+	}
+	if len(got.Task.Stages) != 3 {
+		t.Fatalf("stages len=%d, want 3", len(got.Task.Stages))
+	}
+	if got.Task.CurrentStageIndex != 1 {
+		t.Fatalf("current_stage_index=%d, want 1（指针随删除回移）", got.Task.CurrentStageIndex)
+	}
+	if got.Task.Stages[1].Name != "Review" {
+		t.Fatalf("stages[1].name=%q, want Review", got.Task.Stages[1].Name)
 	}
 }
 

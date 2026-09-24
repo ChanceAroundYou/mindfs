@@ -70,6 +70,9 @@ export function hexToRgba(hex: string, alpha: number): string {
   return fallback;
 }
 
+/** 禁用按钮的灰底。原先引的 CSS 变量全仓库无定义（实际渲染成透明），看不出「不可按」。 */
+const DISABLED_BUTTON_BG = "rgba(100, 116, 139, 0.22)";
+
 /** 发送按钮：实心 accent 底，禁用时降透明度。取消态传 cancel。 */
 export function composerSendButtonStyle(opts: {
   enabled?: boolean;
@@ -114,7 +117,7 @@ export function composerSendButtonStyle(opts: {
           : "1px solid var(--border-color)",
       background: enabled
         ? (accentColor || "var(--accent-color)")
-        : "var(--button-bg)",
+        : DISABLED_BUTTON_BG,
       color: enabled ? "#fff" : "var(--text-secondary)",
       display: "flex",
       alignItems: "center",
@@ -122,7 +125,7 @@ export function composerSendButtonStyle(opts: {
       padding: 0,
       cursor: enabled ? "pointer" : "not-allowed",
       transition: "all 0.2s",
-      opacity: enabled ? 1 : 0.65,
+      opacity: enabled ? 1 : 0.75,
       flexShrink: 0,
     };
   }
@@ -184,6 +187,18 @@ export function PencilIcon({ size = 13 }: { size?: number }) {
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M12 20h9" />
       <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+    </svg>
+  );
+}
+
+export function TrashIcon({ size = 14 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6l-1 14H6L5 6" />
+      <path d="M10 11v6" />
+      <path d="M14 11v6" />
+      <path d="M9 6V4h6v2" />
     </svg>
   );
 }
