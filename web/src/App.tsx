@@ -67,33 +67,13 @@ import { getRootNodeId, setRootNodeId, setRootNodeMap } from "./services/rootNod
 import { scopeKey, scopeSessionKey, treeKey, expandKey, dirSelKey } from "./services/scope";
 import {
   buildGitDiffCacheSignature,
-  checkoutGitBranch,
   clearGitHistoryCache,
-  commitGit,
-  createGitWorktree,
-  discardGitItem,
-  fetchGitCommitDiff,
   fetchGitDiff,
   fetchGitRelatedFileDiff,
   fetchGitBranches,
-  fetchGitHistory,
-  fetchGitStatus,
-  fetchGitStatusByPath,
-  fetchGitWorktrees,
-  getCachedGitHistory,
-  getCachedGitHistoryHead,
-  pullGit,
-  pushGit,
   removeGitWorktree,
-  stageGitItem,
-  unstageGitItem,
   type GitBranchesPayload,
   type GitDiffPayload,
-  type GitHistoryItem,
-  type GitHistoryPayload,
-  type GitStatusItem,
-  type GitStatusPayload,
-  type GitWorktreeItem,
 } from "./services/git";
 import {
   relatedFileStatKey,
@@ -140,34 +120,35 @@ import {
   type ProjectTreeTab,
 } from "./components/FileTree";
 
-import { applyNodesFromServer, getActiveNode, getNodeById, getNodes, LOCAL_NODE_ID, migrateLegacySingleBase, syncNodesFromServer } from "./services/nodeRegistry";
+import { applyNodesFromServer, getActiveNode, getNodeById, getNodes, migrateLegacySingleBase, syncNodesFromServer } from "./services/nodeRegistry";
 
 import { FileViewer } from "./components/FileViewer";
 import { resolveGroupColor } from "./services/sessionGroupDisplay";
 import { GitDiffViewer } from "./components/GitDiffViewer";
-import { GitHistoryPanel } from "./components/GitHistoryPanel";
 import { GitStatusPanel } from "./components/GitStatusPanel";
+import { RootGitContentView } from "./components/RootGitContentView";
+import { RootRelatedContentView } from "./components/RootRelatedContentView";
+import { RootWorktreeContentView } from "./components/RootWorktreeContentView";
 import { SessionViewer } from "./components/SessionViewer";
+import { TaskBoardView } from "./components/TaskBoardView";
 import { DefaultListView, type MainContentViewMode } from "./components/DefaultListView";
-import { MultiProjectSessionList, SessionList, type ProjectSessionGroup } from "./components/SessionList";
-import { ExternalSessionList } from "./components/ExternalSessionList";
+import { type ProjectSessionGroup } from "./components/SessionList";
 import { InlineTokenText } from "./components/InlineTokenText";
-import { AgentIcon } from "./components/AgentIcon";
-import { AgentMenuList } from "./components/AgentMenuList";
 import { ActionBar } from "./components/ActionBar";
 import { CompactUploadProgress } from "./components/CompactUploadProgress";
 import { ToastContainer } from "./components/Toast";
+import { DialogHost } from "./components/DialogHost";
+import { alertDialog, confirmDialog, promptDialog } from "./services/dialog";
 import { BottomSheet } from "./components/BottomSheet";
 import { ScheduledAgentTaskDialog } from "./components/ScheduledAgentTaskDialog";
 import { TaskTemplateDialog } from "./components/TaskTemplateDialog";
 import { TaskDetailPanel } from "./components/TaskDetailPanel";
-import { WorkspaceKanban } from "./components/WorkspaceKanban";
 import { MainViewSwitcher } from "./components/MainViewSwitcher";
 import { OnboardingTour } from "./components/OnboardingTour";
 import { WorktreeBranchSelector } from "./components/WorktreeBranchSelector";
 import { NoWorktreeIcon } from "./components/NoWorktreeIcon";
 import { renderToolIcon } from "./components/stream/ToolCallCard";
-import { type TokenEditorHandle } from "./components/editor/TokenEditor";
+import TokenEditor, { type TokenEditorHandle } from "./components/editor/TokenEditor";
 import { PromptEditor } from "./components/PromptEditor";
 import {
   type GitHubImportState,
@@ -211,1197 +192,35 @@ import {
 } from "./services/onboarding";
 
 // 类型定义
-type SessionMode = "chat" | "plugin" | "command";
-type WSStatus = "connecting" | "connected" | "reconnecting" | "disconnected";
 
-const CHILD_SESSION_PAGE_SIZE = 100;
-const MULTI_PROJECT_SESSION_LIMIT = 6;
-const SESSION_PAGE_SIZE = 50;
-const APP_DOCUMENT_TITLE = "MindFS";
+import { APP_DOCUMENT_TITLE, AppProps, CHILD_SESSION_PAGE_SIZE, MULTI_PROJECT_SESSION_LIMIT, ManagedRootPayload, SESSION_PAGE_SIZE } from "./app/appMisc";
+import { MainViewMode, URLState } from "./app/appPath";
+import { AttachedFileContext, Exchange, GitFileStat, MultiProjectSessionGroup, PendingSend, RelatedFileClickTarget, SessionItem, SessionMode, SessionQueueItem, SlashCommandResult, ViewerSelection, WSStatus } from "./app/appSession";
+import { CANDIDATE_FETCH_DEBOUNCE_MS, DIRECTORY_SORT_OVERRIDES_STORAGE_KEY, GIT_DIFF_SIDE_BY_SIDE_STORAGE_KEY, GIT_HISTORY_EXPANDED_STORAGE_KEY, GIT_STATUS_EXPANDED_STORAGE_KEY, LAST_ROOT_NODE_STORAGE_KEY, LAST_ROOT_STORAGE_KEY, MAIN_VIEW_STORAGE_KEY, MOBILE_ENTER_KEY_SEND_STORAGE_KEY, PLUGIN_QUERY_STORAGE_PREFIX, SIDEBARS_SWAPPED_STORAGE_KEY, TASK_TEMPLATE_ALL_FILTER, TASK_TEMPLATE_SELECTION_STORAGE_KEY, TREE_SORT_STORAGE_KEY } from "./app/appStorage";
+import { TaskInlineEditState } from "./app/appTask";
+import { buildMatchInputFromPath, buildMessageWithViewContext, hasExplicitFileContext, indexManagedRoots, inferReadModeFromPlugin, managedDirAddErrorMessage, mapManagedRootsToEntries, normalizeUpdateState, shouldShowUpdateButton, toPluginInput, updateButtonLabel, updateSummaryText, useResponsive, waitForNextPaint } from "./app/appMisc";
+import { basenameOfPath, buildDirectorySelectionKey, buildFileScrollKey, buildURLSearch, comparableManagedRootPath, dirnameOfPath, isDirectorySortMode, joinDisplayPath, normalizeCursor, normalizePath, parentDirsOfFile, parseFileLocation, parsePluginQuery, readURLState, relativeDisplayPathFromRoot, rootNodeKey } from "./app/appPath";
+import { hasSessionExchanges, isTopLevelSessionItem, normalizeMode, relatedFileSelectionKey, sessionInputHistory, toSessionItem } from "./app/appSession";
+import { accountScopedKey, loadGitDiffSideBySide, loadLastRootId, loadLastRootNodeId, loadLegacyMainView, loadMainView, loadMobileEnterKeySends, loadPersistedFileScrollPositions, loadPersistedPluginQuery, loadSidebarsSwapped, loadTaskCreateWorktreePreference, persistFileScrollPositions, persistPluginQuery, removeLocalStorageByPrefix, saveTaskCreateWorktreePreference } from "./app/appStorage";
+import { currentTaskInputFromDetail, firstAgentStage, firstTaskInputFromDetail, firstUserInputTemplate, isTerminalKanbanTask, isUnfinishedKanbanTask, latestTaskStageRun, normalizeFastService, parseTaskSessionErrorDetails, parseTaskSessionErrorMessage, previousTaskInputsFromDetail, taskSessionKeysFromDetail, taskStatusLabel } from "./app/appTask";
+import { useCompletionSound } from "./app/useCompletionSound";
+import { useExternalSessionImport } from "./app/useExternalSessionImport";
+import { useGitActions } from "./app/useGitActions";
+import { useSessionSearch } from "./app/useSessionSearch";
+import { useGitData } from "./app/useGitData";
+import { useProjectTreeWorktrees } from "./app/useProjectTreeWorktrees";
+import { useProjectLifecycle } from "./app/useProjectLifecycle";
+import { useSessionSidebarView } from "./app/useSessionSidebarView";
+import { useSessionStreamCache } from "./app/useSessionStreamCache";
+import { useRealtimeEvents } from "./app/useRealtimeEvents";
+import { useTaskTemplates } from "./app/useTaskTemplates";
+import { CheckIconSmall, PlusSmallIcon, taskCardIconButtonStyle } from "./app/taskIcons";
 
-function isTopLevelSessionItem(session: SessionItem): boolean {
-  return !String(session?.parent_session_key || "").trim();
-}
-
-function firstUserInputTemplate(template: TaskTemplate | null): string {
-  const first = template?.stages?.[0]?.snapshot;
-  return first?.role === "user" ? first.prompt_template || "" : "";
-}
-
-function firstAgentStage(template: TaskTemplate | null): StageTemplate | null {
-  return template?.stages?.map((stage) => stage.snapshot).find((stage) => stage.role === "agent") || null;
-}
-
-function isUnfinishedKanbanTask(task: KanbanTask): boolean {
-  return task.status !== "success" && task.status !== "fail" && task.status !== "cancelled";
-}
-
-function isTerminalKanbanTask(task: KanbanTask): boolean {
-  return task.status === "success" || task.status === "fail" || task.status === "cancelled";
-}
-
-function parseTaskSessionErrorMessage(error?: string): string {
-  const raw = String(error || "").trim();
-  if (!raw) return "";
-  try {
-    const parsed = JSON.parse(raw) as { message?: unknown };
-    return typeof parsed.message === "string" && parsed.message.trim() ? parsed.message.trim() : raw;
-  } catch {
-    return raw;
-  }
-}
-
-function parseTaskSessionErrorDetails(error?: string): string[] {
-  const raw = String(error || "").trim();
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw) as { data?: unknown };
-    if (Array.isArray(parsed.data)) return parsed.data.map((item) => String(item)).filter(Boolean);
-    if (parsed.data === undefined || parsed.data === null) return [];
-    return [String(parsed.data)];
-  } catch {
-    return [];
-  }
-}
-
-function taskStatusLabel(status: string, t: (key: MessageKey, params?: MessageParams) => string): string {
-  const labels: Record<string, MessageKey> = {
-    pending: "task.status.pending",
-    queued: "task.status.queued",
-    running: "task.status.running",
-    waiting_user: "task.status.waitingUser",
-    paused: "task.status.paused",
-    success: "task.status.success",
-    fail: "task.status.fail",
-    cancelled: "task.status.cancelled",
-    approved: "task.status.approved",
-    rejected: "task.status.rejected",
-  };
-  return labels[status] ? t(labels[status]) : status || "-";
-}
-
-function firstTaskInputFromDetail(detail: TaskDetail): string {
-  return detail.stage_runs.find((run) => run.stage_index === 0)?.input || "";
-}
-
-function latestTaskStageRun(detail: TaskDetail, stageIndex: number): StageRun | null {
-  const runs = detail.stage_runs
-    .filter((run) => run.stage_index === stageIndex)
-    .sort((a, b) => {
-      const aTime = Date.parse(a.created_at || a.updated_at || "");
-      const bTime = Date.parse(b.created_at || b.updated_at || "");
-      return (Number.isFinite(bTime) ? bTime : 0) - (Number.isFinite(aTime) ? aTime : 0);
-    });
-  return runs[0] || null;
-}
-
-function currentTaskInputFromDetail(detail: TaskDetail): string {
-  return latestTaskStageRun(detail, detail.task.current_stage_index)?.input || "";
-}
-
-function previousTaskInputsFromDetail(detail: TaskDetail, t: (key: MessageKey, params?: MessageParams) => string): Array<{ id: string; label: string; input: string }> {
-  const items: Array<{ id: string; label: string; input: string }> = [];
-  for (let index = 0; index < detail.task.current_stage_index; index += 1) {
-    const run = latestTaskStageRun(detail, index);
-    const input = run?.input || "";
-    if (!run || !input.trim()) continue;
-    items.push({
-      id: run.id,
-      label: run.stage_name || t("task.stageLabel", { index: index + 1 }),
-      input,
-    });
-  }
-  return items;
-}
-
-function taskSessionKeysFromDetail(detail: TaskDetail): string[] {
-  const seen = new Set<string>();
-  const keys: string[] = [];
-  for (const run of detail.stage_runs) {
-    const key = String(run.session_key || "").trim();
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    keys.push(key);
-  }
-  const mainKey = String(detail.task.main_session_key || "").trim();
-  if (mainKey && !seen.has(mainKey)) {
-    keys.push(mainKey);
-  }
-  return keys;
-}
-
-function normalizeFastService(
-  value: unknown,
-): "" | "on" | "off" {
-  return value === "on" || value === "off" ? value : "";
-}
-
-export type SessionItem = {
-  key: string;
-  session_key: string;
-  root_id?: string;
-  _nodeId?: string;
-  name?: string;
-  type?: SessionMode;
-  parent_session_key?: string;
-  parent_tool_call_id?: string;
-  agent?: string;
-  model?: string;
-  shell?: string;
-  source?: string;
-  task_id?: string;
-  mode?: string;
-  effort?: string;
-  fast_service?: "" | "on" | "off";
-  plan_mode?: boolean;
-  scope?: string;
-  purpose?: string;
-  created_at?: string;
-  updated_at?: string;
-  pinned_at?: string | null;
-  closed_at?: string;
-  title?: string;
-  agent_session_id?: string;
-  context_window?: {
-    totalTokens: number;
-    modelContextWindow: number;
-  };
-  search_seq?: number;
-  search_target_id?: string;
-  search_snippet?: string;
-  search_match_type?: "name" | "user" | "reply";
-  related_files?: RelatedFile[];
-  related_worktree?: RelatedWorktree | null;
-  exchanges?: Array<{
-    seq?: number;
-    role?: string;
-    agent?: string;
-    content?: string;
-    thought_id?: string;
-    timestamp?: string;
-    model?: string;
-    model_display_name?: string;
-	    mode?: string;
-	    effort?: string;
-	    fast_service?: "" | "on" | "off";
-	    context_window?: {
-      totalTokens: number;
-      modelContextWindow: number;
-    };
-    token_usage?: TokenUsage;
-  }>;
-  pending?: boolean;
-};
-
-type MultiProjectSessionGroup = {
-  rootId: string;
-  rootName: string;
-  latestSessionTime: string;
-  sessions: SessionItem[];
-  totalCount: number;
-  _nodeId?: string;
-  _nodeColor?: string;
-  _nodeName?: string;
-};
-
-type SlashCommandResult = {
-  rootId: string;
-  sessionKey: string;
-  requestId: string;
-  command: string;
-  content: string;
-  status: "running" | "complete" | "failed";
-  error?: string;
-  createdAt?: number;
-  loginNotice?: {
-    status?: string;
-    loginId?: string;
-    verificationUrl?: string;
-    userCode?: string;
-    error?: string;
-    authMode?: string;
-    planType?: string;
-  };
-};
-
-type TaskInlineAttachment = {
-  id: string;
-  file: File;
-  previewUrl?: string;
-  isImage: boolean;
-};
-
-type TaskInlineEditState = {
-  taskId?: string;
-  templateId: string;
-  templateName: string;
-  name: string;
-  text: string;
-  previousInputs: Array<{ id: string; label: string; input: string }>;
-  createWorktree: boolean;
-  worktreeBranchMode: "new" | "existing";
-  worktreeBranch: string;
-  canToggleWorktree: boolean;
-  attachments: TaskInlineAttachment[];
-};
-
-function latestExchangeText(
-  exchanges: unknown,
-  field: "agent" | "mode" | "effort" | "fast_service",
-): string {
-  if (!Array.isArray(exchanges)) {
-    return "";
-  }
-  for (let i = exchanges.length - 1; i >= 0; i -= 1) {
-    const value = (exchanges[i] as Record<string, unknown> | null)?.[field];
-    if (typeof value === "string" && value.trim()) {
-      return value;
-    }
-  }
-  return "";
-}
-
-function sessionInputHistory(session: { exchanges?: Array<{ role?: string; content?: string }> } | null | undefined): string[] {
-  const exchanges = Array.isArray(session?.exchanges) ? session.exchanges : [];
-  const items: string[] = [];
-  for (const exchange of exchanges) {
-    if (exchange?.role !== "user") {
-      continue;
-    }
-    const content = String(exchange.content || "").trim();
-    if (content) {
-      items.push(content);
-    }
-  }
-  return items;
-}
-
-function toSessionItem(
-  rootID: string | null | undefined,
-  session: any,
-): SessionItem | null {
-  if (!session) {
-    return null;
-  }
-  const key = session?.key || session?.session_key || "";
-  const nextRoot =
-    (session?.root_id as string | undefined) || String(rootID || "");
-  if (!key || !nextRoot) {
-    return null;
-  }
-  return {
-    key,
-    session_key: key,
-    root_id: nextRoot,
-    name: typeof session?.name === "string" ? session.name : "",
-    type: normalizeMode(session?.type),
-    parent_session_key:
-      typeof session?.parent_session_key === "string"
-        ? session.parent_session_key
-        : undefined,
-    parent_tool_call_id:
-      typeof session?.parent_tool_call_id === "string"
-        ? session.parent_tool_call_id
-        : undefined,
-    source: typeof session?.source === "string" ? session.source : undefined,
-    task_id: typeof session?.task_id === "string" ? session.task_id : undefined,
-    agent:
-      typeof session?.agent === "string" && session.agent.trim()
-        ? session.agent
-        : latestExchangeText(session?.exchanges, "agent"),
-    model: typeof session?.model === "string" ? session.model : "",
-    shell: typeof session?.shell === "string" ? session.shell : "",
-    mode:
-      typeof session?.mode === "string" && session.mode.trim()
-        ? session.mode
-        : latestExchangeText(session?.exchanges, "mode"),
-    effort:
-      typeof session?.effort === "string" && session.effort.trim()
-        ? session.effort
-        : latestExchangeText(session?.exchanges, "effort"),
-    fast_service:
-      normalizeFastService(session?.fast_service) ||
-      normalizeFastService(latestExchangeText(session?.exchanges, "fast_service")),
-    plan_mode:
-      typeof session?.plan_mode === "boolean"
-        ? session.plan_mode
-        : false,
-    scope: typeof session?.scope === "string" ? session.scope : "",
-    purpose: typeof session?.purpose === "string" ? session.purpose : "",
-    created_at:
-      typeof session?.created_at === "string" ? session.created_at : undefined,
-    updated_at:
-      typeof session?.updated_at === "string" ? session.updated_at : undefined,
-    pinned_at:
-      typeof session?.pinned_at === "string" && session.pinned_at
-        ? session.pinned_at
-        : undefined,
-    closed_at:
-      typeof session?.closed_at === "string" ? session.closed_at : undefined,
-    context_window:
-      session?.context_window &&
-      Number(session.context_window.totalTokens) > 0 &&
-      Number(session.context_window.modelContextWindow) > 0
-        ? {
-            totalTokens: Number(session.context_window.totalTokens),
-            modelContextWindow: Number(session.context_window.modelContextWindow),
-          }
-        : undefined,
-    search_seq:
-      typeof session?.search_seq === "number" ? session.search_seq : undefined,
-    search_target_id:
-      typeof session?.search_target_id === "string"
-        ? session.search_target_id
-        : undefined,
-    search_snippet:
-      typeof session?.search_snippet === "string"
-        ? session.search_snippet
-        : undefined,
-    search_match_type:
-      session?.search_match_type === "name" ||
-      session?.search_match_type === "user" ||
-      session?.search_match_type === "reply"
-        ? session.search_match_type
-        : undefined,
-    related_files: Array.isArray(session?.related_files)
-      ? session.related_files
-      : undefined,
-    related_worktree:
-      session?.related_worktree === null
-        ? null
-        : session?.related_worktree && typeof session.related_worktree === "object"
-          ? session.related_worktree
-          : undefined,
-    pending: typeof session?.pending === "boolean" ? session.pending : undefined,
-    // 多节点同名项目：记录会话归属节点，选择会话时按节点路由
-    ...(typeof (session as any)?._nodeId === "string" && (session as any)._nodeId
-      ? { _nodeId: (session as any)._nodeId as string }
-      : {}),
-  } as SessionItem;
-}
-type Exchange = {
-  role: string;
-  agent?: string;
-  model?: string;
-  model_display_name?: string;
-  mode?: string;
-  effort?: string;
-  fast_service?: "" | "on" | "off";
-  content?: string;
-  thought_id?: string;
-  context_window?: {
-    totalTokens: number;
-    modelContextWindow: number;
-  };
-  token_usage?: TokenUsage;
-  timestamp?: string;
-  toolCall?: any;
-  todoUpdate?: any;
-  planUpdate?: any;
-  compactNotice?: any;
-  pending_ack?: boolean;
-};
-type PendingSend = {
-  rootId: string;
-  mode: SessionMode;
-  agent: string;
-  model?: string;
-  model_display_name?: string;
-  agentMode?: string;
-  effort?: string;
-  fastService?: "" | "on" | "off";
-  shell?: string;
-  message: string;
-  timestamp: string;
-  requestId?: string;
-  sessionKey?: string;
-  tempKey?: string;
-};
-type SessionQueueItem = QueuedUserMessage;
-type ViewerSelection = {
-  filePath: string;
-  text?: string;
-  startLine?: number;
-  endLine?: number;
-};
-
-type AttachedFileContext = {
-  filePath: string;
-  fileName: string;
-  startLine?: number;
-  endLine?: number;
-  text?: string;
-};
-type GitFileStat = {
-  status: string;
-  additions: number;
-  deletions: number;
-};
-type RelatedFileClickTarget = {
-  path: string;
-  head?: string;
-  repo_path?: string;
-  repo_name?: string;
-  repo_kind?: string;
-};
-
-function relatedFileSelectionKey(file: RelatedFileClickTarget | null | undefined): string {
-  if (!file?.path) return "";
-  return [
-    file.repo_kind || "",
-    file.repo_path || "",
-    file.head || "",
-    file.path,
-  ].join("\0");
-}
-type URLState = {
-  root: string;
-  node?: string;
-  file: string;
-  session: string;
-  cursor: number;
-  pluginQuery: Record<string, string>;
-  // 主面板模式也进 URL：按钮高亮与面板显示必须同源恢复（缺省时回落 localStorage）。
-  view?: MainViewMode;
-};
-type ManagedRootPayload = {
-  id: string;
-  display_name?: string;
-  root_path?: string;
-  is_git_repo?: boolean;
-  is_git_worktree?: boolean;
-  size?: number;
-  mtime?: string;
-};
-type LocalDirItemPayload = {
-  name?: string;
-  path?: string;
-  is_dir?: boolean;
-  is_added_root?: boolean;
-  root_id?: string;
-};
-type LocalDirsPayload = {
-  path?: string;
-  parent?: string;
-  volumes?: LocalDirItemPayload[];
-  items?: LocalDirItemPayload[];
-};
-
-function managedDirAddErrorMessage(error: unknown, fallback: string, t: (key: MessageKey, params?: MessageParams) => string): string {
-  const message = error instanceof Error ? error.message : String(error || "");
-  if (message.includes("root name already exists")) {
-    return t("root.nameAlreadyExists");
-  }
-  return message || fallback;
-}
-
-const PLUGIN_QUERY_STORAGE_PREFIX = "vp-progress:";
-const TREE_SORT_STORAGE_KEY = "mindfs-tree-sort-mode";
-const DIRECTORY_SORT_OVERRIDES_STORAGE_KEY = "mindfs-directory-sort-overrides";
-const FILE_SCROLL_STORAGE_KEY = "mindfs-file-scroll-positions";
-const LAST_ROOT_STORAGE_KEY = "mindfs-last-root-id";
-const LAST_ROOT_NODE_STORAGE_KEY = "mindfs-last-root-node";
-
-// 「上次打开的项目」必须按账户存：它是账户作用域的（项目列表按账户分），
-// 不分区的话换账户后会恢复**上一个账户**的项目为当前项目，随后拿它去请求
-// 会话/看板 → 该账户根本没有这个项目 → 报错（实测踩过：登录后看板报错）。
-function accountScopedKey(base: string): string {
-  const name = String(currentUser()?.username || "").trim();
-  return name ? `${base}::${name}` : base;
-}
-const GIT_STATUS_EXPANDED_STORAGE_KEY = "mindfs-git-status-expanded";
-const GIT_HISTORY_EXPANDED_STORAGE_KEY = "mindfs-git-history-expanded";
-const TASK_TEMPLATE_SELECTION_STORAGE_KEY = "mindfs-task-template-selection";
-const TASK_TEMPLATE_ALL_FILTER = "__all__";
-const CANDIDATE_FETCH_DEBOUNCE_MS = 512;
-const FILE_TOKEN_PATTERN = /\[(?:read file|file):\s*[^\]]+\]/i;
-
-function normalizeUpdateState(
-  input: UpdateState | null | undefined,
-): UpdateState {
-  return {
-    current_version: input?.current_version || "",
-    latest_version: input?.latest_version || "",
-    has_update: input?.has_update === true,
-    status: input?.status || "idle",
-    message: input?.message || "",
-    release_name: input?.release_name || "",
-    release_body: input?.release_body || "",
-    release_url: input?.release_url || "",
-    published_at: input?.published_at || "",
-    last_checked_at: input?.last_checked_at || "",
-    auto_update_supported: input?.auto_update_supported === true,
-  };
-}
-
-function updateButtonLabel(state: UpdateState, t: (key: MessageKey, params?: MessageParams) => string): string {
-  const status = (state.status || "idle").toLowerCase();
-  switch (status) {
-    case "available":
-      if (state.current_version && state.latest_version) {
-        return t("update.available", { current: state.current_version, latest: state.latest_version });
-      }
-      return state.latest_version ? t("update.toVersion", { version: state.latest_version }) : t("update.newVersion");
-    case "downloading":
-      return t("update.downloading");
-    case "installing":
-      return t("update.installing");
-    case "restarting":
-      return t("update.restarting");
-    case "failed":
-      return t("update.failed");
-    default:
-      return t("update.latest");
-  }
-}
-
-function updateSummaryText(state: UpdateState, t: (key: MessageKey, params?: MessageParams) => string): string {
-  const body = String(state.release_body || "").trim();
-  if (body) {
-    return body;
-  }
-  const name = String(state.release_name || "").trim();
-  if (name) {
-    return name;
-  }
-  if (state.latest_version) {
-    return t("update.foundVersion", { version: state.latest_version });
-  }
-  return "";
-}
-
-function shouldShowUpdateButton(state: UpdateState): boolean {
-  const status = (state.status || "idle").toLowerCase();
-  if (
-    status === "downloading" ||
-    status === "installing" ||
-    status === "restarting" ||
-    status === "failed"
-  ) {
-    return true;
-  }
-  return state.auto_update_supported === true && state.has_update === true;
-}
-
-function buildFileScrollKey(
-  rootId: string | null | undefined,
-  path: string | null | undefined,
-): string {
-  if (!rootId || !path) {
-    return "";
-  }
-  return `${rootId}::${path}`;
-}
-
-function hasSessionExchanges(session: Session | null | undefined): boolean {
-  return Array.isArray(session?.exchanges) && session.exchanges.length > 0;
-}
-
-function loadPersistedFileScrollPositions(): Record<string, number> {
-  if (typeof window === "undefined") {
-    return {};
-  }
-  try {
-    const raw = window.localStorage.getItem(FILE_SCROLL_STORAGE_KEY);
-    if (!raw) {
-      return {};
-    }
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return {};
-    }
-    const next: Record<string, number> = {};
-    Object.entries(parsed).forEach(([key, value]) => {
-      const scrollTop = Number(value);
-      if (!key || !Number.isFinite(scrollTop) || scrollTop < 0) {
-        return;
-      }
-      next[key] = scrollTop;
-    });
-    return next;
-  } catch {
-    return {};
-  }
-}
-
-function persistFileScrollPositions(positions: Record<string, number>): void {
-  if (typeof window === "undefined") {
-    return;
-  }
-  try {
-    window.localStorage.setItem(
-      FILE_SCROLL_STORAGE_KEY,
-      JSON.stringify(positions),
-    );
-  } catch {}
-}
-
-function normalizeMode(mode: SessionMode | undefined): SessionMode {
-  if (mode === "plugin") return mode;
-  if (mode === "command") return mode;
-  return "chat";
-}
-
-function parsePluginQuery(search: string): Record<string, string> {
-  const params = new URLSearchParams(search);
-  const query: Record<string, string> = {};
-  params.forEach((value, key) => {
-    if (key.startsWith("vp_")) {
-      query[key.slice("vp_".length)] = value;
-    }
-  });
-  return query;
-}
-
-function waitForNextPaint(): Promise<void> {
-  if (typeof window === "undefined" || typeof window.requestAnimationFrame !== "function") {
-    return new Promise((resolve) => setTimeout(resolve, 0));
-  }
-  return new Promise((resolve) => {
-    window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(() => resolve());
-    });
-  });
-}
-
-function parseCursor(value: string | null): number {
-  if (!value) return 0;
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed) || parsed < 0) return 0;
-  return parsed;
-}
-
-function normalizeCursor(value: unknown): number | null {
-  if (value === undefined || value === null || value === "") {
-    return null;
-  }
-  const parsed = Number.parseInt(String(value), 10);
-  if (!Number.isFinite(parsed) || parsed < 0) {
-    return 0;
-  }
-  return parsed;
-}
-
-function isDirectorySortMode(
-  value: string | null | undefined,
-): value is DirectorySortMode {
-  return (
-    value === "name-asc" ||
-    value === "name-desc" ||
-    value === "mtime-desc" ||
-    value === "mtime-asc" ||
-    value === "size-desc" ||
-    value === "size-asc"
-  );
-}
-
-function readURLState(): URLState {
-  const params = new URLSearchParams(window.location.search);
-  const view = params.get("view");
-  return {
-    root: params.get("root") || "",
-    node: params.get("node") || "",
-    file: params.get("file") || "",
-    session: params.get("session") || "",
-    cursor: parseCursor(params.get("cursor")),
-    pluginQuery: parsePluginQuery(window.location.search),
-    view: MAIN_VIEW_MODES.includes(view as MainViewMode)
-      ? (view as MainViewMode)
-      : undefined,
-  };
-}
-
-function buildURLSearch(next: URLState): string {
-  const params = new URLSearchParams();
-  if (next.root) params.set("root", next.root);
-  if (next.node) params.set("node", next.node);
-  if (next.file) params.set("file", next.file);
-  if (next.session) params.set("session", next.session);
-  if (next.cursor > 0) params.set("cursor", String(next.cursor));
-  if (next.view) params.set("view", next.view);
-  Object.entries(next.pluginQuery).forEach(([key, value]) => {
-    if (!key) return;
-    params.set(`vp_${key}`, String(value));
-  });
-  const encoded = params.toString();
-  return encoded ? `?${encoded}` : "";
-}
-
-function pluginQueryStorageKey(
-  root: string,
-  file: string,
-  nodeId?: string,
-): string {
-  // 多节点同名项目按节点隔离；空 nodeId 与历史格式逐字节一致
-  return `${PLUGIN_QUERY_STORAGE_PREFIX}${scopeKey(nodeId, root)}:${file}`;
-}
-
-function loadPersistedPluginQuery(
-  root: string,
-  file: string,
-  nodeId?: string,
-): Record<string, string> {
-  if (!root || !file) return {};
-  try {
-    const raw =
-      window.localStorage.getItem(pluginQueryStorageKey(root, file, nodeId)) ||
-      // 旧版本存的是裸键：scoped 键 miss 时回退，保证历史数据仍能读到
-      window.localStorage.getItem(pluginQueryStorageKey(root, file));
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
-      return {};
-    const next: Record<string, string> = {};
-    Object.entries(parsed as Record<string, unknown>).forEach(
-      ([key, value]) => {
-        if (!key) return;
-        next[key] = String(value);
-      },
-    );
-    return next;
-  } catch {
-    return {};
-  }
-}
-
-function persistPluginQuery(
-  root: string,
-  file: string,
-  query: Record<string, string>,
-  nodeId?: string,
-): void {
-  if (!root || !file) return;
-  try {
-    window.localStorage.setItem(
-      pluginQueryStorageKey(root, file, nodeId),
-      JSON.stringify(query || {}),
-    );
-  } catch {}
-}
-
-function removeLocalStorageByPrefix(prefix: string): void {
-  if (typeof window === "undefined" || !prefix) {
-    return;
-  }
-  try {
-    for (const key of Array.from(
-      { length: window.localStorage.length },
-      (_, index) => window.localStorage.key(index),
-    ).filter(Boolean) as string[]) {
-      if (key.startsWith(prefix)) {
-        window.localStorage.removeItem(key);
-      }
-    }
-  } catch {}
-}
-
-function toPluginInput(
-  file: FilePayload,
-  query: Record<string, string>,
-): PluginInput {
-  return {
-    name: file.name,
-    path: file.path,
-    content: file.content,
-    ext: file.ext || "",
-    mime: file.mime || "",
-    size: typeof file.size === "number" ? file.size : 0,
-    truncated: !!file.truncated,
-    next_cursor:
-      typeof file.next_cursor === "number" ? file.next_cursor : undefined,
-    query,
-  };
-}
-
-function inferReadModeFromPlugin(plugin: any): "incremental" | "full" {
-  if (!plugin) return "incremental";
-  if (plugin?.fileLoadMode === "full") return "full";
-  if (plugin?.fileLoadMode === "incremental") return "incremental";
-  return "incremental";
-}
-
-function buildMatchInputFromPath(
-  path: string,
-  query: Record<string, string>,
-): PluginInput {
-  const normalized = (path || "").replace(/\\/g, "/");
-  const name = normalized.split("/").pop() || normalized;
-  const dot = name.lastIndexOf(".");
-  const ext = dot >= 0 ? name.slice(dot).toLowerCase() : "";
-  return {
-    name,
-    path: normalized,
-    content: "",
-    ext,
-    mime: "",
-    size: 0,
-    truncated: false,
-    query,
-  };
-}
-
-function formatPluginViewContext(value: unknown): string {
-  if (typeof value === "string") return value.trim();
-  if (value == null) return "";
-  try {
-    return JSON.stringify(value, null, 2).trim();
-  } catch {
-    return String(value).trim();
-  }
-}
-
-function buildMessageWithViewContext(
-  message: string,
-  viewContext: unknown,
-): string {
-  const contextText = formatPluginViewContext(viewContext);
-  if (!contextText) return message;
-  return [contextText, "", message].join("\n");
-}
-
-function normalizePath(value: string): string {
-  return String(value || "")
-    .replace(/\\/g, "/")
-    .replace(/^\/+|\/+$/g, "");
-}
-
-function relativeDisplayPathFromRoot(rootPath: string | undefined, absolutePath: string): string {
-  const root = normalizePath(rootPath || "");
-  const target = normalizePath(absolutePath);
-  if (!target) return "";
-  if (!root) return target;
-  if (target === root) return ".";
-  if (target.startsWith(`${root}/`)) {
-    return target.slice(root.length + 1);
-  }
-  const rootParts = root.split("/").filter(Boolean);
-  const targetParts = target.split("/").filter(Boolean);
-  let shared = 0;
-  while (
-    shared < rootParts.length &&
-    shared < targetParts.length &&
-    rootParts[shared] === targetParts[shared]
-  ) {
-    shared += 1;
-  }
-  const upward = Array(Math.max(0, rootParts.length - shared)).fill("..");
-  const downward = targetParts.slice(shared);
-  return [...upward, ...downward].join("/") || ".";
-}
-
-function joinDisplayPath(base: string, path: string): string {
-  const normalizedBase = normalizePath(base);
-  const normalizedPath = normalizePath(path);
-  if (!normalizedBase) return normalizedPath;
-  if (!normalizedPath) return normalizedBase;
-  return `${normalizedBase}/${normalizedPath}`;
-}
-
-function parseFileLocation(path: string): {
-  path: string;
-  targetLine?: number;
-  targetColumn?: number;
-} {
-  const raw = String(path || "");
-  const [base, fragment = ""] = raw.split("#", 2);
-  if (fragment) {
-    const match = /^L(\d+)(?:C(\d+))?$/i.exec(fragment.trim());
-    if (match) {
-      const targetLine = Number.parseInt(match[1], 10);
-      const targetColumn = match[2] ? Number.parseInt(match[2], 10) : undefined;
-      return {
-        path: base,
-        targetLine:
-          Number.isFinite(targetLine) && targetLine > 0 ? targetLine : undefined,
-        targetColumn:
-          targetColumn && Number.isFinite(targetColumn) && targetColumn > 0
-            ? targetColumn
-            : undefined,
-      };
-    }
-  }
-
-  const colonMatch = /^(.*):(\d+)(?::(\d+))?$/.exec(base.trim());
-  if (!colonMatch) {
-    return { path: base };
-  }
-  const targetLine = Number.parseInt(colonMatch[2], 10);
-  const targetColumn = colonMatch[3]
-    ? Number.parseInt(colonMatch[3], 10)
-    : undefined;
-  return {
-    path: colonMatch[1],
-    targetLine:
-      Number.isFinite(targetLine) && targetLine > 0 ? targetLine : undefined,
-    targetColumn:
-      targetColumn && Number.isFinite(targetColumn) && targetColumn > 0
-        ? targetColumn
-        : undefined,
-  };
-}
-
-function parentDirsOfFile(path: string): string[] {
-  const normalized = normalizePath(path);
-  if (!normalized) return [];
-  const parts = normalized.split("/").filter(Boolean);
-  if (parts.length <= 1) return [];
-  const dirs: string[] = [];
-  for (let i = 1; i < parts.length; i++) {
-    dirs.push(parts.slice(0, i).join("/"));
-  }
-  return dirs;
-}
-
-function dirnameOfPath(path: string): string {
-  const normalized = normalizePath(path);
-  if (!normalized) return ".";
-  const parts = normalized.split("/").filter(Boolean);
-  if (parts.length <= 1) return ".";
-  return parts.slice(0, -1).join("/");
-}
-
-function basenameOfPath(path: string): string {
-  const normalized = normalizePath(path);
-  if (!normalized) return "";
-  const parts = normalized.split("/").filter(Boolean);
-  return parts[parts.length - 1] || normalized;
-}
-
-function mapManagedRootsToEntries(dirs: ManagedRootPayload[]): FileEntry[] {
-  return dirs.map((dir) => {
-    const d = dir as any;
-    return {
-      name: dir.display_name || dir.id.split("/").filter(Boolean).pop() || dir.id,
-      path: dir.id,
-      is_dir: true,
-      is_root: true,
-      size: typeof dir.size === "number" ? dir.size : undefined,
-      mtime: typeof dir.mtime === "string" ? dir.mtime : undefined,
-      // ponytail: 多节点着色由 FileTree 通过 rootEntries 扩展字段渲染
-      _nodeId: (d as any)._nodeId as string | undefined,
-      _nodeColor: d._nodeColor as string | undefined,
-      _nodeName: d._nodeName as string | undefined,
-    } as FileEntry & { _nodeId?: string; _nodeColor?: string; _nodeName?: string };
-  });
-}
-
-function comparableManagedRootPath(value: string | undefined): string {
-  return String(value || "").trim().replace(/\\/g, "/").replace(/\/+$/, "");
-}
-
-function buildDirectorySelectionKey(
-  nodeId: string | null | undefined,
-  root: string,
-  path: string,
-  isRoot: boolean,
-): string {
-  return dirSelKey(nodeId, root, path, isRoot);
-}
-
-function loadLastRootId(): string {
-  if (typeof window === "undefined") {
-    return "";
-  }
-  return window.localStorage.getItem(accountScopedKey(LAST_ROOT_STORAGE_KEY)) || "";
-}
-
-function loadLastRootNodeId(): string {
-  if (typeof window === "undefined") {
-    return "";
-  }
-  return window.localStorage.getItem(accountScopedKey(LAST_ROOT_NODE_STORAGE_KEY)) || "";
-}
-
-// 多节点同名项目：以 nodeId::rootId 复合键区分同一 root 在不同节点的副本
-function rootNodeKey(nodeId: string | null | undefined, rootId: string): string {
-  return scopeKey(nodeId, rootId);
-}
-
-function indexManagedRoots(dirs: ManagedRootPayload[]): {
-  byKey: Record<string, ManagedRootPayload>;
-  byId: Record<string, ManagedRootPayload>;
-} {
-  const byKey: Record<string, ManagedRootPayload> = {};
-  const byId: Record<string, ManagedRootPayload> = {};
-  for (const dir of dirs || []) {
-    const id = String(dir?.id || "");
-    if (!id) continue;
-    const nid = String((dir as any)._nodeId || "").trim();
-    byKey[rootNodeKey(nid, id)] = dir;
-    // byId 仅作无节点上下文的回退：同名项目保留首个（本地节点优先），当前选择时再覆盖
-    if (!(id in byId)) byId[id] = dir;
-  }
-  return { byKey, byId };
-}
-
-function loadBooleanRecord(key: string): Record<string, boolean> {
-  if (typeof window === "undefined") {
-    return {};
-  }
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(key) || "{}") as Record<string, unknown>;
-    return Object.fromEntries(
-      Object.entries(parsed).filter(([, value]) => typeof value === "boolean"),
-    ) as Record<string, boolean>;
-  } catch {
-    return {};
-  }
-}
-
-function loadStringBooleanRecord(key: string): Record<string, Record<string, boolean>> {
-  if (typeof window === "undefined") {
-    return {};
-  }
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(key) || "{}") as Record<string, unknown>;
-    return Object.fromEntries(
-      Object.entries(parsed).map(([root, value]) => [
-        root,
-        value && typeof value === "object"
-          ? Object.fromEntries(
-              Object.entries(value as Record<string, unknown>).filter(([, expanded]) => typeof expanded === "boolean"),
-            )
-          : {},
-      ]),
-    ) as Record<string, Record<string, boolean>>;
-  } catch {
-    return {};
-  }
-}
-
-function hasExplicitFileContext(message: string): boolean {
-  return FILE_TOKEN_PATTERN.test(message);
-}
-
-// Hook for responsive detection
-function useResponsive() {
-  const [isMobile, setIsMobile] = useState(false);
-  const [isTablet, setIsTablet] = useState(false);
-  useEffect(() => {
-    const checkSize = () => {
-      const width = window.innerWidth;
-      setIsMobile(width < 768);
-      setIsTablet(width >= 768 && width < 1024);
-    };
-    checkSize();
-    window.addEventListener("resize", checkSize);
-    return () => window.removeEventListener("resize", checkSize);
-  }, []);
-  return { isMobile, isTablet };
-}
-
-type AppProps = {
-  onGoHome?: () => void;
-};
-
-const MOBILE_ENTER_KEY_SEND_STORAGE_KEY = "mindfs-mobile-enter-key-sends";
-const SIDEBARS_SWAPPED_STORAGE_KEY = "mindfs-sidebars-swapped";
-const GIT_DIFF_SIDE_BY_SIDE_STORAGE_KEY = "mindfs-git-diff-side-by-side";
-const TASK_CREATE_WORKTREE_PREF_STORAGE_KEY = "mindfs-task-create-worktree-pref";
-type TaskCreateWorktreePreference = {
-  createWorktree: boolean;
-  worktreeBranchMode: "new" | "existing";
-  worktreeBranch: string;
-};
-
-// 主区内容的唯一真相源：workspace(跨项目工作台) / board(项目看板) / files(文件列表) / chat(对话)。
-// 设计见 docs/main-view-switching-design.md —— 除用户显式点击外，任何代码路径都不得改它。
-export type MainViewMode = "workspace" | "board" | "files" | "chat";
-const MAIN_VIEW_STORAGE_KEY = "mindfs-main-view";
-const MAIN_VIEW_MODES: MainViewMode[] = ["workspace", "board", "files", "chat"];
-
-function loadMainView(): MainViewMode {
-  if (typeof window === "undefined") return "board";
-  try {
-    const saved = window.localStorage.getItem(MAIN_VIEW_STORAGE_KEY);
-    return MAIN_VIEW_MODES.includes(saved as MainViewMode) ? (saved as MainViewMode) : "board";
-  } catch {
-    return "board";
-  }
-}
-
-// 旧版本按项目记忆主区视图；升级后统一读成新键（看板 → board，文件 → files），只迁移一次。
-function loadLegacyMainView(): MainViewMode | null {
-  if (typeof window === "undefined") return null;
-  if (window.localStorage.getItem(MAIN_VIEW_STORAGE_KEY)) return null;
-  try {
-    const legacy = window.localStorage.getItem("mindfs-default-main-content-view");
-    const migrated: MainViewMode = legacy === "file-browser" ? "files" : "board";
-    window.localStorage.setItem(MAIN_VIEW_STORAGE_KEY, migrated);
-    return migrated;
-  } catch {
-    return null;
-  }
-}
-
-function loadMobileEnterKeySends(): boolean {
-  if (typeof window === "undefined") {
-    return false;
-  }
-  try {
-    return window.localStorage.getItem(MOBILE_ENTER_KEY_SEND_STORAGE_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-function loadSidebarsSwapped(): boolean {
-  if (typeof window === "undefined") {
-    return false;
-  }
-  try {
-    return window.localStorage.getItem(SIDEBARS_SWAPPED_STORAGE_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-function loadGitDiffSideBySide(): boolean {
-  if (typeof window === "undefined") {
-    return false;
-  }
-  try {
-    return window.localStorage.getItem(GIT_DIFF_SIDE_BY_SIDE_STORAGE_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-function loadTaskCreateWorktreePreference(rootId: string): TaskCreateWorktreePreference {
-  if (typeof window === "undefined" || !rootId) {
-    return { createWorktree: false, worktreeBranchMode: "new", worktreeBranch: "" };
-  }
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(TASK_CREATE_WORKTREE_PREF_STORAGE_KEY) || "{}") as Record<string, unknown>;
-    const value = parsed[scopeKey(getRootNodeId(rootId) ?? "", rootId)] as Record<string, unknown> | undefined;
-    return {
-      createWorktree: value?.createWorktree === true,
-      worktreeBranchMode: value?.worktreeBranchMode === "existing" ? "existing" : "new",
-      worktreeBranch: typeof value?.worktreeBranch === "string" ? value.worktreeBranch : "",
-    };
-  } catch {
-    return { createWorktree: false, worktreeBranchMode: "new", worktreeBranch: "" };
-  }
-}
-
-function saveTaskCreateWorktreePreference(rootId: string, pref: TaskCreateWorktreePreference): void {
-  if (typeof window === "undefined" || !rootId) return;
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(TASK_CREATE_WORKTREE_PREF_STORAGE_KEY) || "{}") as Record<string, unknown>;
-    window.localStorage.setItem(TASK_CREATE_WORKTREE_PREF_STORAGE_KEY, JSON.stringify({
-      ...parsed,
-      [scopeKey(getRootNodeId(rootId) ?? "", rootId)]: pref,
-    }));
-  } catch {
-    // Ignore storage failures; the current dialog state can still be used.
-  }
-}
 
 export function App({ onGoHome }: AppProps) {
   const { t } = useI18n();
+  const { playCompletionSound } = useCompletionSound();
   const pluginManagerRef = useRef<PluginManager>(new PluginManager());
-  const completionAudioContextRef = useRef<AudioContext | null>(null);
-  const completionAudioUnlockedRef = useRef(false);
   const managedRootIdsRef = useRef<Set<string>>(new Set());
   const expandedRef = useRef<string[]>([]);
   const selectedDirRef = useRef<string | null>(null);
@@ -1471,12 +290,6 @@ export function App({ onGoHome }: AppProps) {
   const multiProjectLoadSeqRef = useRef(0);
   const [multiProjectPendingByKey, setMultiProjectPendingByKey] = useState<Record<string, boolean>>({});
   const multiProjectPendingRef = useRef<Record<string, boolean>>({});
-  const [sessionSearchOpen, setSessionSearchOpen] = useState(false);
-  const [sessionSearchResultsMode, setSessionSearchResultsMode] = useState(false);
-  const [sessionSearchQuery, setSessionSearchQuery] = useState("");
-  const [sessionSearchAppliedQuery, setSessionSearchAppliedQuery] = useState("");
-  const [sessionSearchResults, setSessionSearchResults] = useState<SessionItem[]>([]);
-  const [sessionSearchLoading, setSessionSearchLoading] = useState(false);
   const [syncingSessionKeys, setSyncingSessionKeys] = useState<Set<string>>(
     () => new Set(),
   );
@@ -1485,37 +298,8 @@ export function App({ onGoHome }: AppProps) {
   const [sessionListMode, setSessionListMode] = useState<"local" | "import">(
     "local",
   );
-  const sessionListModeRef = useRef<"local" | "import">("local");
-  const [externalSessions, setExternalSessions] = useState<SessionItem[]>([]);
-  const externalSessionsRef = useRef<SessionItem[]>([]);
-  const [hasMoreExternalSessions, setHasMoreExternalSessions] = useState(false);
-  const [loadingOlderExternalSessions, setLoadingOlderExternalSessions] =
-    useState(false);
-  const [loadingExternalSessions, setLoadingExternalSessions] = useState(false);
-  const [externalSessionsError, setExternalSessionsError] = useState("");
-  const [externalSelectedKey, setExternalSelectedKey] = useState("");
-  const [externalImportAgent, setExternalImportAgent] = useState("");
-  const externalImportAgentRef = useRef("");
-  const [externalFilterBound, setExternalFilterBound] = useState(true);
-  const [selectedExternalImportKeys, setSelectedExternalImportKeys] = useState<
-    Set<string>
-  >(() => new Set());
-  const [importingExternalSessionKeys, setImportingExternalSessionKeys] =
-    useState<Set<string>>(() => new Set());
-  const [confirmingExternalImport, setConfirmingExternalImport] =
-    useState(false);
-  const [importMenuOpen, setImportMenuOpen] = useState(false);
-  const importMenuRef = useRef<HTMLDivElement | null>(null);
-  const projectAddPopoverRef = useRef<HTMLDivElement | null>(null);
-  const worktreeCreatePopoverRef = useRef<HTMLDivElement | null>(null);
-  const worktreeSwitchPopoverRef = useRef<HTMLDivElement | null>(null);
-  const taskTemplateActionMenuRef = useRef<HTMLDivElement | null>(null);
-  const taskCreateTemplateMenuRef = useRef<HTMLDivElement | null>(null);
   const [availableAgents, setAvailableAgents] = useState<AgentStatus[]>([]);
   const [scheduledAgentDialogOpen, setScheduledAgentDialogOpen] = useState(false);
-  const [taskTemplates, setTaskTemplates] = useState<TaskTemplate[]>([]);
-  const [taskTemplateDialogOpen, setTaskTemplateDialogOpen] = useState(false);
-  const [taskTemplateDialogTemplate, setTaskTemplateDialogTemplate] = useState<TaskTemplate | null>(null);
 	  const [kanbanTasks, setKanbanTasks] = useState<KanbanTask[]>([]);
 	  const [kanbanTaskCountItems, setKanbanTaskCountItems] = useState<KanbanTask[]>([]);
 	  const [taskDetailsById, setTaskDetailsById] = useState<Record<string, TaskDetail>>({});
@@ -1547,10 +331,6 @@ export function App({ onGoHome }: AppProps) {
 	  const sessionListAbortRef = useRef<AbortController | null>(null);
   // 列表拉取失败告警冷却：断网/抖动时重拉被多个事件反复触发，避免告警刷屏。
   const listLoadErrorAtRef = useRef(0);
-  const [taskTemplateFilter, setTaskTemplateFilter] = useState("");
-  const [taskTemplateActionMenuOpen, setTaskTemplateActionMenuOpen] = useState(false);
-  const [taskTemplateConcurrencyOpen, setTaskTemplateConcurrencyOpen] = useState(false);
-  const [taskCreateTemplateMenuOpen, setTaskCreateTemplateMenuOpen] = useState(false);
   const taskInlineEditorRef = useRef<TokenEditorHandle | null>(null);
   const taskInlineCandidateItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const taskInlineAttachmentInputRef = useRef<HTMLInputElement | null>(null);
@@ -1614,135 +394,47 @@ export function App({ onGoHome }: AppProps) {
   // 多节点同名项目的完整索引：nodeId::rootId → payload（byId 回退表只保留一份）
   const managedRootByKeyRef = useRef<Record<string, ManagedRootPayload>>({});
 
-  const loadTaskTemplates = useCallback(async () => {
-    if (!protectedAPIReady()) {
-      return;
+  const getNodeIdForRoot = useCallback((rootId: string): string | undefined => {
+    const rid = String(rootId || "").trim();
+    if (!rid) return undefined;
+    // 当前选中的项目优先按其选中节点路由，避免同名项目被多节点表覆盖到错误节点
+    if (rid === String(currentRootIdRef.current || "")) {
+      const nid = String(currentRootNodeIdRef.current || "").trim();
+      if (nid) return nid;
     }
-    try {
-      setTaskTemplates(await fetchTaskTemplates());
-    } catch (err) {
-      reportError("file.write_failed", String((err as Error)?.message || t("taskTemplate.loadFailed")));
-    }
-  }, [t]);
-
-  const openTaskTemplateEditor = useCallback((template: TaskTemplate | null) => {
-    setTaskTemplateDialogTemplate(template);
-    setTaskTemplateDialogOpen(true);
+    const entry = (managedRootByIdRef.current as Record<string, any>)[rid];
+    const nid = String(entry?._nodeId || "").trim();
+    return nid || undefined;
   }, []);
 
-  const handleTaskTemplateSaved = useCallback((template: TaskTemplate) => {
-    setTaskTemplates((prev) => {
-      const id = template.id || "";
-      if (!id) return prev;
-      const index = prev.findIndex((item) => item.id === id);
-      if (index < 0) return [template, ...prev];
-      const next = [...prev];
-      next[index] = template;
-      return next;
-    });
-    setTaskTemplateDialogTemplate(template);
-  }, []);
+  // 按当前作用域解析复合键：当前根 → 选中节点；其他根 → 模块 map/裸回退
+  const scopedRootKey = useCallback(
+    (rootId: string): string =>
+      scopeKey(getNodeIdForRoot(String(rootId || "")) ?? "", String(rootId || "")),
+    [getNodeIdForRoot],
+  );
 
-  const handleDeleteTaskTemplate = useCallback(async (template: TaskTemplate) => {
-    const id = template.id || "";
-    if (!id) return;
-    if (!window.confirm(t("taskTemplate.deleteConfirm", { name: template.name || id }))) return;
-    try {
-      await deleteTaskTemplate(id);
-      setTaskTemplates((prev) => prev.filter((item) => item.id !== id));
-      setTaskTemplateDialogTemplate((prev) => prev?.id === id ? null : prev);
-      setTaskTemplateFilter((prev) => prev === id ? "" : prev);
-    } catch (err) {
-      reportError("file.write_failed", String((err as Error)?.message || t("taskTemplate.deleteFailed")));
-    }
-  }, [t]);
-
-  const handleTaskTemplateConcurrencyChange = useCallback(async (templateId: string, value: number) => {
-    const template = taskTemplates.find((item) => item.id === templateId);
-    if (!template) return;
-    const nextValue = Math.max(1, Math.min(10, value || 1));
-    const optimistic = { ...template, max_concurrency: nextValue };
-    setTaskTemplates((prev) => prev.map((item) => item.id === templateId ? optimistic : item));
-    try {
-      const saved = await saveTaskTemplate(optimistic);
-      setTaskTemplates((prev) => prev.map((item) => item.id === templateId ? saved : item));
-      setTaskTemplateDialogTemplate((prev) => prev?.id === templateId ? saved : prev);
-    } catch (err) {
-      setTaskTemplates((prev) => prev.map((item) => item.id === templateId ? template : item));
-      reportError("file.write_failed", String((err as Error)?.message || t("taskTemplate.concurrencySaveFailed")));
-    }
-  }, [taskTemplates, t]);
-
-  useEffect(() => {
-    void loadTaskTemplates();
-  }, [loadTaskTemplates]);
-
-  useEffect(() => {
-    if (!currentRootId) {
-      if (taskTemplateFilter) setTaskTemplateFilter("");
-      return;
-    }
-    if (taskTemplateFilter === TASK_TEMPLATE_ALL_FILTER || (taskTemplateFilter && taskTemplates.some((template) => template.id === taskTemplateFilter))) {
-      return;
-    }
-    let remembered = "";
-    try {
-      const parsed = JSON.parse(window.localStorage.getItem(TASK_TEMPLATE_SELECTION_STORAGE_KEY) || "{}") as Record<string, unknown>;
-      const value = parsed[scopedRootKey(currentRootId)];
-      remembered = typeof value === "string" ? value : "";
-    } catch {
-      remembered = "";
-    }
-    const rememberedValid = remembered === TASK_TEMPLATE_ALL_FILTER || taskTemplates.some((template) => template.id === remembered);
-    const next = rememberedValid ? remembered : TASK_TEMPLATE_ALL_FILTER;
-    if (next && next !== taskTemplateFilter) {
-      setTaskTemplateFilter(next);
-    }
-  }, [currentRootId, taskTemplateFilter, taskTemplates]);
-
-  useEffect(() => {
-    if (!currentRootId || !taskTemplateFilter) return;
-    try {
-      const parsed = JSON.parse(window.localStorage.getItem(TASK_TEMPLATE_SELECTION_STORAGE_KEY) || "{}") as Record<string, unknown>;
-      window.localStorage.setItem(TASK_TEMPLATE_SELECTION_STORAGE_KEY, JSON.stringify({
-        ...parsed,
-        [scopedRootKey(currentRootId)]: taskTemplateFilter,
-      }));
-    } catch {
-    }
-  }, [currentRootId, taskTemplateFilter]);
-
-  useEffect(() => {
-    if (!taskTemplateActionMenuOpen) return;
-    const onPointerDown = (event: MouseEvent) => {
-      if (taskTemplateActionMenuRef.current?.contains(event.target as Node)) {
-        return;
-      }
-      setTaskTemplateActionMenuOpen(false);
-    };
-    document.addEventListener("mousedown", onPointerDown);
-    return () => document.removeEventListener("mousedown", onPointerDown);
-  }, [taskTemplateActionMenuOpen]);
-
-  useEffect(() => {
-    if (!taskCreateTemplateMenuOpen) return;
-    const onPointerDown = (event: MouseEvent) => {
-      if (taskCreateTemplateMenuRef.current?.contains(event.target as Node)) {
-        return;
-      }
-      setTaskCreateTemplateMenuOpen(false);
-    };
-    document.addEventListener("mousedown", onPointerDown);
-    return () => document.removeEventListener("mousedown", onPointerDown);
-  }, [taskCreateTemplateMenuOpen]);
-
-  useEffect(() => {
-    if (!taskTemplateActionMenuOpen) {
-      setTaskTemplateConcurrencyOpen(false);
-    } else {
-      setTaskCreateTemplateMenuOpen(false);
-    }
-  }, [taskTemplateActionMenuOpen]);
+  const {
+    taskTemplateActionMenuRef,
+    taskCreateTemplateMenuRef,
+    taskTemplates,
+    taskTemplateDialogOpen,
+    setTaskTemplateDialogOpen,
+    taskTemplateDialogTemplate,
+    taskTemplateFilter,
+    setTaskTemplateFilter,
+    taskTemplateActionMenuOpen,
+    setTaskTemplateActionMenuOpen,
+    taskTemplateConcurrencyOpen,
+    setTaskTemplateConcurrencyOpen,
+    taskCreateTemplateMenuOpen,
+    setTaskCreateTemplateMenuOpen,
+    loadTaskTemplates,
+    openTaskTemplateEditor,
+    handleTaskTemplateSaved,
+    handleDeleteTaskTemplate,
+    handleTaskTemplateConcurrencyChange,
+  } = useTaskTemplates({ currentRootId, scopedRootKey });
 
   useEffect(() => {
     if (!taskInlineEdit) return;
@@ -1952,7 +644,7 @@ export function App({ onGoHome }: AppProps) {
     let reason = "";
     if (action === "prev" || action === "pause") {
       const label = action === "prev" ? t("task.actionPrevious") : t("task.actionPause");
-      const input = window.prompt(t("task.reasonPrompt", { action: label }), "");
+      const input = await promptDialog({ message: t("task.reasonPrompt", { action: label }) });
       if (input === null) {
         return;
       }
@@ -1969,6 +661,42 @@ export function App({ onGoHome }: AppProps) {
     }
   }, [applyTaskDetails, t]);
 
+  const openTaskEditDialog = useCallback(async (task: KanbanTask, openAttachmentPicker = false) => {
+    const rootId = task.root_id || currentRootIdRef.current;
+    if (!rootId) return;
+    try {
+      const detail = taskDetailsById[task.id];
+      if (!detail) {
+        reportError("file.write_failed", t("task.detailNotSynced"));
+        return;
+      }
+      const firstInput = firstTaskInputFromDetail(detail);
+      const currentInput = currentTaskInputFromDetail(detail);
+      setTaskInlineEdit({
+        taskId: task.id,
+        templateId: task.task_template_id,
+        templateName: task.task_template_name || t("task.defaultTitle"),
+        text: currentInput,
+        previousInputs: previousTaskInputsFromDetail(detail, t),
+        createWorktree: detail.task.create_worktree === true,
+        worktreeBranchMode: detail.task.worktree_branch_mode === "existing" ? "existing" : "new",
+        worktreeBranch: detail.task.worktree_branch || "",
+        canToggleWorktree: detail.task.current_stage_index === 0 && !detail.task.worktree_path,
+        attachments: [],
+      });
+      setTaskInlineActiveToken(null);
+      setTaskInlineCandidates([]);
+      setTaskInlineCandidateIndex(0);
+      setTaskFirstInputById((prev) => ({ ...prev, [task.id]: firstInput }));
+      window.setTimeout(() => {
+        if (openAttachmentPicker) {
+          taskInlineAttachmentInputRef.current?.click();
+        }
+      }, 0);
+    } catch (err) {
+      reportError("file.write_failed", String((err as Error)?.message || t("task.editFailed")));
+    }
+  }, [taskDetailsById, t]);
 
   const loadTaskWorktreeBranches = useCallback(async (rootId: string) => {
     if (!rootId) return;
@@ -2111,51 +839,6 @@ export function App({ onGoHome }: AppProps) {
       : prev);
   }, []);
 
-  async function refreshTaskWorktree(rootId: string, worktreePath: string, force = true) {
-    const normalizedRootId = String(rootId || "").trim();
-    const normalizedWorktreePath = String(worktreePath || "").trim();
-    if (!normalizedRootId || !normalizedWorktreePath) {
-      return;
-    }
-    if (!force && knownTaskWorktreePathsRef.current.has(normalizedWorktreePath)) {
-      return;
-    }
-    knownTaskWorktreePathsRef.current.add(normalizedWorktreePath);
-    // 同一时间只展开一个工作树：整对象写入会清掉其它已展开项
-    setExpandedWorktreeByRoot({ [scopedRootKey(normalizedRootId)]: normalizedWorktreePath });
-    setWorktreeLoadingByRoot((prev) => ({ ...prev, [scopedRootKey(normalizedRootId)]: true }));
-    setWorktreeErrorByRoot((prev) => ({ ...prev, [scopedRootKey(normalizedRootId)]: "" }));
-    try {
-      const payload = await fetchGitWorktrees(normalizedRootId, getNodeIdForRoot(normalizedRootId));
-      (payload.items || []).forEach((item) => {
-        if (item.path) {
-          knownTaskWorktreePathsRef.current.add(item.path);
-        }
-      });
-      setWorktreeItemsByRoot((prev) => ({
-        ...prev,
-        [scopedRootKey(normalizedRootId)]: (payload.items || []).filter((item) => !!item.branch),
-      }));
-    } catch (error) {
-      knownTaskWorktreePathsRef.current.delete(normalizedWorktreePath);
-      setWorktreeErrorByRoot((prev) => ({
-        ...prev,
-        [scopedRootKey(normalizedRootId)]: error instanceof Error ? error.message : t("worktree.loadFailed"),
-      }));
-    } finally {
-      setWorktreeLoadingByRoot((prev) => ({ ...prev, [scopedRootKey(normalizedRootId)]: false }));
-    }
-    setWorktreeStatusLoadingByPath((prev) => ({ ...prev, [normalizedWorktreePath]: true }));
-    try {
-      const status = await fetchGitStatusByPath(normalizedWorktreePath, getNodeIdForRoot(normalizedRootId));
-      setWorktreeStatusByPath((prev) => ({ ...prev, [normalizedWorktreePath]: status }));
-    } catch {
-      setWorktreeStatusByPath((prev) => ({ ...prev, [normalizedWorktreePath]: null }));
-    } finally {
-      setWorktreeStatusLoadingByPath((prev) => ({ ...prev, [normalizedWorktreePath]: false }));
-    }
-  }
-
   const saveTaskInlineEdit = useCallback(async () => {
     const edit = taskInlineEdit;
     const rootId = currentRootIdRef.current;
@@ -2197,7 +880,7 @@ export function App({ onGoHome }: AppProps) {
             edit.worktreeBranchMode,
             edit.worktreeBranch,
             getNodeIdForRoot(rootId),
-            edit.name.trim() ? { name: edit.name.trim() } : undefined,
+            edit.name?.trim() ? { name: edit.name.trim() } : undefined,
           );
       applyTaskDetails(rootId, [detail]);
       if (detail.task.worktree_path) {
@@ -2276,26 +959,6 @@ export function App({ onGoHome }: AppProps) {
     return String(entry?.id || id);
   }, []);
   const currentRootDisplayName = getRootDisplayName(currentRootId);
-
-  const getNodeIdForRoot = useCallback((rootId: string): string | undefined => {
-    const rid = String(rootId || "").trim();
-    if (!rid) return undefined;
-    // 当前选中的项目优先按其选中节点路由，避免同名项目被多节点表覆盖到错误节点
-    if (rid === String(currentRootIdRef.current || "")) {
-      const nid = String(currentRootNodeIdRef.current || "").trim();
-      if (nid) return nid;
-    }
-    const entry = (managedRootByIdRef.current as Record<string, any>)[rid];
-    const nid = String(entry?._nodeId || "").trim();
-    return nid || undefined;
-  }, []);
-
-  // 按当前作用域解析复合键：当前根 → 选中节点；其他根 → 模块 map/裸回退
-  const scopedRootKey = useCallback(
-    (rootId: string): string =>
-      scopeKey(getNodeIdForRoot(String(rootId || "")) ?? "", String(rootId || "")),
-    [getNodeIdForRoot],
-  );
 
   const getDisplayNodeColor = useCallback((rootId: string): string | null => {
     const rid = String(rootId || "").trim();
@@ -2386,49 +1049,6 @@ export function App({ onGoHome }: AppProps) {
   useEffect(() => {
     rootEntriesRef.current = rootEntries;
   }, [rootEntries]);
-  const [creatingRootName, setCreatingRootName] = useState<string | null>(null);
-  const [creatingRootParentPath, setCreatingRootParentPath] = useState<string | null>(null);
-  const [creatingRootKind, setCreatingRootKind] = useState<"root" | "worktree">("root");
-  const [creatingRootBusy, setCreatingRootBusy] = useState(false);
-  const [worktreeBranches, setWorktreeBranches] = useState<GitBranchesPayload>({
-    branches: [],
-  });
-  const [worktreeBranchesLoading, setWorktreeBranchesLoading] = useState(false);
-  const [worktreeBranchError, setWorktreeBranchError] = useState("");
-  const [worktreeBranchMode, setWorktreeBranchMode] = useState<"new" | "existing">("new");
-  const [worktreeBranch, setWorktreeBranch] = useState("");
-  const [worktreeSwitchOpen, setWorktreeSwitchOpen] = useState(false);
-  const [worktreeSwitchItems, setWorktreeSwitchItems] = useState<GitWorktreeItem[]>([]);
-  const [worktreeSwitchLoading, setWorktreeSwitchLoading] = useState(false);
-  const [worktreeSwitchError, setWorktreeSwitchError] = useState("");
-  const [switchingWorktreePath, setSwitchingWorktreePath] = useState("");
-  const [projectAddMode, setProjectAddMode] = useState<ProjectAddMode | null>(
-    null,
-  );
-  const [projectAddNodeId, setProjectAddNodeId] = useState<string>(() => {
-    try { const n = getActiveNode(); return n?.id || LOCAL_NODE_ID; } catch { return LOCAL_NODE_ID; }
-  });
-  const [localDirState, setLocalDirState] = useState<LocalDirBrowserState>({
-    path: "",
-    parent: "",
-    volumes: [],
-    items: [],
-    loading: false,
-    selectedPath: "",
-    adding: false,
-    error: "",
-  });
-  const [githubImportState, setGitHubImportState] = useState<GitHubImportState>({
-    url: "",
-    parentPath: "",
-    taskId: "",
-    status: "",
-    message: "",
-    running: false,
-    submitting: false,
-    done: false,
-    error: "",
-  });
   const [agentConfigSwitchRequest, setAgentConfigSwitchRequest] =
     useState<AgentConfigSwitchRequest | null>(null);
   const [bootstrapState, setBootstrapState] = useState<BootstrapState>(() =>
@@ -2475,21 +1095,45 @@ export function App({ onGoHome }: AppProps) {
   const [selectedDirKey, setSelectedDirKey] = useState<string | null>(null);
   const [mainEntries, setMainEntries] = useState<FileEntry[]>([]);
   const [mainDirectoryError, setMainDirectoryError] = useState("");
-  const [gitStatus, setGitStatus] = useState<GitStatusPayload | null>(null);
-  const [gitStatusLoading, setGitStatusLoading] = useState(false);
-  const [gitHistory, setGitHistory] = useState<GitHistoryPayload | null>(null);
-  const [gitHistoryLoading, setGitHistoryLoading] = useState(false);
-  const [gitHistoryLoadingMore, setGitHistoryLoadingMore] = useState(false);
-  const [gitStatusByRoot, setGitStatusByRoot] = useState<Record<string, GitStatusPayload | null>>({});
-  const [gitStatusLoadingByRoot, setGitStatusLoadingByRoot] = useState<Record<string, boolean>>({});
-  const [gitHistoryByRoot, setGitHistoryByRoot] = useState<Record<string, GitHistoryPayload | null>>({});
-  const [gitHistoryLoadingByRoot, setGitHistoryLoadingByRoot] = useState<Record<string, boolean>>({});
-  const [gitStatusExpandedByRoot, setGitStatusExpandedByRoot] = useState<Record<string, boolean>>(() =>
-    loadBooleanRecord(GIT_STATUS_EXPANDED_STORAGE_KEY),
+  const mainEntriesRef = useRef<FileEntry[]>([]);
+  mainEntriesRef.current = mainEntries;
+  const mainDirectoryErrorRef = useRef("");
+  mainDirectoryErrorRef.current = mainDirectoryError;
+  const isGitRepo = useCallback(
+    (rootID: string) => managedRootByIdRef.current[rootID]?.is_git_repo === true,
+    [],
   );
-  const [gitHistoryExpandedByRoot, setGitHistoryExpandedByRoot] = useState<Record<string, Record<string, boolean>>>(() =>
-    loadStringBooleanRecord(GIT_HISTORY_EXPANDED_STORAGE_KEY),
-  );
+
+  const {
+    gitStatus,
+    setGitStatus,
+    gitStatusLoading,
+    setGitStatusLoading,
+    gitHistory,
+    setGitHistory,
+    gitHistoryLoading,
+    setGitHistoryLoading,
+    gitHistoryLoadingMore,
+    gitStatusByRoot,
+    setGitStatusByRoot,
+    gitStatusLoadingByRoot,
+    gitHistoryByRoot,
+    setGitHistoryByRoot,
+    gitHistoryLoadingByRoot,
+    gitStatusExpandedByRoot,
+    setGitStatusExpandedByRoot,
+    gitHistoryExpandedByRoot,
+    setGitHistoryExpandedByRoot,
+    refreshGitStatus,
+    refreshGitHistory,
+    loadMoreGitHistory,
+  } = useGitData({
+    currentRootId,
+    currentRootIdRef,
+    scopedRootKey,
+    getNodeIdForRoot,
+    isGitRepo,
+  });
   const [gitDiff, setGitDiff] = useState<GitDiffPayload | null>(null);
   const [relatedSelectedFileKey, setRelatedSelectedFileKey] = useState("");
   const [treeSortMode, setTreeSortMode] = useState<DirectorySortMode>(() => {
@@ -2553,67 +1197,31 @@ export function App({ onGoHome }: AppProps) {
     nonce: number;
   } | null>(null);
   const [projectTreeTab, setProjectTreeTab] = useState<ProjectTreeTab>("files");
-  const [worktreeItemsByRoot, setWorktreeItemsByRoot] = useState<Record<string, GitWorktreeItem[]>>({});
-  const [worktreeLoadingByRoot, setWorktreeLoadingByRoot] = useState<Record<string, boolean>>({});
-  const [worktreeErrorByRoot, setWorktreeErrorByRoot] = useState<Record<string, string>>({});
-  const [expandedWorktreeByRoot, setExpandedWorktreeByRoot] = useState<Record<string, string>>({});
-  const [worktreeStatusByPath, setWorktreeStatusByPath] = useState<Record<string, GitStatusPayload | null>>({});
-  const [worktreeStatusLoadingByPath, setWorktreeStatusLoadingByPath] = useState<Record<string, boolean>>({});
+  const {
+    worktreeItemsByRoot,
+    worktreeLoadingByRoot,
+    worktreeErrorByRoot,
+    expandedWorktreeByRoot,
+    worktreeStatusByPath,
+    worktreeStatusLoadingByPath,
+    loadProjectTreeWorktrees,
+    loadProjectTreeWorktreeStatus,
+    toggleProjectTreeWorktree,
+    expandProjectTreeWorktree,
+    refreshProjectTreeWorktrees,
+    refreshTaskWorktree,
+  } = useProjectTreeWorktrees({
+    currentRootId,
+    currentRootIdRef,
+    projectTreeTab,
+    scopedRootKey,
+    getNodeIdForRoot,
+    knownTaskWorktreePathsRef,
+  });
   const [updateState, setUpdateState] = useState<UpdateState>(() =>
     normalizeUpdateState(null),
   );
   const [updateSubmitting, setUpdateSubmitting] = useState(false);
-
-  const ensureCompletionAudioContext = useCallback((): AudioContext | null => {
-    if (typeof window === "undefined") {
-      return null;
-    }
-    const AudioContextCtor =
-      window.AudioContext ||
-      (
-        window as typeof window & {
-          webkitAudioContext?: typeof AudioContext;
-        }
-      ).webkitAudioContext;
-    if (!AudioContextCtor) {
-      return null;
-    }
-    if (!completionAudioContextRef.current) {
-      completionAudioContextRef.current = new AudioContextCtor();
-    }
-    return completionAudioContextRef.current;
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    const unlockAudio = () => {
-      const audioContext = ensureCompletionAudioContext();
-      if (!audioContext) {
-        return;
-      }
-      if (audioContext.state === "running") {
-        completionAudioUnlockedRef.current = true;
-        return;
-      }
-      void audioContext
-        .resume()
-        .then(() => {
-          completionAudioUnlockedRef.current = audioContext.state === "running";
-        })
-        .catch(() => {});
-    };
-    const options: AddEventListenerOptions = { passive: true };
-    window.addEventListener("pointerdown", unlockAudio, options);
-    window.addEventListener("keydown", unlockAudio, options);
-    window.addEventListener("touchstart", unlockAudio, options);
-    return () => {
-      window.removeEventListener("pointerdown", unlockAudio);
-      window.removeEventListener("keydown", unlockAudio);
-      window.removeEventListener("touchstart", unlockAudio);
-    };
-  }, [ensureCompletionAudioContext]);
 
   const handleStartUpdate = useCallback(async () => {
     const next = normalizeUpdateState(updateState);
@@ -2629,11 +1237,11 @@ export function App({ onGoHome }: AppProps) {
       const target = next.latest_version
         ? `v${next.latest_version}`
         : "the latest version";
-      if (
-        !window.confirm(
-          `Install ${target} now? MindFS will restart after the update finishes.`,
-        )
-      ) {
+      const confirmed = await confirmDialog({
+        message: t("update.confirmInstall", { target }),
+        confirmLabel: t("update.install"),
+      });
+      if (!confirmed) {
         return;
       }
     }
@@ -2657,36 +1265,6 @@ export function App({ onGoHome }: AppProps) {
     }
   }, [updateState]);
 
-  const playCompletionSound = useCallback(() => {
-    const audioContext = ensureCompletionAudioContext();
-    if (!audioContext) {
-      return;
-    }
-    try {
-      if (audioContext.state !== "running") {
-        return;
-      }
-      completionAudioUnlockedRef.current = true;
-      const now = audioContext.currentTime;
-      const oscillator = audioContext.createOscillator();
-      const gainNode = audioContext.createGain();
-      oscillator.type = "sine";
-      oscillator.frequency.setValueAtTime(880, now);
-      oscillator.frequency.exponentialRampToValueAtTime(1174, now + 0.09);
-      gainNode.gain.setValueAtTime(0.0001, now);
-      gainNode.gain.exponentialRampToValueAtTime(0.24, now + 0.012);
-      gainNode.gain.exponentialRampToValueAtTime(0.0001, now + 0.2);
-      oscillator.connect(gainNode);
-      gainNode.connect(audioContext.destination);
-      oscillator.start(now);
-      oscillator.stop(now + 0.2);
-    } catch (error) {
-      if (completionAudioUnlockedRef.current) {
-        console.error("Failed to play completion sound:", error);
-      }
-    }
-  }, [ensureCompletionAudioContext]);
-
   useEffect(() => {
     currentRootIdRef.current = currentRootId;
   }, [currentRootId]);
@@ -2708,28 +1286,6 @@ export function App({ onGoHome }: AppProps) {
       cancelled = true;
     };
   }, [agentsVersion, currentRootId, e2eeState.configured, e2eeState.required, e2eeState.unlocked]);
-  useEffect(() => {
-    if (!importMenuOpen) return;
-    const handlePointerDown = (event: MouseEvent) => {
-      if (!importMenuRef.current?.contains(event.target as Node)) {
-        setImportMenuOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handlePointerDown);
-    return () => document.removeEventListener("mousedown", handlePointerDown);
-  }, [importMenuOpen]);
-  useEffect(() => {
-    if (!projectAddMode) {
-      return;
-    }
-    const handlePointerDown = (event: MouseEvent) => {
-      if (!projectAddPopoverRef.current?.contains(event.target as Node)) {
-        setProjectAddMode(null);
-      }
-    };
-    document.addEventListener("mousedown", handlePointerDown);
-    return () => document.removeEventListener("mousedown", handlePointerDown);
-  }, [projectAddMode]);
   useEffect(() => {
     if (typeof window === "undefined") {
       return;
@@ -2784,32 +1340,8 @@ export function App({ onGoHome }: AppProps) {
     multiProjectPendingRef.current = multiProjectPendingByKey;
   }, [multiProjectPendingByKey]);
   useEffect(() => {
-    sessionListModeRef.current = sessionListMode;
-    if (sessionListMode !== "local") {
-      setSessionSearchOpen(false);
-      setSessionSearchResultsMode(false);
-      setSessionSearchQuery("");
-      setSessionSearchAppliedQuery("");
-      setSessionSearchResults([]);
-      setSessionSearchLoading(false);
-    }
-  }, [sessionListMode]);
-  useEffect(() => {
-    setSessionSearchQuery("");
-    setSessionSearchResultsMode(false);
-    setSessionSearchAppliedQuery("");
-    setSessionSearchResults([]);
-    setSessionSearchLoading(false);
-  }, [currentRootId]);
-  useEffect(() => {
     setPendingPlanMode(false);
   }, [currentRootId]);
-  useEffect(() => {
-    externalSessionsRef.current = externalSessions;
-  }, [externalSessions]);
-  useEffect(() => {
-    externalImportAgentRef.current = externalImportAgent;
-  }, [externalImportAgent]);
   useEffect(() => {
     currentSessionRef.current = currentSession;
   }, [currentSession]);
@@ -2822,18 +1354,6 @@ export function App({ onGoHome }: AppProps) {
     }
     window.localStorage.setItem(TREE_SORT_STORAGE_KEY, treeSortMode);
   }, [treeSortMode]);
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    window.localStorage.setItem(GIT_STATUS_EXPANDED_STORAGE_KEY, JSON.stringify(gitStatusExpandedByRoot));
-  }, [gitStatusExpandedByRoot]);
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    window.localStorage.setItem(GIT_HISTORY_EXPANDED_STORAGE_KEY, JSON.stringify(gitHistoryExpandedByRoot));
-  }, [gitHistoryExpandedByRoot]);
   useEffect(() => {
     if (typeof window === "undefined") {
       return;
@@ -4041,484 +2561,21 @@ export function App({ onGoHome }: AppProps) {
     [rootSessionKey, setBoundSessionForRoot, setDrawerSessionForRoot, bumpCacheVersion],
   );
 
-  const resolveRuntimeMetaForSession = useCallback(
-    (
-      rootID: string,
-      sessionKey: string,
-      fallback?: {
-        agent?: string;
-        model?: string;
-	        mode?: string;
-	        effort?: string;
-	        fast_service?: "" | "on" | "off";
-	      },
-    ) => {
-      const cacheKey = rootSessionKey(rootID, sessionKey);
-      const cachedSession = sessionCacheRef.current[cacheKey] as any;
-      const exchanges = Array.isArray(cachedSession?.exchanges)
-        ? ((cachedSession.exchanges || []) as Exchange[])
-        : [];
-      const latestMatchingExchange = [...exchanges]
-        .reverse()
-        .find(
-          (item) =>
-            item?.agent ||
-	            item?.model ||
-	            item?.mode ||
-	            item?.effort ||
-	            item?.fast_service,
-        );
-      const candidates = [
-        fallback,
-        latestMatchingExchange as any,
-        sessionCacheRef.current[cacheKey] as any,
-        currentSessionRef.current?.key === sessionKey
-          ? (currentSessionRef.current as any)
-          : null,
-        (selectedSessionRef.current?.key ||
-          selectedSessionRef.current?.session_key) === sessionKey
-          ? (selectedSessionRef.current as any)
-          : null,
-      ];
-
-      const pickText = (field: "agent" | "model" | "model_display_name" | "mode" | "effort") => {
-        for (const item of candidates) {
-          const value = `${item?.[field] || ""}`.trim();
-          if (value) return value;
-        }
-        return "";
-      };
-      const pickFastService = (): "" | "on" | "off" => {
-        for (const item of candidates) {
-          const value = normalizeFastService(item?.fast_service);
-          if (value) return value;
-        }
-        return "";
-      };
-	      return {
-	        agent: pickText("agent"),
-	        model: pickText("model"),
-	        model_display_name: pickText("model_display_name"),
-	        mode: pickText("mode"),
-	        effort: pickText("effort"),
-	        fast_service: pickFastService(),
-	      };
-    },
-    [rootSessionKey],
-  );
-
-  const appendAgentChunkForSession = useCallback(
-    (
-      rootID: string,
-      sessionKey: string,
-      content: string,
-      runtimeHint?: {
-        agent?: string;
-        model?: string;
-	        mode?: string;
-	        effort?: string;
-	        fast_service?: "" | "on" | "off";
-	      },
-    ) => {
-      if (!content) return;
-      const now = new Date().toISOString();
-      const cacheKey = rootSessionKey(rootID, sessionKey);
-      const runtimeMeta = resolveRuntimeMetaForSession(
-        rootID,
-        sessionKey,
-        runtimeHint,
-      );
-      const updateList = (prevList: Exchange[]) => {
-        const list = [...(prevList || [])];
-        const last = list.length > 0 ? list[list.length - 1] : null;
-        if (last && (last.role === "agent" || last.role === "assistant")) {
-          list[list.length - 1] = {
-            ...last,
-            agent: runtimeMeta.agent || last.agent,
-            model: runtimeMeta.model || last.model,
-            model_display_name:
-              runtimeMeta.model_display_name || last.model_display_name,
-	            mode: runtimeMeta.mode || last.mode,
-	            effort: runtimeMeta.effort || last.effort,
-	            fast_service: runtimeMeta.fast_service || last.fast_service,
-	            content: `${last.content || ""}${content}`,
-            timestamp: now,
-          };
-          return list;
-        }
-        list.push({
-          role: "agent",
-          agent: runtimeMeta.agent,
-          model: runtimeMeta.model,
-          model_display_name: runtimeMeta.model_display_name,
-	          mode: runtimeMeta.mode,
-	          effort: runtimeMeta.effort,
-	          fast_service: runtimeMeta.fast_service,
-	          content,
-          timestamp: now,
-        });
-        return list;
-      };
-      const cached = sessionCacheRef.current[cacheKey];
-      const base =
-        cached ||
-        ({
-          key: sessionKey,
-          type: "chat",
-          agent: runtimeMeta.agent,
-          model: runtimeMeta.model,
-	          mode: runtimeMeta.mode,
-	          effort: runtimeMeta.effort,
-	          fast_service: runtimeMeta.fast_service,
-	          name: "",
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          exchanges: [],
-        } as any);
-      const nextList = updateList(
-        ((base as any).exchanges || []) as Exchange[],
-      );
-      sessionCacheRef.current[cacheKey] = {
-        ...(base as any),
-        agent: runtimeMeta.agent || (base as any).agent,
-        model: runtimeMeta.model || (base as any).model,
-	        mode: runtimeMeta.mode || (base as any).mode,
-	        effort: runtimeMeta.effort || (base as any).effort,
-	        fast_service: runtimeMeta.fast_service || (base as any).fast_service,
-	        exchanges: nextList,
-        updated_at: new Date().toISOString(),
-      } as Session;
-      bumpCacheVersionDebounced();
-    },
-    [rootSessionKey, resolveRuntimeMetaForSession, bumpCacheVersionDebounced],
-  );
-
-  const appendThoughtChunkForSession = useCallback(
-    (rootID: string, sessionKey: string, content: string, thoughtID?: string) => {
-      if (!content) return;
-      const now = new Date().toISOString();
-      const cacheKey = rootSessionKey(rootID, sessionKey);
-      const updateList = (prevList: Exchange[]) => {
-        const list = [...(prevList || [])];
-        if (thoughtID) {
-          const existingIndex = list.findIndex(
-            (item) => item.role === "thought" && item.thought_id === thoughtID,
-          );
-          if (existingIndex >= 0) {
-            const existing = list[existingIndex];
-            const existingContent = existing.content || "";
-            let nextContent = existingContent;
-            if (content.includes(existingContent)) {
-              nextContent = content;
-            } else if (!existingContent.includes(content)) {
-              nextContent = `${existingContent}${content}`;
-            }
-            list[existingIndex] = {
-              ...existing,
-              content: nextContent,
-              timestamp: now,
-            };
-            return list;
-          }
-        }
-        const last = list.length > 0 ? list[list.length - 1] : null;
-        if (last && last.role === "thought" && (!thoughtID || !last.thought_id)) {
-          list[list.length - 1] = {
-            ...last,
-            content: `${last.content || ""}${content}`,
-            thought_id: thoughtID || last.thought_id,
-            timestamp: now,
-          };
-          return list;
-        }
-        list.push({ role: "thought", content, thought_id: thoughtID, timestamp: now });
-        return list;
-      };
-      const cached = sessionCacheRef.current[cacheKey];
-      const base =
-        cached ||
-        ({
-          key: sessionKey,
-          type: "chat",
-          agent: "",
-          name: "",
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          exchanges: [],
-        } as any);
-      const nextList = updateList(
-        ((base as any).exchanges || []) as Exchange[],
-      );
-      sessionCacheRef.current[cacheKey] = {
-        ...(base as any),
-        exchanges: nextList,
-        updated_at: new Date().toISOString(),
-      } as Session;
-      bumpCacheVersionDebounced();
-    },
-    [rootSessionKey, bumpCacheVersionDebounced],
-  );
-
-  const appendToolCallForSession = useCallback(
-    (rootID: string, sessionKey: string, toolCall: any, update: boolean) => {
-      if (!toolCall) return;
-      const now = new Date().toISOString();
-      const cacheKey = rootSessionKey(rootID, sessionKey);
-      const mergeToolCall = (existing: any, incoming: any) => {
-        const merged = { ...(existing || {}), ...incoming };
-        const incomingMeta = (incoming?.meta || {}) as Record<string, unknown>;
-        if (existing?.meta || incoming?.meta) {
-          merged.meta = { ...(existing?.meta || {}), ...incomingMeta };
-        }
-        const isUserShellStream =
-          incomingMeta.source === "userShell" && incomingMeta.phase === "stream";
-        if (isUserShellStream) {
-          // replaySnapshot 时后端已做全量覆盖，前端不再与旧 text 叠加。
-          if (incomingMeta.replaySnapshot === true) {
-            const incomingText = (incoming?.content || [])
-              .map((item: any) => item?.text || "")
-              .join("");
-            if (incomingText.length > 256 * 1024) {
-              merged.content = [{ type: "text", text: incomingText.slice(-256 * 1024) }];
-            } else {
-              merged.content = incomingText ? [{ type: "text", text: incomingText }] : [];
-            }
-            merged.meta = { ...(existing?.meta || {}), ...incomingMeta };
-          } else {
-            const existingText = (existing?.content || [])
-              .map((item: any) => item?.text || "")
-              .join("");
-            const incomingText = (incoming?.content || [])
-              .map((item: any) => item?.text || "")
-              .join("");
-            const totalText = existingText + incomingText;
-          if (totalText.length > 256 * 1024) {
-            merged.content = [{ type: "text", text: totalText.slice(-256 * 1024) }];
-          } else {
-            merged.content = totalText ? [{ type: "text", text: totalText }] : [];
-            }
-            merged.meta = { ...(existing?.meta || {}), ...incomingMeta };
-          }
-        }
-        if (!incoming.kind && existing?.kind) merged.kind = existing.kind;
-        if (!incoming.title && existing?.title) merged.title = existing.title;
-        const existingStatus = `${existing?.status || ""}`.toLowerCase();
-        const incomingStatus = `${incoming?.status || ""}`.toLowerCase();
-        if (
-          (existingStatus === "failed" ||
-            existingStatus === "error" ||
-            existingStatus === "complete" ||
-            existingStatus === "success") &&
-          (incomingStatus === "running" ||
-            incomingStatus === "pending" ||
-            incomingStatus === "in_progress")
-        ) {
-          merged.status = existing.status;
-        }
-        return merged;
-      };
-      const updateList = (prevList: Exchange[]) => {
-        const list = [...(prevList || [])];
-        const callId =
-          toolCall.callId || toolCall.toolCallId || toolCall.tool_call_id || "";
-        if (callId) {
-          for (let i = list.length - 1; i >= 0; i--) {
-            if (
-              list[i]?.role === "tool" &&
-              (list[i]?.toolCall?.callId === callId ||
-                list[i]?.toolCall?.toolCallId === callId ||
-                list[i]?.toolCall?.tool_call_id === callId)
-            ) {
-              list[i] = {
-                ...list[i],
-                timestamp: now,
-                toolCall: mergeToolCall(list[i].toolCall, toolCall),
-              };
-              return list;
-            }
-          }
-        }
-        list.push({ role: "tool", content: "", timestamp: now, toolCall });
-        return list;
-      };
-      const cached = sessionCacheRef.current[cacheKey];
-      const base =
-        cached ||
-        ({
-          key: sessionKey,
-          type: "chat",
-          agent: "",
-          name: "",
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          exchanges: [],
-        } as any);
-      const nextList = updateList(
-        ((base as any).exchanges || []) as Exchange[],
-      );
-      sessionCacheRef.current[cacheKey] = {
-        ...(base as any),
-        exchanges: nextList,
-        updated_at: new Date().toISOString(),
-      } as Session;
-      bumpCacheVersionDebounced();
-    },
-    [rootSessionKey, bumpCacheVersionDebounced],
-  );
-
-  const appendTodoUpdateForSession = useCallback(
-    (rootID: string, sessionKey: string, todoUpdate: any) => {
-      if (!todoUpdate) return;
-      const now = new Date().toISOString();
-      const cacheKey = rootSessionKey(rootID, sessionKey);
-      const updateList = (prevList: Exchange[]) => {
-        const list = [...(prevList || [])];
-        for (let i = list.length - 1; i >= 0; i -= 1) {
-          if (list[i]?.role !== "todo") continue;
-          list[i] = {
-            ...list[i],
-            timestamp: now,
-            todoUpdate,
-          };
-          return list;
-        }
-        list.push({ role: "todo", content: "", timestamp: now, todoUpdate });
-        return list;
-      };
-      const cached = sessionCacheRef.current[cacheKey];
-      const base =
-        cached ||
-        ({
-          key: sessionKey,
-          type: "chat",
-          agent: "",
-          name: "",
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          exchanges: [],
-        } as any);
-      const nextList = updateList(
-        ((base as any).exchanges || []) as Exchange[],
-      );
-      sessionCacheRef.current[cacheKey] = {
-        ...(base as any),
-        exchanges: nextList,
-        updated_at: new Date().toISOString(),
-      } as Session;
-      bumpCacheVersionDebounced();
-    },
-    [rootSessionKey, bumpCacheVersionDebounced],
-  );
-
-  const appendPlanUpdateForSession = useCallback(
-    (rootID: string, sessionKey: string, planUpdate: any) => {
-      if (!planUpdate) return;
-      const content = `${planUpdate.content || ""}`;
-      if (!content) return;
-      const now = new Date().toISOString();
-      const cacheKey = rootSessionKey(rootID, sessionKey);
-      const updateList = (prevList: Exchange[]) => {
-        const list = [...(prevList || [])];
-        const planId = `${planUpdate.id || ""}`;
-        if (planId) {
-          for (let i = list.length - 1; i >= 0; i -= 1) {
-            if (list[i]?.role !== "plan") continue;
-            if (`${list[i]?.planUpdate?.id || ""}` !== planId) continue;
-            const existingContent = `${list[i].planUpdate?.content || ""}`;
-            const nextContent = planUpdate.delta
-              ? `${existingContent}${content}`
-              : content;
-            list[i] = {
-              ...list[i],
-              timestamp: now,
-              planUpdate: { ...list[i].planUpdate, ...planUpdate, content: nextContent },
-            };
-            return list;
-          }
-        }
-        const last = list.length > 0 ? list[list.length - 1] : null;
-        if (last?.role === "plan" && !planId) {
-          const existingContent = `${last.planUpdate?.content || ""}`;
-          list[list.length - 1] = {
-            ...last,
-            timestamp: now,
-            planUpdate: {
-              ...last.planUpdate,
-              ...planUpdate,
-              content: planUpdate.delta ? `${existingContent}${content}` : content,
-            },
-          };
-          return list;
-        }
-        list.push({ role: "plan", content: "", timestamp: now, planUpdate });
-        return list;
-      };
-      const cached = sessionCacheRef.current[cacheKey];
-      const base =
-        cached ||
-        ({
-          key: sessionKey,
-          type: "chat",
-          agent: "",
-          name: "",
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          exchanges: [],
-        } as any);
-      sessionCacheRef.current[cacheKey] = {
-        ...(base as any),
-        exchanges: updateList(((base as any).exchanges || []) as Exchange[]),
-        updated_at: new Date().toISOString(),
-      } as Session;
-      bumpCacheVersionDebounced();
-    },
-    [rootSessionKey, bumpCacheVersionDebounced],
-  );
-
-  const appendCompactNoticeForSession = useCallback(
-    (rootID: string, sessionKey: string, compactNotice: any) => {
-      if (!compactNotice) return;
-      const now = new Date().toISOString();
-      const cacheKey = rootSessionKey(rootID, sessionKey);
-      const updateList = (prevList: Exchange[]) => {
-        const list = [...(prevList || [])];
-        const compactId = `${compactNotice.id || ""}`;
-        if (compactId) {
-          for (let i = list.length - 1; i >= 0; i -= 1) {
-            if (list[i]?.role !== "compact") continue;
-            if (`${list[i]?.compactNotice?.id || ""}` !== compactId) continue;
-            list[i] = {
-              ...list[i],
-              timestamp: now,
-              compactNotice: { ...list[i].compactNotice, ...compactNotice },
-            };
-            return list;
-          }
-        }
-        list.push({ role: "compact", content: "", timestamp: now, compactNotice });
-        return list;
-      };
-      const cached = sessionCacheRef.current[cacheKey];
-      const base =
-        cached ||
-        ({
-          key: sessionKey,
-          type: "chat",
-          agent: "",
-          name: "",
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          exchanges: [],
-        } as any);
-      sessionCacheRef.current[cacheKey] = {
-        ...(base as any),
-        exchanges: updateList(((base as any).exchanges || []) as Exchange[]),
-        updated_at: new Date().toISOString(),
-      } as Session;
-      bumpCacheVersionDebounced();
-    },
-    [rootSessionKey, bumpCacheVersionDebounced],
-  );
+  const {
+    resolveRuntimeMetaForSession,
+    appendAgentChunkForSession,
+    appendThoughtChunkForSession,
+    appendToolCallForSession,
+    appendTodoUpdateForSession,
+    appendPlanUpdateForSession,
+    appendCompactNoticeForSession,
+  } = useSessionStreamCache({
+    sessionCacheRef,
+    rootSessionKey,
+    bumpCacheVersionDebounced,
+    currentSessionRef,
+    selectedSessionRef,
+  });
 
   const attachContextWindowToLatestAssistant = useCallback(
     (
@@ -4759,198 +2816,6 @@ export function App({ onGoHome }: AppProps) {
     },
     [],
   );
-
-  const refreshGitStatus = useCallback(async (rootID: string) => {
-    if (!rootID) {
-      if (!currentRootIdRef.current) {
-        setGitStatus(null);
-        setGitStatusLoading(false);
-      }
-      return null;
-    }
-    const shouldApply = () => currentRootIdRef.current === rootID;
-    if (managedRootByIdRef.current[rootID]?.is_git_repo !== true) {
-      const fallback = {
-        available: false,
-        dirty_count: 0,
-        items: [],
-      } as GitStatusPayload;
-      setGitStatusByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: fallback }));
-      setGitStatusLoadingByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: false }));
-      if (shouldApply()) {
-        setGitStatus(fallback);
-        setGitStatusLoading(false);
-      }
-      return fallback;
-    }
-    setGitStatusLoadingByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: true }));
-    if (shouldApply()) {
-      setGitStatusLoading(true);
-    }
-    try {
-      const next = await fetchGitStatus(rootID, getNodeIdForRoot(rootID));
-      setGitStatusByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: next }));
-      if (shouldApply()) {
-        setGitStatus(next);
-      }
-      return next;
-    } catch (err) {
-      console.error("[git.status] failed", { rootID, err });
-      const fallback = {
-        available: false,
-        dirty_count: 0,
-        items: [],
-      } as GitStatusPayload;
-      setGitStatusByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: fallback }));
-      if (shouldApply()) {
-        setGitStatus(fallback);
-      }
-      return fallback;
-    } finally {
-      setGitStatusLoadingByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: false }));
-      if (shouldApply()) {
-        setGitStatusLoading(false);
-      }
-    }
-  }, []);
-
-  const refreshGitHistory = useCallback(async (
-    rootID: string,
-    options?: { force?: boolean; waitForIncremental?: boolean },
-  ) => {
-    if (!rootID) {
-      setGitHistory(null);
-      setGitHistoryLoading(false);
-      return null;
-    }
-    if (!options?.force) {
-      const cachedHead = getCachedGitHistoryHead(rootID, 10, getNodeIdForRoot(rootID));
-      if (cachedHead && cachedHead.items.length > 0) {
-        setGitHistoryByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: cachedHead }));
-        if (currentRootIdRef.current === rootID) {
-          setGitHistory(cachedHead);
-        }
-        const newest = cachedHead.items[0]?.hash || "";
-        if (newest) {
-          const refreshAfterNewest = async () => {
-            try {
-              const next = await fetchGitHistory(rootID, { afterCommit: newest, nodeId: getNodeIdForRoot(rootID) });
-              if (next.commit_missing || (next.items || []).length > 0) {
-                clearGitHistoryCache(rootID, getNodeIdForRoot(rootID));
-                const fresh = await fetchGitHistory(rootID, { force: true, nodeId: getNodeIdForRoot(rootID) });
-                setGitHistoryByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: fresh }));
-                if (currentRootIdRef.current === rootID) {
-                  setGitHistory(fresh);
-                }
-                return fresh;
-              }
-              const fresh = getCachedGitHistoryHead(rootID, 10, getNodeIdForRoot(rootID)) || next;
-              setGitHistoryByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: fresh }));
-              if (currentRootIdRef.current === rootID) {
-                setGitHistory(fresh);
-              }
-              return fresh;
-            } catch (err) {
-              console.error("[git.history.after] failed", { rootID, afterCommit: newest, err });
-              return cachedHead;
-            }
-          };
-          if (options?.waitForIncremental) {
-            return refreshAfterNewest();
-          }
-          void refreshAfterNewest();
-        }
-        return cachedHead;
-      }
-    }
-    setGitHistoryLoadingByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: true }));
-    if (currentRootIdRef.current === rootID) {
-      setGitHistoryLoading(true);
-    }
-    try {
-      const next = await fetchGitHistory(rootID, { force: options?.force, nodeId: getNodeIdForRoot(rootID) });
-      if (next.commit_missing) {
-        clearGitHistoryCache(rootID, getNodeIdForRoot(rootID));
-        const fresh = await fetchGitHistory(rootID, { force: true, nodeId: getNodeIdForRoot(rootID) });
-        setGitHistoryByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: fresh }));
-        if (currentRootIdRef.current === rootID) {
-          setGitHistory(fresh);
-        }
-        return fresh;
-      }
-      setGitHistoryByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: next }));
-      if (currentRootIdRef.current === rootID) {
-        setGitHistory(next);
-      }
-      return next;
-    } catch (err) {
-      console.error("[git.history] failed", { rootID, err });
-      const fallback = { available: false, items: [], has_more: false } as GitHistoryPayload;
-      setGitHistoryByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: fallback }));
-      if (currentRootIdRef.current === rootID) {
-        setGitHistory(fallback);
-      }
-      return fallback;
-    } finally {
-      setGitHistoryLoadingByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: false }));
-      if (currentRootIdRef.current === rootID) {
-        setGitHistoryLoading(false);
-      }
-    }
-  }, []);
-
-  const loadMoreGitHistory = useCallback(async (targetRootID?: string) => {
-    const rootID = targetRootID || currentRootIdRef.current;
-    if (!rootID || gitHistoryLoadingMore) {
-      return;
-    }
-    const currentItems =
-      (targetRootID ? gitHistoryByRoot[scopedRootKey(rootID)]?.items : gitHistory?.items) || [];
-    const beforeCommit = currentItems[currentItems.length - 1]?.hash || "";
-    if (!beforeCommit) {
-      return;
-    }
-    setGitHistoryLoadingMore(true);
-    try {
-      const next = await fetchGitHistory(rootID, { beforeCommit, nodeId: getNodeIdForRoot(rootID) });
-      if (next.commit_missing) {
-        clearGitHistoryCache(rootID, getNodeIdForRoot(rootID));
-        const fresh = await fetchGitHistory(rootID, { force: true, nodeId: getNodeIdForRoot(rootID) });
-        setGitHistoryByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: fresh }));
-        if (currentRootIdRef.current === rootID) {
-          setGitHistory(fresh);
-        }
-        return;
-      }
-      const cached = getCachedGitHistory(rootID, getNodeIdForRoot(rootID));
-      const loadedCount = currentItems.length + next.items.length;
-      if (currentRootIdRef.current === rootID) {
-        if (cached) {
-          setGitHistory({
-            ...cached,
-            items: cached.items.slice(0, loadedCount),
-            has_more: cached.items.length > loadedCount || cached.has_more,
-          });
-        } else {
-          setGitHistory(next);
-        }
-      }
-      setGitHistoryByRoot((prev) => ({
-        ...prev,
-        [scopedRootKey(rootID)]: cached
-          ? {
-              ...cached,
-              items: cached.items.slice(0, loadedCount),
-              has_more: cached.items.length > loadedCount || cached.has_more,
-            }
-          : next,
-      }));
-    } catch (err) {
-      console.error("[git.history.more] failed", { rootID, beforeCommit, err });
-    } finally {
-      setGitHistoryLoadingMore(false);
-    }
-  }, [gitHistory, gitHistoryByRoot, gitHistoryLoadingMore]);
 
   const loadSessionsForRoot = useCallback(
     async (
@@ -5355,284 +3220,57 @@ export function App({ onGoHome }: AppProps) {
     void loadMultiProjectSessionGroups();
   }, [loadMultiProjectSessionGroups, multiProjectSessionsEnabled, refreshMultiProjectReplyingSessions]);
 
-  const executeSessionSearch = useCallback(() => {
-    const trimmed = sessionSearchQuery.trim();
-    if (trimmed.length < 2) {
-      return;
-    }
-    setSessionSearchResultsMode(true);
-    setSessionSearchAppliedQuery(trimmed);
-  }, [sessionSearchQuery]);
+  const {
+    sessionSearchOpen,
+    sessionSearchResultsMode,
+    sessionSearchQuery,
+    sessionSearchResults,
+    sessionSearchLoading,
+    executeSessionSearch,
+    openSessionSearch,
+    closeSessionSearch,
+    toggleSessionSearch,
+    handleSearchQueryChange,
+  } = useSessionSearch({
+    currentRootId,
+    sessionListMode,
+    multiProjectSessionsEnabled,
+    getNodeIdForRoot,
+  });
 
-  useEffect(() => {
-    if (
-      sessionListMode !== "local" ||
-      !sessionSearchOpen ||
-      !currentRootId ||
-      !sessionSearchAppliedQuery
-    ) {
-      setSessionSearchLoading(false);
-      return;
-    }
+  const {
+    openGitDiff,
+    openGitCommitDiff,
+    switchGitBranch,
+    handleGitPull,
+    handleGitPush,
+    handleGitCommit,
+    handleGitStageItem,
+    handleGitUnstageItem,
+    handleGitDiscardItem,
+  } = useGitActions({
+    currentRootIdRef,
+    getNodeIdForRoot,
+    scopedRootKey,
+    selectedDirRef,
+    fileOpenRequestRef,
+    refreshGitHistory,
+    refreshTreeDir,
+    resetLocksForRootTransition,
+    switchMainView,
+    replaceURLState,
+    isMobile,
+    setGitStatus,
+    setGitStatusByRoot,
+    setGitDiff,
+    setFile,
+    setCurrentRootId,
+    setIsLeftOpen,
+    setRelatedSelectedFileKey,
+    setSelectedSession,
+    setSelectedSessionLoading,
+  });
 
-    let cancelled = false;
-    const searchAcrossRoots = multiProjectSessionsEnabled;
-    setSessionSearchLoading(true);
-    void sessionService
-      .searchSessions(currentRootId, sessionSearchAppliedQuery, 20, {
-        multiRoot: searchAcrossRoots,
-        nodeId: searchAcrossRoots ? undefined : getNodeIdForRoot(currentRootId),
-      })
-      .then((hits) => {
-        if (cancelled) return;
-        const mapped = hits
-          .map((hit) => {
-            const hitRootId = String(hit.root_id || currentRootId || "");
-            const item = toSessionItem(hitRootId, {
-              ...hit,
-              root_id: hitRootId,
-              search_seq: hit.seq,
-              search_snippet: hit.snippet,
-              search_match_type: hit.match_type,
-            });
-            return item;
-          })
-          .filter((item): item is SessionItem => !!item);
-        setSessionSearchResults(mapped);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        console.error("[session.search] failed", {
-          rootId: currentRootId,
-          query: sessionSearchAppliedQuery,
-          err,
-        });
-        setSessionSearchResults([]);
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setSessionSearchLoading(false);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [currentRootId, multiProjectSessionsEnabled, sessionListMode, sessionSearchAppliedQuery, sessionSearchOpen]);
-
-  const openGitDiff = useCallback(
-    async (rootID: string, item: GitStatusItem, options?: { preserveRelatedSelection?: boolean; repoPath?: string }) => {
-      if (!rootID || !item?.path) {
-        return;
-      }
-      fileOpenRequestRef.current += 1;
-      if (!options?.preserveRelatedSelection) {
-        setRelatedSelectedFileKey("");
-      }
-      switchMainView("files");
-      setSelectedSession(null);
-      setSelectedSessionLoading(false);
-      setFile(null);
-      setGitDiff(null);
-      replaceURLState({
-        root: rootID,
-        file: "",
-        session: "",
-        cursor: 0,
-        pluginQuery: {},
-      });
-      try {
-        const next = await fetchGitDiff(rootID, item.path, { nodeId: getNodeIdForRoot(rootID) as string | undefined,
-          cacheSignature: buildGitDiffCacheSignature(item),
-          repoPath: options?.repoPath,
-        });
-        setGitDiff(next);
-        resetLocksForRootTransition(rootID);
-        if (currentRootIdRef.current !== rootID) {
-          setCurrentRootId(rootID);
-        }
-        if (isMobile) {
-          setIsLeftOpen(false);
-        }
-      } catch (err) {
-        console.error("[git.diff] failed", { rootID, path: item.path, err });
-      }
-    },
-    [isMobile, replaceURLState, resetLocksForRootTransition, switchMainView],
-  );
-
-  const openGitCommitDiff = useCallback(
-    async (rootID: string, commit: GitHistoryItem, item: GitStatusItem) => {
-      if (!rootID || !commit?.hash || !item?.path) {
-        return;
-      }
-      fileOpenRequestRef.current += 1;
-      setRelatedSelectedFileKey("");
-      switchMainView("files");
-      setSelectedSession(null);
-      setSelectedSessionLoading(false);
-      setFile(null);
-      setGitDiff(null);
-      replaceURLState({
-        root: rootID,
-        file: "",
-        session: "",
-        cursor: 0,
-        pluginQuery: {},
-      });
-      try {
-        const next = await fetchGitCommitDiff(rootID, commit.hash, item, getNodeIdForRoot(rootID));
-        setGitDiff(next);
-        resetLocksForRootTransition(rootID);
-        if (currentRootIdRef.current !== rootID) {
-          setCurrentRootId(rootID);
-        }
-        if (isMobile) {
-          setIsLeftOpen(false);
-        }
-      } catch (err) {
-        console.error("[git.commit.diff] failed", {
-          rootID,
-          commit: commit.hash,
-          path: item.path,
-          err,
-        });
-      }
-    },
-    [isMobile, replaceURLState, resetLocksForRootTransition, switchMainView],
-  );
-
-  const switchGitBranch = useCallback(
-    async (rootID: string, branch: string) => {
-      if (!rootID || !branch) {
-        return;
-      }
-      try {
-        const nextStatus = await checkoutGitBranch(rootID, branch);
-        clearGitHistoryCache(rootID, getNodeIdForRoot(rootID));
-        setGitStatusByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: nextStatus }));
-        await refreshGitHistory(rootID, { force: true });
-        if (currentRootIdRef.current === rootID) {
-          setGitStatus(nextStatus);
-          setGitDiff(null);
-          setFile(null);
-          await refreshTreeDir(rootID, selectedDirRef.current || ".", true);
-        }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : t("git.checkoutFailed");
-        console.error("[git.checkout] failed", {
-          rootID,
-          branch,
-          message,
-          payload: err instanceof ProtectedAPIError ? err.payload : undefined,
-          err,
-        });
-        reportError("git.checkout_failed", message, {
-          severity: "error",
-          recoverable: true,
-          details: {
-            root: rootID,
-            branch,
-            payload: err instanceof ProtectedAPIError ? err.payload : undefined,
-          },
-        });
-        throw err;
-      }
-    },
-    [refreshGitHistory, refreshTreeDir, t],
-  );
-
-  const applyGitActionResult = useCallback(
-    async (rootID: string, nextStatus: GitStatusPayload, options?: { refreshHistory?: boolean; clearDiff?: boolean }) => {
-      clearGitHistoryCache(rootID, getNodeIdForRoot(rootID));
-      setGitStatusByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: nextStatus }));
-      if (options?.refreshHistory !== false) {
-        await refreshGitHistory(rootID, { force: true });
-      }
-      if (currentRootIdRef.current !== rootID) {
-        return;
-      }
-      setGitStatus(nextStatus);
-      if (options?.clearDiff) {
-        setGitDiff(null);
-      }
-      await refreshTreeDir(rootID, selectedDirRef.current || ".", true);
-    },
-    [refreshGitHistory, refreshTreeDir],
-  );
-
-  const runGitAction = useCallback(
-    async (
-      rootID: string,
-      action: string,
-      run: () => Promise<{ status: GitStatusPayload; output?: string }>,
-      options?: { refreshHistory?: boolean; clearDiff?: boolean },
-    ) => {
-      if (!rootID) {
-        return;
-      }
-      try {
-        const result = await run();
-        await applyGitActionResult(rootID, result.status, options);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : t("common.actionFailed", { action });
-        console.error(`[git.${action}] failed`, {
-          rootID,
-          message,
-          payload: err instanceof ProtectedAPIError ? err.payload : undefined,
-          err,
-        });
-        window.alert(message);
-        throw err;
-      }
-    },
-    [applyGitActionResult, t],
-  );
-
-  const handleGitPull = useCallback(
-    (rootID: string) =>
-      runGitAction(rootID, "pull", () => pullGit(rootID), { clearDiff: true }),
-    [runGitAction],
-  );
-
-  const handleGitPush = useCallback(
-    (rootID: string) =>
-      runGitAction(rootID, "push", () => pushGit(rootID)),
-    [runGitAction],
-  );
-
-  const handleGitCommit = useCallback(
-    (rootID: string, message: string) =>
-      runGitAction(rootID, "commit", () => commitGit(rootID, message), { clearDiff: true }),
-    [runGitAction],
-  );
-
-  const handleGitStageItem = useCallback(
-    (rootID: string, item: GitStatusItem) =>
-      runGitAction(rootID, "stage", () => stageGitItem(rootID, item), {
-        refreshHistory: false,
-        clearDiff: true,
-      }),
-    [runGitAction],
-  );
-
-  const handleGitUnstageItem = useCallback(
-    (rootID: string, item: GitStatusItem) =>
-      runGitAction(rootID, "unstage", () => unstageGitItem(rootID, item), {
-        refreshHistory: false,
-        clearDiff: true,
-      }),
-    [runGitAction],
-  );
-
-  const handleGitDiscardItem = useCallback(
-    (rootID: string, item: GitStatusItem) =>
-      runGitAction(rootID, "discard", () => discardGitItem(rootID, item), {
-        refreshHistory: false,
-        clearDiff: true,
-      }),
-    [runGitAction],
-  );
 
   const handleTreeUpload = useCallback(
     async (files: File[]) => {
@@ -6384,229 +4022,53 @@ export function App({ onGoHome }: AppProps) {
     handleSelectSessionRef.current = handleSelectSession;
   }, [handleSelectSession]);
 
-  const loadExternalSessions = useCallback(
-    async (
-      rootID: string,
-      agent: string,
-      options?: { beforeTime?: string; afterTime?: string; replace?: boolean },
-    ) => {
-      if (!rootID || !agent) {
-        setExternalSessions([]);
-        setHasMoreExternalSessions(false);
-        setExternalSessionsError("");
-        return;
-      }
-      try {
-        if (!options?.beforeTime) {
-          setLoadingExternalSessions(true);
-        }
-        const next = (await sessionService.fetchExternalSessions(
-          rootID,
-          agent,
-          {
-            beforeTime: options?.beforeTime,
-            afterTime: options?.afterTime,
-            filterBound: externalFilterBound,
-            limit: 50,
-            nodeId: getNodeIdForRoot(rootID),
-          },
-        )) as SessionItem[];
-        setExternalSessionsError("");
-        setHasMoreExternalSessions(next.length >= 50);
-        if (options?.replace || (!options?.beforeTime && !options?.afterTime)) {
-          setExternalSessions(next);
-          return;
-        }
-        setExternalSessions((prev) => mergeSessionItems(prev, next));
-      } catch (err) {
-        const message =
-          err instanceof Error ? err.message : String(err || t("session.importLoadFailed"));
-        setExternalSessionsError(message || t("session.importLoadFailed"));
-        if (options?.replace || (!options?.beforeTime && !options?.afterTime)) {
-          setExternalSessions([]);
-          setHasMoreExternalSessions(false);
-        }
-        console.error("[Session] Failed to fetch external sessions:", err);
-      } finally {
-        setLoadingExternalSessions(false);
-      }
-    },
-    [externalFilterBound, mergeSessionItems],
-  );
+  const refreshSessionsAfterExternalImport = useCallback(async (rootID: string) => {
+    const payload = await sessionService.fetchSessions(rootID, { nodeId: getNodeIdForRoot(rootID) });
+    const next = [...payload.items, ...payload.pinnedItems]
+      .map((item) => toSessionItem(rootID, item))
+      .filter((item): item is SessionItem => !!item);
+    setHasMoreSessions(payload.totalCount > payload.items.length);
+    setSessions(applyPinnedSnapshotToSessions(mergeSessionItems([], next), rootID, payload.pinnedKeys));
+  }, [getNodeIdForRoot]);
 
-  const exitImportMode = useCallback(() => {
-    setSessionListMode("local");
-    setExternalSelectedKey("");
-    setExternalSessionsError("");
-    setSelectedExternalImportKeys(new Set());
-    setImportingExternalSessionKeys(new Set());
-    setImportMenuOpen(false);
-  }, []);
-
-  const enterImportMode = useCallback(
-    async (agentName: string) => {
-      const rootID = currentRootIdRef.current || "";
-      const trimmedAgent = String(agentName || "").trim();
-      if (!rootID || !trimmedAgent) {
-        return;
-      }
-      setExternalImportAgent(trimmedAgent);
-      setExternalSelectedKey("");
-      setExternalSessionsError("");
-      setSelectedExternalImportKeys(new Set());
-      setImportingExternalSessionKeys(new Set());
-      setSessionListMode("import");
-      await loadExternalSessions(rootID, trimmedAgent, { replace: true });
-    },
-    [loadExternalSessions],
-  );
-
-  const handleLoadOlderExternalSessions = useCallback(async () => {
-    const rootID = currentRootIdRef.current || "";
-    const oldest =
-      externalSessionsRef.current[externalSessionsRef.current.length - 1]
-        ?.updated_at || "";
-    if (
-      !rootID ||
-      !externalImportAgent ||
-      !oldest ||
-      loadingOlderExternalSessions
-    ) {
-      return;
-    }
-    setLoadingOlderExternalSessions(true);
-    try {
-      await loadExternalSessions(rootID, externalImportAgent, {
-        beforeTime: oldest,
-      });
-    } finally {
-      setLoadingOlderExternalSessions(false);
-    }
-  }, [externalImportAgent, loadExternalSessions, loadingOlderExternalSessions]);
-
-  const toggleExternalImportSelection = useCallback((session: SessionItem) => {
-    const sessionKey = String(
-      session.agent_session_id || session.key || "",
-    ).trim();
-    if (!sessionKey) {
-      return;
-    }
-    setSelectedExternalImportKeys((current) => {
-      const next = new Set(current);
-      if (next.has(sessionKey)) {
-        next.delete(sessionKey);
-      } else {
-        next.add(sessionKey);
-      }
-      return next;
-    });
-  }, []);
-
-  const toggleAllExternalImportSelection = useCallback((checked: boolean) => {
-    const visibleKeys = externalSessionsRef.current
-      .map((session) =>
-        String(session.agent_session_id || session.key || "").trim(),
-      )
-      .filter(Boolean);
-    setSelectedExternalImportKeys((current) => {
-      const next = new Set(current);
-      visibleKeys.forEach((key) => {
-        if (checked) {
-          next.add(key);
-        } else {
-          next.delete(key);
-        }
-      });
-      return next;
-    });
-  }, []);
-
-  const handleConfirmExternalImport = useCallback(async () => {
-    const rootID = currentRootIdRef.current || "";
-    const sessionKeys = [...selectedExternalImportKeys].filter(Boolean);
-    if (
-      !rootID ||
-      !externalImportAgent ||
-      !sessionKeys.length ||
-      confirmingExternalImport
-    ) {
-      return;
-    }
-    setConfirmingExternalImport(true);
-    setImportingExternalSessionKeys(new Set(sessionKeys));
-    try {
-      const imported = await sessionService.importExternalSessionsBatch(
-        rootID,
-        externalImportAgent,
-        sessionKeys,
-      );
-      const results = imported?.items || [];
-      const successItems = results.filter((item) => item.success && item.session_key);
-      if (!imported || !successItems.length) {
-        const firstError = results.find((item) => !item.success)?.error;
-        reportError(
-          "session.import_failed",
-          firstError ? t("session.importFailedWithReason", { reason: firstError }) : t("session.importFailed"),
-        );
-        return;
-      }
-      setConfirmingExternalImport(false);
-      setImportingExternalSessionKeys(new Set());
-      const failedKeys = new Set(
-        results
-          .filter((item) => !item.success)
-          .map((item) => String(item.agent_session_id || "").trim())
-          .filter(Boolean),
-      );
-      if (failedKeys.size > 0) {
-        const firstError = results.find((item) => !item.success)?.error;
-        const message = firstError
-          ? t("session.importPartialFailedWithReason", { count: failedKeys.size, reason: firstError })
-          : t("session.importPartialFailed", { count: failedKeys.size });
-        reportError(
-          "session.import_failed",
-          message,
-        );
-      }
-      setSelectedExternalImportKeys(failedKeys);
-      if (failedKeys.size === 0) {
-        exitImportMode();
-      }
-      const payload = await sessionService.fetchSessions(rootID, { nodeId: getNodeIdForRoot(rootID) });
-      const next = [...payload.items, ...payload.pinnedItems]
-        .map((item) => toSessionItem(rootID, item))
-        .filter((item): item is SessionItem => !!item);
-      setHasMoreSessions(payload.totalCount > payload.items.length);
-      setSessions(applyPinnedSnapshotToSessions(mergeSessionItems([], next), rootID, payload.pinnedKeys));
-      const firstImported = successItems[0];
-      if (firstImported?.session_key) {
-        const source = externalSessionsRef.current.find((item) =>
-          String(item.agent_session_id || item.key || "").trim() ===
-          String(firstImported.agent_session_id || "").trim(),
-        );
-        await handleSelectSession({
-          key: firstImported.session_key,
-          root_id: rootID,
-          type: "chat",
-          agent: externalImportAgent,
-          name: source?.name,
-        } as SessionItem);
-      }
-      if (isMobile && failedKeys.size === 0) {
-        setIsRightOpen(false);
-      }
-    } finally {
-      setConfirmingExternalImport(false);
-      setImportingExternalSessionKeys(new Set());
-    }
-  }, [
-    confirmingExternalImport,
-    exitImportMode,
+  const {
+    externalSessions,
+    setExternalSessions,
+    externalSessionsRef,
+    hasMoreExternalSessions,
+    loadingOlderExternalSessions,
+    loadingExternalSessions,
+    externalSessionsError,
+    externalSelectedKey,
+    setExternalSelectedKey,
     externalImportAgent,
-    handleSelectSession,
-    isMobile,
+    setExternalImportAgent,
+    externalFilterBound,
+    setExternalFilterBound,
     selectedExternalImportKeys,
-  ]);
+    importingExternalSessionKeys,
+    confirmingExternalImport,
+    importMenuOpen,
+    setImportMenuOpen,
+    importMenuRef,
+    loadExternalSessions,
+    enterImportMode,
+    exitImportMode,
+    handleLoadOlderExternalSessions,
+    toggleExternalImportSelection,
+    toggleAllExternalImportSelection,
+    handleConfirmExternalImport,
+    handleImportedSessionConfirmed,
+  } = useExternalSessionImport({
+    currentRootIdRef,
+    getNodeIdForRoot,
+    sessionListMode,
+    setSessionListMode,
+    isMobile,
+    onSelectSession: handleSelectSession,
+    onImported: refreshSessionsAfterExternalImport,
+    closeRightSidebar: () => setIsRightOpen(false),
+  });
 
   const handleSendMessage = useCallback(
     async (
@@ -7892,7 +5354,17 @@ export function App({ onGoHome }: AppProps) {
             });
             if (restored) {
               void loadSessionsForRoot(path, { replace: true, force: true });
-              await refreshTreeDir(path, ".", false);
+              if (mainViewRef.current === "files" && !mainEntriesRef.current.length && !mainDirectoryErrorRef.current) {
+                // 文件态没有内容可显示：补上项目顶层目录，行为与手动切面板一致
+                await actionHandlersRef.current.open_dir({
+                  path,
+                  root: path,
+                  isRoot: true,
+                  forceDirectory: true,
+                });
+              } else {
+                await refreshTreeDir(path, ".", false);
+              }
               restoreSuppressedRootExpansion();
               return;
             }
@@ -7921,6 +5393,55 @@ export function App({ onGoHome }: AppProps) {
   useEffect(() => {
     actionHandlersRef.current = actionHandlers;
   }, [actionHandlers]);
+
+  // 会话恢复入口（open_dir 开根 / 首屏 boot / popstate）共用：
+  // 会话在场就直接返回，目录一次都不加载——带着 view=files 进来时主区就是空的。
+  const showBoundSessionOrRootDir = useCallback(
+    async (
+      rootID: string,
+      options?: {
+        pluginQuery?: Record<string, string>;
+        closeLeftSidebar?: boolean;
+        loadSessionsOnRestore?: boolean;
+        suppressTreeExpand?: boolean;
+      },
+    ) => {
+      const restored = await tryShowBoundSessionForRoot(rootID, {
+        pluginQuery: options?.pluginQuery,
+        closeLeftSidebar: options?.closeLeftSidebar,
+      });
+      if (!restored) {
+        await actionHandlersRef.current.open_dir({
+          path: rootID,
+          root: rootID,
+          isRoot: true,
+          forceDirectory: true,
+          suppressTreeExpand: options?.suppressTreeExpand,
+        });
+        return;
+      }
+      if (options?.loadSessionsOnRestore) {
+        void loadSessionsForRoot(rootID, { replace: true, force: true });
+      }
+      // 文件态没有内容可显示：把当前项目顶层目录补上，行为与手动切面板一致
+      if (
+        mainViewRef.current === "files" &&
+        !mainEntriesRef.current.length &&
+        !mainDirectoryErrorRef.current
+      ) {
+        await actionHandlersRef.current.open_dir({
+          path: rootID,
+          root: rootID,
+          isRoot: true,
+          forceDirectory: true,
+          suppressTreeExpand: true,
+        });
+        return;
+      }
+      await refreshTreeDir(rootID, ".", false);
+    },
+    [loadSessionsForRoot, refreshTreeDir, tryShowBoundSessionForRoot],
+  );
 
   const openRelatedFileDiff = useCallback(
     async (rootID: string, file: RelatedFileClickTarget) => {
@@ -8396,445 +5917,40 @@ export function App({ onGoHome }: AppProps) {
     return null;
   }, [normalizeComparableRootPath]);
 
-  const handleCreateRootStart = useCallback((parentPath?: string | null) => {
-    if (creatingRootBusy) {
-      return;
-    }
-    const existing = new Set(managedRootIdsRef.current);
-    let nextName = "new-root";
-    let suffix = 2;
-    while (existing.has(nextName)) {
-      nextName = `new-root-${suffix}`;
-      suffix += 1;
-    }
-    setCreatingRootParentPath(
-      parentPath && String(parentPath).trim() ? String(parentPath).trim() : null,
-    );
-    setCreatingRootKind("root");
-    setCreatingRootName(nextName);
-  }, [creatingRootBusy]);
+  const openManagedDir = useCallback(
+    (payload: { path: string; root: string; isRoot: boolean; forceDirectory?: boolean }) =>
+      actionHandlersRef.current.open_dir(payload),
+    [],
+  );
 
-  const loadWorktreeBranches = useCallback(async (rootID: string) => {
-    setWorktreeBranchesLoading(true);
-    setWorktreeBranchError("");
-    try {
-      const payload = await fetchGitBranches(rootID, getNodeIdForRoot(rootID));
-      setWorktreeBranches(payload);
-    } catch (error) {
-      setWorktreeBranches({ branches: [] });
-      setWorktreeBranchError(error instanceof Error ? error.message : t("worktree.loadBranchFailed"));
-    } finally {
-      setWorktreeBranchesLoading(false);
-    }
-  }, [t]);
-
-  const loadWorktreeList = useCallback(async (rootID: string) => {
-    setWorktreeSwitchLoading(true);
-    setWorktreeSwitchError("");
-    try {
-      const payload = await fetchGitWorktrees(rootID, getNodeIdForRoot(rootID));
-      setWorktreeSwitchItems(payload.items || []);
-    } catch (error) {
-      setWorktreeSwitchItems([]);
-      setWorktreeSwitchError(error instanceof Error ? error.message : t("worktree.loadFailed"));
-    } finally {
-      setWorktreeSwitchLoading(false);
-    }
-  }, [t]);
-
-  const loadProjectTreeWorktrees = useCallback(async (rootID: string): Promise<GitWorktreeItem[]> => {
-    if (!rootID) {
-      return [];
-    }
-    setWorktreeLoadingByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: true }));
-    setWorktreeErrorByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: "" }));
-    try {
-      const payload = await fetchGitWorktrees(rootID, getNodeIdForRoot(rootID));
-      (payload.items || []).forEach((item) => {
-        if (item.path) {
-          knownTaskWorktreePathsRef.current.add(item.path);
-        }
-      });
-      const items = (payload.items || []).filter((item) => !!item.branch);
-      setWorktreeItemsByRoot((prev) => ({
-        ...prev,
-        [scopedRootKey(rootID)]: items,
-      }));
-      return items;
-    } catch (error) {
-      setWorktreeItemsByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: [] }));
-      setWorktreeErrorByRoot((prev) => ({
-        ...prev,
-        [scopedRootKey(rootID)]: error instanceof Error ? error.message : t("worktree.loadFailed"),
-      }));
-      return [];
-    } finally {
-      setWorktreeLoadingByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: false }));
-    }
-  }, [t]);
-
-  const loadProjectTreeWorktreeStatus = useCallback(async (worktreePath: string, rootId?: string) => {
-    if (!worktreePath) {
-      return;
-    }
-    setWorktreeStatusLoadingByPath((prev) => ({ ...prev, [worktreePath]: true }));
-    try {
-      const status = await fetchGitStatusByPath(worktreePath, getNodeIdForRoot(String(rootId || "")) as string | undefined);
-      setWorktreeStatusByPath((prev) => ({ ...prev, [worktreePath]: status }));
-    } catch (error) {
-      console.error("[git.worktree.status] failed", { worktreePath, error });
-      setWorktreeStatusByPath((prev) => ({
-        ...prev,
-        [worktreePath]: { available: false, dirty_count: 0, items: [] } as GitStatusPayload,
-      }));
-    } finally {
-      setWorktreeStatusLoadingByPath((prev) => ({ ...prev, [worktreePath]: false }));
-    }
-  }, []);
-
-  const handleCreateWorktreeStart = useCallback((parentPath: string) => {
-    if (creatingRootBusy) {
-      return;
-    }
-    const rootID = currentRootIdRef.current;
-    if (!rootID) {
-      return;
-    }
-    const existing = new Set(managedRootIdsRef.current);
-    const baseName = `${rootID}-worktree`;
-    let nextName = baseName;
-    let suffix = 2;
-    while (existing.has(nextName)) {
-      nextName = `${baseName}-${suffix}`;
-      suffix += 1;
-    }
-    setCreatingRootKind("worktree");
-    setCreatingRootParentPath(parentPath);
-    setCreatingRootName(nextName);
-    setWorktreeBranchMode("new");
-    setWorktreeBranch("");
-    setWorktreeBranches({ branches: [] });
-    setWorktreeBranchError("");
-    void loadWorktreeBranches(rootID);
-  }, [creatingRootBusy, loadWorktreeBranches]);
-
-  const handleSwitchWorktreeStart = useCallback(() => {
-    const rootID = currentRootIdRef.current;
-    if (!rootID) {
-      return;
-    }
-    setProjectAddMode(null);
-    setCreatingRootName(null);
-    setWorktreeSwitchOpen(true);
-    setWorktreeSwitchItems([]);
-    setWorktreeSwitchError("");
-    void loadWorktreeList(rootID);
-  }, [loadWorktreeList]);
-
-  useEffect(() => {
-    if (projectTreeTab !== "worktrees" || !currentRootId) {
-      return;
-    }
-    if (worktreeItemsByRoot[scopedRootKey(currentRootId)] || worktreeLoadingByRoot[scopedRootKey(currentRootId)]) {
-      return;
-    }
-    void loadProjectTreeWorktrees(currentRootId);
-  }, [currentRootId, loadProjectTreeWorktrees, projectTreeTab, worktreeItemsByRoot, worktreeLoadingByRoot]);
-
-  const handleSwitchWorktree = useCallback(async (item: GitWorktreeItem) => {
-    const targetPath = String(item.path || "").trim();
-    if (!targetPath || switchingWorktreePath) {
-      return;
-    }
-    setSwitchingWorktreePath(targetPath);
-    try {
-      let targetRoot = findManagedRootByPath(targetPath);
-      if (!targetRoot?.id) {
-        const created = await apiProtectedJSON<ManagedRootPayload>(appPath("/api/dirs"), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ path: targetPath, create: false }),
-        });
-        targetRoot = created;
-        await refreshManagedRoots();
-      }
-      if (targetRoot?.id) {
-        setWorktreeSwitchOpen(false);
-        await actionHandlersRef.current.open_dir({
-          path: targetRoot.id,
-          root: targetRoot.id,
-          isRoot: true,
-          forceDirectory: true,
-        });
-        return targetRoot.id;
-      }
-    } catch (error) {
-      reportError(
-        "git.worktree_switch_failed",
-        managedDirAddErrorMessage(error, t("root.switchWorktreeFailed"), t),
-      );
-    } finally {
-      setSwitchingWorktreePath("");
-    }
-    return undefined;
-  }, [findManagedRootByPath, refreshManagedRoots, switchingWorktreePath, t]);
-
-  const handleOpenProjectAdd = useCallback(() => {
-    if (creatingRootBusy) {
-      return;
-    }
-    setProjectAddMode("mode");
-  }, [creatingRootBusy]);
-
-  const inferParentPath = useCallback((absolutePath: string): string => {
-    const trimmed = absolutePath.trim().replace(/[\\/]+$/, "");
-    const parts = trimmed.split(/[\\/]/).filter(Boolean);
-    if (parts.length <= 1) {
-      return "";
-    }
-    if (/^[A-Za-z]:/.test(trimmed)) {
-      const drive = parts[0];
-      const rest = parts.slice(1, -1);
-      return rest.length > 0 ? `${drive}\\${rest.join("\\")}` : `${drive}\\`;
-    }
-    if (trimmed.startsWith("/")) {
-      return `/${parts.slice(0, -1).join("/")}`;
-    }
-    return parts.slice(0, -1).join("/");
-  }, []);
-
-  const loadLocalDirs = useCallback(async (path: string, nodeId?: string) => {
-    const trimmed = String(path || "").trim();
-    setLocalDirState((prev) => ({
-      ...prev,
-      loading: true,
-      error: "",
-      path: trimmed,
-      selectedPath: "",
-    }));
-    try {
-      const params = trimmed ? new URLSearchParams({ path: trimmed }) : undefined;
-      const targetNodeId = (nodeId || projectAddNodeId || getActiveNode()?.id || LOCAL_NODE_ID);
-      const payload = await apiProtectedJSON<LocalDirsPayload>(
-        appURL("/api/local_dirs", params, targetNodeId),
-      );
-      setLocalDirState({
-        path: String(payload.path || trimmed),
-        parent: String(payload.parent || ""),
-        volumes: Array.isArray(payload.volumes)
-          ? payload.volumes.map((item) => ({
-              name: String(item.name || ""),
-              path: String(item.path || ""),
-              is_dir: item.is_dir !== false,
-              is_added_root: item.is_added_root === true,
-              root_id: String(item.root_id || ""),
-            }))
-          : [],
-        items: Array.isArray(payload.items)
-          ? payload.items.map((item) => ({
-              name: String(item.name || ""),
-              path: String(item.path || ""),
-              is_dir: item.is_dir !== false,
-              is_added_root: item.is_added_root === true,
-              root_id: String(item.root_id || ""),
-            }))
-          : [],
-        loading: false,
-        selectedPath: "",
-        adding: false,
-        error: "",
-      });
-    } catch (error) {
-      setLocalDirState((prev) => ({
-        ...prev,
-        loading: false,
-        error: error instanceof Error ? error.message : t("directory.loadFailed"),
-      }));
-    }
-  }, [projectAddNodeId, t]);
-
-  const openDirectoryPicker = useCallback((nextMode: ProjectAddMode) => {
-    const rootID = currentRootIdRef.current;
-    const rootPath = rootID
-      ? String(managedRootByIdRef.current[rootID]?.root_path || "")
-      : "";
-    const initialPath = rootPath ? inferParentPath(rootPath) : "";
-    setProjectAddMode(nextMode);
-    if (!initialPath || initialPath === ".") {
-      if (!rootPath) {
-        void loadLocalDirs("");
-        return;
-      }
-      setLocalDirState((prev) => ({
-        ...prev,
-        path: rootPath,
-        parent: "",
-        items: [],
-        loading: false,
-        selectedPath: "",
-        adding: false,
-        error: t("directory.noBrowsableParent"),
-      }));
-      return;
-    }
-    void loadLocalDirs(initialPath);
-  }, [inferParentPath, loadLocalDirs, t]);
-
-  const handleOpenLocalProjectAdd = useCallback(() => {
-    // reset to active/local when opening
-    try { const n = getActiveNode(); if (n?.id) setProjectAddNodeId(n.id); } catch {}
-    void openDirectoryPicker("local");
-  }, [openDirectoryPicker]);
-
-  const handleOpenBlankProjectLocation = useCallback(() => {
-    void openDirectoryPicker("blank_location");
-  }, [openDirectoryPicker]);
-
-  const handleOpenGitHubProjectAdd = useCallback(() => {
-    void openDirectoryPicker("github_location");
-    setGitHubImportState((prev) => ({
-      ...prev,
-      parentPath: "",
-      taskId: "",
-      status: "",
-      message: "",
-      running: false,
-      submitting: false,
-      done: false,
-      error: "",
-    }));
-  }, [openDirectoryPicker]);
-
-  const handleOpenWorktreeLocation = useCallback(() => {
-    setWorktreeSwitchOpen(false);
-    void openDirectoryPicker("worktree_location");
-  }, [openDirectoryPicker]);
-
-  const handleSelectBlankProject = useCallback(() => {
-    setProjectAddMode(null);
-    handleCreateRootStart();
-  }, [handleCreateRootStart]);
-
-  const handleCreateRootCancel = useCallback(() => {
-    if (creatingRootBusy) {
-      return;
-    }
-    setCreatingRootName(null);
-    setCreatingRootParentPath(null);
-    setCreatingRootKind("root");
-    setWorktreeBranchMode("new");
-    setWorktreeBranch("");
-    setWorktreeBranchError("");
-    setWorktreeSwitchOpen(false);
-  }, [creatingRootBusy]);
-
-  useEffect(() => {
-    if (creatingRootKind !== "worktree" || creatingRootName === null) {
-      return;
-    }
-    const handlePointerDown = (event: MouseEvent) => {
-      if (worktreeCreatePopoverRef.current?.contains(event.target as Node)) {
-        return;
-      }
-      handleCreateRootCancel();
-    };
-    document.addEventListener("mousedown", handlePointerDown);
-    return () => document.removeEventListener("mousedown", handlePointerDown);
-  }, [creatingRootKind, creatingRootName, handleCreateRootCancel]);
-
-  useEffect(() => {
-    if (!worktreeSwitchOpen) {
-      return;
-    }
-    const handlePointerDown = (event: MouseEvent) => {
-      if (worktreeSwitchPopoverRef.current?.contains(event.target as Node)) {
-        return;
-      }
-      setWorktreeSwitchOpen(false);
-    };
-    document.addEventListener("mousedown", handlePointerDown);
-    return () => document.removeEventListener("mousedown", handlePointerDown);
-  }, [worktreeSwitchOpen]);
-
-  const handleCreateRootSubmit = useCallback(async () => {
-    const name = String(creatingRootName || "").trim();
-    if (!name) {
-      setCreatingRootName(null);
-      setCreatingRootParentPath(null);
-      return;
-    }
-    if (creatingRootBusy) {
-      return;
-    }
-    setCreatingRootBusy(true);
-    try {
-      if (creatingRootKind === "worktree") {
-        const rootID = currentRootIdRef.current;
-        const parentPath = String(creatingRootParentPath || "").trim();
-        if (!rootID || !parentPath) {
-          throw new Error(t("worktree.createLocationMissing"));
-        }
-        const created = await createGitWorktree({
-          rootId: rootID,
-          parentPath,
-          name,
-          branchMode: worktreeBranchMode,
-          branch: worktreeBranchMode === "existing" ? worktreeBranch : "",
-        }) as ManagedRootPayload;
-        setCreatingRootName(null);
-        setCreatingRootParentPath(null);
-        setCreatingRootKind("root");
-        setWorktreeBranchMode("new");
-        setWorktreeBranch("");
-        await refreshManagedRoots();
-        if (created?.id) {
-          await actionHandlersRef.current.open_dir({
-            path: created.id,
-            root: created.id,
-            isRoot: true,
-          });
-        }
-        return;
-      }
-      const targetPath =
-        creatingRootParentPath && creatingRootParentPath.trim()
-          ? `${creatingRootParentPath.replace(/[\\/]+$/, "")}/${name}`
-          : name;
-      const targetCreateNodeId = projectAddNodeId || getActiveNode()?.id || LOCAL_NODE_ID;
-      const payload = await apiProtectedJSON<any>(appPath("/api/dirs", targetCreateNodeId), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path: targetPath, create: true }),
-      });
-      const created = payload as ManagedRootPayload;
-      setCreatingRootName(null);
-      setCreatingRootParentPath(null);
-      await refreshManagedRoots();
-      if (created?.id) {
-        await actionHandlersRef.current.open_dir({
-          path: created.id,
-          root: created.id,
-          isRoot: true,
-        });
-      }
-    } catch (err) {
-      reportError(
-        "root.create_failed",
-        managedDirAddErrorMessage(err, t("root.createProjectFailed"), t),
-      );
-    } finally {
-      setCreatingRootBusy(false);
-    }
-  }, [
-    creatingRootBusy,
-    creatingRootKind,
+  const {
+    projectAddOverlay,
+    worktreeCreateOverlay,
+    worktreeSwitchOverlay,
     creatingRootName,
-    creatingRootParentPath,
+    setCreatingRootName,
+    creatingRootKind,
+    creatingRootBusy,
+    worktreeSwitchOpen,
+    projectAddMode,
+    handleCreateRootStart,
+    handleSwitchWorktreeStart,
+    handleOpenProjectAdd,
+    handleOpenWorktreeLocation,
+    handleCreateRootCancel,
+    handleCreateRootSubmit,
+    setGitHubImportState,
+    setProjectAddMode,
+  } = useProjectLifecycle({
+    currentRootId,
+    currentRootIdRef,
+    getNodeIdForRoot,
     refreshManagedRoots,
-    t,
-    worktreeBranch,
-    worktreeBranchMode,
-  ]);
+    findManagedRootByPath,
+    managedRootIdsRef,
+    managedRootByIdRef,
+    openManagedDir,
+  });
 
   const handleRenameCurrentRoot = useCallback(
     async (nextName: string) => {
@@ -8895,181 +6011,6 @@ export function App({ onGoHome }: AppProps) {
     [applyManagedRootRename, t],
   );
 
-  const handleLocalDirSelect = useCallback((path: string) => {
-    setLocalDirState((prev) => {
-      const target = prev.items.find((item) => item.path === path);
-      if (!target) {
-        return prev;
-      }
-      if (projectAddMode === "local" && target.is_added_root) {
-        return prev;
-      }
-      return { ...prev, selectedPath: path };
-    });
-  }, [projectAddMode]);
-
-  const handleLocalDirAdd = useCallback(async () => {
-    const path = String(localDirState.selectedPath || "").trim();
-    if (localDirState.adding) {
-      return;
-    }
-    if (projectAddMode === "blank_location") {
-      setProjectAddMode(null);
-      handleCreateRootStart(localDirState.path);
-      return;
-    }
-    if (projectAddMode === "github_location") {
-      setProjectAddMode("github");
-      setGitHubImportState((prev) => ({
-        ...prev,
-        parentPath: localDirState.path,
-        taskId: "",
-        status: "",
-        message: "",
-        running: false,
-        submitting: false,
-        done: false,
-        error: "",
-      }));
-      return;
-    }
-    if (projectAddMode === "worktree_location") {
-      setProjectAddMode(null);
-      handleCreateWorktreeStart(localDirState.path);
-      return;
-    }
-    if (!path) {
-      return;
-    }
-    setLocalDirState((prev) => ({ ...prev, adding: true, error: "" }));
-    try {
-      const targetAddNodeId = projectAddNodeId || getActiveNode()?.id || LOCAL_NODE_ID;
-      const payload = await apiProtectedJSON<any>(appPath("/api/dirs", targetAddNodeId), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path, create: false }),
-      });
-      setLocalDirState((prev) => ({
-        ...prev,
-        adding: false,
-        selectedPath: "",
-      }));
-      setProjectAddMode(null);
-      await refreshManagedRoots();
-      const created = payload as ManagedRootPayload;
-      if (created?.id) {
-        await actionHandlersRef.current.open_dir({
-          path: created.id,
-          root: created.id,
-          isRoot: true,
-        });
-      }
-      void loadLocalDirs(localDirState.path);
-    } catch (error) {
-      setLocalDirState((prev) => ({
-        ...prev,
-        adding: false,
-        error: managedDirAddErrorMessage(error, t("root.addDirectoryFailed"), t),
-      }));
-    }
-  }, [handleCreateRootStart, handleCreateWorktreeStart, loadLocalDirs, localDirState.adding, localDirState.path, localDirState.selectedPath, projectAddMode, refreshManagedRoots, t]);
-
-  const handleGitHubImportStart = useCallback(async () => {
-    const url = String(githubImportState.url || "").trim();
-    const parentPath = String(githubImportState.parentPath || "").trim();
-    if (
-      !url ||
-      !parentPath ||
-      githubImportState.running ||
-      githubImportState.submitting
-    ) {
-      return;
-    }
-    setGitHubImportState((prev) => ({
-      ...prev,
-      submitting: true,
-      done: false,
-      error: "",
-      taskId: "",
-      status: "",
-      message: "",
-    }));
-    try {
-      const targetImportNodeId = projectAddNodeId || getActiveNode()?.id || LOCAL_NODE_ID;
-      const payload = await apiProtectedJSON<any>(appPath("/api/imports/github", targetImportNodeId), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url, parent_path: parentPath }),
-      });
-      setGitHubImportState((prev) => ({
-        ...prev,
-        taskId: String(payload?.task_id || ""),
-        status: "pending",
-        message: t("projectAdd.cloning"),
-        submitting: false,
-        running: true,
-        done: false,
-        error: "",
-      }));
-    } catch (error) {
-      setGitHubImportState((prev) => ({
-        ...prev,
-        submitting: false,
-        running: false,
-        done: false,
-        error: error instanceof Error ? error.message : t("root.githubImportFailed"),
-      }));
-    }
-  }, [githubImportState.parentPath, githubImportState.running, githubImportState.submitting, githubImportState.url, t]);
-
-  const projectAddOverlay = projectAddMode ? (
-    <div ref={projectAddPopoverRef}>
-      <ProjectAddPopover
-        mode={projectAddMode}
-        onSelectMode={() => setProjectAddMode("mode")}
-        onSelectLocal={handleOpenLocalProjectAdd}
-        onSelectBlankLocation={handleOpenBlankProjectLocation}
-        onSelectGitHubLocation={handleOpenGitHubProjectAdd}
-        onSelectGitHub={handleOpenGitHubProjectAdd}
-        onSelectBlank={handleSelectBlankProject}
-        localState={localDirState}
-        selectedNodeId={projectAddNodeId}
-        onSelectedNodeChange={(id) => {
-          setProjectAddNodeId(id);
-          void loadLocalDirs("", id);
-        }}
-        onLocalNavigate={(path) => {
-          void loadLocalDirs(path, projectAddNodeId);
-        }}
-        onLocalSelect={handleLocalDirSelect}
-        onLocalAdd={() => {
-          void handleLocalDirAdd();
-        }}
-        localActionLabel={
-          projectAddMode === "local" ? t("projectAdd.add") : t("projectAdd.placeHere")
-        }
-        localDisabledAddedRoot={projectAddMode === "local"}
-        localBrowseOnly={
-          projectAddMode === "blank_location" ||
-          projectAddMode === "github_location" ||
-          projectAddMode === "worktree_location"
-        }
-        githubState={githubImportState}
-        onGitHubUrlChange={(value) =>
-          setGitHubImportState((prev) => ({
-            ...prev,
-            url: value,
-            error: "",
-            done: false,
-          }))
-        }
-        onGitHubImport={() => {
-          void handleGitHubImportStart();
-        }}
-      />
-    </div>
-  ) : null;
-
   const handleRemoveCurrentRoot = useCallback(async () => {
     const rootID = currentRootIdRef.current;
     if (!rootID) {
@@ -9081,7 +6022,7 @@ export function App({ onGoHome }: AppProps) {
       reportError("root.delete_failed", t("root.missingPathRemove"));
       return;
     }
-    if (!window.confirm(t("root.confirmRemove", { name: rootID }))) {
+    if (!await confirmDialog({ message: t("root.confirmRemove", { name: rootID }), danger: true })) {
       return;
     }
     try {
@@ -9106,7 +6047,7 @@ export function App({ onGoHome }: AppProps) {
     if (!rootID) {
       return;
     }
-    if (!window.confirm(t("worktree.confirmRemove", { name: rootID }))) {
+    if (!await confirmDialog({ message: t("worktree.confirmRemove", { name: rootID }), danger: true })) {
       return;
     }
     try {
@@ -9523,19 +6464,6 @@ export function App({ onGoHome }: AppProps) {
     sessionService.connect(currentRootId, getNodeIdForRoot(currentRootId));
   }, [currentRootId, currentRootNodeId]);
 
-  useEffect(() => {
-    if (sessionListMode !== "import") return;
-    const rootID = currentRootIdRef.current || "";
-    if (!rootID || !externalImportAgent) return;
-    setSelectedExternalImportKeys(new Set());
-    void loadExternalSessions(rootID, externalImportAgent, { replace: true });
-  }, [
-    sessionListMode,
-    externalImportAgent,
-    externalFilterBound,
-    loadExternalSessions,
-  ]);
-
   useEffect(
     () => () => {
       sessionService.disconnect();
@@ -9559,1661 +6487,104 @@ export function App({ onGoHome }: AppProps) {
     setGitDiff(null);
   }, [currentRootId, currentRootNodeId, refreshGitHistory, refreshGitStatus]);
 
-  useEffect(() => {
-    if (!currentRootId) return;
-    let cancelled = false;
-    const reloadSessionForReplay = async (
-      rootID: string,
-      sessionKey: string,
-    ) => {
-      if (!rootID || !sessionKey) return;
-      const restored = await restoreActiveSession(rootID, sessionKey);
-      if (cancelled) return;
-      if (!restored) return;
-      const cacheKey = rootSessionKey(rootID, sessionKey);
-      loadedSessionRef.current[cacheKey] = true;
-      clearSessionStale(rootID, sessionKey);
-      if (
-        (selectedSessionRef.current?.key ||
-          selectedSessionRef.current?.session_key) === sessionKey
-      ) {
-        setSelectedSession((prev) =>
-          prev
-            ? toSessionItem(rootID, {
-                ...(prev as any),
-                ...(restored as any),
-              })
-            : prev,
-        );
-      }
-      if (boundSessionByRootRef.current[scopedRootKey(rootID)] === sessionKey) {
-        setDrawerSessionForRoot(rootID, restored);
-      }
-    };
-    const getReplayTargetsForRoot = (rootID: string): string[] => {
-      if (!rootID) return [];
-      const keys = new Set<string>();
-      const rememberedSelectedKey =
-        selectedSessionByRootRef.current[scopedRootKey(rootID)] || "";
-      if (
-        rememberedSelectedKey &&
-        !rememberedSelectedKey.startsWith("pending-")
-      ) {
-        keys.add(rememberedSelectedKey);
-      }
-      const boundKey = boundSessionByRootRef.current[scopedRootKey(rootID)] || "";
-      if (boundKey && !boundKey.startsWith("pending-")) {
-        keys.add(boundKey);
-      }
-      const drawerKey = drawerSessionByRootRef.current[scopedRootKey(rootID)]?.key || "";
-      if (drawerKey && !drawerKey.startsWith("pending-")) {
-        keys.add(drawerKey);
-      }
-      const selected = selectedSessionRef.current;
-      const selectedKey = selected?.key || selected?.session_key || "";
-      const selectedRoot =
-        (selected?.root_id as string | undefined) || currentRootIdRef.current;
-      if (
-        selectedRoot === rootID &&
-        selectedKey &&
-        !selectedKey.startsWith("pending-")
-      ) {
-        keys.add(selectedKey);
-      }
-      return Array.from(keys);
-    };
-    const replayTargetsForAllRoots = () => {
-      const replayCacheKeys = new Set<string>();
-      for (const rootID of managedRootIdsRef.current) {
-        if (!rootID) continue;
-        const replayTargets = getReplayTargetsForRoot(rootID);
-        for (const sessionKey of replayTargets) {
-          replayCacheKeys.add(rootSessionKey(rootID, sessionKey));
-          void reloadSessionForReplay(rootID, sessionKey);
-        }
-      }
-      for (const cacheKey of Object.keys(sessionCacheRef.current)) {
-        if (replayCacheKeys.has(cacheKey)) {
-          continue;
-        }
-        const separator = cacheKey.indexOf("::");
-        if (separator <= 0) {
-          continue;
-        }
-        const rootID = cacheKey.slice(0, separator);
-        const sessionKey = cacheKey.slice(separator + 2);
-        if (!rootID || !sessionKey || !hasSessionExchanges(sessionCacheRef.current[cacheKey])) {
-          continue;
-        }
-        markSessionStale(rootID, sessionKey);
-      }
-    };
-    const refreshSessionRelatedFiles = async (
-      rootID: string,
-      sessionKey: string,
-    ) => {
-      if (!rootID || !sessionKey) return;
-      const relatedFiles = await sessionService.getSessionRelatedFiles(
-        rootID,
-        sessionKey,
-        getNodeIdForRoot(rootID),
-      );
-      if (cancelled) return;
-      await setCachedSessionRelatedFiles(rootID, sessionKey, relatedFiles, getNodeIdForRoot(rootID));
-      updateSessionRelatedFilesForKey(rootID, sessionKey, relatedFiles);
-    };
-    const handleSessionStreamDone = (rootID: string, sessionKey: string) => {
-      const cacheKey = rootSessionKey(rootID, sessionKey);
-      const wasCanceled = !!cancelRequestedBySessionRef.current[cacheKey];
-      if (wasCanceled) {
-        delete cancelRequestedBySessionRef.current[cacheKey];
-      }
-      delete pendingBySessionRef.current[cacheKey];
-      const clearPendingAck = <T,>(session: T): T => {
-        const exchanges = (session as any)?.exchanges;
-        if (!wasCanceled || !Array.isArray(exchanges)) {
-          return session;
-        }
-        return {
-          ...(session as any),
-          exchanges: exchanges.map((exchange: any) =>
-            exchange?.pending_ack === true
-              ? { ...exchange, pending_ack: false }
-              : exchange,
-          ),
-        } as T;
-      };
-      const queued = queuedMessagesBySessionRef.current[cacheKey] || [];
-      const queueFrozen = !!queueFrozenBySessionRef.current[cacheKey];
-      const hiddenQueued = optimisticDequeuedIdsRef.current[cacheKey];
-      const hasQueuedContinuation =
-        (queued.length > 0 && !queueFrozen) ||
-        !!(hiddenQueued && hiddenQueued.size > 0);
-      if (hasQueuedContinuation && !wasCanceled) {
-        markSessionPending(rootID, sessionKey);
-        return;
-      }
-      const cached = sessionCacheRef.current[cacheKey];
-      if (cached && cached.key === sessionKey) {
-        sessionCacheRef.current[cacheKey] = clearPendingAck({
-          ...(cached as any),
-          pending: false,
-        } as Session);
-      }
-      setSelectedPendingByKey(sessionKey, false);
-      setSelectedSession((prev) => {
-        const prevKey = prev?.key || prev?.session_key;
-        const prevRoot =
-          (prev?.root_id as string | undefined) || currentRootIdRef.current;
-        if (
-          !prev ||
-          prevKey !== sessionKey ||
-          prevRoot !== rootID ||
-          !(prev as any).pending
-        ) {
-          return prev;
-        }
-        return clearPendingAck({
-          ...(prev as any),
-          pending: false,
-        } as SessionItem);
-      });
-      const drawer = drawerSessionByRootRef.current[scopedRootKey(rootID)];
-      if (drawer && drawer.key === sessionKey) {
-        const latest = wasCanceled
-          ? sessionCacheRef.current[cacheKey] || drawer
-          : drawer;
-        setDrawerSessionForRoot(rootID, clearPendingAck({
-          ...(latest as any),
-          pending: false,
-        } as Session));
-      }
-      if (currentRootIdRef.current === rootID) {
-        setSessions((prev) =>
-          prev.map((item) => {
-            const itemKey = item.key || item.session_key;
-            if (itemKey !== sessionKey) {
-              return item;
-            }
-            return clearPendingAck({
-              ...(item as any),
-              pending: false,
-            } as SessionItem);
-          }),
-        );
-      }
-      setMultiProjectSessionPending(rootID, sessionKey, false);
-      bumpCacheVersion();
-    };
-
-    const handleSessionStream = (payload: any) => {
-      const wsNid = String((payload as any)?._nodeId || (payload as any)?.nodeId || "").trim();
-      const curNid = String(currentRootNodeIdRef.current || "").trim();
-      if (wsNid && curNid && wsNid !== curNid) { return; }
-      const streamKey =
-        typeof payload?.session_key === "string" ? payload.session_key : "";
-      const activeRoot =
-        typeof payload?.root_id === "string" && payload.root_id
-          ? payload.root_id
-          : resolveRootForSessionKey(streamKey) || currentRootIdRef.current;
-      if (!streamKey || !activeRoot) return;
-      const ck = rootSessionKey(activeRoot, streamKey);
-      let pending = pendingBySessionRef.current[ck];
-      if (!pending) {
-        const draft = pendingDraftRef.current;
-        if (
-          draft &&
-          draft.rootId === activeRoot &&
-          streamKey !==
-            (suppressedAutoBindSessionByRootRef.current[scopedRootKey(activeRoot)] || "")
-        ) {
-          pending = draft;
-          pendingBySessionRef.current[ck] = draft;
-          pendingDraftRef.current = null;
-          console.info("[session/stream] attach_pending_draft", { rootId: activeRoot, streamKey, requestId: draft.requestId, tempKey: draft.tempKey || null });
-        }
-      }
-      const boundKey = boundSessionByRootRef.current[scopedRootKey(activeRoot)] || "";
-      const suppressedAutoBindKey =
-        suppressedAutoBindSessionByRootRef.current[scopedRootKey(activeRoot)] || "";
-      if (
-        streamKey !== suppressedAutoBindKey &&
-        (!boundKey ||
-          (typeof boundKey === "string" && boundKey.startsWith("pending-")))
-      ) {
-        if (suppressedAutoBindKey && streamKey !== suppressedAutoBindKey) {
-          suppressedAutoBindSessionByRootRef.current[scopedRootKey(activeRoot)] = null;
-        }
-        setBoundSessionForRoot(activeRoot, streamKey);
-        if (pending) {
-          const pendingName =
-            (drawerSessionByRootRef.current[scopedRootKey(activeRoot)]?.key ===
-            pending.tempKey &&
-            typeof (drawerSessionByRootRef.current[scopedRootKey(activeRoot)] as any)?.name ===
-              "string"
-              ? ((drawerSessionByRootRef.current[scopedRootKey(activeRoot)] as any).name as string)
-              : "") ||
-            ((selectedSessionRef.current?.key ||
-              selectedSessionRef.current?.session_key) === pending.tempKey &&
-            (((selectedSessionRef.current?.root_id as string | undefined) ||
-              currentRootIdRef.current) === activeRoot) &&
-            typeof selectedSessionRef.current?.name === "string"
-              ? selectedSessionRef.current.name
-              : "") ||
-            t("session.new");
-          const userEx = {
-            role: "user",
-            content: pending.message,
-            timestamp: pending.timestamp,
-            model: pending.model,
-	            mode: pending.agentMode,
-	            effort: pending.effort,
-	            fast_service: pending.fastService || "",
-	            shell: pending.shell || "",
-          };
-          const cached =
-            sessionCacheRef.current[ck] ||
-            ({
-              key: streamKey,
-              type: pending.mode,
-              agent: pending.agent,
-              model: pending.model,
-	              mode: pending.agentMode,
-	              effort: pending.effort,
-	              fast_service: pending.fastService || "",
-	              shell: pending.shell || "",
-              name: pendingName,
-              created_at: pending.timestamp,
-              updated_at: pending.timestamp,
-              exchanges: [],
-            } as any);
-          const prevExchanges = Array.isArray((cached as any).exchanges)
-            ? ((cached as any).exchanges as Exchange[])
-            : [];
-          sessionCacheRef.current[ck] = {
-            ...(cached as any),
-            exchanges: prevExchanges.length > 0 ? prevExchanges : [userEx],
-            updated_at: new Date().toISOString(),
-          } as Session;
-          bumpCacheVersion();
-        }
-        const seeded = sessionCacheRef.current[ck];
-        if (seeded) {
-          setDrawerSessionForRoot(activeRoot, {
-            ...(seeded as any),
-            pending: true,
-          } as Session);
-        }
-      }
-      if (pending?.tempKey) {
-        console.info("[session/stream] promote_pending", { rootId: activeRoot, tempKey: pending.tempKey, streamKey, requestId: pending.requestId });
-        promotePendingSessionForRoot(
-          activeRoot,
-          pending.tempKey,
-          streamKey,
-          sessionCacheRef.current[ck] || null,
-        );
-      }
-      const event = payload.event;
-      if (!event?.type) return;
-      // message_chunk/thought_chunk 是最高频事件：首次进 pending 用幂等
-      // markSessionPending（内部已在 pending 时只更新 ref 不 setState），
-      // 缓存版本 bump 走 30ms debounce —— 100 token/s 时渲染次数从 100/s 降到 ~33/s。
-      const markStreamPending = () => {
-        if (event.type === "message_done" || event.type === "error") return;
-        markSessionPending(activeRoot, streamKey);
-      };
-      markStreamPending();
-      const isStreamingChunk =
-        event.type === "message_chunk" || event.type === "thought_chunk";
-      if (!isStreamingChunk) {
-        bumpCacheVersion();
-      }
-      switch (event.type) {
-        case "message_chunk":
-          appendAgentChunkForSession(
-            activeRoot,
-            streamKey,
-            event.data?.content || "",
-            pending
-              ? {
-                  agent: pending.agent,
-                  model: pending.model,
-	                  mode: pending.agentMode,
-	                  effort: pending.effort,
-	                  fast_service: pending.fastService || "",
-	                }
-              : undefined,
-          );
-          break;
-        case "thought_chunk":
-          appendThoughtChunkForSession(
-            activeRoot,
-            streamKey,
-            event.data?.content || "",
-            event.data?.id || "",
-          );
-          break;
-        case "tool_call":
-          appendToolCallForSession(
-            activeRoot,
-            streamKey,
-            event.data || {},
-            false,
-          );
-          break;
-        case "tool_call_update":
-          appendToolCallForSession(
-            activeRoot,
-            streamKey,
-            event.data || {},
-            true,
-          );
-          break;
-        case "todo_update":
-          appendTodoUpdateForSession(
-            activeRoot,
-            streamKey,
-            event.data || {},
-          );
-          break;
-        case "plan_update":
-          appendPlanUpdateForSession(
-            activeRoot,
-            streamKey,
-            event.data || {},
-          );
-          break;
-        case "compact_notice":
-          appendCompactNoticeForSession(
-            activeRoot,
-            streamKey,
-            event.data || {},
-          );
-          break;
-        case "message_done":
-          attachContextWindowToLatestAssistant(
-            activeRoot,
-            streamKey,
-            event.data?.contextWindow,
-            event.data?.tokenUsage,
-          );
-          setCodexRateLimitsRefreshToken((value) => value + 1);
-          break;
-        case "error":
-          reportError(
-            "session.resume_failed",
-            event.data?.message || t("session.resumeFailed"),
-            {
-              details: {
-                rootId: activeRoot,
-                sessionKey: streamKey,
-                eventType: event.type,
-              },
-            },
-          );
-          handleSessionStreamDone(activeRoot, streamKey);
-          break;
-      }
-    };
-    const handleSlashCommandStream = (payload: any) => {
-      const wsNid2 = String((payload as any)?._nodeId || (payload as any)?.nodeId || "").trim();
-      const curNid2 = String(currentRootNodeIdRef.current || "").trim();
-      if (wsNid2 && curNid2 && wsNid2 !== curNid2) { return; }
-      const sessionKey =
-        typeof payload?.session_key === "string" ? payload.session_key : "";
-      const rootID =
-        typeof payload?.root_id === "string" && payload.root_id
-          ? payload.root_id
-          : resolveRootForSessionKey(sessionKey) || currentRootIdRef.current;
-      const command =
-        typeof payload?.command === "string" ? payload.command : "status";
-      const requestId =
-        typeof payload?.request_id === "string"
-          ? payload.request_id
-          : typeof payload?.id === "string"
-            ? payload.id
-            : "";
-      const event = payload?.event;
-      if (!rootID || !sessionKey || !event?.type) {
-        return;
-      }
-      const resultKey = rootSessionKey(rootID, sessionKey);
-      if (event.type === "message_chunk") {
-        const chunk = typeof event.data?.content === "string" ? event.data.content : "";
-        if (!chunk) {
-          return;
-        }
-        setSlashCommandResults((prev) => {
-          const current = prev[resultKey];
-          if (!current && sessionKey.startsWith("transient-")) {
-            return prev;
-          }
-          if (
-            current?.requestId &&
-            requestId &&
-            current.requestId !== requestId
-          ) {
-            return prev;
-          }
-          return {
-            ...prev,
-            [resultKey]: {
-              rootId: rootID,
-              sessionKey,
-              requestId: current?.requestId || requestId,
-              command: current?.command || command,
-              content: `${current?.content || ""}${chunk}`,
-              status: "running",
-            },
-          };
-        });
-        return;
-      }
-      if (event.type === "login_notice") {
-        const notice = event.data || {};
-        const noticeStatus = typeof notice.status === "string" ? notice.status : "";
-        const failed = noticeStatus === "error";
-        const complete = noticeStatus === "success";
-        setSlashCommandResults((prev) => {
-          const current = prev[resultKey];
-          if (!current && sessionKey.startsWith("transient-")) {
-            return prev;
-          }
-          if (
-            current?.requestId &&
-            requestId &&
-            current.requestId !== requestId
-          ) {
-            return prev;
-          }
-          return {
-            ...prev,
-            [resultKey]: {
-              rootId: rootID,
-              sessionKey,
-              requestId: current?.requestId || requestId,
-              command: current?.command || command || "login",
-              content: current?.content || "",
-              status: failed ? "failed" : complete ? "complete" : "running",
-              error:
-                failed && typeof notice.error === "string"
-                  ? notice.error
-                  : current?.error,
-              createdAt: current?.createdAt || Date.now(),
-              loginNotice: {
-                ...current?.loginNotice,
-                status: noticeStatus,
-                loginId: typeof notice.loginId === "string" ? notice.loginId : current?.loginNotice?.loginId,
-                verificationUrl:
-                  typeof notice.verificationUrl === "string"
-                    ? notice.verificationUrl
-                    : current?.loginNotice?.verificationUrl,
-                userCode:
-                  typeof notice.userCode === "string"
-                    ? notice.userCode
-                    : current?.loginNotice?.userCode,
-                error: typeof notice.error === "string" ? notice.error : current?.loginNotice?.error,
-                authMode:
-                  typeof notice.authMode === "string"
-                    ? notice.authMode
-                    : current?.loginNotice?.authMode,
-                planType:
-                  typeof notice.planType === "string"
-                    ? notice.planType
-                    : current?.loginNotice?.planType,
-              },
-            },
-          };
-        });
-        if (failed) {
-          reportError("session.slash_command_failed", notice.error || t("session.loginFailed"), {
-            details: { rootId: rootID, sessionKey, command },
-          });
-        }
-        return;
-      }
-      if (event.type === "error") {
-        const message =
-          typeof event.data?.message === "string"
-            ? event.data.message
-            : t("session.commandFailed");
-        setSlashCommandResults((prev) => {
-          const current = prev[resultKey];
-          if (!current && sessionKey.startsWith("transient-")) {
-            return prev;
-          }
-          if (
-            current?.requestId &&
-            requestId &&
-            current.requestId !== requestId
-          ) {
-            return prev;
-          }
-          return {
-            ...prev,
-            [resultKey]: {
-              rootId: rootID,
-              sessionKey,
-              requestId: current?.requestId || requestId,
-              command: current?.command || command,
-              content: current?.content || "",
-              status: "failed",
-              error: message,
-            },
-          };
-        });
-        reportError("session.slash_command_failed", message, {
-          details: { rootId: rootID, sessionKey, command },
-        });
-      }
-    };
-    const handleSlashCommandDone = (payload: any) => {
-      const sessionKey =
-        typeof payload?.session_key === "string" ? payload.session_key : "";
-      const rootID =
-        typeof payload?.root_id === "string" && payload.root_id
-          ? payload.root_id
-          : resolveRootForSessionKey(sessionKey) || currentRootIdRef.current;
-      if (!rootID || !sessionKey) {
-        return;
-      }
-      const resultKey = rootSessionKey(rootID, sessionKey);
-      setSlashCommandResults((prev) => {
-        const current = prev[resultKey];
-        if (!current || current.status === "failed") {
-          return prev;
-        }
-        const requestId =
-          typeof payload?.request_id === "string"
-            ? payload.request_id
-            : typeof payload?.id === "string"
-              ? payload.id
-              : "";
-        if (
-          current.requestId &&
-          requestId &&
-          current.requestId !== requestId
-        ) {
-          return prev;
-        }
-        return {
-          ...prev,
-          [resultKey]: {
-            ...current,
-            status: "complete",
-          },
-        };
-      });
-    };
-    const dirname = (path: string): string => {
-      const clean = (path || "").replace(/^\/+|\/+$/g, "");
-      if (!clean || clean === ".") return ".";
-      const idx = clean.lastIndexOf("/");
-      return idx <= 0 ? "." : clean.slice(0, idx);
-    };
-    const currentDirAPI = (rootID: string): string => {
-      const selected = selectedDirRef.current;
-      if (!selected || selected === rootID) return ".";
-      return selected;
-    };
-    const stringList = (value: unknown): string[] => {
-      if (!Array.isArray(value)) return [];
-      return Array.from(
-        new Set(
-          value.filter(
-            (item): item is string => typeof item === "string" && item !== "",
-          ),
-        ),
-      );
-    };
-    const handleFileChangedBatch = (payload: any) => {
-      const rootID =
-        typeof payload?.root_id === "string" ? payload.root_id : "";
-      if (!rootID) return;
-
-      const paths = stringList(payload?.paths);
-      const events = Array.isArray(payload?.events) ? payload.events : [];
-      const dirPathSet = new Set(stringList(payload?.dirs));
-      for (const path of paths) {
-        const parentDir = dirname(path);
-        dirPathSet.add(parentDir);
-        const event = events.find((item: any) => item?.path === path);
-        const op = typeof event?.op === "string" ? event.op : "";
-        if (
-          event?.is_dir === true ||
-          op.includes("REMOVE") ||
-          op.includes("RENAME")
-        ) {
-          dirPathSet.add(path);
-        }
-      }
-      const dirs = Array.from(dirPathSet);
-      if (paths.length === 0 && dirs.length === 0) return;
-
-      for (const path of paths) {
-        invalidateFileCache(rootID, path);
-      }
-      if (
-        [...paths, ...dirs].some((path) => {
-          const normalized = String(path || "").replace(/\\/g, "/").replace(/^\/+/, "");
-          return normalized === ".mindfs/plugins" || normalized.startsWith(".mindfs/plugins/");
-        })
-      ) {
-        invalidatePluginsForRoot(rootID);
-      }
-
-      const currentFile = fileRef.current;
-      const currentFileRoot =
-        currentFile?.root || currentRootIdRef.current || "";
-      if (
-        currentFile &&
-        currentFileRoot === rootID &&
-        paths.includes(currentFile.path)
-      ) {
-        void refreshCurrentFileContent(rootID, currentFile.path);
-      }
-
-      void refreshGitStatus(rootID).then((next) => {
-        if (!next?.available) {
-          if (rootID === currentRootIdRef.current) {
-            setGitDiff(null);
-          }
-          return;
-        }
-        const changedDiffPath = gitDiff?.path || "";
-        if (
-          rootID === currentRootIdRef.current &&
-          changedDiffPath &&
-          paths.includes(changedDiffPath)
-        ) {
-          const target = next.items.find(
-            (item) => item.path === changedDiffPath,
-          );
-          if (!target) {
-            setGitDiff(null);
-            return;
-          }
-          void fetchGitDiff(rootID, changedDiffPath, {
-            cacheSignature: buildGitDiffCacheSignature(target),
-          })
-            .then(setGitDiff)
-            .catch((err) => {
-              console.error("[git.diff.refresh] failed", {
-                rootID,
-                changedPath: changedDiffPath,
-                err,
-              });
-            });
-        }
-      });
-
-      const currentDir = currentDirAPI(rootID);
-      for (const dir of dirs) {
-        invalidTreeCacheKeysRef.current.add(treeCacheKey(rootID, dir));
-        if (rootID === currentRootIdRef.current && dir === currentDir) {
-          void refreshTreeDir(rootID, dir, true);
-        }
-      }
-    };
-    const handleFileChanged = (payload: any) => {
-      const rootID =
-        typeof payload?.root_id === "string" ? payload.root_id : "";
-      const changedPath = typeof payload?.path === "string" ? payload.path : "";
-      if (!rootID || !changedPath) return;
-      const dirs = [dirname(changedPath)];
-      if (payload?.is_dir === true) {
-        dirs.push(changedPath);
-      }
-      handleFileChangedBatch({
-        root_id: rootID,
-        paths: [changedPath],
-        dirs,
-        events: [
-          { path: changedPath, op: payload?.op, is_dir: payload?.is_dir },
-        ],
-      });
-    };
-    const unsubscribeEvents = sessionService.subscribeEvents((event) => {
-      const payload = (event.payload || {}) as any;
-      switch (event.type) {
-        case "ws.connecting":
-          setStatus("connecting");
-          break;
-        case "ws.connected":
-          setStatus("connected");
-          void refreshManagedRoots();
-          if (currentRootIdRef.current) {
-            const newest = sessionsRef.current[0]?.updated_at || "";
-            void scheduleSessionListReload(
-              currentRootIdRef.current,
-              newest ? { afterTime: newest } : { replace: true },
-            );
-          }
-          if (multiProjectSessionsEnabled) {
-            void refreshMultiProjectReplyingSessions();
-            void loadMultiProjectSessionGroups();
-          }
-          replayTargetsForAllRoots();
-          break;
-        case "ws.reconnecting":
-          setStatus("reconnecting");
-          break;
-        case "ws.reconnected":
-          setStatus("connected");
-          void refreshManagedRoots();
-          if (currentRootIdRef.current) {
-            const newest = sessionsRef.current[0]?.updated_at || "";
-            void scheduleSessionListReload(
-              currentRootIdRef.current,
-              newest ? { afterTime: newest } : { replace: true },
-            );
-          }
-          if (multiProjectSessionsEnabled) {
-            void refreshMultiProjectReplyingSessions();
-            void loadMultiProjectSessionGroups();
-          }
-          replayTargetsForAllRoots();
-          break;
-        case "ws.closed":
-          setStatus(currentRootIdRef.current ? "reconnecting" : "disconnected");
-          break;
-        case "nodes.changed":
-          void syncNodesFromServer().then((ns) => { try { applyNodesFromServer(ns as any); } catch {} }).catch(() => {});
-          void loadManagedRootPayloads().then(() => {
-            if (multiProjectSessionsEnabled) {
-              void refreshMultiProjectReplyingSessions();
-              void loadMultiProjectSessionGroups();
-            }
-          }).catch(() => {});
-          break;
-        case "root.changed":
-          if (
-            payload?.action === "renamed" &&
-            typeof payload?.old_root_id === "string" &&
-            typeof payload?.root_id === "string"
-          ) {
-            const rootPayload =
-              payload?.root && typeof payload.root === "object"
-                ? ({ ...(payload.root as ManagedRootPayload), id: payload.root_id } as ManagedRootPayload)
-                : null;
-            if (!rootPayload) {
-              break;
-            }
-            applyManagedRootRename(payload.old_root_id, rootPayload);
-            if (currentRootIdRef.current === payload.old_root_id) {
-              void actionHandlersRef.current.open_dir({
-                path: payload.root_id,
-                root: payload.root_id,
-                isRoot: true,
-                forceDirectory: true,
-                preservePluginQuery: true,
-              });
-            }
-            break;
-          }
-          if (
-            payload?.action === "display_name_changed" &&
-            typeof payload?.root_id === "string"
-          ) {
-            const rootId = String(payload.root_id).trim();
-            const rootPayload =
-              payload?.root && typeof payload.root === "object"
-                ? ({ ...(payload.root as ManagedRootPayload), id: rootId } as ManagedRootPayload)
-                : null;
-            if (!rootPayload || !rootId) {
-              break;
-            }
-            const merged = { ...(managedRootByIdRef.current[rootId] || {} as ManagedRootPayload), ...rootPayload, id: rootId } as ManagedRootPayload;
-            const nextById = { ...managedRootByIdRef.current, [rootId]: merged };
-            managedRootByIdRef.current = nextById as Record<string, ManagedRootPayload>;
-            const evtNid = String((merged as any)._nodeId || "").trim();
-            if (evtNid) managedRootByKeyRef.current[rootNodeKey(evtNid, rootId)] = merged;
-            setRootNodeMap(nextById as Record<string, any>);
-            const ids = Array.from(managedRootIdsRef.current);
-            setRootEntries(mapManagedRootsToEntries(ids.map((id) => nextById[id]).filter(Boolean) as ManagedRootPayload[]));
-            setMultiProjectSessionGroups((prev) =>
-              prev.map((g) =>
-                g.rootId === rootId
-                  ? { ...g, rootName: String((merged as any)?.display_name || (merged as any)?.id || g.rootName || rootId) }
-                  : g,
-              ),
-            );
-            break;
-          }
-          void refreshManagedRoots();
-          break;
-        case "session.imported": {
-          const rootID =
-            typeof payload?.root_id === "string" ? payload.root_id : "";
-          const agentName =
-            typeof payload?.agent === "string" ? payload.agent : "";
-          const agentSessionID =
-            typeof payload?.agent_session_id === "string"
-              ? payload.agent_session_id.trim()
-              : "";
-          if (!rootID) {
-            break;
-          }
-          if (rootID === currentRootIdRef.current) {
-            void scheduleSessionListReload(rootID, { replace: true });
-            if (
-              sessionListModeRef.current === "import" &&
-              agentSessionID &&
-              (!agentName || agentName === externalImportAgentRef.current)
-            ) {
-              setImportingExternalSessionKeys((current) => {
-                if (!current.has(agentSessionID)) {
-                  return current;
-                }
-                const next = new Set(current);
-                next.delete(agentSessionID);
-                return next;
-              });
-              setSelectedExternalImportKeys((current) => {
-                if (!current.has(agentSessionID)) {
-                  return current;
-                }
-                const next = new Set(current);
-                next.delete(agentSessionID);
-                return next;
-              });
-              setConfirmingExternalImport(false);
-              if (externalImportAgentRef.current) {
-                void loadExternalSessions(rootID, externalImportAgentRef.current, {
-                  replace: true,
-                });
-              }
-            }
-          }
-          if (multiProjectSessionsEnabled) {
-            void loadMultiProjectSessionGroups();
-          }
-          break;
-        }
-        case "session.created": {
-          const rootID =
-            typeof payload?.root_id === "string" ? payload.root_id : "";
-          if (rootID && rootID === currentRootIdRef.current) {
-            void scheduleSessionListReload(rootID, { replace: true });
-          }
-          if (rootID && multiProjectSessionsEnabled) {
-            void loadMultiProjectSessionGroups();
-          }
-          break;
-        }
-        case "session.stream":
-          handleSessionStream(payload);
-          break;
-        case "session.slash_command.stream":
-          handleSlashCommandStream(payload);
-          break;
-        case "session.slash_command.done":
-          handleSlashCommandDone(payload);
-          break;
-        case "session.queue.updated": {
-          const rootID =
-            typeof payload?.root_id === "string" ? payload.root_id : "";
-          const sessionKey =
-            typeof payload?.session_key === "string" ? payload.session_key : "";
-          if (!rootID || !sessionKey) {
-            break;
-          }
-          const incomingQueue = Array.isArray(payload?.queue)
-            ? (payload.queue.filter(
-                (item: any) =>
-                  item &&
-                  typeof item.id === "string" &&
-                  typeof item.content === "string",
-              ) as SessionQueueItem[])
-            : [];
-          const cacheKey = rootSessionKey(rootID, sessionKey);
-          const hidden = optimisticDequeuedIdsRef.current[cacheKey];
-          const queue = hidden && hidden.size > 0
-            ? incomingQueue.filter((item) => !hidden.has(item.id))
-            : incomingQueue;
-          queueFrozenBySessionRef.current[cacheKey] = payload?.queue_frozen === true;
-          if (hidden) {
-            for (const queueId of Array.from(hidden)) {
-              if (!incomingQueue.some((item) => item.id === queueId)) {
-                hidden.delete(queueId);
-              }
-            }
-            if (hidden.size === 0) {
-              delete optimisticDequeuedIdsRef.current[cacheKey];
-            }
-          }
-          queuedMessagesBySessionRef.current[cacheKey] = queue;
-          setQueueVersion((v) => v + 1);
-          break;
-        }
-        case "session.accepted": {
-          {
-            const wsPayloadNid = String((payload as any)?._nodeId || (payload as any)?.nodeId || "").trim();
-            const wsCurNid = String(currentRootNodeIdRef.current || "").trim();
-            if (wsPayloadNid && wsCurNid && wsPayloadNid !== wsCurNid) { break; }
-          }
-          const requestId =
-            typeof payload?.request_id === "string" ? payload.request_id : "";
-          const pending = pendingRequestRef.current[requestId];
-          if (!requestId || !pending) {
-            console.warn("[session/ws] accepted_without_pending", { requestId, payloadSessionKey: typeof payload?.session_key === "string" ? payload.session_key : null });
-            break;
-          }
-          console.info("[session/ws] accepted", { requestId, rootId: pending.rootId, sessionKey: pending.sessionKey || null, tempKey: pending.tempKey || null });
-          delete pendingRequestRef.current[requestId];
-          const acceptedTimestamp =
-            typeof payload?.timestamp === "string" &&
-            !Number.isNaN(Date.parse(payload.timestamp))
-              ? payload.timestamp
-              : pending.timestamp;
-          const acceptedSessionKey =
-            typeof payload?.session_key === "string" ? payload.session_key : "";
-          if (!pending.sessionKey && pending.tempKey && acceptedSessionKey) {
-            const cacheKey = rootSessionKey(pending.rootId, acceptedSessionKey);
-            pendingBySessionRef.current[cacheKey] = {
-              ...pending,
-              timestamp: acceptedTimestamp,
-              sessionKey: acceptedSessionKey,
-              model_display_name:
-                typeof payload?.model_display_name === "string"
-                  ? payload.model_display_name
-                  : "",
-            };
-            setMultiProjectSessionPending(pending.rootId, pending.tempKey, false);
-            setMultiProjectSessionPending(pending.rootId, acceptedSessionKey, true);
-            if (pendingDraftRef.current?.requestId === pending.requestId) {
-              pendingDraftRef.current = null;
-            }
-            promotePendingSessionForRoot(
-              pending.rootId,
-              pending.tempKey,
-              acceptedSessionKey,
-              sessionCacheRef.current[cacheKey] || null,
-            );
-          }
-          const markAccepted = (
-            sess: Session | SessionItem | null | undefined,
-          ): Session | null => {
-            if (!sess) return null;
-            // 服务端若在 accepted 里带了 seq（当前版本不带，OnStart 之后才可知），
-            // 一并写入，使乐观条目立即成为「已持久化条目」。
-            const acceptedSeq = Number((payload as any)?.seq || 0);
-            const exchanges = Array.isArray((sess as any).exchanges)
-              ? ((sess as any).exchanges as Exchange[]).map((exchange) =>
-                  exchange.pending_ack === true &&
-                  exchange.content === pending.message &&
-                  exchange.timestamp === pending.timestamp
-                    ? {
-                        ...exchange,
-                        timestamp: acceptedTimestamp,
-                        pending_ack: false,
-                        ...(acceptedSeq > 0 ? { seq: acceptedSeq } : {}),
-                        model_display_name:
-                          exchange.model_display_name ||
-                          (typeof payload?.model_display_name === "string"
-                            ? payload.model_display_name
-                            : ""),
-                      }
-                    : exchange,
-                )
-              : [];
-            return {
-              ...(sess as any),
-              exchanges,
-              model_display_name:
-                (sess as any).model_display_name ||
-                (typeof payload?.model_display_name === "string"
-                  ? payload.model_display_name
-                  : ""),
-              updated_at: acceptedTimestamp,
-            } as Session;
-          };
-          const acceptedTargetKey = pending.sessionKey || acceptedSessionKey;
-          if (acceptedTargetKey) {
-            const cacheKey = rootSessionKey(pending.rootId, acceptedTargetKey);
-            const accepted = markAccepted(sessionCacheRef.current[cacheKey]);
-            if (accepted) {
-              sessionCacheRef.current[cacheKey] = accepted;
-              bumpCacheVersion();
-            }
-          }
-          const latestDrawer = drawerSessionByRootRef.current[scopedRootKey(pending.rootId)];
-          const drawerKey = latestDrawer?.key || "";
-          if (
-            drawerKey &&
-            (drawerKey === pending.sessionKey ||
-              drawerKey === pending.tempKey ||
-              drawerKey === acceptedSessionKey)
-          ) {
-            const accepted = markAccepted(latestDrawer);
-            if (accepted) {
-              setDrawerSessionForRoot(pending.rootId, accepted);
-            }
-          }
-          break;
-        }
-        case "session.error": {
-          {
-            const wsPayloadNid = String((payload as any)?._nodeId || (payload as any)?.nodeId || "").trim();
-            const wsCurNid = String(currentRootNodeIdRef.current || "").trim();
-            if (wsPayloadNid && wsCurNid && wsPayloadNid !== wsCurNid) { break; }
-          }
-          const requestId =
-            typeof payload?.request_id === "string" ? payload.request_id : "";
-          const pending = requestId
-            ? pendingRequestRef.current[requestId]
-            : null;
-          if (!requestId || !pending) {
-            console.warn("[session/ws] error_without_pending", { requestId, payloadSessionKey: typeof payload?.session_key === "string" ? payload.session_key : null });
-            break;
-          }
-          console.warn("[session/ws] error", { requestId, rootId: pending.rootId, sessionKey: pending.sessionKey || null, tempKey: pending.tempKey || null });
-          delete pendingRequestRef.current[requestId];
-          const targetKey = pending.tempKey || "";
-          const failedKey = pending.sessionKey || targetKey;
-          const rootID = pending.rootId;
-          if (failedKey) {
-            setMultiProjectSessionPending(rootID, failedKey, false);
-          }
-          const latestDrawer = drawerSessionByRootRef.current[scopedRootKey(rootID)];
-          if (targetKey && latestDrawer?.key === targetKey) {
-            const exchanges = Array.isArray((latestDrawer as any).exchanges)
-              ? ((latestDrawer as any).exchanges as Exchange[]).map(
-                  (exchange) =>
-                    exchange.pending_ack === true &&
-                    exchange.content === pending.message &&
-                    exchange.timestamp === pending.timestamp
-                      ? { ...exchange, pending_ack: false }
-                      : exchange,
-                )
-              : [];
-            setDrawerSessionForRoot(rootID, {
-              ...(latestDrawer as any),
-              pending: false,
-              exchanges,
-            } as Session);
-          }
-          break;
-        }
-        case "session.done": {
-          const wsPayloadNid = String((payload as any)?._nodeId || (payload as any)?.nodeId || (payload as any)?.session?._nodeId || "").trim();
-          const wsCurNid = String(currentRootNodeIdRef.current || "").trim();
-          if (wsPayloadNid && wsCurNid && wsPayloadNid !== wsCurNid) { break; }
-          const sessionKey =
-            typeof payload?.session_key === "string" ? payload.session_key : "";
-          const rootID =
-            typeof payload?.root_id === "string" && payload.root_id
-              ? payload.root_id
-              : resolveRootForSessionKey(sessionKey) ||
-                currentRootIdRef.current ||
-                "";
-          if (rootID && sessionKey) {
-            if (payload?.replay !== true) {
-              playCompletionSound();
-            }
-            setMultiProjectSessionPending(rootID, sessionKey, false);
-            handleSessionStreamDone(rootID, sessionKey);
-            // done 后重锚定（仅正在查看/绑定的会话）：restoreActiveSession 以服务端持久化窗口
-            // 替换缓存。持久化完成后服务端窗口不含 seq=0（JSONL 在生成结束时写入），restore
-            // 的 localTransient 合并不回填，缓存里的瞬时尾巴随之清除——否则窗口化合并（F1）
-            // 会把已持久化的轮次以 seq=0 形式重复追加在窗口后面。同时自愈断连间隙丢的 chunk。
-            // 队列续轮（仍在流式）跳过，等它自己的 done；非查看中的会话不重载（避免覆盖
-            // 其它标签页正在流式写入的同一缓存）。
-            // replay=true 的 done 不重载：它是服务端对 session.ready 的一次性回执（「你离线期间
-            // 这一轮结束了」），而 restoreActiveSession 自己又会发 session.ready，于是
-            // done → restore → ready → done 形成自持闭环（实测空转 18 次/秒、每轮一次 ?latest=20）。
-            // 断连恢复不依赖这条路径：ws.reconnected 的 replayTargetsForAllRoots 已经重载过窗口，
-            // 且服务端窗口自带 pending 状态。这里只保留「真·回合结束」的 done 触发重锚定。
-            if (
-              payload?.replay !== true &&
-              getReplayTargetsForRoot(rootID).includes(sessionKey) &&
-              !sessionService.isSessionStreaming(sessionKey)
-            ) {
-              void reloadSessionForReplay(rootID, sessionKey);
-            }
-            // 会话刚结束，服务端 updated_at/context_window 已持久化。
-            // afterTime 增量会被"updated_at 严格大于旧 newest"排除刚结束的会话（竞态），
-            // 必须 replace 全量重拉才能带上最新 meta。频率低 + 300ms debounce，成本可接受。
-            void scheduleSessionListReload(rootID, { replace: true });
-            if (multiProjectSessionsEnabled) {
-              void loadMultiProjectSessionGroups();
-            }
-          } else if (currentRootIdRef.current) {
-            void scheduleSessionListReload(currentRootIdRef.current, {
-              replace: true,
-            });
-            if (multiProjectSessionsEnabled) {
-              void refreshMultiProjectReplyingSessions();
-              void loadMultiProjectSessionGroups();
-            }
-          }
-          break;
-        }
-        case "session.user_message": {
-          const wsPayloadNid2 = String((payload as any)?._nodeId || (payload as any)?.nodeId || (payload as any)?.session?._nodeId || "").trim();
-          const wsCurNid2 = String(currentRootNodeIdRef.current || "").trim();
-          if (wsPayloadNid2 && wsCurNid2 && wsPayloadNid2 !== wsCurNid2) { break; }
-          if (
-            typeof payload?.session_key === "string" &&
-            typeof payload?.root_id === "string"
-          ) {
-            const rootID = payload.root_id;
-            const sessionKey = payload.session_key;
-            setMultiProjectSessionPending(rootID, sessionKey, true);
-            const exchange = payload.exchange;
-            const sessionMeta = payload.session;
-            const cacheKey = rootSessionKey(rootID, sessionKey);
-            console.info("[session/ws] user_message", {
-              rootID,
-              sessionKey,
-              sessionAgent: sessionMeta?.agent || "",
-              exchangeAgent: exchange?.agent || "",
-              cachedAgent: (sessionCacheRef.current[cacheKey] as any)?.agent || "",
-              currentAgent:
-                currentSessionRef.current?.key === sessionKey
-                  ? ((currentSessionRef.current as any)?.agent || "")
-                  : "",
-              selectedAgent:
-                (selectedSessionRef.current?.key || selectedSessionRef.current?.session_key) === sessionKey
-                  ? ((selectedSessionRef.current as any)?.agent || "")
-                  : "",
-            });
-            const cached =
-              sessionCacheRef.current[cacheKey] ||
-              ({
-                key: sessionKey,
-                type: sessionMeta?.type || "chat",
-                agent: sessionMeta?.agent || exchange?.agent || "",
-                model: sessionMeta?.model || exchange?.model || "",
-                mode: sessionMeta?.mode || exchange?.mode || "",
-                effort: sessionMeta?.effort || exchange?.effort || "",
-                fast_service:
-                  normalizeFastService(sessionMeta?.fast_service) ||
-                  normalizeFastService(exchange?.fast_service),
-	                plan_mode:
-	                  typeof sessionMeta?.plan_mode === "boolean"
-	                    ? sessionMeta.plan_mode
-	                    : false,
-                name: sessionMeta?.name || t("session.new"),
-                created_at:
-                  sessionMeta?.created_at ||
-                  exchange?.timestamp ||
-                  new Date().toISOString(),
-                updated_at:
-                  sessionMeta?.updated_at ||
-                  exchange?.timestamp ||
-                  new Date().toISOString(),
-                exchanges: [],
-              } as any);
-            const prevExchanges = Array.isArray((cached as any).exchanges)
-              ? ((cached as any).exchanges as Exchange[])
-              : [];
-            const incomingUserSeq = Number((exchange as any)?.seq || 0);
-            // 服务端下发的 seq 是「该用户消息已持久化」的权威标记。跨端时间戳永不相等
-            // （客户端 ISO 毫秒 vs 服务端 RFC3339Nano），故不能按时间戳判重：
-            //   1) 已有同 seq 条目 → 幂等就地更新（重连重放等）；
-            //   2) 已有同 role+content 且尚无 seq 的乐观条目 → 就地转正（写入 seq）；
-            //   3) 都没有 → 追加（带 seq 即已持久化条目，无 seq 则仍作瞬时项由 overlay 渲染）。
-            const seqIndex =
-              incomingUserSeq > 0
-                ? prevExchanges.findIndex(
-                    (item) => Number((item as any)?.seq || 0) === incomingUserSeq,
-                  )
-                : -1;
-            let mergeIndex = seqIndex;
-            if (mergeIndex < 0) {
-              for (let i = prevExchanges.length - 1; i >= 0; i -= 1) {
-                const item = prevExchanges[i];
-                if (
-                  item.role === "user" &&
-                  item.content === exchange?.content &&
-                  !Number((item as any)?.seq || 0)
-                ) {
-                  mergeIndex = i;
-                  break;
-                }
-              }
-            }
-            const pushExchange = {
-              role: "user",
-              agent: exchange?.agent || "",
-              model: exchange?.model || "",
-              model_display_name: exchange?.model_display_name || "",
-              mode: exchange?.mode || "",
-              effort: exchange?.effort || "",
-              fast_service: exchange?.fast_service || "",
-              content: exchange?.content || "",
-              timestamp:
-                exchange?.timestamp || new Date().toISOString(),
-              pending_ack: false,
-              ...(incomingUserSeq > 0 ? { seq: incomingUserSeq } : {}),
-            } as Exchange;
-            const nextExchanges =
-              mergeIndex >= 0
-                ? [
-                    ...prevExchanges.slice(0, mergeIndex),
-                    {
-                      ...prevExchanges[mergeIndex],
-                      ...(incomingUserSeq > 0 ? { seq: incomingUserSeq } : {}),
-                      timestamp:
-                        exchange?.timestamp || prevExchanges[mergeIndex].timestamp,
-                      model: exchange?.model || prevExchanges[mergeIndex].model,
-                      model_display_name:
-                        exchange?.model_display_name ||
-                        prevExchanges[mergeIndex].model_display_name,
-                      mode: exchange?.mode || prevExchanges[mergeIndex].mode,
-                      effort:
-                        exchange?.effort || prevExchanges[mergeIndex].effort,
-                      fast_service:
-                        exchange?.fast_service ||
-                        prevExchanges[mergeIndex].fast_service,
-                      pending_ack: false,
-                    },
-                    ...prevExchanges.slice(mergeIndex + 1),
-                  ]
-                : [...prevExchanges, pushExchange];
-            sessionCacheRef.current[cacheKey] = {
-              ...(cached as any),
-              ...(sessionMeta || {}),
-              key: sessionKey,
-              agent:
-                sessionMeta?.agent ||
-                exchange?.agent ||
-                (cached as any).agent ||
-                "",
-              model:
-                sessionMeta?.model ||
-                exchange?.model ||
-                (cached as any).model ||
-                "",
-              mode:
-                sessionMeta?.mode ||
-                exchange?.mode ||
-                (cached as any).mode ||
-                "",
-              effort:
-                sessionMeta?.effort ||
-                exchange?.effort ||
-                (cached as any).effort ||
-                "",
-              fast_service:
-                normalizeFastService(sessionMeta?.fast_service) ||
-                normalizeFastService(exchange?.fast_service) ||
-                normalizeFastService((cached as any).fast_service),
-	              plan_mode:
-	                typeof sessionMeta?.plan_mode === "boolean"
-	                  ? sessionMeta.plan_mode
-	                  : !!(cached as any).plan_mode,
-              exchanges: nextExchanges,
-              model_display_name:
-                sessionMeta?.model_display_name ||
-                exchange?.model_display_name ||
-                (cached as any).model_display_name ||
-                "",
-              updated_at:
-                sessionMeta?.updated_at ||
-                exchange?.timestamp ||
-                new Date().toISOString(),
-            } as Session;
-            const runtimeAgent = sessionMeta?.agent || exchange?.agent || "";
-            if (runtimeAgent) {
-              updateSessionAgentForKey(
-                rootID,
-                sessionKey,
-                runtimeAgent,
-                sessionMeta?.model || exchange?.model || "",
-                sessionMeta?.mode || exchange?.mode || "",
-                sessionMeta?.effort || exchange?.effort || "",
-                normalizeFastService(sessionMeta?.fast_service) ||
-                  normalizeFastService(exchange?.fast_service),
-                typeof sessionMeta?.plan_mode === "boolean"
-                  ? sessionMeta.plan_mode
-                  : undefined,
-              );
-            }
-            bumpCacheVersion();
-            const newest2 = sessionsRef.current[0]?.updated_at || "";
-            void loadSessionsForRoot(
-              rootID,
-              newest2 ? { afterTime: newest2 } : { replace: true },
-            );
-            if (multiProjectSessionsEnabled) {
-              void loadMultiProjectSessionGroups();
-            }
-            }
-          }
-          break;
-        case "task.updated":
-          if (
-            typeof payload?.root_id === "string" &&
-            payload.root_id === currentRootIdRef.current &&
-            typeof payload?.task?.id === "string"
-          ) {
-            // 跨节点隔离：同名项目在另一节点的任务推送不污染当前视图
-            const payloadNid = String((payload as any)?.nodeId || (payload as any)?._nodeId || (payload as any)?.task?._nodeId || "").trim();
-            const curNid = String(currentRootNodeIdRef.current || "").trim();
-            if (payloadNid && curNid && payloadNid !== curNid) { break; }
-            const nextTask = payload.task as KanbanTask;
-            const detail = payload.detail as TaskDetail | undefined;
-            if (detail?.task?.id) {
-              applyTaskDetails(payload.root_id, [detail]);
-            } else {
-              const current = taskDetailsByIdRef.current[nextTask.id];
-              applyTaskDetails(payload.root_id, [{
-                task: nextTask,
-                stage_runs: current?.stage_runs || [],
-                events: current?.events || [],
-              }]);
-            }
-            if (nextTask.worktree_path) {
-              void refreshTaskWorktree(payload.root_id, nextTask.worktree_path, false);
-            }
-          }
-          break;
-        case "session.meta.updated":
-          if (
-            typeof payload?.root_id === "string" &&
-            typeof payload?.session?.key === "string"
-          ) {
-            const rootID = payload.root_id;
-            const sessionKey = payload.session.key;
-            const cacheKey = rootSessionKey(rootID, sessionKey);
-            const cached =
-              sessionCacheRef.current[cacheKey] ||
-              ({
-                key: sessionKey,
-                root_id: rootID,
-                type: normalizeMode(payload.session.type),
-                name:
-                  typeof payload.session.name === "string"
-                    ? payload.session.name
-                    : "",
-                created_at: payload.session.updated_at || new Date().toISOString(),
-                updated_at: payload.session.updated_at || new Date().toISOString(),
-                exchanges: [],
-              } as Session);
-            sessionCacheRef.current[cacheKey] = {
-                ...cached,
-                name:
-                  typeof payload.session.name === "string"
-                    ? payload.session.name
-                    : cached.name,
-                agent:
-                  typeof payload.session.agent === "string"
-                    ? payload.session.agent
-                    : (cached as any).agent,
-                model:
-                  typeof payload.session.model === "string"
-                    ? payload.session.model
-                    : (cached as any).model,
-                mode:
-                  typeof payload.session.mode === "string"
-                    ? payload.session.mode
-                    : (cached as any).mode,
-                effort:
-                  typeof payload.session.effort === "string"
-                    ? payload.session.effort
-                    : (cached as any).effort,
-                fast_service:
-                  normalizeFastService(payload.session.fast_service) ||
-                  normalizeFastService((cached as any).fast_service),
-                plan_mode:
-                  typeof payload.session.plan_mode === "boolean"
-                    ? payload.session.plan_mode
-                    : !!(cached as any).plan_mode,
-                parent_session_key:
-                  typeof payload.session.parent_session_key === "string"
-                    ? payload.session.parent_session_key
-                    : (cached as any).parent_session_key,
-                parent_tool_call_id:
-                  typeof payload.session.parent_tool_call_id === "string"
-                    ? payload.session.parent_tool_call_id
-                    : (cached as any).parent_tool_call_id,
-                source:
-                  typeof payload.session.source === "string"
-                    ? payload.session.source
-                    : (cached as any).source,
-                task_id:
-                  typeof payload.session.task_id === "string"
-                    ? payload.session.task_id
-                    : (cached as any).task_id,
-                related_worktree:
-                  payload.session.related_worktree !== undefined
-                    ? payload.session.related_worktree
-                    : (cached as any).related_worktree,
-                pinned_at:
-                  payload.session.pinned_at !== undefined
-                    ? payload.session.pinned_at || undefined
-                    : (cached as any).pinned_at,
-                updated_at: payload.session.updated_at || cached.updated_at,
-              } as Session;
-            bumpCacheVersion();
-            if (
-              (selectedSessionRef.current?.key ||
-                selectedSessionRef.current?.session_key) === sessionKey
-            ) {
-              setSelectedSession((prev) =>
-                prev
-                  ? ({
-                      ...(prev as any),
-                      name:
-                        typeof payload.session.name === "string"
-                          ? payload.session.name
-                          : prev.name,
-                      agent:
-                        typeof payload.session.agent === "string"
-                          ? payload.session.agent
-                          : (prev as any).agent,
-                      model:
-                        typeof payload.session.model === "string"
-                          ? payload.session.model
-                          : (prev as any).model,
-                      mode:
-                        typeof payload.session.mode === "string"
-                          ? payload.session.mode
-                          : (prev as any).mode,
-                      effort:
-                        typeof payload.session.effort === "string"
-                          ? payload.session.effort
-                          : (prev as any).effort,
-                      fast_service:
-                        normalizeFastService(payload.session.fast_service) ||
-                        normalizeFastService((prev as any).fast_service),
-                      plan_mode:
-                        typeof payload.session.plan_mode === "boolean"
-                          ? payload.session.plan_mode
-                          : !!(prev as any).plan_mode,
-                      parent_session_key:
-                        typeof payload.session.parent_session_key === "string"
-                          ? payload.session.parent_session_key
-                          : (prev as any).parent_session_key,
-                      parent_tool_call_id:
-                        typeof payload.session.parent_tool_call_id === "string"
-                          ? payload.session.parent_tool_call_id
-                          : (prev as any).parent_tool_call_id,
-                      source:
-                        typeof payload.session.source === "string"
-                          ? payload.session.source
-                          : (prev as any).source,
-                      task_id:
-                        typeof payload.session.task_id === "string"
-                          ? payload.session.task_id
-                          : (prev as any).task_id,
-                      related_worktree:
-                        payload.session.related_worktree !== undefined
-                          ? payload.session.related_worktree
-                          : (prev as any).related_worktree,
-                      pinned_at:
-                        payload.session.pinned_at !== undefined
-                          ? payload.session.pinned_at || undefined
-                          : (prev as any).pinned_at,
-                      updated_at: payload.session.updated_at || prev.updated_at,
-                    } as SessionItem)
-                  : prev,
-              );
-            }
-            if (boundSessionByRootRef.current[scopedRootKey(rootID)] === sessionKey) {
-              const latest = sessionCacheRef.current[cacheKey];
-              if (latest) {
-                setDrawerSessionForRoot(rootID, latest);
-              }
-            }
-            const relatedWorktreePath =
-              typeof payload.session.related_worktree?.path === "string"
-                ? payload.session.related_worktree.path.trim()
-                : "";
-            if (relatedWorktreePath) {
-              void refreshTaskWorktree(rootID, relatedWorktreePath, false);
-            }
-            // afterTime 增量按 updated_at 严格大于排除刚创建/刚更新的会话（乐观项 timestamp 与
-            // 服务端 updated_at 的竞态，session.done 处有同款注释）：新 key 首次经 WS 露面时
-            // 必须 replace 全量重拉，否则要等手动同步才出现在列表里。
-            const listHasKey = sessionsRef.current.some(
-              (item) =>
-                String(item.key || item.session_key || "") === sessionKey,
-            );
-            if (listHasKey) {
-              const newest = sessionsRef.current[0]?.updated_at || "";
-              void loadSessionsForRoot(
-                rootID,
-                newest ? { afterTime: newest } : { replace: true },
-              );
-            } else {
-              void loadSessionsForRoot(rootID, { replace: true });
-            }
-            if (multiProjectSessionsEnabled) {
-              void loadMultiProjectSessionGroups();
-            }
-          }
-          break;
-        case "session.related_files.updated": {
-          const rootID =
-            typeof payload?.root_id === "string" ? payload.root_id : "";
-          const sessionKey =
-            typeof payload?.session_key === "string" ? payload.session_key : "";
-          if (rootID && sessionKey) {
-            void refreshSessionRelatedFiles(rootID, sessionKey);
-            refreshTasksForRelatedSession(rootID, sessionKey);
-            const cachedSession =
-              sessionCacheRef.current[rootSessionKey(rootID, sessionKey)];
-            const parentSessionKey = String(
-              cachedSession?.parent_session_key || "",
-            ).trim();
-            if (parentSessionKey) {
-              void refreshSessionRelatedFiles(rootID, parentSessionKey);
-              refreshTasksForRelatedSession(rootID, parentSessionKey);
-            }
-            if (payload?.related_worktree && typeof payload.related_worktree === "object") {
-              updateSessionRelatedWorktreeForKey(
-                rootID,
-                sessionKey,
-                payload.related_worktree as RelatedWorktree,
-              );
-            }
-          }
-          break;
-        }
-        case "file.changed.batch":
-          handleFileChangedBatch(payload);
-          break;
-        case "file.changed":
-          handleFileChanged(payload);
-          break;
-        case "agent.status.changed":
-          setAgentsVersion((v) => v + 1);
-          break;
-        case "app.update":
-          setUpdateState(normalizeUpdateState(payload?.state as UpdateState));
-          break;
-        case "github.import": {
-          const status = (payload?.status || {}) as any;
-          const taskID = typeof status?.task_id === "string" ? status.task_id : "";
-          if (!taskID) {
-            break;
-          }
-          setGitHubImportState((prev) => {
-            if (prev.taskId && prev.taskId !== taskID) {
-              return prev;
-            }
-            const nextStatus = String(status?.status || "");
-            const done = nextStatus === "done";
-            const failed = nextStatus === "failed";
-            return {
-              ...prev,
-              taskId: taskID,
-              status: nextStatus,
-              message: String(status?.message || ""),
-              running: !done && !failed,
-              submitting: false,
-              done,
-              error: failed ? String(status?.message || t("root.githubImportFailed")) : "",
-            };
-          });
-          if (String(status?.status || "") === "done") {
-            setProjectAddMode(null);
-            void refreshManagedRoots();
-            const rootID = typeof status?.root_id === "string" ? status.root_id : "";
-            if (rootID) {
-              void actionHandlersRef.current.open_dir({
-                path: rootID,
-                root: rootID,
-                isRoot: true,
-              });
-            }
-          }
-          break;
-        }
-      }
-    });
-    void loadSessionsForRoot(currentRootId, { replace: true });
-    return () => {
-      cancelled = true;
-      if (sessionListReloadTimerRef.current) {
-        window.clearTimeout(sessionListReloadTimerRef.current);
-        sessionListReloadTimerRef.current = null;
-      }
-      unsubscribeEvents();
-    };
-  }, [
-    currentRootId,
-    currentRootNodeId,
-    loadExternalSessions,
-    loadMultiProjectSessionGroups,
-    loadSessionsForRoot,
-    scheduleSessionListReload,
-    multiProjectSessionsEnabled,
-    refreshMultiProjectReplyingSessions,
-    rootSessionKey,
-    resolveRootForSessionKey,
-    promotePendingSessionForRoot,
-    appendAgentChunkForSession,
-    appendThoughtChunkForSession,
-    appendToolCallForSession,
-    appendTodoUpdateForSession,
-    appendPlanUpdateForSession,
-    appendCompactNoticeForSession,
-    clearSessionStale,
-    markSessionPending,
-    markSessionStale,
-    resolvePendingForSession,
-    setSelectedPendingByKey,
-    setBoundSessionForRoot,
-    setDrawerSessionForRoot,
-    setMultiProjectSessionPending,
-    refreshManagedRoots,
-    invalidatePluginsForRoot,
-    refreshTreeDir,
-    refreshCurrentFileContent,
-    refreshGitStatus,
-    refreshManagedRoots,
-    updateSessionRelatedWorktreeForKey,
-    updateSessionRelatedFilesForKey,
-    refreshTasksForRelatedSession,
-    updateSessionAgentForKey,
-    treeCacheKey,
-    t,
-  ]);
+  // 2026-09 App.tsx 拆分：25 个 WS 事件处理器（含 9 个 handleSessionStream 内部 case）
+  // 与其 13 个内部 helper 整体搬到 app/useRealtimeEvents.ts。参数按用途分四组、组内同名简写，
+  // 所以搬过去的 1600 行代码一个标识符都没改。
+  useRealtimeEvents({
+    refs: { // App 的 ref 池
+      actionHandlersRef,
+      boundSessionByRootRef,
+      cancelRequestedBySessionRef,
+      currentRootIdRef,
+      currentRootNodeIdRef,
+      currentSessionRef,
+      drawerSessionByRootRef,
+      fileRef,
+      invalidTreeCacheKeysRef,
+      loadedSessionRef,
+      managedRootByIdRef,
+      managedRootByKeyRef,
+      managedRootIdsRef,
+      optimisticDequeuedIdsRef,
+      pendingBySessionRef,
+      pendingDraftRef,
+      pendingRequestRef,
+      queueFrozenBySessionRef,
+      queuedMessagesBySessionRef,
+      selectedDirRef,
+      selectedSessionByRootRef,
+      selectedSessionRef,
+      sessionCacheRef,
+      sessionListReloadTimerRef,
+      sessionsRef,
+      suppressedAutoBindSessionByRootRef,
+      taskDetailsByIdRef,
+    },
+    setters: { // App 的 setState
+      setAgentsVersion,
+      setBoundSessionForRoot,
+      setCodexRateLimitsRefreshToken,
+      setDrawerSessionForRoot,
+      setGitDiff,
+      setGitHubImportState,
+      setMultiProjectSessionGroups,
+      setMultiProjectSessionPending,
+      setProjectAddMode,
+      setQueueVersion,
+      setRootEntries,
+      setSelectedPendingByKey,
+      setSelectedSession,
+      setSessions,
+      setSlashCommandResults,
+      setStatus,
+      setUpdateState,
+    },
+    actions: { // App 的动作
+      appendAgentChunkForSession,
+      appendCompactNoticeForSession,
+      appendPlanUpdateForSession,
+      appendThoughtChunkForSession,
+      appendTodoUpdateForSession,
+      appendToolCallForSession,
+      applyManagedRootRename,
+      applyTaskDetails,
+      attachContextWindowToLatestAssistant,
+      bumpCacheVersion,
+      clearSessionStale,
+      getNodeIdForRoot,
+      invalidatePluginsForRoot,
+      loadManagedRootPayloads,
+      loadMultiProjectSessionGroups,
+      loadSessionsForRoot,
+      markSessionPending,
+      markSessionStale,
+      playCompletionSound,
+      promotePendingSessionForRoot,
+      refreshCurrentFileContent,
+      refreshGitStatus,
+      refreshManagedRoots,
+      refreshMultiProjectReplyingSessions,
+      refreshTaskWorktree,
+      refreshTasksForRelatedSession,
+      refreshTreeDir,
+      resolveRootForSessionKey,
+      restoreActiveSession,
+      scheduleSessionListReload,
+      updateSessionAgentForKey,
+      updateSessionRelatedFilesForKey,
+      updateSessionRelatedWorktreeForKey,
+    },
+    values: { // 稳定值
+      currentRootId,
+      gitDiff,
+      handleImportedSessionConfirmed,
+      multiProjectSessionsEnabled,
+      rootSessionKey,
+      scopedRootKey,
+      t,
+      treeCacheKey,
+    },
+  });
 
   useEffect(() => {
     if (!currentRootId) return;
@@ -11330,23 +6701,11 @@ export function App({ onGoHome }: AppProps) {
             preservePluginQuery: true,
           });
         } else {
-          const restored = await tryShowBoundSessionForRoot(preferredRoot, {
+          if (cancelled) return;
+          await showBoundSessionOrRootDir(preferredRoot, {
             pluginQuery: urlState.pluginQuery,
+            loadSessionsOnRestore: true,
           });
-          if (!restored) {
-            actionHandlersRef.current.open_dir({
-              path: preferredRoot,
-              root: preferredRoot,
-              preservePluginQuery: true,
-              isRoot: true,
-            });
-          } else {
-            void loadSessionsForRoot(preferredRoot, {
-              replace: true,
-              force: true,
-            });
-            await refreshTreeDir(preferredRoot, ".", false);
-          }
         }
       } catch (err) {
         if (cancelled) {
@@ -11372,7 +6731,7 @@ export function App({ onGoHome }: AppProps) {
     loadMultiProjectSessionGroups,
     loadSessionsForRoot,
     refreshTreeDir,
-    tryShowBoundSessionForRoot,
+    showBoundSessionOrRootDir,
     bootstrapState.phase,
   ]);
 
@@ -11521,26 +6880,16 @@ export function App({ onGoHome }: AppProps) {
         return;
       }
       void (async () => {
-        const restored = await tryShowBoundSessionForRoot(state.root, {
+        await showBoundSessionOrRootDir(state.root, {
           pluginQuery: state.pluginQuery,
-        });
-        if (restored) {
-          void loadSessionsForRoot(state.root, { replace: true, force: true });
-          await refreshTreeDir(state.root, ".", false);
-          return;
-        }
-        actionHandlers.open_dir({
-          path: state.root,
-          root: state.root,
-          preservePluginQuery: true,
-          isRoot: true,
+          loadSessionsOnRestore: true,
         });
       })();
     }
 
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
-  }, [actionHandlers, loadSessionsForRoot, refreshTreeDir, tryShowBoundSessionForRoot]);
+  }, [actionHandlers, loadSessionsForRoot, refreshTreeDir, showBoundSessionOrRootDir]);
 
   const selectedRoot =
     (selectedSession?.root_id as string | undefined) || currentRootId || "";
@@ -12253,197 +7602,6 @@ export function App({ onGoHome }: AppProps) {
     />
   );
 
-  const worktreeBranchSelector =
-    creatingRootKind === "worktree" ? (
-      <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
-        <select
-          value={worktreeBranchMode === "new" ? "__new__" : worktreeBranch}
-          disabled={creatingRootBusy}
-          onChange={(event) => {
-            const value = event.target.value;
-            if (value === "__new__") {
-              setWorktreeBranchMode("new");
-              setWorktreeBranch("");
-              return;
-            }
-            setWorktreeBranchMode("existing");
-            setWorktreeBranch(value);
-          }}
-          style={{
-            width: "100%",
-            borderRadius: "7px",
-            border: "1px solid var(--border-color)",
-            background: "var(--menu-bg)",
-            color: "var(--text-primary)",
-            fontSize: "12px",
-            padding: "6px 8px",
-            outline: "none",
-          }}
-        >
-          <option value="__new__">{t("worktree.createBranch")}</option>
-          {worktreeBranches.branches.map((branch) => (
-            <option key={branch.name} value={branch.name}>
-              {branch.current ? `${branch.name} ${t("worktree.current")}` : branch.name}
-            </option>
-          ))}
-        </select>
-        {worktreeBranchesLoading ? (
-          <span style={{ fontSize: "11px", color: "var(--text-secondary)" }}>{t("worktree.loadingBranches")}</span>
-        ) : worktreeBranchError ? (
-          <span style={{ fontSize: "11px", color: "#b45309" }}>{worktreeBranchError}</span>
-        ) : null}
-      </div>
-    ) : null;
-
-  const worktreeCreateOverlay =
-    creatingRootKind === "worktree" && creatingRootName !== null ? (
-      <div
-        ref={worktreeCreatePopoverRef}
-        style={{
-          width: "248px",
-          maxWidth: "calc(100vw - 32px)",
-          padding: "10px",
-          borderRadius: "12px",
-          border: "1px solid var(--border-color)",
-          background: "var(--menu-bg)",
-          boxShadow: "0 12px 30px rgba(15, 23, 42, 0.14)",
-          display: "flex",
-          flexDirection: "column",
-          gap: "10px",
-        }}
-      >
-        <div style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-primary)" }}>
-          worktree
-        </div>
-        <input
-          value={creatingRootName}
-          disabled={creatingRootBusy}
-          autoFocus
-          onChange={(event) => setCreatingRootName(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") {
-              event.preventDefault();
-              void handleCreateRootSubmit();
-            } else if (event.key === "Escape") {
-              event.preventDefault();
-              handleCreateRootCancel();
-            }
-          }}
-          style={{
-            width: "100%",
-            borderRadius: "8px",
-            border: "1px solid var(--border-color)",
-            background: "transparent",
-            color: "var(--text-primary)",
-            fontSize: "12px",
-            padding: "8px 10px",
-            outline: "none",
-            boxSizing: "border-box",
-          }}
-        />
-        {worktreeBranchSelector}
-        <div style={{ display: "flex" }}>
-          <button
-            type="button"
-            disabled={creatingRootBusy || !String(creatingRootName || "").trim()}
-            onClick={() => {
-              void handleCreateRootSubmit();
-            }}
-            style={{
-              width: "100%",
-              border: "none",
-              background: creatingRootBusy || !String(creatingRootName || "").trim()
-                ? "rgba(59, 130, 246, 0.65)"
-                : "var(--accent-color)",
-              color: "#fff",
-              borderRadius: "8px",
-              padding: "8px 10px",
-              fontSize: "12px",
-              fontWeight: 600,
-              cursor: creatingRootBusy || !String(creatingRootName || "").trim()
-                ? "not-allowed"
-                : "pointer",
-            }}
-          >
-            {creatingRootBusy ? t("worktree.processing") : t("worktree.create")}
-          </button>
-        </div>
-      </div>
-    ) : null;
-
-  const worktreeSwitchOverlay =
-    worktreeSwitchOpen ? (
-      <div
-        ref={worktreeSwitchPopoverRef}
-        style={{
-          width: "248px",
-          maxWidth: "calc(100vw - 32px)",
-          maxHeight: "360px",
-          padding: "8px",
-          borderRadius: "12px",
-          border: "1px solid var(--border-color)",
-          background: "var(--menu-bg)",
-          boxShadow: "0 12px 30px rgba(15, 23, 42, 0.14)",
-          display: "flex",
-          flexDirection: "column",
-          gap: "6px",
-          overflow: "auto",
-        }}
-      >
-        <div style={{ padding: "4px 6px 6px", fontSize: "12px", fontWeight: 600, color: "var(--text-primary)" }}>
-          {t("worktree.switchTitle")}
-        </div>
-        {worktreeSwitchLoading ? (
-          <div style={{ padding: "8px 6px", fontSize: "12px", color: "var(--text-secondary)" }}>{t("common.loading")}</div>
-        ) : worktreeSwitchError ? (
-          <div style={{ padding: "8px 6px", fontSize: "12px", color: "#b45309" }}>{worktreeSwitchError}</div>
-        ) : worktreeSwitchItems.length === 0 ? (
-          <div style={{ padding: "8px 6px", fontSize: "12px", color: "var(--text-secondary)" }}>{t("worktree.noSwitchable")}</div>
-        ) : worktreeSwitchItems.map((item) => {
-          const managed = findManagedRootByPath(item.path);
-          const active = item.current || managed?.id === currentRootId;
-          const busy = switchingWorktreePath === item.path;
-          const name = String(item.path || "").replace(/[\\/]+$/, "").split(/[\\/]/).filter(Boolean).pop() || item.path;
-          return (
-            <button
-              key={item.path}
-              type="button"
-              disabled={active || !!switchingWorktreePath}
-              onClick={() => {
-                void handleSwitchWorktree(item);
-              }}
-              style={{
-                width: "100%",
-                border: "none",
-                background: active ? "var(--selection-bg)" : "transparent",
-                color: active ? "var(--accent-color)" : "var(--text-primary)",
-                borderRadius: "8px",
-                padding: "8px 10px",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: "12px",
-                textAlign: "left",
-                cursor: active || switchingWorktreePath ? "default" : "pointer",
-                opacity: switchingWorktreePath && !busy ? 0.56 : 1,
-              }}
-            >
-              <span style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: "2px" }}>
-                <span style={{ fontSize: "12px", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {name}
-                </span>
-                <span style={{ fontSize: "11px", color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {item.branch || item.head?.slice(0, 8) || item.path}
-                </span>
-              </span>
-              <span style={{ fontSize: "11px", color: active ? "var(--accent-color)" : "var(--text-secondary)", flexShrink: 0 }}>
-                {busy ? "..." : active ? t("worktree.current") : managed ? t("worktree.switch") : t("worktree.join")}
-              </span>
-            </button>
-          );
-        })}
-      </div>
-    ) : null;
 
   let workspaceView: React.ReactNode;
   const gitStatusAvailable = gitStatus?.available === true;
@@ -12557,14 +7715,9 @@ export function App({ onGoHome }: AppProps) {
           refreshGitHistory(root, { waitForIncremental: true }),
         ]);
         return;
-      case "worktrees": {
-        const items = await loadProjectTreeWorktrees(root);
-        const expandedPath = expandedWorktreeByRoot[root] || "";
-        if (expandedPath && items.some((item) => item.path === expandedPath)) {
-          await loadProjectTreeWorktreeStatus(expandedPath);
-        }
+      case "worktrees":
+        await refreshProjectTreeWorktrees(root);
         return;
-      }
       case "related":
         await Promise.all([
           refreshProjectTreeRelatedFiles(),
@@ -12572,14 +7725,12 @@ export function App({ onGoHome }: AppProps) {
         ]);
     }
   }, [
-    expandedWorktreeByRoot,
     getNodeIdForRoot,
-    loadProjectTreeWorktreeStatus,
-    loadProjectTreeWorktrees,
     refreshCurrentFileContent,
     refreshGitHistory,
     refreshGitStatus,
     refreshProjectTreeRelatedFiles,
+    refreshProjectTreeWorktrees,
     refreshTreeDir,
   ]);
 
@@ -12589,189 +7740,35 @@ export function App({ onGoHome }: AppProps) {
     if (projectTreeTab !== "worktrees" || !rootID || !worktreePath) {
       return;
     }
-	    // 同一时间只展开一个工作树：整对象写入会清掉其它已展开项
-    setExpandedWorktreeByRoot({ [scopedRootKey(rootID)]: worktreePath });
-    void loadProjectTreeWorktreeStatus(worktreePath, rootID);
+    void expandProjectTreeWorktree(rootID, worktreePath);
   }, [
-    loadProjectTreeWorktreeStatus,
+    expandProjectTreeWorktree,
     projectTreeTab,
     relatedWorktree?.path,
     relatedWorktree?.root_id,
   ]);
 
-  const renderRootWorktreeContent = (root: string): React.ReactNode => {
-    // 与 renderRootGitContent 同一判据：非 git 根没有 worktree，别把 git 的原始报错
-    // （"fatal: not a git repository"）当错误渲染出来。
-    if (managedRootByIdRef.current[root]?.is_git_repo !== true) {
-      return (
-        <div style={{ padding: "8px 4px", fontSize: "12px", color: "var(--text-secondary)" }}>
-          {t("git.notRepository")}
-        </div>
-      );
-    }
-    const relatedPath =
-      relatedWorktree?.root_id === root ? String(relatedWorktree?.path || "") : "";
-    const items = [...(worktreeItemsByRoot[scopedRootKey(root)] || [])].sort((left, right) => {
-      if (!relatedPath) {
-        return 0;
-      }
-      if (left.path === relatedPath) {
-        return -1;
-      }
-      if (right.path === relatedPath) {
-        return 1;
-      }
-      return 0;
-    });
-    const loading = worktreeLoadingByRoot[scopedRootKey(root)] === true;
-    const error = worktreeErrorByRoot[scopedRootKey(root)] || "";
-    const expandedPath = expandedWorktreeByRoot[scopedRootKey(root)] || "";
-    if (loading) {
-      return (
-        <div style={{ padding: "8px 4px", fontSize: "12px", color: "var(--text-secondary)" }}>
-          {t("worktree.loading")}
-        </div>
-      );
-    }
-    if (error) {
-      return (
-        <div style={{ padding: "8px 4px", fontSize: "12px", color: "#b45309" }}>
-          {error}
-        </div>
-      );
-    }
-    if (items.length === 0) {
-      return (
-        <div style={{ padding: "8px 4px", fontSize: "12px", color: "var(--text-secondary)" }}>
-          {t("worktree.empty")}
-        </div>
-      );
-    }
-    return (
-      <div style={{ display: "flex", flexDirection: "column", gap: "5px", minWidth: 0 }}>
-        {items.map((item) => {
-          const managed = findManagedRootByPath(item.path);
-          const targetRootId = managed?.id || "";
-          const selected = expandedPath === item.path;
-          const status = worktreeStatusByPath[item.path] || null;
-          const statusLoading = worktreeStatusLoadingByPath[item.path] === true;
-          const dirtyCount = status?.items?.length || 0;
-          const branchLabel = item.branch || item.head?.slice(0, 8) || item.path;
-          const statusCountLabel = statusLoading ? "..." : status ? String(dirtyCount) : "";
-          return (
-            <div key={item.path} style={{ minWidth: 0 }}>
-              <button
-                type="button"
-                onClick={async () => {
-                  if (selected) {
-                    setExpandedWorktreeByRoot((prev) => ({ ...prev, [scopedRootKey(root)]: "" }));
-                    return;
-                  }
-                  setExpandedWorktreeByRoot({ [scopedRootKey(root)]: item.path });
-                  await loadProjectTreeWorktreeStatus(item.path, root);
-                }}
-                style={{
-                  width: "100%",
-                  border: "none",
-                  borderRadius: "7px",
-                  background: selected ? "var(--selection-bg)" : "transparent",
-                  color: selected ? "var(--accent-color)" : "var(--text-primary)",
-                  padding: "6px 4px 6px 0",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  gap: "8px",
-                  textAlign: "left",
-                  cursor: "pointer",
-                }}
-              >
-                <span style={{ minWidth: 0, display: "inline-flex", alignItems: "center", gap: "8px" }}>
-                  <span
-                    title={t("git.changes")}
-                    aria-label={t("git.changes")}
-                    style={{
-                      width: "18px",
-                      height: "18px",
-                      display: "inline-flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      color: "var(--text-primary)",
-                      flexShrink: 0,
-                    }}
-                  >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                      <path
-                        fill="currentColor"
-                        d="M7 5a2 2 0 1 1 3.763.945h.58a4 4 0 0 1 4 4v1.28a2 2 0 0 1-1.02 3.72a2 2 0 0 1-.98-3.745V9.945a2 2 0 0 0-2-2H10v9.323A2 2 0 0 1 9 21a2 2 0 0 1-1-3.732V6.732A2 2 0 0 1 7 5"
-                      />
-                    </svg>
-                  </span>
-                  <span style={{ fontSize: "12px", fontWeight: selected ? 700 : 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {branchLabel}
-                  </span>
-                </span>
-                <span style={{ display: "inline-flex", alignItems: "center", gap: "6px", fontSize: "11px", color: selected ? "var(--accent-color)" : "var(--text-secondary)", flexShrink: 0 }}>
-                  <span>{statusCountLabel}</span>
-                  <svg
-                    width="12"
-                    height="12"
-                    viewBox="0 0 20 20"
-                    fill="currentColor"
-                    aria-hidden="true"
-                    style={{
-                      transform: selected ? "rotate(180deg)" : "rotate(0deg)",
-                      transition: "transform 0.15s",
-                    }}
-                  >
-                    <path
-                      fillRule="evenodd"
-                      d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 11.17l3.71-3.94a.75.75 0 1 1 1.08 1.04l-4.25 4.5a.75.75 0 0 1-1.08 0l-4.25-4.5a.75.75 0 0 1 .02-1.06"
-                      clipRule="evenodd"
-                    />
-                  </svg>
-                </span>
-              </button>
-              {selected ? (
-                <div style={{ padding: "4px 0 4px 0" }}>
-                  {statusLoading || status ? (
-                    <GitStatusPanel
-                      rootId={targetRootId || currentRootId || undefined}
-                      status={status}
-                      loading={statusLoading}
-                      compact
-                      expanded
-                      showHeader={false}
-                      showHeaderActions={false}
-                      showExpandedToggle={false}
-                      enableBranchMenu={false}
-                      onSelectItem={(statusItem) => {
-                        const nextRoot = targetRootId || root;
-                        if (!nextRoot) {
-                          return;
-                        }
-                        void openGitDiff(nextRoot, statusItem, targetRootId ? undefined : { repoPath: item.path });
-                      }}
-                      onOpenItem={(statusItem) => {
-                        const nextRoot = targetRootId;
-                        if (!nextRoot || statusItem.is_dir === true) {
-                          return;
-                        }
-                        actionHandlers.open({ path: statusItem.path, root: nextRoot });
-                      }}
-                    />
-                  ) : (
-                    <div style={{ padding: "6px 4px", fontSize: "12px", color: "var(--text-secondary)" }}>
-                      {t("git.loadingStatusInline")}
-                    </div>
-                  )}
-                </div>
-              ) : null}
-            </div>
-          );
-        })}
-      </div>
-    );
-  };
+  const renderRootWorktreeContent = (root: string): React.ReactNode => (
+    <RootWorktreeContentView
+      root={root}
+      currentRootId={currentRootId}
+      scopedRootKey={scopedRootKey}
+      managedRootByIdRef={managedRootByIdRef}
+      relatedWorktree={relatedWorktree}
+      worktrees={{
+        worktreeItemsByRoot,
+        worktreeLoadingByRoot,
+        worktreeErrorByRoot,
+        expandedWorktreeByRoot,
+        worktreeStatusByPath,
+        worktreeStatusLoadingByPath,
+        toggleProjectTreeWorktree,
+      }}
+      findManagedRootByPath={findManagedRootByPath}
+      openGitDiff={openGitDiff}
+      actionHandlers={actionHandlers}
+    />
+  );
   const selectedSessionRelatedFiles = useMemo(() => {
     const rawRelated = selectedKanbanTask
       ? taskRelatedFilesById[selectedKanbanTask.id] || []
@@ -12884,311 +7881,62 @@ export function App({ onGoHome }: AppProps) {
     gitStatsRefreshKey,
     relatedSessionNodeId,
   );
-  const renderRootRelatedContent = (root: string): React.ReactNode => {
-    if (!root || root !== currentRootId || root !== relatedSessionRootId) {
-      return null;
-    }
-    if (!relatedSessionSnapshot && !selectedKanbanTask) {
-      return (
-        <div style={{ padding: "8px 4px", fontSize: "12px", color: "var(--text-secondary)" }}>
-          {t("session.empty")}
-        </div>
-      );
-    }
-    if (selectedSessionRelatedFiles.length === 0) {
-      return (
-        <div style={{ padding: "8px 4px", fontSize: "12px", color: "var(--text-secondary)" }}>
-          {t("session.relatedFiles", { count: 0 })}
-        </div>
-      );
-    }
-    return (
-      <div style={{ display: "flex", flexDirection: "column", gap: "4px", minWidth: 0 }}>
-        {selectedSessionRelatedFileGroups.map((group) => {
-          const isCurrentRepo =
-            !group.repoPath ||
-            normalizePath(group.repoPath) ===
-              normalizePath(managedRootByIdRef.current[root]?.root_path || "");
-          const showGroupHeader = group.repoKind === "plain" || group.head || !isCurrentRepo;
-          return (
-            <div key={group.key} style={{ display: "flex", flexDirection: "column", gap: "4px", minWidth: 0 }}>
-              {showGroupHeader ? (
-                <div
-                  title={[group.repoPath, group.head].filter(Boolean).join(" · ") || group.repoName || t("session.currentProject")}
-                  style={{
-                    padding: "3px 6px 0",
-                    fontSize: "11px",
-                    color: "var(--text-secondary)",
-                    fontFamily: group.head ? "var(--mono-font, monospace)" : undefined,
-                  }}
-                >
-                  {group.repoKind === "plain"
-                    ? `${group.repoName || t("session.currentProject")} · ${t("session.nonGit")}`
-                    : group.head
-                      ? isCurrentRepo
-                        ? `HEAD ${group.head.slice(0, 8)}`
-                        : `${group.repoName || t("session.currentProject")} · HEAD ${group.head.slice(0, 8)}`
-                      : group.repoName || t("session.currentProject")}
-                </div>
-              ) : null}
-              {group.files.map((file) => {
-          const stats = selectedRelatedFileStatsByKey[relatedFileStatKey(file)] || gitFileStatsByPath[file.path];
-          const fileSelectionKey = relatedFileSelectionKey(file);
-          const isSelected = relatedSelectedFileKey
-            ? fileSelectionKey === relatedSelectedFileKey
-            : file.path === relatedSelectedPath;
-          return (
-            <div key={`${file.head || "legacy"}:${file.path}`} style={{ display: "flex", alignItems: "center", gap: "4px", minWidth: 0 }}>
-              <button
-                type="button"
-                onClick={() => handleSelectedSessionFileClick(file)}
-                title={file.path}
-                style={{
-                  flex: 1,
-                  minWidth: 0,
-                  border: "none",
-                  background: isSelected ? "var(--selection-bg)" : "transparent",
-                  color: isSelected ? "var(--accent-color)" : "var(--text-primary)",
-                  borderRadius: "6px",
-                  padding: "5px 6px",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "7px",
-                  textAlign: "left",
-                  cursor: "pointer",
-                  fontSize: "12px",
-                  fontWeight: isSelected ? 700 : 400,
-                }}
-              >
-                <span style={{ width: "16px", display: "inline-flex", justifyContent: "center", color: "#94a3b8", flexShrink: 0 }}>
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                    <polyline points="14 2 14 8 20 8" />
-                    <line x1="16" x2="8" y1="13" y2="13" />
-                    <line x1="16" x2="8" y1="17" y2="17" />
-                  </svg>
-                </span>
-                <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {file.name}
-                </span>
-                {stats ? (
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: "5px", fontSize: "11px", color: "var(--text-secondary)", flexShrink: 0 }}>
-                    <span style={{ color: "#15803d", fontVariantNumeric: "tabular-nums" }}>+{stats.additions}</span>
-                    <span style={{ color: "#b91c1c", fontVariantNumeric: "tabular-nums" }}>-{stats.deletions}</span>
-                  </span>
-                ) : null}
-              </button>
-              <button
-                type="button"
-                aria-label={t("session.removeRelatedFile", { name: file.name || file.path })}
-                title={t("session.removeRelatedFile", { name: file.name || file.path })}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  void handleRemoveSessionRelatedFile(
-                    relatedSessionRootId,
-                    relatedSessionKey,
-                    file.path,
-                    file.head,
-                    file.repo_path,
-                    file.repo_kind,
-                  );
-                }}
-                style={{
-                  width: "18px",
-                  height: "18px",
-                  border: "none",
-                  borderRadius: "5px",
-                  background: "transparent",
-                  color: "#dc2626",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  padding: 0,
-                  cursor: "pointer",
-                  flexShrink: 0,
-                  fontSize: "13px",
-                }}
-              >
-                x
-              </button>
-            </div>
-          );
-              })}
-            </div>
-          );
-        })}
-      </div>
-    );
-  };
-  const renderRootGitContent = (root: string): React.ReactNode => {
-    const rootGitStatus = root === currentRootId ? gitStatus : gitStatusByRoot[scopedRootKey(root)] || null;
-    const rootGitHistory = root === currentRootId ? gitHistory : gitHistoryByRoot[scopedRootKey(root)] || null;
-    const rootGitStatusLoading =
-      root === currentRootId ? gitStatusLoading : gitStatusLoadingByRoot[scopedRootKey(root)] === true;
-    const rootGitHistoryLoading =
-      root === currentRootId ? gitHistoryLoading : gitHistoryLoadingByRoot[scopedRootKey(root)] === true;
-    const rootGitStatusAvailable = rootGitStatus?.available === true;
-    const rootGitHistoryAvailable = rootGitHistory?.available === true;
-    const rootGitStatusExpanded = gitStatusExpandedByRoot[scopedRootKey(root)] !== false;
-    const rootGitHistoryExpandedCommits = gitHistoryExpandedByRoot[scopedRootKey(root)] || {};
-    const rootShouldRenderGitPanel = rootGitStatusLoading || rootGitStatusAvailable;
-    const rootShouldRenderGitHistoryPanel =
-      rootGitHistoryLoading || (rootGitHistoryAvailable && (rootGitHistory?.items.length || 0) > 0);
-    if (managedRootByIdRef.current[root]?.is_git_repo !== true) {
-      return (
-        <div style={{ padding: "8px 4px", fontSize: "12px", color: "var(--text-secondary)" }}>
-          {t("git.notRepository")}
-        </div>
-      );
-    }
-    if (!rootGitStatus && !rootGitHistory && !rootGitStatusLoading && !rootGitHistoryLoading) {
-      return (
-        <button
-          type="button"
-          onClick={() => {
-            void refreshGitStatus(root);
-            void refreshGitHistory(root);
-          }}
-          style={{
-            border: "none",
-            background: "transparent",
-            color: "var(--text-secondary)",
-            borderRadius: "6px",
-            padding: "8px 4px",
-            fontSize: "12px",
-            cursor: "pointer",
-            textAlign: "left",
-            width: "100%",
-          }}
-        >
-          {t("git.loadingStatus")}
-        </button>
-      );
-    }
-    if (!rootGitStatusLoading && !rootGitHistoryLoading && !rootShouldRenderGitPanel && !rootShouldRenderGitHistoryPanel) {
-      return (
-        <div style={{ padding: "8px 4px", fontSize: "12px", color: "var(--text-secondary)" }}>
-          {t("git.emptyChangesOrHistory")}
-        </div>
-      );
-    }
-    return (
-      <div style={{ display: "flex", flexDirection: "column", gap: "14px", minWidth: 0 }}>
-        {rootShouldRenderGitPanel ? (
-          <GitStatusPanel
-            rootId={root}
-            status={rootGitStatus}
-            loading={rootGitStatusLoading}
-            compact
-            expanded={rootGitStatusExpanded}
-            onExpandedChange={(expanded) => {
-              if (!root) {
-                return;
-              }
-              setGitStatusExpandedByRoot((prev) => ({ ...prev, [scopedRootKey(root)]: expanded }));
-            }}
-            onSelectItem={(item) => {
-              if (!root) {
-                return;
-              }
-              void openGitDiff(root, item);
-            }}
-            onOpenItem={(item) => {
-              if (!root || item.is_dir === true) {
-                return;
-              }
-              actionHandlers.open({ path: item.path, root });
-            }}
-            onDiscardItem={(item) => {
-              if (!root) {
-                return;
-              }
-              return handleGitDiscardItem(root, item);
-            }}
-            onStageItem={(item) => {
-              if (!root) {
-                return;
-              }
-              return item.staged === true
-                ? handleGitUnstageItem(root, item)
-                : handleGitStageItem(root, item);
-            }}
-            onPull={() => {
-              if (!root) {
-                return;
-              }
-              return handleGitPull(root);
-            }}
-            onPush={() => {
-              if (!root) {
-                return;
-              }
-              return handleGitPush(root);
-            }}
-            onCommit={(message) => {
-              if (!root) {
-                return;
-              }
-              return handleGitCommit(root, message);
-            }}
-            onSwitchBranch={(branch) => {
-              if (!root) {
-                return;
-              }
-              return switchGitBranch(root, branch);
-            }}
-          />
-        ) : null}
-        {rootShouldRenderGitHistoryPanel ? (
-          <GitHistoryPanel
-            rootId={root}
-            items={rootGitHistory?.items || []}
-            loading={rootGitHistoryLoading}
-            loadingMore={gitHistoryLoadingMore}
-            hasMore={rootGitHistory?.has_more === true}
-            compact
-            expandedCommits={rootGitHistoryExpandedCommits}
-            onToggleCommit={(hash) => {
-              if (!root) {
-                return;
-              }
-              setGitHistoryExpandedByRoot((prev) => {
-                const current = prev[scopedRootKey(root)] || {};
-                return {
-                  ...prev,
-                  [scopedRootKey(root)]: {
-                    ...current,
-                    [hash]: current[hash] !== true,
-                  },
-                };
-              });
-            }}
-            onLoadMore={() => {
-              void loadMoreGitHistory(root);
-            }}
-            onSelectFile={(commit, item) => {
-              if (!root) {
-                return;
-              }
-              void openGitCommitDiff(root, commit, item);
-            }}
-          />
-        ) : null}
-      </div>
-    );
-  };
-  const isAllTaskTemplateFilter = taskTemplateFilter === TASK_TEMPLATE_ALL_FILTER;
-  const selectedTaskTemplateForFilter = isAllTaskTemplateFilter ? null : taskTemplates.find((template) => template.id === taskTemplateFilter) || null;
-  const taskTemplateById = taskTemplates.reduce<Record<string, TaskTemplate>>((acc, template) => {
-    if (template.id) acc[template.id] = template;
-    return acc;
-  }, {});
-	  const unfinishedKanbanTasks = kanbanTaskCountItems.filter(isUnfinishedKanbanTask);
-  const unfinishedKanbanTaskCountByTemplate = unfinishedKanbanTasks.reduce<Record<string, number>>((acc, task) => {
-    const key = task.task_template_id || "";
-    if (key) acc[key] = (acc[key] || 0) + 1;
-    return acc;
-  }, {});
+  const renderRootRelatedContent = (root: string): React.ReactNode => (
+    <RootRelatedContentView
+      root={root}
+      currentRootId={currentRootId}
+      relatedSessionRootId={relatedSessionRootId}
+      relatedSessionSnapshot={relatedSessionSnapshot}
+      relatedSessionKey={relatedSessionKey}
+      relatedSelectedPath={relatedSelectedPath}
+      relatedSelectedFileKey={relatedSelectedFileKey}
+      relatedFileSelectionKey={relatedFileSelectionKey}
+      managedRootByIdRef={managedRootByIdRef}
+      selectedKanbanTask={selectedKanbanTask}
+      selectedSessionRelatedFiles={selectedSessionRelatedFiles}
+      selectedSessionRelatedFileGroups={selectedSessionRelatedFileGroups}
+      selectedRelatedFileStatsByKey={selectedRelatedFileStatsByKey}
+      gitFileStatsByPath={gitFileStatsByPath}
+      normalizePath={normalizePath}
+      handleSelectedSessionFileClick={handleSelectedSessionFileClick}
+      handleRemoveSessionRelatedFile={handleRemoveSessionRelatedFile}
+    />
+  );
+  const renderRootGitContent = (root: string): React.ReactNode => (
+    <RootGitContentView
+      root={root}
+      currentRootId={currentRootId}
+      scopedRootKey={scopedRootKey}
+      managedRootByIdRef={managedRootByIdRef}
+      gitStatus={gitStatus}
+      gitStatusByRoot={gitStatusByRoot}
+      gitStatusLoading={gitStatusLoading}
+      gitStatusLoadingByRoot={gitStatusLoadingByRoot}
+      gitHistory={gitHistory}
+      gitHistoryByRoot={gitHistoryByRoot}
+      gitHistoryLoading={gitHistoryLoading}
+      gitHistoryLoadingMore={gitHistoryLoadingMore}
+      gitHistoryLoadingByRoot={gitHistoryLoadingByRoot}
+      gitStatusExpandedByRoot={gitStatusExpandedByRoot}
+      gitHistoryExpandedByRoot={gitHistoryExpandedByRoot}
+      setGitStatusExpandedByRoot={setGitStatusExpandedByRoot}
+      setGitHistoryExpandedByRoot={setGitHistoryExpandedByRoot}
+      refreshGitStatus={refreshGitStatus}
+      refreshGitHistory={refreshGitHistory}
+      loadMoreGitHistory={loadMoreGitHistory}
+      openGitDiff={openGitDiff}
+      openGitCommitDiff={openGitCommitDiff}
+      handleGitPull={handleGitPull}
+      handleGitPush={handleGitPush}
+      handleGitCommit={handleGitCommit}
+      handleGitStageItem={handleGitStageItem}
+      handleGitUnstageItem={handleGitUnstageItem}
+      handleGitDiscardItem={handleGitDiscardItem}
+      switchGitBranch={switchGitBranch}
+      actionHandlers={actionHandlers}
+      projectSortMode={treeSortMode}
+    />
+  );
   // 四块 = 未开始 / 执行中 / 待审核 / 已结束（已结束内分 完成、取消；失败并入取消）。
   const kanbanStageColumns: Array<{
     index: number;
@@ -13255,6 +8003,20 @@ export function App({ onGoHome }: AppProps) {
     interactionModeRef.current = "main";
     setInteractionMode("main");
     switchMainView(mode);
+    // 切到文件面板但从没点过任何目录时，主区是空的：把当前项目顶层目录补上。
+    // 已经有内容（含报错态）就别动，用户点过的目录优先于这个默认值。
+    if (mode === "files" && rootID && !mainEntriesRef.current.length && !mainDirectoryErrorRef.current) {
+      const currentDir = selectedDirRef.current || "";
+      // 尚停留在上一个项目时（selectedDir 属于别的 root），直接落在新项目根目录
+      if (!currentDir || currentDir === "." || currentDir === rootID || currentDir.startsWith(`${rootID}/`)) {
+        void actionHandlersRef.current.open_dir({
+          path: rootID,
+          root: rootID,
+          isRoot: true,
+          forceDirectory: true,
+        });
+      }
+    }
     // 只改 URL 的 view，保留 root/node/session/pluginQuery。
     // 离开文件态时把 file 摘掉，否则会写出「view=board 且 file=…」的自相矛盾深链。
     const current = readURLState();
@@ -13292,854 +8054,55 @@ export function App({ onGoHome }: AppProps) {
       reportError("file.write_failed", String((err as Error)?.message || t("task.actionFailed")));
     }
   }, [applyTaskDetails, t]);
-	  const kanbanTaskPanel = workspaceOpen ? (
-    <WorkspaceKanban
-      items={workspaceOverview}
-      loading={workspaceLoading}
-      projects={managedRootIds.map((id) => ({ id, name: getRootDisplayName(id) || id }))}
-      onOpenProject={(rootId) => { void openWorkspaceProject(rootId); }}
-      onComplete={(item) => { void handleMoveKanbanTask(item.task, "complete"); }}
-      onRunNow={(item) => { void handleMoveKanbanTask(item.task, "run-now"); }}
-      onOpenSession={(item, sessionKey) => { handleTaskSessionDrawerOpen(sessionKey, item.root_id, item.task.id); }}
-      onOpenDetail={(item) => { void openWorkspaceProject(item.root_id).then(() => setSelectedKanbanTaskId(item.task.id)); }}
-      onCreateTask={(rootId, input) => { void handleWorkspaceCreateTask(rootId, input); }}
+  const kanbanTaskPanel = (
+    <TaskBoardView
+      workspaceOpen={workspaceOpen}
+      currentRootId={currentRootId}
+      currentRootIdRef={currentRootIdRef}
+      workspaceOverview={workspaceOverview}
+      workspaceLoading={workspaceLoading}
+      managedRootIds={managedRootIds}
+      getRootDisplayName={getRootDisplayName}
+      openWorkspaceProject={openWorkspaceProject}
+      handleWorkspaceCreateTask={handleWorkspaceCreateTask}
+      setSelectedKanbanTaskId={setSelectedKanbanTaskId}
+      kanbanTasksLoading={kanbanTasksLoading}
+      kanbanStageColumns={kanbanStageColumns}
+      selectedKanbanTaskId={selectedKanbanTaskId}
+      expandedTaskInputIds={expandedTaskInputIds}
+      setExpandedTaskInputIds={setExpandedTaskInputIds}
+      collapsedTaskCompletionGroups={collapsedTaskCompletionGroups}
+      setCollapsedTaskCompletionGroups={setCollapsedTaskCompletionGroups}
+      collapsedKanbanColumns={collapsedKanbanColumns}
+      setCollapsedKanbanColumns={setCollapsedKanbanColumns}
+      taskFirstInputById={taskFirstInputById}
+      taskSessionKeysById={taskSessionKeysById}
+      sessionByKey={sessionByKey}
+      getDisplayNodeColor={getDisplayNodeColor}
+      handleSelectKanbanTask={handleSelectKanbanTask}
+      handleMoveKanbanTask={handleMoveKanbanTask}
+      openTaskCreateDialog={openTaskCreateDialog}
+      openTaskEditDialog={openTaskEditDialog}
+      handleTaskSessionDrawerOpen={handleTaskSessionDrawerOpen}
+      setTaskSessionErrorDialog={setTaskSessionErrorDialog}
+      loadKanbanTasks={loadKanbanTasks}
+      templateControls={{
+        taskTemplateActionMenuRef,
+        taskTemplateActionMenuOpen,
+        setTaskTemplateActionMenuOpen,
+        taskCreateTemplateMenuRef,
+        taskCreateTemplateMenuOpen,
+        setTaskCreateTemplateMenuOpen,
+        taskTemplates,
+        taskTemplateFilter,
+        setTaskTemplateFilter,
+        openTaskTemplateEditor,
+        handleDeleteTaskTemplate,
+      }}
     />
-  ) : currentRootId ? (
-	    <div
-	      data-onboarding="task-board"
-	      style={{
-	        maxHeight: "calc(100dvh - 92px)",
-	        overflow: "visible",
-	        display: "flex",
-	        flexDirection: "column",
-	        minWidth: 0,
-	      }}
-	    >
-	      <div
-	        style={{
-	          display: "flex",
-          alignItems: "center",
-	          justifyContent: "space-between",
-	          gap: 0,
-	          padding: "0 0 8px",
-	          flexShrink: 0,
-	        }}
-	      >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "6px",
-            minWidth: 0,
-            flex: 1,
-          }}
-        >
-          <div
-            role="tablist"
-            data-onboarding="task-templates"
-            aria-label={t("task.templates")}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "2px",
-              overflowX: "auto",
-              padding: "3px",
-              borderRadius: "10px",
-              border: "1px solid rgba(100, 116, 139, 0.36)",
-              background: "rgba(148, 163, 184, 0.10)",
-              minWidth: 0,
-              scrollbarWidth: "none",
-            }}
-          >
-            {(() => {
-              const active = isAllTaskTemplateFilter;
-              const kanbanAllBg = getDisplayNodeColor(String(currentRootId || "")) || "var(--accent-color, #2563eb)";
-              return (
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={active}
-                  onClick={() => {
-                    setTaskTemplateFilter(TASK_TEMPLATE_ALL_FILTER);
-                    setTaskTemplateActionMenuOpen(false);
-                  }}
-                  style={{
-                    border: "none",
-                    borderRadius: "6px",
-                    background: active ? kanbanAllBg : "transparent",
-                    color: active ? "#fff" : "var(--text-secondary)",
-                    padding: "3px 7px",
-                    fontSize: "11px",
-                    fontWeight: 700,
-                    lineHeight: "14px",
-                    cursor: "pointer",
-                    whiteSpace: "nowrap",
-                    boxShadow: active ? `0 1px 3px ${hexToRgbaApp(kanbanAllBg, 0.28)}` : "none",
-                  }}
-                >
-                  {t("task.all")}
-                </button>
-              );
-            })()}
-            {taskTemplates.length > 0 ? (
-              <span
-                aria-hidden="true"
-                style={{
-                  width: "1px",
-                  height: "16px",
-                  background: "rgba(100, 116, 139, 0.32)",
-                  margin: "0 1px",
-                  flexShrink: 0,
-                }}
-              />
-            ) : null}
-            {taskTemplates.map((template, index) => {
-              const templateId = template.id || "";
-              const active = selectedTaskTemplateForFilter?.id === templateId;
-              return (
-                <React.Fragment key={templateId || template.name}>
-                  {index > 0 ? (
-                    <span
-                      aria-hidden="true"
-                      style={{
-                        width: "1px",
-                        height: "16px",
-                        background: "rgba(100, 116, 139, 0.32)",
-                        margin: "0 1px",
-                        flexShrink: 0,
-                      }}
-                    />
-                  ) : null}
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={active}
-                    onClick={() => {
-                      setTaskTemplateFilter(templateId);
-                      setTaskTemplateActionMenuOpen(false);
-                    }}
-                    style={(() => {
-                      const bg = getDisplayNodeColor(String(currentRootId || "")) || "var(--accent-color, #2563eb)";
-                      return {
-                        border: "none",
-                        borderRadius: "6px",
-                        background: active ? bg : "transparent",
-                        color: active ? "#fff" : "var(--text-secondary)",
-                        padding: "3px 7px",
-                        fontSize: "11px",
-                        fontWeight: 700,
-                        lineHeight: "14px",
-                        cursor: "pointer",
-                        whiteSpace: "nowrap",
-                        boxShadow: active ? `0 1px 3px ${hexToRgbaApp(bg, 0.28)}` : "none",
-                      };
-                    })()}
-                >
-                  <span>{template.name || t("task.unnamedTemplate")}</span>
-                </button>
-                </React.Fragment>
-              );
-            })}
-          </div>
-          <div ref={taskTemplateActionMenuRef} style={{ position: "relative", flexShrink: 0 }}>
-            <button
-              type="button"
-              data-onboarding="task-template-menu"
-              aria-label={t("task.templateMenu")}
-              title={t("task.templateMenu")}
-              onClick={() => setTaskTemplateActionMenuOpen((open) => !open)}
-              style={{
-                width: "28px",
-                height: "28px",
-                borderRadius: "8px",
-                border: "none",
-                background: taskTemplateActionMenuOpen ? "rgba(0, 0, 0, 0.06)" : "transparent",
-                color: "var(--text-secondary)",
-                opacity: 1,
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                cursor: "pointer",
-                padding: 0,
-              }}
-            >
-              <HorizontalDotsIcon />
-            </button>
-            {taskTemplateActionMenuOpen ? (
-              <div
-                style={{
-                  position: "absolute",
-                  top: "calc(100% + 6px)",
-                  left: "50%",
-                  transform: "translateX(-50%)",
-                  minWidth: "160px",
-                  padding: "6px",
-                  borderRadius: "10px",
-                  border: "1px solid var(--border-color)",
-                  background: "var(--menu-bg)",
-                  boxShadow: "0 12px 30px rgba(15, 23, 42, 0.14)",
-                  zIndex: 40,
-                }}
-              >
-                <button
-                  type="button"
-                  onClick={() => {
-                    setTaskTemplateActionMenuOpen(false);
-                    openTaskTemplateEditor(null);
-                  }}
-                  style={taskTemplateMenuItemStyle()}
-                >
-                  <PlusSmallIcon />
-                  <span>{t("task.createTemplate")}</span>
-                </button>
-                <button
-                  type="button"
-                  disabled={!selectedTaskTemplateForFilter}
-                  onClick={() => {
-                    if (!selectedTaskTemplateForFilter) return;
-                    setTaskTemplateActionMenuOpen(false);
-                    openTaskTemplateEditor(selectedTaskTemplateForFilter);
-                  }}
-                  style={taskTemplateMenuItemStyle(!selectedTaskTemplateForFilter)}
-                >
-                  <EditPencilIcon />
-                  <span>{t("task.editTemplate")}</span>
-                </button>
-                <button
-                  type="button"
-                  disabled={!selectedTaskTemplateForFilter}
-                  title={!selectedTaskTemplateForFilter ? t("task.selectTemplate") : t("task.deleteTemplate")}
-                  onClick={() => {
-                    if (!selectedTaskTemplateForFilter) return;
-                    setTaskTemplateActionMenuOpen(false);
-                    void handleDeleteTaskTemplate(selectedTaskTemplateForFilter);
-                  }}
-                  style={taskTemplateMenuItemStyle(!selectedTaskTemplateForFilter)}
-                >
-                  <DeleteIcon />
-                  <span>{t("task.deleteTemplate")}</span>
-                </button>
-                <div style={{ height: "1px", background: "var(--border-color)", margin: "6px 2px" }} />
-              </div>
-            ) : null}
-          </div>
-        </div>
-        <button
-          type="button"
-          data-onboarding="task-refresh"
-          title={t("task.refresh")}
-          aria-label={t("task.refresh")}
-          onClick={() => void kanbanRefreshSpin.handleClick()}
-          onMouseDown={() => kanbanRefreshSpin.setPressed(true)}
-          onMouseUp={() => kanbanRefreshSpin.setPressed(false)}
-          onMouseLeave={() => kanbanRefreshSpin.setPressed(false)}
-          style={{
-            width: "22px",
-            height: "28px",
-            borderRadius: "8px",
-            border: "none",
-            background: "transparent",
-            color: "var(--text-color)",
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "flex-end",
-            cursor: "pointer",
-            flexShrink: 0,
-            padding: 0,
-          }}
-        >
-          <span
-            data-task-refresh-visual
-            style={{
-              width: "18px",
-              height: "28px",
-              borderRadius: "8px",
-              background: kanbanRefreshSpin.pressed || kanbanRefreshSpin.refreshing ? "rgba(0, 0, 0, 0.06)" : "transparent",
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <SyncIcon
-              style={kanbanRefreshSpin.refreshing ? { animation: "mindfs-update-spin 0.8s linear infinite" } : undefined}
-            />
-          </span>
-        </button>
-        <div ref={taskCreateTemplateMenuRef} style={{ position: "relative", flexShrink: 0 }}>
-          <button
-            type="button"
-            data-onboarding="task-create"
-            title={t("task.create")}
-            aria-label={t("task.create")}
-            disabled={!isAllTaskTemplateFilter && !selectedTaskTemplateForFilter}
-            onClick={() => {
-              if (isAllTaskTemplateFilter) {
-                setTaskTemplateActionMenuOpen(false);
-                setTaskCreateTemplateMenuOpen((open) => !open);
-                return;
-              }
-              openTaskCreateDialog(selectedTaskTemplateForFilter);
-            }}
-            style={{
-              width: "28px",
-              height: "28px",
-              borderRadius: "8px",
-              border: "none",
-              background: taskCreateTemplateMenuOpen ? "rgba(0, 0, 0, 0.06)" : "transparent",
-              color: isAllTaskTemplateFilter || selectedTaskTemplateForFilter ? "var(--text-color)" : "var(--muted-text)",
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              cursor: isAllTaskTemplateFilter || selectedTaskTemplateForFilter ? "pointer" : "not-allowed",
-              flexShrink: 0,
-              padding: 0,
-              opacity: isAllTaskTemplateFilter || selectedTaskTemplateForFilter ? 1 : 0.55,
-            }}
-          >
-            <PlusSmallIcon />
-          </button>
-          {taskCreateTemplateMenuOpen ? (
-            <div
-              style={{
-                position: "absolute",
-                top: "calc(100% + 6px)",
-                right: 0,
-                minWidth: "136px",
-                maxWidth: "220px",
-                maxHeight: "260px",
-                overflowY: "auto",
-                padding: "5px",
-                borderRadius: "10px",
-                border: "1px solid var(--border-color)",
-                background: "var(--menu-bg)",
-                boxShadow: "0 12px 30px rgba(15, 23, 42, 0.14)",
-                zIndex: 40,
-              }}
-            >
-              {taskTemplates.length === 0 ? (
-                <div style={{ padding: "8px", fontSize: "12px", color: "var(--text-secondary)", whiteSpace: "nowrap" }}>{t("task.noTemplates")}</div>
-              ) : taskTemplates.map((template) => (
-                <button
-                  key={template.id || template.name}
-                  type="button"
-                  onClick={() => {
-                    setTaskCreateTemplateMenuOpen(false);
-                    openTaskCreateDialog(template);
-                  }}
-                  style={{
-                    width: "100%",
-                    minHeight: "28px",
-                    border: "none",
-                    borderRadius: "7px",
-                    background: "transparent",
-                    color: "var(--text-primary)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "flex-start",
-                    padding: "5px 8px",
-                    fontSize: "12px",
-                    fontWeight: 700,
-                    cursor: "pointer",
-                    textAlign: "left",
-                  }}
-                >
-                  <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{template.name || t("task.unnamedTemplate")}</span>
-                </button>
-              ))}
-            </div>
-          ) : null}
-        </div>
-      </div>
-      {kanbanTasksLoading ? (
-        <div style={{ padding: "12px", fontSize: "12px", color: "var(--text-secondary)" }}>{t("task.loading")}</div>
-      ) : !isAllTaskTemplateFilter && !selectedTaskTemplateForFilter ? (
-        <div style={{ padding: "12px", fontSize: "12px", color: "var(--text-secondary)" }}>{t("task.createTemplateFirst")}</div>
-      ) : (
-	        <div style={{ overflowX: isMobile ? "hidden" : "auto", overflowY: "hidden", padding: "0 0 12px 1px", minHeight: 0 }}>
-	          <div
-	            style={{
-	              display: "grid",
-	              // 移动端横滑空间浪费：列改为换行（每行两列），列内上下滑看卡片。
-	              gridAutoFlow: isMobile ? "row" : "column",
-	              gridTemplateColumns: isMobile ? "repeat(2, 1fr)" : undefined,
-	              gridAutoColumns: isMobile ? undefined : "minmax(220px, 1fr)",
-	              gridAutoRows: isMobile ? "36dvh" : undefined,
-	              gap: "6px",
-	              minWidth: isMobile ? undefined : `${Math.max(kanbanStageColumns.length, 1) * 220}px`,
-	              alignItems: "start",
-	            }}
-	          >
-	            {kanbanStageColumns.map((column) => {
-	              const columnCollapsed = collapsedKanbanColumns.has(String(column.index));
-	              const taskSections = "groups" in column && Array.isArray(column.groups) && column.groups.length > 0
-	                ? column.groups
-	                : [{ key: "tasks", name: "", tone: "default" as const, tasks: column.tasks }];
-	              return (
-	              <section
-	                key={column.index}
-                style={{
-		                  border: "1px solid var(--border-color)",
-	                  borderRadius: "8px",
-	                  background: "rgba(148, 163, 184, 0.06)",
-	                  overflow: "hidden",
-	                  display: "flex",
-	                  flexDirection: "column",
-	                  minHeight: 0,
-	                  height: isMobile ? (columnCollapsed ? undefined : "36dvh") : undefined,
-                  maxHeight: isMobile ? undefined : "calc(100dvh - 96px)",
-	                }}
-	              >
-                <div
-                  style={{
-                    minHeight: "34px",
-                    borderBottom: "1px solid var(--border-color)",
-                    padding: "7px 9px",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-	                    gap: "8px",
-flexShrink: 0,
-                    cursor: "pointer",
-                  }}
-                  onClick={() => {
-                    const key = String(column.index);
-                    setCollapsedKanbanColumns((prev) => {
-                      const next = new Set(prev);
-                      if (next.has(key)) next.delete(key); else next.add(key);
-                      return next;
-                    });
-                  }}
-                >
-                  <div style={{ minWidth: 0, display: "flex", alignItems: "center", gap: "6px" }}>
-                    <TaskGroupChevronIcon collapsed={columnCollapsed} />
-                    <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: "12px", fontWeight: 800, color: "var(--text-color)" }}>
-                      {column.name}
-                    </span>
-                  </div>
-                  <span style={{ fontSize: "11px", fontWeight: 800, color: "var(--text-secondary)" }}>{column.tasks.length}</span>
-                </div>
-	                {columnCollapsed ? null : (
-	                <div style={{ padding: "8px", display: "flex", flexDirection: "column", gap: "8px", overflowY: "auto", minHeight: 0 }}>
-	                  {column.tasks.length === 0 ? (
-	                    <div style={{ padding: "10px 4px", fontSize: "12px", color: "var(--text-secondary)", textAlign: "center" }}>{t("task.empty")}</div>
-	                      ) : taskSections.map((section) => {
-                      const sectionCollapsed = Boolean(section.name && collapsedTaskCompletionGroups.has(section.key));
-                      const sectionColor = section.tone === "danger" ? "#dc2626" : section.tone === "success" ? "#16a34a" : "var(--text-secondary)";
-                      return (
-	                    <React.Fragment key={section.key}>
-	                      {section.name ? (
-	                        <button
-                            type="button"
-                            onClick={() => {
-                              setCollapsedTaskCompletionGroups((prev) => {
-                                const next = new Set(prev);
-                                if (next.has(section.key)) {
-                                  next.delete(section.key);
-                                } else {
-                                  next.add(section.key);
-                                }
-                                return next;
-                              });
-                            }}
-	                          style={{
-	                            marginTop: "2px",
-	                            padding: "2px 2px 0",
-	                            display: "flex",
-	                            alignItems: "center",
-	                            justifyContent: "space-between",
-	                            gap: "8px",
-                              width: "100%",
-                              border: "none",
-                              background: "transparent",
-	                            color: sectionColor,
-	                            fontSize: "11px",
-	                            fontWeight: 800,
-                              cursor: "pointer",
-	                          }}
-	                        >
-                            <span style={{ display: "inline-flex", alignItems: "center", gap: "4px", minWidth: 0 }}>
-                              <TaskGroupChevronIcon collapsed={sectionCollapsed} />
-	                            <span>{section.name}</span>
-                            </span>
-	                          <span>{section.tasks.length}</span>
-	                        </button>
-	                      ) : null}
-	                      {!sectionCollapsed ? section.tasks.map((task) => {
-                    const firstInput = taskFirstInputById[task.id] || "";
-                    const taskSessionKeys = taskSessionKeysById[task.id]?.length
-                      ? taskSessionKeysById[task.id]
-                      : task.main_session_key
-                        ? [task.main_session_key]
-                        : [];
-                    const taskKanbanNodeColor = getDisplayNodeColor(String(task.root_id || "")) || getDisplayNodeColor(String(currentRootId || "")) || "";
-                    const taskSessionPending = taskSessionKeys.some((key) => !!sessionByKey[key]?.pending);
-                    const taskQueued = task.status === "queued";
-                    const taskBlockedByConcurrency = taskQueued && !task.scheduler_admitted && !taskSessionKeys.length;
-                    const auxFlags = task.aux_flags || {};
-                    const taskSessionError = parseTaskSessionErrorMessage(auxFlags.session_error);
-                    const taskSessionErrorDetails = parseTaskSessionErrorDetails(auxFlags.session_error);
-                    const taskAuxBadges = [
-                      auxFlags.ask_user_waiting ? { key: "ask_user", label: t("task.waitingUser"), icon: renderToolIcon("ask_user"), attention: true } : null,
-                      auxFlags.has_plan ? { key: "plan", label: t("task.hasPlan"), icon: <TaskPlanAuxIcon color={taskKanbanNodeColor || undefined} />, attention: false } : null,
-                      auxFlags.has_todos ? { key: "todos", label: t("task.hasTodos"), icon: renderToolIcon("todo"), attention: false } : null,
-                      auxFlags.has_task ? { key: "task", label: t("task.hasTask"), icon: renderToolIcon("task"), attention: false } : null,
-                    ].filter((item): item is { key: string; label: string; icon: React.ReactNode; attention: boolean } => Boolean(item));
-                    const inputExpanded = expandedTaskInputIds.has(task.id);
-                    const inputNeedsToggle = firstInput.length > 120 || firstInput.split(/\r?\n/).length > 3;
-                    const taskTerminal = isTerminalKanbanTask(task);
-                    const taskStageRunning = task.current_stage_status === "running" && task.status === "running";
-                    const taskCanComplete = !taskTerminal && task.status === "waiting_user";
-                    const showTaskAdvanceButton = !taskTerminal && !taskStageRunning;
-                    const taskStatusText = taskStatusLabel(task.status || "", t);
-                    const taskWorktreeEnabled = task.create_worktree === true;
-	                    const taskNumberLabel = task.task_number ? `#${task.task_number}` : "";
-	                    const taskStageName = task.current_stage_name || (task.current_stage_index >= 0 ? t("task.stageLabel", { index: task.current_stage_index + 1 }) : "");
-	                    const showStageName = isAllTaskTemplateFilter ? column.name === t("task.column.running") : Boolean(taskStageName);
-	                    const showTaskStatus = isAllTaskTemplateFilter && column.name === t("task.column.ended");
-	                    const taskSelected = selectedKanbanTaskId === task.id;
-	                    return (
-	                      <article
-	                        key={task.id}
-	                        onClick={() => handleSelectKanbanTask(task)}
-	                        style={{
-	                          position: "relative",
-	                          border: taskSelected ? "1px solid rgba(14, 165, 233, 0.95)" : "1px solid rgba(96, 165, 250, 0.42)",
-	                          borderRadius: "8px",
-	                          background: "var(--menu-bg)",
-	                          padding: "8px",
-	                          boxShadow: taskSelected ? "0 0 0 2px rgba(14, 165, 233, 0.16)" : "0 1px 2px rgba(15, 23, 42, 0.06)",
-	                          cursor: "pointer",
-	                        }}
-	                      >
-                        {taskSessionPending ? (
-                          <span
-                            aria-label={t("task.replying")}
-                            title={t("task.replying")}
-                            style={taskReplyPulseStyle(taskKanbanNodeColor || undefined)}
-                          />
-                        ) : null}
-                        {isAllTaskTemplateFilter ? (
-                          <div
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: "5px",
-                              minWidth: 0,
-                              color: "var(--text-secondary)",
-                              fontSize: "10px",
-                              fontWeight: 700,
-                              lineHeight: "14px",
-                            }}
-                          >
-                            {taskNumberLabel ? (
-                              <span style={{ flex: "0 0 auto", color: "#0ea5e9", fontWeight: 800 }}>{taskNumberLabel}</span>
-                            ) : null}
-                            <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 800, color: "var(--text-color)" }}>
-                              {task.name || task.task_template_name || selectedTaskTemplateForFilter?.name || t("task.unnamedTemplate")}
-                            </span>
-                            {showStageName ? (
-                              <>
-                                <span style={{ flex: "0 0 auto", opacity: 0.55 }}>·</span>
-                                <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                  {taskStageName}
-                                </span>
-                              </>
-                            ) : null}
-	                            {showTaskStatus ? (
-	                              <>
-	                                <span style={{ flex: "0 0 auto", opacity: 0.55 }}>·</span>
-	                                <span style={{ flex: "0 0 auto" }}>{taskStatusText}</span>
-	                                {task.status === "fail" && taskSessionError ? (
-	                                  <button
-	                                    type="button"
-	                                    title={t("task.viewError")}
-	                                    aria-label={t("task.viewTaskError")}
-		                                    onClick={(event) => {
-		                                      event.stopPropagation();
-		                                      setTaskSessionErrorDialog({
-		                                        title: task.task_template_name || selectedTaskTemplateForFilter?.name || t("task.defaultTitle"),
-		                                        message: taskSessionError,
-		                                        details: taskSessionErrorDetails,
-		                                      });
-		                                    }}
-	                                    style={{ ...taskCardIconButtonStyle("warning"), width: "16px", height: "16px" }}
-	                                  >
-	                                    <TaskSessionErrorIcon />
-	                                  </button>
-	                                ) : null}
-	                              </>
-                            ) : null}
-                            <span
-                              title={taskWorktreeEnabled ? t("task.worktreeTitle") : t("task.noWorktreeTitle")}
-                              aria-label={taskWorktreeEnabled ? t("task.worktreeTitle") : t("task.noWorktreeTitle")}
-                              style={taskWorktreeTagStyle(taskWorktreeEnabled)}
-                            >
-                              {taskWorktreeEnabled ? null : <NoWorktreeIcon />}
-                              worktree
-                            </span>
-                          </div>
-                        ) : null}
-                        <div
-                          style={{
-                            marginTop: isAllTaskTemplateFilter ? "5px" : 0,
-                            color: firstInput ? "var(--text-color)" : "var(--text-secondary)",
-                            fontSize: "12px",
-                            lineHeight: "18px",
-                            fontWeight: firstInput ? 700 : 500,
-                            ...(!isAllTaskTemplateFilter
-                              ? {
-                                  display: "flex",
-                                  alignItems: "flex-start",
-                                  gap: "6px",
-                                  minWidth: 0,
-                                }
-                              : {}),
-                          }}
-                        >
-                          <div
-                            style={{
-                              ...(!isAllTaskTemplateFilter ? { flex: "1 1 auto", minWidth: 0 } : {}),
-                              whiteSpace: "pre-wrap",
-                              wordBreak: "break-word",
-                              ...(!inputExpanded
-                                ? {
-                                    display: "-webkit-box",
-                                    WebkitLineClamp: 3,
-                                    WebkitBoxOrient: "vertical",
-                                    overflow: "hidden",
-                                  }
-                                : {}),
-                            }}
-                          >
-                            {!isAllTaskTemplateFilter && (task.task_template_name || taskNumberLabel || task.name) ? (
-                              <>
-                              	{task.task_template_name ? <span style={{ color: "var(--text-secondary)", fontWeight: 800, marginRight: "4px" }}>{task.task_template_name}</span> : null}
-                              	{taskNumberLabel ? <span style={{ color: "#0ea5e9", fontWeight: 800, marginRight: "4px" }}>{taskNumberLabel}</span> : null}
-                              	{task.name ? <span style={{ color: "var(--text-color)", fontWeight: 800, marginRight: "6px" }}>{task.name}</span> : null}
-                              </>
-                            ) : null}
-                            {firstInput ? <InlineTokenText content={firstInput} /> : <span>{t("task.noInput")}</span>}
-                          </div>
-                          {!isAllTaskTemplateFilter ? (
-                            <span
-                              title={taskWorktreeEnabled ? t("task.worktreeTitle") : t("task.noWorktreeTitle")}
-                              aria-label={taskWorktreeEnabled ? t("task.worktreeTitle") : t("task.noWorktreeTitle")}
-                              style={taskWorktreeTagStyle(taskWorktreeEnabled)}
-                            >
-                              {taskWorktreeEnabled ? null : <NoWorktreeIcon />}
-                              worktree
-                            </span>
-                          ) : null}
-                        </div>
-                        <div style={{ marginTop: "8px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "4px" }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-                            {taskSessionKeys.length > 0 ? (
-                              taskSessionKeys.map((sessionKey, sessionIndex) => {
-                                const taskSession = sessionByKey[sessionKey] || null;
-                                return (
-                                  <button
-                                    key={`${task.id}-${sessionKey}`}
-                                    type="button"
-                                    title={taskSession?.name || t("task.openSession", { index: sessionIndex + 1 })}
-                                    aria-label={t("task.openSession", { index: sessionIndex + 1 })}
-	                                    onClick={(event) => {
-	                                      event.stopPropagation();
-	                                      handleTaskSessionDrawerOpen(sessionKey, task.root_id || currentRootIdRef.current, task.id);
-	                                    }}
-                                    style={taskCardIconButtonStyle()}
-                                  >
-                                    <span
-                                      style={{
-                                        position: "relative",
-                                        width: "18px",
-                                        height: "18px",
-                                        display: "inline-flex",
-                                        alignItems: "center",
-                                        justifyContent: "center",
-                                      }}
-                                    >
-                                      <ModeIcon type="task" size={16} />
-                                      <span
-                                        style={{
-                                          position: "absolute",
-                                          right: "-2px",
-                                          bottom: "-2px",
-                                          width: "10px",
-                                          height: "10px",
-                                          borderRadius: "999px",
-                                          background: "var(--content-bg, #fff)",
-                                          border: "1px solid rgba(255,255,255,0.9)",
-                                          display: "flex",
-                                          alignItems: "center",
-                                          justifyContent: "center",
-                                          overflow: "hidden",
-                                        }}
-                                      >
-                                        <AgentIcon
-                                          agentName={taskSession?.agent || ""}
-                                          style={{ width: "10px", height: "10px", display: "block" }}
-                                        />
-                                      </span>
-                                    </span>
-                                  </button>
-                                );
-                              })
-                            ) : taskQueued ? (
-                              <>
-                                <span
-                                  title={t("task.waitingSchedule")}
-                                  aria-label={t("task.waitingSchedule")}
-                                  style={{
-                                    ...taskCardIconButtonStyle(),
-                                    cursor: "default",
-                                    color: "var(--accent-color)",
-                                  }}
-                                >
-                                  <TaskQueuedSpinnerIcon />
-                                </span>
-                                {taskBlockedByConcurrency ? (
-                                  <button
-                                    type="button"
-                                    title={t("task.runNow")}
-                                    aria-label={t("task.runNow")}
-                                    onClick={(event) => {
-                                      event.stopPropagation();
-                                      void handleMoveKanbanTask(task, "run-now");
-                                    }}
-                                    style={{
-                                      ...taskCardIconButtonStyle(),
-                                      width: "17px",
-                                      marginLeft: "-3px",
-                                      color: "#2563eb",
-                                    }}
-                                  >
-                                    <TaskRunNowIcon />
-                                  </button>
-                                ) : null}
-                              </>
-                            ) : null}
-	                            {taskSessionError && !(showTaskStatus && task.status === "fail") ? (
-                              <button
-                                type="button"
-                                title={t("task.viewError")}
-                                aria-label={t("task.viewTaskSessionError")}
-	                                onClick={(event) => {
-	                                  event.stopPropagation();
-	                                  setTaskSessionErrorDialog({
-	                                    title: task.task_template_name || selectedTaskTemplateForFilter?.name || t("task.sessionTitle"),
-	                                    message: taskSessionError,
-	                                    details: taskSessionErrorDetails,
-	                                  });
-	                                }}
-                                style={taskCardIconButtonStyle("warning")}
-                              >
-                                <TaskSessionErrorIcon />
-                              </button>
-                            ) : null}
-                            {taskAuxBadges.length > 0 ? (
-                              <div style={{ display: "inline-flex", alignItems: "center", gap: "2px" }}>
-                                {taskAuxBadges.map((badge) => (
-                                  <span
-                                    key={badge.key}
-                                    title={badge.label}
-                                    aria-label={badge.label}
-                                    style={taskAuxBadgeStyle(badge.attention)}
-                                  >
-                                    {badge.icon}
-                                  </span>
-                                ))}
-                              </div>
-                            ) : null}
-                            {inputNeedsToggle ? (
-                              <button
-                                type="button"
-                                title={inputExpanded ? t("common.collapse") : t("common.expand")}
-                                aria-label={inputExpanded ? t("task.collapseContent") : t("task.expandContent")}
-	                                onClick={(event) => {
-	                                  event.stopPropagation();
-	                                  setExpandedTaskInputIds((prev) => {
-                                    const next = new Set(prev);
-                                    if (next.has(task.id)) {
-                                      next.delete(task.id);
-                                    } else {
-                                      next.add(task.id);
-                                    }
-                                    return next;
-                                  });
-                                }}
-                                style={taskCardIconButtonStyle()}
-                              >
-                                <TaskExpandIcon collapsed={!inputExpanded} />
-                              </button>
-                            ) : null}
-                          </div>
-                          {!taskTerminal ? (
-                            <div style={{ display: "flex", justifyContent: "flex-end", gap: 0 }}>
-                              {showTaskAdvanceButton ? (
-                                <button
-                                  type="button"
-                                  title={t("task.runNow")}
-                                  aria-label={t("task.runNow")}
-	                                  onClick={(event) => {
-	                                    event.stopPropagation();
-	                                    void handleMoveKanbanTask(task, "run-now");
-	                                  }}
-                                  style={taskCardIconButtonStyle("accent")}
-                                >
-                                  <RunNowIcon />
-                                </button>
-                              ) : null}
-                              {taskCanComplete ? (
-                                <button
-                                  type="button"
-                                  title={t("task.completeShort")}
-                                  aria-label={t("task.complete")}
-	                                  onClick={(event) => {
-	                                    event.stopPropagation();
-	                                    void handleMoveKanbanTask(task, "complete");
-	                                  }}
-                                  style={taskCardIconButtonStyle("success")}
-                                >
-                                  <TaskCompleteIcon />
-                                </button>
-                              ) : null}
-	                              <button type="button" title={t("common.delete")} aria-label={t("task.delete")} onClick={(event) => {
-	                                event.stopPropagation();
-	                                void handleMoveKanbanTask(task, "cancel");
-	                              }} style={taskCardIconButtonStyle("danger")}>
-                                <DeleteIcon />
-                              </button>
-                            </div>
-                          ) : null}
-                        </div>
-	                      </article>
-	                    );
-	                  }) : null}
-	                    </React.Fragment>
-                      );
-	                  })}
-	                </div>
-	                )}
-	              </section>
-	              );
-	            })}
-          </div>
-        </div>
-      )}
-    </div>
-  ) : workspaceOpen ? (
-    <WorkspaceKanban
-      items={workspaceOverview}
-      loading={workspaceLoading}
-      projects={managedRootIds.map((id) => ({ id, name: getRootDisplayName(id) || id }))}
-      onOpenProject={(rootId) => { void openWorkspaceProject(rootId); }}
-      onComplete={(item) => { void handleMoveKanbanTask(item.task, "complete"); }}
-      onRunNow={(item) => { void handleMoveKanbanTask(item.task, "run-now"); }}
-      onOpenSession={(item, sessionKey) => { handleTaskSessionDrawerOpen(sessionKey, item.root_id, item.task.id); }}
-      onOpenDetail={(item) => { void openWorkspaceProject(item.root_id).then(() => setSelectedKanbanTaskId(item.task.id)); }}
-      onCreateTask={(rootId, input) => { void handleWorkspaceCreateTask(rootId, input); }}
-    />
-  ) : null;
+
+  );
+
   if (mainView === "chat" && !selectedSession) {
     // chat 模式但没有选中会话：给一个明确空态，而不是把看板/文件列表塞回来（否则看起来像「自己跳走了」）
     workspaceView = (
@@ -14587,251 +8550,63 @@ flexShrink: 0,
   const updateLabel = updateButtonLabel(updateState, t);
   const updateHelp = updateState.message || updateSummaryText(updateState, t);
   const updateSummary = updateSummaryText(updateState, t);
-  const sessionImportMenu = (
-    <div ref={importMenuRef} style={{ position: "relative" }}>
-      <button
-        type="button"
-        onClick={() => setImportMenuOpen((open) => !open)}
-        aria-label={t("externalImport.open")}
-        style={{
-          border: "none",
-          background: "transparent",
-          color:
-            sessionListMode === "import" && externalImportAgent
-              ? "var(--text-secondary)"
-              : "#0f766e",
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-          height: "34px",
-          minWidth: "34px",
-          borderRadius: "8px",
-          cursor: "pointer",
-          padding:
-            sessionListMode === "import" && externalImportAgent ? 0 : "0 2px",
-        }}
-      >
-        {sessionListMode === "import" && externalImportAgent ? (
-          <>
-            <AgentIcon
-              agentName={externalImportAgent}
-              style={{ width: "14px", height: "14px", display: "block" }}
-            />
-            <ChevronDownSmallIcon />
-          </>
-        ) : (
-          <ImportIcon />
-        )}
-      </button>
-      {importMenuOpen ? (
-        <div
-          style={{
-            position: "absolute",
-            top: "calc(100% + 6px)",
-            right: 0,
-            width: "260px",
-            padding: "10px",
-            borderRadius: "12px",
-            border: "1px solid var(--border-color)",
-            background: "var(--menu-bg)",
-            boxShadow: "0 12px 30px rgba(15, 23, 42, 0.14)",
-            zIndex: 40,
-            display: "flex",
-            flexDirection: "column",
-            gap: "10px",
-          }}
-        >
-          <div
-            style={{
-              fontSize: "12px",
-              fontWeight: 700,
-              color: "var(--text-primary)",
-            }}
-          >
-            {t("externalImport.chooseAgent")}
-          </div>
-          <AgentMenuList
-            agents={availableAgents}
-            selectedAgent={externalImportAgent}
-            maxHeight="180px"
-            onSelect={(agentName) => {
-              setImportMenuOpen(false);
-              setExternalImportAgent(agentName);
-              setExternalSelectedKey("");
-              void enterImportMode(agentName);
-            }}
-          />
-          <label
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "8px",
-              fontSize: "12px",
-              color: "var(--text-primary)",
-              cursor: "pointer",
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={externalFilterBound}
-              onChange={(e) => setExternalFilterBound(e.target.checked)}
-            />
-            <span>{t("externalImport.hideImported")}</span>
-          </label>
-        </div>
-      ) : null}
-    </div>
-  );
-  const sessionSidebar =
-    sessionListMode === "import" ? (
-      <ExternalSessionList
-        sessions={externalSessions}
-        selectedKey={externalSelectedKey}
-        selectedAgent={externalImportAgent}
-        importingKeys={importingExternalSessionKeys}
-        selectedImportKeys={selectedExternalImportKeys}
-        filterBound={externalFilterBound}
-        headerAction={sessionImportMenu}
-        loading={loadingExternalSessions}
-        error={externalSessionsError}
-        loadingOlder={loadingOlderExternalSessions}
-        confirmingImport={confirmingExternalImport}
-        hasMore={hasMoreExternalSessions}
-        onBack={exitImportMode}
-        onSelect={(session) =>
-          setExternalSelectedKey(
-            String(session.key || session.session_key || ""),
-          )
-        }
-        onToggleImport={toggleExternalImportSelection}
-        onToggleSelectAllImport={toggleAllExternalImportSelection}
-        onConfirmImport={() => {
-          void handleConfirmExternalImport();
-        }}
-        onLoadOlder={() => {
-          void handleLoadOlderExternalSessions();
-        }}
-      />
-    ) : multiProjectSessionsEnabled && !sessionSearchOpen && !sessionSearchResultsMode ? (
-      <MultiProjectSessionList
-        groups={multiProjectSessionGroups}
-        selectedKey={activeBoundSessionKey || ""}
-        selectedRootId={currentRootId || ""}
-        selectedNodeId={currentRootNodeId || ""}
-        projectSortMode={treeSortMode}
-        headerAction={sessionImportMenu}
-        loading={multiProjectSessionsLoading}
-        emptyText={t("externalImport.empty")}
-        syncingSessionKeys={syncingSessionKeys}
-        onSearchToggle={() => {
-          setSessionSearchOpen(true);
-          setSessionSearchResultsMode(false);
-          setSessionSearchQuery("");
-          setSessionSearchAppliedQuery("");
-          setSessionSearchResults([]);
-          setSessionSearchLoading(false);
-        }}
-        onSelect={handleSelectSessionAndClose}
-        onSync={handleSyncSession}
-        onPin={handlePinSession}
-        onRename={handleRenameSession}
-        onDelete={handleDeleteSession}
-        onLoadMoreProject={loadMoreMultiProjectSessions}
-        onLoadChildren={loadChildSessionsForParent}
-      />
-    ) : (
-      <SessionList
-        sessions={
-          sessionSearchOpen && sessionSearchResultsMode
-            ? sessionSearchResults
-            : sessions
-        }
-        selectedKey={activeBoundSessionKey || ""}
-        headerAction={sessionImportMenu}
-        searchOpen={sessionSearchOpen}
-        searchResultsMode={sessionSearchResultsMode}
-        searchQuery={sessionSearchQuery}
-        searchLoading={sessionSearchLoading}
-        syncingSessionKeys={syncingSessionKeys}
-        emptyText={
-          sessionSearchResultsMode
-            ? t("externalImport.noSearchMatch")
-            : sessionSearchOpen
-              ? ""
-            : (
-              <span>
-                {t("externalImport.emptyHintPrefix")}
-                <strong style={{ color: "var(--text-primary)", fontWeight: 800 }}>
-                  {t("externalImport.emptyHintAction")}
-                </strong>
-              </span>
-            )
-        }
-        onSearchToggle={() => {
-          setSessionSearchOpen((prev) => {
-            const next = !prev;
-            if (!next) {
-              setSessionSearchResultsMode(false);
-              setSessionSearchQuery("");
-              setSessionSearchAppliedQuery("");
-              setSessionSearchResults([]);
-              setSessionSearchLoading(false);
-            }
-            return next;
-          });
-        }}
-        onSearchQueryChange={(value) => {
-          setSessionSearchQuery(value);
-          if (!value.trim() && !sessionSearchResultsMode) {
-            setSessionSearchAppliedQuery("");
-            setSessionSearchResults([]);
-            setSessionSearchLoading(false);
-          }
-        }}
-        onSearchSubmit={executeSessionSearch}
-        onSearchBlur={() => {
-          setSessionSearchOpen(false);
-          setSessionSearchResultsMode(false);
-          setSessionSearchQuery("");
-          setSessionSearchAppliedQuery("");
-          setSessionSearchResults([]);
-          setSessionSearchLoading(false);
-        }}
-        onSearchBack={() => {
-          setSessionSearchResultsMode(false);
-          setSessionSearchQuery("");
-          setSessionSearchAppliedQuery("");
-          setSessionSearchResults([]);
-          setSessionSearchLoading(false);
-          setSessionSearchOpen(false);
-        }}
-        onSelect={handleSelectSessionAndClose}
-        onSync={handleSyncSession}
-        onPin={handlePinSession}
-        onRename={handleRenameSession}
-        onDelete={handleDeleteSession}
-        onLoadChildren={
-          sessionSearchOpen && sessionSearchResultsMode
-            ? undefined
-            : loadChildSessionsForParent
-        }
-        onLoadOlder={
-          sessionSearchOpen && sessionSearchResultsMode
-            ? undefined
-            : handleLoadOlderSessions
-        }
-        loadingOlder={
-          sessionSearchOpen && sessionSearchResultsMode
-            ? false
-            : loadingOlderSessions
-        }
-        hasMore={
-          sessionSearchOpen && sessionSearchResultsMode
-            ? false
-            : hasMoreSessions
-        }
-      />
-    );
+
+  const { sessionImportMenu, sessionSidebar } = useSessionSidebarView({
+    sessionListMode,
+    importMenuRef,
+    importMenuOpen,
+    setImportMenuOpen,
+    availableAgents,
+    externalImportAgent,
+    setExternalImportAgent,
+    setExternalSelectedKey,
+    enterImportMode,
+    externalFilterBound,
+    setExternalFilterBound,
+    externalSessions,
+    externalSelectedKey,
+    importingExternalSessionKeys,
+    selectedExternalImportKeys,
+    loadingExternalSessions,
+    externalSessionsError,
+    loadingOlderExternalSessions,
+    confirmingExternalImport,
+    hasMoreExternalSessions,
+    exitImportMode,
+    toggleExternalImportSelection,
+    toggleAllExternalImportSelection,
+    handleConfirmExternalImport,
+    handleLoadOlderExternalSessions,
+    multiProjectSessionsEnabled,
+    sessionSearchOpen,
+    sessionSearchResultsMode,
+    multiProjectSessionGroups,
+    activeBoundSessionKey,
+    currentRootId,
+    currentRootNodeId,
+    treeSortMode,
+    multiProjectSessionsLoading,
+    syncingSessionKeys,
+    handleSelectSessionAndClose,
+    handleSyncSession,
+    handlePinSession,
+    handleRenameSession,
+    handleDeleteSession,
+    loadMoreMultiProjectSessions,
+    loadChildSessionsForParent,
+    sessionSearchResults,
+    sessions,
+    sessionSearchQuery,
+    sessionSearchLoading,
+    toggleSessionSearch,
+    handleSearchQueryChange,
+    executeSessionSearch,
+    closeSessionSearch,
+    openSessionSearch,
+    handleLoadOlderSessions,
+    loadingOlderSessions,
+    hasMoreSessions,
+  });
 
   return (
     <>
@@ -15763,375 +9538,7 @@ flexShrink: 0,
         />
       ) : null}
       <ToastContainer />
+      <DialogHost />
     </>
-  );
-}
-
-function ImportIcon() {
-  return (
-    <svg
-      width="20"
-      height="20"
-      viewBox="0 0 24 24"
-      fill="currentColor"
-      aria-hidden="true"
-    >
-      <path d="m14 12l-4-4v3H2v2h8v3m10 2V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v3h2V6h12v12H6v-3H4v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2" />
-    </svg>
-  );
-}
-
-function EditPencilIcon() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path
-        d="M4 20h4.2L18.7 9.5a2.1 2.1 0 0 0 0-3L17.5 5.3a2.1 2.1 0 0 0-3 0L4 15.8V20Z"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path
-        d="m13.5 6.3 4.2 4.2"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
-
-function HorizontalDotsIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-      <circle cx="5" cy="12" r="1.8" />
-      <circle cx="12" cy="12" r="1.8" />
-      <circle cx="19" cy="12" r="1.8" />
-    </svg>
-  );
-}
-
-function PlusSmallIcon() {
-  return (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
-      <path d="M12 5v14" />
-      <path d="M5 12h14" />
-    </svg>
-  );
-}
-
-function CheckIconSmall() {
-  return (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path d="m5 12 4 4L19 6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-function TaskCompleteIcon() {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
-      <path d="M0 0h16v16H0z" fill="none" />
-      <path fill="currentColor" fillRule="evenodd" d="M3 13.5a.5.5 0 0 1-.5-.5V3a.5.5 0 0 1 .5-.5h9.25a.75.75 0 0 0 0-1.5H3a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9.75a.75.75 0 0 0-1.5 0V13a.5.5 0 0 1-.5.5zm12.78-8.82a.75.75 0 0 0-1.06-1.06L9.162 9.177 7.289 7.241a.75.75 0 1 0-1.078 1.043l2.403 2.484a.75.75 0 0 0 1.07.01z" clipRule="evenodd" />
-    </svg>
-  );
-}
-
-function TaskQueuedSpinnerIcon() {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2.5"
-      strokeLinecap="round"
-      aria-hidden="true"
-      style={{ animation: "mindfs-update-spin 0.9s linear infinite" }}
-    >
-      <path d="M21 12a9 9 0 1 1-6.2-8.56" />
-    </svg>
-  );
-}
-
-function TaskRunNowIcon() {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      aria-hidden="true"
-      style={{ display: "block", transform: "translateX(-1px) scale(1.06)", transformOrigin: "center" }}
-    >
-      <path d="M0 0h24v24H0z" fill="none" />
-      <path
-        fill="currentColor"
-        d="M14.5 4h.005M14.5 4L12 10l5 2.898L9.5 20l2.5-6l-5-2.9zm0-2a2.02 2.02 0 0 0-1.379.551L5.624 9.646a2 2 0 0 0-.61 1.686c.072.626.437 1.182.982 1.498l3.482 2.021l-1.826 4.381a2.003 2.003 0 0 0 1.847 2.77c.498 0 .993-.186 1.375-.548l7.5-7.103a2 2 0 0 0 .61-1.685a2 2 0 0 0-.982-1.498L14.52 9.15l1.789-4.293A2 2 0 0 0 14.5 2"
-      />
-    </svg>
-  );
-}
-
-function TaskSessionErrorIcon() {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2.2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <circle cx="12" cy="12" r="9" />
-      <path d="M12 7v6" />
-      <path d="M12 17h.01" />
-    </svg>
-  );
-}
-
-function DeleteIcon() {
-  return (
-    <svg
-      width="13"
-      height="13"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <polyline points="3 6 5 6 21 6" />
-      <path d="M19 6l-1 14H6L5 6" />
-      <path d="M10 11v6" />
-      <path d="M14 11v6" />
-      <path d="M9 6V4h6v2" />
-    </svg>
-  );
-}
-
-function taskTemplateMenuItemStyle(disabled = false): React.CSSProperties {
-  return {
-    width: "100%",
-    minHeight: "30px",
-    border: "none",
-    borderRadius: "8px",
-    background: "transparent",
-    color: "var(--text-primary)",
-    display: "flex",
-    alignItems: "center",
-    gap: "8px",
-    padding: "6px 8px",
-    textAlign: "left",
-    fontSize: "12px",
-    cursor: disabled ? "not-allowed" : "pointer",
-    opacity: disabled ? 0.45 : 1,
-    boxSizing: "border-box",
-  };
-}
-
-function taskCardIconButtonStyle(tone: "default" | "accent" | "success" | "danger" | "warning" = "default"): React.CSSProperties {
-  return {
-    width: "22px",
-    height: "22px",
-    border: "none",
-    borderRadius: "6px",
-    background: "transparent",
-    color: tone === "accent" ? "var(--accent-color)" : tone === "success" ? "#16a34a" : tone === "danger" ? "#dc2626" : tone === "warning" ? "#d97706" : "var(--text-secondary)",
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    cursor: "pointer",
-    padding: 0,
-  };
-}
-
-function taskAuxBadgeStyle(attention = false): React.CSSProperties {
-  return {
-    width: "18px",
-    height: "18px",
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: "5px",
-    background: attention ? "rgba(239, 68, 68, 0.10)" : "transparent",
-    color: "var(--text-secondary)",
-    animation: attention ? "mindfs-task-ask-user-pulse 2.2s ease-in-out infinite" : "none",
-  };
-}
-
-function taskWorktreeTagStyle(enabled: boolean): React.CSSProperties {
-  return {
-    flex: "0 0 auto",
-    marginLeft: "auto",
-    display: "inline-flex",
-    alignItems: "center",
-    gap: "1px",
-    border: enabled ? "1px solid rgba(22, 163, 74, 0.28)" : "1px solid rgba(217, 119, 6, 0.28)",
-    borderRadius: "4px",
-    background: enabled ? "rgba(22, 163, 74, 0.08)" : "rgba(217, 119, 6, 0.08)",
-    color: enabled ? "#15803d" : "#b45309",
-    fontSize: "9px",
-    fontWeight: 800,
-    lineHeight: "12px",
-    padding: enabled ? "0 4px" : "0 3px 0 2px",
-  };
-}
-
-function hexToRgbaApp(hex: string, alpha: number): string {
-  const h = String(hex || "").trim().replace(/^#/, "");
-  const fallback = `rgba(37, 99, 235, ${alpha})`;
-  if (h.length === 3) {
-    const r = parseInt(h[0] + h[0], 16);
-    const g = parseInt(h[1] + h[1], 16);
-    const b = parseInt(h[2] + h[2], 16);
-    if (Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b)) return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-    return fallback;
-  }
-  if (h.length === 6) {
-    const r = parseInt(h.slice(0, 2), 16);
-    const g = parseInt(h.slice(2, 4), 16);
-    const b = parseInt(h.slice(4, 6), 16);
-    if (Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b)) return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-  }
-  if (/^rgba?\(/.test(String(hex || ""))) return String(hex);
-  return fallback;
-}
-
-function taskReplyPulseStyle(color?: string | null): React.CSSProperties {
-  const c = String(color || "#2563eb").trim() || "#2563eb";
-  return {
-    position: "absolute",
-    top: "6px",
-    right: "6px",
-    width: "8px",
-    height: "8px",
-    borderRadius: "999px",
-    boxSizing: "border-box",
-    border: `1.5px solid ${c}`,
-    background: c,
-    animation: "mindfs-bound-pulse 2.2s ease-in-out infinite",
-    boxShadow: `0 0 0 1.5px ${hexToRgbaApp(c, 0.14)}`,
-    pointerEvents: "none",
-  };
-}
-
-function TaskPlanAuxIcon({ color }: { color?: string } = {}) {
-  const c = String(color || "#2563eb").trim() || "#2563eb";
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path d="M7 6h10M7 12h10M7 18h6" stroke={c} strokeWidth="2" strokeLinecap="round" />
-      <path d="M4 6h.01M4 12h.01M4 18h.01" stroke={c} strokeWidth="3" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-function TaskExpandIcon({ collapsed }: { collapsed: boolean }) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      width="13"
-      height="13"
-      viewBox="0 0 16 16"
-      aria-hidden="true"
-      style={{
-        display: "block",
-        transform: collapsed ? "none" : "rotate(180deg)",
-      }}
-    >
-      <path d="M0 0h16v16H0z" fill="none" />
-      <path fill="currentColor" d="M12.146 7.146a.5.5 0 0 1 .708.708l-4.5 4.5a.5.5 0 0 1-.708 0l-4.5-4.5a.5.5 0 1 1 .708-.708L8 11.293zm0-4a.5.5 0 0 1 .708.708l-4.5 4.5a.5.5 0 0 1-.708 0l-4.5-4.5a.5.5 0 1 1 .708-.708L8 7.293z" />
-    </svg>
-  );
-}
-
-function TaskGroupChevronIcon({ collapsed }: { collapsed: boolean }) {
-  return (
-    <span
-      aria-hidden="true"
-      style={{
-        flexShrink: 0,
-        transform: collapsed ? "rotate(0deg)" : "rotate(90deg)",
-        transition: "transform 0.2s",
-        color: "currentColor",
-        display: "inline-flex",
-        alignItems: "center",
-      }}
-    >
-      <svg
-        width="12"
-        height="12"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2.25"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <polyline points="9 18 15 12 9 6" />
-      </svg>
-    </span>
-  );
-}
-
-function RunNowIcon() {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      width="13"
-      height="13"
-      viewBox="0 0 24 24"
-      aria-hidden="true"
-    >
-      <path d="M0 0h24v24H0z" fill="none" />
-      <path
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        d="M20.409 9.353a2.998 2.998 0 0 1 0 5.294L7.597 21.614C5.534 22.737 3 21.277 3 18.968V5.033c0-2.31 2.534-3.769 4.597-2.648z"
-      />
-    </svg>
-  );
-}
-
-function SyncIcon({ style }: { style?: React.CSSProperties }) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      width="13"
-      height="13"
-      viewBox="0 0 24 24"
-      aria-hidden="true"
-      style={style}
-    >
-      <path
-        fill="currentColor"
-        d="M19.91 15.51h-4.53a1 1 0 0 0 0 2h2.4A8 8 0 0 1 4 12a1 1 0 0 0-2 0a10 10 0 0 0 16.88 7.23V21a1 1 0 0 0 2 0v-4.5a1 1 0 0 0-.97-.99M12 2a10 10 0 0 0-6.88 2.77V3a1 1 0 0 0-2 0v4.5a1 1 0 0 0 1 1h4.5a1 1 0 0 0 0-2h-2.4A8 8 0 0 1 20 12a1 1 0 0 0 2 0A10 10 0 0 0 12 2"
-      />
-    </svg>
-  );
-}
-
-function ChevronDownSmallIcon() {
-  return (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="m6 9 6 6 6-6" />
-    </svg>
   );
 }

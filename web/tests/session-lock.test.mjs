@@ -29,10 +29,14 @@ assert.equal(shouldResetSessionLockForRootChange("root-a", "root-a"), false);
 assert.equal(shouldResetSessionLockForRootChange("root-a", "root-b"), true);
 assert.equal(shouldResetSessionLockForRootChange(null, "root-b"), false);
 
-// Source contracts that will fail until Task 2 wires App.tsx to the pure model.
+// 2026-09 App.tsx 拆分：会话右栏 JSX 移到 app/useSessionSidebarView.tsx，契约随文件走。
+const sidebarView = fs.readFileSync(
+  path.resolve(import.meta.dirname, "../src/app/useSessionSidebarView.tsx"),
+  "utf8",
+);
 const app = fs.readFileSync(path.resolve(import.meta.dirname, "../src/App.tsx"), "utf8");
 assert.match(app, /resolveLockedSessionKey\(activeBoundSessionKey\)/);
-assert.match(app, /selectedKey=\{activeBoundSessionKey \|\| ""\}/);
+assert.match(sidebarView, /selectedKey=\{activeBoundSessionKey \|\| ""\}/);
 assert.match(app, /shouldResetSessionLockForRootChange\(/);
 
 // Positive source contracts added by Task 2 wiring.
@@ -42,12 +46,12 @@ assert.match(
   "ActionBar/send routing must derive from the canonical active bound lock",
 );
 assert.match(
-  app,
+  sidebarView,
   /selectedKey=\{activeBoundSessionKey \|\| ""\}/,
   "single-project list must highlight the lock even when the main view is a file",
 );
 assert.match(
-  app,
+  sidebarView,
   /selectedKey=\{activeBoundSessionKey \|\| ""\}[\s\S]*selectedRootId=\{currentRootId \|\| ""\}/,
   "multi-project list must highlight the active root lock",
 );

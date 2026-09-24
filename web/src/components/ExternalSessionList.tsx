@@ -2,7 +2,7 @@ import React from "react";
 import type { SessionItem } from "./SessionList";
 import { useI18n, type Locale } from "../i18n";
 
-type ExternalSessionListProps = {
+export type ExternalSessionListProps = {
   sessions: SessionItem[];
   selectedKey?: string;
   selectedAgent?: string;

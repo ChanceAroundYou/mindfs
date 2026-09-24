@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { AgentIcon } from "./AgentIcon";
 import { ModeIcon } from "./ModeIcon";
-import { with1MSuffix } from "./ActionBar";
+import { with1MSuffix } from "./action/modelUtils";
 import { PromptEditor } from "./PromptEditor";
 import { PencilIcon, TrashIcon } from "./composerStyles";
 import { uploadFiles } from "../services/upload";

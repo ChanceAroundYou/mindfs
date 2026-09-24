@@ -1,13 +1,18 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
+// 2026-09 App.tsx 拆分：顶层存储键/常量移到 app/appSupport.tsx，契约随文件走。
+// 2026-09 二次拆分：appSupport.tsx 拆成 appStorage / appPath / appSession / appTask / appMisc，
+// 各断言改为读符号真正所在的那个模块，契约随文件走。
 const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
+const appStorage = readFileSync(new URL("../src/app/appStorage.ts", import.meta.url), "utf8");
+const appPath = readFileSync(new URL("../src/app/appPath.ts", import.meta.url), "utf8");
 const panel = readFileSync(new URL("../src/components/DefaultListView.tsx", import.meta.url), "utf8");
 const switcher = readFileSync(new URL("../src/components/MainViewSwitcher.tsx", import.meta.url), "utf8");
 
 // 设计契约见 docs/main-view-switching-design.md：主区内容由**唯一一个**全局状态决定。
 assert.match(
-  app,
+  appStorage,
   /const MAIN_VIEW_STORAGE_KEY = "mindfs-main-view";/,
   "main view should persist under its own key",
 );
@@ -17,12 +22,12 @@ assert.match(
   "main view should be a single app-level state",
 );
 assert.match(
-  app,
+  appPath,
   /export type MainViewMode = "workspace" \| "board" \| "files" \| "chat";/,
   "the four modes are workspace / board / files / chat",
 );
 assert.match(
-  app,
+  appStorage,
   /return MAIN_VIEW_MODES\.includes\(saved as MainViewMode\) \? \(saved as MainViewMode\) : "board";/,
   "first run should fall back to the board (same as before the refactor)",
 );
@@ -131,12 +136,12 @@ assert.match(
 
 // 主面板模式进 URL：按钮高亮与面板显示必须同源恢复
 assert.match(
-  app,
+  appPath,
   /view\?: MainViewMode;/,
   "URL state should carry the main view",
 );
 assert.match(
-  app,
+  appPath,
   /if \(next\.view\) params\.set\("view", next\.view\);/,
   "the view must be serialized into the URL",
 );

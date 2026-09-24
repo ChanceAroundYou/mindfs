@@ -28,6 +28,7 @@ import { AgentSelector } from "./AgentSelector";
 import { SymlinkBadge } from "./SymlinkBadge";
 import { fetchAgentCatalog, fetchAgents, type AgentStatus } from "../services/agents";
 import { getRootNodeId } from "../services/rootNode";
+import { alertDialog } from "../services/dialog";
 import {
   createAgentAPIProvider,
   createAgentConfigBackup,
@@ -1841,25 +1842,26 @@ function FileTreeInner({
       }
       return;
     }
-    if (isIOS && typeof window !== "undefined") {
-      window.alert(t("pwa.alertIOS"));
+    if (typeof window === "undefined") {
       return;
     }
-    if (isMacSafari && typeof window !== "undefined") {
-      window.alert(t("pwa.alertMacSafari"));
+    if (isIOS) {
+      alertDialog(t("pwa.alertIOS"));
       return;
     }
-    if (isDesktopChromium && typeof window !== "undefined") {
-      window.alert(t("pwa.alertDesktopChromium"));
+    if (isMacSafari) {
+      alertDialog(t("pwa.alertMacSafari"));
       return;
     }
-    if (isAndroidChrome && typeof window !== "undefined") {
-      window.alert(t("pwa.alertAndroidChrome"));
+    if (isDesktopChromium) {
+      alertDialog(t("pwa.alertDesktopChromium"));
       return;
     }
-    if (typeof window !== "undefined") {
-      window.alert(t("pwa.alertUnavailable"));
+    if (isAndroidChrome) {
+      alertDialog(t("pwa.alertAndroidChrome"));
+      return;
     }
+    alertDialog(t("pwa.alertUnavailable"));
   }, [deferredInstallPrompt, isAndroidChrome, isDesktopChromium, isIOS, isKnownInstalled, isMacSafari, persistInstallState, t]);
 
   React.useEffect(() => {

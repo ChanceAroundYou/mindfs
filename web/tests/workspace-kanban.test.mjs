@@ -4,6 +4,8 @@ import { readFileSync } from "node:fs";
 const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 const bar = readFileSync(new URL("../src/components/ActionBar.tsx", import.meta.url), "utf8");
 const panel = readFileSync(new URL("../src/components/WorkspaceKanban.tsx", import.meta.url), "utf8");
+// 2026-09 App.tsx 拆分：项目看板搬到 components/TaskBoardView.tsx，契约随文件走。
+const board = readFileSync(new URL("../src/components/TaskBoardView.tsx", import.meta.url), "utf8");
 const zh = readFileSync(new URL("../src/i18n/locales/zh-CN.ts", import.meta.url), "utf8");
 const en = readFileSync(new URL("../src/i18n/locales/en-US.ts", import.meta.url), "utf8");
 
@@ -13,9 +15,11 @@ assert.match(
   /const workspaceOpen = mainView === "workspace";/,
   "workspace should only own the task view when no project is open",
 );
+// 有项目时项目看板胜出，工作台只是「无项目」时的兜底。
+// 2026-09 App.tsx 拆分：这条优先级判定搬到 TaskBoardView 内（workspaceOpen 早退 + currentRootId 守卫）。
 assert.match(
-  app,
-  /const kanbanTaskPanel = workspaceOpen \? \(\n    <WorkspaceKanban[\s\S]*?\n  \) : currentRootId \? \(/,
+  board,
+  /if \(workspaceOpen\) return workspacePanel;\s*\n\s*if \(!currentRootId\) return null;/,
   "project board should win when a project is open; workspace is the no-project fallback",
 );
 
@@ -40,19 +44,34 @@ assert.match(
 
 // 跨项目操作必须按卡片自带的 root_id 派发，不能落到当前项目
 assert.match(
-  app,
+  board,
   /onComplete=\{\(item\) => \{ void handleMoveKanbanTask\(item\.task, "complete"\); \}\}/,
   "complete should act on the card's own root",
 );
 assert.match(
-  app,
+  board,
   /onOpenSession=\{\(item, sessionKey\) => \{ handleTaskSessionDrawerOpen\(sessionKey, item\.root_id, item\.task\.id\); \}\}/,
   "opening a session should use the card's own root",
 );
 assert.match(
-  app,
+  board,
   /onOpenDetail=\{\(item\) => \{ void openWorkspaceProject\(item\.root_id\)\.then\(\(\) => setSelectedKanbanTaskId\(item\.task\.id\)\); \}\}/,
   "opening a detail should switch project first, then select the task",
+);
+
+// 2026-09 App.tsx 拆分守卫：看板 JSX 必须留在 TaskBoardView，App 侧只转发。
+// 一旦有人把那段 JSX 抄回 App，这里立刻失败。
+assert.match(board, /data-onboarding="task-board"/, "看板容器应在视图组件里");
+assert.match(board, /<WorkspaceKanban/, "视图组件应自己渲染跨项目工作台");
+assert.doesNotMatch(
+  app,
+  /data-onboarding="task-board"/,
+  "看板 JSX 不应再在 App 里内联实现（应转发给 TaskBoardView）",
+);
+assert.doesNotMatch(
+  app,
+  /const kanbanStageColumns:[\s\S]{0,4000}?data-onboarding="task-board"/,
+  "App 只构造列数据，不渲染看板结构",
 );
 
 // 工作台入口收敛到左栏底部的四态切换器（见 docs/main-view-switching-design.md）
@@ -93,7 +112,7 @@ assert.match(
 );
 // 每块固定高度 + 完成分组默认展开
 assert.match(
-  app,
+  board,
   /gridAutoRows: isMobile \? "36dvh" : undefined,/,
   "mobile blocks should keep a fixed height",
 );

@@ -2,8 +2,14 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
+const streamCache = readFileSync(new URL("../src/app/useSessionStreamCache.ts", import.meta.url), "utf8");
 const fileTree = readFileSync(new URL("../src/components/FileTree.tsx", import.meta.url), "utf8");
 const viewer = readFileSync(new URL("../src/components/SessionViewer.tsx", import.meta.url), "utf8");
+// 2026-09 App.tsx 拆分：相关文件页签的渲染搬到 components/RootRelatedContentView.tsx，契约随文件走。
+const rootRelatedView = readFileSync(new URL("../src/components/RootRelatedContentView.tsx", import.meta.url), "utf8");
+// 2026-09 App.tsx 拆分：worktree 页签的渲染搬到 components/RootWorktreeContentView.tsx，契约随文件走。
+const rootWorktreeView = readFileSync(new URL("../src/components/RootWorktreeContentView.tsx", import.meta.url), "utf8");
+const rootGitView = readFileSync(new URL("../src/components/RootGitContentView.tsx", import.meta.url), "utf8");
 const fileService = readFileSync(new URL("../src/services/file.ts", import.meta.url), "utf8");
 const sessionSvc = readFileSync(new URL("../src/services/session.ts", import.meta.url), "utf8");
 const claudeSession = readFileSync(new URL("../../server/internal/agent/claude/session.go", import.meta.url), "utf8");
@@ -29,7 +35,7 @@ assert.match(app, /file\.agent_path \|\| file\.path/, "466b21e App should use ag
 // c0a4398 — related-file git-diff line stats hook wiring
 assert.match(app, /useRelatedFileStats/, "c0a4398 App should wire useRelatedFileStats");
 assert.match(app, /gitStatsRefreshKey/, "c0a4398 App should compute gitStatsRefreshKey");
-assert.match(app, /selectedRelatedFileStatsByKey\[relatedFileStatKey\(file\)\]/, "c0a4398 App should resolve stats by relatedFileStatKey");
+assert.match(rootRelatedView, /selectedRelatedFileStatsByKey\[relatedFileStatKey\(file\)\]/, "c0a4398 related-files view should resolve stats by relatedFileStatKey");
 assert.match(viewer, /useRelatedFileStats/, "c0a4398 SessionViewer should wire useRelatedFileStats");
 assert.match(viewer, /relatedFileStatsByKey\[relatedFileStatKey\(file\)\]/, "c0a4398 SessionViewer should resolve stats by relatedFileStatKey");
 const hook = readFileSync(new URL("../src/hooks/useRelatedFileStats.ts", import.meta.url), "utf8");
@@ -45,7 +51,8 @@ assert.doesNotMatch(claudeSession, /claudeModelSupportsEffortAt/, "5941a36 shoul
 assert.match(app, /cachedBeforeSync/, "d36cc53 App restore should capture cachedBeforeSync");
 assert.match(app, /getEventCursor/, "d36cc53 App restore should read resumeCursor via getEventCursor");
 assert.match(app, /localTransient/, "d36cc53 App restore should keep local seq==0 exchanges");
-assert.match(app, /replaySnapshot === true/, "d36cc53 App should branch on replaySnapshot when coalescing userShell");
+// 2026-09 App.tsx 拆分：userShell 流合并搬到 app/useSessionStreamCache.ts，契约随文件走。
+assert.match(streamCache, /replaySnapshot === true/, "d36cc53 App should branch on replaySnapshot when coalescing userShell");
 assert.match(sessionSvc, /eventCursors/, "d36cc53 session.ts should track eventCursors");
 assert.match(sessionSvc, /getEventCursor/, "d36cc53 session.ts should expose getEventCursor");
 
@@ -61,3 +68,20 @@ assert.match(app, /void saveCachedSessionList\(rootID, payload(?:,\s*[^)]+)?\);/
 // single assertion for fileService raw 404 + blob dedup sanity (from 33c190/466b21e overlap covers 633c190 zone too)
 assert.match(fileService, /rawFileFailures/, "file.ts raw 404 cache should exist");
 assert.match(fileService, /rawFileBlobCache/, "file.ts blob dedup cache should exist");
+
+// 2026-09 App.tsx 拆分守卫：项目树三个页签的渲染必须留在各自的视图组件里。
+// 这三条 renderRoot* 在 App 侧只应是「取好数据 → 交给组件」的转发，
+// 一旦有人把 JSX 抄回 App，这里会立刻失败（此前没有测试守这条）。
+assert.match(rootWorktreeView, /is_git_repo !== true/, "worktree 视图应保留非 git 根的早退守卫");
+assert.match(rootWorktreeView, /<GitStatusPanel/, "worktree 视图应渲染每个 worktree 的 git 状态面板");
+assert.match(rootGitView, /<GitHistoryPanel/, "git 视图应渲染历史面板");
+assert.match(rootRelatedView, /relatedFileStatKey/, "相关文件视图应按 relatedFileStatKey 取统计");
+for (const [name, body] of [["git", app], ["worktree", app], ["related", app]]) {
+  assert.doesNotMatch(
+    body,
+    new RegExp(`const renderRoot${name[0].toUpperCase() + name.slice(1)}Content = \\(root: string\\): React\\.ReactNode => \\{`),
+    `renderRoot${name[0].toUpperCase() + name.slice(1)}Content 不应再在 App 里内联实现（应转发给视图组件）`,
+  );
+}
+
+console.log("upstream restore contracts OK");

@@ -3,8 +3,10 @@ import type { Messages } from "../types";
 export const enUS = {
   "app.name": "MindFS",
   "app.initFailed": "Initialization failed",
-  "common.cancel": "Cancel",
+  "update.confirmInstall": "Install {target} now? MindFS will restart after the update finishes.",
+  "update.install": "Install update",
   "common.confirm": "Confirm",
+  "common.cancel": "Cancel",
   "common.close": "Close",
   "common.delete": "Delete",
   "common.edit": "Edit",

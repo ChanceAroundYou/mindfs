@@ -1,6 +1,6 @@
 import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { AgentSelector } from "./AgentSelector";
-import { has1MSuffix } from "./ActionBar";
+import { has1MSuffix } from "./action/modelUtils";
 import TokenEditor, { type TokenEditorHandle } from "./editor/TokenEditor";
 import { PencilIcon, PlusIcon, SendIcon, composerContainerStyle, composerIconButtonStyle, composerSendButtonStyle } from "./composerStyles";
 import type { StageRole } from "../services/tasks";

@@ -1,13 +1,18 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
+const app = readFileSync(new URL("../src/app/useRealtimeEvents.ts", import.meta.url), "utf8");
+// 2026-09 App.tsx 拆分：WS 事件处理器整块搬到 app/useRealtimeEvents.ts，契约随文件走。
+// 更早的一轮拆分已把 `switch (event.type) { case "x": … }` 变成
+// `"x": (event, payload) => { … }` 的 handler map，切片锚点用后者。
+// 契约（replay 的 done 不重锚 / 真 done 仍重锚）一条没少，只是换了所在文件与写法。
+const doneStart = app.indexOf('"session.done": (event: any, payload: any) => {');
 const doneBody = app.slice(
-  app.indexOf('case "session.done": {'),
-  app.indexOf('case "session.user_message": {'),
+  doneStart,
+  app.indexOf('"session.user_message": (event: any, payload: any) => {'),
 );
 
-assert.ok(doneBody.length > 0, 'the "session.done" handler should be found in App.tsx');
+assert.ok(doneStart >= 0 && doneBody.length > 0, 'the "session.done" handler should be found in useRealtimeEvents.ts');
 
 // 服务端在每次 session.ready 之后都会补发一条 replay=true 的 session.done
 // （h.completed 只在新回合开始时清空，回合结束后一直留着），而 restoreActiveSession

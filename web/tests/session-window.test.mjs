@@ -127,6 +127,11 @@ assert.equal(getSessionMaxSeq({ exchanges: [] }), 0);
 //        + [overlay 尾巴（App 缓存 seq=0 瞬时尾部，只读派生）]。全流程无 seq 合并。
 // mergeWindowedTail 已删除；不得回归为 seq 过滤合并模型。
 const appSrc = fs.readFileSync(path.resolve(import.meta.dirname, "../src/App.tsx"), "utf8");
+// 2026-09 App.tsx 拆分：WS 事件处理器整块搬到 app/useRealtimeEvents.ts，契约随文件走。
+// done 后的重锚定（F2）与 meta.updated 新 key 的 replace 重拉（F3）都在这批 handler 里，
+// 故这几条断言改读新文件；仍在 App 里的（_windowMeta 附加、锚点计数、reportError 冷却、
+// SESSION_WINDOW_SIZE）继续读 appSrc。
+const realtimeSrc = fs.readFileSync(path.resolve(import.meta.dirname, "../src/app/useRealtimeEvents.ts"), "utf8");
 assert.ok(
   !fs.existsSync(path.resolve(import.meta.dirname, "../src/services/sessionWindowMerge.ts")),
   "sessionWindowMerge.ts must stay deleted",
@@ -268,16 +273,16 @@ assert.match(
 // 残留的 seq=0 瞬时轮次会被合并 effect 重新追加 → 最后一轮显示两次。必须在 App 层经
 // restoreActiveSession 替换缓存（服务端窗口无 seq=0 时 localTransient 不回填，瞬时被清）。
 assert.match(
-  appSrc,
+  realtimeSrc,
   /getReplayTargetsForRoot\(rootID\)\.includes\(sessionKey\) &&\s*\n\s*!sessionService\.isSessionStreaming\(sessionKey\)\s*\n\s*\) \{\s*\n\s*void reloadSessionForReplay\(rootID, sessionKey\);/,
   "F2 done-path re-anchor (viewing-sessions only, guarded) missing",
 );
 assert.doesNotMatch(viewerSrc, /streamingEdgeRef/, "F2 must not re-anchor inside SessionViewer (would duplicate the persisted turn)");
 
 // ── F3: meta.updated 新 key → replace 重拉 ─────────────────────────────
-assert.match(appSrc, /const listHasKey = sessionsRef\.current\.some\(/, "F3 listHasKey missing");
+assert.match(realtimeSrc, /const listHasKey = sessionsRef\.current\.some\(/, "F3 listHasKey missing");
 assert.match(
-  appSrc,
+  realtimeSrc,
   /\} else \{\s*\n\s*void loadSessionsForRoot\(rootID, \{ replace: true \}\);\s*\n\s*\}\s*\n\s*if \(multiProjectSessionsEnabled\) \{/,
   "F3 new-key replace branch missing",
 );

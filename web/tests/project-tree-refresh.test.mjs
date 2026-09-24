@@ -2,8 +2,11 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
+const worktrees = readFileSync(new URL("../src/app/useProjectTreeWorktrees.ts", import.meta.url), "utf8");
+const gitData = readFileSync(new URL("../src/app/useGitData.ts", import.meta.url), "utf8");
 const fileTree = readFileSync(new URL("../src/components/FileTree.tsx", import.meta.url), "utf8");
 const fileService = readFileSync(new URL("../src/services/file.ts", import.meta.url), "utf8");
+const taskBoard = readFileSync(new URL("../src/components/TaskBoardView.tsx", import.meta.url), "utf8");
 
 assert.match(
   fileTree,
@@ -58,21 +61,27 @@ assert.match(
 );
 assert.match(
   app,
-  /case "worktrees":[\s\S]*?loadProjectTreeWorktrees\(root\)[\s\S]*?expandedWorktreeByRoot\[root\][\s\S]*?loadProjectTreeWorktreeStatus\(expandedPath\)/,
+  /case "worktrees":[\s\S]*?refreshProjectTreeWorktrees\(root\)/,
+  "worktree refresh should dispatch to the worktree domain",
+);
+assert.match(
+  worktrees,
+  /refreshProjectTreeWorktrees = useCallback\(async \(root: string\) => \{[\s\S]*?loadProjectTreeWorktrees\(root\)[\s\S]*?expandedWorktreeByRoot\[scopedRootKey\(root\)\][\s\S]*?loadProjectTreeWorktreeStatus\(expandedPath, root\)/,
   "worktree refresh should reload the list and only the expanded worktree status",
 );
 assert.match(
-  app,
+  gitData,
   /fetchGitHistory\(rootID, \{ afterCommit: newest(?:, nodeId: [^}]+)? \}\)[\s\S]*?options\?\.waitForIncremental[\s\S]*?return refreshAfterNewest\(\)/,
   "manual history refresh should await the existing after_commit probe",
 );
+// 2026-09 App.tsx 拆分：任务刷新/新建按钮搬到 components/TaskBoardView.tsx，契约随文件走。
 assert.match(
-  app,
+  taskBoard,
   /data-onboarding="task-refresh"[\s\S]*?width: "22px"[\s\S]*?data-task-refresh-visual[\s\S]*?width: "18px"/,
   "task refresh should use a compact hit area and centered feedback background",
 );
 assert.match(
-  app,
+  taskBoard,
   /data-onboarding="task-create"[\s\S]*?width: "28px"[\s\S]*?background: taskCreateTemplateMenuOpen[\s\S]*?justifyContent: "center"/,
   "task create should retain its normal button size",
 );

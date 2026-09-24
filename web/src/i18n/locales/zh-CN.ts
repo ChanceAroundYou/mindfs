@@ -1,8 +1,10 @@
 export const zhCN = {
   "app.name": "MindFS",
   "app.initFailed": "初始化失败",
-  "common.cancel": "取消",
+  "update.confirmInstall": "现在安装 {target}？更新完成后 MindFS 将自动重启。",
+  "update.install": "安装更新",
   "common.confirm": "确认",
+  "common.cancel": "取消",
   "common.close": "关闭",
   "common.delete": "删除",
   "common.edit": "编辑",

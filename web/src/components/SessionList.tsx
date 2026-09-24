@@ -54,7 +54,7 @@ export type SessionItem = {
   search_match_type?: "name" | "user" | "reply";
 };
 
-type SessionListProps = {
+export type SessionListProps = {
   sessions: SessionItem[];
   selectedKey?: string;
   headerAction?: React.ReactNode;
@@ -107,7 +107,7 @@ export type ProjectSessionGroup = {
   totalCount: number;
 };
 
-type ProjectSessionListProps = {
+export type ProjectSessionListProps = {
   groups: ProjectSessionGroup[];
   selectedKey?: string;
   selectedRootId?: string;
