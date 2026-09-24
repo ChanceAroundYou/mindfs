@@ -7,6 +7,9 @@ const promptEditor = fs.readFileSync(path.join(root, "src/components/PromptEdito
 const panel = fs.readFileSync(path.join(root, "src/components/TaskDetailPanel.tsx"), "utf8");
 const composer = fs.readFileSync(path.join(root, "src/components/composerStyles.tsx"), "utf8");
 const tasks = fs.readFileSync(path.join(root, "src/services/tasks.ts"), "utf8");
+const app = fs.readFileSync(path.join(root, "src/App.tsx"), "utf8");
+const zh = fs.readFileSync(path.join(root, "src/i18n/locales/zh-CN.ts"), "utf8");
+const en = fs.readFileSync(path.join(root, "src/i18n/locales/en-US.ts"), "utf8");
 
 // 文字铺满整宽：单行时右侧给控件留位，多行时贴边只在底部让高度（与 ActionBar/TokenEditor 同款）。
 assert.match(
@@ -64,5 +67,65 @@ assert.match(panel, /\{!executed && !isCurrent \? \(/, "TaskDetailPanel must off
 assert.match(panel, /removeTaskStage\(task\.root_id, task\.id, index, nodeId\)/, "TaskDetailPanel must call removeTaskStage");
 assert.match(panel, /requestRemoveStage\(index\)/, "delete button must go through the confirm flow");
 assert.match(tasks, /\/api\/tasks\/\$\{encodeURIComponent\(taskId\)\}\/remove-stage/, "tasks.ts must POST to the remove-stage endpoint");
+
+// 回车 = 发送（复用 PromptEditor 的输入框都得有，否则只能点按钮）。
+// 曾经 PromptEditor 不接 onEnter，TokenEditor 插入换行 —— 面板里回车永远发不出去。
+assert.match(
+  promptEditor,
+  /onEnter\?: \(event: KeyboardEvent \| null\) => boolean;/,
+  "PromptEditor must accept an onEnter override",
+);
+assert.match(
+  promptEditor,
+  /onEnter=\{handleEnter\}/,
+  "PromptEditor must forward Enter handling to TokenEditor",
+);
+assert.match(
+  promptEditor,
+  /if \(isComposing\(event\) \|\| event\?\.shiftKey\) return false;/,
+  "Enter must pass through while composing (IME) and on Shift+Enter",
+);
+assert.match(
+  promptEditor,
+  /if \(canSend\) onSend\?\.\(\);/,
+  "Enter must send when the editor is editable and has text",
+);
+
+// setText 不得无条件抢焦点：常驻挂载的编辑器（如工作台快速发起）一挂载就把整页焦点夺走。
+const tokenEditor = fs.readFileSync(path.join(root, "src/components/editor/TokenEditor.tsx"), "utf8");
+assert.match(
+  tokenEditor,
+  /const keepFocus = !!rootRef\.current && rootRef\.current\.contains\(document\.activeElement\);/,
+  "setText must only re-focus when the editor already holds focus",
+);
+assert.match(
+  app,
+  /taskInlineEditorRef\.current\?\.setText\([\s\S]{0,120}?taskInlineEditorRef\.current\?\.focus\(\)/,
+  "the create dialog must focus its editor explicitly now that setText no longer steals focus",
+);
+
+// 新建任务标题不该再塞模板名：模板名已经由标题右侧的下拉框显示，重复一遍看着像两处设置。
+assert.match(
+  zh,
+  /"task\.createDialogTitle": "创建任务"/,
+  "the create dialog title must be plain 「创建任务」",
+);
+assert.doesNotMatch(
+  zh,
+  /"task\.createDialogTitle": "创建\{name\}任务"/,
+  "the create dialog title must not repeat the template name",
+);
+assert.match(
+  en,
+  /"task\.createDialogTitle": "Create task"/,
+  "en-US create dialog title must match",
+);
+assert.doesNotMatch(
+  en,
+  /"task\.createDialogTitle": "Create \{name\} task"/,
+  "en-US create dialog title must not repeat the template name",
+);
+// 编辑态标题保留模板名（那里没有下拉框）。
+assert.match(zh, /"task\.editDialogTitle": "编辑\{name\}任务"/, "the edit dialog keeps the template name");
 
 console.log("task-stage-panel.test.mjs: OK");

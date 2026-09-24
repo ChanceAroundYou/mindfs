@@ -30,6 +30,8 @@ export type PromptEditorProps = {
   onAttach?: () => void;
   onEdit?: () => void;
   onSend?: () => void;
+  /** 回车处理，返回 true 表示已消费（交给 TokenEditor 的 Enter 命令）。 */
+  onEnter?: (event: KeyboardEvent | null) => boolean;
   sending?: boolean;
   sendDisabled?: boolean;
   /** 节点主题色（hex），用于发送/编辑按钮的外框与底色 */
@@ -62,6 +64,7 @@ export const PromptEditor = forwardRef<TokenEditorHandle, PromptEditorProps>(fun
     onAttach,
     onEdit,
     onSend,
+    onEnter,
     sending,
     sendDisabled,
     accentColor,
@@ -105,6 +108,19 @@ export const PromptEditor = forwardRef<TokenEditorHandle, PromptEditorProps>(fun
   const noop = () => {};
   const canSend = editable && !sending && !sendDisabled;
 
+  // 默认回车 = 发送（Shift+Enter 换行），与对话输入框一致；输入法组合中的回车放行。
+  const isComposing = (event: KeyboardEvent | null) => {
+    const native = event as (KeyboardEvent & { isComposing?: boolean; keyCode?: number }) | null | undefined;
+    return !!native?.isComposing || native?.keyCode === 229;
+  };
+  const handleEnter = (event: KeyboardEvent | null): boolean => {
+    if (onEnter) return onEnter(event);
+    if (isComposing(event) || event?.shiftKey) return false;
+    event?.preventDefault();
+    if (canSend) onSend?.();
+    return true;
+  };
+
   return (
     <div style={composerContainerStyle(mode === "done" ? "rgba(148, 163, 184, 0.10)" : "var(--input-bg)")}>
       <TokenEditor
@@ -117,6 +133,7 @@ export const PromptEditor = forwardRef<TokenEditorHandle, PromptEditorProps>(fun
         topInset={0}
         bottomInset={isMultiLine ? 44 : 12}
         fillHeight
+        onEnter={handleEnter}
         onChange={(payload) => {
           onChange?.(payload.serializedText);
           if (!payload.displayText.trim()) {

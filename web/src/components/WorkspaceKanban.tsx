@@ -1,5 +1,7 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import { useI18n } from "../i18n";
+import { PromptEditor } from "./PromptEditor";
+import type { TokenEditorHandle } from "./editor/TokenEditor";
 import type { TaskOverviewItem } from "../services/tasks";
 
 export type WorkspaceKanbanProps = {
@@ -21,6 +23,7 @@ export function WorkspaceKanban({ items, loading, projects, onOpenProject, onCom
   const [showAll, setShowAll] = useState(false);
   const [quickProject, setQuickProject] = useState(projects[0]?.id || "");
   const [quickInput, setQuickInput] = useState("");
+  const quickEditorRef = useRef<TokenEditorHandle | null>(null);
 
   const taskName = (item: TaskOverviewItem) => item.task.name || item.root_name || item.task.task_template_name || t("task.unnamedTemplate");
 
@@ -51,6 +54,8 @@ export function WorkspaceKanban({ items, loading, projects, onOpenProject, onCom
     if (!input || !rootId) return;
     onCreateTask(rootId, input);
     setQuickInput("");
+    // 编辑器常驻挂载，resetKey 不变不会重灌；得手动清一次，否则上次输入留在框里。
+    quickEditorRef.current?.clear();
   };
 
   const renderCardButtons = (item: TaskOverviewItem, big: boolean) => {
@@ -242,31 +247,18 @@ export function WorkspaceKanban({ items, loading, projects, onOpenProject, onCom
             <option key={project.id} value={project.id}>{project.name}</option>
           ))}
         </select>
-        <input
-          value={quickInput}
-          onChange={(event) => setQuickInput(event.target.value)}
-          placeholder={t("task.quickLaunchPlaceholder")}
-          onKeyDown={(event) => { if (event.key === "Enter") submitQuick(); }}
-          style={{ flex: "1 1 auto", minWidth: "160px", height: "28px", borderRadius: "6px", border: "1px solid var(--border-color)", background: "var(--input-bg)", color: "var(--text-color)", padding: "0 8px", fontSize: "12px", outline: "none" }}
-        />
-        <button
-          type="button"
-          disabled={!quickInput.trim()}
-          onClick={submitQuick}
-          style={{
-            height: "28px",
-            borderRadius: "6px",
-            border: "1px solid var(--accent-color)",
-            background: quickInput.trim() ? "var(--accent-color)" : "var(--button-bg)",
-            color: quickInput.trim() ? "#fff" : "var(--text-secondary)",
-            padding: "0 12px",
-            fontSize: "12px",
-            fontWeight: 700,
-            cursor: quickInput.trim() ? "pointer" : "not-allowed",
-          }}
-        >
-          {t("task.quickLaunchSend")}
-        </button>
+        <div style={{ flex: "1 1 260px", minWidth: "160px" }}>
+          <PromptEditor
+            ref={quickEditorRef}
+            value={quickInput}
+            onChange={setQuickInput}
+            resetKey="quick-launch"
+            role="user"
+            placeholder={t("task.quickLaunchPlaceholder")}
+            onSend={submitQuick}
+            sendDisabled={!quickInput.trim()}
+          />
+        </div>
       </section>
 
       {/* 最近完成 / 归档 */}

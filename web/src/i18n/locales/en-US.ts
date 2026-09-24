@@ -316,7 +316,8 @@ export const enUS = {
   "task.saveFailed": "Failed to save task",
   "task.startHint": "Click the blue dot or send a message to start",
   "task.editDialogTitle": "Edit {name} task",
-  "task.createDialogTitle": "Create {name} task",
+  // The template name already shows in the dropdown beside the title; don't repeat it.
+  "task.createDialogTitle": "Create task",
   "task.addAttachment": "Add attachment",
   "task.removeAttachment": "Remove attachment {name}",
   "task.closeErrorInfo": "Close error details",

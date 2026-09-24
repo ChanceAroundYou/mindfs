@@ -146,6 +146,29 @@ for (const [key, label] of [
   );
 }
 
+// 快速发起必须用 PromptEditor（与任务侧其它输入统一），不能再退回裸 <input>。
+assert.match(
+  panel,
+  /import \{ PromptEditor \} from "\.\/PromptEditor"/,
+  "the quick-launch field must reuse PromptEditor",
+);
+assert.match(
+  panel,
+  /<PromptEditor[\s\S]*?value=\{quickInput\}[\s\S]*?onSend=\{submitQuick\}[\s\S]*?sendDisabled=\{!quickInput\.trim\(\)\}/,
+  "quick launch must bind the editor value, Enter-to-send, and the empty guard",
+);
+assert.doesNotMatch(
+  panel,
+  /placeholder=\{t\("task\.quickLaunchPlaceholder"\)\}[\s\S]{0,200}onKeyDown/,
+  "quick launch must not keep the old raw <input> Enter handler",
+);
+// 编辑器常驻挂载（resetKey 不变不会重灌），提交后必须手动清一次，否则上次输入留在框里。
+assert.match(
+  panel,
+  /quickEditorRef\.current\?\.clear\(\);/,
+  "quick launch must clear the editor after submitting",
+);
+
 // 面板文案两端都要有，缺 key 会渲染成空白
 for (const key of [
   "task.workspaceQuickLaunch",

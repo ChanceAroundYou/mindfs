@@ -689,10 +689,15 @@ const TokenEditor = forwardRef<TokenEditorHandle, TokenEditorProps>(function Tok
       });
     },
     setText(value: string) {
+      // 只在焦点已经在这个编辑器里时才抢焦点：常驻挂载的编辑器（如工作台快速发起）
+      // 灌值不能把整页焦点夺走；已聚焦的调用方（改写草稿、插入候选）行为不变。
+      const keepFocus = !!rootRef.current && rootRef.current.contains(document.activeElement);
       editorRef.current?.update(() => {
         $replaceWithSerializedText(value);
       });
-      rootRef.current?.focus({ preventScroll: true });
+      if (keepFocus) {
+        rootRef.current?.focus({ preventScroll: true });
+      }
     },
     insertCandidate(type: CandidateType, value: string) {
       const editor = editorRef.current;

@@ -1748,6 +1748,8 @@ export function App({ onGoHome }: AppProps) {
     if (!taskInlineEdit) return;
     window.setTimeout(() => {
       taskInlineEditorRef.current?.setText(taskInlineEdit.text || "");
+      // TokenEditor 的 setText 不再抢焦点（常驻挂载的编辑器会夺走整页焦点），开面板时自己聚焦。
+      taskInlineEditorRef.current?.focus();
     }, 0);
   }, [taskInlineEdit?.taskId, taskInlineEdit?.templateId]);
 

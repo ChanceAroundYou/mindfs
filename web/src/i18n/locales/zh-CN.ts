@@ -314,7 +314,8 @@ export const zhCN = {
   "task.saveFailed": "任务保存失败",
   "task.startHint": "点击蓝点或发消息开始",
   "task.editDialogTitle": "编辑{name}任务",
-  "task.createDialogTitle": "创建{name}任务",
+  // 模板名已经由标题右侧的下拉框显示，标题不再重复它。
+  "task.createDialogTitle": "创建任务",
   "task.addAttachment": "添加附件",
   "task.removeAttachment": "移除附件 {name}",
   "task.closeErrorInfo": "关闭错误信息",
