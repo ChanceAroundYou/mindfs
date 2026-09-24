@@ -8042,8 +8042,6 @@ export function App({ onGoHome }: AppProps) {
     };
   }, [
     currentRootId,
-    currentRootNodeId,
-    loadExternalSessions,
     loadMultiProjectSessionGroups,
     loadSessionsForRoot,
     scheduleSessionListReload,
@@ -8061,7 +8059,6 @@ export function App({ onGoHome }: AppProps) {
     clearSessionStale,
     markSessionPending,
     markSessionStale,
-    resolvePendingForSession,
     setSelectedPendingByKey,
     setBoundSessionForRoot,
     setDrawerSessionForRoot,
@@ -8071,7 +8068,6 @@ export function App({ onGoHome }: AppProps) {
     refreshTreeDir,
     refreshCurrentFileContent,
     refreshGitStatus,
-    refreshManagedRoots,
     updateSessionRelatedWorktreeForKey,
     updateSessionRelatedFilesForKey,
     refreshTasksForRelatedSession,
