@@ -13,7 +13,17 @@ const authGateSrc = read("src/services/authGate.ts");
 const apiSrc = read("src/services/api.ts");
 const appSrc = read("src/App.tsx");
 // 2026-09 App.tsx 拆分：顶层存储键工具移到 app/appSupport.tsx（账户分区合同随文件走）。
-const supportSrc = read("src/app/appSupport.tsx");
+// 2026-09 二次拆分：appSupport.tsx 拆成 appStorage / appPath / appSession / appTask / appMisc，
+// 账户分区合同随 appStorage.ts 走；负向断言改为扫全部 app 模块（比只扫单文件更强）。
+const supportSrc = read("src/app/appStorage.ts");
+const appSupportModules = [
+  "src/app/appStorage.ts",
+  "src/app/appPath.ts",
+  "src/app/appSession.ts",
+  "src/app/appTask.ts",
+  "src/app/appMisc.tsx",
+  "src/app/appSupport.tsx",
+].map(read);
 
 // 1) 账户参数必须由 base.ts 注入——它是全部 fetch / WS / 资源 URL 的唯一汇聚点。
 //    漏了它，文件与图片的 src 会读到别的账户的数据。
@@ -156,9 +166,14 @@ assert.ok(
   /function accountScopedKey\(base: string\)[\s\S]{0,300}currentUser\(\)\?\.username/.test(supportSrc),
   "last-root 存储键必须带账户",
 );
+// 扫全部 app 模块：门面拆开后，裸 key 的误用可能落在任何一个新文件里，
+// 只查单个文件等于把守卫削弱成「那个文件恰好干净」。
 assert.ok(
-  !/localStorage\.setItem\(LAST_ROOT_STORAGE_KEY/.test(supportSrc) &&
-    !/localStorage\.getItem\(LAST_ROOT_STORAGE_KEY\)/.test(supportSrc),
+  appSupportModules.every(
+    (src) =>
+      !/localStorage\.setItem\(LAST_ROOT_STORAGE_KEY/.test(src) &&
+      !/localStorage\.getItem\(LAST_ROOT_STORAGE_KEY\)/.test(src),
+  ),
   "不得再直接读写裸的 LAST_ROOT_STORAGE_KEY（必须走 accountScopedKey）",
 );
 
