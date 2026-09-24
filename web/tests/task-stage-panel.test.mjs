@@ -125,7 +125,26 @@ assert.doesNotMatch(
   /"task\.createDialogTitle": "Create \{name\} task"/,
   "en-US create dialog title must not repeat the template name",
 );
-// 编辑态标题保留模板名（那里没有下拉框）。
-assert.match(zh, /"task\.editDialogTitle": "编辑\{name\}任务"/, "the edit dialog keeps the template name");
+// 任务小卡片的编辑按钮和它开的编辑态弹窗都删了：面板只剩「新建」，
+// 所以 editDialogTitle / edit / editFailed / detailNotSynced 全部没有引用了。
+for (const [dict, name] of [[zh, "zh-CN"], [en, "en-US"]]) {
+  for (const key of ["task.editDialogTitle", "task.edit", "task.editFailed", "task.detailNotSynced"]) {
+    assert.doesNotMatch(
+      dict,
+      new RegExp(`"${key.replace(/\./g, "\\.")}":`),
+      `${name} must not keep the dead ${key} key after the task edit dialog was removed`,
+    );
+  }
+}
+assert.doesNotMatch(
+  app,
+  /openTaskEditDialog/,
+  "the task edit dialog opener must be gone, not just its button",
+);
+assert.doesNotMatch(
+  app,
+  /taskInlineEdit\.taskId/,
+  "the inline task dialog is create-only; the taskId branch must be gone",
+);
 
 console.log("task-stage-panel.test.mjs: OK");

@@ -312,11 +312,8 @@ export const zhCN = {
   "task.actionPause": "暂停任务",
   "task.reasonPrompt": "{action}原因（可留空）",
   "task.actionFailed": "任务操作失败",
-  "task.detailNotSynced": "任务详情尚未同步，请刷新后重试",
-  "task.editFailed": "任务编辑失败",
   "task.saveFailed": "任务保存失败",
   "task.startHint": "点击蓝点或发消息开始",
-  "task.editDialogTitle": "编辑{name}任务",
   // 模板名已经由标题右侧的下拉框显示，标题不再重复它。
   "task.createDialogTitle": "创建任务",
   "task.addAttachment": "添加附件",
@@ -833,7 +830,6 @@ export const zhCN = {
   "view.files": "文件",
   "view.chat": "对话",
   "view.chatEmpty": "从右侧会话列表选择一个会话开始对话",
-  "task.edit": "编辑任务",
   "task.delete": "删除任务",
   "task.editPlaceholder": "编辑任务输入，可输入 @ 文件或 / 命令",
 

@@ -78,25 +78,6 @@ export function latestTaskStageRun(detail: TaskDetail, stageIndex: number): Stag
   return runs[0] || null;
 }
 
-export function currentTaskInputFromDetail(detail: TaskDetail): string {
-  return latestTaskStageRun(detail, detail.task.current_stage_index)?.input || "";
-}
-
-export function previousTaskInputsFromDetail(detail: TaskDetail, t: (key: MessageKey, params?: MessageParams) => string): Array<{ id: string; label: string; input: string }> {
-  const items: Array<{ id: string; label: string; input: string }> = [];
-  for (let index = 0; index < detail.task.current_stage_index; index += 1) {
-    const run = latestTaskStageRun(detail, index);
-    const input = run?.input || "";
-    if (!run || !input.trim()) continue;
-    items.push({
-      id: run.id,
-      label: run.stage_name || t("task.stageLabel", { index: index + 1 }),
-      input,
-    });
-  }
-  return items;
-}
-
 export function taskSessionKeysFromDetail(detail: TaskDetail): string[] {
   const seen = new Set<string>();
   const keys: string[] = [];
@@ -127,11 +108,10 @@ export type TaskInlineAttachment = {
 };
 
 export type TaskInlineEditState = {
-  taskId?: string;
   templateId: string;
   templateName: string;
   text: string;
-  /** 新建时的任务名（编辑态用 task.name，不走这里） */
+  /** 新建时的任务名 */
   name?: string;
   previousInputs: Array<{ id: string; label: string; input: string }>;
   createWorktree: boolean;

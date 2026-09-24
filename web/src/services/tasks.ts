@@ -367,29 +367,6 @@ export async function createTask(
   });
 }
 
-export async function updateTaskInput(
-  rootId: string,
-  taskId: string,
-  input: string,
-  createWorktree?: boolean,
-  worktreeBranchMode?: "new" | "existing",
-  worktreeBranch?: string,
-  nodeId?: string,
-): Promise<TaskDetail> {
-  nodeId = nodeId || getRootNodeId(rootId);
-  return protectedJSON<TaskDetail>(appURL(`/api/tasks/${encodeURIComponent(taskId)}/input`, undefined, nodeId), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      root_id: rootId,
-      input,
-      ...(typeof createWorktree === "boolean" ? { create_worktree: createWorktree } : {}),
-      ...(worktreeBranchMode ? { worktree_branch_mode: worktreeBranchMode } : {}),
-      ...(typeof worktreeBranch === "string" ? { worktree_branch: worktreeBranch } : {}),
-    }),
-  });
-}
-
 export async function moveTask(rootId: string, taskId: string, action: "next" | "run-now" | "prev" | "pause" | "resume" | "complete" | "cancel" | "fail", reason = "", nodeId?: string): Promise<TaskDetail> {
   return protectedJSON<TaskDetail>(appURL(`/api/tasks/${encodeURIComponent(taskId)}/${action}`, undefined, nodeId), {
     method: "POST",

@@ -84,7 +84,6 @@ export function TaskBoardView({
   handleSelectKanbanTask,
   handleMoveKanbanTask,
   openTaskCreateDialog,
-  openTaskEditDialog,
   handleTaskSessionDrawerOpen,
   setTaskSessionErrorDialog,
   loadKanbanTasks,
@@ -116,7 +115,6 @@ export function TaskBoardView({
   handleSelectKanbanTask: (task: KanbanTask) => void;
   handleMoveKanbanTask: (task: KanbanTask, action: MoveKanbanAction) => Promise<void>;
   openTaskCreateDialog: (template: TaskTemplate | null) => void;
-  openTaskEditDialog: (task: KanbanTask, openAttachmentPicker?: boolean) => Promise<void>;
   handleTaskSessionDrawerOpen: (sessionKey: string, rootOverride?: string | null, taskId?: string) => void;
   setTaskSessionErrorDialog: React.Dispatch<React.SetStateAction<TaskSessionErrorDialog | null>>;
   loadKanbanTasks: (rootId?: string | null, force?: boolean) => Promise<void>;
@@ -967,12 +965,6 @@ export function TaskBoardView({
                                 <TaskCompleteIcon />
                               </button>
                             ) : null}
-                              <button type="button" title={t("common.edit")} aria-label={t("task.edit")} onClick={(event) => {
-                                event.stopPropagation();
-                                void openTaskEditDialog(task);
-                              }} style={taskCardIconButtonStyle()}>
-                              {renderToolIcon("edit")}
-                            </button>
                               <button type="button" title={t("common.delete")} aria-label={t("task.delete")} onClick={(event) => {
                                 event.stopPropagation();
                                 void handleMoveKanbanTask(task, "cancel");

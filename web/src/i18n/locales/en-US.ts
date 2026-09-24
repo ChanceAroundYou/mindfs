@@ -314,11 +314,8 @@ export const enUS = {
   "task.actionPause": "Pause task",
   "task.reasonPrompt": "{action} reason (optional)",
   "task.actionFailed": "Task action failed",
-  "task.detailNotSynced": "Task details have not synced yet. Refresh and try again.",
-  "task.editFailed": "Failed to edit task",
   "task.saveFailed": "Failed to save task",
   "task.startHint": "Click the blue dot or send a message to start",
-  "task.editDialogTitle": "Edit {name} task",
   // The template name already shows in the dropdown beside the title; don't repeat it.
   "task.createDialogTitle": "Create task",
   "task.addAttachment": "Add attachment",
@@ -835,7 +832,6 @@ export const enUS = {
   "view.files": "Files",
   "view.chat": "Chat",
   "view.chatEmpty": "Pick a session from the list on the right to start chatting",
-  "task.edit": "Edit task",
   "task.delete": "Delete task",
   "task.editPlaceholder": "Edit task input. Use @ for files or / for commands",
 
