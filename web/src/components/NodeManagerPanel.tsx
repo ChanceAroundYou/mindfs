@@ -3,6 +3,7 @@ import { useI18n } from "../i18n";
 import { appPath } from "../services/base";
 import { protectedJSON } from "../services/api";
 import { useRefreshSpin } from "../hooks/useRefreshSpin";
+import { confirmDialog } from "../services/dialog";
 import {
   addNode,
   getNodes,
@@ -239,7 +240,7 @@ export function NodeManagerPanel({ onClose, onRefreshAll }: NodeManagerPanelProp
   };
 
   const handleDelete = async (node: NodeConnection) => {
-    if (!window.confirm(t("nodeManager.confirmDelete", { name: node.name }))) return;
+    if (!await confirmDialog({ message: t("nodeManager.confirmDelete", { name: node.name }), danger: true })) return;
     try {
       setError("");
       await removeNode(node.id);

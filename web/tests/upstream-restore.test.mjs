@@ -4,6 +4,8 @@ import { readFileSync } from "node:fs";
 const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 const fileTree = readFileSync(new URL("../src/components/FileTree.tsx", import.meta.url), "utf8");
 const viewer = readFileSync(new URL("../src/components/SessionViewer.tsx", import.meta.url), "utf8");
+// 2026-09 App.tsx 拆分：相关文件页签的渲染搬到 components/RootRelatedContentView.tsx，契约随文件走。
+const rootRelatedView = readFileSync(new URL("../src/components/RootRelatedContentView.tsx", import.meta.url), "utf8");
 const fileService = readFileSync(new URL("../src/services/file.ts", import.meta.url), "utf8");
 const sessionSvc = readFileSync(new URL("../src/services/session.ts", import.meta.url), "utf8");
 const claudeSession = readFileSync(new URL("../../server/internal/agent/claude/session.go", import.meta.url), "utf8");
@@ -29,7 +31,7 @@ assert.match(app, /file\.agent_path \|\| file\.path/, "466b21e App should use ag
 // c0a4398 — related-file git-diff line stats hook wiring
 assert.match(app, /useRelatedFileStats/, "c0a4398 App should wire useRelatedFileStats");
 assert.match(app, /gitStatsRefreshKey/, "c0a4398 App should compute gitStatsRefreshKey");
-assert.match(app, /selectedRelatedFileStatsByKey\[relatedFileStatKey\(file\)\]/, "c0a4398 App should resolve stats by relatedFileStatKey");
+assert.match(rootRelatedView, /selectedRelatedFileStatsByKey\[relatedFileStatKey\(file\)\]/, "c0a4398 related-files view should resolve stats by relatedFileStatKey");
 assert.match(viewer, /useRelatedFileStats/, "c0a4398 SessionViewer should wire useRelatedFileStats");
 assert.match(viewer, /relatedFileStatsByKey\[relatedFileStatKey\(file\)\]/, "c0a4398 SessionViewer should resolve stats by relatedFileStatKey");
 const hook = readFileSync(new URL("../src/hooks/useRelatedFileStats.ts", import.meta.url), "utf8");

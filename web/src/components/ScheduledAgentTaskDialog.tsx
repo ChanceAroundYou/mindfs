@@ -12,6 +12,7 @@ import {
   type ScheduledAgentTask,
 } from "../services/scheduledTasks";
 import { useI18n, type Locale, type MessageKey } from "../i18n";
+import { confirmDialog } from "../services/dialog";
 
 type DialogView = "list" | "create" | "edit";
 
@@ -527,8 +528,10 @@ export function ScheduledAgentTaskDialog({
   };
 
   const remove = async (task: ScheduledAgentTask) => {
-    if (!rootId || !window.confirm(t("scheduled.confirmDelete", { name: task.name || task.id })))
+    if (!rootId) return;
+    if (!await confirmDialog({ message: t("scheduled.confirmDelete", { name: task.name || task.id }), danger: true })) {
       return;
+    }
     setError("");
     try {
       await deleteScheduledAgentTask(rootId, task.id);

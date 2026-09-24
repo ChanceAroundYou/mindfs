@@ -12,6 +12,8 @@ const baseSrc = read("src/services/base.ts");
 const authGateSrc = read("src/services/authGate.ts");
 const apiSrc = read("src/services/api.ts");
 const appSrc = read("src/App.tsx");
+// 2026-09 App.tsx 拆分：顶层存储键工具移到 app/appSupport.tsx（账户分区合同随文件走）。
+const supportSrc = read("src/app/appSupport.tsx");
 
 // 1) 账户参数必须由 base.ts 注入——它是全部 fetch / WS / 资源 URL 的唯一汇聚点。
 //    漏了它，文件与图片的 src 会读到别的账户的数据。
@@ -151,12 +153,12 @@ assert.ok(
 //     它不分区的话，换账户后会恢复**上一个账户**的项目为当前项目，
 //     随后拿它去请求会话/看板 → 新账户根本没这个项目 → 登录后直接报错（实测踩过）。
 assert.ok(
-  /function accountScopedKey\(base: string\)[\s\S]{0,300}currentUser\(\)\?\.username/.test(appSrc),
+  /function accountScopedKey\(base: string\)[\s\S]{0,300}currentUser\(\)\?\.username/.test(supportSrc),
   "last-root 存储键必须带账户",
 );
 assert.ok(
-  !/localStorage\.setItem\(LAST_ROOT_STORAGE_KEY/.test(appSrc) &&
-    !/localStorage\.getItem\(LAST_ROOT_STORAGE_KEY\)/.test(appSrc),
+  !/localStorage\.setItem\(LAST_ROOT_STORAGE_KEY/.test(supportSrc) &&
+    !/localStorage\.getItem\(LAST_ROOT_STORAGE_KEY\)/.test(supportSrc),
   "不得再直接读写裸的 LAST_ROOT_STORAGE_KEY（必须走 accountScopedKey）",
 );
 

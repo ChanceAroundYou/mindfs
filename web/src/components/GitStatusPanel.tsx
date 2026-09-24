@@ -6,6 +6,7 @@ import {
   type GitStatusPayload,
 } from "../services/git";
 import { useI18n } from "../i18n";
+import { confirmDialog } from "../services/dialog";
 
 type GitStatusPanelProps = {
   rootId?: string;
@@ -697,13 +698,20 @@ export function GitStatusPanel({
                       title={t("git.discardChanges")}
                       disabled={!onDiscardItem || !!actionBusy}
                       onClick={() => {
-                        if (item.status === "??") {
-                          const ok = window.confirm(t("git.confirmDeleteUntracked", { path: item.path }));
-                          if (!ok) {
-                            return;
-                          }
+                        const runDiscard = () =>
+                          runPanelAction(`discard:${item.path}`, () => onDiscardItem?.(item));
+                        if (item.status !== "??") {
+                          return runDiscard();
                         }
-                        return runPanelAction(`discard:${item.path}`, () => onDiscardItem?.(item));
+                        void confirmDialog({
+                          message: t("git.confirmDeleteUntracked", { path: item.path }),
+                          danger: true,
+                        }).then((ok) => {
+                          if (ok) {
+                            return runDiscard();
+                          }
+                          return undefined;
+                        });
                       }}
                     >
                       <UndoIcon />

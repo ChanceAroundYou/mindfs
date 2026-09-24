@@ -2,6 +2,7 @@ import React from "react";
 import { createPortal } from "react-dom";
 import { useI18n } from "../i18n";
 import { currentUser, logout, type AuthUser } from "../services/authGate";
+import { confirmDialog } from "../services/dialog";
 import {
   accountErrorKey,
   changePassword,
@@ -480,9 +481,14 @@ export function AccountPanel({ onClose, anchorRef }: AccountPanelProps): React.R
                     opacity: busy || account.primary ? 0.45 : 1,
                   }}
                   onClick={() => {
-                    if (!window.confirm(t("account.confirmDelete", { name: account.username }))) return;
-                    void run(async () => {
-                      await deleteAccount(account.id);
+                    void confirmDialog({
+                      message: t("account.confirmDelete", { name: account.username }),
+                      danger: true,
+                    }).then((ok) => {
+                      if (!ok) return;
+                      return run(async () => {
+                        await deleteAccount(account.id);
+                      });
                     });
                   }}
                 >

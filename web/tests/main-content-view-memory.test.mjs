@@ -1,31 +1,27 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
+// 2026-09 App.tsx 拆分：顶层存储键/常量移到 app/appSupport.tsx，契约随文件走。
 const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
+const support = readFileSync(new URL("../src/app/appSupport.tsx", import.meta.url), "utf8");
 const panel = readFileSync(new URL("../src/components/DefaultListView.tsx", import.meta.url), "utf8");
 const switcher = readFileSync(new URL("../src/components/MainViewSwitcher.tsx", import.meta.url), "utf8");
 
 // 设计契约见 docs/main-view-switching-design.md：主区内容由**唯一一个**全局状态决定。
-assert.match(
-  app,
-  /const MAIN_VIEW_STORAGE_KEY = "mindfs-main-view";/,
-  "main view should persist under its own key",
-);
+{
+  const support = readFileSync(new URL("../src/app/appSupport.tsx", import.meta.url), "utf8");
+  assert.match(support, /const MAIN_VIEW_STORAGE_KEY = "mindfs-main-view";/, "main view should persist under its own key");
+}
 assert.match(
   app,
   /const \[mainView, setMainView\] = useState<MainViewMode>\(/,
   "main view should be a single app-level state",
 );
-assert.match(
-  app,
-  /export type MainViewMode = "workspace" \| "board" \| "files" \| "chat";/,
-  "the four modes are workspace / board / files / chat",
-);
-assert.match(
-  app,
-  /return MAIN_VIEW_MODES\.includes\(saved as MainViewMode\) \? \(saved as MainViewMode\) : "board";/,
-  "first run should fall back to the board (same as before the refactor)",
-);
+{
+  const support = readFileSync(new URL("../src/app/appSupport.tsx", import.meta.url), "utf8");
+  assert.match(support, /export type MainViewMode = "workspace" \| "board" \| "files" \| "chat";/, "the four modes are workspace / board / files / chat");
+  assert.match(support, /return MAIN_VIEW_MODES\.includes\(saved as MainViewMode\) \? \(saved as MainViewMode\) : "board";/, "first run should fall back to the board (same as before the refactor)");
+}
 
 // 旧的「按项目记忆 + 全局兜底」必须彻底消失：那正是「点目录突然跳到看板」的根因
 assert.doesNotMatch(
@@ -131,12 +127,12 @@ assert.match(
 
 // 主面板模式进 URL：按钮高亮与面板显示必须同源恢复
 assert.match(
-  app,
+  support,
   /view\?: MainViewMode;/,
   "URL state should carry the main view",
 );
 assert.match(
-  app,
+  support,
   /if \(next\.view\) params\.set\("view", next\.view\);/,
   "the view must be serialized into the URL",
 );

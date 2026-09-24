@@ -67,33 +67,13 @@ import { getRootNodeId, setRootNodeId, setRootNodeMap } from "./services/rootNod
 import { scopeKey, scopeSessionKey, treeKey, expandKey, dirSelKey } from "./services/scope";
 import {
   buildGitDiffCacheSignature,
-  checkoutGitBranch,
   clearGitHistoryCache,
-  commitGit,
-  createGitWorktree,
-  discardGitItem,
-  fetchGitCommitDiff,
   fetchGitDiff,
   fetchGitRelatedFileDiff,
   fetchGitBranches,
-  fetchGitHistory,
-  fetchGitStatus,
-  fetchGitStatusByPath,
-  fetchGitWorktrees,
-  getCachedGitHistory,
-  getCachedGitHistoryHead,
-  pullGit,
-  pushGit,
   removeGitWorktree,
-  stageGitItem,
-  unstageGitItem,
   type GitBranchesPayload,
   type GitDiffPayload,
-  type GitHistoryItem,
-  type GitHistoryPayload,
-  type GitStatusItem,
-  type GitStatusPayload,
-  type GitWorktreeItem,
 } from "./services/git";
 import {
   relatedFileStatKey,
@@ -140,23 +120,24 @@ import {
   type ProjectTreeTab,
 } from "./components/FileTree";
 
-import { applyNodesFromServer, getActiveNode, getNodeById, getNodes, LOCAL_NODE_ID, migrateLegacySingleBase, syncNodesFromServer } from "./services/nodeRegistry";
+import { applyNodesFromServer, getActiveNode, getNodeById, getNodes, migrateLegacySingleBase, syncNodesFromServer } from "./services/nodeRegistry";
 
 import { FileViewer } from "./components/FileViewer";
 import { resolveGroupColor } from "./services/sessionGroupDisplay";
 import { GitDiffViewer } from "./components/GitDiffViewer";
-import { GitHistoryPanel } from "./components/GitHistoryPanel";
 import { GitStatusPanel } from "./components/GitStatusPanel";
+import { RootGitContentView } from "./components/RootGitContentView";
+import { RootRelatedContentView } from "./components/RootRelatedContentView";
 import { SessionViewer } from "./components/SessionViewer";
 import { DefaultListView, type MainContentViewMode } from "./components/DefaultListView";
-import { MultiProjectSessionList, SessionList, type ProjectSessionGroup } from "./components/SessionList";
-import { ExternalSessionList } from "./components/ExternalSessionList";
+import { type ProjectSessionGroup } from "./components/SessionList";
 import { InlineTokenText } from "./components/InlineTokenText";
 import { AgentIcon } from "./components/AgentIcon";
-import { AgentMenuList } from "./components/AgentMenuList";
 import { ActionBar } from "./components/ActionBar";
 import { CompactUploadProgress } from "./components/CompactUploadProgress";
 import { ToastContainer } from "./components/Toast";
+import { DialogHost } from "./components/DialogHost";
+import { alertDialog, confirmDialog, promptDialog } from "./services/dialog";
 import { BottomSheet } from "./components/BottomSheet";
 import { ScheduledAgentTaskDialog } from "./components/ScheduledAgentTaskDialog";
 import { TaskTemplateDialog } from "./components/TaskTemplateDialog";
@@ -168,12 +149,6 @@ import { WorktreeBranchSelector } from "./components/WorktreeBranchSelector";
 import { NoWorktreeIcon } from "./components/NoWorktreeIcon";
 import { renderToolIcon } from "./components/stream/ToolCallCard";
 import TokenEditor, { type TokenEditorHandle } from "./components/editor/TokenEditor";
-import {
-  type GitHubImportState,
-  type LocalDirBrowserState,
-  ProjectAddPopover,
-  type ProjectAddMode,
-} from "./components/ProjectAddPopover";
 import { fetchAgents, restartAgent, type AgentStatus } from "./services/agents";
 import { fetchCandidates, type CandidateItem } from "./services/candidates";
 import {
@@ -210,1196 +185,144 @@ import {
 } from "./services/onboarding";
 
 // 类型定义
-type SessionMode = "chat" | "plugin" | "command";
-type WSStatus = "connecting" | "connected" | "reconnecting" | "disconnected";
-
-const CHILD_SESSION_PAGE_SIZE = 100;
-const MULTI_PROJECT_SESSION_LIMIT = 6;
-const SESSION_PAGE_SIZE = 50;
-const APP_DOCUMENT_TITLE = "MindFS";
-
-function isTopLevelSessionItem(session: SessionItem): boolean {
-  return !String(session?.parent_session_key || "").trim();
-}
-
-function firstUserInputTemplate(template: TaskTemplate | null): string {
-  const first = template?.stages?.[0]?.snapshot;
-  return first?.role === "user" ? first.prompt_template || "" : "";
-}
-
-function firstAgentStage(template: TaskTemplate | null): StageTemplate | null {
-  return template?.stages?.map((stage) => stage.snapshot).find((stage) => stage.role === "agent") || null;
-}
-
-function isUnfinishedKanbanTask(task: KanbanTask): boolean {
-  return task.status !== "success" && task.status !== "fail" && task.status !== "cancelled";
-}
-
-function isTerminalKanbanTask(task: KanbanTask): boolean {
-  return task.status === "success" || task.status === "fail" || task.status === "cancelled";
-}
-
-function parseTaskSessionErrorMessage(error?: string): string {
-  const raw = String(error || "").trim();
-  if (!raw) return "";
-  try {
-    const parsed = JSON.parse(raw) as { message?: unknown };
-    return typeof parsed.message === "string" && parsed.message.trim() ? parsed.message.trim() : raw;
-  } catch {
-    return raw;
-  }
-}
-
-function parseTaskSessionErrorDetails(error?: string): string[] {
-  const raw = String(error || "").trim();
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw) as { data?: unknown };
-    if (Array.isArray(parsed.data)) return parsed.data.map((item) => String(item)).filter(Boolean);
-    if (parsed.data === undefined || parsed.data === null) return [];
-    return [String(parsed.data)];
-  } catch {
-    return [];
-  }
-}
-
-function taskStatusLabel(status: string, t: (key: MessageKey, params?: MessageParams) => string): string {
-  const labels: Record<string, MessageKey> = {
-    pending: "task.status.pending",
-    queued: "task.status.queued",
-    running: "task.status.running",
-    waiting_user: "task.status.waitingUser",
-    paused: "task.status.paused",
-    success: "task.status.success",
-    fail: "task.status.fail",
-    cancelled: "task.status.cancelled",
-    approved: "task.status.approved",
-    rejected: "task.status.rejected",
-  };
-  return labels[status] ? t(labels[status]) : status || "-";
-}
-
-function firstTaskInputFromDetail(detail: TaskDetail): string {
-  return detail.stage_runs.find((run) => run.stage_index === 0)?.input || "";
-}
-
-function latestTaskStageRun(detail: TaskDetail, stageIndex: number): StageRun | null {
-  const runs = detail.stage_runs
-    .filter((run) => run.stage_index === stageIndex)
-    .sort((a, b) => {
-      const aTime = Date.parse(a.created_at || a.updated_at || "");
-      const bTime = Date.parse(b.created_at || b.updated_at || "");
-      return (Number.isFinite(bTime) ? bTime : 0) - (Number.isFinite(aTime) ? aTime : 0);
-    });
-  return runs[0] || null;
-}
-
-function currentTaskInputFromDetail(detail: TaskDetail): string {
-  return latestTaskStageRun(detail, detail.task.current_stage_index)?.input || "";
-}
-
-function previousTaskInputsFromDetail(detail: TaskDetail, t: (key: MessageKey, params?: MessageParams) => string): Array<{ id: string; label: string; input: string }> {
-  const items: Array<{ id: string; label: string; input: string }> = [];
-  for (let index = 0; index < detail.task.current_stage_index; index += 1) {
-    const run = latestTaskStageRun(detail, index);
-    const input = run?.input || "";
-    if (!run || !input.trim()) continue;
-    items.push({
-      id: run.id,
-      label: run.stage_name || t("task.stageLabel", { index: index + 1 }),
-      input,
-    });
-  }
-  return items;
-}
-
-function taskSessionKeysFromDetail(detail: TaskDetail): string[] {
-  const seen = new Set<string>();
-  const keys: string[] = [];
-  for (const run of detail.stage_runs) {
-    const key = String(run.session_key || "").trim();
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    keys.push(key);
-  }
-  const mainKey = String(detail.task.main_session_key || "").trim();
-  if (mainKey && !seen.has(mainKey)) {
-    keys.push(mainKey);
-  }
-  return keys;
-}
-
-function normalizeFastService(
-  value: unknown,
-): "" | "on" | "off" {
-  return value === "on" || value === "off" ? value : "";
-}
-
-export type SessionItem = {
-  key: string;
-  session_key: string;
-  root_id?: string;
-  _nodeId?: string;
-  name?: string;
-  type?: SessionMode;
-  parent_session_key?: string;
-  parent_tool_call_id?: string;
-  agent?: string;
-  model?: string;
-  shell?: string;
-  source?: string;
-  task_id?: string;
-  mode?: string;
-  effort?: string;
-  fast_service?: "" | "on" | "off";
-  plan_mode?: boolean;
-  scope?: string;
-  purpose?: string;
-  created_at?: string;
-  updated_at?: string;
-  pinned_at?: string | null;
-  closed_at?: string;
-  title?: string;
-  agent_session_id?: string;
-  context_window?: {
-    totalTokens: number;
-    modelContextWindow: number;
-  };
-  search_seq?: number;
-  search_target_id?: string;
-  search_snippet?: string;
-  search_match_type?: "name" | "user" | "reply";
-  related_files?: RelatedFile[];
-  related_worktree?: RelatedWorktree | null;
-  exchanges?: Array<{
-    seq?: number;
-    role?: string;
-    agent?: string;
-    content?: string;
-    thought_id?: string;
-    timestamp?: string;
-    model?: string;
-    model_display_name?: string;
-	    mode?: string;
-	    effort?: string;
-	    fast_service?: "" | "on" | "off";
-	    context_window?: {
-      totalTokens: number;
-      modelContextWindow: number;
-    };
-    token_usage?: TokenUsage;
-  }>;
-  pending?: boolean;
-};
-
-type MultiProjectSessionGroup = {
-  rootId: string;
-  rootName: string;
-  latestSessionTime: string;
-  sessions: SessionItem[];
-  totalCount: number;
-  _nodeId?: string;
-  _nodeColor?: string;
-  _nodeName?: string;
-};
-
-type SlashCommandResult = {
-  rootId: string;
-  sessionKey: string;
-  requestId: string;
-  command: string;
-  content: string;
-  status: "running" | "complete" | "failed";
-  error?: string;
-  createdAt?: number;
-  loginNotice?: {
-    status?: string;
-    loginId?: string;
-    verificationUrl?: string;
-    userCode?: string;
-    error?: string;
-    authMode?: string;
-    planType?: string;
-  };
-};
-
-type TaskInlineAttachment = {
-  id: string;
-  file: File;
-  previewUrl?: string;
-  isImage: boolean;
-};
-
-type TaskInlineEditState = {
-  taskId?: string;
-  templateId: string;
-  templateName: string;
-  text: string;
-  previousInputs: Array<{ id: string; label: string; input: string }>;
-  createWorktree: boolean;
-  worktreeBranchMode: "new" | "existing";
-  worktreeBranch: string;
-  canToggleWorktree: boolean;
-  attachments: TaskInlineAttachment[];
-};
-
-function latestExchangeText(
-  exchanges: unknown,
-  field: "agent" | "mode" | "effort" | "fast_service",
-): string {
-  if (!Array.isArray(exchanges)) {
-    return "";
-  }
-  for (let i = exchanges.length - 1; i >= 0; i -= 1) {
-    const value = (exchanges[i] as Record<string, unknown> | null)?.[field];
-    if (typeof value === "string" && value.trim()) {
-      return value;
-    }
-  }
-  return "";
-}
-
-function sessionInputHistory(session: { exchanges?: Array<{ role?: string; content?: string }> } | null | undefined): string[] {
-  const exchanges = Array.isArray(session?.exchanges) ? session.exchanges : [];
-  const items: string[] = [];
-  for (const exchange of exchanges) {
-    if (exchange?.role !== "user") {
-      continue;
-    }
-    const content = String(exchange.content || "").trim();
-    if (content) {
-      items.push(content);
-    }
-  }
-  return items;
-}
-
-function toSessionItem(
-  rootID: string | null | undefined,
-  session: any,
-): SessionItem | null {
-  if (!session) {
-    return null;
-  }
-  const key = session?.key || session?.session_key || "";
-  const nextRoot =
-    (session?.root_id as string | undefined) || String(rootID || "");
-  if (!key || !nextRoot) {
-    return null;
-  }
-  return {
-    key,
-    session_key: key,
-    root_id: nextRoot,
-    name: typeof session?.name === "string" ? session.name : "",
-    type: normalizeMode(session?.type),
-    parent_session_key:
-      typeof session?.parent_session_key === "string"
-        ? session.parent_session_key
-        : undefined,
-    parent_tool_call_id:
-      typeof session?.parent_tool_call_id === "string"
-        ? session.parent_tool_call_id
-        : undefined,
-    source: typeof session?.source === "string" ? session.source : undefined,
-    task_id: typeof session?.task_id === "string" ? session.task_id : undefined,
-    agent:
-      typeof session?.agent === "string" && session.agent.trim()
-        ? session.agent
-        : latestExchangeText(session?.exchanges, "agent"),
-    model: typeof session?.model === "string" ? session.model : "",
-    shell: typeof session?.shell === "string" ? session.shell : "",
-    mode:
-      typeof session?.mode === "string" && session.mode.trim()
-        ? session.mode
-        : latestExchangeText(session?.exchanges, "mode"),
-    effort:
-      typeof session?.effort === "string" && session.effort.trim()
-        ? session.effort
-        : latestExchangeText(session?.exchanges, "effort"),
-    fast_service:
-      normalizeFastService(session?.fast_service) ||
-      normalizeFastService(latestExchangeText(session?.exchanges, "fast_service")),
-    plan_mode:
-      typeof session?.plan_mode === "boolean"
-        ? session.plan_mode
-        : false,
-    scope: typeof session?.scope === "string" ? session.scope : "",
-    purpose: typeof session?.purpose === "string" ? session.purpose : "",
-    created_at:
-      typeof session?.created_at === "string" ? session.created_at : undefined,
-    updated_at:
-      typeof session?.updated_at === "string" ? session.updated_at : undefined,
-    pinned_at:
-      typeof session?.pinned_at === "string" && session.pinned_at
-        ? session.pinned_at
-        : undefined,
-    closed_at:
-      typeof session?.closed_at === "string" ? session.closed_at : undefined,
-    context_window:
-      session?.context_window &&
-      Number(session.context_window.totalTokens) > 0 &&
-      Number(session.context_window.modelContextWindow) > 0
-        ? {
-            totalTokens: Number(session.context_window.totalTokens),
-            modelContextWindow: Number(session.context_window.modelContextWindow),
-          }
-        : undefined,
-    search_seq:
-      typeof session?.search_seq === "number" ? session.search_seq : undefined,
-    search_target_id:
-      typeof session?.search_target_id === "string"
-        ? session.search_target_id
-        : undefined,
-    search_snippet:
-      typeof session?.search_snippet === "string"
-        ? session.search_snippet
-        : undefined,
-    search_match_type:
-      session?.search_match_type === "name" ||
-      session?.search_match_type === "user" ||
-      session?.search_match_type === "reply"
-        ? session.search_match_type
-        : undefined,
-    related_files: Array.isArray(session?.related_files)
-      ? session.related_files
-      : undefined,
-    related_worktree:
-      session?.related_worktree === null
-        ? null
-        : session?.related_worktree && typeof session.related_worktree === "object"
-          ? session.related_worktree
-          : undefined,
-    pending: typeof session?.pending === "boolean" ? session.pending : undefined,
-    // 多节点同名项目：记录会话归属节点，选择会话时按节点路由
-    ...(typeof (session as any)?._nodeId === "string" && (session as any)._nodeId
-      ? { _nodeId: (session as any)._nodeId as string }
-      : {}),
-  } as SessionItem;
-}
-type Exchange = {
-  role: string;
-  agent?: string;
-  model?: string;
-  model_display_name?: string;
-  mode?: string;
-  effort?: string;
-  fast_service?: "" | "on" | "off";
-  content?: string;
-  thought_id?: string;
-  context_window?: {
-    totalTokens: number;
-    modelContextWindow: number;
-  };
-  token_usage?: TokenUsage;
-  timestamp?: string;
-  toolCall?: any;
-  todoUpdate?: any;
-  planUpdate?: any;
-  compactNotice?: any;
-  pending_ack?: boolean;
-};
-type PendingSend = {
-  rootId: string;
-  mode: SessionMode;
-  agent: string;
-  model?: string;
-  model_display_name?: string;
-  agentMode?: string;
-  effort?: string;
-  fastService?: "" | "on" | "off";
-  shell?: string;
-  message: string;
-  timestamp: string;
-  requestId?: string;
-  sessionKey?: string;
-  tempKey?: string;
-};
-type SessionQueueItem = QueuedUserMessage;
-type ViewerSelection = {
-  filePath: string;
-  text?: string;
-  startLine?: number;
-  endLine?: number;
-};
-
-type AttachedFileContext = {
-  filePath: string;
-  fileName: string;
-  startLine?: number;
-  endLine?: number;
-  text?: string;
-};
-type GitFileStat = {
-  status: string;
-  additions: number;
-  deletions: number;
-};
-type RelatedFileClickTarget = {
-  path: string;
-  head?: string;
-  repo_path?: string;
-  repo_name?: string;
-  repo_kind?: string;
-};
-
-function relatedFileSelectionKey(file: RelatedFileClickTarget | null | undefined): string {
-  if (!file?.path) return "";
-  return [
-    file.repo_kind || "",
-    file.repo_path || "",
-    file.head || "",
-    file.path,
-  ].join("\0");
-}
-type URLState = {
-  root: string;
-  node?: string;
-  file: string;
-  session: string;
-  cursor: number;
-  pluginQuery: Record<string, string>;
-  // 主面板模式也进 URL：按钮高亮与面板显示必须同源恢复（缺省时回落 localStorage）。
-  view?: MainViewMode;
-};
-type ManagedRootPayload = {
-  id: string;
-  display_name?: string;
-  root_path?: string;
-  is_git_repo?: boolean;
-  is_git_worktree?: boolean;
-  size?: number;
-  mtime?: string;
-};
-type LocalDirItemPayload = {
-  name?: string;
-  path?: string;
-  is_dir?: boolean;
-  is_added_root?: boolean;
-  root_id?: string;
-};
-type LocalDirsPayload = {
-  path?: string;
-  parent?: string;
-  volumes?: LocalDirItemPayload[];
-  items?: LocalDirItemPayload[];
-};
-
-function managedDirAddErrorMessage(error: unknown, fallback: string, t: (key: MessageKey, params?: MessageParams) => string): string {
-  const message = error instanceof Error ? error.message : String(error || "");
-  if (message.includes("root name already exists")) {
-    return t("root.nameAlreadyExists");
-  }
-  return message || fallback;
-}
-
-const PLUGIN_QUERY_STORAGE_PREFIX = "vp-progress:";
-const TREE_SORT_STORAGE_KEY = "mindfs-tree-sort-mode";
-const DIRECTORY_SORT_OVERRIDES_STORAGE_KEY = "mindfs-directory-sort-overrides";
-const FILE_SCROLL_STORAGE_KEY = "mindfs-file-scroll-positions";
-const LAST_ROOT_STORAGE_KEY = "mindfs-last-root-id";
-const LAST_ROOT_NODE_STORAGE_KEY = "mindfs-last-root-node";
-
-// 「上次打开的项目」必须按账户存：它是账户作用域的（项目列表按账户分），
-// 不分区的话换账户后会恢复**上一个账户**的项目为当前项目，随后拿它去请求
-// 会话/看板 → 该账户根本没有这个项目 → 报错（实测踩过：登录后看板报错）。
-function accountScopedKey(base: string): string {
-  const name = String(currentUser()?.username || "").trim();
-  return name ? `${base}::${name}` : base;
-}
-const GIT_STATUS_EXPANDED_STORAGE_KEY = "mindfs-git-status-expanded";
-const GIT_HISTORY_EXPANDED_STORAGE_KEY = "mindfs-git-history-expanded";
-const TASK_TEMPLATE_SELECTION_STORAGE_KEY = "mindfs-task-template-selection";
-const TASK_TEMPLATE_ALL_FILTER = "__all__";
-const CANDIDATE_FETCH_DEBOUNCE_MS = 512;
-const FILE_TOKEN_PATTERN = /\[(?:read file|file):\s*[^\]]+\]/i;
-
-function normalizeUpdateState(
-  input: UpdateState | null | undefined,
-): UpdateState {
-  return {
-    current_version: input?.current_version || "",
-    latest_version: input?.latest_version || "",
-    has_update: input?.has_update === true,
-    status: input?.status || "idle",
-    message: input?.message || "",
-    release_name: input?.release_name || "",
-    release_body: input?.release_body || "",
-    release_url: input?.release_url || "",
-    published_at: input?.published_at || "",
-    last_checked_at: input?.last_checked_at || "",
-    auto_update_supported: input?.auto_update_supported === true,
-  };
-}
-
-function updateButtonLabel(state: UpdateState, t: (key: MessageKey, params?: MessageParams) => string): string {
-  const status = (state.status || "idle").toLowerCase();
-  switch (status) {
-    case "available":
-      if (state.current_version && state.latest_version) {
-        return t("update.available", { current: state.current_version, latest: state.latest_version });
-      }
-      return state.latest_version ? t("update.toVersion", { version: state.latest_version }) : t("update.newVersion");
-    case "downloading":
-      return t("update.downloading");
-    case "installing":
-      return t("update.installing");
-    case "restarting":
-      return t("update.restarting");
-    case "failed":
-      return t("update.failed");
-    default:
-      return t("update.latest");
-  }
-}
-
-function updateSummaryText(state: UpdateState, t: (key: MessageKey, params?: MessageParams) => string): string {
-  const body = String(state.release_body || "").trim();
-  if (body) {
-    return body;
-  }
-  const name = String(state.release_name || "").trim();
-  if (name) {
-    return name;
-  }
-  if (state.latest_version) {
-    return t("update.foundVersion", { version: state.latest_version });
-  }
-  return "";
-}
-
-function shouldShowUpdateButton(state: UpdateState): boolean {
-  const status = (state.status || "idle").toLowerCase();
-  if (
-    status === "downloading" ||
-    status === "installing" ||
-    status === "restarting" ||
-    status === "failed"
-  ) {
-    return true;
-  }
-  return state.auto_update_supported === true && state.has_update === true;
-}
-
-function buildFileScrollKey(
-  rootId: string | null | undefined,
-  path: string | null | undefined,
-): string {
-  if (!rootId || !path) {
-    return "";
-  }
-  return `${rootId}::${path}`;
-}
-
-function hasSessionExchanges(session: Session | null | undefined): boolean {
-  return Array.isArray(session?.exchanges) && session.exchanges.length > 0;
-}
-
-function loadPersistedFileScrollPositions(): Record<string, number> {
-  if (typeof window === "undefined") {
-    return {};
-  }
-  try {
-    const raw = window.localStorage.getItem(FILE_SCROLL_STORAGE_KEY);
-    if (!raw) {
-      return {};
-    }
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return {};
-    }
-    const next: Record<string, number> = {};
-    Object.entries(parsed).forEach(([key, value]) => {
-      const scrollTop = Number(value);
-      if (!key || !Number.isFinite(scrollTop) || scrollTop < 0) {
-        return;
-      }
-      next[key] = scrollTop;
-    });
-    return next;
-  } catch {
-    return {};
-  }
-}
-
-function persistFileScrollPositions(positions: Record<string, number>): void {
-  if (typeof window === "undefined") {
-    return;
-  }
-  try {
-    window.localStorage.setItem(
-      FILE_SCROLL_STORAGE_KEY,
-      JSON.stringify(positions),
-    );
-  } catch {}
-}
-
-function normalizeMode(mode: SessionMode | undefined): SessionMode {
-  if (mode === "plugin") return mode;
-  if (mode === "command") return mode;
-  return "chat";
-}
-
-function parsePluginQuery(search: string): Record<string, string> {
-  const params = new URLSearchParams(search);
-  const query: Record<string, string> = {};
-  params.forEach((value, key) => {
-    if (key.startsWith("vp_")) {
-      query[key.slice("vp_".length)] = value;
-    }
-  });
-  return query;
-}
-
-function waitForNextPaint(): Promise<void> {
-  if (typeof window === "undefined" || typeof window.requestAnimationFrame !== "function") {
-    return new Promise((resolve) => setTimeout(resolve, 0));
-  }
-  return new Promise((resolve) => {
-    window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(() => resolve());
-    });
-  });
-}
-
-function parseCursor(value: string | null): number {
-  if (!value) return 0;
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed) || parsed < 0) return 0;
-  return parsed;
-}
-
-function normalizeCursor(value: unknown): number | null {
-  if (value === undefined || value === null || value === "") {
-    return null;
-  }
-  const parsed = Number.parseInt(String(value), 10);
-  if (!Number.isFinite(parsed) || parsed < 0) {
-    return 0;
-  }
-  return parsed;
-}
-
-function isDirectorySortMode(
-  value: string | null | undefined,
-): value is DirectorySortMode {
-  return (
-    value === "name-asc" ||
-    value === "name-desc" ||
-    value === "mtime-desc" ||
-    value === "mtime-asc" ||
-    value === "size-desc" ||
-    value === "size-asc"
-  );
-}
-
-function readURLState(): URLState {
-  const params = new URLSearchParams(window.location.search);
-  const view = params.get("view");
-  return {
-    root: params.get("root") || "",
-    node: params.get("node") || "",
-    file: params.get("file") || "",
-    session: params.get("session") || "",
-    cursor: parseCursor(params.get("cursor")),
-    pluginQuery: parsePluginQuery(window.location.search),
-    view: MAIN_VIEW_MODES.includes(view as MainViewMode)
-      ? (view as MainViewMode)
-      : undefined,
-  };
-}
-
-function buildURLSearch(next: URLState): string {
-  const params = new URLSearchParams();
-  if (next.root) params.set("root", next.root);
-  if (next.node) params.set("node", next.node);
-  if (next.file) params.set("file", next.file);
-  if (next.session) params.set("session", next.session);
-  if (next.cursor > 0) params.set("cursor", String(next.cursor));
-  if (next.view) params.set("view", next.view);
-  Object.entries(next.pluginQuery).forEach(([key, value]) => {
-    if (!key) return;
-    params.set(`vp_${key}`, String(value));
-  });
-  const encoded = params.toString();
-  return encoded ? `?${encoded}` : "";
-}
-
-function pluginQueryStorageKey(
-  root: string,
-  file: string,
-  nodeId?: string,
-): string {
-  // 多节点同名项目按节点隔离；空 nodeId 与历史格式逐字节一致
-  return `${PLUGIN_QUERY_STORAGE_PREFIX}${scopeKey(nodeId, root)}:${file}`;
-}
-
-function loadPersistedPluginQuery(
-  root: string,
-  file: string,
-  nodeId?: string,
-): Record<string, string> {
-  if (!root || !file) return {};
-  try {
-    const raw =
-      window.localStorage.getItem(pluginQueryStorageKey(root, file, nodeId)) ||
-      // 旧版本存的是裸键：scoped 键 miss 时回退，保证历史数据仍能读到
-      window.localStorage.getItem(pluginQueryStorageKey(root, file));
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
-      return {};
-    const next: Record<string, string> = {};
-    Object.entries(parsed as Record<string, unknown>).forEach(
-      ([key, value]) => {
-        if (!key) return;
-        next[key] = String(value);
-      },
-    );
-    return next;
-  } catch {
-    return {};
-  }
-}
-
-function persistPluginQuery(
-  root: string,
-  file: string,
-  query: Record<string, string>,
-  nodeId?: string,
-): void {
-  if (!root || !file) return;
-  try {
-    window.localStorage.setItem(
-      pluginQueryStorageKey(root, file, nodeId),
-      JSON.stringify(query || {}),
-    );
-  } catch {}
-}
-
-function removeLocalStorageByPrefix(prefix: string): void {
-  if (typeof window === "undefined" || !prefix) {
-    return;
-  }
-  try {
-    for (const key of Array.from(
-      { length: window.localStorage.length },
-      (_, index) => window.localStorage.key(index),
-    ).filter(Boolean) as string[]) {
-      if (key.startsWith(prefix)) {
-        window.localStorage.removeItem(key);
-      }
-    }
-  } catch {}
-}
-
-function toPluginInput(
-  file: FilePayload,
-  query: Record<string, string>,
-): PluginInput {
-  return {
-    name: file.name,
-    path: file.path,
-    content: file.content,
-    ext: file.ext || "",
-    mime: file.mime || "",
-    size: typeof file.size === "number" ? file.size : 0,
-    truncated: !!file.truncated,
-    next_cursor:
-      typeof file.next_cursor === "number" ? file.next_cursor : undefined,
-    query,
-  };
-}
-
-function inferReadModeFromPlugin(plugin: any): "incremental" | "full" {
-  if (!plugin) return "incremental";
-  if (plugin?.fileLoadMode === "full") return "full";
-  if (plugin?.fileLoadMode === "incremental") return "incremental";
-  return "incremental";
-}
-
-function buildMatchInputFromPath(
-  path: string,
-  query: Record<string, string>,
-): PluginInput {
-  const normalized = (path || "").replace(/\\/g, "/");
-  const name = normalized.split("/").pop() || normalized;
-  const dot = name.lastIndexOf(".");
-  const ext = dot >= 0 ? name.slice(dot).toLowerCase() : "";
-  return {
-    name,
-    path: normalized,
-    content: "",
-    ext,
-    mime: "",
-    size: 0,
-    truncated: false,
-    query,
-  };
-}
-
-function formatPluginViewContext(value: unknown): string {
-  if (typeof value === "string") return value.trim();
-  if (value == null) return "";
-  try {
-    return JSON.stringify(value, null, 2).trim();
-  } catch {
-    return String(value).trim();
-  }
-}
-
-function buildMessageWithViewContext(
-  message: string,
-  viewContext: unknown,
-): string {
-  const contextText = formatPluginViewContext(viewContext);
-  if (!contextText) return message;
-  return [contextText, "", message].join("\n");
-}
-
-function normalizePath(value: string): string {
-  return String(value || "")
-    .replace(/\\/g, "/")
-    .replace(/^\/+|\/+$/g, "");
-}
-
-function relativeDisplayPathFromRoot(rootPath: string | undefined, absolutePath: string): string {
-  const root = normalizePath(rootPath || "");
-  const target = normalizePath(absolutePath);
-  if (!target) return "";
-  if (!root) return target;
-  if (target === root) return ".";
-  if (target.startsWith(`${root}/`)) {
-    return target.slice(root.length + 1);
-  }
-  const rootParts = root.split("/").filter(Boolean);
-  const targetParts = target.split("/").filter(Boolean);
-  let shared = 0;
-  while (
-    shared < rootParts.length &&
-    shared < targetParts.length &&
-    rootParts[shared] === targetParts[shared]
-  ) {
-    shared += 1;
-  }
-  const upward = Array(Math.max(0, rootParts.length - shared)).fill("..");
-  const downward = targetParts.slice(shared);
-  return [...upward, ...downward].join("/") || ".";
-}
-
-function joinDisplayPath(base: string, path: string): string {
-  const normalizedBase = normalizePath(base);
-  const normalizedPath = normalizePath(path);
-  if (!normalizedBase) return normalizedPath;
-  if (!normalizedPath) return normalizedBase;
-  return `${normalizedBase}/${normalizedPath}`;
-}
-
-function parseFileLocation(path: string): {
-  path: string;
-  targetLine?: number;
-  targetColumn?: number;
-} {
-  const raw = String(path || "");
-  const [base, fragment = ""] = raw.split("#", 2);
-  if (fragment) {
-    const match = /^L(\d+)(?:C(\d+))?$/i.exec(fragment.trim());
-    if (match) {
-      const targetLine = Number.parseInt(match[1], 10);
-      const targetColumn = match[2] ? Number.parseInt(match[2], 10) : undefined;
-      return {
-        path: base,
-        targetLine:
-          Number.isFinite(targetLine) && targetLine > 0 ? targetLine : undefined,
-        targetColumn:
-          targetColumn && Number.isFinite(targetColumn) && targetColumn > 0
-            ? targetColumn
-            : undefined,
-      };
-    }
-  }
-
-  const colonMatch = /^(.*):(\d+)(?::(\d+))?$/.exec(base.trim());
-  if (!colonMatch) {
-    return { path: base };
-  }
-  const targetLine = Number.parseInt(colonMatch[2], 10);
-  const targetColumn = colonMatch[3]
-    ? Number.parseInt(colonMatch[3], 10)
-    : undefined;
-  return {
-    path: colonMatch[1],
-    targetLine:
-      Number.isFinite(targetLine) && targetLine > 0 ? targetLine : undefined,
-    targetColumn:
-      targetColumn && Number.isFinite(targetColumn) && targetColumn > 0
-        ? targetColumn
-        : undefined,
-  };
-}
-
-function parentDirsOfFile(path: string): string[] {
-  const normalized = normalizePath(path);
-  if (!normalized) return [];
-  const parts = normalized.split("/").filter(Boolean);
-  if (parts.length <= 1) return [];
-  const dirs: string[] = [];
-  for (let i = 1; i < parts.length; i++) {
-    dirs.push(parts.slice(0, i).join("/"));
-  }
-  return dirs;
-}
-
-function dirnameOfPath(path: string): string {
-  const normalized = normalizePath(path);
-  if (!normalized) return ".";
-  const parts = normalized.split("/").filter(Boolean);
-  if (parts.length <= 1) return ".";
-  return parts.slice(0, -1).join("/");
-}
-
-function basenameOfPath(path: string): string {
-  const normalized = normalizePath(path);
-  if (!normalized) return "";
-  const parts = normalized.split("/").filter(Boolean);
-  return parts[parts.length - 1] || normalized;
-}
-
-function mapManagedRootsToEntries(dirs: ManagedRootPayload[]): FileEntry[] {
-  return dirs.map((dir) => {
-    const d = dir as any;
-    return {
-      name: dir.display_name || dir.id.split("/").filter(Boolean).pop() || dir.id,
-      path: dir.id,
-      is_dir: true,
-      is_root: true,
-      size: typeof dir.size === "number" ? dir.size : undefined,
-      mtime: typeof dir.mtime === "string" ? dir.mtime : undefined,
-      // ponytail: 多节点着色由 FileTree 通过 rootEntries 扩展字段渲染
-      _nodeId: (d as any)._nodeId as string | undefined,
-      _nodeColor: d._nodeColor as string | undefined,
-      _nodeName: d._nodeName as string | undefined,
-    } as FileEntry & { _nodeId?: string; _nodeColor?: string; _nodeName?: string };
-  });
-}
-
-function comparableManagedRootPath(value: string | undefined): string {
-  return String(value || "").trim().replace(/\\/g, "/").replace(/\/+$/, "");
-}
-
-function buildDirectorySelectionKey(
-  nodeId: string | null | undefined,
-  root: string,
-  path: string,
-  isRoot: boolean,
-): string {
-  return dirSelKey(nodeId, root, path, isRoot);
-}
-
-function loadLastRootId(): string {
-  if (typeof window === "undefined") {
-    return "";
-  }
-  return window.localStorage.getItem(accountScopedKey(LAST_ROOT_STORAGE_KEY)) || "";
-}
-
-function loadLastRootNodeId(): string {
-  if (typeof window === "undefined") {
-    return "";
-  }
-  return window.localStorage.getItem(accountScopedKey(LAST_ROOT_NODE_STORAGE_KEY)) || "";
-}
-
-// 多节点同名项目：以 nodeId::rootId 复合键区分同一 root 在不同节点的副本
-function rootNodeKey(nodeId: string | null | undefined, rootId: string): string {
-  return scopeKey(nodeId, rootId);
-}
-
-function indexManagedRoots(dirs: ManagedRootPayload[]): {
-  byKey: Record<string, ManagedRootPayload>;
-  byId: Record<string, ManagedRootPayload>;
-} {
-  const byKey: Record<string, ManagedRootPayload> = {};
-  const byId: Record<string, ManagedRootPayload> = {};
-  for (const dir of dirs || []) {
-    const id = String(dir?.id || "");
-    if (!id) continue;
-    const nid = String((dir as any)._nodeId || "").trim();
-    byKey[rootNodeKey(nid, id)] = dir;
-    // byId 仅作无节点上下文的回退：同名项目保留首个（本地节点优先），当前选择时再覆盖
-    if (!(id in byId)) byId[id] = dir;
-  }
-  return { byKey, byId };
-}
-
-function loadBooleanRecord(key: string): Record<string, boolean> {
-  if (typeof window === "undefined") {
-    return {};
-  }
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(key) || "{}") as Record<string, unknown>;
-    return Object.fromEntries(
-      Object.entries(parsed).filter(([, value]) => typeof value === "boolean"),
-    ) as Record<string, boolean>;
-  } catch {
-    return {};
-  }
-}
-
-function loadStringBooleanRecord(key: string): Record<string, Record<string, boolean>> {
-  if (typeof window === "undefined") {
-    return {};
-  }
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(key) || "{}") as Record<string, unknown>;
-    return Object.fromEntries(
-      Object.entries(parsed).map(([root, value]) => [
-        root,
-        value && typeof value === "object"
-          ? Object.fromEntries(
-              Object.entries(value as Record<string, unknown>).filter(([, expanded]) => typeof expanded === "boolean"),
-            )
-          : {},
-      ]),
-    ) as Record<string, Record<string, boolean>>;
-  } catch {
-    return {};
-  }
-}
-
-function hasExplicitFileContext(message: string): boolean {
-  return FILE_TOKEN_PATTERN.test(message);
-}
-
-// Hook for responsive detection
-function useResponsive() {
-  const [isMobile, setIsMobile] = useState(false);
-  const [isTablet, setIsTablet] = useState(false);
-  useEffect(() => {
-    const checkSize = () => {
-      const width = window.innerWidth;
-      setIsMobile(width < 768);
-      setIsTablet(width >= 768 && width < 1024);
-    };
-    checkSize();
-    window.addEventListener("resize", checkSize);
-    return () => window.removeEventListener("resize", checkSize);
-  }, []);
-  return { isMobile, isTablet };
-}
-
-type AppProps = {
-  onGoHome?: () => void;
-};
-
-const MOBILE_ENTER_KEY_SEND_STORAGE_KEY = "mindfs-mobile-enter-key-sends";
-const SIDEBARS_SWAPPED_STORAGE_KEY = "mindfs-sidebars-swapped";
-const GIT_DIFF_SIDE_BY_SIDE_STORAGE_KEY = "mindfs-git-diff-side-by-side";
-const TASK_CREATE_WORKTREE_PREF_STORAGE_KEY = "mindfs-task-create-worktree-pref";
-type TaskCreateWorktreePreference = {
-  createWorktree: boolean;
-  worktreeBranchMode: "new" | "existing";
-  worktreeBranch: string;
-};
-
-// 主区内容的唯一真相源：workspace(跨项目工作台) / board(项目看板) / files(文件列表) / chat(对话)。
-// 设计见 docs/main-view-switching-design.md —— 除用户显式点击外，任何代码路径都不得改它。
-export type MainViewMode = "workspace" | "board" | "files" | "chat";
-const MAIN_VIEW_STORAGE_KEY = "mindfs-main-view";
-const MAIN_VIEW_MODES: MainViewMode[] = ["workspace", "board", "files", "chat"];
-
-function loadMainView(): MainViewMode {
-  if (typeof window === "undefined") return "board";
-  try {
-    const saved = window.localStorage.getItem(MAIN_VIEW_STORAGE_KEY);
-    return MAIN_VIEW_MODES.includes(saved as MainViewMode) ? (saved as MainViewMode) : "board";
-  } catch {
-    return "board";
-  }
-}
-
-// 旧版本按项目记忆主区视图；升级后统一读成新键（看板 → board，文件 → files），只迁移一次。
-function loadLegacyMainView(): MainViewMode | null {
-  if (typeof window === "undefined") return null;
-  if (window.localStorage.getItem(MAIN_VIEW_STORAGE_KEY)) return null;
-  try {
-    const legacy = window.localStorage.getItem("mindfs-default-main-content-view");
-    const migrated: MainViewMode = legacy === "file-browser" ? "files" : "board";
-    window.localStorage.setItem(MAIN_VIEW_STORAGE_KEY, migrated);
-    return migrated;
-  } catch {
-    return null;
-  }
-}
-
-function loadMobileEnterKeySends(): boolean {
-  if (typeof window === "undefined") {
-    return false;
-  }
-  try {
-    return window.localStorage.getItem(MOBILE_ENTER_KEY_SEND_STORAGE_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-function loadSidebarsSwapped(): boolean {
-  if (typeof window === "undefined") {
-    return false;
-  }
-  try {
-    return window.localStorage.getItem(SIDEBARS_SWAPPED_STORAGE_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-function loadGitDiffSideBySide(): boolean {
-  if (typeof window === "undefined") {
-    return false;
-  }
-  try {
-    return window.localStorage.getItem(GIT_DIFF_SIDE_BY_SIDE_STORAGE_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-function loadTaskCreateWorktreePreference(rootId: string): TaskCreateWorktreePreference {
-  if (typeof window === "undefined" || !rootId) {
-    return { createWorktree: false, worktreeBranchMode: "new", worktreeBranch: "" };
-  }
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(TASK_CREATE_WORKTREE_PREF_STORAGE_KEY) || "{}") as Record<string, unknown>;
-    const value = parsed[scopeKey(getRootNodeId(rootId) ?? "", rootId)] as Record<string, unknown> | undefined;
-    return {
-      createWorktree: value?.createWorktree === true,
-      worktreeBranchMode: value?.worktreeBranchMode === "existing" ? "existing" : "new",
-      worktreeBranch: typeof value?.worktreeBranch === "string" ? value.worktreeBranch : "",
-    };
-  } catch {
-    return { createWorktree: false, worktreeBranchMode: "new", worktreeBranch: "" };
-  }
-}
-
-function saveTaskCreateWorktreePreference(rootId: string, pref: TaskCreateWorktreePreference): void {
-  if (typeof window === "undefined" || !rootId) return;
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(TASK_CREATE_WORKTREE_PREF_STORAGE_KEY) || "{}") as Record<string, unknown>;
-    window.localStorage.setItem(TASK_CREATE_WORKTREE_PREF_STORAGE_KEY, JSON.stringify({
-      ...parsed,
-      [scopeKey(getRootNodeId(rootId) ?? "", rootId)]: pref,
-    }));
-  } catch {
-    // Ignore storage failures; the current dialog state can still be used.
-  }
-}
+import {
+APP_DOCUMENT_TITLE,
+AppProps,
+AttachedFileContext,
+CANDIDATE_FETCH_DEBOUNCE_MS,
+CHILD_SESSION_PAGE_SIZE,
+DIRECTORY_SORT_OVERRIDES_STORAGE_KEY,
+Exchange,
+GIT_DIFF_SIDE_BY_SIDE_STORAGE_KEY,
+GIT_HISTORY_EXPANDED_STORAGE_KEY,
+GIT_STATUS_EXPANDED_STORAGE_KEY,
+GitFileStat,
+LAST_ROOT_NODE_STORAGE_KEY,
+LAST_ROOT_STORAGE_KEY,
+MAIN_VIEW_STORAGE_KEY,
+MOBILE_ENTER_KEY_SEND_STORAGE_KEY,
+MULTI_PROJECT_SESSION_LIMIT,
+MainViewMode,
+ManagedRootPayload,
+MultiProjectSessionGroup,
+PLUGIN_QUERY_STORAGE_PREFIX,
+PendingSend,
+RelatedFileClickTarget,
+SESSION_PAGE_SIZE,
+SIDEBARS_SWAPPED_STORAGE_KEY,
+SessionItem,
+SessionMode,
+SessionQueueItem,
+SlashCommandResult,
+TASK_TEMPLATE_ALL_FILTER,
+TASK_TEMPLATE_SELECTION_STORAGE_KEY,
+TREE_SORT_STORAGE_KEY,
+TaskInlineEditState,
+URLState,
+ViewerSelection,
+WSStatus,
+} from "./app/appSupport";
+import {
+accountScopedKey,
+basenameOfPath,
+buildDirectorySelectionKey,
+buildFileScrollKey,
+buildMatchInputFromPath,
+buildMessageWithViewContext,
+buildURLSearch,
+comparableManagedRootPath,
+currentTaskInputFromDetail,
+dirnameOfPath,
+firstAgentStage,
+firstTaskInputFromDetail,
+firstUserInputTemplate,
+hasExplicitFileContext,
+hasSessionExchanges,
+indexManagedRoots,
+inferReadModeFromPlugin,
+isDirectorySortMode,
+isTerminalKanbanTask,
+isTopLevelSessionItem,
+isUnfinishedKanbanTask,
+joinDisplayPath,
+loadGitDiffSideBySide,
+loadLastRootId,
+loadLastRootNodeId,
+loadLegacyMainView,
+loadMainView,
+loadMobileEnterKeySends,
+loadPersistedFileScrollPositions,
+loadPersistedPluginQuery,
+loadSidebarsSwapped,
+loadTaskCreateWorktreePreference,
+managedDirAddErrorMessage,
+mapManagedRootsToEntries,
+normalizeCursor,
+normalizeFastService,
+normalizeMode,
+normalizePath,
+normalizeUpdateState,
+parentDirsOfFile,
+parseFileLocation,
+parsePluginQuery,
+parseTaskSessionErrorDetails,
+parseTaskSessionErrorMessage,
+persistFileScrollPositions,
+persistPluginQuery,
+previousTaskInputsFromDetail,
+readURLState,
+relatedFileSelectionKey,
+relativeDisplayPathFromRoot,
+removeLocalStorageByPrefix,
+rootNodeKey,
+saveTaskCreateWorktreePreference,
+sessionInputHistory,
+shouldShowUpdateButton,
+taskSessionKeysFromDetail,
+taskStatusLabel,
+toPluginInput,
+toSessionItem,
+updateButtonLabel,
+updateSummaryText,
+useResponsive,
+waitForNextPaint,
+} from "./app/appSupport";
+import { useCompletionSound } from "./app/useCompletionSound";
+import { useExternalSessionImport } from "./app/useExternalSessionImport";
+import { useGitActions } from "./app/useGitActions";
+import { useSessionSearch } from "./app/useSessionSearch";
+import { useGitData } from "./app/useGitData";
+import { useProjectTreeWorktrees } from "./app/useProjectTreeWorktrees";
+import { useProjectLifecycle } from "./app/useProjectLifecycle";
+import { useSessionSidebarView } from "./app/useSessionSidebarView";
+import { useTaskTemplates } from "./app/useTaskTemplates";
+import {
+CheckIconSmall,
+DeleteIcon,
+EditPencilIcon,
+HorizontalDotsIcon,
+PlusSmallIcon,
+RunNowIcon,
+SyncIcon,
+TaskCompleteIcon,
+TaskExpandIcon,
+TaskGroupChevronIcon,
+TaskPlanAuxIcon,
+TaskQueuedSpinnerIcon,
+TaskRunNowIcon,
+TaskSessionErrorIcon,
+hexToRgbaApp,
+taskAuxBadgeStyle,
+taskCardIconButtonStyle,
+taskReplyPulseStyle,
+taskTemplateMenuItemStyle,
+taskWorktreeTagStyle,
+} from "./app/taskIcons";
 
 export function App({ onGoHome }: AppProps) {
   const { t } = useI18n();
+  const { playCompletionSound } = useCompletionSound();
   const pluginManagerRef = useRef<PluginManager>(new PluginManager());
-  const completionAudioContextRef = useRef<AudioContext | null>(null);
-  const completionAudioUnlockedRef = useRef(false);
   const managedRootIdsRef = useRef<Set<string>>(new Set());
   const expandedRef = useRef<string[]>([]);
   const selectedDirRef = useRef<string | null>(null);
@@ -1469,12 +392,6 @@ export function App({ onGoHome }: AppProps) {
   const multiProjectLoadSeqRef = useRef(0);
   const [multiProjectPendingByKey, setMultiProjectPendingByKey] = useState<Record<string, boolean>>({});
   const multiProjectPendingRef = useRef<Record<string, boolean>>({});
-  const [sessionSearchOpen, setSessionSearchOpen] = useState(false);
-  const [sessionSearchResultsMode, setSessionSearchResultsMode] = useState(false);
-  const [sessionSearchQuery, setSessionSearchQuery] = useState("");
-  const [sessionSearchAppliedQuery, setSessionSearchAppliedQuery] = useState("");
-  const [sessionSearchResults, setSessionSearchResults] = useState<SessionItem[]>([]);
-  const [sessionSearchLoading, setSessionSearchLoading] = useState(false);
   const [syncingSessionKeys, setSyncingSessionKeys] = useState<Set<string>>(
     () => new Set(),
   );
@@ -1483,37 +400,8 @@ export function App({ onGoHome }: AppProps) {
   const [sessionListMode, setSessionListMode] = useState<"local" | "import">(
     "local",
   );
-  const sessionListModeRef = useRef<"local" | "import">("local");
-  const [externalSessions, setExternalSessions] = useState<SessionItem[]>([]);
-  const externalSessionsRef = useRef<SessionItem[]>([]);
-  const [hasMoreExternalSessions, setHasMoreExternalSessions] = useState(false);
-  const [loadingOlderExternalSessions, setLoadingOlderExternalSessions] =
-    useState(false);
-  const [loadingExternalSessions, setLoadingExternalSessions] = useState(false);
-  const [externalSessionsError, setExternalSessionsError] = useState("");
-  const [externalSelectedKey, setExternalSelectedKey] = useState("");
-  const [externalImportAgent, setExternalImportAgent] = useState("");
-  const externalImportAgentRef = useRef("");
-  const [externalFilterBound, setExternalFilterBound] = useState(true);
-  const [selectedExternalImportKeys, setSelectedExternalImportKeys] = useState<
-    Set<string>
-  >(() => new Set());
-  const [importingExternalSessionKeys, setImportingExternalSessionKeys] =
-    useState<Set<string>>(() => new Set());
-  const [confirmingExternalImport, setConfirmingExternalImport] =
-    useState(false);
-  const [importMenuOpen, setImportMenuOpen] = useState(false);
-  const importMenuRef = useRef<HTMLDivElement | null>(null);
-  const projectAddPopoverRef = useRef<HTMLDivElement | null>(null);
-  const worktreeCreatePopoverRef = useRef<HTMLDivElement | null>(null);
-  const worktreeSwitchPopoverRef = useRef<HTMLDivElement | null>(null);
-  const taskTemplateActionMenuRef = useRef<HTMLDivElement | null>(null);
-  const taskCreateTemplateMenuRef = useRef<HTMLDivElement | null>(null);
   const [availableAgents, setAvailableAgents] = useState<AgentStatus[]>([]);
   const [scheduledAgentDialogOpen, setScheduledAgentDialogOpen] = useState(false);
-  const [taskTemplates, setTaskTemplates] = useState<TaskTemplate[]>([]);
-  const [taskTemplateDialogOpen, setTaskTemplateDialogOpen] = useState(false);
-  const [taskTemplateDialogTemplate, setTaskTemplateDialogTemplate] = useState<TaskTemplate | null>(null);
 	  const [kanbanTasks, setKanbanTasks] = useState<KanbanTask[]>([]);
 	  const [kanbanTaskCountItems, setKanbanTaskCountItems] = useState<KanbanTask[]>([]);
 	  const [taskDetailsById, setTaskDetailsById] = useState<Record<string, TaskDetail>>({});
@@ -1545,10 +433,6 @@ export function App({ onGoHome }: AppProps) {
 	  const sessionListAbortRef = useRef<AbortController | null>(null);
   // 列表拉取失败告警冷却：断网/抖动时重拉被多个事件反复触发，避免告警刷屏。
   const listLoadErrorAtRef = useRef(0);
-  const [taskTemplateFilter, setTaskTemplateFilter] = useState("");
-  const [taskTemplateActionMenuOpen, setTaskTemplateActionMenuOpen] = useState(false);
-  const [taskTemplateConcurrencyOpen, setTaskTemplateConcurrencyOpen] = useState(false);
-  const [taskCreateTemplateMenuOpen, setTaskCreateTemplateMenuOpen] = useState(false);
   const taskInlineEditorRef = useRef<TokenEditorHandle | null>(null);
   const taskInlineCandidateItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const taskInlineAttachmentInputRef = useRef<HTMLInputElement | null>(null);
@@ -1612,135 +496,47 @@ export function App({ onGoHome }: AppProps) {
   // 多节点同名项目的完整索引：nodeId::rootId → payload（byId 回退表只保留一份）
   const managedRootByKeyRef = useRef<Record<string, ManagedRootPayload>>({});
 
-  const loadTaskTemplates = useCallback(async () => {
-    if (!protectedAPIReady()) {
-      return;
+  const getNodeIdForRoot = useCallback((rootId: string): string | undefined => {
+    const rid = String(rootId || "").trim();
+    if (!rid) return undefined;
+    // 当前选中的项目优先按其选中节点路由，避免同名项目被多节点表覆盖到错误节点
+    if (rid === String(currentRootIdRef.current || "")) {
+      const nid = String(currentRootNodeIdRef.current || "").trim();
+      if (nid) return nid;
     }
-    try {
-      setTaskTemplates(await fetchTaskTemplates());
-    } catch (err) {
-      reportError("file.write_failed", String((err as Error)?.message || t("taskTemplate.loadFailed")));
-    }
-  }, [t]);
-
-  const openTaskTemplateEditor = useCallback((template: TaskTemplate | null) => {
-    setTaskTemplateDialogTemplate(template);
-    setTaskTemplateDialogOpen(true);
+    const entry = (managedRootByIdRef.current as Record<string, any>)[rid];
+    const nid = String(entry?._nodeId || "").trim();
+    return nid || undefined;
   }, []);
 
-  const handleTaskTemplateSaved = useCallback((template: TaskTemplate) => {
-    setTaskTemplates((prev) => {
-      const id = template.id || "";
-      if (!id) return prev;
-      const index = prev.findIndex((item) => item.id === id);
-      if (index < 0) return [template, ...prev];
-      const next = [...prev];
-      next[index] = template;
-      return next;
-    });
-    setTaskTemplateDialogTemplate(template);
-  }, []);
+  // 按当前作用域解析复合键：当前根 → 选中节点；其他根 → 模块 map/裸回退
+  const scopedRootKey = useCallback(
+    (rootId: string): string =>
+      scopeKey(getNodeIdForRoot(String(rootId || "")) ?? "", String(rootId || "")),
+    [getNodeIdForRoot],
+  );
 
-  const handleDeleteTaskTemplate = useCallback(async (template: TaskTemplate) => {
-    const id = template.id || "";
-    if (!id) return;
-    if (!window.confirm(t("taskTemplate.deleteConfirm", { name: template.name || id }))) return;
-    try {
-      await deleteTaskTemplate(id);
-      setTaskTemplates((prev) => prev.filter((item) => item.id !== id));
-      setTaskTemplateDialogTemplate((prev) => prev?.id === id ? null : prev);
-      setTaskTemplateFilter((prev) => prev === id ? "" : prev);
-    } catch (err) {
-      reportError("file.write_failed", String((err as Error)?.message || t("taskTemplate.deleteFailed")));
-    }
-  }, [t]);
-
-  const handleTaskTemplateConcurrencyChange = useCallback(async (templateId: string, value: number) => {
-    const template = taskTemplates.find((item) => item.id === templateId);
-    if (!template) return;
-    const nextValue = Math.max(1, Math.min(10, value || 1));
-    const optimistic = { ...template, max_concurrency: nextValue };
-    setTaskTemplates((prev) => prev.map((item) => item.id === templateId ? optimistic : item));
-    try {
-      const saved = await saveTaskTemplate(optimistic);
-      setTaskTemplates((prev) => prev.map((item) => item.id === templateId ? saved : item));
-      setTaskTemplateDialogTemplate((prev) => prev?.id === templateId ? saved : prev);
-    } catch (err) {
-      setTaskTemplates((prev) => prev.map((item) => item.id === templateId ? template : item));
-      reportError("file.write_failed", String((err as Error)?.message || t("taskTemplate.concurrencySaveFailed")));
-    }
-  }, [taskTemplates, t]);
-
-  useEffect(() => {
-    void loadTaskTemplates();
-  }, [loadTaskTemplates]);
-
-  useEffect(() => {
-    if (!currentRootId) {
-      if (taskTemplateFilter) setTaskTemplateFilter("");
-      return;
-    }
-    if (taskTemplateFilter === TASK_TEMPLATE_ALL_FILTER || (taskTemplateFilter && taskTemplates.some((template) => template.id === taskTemplateFilter))) {
-      return;
-    }
-    let remembered = "";
-    try {
-      const parsed = JSON.parse(window.localStorage.getItem(TASK_TEMPLATE_SELECTION_STORAGE_KEY) || "{}") as Record<string, unknown>;
-      const value = parsed[scopedRootKey(currentRootId)];
-      remembered = typeof value === "string" ? value : "";
-    } catch {
-      remembered = "";
-    }
-    const rememberedValid = remembered === TASK_TEMPLATE_ALL_FILTER || taskTemplates.some((template) => template.id === remembered);
-    const next = rememberedValid ? remembered : TASK_TEMPLATE_ALL_FILTER;
-    if (next && next !== taskTemplateFilter) {
-      setTaskTemplateFilter(next);
-    }
-  }, [currentRootId, taskTemplateFilter, taskTemplates]);
-
-  useEffect(() => {
-    if (!currentRootId || !taskTemplateFilter) return;
-    try {
-      const parsed = JSON.parse(window.localStorage.getItem(TASK_TEMPLATE_SELECTION_STORAGE_KEY) || "{}") as Record<string, unknown>;
-      window.localStorage.setItem(TASK_TEMPLATE_SELECTION_STORAGE_KEY, JSON.stringify({
-        ...parsed,
-        [scopedRootKey(currentRootId)]: taskTemplateFilter,
-      }));
-    } catch {
-    }
-  }, [currentRootId, taskTemplateFilter]);
-
-  useEffect(() => {
-    if (!taskTemplateActionMenuOpen) return;
-    const onPointerDown = (event: MouseEvent) => {
-      if (taskTemplateActionMenuRef.current?.contains(event.target as Node)) {
-        return;
-      }
-      setTaskTemplateActionMenuOpen(false);
-    };
-    document.addEventListener("mousedown", onPointerDown);
-    return () => document.removeEventListener("mousedown", onPointerDown);
-  }, [taskTemplateActionMenuOpen]);
-
-  useEffect(() => {
-    if (!taskCreateTemplateMenuOpen) return;
-    const onPointerDown = (event: MouseEvent) => {
-      if (taskCreateTemplateMenuRef.current?.contains(event.target as Node)) {
-        return;
-      }
-      setTaskCreateTemplateMenuOpen(false);
-    };
-    document.addEventListener("mousedown", onPointerDown);
-    return () => document.removeEventListener("mousedown", onPointerDown);
-  }, [taskCreateTemplateMenuOpen]);
-
-  useEffect(() => {
-    if (!taskTemplateActionMenuOpen) {
-      setTaskTemplateConcurrencyOpen(false);
-    } else {
-      setTaskCreateTemplateMenuOpen(false);
-    }
-  }, [taskTemplateActionMenuOpen]);
+  const {
+    taskTemplateActionMenuRef,
+    taskCreateTemplateMenuRef,
+    taskTemplates,
+    taskTemplateDialogOpen,
+    setTaskTemplateDialogOpen,
+    taskTemplateDialogTemplate,
+    taskTemplateFilter,
+    setTaskTemplateFilter,
+    taskTemplateActionMenuOpen,
+    setTaskTemplateActionMenuOpen,
+    taskTemplateConcurrencyOpen,
+    setTaskTemplateConcurrencyOpen,
+    taskCreateTemplateMenuOpen,
+    setTaskCreateTemplateMenuOpen,
+    loadTaskTemplates,
+    openTaskTemplateEditor,
+    handleTaskTemplateSaved,
+    handleDeleteTaskTemplate,
+    handleTaskTemplateConcurrencyChange,
+  } = useTaskTemplates({ currentRootId, scopedRootKey });
 
   useEffect(() => {
     if (!taskInlineEdit) return;
@@ -1948,7 +744,7 @@ export function App({ onGoHome }: AppProps) {
     let reason = "";
     if (action === "prev" || action === "pause") {
       const label = action === "prev" ? t("task.actionPrevious") : t("task.actionPause");
-      const input = window.prompt(t("task.reasonPrompt", { action: label }), "");
+      const input = await promptDialog({ message: t("task.reasonPrompt", { action: label }) });
       if (input === null) {
         return;
       }
@@ -2153,51 +949,6 @@ export function App({ onGoHome }: AppProps) {
       : prev);
   }, []);
 
-  async function refreshTaskWorktree(rootId: string, worktreePath: string, force = true) {
-    const normalizedRootId = String(rootId || "").trim();
-    const normalizedWorktreePath = String(worktreePath || "").trim();
-    if (!normalizedRootId || !normalizedWorktreePath) {
-      return;
-    }
-    if (!force && knownTaskWorktreePathsRef.current.has(normalizedWorktreePath)) {
-      return;
-    }
-    knownTaskWorktreePathsRef.current.add(normalizedWorktreePath);
-    // 同一时间只展开一个工作树：整对象写入会清掉其它已展开项
-    setExpandedWorktreeByRoot({ [scopedRootKey(normalizedRootId)]: normalizedWorktreePath });
-    setWorktreeLoadingByRoot((prev) => ({ ...prev, [scopedRootKey(normalizedRootId)]: true }));
-    setWorktreeErrorByRoot((prev) => ({ ...prev, [scopedRootKey(normalizedRootId)]: "" }));
-    try {
-      const payload = await fetchGitWorktrees(normalizedRootId, getNodeIdForRoot(normalizedRootId));
-      (payload.items || []).forEach((item) => {
-        if (item.path) {
-          knownTaskWorktreePathsRef.current.add(item.path);
-        }
-      });
-      setWorktreeItemsByRoot((prev) => ({
-        ...prev,
-        [scopedRootKey(normalizedRootId)]: (payload.items || []).filter((item) => !!item.branch),
-      }));
-    } catch (error) {
-      knownTaskWorktreePathsRef.current.delete(normalizedWorktreePath);
-      setWorktreeErrorByRoot((prev) => ({
-        ...prev,
-        [scopedRootKey(normalizedRootId)]: error instanceof Error ? error.message : t("worktree.loadFailed"),
-      }));
-    } finally {
-      setWorktreeLoadingByRoot((prev) => ({ ...prev, [scopedRootKey(normalizedRootId)]: false }));
-    }
-    setWorktreeStatusLoadingByPath((prev) => ({ ...prev, [normalizedWorktreePath]: true }));
-    try {
-      const status = await fetchGitStatusByPath(normalizedWorktreePath, getNodeIdForRoot(normalizedRootId));
-      setWorktreeStatusByPath((prev) => ({ ...prev, [normalizedWorktreePath]: status }));
-    } catch {
-      setWorktreeStatusByPath((prev) => ({ ...prev, [normalizedWorktreePath]: null }));
-    } finally {
-      setWorktreeStatusLoadingByPath((prev) => ({ ...prev, [normalizedWorktreePath]: false }));
-    }
-  }
-
   const saveTaskInlineEdit = useCallback(async () => {
     const edit = taskInlineEdit;
     const rootId = currentRootIdRef.current;
@@ -2349,26 +1100,6 @@ export function App({ onGoHome }: AppProps) {
   }, []);
   const currentRootDisplayName = getRootDisplayName(currentRootId);
 
-  const getNodeIdForRoot = useCallback((rootId: string): string | undefined => {
-    const rid = String(rootId || "").trim();
-    if (!rid) return undefined;
-    // 当前选中的项目优先按其选中节点路由，避免同名项目被多节点表覆盖到错误节点
-    if (rid === String(currentRootIdRef.current || "")) {
-      const nid = String(currentRootNodeIdRef.current || "").trim();
-      if (nid) return nid;
-    }
-    const entry = (managedRootByIdRef.current as Record<string, any>)[rid];
-    const nid = String(entry?._nodeId || "").trim();
-    return nid || undefined;
-  }, []);
-
-  // 按当前作用域解析复合键：当前根 → 选中节点；其他根 → 模块 map/裸回退
-  const scopedRootKey = useCallback(
-    (rootId: string): string =>
-      scopeKey(getNodeIdForRoot(String(rootId || "")) ?? "", String(rootId || "")),
-    [getNodeIdForRoot],
-  );
-
   const getDisplayNodeColor = useCallback((rootId: string): string | null => {
     const rid = String(rootId || "").trim();
     if (!rid) return null;
@@ -2458,49 +1189,6 @@ export function App({ onGoHome }: AppProps) {
   useEffect(() => {
     rootEntriesRef.current = rootEntries;
   }, [rootEntries]);
-  const [creatingRootName, setCreatingRootName] = useState<string | null>(null);
-  const [creatingRootParentPath, setCreatingRootParentPath] = useState<string | null>(null);
-  const [creatingRootKind, setCreatingRootKind] = useState<"root" | "worktree">("root");
-  const [creatingRootBusy, setCreatingRootBusy] = useState(false);
-  const [worktreeBranches, setWorktreeBranches] = useState<GitBranchesPayload>({
-    branches: [],
-  });
-  const [worktreeBranchesLoading, setWorktreeBranchesLoading] = useState(false);
-  const [worktreeBranchError, setWorktreeBranchError] = useState("");
-  const [worktreeBranchMode, setWorktreeBranchMode] = useState<"new" | "existing">("new");
-  const [worktreeBranch, setWorktreeBranch] = useState("");
-  const [worktreeSwitchOpen, setWorktreeSwitchOpen] = useState(false);
-  const [worktreeSwitchItems, setWorktreeSwitchItems] = useState<GitWorktreeItem[]>([]);
-  const [worktreeSwitchLoading, setWorktreeSwitchLoading] = useState(false);
-  const [worktreeSwitchError, setWorktreeSwitchError] = useState("");
-  const [switchingWorktreePath, setSwitchingWorktreePath] = useState("");
-  const [projectAddMode, setProjectAddMode] = useState<ProjectAddMode | null>(
-    null,
-  );
-  const [projectAddNodeId, setProjectAddNodeId] = useState<string>(() => {
-    try { const n = getActiveNode(); return n?.id || LOCAL_NODE_ID; } catch { return LOCAL_NODE_ID; }
-  });
-  const [localDirState, setLocalDirState] = useState<LocalDirBrowserState>({
-    path: "",
-    parent: "",
-    volumes: [],
-    items: [],
-    loading: false,
-    selectedPath: "",
-    adding: false,
-    error: "",
-  });
-  const [githubImportState, setGitHubImportState] = useState<GitHubImportState>({
-    url: "",
-    parentPath: "",
-    taskId: "",
-    status: "",
-    message: "",
-    running: false,
-    submitting: false,
-    done: false,
-    error: "",
-  });
   const [agentConfigSwitchRequest, setAgentConfigSwitchRequest] =
     useState<AgentConfigSwitchRequest | null>(null);
   const [bootstrapState, setBootstrapState] = useState<BootstrapState>(() =>
@@ -2547,21 +1235,41 @@ export function App({ onGoHome }: AppProps) {
   const [selectedDirKey, setSelectedDirKey] = useState<string | null>(null);
   const [mainEntries, setMainEntries] = useState<FileEntry[]>([]);
   const [mainDirectoryError, setMainDirectoryError] = useState("");
-  const [gitStatus, setGitStatus] = useState<GitStatusPayload | null>(null);
-  const [gitStatusLoading, setGitStatusLoading] = useState(false);
-  const [gitHistory, setGitHistory] = useState<GitHistoryPayload | null>(null);
-  const [gitHistoryLoading, setGitHistoryLoading] = useState(false);
-  const [gitHistoryLoadingMore, setGitHistoryLoadingMore] = useState(false);
-  const [gitStatusByRoot, setGitStatusByRoot] = useState<Record<string, GitStatusPayload | null>>({});
-  const [gitStatusLoadingByRoot, setGitStatusLoadingByRoot] = useState<Record<string, boolean>>({});
-  const [gitHistoryByRoot, setGitHistoryByRoot] = useState<Record<string, GitHistoryPayload | null>>({});
-  const [gitHistoryLoadingByRoot, setGitHistoryLoadingByRoot] = useState<Record<string, boolean>>({});
-  const [gitStatusExpandedByRoot, setGitStatusExpandedByRoot] = useState<Record<string, boolean>>(() =>
-    loadBooleanRecord(GIT_STATUS_EXPANDED_STORAGE_KEY),
+  const isGitRepo = useCallback(
+    (rootID: string) => managedRootByIdRef.current[rootID]?.is_git_repo === true,
+    [],
   );
-  const [gitHistoryExpandedByRoot, setGitHistoryExpandedByRoot] = useState<Record<string, Record<string, boolean>>>(() =>
-    loadStringBooleanRecord(GIT_HISTORY_EXPANDED_STORAGE_KEY),
-  );
+
+  const {
+    gitStatus,
+    setGitStatus,
+    gitStatusLoading,
+    setGitStatusLoading,
+    gitHistory,
+    setGitHistory,
+    gitHistoryLoading,
+    setGitHistoryLoading,
+    gitHistoryLoadingMore,
+    gitStatusByRoot,
+    setGitStatusByRoot,
+    gitStatusLoadingByRoot,
+    gitHistoryByRoot,
+    setGitHistoryByRoot,
+    gitHistoryLoadingByRoot,
+    gitStatusExpandedByRoot,
+    setGitStatusExpandedByRoot,
+    gitHistoryExpandedByRoot,
+    setGitHistoryExpandedByRoot,
+    refreshGitStatus,
+    refreshGitHistory,
+    loadMoreGitHistory,
+  } = useGitData({
+    currentRootId,
+    currentRootIdRef,
+    scopedRootKey,
+    getNodeIdForRoot,
+    isGitRepo,
+  });
   const [gitDiff, setGitDiff] = useState<GitDiffPayload | null>(null);
   const [relatedSelectedFileKey, setRelatedSelectedFileKey] = useState("");
   const [treeSortMode, setTreeSortMode] = useState<DirectorySortMode>(() => {
@@ -2625,67 +1333,31 @@ export function App({ onGoHome }: AppProps) {
     nonce: number;
   } | null>(null);
   const [projectTreeTab, setProjectTreeTab] = useState<ProjectTreeTab>("files");
-  const [worktreeItemsByRoot, setWorktreeItemsByRoot] = useState<Record<string, GitWorktreeItem[]>>({});
-  const [worktreeLoadingByRoot, setWorktreeLoadingByRoot] = useState<Record<string, boolean>>({});
-  const [worktreeErrorByRoot, setWorktreeErrorByRoot] = useState<Record<string, string>>({});
-  const [expandedWorktreeByRoot, setExpandedWorktreeByRoot] = useState<Record<string, string>>({});
-  const [worktreeStatusByPath, setWorktreeStatusByPath] = useState<Record<string, GitStatusPayload | null>>({});
-  const [worktreeStatusLoadingByPath, setWorktreeStatusLoadingByPath] = useState<Record<string, boolean>>({});
+  const {
+    worktreeItemsByRoot,
+    worktreeLoadingByRoot,
+    worktreeErrorByRoot,
+    expandedWorktreeByRoot,
+    worktreeStatusByPath,
+    worktreeStatusLoadingByPath,
+    loadProjectTreeWorktrees,
+    loadProjectTreeWorktreeStatus,
+    toggleProjectTreeWorktree,
+    expandProjectTreeWorktree,
+    refreshProjectTreeWorktrees,
+    refreshTaskWorktree,
+  } = useProjectTreeWorktrees({
+    currentRootId,
+    currentRootIdRef,
+    projectTreeTab,
+    scopedRootKey,
+    getNodeIdForRoot,
+    knownTaskWorktreePathsRef,
+  });
   const [updateState, setUpdateState] = useState<UpdateState>(() =>
     normalizeUpdateState(null),
   );
   const [updateSubmitting, setUpdateSubmitting] = useState(false);
-
-  const ensureCompletionAudioContext = useCallback((): AudioContext | null => {
-    if (typeof window === "undefined") {
-      return null;
-    }
-    const AudioContextCtor =
-      window.AudioContext ||
-      (
-        window as typeof window & {
-          webkitAudioContext?: typeof AudioContext;
-        }
-      ).webkitAudioContext;
-    if (!AudioContextCtor) {
-      return null;
-    }
-    if (!completionAudioContextRef.current) {
-      completionAudioContextRef.current = new AudioContextCtor();
-    }
-    return completionAudioContextRef.current;
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    const unlockAudio = () => {
-      const audioContext = ensureCompletionAudioContext();
-      if (!audioContext) {
-        return;
-      }
-      if (audioContext.state === "running") {
-        completionAudioUnlockedRef.current = true;
-        return;
-      }
-      void audioContext
-        .resume()
-        .then(() => {
-          completionAudioUnlockedRef.current = audioContext.state === "running";
-        })
-        .catch(() => {});
-    };
-    const options: AddEventListenerOptions = { passive: true };
-    window.addEventListener("pointerdown", unlockAudio, options);
-    window.addEventListener("keydown", unlockAudio, options);
-    window.addEventListener("touchstart", unlockAudio, options);
-    return () => {
-      window.removeEventListener("pointerdown", unlockAudio);
-      window.removeEventListener("keydown", unlockAudio);
-      window.removeEventListener("touchstart", unlockAudio);
-    };
-  }, [ensureCompletionAudioContext]);
 
   const handleStartUpdate = useCallback(async () => {
     const next = normalizeUpdateState(updateState);
@@ -2701,11 +1373,11 @@ export function App({ onGoHome }: AppProps) {
       const target = next.latest_version
         ? `v${next.latest_version}`
         : "the latest version";
-      if (
-        !window.confirm(
-          `Install ${target} now? MindFS will restart after the update finishes.`,
-        )
-      ) {
+      const confirmed = await confirmDialog({
+        message: t("update.confirmInstall", { target }),
+        confirmLabel: t("update.install"),
+      });
+      if (!confirmed) {
         return;
       }
     }
@@ -2729,36 +1401,6 @@ export function App({ onGoHome }: AppProps) {
     }
   }, [updateState]);
 
-  const playCompletionSound = useCallback(() => {
-    const audioContext = ensureCompletionAudioContext();
-    if (!audioContext) {
-      return;
-    }
-    try {
-      if (audioContext.state !== "running") {
-        return;
-      }
-      completionAudioUnlockedRef.current = true;
-      const now = audioContext.currentTime;
-      const oscillator = audioContext.createOscillator();
-      const gainNode = audioContext.createGain();
-      oscillator.type = "sine";
-      oscillator.frequency.setValueAtTime(880, now);
-      oscillator.frequency.exponentialRampToValueAtTime(1174, now + 0.09);
-      gainNode.gain.setValueAtTime(0.0001, now);
-      gainNode.gain.exponentialRampToValueAtTime(0.24, now + 0.012);
-      gainNode.gain.exponentialRampToValueAtTime(0.0001, now + 0.2);
-      oscillator.connect(gainNode);
-      gainNode.connect(audioContext.destination);
-      oscillator.start(now);
-      oscillator.stop(now + 0.2);
-    } catch (error) {
-      if (completionAudioUnlockedRef.current) {
-        console.error("Failed to play completion sound:", error);
-      }
-    }
-  }, [ensureCompletionAudioContext]);
-
   useEffect(() => {
     currentRootIdRef.current = currentRootId;
   }, [currentRootId]);
@@ -2780,28 +1422,6 @@ export function App({ onGoHome }: AppProps) {
       cancelled = true;
     };
   }, [agentsVersion, currentRootId, e2eeState.configured, e2eeState.required, e2eeState.unlocked]);
-  useEffect(() => {
-    if (!importMenuOpen) return;
-    const handlePointerDown = (event: MouseEvent) => {
-      if (!importMenuRef.current?.contains(event.target as Node)) {
-        setImportMenuOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handlePointerDown);
-    return () => document.removeEventListener("mousedown", handlePointerDown);
-  }, [importMenuOpen]);
-  useEffect(() => {
-    if (!projectAddMode) {
-      return;
-    }
-    const handlePointerDown = (event: MouseEvent) => {
-      if (!projectAddPopoverRef.current?.contains(event.target as Node)) {
-        setProjectAddMode(null);
-      }
-    };
-    document.addEventListener("mousedown", handlePointerDown);
-    return () => document.removeEventListener("mousedown", handlePointerDown);
-  }, [projectAddMode]);
   useEffect(() => {
     if (typeof window === "undefined") {
       return;
@@ -2856,32 +1476,8 @@ export function App({ onGoHome }: AppProps) {
     multiProjectPendingRef.current = multiProjectPendingByKey;
   }, [multiProjectPendingByKey]);
   useEffect(() => {
-    sessionListModeRef.current = sessionListMode;
-    if (sessionListMode !== "local") {
-      setSessionSearchOpen(false);
-      setSessionSearchResultsMode(false);
-      setSessionSearchQuery("");
-      setSessionSearchAppliedQuery("");
-      setSessionSearchResults([]);
-      setSessionSearchLoading(false);
-    }
-  }, [sessionListMode]);
-  useEffect(() => {
-    setSessionSearchQuery("");
-    setSessionSearchResultsMode(false);
-    setSessionSearchAppliedQuery("");
-    setSessionSearchResults([]);
-    setSessionSearchLoading(false);
-  }, [currentRootId]);
-  useEffect(() => {
     setPendingPlanMode(false);
   }, [currentRootId]);
-  useEffect(() => {
-    externalSessionsRef.current = externalSessions;
-  }, [externalSessions]);
-  useEffect(() => {
-    externalImportAgentRef.current = externalImportAgent;
-  }, [externalImportAgent]);
   useEffect(() => {
     currentSessionRef.current = currentSession;
   }, [currentSession]);
@@ -2894,18 +1490,6 @@ export function App({ onGoHome }: AppProps) {
     }
     window.localStorage.setItem(TREE_SORT_STORAGE_KEY, treeSortMode);
   }, [treeSortMode]);
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    window.localStorage.setItem(GIT_STATUS_EXPANDED_STORAGE_KEY, JSON.stringify(gitStatusExpandedByRoot));
-  }, [gitStatusExpandedByRoot]);
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    window.localStorage.setItem(GIT_HISTORY_EXPANDED_STORAGE_KEY, JSON.stringify(gitHistoryExpandedByRoot));
-  }, [gitHistoryExpandedByRoot]);
   useEffect(() => {
     if (typeof window === "undefined") {
       return;
@@ -4832,198 +3416,6 @@ export function App({ onGoHome }: AppProps) {
     [],
   );
 
-  const refreshGitStatus = useCallback(async (rootID: string) => {
-    if (!rootID) {
-      if (!currentRootIdRef.current) {
-        setGitStatus(null);
-        setGitStatusLoading(false);
-      }
-      return null;
-    }
-    const shouldApply = () => currentRootIdRef.current === rootID;
-    if (managedRootByIdRef.current[rootID]?.is_git_repo !== true) {
-      const fallback = {
-        available: false,
-        dirty_count: 0,
-        items: [],
-      } as GitStatusPayload;
-      setGitStatusByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: fallback }));
-      setGitStatusLoadingByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: false }));
-      if (shouldApply()) {
-        setGitStatus(fallback);
-        setGitStatusLoading(false);
-      }
-      return fallback;
-    }
-    setGitStatusLoadingByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: true }));
-    if (shouldApply()) {
-      setGitStatusLoading(true);
-    }
-    try {
-      const next = await fetchGitStatus(rootID, getNodeIdForRoot(rootID));
-      setGitStatusByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: next }));
-      if (shouldApply()) {
-        setGitStatus(next);
-      }
-      return next;
-    } catch (err) {
-      console.error("[git.status] failed", { rootID, err });
-      const fallback = {
-        available: false,
-        dirty_count: 0,
-        items: [],
-      } as GitStatusPayload;
-      setGitStatusByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: fallback }));
-      if (shouldApply()) {
-        setGitStatus(fallback);
-      }
-      return fallback;
-    } finally {
-      setGitStatusLoadingByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: false }));
-      if (shouldApply()) {
-        setGitStatusLoading(false);
-      }
-    }
-  }, []);
-
-  const refreshGitHistory = useCallback(async (
-    rootID: string,
-    options?: { force?: boolean; waitForIncremental?: boolean },
-  ) => {
-    if (!rootID) {
-      setGitHistory(null);
-      setGitHistoryLoading(false);
-      return null;
-    }
-    if (!options?.force) {
-      const cachedHead = getCachedGitHistoryHead(rootID, 10, getNodeIdForRoot(rootID));
-      if (cachedHead && cachedHead.items.length > 0) {
-        setGitHistoryByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: cachedHead }));
-        if (currentRootIdRef.current === rootID) {
-          setGitHistory(cachedHead);
-        }
-        const newest = cachedHead.items[0]?.hash || "";
-        if (newest) {
-          const refreshAfterNewest = async () => {
-            try {
-              const next = await fetchGitHistory(rootID, { afterCommit: newest, nodeId: getNodeIdForRoot(rootID) });
-              if (next.commit_missing || (next.items || []).length > 0) {
-                clearGitHistoryCache(rootID, getNodeIdForRoot(rootID));
-                const fresh = await fetchGitHistory(rootID, { force: true, nodeId: getNodeIdForRoot(rootID) });
-                setGitHistoryByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: fresh }));
-                if (currentRootIdRef.current === rootID) {
-                  setGitHistory(fresh);
-                }
-                return fresh;
-              }
-              const fresh = getCachedGitHistoryHead(rootID, 10, getNodeIdForRoot(rootID)) || next;
-              setGitHistoryByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: fresh }));
-              if (currentRootIdRef.current === rootID) {
-                setGitHistory(fresh);
-              }
-              return fresh;
-            } catch (err) {
-              console.error("[git.history.after] failed", { rootID, afterCommit: newest, err });
-              return cachedHead;
-            }
-          };
-          if (options?.waitForIncremental) {
-            return refreshAfterNewest();
-          }
-          void refreshAfterNewest();
-        }
-        return cachedHead;
-      }
-    }
-    setGitHistoryLoadingByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: true }));
-    if (currentRootIdRef.current === rootID) {
-      setGitHistoryLoading(true);
-    }
-    try {
-      const next = await fetchGitHistory(rootID, { force: options?.force, nodeId: getNodeIdForRoot(rootID) });
-      if (next.commit_missing) {
-        clearGitHistoryCache(rootID, getNodeIdForRoot(rootID));
-        const fresh = await fetchGitHistory(rootID, { force: true, nodeId: getNodeIdForRoot(rootID) });
-        setGitHistoryByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: fresh }));
-        if (currentRootIdRef.current === rootID) {
-          setGitHistory(fresh);
-        }
-        return fresh;
-      }
-      setGitHistoryByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: next }));
-      if (currentRootIdRef.current === rootID) {
-        setGitHistory(next);
-      }
-      return next;
-    } catch (err) {
-      console.error("[git.history] failed", { rootID, err });
-      const fallback = { available: false, items: [], has_more: false } as GitHistoryPayload;
-      setGitHistoryByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: fallback }));
-      if (currentRootIdRef.current === rootID) {
-        setGitHistory(fallback);
-      }
-      return fallback;
-    } finally {
-      setGitHistoryLoadingByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: false }));
-      if (currentRootIdRef.current === rootID) {
-        setGitHistoryLoading(false);
-      }
-    }
-  }, []);
-
-  const loadMoreGitHistory = useCallback(async (targetRootID?: string) => {
-    const rootID = targetRootID || currentRootIdRef.current;
-    if (!rootID || gitHistoryLoadingMore) {
-      return;
-    }
-    const currentItems =
-      (targetRootID ? gitHistoryByRoot[scopedRootKey(rootID)]?.items : gitHistory?.items) || [];
-    const beforeCommit = currentItems[currentItems.length - 1]?.hash || "";
-    if (!beforeCommit) {
-      return;
-    }
-    setGitHistoryLoadingMore(true);
-    try {
-      const next = await fetchGitHistory(rootID, { beforeCommit, nodeId: getNodeIdForRoot(rootID) });
-      if (next.commit_missing) {
-        clearGitHistoryCache(rootID, getNodeIdForRoot(rootID));
-        const fresh = await fetchGitHistory(rootID, { force: true, nodeId: getNodeIdForRoot(rootID) });
-        setGitHistoryByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: fresh }));
-        if (currentRootIdRef.current === rootID) {
-          setGitHistory(fresh);
-        }
-        return;
-      }
-      const cached = getCachedGitHistory(rootID, getNodeIdForRoot(rootID));
-      const loadedCount = currentItems.length + next.items.length;
-      if (currentRootIdRef.current === rootID) {
-        if (cached) {
-          setGitHistory({
-            ...cached,
-            items: cached.items.slice(0, loadedCount),
-            has_more: cached.items.length > loadedCount || cached.has_more,
-          });
-        } else {
-          setGitHistory(next);
-        }
-      }
-      setGitHistoryByRoot((prev) => ({
-        ...prev,
-        [scopedRootKey(rootID)]: cached
-          ? {
-              ...cached,
-              items: cached.items.slice(0, loadedCount),
-              has_more: cached.items.length > loadedCount || cached.has_more,
-            }
-          : next,
-      }));
-    } catch (err) {
-      console.error("[git.history.more] failed", { rootID, beforeCommit, err });
-    } finally {
-      setGitHistoryLoadingMore(false);
-    }
-  }, [gitHistory, gitHistoryByRoot, gitHistoryLoadingMore]);
-
   const loadSessionsForRoot = useCallback(
     async (
       rootID: string,
@@ -5427,284 +3819,57 @@ export function App({ onGoHome }: AppProps) {
     void loadMultiProjectSessionGroups();
   }, [loadMultiProjectSessionGroups, multiProjectSessionsEnabled, refreshMultiProjectReplyingSessions]);
 
-  const executeSessionSearch = useCallback(() => {
-    const trimmed = sessionSearchQuery.trim();
-    if (trimmed.length < 2) {
-      return;
-    }
-    setSessionSearchResultsMode(true);
-    setSessionSearchAppliedQuery(trimmed);
-  }, [sessionSearchQuery]);
+  const {
+    sessionSearchOpen,
+    sessionSearchResultsMode,
+    sessionSearchQuery,
+    sessionSearchResults,
+    sessionSearchLoading,
+    executeSessionSearch,
+    openSessionSearch,
+    closeSessionSearch,
+    toggleSessionSearch,
+    handleSearchQueryChange,
+  } = useSessionSearch({
+    currentRootId,
+    sessionListMode,
+    multiProjectSessionsEnabled,
+    getNodeIdForRoot,
+  });
 
-  useEffect(() => {
-    if (
-      sessionListMode !== "local" ||
-      !sessionSearchOpen ||
-      !currentRootId ||
-      !sessionSearchAppliedQuery
-    ) {
-      setSessionSearchLoading(false);
-      return;
-    }
+  const {
+    openGitDiff,
+    openGitCommitDiff,
+    switchGitBranch,
+    handleGitPull,
+    handleGitPush,
+    handleGitCommit,
+    handleGitStageItem,
+    handleGitUnstageItem,
+    handleGitDiscardItem,
+  } = useGitActions({
+    currentRootIdRef,
+    getNodeIdForRoot,
+    scopedRootKey,
+    selectedDirRef,
+    fileOpenRequestRef,
+    refreshGitHistory,
+    refreshTreeDir,
+    resetLocksForRootTransition,
+    switchMainView,
+    replaceURLState,
+    isMobile,
+    setGitStatus,
+    setGitStatusByRoot,
+    setGitDiff,
+    setFile,
+    setCurrentRootId,
+    setIsLeftOpen,
+    setRelatedSelectedFileKey,
+    setSelectedSession,
+    setSelectedSessionLoading,
+  });
 
-    let cancelled = false;
-    const searchAcrossRoots = multiProjectSessionsEnabled;
-    setSessionSearchLoading(true);
-    void sessionService
-      .searchSessions(currentRootId, sessionSearchAppliedQuery, 20, {
-        multiRoot: searchAcrossRoots,
-        nodeId: searchAcrossRoots ? undefined : getNodeIdForRoot(currentRootId),
-      })
-      .then((hits) => {
-        if (cancelled) return;
-        const mapped = hits
-          .map((hit) => {
-            const hitRootId = String(hit.root_id || currentRootId || "");
-            const item = toSessionItem(hitRootId, {
-              ...hit,
-              root_id: hitRootId,
-              search_seq: hit.seq,
-              search_snippet: hit.snippet,
-              search_match_type: hit.match_type,
-            });
-            return item;
-          })
-          .filter((item): item is SessionItem => !!item);
-        setSessionSearchResults(mapped);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        console.error("[session.search] failed", {
-          rootId: currentRootId,
-          query: sessionSearchAppliedQuery,
-          err,
-        });
-        setSessionSearchResults([]);
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setSessionSearchLoading(false);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [currentRootId, multiProjectSessionsEnabled, sessionListMode, sessionSearchAppliedQuery, sessionSearchOpen]);
-
-  const openGitDiff = useCallback(
-    async (rootID: string, item: GitStatusItem, options?: { preserveRelatedSelection?: boolean; repoPath?: string }) => {
-      if (!rootID || !item?.path) {
-        return;
-      }
-      fileOpenRequestRef.current += 1;
-      if (!options?.preserveRelatedSelection) {
-        setRelatedSelectedFileKey("");
-      }
-      switchMainView("files");
-      setSelectedSession(null);
-      setSelectedSessionLoading(false);
-      setFile(null);
-      setGitDiff(null);
-      replaceURLState({
-        root: rootID,
-        file: "",
-        session: "",
-        cursor: 0,
-        pluginQuery: {},
-      });
-      try {
-        const next = await fetchGitDiff(rootID, item.path, { nodeId: getNodeIdForRoot(rootID) as string | undefined,
-          cacheSignature: buildGitDiffCacheSignature(item),
-          repoPath: options?.repoPath,
-        });
-        setGitDiff(next);
-        resetLocksForRootTransition(rootID);
-        if (currentRootIdRef.current !== rootID) {
-          setCurrentRootId(rootID);
-        }
-        if (isMobile) {
-          setIsLeftOpen(false);
-        }
-      } catch (err) {
-        console.error("[git.diff] failed", { rootID, path: item.path, err });
-      }
-    },
-    [isMobile, replaceURLState, resetLocksForRootTransition, switchMainView],
-  );
-
-  const openGitCommitDiff = useCallback(
-    async (rootID: string, commit: GitHistoryItem, item: GitStatusItem) => {
-      if (!rootID || !commit?.hash || !item?.path) {
-        return;
-      }
-      fileOpenRequestRef.current += 1;
-      setRelatedSelectedFileKey("");
-      switchMainView("files");
-      setSelectedSession(null);
-      setSelectedSessionLoading(false);
-      setFile(null);
-      setGitDiff(null);
-      replaceURLState({
-        root: rootID,
-        file: "",
-        session: "",
-        cursor: 0,
-        pluginQuery: {},
-      });
-      try {
-        const next = await fetchGitCommitDiff(rootID, commit.hash, item, getNodeIdForRoot(rootID));
-        setGitDiff(next);
-        resetLocksForRootTransition(rootID);
-        if (currentRootIdRef.current !== rootID) {
-          setCurrentRootId(rootID);
-        }
-        if (isMobile) {
-          setIsLeftOpen(false);
-        }
-      } catch (err) {
-        console.error("[git.commit.diff] failed", {
-          rootID,
-          commit: commit.hash,
-          path: item.path,
-          err,
-        });
-      }
-    },
-    [isMobile, replaceURLState, resetLocksForRootTransition, switchMainView],
-  );
-
-  const switchGitBranch = useCallback(
-    async (rootID: string, branch: string) => {
-      if (!rootID || !branch) {
-        return;
-      }
-      try {
-        const nextStatus = await checkoutGitBranch(rootID, branch);
-        clearGitHistoryCache(rootID, getNodeIdForRoot(rootID));
-        setGitStatusByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: nextStatus }));
-        await refreshGitHistory(rootID, { force: true });
-        if (currentRootIdRef.current === rootID) {
-          setGitStatus(nextStatus);
-          setGitDiff(null);
-          setFile(null);
-          await refreshTreeDir(rootID, selectedDirRef.current || ".", true);
-        }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : t("git.checkoutFailed");
-        console.error("[git.checkout] failed", {
-          rootID,
-          branch,
-          message,
-          payload: err instanceof ProtectedAPIError ? err.payload : undefined,
-          err,
-        });
-        reportError("git.checkout_failed", message, {
-          severity: "error",
-          recoverable: true,
-          details: {
-            root: rootID,
-            branch,
-            payload: err instanceof ProtectedAPIError ? err.payload : undefined,
-          },
-        });
-        throw err;
-      }
-    },
-    [refreshGitHistory, refreshTreeDir, t],
-  );
-
-  const applyGitActionResult = useCallback(
-    async (rootID: string, nextStatus: GitStatusPayload, options?: { refreshHistory?: boolean; clearDiff?: boolean }) => {
-      clearGitHistoryCache(rootID, getNodeIdForRoot(rootID));
-      setGitStatusByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: nextStatus }));
-      if (options?.refreshHistory !== false) {
-        await refreshGitHistory(rootID, { force: true });
-      }
-      if (currentRootIdRef.current !== rootID) {
-        return;
-      }
-      setGitStatus(nextStatus);
-      if (options?.clearDiff) {
-        setGitDiff(null);
-      }
-      await refreshTreeDir(rootID, selectedDirRef.current || ".", true);
-    },
-    [refreshGitHistory, refreshTreeDir],
-  );
-
-  const runGitAction = useCallback(
-    async (
-      rootID: string,
-      action: string,
-      run: () => Promise<{ status: GitStatusPayload; output?: string }>,
-      options?: { refreshHistory?: boolean; clearDiff?: boolean },
-    ) => {
-      if (!rootID) {
-        return;
-      }
-      try {
-        const result = await run();
-        await applyGitActionResult(rootID, result.status, options);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : t("common.actionFailed", { action });
-        console.error(`[git.${action}] failed`, {
-          rootID,
-          message,
-          payload: err instanceof ProtectedAPIError ? err.payload : undefined,
-          err,
-        });
-        window.alert(message);
-        throw err;
-      }
-    },
-    [applyGitActionResult, t],
-  );
-
-  const handleGitPull = useCallback(
-    (rootID: string) =>
-      runGitAction(rootID, "pull", () => pullGit(rootID), { clearDiff: true }),
-    [runGitAction],
-  );
-
-  const handleGitPush = useCallback(
-    (rootID: string) =>
-      runGitAction(rootID, "push", () => pushGit(rootID)),
-    [runGitAction],
-  );
-
-  const handleGitCommit = useCallback(
-    (rootID: string, message: string) =>
-      runGitAction(rootID, "commit", () => commitGit(rootID, message), { clearDiff: true }),
-    [runGitAction],
-  );
-
-  const handleGitStageItem = useCallback(
-    (rootID: string, item: GitStatusItem) =>
-      runGitAction(rootID, "stage", () => stageGitItem(rootID, item), {
-        refreshHistory: false,
-        clearDiff: true,
-      }),
-    [runGitAction],
-  );
-
-  const handleGitUnstageItem = useCallback(
-    (rootID: string, item: GitStatusItem) =>
-      runGitAction(rootID, "unstage", () => unstageGitItem(rootID, item), {
-        refreshHistory: false,
-        clearDiff: true,
-      }),
-    [runGitAction],
-  );
-
-  const handleGitDiscardItem = useCallback(
-    (rootID: string, item: GitStatusItem) =>
-      runGitAction(rootID, "discard", () => discardGitItem(rootID, item), {
-        refreshHistory: false,
-        clearDiff: true,
-      }),
-    [runGitAction],
-  );
 
   const handleTreeUpload = useCallback(
     async (files: File[]) => {
@@ -6456,229 +4621,53 @@ export function App({ onGoHome }: AppProps) {
     handleSelectSessionRef.current = handleSelectSession;
   }, [handleSelectSession]);
 
-  const loadExternalSessions = useCallback(
-    async (
-      rootID: string,
-      agent: string,
-      options?: { beforeTime?: string; afterTime?: string; replace?: boolean },
-    ) => {
-      if (!rootID || !agent) {
-        setExternalSessions([]);
-        setHasMoreExternalSessions(false);
-        setExternalSessionsError("");
-        return;
-      }
-      try {
-        if (!options?.beforeTime) {
-          setLoadingExternalSessions(true);
-        }
-        const next = (await sessionService.fetchExternalSessions(
-          rootID,
-          agent,
-          {
-            beforeTime: options?.beforeTime,
-            afterTime: options?.afterTime,
-            filterBound: externalFilterBound,
-            limit: 50,
-            nodeId: getNodeIdForRoot(rootID),
-          },
-        )) as SessionItem[];
-        setExternalSessionsError("");
-        setHasMoreExternalSessions(next.length >= 50);
-        if (options?.replace || (!options?.beforeTime && !options?.afterTime)) {
-          setExternalSessions(next);
-          return;
-        }
-        setExternalSessions((prev) => mergeSessionItems(prev, next));
-      } catch (err) {
-        const message =
-          err instanceof Error ? err.message : String(err || t("session.importLoadFailed"));
-        setExternalSessionsError(message || t("session.importLoadFailed"));
-        if (options?.replace || (!options?.beforeTime && !options?.afterTime)) {
-          setExternalSessions([]);
-          setHasMoreExternalSessions(false);
-        }
-        console.error("[Session] Failed to fetch external sessions:", err);
-      } finally {
-        setLoadingExternalSessions(false);
-      }
-    },
-    [externalFilterBound, mergeSessionItems],
-  );
+  const refreshSessionsAfterExternalImport = useCallback(async (rootID: string) => {
+    const payload = await sessionService.fetchSessions(rootID, { nodeId: getNodeIdForRoot(rootID) });
+    const next = [...payload.items, ...payload.pinnedItems]
+      .map((item) => toSessionItem(rootID, item))
+      .filter((item): item is SessionItem => !!item);
+    setHasMoreSessions(payload.totalCount > payload.items.length);
+    setSessions(applyPinnedSnapshotToSessions(mergeSessionItems([], next), rootID, payload.pinnedKeys));
+  }, [getNodeIdForRoot]);
 
-  const exitImportMode = useCallback(() => {
-    setSessionListMode("local");
-    setExternalSelectedKey("");
-    setExternalSessionsError("");
-    setSelectedExternalImportKeys(new Set());
-    setImportingExternalSessionKeys(new Set());
-    setImportMenuOpen(false);
-  }, []);
-
-  const enterImportMode = useCallback(
-    async (agentName: string) => {
-      const rootID = currentRootIdRef.current || "";
-      const trimmedAgent = String(agentName || "").trim();
-      if (!rootID || !trimmedAgent) {
-        return;
-      }
-      setExternalImportAgent(trimmedAgent);
-      setExternalSelectedKey("");
-      setExternalSessionsError("");
-      setSelectedExternalImportKeys(new Set());
-      setImportingExternalSessionKeys(new Set());
-      setSessionListMode("import");
-      await loadExternalSessions(rootID, trimmedAgent, { replace: true });
-    },
-    [loadExternalSessions],
-  );
-
-  const handleLoadOlderExternalSessions = useCallback(async () => {
-    const rootID = currentRootIdRef.current || "";
-    const oldest =
-      externalSessionsRef.current[externalSessionsRef.current.length - 1]
-        ?.updated_at || "";
-    if (
-      !rootID ||
-      !externalImportAgent ||
-      !oldest ||
-      loadingOlderExternalSessions
-    ) {
-      return;
-    }
-    setLoadingOlderExternalSessions(true);
-    try {
-      await loadExternalSessions(rootID, externalImportAgent, {
-        beforeTime: oldest,
-      });
-    } finally {
-      setLoadingOlderExternalSessions(false);
-    }
-  }, [externalImportAgent, loadExternalSessions, loadingOlderExternalSessions]);
-
-  const toggleExternalImportSelection = useCallback((session: SessionItem) => {
-    const sessionKey = String(
-      session.agent_session_id || session.key || "",
-    ).trim();
-    if (!sessionKey) {
-      return;
-    }
-    setSelectedExternalImportKeys((current) => {
-      const next = new Set(current);
-      if (next.has(sessionKey)) {
-        next.delete(sessionKey);
-      } else {
-        next.add(sessionKey);
-      }
-      return next;
-    });
-  }, []);
-
-  const toggleAllExternalImportSelection = useCallback((checked: boolean) => {
-    const visibleKeys = externalSessionsRef.current
-      .map((session) =>
-        String(session.agent_session_id || session.key || "").trim(),
-      )
-      .filter(Boolean);
-    setSelectedExternalImportKeys((current) => {
-      const next = new Set(current);
-      visibleKeys.forEach((key) => {
-        if (checked) {
-          next.add(key);
-        } else {
-          next.delete(key);
-        }
-      });
-      return next;
-    });
-  }, []);
-
-  const handleConfirmExternalImport = useCallback(async () => {
-    const rootID = currentRootIdRef.current || "";
-    const sessionKeys = [...selectedExternalImportKeys].filter(Boolean);
-    if (
-      !rootID ||
-      !externalImportAgent ||
-      !sessionKeys.length ||
-      confirmingExternalImport
-    ) {
-      return;
-    }
-    setConfirmingExternalImport(true);
-    setImportingExternalSessionKeys(new Set(sessionKeys));
-    try {
-      const imported = await sessionService.importExternalSessionsBatch(
-        rootID,
-        externalImportAgent,
-        sessionKeys,
-      );
-      const results = imported?.items || [];
-      const successItems = results.filter((item) => item.success && item.session_key);
-      if (!imported || !successItems.length) {
-        const firstError = results.find((item) => !item.success)?.error;
-        reportError(
-          "session.import_failed",
-          firstError ? t("session.importFailedWithReason", { reason: firstError }) : t("session.importFailed"),
-        );
-        return;
-      }
-      setConfirmingExternalImport(false);
-      setImportingExternalSessionKeys(new Set());
-      const failedKeys = new Set(
-        results
-          .filter((item) => !item.success)
-          .map((item) => String(item.agent_session_id || "").trim())
-          .filter(Boolean),
-      );
-      if (failedKeys.size > 0) {
-        const firstError = results.find((item) => !item.success)?.error;
-        const message = firstError
-          ? t("session.importPartialFailedWithReason", { count: failedKeys.size, reason: firstError })
-          : t("session.importPartialFailed", { count: failedKeys.size });
-        reportError(
-          "session.import_failed",
-          message,
-        );
-      }
-      setSelectedExternalImportKeys(failedKeys);
-      if (failedKeys.size === 0) {
-        exitImportMode();
-      }
-      const payload = await sessionService.fetchSessions(rootID, { nodeId: getNodeIdForRoot(rootID) });
-      const next = [...payload.items, ...payload.pinnedItems]
-        .map((item) => toSessionItem(rootID, item))
-        .filter((item): item is SessionItem => !!item);
-      setHasMoreSessions(payload.totalCount > payload.items.length);
-      setSessions(applyPinnedSnapshotToSessions(mergeSessionItems([], next), rootID, payload.pinnedKeys));
-      const firstImported = successItems[0];
-      if (firstImported?.session_key) {
-        const source = externalSessionsRef.current.find((item) =>
-          String(item.agent_session_id || item.key || "").trim() ===
-          String(firstImported.agent_session_id || "").trim(),
-        );
-        await handleSelectSession({
-          key: firstImported.session_key,
-          root_id: rootID,
-          type: "chat",
-          agent: externalImportAgent,
-          name: source?.name,
-        } as SessionItem);
-      }
-      if (isMobile && failedKeys.size === 0) {
-        setIsRightOpen(false);
-      }
-    } finally {
-      setConfirmingExternalImport(false);
-      setImportingExternalSessionKeys(new Set());
-    }
-  }, [
-    confirmingExternalImport,
-    exitImportMode,
+  const {
+    externalSessions,
+    setExternalSessions,
+    externalSessionsRef,
+    hasMoreExternalSessions,
+    loadingOlderExternalSessions,
+    loadingExternalSessions,
+    externalSessionsError,
+    externalSelectedKey,
+    setExternalSelectedKey,
     externalImportAgent,
-    handleSelectSession,
-    isMobile,
+    setExternalImportAgent,
+    externalFilterBound,
+    setExternalFilterBound,
     selectedExternalImportKeys,
-  ]);
+    importingExternalSessionKeys,
+    confirmingExternalImport,
+    importMenuOpen,
+    setImportMenuOpen,
+    importMenuRef,
+    loadExternalSessions,
+    enterImportMode,
+    exitImportMode,
+    handleLoadOlderExternalSessions,
+    toggleExternalImportSelection,
+    toggleAllExternalImportSelection,
+    handleConfirmExternalImport,
+    handleImportedSessionConfirmed,
+  } = useExternalSessionImport({
+    currentRootIdRef,
+    getNodeIdForRoot,
+    sessionListMode,
+    setSessionListMode,
+    isMobile,
+    onSelectSession: handleSelectSession,
+    onImported: refreshSessionsAfterExternalImport,
+    closeRightSidebar: () => setIsRightOpen(false),
+  });
 
   const handleSendMessage = useCallback(
     async (
@@ -8468,445 +6457,40 @@ export function App({ onGoHome }: AppProps) {
     return null;
   }, [normalizeComparableRootPath]);
 
-  const handleCreateRootStart = useCallback((parentPath?: string | null) => {
-    if (creatingRootBusy) {
-      return;
-    }
-    const existing = new Set(managedRootIdsRef.current);
-    let nextName = "new-root";
-    let suffix = 2;
-    while (existing.has(nextName)) {
-      nextName = `new-root-${suffix}`;
-      suffix += 1;
-    }
-    setCreatingRootParentPath(
-      parentPath && String(parentPath).trim() ? String(parentPath).trim() : null,
-    );
-    setCreatingRootKind("root");
-    setCreatingRootName(nextName);
-  }, [creatingRootBusy]);
+  const openManagedDir = useCallback(
+    (payload: { path: string; root: string; isRoot: boolean; forceDirectory?: boolean }) =>
+      actionHandlersRef.current.open_dir(payload),
+    [],
+  );
 
-  const loadWorktreeBranches = useCallback(async (rootID: string) => {
-    setWorktreeBranchesLoading(true);
-    setWorktreeBranchError("");
-    try {
-      const payload = await fetchGitBranches(rootID, getNodeIdForRoot(rootID));
-      setWorktreeBranches(payload);
-    } catch (error) {
-      setWorktreeBranches({ branches: [] });
-      setWorktreeBranchError(error instanceof Error ? error.message : t("worktree.loadBranchFailed"));
-    } finally {
-      setWorktreeBranchesLoading(false);
-    }
-  }, [t]);
-
-  const loadWorktreeList = useCallback(async (rootID: string) => {
-    setWorktreeSwitchLoading(true);
-    setWorktreeSwitchError("");
-    try {
-      const payload = await fetchGitWorktrees(rootID, getNodeIdForRoot(rootID));
-      setWorktreeSwitchItems(payload.items || []);
-    } catch (error) {
-      setWorktreeSwitchItems([]);
-      setWorktreeSwitchError(error instanceof Error ? error.message : t("worktree.loadFailed"));
-    } finally {
-      setWorktreeSwitchLoading(false);
-    }
-  }, [t]);
-
-  const loadProjectTreeWorktrees = useCallback(async (rootID: string): Promise<GitWorktreeItem[]> => {
-    if (!rootID) {
-      return [];
-    }
-    setWorktreeLoadingByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: true }));
-    setWorktreeErrorByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: "" }));
-    try {
-      const payload = await fetchGitWorktrees(rootID, getNodeIdForRoot(rootID));
-      (payload.items || []).forEach((item) => {
-        if (item.path) {
-          knownTaskWorktreePathsRef.current.add(item.path);
-        }
-      });
-      const items = (payload.items || []).filter((item) => !!item.branch);
-      setWorktreeItemsByRoot((prev) => ({
-        ...prev,
-        [scopedRootKey(rootID)]: items,
-      }));
-      return items;
-    } catch (error) {
-      setWorktreeItemsByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: [] }));
-      setWorktreeErrorByRoot((prev) => ({
-        ...prev,
-        [scopedRootKey(rootID)]: error instanceof Error ? error.message : t("worktree.loadFailed"),
-      }));
-      return [];
-    } finally {
-      setWorktreeLoadingByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: false }));
-    }
-  }, [t]);
-
-  const loadProjectTreeWorktreeStatus = useCallback(async (worktreePath: string, rootId?: string) => {
-    if (!worktreePath) {
-      return;
-    }
-    setWorktreeStatusLoadingByPath((prev) => ({ ...prev, [worktreePath]: true }));
-    try {
-      const status = await fetchGitStatusByPath(worktreePath, getNodeIdForRoot(String(rootId || "")) as string | undefined);
-      setWorktreeStatusByPath((prev) => ({ ...prev, [worktreePath]: status }));
-    } catch (error) {
-      console.error("[git.worktree.status] failed", { worktreePath, error });
-      setWorktreeStatusByPath((prev) => ({
-        ...prev,
-        [worktreePath]: { available: false, dirty_count: 0, items: [] } as GitStatusPayload,
-      }));
-    } finally {
-      setWorktreeStatusLoadingByPath((prev) => ({ ...prev, [worktreePath]: false }));
-    }
-  }, []);
-
-  const handleCreateWorktreeStart = useCallback((parentPath: string) => {
-    if (creatingRootBusy) {
-      return;
-    }
-    const rootID = currentRootIdRef.current;
-    if (!rootID) {
-      return;
-    }
-    const existing = new Set(managedRootIdsRef.current);
-    const baseName = `${rootID}-worktree`;
-    let nextName = baseName;
-    let suffix = 2;
-    while (existing.has(nextName)) {
-      nextName = `${baseName}-${suffix}`;
-      suffix += 1;
-    }
-    setCreatingRootKind("worktree");
-    setCreatingRootParentPath(parentPath);
-    setCreatingRootName(nextName);
-    setWorktreeBranchMode("new");
-    setWorktreeBranch("");
-    setWorktreeBranches({ branches: [] });
-    setWorktreeBranchError("");
-    void loadWorktreeBranches(rootID);
-  }, [creatingRootBusy, loadWorktreeBranches]);
-
-  const handleSwitchWorktreeStart = useCallback(() => {
-    const rootID = currentRootIdRef.current;
-    if (!rootID) {
-      return;
-    }
-    setProjectAddMode(null);
-    setCreatingRootName(null);
-    setWorktreeSwitchOpen(true);
-    setWorktreeSwitchItems([]);
-    setWorktreeSwitchError("");
-    void loadWorktreeList(rootID);
-  }, [loadWorktreeList]);
-
-  useEffect(() => {
-    if (projectTreeTab !== "worktrees" || !currentRootId) {
-      return;
-    }
-    if (worktreeItemsByRoot[scopedRootKey(currentRootId)] || worktreeLoadingByRoot[scopedRootKey(currentRootId)]) {
-      return;
-    }
-    void loadProjectTreeWorktrees(currentRootId);
-  }, [currentRootId, loadProjectTreeWorktrees, projectTreeTab, worktreeItemsByRoot, worktreeLoadingByRoot]);
-
-  const handleSwitchWorktree = useCallback(async (item: GitWorktreeItem) => {
-    const targetPath = String(item.path || "").trim();
-    if (!targetPath || switchingWorktreePath) {
-      return;
-    }
-    setSwitchingWorktreePath(targetPath);
-    try {
-      let targetRoot = findManagedRootByPath(targetPath);
-      if (!targetRoot?.id) {
-        const created = await apiProtectedJSON<ManagedRootPayload>(appPath("/api/dirs"), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ path: targetPath, create: false }),
-        });
-        targetRoot = created;
-        await refreshManagedRoots();
-      }
-      if (targetRoot?.id) {
-        setWorktreeSwitchOpen(false);
-        await actionHandlersRef.current.open_dir({
-          path: targetRoot.id,
-          root: targetRoot.id,
-          isRoot: true,
-          forceDirectory: true,
-        });
-        return targetRoot.id;
-      }
-    } catch (error) {
-      reportError(
-        "git.worktree_switch_failed",
-        managedDirAddErrorMessage(error, t("root.switchWorktreeFailed"), t),
-      );
-    } finally {
-      setSwitchingWorktreePath("");
-    }
-    return undefined;
-  }, [findManagedRootByPath, refreshManagedRoots, switchingWorktreePath, t]);
-
-  const handleOpenProjectAdd = useCallback(() => {
-    if (creatingRootBusy) {
-      return;
-    }
-    setProjectAddMode("mode");
-  }, [creatingRootBusy]);
-
-  const inferParentPath = useCallback((absolutePath: string): string => {
-    const trimmed = absolutePath.trim().replace(/[\\/]+$/, "");
-    const parts = trimmed.split(/[\\/]/).filter(Boolean);
-    if (parts.length <= 1) {
-      return "";
-    }
-    if (/^[A-Za-z]:/.test(trimmed)) {
-      const drive = parts[0];
-      const rest = parts.slice(1, -1);
-      return rest.length > 0 ? `${drive}\\${rest.join("\\")}` : `${drive}\\`;
-    }
-    if (trimmed.startsWith("/")) {
-      return `/${parts.slice(0, -1).join("/")}`;
-    }
-    return parts.slice(0, -1).join("/");
-  }, []);
-
-  const loadLocalDirs = useCallback(async (path: string, nodeId?: string) => {
-    const trimmed = String(path || "").trim();
-    setLocalDirState((prev) => ({
-      ...prev,
-      loading: true,
-      error: "",
-      path: trimmed,
-      selectedPath: "",
-    }));
-    try {
-      const params = trimmed ? new URLSearchParams({ path: trimmed }) : undefined;
-      const targetNodeId = (nodeId || projectAddNodeId || getActiveNode()?.id || LOCAL_NODE_ID);
-      const payload = await apiProtectedJSON<LocalDirsPayload>(
-        appURL("/api/local_dirs", params, targetNodeId),
-      );
-      setLocalDirState({
-        path: String(payload.path || trimmed),
-        parent: String(payload.parent || ""),
-        volumes: Array.isArray(payload.volumes)
-          ? payload.volumes.map((item) => ({
-              name: String(item.name || ""),
-              path: String(item.path || ""),
-              is_dir: item.is_dir !== false,
-              is_added_root: item.is_added_root === true,
-              root_id: String(item.root_id || ""),
-            }))
-          : [],
-        items: Array.isArray(payload.items)
-          ? payload.items.map((item) => ({
-              name: String(item.name || ""),
-              path: String(item.path || ""),
-              is_dir: item.is_dir !== false,
-              is_added_root: item.is_added_root === true,
-              root_id: String(item.root_id || ""),
-            }))
-          : [],
-        loading: false,
-        selectedPath: "",
-        adding: false,
-        error: "",
-      });
-    } catch (error) {
-      setLocalDirState((prev) => ({
-        ...prev,
-        loading: false,
-        error: error instanceof Error ? error.message : t("directory.loadFailed"),
-      }));
-    }
-  }, [projectAddNodeId, t]);
-
-  const openDirectoryPicker = useCallback((nextMode: ProjectAddMode) => {
-    const rootID = currentRootIdRef.current;
-    const rootPath = rootID
-      ? String(managedRootByIdRef.current[rootID]?.root_path || "")
-      : "";
-    const initialPath = rootPath ? inferParentPath(rootPath) : "";
-    setProjectAddMode(nextMode);
-    if (!initialPath || initialPath === ".") {
-      if (!rootPath) {
-        void loadLocalDirs("");
-        return;
-      }
-      setLocalDirState((prev) => ({
-        ...prev,
-        path: rootPath,
-        parent: "",
-        items: [],
-        loading: false,
-        selectedPath: "",
-        adding: false,
-        error: t("directory.noBrowsableParent"),
-      }));
-      return;
-    }
-    void loadLocalDirs(initialPath);
-  }, [inferParentPath, loadLocalDirs, t]);
-
-  const handleOpenLocalProjectAdd = useCallback(() => {
-    // reset to active/local when opening
-    try { const n = getActiveNode(); if (n?.id) setProjectAddNodeId(n.id); } catch {}
-    void openDirectoryPicker("local");
-  }, [openDirectoryPicker]);
-
-  const handleOpenBlankProjectLocation = useCallback(() => {
-    void openDirectoryPicker("blank_location");
-  }, [openDirectoryPicker]);
-
-  const handleOpenGitHubProjectAdd = useCallback(() => {
-    void openDirectoryPicker("github_location");
-    setGitHubImportState((prev) => ({
-      ...prev,
-      parentPath: "",
-      taskId: "",
-      status: "",
-      message: "",
-      running: false,
-      submitting: false,
-      done: false,
-      error: "",
-    }));
-  }, [openDirectoryPicker]);
-
-  const handleOpenWorktreeLocation = useCallback(() => {
-    setWorktreeSwitchOpen(false);
-    void openDirectoryPicker("worktree_location");
-  }, [openDirectoryPicker]);
-
-  const handleSelectBlankProject = useCallback(() => {
-    setProjectAddMode(null);
-    handleCreateRootStart();
-  }, [handleCreateRootStart]);
-
-  const handleCreateRootCancel = useCallback(() => {
-    if (creatingRootBusy) {
-      return;
-    }
-    setCreatingRootName(null);
-    setCreatingRootParentPath(null);
-    setCreatingRootKind("root");
-    setWorktreeBranchMode("new");
-    setWorktreeBranch("");
-    setWorktreeBranchError("");
-    setWorktreeSwitchOpen(false);
-  }, [creatingRootBusy]);
-
-  useEffect(() => {
-    if (creatingRootKind !== "worktree" || creatingRootName === null) {
-      return;
-    }
-    const handlePointerDown = (event: MouseEvent) => {
-      if (worktreeCreatePopoverRef.current?.contains(event.target as Node)) {
-        return;
-      }
-      handleCreateRootCancel();
-    };
-    document.addEventListener("mousedown", handlePointerDown);
-    return () => document.removeEventListener("mousedown", handlePointerDown);
-  }, [creatingRootKind, creatingRootName, handleCreateRootCancel]);
-
-  useEffect(() => {
-    if (!worktreeSwitchOpen) {
-      return;
-    }
-    const handlePointerDown = (event: MouseEvent) => {
-      if (worktreeSwitchPopoverRef.current?.contains(event.target as Node)) {
-        return;
-      }
-      setWorktreeSwitchOpen(false);
-    };
-    document.addEventListener("mousedown", handlePointerDown);
-    return () => document.removeEventListener("mousedown", handlePointerDown);
-  }, [worktreeSwitchOpen]);
-
-  const handleCreateRootSubmit = useCallback(async () => {
-    const name = String(creatingRootName || "").trim();
-    if (!name) {
-      setCreatingRootName(null);
-      setCreatingRootParentPath(null);
-      return;
-    }
-    if (creatingRootBusy) {
-      return;
-    }
-    setCreatingRootBusy(true);
-    try {
-      if (creatingRootKind === "worktree") {
-        const rootID = currentRootIdRef.current;
-        const parentPath = String(creatingRootParentPath || "").trim();
-        if (!rootID || !parentPath) {
-          throw new Error(t("worktree.createLocationMissing"));
-        }
-        const created = await createGitWorktree({
-          rootId: rootID,
-          parentPath,
-          name,
-          branchMode: worktreeBranchMode,
-          branch: worktreeBranchMode === "existing" ? worktreeBranch : "",
-        }) as ManagedRootPayload;
-        setCreatingRootName(null);
-        setCreatingRootParentPath(null);
-        setCreatingRootKind("root");
-        setWorktreeBranchMode("new");
-        setWorktreeBranch("");
-        await refreshManagedRoots();
-        if (created?.id) {
-          await actionHandlersRef.current.open_dir({
-            path: created.id,
-            root: created.id,
-            isRoot: true,
-          });
-        }
-        return;
-      }
-      const targetPath =
-        creatingRootParentPath && creatingRootParentPath.trim()
-          ? `${creatingRootParentPath.replace(/[\\/]+$/, "")}/${name}`
-          : name;
-      const targetCreateNodeId = projectAddNodeId || getActiveNode()?.id || LOCAL_NODE_ID;
-      const payload = await apiProtectedJSON<any>(appPath("/api/dirs", targetCreateNodeId), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path: targetPath, create: true }),
-      });
-      const created = payload as ManagedRootPayload;
-      setCreatingRootName(null);
-      setCreatingRootParentPath(null);
-      await refreshManagedRoots();
-      if (created?.id) {
-        await actionHandlersRef.current.open_dir({
-          path: created.id,
-          root: created.id,
-          isRoot: true,
-        });
-      }
-    } catch (err) {
-      reportError(
-        "root.create_failed",
-        managedDirAddErrorMessage(err, t("root.createProjectFailed"), t),
-      );
-    } finally {
-      setCreatingRootBusy(false);
-    }
-  }, [
-    creatingRootBusy,
-    creatingRootKind,
+  const {
+    projectAddOverlay,
+    worktreeCreateOverlay,
+    worktreeSwitchOverlay,
     creatingRootName,
-    creatingRootParentPath,
+    setCreatingRootName,
+    creatingRootKind,
+    creatingRootBusy,
+    worktreeSwitchOpen,
+    projectAddMode,
+    handleCreateRootStart,
+    handleSwitchWorktreeStart,
+    handleOpenProjectAdd,
+    handleOpenWorktreeLocation,
+    handleCreateRootCancel,
+    handleCreateRootSubmit,
+    setGitHubImportState,
+    setProjectAddMode,
+  } = useProjectLifecycle({
+    currentRootId,
+    currentRootIdRef,
+    getNodeIdForRoot,
     refreshManagedRoots,
-    t,
-    worktreeBranch,
-    worktreeBranchMode,
-  ]);
+    findManagedRootByPath,
+    managedRootIdsRef,
+    managedRootByIdRef,
+    openManagedDir,
+  });
 
   const handleRenameCurrentRoot = useCallback(
     async (nextName: string) => {
@@ -8967,181 +6551,6 @@ export function App({ onGoHome }: AppProps) {
     [applyManagedRootRename, t],
   );
 
-  const handleLocalDirSelect = useCallback((path: string) => {
-    setLocalDirState((prev) => {
-      const target = prev.items.find((item) => item.path === path);
-      if (!target) {
-        return prev;
-      }
-      if (projectAddMode === "local" && target.is_added_root) {
-        return prev;
-      }
-      return { ...prev, selectedPath: path };
-    });
-  }, [projectAddMode]);
-
-  const handleLocalDirAdd = useCallback(async () => {
-    const path = String(localDirState.selectedPath || "").trim();
-    if (localDirState.adding) {
-      return;
-    }
-    if (projectAddMode === "blank_location") {
-      setProjectAddMode(null);
-      handleCreateRootStart(localDirState.path);
-      return;
-    }
-    if (projectAddMode === "github_location") {
-      setProjectAddMode("github");
-      setGitHubImportState((prev) => ({
-        ...prev,
-        parentPath: localDirState.path,
-        taskId: "",
-        status: "",
-        message: "",
-        running: false,
-        submitting: false,
-        done: false,
-        error: "",
-      }));
-      return;
-    }
-    if (projectAddMode === "worktree_location") {
-      setProjectAddMode(null);
-      handleCreateWorktreeStart(localDirState.path);
-      return;
-    }
-    if (!path) {
-      return;
-    }
-    setLocalDirState((prev) => ({ ...prev, adding: true, error: "" }));
-    try {
-      const targetAddNodeId = projectAddNodeId || getActiveNode()?.id || LOCAL_NODE_ID;
-      const payload = await apiProtectedJSON<any>(appPath("/api/dirs", targetAddNodeId), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path, create: false }),
-      });
-      setLocalDirState((prev) => ({
-        ...prev,
-        adding: false,
-        selectedPath: "",
-      }));
-      setProjectAddMode(null);
-      await refreshManagedRoots();
-      const created = payload as ManagedRootPayload;
-      if (created?.id) {
-        await actionHandlersRef.current.open_dir({
-          path: created.id,
-          root: created.id,
-          isRoot: true,
-        });
-      }
-      void loadLocalDirs(localDirState.path);
-    } catch (error) {
-      setLocalDirState((prev) => ({
-        ...prev,
-        adding: false,
-        error: managedDirAddErrorMessage(error, t("root.addDirectoryFailed"), t),
-      }));
-    }
-  }, [handleCreateRootStart, handleCreateWorktreeStart, loadLocalDirs, localDirState.adding, localDirState.path, localDirState.selectedPath, projectAddMode, refreshManagedRoots, t]);
-
-  const handleGitHubImportStart = useCallback(async () => {
-    const url = String(githubImportState.url || "").trim();
-    const parentPath = String(githubImportState.parentPath || "").trim();
-    if (
-      !url ||
-      !parentPath ||
-      githubImportState.running ||
-      githubImportState.submitting
-    ) {
-      return;
-    }
-    setGitHubImportState((prev) => ({
-      ...prev,
-      submitting: true,
-      done: false,
-      error: "",
-      taskId: "",
-      status: "",
-      message: "",
-    }));
-    try {
-      const targetImportNodeId = projectAddNodeId || getActiveNode()?.id || LOCAL_NODE_ID;
-      const payload = await apiProtectedJSON<any>(appPath("/api/imports/github", targetImportNodeId), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url, parent_path: parentPath }),
-      });
-      setGitHubImportState((prev) => ({
-        ...prev,
-        taskId: String(payload?.task_id || ""),
-        status: "pending",
-        message: t("projectAdd.cloning"),
-        submitting: false,
-        running: true,
-        done: false,
-        error: "",
-      }));
-    } catch (error) {
-      setGitHubImportState((prev) => ({
-        ...prev,
-        submitting: false,
-        running: false,
-        done: false,
-        error: error instanceof Error ? error.message : t("root.githubImportFailed"),
-      }));
-    }
-  }, [githubImportState.parentPath, githubImportState.running, githubImportState.submitting, githubImportState.url, t]);
-
-  const projectAddOverlay = projectAddMode ? (
-    <div ref={projectAddPopoverRef}>
-      <ProjectAddPopover
-        mode={projectAddMode}
-        onSelectMode={() => setProjectAddMode("mode")}
-        onSelectLocal={handleOpenLocalProjectAdd}
-        onSelectBlankLocation={handleOpenBlankProjectLocation}
-        onSelectGitHubLocation={handleOpenGitHubProjectAdd}
-        onSelectGitHub={handleOpenGitHubProjectAdd}
-        onSelectBlank={handleSelectBlankProject}
-        localState={localDirState}
-        selectedNodeId={projectAddNodeId}
-        onSelectedNodeChange={(id) => {
-          setProjectAddNodeId(id);
-          void loadLocalDirs("", id);
-        }}
-        onLocalNavigate={(path) => {
-          void loadLocalDirs(path, projectAddNodeId);
-        }}
-        onLocalSelect={handleLocalDirSelect}
-        onLocalAdd={() => {
-          void handleLocalDirAdd();
-        }}
-        localActionLabel={
-          projectAddMode === "local" ? t("projectAdd.add") : t("projectAdd.placeHere")
-        }
-        localDisabledAddedRoot={projectAddMode === "local"}
-        localBrowseOnly={
-          projectAddMode === "blank_location" ||
-          projectAddMode === "github_location" ||
-          projectAddMode === "worktree_location"
-        }
-        githubState={githubImportState}
-        onGitHubUrlChange={(value) =>
-          setGitHubImportState((prev) => ({
-            ...prev,
-            url: value,
-            error: "",
-            done: false,
-          }))
-        }
-        onGitHubImport={() => {
-          void handleGitHubImportStart();
-        }}
-      />
-    </div>
-  ) : null;
-
   const handleRemoveCurrentRoot = useCallback(async () => {
     const rootID = currentRootIdRef.current;
     if (!rootID) {
@@ -9153,7 +6562,7 @@ export function App({ onGoHome }: AppProps) {
       reportError("root.delete_failed", t("root.missingPathRemove"));
       return;
     }
-    if (!window.confirm(t("root.confirmRemove", { name: rootID }))) {
+    if (!await confirmDialog({ message: t("root.confirmRemove", { name: rootID }), danger: true })) {
       return;
     }
     try {
@@ -9178,7 +6587,7 @@ export function App({ onGoHome }: AppProps) {
     if (!rootID) {
       return;
     }
-    if (!window.confirm(t("worktree.confirmRemove", { name: rootID }))) {
+    if (!await confirmDialog({ message: t("worktree.confirmRemove", { name: rootID }), danger: true })) {
       return;
     }
     try {
@@ -9594,19 +7003,6 @@ export function App({ onGoHome }: AppProps) {
     if (!currentRootId) return;
     sessionService.connect(currentRootId, getNodeIdForRoot(currentRootId));
   }, [currentRootId, currentRootNodeId]);
-
-  useEffect(() => {
-    if (sessionListMode !== "import") return;
-    const rootID = currentRootIdRef.current || "";
-    if (!rootID || !externalImportAgent) return;
-    setSelectedExternalImportKeys(new Set());
-    void loadExternalSessions(rootID, externalImportAgent, { replace: true });
-  }, [
-    sessionListMode,
-    externalImportAgent,
-    externalFilterBound,
-    loadExternalSessions,
-  ]);
 
   useEffect(
     () => () => {
@@ -10469,34 +7865,7 @@ export function App({ onGoHome }: AppProps) {
           }
           if (rootID === currentRootIdRef.current) {
             void scheduleSessionListReload(rootID, { replace: true });
-            if (
-              sessionListModeRef.current === "import" &&
-              agentSessionID &&
-              (!agentName || agentName === externalImportAgentRef.current)
-            ) {
-              setImportingExternalSessionKeys((current) => {
-                if (!current.has(agentSessionID)) {
-                  return current;
-                }
-                const next = new Set(current);
-                next.delete(agentSessionID);
-                return next;
-              });
-              setSelectedExternalImportKeys((current) => {
-                if (!current.has(agentSessionID)) {
-                  return current;
-                }
-                const next = new Set(current);
-                next.delete(agentSessionID);
-                return next;
-              });
-              setConfirmingExternalImport(false);
-              if (externalImportAgentRef.current) {
-                void loadExternalSessions(rootID, externalImportAgentRef.current, {
-                  replace: true,
-                });
-              }
-            }
+            handleImportedSessionConfirmed(agentSessionID, agentName);
           }
           if (multiProjectSessionsEnabled) {
             void loadMultiProjectSessionGroups();
@@ -12325,197 +9694,6 @@ export function App({ onGoHome }: AppProps) {
     />
   );
 
-  const worktreeBranchSelector =
-    creatingRootKind === "worktree" ? (
-      <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
-        <select
-          value={worktreeBranchMode === "new" ? "__new__" : worktreeBranch}
-          disabled={creatingRootBusy}
-          onChange={(event) => {
-            const value = event.target.value;
-            if (value === "__new__") {
-              setWorktreeBranchMode("new");
-              setWorktreeBranch("");
-              return;
-            }
-            setWorktreeBranchMode("existing");
-            setWorktreeBranch(value);
-          }}
-          style={{
-            width: "100%",
-            borderRadius: "7px",
-            border: "1px solid var(--border-color)",
-            background: "var(--menu-bg)",
-            color: "var(--text-primary)",
-            fontSize: "12px",
-            padding: "6px 8px",
-            outline: "none",
-          }}
-        >
-          <option value="__new__">{t("worktree.createBranch")}</option>
-          {worktreeBranches.branches.map((branch) => (
-            <option key={branch.name} value={branch.name}>
-              {branch.current ? `${branch.name} ${t("worktree.current")}` : branch.name}
-            </option>
-          ))}
-        </select>
-        {worktreeBranchesLoading ? (
-          <span style={{ fontSize: "11px", color: "var(--text-secondary)" }}>{t("worktree.loadingBranches")}</span>
-        ) : worktreeBranchError ? (
-          <span style={{ fontSize: "11px", color: "#b45309" }}>{worktreeBranchError}</span>
-        ) : null}
-      </div>
-    ) : null;
-
-  const worktreeCreateOverlay =
-    creatingRootKind === "worktree" && creatingRootName !== null ? (
-      <div
-        ref={worktreeCreatePopoverRef}
-        style={{
-          width: "248px",
-          maxWidth: "calc(100vw - 32px)",
-          padding: "10px",
-          borderRadius: "12px",
-          border: "1px solid var(--border-color)",
-          background: "var(--menu-bg)",
-          boxShadow: "0 12px 30px rgba(15, 23, 42, 0.14)",
-          display: "flex",
-          flexDirection: "column",
-          gap: "10px",
-        }}
-      >
-        <div style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-primary)" }}>
-          worktree
-        </div>
-        <input
-          value={creatingRootName}
-          disabled={creatingRootBusy}
-          autoFocus
-          onChange={(event) => setCreatingRootName(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") {
-              event.preventDefault();
-              void handleCreateRootSubmit();
-            } else if (event.key === "Escape") {
-              event.preventDefault();
-              handleCreateRootCancel();
-            }
-          }}
-          style={{
-            width: "100%",
-            borderRadius: "8px",
-            border: "1px solid var(--border-color)",
-            background: "transparent",
-            color: "var(--text-primary)",
-            fontSize: "12px",
-            padding: "8px 10px",
-            outline: "none",
-            boxSizing: "border-box",
-          }}
-        />
-        {worktreeBranchSelector}
-        <div style={{ display: "flex" }}>
-          <button
-            type="button"
-            disabled={creatingRootBusy || !String(creatingRootName || "").trim()}
-            onClick={() => {
-              void handleCreateRootSubmit();
-            }}
-            style={{
-              width: "100%",
-              border: "none",
-              background: creatingRootBusy || !String(creatingRootName || "").trim()
-                ? "rgba(59, 130, 246, 0.65)"
-                : "var(--accent-color)",
-              color: "#fff",
-              borderRadius: "8px",
-              padding: "8px 10px",
-              fontSize: "12px",
-              fontWeight: 600,
-              cursor: creatingRootBusy || !String(creatingRootName || "").trim()
-                ? "not-allowed"
-                : "pointer",
-            }}
-          >
-            {creatingRootBusy ? t("worktree.processing") : t("worktree.create")}
-          </button>
-        </div>
-      </div>
-    ) : null;
-
-  const worktreeSwitchOverlay =
-    worktreeSwitchOpen ? (
-      <div
-        ref={worktreeSwitchPopoverRef}
-        style={{
-          width: "248px",
-          maxWidth: "calc(100vw - 32px)",
-          maxHeight: "360px",
-          padding: "8px",
-          borderRadius: "12px",
-          border: "1px solid var(--border-color)",
-          background: "var(--menu-bg)",
-          boxShadow: "0 12px 30px rgba(15, 23, 42, 0.14)",
-          display: "flex",
-          flexDirection: "column",
-          gap: "6px",
-          overflow: "auto",
-        }}
-      >
-        <div style={{ padding: "4px 6px 6px", fontSize: "12px", fontWeight: 600, color: "var(--text-primary)" }}>
-          {t("worktree.switchTitle")}
-        </div>
-        {worktreeSwitchLoading ? (
-          <div style={{ padding: "8px 6px", fontSize: "12px", color: "var(--text-secondary)" }}>{t("common.loading")}</div>
-        ) : worktreeSwitchError ? (
-          <div style={{ padding: "8px 6px", fontSize: "12px", color: "#b45309" }}>{worktreeSwitchError}</div>
-        ) : worktreeSwitchItems.length === 0 ? (
-          <div style={{ padding: "8px 6px", fontSize: "12px", color: "var(--text-secondary)" }}>{t("worktree.noSwitchable")}</div>
-        ) : worktreeSwitchItems.map((item) => {
-          const managed = findManagedRootByPath(item.path);
-          const active = item.current || managed?.id === currentRootId;
-          const busy = switchingWorktreePath === item.path;
-          const name = String(item.path || "").replace(/[\\/]+$/, "").split(/[\\/]/).filter(Boolean).pop() || item.path;
-          return (
-            <button
-              key={item.path}
-              type="button"
-              disabled={active || !!switchingWorktreePath}
-              onClick={() => {
-                void handleSwitchWorktree(item);
-              }}
-              style={{
-                width: "100%",
-                border: "none",
-                background: active ? "var(--selection-bg)" : "transparent",
-                color: active ? "var(--accent-color)" : "var(--text-primary)",
-                borderRadius: "8px",
-                padding: "8px 10px",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: "12px",
-                textAlign: "left",
-                cursor: active || switchingWorktreePath ? "default" : "pointer",
-                opacity: switchingWorktreePath && !busy ? 0.56 : 1,
-              }}
-            >
-              <span style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: "2px" }}>
-                <span style={{ fontSize: "12px", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {name}
-                </span>
-                <span style={{ fontSize: "11px", color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {item.branch || item.head?.slice(0, 8) || item.path}
-                </span>
-              </span>
-              <span style={{ fontSize: "11px", color: active ? "var(--accent-color)" : "var(--text-secondary)", flexShrink: 0 }}>
-                {busy ? "..." : active ? t("worktree.current") : managed ? t("worktree.switch") : t("worktree.join")}
-              </span>
-            </button>
-          );
-        })}
-      </div>
-    ) : null;
 
   let workspaceView: React.ReactNode;
   const gitStatusAvailable = gitStatus?.available === true;
@@ -12629,14 +9807,9 @@ export function App({ onGoHome }: AppProps) {
           refreshGitHistory(root, { waitForIncremental: true }),
         ]);
         return;
-      case "worktrees": {
-        const items = await loadProjectTreeWorktrees(root);
-        const expandedPath = expandedWorktreeByRoot[root] || "";
-        if (expandedPath && items.some((item) => item.path === expandedPath)) {
-          await loadProjectTreeWorktreeStatus(expandedPath);
-        }
+      case "worktrees":
+        await refreshProjectTreeWorktrees(root);
         return;
-      }
       case "related":
         await Promise.all([
           refreshProjectTreeRelatedFiles(),
@@ -12644,14 +9817,12 @@ export function App({ onGoHome }: AppProps) {
         ]);
     }
   }, [
-    expandedWorktreeByRoot,
     getNodeIdForRoot,
-    loadProjectTreeWorktreeStatus,
-    loadProjectTreeWorktrees,
     refreshCurrentFileContent,
     refreshGitHistory,
     refreshGitStatus,
     refreshProjectTreeRelatedFiles,
+    refreshProjectTreeWorktrees,
     refreshTreeDir,
   ]);
 
@@ -12661,11 +9832,9 @@ export function App({ onGoHome }: AppProps) {
     if (projectTreeTab !== "worktrees" || !rootID || !worktreePath) {
       return;
     }
-	    // 同一时间只展开一个工作树：整对象写入会清掉其它已展开项
-    setExpandedWorktreeByRoot({ [scopedRootKey(rootID)]: worktreePath });
-    void loadProjectTreeWorktreeStatus(worktreePath, rootID);
+    void expandProjectTreeWorktree(rootID, worktreePath);
   }, [
-    loadProjectTreeWorktreeStatus,
+    expandProjectTreeWorktree,
     projectTreeTab,
     relatedWorktree?.path,
     relatedWorktree?.root_id,
@@ -12735,12 +9904,7 @@ export function App({ onGoHome }: AppProps) {
               <button
                 type="button"
                 onClick={async () => {
-                  if (selected) {
-                    setExpandedWorktreeByRoot((prev) => ({ ...prev, [scopedRootKey(root)]: "" }));
-                    return;
-                  }
-                  setExpandedWorktreeByRoot({ [scopedRootKey(root)]: item.path });
-                  await loadProjectTreeWorktreeStatus(item.path, root);
+                  await toggleProjectTreeWorktree(root, item.path);
                 }}
                 style={{
                   width: "100%",
@@ -12956,299 +10120,62 @@ export function App({ onGoHome }: AppProps) {
     gitStatsRefreshKey,
     relatedSessionNodeId,
   );
-  const renderRootRelatedContent = (root: string): React.ReactNode => {
-    if (!root || root !== currentRootId || root !== relatedSessionRootId) {
-      return null;
-    }
-    if (!relatedSessionSnapshot && !selectedKanbanTask) {
-      return (
-        <div style={{ padding: "8px 4px", fontSize: "12px", color: "var(--text-secondary)" }}>
-          {t("session.empty")}
-        </div>
-      );
-    }
-    if (selectedSessionRelatedFiles.length === 0) {
-      return (
-        <div style={{ padding: "8px 4px", fontSize: "12px", color: "var(--text-secondary)" }}>
-          {t("session.relatedFiles", { count: 0 })}
-        </div>
-      );
-    }
-    return (
-      <div style={{ display: "flex", flexDirection: "column", gap: "4px", minWidth: 0 }}>
-        {selectedSessionRelatedFileGroups.map((group) => {
-          const isCurrentRepo =
-            !group.repoPath ||
-            normalizePath(group.repoPath) ===
-              normalizePath(managedRootByIdRef.current[root]?.root_path || "");
-          const showGroupHeader = group.repoKind === "plain" || group.head || !isCurrentRepo;
-          return (
-            <div key={group.key} style={{ display: "flex", flexDirection: "column", gap: "4px", minWidth: 0 }}>
-              {showGroupHeader ? (
-                <div
-                  title={[group.repoPath, group.head].filter(Boolean).join(" · ") || group.repoName || t("session.currentProject")}
-                  style={{
-                    padding: "3px 6px 0",
-                    fontSize: "11px",
-                    color: "var(--text-secondary)",
-                    fontFamily: group.head ? "var(--mono-font, monospace)" : undefined,
-                  }}
-                >
-                  {group.repoKind === "plain"
-                    ? `${group.repoName || t("session.currentProject")} · ${t("session.nonGit")}`
-                    : group.head
-                      ? isCurrentRepo
-                        ? `HEAD ${group.head.slice(0, 8)}`
-                        : `${group.repoName || t("session.currentProject")} · HEAD ${group.head.slice(0, 8)}`
-                      : group.repoName || t("session.currentProject")}
-                </div>
-              ) : null}
-              {group.files.map((file) => {
-          const stats = selectedRelatedFileStatsByKey[relatedFileStatKey(file)] || gitFileStatsByPath[file.path];
-          const fileSelectionKey = relatedFileSelectionKey(file);
-          const isSelected = relatedSelectedFileKey
-            ? fileSelectionKey === relatedSelectedFileKey
-            : file.path === relatedSelectedPath;
-          return (
-            <div key={`${file.head || "legacy"}:${file.path}`} style={{ display: "flex", alignItems: "center", gap: "4px", minWidth: 0 }}>
-              <button
-                type="button"
-                onClick={() => handleSelectedSessionFileClick(file)}
-                title={file.path}
-                style={{
-                  flex: 1,
-                  minWidth: 0,
-                  border: "none",
-                  background: isSelected ? "var(--selection-bg)" : "transparent",
-                  color: isSelected ? "var(--accent-color)" : "var(--text-primary)",
-                  borderRadius: "6px",
-                  padding: "5px 6px",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "7px",
-                  textAlign: "left",
-                  cursor: "pointer",
-                  fontSize: "12px",
-                  fontWeight: isSelected ? 700 : 400,
-                }}
-              >
-                <span style={{ width: "16px", display: "inline-flex", justifyContent: "center", color: "#94a3b8", flexShrink: 0 }}>
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                    <polyline points="14 2 14 8 20 8" />
-                    <line x1="16" x2="8" y1="13" y2="13" />
-                    <line x1="16" x2="8" y1="17" y2="17" />
-                  </svg>
-                </span>
-                <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {file.name}
-                </span>
-                {stats ? (
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: "5px", fontSize: "11px", color: "var(--text-secondary)", flexShrink: 0 }}>
-                    <span style={{ color: "#15803d", fontVariantNumeric: "tabular-nums" }}>+{stats.additions}</span>
-                    <span style={{ color: "#b91c1c", fontVariantNumeric: "tabular-nums" }}>-{stats.deletions}</span>
-                  </span>
-                ) : null}
-              </button>
-              <button
-                type="button"
-                aria-label={t("session.removeRelatedFile", { name: file.name || file.path })}
-                title={t("session.removeRelatedFile", { name: file.name || file.path })}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  void handleRemoveSessionRelatedFile(
-                    relatedSessionRootId,
-                    relatedSessionKey,
-                    file.path,
-                    file.head,
-                    file.repo_path,
-                    file.repo_kind,
-                  );
-                }}
-                style={{
-                  width: "18px",
-                  height: "18px",
-                  border: "none",
-                  borderRadius: "5px",
-                  background: "transparent",
-                  color: "#dc2626",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  padding: 0,
-                  cursor: "pointer",
-                  flexShrink: 0,
-                  fontSize: "13px",
-                }}
-              >
-                x
-              </button>
-            </div>
-          );
-              })}
-            </div>
-          );
-        })}
-      </div>
-    );
-  };
-  const renderRootGitContent = (root: string): React.ReactNode => {
-    const rootGitStatus = root === currentRootId ? gitStatus : gitStatusByRoot[scopedRootKey(root)] || null;
-    const rootGitHistory = root === currentRootId ? gitHistory : gitHistoryByRoot[scopedRootKey(root)] || null;
-    const rootGitStatusLoading =
-      root === currentRootId ? gitStatusLoading : gitStatusLoadingByRoot[scopedRootKey(root)] === true;
-    const rootGitHistoryLoading =
-      root === currentRootId ? gitHistoryLoading : gitHistoryLoadingByRoot[scopedRootKey(root)] === true;
-    const rootGitStatusAvailable = rootGitStatus?.available === true;
-    const rootGitHistoryAvailable = rootGitHistory?.available === true;
-    const rootGitStatusExpanded = gitStatusExpandedByRoot[scopedRootKey(root)] !== false;
-    const rootGitHistoryExpandedCommits = gitHistoryExpandedByRoot[scopedRootKey(root)] || {};
-    const rootShouldRenderGitPanel = rootGitStatusLoading || rootGitStatusAvailable;
-    const rootShouldRenderGitHistoryPanel =
-      rootGitHistoryLoading || (rootGitHistoryAvailable && (rootGitHistory?.items.length || 0) > 0);
-    if (managedRootByIdRef.current[root]?.is_git_repo !== true) {
-      return (
-        <div style={{ padding: "8px 4px", fontSize: "12px", color: "var(--text-secondary)" }}>
-          {t("git.notRepository")}
-        </div>
-      );
-    }
-    if (!rootGitStatus && !rootGitHistory && !rootGitStatusLoading && !rootGitHistoryLoading) {
-      return (
-        <button
-          type="button"
-          onClick={() => {
-            void refreshGitStatus(root);
-            void refreshGitHistory(root);
-          }}
-          style={{
-            border: "none",
-            background: "transparent",
-            color: "var(--text-secondary)",
-            borderRadius: "6px",
-            padding: "8px 4px",
-            fontSize: "12px",
-            cursor: "pointer",
-            textAlign: "left",
-            width: "100%",
-          }}
-        >
-          {t("git.loadingStatus")}
-        </button>
-      );
-    }
-    if (!rootGitStatusLoading && !rootGitHistoryLoading && !rootShouldRenderGitPanel && !rootShouldRenderGitHistoryPanel) {
-      return (
-        <div style={{ padding: "8px 4px", fontSize: "12px", color: "var(--text-secondary)" }}>
-          {t("git.emptyChangesOrHistory")}
-        </div>
-      );
-    }
-    return (
-      <div style={{ display: "flex", flexDirection: "column", gap: "14px", minWidth: 0 }}>
-        {rootShouldRenderGitPanel ? (
-          <GitStatusPanel
-            rootId={root}
-            status={rootGitStatus}
-            loading={rootGitStatusLoading}
-            compact
-            expanded={rootGitStatusExpanded}
-            onExpandedChange={(expanded) => {
-              if (!root) {
-                return;
-              }
-              setGitStatusExpandedByRoot((prev) => ({ ...prev, [scopedRootKey(root)]: expanded }));
-            }}
-            onSelectItem={(item) => {
-              if (!root) {
-                return;
-              }
-              void openGitDiff(root, item);
-            }}
-            onOpenItem={(item) => {
-              if (!root || item.is_dir === true) {
-                return;
-              }
-              actionHandlers.open({ path: item.path, root });
-            }}
-            onDiscardItem={(item) => {
-              if (!root) {
-                return;
-              }
-              return handleGitDiscardItem(root, item);
-            }}
-            onStageItem={(item) => {
-              if (!root) {
-                return;
-              }
-              return item.staged === true
-                ? handleGitUnstageItem(root, item)
-                : handleGitStageItem(root, item);
-            }}
-            onPull={() => {
-              if (!root) {
-                return;
-              }
-              return handleGitPull(root);
-            }}
-            onPush={() => {
-              if (!root) {
-                return;
-              }
-              return handleGitPush(root);
-            }}
-            onCommit={(message) => {
-              if (!root) {
-                return;
-              }
-              return handleGitCommit(root, message);
-            }}
-            onSwitchBranch={(branch) => {
-              if (!root) {
-                return;
-              }
-              return switchGitBranch(root, branch);
-            }}
-          />
-        ) : null}
-        {rootShouldRenderGitHistoryPanel ? (
-          <GitHistoryPanel
-            rootId={root}
-            items={rootGitHistory?.items || []}
-            loading={rootGitHistoryLoading}
-            loadingMore={gitHistoryLoadingMore}
-            hasMore={rootGitHistory?.has_more === true}
-            compact
-            expandedCommits={rootGitHistoryExpandedCommits}
-            onToggleCommit={(hash) => {
-              if (!root) {
-                return;
-              }
-              setGitHistoryExpandedByRoot((prev) => {
-                const current = prev[scopedRootKey(root)] || {};
-                return {
-                  ...prev,
-                  [scopedRootKey(root)]: {
-                    ...current,
-                    [hash]: current[hash] !== true,
-                  },
-                };
-              });
-            }}
-            onLoadMore={() => {
-              void loadMoreGitHistory(root);
-            }}
-            onSelectFile={(commit, item) => {
-              if (!root) {
-                return;
-              }
-              void openGitCommitDiff(root, commit, item);
-            }}
-          />
-        ) : null}
-      </div>
-    );
-  };
+  const renderRootRelatedContent = (root: string): React.ReactNode => (
+    <RootRelatedContentView
+      root={root}
+      currentRootId={currentRootId}
+      relatedSessionRootId={relatedSessionRootId}
+      relatedSessionSnapshot={relatedSessionSnapshot}
+      relatedSessionKey={relatedSessionKey}
+      relatedSelectedPath={relatedSelectedPath}
+      relatedSelectedFileKey={relatedSelectedFileKey}
+      relatedFileSelectionKey={relatedFileSelectionKey}
+      managedRootByIdRef={managedRootByIdRef}
+      selectedKanbanTask={selectedKanbanTask}
+      selectedSessionRelatedFiles={selectedSessionRelatedFiles}
+      selectedSessionRelatedFileGroups={selectedSessionRelatedFileGroups}
+      selectedRelatedFileStatsByKey={selectedRelatedFileStatsByKey}
+      gitFileStatsByPath={gitFileStatsByPath}
+      normalizePath={normalizePath}
+      handleSelectedSessionFileClick={handleSelectedSessionFileClick}
+      handleRemoveSessionRelatedFile={handleRemoveSessionRelatedFile}
+    />
+  );
+  const renderRootGitContent = (root: string): React.ReactNode => (
+    <RootGitContentView
+      root={root}
+      currentRootId={currentRootId}
+      scopedRootKey={scopedRootKey}
+      managedRootByIdRef={managedRootByIdRef}
+      gitStatus={gitStatus}
+      gitStatusByRoot={gitStatusByRoot}
+      gitStatusLoading={gitStatusLoading}
+      gitStatusLoadingByRoot={gitStatusLoadingByRoot}
+      gitHistory={gitHistory}
+      gitHistoryByRoot={gitHistoryByRoot}
+      gitHistoryLoading={gitHistoryLoading}
+      gitHistoryLoadingMore={gitHistoryLoadingMore}
+      gitHistoryLoadingByRoot={gitHistoryLoadingByRoot}
+      gitStatusExpandedByRoot={gitStatusExpandedByRoot}
+      gitHistoryExpandedByRoot={gitHistoryExpandedByRoot}
+      setGitStatusExpandedByRoot={setGitStatusExpandedByRoot}
+      setGitHistoryExpandedByRoot={setGitHistoryExpandedByRoot}
+      refreshGitStatus={refreshGitStatus}
+      refreshGitHistory={refreshGitHistory}
+      loadMoreGitHistory={loadMoreGitHistory}
+      openGitDiff={openGitDiff}
+      openGitCommitDiff={openGitCommitDiff}
+      handleGitPull={handleGitPull}
+      handleGitPush={handleGitPush}
+      handleGitCommit={handleGitCommit}
+      handleGitStageItem={handleGitStageItem}
+      handleGitUnstageItem={handleGitUnstageItem}
+      handleGitDiscardItem={handleGitDiscardItem}
+      switchGitBranch={switchGitBranch}
+      actionHandlers={actionHandlers}
+      projectSortMode={treeSortMode}
+    />
+  );
   const isAllTaskTemplateFilter = taskTemplateFilter === TASK_TEMPLATE_ALL_FILTER;
   const selectedTaskTemplateForFilter = isAllTaskTemplateFilter ? null : taskTemplates.find((template) => template.id === taskTemplateFilter) || null;
   const taskTemplateById = taskTemplates.reduce<Record<string, TaskTemplate>>((acc, template) => {
@@ -14661,251 +11588,63 @@ flexShrink: 0,
   const updateLabel = updateButtonLabel(updateState, t);
   const updateHelp = updateState.message || updateSummaryText(updateState, t);
   const updateSummary = updateSummaryText(updateState, t);
-  const sessionImportMenu = (
-    <div ref={importMenuRef} style={{ position: "relative" }}>
-      <button
-        type="button"
-        onClick={() => setImportMenuOpen((open) => !open)}
-        aria-label={t("externalImport.open")}
-        style={{
-          border: "none",
-          background: "transparent",
-          color:
-            sessionListMode === "import" && externalImportAgent
-              ? "var(--text-secondary)"
-              : "#0f766e",
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-          height: "34px",
-          minWidth: "34px",
-          borderRadius: "8px",
-          cursor: "pointer",
-          padding:
-            sessionListMode === "import" && externalImportAgent ? 0 : "0 2px",
-        }}
-      >
-        {sessionListMode === "import" && externalImportAgent ? (
-          <>
-            <AgentIcon
-              agentName={externalImportAgent}
-              style={{ width: "14px", height: "14px", display: "block" }}
-            />
-            <ChevronDownSmallIcon />
-          </>
-        ) : (
-          <ImportIcon />
-        )}
-      </button>
-      {importMenuOpen ? (
-        <div
-          style={{
-            position: "absolute",
-            top: "calc(100% + 6px)",
-            right: 0,
-            width: "260px",
-            padding: "10px",
-            borderRadius: "12px",
-            border: "1px solid var(--border-color)",
-            background: "var(--menu-bg)",
-            boxShadow: "0 12px 30px rgba(15, 23, 42, 0.14)",
-            zIndex: 40,
-            display: "flex",
-            flexDirection: "column",
-            gap: "10px",
-          }}
-        >
-          <div
-            style={{
-              fontSize: "12px",
-              fontWeight: 700,
-              color: "var(--text-primary)",
-            }}
-          >
-            {t("externalImport.chooseAgent")}
-          </div>
-          <AgentMenuList
-            agents={availableAgents}
-            selectedAgent={externalImportAgent}
-            maxHeight="180px"
-            onSelect={(agentName) => {
-              setImportMenuOpen(false);
-              setExternalImportAgent(agentName);
-              setExternalSelectedKey("");
-              void enterImportMode(agentName);
-            }}
-          />
-          <label
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "8px",
-              fontSize: "12px",
-              color: "var(--text-primary)",
-              cursor: "pointer",
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={externalFilterBound}
-              onChange={(e) => setExternalFilterBound(e.target.checked)}
-            />
-            <span>{t("externalImport.hideImported")}</span>
-          </label>
-        </div>
-      ) : null}
-    </div>
-  );
-  const sessionSidebar =
-    sessionListMode === "import" ? (
-      <ExternalSessionList
-        sessions={externalSessions}
-        selectedKey={externalSelectedKey}
-        selectedAgent={externalImportAgent}
-        importingKeys={importingExternalSessionKeys}
-        selectedImportKeys={selectedExternalImportKeys}
-        filterBound={externalFilterBound}
-        headerAction={sessionImportMenu}
-        loading={loadingExternalSessions}
-        error={externalSessionsError}
-        loadingOlder={loadingOlderExternalSessions}
-        confirmingImport={confirmingExternalImport}
-        hasMore={hasMoreExternalSessions}
-        onBack={exitImportMode}
-        onSelect={(session) =>
-          setExternalSelectedKey(
-            String(session.key || session.session_key || ""),
-          )
-        }
-        onToggleImport={toggleExternalImportSelection}
-        onToggleSelectAllImport={toggleAllExternalImportSelection}
-        onConfirmImport={() => {
-          void handleConfirmExternalImport();
-        }}
-        onLoadOlder={() => {
-          void handleLoadOlderExternalSessions();
-        }}
-      />
-    ) : multiProjectSessionsEnabled && !sessionSearchOpen && !sessionSearchResultsMode ? (
-      <MultiProjectSessionList
-        groups={multiProjectSessionGroups}
-        selectedKey={activeBoundSessionKey || ""}
-        selectedRootId={currentRootId || ""}
-        selectedNodeId={currentRootNodeId || ""}
-        projectSortMode={treeSortMode}
-        headerAction={sessionImportMenu}
-        loading={multiProjectSessionsLoading}
-        emptyText={t("externalImport.empty")}
-        syncingSessionKeys={syncingSessionKeys}
-        onSearchToggle={() => {
-          setSessionSearchOpen(true);
-          setSessionSearchResultsMode(false);
-          setSessionSearchQuery("");
-          setSessionSearchAppliedQuery("");
-          setSessionSearchResults([]);
-          setSessionSearchLoading(false);
-        }}
-        onSelect={handleSelectSessionAndClose}
-        onSync={handleSyncSession}
-        onPin={handlePinSession}
-        onRename={handleRenameSession}
-        onDelete={handleDeleteSession}
-        onLoadMoreProject={loadMoreMultiProjectSessions}
-        onLoadChildren={loadChildSessionsForParent}
-      />
-    ) : (
-      <SessionList
-        sessions={
-          sessionSearchOpen && sessionSearchResultsMode
-            ? sessionSearchResults
-            : sessions
-        }
-        selectedKey={activeBoundSessionKey || ""}
-        headerAction={sessionImportMenu}
-        searchOpen={sessionSearchOpen}
-        searchResultsMode={sessionSearchResultsMode}
-        searchQuery={sessionSearchQuery}
-        searchLoading={sessionSearchLoading}
-        syncingSessionKeys={syncingSessionKeys}
-        emptyText={
-          sessionSearchResultsMode
-            ? t("externalImport.noSearchMatch")
-            : sessionSearchOpen
-              ? ""
-            : (
-              <span>
-                {t("externalImport.emptyHintPrefix")}
-                <strong style={{ color: "var(--text-primary)", fontWeight: 800 }}>
-                  {t("externalImport.emptyHintAction")}
-                </strong>
-              </span>
-            )
-        }
-        onSearchToggle={() => {
-          setSessionSearchOpen((prev) => {
-            const next = !prev;
-            if (!next) {
-              setSessionSearchResultsMode(false);
-              setSessionSearchQuery("");
-              setSessionSearchAppliedQuery("");
-              setSessionSearchResults([]);
-              setSessionSearchLoading(false);
-            }
-            return next;
-          });
-        }}
-        onSearchQueryChange={(value) => {
-          setSessionSearchQuery(value);
-          if (!value.trim() && !sessionSearchResultsMode) {
-            setSessionSearchAppliedQuery("");
-            setSessionSearchResults([]);
-            setSessionSearchLoading(false);
-          }
-        }}
-        onSearchSubmit={executeSessionSearch}
-        onSearchBlur={() => {
-          setSessionSearchOpen(false);
-          setSessionSearchResultsMode(false);
-          setSessionSearchQuery("");
-          setSessionSearchAppliedQuery("");
-          setSessionSearchResults([]);
-          setSessionSearchLoading(false);
-        }}
-        onSearchBack={() => {
-          setSessionSearchResultsMode(false);
-          setSessionSearchQuery("");
-          setSessionSearchAppliedQuery("");
-          setSessionSearchResults([]);
-          setSessionSearchLoading(false);
-          setSessionSearchOpen(false);
-        }}
-        onSelect={handleSelectSessionAndClose}
-        onSync={handleSyncSession}
-        onPin={handlePinSession}
-        onRename={handleRenameSession}
-        onDelete={handleDeleteSession}
-        onLoadChildren={
-          sessionSearchOpen && sessionSearchResultsMode
-            ? undefined
-            : loadChildSessionsForParent
-        }
-        onLoadOlder={
-          sessionSearchOpen && sessionSearchResultsMode
-            ? undefined
-            : handleLoadOlderSessions
-        }
-        loadingOlder={
-          sessionSearchOpen && sessionSearchResultsMode
-            ? false
-            : loadingOlderSessions
-        }
-        hasMore={
-          sessionSearchOpen && sessionSearchResultsMode
-            ? false
-            : hasMoreSessions
-        }
-      />
-    );
+
+  const { sessionImportMenu, sessionSidebar } = useSessionSidebarView({
+    sessionListMode,
+    importMenuRef,
+    importMenuOpen,
+    setImportMenuOpen,
+    availableAgents,
+    externalImportAgent,
+    setExternalImportAgent,
+    setExternalSelectedKey,
+    enterImportMode,
+    externalFilterBound,
+    setExternalFilterBound,
+    externalSessions,
+    externalSelectedKey,
+    importingExternalSessionKeys,
+    selectedExternalImportKeys,
+    loadingExternalSessions,
+    externalSessionsError,
+    loadingOlderExternalSessions,
+    confirmingExternalImport,
+    hasMoreExternalSessions,
+    exitImportMode,
+    toggleExternalImportSelection,
+    toggleAllExternalImportSelection,
+    handleConfirmExternalImport,
+    handleLoadOlderExternalSessions,
+    multiProjectSessionsEnabled,
+    sessionSearchOpen,
+    sessionSearchResultsMode,
+    multiProjectSessionGroups,
+    activeBoundSessionKey,
+    currentRootId,
+    currentRootNodeId,
+    treeSortMode,
+    multiProjectSessionsLoading,
+    syncingSessionKeys,
+    handleSelectSessionAndClose,
+    handleSyncSession,
+    handlePinSession,
+    handleRenameSession,
+    handleDeleteSession,
+    loadMoreMultiProjectSessions,
+    loadChildSessionsForParent,
+    sessionSearchResults,
+    sessions,
+    sessionSearchQuery,
+    sessionSearchLoading,
+    toggleSessionSearch,
+    handleSearchQueryChange,
+    executeSessionSearch,
+    closeSessionSearch,
+    openSessionSearch,
+    handleLoadOlderSessions,
+    loadingOlderSessions,
+    hasMoreSessions,
+  });
 
   return (
     <>
@@ -15870,375 +12609,7 @@ flexShrink: 0,
         />
       ) : null}
       <ToastContainer />
+      <DialogHost />
     </>
-  );
-}
-
-function ImportIcon() {
-  return (
-    <svg
-      width="20"
-      height="20"
-      viewBox="0 0 24 24"
-      fill="currentColor"
-      aria-hidden="true"
-    >
-      <path d="m14 12l-4-4v3H2v2h8v3m10 2V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v3h2V6h12v12H6v-3H4v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2" />
-    </svg>
-  );
-}
-
-function EditPencilIcon() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path
-        d="M4 20h4.2L18.7 9.5a2.1 2.1 0 0 0 0-3L17.5 5.3a2.1 2.1 0 0 0-3 0L4 15.8V20Z"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path
-        d="m13.5 6.3 4.2 4.2"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
-
-function HorizontalDotsIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-      <circle cx="5" cy="12" r="1.8" />
-      <circle cx="12" cy="12" r="1.8" />
-      <circle cx="19" cy="12" r="1.8" />
-    </svg>
-  );
-}
-
-function PlusSmallIcon() {
-  return (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
-      <path d="M12 5v14" />
-      <path d="M5 12h14" />
-    </svg>
-  );
-}
-
-function CheckIconSmall() {
-  return (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path d="m5 12 4 4L19 6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-function TaskCompleteIcon() {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
-      <path d="M0 0h16v16H0z" fill="none" />
-      <path fill="currentColor" fillRule="evenodd" d="M3 13.5a.5.5 0 0 1-.5-.5V3a.5.5 0 0 1 .5-.5h9.25a.75.75 0 0 0 0-1.5H3a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9.75a.75.75 0 0 0-1.5 0V13a.5.5 0 0 1-.5.5zm12.78-8.82a.75.75 0 0 0-1.06-1.06L9.162 9.177 7.289 7.241a.75.75 0 1 0-1.078 1.043l2.403 2.484a.75.75 0 0 0 1.07.01z" clipRule="evenodd" />
-    </svg>
-  );
-}
-
-function TaskQueuedSpinnerIcon() {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2.5"
-      strokeLinecap="round"
-      aria-hidden="true"
-      style={{ animation: "mindfs-update-spin 0.9s linear infinite" }}
-    >
-      <path d="M21 12a9 9 0 1 1-6.2-8.56" />
-    </svg>
-  );
-}
-
-function TaskRunNowIcon() {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      aria-hidden="true"
-      style={{ display: "block", transform: "translateX(-1px) scale(1.06)", transformOrigin: "center" }}
-    >
-      <path d="M0 0h24v24H0z" fill="none" />
-      <path
-        fill="currentColor"
-        d="M14.5 4h.005M14.5 4L12 10l5 2.898L9.5 20l2.5-6l-5-2.9zm0-2a2.02 2.02 0 0 0-1.379.551L5.624 9.646a2 2 0 0 0-.61 1.686c.072.626.437 1.182.982 1.498l3.482 2.021l-1.826 4.381a2.003 2.003 0 0 0 1.847 2.77c.498 0 .993-.186 1.375-.548l7.5-7.103a2 2 0 0 0 .61-1.685a2 2 0 0 0-.982-1.498L14.52 9.15l1.789-4.293A2 2 0 0 0 14.5 2"
-      />
-    </svg>
-  );
-}
-
-function TaskSessionErrorIcon() {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2.2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <circle cx="12" cy="12" r="9" />
-      <path d="M12 7v6" />
-      <path d="M12 17h.01" />
-    </svg>
-  );
-}
-
-function DeleteIcon() {
-  return (
-    <svg
-      width="13"
-      height="13"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <polyline points="3 6 5 6 21 6" />
-      <path d="M19 6l-1 14H6L5 6" />
-      <path d="M10 11v6" />
-      <path d="M14 11v6" />
-      <path d="M9 6V4h6v2" />
-    </svg>
-  );
-}
-
-function taskTemplateMenuItemStyle(disabled = false): React.CSSProperties {
-  return {
-    width: "100%",
-    minHeight: "30px",
-    border: "none",
-    borderRadius: "8px",
-    background: "transparent",
-    color: "var(--text-primary)",
-    display: "flex",
-    alignItems: "center",
-    gap: "8px",
-    padding: "6px 8px",
-    textAlign: "left",
-    fontSize: "12px",
-    cursor: disabled ? "not-allowed" : "pointer",
-    opacity: disabled ? 0.45 : 1,
-    boxSizing: "border-box",
-  };
-}
-
-function taskCardIconButtonStyle(tone: "default" | "accent" | "success" | "danger" | "warning" = "default"): React.CSSProperties {
-  return {
-    width: "22px",
-    height: "22px",
-    border: "none",
-    borderRadius: "6px",
-    background: "transparent",
-    color: tone === "accent" ? "var(--accent-color)" : tone === "success" ? "#16a34a" : tone === "danger" ? "#dc2626" : tone === "warning" ? "#d97706" : "var(--text-secondary)",
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    cursor: "pointer",
-    padding: 0,
-  };
-}
-
-function taskAuxBadgeStyle(attention = false): React.CSSProperties {
-  return {
-    width: "18px",
-    height: "18px",
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: "5px",
-    background: attention ? "rgba(239, 68, 68, 0.10)" : "transparent",
-    color: "var(--text-secondary)",
-    animation: attention ? "mindfs-task-ask-user-pulse 2.2s ease-in-out infinite" : "none",
-  };
-}
-
-function taskWorktreeTagStyle(enabled: boolean): React.CSSProperties {
-  return {
-    flex: "0 0 auto",
-    marginLeft: "auto",
-    display: "inline-flex",
-    alignItems: "center",
-    gap: "1px",
-    border: enabled ? "1px solid rgba(22, 163, 74, 0.28)" : "1px solid rgba(217, 119, 6, 0.28)",
-    borderRadius: "4px",
-    background: enabled ? "rgba(22, 163, 74, 0.08)" : "rgba(217, 119, 6, 0.08)",
-    color: enabled ? "#15803d" : "#b45309",
-    fontSize: "9px",
-    fontWeight: 800,
-    lineHeight: "12px",
-    padding: enabled ? "0 4px" : "0 3px 0 2px",
-  };
-}
-
-function hexToRgbaApp(hex: string, alpha: number): string {
-  const h = String(hex || "").trim().replace(/^#/, "");
-  const fallback = `rgba(37, 99, 235, ${alpha})`;
-  if (h.length === 3) {
-    const r = parseInt(h[0] + h[0], 16);
-    const g = parseInt(h[1] + h[1], 16);
-    const b = parseInt(h[2] + h[2], 16);
-    if (Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b)) return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-    return fallback;
-  }
-  if (h.length === 6) {
-    const r = parseInt(h.slice(0, 2), 16);
-    const g = parseInt(h.slice(2, 4), 16);
-    const b = parseInt(h.slice(4, 6), 16);
-    if (Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b)) return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-  }
-  if (/^rgba?\(/.test(String(hex || ""))) return String(hex);
-  return fallback;
-}
-
-function taskReplyPulseStyle(color?: string | null): React.CSSProperties {
-  const c = String(color || "#2563eb").trim() || "#2563eb";
-  return {
-    position: "absolute",
-    top: "6px",
-    right: "6px",
-    width: "8px",
-    height: "8px",
-    borderRadius: "999px",
-    boxSizing: "border-box",
-    border: `1.5px solid ${c}`,
-    background: c,
-    animation: "mindfs-bound-pulse 2.2s ease-in-out infinite",
-    boxShadow: `0 0 0 1.5px ${hexToRgbaApp(c, 0.14)}`,
-    pointerEvents: "none",
-  };
-}
-
-function TaskPlanAuxIcon({ color }: { color?: string } = {}) {
-  const c = String(color || "#2563eb").trim() || "#2563eb";
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path d="M7 6h10M7 12h10M7 18h6" stroke={c} strokeWidth="2" strokeLinecap="round" />
-      <path d="M4 6h.01M4 12h.01M4 18h.01" stroke={c} strokeWidth="3" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-function TaskExpandIcon({ collapsed }: { collapsed: boolean }) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      width="13"
-      height="13"
-      viewBox="0 0 16 16"
-      aria-hidden="true"
-      style={{
-        display: "block",
-        transform: collapsed ? "none" : "rotate(180deg)",
-      }}
-    >
-      <path d="M0 0h16v16H0z" fill="none" />
-      <path fill="currentColor" d="M12.146 7.146a.5.5 0 0 1 .708.708l-4.5 4.5a.5.5 0 0 1-.708 0l-4.5-4.5a.5.5 0 1 1 .708-.708L8 11.293zm0-4a.5.5 0 0 1 .708.708l-4.5 4.5a.5.5 0 0 1-.708 0l-4.5-4.5a.5.5 0 1 1 .708-.708L8 7.293z" />
-    </svg>
-  );
-}
-
-function TaskGroupChevronIcon({ collapsed }: { collapsed: boolean }) {
-  return (
-    <span
-      aria-hidden="true"
-      style={{
-        flexShrink: 0,
-        transform: collapsed ? "rotate(0deg)" : "rotate(90deg)",
-        transition: "transform 0.2s",
-        color: "currentColor",
-        display: "inline-flex",
-        alignItems: "center",
-      }}
-    >
-      <svg
-        width="12"
-        height="12"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2.25"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <polyline points="9 18 15 12 9 6" />
-      </svg>
-    </span>
-  );
-}
-
-function RunNowIcon() {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      width="13"
-      height="13"
-      viewBox="0 0 24 24"
-      aria-hidden="true"
-    >
-      <path d="M0 0h24v24H0z" fill="none" />
-      <path
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        d="M20.409 9.353a2.998 2.998 0 0 1 0 5.294L7.597 21.614C5.534 22.737 3 21.277 3 18.968V5.033c0-2.31 2.534-3.769 4.597-2.648z"
-      />
-    </svg>
-  );
-}
-
-function SyncIcon({ style }: { style?: React.CSSProperties }) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      width="13"
-      height="13"
-      viewBox="0 0 24 24"
-      aria-hidden="true"
-      style={style}
-    >
-      <path
-        fill="currentColor"
-        d="M19.91 15.51h-4.53a1 1 0 0 0 0 2h2.4A8 8 0 0 1 4 12a1 1 0 0 0-2 0a10 10 0 0 0 16.88 7.23V21a1 1 0 0 0 2 0v-4.5a1 1 0 0 0-.97-.99M12 2a10 10 0 0 0-6.88 2.77V3a1 1 0 0 0-2 0v4.5a1 1 0 0 0 1 1h4.5a1 1 0 0 0 0-2h-2.4A8 8 0 0 1 20 12a1 1 0 0 0 2 0A10 10 0 0 0 12 2"
-      />
-    </svg>
-  );
-}
-
-function ChevronDownSmallIcon() {
-  return (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="m6 9 6 6 6-6" />
-    </svg>
   );
 }

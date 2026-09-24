@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { AgentSelector } from "./AgentSelector";
-import { has1MSuffix, with1MSuffix } from "./ActionBar";
+import { has1MSuffix, with1MSuffix } from "./action/modelUtils";
 import { AgentIcon } from "./AgentIcon";
 import {
   deleteStageTemplate,
