@@ -6451,16 +6451,17 @@ export function App({ onGoHome }: AppProps) {
     setGitDiff(null);
   }, [currentRootId, currentRootNodeId, refreshGitHistory, refreshGitStatus]);
 
-  useEffect(() => {
-    if (!currentRootId) return;
-    let cancelled = false;
+  // 2026-09 App.tsx 拆分：34 个 WS 事件处理器整体搬进 useMemo，订阅器只剩「派发」这一件事。
+  // 事件回调全同步、无 await，且没有「值变了才动作」的守卫比较，故经 ref 读最新闭包不改变行为。
+  const cancelledRef = useRef(false);
+  const wsHandlers = useMemo(() => {
     const reloadSessionForReplay = async (
       rootID: string,
       sessionKey: string,
     ) => {
       if (!rootID || !sessionKey) return;
       const restored = await restoreActiveSession(rootID, sessionKey);
-      if (cancelled) return;
+      if (cancelledRef.current) return;
       if (!restored) return;
       const cacheKey = rootSessionKey(rootID, sessionKey);
       loadedSessionRef.current[cacheKey] = true;
@@ -6550,7 +6551,7 @@ export function App({ onGoHome }: AppProps) {
         sessionKey,
         getNodeIdForRoot(rootID),
       );
-      if (cancelled) return;
+      if (cancelledRef.current) return;
       await setCachedSessionRelatedFiles(rootID, sessionKey, relatedFiles, getNodeIdForRoot(rootID));
       updateSessionRelatedFilesForKey(rootID, sessionKey, relatedFiles);
     };
@@ -6698,10 +6699,10 @@ export function App({ onGoHome }: AppProps) {
             content: pending.message,
             timestamp: pending.timestamp,
             model: pending.model,
-	            mode: pending.agentMode,
-	            effort: pending.effort,
-	            fast_service: pending.fastService || "",
-	            shell: pending.shell || "",
+              mode: pending.agentMode,
+              effort: pending.effort,
+              fast_service: pending.fastService || "",
+              shell: pending.shell || "",
           };
           const cached =
             sessionCacheRef.current[ck] ||
@@ -6710,10 +6711,10 @@ export function App({ onGoHome }: AppProps) {
               type: pending.mode,
               agent: pending.agent,
               model: pending.model,
-	              mode: pending.agentMode,
-	              effort: pending.effort,
-	              fast_service: pending.fastService || "",
-	              shell: pending.shell || "",
+                mode: pending.agentMode,
+                effort: pending.effort,
+                fast_service: pending.fastService || "",
+                shell: pending.shell || "",
               name: pendingName,
               created_at: pending.timestamp,
               updated_at: pending.timestamp,
@@ -6771,10 +6772,10 @@ export function App({ onGoHome }: AppProps) {
               ? {
                   agent: pending.agent,
                   model: pending.model,
-	                  mode: pending.agentMode,
-	                  effort: pending.effort,
-	                  fast_service: pending.fastService || "",
-	                }
+                    mode: pending.agentMode,
+                    effort: pending.effort,
+                    fast_service: pending.fastService || "",
+                  }
               : undefined,
           );
           break;
@@ -7166,13 +7167,11 @@ export function App({ onGoHome }: AppProps) {
         ],
       });
     };
-    const unsubscribeEvents = sessionService.subscribeEvents((event) => {
-      const payload = (event.payload || {}) as any;
-      switch (event.type) {
-        case "ws.connecting":
+    return {
+      "ws.connecting": (event: any, payload: any) => {
           setStatus("connecting");
-          break;
-        case "ws.connected":
+      },
+      "ws.connected": (event: any, payload: any) => {
           setStatus("connected");
           void refreshManagedRoots();
           if (currentRootIdRef.current) {
@@ -7187,11 +7186,11 @@ export function App({ onGoHome }: AppProps) {
             void loadMultiProjectSessionGroups();
           }
           replayTargetsForAllRoots();
-          break;
-        case "ws.reconnecting":
+      },
+      "ws.reconnecting": (event: any, payload: any) => {
           setStatus("reconnecting");
-          break;
-        case "ws.reconnected":
+      },
+      "ws.reconnected": (event: any, payload: any) => {
           setStatus("connected");
           void refreshManagedRoots();
           if (currentRootIdRef.current) {
@@ -7206,11 +7205,11 @@ export function App({ onGoHome }: AppProps) {
             void loadMultiProjectSessionGroups();
           }
           replayTargetsForAllRoots();
-          break;
-        case "ws.closed":
+      },
+      "ws.closed": (event: any, payload: any) => {
           setStatus(currentRootIdRef.current ? "reconnecting" : "disconnected");
-          break;
-        case "nodes.changed":
+      },
+      "nodes.changed": (event: any, payload: any) => {
           void syncNodesFromServer().then((ns) => { try { applyNodesFromServer(ns as any); } catch {} }).catch(() => {});
           void loadManagedRootPayloads().then(() => {
             if (multiProjectSessionsEnabled) {
@@ -7218,8 +7217,8 @@ export function App({ onGoHome }: AppProps) {
               void loadMultiProjectSessionGroups();
             }
           }).catch(() => {});
-          break;
-        case "root.changed":
+      },
+      "root.changed": (event: any, payload: any) => {
           if (
             payload?.action === "renamed" &&
             typeof payload?.old_root_id === "string" &&
@@ -7230,7 +7229,7 @@ export function App({ onGoHome }: AppProps) {
                 ? ({ ...(payload.root as ManagedRootPayload), id: payload.root_id } as ManagedRootPayload)
                 : null;
             if (!rootPayload) {
-              break;
+              return;
             }
             applyManagedRootRename(payload.old_root_id, rootPayload);
             if (currentRootIdRef.current === payload.old_root_id) {
@@ -7242,7 +7241,7 @@ export function App({ onGoHome }: AppProps) {
                 preservePluginQuery: true,
               });
             }
-            break;
+            return;
           }
           if (
             payload?.action === "display_name_changed" &&
@@ -7254,7 +7253,7 @@ export function App({ onGoHome }: AppProps) {
                 ? ({ ...(payload.root as ManagedRootPayload), id: rootId } as ManagedRootPayload)
                 : null;
             if (!rootPayload || !rootId) {
-              break;
+              return;
             }
             const merged = { ...(managedRootByIdRef.current[rootId] || {} as ManagedRootPayload), ...rootPayload, id: rootId } as ManagedRootPayload;
             const nextById = { ...managedRootByIdRef.current, [rootId]: merged };
@@ -7271,11 +7270,11 @@ export function App({ onGoHome }: AppProps) {
                   : g,
               ),
             );
-            break;
+            return;
           }
           void refreshManagedRoots();
-          break;
-        case "session.imported": {
+      },
+      "session.imported": (event: any, payload: any) => {
           const rootID =
             typeof payload?.root_id === "string" ? payload.root_id : "";
           const agentName =
@@ -7285,7 +7284,7 @@ export function App({ onGoHome }: AppProps) {
               ? payload.agent_session_id.trim()
               : "";
           if (!rootID) {
-            break;
+            return;
           }
           if (rootID === currentRootIdRef.current) {
             void scheduleSessionListReload(rootID, { replace: true });
@@ -7294,9 +7293,9 @@ export function App({ onGoHome }: AppProps) {
           if (multiProjectSessionsEnabled) {
             void loadMultiProjectSessionGroups();
           }
-          break;
-        }
-        case "session.created": {
+          return;
+      },
+      "session.created": (event: any, payload: any) => {
           const rootID =
             typeof payload?.root_id === "string" ? payload.root_id : "";
           if (rootID && rootID === currentRootIdRef.current) {
@@ -7305,24 +7304,24 @@ export function App({ onGoHome }: AppProps) {
           if (rootID && multiProjectSessionsEnabled) {
             void loadMultiProjectSessionGroups();
           }
-          break;
-        }
-        case "session.stream":
+          return;
+      },
+      "session.stream": (event: any, payload: any) => {
           handleSessionStream(payload);
-          break;
-        case "session.slash_command.stream":
+      },
+      "session.slash_command.stream": (event: any, payload: any) => {
           handleSlashCommandStream(payload);
-          break;
-        case "session.slash_command.done":
+      },
+      "session.slash_command.done": (event: any, payload: any) => {
           handleSlashCommandDone(payload);
-          break;
-        case "session.queue.updated": {
+      },
+      "session.queue.updated": (event: any, payload: any) => {
           const rootID =
             typeof payload?.root_id === "string" ? payload.root_id : "";
           const sessionKey =
             typeof payload?.session_key === "string" ? payload.session_key : "";
           if (!rootID || !sessionKey) {
-            break;
+            return;
           }
           const incomingQueue = Array.isArray(payload?.queue)
             ? (payload.queue.filter(
@@ -7350,20 +7349,20 @@ export function App({ onGoHome }: AppProps) {
           }
           queuedMessagesBySessionRef.current[cacheKey] = queue;
           setQueueVersion((v) => v + 1);
-          break;
-        }
-        case "session.accepted": {
+          return;
+      },
+      "session.accepted": (event: any, payload: any) => {
           {
             const wsPayloadNid = String((payload as any)?._nodeId || (payload as any)?.nodeId || "").trim();
             const wsCurNid = String(currentRootNodeIdRef.current || "").trim();
-            if (wsPayloadNid && wsCurNid && wsPayloadNid !== wsCurNid) { break; }
+            if (wsPayloadNid && wsCurNid && wsPayloadNid !== wsCurNid) { return; }
           }
           const requestId =
             typeof payload?.request_id === "string" ? payload.request_id : "";
           const pending = pendingRequestRef.current[requestId];
           if (!requestId || !pending) {
             console.warn("[session/ws] accepted_without_pending", { requestId, payloadSessionKey: typeof payload?.session_key === "string" ? payload.session_key : null });
-            break;
+            return;
           }
           console.info("[session/ws] accepted", { requestId, rootId: pending.rootId, sessionKey: pending.sessionKey || null, tempKey: pending.tempKey || null });
           delete pendingRequestRef.current[requestId];
@@ -7456,13 +7455,13 @@ export function App({ onGoHome }: AppProps) {
               setDrawerSessionForRoot(pending.rootId, accepted);
             }
           }
-          break;
-        }
-        case "session.error": {
+          return;
+      },
+      "session.error": (event: any, payload: any) => {
           {
             const wsPayloadNid = String((payload as any)?._nodeId || (payload as any)?.nodeId || "").trim();
             const wsCurNid = String(currentRootNodeIdRef.current || "").trim();
-            if (wsPayloadNid && wsCurNid && wsPayloadNid !== wsCurNid) { break; }
+            if (wsPayloadNid && wsCurNid && wsPayloadNid !== wsCurNid) { return; }
           }
           const requestId =
             typeof payload?.request_id === "string" ? payload.request_id : "";
@@ -7471,7 +7470,7 @@ export function App({ onGoHome }: AppProps) {
             : null;
           if (!requestId || !pending) {
             console.warn("[session/ws] error_without_pending", { requestId, payloadSessionKey: typeof payload?.session_key === "string" ? payload.session_key : null });
-            break;
+            return;
           }
           console.warn("[session/ws] error", { requestId, rootId: pending.rootId, sessionKey: pending.sessionKey || null, tempKey: pending.tempKey || null });
           delete pendingRequestRef.current[requestId];
@@ -7499,12 +7498,12 @@ export function App({ onGoHome }: AppProps) {
               exchanges,
             } as Session);
           }
-          break;
-        }
-        case "session.done": {
+          return;
+      },
+      "session.done": (event: any, payload: any) => {
           const wsPayloadNid = String((payload as any)?._nodeId || (payload as any)?.nodeId || (payload as any)?.session?._nodeId || "").trim();
           const wsCurNid = String(currentRootNodeIdRef.current || "").trim();
-          if (wsPayloadNid && wsCurNid && wsPayloadNid !== wsCurNid) { break; }
+          if (wsPayloadNid && wsCurNid && wsPayloadNid !== wsCurNid) { return; }
           const sessionKey =
             typeof payload?.session_key === "string" ? payload.session_key : "";
           const rootID =
@@ -7553,12 +7552,12 @@ export function App({ onGoHome }: AppProps) {
               void loadMultiProjectSessionGroups();
             }
           }
-          break;
-        }
-        case "session.user_message": {
+          return;
+      },
+      "session.user_message": (event: any, payload: any) => {
           const wsPayloadNid2 = String((payload as any)?._nodeId || (payload as any)?.nodeId || (payload as any)?.session?._nodeId || "").trim();
           const wsCurNid2 = String(currentRootNodeIdRef.current || "").trim();
-          if (wsPayloadNid2 && wsCurNid2 && wsPayloadNid2 !== wsCurNid2) { break; }
+          if (wsPayloadNid2 && wsCurNid2 && wsPayloadNid2 !== wsCurNid2) { return; }
           if (
             typeof payload?.session_key === "string" &&
             typeof payload?.root_id === "string"
@@ -7596,10 +7595,10 @@ export function App({ onGoHome }: AppProps) {
                 fast_service:
                   normalizeFastService(sessionMeta?.fast_service) ||
                   normalizeFastService(exchange?.fast_service),
-	                plan_mode:
-	                  typeof sessionMeta?.plan_mode === "boolean"
-	                    ? sessionMeta.plan_mode
-	                    : false,
+                  plan_mode:
+                    typeof sessionMeta?.plan_mode === "boolean"
+                      ? sessionMeta.plan_mode
+                      : false,
                 name: sessionMeta?.name || t("session.new"),
                 created_at:
                   sessionMeta?.created_at ||
@@ -7706,10 +7705,10 @@ export function App({ onGoHome }: AppProps) {
                 normalizeFastService(sessionMeta?.fast_service) ||
                 normalizeFastService(exchange?.fast_service) ||
                 normalizeFastService((cached as any).fast_service),
-	              plan_mode:
-	                typeof sessionMeta?.plan_mode === "boolean"
-	                  ? sessionMeta.plan_mode
-	                  : !!(cached as any).plan_mode,
+                plan_mode:
+                  typeof sessionMeta?.plan_mode === "boolean"
+                    ? sessionMeta.plan_mode
+                    : !!(cached as any).plan_mode,
               exchanges: nextExchanges,
               model_display_name:
                 sessionMeta?.model_display_name ||
@@ -7747,9 +7746,8 @@ export function App({ onGoHome }: AppProps) {
               void loadMultiProjectSessionGroups();
             }
             }
-          }
-          break;
-        case "task.updated":
+      },
+      "task.updated": (event: any, payload: any) => {
           if (
             typeof payload?.root_id === "string" &&
             payload.root_id === currentRootIdRef.current &&
@@ -7758,7 +7756,7 @@ export function App({ onGoHome }: AppProps) {
             // 跨节点隔离：同名项目在另一节点的任务推送不污染当前视图
             const payloadNid = String((payload as any)?.nodeId || (payload as any)?._nodeId || (payload as any)?.task?._nodeId || "").trim();
             const curNid = String(currentRootNodeIdRef.current || "").trim();
-            if (payloadNid && curNid && payloadNid !== curNid) { break; }
+            if (payloadNid && curNid && payloadNid !== curNid) { return; }
             const nextTask = payload.task as KanbanTask;
             const detail = payload.detail as TaskDetail | undefined;
             if (detail?.task?.id) {
@@ -7775,8 +7773,8 @@ export function App({ onGoHome }: AppProps) {
               void refreshTaskWorktree(payload.root_id, nextTask.worktree_path, false);
             }
           }
-          break;
-        case "session.meta.updated":
+      },
+      "session.meta.updated": (event: any, payload: any) => {
           if (
             typeof payload?.root_id === "string" &&
             typeof payload?.session?.key === "string"
@@ -7951,8 +7949,8 @@ export function App({ onGoHome }: AppProps) {
               void loadMultiProjectSessionGroups();
             }
           }
-          break;
-        case "session.related_files.updated": {
+      },
+      "session.related_files.updated": (event: any, payload: any) => {
           const rootID =
             typeof payload?.root_id === "string" ? payload.root_id : "";
           const sessionKey =
@@ -7977,25 +7975,25 @@ export function App({ onGoHome }: AppProps) {
               );
             }
           }
-          break;
-        }
-        case "file.changed.batch":
+          return;
+      },
+      "file.changed.batch": (event: any, payload: any) => {
           handleFileChangedBatch(payload);
-          break;
-        case "file.changed":
+      },
+      "file.changed": (event: any, payload: any) => {
           handleFileChanged(payload);
-          break;
-        case "agent.status.changed":
+      },
+      "agent.status.changed": (event: any, payload: any) => {
           setAgentsVersion((v) => v + 1);
-          break;
-        case "app.update":
+      },
+      "app.update": (event: any, payload: any) => {
           setUpdateState(normalizeUpdateState(payload?.state as UpdateState));
-          break;
-        case "github.import": {
+      },
+      "github.import": (event: any, payload: any) => {
           const status = (payload?.status || {}) as any;
           const taskID = typeof status?.task_id === "string" ? status.task_id : "";
           if (!taskID) {
-            break;
+            return;
           }
           setGitHubImportState((prev) => {
             if (prev.taskId && prev.taskId !== taskID) {
@@ -8027,19 +8025,9 @@ export function App({ onGoHome }: AppProps) {
               });
             }
           }
-          break;
-        }
-      }
-    });
-    void loadSessionsForRoot(currentRootId, { replace: true });
-    return () => {
-      cancelled = true;
-      if (sessionListReloadTimerRef.current) {
-        window.clearTimeout(sessionListReloadTimerRef.current);
-        sessionListReloadTimerRef.current = null;
-      }
-      unsubscribeEvents();
-    };
+          return;
+      },
+    } as Record<string, (event: any, payload: any) => void>;
   }, [
     currentRootId,
     loadMultiProjectSessionGroups,
@@ -8075,6 +8063,26 @@ export function App({ onGoHome }: AppProps) {
     treeCacheKey,
     t,
   ]);
+  const wsHandlersRef = useRef(wsHandlers);
+  useEffect(() => {
+    wsHandlersRef.current = wsHandlers;
+  }, [wsHandlers]);
+  useEffect(() => {
+    if (!currentRootId) return;
+    cancelledRef.current = false;
+    const unsubscribeEvents = sessionService.subscribeEvents((event) => {
+      wsHandlersRef.current[event.type]?.(event, (event.payload || {}) as any);
+    });
+    void loadSessionsForRoot(currentRootId, { replace: true });
+    return () => {
+      cancelledRef.current = true;
+      if (sessionListReloadTimerRef.current) {
+        window.clearTimeout(sessionListReloadTimerRef.current);
+        sessionListReloadTimerRef.current = null;
+      }
+      unsubscribeEvents();
+    };
+  }, [currentRootId, loadSessionsForRoot]);
 
   useEffect(() => {
     if (!currentRootId) return;
