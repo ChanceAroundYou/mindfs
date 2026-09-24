@@ -1123,6 +1123,10 @@ export function App({ onGoHome }: AppProps) {
   const [selectedDirKey, setSelectedDirKey] = useState<string | null>(null);
   const [mainEntries, setMainEntries] = useState<FileEntry[]>([]);
   const [mainDirectoryError, setMainDirectoryError] = useState("");
+  const mainEntriesRef = useRef<FileEntry[]>([]);
+  mainEntriesRef.current = mainEntries;
+  const mainDirectoryErrorRef = useRef("");
+  mainDirectoryErrorRef.current = mainDirectoryError;
   const isGitRepo = useCallback(
     (rootID: string) => managedRootByIdRef.current[rootID]?.is_git_repo === true,
     [],
@@ -5378,7 +5382,17 @@ export function App({ onGoHome }: AppProps) {
             });
             if (restored) {
               void loadSessionsForRoot(path, { replace: true, force: true });
-              await refreshTreeDir(path, ".", false);
+              if (mainViewRef.current === "files" && !mainEntriesRef.current.length && !mainDirectoryErrorRef.current) {
+                // 文件态没有内容可显示：补上项目顶层目录，行为与手动切面板一致
+                await actionHandlersRef.current.open_dir({
+                  path,
+                  root: path,
+                  isRoot: true,
+                  forceDirectory: true,
+                });
+              } else {
+                await refreshTreeDir(path, ".", false);
+              }
               restoreSuppressedRootExpansion();
               return;
             }
@@ -5407,6 +5421,55 @@ export function App({ onGoHome }: AppProps) {
   useEffect(() => {
     actionHandlersRef.current = actionHandlers;
   }, [actionHandlers]);
+
+  // 会话恢复入口（open_dir 开根 / 首屏 boot / popstate）共用：
+  // 会话在场就直接返回，目录一次都不加载——带着 view=files 进来时主区就是空的。
+  const showBoundSessionOrRootDir = useCallback(
+    async (
+      rootID: string,
+      options?: {
+        pluginQuery?: Record<string, string>;
+        closeLeftSidebar?: boolean;
+        loadSessionsOnRestore?: boolean;
+        suppressTreeExpand?: boolean;
+      },
+    ) => {
+      const restored = await tryShowBoundSessionForRoot(rootID, {
+        pluginQuery: options?.pluginQuery,
+        closeLeftSidebar: options?.closeLeftSidebar,
+      });
+      if (!restored) {
+        await actionHandlersRef.current.open_dir({
+          path: rootID,
+          root: rootID,
+          isRoot: true,
+          forceDirectory: true,
+          suppressTreeExpand: options?.suppressTreeExpand,
+        });
+        return;
+      }
+      if (options?.loadSessionsOnRestore) {
+        void loadSessionsForRoot(rootID, { replace: true, force: true });
+      }
+      // 文件态没有内容可显示：把当前项目顶层目录补上，行为与手动切面板一致
+      if (
+        mainViewRef.current === "files" &&
+        !mainEntriesRef.current.length &&
+        !mainDirectoryErrorRef.current
+      ) {
+        await actionHandlersRef.current.open_dir({
+          path: rootID,
+          root: rootID,
+          isRoot: true,
+          forceDirectory: true,
+          suppressTreeExpand: true,
+        });
+        return;
+      }
+      await refreshTreeDir(rootID, ".", false);
+    },
+    [loadSessionsForRoot, refreshTreeDir, tryShowBoundSessionForRoot],
+  );
 
   const openRelatedFileDiff = useCallback(
     async (rootID: string, file: RelatedFileClickTarget) => {
@@ -6666,23 +6729,11 @@ export function App({ onGoHome }: AppProps) {
             preservePluginQuery: true,
           });
         } else {
-          const restored = await tryShowBoundSessionForRoot(preferredRoot, {
+          if (cancelled) return;
+          await showBoundSessionOrRootDir(preferredRoot, {
             pluginQuery: urlState.pluginQuery,
+            loadSessionsOnRestore: true,
           });
-          if (!restored) {
-            actionHandlersRef.current.open_dir({
-              path: preferredRoot,
-              root: preferredRoot,
-              preservePluginQuery: true,
-              isRoot: true,
-            });
-          } else {
-            void loadSessionsForRoot(preferredRoot, {
-              replace: true,
-              force: true,
-            });
-            await refreshTreeDir(preferredRoot, ".", false);
-          }
         }
       } catch (err) {
         if (cancelled) {
@@ -6708,7 +6759,7 @@ export function App({ onGoHome }: AppProps) {
     loadMultiProjectSessionGroups,
     loadSessionsForRoot,
     refreshTreeDir,
-    tryShowBoundSessionForRoot,
+    showBoundSessionOrRootDir,
     bootstrapState.phase,
   ]);
 
@@ -6857,26 +6908,16 @@ export function App({ onGoHome }: AppProps) {
         return;
       }
       void (async () => {
-        const restored = await tryShowBoundSessionForRoot(state.root, {
+        await showBoundSessionOrRootDir(state.root, {
           pluginQuery: state.pluginQuery,
-        });
-        if (restored) {
-          void loadSessionsForRoot(state.root, { replace: true, force: true });
-          await refreshTreeDir(state.root, ".", false);
-          return;
-        }
-        actionHandlers.open_dir({
-          path: state.root,
-          root: state.root,
-          preservePluginQuery: true,
-          isRoot: true,
+          loadSessionsOnRestore: true,
         });
       })();
     }
 
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
-  }, [actionHandlers, loadSessionsForRoot, refreshTreeDir, tryShowBoundSessionForRoot]);
+  }, [actionHandlers, loadSessionsForRoot, refreshTreeDir, showBoundSessionOrRootDir]);
 
   const selectedRoot =
     (selectedSession?.root_id as string | undefined) || currentRootId || "";
@@ -7990,6 +8031,20 @@ export function App({ onGoHome }: AppProps) {
     interactionModeRef.current = "main";
     setInteractionMode("main");
     switchMainView(mode);
+    // 切到文件面板但从没点过任何目录时，主区是空的：把当前项目顶层目录补上。
+    // 已经有内容（含报错态）就别动，用户点过的目录优先于这个默认值。
+    if (mode === "files" && rootID && !mainEntriesRef.current.length && !mainDirectoryErrorRef.current) {
+      const currentDir = selectedDirRef.current || "";
+      // 尚停留在上一个项目时（selectedDir 属于别的 root），直接落在新项目根目录
+      if (!currentDir || currentDir === "." || currentDir === rootID || currentDir.startsWith(`${rootID}/`)) {
+        void actionHandlersRef.current.open_dir({
+          path: rootID,
+          root: rootID,
+          isRoot: true,
+          forceDirectory: true,
+        });
+      }
+    }
     // 只改 URL 的 view，保留 root/node/session/pluginQuery。
     // 离开文件态时把 file 摘掉，否则会写出「view=board 且 file=…」的自相矛盾深链。
     const current = readURLState();
