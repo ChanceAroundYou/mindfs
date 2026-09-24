@@ -130,10 +130,10 @@ import { RootGitContentView } from "./components/RootGitContentView";
 import { RootRelatedContentView } from "./components/RootRelatedContentView";
 import { RootWorktreeContentView } from "./components/RootWorktreeContentView";
 import { SessionViewer } from "./components/SessionViewer";
+import { TaskBoardView } from "./components/TaskBoardView";
 import { DefaultListView, type MainContentViewMode } from "./components/DefaultListView";
 import { type ProjectSessionGroup } from "./components/SessionList";
 import { InlineTokenText } from "./components/InlineTokenText";
-import { AgentIcon } from "./components/AgentIcon";
 import { ActionBar } from "./components/ActionBar";
 import { CompactUploadProgress } from "./components/CompactUploadProgress";
 import { ToastContainer } from "./components/Toast";
@@ -143,12 +143,10 @@ import { BottomSheet } from "./components/BottomSheet";
 import { ScheduledAgentTaskDialog } from "./components/ScheduledAgentTaskDialog";
 import { TaskTemplateDialog } from "./components/TaskTemplateDialog";
 import { TaskDetailPanel } from "./components/TaskDetailPanel";
-import { WorkspaceKanban } from "./components/WorkspaceKanban";
 import { MainViewSwitcher } from "./components/MainViewSwitcher";
 import { OnboardingTour } from "./components/OnboardingTour";
 import { WorktreeBranchSelector } from "./components/WorktreeBranchSelector";
 import { NoWorktreeIcon } from "./components/NoWorktreeIcon";
-import { renderToolIcon } from "./components/stream/ToolCallCard";
 import TokenEditor, { type TokenEditorHandle } from "./components/editor/TokenEditor";
 import { fetchAgents, restartAgent, type AgentStatus } from "./services/agents";
 import { fetchCandidates, type CandidateItem } from "./services/candidates";
@@ -195,7 +193,7 @@ import { buildMatchInputFromPath, buildMessageWithViewContext, hasExplicitFileCo
 import { basenameOfPath, buildDirectorySelectionKey, buildFileScrollKey, buildURLSearch, comparableManagedRootPath, dirnameOfPath, isDirectorySortMode, joinDisplayPath, normalizeCursor, normalizePath, parentDirsOfFile, parseFileLocation, parsePluginQuery, readURLState, relativeDisplayPathFromRoot, rootNodeKey } from "./app/appPath";
 import { hasSessionExchanges, isTopLevelSessionItem, normalizeMode, relatedFileSelectionKey, sessionInputHistory, toSessionItem } from "./app/appSession";
 import { accountScopedKey, loadGitDiffSideBySide, loadLastRootId, loadLastRootNodeId, loadLegacyMainView, loadMainView, loadMobileEnterKeySends, loadPersistedFileScrollPositions, loadPersistedPluginQuery, loadSidebarsSwapped, loadTaskCreateWorktreePreference, persistFileScrollPositions, persistPluginQuery, removeLocalStorageByPrefix, saveTaskCreateWorktreePreference } from "./app/appStorage";
-import { currentTaskInputFromDetail, firstAgentStage, firstTaskInputFromDetail, firstUserInputTemplate, isTerminalKanbanTask, isUnfinishedKanbanTask, normalizeFastService, parseTaskSessionErrorDetails, parseTaskSessionErrorMessage, previousTaskInputsFromDetail, taskSessionKeysFromDetail, taskStatusLabel } from "./app/appTask";
+import { currentTaskInputFromDetail, firstAgentStage, firstTaskInputFromDetail, firstUserInputTemplate, isUnfinishedKanbanTask, normalizeFastService, previousTaskInputsFromDetail, taskSessionKeysFromDetail } from "./app/appTask";
 import { useCompletionSound } from "./app/useCompletionSound";
 import { useExternalSessionImport } from "./app/useExternalSessionImport";
 import { useGitActions } from "./app/useGitActions";
@@ -205,28 +203,7 @@ import { useProjectTreeWorktrees } from "./app/useProjectTreeWorktrees";
 import { useProjectLifecycle } from "./app/useProjectLifecycle";
 import { useSessionSidebarView } from "./app/useSessionSidebarView";
 import { useTaskTemplates } from "./app/useTaskTemplates";
-import {
-CheckIconSmall,
-DeleteIcon,
-EditPencilIcon,
-HorizontalDotsIcon,
-PlusSmallIcon,
-RunNowIcon,
-SyncIcon,
-TaskCompleteIcon,
-TaskExpandIcon,
-TaskGroupChevronIcon,
-TaskPlanAuxIcon,
-TaskQueuedSpinnerIcon,
-TaskRunNowIcon,
-TaskSessionErrorIcon,
-hexToRgbaApp,
-taskAuxBadgeStyle,
-taskCardIconButtonStyle,
-taskReplyPulseStyle,
-taskTemplateMenuItemStyle,
-taskWorktreeTagStyle,
-} from "./app/taskIcons";
+import { CheckIconSmall, PlusSmallIcon, taskCardIconButtonStyle } from "./app/taskIcons";
 
 export function App({ onGoHome }: AppProps) {
   const { t } = useI18n();
@@ -9938,18 +9915,6 @@ export function App({ onGoHome }: AppProps) {
       projectSortMode={treeSortMode}
     />
   );
-  const isAllTaskTemplateFilter = taskTemplateFilter === TASK_TEMPLATE_ALL_FILTER;
-  const selectedTaskTemplateForFilter = isAllTaskTemplateFilter ? null : taskTemplates.find((template) => template.id === taskTemplateFilter) || null;
-  const taskTemplateById = taskTemplates.reduce<Record<string, TaskTemplate>>((acc, template) => {
-    if (template.id) acc[template.id] = template;
-    return acc;
-  }, {});
-	  const unfinishedKanbanTasks = kanbanTaskCountItems.filter(isUnfinishedKanbanTask);
-  const unfinishedKanbanTaskCountByTemplate = unfinishedKanbanTasks.reduce<Record<string, number>>((acc, task) => {
-    const key = task.task_template_id || "";
-    if (key) acc[key] = (acc[key] || 0) + 1;
-    return acc;
-  }, {});
   // 四块 = 未开始 / 执行中 / 待审核 / 已结束（已结束内分 完成、取消；失败并入取消）。
   const kanbanStageColumns: Array<{
     index: number;
@@ -10053,856 +10018,53 @@ export function App({ onGoHome }: AppProps) {
       reportError("file.write_failed", String((err as Error)?.message || t("task.actionFailed")));
     }
   }, [applyTaskDetails, t]);
-	  const kanbanTaskPanel = workspaceOpen ? (
-    <WorkspaceKanban
-      items={workspaceOverview}
-      loading={workspaceLoading}
-      projects={managedRootIds.map((id) => ({ id, name: getRootDisplayName(id) || id }))}
-      onOpenProject={(rootId) => { void openWorkspaceProject(rootId); }}
-      onComplete={(item) => { void handleMoveKanbanTask(item.task, "complete"); }}
-      onRunNow={(item) => { void handleMoveKanbanTask(item.task, "run-now"); }}
-      onOpenSession={(item, sessionKey) => { handleTaskSessionDrawerOpen(sessionKey, item.root_id, item.task.id); }}
-      onOpenDetail={(item) => { void openWorkspaceProject(item.root_id).then(() => setSelectedKanbanTaskId(item.task.id)); }}
-      onCreateTask={(rootId, input) => { void handleWorkspaceCreateTask(rootId, input); }}
+  const kanbanTaskPanel = (
+    <TaskBoardView
+      workspaceOpen={workspaceOpen}
+      currentRootId={currentRootId}
+      currentRootIdRef={currentRootIdRef}
+      workspaceOverview={workspaceOverview}
+      workspaceLoading={workspaceLoading}
+      managedRootIds={managedRootIds}
+      getRootDisplayName={getRootDisplayName}
+      openWorkspaceProject={openWorkspaceProject}
+      handleWorkspaceCreateTask={handleWorkspaceCreateTask}
+      setSelectedKanbanTaskId={setSelectedKanbanTaskId}
+      kanbanTasksLoading={kanbanTasksLoading}
+      kanbanStageColumns={kanbanStageColumns}
+      selectedKanbanTaskId={selectedKanbanTaskId}
+      expandedTaskInputIds={expandedTaskInputIds}
+      setExpandedTaskInputIds={setExpandedTaskInputIds}
+      collapsedTaskCompletionGroups={collapsedTaskCompletionGroups}
+      setCollapsedTaskCompletionGroups={setCollapsedTaskCompletionGroups}
+      collapsedKanbanColumns={collapsedKanbanColumns}
+      setCollapsedKanbanColumns={setCollapsedKanbanColumns}
+      taskFirstInputById={taskFirstInputById}
+      taskSessionKeysById={taskSessionKeysById}
+      sessionByKey={sessionByKey}
+      getDisplayNodeColor={getDisplayNodeColor}
+      handleSelectKanbanTask={handleSelectKanbanTask}
+      handleMoveKanbanTask={handleMoveKanbanTask}
+      openTaskCreateDialog={openTaskCreateDialog}
+      openTaskEditDialog={openTaskEditDialog}
+      handleTaskSessionDrawerOpen={handleTaskSessionDrawerOpen}
+      setTaskSessionErrorDialog={setTaskSessionErrorDialog}
+      loadKanbanTasks={loadKanbanTasks}
+      templateControls={{
+        taskTemplateActionMenuRef,
+        taskTemplateActionMenuOpen,
+        setTaskTemplateActionMenuOpen,
+        taskCreateTemplateMenuRef,
+        taskCreateTemplateMenuOpen,
+        setTaskCreateTemplateMenuOpen,
+        taskTemplates,
+        taskTemplateFilter,
+        setTaskTemplateFilter,
+        openTaskTemplateEditor,
+        handleDeleteTaskTemplate,
+      }}
     />
-  ) : currentRootId ? (
-	    <div
-	      data-onboarding="task-board"
-	      style={{
-	        maxHeight: "calc(100dvh - 92px)",
-	        overflow: "visible",
-	        display: "flex",
-	        flexDirection: "column",
-	        minWidth: 0,
-	      }}
-	    >
-	      <div
-	        style={{
-	          display: "flex",
-          alignItems: "center",
-	          justifyContent: "space-between",
-	          gap: 0,
-	          padding: "0 0 8px",
-	          flexShrink: 0,
-	        }}
-	      >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "6px",
-            minWidth: 0,
-            flex: 1,
-          }}
-        >
-          <div
-            role="tablist"
-            data-onboarding="task-templates"
-            aria-label={t("task.templates")}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "2px",
-              overflowX: "auto",
-              padding: "3px",
-              borderRadius: "10px",
-              border: "1px solid rgba(100, 116, 139, 0.36)",
-              background: "rgba(148, 163, 184, 0.10)",
-              minWidth: 0,
-              scrollbarWidth: "none",
-            }}
-          >
-            {(() => {
-              const active = isAllTaskTemplateFilter;
-              const kanbanAllBg = getDisplayNodeColor(String(currentRootId || "")) || "var(--accent-color, #2563eb)";
-              return (
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={active}
-                  onClick={() => {
-                    setTaskTemplateFilter(TASK_TEMPLATE_ALL_FILTER);
-                    setTaskTemplateActionMenuOpen(false);
-                  }}
-                  style={{
-                    border: "none",
-                    borderRadius: "6px",
-                    background: active ? kanbanAllBg : "transparent",
-                    color: active ? "#fff" : "var(--text-secondary)",
-                    padding: "3px 7px",
-                    fontSize: "11px",
-                    fontWeight: 700,
-                    lineHeight: "14px",
-                    cursor: "pointer",
-                    whiteSpace: "nowrap",
-                    boxShadow: active ? `0 1px 3px ${hexToRgbaApp(kanbanAllBg, 0.28)}` : "none",
-                  }}
-                >
-                  {t("task.all")}
-                </button>
-              );
-            })()}
-            {taskTemplates.length > 0 ? (
-              <span
-                aria-hidden="true"
-                style={{
-                  width: "1px",
-                  height: "16px",
-                  background: "rgba(100, 116, 139, 0.32)",
-                  margin: "0 1px",
-                  flexShrink: 0,
-                }}
-              />
-            ) : null}
-            {taskTemplates.map((template, index) => {
-              const templateId = template.id || "";
-              const active = selectedTaskTemplateForFilter?.id === templateId;
-              return (
-                <React.Fragment key={templateId || template.name}>
-                  {index > 0 ? (
-                    <span
-                      aria-hidden="true"
-                      style={{
-                        width: "1px",
-                        height: "16px",
-                        background: "rgba(100, 116, 139, 0.32)",
-                        margin: "0 1px",
-                        flexShrink: 0,
-                      }}
-                    />
-                  ) : null}
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={active}
-                    onClick={() => {
-                      setTaskTemplateFilter(templateId);
-                      setTaskTemplateActionMenuOpen(false);
-                    }}
-                    style={(() => {
-                      const bg = getDisplayNodeColor(String(currentRootId || "")) || "var(--accent-color, #2563eb)";
-                      return {
-                        border: "none",
-                        borderRadius: "6px",
-                        background: active ? bg : "transparent",
-                        color: active ? "#fff" : "var(--text-secondary)",
-                        padding: "3px 7px",
-                        fontSize: "11px",
-                        fontWeight: 700,
-                        lineHeight: "14px",
-                        cursor: "pointer",
-                        whiteSpace: "nowrap",
-                        boxShadow: active ? `0 1px 3px ${hexToRgbaApp(bg, 0.28)}` : "none",
-                      };
-                    })()}
-                >
-                  <span>{template.name || t("task.unnamedTemplate")}</span>
-                </button>
-                </React.Fragment>
-              );
-            })}
-          </div>
-          <div ref={taskTemplateActionMenuRef} style={{ position: "relative", flexShrink: 0 }}>
-            <button
-              type="button"
-              data-onboarding="task-template-menu"
-              aria-label={t("task.templateMenu")}
-              title={t("task.templateMenu")}
-              onClick={() => setTaskTemplateActionMenuOpen((open) => !open)}
-              style={{
-                width: "28px",
-                height: "28px",
-                borderRadius: "8px",
-                border: "none",
-                background: taskTemplateActionMenuOpen ? "rgba(0, 0, 0, 0.06)" : "transparent",
-                color: "var(--text-secondary)",
-                opacity: 1,
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                cursor: "pointer",
-                padding: 0,
-              }}
-            >
-              <HorizontalDotsIcon />
-            </button>
-            {taskTemplateActionMenuOpen ? (
-              <div
-                style={{
-                  position: "absolute",
-                  top: "calc(100% + 6px)",
-                  left: "50%",
-                  transform: "translateX(-50%)",
-                  minWidth: "160px",
-                  padding: "6px",
-                  borderRadius: "10px",
-                  border: "1px solid var(--border-color)",
-                  background: "var(--menu-bg)",
-                  boxShadow: "0 12px 30px rgba(15, 23, 42, 0.14)",
-                  zIndex: 40,
-                }}
-              >
-                <button
-                  type="button"
-                  onClick={() => {
-                    setTaskTemplateActionMenuOpen(false);
-                    openTaskTemplateEditor(null);
-                  }}
-                  style={taskTemplateMenuItemStyle()}
-                >
-                  <PlusSmallIcon />
-                  <span>{t("task.createTemplate")}</span>
-                </button>
-                <button
-                  type="button"
-                  disabled={!selectedTaskTemplateForFilter}
-                  onClick={() => {
-                    if (!selectedTaskTemplateForFilter) return;
-                    setTaskTemplateActionMenuOpen(false);
-                    openTaskTemplateEditor(selectedTaskTemplateForFilter);
-                  }}
-                  style={taskTemplateMenuItemStyle(!selectedTaskTemplateForFilter)}
-                >
-                  <EditPencilIcon />
-                  <span>{t("task.editTemplate")}</span>
-                </button>
-                <button
-                  type="button"
-                  disabled={!selectedTaskTemplateForFilter}
-                  title={!selectedTaskTemplateForFilter ? t("task.selectTemplate") : t("task.deleteTemplate")}
-                  onClick={() => {
-                    if (!selectedTaskTemplateForFilter) return;
-                    setTaskTemplateActionMenuOpen(false);
-                    void handleDeleteTaskTemplate(selectedTaskTemplateForFilter);
-                  }}
-                  style={taskTemplateMenuItemStyle(!selectedTaskTemplateForFilter)}
-                >
-                  <DeleteIcon />
-                  <span>{t("task.deleteTemplate")}</span>
-                </button>
-                <div style={{ height: "1px", background: "var(--border-color)", margin: "6px 2px" }} />
-              </div>
-            ) : null}
-          </div>
-        </div>
-        <button
-          type="button"
-          data-onboarding="task-refresh"
-          title={t("task.refresh")}
-          aria-label={t("task.refresh")}
-          onClick={() => void kanbanRefreshSpin.handleClick()}
-          onMouseDown={() => kanbanRefreshSpin.setPressed(true)}
-          onMouseUp={() => kanbanRefreshSpin.setPressed(false)}
-          onMouseLeave={() => kanbanRefreshSpin.setPressed(false)}
-          style={{
-            width: "22px",
-            height: "28px",
-            borderRadius: "8px",
-            border: "none",
-            background: "transparent",
-            color: "var(--text-color)",
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "flex-end",
-            cursor: "pointer",
-            flexShrink: 0,
-            padding: 0,
-          }}
-        >
-          <span
-            data-task-refresh-visual
-            style={{
-              width: "18px",
-              height: "28px",
-              borderRadius: "8px",
-              background: kanbanRefreshSpin.pressed || kanbanRefreshSpin.refreshing ? "rgba(0, 0, 0, 0.06)" : "transparent",
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <SyncIcon
-              style={kanbanRefreshSpin.refreshing ? { animation: "mindfs-update-spin 0.8s linear infinite" } : undefined}
-            />
-          </span>
-        </button>
-        <div ref={taskCreateTemplateMenuRef} style={{ position: "relative", flexShrink: 0 }}>
-          <button
-            type="button"
-            data-onboarding="task-create"
-            title={t("task.create")}
-            aria-label={t("task.create")}
-            disabled={!isAllTaskTemplateFilter && !selectedTaskTemplateForFilter}
-            onClick={() => {
-              if (isAllTaskTemplateFilter) {
-                setTaskTemplateActionMenuOpen(false);
-                setTaskCreateTemplateMenuOpen((open) => !open);
-                return;
-              }
-              openTaskCreateDialog(selectedTaskTemplateForFilter);
-            }}
-            style={{
-              width: "28px",
-              height: "28px",
-              borderRadius: "8px",
-              border: "none",
-              background: taskCreateTemplateMenuOpen ? "rgba(0, 0, 0, 0.06)" : "transparent",
-              color: isAllTaskTemplateFilter || selectedTaskTemplateForFilter ? "var(--text-color)" : "var(--muted-text)",
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              cursor: isAllTaskTemplateFilter || selectedTaskTemplateForFilter ? "pointer" : "not-allowed",
-              flexShrink: 0,
-              padding: 0,
-              opacity: isAllTaskTemplateFilter || selectedTaskTemplateForFilter ? 1 : 0.55,
-            }}
-          >
-            <PlusSmallIcon />
-          </button>
-          {taskCreateTemplateMenuOpen ? (
-            <div
-              style={{
-                position: "absolute",
-                top: "calc(100% + 6px)",
-                right: 0,
-                minWidth: "136px",
-                maxWidth: "220px",
-                maxHeight: "260px",
-                overflowY: "auto",
-                padding: "5px",
-                borderRadius: "10px",
-                border: "1px solid var(--border-color)",
-                background: "var(--menu-bg)",
-                boxShadow: "0 12px 30px rgba(15, 23, 42, 0.14)",
-                zIndex: 40,
-              }}
-            >
-              {taskTemplates.length === 0 ? (
-                <div style={{ padding: "8px", fontSize: "12px", color: "var(--text-secondary)", whiteSpace: "nowrap" }}>{t("task.noTemplates")}</div>
-              ) : taskTemplates.map((template) => (
-                <button
-                  key={template.id || template.name}
-                  type="button"
-                  onClick={() => {
-                    setTaskCreateTemplateMenuOpen(false);
-                    openTaskCreateDialog(template);
-                  }}
-                  style={{
-                    width: "100%",
-                    minHeight: "28px",
-                    border: "none",
-                    borderRadius: "7px",
-                    background: "transparent",
-                    color: "var(--text-primary)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "flex-start",
-                    padding: "5px 8px",
-                    fontSize: "12px",
-                    fontWeight: 700,
-                    cursor: "pointer",
-                    textAlign: "left",
-                  }}
-                >
-                  <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{template.name || t("task.unnamedTemplate")}</span>
-                </button>
-              ))}
-            </div>
-          ) : null}
-        </div>
-      </div>
-      {kanbanTasksLoading ? (
-        <div style={{ padding: "12px", fontSize: "12px", color: "var(--text-secondary)" }}>{t("task.loading")}</div>
-      ) : !isAllTaskTemplateFilter && !selectedTaskTemplateForFilter ? (
-        <div style={{ padding: "12px", fontSize: "12px", color: "var(--text-secondary)" }}>{t("task.createTemplateFirst")}</div>
-      ) : (
-	        <div style={{ overflowX: isMobile ? "hidden" : "auto", overflowY: "hidden", padding: "0 0 12px 1px", minHeight: 0 }}>
-	          <div
-	            style={{
-	              display: "grid",
-	              // 移动端横滑空间浪费：列改为换行（每行两列），列内上下滑看卡片。
-	              gridAutoFlow: isMobile ? "row" : "column",
-	              gridTemplateColumns: isMobile ? "repeat(2, 1fr)" : undefined,
-	              gridAutoColumns: isMobile ? undefined : "minmax(220px, 1fr)",
-	              gridAutoRows: isMobile ? "36dvh" : undefined,
-	              gap: "6px",
-	              minWidth: isMobile ? undefined : `${Math.max(kanbanStageColumns.length, 1) * 220}px`,
-	              alignItems: "start",
-	            }}
-	          >
-	            {kanbanStageColumns.map((column) => {
-	              const columnCollapsed = collapsedKanbanColumns.has(String(column.index));
-	              const taskSections = "groups" in column && Array.isArray(column.groups) && column.groups.length > 0
-	                ? column.groups
-	                : [{ key: "tasks", name: "", tone: "default" as const, tasks: column.tasks }];
-	              return (
-	              <section
-	                key={column.index}
-                style={{
-		                  border: "1px solid var(--border-color)",
-	                  borderRadius: "8px",
-	                  background: "rgba(148, 163, 184, 0.06)",
-	                  overflow: "hidden",
-	                  display: "flex",
-	                  flexDirection: "column",
-	                  minHeight: 0,
-	                  height: isMobile ? (columnCollapsed ? undefined : "36dvh") : undefined,
-                  maxHeight: isMobile ? undefined : "calc(100dvh - 96px)",
-	                }}
-	              >
-                <div
-                  style={{
-                    minHeight: "34px",
-                    borderBottom: "1px solid var(--border-color)",
-                    padding: "7px 9px",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-	                    gap: "8px",
-flexShrink: 0,
-                    cursor: "pointer",
-                  }}
-                  onClick={() => {
-                    const key = String(column.index);
-                    setCollapsedKanbanColumns((prev) => {
-                      const next = new Set(prev);
-                      if (next.has(key)) next.delete(key); else next.add(key);
-                      return next;
-                    });
-                  }}
-                >
-                  <div style={{ minWidth: 0, display: "flex", alignItems: "center", gap: "6px" }}>
-                    <TaskGroupChevronIcon collapsed={columnCollapsed} />
-                    <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: "12px", fontWeight: 800, color: "var(--text-color)" }}>
-                      {column.name}
-                    </span>
-                  </div>
-                  <span style={{ fontSize: "11px", fontWeight: 800, color: "var(--text-secondary)" }}>{column.tasks.length}</span>
-                </div>
-	                {columnCollapsed ? null : (
-	                <div style={{ padding: "8px", display: "flex", flexDirection: "column", gap: "8px", overflowY: "auto", minHeight: 0 }}>
-	                  {column.tasks.length === 0 ? (
-	                    <div style={{ padding: "10px 4px", fontSize: "12px", color: "var(--text-secondary)", textAlign: "center" }}>{t("task.empty")}</div>
-	                      ) : taskSections.map((section) => {
-                      const sectionCollapsed = Boolean(section.name && collapsedTaskCompletionGroups.has(section.key));
-                      const sectionColor = section.tone === "danger" ? "#dc2626" : section.tone === "success" ? "#16a34a" : "var(--text-secondary)";
-                      return (
-	                    <React.Fragment key={section.key}>
-	                      {section.name ? (
-	                        <button
-                            type="button"
-                            onClick={() => {
-                              setCollapsedTaskCompletionGroups((prev) => {
-                                const next = new Set(prev);
-                                if (next.has(section.key)) {
-                                  next.delete(section.key);
-                                } else {
-                                  next.add(section.key);
-                                }
-                                return next;
-                              });
-                            }}
-	                          style={{
-	                            marginTop: "2px",
-	                            padding: "2px 2px 0",
-	                            display: "flex",
-	                            alignItems: "center",
-	                            justifyContent: "space-between",
-	                            gap: "8px",
-                              width: "100%",
-                              border: "none",
-                              background: "transparent",
-	                            color: sectionColor,
-	                            fontSize: "11px",
-	                            fontWeight: 800,
-                              cursor: "pointer",
-	                          }}
-	                        >
-                            <span style={{ display: "inline-flex", alignItems: "center", gap: "4px", minWidth: 0 }}>
-                              <TaskGroupChevronIcon collapsed={sectionCollapsed} />
-	                            <span>{section.name}</span>
-                            </span>
-	                          <span>{section.tasks.length}</span>
-	                        </button>
-	                      ) : null}
-	                      {!sectionCollapsed ? section.tasks.map((task) => {
-                    const firstInput = taskFirstInputById[task.id] || "";
-                    const taskSessionKeys = taskSessionKeysById[task.id]?.length
-                      ? taskSessionKeysById[task.id]
-                      : task.main_session_key
-                        ? [task.main_session_key]
-                        : [];
-                    const taskKanbanNodeColor = getDisplayNodeColor(String(task.root_id || "")) || getDisplayNodeColor(String(currentRootId || "")) || "";
-                    const taskSessionPending = taskSessionKeys.some((key) => !!sessionByKey[key]?.pending);
-                    const taskQueued = task.status === "queued";
-                    const taskBlockedByConcurrency = taskQueued && !task.scheduler_admitted && !taskSessionKeys.length;
-                    const auxFlags = task.aux_flags || {};
-                    const taskSessionError = parseTaskSessionErrorMessage(auxFlags.session_error);
-                    const taskSessionErrorDetails = parseTaskSessionErrorDetails(auxFlags.session_error);
-                    const taskAuxBadges = [
-                      auxFlags.ask_user_waiting ? { key: "ask_user", label: t("task.waitingUser"), icon: renderToolIcon("ask_user"), attention: true } : null,
-                      auxFlags.has_plan ? { key: "plan", label: t("task.hasPlan"), icon: <TaskPlanAuxIcon color={taskKanbanNodeColor || undefined} />, attention: false } : null,
-                      auxFlags.has_todos ? { key: "todos", label: t("task.hasTodos"), icon: renderToolIcon("todo"), attention: false } : null,
-                      auxFlags.has_task ? { key: "task", label: t("task.hasTask"), icon: renderToolIcon("task"), attention: false } : null,
-                    ].filter((item): item is { key: string; label: string; icon: React.ReactNode; attention: boolean } => Boolean(item));
-                    const inputExpanded = expandedTaskInputIds.has(task.id);
-                    const inputNeedsToggle = firstInput.length > 120 || firstInput.split(/\r?\n/).length > 3;
-                    const taskTerminal = isTerminalKanbanTask(task);
-                    const taskStageRunning = task.current_stage_status === "running" && task.status === "running";
-                    const taskCanComplete = !taskTerminal && task.status === "waiting_user";
-                    const showTaskAdvanceButton = !taskTerminal && !taskStageRunning;
-                    const taskStatusText = taskStatusLabel(task.status || "", t);
-                    const taskWorktreeEnabled = task.create_worktree === true;
-	                    const taskNumberLabel = task.task_number ? `#${task.task_number}` : "";
-	                    const taskStageName = task.current_stage_name || (task.current_stage_index >= 0 ? t("task.stageLabel", { index: task.current_stage_index + 1 }) : "");
-	                    const showStageName = isAllTaskTemplateFilter ? column.name === t("task.column.running") : Boolean(taskStageName);
-	                    const showTaskStatus = isAllTaskTemplateFilter && column.name === t("task.column.ended");
-	                    const taskSelected = selectedKanbanTaskId === task.id;
-	                    return (
-	                      <article
-	                        key={task.id}
-	                        onClick={() => handleSelectKanbanTask(task)}
-	                        style={{
-	                          position: "relative",
-	                          border: taskSelected ? "1px solid rgba(14, 165, 233, 0.95)" : "1px solid rgba(96, 165, 250, 0.42)",
-	                          borderRadius: "8px",
-	                          background: "var(--menu-bg)",
-	                          padding: "8px",
-	                          boxShadow: taskSelected ? "0 0 0 2px rgba(14, 165, 233, 0.16)" : "0 1px 2px rgba(15, 23, 42, 0.06)",
-	                          cursor: "pointer",
-	                        }}
-	                      >
-                        {taskSessionPending ? (
-                          <span
-                            aria-label={t("task.replying")}
-                            title={t("task.replying")}
-                            style={taskReplyPulseStyle(taskKanbanNodeColor || undefined)}
-                          />
-                        ) : null}
-                        {isAllTaskTemplateFilter ? (
-                          <div
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: "5px",
-                              minWidth: 0,
-                              color: "var(--text-secondary)",
-                              fontSize: "10px",
-                              fontWeight: 700,
-                              lineHeight: "14px",
-                            }}
-                          >
-                            {taskNumberLabel ? (
-                              <span style={{ flex: "0 0 auto", color: "#0ea5e9", fontWeight: 800 }}>{taskNumberLabel}</span>
-                            ) : null}
-                            <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 800, color: "var(--text-color)" }}>
-                              {task.name || task.task_template_name || selectedTaskTemplateForFilter?.name || t("task.unnamedTemplate")}
-                            </span>
-                            {showStageName ? (
-                              <>
-                                <span style={{ flex: "0 0 auto", opacity: 0.55 }}>·</span>
-                                <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                  {taskStageName}
-                                </span>
-                              </>
-                            ) : null}
-	                            {showTaskStatus ? (
-	                              <>
-	                                <span style={{ flex: "0 0 auto", opacity: 0.55 }}>·</span>
-	                                <span style={{ flex: "0 0 auto" }}>{taskStatusText}</span>
-	                                {task.status === "fail" && taskSessionError ? (
-	                                  <button
-	                                    type="button"
-	                                    title={t("task.viewError")}
-	                                    aria-label={t("task.viewTaskError")}
-		                                    onClick={(event) => {
-		                                      event.stopPropagation();
-		                                      setTaskSessionErrorDialog({
-		                                        title: task.task_template_name || selectedTaskTemplateForFilter?.name || t("task.defaultTitle"),
-		                                        message: taskSessionError,
-		                                        details: taskSessionErrorDetails,
-		                                      });
-		                                    }}
-	                                    style={{ ...taskCardIconButtonStyle("warning"), width: "16px", height: "16px" }}
-	                                  >
-	                                    <TaskSessionErrorIcon />
-	                                  </button>
-	                                ) : null}
-	                              </>
-                            ) : null}
-                            <span
-                              title={taskWorktreeEnabled ? t("task.worktreeTitle") : t("task.noWorktreeTitle")}
-                              aria-label={taskWorktreeEnabled ? t("task.worktreeTitle") : t("task.noWorktreeTitle")}
-                              style={taskWorktreeTagStyle(taskWorktreeEnabled)}
-                            >
-                              {taskWorktreeEnabled ? null : <NoWorktreeIcon />}
-                              worktree
-                            </span>
-                          </div>
-                        ) : null}
-                        <div
-                          style={{
-                            marginTop: isAllTaskTemplateFilter ? "5px" : 0,
-                            color: firstInput ? "var(--text-color)" : "var(--text-secondary)",
-                            fontSize: "12px",
-                            lineHeight: "18px",
-                            fontWeight: firstInput ? 700 : 500,
-                            ...(!isAllTaskTemplateFilter
-                              ? {
-                                  display: "flex",
-                                  alignItems: "flex-start",
-                                  gap: "6px",
-                                  minWidth: 0,
-                                }
-                              : {}),
-                          }}
-                        >
-                          <div
-                            style={{
-                              ...(!isAllTaskTemplateFilter ? { flex: "1 1 auto", minWidth: 0 } : {}),
-                              whiteSpace: "pre-wrap",
-                              wordBreak: "break-word",
-                              ...(!inputExpanded
-                                ? {
-                                    display: "-webkit-box",
-                                    WebkitLineClamp: 3,
-                                    WebkitBoxOrient: "vertical",
-                                    overflow: "hidden",
-                                  }
-                                : {}),
-                            }}
-                          >
-                            {!isAllTaskTemplateFilter && taskNumberLabel ? (
-                              <span style={{ color: "#0ea5e9", fontWeight: 800, marginRight: "6px" }}>{taskNumberLabel}</span>
-                            ) : null}
-                            {firstInput ? <InlineTokenText content={firstInput} /> : <span>{t("task.noInput")}</span>}
-                          </div>
-                          {!isAllTaskTemplateFilter ? (
-                            <span
-                              title={taskWorktreeEnabled ? t("task.worktreeTitle") : t("task.noWorktreeTitle")}
-                              aria-label={taskWorktreeEnabled ? t("task.worktreeTitle") : t("task.noWorktreeTitle")}
-                              style={taskWorktreeTagStyle(taskWorktreeEnabled)}
-                            >
-                              {taskWorktreeEnabled ? null : <NoWorktreeIcon />}
-                              worktree
-                            </span>
-                          ) : null}
-                        </div>
-                        <div style={{ marginTop: "8px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "4px" }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-                            {taskSessionKeys.length > 0 ? (
-                              taskSessionKeys.map((sessionKey, sessionIndex) => {
-                                const taskSession = sessionByKey[sessionKey] || null;
-                                return (
-                                  <button
-                                    key={`${task.id}-${sessionKey}`}
-                                    type="button"
-                                    title={taskSession?.name || t("task.openSession", { index: sessionIndex + 1 })}
-                                    aria-label={t("task.openSession", { index: sessionIndex + 1 })}
-	                                    onClick={(event) => {
-	                                      event.stopPropagation();
-	                                      handleTaskSessionDrawerOpen(sessionKey, task.root_id || currentRootIdRef.current, task.id);
-	                                    }}
-                                    style={taskCardIconButtonStyle()}
-                                  >
-                                    <span
-                                      style={{
-                                        position: "relative",
-                                        width: "18px",
-                                        height: "18px",
-                                        display: "inline-flex",
-                                        alignItems: "center",
-                                        justifyContent: "center",
-                                      }}
-                                    >
-                                      <ModeIcon type="task" size={16} />
-                                      <span
-                                        style={{
-                                          position: "absolute",
-                                          right: "-2px",
-                                          bottom: "-2px",
-                                          width: "10px",
-                                          height: "10px",
-                                          borderRadius: "999px",
-                                          background: "var(--content-bg, #fff)",
-                                          border: "1px solid rgba(255,255,255,0.9)",
-                                          display: "flex",
-                                          alignItems: "center",
-                                          justifyContent: "center",
-                                          overflow: "hidden",
-                                        }}
-                                      >
-                                        <AgentIcon
-                                          agentName={taskSession?.agent || ""}
-                                          style={{ width: "10px", height: "10px", display: "block" }}
-                                        />
-                                      </span>
-                                    </span>
-                                  </button>
-                                );
-                              })
-                            ) : taskQueued ? (
-                              <>
-                                <span
-                                  title={t("task.waitingSchedule")}
-                                  aria-label={t("task.waitingSchedule")}
-                                  style={{
-                                    ...taskCardIconButtonStyle(),
-                                    cursor: "default",
-                                    color: "var(--accent-color)",
-                                  }}
-                                >
-                                  <TaskQueuedSpinnerIcon />
-                                </span>
-                                {taskBlockedByConcurrency ? (
-                                  <button
-                                    type="button"
-                                    title={t("task.runNow")}
-                                    aria-label={t("task.runNow")}
-                                    onClick={(event) => {
-                                      event.stopPropagation();
-                                      void handleMoveKanbanTask(task, "run-now");
-                                    }}
-                                    style={{
-                                      ...taskCardIconButtonStyle(),
-                                      width: "17px",
-                                      marginLeft: "-3px",
-                                      color: "#2563eb",
-                                    }}
-                                  >
-                                    <TaskRunNowIcon />
-                                  </button>
-                                ) : null}
-                              </>
-                            ) : null}
-	                            {taskSessionError && !(showTaskStatus && task.status === "fail") ? (
-                              <button
-                                type="button"
-                                title={t("task.viewError")}
-                                aria-label={t("task.viewTaskSessionError")}
-	                                onClick={(event) => {
-	                                  event.stopPropagation();
-	                                  setTaskSessionErrorDialog({
-	                                    title: task.task_template_name || selectedTaskTemplateForFilter?.name || t("task.sessionTitle"),
-	                                    message: taskSessionError,
-	                                    details: taskSessionErrorDetails,
-	                                  });
-	                                }}
-                                style={taskCardIconButtonStyle("warning")}
-                              >
-                                <TaskSessionErrorIcon />
-                              </button>
-                            ) : null}
-                            {taskAuxBadges.length > 0 ? (
-                              <div style={{ display: "inline-flex", alignItems: "center", gap: "2px" }}>
-                                {taskAuxBadges.map((badge) => (
-                                  <span
-                                    key={badge.key}
-                                    title={badge.label}
-                                    aria-label={badge.label}
-                                    style={taskAuxBadgeStyle(badge.attention)}
-                                  >
-                                    {badge.icon}
-                                  </span>
-                                ))}
-                              </div>
-                            ) : null}
-                            {inputNeedsToggle ? (
-                              <button
-                                type="button"
-                                title={inputExpanded ? t("common.collapse") : t("common.expand")}
-                                aria-label={inputExpanded ? t("task.collapseContent") : t("task.expandContent")}
-	                                onClick={(event) => {
-	                                  event.stopPropagation();
-	                                  setExpandedTaskInputIds((prev) => {
-                                    const next = new Set(prev);
-                                    if (next.has(task.id)) {
-                                      next.delete(task.id);
-                                    } else {
-                                      next.add(task.id);
-                                    }
-                                    return next;
-                                  });
-                                }}
-                                style={taskCardIconButtonStyle()}
-                              >
-                                <TaskExpandIcon collapsed={!inputExpanded} />
-                              </button>
-                            ) : null}
-                          </div>
-                          {!taskTerminal ? (
-                            <div style={{ display: "flex", justifyContent: "flex-end", gap: 0 }}>
-                              {showTaskAdvanceButton ? (
-                                <button
-                                  type="button"
-                                  title={t("task.runNow")}
-                                  aria-label={t("task.runNow")}
-	                                  onClick={(event) => {
-	                                    event.stopPropagation();
-	                                    void handleMoveKanbanTask(task, "run-now");
-	                                  }}
-                                  style={taskCardIconButtonStyle("accent")}
-                                >
-                                  <RunNowIcon />
-                                </button>
-                              ) : null}
-                              {taskCanComplete ? (
-                                <button
-                                  type="button"
-                                  title={t("task.completeShort")}
-                                  aria-label={t("task.complete")}
-	                                  onClick={(event) => {
-	                                    event.stopPropagation();
-	                                    void handleMoveKanbanTask(task, "complete");
-	                                  }}
-                                  style={taskCardIconButtonStyle("success")}
-                                >
-                                  <TaskCompleteIcon />
-                                </button>
-                              ) : null}
-	                              <button type="button" title={t("common.edit")} aria-label={t("task.edit")} onClick={(event) => {
-	                                event.stopPropagation();
-	                                void openTaskEditDialog(task);
-	                              }} style={taskCardIconButtonStyle()}>
-                                {renderToolIcon("edit")}
-                              </button>
-	                              <button type="button" title={t("common.delete")} aria-label={t("task.delete")} onClick={(event) => {
-	                                event.stopPropagation();
-	                                void handleMoveKanbanTask(task, "cancel");
-	                              }} style={taskCardIconButtonStyle("danger")}>
-                                <DeleteIcon />
-                              </button>
-                            </div>
-                          ) : null}
-                        </div>
-	                      </article>
-	                    );
-	                  }) : null}
-	                    </React.Fragment>
-                      );
-	                  })}
-	                </div>
-	                )}
-	              </section>
-	              );
-	            })}
-          </div>
-        </div>
-      )}
-    </div>
-  ) : workspaceOpen ? (
-    <WorkspaceKanban
-      items={workspaceOverview}
-      loading={workspaceLoading}
-      projects={managedRootIds.map((id) => ({ id, name: getRootDisplayName(id) || id }))}
-      onOpenProject={(rootId) => { void openWorkspaceProject(rootId); }}
-      onComplete={(item) => { void handleMoveKanbanTask(item.task, "complete"); }}
-      onRunNow={(item) => { void handleMoveKanbanTask(item.task, "run-now"); }}
-      onOpenSession={(item, sessionKey) => { handleTaskSessionDrawerOpen(sessionKey, item.root_id, item.task.id); }}
-      onOpenDetail={(item) => { void openWorkspaceProject(item.root_id).then(() => setSelectedKanbanTaskId(item.task.id)); }}
-      onCreateTask={(rootId, input) => { void handleWorkspaceCreateTask(rootId, input); }}
-    />
-  ) : null;
+  );
   if (mainView === "chat" && !selectedSession) {
     // chat 模式但没有选中会话：给一个明确空态，而不是把看板/文件列表塞回来（否则看起来像「自己跳走了」）
     workspaceView = (
