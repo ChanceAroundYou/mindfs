@@ -1,8 +1,10 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { AgentIcon } from "./AgentIcon";
 import { ModeIcon } from "./ModeIcon";
 import { with1MSuffix } from "./ActionBar";
 import { PromptEditor } from "./PromptEditor";
+import { PencilIcon } from "./composerStyles";
+import { uploadFiles } from "../services/upload";
 import { useI18n, type I18nContextValue } from "../i18n";
 import {
   addTaskStage,
@@ -73,6 +75,7 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
   const [editEffort, setEditEffort] = useState("");
   const [editMode, setEditMode] = useState("");
   const [saving, setSaving] = useState(false);
+  const stageAttachRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     setNameDraft(task?.name || "");
@@ -141,8 +144,19 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
     } catch (err) { fail(err); } finally { setSaving(false); }
   };
 
-  const appendStage = async () => {
-    const stage: StageTemplate = {
+  const handleStageAttach = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files || []);
+    event.currentTarget.value = "";
+    if (files.length === 0 || !task.root_id) return;
+    try {
+      setSaving(true);
+      const uploaded = await uploadFiles({ rootId: task.root_id, files, nodeId });
+      const tokens = uploaded.map((file) => `[file: ${file.agent_path || file.path}]`).join("\n");
+      if (tokens) setEditPrompt((prev) => [prev.trim(), tokens].filter(Boolean).join("\n"));
+    } catch (err) { fail(err); } finally { setSaving(false); }
+  };
+
+  const appendStage = async () => {    const stage: StageTemplate = {
       name: "",
       role: "agent",
       agent: "codex",
@@ -279,12 +293,13 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
                   onSend={() => void saveStage(index)}
                   sending={saving}
                   sendDisabled={!editPrompt.trim()}
-                  saveLabel={t("common.save")}
+                  canAttach={editing}
+                  onAttach={() => stageAttachRef.current?.click()}
                   agents={agents}
                   agent={editAgent}
                   model={editModel}
                   effort={editEffort}
-                  mode2={editMode}
+                  agentMode={editMode}
                   onAgentChange={(agent, model) => {
                     const status = agents.find((item) => item.name === agent) || null;
                     setEditAgent(agent);
@@ -305,20 +320,13 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
           <button type="button" disabled={saving} onClick={() => void appendStage()} style={{ ...buttonStyle("secondary"), alignSelf: "flex-start" }}>
             {t("task.appendStage")}
           </button>
+          <input ref={stageAttachRef} type="file" multiple style={{ display: "none" }} onChange={(event) => void handleStageAttach(event)} />
         </div>
       </section>
     </div>
   );
 }
 
-function PencilIcon() {
-  return (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M12 20h9" />
-      <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
-    </svg>
-  );
-}
 
 function pencilStyle(disabled: boolean): React.CSSProperties {
   return {

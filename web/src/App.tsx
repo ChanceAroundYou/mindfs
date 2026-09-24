@@ -15545,7 +15545,6 @@ flexShrink: 0,
                 onSend={() => void saveTaskInlineEdit()}
                 sending={taskInlineSaving}
                 sendDisabled={!taskInlineEdit.text.trim()}
-                saveLabel={t("common.save")}
                 placeholder={t("task.editPlaceholder")}
               />
               {taskInlineEdit.attachments.length > 0 || taskInlineUploadProgress ? (
