@@ -14,7 +14,8 @@ import vm from "node:vm";
 // 用真编译器跑 modelUtils（与 dialog-lifecycle.test.mjs 同款做法），不是读源码文本 ——
 // 行为变了才会红，改注释/改写法都不会误报。
 
-const sourcePath = path.resolve(import.meta.dirname, "../src/components/action/modelUtils.ts");
+const root = path.resolve(import.meta.dirname, "..");
+const sourcePath = path.join(root, "src/components/action/modelUtils.ts");
 const source = fs.readFileSync(sourcePath, "utf8");
 const compiled = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
@@ -118,5 +119,59 @@ for (const [prevModel, nextBase] of [["of[1m]", "os"], ["os[1m]", "op"], ["os", 
 // 非 claude 时：勾选框是关的，发送串里就不能带后缀
 const codexKept = resolveLongContextOnSwitch({ nextAgent: "codex", nextModel: "gpt-5", prevLongContext: true });
 assert.equal(with1MSuffix("gpt-5", codexKept), "gpt-5", "非 claude 不应发出带 [1m] 的 model");
+
+// —— 调用点接线：修 resolver 还不够，每个 onAgentChange 都得真的用上它 ——
+// 三处曾经把 model 写成裸串、effort 写成 ""，于是 resolver 存在却没人调。
+// （ActionBar 已在上一轮换用。）
+//
+// 任务详情面板与任务模板弹窗后来统一到 StageEditor，onAgentChange 随之只剩
+// StageEditor 这一处 —— 所以这两个文件只需要经过它，不必自己再调一次 resolver。
+const callSites = [
+  ["components/StageEditor.tsx", "共享阶段编辑器（详情面板 / 任务模板弹窗共用）"],
+  ["components/ScheduledAgentTaskDialog.tsx", "定时任务弹窗（form.model 会原样 POST）"],
+];
+for (const [rel, label] of callSites) {
+  const text = fs.readFileSync(path.join(root, "src", rel), "utf8");
+  assert.match(
+    text,
+    /resolveLongContextOnSwitch\(\{/,
+    `${label}(${rel}) 的 onAgentChange 必须用 resolveLongContextOnSwitch 决定 1M`,
+  );
+  assert.match(
+    text,
+    /resolveEffortOnSwitch\(\{/,
+    `${label}(${rel}) 的 onAgentChange 必须用 resolveEffortOnSwitch 决定 effort`,
+  );
+  // 不能再出现"model 直接取下拉裸值"的写法
+  assert.doesNotMatch(
+    text,
+    /\bmodel:\s*model\s*\|\|\s*""/,
+    `${label}(${rel}): model 不能再直接取裸 id，会丢 [1m]`,
+  );
+}
+
+// 详情面板 / 模板弹窗不再自带 AgentSelector，必须经 StageEditor 这一个口子走，
+// 否则统一之后 resolver 很容易只改到其中一条路径。
+for (const [rel, label] of [
+  ["components/TaskDetailPanel.tsx", "任务详情面板"],
+  ["components/TaskTemplateDialog.tsx", "任务模板弹窗"],
+]) {
+  const text = fs.readFileSync(path.join(root, "src", rel), "utf8");
+  assert.match(text, /<StageEditor\b/, `${label}(${rel}) 必须渲染 StageEditor`);
+  assert.doesNotMatch(
+    text,
+    /<AgentSelector\b/,
+    `${label}(${rel}) 不应再直接挂 AgentSelector（改 agent 的语义只在 StageEditor 里一份）`,
+  );
+}
+
+// 唯一一处「只设 agent+model、不带 1M/effort」的调用点是给会话起名的，
+// 那里本来就没有 1M 开关和 effort 概念 —— 钉住这个已知例外，别让人误以为是漏网之鱼。
+const fileTree = fs.readFileSync(path.join(root, "src/components/FileTree.tsx"), "utf8");
+assert.match(
+  fileTree,
+  /sessionNamingAgent/,
+  "FileTree 的 AgentSelector 是会话起名弹窗（无 1M/effort），保持原样即可",
+);
 
 console.log("long-context-inheritance.test.mjs: OK");
