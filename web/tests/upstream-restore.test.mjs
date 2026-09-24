@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
+const streamCache = readFileSync(new URL("../src/app/useSessionStreamCache.ts", import.meta.url), "utf8");
 const fileTree = readFileSync(new URL("../src/components/FileTree.tsx", import.meta.url), "utf8");
 const viewer = readFileSync(new URL("../src/components/SessionViewer.tsx", import.meta.url), "utf8");
 // 2026-09 App.tsx 拆分：相关文件页签的渲染搬到 components/RootRelatedContentView.tsx，契约随文件走。
@@ -50,7 +51,8 @@ assert.doesNotMatch(claudeSession, /claudeModelSupportsEffortAt/, "5941a36 shoul
 assert.match(app, /cachedBeforeSync/, "d36cc53 App restore should capture cachedBeforeSync");
 assert.match(app, /getEventCursor/, "d36cc53 App restore should read resumeCursor via getEventCursor");
 assert.match(app, /localTransient/, "d36cc53 App restore should keep local seq==0 exchanges");
-assert.match(app, /replaySnapshot === true/, "d36cc53 App should branch on replaySnapshot when coalescing userShell");
+// 2026-09 App.tsx 拆分：userShell 流合并搬到 app/useSessionStreamCache.ts，契约随文件走。
+assert.match(streamCache, /replaySnapshot === true/, "d36cc53 App should branch on replaySnapshot when coalescing userShell");
 assert.match(sessionSvc, /eventCursors/, "d36cc53 session.ts should track eventCursors");
 assert.match(sessionSvc, /getEventCursor/, "d36cc53 session.ts should expose getEventCursor");
 
