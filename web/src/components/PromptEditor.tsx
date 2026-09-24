@@ -34,6 +34,8 @@ export type PromptEditorProps = {
   onEnter?: (event: KeyboardEvent | null) => boolean;
   sending?: boolean;
   sendDisabled?: boolean;
+  /** 隐藏内嵌的 agent 选择器（调用方已在别处提供时用，避免出现两个） */
+  hideAgentSelector?: boolean;
   /** 节点主题色（hex），用于发送/编辑按钮的外框与底色 */
   accentColor?: string;
 };
@@ -67,6 +69,7 @@ export const PromptEditor = forwardRef<TokenEditorHandle, PromptEditorProps>(fun
     onEnter,
     sending,
     sendDisabled,
+    hideAgentSelector,
     accentColor,
   },
   ref
@@ -144,7 +147,7 @@ export const PromptEditor = forwardRef<TokenEditorHandle, PromptEditorProps>(fun
         }}
       />
       <div style={{ position: "absolute", right: "6px", bottom: "6px", display: "flex", alignItems: "center", gap: "2px", zIndex: 3 }}>
-        {!isUser ? (
+        {!isUser && !hideAgentSelector ? (
           <AgentSelector
             agent={agent}
             model={model}
@@ -178,7 +181,7 @@ export const PromptEditor = forwardRef<TokenEditorHandle, PromptEditorProps>(fun
             <PlusIcon />
           </button>
         ) : null}
-        {editable ? (
+        {editable && onSend ? (
           <button
             type="button"
             disabled={!canSend}

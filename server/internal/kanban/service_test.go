@@ -676,6 +676,46 @@ func TestTaskWorktreeCreateErrorStoredOnTask(t *testing.T) {
 	}
 }
 
+// 待开始态点「开始」必须直接进执行中：先过掉 user 段再跑 agent 段。
+// 曾经 RunNow 对 pending 只调 RunTask 不推进阶段，任务卡在待审核，
+// 用户得再点一次「执行」才真的跑起来。
+func TestRunNowFromPendingStartsAgentStage(t *testing.T) {
+	ctx := context.Background()
+	svc, root := newTestService(t, &fakeRunner{})
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID: root.ID,
+		Stages: []StageTemplate{userStage("Describe"), agentStage("Fix", "Fix this:\n{previous_input}")},
+		Input:  "broken save button",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if detail.Task.Status != StatusPending || detail.Task.CurrentStageIndex != 0 {
+		t.Fatalf("new task stage/status = %d/%s, want 0/%s", detail.Task.CurrentStageIndex, detail.Task.Status, StatusPending)
+	}
+
+	if _, err := svc.RunNow(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err != nil {
+		t.Fatalf("RunNow: %v", err)
+	}
+	waitForCondition(t, func() bool {
+		d, err := svc.GetTask(ctx, root.ID, detail.Task.ID)
+		return err == nil && d.Task.Status == StatusRunning
+	})
+	detail, err = svc.GetTask(ctx, root.ID, detail.Task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if detail.Task.CurrentStageIndex != 1 {
+		t.Fatalf("current stage=%d, want 1（「开始」应直接进入 agent 段）", detail.Task.CurrentStageIndex)
+	}
+	// user 段被「开始」这一次动作批准掉，不该留在待审核。
+	for _, run := range detail.StageRuns {
+		if run.StageIndex == 0 && run.Status == StageStatusWaitingUser {
+			t.Fatalf("stage 0 still waiting_user after one RunNow")
+		}
+	}
+}
+
 func TestUpdateCurrentInputKeepsPreviousStageInput(t *testing.T) {
 	ctx := context.Background()
 	svc, root := newTestService(t, nil)

@@ -603,6 +603,21 @@ func (s *Service) RunNow(ctx context.Context, in MoveInput) (TaskDetail, error) 
 	switch task.Status {
 	case StatusWaitingUser:
 		return s.Next(ctx, in)
+	case StatusPending:
+		// 未开始态点「开始」= 批准当前 user 段并跑起来。已经停在最后一段时
+		// 没有下一段可进（moveRelative 会报 out of range），直接执行体推进即可。
+		// 曾经这里对 pending 一律只调 RunTask 不推进阶段，多段任务会卡在待审核，
+		// 用户得再点一次「执行」。
+		if task.CurrentStageIndex >= len(task.Stages)-1 {
+			break
+		}
+		detail, nerr := s.Next(ctx, in)
+		// worktree 建不起来时 moveRelative 会报错，但错误已经记在任务上了：
+		// 「开始」不该因此失败，返回当前详情让前端显示那条错误。
+		if nerr != nil && task.CreateWorktree && strings.TrimSpace(task.WorktreePath) == "" {
+			return store.GetDetail(ctx, task.ID)
+		}
+		return detail, nerr
 	case StatusRunning, StatusPaused:
 		return store.GetDetail(ctx, task.ID)
 	}

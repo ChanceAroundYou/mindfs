@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { AgentSelector } from "./AgentSelector";
+import { PromptEditor } from "./PromptEditor";
 import { has1MSuffix, with1MSuffix } from "./action/modelUtils";
 import { AgentIcon } from "./AgentIcon";
 import {
@@ -311,33 +312,28 @@ export function TaskTemplateDialog({ open, agents, template, onClose, onSaved }:
                   <div style={{ flex: "1 1 8px", minWidth: 0 }} />
                   {renderStageMetaActions()}
                 </div>
-                {isAgent ? (
-                  <div style={fieldStyle}>
-                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-	                      <FieldLabelWithInfo
-	                        label={t("taskTemplate.promptTemplate")}
-	                        info={t("taskTemplate.promptTemplateInfo")}
-                        helpKey={`prompt-${index}`}
-                        openHelpKey={openHelpKey}
-                        setOpenHelpKey={setOpenHelpKey}
-                      />
-                    </div>
-                    <textarea className="task-template-input" value={snapshot.prompt_template || ""} onChange={(event) => updateStage(index, { prompt_template: event.target.value })} rows={4} style={{ ...inputStyle, height: "auto", padding: "8px", resize: "vertical" }} />
+                <div style={fieldStyle}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                    <FieldLabelWithInfo
+                      label={isAgent ? t("taskTemplate.promptTemplate") : t("taskTemplate.userInputTemplate")}
+                      info={isAgent ? t("taskTemplate.promptTemplateInfo") : t("taskTemplate.userInputTemplateInfo")}
+                      helpKey={`prompt-${index}`}
+                      openHelpKey={openHelpKey}
+                      setOpenHelpKey={setOpenHelpKey}
+                    />
                   </div>
-                ) : (
-                  <div style={fieldStyle}>
-                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                      <FieldLabelWithInfo
-                        label={t("taskTemplate.userInputTemplate")}
-                        info={t("taskTemplate.userInputTemplateInfo")}
-                        helpKey={`user-${index}`}
-                        openHelpKey={openHelpKey}
-                        setOpenHelpKey={setOpenHelpKey}
-                      />
-                    </div>
-                    <textarea className="task-template-input" value={snapshot.prompt_template || ""} onChange={(event) => updateStage(index, { prompt_template: event.target.value })} rows={4} style={{ ...inputStyle, height: "auto", padding: "8px", resize: "vertical" }} />
-                  </div>
-                )}
+                  {/* 与任务侧同一套 PromptEditor：草稿随改随存，没有发送按钮。
+                      agent/model 由上一行的 RoleAgentSwitch 统一管，这里不再重复一遍选择器。 */}
+                  <PromptEditor
+                    value={snapshot.prompt_template || ""}
+                    onChange={(value) => updateStage(index, { prompt_template: value })}
+                    resetKey={`${draft.id || "new"}-${index}`}
+                    role={isAgent ? "agent" : "user"}
+                    mode="editable"
+                    hideAgentSelector
+                    placeholder={isAgent ? t("taskTemplate.promptTemplate") : t("taskTemplate.userInputTemplate")}
+                  />
+                </div>
               </div>
             );
           })}

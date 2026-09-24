@@ -9,7 +9,7 @@
         "position": 0,
         "snapshot": {
           "id": "",
-          "name": "backlog",
+          "name": "任务初始输入",
           "role": "user",
           "auto_advance": false,
           "session_reuse_policy": "task_main",
@@ -46,7 +46,7 @@
         "position": 0,
         "snapshot": {
           "id": "",
-          "name": "backlog",
+          "name": "任务初始输入",
           "role": "user",
           "auto_advance": false,
           "session_reuse_policy": "task_main",
@@ -83,7 +83,7 @@
         "position": 0,
         "snapshot": {
           "id": "",
-          "name": "backlog",
+          "name": "任务初始输入",
           "role": "user",
           "auto_advance": false,
           "session_reuse_policy": "task_main",
