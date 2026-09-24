@@ -222,3 +222,43 @@ assert.doesNotMatch(
   /import[^;]*isUnfinishedKanbanTask[^;]*from "\.\/app\/appTask"/,
   "isUnfinishedKanbanTask should be gone once nothing calls it",
 );
+// —— 2026-09-24 两处回归守卫 ——
+
+// 1) 「已完成」分组曾整组消失
+//    App 侧构造已结束列的 groups 时带 .filter(g => g.tasks.length > 0)，空组被删；
+//    而 TaskBoardView 用「groups 非空」决定走不走分组渲染 —— 于是「已完成」没任务、
+//    「已取消」有任务时，前者连标题都不渲染，列头却仍按 tasks.length 显示两状态总和。
+//    观感就是「列头有数字、里面是空的 / 找不到该组」。
+assert.doesNotMatch(
+  app,
+  /\}\]\.filter\(\(group\) => group\.tasks\.length > 0\)/,
+  "已结束列的 groups 不能滤掉空分组，否则「已完成」会整组消失",
+);
+
+// 2) 全部看板与子看板的卡片必须是同一套 DOM
+//    以前用 isAllTaskTemplateFilter 把卡片劈成两套：全部看板有标题条，子看板没有，
+//    #编号 与输入顶格同行、worktree badge 又在输入行右侧重复渲染一份。
+//    已统一为「以全部看板为准」，卡片区不该再按筛选态分叉。
+const cardStart = board.indexOf("<article");
+const cardEnd = board.indexOf("</article>", cardStart);
+const cardJsx = board.slice(cardStart, cardEnd);
+assert.doesNotMatch(
+  cardJsx,
+  /isAllTaskTemplateFilter/,
+  "看板卡片不应再按「全部/子」筛选态分叉渲染（已统一为全部看板样式）",
+);
+assert.doesNotMatch(
+  cardJsx,
+  /!isAllTaskTemplateFilter && taskNumberLabel/,
+  "编号只由标题条渲染一次，不该在输入行里再来一份",
+);
+
+// 3) worktree badge 曾经渲染两份（标题条一份、输入行右侧一份），只留标题条那份
+assert.equal(
+  (cardJsx.match(/taskWorktreeTagStyle\(taskWorktreeEnabled\)/g) || []).length,
+  1,
+  "worktree badge 在卡片里只应渲染一次",
+);
+assert.match(cardJsx, /style=\{taskWorktreeTagStyle\(taskWorktreeEnabled\)\}/, "标题条应保留 worktree badge");
+
+console.log("workspace-kanban.test.mjs: OK");

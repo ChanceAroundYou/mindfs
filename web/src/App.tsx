@@ -7953,7 +7953,10 @@ export function App({ onGoHome }: AppProps) {
         name: t("task.group.cancelled"),
         tone: "muted" as const,
         tasks: kanbanTasks.filter((task) => task.status === "fail" || task.status === "cancelled"),
-      }].filter((group) => group.tasks.length > 0),
+      }],
+      // 别在这里滤掉空分组：TaskBoardView 用「groups 非空」决定走不走分组渲染，
+      // 滤掉「已完成」后，只要「已取消」有任务就整组看不见——列头却仍按 tasks.length
+      // 显示两状态总和，于是出现「列头有数字、里面找不到对应组」。空组由渲染层显示成 0。
     },
   ];
   // 跨项目工作台（无项目展开任务视图时）：拉取全项目任务汇总；任务详情变化（WS 广播/本地操作回包）后自动重拉

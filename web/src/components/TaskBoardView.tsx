@@ -667,8 +667,10 @@ export function TaskBoardView({
                   const taskWorktreeEnabled = task.create_worktree === true;
                     const taskNumberLabel = task.task_number ? `#${task.task_number}` : "";
                     const taskStageName = task.current_stage_name || (task.current_stage_index >= 0 ? t("task.stageLabel", { index: task.current_stage_index + 1 }) : "");
-                    const showStageName = isAllTaskTemplateFilter ? column.name === t("task.column.running") : Boolean(taskStageName);
-                    const showTaskStatus = isAllTaskTemplateFilter && column.name === t("task.column.ended");
+                    // 列语义对两种筛选态一视同仁：阶段名只在"执行中"列、状态只在"已结束"列出现。
+                    // 以前子看板走另一套（恒显示阶段），于是同一张卡在两边信息量不同。
+                    const showStageName = column.name === t("task.column.running") && Boolean(taskStageName);
+                    const showTaskStatus = column.name === t("task.column.ended");
                     const taskSelected = selectedKanbanTaskId === task.id;
                     return (
                       <article
@@ -691,8 +693,7 @@ export function TaskBoardView({
                           style={taskReplyPulseStyle(taskKanbanNodeColor || undefined)}
                         />
                       ) : null}
-                      {isAllTaskTemplateFilter ? (
-                        <div
+                      <div
                           style={{
                             display: "flex",
                             alignItems: "center",
@@ -751,27 +752,17 @@ export function TaskBoardView({
                             worktree
                           </span>
                         </div>
-                      ) : null}
                       <div
                         style={{
-                          marginTop: isAllTaskTemplateFilter ? "5px" : 0,
+                          marginTop: "5px",
                           color: firstInput ? "var(--text-color)" : "var(--text-secondary)",
                           fontSize: "12px",
                           lineHeight: "18px",
                           fontWeight: firstInput ? 700 : 500,
-                          ...(!isAllTaskTemplateFilter
-                            ? {
-                                display: "flex",
-                                alignItems: "flex-start",
-                                gap: "6px",
-                                minWidth: 0,
-                              }
-                            : {}),
                         }}
                       >
                         <div
                           style={{
-                            ...(!isAllTaskTemplateFilter ? { flex: "1 1 auto", minWidth: 0 } : {}),
                             whiteSpace: "pre-wrap",
                             wordBreak: "break-word",
                             ...(!inputExpanded
@@ -784,21 +775,8 @@ export function TaskBoardView({
                               : {}),
                           }}
                         >
-                          {!isAllTaskTemplateFilter && taskNumberLabel ? (
-                            <span style={{ color: "#0ea5e9", fontWeight: 800, marginRight: "6px" }}>{taskNumberLabel}</span>
-                          ) : null}
                           {firstInput ? <InlineTokenText content={firstInput} /> : <span>{t("task.noInput")}</span>}
                         </div>
-                        {!isAllTaskTemplateFilter ? (
-                          <span
-                            title={taskWorktreeEnabled ? t("task.worktreeTitle") : t("task.noWorktreeTitle")}
-                            aria-label={taskWorktreeEnabled ? t("task.worktreeTitle") : t("task.noWorktreeTitle")}
-                            style={taskWorktreeTagStyle(taskWorktreeEnabled)}
-                          >
-                            {taskWorktreeEnabled ? null : <NoWorktreeIcon />}
-                            worktree
-                          </span>
-                        ) : null}
                       </div>
                       <div style={{ marginTop: "8px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "4px" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
