@@ -7,7 +7,7 @@ import { type CandidateItem } from "../services/candidates";
 import { reportError } from "../services/error";
 import { isUploadAbortError, uploadFiles, type UploadProgress } from "../services/upload";
 import TokenEditor, { type TokenEditorHandle } from "./editor/TokenEditor";
-import { CancelIcon, PlusIcon, SendIcon, SpinnerIcon } from "./composerStyles";
+import { CancelIcon, PlusIcon, SendIcon, SpinnerIcon } from "./action/composerStyles";
 import { useI18n, type MessageKey } from "../i18n";
 import {
   CandidateDropdown,
@@ -32,6 +32,7 @@ import { useAppearanceSync } from "./action/useAppearanceSync";
 import { useCandidates } from "./action/useCandidates";
 import { useDisplayStatus } from "./action/useDisplayStatus";
 import { useInputHistory } from "./action/useInputHistory";
+import { composerEditorInsets, useComposerEditorHeight } from "./action/useComposerEditorHeight";
 import { usePendingAttachments } from "./action/usePendingAttachments";
 import { useWorktreeState } from "./action/useWorktreeState";
 import {
@@ -39,6 +40,9 @@ import {
   has1MSuffix,
   isClaudeAgentName,
   modelBaseForAgent,
+  resolveEffortOnSwitch,
+  resolveLongContextOnSwitch,
+  strip1MSuffix,
   with1MSuffix,
 } from "./action/modelUtils";
 import { type ActionBarProps, type AttachedFileContext, type QueuedMessageInfo, type SessionInfo, type WSStatus } from "./action/types";
@@ -107,7 +111,6 @@ export function ActionBar({
   const [sending, setSending] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
   const [cancelling, setCancelling] = useState(false);
-  const [isMultiLine, setIsMultiLine] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
   const [blurPlaceholderKey, setBlurPlaceholderKey] = useState<MessageKey>(
     () => chatBlurPlaceholderKeys[Math.floor(Math.random() * chatBlurPlaceholderKeys.length)] || "action.placeholder.chat",
@@ -297,10 +300,11 @@ export function ActionBar({
     }
   }, [supportsLongContext, longContext]);
 
-  const syncEditorHeight = useCallback(() => {
-    const height = editorRef.current?.getHeight() || 44;
-    setIsMultiLine(height > 50);
-  }, []);
+  const {
+    isMultiLine,
+    syncEditorHeight,
+    resetEditorHeight,
+  } = useComposerEditorHeight(editorRef);
 
   const {
     inputHistoryIndex,
@@ -363,7 +367,7 @@ export function ActionBar({
       setActiveToken(payload.activeToken);
     }
     if (payload.displayText.trim().length === 0) {
-      setIsMultiLine(false);
+      resetEditorHeight();
       return;
     }
     requestAnimationFrame(syncEditorHeight);
@@ -471,7 +475,7 @@ export function ActionBar({
       setCandidates([]);
       setActiveCandidateIndex(0);
       clearPendingAttachments();
-      setIsMultiLine(false);
+      resetEditorHeight();
       setCreateWorktree(false);
       setWorktreeBranchMode("new");
       setWorktreeBranch("");
@@ -658,8 +662,10 @@ export function ActionBar({
     : mode === "chat" && !isFocused
       ? t(blurPlaceholderKey)
       : t(modePlaceholderKeys[mode]);
-  const editorRightInset = isMultiLine ? 14 : mode === "command" ? (isMobile ? 92 : 116) : isMobile ? 124 : 148;
-  const editorBottomInset = isMultiLine ? 44 : 12;
+  const editorInsets = composerEditorInsets(
+    isMultiLine,
+    mode === "command" ? (isMobile ? 92 : 116) : isMobile ? 124 : 148,
+  );
   const editorMinHeight = 44;
   const mobileFileSidebarButton = isMobile ? (
     <button
@@ -799,9 +805,9 @@ export function ActionBar({
                 placeholder={inputPlaceholder}
                 disabled={sending}
                 isDark={isDark}
-                rightInset={editorRightInset}
+                rightInset={editorInsets.rightInset}
                 topInset={0}
-                bottomInset={editorBottomInset}
+                bottomInset={editorInsets.bottomInset}
                 onChange={handleEditorChange}
                 onFocusChange={(focused) => {
                   setIsFocused(focused);
@@ -899,16 +905,32 @@ export function ActionBar({
                         const nextStatus = agents.find((item) => item.name === nextAgent);
                         const defaults = getAgentDefaults(nextStatus);
                         const explicitModel = String(nextModel || "").trim();
+                        const nextBaseModel = explicitModel || defaults.model;
+                        const nextModelInfo = nextStatus?.models?.find(
+                          (item) => item.id === nextBaseModel || strip1MSuffix(item.id) === strip1MSuffix(nextBaseModel),
+                        );
+                        const nextAvailableEfforts = nextModelInfo?.efforts ?? nextStatus?.efforts ?? [];
                         setAgent(nextAgent);
-                        setModel(explicitModel || defaults.model);
+                        setModel(nextBaseModel);
                         setAgentMode("");
-                        setEffort(defaults.effort);
+                        setEffort(
+                          resolveEffortOnSwitch({
+                            nextAgent,
+                            nextModel: nextBaseModel,
+                            prevEffort: effort,
+                            defaultEffort: defaults.effort,
+                            availableEfforts: nextAvailableEfforts,
+                          }),
+                        );
                         setFastService(defaults.fastService);
-                        if (explicitModel) {
-                          setLongContext(isClaudeAgentName(nextAgent) && has1MSuffix(explicitModel));
-                        } else {
-                          setLongContext(isClaudeAgentName(nextAgent) && has1MSuffix(defaults.model));
-                        }
+                        // 1M 跟着用户走：下拉传回的是不带后缀的裸 id，不能据此判定"用户关了 1M"。
+                        setLongContext(
+                          resolveLongContextOnSwitch({
+                            nextAgent,
+                            nextModel: nextBaseModel,
+                            prevLongContext: longContext,
+                          }),
+                        );
                       }}
                       onModeChange={(nextAgentMode) => setAgentMode(nextAgentMode || "")}
                       onEffortChange={(nextEffort) => setEffort(nextEffort || "")}

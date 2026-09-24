@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { StageEditor } from "./StageEditor";
 import { PanelShell, panelButtonStyle, panelIconButtonStyle } from "./PanelShell";
-import { composerInputStyle } from "./composerStyles";
+import { composerInputStyle } from "./action/composerStyles";
 import {
   saveTaskTemplate,
   type StageTemplate,

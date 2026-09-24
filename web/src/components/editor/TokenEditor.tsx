@@ -1,6 +1,6 @@
 import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { LexicalComposer } from "@lexical/react/LexicalComposer";
-import { EDITOR_FONT_SIZE, EDITOR_LINE_HEIGHT } from "../composerStyles";
+import { EDITOR_FONT_SIZE, EDITOR_LINE_HEIGHT } from "../action/composerStyles";
 import { PlainTextPlugin } from "@lexical/react/LexicalPlainTextPlugin";
 import { ContentEditable } from "@lexical/react/LexicalContentEditable";
 import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";

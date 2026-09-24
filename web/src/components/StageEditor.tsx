@@ -1,8 +1,8 @@
 import React from "react";
 import { PromptEditor } from "./PromptEditor";
 import { StageOptionsBar, type SessionReusePolicy } from "./StageOptionsBar";
-import { with1MSuffix } from "./action/modelUtils";
-import { composerInputStyle } from "./composerStyles";
+import { has1MSuffix, resolveEffortOnSwitch, resolveLongContextOnSwitch, strip1MSuffix, with1MSuffix } from "./action/modelUtils";
+import { composerInputStyle } from "./action/composerStyles";
 import { useI18n } from "../i18n";
 import { DEFAULT_TASK_AGENT } from "../app/appTask";
 import type { StageTemplate } from "../services/tasks";
@@ -134,11 +134,33 @@ export function StageEditor({
         fastService={stage.fast_service === "on" || stage.fast_service === "off" ? stage.fast_service : ""}
         onAgentChange={(nextAgent, nextModel) => {
           const status = agents.find((item) => item.name === nextAgent) || null;
+          const nextBaseModel = String(nextModel || "").trim();
+          const nextModelInfo = status?.models?.find(
+            (item) => item.id === nextBaseModel || strip1MSuffix(item.id) === strip1MSuffix(nextBaseModel),
+          );
+          const nextAvailableEfforts = nextModelInfo?.efforts ?? status?.efforts ?? [];
           onChange({
             agent: nextAgent,
-            model: nextModel || "",
+            // 面板把 [1M] 直接存在 model 串里，而下拉回传的是裸 id ——
+            // 直接写 nextModel 等于用户没主动关也被清掉 1M。按继承规则把后缀补回去。
+            model: with1MSuffix(
+              nextBaseModel,
+              resolveLongContextOnSwitch({
+                nextAgent,
+                nextModel: nextBaseModel,
+                prevLongContext: has1MSuffix(stage.model || ""),
+              }),
+            ),
             mode: status?.current_mode_id || "",
-            effort: "",
+            // 原来这里一律置空：换一次模型就把用户手选的 effort 抹掉。
+            // 只在目标模型不支持该值时才回落默认值。
+            effort: resolveEffortOnSwitch({
+              nextAgent,
+              nextModel: nextBaseModel,
+              prevEffort: stage.effort || "",
+              defaultEffort: status?.default_effort || "",
+              availableEfforts: nextAvailableEfforts,
+            }),
             fast_service: "",
             ...(status?.protocol === "acp" ? { plan_mode: false } : {}),
           });

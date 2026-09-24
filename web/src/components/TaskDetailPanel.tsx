@@ -5,7 +5,7 @@ import { PromptEditor } from "./PromptEditor";
 import { StageEditor } from "./StageEditor";
 import { PanelShell, panelButtonStyle, panelIconButtonStyle } from "./PanelShell";
 import type { SessionReusePolicy } from "./StageOptionsBar";
-import { PencilIcon, TrashIcon, composerInputStyle } from "./composerStyles";
+import { PencilIcon, TrashIcon, composerInputStyle } from "./action/composerStyles";
 import { uploadFiles } from "../services/upload";
 import { useI18n, type I18nContextValue } from "../i18n";
 import {

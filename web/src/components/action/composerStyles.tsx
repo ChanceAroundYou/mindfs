@@ -1,4 +1,5 @@
 import React from "react";
+import { appAccentHexToRgba } from "./styleHelpers";
 
 /**
  * 对话输入框（ActionBar）与任务 PromptEditor 共用的样式与图标。

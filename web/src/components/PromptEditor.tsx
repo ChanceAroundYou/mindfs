@@ -1,8 +1,9 @@
-import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
+import React, { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import { AgentSelector } from "./AgentSelector";
 import { has1MSuffix } from "./action/modelUtils";
+import { composerEditorInsets, useComposerEditorHeight } from "./action/useComposerEditorHeight";
 import TokenEditor, { type TokenEditorHandle } from "./editor/TokenEditor";
-import { PencilIcon, PlusIcon, SendIcon, composerContainerStyle, composerIconButtonStyle, composerSendButtonStyle } from "./composerStyles";
+import { PencilIcon, PlusIcon, SendIcon, composerContainerStyle, composerIconButtonStyle, composerSendButtonStyle } from "./action/composerStyles";
 import type { StageRole } from "../services/tasks";
 import type { AgentStatus } from "../services/agents";
 import { useI18n } from "../i18n";
@@ -89,8 +90,12 @@ export const PromptEditor = forwardRef<TokenEditorHandle, PromptEditorProps>(fun
   const editorRef = useRef<TokenEditorHandle | null>(null);
   const editable = mode === "editable";
   const isUser = role === "user";
-  // 单行时右侧给控件留位；一旦折行就与对话输入框一样铺满整宽，只在底部让出控件高度。
-  const [isMultiLine, setIsMultiLine] = useState(false);
+  // 折行判定与 inset 切换与对话输入框共用同一 hook（阈值只有一处，不会各改各的）。
+  const {
+    isMultiLine,
+    syncEditorHeight,
+    resetEditorHeight,
+  } = useComposerEditorHeight(editorRef);
 
   useImperativeHandle(ref, () => ({
     focus: () => editorRef.current?.focus(),
@@ -109,18 +114,13 @@ export const PromptEditor = forwardRef<TokenEditorHandle, PromptEditorProps>(fun
 
   // 灌入后高度会变，重算一次多行标记（否则从长文本切到短文本会一直留着底部留白）。
   useEffect(() => {
-    const frame = requestAnimationFrame(() => {
-      setIsMultiLine((editorRef.current?.getHeight() || 44) > 50);
-    });
+    const frame = requestAnimationFrame(syncEditorHeight);
     return () => cancelAnimationFrame(frame);
-  }, [value, resetKey, mode]);
-
-  const syncEditorHeight = () => {
-    setIsMultiLine((editorRef.current?.getHeight() || 44) > 50);
-  };
+  }, [value, resetKey, mode, syncEditorHeight]);
 
   const noop = () => {};
   const canSend = editable && !sending && !sendDisabled;
+  const insets = composerEditorInsets(isMultiLine, 96);
 
   // 默认回车 = 发送（Shift+Enter 换行），与对话输入框一致；输入法组合中的回车放行。
   const isComposing = (event: KeyboardEvent | null) => {
@@ -145,15 +145,15 @@ export const PromptEditor = forwardRef<TokenEditorHandle, PromptEditorProps>(fun
         disabled={sending}
         readOnly={!editable}
         isDark={false}
-        rightInset={isMultiLine ? 14 : 96}
-        topInset={0}
-        bottomInset={isMultiLine ? 44 : 12}
+        rightInset={insets.rightInset}
+        topInset={insets.topInset}
+        bottomInset={insets.bottomInset}
         fillHeight
         onEnter={handleEnter}
         onChange={(payload) => {
           onChange?.(payload.serializedText);
           if (!payload.displayText.trim()) {
-            setIsMultiLine(false);
+            resetEditorHeight();
             return;
           }
           requestAnimationFrame(syncEditorHeight);

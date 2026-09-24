@@ -153,7 +153,7 @@ import { PromptEditor } from "./components/PromptEditor";
 import { StageEditor } from "./components/StageEditor";
 import { Select } from "./components/Select";
 import { PanelShell } from "./components/PanelShell";
-import { composerInputStyle } from "./components/composerStyles";
+import { composerInputStyle } from "./components/action/composerStyles";
 import {
   type GitHubImportState,
   type LocalDirBrowserState,
