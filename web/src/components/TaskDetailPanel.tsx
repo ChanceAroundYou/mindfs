@@ -23,6 +23,8 @@ export type TaskDetailPanelProps = {
   onOpenSession: (sessionKey: string) => void;
   onMoved?: (detail: TaskDetail) => void;
   nodeId?: string;
+  /** 节点主题色，用于发送/编辑按钮 */
+  accentColor?: string;
 };
 
 const statusColors: Record<string, string> = {
@@ -59,7 +61,7 @@ function latestStageRun(detail: TaskDetail, index: number): TaskDetail["stage_ru
     .sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1))[0] || null;
 }
 
-export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMoved, nodeId }: TaskDetailPanelProps) {
+export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMoved, nodeId, accentColor }: TaskDetailPanelProps) {
   const { t } = useI18n();
   const task = detail?.task || null;
 
@@ -76,16 +78,38 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
   const [editMode, setEditMode] = useState("");
   const [saving, setSaving] = useState(false);
   const stageAttachRef = useRef<HTMLInputElement | null>(null);
+  // 待切换的编辑目标：有未保存修改时先弹确认
+  const [pendingEditIndex, setPendingEditIndex] = useState<number | null>(null);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
 
   useEffect(() => {
     setNameDraft(task?.name || "");
     setEditingName(false);
     setEditingStage(-1);
+    setPendingEditIndex(null);
+    setConfirmDiscard(false);
   }, [task?.id]);
 
   useEffect(() => {
     if (!editingName) setNameDraft(task?.name || "");
   }, [task?.name, editingName]);
+
+  // Esc：先关确认弹窗，再退出阶段编辑
+  useEffect(() => {
+    if (confirmDiscard) {
+      const onEsc = (event: KeyboardEvent) => {
+        if (event.key === "Escape") { event.preventDefault(); setConfirmDiscard(false); setPendingEditIndex(null); }
+      };
+      window.addEventListener("keydown", onEsc);
+      return () => window.removeEventListener("keydown", onEsc);
+    }
+    if (editingStage < 0) return;
+    const onEsc = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); setEditingStage(-1); }
+    };
+    window.addEventListener("keydown", onEsc);
+    return () => window.removeEventListener("keydown", onEsc);
+  }, [editingStage, confirmDiscard]);
 
   if (!task || !detail) return null;
 
@@ -123,6 +147,37 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
     setEditModel(stage.model || "");
     setEditEffort(stage.effort || "");
     setEditMode(stage.mode || "");
+  };
+
+  // 编辑态是否已有未保存修改
+  const hasStageDraftChanges = (index: number): boolean => {
+    const stage = stages[index];
+    if (!stage || editingStage !== index) return false;
+    return (
+      editName !== (stage.name || "")
+      || editPrompt !== (stage.prompt_template || "")
+      || editAgent !== (stage.agent || "codex")
+      || editModel !== (stage.model || "")
+      || editEffort !== (stage.effort || "")
+      || editMode !== (stage.mode || "")
+    );
+  };
+
+  const cancelEditStage = () => {
+    setEditingStage(-1);
+    setPendingEditIndex(null);
+    setConfirmDiscard(false);
+  };
+
+  // 点铅笔：有草稿改到别的段时先确认
+  const requestEditStage = (index: number) => {
+    if (editingStage === index) return;
+    if (hasStageDraftChanges(editingStage)) {
+      setPendingEditIndex(index);
+      setConfirmDiscard(true);
+      return;
+    }
+    startEditStage(index);
   };
 
   const saveStage = async (index: number) => {
@@ -256,11 +311,9 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
                       {stage.name || t("task.stageLabel", { index })}
                     </span>
                   )}
-                  {isAgent ? (
-                    <span style={tagStyle}><AgentIcon agentName={stage.agent || "codex"} style={{ width: "12px", height: "12px" }} /> {stage.agent || "codex"}{stage.model ? ` · ${stage.model}` : ""}{stage.effort ? ` · ${stage.effort}` : ""}</span>
-                  ) : (
+                  {!isAgent ? (
                     <span style={tagStyle}>{t("task.stage.user")}</span>
-                  )}
+                  ) : null}
                   <span style={{ fontSize: "11px", fontWeight: 700, color: statusColors[run?.status || ""] || "var(--text-secondary)" }}>
                     {executed ? statusText(run.status, t) : t("task.stage.notExecuted")}
                   </span>
@@ -280,6 +333,11 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
                       </span>
                     </button>
                   ) : null}
+                  {editing ? (
+                    <button type="button" onClick={cancelEditStage} style={{ ...buttonStyle("secondary"), marginLeft: "auto", height: "26px", fontSize: "11px" }}>
+                      {t("common.cancel")}
+                    </button>
+                  ) : null}
                 </div>
 
                 <PromptEditor
@@ -289,12 +347,12 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
                   mode={editing ? "editable" : (executed ? "done" : "readonly")}
                   role={stage.role}
                   placeholder={t("taskTemplate.promptTemplate")}
-                  onEdit={() => startEditStage(index)}
+                  onEdit={() => requestEditStage(index)}
                   onSend={() => void saveStage(index)}
                   sending={saving}
                   sendDisabled={!editPrompt.trim()}
-                  canAttach={editing}
-                  onAttach={() => stageAttachRef.current?.click()}
+                  accentColor={accentColor}
+                  onAttach={editing ? () => stageAttachRef.current?.click() : undefined}
                   agents={agents}
                   agent={editAgent}
                   model={editModel}
@@ -323,6 +381,38 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
           <input ref={stageAttachRef} type="file" multiple style={{ display: "none" }} onChange={(event) => void handleStageAttach(event)} />
         </div>
       </section>
+      {confirmDiscard ? (
+        <div
+          style={{ position: "fixed", inset: 0, zIndex: 96, background: "rgba(15, 23, 42, 0.28)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px" }}
+          onMouseDown={(event) => { if (event.target === event.currentTarget) { setConfirmDiscard(false); setPendingEditIndex(null); } }}
+        >
+          <section style={{ width: "min(420px, 100%)", borderRadius: "10px", border: "1px solid var(--border-color)", background: "var(--menu-bg)", boxShadow: "0 24px 60px rgba(15, 23, 42, 0.24)", overflow: "hidden" }}>
+            <div style={{ padding: "12px 14px", borderBottom: "1px solid var(--border-color)", display: "flex", alignItems: "center", gap: "10px" }}>
+              <div style={{ minWidth: 0, fontSize: "13px", fontWeight: 800, color: "var(--text-color)" }}>{t("task.discardDraftTitle")}</div>
+            </div>
+            <div style={{ padding: "14px", display: "flex", flexDirection: "column", gap: "12px" }}>
+              <div style={{ fontSize: "12px", lineHeight: 1.5, color: "var(--text-secondary)" }}>{t("task.discardDraftMessage")}</div>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px" }}>
+                <button type="button" onClick={() => { setConfirmDiscard(false); setPendingEditIndex(null); }} style={buttonStyle("secondary")}>
+                  {t("task.keepEditing")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setConfirmDiscard(false);
+                    if (pendingEditIndex !== null) startEditStage(pendingEditIndex);
+                    else setEditingStage(-1);
+                    setPendingEditIndex(null);
+                  }}
+                  style={buttonStyle("danger")}
+                >
+                  {t("task.discardDraft")}
+                </button>
+              </div>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -386,13 +476,28 @@ const inputStyle: React.CSSProperties = {
   outline: "none",
 };
 
-function buttonStyle(kind: "primary" | "secondary"): React.CSSProperties {
+function buttonStyle(kind: "primary" | "secondary" | "danger"): React.CSSProperties {
+  const border = kind === "primary"
+    ? "1px solid var(--accent-color)"
+    : kind === "danger"
+      ? "1px solid rgba(220, 38, 38, 0.45)"
+      : "1px solid var(--border-color)";
+  const background = kind === "primary"
+    ? "var(--accent-color)"
+    : kind === "danger"
+      ? "rgba(220, 38, 38, 0.10)"
+      : "var(--button-bg)";
+  const color = kind === "primary"
+    ? "#fff"
+    : kind === "danger"
+      ? "#dc2626"
+      : "var(--text-color)";
   return {
     height: "30px",
     borderRadius: "6px",
-    border: kind === "primary" ? "1px solid var(--accent-color)" : "1px solid var(--border-color)",
-    background: kind === "primary" ? "var(--accent-color)" : "var(--button-bg)",
-    color: kind === "primary" ? "#fff" : "var(--text-color)",
+    border,
+    background,
+    color,
     padding: "0 12px",
     fontSize: "12px",
     fontWeight: 700,

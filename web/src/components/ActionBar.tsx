@@ -9,6 +9,7 @@ import {
   SpinnerIcon,
   composerIconButtonStyle,
   composerSendButtonStyle,
+  hexToRgba,
 } from "./composerStyles";
 import { fetchAgents, fetchShells, restartAgent, type AgentStatus, type ShellStatus } from "../services/agents";
 import { getRootNodeId } from "../services/rootNode";
@@ -556,12 +557,7 @@ export function ActionBar({
   const connectionMeta = wsStatusMeta(displayStatus, t);
   const DRAG_THRESHOLD = -40;
   function appAccentHexToRgba(hex: string, alpha: number): string {
-    const h = String(hex || "").trim().replace(/^#/, "");
-    const fallback = `rgba(37, 99, 235, ${alpha})`;
-    if (h.length === 3) { const r = parseInt(h[0] + h[0], 16); const g = parseInt(h[1] + h[1], 16); const b = parseInt(h[2] + h[2], 16); if (Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b)) return `rgba(${r}, ${g}, ${b}, ${alpha})`; return fallback; }
-    if (h.length === 6) { const r = parseInt(h.slice(0, 2), 16); const g = parseInt(h.slice(2, 4), 16); const b = parseInt(h.slice(4, 6), 16); if (Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b)) return `rgba(${r}, ${g}, ${b}, ${alpha})`; }
-    if (/^rgba?\(/.test(String(hex || ""))) return String(hex);
-    return fallback;
+    return hexToRgba(hex, alpha);
   }
   const accentColorRaw = String(rootColor || "").trim() || "var(--accent-color)";
   const accentHex = String(rootColor || "").trim() || "#2563eb";

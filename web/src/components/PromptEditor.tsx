@@ -1,5 +1,6 @@
 import React, { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import { AgentSelector } from "./AgentSelector";
+import { has1MSuffix } from "./ActionBar";
 import TokenEditor, { type TokenEditorHandle } from "./editor/TokenEditor";
 import { PencilIcon, PlusIcon, SendIcon, composerContainerStyle, composerIconButtonStyle, composerSendButtonStyle } from "./composerStyles";
 import type { StageRole } from "../services/tasks";
@@ -26,12 +27,13 @@ export type PromptEditorProps = {
   onEffortChange?: (effort?: string) => void;
   onLongContextChange?: (enabled: boolean) => void;
   onRestartAgent?: (agent: string) => void | Promise<void>;
-  canAttach?: boolean;
   onAttach?: () => void;
   onEdit?: () => void;
   onSend?: () => void;
   sending?: boolean;
   sendDisabled?: boolean;
+  /** 节点主题色（hex），用于发送/编辑按钮的外框与底色 */
+  accentColor?: string;
 };
 
 /**
@@ -57,12 +59,12 @@ export const PromptEditor = forwardRef<TokenEditorHandle, PromptEditorProps>(fun
     onEffortChange,
     onLongContextChange,
     onRestartAgent,
-    canAttach,
     onAttach,
     onEdit,
     onSend,
     sending,
     sendDisabled,
+    accentColor,
   },
   ref
 ) {
@@ -97,7 +99,7 @@ export const PromptEditor = forwardRef<TokenEditorHandle, PromptEditorProps>(fun
         disabled={sending}
         readOnly={!editable}
         isDark={false}
-        rightInset={canAttach ? 42 : 14}
+        rightInset={96}
         topInset={0}
         bottomInset={12}
         fillHeight
@@ -113,8 +115,10 @@ export const PromptEditor = forwardRef<TokenEditorHandle, PromptEditorProps>(fun
             agents={agents}
             compact
             menuPlacement="top"
-            showChevron
+            viewportMenu
+            showChevron={false}
             warnUnavailable={false}
+            longContext={has1MSuffix(model || "")}
             onAgentChange={editable ? (onAgentChange || noop) : noop}
             onModeChange={editable ? (onModeChange || noop) : noop}
             onEffortChange={editable ? (onEffortChange || noop) : noop}
@@ -123,26 +127,26 @@ export const PromptEditor = forwardRef<TokenEditorHandle, PromptEditorProps>(fun
             onAgentRestart={onRestartAgent}
           />
         ) : null}
-        {canAttach ? (
-          <button
-            type="button"
-            title={t("task.addAttachment")}
-            aria-label={t("task.addAttachment")}
-            disabled={!editable || sending}
-            onClick={onAttach}
-            style={composerIconButtonStyle({ enabled: editable && !sending })}
-          >
-            <PlusIcon />
-          </button>
-        ) : null}
+        <button
+          type="button"
+          title={t("task.addAttachment")}
+          aria-label={t("task.addAttachment")}
+          disabled={!editable || sending || !onAttach}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={onAttach}
+          style={composerIconButtonStyle({ enabled: editable && !sending && !!onAttach })}
+        >
+          <PlusIcon />
+        </button>
         {editable ? (
           <button
             type="button"
             disabled={!canSend}
+            onMouseDown={(event) => event.preventDefault()}
             onClick={onSend}
             title={t("common.save")}
             aria-label={t("common.save")}
-            style={composerSendButtonStyle({ enabled: canSend })}
+            style={composerSendButtonStyle({ enabled: canSend, variant: "panel", accent: accentColor })}
           >
             <SendIcon />
           </button>
@@ -152,8 +156,13 @@ export const PromptEditor = forwardRef<TokenEditorHandle, PromptEditorProps>(fun
             title={t("common.edit")}
             aria-label={t("common.edit")}
             disabled={mode === "done" || sending}
+            onMouseDown={(event) => event.preventDefault()}
             onClick={onEdit}
-            style={composerIconButtonStyle({ enabled: mode !== "done" && !!onEdit, dimmed: mode === "done" })}
+            style={composerSendButtonStyle({
+              enabled: mode !== "done" && !!onEdit,
+              variant: "panel",
+              accent: accentColor,
+            })}
           >
             <PencilIcon />
           </button>

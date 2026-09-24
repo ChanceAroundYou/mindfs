@@ -15540,7 +15540,6 @@ flexShrink: 0,
                 onChange={(value) => setTaskInlineEdit((prev) => prev ? { ...prev, text: value } : prev)}
                 mode="editable"
                 role="user"
-                canAttach
                 onAttach={() => taskInlineAttachmentInputRef.current?.click()}
                 onSend={() => void saveTaskInlineEdit()}
                 sending={taskInlineSaving}
@@ -15758,6 +15757,7 @@ flexShrink: 0,
           onClose={() => setSelectedKanbanTaskId("")}
           onOpenSession={(sessionKey) => handleTaskSessionDrawerOpen(sessionKey, selectedKanbanTask.root_id || currentRootIdRef.current, selectedKanbanTask.id)}
           onMoved={(next) => applyTaskDetails(next.task.root_id || currentRootIdRef.current || "", [next])}
+          accentColor={getDisplayNodeColor(String(selectedKanbanTask.root_id || currentRootId || "")) || undefined}
         />
       ) : null}
       <ToastContainer />
