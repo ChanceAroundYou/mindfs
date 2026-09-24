@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { AgentSelector } from "./AgentSelector";
 import { PromptEditor } from "./PromptEditor";
-import { has1MSuffix, with1MSuffix } from "./action/modelUtils";
+import { with1MSuffix } from "./action/modelUtils";
+import { composerInputStyle } from "./composerStyles";
 import { AgentIcon } from "./AgentIcon";
 import {
   saveTaskTemplate,
@@ -71,10 +71,6 @@ function cloneTemplate(template?: TaskTemplate | null, t?: I18nContextValue["t"]
     ...base,
     stages: normalizeStages(base.stages?.length ? base.stages : newTaskTemplate(t).stages),
   };
-}
-
-function toFastService(value?: string): "" | "on" | "off" {
-  return value === "on" || value === "off" ? value : "";
 }
 
 export function TaskTemplateDialog({ open, agents, template, onClose, onSaved }: TaskTemplateDialogProps) {
@@ -154,16 +150,6 @@ export function TaskTemplateDialog({ open, agents, template, onClose, onSaved }:
             border-color: var(--accent-color) !important;
             box-shadow: none;
           }
-          .task-template-agent-active > div > button svg {
-            color: #fff !important;
-          }
-          .task-template-agent-active > div > button img {
-            filter: brightness(0) invert(1);
-          }
-          .task-template-agent-active > div > button span[aria-label] {
-            color: #fff !important;
-            background: transparent !important;
-          }
           @media (max-width: 640px) {
             .task-template-overlay {
               top: 36px !important;
@@ -213,7 +199,7 @@ export function TaskTemplateDialog({ open, agents, template, onClose, onSaved }:
         <div className="task-template-dialog-body" style={{ padding: "12px 14px", overflow: "auto", display: "flex", flexDirection: "column", gap: "12px", minHeight: 0 }}>
           <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: "10px", alignItems: "end" }}>
             <label style={fieldStyle}>
-              <input className="task-template-input" value={draft.name} placeholder={t("taskTemplate.namePlaceholder")} onChange={(event) => setDraft((prev) => ({ ...prev, name: event.target.value }))} style={inputStyle} />
+              <input className="task-template-input" value={draft.name} placeholder={t("taskTemplate.namePlaceholder")} onChange={(event) => setDraft((prev) => ({ ...prev, name: event.target.value }))} style={{ ...composerInputStyle, height: "30px" }} />
             </label>
           </div>
 
@@ -256,19 +242,12 @@ export function TaskTemplateDialog({ open, agents, template, onClose, onSaved }:
                     value={snapshot.name || ""}
                     onChange={(event) => updateStage(index, { name: event.target.value })}
                     placeholder={t("taskTemplate.stageNamePlaceholder")}
-                    style={{ ...inputStyle, width: "156px", flex: "0 0 156px" }}
+                    style={{ ...composerInputStyle, height: "30px", width: "156px", flex: "0 0 156px" }}
                   />
                   <RoleAgentSwitch
                     role={snapshot.role}
                     disabled={index === 0}
                     agent={snapshot.agent || "codex"}
-                    model={snapshot.model || ""}
-                    mode={snapshot.mode || ""}
-                    effort={snapshot.effort || ""}
-                    fastService={toFastService(snapshot.fast_service)}
-                    longContext={has1MSuffix(snapshot.model || "")}
-                    onLongContextChange={(enabled) => updateStage(index, { model: with1MSuffix(snapshot.model || "", enabled) })}
-                    agents={agents}
                     onUserClick={() => updateStage(index, { ...blankUserStage(), name: snapshot.name || "" })}
                     onAgentActivate={() => {
                       const status = agents.find((item) => item.name === (snapshot.agent || "codex")) || agents[0] || null;
@@ -282,20 +261,6 @@ export function TaskTemplateDialog({ open, agents, template, onClose, onSaved }:
                         ...(status?.protocol === "acp" ? { plan_mode: false } : {}),
                       });
                     }}
-                    onAgentChange={(agent, model) => {
-                      const status = agents.find((item) => item.name === agent) || null;
-                      updateStage(index, {
-                        agent,
-                        model: model || "",
-                        mode: status?.current_mode_id || "",
-                        effort: "",
-                        fast_service: "",
-                        ...(status?.protocol === "acp" ? { plan_mode: false } : {}),
-                      });
-                    }}
-                    onModeChange={(mode) => updateStage(index, { mode: mode || "" })}
-                    onEffortChange={(effort) => updateStage(index, { effort: effort || "" })}
-                    onFastServiceChange={(fastService) => updateStage(index, { fast_service: fastService || "" })}
                   />
                   <StageOptionsMenu
                     isAgent={isAgent}
@@ -323,14 +288,35 @@ export function TaskTemplateDialog({ open, agents, template, onClose, onSaved }:
                     />
                   </div>
                   {/* 与任务侧同一套 PromptEditor：草稿随改随存，没有发送按钮。
-                      agent/model 由上一行的 RoleAgentSwitch 统一管，这里不再重复一遍选择器。 */}
+                      agent 选择器由 PromptEditor 自带（role=agent 时才出现），
+                      和任务面板、对话输入框是同一个控件，不再另起一套。 */}
                   <PromptEditor
                     value={snapshot.prompt_template || ""}
                     onChange={(value) => updateStage(index, { prompt_template: value })}
                     resetKey={`${draft.id || "new"}-${index}`}
                     role={isAgent ? "agent" : "user"}
                     mode="editable"
-                    hideAgentSelector
+                    agent={snapshot.agent || "codex"}
+                    model={snapshot.model || ""}
+                    effort={snapshot.effort || ""}
+                    agentMode={snapshot.mode || ""}
+                    fastService={snapshot.fast_service === "on" || snapshot.fast_service === "off" ? snapshot.fast_service : ""}
+                    agents={agents}
+                    onAgentChange={(nextAgent, nextModel) => {
+                      const status = agents.find((item) => item.name === nextAgent) || null;
+                      updateStage(index, {
+                        agent: nextAgent,
+                        model: nextModel || "",
+                        mode: status?.current_mode_id || "",
+                        effort: "",
+                        fast_service: "",
+                        ...(status?.protocol === "acp" ? { plan_mode: false } : {}),
+                      });
+                    }}
+                    onModeChange={(mode) => updateStage(index, { mode: mode || "" })}
+                    onEffortChange={(effort) => updateStage(index, { effort: effort || "" })}
+                    onFastServiceChange={(fastService) => updateStage(index, { fast_service: fastService })}
+                    onLongContextChange={(enabled) => updateStage(index, { model: with1MSuffix(snapshot.model || "", enabled) })}
                     placeholder={isAgent ? t("taskTemplate.promptTemplate") : t("taskTemplate.userInputTemplate")}
                   />
                 </div>
@@ -557,36 +543,14 @@ function RoleAgentSwitch({
   role,
   disabled,
   agent,
-  model,
-  mode,
-  effort,
-  fastService,
-  longContext,
-  onLongContextChange,
-  agents,
   onUserClick,
   onAgentActivate,
-  onAgentChange,
-  onModeChange,
-  onEffortChange,
-  onFastServiceChange,
 }: {
   role: "user" | "agent";
   disabled?: boolean;
   agent: string;
-  model: string;
-  mode: string;
-  effort: string;
-  fastService: "" | "on" | "off";
-  longContext?: boolean;
-  onLongContextChange?: (enabled: boolean) => void;
-  agents: AgentStatus[];
   onUserClick: () => void;
   onAgentActivate: () => void;
-  onAgentChange: (agent: string, model?: string) => void;
-  onModeChange: (mode?: string) => void;
-  onEffortChange: (effort?: string) => void;
-  onFastServiceChange: (fastService?: "" | "on" | "off") => void;
 }) {
   const { t } = useI18n();
   const userActive = role === "user";
@@ -612,50 +576,16 @@ function RoleAgentSwitch({
       >
         user
       </button>
-      {role === "agent" ? (
-        <div
-          className="task-template-agent-active"
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            minWidth: 0,
-            borderRadius: "5px",
-            background: "var(--accent-color)",
-            position: "relative",
-            overflow: "visible",
-          }}
-        >
-          <AgentSelector
-            agent={agent}
-            model={model}
-            mode={mode}
-            effort={effort}
-            fastService={fastService}
-            longContext={longContext}
-            onLongContextChange={onLongContextChange}
-            agents={agents}
-            compact
-            menuPlacement="bottom"
-            showChevron
-            onAgentChange={onAgentChange}
-            onModeChange={onModeChange}
-            onEffortChange={onEffortChange}
-            onFastServiceChange={onFastServiceChange}
-          />
-        </div>
-      ) : (
-        <button
-          type="button"
-          disabled={disabled}
-          onClick={onAgentActivate}
-          style={roleSegmentStyle(false, disabled)}
-          aria-label={t("taskTemplate.switchToAgentStage")}
-          title={t("taskTemplate.switchToAgentStage")}
-        >
-          <AgentIcon agentName={agent || "codex"} style={{ width: "15px", height: "15px" }} />
-        </button>
-      )}
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={onAgentActivate}
+        style={roleSegmentStyle(!userActive, disabled)}
+        aria-label={t("taskTemplate.switchToAgentStage")}
+        title={t("taskTemplate.switchToAgentStage")}
+      >
+        <AgentIcon agentName={agent || "codex"} style={{ width: "15px", height: "15px" }} />
+      </button>
     </div>
   );
 }
@@ -679,7 +609,6 @@ function roleSegmentStyle(active: boolean, disabled?: boolean): React.CSSPropert
 
 const fieldStyle: React.CSSProperties = { display: "flex", flexDirection: "column", gap: "4px", minWidth: 0 };
 const labelStyle: React.CSSProperties = { fontSize: "11px", color: "var(--text-secondary)", fontWeight: 700 };
-const inputStyle: React.CSSProperties = { height: "30px", boxSizing: "border-box", borderRadius: "6px", border: "1px solid var(--border-color)", background: "var(--input-bg)", color: "var(--text-color)", padding: "0 8px", fontSize: "12px", minWidth: 0, outline: "none" };
 
 function menuIconButtonStyle(active: boolean): React.CSSProperties {
   return {

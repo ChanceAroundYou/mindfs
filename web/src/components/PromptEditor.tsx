@@ -22,10 +22,12 @@ export type PromptEditorProps = {
   model?: string;
   effort?: string;
   agentMode?: string;
+  fastService?: "" | "on" | "off";
   onAgentChange?: (agent: string, model?: string) => void;
   onModeChange?: (mode?: string) => void;
   onEffortChange?: (effort?: string) => void;
   onLongContextChange?: (enabled: boolean) => void;
+  onFastServiceChange?: (fastService?: "" | "on" | "off") => void;
   onRestartAgent?: (agent: string) => void | Promise<void>;
   onAttach?: () => void;
   onEdit?: () => void;
@@ -34,8 +36,6 @@ export type PromptEditorProps = {
   onEnter?: (event: KeyboardEvent | null) => boolean;
   sending?: boolean;
   sendDisabled?: boolean;
-  /** 隐藏内嵌的 agent 选择器（调用方已在别处提供时用，避免出现两个） */
-  hideAgentSelector?: boolean;
   /** 节点主题色（hex），用于发送/编辑按钮的外框与底色 */
   accentColor?: string;
 };
@@ -58,10 +58,12 @@ export const PromptEditor = forwardRef<TokenEditorHandle, PromptEditorProps>(fun
     model = "",
     effort = "",
     agentMode = "",
+    fastService = "",
     onAgentChange,
     onModeChange,
     onEffortChange,
     onLongContextChange,
+    onFastServiceChange,
     onRestartAgent,
     onAttach,
     onEdit,
@@ -69,7 +71,6 @@ export const PromptEditor = forwardRef<TokenEditorHandle, PromptEditorProps>(fun
     onEnter,
     sending,
     sendDisabled,
-    hideAgentSelector,
     accentColor,
   },
   ref
@@ -147,12 +148,13 @@ export const PromptEditor = forwardRef<TokenEditorHandle, PromptEditorProps>(fun
         }}
       />
       <div style={{ position: "absolute", right: "6px", bottom: "6px", display: "flex", alignItems: "center", gap: "2px", zIndex: 3 }}>
-        {!isUser && !hideAgentSelector ? (
+        {!isUser ? (
           <AgentSelector
             agent={agent}
             model={model}
             mode={agentMode}
             effort={effort}
+            fastService={fastService}
             agents={agents}
             compact
             menuPlacement="top"
@@ -164,7 +166,7 @@ export const PromptEditor = forwardRef<TokenEditorHandle, PromptEditorProps>(fun
             onModeChange={editable ? (onModeChange || noop) : noop}
             onEffortChange={editable ? (onEffortChange || noop) : noop}
             onLongContextChange={editable ? (onLongContextChange || noop) : noop}
-            onFastServiceChange={noop}
+            onFastServiceChange={editable ? (onFastServiceChange || noop) : noop}
             onAgentRestart={onRestartAgent}
           />
         ) : null}

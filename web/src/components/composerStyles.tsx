@@ -17,6 +17,19 @@ export function composerContainerStyle(background: string): React.CSSProperties 
   };
 }
 
+/** 单行紧凑输入框（模板名、阶段名等）。与 PromptEditor 同源边框/底色/字号。 */
+export const composerInputStyle: React.CSSProperties = {
+  boxSizing: "border-box",
+  borderRadius: "6px",
+  border: "1px solid var(--border-color)",
+  background: "var(--input-bg)",
+  color: "var(--text-color)",
+  padding: "0 8px",
+  fontSize: "12px",
+  minWidth: 0,
+  outline: "none",
+};
+
 /** 圆角图标按钮（+ 号、铅笔、附加操作）。 */
 export function composerIconButtonStyle(opts: {
   enabled?: boolean;
