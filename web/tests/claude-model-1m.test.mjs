@@ -7,7 +7,6 @@ const root = path.resolve(import.meta.dirname, "..");
 const actionBar = fs.readFileSync(path.join(root, "src/components/ActionBar.tsx"), "utf8");
 const modelUtils = fs.readFileSync(path.join(root, "src/components/action/modelUtils.ts"), "utf8");
 const selector = fs.readFileSync(path.join(root, "src/components/AgentSelector.tsx"), "utf8");
-const app = fs.readFileSync(path.join(root, "src/App.tsx"), "utf8");
 const streamCache = fs.readFileSync(path.join(root, "src/app/useSessionStreamCache.ts"), "utf8");
 
 assert.match(modelUtils, /function modelBaseForAgent\(agentName: string \| undefined, model: string\)/, "modelBaseForAgent must compare Claude aliases on their canonical base");
@@ -27,10 +26,12 @@ assert.match(selector, /if \(isClaudeAliasModelName\(targetModel\)\)/, "AgentSel
 assert.match(selector, /strip1MSuffix\(item\.id\) === strip1MSuffix\(targetModel\)/, "AgentSelector must handle generic [1m] fallback");
 
 // Realtime optimistic display must carry model_display_name from backend (user_message push + accepted ack + chunk merge).
-assert.match(app, /model_display_name:\s*exchange\?\.model_display_name/, "App must store model_display_name from session.user_message WS push");
+// 2026-09 App.tsx 拆分：WS 事件处理器整块搬到 app/useRealtimeEvents.ts，契约随文件走。
+const realtime = fs.readFileSync(path.join(root, "src/app/useRealtimeEvents.ts"), "utf8");
+assert.match(realtime, /model_display_name:\s*exchange\?\.model_display_name/, "App must store model_display_name from session.user_message WS push");
 // 2026-09 App.tsx 拆分：运行时元信息解析与 chunk 合并搬到 app/useSessionStreamCache.ts，契约随文件走。
 assert.match(streamCache, /model_display_name: pickText\("model_display_name"\)/, "App runtime meta must resolve model_display_name like model");
 assert.match(streamCache, /runtimeMeta\.model_display_name \|\| last\.model_display_name/, "App chunk merge must carry realtime model_display_name");
-assert.match(app, /payload\?\.model_display_name/, "App session.accepted must backfill realtime model_display_name");
+assert.match(realtime, /payload\?\.model_display_name/, "App session.accepted must backfill realtime model_display_name");
 
 console.log("claude-model-1m-realtime-display.test.mjs: OK");

@@ -16,7 +16,7 @@ import { normalizeFastService } from "./appTask";
  * meta 为 undefined，行为不变。
  */
 
-type SessionRuntimeMeta = {
+export type SessionRuntimeMeta = {
   agent?: string;
   model?: string;
   model_display_name?: string;
