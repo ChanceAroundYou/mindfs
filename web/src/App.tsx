@@ -8029,7 +8029,6 @@ export function App({ onGoHome }: AppProps) {
       },
     } as Record<string, (event: any, payload: any) => void>;
   }, [
-    currentRootId,
     loadMultiProjectSessionGroups,
     loadSessionsForRoot,
     scheduleSessionListReload,
