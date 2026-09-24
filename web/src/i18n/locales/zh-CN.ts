@@ -304,7 +304,8 @@ export const zhCN = {
   "taskTemplate.sessionReuseTaskMain": "任务主会话",
   "taskTemplate.sessionReuseSameStage": "同阶段会话",
   "taskTemplate.sessionReuseAlwaysNew": "每次新建",
-  "taskTemplate.switchToAgentStage": "切换到 Agent 阶段",
+  "taskTemplate.userStageOn": "user 阶段（点一下切成 agent 阶段）",
+  "taskTemplate.userStageOff": "agent 阶段（点一下切成 user 阶段）",
 
   "task.loadFailed": "任务加载失败",
   "task.actionPrevious": "退回上一阶段",

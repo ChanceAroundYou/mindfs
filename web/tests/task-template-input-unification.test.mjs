@@ -28,7 +28,8 @@ assert.doesNotMatch(
   "task template prompts must not fall back to a raw textarea",
 );
 
-// 2) RoleAgentSwitch 只剩 user/agent 角色切换，不再自己内嵌 AgentSelector。
+// 2) 角色控件只剩一个 user 开关：亮 = user 段，agent 选择器交给下面的
+//    PromptEditor（role=user 时它自己隐藏），这一行不再画 agent 图标/选择器。
 assert.doesNotMatch(
   dialog,
   /<AgentSelector/,
@@ -39,10 +40,32 @@ assert.doesNotMatch(
   /task-template-agent-active/,
   "the accent-background wrapper for the old inline AgentSelector is dead and must be gone",
 );
+assert.doesNotMatch(
+  dialog,
+  /AgentIcon/,
+  "the role toggle must not draw an agent icon; the selector lives inside the editor",
+);
 assert.match(
   dialog,
-  /function RoleAgentSwitch\(\{\s*role,\s*disabled,\s*agent,\s*onUserClick,\s*onAgentActivate,?\s*\}:\s*\{[^}]*role: "user" \| "agent";[^}]*agent: string;[^}]*onUserClick: \(\) => void;[^}]*onAgentActivate: \(\) => void;[^}]*\}\)/,
-  "RoleAgentSwitch must shrink to a pure role toggle (role/agent + the two click handlers)",
+  /function RoleAgentSwitch\(\{\s*role,\s*disabled,\s*onUserClick,?\s*\}:\s*\{\s*role: "user" \| "agent";\s*disabled\?: boolean;\s*onUserClick: \(\) => void;\s*\}\)/,
+  "RoleAgentSwitch must be a single toggle button (role + onUserClick only)",
+);
+// 亮 = user 段：按钮带 aria-pressed，选中态走 accent 底。
+assert.match(
+  dialog,
+  /aria-pressed=\{userActive\}/,
+  "the user toggle must expose its state via aria-pressed",
+);
+assert.match(
+  dialog,
+  /background: active \? "var\(--accent-color\)" : "var\(--input-bg\)"/,
+  "the user toggle must highlight when selected",
+);
+// PromptEditor 自己按 role 隐藏选择器，user 段不该出现 agent 选择器。
+assert.match(
+  promptEditor,
+  /\{!isUser \? \(\s*<AgentSelector/,
+  "PromptEditor must hide the agent selector for user-role stages",
 );
 
 // 3) agent/model/mode/effort/fastService 一律经 PromptEditor 的回调落库。

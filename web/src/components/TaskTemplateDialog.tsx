@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { PromptEditor } from "./PromptEditor";
 import { with1MSuffix } from "./action/modelUtils";
 import { composerInputStyle } from "./composerStyles";
-import { AgentIcon } from "./AgentIcon";
 import {
   saveTaskTemplate,
   type StageTemplate,
@@ -244,22 +243,26 @@ export function TaskTemplateDialog({ open, agents, template, onClose, onSaved }:
                     placeholder={t("taskTemplate.stageNamePlaceholder")}
                     style={{ ...composerInputStyle, height: "30px", width: "156px", flex: "0 0 156px" }}
                   />
+                  {/* user 开关：亮 = user 段（输入框里不显示 agent 选择器），
+                      暗 = agent 段（选择器在下面的 PromptEditor 里）。点一下在两种角色间切。 */}
                   <RoleAgentSwitch
                     role={snapshot.role}
                     disabled={index === 0}
-                    agent={snapshot.agent || "codex"}
-                    onUserClick={() => updateStage(index, { ...blankUserStage(), name: snapshot.name || "" })}
-                    onAgentActivate={() => {
-                      const status = agents.find((item) => item.name === (snapshot.agent || "codex")) || agents[0] || null;
-                      updateStage(index, {
-                        ...blankAgentStage(),
-                        name: snapshot.name || "",
-                        agent: status?.name || snapshot.agent || "codex",
-                        model: snapshot.model || "",
-                        effort: snapshot.effort || "",
-                        fast_service: snapshot.fast_service || "",
-                        ...(status?.protocol === "acp" ? { plan_mode: false } : {}),
-                      });
+                    onUserClick={() => {
+                      if (snapshot.role === "user") {
+                        const status = agents.find((item) => item.name === (snapshot.agent || "codex")) || agents[0] || null;
+                        updateStage(index, {
+                          ...blankAgentStage(),
+                          name: snapshot.name || "",
+                          agent: status?.name || snapshot.agent || "codex",
+                          model: snapshot.model || "",
+                          effort: snapshot.effort || "",
+                          fast_service: snapshot.fast_service || "",
+                          ...(status?.protocol === "acp" ? { plan_mode: false } : {}),
+                        });
+                        return;
+                      }
+                      updateStage(index, { ...blankUserStage(), name: snapshot.name || "" });
                     }}
                   />
                   <StageOptionsMenu
@@ -542,67 +545,47 @@ function ChevronRight({ isOpen }: { isOpen: boolean }) {
 function RoleAgentSwitch({
   role,
   disabled,
-  agent,
   onUserClick,
-  onAgentActivate,
 }: {
   role: "user" | "agent";
   disabled?: boolean;
-  agent: string;
   onUserClick: () => void;
-  onAgentActivate: () => void;
 }) {
   const { t } = useI18n();
   const userActive = role === "user";
+  // 只有一个 user 开关：亮 = user 段（下面输入框不显示 agent 选择器），
+  // 暗 = agent 段（选择器在输入框里）。agent 图标不再出现在这一行。
   return (
-    <div
-      style={{
-        height: "30px",
-        width: "76px",
-        borderRadius: "7px",
-        border: "1px solid var(--border-color)",
-        background: "var(--input-bg)",
-        padding: "1px",
-        display: "grid",
-        gridTemplateColumns: "1fr 1fr",
-        opacity: disabled ? 0.68 : 1,
-      }}
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onUserClick}
+      aria-pressed={userActive}
+      aria-label={userActive ? t("taskTemplate.userStageOn") : t("taskTemplate.userStageOff")}
+      title={userActive ? t("taskTemplate.userStageOn") : t("taskTemplate.userStageOff")}
+      style={userStageToggleStyle(userActive, disabled)}
     >
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={onUserClick}
-        style={roleSegmentStyle(userActive, disabled)}
-      >
-        user
-      </button>
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={onAgentActivate}
-        style={roleSegmentStyle(!userActive, disabled)}
-        aria-label={t("taskTemplate.switchToAgentStage")}
-        title={t("taskTemplate.switchToAgentStage")}
-      >
-        <AgentIcon agentName={agent || "codex"} style={{ width: "15px", height: "15px" }} />
-      </button>
-    </div>
+      user
+    </button>
   );
 }
 
-function roleSegmentStyle(active: boolean, disabled?: boolean): React.CSSProperties {
+function userStageToggleStyle(active: boolean, disabled?: boolean): React.CSSProperties {
   return {
-    border: "none",
-    borderRadius: "5px",
-    background: active ? "var(--accent-color)" : "transparent",
-    color: active ? "#fff" : "var(--text-color)",
+    height: "30px",
+    width: "60px",
+    flex: "0 0 60px",
+    border: "1px solid var(--border-color)",
+    borderRadius: "7px",
+    background: active ? "var(--accent-color)" : "var(--input-bg)",
+    color: active ? "#fff" : "var(--text-secondary)",
     fontSize: "11px",
     fontWeight: 800,
     cursor: disabled ? "not-allowed" : "pointer",
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",
-    minWidth: 0,
+    opacity: disabled ? 0.68 : 1,
     padding: 0,
   };
 }

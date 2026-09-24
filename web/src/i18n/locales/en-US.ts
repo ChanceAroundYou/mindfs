@@ -306,7 +306,8 @@ export const enUS = {
   "taskTemplate.sessionReuseTaskMain": "Task main session",
   "taskTemplate.sessionReuseSameStage": "Same-stage session",
   "taskTemplate.sessionReuseAlwaysNew": "Always create new",
-  "taskTemplate.switchToAgentStage": "Switch to Agent stage",
+  "taskTemplate.userStageOn": "User stage (click for agent stage)",
+  "taskTemplate.userStageOff": "Agent stage (click for user stage)",
 
   "task.loadFailed": "Failed to load tasks",
   "task.actionPrevious": "Move back to previous stage",
