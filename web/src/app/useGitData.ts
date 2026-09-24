@@ -8,7 +8,7 @@ import {
   type GitHistoryPayload,
   type GitStatusPayload,
 } from "../services/git";
-import { GIT_HISTORY_EXPANDED_STORAGE_KEY, GIT_STATUS_EXPANDED_STORAGE_KEY, loadBooleanRecord, loadStringBooleanRecord } from "./appSupport";
+import { GIT_HISTORY_EXPANDED_STORAGE_KEY, GIT_STATUS_EXPANDED_STORAGE_KEY, loadBooleanRecord, loadStringBooleanRecord } from "./appStorage";
 
 /**
  * 当前项目的 git 数据：状态 / 历史（含分页）/ 各 root 的缓存与折叠态。

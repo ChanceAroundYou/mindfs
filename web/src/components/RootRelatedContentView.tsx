@@ -2,7 +2,8 @@ import React from "react";
 import { useI18n } from "../i18n";
 import { relatedFileStatKey } from "../hooks/useRelatedFileStats";
 import type { RelatedFileStat, RelatedFileStatTarget } from "../hooks/useRelatedFileStats";
-import type { GitFileStat, ManagedRootPayload, SessionItem } from "../app/appSupport";
+import { ManagedRootPayload } from "../app/appMisc";
+import { GitFileStat, SessionItem } from "../app/appSession";
 import type { KanbanTask } from "../services/tasks";
 
 /** 与 App 里 selectedSessionRelatedFileGroups 的 flatMap 结果同构。 */

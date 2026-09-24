@@ -15,6 +15,7 @@ const appSrc = read("src/App.tsx");
 // 2026-09 App.tsx 拆分：顶层存储键工具移到 app/appSupport.tsx（账户分区合同随文件走）。
 // 2026-09 二次拆分：appSupport.tsx 拆成 appStorage / appPath / appSession / appTask / appMisc，
 // 账户分区合同随 appStorage.ts 走；负向断言改为扫全部 app 模块（比只扫单文件更强）。
+// 注：过渡门面 appSupport.tsx 已在同批删除，下列为全部实际模块。
 const supportSrc = read("src/app/appStorage.ts");
 const appSupportModules = [
   "src/app/appStorage.ts",
@@ -22,7 +23,6 @@ const appSupportModules = [
   "src/app/appSession.ts",
   "src/app/appTask.ts",
   "src/app/appMisc.tsx",
-  "src/app/appSupport.tsx",
 ].map(read);
 
 // 1) 账户参数必须由 base.ts 注入——它是全部 fetch / WS / 资源 URL 的唯一汇聚点。

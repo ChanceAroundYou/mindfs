@@ -10,7 +10,7 @@ import { appPath, appURL } from "../services/base";
 import { protectedJSON as apiProtectedJSON } from "../services/api";
 import { reportError } from "../services/error";
 import { getActiveNode, LOCAL_NODE_ID } from "../services/nodeRegistry";
-import { managedDirAddErrorMessage, type LocalDirsPayload, type ManagedRootPayload } from "./appSupport";
+import { managedDirAddErrorMessage, type LocalDirsPayload, type ManagedRootPayload } from "./appMisc";
 import {
   ProjectAddPopover,
   type GitHubImportState,

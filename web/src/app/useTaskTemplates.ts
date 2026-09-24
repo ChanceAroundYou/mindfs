@@ -8,7 +8,7 @@ import {
 import { useI18n } from "../i18n";
 import { protectedAPIReady } from "../services/api";
 import { reportError } from "../services/error";
-import { TASK_TEMPLATE_ALL_FILTER, TASK_TEMPLATE_SELECTION_STORAGE_KEY } from "./appSupport";
+import { TASK_TEMPLATE_ALL_FILTER, TASK_TEMPLATE_SELECTION_STORAGE_KEY } from "./appStorage";
 import { confirmDialog } from "../services/dialog";
 
 /**

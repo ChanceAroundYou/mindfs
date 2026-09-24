@@ -18,7 +18,7 @@ import {
 import { reportError } from "../services/error";
 import { ProtectedAPIError } from "../services/api";
 import { useI18n } from "../i18n";
-import { type URLState } from "./appSupport";
+import type { URLState } from "./appPath";
 import { alertDialog } from "../services/dialog";
 
 /**

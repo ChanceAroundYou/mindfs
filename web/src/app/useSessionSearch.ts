@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { sessionService } from "../services/session";
-import { toSessionItem, type SessionItem } from "./appSupport";
+import { toSessionItem, type SessionItem } from "./appSession";
 
 /**
  * 会话搜索：查询串 → 应用串 → 结果。`applied` 与 `query` 分开是为了「回车才搜」。

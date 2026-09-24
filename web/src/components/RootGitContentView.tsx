@@ -8,7 +8,7 @@ import type {
   GitStatusItem,
   GitStatusPayload,
 } from "../services/git";
-import type { ManagedRootPayload } from "../app/appSupport";
+import { ManagedRootPayload } from "../app/appMisc";
 import type { DirectorySortMode } from "../services/directorySort";
 
 /**
