@@ -3,7 +3,7 @@ import { AgentIcon } from "./AgentIcon";
 import { ModeIcon } from "./ModeIcon";
 import { with1MSuffix } from "./action/modelUtils";
 import { PromptEditor } from "./PromptEditor";
-import { PencilIcon, TrashIcon } from "./composerStyles";
+import { PencilIcon, TrashIcon, composerInputStyle } from "./composerStyles";
 import { uploadFiles } from "../services/upload";
 import { useI18n, type I18nContextValue } from "../i18n";
 import {
@@ -258,7 +258,7 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
                   if (event.key === "Enter") void saveName();
                   if (event.key === "Escape") { setEditingName(false); setNameDraft(task.name || ""); }
                 }}
-                style={{ flex: "1 1 auto", minWidth: 0, height: "30px", borderRadius: "6px", border: "1px solid var(--accent-color)", background: "var(--input-bg)", color: "var(--text-color)", padding: "0 8px", fontSize: "14px", fontWeight: 700, outline: "none" }}
+                style={{ ...composerInputStyle, flex: "1 1 auto", height: "30px", border: "1px solid var(--accent-color)", fontWeight: 700 }}
               />
               <button type="button" disabled={saving} onClick={() => void saveName()} style={buttonStyle("primary")}>{t("common.confirm")}</button>
               <button type="button" onClick={() => { setEditingName(false); setNameDraft(task.name || ""); }} style={buttonStyle("secondary")}>{t("common.cancel")}</button>
@@ -315,7 +315,7 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
                       value={editName}
                       onChange={(event) => setEditName(event.target.value)}
                       placeholder={t("taskTemplate.stageNamePlaceholder")}
-                      style={{ ...inputStyle, height: "26px", width: "180px", flex: "0 0 180px", fontSize: "12px", fontWeight: 800 }}
+                      style={{ ...composerInputStyle, height: "26px", width: "180px", flex: "0 0 180px", fontWeight: 800 }}
                     />
                   ) : (
                     <span style={{ fontWeight: 800, fontSize: "12px", color: isCurrent ? "var(--accent-color)" : "var(--text-color)" }}>
@@ -494,19 +494,6 @@ const tagStyle: React.CSSProperties = {
   background: "rgba(148, 163, 184, 0.12)",
   borderRadius: "999px",
   padding: "2px 8px",
-};
-
-const inputStyle: React.CSSProperties = {
-  width: "100%",
-  boxSizing: "border-box",
-  borderRadius: "6px",
-  border: "1px solid var(--border-color)",
-  background: "var(--input-bg)",
-  color: "var(--text-color)",
-  padding: "0 8px",
-  fontSize: "12px",
-  minWidth: 0,
-  outline: "none",
 };
 
 function buttonStyle(kind: "primary" | "secondary" | "danger"): React.CSSProperties {

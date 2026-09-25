@@ -150,6 +150,7 @@ import { NoWorktreeIcon } from "./components/NoWorktreeIcon";
 import { renderToolIcon } from "./components/stream/ToolCallCard";
 import TokenEditor, { type TokenEditorHandle } from "./components/editor/TokenEditor";
 import { PromptEditor } from "./components/PromptEditor";
+import { composerInputStyle } from "./components/composerStyles";
 import {
   type GitHubImportState,
   type LocalDirBrowserState,
@@ -823,6 +824,28 @@ export function App({ onGoHome }: AppProps) {
       const payload = [edit.text.trim(), attachmentTokens].filter(Boolean).join("\n");
       const taskCanCreateWorktree = managedRootByIdRef.current[rootId]?.is_git_repo === true;
       const createWorktree = taskCanCreateWorktree && edit.createWorktree;
+      // 有 agent/模型覆盖才带 stages：把模板的段整体拷出来（wire 上是拍平的
+      // StageTemplate[]，不是模板里的 {snapshot} 包装），只改第一个 agent 段。
+      // 没选覆盖就别传 stages，让后端照模板走。
+      const overrideStages = edit.agentOverride || edit.modelOverride
+        ? (() => {
+            const template = taskTemplates.find((tpl) => tpl.id === edit.templateId) || null;
+            if (!template) return undefined;
+            let touched = false;
+            const stages = (template.stages || []).map((stage) => {
+              const snapshot = stage.snapshot;
+              if (snapshot?.role !== "agent") return snapshot;
+              if (touched) return snapshot;
+              touched = true;
+              return {
+                ...snapshot,
+                ...(edit.agentOverride ? { agent: edit.agentOverride } : {}),
+                ...(edit.modelOverride ? { model: edit.modelOverride } : {}),
+              };
+            });
+            return touched ? stages : undefined;
+          })()
+        : undefined;
       const detail = await createTask(
         rootId,
         edit.templateId,
@@ -831,7 +854,10 @@ export function App({ onGoHome }: AppProps) {
         edit.worktreeBranchMode,
         edit.worktreeBranch,
         getNodeIdForRoot(rootId),
-        edit.name?.trim() ? { name: edit.name.trim() } : undefined,
+        {
+          ...(edit.name?.trim() ? { name: edit.name.trim() } : {}),
+          ...(overrideStages ? { stages: overrideStages } : {}),
+        },
       );
       applyTaskDetails(rootId, [detail]);
       if (detail.task.worktree_path) {
@@ -846,7 +872,7 @@ export function App({ onGoHome }: AppProps) {
       setTaskInlineUploadProgress(null);
       taskInlineUploadAbortRef.current = null;
     }
-  }, [applyTaskDetails, closeTaskEditDialog, taskInlineEdit, t]);
+  }, [applyTaskDetails, closeTaskEditDialog, taskInlineEdit, taskTemplates, t]);
 
 
 
@@ -9019,6 +9045,13 @@ export function App({ onGoHome }: AppProps) {
 	          const taskInlineCanCreateWorktree = managedRootByIdRef.current[currentRootId || ""]?.is_git_repo === true;
 	          const showTaskWorktreeControls = taskInlineCanCreateWorktree && taskInlineEdit.canToggleWorktree;
 	          const taskWorktreeControlsEditable = taskInlineEdit.canToggleWorktree;
+	          // agent/模型下拉的候选：没显式覆盖就回落到模板里第一个 agent 段。
+	          const taskInlineTemplateAgent = firstAgentStage(
+	            taskTemplates.find((tpl) => tpl.id === taskInlineEdit.templateId) || null,
+	          );
+	          const taskInlineAgent = taskInlineEdit.agentOverride || taskInlineTemplateAgent?.agent || "";
+	          const taskInlineAgentModels =
+	            availableAgents.find((a) => a.name === taskInlineAgent)?.models || [];
 	          return (
         <div
           style={{
@@ -9079,12 +9112,48 @@ export function App({ onGoHome }: AppProps) {
                       setTaskInlineActiveToken(null);
                       setTaskInlineCandidates([]);
                     }}
-                    style={{ height: "26px", borderRadius: "6px", border: "1px solid var(--border-color)", background: "var(--input-bg)", color: "var(--text-color)", fontSize: "12px", fontWeight: 700, maxWidth: "160px", padding: "0 6px" }}
+                    style={{ height: "26px", fontWeight: 700, maxWidth: "160px" }}
                   >
                     {taskTemplates.map((tpl) => (
                       <option key={tpl.id} value={tpl.id}>{tpl.name}</option>
                     ))}
                   </select>
+                ) : null}
+                {/* agent / 模型：覆盖模板里第一个 agent 段的取值。
+                    留空 = 跟模板走；选了就在保存时写进 stages 覆盖过去。 */}
+                {taskInlineAgentModels.length > 0 ? (
+                  <>
+                    <select
+                      value={taskInlineEdit.agentOverride || taskInlineAgent || ""}
+                      aria-label={t("task.selectAgent")}
+                      onChange={(event) => {
+                        const nextAgent = event.target.value;
+                        const nextModels = availableAgents.find((a) => a.name === nextAgent)?.models || [];
+                        setTaskInlineEdit((prev) => prev ? {
+                          ...prev,
+                          agentOverride: nextAgent,
+                          // 换 agent 后原来的模型多半不存在了，回到「跟模板走」
+                          modelOverride: nextModels.some((m) => m.id === prev.modelOverride) ? prev.modelOverride : "",
+                        } : prev);
+                      }}
+                      style={{ height: "26px", fontWeight: 700, maxWidth: "150px" }}
+                    >
+                      {availableAgents.filter((a) => (a.models || []).length > 0).map((a) => (
+                        <option key={a.name} value={a.name}>{a.name}</option>
+                      ))}
+                    </select>
+                    <select
+                      value={taskInlineEdit.modelOverride || ""}
+                      aria-label={t("task.selectModel")}
+                      onChange={(event) => setTaskInlineEdit((prev) => prev ? { ...prev, modelOverride: event.target.value } : prev)}
+                      style={{ height: "26px", fontWeight: 700, maxWidth: "190px" }}
+                    >
+                      <option value="">{t("task.modelFollowTemplate")}</option>
+                      {taskInlineAgentModels.map((model) => (
+                        <option key={model.id} value={model.id}>{model.name || model.id}</option>
+                      ))}
+                    </select>
+                  </>
                 ) : null}
 	                {showTaskWorktreeControls ? (
 	                  <>
@@ -9210,7 +9279,7 @@ export function App({ onGoHome }: AppProps) {
                   value={taskInlineEdit.name}
                   onChange={(event) => setTaskInlineEdit((prev) => prev ? { ...prev, name: event.target.value } : prev)}
                   placeholder={t("task.namePlaceholder")}
-                  style={{ flex: "1 1 auto", minWidth: "140px", height: "30px", borderRadius: "6px", border: "1px solid var(--border-color)", background: "var(--input-bg)", color: "var(--text-color)", padding: "0 8px", fontSize: "12px", outline: "none" }}
+                  style={{ ...composerInputStyle, flex: "1 1 auto", height: "30px" }}
                 />
               </div>
               {taskInlineEdit.previousInputs.length > 0 ? (

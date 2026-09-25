@@ -1,5 +1,6 @@
 import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { LexicalComposer } from "@lexical/react/LexicalComposer";
+import { EDITOR_FONT_SIZE, EDITOR_LINE_HEIGHT } from "../composerStyles";
 import { PlainTextPlugin } from "@lexical/react/LexicalPlainTextPlugin";
 import { ContentEditable } from "@lexical/react/LexicalContentEditable";
 import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
@@ -86,7 +87,7 @@ function PlaceholderLayer({
         top: topInset > 0 ? `${topInset + 12}px` : "50%",
         transform: topInset > 0 ? "none" : "translateY(-50%)",
         color: "var(--text-secondary)",
-        fontSize: "16px",
+        fontSize: `${EDITOR_FONT_SIZE}px`,
         pointerEvents: "none",
         zIndex: 1,
         whiteSpace: "nowrap",
@@ -361,8 +362,8 @@ const TokenEditor = forwardRef<TokenEditorHandle, TokenEditorProps>(function Tok
                   ? `${12 + topInset}px ${rightInset}px 12px 14px`
                   : `${8 + topInset}px ${rightInset}px ${bottomInset}px 14px`,
                 outline: "none",
-                fontSize: "16px",
-                lineHeight: "20px",
+                fontSize: `${EDITOR_FONT_SIZE}px`,
+                lineHeight: `${EDITOR_LINE_HEIGHT}px`,
                 boxSizing: "border-box",
                 whiteSpace: "pre-wrap",
                 wordBreak: "break-word",

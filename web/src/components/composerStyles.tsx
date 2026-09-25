@@ -17,7 +17,16 @@ export function composerContainerStyle(background: string): React.CSSProperties 
   };
 }
 
-/** 单行紧凑输入框（模板名、阶段名等）。与 PromptEditor 同源边框/底色/字号。 */
+/**
+ * 编辑区字号刻度：单一来源。
+ * token 编辑器（TokenEditor 内部）走 16px/20px，单行输入框走 13px，
+ * 两者之前各写各的（12/12-bold/14 混着来），看着像三套控件。
+ */
+export const EDITOR_FONT_SIZE = 16;
+export const EDITOR_LINE_HEIGHT = 20;
+export const INPUT_FONT_SIZE = 13;
+
+/** 单行紧凑输入框（模板名、阶段名、任务名等）。与 PromptEditor 同源边框/底色/字号。 */
 export const composerInputStyle: React.CSSProperties = {
   boxSizing: "border-box",
   borderRadius: "6px",
@@ -25,7 +34,7 @@ export const composerInputStyle: React.CSSProperties = {
   background: "var(--input-bg)",
   color: "var(--text-color)",
   padding: "0 8px",
-  fontSize: "12px",
+  fontSize: INPUT_FONT_SIZE,
   minWidth: 0,
   outline: "none",
 };

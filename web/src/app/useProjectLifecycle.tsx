@@ -621,12 +621,6 @@ export function useProjectLifecycle({
           style={{
             width: "100%",
             borderRadius: "7px",
-            border: "1px solid var(--border-color)",
-            background: "var(--menu-bg)",
-            color: "var(--text-primary)",
-            fontSize: "12px",
-            padding: "6px 8px",
-            outline: "none",
           }}
         >
           <option value="__new__">{t("worktree.createBranch")}</option>

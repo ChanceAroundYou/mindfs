@@ -62,7 +62,7 @@ assert.match(
 );
 
 // 未执行阶段可删除；已执行的不给删除入口。
-assert.match(panel, /import \{ PencilIcon, TrashIcon \} from "\.\/composerStyles"/, "delete icon must come from the shared composerStyles set");
+assert.match(panel, /import \{[^}]*TrashIcon[^}]*\} from "\.\/composerStyles"/, "delete icon must come from the shared composerStyles set");
 assert.match(panel, /\{!executed && !isCurrent \? \(/, "TaskDetailPanel must offer delete only on unexecuted, non-current stages");
 assert.match(panel, /removeTaskStage\(task\.root_id, task\.id, index, nodeId\)/, "TaskDetailPanel must call removeTaskStage");
 assert.match(panel, /requestRemoveStage\(index\)/, "delete button must go through the confirm flow");

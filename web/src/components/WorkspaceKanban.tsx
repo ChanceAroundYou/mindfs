@@ -241,7 +241,7 @@ export function WorkspaceKanban({ items, loading, projects, onOpenProject, onCom
         <select
           value={quickProject || availableProjects[0]?.id || ""}
           onChange={(event) => setQuickProject(event.target.value)}
-          style={{ height: "28px", borderRadius: "6px", border: "1px solid var(--border-color)", background: "var(--input-bg)", color: "var(--text-color)", fontSize: "12px", maxWidth: "180px" }}
+          style={{ height: "28px", maxWidth: "180px" }}
         >
           {availableProjects.map((project) => (
             <option key={project.id} value={project.id}>{project.name}</option>
