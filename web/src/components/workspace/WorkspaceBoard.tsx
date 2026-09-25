@@ -1,6 +1,7 @@
 import React from "react";
 import { useI18n } from "../../i18n";
 import { useRefreshSpin } from "../../hooks";
+import { useResponsive } from "../../app/appMisc";
 import { SyncIcon } from "../../app/taskIcons";
 import type { WorkspaceBoardFilter } from "../../app/appStorage";
 import type { WorkspaceBoard, WorkspaceTaskItem } from "../../app/useWorkspaceBoard";
@@ -41,6 +42,7 @@ export function WorkspaceBoard({
   onOpenProject, onOpenTask, onMoveTask, onCreateTask, onRefresh,
 }: WorkspaceBoardProps) {
   const { t } = useI18n();
+  const { isMobile } = useResponsive();
   const spin = useRefreshSpin(onRefresh);
   return (
     <div style={workspaceRootStyle}>
@@ -86,7 +88,7 @@ export function WorkspaceBoard({
         </button>
       </div>
 
-      <WorkspaceAttentionBar items={board.blockedAll} onOpenTask={onOpenTask} />
+      <WorkspaceAttentionBar items={board.blockedAll} onOpenTask={onOpenTask} isMobile={isMobile} />
 
       {board.loading && board.projects.length === 0 ? (
         <div style={workspaceEmptyTextStyle}>{t("task.loading")}</div>
@@ -108,7 +110,7 @@ export function WorkspaceBoard({
         ))
       )}
 
-      <WorkspaceQuickLaunch projects={board.projects} onCreateTask={onCreateTask} />
+      <WorkspaceQuickLaunch projects={board.projects} onCreateTask={onCreateTask} isMobile={isMobile} />
     </div>
   );
 }

@@ -26,6 +26,12 @@ export const workspaceRootStyle: React.CSSProperties = {
   maxHeight: "calc(100dvh - 148px)",
 };
 
+// 「需要你」条带：桌面横向滚，窄屏改纵向堆叠 ——
+// 220px 的卡在 375px 主区里只放得下一张半，横向滚等于每张都要手动划一下。
+export const workspaceAttentionBarStyle = (isMobile = false): React.CSSProperties => (isMobile
+  ? { display: "flex", flexDirection: "column", gap: "6px" }
+  : { display: "flex", gap: "6px", overflowX: "auto", paddingBottom: "2px" });
+
 export const workspaceToolbarStyle: React.CSSProperties = {
   display: "flex",
   alignItems: "center",
@@ -69,17 +75,9 @@ export const workspaceSectionTitleStyle: React.CSSProperties = {
   color: "var(--text-secondary)",
 };
 
-/** 「需要你」条带：横向滚动的紧凑卡，没东西时整条不渲染 */
-export const workspaceAttentionBarStyle: React.CSSProperties = {
-  display: "flex",
-  gap: "6px",
-  overflowX: "auto",
-  paddingBottom: "2px",
-};
-
-export const workspaceAttentionCardStyle = (color: string | null): React.CSSProperties => ({
+export const workspaceAttentionCardStyle = (color: string | null, isMobile = false): React.CSSProperties => ({
   flex: "0 0 auto",
-  width: "220px",
+  width: isMobile ? "100%" : "220px",
   textAlign: "left",
   border: `1px solid ${nodeTint(color, 0.28)}`,
   borderRadius: "8px",
@@ -187,6 +185,12 @@ export const workspaceQuickLaunchStyle: React.CSSProperties = {
   gap: "8px",
   flexWrap: "wrap",
   background: "var(--menu-bg)",
+};
+
+/** 窄屏快速发起：选项目与输入各占整行，不挤在一条 375px 的缝里 */
+export const workspaceQuickLaunchMobileStyle: React.CSSProperties = {
+  flexDirection: "column",
+  alignItems: "stretch",
 };
 
 export const workspaceFilterButtonStyle = (active: boolean): React.CSSProperties => ({

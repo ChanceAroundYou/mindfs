@@ -4,7 +4,7 @@ import { PromptEditor } from "../PromptEditor";
 import { Select } from "../Select";
 import type { TokenEditorHandle } from "../editor/TokenEditor";
 import type { WorkspaceProjectGroup } from "../../app/useWorkspaceBoard";
-import { workspaceQuickLaunchStyle } from "./workspaceStyles";
+import { workspaceQuickLaunchMobileStyle, workspaceQuickLaunchStyle } from "./workspaceStyles";
 
 /**
  * 快速发起：常驻工作台底部。
@@ -12,9 +12,10 @@ import { workspaceQuickLaunchStyle } from "./workspaceStyles";
  * 复用 PromptEditor 而不是裸 <input>（与任务侧其它输入统一：@ 补全、多行、Enter 发送），
  * 提交后必须手动 clear()：编辑器是常驻挂载的，resetKey 不变它不会重灌。
  */
-export function WorkspaceQuickLaunch({ projects, onCreateTask }: {
+export function WorkspaceQuickLaunch({ projects, onCreateTask, isMobile }: {
   projects: WorkspaceProjectGroup[];
   onCreateTask: (rootId: string, nodeId: string, input: string) => void;
+  isMobile: boolean;
 }) {
   const { t } = useI18n();
   const [rootKey, setRootKey] = useState("");
@@ -43,11 +44,11 @@ export function WorkspaceQuickLaunch({ projects, onCreateTask }: {
 
   if (projects.length === 0) return null;
   return (
-    <div style={workspaceQuickLaunchStyle}>
+    <div style={isMobile ? { ...workspaceQuickLaunchStyle, ...workspaceQuickLaunchMobileStyle } : workspaceQuickLaunchStyle}>
       <span style={{ fontSize: "12px", fontWeight: 800, color: "var(--text-secondary)", whiteSpace: "nowrap" }}>
         {t("task.workspaceQuickLaunch")}
       </span>
-      <div style={{ minWidth: "120px", maxWidth: "180px" }}>
+      <div style={isMobile ? { width: "100%" } : { minWidth: "120px", maxWidth: "180px" }}>
         <Select value={effectiveKey} onChange={setRootKey} options={options} />
       </div>
       <div style={{ flex: "1 1 260px", minWidth: "160px" }}>

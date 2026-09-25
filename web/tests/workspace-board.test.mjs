@@ -99,7 +99,40 @@ assert.match(quick, /editorRef\.current\?\.clear\(\);/, "quick launch must clear
 // 项目增删后旧选中会悬空，回落到第一个
 assert.match(quick, /options\.some\(\(option\) => option\.value === rootKey\) \? rootKey : options\[0\]\?\.value \|\| ""/, "a dangling project selection must fall back to the first project");
 
-// 9) 筛选与折叠状态跨会话记住（读时校验、非法值回退默认）
+// 9) 窄屏：旧面板零响应式处理（没有任何 isMobile 分支），这里钉住三处该变的地方
+assert.match(board, /const \{ isMobile \} = useResponsive\(\);/, "the board must read the viewport, not assume desktop");
+assert.match(
+  board,
+  /<WorkspaceAttentionBar items=\{board\.blockedAll\} onOpenTask=\{onOpenTask\} isMobile=\{isMobile\} \/>/,
+  "the attention bar must be told about the viewport",
+);
+assert.match(
+  attention,
+  /<div style=\{workspaceAttentionBarStyle\(isMobile\)\}>/,
+  "the attention bar must switch layout on narrow screens",
+);
+assert.match(
+  styles,
+  /export const workspaceAttentionBarStyle = \(isMobile = false\)[\s\S]*?isMobile\s*\n\s*\? \{ display: "flex", flexDirection: "column"/,
+  "a 220px card does not fit a 375px pane: the bar stacks instead of scrolling sideways",
+);
+assert.match(
+  styles,
+  /width: isMobile \? "100%" : "220px"/,
+  "attention cards go full width on narrow screens",
+);
+assert.match(
+  quick,
+  /style=\{isMobile \? \{ \.\.\.workspaceQuickLaunchStyle, \.\.\.workspaceQuickLaunchMobileStyle \} : workspaceQuickLaunchStyle\}/,
+  "quick launch stacks its project picker and input on narrow screens",
+);
+assert.match(
+  quick,
+  /isMobile \? \{ width: "100%" \} : \{ minWidth: "120px", maxWidth: "180px" \}/,
+  "the project picker takes the full row on narrow screens",
+);
+
+// 10) 筛选与折叠状态跨会话记住（读时校验、非法值回退默认）
 assert.match(storage, /const WORKSPACE_FILTER_STORAGE_KEY = "mindfs-workspace-filter";/, "the filter needs its own storage key");
 assert.match(storage, /const WORKSPACE_COLLAPSED_STORAGE_KEY = "mindfs-workspace-collapsed";/, "collapsed groups need their own storage key");
 assert.match(
@@ -113,7 +146,7 @@ assert.match(
   "collapsed keys must tolerate corrupt storage",
 );
 
-// 10) 面板文案两端都要有，缺 key 会渲染成空白
+// 11) 面板文案两端都要有，缺 key 会渲染成空白
 for (const key of [
   "task.workspaceAttention",
   "task.workspaceFilterAll",
@@ -134,7 +167,7 @@ for (const key of [
   assert.ok(en.includes(`"${key}"`), `${key} missing in en-US`);
 }
 
-// 11) 随旧面板一起废弃的 key 必须两端都删干净（留着会让人以为还有那个分区）
+// 12) 随旧面板一起废弃的 key 必须两端都删干净（留着会让人以为还有那个分区）
 for (const key of [
   "task.workspaceNothingWaiting",
   "task.workspaceNothingRunning",

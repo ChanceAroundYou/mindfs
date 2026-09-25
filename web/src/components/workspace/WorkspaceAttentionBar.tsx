@@ -20,9 +20,10 @@ import {
  * 其余全部按项目组织，回答「各项目在干什么」。跨项目维度只在这里出现一次，
  * 不会出现第二处需要按状态分区的跨项目视图。
  */
-export function WorkspaceAttentionBar({ items, onOpenTask }: {
+export function WorkspaceAttentionBar({ items, onOpenTask, isMobile }: {
   items: WorkspaceTaskItem[];
   onOpenTask: (item: WorkspaceTaskItem) => void;
+  isMobile: boolean;
 }) {
   const { t } = useI18n();
   // 没人等时整条收起，不占空间（不渲染空壳标题）
@@ -33,13 +34,13 @@ export function WorkspaceAttentionBar({ items, onOpenTask }: {
         <span style={workspaceSectionTitleStyle}>{t("task.workspaceAttention")}</span>
         <span style={workspaceCountBadgeStyle}>{items.length}</span>
       </header>
-      <div style={workspaceAttentionBarStyle}>
+      <div style={workspaceAttentionBarStyle(isMobile)}>
         {items.map((item) => (
           <button
             key={`${item.nodeId}::${item.root_id}::${item.task.id}`}
             type="button"
             onClick={() => onOpenTask(item)}
-            style={workspaceAttentionCardStyle(null)}
+            style={workspaceAttentionCardStyle(null, isMobile)}
           >
             <span style={workspaceTaskNumberStyle}>
               {item.task.task_number ? `#${item.task.task_number}` : ""} · {item.root_name}
