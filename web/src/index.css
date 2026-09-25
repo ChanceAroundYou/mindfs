@@ -982,37 +982,6 @@ body[data-plugin-theme="1"] [data-slot="drawer-content"] {
   }
 }
 
-/* 原生 <select> 的下拉面板（option 列表）不吃 CSS，appearance 才是关键：
-   保留 appearance 让各系统仍能用原生菜单（移动端体验好），但把收起态的
-   边框/底色/字号/圆角统一成输入框那套，否则下拉框在深色下是一块系统灰。 */
-select {
-  appearance: none;
-  -webkit-appearance: none;
-  background-color: var(--input-bg, #fff);
-  color: var(--text-color, #111);
-  border: 1px solid var(--border-color, #ccc);
-  border-radius: 6px;
-  font: inherit;
-  font-size: 12px;
-  padding: 0 24px 0 8px;
-  /* 自绘下拉箭头：原生箭头在深色主题下是黑点，看不见 */
-  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%23888' d='M0 0h10L5 6z'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 8px center;
-  cursor: pointer;
-}
-
-select:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-/* option 本身不吃 background-color 的话（部分内核），至少把字色统一 */
-select option {
-  background-color: var(--menu-bg, #fff);
-  color: var(--text-color, #111);
-}
-
 .token-editor-input {
   display: block;
 }

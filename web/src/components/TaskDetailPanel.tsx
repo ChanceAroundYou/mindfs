@@ -1,9 +1,10 @@
 import React, { useEffect, useRef, useState } from "react";
 import { AgentIcon } from "./AgentIcon";
 import { ModeIcon } from "./ModeIcon";
-import { with1MSuffix } from "./action/modelUtils";
 import { PromptEditor } from "./PromptEditor";
-import { StageOptionsBar, type SessionReusePolicy } from "./StageOptionsBar";
+import { StageEditor } from "./StageEditor";
+import { PanelShell, panelButtonStyle, panelIconButtonStyle } from "./PanelShell";
+import type { SessionReusePolicy } from "./StageOptionsBar";
 import { PencilIcon, TrashIcon, composerInputStyle } from "./composerStyles";
 import { uploadFiles } from "../services/upload";
 import { useI18n, type I18nContextValue } from "../i18n";
@@ -260,51 +261,53 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
   const numberLabel = task.task_number ? `#${task.task_number}` : "";
 
   return (
-    <div
-      style={{ position: "fixed", inset: 0, zIndex: 88, background: "rgba(15, 23, 42, 0.36)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px" }}
-      onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}
+    <>
+    <PanelShell
+      width={720}
+      onClose={onClose}
+      closeOnOverlayClick
+      title={(
+        <span style={{ flex: "1 1 auto", minWidth: 0, fontSize: "14px", fontWeight: 700, color: "var(--text-color)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {task.name || t("task.namePlaceholder")}
+        </span>
+      )}
+      headerLeft={editingName ? (
+        <input
+          autoFocus
+          value={nameDraft}
+          placeholder={t("task.namePlaceholder")}
+          onChange={(event) => setNameDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") void saveName();
+            if (event.key === "Escape") { setEditingName(false); setNameDraft(task.name || ""); }
+          }}
+          style={{ ...composerInputStyle, flex: "1 1 auto", height: "30px", border: "1px solid var(--accent-color)", fontWeight: 700 }}
+        />
+      ) : (
+        <>
+          <span style={{ fontSize: "12px", fontWeight: 800, color: statusColors[task.status] || "var(--text-secondary)", flexShrink: 0, whiteSpace: "nowrap" }}>
+            {statusText(task.status, t)}
+          </span>
+          <span style={{ fontSize: "12px", fontWeight: 700, color: "var(--text-secondary)", flexShrink: 0, whiteSpace: "nowrap" }}>
+            {task.task_template_name || ""}
+          </span>
+          {numberLabel ? (
+            <span style={{ fontSize: "12px", fontWeight: 800, color: "#0ea5e9", flexShrink: 0, whiteSpace: "nowrap" }}>{numberLabel}</span>
+          ) : null}
+        </>
+      )}
+      headerRight={editingName ? (
+        <>
+          <button type="button" disabled={saving} onClick={() => void saveName()} style={panelButtonStyle("primary")}>{t("common.confirm")}</button>
+          <button type="button" onClick={() => { setEditingName(false); setNameDraft(task.name || ""); }} style={panelButtonStyle("secondary")}>{t("common.cancel")}</button>
+        </>
+      ) : (
+        <button type="button" aria-label={t("task.renameTask")} title={t("task.renameTask")} onClick={() => setEditingName(true)} style={pencilStyle(false)}>
+          <PencilIcon />
+        </button>
+      )}
     >
-      <section style={{ width: "min(720px, 100%)", maxHeight: "88dvh", overflow: "hidden", borderRadius: "10px", background: "var(--menu-bg)", border: "1px solid var(--border-color)", boxShadow: "0 24px 60px rgba(15, 23, 42, 0.24)", display: "flex", flexDirection: "column" }}>
-        <header style={{ padding: "10px 14px", borderBottom: "1px solid var(--border-color)", display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 }}>
-          {editingName ? (
-            <>
-              <input
-                autoFocus
-                value={nameDraft}
-                placeholder={t("task.namePlaceholder")}
-                onChange={(event) => setNameDraft(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") void saveName();
-                  if (event.key === "Escape") { setEditingName(false); setNameDraft(task.name || ""); }
-                }}
-                style={{ ...composerInputStyle, flex: "1 1 auto", height: "30px", border: "1px solid var(--accent-color)", fontWeight: 700 }}
-              />
-              <button type="button" disabled={saving} onClick={() => void saveName()} style={buttonStyle("primary")}>{t("common.confirm")}</button>
-              <button type="button" onClick={() => { setEditingName(false); setNameDraft(task.name || ""); }} style={buttonStyle("secondary")}>{t("common.cancel")}</button>
-            </>
-          ) : (
-            <>
-              <span style={{ fontSize: "12px", fontWeight: 800, color: statusColors[task.status] || "var(--text-secondary)", flexShrink: 0, whiteSpace: "nowrap" }}>
-                {statusText(task.status, t)}
-              </span>
-              <span style={{ fontSize: "12px", fontWeight: 700, color: "var(--text-secondary)", flexShrink: 0, whiteSpace: "nowrap" }}>
-                {task.task_template_name || ""}
-              </span>
-              {numberLabel ? (
-                <span style={{ fontSize: "12px", fontWeight: 800, color: "#0ea5e9", flexShrink: 0, whiteSpace: "nowrap" }}>{numberLabel}</span>
-              ) : null}
-              <span style={{ flex: "1 1 auto", minWidth: 0, fontSize: "14px", fontWeight: 700, color: "var(--text-color)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {task.name || t("task.namePlaceholder")}
-              </span>
-              <button type="button" aria-label={t("task.renameTask")} title={t("task.renameTask")} onClick={() => setEditingName(true)} style={pencilStyle(false)}>
-                <PencilIcon />
-              </button>
-            </>
-          )}
-        </header>
-
-        <div style={{ padding: "12px 14px", overflow: "auto", display: "flex", flexDirection: "column", gap: "10px", minHeight: 0 }}>
-          {/* 任务初始输入：第一段 user 段，只读 */}
+      <div style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: "10px" }}>
           {initialInput ? (
             <div style={{ border: "1px dashed var(--border-color)", borderRadius: "8px", padding: "10px", display: "flex", flexDirection: "column", gap: "6px", background: "var(--panel-bg)" }}>
               <span style={{ fontSize: "11px", fontWeight: 800, color: "var(--text-secondary)" }}>{t("task.initialInput")}</span>
@@ -326,21 +329,30 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
             const editing = editingStage === index;
             const isAgent = stage.role === "agent";
             const shown = executed ? (run?.rendered_prompt || stage.prompt_template || "") : (stage.prompt_template || "");
+            // 编辑态用草稿值渲染，未保存前先让用户看到自己刚改的
+            const displayStage: StageTemplate = editing
+              ? {
+                  ...stage,
+                  name: editName,
+                  role: editRole,
+                  prompt_template: editPrompt,
+                  agent: editRole === "agent" ? editAgent : undefined,
+                  model: editRole === "agent" ? editModel : undefined,
+                  effort: editRole === "agent" ? editEffort : undefined,
+                  mode: editRole === "agent" ? editMode : undefined,
+                  auto_advance: editAutoAdvance,
+                  plan_mode: editRole === "agent" ? editPlanMode : false,
+                  session_reuse_policy: editSessionReuse,
+                }
+              : stage;
             return (
               <div key={stage.id || index} style={{ border: isCurrent ? "1px solid var(--accent-color)" : "1px solid var(--border-color)", borderRadius: "8px", background: "var(--panel-bg)", padding: "10px", display: "flex", flexDirection: "column", gap: "8px" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-                  {editing ? (
-                    <input
-                      value={editName}
-                      onChange={(event) => setEditName(event.target.value)}
-                      placeholder={t("taskTemplate.stageNamePlaceholder")}
-                      style={{ ...composerInputStyle, height: "26px", width: "180px", flex: "0 0 180px", fontWeight: 800 }}
-                    />
-                  ) : (
+                  {!editing ? (
                     <span style={{ fontWeight: 800, fontSize: "12px", color: isCurrent ? "var(--accent-color)" : "var(--text-color)" }}>
                       {stage.name || t("task.stageLabel", { index })}
                     </span>
-                  )}
+                  ) : null}
                   {!isAgent && !editing ? (
                     <span style={tagStyle}>{t("task.stage.user")}</span>
                   ) : null}
@@ -364,7 +376,7 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
                     </button>
                   ) : null}
                   {editing ? (
-                    <button type="button" onClick={cancelEditStage} style={{ ...buttonStyle("secondary"), marginLeft: "auto", height: "26px", fontSize: "11px" }}>
+                    <button type="button" onClick={cancelEditStage} style={{ ...panelButtonStyle("secondary"), marginLeft: "auto", height: "26px", fontSize: "11px" }}>
                       {t("common.cancel")}
                     </button>
                   ) : null}
@@ -376,66 +388,52 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
                       disabled={saving}
                       onMouseDown={(event) => event.preventDefault()}
                       onClick={() => requestRemoveStage(index)}
-                      style={{ ...sessionIconButtonStyle, marginLeft: editing ? 0 : "auto", color: "#dc2626", cursor: saving ? "not-allowed" : "pointer", opacity: saving ? 0.4 : 1 }}
+                      style={{ ...panelIconButtonStyle(true, saving), marginLeft: editing ? 0 : "auto" }}
                     >
                       <TrashIcon />
                     </button>
                   ) : null}
                 </div>
 
-                <PromptEditor
-                  value={shown}
-                  onChange={(value) => setEditPrompt(value)}
+                <StageEditor
+                  stage={displayStage}
+                  agents={agents}
+                  onChange={(patch: Partial<StageTemplate>) => {
+                    if ("name" in patch) setEditName(patch.name || "");
+                    if ("role" in patch) setEditRole(patch.role as "user" | "agent");
+                    if ("prompt_template" in patch) setEditPrompt(patch.prompt_template || "");
+                    if ("agent" in patch) setEditAgent(patch.agent || "codex");
+                    if ("model" in patch) setEditModel(patch.model || "");
+                    if ("effort" in patch) setEditEffort(patch.effort || "");
+                    if ("mode" in patch) setEditMode(patch.mode || "");
+                    if ("auto_advance" in patch) setEditAutoAdvance(patch.auto_advance === true);
+                    if ("plan_mode" in patch) setEditPlanMode(patch.plan_mode === true);
+                    if ("session_reuse_policy" in patch) setEditSessionReuse((patch.session_reuse_policy as SessionReusePolicy) || "task_main");
+                  }}
+                  stageNamePlaceholder={editing ? t("taskTemplate.stageNamePlaceholder") : undefined}
+                  onStageNameChange={(name) => setEditName(name)}
+                  onToggleRole={editing ? () => {
+                    if (editRole === "agent") {
+                      setEditRole("user");
+                      setEditAgent("codex");
+                      setEditModel("");
+                      setEditEffort("");
+                      setEditMode("");
+                      setEditPlanMode(false);
+                    } else {
+                      setEditRole("agent");
+                    }
+                  } : undefined}
                   resetKey={`${task.id}-${index}`}
                   mode={editing ? "editable" : (executed ? "done" : "readonly")}
-                  role={editing ? editRole : stage.role}
-                  placeholder={t("taskTemplate.promptTemplate")}
-                  header={editing ? (
-                    <StageOptionsBar
-                      role={editRole}
-                      autoAdvance={editAutoAdvance}
-                      planMode={editPlanMode}
-                      sessionReusePolicy={editSessionReuse}
-                      onToggleRole={() => {
-                        if (editRole === "agent") {
-                          // agent → user：清掉 agent 专属字段
-                          setEditRole("user");
-                          setEditAgent("");
-                          setEditModel("");
-                          setEditEffort("");
-                          setEditMode("");
-                          setEditPlanMode(false);
-                        } else {
-                          setEditRole("agent");
-                          setEditAgent(stage.agent || "codex");
-                        }
-                      }}
-                      onAutoAdvanceChange={setEditAutoAdvance}
-                      onPlanModeChange={setEditPlanMode}
-                      onSessionReusePolicyChange={setEditSessionReuse}
-                    />
-                  ) : null}
-                  onEdit={() => requestEditStage(index)}
-                  onSend={() => void saveStage(index)}
+                  onEdit={editing ? undefined : () => requestEditStage(index)}
+                  onSend={editing ? () => void saveStage(index) : undefined}
+                  onAttach={editing ? () => stageAttachRef.current?.click() : undefined}
                   sending={saving}
                   sendDisabled={!editPrompt.trim()}
+                  placeholder={t("taskTemplate.promptTemplate")}
                   accentColor={accentColor}
-                  onAttach={editing ? () => stageAttachRef.current?.click() : undefined}
-                  agents={agents}
-                  // 非编辑态必须显示该阶段自身的 agent/model，否则每张卡都显示打开面板时的默认草稿。
-                  agent={editing ? editAgent : (stage.agent || "codex")}
-                  model={editing ? editModel : (stage.model || "")}
-                  effort={editing ? editEffort : (stage.effort || "")}
-                  agentMode={editing ? editMode : (stage.mode || "")}
-                  onAgentChange={(agent, model) => {
-                    const status = agents.find((item) => item.name === agent) || null;
-                    setEditAgent(agent);
-                    setEditModel(model || "");
-                    setEditMode(status?.current_mode_id || "");
-                  }}
-                  onModeChange={(mode) => setEditMode(mode || "")}
-                  onEffortChange={(effort) => setEditEffort(effort || "")}
-                  onLongContextChange={(enabled) => setEditModel(with1MSuffix(editModel || "", enabled))}
+                  displayValue={editing ? editPrompt : shown}
                 />
               </div>
             );
@@ -444,12 +442,12 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
             <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>{t("task.noStages")}</div>
           ) : null}
 
-          <button type="button" disabled={saving} onClick={() => void appendStage()} style={{ ...buttonStyle("secondary"), alignSelf: "flex-start" }}>
+          <button type="button" disabled={saving} onClick={() => void appendStage()} style={{ ...panelButtonStyle("secondary"), alignSelf: "flex-start" }}>
             {t("task.appendStage")}
           </button>
           <input ref={stageAttachRef} type="file" multiple style={{ display: "none" }} onChange={(event) => void handleStageAttach(event)} />
         </div>
-      </section>
+    </PanelShell>
       {pendingConfirm ? (
         <div
           style={{ position: "fixed", inset: 0, zIndex: 96, background: "rgba(15, 23, 42, 0.28)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px" }}
@@ -466,7 +464,7 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
                 {pendingConfirm.type === "discard" ? t("task.discardDraftMessage") : t("task.removeStageMessage")}
               </div>
               <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px" }}>
-                <button type="button" onClick={() => setPendingConfirm(null)} style={buttonStyle("secondary")}>
+                <button type="button" onClick={() => setPendingConfirm(null)} style={panelButtonStyle("secondary")}>
                   {pendingConfirm.type === "discard" ? t("task.keepEditing") : t("common.cancel")}
                 </button>
                 <button
@@ -481,7 +479,7 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
                       void removeStage(pending.index);
                     }
                   }}
-                  style={buttonStyle("danger")}
+                  style={panelButtonStyle("danger")}
                 >
                   {pendingConfirm.type === "discard" ? t("task.discardDraft") : t("common.delete")}
                 </button>
@@ -490,7 +488,7 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
           </section>
         </div>
       ) : null}
-    </div>
+    </>
   );
 }
 
@@ -540,32 +538,3 @@ const tagStyle: React.CSSProperties = {
   padding: "2px 8px",
 };
 
-function buttonStyle(kind: "primary" | "secondary" | "danger"): React.CSSProperties {
-  const border = kind === "primary"
-    ? "1px solid var(--accent-color)"
-    : kind === "danger"
-      ? "1px solid rgba(220, 38, 38, 0.45)"
-      : "1px solid var(--border-color)";
-  const background = kind === "primary"
-    ? "var(--accent-color)"
-    : kind === "danger"
-      ? "rgba(220, 38, 38, 0.10)"
-      : "var(--button-bg)";
-  const color = kind === "primary"
-    ? "#fff"
-    : kind === "danger"
-      ? "#dc2626"
-      : "var(--text-color)";
-  return {
-    height: "30px",
-    borderRadius: "6px",
-    border,
-    background,
-    color,
-    padding: "0 12px",
-    fontSize: "12px",
-    fontWeight: 700,
-    cursor: "pointer",
-    whiteSpace: "nowrap",
-  };
-}

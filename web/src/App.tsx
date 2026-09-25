@@ -150,6 +150,9 @@ import { NoWorktreeIcon } from "./components/NoWorktreeIcon";
 import { renderToolIcon } from "./components/stream/ToolCallCard";
 import TokenEditor, { type TokenEditorHandle } from "./components/editor/TokenEditor";
 import { PromptEditor } from "./components/PromptEditor";
+import { StageEditor } from "./components/StageEditor";
+import { Select } from "./components/Select";
+import { PanelShell } from "./components/PanelShell";
 import { composerInputStyle } from "./components/composerStyles";
 import {
   type GitHubImportState,
@@ -202,7 +205,7 @@ import { buildMatchInputFromPath, buildMessageWithViewContext, hasExplicitFileCo
 import { basenameOfPath, buildDirectorySelectionKey, buildFileScrollKey, buildURLSearch, comparableManagedRootPath, dirnameOfPath, isDirectorySortMode, joinDisplayPath, normalizeCursor, normalizePath, parentDirsOfFile, parseFileLocation, parsePluginQuery, readURLState, relativeDisplayPathFromRoot, rootNodeKey } from "./app/appPath";
 import { hasSessionExchanges, isTopLevelSessionItem, normalizeMode, relatedFileSelectionKey, sessionInputHistory, toSessionItem } from "./app/appSession";
 import { accountScopedKey, loadGitDiffSideBySide, loadLastRootId, loadLastRootNodeId, loadLegacyMainView, loadMainView, loadMobileEnterKeySends, loadPersistedFileScrollPositions, loadPersistedPluginQuery, loadSidebarsSwapped, loadTaskCreateWorktreePreference, persistFileScrollPositions, persistPluginQuery, removeLocalStorageByPrefix, saveTaskCreateWorktreePreference } from "./app/appStorage";
-import { firstAgentStage, firstTaskInputFromDetail, firstUserInputTemplate, isTerminalKanbanTask, isUnfinishedKanbanTask, latestTaskStageRun, normalizeFastService, parseTaskSessionErrorDetails, parseTaskSessionErrorMessage, taskSessionKeysFromDetail, taskStatusLabel } from "./app/appTask";
+import { applyStageOverride, firstAgentStage, firstTaskInputFromDetail, firstUserInputTemplate, isTerminalKanbanTask, isUnfinishedKanbanTask, latestTaskStageRun, normalizeFastService, parseTaskSessionErrorDetails, parseTaskSessionErrorMessage, taskSessionKeysFromDetail, taskStatusLabel } from "./app/appTask";
 import { useCompletionSound } from "./app/useCompletionSound";
 import { useExternalSessionImport } from "./app/useExternalSessionImport";
 import { useGitActions } from "./app/useGitActions";
@@ -824,29 +827,12 @@ export function App({ onGoHome }: AppProps) {
       const payload = [edit.text.trim(), attachmentTokens].filter(Boolean).join("\n");
       const taskCanCreateWorktree = managedRootByIdRef.current[rootId]?.is_git_repo === true;
       const createWorktree = taskCanCreateWorktree && edit.createWorktree;
-      // 有 agent/模型覆盖才带 stages：把模板的段整体拷出来（wire 上是拍平的
-      // StageTemplate[]，不是模板里的 {snapshot} 包装），只改第一个 agent 段。
-      // 没选覆盖就别传 stages，让后端照模板走。
-      const overrideStages = edit.agentOverride || edit.modelOverride || edit.effortOverride
-        ? (() => {
-            const template = taskTemplates.find((tpl) => tpl.id === edit.templateId) || null;
-            if (!template) return undefined;
-            let touched = false;
-            const stages = (template.stages || []).map((stage) => {
-              const snapshot = stage.snapshot;
-              if (snapshot?.role !== "agent") return snapshot;
-              if (touched) return snapshot;
-              touched = true;
-              return {
-                ...snapshot,
-                ...(edit.agentOverride ? { agent: edit.agentOverride } : {}),
-                ...(edit.modelOverride ? { model: edit.modelOverride } : {}),
-                ...(edit.effortOverride ? { effort: edit.effortOverride } : {}),
-              };
-            });
-            return touched ? stages : undefined;
-          })()
-        : undefined;
+      // 有 agent/模型覆盖才带 stages（applyStageOverride 内部处理：只改第一个
+      // agent 段、没覆盖时返回 undefined 让后端照模板走）。
+      const overrideStages = applyStageOverride(
+        taskTemplates.find((tpl) => tpl.id === edit.templateId) || null,
+        { agent: edit.agentOverride, model: edit.modelOverride, effort: edit.effortOverride },
+      );
       const detail = await createTask(
         rootId,
         edit.templateId,
@@ -9052,143 +9038,104 @@ export function App({ onGoHome }: AppProps) {
 	            taskTemplates.find((tpl) => tpl.id === taskInlineEdit.templateId) || null,
 	          );
 	          const taskInlineHasAgentStage = !!taskInlineTemplateAgent;
-	          const taskInlineAgent = taskInlineEdit.agentOverride || taskInlineTemplateAgent?.agent || "codex";
-	          const taskInlineModel = taskInlineEdit.modelOverride || taskInlineTemplateAgent?.model || "";
-	          const taskInlineAgentEffort =
-	            taskInlineEdit.effortOverride || taskInlineTemplateAgent?.effort || "";
+	          // 喂给 StageEditor 的那一段：user 段（角色不可切、没有段名），
+	          // 但带上「下一个 agent 阶段」的 agent/model/effort，选择器才有默认值。
+	          const createTaskInitialStage: StageTemplate = {
+	            name: "",
+	            role: "user",
+	            prompt_template: taskInlineEdit.text,
+	            agent: taskInlineEdit.agentOverride || taskInlineTemplateAgent?.agent || "codex",
+	            model: taskInlineEdit.modelOverride || taskInlineTemplateAgent?.model || "",
+	            effort: taskInlineEdit.effortOverride || taskInlineTemplateAgent?.effort || "",
+	          };
 	          return (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            zIndex: 95,
-            background: "rgba(15, 23, 42, 0.36)",
-            display: "flex",
-            alignItems: isMobile ? "flex-start" : "center",
-            justifyContent: "center",
-            padding: isMobile ? "38px 12px 12px" : "24px",
-          }}
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget && !taskInlineSaving) {
-              closeTaskEditDialog();
-            }
-          }}
-        >
-          <section
-            style={{
-              width: isMobile ? "100%" : "min(640px, 100%)",
-              maxHeight: isMobile ? "70dvh" : "82vh",
-              minHeight: isMobile ? undefined : "480px",
-              borderRadius: "10px",
-              border: "1px solid var(--border-color)",
-              background: "var(--menu-bg)",
-              boxShadow: "0 24px 60px rgba(15, 23, 42, 0.24)",
-              display: "flex",
-              flexDirection: "column",
-              overflow: "visible",
-            }}
-          >
-            <div
-              style={{
-                minHeight: "42px",
-                padding: "8px 12px",
-                borderBottom: "1px solid var(--border-color)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: "10px",
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "8px", minWidth: 0 }}>
-                <div style={{ fontSize: "13px", fontWeight: 800, color: "var(--text-color)", whiteSpace: "nowrap" }}>
-                  {t("task.createDialogTitle", {
-                    name: taskInlineEdit.templateName || t("task.defaultTitle"),
-                  })}
-                </div>
-                {taskTemplates.length > 0 ? (
-                  <select
+        <PanelShell
+          width={640}
+          minHeight={isMobile ? undefined : 480}
+          onClose={() => { if (!taskInlineSaving) closeTaskEditDialog(); }}
+          closeOnOverlayClick
+          title={(
+            <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "8px", minWidth: 0 }}>
+              <div style={{ fontSize: "13px", fontWeight: 800, color: "var(--text-color)", whiteSpace: "nowrap" }}>
+                {t("task.createDialogTitle", {
+                  name: taskInlineEdit.templateName || t("task.defaultTitle"),
+                })}
+              </div>
+              {taskTemplates.length > 0 ? (
+                <div style={{ minWidth: "120px", maxWidth: "160px" }}>
+                  <Select
                     value={taskInlineEdit.templateId}
-                    aria-label={t("task.selectTemplate")}
-                    onChange={(event) => {
-                      const picked = taskTemplates.find((tpl) => tpl.id === event.target.value);
+                    ariaLabel={t("task.selectTemplate")}
+                    onChange={(value) => {
+                      const picked = taskTemplates.find((tpl) => tpl.id === value);
                       if (!picked) return;
                       setTaskInlineEdit((prev) => prev ? { ...prev, templateId: picked.id || "", templateName: picked.name, text: firstUserInputTemplate(picked) } : prev);
                       setTaskInlineActiveToken(null);
                       setTaskInlineCandidates([]);
                     }}
-                    style={{ height: "26px", fontWeight: 700, maxWidth: "160px" }}
-                  >
-                    {taskTemplates.map((tpl) => (
-                      <option key={tpl.id} value={tpl.id}>{tpl.name}</option>
-                    ))}
-                  </select>
-                ) : null}
-	                {showTaskWorktreeControls ? (
-	                  <>
-	                    <button
-	                      type="button"
-	                      onClick={() => {
-	                        if (!taskWorktreeControlsEditable) return;
-	                        setTaskInlineEdit((prev) => prev ? { ...prev, createWorktree: !prev.createWorktree } : prev);
-	                      }}
-	                      disabled={taskInlineSaving || !taskWorktreeControlsEditable}
-                      aria-label={taskInlineEdit.createWorktree ? t("task.worktreeTitle") : t("task.noWorktreeTitle")}
-                      title={taskInlineEdit.createWorktree ? t("task.worktreeTitle") : t("task.noWorktreeTitle")}
-                      style={{
-                        height: "26px",
-                        borderRadius: "6px",
-                        border: taskInlineEdit.createWorktree ? "1px solid rgba(22, 163, 74, 0.28)" : "1px solid var(--border-color)",
-                        background: taskInlineEdit.createWorktree ? "rgba(22, 163, 74, 0.08)" : "rgba(100, 116, 139, 0.10)",
-                        color: taskInlineEdit.createWorktree ? "#15803d" : "var(--text-secondary)",
-                        padding: taskInlineEdit.createWorktree ? "0 8px" : "0 8px 0 5px",
-                        fontSize: "12px",
-                        fontWeight: 800,
-	                        cursor: taskInlineSaving || !taskWorktreeControlsEditable ? "not-allowed" : "pointer",
-	                        whiteSpace: "nowrap",
-	                        opacity: taskInlineSaving || !taskWorktreeControlsEditable ? 0.72 : 1,
-                        display: "inline-flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        gap: "3px",
-                      }}
-                    >
-                      {taskInlineEdit.createWorktree ? "worktree" : (
-                        <>
-                          <NoWorktreeIcon size={12} />
-                          worktree
-                        </>
-                      )}
-                    </button>
-                    {taskInlineEdit.createWorktree ? (
-                      <div style={{ display: "flex", alignItems: "center", gap: "6px", minWidth: 0 }}>
-	                        <WorktreeBranchSelector
-	                          branchMode={taskInlineEdit.worktreeBranchMode}
-	                          branch={taskInlineEdit.worktreeBranch}
-	                          branches={taskWorktreeBranches.branches}
-                          disabled={taskInlineSaving || !taskWorktreeControlsEditable}
-                          height={26}
-                          maxWidth={isMobile ? 160 : 240}
-                          menuAlign={isMobile ? "left" : "right"}
-                          menuPlacement="bottom"
-                          onChange={(nextMode, nextBranch) => {
-                            setTaskInlineEdit((prev) => {
-                              if (!prev) return prev;
-                              return { ...prev, worktreeBranchMode: nextMode, worktreeBranch: nextBranch };
-                            });
-                          }}
-                        />
-                        {taskWorktreeBranchesLoading ? (
-                          <span style={{ fontSize: "11px", color: "var(--text-secondary)", whiteSpace: "nowrap" }}>{t("common.loading")}</span>
-                        ) : taskWorktreeBranchError ? (
-                          <span title={taskWorktreeBranchError} style={{ fontSize: "11px", color: "#b45309", whiteSpace: "nowrap" }}>{t("common.loadingFailed")}</span>
-                        ) : null}
-                      </div>
-                    ) : null}
-                  </>
-                ) : null}
-              </div>
+                    options={taskTemplates.map((tpl) => ({ value: tpl.id || "", label: tpl.name }))}
+                    size="panel"
+                  />
+                </div>
+              ) : null}
+              {showTaskWorktreeControls ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!taskWorktreeControlsEditable) return;
+                    setTaskInlineEdit((prev) => prev ? { ...prev, createWorktree: !prev.createWorktree } : prev);
+                  }}
+                  disabled={taskInlineSaving || !taskWorktreeControlsEditable}
+                  aria-label={taskInlineEdit.createWorktree ? t("task.worktreeTitle") : t("task.noWorktreeTitle")}
+                  title={taskInlineEdit.createWorktree ? t("task.worktreeTitle") : t("task.noWorktreeTitle")}
+                  style={{
+                    height: "26px",
+                    borderRadius: "6px",
+                    border: taskInlineEdit.createWorktree ? "1px solid rgba(22, 163, 74, 0.28)" : "1px solid var(--border-color)",
+                    background: taskInlineEdit.createWorktree ? "rgba(22, 163, 74, 0.08)" : "rgba(100, 116, 139, 0.10)",
+                    color: taskInlineEdit.createWorktree ? "#15803d" : "var(--text-secondary)",
+                    padding: "0 8px",
+                    fontSize: "12px",
+                    fontWeight: 700,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: "3px",
+                    flexShrink: 0,
+                  }}
+                >
+                  {taskInlineEdit.createWorktree ? "worktree" : (
+                    <>
+                      <NoWorktreeIcon size={12} />
+                      worktree
+                    </>
+                  )}
+                </button>
+              ) : null}
+              {showTaskWorktreeControls && taskInlineEdit.createWorktree ? (
+                <div style={{ display: "flex", alignItems: "center", gap: "6px", minWidth: 0 }}>
+                  <WorktreeBranchSelector
+                    branchMode={taskInlineEdit.worktreeBranchMode}
+                    branch={taskInlineEdit.worktreeBranch}
+                    branches={taskWorktreeBranches.branches}
+                    disabled={taskInlineSaving || !taskWorktreeControlsEditable}
+                    height={26}
+                    maxWidth={isMobile ? 160 : 240}
+                    menuAlign={isMobile ? "left" : "right"}
+                    menuPlacement="bottom"
+                    onChange={(nextMode, nextBranch) => {
+                      setTaskInlineEdit((prev) => {
+                        if (!prev) return prev;
+                        return { ...prev, worktreeBranchMode: nextMode, worktreeBranch: nextBranch };
+                      });
+                    }}
+                  />
+                </div>
+              ) : null}
             </div>
-            <div style={{ padding: "12px", overflow: "visible", position: "relative", minHeight: 0, display: "flex", flexDirection: "column" }}>
+          )}
+        >
+          <div style={{ padding: "12px", overflow: "visible", position: "relative", minHeight: 0, display: "flex", flexDirection: "column" }}>
               {taskInlineActiveToken && taskInlineCandidates.length > 0 ? (
                 <div
                   style={{
@@ -9296,28 +9243,21 @@ export function App({ onGoHome }: AppProps) {
                   ))}
                 </div>
               ) : null}
-              <PromptEditor
-                ref={taskInlineEditorRef}
-                value={taskInlineEdit.text}
-                onChange={(value) => setTaskInlineEdit((prev) => prev ? { ...prev, text: value } : prev)}
-                mode="editable"
-                role="user"
+              <StageEditor
+                editorRef={taskInlineEditorRef}
+                stage={createTaskInitialStage}
+                agents={availableAgents}
+                onChange={(patch) => setTaskInlineEdit((prev) => prev ? {
+                  ...prev,
+                  text: patch.prompt_template ?? prev.text,
+                  ...(patch.agent ? { agentOverride: patch.agent } : {}),
+                  ...(patch.model !== undefined ? { modelOverride: patch.model } : {}),
+                  ...(patch.effort !== undefined ? { effortOverride: patch.effort } : {}),
+                } : prev)}
                 /* 这个编辑区本身是 user 段，但新建时要在这里挑「下一个 agent 阶段」
                    用哪个 agent/模型，所以把 PromptEditor 自带的 AgentSelector 打开。
-                   默认值取模板里第一个 agent 段的 agent/model（taskInlineAgent /
-                   taskInlineModel），没覆盖就显示模板的那个。 */
+                   默认值取模板里第一个 agent 段的 agent/model（createTaskInitialStage）。 */
                 showAgentSelector={taskInlineHasAgentStage}
-                agents={availableAgents}
-                agent={taskInlineAgent}
-                model={taskInlineModel}
-                effort={taskInlineAgentEffort}
-                onAgentChange={(nextAgent, nextModel) => setTaskInlineEdit((prev) => prev ? {
-                  ...prev,
-                  agentOverride: nextAgent,
-                  modelOverride: nextModel || "",
-                } : prev)}
-                onEffortChange={(effort) => setTaskInlineEdit((prev) => prev ? { ...prev, effortOverride: effort || "" } : prev)}
-                onAttach={() => taskInlineAttachmentInputRef.current?.click()}
                 onSend={() => void saveTaskInlineEdit()}
                 sending={taskInlineSaving}
                 sendDisabled={!taskInlineEdit.text.trim()}
@@ -9434,8 +9374,7 @@ export function App({ onGoHome }: AppProps) {
                 </button>
               </div>
             </div>
-          </section>
-        </div>
+    </PanelShell>
           );
         })()
       ) : null}

@@ -5,6 +5,7 @@ import path from "node:path";
 const root = path.resolve(import.meta.dirname, "..");
 const promptEditor = fs.readFileSync(path.join(root, "src/components/PromptEditor.tsx"), "utf8");
 const panel = fs.readFileSync(path.join(root, "src/components/TaskDetailPanel.tsx"), "utf8");
+const stageEditor = fs.readFileSync(path.join(root, "src/components/StageEditor.tsx"), "utf8");
 const composer = fs.readFileSync(path.join(root, "src/components/composerStyles.tsx"), "utf8");
 const tasks = fs.readFileSync(path.join(root, "src/services/tasks.ts"), "utf8");
 const app = fs.readFileSync(path.join(root, "src/App.tsx"), "utf8");
@@ -46,19 +47,19 @@ assert.doesNotMatch(
 // 非编辑态必须显示该阶段自身的 agent/model —— 曾经一律传打开面板时的草稿，
 // 结果所有阶段卡（含已执行的 claude/sonnet 卡）都显示 codex 无模型。
 assert.match(
-  panel,
-  /agent=\{editing \? editAgent : \(stage\.agent \|\| "codex"\)\}/,
-  "TaskDetailPanel must show each stage's own agent when not editing",
+  stageEditor,
+  /agent=\{stage\.agent \|\| "codex"\}/,
+  "StageEditor must show each stage's own agent (not a panel-wide default)",
 );
 assert.match(
-  panel,
-  /model=\{editing \? editModel : \(stage\.model \|\| ""\)\}/,
-  "TaskDetailPanel must show each stage's own model when not editing",
+  stageEditor,
+  /model=\{stage\.model \|\| ""\}/,
+  "StageEditor must show each stage's own model when not editing",
 );
 assert.match(
-  panel,
-  /effort=\{editing \? editEffort : \(stage\.effort \|\| ""\)\}/,
-  "TaskDetailPanel must show each stage's own effort when not editing",
+  stageEditor,
+  /effort=\{stage\.effort \|\| ""\}/,
+  "StageEditor must show each stage's own effort when not editing",
 );
 
 // 未执行阶段可删除；已执行的不给删除入口。

@@ -1,7 +1,6 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { PromptEditor } from "./PromptEditor";
-import { StageOptionsBar, type SessionReusePolicy } from "./StageOptionsBar";
-import { with1MSuffix } from "./action/modelUtils";
+import React, { useEffect, useMemo, useState } from "react";
+import { StageEditor } from "./StageEditor";
+import { PanelShell, panelButtonStyle, panelIconButtonStyle } from "./PanelShell";
 import { composerInputStyle } from "./composerStyles";
 import {
   saveTaskTemplate,
@@ -163,60 +162,36 @@ export function TaskTemplateDialog({ open, agents, template, onClose, onSaved }:
   };
 
   return (
-    <div className="task-template-overlay" style={{ position: "fixed", inset: 0, zIndex: 90, background: "rgba(15, 23, 42, 0.36)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px" }}>
-      <section className="task-template-dialog" style={{ width: "min(760px, 100%)", maxHeight: "88vh", minHeight: "520px", overflow: "hidden", borderRadius: "10px", background: "var(--menu-bg)", border: "1px solid var(--border-color)", boxShadow: "0 24px 60px rgba(15, 23, 42, 0.24)", display: "flex", flexDirection: "column" }}>
-        <style>{`
-          .task-template-input:focus {
-            border-color: var(--accent-color) !important;
-            box-shadow: none;
-          }
-          @media (max-width: 640px) {
-            .task-template-overlay {
-              top: 36px !important;
-              align-items: flex-start !important;
-              padding: 8px 12px 12px !important;
-            }
-            .task-template-dialog {
-              width: 100% !important;
-              height: auto !important;
-              max-height: 60dvh !important;
-            }
-            .task-template-dialog-body {
-              min-height: 0 !important;
-              overflow: auto !important;
-              -webkit-overflow-scrolling: touch;
-            }
-            .task-template-stage-name {
-              width: 120px !important;
-              flex-basis: 120px !important;
-            }
-          }
-        `}</style>
-        <header style={{ padding: "10px 14px", borderBottom: "1px solid var(--border-color)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px" }}>
-          <div style={{ fontSize: "15px", fontWeight: 800, color: "var(--text-color)" }}>{title}</div>
-          <div style={{ display: "flex", gap: "8px" }}>
-            <button type="button" onClick={onClose} style={buttonStyle("secondary")}>{t("taskTemplate.close")}</button>
-            <button type="button" disabled={saving} onClick={() => void saveTask()} style={buttonStyle("primary")}>{saving ? t("common.saving") : t("common.save")}</button>
-          </div>
-        </header>
-        {saveError ? (
-          <div
-            style={{
-              margin: "10px 14px 0",
-              padding: "8px 10px",
-              borderRadius: "8px",
-              border: "1px solid rgba(220, 38, 38, 0.24)",
-              background: "rgba(220, 38, 38, 0.08)",
-              color: "#b91c1c",
-              fontSize: "12px",
-              lineHeight: 1.45,
-              fontWeight: 700,
-            }}
-          >
-            {saveError}
-          </div>
-        ) : null}
-        <div className="task-template-dialog-body" style={{ padding: "12px 14px", overflow: "auto", display: "flex", flexDirection: "column", gap: "12px", minHeight: 0 }}>
+    <PanelShell
+      width={760}
+      minHeight={520}
+      onClose={onClose}
+      title={<div style={{ fontSize: "15px", fontWeight: 800, color: "var(--text-color)" }}>{title}</div>}
+      headerRight={(
+        <div style={{ display: "flex", gap: "8px" }}>
+          <button type="button" onClick={onClose} style={panelButtonStyle("secondary")}>{t("taskTemplate.close")}</button>
+          <button type="button" disabled={saving} onClick={() => void saveTask()} style={panelButtonStyle("primary")}>{saving ? t("common.saving") : t("common.save")}</button>
+        </div>
+      )}
+      belowHeader={saveError ? (
+        <div
+          style={{
+            margin: "10px 14px 0",
+            padding: "8px 10px",
+            borderRadius: "8px",
+            border: "1px solid rgba(220, 38, 38, 0.24)",
+            background: "rgba(220, 38, 38, 0.08)",
+            color: "#b91c1c",
+            fontSize: "12px",
+            lineHeight: 1.45,
+            fontWeight: 700,
+          }}
+        >
+          {saveError}
+        </div>
+      ) : null}
+    >
+      <div style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: "12px" }}>
           <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: "10px", alignItems: "end" }}>
             <label style={fieldStyle}>
               <input className="task-template-input" value={draft.name} placeholder={t("taskTemplate.namePlaceholder")} onChange={(event) => setDraft((prev) => ({ ...prev, name: event.target.value }))} style={{ ...composerInputStyle, height: "30px" }} />
@@ -228,20 +203,6 @@ export function TaskTemplateDialog({ open, agents, template, onClose, onSaved }:
             const isAgent = snapshot.role === "agent";
             const selectedAgentStatus = agents.find((item) => item.name === (snapshot.agent || "codex")) || null;
             const planModeDisabled = isAgent && selectedAgentStatus?.protocol === "acp";
-            const renderStageMetaActions = () => (
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "4px", marginLeft: "auto", flex: "0 0 auto" }}>
-                <button
-                  type="button"
-                  aria-label={t("taskTemplate.deleteStage")}
-                  title={index === 0 ? t("taskTemplate.firstStageCannotDelete") : t("taskTemplate.deleteStage")}
-                  disabled={index === 0}
-                  onClick={() => removeStage(index)}
-                  style={{ ...taskIconButtonStyle(index === 0), color: index === 0 ? "var(--text-secondary)" : "#dc2626" }}
-                >
-                  <DeleteIcon />
-                </button>
-              </div>
-            );
             return (
               <div
                 key={`${stage.id || "stage"}-${index}`}
@@ -256,18 +217,17 @@ export function TaskTemplateDialog({ open, agents, template, onClose, onSaved }:
                   flexShrink: 0,
                 }}
               >
-                <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
-                  <input
-                    className="task-template-input task-template-stage-name"
-                    value={snapshot.name || ""}
-                    onChange={(event) => updateStage(index, { name: event.target.value })}
-                    placeholder={t("taskTemplate.stageNamePlaceholder")}
-                    style={{ ...composerInputStyle, height: "30px", width: "156px", flex: "0 0 156px" }}
-                  />
-                  {renderStageMetaActions()}
-                </div>
-                <div style={fieldStyle}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <StageEditor
+                  stage={snapshot}
+                  agents={agents}
+                  onChange={(patch) => updateStage(index, patch)}
+                  stageNamePlaceholder={t("taskTemplate.stageNamePlaceholder")}
+                  onStageNameChange={(name) => updateStage(index, { name })}
+                  onToggleRole={index === 0 ? undefined : onToggleStageRole(index)}
+                  planModeDisabled={planModeDisabled}
+                  resetKey={`${draft.id || "new"}-${index}`}
+                  placeholder={isAgent ? t("taskTemplate.promptTemplate") : t("taskTemplate.userInputTemplate")}
+                  label={(
                     <FieldLabelWithInfo
                       label={isAgent ? t("taskTemplate.promptTemplate") : t("taskTemplate.userInputTemplate")}
                       info={isAgent ? t("taskTemplate.promptTemplateInfo") : t("taskTemplate.userInputTemplateInfo")}
@@ -275,63 +235,28 @@ export function TaskTemplateDialog({ open, agents, template, onClose, onSaved }:
                       openHelpKey={openHelpKey}
                       setOpenHelpKey={setOpenHelpKey}
                     />
-                  </div>
-                  {/* 与任务侧同一套 PromptEditor：草稿随改随存，没有发送按钮。
-                      agent 选择器由 PromptEditor 自带（role=agent 时才出现），
-                      和任务面板、对话输入框是同一个控件，不再另起一套。 */}
-                  <PromptEditor
-                    value={snapshot.prompt_template || ""}
-                    onChange={(value) => updateStage(index, { prompt_template: value })}
-                    resetKey={`${draft.id || "new"}-${index}`}
-                    role={isAgent ? "agent" : "user"}
-                    mode="editable"
-                    agent={snapshot.agent || "codex"}
-                    model={snapshot.model || ""}
-                    effort={snapshot.effort || ""}
-                    agentMode={snapshot.mode || ""}
-                    fastService={snapshot.fast_service === "on" || snapshot.fast_service === "off" ? snapshot.fast_service : ""}
-                    agents={agents}
-                    onAgentChange={(nextAgent, nextModel) => {
-                      const status = agents.find((item) => item.name === nextAgent) || null;
-                      updateStage(index, {
-                        agent: nextAgent,
-                        model: nextModel || "",
-                        mode: status?.current_mode_id || "",
-                        effort: "",
-                        fast_service: "",
-                        ...(status?.protocol === "acp" ? { plan_mode: false } : {}),
-                      });
-                    }}
-                    onModeChange={(mode) => updateStage(index, { mode: mode || "" })}
-                    onEffortChange={(effort) => updateStage(index, { effort: effort || "" })}
-                    onFastServiceChange={(fastService) => updateStage(index, { fast_service: fastService })}
-                    onLongContextChange={(enabled) => updateStage(index, { model: with1MSuffix(snapshot.model || "", enabled) })}
-                    placeholder={isAgent ? t("taskTemplate.promptTemplate") : t("taskTemplate.userInputTemplate")}
-                    header={(
-                      <StageOptionsBar
-                        role={snapshot.role}
-                        autoAdvance={snapshot.auto_advance === true}
-                        planMode={!planModeDisabled && snapshot.plan_mode === true}
-                        planModeDisabled={planModeDisabled}
-                        sessionReusePolicy={(snapshot.session_reuse_policy as SessionReusePolicy) || "task_main"}
-                        readOnly={index === 0}
-                        onToggleRole={index === 0 ? undefined : onToggleStageRole(index)}
-                        onAutoAdvanceChange={(next) => updateStage(index, { auto_advance: next })}
-                        onPlanModeChange={(next) => {
-                          if (!planModeDisabled) updateStage(index, { plan_mode: next });
-                        }}
-                        onSessionReusePolicyChange={(policy) => updateStage(index, { session_reuse_policy: policy })}
-                      />
-                    )}
-                  />
-                </div>
+                  )}
+                  actions={(
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "4px", marginLeft: "auto", flex: "0 0 auto" }}>
+                      <button
+                        type="button"
+                        aria-label={t("taskTemplate.deleteStage")}
+                        title={index === 0 ? t("taskTemplate.firstStageCannotDelete") : t("taskTemplate.deleteStage")}
+                        disabled={index === 0}
+                        onClick={() => removeStage(index)}
+                        style={{ ...panelIconButtonStyle(true, index === 0) }}
+                      >
+                        <DeleteIcon />
+                      </button>
+                    </div>
+                  )}
+                />
               </div>
             );
           })}
-          <button type="button" onClick={addStage} style={{ ...buttonStyle("secondary"), flexShrink: 0 }}>{t("taskTemplate.addStage")}</button>
+          <button type="button" onClick={addStage} style={{ ...panelButtonStyle("secondary"), flexShrink: 0 }}>{t("taskTemplate.addStage")}</button>
         </div>
-      </section>
-    </div>
+    </PanelShell>
   );
 }
 
@@ -391,22 +316,6 @@ function FieldLabelWithInfo({ label, info, helpKey, openHelpKey, setOpenHelpKey 
 const fieldStyle: React.CSSProperties = { display: "flex", flexDirection: "column", gap: "4px", minWidth: 0 };
 const labelStyle: React.CSSProperties = { fontSize: "11px", color: "var(--text-secondary)", fontWeight: 700 };
 
-function menuIconButtonStyle(active: boolean): React.CSSProperties {
-  return {
-    width: "30px",
-    height: "30px",
-    borderRadius: "8px",
-    border: "none",
-    background: active ? "rgba(0, 0, 0, 0.06)" : "transparent",
-    color: "var(--text-secondary)",
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    cursor: "pointer",
-    outline: "none",
-  };
-}
-
 const stageMenuStyle: React.CSSProperties = {
   position: "absolute",
   top: "calc(100% + 6px)",
@@ -457,25 +366,6 @@ function menuTrailingCheckStyle(checked: boolean): React.CSSProperties {
   };
 }
 
-function taskIconButtonStyle(disabled = false): React.CSSProperties {
-  return {
-    border: "none",
-    background: "transparent",
-    color: "var(--text-primary)",
-    borderRadius: 6,
-    width: 26,
-    height: 26,
-    padding: 0,
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    cursor: disabled ? "not-allowed" : "pointer",
-    flexShrink: 0,
-    opacity: disabled ? 0.5 : 1,
-  };
-}
-
-
 function DeleteIcon() {
   return (
     <svg
@@ -498,17 +388,3 @@ function DeleteIcon() {
   );
 }
 
-function buttonStyle(kind: "primary" | "secondary"): React.CSSProperties {
-  return {
-    height: "30px",
-    borderRadius: "6px",
-    border: kind === "primary" ? "1px solid var(--accent-color)" : "1px solid var(--border-color)",
-    background: kind === "primary" ? "var(--accent-color)" : "var(--button-bg)",
-    color: kind === "primary" ? "#fff" : "var(--text-color)",
-    padding: "0 9px",
-    fontSize: "12px",
-    fontWeight: 700,
-    cursor: "pointer",
-    whiteSpace: "nowrap",
-  };
-}

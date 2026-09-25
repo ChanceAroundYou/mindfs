@@ -1,6 +1,7 @@
 import React, { useMemo, useRef, useState } from "react";
 import { useI18n } from "../i18n";
 import { PromptEditor } from "./PromptEditor";
+import { Select } from "./Select";
 import type { TokenEditorHandle } from "./editor/TokenEditor";
 import type { TaskOverviewItem } from "../services/tasks";
 
@@ -238,15 +239,13 @@ export function WorkspaceKanban({ items, loading, projects, onOpenProject, onCom
       {/* + 快速发起 */}
       <section style={{ border: "1px dashed var(--border-color)", borderRadius: "10px", padding: "10px", display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", background: "var(--menu-bg)" }}>
         <span style={{ fontSize: "12px", fontWeight: 800, color: "var(--text-secondary)" }}>{t("task.workspaceQuickLaunch")}</span>
-        <select
-          value={quickProject || availableProjects[0]?.id || ""}
-          onChange={(event) => setQuickProject(event.target.value)}
-          style={{ height: "28px", maxWidth: "180px" }}
-        >
-          {availableProjects.map((project) => (
-            <option key={project.id} value={project.id}>{project.name}</option>
-          ))}
-        </select>
+        <div style={{ minWidth: "120px", maxWidth: "180px" }}>
+          <Select
+            value={quickProject || availableProjects[0]?.id || ""}
+            onChange={setQuickProject}
+            options={availableProjects.map((project) => ({ value: project.id, label: project.name }))}
+          />
+        </div>
         <div style={{ flex: "1 1 260px", minWidth: "160px" }}>
           <PromptEditor
             ref={quickEditorRef}

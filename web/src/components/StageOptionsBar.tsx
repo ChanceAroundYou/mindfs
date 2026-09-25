@@ -1,6 +1,6 @@
 import React from "react";
 import { useI18n } from "../i18n";
-import { composerInputStyle } from "./composerStyles";
+import { Select } from "./Select";
 
 export type SessionReusePolicy = "task_main" | "same_stage" | "always_new";
 
@@ -79,22 +79,25 @@ export function StageOptionsBar({
         onClick={() => onPlanModeChange(!planMode)}
       />
 
-      {/* 会话复用：agent 段才有意义。 */}
+      {/* 会话复用：agent 段才有意义。自绘下拉，不用系统 option 菜单。 */}
       <label style={{ display: "inline-flex", alignItems: "center", gap: "4px", minWidth: 0 }}>
         <span style={{ fontSize: "11px", color: "var(--text-secondary)", whiteSpace: "nowrap" }}>
           {t("taskTemplate.sessionReuse")}
         </span>
-        <select
-          value={sessionReusePolicy}
-          disabled={disabled || !isAgent}
-          aria-label={t("taskTemplate.sessionReuse")}
-          onChange={(event) => onSessionReusePolicyChange(event.target.value as SessionReusePolicy)}
-          style={{ ...composerInputStyle, height: "26px", width: "auto", cursor: disabled || !isAgent ? "not-allowed" : "pointer" }}
-        >
-          <option value="task_main">{t("taskTemplate.sessionReuseTaskMain")}</option>
-          <option value="same_stage">{t("taskTemplate.sessionReuseSameStage")}</option>
-          <option value="always_new">{t("taskTemplate.sessionReuseAlwaysNew")}</option>
-        </select>
+        <div style={{ minWidth: "128px" }}>
+          <Select
+            value={sessionReusePolicy}
+            disabled={disabled || !isAgent}
+            ariaLabel={t("taskTemplate.sessionReuse")}
+            onChange={onSessionReusePolicyChange}
+            options={[
+              { value: "task_main", label: t("taskTemplate.sessionReuseTaskMain") },
+              { value: "same_stage", label: t("taskTemplate.sessionReuseSameStage") },
+              { value: "always_new", label: t("taskTemplate.sessionReuseAlwaysNew") },
+            ]}
+            size="panel"
+          />
+        </div>
       </label>
     </div>
   );

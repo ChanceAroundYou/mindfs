@@ -1,6 +1,7 @@
 import React from "react";
 import { createPortal } from "react-dom";
 import { useI18n } from "../i18n";
+import { Select } from "./Select";
 import { currentUser, logout, type AuthUser } from "../services/authGate";
 import { confirmDialog } from "../services/dialog";
 import {
@@ -422,14 +423,16 @@ export function AccountPanel({ onClose, anchorRef }: AccountPanelProps): React.R
                 style={FIELD_STYLE}
               />
               <div style={ROW_STYLE}>
-                <select
-                  value={addRole}
-                  onChange={(e) => setAddRole(e.target.value)}
-                  style={{ ...FIELD_STYLE, cursor: "pointer", flex: 1 }}
-                >
-                  <option value="user">{t("account.roleUser")}</option>
-                  <option value="admin">{t("account.roleAdmin")}</option>
-                </select>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <Select
+                    value={addRole}
+                    onChange={setAddRole}
+                    options={[
+                      { value: "user", label: t("account.roleUser") },
+                      { value: "admin", label: t("account.roleAdmin") },
+                    ]}
+                  />
+                </div>
                 <button type="button" disabled={busy} onClick={submitNewAccount} style={PRIMARY_BUTTON_STYLE}>
                   {t("account.create")}
                 </button>

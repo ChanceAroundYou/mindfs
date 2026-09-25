@@ -126,3 +126,32 @@ export type TaskInlineEditState = {
   canToggleWorktree: boolean;
   attachments: TaskInlineAttachment[];
 };
+
+/**
+ * 把 agent/model/effort 覆盖写到模板的**第一个** agent 段上。
+ *
+ * wire 上 stages 是拍平的 StageTemplate[]（不是模板里的 { snapshot } 包装），
+ * 所以这里返回拍平后的段。模板里没有 agent 段、或什么都没覆盖时返回 undefined，
+ * 让后端照模板走。
+ */
+export function applyStageOverride(
+  template: TaskTemplate | null,
+  override: { agent?: string; model?: string; effort?: string },
+): StageTemplate[] | undefined {
+  if (!template) return undefined;
+  if (!override.agent && !override.model && !override.effort) return undefined;
+  let touched = false;
+  const stages = (template.stages || []).map((stage) => {
+    const snapshot = stage.snapshot;
+    if (snapshot?.role !== "agent") return snapshot;
+    if (touched) return snapshot;
+    touched = true;
+    return {
+      ...snapshot,
+      ...(override.agent ? { agent: override.agent } : {}),
+      ...(override.model ? { model: override.model } : {}),
+      ...(override.effort ? { effort: override.effort } : {}),
+    };
+  });
+  return touched ? stages : undefined;
+}
