@@ -404,7 +404,7 @@ function Breadcrumbs({
               style={{
                 ...rootBadgeButtonStyle,
                 background: "var(--node-badge-bg)",
-                color: String(rootColor || "").trim() || "var(--node-badge-text, var(--root-badge-text))",
+                color: String(rootColor || "").trim() || "var(--text-primary)",
                 cursor: "pointer",
               }}
               onMouseEnter={(e) => {

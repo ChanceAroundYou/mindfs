@@ -1,4 +1,5 @@
 import React, { useId } from "react";
+import { DEFAULT_NODE_COLOR } from "../services/nodeRegistry";
 
 export type ModeIconType = "chat" | "plugin" | "command" | "task";
 
@@ -10,7 +11,7 @@ type ModeIconProps = {
 };
 
 export function ModeIcon({ type, size = "1em", style, color }: ModeIconProps) {
-  const themedStyle = color ? { ...style, color: String(color).trim() || String((style as any)?.color || "#3b82f6") } : style;
+  const themedStyle = color ? { ...style, color: String(color).trim() || String((style as any)?.color || DEFAULT_NODE_COLOR) } : style;
   if (type === "plugin") {
     return <PluginIcon size={size} style={themedStyle} />;
   }
@@ -18,13 +19,13 @@ export function ModeIcon({ type, size = "1em", style, color }: ModeIconProps) {
     return <CommandIcon size={size} style={themedStyle} />;
   }
   if (type === "task") {
-    return <TaskIcon size={size} style={themedStyle || { color: "#3b82f6" }} />;
+    return <TaskIcon size={size} style={themedStyle || { color: DEFAULT_NODE_COLOR }} />;
   }
   return <ChatIcon size={size} style={style} color={color} />;
 }
 
 function ChatIcon({ size, style, color }: Omit<ModeIconProps, "type">) {
-  const c = String(color || (style as any)?.color || "#3b82f6").trim() || "#3b82f6";
+  const c = String(color || (style as any)?.color || DEFAULT_NODE_COLOR).trim() || DEFAULT_NODE_COLOR;
   return (
     <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 12 12" style={{ ...style, color: c }} aria-hidden="true">
       <path d="M0 0h12v12H0z" fill="none" />

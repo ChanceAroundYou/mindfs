@@ -514,8 +514,8 @@ function PlanUpdateCard({ content, rootId }: { content: string; rootId?: string 
         width: "100%",
         minWidth: 0,
         borderRadius: "10px",
-        border: "1px solid rgba(59, 130, 246, 0.24)",
-        background: "linear-gradient(180deg, rgba(59, 130, 246, 0.08), rgba(59, 130, 246, 0.03))",
+        border: "1px solid color-mix(in srgb, var(--accent-color) 24%, transparent)",
+        background: "linear-gradient(180deg, color-mix(in srgb, var(--accent-color) 8%, transparent), color-mix(in srgb, var(--accent-color) 3%, transparent))",
         overflow: "hidden",
       }}
     >
@@ -2988,7 +2988,7 @@ function SessionViewerInner({
                 style={{
                   ...rootBadgeButtonStyle,
                   background: "var(--node-badge-bg)",
-                  color: String(rootColor || "").trim() || "var(--root-badge-text)",
+                  color: String(rootColor || "").trim() || "var(--text-primary)",
                   flexShrink: 0,
                   cursor: onRootClick ? "pointer" : "default",
                 }}

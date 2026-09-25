@@ -117,7 +117,7 @@ export function ShellSelector({
                   width: "100%",
                   padding: "9px 12px",
                   border: "none",
-                  background: isSelected ? "rgba(59, 130, 246, 0.08)" : "transparent",
+                  background: isSelected ? "var(--selection-bg)" : "transparent",
                   color: isSelected ? "var(--accent-color)" : "var(--text-primary)",
                   fontSize: "13px",
                   fontWeight: isSelected ? 700 : 500,
@@ -131,7 +131,7 @@ export function ShellSelector({
                   }
                 }}
                 onMouseLeave={(event) => {
-                  event.currentTarget.style.background = isSelected ? "rgba(59, 130, 246, 0.08)" : "transparent";
+                  event.currentTarget.style.background = isSelected ? "var(--selection-bg)" : "transparent";
                 }}
               >
                 {item.label}

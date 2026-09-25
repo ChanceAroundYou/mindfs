@@ -178,7 +178,7 @@ function diffCodeRowStyle(kind: DiffCodeRow["kind"]): { background: string; colo
     return { background: "rgba(239, 68, 68, 0.14)", color: "#991b1b" };
   }
   if (kind === "hunk") {
-    return { background: "rgba(59, 130, 246, 0.10)", color: "#1d4ed8" };
+    return { background: "color-mix(in srgb, var(--accent-color) 10%, transparent)", color: "var(--accent-color)" };
   }
   if (kind === "meta") {
     return { background: "rgba(100, 116, 139, 0.10)", color: "#475569" };
@@ -315,7 +315,7 @@ function MarkdownCodeBlock({
           borderRadius: "6px",
           border: "none",
           background: "transparent",
-          color: isFailed ? "#b91c1c" : "#2563eb",
+          color: isFailed ? "#b91c1c" : "var(--accent-color)",
           cursor: "pointer",
           opacity: isFailed ? 1 : 0.5,
           padding: 0,

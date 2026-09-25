@@ -48,7 +48,7 @@ function Breadcrumbs({ root, rootDisplayName, path, rootColor, onPathClick }: { 
             style={{
               ...rootBadgeButtonStyle,
               background: "var(--node-badge-bg)",
-              color: String(rootColor || "").trim() || "var(--node-badge-text, var(--root-badge-text))",
+              color: String(rootColor || "").trim() || "var(--text-primary)",
               cursor: "pointer",
             }}
             onMouseEnter={(e) => { e.currentTarget.style.textDecoration = "underline"; }}
@@ -105,7 +105,7 @@ function lineBackground(kind: DiffLine["kind"]): string {
     case "del":
       return "rgba(239, 68, 68, 0.14)";
     case "hunk":
-      return "rgba(59, 130, 246, 0.10)";
+      return "color-mix(in srgb, var(--accent-color) 10%, transparent)";
     default:
       return "transparent";
   }
@@ -346,9 +346,9 @@ export function GitDiffViewer({ diff, root, rootDisplayName = null, rootColor = 
                       transition: "all 0.2s ease",
                     }}
                     onMouseEnter={(e) => {
-                      e.currentTarget.style.background = "rgba(59, 130, 246, 0.08)";
+                      e.currentTarget.style.background = "var(--selection-bg)";
                       e.currentTarget.style.color = "var(--accent-color)";
-                      e.currentTarget.style.borderColor = "rgba(59, 130, 246, 0.2)";
+                      e.currentTarget.style.borderColor = "color-mix(in srgb, var(--accent-color) 20%, transparent)";
                     }}
                     onMouseLeave={(e) => {
                       e.currentTarget.style.background = "rgba(0, 0, 0, 0.03)";

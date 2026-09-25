@@ -1,6 +1,7 @@
 import React from "react";
 import { type MessageKey } from "../i18n";
 import { type MessageParams } from "../i18n";
+import { DEFAULT_NODE_COLOR } from "../services/nodeRegistry";
 
 export function ImportIcon() {
   return (
@@ -247,9 +248,15 @@ export function taskWorktreeTagStyle(enabled: boolean): React.CSSProperties {
   };
 }
 
+// 无效 hex 的兜底色 = local 节点色。预先展开成 rgb 分量，避免递归解析。
+const DEFAULT_NODE_RGB = (() => {
+  const h = DEFAULT_NODE_COLOR.replace(/^#/, "");
+  return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16));
+})();
+
 export function hexToRgbaApp(hex: string, alpha: number): string {
   const h = String(hex || "").trim().replace(/^#/, "");
-  const fallback = `rgba(37, 99, 235, ${alpha})`;
+  const fallback = `rgba(${DEFAULT_NODE_RGB.join(", ")}, ${alpha})`;
   if (h.length === 3) {
     const r = parseInt(h[0] + h[0], 16);
     const g = parseInt(h[1] + h[1], 16);
@@ -268,7 +275,7 @@ export function hexToRgbaApp(hex: string, alpha: number): string {
 }
 
 export function taskReplyPulseStyle(color?: string | null): React.CSSProperties {
-  const c = String(color || "#2563eb").trim() || "#2563eb";
+  const c = String(color || DEFAULT_NODE_COLOR).trim() || DEFAULT_NODE_COLOR;
   return {
     position: "absolute",
     top: "6px",
@@ -286,7 +293,7 @@ export function taskReplyPulseStyle(color?: string | null): React.CSSProperties 
 }
 
 export function TaskPlanAuxIcon({ color }: { color?: string } = {}) {
-  const c = String(color || "#2563eb").trim() || "#2563eb";
+  const c = String(color || DEFAULT_NODE_COLOR).trim() || DEFAULT_NODE_COLOR;
   return (
     <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <path d="M7 6h10M7 12h10M7 18h6" stroke={c} strokeWidth="2" strokeLinecap="round" />

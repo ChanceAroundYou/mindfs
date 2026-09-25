@@ -29,6 +29,7 @@ import {
   wsStatusMeta,
 } from "./action/styleHelpers";
 import { useAppearanceSync } from "./action/useAppearanceSync";
+import { DEFAULT_NODE_COLOR } from "../services/nodeRegistry";
 import { useCandidates } from "./action/useCandidates";
 import { useDisplayStatus } from "./action/useDisplayStatus";
 import { useInputHistory } from "./action/useInputHistory";
@@ -161,7 +162,7 @@ export function ActionBar({
   const displayStatus = useDisplayStatus(status);
   const connectionMeta = wsStatusMeta(displayStatus, t);
   const accentColorRaw = String(rootColor || "").trim() || "var(--accent-color)";
-  const accentHex = String(rootColor || "").trim() || "#2563eb";
+  const accentHex = String(rootColor || "").trim() || DEFAULT_NODE_COLOR;
 
   useEffect(() => {
     const sessionKey = currentSession?.key || currentSession?.session_key || null;

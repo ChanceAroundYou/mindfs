@@ -50,7 +50,7 @@ const LABEL_KEYS = {
 
 export function MainViewSwitcher({ value, onChange, accentColor }: MainViewSwitcherProps) {
   const { t } = useI18n();
-  const accent = accentColor || "var(--accent-color, #2563eb)";
+  const accent = accentColor || "var(--accent-color)";
   return (
     <div
       role="tablist"
@@ -85,7 +85,7 @@ export function MainViewSwitcher({ value, onChange, accentColor }: MainViewSwitc
               border: "none",
               borderRadius: 8,
               cursor: "pointer",
-              background: active ? "var(--selection-bg, rgba(37, 99, 235, 0.12))" : "transparent",
+              background: active ? "var(--node-row-selected-bg)" : "transparent",
               color: active ? accent : "var(--text-secondary)",
               fontSize: 10,
               fontWeight: 700,

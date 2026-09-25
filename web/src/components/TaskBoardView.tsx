@@ -221,7 +221,7 @@ export function TaskBoardView({
         >
           {(() => {
             const active = isAllTaskTemplateFilter;
-            const kanbanAllBg = getDisplayNodeColor(String(currentRootId || "")) || "var(--accent-color, #2563eb)";
+            const kanbanAllBg = getDisplayNodeColor(String(currentRootId || "")) || "var(--accent-color)";
             return (
               <button
                 type="button"
@@ -287,7 +287,7 @@ export function TaskBoardView({
                     setTaskTemplateActionMenuOpen(false);
                   }}
                   style={(() => {
-                    const bg = getDisplayNodeColor(String(currentRootId || "")) || "var(--accent-color, #2563eb)";
+                    const bg = getDisplayNodeColor(String(currentRootId || "")) || "var(--accent-color)";
                     return {
                       border: "none",
                       borderRadius: "6px",
@@ -857,7 +857,7 @@ export function TaskBoardView({
                                     ...taskCardIconButtonStyle(),
                                     width: "17px",
                                     marginLeft: "-3px",
-                                    color: "#2563eb",
+                                    color: "var(--accent-color)",
                                   }}
                                 >
                                   <TaskRunNowIcon />

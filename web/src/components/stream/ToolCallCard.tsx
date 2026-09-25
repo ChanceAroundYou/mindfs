@@ -644,9 +644,9 @@ export const ToolCallCard = memo(function ToolCallCard({
         width: "100%",
         minWidth: 0,
         borderRadius: "10px",
-        border: isFileChange ? "1px solid rgba(59, 130, 246, 0.22)" : "1px solid var(--border-color)",
+        border: isFileChange ? "1px solid color-mix(in srgb, var(--accent-color) 22%, transparent)" : "1px solid var(--border-color)",
         background: isFileChange
-          ? "linear-gradient(180deg, rgba(59, 130, 246, 0.08), rgba(59, 130, 246, 0.03))"
+          ? "linear-gradient(180deg, color-mix(in srgb, var(--accent-color) 8%, transparent), color-mix(in srgb, var(--accent-color) 3%, transparent))"
           : "var(--content-bg)",
         boxShadow: isFileChange ? "inset 0 1px 0 rgba(255,255,255,0.35)" : "none",
         overflow: "hidden",
@@ -661,7 +661,7 @@ export const ToolCallCard = memo(function ToolCallCard({
           alignItems: "center",
           justifyContent: "flex-start",
           padding: "6px 8px",
-          background: isFileChange ? "rgba(59, 130, 246, 0.04)" : "none",
+          background: isFileChange ? "color-mix(in srgb, var(--accent-color) 4%, transparent)" : "none",
           border: "none",
           cursor: hasDetails ? "pointer" : "default",
           fontSize: "12px",
@@ -682,7 +682,7 @@ export const ToolCallCard = memo(function ToolCallCard({
                 minWidth: 0,
                 padding: "1px 6px",
                 borderRadius: "999px",
-                background: "rgba(37, 99, 235, 0.10)",
+                background: "color-mix(in srgb, var(--accent-color) 10%, transparent)",
                 color: "#1d4ed8",
                 fontSize: "10px",
                 fontWeight: 600,

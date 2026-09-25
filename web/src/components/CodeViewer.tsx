@@ -132,7 +132,7 @@ export const CodeViewer = memo(function CodeViewer({
               right: 0,
               top: `${24 + (targetLine - 1) * 20}px`,
               height: "20px",
-              background: "rgba(59, 130, 246, 0.08)",
+              background: "var(--selection-bg)",
               borderRadius: "4px",
               pointerEvents: "none",
             }}
