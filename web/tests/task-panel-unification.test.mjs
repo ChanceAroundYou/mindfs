@@ -55,10 +55,29 @@ assert.doesNotMatch(
 assert.match(promptEditor, /\{!isUser \|\| showAgentSelector \? \(/, "PromptEditor must allow forcing the selector on for user stages");
 assert.match(app, /showAgentSelector=\{taskInlineHasAgentStage\}/, "the create-task editor must show the agent selector");
 
-// 4) 角色切换：首段固定 user，两处都靠「不传 onToggleRole」表达
-assert.match(stageEditor, /readOnly=\{!onToggleRole\}/, "no role toggle handler means the role is locked");
+// 4) 角色切换：user 开关贴在段名旁；不给 onToggleRole 只是「这一段角色锁死」，
+//    不会连带把自动推进/计划/会话复用也一起禁掉 —— 曾经用 readOnly={!onToggleRole}
+//    表达「角色不可切」，结果详情面板未进编辑态时四个选项全部变灰。
+assert.match(
+  stageEditor,
+  /disabled=\{!onToggleRole\}[\s\S]*?style=\{roleToggleStyle\(!isAgent, !onToggleRole\)\}/,
+  "the user toggle locks on its own, independent of the other options",
+);
+assert.match(
+  stageEditor,
+  /readOnly=\{mode !== "editable"\}/,
+  "the options bar follows the editor's editable state, not the role-toggle handler",
+);
+assert.doesNotMatch(
+  stageEditor,
+  /readOnly=\{!onToggleRole\}/,
+  "a locked role must not disable the other three options",
+);
 assert.match(dialog, /onToggleRole=\{index === 0 \? undefined : onToggleStageRole\(index\)\}/, "the template's first stage locks its role");
 assert.match(panel, /onToggleRole=\{editing \?/, "the detail panel offers a role toggle while editing");
+// 会话复用：不再有「会话复用」前缀文字，收起态直接显示当前策略
+assert.doesNotMatch(stageOptions, /\{t\("taskTemplate\.sessionReuse"\)\}<\/span>/, "the session-reuse label must be gone; the dropdown shows the policy name");
+assert.match(stageOptions, /taskTemplate\.sessionReuseTaskMain/, "the dropdown must offer the reuse policies as its own labels");
 
 // 5) 新建任务：可选 agent/模型覆盖下一个 agent 阶段
 for (const key of ["agentOverride", "modelOverride", "effortOverride"]) {

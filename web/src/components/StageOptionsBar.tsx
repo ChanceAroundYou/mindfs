@@ -11,12 +11,11 @@ export type StageOptions = {
   planMode: boolean;
   planModeDisabled?: boolean;
   sessionReusePolicy: SessionReusePolicy;
-  /** 禁改：首段固定 user、已执行过的段不能改会话复用 */
+  /** 只读展示（未进入编辑态）：值照常显示，但点不动 */
   readOnly?: boolean;
 };
 
 export type StageOptionsBarProps = StageOptions & {
-  onToggleRole?: () => void;
   onAutoAdvanceChange: (next: boolean) => void;
   onPlanModeChange: (next: boolean) => void;
   onSessionReusePolicyChange: (policy: SessionReusePolicy) => void;
@@ -35,7 +34,6 @@ export function StageOptionsBar({
   planModeDisabled,
   sessionReusePolicy,
   readOnly,
-  onToggleRole,
   onAutoAdvanceChange,
   onPlanModeChange,
   onSessionReusePolicyChange,
@@ -54,18 +52,6 @@ export function StageOptionsBar({
         minWidth: 0,
       }}
     >
-      {/* user 开关：亮 = user 段。首段固定 user，不给切。 */}
-      <button
-        type="button"
-        disabled={disabled || !onToggleRole}
-        onClick={onToggleRole}
-        aria-pressed={!isAgent}
-        title={isAgent ? t("taskTemplate.userStageOff") : t("taskTemplate.userStageOn")}
-        style={roleToggleStyle(!isAgent, disabled || !onToggleRole)}
-      >
-        user
-      </button>
-
       <OptionToggle
         checked={autoAdvance}
         label={t("taskTemplate.autoAdvance")}
@@ -79,12 +65,9 @@ export function StageOptionsBar({
         onClick={() => onPlanModeChange(!planMode)}
       />
 
-      {/* 会话复用：agent 段才有意义。自绘下拉，不用系统 option 菜单。 */}
-      <label style={{ display: "inline-flex", alignItems: "center", gap: "4px", minWidth: 0 }}>
-        <span style={{ fontSize: "11px", color: "var(--text-secondary)", whiteSpace: "nowrap" }}>
-          {t("taskTemplate.sessionReuse")}
-        </span>
-        <div style={{ minWidth: "128px" }}>
+      {/* 会话复用：agent 段才有意义。自绘下拉，不用系统 option 菜单。
+          收起态直接显示当前策略名，不再加「会话复用」前缀 —— 三个选项自解释。 */}
+      <div style={{ display: "inline-flex", alignItems: "center", minWidth: "116px" }}>
           <Select
             value={sessionReusePolicy}
             disabled={disabled || !isAgent}
@@ -97,8 +80,7 @@ export function StageOptionsBar({
             ]}
             size="panel"
           />
-        </div>
-      </label>
+      </div>
     </div>
   );
 }
@@ -126,25 +108,6 @@ function OptionToggle({
       {label}
     </button>
   );
-}
-
-export function roleToggleStyle(active: boolean, disabled?: boolean): React.CSSProperties {
-  return {
-    height: "26px",
-    padding: "0 9px",
-    flex: "0 0 auto",
-    border: "1px solid var(--border-color)",
-    borderRadius: "6px",
-    background: active ? "var(--accent-color)" : "var(--input-bg)",
-    color: active ? "#fff" : "var(--text-secondary)",
-    fontSize: "11px",
-    fontWeight: 800,
-    cursor: disabled ? "not-allowed" : "pointer",
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    opacity: disabled ? 0.6 : 1,
-  };
 }
 
 function optionChipStyle(active: boolean, disabled?: boolean): React.CSSProperties {

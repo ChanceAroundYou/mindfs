@@ -3,6 +3,7 @@ import { PromptEditor } from "./PromptEditor";
 import { StageOptionsBar, type SessionReusePolicy } from "./StageOptionsBar";
 import { with1MSuffix } from "./action/modelUtils";
 import { composerInputStyle } from "./composerStyles";
+import { useI18n } from "../i18n";
 import type { StageTemplate } from "../services/tasks";
 import type { AgentStatus } from "../services/agents";
 
@@ -77,6 +78,7 @@ export function StageEditor({
   resetKey,
   displayValue,
 }: StageEditorProps) {
+  const { t } = useI18n();
   const isAgent = stage.role === "agent";
   const value = displayValue ?? stage.prompt_template ?? "";
 
@@ -91,6 +93,18 @@ export function StageEditor({
             style={{ ...composerInputStyle, height: "26px", width: "180px", flex: "0 0 180px", fontWeight: 800 }}
           />
         ) : null}
+        {/* user 开关贴着段名：亮 = user 段。不给 onToggleRole 就是这一段角色锁死
+            （首段固定 user），但仍然显示，别让人以为少了开关。 */}
+        <button
+          type="button"
+          disabled={!onToggleRole}
+          onClick={onToggleRole}
+          aria-pressed={!isAgent}
+          title={isAgent ? t("taskTemplate.userStageOff") : t("taskTemplate.userStageOn")}
+          style={roleToggleStyle(!isAgent, !onToggleRole)}
+        >
+          user
+        </button>
         {actions}
       </div>
 
@@ -139,8 +153,7 @@ export function StageEditor({
             planMode={!planModeDisabled && stage.plan_mode === true}
             planModeDisabled={planModeDisabled}
             sessionReusePolicy={(stage.session_reuse_policy as SessionReusePolicy) || "task_main"}
-            readOnly={!onToggleRole}
-            onToggleRole={onToggleRole}
+            readOnly={mode !== "editable"}
             onAutoAdvanceChange={(next) => onChange({ auto_advance: next })}
             onPlanModeChange={(next) => {
               if (!planModeDisabled) onChange({ plan_mode: next });
@@ -152,4 +165,24 @@ export function StageEditor({
       {footer}
     </div>
   );
+}
+
+/** user 开关：亮 = user 段。与选项条同款的紧凑尺寸。 */
+function roleToggleStyle(active: boolean, disabled?: boolean): React.CSSProperties {
+  return {
+    height: "26px",
+    padding: "0 9px",
+    flex: "0 0 auto",
+    border: "1px solid var(--border-color)",
+    borderRadius: "6px",
+    background: active ? "var(--accent-color)" : "var(--input-bg)",
+    color: active ? "#fff" : "var(--text-secondary)",
+    fontSize: "11px",
+    fontWeight: 800,
+    cursor: disabled ? "not-allowed" : "pointer",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    opacity: disabled ? 0.6 : 1,
+  };
 }
