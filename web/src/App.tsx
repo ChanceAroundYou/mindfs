@@ -167,7 +167,6 @@ import {
   deleteTaskTemplate,
   fetchTaskDetails,
   fetchTaskTemplates,
-  fetchTasksOverview,
   getCachedTaskDetails,
   getCachedTaskMeta,
   moveTask,
@@ -203,6 +202,7 @@ import { CANDIDATE_FETCH_DEBOUNCE_MS, DIRECTORY_SORT_OVERRIDES_STORAGE_KEY, GIT_
 import { TaskInlineEditState } from "./app/appTask";
 import { buildMatchInputFromPath, buildMessageWithViewContext, hasExplicitFileContext, indexManagedRoots, inferReadModeFromPlugin, managedDirAddErrorMessage, mapManagedRootsToEntries, normalizeUpdateState, shouldShowUpdateButton, toPluginInput, updateButtonLabel, updateSummaryText, useResponsive, waitForNextPaint } from "./app/appMisc";
 import { basenameOfPath, buildDirectorySelectionKey, buildFileScrollKey, buildURLSearch, comparableManagedRootPath, dirnameOfPath, isDirectorySortMode, joinDisplayPath, normalizeCursor, normalizePath, parentDirsOfFile, parseFileLocation, parsePluginQuery, readURLState, relativeDisplayPathFromRoot, rootNodeKey } from "./app/appPath";
+import { useWorkspaceBoard } from "./app/useWorkspaceBoard";
 import { hasSessionExchanges, isTopLevelSessionItem, normalizeMode, relatedFileSelectionKey, sessionInputHistory, toSessionItem } from "./app/appSession";
 import { accountScopedKey, loadGitDiffSideBySide, loadLastRootId, loadLastRootNodeId, loadLegacyMainView, loadMainView, loadMobileEnterKeySends, loadPersistedFileScrollPositions, loadPersistedPluginQuery, loadSidebarsSwapped, loadTaskCreateWorktreePreference, persistFileScrollPositions, persistPluginQuery, removeLocalStorageByPrefix, saveTaskCreateWorktreePreference } from "./app/appStorage";
 import { applyStageOverride, currentTaskInputFromDetail, DEFAULT_TASK_AGENT, DEFAULT_TASK_MODEL, firstAgentStage, firstTaskInputFromDetail, firstUserInputTemplate, isTerminalKanbanTask, latestTaskStageRun, normalizeFastService, parseTaskSessionErrorDetails, parseTaskSessionErrorMessage, previousTaskInputsFromDetail, taskSessionKeysFromDetail, taskStatusLabel } from "./app/appTask";
@@ -7964,19 +7964,30 @@ export function App({ onGoHome }: AppProps) {
       // 显示两状态总和，于是出现「列头有数字、里面找不到对应组」。空组由渲染层显示成 0。
     },
   ];
-  // 跨项目工作台（无项目展开任务视图时）：拉取全项目任务汇总；任务详情变化（WS 广播/本地操作回包）后自动重拉
-  const [workspaceOverview, setWorkspaceOverview] = useState<TaskOverviewItem[]>([]);
-  const [workspaceLoading, setWorkspaceLoading] = useState(false);
-  useEffect(() => {
-    if (!workspaceOpen) return;
-    let cancelled = false;
-    setWorkspaceLoading(true);
-    fetchTasksOverview(currentRootNodeIdRef.current || undefined)
-      .then((items) => { if (!cancelled) setWorkspaceOverview(Array.isArray(items) ? items : []); })
-      .catch(() => { if (!cancelled) setWorkspaceOverview([]); })
-      .finally(() => { if (!cancelled) setWorkspaceLoading(false); });
-    return () => { cancelled = true; };
-  }, [workspaceOpen, taskDetailsById]);
+  // 跨项目工作台：按项目聚合的跨节点任务总览（扇出与建组都在 useWorkspaceBoard 内）。
+  // refreshToken 目前只取初值 0 —— 首屏拉一次；WS 的高频推送靠 C1 放行的 task.updated
+  // 增量更新就地生效，不驱动整包重拉（否则多节点扇出会被事件风暴打爆）。
+  // C3 接上刷新按钮时，这里才需要一个自增口。
+  const workspaceBoardToken = 0;
+  const workspaceSessionCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const group of multiProjectSessionGroups) {
+      const key = scopeKey(group._nodeId, group.rootId);
+      counts.set(key, (counts.get(key) || 0) + group.sessions.length);
+    }
+    return counts;
+  }, [multiProjectSessionGroups]);
+  const workspaceBoard = useWorkspaceBoard({
+    enabled: workspaceOpen,
+    refreshToken: workspaceBoardToken,
+    managedRootIds,
+    getRootDisplayName,
+    getNodeColor: (rootId) => getDisplayNodeColor(rootId),
+    getNodeId: getNodeIdForRoot,
+    fallbackNodeId: getNodeIdForRoot(String(currentRootIdRef.current || "")) || String(getActiveNode()?.id || ""),
+    sessionCounts: workspaceSessionCounts,
+    filter: "all",
+  });
   // 左下角四态切换器：只切面板 + 关掉悬浮框。
   // 会话选中与面板是正交的两条线——切面板一律不解除选中（面板不显示而已）。
   const handleMainViewSwitcherChange = useCallback((mode: MainViewMode) => {
@@ -8041,8 +8052,7 @@ export function App({ onGoHome }: AppProps) {
       workspaceOpen={workspaceOpen}
       currentRootId={currentRootId}
       currentRootIdRef={currentRootIdRef}
-      workspaceOverview={workspaceOverview}
-      workspaceLoading={workspaceLoading}
+      workspaceBoard={workspaceBoard}
       managedRootIds={managedRootIds}
       getRootDisplayName={getRootDisplayName}
       openWorkspaceProject={openWorkspaceProject}

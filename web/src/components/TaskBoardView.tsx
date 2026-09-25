@@ -1,10 +1,11 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { useI18n } from "../i18n";
 import { useResponsive } from "../app/appMisc";
 import { TASK_TEMPLATE_ALL_FILTER } from "../app/appStorage";
 import { useRefreshSpin } from "../hooks";
 import type { useTaskTemplates } from "../app/useTaskTemplates";
-import type { KanbanTask, TaskOverviewItem, TaskTemplate } from "../services/tasks";
+import type { KanbanTask, TaskTemplate } from "../services/tasks";
+import type { WorkspaceBoard, WorkspaceTaskItem } from "../app/useWorkspaceBoard";
 import type { SessionItem } from "../app/appSession";
 import { isTerminalKanbanTask, parseTaskSessionErrorDetails, parseTaskSessionErrorMessage, taskStatusLabel } from "../app/appTask";
 import { InlineTokenText } from "./InlineTokenText";
@@ -63,8 +64,7 @@ export function TaskBoardView({
   workspaceOpen,
   currentRootId,
   currentRootIdRef,
-  workspaceOverview,
-  workspaceLoading,
+  workspaceBoard,
   managedRootIds,
   getRootDisplayName,
   openWorkspaceProject,
@@ -94,8 +94,7 @@ export function TaskBoardView({
   workspaceOpen: boolean;
   currentRootId: string | null;
   currentRootIdRef: React.MutableRefObject<string | null>;
-  workspaceOverview: TaskOverviewItem[];
-  workspaceLoading: boolean;
+  workspaceBoard: WorkspaceBoard;
   managedRootIds: string[];
   getRootDisplayName: (rootId: string | null | undefined) => string;
   openWorkspaceProject: (rootId: string) => Promise<void>;
@@ -154,10 +153,16 @@ export function TaskBoardView({
   const isAllTaskTemplateFilter = taskTemplateFilter === TASK_TEMPLATE_ALL_FILTER;
   const selectedTaskTemplateForFilter = isAllTaskTemplateFilter ? null : taskTemplates.find((template) => template.id === taskTemplateFilter) || null;
 
+  // C2 已把「跨节点扇出 + 按项目建组」搬进 useWorkspaceBoard；旧的面板仍吃平铺列表，
+  // 这里把各组的任务摊平喂过去。C3 换成 WorkspaceBoard 后这两行连同 props 一起删掉。
+  const workspaceItems = useMemo<WorkspaceTaskItem[]>(
+    () => workspaceBoard.projects.flatMap((group) => [...group.active, ...group.ended]),
+    [workspaceBoard.projects],
+  );
   const workspacePanel = (
     <WorkspaceKanban
-      items={workspaceOverview}
-      loading={workspaceLoading}
+      items={workspaceItems}
+      loading={workspaceBoard.loading}
       projects={managedRootIds.map((id) => ({ id, name: getRootDisplayName(id) || id }))}
       onOpenProject={(rootId) => { void openWorkspaceProject(rootId); }}
       onComplete={(item) => { void handleMoveKanbanTask(item.task, "complete"); }}

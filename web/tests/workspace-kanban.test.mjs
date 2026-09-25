@@ -23,16 +23,23 @@ assert.match(
   "project board should win when a project is open; workspace is the no-project fallback",
 );
 
-// 汇总数据来自 /api/tasks/overview，且任务详情变化后自动重拉（否则操作后卡片状态会滞留）
+// 汇总数据来自 useWorkspaceBoard（跨节点扇出 + 按项目建组），不再由 App 裸调接口。
+// 2026-09：扇出本身（Promise.all / 失败不阻塞 / 去重键 / 后端零改动）改由
+// workspace-node-fanout.test.mjs 守，这里只钉 App 这一层不再自己拉。
 assert.match(
   app,
-  /if \(!workspaceOpen\) return;[\s\S]*?fetchTasksOverview\(currentRootNodeIdRef\.current \|\| undefined\)[\s\S]*?if \(!cancelled\) setWorkspaceOverview/,
-  "workspace should fetch the overview with a cancel guard",
+  /const workspaceBoard = useWorkspaceBoard\(\{/,
+  "workspace data must come from the fan-out hook",
 );
 assert.match(
   app,
-  /\}, \[workspaceOpen, taskDetailsById\]\);/,
-  "overview should refresh when task details change (WS broadcast or local action)",
+  /workspaceBoard=\{workspaceBoard\}/,
+  "the board must be handed to the view as a single prop",
+);
+assert.doesNotMatch(
+  app,
+  /fetchTasksOverview\(/,
+  "App must not fetch the overview itself any more",
 );
 
 // 快速发起必须自带 user 首段 + 任务名：后端在无模板时要求 stages[0].role === "user"
