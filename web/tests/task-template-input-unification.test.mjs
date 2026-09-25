@@ -28,8 +28,8 @@ assert.doesNotMatch(
   "task template prompts must not fall back to a raw textarea",
 );
 
-// 2) 角色控件只剩一个 user 开关：亮 = user 段，agent 选择器交给下面的
-//    PromptEditor（role=user 时它自己隐藏），这一行不再画 agent 图标/选择器。
+// 2) 角色 / 阶段选项不再是这个文件私有的控件：统一到 StageOptionsBar，
+//    两处（任务模板编辑 + 任务详情的阶段编辑）共用同一个组件。
 assert.doesNotMatch(
   dialog,
   /<AgentSelector/,
@@ -45,21 +45,25 @@ assert.doesNotMatch(
   /AgentIcon/,
   "the role toggle must not draw an agent icon; the selector lives inside the editor",
 );
-assert.match(
+assert.doesNotMatch(
   dialog,
-  /function RoleAgentSwitch\(\{\s*role,\s*disabled,\s*onUserClick,?\s*\}:\s*\{\s*role: "user" \| "agent";\s*disabled\?: boolean;\s*onUserClick: \(\) => void;\s*\}\)/,
-  "RoleAgentSwitch must be a single toggle button (role + onUserClick only)",
+  /function RoleAgentSwitch/,
+  "RoleAgentSwitch must be gone; the role toggle lives in the shared StageOptionsBar",
 );
-// 亮 = user 段：按钮带 aria-pressed，选中态走 accent 底。
-assert.match(
+assert.doesNotMatch(
   dialog,
-  /aria-pressed=\{userActive\}/,
-  "the user toggle must expose its state via aria-pressed",
+  /function StageOptionsMenu/,
+  "the 3-dot StageOptionsMenu must be gone; options are now an always-visible bar",
 );
 assert.match(
   dialog,
-  /background: active \? "var\(--accent-color\)" : "var\(--input-bg\)"/,
-  "the user toggle must highlight when selected",
+  /import \{ StageOptionsBar, type SessionReusePolicy \} from "\.\/StageOptionsBar"/,
+  "the template dialog must use the shared StageOptionsBar",
+);
+assert.match(
+  dialog,
+  /header=\{\(\s*<StageOptionsBar/,
+  "the options must render in PromptEditor's header slot, not hidden in a menu",
 );
 // PromptEditor 默认按 role 隐藏选择器（user 段没有 agent），但允许调用方显式打开
 // ——新建任务面板就是 user 段，却要在里面挑「下一个 agent 阶段」的 agent/模型。
@@ -116,3 +120,48 @@ assert.ok(
   dialog.includes("composerInputStyle"),
   "the template name and stage name inputs must use the shared compact input style",
 );
+
+// 3) StageOptionsBar：两处共用的那一份，且不藏在三点菜单里。
+const stageOptions = fs.readFileSync(path.join(root, "src/components/StageOptionsBar.tsx"), "utf8");
+const panel = fs.readFileSync(path.join(root, "src/components/TaskDetailPanel.tsx"), "utf8");
+
+for (const key of ["taskTemplate.autoAdvance", "taskTemplate.planMode", "taskTemplate.sessionReuse"]) {
+  assert.ok(stageOptions.includes(`t("${key}")`), `the shared bar must expose ${key}`);
+}
+assert.match(
+  stageOptions,
+  /aria-pressed=\{!isAgent\}/,
+  "the user toggle must expose its state via aria-pressed",
+);
+assert.match(
+  stageOptions,
+  /background: active \? "var\(--accent-color\)" : "var\(--input-bg\)"/,
+  "the user toggle must highlight when selected",
+);
+// 会话复用：三个选项都在，且 user 段禁用。
+for (const opt of ["task_main", "same_stage", "always_new"]) {
+  assert.ok(stageOptions.includes(`value="${opt}"`), `session reuse must offer ${opt}`);
+}
+assert.match(
+  stageOptions,
+  /disabled=\{disabled \|\| !isAgent\}/,
+  "session reuse is meaningless on a user stage and must be disabled there",
+);
+// 任务详情里的阶段编辑也用同一份，且排在 header 上。
+assert.match(
+  panel,
+  /import \{ StageOptionsBar, type SessionReusePolicy \} from "\.\/StageOptionsBar"/,
+  "TaskDetailPanel must use the shared StageOptionsBar",
+);
+assert.match(
+  panel,
+  /header=\{editing \? \(\s*<StageOptionsBar/,
+  "the options must sit in the editor header while editing",
+);
+// 保存时四个选项都要落库（UpdateStage 是全量替换，漏一个就丢一个）。
+for (const field of ["auto_advance: editAutoAdvance", "plan_mode: isAgent ? editPlanMode : false", "session_reuse_policy: editSessionReuse", "role: editRole"]) {
+  assert.ok(panel.includes(field), `saveStage must persist ${field}`);
+}
+// 三点菜单那套在两处都得消失。
+assert.doesNotMatch(dialog, /StageOptionsMenu/, "template dialog must not keep the 3-dot menu");
+assert.doesNotMatch(panel, /StageOptionsMenu/, "task detail must not keep the 3-dot menu");

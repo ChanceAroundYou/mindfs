@@ -38,6 +38,8 @@ export type PromptEditorProps = {
   onAttach?: () => void;
   onEdit?: () => void;
   onSend?: () => void;
+  /** 编辑区上方的附加控件行（阶段选项：user 切换 / 自动进入下一段 / 会话复用…）。 */
+  header?: React.ReactNode;
   /** 回车处理，返回 true 表示已消费（交给 TokenEditor 的 Enter 命令）。 */
   onEnter?: (event: KeyboardEvent | null) => boolean;
   sending?: boolean;
@@ -75,6 +77,7 @@ export const PromptEditor = forwardRef<TokenEditorHandle, PromptEditorProps>(fun
     onAttach,
     onEdit,
     onSend,
+    header,
     onEnter,
     sending,
     sendDisabled,
@@ -133,7 +136,9 @@ export const PromptEditor = forwardRef<TokenEditorHandle, PromptEditorProps>(fun
   };
 
   return (
-    <div style={composerContainerStyle(mode === "done" ? "rgba(148, 163, 184, 0.10)" : "var(--input-bg)")}>
+    <div style={{ display: "flex", flexDirection: "column", gap: "6px", minWidth: 0 }}>
+      {header}
+      <div style={composerContainerStyle(mode === "done" ? "rgba(148, 163, 184, 0.10)" : "var(--input-bg)")}>
       <TokenEditor
         ref={editorRef}
         placeholder={placeholder || t("taskTemplate.promptTemplate")}
@@ -219,6 +224,7 @@ export const PromptEditor = forwardRef<TokenEditorHandle, PromptEditorProps>(fun
             <PencilIcon />
           </button>
         )}
+      </div>
       </div>
     </div>
   );

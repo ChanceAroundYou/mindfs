@@ -3,6 +3,7 @@ import { AgentIcon } from "./AgentIcon";
 import { ModeIcon } from "./ModeIcon";
 import { with1MSuffix } from "./action/modelUtils";
 import { PromptEditor } from "./PromptEditor";
+import { StageOptionsBar, type SessionReusePolicy } from "./StageOptionsBar";
 import { PencilIcon, TrashIcon, composerInputStyle } from "./composerStyles";
 import { uploadFiles } from "../services/upload";
 import { useI18n, type I18nContextValue } from "../i18n";
@@ -77,6 +78,12 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
   const [editModel, setEditModel] = useState("");
   const [editEffort, setEditEffort] = useState("");
   const [editMode, setEditMode] = useState("");
+  // 阶段选项：与任务模板编辑共用 StageOptionsBar 那一套
+  const [editAutoAdvance, setEditAutoAdvance] = useState(false);
+  const [editPlanMode, setEditPlanMode] = useState(false);
+  const [editSessionReuse, setEditSessionReuse] = useState<SessionReusePolicy>("task_main");
+  // 角色也可在编辑态切换（agent ↔ user），首段固定 user
+  const [editRole, setEditRole] = useState<"user" | "agent">("agent");
   const [saving, setSaving] = useState(false);
   const stageAttachRef = useRef<HTMLInputElement | null>(null);
   // 待确认动作：切换编辑对象会丢草稿 / 删除阶段。共用一个居中确认弹窗。
@@ -148,6 +155,10 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
     setEditModel(stage.model || "");
     setEditEffort(stage.effort || "");
     setEditMode(stage.mode || "");
+    setEditAutoAdvance(stage.auto_advance === true);
+    setEditPlanMode(stage.plan_mode === true);
+    setEditSessionReuse((stage.session_reuse_policy as SessionReusePolicy) || "task_main");
+    setEditRole(stage.role);
   };
 
   // 编辑态是否已有未保存修改
@@ -161,6 +172,9 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
       || editModel !== (stage.model || "")
       || editEffort !== (stage.effort || "")
       || editMode !== (stage.mode || "")
+      || editAutoAdvance !== (stage.auto_advance === true)
+      || editPlanMode !== (stage.plan_mode === true)
+      || editSessionReuse !== ((stage.session_reuse_policy as SessionReusePolicy) || "task_main")
     );
   };
 
@@ -194,14 +208,19 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
   const saveStage = async (index: number) => {
     const original = stages[index];
     if (!original || !editPrompt.trim()) return;
+    const isAgent = editRole === "agent";
     const nextStage: StageTemplate = {
       ...original,
       name: editName,
+      role: editRole,
       prompt_template: editPrompt,
-      agent: original.role === "agent" ? editAgent : undefined,
-      model: original.role === "agent" ? editModel : undefined,
-      effort: original.role === "agent" ? editEffort : undefined,
-      mode: original.role === "agent" ? editMode : undefined,
+      agent: isAgent ? editAgent : undefined,
+      model: isAgent ? editModel : undefined,
+      effort: isAgent ? editEffort : undefined,
+      mode: isAgent ? editMode : undefined,
+      auto_advance: editAutoAdvance,
+      plan_mode: isAgent ? editPlanMode : false,
+      session_reuse_policy: editSessionReuse,
     };
     try {
       setSaving(true);
@@ -322,7 +341,7 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
                       {stage.name || t("task.stageLabel", { index })}
                     </span>
                   )}
-                  {!isAgent ? (
+                  {!isAgent && !editing ? (
                     <span style={tagStyle}>{t("task.stage.user")}</span>
                   ) : null}
                   <span style={{ fontSize: "11px", fontWeight: 700, color: statusColors[run?.status || ""] || "var(--text-secondary)" }}>
@@ -369,8 +388,33 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
                   onChange={(value) => setEditPrompt(value)}
                   resetKey={`${task.id}-${index}`}
                   mode={editing ? "editable" : (executed ? "done" : "readonly")}
-                  role={stage.role}
+                  role={editing ? editRole : stage.role}
                   placeholder={t("taskTemplate.promptTemplate")}
+                  header={editing ? (
+                    <StageOptionsBar
+                      role={editRole}
+                      autoAdvance={editAutoAdvance}
+                      planMode={editPlanMode}
+                      sessionReusePolicy={editSessionReuse}
+                      onToggleRole={() => {
+                        if (editRole === "agent") {
+                          // agent → user：清掉 agent 专属字段
+                          setEditRole("user");
+                          setEditAgent("");
+                          setEditModel("");
+                          setEditEffort("");
+                          setEditMode("");
+                          setEditPlanMode(false);
+                        } else {
+                          setEditRole("agent");
+                          setEditAgent(stage.agent || "codex");
+                        }
+                      }}
+                      onAutoAdvanceChange={setEditAutoAdvance}
+                      onPlanModeChange={setEditPlanMode}
+                      onSessionReusePolicyChange={setEditSessionReuse}
+                    />
+                  ) : null}
                   onEdit={() => requestEditStage(index)}
                   onSend={() => void saveStage(index)}
                   sending={saving}

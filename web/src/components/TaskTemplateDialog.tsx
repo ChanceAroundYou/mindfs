@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { PromptEditor } from "./PromptEditor";
+import { StageOptionsBar, type SessionReusePolicy } from "./StageOptionsBar";
 import { with1MSuffix } from "./action/modelUtils";
 import { composerInputStyle } from "./composerStyles";
 import {
@@ -96,6 +97,26 @@ export function TaskTemplateDialog({ open, agents, template, onClose, onSaved }:
         i === index ? { ...stage, snapshot: { ...stage.snapshot, ...patch } } : stage
       ))),
     }));
+  };
+
+  // user ↔ agent 切换：切过去时用空白段打底，保留段名和 agent 相关的旧值。
+  const onToggleStageRole = (index: number) => () => {
+    const current = draft.stages[index]?.snapshot;
+    if (!current) return;
+    if (current.role === "user") {
+      const status = agents.find((item) => item.name === (current.agent || "codex")) || agents[0] || null;
+      updateStage(index, {
+        ...blankAgentStage(),
+        name: current.name || "",
+        agent: status?.name || current.agent || "codex",
+        model: current.model || "",
+        effort: current.effort || "",
+        fast_service: current.fast_service || "",
+        ...(status?.protocol === "acp" ? { plan_mode: false } : {}),
+      });
+      return;
+    }
+    updateStage(index, { ...blankUserStage(), name: current.name || "" });
   };
 
   const addStage = () => {
@@ -243,41 +264,6 @@ export function TaskTemplateDialog({ open, agents, template, onClose, onSaved }:
                     placeholder={t("taskTemplate.stageNamePlaceholder")}
                     style={{ ...composerInputStyle, height: "30px", width: "156px", flex: "0 0 156px" }}
                   />
-                  {/* user 开关：亮 = user 段（输入框里不显示 agent 选择器），
-                      暗 = agent 段（选择器在下面的 PromptEditor 里）。点一下在两种角色间切。 */}
-                  <RoleAgentSwitch
-                    role={snapshot.role}
-                    disabled={index === 0}
-                    onUserClick={() => {
-                      if (snapshot.role === "user") {
-                        const status = agents.find((item) => item.name === (snapshot.agent || "codex")) || agents[0] || null;
-                        updateStage(index, {
-                          ...blankAgentStage(),
-                          name: snapshot.name || "",
-                          agent: status?.name || snapshot.agent || "codex",
-                          model: snapshot.model || "",
-                          effort: snapshot.effort || "",
-                          fast_service: snapshot.fast_service || "",
-                          ...(status?.protocol === "acp" ? { plan_mode: false } : {}),
-                        });
-                        return;
-                      }
-                      updateStage(index, { ...blankUserStage(), name: snapshot.name || "" });
-                    }}
-                  />
-                  <StageOptionsMenu
-                    isAgent={isAgent}
-                    autoAdvance={snapshot.auto_advance === true}
-                    planMode={!planModeDisabled && snapshot.plan_mode === true}
-                    planModeDisabled={planModeDisabled}
-                    sessionReusePolicy={snapshot.session_reuse_policy || "task_main"}
-                    onAutoAdvanceChange={() => updateStage(index, { auto_advance: !snapshot.auto_advance })}
-                    onPlanModeChange={() => {
-                      if (!planModeDisabled) updateStage(index, { plan_mode: !snapshot.plan_mode });
-                    }}
-                    onSessionReusePolicyChange={(policy) => updateStage(index, { session_reuse_policy: policy })}
-                  />
-                  <div style={{ flex: "1 1 8px", minWidth: 0 }} />
                   {renderStageMetaActions()}
                 </div>
                 <div style={fieldStyle}>
@@ -321,6 +307,22 @@ export function TaskTemplateDialog({ open, agents, template, onClose, onSaved }:
                     onFastServiceChange={(fastService) => updateStage(index, { fast_service: fastService })}
                     onLongContextChange={(enabled) => updateStage(index, { model: with1MSuffix(snapshot.model || "", enabled) })}
                     placeholder={isAgent ? t("taskTemplate.promptTemplate") : t("taskTemplate.userInputTemplate")}
+                    header={(
+                      <StageOptionsBar
+                        role={snapshot.role}
+                        autoAdvance={snapshot.auto_advance === true}
+                        planMode={!planModeDisabled && snapshot.plan_mode === true}
+                        planModeDisabled={planModeDisabled}
+                        sessionReusePolicy={(snapshot.session_reuse_policy as SessionReusePolicy) || "task_main"}
+                        readOnly={index === 0}
+                        onToggleRole={index === 0 ? undefined : onToggleStageRole(index)}
+                        onAutoAdvanceChange={(next) => updateStage(index, { auto_advance: next })}
+                        onPlanModeChange={(next) => {
+                          if (!planModeDisabled) updateStage(index, { plan_mode: next });
+                        }}
+                        onSessionReusePolicyChange={(policy) => updateStage(index, { session_reuse_policy: policy })}
+                      />
+                    )}
                   />
                 </div>
               </div>
@@ -385,210 +387,6 @@ function FieldLabelWithInfo({ label, info, helpKey, openHelpKey, setOpenHelpKey 
   );
 }
 
-function StageOptionsMenu({
-  isAgent,
-  autoAdvance,
-  planMode,
-  planModeDisabled,
-  sessionReusePolicy,
-  onAutoAdvanceChange,
-  onPlanModeChange,
-  onSessionReusePolicyChange,
-}: {
-  isAgent: boolean;
-  autoAdvance: boolean;
-  planMode: boolean;
-  planModeDisabled?: boolean;
-  sessionReusePolicy: "task_main" | "same_stage" | "always_new";
-  onAutoAdvanceChange: () => void;
-  onPlanModeChange: () => void;
-  onSessionReusePolicyChange: (policy: "task_main" | "same_stage" | "always_new") => void;
-}) {
-  const { t } = useI18n();
-  const [open, setOpen] = useState(false);
-  const [sessionOpen, setSessionOpen] = useState(false);
-  const ref = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const handlePointerDown = (event: PointerEvent) => {
-      if (!ref.current?.contains(event.target as Node)) {
-        setOpen(false);
-        setSessionOpen(false);
-      }
-    };
-    document.addEventListener("pointerdown", handlePointerDown);
-    return () => document.removeEventListener("pointerdown", handlePointerDown);
-  }, [open]);
-
-  return (
-    <div ref={ref} style={{ position: "relative", width: "32px", height: "30px" }}>
-      <button
-        type="button"
-        aria-label={t("taskTemplate.stageOptions")}
-        onClick={() => setOpen((value) => !value)}
-        style={menuIconButtonStyle(open)}
-      >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-          <circle cx="5" cy="12" r="1.8" />
-          <circle cx="12" cy="12" r="1.8" />
-          <circle cx="19" cy="12" r="1.8" />
-        </svg>
-      </button>
-      {open ? (
-        <div style={stageMenuStyle}>
-          <MenuCheckRow checked={autoAdvance} label={t("taskTemplate.autoAdvance")} onClick={onAutoAdvanceChange} />
-          <MenuCheckRow checked={planMode} label={t("taskTemplate.planMode")} disabled={!isAgent || planModeDisabled} onClick={onPlanModeChange} />
-          <div style={menuDividerStyle} />
-          <button
-            type="button"
-            disabled={!isAgent}
-            onClick={() => {
-              if (isAgent) setSessionOpen((value) => !value);
-            }}
-            style={menuRowStyle({ disabled: !isAgent })}
-          >
-            <span style={{ flex: 1 }}>{t("taskTemplate.sessionReuse")}</span>
-            <span style={{ color: "var(--text-secondary)", fontSize: "11px" }}>{sessionReuseLabel(sessionReusePolicy, t)}</span>
-            <ChevronRight isOpen={sessionOpen} />
-          </button>
-          {sessionOpen && isAgent ? (
-            <>
-              <MenuRadioRow checked={sessionReusePolicy === "task_main"} label={t("taskTemplate.sessionReuseTaskMain")} onClick={() => onSessionReusePolicyChange("task_main")} />
-              <MenuRadioRow checked={sessionReusePolicy === "same_stage"} label={t("taskTemplate.sessionReuseSameStage")} onClick={() => onSessionReusePolicyChange("same_stage")} />
-              <MenuRadioRow checked={sessionReusePolicy === "always_new"} label={t("taskTemplate.sessionReuseAlwaysNew")} onClick={() => onSessionReusePolicyChange("always_new")} />
-            </>
-          ) : null}
-          <div style={menuDividerStyle} />
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function AgentDropdownChevron() {
-  return (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-      style={{ color: "var(--text-secondary)", flexShrink: 0 }}
-    >
-      <path d="m6 9 6 6 6-6" />
-    </svg>
-  );
-}
-
-function sessionReuseLabel(policy: "task_main" | "same_stage" | "always_new", t: I18nContextValue["t"]): string {
-  if (policy === "same_stage") return t("taskTemplate.sessionReuseSameStage");
-  if (policy === "always_new") return t("taskTemplate.sessionReuseAlwaysNew");
-  return t("taskTemplate.sessionReuseTaskMain");
-}
-
-function MenuCheckRow({ checked, label, disabled, onClick }: {
-  checked: boolean;
-  label: string;
-  disabled?: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button type="button" disabled={disabled} onClick={onClick} style={menuRowStyle({ active: checked, disabled })}>
-      <span>{label}</span>
-      <span style={menuTrailingCheckStyle(checked)}>✓</span>
-    </button>
-  );
-}
-
-function MenuRadioRow({ checked, label, onClick }: {
-  checked: boolean;
-  label: string;
-  onClick: () => void;
-}) {
-  return (
-    <button type="button" onClick={onClick} style={menuRowStyle({ active: checked })}>
-      <span>{label}</span>
-      <span style={menuTrailingCheckStyle(checked)}>✓</span>
-    </button>
-  );
-}
-
-function ChevronRight({ isOpen }: { isOpen: boolean }) {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      style={{
-        transform: isOpen ? "rotate(90deg)" : "rotate(0deg)",
-        transition: "transform 0.15s cubic-bezier(0.4, 0, 0.2, 1)",
-        color: isOpen ? "var(--text-primary)" : "#9ca3af",
-        flexShrink: 0,
-      }}
-      aria-hidden="true"
-    >
-      <polyline points="9 18 15 12 9 6" />
-    </svg>
-  );
-}
-
-function RoleAgentSwitch({
-  role,
-  disabled,
-  onUserClick,
-}: {
-  role: "user" | "agent";
-  disabled?: boolean;
-  onUserClick: () => void;
-}) {
-  const { t } = useI18n();
-  const userActive = role === "user";
-  // 只有一个 user 开关：亮 = user 段（下面输入框不显示 agent 选择器），
-  // 暗 = agent 段（选择器在输入框里）。agent 图标不再出现在这一行。
-  return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={onUserClick}
-      aria-pressed={userActive}
-      aria-label={userActive ? t("taskTemplate.userStageOn") : t("taskTemplate.userStageOff")}
-      title={userActive ? t("taskTemplate.userStageOn") : t("taskTemplate.userStageOff")}
-      style={userStageToggleStyle(userActive, disabled)}
-    >
-      user
-    </button>
-  );
-}
-
-function userStageToggleStyle(active: boolean, disabled?: boolean): React.CSSProperties {
-  return {
-    height: "30px",
-    width: "60px",
-    flex: "0 0 60px",
-    border: "1px solid var(--border-color)",
-    borderRadius: "7px",
-    background: active ? "var(--accent-color)" : "var(--input-bg)",
-    color: active ? "#fff" : "var(--text-secondary)",
-    fontSize: "11px",
-    fontWeight: 800,
-    cursor: disabled ? "not-allowed" : "pointer",
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    opacity: disabled ? 0.68 : 1,
-    padding: 0,
-  };
-}
 
 const fieldStyle: React.CSSProperties = { display: "flex", flexDirection: "column", gap: "4px", minWidth: 0 };
 const labelStyle: React.CSSProperties = { fontSize: "11px", color: "var(--text-secondary)", fontWeight: 700 };
