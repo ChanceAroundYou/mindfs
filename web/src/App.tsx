@@ -193,7 +193,7 @@ import { buildMatchInputFromPath, buildMessageWithViewContext, hasExplicitFileCo
 import { basenameOfPath, buildDirectorySelectionKey, buildFileScrollKey, buildURLSearch, comparableManagedRootPath, dirnameOfPath, isDirectorySortMode, joinDisplayPath, normalizeCursor, normalizePath, parentDirsOfFile, parseFileLocation, parsePluginQuery, readURLState, relativeDisplayPathFromRoot, rootNodeKey } from "./app/appPath";
 import { hasSessionExchanges, isTopLevelSessionItem, normalizeMode, relatedFileSelectionKey, sessionInputHistory, toSessionItem } from "./app/appSession";
 import { accountScopedKey, loadGitDiffSideBySide, loadLastRootId, loadLastRootNodeId, loadLegacyMainView, loadMainView, loadMobileEnterKeySends, loadPersistedFileScrollPositions, loadPersistedPluginQuery, loadSidebarsSwapped, loadTaskCreateWorktreePreference, persistFileScrollPositions, persistPluginQuery, removeLocalStorageByPrefix, saveTaskCreateWorktreePreference } from "./app/appStorage";
-import { currentTaskInputFromDetail, firstAgentStage, firstTaskInputFromDetail, firstUserInputTemplate, isUnfinishedKanbanTask, normalizeFastService, previousTaskInputsFromDetail, taskSessionKeysFromDetail } from "./app/appTask";
+import { currentTaskInputFromDetail, firstAgentStage, firstTaskInputFromDetail, firstUserInputTemplate, normalizeFastService, previousTaskInputsFromDetail, taskSessionKeysFromDetail } from "./app/appTask";
 import { useCompletionSound } from "./app/useCompletionSound";
 import { useExternalSessionImport } from "./app/useExternalSessionImport";
 import { useGitActions } from "./app/useGitActions";
@@ -615,7 +615,10 @@ export function App({ onGoHome }: AppProps) {
 	      ? allTasks.filter((task) => task.task_template_id === selectedTemplateId)
 	      : allTasks;
 	    setKanbanTaskCountItems(allTasks);
-	    setKanbanTasks(allTemplatesSelected ? filtered : filtered.filter(isUnfinishedKanbanTask));
+	    // 模板筛选只按 task_template_id 收窄，不要在这里再滤终态：
+	    // 四块看板里「已结束」那一列唯一的任务来源就是 success/fail/cancelled，
+	    // 前面多滤一道，终态卡在子看板里就凭空消失（连已完成列都进不去）。
+	    setKanbanTasks(filtered);
 	  }, [currentRootId, taskDetailsById, taskTemplateFilter]);
 
 	  useEffect(() => {

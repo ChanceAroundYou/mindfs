@@ -180,3 +180,22 @@ for (const key of [
   assert.ok(zh.includes(`"${key}"`), `${key} missing in zh-CN`);
   assert.ok(en.includes(`"${key}"`), `${key} missing in en-US`);
 }
+
+// 模板子看板不得丢弃终态任务：#11(cancelled)/#13(success) 曾因此在「新功能」下整张消失，
+// 连「已结束」列都进不去。「已结束」列唯一的任务来源就是 success/fail/cancelled，
+// 筛选阶段再滤一道终态，列就必然是空的。
+assert.match(
+  app,
+  /setKanbanTasks\(filtered\);/,
+  "template filtering should narrow by template id only, not drop terminal tasks",
+);
+assert.doesNotMatch(
+  app,
+  /filtered\.filter\(isUnfinishedKanbanTask\)/,
+  "no extra 'unfinished' filter — it silently empties the 已结束 column in sub-boards",
+);
+assert.doesNotMatch(
+  app,
+  /import[^;]*isUnfinishedKanbanTask[^;]*from "\.\/app\/appTask"/,
+  "isUnfinishedKanbanTask should be gone once nothing calls it",
+);

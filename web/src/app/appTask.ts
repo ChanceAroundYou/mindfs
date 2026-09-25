@@ -15,10 +15,6 @@ export function firstAgentStage(template: TaskTemplate | null): StageTemplate | 
   return template?.stages?.map((stage) => stage.snapshot).find((stage) => stage.role === "agent") || null;
 }
 
-export function isUnfinishedKanbanTask(task: KanbanTask): boolean {
-  return task.status !== "success" && task.status !== "fail" && task.status !== "cancelled";
-}
-
 export function isTerminalKanbanTask(task: KanbanTask): boolean {
   return task.status === "success" || task.status === "fail" || task.status === "cancelled";
 }
