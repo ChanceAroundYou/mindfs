@@ -4,14 +4,16 @@ import { useResponsive } from "../app/appMisc";
 import { TASK_TEMPLATE_ALL_FILTER } from "../app/appStorage";
 import { useRefreshSpin } from "../hooks";
 import type { useTaskTemplates } from "../app/useTaskTemplates";
-import type { KanbanTask, TaskOverviewItem, TaskTemplate } from "../services/tasks";
+import type { KanbanTask, TaskTemplate } from "../services/tasks";
+import type { WorkspaceBoard as WorkspaceBoardData } from "../app/useWorkspaceBoard";
+import type { WorkspaceBoardFilter } from "../app/appStorage";
 import type { SessionItem } from "../app/appSession";
 import { isTerminalKanbanTask, parseTaskSessionErrorDetails, parseTaskSessionErrorMessage, taskStatusLabel } from "../app/appTask";
 import { InlineTokenText } from "./InlineTokenText";
 import { AgentIcon } from "./AgentIcon";
 import { ModeIcon } from "./ModeIcon";
 import { NoWorktreeIcon } from "./NoWorktreeIcon";
-import { WorkspaceKanban } from "./WorkspaceKanban";
+import { WorkspaceBoard } from "./workspace/WorkspaceBoard";
 import { renderToolIcon } from "./stream/ToolCallCard";
 import {
   DeleteIcon,
@@ -52,7 +54,7 @@ export type TaskSessionErrorDialog = { title: string; message: string; details: 
 type MoveKanbanAction = "next" | "run-now" | "pause" | "resume" | "complete" | "cancel";
 
 /**
- * 任务面板：无项目时是跨项目工作台（WorkspaceKanban），有项目时是项目内四块看板。
+ * 任务面板：无项目时是跨项目工作台（WorkspaceBoard），有项目时是项目内四块看板。
  *
  * 纯视图——数据与回调全由 App 传入。折叠/选中这类"看起来是本地的"状态其实 App 也要用
  * （详情面板、WS 回包），所以照样由 App 持有，组件内不新增状态。
@@ -63,8 +65,12 @@ export function TaskBoardView({
   workspaceOpen,
   currentRootId,
   currentRootIdRef,
-  workspaceOverview,
-  workspaceLoading,
+  workspaceBoard,
+  workspaceFilter,
+  onWorkspaceFilterChange,
+  workspaceCollapsedKeys,
+  onToggleWorkspaceProject,
+  onRefreshWorkspaceBoard,
   managedRootIds,
   getRootDisplayName,
   openWorkspaceProject,
@@ -94,12 +100,16 @@ export function TaskBoardView({
   workspaceOpen: boolean;
   currentRootId: string | null;
   currentRootIdRef: React.MutableRefObject<string | null>;
-  workspaceOverview: TaskOverviewItem[];
-  workspaceLoading: boolean;
+  workspaceBoard: WorkspaceBoardData;
+  workspaceFilter: WorkspaceBoardFilter;
+  onWorkspaceFilterChange: (filter: WorkspaceBoardFilter) => void;
+  workspaceCollapsedKeys: Set<string>;
+  onToggleWorkspaceProject: (key: string) => void;
+  onRefreshWorkspaceBoard: () => void;
   managedRootIds: string[];
   getRootDisplayName: (rootId: string | null | undefined) => string;
   openWorkspaceProject: (rootId: string) => Promise<void>;
-  handleWorkspaceCreateTask: (rootId: string, input: string) => Promise<void>;
+  handleWorkspaceCreateTask: (rootId: string, nodeId: string, template: TaskTemplate) => void;
   setSelectedKanbanTaskId: React.Dispatch<React.SetStateAction<string>>;
   kanbanTasksLoading: boolean;
   kanbanStageColumns: KanbanStageColumn[];
@@ -116,7 +126,7 @@ export function TaskBoardView({
   getDisplayNodeColor: (rootId: string) => string | null;
   handleSelectKanbanTask: (task: KanbanTask) => void;
   handleMoveKanbanTask: (task: KanbanTask, action: MoveKanbanAction) => Promise<void>;
-  openTaskCreateDialog: (template: TaskTemplate | null) => void;
+  openTaskCreateDialog: (template: TaskTemplate | null, targetRootId?: string) => void;
   handleTaskSessionDrawerOpen: (sessionKey: string, rootOverride?: string | null, taskId?: string) => void;
   setTaskSessionErrorDialog: React.Dispatch<React.SetStateAction<TaskSessionErrorDialog | null>>;
   loadKanbanTasks: (rootId?: string | null, force?: boolean) => Promise<void>;
@@ -155,16 +165,19 @@ export function TaskBoardView({
   const selectedTaskTemplateForFilter = isAllTaskTemplateFilter ? null : taskTemplates.find((template) => template.id === taskTemplateFilter) || null;
 
   const workspacePanel = (
-    <WorkspaceKanban
-      items={workspaceOverview}
-      loading={workspaceLoading}
-      projects={managedRootIds.map((id) => ({ id, name: getRootDisplayName(id) || id }))}
+    <WorkspaceBoard
+      board={workspaceBoard}
+      filter={workspaceFilter}
+      onFilterChange={onWorkspaceFilterChange}
+      collapsedKeys={workspaceCollapsedKeys}
+      onToggleProject={onToggleWorkspaceProject}
+      getNodeColor={getDisplayNodeColor}
       onOpenProject={(rootId) => { void openWorkspaceProject(rootId); }}
-      onComplete={(item) => { void handleMoveKanbanTask(item.task, "complete"); }}
-      onRunNow={(item) => { void handleMoveKanbanTask(item.task, "run-now"); }}
-      onOpenSession={(item, sessionKey) => { handleTaskSessionDrawerOpen(sessionKey, item.root_id, item.task.id); }}
-      onOpenDetail={(item) => { void openWorkspaceProject(item.root_id).then(() => setSelectedKanbanTaskId(item.task.id)); }}
-      onCreateTask={(rootId, input) => { void handleWorkspaceCreateTask(rootId, input); }}
+      onOpenTask={(item) => { void openWorkspaceProject(item.root_id).then(() => setSelectedKanbanTaskId(item.task.id)); }}
+      onMoveTask={(item, action) => { void handleMoveKanbanTask(item.task, action); }}
+      templates={templateControls.taskTemplates}
+      onCreateTask={handleWorkspaceCreateTask}
+      onRefresh={onRefreshWorkspaceBoard}
     />
   );
 

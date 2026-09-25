@@ -154,6 +154,11 @@ export type TaskInlineEditState = {
   templateId: string;
   templateName: string;
   text: string;
+  /**
+   * 面板的目标项目。从工作台发起时是那个面板里选的项目，不一定是当前项目；
+   * 缺省表示当前项目（看板入口永远落在当前项目上）。
+   */
+  targetRootId?: string;
   /** 新建时的任务名 */
   name?: string;
   /** 覆盖下一个 agent 阶段的 agent（空 = 用模板里的） */

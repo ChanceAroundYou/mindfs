@@ -61,6 +61,8 @@ export type RealtimeEventsContext = {
     sessionsRef: RefObject<SessionItem[]>;
     suppressedAutoBindSessionByRootRef: RefObject<Record<string, string | null>>;
     taskDetailsByIdRef: RefObject<Record<string, TaskDetail>>;
+    /** 主区是否停在跨项目工作台。工作台要收全部项目的 task.updated，不能只听当前项目。 */
+    workspaceOpenRef: RefObject<boolean>;
   };
   /** App 的 setState */
   setters: {
@@ -161,6 +163,7 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
       sessionsRef,
       suppressedAutoBindSessionByRootRef,
       taskDetailsByIdRef,
+      workspaceOpenRef,
     },
     setters: {
       setAgentsVersion,
@@ -1525,9 +1528,12 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
             }
       },
       "task.updated": (event: any, payload: any) => {
+          // 工作台是跨项目视图：它要显示所有项目的任务，只听 currentRootId 会让
+          // 「在别处把任务点完成，工作台卡片不变」——taskDetailsById 不动，
+          // 依赖它的整包重拉 effect 也不触发。板态仍只收当前项目，免得污染项目看板。
           if (
             typeof payload?.root_id === "string" &&
-            payload.root_id === currentRootIdRef.current &&
+            (workspaceOpenRef.current || payload.root_id === currentRootIdRef.current) &&
             typeof payload?.task?.id === "string"
           ) {
             // 跨节点隔离：同名项目在另一节点的任务推送不污染当前视图

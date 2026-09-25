@@ -433,6 +433,11 @@ export type TaskOverviewItem = {
   root_id: string;
   root_name: string;
   task: KanbanTask;
+  /**
+   * 前端跨节点扇出时打的标，**后端不返**（后端 Overview 遍历本节点 roots，不知道自己在哪个节点上）。
+   * 可选是为了让直接用 /api/tasks/overview 的调用方类型照旧成立。
+   */
+  nodeId?: string;
 };
 
 export async function fetchTasksOverview(nodeId?: string): Promise<TaskOverviewItem[]> {

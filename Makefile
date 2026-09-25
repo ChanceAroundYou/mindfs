@@ -1,4 +1,4 @@
-.PHONY: help dev dev-backend dev-web build-web build build-android build-harmony install uninstall build-all start start-server test dist-clean publish-release-notes verify-release release tag
+.PHONY: help dev dev-backend dev-web build-web build build-android build-harmony install uninstall build-all start start-server test test-web dist-clean publish-release-notes verify-release release tag
 
 GO ?= go
 NPM ?= npm
@@ -77,6 +77,10 @@ start-server:
 
 test:
 	$(GO) test ./...
+
+# web 契约测试：源码守卫（tests/*.test.mjs），不需要浏览器
+test-web:
+	cd $(WEB_DIR) && $(NPM) test
 
 # ── Cross-platform distribution ──────────────────────────────────────────
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")

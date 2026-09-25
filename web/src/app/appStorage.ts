@@ -212,6 +212,50 @@ export type TaskCreateWorktreePreference = {
 
 export const MAIN_VIEW_STORAGE_KEY = "mindfs-main-view";
 
+// 跨项目工作台：筛选档 + 折叠的项目组（键是 scopeKey(nodeId, rootId) 列表）。
+// 项目数一多就该靠「收窄」而不是「加层级」来扫读，所以这两项都要跨会话记住。
+export const WORKSPACE_FILTER_STORAGE_KEY = "mindfs-workspace-filter";
+export const WORKSPACE_COLLAPSED_STORAGE_KEY = "mindfs-workspace-collapsed";
+
+export const WORKSPACE_FILTERS = ["all", "active", "blocked"] as const;
+export type WorkspaceBoardFilter = (typeof WORKSPACE_FILTERS)[number];
+
+export function loadWorkspaceFilter(): WorkspaceBoardFilter {
+  if (typeof window === "undefined") return "all";
+  try {
+    const saved = window.localStorage.getItem(WORKSPACE_FILTER_STORAGE_KEY);
+    return WORKSPACE_FILTERS.includes(saved as WorkspaceBoardFilter) ? (saved as WorkspaceBoardFilter) : "all";
+  } catch {
+    return "all";
+  }
+}
+
+export function saveWorkspaceFilter(filter: WorkspaceBoardFilter): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(WORKSPACE_FILTER_STORAGE_KEY, filter);
+  } catch {}
+}
+
+export function loadWorkspaceCollapsed(): Set<string> {
+  if (typeof window === "undefined") return new Set<string>();
+  try {
+    const raw = window.localStorage.getItem(WORKSPACE_COLLAPSED_STORAGE_KEY);
+    if (!raw) return new Set<string>();
+    const parsed = JSON.parse(raw);
+    return new Set(Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === "string") : []);
+  } catch {
+    return new Set<string>();
+  }
+}
+
+export function saveWorkspaceCollapsed(keys: Set<string>): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(WORKSPACE_COLLAPSED_STORAGE_KEY, JSON.stringify(Array.from(keys)));
+  } catch {}
+}
+
 export function loadMainView(): MainViewMode {
   if (typeof window === "undefined") return "board";
   try {
