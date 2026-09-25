@@ -56,10 +56,24 @@ assert.match(
   "the 'all' filter must keep empty projects visible",
 );
 
-// 5) TaskOverviewItem 的 nodeId 必须是可选的：后端不返，直接用该接口的调用方类型照旧成立
+// 5) 切到工作台那一刻必须真的发起扇出：enabled 从 false 翻到 true 的那次渲染，
+//    本地节点可能还没进 getNodes()/managedRootIds —— 若 effect 只认依赖值而它们恰好没变，
+//    切过去会看到一台节点都不扇出（空工作台）。所以依赖里要有节点/项目清单本身。
+assert.match(
+  board,
+  /const fanoutKey = enabled[\s\S]*?managedRootIds\.join\(","\)/,
+  "the fan-out effect must re-run when the node/project list changes, not only on the boolean flip",
+);
+assert.match(
+  board,
+  /\}, \[enabled, refreshToken, localToken, fanoutKey\]\);/,
+  "fanoutKey must be an effect dependency",
+);
+
+// 6) TaskOverviewItem 的 nodeId 必须是可选的：后端不返，直接用该接口的调用方类型照旧成立
 assert.match(tasks, /nodeId\?: string;/, "TaskOverviewItem.nodeId must be optional");
 
-// 6) 后端零改动守卫：Go struct 里不能出现 NodeID
+// 7) 后端零改动守卫：Go struct 里不能出现 NodeID
 assert.match(goService, /type TaskOverviewItem struct/, "the Go overview item must still exist");
 assert.doesNotMatch(
   goService,
@@ -67,7 +81,7 @@ assert.doesNotMatch(
   "the backend must not gain a NodeID field — node identity is the fan-out's job, not the server's",
 );
 
-// 7) App 侧不再裸调 fetchTasksOverview，只剩走 hook 一条路
+// 8) App 侧不再裸调 fetchTasksOverview，只剩走 hook 一条路
 assert.doesNotMatch(
   app,
   /fetchTasksOverview\(/,
@@ -75,7 +89,7 @@ assert.doesNotMatch(
 );
 assert.match(app, /useWorkspaceBoard\(\{/, "App must drive the board through useWorkspaceBoard");
 
-// 8) 拉数失败不能抛给渲染层：hook 的 catch 返回空数组而不是 reject
+// 9) 拉数失败不能抛给渲染层：hook 的 catch 返回空数组而不是 reject
 assert.ok(
   existsSync(new URL("../src/app/useWorkspaceBoard.ts", import.meta.url)),
   "the fan-out hook must exist",

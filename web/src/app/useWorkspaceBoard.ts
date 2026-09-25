@@ -112,6 +112,11 @@ export function useWorkspaceBoard(params: {
   const cfgRef = useRef(params);
   cfgRef.current = params;
 
+  // enabled 从 false 翻到 true 的那一次渲染，本地节点可能还没进 getNodes()/managedRootIds。
+  // 若 effect 只认依赖值、而那些值此时恰好没变化，切到工作台就会看到一台节点都不扇出。
+  const fanoutKey = enabled
+    ? `${managedRootIds.join(",")}|${getNodes().map((n) => String((n as any)?.id || "")).join(",")}`
+    : "";
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
@@ -162,7 +167,7 @@ export function useWorkspaceBoard(params: {
       setLoading(false);
     })();
     return () => { cancelled = true; };
-  }, [enabled, refreshToken, localToken]);
+  }, [enabled, refreshToken, localToken, fanoutKey]);
 
   const refresh = useCallback(() => setLocalToken((n) => n + 1), []);
 

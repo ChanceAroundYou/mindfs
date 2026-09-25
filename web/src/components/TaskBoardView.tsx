@@ -171,6 +171,7 @@ export function TaskBoardView({
       onFilterChange={onWorkspaceFilterChange}
       collapsedKeys={workspaceCollapsedKeys}
       onToggleProject={onToggleWorkspaceProject}
+      getNodeColor={getDisplayNodeColor}
       onOpenProject={(rootId) => { void openWorkspaceProject(rootId); }}
       onOpenTask={(item) => { void openWorkspaceProject(item.root_id).then(() => setSelectedKanbanTaskId(item.task.id)); }}
       onMoveTask={(item, action) => { void handleMoveKanbanTask(item.task, action); }}

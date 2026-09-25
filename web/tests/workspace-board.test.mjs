@@ -64,6 +64,28 @@ assert.match(
 );
 // 节点色带透明度由 hexToRgbaApp 从运行时色值算出，不在样式文件里写死
 assert.match(styles, /import \{ hexToRgbaApp \} from "\.\.\/\.\.\/app\/taskIcons"/, "node tint must reuse the shared rgba helper");
+// 条带是跨项目的，每张卡得按**自己**的任务找节点色，不能拿一个全局值
+assert.match(
+  board,
+  /<WorkspaceAttentionBar[\s\S]*?getNodeColor=\{getNodeColor\}/,
+  "the attention bar needs the node-color resolver to tint each card",
+);
+assert.match(
+  attention,
+  /style=\{workspaceAttentionCardStyle\(getNodeColor\(item\.root_id\), isMobile\)\}/,
+  "an attention card must be tinted by the node of its own project, not a single global color",
+);
+assert.match(
+  view,
+  /getNodeColor=\{getDisplayNodeColor\}/,
+  "the view must hand the board App's stable node-color resolver",
+);
+// 取不到节点色时回退中性 token，不猜一个颜色
+assert.match(
+  styles,
+  /return \/\^#\[0-9a-fA-F\]\{3,8\}\$\/\.test\(hex\) \? hexToRgbaApp\(hex, alpha\) : `var\(--node-badge-bg\)`/,
+  "an unknown node color must fall back to a neutral token",
+);
 
 // 4) 信息架构：顶部「需要你」条带 + 按项目分组 + 底部快速发起。
 //    唯一按状态分区的地方是顶部条带，它回答的是与项目无关的「现在该我做什么」。
@@ -103,7 +125,7 @@ assert.match(quick, /options\.some\(\(option\) => option\.value === rootKey\) \?
 assert.match(board, /const \{ isMobile \} = useResponsive\(\);/, "the board must read the viewport, not assume desktop");
 assert.match(
   board,
-  /<WorkspaceAttentionBar items=\{board\.blockedAll\} onOpenTask=\{onOpenTask\} isMobile=\{isMobile\} \/>/,
+  /<WorkspaceAttentionBar items=\{board\.blockedAll\} onOpenTask=\{onOpenTask\} isMobile=\{isMobile\} getNodeColor=\{getNodeColor\} \/>/,
   "the attention bar must be told about the viewport",
 );
 assert.match(

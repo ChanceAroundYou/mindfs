@@ -30,6 +30,7 @@ export type WorkspaceBoardProps = {
   onFilterChange: (filter: WorkspaceBoardFilter) => void;
   collapsedKeys: Set<string>;
   onToggleProject: (key: string) => void;
+  getNodeColor: (rootId: string) => string | null;
   onOpenProject: (rootId: string, nodeId: string) => void;
   onOpenTask: (item: WorkspaceTaskItem) => void;
   onMoveTask: (item: WorkspaceTaskItem, action: "complete" | "run-now" | "pause" | "resume") => void;
@@ -38,7 +39,7 @@ export type WorkspaceBoardProps = {
 };
 
 export function WorkspaceBoard({
-  board, filter, onFilterChange, collapsedKeys, onToggleProject,
+  board, filter, onFilterChange, collapsedKeys, onToggleProject, getNodeColor,
   onOpenProject, onOpenTask, onMoveTask, onCreateTask, onRefresh,
 }: WorkspaceBoardProps) {
   const { t } = useI18n();
@@ -88,7 +89,7 @@ export function WorkspaceBoard({
         </button>
       </div>
 
-      <WorkspaceAttentionBar items={board.blockedAll} onOpenTask={onOpenTask} isMobile={isMobile} />
+      <WorkspaceAttentionBar items={board.blockedAll} onOpenTask={onOpenTask} isMobile={isMobile} getNodeColor={getNodeColor} />
 
       {board.loading && board.projects.length === 0 ? (
         <div style={workspaceEmptyTextStyle}>{t("task.loading")}</div>
