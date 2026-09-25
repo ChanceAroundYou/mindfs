@@ -56,9 +56,15 @@ for (const fn of ["fetchTaskTemplates", "saveTaskTemplate", "deleteTaskTemplate"
   assert.match(services, new RegExp(`export async function ${fn}\\([\\s\\S]{0,120}?nodeId\\?: string`), `${fn} must accept nodeId`);
 }
 
-// 模板数据：三段、user 段统一叫「任务输入」。
+// 模板数据：user 段统一叫「任务输入」。
+// 模板清单随产品调整增减，这里钉住实际存在的名字，而不是把数量写死 ——
+// 「优化」模板已下线（task-6 重写模板时移除），写死 3 只会让正常改动误报成回归。
 const templates = JSON.parse(read("../task_template.json"));
-assert.equal(templates.length, 3, "three bundled templates");
+assert.deepEqual(
+  templates.map((tpl) => tpl.name),
+  ["debug", "新功能"],
+  "bundled template names",
+);
 for (const tpl of templates) {
   assert.equal(tpl.stages.length, 3, `${tpl.name} must have 3 stages (aligned with the pc node)`);
   assert.equal(tpl.stages[0].snapshot.role, "user", `${tpl.name} stage 0 must be the user stage`);
