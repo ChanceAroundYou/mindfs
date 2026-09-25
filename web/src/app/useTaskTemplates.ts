@@ -18,9 +18,11 @@ import { confirmDialog } from "../services/dialog";
 export function useTaskTemplates({
   currentRootId,
   scopedRootKey,
+  getNodeIdForRoot,
 }: {
   currentRootId: string | null;
   scopedRootKey: (rootId: string) => string;
+  getNodeIdForRoot: (rootId: string) => string | undefined;
 }) {
   const { t } = useI18n();
   const taskTemplateActionMenuRef = useRef<HTMLDivElement | null>(null);
@@ -34,16 +36,23 @@ export function useTaskTemplates({
   const [taskTemplateConcurrencyOpen, setTaskTemplateConcurrencyOpen] = useState(false);
   const [taskCreateTemplateMenuOpen, setTaskCreateTemplateMenuOpen] = useState(false);
 
+  // 模板请求必须带上当前项目的 nodeId。不带的话 getApiBaseURL(undefined) 会
+  // 回退到 active node —— 面板明明开着本机项目，请求却打到另一台机器上去了
+  // （实测：https://pc.xiaokubao.space/... 而页面在 127.0.0.1）。
+  const templateNodeId = useCallback((): string | undefined => (
+    currentRootId ? getNodeIdForRoot(currentRootId) : undefined
+  ), [currentRootId, getNodeIdForRoot]);
+
   const loadTaskTemplates = useCallback(async () => {
     if (!protectedAPIReady()) {
       return;
     }
     try {
-      setTaskTemplates(await fetchTaskTemplates());
+      setTaskTemplates(await fetchTaskTemplates(templateNodeId()));
     } catch (err) {
       reportError("file.write_failed", String((err as Error)?.message || t("taskTemplate.loadFailed")));
     }
-  }, [t]);
+  }, [t, templateNodeId]);
 
   const openTaskTemplateEditor = useCallback((template: TaskTemplate | null) => {
     setTaskTemplateDialogTemplate(template);
@@ -68,7 +77,7 @@ export function useTaskTemplates({
     if (!id) return;
     if (!await confirmDialog({ message: t("taskTemplate.deleteConfirm", { name: template.name || id }), danger: true })) return;
     try {
-      await deleteTaskTemplate(id);
+      await deleteTaskTemplate(id, templateNodeId());
       setTaskTemplates((prev) => prev.filter((item) => item.id !== id));
       setTaskTemplateDialogTemplate((prev) => prev?.id === id ? null : prev);
       setTaskTemplateFilter((prev) => prev === id ? "" : prev);
@@ -84,7 +93,7 @@ export function useTaskTemplates({
     const optimistic = { ...template, max_concurrency: nextValue };
     setTaskTemplates((prev) => prev.map((item) => item.id === templateId ? optimistic : item));
     try {
-      const saved = await saveTaskTemplate(optimistic);
+      const saved = await saveTaskTemplate(optimistic, templateNodeId());
       setTaskTemplates((prev) => prev.map((item) => item.id === templateId ? saved : item));
       setTaskTemplateDialogTemplate((prev) => prev?.id === templateId ? saved : prev);
     } catch (err) {

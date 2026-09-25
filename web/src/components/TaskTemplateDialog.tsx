@@ -18,6 +18,8 @@ type TaskTemplateDialogProps = {
   template?: TaskTemplate | null;
   onClose: () => void;
   onSaved?: (template: TaskTemplate) => void;
+  /** 当前项目的 nodeId：不带的话模板请求会打到 active node（另一台机器）去 */
+  nodeId?: string;
 };
 
 const blankUserStage = (): StageTemplate => ({
@@ -72,7 +74,7 @@ function cloneTemplate(template?: TaskTemplate | null, t?: I18nContextValue["t"]
   };
 }
 
-export function TaskTemplateDialog({ open, agents, template, onClose, onSaved }: TaskTemplateDialogProps) {
+export function TaskTemplateDialog({ open, agents, template, onClose, onSaved, nodeId }: TaskTemplateDialogProps) {
   const { t } = useI18n();
   const [draft, setDraft] = useState<TaskTemplate>(() => cloneTemplate(template, t));
   const [saving, setSaving] = useState(false);
@@ -148,7 +150,7 @@ export function TaskTemplateDialog({ open, agents, template, onClose, onSaved }:
       const saved = await saveTaskTemplate({
         ...draft,
         stages: normalizeStages(draft.stages),
-      });
+      }, nodeId);
       setDraft(cloneTemplate(saved, t));
       onSaved?.(saved);
       onClose();

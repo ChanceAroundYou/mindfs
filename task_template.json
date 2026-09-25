@@ -1,7 +1,7 @@
 [
   {
     "id": "tmpl_32f3b6aec1e1c0c1",
-    "name": "bugfix",
+    "name": "debug",
     "max_concurrency": 2,
     "stages": [
       {
@@ -9,12 +9,10 @@
         "position": 0,
         "snapshot": {
           "id": "",
-          "name": "任务初始输入",
+          "name": "任务输入",
           "role": "user",
           "auto_advance": false,
-          "session_reuse_policy": "task_main",
-          "created_at": "0001-01-01T00:00:00Z",
-          "updated_at": "0001-01-01T00:00:00Z"
+          "session_reuse_policy": "task_main"
         }
       },
       {
@@ -22,14 +20,28 @@
         "position": 1,
         "snapshot": {
           "id": "",
+          "name": "定位",
+          "role": "agent",
+          "auto_advance": true,
+          "agent": "claude",
+          "model": "fable",
+          "session_reuse_policy": "task_main",
+          "prompt_template": "{previous_input}",
+          "plan_mode": true
+        }
+      },
+      {
+        "id": "tmpl_stage_439ed59c777e100f",
+        "position": 2,
+        "snapshot": {
+          "id": "",
           "name": "修复",
           "role": "agent",
-          "auto_advance": false,
-          "agent": "codex",
+          "auto_advance": true,
+          "agent": "claude",
+          "model": "fable",
           "session_reuse_policy": "task_main",
-          "prompt_template": "{previous_input}\n不要兜底式修改，找到明确的原因",
-          "created_at": "0001-01-01T00:00:00Z",
-          "updated_at": "0001-01-01T00:00:00Z"
+          "prompt_template": "{previous_input}"
         }
       }
     ],
@@ -38,7 +50,7 @@
   },
   {
     "id": "tmpl_e688ddd455286695",
-    "name": "优化改进",
+    "name": "优化",
     "max_concurrency": 2,
     "stages": [
       {
@@ -46,12 +58,10 @@
         "position": 0,
         "snapshot": {
           "id": "",
-          "name": "任务初始输入",
+          "name": "任务输入",
           "role": "user",
           "auto_advance": false,
-          "session_reuse_policy": "task_main",
-          "created_at": "0001-01-01T00:00:00Z",
-          "updated_at": "0001-01-01T00:00:00Z"
+          "session_reuse_policy": "task_main"
         }
       },
       {
@@ -59,36 +69,48 @@
         "position": 1,
         "snapshot": {
           "id": "",
-          "name": "实现",
+          "name": "方案",
           "role": "agent",
-          "auto_advance": false,
-          "agent": "codex",
+          "auto_advance": true,
+          "agent": "claude",
+          "model": "haiku",
           "session_reuse_policy": "task_main",
           "prompt_template": "{previous_input}",
-          "created_at": "0001-01-01T00:00:00Z",
-          "updated_at": "0001-01-01T00:00:00Z"
+          "plan_mode": true
+        }
+      },
+      {
+        "id": "tmpl_stage_5550190346a2b897",
+        "position": 2,
+        "snapshot": {
+          "id": "",
+          "name": "实现",
+          "role": "agent",
+          "auto_advance": true,
+          "agent": "claude",
+          "model": "fable",
+          "session_reuse_policy": "task_main",
+          "prompt_template": "{previous_input}"
         }
       }
     ],
     "created_at": "2026-07-02T15:16:01.314156Z",
-    "updated_at": "2026-07-15T07:12:30.572117Z"
+    "updated_at": "2026-09-07T02:21:54.435587706Z"
   },
   {
     "id": "tmpl_0d34149b1d70c2f8",
     "name": "新功能",
-    "max_concurrency": 2,
+    "max_concurrency": 5,
     "stages": [
       {
         "id": "tmpl_stage_716bbf926befd477",
         "position": 0,
         "snapshot": {
           "id": "",
-          "name": "任务初始输入",
+          "name": "任务输入",
           "role": "user",
           "auto_advance": false,
-          "session_reuse_policy": "task_main",
-          "created_at": "0001-01-01T00:00:00Z",
-          "updated_at": "0001-01-01T00:00:00Z"
+          "session_reuse_policy": "task_main"
         }
       },
       {
@@ -98,16 +120,30 @@
           "id": "",
           "name": "方案",
           "role": "agent",
-          "auto_advance": false,
-          "agent": "codex",
+          "auto_advance": true,
+          "agent": "claude",
+          "model": "sonnet",
           "session_reuse_policy": "task_main",
           "prompt_template": "{previous_input}",
-          "created_at": "0001-01-01T00:00:00Z",
-          "updated_at": "0001-01-01T00:00:00Z"
+          "plan_mode": true
+        }
+      },
+      {
+        "id": "tmpl_stage_d4a031ca13b38a0a",
+        "position": 2,
+        "snapshot": {
+          "id": "",
+          "name": "实现",
+          "role": "agent",
+          "auto_advance": true,
+          "agent": "claude",
+          "model": "sonnet",
+          "session_reuse_policy": "task_main",
+          "prompt_template": "{previous_input}"
         }
       }
     ],
     "created_at": "2026-07-02T15:19:30.351072Z",
-    "updated_at": "2026-07-15T07:13:49.411475Z"
+    "updated_at": "2026-09-25T00:56:46.287703824Z"
   }
 ]

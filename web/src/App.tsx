@@ -437,7 +437,7 @@ export function App({ onGoHome }: AppProps) {
     handleTaskTemplateSaved,
     handleDeleteTaskTemplate,
     handleTaskTemplateConcurrencyChange,
-  } = useTaskTemplates({ currentRootId, scopedRootKey });
+  } = useTaskTemplates({ currentRootId, scopedRootKey, getNodeIdForRoot });
 
   useEffect(() => {
     if (!taskInlineEdit) return;
@@ -9464,6 +9464,7 @@ export function App({ onGoHome }: AppProps) {
         template={taskTemplateDialogTemplate}
         onClose={() => setTaskTemplateDialogOpen(false)}
         onSaved={handleTaskTemplateSaved}
+        nodeId={currentRootId ? getNodeIdForRoot(currentRootId) : undefined}
       />
       {selectedKanbanTask ? (
         <TaskDetailPanel
