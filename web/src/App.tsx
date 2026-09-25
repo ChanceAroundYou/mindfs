@@ -1442,6 +1442,10 @@ export function App({ onGoHome }: AppProps) {
         : "task-kanban";
   // 跨项目工作台是「模式」，不再是「没有打开项目」的副产物（后者会被自动选根冲掉）。
   const workspaceOpen = mainView === "workspace";
+  // task.updated 的处理器要按这个放行跨项目推送（板态只收当前项目），
+  // 而它是被 useRealtimeEvents 消费的——只能走 ref，不能直接传值。
+  const workspaceOpenRef = useRef(workspaceOpen);
+  workspaceOpenRef.current = workspaceOpen;
   // 会话面板只在对话态显示。判据是 mainView 而不是 selectedSession——
   // 否则看板/文件/工作台态下，仍被选中的会话会盖住主区（切面板不解除选中）。
   const showSessionPane = mainView === "chat" && !!selectedSession;
@@ -6493,6 +6497,7 @@ export function App({ onGoHome }: AppProps) {
       sessionsRef,
       suppressedAutoBindSessionByRootRef,
       taskDetailsByIdRef,
+      workspaceOpenRef,
     },
     setters: { // App 的 setState
       setAgentsVersion,
@@ -9484,7 +9489,9 @@ export function App({ onGoHome }: AppProps) {
         <TaskDetailPanel
           detail={taskDetailsById[selectedKanbanTask.id] || { task: selectedKanbanTask, stage_runs: [], events: [] }}
           agents={availableAgents}
-          nodeId={currentRootNodeId || undefined}
+          // 详情面板可能从工作台的就地入口打开（任务属于别的项目/节点），
+          // 路由必须按任务自己的项目走，写死当前项目会把编辑打到错节点。
+          nodeId={getNodeIdForRoot(selectedKanbanTask.root_id || currentRootId || "")}
           onClose={() => setSelectedKanbanTaskId("")}
           onOpenSession={(sessionKey) => handleTaskSessionDrawerOpen(sessionKey, selectedKanbanTask.root_id || currentRootIdRef.current, selectedKanbanTask.id)}
           onMoved={(next) => applyTaskDetails(next.task.root_id || currentRootIdRef.current || "", [next])}
