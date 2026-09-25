@@ -2,7 +2,6 @@
   {
     "id": "tmpl_32f3b6aec1e1c0c1",
     "name": "debug",
-    "max_concurrency": 2,
     "stages": [
       {
         "id": "tmpl_stage_5d3572c92dbaa487",
@@ -51,7 +50,6 @@
   {
     "id": "tmpl_e688ddd455286695",
     "name": "优化",
-    "max_concurrency": 2,
     "stages": [
       {
         "id": "tmpl_stage_104a5418559b3c8a",
@@ -100,7 +98,6 @@
   {
     "id": "tmpl_0d34149b1d70c2f8",
     "name": "新功能",
-    "max_concurrency": 5,
     "stages": [
       {
         "id": "tmpl_stage_716bbf926befd477",

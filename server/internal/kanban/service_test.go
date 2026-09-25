@@ -122,7 +122,6 @@ func TestTaskTemplateStoreSeedsBundledTemplatesWhenUserFileMissing(t *testing.T)
 	bundled := []TaskTemplate{{
 		ID:             "tmpl_default",
 		Name:           "Default task",
-		MaxConcurrency: 2,
 		Stages: []TaskTemplateStage{{
 			ID:       "stage_default",
 			Position: 0,
@@ -175,7 +174,7 @@ func TestTaskTemplateStoreDoesNotSeedWhenUserFileExists(t *testing.T) {
 				t.Fatalf("write user templates: %v", err)
 			}
 			bundledPath := filepath.Join(t.TempDir(), taskTemplateFile)
-			if err := os.WriteFile(bundledPath, []byte(`[{"id":"tmpl_default","name":"Default task","max_concurrency":1,"stages":[{"id":"stage_default","position":0,"snapshot":{"id":"stage_user","name":"Describe","role":"user"}}]}]`), 0o644); err != nil {
+			if err := os.WriteFile(bundledPath, []byte(`[{"id":"tmpl_default","name":"Default task","stages":[{"id":"stage_default","position":0,"snapshot":{"id":"stage_user","name":"Describe","role":"user"}}]}]`), 0o644); err != nil {
 				t.Fatalf("write bundled templates: %v", err)
 			}
 
@@ -232,7 +231,7 @@ func TestTemplateStoreJSONAndFirstStageValidation(t *testing.T) {
 	if err == nil {
 		t.Fatalf("SaveTaskTemplate accepted non-user first stage")
 	}
-	tmpl, err := store.SaveTaskTemplate(TaskTemplate{
+	_, err = store.SaveTaskTemplate(TaskTemplate{
 		Name: "Good",
 		Stages: []TaskTemplateStage{{
 			Position: 0,
@@ -241,9 +240,6 @@ func TestTemplateStoreJSONAndFirstStageValidation(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("SaveTaskTemplate: %v", err)
-	}
-	if tmpl.MaxConcurrency != 1 {
-		t.Fatalf("MaxConcurrency = %d, want 1", tmpl.MaxConcurrency)
 	}
 }
 

@@ -64,7 +64,6 @@ type TaskTemplate struct {
 	ID             string              `json:"id"`
 	Name           string              `json:"name"`
 	Description    string              `json:"description,omitempty"`
-	MaxConcurrency int                 `json:"max_concurrency"`
 	Stages         []TaskTemplateStage `json:"stages"`
 	CreatedAt      time.Time           `json:"created_at"`
 	UpdatedAt      time.Time           `json:"updated_at"`

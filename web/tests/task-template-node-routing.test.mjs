@@ -11,6 +11,9 @@ const app = read("src/App.tsx");
 const runtime = read("src/services/runtime.ts");
 const services = read("src/services/tasks.ts");
 const registry = read("src/services/nodeRegistry.ts");
+const goTypes = fs.readFileSync(path.join(root, "../server/internal/kanban/types.go"), "utf8");
+const goStore = fs.readFileSync(path.join(root, "../server/internal/kanban/template_store.go"), "utf8");
+const goTest = fs.readFileSync(path.join(root, "../server/internal/kanban/service_test.go"), "utf8");
 
 // 回归：模板请求必须带 nodeId。
 // 不带的话 appURL → basePath → getApiBaseURL(undefined) → getActiveNode()，
@@ -24,9 +27,9 @@ assert.match(
   "getApiBaseURL(undefined) follows the active node — this is why unscoped calls leak to another machine",
 );
 
-// 三个模板接口（读 / 存 / 删）都必须带 nodeId。
+// 模板接口（读 / 存 / 删）都必须带 nodeId。
+// 写只有编辑弹窗那一条路（hook 里的并发保存入口已随 max_concurrency 一起删掉）。
 assert.match(hook, /fetchTaskTemplates\(templateNodeId\(\)\)/, "fetchTaskTemplates must carry the current project's nodeId");
-assert.match(hook, /saveTaskTemplate\(optimistic, templateNodeId\(\)\)/, "saveTaskTemplate must carry nodeId");
 assert.match(hook, /deleteTaskTemplate\(id, templateNodeId\(\)\)/, "deleteTaskTemplate must carry nodeId");
 assert.match(
   hook,
@@ -61,7 +64,6 @@ for (const tpl of templates) {
   assert.equal(tpl.stages[0].snapshot.role, "user", `${tpl.name} stage 0 must be the user stage`);
   assert.equal(tpl.stages[0].snapshot.name, "任务输入", `${tpl.name} stage 0 must be named 任务输入`);
 }
-assert.equal(templates.find((t) => t.name === "新功能").max_concurrency, 5, "新功能 keeps max_concurrency 5");
 
 console.log("task-template-node-routing.test.mjs: OK");
 
@@ -101,3 +103,30 @@ for (const tpl of templates) {
     }
   }
 }
+
+// 11) max_concurrency 是死字段，已连根拔掉：调度器早已不存在（types.go 注释：
+//     「兼容保留：位无调度器时恒为 true」），后端只做了一次 <=0 归一化就没人读。
+assert.doesNotMatch(services, /max_concurrency/, "the frontend TaskTemplate type must no longer carry max_concurrency");
+assert.doesNotMatch(dialog, /max_concurrency/, "the new-template seed must no longer set max_concurrency");
+assert.doesNotMatch(hook, /[Cc]oncurrency/, "the concurrency editor handler must be gone");
+assert.doesNotMatch(goTypes, /MaxConcurrency/, "the Go TaskTemplate must no longer carry MaxConcurrency");
+assert.doesNotMatch(goStore, /MaxConcurrency/, "the store must no longer normalize MaxConcurrency");
+assert.doesNotMatch(goTest, /MaxConcurrency/, "tests must not reference the removed field");
+for (const tpl of templates) {
+  assert.ok(!("max_concurrency" in tpl), `${tpl.name} must not carry max_concurrency in data`);
+}
+
+// 12) active node 跟着选中的项目走
+//     之前只有节点切换器会改 active node，于是「选中本机项目 + 上次点过 pc」的
+//     组合下，所有不带 nodeId 的请求都发去了 pc。项目本身知道自己在哪个节点
+//     （currentRootNodeId / _nodeId），选中它时应该把 active 一起切过去。
+assert.match(
+  app,
+  /currentRootNodeIdRef\.current = nid \|\| null;[\s\S]{0,400}?if \(nid\) \{\s*\n\s*const known = getNodeById\(nid\);\s*\n\s*if \(known && getActiveNodeId\(\) !== nid\) \{\s*\n\s*setActiveNodeId\(nid\);/,
+  "selectRootNode must set the active node to the selected project's node",
+);
+assert.match(
+  app,
+  /import \{[^}]*getActiveNodeId[^}]*setActiveNodeId[^}]*\} from "\.\/services\/nodeRegistry"/,
+  "App must import the active-node setters/getter",
+);

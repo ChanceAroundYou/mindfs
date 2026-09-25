@@ -190,9 +190,6 @@ func (s *TemplateStore) SaveTaskTemplate(in TaskTemplate) (TaskTemplate, error) 
 			}
 		}
 	}
-	if in.MaxConcurrency <= 0 {
-		in.MaxConcurrency = 1
-	}
 	replaced := false
 	for i := range items {
 		if items[i].ID == in.ID {

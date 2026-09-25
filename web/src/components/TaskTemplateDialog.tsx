@@ -47,7 +47,6 @@ const blankAgentStage = (): StageTemplate => ({
 const newTaskTemplate = (t?: I18nContextValue["t"]): TaskTemplate => ({
   name: "",
   description: "",
-  max_concurrency: 2,
   stages: [{ position: 0, snapshot: { ...blankUserStage(), name: defaultStageName(0, t) } }],
 });
 

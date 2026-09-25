@@ -120,7 +120,7 @@ import {
   type ProjectTreeTab,
 } from "./components/FileTree";
 
-import { applyNodesFromServer, getActiveNode, getNodeById, getNodes, migrateLegacySingleBase, syncNodesFromServer } from "./services/nodeRegistry";
+import { applyNodesFromServer, getActiveNode, getActiveNodeId, getNodeById, getNodes, migrateLegacySingleBase, setActiveNodeId, syncNodesFromServer } from "./services/nodeRegistry";
 
 import { FileViewer } from "./components/FileViewer";
 import { resolveGroupColor } from "./services/sessionGroupDisplay";
@@ -428,15 +428,12 @@ export function App({ onGoHome }: AppProps) {
     setTaskTemplateFilter,
     taskTemplateActionMenuOpen,
     setTaskTemplateActionMenuOpen,
-    taskTemplateConcurrencyOpen,
-    setTaskTemplateConcurrencyOpen,
     taskCreateTemplateMenuOpen,
     setTaskCreateTemplateMenuOpen,
     loadTaskTemplates,
     openTaskTemplateEditor,
     handleTaskTemplateSaved,
     handleDeleteTaskTemplate,
-    handleTaskTemplateConcurrencyChange,
   } = useTaskTemplates({ currentRootId, scopedRootKey, getNodeIdForRoot });
 
   useEffect(() => {
@@ -965,6 +962,17 @@ export function App({ onGoHome }: AppProps) {
     setCurrentRootNodeId(nid || null);
     // 无条件更新模块级 root→node 映射，保证路由/作用域解析在任何时机都正确
     setRootNodeId(rid, nid || undefined);
+    // active node 跟着选中的项目走：选中哪个项目，请求就该发到那台机器。
+    // 之前 active node 只由节点切换器改，于是「本机项目 + 上次点过 pc」的组合下，
+    // 所有不带 nodeId 的请求（模板、会话…）都发去了 pc，页面看着在本机、数据却是
+    // 另一台机器的。项目本身知道自己在哪个节点，选中它时把 active 一起切过去。
+    if (nid) {
+      const known = getNodeById(nid);
+      if (known && getActiveNodeId() !== nid) {
+        setActiveNodeId(nid);
+        window.dispatchEvent(new CustomEvent("mindfs:nodes-changed"));
+      }
+    }
     if (prevNid && nid && prevNid !== nid) {
       // 同名项目跨节点切换：清掉该 root 的会话选择状态，避免把另一节点的会话恢复到错误节点
       const scopedRid = scopeKey(nid, rid);

@@ -33,7 +33,6 @@ export function useTaskTemplates({
   const [taskTemplateDialogTemplate, setTaskTemplateDialogTemplate] = useState<TaskTemplate | null>(null);
   const [taskTemplateFilter, setTaskTemplateFilter] = useState("");
   const [taskTemplateActionMenuOpen, setTaskTemplateActionMenuOpen] = useState(false);
-  const [taskTemplateConcurrencyOpen, setTaskTemplateConcurrencyOpen] = useState(false);
   const [taskCreateTemplateMenuOpen, setTaskCreateTemplateMenuOpen] = useState(false);
 
   // 模板请求必须带上当前项目的 nodeId。不带的话 getApiBaseURL(undefined) 会
@@ -86,21 +85,6 @@ export function useTaskTemplates({
     }
   }, [t]);
 
-  const handleTaskTemplateConcurrencyChange = useCallback(async (templateId: string, value: number) => {
-    const template = taskTemplates.find((item) => item.id === templateId);
-    if (!template) return;
-    const nextValue = Math.max(1, Math.min(10, value || 1));
-    const optimistic = { ...template, max_concurrency: nextValue };
-    setTaskTemplates((prev) => prev.map((item) => item.id === templateId ? optimistic : item));
-    try {
-      const saved = await saveTaskTemplate(optimistic, templateNodeId());
-      setTaskTemplates((prev) => prev.map((item) => item.id === templateId ? saved : item));
-      setTaskTemplateDialogTemplate((prev) => prev?.id === templateId ? saved : prev);
-    } catch (err) {
-      setTaskTemplates((prev) => prev.map((item) => item.id === templateId ? template : item));
-      reportError("file.write_failed", String((err as Error)?.message || t("taskTemplate.concurrencySaveFailed")));
-    }
-  }, [taskTemplates, t]);
 
   useEffect(() => {
     void loadTaskTemplates();
@@ -167,9 +151,7 @@ export function useTaskTemplates({
   }, [taskCreateTemplateMenuOpen]);
 
   useEffect(() => {
-    if (!taskTemplateActionMenuOpen) {
-      setTaskTemplateConcurrencyOpen(false);
-    } else {
+    if (taskTemplateActionMenuOpen) {
       setTaskCreateTemplateMenuOpen(false);
     }
   }, [taskTemplateActionMenuOpen]);
@@ -185,14 +167,11 @@ export function useTaskTemplates({
     setTaskTemplateFilter,
     taskTemplateActionMenuOpen,
     setTaskTemplateActionMenuOpen,
-    taskTemplateConcurrencyOpen,
-    setTaskTemplateConcurrencyOpen,
     taskCreateTemplateMenuOpen,
     setTaskCreateTemplateMenuOpen,
     loadTaskTemplates,
     openTaskTemplateEditor,
     handleTaskTemplateSaved,
     handleDeleteTaskTemplate,
-    handleTaskTemplateConcurrencyChange,
   };
 }

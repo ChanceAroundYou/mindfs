@@ -42,7 +42,6 @@ export type TaskTemplate = {
   id?: string;
   name: string;
   description?: string;
-  max_concurrency?: number;
   stages: TaskTemplateStage[];
   created_at?: string;
   updated_at?: string;
