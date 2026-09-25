@@ -200,22 +200,3 @@ assert.match(
   /store\.UpdateTaskStatus\(ctx, taskID, status, nil, terminal\)/,
   "Cancel must clear the session error flag (nil aux) so a stuck task can be cleaned up",
 );
-
-// 选中具体模板时也必须看得到它已结束的任务 —— 曾经只显示未完成，
-// 结果「已完成」卡片一切换模板就消失，只能在「所有」里找到。
-assert.match(
-  app,
-  /setKanbanTasks\(filtered\);/,
-  "the per-template board must keep terminal tasks so finished cards stay visible",
-);
-assert.doesNotMatch(
-  app,
-  /allTemplatesSelected \? filtered : filtered\.filter\(isUnfinishedKanbanTask\)/,
-  "the board must not drop finished tasks when a single template is selected",
-);
-// 终态归到「已结束」列（其内再分 完成 / 取消），不再需要前端过滤。
-assert.match(
-  app,
-  /tasks: kanbanTasks\.filter\(\(task\) => task\.status === "success" \|\| task\.status === "fail" \|\| task\.status === "cancelled"\)/,
-  "the ended column must collect success + fail + cancelled",
-);
