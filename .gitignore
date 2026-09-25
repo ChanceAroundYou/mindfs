@@ -1,5 +1,6 @@
 .codex/
 .claude/
+.worktree/
 .mindfs/
 .specify/
 .gemini/
