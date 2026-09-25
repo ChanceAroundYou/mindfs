@@ -129,6 +129,7 @@ for (const field of ["auto_advance: editAutoAdvance", "plan_mode:", "session_reu
   assert.ok(panel.includes(field), `saveStage must persist ${field}`);
 }
 
+
 function walk(dir) {
   const out = [];
   for (const entry of fs.readdirSync(path.join(root, dir), { withFileTypes: true })) {
@@ -138,3 +139,32 @@ function walk(dir) {
   }
   return out;
 }
+
+// 8) 已执行过的阶段只可看：不可改、不可保存。三道门控各挡一路入口。
+assert.match(
+  panel,
+  /const existingRun = latestStageRun\(detail, index\);\s*\n\s*if \(existingRun && String\(existingRun\.status\) !== "pending"\) return;/,
+  "startEditStage must refuse an executed stage: no path may put it into edit mode",
+);
+assert.match(
+  panel,
+  /onEdit=\{editing \|\| executed \? undefined : \(\) => requestEditStage\(index\)\}/,
+  "an executed stage must not offer the pencil",
+);
+assert.match(
+  panel,
+  /onSend=\{editing && !executed \? \(\) => void saveStage\(index\) : undefined\}/,
+  "an executed stage must not offer save",
+);
+assert.match(
+  panel,
+  /const run = latestStageRun\(detail, index\);\s*\n\s*if \(run && String\(run\.status\) !== "pending"\) return;/,
+  "saveStage must bail on an executed stage even if some future caller reaches it",
+);
+// 只读态仍然显示该段真实的选项值（不是隐藏、也不是全灰）
+assert.match(stageEditor, /readOnly=\{mode !== "editable"\}/, "read mode shows option values, disabled");
+assert.match(
+  panel,
+  /\{!executed && !isCurrent \? \(/,
+  "an executed stage must not offer delete either",
+);

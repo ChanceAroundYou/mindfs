@@ -149,6 +149,9 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
   const startEditStage = (index: number) => {
     const stage = stages[index];
     if (!stage) return;
+    // 已执行过的段只可看：任何入口都不该把它拉进编辑态。
+    const existingRun = latestStageRun(detail, index);
+    if (existingRun && String(existingRun.status) !== "pending") return;
     setEditingStage(index);
     setEditName(stage.name || "");
     setEditPrompt(stage.prompt_template || "");
@@ -209,6 +212,10 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
   const saveStage = async (index: number) => {
     const original = stages[index];
     if (!original || !editPrompt.trim()) return;
+    // 已执行过的阶段只可看：UI 上铅笔已禁，这里再兜一道 ——
+    // 就算将来别的入口把 editingStage 指到已执行的段，也不会把它改写掉。
+    const run = latestStageRun(detail, index);
+    if (run && String(run.status) !== "pending") return;
     const isAgent = editRole === "agent";
     const nextStage: StageTemplate = {
       ...original,
@@ -426,8 +433,9 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
                   } : undefined}
                   resetKey={`${task.id}-${index}`}
                   mode={editing ? "editable" : (executed ? "done" : "readonly")}
-                  onEdit={editing ? undefined : () => requestEditStage(index)}
-                  onSend={editing ? () => void saveStage(index) : undefined}
+                  /* 已执行过的段只可看：不给 onEdit，PromptEditor 的铅笔就是禁的 */
+                  onEdit={editing || executed ? undefined : () => requestEditStage(index)}
+                  onSend={editing && !executed ? () => void saveStage(index) : undefined}
                   onAttach={editing ? () => stageAttachRef.current?.click() : undefined}
                   sending={saving}
                   sendDisabled={!editPrompt.trim()}
