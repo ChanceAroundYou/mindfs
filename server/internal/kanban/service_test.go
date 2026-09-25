@@ -1313,7 +1313,7 @@ func TestRemoveStageDeletesUnexecutedStage(t *testing.T) {
 	}
 	taskID := detail.Task.ID
 
-	// index 0 是任务初始输入段，不可删。
+	// index 0 是任务输入段，不可删。
 	if _, err := svc.RemoveStage(ctx, RemoveStageInput{RootID: root.ID, TaskID: taskID, Index: 0}); err == nil {
 		t.Fatal("RemoveStage(index 0) succeeded, want rejection")
 	}

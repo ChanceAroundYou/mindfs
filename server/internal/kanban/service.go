@@ -399,7 +399,7 @@ func (s *Service) UpdateStage(ctx context.Context, in UpdateStageInput) (TaskDet
 }
 
 // RemoveStage 删除任务流水里尚未执行的一段。
-// index 0 是任务初始输入段，不可删；当前指针所在段不可删（执行体正对着它）；
+// index 0 是任务输入段，不可删；当前指针所在段不可删（执行体正对着它）；
 // 产生过 StageRun 的段也不可删（要改走 UpdateStage）。
 func (s *Service) RemoveStage(ctx context.Context, in RemoveStageInput) (TaskDetail, error) {
 	store, err := s.taskStore(in.RootID)

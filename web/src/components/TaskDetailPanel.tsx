@@ -125,7 +125,7 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
 
   const stages = task.stages || [];
 
-  // 第一段 user 段 = 任务初始输入
+  // 第一段 user 段 = 任务输入
   const initialInput = (latestStageRun(detail, 0)?.input || stages[0]?.prompt_template || "").trim();
   const bodyStages = stages.slice(1); // 阶段流从 index 1 起
 

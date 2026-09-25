@@ -51,7 +51,7 @@ assert.match(stageEditor, /stageNamePlaceholder \? \(/, "the stage name input is
 assert.doesNotMatch(
   app.slice(app.indexOf("<StageEditor")),
   /stageNamePlaceholder=/,
-  "the create-task dialog must not render a stage name (that stage is always 任务初始输入)",
+  "the create-task dialog must not render a stage name (that stage is always 任务输入)",
 );
 // user 段也能显示 agent 选择器（新建任务面板要选下一段的 agent/模型）
 assert.match(promptEditor, /\{!isUser \|\| showAgentSelector \? \(/, "PromptEditor must allow forcing the selector on for user stages");
