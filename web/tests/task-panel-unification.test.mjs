@@ -15,6 +15,8 @@ const stageOptions = read("src/components/StageOptionsBar.tsx");
 const panelShell = read("src/components/PanelShell.tsx");
 const promptEditor = read("src/components/PromptEditor.tsx");
 const css = read("src/index.css");
+const boardView = read("src/components/TaskBoardView.tsx");
+const serviceGo = fs.readFileSync(path.join(root, "../server/internal/kanban/service.go"), "utf8");
 
 // 三张面板深度统一：任务模板编辑（新建+编辑同一个组件）、任务详情、新建任务
 // 都在编辑同一种东西（阶段定义 + prompt），以前各拼各的。
@@ -167,4 +169,34 @@ assert.match(
   panel,
   /\{!executed && !isCurrent \? \(/,
   "an executed stage must not offer delete either",
+);
+
+// 9) 任务状态不能和会话 / worktree 绑死：会话没了、worktree 被删导致卡住的
+//    任务，卡片上仍要能调整状态。曾经整排操作区都包在 !taskTerminal 里，
+//    于是「已结束但状态不对」的任务连删除都点不到，只能干看着。
+assert.match(
+  boardView,
+  /\{!taskTerminal \? \(\s*<>[\s\S]*?showTaskAdvanceButton[\s\S]*?taskCanComplete[\s\S]*?<\/>\s*\) : null\}/,
+  "only run-now / complete are gated on taskTerminal",
+);
+assert.match(
+  boardView,
+  /handleMoveKanbanTask\(task, "cancel"\)[\s\S]{0,220}?<\/div>/,
+  "the delete button must live OUTSIDE the !taskTerminal block",
+);
+assert.doesNotMatch(
+  boardView,
+  /\{!taskTerminal \? \(\s*<div style=\{\{ display: "flex", justifyContent: "flex-end"/,
+  "the whole action row must no longer be hidden for terminal tasks",
+);
+// Cancel 本身不看 worktree / session：服务端末端任务也能取消，并清掉会话错误。
+assert.match(
+  serviceGo,
+  /func \(s \*Service\) Cancel\(ctx context\.Context, in MoveInput\) \(TaskDetail, error\) \{\s*\n\s*return s\.setTaskStatus\(ctx, in\.RootID, in\.TaskID, StatusCancelled, "cancelled", in\.Reason, true\)/,
+  "Cancel must not be gated on worktree or session state",
+);
+assert.match(
+  serviceGo,
+  /store\.UpdateTaskStatus\(ctx, taskID, status, nil, terminal\)/,
+  "Cancel must clear the session error flag (nil aux) so a stuck task can be cleaned up",
 );

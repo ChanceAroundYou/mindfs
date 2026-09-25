@@ -935,8 +935,12 @@ export function TaskBoardView({
                             </button>
                           ) : null}
                         </div>
-                        {!taskTerminal ? (
-                          <div style={{ display: "flex", justifyContent: "flex-end", gap: 0 }}>
+                        {/* 已结束（success/fail/cancelled）的任务也要留得住「删除」：
+                            会话没了、worktree 被删导致卡住的任务，卡片上仍得能清理。
+                            执行 / 完成只对未结束的任务有意义。 */}
+                        <div style={{ display: "flex", justifyContent: "flex-end", gap: 0 }}>
+                          {!taskTerminal ? (
+                            <>
                             {showTaskAdvanceButton ? (
                               <button
                                 type="button"
@@ -965,14 +969,15 @@ export function TaskBoardView({
                                 <TaskCompleteIcon />
                               </button>
                             ) : null}
-                              <button type="button" title={t("common.delete")} aria-label={t("task.delete")} onClick={(event) => {
-                                event.stopPropagation();
-                                void handleMoveKanbanTask(task, "cancel");
-                              }} style={taskCardIconButtonStyle("danger")}>
+                            </>
+                          ) : null}
+                            <button type="button" title={t("common.delete")} aria-label={t("task.delete")} onClick={(event) => {
+                              event.stopPropagation();
+                              void handleMoveKanbanTask(task, "cancel");
+                            }} style={taskCardIconButtonStyle("danger")}>
                               <DeleteIcon />
                             </button>
-                          </div>
-                        ) : null}
+                        </div>
                       </div>
                       </article>
                     );
