@@ -117,6 +117,8 @@ export type TaskInlineEditState = {
   agentOverride?: string;
   /** 覆盖下一个 agent 阶段的模型（空 = 用模板里的） */
   modelOverride?: string;
+  /** 覆盖下一个 agent 阶段的 effort（空 = 用模板里的） */
+  effortOverride?: string;
   previousInputs: Array<{ id: string; label: string; input: string }>;
   createWorktree: boolean;
   worktreeBranchMode: "new" | "existing";

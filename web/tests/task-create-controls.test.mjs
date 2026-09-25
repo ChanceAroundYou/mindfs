@@ -7,6 +7,7 @@ const app = fs.readFileSync(path.join(root, "src/App.tsx"), "utf8");
 const appTask = fs.readFileSync(path.join(root, "src/app/appTask.ts"), "utf8");
 const css = fs.readFileSync(path.join(root, "src/index.css"), "utf8");
 const composer = fs.readFileSync(path.join(root, "src/components/composerStyles.tsx"), "utf8");
+const promptEditor = fs.readFileSync(path.join(root, "src/components/PromptEditor.tsx"), "utf8");
 const tokenEditor = fs.readFileSync(path.join(root, "src/components/editor/TokenEditor.tsx"), "utf8");
 
 // 1) 原生 <select> 统一外观：全局一条规则接管，收起态跟输入框同源。
@@ -38,10 +39,32 @@ assert.doesNotMatch(
   "the create dialog select must not inline its own font size",
 );
 
-// 2) 新建任务时可选 agent / 模型，覆盖下一个 agent 阶段。
-for (const key of ["task.selectAgent", "task.selectModel", "task.modelFollowTemplate"]) {
-  assert.ok(app.includes(`t("${key}")`), `create dialog must offer ${key}`);
+// 2) 新建任务时可在编辑区里选 agent / 模型，覆盖下一个 agent 阶段。
+//    选择器是 PromptEditor 自带的那一个（不是另画的下拉框），所以要显式打开。
+assert.match(
+  promptEditor,
+  /\{!isUser \|\| showAgentSelector \? \(/,
+  "PromptEditor must let a caller force the agent selector on (the create editor is a user stage)",
+);
+assert.match(
+  app,
+  /showAgentSelector=\{taskInlineHasAgentStage\}/,
+  "the create dialog must turn on the editor's agent selector when the template has an agent stage",
+);
+for (const prop of ["agents={availableAgents}", "agent={taskInlineAgent}", "model={taskInlineModel}"]) {
+  assert.ok(app.includes(prop), `the create editor must receive ${prop}`);
 }
+// 默认显式选中模板里第一个 agent 段的取值。
+assert.match(
+  app,
+  /const taskInlineAgent = taskInlineEdit\.agentOverride \|\| taskInlineTemplateAgent\?\.agent \|\| "codex";/,
+  "the selector must default to the next agent stage's agent",
+);
+assert.match(
+  app,
+  /const taskInlineModel = taskInlineEdit\.modelOverride \|\| taskInlineTemplateAgent\?\.model \|\| "";/,
+  "the selector must default to the next agent stage's model",
+);
 assert.match(
   appTask,
   /agentOverride\?: string;/,
@@ -51,6 +74,11 @@ assert.match(
   appTask,
   /modelOverride\?: string;/,
   "TaskInlineEditState must carry the model override",
+);
+assert.match(
+  appTask,
+  /effortOverride\?: string;/,
+  "TaskInlineEditState must carry the effort override",
 );
 // 覆盖只作用于「第一个」agent 段，后面的段不动。
 assert.match(
@@ -66,8 +94,14 @@ assert.match(
 // 没选覆盖时不能传 stages，让后端照模板走。
 assert.match(
   app,
-  /const overrideStages = edit\.agentOverride \|\| edit\.modelOverride/,
+  /const overrideStages = edit\.agentOverride \|\| edit\.modelOverride \|\| edit\.effortOverride/,
   "stages must only be sent when an override was actually chosen",
+);
+// 不要再在弹窗头部另画下拉框。
+assert.doesNotMatch(
+  app,
+  /aria-label=\{t\("task\.selectAgent"\)\}/,
+  "the agent picker must live in the editor, not as a separate header dropdown",
 );
 
 // 3) 字号刻度单一来源：token 编辑器与单行输入框都不再写死数字。

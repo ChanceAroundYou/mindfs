@@ -827,7 +827,7 @@ export function App({ onGoHome }: AppProps) {
       // 有 agent/模型覆盖才带 stages：把模板的段整体拷出来（wire 上是拍平的
       // StageTemplate[]，不是模板里的 {snapshot} 包装），只改第一个 agent 段。
       // 没选覆盖就别传 stages，让后端照模板走。
-      const overrideStages = edit.agentOverride || edit.modelOverride
+      const overrideStages = edit.agentOverride || edit.modelOverride || edit.effortOverride
         ? (() => {
             const template = taskTemplates.find((tpl) => tpl.id === edit.templateId) || null;
             if (!template) return undefined;
@@ -841,6 +841,7 @@ export function App({ onGoHome }: AppProps) {
                 ...snapshot,
                 ...(edit.agentOverride ? { agent: edit.agentOverride } : {}),
                 ...(edit.modelOverride ? { model: edit.modelOverride } : {}),
+                ...(edit.effortOverride ? { effort: edit.effortOverride } : {}),
               };
             });
             return touched ? stages : undefined;
@@ -9045,13 +9046,16 @@ export function App({ onGoHome }: AppProps) {
 	          const taskInlineCanCreateWorktree = managedRootByIdRef.current[currentRootId || ""]?.is_git_repo === true;
 	          const showTaskWorktreeControls = taskInlineCanCreateWorktree && taskInlineEdit.canToggleWorktree;
 	          const taskWorktreeControlsEditable = taskInlineEdit.canToggleWorktree;
-	          // agent/模型下拉的候选：没显式覆盖就回落到模板里第一个 agent 段。
+	          // 编辑区里的 agent 选择器：默认值就是「下一个 agent 阶段」在模板里
+	          // 的 agent/model，用户没动过就不写覆盖，让后端照模板走。
 	          const taskInlineTemplateAgent = firstAgentStage(
 	            taskTemplates.find((tpl) => tpl.id === taskInlineEdit.templateId) || null,
 	          );
-	          const taskInlineAgent = taskInlineEdit.agentOverride || taskInlineTemplateAgent?.agent || "";
-	          const taskInlineAgentModels =
-	            availableAgents.find((a) => a.name === taskInlineAgent)?.models || [];
+	          const taskInlineHasAgentStage = !!taskInlineTemplateAgent;
+	          const taskInlineAgent = taskInlineEdit.agentOverride || taskInlineTemplateAgent?.agent || "codex";
+	          const taskInlineModel = taskInlineEdit.modelOverride || taskInlineTemplateAgent?.model || "";
+	          const taskInlineAgentEffort =
+	            taskInlineEdit.effortOverride || taskInlineTemplateAgent?.effort || "";
 	          return (
         <div
           style={{
@@ -9118,42 +9122,6 @@ export function App({ onGoHome }: AppProps) {
                       <option key={tpl.id} value={tpl.id}>{tpl.name}</option>
                     ))}
                   </select>
-                ) : null}
-                {/* agent / 模型：覆盖模板里第一个 agent 段的取值。
-                    留空 = 跟模板走；选了就在保存时写进 stages 覆盖过去。 */}
-                {taskInlineAgentModels.length > 0 ? (
-                  <>
-                    <select
-                      value={taskInlineEdit.agentOverride || taskInlineAgent || ""}
-                      aria-label={t("task.selectAgent")}
-                      onChange={(event) => {
-                        const nextAgent = event.target.value;
-                        const nextModels = availableAgents.find((a) => a.name === nextAgent)?.models || [];
-                        setTaskInlineEdit((prev) => prev ? {
-                          ...prev,
-                          agentOverride: nextAgent,
-                          // 换 agent 后原来的模型多半不存在了，回到「跟模板走」
-                          modelOverride: nextModels.some((m) => m.id === prev.modelOverride) ? prev.modelOverride : "",
-                        } : prev);
-                      }}
-                      style={{ height: "26px", fontWeight: 700, maxWidth: "150px" }}
-                    >
-                      {availableAgents.filter((a) => (a.models || []).length > 0).map((a) => (
-                        <option key={a.name} value={a.name}>{a.name}</option>
-                      ))}
-                    </select>
-                    <select
-                      value={taskInlineEdit.modelOverride || ""}
-                      aria-label={t("task.selectModel")}
-                      onChange={(event) => setTaskInlineEdit((prev) => prev ? { ...prev, modelOverride: event.target.value } : prev)}
-                      style={{ height: "26px", fontWeight: 700, maxWidth: "190px" }}
-                    >
-                      <option value="">{t("task.modelFollowTemplate")}</option>
-                      {taskInlineAgentModels.map((model) => (
-                        <option key={model.id} value={model.id}>{model.name || model.id}</option>
-                      ))}
-                    </select>
-                  </>
                 ) : null}
 	                {showTaskWorktreeControls ? (
 	                  <>
@@ -9334,6 +9302,21 @@ export function App({ onGoHome }: AppProps) {
                 onChange={(value) => setTaskInlineEdit((prev) => prev ? { ...prev, text: value } : prev)}
                 mode="editable"
                 role="user"
+                /* 这个编辑区本身是 user 段，但新建时要在这里挑「下一个 agent 阶段」
+                   用哪个 agent/模型，所以把 PromptEditor 自带的 AgentSelector 打开。
+                   默认值取模板里第一个 agent 段的 agent/model（taskInlineAgent /
+                   taskInlineModel），没覆盖就显示模板的那个。 */
+                showAgentSelector={taskInlineHasAgentStage}
+                agents={availableAgents}
+                agent={taskInlineAgent}
+                model={taskInlineModel}
+                effort={taskInlineAgentEffort}
+                onAgentChange={(nextAgent, nextModel) => setTaskInlineEdit((prev) => prev ? {
+                  ...prev,
+                  agentOverride: nextAgent,
+                  modelOverride: nextModel || "",
+                } : prev)}
+                onEffortChange={(effort) => setTaskInlineEdit((prev) => prev ? { ...prev, effortOverride: effort || "" } : prev)}
                 onAttach={() => taskInlineAttachmentInputRef.current?.click()}
                 onSend={() => void saveTaskInlineEdit()}
                 sending={taskInlineSaving}

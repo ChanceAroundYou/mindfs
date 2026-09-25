@@ -61,11 +61,12 @@ assert.match(
   /background: active \? "var\(--accent-color\)" : "var\(--input-bg\)"/,
   "the user toggle must highlight when selected",
 );
-// PromptEditor 自己按 role 隐藏选择器，user 段不该出现 agent 选择器。
+// PromptEditor 默认按 role 隐藏选择器（user 段没有 agent），但允许调用方显式打开
+// ——新建任务面板就是 user 段，却要在里面挑「下一个 agent 阶段」的 agent/模型。
 assert.match(
   promptEditor,
-  /\{!isUser \? \(\s*<AgentSelector/,
-  "PromptEditor must hide the agent selector for user-role stages",
+  /\{!isUser \|\| showAgentSelector \? \(\s*<AgentSelector/,
+  "PromptEditor must hide the agent selector for user stages unless a caller forces it on",
 );
 
 // 3) agent/model/mode/effort/fastService 一律经 PromptEditor 的回调落库。

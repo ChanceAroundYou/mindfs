@@ -17,6 +17,12 @@ export type PromptEditorProps = {
   resetKey?: string | number;
   placeholder?: string;
   role?: StageRole;
+  /**
+   * 强制显示 agent 选择器。role="user" 的段默认不显示（user 段没有 agent），
+   * 但新建任务面板要在这里选「下一个 agent 阶段」用哪个 agent/模型，
+   * 那个编辑区本身是 user 段，所以要显式打开。
+   */
+  showAgentSelector?: boolean;
   agents?: AgentStatus[];
   agent?: string;
   model?: string;
@@ -53,6 +59,7 @@ export const PromptEditor = forwardRef<TokenEditorHandle, PromptEditorProps>(fun
     resetKey,
     placeholder,
     role = "agent",
+    showAgentSelector = false,
     agents = [],
     agent = "codex",
     model = "",
@@ -148,7 +155,7 @@ export const PromptEditor = forwardRef<TokenEditorHandle, PromptEditorProps>(fun
         }}
       />
       <div style={{ position: "absolute", right: "6px", bottom: "6px", display: "flex", alignItems: "center", gap: "2px", zIndex: 3 }}>
-        {!isUser ? (
+        {!isUser || showAgentSelector ? (
           <AgentSelector
             agent={agent}
             model={model}
