@@ -309,8 +309,8 @@ export const enUS = {
   "taskTemplate.switchToAgentStage": "Switch to Agent stage",
 
   "task.loadFailed": "Failed to load tasks",
-  "task.actionPrevious": "Move back to previous stage",
   "task.actionPause": "Pause task",
+  "task.actionResume": "Resume task",
   "task.reasonPrompt": "{action} reason (optional)",
   "task.actionFailed": "Task action failed",
   "task.detailNotSynced": "Task details have not synced yet. Refresh and try again.",

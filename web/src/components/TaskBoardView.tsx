@@ -23,8 +23,10 @@ import {
   TaskCompleteIcon,
   TaskExpandIcon,
   TaskGroupChevronIcon,
+  TaskPauseIcon,
   TaskPlanAuxIcon,
   TaskQueuedSpinnerIcon,
+  TaskResumeIcon,
   TaskRunNowIcon,
   TaskSessionErrorIcon,
   hexToRgbaApp,
@@ -47,7 +49,7 @@ export type KanbanStageColumn = {
 /** 任务会话报错弹窗内容。App 持有该状态（别处也会打开它），类型放这里共用。 */
 export type TaskSessionErrorDialog = { title: string; message: string; details: string[] };
 
-type MoveKanbanAction = "next" | "run-now" | "prev" | "pause" | "resume" | "complete" | "cancel";
+type MoveKanbanAction = "next" | "run-now" | "pause" | "resume" | "complete" | "cancel";
 
 /**
  * 任务面板：无项目时是跨项目工作台（WorkspaceKanban），有项目时是项目内四块看板。
@@ -656,7 +658,12 @@ export function TaskBoardView({
                   const inputNeedsToggle = firstInput.length > 120 || firstInput.split(/\r?\n/).length > 3;
                   const taskTerminal = isTerminalKanbanTask(task);
                   const taskStageRunning = task.current_stage_status === "running" && task.status === "running";
-                  const taskCanComplete = !taskTerminal && task.status === "waiting_user";
+                  // 完成是纯任务状态操作：不碰会话/worktree，所以任何非终态卡都该给这个出口。
+                  // 会话被删或 worktree 丢失的任务永远停在 running，只有这条能救。
+                  const taskCanComplete = !taskTerminal;
+                  // 暂停只在阶段真在跑时给；等待/未开始没有"暂停"可言。恢复同理。
+                  const taskCanPause = taskStageRunning;
+                  const taskCanResume = task.status === "paused";
                   const showTaskAdvanceButton = !taskTerminal && !taskStageRunning;
                   const taskStatusText = taskStatusLabel(task.status || "", t);
                   const taskWorktreeEnabled = task.create_worktree === true;
@@ -951,6 +958,34 @@ export function TaskBoardView({
                                 style={taskCardIconButtonStyle("accent")}
                               >
                                 <RunNowIcon />
+                              </button>
+                            ) : null}
+                            {taskCanPause ? (
+                              <button
+                                type="button"
+                                title={t("task.status.paused")}
+                                aria-label={t("task.actionPause")}
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    void handleMoveKanbanTask(task, "pause");
+                                  }}
+                                style={taskCardIconButtonStyle()}
+                              >
+                                <TaskPauseIcon />
+                              </button>
+                            ) : null}
+                            {taskCanResume ? (
+                              <button
+                                type="button"
+                                title={t("task.actionResume")}
+                                aria-label={t("task.actionResume")}
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    void handleMoveKanbanTask(task, "resume");
+                                  }}
+                                style={taskCardIconButtonStyle("accent")}
+                              >
+                                <TaskResumeIcon />
                               </button>
                             ) : null}
                             {taskCanComplete ? (

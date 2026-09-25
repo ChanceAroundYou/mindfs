@@ -626,13 +626,12 @@ export function App({ onGoHome }: AppProps) {
 
 	  // 跨项目工作台状态与逻辑见 kanbanTaskPanel 定义前（workspaceOpen 等）
 
-	  const handleMoveKanbanTask = useCallback(async (task: KanbanTask, action: "next" | "run-now" | "prev" | "pause" | "resume" | "complete" | "cancel") => {
+  const handleMoveKanbanTask = useCallback(async (task: KanbanTask, action: "next" | "run-now" | "pause" | "resume" | "complete" | "cancel") => {
     const rootId = task.root_id || currentRootIdRef.current;
     if (!rootId) return;
     let reason = "";
-    if (action === "prev" || action === "pause") {
-      const label = action === "prev" ? t("task.actionPrevious") : t("task.actionPause");
-      const input = await promptDialog({ message: t("task.reasonPrompt", { action: label }) });
+    if (action === "pause") {
+      const input = await promptDialog({ message: t("task.reasonPrompt", { action: t("task.actionPause") }) });
       if (input === null) {
         return;
       }

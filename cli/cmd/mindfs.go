@@ -87,9 +87,7 @@ func main() {
 	agentConfigFlag := flag.String("agent-config", "", "extra agents.json file for customizable agent(ACP-protocol) and shell")
 	notifyScriptFlag := flag.String("notify-script", "", "executable script for notification events; receives JSON payload on stdin")
 	remove := flag.Bool("remove", false, "remove the managed directory")
-	taskNumber := flag.String("task", "", "task number for task stage control; defaults to status when set")
-	taskNext := flag.Bool("next", false, "advance task to next stage")
-	taskPrev := flag.Bool("prev", false, "move task to previous stage")
+	taskNumber := flag.String("task", "", "task number to inspect; prints task detail (read-only)")
 	tlsFlag := flag.Bool("tls", false, "enable HTTPS (auto-generates self-signed cert if -cert/-key not provided)")
 	certFlag := flag.String("cert", "", "TLS certificate file (PEM); auto-generated if empty with -tls")
 	keyFlag := flag.String("key", "", "TLS private key file (PEM); auto-generated if empty with -tls")
@@ -115,8 +113,7 @@ func main() {
 		if flag.NArg() > 0 {
 			rootID = flag.Arg(0)
 		}
-		action := taskCLIAction(*statusFlag, *taskNext, *taskPrev)
-		if err := handleTaskCommand(*addr, *tlsFlag, rootID, strings.TrimSpace(*taskNumber), action); err != nil {
+		if err := handleTaskCommand(*addr, *tlsFlag, rootID, strings.TrimSpace(*taskNumber)); err != nil {
 			fmt.Fprintln(os.Stderr, err.Error())
 			os.Exit(1)
 		}
@@ -880,26 +877,6 @@ func containsTaskFlag(args []string) bool {
 	return false
 }
 
-func taskCLIAction(status, next, prev bool) string {
-	actions := []string{}
-	if status {
-		actions = append(actions, "status")
-	}
-	if next {
-		actions = append(actions, "next")
-	}
-	if prev {
-		actions = append(actions, "prev")
-	}
-	if len(actions) == 0 {
-		return "status"
-	}
-	if len(actions) > 1 {
-		return ""
-	}
-	return actions[0]
-}
-
 type taskCLIListResponse struct {
 	Items []json.RawMessage `json:"items"`
 }
@@ -911,7 +888,8 @@ type taskCLIDetailHeader struct {
 	} `json:"task"`
 }
 
-func handleTaskCommand(addr string, useTLS bool, rootID, taskNumberRaw, action string) error {
+// handleTaskCommand 只读：打印指定编号的任务详情。阶段推进/暂停一律走面板。
+func handleTaskCommand(addr string, useTLS bool, rootID, taskNumberRaw string) error {
 	rootID = strings.TrimSpace(rootID)
 	taskNumberRaw = strings.TrimSpace(strings.TrimPrefix(taskNumberRaw, "#"))
 	if rootID == "" {
@@ -921,46 +899,15 @@ func handleTaskCommand(addr string, useTLS bool, rootID, taskNumberRaw, action s
 	if err != nil || taskNumber <= 0 {
 		return errors.New("task number must be a positive integer")
 	}
-	if action == "" {
-		return errors.New("at most one task action allowed: -status, -next, or -prev")
-	}
 	token, err := app.ReadLocalCLIToken(addr)
 	if err != nil {
 		return err
 	}
-	taskID, detail, err := fetchTaskDetailByNumber(addr, useTLS, token, rootID, taskNumber)
+	_, detail, err := fetchTaskDetailByNumber(addr, useTLS, token, rootID, taskNumber)
 	if err != nil {
 		return err
 	}
-	if action == "status" {
-		_, err = os.Stdout.Write(detail)
-		if err == nil {
-			fmt.Fprintln(os.Stdout)
-		}
-		return err
-	}
-	payload, err := json.Marshal(map[string]any{"root_id": rootID})
-	if err != nil {
-		return err
-	}
-	path := "/api/tasks/" + url.PathEscape(taskID) + "/" + action
-	req, err := http.NewRequest(http.MethodPost, addrToURL(addr, path, useTLS), bytes.NewReader(payload))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("X-MindFS-Local-CLI-Token", token)
-	req.Header.Set("Content-Type", "application/json")
-	client := newHTTPClient(useTLS, 10*time.Second)
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("task command failed: %s", httpErrorMessage(resp))
-	}
-	_, err = io.Copy(os.Stdout, resp.Body)
-	if err == nil {
+	if _, err = os.Stdout.Write(detail); err == nil {
 		fmt.Fprintln(os.Stdout)
 	}
 	return err
