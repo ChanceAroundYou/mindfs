@@ -280,6 +280,38 @@ export async function upsertCachedTaskDetails(rootId: string, details: TaskDetai
   } catch {}
 }
 
+/**
+ * 淘汰「服务端已经没有、缓存里还留着」的任务。
+ *
+ * 缓存以前只 put 不 delete，配合增量拉取（after=newestUpdatedAt，只取更新的行）
+ * 就等于把删除永久吞掉：任务在服务端消失后，响应里永远不会出现它，缓存就一直
+ * 喂给你，跨设备还各存各的。实测手机上看得到 #11/#13，而两台机器的库里都查不到。
+ *
+ * keepTaskIds 必须是**全量**响应的集合（不带 after / limit，服务端会返回该 root
+ * 的全部任务，见 task_store.go:275）。拿增量或限流响应当权威集合会误删。
+ */
+export async function pruneCachedTaskDetails(rootId: string, keepTaskIds: Iterable<string>, nodeId?: string): Promise<string[]> {
+  const keep = new Set(Array.from(keepTaskIds, (id) => String(id || "")).filter(Boolean));
+  const nid = String(nodeId || "").trim();
+  try {
+    return await withTaskStore("readwrite", async ({ tasks }) => {
+      const index = tasks.index("rootId");
+      const records = await taskRequest(index.getAll(rootId) as IDBRequest<CachedTaskRecord[]>);
+      // 按 root + node 圈定：同名项目跨节点时各存各的，淘汰不能波及另一台机器。
+      const scoped = nid ? records.filter((r) => String(r.cacheKey || "").startsWith(`${nid}::`)) : records;
+      const dropped: string[] = [];
+      for (const rec of scoped) {
+        if (keep.has(String(rec.taskId || ""))) continue;
+        dropped.push(String(rec.taskId || ""));
+        await taskRequest(tasks.delete(rec.cacheKey));
+      }
+      return dropped;
+    });
+  } catch {
+    return [];
+  }
+}
+
 export async function fetchStageTemplates(nodeId?: string): Promise<StageTemplate[]> {
   const payload = await protectedJSON<any>(appURL("/api/task-stage-templates", undefined, nodeId));
   return Array.isArray(payload?.items) ? payload.items : [];

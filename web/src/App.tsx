@@ -171,6 +171,7 @@ import {
   getCachedTaskDetails,
   getCachedTaskMeta,
   moveTask,
+  pruneCachedTaskDetails,
   saveTaskTemplate,
   upsertCachedTaskDetails,
   type KanbanTask,
@@ -545,6 +546,38 @@ export function App({ onGoHome }: AppProps) {
     }
   }, []);
 
+  /**
+   * 把「服务端全量响应里已经没有」的任务从内存里摘掉。
+   *
+   * 缓存以前只写不删，内存这边同样只有合并（applyTaskDetails）没有移除，于是
+   * 服务端删掉的任务会被一直渲染。必须真的 delete 键：kanbanTasks 和
+   * kanbanTaskCountItems 都是从 taskDetailsById 派生的，只过滤数组不改 map 的话
+   * 下一轮派生又会把它们带回来。
+   */
+  const pruneTaskDetails = useCallback((rootId: string, keepTaskIds: Iterable<string>) => {
+    const keep = new Set(Array.from(keepTaskIds, (id) => String(id || "")).filter(Boolean));
+    // taskDetailsById 是跨 root 共享的，权威集合只覆盖本次拉取的那个 root ——
+    // 不按 root_id 圈定的话，刷新 A 项目会把 B 项目的任务一起清掉。
+    const inScope = (task: KanbanTask) => task.root_id === rootId;
+    const dropped = Object.entries(taskDetailsByIdRef.current)
+      .filter(([taskId, detail]) => !keep.has(String(taskId)) && inScope((detail as TaskDetail).task))
+      .map(([taskId]) => taskId);
+    if (dropped.length === 0) return;
+    const droppedSet = new Set(dropped);
+    const kept = <V,>(entries: [string, V][]) =>
+      Object.fromEntries(entries.filter(([taskId]) => !droppedSet.has(taskId))) as Record<string, V>;
+    taskDetailsByIdRef.current = kept(Object.entries(taskDetailsByIdRef.current));
+    setTaskDetailsById((prev) => kept(Object.entries(prev)));
+    // 这两张表只有 taskId → 值，没有 root 信息可判归属，所以直接吃上面算好的
+    // 淘汰名单：跟着 taskDetailsById 一起摘掉，不自己再推导一遍。
+    setTaskFirstInputById((prev) => kept(Object.entries(prev)));
+    setTaskSessionKeysById((prev) => kept(Object.entries(prev)));
+    setKanbanTaskCountItems((prev) => {
+      const next = prev.filter((task) => !inScope(task) || keep.has(String(task.id)));
+      return next.length === prev.length ? prev : next;
+    });
+  }, []);
+
   const loadKanbanTasks = useCallback(async (rootId?: string | null, force = false) => {
     if (!protectedAPIReady()) {
       return;
@@ -595,6 +628,13 @@ export function App({ onGoHome }: AppProps) {
       const tagDetails = (arr: TaskDetail[]) => { for (const d of arr) (d.task as any)._nodeId = (d.task as any)._nodeId || snapNode; };
       if (details.length > 0) { tagDetails(details); applyTaskDetails(targetRoot, details); }
       if (recent.length > 0) { tagDetails(recent); applyTaskDetails(targetRoot, recent); }
+      // 只有全量响应才是权威集合：增量只含更新的行、限流只含前 20 条，
+      // 拿它们去淘汰会把「没被这次响应覆盖到」的任务误删。
+      if (force) {
+        const keepTaskIds = details.map((d) => d.task?.id);
+        pruneTaskDetails(targetRoot, keepTaskIds);
+        void pruneCachedTaskDetails(targetRoot, keepTaskIds, snapNode || undefined);
+      }
     } catch (err) {
       if ((err as any)?.name === "AbortError") return;
       if (kanbanAbortRef.current?.signal.aborted) return;
@@ -602,9 +642,10 @@ export function App({ onGoHome }: AppProps) {
     } finally {
       if (seq === kanbanLoadSeqRef.current && !controller.signal.aborted) setKanbanTasksLoading(false);
     }
-  }, [applyTaskDetails, t]);
+  }, [applyTaskDetails, pruneTaskDetails, t]);
 
-  const kanbanRefreshSpin = useRefreshSpin(() => loadKanbanTasks(currentRootId));
+  // 刷新必须走全量：增量响应在结构上就看不见「少了谁」，删除永远刷不掉。
+  const kanbanRefreshSpin = useRefreshSpin(() => loadKanbanTasks(currentRootId, true));
 
 	  useEffect(() => {
 	    void loadKanbanTasks(currentRootId);
