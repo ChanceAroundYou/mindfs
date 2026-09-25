@@ -130,7 +130,7 @@ fi
 # ── 7. 本机重启：只能由用户执行 ──
 echo
 if [[ "$DO_RESTART" == "1" ]]; then
-  echo "    \033[1m本机还需你手动重启：\033[0m sudo systemctl restart mindfs"
-  echo "    （纯前端改动刷新页面即生效；重启只为让二进制版本号一致）"
+  printf '    \033[1m本机还需你手动重启：\033[0m sudo systemctl restart mindfs\n'
+  echo    '    （纯前端改动刷新页面即生效；重启只为让二进制版本号一致）'
 fi
 echo "    部署完成 $VERSION"
