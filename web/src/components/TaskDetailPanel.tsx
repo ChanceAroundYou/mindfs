@@ -25,7 +25,7 @@ export type TaskDetailPanelProps = {
 
 const statusColors: Record<string, string> = {
   pending: "var(--text-secondary)",
-  running: "#2563eb",
+  running: "var(--accent-color)",
   waiting_user: "#b45309",
   paused: "var(--text-secondary)",
   success: "#16a34a",

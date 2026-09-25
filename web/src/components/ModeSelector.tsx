@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useLayoutEffect, useCallback } from
 import { createPortal } from "react-dom";
 import { ModeIcon } from "./ModeIcon";
 import { useI18n, type MessageKey } from "../i18n";
+import { DEFAULT_NODE_COLOR } from "../services/nodeRegistry";
 
 export type SessionMode = "chat" | "plugin" | "command";
 
@@ -33,15 +34,8 @@ export function ModeSelector({
   onOpenChange,
 }: ModeSelectorProps) {
   const { t } = useI18n();
-  const accentHex = String(accentColor || "").trim() || "#3b82f6";
-  const accentApplied = String(accentColor || "").trim() || "#3b82f6";
-  function hexToRgba(hex: string, alpha: number): string {
-    const h = String(hex || "").trim().replace(/^#/, "");
-    const fb = `rgba(59, 130, 246, ${alpha})`;
-    if (h.length === 3) { const r = parseInt(h[0] + h[0], 16); const g = parseInt(h[1] + h[1], 16); const b = parseInt(h[2] + h[2], 16); if (Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b)) return `rgba(${r}, ${g}, ${b}, ${alpha})`; return fb; }
-    if (h.length === 6) { const r = parseInt(h.slice(0, 2), 16); const g = parseInt(h.slice(2, 4), 16); const b = parseInt(h.slice(4, 6), 16); if (Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b)) return `rgba(${r}, ${g}, ${b}, ${alpha})`; }
-    return fb;
-  }
+  const accentHex = String(accentColor || "").trim() || DEFAULT_NODE_COLOR;
+  const accentApplied = String(accentColor || "").trim() || DEFAULT_NODE_COLOR;
   const [isOpen, setIsOpen] = useState(false);
   const [viewportMenuPosition, setViewportMenuPosition] = useState<{ top: number; left: number } | null>(null);
   const [positionTick, setPositionTick] = useState(0);
@@ -140,7 +134,7 @@ export function ModeSelector({
         {t("mode.title")}
       </div>
       {(["chat", "plugin", "command"] as SessionMode[]).map((m) => (
-        <button key={m} type="button" onClick={() => handleModeSelect(m)} style={{ display: "flex", alignItems: "center", gap: "8px", width: "100%", padding: "10px 12px", border: "none", background: m === mode ? hexToRgba(accentHex, 0.08) : "transparent", cursor: "pointer", fontSize: "13px", color: m === mode ? accentHex : "var(--text-primary)", fontWeight: m === mode ? 500 : 400, textAlign: "left", whiteSpace: "nowrap" }}>
+        <button key={m} type="button" onClick={() => handleModeSelect(m)} style={{ display: "flex", alignItems: "center", gap: "8px", width: "100%", padding: "10px 12px", border: "none", background: m === mode ? "var(--selection-bg)" : "transparent", cursor: "pointer", fontSize: "13px", color: m === mode ? accentHex : "var(--text-primary)", fontWeight: m === mode ? 500 : 400, textAlign: "left", whiteSpace: "nowrap" }}>
           <ModeIcon type={m} size={18} style={m === "chat" && m !== mode ? { color: "#64748b" } : undefined} />
           <span>{t(modeLabelKeys[m])}</span>
         </button>

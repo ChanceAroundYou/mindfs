@@ -229,7 +229,7 @@ export function BottomSheet({
             if (!isDragging) onExpand?.();
           }}
         >
-          <div style={{ width: "96px", height: "5px", background: "#2563eb", borderRadius: "999px" }} />
+          <div style={{ width: "96px", height: "5px", background: "var(--accent-color)", borderRadius: "999px" }} />
         </div>
 
         {/* Content */}

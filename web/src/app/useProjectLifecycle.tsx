@@ -702,7 +702,7 @@ export function useProjectLifecycle({
               width: "100%",
               border: "none",
               background: creatingRootBusy || !String(creatingRootName || "").trim()
-                ? "rgba(59, 130, 246, 0.65)"
+                ? "color-mix(in srgb, var(--accent-color) 65%, transparent)"
                 : "var(--accent-color)",
               color: "#fff",
               borderRadius: "8px",

@@ -597,7 +597,7 @@ function StageTemplateSelect({ value, name, role, templates, onNameChange, onCha
             height: "28px",
             border: "none",
             borderLeft: "1px solid var(--border-color)",
-            background: selected ? "rgba(37, 99, 235, 0.08)" : "transparent",
+            background: selected ? "var(--selection-bg)" : "transparent",
             color: selected ? "var(--accent-color)" : "var(--text-secondary)",
             display: "inline-flex",
             alignItems: "center",

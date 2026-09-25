@@ -287,7 +287,7 @@ function ExternalSessionCard({
           background: checked
             ? "var(--selection-bg)"
             : selected
-              ? "rgba(59, 130, 246, 0.1)"
+              ? "var(--selection-bg)"
               : "transparent",
           cursor: "pointer",
           flex: 1,

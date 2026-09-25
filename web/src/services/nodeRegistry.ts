@@ -2,6 +2,9 @@ import { getStoredString, setStoredString, removeStoredString } from "./storage"
 import { deriveLocalNodeBase, normalizeExplicitNodeBase, repairDuplicateDeployPrefix } from "./nodeBase";
 import { DEPLOY_PREFIX } from "./prefix";
 export const PALETTE = ["#3b82f6", "#f59e0b", "#7c6bd6", "#c66a7a", "#8a8f99", "#7aae8a"] as const;
+// 无节点上下文时（通用菜单/弹窗/面板内选中项）的唯一兜底强调色 = local 节点色。
+// --accent-color 的 CSS 取值必须与本常量一致，见 index.css 主题块。
+export const DEFAULT_NODE_COLOR = PALETTE[0];
 const PREVIOUS_PALETTE = ["#7c6bd6", "#c9b84a", "#6a8dc2", "#c66a7a", "#8a8f99", "#7aae8a"] as const;
 const OLD_PALETTE = ["#6d5bcf", "#0ea5a0", "#e07a2f", "#2f8f4e", "#d9466a", "#7a9a3a"] as const;
 const paletteIndex = [PREVIOUS_PALETTE, OLD_PALETTE] as const;

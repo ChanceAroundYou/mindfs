@@ -64,7 +64,7 @@ export function WorkspaceKanban({ items, loading, projects, onOpenProject, onCom
             height: big ? "26px" : "22px",
             borderRadius: "6px",
             border: "1px solid var(--border-color)",
-            background: kind === "success" ? "rgba(22, 163, 74, 0.12)" : "rgba(37, 99, 235, 0.10)",
+            background: kind === "success" ? "rgba(22, 163, 74, 0.12)" : "var(--selection-bg)",
             color: kind === "success" ? "#16a34a" : "var(--accent-color)",
             padding: big ? "0 10px" : "0 7px",
             fontSize: big ? "12px" : "11px",
@@ -206,7 +206,7 @@ export function WorkspaceKanban({ items, loading, projects, onOpenProject, onCom
       {/* ▶ 运行中 */}
       <section style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
         <header style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-          <span style={{ fontSize: "13px", fontWeight: 800, color: "#2563eb" }}>{t("task.column.running")}</span>
+          <span style={{ fontSize: "13px", fontWeight: 800, color: "var(--accent-color)" }}>{t("task.column.running")}</span>
           <span style={{ fontSize: "11px", fontWeight: 800, color: "var(--text-secondary)" }}>{running.length}</span>
         </header>
         {running.length === 0 ? (

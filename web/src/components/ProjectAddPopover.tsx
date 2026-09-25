@@ -222,7 +222,7 @@ function PathBreadcrumb({
                 }}
                 style={{
                   border: "none",
-                  background: active ? "rgba(59, 130, 246, 0.1)" : "transparent",
+                  background: active ? "var(--selection-bg)" : "transparent",
                   color: active ? "var(--accent-color)" : "var(--text-primary)",
                   borderRadius: "6px",
                   padding: "6px 8px",
@@ -376,7 +376,7 @@ function ModePanel({
       <ModeItem
         label={t("projectAdd.blankProject")}
         onClick={onSelectBlankLocation}
-        iconColor="#2563eb"
+        iconColor="var(--accent-color)"
         icon={
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
             <path d="M12 5v14" />
@@ -387,7 +387,7 @@ function ModePanel({
       <ModeItem
         label={t("projectAdd.localDirectory")}
         onClick={onSelectLocal}
-        iconColor="#2563eb"
+        iconColor="var(--accent-color)"
         icon={
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M3 6h5l2 2h11" />
@@ -438,7 +438,7 @@ function LocalPanel({
     (!localBrowseOnly && !localState.selectedPath);
   const actionBackground = !actionDisabled
     ? "var(--accent-color)"
-    : "rgba(59, 130, 246, 0.45)";
+    : "color-mix(in srgb, var(--accent-color) 45%, transparent)";
   const actionCursor = !actionDisabled ? "pointer" : "not-allowed";
   const volumes = Array.isArray(localState.volumes) ? localState.volumes : [];
 
@@ -548,7 +548,7 @@ function LocalPanel({
                     border: "1px solid transparent",
                     background:
                       !localBrowseOnly && selected
-                        ? "rgba(59, 130, 246, 0.1)"
+                        ? "var(--selection-bg)"
                         : "transparent",
                     color: disabled
                       ? "var(--text-secondary)"
@@ -660,7 +660,7 @@ function GitHubPanel({
         onClick={onGitHubImport}
         style={{
           border: "none",
-          background: disabled ? "rgba(59, 130, 246, 0.65)" : "var(--accent-color)",
+          background: disabled ? "color-mix(in srgb, var(--accent-color) 65%, transparent)" : "var(--accent-color)",
           color: "#fff",
           borderRadius: "8px",
           padding: "9px 10px",

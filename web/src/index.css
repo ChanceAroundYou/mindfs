@@ -37,20 +37,15 @@
   --panel-bg: #ffffff;
   --panel-border: rgba(15, 23, 42, 0.15);
   --panel-shadow: 0 4px 12px rgba(0, 0, 0, 0.02);
-  --panel-focus-shadow: 0 4px 24px rgba(37, 99, 235, 0.1);
   --mindfs-code-bg: #f8fafc;
   --mindfs-code-text: #0f172a;
   --mindfs-code-border: rgba(15, 23, 42, 0.12);
   --menu-bg: #ffffff;
   --menu-border: rgba(15, 23, 42, 0.08);
   --menu-divider: rgba(15, 23, 42, 0.06);
-  --menu-active-bg: rgba(59, 130, 246, 0.08);
-  --accent-color: #2563eb;
-  --accent-hover: #1d4ed8;
-  --selection-bg: rgba(37, 99, 235, 0.1);
-  --root-badge-bg: rgba(99, 102, 241, 0.14);
-  --root-badge-border: rgba(99, 102, 241, 0.24);
-  --root-badge-text: #4f46e5;
+  --menu-active-bg: rgba(148, 163, 184, 0.16);
+  --accent-color: #3b82f6;
+  --selection-bg: rgba(148, 163, 184, 0.16);
   --node-badge-bg: rgba(148, 163, 184, 0.14);
   --node-row-selected-bg: rgba(148, 163, 184, 0.16);
 }
@@ -273,20 +268,15 @@ html {
     --panel-bg: #020617;
     --panel-border: rgba(148, 163, 184, 0.2);
     --panel-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
-    --panel-focus-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
     --mindfs-code-bg: #0f172a;
     --mindfs-code-text: #e2e8f0;
     --mindfs-code-border: rgba(255, 255, 255, 0.1);
     --menu-bg: #0f172a;
     --menu-border: rgba(148, 163, 184, 0.18);
     --menu-divider: rgba(148, 163, 184, 0.1);
-    --menu-active-bg: rgba(59, 130, 246, 0.16);
+    --menu-active-bg: rgba(148, 163, 184, 0.20);
     --accent-color: #3b82f6;
-    --accent-hover: #60a5fa;
-    --selection-bg: rgba(59, 130, 246, 0.2);
-    --root-badge-bg: rgba(129, 140, 248, 0.22);
-    --root-badge-border: rgba(165, 180, 252, 0.34);
-    --root-badge-text: #c7d2fe;
+    --selection-bg: rgba(148, 163, 184, 0.20);
     --node-badge-bg: rgba(148, 163, 184, 0.18);
     --node-row-selected-bg: rgba(148, 163, 184, 0.20);
   }
@@ -337,20 +327,15 @@ html {
   --panel-bg: #020617;
   --panel-border: rgba(148, 163, 184, 0.2);
   --panel-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
-  --panel-focus-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
   --mindfs-code-bg: #0f172a;
   --mindfs-code-text: #e2e8f0;
   --mindfs-code-border: rgba(255, 255, 255, 0.1);
   --menu-bg: #0f172a;
   --menu-border: rgba(148, 163, 184, 0.18);
   --menu-divider: rgba(148, 163, 184, 0.1);
-  --menu-active-bg: rgba(59, 130, 246, 0.16);
+  --menu-active-bg: rgba(148, 163, 184, 0.20);
   --accent-color: #3b82f6;
-  --accent-hover: #60a5fa;
-  --selection-bg: rgba(59, 130, 246, 0.2);
-  --root-badge-bg: rgba(129, 140, 248, 0.22);
-  --root-badge-border: rgba(165, 180, 252, 0.34);
-  --root-badge-text: #c7d2fe;
+  --selection-bg: rgba(148, 163, 184, 0.20);
   --node-badge-bg: rgba(148, 163, 184, 0.18);
   --node-row-selected-bg: rgba(148, 163, 184, 0.20);
 }
@@ -420,20 +405,15 @@ html {
   --panel-bg: rgba(255, 252, 247, 0.94);
   --panel-border: rgba(25, 48, 51, 0.14);
   --panel-shadow: 0 24px 70px rgba(63, 54, 33, 0.12);
-  --panel-focus-shadow: 0 0 0 3px rgba(40, 80, 45, 0.16);
   --mindfs-code-bg: rgba(255, 252, 247, 0.94);
   --mindfs-code-text: #193033;
   --mindfs-code-border: rgba(25, 48, 51, 0.14);
   --menu-bg: rgba(255, 252, 247, 0.96);
   --menu-border: rgba(25, 48, 51, 0.12);
   --menu-divider: rgba(25, 48, 51, 0.10);
-  --menu-active-bg: rgba(40, 80, 45, 0.12);
-  --accent-color: #2d5a32;
-  --accent-hover: #3a6b3f;
-  --selection-bg: rgba(198, 151, 56, 0.18);
-  --root-badge-bg: rgba(198, 151, 56, 0.22);
-  --root-badge-border: rgba(198, 151, 56, 0.32);
-  --root-badge-text: #7a561b;
+  --menu-active-bg: rgba(148, 163, 184, 0.16);
+  --accent-color: #3b82f6;
+  --selection-bg: rgba(148, 163, 184, 0.16);
   --node-badge-bg: rgba(148, 163, 184, 0.14);
   --node-row-selected-bg: rgba(148, 163, 184, 0.16);
 }
@@ -454,15 +434,15 @@ html {
     radial-gradient(circle at top right, rgba(40, 80, 45, 0.22), transparent 30%);
 }
 
-:root[data-theme="meadow"] a { color: #2d5a32; }
-:root[data-theme="meadow"] a:hover { color: #3a6b3f; }
+:root[data-theme="meadow"] a { color: var(--accent-color); }
+:root[data-theme="meadow"] a:hover { color: var(--accent-color); }
 
 :root[data-theme="meadow"] .mindfs-sidebar-resize-rail::before {
-  background: linear-gradient(transparent, rgba(40, 80, 45, 0.08) 12%, rgba(40, 80, 45, 0.55), rgba(40, 80, 45, 0.08) 88%, transparent);
-  box-shadow: 0 0 16px rgba(40, 80, 45, 0.22);
+  background: linear-gradient(transparent, color-mix(in srgb, var(--accent-color) 8%, transparent) 12%, color-mix(in srgb, var(--accent-color) 55%, transparent), color-mix(in srgb, var(--accent-color) 8%, transparent) 88%, transparent);
+  box-shadow: 0 0 16px color-mix(in srgb, var(--accent-color) 22%, transparent);
 }
 :root[data-theme="meadow"] .mindfs-sidebar-resize-rail:focus-visible::before {
-  background: linear-gradient(transparent, rgba(40, 80, 45, 0.12) 12%, rgba(40, 80, 45, 0.7), rgba(40, 80, 45, 0.12) 88%, transparent);
+  background: linear-gradient(transparent, color-mix(in srgb, var(--accent-color) 12%, transparent) 12%, color-mix(in srgb, var(--accent-color) 70%, transparent), color-mix(in srgb, var(--accent-color) 12%, transparent) 88%, transparent);
 }
 
 :root[data-theme="meadow"] pre[class*="language-"],
@@ -524,20 +504,15 @@ html {
   --panel-bg: rgba(246, 248, 241, 0.92);
   --panel-border: rgba(55, 75, 50, 0.14);
   --panel-shadow: 0 24px 70px rgba(39, 51, 36, 0.10);
-  --panel-focus-shadow: 0 0 0 3px rgba(65, 91, 63, 0.18);
   --mindfs-code-bg: rgba(246, 248, 241, 0.94);
   --mindfs-code-text: #1d261f;
   --mindfs-code-border: rgba(55, 75, 50, 0.14);
   --menu-bg: rgba(246, 248, 241, 0.96);
   --menu-border: rgba(55, 75, 50, 0.12);
   --menu-divider: rgba(55, 75, 50, 0.08);
-  --menu-active-bg: rgba(65, 91, 63, 0.11);
-  --accent-color: #415b3f;
-  --accent-hover: #344a33;
-  --selection-bg: rgba(116, 133, 91, 0.20);
-  --root-badge-bg: rgba(116, 133, 91, 0.18);
-  --root-badge-border: rgba(116, 133, 91, 0.30);
-  --root-badge-text: #44512f;
+  --menu-active-bg: rgba(148, 163, 184, 0.16);
+  --accent-color: #3b82f6;
+  --selection-bg: rgba(148, 163, 184, 0.16);
   --node-badge-bg: rgba(148, 163, 184, 0.14);
   --node-row-selected-bg: rgba(148, 163, 184, 0.16);
 }
@@ -558,15 +533,15 @@ html {
     radial-gradient(circle at top right, rgba(65, 91, 63, 0.20), transparent 34%);
 }
 
-:root[data-theme="moss"] a { color: #415b3f; }
-:root[data-theme="moss"] a:hover { color: #344a33; }
+:root[data-theme="moss"] a { color: var(--accent-color); }
+:root[data-theme="moss"] a:hover { color: var(--accent-color); }
 
 :root[data-theme="moss"] .mindfs-sidebar-resize-rail::before {
-  background: linear-gradient(transparent, rgba(65, 91, 63, 0.08) 12%, rgba(65, 91, 63, 0.55), rgba(65, 91, 63, 0.08) 88%, transparent);
-  box-shadow: 0 0 16px rgba(65, 91, 63, 0.22);
+  background: linear-gradient(transparent, color-mix(in srgb, var(--accent-color) 8%, transparent) 12%, color-mix(in srgb, var(--accent-color) 55%, transparent), color-mix(in srgb, var(--accent-color) 8%, transparent) 88%, transparent);
+  box-shadow: 0 0 16px color-mix(in srgb, var(--accent-color) 22%, transparent);
 }
 :root[data-theme="moss"] .mindfs-sidebar-resize-rail:focus-visible::before {
-  background: linear-gradient(transparent, rgba(65, 91, 63, 0.12) 12%, rgba(65, 91, 63, 0.7), rgba(65, 91, 63, 0.12) 88%, transparent);
+  background: linear-gradient(transparent, color-mix(in srgb, var(--accent-color) 12%, transparent) 12%, color-mix(in srgb, var(--accent-color) 70%, transparent), color-mix(in srgb, var(--accent-color) 12%, transparent) 88%, transparent);
 }
 
 :root[data-theme="moss"] pre[class*="language-"],

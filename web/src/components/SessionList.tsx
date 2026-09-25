@@ -2,32 +2,14 @@ import React, { memo, useEffect, useMemo, useRef, useState } from "react";
 import { AgentIcon } from "./AgentIcon";
 import { ModeIcon } from "./ModeIcon";
 import { NodeBadgeHeader } from "./NodeBadgeHeader";
-import { getNodes, PALETTE } from "../services/nodeRegistry";
+import { getNodes, PALETTE, DEFAULT_NODE_COLOR } from "../services/nodeRegistry";
+import { hexToRgbaApp } from "../app/taskIcons";
 import { resolveGroupColor } from "../services/sessionGroupDisplay";
 import { scopeKey } from "../services/scope";
 import { fetchSessionProjectPins, updateSessionProjectPins } from "../services/preferences";
 import { useI18n, type Locale } from "../i18n";
 import { type DirectorySortMode, sortDirectoryEntries } from "../services/directorySort";
 
-function hexToRgba(hex: string, alpha: number): string {
-  const h = String(hex || "").trim().replace(/^#/, "");
-  const fallback = `rgba(37, 99, 235, ${alpha})`;
-  if (h.length === 3) {
-    const r = parseInt(h[0] + h[0], 16);
-    const g = parseInt(h[1] + h[1], 16);
-    const b = parseInt(h[2] + h[2], 16);
-    if (Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b)) return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-    return fallback;
-  }
-  if (h.length === 6) {
-    const r = parseInt(h.slice(0, 2), 16);
-    const g = parseInt(h.slice(2, 4), 16);
-    const b = parseInt(h.slice(4, 6), 16);
-    if (Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b)) return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-  }
-  if (/^rgba?\(/.test(String(hex || ""))) return String(hex);
-  return fallback;
-}
 
 export type SessionType = "chat" | "plugin" | "command";
 
@@ -1703,7 +1685,7 @@ function SessionCard({
                 border: `1.5px solid ${effectiveNodeColor || "var(--accent-color)"}`,
                 background: effectiveNodeColor || "var(--accent-color)",
                 animation: "mindfs-bound-pulse 2.2s ease-in-out infinite",
-                boxShadow: `0 0 0 1.5px ${hexToRgba(effectiveNodeColor || "var(--accent-color)", 0.14)}`,
+                boxShadow: `0 0 0 1.5px ${hexToRgbaApp(effectiveNodeColor || "var(--accent-color)", 0.14)}`,
               }}
             />
           ) : (

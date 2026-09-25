@@ -764,7 +764,7 @@ export function AgentSelector({
                       padding: "10px 12px",
                       background:
                         isExpanded || isSelected
-                          ? "rgba(59, 130, 246, 0.08)"
+                          ? "var(--selection-bg)"
                           : "transparent",
                       opacity: 1,
                     }}
@@ -794,7 +794,7 @@ export function AgentSelector({
                           fontSize: "13px",
                           color:
                             isExpanded || isSelected
-                              ? "#3b82f6"
+                              ? "var(--accent-color)"
                               : "var(--text-primary)",
                           fontWeight: isExpanded || isSelected ? 500 : 400,
                           whiteSpace: "nowrap",
@@ -868,7 +868,7 @@ export function AgentSelector({
                           border: "none",
                           background: "transparent",
                           color: isExpanded
-                            ? "#3b82f6"
+                            ? "var(--accent-color)"
                             : "var(--text-secondary)",
                           cursor: "pointer",
                           justifySelf: "center",
@@ -1287,7 +1287,7 @@ export function AgentSelector({
                         borderRadius: "999px",
                         padding: "2px",
                         boxSizing: "border-box",
-                        background: longContextEnabled ? "#3b82f6" : "rgba(0,0,0,0.18)",
+                        background: longContextEnabled ? "var(--accent-color)" : "rgba(0,0,0,0.18)",
                         display: "inline-flex",
                         alignItems: "center",
                         justifyContent: longContextEnabled ? "flex-end" : "flex-start",
@@ -1386,7 +1386,7 @@ function SectionHeader({
         padding: "10px 12px",
         border: "none",
         borderTop: topBorder ? "1px solid var(--menu-divider)" : "none",
-        background: expanded ? "rgba(59, 130, 246, 0.05)" : "transparent",
+        background: expanded ? "var(--selection-bg)" : "transparent",
         color: "var(--text-primary)",
         textAlign: "left",
         cursor: "pointer",
@@ -1399,7 +1399,7 @@ function SectionHeader({
           fontWeight: 700,
           letterSpacing: "0.08em",
           textTransform: "uppercase",
-          color: expanded ? "#3b82f6" : "var(--text-secondary)",
+          color: expanded ? "var(--accent-color)" : "var(--text-secondary)",
           whiteSpace: "nowrap",
         }}
       >
@@ -1450,7 +1450,7 @@ function SelectorChevron({ expanded }: { expanded: boolean }) {
       aria-hidden="true"
       style={{
         flexShrink: 0,
-        color: expanded ? "#3b82f6" : "#9ca3af",
+        color: expanded ? "var(--accent-color)" : "var(--text-secondary)",
         transform: expanded ? "rotate(90deg)" : "rotate(0deg)",
         transition: "transform 0.16s ease",
       }}
@@ -1481,8 +1481,8 @@ function sectionItemStyle(
     padding: "10px 12px",
     border: "none",
     borderTop: topBorder ? "1px solid var(--menu-divider)" : "none",
-    background: selected ? "rgba(59, 130, 246, 0.08)" : "transparent",
-    color: selected ? "#3b82f6" : "var(--text-primary)",
+    background: selected ? "var(--selection-bg)" : "transparent",
+    color: selected ? "var(--accent-color)" : "var(--text-primary)",
     textAlign: "left",
     cursor: "pointer",
     opacity,
