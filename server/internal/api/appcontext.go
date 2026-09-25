@@ -282,7 +282,13 @@ func (s *AppContext) EnsureAgentSession(ctx context.Context, exec kanban.AgentSt
 			return strings.TrimSpace(exec.Run.SessionKey), nil
 		}
 	}
-	name := strings.TrimSpace(exec.Task.TaskTemplateName)
+	// 任务名优先：任务名在建会话之前就定了，而「任务改名 → 同步会话名」只在
+	// 会话已经存在时才跑得到（bindTaskSessionNames），首段建会话这步是唯一的兜底，
+	// 不兜底会话就一直挂着模板名。任务没名字才退回模板名 / #编号 / prompt。
+	name := strings.TrimSpace(exec.Task.Name)
+	if name == "" {
+		name = strings.TrimSpace(exec.Task.TaskTemplateName)
+	}
 	if exec.Task.TaskNumber > 0 {
 		number := "#" + strconv.Itoa(exec.Task.TaskNumber)
 		if name == "" {

@@ -1,5 +1,6 @@
 import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { LexicalComposer } from "@lexical/react/LexicalComposer";
+import { EDITOR_FONT_SIZE, EDITOR_LINE_HEIGHT } from "../composerStyles";
 import { PlainTextPlugin } from "@lexical/react/LexicalPlainTextPlugin";
 import { ContentEditable } from "@lexical/react/LexicalContentEditable";
 import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
@@ -39,6 +40,8 @@ export type TokenEditorHandle = {
 type TokenEditorProps = {
   placeholder: string;
   disabled?: boolean;
+  /** 只读：任务阶段卡的「已执行/未执行」态用（PromptEditor 的 readonly / done）。 */
+  readOnly?: boolean;
   isDark?: boolean;
   rightInset?: number;
   topInset?: number;
@@ -62,6 +65,7 @@ function PlaceholderLayer({
   isSingleLine,
   rightInset,
   topInset,
+  readOnly,
 }: {
   isEmpty: boolean;
   isFocused: boolean;
@@ -69,8 +73,9 @@ function PlaceholderLayer({
   isSingleLine: boolean;
   rightInset: number;
   topInset: number;
+  readOnly?: boolean;
 }) {
-  if (!isEmpty || isFocused) {
+  if (!isEmpty || isFocused || readOnly) {
     return null;
   }
   return (
@@ -82,7 +87,7 @@ function PlaceholderLayer({
         top: topInset > 0 ? `${topInset + 12}px` : "50%",
         transform: topInset > 0 ? "none" : "translateY(-50%)",
         color: "var(--text-secondary)",
-        fontSize: "16px",
+        fontSize: `${EDITOR_FONT_SIZE}px`,
         pointerEvents: "none",
         zIndex: 1,
         whiteSpace: "nowrap",
@@ -99,6 +104,7 @@ const TokenEditor = forwardRef<TokenEditorHandle, TokenEditorProps>(function Tok
   {
     placeholder,
     disabled = false,
+    readOnly = false,
     isDark = false,
     rightInset = 120,
     topInset = 0,
@@ -151,10 +157,15 @@ const TokenEditor = forwardRef<TokenEditorHandle, TokenEditorProps>(function Tok
       });
     },
     setText(value: string) {
+      // 只在焦点已经在这个编辑器里时才抢焦点：常驻挂载的编辑器（如工作台快速发起）
+      // 灌值不能把整页焦点夺走；已聚焦的调用方（改写草稿、插入候选）行为不变。
+      const keepFocus = !!rootRef.current && rootRef.current.contains(document.activeElement);
       editorRef.current?.update(() => {
         $replaceWithSerializedText(value);
       });
-      rootRef.current?.focus({ preventScroll: true });
+      if (keepFocus) {
+        rootRef.current?.focus({ preventScroll: true });
+      }
     },
     insertCandidate(type: CandidateType, value: string) {
       const editor = editorRef.current;
@@ -325,6 +336,7 @@ const TokenEditor = forwardRef<TokenEditorHandle, TokenEditorProps>(function Tok
             <ContentEditable
               className="token-editor-input"
               aria-placeholder={placeholder}
+              aria-readonly={readOnly || undefined}
               placeholder={<span></span>}
               spellCheck={false}
               onFocus={() => {
@@ -350,8 +362,8 @@ const TokenEditor = forwardRef<TokenEditorHandle, TokenEditorProps>(function Tok
                   ? `${12 + topInset}px ${rightInset}px 12px 14px`
                   : `${8 + topInset}px ${rightInset}px ${bottomInset}px 14px`,
                 outline: "none",
-                fontSize: "16px",
-                lineHeight: "20px",
+                fontSize: `${EDITOR_FONT_SIZE}px`,
+                lineHeight: `${EDITOR_LINE_HEIGHT}px`,
                 boxSizing: "border-box",
                 whiteSpace: "pre-wrap",
                 wordBreak: "break-word",
@@ -359,6 +371,7 @@ const TokenEditor = forwardRef<TokenEditorHandle, TokenEditorProps>(function Tok
                 position: "relative",
                 zIndex: 2,
                 pointerEvents: disabled ? "none" : "auto",
+                cursor: readOnly ? "text" : undefined,
               }}
             />
           }
@@ -370,6 +383,7 @@ const TokenEditor = forwardRef<TokenEditorHandle, TokenEditorProps>(function Tok
               isSingleLine={isSingleLine}
               rightInset={rightInset}
               topInset={topInset}
+              readOnly={readOnly}
             />
           }
           ErrorBoundary={({ children, onError: _onError }) => children}
@@ -377,6 +391,7 @@ const TokenEditor = forwardRef<TokenEditorHandle, TokenEditorProps>(function Tok
         <HistoryPlugin />
         <EditorBridge
           onChange={handleChange}
+          readOnly={readOnly}
           onReady={({ editor, root }) => {
             editorRef.current = editor;
             rootRef.current = root;

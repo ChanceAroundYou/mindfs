@@ -7,6 +7,7 @@ import { type CandidateItem } from "../services/candidates";
 import { reportError } from "../services/error";
 import { isUploadAbortError, uploadFiles, type UploadProgress } from "../services/upload";
 import TokenEditor, { type TokenEditorHandle } from "./editor/TokenEditor";
+import { CancelIcon, PlusIcon, SendIcon, SpinnerIcon } from "./composerStyles";
 import { useI18n, type MessageKey } from "../i18n";
 import {
   CandidateDropdown,
@@ -965,10 +966,7 @@ export function ActionBar({
                   title={t("action.addAttachment")}
                   aria-label={t("action.addAttachment")}
                 >
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
-                    <path d="M12 5v14" />
-                    <path d="M5 12h14" />
-                  </svg>
+                  <PlusIcon />
                   </button>
                   <button
                   data-onboarding="send-action"
@@ -979,11 +977,11 @@ export function ActionBar({
                   style={{ width: "28px", height: "28px", borderRadius: "8px", border: "none", background: showCancel ? "rgba(239,68,68,0.14)" : (canSend ? accentColorRaw : "transparent"), color: showCancel ? "#ef4444" : (canSend ? "#fff" : "var(--text-secondary)"), display: "flex", alignItems: "center", justifyContent: "center", cursor: showCancel ? (cancelling ? "wait" : "pointer") : (canSend ? "pointer" : "not-allowed"), transition: "all 0.2s", opacity: showCancel ? 1 : (canSend ? 1 : 0.3) }}
                 >
                   {sending || cancelling ? (
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" style={{ animation: "spin 1s linear infinite" }}><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                    <SpinnerIcon />
                   ) : showCancel ? (
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2.5" /></svg>
+                    <CancelIcon />
                   ) : (
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+                    <SendIcon />
                   )}
                   </button>
                 </>

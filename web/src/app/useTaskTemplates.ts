@@ -18,9 +18,11 @@ import { confirmDialog } from "../services/dialog";
 export function useTaskTemplates({
   currentRootId,
   scopedRootKey,
+  getNodeIdForRoot,
 }: {
   currentRootId: string | null;
   scopedRootKey: (rootId: string) => string;
+  getNodeIdForRoot: (rootId: string) => string | undefined;
 }) {
   const { t } = useI18n();
   const taskTemplateActionMenuRef = useRef<HTMLDivElement | null>(null);
@@ -31,19 +33,25 @@ export function useTaskTemplates({
   const [taskTemplateDialogTemplate, setTaskTemplateDialogTemplate] = useState<TaskTemplate | null>(null);
   const [taskTemplateFilter, setTaskTemplateFilter] = useState("");
   const [taskTemplateActionMenuOpen, setTaskTemplateActionMenuOpen] = useState(false);
-  const [taskTemplateConcurrencyOpen, setTaskTemplateConcurrencyOpen] = useState(false);
   const [taskCreateTemplateMenuOpen, setTaskCreateTemplateMenuOpen] = useState(false);
+
+  // 模板请求必须带上当前项目的 nodeId。不带的话 getApiBaseURL(undefined) 会
+  // 回退到 active node —— 面板明明开着本机项目，请求却打到另一台机器上去了
+  // （实测：https://pc.xiaokubao.space/... 而页面在 127.0.0.1）。
+  const templateNodeId = useCallback((): string | undefined => (
+    currentRootId ? getNodeIdForRoot(currentRootId) : undefined
+  ), [currentRootId, getNodeIdForRoot]);
 
   const loadTaskTemplates = useCallback(async () => {
     if (!protectedAPIReady()) {
       return;
     }
     try {
-      setTaskTemplates(await fetchTaskTemplates());
+      setTaskTemplates(await fetchTaskTemplates(templateNodeId()));
     } catch (err) {
       reportError("file.write_failed", String((err as Error)?.message || t("taskTemplate.loadFailed")));
     }
-  }, [t]);
+  }, [t, templateNodeId]);
 
   const openTaskTemplateEditor = useCallback((template: TaskTemplate | null) => {
     setTaskTemplateDialogTemplate(template);
@@ -68,7 +76,7 @@ export function useTaskTemplates({
     if (!id) return;
     if (!await confirmDialog({ message: t("taskTemplate.deleteConfirm", { name: template.name || id }), danger: true })) return;
     try {
-      await deleteTaskTemplate(id);
+      await deleteTaskTemplate(id, templateNodeId());
       setTaskTemplates((prev) => prev.filter((item) => item.id !== id));
       setTaskTemplateDialogTemplate((prev) => prev?.id === id ? null : prev);
       setTaskTemplateFilter((prev) => prev === id ? "" : prev);
@@ -77,21 +85,6 @@ export function useTaskTemplates({
     }
   }, [t]);
 
-  const handleTaskTemplateConcurrencyChange = useCallback(async (templateId: string, value: number) => {
-    const template = taskTemplates.find((item) => item.id === templateId);
-    if (!template) return;
-    const nextValue = Math.max(1, Math.min(10, value || 1));
-    const optimistic = { ...template, max_concurrency: nextValue };
-    setTaskTemplates((prev) => prev.map((item) => item.id === templateId ? optimistic : item));
-    try {
-      const saved = await saveTaskTemplate(optimistic);
-      setTaskTemplates((prev) => prev.map((item) => item.id === templateId ? saved : item));
-      setTaskTemplateDialogTemplate((prev) => prev?.id === templateId ? saved : prev);
-    } catch (err) {
-      setTaskTemplates((prev) => prev.map((item) => item.id === templateId ? template : item));
-      reportError("file.write_failed", String((err as Error)?.message || t("taskTemplate.concurrencySaveFailed")));
-    }
-  }, [taskTemplates, t]);
 
   useEffect(() => {
     void loadTaskTemplates();
@@ -158,9 +151,7 @@ export function useTaskTemplates({
   }, [taskCreateTemplateMenuOpen]);
 
   useEffect(() => {
-    if (!taskTemplateActionMenuOpen) {
-      setTaskTemplateConcurrencyOpen(false);
-    } else {
+    if (taskTemplateActionMenuOpen) {
       setTaskCreateTemplateMenuOpen(false);
     }
   }, [taskTemplateActionMenuOpen]);
@@ -176,14 +167,11 @@ export function useTaskTemplates({
     setTaskTemplateFilter,
     taskTemplateActionMenuOpen,
     setTaskTemplateActionMenuOpen,
-    taskTemplateConcurrencyOpen,
-    setTaskTemplateConcurrencyOpen,
     taskCreateTemplateMenuOpen,
     setTaskCreateTemplateMenuOpen,
     loadTaskTemplates,
     openTaskTemplateEditor,
     handleTaskTemplateSaved,
     handleDeleteTaskTemplate,
-    handleTaskTemplateConcurrencyChange,
   };
 }

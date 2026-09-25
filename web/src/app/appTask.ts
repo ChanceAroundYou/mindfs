@@ -6,6 +6,10 @@
 import {  MessageKey ,  MessageParams  } from "../i18n";
 import {  KanbanTask ,  StageRun ,  StageTemplate ,  TaskDetail ,  TaskTemplate  } from "../services/tasks";
 
+/** 新建 agent 段时的默认 agent/模型：claude + sonnet，别再默认 codex。 */
+export const DEFAULT_TASK_AGENT = "claude";
+export const DEFAULT_TASK_MODEL = "sonnet";
+
 export function firstUserInputTemplate(template: TaskTemplate | null): string {
   const first = template?.stages?.[0]?.snapshot;
   return first?.role === "user" ? first.prompt_template || "" : "";
@@ -13,6 +17,30 @@ export function firstUserInputTemplate(template: TaskTemplate | null): string {
 
 export function firstAgentStage(template: TaskTemplate | null): StageTemplate | null {
   return template?.stages?.map((stage) => stage.snapshot).find((stage) => stage.role === "agent") || null;
+}
+
+/**
+ * 新增阶段时继承的那一段：紧挨着新段的上一段 agent 段。
+ * 没有 agent 段就退回默认（claude + sonnet）。
+ */
+export function inheritAgentStage(stages: StageTemplate[], fromIndex: number): StageTemplate {
+  const previous = stages
+    .slice(0, fromIndex)
+    .reverse()
+    .find((stage) => stage.role === "agent");
+  return {
+    name: "",
+    role: "agent",
+    agent: previous?.agent || DEFAULT_TASK_AGENT,
+    model: previous?.model || DEFAULT_TASK_MODEL,
+    mode: previous?.mode || "",
+    effort: previous?.effort || "",
+    fast_service: previous?.fast_service || "",
+    plan_mode: previous?.plan_mode === true,
+    session_reuse_policy: previous?.session_reuse_policy || "task_main",
+    prompt_template: "",
+    auto_advance: false,
+  };
 }
 
 export function isTerminalKanbanTask(task: KanbanTask): boolean {
@@ -123,10 +151,17 @@ export type TaskInlineAttachment = {
 };
 
 export type TaskInlineEditState = {
-  taskId?: string;
   templateId: string;
   templateName: string;
   text: string;
+  /** 新建时的任务名 */
+  name?: string;
+  /** 覆盖下一个 agent 阶段的 agent（空 = 用模板里的） */
+  agentOverride?: string;
+  /** 覆盖下一个 agent 阶段的模型（空 = 用模板里的） */
+  modelOverride?: string;
+  /** 覆盖下一个 agent 阶段的 effort（空 = 用模板里的） */
+  effortOverride?: string;
   previousInputs: Array<{ id: string; label: string; input: string }>;
   createWorktree: boolean;
   worktreeBranchMode: "new" | "existing";
@@ -134,3 +169,32 @@ export type TaskInlineEditState = {
   canToggleWorktree: boolean;
   attachments: TaskInlineAttachment[];
 };
+
+/**
+ * 把 agent/model/effort 覆盖写到模板的**第一个** agent 段上。
+ *
+ * wire 上 stages 是拍平的 StageTemplate[]（不是模板里的 { snapshot } 包装），
+ * 所以这里返回拍平后的段。模板里没有 agent 段、或什么都没覆盖时返回 undefined，
+ * 让后端照模板走。
+ */
+export function applyStageOverride(
+  template: TaskTemplate | null,
+  override: { agent?: string; model?: string; effort?: string },
+): StageTemplate[] | undefined {
+  if (!template) return undefined;
+  if (!override.agent && !override.model && !override.effort) return undefined;
+  let touched = false;
+  const stages = (template.stages || []).map((stage) => {
+    const snapshot = stage.snapshot;
+    if (snapshot?.role !== "agent") return snapshot;
+    if (touched) return snapshot;
+    touched = true;
+    return {
+      ...snapshot,
+      ...(override.agent ? { agent: override.agent } : {}),
+      ...(override.model ? { model: override.model } : {}),
+      ...(override.effort ? { effort: override.effort } : {}),
+    };
+  });
+  return touched ? stages : undefined;
+}

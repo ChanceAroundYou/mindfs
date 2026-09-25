@@ -120,7 +120,7 @@ import {
   type ProjectTreeTab,
 } from "./components/FileTree";
 
-import { applyNodesFromServer, getActiveNode, getNodeById, getNodes, migrateLegacySingleBase, syncNodesFromServer } from "./services/nodeRegistry";
+import { applyNodesFromServer, getActiveNode, getActiveNodeId, getNodeById, getNodes, migrateLegacySingleBase, setActiveNodeId, syncNodesFromServer } from "./services/nodeRegistry";
 
 import { FileViewer } from "./components/FileViewer";
 import { resolveGroupColor } from "./services/sessionGroupDisplay";
@@ -147,7 +147,19 @@ import { MainViewSwitcher } from "./components/MainViewSwitcher";
 import { OnboardingTour } from "./components/OnboardingTour";
 import { WorktreeBranchSelector } from "./components/WorktreeBranchSelector";
 import { NoWorktreeIcon } from "./components/NoWorktreeIcon";
+import { renderToolIcon } from "./components/stream/ToolCallCard";
 import TokenEditor, { type TokenEditorHandle } from "./components/editor/TokenEditor";
+import { PromptEditor } from "./components/PromptEditor";
+import { StageEditor } from "./components/StageEditor";
+import { Select } from "./components/Select";
+import { PanelShell } from "./components/PanelShell";
+import { composerInputStyle } from "./components/composerStyles";
+import {
+  type GitHubImportState,
+  type LocalDirBrowserState,
+  ProjectAddPopover,
+  type ProjectAddMode,
+} from "./components/ProjectAddPopover";
 import { fetchAgents, restartAgent, type AgentStatus } from "./services/agents";
 import { fetchCandidates, type CandidateItem } from "./services/candidates";
 import {
@@ -161,7 +173,6 @@ import {
   moveTask,
   saveTaskTemplate,
   upsertCachedTaskDetails,
-  updateTaskInput,
   type KanbanTask,
   type StageRun,
   type TaskDetail,
@@ -184,6 +195,7 @@ import {
 } from "./services/onboarding";
 
 // 类型定义
+
 import { APP_DOCUMENT_TITLE, AppProps, CHILD_SESSION_PAGE_SIZE, MULTI_PROJECT_SESSION_LIMIT, ManagedRootPayload, SESSION_PAGE_SIZE } from "./app/appMisc";
 import { MainViewMode, URLState } from "./app/appPath";
 import { AttachedFileContext, Exchange, GitFileStat, MultiProjectSessionGroup, PendingSend, RelatedFileClickTarget, SessionItem, SessionMode, SessionQueueItem, SlashCommandResult, ViewerSelection, WSStatus } from "./app/appSession";
@@ -193,7 +205,7 @@ import { buildMatchInputFromPath, buildMessageWithViewContext, hasExplicitFileCo
 import { basenameOfPath, buildDirectorySelectionKey, buildFileScrollKey, buildURLSearch, comparableManagedRootPath, dirnameOfPath, isDirectorySortMode, joinDisplayPath, normalizeCursor, normalizePath, parentDirsOfFile, parseFileLocation, parsePluginQuery, readURLState, relativeDisplayPathFromRoot, rootNodeKey } from "./app/appPath";
 import { hasSessionExchanges, isTopLevelSessionItem, normalizeMode, relatedFileSelectionKey, sessionInputHistory, toSessionItem } from "./app/appSession";
 import { accountScopedKey, loadGitDiffSideBySide, loadLastRootId, loadLastRootNodeId, loadLegacyMainView, loadMainView, loadMobileEnterKeySends, loadPersistedFileScrollPositions, loadPersistedPluginQuery, loadSidebarsSwapped, loadTaskCreateWorktreePreference, persistFileScrollPositions, persistPluginQuery, removeLocalStorageByPrefix, saveTaskCreateWorktreePreference } from "./app/appStorage";
-import { currentTaskInputFromDetail, firstAgentStage, firstTaskInputFromDetail, firstUserInputTemplate, normalizeFastService, previousTaskInputsFromDetail, taskSessionKeysFromDetail } from "./app/appTask";
+import { applyStageOverride, currentTaskInputFromDetail, DEFAULT_TASK_AGENT, DEFAULT_TASK_MODEL, firstAgentStage, firstTaskInputFromDetail, firstUserInputTemplate, isTerminalKanbanTask, latestTaskStageRun, normalizeFastService, parseTaskSessionErrorDetails, parseTaskSessionErrorMessage, previousTaskInputsFromDetail, taskSessionKeysFromDetail, taskStatusLabel } from "./app/appTask";
 import { useCompletionSound } from "./app/useCompletionSound";
 import { useExternalSessionImport } from "./app/useExternalSessionImport";
 import { useGitActions } from "./app/useGitActions";
@@ -206,6 +218,7 @@ import { useSessionStreamCache } from "./app/useSessionStreamCache";
 import { useRealtimeEvents } from "./app/useRealtimeEvents";
 import { useTaskTemplates } from "./app/useTaskTemplates";
 import { CheckIconSmall, PlusSmallIcon, taskCardIconButtonStyle } from "./app/taskIcons";
+
 
 export function App({ onGoHome }: AppProps) {
   const { t } = useI18n();
@@ -415,23 +428,22 @@ export function App({ onGoHome }: AppProps) {
     setTaskTemplateFilter,
     taskTemplateActionMenuOpen,
     setTaskTemplateActionMenuOpen,
-    taskTemplateConcurrencyOpen,
-    setTaskTemplateConcurrencyOpen,
     taskCreateTemplateMenuOpen,
     setTaskCreateTemplateMenuOpen,
     loadTaskTemplates,
     openTaskTemplateEditor,
     handleTaskTemplateSaved,
     handleDeleteTaskTemplate,
-    handleTaskTemplateConcurrencyChange,
-  } = useTaskTemplates({ currentRootId, scopedRootKey });
+  } = useTaskTemplates({ currentRootId, scopedRootKey, getNodeIdForRoot });
 
   useEffect(() => {
     if (!taskInlineEdit) return;
     window.setTimeout(() => {
       taskInlineEditorRef.current?.setText(taskInlineEdit.text || "");
+      // TokenEditor 的 setText 不再抢焦点（常驻挂载的编辑器会夺走整页焦点），开面板时自己聚焦。
+      taskInlineEditorRef.current?.focus();
     }, 0);
-  }, [taskInlineEdit?.taskId, taskInlineEdit?.templateId]);
+  }, [taskInlineEdit?.templateId]);
 
   useEffect(() => {
     if (!taskInlineActiveToken || !currentRootId) {
@@ -651,43 +663,6 @@ export function App({ onGoHome }: AppProps) {
     }
   }, [applyTaskDetails, t]);
 
-  const openTaskEditDialog = useCallback(async (task: KanbanTask, openAttachmentPicker = false) => {
-    const rootId = task.root_id || currentRootIdRef.current;
-    if (!rootId) return;
-    try {
-      const detail = taskDetailsById[task.id];
-      if (!detail) {
-        reportError("file.write_failed", t("task.detailNotSynced"));
-        return;
-      }
-      const firstInput = firstTaskInputFromDetail(detail);
-      const currentInput = currentTaskInputFromDetail(detail);
-	      setTaskInlineEdit({
-	        taskId: task.id,
-	        templateId: task.task_template_id,
-	        templateName: task.task_template_name || t("task.defaultTitle"),
-	        text: currentInput,
-	        previousInputs: previousTaskInputsFromDetail(detail, t),
-	        createWorktree: detail.task.create_worktree === true,
-	        worktreeBranchMode: detail.task.worktree_branch_mode === "existing" ? "existing" : "new",
-	        worktreeBranch: detail.task.worktree_branch || "",
-	        canToggleWorktree: detail.task.current_stage_index === 0 && !detail.task.worktree_path,
-	        attachments: [],
-	      });
-      setTaskInlineActiveToken(null);
-      setTaskInlineCandidates([]);
-      setTaskInlineCandidateIndex(0);
-      setTaskFirstInputById((prev) => ({ ...prev, [task.id]: firstInput }));
-      window.setTimeout(() => {
-        if (openAttachmentPicker) {
-          taskInlineAttachmentInputRef.current?.click();
-        }
-      }, 0);
-    } catch (err) {
-      reportError("file.write_failed", String((err as Error)?.message || t("task.editFailed")));
-    }
-  }, [taskDetailsById, t]);
-
   const loadTaskWorktreeBranches = useCallback(async (rootId: string) => {
     if (!rootId) return;
     setTaskWorktreeBranchesLoading(true);
@@ -716,7 +691,7 @@ export function App({ onGoHome }: AppProps) {
 	  }, [currentRootId, loadTaskWorktreeBranches, taskInlineEdit?.canToggleWorktree, taskInlineEdit?.createWorktree]);
 
 	  useEffect(() => {
-	    if (!taskInlineEdit || taskInlineEdit.taskId || !taskInlineEdit.canToggleWorktree) return;
+	    if (!taskInlineEdit || !taskInlineEdit.canToggleWorktree) return;
 	    const rootId = currentRootIdRef.current || "";
 	    if (!rootId) return;
 	    saveTaskCreateWorktreePreference(rootId, {
@@ -727,7 +702,6 @@ export function App({ onGoHome }: AppProps) {
 	  }, [
 	    taskInlineEdit?.canToggleWorktree,
 	    taskInlineEdit?.createWorktree,
-	    taskInlineEdit?.taskId,
 	    taskInlineEdit?.worktreeBranch,
 	    taskInlineEdit?.worktreeBranchMode,
 	  ]);
@@ -743,6 +717,7 @@ export function App({ onGoHome }: AppProps) {
 	      templateId,
 	      templateName: template?.name || t("task.defaultTitle"),
 	      text: initialText,
+	      name: "",
 	      previousInputs: [],
 	      createWorktree: taskCanCreateWorktree && worktreePref.createWorktree,
 	      worktreeBranchMode: worktreePref.worktreeBranchMode,
@@ -814,17 +789,6 @@ export function App({ onGoHome }: AppProps) {
     event.currentTarget.value = "";
   }, [appendTaskInlineAttachments]);
 
-  const handleTaskInlinePaste = useCallback((event: React.ClipboardEvent<HTMLDivElement>) => {
-    if (taskInlineSaving || !currentRootIdRef.current) return;
-    const clipboardItems = Array.from(event.clipboardData?.items || []);
-    const imageFiles = clipboardItems
-      .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
-      .map((item) => item.getAsFile())
-      .filter((file): file is File => !!file);
-    if (imageFiles.length === 0) return;
-    event.preventDefault();
-    appendTaskInlineAttachments(imageFiles);
-  }, [appendTaskInlineAttachments, taskInlineSaving]);
 
   const removeTaskInlineAttachment = useCallback((id: string) => {
     setTaskInlineEdit((prev) => prev
@@ -862,17 +826,25 @@ export function App({ onGoHome }: AppProps) {
       const payload = [edit.text.trim(), attachmentTokens].filter(Boolean).join("\n");
       const taskCanCreateWorktree = managedRootByIdRef.current[rootId]?.is_git_repo === true;
       const createWorktree = taskCanCreateWorktree && edit.createWorktree;
-      const detail = edit.taskId
-        ? await updateTaskInput(
-            rootId,
-            edit.taskId,
-            payload,
-            edit.canToggleWorktree ? createWorktree : undefined,
-            edit.canToggleWorktree && createWorktree ? edit.worktreeBranchMode : undefined,
-            edit.canToggleWorktree && createWorktree ? edit.worktreeBranch : undefined,
-            getNodeIdForRoot(rootId),
-          )
-        : await createTask(rootId, edit.templateId, payload, createWorktree, edit.worktreeBranchMode, edit.worktreeBranch, getNodeIdForRoot(rootId));
+      // 有 agent/模型覆盖才带 stages（applyStageOverride 内部处理：只改第一个
+      // agent 段、没覆盖时返回 undefined 让后端照模板走）。
+      const overrideStages = applyStageOverride(
+        taskTemplates.find((tpl) => tpl.id === edit.templateId) || null,
+        { agent: edit.agentOverride, model: edit.modelOverride, effort: edit.effortOverride },
+      );
+      const detail = await createTask(
+        rootId,
+        edit.templateId,
+        payload,
+        createWorktree,
+        edit.worktreeBranchMode,
+        edit.worktreeBranch,
+        getNodeIdForRoot(rootId),
+        {
+          ...(edit.name?.trim() ? { name: edit.name.trim() } : {}),
+          ...(overrideStages ? { stages: overrideStages } : {}),
+        },
+      );
       applyTaskDetails(rootId, [detail]);
       if (detail.task.worktree_path) {
         void refreshTaskWorktree(rootId, detail.task.worktree_path);
@@ -886,48 +858,9 @@ export function App({ onGoHome }: AppProps) {
       setTaskInlineUploadProgress(null);
       taskInlineUploadAbortRef.current = null;
     }
-  }, [applyTaskDetails, closeTaskEditDialog, taskInlineEdit, t]);
+  }, [applyTaskDetails, closeTaskEditDialog, taskInlineEdit, taskTemplates, t]);
 
-  const handleTaskInlineEditorKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (taskInlineCandidates.length === 0) {
-      return;
-    }
-    if (event.key === "ArrowDown") {
-      event.preventDefault();
-      setTaskInlineCandidateIndex((prev) => (prev + 1) % taskInlineCandidates.length);
-      return;
-    }
-    if (event.key === "ArrowUp") {
-      event.preventDefault();
-      setTaskInlineCandidateIndex((prev) => (prev - 1 + taskInlineCandidates.length) % taskInlineCandidates.length);
-      return;
-    }
-    if (event.key === "Tab") {
-      event.preventDefault();
-      applyTaskInlineCandidate(taskInlineCandidates[taskInlineCandidateIndex] || taskInlineCandidates[0]);
-      return;
-    }
-    if (event.key === "Escape") {
-      event.preventDefault();
-      event.stopPropagation();
-      setTaskInlineCandidates([]);
-      setTaskInlineCandidateIndex(0);
-    }
-  }, [applyTaskInlineCandidate, taskInlineCandidates, taskInlineCandidateIndex]);
 
-  const handleTaskInlineEditorEnter = useCallback((event: KeyboardEvent | null) => {
-    if (event?.shiftKey) {
-      return false;
-    }
-    if (taskInlineCandidates.length > 0) {
-      event?.preventDefault();
-      event?.stopPropagation();
-      applyTaskInlineCandidate(taskInlineCandidates[taskInlineCandidateIndex] || taskInlineCandidates[0]);
-      return true;
-    }
-    void saveTaskInlineEdit();
-    return true;
-  }, [applyTaskInlineCandidate, saveTaskInlineEdit, taskInlineCandidates, taskInlineCandidateIndex]);
 
   useEffect(() => {
     try {
@@ -1031,6 +964,17 @@ export function App({ onGoHome }: AppProps) {
     setCurrentRootNodeId(nid || null);
     // 无条件更新模块级 root→node 映射，保证路由/作用域解析在任何时机都正确
     setRootNodeId(rid, nid || undefined);
+    // active node 跟着选中的项目走：选中哪个项目，请求就该发到那台机器。
+    // 之前 active node 只由节点切换器改，于是「本机项目 + 上次点过 pc」的组合下，
+    // 所有不带 nodeId 的请求（模板、会话…）都发去了 pc，页面看着在本机、数据却是
+    // 另一台机器的。项目本身知道自己在哪个节点，选中它时把 active 一起切过去。
+    if (nid) {
+      const known = getNodeById(nid);
+      if (known && getActiveNodeId() !== nid) {
+        setActiveNodeId(nid);
+        window.dispatchEvent(new CustomEvent("mindfs:nodes-changed"));
+      }
+    }
     if (prevNid && nid && prevNid !== nid) {
       // 同名项目跨节点切换：清掉该 root 的会话选择状态，避免把另一节点的会话恢复到错误节点
       const scopedRid = scopeKey(nid, rid);
@@ -8112,7 +8056,6 @@ export function App({ onGoHome }: AppProps) {
       handleSelectKanbanTask={handleSelectKanbanTask}
       handleMoveKanbanTask={handleMoveKanbanTask}
       openTaskCreateDialog={openTaskCreateDialog}
-      openTaskEditDialog={openTaskEditDialog}
       handleTaskSessionDrawerOpen={handleTaskSessionDrawerOpen}
       setTaskSessionErrorDialog={setTaskSessionErrorDialog}
       loadKanbanTasks={loadKanbanTasks}
@@ -8130,7 +8073,9 @@ export function App({ onGoHome }: AppProps) {
         handleDeleteTaskTemplate,
       }}
     />
+
   );
+
   if (mainView === "chat" && !selectedSession) {
     // chat 模式但没有选中会话：给一个明确空态，而不是把看板/文件列表塞回来（否则看起来像「自己跳走了」）
     workspaceView = (
@@ -9095,122 +9040,113 @@ export function App({ onGoHome }: AppProps) {
       {taskInlineEdit ? (
 	        (() => {
 	          const taskInlineCanCreateWorktree = managedRootByIdRef.current[currentRootId || ""]?.is_git_repo === true;
-	          const showTaskWorktreeControls = taskInlineCanCreateWorktree && (taskInlineEdit.canToggleWorktree || taskInlineEdit.taskId);
+	          const showTaskWorktreeControls = taskInlineCanCreateWorktree && taskInlineEdit.canToggleWorktree;
 	          const taskWorktreeControlsEditable = taskInlineEdit.canToggleWorktree;
+	          // 编辑区里的 agent 选择器：默认值就是「下一个 agent 阶段」在模板里
+	          // 的 agent/model，用户没动过就不写覆盖，让后端照模板走。
+	          const taskInlineTemplateAgent = firstAgentStage(
+	            taskTemplates.find((tpl) => tpl.id === taskInlineEdit.templateId) || null,
+	          );
+	          const taskInlineHasAgentStage = !!taskInlineTemplateAgent;
+	          // 喂给 StageEditor 的那一段：user 段（角色不可切、没有段名），
+	          // 但带上「下一个 agent 阶段」的 agent/model/effort，选择器才有默认值。
+	          const createTaskInputStage: StageTemplate = {
+	            name: "",
+	            role: "user",
+	            prompt_template: taskInlineEdit.text,
+	            // 模板里第一个 agent 段没写 agent/model 时退回 claude + sonnet。
+	            agent: taskInlineEdit.agentOverride || taskInlineTemplateAgent?.agent || DEFAULT_TASK_AGENT,
+	            model: taskInlineEdit.modelOverride || taskInlineTemplateAgent?.model || DEFAULT_TASK_MODEL,
+	            effort: taskInlineEdit.effortOverride || taskInlineTemplateAgent?.effort || "",
+	          };
 	          return (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            zIndex: 95,
-            background: "rgba(15, 23, 42, 0.36)",
-            display: "flex",
-            alignItems: isMobile ? "flex-start" : "center",
-            justifyContent: "center",
-            padding: isMobile ? "38px 12px 12px" : "24px",
-          }}
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget && !taskInlineSaving) {
-              closeTaskEditDialog();
-            }
-          }}
-        >
-          <section
-            style={{
-              width: isMobile ? "100%" : "min(640px, 100%)",
-              maxHeight: isMobile ? "70dvh" : "82vh",
-              borderRadius: "10px",
-              border: "1px solid var(--border-color)",
-              background: "var(--menu-bg)",
-              boxShadow: "0 24px 60px rgba(15, 23, 42, 0.24)",
-              display: "flex",
-              flexDirection: "column",
-              overflow: "visible",
-            }}
-          >
-            <div
-              style={{
-                minHeight: "42px",
-                padding: "8px 12px",
-                borderBottom: "1px solid var(--border-color)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: "10px",
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "8px", minWidth: 0 }}>
-                <div style={{ fontSize: "13px", fontWeight: 800, color: "var(--text-color)", whiteSpace: "nowrap" }}>
-                  {t(taskInlineEdit.taskId ? "task.editDialogTitle" : "task.createDialogTitle", {
-                    name: taskInlineEdit.templateName || t("task.defaultTitle"),
-                  })}
-                </div>
-	                {showTaskWorktreeControls ? (
-	                  <>
-	                    <button
-	                      type="button"
-	                      onClick={() => {
-	                        if (!taskWorktreeControlsEditable) return;
-	                        setTaskInlineEdit((prev) => prev ? { ...prev, createWorktree: !prev.createWorktree } : prev);
-	                      }}
-	                      disabled={taskInlineSaving || !taskWorktreeControlsEditable}
-                      aria-label={taskInlineEdit.createWorktree ? t("task.worktreeTitle") : t("task.noWorktreeTitle")}
-                      title={taskInlineEdit.createWorktree ? t("task.worktreeTitle") : t("task.noWorktreeTitle")}
-                      style={{
-                        height: "26px",
-                        borderRadius: "6px",
-                        border: taskInlineEdit.createWorktree ? "1px solid rgba(22, 163, 74, 0.28)" : "1px solid var(--border-color)",
-                        background: taskInlineEdit.createWorktree ? "rgba(22, 163, 74, 0.08)" : "rgba(100, 116, 139, 0.10)",
-                        color: taskInlineEdit.createWorktree ? "#15803d" : "var(--text-secondary)",
-                        padding: taskInlineEdit.createWorktree ? "0 8px" : "0 8px 0 5px",
-                        fontSize: "12px",
-                        fontWeight: 800,
-	                        cursor: taskInlineSaving || !taskWorktreeControlsEditable ? "not-allowed" : "pointer",
-	                        whiteSpace: "nowrap",
-	                        opacity: taskInlineSaving || !taskWorktreeControlsEditable ? 0.72 : 1,
-                        display: "inline-flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        gap: "3px",
-                      }}
-                    >
-                      {taskInlineEdit.createWorktree ? "worktree" : (
-                        <>
-                          <NoWorktreeIcon size={12} />
-                          worktree
-                        </>
-                      )}
-                    </button>
-                    {taskInlineEdit.createWorktree ? (
-                      <div style={{ display: "flex", alignItems: "center", gap: "6px", minWidth: 0 }}>
-	                        <WorktreeBranchSelector
-	                          branchMode={taskInlineEdit.worktreeBranchMode}
-	                          branch={taskInlineEdit.worktreeBranch}
-	                          branches={taskWorktreeBranches.branches}
-                          disabled={taskInlineSaving || !taskWorktreeControlsEditable}
-                          height={26}
-                          maxWidth={isMobile ? 160 : 240}
-                          menuAlign={isMobile ? "left" : "right"}
-                          menuPlacement="bottom"
-                          onChange={(nextMode, nextBranch) => {
-                            setTaskInlineEdit((prev) => {
-                              if (!prev) return prev;
-                              return { ...prev, worktreeBranchMode: nextMode, worktreeBranch: nextBranch };
-                            });
-                          }}
-                        />
-                        {taskWorktreeBranchesLoading ? (
-                          <span style={{ fontSize: "11px", color: "var(--text-secondary)", whiteSpace: "nowrap" }}>{t("common.loading")}</span>
-                        ) : taskWorktreeBranchError ? (
-                          <span title={taskWorktreeBranchError} style={{ fontSize: "11px", color: "#b45309", whiteSpace: "nowrap" }}>{t("common.loadingFailed")}</span>
-                        ) : null}
-                      </div>
-                    ) : null}
-                  </>
-                ) : null}
+        <PanelShell
+          width={640}
+          minHeight={isMobile ? undefined : 480}
+          onClose={() => { if (!taskInlineSaving) closeTaskEditDialog(); }}
+          closeOnOverlayClick
+          title={(
+            <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "8px", minWidth: 0 }}>
+              <div style={{ fontSize: "13px", fontWeight: 800, color: "var(--text-color)", whiteSpace: "nowrap" }}>
+                {t("task.createDialogTitle", {
+                  name: taskInlineEdit.templateName || t("task.defaultTitle"),
+                })}
               </div>
+              {taskTemplates.length > 0 ? (
+                <div style={{ minWidth: "120px", maxWidth: "160px" }}>
+                  <Select
+                    value={taskInlineEdit.templateId}
+                    ariaLabel={t("task.selectTemplate")}
+                    onChange={(value) => {
+                      const picked = taskTemplates.find((tpl) => tpl.id === value);
+                      if (!picked) return;
+                      setTaskInlineEdit((prev) => prev ? { ...prev, templateId: picked.id || "", templateName: picked.name, text: firstUserInputTemplate(picked) } : prev);
+                      setTaskInlineActiveToken(null);
+                      setTaskInlineCandidates([]);
+                    }}
+                    options={taskTemplates.map((tpl) => ({ value: tpl.id || "", label: tpl.name }))}
+                    size="panel"
+                  />
+                </div>
+              ) : null}
+              {showTaskWorktreeControls ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!taskWorktreeControlsEditable) return;
+                    setTaskInlineEdit((prev) => prev ? { ...prev, createWorktree: !prev.createWorktree } : prev);
+                  }}
+                  disabled={taskInlineSaving || !taskWorktreeControlsEditable}
+                  aria-label={taskInlineEdit.createWorktree ? t("task.worktreeTitle") : t("task.noWorktreeTitle")}
+                  title={taskInlineEdit.createWorktree ? t("task.worktreeTitle") : t("task.noWorktreeTitle")}
+                  style={{
+                    height: "26px",
+                    borderRadius: "6px",
+                    border: taskInlineEdit.createWorktree ? "1px solid rgba(22, 163, 74, 0.28)" : "1px solid var(--border-color)",
+                    background: taskInlineEdit.createWorktree ? "rgba(22, 163, 74, 0.08)" : "rgba(100, 116, 139, 0.10)",
+                    color: taskInlineEdit.createWorktree ? "#15803d" : "var(--text-secondary)",
+                    padding: "0 8px",
+                    fontSize: "12px",
+                    fontWeight: 700,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: "3px",
+                    flexShrink: 0,
+                  }}
+                >
+                  {taskInlineEdit.createWorktree ? "worktree" : (
+                    <>
+                      <NoWorktreeIcon size={12} />
+                      worktree
+                    </>
+                  )}
+                </button>
+              ) : null}
+              {showTaskWorktreeControls && taskInlineEdit.createWorktree ? (
+                <div style={{ display: "flex", alignItems: "center", gap: "6px", minWidth: 0 }}>
+                  <WorktreeBranchSelector
+                    branchMode={taskInlineEdit.worktreeBranchMode}
+                    branch={taskInlineEdit.worktreeBranch}
+                    branches={taskWorktreeBranches.branches}
+                    disabled={taskInlineSaving || !taskWorktreeControlsEditable}
+                    height={26}
+                    maxWidth={isMobile ? 160 : 240}
+                    menuAlign={isMobile ? "left" : "right"}
+                    menuPlacement="bottom"
+                    onChange={(nextMode, nextBranch) => {
+                      setTaskInlineEdit((prev) => {
+                        if (!prev) return prev;
+                        return { ...prev, worktreeBranchMode: nextMode, worktreeBranch: nextBranch };
+                      });
+                    }}
+                  />
+                </div>
+              ) : null}
             </div>
-            <div style={{ padding: "12px", overflow: "visible", position: "relative", minHeight: 0, display: "flex", flexDirection: "column" }}>
+          )}
+        >
+          <div style={{ padding: "12px", overflow: "visible", position: "relative", minHeight: 0, display: "flex", flexDirection: "column" }}>
               {taskInlineActiveToken && taskInlineCandidates.length > 0 ? (
                 <div
                   style={{
@@ -9264,6 +9200,14 @@ export function App({ onGoHome }: AppProps) {
                   ))}
                 </div>
               ) : null}
+              <div style={{ marginBottom: "10px", display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                <input
+                  value={taskInlineEdit.name}
+                  onChange={(event) => setTaskInlineEdit((prev) => prev ? { ...prev, name: event.target.value } : prev)}
+                  placeholder={t("task.namePlaceholder")}
+                  style={{ ...composerInputStyle, flex: "1 1 auto", height: "30px" }}
+                />
+              </div>
               {taskInlineEdit.previousInputs.length > 0 ? (
                 <div
                   style={{
@@ -9310,72 +9254,26 @@ export function App({ onGoHome }: AppProps) {
                   ))}
                 </div>
               ) : null}
-              <div style={{ position: "relative" }}>
-                <div
-                  style={{
-                    position: "relative",
-                    height: "112px",
-                    border: "1px solid var(--border-color)",
-                    borderRadius: "8px",
-                    background: "var(--input-bg)",
-                    overflow: "auto",
-                  }}
-                >
-                  <TokenEditor
-                    ref={taskInlineEditorRef}
-                    placeholder={t("task.editPlaceholder")}
-                    disabled={taskInlineSaving}
-                    isDark={false}
-                    rightInset={42}
-                    topInset={0}
-                    bottomInset={12}
-                    fillHeight
-                    onChange={(payload) => {
-                      setTaskInlineEdit((prev) => prev ? { ...prev, text: payload.serializedText } : prev);
-                      setTaskInlineActiveToken(payload.activeToken);
-                    }}
-                    onFocusChange={(focused) => {
-                      if (!focused) {
-                        setTaskInlineActiveToken(null);
-                        setTaskInlineCandidates([]);
-                        setTaskInlineCandidateIndex(0);
-                      }
-                    }}
-                    onPaste={handleTaskInlinePaste}
-                    onKeyDown={handleTaskInlineEditorKeyDown}
-                    onEnter={handleTaskInlineEditorEnter}
-                  />
-                </div>
-                <button
-                  type="button"
-                  title={t("task.addAttachment")}
-                  aria-label={t("task.addAttachment")}
-	                  disabled={taskInlineSaving}
-	                  onClick={() => {
-	                    taskInlineAttachmentInputRef.current?.click();
-	                  }}
-                  style={{
-                    position: "absolute",
-                    right: "6px",
-                    bottom: "6px",
-                    zIndex: 3,
-                    width: "28px",
-                    height: "28px",
-                    border: "none",
-                    borderRadius: "8px",
-                    background: "var(--button-bg)",
-                    color: "var(--text-secondary)",
-                    cursor: taskInlineSaving ? "not-allowed" : "pointer",
-                    opacity: taskInlineSaving ? 0.55 : 1,
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    padding: 0,
-                  }}
-                >
-                  <PlusSmallIcon />
-                </button>
-              </div>
+              <StageEditor
+                editorRef={taskInlineEditorRef}
+                stage={createTaskInputStage}
+                agents={availableAgents}
+                onChange={(patch) => setTaskInlineEdit((prev) => prev ? {
+                  ...prev,
+                  text: patch.prompt_template ?? prev.text,
+                  ...(patch.agent ? { agentOverride: patch.agent } : {}),
+                  ...(patch.model !== undefined ? { modelOverride: patch.model } : {}),
+                  ...(patch.effort !== undefined ? { effortOverride: patch.effort } : {}),
+                } : prev)}
+                /* 这个编辑区本身是 user 段，但新建时要在这里挑「下一个 agent 阶段」
+                   用哪个 agent/模型，所以把 PromptEditor 自带的 AgentSelector 打开。
+                   默认值取模板里第一个 agent 段的 agent/model（createTaskInputStage）。 */
+                showAgentSelector={taskInlineHasAgentStage}
+                onSend={() => void saveTaskInlineEdit()}
+                sending={taskInlineSaving}
+                sendDisabled={!taskInlineEdit.text.trim()}
+                placeholder={t("task.editPlaceholder")}
+              />
               {taskInlineEdit.attachments.length > 0 || taskInlineUploadProgress ? (
                 <div style={{ marginTop: "10px", display: "flex", flexWrap: "wrap", gap: "8px" }}>
                   {taskInlineEdit.attachments.map((attachment) => attachment.isImage && attachment.previewUrl ? (
@@ -9485,18 +9383,9 @@ export function App({ onGoHome }: AppProps) {
                 >
                   {t("common.cancel")}
                 </button>
-                <button
-                  type="button"
-                  onClick={() => void saveTaskInlineEdit()}
-                  disabled={taskInlineSaving}
-                  style={{ height: "30px", borderRadius: "6px", border: "1px solid var(--accent-color)", background: "var(--accent-color)", color: "#fff", padding: "0 14px", fontWeight: 800, cursor: taskInlineSaving ? "not-allowed" : "pointer", opacity: taskInlineSaving ? 0.7 : 1 }}
-                >
-                  {taskInlineSaving ? t("common.saving") : t("common.save")}
-                </button>
               </div>
             </div>
-          </section>
-        </div>
+    </PanelShell>
           );
         })()
       ) : null}
@@ -9586,6 +9475,7 @@ export function App({ onGoHome }: AppProps) {
         template={taskTemplateDialogTemplate}
         onClose={() => setTaskTemplateDialogOpen(false)}
         onSaved={handleTaskTemplateSaved}
+        nodeId={currentRootId ? getNodeIdForRoot(currentRootId) : undefined}
       />
       {selectedKanbanTask ? (
         <TaskDetailPanel
@@ -9594,8 +9484,8 @@ export function App({ onGoHome }: AppProps) {
           nodeId={currentRootNodeId || undefined}
           onClose={() => setSelectedKanbanTaskId("")}
           onOpenSession={(sessionKey) => handleTaskSessionDrawerOpen(sessionKey, selectedKanbanTask.root_id || currentRootIdRef.current, selectedKanbanTask.id)}
-          onEditInput={() => { setSelectedKanbanTaskId(""); void openTaskEditDialog(selectedKanbanTask); }}
           onMoved={(next) => applyTaskDetails(next.task.root_id || currentRootIdRef.current || "", [next])}
+          accentColor={getDisplayNodeColor(String(selectedKanbanTask.root_id || currentRootId || "")) || undefined}
         />
       ) : null}
       <ToastContainer />

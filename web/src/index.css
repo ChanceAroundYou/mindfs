@@ -53,6 +53,20 @@
   --root-badge-text: #4f46e5;
   --node-badge-bg: rgba(148, 163, 184, 0.14);
   --node-row-selected-bg: rgba(148, 163, 184, 0.16);
+
+  /* 历史别名：这些名字被多处引用，但从未在此定义过 —— 声明整条失效（浏览器解析不出
+     var() 时按 invalid at computed-value time 丢弃），依赖它们的地方一直静默退化成
+     「无颜色/透明」。统一映射到真实变量，只此一处，各主题自动跟随：别名在 :root 上
+     求值，:root[data-theme=…] 覆盖 --text-primary 等之后照样生效。 */
+  --text-color: var(--text-primary);
+  --muted-text: var(--text-secondary);
+  /* 输入框底色与面板同色、靠边框区分：这样「已执行=浅灰底 / 未执行=正常底」的对比
+     保持既有观感（未执行态原本就因为本变量失效而呈面板色，已是确认过的效果）。 */
+  --input-bg: var(--panel-bg);
+  --background-color: var(--panel-bg);
+  --bg-primary: var(--panel-bg);
+  /* 次要按钮底色：半透明灰在深浅主题下都成立。 */
+  --button-bg: rgba(100, 116, 139, 0.12);
 }
 
 /* Region font preferences preserve the existing type hierarchy while scaling text only. */

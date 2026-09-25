@@ -248,6 +248,15 @@ export function getActiveNode(): NodeConnection | null {
     const found = nodes.find((n) => n.id === activeId);
     if (found) return found;
   }
+  // 存的 active id 解析不出来（首次同步前被清、节点被删/重加换了 id、或从另一台
+  // 设备带来的旧 id）时**不要退到 nodes[0]** —— 那可能正是另一台机器，于是所有
+  // 不带 nodeId 的请求（appURL(undefined) → getApiBaseURL → getActiveNode）
+  // 会静默打到那台机器上：页面明明开在本机，模板/会话却读的是 pc 的数据，
+  // 而且两边 id/名字都一样，肉眼完全看不出来。
+  // local 节点的 URL 是按当前 origin 推导的（见 deviceLocalNodeURL），正是
+  // 「页面所在这台机器」，拿不到 active id 时应该选它。
+  const local = nodes.find((n) => n.id === LOCAL_NODE_ID);
+  if (local) return local;
   return nodes[0] || null;
 }
 

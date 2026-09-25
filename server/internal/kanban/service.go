@@ -89,6 +89,13 @@ type UpdateStageInput struct {
 	Stage  *StageTemplate // 全量替换该段定义
 }
 
+// RemoveStageInput 删除任务流水里尚未执行的一段。
+type RemoveStageInput struct {
+	RootID string
+	TaskID string
+	Index  int
+}
+
 func (s *Service) ListStageTemplates(ctx context.Context) ([]StageTemplate, error) {
 	if s == nil || s.Templates == nil {
 		return nil, errors.New("template store not configured")
@@ -182,7 +189,7 @@ func (s *Service) CreateTask(ctx context.Context, in CreateTaskInput) (TaskDetai
 		WorktreeBranchMode: branchMode,
 		WorktreeBranch:     branch,
 		CurrentStageIndex:  0,
-		Status:             StatusWaitingUser,
+		Status:             StatusPending,
 		Labels:             []string{},
 		CreatedAt:          now,
 		UpdatedAt:          now,
@@ -193,7 +200,7 @@ func (s *Service) CreateTask(ctx context.Context, in CreateTaskInput) (TaskDetai
 		StageIndex: 0,
 		StageName:  first.Name,
 		Role:       RoleUser,
-		Status:     StageStatusWaitingUser,
+		Status:     StageStatusPending,
 		Input:      strings.TrimSpace(in.Input),
 		CreatedAt:  now,
 		UpdatedAt:  now,
@@ -330,10 +337,7 @@ func (s *Service) AddStage(ctx context.Context, in AddStageInput) (TaskDetail, e
 		return TaskDetail{}, err
 	}
 	stage := normalizeStageTemplate(in.Stage)
-	if strings.TrimSpace(stage.PromptTemplate) == "" {
-		return TaskDetail{}, errors.New("stage prompt required")
-	}
-	if task.Status == StatusWaitingUser {
+	if task.Status == StatusWaitingUser && strings.TrimSpace(stage.PromptTemplate) != "" {
 		stage.Name = defaultStageName(task, len(task.Stages))
 		task.Stages = append(task.Stages, stage)
 		if latest, runErr := store.LatestStageRun(ctx, task.ID, task.CurrentStageIndex); runErr == nil {
@@ -387,6 +391,65 @@ func (s *Service) UpdateStage(ctx context.Context, in UpdateStageInput) (TaskDet
 	if err := store.UpdateTask(ctx, task); err != nil {
 		return TaskDetail{}, err
 	}
+	detail, err := store.GetDetail(ctx, task.ID)
+	if err == nil && s.Runner != nil {
+		s.Runner.TaskUpdated(task.RootID, detail)
+	}
+	return detail, err
+}
+
+// RemoveStage 删除任务流水里尚未执行的一段。
+// index 0 是任务输入段，不可删；当前指针所在段不可删（执行体正对着它）；
+// 产生过 StageRun 的段也不可删（要改走 UpdateStage）。
+func (s *Service) RemoveStage(ctx context.Context, in RemoveStageInput) (TaskDetail, error) {
+	store, err := s.taskStore(in.RootID)
+	if err != nil {
+		return TaskDetail{}, err
+	}
+	task, err := s.ensureServiceTask(ctx, in.RootID, store, strings.TrimSpace(in.TaskID))
+	if err != nil {
+		return TaskDetail{}, err
+	}
+	idx := in.Index
+	if idx <= 0 || idx >= len(task.Stages) {
+		return TaskDetail{}, errors.New("stage_index out of range")
+	}
+	if idx == task.CurrentStageIndex {
+		return TaskDetail{}, errors.New("current stage cannot be removed")
+	}
+	runs, err := store.ListStageRuns(ctx, task.ID)
+	if err != nil {
+		return TaskDetail{}, err
+	}
+	for _, run := range runs {
+		if run.StageIndex == idx && run.Status != StageStatusPending {
+			return TaskDetail{}, errors.New("stage already executed")
+		}
+	}
+
+	task.Stages = append(task.Stages[:idx], task.Stages[idx+1:]...)
+	if idx < task.CurrentStageIndex {
+		task.CurrentStageIndex--
+	}
+	if task.CurrentStageIndex >= len(task.Stages) {
+		task.CurrentStageIndex = len(task.Stages) - 1
+	}
+	if task.CurrentStageIndex < 0 {
+		task.CurrentStageIndex = 0
+	}
+	now := time.Now().UTC()
+	task.AuxFlags.SessionError = ""
+	task.UpdatedAt = now
+	if err := store.UpdateTask(ctx, task); err != nil {
+		return TaskDetail{}, err
+	}
+	_ = store.AddEvent(ctx, TaskEvent{
+		ID:        newID("event"),
+		TaskID:    task.ID,
+		Type:      "stage_removed",
+		Payload:   eventPayload(map[string]any{"stage_index": idx}),
+		CreatedAt: now,
+	})
 	detail, err := store.GetDetail(ctx, task.ID)
 	if err == nil && s.Runner != nil {
 		s.Runner.TaskUpdated(task.RootID, detail)
@@ -540,6 +603,21 @@ func (s *Service) RunNow(ctx context.Context, in MoveInput) (TaskDetail, error) 
 	switch task.Status {
 	case StatusWaitingUser:
 		return s.Next(ctx, in)
+	case StatusPending:
+		// 未开始态点「开始」= 批准当前 user 段并跑起来。已经停在最后一段时
+		// 没有下一段可进（moveRelative 会报 out of range），直接执行体推进即可。
+		// 曾经这里对 pending 一律只调 RunTask 不推进阶段，多段任务会卡在待审核，
+		// 用户得再点一次「执行」。
+		if task.CurrentStageIndex >= len(task.Stages)-1 {
+			break
+		}
+		detail, nerr := s.Next(ctx, in)
+		// worktree 建不起来时 moveRelative 会报错，但错误已经记在任务上了：
+		// 「开始」不该因此失败，返回当前详情让前端显示那条错误。
+		if nerr != nil && task.CreateWorktree && strings.TrimSpace(task.WorktreePath) == "" {
+			return store.GetDetail(ctx, task.ID)
+		}
+		return detail, nerr
 	case StatusRunning, StatusPaused:
 		return store.GetDetail(ctx, task.ID)
 	}
@@ -668,7 +746,7 @@ func (s *Service) KickPending(rootID string) {
 			return
 		}
 		for _, task := range tasks {
-			if isTerminalStatus(task.Status) || task.Status == StatusWaitingUser || task.Status == StatusPaused {
+			if isTerminalStatus(task.Status) || task.Status == StatusWaitingUser || task.Status == StatusPending || task.Status == StatusPaused {
 				continue
 			}
 			if strings.TrimSpace(task.AuxFlags.SessionError) != "" {

@@ -18,6 +18,7 @@ import {
   type ProjectAddMode,
 } from "../components/ProjectAddPopover";
 import { useI18n } from "../i18n";
+import { Select } from "../components/Select";
 
 type OpenDirPayload = { path: string; root: string; isRoot: boolean; forceDirectory?: boolean };
 
@@ -605,11 +606,10 @@ export function useProjectLifecycle({
   const worktreeBranchSelector =
     creatingRootKind === "worktree" ? (
       <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
-        <select
+        <Select
           value={worktreeBranchMode === "new" ? "__new__" : worktreeBranch}
           disabled={creatingRootBusy}
-          onChange={(event) => {
-            const value = event.target.value;
+          onChange={(value) => {
             if (value === "__new__") {
               setWorktreeBranchMode("new");
               setWorktreeBranch("");
@@ -618,24 +618,14 @@ export function useProjectLifecycle({
             setWorktreeBranchMode("existing");
             setWorktreeBranch(value);
           }}
-          style={{
-            width: "100%",
-            borderRadius: "7px",
-            border: "1px solid var(--border-color)",
-            background: "var(--menu-bg)",
-            color: "var(--text-primary)",
-            fontSize: "12px",
-            padding: "6px 8px",
-            outline: "none",
-          }}
-        >
-          <option value="__new__">{t("worktree.createBranch")}</option>
-          {worktreeBranches.branches.map((branch) => (
-            <option key={branch.name} value={branch.name}>
-              {branch.current ? `${branch.name} ${t("worktree.current")}` : branch.name}
-            </option>
-          ))}
-        </select>
+          options={[
+            { value: "__new__", label: t("worktree.createBranch") },
+            ...worktreeBranches.branches.map((branch) => ({
+              value: branch.name,
+              label: branch.current ? `${branch.name} ${t("worktree.current")}` : branch.name,
+            })),
+          ]}
+        />
         {worktreeBranchesLoading ? (
           <span style={{ fontSize: "11px", color: "var(--text-secondary)" }}>{t("worktree.loadingBranches")}</span>
         ) : worktreeBranchError ? (

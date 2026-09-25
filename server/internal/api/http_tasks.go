@@ -456,6 +456,28 @@ func (h *HTTPHandler) handleKanbanTaskUpdateStage(w http.ResponseWriter, r *http
 	respondJSON(w, http.StatusOK, detail)
 }
 
+func (h *HTTPHandler) handleKanbanTaskRemoveStage(w http.ResponseWriter, r *http.Request) {
+	svc, ok := h.kanbanService(w)
+	if !ok {
+		return
+	}
+	var req struct {
+		RootID string `json:"root_id"`
+		Index  int    `json:"index"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<20)).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("invalid json body"))
+		return
+	}
+	detail, err := svc.RemoveStage(r.Context(), kanban.RemoveStageInput{RootID: req.RootID, TaskID: chi.URLParam(r, "id"), Index: req.Index})
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err)
+		return
+	}
+	h.broadcastTaskUpdated(req.RootID, detail)
+	respondJSON(w, http.StatusOK, detail)
+}
+
 func (h *HTTPHandler) broadcastTaskUpdated(rootID string, detail kanban.TaskDetail) {
 	if h == nil || h.AppContext == nil {
 		return

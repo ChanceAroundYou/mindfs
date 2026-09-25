@@ -37,15 +37,21 @@ export function EditorBridge({
   onReady,
   onEnter,
   onDeleteToken,
+  readOnly,
 }: {
   onChange: (payload: BridgeOnChangePayload) => void;
   onReady: (api: { editor: LexicalEditor; root: HTMLDivElement | null }) => void;
   onEnter?: (event: KeyboardEvent | null) => boolean;
   onDeleteToken: (forward: boolean) => boolean;
+  readOnly?: boolean;
 }) {
   const [editor] = useLexicalComposerContext();
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [rootElement, setRootElement] = useState<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    editor.setEditable(!readOnly);
+  }, [editor, readOnly]);
 
   useEffect(() => {
     return editor.registerRootListener((rootElement) => {
