@@ -16,11 +16,29 @@ assert.match(
   "project board should win when a project is open; workspace is the no-project fallback",
 );
 
-// 快速发起必须自带 user 首段 + 任务名：后端在无模板时要求 stages[0].role === "user"
+// 工作台快速发起不再自己 createTask —— 它挑完项目 + 模板就打开看板那套新建任务面板，
+// 模板/worktree/agent/附件只有一份实现。存活的唯一「无模板建任务」入口因此消失，
+// 后端 stages[0].role === "user" 的要求改由 openTaskCreateDialog 选的模板保证。
 assert.match(
   app,
-  /createTask\(rootId, "", text, false, "new", "", getNodeIdForRoot\(rootId\), \{[\s\S]*?stages: \[\{ name: "", role: "user" \} as StageTemplate\]/,
-  "quick launch should create a task with an explicit user stage and no template",
+  /const handleWorkspaceCreateTask = useCallback\(\(rootId: string, _nodeId: string, template: TaskTemplate\) => \{\s*\n\s*openTaskCreateDialog\(template, rootId\);/,
+  "workspace quick launch must hand off to the shared create-task dialog, not build a second one",
+);
+// 面板得知道自己往哪个项目建：targetRootId 缺省才是当前项目（看板入口走这条）
+assert.match(
+  app,
+  /const openTaskCreateDialog = useCallback\(\(template: TaskTemplate \| null, targetRootId\?: string\)/,
+  "openTaskCreateDialog must accept the target project",
+);
+assert.match(
+  app,
+  /const rootId = edit\?\.targetRootId \|\| currentRootIdRef\.current;/,
+  "saving must target the dialog's project, not whatever project happens to be selected",
+);
+assert.doesNotMatch(
+  app,
+  /createTask\(rootId, "", text, false, "new", "", getNodeIdForRoot\(rootId\)/,
+  "the template-less createTask path must be gone",
 );
 
 // 项目看板四块布局（未开始/执行中/待审核/已结束）—— 末列是「已结束」，失败并入取消。

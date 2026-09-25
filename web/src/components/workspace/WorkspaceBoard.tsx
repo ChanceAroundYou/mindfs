@@ -8,6 +8,7 @@ import type { WorkspaceBoard, WorkspaceTaskItem } from "../../app/useWorkspaceBo
 import { WorkspaceAttentionBar } from "./WorkspaceAttentionBar";
 import { WorkspaceProjectRow } from "./WorkspaceProjectRow";
 import { WorkspaceQuickLaunch } from "./WorkspaceQuickLaunch";
+import type { TaskTemplate } from "../../services/tasks";
 import {
   workspaceEmptyTextStyle,
   workspaceFilterButtonStyle,
@@ -22,6 +23,8 @@ import {
  * 唯一按任务状态分区的地方是顶部条带，因为它回答的是「现在该我做什么」这个与项目无关的
  * 问题；其余按项目组织，回答「各项目在干什么」。跨项目维度只出现一次。
  *
+ * 没有任务的项目不出现（筛选后为空壳的也不出现）—— 面板上的每一行都必须是件真事。
+ *
  * 纯视图：数据由 useWorkspaceBoard 提供，回调全由 App 传入，组件内不持有业务状态。
  */
 export type WorkspaceBoardProps = {
@@ -34,13 +37,15 @@ export type WorkspaceBoardProps = {
   onOpenProject: (rootId: string, nodeId: string) => void;
   onOpenTask: (item: WorkspaceTaskItem) => void;
   onMoveTask: (item: WorkspaceTaskItem, action: "complete" | "run-now" | "pause" | "resume") => void;
-  onCreateTask: (rootId: string, nodeId: string, input: string) => void;
+  /** 快速发起：挑完项目 + 模板就交给看板那套新建任务面板 */
+  templates: TaskTemplate[];
+  onCreateTask: (rootId: string, nodeId: string, template: TaskTemplate) => void;
   onRefresh: () => void;
 };
 
 export function WorkspaceBoard({
   board, filter, onFilterChange, collapsedKeys, onToggleProject, getNodeColor,
-  onOpenProject, onOpenTask, onMoveTask, onCreateTask, onRefresh,
+  onOpenProject, onOpenTask, onMoveTask, templates, onCreateTask, onRefresh,
 }: WorkspaceBoardProps) {
   const { t } = useI18n();
   const { isMobile } = useResponsive();
@@ -111,7 +116,7 @@ export function WorkspaceBoard({
         ))
       )}
 
-      <WorkspaceQuickLaunch projects={board.projects} onCreateTask={onCreateTask} isMobile={isMobile} />
+      <WorkspaceQuickLaunch projects={board.projects} templates={templates} onPick={onCreateTask} isMobile={isMobile} />
     </div>
   );
 }

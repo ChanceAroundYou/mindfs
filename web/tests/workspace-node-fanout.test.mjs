@@ -43,7 +43,8 @@ assert.match(
 );
 
 // 4) 聚合以 managedRootIds 为基准，不是以返回的 items 为基准 ——
-//    后端只 append 有任务的项目，拿 items 建组会让空项目从工作台上消失
+//    后端只 append 有任务的项目，拿 items 建组会让「只存在于 managedRootIds、
+//    本节点没回包的」那个项目连键都对不上。建完再按匹配到的任务收窄，匹配不到就不渲染。
 assert.match(
   board,
   /return toRootEntries\(managedRootIds, getNodeId\)/,
@@ -52,8 +53,8 @@ assert.match(
 assert.match(board, /export function toRootEntries|function toRootEntries/, "the seeding helper must exist");
 assert.match(
   board,
-  /return true; \/\/ 「全部」下空项目也要出现 —— 它才需要被看到/,
-  "the 'all' filter must keep empty projects visible",
+  /\.filter\(\(group\) => group\.tasks\.length > 0\);/,
+  "a group with no task matching the filter must not be rendered — under 「全部」 too",
 );
 
 // 5) 切到工作台那一刻必须真的发起扇出：enabled 从 false 翻到 true 的那次渲染，

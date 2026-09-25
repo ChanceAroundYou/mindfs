@@ -446,7 +446,9 @@ export function App({ onGoHome }: AppProps) {
   }, [taskInlineEdit?.templateId]);
 
   useEffect(() => {
-    if (!taskInlineActiveToken || !currentRootId) {
+    // 候选跟着面板的目标项目走，不跟着「当前选中项目」走 —— 工作台发起时两者不是一个。
+    const tokenRootId = taskInlineEdit?.targetRootId || currentRootId;
+    if (!taskInlineActiveToken || !tokenRootId) {
       setTaskInlineCandidates([]);
       setTaskInlineCandidateIndex(0);
       return;
@@ -456,7 +458,7 @@ export function App({ onGoHome }: AppProps) {
       const selectedTemplate = taskTemplates.find((template) => template.id === taskTemplateFilter) || null;
       const agent = firstAgentStage(selectedTemplate)?.agent || "";
       fetchCandidates({
-        rootId: currentRootId,
+        rootId: tokenRootId,
         type: taskInlineActiveToken.type === "file"
           ? "file"
           : taskInlineActiveToken.type === "prompt"
@@ -467,7 +469,7 @@ export function App({ onGoHome }: AppProps) {
         query: taskInlineActiveToken.query,
         agent: taskInlineActiveToken.type === "slash" ? agent : undefined,
         signal: controller.signal,
-        nodeId: getNodeIdForRoot(currentRootId),
+        nodeId: getNodeIdForRoot(tokenRootId),
       })
         .then((items) => {
           setTaskInlineCandidates(items);
@@ -484,7 +486,7 @@ export function App({ onGoHome }: AppProps) {
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [currentRootId, taskInlineActiveToken, taskTemplateFilter, taskTemplates]);
+  }, [currentRootId, taskInlineEdit?.targetRootId, taskInlineActiveToken, taskTemplateFilter, taskTemplates]);
 
   const applyTaskDetails = useCallback((rootId: string, details: TaskDetail[], persist = true) => {
     const curNid = String(currentRootNodeIdRef.current || "").trim();
@@ -706,17 +708,19 @@ export function App({ onGoHome }: AppProps) {
 	    taskInlineEdit?.worktreeBranchMode,
 	  ]);
 
-	  const openTaskCreateDialog = useCallback((template: TaskTemplate | null) => {
+	  const openTaskCreateDialog = useCallback((template: TaskTemplate | null, targetRootId?: string) => {
 	    const templateId = template?.id || "";
 	    if (!templateId) return;
 	    const initialText = firstUserInputTemplate(template);
-	    const rootId = currentRootIdRef.current || "";
+	    // 工作台发起时可以指定项目；看板入口不传，落在当前项目上。
+	    const rootId = targetRootId || currentRootIdRef.current || "";
 	    const taskCanCreateWorktree = managedRootByIdRef.current[rootId]?.is_git_repo === true;
 	    const worktreePref = loadTaskCreateWorktreePreference(rootId);
 	    setTaskInlineEdit({
 	      templateId,
 	      templateName: template?.name || t("task.defaultTitle"),
 	      text: initialText,
+	      targetRootId: targetRootId || undefined,
 	      name: "",
 	      previousInputs: [],
 	      createWorktree: taskCanCreateWorktree && worktreePref.createWorktree,
@@ -805,7 +809,7 @@ export function App({ onGoHome }: AppProps) {
 
   const saveTaskInlineEdit = useCallback(async () => {
     const edit = taskInlineEdit;
-    const rootId = currentRootIdRef.current;
+    const rootId = edit?.targetRootId || currentRootIdRef.current;
     if (!edit || !rootId) return;
     setTaskInlineSaving(true);
     setTaskInlineUploadProgress(null);
@@ -7983,14 +7987,6 @@ export function App({ onGoHome }: AppProps) {
     setWorkspaceFilter(filter);
     saveWorkspaceFilter(filter);
   }, []);
-  const workspaceSessionCounts = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const group of multiProjectSessionGroups) {
-      const key = scopeKey(group._nodeId, group.rootId);
-      counts.set(key, (counts.get(key) || 0) + group.sessions.length);
-    }
-    return counts;
-  }, [multiProjectSessionGroups]);
   const workspaceBoard = useWorkspaceBoard({
     enabled: workspaceOpen,
     refreshToken: workspaceBoardToken,
@@ -7999,7 +7995,6 @@ export function App({ onGoHome }: AppProps) {
     getNodeColor: getDisplayNodeColor,
     getNodeId: getNodeIdForRoot,
     fallbackNodeId: getNodeIdForRoot(String(currentRootIdRef.current || "")) || String(getActiveNode()?.id || ""),
-    sessionCounts: workspaceSessionCounts,
     filter: workspaceFilter,
   });
   // 左下角四态切换器：只切面板 + 关掉悬浮框。
@@ -8048,19 +8043,11 @@ export function App({ onGoHome }: AppProps) {
     switchMainView("board");
     setTaskTemplateFilter(TASK_TEMPLATE_ALL_FILTER);
   }, [setTaskTemplateFilter, switchMainView]);
-  const handleWorkspaceCreateTask = useCallback(async (rootId: string, input: string) => {
-    const text = String(input || "").trim();
-    if (!text) return;
-    try {
-      const detail = await createTask(rootId, "", text, false, "new", "", getNodeIdForRoot(rootId), {
-        name: text.length > 60 ? `${text.slice(0, 60)}…` : text,
-        stages: [{ name: "", role: "user" } as StageTemplate],
-      });
-      applyTaskDetails(rootId, [detail]);
-    } catch (err) {
-      reportError("file.write_failed", String((err as Error)?.message || t("task.actionFailed")));
-    }
-  }, [applyTaskDetails, t]);
+  // 工作台的快速发起不自己建任务：挑完项目 + 模板就打开看板那套新建任务面板，
+  // 模板、worktree、agent、附件全都跟项目看板里一致，不在工作台上复制第二份实现。
+  const handleWorkspaceCreateTask = useCallback((rootId: string, _nodeId: string, template: TaskTemplate) => {
+    openTaskCreateDialog(template, rootId);
+  }, [openTaskCreateDialog]);
   const kanbanTaskPanel = (
     <TaskBoardView
       workspaceOpen={workspaceOpen}

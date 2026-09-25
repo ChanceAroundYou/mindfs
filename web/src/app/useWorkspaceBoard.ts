@@ -9,26 +9,17 @@
  *
  * 聚合以 managedRootIds 为**基准**而不是以返回的 items 为基准：后端只 append 有任务的项目
  * （Overview 里逐 root 拉、拉到才 append），拿 items 建组会让「一个任务都没有的项目」
- * 从工作台上彻底消失 —— 而空项目恰恰是最需要被看到的那批。
+ * 和「本节点没有、但别的节点有同名项目」的情况混为一谈 —— 复合键只有对 managedRootIds
+ * 逐个求值才认得出来。组建出来后再按筛选收窄，匹配不到任何任务的组不渲染。
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getNodes } from "../services/nodeRegistry";
 import { scopeKey } from "../services/scope";
 import { fetchTasksOverview, type KanbanTask, type TaskOverviewItem } from "../services/tasks";
-import { isTerminalKanbanTask } from "./appTask";
 
 /** 跨项目任务条 = 后端 TaskOverviewItem + 前端扇出时打的节点标（后端不返这个字段） */
 export type WorkspaceTaskItem = TaskOverviewItem & { nodeId: string };
-
-/** 一次扇出的原始结果，尚未按项目建组 */
-export type WorkspaceTaskPool = {
-  items: WorkspaceTaskItem[];
-  loading: boolean;
-  /** 本次扇出覆盖到的节点 */
-  nodeIds: string[];
-  refresh: () => void;
-};
 
 /** 工作台按项目聚合出的一组（一个项目一条） */
 export type WorkspaceProjectGroup = {
@@ -39,16 +30,10 @@ export type WorkspaceProjectGroup = {
   nodeId: string;
   /** 节点色；取不到时为 null（渲染层回退 var(--text-secondary)） */
   color: string | null;
-  /** 非终态任务，按 updated_at 倒序 */
-  active: WorkspaceTaskItem[];
-  /** waiting_user / pending —— 顶部「需要你」捞的就是这批 */
-  blocked: WorkspaceTaskItem[];
-  /** 终态：success / fail / cancelled */
-  ended: WorkspaceTaskItem[];
-  /** 有活跃会话（由多项目会话组派生，不新增请求） */
-  sessionCount: number;
-  /** 该项目既无任务也无会话 */
-  isEmpty: boolean;
+  /** 当前筛选下这条任务行要显示什么；空则整组不渲染 */
+  tasks: WorkspaceTaskItem[];
+  /** 组内待审核数（waiting_user / pending），头部角标用 */
+  blockedCount: number;
 };
 
 export type WorkspaceBoard = {
@@ -97,13 +82,11 @@ export function useWorkspaceBoard(params: {
   getNodeId: (rootId: string) => string | undefined;
   /** getNodes() 未就绪时的回退节点，与会话侧 loadMultiProjectSessionGroups 同一口径 */
   fallbackNodeId: string;
-  /** 已有的跨项目会话组，只用来算 sessionCount，不新增请求 */
-  sessionCounts: Map<string, number>;
   filter: WorkspaceBoardFilter;
 }): WorkspaceBoard {
   const {
     enabled, refreshToken, managedRootIds, getRootDisplayName,
-    getNodeColor, getNodeId, fallbackNodeId, sessionCounts, filter,
+    getNodeColor, getNodeId, fallbackNodeId, filter,
   } = params;
   const [items, setItems] = useState<WorkspaceTaskItem[]>(EMPTY_ITEMS);
   const [loading, setLoading] = useState(false);
@@ -183,38 +166,43 @@ export function useWorkspaceBoard(params: {
       .map(({ rootId, nodeId }) => {
         const key = scopeKey(nodeId, rootId);
         const bucket = (byProject.get(key) || []).slice().sort(byUpdatedDesc);
-        const active = bucket.filter((i) => !isTerminalKanbanTask(i.task));
-        const blocked = active.filter((i) => isBlockedTask(i.task));
-        const ended = bucket.filter((i) => isTerminalKanbanTask(i.task));
-        const sessionCount = sessionCounts.get(key) || 0;
         return {
           key,
           rootId,
           rootName: getRootDisplayName(rootId) || rootId,
           nodeId,
           color: getNodeColor(rootId) || null,
-          active,
-          blocked,
-          ended,
-          sessionCount,
-          isEmpty: bucket.length === 0 && sessionCount === 0,
+          tasks: bucket.filter((item) => matchesFilter(item.task, filter)),
+          blockedCount: bucket.filter((item) => isBlockedTask(item.task)).length,
         };
       })
-      .filter((group) => {
-        if (filter === "active") return group.active.length > 0 || group.sessionCount > 0;
-        if (filter === "blocked") return group.blocked.length > 0;
-        return true; // 「全部」下空项目也要出现 —— 它才需要被看到
-      });
-  }, [items, managedRootIds, getNodeId, getRootDisplayName, getNodeColor, sessionCounts, filter]);
+      // 没有任务的项目不占地方：筛选后只剩空壳的组、连「全部」下都没有任何任务的项目，
+      // 都直接不渲染。空项目要建任务去项目里建，工作台只回答「现在各项目在干什么」。
+      .filter((group) => group.tasks.length > 0);
+  }, [items, managedRootIds, getNodeId, getRootDisplayName, getNodeColor, filter]);
 
   const blockedAll = useMemo(
-    () => projects.flatMap((group) => group.blocked).sort(byUpdatedDesc),
-    [projects],
+    () => items.filter((item) => isBlockedTask(item.task)).sort(byUpdatedDesc),
+    [items],
   );
 
   return { projects, blockedAll, loading, refresh };
 }
 
+/** 待审核：等人回话。顶部条带与「待处理」筛选都按这批。 */
 export function isBlockedTask(task: KanbanTask): boolean {
   return task.status === "waiting_user" || task.status === "pending";
+}
+
+/**
+ * 「进行中」的口径是**执行中 + 待审核**，不是「非终态」。
+ *
+ * 非终态还包含 queued（还没排上）和 paused（手动停的）—— 它们没在跑，也没人等，
+ * 混进来之后这个筛选就名不副实了。而一旦选了「进行中」，行里就只该出现这两类状态；
+ * 渲染层不再额外补已完成的任务（那属于「全部」）。
+ */
+function matchesFilter(task: KanbanTask, filter: WorkspaceBoardFilter): boolean {
+  if (filter === "active") return task.status === "running" || isBlockedTask(task);
+  if (filter === "blocked") return isBlockedTask(task);
+  return true;
 }

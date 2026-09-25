@@ -109,7 +109,7 @@ export function TaskBoardView({
   managedRootIds: string[];
   getRootDisplayName: (rootId: string | null | undefined) => string;
   openWorkspaceProject: (rootId: string) => Promise<void>;
-  handleWorkspaceCreateTask: (rootId: string, input: string) => Promise<void>;
+  handleWorkspaceCreateTask: (rootId: string, nodeId: string, template: TaskTemplate) => void;
   setSelectedKanbanTaskId: React.Dispatch<React.SetStateAction<string>>;
   kanbanTasksLoading: boolean;
   kanbanStageColumns: KanbanStageColumn[];
@@ -126,7 +126,7 @@ export function TaskBoardView({
   getDisplayNodeColor: (rootId: string) => string | null;
   handleSelectKanbanTask: (task: KanbanTask) => void;
   handleMoveKanbanTask: (task: KanbanTask, action: MoveKanbanAction) => Promise<void>;
-  openTaskCreateDialog: (template: TaskTemplate | null) => void;
+  openTaskCreateDialog: (template: TaskTemplate | null, targetRootId?: string) => void;
   handleTaskSessionDrawerOpen: (sessionKey: string, rootOverride?: string | null, taskId?: string) => void;
   setTaskSessionErrorDialog: React.Dispatch<React.SetStateAction<TaskSessionErrorDialog | null>>;
   loadKanbanTasks: (rootId?: string | null, force?: boolean) => Promise<void>;
@@ -175,7 +175,8 @@ export function TaskBoardView({
       onOpenProject={(rootId) => { void openWorkspaceProject(rootId); }}
       onOpenTask={(item) => { void openWorkspaceProject(item.root_id).then(() => setSelectedKanbanTaskId(item.task.id)); }}
       onMoveTask={(item, action) => { void handleMoveKanbanTask(item.task, action); }}
-      onCreateTask={(rootId, _nodeId, input) => { void handleWorkspaceCreateTask(rootId, input); }}
+      templates={templateControls.taskTemplates}
+      onCreateTask={handleWorkspaceCreateTask}
       onRefresh={onRefreshWorkspaceBoard}
     />
   );
