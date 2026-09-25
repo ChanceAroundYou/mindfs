@@ -1,45 +1,19 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
+// 项目内四块看板的契约。跨项目工作台的契约已拆到 workspace-board.test.mjs。
+// 2026-09 App.tsx 拆分：项目看板搬到 components/TaskBoardView.tsx，契约随文件走。
 const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 const bar = readFileSync(new URL("../src/components/ActionBar.tsx", import.meta.url), "utf8");
-const panel = readFileSync(new URL("../src/components/WorkspaceKanban.tsx", import.meta.url), "utf8");
-// 2026-09 App.tsx 拆分：项目看板搬到 components/TaskBoardView.tsx，契约随文件走。
 const board = readFileSync(new URL("../src/components/TaskBoardView.tsx", import.meta.url), "utf8");
 const zh = readFileSync(new URL("../src/i18n/locales/zh-CN.ts", import.meta.url), "utf8");
 const en = readFileSync(new URL("../src/i18n/locales/en-US.ts", import.meta.url), "utf8");
 
-// 总面板只在「无项目 + 任务视图」时接管，有项目时仍走项目内看板
-assert.match(
-  app,
-  /const workspaceOpen = mainView === "workspace";/,
-  "workspace should only own the task view when no project is open",
-);
 // 有项目时项目看板胜出，工作台只是「无项目」时的兜底。
-// 2026-09 App.tsx 拆分：这条优先级判定搬到 TaskBoardView 内（workspaceOpen 早退 + currentRootId 守卫）。
 assert.match(
   board,
   /if \(workspaceOpen\) return workspacePanel;\s*\n\s*if \(!currentRootId\) return null;/,
   "project board should win when a project is open; workspace is the no-project fallback",
-);
-
-// 汇总数据来自 useWorkspaceBoard（跨节点扇出 + 按项目建组），不再由 App 裸调接口。
-// 2026-09：扇出本身（Promise.all / 失败不阻塞 / 去重键 / 后端零改动）改由
-// workspace-node-fanout.test.mjs 守，这里只钉 App 这一层不再自己拉。
-assert.match(
-  app,
-  /const workspaceBoard = useWorkspaceBoard\(\{/,
-  "workspace data must come from the fan-out hook",
-);
-assert.match(
-  app,
-  /workspaceBoard=\{workspaceBoard\}/,
-  "the board must be handed to the view as a single prop",
-);
-assert.doesNotMatch(
-  app,
-  /fetchTasksOverview\(/,
-  "App must not fetch the overview itself any more",
 );
 
 // 快速发起必须自带 user 首段 + 任务名：后端在无模板时要求 stages[0].role === "user"
@@ -47,57 +21,6 @@ assert.match(
   app,
   /createTask\(rootId, "", text, false, "new", "", getNodeIdForRoot\(rootId\), \{[\s\S]*?stages: \[\{ name: "", role: "user" \} as StageTemplate\]/,
   "quick launch should create a task with an explicit user stage and no template",
-);
-
-// 跨项目操作必须按卡片自带的 root_id 派发，不能落到当前项目
-assert.match(
-  board,
-  /onComplete=\{\(item\) => \{ void handleMoveKanbanTask\(item\.task, "complete"\); \}\}/,
-  "complete should act on the card's own root",
-);
-assert.match(
-  board,
-  /onOpenSession=\{\(item, sessionKey\) => \{ handleTaskSessionDrawerOpen\(sessionKey, item\.root_id, item\.task\.id\); \}\}/,
-  "opening a session should use the card's own root",
-);
-assert.match(
-  board,
-  /onOpenDetail=\{\(item\) => \{ void openWorkspaceProject\(item\.root_id\)\.then\(\(\) => setSelectedKanbanTaskId\(item\.task\.id\)\); \}\}/,
-  "opening a detail should switch project first, then select the task",
-);
-
-// 2026-09 App.tsx 拆分守卫：看板 JSX 必须留在 TaskBoardView，App 侧只转发。
-// 一旦有人把那段 JSX 抄回 App，这里立刻失败。
-assert.match(board, /data-onboarding="task-board"/, "看板容器应在视图组件里");
-assert.match(board, /<WorkspaceKanban/, "视图组件应自己渲染跨项目工作台");
-assert.doesNotMatch(
-  app,
-  /data-onboarding="task-board"/,
-  "看板 JSX 不应再在 App 里内联实现（应转发给 TaskBoardView）",
-);
-assert.doesNotMatch(
-  app,
-  /const kanbanStageColumns:[\s\S]{0,4000}?data-onboarding="task-board"/,
-  "App 只构造列数据，不渲染看板结构",
-);
-
-// 工作台入口收敛到左栏底部的四态切换器（见 docs/main-view-switching-design.md）
-assert.match(
-  app,
-  /<MainViewSwitcher[\s\S]*?onChange=\{handleMainViewSwitcherChange\}/,
-  "the workspace should be reachable from the sidebar switcher",
-);
-
-// 分区：等待你 / 运行中 / 归档，归档默认只显示最近几条，可切全部
-assert.match(
-  panel,
-  /const waiting = useMemo\(\s*\(\) => items\.filter\(\(item\) => item\.task\.status === "waiting_user" \|\| item\.task\.status === "pending"\)/,
-  "waiting section should cover waiting_user and pending",
-);
-assert.match(
-  panel,
-  /const shown = showAll \? archive : archive\.slice\(0, 5\);/,
-  "archive should default to the most recent entries until switched to all",
 );
 
 // 项目看板四块布局（未开始/执行中/待审核/已结束）—— 末列是「已结束」，失败并入取消。
@@ -172,45 +95,6 @@ for (const [key, label] of [
   );
 }
 
-// 快速发起必须用 PromptEditor（与任务侧其它输入统一），不能再退回裸 <input>。
-assert.match(
-  panel,
-  /import \{ PromptEditor \} from "\.\/PromptEditor"/,
-  "the quick-launch field must reuse PromptEditor",
-);
-assert.match(
-  panel,
-  /<PromptEditor[\s\S]*?value=\{quickInput\}[\s\S]*?onSend=\{submitQuick\}[\s\S]*?sendDisabled=\{!quickInput\.trim\(\)\}/,
-  "quick launch must bind the editor value, Enter-to-send, and the empty guard",
-);
-assert.doesNotMatch(
-  panel,
-  /placeholder=\{t\("task\.quickLaunchPlaceholder"\)\}[\s\S]{0,200}onKeyDown/,
-  "quick launch must not keep the old raw <input> Enter handler",
-);
-// 编辑器常驻挂载（resetKey 不变不会重灌），提交后必须手动清一次，否则上次输入留在框里。
-assert.match(
-  panel,
-  /quickEditorRef\.current\?\.clear\(\);/,
-  "quick launch must clear the editor after submitting",
-);
-
-// 面板文案两端都要有，缺 key 会渲染成空白
-for (const key of [
-  "task.workspaceQuickLaunch",
-  "task.quickLaunchPlaceholder",
-  "task.quickLaunchSend",
-  "task.workspaceAll",
-  "task.workspaceRecent",
-  "task.workspaceNothingWaiting",
-  "task.workspaceNothingRunning",
-  "task.workspaceNoArchive",
-  "task.column.ended",
-]) {
-  assert.ok(zh.includes(`"${key}"`), `${key} missing in zh-CN`);
-  assert.ok(en.includes(`"${key}"`), `${key} missing in en-US`);
-}
-
 // 模板子看板不得丢弃终态任务：#11(cancelled)/#13(success) 曾因此在「新功能」下整张消失，
 // 连「已结束」列都进不去。「已结束」列唯一的任务来源就是 success/fail/cancelled，
 // 筛选阶段再滤一道终态，列就必然是空的。
@@ -268,4 +152,4 @@ assert.equal(
 );
 assert.match(cardJsx, /style=\{taskWorktreeTagStyle\(taskWorktreeEnabled\)\}/, "标题条应保留 worktree badge");
 
-console.log("workspace-kanban.test.mjs: OK");
+console.log("task-board-view.test.mjs: OK");

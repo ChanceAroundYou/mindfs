@@ -1,18 +1,19 @@
-import React, { useMemo } from "react";
+import React from "react";
 import { useI18n } from "../i18n";
 import { useResponsive } from "../app/appMisc";
 import { TASK_TEMPLATE_ALL_FILTER } from "../app/appStorage";
 import { useRefreshSpin } from "../hooks";
 import type { useTaskTemplates } from "../app/useTaskTemplates";
 import type { KanbanTask, TaskTemplate } from "../services/tasks";
-import type { WorkspaceBoard, WorkspaceTaskItem } from "../app/useWorkspaceBoard";
+import type { WorkspaceBoard as WorkspaceBoardData } from "../app/useWorkspaceBoard";
+import type { WorkspaceBoardFilter } from "../app/appStorage";
 import type { SessionItem } from "../app/appSession";
 import { isTerminalKanbanTask, parseTaskSessionErrorDetails, parseTaskSessionErrorMessage, taskStatusLabel } from "../app/appTask";
 import { InlineTokenText } from "./InlineTokenText";
 import { AgentIcon } from "./AgentIcon";
 import { ModeIcon } from "./ModeIcon";
 import { NoWorktreeIcon } from "./NoWorktreeIcon";
-import { WorkspaceKanban } from "./WorkspaceKanban";
+import { WorkspaceBoard } from "./workspace/WorkspaceBoard";
 import { renderToolIcon } from "./stream/ToolCallCard";
 import {
   DeleteIcon,
@@ -53,7 +54,7 @@ export type TaskSessionErrorDialog = { title: string; message: string; details: 
 type MoveKanbanAction = "next" | "run-now" | "pause" | "resume" | "complete" | "cancel";
 
 /**
- * 任务面板：无项目时是跨项目工作台（WorkspaceKanban），有项目时是项目内四块看板。
+ * 任务面板：无项目时是跨项目工作台（WorkspaceBoard），有项目时是项目内四块看板。
  *
  * 纯视图——数据与回调全由 App 传入。折叠/选中这类"看起来是本地的"状态其实 App 也要用
  * （详情面板、WS 回包），所以照样由 App 持有，组件内不新增状态。
@@ -65,6 +66,11 @@ export function TaskBoardView({
   currentRootId,
   currentRootIdRef,
   workspaceBoard,
+  workspaceFilter,
+  onWorkspaceFilterChange,
+  workspaceCollapsedKeys,
+  onToggleWorkspaceProject,
+  onRefreshWorkspaceBoard,
   managedRootIds,
   getRootDisplayName,
   openWorkspaceProject,
@@ -94,7 +100,12 @@ export function TaskBoardView({
   workspaceOpen: boolean;
   currentRootId: string | null;
   currentRootIdRef: React.MutableRefObject<string | null>;
-  workspaceBoard: WorkspaceBoard;
+  workspaceBoard: WorkspaceBoardData;
+  workspaceFilter: WorkspaceBoardFilter;
+  onWorkspaceFilterChange: (filter: WorkspaceBoardFilter) => void;
+  workspaceCollapsedKeys: Set<string>;
+  onToggleWorkspaceProject: (key: string) => void;
+  onRefreshWorkspaceBoard: () => void;
   managedRootIds: string[];
   getRootDisplayName: (rootId: string | null | undefined) => string;
   openWorkspaceProject: (rootId: string) => Promise<void>;
@@ -153,23 +164,18 @@ export function TaskBoardView({
   const isAllTaskTemplateFilter = taskTemplateFilter === TASK_TEMPLATE_ALL_FILTER;
   const selectedTaskTemplateForFilter = isAllTaskTemplateFilter ? null : taskTemplates.find((template) => template.id === taskTemplateFilter) || null;
 
-  // C2 已把「跨节点扇出 + 按项目建组」搬进 useWorkspaceBoard；旧的面板仍吃平铺列表，
-  // 这里把各组的任务摊平喂过去。C3 换成 WorkspaceBoard 后这两行连同 props 一起删掉。
-  const workspaceItems = useMemo<WorkspaceTaskItem[]>(
-    () => workspaceBoard.projects.flatMap((group) => [...group.active, ...group.ended]),
-    [workspaceBoard.projects],
-  );
   const workspacePanel = (
-    <WorkspaceKanban
-      items={workspaceItems}
-      loading={workspaceBoard.loading}
-      projects={managedRootIds.map((id) => ({ id, name: getRootDisplayName(id) || id }))}
+    <WorkspaceBoard
+      board={workspaceBoard}
+      filter={workspaceFilter}
+      onFilterChange={onWorkspaceFilterChange}
+      collapsedKeys={workspaceCollapsedKeys}
+      onToggleProject={onToggleWorkspaceProject}
       onOpenProject={(rootId) => { void openWorkspaceProject(rootId); }}
-      onComplete={(item) => { void handleMoveKanbanTask(item.task, "complete"); }}
-      onRunNow={(item) => { void handleMoveKanbanTask(item.task, "run-now"); }}
-      onOpenSession={(item, sessionKey) => { handleTaskSessionDrawerOpen(sessionKey, item.root_id, item.task.id); }}
-      onOpenDetail={(item) => { void openWorkspaceProject(item.root_id).then(() => setSelectedKanbanTaskId(item.task.id)); }}
-      onCreateTask={(rootId, input) => { void handleWorkspaceCreateTask(rootId, input); }}
+      onOpenTask={(item) => { void openWorkspaceProject(item.root_id).then(() => setSelectedKanbanTaskId(item.task.id)); }}
+      onMoveTask={(item, action) => { void handleMoveKanbanTask(item.task, action); }}
+      onCreateTask={(rootId, _nodeId, input) => { void handleWorkspaceCreateTask(rootId, input); }}
+      onRefresh={onRefreshWorkspaceBoard}
     />
   );
 

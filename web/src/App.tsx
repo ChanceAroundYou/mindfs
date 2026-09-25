@@ -198,7 +198,7 @@ import {
 import { APP_DOCUMENT_TITLE, AppProps, CHILD_SESSION_PAGE_SIZE, MULTI_PROJECT_SESSION_LIMIT, ManagedRootPayload, SESSION_PAGE_SIZE } from "./app/appMisc";
 import { MainViewMode, URLState } from "./app/appPath";
 import { AttachedFileContext, Exchange, GitFileStat, MultiProjectSessionGroup, PendingSend, RelatedFileClickTarget, SessionItem, SessionMode, SessionQueueItem, SlashCommandResult, ViewerSelection, WSStatus } from "./app/appSession";
-import { CANDIDATE_FETCH_DEBOUNCE_MS, DIRECTORY_SORT_OVERRIDES_STORAGE_KEY, GIT_DIFF_SIDE_BY_SIDE_STORAGE_KEY, GIT_HISTORY_EXPANDED_STORAGE_KEY, GIT_STATUS_EXPANDED_STORAGE_KEY, LAST_ROOT_NODE_STORAGE_KEY, LAST_ROOT_STORAGE_KEY, MAIN_VIEW_STORAGE_KEY, MOBILE_ENTER_KEY_SEND_STORAGE_KEY, PLUGIN_QUERY_STORAGE_PREFIX, SIDEBARS_SWAPPED_STORAGE_KEY, TASK_TEMPLATE_ALL_FILTER, TASK_TEMPLATE_SELECTION_STORAGE_KEY, TREE_SORT_STORAGE_KEY } from "./app/appStorage";
+import { CANDIDATE_FETCH_DEBOUNCE_MS, DIRECTORY_SORT_OVERRIDES_STORAGE_KEY, GIT_DIFF_SIDE_BY_SIDE_STORAGE_KEY, GIT_HISTORY_EXPANDED_STORAGE_KEY, GIT_STATUS_EXPANDED_STORAGE_KEY, LAST_ROOT_NODE_STORAGE_KEY, LAST_ROOT_STORAGE_KEY, loadWorkspaceCollapsed, loadWorkspaceFilter, MAIN_VIEW_STORAGE_KEY, MOBILE_ENTER_KEY_SEND_STORAGE_KEY, PLUGIN_QUERY_STORAGE_PREFIX, saveWorkspaceCollapsed, saveWorkspaceFilter, SIDEBARS_SWAPPED_STORAGE_KEY, TASK_TEMPLATE_ALL_FILTER, TASK_TEMPLATE_SELECTION_STORAGE_KEY, TREE_SORT_STORAGE_KEY, type WorkspaceBoardFilter } from "./app/appStorage";
 import { TaskInlineEditState } from "./app/appTask";
 import { buildMatchInputFromPath, buildMessageWithViewContext, hasExplicitFileContext, indexManagedRoots, inferReadModeFromPlugin, managedDirAddErrorMessage, mapManagedRootsToEntries, normalizeUpdateState, shouldShowUpdateButton, toPluginInput, updateButtonLabel, updateSummaryText, useResponsive, waitForNextPaint } from "./app/appMisc";
 import { basenameOfPath, buildDirectorySelectionKey, buildFileScrollKey, buildURLSearch, comparableManagedRootPath, dirnameOfPath, isDirectorySortMode, joinDisplayPath, normalizeCursor, normalizePath, parentDirsOfFile, parseFileLocation, parsePluginQuery, readURLState, relativeDisplayPathFromRoot, rootNodeKey } from "./app/appPath";
@@ -7965,10 +7965,24 @@ export function App({ onGoHome }: AppProps) {
     },
   ];
   // 跨项目工作台：按项目聚合的跨节点任务总览（扇出与建组都在 useWorkspaceBoard 内）。
-  // refreshToken 目前只取初值 0 —— 首屏拉一次；WS 的高频推送靠 C1 放行的 task.updated
-  // 增量更新就地生效，不驱动整包重拉（否则多节点扇出会被事件风暴打爆）。
-  // C3 接上刷新按钮时，这里才需要一个自增口。
-  const workspaceBoardToken = 0;
+  // refreshToken 由刷新按钮驱动；WS 的高频推送靠 C1 放行的 task.updated 增量更新就地生效，
+  // 不驱动整包重拉（否则多节点扇出会被事件风暴打爆）。
+  const [workspaceBoardToken, setWorkspaceBoardToken] = useState(0);
+  const [workspaceFilter, setWorkspaceFilter] = useState<WorkspaceBoardFilter>(loadWorkspaceFilter);
+  const [workspaceCollapsedKeys, setWorkspaceCollapsedKeys] = useState<Set<string>>(loadWorkspaceCollapsed);
+  const toggleWorkspaceProject = useCallback((key: string) => {
+    setWorkspaceCollapsedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      saveWorkspaceCollapsed(next);
+      return next;
+    });
+  }, []);
+  const changeWorkspaceFilter = useCallback((filter: WorkspaceBoardFilter) => {
+    setWorkspaceFilter(filter);
+    saveWorkspaceFilter(filter);
+  }, []);
   const workspaceSessionCounts = useMemo(() => {
     const counts = new Map<string, number>();
     for (const group of multiProjectSessionGroups) {
@@ -7982,11 +7996,11 @@ export function App({ onGoHome }: AppProps) {
     refreshToken: workspaceBoardToken,
     managedRootIds,
     getRootDisplayName,
-    getNodeColor: (rootId) => getDisplayNodeColor(rootId),
+    getNodeColor: getDisplayNodeColor,
     getNodeId: getNodeIdForRoot,
     fallbackNodeId: getNodeIdForRoot(String(currentRootIdRef.current || "")) || String(getActiveNode()?.id || ""),
     sessionCounts: workspaceSessionCounts,
-    filter: "all",
+    filter: workspaceFilter,
   });
   // 左下角四态切换器：只切面板 + 关掉悬浮框。
   // 会话选中与面板是正交的两条线——切面板一律不解除选中（面板不显示而已）。
@@ -8053,6 +8067,11 @@ export function App({ onGoHome }: AppProps) {
       currentRootId={currentRootId}
       currentRootIdRef={currentRootIdRef}
       workspaceBoard={workspaceBoard}
+      workspaceFilter={workspaceFilter}
+      onWorkspaceFilterChange={changeWorkspaceFilter}
+      workspaceCollapsedKeys={workspaceCollapsedKeys}
+      onToggleWorkspaceProject={toggleWorkspaceProject}
+      onRefreshWorkspaceBoard={() => setWorkspaceBoardToken((token) => token + 1)}
       managedRootIds={managedRootIds}
       getRootDisplayName={getRootDisplayName}
       openWorkspaceProject={openWorkspaceProject}
