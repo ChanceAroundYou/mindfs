@@ -24,7 +24,7 @@
           "role": "agent",
           "auto_advance": true,
           "agent": "claude",
-          "model": "fable",
+          "model": "sonnet",
           "session_reuse_policy": "task_main",
           "prompt_template": "{previous_input}",
           "plan_mode": true
@@ -39,7 +39,7 @@
           "role": "agent",
           "auto_advance": true,
           "agent": "claude",
-          "model": "fable",
+          "model": "sonnet",
           "session_reuse_policy": "task_main",
           "prompt_template": "{previous_input}"
         }
@@ -73,7 +73,7 @@
           "role": "agent",
           "auto_advance": true,
           "agent": "claude",
-          "model": "haiku",
+          "model": "sonnet",
           "session_reuse_policy": "task_main",
           "prompt_template": "{previous_input}",
           "plan_mode": true
@@ -88,7 +88,7 @@
           "role": "agent",
           "auto_advance": true,
           "agent": "claude",
-          "model": "fable",
+          "model": "sonnet",
           "session_reuse_policy": "task_main",
           "prompt_template": "{previous_input}"
         }

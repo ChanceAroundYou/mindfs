@@ -10,6 +10,7 @@ const dialog = read("src/components/TaskTemplateDialog.tsx");
 const app = read("src/App.tsx");
 const runtime = read("src/services/runtime.ts");
 const services = read("src/services/tasks.ts");
+const registry = read("src/services/nodeRegistry.ts");
 
 // 回归：模板请求必须带 nodeId。
 // 不带的话 appURL → basePath → getApiBaseURL(undefined) → getActiveNode()，
@@ -63,3 +64,40 @@ for (const tpl of templates) {
 assert.equal(templates.find((t) => t.name === "新功能").max_concurrency, 5, "新功能 keeps max_concurrency 5");
 
 console.log("task-template-node-routing.test.mjs: OK");
+
+// 10) active node 兜底不能退到 nodes[0]
+//     存的 mindfs_active_node_id 解析不出来时（首次同步前、节点换 id、跨设备带来的
+//     旧 id），旧实现退到 nodes[0] —— 那可能正是另一台机器，于是所有不带 nodeId 的
+//     请求静默打到 pc。local 节点的 URL 按当前 origin 推导（deviceLocalNodeURL），
+//     才是「页面所在这台机器」。
+assert.match(
+  registry,
+  /if \(local\) return local;\s*\n\s*return nodes\[0\] \|\| null;/,
+  "getActiveNode must prefer the local node over nodes[0] when the stored active id does not resolve",
+);
+assert.match(
+  registry,
+  /const local = nodes\.find\(\(n\) => n\.id === LOCAL_NODE_ID\);/,
+  "the fallback must look up the local node by id",
+);
+// local 节点的 URL 必须由当前 origin 推导，不能用共享列表里持久化的值
+assert.match(
+  registry,
+  /function deviceLocalNodeURL\(\): string \{\s*\n\s*const base = localBaseURL\(\);/,
+  "the local node's URL must be derived from the current origin, never read from the shared list",
+);
+// active id 是纯 localStorage，不参与服务端同步 —— 换设备不会带过来
+assert.doesNotMatch(
+  registry,
+  /enqueueServerWrite\([^\)]*activeId/,
+  "the active node id must not be synced to the server (it is per-browser)",
+);
+
+// 模板数据：agent 段统一 sonnet
+for (const tpl of templates) {
+  for (const st of tpl.stages) {
+    if (st.snapshot.role === "agent") {
+      assert.equal(st.snapshot.model, "sonnet", `${tpl.name}/${st.snapshot.name} must use sonnet`);
+    }
+  }
+}
