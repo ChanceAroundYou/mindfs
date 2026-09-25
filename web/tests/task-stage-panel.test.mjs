@@ -46,10 +46,16 @@ assert.doesNotMatch(
 
 // 非编辑态必须显示该阶段自身的 agent/model —— 曾经一律传打开面板时的草稿，
 // 结果所有阶段卡（含已执行的 claude/sonnet 卡）都显示 codex 无模型。
+// 兜底默认是 claude（DEFAULT_TASK_AGENT），不是 codex。
 assert.match(
   stageEditor,
-  /agent=\{stage\.agent \|\| "codex"\}/,
+  /agent=\{stage\.agent \|\| DEFAULT_TASK_AGENT\}/,
   "StageEditor must show each stage's own agent (not a panel-wide default)",
+);
+assert.doesNotMatch(
+  stageEditor,
+  /agent=\{stage\.agent \|\| "codex"\}/,
+  "StageEditor must not fall back to codex when a stage has no agent",
 );
 assert.match(
   stageEditor,
@@ -147,5 +153,53 @@ assert.doesNotMatch(
   /taskInlineEdit\.taskId/,
   "the inline task dialog is create-only; the taskId branch must be gone",
 );
+
+// 「任务输入」三处说法统一成同一个词。
+assert.match(zh, /"task\.initialInput": "任务输入"/, "zh-CN must label the first stage 任务输入");
+assert.doesNotMatch(zh, /"task\.initialInput": "任务初始输入"/, "zh-CN must drop the 任务初始输入 wording");
+assert.match(en, /"task\.initialInput": "Task input"/, "en-US must label the first stage Task input");
+
+// 新增阶段：复制上一段的 agent/model，模板面板和任务详情都走同一个函数。
+const appTask = fs.readFileSync(path.join(root, "src/app/appTask.ts"), "utf8");
+const templateDialog = fs.readFileSync(path.join(root, "src/components/TaskTemplateDialog.tsx"), "utf8");
+assert.match(
+  appTask,
+  /export const DEFAULT_TASK_AGENT = "claude"/,
+  "new agent stages must default to claude, not codex",
+);
+assert.match(
+  appTask,
+  /export const DEFAULT_TASK_MODEL = "sonnet"/,
+  "new agent stages must default to sonnet",
+);
+assert.match(
+  appTask,
+  /export function inheritAgentStage\(stages: StageTemplate\[\], fromIndex: number\)/,
+  "inheritAgentStage copies the closest previous agent stage",
+);
+assert.match(
+  templateDialog,
+  /snapshot: \{ \.\.\.blankAgentStage\(prev\.stages\[prev\.stages\.length - 1\]\?\.snapshot\)/,
+  "template addStage must inherit the last stage's agent/model",
+);
+assert.match(
+  panel,
+  /const stage = inheritAgentStage\(stages, stages\.length\);/,
+  "task detail addStage must inherit the last stage's agent/model",
+);
+// 新增完直接落在编辑态，省得再点一次铅笔。
+assert.match(
+  panel,
+  /setEditingStage\(\(next\.task\.stages\?\.length \|\| 1\) - 1\);/,
+  "a freshly added stage must open in edit mode",
+);
+// 两张面板都不许再留 codex 兜底。
+for (const [src, name] of [[panel, "TaskDetailPanel"], [templateDialog, "TaskTemplateDialog"], [app, "App"]]) {
+  assert.doesNotMatch(
+    src,
+    /editAgent[^\n]*"codex"|agent: "codex"|\|\| "codex"/,
+    `${name} must not fall back to codex`,
+  );
+}
 
 console.log("task-stage-panel.test.mjs: OK");

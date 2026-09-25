@@ -11,6 +11,7 @@ import {
 import type { AgentStatus } from "../services/agents";
 import { reportError } from "../services/error";
 import { useI18n, type I18nContextValue } from "../i18n";
+import { DEFAULT_TASK_AGENT, DEFAULT_TASK_MODEL } from "../app/appTask";
 
 type TaskTemplateDialogProps = {
   open: boolean;
@@ -29,17 +30,21 @@ const blankUserStage = (): StageTemplate => ({
   prompt_template: "",
 });
 
-const blankAgentStage = (): StageTemplate => ({
+/**
+ * 新 agent 段：agent/model/模型档位继承「上一段 agent 段」，没有就 claude + sonnet。
+ * prompt_template 默认带 {previous_input}，跟已有段保持一致。
+ */
+const blankAgentStage = (previous?: StageTemplate | null): StageTemplate => ({
   name: "",
   role: "agent",
   auto_advance: false,
-  agent: "codex",
-  model: "",
-  mode: "",
-  effort: "",
-  fast_service: "",
-  plan_mode: false,
-  session_reuse_policy: "task_main",
+  agent: previous?.agent || DEFAULT_TASK_AGENT,
+  model: previous?.model || DEFAULT_TASK_MODEL,
+  mode: previous?.mode || "",
+  effort: previous?.effort || "",
+  fast_service: previous?.fast_service || "",
+  plan_mode: previous?.plan_mode === true,
+  session_reuse_policy: previous?.session_reuse_policy || "task_main",
   prompt_template: "{previous_input}",
   agent_can_control_stage: false,
 });
@@ -99,19 +104,21 @@ export function TaskTemplateDialog({ open, agents, template, onClose, onSaved, n
     }));
   };
 
-  // user ↔ agent 切换：切过去时用空白段打底，保留段名和 agent 相关的旧值。
+  // user ↔ agent 切换：切过去时用上一段 agent 段的 agent/模型打底，保留段名。
   const onToggleStageRole = (index: number) => () => {
     const current = draft.stages[index]?.snapshot;
     if (!current) return;
     if (current.role === "user") {
-      const status = agents.find((item) => item.name === (current.agent || "codex")) || agents[0] || null;
+      const previous = draft.stages
+        .slice(0, index)
+        .reverse()
+        .map((stage) => stage.snapshot)
+        .find((stage) => stage.role === "agent");
+      const status = agents.find((item) => item.name === previous?.agent) || agents[0] || null;
       updateStage(index, {
-        ...blankAgentStage(),
+        ...blankAgentStage(previous),
         name: current.name || "",
-        agent: status?.name || current.agent || "codex",
-        model: current.model || "",
-        effort: current.effort || "",
-        fast_service: current.fast_service || "",
+        agent: status?.name || previous?.agent || DEFAULT_TASK_AGENT,
         ...(status?.protocol === "acp" ? { plan_mode: false } : {}),
       });
       return;
@@ -122,7 +129,13 @@ export function TaskTemplateDialog({ open, agents, template, onClose, onSaved, n
   const addStage = () => {
     setDraft((prev) => ({
       ...prev,
-      stages: normalizeStages([...prev.stages, { position: prev.stages.length, snapshot: { ...blankAgentStage(), name: defaultStageName(prev.stages.length, t) } }]),
+      stages: normalizeStages([
+        ...prev.stages,
+        {
+          position: prev.stages.length,
+          snapshot: { ...blankAgentStage(prev.stages[prev.stages.length - 1]?.snapshot), name: defaultStageName(prev.stages.length, t) },
+        },
+      ]),
     }));
   };
 
@@ -202,7 +215,7 @@ export function TaskTemplateDialog({ open, agents, template, onClose, onSaved, n
           {draft.stages.map((stage, index) => {
             const snapshot = stage.snapshot;
             const isAgent = snapshot.role === "agent";
-            const selectedAgentStatus = agents.find((item) => item.name === (snapshot.agent || "codex")) || null;
+            const selectedAgentStatus = agents.find((item) => item.name === (snapshot.agent || DEFAULT_TASK_AGENT)) || null;
             const planModeDisabled = isAgent && selectedAgentStatus?.protocol === "acp";
             return (
               <div

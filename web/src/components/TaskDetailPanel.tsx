@@ -18,6 +18,7 @@ import {
 } from "../services/tasks";
 import type { AgentStatus } from "../services/agents";
 import { reportError } from "../services/error";
+import { DEFAULT_TASK_AGENT, DEFAULT_TASK_MODEL, inheritAgentStage } from "../app/appTask";
 
 export type TaskDetailPanelProps = {
   detail: TaskDetail | null;
@@ -75,7 +76,7 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
   const [editingStage, setEditingStage] = useState(-1);
   const [editName, setEditName] = useState("");
   const [editPrompt, setEditPrompt] = useState("");
-  const [editAgent, setEditAgent] = useState("codex");
+  const [editAgent, setEditAgent] = useState(DEFAULT_TASK_AGENT);
   const [editModel, setEditModel] = useState("");
   const [editEffort, setEditEffort] = useState("");
   const [editMode, setEditMode] = useState("");
@@ -155,7 +156,7 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
     setEditingStage(index);
     setEditName(stage.name || "");
     setEditPrompt(stage.prompt_template || "");
-    setEditAgent(stage.agent || "codex");
+    setEditAgent(stage.agent || DEFAULT_TASK_AGENT);
     setEditModel(stage.model || "");
     setEditEffort(stage.effort || "");
     setEditMode(stage.mode || "");
@@ -172,7 +173,7 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
     return (
       editName !== (stage.name || "")
       || editPrompt !== (stage.prompt_template || "")
-      || editAgent !== (stage.agent || "codex")
+      || editAgent !== (stage.agent || DEFAULT_TASK_AGENT)
       || editModel !== (stage.model || "")
       || editEffort !== (stage.effort || "")
       || editMode !== (stage.mode || "")
@@ -249,19 +250,24 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
     } catch (err) { fail(err); } finally { setSaving(false); }
   };
 
-  const appendStage = async () => {    const stage: StageTemplate = {
-      name: "",
-      role: "agent",
-      agent: "codex",
-      model: "",
-      mode: "",
-      effort: "",
-      prompt_template: "",
-      auto_advance: false,
-    };
+  const appendStage = async () => {
+    // 复制紧挨着的上一段（agent/model/选项），省得从头点；新段自带草稿 → 直接进编辑态。
+    const stage = inheritAgentStage(stages, stages.length);
+    setEditName(stage.name || "");
+    setEditPrompt(stage.prompt_template || "");
+    setEditAgent(stage.agent || DEFAULT_TASK_AGENT);
+    setEditModel(stage.model || DEFAULT_TASK_MODEL);
+    setEditEffort(stage.effort || "");
+    setEditMode(stage.mode || "");
+    setEditAutoAdvance(stage.auto_advance === true);
+    setEditPlanMode(stage.plan_mode === true);
+    setEditSessionReuse((stage.session_reuse_policy as SessionReusePolicy) || "task_main");
+    setEditRole("agent");
     try {
       setSaving(true);
-      apply(await addTaskStage(task.root_id, task.id, stage, nodeId));
+      const next = await addTaskStage(task.root_id, task.id, stage, nodeId);
+      apply(next);
+      setEditingStage((next.task.stages?.length || 1) - 1);
     } catch (err) { fail(err); } finally { setSaving(false); }
   };
 
@@ -409,7 +415,7 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
                     if ("name" in patch) setEditName(patch.name || "");
                     if ("role" in patch) setEditRole(patch.role as "user" | "agent");
                     if ("prompt_template" in patch) setEditPrompt(patch.prompt_template || "");
-                    if ("agent" in patch) setEditAgent(patch.agent || "codex");
+                    if ("agent" in patch) setEditAgent(patch.agent || DEFAULT_TASK_AGENT);
                     if ("model" in patch) setEditModel(patch.model || "");
                     if ("effort" in patch) setEditEffort(patch.effort || "");
                     if ("mode" in patch) setEditMode(patch.mode || "");
@@ -422,7 +428,7 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
                   onToggleRole={editing ? () => {
                     if (editRole === "agent") {
                       setEditRole("user");
-                      setEditAgent("codex");
+                      setEditAgent(DEFAULT_TASK_AGENT);
                       setEditModel("");
                       setEditEffort("");
                       setEditMode("");

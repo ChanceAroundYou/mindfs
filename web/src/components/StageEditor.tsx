@@ -4,6 +4,7 @@ import { StageOptionsBar, type SessionReusePolicy } from "./StageOptionsBar";
 import { with1MSuffix } from "./action/modelUtils";
 import { composerInputStyle } from "./composerStyles";
 import { useI18n } from "../i18n";
+import { DEFAULT_TASK_AGENT } from "../app/appTask";
 import type { StageTemplate } from "../services/tasks";
 import type { AgentStatus } from "../services/agents";
 
@@ -126,7 +127,7 @@ export function StageEditor({
         sending={sending}
         sendDisabled={sendDisabled}
         agents={agents}
-        agent={stage.agent || "codex"}
+        agent={stage.agent || DEFAULT_TASK_AGENT}
         model={stage.model || ""}
         effort={stage.effort || ""}
         agentMode={stage.mode || ""}

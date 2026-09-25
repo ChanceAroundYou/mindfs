@@ -6,6 +6,10 @@
 import {  MessageKey ,  MessageParams  } from "../i18n";
 import {  KanbanTask ,  StageRun ,  StageTemplate ,  TaskDetail ,  TaskTemplate  } from "../services/tasks";
 
+/** 新建 agent 段时的默认 agent/模型：claude + sonnet，别再默认 codex。 */
+export const DEFAULT_TASK_AGENT = "claude";
+export const DEFAULT_TASK_MODEL = "sonnet";
+
 export function firstUserInputTemplate(template: TaskTemplate | null): string {
   const first = template?.stages?.[0]?.snapshot;
   return first?.role === "user" ? first.prompt_template || "" : "";
@@ -13,6 +17,30 @@ export function firstUserInputTemplate(template: TaskTemplate | null): string {
 
 export function firstAgentStage(template: TaskTemplate | null): StageTemplate | null {
   return template?.stages?.map((stage) => stage.snapshot).find((stage) => stage.role === "agent") || null;
+}
+
+/**
+ * 新增阶段时继承的那一段：紧挨着新段的上一段 agent 段。
+ * 没有 agent 段就退回默认（claude + sonnet）。
+ */
+export function inheritAgentStage(stages: StageTemplate[], fromIndex: number): StageTemplate {
+  const previous = stages
+    .slice(0, fromIndex)
+    .reverse()
+    .find((stage) => stage.role === "agent");
+  return {
+    name: "",
+    role: "agent",
+    agent: previous?.agent || DEFAULT_TASK_AGENT,
+    model: previous?.model || DEFAULT_TASK_MODEL,
+    mode: previous?.mode || "",
+    effort: previous?.effort || "",
+    fast_service: previous?.fast_service || "",
+    plan_mode: previous?.plan_mode === true,
+    session_reuse_policy: previous?.session_reuse_policy || "task_main",
+    prompt_template: "",
+    auto_advance: false,
+  };
 }
 
 export function isUnfinishedKanbanTask(task: KanbanTask): boolean {

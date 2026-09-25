@@ -205,7 +205,7 @@ import { buildMatchInputFromPath, buildMessageWithViewContext, hasExplicitFileCo
 import { basenameOfPath, buildDirectorySelectionKey, buildFileScrollKey, buildURLSearch, comparableManagedRootPath, dirnameOfPath, isDirectorySortMode, joinDisplayPath, normalizeCursor, normalizePath, parentDirsOfFile, parseFileLocation, parsePluginQuery, readURLState, relativeDisplayPathFromRoot, rootNodeKey } from "./app/appPath";
 import { hasSessionExchanges, isTopLevelSessionItem, normalizeMode, relatedFileSelectionKey, sessionInputHistory, toSessionItem } from "./app/appSession";
 import { accountScopedKey, loadGitDiffSideBySide, loadLastRootId, loadLastRootNodeId, loadLegacyMainView, loadMainView, loadMobileEnterKeySends, loadPersistedFileScrollPositions, loadPersistedPluginQuery, loadSidebarsSwapped, loadTaskCreateWorktreePreference, persistFileScrollPositions, persistPluginQuery, removeLocalStorageByPrefix, saveTaskCreateWorktreePreference } from "./app/appStorage";
-import { applyStageOverride, firstAgentStage, firstTaskInputFromDetail, firstUserInputTemplate, isTerminalKanbanTask, isUnfinishedKanbanTask, latestTaskStageRun, normalizeFastService, parseTaskSessionErrorDetails, parseTaskSessionErrorMessage, taskSessionKeysFromDetail, taskStatusLabel } from "./app/appTask";
+import { applyStageOverride, DEFAULT_TASK_AGENT, DEFAULT_TASK_MODEL, firstAgentStage, firstTaskInputFromDetail, firstUserInputTemplate, isTerminalKanbanTask, isUnfinishedKanbanTask, latestTaskStageRun, normalizeFastService, parseTaskSessionErrorDetails, parseTaskSessionErrorMessage, taskSessionKeysFromDetail, taskStatusLabel } from "./app/appTask";
 import { useCompletionSound } from "./app/useCompletionSound";
 import { useExternalSessionImport } from "./app/useExternalSessionImport";
 import { useGitActions } from "./app/useGitActions";
@@ -9048,12 +9048,13 @@ export function App({ onGoHome }: AppProps) {
 	          const taskInlineHasAgentStage = !!taskInlineTemplateAgent;
 	          // 喂给 StageEditor 的那一段：user 段（角色不可切、没有段名），
 	          // 但带上「下一个 agent 阶段」的 agent/model/effort，选择器才有默认值。
-	          const createTaskInitialStage: StageTemplate = {
+	          const createTaskInputStage: StageTemplate = {
 	            name: "",
 	            role: "user",
 	            prompt_template: taskInlineEdit.text,
-	            agent: taskInlineEdit.agentOverride || taskInlineTemplateAgent?.agent || "codex",
-	            model: taskInlineEdit.modelOverride || taskInlineTemplateAgent?.model || "",
+	            // 模板里第一个 agent 段没写 agent/model 时退回 claude + sonnet。
+	            agent: taskInlineEdit.agentOverride || taskInlineTemplateAgent?.agent || DEFAULT_TASK_AGENT,
+	            model: taskInlineEdit.modelOverride || taskInlineTemplateAgent?.model || DEFAULT_TASK_MODEL,
 	            effort: taskInlineEdit.effortOverride || taskInlineTemplateAgent?.effort || "",
 	          };
 	          return (
@@ -9253,7 +9254,7 @@ export function App({ onGoHome }: AppProps) {
               ) : null}
               <StageEditor
                 editorRef={taskInlineEditorRef}
-                stage={createTaskInitialStage}
+                stage={createTaskInputStage}
                 agents={availableAgents}
                 onChange={(patch) => setTaskInlineEdit((prev) => prev ? {
                   ...prev,
@@ -9264,7 +9265,7 @@ export function App({ onGoHome }: AppProps) {
                 } : prev)}
                 /* 这个编辑区本身是 user 段，但新建时要在这里挑「下一个 agent 阶段」
                    用哪个 agent/模型，所以把 PromptEditor 自带的 AgentSelector 打开。
-                   默认值取模板里第一个 agent 段的 agent/model（createTaskInitialStage）。 */
+                   默认值取模板里第一个 agent 段的 agent/model（createTaskInputStage）。 */
                 showAgentSelector={taskInlineHasAgentStage}
                 onSend={() => void saveTaskInlineEdit()}
                 sending={taskInlineSaving}

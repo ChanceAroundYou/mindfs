@@ -799,7 +799,7 @@ export const enUS = {
   "task.renameTask": "Rename task",
   "task.appendStage": "+ Add stage",
   "task.stage.notExecuted": "Not executed",
-  "task.initialInput": "Task initial input",
+  "task.initialInput": "Task input",
   "task.discardDraftTitle": "Discard unsaved changes?",
   "task.discardDraftMessage": "Your edits to this stage are not saved and will be lost if you switch.",
   "task.keepEditing": "Keep editing",

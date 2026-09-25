@@ -797,7 +797,7 @@ export const zhCN = {
   "task.renameTask": "修改任务名",
   "task.appendStage": "+ 新增阶段",
   "task.stage.notExecuted": "未执行",
-  "task.initialInput": "任务初始输入",
+  "task.initialInput": "任务输入",
   "task.discardDraftTitle": "放弃未保存的修改？",
   "task.discardDraftMessage": "当前阶段的修改尚未保存，切换后将会丢失。",
   "task.keepEditing": "继续编辑",
