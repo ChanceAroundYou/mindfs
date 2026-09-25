@@ -744,6 +744,120 @@ func TestCompleteFinalWaitingTask(t *testing.T) {
 	}
 }
 
+// 任务状态不跟会话/worktree 绑死：会话被删、worktree 丢失后任务会一直卡在 running，
+// 此时必须还能被人工完成，否则这些任务永远动不了。
+func TestCompleteStuckRunningTaskAfterSessionLost(t *testing.T) {
+	ctx := context.Background()
+	svc, root := newTestService(t, nil)
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID: root.ID,
+		Stages: []StageTemplate{
+			userStage("Describe"),
+			agentStage("Fix", "Fix this:\n{previous_input}"),
+		},
+		Input: "broken save button",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if _, err := svc.Next(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err != nil {
+		t.Fatalf("Next: %v", err)
+	}
+	// 任务已经进入 agent 段（running）后，会话/worktree 丢失：执行体不再回来。
+	store, err := svc.taskStore(root.ID)
+	if err != nil {
+		t.Fatalf("taskStore: %v", err)
+	}
+	if err := store.UpdateTaskStatus(ctx, detail.Task.ID, StatusRunning, nil, false); err != nil {
+		t.Fatalf("UpdateTaskStatus: %v", err)
+	}
+	stuck, err := store.GetTask(ctx, detail.Task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if stuck.Status != StatusRunning {
+		t.Fatalf("precondition status=%s, want running", stuck.Status)
+	}
+
+	completed, err := svc.Complete(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID, Reason: "session gone"})
+	if err != nil {
+		t.Fatalf("Complete on a stuck running task must succeed, got: %v", err)
+	}
+	if completed.Task.Status != StatusSuccess {
+		t.Fatalf("task status=%s, want success", completed.Task.Status)
+	}
+	if completed.Task.CompletedAt == "" {
+		t.Fatalf("completed_at empty")
+	}
+}
+
+// 终态任务不能被状态操作复活：Pause/Resume 走 setTaskStatus，终态时必须原样返回。
+func TestTerminalTaskCannotBeResurrected(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name  string
+		kill  func(*Service, string, string) error
+		after string
+	}{
+		{"success+resume", func(s *Service, r, id string) error { _, err := s.Resume(ctx, MoveInput{RootID: r, TaskID: id}); return err }, StatusSuccess},
+		{"success+pause", func(s *Service, r, id string) error { _, err := s.Pause(ctx, MoveInput{RootID: r, TaskID: id}); return err }, StatusSuccess},
+		{"cancelled+pause", func(s *Service, r, id string) error { _, err := s.Pause(ctx, MoveInput{RootID: r, TaskID: id}); return err }, StatusCancelled},
+		{"cancelled+resume", func(s *Service, r, id string) error { _, err := s.Resume(ctx, MoveInput{RootID: r, TaskID: id}); return err }, StatusCancelled},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, root := newTestService(t, nil)
+			d, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, Stages: []StageTemplate{userStage("Describe")}, Input: "x"})
+			if err != nil {
+				t.Fatalf("CreateTask: %v", err)
+			}
+			// 从非终态进入终态：cancelled 用 Cancel，success 用 Complete。
+			// 不能拿 success 再 Cancel——终态已不可改写，那是本测试要守的行为本身。
+			if tc.after == StatusCancelled {
+				if _, err := svc.Cancel(ctx, MoveInput{RootID: root.ID, TaskID: d.Task.ID}); err != nil {
+					t.Fatalf("Cancel: %v", err)
+				}
+			} else if _, err := svc.Complete(ctx, MoveInput{RootID: root.ID, TaskID: d.Task.ID}); err != nil {
+				t.Fatalf("Complete: %v", err)
+			}
+			if err := tc.kill(svc, root.ID, d.Task.ID); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			got, err := svc.GetTask(ctx, root.ID, d.Task.ID)
+			if err != nil {
+				t.Fatalf("GetTask: %v", err)
+			}
+			if got.Task.Status != tc.after {
+				t.Fatalf("terminal task was resurrected: status=%s, want %s", got.Task.Status, tc.after)
+			}
+		})
+	}
+}
+
+// 暂停/恢复往返：暂停后状态保持，恢复后继续跑（非终态才允许）。
+func TestPauseResumeRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	svc, root := newTestService(t, nil)
+	d, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID,
+		Stages: []StageTemplate{userStage("A"), agentStage("B", "do {previous_input}")}, Input: "x"})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	paused, err := svc.Pause(ctx, MoveInput{RootID: root.ID, TaskID: d.Task.ID})
+	if err != nil {
+		t.Fatalf("Pause: %v", err)
+	}
+	if paused.Task.Status != StatusPaused {
+		t.Fatalf("status=%s, want paused", paused.Task.Status)
+	}
+	resumed, err := svc.Resume(ctx, MoveInput{RootID: root.ID, TaskID: d.Task.ID})
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	if resumed.Task.Status != StatusRunning {
+		t.Fatalf("status=%s, want running", resumed.Task.Status)
+	}
+}
+
 func TestTaskNumbersIncrement(t *testing.T) {
 	ctx := context.Background()
 	svc, root := newTestService(t, nil)

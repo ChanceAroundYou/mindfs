@@ -79,7 +79,10 @@ export function WorkspaceKanban({ items, loading, projects, onOpenProject, onCom
       );
     return (
       <>
-        {status === "waiting_user" ? btn("success", t("task.completeShort"), () => onComplete(item)) : null}
+        {/* 完成只改任务状态，不依赖会话/worktree，所以非终态都给。 */}
+        {status !== "success" && status !== "fail" && status !== "cancelled"
+          ? btn("success", t("task.completeShort"), () => onComplete(item))
+          : null}
         {status === "waiting_user" || status === "pending"
           ? btn("accent", t("task.runNow"), () => onRunNow(item))
           : null}

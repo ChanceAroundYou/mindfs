@@ -307,8 +307,8 @@ export const zhCN = {
   "taskTemplate.switchToAgentStage": "切换到 Agent 阶段",
 
   "task.loadFailed": "任务加载失败",
-  "task.actionPrevious": "退回上一阶段",
   "task.actionPause": "暂停任务",
+  "task.actionResume": "恢复任务",
   "task.reasonPrompt": "{action}原因（可留空）",
   "task.actionFailed": "任务操作失败",
   "task.detailNotSynced": "任务详情尚未同步，请刷新后重试",

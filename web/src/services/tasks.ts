@@ -390,7 +390,7 @@ export async function updateTaskInput(
   });
 }
 
-export async function moveTask(rootId: string, taskId: string, action: "next" | "run-now" | "prev" | "pause" | "resume" | "complete" | "cancel" | "fail", reason = "", nodeId?: string): Promise<TaskDetail> {
+export async function moveTask(rootId: string, taskId: string, action: "next" | "run-now" | "pause" | "resume" | "complete" | "cancel" | "fail", reason = "", nodeId?: string): Promise<TaskDetail> {
   return protectedJSON<TaskDetail>(appURL(`/api/tasks/${encodeURIComponent(taskId)}/${action}`, undefined, nodeId), {
     method: "POST",
     headers: { "Content-Type": "application/json" },

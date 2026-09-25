@@ -563,29 +563,6 @@ func (s *Service) RunNow(ctx context.Context, in MoveInput) (TaskDetail, error) 
 	return detail, err
 }
 
-func (s *Service) Prev(ctx context.Context, in MoveInput) (TaskDetail, error) {
-	detail, err := s.moveRelative(ctx, in, -1, "user_rejected", StageStatusRejected)
-	if err == nil {
-		s.RunTask(detail.Task.RootID, detail.Task.ID)
-	}
-	return detail, err
-}
-
-func (s *Service) Jump(ctx context.Context, in MoveInput) (TaskDetail, error) {
-	store, task, err := s.loadForMove(ctx, in.RootID, in.TaskID)
-	if err != nil {
-		return TaskDetail{}, err
-	}
-	if in.StageIndex < 0 || in.StageIndex >= len(task.Stages) {
-		return TaskDetail{}, errors.New("stage_index out of range")
-	}
-	detail, err := s.moveTo(ctx, store, task, in.StageIndex, "moved", "", in.Reason)
-	if err == nil && !isTerminalStatus(detail.Task.Status) {
-		s.RunTask(detail.Task.RootID, detail.Task.ID)
-	}
-	return detail, err
-}
-
 func (s *Service) Pause(ctx context.Context, in MoveInput) (TaskDetail, error) {
 	return s.setTaskStatus(ctx, in.RootID, in.TaskID, StatusPaused, "paused", in.Reason, false)
 }
@@ -606,7 +583,9 @@ func (s *Service) Cancel(ctx context.Context, in MoveInput) (TaskDetail, error) 
 	return s.setTaskStatus(ctx, in.RootID, in.TaskID, StatusCancelled, "cancelled", in.Reason, true)
 }
 
-// Complete：任何等待用户的状态都可一键完成（不再限制必须停在最后一段）。
+// Complete：任何非终态任务都可一键完成。
+// 不看会话/worktree 是否还在——会话被删、worktree 丢了，任务状态照样能人工收尾，
+// 否则这些任务会永远卡在 running 没法推进。
 func (s *Service) Complete(ctx context.Context, in MoveInput) (TaskDetail, error) {
 	store, task, err := s.loadForMove(ctx, in.RootID, in.TaskID)
 	if err != nil {
@@ -614,9 +593,6 @@ func (s *Service) Complete(ctx context.Context, in MoveInput) (TaskDetail, error
 	}
 	if isTerminalStatus(task.Status) {
 		return store.GetDetail(ctx, task.ID)
-	}
-	if task.Status != StatusWaitingUser {
-		return TaskDetail{}, errors.New("task is not waiting for user")
 	}
 	if latest, runErr := store.LatestStageRun(ctx, task.ID, task.CurrentStageIndex); runErr == nil {
 		if latest.Status != StageStatusSuccess {
@@ -1212,10 +1188,15 @@ func (s *Service) moveTo(ctx context.Context, store *TaskStore, task Task, targe
 	return store.GetDetail(ctx, task.ID)
 }
 
+// setTaskStatus 改任务状态（Pause/Resume/Cancel/Fail 共用）。
+// 终态任务不再接受任何状态改写：已归档的任务不能被 Resume/Pause 复活。
 func (s *Service) setTaskStatus(ctx context.Context, rootID, taskID, status, eventType, reason string, terminal bool) (TaskDetail, error) {
 	store, err := s.taskStore(rootID)
 	if err != nil {
 		return TaskDetail{}, err
+	}
+	if current, getErr := store.GetTask(ctx, taskID); getErr == nil && isTerminalStatus(current.Status) {
+		return store.GetDetail(ctx, current.ID)
 	}
 	if err := store.UpdateTaskStatus(ctx, taskID, status, nil, terminal); err != nil {
 		return TaskDetail{}, err
