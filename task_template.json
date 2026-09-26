@@ -10,7 +10,7 @@
           "id": "",
           "name": "任务输入",
           "role": "user",
-          "auto_advance": false,
+          "auto_advance": true,
           "session_reuse_policy": "task_main"
         }
       },
@@ -58,7 +58,7 @@
           "id": "",
           "name": "任务输入",
           "role": "user",
-          "auto_advance": false,
+          "auto_advance": true,
           "session_reuse_policy": "task_main"
         }
       },

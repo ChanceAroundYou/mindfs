@@ -18,6 +18,8 @@ export type StageTemplate = {
   name: string;
   role: StageRole;
   auto_advance?: boolean;
+  /** 首段（任务输入）专用：建完立刻开跑，不用等用户点「立即执行」 */
+  start_immediately?: boolean;
   agent?: string;
   model?: string;
   mode?: string;

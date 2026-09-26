@@ -8,6 +8,11 @@ export type StageOptions = {
   /** 是否 user 段（user 段没有 agent / 会话复用可言） */
   role: "user" | "agent";
   autoAdvance: boolean;
+  /**
+   * 「立即执行」——只对首段（任务输入）有意义：建完任务立刻开跑。
+   * 不传 = 这一段不是首段，不显示这颗。
+   */
+  startImmediately?: boolean;
   planMode: boolean;
   planModeDisabled?: boolean;
   sessionReusePolicy: SessionReusePolicy;
@@ -17,6 +22,7 @@ export type StageOptions = {
 
 export type StageOptionsBarProps = StageOptions & {
   onAutoAdvanceChange: (next: boolean) => void;
+  onStartImmediatelyChange?: (next: boolean) => void;
   onPlanModeChange: (next: boolean) => void;
   onSessionReusePolicyChange: (policy: SessionReusePolicy) => void;
 };
@@ -26,15 +32,21 @@ export type StageOptionsBarProps = StageOptions & {
  *
  * 任务模板编辑和任务详情里的阶段编辑共用这一套（以前前者把这些塞在三点
  * 菜单里，后者干脆没有）。选项直接摊在编辑区上方，不藏菜单。
+ *
+ * user 段的选项按语义裁掉：引擎对 user 段一律推进（不读 AutoAdvance），
+ * 也开不了 plan、更没有会话复用可言 —— 摆出来只会是能撒谎的灰按钮。
+ * 首段另给一颗「立即执行」，那才是真开关（建完要不要立刻开跑）。
  */
 export function StageOptionsBar({
   role,
   autoAdvance,
+  startImmediately,
   planMode,
   planModeDisabled,
   sessionReusePolicy,
   readOnly,
   onAutoAdvanceChange,
+  onStartImmediatelyChange,
   onPlanModeChange,
   onSessionReusePolicyChange,
 }: StageOptionsBarProps) {
@@ -52,35 +64,48 @@ export function StageOptionsBar({
         minWidth: 0,
       }}
     >
-      <OptionToggle
-        checked={autoAdvance}
-        label={t("taskTemplate.autoAdvance")}
-        disabled={disabled}
-        onClick={() => onAutoAdvanceChange(!autoAdvance)}
-      />
-      <OptionToggle
-        checked={planMode}
-        label={t("taskTemplate.planMode")}
-        disabled={disabled || !isAgent || !!planModeDisabled}
-        onClick={() => onPlanModeChange(!planMode)}
-      />
-
-      {/* 会话复用：agent 段才有意义。自绘下拉，不用系统 option 菜单。
-          收起态直接显示当前策略名，不再加「会话复用」前缀 —— 三个选项自解释。 */}
-      <div style={{ display: "inline-flex", alignItems: "center", minWidth: "116px" }}>
-          <Select
-            value={sessionReusePolicy}
-            disabled={disabled || !isAgent}
-            ariaLabel={t("taskTemplate.sessionReuse")}
-            onChange={onSessionReusePolicyChange}
-            options={[
-              { value: "task_main", label: t("taskTemplate.sessionReuseTaskMain") },
-              { value: "same_stage", label: t("taskTemplate.sessionReuseSameStage") },
-              { value: "always_new", label: t("taskTemplate.sessionReuseAlwaysNew") },
-            ]}
-            size="panel"
+      {startImmediately !== undefined ? (
+        <OptionToggle
+          checked={startImmediately}
+          label={t("taskTemplate.startImmediately")}
+          disabled={disabled}
+          onClick={() => onStartImmediatelyChange?.(!startImmediately)}
+        />
+      ) : isAgent ? (
+        <OptionToggle
+          checked={autoAdvance}
+          label={t("taskTemplate.autoAdvance")}
+          disabled={disabled}
+          onClick={() => onAutoAdvanceChange(!autoAdvance)}
+        />
+      ) : null}
+      {isAgent ? (
+        <>
+          <OptionToggle
+            checked={planMode}
+            label={t("taskTemplate.planMode")}
+            disabled={disabled || !!planModeDisabled}
+            onClick={() => onPlanModeChange(!planMode)}
           />
-      </div>
+
+          {/* 会话复用：agent 段才有意义。自绘下拉，不用系统 option 菜单。
+              收起态直接显示当前策略名，不再加「会话复用」前缀 —— 三个选项自解释。 */}
+          <div style={{ display: "inline-flex", alignItems: "center", minWidth: "116px" }}>
+            <Select
+              value={sessionReusePolicy}
+              disabled={disabled}
+              ariaLabel={t("taskTemplate.sessionReuse")}
+              onChange={onSessionReusePolicyChange}
+              options={[
+                { value: "task_main", label: t("taskTemplate.sessionReuseTaskMain") },
+                { value: "same_stage", label: t("taskTemplate.sessionReuseSameStage") },
+                { value: "always_new", label: t("taskTemplate.sessionReuseAlwaysNew") },
+              ]}
+              size="panel"
+            />
+          </div>
+        </>
+      ) : null}
     </div>
   );
 }

@@ -167,6 +167,11 @@ export type TaskInlineEditState = {
   modelOverride?: string;
   /** 覆盖下一个 agent 阶段的 effort（空 = 用模板里的） */
   effortOverride?: string;
+  /**
+   * 覆盖首段的「立即执行」（缺省 = 用模板里的）。
+   * 开 → 创建后直接推进到下一个 agent 段跑起来；关 → 停在「未开始」。
+   */
+  startImmediately?: boolean;
   previousInputs: Array<{ id: string; label: string; input: string }>;
   createWorktree: boolean;
   worktreeBranchMode: "new" | "existing";
@@ -176,18 +181,23 @@ export type TaskInlineEditState = {
 };
 
 /**
- * 把 agent/model/effort 覆盖写到模板的**第一个** agent 段上。
+ * 把 agent/model/effort 覆盖写到模板的**第一个** agent 段上，
+ * 把 startImmediately 覆盖写到首段（任务输入）的「立即执行」上。
  *
  * wire 上 stages 是拍平的 StageTemplate[]（不是模板里的 { snapshot } 包装），
- * 所以这里返回拍平后的段。模板里没有 agent 段、或什么都没覆盖时返回 undefined，
+ * 所以这里返回拍平后的段。模板里没有 agent 段、什么都没覆盖时返回 undefined，
  * 让后端照模板走。
+ *
+ * startImmediately 是**每次都照实发**的（面板开出来时就填了模板的值，不传才是
+ * 「别管」）：只在 true 时写会让「面板上把模板勾上的那颗取消掉」退化成「照模板走」，
+ * 任务照样自己跑起来 —— 面板上看得见的选择必须压得住后端。
  */
 export function applyStageOverride(
   template: TaskTemplate | null,
-  override: { agent?: string; model?: string; effort?: string },
+  override: { agent?: string; model?: string; effort?: string; startImmediately?: boolean },
 ): StageTemplate[] | undefined {
   if (!template) return undefined;
-  if (!override.agent && !override.model && !override.effort) return undefined;
+  if (!override.agent && !override.model && !override.effort && override.startImmediately === undefined) return undefined;
   let touched = false;
   const stages = (template.stages || []).map((stage) => {
     const snapshot = stage.snapshot;
@@ -201,5 +211,10 @@ export function applyStageOverride(
       ...(override.effort ? { effort: override.effort } : {}),
     };
   });
+  if (override.startImmediately !== undefined && stages[0]) {
+    // 首段必是 user 段（后端 CreateTask 也这么校验），「立即执行」挂在这儿。
+    // 模板里没有 agent 段时下面会返回 undefined，反正也没有下一段可推进。
+    stages[0] = { ...stages[0], start_immediately: override.startImmediately };
+  }
   return touched ? stages : undefined;
 }

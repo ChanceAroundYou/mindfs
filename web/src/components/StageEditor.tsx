@@ -22,6 +22,13 @@ export type StageEditorProps = {
   /** 计划模式是否不可选（acp 协议等） */
   planModeDisabled?: boolean;
 
+  /**
+   * 这是首段（任务输入）吗？首段额外显示「立即执行」（建完就开跑），
+   * 其余段显示「自动进入下一阶段」。user 段的自动推进由引擎固定（反馈完就推进），
+   * 面板上不给开关。
+   */
+  isFirstStage?: boolean;
+
   /** editor 上方的字段标签（任务模板编辑有「?」说明，任务详情/新建任务没有） */
   label?: React.ReactNode;
 
@@ -63,6 +70,7 @@ export function StageEditor({
   onStageNameChange,
   onToggleRole,
   planModeDisabled,
+  isFirstStage = false,
   label,
   showAgentSelector,
   actions,
@@ -173,11 +181,13 @@ export function StageEditor({
           <StageOptionsBar
             role={stage.role}
             autoAdvance={stage.auto_advance === true}
+            startImmediately={isFirstStage ? stage.start_immediately === true : undefined}
             planMode={!planModeDisabled && stage.plan_mode === true}
             planModeDisabled={planModeDisabled}
             sessionReusePolicy={(stage.session_reuse_policy as SessionReusePolicy) || "task_main"}
             readOnly={mode !== "editable"}
             onAutoAdvanceChange={(next) => onChange({ auto_advance: next })}
+            onStartImmediatelyChange={(next) => onChange({ start_immediately: next })}
             onPlanModeChange={(next) => {
               if (!planModeDisabled) onChange({ plan_mode: next });
             }}

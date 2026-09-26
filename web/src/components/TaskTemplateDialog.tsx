@@ -26,7 +26,10 @@ type TaskTemplateDialogProps = {
 const blankUserStage = (): StageTemplate => ({
   name: "",
   role: "user",
-  auto_advance: false,
+  // user 段的自动推进由引擎固定（反馈完就推进），引擎不读这个字段；
+  // 存 true 只是让模板 JSON 里的值和实际行为一致。
+  auto_advance: true,
+  start_immediately: false,
   prompt_template: "",
 });
 
@@ -238,6 +241,7 @@ export function TaskTemplateDialog({ open, agents, template, onClose, onSaved, n
                   stageNamePlaceholder={t("taskTemplate.stageNamePlaceholder")}
                   onStageNameChange={(name) => updateStage(index, { name })}
                   onToggleRole={index === 0 ? undefined : onToggleStageRole(index)}
+                  isFirstStage={index === 0}
                   planModeDisabled={planModeDisabled}
                   resetKey={`${draft.id || "new"}-${index}`}
                   placeholder={isAgent ? t("taskTemplate.promptTemplate") : t("taskTemplate.userInputTemplate")}
@@ -274,7 +278,7 @@ export function TaskTemplateDialog({ open, agents, template, onClose, onSaved, n
   );
 }
 
-function FieldLabelWithInfo({ label, info, helpKey, openHelpKey, setOpenHelpKey }: {
+export function FieldLabelWithInfo({ label, info, helpKey, openHelpKey, setOpenHelpKey }: {
   label: string;
   info: string;
   helpKey: string;

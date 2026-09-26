@@ -82,6 +82,8 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
   const [editMode, setEditMode] = useState("");
   // 阶段选项：与任务模板编辑共用 StageOptionsBar 那一套
   const [editAutoAdvance, setEditAutoAdvance] = useState(false);
+  // 首段（任务输入）专用：「立即执行」= 建完就开跑
+  const [editStartImmediately, setEditStartImmediately] = useState(false);
   const [editPlanMode, setEditPlanMode] = useState(false);
   const [editSessionReuse, setEditSessionReuse] = useState<SessionReusePolicy>("task_main");
   // 角色也可在编辑态切换（agent ↔ user），首段固定 user
@@ -161,6 +163,7 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
     setEditEffort(stage.effort || "");
     setEditMode(stage.mode || "");
     setEditAutoAdvance(stage.auto_advance === true);
+    setEditStartImmediately(stage.start_immediately === true);
     setEditPlanMode(stage.plan_mode === true);
     setEditSessionReuse((stage.session_reuse_policy as SessionReusePolicy) || "task_main");
     setEditRole(stage.role);
@@ -178,6 +181,7 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
       || editEffort !== (stage.effort || "")
       || editMode !== (stage.mode || "")
       || editAutoAdvance !== (stage.auto_advance === true)
+      || editStartImmediately !== (stage.start_immediately === true)
       || editPlanMode !== (stage.plan_mode === true)
       || editSessionReuse !== ((stage.session_reuse_policy as SessionReusePolicy) || "task_main")
     );
@@ -228,6 +232,7 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
       effort: isAgent ? editEffort : undefined,
       mode: isAgent ? editMode : undefined,
       auto_advance: editAutoAdvance,
+      start_immediately: editStartImmediately,
       plan_mode: isAgent ? editPlanMode : false,
       session_reuse_policy: editSessionReuse,
     };
@@ -260,6 +265,7 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
     setEditEffort(stage.effort || "");
     setEditMode(stage.mode || "");
     setEditAutoAdvance(stage.auto_advance === true);
+    setEditStartImmediately(stage.start_immediately === true);
     setEditPlanMode(stage.plan_mode === true);
     setEditSessionReuse((stage.session_reuse_policy as SessionReusePolicy) || "task_main");
     setEditRole("agent");
@@ -354,6 +360,7 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
                   effort: editRole === "agent" ? editEffort : undefined,
                   mode: editRole === "agent" ? editMode : undefined,
                   auto_advance: editAutoAdvance,
+                  start_immediately: editStartImmediately,
                   plan_mode: editRole === "agent" ? editPlanMode : false,
                   session_reuse_policy: editSessionReuse,
                 }
@@ -420,10 +427,12 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
                     if ("effort" in patch) setEditEffort(patch.effort || "");
                     if ("mode" in patch) setEditMode(patch.mode || "");
                     if ("auto_advance" in patch) setEditAutoAdvance(patch.auto_advance === true);
+                    if ("start_immediately" in patch) setEditStartImmediately(patch.start_immediately === true);
                     if ("plan_mode" in patch) setEditPlanMode(patch.plan_mode === true);
                     if ("session_reuse_policy" in patch) setEditSessionReuse((patch.session_reuse_policy as SessionReusePolicy) || "task_main");
                   }}
                   stageNamePlaceholder={editing ? t("taskTemplate.stageNamePlaceholder") : undefined}
+                  isFirstStage={index === 0}
                   onStageNameChange={(name) => setEditName(name)}
                   onToggleRole={editing ? () => {
                     if (editRole === "agent") {

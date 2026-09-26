@@ -141,7 +141,7 @@ import { DialogHost } from "./components/DialogHost";
 import { alertDialog, confirmDialog, promptDialog } from "./services/dialog";
 import { BottomSheet } from "./components/BottomSheet";
 import { ScheduledAgentTaskDialog } from "./components/ScheduledAgentTaskDialog";
-import { TaskTemplateDialog } from "./components/TaskTemplateDialog";
+import { TaskTemplateDialog, FieldLabelWithInfo } from "./components/TaskTemplateDialog";
 import { TaskDetailPanel } from "./components/TaskDetailPanel";
 import { MainViewSwitcher } from "./components/MainViewSwitcher";
 import { OnboardingTour } from "./components/OnboardingTour";
@@ -323,6 +323,8 @@ export function App({ onGoHome }: AppProps) {
   const [taskInlineCandidates, setTaskInlineCandidates] = useState<CandidateItem[]>([]);
   const [taskInlineCandidateIndex, setTaskInlineCandidateIndex] = useState(0);
   const [taskInlineSaving, setTaskInlineSaving] = useState(false);
+  // 新建任务面板里「用户输入模板」字段说明的展开态（与模板编辑面板同一套组件）。
+  const [taskInlineHelpKey, setTaskInlineHelpKey] = useState("");
   const [taskInlineUploadProgress, setTaskInlineUploadProgress] = useState<UploadProgress | null>(null);
 	  const [directoryUploadProgress, setDirectoryUploadProgress] = useState<UploadProgress | null>(null);
 	  const [taskWorktreeBranches, setTaskWorktreeBranches] = useState<GitBranchesPayload>({ branches: [] });
@@ -763,6 +765,8 @@ export function App({ onGoHome }: AppProps) {
 	      text: initialText,
 	      targetRootId: targetRootId || undefined,
 	      name: "",
+	      // 首段的「立即执行」：面板开出来就照模板的面板值。
+	      startImmediately: template?.stages?.[0]?.snapshot?.start_immediately === true,
 	      previousInputs: [],
 	      createWorktree: taskCanCreateWorktree && worktreePref.createWorktree,
 	      worktreeBranchMode: worktreePref.worktreeBranchMode,
@@ -785,6 +789,7 @@ export function App({ onGoHome }: AppProps) {
     setTaskInlineActiveToken(null);
     setTaskInlineCandidates([]);
     setTaskInlineCandidateIndex(0);
+    setTaskInlineHelpKey("");
     setTaskInlineSaving(false);
     setTaskInlineUploadProgress(null);
     taskInlineUploadAbortRef.current?.abort();
@@ -871,11 +876,12 @@ export function App({ onGoHome }: AppProps) {
       const payload = [edit.text.trim(), attachmentTokens].filter(Boolean).join("\n");
       const taskCanCreateWorktree = managedRootByIdRef.current[rootId]?.is_git_repo === true;
       const createWorktree = taskCanCreateWorktree && edit.createWorktree;
-      // 有 agent/模型覆盖才带 stages（applyStageOverride 内部处理：只改第一个
-      // agent 段、没覆盖时返回 undefined 让后端照模板走）。
+      // 有 agent/模型/立即执行覆盖才带 stages（applyStageOverride 内部处理：
+      // agent/model/effort 只改第一个 agent 段、startImmediately 只改首段，
+      // 没覆盖时返回 undefined 让后端照模板走）。
       const overrideStages = applyStageOverride(
         taskTemplates.find((tpl) => tpl.id === edit.templateId) || null,
-        { agent: edit.agentOverride, model: edit.modelOverride, effort: edit.effortOverride },
+        { agent: edit.agentOverride, model: edit.modelOverride, effort: edit.effortOverride, startImmediately: edit.startImmediately },
       );
       const detail = await createTask(
         rootId,
@@ -9109,12 +9115,12 @@ export function App({ onGoHome }: AppProps) {
 	          const taskWorktreeControlsEditable = taskInlineEdit.canToggleWorktree;
 	          // 编辑区里的 agent 选择器：默认值就是「下一个 agent 阶段」在模板里
 	          // 的 agent/model，用户没动过就不写覆盖，让后端照模板走。
-	          const taskInlineTemplateAgent = firstAgentStage(
-	            taskTemplates.find((tpl) => tpl.id === taskInlineEdit.templateId) || null,
-	          );
+	          const taskInlineTemplate = taskTemplates.find((tpl) => tpl.id === taskInlineEdit.templateId) || null;
+	          const taskInlineTemplateAgent = firstAgentStage(taskInlineTemplate);
 	          const taskInlineHasAgentStage = !!taskInlineTemplateAgent;
 	          // 喂给 StageEditor 的那一段：user 段（角色不可切、没有段名），
 	          // 但带上「下一个 agent 阶段」的 agent/model/effort，选择器才有默认值。
+	          // auto_advance 照模板首段的来，面板上可以临时改。
 	          const createTaskInputStage: StageTemplate = {
 	            name: "",
 	            role: "user",
@@ -9123,6 +9129,7 @@ export function App({ onGoHome }: AppProps) {
 	            agent: taskInlineEdit.agentOverride || taskInlineTemplateAgent?.agent || DEFAULT_TASK_AGENT,
 	            model: taskInlineEdit.modelOverride || taskInlineTemplateAgent?.model || DEFAULT_TASK_MODEL,
 	            effort: taskInlineEdit.effortOverride || taskInlineTemplateAgent?.effort || "",
+	            start_immediately: taskInlineEdit.startImmediately === true,
 	          };
 	          return (
         <PanelShell
@@ -9145,7 +9152,7 @@ export function App({ onGoHome }: AppProps) {
                     onChange={(value) => {
                       const picked = taskTemplates.find((tpl) => tpl.id === value);
                       if (!picked) return;
-                      setTaskInlineEdit((prev) => prev ? { ...prev, templateId: picked.id || "", templateName: picked.name, text: firstUserInputTemplate(picked) } : prev);
+                      setTaskInlineEdit((prev) => prev ? { ...prev, templateId: picked.id || "", templateName: picked.name, text: firstUserInputTemplate(picked), startImmediately: picked.stages?.[0]?.snapshot?.start_immediately === true } : prev);
                       setTaskInlineActiveToken(null);
                       setTaskInlineCandidates([]);
                     }}
@@ -9270,7 +9277,8 @@ export function App({ onGoHome }: AppProps) {
                   value={taskInlineEdit.name}
                   onChange={(event) => setTaskInlineEdit((prev) => prev ? { ...prev, name: event.target.value } : prev)}
                   placeholder={t("task.namePlaceholder")}
-                  style={{ ...composerInputStyle, flex: "1 1 auto", height: "30px" }}
+                  /* 与模板编辑面板的段名输入框同款窄框，不再撑满整行。 */
+                  style={{ ...composerInputStyle, height: "26px", width: "180px", flex: "0 0 180px", fontWeight: 800 }}
                 />
               </div>
               {taskInlineEdit.previousInputs.length > 0 ? (
@@ -9323,13 +9331,27 @@ export function App({ onGoHome }: AppProps) {
                 editorRef={taskInlineEditorRef}
                 stage={createTaskInputStage}
                 agents={availableAgents}
+                isFirstStage
                 onChange={(patch) => setTaskInlineEdit((prev) => prev ? {
                   ...prev,
                   text: patch.prompt_template ?? prev.text,
                   ...(patch.agent ? { agentOverride: patch.agent } : {}),
                   ...(patch.model !== undefined ? { modelOverride: patch.model } : {}),
                   ...(patch.effort !== undefined ? { effortOverride: patch.effort } : {}),
+                  // 首段的「立即执行」：面板上可临时改，勾上创建后直接开跑。
+                  ...(patch.start_immediately !== undefined ? { startImmediately: patch.start_immediately } : {}),
                 } : prev)}
+                /* 字段说明跟模板编辑面板共用一套：新建任务这里填的就是模板里
+                   那个「用户输入模板」的预填内容。 */
+                label={(
+                  <FieldLabelWithInfo
+                    label={t("taskTemplate.userInputTemplate")}
+                    info={t("taskTemplate.userInputTemplateInfo")}
+                    helpKey="task-input"
+                    openHelpKey={taskInlineHelpKey}
+                    setOpenHelpKey={setTaskInlineHelpKey}
+                  />
+                )}
                 /* 这个编辑区本身是 user 段，但新建时要在这里挑「下一个 agent 阶段」
                    用哪个 agent/模型，所以把 PromptEditor 自带的 AgentSelector 打开。
                    默认值取模板里第一个 agent 段的 agent/model（createTaskInputStage）。 */
