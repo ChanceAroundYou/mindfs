@@ -162,12 +162,38 @@ assert.doesNotMatch(
   "编号只由标题条渲染一次，不该在输入行里再来一份",
 );
 
-// 3) worktree badge 曾经渲染两份（标题条一份、输入行右侧一份），只留标题条那份
+// 3) worktree badge 曾经渲染两份（标题条一份、输入行右侧一份），只留标题条那份。
+//    标题行/操作行已抽进 TaskCardRows（看板和工作台共用），契约跟着文件走。
+const cardRows = readFileSync(new URL("../src/components/TaskCardRows.tsx", import.meta.url), "utf8");
 assert.equal(
-  (cardJsx.match(/taskWorktreeTagStyle\(taskWorktreeEnabled\)/g) || []).length,
+  (cardRows.match(/taskWorktreeTagStyle\(worktreeEnabled\)/g) || []).length,
   1,
   "worktree badge 在卡片里只应渲染一次",
 );
-assert.match(cardJsx, /style=\{taskWorktreeTagStyle\(taskWorktreeEnabled\)\}/, "标题条应保留 worktree badge");
+assert.match(cardRows, /style=\{taskWorktreeTagStyle\(worktreeEnabled\)\}/, "标题条应保留 worktree badge");
+// 看板仍要渲染正文（可展开），工作台不传 children —— 那一段因此只存在于看板一侧
+assert.match(
+  board,
+  /<TaskCardRows[\s\S]*?>\s*<div\s*\n\s*style=\{\{\s*\n\s*marginTop: "5px"/,
+  "the board keeps the task body row, passed as TaskCardRows children",
+);
+// 长正文必须还能展开。展开开关跟着正文住在看板这一侧的 children 里 ——
+// 共享的 TaskCardRows 不碰正文，也就不该有它的开关。曾经把开关连同正文一起
+// 搬进共享组件，结果工作台不传 children 时开关也没了，看板上的长正文永久卡在 3 行。
+assert.match(
+  board,
+  /const inputNeedsToggle = firstInput\.length > 120 \|\| firstInput\.split\(\/\\r\?\\n\/\)\.length > 3;/,
+  "a body longer than 3 lines must still be expandable",
+);
+assert.match(
+  board,
+  /\{inputNeedsToggle \? \([\s\S]*?setExpandedTaskInputIds\(\(prev\) =>[\s\S]*?<TaskExpandIcon collapsed=\{!inputExpanded\} \/>[\s\S]*?<\/TaskCardRows>/,
+  "the expand toggle must render on the board side, inside the body children",
+);
+assert.doesNotMatch(
+  cardRows,
+  /TaskExpandIcon|expandedTaskInputIds|setExpandedTaskInputIds/,
+  "the shared card rows must not own the body expand toggle — it controls something the workbench does not render",
+);
 
 console.log("task-board-view.test.mjs: OK");

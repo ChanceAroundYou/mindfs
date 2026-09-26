@@ -319,15 +319,17 @@ assert.match(
 // 9) 任务状态不能和会话 / worktree 绑死：会话没了、worktree 被删导致卡住的
 //    任务，卡片上仍要能调整状态。曾经整排操作区都包在 !taskTerminal 里，
 //    于是「已结束但状态不对」的任务连删除都点不到，只能干看着。
+//    标题行/操作行已抽进 TaskCardRows（看板和工作台共用），契约跟着文件走。
+const cardRows = read("src/components/TaskCardRows.tsx");
 assert.match(
-  boardView,
-  /\{!taskTerminal \? \(\s*<>[\s\S]*?showTaskAdvanceButton[\s\S]*?taskCanComplete[\s\S]*?<\/>\s*\) : null\}/,
+  cardRows,
+  /\{!terminal \? \(\s*<>[\s\S]*?showAdvance[\s\S]*?canComplete[\s\S]*?<\/>\s*\) : null\}/,
   "only run-now / complete are gated on taskTerminal",
 );
 assert.match(
-  boardView,
-  /handleMoveKanbanTask\(task, "cancel"\)[\s\S]{0,220}?<\/div>/,
-  "the delete button must live OUTSIDE the !taskTerminal block",
+  cardRows,
+  /onMove\(task, "cancel"\)[\s\S]{0,220}?<\/div>/,
+  "the delete button must live OUTSIDE the !terminal block",
 );
 assert.doesNotMatch(
   boardView,
@@ -378,3 +380,49 @@ assert.match(
   /function revalidate\(request, cache\) \{[\s\S]*?fetch\(request\)[\s\S]*?cache\.put\(/,
   "revalidate must refresh the cached copy in the background",
 );
+
+// 10) 任务状态色只有一份定义（appTask.taskStatusColor），看板卡 / 工作台卡 /
+//     详情面板都从它拿。以前详情面板自带一份 statusColors，工作台干脆没有配色，
+//     于是同一个「已完成」在三处是三种颜色。色值走 --status-* token 而不是字面 hex，
+//     深浅主题（含 meadow/moss）才能自动跟随。
+assert.match(
+  appTask,
+  /export function taskStatusColor\(status: string\): string \{[\s\S]*?return colors\[status\] \|\| "var\(--text-secondary\)";/,
+  "one helper maps task status to a color, with a neutral fallback",
+);
+for (const [status, color] of [
+  ["success", "var(--status-ok)"],
+  ["approved", "var(--status-ok)"],
+  ["fail", "var(--status-bad)"],
+  ["rejected", "var(--status-bad)"],
+  ["waiting_user", "var(--status-warn)"],
+  ["running", "var(--accent-color)"],
+  ["queued", "var(--accent-color)"],
+  ["pending", "var(--text-secondary)"],
+  ["paused", "var(--text-secondary)"],
+  ["cancelled", "var(--text-secondary)"],
+]) {
+  assert.match(
+    appTask,
+    new RegExp(`\\b${status}: "${color.replace(/[()]/g, "\\$&")}"`),
+    `${status} must map to ${color}`,
+  );
+}
+assert.doesNotMatch(
+  appTask,
+  /#[0-9a-fA-F]{3,8}\b/,
+  "the status helper must not hardcode hex — light/dark themes each supply their own value",
+);
+assert.match(panel, /taskStatusColor\(task\.status\)/, "the detail panel reads the shared status color");
+assert.match(panel, /taskStatusColor\(run\?\.status \|\| ""\)/, "so does the per-stage run badge");
+assert.doesNotMatch(
+  panel,
+  /const statusColors: Record<string, string>/,
+  "the detail panel's private statusColors map is gone — one definition, not two",
+);
+for (const token of ["--status-ok", "--status-warn", "--status-bad"]) {
+  assert.ok(css.includes(`${token}:`), `${token} must be defined in index.css`);
+  // 浅色 :root + 深色 data-theme + prefers-color-scheme 三个块都得给值
+  const occurrences = css.split(`${token}:`).length - 1;
+  assert.ok(occurrences >= 3, `${token} needs a light value plus both dark blocks, found ${occurrences}`);
+}

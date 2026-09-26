@@ -8,35 +8,21 @@ import type { KanbanTask, TaskTemplate } from "../services/tasks";
 import type { WorkspaceBoard as WorkspaceBoardData } from "../app/useWorkspaceBoard";
 import type { WorkspaceBoardFilter } from "../app/appStorage";
 import type { SessionItem } from "../app/appSession";
-import { isTerminalKanbanTask, parseTaskSessionErrorDetails, parseTaskSessionErrorMessage, taskStatusLabel } from "../app/appTask";
 import { InlineTokenText } from "./InlineTokenText";
-import { AgentIcon } from "./AgentIcon";
-import { ModeIcon } from "./ModeIcon";
-import { NoWorktreeIcon } from "./NoWorktreeIcon";
+import { TaskCardRows } from "./TaskCardRows";
 import { WorkspaceBoard } from "./workspace/WorkspaceBoard";
-import { renderToolIcon } from "./stream/ToolCallCard";
 import {
   DeleteIcon,
   EditPencilIcon,
   HorizontalDotsIcon,
   PlusSmallIcon,
-  RunNowIcon,
   SyncIcon,
-  TaskCompleteIcon,
   TaskExpandIcon,
   TaskGroupChevronIcon,
-  TaskPauseIcon,
-  TaskPlanAuxIcon,
-  TaskQueuedSpinnerIcon,
-  TaskResumeIcon,
-  TaskRunNowIcon,
-  TaskSessionErrorIcon,
   hexToRgbaApp,
-  taskAuxBadgeStyle,
   taskCardIconButtonStyle,
-  taskReplyPulseStyle,
+  taskCardSurfaceStyle,
   taskTemplateMenuItemStyle,
-  taskWorktreeTagStyle,
 } from "../app/taskIcons";
 
 /** 看板列（四块：未开始 / 执行中 / 待审核 / 已结束）。App 侧构造，本视图只渲染。 */
@@ -74,6 +60,7 @@ export function TaskBoardView({
   managedRootIds,
   getRootDisplayName,
   openWorkspaceProject,
+  openWorkspaceTaskDetail,
   handleWorkspaceCreateTask,
   setSelectedKanbanTaskId,
   kanbanTasksLoading,
@@ -109,6 +96,7 @@ export function TaskBoardView({
   managedRootIds: string[];
   getRootDisplayName: (rootId: string | null | undefined) => string;
   openWorkspaceProject: (rootId: string) => Promise<void>;
+  openWorkspaceTaskDetail: (item: { root_id: string; nodeId: string; task: KanbanTask }) => Promise<void>;
   handleWorkspaceCreateTask: (rootId: string, nodeId: string, template: TaskTemplate) => void;
   setSelectedKanbanTaskId: React.Dispatch<React.SetStateAction<string>>;
   kanbanTasksLoading: boolean;
@@ -173,8 +161,14 @@ export function TaskBoardView({
       onToggleProject={onToggleWorkspaceProject}
       getNodeColor={getDisplayNodeColor}
       onOpenProject={(rootId) => { void openWorkspaceProject(rootId); }}
-      onOpenTask={(item) => { void openWorkspaceProject(item.root_id).then(() => setSelectedKanbanTaskId(item.task.id)); }}
+      onOpenTask={(item) => { void openWorkspaceTaskDetail(item); }}
       onMoveTask={(item, action) => { void handleMoveKanbanTask(item.task, action); }}
+      onOpenSession={(sessionKey, rootId, taskId) => {
+        handleTaskSessionDrawerOpen(sessionKey, rootId, taskId);
+      }}
+      onShowSessionError={setTaskSessionErrorDialog}
+      taskSessionKeysById={taskSessionKeysById}
+      sessionByKey={sessionByKey}
       templates={templateControls.taskTemplates}
       onCreateTask={handleWorkspaceCreateTask}
       onRefresh={onRefreshWorkspaceBoard}
@@ -652,33 +646,10 @@ export function TaskBoardView({
                     : task.main_session_key
                       ? [task.main_session_key]
                       : [];
-                  const taskKanbanNodeColor = getDisplayNodeColor(String(task.root_id || "")) || getDisplayNodeColor(String(currentRootId || "")) || "";
-                  const taskSessionPending = taskSessionKeys.some((key) => !!sessionByKey[key]?.pending);
-                  const taskQueued = task.status === "queued";
-                  const taskBlockedByConcurrency = taskQueued && !task.scheduler_admitted && !taskSessionKeys.length;
-                  const auxFlags = task.aux_flags || {};
-                  const taskSessionError = parseTaskSessionErrorMessage(auxFlags.session_error);
-                  const taskSessionErrorDetails = parseTaskSessionErrorDetails(auxFlags.session_error);
-                  const taskAuxBadges = [
-                    auxFlags.ask_user_waiting ? { key: "ask_user", label: t("task.waitingUser"), icon: renderToolIcon("ask_user"), attention: true } : null,
-                    auxFlags.has_plan ? { key: "plan", label: t("task.hasPlan"), icon: <TaskPlanAuxIcon color={taskKanbanNodeColor || undefined} />, attention: false } : null,
-                    auxFlags.has_todos ? { key: "todos", label: t("task.hasTodos"), icon: renderToolIcon("todo"), attention: false } : null,
-                    auxFlags.has_task ? { key: "task", label: t("task.hasTask"), icon: renderToolIcon("task"), attention: false } : null,
-                  ].filter((item): item is { key: string; label: string; icon: React.ReactNode; attention: boolean } => Boolean(item));
+                  // 正文要不要折叠由看板自己决定 —— 正文段在 TaskCardRows 的 children 里，不在共享组件内。
                   const inputExpanded = expandedTaskInputIds.has(task.id);
+                  // 正文超过 3 行（或 120 字）才需要展开开关 —— 它只对正文生效
                   const inputNeedsToggle = firstInput.length > 120 || firstInput.split(/\r?\n/).length > 3;
-                  const taskTerminal = isTerminalKanbanTask(task);
-                  const taskStageRunning = task.current_stage_status === "running" && task.status === "running";
-                  // 完成是纯任务状态操作：不碰会话/worktree，所以任何非终态卡都该给这个出口。
-                  // 会话被删或 worktree 丢失的任务永远停在 running，只有这条能救。
-                  const taskCanComplete = !taskTerminal;
-                  // 暂停只在阶段真在跑时给；等待/未开始没有"暂停"可言。恢复同理。
-                  const taskCanPause = taskStageRunning;
-                  const taskCanResume = task.status === "paused";
-                  const showTaskAdvanceButton = !taskTerminal && !taskStageRunning;
-                  const taskStatusText = taskStatusLabel(task.status || "", t);
-                  const taskWorktreeEnabled = task.create_worktree === true;
-                    const taskNumberLabel = task.task_number ? `#${task.task_number}` : "";
                     const taskStageName = task.current_stage_name || (task.current_stage_index >= 0 ? t("task.stageLabel", { index: task.current_stage_index + 1 }) : "");
                     // 列语义对两种筛选态一视同仁：阶段名只在"执行中"列、状态只在"已结束"列出现。
                     // 以前子看板走另一套（恒显示阶段），于是同一张卡在两边信息量不同。
@@ -689,235 +660,60 @@ export function TaskBoardView({
                       <article
                         key={task.id}
                         onClick={() => handleSelectKanbanTask(task)}
-                        style={{
-                          position: "relative",
-                          border: taskSelected ? "1px solid rgba(14, 165, 233, 0.95)" : "1px solid rgba(96, 165, 250, 0.42)",
-                          borderRadius: "8px",
-                          background: "var(--menu-bg)",
-                          padding: "8px",
-                          boxShadow: taskSelected ? "0 0 0 2px rgba(14, 165, 233, 0.16)" : "0 1px 2px rgba(15, 23, 42, 0.06)",
-                          cursor: "pointer",
-                        }}
+                        style={{ ...taskCardSurfaceStyle(taskSelected), padding: "8px" }}
                       >
-                      {taskSessionPending ? (
-                        <span
-                          aria-label={t("task.replying")}
-                          title={t("task.replying")}
-                          style={taskReplyPulseStyle(taskKanbanNodeColor || undefined)}
-                        />
-                      ) : null}
-                      <div
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: "5px",
-                            minWidth: 0,
-                            color: "var(--text-secondary)",
-                            fontSize: "10px",
-                            fontWeight: 700,
-                            lineHeight: "14px",
-                          }}
-                        >
-                          {taskNumberLabel ? (
-                            <span style={{ flex: "0 0 auto", color: "#0ea5e9", fontWeight: 800 }}>{taskNumberLabel}</span>
-                          ) : null}
-                          <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 800, color: "var(--text-color)" }}>
-                            {task.name || task.task_template_name || selectedTaskTemplateForFilter?.name || t("task.unnamedTemplate")}
-                          </span>
-                          {showStageName ? (
-                            <>
-                              <span style={{ flex: "0 0 auto", opacity: 0.55 }}>·</span>
-                              <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                {taskStageName}
-                              </span>
-                            </>
-                          ) : null}
-                            {showTaskStatus ? (
-                              <>
-                                <span style={{ flex: "0 0 auto", opacity: 0.55 }}>·</span>
-                                <span style={{ flex: "0 0 auto" }}>{taskStatusText}</span>
-                                {task.status === "fail" && taskSessionError ? (
-                                  <button
-                                    type="button"
-                                    title={t("task.viewError")}
-                                    aria-label={t("task.viewTaskError")}
-                                      onClick={(event) => {
-                                        event.stopPropagation();
-                                        setTaskSessionErrorDialog({
-                                          title: task.task_template_name || selectedTaskTemplateForFilter?.name || t("task.defaultTitle"),
-                                          message: taskSessionError,
-                                          details: taskSessionErrorDetails,
-                                        });
-                                      }}
-                                    style={{ ...taskCardIconButtonStyle("warning"), width: "16px", height: "16px" }}
-                                  >
-                                    <TaskSessionErrorIcon />
-                                  </button>
-                                ) : null}
-                              </>
-                          ) : null}
-                          <span
-                            title={taskWorktreeEnabled ? t("task.worktreeTitle") : t("task.noWorktreeTitle")}
-                            aria-label={taskWorktreeEnabled ? t("task.worktreeTitle") : t("task.noWorktreeTitle")}
-                            style={taskWorktreeTagStyle(taskWorktreeEnabled)}
-                          >
-                            {taskWorktreeEnabled ? null : <NoWorktreeIcon />}
-                            worktree
-                          </span>
-                        </div>
-                      <div
-                        style={{
-                          marginTop: "5px",
-                          color: firstInput ? "var(--text-color)" : "var(--text-secondary)",
-                          fontSize: "12px",
-                          lineHeight: "18px",
-                          fontWeight: firstInput ? 700 : 500,
+                      <TaskCardRows
+                        task={task}
+                        templateNameFallback={selectedTaskTemplateForFilter?.name || ""}
+                        sessionKeys={taskSessionKeys}
+                        sessionByKey={sessionByKey}
+                        getNodeColor={getDisplayNodeColor}
+                        onOpenSession={(sessionKey, rootId, taskId) => {
+                          handleTaskSessionDrawerOpen(sessionKey, rootId || currentRootIdRef.current, taskId);
                         }}
+                        onMove={(cardTask, action) => { void handleMoveKanbanTask(cardTask, action); }}
+                        onShowSessionError={(payload) => { setTaskSessionErrorDialog(payload); }}
+                        stageName={showStageName ? taskStageName : ""}
+                        showStatus={showTaskStatus}
+                        hideSessionError={showTaskStatus && task.status === "fail"}
                       >
                         <div
                           style={{
-                            whiteSpace: "pre-wrap",
-                            wordBreak: "break-word",
-                            ...(!inputExpanded
-                              ? {
-                                  display: "-webkit-box",
-                                  WebkitLineClamp: 3,
-                                  WebkitBoxOrient: "vertical",
-                                  overflow: "hidden",
-                                }
-                              : {}),
+                            marginTop: "5px",
+                            color: firstInput ? "var(--text-color)" : "var(--text-secondary)",
+                            fontSize: "12px",
+                            lineHeight: "18px",
+                            fontWeight: firstInput ? 700 : 500,
                           }}
                         >
-                          {firstInput ? <InlineTokenText content={firstInput} /> : <span>{t("task.noInput")}</span>}
+                          <div
+                            style={{
+                              whiteSpace: "pre-wrap",
+                              wordBreak: "break-word",
+                              ...(!inputExpanded
+                                ? {
+                                    display: "-webkit-box",
+                                    WebkitLineClamp: 3,
+                                    WebkitBoxOrient: "vertical",
+                                    overflow: "hidden",
+                                  }
+                                : {}),
+                            }}
+                          >
+                            {firstInput ? <InlineTokenText content={firstInput} /> : <span>{t("task.noInput")}</span>}
+                          </div>
                         </div>
-                      </div>
-                      <div style={{ marginTop: "8px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "4px" }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-                          {taskSessionKeys.length > 0 ? (
-                            taskSessionKeys.map((sessionKey, sessionIndex) => {
-                              const taskSession = sessionByKey[sessionKey] || null;
-                              return (
-                                <button
-                                  key={`${task.id}-${sessionKey}`}
-                                  type="button"
-                                  title={taskSession?.name || t("task.openSession", { index: sessionIndex + 1 })}
-                                  aria-label={t("task.openSession", { index: sessionIndex + 1 })}
-                                    onClick={(event) => {
-                                      event.stopPropagation();
-                                      handleTaskSessionDrawerOpen(sessionKey, task.root_id || currentRootIdRef.current, task.id);
-                                    }}
-                                  style={taskCardIconButtonStyle()}
-                                >
-                                  <span
-                                    style={{
-                                      position: "relative",
-                                      width: "18px",
-                                      height: "18px",
-                                      display: "inline-flex",
-                                      alignItems: "center",
-                                      justifyContent: "center",
-                                    }}
-                                  >
-                                    <ModeIcon type="task" size={16} />
-                                    <span
-                                      style={{
-                                        position: "absolute",
-                                        right: "-2px",
-                                        bottom: "-2px",
-                                        width: "10px",
-                                        height: "10px",
-                                        borderRadius: "999px",
-                                        background: "var(--content-bg, #fff)",
-                                        border: "1px solid rgba(255,255,255,0.9)",
-                                        display: "flex",
-                                        alignItems: "center",
-                                        justifyContent: "center",
-                                        overflow: "hidden",
-                                      }}
-                                    >
-                                      <AgentIcon
-                                        agentName={taskSession?.agent || ""}
-                                        style={{ width: "10px", height: "10px", display: "block" }}
-                                      />
-                                    </span>
-                                  </span>
-                                </button>
-                              );
-                            })
-                          ) : taskQueued ? (
-                            <>
-                              <span
-                                title={t("task.waitingSchedule")}
-                                aria-label={t("task.waitingSchedule")}
-                                style={{
-                                  ...taskCardIconButtonStyle(),
-                                  cursor: "default",
-                                  color: "var(--accent-color)",
-                                }}
-                              >
-                                <TaskQueuedSpinnerIcon />
-                              </span>
-                              {taskBlockedByConcurrency ? (
-                                <button
-                                  type="button"
-                                  title={t("task.runNow")}
-                                  aria-label={t("task.runNow")}
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    void handleMoveKanbanTask(task, "run-now");
-                                  }}
-                                  style={{
-                                    ...taskCardIconButtonStyle(),
-                                    width: "17px",
-                                    marginLeft: "-3px",
-                                    color: "var(--accent-color)",
-                                  }}
-                                >
-                                  <TaskRunNowIcon />
-                                </button>
-                              ) : null}
-                            </>
-                          ) : null}
-                            {taskSessionError && !(showTaskStatus && task.status === "fail") ? (
-                            <button
-                              type="button"
-                              title={t("task.viewError")}
-                              aria-label={t("task.viewTaskSessionError")}
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  setTaskSessionErrorDialog({
-                                    title: task.task_template_name || selectedTaskTemplateForFilter?.name || t("task.sessionTitle"),
-                                    message: taskSessionError,
-                                    details: taskSessionErrorDetails,
-                                  });
-                                }}
-                              style={taskCardIconButtonStyle("warning")}
-                            >
-                              <TaskSessionErrorIcon />
-                            </button>
-                          ) : null}
-                          {taskAuxBadges.length > 0 ? (
-                            <div style={{ display: "inline-flex", alignItems: "center", gap: "2px" }}>
-                              {taskAuxBadges.map((badge) => (
-                                <span
-                                  key={badge.key}
-                                  title={badge.label}
-                                  aria-label={badge.label}
-                                  style={taskAuxBadgeStyle(badge.attention)}
-                                >
-                                  {badge.icon}
-                                </span>
-                              ))}
-                            </div>
-                          ) : null}
-                          {inputNeedsToggle ? (
+                        {/* 展开/收起只管正文这一段，所以按钮跟着正文住在看板这一侧的 children 里
+                            （共享的 TaskCardRows 不碰正文，也就不该有它的开关）。 */}
+                        {inputNeedsToggle ? (
+                          <div style={{ display: "flex", justifyContent: "flex-start", marginTop: "3px" }}>
                             <button
                               type="button"
                               title={inputExpanded ? t("common.collapse") : t("common.expand")}
                               aria-label={inputExpanded ? t("task.collapseContent") : t("task.expandContent")}
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  setExpandedTaskInputIds((prev) => {
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setExpandedTaskInputIds((prev) => {
                                   const next = new Set(prev);
                                   if (next.has(task.id)) {
                                     next.delete(task.id);
@@ -931,80 +727,9 @@ export function TaskBoardView({
                             >
                               <TaskExpandIcon collapsed={!inputExpanded} />
                             </button>
-                          ) : null}
-                        </div>
-                        {/* 已结束（success/fail/cancelled）的任务也要留得住「删除」：
-                            会话没了、worktree 被删导致卡住的任务，卡片上仍得能清理。
-                            执行 / 完成只对未结束的任务有意义。 */}
-                        <div style={{ display: "flex", justifyContent: "flex-end", gap: 0 }}>
-                          {!taskTerminal ? (
-                            <>
-                            {showTaskAdvanceButton ? (
-                              <button
-                                type="button"
-                                title={t("task.runNow")}
-                                aria-label={t("task.runNow")}
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    void handleMoveKanbanTask(task, "run-now");
-                                  }}
-                                style={taskCardIconButtonStyle("accent")}
-                              >
-                                <RunNowIcon />
-                              </button>
-                            ) : null}
-                            {taskCanPause ? (
-                              <button
-                                type="button"
-                                title={t("task.status.paused")}
-                                aria-label={t("task.actionPause")}
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    void handleMoveKanbanTask(task, "pause");
-                                  }}
-                                style={taskCardIconButtonStyle()}
-                              >
-                                <TaskPauseIcon />
-                              </button>
-                            ) : null}
-                            {taskCanResume ? (
-                              <button
-                                type="button"
-                                title={t("task.actionResume")}
-                                aria-label={t("task.actionResume")}
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    void handleMoveKanbanTask(task, "resume");
-                                  }}
-                                style={taskCardIconButtonStyle("accent")}
-                              >
-                                <TaskResumeIcon />
-                              </button>
-                            ) : null}
-                            {taskCanComplete ? (
-                              <button
-                                type="button"
-                                title={t("task.completeShort")}
-                                aria-label={t("task.complete")}
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    void handleMoveKanbanTask(task, "complete");
-                                  }}
-                                style={taskCardIconButtonStyle("success")}
-                              >
-                                <TaskCompleteIcon />
-                              </button>
-                            ) : null}
-                            </>
-                          ) : null}
-                            <button type="button" title={t("common.delete")} aria-label={t("task.delete")} onClick={(event) => {
-                              event.stopPropagation();
-                              void handleMoveKanbanTask(task, "cancel");
-                            }} style={taskCardIconButtonStyle("danger")}>
-                              <DeleteIcon />
-                            </button>
-                        </div>
-                      </div>
+                          </div>
+                        ) : null}
+                      </TaskCardRows>
                       </article>
                     );
                   }) : null}

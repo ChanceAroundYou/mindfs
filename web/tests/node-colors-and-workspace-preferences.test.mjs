@@ -72,3 +72,28 @@ assert.doesNotMatch(mainViewSwitcher, /#2563eb/, "main view switcher must not in
 // rootBadgeStyle 只保留中性灰底，色由各消费点的节点色决定
 assert.match(rootBadgeStyle, /var\(--node-badge-bg\)/);
 assert.doesNotMatch(rootBadgeStyle, /--root-badge-/, "rootBadgeStyle must not reference removed theme badge colors");
+
+// 新建任务面板的「项目」下拉：项目名各用各的节点色，和工作台项目行同一套口径。
+// Select 是自绘的（option 是 <button role="option">，不是原生 <option>），所以逐项着色可行。
+const selectCmp = read("components/Select.tsx");
+assert.match(selectCmp, /color\?: string;/, "SelectOption must accept a per-option label color");
+assert.match(
+  selectCmp,
+  /option\.color \? \{ color: option\.color \} : null/,
+  "the option label must honor its own color",
+);
+assert.match(
+  selectCmp,
+  /color: selectedColor\s*\|\|/,
+  "the collapsed trigger must keep the selected option's color",
+);
+assert.match(
+  app,
+  /color: getDisplayNodeColor\(id\) \|\| undefined/,
+  "the project dropdown must color each project by its node color",
+);
+// taskCreateProjectOptions 引用 getDisplayNodeColor，而 const 不提升 —— 声明顺序不能反。
+assert.ok(
+  app.indexOf("const taskCreateProjectOptions") > app.indexOf("const getDisplayNodeColor"),
+  "taskCreateProjectOptions must be declared after getDisplayNodeColor (const is not hoisted)",
+);

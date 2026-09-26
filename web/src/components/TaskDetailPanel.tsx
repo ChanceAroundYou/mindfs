@@ -18,6 +18,7 @@ import {
 } from "../services/tasks";
 import type { AgentStatus } from "../services/agents";
 import { reportError } from "../services/error";
+import { taskStatusColor } from "../app/appTask";
 import { DEFAULT_TASK_AGENT, DEFAULT_TASK_MODEL, inheritAgentStage } from "../app/appTask";
 
 export type TaskDetailPanelProps = {
@@ -29,18 +30,6 @@ export type TaskDetailPanelProps = {
   nodeId?: string;
   /** 节点主题色，用于发送/编辑按钮 */
   accentColor?: string;
-};
-
-const statusColors: Record<string, string> = {
-  pending: "var(--text-secondary)",
-  running: "var(--accent-color)",
-  waiting_user: "#b45309",
-  paused: "var(--text-secondary)",
-  success: "#16a34a",
-  fail: "#dc2626",
-  cancelled: "var(--text-secondary)",
-  approved: "#16a34a",
-  rejected: "#dc2626",
 };
 
 function statusText(status: string, t: (key: Parameters<I18nContextValue["t"]>[0]) => string): string {
@@ -304,7 +293,7 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
         />
       ) : (
         <>
-          <span style={{ fontSize: "12px", fontWeight: 800, color: statusColors[task.status] || "var(--text-secondary)", flexShrink: 0, whiteSpace: "nowrap" }}>
+          <span style={{ fontSize: "12px", fontWeight: 800, color: taskStatusColor(task.status), flexShrink: 0, whiteSpace: "nowrap" }}>
             {statusText(task.status, t)}
           </span>
           <span style={{ fontSize: "12px", fontWeight: 700, color: "var(--text-secondary)", flexShrink: 0, whiteSpace: "nowrap" }}>
@@ -376,7 +365,7 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
                   {!isAgent && !editing ? (
                     <span style={tagStyle}>{t("task.stage.user")}</span>
                   ) : null}
-                  <span style={{ fontSize: "11px", fontWeight: 700, color: statusColors[run?.status || ""] || "var(--text-secondary)" }}>
+                  <span style={{ fontSize: "11px", fontWeight: 700, color: taskStatusColor(run?.status || "") }}>
                     {executed ? statusText(run.status, t) : t("task.stage.notExecuted")}
                   </span>
                   {run?.session_key ? (

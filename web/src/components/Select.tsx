@@ -8,6 +8,8 @@ export type SelectOption<T extends string = string> = {
   disabled?: boolean;
   /** 右侧次要说明文字 */
   hint?: string;
+  /** 标签字色。用于「项目名用节点色」这种逐项着色的场景；不传则跟默认文字色。 */
+  color?: string;
 };
 
 export type SelectProps<T extends string = string> = {
@@ -62,6 +64,8 @@ export function Select<T extends string = string>({
 
   const selected = useMemo(() => options.find((item) => item.value === value) || null, [options, value]);
   const triggerText = displayLabel ?? selected?.label ?? placeholder ?? "";
+  // 收起态跟展开的选项列表保持同一套字色，否则列表一关颜色就没了。
+  const selectedColor = String(selected?.color || "").trim();
 
   // 视口变化时重算（软键盘弹出 / 窗口缩放会改变可用高度）
   useEffect(() => {
@@ -224,7 +228,15 @@ export function Select<T extends string = string>({
               whiteSpace: "nowrap",
             }}
           >
-            <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
+            <span style={{
+              flex: 1,
+              minWidth: 0,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              // 逐项着色优先于选中态的 accentHex：项目名要的是各自的节点色，
+              // 不是「选中项统一高亮成一种颜色」。
+              ...(option.color ? { color: option.color } : null),
+            }}>
               {option.label}
             </span>
             {option.hint ? (
@@ -267,7 +279,8 @@ export function Select<T extends string = string>({
           border: "1px solid var(--border-color)",
           borderRadius: "6px",
           background: "var(--input-bg)",
-          color: selected || displayLabel ? "var(--text-color)" : "var(--text-secondary)",
+          color: selectedColor
+            || (selected || displayLabel ? "var(--text-color)" : "var(--text-secondary)"),
           fontSize: size === "panel" ? "12px" : "12px",
           fontWeight: size === "panel" ? 700 : 500,
           cursor: disabled ? "not-allowed" : "pointer",

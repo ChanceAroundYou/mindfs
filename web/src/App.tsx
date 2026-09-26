@@ -681,6 +681,10 @@ export function App({ onGoHome }: AppProps) {
 	  useEffect(() => {
 	    if (!selectedKanbanTaskId) return;
 	    if (kanbanTasks.some((task) => task.id === selectedKanbanTaskId)) return;
+	    // 工作台上选中的任务往往属于**别的**项目，而 kanbanTasks 按 currentRootId 过滤，
+	    // 天然不含它们 —— 不放行的话，刚弹出来的详情会被这个守卫立刻关掉。
+	    // 详情已经在 taskDetailsById 里（openWorkspaceTaskDetail 灌的），选中是合法的。
+	    if (workspaceOpenRef.current && taskDetailsByIdRef.current[selectedKanbanTaskId]) return;
 	    setSelectedKanbanTaskId("");
 	  }, [kanbanTasks, selectedKanbanTaskId]);
 
@@ -722,33 +726,36 @@ export function App({ onGoHome }: AppProps) {
     }
   }, [t]);
 
+	  // 分支列表跟的是**面板的目标项目**：从工作台发起时那不是 currentRootId，
+	  // 照 currentRootId 拉会把别的项目的分支带进分支选择器。
 	  useEffect(() => {
-	    if (
-	      !taskInlineEdit?.createWorktree ||
-	      !taskInlineEdit.canToggleWorktree ||
-      !currentRootId ||
-      managedRootByIdRef.current[currentRootId]?.is_git_repo !== true
-    ) {
-      setTaskWorktreeBranchError("");
-      return;
-    }
-	    void loadTaskWorktreeBranches(currentRootId);
-	  }, [currentRootId, loadTaskWorktreeBranches, taskInlineEdit?.canToggleWorktree, taskInlineEdit?.createWorktree]);
+	    const edit = taskInlineEdit;
+	    if (!edit) return;
+	    const rootId = edit.targetRootId || currentRootId || "";
+	    if (!edit.createWorktree || !edit.canToggleWorktree || !rootId || managedRootByIdRef.current[rootId]?.is_git_repo !== true) {
+	      setTaskWorktreeBranchError("");
+	      return;
+	    }
+	    void loadTaskWorktreeBranches(rootId);
+	  }, [currentRootId, loadTaskWorktreeBranches, taskInlineEdit?.canToggleWorktree, taskInlineEdit?.createWorktree, taskInlineEdit?.targetRootId]);
 
 	  useEffect(() => {
-	    if (!taskInlineEdit || !taskInlineEdit.canToggleWorktree) return;
-	    const rootId = currentRootIdRef.current || "";
+	    const edit = taskInlineEdit;
+	    if (!edit || !edit.canToggleWorktree) return;
+	    // 同样按目标项目存：从工作台发起时把 A 项目的偏好写到 B 项目上是错的。
+	    const rootId = edit.targetRootId || currentRootIdRef.current || "";
 	    if (!rootId) return;
 	    saveTaskCreateWorktreePreference(rootId, {
-	      createWorktree: taskInlineEdit.createWorktree,
-	      worktreeBranchMode: taskInlineEdit.worktreeBranchMode,
-	      worktreeBranch: taskInlineEdit.worktreeBranch,
+	      createWorktree: edit.createWorktree,
+	      worktreeBranchMode: edit.worktreeBranchMode,
+	      worktreeBranch: edit.worktreeBranch,
 	    });
 	  }, [
 	    taskInlineEdit?.canToggleWorktree,
 	    taskInlineEdit?.createWorktree,
 	    taskInlineEdit?.worktreeBranch,
 	    taskInlineEdit?.worktreeBranchMode,
+	    taskInlineEdit?.targetRootId,
 	  ]);
 
 	  const openTaskCreateDialog = useCallback((template: TaskTemplate | null, targetRootId?: string) => {
@@ -764,6 +771,15 @@ export function App({ onGoHome }: AppProps) {
 	      templateName: template?.name || t("task.defaultTitle"),
 	      text: initialText,
 	      targetRootId: targetRootId || undefined,
+	      // 只有工作台来的才带项目下拉：那里没有「当前项目」这个默认落点。
+	      allowProjectSwitch: Boolean(targetRootId),
+	      createWorktreePerRoot: {
+	        [rootId]: {
+	          createWorktree: taskCanCreateWorktree && worktreePref.createWorktree,
+	          worktreeBranchMode: worktreePref.worktreeBranchMode,
+	          worktreeBranch: worktreePref.worktreeBranch,
+	        },
+	      },
 	      name: "",
 	      // 首段的「立即执行」：面板开出来就照模板的面板值。
 	      startImmediately: template?.stages?.[0]?.snapshot?.start_immediately === true,
@@ -779,8 +795,40 @@ export function App({ onGoHome }: AppProps) {
     setTaskInlineCandidateIndex(0);
   }, [t]);
 
-  const closeTaskEditDialog = useCallback(() => {
+  // 面板上换项目：worktree 三个开关是**按项目存**的，换回去要还原回这个项目那份，
+  // 第一次切到某项目则从 localStorage 的偏好起头。切项目不碰正文/模板/附件。
+  const switchTaskInlineEditProject = useCallback((nextRootId: string) => {
     setTaskInlineEdit((prev) => {
+      if (!prev || !nextRootId || nextRootId === (prev.targetRootId || currentRootIdRef.current || "")) return prev;
+      const prevRootId = prev.targetRootId || currentRootIdRef.current || "";
+      const stash = (state: TaskInlineEditState, rootId: string) => ({
+        createWorktree: state.createWorktree,
+        worktreeBranchMode: state.worktreeBranchMode,
+        worktreeBranch: state.worktreeBranch,
+      });
+      const perRoot = {
+        ...(prev.createWorktreePerRoot || {}),
+        [prevRootId]: stash(prev, prevRootId),
+      };
+      const restored = perRoot[nextRootId];
+      const canCreate = managedRootByIdRef.current[nextRootId]?.is_git_repo === true;
+      const pref = restored || (() => {
+        const stored = loadTaskCreateWorktreePreference(nextRootId);
+        return { createWorktree: canCreate && stored.createWorktree, worktreeBranchMode: stored.worktreeBranchMode, worktreeBranch: stored.worktreeBranch };
+      })();
+      return {
+        ...prev,
+        targetRootId: nextRootId,
+        createWorktreePerRoot: { ...perRoot, [nextRootId]: pref },
+        createWorktree: pref.createWorktree,
+        worktreeBranchMode: pref.worktreeBranchMode,
+        worktreeBranch: pref.worktreeBranch,
+        canToggleWorktree: true,
+      };
+    });
+  }, []);
+
+  const closeTaskEditDialog = useCallback(() => {    setTaskInlineEdit((prev) => {
       prev?.attachments.forEach((attachment) => {
         if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
       });
@@ -985,6 +1033,24 @@ export function App({ onGoHome }: AppProps) {
     }
     return String((managedRootByIdRef.current as any)[rid]?._nodeColor || "").trim() || null;
   }, []);
+
+  // 新建任务面板上的「项目」下拉选项。只有工作台发起的面板会用到它（看板入口
+  // 项目已定），范围取跨项目会话那份清单，挂在 taskInlineEdit.targetRootId 上
+  // 是为了项目增删后重算一次，不额外订阅一份 state。
+  //
+  // 项目名各用各的节点色，和工作台项目行、DefaultListView 的项目徽章是同一套口径。
+  // 位置必须在 getDisplayNodeColor 之后 —— const 不提升，提前引用会吃到 TDZ。
+  const taskCreateProjectOptions = useMemo(() => {
+    const ids = Array.from(managedRootIdsRef.current);
+    if (ids.length === 0 && currentRootId) ids.push(currentRootId);
+    return ids
+      .filter((id) => String(id || "").trim())
+      .map((id) => ({
+        value: id,
+        label: getRootDisplayName(id) || id,
+        color: getDisplayNodeColor(id) || undefined,
+      }));
+  }, [currentRootId, getRootDisplayName, getDisplayNodeColor, taskInlineEdit?.targetRootId]);
 
   // 复合键还原为裸 rootId（scoped 键为 n::r 或 r；rootId 自身不含 "::"）
   const unscopedRootId = useCallback((scoped: string): string => {
@@ -8095,6 +8161,21 @@ export function App({ onGoHome }: AppProps) {
   const handleWorkspaceCreateTask = useCallback((rootId: string, _nodeId: string, template: TaskTemplate) => {
     openTaskCreateDialog(template, rootId);
   }, [openTaskCreateDialog]);
+  // 工作台里点任务卡：留在工作台，就地弹任务详情面板。
+  // 不走 openWorkspaceProject —— 那会切项目、切看板、改 URL，等于把人甩出工作台。
+  // overview 只带任务不带 stage_runs/events（详情面板要后者），所以按项目内任务号
+  // 取那一条完整详情，灌进 taskDetailsById 后由 selectedKanbanTask 接手。
+  const openWorkspaceTaskDetail = useCallback(async (item: { root_id: string; nodeId: string; task: KanbanTask }) => {
+    const rootId = item.root_id;
+    const taskNumber = Number(item.task?.task_number || 0);
+    if (!rootId || !item.task?.id) return;
+    // 先选中，卡片立刻有选中态；详情随后补上。面板此时短暂显示 overview 那份基础信息。
+    setSelectedKanbanTaskId(item.task.id);
+    const details = await fetchTaskDetails(rootId, { taskNumber }, item.nodeId).catch(() => [] as TaskDetail[]);
+    const detail = details.find((entry) => entry.task?.id === item.task.id) || details[0];
+    if (!detail) return;
+    applyTaskDetails(rootId, [detail]);
+  }, [applyTaskDetails]);
   const kanbanTaskPanel = (
     <TaskBoardView
       workspaceOpen={workspaceOpen}
@@ -8109,6 +8190,7 @@ export function App({ onGoHome }: AppProps) {
       managedRootIds={managedRootIds}
       getRootDisplayName={getRootDisplayName}
       openWorkspaceProject={openWorkspaceProject}
+      openWorkspaceTaskDetail={openWorkspaceTaskDetail}
       handleWorkspaceCreateTask={handleWorkspaceCreateTask}
       setSelectedKanbanTaskId={setSelectedKanbanTaskId}
       kanbanTasksLoading={kanbanTasksLoading}
@@ -8465,6 +8547,8 @@ export function App({ onGoHome }: AppProps) {
         sortMode={currentDirectorySortMode}
         sortControlValue={currentDirectorySortOverride || "inherit"}
         currentViewMode={currentMainContentView}
+        workspaceMode={workspaceOpen}
+        workspaceProjectCount={workspaceBoard.projects.length}
         uploadProgress={directoryUploadProgress}
         onCancelUpload={() => directoryUploadAbortRef.current?.abort()}
         onSortModeChange={(nextMode) => {
@@ -9110,7 +9194,10 @@ export function App({ onGoHome }: AppProps) {
       ) : null}
       {taskInlineEdit ? (
 	        (() => {
-	          const taskInlineCanCreateWorktree = managedRootByIdRef.current[currentRootId || ""]?.is_git_repo === true;
+	          // worktree 开关跟的是**面板的目标项目**：从工作台发起时那不是当前项目，
+	          // 写死 currentRootId 会让「非 git 项目也显示 worktree 开关」。
+	          const taskInlineTargetRootId = taskInlineEdit.targetRootId || currentRootId || "";
+	          const taskInlineCanCreateWorktree = managedRootByIdRef.current[taskInlineTargetRootId]?.is_git_repo === true;
 	          const showTaskWorktreeControls = taskInlineCanCreateWorktree && taskInlineEdit.canToggleWorktree;
 	          const taskWorktreeControlsEditable = taskInlineEdit.canToggleWorktree;
 	          // 编辑区里的 agent 选择器：默认值就是「下一个 agent 阶段」在模板里
@@ -9144,6 +9231,17 @@ export function App({ onGoHome }: AppProps) {
                   name: taskInlineEdit.templateName || t("task.defaultTitle"),
                 })}
               </div>
+              {taskInlineEdit.allowProjectSwitch && taskCreateProjectOptions.length > 1 ? (
+                <div style={{ minWidth: "120px", maxWidth: "160px" }}>
+                  <Select
+                    value={taskInlineTargetRootId}
+                    ariaLabel={t("task.workspaceSelectProject")}
+                    onChange={(value) => switchTaskInlineEditProject(value)}
+                    options={taskCreateProjectOptions}
+                    size="panel"
+                  />
+                </div>
+              ) : null}
               {taskTemplates.length > 0 ? (
                 <div style={{ minWidth: "120px", maxWidth: "160px" }}>
                   <Select

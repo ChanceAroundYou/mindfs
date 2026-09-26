@@ -9,6 +9,7 @@
 
 import type React from "react";
 import { hexToRgbaApp } from "../../app/taskIcons";
+import { rootBadgeButtonStyle } from "../rootBadgeStyle";
 
 /** 节点色 → 半透明底/边框；取不到节点色时回退中性 token（不猜一个颜色） */
 export function nodeTint(color: string | null, alpha: number): string {
@@ -37,6 +38,14 @@ export const workspaceToolbarStyle: React.CSSProperties = {
   alignItems: "center",
   gap: "6px",
   flexWrap: "wrap",
+};
+
+/** 工具栏右侧动作区（新建任务 + 刷新）。整体贴右，内部两个键自然紧贴。 */
+export const workspaceToolbarActionsStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: "6px",
+  marginLeft: "auto",
 };
 
 export const workspaceCountBadgeStyle: React.CSSProperties = {
@@ -89,77 +98,83 @@ export const workspaceAttentionCardStyle = (color: string | null, isMobile = fal
   gap: "4px",
 });
 
-/** 项目组：可点开的头 + 任务行列表。整组是折叠的，所以没有外框，组与组之间靠间距 */
+/**
+ * 项目组：项目名 + 任务卡网格。整组是折叠的，所以没有外框，组与组之间靠间距。
+ *
+ * 头部只有两个热区：项目名（跳该项目看板）和折叠箭头。徽章、节点色点、计数都不可点 ——
+ * 之前整个头都能点，反而让人以为点空白处也会跳。
+ */
 export const workspaceProjectGroupStyle: React.CSSProperties = {
   display: "flex",
   flexDirection: "column",
-  gap: "4px",
+  gap: "6px",
 };
 
 export const workspaceProjectHeaderStyle: React.CSSProperties = {
   display: "flex",
   alignItems: "center",
-  gap: "8px",
+  gap: "6px",
   minHeight: "26px",
-  padding: "2px 4px",
-  borderRadius: "7px",
+};
+
+/**
+ * 项目名：直接复用左侧项目列表那套徽章样式（rootBadgeButtonStyle），
+ * 只是把中性字色换成该项目的节点色。底色因此不再是「和任务行一样的灰」，
+ * 而是一个有主色的名字 —— 层级一下就分开了。
+ */
+export const workspaceProjectNameButtonStyle = (color: string | null): React.CSSProperties => ({
+  ...rootBadgeButtonStyle,
+  color: String(color || "").trim() || "var(--text-primary)",
   cursor: "pointer",
-};
-
-export const workspaceProjectHeaderHoverStyle: React.CSSProperties = {
-  background: "var(--node-row-selected-bg)",
-};
-
-/** 节点色点：工作台上唯一允许的彩色，且唯一来源是节点色本身 */
-export const workspaceNodeDotStyle = (color: string | null): React.CSSProperties => ({
-  width: "8px",
-  height: "8px",
-  borderRadius: "50%",
-  background: color || "var(--text-secondary)",
-  flexShrink: 0,
+  maxWidth: "55%",
+  textAlign: "left",
 });
 
-export const workspaceProjectNameStyle: React.CSSProperties = {
-  fontSize: "13px",
-  fontWeight: 800,
-  color: "var(--text-color)",
-  minWidth: 0,
-  overflow: "hidden",
-  textOverflow: "ellipsis",
-  whiteSpace: "nowrap",
-};
-
-/** 任务行：紧凑单行，不是看板那种大卡 —— 工作台只回答「各项目在干什么」 */
-export const workspaceTaskRowStyle: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  gap: "8px",
-  minHeight: "28px",
-  padding: "3px 8px",
+/**
+ * 折叠热区：只有 12px 的箭头太小了，整块撑成 40×24 的可点区。
+ *
+ * 刻意**不给**边框和底色（`background: transparent` + `border: none`）：
+ * 项目头已经是「有底色的名字 + 中性徽章」，再加一个带框的按钮就三块底色打架，
+ * 反而看不出该点哪。现在只留箭头，热区靠 minWidth/height 撑。
+ */
+export const workspaceProjectToggleStyle: React.CSSProperties = {
+  marginLeft: "auto",
+  minWidth: "40px",
+  height: "24px",
+  padding: "0 6px",
   borderRadius: "7px",
-  background: "var(--menu-bg)",
+  border: "none",
+  background: "transparent",
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  color: "var(--text-secondary)",
   cursor: "pointer",
+  flexShrink: 0,
 };
 
-export const workspaceTaskRowHoverStyle: React.CSSProperties = {
-  background: "var(--node-row-selected-bg)",
+/**
+ * 任务卡网格。卡面（边框/底/圆角/投影）和卡内两行都来自共享的
+ * taskCardSurfaceStyle + TaskCardRows（看板那套卡片同一份），这里只管排布。
+ *
+ * 列宽对齐看板单列的 220px —— 150px 时长任务名几乎必被截断，而工作台是扫读场景，
+ * 名字看不全等于这张卡白给。
+ */
+export const workspaceTaskGridStyle: React.CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
+  gap: "6px",
 };
 
+/**
+ * 「需要你」条带专用的两行小字：编号·项目名 / 阶段名。
+ * 条带是横向滚的紧凑卡（220px 定宽），不是项目卡，所以这两条不归 TaskCardRows 管。
+ */
 export const workspaceTaskNumberStyle: React.CSSProperties = {
   fontSize: "11px",
   fontWeight: 800,
   color: "var(--text-secondary)",
   flexShrink: 0,
-};
-
-export const workspaceTaskNameStyle: React.CSSProperties = {
-  fontSize: "12px",
-  fontWeight: 600,
-  color: "var(--text-color)",
-  minWidth: 0,
-  overflow: "hidden",
-  textOverflow: "ellipsis",
-  whiteSpace: "nowrap",
 };
 
 export const workspaceTaskMetaStyle: React.CSSProperties = {
@@ -169,28 +184,15 @@ export const workspaceTaskMetaStyle: React.CSSProperties = {
   flexShrink: 0,
 };
 
-export const workspaceEndedTextStyle: React.CSSProperties = {
-  fontSize: "11px",
-  color: "var(--text-secondary)",
-  padding: "2px 8px",
-};
-
-/** 快速发起常驻底部：空项目也在这里被看见并被就地建任务 */
-export const workspaceQuickLaunchStyle: React.CSSProperties = {
-  border: "1px dashed var(--border-color)",
-  borderRadius: "10px",
-  padding: "8px",
-  display: "flex",
-  alignItems: "center",
-  gap: "8px",
-  flexWrap: "wrap",
-  background: "var(--menu-bg)",
-};
-
-/** 窄屏快速发起：选项目与输入各占整行，不挤在一条 375px 的缝里 */
-export const workspaceQuickLaunchMobileStyle: React.CSSProperties = {
-  flexDirection: "column",
-  alignItems: "stretch",
+/** 任务名：顶部「需要你」条带里那行字（项目卡的名字样式在 TaskCardRows 内） */
+export const workspaceTaskNameStyle: React.CSSProperties = {
+  fontSize: "12px",
+  fontWeight: 600,
+  color: "var(--text-color)",
+  minWidth: 0,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
 };
 
 export const workspaceFilterButtonStyle = (active: boolean): React.CSSProperties => ({
