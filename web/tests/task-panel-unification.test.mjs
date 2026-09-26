@@ -16,6 +16,7 @@ const panelShell = read("src/components/PanelShell.tsx");
 const promptEditor = read("src/components/PromptEditor.tsx");
 const css = read("src/index.css");
 const boardView = read("src/components/TaskBoardView.tsx");
+const viteConfig = read("vite.config.ts");
 const serviceGo = fs.readFileSync(path.join(root, "../server/internal/kanban/service.go"), "utf8");
 const templateStore = fs.readFileSync(path.join(root, "../server/internal/kanban/template_store.go"), "utf8");
 
@@ -343,4 +344,37 @@ assert.match(
   serviceGo,
   /store\.UpdateTaskStatus\(ctx, taskID, status, nil, terminal\)/,
   "Cancel must clear the session error flag (nil aux) so a stuck task can be cleaned up",
+);
+
+// 10) Service Worker 缓存策略：index.html 是整条缓存链的根。
+//     一旦把它 cache-first 住，旧标签页会一直拿旧壳子去请求早已不存在的
+//     旧 chunk（内容哈希对不上），表现为一整批过期 js 反复加载。
+//     静态资源则改 stale-while-revalidate，让哈希收敛自动发生。
+const navHandler = viteConfig.slice(
+  viteConfig.indexOf("async function handleNavigationRequest"),
+  viteConfig.indexOf("async function handleStaticRequest"),
+);
+assert.doesNotMatch(
+  navHandler,
+  /cache\.put\(INDEX_URL/,
+  "index.html must never be written back into the cache: it is the root of the whole asset chain",
+);
+assert.match(
+  navHandler,
+  /return await fetch\(request\);/,
+  "navigation must go straight to the network, falling back to the precached shell when offline",
+);
+const staticHandler = viteConfig.slice(
+  viteConfig.indexOf("async function handleStaticRequest"),
+  viteConfig.indexOf("function revalidate("),
+);
+assert.match(
+  staticHandler,
+  /cachedRuntimeResponse[\s\S]{0,160}?revalidate\(request, runtimeCache\);/,
+  "cached runtime assets must revalidate in the background instead of being served stale forever",
+);
+assert.match(
+  viteConfig,
+  /function revalidate\(request, cache\) \{[\s\S]*?fetch\(request\)[\s\S]*?cache\.put\(/,
+  "revalidate must refresh the cached copy in the background",
 );

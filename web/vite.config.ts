@@ -198,9 +198,10 @@ self.addEventListener("fetch", (event) => {
 async function handleNavigationRequest(request) {
   const cache = await caches.open(SHELL_CACHE);
   try {
-    const response = await fetch(request);
-    cache.put(INDEX_URL, response.clone()).catch(() => {});
-    return response;
+    // 不再把 index.html 写回缓存：它是整条缓存链的根，一旦缓存住，
+    // 旧标签页就会一直拿旧壳子去请求早已不存在的旧 chunk（内容哈希对不上，
+    // 表现为 DevTools 里加载了一整批过期 js）。离线兜底仍读 precache 里那份。
+    return await fetch(request);
   } catch {
     const cachedIndex = await cache.match(INDEX_URL);
     if (cachedIndex) {
@@ -224,6 +225,10 @@ async function handleStaticRequest(request) {
   const runtimeCache = await caches.open(RUNTIME_CACHE);
   const cachedRuntimeResponse = await runtimeCache.match(request);
   if (cachedRuntimeResponse) {
+    // stale-while-revalidate：先拿缓存顶上（离线也能开），同时后台拉新版本。
+    // 纯 cache-first 会把旧 chunk 一直喂给老标签页，直到 RUNTIME_CACHE 改名
+    // 加上一次手动刷新才收敛。
+    revalidate(request, runtimeCache);
     return cachedRuntimeResponse;
   }
 
@@ -245,6 +250,18 @@ async function handleStaticRequest(request) {
       statusText: "Asset Unavailable",
     });
   }
+}
+
+// 后台刷新缓存，不阻塞本次响应。失败就算了：离线时保持旧副本总比没有强。
+function revalidate(request, cache) {
+  fetch(request)
+    .then((response) => {
+      if (response.ok) {
+        return cache.put(request, response.clone());
+      }
+      return undefined;
+    })
+    .catch(() => {});
 }
 `;
 }
