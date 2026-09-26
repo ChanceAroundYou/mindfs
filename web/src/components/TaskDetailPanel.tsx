@@ -3,7 +3,7 @@ import { AgentIcon } from "./AgentIcon";
 import { ModeIcon } from "./ModeIcon";
 import { PromptEditor } from "./PromptEditor";
 import { StageEditor } from "./StageEditor";
-import { PanelShell, panelButtonStyle, panelIconButtonStyle } from "./PanelShell";
+import { PanelShell, panelButtonStyle, panelIconButtonStyle, CloseGlyph } from "./PanelShell";
 import type { SessionReusePolicy } from "./StageOptionsBar";
 import { PencilIcon, TrashIcon, composerInputStyle } from "./action/composerStyles";
 import { uploadFiles } from "../services/upload";
@@ -273,6 +273,7 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
     <PanelShell
       width={720}
       onClose={onClose}
+      hasUnsavedChanges={() => editingName && nameDraft.trim() !== (task.name || "").trim()}
       closeOnOverlayClick
       title={(
         <span style={{ flex: "1 1 auto", minWidth: 0, fontSize: "14px", fontWeight: 700, color: "var(--text-color)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -304,15 +305,22 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
           ) : null}
         </>
       )}
-      headerRight={editingName ? (
+      headerRight={(requestClose) => (
         <>
-          <button type="button" disabled={saving} onClick={() => void saveName()} style={panelButtonStyle("primary")}>{t("common.confirm")}</button>
-          <button type="button" onClick={() => { setEditingName(false); setNameDraft(task.name || ""); }} style={panelButtonStyle("secondary")}>{t("common.cancel")}</button>
+          {editingName ? (
+            <>
+              <button type="button" disabled={saving} onClick={() => void saveName()} style={panelButtonStyle("primary")}>{t("common.confirm")}</button>
+              <button type="button" onClick={() => { setEditingName(false); setNameDraft(task.name || ""); }} style={panelButtonStyle("secondary")}>{t("common.cancel")}</button>
+            </>
+          ) : (
+            <button type="button" aria-label={t("task.renameTask")} title={t("task.renameTask")} onClick={() => setEditingName(true)} style={pencilStyle(false)}>
+              <PencilIcon />
+            </button>
+          )}
+          <button type="button" aria-label={t("common.close")} title={t("common.close")} onClick={requestClose} style={panelIconButtonStyle()}>
+            <CloseGlyph />
+          </button>
         </>
-      ) : (
-        <button type="button" aria-label={t("task.renameTask")} title={t("task.renameTask")} onClick={() => setEditingName(true)} style={pencilStyle(false)}>
-          <PencilIcon />
-        </button>
       )}
     >
       <div style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: "10px" }}>

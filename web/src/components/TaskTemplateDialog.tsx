@@ -1,6 +1,6 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { StageEditor } from "./StageEditor";
-import { PanelShell, panelButtonStyle, panelIconButtonStyle } from "./PanelShell";
+import { PanelShell, panelButtonStyle, panelIconButtonStyle, CloseGlyph } from "./PanelShell";
 import { composerInputStyle } from "./action/composerStyles";
 import {
   saveTaskTemplate,
@@ -84,15 +84,22 @@ function cloneTemplate(template?: TaskTemplate | null, t?: I18nContextValue["t"]
 export function TaskTemplateDialog({ open, agents, template, onClose, onSaved, nodeId }: TaskTemplateDialogProps) {
   const { t } = useI18n();
   const [draft, setDraft] = useState<TaskTemplate>(() => cloneTemplate(template, t));
+  // 打开那一刻的草稿快照。dirty 拿它和当前 draft 比 —— 不能每次渲染现算基线，
+  // 那会把「刚打开」也判成有改动。
+  const baselineRef = useRef("");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [openHelpKey, setOpenHelpKey] = useState("");
 
   useEffect(() => {
     if (!open) return;
-    setDraft(cloneTemplate(template, t));
+    const fresh = cloneTemplate(template, t);
+    baselineRef.current = JSON.stringify(fresh);
+    setDraft(fresh);
     setSaveError("");
   }, [open, template, t]);
+
+  const dirty = JSON.stringify(draft) !== baselineRef.current;
 
   const title = useMemo(() => (template?.id ? t("taskTemplate.editTitle") : t("taskTemplate.createTitle")), [template?.id, t]);
 
@@ -181,13 +188,16 @@ export function TaskTemplateDialog({ open, agents, template, onClose, onSaved, n
   return (
     <PanelShell
       width={760}
-      minHeight={520}
       onClose={onClose}
+      hasUnsavedChanges={() => dirty}
       title={<div style={{ fontSize: "15px", fontWeight: 800, color: "var(--text-color)" }}>{title}</div>}
-      headerRight={(
+      headerRight={(requestClose) => (
         <div style={{ display: "flex", gap: "8px" }}>
-          <button type="button" onClick={onClose} style={panelButtonStyle("secondary")}>{t("taskTemplate.close")}</button>
+          <button type="button" onClick={requestClose} style={panelButtonStyle("secondary")}>{t("taskTemplate.close")}</button>
           <button type="button" disabled={saving} onClick={() => void saveTask()} style={panelButtonStyle("primary")}>{saving ? t("common.saving") : t("common.save")}</button>
+          <button type="button" aria-label={t("common.close")} title={t("common.close")} onClick={requestClose} style={panelIconButtonStyle()}>
+            <CloseGlyph />
+          </button>
         </div>
       )}
       belowHeader={saveError ? (

@@ -1,4 +1,6 @@
-import React from "react";
+import React, { useCallback, useEffect } from "react";
+import { confirmDialog } from "../services/dialog";
+import { useI18n } from "../i18n";
 
 /**
  * 弹窗外壳：遮罩 + 圆角卡 + header。
@@ -55,10 +57,32 @@ export function panelIconButtonStyle(danger = false, disabled = false): React.CS
   };
 }
 
+/** 面板右上角的 ×。三张面板共用，避免各画一个粗细不一样的。 */
+export function CloseGlyph() {
+  return (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 12 12"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      aria-hidden="true"
+    >
+      <line x1="2" y1="2" x2="10" y2="10" />
+      <line x1="10" y1="2" x2="2" y2="10" />
+    </svg>
+  );
+}
+
 export type PanelShellProps = {
   title: React.ReactNode;
-  /** header 右侧（关闭 / 保存等） */
-  headerRight?: React.ReactNode;
+  /**
+   * header 右侧（关闭 / 保存等）。传函数是为了把**受控的关闭**交回给 PanelShell ——
+   * 否则调用方写 `onClick={onClose}` 会绕过放弃确认。返回 null 则不渲染。
+   */
+  headerRight?: (requestClose: () => void) => React.ReactNode;
   /** header 标题左侧的额外内容（状态徽章等） */
   headerLeft?: React.ReactNode;
   children: React.ReactNode;
@@ -72,6 +96,18 @@ export type PanelShellProps = {
   closeOnOverlayClick?: boolean;
   /** 遮罩下方额外内容（错误条等） */
   belowHeader?: React.ReactNode;
+  /**
+   * 有未保存内容。返回 true 时，任何关闭入口（遮罩 / 右上角 × / Esc）都先问一句
+   * 「是否放弃修改」再真关；返回 false（默认）直接关。
+   *
+   * 传函数而不是布尔：判断「有没有改东西」常常要看草稿与初值的对比（改名、改 prompt），
+   * 而这些草稿住在各自的组件里，共享层拿不到。
+   */
+  hasUnsavedChanges?: () => boolean;
+  /** 放弃确认的文案；不传用通用措辞。 */
+  discardConfirmMessage?: string;
+  /** 放弃确认按钮上的字；不传用通用措辞。 */
+  discardConfirmLabel?: string;
 };
 
 export function PanelShell({
@@ -85,7 +121,42 @@ export function PanelShell({
   onClose,
   closeOnOverlayClick,
   belowHeader,
+  hasUnsavedChanges,
+  discardConfirmMessage,
+  discardConfirmLabel,
 }: PanelShellProps) {
+  const { t } = useI18n();
+  // 关闭的三条路（遮罩 / Esc / 调用方按钮）都走这里，判定只写一遍。
+  // 没有 onClose 时不算「有关闭动作」，直接放行。
+  const requestClose = useCallback(() => {
+    if (!onClose) return;
+    if (!hasUnsavedChanges?.()) {
+      onClose();
+      return;
+    }
+    void confirmDialog({
+      message: discardConfirmMessage || t("common.discardChangesConfirm"),
+      confirmLabel: discardConfirmLabel || t("common.discardChanges"),
+      cancelLabel: t("common.keepEditing"),
+      danger: true,
+    }).then((ok) => {
+      if (ok) onClose();
+    });
+  }, [onClose, hasUnsavedChanges, discardConfirmMessage, discardConfirmLabel, t]);
+
+  // Esc 关闭。捕获阶段监听：面板里是 Lexical/输入框，冒泡上来时可能被它们先处理掉。
+  useEffect(() => {
+    if (!onClose) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      requestClose();
+    };
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => document.removeEventListener("keydown", onKeyDown, true);
+  }, [onClose, requestClose]);
+
   return (
     <div
       className="mindfs-panel-overlay"
@@ -100,7 +171,7 @@ export function PanelShell({
         padding: "24px",
       }}
       onClick={(event) => {
-        if (closeOnOverlayClick && onClose && event.target === event.currentTarget) onClose();
+        if (closeOnOverlayClick && event.target === event.currentTarget) requestClose();
       }}
     >
       <section
@@ -151,7 +222,7 @@ export function PanelShell({
           <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
             {title}
           </div>
-          {headerRight}
+          {headerRight?.(requestClose) ?? null}
         </header>
         {belowHeader}
         <div className="mindfs-panel-body" style={{ flex: 1, minHeight: 0, overflow: "auto", display: "flex", flexDirection: "column" }}>
