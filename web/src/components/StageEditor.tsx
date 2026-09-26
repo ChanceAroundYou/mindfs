@@ -17,6 +17,13 @@ export type StageEditorProps = {
   stageNamePlaceholder?: string;
   onStageNameChange?: (name: string) => void;
 
+  /**
+   * 标题行最左边的自定义控件，插在段名前面。
+   * 新建任务面板的任务名就挂在这儿 —— 它和 user 开关属于同一行的视觉组，
+   * 曾经在 App.tsx 外面自己占一行，user 芯片被挤到下一排去了。
+   */
+  leading?: React.ReactNode;
+
   /** 不传 = 该段角色不可切换（首段固定 user） */
   onToggleRole?: () => void;
   /** 计划模式是否不可选（acp 协议等） */
@@ -68,6 +75,7 @@ export function StageEditor({
   agents,
   stageNamePlaceholder,
   onStageNameChange,
+  leading,
   onToggleRole,
   planModeDisabled,
   isFirstStage = false,
@@ -94,6 +102,7 @@ export function StageEditor({
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "8px", minWidth: 0 }}>
       <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
+        {leading}
         {stageNamePlaceholder ? (
           <input
             value={stage.name || ""}

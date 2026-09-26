@@ -9272,15 +9272,6 @@ export function App({ onGoHome }: AppProps) {
                   ))}
                 </div>
               ) : null}
-              <div style={{ marginBottom: "10px", display: "flex", gap: "8px", flexWrap: "wrap" }}>
-                <input
-                  value={taskInlineEdit.name}
-                  onChange={(event) => setTaskInlineEdit((prev) => prev ? { ...prev, name: event.target.value } : prev)}
-                  placeholder={t("task.namePlaceholder")}
-                  /* 与模板编辑面板的段名输入框同款窄框，不再撑满整行。 */
-                  style={{ ...composerInputStyle, height: "26px", width: "180px", flex: "0 0 180px", fontWeight: 800 }}
-                />
-              </div>
               {taskInlineEdit.previousInputs.length > 0 ? (
                 <div
                   style={{
@@ -9332,6 +9323,17 @@ export function App({ onGoHome }: AppProps) {
                 stage={createTaskInputStage}
                 agents={availableAgents}
                 isFirstStage
+                /* 任务名和 user 开关同排：以前这个输入框在 StageEditor 外面
+                   自己占一行，user 芯片被挤到下一排去了。样式照抄模板编辑
+                   面板的段名输入框。 */
+                leading={(
+                  <input
+                    value={taskInlineEdit.name}
+                    onChange={(event) => setTaskInlineEdit((prev) => prev ? { ...prev, name: event.target.value } : prev)}
+                    placeholder={t("task.namePlaceholder")}
+                    style={{ ...composerInputStyle, height: "26px", width: "180px", flex: "0 0 180px", fontWeight: 800 }}
+                  />
+                )}
                 onChange={(patch) => setTaskInlineEdit((prev) => prev ? {
                   ...prev,
                   text: patch.prompt_template ?? prev.text,

@@ -226,10 +226,23 @@ assert.doesNotMatch(
   /onToggleRole=/,
   "the create-task panel keeps the user toggle greyed but visible, exactly like the template's first stage",
 );
+// 任务名必须和 user 开关同排。两者都在 StageEditor 内部才可能同排：任务名
+// 曾经由 App.tsx 在 StageEditor 外面自己开一个 div，user 芯片被挤到下一排。
+// 曾有过一次「只改宽度不改位置」的修法，样式对了、行还是错的。
 assert.match(
-  app,
-  /placeholder=\{t\("task\.namePlaceholder"\)\}[\s\S]{0,200}?flex: "0 0 180px"/,
-  "the task name input must be the same fixed 180px box as the template's stage name input, not full-width",
+  createEditor,
+  /leading=\{\(\s*<input[\s\S]*?task\.namePlaceholder[\s\S]*?flex: "0 0 180px"/,
+  "the task name must be handed to StageEditor's leading slot, styled like the stage name input",
+);
+assert.match(
+  stageEditor,
+  /\{leading\}\s*\n\s*\{stageNamePlaceholder \? \(/,
+  "StageEditor must render leading in the same row as the stage name and the user toggle",
+);
+assert.doesNotMatch(
+  stageEditor,
+  /<div style=\{\{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" ">\}\}>\s*\n\s*\{stageNamePlaceholder/,
+  "leading must not be rendered in a row of its own",
 );
 assert.doesNotMatch(app, /flex: "1 1 auto", height: "30px"/, "the full-width task name input must be gone");
 
