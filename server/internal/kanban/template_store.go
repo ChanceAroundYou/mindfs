@@ -189,6 +189,12 @@ func (s *TemplateStore) SaveTaskTemplate(in TaskTemplate) (TaskTemplate, error) 
 				return TaskTemplate{}, errors.New("agent stage requires agent")
 			}
 		}
+		// user 段被批准后引擎一律推进下一段（executeTask 里不读 AutoAdvance），
+		// 面板上那颗开关是灰的、值也没地方改。存成 false 只会让模板 JSON 里躺着
+		// 一个假的「不自动推进」，看着像能配。归一成 true，存量模板下次一存就自愈。
+		if in.Stages[i].Snapshot.Role == RoleUser {
+			in.Stages[i].Snapshot.AutoAdvance = true
+		}
 	}
 	replaced := false
 	for i := range items {

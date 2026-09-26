@@ -298,6 +298,7 @@ export const zhCN = {
   "taskTemplate.deleteStageTemplate": "删除阶段模板",
   "taskTemplate.stageOptions": "阶段选项",
   "taskTemplate.autoAdvance": "自动进入下一阶段",
+  "taskTemplate.startImmediately": "立即执行",
   "taskTemplate.planMode": "Plan 模式",
   "taskTemplate.sessionReuse": "会话复用",
   "taskTemplate.sessionReuseTaskMain": "任务主会话",

@@ -273,6 +273,204 @@ func TestCreateTaskCopiesTaskStagesAndWaitsForUser(t *testing.T) {
 	}
 }
 
+// 首段勾了「立即执行」：创建后不用手动点「立即执行」就自己跑起来。
+func TestCreateTaskStartsImmediatelyWhenFirstStageSaysSo(t *testing.T) {
+	ctx := context.Background()
+	svc, root := newTestService(t, &fakeRunner{})
+	first := userStage("Describe")
+	first.StartImmediately = true
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID: root.ID,
+		Stages: []StageTemplate{first, agentStage("Fix", "Fix this:\n{previous_input}")},
+		Input:  "broken button",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	waitForCondition(t, func() bool {
+		d, err := svc.GetTask(ctx, root.ID, detail.Task.ID)
+		return err == nil && d.Task.Status == StatusRunning
+	})
+	detail, err = svc.GetTask(ctx, root.ID, detail.Task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if detail.Task.CurrentStageIndex != 1 {
+		t.Fatalf("current stage=%d, want 1（首段勾了立即执行就该直接进 agent 段）", detail.Task.CurrentStageIndex)
+	}
+	// 开跑这一次就把 user 段批准掉了，不该留在待审核。
+	for _, run := range detail.StageRuns {
+		if run.StageIndex == 0 && run.Status == StageStatusWaitingUser {
+			t.Fatalf("stage 0 still waiting_user after start immediately")
+		}
+	}
+}
+
+// 没勾「立即执行」：安静停在「未开始」，等用户手动点「立即执行」。
+func TestCreateTaskStaysPendingWithoutStartImmediately(t *testing.T) {
+	ctx := context.Background()
+	svc, root := newTestService(t, &fakeRunner{})
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID: root.ID,
+		Stages: []StageTemplate{userStage("Describe"), agentStage("Fix", "Fix this:\n{previous_input}")},
+		Input:  "broken button",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if detail.Task.Status != StatusPending || detail.Task.CurrentStageIndex != 0 {
+		t.Fatalf("task stage/status = %d/%s, want 0/%s（没勾就该停在未开始）",
+			detail.Task.CurrentStageIndex, detail.Task.Status, StatusPending)
+	}
+}
+
+// user 段的 AutoAdvance 是死字段（引擎对 user 段一律推进，不读它）：
+// 它为 true 也不能触发开跑，否则模板里一个改不动的值就能决定任务跑不跑。
+func TestCreateTaskIgnoresUserStageAutoAdvance(t *testing.T) {
+	ctx := context.Background()
+	svc, root := newTestService(t, &fakeRunner{})
+	first := userStage("Describe")
+	first.AutoAdvance = true
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID: root.ID,
+		Stages: []StageTemplate{first, agentStage("Fix", "Fix this:\n{previous_input}")},
+		Input:  "broken button",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if detail.Task.Status != StatusPending || detail.Task.CurrentStageIndex != 0 {
+		t.Fatalf("task stage/status = %d/%s, want 0/%s（user 段的 auto_advance 管不了开跑）",
+			detail.Task.CurrentStageIndex, detail.Task.Status, StatusPending)
+	}
+}
+
+// 面板上把模板勾上的那颗取消掉：前端会把首段的 start_immediately 显式发回 false，
+// 任务必须尊重它、停在「未开始」（不能因为模板是 true 就自己跑起来）。
+func TestCreateTaskRespectsExplicitStartImmediatelyOffOverTemplate(t *testing.T) {
+	ctx := context.Background()
+	svc, root := newTestService(t, &fakeRunner{})
+	tmpl, err := svc.SaveTaskTemplate(ctx, TaskTemplate{
+		Name: "Autostart",
+		Stages: []TaskTemplateStage{
+			{Position: 0, Snapshot: StageTemplate{Name: "Describe", Role: RoleUser, StartImmediately: true}},
+			{Position: 1, Snapshot: agentStage("Fix", "Fix this:\n{previous_input}")},
+		},
+	})
+	if err != nil {
+		t.Fatalf("SaveTaskTemplate: %v", err)
+	}
+	// 前端 applyStageOverride 的输出形状：拍平的 stages，首段 start_immediately=false。
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID:         root.ID,
+		TaskTemplateID: tmpl.ID,
+		Input:          "broken button",
+		Stages: []StageTemplate{
+			{Name: "Describe", Role: RoleUser, StartImmediately: false},
+			agentStage("Fix", "Fix this:\n{previous_input}"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if detail.Task.Status != StatusPending || detail.Task.CurrentStageIndex != 0 {
+		t.Fatalf("task stage/status = %d/%s, want 0/%s（面板显式取消就该停在未开始）",
+			detail.Task.CurrentStageIndex, detail.Task.Status, StatusPending)
+	}
+}
+
+// 模板首段勾了「立即执行」且客户端没发 stages（老客户端）：后端照模板的开跑。
+func TestCreateTaskFollowsTemplateStartImmediatelyWhenNoStagesSent(t *testing.T) {
+	ctx := context.Background()
+	svc, root := newTestService(t, &fakeRunner{})
+	tmpl, err := svc.SaveTaskTemplate(ctx, TaskTemplate{
+		Name: "Autostart",
+		Stages: []TaskTemplateStage{
+			{Position: 0, Snapshot: StageTemplate{Name: "Describe", Role: RoleUser, StartImmediately: true}},
+			{Position: 1, Snapshot: agentStage("Fix", "Fix this:\n{previous_input}")},
+		},
+	})
+	if err != nil {
+		t.Fatalf("SaveTaskTemplate: %v", err)
+	}
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID:         root.ID,
+		TaskTemplateID: tmpl.ID,
+		Input:          "broken button",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	waitForCondition(t, func() bool {
+		d, err := svc.GetTask(ctx, root.ID, detail.Task.ID)
+		return err == nil && d.Task.Status == StatusRunning
+	})
+	detail, err = svc.GetTask(ctx, root.ID, detail.Task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if detail.Task.CurrentStageIndex != 1 {
+		t.Fatalf("current stage=%d, want 1（没发 stages 就该照模板立即执行）", detail.Task.CurrentStageIndex)
+	}
+}
+
+// 勾了立即执行但没给输入：停在「未开始」，创建请求不能因此报错
+// （目标段引用 {previous_input}，RunNow 本会因「input required」失败）。
+func TestCreateTaskStartImmediatelyRequiresNonEmptyInput(t *testing.T) {
+	ctx := context.Background()
+	svc, root := newTestService(t, &fakeRunner{})
+	first := userStage("Describe")
+	first.StartImmediately = true
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID: root.ID,
+		Stages: []StageTemplate{first, agentStage("Fix", "Fix this:\n{previous_input}")},
+	})
+	if err != nil {
+		t.Fatalf("CreateTask with empty input returned error: %v", err)
+	}
+	if detail.Task.Status != StatusPending || detail.Task.CurrentStageIndex != 0 {
+		t.Fatalf("task stage/status = %d/%s, want 0/%s（没有输入不该立即执行）",
+			detail.Task.CurrentStageIndex, detail.Task.Status, StatusPending)
+	}
+}
+
+// 存模板时把 user 段的 auto_advance 归一成 true：引擎对 user 段一律推进，
+// 面板上那颗开关是灰的、改不了，存成 false 只会让 JSON 里躺着个假值。
+// 存量模板（AutoAdvance 缺失 = false）下次一存就自愈。
+func TestSaveTaskTemplateNormalizesUserStageAutoAdvance(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newTestService(t, nil)
+	tmpl, err := svc.SaveTaskTemplate(ctx, TaskTemplate{
+		Name: "Legacy",
+		Stages: []TaskTemplateStage{
+			{Position: 0, Snapshot: StageTemplate{Name: "Describe", Role: RoleUser, AutoAdvance: false, StartImmediately: true}},
+			{Position: 1, Snapshot: agentStage("Fix", "Fix this:\n{previous_input}")},
+		},
+	})
+	if err != nil {
+		t.Fatalf("SaveTaskTemplate: %v", err)
+	}
+	if !tmpl.Stages[0].Snapshot.AutoAdvance {
+		t.Fatalf("user stage auto_advance=%v, want true（user 段一律推进，存 false 是假值）",
+			tmpl.Stages[0].Snapshot.AutoAdvance)
+	}
+	// 首段的「立即执行」不该被这次归一化碰到。
+	if !tmpl.Stages[0].Snapshot.StartImmediately {
+		t.Fatalf("user stage start_immediately=%v, want true", tmpl.Stages[0].Snapshot.StartImmediately)
+	}
+	// agent 段的 auto_advance 仍由用户自己管。
+	agent := agentStage("Fix", "Fix this:\n{previous_input}")
+	agent.AutoAdvance = false
+	tmpl.Stages[1].Snapshot = agent
+	saved, err := svc.SaveTaskTemplate(ctx, tmpl)
+	if err != nil {
+		t.Fatalf("SaveTaskTemplate again: %v", err)
+	}
+	if saved.Stages[1].Snapshot.AutoAdvance {
+		t.Fatalf("agent stage auto_advance was forced true, want false")
+	}
+}
+
 // 模板是预设：创建时拷贝快照，之后改/删预设与在途任务完全无关。
 func TestPresetSnapshotIndependentOfTask(t *testing.T) {
 	ctx := context.Background()

@@ -300,6 +300,7 @@ export const enUS = {
   "taskTemplate.deleteStageTemplate": "Delete stage template",
   "taskTemplate.stageOptions": "Stage options",
   "taskTemplate.autoAdvance": "Auto-advance to next stage",
+  "taskTemplate.startImmediately": "Run immediately",
   "taskTemplate.planMode": "Plan mode",
   "taskTemplate.sessionReuse": "Session reuse",
   "taskTemplate.sessionReuseTaskMain": "Task main session",

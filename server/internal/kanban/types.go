@@ -35,10 +35,14 @@ const (
 
 // StageTemplate 是一段可执行的流水阶段定义；既用于模板（预设），也直接存储在任务身上。
 type StageTemplate struct {
-	ID                   string    `json:"id"`
-	Name                 string    `json:"name"`
-	Role                 string    `json:"role"`
-	AutoAdvance          bool      `json:"auto_advance"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Role        string `json:"role"`
+	AutoAdvance bool   `json:"auto_advance"`
+	// StartImmediately 只对首段（任务输入）有意义：建完任务立刻开跑，
+	// 不用等用户点「立即执行」。user 段的 AutoAdvance 是引擎不读的死字段
+	// （user 段被批准后一律推进），别拿它表达「要不要开跑」。
+	StartImmediately     bool      `json:"start_immediately,omitempty"`
 	Agent                string    `json:"agent,omitempty"`
 	Model                string    `json:"model,omitempty"`
 	Mode                 string    `json:"mode,omitempty"`
@@ -61,12 +65,12 @@ type TaskTemplateStage struct {
 
 // TaskTemplate 仅作为「预设」存在：新建任务时可选套用，之后与任务完全解耦，可随时修改/删除。
 type TaskTemplate struct {
-	ID             string              `json:"id"`
-	Name           string              `json:"name"`
-	Description    string              `json:"description,omitempty"`
-	Stages         []TaskTemplateStage `json:"stages"`
-	CreatedAt      time.Time           `json:"created_at"`
-	UpdatedAt      time.Time           `json:"updated_at"`
+	ID          string              `json:"id"`
+	Name        string              `json:"name"`
+	Description string              `json:"description,omitempty"`
+	Stages      []TaskTemplateStage `json:"stages"`
+	CreatedAt   time.Time           `json:"created_at"`
+	UpdatedAt   time.Time           `json:"updated_at"`
 }
 
 // Task 自带流水（Stages）：执行永远读任务自己的阶段，不再回查模板。
