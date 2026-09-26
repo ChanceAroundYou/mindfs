@@ -277,6 +277,136 @@ for (const field of ["auto_advance: editAutoAdvance", "plan_mode:", "session_reu
 }
 
 
+// 11) 关闭面板前先问一句「是否放弃修改」。
+//     三条关闭入口（遮罩 / 右上角 × / Esc）都必须过同一道判定，且判定只写一遍。
+//     曾经三张面板各关各的，改到一半点外面就没了；后加确认又只在遮罩上生效，
+//     右上角 × 和 Esc 照旧直关 —— 所以断言的是「三条路都走 requestClose」。
+assert.match(
+  panelShell,
+  /hasUnsavedChanges\?: \(\) => boolean;/,
+  "PanelShell must expose a dirty check so every panel shares one confirmation",
+);
+assert.match(
+  panelShell,
+  /const requestClose = useCallback\(\(\) => \{\s*\n\s*if \(!onClose\) return;\s*\n\s*if \(!hasUnsavedChanges\?\.\(\)\)/,
+  "the guard must short-circuit straight to onClose when there is nothing to lose",
+);
+assert.match(
+  panelShell,
+  /confirmDialog\(\{\s*\n\s*message: discardConfirmMessage \|\| t\("common\.discardChangesConfirm"\),/,
+  "a dirty close must confirm, with a caller-overridable message",
+);
+assert.match(
+  panelShell,
+  /if \(ok\) onClose\(\);/,
+  "the panel may only close after the user confirms discarding",
+);
+assert.match(
+  panelShell,
+  /closeOnOverlayClick && event\.target === event\.currentTarget\) requestClose\(\)/,
+  "the overlay must go through the guard, not call onClose directly",
+);
+assert.match(
+  panelShell,
+  /document\.addEventListener\("keydown", onKeyDown, true\)/,
+  "Esc must be captured, or the editors inside swallow it before it bubbles",
+);
+assert.match(
+  panelShell,
+  /if \(event\.key !== "Escape"\) return;[\s\S]*?requestClose\(\);/,
+  "Esc must route through the same guard",
+);
+// headerRight 收函数而不是收节点：收节点的话调用方写 onClick={onClose} 就绕过了确认。
+assert.match(
+  panelShell,
+  /headerRight\?: \(requestClose: \(\) => void\) => React\.ReactNode;/,
+  "headerRight must hand the guarded close down to callers",
+);
+assert.match(
+  panelShell,
+  /\{headerRight\?\.\(requestClose\) \?\? null\}/,
+  "PanelShell must invoke headerRight with its guarded close",
+);
+assert.doesNotMatch(
+  panelShell,
+  /\{headerRight\}/,
+  "rendering headerRight as a bare node would drop the guard",
+);
+for (const [name, src] of [
+  ["TaskTemplateDialog", dialog],
+  ["TaskDetailPanel", panel],
+  ["App create dialog", app],
+]) {
+  assert.doesNotMatch(
+    src,
+    /onClick=\{onClose\}/,
+    `${name} must not close via a bare onClick={onClose} — that skips the discard confirm`,
+  );
+}
+assert.match(
+  dialog,
+  /onClick=\{requestClose\} style=\{panelButtonStyle\("secondary"\)\}/,
+  "the template dialog's close button must use the guarded close",
+);
+// 三张面板都要真的接上 dirty 判定，否则守卫对它是空转
+assert.match(dialog, /hasUnsavedChanges=\{\(\) => dirty\}/, "the template dialog must report an edited template");
+assert.match(
+  dialog,
+  /const dirty = JSON\.stringify\(draft\) !== baselineRef\.current;/,
+  "dirty must compare against the snapshot taken when the dialog opened, not a baseline recomputed each render",
+);
+assert.match(
+  panel,
+  /hasUnsavedChanges=\{\(\) => editingName && nameDraft\.trim\(\) !== \(task\.name \|\| ""\)\.trim\(\)\}/,
+  "the detail panel must only warn when a rename is actually mid-flight",
+);
+assert.match(
+  app,
+  /hasUnsavedChanges=\{\(\) => String\(taskInlineEdit\?\.text \|\| ""\)\.trim\(\) !== ""\}/,
+  "the create-task panel must warn when a prompt was typed",
+);
+// 取消按钮被去掉，改成「点外面关闭」；可见的关闭入口只剩右上角 ×
+assert.doesNotMatch(
+  app.slice(app.indexOf("<PanelShell", app.indexOf("createTaskInputStage"))),
+  /t\("common\.cancel"\)/,
+  "the create-task panel must not keep a cancel button",
+);
+for (const [name, src] of [
+  ["TaskTemplateDialog", dialog],
+  ["TaskDetailPanel", panel],
+  ["App create dialog", app],
+]) {
+  assert.match(
+    src,
+    /<CloseGlyph \/>/,
+    `${name} must render the shared × so the panel is still visibly closable`,
+  );
+}
+
+// 12) 新建任务面板不再有底部大片空白：去掉 minHeight 后整卡按内容收缩。
+//     minHeight 一撤，卡片只剩 maxHeight，卡高就由内容决定；遮罩是
+//     alignItems:center，居中不受影响。
+assert.doesNotMatch(
+  app.slice(app.indexOf("<PanelShell", app.indexOf("createTaskInputStage"))),
+  /minHeight=/,
+  "the create-task panel must not pin a minHeight — that was the empty band at the bottom",
+);
+assert.match(
+  panelShell,
+  /\.\.\.\(minHeight \? \{ minHeight \} : \{\}\)/,
+  "PanelShell must treat minHeight as opt-in so omitting it really collapses the card",
+);
+assert.doesNotMatch(
+  dialog,
+  /minHeight=\{520\}/,
+  "the template dialog's fixed 520px floor had the same dead-space problem",
+);
+assert.match(
+  panelShell,
+  /alignItems: "center"/,
+  "the overlay must keep centering the card, or a collapsed panel drifts to the top",
+);
+
 function walk(dir) {
   const out = [];
   for (const entry of fs.readdirSync(path.join(root, dir), { withFileTypes: true })) {

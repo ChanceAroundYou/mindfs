@@ -152,7 +152,7 @@ import TokenEditor, { type TokenEditorHandle } from "./components/editor/TokenEd
 import { PromptEditor } from "./components/PromptEditor";
 import { StageEditor } from "./components/StageEditor";
 import { Select } from "./components/Select";
-import { PanelShell } from "./components/PanelShell";
+import { PanelShell, panelIconButtonStyle, CloseGlyph } from "./components/PanelShell";
 import { composerInputStyle } from "./components/action/composerStyles";
 import {
   type GitHubImportState,
@@ -828,7 +828,8 @@ export function App({ onGoHome }: AppProps) {
     });
   }, []);
 
-  const closeTaskEditDialog = useCallback(() => {    setTaskInlineEdit((prev) => {
+  const closeTaskEditDialog = useCallback(() => {
+    setTaskInlineEdit((prev) => {
       prev?.attachments.forEach((attachment) => {
         if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
       });
@@ -9221,9 +9222,14 @@ export function App({ onGoHome }: AppProps) {
 	          return (
         <PanelShell
           width={640}
-          minHeight={isMobile ? undefined : 480}
           onClose={() => { if (!taskInlineSaving) closeTaskEditDialog(); }}
           closeOnOverlayClick
+          hasUnsavedChanges={() => String(taskInlineEdit?.text || "").trim() !== ""}
+          headerRight={(requestClose) => (
+            <button type="button" aria-label={t("common.close")} title={t("common.close")} onClick={requestClose} style={panelIconButtonStyle()}>
+              <CloseGlyph />
+            </button>
+          )}
           title={(
             <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "8px", minWidth: 0 }}>
               <div style={{ fontSize: "13px", fontWeight: 800, color: "var(--text-color)", whiteSpace: "nowrap" }}>
@@ -9549,28 +9555,6 @@ export function App({ onGoHome }: AppProps) {
                 style={{ display: "none" }}
                 onChange={handleTaskInlineAttachmentChange}
               />
-            </div>
-            <div
-              style={{
-                padding: "10px 12px",
-                borderTop: "1px solid var(--border-color)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: "8px",
-              }}
-            >
-              <span />
-              <div style={{ display: "flex", gap: "8px" }}>
-                <button
-                  type="button"
-                  onClick={closeTaskEditDialog}
-                  disabled={taskInlineSaving}
-                  style={{ height: "30px", borderRadius: "6px", border: "1px solid var(--border-color)", background: "transparent", color: "var(--text-color)", padding: "0 12px", cursor: taskInlineSaving ? "not-allowed" : "pointer" }}
-                >
-                  {t("common.cancel")}
-                </button>
-              </div>
             </div>
     </PanelShell>
           );
