@@ -241,7 +241,7 @@ func isLocalCLIPath(r *http.Request) bool {
 	if r.URL.Path == "/api/task-groups" || strings.HasPrefix(r.URL.Path, "/api/task-groups/") {
 		return r.Method == http.MethodGet || r.Method == http.MethodPost
 	}
-	if r.Method == http.MethodGet && (r.URL.Path == "/api/agents" || r.URL.Path == "/api/task-templates" || r.URL.Path == "/api/tasks") {
+	if r.Method == http.MethodGet && (r.URL.Path == "/api/agents" || r.URL.Path == "/api/task-templates" || r.URL.Path == "/api/tasks" || r.URL.Path == "/api/relay/status") {
 		return true
 	}
 	if r.Method == http.MethodPost && r.URL.Path == "/api/tasks" {
@@ -2483,7 +2483,7 @@ func (h *HTTPHandler) handleRelayStatus(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	status := h.relayStatusWithE2EE(manager.Status())
-	if !status.E2EERequired {
+	if !status.E2EERequired || h.isLocalCLIRequest(r) {
 		respondJSON(w, http.StatusOK, status)
 		return
 	}

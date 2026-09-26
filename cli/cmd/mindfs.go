@@ -184,7 +184,12 @@ func main() {
 		if flag.NArg() > 0 {
 			root = flag.Arg(0)
 		}
-		if err := handleTaskOperation(*addr, *tlsFlag, root, id, action, *taskCursor); err != nil {
+		useTLS, err := resolveClientTLS(*addr, *tlsFlag, explicitFlags["tls"] || startupCfg.TLS != nil)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		if err := handleTaskOperation(*addr, useTLS, root, id, action, *taskCursor); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -217,8 +222,15 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Discover the existing service's transport without changing startup flags:
+	// a new service must use this invocation's requested TLS configuration.
+	clientTLS, err := resolveClientTLS(*addr, *tlsFlag, explicitFlags["tls"] || startupCfg.TLS != nil)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		os.Exit(1)
+	}
 	if *updateFlag {
-		if err := handleUpdateCommand(context.Background(), *addr, *tlsFlag); err != nil {
+		if err := handleUpdateCommand(context.Background(), *addr, clientTLS); err != nil {
 			fmt.Fprintln(os.Stderr, err.Error())
 			os.Exit(1)
 		}
@@ -226,14 +238,14 @@ func main() {
 	}
 
 	if *statusFlag {
-		if err := printServiceStatus(*addr, *tlsFlag, pidPath, logPath); err != nil {
+		if err := printServiceStatus(*addr, clientTLS, pidPath, logPath); err != nil {
 			fmt.Fprintln(os.Stderr, err.Error())
 			os.Exit(1)
 		}
 		return
 	}
 	if *stop {
-		if err := stopService(*addr, *tlsFlag, pidPath); err != nil {
+		if err := stopService(*addr, clientTLS, pidPath); err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				fmt.Fprintln(os.Stdout, "mindfs service already stopped")
 				return
@@ -245,7 +257,7 @@ func main() {
 		return
 	}
 	if *restart {
-		if err := stopService(*addr, *tlsFlag, pidPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := stopService(*addr, clientTLS, pidPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 			fmt.Fprintln(os.Stderr, err.Error())
 			os.Exit(1)
 		}
@@ -257,7 +269,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, err.Error())
 			os.Exit(1)
 		}
-		if err := handleRemoveRoot(*addr, *tlsFlag, absRoot); err != nil {
+		if err := handleRemoveRoot(*addr, clientTLS, absRoot); err != nil {
 			fmt.Fprintln(os.Stderr, err.Error())
 			os.Exit(1)
 		}
@@ -265,18 +277,10 @@ func main() {
 		return
 	}
 
-	e2eeResult, err := app.EnsureE2EEConfig(*e2eeFlag)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		os.Exit(1)
-	}
-	if *e2eeFlag && !internalAutoStart && strings.TrimSpace(e2eeResult.Config.PairingSecret) != "" {
-		fmt.Fprintln(os.Stdout, "E2EE enabled")
-		fmt.Fprintln(os.Stdout, "pairing secret:", e2eeResult.Config.PairingSecret)
-	}
+	reuseService := !internalRestart && !*restart && serverRunning(*addr, clientTLS)
 	if !daemonMode && !internalRestart && !internalAutoStart {
 		autoStartExplicit := explicitFlags["autostart"]
-		if *autoStart || (!autoStartExplicit && autoStartConfigured()) {
+		if *autoStart || (!reuseService && !autoStartExplicit && autoStartConfigured()) {
 			autoArgs := autoStartArguments(
 				*addr,
 				*noRelayer,
@@ -298,7 +302,7 @@ func main() {
 		}
 	}
 
-	if !internalRestart && !*restart && serverRunning(*addr, *tlsFlag) {
+	if reuseService {
 		fmt.Fprintf(os.Stdout, "server already running on %s, reusing existing process\n", *addr)
 		rootID := ""
 		if hasRootArg {
@@ -307,7 +311,7 @@ func main() {
 				fmt.Fprintln(os.Stderr, err.Error())
 				os.Exit(1)
 			}
-			rootInfo, err := addManagedDir(*addr, *tlsFlag, absRoot)
+			rootInfo, err := addManagedDir(*addr, clientTLS, absRoot)
 			if err != nil {
 				fmt.Fprintln(os.Stderr, err.Error())
 				os.Exit(1)
@@ -316,18 +320,28 @@ func main() {
 			fmt.Fprintln(os.Stdout, "added managed directory:", rootInfo.RootPath)
 		}
 		if *bindRelay {
-			if err := printRelayBindTarget(os.Stdout, *addr, *tlsFlag, rootID); err != nil {
+			if err := printRelayBindTarget(os.Stdout, *addr, clientTLS, rootID); err != nil {
 				fmt.Fprintln(os.Stderr, err.Error())
 				os.Exit(1)
 			}
 		} else if !internalAutoStart {
-			if err := openTarget(*addr, *tlsFlag, rootID); err != nil {
+			if err := openTarget(*addr, clientTLS, rootID); err != nil {
 				reportOpenTargetError(os.Stderr, err)
 			}
 		}
 		return
 	}
 
+	// Only persist E2EE settings when starting a service, not when reusing it.
+	e2eeResult, err := app.EnsureE2EEConfig(*e2eeFlag)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		os.Exit(1)
+	}
+	if *e2eeFlag && !internalAutoStart && strings.TrimSpace(e2eeResult.Config.PairingSecret) != "" {
+		fmt.Fprintln(os.Stdout, "E2EE enabled")
+		fmt.Fprintln(os.Stdout, "pairing secret:", e2eeResult.Config.PairingSecret)
+	}
 	// Resolve TLS certificate/key paths when TLS is enabled.
 	resolvedCert, resolvedKey := *certFlag, *keyFlag
 	if *tlsFlag && (resolvedCert == "" || resolvedKey == "") {
@@ -830,6 +844,19 @@ func processExists(pid int) bool {
 	return processExistsPlatform(pid)
 }
 
+func resolveClientTLS(addr string, useTLS, configured bool) (bool, error) {
+	if strings.HasPrefix(addr, "https://") {
+		return true, nil
+	}
+	if strings.HasPrefix(addr, "http://") {
+		return false, nil
+	}
+	if configured {
+		return useTLS, nil
+	}
+	return app.ReadLocalCLITLS(addr)
+}
+
 func newHTTPClient(useTLS bool, timeout time.Duration) *http.Client {
 	c := &http.Client{Timeout: timeout}
 	if useTLS {
@@ -1028,9 +1055,18 @@ func handleRemoveRoot(addr string, useTLS bool, path string) error {
 }
 
 func fetchRelayStatus(addr string, useTLS bool) (relayStatusResponse, error) {
+	token, err := app.ReadLocalCLIToken(addr)
+	if err != nil {
+		return relayStatusResponse{}, err
+	}
 	url := addrToURL(addr, "/api/relay/status", useTLS)
 	client := newHTTPClient(useTLS, 3*time.Second)
-	resp, err := client.Get(url)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return relayStatusResponse{}, err
+	}
+	req.Header.Set("X-MindFS-Local-CLI-Token", token)
+	resp, err := client.Do(req)
 	if err != nil {
 		return relayStatusResponse{}, err
 	}
@@ -1197,7 +1233,7 @@ func openBrowser(target string) error {
 
 func addrToURL(addr, path string, useTLS bool) string {
 	if strings.HasPrefix(addr, "http://") || strings.HasPrefix(addr, "https://") {
-		return addr + path
+		return strings.TrimRight(addr, "/") + path
 	}
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -1207,7 +1243,7 @@ func addrToURL(addr, path string, useTLS bool) string {
 	if host == "" {
 		host = "localhost"
 	}
-	if host == "0.0.0.0" {
+	if host == "0.0.0.0" || host == "::" {
 		host = "127.0.0.1"
 	}
 	if port == "" {
@@ -1217,7 +1253,7 @@ func addrToURL(addr, path string, useTLS bool) string {
 	if useTLS {
 		scheme = "https"
 	}
-	return fmt.Sprintf("%s://%s:%s%s", scheme, host, port, path)
+	return fmt.Sprintf("%s://%s%s", scheme, net.JoinHostPort(host, port), path)
 }
 
 func waitForServer(addr string, useTLS bool, timeout time.Duration) error {

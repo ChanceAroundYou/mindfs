@@ -3,9 +3,86 @@ package main
 import (
 	"flag"
 	"io"
+	"mindfs/server/app"
+	"net/http"
+	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 )
+
+func TestTaskOperationsDiscoverServiceTLS(t *testing.T) {
+	for _, useTLS := range []bool{false, true} {
+		name := "http"
+		if useTLS {
+			name = "https"
+		}
+		t.Run(name, func(t *testing.T) {
+			for _, key := range []string{"HOME", "USERPROFILE", "AppData", "XDG_CONFIG_HOME"} {
+				t.Setenv(key, t.TempDir())
+			}
+			var token string
+			var paths []string
+			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Header.Get("X-MindFS-Local-CLI-Token") != token || (r.TLS != nil) != useTLS {
+					t.Error("incorrect authentication or transport")
+				}
+				paths = append(paths, r.URL.Path)
+				w.Header().Set("Content-Type", "application/json")
+				if r.URL.Path == "/api/tasks" {
+					io.WriteString(w, `{"items":[{"task":{"id":"task-id","task_number":7}}]}`)
+					return
+				}
+				io.WriteString(w, `{}`)
+			})
+			server := httptest.NewUnstartedServer(handler)
+			if useTLS {
+				server.StartTLS()
+			} else {
+				server.Start()
+			}
+			defer server.Close()
+			addr := server.Listener.Addr().String()
+			var err error
+			token, err = app.EnsureLocalCLIToken(addr, useTLS)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resolved, err := resolveClientTLS(addr, false, false)
+			if err != nil || resolved != useTLS {
+				t.Fatalf("resolved TLS = %v, %v", resolved, err)
+			}
+			for _, explicit := range []bool{false, true} {
+				if got, err := resolveClientTLS(addr, explicit, true); err != nil || got != explicit {
+					t.Fatalf("explicit TLS ignored: %v, %v", got, err)
+				}
+			}
+			input, err := os.CreateTemp(t.TempDir(), "request")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer input.Close()
+			if _, err := input.WriteString(`{"parent_session_key":"parent"}`); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := input.Seek(0, 0); err != nil {
+				t.Fatal(err)
+			}
+			originalStdin := os.Stdin
+			os.Stdin = input
+			defer func() { os.Stdin = originalStdin }()
+			if err := handleTaskOperation(addr, resolved, "root", "", "group:create", ""); err != nil {
+				t.Fatal(err)
+			}
+			if err := handleTaskOperation(addr, resolved, "root", "7", "status", ""); err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Join(paths, ","); got != "/api/task-groups,/api/tasks,/api/tasks/task-id" {
+				t.Fatalf("unexpected requests: %s", got)
+			}
+		})
+	}
+}
 
 func TestReadTaskJSON(t *testing.T) {
 	for _, tc := range []struct {
