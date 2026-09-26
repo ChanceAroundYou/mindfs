@@ -11,8 +11,11 @@ const board = readFileSync(new URL("../src/components/workspace/WorkspaceBoard.t
 const attention = readFileSync(new URL("../src/components/workspace/WorkspaceAttentionBar.tsx", import.meta.url), "utf8");
 const projectRow = readFileSync(new URL("../src/components/workspace/WorkspaceProjectRow.tsx", import.meta.url), "utf8");
 const taskRow = readFileSync(new URL("../src/components/workspace/WorkspaceTaskRow.tsx", import.meta.url), "utf8");
+// 卡片两行（标题行 + 操作行）抽成了看板和工作台共用的组件，契约跟着文件走。
+const cardRows = readFileSync(new URL("../src/components/TaskCardRows.tsx", import.meta.url), "utf8");
 const quick = readFileSync(new URL("../src/components/workspace/WorkspaceQuickLaunch.tsx", import.meta.url), "utf8");
 const styles = readFileSync(new URL("../src/components/workspace/workspaceStyles.ts", import.meta.url), "utf8");
+const services = readFileSync(new URL("../src/services/tasks.ts", import.meta.url), "utf8");
 const storage = readFileSync(new URL("../src/app/appStorage.ts", import.meta.url), "utf8");
 const zh = readFileSync(new URL("../src/i18n/locales/zh-CN.ts", import.meta.url), "utf8");
 const en = readFileSync(new URL("../src/i18n/locales/en-US.ts", import.meta.url), "utf8");
@@ -55,16 +58,23 @@ assert.match(
 );
 assert.match(
   styles,
-  /export const workspaceProjectHeaderHoverStyle[\s\S]*?background: "var\(--node-row-selected-bg\)"/,
+  /background: active \? "var\(--node-row-selected-bg\)" : "transparent"/,
   "hover/selected surfaces must use the neutral selected-row background",
 );
-assert.match(
+// 项目名前没有色点：名字本身已经是节点色（workspaceProjectNameButtonStyle），
+// 再配一个同色圆点等于把同一个信息说两遍，还占了名字的缩进。
+assert.doesNotMatch(
   styles,
-  /export const workspaceNodeDotStyle = \(color: string \| null\)[\s\S]*?background: color \|\| "var\(--text-secondary\)"/,
-  "the node dot takes the node color and falls back to a neutral token when unknown",
+  /workspaceNodeDotStyle/,
+  "the node dot is gone — the project name already carries the node color",
+);
+assert.doesNotMatch(
+  projectRow,
+  /workspaceNodeDotStyle/,
+  "the project row must not render a color dot before the name",
 );
 // 节点色带透明度由 hexToRgbaApp 从运行时色值算出，不在样式文件里写死
-assert.match(styles, /import \{ hexToRgbaApp \} from "\.\.\/\.\.\/app\/taskIcons"/, "node tint must reuse the shared rgba helper");
+assert.match(styles, /import \{[^}]*hexToRgbaApp[^}]*\} from "\.\.\/\.\.\/app\/taskIcons"/, "node tint must reuse the shared rgba helper");
 // 条带是跨项目的，每张卡得按**自己**的任务找节点色，不能拿一个全局值
 assert.match(
   board,
@@ -92,7 +102,11 @@ assert.match(
 //    唯一按状态分区的地方是顶部条带，它回答的是与项目无关的「现在该我做什么」。
 assert.match(board, /<WorkspaceAttentionBar items=\{board\.blockedAll\}/, "the attention bar is fed the cross-project blocked list");
 assert.match(board, /board\.projects\.map\(\(group\) => \(\s*<WorkspaceProjectRow/, "projects render as groups, not as a flat task list");
-assert.match(board, /<WorkspaceQuickLaunch projects=\{board\.projects\} templates=\{templates\} onPick=\{onCreateTask\}/, "quick launch is a trigger that hands off to the shared dialog");
+assert.match(board, /<WorkspaceQuickLaunch projects=\{board\.projects\} templates=\{templates\} onPick=\{onCreateTask\} \/>/, "quick launch is a trigger that hands off to the shared dialog");
+// 快速发起在工具栏里，且排在刷新键**之前**（紧贴其左边）
+const quickAt = board.indexOf("<WorkspaceQuickLaunch");
+const refreshAt = board.indexOf("title={t(\"common.refresh\")}");
+assert.ok(quickAt > -1 && refreshAt > -1 && quickAt < refreshAt, "quick launch must sit in the toolbar, immediately left of the refresh button");
 assert.doesNotMatch(
   board,
   /const waiting = useMemo|const running = useMemo|const archive = useMemo/,
@@ -118,32 +132,38 @@ assert.match(
 assert.match(hook, /if \(filter === "blocked"\) return isBlockedTask\(task\);/, "the blocked filter is waiting_user + pending");
 assert.match(hook, /tasks: bucket\.filter\(\(item\) => matchesFilter\(item\.task, filter\)\)/, "the row list must be exactly what the filter matched");
 assert.doesNotMatch(projectRow, /\[\.\.\.group\.active, \.\.\.group\.ended\]/, "ended tasks must not be appended under any filter");
-assert.match(taskRow, /isTerminalKanbanTask\(task\)/, "task rows still need the terminal predicate for their own buttons");
 
-// 7) 就地操作仍在：完成/立刻跑/暂停/继续，都走 App 传来的统一回调
-assert.match(taskRow, /onComplete\(item\)/, "complete stays inline");
-assert.match(taskRow, /onRunNow\(item\)/, "run-now stays inline");
-assert.match(taskRow, /onTogglePause\(item\)/, "pause/resume stays inline");
+// 7) 就地操作仍在：完成/立刻跑/暂停/继续，都走 App 传来的统一回调。
+//    卡片两行已抽进共享的 TaskCardRows（看板同一份），所以这三件事由它保证，
+//    工作台只负责把 onMove 透下去。
+assert.match(cardRows, /onMove\(task, "complete"\)/, "complete stays inline");
+assert.match(cardRows, /onMove\(task, "run-now"\)/, "run-now stays inline");
+assert.match(cardRows, /onMove\(task, "pause"\)/, "pause stays inline");
+assert.match(cardRows, /onMove\(task, "resume"\)/, "resume stays inline");
+assert.match(taskRow, /onMove=\{\(_cardTask, action\) => onMove\(item, action\)\}/, "the move is reported against the workbench item, not the bare task");
 
-// 8) 快速发起必须是「一个按钮 + 点开的面板」，不能再常驻挂编辑器 ——
-//    常驻的编辑器会自己抢焦点，工作台一进来焦点就被它吃掉。
-assert.doesNotMatch(quick, /PromptEditor/, "quick launch must not mount an editor at all — that is the focus steal");
-assert.match(quick, /const \[open, setOpen\] = useState\(false\);/, "the panel state must start closed");
-assert.match(quick, /aria-expanded=\{open\}/, "the trigger must expose its expanded state");
-assert.match(quick, /\{open \? \([\s\S]*?\) : null\}/, "the panel must not exist in the tree until the button is pressed");
-// 面板基于看板的新建任务面板，只多一个「选项目」
-assert.match(quick, /onPick\(target\.rootId, target\.nodeId, template\)/, "picking must hand the chosen project + template to the shared dialog");
-assert.match(quick, /onPick: \(rootId: string, nodeId: string, template: TaskTemplate\) => void;/, "and that callback must carry a real template");
-// 面板自己有两个下拉：项目 + 模板
-assert.equal(quick.match(/<Select/g).length, 2, "the panel needs exactly two pickers: project and template");
-// 项目增删后旧选中会悬空，回落到第一个
-assert.match(quick, /options\.some\(\(option\) => option\.value === rootKey\) \? rootKey : options\[0\]\?\.value \|\| ""/, "a dangling project selection must fall back to the first project");
-// 点外面 / Esc 都要能直接丢掉这个临时选择
-assert.match(quick, /document\.addEventListener\("mousedown", onPointerDown\)/, "click-away must close the panel");
-assert.match(quick, /if \(event\.key === "Escape"\) setOpen\(false\);/, "Escape must close the panel");
-// 会话数不再显示：用户明确说「不需要显示有多少会话」
-assert.doesNotMatch(projectRow, /workspaceSessions/, "the session-count badge must be gone");
-assert.doesNotMatch(hook, /sessionCount|sessionCounts/, "and the data layer must not plumb it either");
+// 8) 快速发起必须**一步到位**：按钮直接打开新建任务面板，不能再夹一层小弹窗。
+//    两层弹窗意味着两次点击，而且第二层里真正能改的东西全被挡在后面。
+//    面板侧的「项目」下拉由 allowProjectSwitch 控制，只在工作台入口出现。
+assert.doesNotMatch(quick, /PromptEditor/, "quick launch must not mount an editor of its own");
+assert.doesNotMatch(quick, /useState|useRef|setOpen|<Select|<div/, "the launch must be a plain trigger — no local panel state, no pickers, no second dialog");
+assert.match(quick, /onClick=\{\(\) => onPick\(group\.rootId, group\.nodeId, template\)\}/, "one click hands the project + template straight to the shared create dialog");
+assert.match(quick, /data-onboarding="task-create"/, "the onboarding anchor must survive the rewrite");
+assert.match(app, /allowProjectSwitch: Boolean\(targetRootId\)/, "only the workspace entry gets the project dropdown; the board entry has none");
+assert.match(app, /taskInlineEdit\.allowProjectSwitch && taskCreateProjectOptions\.length > 1/, "the dropdown only renders when there is a choice to make");
+// 换项目时 worktree 三个开关按项目分别记：还原回那个项目那份，第一次去则取它的偏好
+assert.match(app, /createWorktreePerRoot/, "worktree prefs must be stashed per project across switches");
+// 分支列表 / 偏好存取都跟目标项目而不是 currentRootId，否则工作台发起时会串到当前项目
+assert.match(app, /const rootId = edit\.targetRootId \|\| currentRootId \|\| "";[\s\S]*?loadTaskWorktreeBranches\(rootId\)/, "worktree branches must load for the panel's target project, not the current one");
+assert.match(app, /const rootId = edit\.targetRootId \|\| currentRootIdRef\.current \|\| "";[\s\S]*?saveTaskCreateWorktreePreference\(rootId/, "worktree prefs must persist against the panel's target project");
+
+// 8b) 选中态守卫不能在工作台上把刚打开的详情关掉：工作台选中的任务往往属于别的项目，
+//     而 kanbanTasks 按 currentRootId 过滤，天然不含它们。
+assert.match(
+  app,
+  /if \(workspaceOpenRef\.current && taskDetailsByIdRef\.current\[selectedKanbanTaskId\]\) return;/,
+  "a cross-project selection made on the workbench must survive the stale-selection guard",
+);
 
 // 9) 窄屏：旧面板零响应式处理（没有任何 isMobile 分支），这里钉住三处该变的地方
 assert.match(board, /const \{ isMobile \} = useResponsive\(\);/, "the board must read the viewport, not assume desktop");
@@ -167,10 +187,89 @@ assert.match(
   /width: isMobile \? "100%" : "220px"/,
   "attention cards go full width on narrow screens",
 );
+
+// 9b) 层级：项目名用左侧项目列表那套徽章（中性灰底 + 主体色字），
+//     任务是小卡片。两行不再共用同一个灰底 —— 那正是「看起来很丑」的病根。
 assert.match(
-  quick,
-  /\.\.\.\(isMobile \? \{ \.\.\.workspaceQuickLaunchStyle, \.\.\.workspaceQuickLaunchMobileStyle \} : \{\}\)/,
-  "the quick-launch panel stacks on narrow screens",
+  styles,
+  /import \{ rootBadgeButtonStyle \} from "\.\.\/rootBadgeStyle"/,
+  "the project name must reuse the sidebar's root-badge style, not invent its own chrome",
+);
+assert.match(
+  styles,
+  /export const workspaceProjectNameButtonStyle[\s\S]*?\.\.\.rootBadgeButtonStyle,[\s\S]*?color: String\(color \|\| ""\)\.trim\(\) \|\| "var\(--text-primary\)"[\s\S]*?cursor: "pointer"/,
+  "project name = neutral badge background + the project's own node color, and it is the only jump target",
+);
+assert.match(
+  taskRow,
+  /style=\{\{ \.\.\.taskCardSurfaceStyle\(false\), padding: "8px" \}\}/,
+  "the task card must reuse the kanban card surface, otherwise the two drift apart again",
+);
+// 卡片不含任务正文：工作台只扫读，正文去项目看板。
+// 正文是 TaskCardRows 的 children，工作台不传 —— 所以这一层连正文相关的 prop 都没有。
+assert.doesNotMatch(taskRow, /taskFirstInput|InlineTokenText|firstInput/, "the workbench card must not render task input text");
+assert.doesNotMatch(cardRows, /taskFirstInput|InlineTokenText|expandedTaskInputIds/, "the shared card rows must not depend on the task body — the body arrives as children");
+assert.match(
+  taskRow,
+  /<TaskCardRows[\s\S]*?\/>\s*<\/div>/,
+  "the workbench card renders the shared rows with no children, so the body row is absent",
+);
+assert.match(
+  taskRow,
+  /showStatus\s*\n/,
+  "the workbench has no columns, so it always shows the (colored) status text",
+);
+// 状态色只有一份定义，看板和工作台都从它拿
+assert.match(
+  cardRows,
+  /color: taskStatusColor\(task\.status \|\| ""\)/,
+  "the status text is tinted from the shared status-color helper",
+);
+assert.match(
+  taskRow,
+  /showStatus/,
+  "the workbench card asks for the status text",
+);
+
+// 9c) 只有项目名能跳，整个头不能：以前整行都是热区，空白处/计数/色点都成了跳转陷阱。
+const headerJsx = projectRow.slice(projectRow.indexOf("<div style={workspaceProjectHeaderStyle}>"), projectRow.indexOf("</section>"));
+assert.doesNotMatch(headerJsx, /role="button"[\s\S]*?onClick=\{\(\) => onOpenProject/, "the whole project header must not be a click target");
+assert.match(projectRow, /onClick=\{openProject\}/, "the project name button is what opens the project board");
+assert.match(projectRow, /onClick=\{\(\) => onToggle\(group\.key\)\}/, "the chevron toggles collapse");
+// 折叠键刻意无框无底：只看得见箭头，热区仍靠 40×24 撑（12px 图标点不准）
+assert.match(
+  styles,
+  /export const workspaceProjectToggleStyle[\s\S]*?border: "none"[\s\S]*?background: "transparent"/,
+  "the collapse toggle must have no border and no fill — only the arrow shows",
+);
+assert.match(
+  styles,
+  /export const workspaceProjectToggleStyle[\s\S]*?minWidth: "40px"[\s\S]*?height: "24px"/,
+  "the collapse target must stay a comfortable 40x24, not a 12px icon",
+);
+// 任务排成卡片网格，不再是一条条平铺的行；列宽对齐看板单列的 220px
+assert.match(styles, /export const workspaceTaskGridStyle[\s\S]*?gridTemplateColumns: "repeat\(auto-fill, minmax\(220px, 1fr\)\)"/, "tasks lay out as cards wide enough to show the name");
+
+// 9d) 点任务卡留在工作台：不许再走 openWorkspaceProject（那会切项目 + 切看板）
+assert.match(
+  view,
+  /onOpenTask=\{\(item\) => \{ void openWorkspaceTaskDetail\(item\); \}\}/,
+  "clicking a workbench task must not navigate to the project board",
+);
+assert.doesNotMatch(
+  view,
+  /openWorkspaceProject\(item\.root_id\)\.then/,
+  "the old jump-then-select path is gone",
+);
+assert.match(
+  app,
+  /fetchTaskDetails\(rootId, \{ taskNumber \}, item\.nodeId\)/,
+  "the detail panel needs stage_runs/events, which overview does not return — fetch that one task by number",
+);
+assert.match(
+  services,
+  /if \(typeof filters\?\.taskNumber === "number" && filters\.taskNumber > 0\) params\.set\("task_number", String\(filters\.taskNumber\)\)/,
+  "the single-task fetch must go through the existing task_number filter",
 );
 
 // 10) 筛选与折叠状态跨会话记住（读时校验、非法值回退默认）
@@ -202,10 +301,41 @@ for (const key of [
   "task.workspaceSelectProject",
   "task.quickLaunchPlaceholder",
   "task.quickLaunchSend",
+  "task.workspaceProjectCount",
 ]) {
   assert.ok(zh.includes(`"${key}"`), `${key} missing in zh-CN`);
   assert.ok(en.includes(`"${key}"`), `${key} missing in en-US`);
 }
+
+// 11b) 文案本身：键名可以不变，值必须跟着变。
+//      「快速发起」→「新建任务」（点开就是新建任务面板，名字得说清楚是哪件事）；
+//      「待处理」→「待审核」—— task.status.waitingUser / task.column.waitingUser
+//      早就是「待审核」，工作台这个筛选键是唯一的异类。
+assert.match(zh, /"task\.workspaceQuickLaunch": "新建任务"/, "the launch button says 新建任务, not 快速发起");
+assert.match(en, /"task\.workspaceQuickLaunch": "New task"/, "en-US launch label follows");
+assert.match(zh, /"task\.workspaceFilterBlocked": "待审核"/, "the blocked filter must read 待审核, matching the status and column labels");
+assert.match(en, /"task\.workspaceFilterBlocked": "Awaiting review"/, "en-US blocked filter matches the column label");
+assert.doesNotMatch(zh, /"task\.workspaceFilterBlocked": "待处理"/, "待处理 was the odd one out");
+assert.match(zh, /"task\.status\.waitingUser": "待审核"/, "status label stays 待审核");
+assert.match(zh, /"task\.column\.waitingUser": "待审核"/, "column label stays 待审核");
+
+// 11c) 面板标题：工作台不属于任何项目，顶部不能继续显示当前选中的项目名面包屑。
+//       换成视图名 + 项目数，和 MainViewSwitcher 的「工作台/看板/文件/对话」对齐。
+const listView = readFileSync(new URL("../src/components/DefaultListView.tsx", import.meta.url), "utf8");
+assert.match(listView, /workspaceMode \? \(/, "the header must branch on workspace mode");
+assert.match(listView, /\{workspaceMode \? \([\s\S]*?t\("view\.workspace"\)[\s\S]*?t\("task\.workspaceProjectCount", \{ count: workspaceProjectCount \}\)[\s\S]*?\) : \(\s*<Breadcrumbs/, "workspace mode shows the view name, everything else keeps the breadcrumb");
+assert.match(
+  app,
+  /workspaceMode=\{workspaceOpen\}/,
+  "only the workspace view opts out of the project-name breadcrumb",
+);
+assert.match(
+  app,
+  /workspaceProjectCount=\{workspaceBoard\.projects\.length\}/,
+  "the title reports how many projects are on the board",
+);
+// 工作台态没有面包屑，就也不该有上传进度条（那是文件模式的东西）
+assert.match(listView, /\{!workspaceMode && uploadProgress \? \(/, "the file-upload progress bar belongs to file mode, not the workbench");
 
 // 12) 随旧面板一起废弃的 key 必须两端都删干净（留着会让人以为还有那个分区）
 for (const key of [

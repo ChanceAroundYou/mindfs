@@ -87,6 +87,30 @@ export function taskStatusLabel(status: string, t: (key: MessageKey, params?: Me
   return labels[status] ? t(labels[status]) : status || "-";
 }
 
+/**
+ * 任务状态色。看板卡、工作台卡、任务详情面板共用这一份 —— 三处各写一套的话，
+ * 「已完成到底该是绿还是灰」迟早会分叉。
+ *
+ * 色值走 index.css 的 --status-* token，深浅主题各自给值（meadow/moss 是浅色，继承 :root）。
+ * 注意别和 stream/ToolCallCard.tsx 里那份 statusColors 混：那份是工具调用的生命周期
+ * （in_progress / complete / error），词表不同，混用会让两边互相污染。
+ */
+export function taskStatusColor(status: string): string {
+  const colors: Record<string, string> = {
+    pending: "var(--text-secondary)",
+    queued: "var(--accent-color)",
+    running: "var(--accent-color)",
+    waiting_user: "var(--status-warn)",
+    paused: "var(--text-secondary)",
+    success: "var(--status-ok)",
+    approved: "var(--status-ok)",
+    fail: "var(--status-bad)",
+    rejected: "var(--status-bad)",
+    cancelled: "var(--text-secondary)",
+  };
+  return colors[status] || "var(--text-secondary)";
+}
+
 export function firstTaskInputFromDetail(detail: TaskDetail): string {
   return detail.stage_runs.find((run) => run.stage_index === 0)?.input || "";
 }
@@ -159,6 +183,13 @@ export type TaskInlineEditState = {
    * 缺省表示当前项目（看板入口永远落在当前项目上）。
    */
   targetRootId?: string;
+  /**
+   * 面板上是否显示「项目」下拉。只有工作台入口会置 true（它不知道当前在哪个项目）；
+   * 看板入口为 false —— 那里项目已经定了，多一个选不了的项目下拉只是噪声。
+   * 换项目时要重算 worktree 偏好和 canToggleWorktree，存的是「每个项目各一份」的值。
+   */
+  allowProjectSwitch?: boolean;
+  createWorktreePerRoot?: Record<string, { createWorktree: boolean; worktreeBranchMode: "new" | "existing"; worktreeBranch: string }>;
   /** 新建时的任务名 */
   name?: string;
   /** 覆盖下一个 agent 阶段的 agent（空 = 用模板里的） */

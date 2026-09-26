@@ -71,6 +71,10 @@ type DefaultListViewProps = {
   onRemoveWorktree?: () => void;
   onOpenScheduledAgentTasks?: () => void;
   currentViewMode?: MainContentViewMode;
+  /** 跨项目工作台态：顶部不显示项目名面包屑（工作台不属于任何项目），改显示视图名 */
+  workspaceMode?: boolean;
+  /** 配合 workspaceMode，显示「N 个项目」 */
+  workspaceProjectCount?: number;
   menuOverlay?: React.ReactNode;
   rootColor?: string | null;
 };
@@ -485,6 +489,8 @@ export function DefaultListView({
   onRemoveWorktree,
   onOpenScheduledAgentTasks,
   currentViewMode = "task-kanban",
+  workspaceMode = false,
+  workspaceProjectCount = 0,
   menuOverlay = null,
   rootColor = null,
 }: DefaultListViewProps) {
@@ -608,6 +614,19 @@ export function DefaultListView({
             flex: 1,
           }}
         >
+          {/* 跨项目工作台不属于任何项目，面包屑（项目名 + 路径）在它是错的：
+              顶部写着当前选中的项目名，人会以为自己正看着那个项目。
+              换成视图名，和 MainViewSwitcher 的「工作台/看板/文件/对话」对齐。 */}
+          {workspaceMode ? (
+            <div style={{ display: "flex", alignItems: "baseline", gap: "8px", minWidth: 0 }}>
+              <span style={{ fontSize: "13px", fontWeight: 800, color: "var(--text-color)", whiteSpace: "nowrap" }}>
+                {t("view.workspace")}
+              </span>
+              <span style={{ fontSize: "11px", color: "var(--text-secondary)", whiteSpace: "nowrap" }}>
+                {t("task.workspaceProjectCount", { count: workspaceProjectCount })}
+              </span>
+            </div>
+          ) : (
           <Breadcrumbs
             root={root}
             rootDisplayName={rootDisplayName || root}
@@ -624,7 +643,8 @@ export function DefaultListView({
             }}
             onRootRenameCancel={cancelRootRename}
           />
-          {uploadProgress ? (
+          )}
+          {!workspaceMode && uploadProgress ? (
           <div style={{ marginLeft: "10px", flexShrink: 0 }}>
             <CompactUploadProgress
               progress={uploadProgress}

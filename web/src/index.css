@@ -48,6 +48,11 @@
   --selection-bg: rgba(148, 163, 184, 0.16);
   --node-badge-bg: rgba(148, 163, 184, 0.14);
   --node-row-selected-bg: rgba(148, 163, 184, 0.16);
+  /* 任务状态色：看板卡、工作台卡、任务详情面板共用一份定义。
+     浅色值在 :root 给，两个浅色主题（meadow/moss）自动继承；深色值见下方两个块。 */
+  --status-ok: #16a34a;
+  --status-warn: #b45309;
+  --status-bad: #dc2626;
 
   /* 历史别名：这些名字被多处引用，但从未在此定义过 —— 声明整条失效（浏览器解析不出
      var() 时按 invalid at computed-value time 丢弃），依赖它们的地方一直静默退化成
@@ -293,6 +298,9 @@ html {
     --selection-bg: rgba(148, 163, 184, 0.20);
     --node-badge-bg: rgba(148, 163, 184, 0.18);
     --node-row-selected-bg: rgba(148, 163, 184, 0.20);
+    --status-ok: #4ade80;
+    --status-warn: #fbbf24;
+    --status-bad: #f87171;
   }
 
   /* 仅修正语法高亮代码块，避免全局 pre/code 叠出双层边框 */
@@ -352,6 +360,9 @@ html {
   --selection-bg: rgba(148, 163, 184, 0.20);
   --node-badge-bg: rgba(148, 163, 184, 0.18);
   --node-row-selected-bg: rgba(148, 163, 184, 0.20);
+  --status-ok: #4ade80;
+  --status-warn: #fbbf24;
+  --status-bad: #f87171;
 }
 
 :root[data-theme="dark"] pre[class*="language-"],

@@ -322,6 +322,9 @@ func autoAddExternalProjectRoots(registry *fs.Registry, prefs *preferences.Store
 			existing[normalized] = struct{}{}
 		}
 	}
+	// 清理历史遗留：任务工作树被误收进来的那几笔（task-9 之类）。只摘注册表，不动磁盘
+	// 上的目录 —— 任务还在用它，文件得留着。
+	pruneTaskWorktreeRoots(registry, existing)
 	added := 0
 	for _, projectPath := range agent.DiscoverExternalProjectPaths() {
 		normalized := agent.NormalizeComparablePath(projectPath)
@@ -335,6 +338,12 @@ func autoAddExternalProjectRoots(registry *fs.Registry, prefs *preferences.Store
 			continue
 		}
 		if agent.IsTemporaryWorkDir(projectPath) {
+			continue
+		}
+		// 任务工作树（<root>/.worktree/task-N）不是项目：任务在里头跑，agent 把这个
+		// cwd 记进 ~/.claude/projects，下次扫描就会把它当外部项目收进来（历史上确实
+		// 冒出过 task-9）。git 那条判据拦不住它 —— 见 agent.TaskWorktreeParentRoot 注释。
+		if isTaskWorktreeOfRegisteredProject(projectPath, existing) {
 			continue
 		}
 		gitCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -363,6 +372,41 @@ func autoAddExternalProjectRoots(registry *fs.Registry, prefs *preferences.Store
 	}
 	if added > 0 {
 		log.Printf("[startup/projects] auto added external project roots count=%d", added)
+	}
+}
+
+// isTaskWorktreeOfRegisteredProject 判断 path 是不是某个**已注册项目**下的任务工作树。
+//
+// 只有宿主在册时才当任务工作树排除；只是碰巧长成 <某目录>/.worktree/<name> 这个形状、
+// 而宿主并不在注册表里的，照旧按普通外部项目处理，免得误伤真项目。
+func isTaskWorktreeOfRegisteredProject(path string, existing map[string]struct{}) bool {
+	host := agent.TaskWorktreeParentRoot(path)
+	if host == "" {
+		return false
+	}
+	_, ok := existing[host]
+	return ok
+}
+
+// pruneTaskWorktreeRoots 把历史上被误收进来的任务工作树从注册表里摘掉。
+//
+// 只在「宿主项目确实已注册」时才摘，且只动注册表不动磁盘 —— 任务可能正在这个目录里跑，
+// 删文件会把在跑的任务连坐掉（RemoveManagedDir 同样只摘注册表，正是这个理由）。
+func pruneTaskWorktreeRoots(registry *fs.Registry, existing map[string]struct{}) {
+	for _, root := range registry.List() {
+		host := agent.TaskWorktreeParentRoot(root.RootPath)
+		if host == "" {
+			continue
+		}
+		if _, ok := existing[host]; !ok {
+			continue
+		}
+		if _, err := registry.Remove(root.RootPath); err != nil {
+			log.Printf("[startup/projects] prune task worktree root failed id=%s path=%s err=%v", root.ID, root.RootPath, err)
+			continue
+		}
+		delete(existing, agent.NormalizeComparablePath(root.RootPath))
+		log.Printf("[startup/projects] pruned task worktree root id=%s path=%s host=%s", root.ID, root.RootPath, host)
 	}
 }
 

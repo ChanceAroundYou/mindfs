@@ -360,6 +360,8 @@ export async function fetchTaskDetails(rootId: string, filters?: {
   after?: string;
   before?: string;
   limit?: number;
+  /** 项目内的任务号（每项目自增）。命中即一条 —— 工作台就地开详情就走这条 */
+  taskNumber?: number;
 }, nodeId?: string): Promise<TaskDetail[]> {
   const params = new URLSearchParams({ root: rootId });
   if (filters?.templateId) params.set("template_id", filters.templateId);
@@ -368,6 +370,7 @@ export async function fetchTaskDetails(rootId: string, filters?: {
   if (filters?.after) params.set("after", filters.after);
   if (filters?.before) params.set("before", filters.before);
   if (typeof filters?.limit === "number" && filters.limit > 0) params.set("limit", String(filters.limit));
+  if (typeof filters?.taskNumber === "number" && filters.taskNumber > 0) params.set("task_number", String(filters.taskNumber));
   nodeId = nodeId || getRootNodeId(rootId);
   const payload = await protectedJSON<any>(appURL("/api/tasks", params, nodeId));
   return Array.isArray(payload?.items) ? payload.items : [];
