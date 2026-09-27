@@ -28,8 +28,15 @@ assert.match(
 );
 assert.match(
   appStorage,
-  /return MAIN_VIEW_MODES\.includes\(saved as MainViewMode\) \? \(saved as MainViewMode\) : "board";/,
-  "first run should fall back to the board (same as before the refactor)",
+  /return MAIN_VIEW_MODES\.includes\(saved as MainViewMode\) \? \(saved as MainViewMode\) : "workspace";/,
+  "first run should land on the workspace (工作台), not the board",
+);
+// 旧键迁移同理：只有 file-browser 有意义，其余落到工作台。
+// 存量用户存的 mindfs-main-view 仍然照读 —— 记住用户自己的选择。
+assert.match(
+  appStorage,
+  /const migrated: MainViewMode = legacy === "file-browser" \? "files" : "workspace";/,
+  "legacy migration should fall back to the workspace too",
 );
 
 // 旧的「按项目记忆 + 全局兜底」必须彻底消失：那正是「点目录突然跳到看板」的根因
