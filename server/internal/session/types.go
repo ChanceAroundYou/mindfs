@@ -71,9 +71,12 @@ type Session struct {
 	RelatedWorktree   *RelatedWorktree         `json:"related_worktree,omitempty"`
 	LastContextWindow agenttypes.ContextWindow `json:"last_context_window,omitempty"`
 	PinnedAt          *time.Time               `json:"pinned_at,omitempty"`
-	CreatedAt         time.Time                `json:"created_at"`
-	UpdatedAt         time.Time                `json:"updated_at"`
-	ClosedAt          *time.Time               `json:"closed_at,omitempty"`
+	// ArchivedAt 非空 = 已归档。归档只是从主面板隐去，正文/链接都还在（能深链接打开、
+	// 搜索搜得到），只有删除才真正清内容。与 PinnedAt 同构：NULL = 未归档。
+	ArchivedAt *time.Time `json:"archived_at,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
+	ClosedAt   *time.Time `json:"closed_at,omitempty"`
 }
 
 type Exchange struct {

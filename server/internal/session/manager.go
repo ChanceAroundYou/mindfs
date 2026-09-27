@@ -36,7 +36,7 @@ const (
 	// maxExchangeLineBytes 单条 JSONL 上限（tool call 大 content），bufio.Scanner 兜底。
 	maxExchangeLineBytes = 64 << 20
 	selectSessionSQL     = `
-	SELECT key, type, parent_session_key, parent_tool_call_id, source, task_id, model, shell, plan_mode, name, related_files_json, related_worktree_json, last_context_window_total_tokens, last_context_window_model_context_window, pinned_at, created_at, updated_at, closed_at
+	SELECT key, type, parent_session_key, parent_tool_call_id, source, task_id, model, shell, plan_mode, name, related_files_json, related_worktree_json, last_context_window_total_tokens, last_context_window_model_context_window, pinned_at, archived_at, created_at, updated_at, closed_at
 	FROM sessions`
 	deleteSessionSQL = `
 DELETE FROM sessions
@@ -46,8 +46,8 @@ DELETE FROM session_agent_bindings
 WHERE session_key = ?`
 	upsertSessionMetaSQL = `
 INSERT INTO sessions (
-		key, type, parent_session_key, parent_tool_call_id, source, task_id, model, shell, plan_mode, name, related_files_json, related_worktree_json, last_context_window_total_tokens, last_context_window_model_context_window, pinned_at, created_at, updated_at, closed_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		key, type, parent_session_key, parent_tool_call_id, source, task_id, model, shell, plan_mode, name, related_files_json, related_worktree_json, last_context_window_total_tokens, last_context_window_model_context_window, pinned_at, archived_at, created_at, updated_at, closed_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(key) DO UPDATE SET
 	type = excluded.type,
 	parent_session_key = excluded.parent_session_key,
@@ -63,6 +63,7 @@ ON CONFLICT(key) DO UPDATE SET
 	last_context_window_total_tokens = excluded.last_context_window_total_tokens,
 	last_context_window_model_context_window = excluded.last_context_window_model_context_window,
 	pinned_at = excluded.pinned_at,
+	archived_at = excluded.archived_at,
 	created_at = excluded.created_at,
 	updated_at = excluded.updated_at,
 	closed_at = excluded.closed_at`
@@ -83,6 +84,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 	last_context_window_total_tokens INTEGER NOT NULL DEFAULT 0,
 	last_context_window_model_context_window INTEGER NOT NULL DEFAULT 0,
 	pinned_at TEXT,
+	archived_at TEXT,
 	created_at TEXT NOT NULL,
 	updated_at TEXT NOT NULL,
 	closed_at TEXT
@@ -221,6 +223,10 @@ type ListOptions struct {
 	ParentSessionKey string
 	TopLevelOnly     bool
 	Limit            int
+	// ArchivedMode 过滤归档。零值 "" = 排除已归档（主面板的默认），
+	// "only" = 只返回已归档（归档区用）。用字符串枚举而不是两个 bool：
+	// 「既排除又只要」不是合法状态，两个 bool 能表达出来就一定会有人传错。
+	ArchivedMode string
 }
 
 func NewManager(root fs.RootInfo, opts ...Option) *Manager {
@@ -1246,6 +1252,34 @@ func (m *Manager) SetPinned(_ context.Context, key string, pinned bool) (*Sessio
 	return session, nil
 }
 
+// SetArchived 归档/取消归档一个会话。归档只打标记：JSONL 正文一行不动，
+// 深链接仍能打开、搜索仍搜得到，只有 Delete 才真正清内容。
+// 与 SetPinned 同形状：已是目标态就早返回，不白写一次库（也就不会改动 updated_at）。
+func (m *Manager) SetArchived(_ context.Context, key string, archived bool) (*Session, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	session, err := m.getSessionUnsafe(key, 0)
+	if err != nil {
+		return nil, err
+	}
+	if archived {
+		if session.ArchivedAt != nil {
+			return session, nil
+		}
+		now := m.now().UTC()
+		session.ArchivedAt = &now
+	} else {
+		if session.ArchivedAt == nil {
+			return session, nil
+		}
+		session.ArchivedAt = nil
+	}
+	if err := m.upsertSessionMetaUnsafe(session); err != nil {
+		return nil, err
+	}
+	return session, nil
+}
+
 func (m *Manager) UpdateModel(_ context.Context, session *Session, model string) error {
 	if session == nil || strings.TrimSpace(session.Key) == "" {
 		return errors.New("session required")
@@ -1764,6 +1798,14 @@ func sessionListWhere(opts ListOptions) ([]string, []any) {
 	} else if !opts.AfterTime.IsZero() {
 		where = append(where, "updated_at > ?")
 		args = append(args, opts.AfterTime.UTC().Format(time.RFC3339Nano))
+	}
+	// 归档过滤放在这里（唯一的 WHERE 构造器），四个列表入口一次覆盖：
+	// 主列表、置顶列表、计数、子会话列表。置顶的归档会话会从置顶区掉进归档区 ——
+	// 这是期望行为，归档就该从主视图消失。
+	if strings.TrimSpace(opts.ArchivedMode) == "only" {
+		where = append(where, "archived_at IS NOT NULL")
+	} else {
+		where = append(where, "archived_at IS NULL")
 	}
 	return where, args
 }
@@ -2906,6 +2948,10 @@ func sessionMetaUpsertArgs(session *Session) ([]any, error) {
 	if session.PinnedAt != nil {
 		pinnedAt = session.PinnedAt.UTC().Format(time.RFC3339Nano)
 	}
+	var archivedAt any
+	if session.ArchivedAt != nil {
+		archivedAt = session.ArchivedAt.UTC().Format(time.RFC3339Nano)
+	}
 	return []any{
 		session.Key,
 		session.Type,
@@ -2922,6 +2968,7 @@ func sessionMetaUpsertArgs(session *Session) ([]any, error) {
 		session.LastContextWindow.TotalTokens,
 		session.LastContextWindow.ModelContextWindow,
 		pinnedAt,
+		archivedAt,
 		session.CreatedAt.UTC().Format(time.RFC3339Nano),
 		session.UpdatedAt.UTC().Format(time.RFC3339Nano),
 		closedAt,
@@ -2960,6 +3007,7 @@ func scanSessionMetaRow(scanner rowScanner) (*Session, error) {
 		contextTotalTokens  int
 		contextModelWindow  int
 		pinnedAtRaw         sql.NullString
+		archivedAtRaw       sql.NullString
 		createdAtRaw        string
 		updatedAtRaw        string
 		closedAtRaw         sql.NullString
@@ -2980,6 +3028,7 @@ func scanSessionMetaRow(scanner rowScanner) (*Session, error) {
 		&contextTotalTokens,
 		&contextModelWindow,
 		&pinnedAtRaw,
+		&archivedAtRaw,
 		&createdAtRaw,
 		&updatedAtRaw,
 		&closedAtRaw,
@@ -3029,6 +3078,12 @@ func scanSessionMetaRow(scanner rowScanner) (*Session, error) {
 		pinnedAt, err := time.Parse(time.RFC3339Nano, pinnedAtRaw.String)
 		if err == nil {
 			session.PinnedAt = &pinnedAt
+		}
+	}
+	if archivedAtRaw.Valid && strings.TrimSpace(archivedAtRaw.String) != "" {
+		archivedAt, err := time.Parse(time.RFC3339Nano, archivedAtRaw.String)
+		if err == nil {
+			session.ArchivedAt = &archivedAt
 		}
 	}
 	if closedAtRaw.Valid && strings.TrimSpace(closedAtRaw.String) != "" {
