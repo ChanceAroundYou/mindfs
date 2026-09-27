@@ -58,11 +58,32 @@ assert.match(
   /t\("task\.column\.ended"\)[\s\S]*?key: "success"[\s\S]*?key: "cancelled"[\s\S]*?task\.status === "fail" \|\| task\.status === "cancelled"/,
   "已结束 must group 完成 and 取消, with 失败 folded into 取消",
 );
-// 每块固定高度 + 完成分组默认展开
+// 每块高度跟着可用高度走（不再写死 36dvh —— 那跟真实视口对不上就留下空带）。
+// 2026-09-28：行高改由网格给满，列内列表容器自己滚。
 assert.match(
   board,
-  /gridAutoRows: isMobile \? "36dvh" : undefined,/,
-  "mobile blocks should keep a fixed height",
+  /gridAutoRows: "minmax\(0, 1fr\)",/,
+  "board blocks should split the available height, not a hardcoded dvh",
+);
+// 桌面列高曾经写死 calc(100dvh - 96px)，那套魔法数已随根容器的 flex:1 退休。
+// 只看样式值不看注释 —— 注释里得留着「为什么删掉」，否则下一个人会再加回来。
+// 剥 /* */ 块注释：从 /* 起跳到最近的 */ 为止（.tsx 里没有嵌套）。
+const boardStyleValues = board.replace(/\/\*[\s\S]*?\*\//g, "");
+assert.doesNotMatch(
+  boardStyleValues,
+  /100dvh/,
+  "no dvh magic numbers left in the board styles — height comes from the flex chain",
+);
+// 列必须能撑满网格行：默认的 stretch 才行，alignItems:"start" 会退回内容高度。
+assert.doesNotMatch(
+  board,
+  /alignItems: "start"/,
+  "columns must stretch to the grid row, or the bottom gap comes right back",
+);
+assert.match(
+  board,
+  /height: columnCollapsed \? "auto" : "100%",/,
+  "collapsed columns may shrink, open ones fill their row",
 );
 assert.match(
   app,

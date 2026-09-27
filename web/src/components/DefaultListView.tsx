@@ -1198,7 +1198,10 @@ export function DefaultListView({
 
       <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
         {showTaskKanban && topContent ? (
-          <div style={{ padding: "8px 16px 24px" }}>{topContent}</div>
+          /* 看板/工作台靠 flex 链铺满主区，这一层是链子的起点：
+             没有 minHeight:"100%"，子级的 flex:1 落在高度 auto 的祖先里就无效，
+             底部又空回一大截。 */
+          <div style={{ padding: "8px 16px 24px", minHeight: "100%" }}>{topContent}</div>
         ) : null}
         {showFileBrowser ? (
           <div style={{ padding: "24px 16px" }}>

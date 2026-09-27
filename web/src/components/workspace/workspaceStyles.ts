@@ -18,13 +18,15 @@ export function nodeTint(color: string | null, alpha: number): string {
 }
 
 export const workspaceRootStyle: React.CSSProperties = {
+  // 铺满：以前写死 maxHeight: calc(100dvh - 148px)，那 148px 猜的是 ActionBar
+  // 高度 + 安全区，和真实值对不上，内容一少底部就空一大截。高度交给 flex 链。
+  flex: 1,
   overflowY: "auto",
   padding: "12px",
   display: "flex",
   flexDirection: "column",
   gap: "10px",
   minHeight: 0,
-  maxHeight: "calc(100dvh - 148px)",
 };
 
 // 「需要你」条带：桌面横向滚，窄屏改纵向堆叠 ——

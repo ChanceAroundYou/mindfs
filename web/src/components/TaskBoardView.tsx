@@ -183,7 +183,12 @@ export function TaskBoardView({
     <div
       data-onboarding="task-board"
       style={{
-        maxHeight: "calc(100dvh - 92px)",
+        /* 铺满：以前这里写死 maxHeight: calc(100dvh - 92px)，而那 92px 猜的是
+           ActionBar 高度 + 安全区，跟真实值对不上，内容一少底部就空一大截。
+           高度交给 flex 链（DefaultListView 的滚动容器已经撑满了），
+           那套 dvh 魔法数就此退休。 */
+        flex: 1,
+        minHeight: 0,
         overflow: "visible",
         display: "flex",
         flexDirection: "column",
@@ -530,7 +535,7 @@ export function TaskBoardView({
     ) : !isAllTaskTemplateFilter && !selectedTaskTemplateForFilter ? (
       <div style={{ padding: "12px", fontSize: "12px", color: "var(--text-secondary)" }}>{t("task.createTemplateFirst")}</div>
     ) : (
-        <div style={{ overflowX: isMobile ? "hidden" : "auto", overflowY: "hidden", padding: "0 0 12px 1px", minHeight: 0 }}>
+        <div style={{ overflowX: isMobile ? "hidden" : "auto", overflowY: "hidden", padding: "0 0 12px 1px", minHeight: 0, flex: 1 }}>
           <div
             style={{
               display: "grid",
@@ -538,10 +543,14 @@ export function TaskBoardView({
               gridAutoFlow: isMobile ? "row" : "column",
               gridTemplateColumns: isMobile ? "repeat(2, 1fr)" : undefined,
               gridAutoColumns: isMobile ? undefined : "minmax(220px, 1fr)",
-              gridAutoRows: isMobile ? "36dvh" : undefined,
+              // 行高跟着可用高度走（以前写死 36dvh，和真实视口对不上就留下空带）。
+              // minmax(0,1fr) 而不是 1fr：默认 auto 的下限会让列被内容顶高、overflow 失灵。
+              gridAutoRows: "minmax(0, 1fr)",
               gap: "6px",
               minWidth: isMobile ? undefined : `${Math.max(kanbanStageColumns.length, 1) * 220}px`,
-              alignItems: "start",
+              // 列要撑满行高（alignItems 默认的 stretch）。以前写的是 "start"，
+              // 那是配合 36dvh 定高用的；行高交给网格后必须放开，
+              // 否则列退回内容高度，底部空带原封不动地回来。
             }}
           >
             {kanbanStageColumns.map((column) => {
@@ -560,8 +569,9 @@ export function TaskBoardView({
                   display: "flex",
                   flexDirection: "column",
                   minHeight: 0,
-                  height: isMobile ? (columnCollapsed ? undefined : "36dvh") : undefined,
-                maxHeight: isMobile ? undefined : "calc(100dvh - 96px)",
+                  // 高度由网格行（minmax(0,1fr)）给满，列内列表容器自己滚。
+                  // 移动端行高同样由网格给；折叠的列按内容收缩，不拉成空壳。
+                  height: columnCollapsed ? "auto" : "100%",
                 }}
               >
               <div
