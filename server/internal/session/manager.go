@@ -868,6 +868,32 @@ func (m *Manager) RecordRelatedWorktree(_ context.Context, key, rootID, path, br
 	return true, nil
 }
 
+// ClearRelatedWorktree 解除会话与工作树的归属关系。
+//
+// 为什么不能靠 RecordRelatedWorktree 做到：它拒绝空 path（worktree path required），
+// 而且已有归属时直接返回 false —— 那是「只记一次」的语义，repoint 需要的是**清除**。
+// 清空后 sessionRuntimeRootPath 返回空，运行时 cwd 回到主 checkout。
+func (m *Manager) ClearRelatedWorktree(_ context.Context, key string) (bool, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return false, errors.New("session key required")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	session, err := m.getSessionUnsafe(key, 0)
+	if err != nil {
+		return false, err
+	}
+	if session.RelatedWorktree == nil || strings.TrimSpace(session.RelatedWorktree.Path) == "" {
+		return false, nil
+	}
+	session.RelatedWorktree = nil
+	if err := m.upsertSessionMetaUnsafe(session); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func (m *Manager) UpdateAgentState(_ context.Context, session *Session, agent string, lastCtxSeq int, agentSessionID string) error {
 	if session == nil || strings.TrimSpace(session.Key) == "" {
 		return errors.New("session required")
@@ -922,6 +948,73 @@ func (m *Manager) UpsertAgentBinding(_ context.Context, binding AgentBinding) er
 		return err
 	}
 	return m.upsertExternalSessionNameUnsafe(binding.Agent, binding.AgentSessionID, current.Name)
+}
+
+// RepointAgentBinding 在**同一个事务**里换 agent_session_id 并改写游标。
+//
+// 为什么不复用 UpsertAgentBinding + UpdateExternalSessionCursor 分两次写：repoint 的
+// 语义要求「换 id」和「游标指向新转录的末尾」同时成立。分两次写时，若第二次失败，
+// binding 已经是新 id、游标却还指着旧路径的冻结偏移——导入器的 externalSessionFileCursor
+// 按 SourcePath 判「变没变」，路径一变就算变了，于是从 committed（live-owned 会话为 0）
+// 整份重读，正是 2026-09-16「ask 下面又渲染了一轮出现过的文字」的成因。合成一个事务后
+// 要么都成、要么都没动，不存在这个中间态。
+func (m *Manager) RepointAgentBinding(sessionKey, agent, previousAgentSessionID, agentSessionID string, cursor agenttypes.ExternalSessionCursor) error {
+	sessionKey = strings.TrimSpace(sessionKey)
+	agent = strings.TrimSpace(agent)
+	agentSessionID = strings.TrimSpace(agentSessionID)
+	if sessionKey == "" {
+		return errors.New("session key required")
+	}
+	if agent == "" {
+		return errors.New("agent required")
+	}
+	if agentSessionID == "" {
+		return errors.New("agent session id required")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	db, err := m.ensureSessionMetaDBUnsafe()
+	if err != nil {
+		return err
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.Exec(upsertAgentBindingSQL, sessionKey, agent, agentSessionID, 0); err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec(
+		`UPDATE session_agent_bindings SET external_source_path = ?, external_source_offset = ?, external_source_mtime_ns = ?, external_source_committed_offset = ? WHERE session_key = ? AND agent = ?`,
+		strings.TrimSpace(cursor.SourcePath), cursor.Offset, cursor.ModTimeUnixNano, cursor.CommittedOffset, sessionKey, agent,
+	); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	// 名字跟着换 id，否则重开会话时按新 agent_session_id 查不到名字、会退回默认名。
+	// 这条走 session_external_names —— 它才是 LookupAliasForAgent 真正读的表
+	//（selectExternalSessionNameSQL）。放在事务外：它写的是另一张表，失败不影响
+	// 「id + 游标」这个必须原子的一致性。
+	//
+	// 旧 id 的那条必须删掉：upsertExternalSessionNameUnsafe 只 upsert 新 id，旧行会一直
+	// 留着并继续被旧 id 查到。两个 id 同时能查到同一个名字，下次按旧 id 导入时就会
+	// 认领到一条本该属于别的会话的名字。
+
+	if previousAgentSessionID = strings.TrimSpace(previousAgentSessionID); previousAgentSessionID != "" && previousAgentSessionID != agentSessionID {
+		if _, err := db.Exec(`DELETE FROM session_external_names WHERE agent = ? AND agent_session_id = ?`, agent, previousAgentSessionID); err != nil {
+			return err
+		}
+	}
+	current, err := m.getSessionUnsafe(sessionKey, 0)
+	if err != nil {
+		return err
+	}
+	return m.upsertExternalSessionNameUnsafe(agent, agentSessionID, current.Name)
 }
 
 func (m *Manager) UpdateExternalSessionCursor(_ context.Context, sessionKey, agent string, cursor agenttypes.ExternalSessionCursor) error {

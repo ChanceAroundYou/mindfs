@@ -385,6 +385,7 @@ func (h *HTTPHandler) Routes() http.Handler {
 	r.Post("/api/sessions/import", h.protectedEndpoint(h.handleExternalSessionImport))
 	r.Post("/api/sessions/import/batch", h.protectedEndpoint(h.handleExternalSessionImportBatch))
 	r.Post("/api/sessions/fork", h.protectedEndpoint(h.handleSessionFork))
+	r.Post("/api/sessions/{key}/repoint", h.protectedEndpoint(h.handleSessionRepoint))
 	r.Get("/api/sessions/{key}/toolcalls/{callID}", h.protectedEndpoint(h.handleSessionToolCallGet))
 	r.Post("/api/sessions/{key}/sync", h.protectedEndpoint(h.handleSessionSync))
 	r.Get("/api/sessions/{key}", h.protectedEndpoint(h.handleSessionGet))
@@ -1026,6 +1027,10 @@ func (h *HTTPHandler) handleSessionSync(w http.ResponseWriter, r *http.Request) 
 		// 注意这里**不**去修「按残留 slug 目录找转录」：live-owned 会话的字节游标是冻结的
 		// （external_source_* 全空），一旦找到就会从 offset 0 整份重读，正是 2026-09-16 那次
 		// 「ask 下面又渲染了一轮出现过的文字」的成因。找不到反而是安全的。
+		// 补充（repoint 落地后）：对**已 repoint** 的会话，本条路径的触发条件已经消失——
+		// related_worktree 被清空、转录落在主 slug 目录下，worktreeCandidateRoots 的第一项
+		// 就是主 checkout，所以一定找得到；cursor 也在 repoint 时被推进到了新转录末尾，
+		// 找到之后也不会从 0 重读。没 repoint 的会话仍旧走「找不到」这条安全路径。
 		log.Printf("[session/sync] external sync failed root=%s session=%s err=%v", strings.TrimSpace(rootID), strings.TrimSpace(key), err)
 	}
 	out, windowMeta, err := uc.GetSession(r.Context(), usecase.GetSessionInput{
@@ -1178,6 +1183,47 @@ func (h *HTTPHandler) handleSessionFork(w http.ResponseWriter, r *http.Request) 
 		"session_key": out.Session.Key,
 		"session":     h.sessionResponse(out.Session, nil, agenttypes.ContextWindow{}, nil, nil),
 	})
+}
+
+func (h *HTTPHandler) handleSessionRepoint(w http.ResponseWriter, r *http.Request) {
+	key := chi.URLParam(r, "key")
+	if strings.TrimSpace(key) == "" {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("session key required"))
+		return
+	}
+	var req struct {
+		RootID string `json:"root_id"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("invalid json body"))
+		return
+	}
+	if strings.TrimSpace(req.RootID) == "" {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("root_id is required"))
+		return
+	}
+	out, err := h.service().RepointSession(r.Context(), usecase.RepointSessionInput{
+		RootID: strings.TrimSpace(req.RootID),
+		Key:    strings.TrimSpace(key),
+	})
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err)
+		return
+	}
+	// 搬完之后前端持有的还是旧会话视图（worktree 标签、agent_session_id），广播一次强制刷新。
+	if h.AppContext != nil {
+		h.AppContext.GetSessionStreamHub().BroadcastAll(WSResponse{
+			Type: "session.repointed",
+			Payload: map[string]any{
+				"root_id":                   strings.TrimSpace(req.RootID),
+				"session_key":               out.SessionKey,
+				"agent":                     out.Agent,
+				"previous_agent_session_id": out.PreviousAgentSessionID,
+				"agent_session_id":          out.AgentSessionID,
+			},
+		})
+	}
+	respondJSON(w, http.StatusOK, out)
 }
 
 func (h *HTTPHandler) handleSessionRename(w http.ResponseWriter, r *http.Request) {
