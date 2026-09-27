@@ -15,6 +15,10 @@ import (
 type RepointSessionInput struct {
 	RootID string
 	Key    string
+	// AgentSessionID 用于按 claude 的 session id 反查 mindfs 会话。给脚本用：
+	// wt-finish 手里只有 CLAUDE_CODE_SESSION_ID 和 worktree 路径，没有 mindfs 的 key。
+	// Key 与 AgentSessionID 二选一，Key 优先。
+	AgentSessionID string
 }
 
 type RepointSessionOutput struct {
@@ -46,12 +50,24 @@ func (s *Service) RepointSession(ctx context.Context, in RepointSessionInput) (R
 		return out, err
 	}
 	key := strings.TrimSpace(in.Key)
-	if key == "" {
-		return out, errors.New("session key required")
+	agentSessionID := strings.TrimSpace(in.AgentSessionID)
+	if key == "" && agentSessionID == "" {
+		return out, errors.New("session key or agent session id required")
 	}
 	manager, err := s.Registry.GetSessionManager(in.RootID)
 	if err != nil {
 		return out, err
+	}
+	if key == "" {
+		// 脚本只知道 claude 的 session id，反查 mindfs 会话。
+		binding, err := manager.FindAgentBindingByAgentSession(ctx, "claude", agentSessionID)
+		if err != nil {
+			return out, err
+		}
+		if binding == nil {
+			return out, fmt.Errorf("no mindfs session bound to agent session id %q", agentSessionID)
+		}
+		key = binding.SessionKey
 	}
 	current, err := manager.Get(ctx, key, 0)
 	if err != nil {

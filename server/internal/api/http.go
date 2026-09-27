@@ -386,6 +386,9 @@ func (h *HTTPHandler) Routes() http.Handler {
 	r.Post("/api/sessions/import/batch", h.protectedEndpoint(h.handleExternalSessionImportBatch))
 	r.Post("/api/sessions/fork", h.protectedEndpoint(h.handleSessionFork))
 	r.Post("/api/sessions/{key}/repoint", h.protectedEndpoint(h.handleSessionRepoint))
+	// 无 path 参数的同一操作：给 wt-finish 这类只有 CLAUDE_CODE_SESSION_ID 的脚本用，
+	// body 里带 agent_session_id，服务端反查 mindfs 会话。
+	r.Post("/api/sessions/repoint", h.protectedEndpoint(h.handleSessionRepoint))
 	r.Get("/api/sessions/{key}/toolcalls/{callID}", h.protectedEndpoint(h.handleSessionToolCallGet))
 	r.Post("/api/sessions/{key}/sync", h.protectedEndpoint(h.handleSessionSync))
 	r.Get("/api/sessions/{key}", h.protectedEndpoint(h.handleSessionGet))
@@ -1186,16 +1189,20 @@ func (h *HTTPHandler) handleSessionFork(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *HTTPHandler) handleSessionRepoint(w http.ResponseWriter, r *http.Request) {
-	key := chi.URLParam(r, "key")
-	if strings.TrimSpace(key) == "" {
-		respondError(w, http.StatusBadRequest, errInvalidRequest("session key required"))
-		return
-	}
+	// path 里的 key 可选：wt-finish 这类脚本手里只有 CLAUDE_CODE_SESSION_ID，
+	// 没有 mindfs 的 session key，所以也允许放 agent_session_id 让服务端反查。
+	key := strings.TrimSpace(chi.URLParam(r, "key"))
 	var req struct {
-		RootID string `json:"root_id"`
+		RootID         string `json:"root_id"`
+		AgentSessionID string `json:"agent_session_id"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, errInvalidRequest("invalid json body"))
+		return
+	}
+	agentSessionID := strings.TrimSpace(req.AgentSessionID)
+	if key == "" && agentSessionID == "" {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("session key or agent_session_id required"))
 		return
 	}
 	if strings.TrimSpace(req.RootID) == "" {
@@ -1203,8 +1210,9 @@ func (h *HTTPHandler) handleSessionRepoint(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	out, err := h.service().RepointSession(r.Context(), usecase.RepointSessionInput{
-		RootID: strings.TrimSpace(req.RootID),
-		Key:    strings.TrimSpace(key),
+		RootID:         strings.TrimSpace(req.RootID),
+		Key:            key,
+		AgentSessionID: agentSessionID,
 	})
 	if err != nil {
 		respondError(w, http.StatusBadRequest, err)
