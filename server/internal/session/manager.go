@@ -2637,6 +2637,15 @@ func (m *Manager) ensureSessionMetaDBUnsafe() (*sql.DB, error) {
 	}
 	legacyErr := err
 
+	// 本地会话库已存在却打不开时，绝不回退到空库：回退会让全部历史会话在界面上凭空消失，
+	// 而根因（多半是某条 schema 迁移/索引在旧库上报错）仍然留在原地，下次启动照样复现。
+	// 只有本地库压根不存在时，"从零新建"才是正确行为。
+	if _, statErr := os.Stat(legacyDBFile); statErr == nil {
+		return nil, fmt.Errorf("open legacy session db: %w (refusing to fall back to an empty db: %s exists)", legacyErr, legacyDBFile)
+	} else if !os.IsNotExist(statErr) {
+		return nil, fmt.Errorf("open legacy session db: %w; stat %s: %v", legacyErr, legacyDBFile, statErr)
+	}
+
 	fallbackDBFile, err := userDataSessionDBFile(m.root.ID)
 	if err != nil {
 		return nil, fmt.Errorf("open legacy session db: %w; resolve fallback session db: %w", legacyErr, err)
@@ -2698,15 +2707,6 @@ func openSessionMetaDB(dbFile string) (db *sql.DB, err error) {
 		db.Close()
 		return nil, err
 	}
-	// 列表/搜索按 updated_at DESC 排序，无索引时全表排序。
-	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_sessions_updated_at ON sessions(updated_at DESC)`); err != nil {
-		db.Close()
-		return nil, err
-	}
-	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_sessions_pinned_at ON sessions(pinned_at, updated_at DESC)`); err != nil {
-		db.Close()
-		return nil, err
-	}
 	if _, err := db.Exec(`ALTER TABLE sessions ADD COLUMN model TEXT NOT NULL DEFAULT ''`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
 		db.Close()
 		return nil, err
@@ -2728,6 +2728,7 @@ func openSessionMetaDB(dbFile string) (db *sql.DB, err error) {
 		`ALTER TABLE sessions ADD COLUMN last_context_window_total_tokens INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE sessions ADD COLUMN last_context_window_model_context_window INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE sessions ADD COLUMN pinned_at TEXT`,
+		`ALTER TABLE sessions ADD COLUMN archived_at TEXT`,
 		`ALTER TABLE session_agent_bindings ADD COLUMN external_source_path TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE session_agent_bindings ADD COLUMN external_source_offset INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE session_agent_bindings ADD COLUMN external_source_mtime_ns INTEGER NOT NULL DEFAULT 0`,
@@ -2736,6 +2737,19 @@ func openSessionMetaDB(dbFile string) (db *sql.DB, err error) {
 		`ALTER TABLE session_name_aliases ADD COLUMN agent_session_id TEXT NOT NULL DEFAULT ''`,
 	} {
 		if _, err := db.Exec(stmt); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			db.Close()
+			return nil, err
+		}
+	}
+	// 索引必须建在列补齐之后：CREATE INDEX 引用尚不存在的列会报 "no such column"，
+	// 让整个 openSessionMetaDB 失败，进而把完好的旧库误判成不可用并静默回退到空库。
+	// 列表/搜索按 updated_at DESC 排序，无索引时全表排序。
+	for _, stmt := range []string{
+		`CREATE INDEX IF NOT EXISTS idx_sessions_updated_at ON sessions(updated_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_sessions_pinned_at ON sessions(pinned_at, updated_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_sessions_archived_at ON sessions(archived_at, updated_at DESC)`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
 			db.Close()
 			return nil, err
 		}
