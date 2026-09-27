@@ -6,6 +6,7 @@ import { getNodes, PALETTE, DEFAULT_NODE_COLOR } from "../services/nodeRegistry"
 import { hexToRgbaApp } from "../app/taskIcons";
 import { resolveGroupColor } from "../services/sessionGroupDisplay";
 import { scopeKey } from "../services/scope";
+import { pruneChildState } from "../services/sessionTree";
 import { fetchSessionProjectPins, updateSessionProjectPins } from "../services/preferences";
 import { useI18n, type Locale } from "../i18n";
 import { type DirectorySortMode, sortDirectoryEntries } from "../services/directorySort";
@@ -316,6 +317,13 @@ export function SessionList({
   const [expandedChildren, setExpandedChildren] = useState<Record<string, boolean>>({});
   const [loadingChildren, setLoadingChildren] = useState<Record<string, boolean>>({});
   const [childrenHasMore, setChildrenHasMore] = useState<Record<string, boolean>>({});
+  // 展开态回收：会话被删除/归档后，其条目必须随之消失（见 pruneChildState 注释）
+  useEffect(() => {
+    const live = new Set(sessions.map((item) => item.key).filter(Boolean));
+    setExpandedChildren((prev) => pruneChildState(prev, live));
+    setLoadingChildren((prev) => pruneChildState(prev, live));
+    setChildrenHasMore((prev) => pruneChildState(prev, live));
+  }, [sessions]);
   const visibleSessions = useMemo(() => {
     if (searchResultsMode) {
       return sessions.map((session): VisibleSessionRow => ({ type: "session", session }));
@@ -769,6 +777,18 @@ export function MultiProjectSessionList({
   const [loadingChildren, setLoadingChildren] = useState<Record<string, boolean>>({});
   const [childrenHasMore, setChildrenHasMore] = useState<Record<string, boolean>>({});
   const [pinnedProjects, setPinnedProjects] = useState<Record<string, number>>(readLocalProjectPins);
+  // 展开态回收：分组里的会话消失（删除/归档/切节点）后，其条目必须随之消失
+  useEffect(() => {
+    const live = new Set<string>();
+    for (const group of groups) {
+      for (const item of group.sessions || []) {
+        if (item.key) live.add(item.key);
+      }
+    }
+    setExpandedChildren((prev) => pruneChildState(prev, live));
+    setLoadingChildren((prev) => pruneChildState(prev, live));
+    setChildrenHasMore((prev) => pruneChildState(prev, live));
+  }, [groups]);
   // 项目置顶持久化到服务端偏好（跨设备/清缓存不丢）；本地缓存先出帧，服务端返回后校正并回写
   useEffect(() => {
     let cancelled = false;

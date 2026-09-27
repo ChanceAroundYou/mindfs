@@ -12,6 +12,7 @@ import {
   clearCachedSessionsForRoot,
   clearWindowedView,
   deleteCachedSession,
+  deleteCachedSessionLists,
   getCachedMultiRootSessionList,
   getCachedSession,
   getCachedSessionList,
@@ -110,6 +111,7 @@ import {
   applyPinnedSnapshotToSessions,
   mergeSessionItems,
 } from "./services/sessionListMerge";
+import { collectSessionSubtreeKeys, type SessionTreeItem } from "./services/sessionTree";
 import { currentUser } from "./services/authGate";
 // 直接导入标准组件
 import { AppShell } from "./layout/AppShell";
@@ -289,6 +291,9 @@ export function App({ onGoHome }: AppProps) {
   const sessionsRef = useRef<SessionItem[]>([]);
   const multiProjectSessionsEnabled = true;
   const [multiProjectSessionGroups, setMultiProjectSessionGroups] = useState<MultiProjectSessionGroup[]>([]);
+  // 多项目分组的 ref 镜像：删除会话时要跨分组收集整棵子树，只看 sessionsRef 会漏掉
+  // 只存在于分组里的子会话（它们随后会被提升成顶层行，把面板撑爆）。
+  const multiProjectSessionGroupsRef = useRef<MultiProjectSessionGroup[]>([]);
   const [multiProjectSessionsLoading, setMultiProjectSessionsLoading] = useState(false);
   // 多项目列表全量重拉竞态守卫：只应用最后一次发起的请求结果，避免旧响应覆盖新数据
   const multiProjectLoadSeqRef = useRef(0);
@@ -1428,6 +1433,9 @@ export function App({ onGoHome }: AppProps) {
   useEffect(() => {
     sessionsRef.current = sessions;
   }, [sessions]);
+  useEffect(() => {
+    multiProjectSessionGroupsRef.current = multiProjectSessionGroups;
+  }, [multiProjectSessionGroups]);
   useEffect(() => {
     multiProjectPendingRef.current = multiProjectPendingByKey;
   }, [multiProjectPendingByKey]);
@@ -3327,6 +3335,7 @@ export function App({ onGoHome }: AppProps) {
     closeSessionSearch,
     toggleSessionSearch,
     handleSearchQueryChange,
+    setSessionSearchResults,
   } = useSessionSearch({
     currentRootId,
     sessionListMode,
@@ -3680,18 +3689,14 @@ export function App({ onGoHome }: AppProps) {
         return;
       }
 
-      const deletedKeys = new Set<string>();
-      const collectDeletedKeys = (key: string) => {
-        if (!key || deletedKeys.has(key)) return;
-        deletedKeys.add(key);
-        for (const item of sessionsRef.current) {
-          const itemKey = item.key || item.session_key || "";
-          if (String(item.parent_session_key || "").trim() === key) {
-            collectDeletedKeys(itemKey);
-          }
-        }
-      };
-      collectDeletedKeys(sessionKey);
+      // 后端已按 parent_session_key 级联删掉整棵子树；这里要在**全部**本地状态里
+      // 摘掉同一批 key。只看 sessionsRef 会漏掉只存在于多项目分组里的子会话，
+      // 漏掉的那些会被树构建当成孤儿提升成顶层整宽行 —— 面板就此撑爆且收不回去。
+      const knownItems: SessionTreeItem[] = [
+        ...sessionsRef.current,
+        ...multiProjectSessionGroupsRef.current.flatMap((group) => group.sessions || []),
+      ];
+      const deletedKeys = new Set<string>(collectSessionSubtreeKeys(knownItems, sessionKey));
 
       setSessions((prev) =>
         prev.filter((item) => !deletedKeys.has(item.key || item.session_key || "")),
@@ -3707,6 +3712,13 @@ export function App({ onGoHome }: AppProps) {
         staleSessionKeysRef.current.delete(cacheKey);
         void deleteCachedSession(rootID, deletedKey, getNodeIdForRoot(rootID));
       }
+
+      // 搜索结果独立于两棵列表 state，删掉的会话会继续挂在结果里；
+      // 列表快照同理——只删单个会话记录不动列表快照的话，下次进面板已删的行会从缓存里复活。
+      setSessionSearchResults((prev) =>
+        prev.filter((item) => !deletedKeys.has(item.key || item.session_key || "")),
+      );
+      void deleteCachedSessionLists(rootID, getNodeIdForRoot(rootID));
 
       if (deletedKeys.has(boundSessionByRootRef.current[scopedRootKey(rootID)] || "")) {
         resetSessionLockForRoot(rootID);

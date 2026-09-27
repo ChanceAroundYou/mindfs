@@ -2091,6 +2091,41 @@ export async function deleteCachedSession(
   } catch {}
 }
 
+/**
+ * 只删**列表快照**，不动单会话记录。
+ * 删除会话后必须调用：列表快照是下次进面板时**先渲染、后请求**的来源，
+ * 不同步失效的话已删的行会从 IndexedDB 里重新出现（单个会话记录删了也没用）。
+ */
+export async function deleteCachedSessionLists(
+  rootId: string,
+  nodeId?: string,
+): Promise<void> {
+  if (!rootId) {
+    return;
+  }
+  const nid = String(nodeId || "").trim();
+  try {
+    await withSessionListStore("readwrite", async (store) => {
+      try { await sessionRequestToPromise(store.delete(buildSessionListCacheKey(rootId, nid || undefined))); } catch {}
+      if (nid) {
+        // node-blind 旧键：不带 nodeId 的历史记录
+        try { await sessionRequestToPromise(store.delete(buildSessionListCacheKey(rootId))); } catch {}
+      } else {
+        const entries = (await sessionRequestToPromise(store.getAll() as IDBRequest<CachedSessionListRecord<any>[]>)) || [];
+        for (const entry of entries) {
+          const key = String(entry?.cacheKey || "");
+          if (key === `root::${rootId}` || key.endsWith(`::${rootId}`)) {
+            try { await sessionRequestToPromise(store.delete(key)); } catch {}
+          }
+        }
+      }
+      // 多项目面板（当前默认形态）渲染的是这份按账户存的快照，同样要失效，
+      // 否则已删的会话会在下次进面板时从 multi-root 快照里复活。
+      try { await sessionRequestToPromise(store.delete(multiRootSessionListCacheKey())); } catch {}
+    });
+  } catch {}
+}
+
 export async function clearCachedSessionsForRoot(
   rootId: string,
   nodeId?: string,
