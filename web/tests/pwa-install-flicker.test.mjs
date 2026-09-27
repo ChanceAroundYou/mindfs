@@ -62,8 +62,13 @@ assert.doesNotMatch(
 );
 assert.match(
   fileTree,
-  /const installProbePending = !installProbeDone && !isKnownInstalled && !isNativeApp;/,
-  "应显式区分「判定中」与「不能装」，且覆盖所有平台",
+  /const expectsInstallPrompt = !isIOS && !isMacSafari;/,
+  "「该平台会不会派发 beforeinstallprompt」须独立成变量，不能混进 UA 判断",
+);
+assert.match(
+  fileTree,
+  /const installProbePending =\s*\n?\s*expectsInstallPrompt && !installProbeDone && !isKnownInstalled && !isNativeApp;/,
+  "应显式区分「判定中」与「不能装」，且覆盖所有会派发该事件的平台",
 );
 assert.match(
   fileTree,
@@ -87,6 +92,14 @@ assert.match(
   service,
   /setTimeout\(\(\) => \{[\s\S]{0,160}probeTimer = null;[\s\S]{0,160}probed: true/,
   "超时后必须把 probed 置 true，否则事件不来时按钮永远不出现",
+);
+
+// 3c) 反过来，Safari 系永远不派发该事件，绝不能对它设门 —— 那是把闪烁换成迟到。
+//     （回归：iOS 上按钮从 ~0.3s 推迟到 6.0s 才出现。）
+assert.doesNotMatch(
+  fileTree,
+  /const installProbePending = !installProbeDone && !isKnownInstalled && !isNativeApp;/,
+  "installProbePending 不得无条件设门（Safari 不派发该事件，会白白迟到一个超时周期）",
 );
 
 // 4) 单例的 probed 只在拿到结论时置位，不能一上来就置 true（否则前置门形同虚设）。

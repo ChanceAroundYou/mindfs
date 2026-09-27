@@ -1748,13 +1748,19 @@ function FileTreeInner({
         ? t("pwa.helpDeferred")
         : t("pwa.helpUnavailable");
 
-  // 「能不能装」对所有移动浏览器都只有一个来源：beforeinstallprompt，且它要等 SW 激活
-  // 才派发。这道门此前只挂在 isAndroidChrome 上，于是 SamsungBrowser / MiuiBrowser /
-  // UCBrowser / HuaweiBrowser / 任何不含 "Chrome" 字样的安卓 UA 全部绕过它：
-  // 组件首帧 probed=false → 判定为「不是待定」→ 按钮凭空画出，等事件到了再翻掉 ——
-  // 正是手机上看到的那一帧闪。门必须挂在「可见性依赖那个事件」这个条件本身上，
-  // 而不是挂在某一个具体 UA 上。
-  const installProbePending = !installProbeDone && !isKnownInstalled && !isNativeApp;
+  // 「能不能装」对所有 Chromium 系浏览器都只有一个来源：beforeinstallprompt，
+  // 且它要等 SW 激活才派发。这道门此前只挂在 isAndroidChrome 上，于是
+  // SamsungBrowser / MiuiBrowser / UCBrowser / HuaweiBrowser / 任何不含 "Chrome"
+  // 字样的安卓 UA 全部绕过它：组件首帧 probed=false 被当成「不是待定」→ 按钮凭空
+  // 画出，等事件到了再翻掉 —— 正是手机上看到的那一帧闪。门必须挂在「这个平台会不会
+  // 派发该事件」本身，而不是挂在某一个具体 UA 上。
+  //
+  // Safari 系（iOS / macOS）例外：它们永远不派发 beforeinstallprompt，按钮靠平台
+  // 判定直接显示。等它等于白等一个不会来的事件，只会让按钮迟到 PROBE_TIMEOUT_MS
+  // 才出现 —— 那是把闪烁换成延迟，一样是回归。
+  const expectsInstallPrompt = !isIOS && !isMacSafari;
+  const installProbePending =
+    expectsInstallPrompt && !installProbeDone && !isKnownInstalled && !isNativeApp;
 
   const shouldShowInstallButton = !installProbePending && !isNativeApp && !isKnownInstalled && !(isAndroidChrome && !deferredInstallPrompt);
   const shouldShowInstallHelp = !installProbePending && !isNativeApp && (!!installHelp) && (isKnownInstalled || isIOS || isMacSafari || isDesktopChromium || deferredInstallPrompt !== null || (isAndroidChrome && !deferredInstallPrompt));
