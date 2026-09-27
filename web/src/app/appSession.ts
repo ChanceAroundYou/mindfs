@@ -39,6 +39,7 @@ export type SessionItem = {
   created_at?: string;
   updated_at?: string;
   pinned_at?: string | null;
+  archived_at?: string | null;
   closed_at?: string;
   title?: string;
   agent_session_id?: string;
@@ -194,6 +195,10 @@ export function toSessionItem(
     pinned_at:
       typeof session?.pinned_at === "string" && session.pinned_at
         ? session.pinned_at
+        : undefined,
+    archived_at:
+      typeof session?.archived_at === "string" && session.archived_at
+        ? session.archived_at
         : undefined,
     closed_at:
       typeof session?.closed_at === "string" ? session.closed_at : undefined,

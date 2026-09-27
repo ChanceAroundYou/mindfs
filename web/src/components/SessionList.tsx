@@ -29,6 +29,7 @@ export type SessionItem = {
   created_at?: string;
   updated_at?: string;
   pinned_at?: string | null;
+  archived_at?: string | null;
   closed_at?: string;
   pending?: boolean;
   related_files?: Array<{ path: string }>;
@@ -57,6 +58,7 @@ export type SessionListProps = {
   onPin?: (session: SessionItem, pinned: boolean) => Promise<boolean> | boolean;
   onRename?: (session: SessionItem, nextName: string) => Promise<boolean> | boolean;
   onDelete?: (session: SessionItem) => void;
+  onArchive?: (session: SessionItem, archived: boolean) => Promise<boolean> | boolean;
   onLoadChildren?: (
     session: SessionItem,
     options?: { beforeTime?: string },
@@ -64,6 +66,12 @@ export type SessionListProps = {
   onLoadOlder?: () => void;
   loadingOlder?: boolean;
   hasMore?: boolean;
+  // 归档区：默认收起，面板底部一行摘要；点开才由上层懒加载 archivedSessions。
+  archivedSessions?: SessionItem[];
+  archiveOpen?: boolean;
+  archiveLoading?: boolean;
+  archiveCount?: number;
+  onToggleArchive?: () => void;
 };
 
 const COLLAPSED_CHILD_SESSION_LIMIT = 3;
@@ -106,11 +114,18 @@ export type ProjectSessionListProps = {
   onPin?: (session: SessionItem, pinned: boolean) => Promise<boolean> | boolean;
   onRename?: (session: SessionItem, nextName: string) => Promise<boolean> | boolean;
   onDelete?: (session: SessionItem) => void;
+  onArchive?: (session: SessionItem, archived: boolean) => Promise<boolean> | boolean;
   onLoadMoreProject?: (group: ProjectSessionGroup) => Promise<void> | void;
   onLoadChildren?: (
     session: SessionItem,
     options?: { beforeTime?: string },
   ) => Promise<{ hasMore?: boolean } | void> | { hasMore?: boolean } | void;
+  // 归档区：默认收起，面板底部一行摘要；点开才由上层懒加载 archivedSessions。
+  archivedSessions?: SessionItem[];
+  archiveOpen?: boolean;
+  archiveLoading?: boolean;
+  archiveCount?: number;
+  onToggleArchive?: () => void;
 };
 
 function ToggleRowButton({
@@ -228,6 +243,87 @@ function PinIcon({ pinned }: { pinned: boolean }) {
   );
 }
 
+function ArchiveIcon() {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="1em"
+      height="1em"
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+    >
+      <path d="M0 0h24v24H0z" fill="none" />
+      <path
+        fill="currentColor"
+        d="M3 4.5A1.5 1.5 0 0 1 4.5 3h15A1.5 1.5 0 0 1 21 4.5V6H3zm-.5 3A1.5 1.5 0 0 0 1 8.5V19a2 2 0 0 0 2 2h18a2 2 0 0 0 2-2V8.5a1.5 1.5 0 0 0-1.5-1.5zm5 3.5a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-7a1 1 0 0 0-1-1zm2.5 3h5v2h-5z"
+      />
+    </svg>
+  );
+}
+
+/**
+ * 归档区：面板底部默认只有这一行摘要，零渲染成本。
+ * 归档会话不进主列表 state（否则会被树构建再算一次、还会撞上孤儿提升），
+ * 内容全部由上层在展开时懒加载后传进来。
+ */
+function ArchiveSection({
+  archivedSessions = [],
+  open = false,
+  loading = false,
+  count = 0,
+  selectedKey = "",
+  onToggle,
+  onSelect,
+  onArchive,
+}: {
+  archivedSessions?: SessionItem[];
+  open?: boolean;
+  loading?: boolean;
+  count?: number;
+  selectedKey?: string;
+  onToggle?: () => void;
+  onSelect?: (session: SessionItem) => void;
+  onArchive?: (session: SessionItem, archived: boolean) => Promise<boolean> | boolean;
+}) {
+  const { t } = useI18n();
+  const total = count || archivedSessions.length;
+  return (
+    <div
+      style={{
+        marginTop: "8px",
+        paddingTop: "6px",
+        borderTop: "1px solid var(--border-color)",
+        display: "flex",
+        flexDirection: "column",
+        gap: "2px",
+      }}
+    >
+      <ToggleRowButton
+        loading={loading}
+        label={t("sessionList.archiveCount", { count: total })}
+        showExpandIcon={!loading && !open}
+        showCollapseIcon={!loading && open}
+        marginLeft={MAIN_SESSION_ICON_OFFSET}
+        onClick={() => onToggle?.()}
+      />
+      {open && !loading
+        ? archivedSessions.map((session) => (
+            <SessionCardMemo
+              key={`archived::${session.key}`}
+              session={session}
+              sessionByKey={new Map()}
+              selected={session.key === selectedKey}
+              parentHighlighted={false}
+              syncing={false}
+              onSelect={onSelect}
+              onArchive={onArchive}
+            />
+          ))
+        : null}
+    </div>
+  );
+}
+
 function shellBadgeLabel(shell?: string): string {
   const normalized = String(shell || "").trim().replace(/\\/g, "/");
   const base = (normalized.split("/").filter(Boolean).pop() || normalized || "sh").toLowerCase();
@@ -309,6 +405,12 @@ export function SessionList({
   onLoadOlder,
   loadingOlder = false,
   hasMore = false,
+  onArchive,
+  archivedSessions,
+  archiveOpen = false,
+  archiveLoading = false,
+  archiveCount = 0,
+  onToggleArchive,
 }: SessionListProps) {
   const { t } = useI18n();
   const effectiveEmptyText = emptyText || t("sessionList.empty");
@@ -686,6 +788,7 @@ export function SessionList({
                   onPin={onPin}
                   onRename={onRename}
                   onDelete={onDelete}
+                  onArchive={onArchive}
                 />
               );
             })}
@@ -709,6 +812,19 @@ export function SessionList({
               </button>
             ) : null}
           </div>
+        )}
+        {/* 归档区与搜索态互斥：搜索结果是跨会话的一次性视图，不该混进归档入口 */}
+        {searchOpen || searchResultsMode ? null : (
+          <ArchiveSection
+            archivedSessions={archivedSessions}
+            open={archiveOpen}
+            loading={archiveLoading}
+            count={archiveCount}
+            selectedKey={selectedKey}
+            onToggle={onToggleArchive}
+            onSelect={onSelect}
+            onArchive={onArchive}
+          />
         )}
       </div>
       <style>{`
@@ -768,6 +884,12 @@ export function MultiProjectSessionList({
   selectedNodeId = "",
   onLoadMoreProject,
   onLoadChildren,
+  onArchive,
+  archivedSessions,
+  archiveOpen = false,
+  archiveLoading = false,
+  archiveCount = 0,
+  onToggleArchive,
 }: ProjectSessionListProps) {
   const { t } = useI18n();
   const effectiveEmptyText = emptyText || t("sessionList.empty");
@@ -1208,6 +1330,7 @@ export function MultiProjectSessionList({
                           onPin={onPin}
                           onRename={onRename}
                           onDelete={onDelete}
+                          onArchive={onArchive}
                         />
                       );
                     })}
@@ -1234,6 +1357,16 @@ export function MultiProjectSessionList({
                 </section>
               );
             })}
+            <ArchiveSection
+              archivedSessions={archivedSessions}
+              open={archiveOpen}
+              loading={archiveLoading}
+              count={archiveCount}
+              selectedKey={selectedKey}
+              onToggle={onToggleArchive}
+              onSelect={onSelect}
+              onArchive={onArchive}
+            />
           </div>
         )}
       </div>
@@ -1264,6 +1397,7 @@ function SessionCard({
   onPin,
   onRename,
   onDelete,
+  onArchive,
 }: {
   session: SessionItem;
   sessionByKey: Map<string, SessionItem>;
@@ -1277,10 +1411,12 @@ function SessionCard({
   onPin?: (session: SessionItem, pinned: boolean) => Promise<boolean> | boolean;
   onRename?: (session: SessionItem, nextName: string) => Promise<boolean> | boolean;
   onDelete?: (session: SessionItem) => void;
+  onArchive?: (session: SessionItem, archived: boolean) => Promise<boolean> | boolean;
 }) {
   const { locale, t } = useI18n();
   const isClosed = !!session.closed_at;
   const isPinned = !!session.pinned_at;
+  const isArchived = !!session.archived_at;
   const isSubagent = !!session.parent_session_key && !parseForkSessionSource(session.source);
   const storedName = session.name || `Session ${session.key.slice(0, 8)}`;
   const displayName = storedName;
@@ -1882,6 +2018,25 @@ function SessionCard({
               </svg>
               {t("sessionList.rename")}
             </button>
+            {onArchive ? (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setMenuOpen(false);
+                  void onArchive(session, !isArchived);
+                }}
+                style={{
+                  ...menuItemStyle,
+                  color: "var(--text-primary)",
+                }}
+              >
+                <span style={{ width: "13px", height: "13px", display: "inline-flex" }}>
+                  <ArchiveIcon />
+                </span>
+                {isArchived ? t("sessionList.unarchive") : t("sessionList.archive")}
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={(e) => {

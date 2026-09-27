@@ -303,6 +303,7 @@ type FetchSessionsOptions = {
   limit?: number;
   topLevel?: boolean;
   includeChildren?: boolean;
+  archivedOnly?: boolean;
 };
 
 export type SessionListPayload = {
@@ -1210,6 +1211,9 @@ class SessionService {
       if (options?.includeChildren) {
         params.set("include_children", "1");
       }
+      if (options?.archivedOnly) {
+        params.set("archived", "only");
+      }
       const data = await protectedJSON<any>(appURL("/api/sessions", params, (options as any)?.nodeId));
       if (Array.isArray(data)) {
         return { items: data, pinnedItems: [], pinnedKeys: [], totalCount: data.length };
@@ -1574,6 +1578,36 @@ class SessionService {
       return data as Session;
     } catch (err) {
       console.error("[Session] Failed to update session pin:", err);
+      return null;
+    }
+  }
+
+  async setSessionArchived(
+    rootId: string,
+    sessionKey: string,
+    archived: boolean,
+    nodeId?: string,
+  ): Promise<Session | null> {
+    try {
+      nodeId = nodeId || getRootNodeId(rootId);
+      const params = new URLSearchParams({ root: rootId });
+      const data = await protectedJSON<Session>(
+        appURL(
+          `/api/sessions/${encodeURIComponent(sessionKey)}/archive`,
+          params,
+          nodeId,
+        ),
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ archived }),
+        },
+      );
+      return data as Session;
+    } catch (err) {
+      console.error("[Session] Failed to update session archive state:", err);
       return null;
     }
   }
