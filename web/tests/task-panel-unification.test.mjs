@@ -278,9 +278,8 @@ for (const field of ["auto_advance: editAutoAdvance", "plan_mode:", "session_reu
 
 
 // 11) 关闭面板前先问一句「是否放弃修改」。
-//     三条关闭入口（遮罩 / 右上角 × / Esc）都必须过同一道判定，且判定只写一遍。
-//     曾经三张面板各关各的，改到一半点外面就没了；后加确认又只在遮罩上生效，
-//     右上角 × 和 Esc 照旧直关 —— 所以断言的是「三条路都走 requestClose」。
+//     关闭入口只剩「点空白（遮罩）」一条：取消键、右上角 ×、Esc 全部拿掉，
+//     所以判定天然只有一个出口，不存在「某条路忘了加确认」。
 assert.match(
   panelShell,
   /hasUnsavedChanges\?: \(\) => boolean;/,
@@ -293,8 +292,8 @@ assert.match(
 );
 assert.match(
   panelShell,
-  /confirmDialog\(\{\s*\n\s*message: discardConfirmMessage \|\| t\("common\.discardChangesConfirm"\),/,
-  "a dirty close must confirm, with a caller-overridable message",
+  /confirmDialog\(\{\s*\n\s*message: t\("common\.discardChangesConfirm"\),/,
+  "a dirty close must confirm before discarding",
 );
 assert.match(
   panelShell,
@@ -303,51 +302,40 @@ assert.match(
 );
 assert.match(
   panelShell,
-  /closeOnOverlayClick && event\.target === event\.currentTarget\) requestClose\(\)/,
-  "the overlay must go through the guard, not call onClose directly",
+  /if \(event\.target === event\.currentTarget\) requestClose\(\);/,
+  "the overlay must be the one close path, going through the guard",
 );
-assert.match(
-  panelShell,
-  /document\.addEventListener\("keydown", onKeyDown, true\)/,
-  "Esc must be captured, or the editors inside swallow it before it bubbles",
-);
-assert.match(
-  panelShell,
-  /if \(event\.key !== "Escape"\) return;[\s\S]*?requestClose\(\);/,
-  "Esc must route through the same guard",
-);
-// headerRight 收函数而不是收节点：收节点的话调用方写 onClick={onClose} 就绕过了确认。
-assert.match(
-  panelShell,
-  /headerRight\?: \(requestClose: \(\) => void\) => React\.ReactNode;/,
-  "headerRight must hand the guarded close down to callers",
-);
-assert.match(
-  panelShell,
-  /\{headerRight\?\.\(requestClose\) \?\? null\}/,
-  "PanelShell must invoke headerRight with its guarded close",
-);
-assert.doesNotMatch(
-  panelShell,
-  /\{headerRight\}/,
-  "rendering headerRight as a bare node would drop the guard",
-);
+// 显式关闭控件一律退场：留一个就直接关，等于把「误点丢内容」的坑又挖回来。
+assert.doesNotMatch(panelShell, /closeOnOverlayClick/, "closeOnOverlayClick is dead — the overlay always closes");
+assert.doesNotMatch(panelShell, /CloseGlyph/, "the shared × must be gone entirely");
+assert.doesNotMatch(panelShell, /onKeyDown|"Escape"|keydown/, "Esc must no longer close the panel");
+// 关闭控件可能长在三处里的任何一处：共享 header，或某个调用方自定义的 headerRight。
+// 只查「有没有 CloseGlyph」太窄 —— 换个画法或直接写个 onClick 就溜过去了。
 for (const [name, src] of [
+  ["PanelShell", panelShell],
   ["TaskTemplateDialog", dialog],
   ["TaskDetailPanel", panel],
   ["App create dialog", app],
 ]) {
   assert.doesNotMatch(
     src,
-    /onClick=\{onClose\}/,
-    `${name} must not close via a bare onClick={onClose} — that skips the discard confirm`,
+    /onClick=\{onClose\}|onClick=\{requestClose\}/,
+    `${name} must not close via a click handler — with no explicit close control, the overlay is the only route`,
+  );
+  assert.doesNotMatch(
+    src,
+    /aria-label=\{t\("common\.close"\)\}|taskTemplate\.close/,
+    `${name} must not render an explicit close affordance`,
   );
 }
-assert.match(
-  dialog,
-  /onClick=\{requestClose\} style=\{panelButtonStyle\("secondary"\)\}/,
-  "the template dialog's close button must use the guarded close",
+assert.doesNotMatch(
+  app.slice(app.indexOf("<PanelShell", app.indexOf("createTaskInputStage"))),
+  /t\("common\.cancel"\)/,
+  "the create-task panel must not keep a cancel button",
 );
+// headerRight 回到收节点：不再有任何「受控关闭」要发下去
+assert.match(panelShell, /headerRight\?: React\.ReactNode;/, "headerRight is a plain node again");
+assert.match(panelShell, /\{headerRight\}/, "PanelShell must render headerRight directly");
 // 三张面板都要真的接上 dirty 判定，否则守卫对它是空转
 assert.match(dialog, /hasUnsavedChanges=\{\(\) => dirty\}/, "the template dialog must report an edited template");
 assert.match(
@@ -365,23 +353,6 @@ assert.match(
   /hasUnsavedChanges=\{\(\) => String\(taskInlineEdit\?\.text \|\| ""\)\.trim\(\) !== ""\}/,
   "the create-task panel must warn when a prompt was typed",
 );
-// 取消按钮被去掉，改成「点外面关闭」；可见的关闭入口只剩右上角 ×
-assert.doesNotMatch(
-  app.slice(app.indexOf("<PanelShell", app.indexOf("createTaskInputStage"))),
-  /t\("common\.cancel"\)/,
-  "the create-task panel must not keep a cancel button",
-);
-for (const [name, src] of [
-  ["TaskTemplateDialog", dialog],
-  ["TaskDetailPanel", panel],
-  ["App create dialog", app],
-]) {
-  assert.match(
-    src,
-    /<CloseGlyph \/>/,
-    `${name} must render the shared × so the panel is still visibly closable`,
-  );
-}
 
 // 12) 新建任务面板不再有底部大片空白：去掉 minHeight 后整卡按内容收缩。
 //     minHeight 一撤，卡片只剩 maxHeight，卡高就由内容决定；遮罩是
@@ -405,6 +376,59 @@ assert.match(
   panelShell,
   /alignItems: "center"/,
   "the overlay must keep centering the card, or a collapsed panel drifts to the top",
+);
+
+// 13) 移动端软键盘不能盖住面板。关键在两个地方：
+//     遮罩不能是 inset:0 —— 键盘弹出时 layout 视口纹丝不动，inset:0 会把
+//     遮罩和卡片一起留在键盘下面；高度必须取 visualViewport。
+//     移动端媒体查询里 alignItems 换成 flex-start，上浮幅度由 --panel-vh 决定。
+assert.doesNotMatch(
+  panelShell,
+  /inset: 0,/,
+  "the overlay must not be pinned with inset:0 — that leaves it under the keyboard",
+);
+assert.match(
+  panelShell,
+  /const \[viewportHeight, setViewportHeight\] = useState\(0\);/,
+  "PanelShell must track the visual viewport height",
+);
+assert.match(
+  panelShell,
+  /const vv = window\.visualViewport;/,
+  "the tracked viewport must be visualViewport, not window.innerHeight",
+);
+assert.match(
+  panelShell,
+  /vv\.addEventListener\("resize", sync\);[\s\S]*?vv\.addEventListener\("scroll", sync\);/,
+  "the keyboard raising/resizing and any viewport scroll must both re-sync the height",
+);
+assert.match(
+  panelShell,
+  /"--panel-vh": `\$\{viewportHeight\}px`/,
+  "the measured height must reach the card's max-height via --panel-vh",
+);
+assert.match(
+  panelShell,
+  /maxHeight: "min\(88dvh, calc\(var\(--panel-vh, 100dvh\) - 48px\)\)/,
+  "the card's height cap must follow the visible viewport, not just the layout viewport",
+);
+assert.match(
+  panelShell,
+  /height: viewportHeight \? `\$\{viewportHeight\}px` : "100dvh",/,
+  "the overlay's own height must follow the visible viewport too, or the card stays centered against the wrong box",
+);
+const mobileBlock = panelShell.slice(
+  panelShell.indexOf("@media (max-width: 640px)"),
+);
+assert.match(
+  mobileBlock,
+  /align-items: flex-start !important;/,
+  "on mobile the card anchors to the top so it floats above the keyboard instead of being centered away",
+);
+assert.match(
+  mobileBlock,
+  /max-height: var\(--panel-vh, 60dvh\) !important;/,
+  "the mobile height cap must read --panel-vh, so it shrinks as the keyboard rises",
 );
 
 function walk(dir) {

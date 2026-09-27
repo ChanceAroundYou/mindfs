@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { confirmDialog } from "../services/dialog";
 import { useI18n } from "../i18n";
 
@@ -7,6 +7,9 @@ import { useI18n } from "../i18n";
  *
  * 三张任务面板（任务模板编辑 / 任务详情 / 新建任务）以前各手搓一遍同样的
  * 遮罩、圆角、阴影，zIndex 还各不同。这里收敛成一处。
+ *
+ * 关闭只有「点空白（遮罩）」一条路：面板里不放取消键、也不放右上角 ×。
+ * 改到一半点出去会先问一句「是否放弃修改」，见 hasUnsavedChanges。
  */
 
 export function panelButtonStyle(kind: "primary" | "secondary" | "danger"): React.CSSProperties {
@@ -57,32 +60,10 @@ export function panelIconButtonStyle(danger = false, disabled = false): React.CS
   };
 }
 
-/** 面板右上角的 ×。三张面板共用，避免各画一个粗细不一样的。 */
-export function CloseGlyph() {
-  return (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 12 12"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.6"
-      strokeLinecap="round"
-      aria-hidden="true"
-    >
-      <line x1="2" y1="2" x2="10" y2="10" />
-      <line x1="10" y1="2" x2="2" y2="10" />
-    </svg>
-  );
-}
-
 export type PanelShellProps = {
   title: React.ReactNode;
-  /**
-   * header 右侧（关闭 / 保存等）。传函数是为了把**受控的关闭**交回给 PanelShell ——
-   * 否则调用方写 `onClick={onClose}` 会绕过放弃确认。返回 null 则不渲染。
-   */
-  headerRight?: (requestClose: () => void) => React.ReactNode;
+  /** header 右侧（保存等）。关闭一律走遮罩，这里不摆关闭控件。 */
+  headerRight?: React.ReactNode;
   /** header 标题左侧的额外内容（状态徽章等） */
   headerLeft?: React.ReactNode;
   children: React.ReactNode;
@@ -92,8 +73,6 @@ export type PanelShellProps = {
   /** 卡片最小高度，默认不设 */
   minHeight?: number;
   onClose?: () => void;
-  /** 点遮罩关闭（任务详情有，模板弹窗没有） */
-  closeOnOverlayClick?: boolean;
   /** 遮罩下方额外内容（错误条等） */
   belowHeader?: React.ReactNode;
   /**
@@ -104,10 +83,6 @@ export type PanelShellProps = {
    * 而这些草稿住在各自的组件里，共享层拿不到。
    */
   hasUnsavedChanges?: () => boolean;
-  /** 放弃确认的文案；不传用通用措辞。 */
-  discardConfirmMessage?: string;
-  /** 放弃确认按钮上的字；不传用通用措辞。 */
-  discardConfirmLabel?: string;
 };
 
 export function PanelShell({
@@ -119,15 +94,11 @@ export function PanelShell({
   width = 720,
   minHeight,
   onClose,
-  closeOnOverlayClick,
   belowHeader,
   hasUnsavedChanges,
-  discardConfirmMessage,
-  discardConfirmLabel,
 }: PanelShellProps) {
   const { t } = useI18n();
-  // 关闭的三条路（遮罩 / Esc / 调用方按钮）都走这里，判定只写一遍。
-  // 没有 onClose 时不算「有关闭动作」，直接放行。
+  // 关闭只有一条路：点遮罩。判定只写一遍，所以将来要加确认/拦截也只需改这里。
   const requestClose = useCallback(() => {
     if (!onClose) return;
     if (!hasUnsavedChanges?.()) {
@@ -135,50 +106,64 @@ export function PanelShell({
       return;
     }
     void confirmDialog({
-      message: discardConfirmMessage || t("common.discardChangesConfirm"),
-      confirmLabel: discardConfirmLabel || t("common.discardChanges"),
+      message: t("common.discardChangesConfirm"),
+      confirmLabel: t("common.discardChanges"),
       cancelLabel: t("common.keepEditing"),
       danger: true,
     }).then((ok) => {
       if (ok) onClose();
     });
-  }, [onClose, hasUnsavedChanges, discardConfirmMessage, discardConfirmLabel, t]);
+  }, [onClose, hasUnsavedChanges, t]);
 
-  // Esc 关闭。捕获阶段监听：面板里是 Lexical/输入框，冒泡上来时可能被它们先处理掉。
+  // 跟着可视视口把可用高度写成 --panel-vh，面板据此上浮避让软键盘。
+  // 必须用 visualViewport：键盘弹出时 layout 视口（100vh / dvh）纹丝不动，
+  // 只有 visualViewport 变矮，所以内联高度得从它取。
+  const [viewportHeight, setViewportHeight] = useState(0);
   useEffect(() => {
-    if (!onClose) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      event.stopPropagation();
-      requestClose();
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const sync = () => setViewportHeight(vv.height);
+    sync();
+    vv.addEventListener("resize", sync);
+    vv.addEventListener("scroll", sync);
+    return () => {
+      vv.removeEventListener("resize", sync);
+      vv.removeEventListener("scroll", sync);
     };
-    document.addEventListener("keydown", onKeyDown, true);
-    return () => document.removeEventListener("keydown", onKeyDown, true);
-  }, [onClose, requestClose]);
+  }, []);
 
   return (
     <div
       className="mindfs-panel-overlay"
       style={{
         position: "fixed",
-        inset: 0,
+        // inset:0 会把遮罩钉在 layout 视口，键盘弹出后它和卡片一起被压在键盘下面。
+        // 改用可视视口的 top/height，卡片才能真正停在键盘上方那块可见区域里。
+        top: 0,
+        left: 0,
+        right: 0,
+        height: viewportHeight ? `${viewportHeight}px` : "100dvh",
         zIndex: 90,
         background: "rgba(15, 23, 42, 0.36)",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
         padding: "24px",
-      }}
+        // 供上面的 max-height 表达式取值；0 高度时 CSS 回退到 100dvh。
+        ...(viewportHeight ? { "--panel-vh": `${viewportHeight}px` } : null),
+      } as React.CSSProperties}
       onClick={(event) => {
-        if (closeOnOverlayClick && event.target === event.currentTarget) requestClose();
+        if (event.target === event.currentTarget) requestClose();
       }}
     >
       <section
         className="mindfs-panel-dialog"
         style={{
           width: `min(${width}px, 100%)`,
-          maxHeight: "88dvh",
+          // 高度上限跟着**可视视口**走。移动端键盘弹出时 layout 视口不动、
+          // visualViewport 变矮，写死 dvh/vh 的话面板下半截会躲到键盘后面 ——
+          // 也就是「输入框在屏幕外、看不见自己打了什么」。
+          maxHeight: "min(88dvh, calc(var(--panel-vh, 100dvh) - 48px))",
           ...(minHeight ? { minHeight } : {}),
           overflow: "hidden",
           borderRadius: "10px",
@@ -192,6 +177,9 @@ export function PanelShell({
         <style>{`
           @media (max-width: 640px) {
             .mindfs-panel-overlay {
+              /* 顶栏（36px）之下居中，留出 8px 呼吸位。alignItems 换 flex-start，
+                 具体上浮多少交给内联的 --panel-vh（见上），CSS 里写死 60dvh
+                 只在没有该变量时兜底。 */
               top: 36px !important;
               align-items: flex-start !important;
               padding: 8px 12px 12px !important;
@@ -199,7 +187,7 @@ export function PanelShell({
             .mindfs-panel-dialog {
               width: 100% !important;
               height: auto !important;
-              max-height: 60dvh !important;
+              max-height: var(--panel-vh, 60dvh) !important;
             }
             .mindfs-panel-body {
               min-height: 0 !important;
@@ -222,7 +210,7 @@ export function PanelShell({
           <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
             {title}
           </div>
-          {headerRight?.(requestClose) ?? null}
+          {headerRight}
         </header>
         {belowHeader}
         <div className="mindfs-panel-body" style={{ flex: 1, minHeight: 0, overflow: "auto", display: "flex", flexDirection: "column" }}>

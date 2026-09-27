@@ -152,7 +152,7 @@ import TokenEditor, { type TokenEditorHandle } from "./components/editor/TokenEd
 import { PromptEditor } from "./components/PromptEditor";
 import { StageEditor } from "./components/StageEditor";
 import { Select } from "./components/Select";
-import { PanelShell, panelIconButtonStyle, CloseGlyph } from "./components/PanelShell";
+import { PanelShell } from "./components/PanelShell";
 import { composerInputStyle } from "./components/action/composerStyles";
 import {
   type GitHubImportState,
@@ -9223,13 +9223,7 @@ export function App({ onGoHome }: AppProps) {
         <PanelShell
           width={640}
           onClose={() => { if (!taskInlineSaving) closeTaskEditDialog(); }}
-          closeOnOverlayClick
           hasUnsavedChanges={() => String(taskInlineEdit?.text || "").trim() !== ""}
-          headerRight={(requestClose) => (
-            <button type="button" aria-label={t("common.close")} title={t("common.close")} onClick={requestClose} style={panelIconButtonStyle()}>
-              <CloseGlyph />
-            </button>
-          )}
           title={(
             <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "8px", minWidth: 0 }}>
               <div style={{ fontSize: "13px", fontWeight: 800, color: "var(--text-color)", whiteSpace: "nowrap" }}>
