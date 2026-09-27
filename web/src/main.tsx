@@ -575,7 +575,10 @@ function AppRoot() {
     window.visualViewport?.addEventListener("resize", onViewportResize);
 
     const onBackRequest = () => {
-      const event = new CustomEvent("mindfs:android-back-request");
+      // cancelable：应用内有层可关时监听方要 preventDefault 挡住 Capacitor 的
+      // 默认退出。事件不可取消的话 preventDefault 静默失效，按一次返回会
+      // 「先关掉面板、紧接着整个应用退出」。
+      const event = new CustomEvent("mindfs:android-back-request", { cancelable: true });
       window.dispatchEvent(event);
     };
 

@@ -200,6 +200,7 @@ import {
 
 import { APP_DOCUMENT_TITLE, AppProps, CHILD_SESSION_PAGE_SIZE, MULTI_PROJECT_SESSION_LIMIT, ManagedRootPayload, SESSION_PAGE_SIZE } from "./app/appMisc";
 import { MainViewMode, URLState } from "./app/appPath";
+import { closeTopBackLayer, hasBackLayer, installBackNavigation, popViewHistory, pushViewHistory, useBackLayer } from "./app/useBackNavigation";
 import { AttachedFileContext, Exchange, GitFileStat, MultiProjectSessionGroup, PendingSend, RelatedFileClickTarget, SessionItem, SessionMode, SessionQueueItem, SlashCommandResult, ViewerSelection, WSStatus } from "./app/appSession";
 import { CANDIDATE_FETCH_DEBOUNCE_MS, DIRECTORY_SORT_OVERRIDES_STORAGE_KEY, GIT_DIFF_SIDE_BY_SIDE_STORAGE_KEY, GIT_HISTORY_EXPANDED_STORAGE_KEY, GIT_STATUS_EXPANDED_STORAGE_KEY, LAST_ROOT_NODE_STORAGE_KEY, LAST_ROOT_STORAGE_KEY, loadWorkspaceCollapsed, loadWorkspaceFilter, MAIN_VIEW_STORAGE_KEY, MOBILE_ENTER_KEY_SEND_STORAGE_KEY, PLUGIN_QUERY_STORAGE_PREFIX, saveWorkspaceCollapsed, saveWorkspaceFilter, SIDEBARS_SWAPPED_STORAGE_KEY, TASK_TEMPLATE_ALL_FILTER, TASK_TEMPLATE_SELECTION_STORAGE_KEY, TREE_SORT_STORAGE_KEY, type WorkspaceBoardFilter } from "./app/appStorage";
 import { TaskInlineEditState } from "./app/appTask";
@@ -1586,9 +1587,29 @@ export function App({ onGoHome }: AppProps) {
     if (mode !== "chat") {
       lastNonChatViewRef.current = mode;
     }
+    // 记「从哪来」，让返回有路可退（覆盖层关完之后的那一步）。
+    // 冷启动深链恢复也会走到这里，那时栈是空的、退回去等于原地不动，无害。
+    pushViewHistory(mainViewRef.current);
     mainViewRef.current = mode;
     setMainView(mode);
   }, []);
+
+  /* 覆盖层接进返回栈：按返回/侧滑时先关最上面那一层，而不是退视图或退出应用。
+     四个接线点摆在一起是因为它们互为兄弟（都是「盖在主区之上」的东西），
+     放在一起才看得出「返回」的优先级：弹窗 > 面板 > 悬浮框 > 退视图。
+     关闭动作都复用各层既有的关闭路径，所以 PanelShell 的「放弃改动？」确认照旧生效。 */
+  useBackLayer(scheduledAgentDialogOpen, () => setScheduledAgentDialogOpen(false));
+  useBackLayer(taskTemplateDialogOpen, () => setTaskTemplateDialogOpen(false));
+  useBackLayer(!!taskInlineEdit, () => {
+    // 保存中不给关：和面板上那个 × 按钮同一条规则。
+    if (!taskInlineSaving) closeTaskEditDialog();
+  });
+  useBackLayer(isDrawerOpen && mainView === "files", () => {
+    interactionModeRef.current = "main";
+    setInteractionMode("main");
+    setDrawerOpenForRoot(currentRootIdRef.current, false);
+  });
+
   const currentDirectorySortMode = currentDirectorySortOverride || treeSortMode;
 
   const replaceURLState = useCallback((next: URLState) => {
@@ -1608,6 +1629,19 @@ export function App({ onGoHome }: AppProps) {
     const target = `${window.location.pathname}${search}`;
     window.history.replaceState(null, "", target);
   }, []);
+
+  /* Android 硬件返回键。覆盖层栈在 App 层之上（DialogHost 注册），
+     这里先让覆盖层有机会处理，再退到视图栈，两边都没有才把控制权交回系统。 */
+  useEffect(() => installBackNavigation(() => {
+    const previous = popViewHistory();
+    if (!previous) return false;
+    switchMainView(previous as MainViewMode);
+    // 只换视图，其余 URL 字段（root/file/session）原样带回，
+    // 否则 replaceURLState 写出来的 URL 会把当前项目/文件抹掉。
+    const now = readURLState();
+    replaceURLState({ ...now, view: previous as MainViewMode });
+    return true;
+  }), [switchMainView, replaceURLState]);
 
   const handleOnboardingStepChange = useCallback((stepId: string) => {
     const showingSidebar = stepId === "sidebar-menu" || stepId === "project-tabs";
@@ -7207,8 +7241,19 @@ export function App({ onGoHome }: AppProps) {
       })();
     }
 
-    window.addEventListener("popstate", handlePopState);
-    return () => window.removeEventListener("popstate", handlePopState);
+    const onPopState = (event: PopStateEvent) => {
+      // 覆盖层开着的时候，浏览器后退/iOS 侧滑应该只关那一层，而不是连视图一起换掉。
+      // 刚被弹掉的那一条立刻 push 回去，否则历史被吃掉一次，
+      // 下一次后退就直接退到站外（用户看到的是「按两次返回就出去了」）。
+      if (hasBackLayer()) {
+        window.history.pushState(event.state, "", window.location.href);
+        closeTopBackLayer();
+        return;
+      }
+      handlePopState();
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
   }, [actionHandlers, loadSessionsForRoot, refreshTreeDir, showBoundSessionOrRootDir]);
 
   const selectedRoot =
