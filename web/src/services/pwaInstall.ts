@@ -32,6 +32,16 @@ type PwaInstallListener = (snapshot: PwaInstallSnapshot) => void;
 
 const INSTALLED_KEY = "mindfs-pwa-installed";
 
+/**
+ * 判定落定的兜底时限（毫秒）。
+ *
+ * beforeinstallprompt 不是所有浏览器都会派发：iOS Safari、桌面版已装、或 Chrome
+ * 因启发式（近期拒绝过、engagement 不足）压住时，它可能永远不来。没有这个超时，
+ * 「等判定」就等于「永久不显示」。超时后按「没有原生 event」落定，按钮照常出现
+ * 一次并保持——宁可晚出现，不可反复翻转，也不可永不出现。
+ */
+const PROBE_TIMEOUT_MS = 5000;
+
 function isStandaloneDisplay(): boolean {
   if (typeof window === "undefined") {
     return false;
@@ -75,6 +85,7 @@ class PwaInstallService {
   private handleBeforeInstallPrompt: (event: Event) => void = () => {};
   private handleInstalled: () => void = () => {};
   private refreshInstalled: () => void = () => {};
+  private probeTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor() {
     if (typeof window === "undefined" || !shouldEnablePWAInstall()) {
@@ -85,9 +96,11 @@ class PwaInstallService {
 
     this.handleBeforeInstallPrompt = (event: Event) => {
       event.preventDefault();
+      this.settleProbe();
       this.patch({ deferredPrompt: event as BeforeInstallPromptEvent, probed: true });
     };
     this.handleInstalled = () => {
+      this.settleProbe();
       persistInstallState();
       this.patch({ installed: true, deferredPrompt: null, probed: true });
     };
@@ -103,6 +116,21 @@ class PwaInstallService {
     document.addEventListener("visibilitychange", this.refreshInstalled);
     for (const query of this.displayModeQueries()) {
       query.addEventListener?.("change", this.refreshInstalled);
+    }
+
+    // 事件迟迟不来（iOS Safari / Chrome 启发式压住）也要落定，否则按钮永远不出现。
+    this.probeTimer = setTimeout(() => {
+      this.probeTimer = null;
+      if (!this.state.probed) {
+        this.patch({ probed: true });
+      }
+    }, PROBE_TIMEOUT_MS);
+  }
+
+  private settleProbe(): void {
+    if (this.probeTimer !== null) {
+      clearTimeout(this.probeTimer);
+      this.probeTimer = null;
     }
   }
 

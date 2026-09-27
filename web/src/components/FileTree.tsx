@@ -1748,10 +1748,13 @@ function FileTreeInner({
         ? t("pwa.helpDeferred")
         : t("pwa.helpUnavailable");
 
-  // Android Chrome 的可见性完全由 beforeinstallPromptEvent 决定：事件来之前一律不画，
-  // 事件来之后由 installProbeDone 锁死，不再被它清空后二次翻转。
-  // 其余平台的可见性不依赖这个事件，保持原判定（改动面收窄，避免桌面端按钮被延迟显示）。
-  const installProbePending = isAndroidChrome && !installProbeDone;
+  // 「能不能装」对所有移动浏览器都只有一个来源：beforeinstallprompt，且它要等 SW 激活
+  // 才派发。这道门此前只挂在 isAndroidChrome 上，于是 SamsungBrowser / MiuiBrowser /
+  // UCBrowser / HuaweiBrowser / 任何不含 "Chrome" 字样的安卓 UA 全部绕过它：
+  // 组件首帧 probed=false → 判定为「不是待定」→ 按钮凭空画出，等事件到了再翻掉 ——
+  // 正是手机上看到的那一帧闪。门必须挂在「可见性依赖那个事件」这个条件本身上，
+  // 而不是挂在某一个具体 UA 上。
+  const installProbePending = !installProbeDone && !isKnownInstalled && !isNativeApp;
 
   const shouldShowInstallButton = !installProbePending && !isNativeApp && !isKnownInstalled && !(isAndroidChrome && !deferredInstallPrompt);
   const shouldShowInstallHelp = !installProbePending && !isNativeApp && (!!installHelp) && (isKnownInstalled || isIOS || isMacSafari || isDesktopChromium || deferredInstallPrompt !== null || (isAndroidChrome && !deferredInstallPrompt));
