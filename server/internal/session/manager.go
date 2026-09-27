@@ -983,7 +983,16 @@ func (m *Manager) RepointAgentBinding(sessionKey, agent, previousAgentSessionID,
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if _, err := tx.Exec(upsertAgentBindingSQL, sessionKey, agent, agentSessionID, 0); err != nil {
+	// ctx_seq 必须**原样保留**。它是 Full 同步的幂等护栏：externalSessionDeltaAfterCtxSeq
+	// 用它切掉「库里已有」的前缀，写 0 会让 `agentCtxSeq <= 0` 分支直接放行全部，
+	// 下次点「同步」就把早已渲染过的回合重导一遍 —— 2026-09-16 那个 bug 的形态。
+	// repoint 只换 id 和游标、不增删 exchange，所以原值就是正确值。
+	// 读和写都在事务内，避免并发同步在这两步之间改掉它。
+	var existing AgentBinding
+	if err := scanAgentBinding(tx.QueryRow(selectAgentBindingSQL, sessionKey, agent), &existing); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if _, err := tx.Exec(upsertAgentBindingSQL, sessionKey, agent, agentSessionID, existing.AgentCtxSeq); err != nil {
 		return err
 	}
 

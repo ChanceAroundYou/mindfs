@@ -129,3 +129,44 @@ func TestRepointAgentBindingKeepsSessionName(t *testing.T) {
 		t.Fatalf("alias still resolves for the old id (%q); the stale id could win a lookup", old)
 	}
 }
+
+// ctx_seq 是 Full 同步的幂等护栏，repoint 必须原样保留它。
+//
+// 它挡的是这条路：点「同步」时 externalSessionDeltaAfterCtxSeq 用 ctx_seq 切掉库里已有的
+// 前缀，只补新增部分。写 0 会命中 `agentCtxSeq <= 0 → return exchanges` 直接放行全部，
+// 于是下一次点同步就把早已渲染过的回合重导一遍 —— 202609-16「ask 下面又渲染了一轮出现过的
+// 文字」。实测复现：repoint 后第一次同步多导 2 条（20 → 22 行），第二次才是 0。
+func TestRepointAgentBindingPreservesCtxSeq(t *testing.T) {
+	root := rootfs.NewRootInfo("mindfs", "mindfs", t.TempDir())
+	manager := NewManager(root)
+	key := seedRepointSession(t, manager)
+
+	// 会话已经跑过 20 轮：ctx_seq 推进到 20。
+	if err := manager.UpdateAgentState(context.Background(), mustGetSession(t, manager, key), "claude", 20, "old-agent-session-id"); err != nil {
+		t.Fatalf("update agent state: %v", err)
+	}
+
+	if err := manager.RepointAgentBinding(key, "claude", "old-agent-session-id", "id-new", agenttypes.ExternalSessionCursor{
+		SourcePath: "/tmp/x/new.jsonl", Offset: 10, ModTimeUnixNano: 1, CommittedOffset: 10,
+	}); err != nil {
+		t.Fatalf("repoint binding: %v", err)
+	}
+
+	binding, err := manager.GetAgentBinding(context.Background(), key, "claude")
+	if err != nil {
+		t.Fatalf("get binding: %v", err)
+	}
+	if binding.AgentCtxSeq != 20 {
+		t.Fatalf("agent_ctx_seq after repoint = %d, want 20; 0 disables the full-sync dedup guard "+
+			"and the next sync re-imports already-rendered turns", binding.AgentCtxSeq)
+	}
+}
+
+func mustGetSession(t *testing.T, manager *Manager, key string) *Session {
+	t.Helper()
+	current, err := manager.Get(context.Background(), key, 0)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	return current
+}
