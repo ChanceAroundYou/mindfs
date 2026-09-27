@@ -338,14 +338,20 @@ func (h *HTTPHandler) handleKanbanTaskRename(w http.ResponseWriter, r *http.Requ
 	h.broadcastTaskUpdated(req.RootID, detail)
 	// 任务名与会话名双向绑定：任务改名把名字同步到绑定的全部会话
 	//（请求返回后再同步的小尾巴用 WithoutCancel，避免 response 结束即 ctx 取消）。
-	go h.bindTaskSessionNames(context.WithoutCancel(r.Context()), req.RootID, req.Name, detail)
+	go h.bindTaskSessionNames(context.WithoutCancel(r.Context()), req.RootID, detail)
 	respondJSON(w, http.StatusOK, detail)
 }
 
-// bindTaskSessionNames（任务→会话）：任务绑定到的所有 agent 会话统一改成任务名。
+// bindTaskSessionNames（任务→会话）：任务绑定到的所有 agent 会话统一改成
+// 「任务名 / #编号」——和建会话那步（EnsureAgentSession）同一条派生，改名不丢后缀。
+// 名字从 detail 现场派生，不接调用方的裸名入参。
 // 单个会话改名失败（会话被删等）不影响其余，也不让任务改名本身失败。
-func (h *HTTPHandler) bindTaskSessionNames(ctx context.Context, rootID, name string, detail kanban.TaskDetail) {
-	if h == nil || h.AppContext == nil || strings.TrimSpace(name) == "" {
+func (h *HTTPHandler) bindTaskSessionNames(ctx context.Context, rootID string, detail kanban.TaskDetail) {
+	if h == nil || h.AppContext == nil {
+		return
+	}
+	name := kanban.TaskSessionName(detail.Task.Name, detail.Task.TaskNumber)
+	if strings.TrimSpace(name) == "" {
 		return
 	}
 	seen := map[string]bool{}
