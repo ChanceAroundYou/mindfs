@@ -120,8 +120,8 @@ func TestTaskTemplateStoreSeedsBundledTemplatesWhenUserFileMissing(t *testing.T)
 	dir := t.TempDir()
 	bundledPath := filepath.Join(t.TempDir(), taskTemplateFile)
 	bundled := []TaskTemplate{{
-		ID:             "tmpl_default",
-		Name:           "Default task",
+		ID:   "tmpl_default",
+		Name: "Default task",
 		Stages: []TaskTemplateStage{{
 			ID:       "stage_default",
 			Position: 0,
@@ -534,15 +534,15 @@ func TestLegacyTaskStagesBackfilledFromTemplate(t *testing.T) {
 	}
 	now := time.Now().UTC()
 	legacy := Task{
-		ID:             "task_legacy",
-		RootID:         root.ID,
-		TaskTemplateID: tmpl.ID,
-		Stages:         nil,
+		ID:                "task_legacy",
+		RootID:            root.ID,
+		TaskTemplateID:    tmpl.ID,
+		Stages:            nil,
 		CurrentStageIndex: 0,
-		Status:         StatusWaitingUser,
-		Labels:         []string{},
-		CreatedAt:      now,
-		UpdatedAt:      now,
+		Status:            StatusWaitingUser,
+		Labels:            []string{},
+		CreatedAt:         now,
+		UpdatedAt:         now,
 	}
 	if _, err := store.CreateTask(ctx, legacy, StageRun{
 		ID:         "run_legacy",
@@ -1044,10 +1044,22 @@ func TestTerminalTaskCannotBeResurrected(t *testing.T) {
 		kill  func(*Service, string, string) error
 		after string
 	}{
-		{"success+resume", func(s *Service, r, id string) error { _, err := s.Resume(ctx, MoveInput{RootID: r, TaskID: id}); return err }, StatusSuccess},
-		{"success+pause", func(s *Service, r, id string) error { _, err := s.Pause(ctx, MoveInput{RootID: r, TaskID: id}); return err }, StatusSuccess},
-		{"cancelled+pause", func(s *Service, r, id string) error { _, err := s.Pause(ctx, MoveInput{RootID: r, TaskID: id}); return err }, StatusCancelled},
-		{"cancelled+resume", func(s *Service, r, id string) error { _, err := s.Resume(ctx, MoveInput{RootID: r, TaskID: id}); return err }, StatusCancelled},
+		{"success+resume", func(s *Service, r, id string) error {
+			_, err := s.Resume(ctx, MoveInput{RootID: r, TaskID: id})
+			return err
+		}, StatusSuccess},
+		{"success+pause", func(s *Service, r, id string) error {
+			_, err := s.Pause(ctx, MoveInput{RootID: r, TaskID: id})
+			return err
+		}, StatusSuccess},
+		{"cancelled+pause", func(s *Service, r, id string) error {
+			_, err := s.Pause(ctx, MoveInput{RootID: r, TaskID: id})
+			return err
+		}, StatusCancelled},
+		{"cancelled+resume", func(s *Service, r, id string) error {
+			_, err := s.Resume(ctx, MoveInput{RootID: r, TaskID: id})
+			return err
+		}, StatusCancelled},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			svc, root := newTestService(t, nil)
@@ -1469,6 +1481,141 @@ func TestTaskNameFromSessionStripsNumberSuffix(t *testing.T) {
 	}
 	if got.Task.Name != "新名" {
 		t.Fatalf("task name=%q, want %q (suffix must not land on the task)", got.Task.Name, "新名")
+	}
+}
+
+// 删会话时清空任务链接：会话没了，任务不能再指向它，且要在 aux_session_error 留痕。
+func TestDetachFromSessionClearsTaskLink(t *testing.T) {
+	ctx := context.Background()
+	svc, root := newTestService(t, nil)
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID: root.ID,
+		Stages: []StageTemplate{userStage("Describe")},
+		Name:   "任务",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	store, err := svc.taskStore(root.ID)
+	if err != nil {
+		t.Fatalf("taskStore: %v", err)
+	}
+	task, err := store.GetTask(ctx, detail.Task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	task.MainSessionKey = "sess-dead"
+	if err := store.UpdateTask(ctx, task); err != nil {
+		t.Fatalf("UpdateTask: %v", err)
+	}
+	// 让阶段运行也指向这个会话：任务面板的会话列表同时收 stage_run.session_key
+	runs, err := store.ListStageRuns(ctx, task.ID)
+	if err != nil || len(runs) == 0 {
+		t.Fatalf("ListStageRuns: %v runs=%d", err, len(runs))
+	}
+	runs[0].SessionKey = "sess-dead"
+	if err := store.UpdateStageRunExecution(ctx, runs[0]); err != nil {
+		t.Fatalf("UpdateStageRunExecution: %v", err)
+	}
+
+	got, changed := svc.DetachFromSession(ctx, root.ID, []string{"sess-dead"})
+	if !changed {
+		t.Fatal("expected task updated")
+	}
+	if got.Task.MainSessionKey != "" {
+		t.Fatalf("main_session_key should be cleared, got %q", got.Task.MainSessionKey)
+	}
+	if strings.TrimSpace(got.Task.AuxFlags.SessionError) == "" {
+		t.Fatal("expected session_error trace left on the task")
+	}
+	// 留痕要能被前端解析：形状是 {"message":..., "data":[...]}
+	var notice struct {
+		Message string   `json:"message"`
+		Data    []string `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(got.Task.AuxFlags.SessionError), &notice); err != nil {
+		t.Fatalf("session_error is not the expected JSON shape: %v (%q)", err, got.Task.AuxFlags.SessionError)
+	}
+	if strings.TrimSpace(notice.Message) == "" {
+		t.Fatalf("session_error.message empty: %q", got.Task.AuxFlags.SessionError)
+	}
+	runs, err = store.ListStageRuns(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("ListStageRuns: %v", err)
+	}
+	if runs[0].SessionKey != "" {
+		t.Fatalf("stage run session_key should be cleared, got %q", runs[0].SessionKey)
+	}
+}
+
+func TestDetachFromSessionIgnoresUnboundAndForeignSessions(t *testing.T) {
+	ctx := context.Background()
+	svc, root := newTestService(t, nil)
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID: root.ID,
+		Stages: []StageTemplate{userStage("Describe")},
+		Name:   "任务",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	store, err := svc.taskStore(root.ID)
+	if err != nil {
+		t.Fatalf("taskStore: %v", err)
+	}
+	task, err := store.GetTask(ctx, detail.Task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	task.MainSessionKey = "sess-alive"
+	if err := store.UpdateTask(ctx, task); err != nil {
+		t.Fatalf("UpdateTask: %v", err)
+	}
+	if _, changed := svc.DetachFromSession(ctx, root.ID, []string{"sess-unbound", ""}); changed {
+		t.Fatal("unbound session must not touch any task")
+	}
+	after, err := store.GetTask(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if after.MainSessionKey != "sess-alive" {
+		t.Fatalf("main_session_key must survive unrelated detach, got %q", after.MainSessionKey)
+	}
+}
+
+// ClearSessionRefs 只清确实指向该会话的引用：主会话被改成别的 key 后不该被误清。
+func TestClearSessionRefsKeepsRepointedTask(t *testing.T) {
+	ctx := context.Background()
+	svc, root := newTestService(t, nil)
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID: root.ID,
+		Stages: []StageTemplate{userStage("Describe")},
+		Name:   "任务",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	store, err := svc.taskStore(root.ID)
+	if err != nil {
+		t.Fatalf("taskStore: %v", err)
+	}
+	task, err := store.GetTask(ctx, detail.Task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	task.MainSessionKey = "sess-new"
+	if err := store.UpdateTask(ctx, task); err != nil {
+		t.Fatalf("UpdateTask: %v", err)
+	}
+	if err := store.ClearSessionRefs(ctx, task.ID, "sess-old"); err != nil {
+		t.Fatalf("ClearSessionRefs: %v", err)
+	}
+	after, err := store.GetTask(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if after.MainSessionKey != "sess-new" {
+		t.Fatalf("repointed task must keep its key, got %q", after.MainSessionKey)
 	}
 }
 

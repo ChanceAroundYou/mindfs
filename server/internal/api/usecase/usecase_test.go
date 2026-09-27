@@ -487,7 +487,7 @@ func TestDeleteSessionDeletesSubSessionTree(t *testing.T) {
 		t.Fatalf("create sibling: %v", err)
 	}
 
-	if err := service.DeleteSession(ctx, DeleteSessionInput{RootID: root.ID, Key: parent.Key}); err != nil {
+	if _, err := service.DeleteSession(ctx, DeleteSessionInput{RootID: root.ID, Key: parent.Key}); err != nil {
 		t.Fatalf("delete parent: %v", err)
 	}
 	for _, deleted := range []*session.Session{parent, child, grandchild} {
@@ -527,7 +527,7 @@ func TestDeleteSessionKeepsForkSession(t *testing.T) {
 		t.Fatalf("create subagent: %v", err)
 	}
 
-	if err := service.DeleteSession(ctx, DeleteSessionInput{RootID: root.ID, Key: parent.Key}); err != nil {
+	if _, err := service.DeleteSession(ctx, DeleteSessionInput{RootID: root.ID, Key: parent.Key}); err != nil {
 		t.Fatalf("delete parent: %v", err)
 	}
 	if _, err := manager.Get(ctx, parent.Key, 0); err == nil {
@@ -538,6 +538,48 @@ func TestDeleteSessionKeepsForkSession(t *testing.T) {
 	}
 	if _, err := manager.Get(ctx, subagent.Key, 0); err == nil {
 		t.Fatal("subagent still exists")
+	}
+}
+
+func TestDeleteSessionReturnsCascadeKeys(t *testing.T) {
+	// 返回值给上层解绑任务引用用：必须含整棵子树，不能只有被点的那个。
+	ctx := context.Background()
+	root := rootfs.NewRootInfo("mindfs", "mindfs", t.TempDir())
+	manager := session.NewManager(root)
+	service := Service{Registry: &commandTestRegistry{root: root, manager: manager}}
+
+	parent, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, Name: "parent"})
+	if err != nil {
+		t.Fatalf("create parent: %v", err)
+	}
+	child, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, ParentSessionKey: parent.Key, Name: "child"})
+	if err != nil {
+		t.Fatalf("create child: %v", err)
+	}
+	grandchild, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, ParentSessionKey: child.Key, Name: "grandchild"})
+	if err != nil {
+		t.Fatalf("create grandchild: %v", err)
+	}
+	sibling, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, Name: "sibling"})
+	if err != nil {
+		t.Fatalf("create sibling: %v", err)
+	}
+
+	keys, err := service.DeleteSession(ctx, DeleteSessionInput{RootID: root.ID, Key: parent.Key})
+	if err != nil {
+		t.Fatalf("delete parent: %v", err)
+	}
+	got := map[string]bool{}
+	for _, key := range keys {
+		got[key] = true
+	}
+	for _, want := range []string{parent.Key, child.Key, grandchild.Key} {
+		if !got[want] {
+			t.Fatalf("deleted keys %v missing %s", keys, want)
+		}
+	}
+	if got[sibling.Key] {
+		t.Fatalf("sibling must not be reported deleted: %v", keys)
 	}
 }
 

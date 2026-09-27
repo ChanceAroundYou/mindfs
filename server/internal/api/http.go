@@ -1327,13 +1327,17 @@ func (h *HTTPHandler) handleSessionDelete(w http.ResponseWriter, r *http.Request
 		return
 	}
 	uc := h.service()
-	if err := uc.DeleteSession(r.Context(), usecase.DeleteSessionInput{
+	deletedKeys, err := uc.DeleteSession(r.Context(), usecase.DeleteSessionInput{
 		RootID: rootID,
 		Key:    key,
-	}); err != nil {
+	})
+	if err != nil {
 		respondError(w, http.StatusNotFound, err)
 		return
 	}
+	// 会话没了，任务里指向它的链接必须一并清掉，否则任务点进去是空白。
+	// 要传整棵子树的 key：子会话也可能绑着别的任务。
+	h.detachTaskFromSession(r.Context(), rootID, deletedKeys)
 	w.WriteHeader(http.StatusNoContent)
 }
 

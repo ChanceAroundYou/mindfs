@@ -394,6 +394,25 @@ func (h *HTTPHandler) syncTaskNameFromSession(ctx context.Context, rootID, sessi
 	}
 }
 
+// detachTaskFromSession（会话→任务）：会话被删除时，把任务里指向这些 key 的
+// main_session_key / StageRun.session_key 清空并留痕，避免任务跳进空会话。
+//
+// 与 syncTaskNameFromSession 同一层同一形状：usecase 只管会话树，跨层协调放在 HTTP 层。
+// keys 要传整棵被删子树的 key，不只是被点的那个 —— 子会话也可能绑着别的任务。
+func (h *HTTPHandler) detachTaskFromSession(ctx context.Context, rootID string, keys []string) {
+	if h == nil || h.AppContext == nil || len(keys) == 0 {
+		return
+	}
+	svc, err := h.AppContext.GetKanbanService()
+	if err != nil {
+		return
+	}
+	detail, changed := svc.DetachFromSession(ctx, rootID, keys)
+	if changed {
+		h.broadcastTaskUpdated(rootID, detail)
+	}
+}
+
 func (h *HTTPHandler) handleKanbanTaskRerun(w http.ResponseWriter, r *http.Request) {
 	svc, ok := h.kanbanService(w)
 	if !ok {

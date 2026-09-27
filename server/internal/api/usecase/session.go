@@ -948,36 +948,40 @@ type DeleteSessionInput struct {
 	Key    string
 }
 
-func (s *Service) DeleteSession(ctx context.Context, in DeleteSessionInput) error {
+// DeleteSession 删除会话**整棵子树**，返回被删掉的 key 集合（父 + 全部子会话）。
+//
+// 返回 key 列表是给调用方的：上层要拿它去解绑任务引用（Task.MainSessionKey /
+// StageRun.SessionKey），否则任务会一直指向一个已不存在的会话。
+func (s *Service) DeleteSession(ctx context.Context, in DeleteSessionInput) ([]string, error) {
 	if err := s.ensureRegistry(); err != nil {
-		return err
+		return nil, err
 	}
 	root, err := s.Registry.GetRoot(in.RootID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	manager, err := s.Registry.GetSessionManager(in.RootID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	keys, err := deleteSessionCascadeKeys(ctx, manager, in.Key)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	for _, key := range keys {
 		cancelActiveSessionTurn(in.RootID, key)
 	}
 	for _, key := range keys {
 		if err := manager.Delete(ctx, key); err != nil {
-			return err
+			return nil, err
 		}
 		if err := root.RemoveSessionFileMeta(key); err != nil {
-			return err
+			return nil, err
 		}
 		commandexec.CloseSession(in.RootID, key)
 		s.Registry.ReleaseFileWatcher(in.RootID, key)
 	}
-	return nil
+	return keys, nil
 }
 
 func deleteSessionCascadeKeys(ctx context.Context, manager *session.Manager, key string) ([]string, error) {
