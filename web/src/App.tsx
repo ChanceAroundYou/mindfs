@@ -9694,6 +9694,10 @@ export function App({ onGoHome }: AppProps) {
                    用哪个 agent/模型，所以把 PromptEditor 自带的 AgentSelector 打开。
                    默认值取模板里第一个 agent 段的 agent/model（createTaskInputStage）。 */
                 showAgentSelector={taskInlineHasAgentStage}
+                /* 附件「+」：面板底部的隐藏 file input 一直在（App.tsx:9782），
+                   chips 也在渲染，只是没告诉编辑器有这个按钮可点。
+                   任务详情面板（TaskDetailPanel.tsx:445）早就这么传了。 */
+                onAttach={() => taskInlineAttachmentInputRef.current?.click()}
                 onSend={() => void saveTaskInlineEdit()}
                 sending={taskInlineSaving}
                 sendDisabled={!taskInlineEdit.text.trim()}
