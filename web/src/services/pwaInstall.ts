@@ -134,6 +134,37 @@ class PwaInstallService {
     }
   }
 
+  /**
+   * 这个浏览器会不会派发 beforeinstallprompt。
+   *
+   * 用来决定「判定中」要不要设门。Safari（含 iOS/macOS）从不派发该事件——它的安装
+   * 入口是分享菜单，不走 beforeinstallprompt；对它设门等于白等一个不会来的事件，
+   * 只会把按钮推迟到 PROBE_TIMEOUT_MS 才出现。
+   *
+   * 这里用 Safari 的引擎特征而不是 UA 品牌枚举：`navigator.standalone` 只有
+   * Safari 有；`AppleWebKit` + Safari 特征 token（不带 CriOS/FxiOS/Edg 等 Chromium
+   * 系后缀）用来区分桌面 Safari 与 iOS 上伪装成 Safari 的第三方浏览器。UA 枚举会
+   * 随新浏览器出现而失效，这两条是引擎级的。
+   */
+  expectsPrompt(): boolean {
+    if (typeof navigator === "undefined") {
+      return false;
+    }
+    const nav = navigator as Navigator & { standalone?: boolean };
+    // iOS Safari 独有
+    if (nav.standalone !== undefined) {
+      return false;
+    }
+    const ua = nav.userAgent || "";
+    const isWebKit = /AppleWebKit/i.test(ua);
+    // 第三方 iOS 浏览器（CriOS/FxiOS/Edg…）底层是 Chromium，会派发该事件
+    const isChromiumIosShell = /CriOS|FxiOS|EdgiOS|OPiOS|Chrome\//i.test(ua);
+    if (isWebKit && /Safari\//i.test(ua) && !isChromiumIosShell) {
+      return false;
+    }
+    return true;
+  }
+
   private displayModeQueries(): MediaQueryList[] {
     if (typeof window === "undefined") {
       return [];

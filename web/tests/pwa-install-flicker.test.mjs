@@ -12,11 +12,16 @@ import { readFileSync } from "node:fs";
 // 在 0 / 43 / 74 帧各存在**恰好一帧**（~42ms）就消失，其余帧与稳态逐像素一致 ——
 // 是渲染翻转，不是布局抖动。
 //
-// 两处根因，各由下面一组断言守住：
+// 三处根因，各由下面一组断言守住：
 //   (1) 事件绑在组件生命周期上 → 必须由模块级单例持有；
 //   (2) 「判定中」的前置门只挂在 isAndroidChrome 上，第三方安卓浏览器
 //       （SamsungBrowser / MiuiBrowser / UCBrowser / HuaweiBrowser / 无 "Chrome" 字样）
-//       整条绕过它，首帧按「不是待定」画出按钮、事件到达后再翻掉 —— 这才是手机上那一下。
+//       整条绕过它，首帧按「不是待定」画出按钮、事件到达后再翻掉 —— 这才是手机上那一下；
+//   (3) 反向也成立：Safari 永不派发该事件，对它设门等于把闪烁换成迟到（回归：iOS 上
+//       按钮从 ~0.3s 推迟到 6.0s）。「会不会派发」由单例 expectsPrompt() 用引擎特征
+//       判定，不是 UA 品牌枚举。
+//
+// 更新按钮（同一底栏、同一类问题）由 tests/update-button-flicker.test.mjs 守。
 
 const fileTree = readFileSync(new URL("../src/components/FileTree.tsx", import.meta.url), "utf8");
 const service = readFileSync(new URL("../src/services/pwaInstall.ts", import.meta.url), "utf8");
@@ -62,12 +67,22 @@ assert.doesNotMatch(
 );
 assert.match(
   fileTree,
-  /const expectsInstallPrompt = !isIOS && !isMacSafari;/,
-  "「该平台会不会派发 beforeinstallprompt」须独立成变量，不能混进 UA 判断",
+  /const installProbePending = pwaInstallService\.expectsPrompt\(\)/,
+  "「该平台会不会派发 beforeinstallprompt」应问单例，不得在组件里按 UA 枚举",
+);
+assert.match(
+  service,
+  /expectsPrompt\(\): boolean \{/,
+  "单例须提供 expectsPrompt()（持有事件的一方才知道会不会派发）",
+);
+assert.doesNotMatch(
+  service,
+  /isMacSafari|isIOS/,
+  "Safari 判定不得在单例里复述组件那套 UA 品牌枚举（会随新浏览器失效）",
 );
 assert.match(
   fileTree,
-  /const installProbePending =\s*\n?\s*expectsInstallPrompt && !installProbeDone && !isKnownInstalled && !isNativeApp;/,
+  /const installProbePending = pwaInstallService\.expectsPrompt\(\)[\s\S]{0,140}&& !installProbeDone[\s\S]{0,80}&& !isKnownInstalled[\s\S]{0,40}&& !isNativeApp;/,
   "应显式区分「判定中」与「不能装」，且覆盖所有会派发该事件的平台",
 );
 assert.match(

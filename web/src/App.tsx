@@ -8893,7 +8893,11 @@ export function App({ onGoHome }: AppProps) {
     });
   }, [file, actionHandlers]);
 
-  const showUpdateButton = shouldShowUpdateButton(updateState);
+  // 更新状态由 WS 的 app.update 推送（pushInitialAppUpdate 在连接时推一次），
+  // 不是启动时同步就绪的。首帧 updateState 还是 normalizeUpdateState(null) 的全空
+  // 初值，若直接拿它判可见性，就会先按「没更新」画一帧、收到推送后再翻出来 ——
+  // 与 PWA 安装按钮同一种闪烁。WS 连上之前一律不画，连上后状态已由服务端推来。
+  const showUpdateButton = status === "connected" && shouldShowUpdateButton(updateState);
   const updateBusy =
     updateSubmitting ||
     ["downloading", "installing", "restarting"].includes(
