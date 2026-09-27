@@ -26,6 +26,23 @@ import {
 /** 卡片能做的状态迁移。cancel 也在这儿：已结束的任务只剩这一个出口。 */
 export type TaskCardAction = "run-now" | "pause" | "resume" | "complete" | "cancel";
 
+/**
+ * 「· + 内容」合成一个 flex item。
+ *
+ * 裸的「·」自己是独立 flex item，换行时可能被留在上一行末尾、把它后面的阶段/状态
+ * 推到下一行 —— 排出来就是行首一个孤零零的「· worktree」（实测 161px 卡上必现）。
+ * 旧的 nowrap 单行挤不出这种形态，是开了 flexWrap 才有的。合成一对就永不拆散。
+ * 不能改用 ::before 伪元素（那样更干净）—— 那需要 className，而本卡的字号必须留在
+ * 行内 style 里：index.css 的分区缩放靠 [style*="font-size: Npx"] 属性选择器。
+ */
+const taskMetaPairStyle: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: "5px",
+  flex: "0 1 auto",
+  minWidth: 0,
+};
+
 export type TaskSessionErrorDialog = { title: string; message: string; details: string[] };
 
 export type TaskCardRowsProps = {
@@ -116,6 +133,9 @@ export function TaskCardRows({
           display: "flex",
           alignItems: "center",
           gap: "5px",
+          // 窄容器（220px 工作台卡 / 161px 移动端两列）里原来 5 个元素挤一条 nowrap 线，
+          // 任务名是唯一可伸缩项，被挤到只剩 23px ≈ 2 个汉字。允许换行后信息分两行各自完整。
+          flexWrap: "wrap",
           minWidth: 0,
           color: "var(--text-secondary)",
           fontSize: "10px",
@@ -126,21 +146,43 @@ export function TaskCardRows({
         {numberLabel ? (
           <span style={{ flex: "0 0 auto", color: "#0ea5e9", fontWeight: 800 }}>{numberLabel}</span>
         ) : null}
-        <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 800, color: "var(--text-color)" }}>
+        {/* flex-basis 是全部：换行按 base size 判定、收缩只发生在换行之后，
+            不给一个明确的小 basis，名字的 auto(=max-content) 仍会被当成占满整行。
+            basis 用百分比而非固定 px：固定 px 会在 300~400px 段反常地比 220px 更窄
+            （那时阶段/状态刚好都排得下、又把剩余全吃掉的名字挤回去）；50% 各段都 ≥ 它。
+            注意 grow 只吃**剩余**空间，拿不走别人的，所以这里不是"名字通吃"。 */}
+        <span
+          title={taskName}
+          style={{
+            flex: "1 1 50%",
+            minWidth: 0,
+            // 2 行截断：与 TaskBoardView 正文折叠同一套写法（仓库先例），不新增 CSS 类。
+            display: "-webkit-box",
+            WebkitLineClamp: 2,
+            WebkitBoxOrient: "vertical",
+            overflow: "hidden",
+            wordBreak: "break-word",
+            overflowWrap: "anywhere",
+            fontWeight: 800,
+            color: "var(--text-color)",
+          }}
+        >
           {taskName}
         </span>
         {stageName ? (
-          <>
+          <span style={taskMetaPairStyle}>
             <span style={{ flex: "0 0 auto", opacity: 0.55 }}>·</span>
             <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {stageName}
             </span>
-          </>
+          </span>
         ) : null}
         {showStatus ? (
           <>
-            <span style={{ flex: "0 0 auto", opacity: 0.55 }}>·</span>
-            <span style={{ flex: "0 0 auto", color: taskStatusColor(task.status || ""), fontWeight: 800 }}>{statusText}</span>
+            <span style={taskMetaPairStyle}>
+              <span style={{ flex: "0 0 auto", opacity: 0.55 }}>·</span>
+              <span style={{ flex: "0 0 auto", color: taskStatusColor(task.status || ""), fontWeight: 800 }}>{statusText}</span>
+            </span>
             {task.status === "fail" && sessionError ? (
               <button
                 type="button"
@@ -167,7 +209,7 @@ export function TaskCardRows({
         </span>
       </div>
       {children}
-      <div style={{ marginTop: "8px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "4px" }}>
+      <div style={{ marginTop: "8px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "4px", flexWrap: "wrap" }}>
         <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
           {sessionKeys.length > 0 ? (
             sessionKeys.map((sessionKey, sessionIndex) => {
@@ -286,7 +328,8 @@ export function TaskCardRows({
         {/* 已结束（success/fail/cancelled）的任务也要留得住「删除」：
             会话没了、worktree 被删导致卡住的任务，卡片上仍得能清理。
             执行 / 完成只对未结束的任务有意义。 */}
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: 0 }}>
+        {/* 换行后靠 marginLeft:auto 仍贴右（space-between 在单行时本来也等效） */}
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 0, marginLeft: "auto" }}>
           {!terminal ? (
             <>
               {showAdvance ? (

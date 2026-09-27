@@ -184,15 +184,23 @@ export const workspaceTaskMetaStyle: React.CSSProperties = {
   flexShrink: 0,
 };
 
-/** 任务名：顶部「需要你」条带里那行字（项目卡的名字样式在 TaskCardRows 内） */
+/**
+ * 任务名：顶部「需要你」条带里那行字（项目卡的名字样式在 TaskCardRows 内）。
+ *
+ * 2 行截断而非单行省略号：条带是 220px 定宽紧凑卡（isMobile 下才占满整宽），
+ * 省略号只会留下「修登录…」。与 TaskCardRows 的名字用同一套写法。
+ */
 export const workspaceTaskNameStyle: React.CSSProperties = {
   fontSize: "12px",
   fontWeight: 600,
   color: "var(--text-color)",
   minWidth: 0,
+  display: "-webkit-box",
+  WebkitLineClamp: 2,
+  WebkitBoxOrient: "vertical",
   overflow: "hidden",
-  textOverflow: "ellipsis",
-  whiteSpace: "nowrap",
+  wordBreak: "break-word",
+  overflowWrap: "anywhere",
 };
 
 export const workspaceFilterButtonStyle = (active: boolean): React.CSSProperties => ({

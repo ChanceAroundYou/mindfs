@@ -2,7 +2,8 @@ import React, { memo } from "react";
 import { ProviderModelSelect } from "./ProviderModelSelect";
 import { rootBadgeStyle } from "./rootBadgeStyle";
 import { NodeBadgeHeader } from "./NodeBadgeHeader";
-import { isNativeShellRuntime, shouldEnablePWAInstall } from "../services/runtime";
+import { isNativeShellRuntime } from "../services/runtime";
+import { pwaInstallService } from "../services/pwaInstall";
 import { hexToRgbaApp } from "../app/taskIcons";
 import { DEFAULT_NODE_COLOR } from "../services/nodeRegistry";
 import {
@@ -1541,6 +1542,10 @@ function FileTreeInner({
   const [deferredInstallPrompt, setDeferredInstallPrompt] = React.useState<BeforeInstallPromptEvent | null>(null);
   const [isInstalled, setIsInstalled] = React.useState(false);
   const [isInstallCapable, setIsInstallCapable] = React.useState(false);
+  // Android Chrome 上「能不能装」只有 beforeinstallprompt 能给结论，而它要等 SW 激活才派发（数秒）。
+  // 没有这个 flag 时「还没结论」和「不能装」共用同一个 false，按钮会先凭空出现再消失。
+  // 置位后，按钮的可见性不再被这个迟到的异步事件来回翻转。
+  const [installProbeDone, setInstallProbeDone] = React.useState(false);
   const [protectedAPIReady, setProtectedAPIReady] = React.useState(() =>
     bootstrapService.canUseProtectedAPI(),
   );
@@ -1684,16 +1689,6 @@ function FileTreeInner({
     return isDesktop && isChromium && !isExcluded;
   }, []);
 
-  const isStandaloneDisplay = React.useCallback(() => {
-    if (typeof window === "undefined") {
-      return false;
-    }
-    return window.matchMedia("(display-mode: standalone)").matches
-      || window.matchMedia("(display-mode: window-controls-overlay)").matches
-      || window.matchMedia("(display-mode: fullscreen)").matches
-      || (window.navigator as Navigator & { standalone?: boolean }).standalone === true;
-  }, []);
-
   const hasPersistedInstallState = React.useCallback(() => {
     if (typeof window === "undefined") {
       return false;
@@ -1705,66 +1700,21 @@ function FileTreeInner({
     }
   }, []);
 
-  const persistInstallState = React.useCallback(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    try {
-      window.localStorage.setItem(PWA_INSTALL_STATE_KEY, "true");
-    } catch {
-    }
-  }, []);
-
+  // 安装状态订阅模块级单例而非组件本地 state：beforeinstallprompt 每生命周期只派发一次，
+  // 而 FileTree 在移动端会被整块卸载（侧栏关闭即销毁 <aside>），本地 state 会跟着归零。
   React.useEffect(() => {
-    if (typeof window === "undefined" || !shouldEnablePWAInstall()) {
-      setDeferredInstallPrompt(null);
-      setIsInstalled(false);
-      setIsInstallCapable(false);
-      return;
-    }
-
-    const updateInstallState = () => {
-      const installed = isStandaloneDisplay();
-      const knownInstall = installed || hasPersistedInstallState();
-      setIsInstalled(installed);
-      setIsInstallCapable(knownInstall || isIOS || "serviceWorker" in navigator);
-    };
-
-    const handleBeforeInstallPrompt = (event: Event) => {
-      event.preventDefault();
-      setDeferredInstallPrompt(event as BeforeInstallPromptEvent);
-      setIsInstallCapable(true);
-    };
-
-    const handleInstalled = () => {
-      persistInstallState();
-      setIsInstalled(true);
-      setDeferredInstallPrompt(null);
-    };
-
-    updateInstallState();
-    window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
-    window.addEventListener("appinstalled", handleInstalled);
-    window.addEventListener("pageshow", updateInstallState);
-    document.addEventListener("visibilitychange", updateInstallState);
-
-    const standaloneQuery = window.matchMedia("(display-mode: standalone)");
-    const overlayQuery = window.matchMedia("(display-mode: window-controls-overlay)");
-    const fullscreenQuery = window.matchMedia("(display-mode: fullscreen)");
-    standaloneQuery.addEventListener?.("change", updateInstallState);
-    overlayQuery.addEventListener?.("change", updateInstallState);
-    fullscreenQuery.addEventListener?.("change", updateInstallState);
-
-    return () => {
-      window.removeEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
-      window.removeEventListener("appinstalled", handleInstalled);
-      window.removeEventListener("pageshow", updateInstallState);
-      document.removeEventListener("visibilitychange", updateInstallState);
-      standaloneQuery.removeEventListener?.("change", updateInstallState);
-      overlayQuery.removeEventListener?.("change", updateInstallState);
-      fullscreenQuery.removeEventListener?.("change", updateInstallState);
-    };
-  }, [hasPersistedInstallState, isIOS, isStandaloneDisplay, persistInstallState]);
+    return pwaInstallService.subscribe((snapshot) => {
+      setDeferredInstallPrompt(snapshot.deferredPrompt);
+      setIsInstalled(snapshot.installed);
+      setInstallProbeDone(snapshot.probed);
+      setIsInstallCapable(
+        snapshot.deferredPrompt !== null
+        || snapshot.installed
+        || isIOS
+        || (typeof navigator !== "undefined" && "serviceWorker" in navigator),
+      );
+    });
+  }, [isIOS]);
 
   const isKnownInstalled = isInstalled || hasPersistedInstallState();
 
@@ -1798,8 +1748,13 @@ function FileTreeInner({
         ? t("pwa.helpDeferred")
         : t("pwa.helpUnavailable");
 
-  const shouldShowInstallButton = !isNativeApp && !isKnownInstalled && !(isAndroidChrome && !deferredInstallPrompt);
-  const shouldShowInstallHelp = !isNativeApp && (!!installHelp) && (isKnownInstalled || isIOS || isMacSafari || isDesktopChromium || deferredInstallPrompt !== null || (isAndroidChrome && !deferredInstallPrompt));
+  // Android Chrome 的可见性完全由 beforeinstallPromptEvent 决定：事件来之前一律不画，
+  // 事件来之后由 installProbeDone 锁死，不再被它清空后二次翻转。
+  // 其余平台的可见性不依赖这个事件，保持原判定（改动面收窄，避免桌面端按钮被延迟显示）。
+  const installProbePending = isAndroidChrome && !installProbeDone;
+
+  const shouldShowInstallButton = !installProbePending && !isNativeApp && !isKnownInstalled && !(isAndroidChrome && !deferredInstallPrompt);
+  const shouldShowInstallHelp = !installProbePending && !isNativeApp && (!!installHelp) && (isKnownInstalled || isIOS || isMacSafari || isDesktopChromium || deferredInstallPrompt !== null || (isAndroidChrome && !deferredInstallPrompt));
   const hasFooterContent =
     !!updateActionLabel ||
     !!updateActionHelp ||
@@ -1817,11 +1772,11 @@ function FileTreeInner({
       try {
         const choice = await deferredInstallPrompt.userChoice;
         if (choice.outcome === "accepted") {
-          persistInstallState();
-          setIsInstalled(true);
+          pwaInstallService.markInstalled();
         }
       } finally {
-        setDeferredInstallPrompt(null);
+        // 一次性 event 用过即弃：清掉并落定，避免按钮又被翻回「判定中」而消失
+        pwaInstallService.consumeDeferredPrompt();
       }
       return;
     }
@@ -1845,7 +1800,7 @@ function FileTreeInner({
       return;
     }
     alertDialog(t("pwa.alertUnavailable"));
-  }, [deferredInstallPrompt, isAndroidChrome, isDesktopChromium, isIOS, isKnownInstalled, isMacSafari, persistInstallState, t]);
+  }, [deferredInstallPrompt, isAndroidChrome, isDesktopChromium, isIOS, isKnownInstalled, isMacSafari, t]);
 
   React.useEffect(() => {
     if (!creatingRootName) {
