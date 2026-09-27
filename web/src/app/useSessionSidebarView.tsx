@@ -82,6 +82,12 @@ export type SessionSidebarViewParams = {
   handlePinSession: SessionListProps["onPin"];
   handleRenameSession: SessionListProps["onRename"];
   handleDeleteSession: SessionListProps["onDelete"];
+  handleArchiveSession: SessionListProps["onArchive"];
+  archiveOpen: boolean;
+  archiveLoading: boolean;
+  archiveCount: number;
+  archivedSessions: SessionItem[];
+  toggleArchiveOpen: () => void;
   loadChildSessionsForParent: SessionListProps["onLoadChildren"];
   handleLoadOlderSessions: () => void;
   loadingOlderSessions: boolean;
@@ -139,6 +145,12 @@ export function useSessionSidebarView({
   handlePinSession,
   handleRenameSession,
   handleDeleteSession,
+  handleArchiveSession,
+  archiveOpen,
+  archiveLoading,
+  archiveCount,
+  archivedSessions,
+  toggleArchiveOpen,
   loadChildSessionsForParent,
   handleLoadOlderSessions,
   loadingOlderSessions,
@@ -290,8 +302,14 @@ export function useSessionSidebarView({
         onPin={handlePinSession}
         onRename={handleRenameSession}
         onDelete={handleDeleteSession}
+        onArchive={handleArchiveSession}
         onLoadMoreProject={loadMoreMultiProjectSessions}
         onLoadChildren={loadChildSessionsForParent}
+        archiveOpen={archiveOpen}
+        archiveLoading={archiveLoading}
+        archiveCount={archiveCount}
+        archivedSessions={archivedSessions}
+        onToggleArchive={toggleArchiveOpen}
       />
     ) : (
       <SessionList
@@ -331,6 +349,7 @@ export function useSessionSidebarView({
         onPin={handlePinSession}
         onRename={handleRenameSession}
         onDelete={handleDeleteSession}
+        onArchive={handleArchiveSession}
         onLoadChildren={
           sessionSearchOpen && sessionSearchResultsMode
             ? undefined
@@ -351,6 +370,11 @@ export function useSessionSidebarView({
             ? false
             : hasMoreSessions
         }
+        archivedSessions={archivedSessions}
+        archiveOpen={archiveOpen}
+        archiveLoading={archiveLoading}
+        archiveCount={archiveCount}
+        onToggleArchive={toggleArchiveOpen}
       />
     );
 

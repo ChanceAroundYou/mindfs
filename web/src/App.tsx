@@ -12,6 +12,7 @@ import {
   clearCachedSessionsForRoot,
   clearWindowedView,
   deleteCachedSession,
+  deleteCachedSessionLists,
   getCachedMultiRootSessionList,
   getCachedSession,
   getCachedSessionList,
@@ -110,6 +111,7 @@ import {
   applyPinnedSnapshotToSessions,
   mergeSessionItems,
 } from "./services/sessionListMerge";
+import { collectSessionSubtreeKeys, type SessionTreeItem } from "./services/sessionTree";
 import { currentUser } from "./services/authGate";
 // 直接导入标准组件
 import { AppShell } from "./layout/AppShell";
@@ -289,6 +291,9 @@ export function App({ onGoHome }: AppProps) {
   const sessionsRef = useRef<SessionItem[]>([]);
   const multiProjectSessionsEnabled = true;
   const [multiProjectSessionGroups, setMultiProjectSessionGroups] = useState<MultiProjectSessionGroup[]>([]);
+  // 多项目分组的 ref 镜像：删除会话时要跨分组收集整棵子树，只看 sessionsRef 会漏掉
+  // 只存在于分组里的子会话（它们随后会被提升成顶层行，把面板撑爆）。
+  const multiProjectSessionGroupsRef = useRef<MultiProjectSessionGroup[]>([]);
   const [multiProjectSessionsLoading, setMultiProjectSessionsLoading] = useState(false);
   // 多项目列表全量重拉竞态守卫：只应用最后一次发起的请求结果，避免旧响应覆盖新数据
   const multiProjectLoadSeqRef = useRef(0);
@@ -297,6 +302,13 @@ export function App({ onGoHome }: AppProps) {
   const [syncingSessionKeys, setSyncingSessionKeys] = useState<Set<string>>(
     () => new Set(),
   );
+  // 归档区：默认不渲染任何归档行，面板底部只留一行摘要，点开才懒加载。
+  const [archivedSessions, setArchivedSessions] = useState<SessionItem[]>([]);
+  const [archiveOpen, setArchiveOpen] = useState(false);
+  const [archiveLoading, setArchiveLoading] = useState(false);
+  const [archiveCount, setArchiveCount] = useState(0);
+  // 归档/取消归档后 +1，强制下面的懒加载 effect 重拉一次（否则摘要数字会停留在旧值）。
+  const [archiveReloadToken, setArchiveReloadToken] = useState(0);
   const [hasMoreSessions, setHasMoreSessions] = useState(false);
   const [loadingOlderSessions, setLoadingOlderSessions] = useState(false);
   const [sessionListMode, setSessionListMode] = useState<"local" | "import">(
@@ -1428,6 +1440,9 @@ export function App({ onGoHome }: AppProps) {
   useEffect(() => {
     sessionsRef.current = sessions;
   }, [sessions]);
+  useEffect(() => {
+    multiProjectSessionGroupsRef.current = multiProjectSessionGroups;
+  }, [multiProjectSessionGroups]);
   useEffect(() => {
     multiProjectPendingRef.current = multiProjectPendingByKey;
   }, [multiProjectPendingByKey]);
@@ -3327,6 +3342,7 @@ export function App({ onGoHome }: AppProps) {
     closeSessionSearch,
     toggleSessionSearch,
     handleSearchQueryChange,
+    setSessionSearchResults,
   } = useSessionSearch({
     currentRootId,
     sessionListMode,
@@ -3674,24 +3690,32 @@ export function App({ onGoHome }: AppProps) {
         (session?.root_id as string | undefined) || currentRootIdRef.current;
       if (!rootID || !sessionKey) return;
 
+      // 删除是不可撤销的（归档才是那条可回头的路），且后端会连带删掉整棵子树。
+      // 放在唯一的删除出口而不是每个调用点，菜单/快捷键/未来入口全都覆盖到。
+      const sessionName = String(session?.name || sessionKey.slice(0, 8));
+      if (
+        !(await confirmDialog({
+          message: t("sessionList.confirmDeleteSession", { name: sessionName }),
+          danger: true,
+        }))
+      ) {
+        return;
+      }
+
       const deleted = await sessionService.deleteSession(rootID, sessionKey, String((session as any)?._nodeId || "") || getNodeIdForRoot(rootID));
       if (!deleted) {
         reportError("session.delete_failed", t("session.deleteFailed"));
         return;
       }
 
-      const deletedKeys = new Set<string>();
-      const collectDeletedKeys = (key: string) => {
-        if (!key || deletedKeys.has(key)) return;
-        deletedKeys.add(key);
-        for (const item of sessionsRef.current) {
-          const itemKey = item.key || item.session_key || "";
-          if (String(item.parent_session_key || "").trim() === key) {
-            collectDeletedKeys(itemKey);
-          }
-        }
-      };
-      collectDeletedKeys(sessionKey);
+      // 后端已按 parent_session_key 级联删掉整棵子树；这里要在**全部**本地状态里
+      // 摘掉同一批 key。只看 sessionsRef 会漏掉只存在于多项目分组里的子会话，
+      // 漏掉的那些会被树构建当成孤儿提升成顶层整宽行 —— 面板就此撑爆且收不回去。
+      const knownItems: SessionTreeItem[] = [
+        ...sessionsRef.current,
+        ...multiProjectSessionGroupsRef.current.flatMap((group) => group.sessions || []),
+      ];
+      const deletedKeys = new Set<string>(collectSessionSubtreeKeys(knownItems, sessionKey));
 
       setSessions((prev) =>
         prev.filter((item) => !deletedKeys.has(item.key || item.session_key || "")),
@@ -3707,6 +3731,13 @@ export function App({ onGoHome }: AppProps) {
         staleSessionKeysRef.current.delete(cacheKey);
         void deleteCachedSession(rootID, deletedKey, getNodeIdForRoot(rootID));
       }
+
+      // 搜索结果独立于两棵列表 state，删掉的会话会继续挂在结果里；
+      // 列表快照同理——只删单个会话记录不动列表快照的话，下次进面板已删的行会从缓存里复活。
+      setSessionSearchResults((prev) =>
+        prev.filter((item) => !deletedKeys.has(item.key || item.session_key || "")),
+      );
+      void deleteCachedSessionLists(rootID, getNodeIdForRoot(rootID));
 
       if (deletedKeys.has(boundSessionByRootRef.current[scopedRootKey(rootID)] || "")) {
         resetSessionLockForRoot(rootID);
@@ -3924,6 +3955,198 @@ export function App({ onGoHome }: AppProps) {
     },
     [bumpCacheVersion, rootSessionKey, setDrawerSessionForRoot, t],
   );
+
+  // 归档/取消归档。后端按 parent_session_key 级联整棵子树，前端要摘掉的是同一批 key
+  // ——和 handleDeleteSession 完全同一套收集+摘除逻辑，只是摘除后不销毁缓存（内容还在）。
+  const pruneSubtreeFromSessionState = useCallback(
+    (rootID: string, sessionKey: string, sessionNodeId: string) => {
+      const knownItems: SessionTreeItem[] = [
+        ...sessionsRef.current,
+        ...multiProjectSessionGroupsRef.current.flatMap((group) => group.sessions || []),
+      ];
+      const affected = new Set<string>(
+        collectSessionSubtreeKeys(knownItems, sessionKey),
+      );
+      if (affected.size <= 0) {
+        return affected;
+      }
+      setSessions((prev) =>
+        prev.filter((item) => !affected.has(item.key || item.session_key || "")),
+      );
+      setMultiProjectSessionGroups((prev) =>
+        prev
+          .map((group) => {
+            if (
+              group.rootId !== rootID ||
+              (sessionNodeId && (group as any)._nodeId !== sessionNodeId)
+            ) {
+              return group;
+            }
+            const sessions = group.sessions.filter(
+              (item) => !affected.has(item.key || item.session_key || ""),
+            );
+            return {
+              ...group,
+              sessions,
+              totalCount: Math.max(0, group.totalCount - (group.sessions.length - sessions.length)),
+            };
+          })
+          .filter((group) => group.totalCount > 0 || group.sessions.length > 0),
+      );
+      return affected;
+    },
+    [],
+  );
+
+  const handleArchiveSession = useCallback(
+    async (session: SessionItem, archived: boolean) => {
+      const sessionKey = session?.key || session?.session_key;
+      const rootID =
+        (session?.root_id as string | undefined) || currentRootIdRef.current;
+      if (!rootID || !sessionKey) return false;
+      const sessionNodeId =
+        String((session as any)?._nodeId || "") ||
+        getNodeIdForRoot(rootID) ||
+        "";
+
+      const updated = await sessionService.setSessionArchived(
+        rootID,
+        sessionKey,
+        archived,
+        sessionNodeId,
+      );
+      if (!updated) {
+        reportError("session.archive_failed", t("session.archiveFailed"));
+        return false;
+      }
+
+      // 归档态只由归档区的懒加载结果持有，不进两棵列表 state ——
+      // 同一批 key 出现在两个视图里会被树构建各算一次，还会撞上孤儿提升。
+      const affected = pruneSubtreeFromSessionState(
+        rootID,
+        sessionKey,
+        sessionNodeId,
+      );
+      if (!archived) {
+        // 取消归档要把整棵子树放回主列表。只有 root 这个会话有服务端返回的完整元数据，
+        // 后代沿用它（子会话的 root_id/nodeColor 一致），档案行的字段本来就来自同一份列表。
+        const restored = [...affected]
+          .map((key) =>
+            toSessionItem(rootID, {
+              ...(session as any),
+              key,
+              session_key: key,
+              root_id: rootID,
+              _nodeId: sessionNodeId,
+              archived_at: null,
+            }),
+          )
+          .filter((item): item is SessionItem => !!item);
+        if (restored.length) {
+          setSessions((prev) => mergeSessionItems(prev, restored));
+          setMultiProjectSessionGroups((prev) => {
+            const matches = (group: MultiProjectSessionGroup) =>
+              group.rootId === rootID &&
+              (!sessionNodeId || (group as any)._nodeId === sessionNodeId);
+            // 分组可能在上面的摘除里被整个丢掉（该项目可见会话归零），
+            // 多项目面板只渲染分组，所以取消归档必须把它建回来。
+            const next = prev.some(matches)
+              ? prev
+              : [
+                  ...prev,
+                  {
+                    rootId: rootID,
+                    rootName:
+                      managedRootByIdRef.current[rootID]?.display_name || rootID,
+                    latestSessionTime: String(session.updated_at || ""),
+                    _nodeId: sessionNodeId || undefined,
+                    sessions: [],
+                    totalCount: 0,
+                  } satisfies MultiProjectSessionGroup,
+                ];
+            return next.map((group) =>
+              matches(group)
+                ? {
+                    ...group,
+                    sessions: mergeSessionItems(group.sessions, restored),
+                    totalCount: group.totalCount + restored.length,
+                  }
+                : group,
+            );
+          });
+        }
+      }
+      setSessionSearchResults((prev) =>
+        prev.filter((item) => !affected.has(item.key || item.session_key || "")),
+      );
+      // 归档区快照已过期（摘掉的可能是里面的行，撤销归档会往里加行），
+      // 重新展开时按下面的 effect 重拉；已展开则立刻重拉一次。
+      setArchivedSessions((prev) =>
+        prev.filter((item) => !affected.has(item.key || item.session_key || "")),
+      );
+      setArchiveCount((count) => Math.max(0, count - affected.size));
+      setArchiveReloadToken((token) => token + 1);
+      void deleteCachedSessionLists(rootID, sessionNodeId);
+      return true;
+    },
+    [pruneSubtreeFromSessionState, t],
+  );
+
+  // 归档区懒加载：只有展开过 / 归档状态变过才拉，未展开时面板零成本。
+  // ponytail: 按多项目分组里出现过的 rootId 逐个查。某个项目的会话被**全部**归档后
+  // 该分组就不再出现，它的归档行会漏在列表外；等真出现这种项目再改成查 managedRoot 全集。
+  useEffect(() => {
+    if (!archiveOpen) return;
+    const rootIds = Array.from(
+      new Set(
+        multiProjectSessionGroupsRef.current
+          .map((group) => String(group.rootId || ""))
+          .filter(Boolean),
+      ),
+    );
+    if (rootIds.length === 0) return;
+    let cancelled = false;
+    setArchiveLoading(true);
+    (async () => {
+      try {
+        const payloads = await Promise.all(
+          rootIds.map((rootId) =>
+            sessionService.fetchSessions(rootId, {
+              nodeId: getNodeIdForRoot(rootId),
+              limit: SESSION_PAGE_SIZE,
+              archivedOnly: true,
+            }),
+          ),
+        );
+        if (cancelled) return;
+        setArchivedSessions(
+          payloads
+            .flatMap((payload, i) =>
+              payload.items.map((item) =>
+                toSessionItem(rootIds[i], {
+                  ...(item as any),
+                  root_id: rootIds[i],
+                }),
+              ),
+            )
+            .filter((item): item is SessionItem => !!item)
+            .sort(
+              (a, b) =>
+                String(b.updated_at || "").localeCompare(String(a.updated_at || "")) ||
+                String(a.key).localeCompare(String(b.key)),
+            ),
+        );
+        setArchiveCount(
+          payloads.reduce((sum, payload) => sum + (payload.totalCount || payload.items.length), 0),
+        );
+      } finally {
+        if (!cancelled) setArchiveLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [archiveOpen, archiveReloadToken]);
 
   const handleSyncSession = useCallback(
     async (session: SessionItem) => {
@@ -8680,6 +8903,11 @@ export function App({ onGoHome }: AppProps) {
   const updateHelp = updateState.message || updateSummaryText(updateState, t);
   const updateSummary = updateSummaryText(updateState, t);
 
+  // 归档区：默认收起，面板底部一行摘要，点开才拉取。
+  const toggleArchiveOpen = useCallback(() => {
+    setArchiveOpen((open) => !open);
+  }, []);
+
   const { sessionImportMenu, sessionSidebar } = useSessionSidebarView({
     sessionListMode,
     importMenuRef,
@@ -8721,6 +8949,12 @@ export function App({ onGoHome }: AppProps) {
     handlePinSession,
     handleRenameSession,
     handleDeleteSession,
+    handleArchiveSession,
+    archiveOpen,
+    archiveLoading,
+    archiveCount,
+    archivedSessions,
+    toggleArchiveOpen,
     loadMoreMultiProjectSessions,
     loadChildSessionsForParent,
     sessionSearchResults,

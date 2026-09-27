@@ -446,6 +446,33 @@ func (s *TaskStore) UpdateTaskAuxFlags(ctx context.Context, taskID string, patch
 	return err
 }
 
+// ClearSessionRefs 清掉任务指向某个会话的所有引用（main_session_key + 阶段运行的 session_key）。
+//
+// 会话被删除后必须调它：否则任务仍指向一个不存在的 key，任务面板点进去是空白。
+// 归档不走这里 —— 归档的会话还能打开，链接必须留着。
+func (s *TaskStore) ClearSessionRefs(ctx context.Context, taskID, sessionKey string) error {
+	taskID = strings.TrimSpace(taskID)
+	key := strings.TrimSpace(sessionKey)
+	if taskID == "" || key == "" {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	// 只清「确实指向这个会话」的那一条：任务的主会话可能已被改成别的 key。
+	if _, err := tx.ExecContext(ctx, `UPDATE tasks SET main_session_key = '', updated_at = ? WHERE id = ? AND main_session_key = ?`,
+		s.now().UTC().Format(time.RFC3339Nano), taskID, key); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE stage_runs SET session_key = '', updated_at = ? WHERE task_id = ? AND session_key = ?`,
+		s.now().UTC().Format(time.RFC3339Nano), taskID, key); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *TaskStore) UpdateTask(ctx context.Context, task Task) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
