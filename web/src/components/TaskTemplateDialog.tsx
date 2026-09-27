@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { StageEditor } from "./StageEditor";
-import { PanelShell, panelButtonStyle, panelIconButtonStyle, CloseGlyph } from "./PanelShell";
+import { PanelShell, panelButtonStyle, panelIconButtonStyle } from "./PanelShell";
 import { composerInputStyle } from "./action/composerStyles";
 import {
   saveTaskTemplate,
@@ -191,13 +191,9 @@ export function TaskTemplateDialog({ open, agents, template, onClose, onSaved, n
       onClose={onClose}
       hasUnsavedChanges={() => dirty}
       title={<div style={{ fontSize: "15px", fontWeight: 800, color: "var(--text-color)" }}>{title}</div>}
-      headerRight={(requestClose) => (
+      headerRight={(
         <div style={{ display: "flex", gap: "8px" }}>
-          <button type="button" onClick={requestClose} style={panelButtonStyle("secondary")}>{t("taskTemplate.close")}</button>
           <button type="button" disabled={saving} onClick={() => void saveTask()} style={panelButtonStyle("primary")}>{saving ? t("common.saving") : t("common.save")}</button>
-          <button type="button" aria-label={t("common.close")} title={t("common.close")} onClick={requestClose} style={panelIconButtonStyle()}>
-            <CloseGlyph />
-          </button>
         </div>
       )}
       belowHeader={saveError ? (
