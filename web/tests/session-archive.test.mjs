@@ -68,3 +68,27 @@ test("setSessionArchived 打 POST /api/sessions/{key}/archive 并带 archived �
   assert.match(sessionServiceSrc, /\/api\/sessions\/\$\{encodeURIComponent\(sessionKey\)\}\/archive/);
   assert.match(sessionServiceSrc, /body: JSON\.stringify\(\{ archived \}\),/);
 });
+
+test("删除会话走应用内确认弹窗，且挡在 deleteSession 之前", () => {
+  // 删除级联删掉整棵子树且不可撤销，误触成本很高。
+  // 守卫放在 handleDeleteSession 内部（唯一删除出口），
+  // 不放在 SessionCard 的菜单回调里——那样换个入口就绕过去了。
+  const appSrc = read("src/App.tsx");
+  const start = appSrc.indexOf("const handleDeleteSession = useCallback(");
+  assert.ok(start >= 0, "App.tsx 应有 handleDeleteSession");
+  const body = appSrc.slice(start, appSrc.indexOf("const handleRenameSession = useCallback(", start));
+  const confirmAt = body.indexOf("confirmDialog(");
+  const deleteAt = body.indexOf("sessionService.deleteSession(");
+  assert.ok(confirmAt >= 0, "删除会话前应有确认弹窗");
+  assert.ok(deleteAt > confirmAt, "确认弹窗必须早于实际删除");
+  // 取消时直接 return，不发起请求
+  assert.match(body, /if \(\s*!\(await confirmDialog\(/);
+});
+
+test("确认弹窗文案两种语言都有，且提示级联与不可撤销", () => {
+  for (const locale of ["zh-CN", "en-US"]) {
+    const src = read(`src/i18n/locales/${locale}.ts`);
+    assert.match(src, /"sessionList\.confirmDeleteSession":/);
+  }
+});
+

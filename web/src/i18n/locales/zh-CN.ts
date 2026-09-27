@@ -343,6 +343,7 @@ export const zhCN = {
   "sessionList.archive": "归档",
   "sessionList.unarchive": "取消归档",
   "sessionList.archiveCount": "已归档 {count} 个会话",
+  "sessionList.confirmDeleteSession": "删除会话「{name}」及其全部子会话？该操作不可撤销。",
   "sessionList.childCount": "{count} 个子会话",
   "sessionList.confirmRename": "确认重命名",
   "sessionList.cancelRename": "取消重命名",

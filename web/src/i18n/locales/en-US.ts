@@ -345,6 +345,7 @@ export const enUS = {
   "sessionList.archive": "Archive",
   "sessionList.unarchive": "Unarchive",
   "sessionList.archiveCount": "{count} archived sessions",
+  "sessionList.confirmDeleteSession": "Delete session \"{name}\" and all of its child sessions? This cannot be undone.",
   "sessionList.childCount": "{count} child sessions",
   "sessionList.confirmRename": "Confirm rename",
   "sessionList.cancelRename": "Cancel rename",

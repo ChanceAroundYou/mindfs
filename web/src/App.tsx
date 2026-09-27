@@ -3690,6 +3690,18 @@ export function App({ onGoHome }: AppProps) {
         (session?.root_id as string | undefined) || currentRootIdRef.current;
       if (!rootID || !sessionKey) return;
 
+      // 删除是不可撤销的（归档才是那条可回头的路），且后端会连带删掉整棵子树。
+      // 放在唯一的删除出口而不是每个调用点，菜单/快捷键/未来入口全都覆盖到。
+      const sessionName = String(session?.name || sessionKey.slice(0, 8));
+      if (
+        !(await confirmDialog({
+          message: t("sessionList.confirmDeleteSession", { name: sessionName }),
+          danger: true,
+        }))
+      ) {
+        return;
+      }
+
       const deleted = await sessionService.deleteSession(rootID, sessionKey, String((session as any)?._nodeId || "") || getNodeIdForRoot(rootID));
       if (!deleted) {
         reportError("session.delete_failed", t("session.deleteFailed"));
