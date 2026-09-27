@@ -583,6 +583,175 @@ func TestDeleteSessionReturnsCascadeKeys(t *testing.T) {
 	}
 }
 
+func TestArchiveSessionCascadesToSubtreeAndKeepsContent(t *testing.T) {
+	ctx := context.Background()
+	root := rootfs.NewRootInfo("mindfs", "mindfs", t.TempDir())
+	manager := session.NewManager(root)
+	service := Service{Registry: &commandTestRegistry{root: root, manager: manager}}
+
+	parent, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, Name: "parent"})
+	if err != nil {
+		t.Fatalf("create parent: %v", err)
+	}
+	child, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, ParentSessionKey: parent.Key, Name: "child"})
+	if err != nil {
+		t.Fatalf("create child: %v", err)
+	}
+	grandchild, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, ParentSessionKey: child.Key, Name: "grandchild"})
+	if err != nil {
+		t.Fatalf("create grandchild: %v", err)
+	}
+	sibling, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, Name: "sibling"})
+	if err != nil {
+		t.Fatalf("create sibling: %v", err)
+	}
+	if err := manager.AddExchangeForAgent(ctx, parent, "user", "hello", "", "", "", ""); err != nil {
+		t.Fatalf("add exchange: %v", err)
+	}
+
+	archived, err := service.ArchiveSession(ctx, ArchiveSessionInput{RootID: root.ID, Key: parent.Key, Archived: true})
+	if err != nil {
+		t.Fatalf("archive parent: %v", err)
+	}
+	if archived == nil || archived.ArchivedAt == nil {
+		t.Fatal("archive should return the archived session")
+	}
+	// 整棵子树都打上标记
+	for _, item := range []*session.Session{parent, child, grandchild} {
+		got, err := manager.Get(ctx, item.Key, 0)
+		if err != nil {
+			t.Fatalf("reload %s: %v", item.Key, err)
+		}
+		if got.ArchivedAt == nil {
+			t.Fatalf("descendant %s should be archived too", item.Key)
+		}
+	}
+	if other, err := manager.Get(ctx, sibling.Key, 0); err != nil || other.ArchivedAt != nil {
+		t.Fatalf("sibling must stay visible: err=%v archivedAt=%v", err, other.ArchivedAt)
+	}
+
+	// 归档不是删除：正文必须还在（深链接/搜索仍要能打开它）
+	loaded, err := manager.Get(ctx, parent.Key, 0)
+	if err != nil {
+		t.Fatalf("archived session must still be readable: %v", err)
+	}
+	if len(loaded.Exchanges) == 0 {
+		t.Fatal("archived session lost its exchanges")
+	}
+}
+
+func TestArchiveSessionUnarchiveRestoresVisibility(t *testing.T) {
+	ctx := context.Background()
+	root := rootfs.NewRootInfo("mindfs", "mindfs", t.TempDir())
+	manager := session.NewManager(root)
+	service := Service{Registry: &commandTestRegistry{root: root, manager: manager}}
+
+	created, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, Name: "s"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := service.ArchiveSession(ctx, ArchiveSessionInput{RootID: root.ID, Key: created.Key, Archived: true}); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+	if _, err := service.ArchiveSession(ctx, ArchiveSessionInput{RootID: root.ID, Key: created.Key, Archived: false}); err != nil {
+		t.Fatalf("unarchive: %v", err)
+	}
+	got, err := manager.Get(ctx, created.Key, 0)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if got.ArchivedAt != nil {
+		t.Fatalf("ArchivedAt = %v, want nil", got.ArchivedAt)
+	}
+}
+
+func TestArchiveSessionKeepsForkSession(t *testing.T) {
+	// 与 TestDeleteSessionKeepsForkSession 对称：fork 只记来源，不是子会话。
+	ctx := context.Background()
+	root := rootfs.NewRootInfo("mindfs", "mindfs", t.TempDir())
+	manager := session.NewManager(root)
+	service := Service{Registry: &commandTestRegistry{root: root, manager: manager}}
+
+	parent, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, Name: "parent"})
+	if err != nil {
+		t.Fatalf("create parent: %v", err)
+	}
+	fork, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, Source: `{"type":"fork"}`, Name: "fork"})
+	if err != nil {
+		t.Fatalf("create fork: %v", err)
+	}
+	subagent, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, ParentSessionKey: parent.Key, Name: "subagent"})
+	if err != nil {
+		t.Fatalf("create subagent: %v", err)
+	}
+
+	if _, err := service.ArchiveSession(ctx, ArchiveSessionInput{RootID: root.ID, Key: parent.Key, Archived: true}); err != nil {
+		t.Fatalf("archive parent: %v", err)
+	}
+	got, err := manager.Get(ctx, subagent.Key, 0)
+	if err != nil {
+		t.Fatalf("subagent must still exist after archiving its parent: %v", err)
+	}
+	if got.ArchivedAt == nil {
+		t.Fatal("subagent should be archived with its parent")
+	}
+	forkGot, err := manager.Get(ctx, fork.Key, 0)
+	if err != nil {
+		t.Fatalf("fork must remain: %v", err)
+	}
+	if forkGot.ArchivedAt != nil {
+		t.Fatal("fork must not be archived")
+	}
+}
+
+func TestListSessionsArchivedOnlyViaUsecase(t *testing.T) {
+	ctx := context.Background()
+	root := rootfs.NewRootInfo("mindfs", "mindfs", t.TempDir())
+	manager := session.NewManager(root)
+	service := Service{Registry: &commandTestRegistry{root: root, manager: manager}}
+
+	visible, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, Name: "visible"})
+	if err != nil {
+		t.Fatalf("create visible: %v", err)
+	}
+	hidden, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, Name: "hidden"})
+	if err != nil {
+		t.Fatalf("create hidden: %v", err)
+	}
+	if _, err := service.ArchiveSession(ctx, ArchiveSessionInput{RootID: root.ID, Key: hidden.Key, Archived: true}); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+
+	out, err := service.ListSessions(ctx, ListSessionsInput{RootID: root.ID})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(out.Sessions) != 1 || out.Sessions[0].Key != visible.Key {
+		t.Fatalf("default list = %v, want only %s", keysOfSessions(out.Sessions), visible.Key)
+	}
+	if out.TotalCount != 1 {
+		t.Fatalf("TotalCount = %d, want 1", out.TotalCount)
+	}
+
+	archived, err := service.ListSessions(ctx, ListSessionsInput{RootID: root.ID, ArchivedOnly: true})
+	if err != nil {
+		t.Fatalf("list archived: %v", err)
+	}
+	if len(archived.Sessions) != 1 || archived.Sessions[0].Key != hidden.Key {
+		t.Fatalf("archived list = %v, want only %s", keysOfSessions(archived.Sessions), hidden.Key)
+	}
+}
+
+func keysOfSessions(items []*session.Session) []string {
+	keys := make([]string, 0, len(items))
+	for _, item := range items {
+		if item != nil {
+			keys = append(keys, item.Key)
+		}
+	}
+	return keys
+}
+
 func TestSubSessionSyntheticDonePersistsPartialResponse(t *testing.T) {
 	ctx := context.Background()
 	rootDir := t.TempDir()

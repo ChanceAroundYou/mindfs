@@ -44,6 +44,8 @@ type ListSessionsInput struct {
 	Limit           int
 	TopLevelOnly    bool
 	IncludeChildren bool
+	// ArchivedOnly = 只列已归档（归档区）。默认 false = 排除已归档（主面板）。
+	ArchivedOnly bool
 }
 
 type ListSessionsOutput struct {
@@ -108,6 +110,15 @@ type SessionSearchHit struct {
 	Snippet          string     `json:"snippet,omitempty"`
 }
 
+// archivedMode 把「只列归档」这个 bool 翻成 manager 的枚举值。
+// 零值 "" 即「排除归档」，也就是主面板的老行为。
+func archivedMode(only bool) string {
+	if only {
+		return "only"
+	}
+	return ""
+}
+
 func (s *Service) ListSessions(ctx context.Context, in ListSessionsInput) (ListSessionsOutput, error) {
 	if err := s.ensureRegistry(); err != nil {
 		return ListSessionsOutput{}, err
@@ -121,6 +132,7 @@ func (s *Service) ListSessions(ctx context.Context, in ListSessionsInput) (ListS
 		AfterTime:    in.AfterTime,
 		TopLevelOnly: in.TopLevelOnly,
 		Limit:        in.Limit,
+		ArchivedMode: archivedMode(in.ArchivedOnly),
 	})
 	if err != nil {
 		return ListSessionsOutput{}, err
@@ -129,6 +141,7 @@ func (s *Service) ListSessions(ctx context.Context, in ListSessionsInput) (ListS
 		BeforeTime:   in.BeforeTime,
 		AfterTime:    in.AfterTime,
 		TopLevelOnly: in.TopLevelOnly,
+		ArchivedMode: archivedMode(in.ArchivedOnly),
 	})
 	if err != nil {
 		return ListSessionsOutput{}, err
@@ -984,7 +997,11 @@ func (s *Service) DeleteSession(ctx context.Context, in DeleteSessionInput) ([]s
 	return keys, nil
 }
 
-func deleteSessionCascadeKeys(ctx context.Context, manager *session.Manager, key string) ([]string, error) {
+// sessionSubtreeKeys 收集 key 及其全部后代（子会话）的 key 集合。
+//
+// 删除和归档共用：两者都是「整棵树一起处理」，区别只在最后一步是删还是打归档标记。
+// 按 ParentSessionKey 遍历，fork 会话不在其中（fork 只是 source 里记了来源，不是父子关系）。
+func sessionSubtreeKeys(ctx context.Context, manager *session.Manager, key string) ([]string, error) {
 	rootKey := strings.TrimSpace(key)
 	if rootKey == "" {
 		return nil, errors.New("session key required")
@@ -1029,6 +1046,48 @@ func deleteSessionCascadeKeys(ctx context.Context, manager *session.Manager, key
 	}
 	visit(rootKey)
 	return keys, nil
+}
+
+// deleteSessionCascadeKeys 保留旧名：删除用例用它，语义就是「要删的整棵子树」。
+func deleteSessionCascadeKeys(ctx context.Context, manager *session.Manager, key string) ([]string, error) {
+	return sessionSubtreeKeys(ctx, manager, key)
+}
+
+type ArchiveSessionInput struct {
+	RootID string
+	Key    string
+	// Archived = true 归档（整棵子树），false 取消归档。
+	Archived bool
+}
+
+// ArchiveSession 归档/取消归档**整棵子树**，返回受影响的会话（已归档的那个）。
+//
+// 与 DeleteSession 的关键差别：这里只打归档标记，**不做**任何资源清理
+// （不 cancelActiveSessionTurn / CloseSession / ReleaseFileWatcher / 删文件元数据）。
+// 归档的会话正文完好 —— 深链接能打开、搜索搜得到、还能继续跑；只有删除才真正收资源。
+func (s *Service) ArchiveSession(ctx context.Context, in ArchiveSessionInput) (*session.Session, error) {
+	if err := s.ensureRegistry(); err != nil {
+		return nil, err
+	}
+	manager, err := s.Registry.GetSessionManager(in.RootID)
+	if err != nil {
+		return nil, err
+	}
+	keys, err := sessionSubtreeKeys(ctx, manager, in.Key)
+	if err != nil {
+		return nil, err
+	}
+	var updated *session.Session
+	for _, key := range keys {
+		item, err := manager.SetArchived(ctx, key, in.Archived)
+		if err != nil {
+			return nil, err
+		}
+		if key == strings.TrimSpace(in.Key) {
+			updated = item
+		}
+	}
+	return updated, nil
 }
 
 func cancelActiveSessionTurn(rootID, sessionKey string) {

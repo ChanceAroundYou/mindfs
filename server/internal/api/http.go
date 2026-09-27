@@ -395,6 +395,7 @@ func (h *HTTPHandler) Routes() http.Handler {
 	r.Get("/api/sessions/{key}/audit", h.protectedEndpoint(h.handleSessionAudit))
 	r.Get("/api/sessions/{key}/related-files", h.protectedEndpoint(h.handleSessionRelatedFilesGet))
 	r.Post("/api/sessions/{key}/pin", h.protectedEndpoint(h.handleSessionPin))
+	r.Post("/api/sessions/{key}/archive", h.protectedEndpoint(h.handleSessionArchive))
 	r.Post("/api/sessions/{key}/rename", h.protectedEndpoint(h.handleSessionRename))
 	r.Delete("/api/sessions/{key}/related-files", h.protectedEndpoint(h.handleSessionRelatedFilesDelete))
 	r.Delete("/api/sessions/{key}", h.protectedEndpoint(h.handleSessionDelete))
@@ -511,6 +512,8 @@ func (h *HTTPHandler) handleSessions(w http.ResponseWriter, r *http.Request) {
 		Limit:           limit,
 		TopLevelOnly:    truthyQuery(r, "top_level"),
 		IncludeChildren: truthyQuery(r, "include_children"),
+		// 默认排除已归档（主面板）；archived=only 时只返回归档区的那批。
+		ArchivedOnly: strings.TrimSpace(r.URL.Query().Get("archived")) == "only",
 	})
 	if err != nil {
 		respondError(w, http.StatusServiceUnavailable, err)
@@ -1341,6 +1344,45 @@ func (h *HTTPHandler) handleSessionDelete(w http.ResponseWriter, r *http.Request
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// handleSessionArchive 归档/取消归档整棵子树。形状照 handleSessionPin。
+//
+// 这里刻意**不**碰任务：归档的会话还能打开，任务里指向它的链接必须继续有效
+// （解绑只发生在真删除时，见 detachTaskFromSession）。
+func (h *HTTPHandler) handleSessionArchive(w http.ResponseWriter, r *http.Request) {
+	rootID := r.URL.Query().Get("root")
+	key := chi.URLParam(r, "key")
+	if strings.TrimSpace(key) == "" {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("session key required"))
+		return
+	}
+	var req struct {
+		Archived bool `json:"archived"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("invalid json body"))
+		return
+	}
+	updated, err := h.service().ArchiveSession(r.Context(), usecase.ArchiveSessionInput{
+		RootID:   rootID,
+		Key:      key,
+		Archived: req.Archived,
+	})
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err)
+		return
+	}
+	if h.AppContext != nil {
+		h.AppContext.GetSessionStreamHub().BroadcastAll(WSResponse{
+			Type: "session.meta.updated",
+			Payload: map[string]any{
+				"root_id": rootID,
+				"session": h.sessionListResponse(updated),
+			},
+		})
+	}
+	respondJSON(w, http.StatusOK, h.sessionListResponse(updated))
+}
+
 // projectSessionExchangesForResponse 折叠「同一轮被多个写入者各写一份」的重复行，并把被
 // 隐藏行的 aux 重挂到保留行（aux 以 seq 为键；重挂后由前端已有的按 callId 去重收口）。
 //
@@ -1430,6 +1472,7 @@ func (h *HTTPHandler) sessionResponse(
 		"related_worktree":    s.RelatedWorktree,
 		"context_window":      contextWindow,
 		"pinned_at":           s.PinnedAt,
+		"archived_at":         s.ArchivedAt,
 		"created_at":          s.CreatedAt,
 		"updated_at":          s.UpdatedAt,
 		"closed_at":           s.ClosedAt,
@@ -1461,6 +1504,7 @@ func (h *HTTPHandler) sessionListResponse(s *session.Session) map[string]any {
 		"name":                s.Name,
 		"related_worktree":    s.RelatedWorktree,
 		"pinned_at":           s.PinnedAt,
+		"archived_at":         s.ArchivedAt,
 		"created_at":          s.CreatedAt,
 		"updated_at":          s.UpdatedAt,
 		"closed_at":           s.ClosedAt,
