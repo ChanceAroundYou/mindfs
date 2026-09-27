@@ -1594,6 +1594,16 @@ export function App({ onGoHome }: AppProps) {
     setMainView(mode);
   }, []);
 
+  /* 切视图时写一条真正的历史记录。
+     以前 switchMainView 全程 replaceState，浏览器历史永远只有一条 ——
+     于是 popstate 那套恢复逻辑写得再全也没东西可退，iOS 边缘侧滑更是
+     直接把应用带出去（压根不进 popstate）。所以这里必须 pushState。
+     调用点紧跟着 replaceURLState 写最终 URL，push 用的是切之前的 URL，
+     两条记录因此各自带着一个完整状态。 */
+  const pushViewHistoryEntry = useCallback((from: MainViewMode) => {
+    window.history.pushState({ mindfsView: from, url: window.location.href }, "");
+  }, []);
+
   /* 覆盖层接进返回栈：按返回/侧滑时先关最上面那一层，而不是退视图或退出应用。
      四个接线点摆在一起是因为它们互为兄弟（都是「盖在主区之上」的东西），
      放在一起才看得出「返回」的优先级：弹窗 > 面板 > 悬浮框 > 退视图。
@@ -7250,6 +7260,19 @@ export function App({ onGoHome }: AppProps) {
         closeTopBackLayer();
         return;
       }
+      // 视图切换留下的那条记录：它带的是「切之前」那个视图，直接退回去。
+      // 不走 handlePopState —— 那套按 URL 恢复，而 pushViewHistoryEntry 存的
+      // 是切换瞬间的 URL，view 字段可能还没写进去，判据只能是 state 里的视图。
+      const fromView = (event.state as { mindfsView?: MainViewMode } | null)?.mindfsView;
+      if (fromView) {
+        popViewHistory();
+        mainViewRef.current = fromView;
+        setMainView(fromView);
+        if (fromView !== "chat") {
+          lastNonChatViewRef.current = fromView;
+        }
+        return;
+      }
       handlePopState();
     };
     window.addEventListener("popstate", onPopState);
@@ -8386,6 +8409,9 @@ export function App({ onGoHome }: AppProps) {
     if (rootID) setDrawerOpenForRoot(rootID, false);
     interactionModeRef.current = "main";
     setInteractionMode("main");
+    // 先落一条历史（存切之前的视图），再切。没有这条浏览器历史就永远只有一项，
+    // 侧滑/后退无路可退 —— 这正是「侧滑直接退出」的直接原因。
+    pushViewHistoryEntry(mainViewRef.current);
     switchMainView(mode);
     // 切到文件面板但从没点过任何目录时，主区是空的：把当前项目顶层目录补上。
     // 已经有内容（含报错态）就别动，用户点过的目录优先于这个默认值。
@@ -8410,7 +8436,7 @@ export function App({ onGoHome }: AppProps) {
       file: mode === "files" ? current.file : "",
       view: mode,
     });
-  }, [replaceURLState, setDrawerOpenForRoot, switchMainView]);
+  }, [pushViewHistoryEntry, replaceURLState, setDrawerOpenForRoot, switchMainView]);
 
   const openWorkspaceProject = useCallback(async (rootId: string) => {
     if (!rootId) return;

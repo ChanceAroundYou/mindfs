@@ -247,8 +247,15 @@ assert.match(
   /export const workspaceProjectToggleStyle[\s\S]*?minWidth: "40px"[\s\S]*?height: "24px"/,
   "the collapse target must stay a comfortable 40x24, not a 12px icon",
 );
-// 任务排成卡片网格，不再是一条条平铺的行；列宽对齐看板单列的 220px
-assert.match(styles, /export const workspaceTaskGridStyle[\s\S]*?gridTemplateColumns: "repeat\(auto-fill, minmax\(220px, 1fr\)\)"/, "tasks lay out as cards wide enough to show the name");
+// 任务排成卡片网格。桌面固定一排 4 张（此前 auto-fill 在宽屏能铺 6、7 张，
+// 一屏塞太多、扫读时找不到「哪个项目」）；窄屏不用另写媒体查询 ——
+// 4 条轨道放不下时 Grid 自动少铺几列。minmax(0,1fr) 的 0 下限是必要的：
+// 默认 minmax(auto,1fr) 会被卡片内容顶宽，4 列在窄屏挤成一条。
+assert.match(
+  styles,
+  /export const workspaceTaskGridStyle[\s\S]*?gridTemplateColumns: "repeat\(4, minmax\(0, 1fr\)\)"/,
+  "tasks lay out four per row on desktop, shrinking the column count when the width can't hold them",
+);
 
 // 9d) 点任务卡留在工作台：不许再走 openWorkspaceProject（那会切项目 + 切看板）
 assert.match(

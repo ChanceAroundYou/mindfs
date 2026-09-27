@@ -539,13 +539,19 @@ export function TaskBoardView({
           <div
             style={{
               display: "grid",
+              // 百分比行高要有个确定高度才能解析：外层那个滚动容器是 flex:1 的
+              // flex item，高度由 flex 布局定死，所以这里 height:100% 拿得到值。
+              // 缺了它下面的 50% 会退回 auto，列又变内容高度 —— 也就是老问题复发。
+              height: "100%",
               // 移动端横滑空间浪费：列改为换行（每行两列），列内上下滑看卡片。
               gridAutoFlow: isMobile ? "row" : "column",
               gridTemplateColumns: isMobile ? "repeat(2, 1fr)" : undefined,
               gridAutoColumns: isMobile ? undefined : "minmax(220px, 1fr)",
-              // 行高跟着可用高度走（以前写死 36dvh，和真实视口对不上就留下空带）。
-              // minmax(0,1fr) 而不是 1fr：默认 auto 的下限会让列被内容顶高、overflow 失灵。
-              gridAutoRows: "minmax(0, 1fr)",
+              // 行高：桌面四块同排，撑满即可；移动端两行必须**封顶**。
+              // 这里踩过坑：写 minmax(0,1fr) 时父容器高度 auto、无上限，1fr 退化成
+              // 「视口的一半」—— 四块两行直接撑到 2 个屏。所以移动端按 50% 切两行、
+              // 各扣掉半个 gap，总高恰好等于可用高度，永远不外溢。
+              gridAutoRows: isMobile ? "calc(50% - 3px)" : "100%",
               gap: "6px",
               minWidth: isMobile ? undefined : `${Math.max(kanbanStageColumns.length, 1) * 220}px`,
               // 列要撑满行高（alignItems 默认的 stretch）。以前写的是 "start"，

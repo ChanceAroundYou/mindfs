@@ -164,7 +164,11 @@ export const workspaceProjectToggleStyle: React.CSSProperties = {
  */
 export const workspaceTaskGridStyle: React.CSSProperties = {
   display: "grid",
-  gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
+  // 桌面一排 4 张。此前 auto-fill + minmax(220px,1fr) 在宽屏上能铺到 6、7 张，
+  // 一屏塞太多、扫读时找不到「哪个项目」；4 张是扫读不费力的密度。
+  // 窄屏不用另写媒体查询：4 条轨道里放不下 220px 时 Grid 会自动少铺几列，
+  // 平板降到 2~3 列、375px 手机降到 1 列，minmax(0,1fr) 保证不会被压瘪。
+  gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
   gap: "6px",
 };
 

@@ -58,12 +58,19 @@ assert.match(
   /t\("task\.column\.ended"\)[\s\S]*?key: "success"[\s\S]*?key: "cancelled"[\s\S]*?task\.status === "fail" \|\| task\.status === "cancelled"/,
   "已结束 must group 完成 and 取消, with 失败 folded into 取消",
 );
-// 每块高度跟着可用高度走（不再写死 36dvh —— 那跟真实视口对不上就留下空带）。
-// 2026-09-28：行高改由网格给满，列内列表容器自己滚。
+// 每块高度必须封顶，不能是 minmax(0,1fr)：父容器高度 auto、无上限时 1fr 退化成
+// 「视口的一半」，移动端四块两行直接撑到两个屏 —— 那正是 minmax(0,1fr) 那版的 bug。
+// 移动端 calc(50% - 3px) 两行加 gap 恰好等于可用高度；桌面四块同排 100%。
 assert.match(
   board,
-  /gridAutoRows: "minmax\(0, 1fr\)",/,
-  "board blocks should split the available height, not a hardcoded dvh",
+  /gridAutoRows: isMobile \? "calc\(50% - 3px\)" : "100%",/,
+  "mobile blocks must each be capped at half the available height, or four blocks span two screens",
+);
+// 百分比行高要有个确定高度才能解析，缺了它 50% 会退回 auto（等于没封顶）。
+assert.match(
+  board,
+  /display: "grid",[\s\S]{0,220}?height: "100%",/,
+  "the grid needs a definite height for the percentage rows to resolve",
 );
 // 桌面列高曾经写死 calc(100dvh - 96px)，那套魔法数已随根容器的 flex:1 退休。
 // 只看样式值不看注释 —— 注释里得留着「为什么删掉」，否则下一个人会再加回来。

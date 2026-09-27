@@ -14,6 +14,33 @@ const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
 
 // —— 分发器本身 ——
 
+// —— 切视图必须真的压一条历史 ——
+// 这是「侧滑还是直接退出」的直接原因：以前 switchMainView 全程 replaceState，
+// 浏览器历史永远只有一项，popstate 压根不触发，侧滑把应用直接带出去。
+// 覆层关掉之后能退视图，靠的就是这条 push 出来的记录。
+assert.match(
+  app,
+  /const pushViewHistoryEntry = useCallback\(\(from: MainViewMode\) => \{\s*window\.history\.pushState\(\{ mindfsView: from/,
+  "switching views must push a real history entry, or back has nothing to pop",
+);
+assert.match(
+  app,
+  /pushViewHistoryEntry\(mainViewRef\.current\);\s*switchMainView\(mode\);/,
+  "the switcher must record the view it is leaving before switching",
+);
+// popstate 认这条记录：判据是 state 里的视图，不能走 handlePopState ——
+// push 存的是切换瞬间的 URL，view 字段可能还没写进去。
+assert.match(
+  app,
+  /const fromView = \(event\.state as \{ mindfsView\?: MainViewMode \} \| null\)\?\.mindfsView;/,
+  "popstate must recognise the view-switch entry by its state, not by parsing the URL",
+);
+assert.match(
+  app,
+  /if \(fromView\) \{[\s\S]*?popViewHistory\(\);\s*mainViewRef\.current = fromView;\s*setMainView\(fromView\);/,
+  "popping a view-switch entry must go back to that view and keep both stacks in sync",
+);
+
 // 覆盖层优先于视图栈：栈非空就先关最上面那一层。
 assert.match(
   nav,
