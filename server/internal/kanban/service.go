@@ -293,6 +293,47 @@ func (s *Service) GetTask(ctx context.Context, rootID, taskID string) (TaskDetai
 	return store.GetDetail(ctx, taskID)
 }
 
+// taskSessionNameSeparator 是任务名与 #编号之间的分隔，与后缀一起构成会话名。
+const taskSessionNameSeparator = " / "
+
+// TaskSessionName 组出绑定会话该有的名字：<任务名> / #<任务号>。
+// 建会话（AppContext.EnsureAgentSession）与「任务改名 → 同步会话名」都走它，
+// 后缀才不会只在建会话那一刻存在 —— 改名一次就丢，那正是这个函数要收口的原因。
+//
+// 幂等：base 尾部已带本任务号的后缀时先剥再拼，重复调用不会叠成 "名 / #8 / #8"。
+// taskNumber <= 0（legacy 行没有编号）时原样返回，不凭空造后缀。
+func TaskSessionName(base string, taskNumber int) string {
+	base = TrimTaskSessionNameSuffix(base, taskNumber)
+	if taskNumber <= 0 {
+		return base
+	}
+	number := "#" + strconv.Itoa(taskNumber)
+	if base == "" {
+		return number
+	}
+	return base + taskSessionNameSeparator + number
+}
+
+// TrimTaskSessionNameSuffix 剥掉尾部的 " / #N"，且只在 N 等于该任务自己的编号时才剥。
+// 剥是为了让会话名回流成任务名时不带后缀（否则面板上两个 #编号 撞车）；
+// 比对编号是为了不误伤「任务名本来就叫 foo / #3」这种真名。
+func TrimTaskSessionNameSuffix(name string, taskNumber int) string {
+	trimmed := strings.TrimSpace(name)
+	if taskNumber <= 0 {
+		return trimmed
+	}
+	marker := taskSessionNameSeparator + "#"
+	idx := strings.LastIndex(trimmed, marker)
+	if idx < 0 {
+		return trimmed
+	}
+	n, err := strconv.Atoi(trimmed[idx+len(marker):])
+	if err != nil || n != taskNumber {
+		return trimmed
+	}
+	return strings.TrimSpace(trimmed[:idx])
+}
+
 // RenameTask 设置任务名。
 func (s *Service) RenameTask(ctx context.Context, rootID, taskID, name string) (TaskDetail, error) {
 	store, err := s.taskStore(rootID)
@@ -303,7 +344,8 @@ func (s *Service) RenameTask(ctx context.Context, rootID, taskID, name string) (
 	if err != nil {
 		return TaskDetail{}, err
 	}
-	task.Name = strings.TrimSpace(name)
+	// 任务名永不携带本任务自己的后缀：这里剥一次，「任务名 ↔ 会话名」往返怎么走都干净。
+	task.Name = TrimTaskSessionNameSuffix(name, task.TaskNumber)
 	task.UpdatedAt = time.Now().UTC()
 	if err := store.UpdateTask(ctx, task); err != nil {
 		return TaskDetail{}, err
@@ -328,10 +370,16 @@ func (s *Service) TaskNameFromSession(ctx context.Context, rootID, sessionKey, n
 		return TaskDetail{}, false
 	}
 	task, err := store.GetTask(ctx, taskID)
-	if err != nil || task.Name == strings.TrimSpace(name) {
+	if err != nil {
 		return TaskDetail{}, false
 	}
-	detail, err := s.RenameTask(ctx, rootID, taskID, name)
+	// 会话名带着 " / #编号"，比变更前先剥掉，否则「原样重命名一个带后缀的会话」
+	// 会被判成变更，白跑一趟 RenameTask + broadcastTaskUpdated。
+	base := TrimTaskSessionNameSuffix(name, task.TaskNumber)
+	if task.Name == base {
+		return TaskDetail{}, false
+	}
+	detail, err := s.RenameTask(ctx, rootID, taskID, base)
 	if err != nil {
 		return TaskDetail{}, false
 	}

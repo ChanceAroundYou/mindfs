@@ -274,12 +274,7 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
       width={720}
       onClose={onClose}
       hasUnsavedChanges={() => editingName && nameDraft.trim() !== (task.name || "").trim()}
-      title={(
-        <span style={{ flex: "1 1 auto", minWidth: 0, fontSize: "14px", fontWeight: 700, color: "var(--text-color)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {task.name || t("task.namePlaceholder")}
-        </span>
-      )}
-      headerLeft={editingName ? (
+      title={editingName ? (
         <input
           autoFocus
           value={nameDraft}
@@ -289,9 +284,16 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
             if (event.key === "Enter") void saveName();
             if (event.key === "Escape") { setEditingName(false); setNameDraft(task.name || ""); }
           }}
-          style={{ ...composerInputStyle, flex: "1 1 auto", height: "30px", border: "1px solid var(--accent-color)", fontWeight: 700 }}
+          style={{ ...composerInputStyle, flex: "1 1 auto", minWidth: 0, height: "30px", border: "1px solid var(--accent-color)", fontWeight: 700 }}
         />
       ) : (
+        /* 编辑态这一格换成输入框，旧名跟着 unmount —— 不再和输入框并排留着 */
+        <span style={{ flex: "1 1 auto", minWidth: 0, fontSize: "14px", fontWeight: 700, color: "var(--text-color)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {task.name || t("task.namePlaceholder")}
+        </span>
+      )}
+      /* 状态 / 模板名 / #编号编辑时也留着：它们是别的信息，不是正在被改的那一格 */
+      headerLeft={(
         <>
           <span style={{ fontSize: "12px", fontWeight: 800, color: taskStatusColor(task.status), flexShrink: 0, whiteSpace: "nowrap" }}>
             {statusText(task.status, t)}

@@ -97,6 +97,69 @@ func TestEnsureAgentSessionIgnoresTaskIDWhenNameMissing(t *testing.T) {
 	}
 }
 
+// 任务改名同步到会话时后缀必须还在：以前 bindTaskSessionNames 拿的是调用方传进来的
+// 裸任务名，改名一次就把建会话时拼上的 " / #编号" 抹掉了。
+func TestBindTaskSessionNamesKeepsNumberSuffix(t *testing.T) {
+	parent := tempDirForSessionNaming(t)
+	registry := fs.NewRegistry(filepath.Join(parent, "registry.json"))
+	projectPath := filepath.Join(parent, "project")
+	if err := mkdirAllForSessionNaming(projectPath); err != nil {
+		t.Fatalf("mkdir project: %v", err)
+	}
+	root, err := registry.Upsert(projectPath)
+	if err != nil {
+		t.Fatalf("Upsert returned error: %v", err)
+	}
+	app := &AppContext{Dirs: registry}
+	app.Kanban = kanban.NewService(kanban.NewTemplateStoreAt(parent), app)
+	ctx := context.Background()
+
+	// 建会话：拿到带后缀的名字。
+	key, err := app.EnsureAgentSession(ctx, kanbanExecForSessionNaming(root.ID, "旧名", 8, "bugfix", "提示"))
+	if err != nil {
+		t.Fatalf("EnsureAgentSession returned error: %v", err)
+	}
+	if got := sessionNameForTest(t, app, root.ID, key); got != "旧名 / #8" {
+		t.Fatalf("created session name = %q, want %q", got, "旧名 / #8")
+	}
+
+	// 造一个绑定了该会话的任务（task_number=8），再走任务改名同步。
+	svc, err := app.GetKanbanService()
+	if err != nil {
+		t.Fatalf("GetKanbanService: %v", err)
+	}
+	created, err := svc.CreateTask(ctx, kanban.CreateTaskInput{
+		RootID: root.ID,
+		Name:   "旧名",
+		Input:  "提示",
+		Stages: []kanban.StageTemplate{{Name: "任务输入", Role: kanban.RoleUser, PromptTemplate: "提示"}},
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if created.Task.TaskNumber <= 0 {
+		t.Fatalf("task_number = %d, want a positive number to build the suffix from", created.Task.TaskNumber)
+	}
+	renamed, err := svc.RenameTask(ctx, root.ID, created.Task.ID, "新名")
+	if err != nil {
+		t.Fatalf("RenameTask: %v", err)
+	}
+	renamed.Task.MainSessionKey = key
+
+	want := kanban.TaskSessionName("新名", created.Task.TaskNumber)
+	h := &HTTPHandler{AppContext: app}
+	h.bindTaskSessionNames(ctx, root.ID, renamed)
+
+	if got := sessionNameForTest(t, app, root.ID, key); got != want {
+		t.Fatalf("session name after task rename = %q, want %q", got, want)
+	}
+	// 再同步一次不能叠成 "新名 / #8 / #8"。
+	h.bindTaskSessionNames(ctx, root.ID, renamed)
+	if got := sessionNameForTest(t, app, root.ID, key); got != want {
+		t.Fatalf("session name after second sync = %q, want %q (no accumulation)", got, want)
+	}
+}
+
 func sessionNameForTest(t *testing.T, app *AppContext, rootID, key string) string {
 	t.Helper()
 	manager, err := app.GetSessionManager(rootID)
