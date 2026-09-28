@@ -180,28 +180,29 @@ test("面板复用主列表的项目分组，且不再有嵌套归档入口", ()
   assert.doesNotMatch(panel, /archivedSessions=/);
 });
 
-test("归档入口行钉在滚动容器最底部，短列表在最下、长列表只被内容推过", () => {
-  // position: sticky + bottom 才同时满足两条：列表短时它就是最下面一行；
-  // 列表长过一屏时它钉在视口底边，内容从它上面滚过去，任何滚动位置都不会
-  // 让它停在中间。条件渲染里塞回去会丢掉这两种。
+test("归档入口行是滚动容器的**兄弟**节点，永远在侧栏最底", () => {
+  // 这里刻意不用 position: sticky。sticky 只在内容溢出时才起作用：列表不满一屏
+  // 时它就留在文档流末尾（后面还有空白），读起来正是「浮在中间」—— 踩过两次。
+  // 正确形状是：入口行退出滚动容器，做同一根 flex 列上 flexShrink:0 的最后一项。
+  // 列表长就被内容顶上去，列表短就贴住容器底边，两种情况都在最底。
   const list = read("src/components/SessionList.tsx");
   const row = list.slice(
     list.indexOf('data-archive-entry="open"'),
     list.indexOf("</button>", list.indexOf('data-archive-entry="open"')),
   );
-  assert.match(row, /position: "sticky"/, "入口行应 sticky 钉底");
-  assert.match(row, /bottom: -8/, "应抵消容器 padding，贴真正的底边");
-  // sticky 必须挂在块级盒上：inline-flex 会让行盒由内容定尺寸，贴不住底边
-  // （上一版正是栽在这，刷新后完全看不出钉住）。所以 display 必须是 flex。
-  assert.match(row, /display: "flex"/, "入口行必须是块级 flex，sticky 才生效");
-  // 注释里会正面提到 inline-flex（解释这个 bug），先剥掉行注释再断言
-  const rowCode = row.replace(/^\s*\/\/.*$/gm, "");
-  assert.doesNotMatch(rowCode, /inline-flex/, "inline 级盒上 sticky 不可靠");
-  // 钉底就必须占满整行，否则右边留一道缝
+  assert.doesNotMatch(row, /position: "sticky"/, "sticky 表达不了「永远在最底」");
+  assert.match(row, /flexShrink: 0/, "必须是不可压缩的列尾项，否则会被内容压扁/顶走");
   assert.match(row, /width: "100%"/, "应占满整行");
-  // 钉住 = 内容要从它底下经过，背景必须不透；sidebar-bg 本身半透明
-  assert.match(row, /var\(--panel-bg\)/, "需叠一层不透明底，否则字从按钮里滚过去");
-  // 两种列表里都还留着这一行
+  assert.match(row, /var\(--panel-bg\)/, "内容从它上面滚过，背景必须不透");
+
+  // 结构守卫：两个调用点的入口行都必须在 overflow:auto 的**外面**，
+  // 即紧跟在滚动容器的闭合 </div> 之后，而不是在它里面。
+  for (const scroller of [...list.matchAll(/overflow: "auto", padding: "8px" \/\}>/g)]) {
+    const after = list.slice(scroller.index, scroller.index + 4000);
+    const close = after.indexOf("</div>");
+    const entry = after.indexOf("<ArchiveEntryRow");
+    assert.ok(entry > close, "入口行必须排在滚动容器闭合之后（即在其外部）");
+  }
   const entries =
     list.match(/<ArchiveEntryRow onOpen=\{onOpenArchivePanel\} \/>/g) || [];
   assert.equal(entries.length, 2, "SessionList 和 MultiProjectSessionList 各一处入口行");

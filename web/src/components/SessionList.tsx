@@ -268,29 +268,24 @@ function ArchiveEntryRow({ onOpen }: { onOpen?: () => void }) {
       data-archive-entry="open"
       onClick={onOpen}
       style={{
-        // 钉在滚动容器最底部：列表短时它就在最下面，列表长过一屏时它跟着
-        // 视口底边不动、只让内容从它上面滚过去 —— 无论滚到哪都不会跑到中间。
-        // sticky 认的是滚动容器的 padding 边，所以 bottom/marginBottom 都要减掉
-        // 那 8px，才是真正贴到最底，而不是浮在底部上方 8px。
-        position: "sticky",
-        bottom: -8,
-        marginTop: "8px",
-        marginBottom: -8,
+        // 钉在侧栏最底：它**不在**滚动容器里，而是滚动容器的兄弟节点、同一根
+        // flex 列上的最后一项。列表长过一屏时被内容「顶上去」，列表短于一屏时
+        // 贴住容器底边 —— 两种情况都在最底部，任何滚动位置都不可能停在中间。
+        //
+        // 之前用 position: sticky，那是**表达不了这条需求**的：sticky 只在内容
+        // 溢出时才起作用，列表不溢出时它就静静待在文档流末尾（列表后面还
+        // 有一段空白时，读起来正好就是「浮在中间」）。连踩两次，根因都在这。
+        flexShrink: 0,
         padding: "6px 8px",
         width: "100%",
         boxSizing: "border-box",
         border: "none",
         borderTop: "1px solid var(--border-color)",
-        // 钉住就意味着内容要从它底下经过，背景必须不透。sidebar-bg 本身是半透明
-        // 的（浅色主题 0.65~0.82），直接用会看见字从按钮里滚过去，所以叠一层
-        // panel-bg 把它压实，再补一点 backdrop blur 收掉残余。
-        background: "linear-gradient(var(--sidebar-bg), var(--sidebar-bg)), var(--panel-bg)",
-        backdropFilter: "blur(6px)",
+        // 内容要从它上面滚过去，背景必须不透；panel-bg 是不透明的。
+        background: "var(--panel-bg)",
         color: "var(--text-secondary)",
         fontSize: "11px",
         lineHeight: 1.2,
-        // 必须是块级盒：sticky 挂在 inline 级盒上不可靠（行盒由内容定尺寸，
-        // 贴不住底边）。之前是 inline-flex，所以「钉在底部」根本没生效。
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
@@ -795,8 +790,8 @@ export function SessionList({
             ) : null}
           </div>
         )}
-        <ArchiveEntryRow onOpen={onOpenArchivePanel} />
       </div>
+      <ArchiveEntryRow onOpen={onOpenArchivePanel} />
       <style>{`
         @keyframes mindfs-bound-pulse {
           0%, 100% { opacity: 1; box-shadow: 0 0 0 1.5px rgba(37,99,235,0.14); }
@@ -1326,8 +1321,8 @@ export function MultiProjectSessionList({
             })}
           </div>
         )}
-        <ArchiveEntryRow onOpen={onOpenArchivePanel} />
       </div>
+      <ArchiveEntryRow onOpen={onOpenArchivePanel} />
       <style>{`
         @keyframes mindfs-bound-pulse {
           0%, 100% { opacity: 1; box-shadow: 0 0 0 1.5px rgba(37,99,235,0.14); }
