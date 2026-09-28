@@ -202,36 +202,6 @@ function ToggleRowButton({
 }
 
 
-// 顶部「全部收起」：子会话树可能同时有会话级和项目级两层展开，展开的那一行滚出
-// 视口后就找不回来了 —— 没有这个兜底就只能一路展开下去。
-function CollapseAllRow({ onClick }: { onClick: () => void }) {
-  const { t } = useI18n();
-  return (
-    <button
-      type="button"
-      data-collapse-all="children"
-      onClick={onClick}
-      style={{
-        flexShrink: 0,
-        height: "22px",
-        padding: "0 8px",
-        border: "none",
-        background: "transparent",
-        color: "var(--text-secondary)",
-        fontSize: "10.5px",
-        cursor: "pointer",
-      }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.color = "var(--text-primary)";
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.color = "var(--text-secondary)";
-      }}
-    >
-      {t("sessionList.collapseAllChildren")}
-    </button>
-  );
-}
 function PinIcon({ pinned }: { pinned: boolean }) {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" aria-hidden="true">
@@ -267,7 +237,7 @@ function ArchiveIcon() {
 }
 
 /**
- * 归档入口行：列表底部固定一行，点它把「已归档对话」面板叫起来。
+ * 归档入口行：列表**末尾**的一行，点它把「已归档对话」面板叫起来。
  * 归档内容**不**在这里展开 —— 面板才有遮罩和收起按钮，摊在这里会和主列表糊在一起。
  */
 function ArchiveEntryRow({ onOpen }: { onOpen?: () => void }) {
@@ -279,20 +249,23 @@ function ArchiveEntryRow({ onOpen }: { onOpen?: () => void }) {
       data-archive-entry="open"
       onClick={onOpen}
       style={{
-        // 钉在侧栏最底：它**不在**滚动容器里，而是滚动容器的兄弟节点、同一根
-        // flex 列上的最后一项。列表长过一屏时被内容「顶上去」，列表短于一屏时
-        // 贴住容器底边 —— 两种情况都在最底部，任何滚动位置都不可能停在中间。
+        // 它是滚动内容的**最后一项**（不是滚动容器的兄弟节点）：会话多到一屏
+        // 装不下时，它跟着内容一起被顶下去，要滚动才看得到；会话少时它就在
+        // 列表末尾。2026-09-28 用户明确要这个「会被顶下去」的行为。
         //
-        // 之前用 position: sticky，那是**表达不了这条需求**的：sticky 只在内容
-        // 溢出时才起作用，列表不溢出时它就静静待在文档流末尾（列表后面还
-        // 有一段空白时，读起来正好就是「浮在中间」）。连踩两次，根因都在这。
+        // 之前做成 flexShrink:0 的列尾项（贴在滚动容器外面），那形态是**永远
+        // 贴底**、顶不下去 —— 与需求正相反。
+        // 放在 flex 列里要 flexShrink:0，否则内容多时它会被压扁。
         flexShrink: 0,
+        position: "sticky",
+        bottom: 0,
+        marginTop: "8px",
         padding: "6px 8px",
         width: "100%",
         boxSizing: "border-box",
         border: "none",
         borderTop: "1px solid var(--border-color)",
-        // 内容要从它上面滚过去，背景必须不透；panel-bg 是不透明的。
+        // 会从它上面滚过去，背景必须不透；panel-bg 是不透明的。
         background: "var(--panel-bg)",
         color: "var(--text-secondary)",
         fontSize: "11px",
@@ -407,6 +380,9 @@ export function SessionList({
   const [expandedChildren, setExpandedChildren] = useState<Record<string, boolean>>({});
   const [loadingChildren, setLoadingChildren] = useState<Record<string, boolean>>({});
   const [childrenHasMore, setChildrenHasMore] = useState<Record<string, boolean>>({});
+  // 折叠态的子会话基数：展开**之前**记下当时的已加载数，折叠态的「还有几个」用它算。
+  // 展开会再拉一批子会话合并进 sessions，若按新的总数算，收起后的数字会大于展开前。
+  const [collapsedBaseCount, setCollapsedBaseCount] = useState<Record<string, number>>({});
   // 展开态回收：会话被删除/归档后，其条目必须随之消失（见 pruneChildState 注释）
   useEffect(() => {
     const live = new Set(sessions.map((item) => item.key).filter(Boolean));
@@ -461,12 +437,17 @@ export function SessionList({
       for (const child of visibleChildren) {
         append(child);
       }
-      const hiddenCount = Math.max(0, children.length - COLLAPSED_CHILD_SESSION_LIMIT);
-      if (active && (children.length > COLLAPSED_CHILD_SESSION_LIMIT || expanded || childrenHasMore[item.key])) {
+      // 折叠态显示的是「**展开那一刻**已加载的子会话里还剩几个」，不是当前总数：
+      // 展开会再拉一批（每批最多 50 条）合并进 children，总数只增不减。用总数算，
+      // 收起后的数字就会大于展开前的（用户报的 a=2 收起变 102 就是这么来的）。
+      // 基数在**展开前**钉一次（见 handleChildToggle），来回切换多少次都稳定。
+      const collapsedBase = collapsedBaseCount[item.key] ?? children.length;
+      const hiddenCount = Math.max(0, collapsedBase - COLLAPSED_CHILD_SESSION_LIMIT);
+      if (active && (hiddenCount > 0 || expanded || childrenHasMore[item.key])) {
         out.push({
           type: "child-toggle",
           parent: item,
-          loadedChildCount: children.length,
+          loadedChildCount: collapsedBase,
           hiddenCount,
           expanded,
         });
@@ -474,7 +455,7 @@ export function SessionList({
     };
     topLevel.forEach((item) => append(item));
     return out;
-  }, [childrenHasMore, expandedChildren, searchResultsMode, selectedKey, sessions]);
+  }, [collapsedBaseCount, childrenHasMore, expandedChildren, searchResultsMode, selectedKey, sessions]);
   const selectedParentKey = useMemo(() => {
     if (!selectedKey) return "";
     return sessions.find((item) => item.key === selectedKey)?.parent_session_key || "";
@@ -514,12 +495,16 @@ export function SessionList({
     }
   };
 
-  const anyExpanded = Object.values(expandedChildren).some(Boolean);
-  const collapseAll = () => setExpandedChildren({});
 
   const handleChildToggle = async (row: Extract<VisibleSessionRow, { type: "child-toggle" }>) => {
     const parentKey = row.parent.key;
     if (!row.expanded) {
+      // 折叠基数在**展开前**钉，不是收起时：展开会再拉一批子会话合并进 sessions，
+      // 收起后若按新的总数算，「还有 N 个」必然大于展开前（用户报的 a=2 → b=102）。
+      setCollapsedBaseCount((prev) => ({
+        ...prev,
+        [parentKey]: sessions.filter((item) => item.parent_session_key === parentKey).length,
+      }));
       setExpandedChildren((prev) => ({ ...prev, [parentKey]: true }));
       await loadChildren(row.parent);
       return;
@@ -546,7 +531,6 @@ export function SessionList({
         background: "transparent",
       }}
     >
-      {anyExpanded ? <CollapseAllRow onClick={collapseAll} /> : null}
       {/* 统一的 Header 边栏 */}
       <div
         data-onboarding="session-actions"
@@ -757,6 +741,8 @@ export function SessionList({
                     marginLeft={SUB_SESSION_ICON_OFFSET}
                     onClick={() => void handleChildToggle(row)}
                     onCollapse={() =>
+                      // 整行点 = 收起。折叠基数已在展开那一刻钉好，这里不再动它 ——
+                      // 收起时按当时的总数钉，钉进去的就是展开拉回来的新批次（b > a）。
                       setExpandedChildren((prev) => ({
                         ...prev,
                         [row.parent.key]: false,
@@ -805,8 +791,11 @@ export function SessionList({
             ) : null}
           </div>
         )}
+        {/* 入口行在滚动容器内、但在「有无会话」这个分支之外：会话多到装不下一屏时它跟着
+            内容被顶下去（要滚动才看得到），会话一条不剩时它也还在 —— 放进上面的分支里
+            会连空态一起消失，归档就再也进不去了。 */}
+        <ArchiveEntryRow onOpen={onOpenArchivePanel} />
       </div>
-      <ArchiveEntryRow onOpen={onOpenArchivePanel} />
       <style>{`
         @keyframes mindfs-bound-pulse {
           0%, 100% { opacity: 1; box-shadow: 0 0 0 1.5px rgba(37,99,235,0.14); }
@@ -875,6 +864,9 @@ export function MultiProjectSessionList({
   const [expandedChildren, setExpandedChildren] = useState<Record<string, boolean>>({});
   const [loadingChildren, setLoadingChildren] = useState<Record<string, boolean>>({});
   const [childrenHasMore, setChildrenHasMore] = useState<Record<string, boolean>>({});
+  // 折叠态的子会话基数（键与 expandedChildren 同形）：展开**之前**记下当时的已加载数，
+  // 折叠态按它算，不受展开时陆续拉回来的批次影响。
+  const [collapsedBaseCount, setCollapsedBaseCount] = useState<Record<string, number>>({});
   const [pinnedProjects, setPinnedProjects] = useState<Record<string, number>>(readLocalProjectPins);
   // 展开态回收：分组里的会话消失（删除/归档/切节点）后，其条目必须随之消失
   useEffect(() => {
@@ -976,8 +968,16 @@ export function MultiProjectSessionList({
     return `${scopeKey(nodeId, rootId)}:${session.key}`;
   };
 
-  const loadChildren = async (parent: SessionItem, beforeTime?: string) => {
-    const stateKey = childStateKey(parent);
+  // fallbackRootId / fallbackNodeId 必须一起传：读侧（render / handleChildToggle）
+  // 用的是三参数版本，这里少传就会写到另一个键上 —— childrenHasMore 写进去读不回来，
+  // 表现是「还有下一批」永远不出现、点收起也只能收不能继续加载。
+  const loadChildren = async (
+    parent: SessionItem,
+    beforeTime?: string,
+    fallbackRootId = "",
+    fallbackNodeId = "",
+  ) => {
+    const stateKey = childStateKey(parent, fallbackRootId, fallbackNodeId);
     if (!onLoadChildren || loadingChildren[stateKey]) {
       return;
     }
@@ -1029,7 +1029,7 @@ export function MultiProjectSessionList({
     const append = (item: SessionItem) => {
       out.push({ type: "session", session: item });
       const children = childrenByParent.get(item.key) || [];
-      const stateKey = childStateKey(item, fallbackRootId);
+      const stateKey = childStateKey(item, fallbackRootId, fallbackNodeId);
       const active = activeParentKeys.has(item.key);
       const expanded = !!expandedChildren[stateKey];
       const visibleChildren = active
@@ -1040,12 +1040,15 @@ export function MultiProjectSessionList({
       for (const child of visibleChildren) {
         append(child);
       }
-      const hiddenCount = Math.max(0, children.length - COLLAPSED_CHILD_SESSION_LIMIT);
-      if (active && (children.length > COLLAPSED_CHILD_SESSION_LIMIT || expanded || childrenHasMore[stateKey])) {
+      // 同单项目列表：折叠基数取「展开那一刻」的已加载数，展开后陆续拉回的批次
+      // 不参与计数，所以收起后的「还有几个」不会大于展开前。
+      const collapsedBase = collapsedBaseCount[stateKey] ?? children.length;
+      const hiddenCount = Math.max(0, collapsedBase - COLLAPSED_CHILD_SESSION_LIMIT);
+      if (active && (hiddenCount > 0 || expanded || childrenHasMore[stateKey])) {
         out.push({
           type: "child-toggle",
           parent: item,
-          loadedChildCount: children.length,
+          loadedChildCount: collapsedBase,
           hiddenCount,
           expanded,
         });
@@ -1064,15 +1067,21 @@ export function MultiProjectSessionList({
     const parentKey = row.parent.key;
     const stateKey = childStateKey(row.parent, fallbackRootId, fallbackNodeId);
     if (!row.expanded) {
+      // 折叠基数在**展开前**钉（不是收起时）：展开会再拉一批合并进 group.sessions，
+      // 收起后按新的总数算，「还有 N 个」必然大于展开前。
+      setCollapsedBaseCount((prev) => ({
+        ...prev,
+        [stateKey]: groupSessions.filter((item) => item.parent_session_key === parentKey).length,
+      }));
       setExpandedChildren((prev) => ({ ...prev, [stateKey]: true }));
-      await loadChildren(row.parent);
+      await loadChildren(row.parent, undefined, fallbackRootId, fallbackNodeId);
       return;
     }
     if (childrenHasMore[stateKey]) {
       const lastChild = groupSessions
         .filter((item) => item.parent_session_key === parentKey)
         .sort((left, right) => (Date.parse(left.updated_at || "") || 0) - (Date.parse(right.updated_at || "") || 0))[0];
-      await loadChildren(row.parent, lastChild?.updated_at);
+      await loadChildren(row.parent, lastChild?.updated_at, fallbackRootId, fallbackNodeId);
     } else {
       setExpandedChildren((prev) => ({ ...prev, [stateKey]: false }));
     }
@@ -1125,26 +1134,6 @@ export function MultiProjectSessionList({
     setExpandedProjects((prev) => ({ ...prev, [groupScopeKey(group)]: false }));
   };
 
-  // 多项目列表有两层展开：项目分组 + 项目内的子会话树。任一层展开着就在顶部给
-  // 一个「全部收起」—— 分组默认展开，展开的那行可能早滚出视口，没有它就只能
-  // 一路展开下去。
-  const anyExpanded = useMemo(() => {
-    const explicit = Object.values(expandedProjects).some(Boolean);
-    if (explicit) return true;
-    return groups.some((group) => {
-      const key = groupScopeKey(group);
-      if (expandedProjects[key] !== undefined) return !!expandedProjects[key];
-      return groupDefaultExpanded(group);
-    });
-  }, [expandedProjects, groups]);
-
-  const collapseAll = () => {
-    setExpandedProjects(
-      Object.fromEntries(groups.map((group) => [groupScopeKey(group), false])),
-    );
-    setExpandedChildren({});
-  };
-
   const handleProjectHeaderToggle = async (group: ProjectSessionGroup) => {
     const key = groupScopeKey(group);
     const expanded = expandedProjects[key] ?? groupDefaultExpanded(group);
@@ -1167,7 +1156,6 @@ export function MultiProjectSessionList({
 
   return (
     <div style={{ flex: 1, width: "100%", minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column", background: "transparent" }}>
-      {anyExpanded ? <CollapseAllRow onClick={collapseAll} /> : null}
       <div
         data-onboarding="session-actions"
         style={{
@@ -1280,7 +1268,10 @@ export function MultiProjectSessionList({
                   <div style={{ display: "flex", flexDirection: "column", gap: "2px", paddingTop: 0 }}>
                     {rows.map((row) => {
                       if (row.type === "child-toggle") {
-                        const stateKey = childStateKey(row.parent, group.rootId);
+                        // nodeId 必须一起传：写键的地方（handleChildToggle / onCollapse）
+                        // 传的是三参数版本，这里少传一个就会算出另一个键，于是读到
+                        // 未定义 —— 表现正是「行显示已展开、点它却毫无反应」。
+                        const stateKey = childStateKey(row.parent, group.rootId, groupNodeId);
                         const loadingChild = !!loadingChildren[stateKey];
                         const hasMoreChildren = !!childrenHasMore[stateKey];
                         const label = loadingChild
@@ -1302,6 +1293,7 @@ export function MultiProjectSessionList({
                             marginLeft={SUB_SESSION_ICON_OFFSET}
                             onClick={() => void handleChildToggle(row, group.sessions, group.rootId, groupNodeId)}
                             onCollapse={() =>
+                              // 整行点 = 收起；折叠基数已在展开那一刻钉好，这里不动。
                               setExpandedChildren((prev) => ({
                                 ...prev,
                                 [childStateKey(row.parent, group.rootId, groupNodeId)]: false,
@@ -1357,8 +1349,11 @@ export function MultiProjectSessionList({
             })}
           </div>
         )}
+        {/* 入口行在滚动容器内、但在「有无分组」这个分支之外：分组多到装不下一屏时它跟着
+            内容被顶下去（要滚动才看得到），一个分组都没有时它也还在 —— 放进上面的分支
+            里会连空态一起消失，归档就再也进不去了。 */}
+        <ArchiveEntryRow onOpen={onOpenArchivePanel} />
       </div>
-      <ArchiveEntryRow onOpen={onOpenArchivePanel} />
       <style>{`
         @keyframes mindfs-bound-pulse {
           0%, 100% { opacity: 1; box-shadow: 0 0 0 1.5px rgba(37,99,235,0.14); }

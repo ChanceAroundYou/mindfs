@@ -337,7 +337,6 @@ export const enUS = {
   "sessionList.loadMoreChildren": "Load more child sessions",
   "sessionList.expandChildren": "Expand child sessions",
   "sessionList.remainingChildren": "{count} child sessions left",
-  "sessionList.collapseAllChildren": "Collapse all",
   "sessionList.remainingSessions": "{count} sessions left",
   "sessionList.pinProject": "Pin project",
   "sessionList.unpinProject": "Unpin project",

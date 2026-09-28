@@ -335,7 +335,6 @@ export const zhCN = {
   "sessionList.loadMoreChildren": "加载更多子会话",
   "sessionList.expandChildren": "展开子会话",
   "sessionList.remainingChildren": "还有 {count} 个子会话",
-  "sessionList.collapseAllChildren": "全部收起",
   "sessionList.remainingSessions": "还有 {count} 个会话",
   "sessionList.pinProject": "置顶项目",
   "sessionList.unpinProject": "取消置顶项目",

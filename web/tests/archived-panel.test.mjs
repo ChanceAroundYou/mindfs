@@ -180,28 +180,34 @@ test("面板复用主列表的项目分组，且不再有嵌套归档入口", ()
   assert.doesNotMatch(panel, /archivedSessions=/);
 });
 
-test("归档入口行是滚动容器的**兄弟**节点，永远在侧栏最底", () => {
-  // 这里刻意不用 position: sticky。sticky 只在内容溢出时才起作用：列表不满一屏
-  // 时它就留在文档流末尾（后面还有空白），读起来正是「浮在中间」—— 踩过两次。
-  // 正确形状是：入口行退出滚动容器，做同一根 flex 列上 flexShrink:0 的最后一项。
-  // 列表长就被内容顶上去，列表短就贴住容器底边，两种情况都在最底。
+test("归档入口行是滚动内容的最后一项：会话多时会被顶下去", () => {
+  // 2026-09-28 用户明确要的形态：它**不**永远贴底，而是排在滚动内容末尾，
+  // 会话多到装不下一屏时被内容顶下去，要滚动才看得到。
+  // 之前那版把它做成滚动容器的兄弟节点 + flexShrink:0（列尾项），那形态恰恰是
+  // **永远贴底、顶不下去**，与需求正相反。
   const list = read("src/components/SessionList.tsx");
   const row = list.slice(
     list.indexOf('data-archive-entry="open"'),
     list.indexOf("</button>", list.indexOf('data-archive-entry="open"')),
   );
-  assert.doesNotMatch(row, /position: "sticky"/, "sticky 表达不了「永远在最底」");
-  assert.match(row, /flexShrink: 0/, "必须是不可压缩的列尾项，否则会被内容压扁/顶走");
+  // 在 flex 列里要被压扁，所以 flexShrink:0 仍然要
+  assert.match(row, /flexShrink: 0/, "放在 flex 列里会被压扁");
   assert.match(row, /width: "100%"/, "应占满整行");
   assert.match(row, /var\(--panel-bg\)/, "内容从它上面滚过，背景必须不透");
+  // sticky 只是让它滚到末尾时仍可点；不是「贴底」的手段
+  assert.match(row, /position: "sticky"/);
 
-  // 结构守卫：两个调用点的入口行都必须在 overflow:auto 的**外面**，
-  // 即紧跟在滚动容器的闭合 </div> 之后，而不是在它里面。
+  // 结构守卫：两个调用点的入口行都在 overflow:auto 滚动容器里、且排在
+  // 「有无会话/分组」那个三元分支的**外面**。放进分支里的话，会话一条不剩时
+  // 它跟着空态一起消失 —— 归档入口就此消失，用户再也进不去归档（死锁）。
   for (const scroller of [...list.matchAll(/overflow: "auto", padding: "8px" \/\}>/g)]) {
     const after = list.slice(scroller.index, scroller.index + 4000);
-    const close = after.indexOf("</div>");
     const entry = after.indexOf("<ArchiveEntryRow");
-    assert.ok(entry > close, "入口行必须排在滚动容器闭合之后（即在其外部）");
+    assert.ok(entry > 0, "每个滚动容器里都应有一处入口行");
+    const close = after.indexOf("</div>");
+    assert.ok(entry < close, "入口行必须排在滚动容器闭合之前（即在其内部）");
+    const branchClose = after.lastIndexOf(")}", entry);
+    assert.ok(branchClose > 0 && branchClose < entry, "入口行必须在有无会话/分组的分支之外");
   }
   const entries =
     list.match(/<ArchiveEntryRow onOpen=\{onOpenArchivePanel\} \/>/g) || [];
@@ -263,17 +269,101 @@ test("图标只看展开态：还有下一批时不再把收起图标换成展�
   assert.match(list, /showExpandIcon=\{!projectLoading && !expanded\}/);
 });
 
-test("顶部有「全部收起」兜底，展开行滚出视口也收得回来", () => {
+test("只有行内收起，没有顶部「全部收起」兜底行", () => {
+  // 2026-09-28 用户明确要求删掉「全部收起」：它收的是**项目分组**的展开态，
+  // 收不了子会话 —— 名字骗人，做的事又不是子会话。子会话靠行内那一行的收起图标。
+  // （前一版我把它加回来也是错的，被同一轮反馈推翻了。）
   const list = read("src/components/SessionList.tsx");
   const code = list.replace(/^\s*\/\/.*$/gm, "");
-  assert.match(list, /data-collapse-all="children"/);
-  const rows = code.match(/\{anyExpanded \? <CollapseAllRow onClick=\{collapseAll\} \/> : null\}/g) || [];
-  assert.equal(rows.length, 2, "SessionList 和 MultiProjectSessionList 各一处");
-  // 单项目列表只展开过子会话
-  assert.match(list, /const collapseAll = \(\) => setExpandedChildren\(\{\}\);/);
-  // 多项目列表两层都收：项目分组 + 组内子会话树
-  assert.match(code, /setExpandedChildren\(\{\}\);[\s\S]{0,400}setExpandedProjects\(/);
+  assert.doesNotMatch(code, /function CollapseAllRow/, "兜底行组件要删掉");
+  assert.doesNotMatch(code, /data-collapse-all/, "不得再有 data-collapse-all 标记");
+  assert.doesNotMatch(code, /const anyExpanded/, "不再有为此存在的聚合判定");
+  assert.doesNotMatch(code, /const collapseAll = /, "不再有 collapseAll");
   for (const locale of ["zh-CN", "en-US"]) {
-    assert.match(read(`src/i18n/locales/${locale}.ts`), /"sessionList\.collapseAllChildren":/);
+    assert.doesNotMatch(
+      read(`src/i18n/locales/${locale}.ts`),
+      /collapseAllChildren/,
+      "i18n 里的兜底文案应一并删掉",
+    );
+  }
+  // 行内收起仍然在：两处子会话行 + 一处项目分组行
+  const wired = code.match(/onCollapse=/g) || [];
+  assert.equal(wired.length, 3, "子会话行两处 + 项目分组行一处");
+  assert.match(code, /onCollapse=\{\(\) => handleProjectCollapse\(group\)\}/);
+});
+
+test("收起后的「还有 N 个」按展开**那一刻**的已加载数算，不含展开时新拉回的批次", () => {
+  // 用户报的 bug：折叠时是「还有 2 个子会话」，展开后点收起变成「还有 81 个」，
+  // 也就是 b > a。根因是 hiddenCount 按 children.length 算，而展开会再拉一批
+  // （每批最多 50 条）合并进 children，总数只增不减 —— 收起后的数字必然大于展开前。
+  // 修法：基数在**展开前**钉进 collapsedBaseCount。反过来（收起时钉）会把 bug
+  // 固化 —— 收起那一刻 sessions 里已经含新拉回的批次，钉进去的正是那个虚高的数。
+  const list = read("src/components/SessionList.tsx");
+  const code = list.replace(/^\s*\/\/.*$/gm, "");
+  // 两个列表各一份 collapsedBaseCount state
+  const states = code.match(/const \[collapsedBaseCount, setCollapsedBaseCount\]/g) || [];
+  assert.equal(states.length, 2, "SessionList 和 MultiProjectSessionList 各一份");
+  // 折叠计数必须读这份 state，不能直接用 children.length
+  const reads = code.match(/const collapsedBase = collapsedBaseCount\[([^\]]+)\] \?\? children\.length;/g) || [];
+  assert.equal(reads.length, 2, "两处 buildRows 都要按折叠基数算 hiddenCount");
+  // 不得再有「按总数算」的旧写法
+  assert.doesNotMatch(
+    code,
+    /const hiddenCount = Math\.max\(0, children\.length - COLLAPSED_CHILD_SESSION_LIMIT\)/,
+    "这就是 b > a 的那行：按总数算",
+  );
+  // 钉基数只发生在两处展开分支（各一次），收起路径一处都不许有
+  const pins = code.match(/setCollapsedBaseCount\(/g) || [];
+  assert.equal(pins.length, 2, `只在两处展开分支钉基数，实得 ${pins.length}`);
+  for (const fn of [...code.matchAll(/const handleChildToggle = async \([\s\S]*?\n  \};/g)].map((m) => m[0])) {
+    const expandAt = fn.indexOf("!row.expanded");
+    const pinAt = fn.indexOf("setCollapsedBaseCount(");
+    assert.ok(pinAt > expandAt, "钉基数必须在展开分支（!row.expanded）里");
+    const tail = fn.slice(fn.indexOf("else {", expandAt));
+    assert.doesNotMatch(tail, /setCollapsedBaseCount\(/, "收起分支不得再钉基数");
+  }
+  // onCollapse（整行点 = 收起）只翻展开态，不碰基数。
+  // 先剥掉行注释再匹配；剥完会留下空行，所以别指望原来的缩进 —— 直接从
+  // onCollapse 切到下一个 `}` 就拿到函数体了。
+  const stripped = code.replace(/^\s*\/\/.*$/gm, "");
+  const onCollapse = [...stripped.matchAll(/onCollapse=\{\(\) =>/g)]
+    .filter((m) => !stripped.slice(m.index, m.index + 60).includes("handleProjectCollapse"))
+    .map((m) => stripped.slice(m.index, stripped.indexOf("}", m.index)));
+  assert.equal(onCollapse.length, 2, "两处子会话行都有 onCollapse");
+  for (const body of onCollapse) {
+    assert.match(body, /setExpandedChildren\(/, "onCollapse 应翻展开态");
+    assert.doesNotMatch(body, /setCollapsedBaseCount\(/, "收起时不得钉基数");
   }
 });
+
+test("buildRows 的读键与写键用同一个 childStateKey 调用形状（含 nodeId）", () => {
+  // 算错键的表现极具迷惑性：行照样显示「已展开」（那个只看 React 局部 state 的
+  // row.expanded），点下去却毫无反应 —— 因为 onCollapse 写的是另一个键。
+  // 读键（render 里）必须带上 nodeId，与 handleChildToggle / onCollapse 的三参数
+  // 版本一致。buildRows 里那处是第三个读键，同样要带 —— 它决定「哪些子会话被
+  // 铺出来」，键算错就等于展开态写进去却读不出来。
+  const list = read("src/components/SessionList.tsx");
+  assert.match(
+    list,
+    /const stateKey = childStateKey\(row\.parent, group\.rootId, groupNodeId\);/,
+    "render 里的读键少传了 nodeId，会算到另一个键上",
+  );
+  assert.match(
+    list,
+    /const stateKey = childStateKey\(item, fallbackRootId, fallbackNodeId\);/,
+    "buildRows 里的读键也必须带 nodeId",
+  );
+  // 写键与 render 读键必须算出同一个键：onCollapse 里的内联写法
+  // [childStateKey(row.parent, group.rootId, groupNodeId)]: false
+  const writes = list.match(
+    /\[childStateKey\(row\.parent, group\.rootId, groupNodeId\)\]: false,/g,
+  ) || [];
+  assert.equal(writes.length, 1, "onCollapse 的写键应与读键同形");
+  // 任何 childStateKey 调用都不得只剩两参（那正是本 bug 的形状）。按实参个数判定，
+  // 别靠逗号切串 —— 键里本来就带 `::` 和 `:`。
+  const calls = [...list.matchAll(/childStateKey\(([^)]*)\)/g)].map((m) => m[1]);
+  assert.ok(calls.length >= 4, "至少应覆盖 buildRows / handleChildToggle / render 三处");
+  const twoArg = calls.filter((args) => args.split(",").length !== 3);
+  assert.deepEqual(twoArg, [], "不得有非三参数的 childStateKey 调用（少传 nodeId 即本 bug）");
+});
+
