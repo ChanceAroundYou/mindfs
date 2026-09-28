@@ -63,6 +63,20 @@ export function dirSelKey(
   return isRoot ? scopeKey(nodeId, rootId) : scopedDirKey(nodeId, rootId, path);
 }
 
+/**
+ * 判断一个会话复合键属于哪个节点。
+ *
+ * 用途：多节点刷新时只重算「本轮成功拉到的那几个节点」的键，其余节点的值原样保留
+ * （节点不可达时把它的条目当成没有在回复 = 灯被误灭；切节点时整体替换 = 灯全灭）。
+ * 段数规则见文件头——2 段必是空 nodeId，3 段必是非空 nodeId，故按段数判定不会误伤。
+ */
+export function sessionKeyNodeId(sessionScopeKey: string | null | undefined): string {
+  const k = String(sessionScopeKey ?? "");
+  if (!k) return "";
+  const parts = k.split(S);
+  return parts.length >= 3 ? parts[0] : "";
+}
+
 /** 会话键别名 */
 export function sessionScope(
   nodeId: string | null | undefined,
