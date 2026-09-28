@@ -268,14 +268,25 @@ function ArchiveEntryRow({ onOpen }: { onOpen?: () => void }) {
       data-archive-entry="open"
       onClick={onOpen}
       style={{
+        // 钉在滚动容器最底部：列表短时它就在最下面，列表长过一屏时它跟着
+        // 视口底边不动、只让内容从它上面滚过去 —— 无论滚到哪都不会跑到中间。
+        // sticky 认的是滚动容器的 padding 边，所以 bottom/marginBottom 都要减掉
+        // 那 8px，才是真正贴到最底，而不是浮在底部上方 8px。
+        position: "sticky",
+        bottom: -8,
         marginTop: "8px",
+        marginBottom: -8,
         padding: "6px 8px",
         width: "calc(100% - 2px)",
         marginLeft: MAIN_SESSION_ICON_OFFSET,
         boxSizing: "border-box",
         border: "none",
         borderTop: "1px solid var(--border-color)",
-        background: "transparent",
+        // 钉住就意味着内容要从它底下经过，背景必须不透。sidebar-bg 本身是半透明
+        // 的（浅色主题 0.65~0.82），直接用会看见字从按钮里滚过去，所以叠一层
+        // panel-bg 把它压实，再补一点 backdrop blur 收掉残余。
+        background: "linear-gradient(var(--sidebar-bg), var(--sidebar-bg)), var(--panel-bg)",
+        backdropFilter: "blur(6px)",
         color: "var(--text-secondary)",
         fontSize: "11px",
         lineHeight: 1.2,

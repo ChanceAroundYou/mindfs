@@ -180,6 +180,25 @@ test("面板复用主列表的项目分组，且不再有嵌套归档入口", ()
   assert.doesNotMatch(panel, /archivedSessions=/);
 });
 
+test("归档入口行钉在滚动容器最底部，短列表在最下、长列表只被内容推过", () => {
+  // position: sticky + bottom 才同时满足两条：列表短时它就是最下面一行；
+  // 列表长过一屏时它钉在视口底边，内容从它上面滚过去，任何滚动位置都不会
+  // 让它停在中间。条件渲染里塞回去会丢掉这两种。
+  const list = read("src/components/SessionList.tsx");
+  const row = list.slice(
+    list.indexOf('data-archive-entry="open"'),
+    list.indexOf("</button>", list.indexOf('data-archive-entry="open"')),
+  );
+  assert.match(row, /position: "sticky"/, "入口行应 sticky 钉底");
+  assert.match(row, /bottom: -8/, "应抵消容器 padding，贴真正的底边");
+  // 钉住 = 内容要从它底下经过，背景必须不透；sidebar-bg 本身半透明
+  assert.match(row, /var\(--panel-bg\)/, "需叠一层不透明底，否则字从按钮里滚过去");
+  // 两种列表里都还留着这一行
+  const entries =
+    list.match(/<ArchiveEntryRow onOpen=\{onOpenArchivePanel\} \/>/g) || [];
+  assert.equal(entries.length, 2, "SessionList 和 MultiProjectSessionList 各一处入口行");
+});
+
 test("侧栏底部只留入口行，归档内容不再内联展开", () => {
   const list = read("src/components/SessionList.tsx");
   assert.match(list, /data-archive-entry="open"/);
