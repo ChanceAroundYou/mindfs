@@ -911,17 +911,11 @@ func (h *HTTPHandler) handleSessionGet(w http.ResponseWriter, r *http.Request) {
 		limit = 200
 	}
 	uc := h.service()
-	var pendingUser *session.Exchange
-	if h.AppContext != nil {
-		pendingUser = h.AppContext.GetSessionStreamHub().GetPendingUserExchange(key)
-	}
-	if pendingUser == nil {
-		if _, err := uc.SyncExternalSessionDelta(r.Context(), usecase.SyncExternalSessionDeltaInput{
-			RootID: rootID,
-			Key:    key,
-		}); err != nil {
-			log.Printf("[session/sync] external delta best-effort failed root=%s session=%s err=%v", strings.TrimSpace(rootID), strings.TrimSpace(key), err)
-		}
+	if _, err := uc.SyncExternalSessionDelta(r.Context(), usecase.SyncExternalSessionDeltaInput{
+		RootID: rootID,
+		Key:    key,
+	}); err != nil {
+		log.Printf("[session/sync] external delta best-effort failed root=%s session=%s err=%v", strings.TrimSpace(rootID), strings.TrimSpace(key), err)
 	}
 	out, windowMeta, err := uc.GetSession(r.Context(), usecase.GetSessionInput{
 		RootID:    rootID,
@@ -961,7 +955,7 @@ func (h *HTTPHandler) handleSessionGet(w http.ResponseWriter, r *http.Request) {
 			Seq:    afterSeq,
 		})
 	}
-	respondJSON(w, http.StatusOK, h.sessionResponse(out, pendingUser, contextWindow, projectSessionExchangesForResponse(out, exchangeAux), windowMeta))
+	respondJSON(w, http.StatusOK, h.sessionResponse(out, contextWindow, projectSessionExchangesForResponse(out, exchangeAux), windowMeta))
 }
 
 // handleSessionAudit 只读体检：文件层（seq 空洞/重复、坏行、aux 悬空）+ 投影层的重复分类。
@@ -1062,13 +1056,7 @@ func (h *HTTPHandler) handleSessionSync(w http.ResponseWriter, r *http.Request) 
 	})
 	exchangeAux = projectSessionExchangesForResponse(out, exchangeAux)
 	// 注：sync 先做全量外部增量拉取（Full:true），再按窗口切片，保证窗口数据最新。
-	// pendingUser 必须与 GET 路径同样带上：否则点「同步」会丢掉正在等待回答的
-	// ask_user 卡（seq=0 条目，实测 2026-09-12 症状 2）。
-	var pendingUser *session.Exchange
-	if h.AppContext != nil {
-		pendingUser = h.AppContext.GetSessionStreamHub().GetPendingUserExchange(key)
-	}
-	respondJSON(w, http.StatusOK, h.sessionResponse(out, pendingUser, contextWindow, exchangeAux, windowMeta))
+	respondJSON(w, http.StatusOK, h.sessionResponse(out, contextWindow, exchangeAux, windowMeta))
 }
 
 func (h *HTTPHandler) handleSessionToolCallGet(w http.ResponseWriter, r *http.Request) {
@@ -1187,7 +1175,7 @@ func (h *HTTPHandler) handleSessionFork(w http.ResponseWriter, r *http.Request) 
 	}
 	respondJSON(w, http.StatusOK, map[string]any{
 		"session_key": out.Session.Key,
-		"session":     h.sessionResponse(out.Session, nil, agenttypes.ContextWindow{}, nil, nil),
+		"session":     h.sessionResponse(out.Session, agenttypes.ContextWindow{}, nil, nil),
 	})
 }
 
@@ -1417,7 +1405,6 @@ var projectedSessions sync.Map
 
 func (h *HTTPHandler) sessionResponse(
 	s *session.Session,
-	pendingUser *session.Exchange,
 	contextWindow agenttypes.ContextWindow,
 	exchangeAux map[int][]session.ExchangeAux,
 	windowMeta *session.SessionWindowMeta,
@@ -1426,10 +1413,6 @@ func (h *HTTPHandler) sessionResponse(
 		return map[string]any{}
 	}
 	exchanges := append([]session.Exchange{}, s.Exchanges...)
-	if pendingUser != nil {
-		pendingUser.Seq = 0
-		exchanges = append(exchanges, *pendingUser)
-	}
 	auxPayload := make(map[string][]session.ExchangeAux, len(exchangeAux))
 	if windowMeta != nil {
 		// 窗口模式：仅保留窗口内 exchange 的 aux，避免 aux.line 错位

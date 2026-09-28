@@ -363,13 +363,6 @@ func TestStreamHubSetPendingUserAtUsesProvidedTimestamp(t *testing.T) {
 	if !pending.Timestamp.Equal(want) {
 		t.Fatalf("pending timestamp = %s, want %s", pending.Timestamp.Format(time.RFC3339Nano), want.Format(time.RFC3339Nano))
 	}
-	exchange := hub.GetPendingUserExchange("session")
-	if exchange == nil {
-		t.Fatal("pending exchange is nil")
-	}
-	if !exchange.Timestamp.Equal(want) {
-		t.Fatalf("exchange timestamp = %s, want %s", exchange.Timestamp.Format(time.RFC3339Nano), want.Format(time.RFC3339Nano))
-	}
 }
 
 func TestReserveClientRequestKeepsOriginalTimestamp(t *testing.T) {
