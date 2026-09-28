@@ -230,3 +230,50 @@ test("面板文案两种语言都有", () => {
     assert.match(src, /"sessionList\.archivedPanel\.empty":/);
   }
 });
+
+// 这条守的是「子会话能展开、却收不回来」那个 bug 的根因，不只是现象。
+test("展开的子会话能收回去：ToggleRowButton 不再套嵌套 button", () => {
+  const list = read("src/components/SessionList.tsx");
+  const fn = list.slice(list.indexOf("function ToggleRowButton({"));
+  const body = fn.slice(0, fn.indexOf("\n}\n"));
+  const code = body.replace(/^\s*\/\/.*$/gm, "");
+
+  // 收起图标之前是个 button 里套 button（role="button" 的 span + stopPropagation）。
+  // 嵌套 button 是非法 HTML，浏览器把子元素从父 button 里拆出来，事件到不了父级，
+  // 那个图标就永远按不动 —— 表现正是「只能继续展开」。
+  assert.doesNotMatch(code, /<button[\s\S]*<button/, "按钮里不能再套按钮");
+  assert.doesNotMatch(code, /stopPropagation/, "不再需要靠阻止冒泡来隔离子按钮");
+  assert.doesNotMatch(code, /role="button"/, "行内不再有第二个可点元素");
+
+  // 收起 = 整行换 onCollapse，所以整行点得动
+  assert.match(code, /onClick=\{collapsed \? onCollapse : onClick\}/);
+  // 收起图标无条件跟着展开态走；「还有下一批」不再决定它出不出现
+  assert.match(code, /\{showCollapseIcon \? icon\(true\) : null\}/);
+});
+
+test("图标只看展开态：还有下一批时不再把收起图标换成展开图标", () => {
+  // `(!expanded || hasMore)` 会让「行文字写着收起、图标却是 ▾、点下去是加载更多」，
+  // 三者互相矛盾，用户既看不到也点不到收回去。
+  const list = read("src/components/SessionList.tsx");
+  const code = list.replace(/^\s*\/\/.*$/gm, "");
+  assert.doesNotMatch(code, /showExpandIcon=\{[^}]*\|\|[^}]*\}/, "展开图标不该被 hasMore 掺和");
+  assert.doesNotMatch(code, /showCollapseIcon=\{[^}]*\|\|[^}]*\}/, "收起图标不该被 hasMore 掺和");
+  assert.match(list, /showExpandIcon=\{!loading && !row\.expanded\}/);
+  assert.match(list, /showExpandIcon=\{!loadingChild && !row\.expanded\}/);
+  assert.match(list, /showExpandIcon=\{!projectLoading && !expanded\}/);
+});
+
+test("顶部有「全部收起」兜底，展开行滚出视口也收得回来", () => {
+  const list = read("src/components/SessionList.tsx");
+  const code = list.replace(/^\s*\/\/.*$/gm, "");
+  assert.match(list, /data-collapse-all="children"/);
+  const rows = code.match(/\{anyExpanded \? <CollapseAllRow onClick=\{collapseAll\} \/> : null\}/g) || [];
+  assert.equal(rows.length, 2, "SessionList 和 MultiProjectSessionList 各一处");
+  // 单项目列表只展开过子会话
+  assert.match(list, /const collapseAll = \(\) => setExpandedChildren\(\{\}\);/);
+  // 多项目列表两层都收：项目分组 + 组内子会话树
+  assert.match(code, /setExpandedChildren\(\{\}\);[\s\S]{0,400}setExpandedProjects\(/);
+  for (const locale of ["zh-CN", "en-US"]) {
+    assert.match(read(`src/i18n/locales/${locale}.ts`), /"sessionList\.collapseAllChildren":/);
+  }
+});

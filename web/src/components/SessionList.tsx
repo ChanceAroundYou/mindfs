@@ -159,11 +159,18 @@ function ToggleRowButton({
     </svg>
   );
 
+  // 展开态这一行有两个动作：拉下一批子会话 / 全部收起。所以收起图标是**整行
+  // 可点**的 —— 它就长在「展开 N 条」这一行里，点这一行任何位置都该能收回去。
+  // 行内不再套一个可点的子元素：嵌套 button 是非法 HTML，浏览器会把子 button
+  // 从父 button 里拆出来，事件到不了父级，再叠上 stopPropagation，那个收起图标
+  // 就永远按不动（只能继续展开）。所以收起 = 整行换 onCollapse，不是第二个按钮。
+  const collapsed = showCollapseIcon && !!onCollapse;
   return (
     <button
       type="button"
       disabled={loading}
-      onClick={onClick}
+      onClick={collapsed ? onCollapse : onClick}
+      title={collapsed ? t("common.collapse") : undefined}
       style={{
         marginLeft,
         marginTop: "-2px",
@@ -188,39 +195,43 @@ function ToggleRowButton({
       <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: "6px", minWidth: 0, flexShrink: 1 }}>
         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
         {showExpandIcon ? icon(false) : null}
-        {showCollapseIcon ? (
-          <span
-            role="button"
-            tabIndex={0}
-            aria-label={t("common.collapse")}
-            title={t("common.collapse")}
-            onClick={(event) => {
-              event.stopPropagation();
-              onCollapse?.();
-            }}
-            onKeyDown={(event) => {
-              if (event.key !== "Enter" && event.key !== " ") {
-                return;
-              }
-              event.preventDefault();
-              event.stopPropagation();
-              onCollapse?.();
-            }}
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              cursor: loading ? "default" : "pointer",
-            }}
-          >
-            {icon(true)}
-          </span>
-        ) : null}
+        {showCollapseIcon ? icon(true) : null}
       </span>
     </button>
   );
 }
 
+
+// 顶部「全部收起」：子会话树可能同时有会话级和项目级两层展开，展开的那一行滚出
+// 视口后就找不回来了 —— 没有这个兜底就只能一路展开下去。
+function CollapseAllRow({ onClick }: { onClick: () => void }) {
+  const { t } = useI18n();
+  return (
+    <button
+      type="button"
+      data-collapse-all="children"
+      onClick={onClick}
+      style={{
+        flexShrink: 0,
+        height: "22px",
+        padding: "0 8px",
+        border: "none",
+        background: "transparent",
+        color: "var(--text-secondary)",
+        fontSize: "10.5px",
+        cursor: "pointer",
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.color = "var(--text-primary)";
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.color = "var(--text-secondary)";
+      }}
+    >
+      {t("sessionList.collapseAllChildren")}
+    </button>
+  );
+}
 function PinIcon({ pinned }: { pinned: boolean }) {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" aria-hidden="true">
@@ -503,6 +514,9 @@ export function SessionList({
     }
   };
 
+  const anyExpanded = Object.values(expandedChildren).some(Boolean);
+  const collapseAll = () => setExpandedChildren({});
+
   const handleChildToggle = async (row: Extract<VisibleSessionRow, { type: "child-toggle" }>) => {
     const parentKey = row.parent.key;
     if (!row.expanded) {
@@ -532,6 +546,7 @@ export function SessionList({
         background: "transparent",
       }}
     >
+      {anyExpanded ? <CollapseAllRow onClick={collapseAll} /> : null}
       {/* 统一的 Header 边栏 */}
       <div
         data-onboarding="session-actions"
@@ -737,7 +752,7 @@ export function SessionList({
                     key={`children-toggle-${row.parent.key}`}
                     loading={loading}
                     label={label}
-                    showExpandIcon={!loading && (!row.expanded || hasMoreChildren)}
+                    showExpandIcon={!loading && !row.expanded}
                     showCollapseIcon={!loading && row.expanded}
                     marginLeft={SUB_SESSION_ICON_OFFSET}
                     onClick={() => void handleChildToggle(row)}
@@ -1110,6 +1125,26 @@ export function MultiProjectSessionList({
     setExpandedProjects((prev) => ({ ...prev, [groupScopeKey(group)]: false }));
   };
 
+  // 多项目列表有两层展开：项目分组 + 项目内的子会话树。任一层展开着就在顶部给
+  // 一个「全部收起」—— 分组默认展开，展开的那行可能早滚出视口，没有它就只能
+  // 一路展开下去。
+  const anyExpanded = useMemo(() => {
+    const explicit = Object.values(expandedProjects).some(Boolean);
+    if (explicit) return true;
+    return groups.some((group) => {
+      const key = groupScopeKey(group);
+      if (expandedProjects[key] !== undefined) return !!expandedProjects[key];
+      return groupDefaultExpanded(group);
+    });
+  }, [expandedProjects, groups]);
+
+  const collapseAll = () => {
+    setExpandedProjects(
+      Object.fromEntries(groups.map((group) => [groupScopeKey(group), false])),
+    );
+    setExpandedChildren({});
+  };
+
   const handleProjectHeaderToggle = async (group: ProjectSessionGroup) => {
     const key = groupScopeKey(group);
     const expanded = expandedProjects[key] ?? groupDefaultExpanded(group);
@@ -1132,6 +1167,7 @@ export function MultiProjectSessionList({
 
   return (
     <div style={{ flex: 1, width: "100%", minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column", background: "transparent" }}>
+      {anyExpanded ? <CollapseAllRow onClick={collapseAll} /> : null}
       <div
         data-onboarding="session-actions"
         style={{
@@ -1261,7 +1297,7 @@ export function MultiProjectSessionList({
                             key={`children-toggle-${group.rootId}-${row.parent.key}`}
                             loading={loadingChild}
                             label={label}
-                            showExpandIcon={!loadingChild && (!row.expanded || hasMoreChildren)}
+                            showExpandIcon={!loadingChild && !row.expanded}
                             showCollapseIcon={!loadingChild && row.expanded}
                             marginLeft={SUB_SESSION_ICON_OFFSET}
                             onClick={() => void handleChildToggle(row, group.sessions, group.rootId, groupNodeId)}
@@ -1308,7 +1344,7 @@ export function MultiProjectSessionList({
                                 : t("common.collapse")
                               : t("sessionList.remainingSessions", { count: Math.max(0, group.totalCount - MULTI_PROJECT_VISIBLE_LIMIT) })
                         }
-                        showExpandIcon={!projectLoading && (!expanded || remaining > 0)}
+                        showExpandIcon={!projectLoading && !expanded}
                         showCollapseIcon={!projectLoading && expanded}
                         marginLeft={MAIN_SESSION_ICON_OFFSET}
                         onClick={() => void handleProjectToggle(group)}
