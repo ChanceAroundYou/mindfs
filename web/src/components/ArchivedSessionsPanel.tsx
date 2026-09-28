@@ -26,7 +26,7 @@ const TOP_GAP = 56;
 // 进出用同一条**线性**曲线。曲线形态在这件事上是过度设计：真正让进场
 // 「几乎瞬间」的不是曲线，是进场那一帧没有过渡起点（见下面 mounted 的注释）。
 // 起点补上之后两侧就都是同一串 CSS 的镜像，线性足够 —— 而且线性天生自反。
-const TRANSITION_MS = 320;
+const TRANSITION_MS = 240;
 const TRANSITION_EASE = "linear";
 
 type ArchivedSessionsPanelProps = {
@@ -115,11 +115,10 @@ export function ArchivedSessionsPanel({
           borderTopRightRadius: "12px",
           boxShadow: "0 -8px 24px rgba(0, 0, 0, 0.22)",
           background: "var(--mindfs-topbar-bg, var(--sidebar-bg))",
-          // 上浮幅度：18px 在 280px 宽的栏里几乎看不出在动，64px 才读得出
-          // 「从底边升起来」。配合 scale 的一点收缩，落位时像被托上来。
-          transform: isOpen
-            ? "translateY(0) scale(1)"
-            : "translateY(64px) scale(0.97)",
+          // 只做竖直方向的位移：开着不动，收起沉到栏底之下。
+          // 不带 scale —— 缩放是第二个方向的运动，和位移叠在一起读起来
+          // 就是「在缩放」，抢了「在升起」的主戏。位移 + 淡入淡出已经够了。
+          transform: isOpen ? "translateY(0)" : "translateY(48px)",
           opacity: isOpen ? 1 : 0,
           transition: `transform ${timing}, opacity ${timing}`,
         }}

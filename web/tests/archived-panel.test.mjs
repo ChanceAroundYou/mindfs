@@ -36,7 +36,9 @@ test("遮罩是半透明黑，罩住右栏内容、透出底下的列表", () =>
 test("面板上浮靠 transition 终态切换，不是只进不退的 animation", () => {
   // animation 只能播进场；关闭时整层卸载就是硬切 —— 闪烁的一半来源。
   assert.match(panel, /data-archived-panel="sheet"/);
-  assert.match(panel, /transform: isOpen\s*\n\s*\? "translateY\(0\) scale\(1\)"\s*\n\s*: "translateY\(64px\) scale\(0\.97\)"/);
+  // 只做竖直位移。scale 是第二个方向的运动，叠上去读起来就是「在缩放」。
+  assert.doesNotMatch(panel, /scale\(/, "不该再有缩放动画");
+  assert.match(panel, /transform: isOpen \? "translateY\(0\)" : "translateY\(48px\)"/);
   assert.match(panel, /transition: `transform \$\{timing\}, opacity \$\{timing\}`/);
   assert.doesNotMatch(panel, /animation: "mindfs-archived-rise/);
   const css = read("src/index.css");
@@ -55,8 +57,8 @@ test("进出共用一套时长和一条线性曲线", () => {
   const durations = panel.match(/_MS = \d+/g) || [];
   assert.equal(durations.length, 1, "只应有一个时长常量");
   assert.ok(
-    Number(durations[0].replace(/.*= /, "")) >= 260,
-    `时长应 >= 260ms，实得 ${durations[0]}`,
+    Number(durations[0].replace(/.*= /, "")) >= 200,
+    `时长应 >= 200ms（再慢就又显得磨叽），实得 ${durations[0]}`,
   );
   // 遮罩和面板两条 transition 都得是这一串
   assert.match(panel, /transition: `opacity \$\{timing\}`/);
@@ -78,7 +80,7 @@ test("面板常驻 DOM：isOpen 直接当终态样式，没有两态和延迟卸
   assert.doesNotMatch(code, /setTimeout\(\(\) => setMounted/, "不再有延迟卸载");
   // 终态样式直接由 isOpen 决定
   assert.match(panel, /opacity: isOpen \? 1 : 0/);
-  assert.match(panel, /transform: isOpen\s*\n\s*\? "translateY\(0\) scale\(1\)"/);
+  assert.match(panel, /transform: isOpen \? "translateY\(0\)" : "translateY\(48px\)"/);
   // 收起后仍占整列但不透明、不吃点击，把交互还给底下的列表
   assert.match(panel, /pointerEvents: isOpen \? "auto" : "none"/);
   // 挂载交给组件自己，hook 不再条件渲染
