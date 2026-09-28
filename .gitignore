@@ -1,5 +1,11 @@
 .codex/
-.claude/
+# .claude/ 曾经整个忽略，结果 worktree 里的 agent 拿不到工程约定（最要紧的
+# CLAUDE.md「构建与部署」和 skills/ship 的收尾闭环都丢了，只能靠猜）。
+# 改成：运行时自动产生的状态忽略，人工维护的约定入库。
+# 注意要带前导 / 的模式（见末尾的 **/.claude/ 补漏）—— .claude/* 只管根目录，
+# 而 hook 在 web/、web/src/、web/tests/ 下也各建了一份状态目录。
+.claude/*
+!.claude/skills/
 .worktree/
 .mindfs/
 .specify/
@@ -16,7 +22,10 @@ web/node_modules
 dist/
 build/
 *.log
+# .env* 里只有 web/.env 例外：Makefile 用 -include 读它拿 VITE_MIND_FS_BASE，
+# 没有它 make install 在新 worktree 里只能回退到兜底前缀去猜。内容无密钥。
 .env*
+!web/.env
 *.exe
 *.test
 vendor/
@@ -29,4 +38,7 @@ harmony/.appanalyzer/
 harmony/local.properties
 harmony/entry/src/main/resources/rawfile/public/
 .omc/
-CLAUDE.md
+# 补漏：hook 状态目录不止根目录一处，web/、web/src/、web/tests/、server/ 下都有。
+# 与上面的 .claude/* 配套：任意深度的 .claude 状态都忽略，但 skills 例外放行。
+**/.claude/*
+!**/.claude/skills/

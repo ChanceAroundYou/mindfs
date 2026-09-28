@@ -15,6 +15,7 @@ const taskRow = readFileSync(new URL("../src/components/workspace/WorkspaceTaskR
 const cardRows = readFileSync(new URL("../src/components/TaskCardRows.tsx", import.meta.url), "utf8");
 const quick = readFileSync(new URL("../src/components/workspace/WorkspaceQuickLaunch.tsx", import.meta.url), "utf8");
 const styles = readFileSync(new URL("../src/components/workspace/workspaceStyles.ts", import.meta.url), "utf8");
+const row = readFileSync(new URL("../src/components/workspace/WorkspaceProjectRow.tsx", import.meta.url), "utf8");
 const services = readFileSync(new URL("../src/services/tasks.ts", import.meta.url), "utf8");
 const storage = readFileSync(new URL("../src/app/appStorage.ts", import.meta.url), "utf8");
 const zh = readFileSync(new URL("../src/i18n/locales/zh-CN.ts", import.meta.url), "utf8");
@@ -247,8 +248,37 @@ assert.match(
   /export const workspaceProjectToggleStyle[\s\S]*?minWidth: "40px"[\s\S]*?height: "24px"/,
   "the collapse target must stay a comfortable 40x24, not a 12px icon",
 );
-// 任务排成卡片网格，不再是一条条平铺的行；列宽对齐看板单列的 220px
-assert.match(styles, /export const workspaceTaskGridStyle[\s\S]*?gridTemplateColumns: "repeat\(auto-fill, minmax\(220px, 1fr\)\)"/, "tasks lay out as cards wide enough to show the name");
+// 内边距只由 DefaultListView 的 topContent 包裹层给（移动端 16/16/0，桌面 8/16/24）。
+// 工作台根原来还叠了一层 12px，两个视图的边距因此对不上，底边宽出一截。
+// 剥注释再断言 —— 注释里得留着「为什么不加 padding」，否则下一个人会加回来。
+const workspaceRootBlock = styles.match(
+  /export const workspaceRootStyle[\s\S]*?\n};/,
+)[0].replace(/\/\*[\s\S]*?\*\//g, "");
+assert.doesNotMatch(
+  workspaceRootBlock,
+  /padding/,
+  "the workspace root must not add its own padding — the shared wrapper owns the insets",
+);
+
+// 任务排成卡片网格。列数跟着看板对齐：桌面一排 4 张、移动端一排 2 张。
+// 此前是 auto-fill + minmax(220px,1fr)，窄屏落到 1 列、宽屏铺到 6、7 张，两头都不对。
+// minmax(0,1fr) 的 0 下限是必要的：默认 minmax(auto,1fr) 会被卡片内容顶宽，多列挤成一条。
+assert.match(
+  styles,
+  /export const workspaceTaskGridStyle = \(isMobile = false\)[\s\S]*?gridTemplateColumns: isMobile \? "repeat\(2, minmax\(0, 1fr\)\)" : "repeat\(4, minmax\(0, 1fr\)\)"/,
+  "tasks lay out two per row on mobile and four on desktop, matching the board's column counts",
+);
+// 移动端那两列必须真的排出来，否则调用点漏传 isMobile 就静默退回 4 列挤成一条。
+assert.match(
+  row,
+  /<div style=\{workspaceTaskGridStyle\(isMobile\)\}>/,
+  "the project row must pass isMobile into the grid, or mobile keeps four cramped columns",
+);
+assert.match(
+  row,
+  /const \{ isMobile \} = useResponsive\(\);/,
+  "the project row reads isMobile itself rather than threading it through the whole tree",
+);
 
 // 9d) 点任务卡留在工作台：不许再走 openWorkspaceProject（那会切项目 + 切看板）
 assert.match(

@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { dialogService, type DialogRequest } from "../services/dialog";
+import { useBackLayer } from "../app/useBackNavigation";
 import { useI18n } from "../i18n";
 
 /**
@@ -82,6 +83,10 @@ export function DialogHost(): React.ReactElement | null {
     setRequest(next);
     setDraft(next?.kind === "prompt" ? next.defaultValue || "" : "");
   }), []);
+
+  // 弹窗是覆盖层里最高的一层：按返回/侧滑应该走 dismiss（取消语义），
+  // 而不是穿透到面板或视图栈。注册在 App 层之上，所以它天然在最上面。
+  useBackLayer(!!request, () => dialogService.dismiss());
 
   useEffect(() => {
     if (request?.kind === "prompt") {

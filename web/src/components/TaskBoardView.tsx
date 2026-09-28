@@ -183,7 +183,12 @@ export function TaskBoardView({
     <div
       data-onboarding="task-board"
       style={{
-        maxHeight: "calc(100dvh - 92px)",
+        /* 铺满：以前这里写死 maxHeight: calc(100dvh - 92px)，而那 92px 猜的是
+           ActionBar 高度 + 安全区，跟真实值对不上，内容一少底部就空一大截。
+           高度交给 flex 链（DefaultListView 的滚动容器已经撑满了），
+           那套 dvh 魔法数就此退休。 */
+        flex: 1,
+        minHeight: 0,
         overflow: "visible",
         display: "flex",
         flexDirection: "column",
@@ -530,18 +535,30 @@ export function TaskBoardView({
     ) : !isAllTaskTemplateFilter && !selectedTaskTemplateForFilter ? (
       <div style={{ padding: "12px", fontSize: "12px", color: "var(--text-secondary)" }}>{t("task.createTemplateFirst")}</div>
     ) : (
-        <div style={{ overflowX: isMobile ? "hidden" : "auto", overflowY: "hidden", padding: "0 0 12px 1px", minHeight: 0 }}>
+        <div style={{ overflowX: isMobile ? "hidden" : "auto", overflowY: "hidden", padding: "0 0 12px 1px", minHeight: 0, flex: 1, minWidth: 0 }}>
           <div
             style={{
               display: "grid",
+              // 百分比行高要有个**确定**高度才能解析。这一层拿得到值，是因为 DefaultListView
+              // 的 topContent 包裹层声明了 height:"100%" + display:flex/column，
+              // 本组件根因此是个高度已定的 flex item，网格容器 flex:1 又是已定的 flex item。
+              // 链条上任何一环退回 auto，下面的 50% 就解析不出来、行高变内容高度 —— 老问题复发。
+              height: "100%",
               // 移动端横滑空间浪费：列改为换行（每行两列），列内上下滑看卡片。
               gridAutoFlow: isMobile ? "row" : "column",
-              gridTemplateColumns: isMobile ? "repeat(2, 1fr)" : undefined,
+              // minmax(0,1fr) 而不是 1fr：默认的 auto 下限会被卡片内容顶宽，窄屏挤成一条。
+              gridTemplateColumns: isMobile ? "repeat(2, minmax(0, 1fr))" : undefined,
               gridAutoColumns: isMobile ? undefined : "minmax(220px, 1fr)",
-              gridAutoRows: isMobile ? "36dvh" : undefined,
+              // 行高：桌面四块同排，撑满即可；移动端两行必须**封顶**。
+              // 这里踩过坑：写 minmax(0,1fr) 时父容器高度 auto、无上限，1fr 退化成
+              // 「视口的一半」—— 四块两行直接撑到 2 个屏。所以移动端按 50% 切两行、
+              // 各扣掉半个 gap，总高恰好等于可用高度，永远不外溢。
+              gridAutoRows: isMobile ? "calc(50% - 3px)" : "100%",
               gap: "6px",
               minWidth: isMobile ? undefined : `${Math.max(kanbanStageColumns.length, 1) * 220}px`,
-              alignItems: "start",
+              // 列要撑满行高（alignItems 默认的 stretch）。以前写的是 "start"，
+              // 那是配合 36dvh 定高用的；行高交给网格后必须放开，
+              // 否则列退回内容高度，底部空带原封不动地回来。
             }}
           >
             {kanbanStageColumns.map((column) => {
@@ -560,8 +577,9 @@ export function TaskBoardView({
                   display: "flex",
                   flexDirection: "column",
                   minHeight: 0,
-                  height: isMobile ? (columnCollapsed ? undefined : "36dvh") : undefined,
-                maxHeight: isMobile ? undefined : "calc(100dvh - 96px)",
+                  // 高度由网格行（minmax(0,1fr)）给满，列内列表容器自己滚。
+                  // 移动端行高同样由网格给；折叠的列按内容收缩，不拉成空壳。
+                  height: columnCollapsed ? "auto" : "100%",
                 }}
               >
               <div

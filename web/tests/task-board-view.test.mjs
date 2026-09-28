@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 const bar = readFileSync(new URL("../src/components/ActionBar.tsx", import.meta.url), "utf8");
 const board = readFileSync(new URL("../src/components/TaskBoardView.tsx", import.meta.url), "utf8");
+const listView = readFileSync(new URL("../src/components/DefaultListView.tsx", import.meta.url), "utf8");
 const zh = readFileSync(new URL("../src/i18n/locales/zh-CN.ts", import.meta.url), "utf8");
 const en = readFileSync(new URL("../src/i18n/locales/en-US.ts", import.meta.url), "utf8");
 
@@ -58,11 +59,53 @@ assert.match(
   /t\("task\.column\.ended"\)[\s\S]*?key: "success"[\s\S]*?key: "cancelled"[\s\S]*?task\.status === "fail" \|\| task\.status === "cancelled"/,
   "已结束 must group 完成 and 取消, with 失败 folded into 取消",
 );
-// 每块固定高度 + 完成分组默认展开
+// 每块高度必须封顶，不能是 minmax(0,1fr)：父容器高度 auto、无上限时 1fr 退化成
+// 「视口的一半」，移动端四块两行直接撑到两个屏 —— 那正是 minmax(0,1fr) 那版的 bug。
+// 移动端 calc(50% - 3px) 两行加 gap 恰好等于可用高度；桌面四块同排 100%。
 assert.match(
   board,
-  /gridAutoRows: isMobile \? "36dvh" : undefined,/,
-  "mobile blocks should keep a fixed height",
+  /gridAutoRows: isMobile \? "calc\(50% - 3px\)" : "100%",/,
+  "mobile blocks must each be capped at half the available height, or four blocks span two screens",
+);
+// 百分比行高要有个确定高度才能解析，缺了它 50% 会退回 auto（等于没封顶）。
+// height:"100%" 必须落在这层网格自己的 style 上，DefaultListView 的 topContent
+// 包裹层负责把确定高度一路传下来（那层也要有 height + display:flex）。
+assert.match(
+  board,
+  /display: "grid",[\s\S]{0,300}?height: "100%",/,
+  "the grid needs a definite height for the percentage rows to resolve",
+);
+assert.match(
+  listView,
+  /showTaskKanban && topContent[\s\S]{0,900}?height: "100%",[\s\S]{0,120}?display: "flex"/,
+  "the topContent wrapper must be a sized flex column, or nothing below it can flex",
+);
+// 内边距跟着设备走。移动端底部那条 24px 紧贴输入区，是一道永远用不上的空带；
+// 顶部 8px 比左右两侧的 16px 窄一截，看着像没对齐。桌面四边 16px 保持不变。
+assert.match(
+  listView,
+  /padding: isMobile \? "16px 16px 0" : "8px 16px 24px"/,
+  "mobile drops the dead bottom padding and widens the top to match the 16px sides; desktop keeps 8/16/24",
+);
+// 桌面列高曾经写死 calc(100dvh - 96px)，那套魔法数已随根容器的 flex:1 退休。
+// 只看样式值不看注释 —— 注释里得留着「为什么删掉」，否则下一个人会再加回来。
+// 剥 /* */ 块注释：从 /* 起跳到最近的 */ 为止（.tsx 里没有嵌套）。
+const boardStyleValues = board.replace(/\/\*[\s\S]*?\*\//g, "");
+assert.doesNotMatch(
+  boardStyleValues,
+  /100dvh/,
+  "no dvh magic numbers left in the board styles — height comes from the flex chain",
+);
+// 列必须能撑满网格行：默认的 stretch 才行，alignItems:"start" 会退回内容高度。
+assert.doesNotMatch(
+  board,
+  /alignItems: "start"/,
+  "columns must stretch to the grid row, or the bottom gap comes right back",
+);
+assert.match(
+  board,
+  /height: columnCollapsed \? "auto" : "100%",/,
+  "collapsed columns may shrink, open ones fill their row",
 );
 assert.match(
   app,

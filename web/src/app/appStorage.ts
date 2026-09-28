@@ -257,12 +257,12 @@ export function saveWorkspaceCollapsed(keys: Set<string>): void {
 }
 
 export function loadMainView(): MainViewMode {
-  if (typeof window === "undefined") return "board";
+  if (typeof window === "undefined") return "workspace";
   try {
     const saved = window.localStorage.getItem(MAIN_VIEW_STORAGE_KEY);
-    return MAIN_VIEW_MODES.includes(saved as MainViewMode) ? (saved as MainViewMode) : "board";
+    return MAIN_VIEW_MODES.includes(saved as MainViewMode) ? (saved as MainViewMode) : "workspace";
   } catch {
-    return "board";
+    return "workspace";
   }
 }
 
@@ -271,7 +271,8 @@ export function loadLegacyMainView(): MainViewMode | null {
   if (window.localStorage.getItem(MAIN_VIEW_STORAGE_KEY)) return null;
   try {
     const legacy = window.localStorage.getItem("mindfs-default-main-content-view");
-    const migrated: MainViewMode = legacy === "file-browser" ? "files" : "board";
+    // 旧键里只有 file-browser 有意义，其余（缺失/非法）一律落到默认落地页 = 工作台。
+    const migrated: MainViewMode = legacy === "file-browser" ? "files" : "workspace";
     window.localStorage.setItem(MAIN_VIEW_STORAGE_KEY, migrated);
     return migrated;
   } catch {

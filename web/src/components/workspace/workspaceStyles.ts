@@ -18,13 +18,17 @@ export function nodeTint(color: string | null, alpha: number): string {
 }
 
 export const workspaceRootStyle: React.CSSProperties = {
+  // 铺满：以前写死 maxHeight: calc(100dvh - 148px)，那 148px 猜的是 ActionBar
+  // 高度 + 安全区，和真实值对不上，内容一少底部就空一大截。高度交给 flex 链。
+  flex: 1,
   overflowY: "auto",
-  padding: "12px",
+  // 刻意不带内边距：外层 DefaultListView 的 topContent 包裹层已经给了
+  // （移动端 16/16/0，桌面 8/16/24）。这里原来还有一层 12px，两层叠加让工作台的
+  // 边距和看板对不上——底边尤其宽出一截。去掉之后两个视图只由包裹层一处决定。
   display: "flex",
   flexDirection: "column",
   gap: "10px",
   minHeight: 0,
-  maxHeight: "calc(100dvh - 148px)",
 };
 
 // 「需要你」条带：桌面横向滚，窄屏改纵向堆叠 ——
@@ -157,14 +161,17 @@ export const workspaceProjectToggleStyle: React.CSSProperties = {
  * 任务卡网格。卡面（边框/底/圆角/投影）和卡内两行都来自共享的
  * taskCardSurfaceStyle + TaskCardRows（看板那套卡片同一份），这里只管排布。
  *
- * 列宽对齐看板单列的 220px —— 150px 时长任务名几乎必被截断，而工作台是扫读场景，
- * 名字看不全等于这张卡白给。
+ * 轨道数跟着看板对齐：桌面一排 4 张，移动端一排 2 张。
+ * 此前是 auto-fill + minmax(220px,1fr)，窄屏落到 1 列、宽屏能铺到 6、7 张，
+ * 两头都不对；固定 repeat 之后列数只由 isMobile 决定，不受可用宽度摆布。
  */
-export const workspaceTaskGridStyle: React.CSSProperties = {
+export const workspaceTaskGridStyle = (isMobile = false): React.CSSProperties => ({
   display: "grid",
-  gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
+  // minmax(0,1fr) 的 0 下限是必要的：默认 minmax(auto,1fr) 会被卡片内容顶宽，
+  // 多列在窄屏挤成一条。
+  gridTemplateColumns: isMobile ? "repeat(2, minmax(0, 1fr))" : "repeat(4, minmax(0, 1fr))",
   gap: "6px",
-};
+});
 
 /**
  * 「需要你」条带专用的两行小字：编号·项目名 / 阶段名。

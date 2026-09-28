@@ -253,7 +253,12 @@ html {
   background: var(--bg-gradient-start);
   overflow-x: hidden;
   overflow-y: hidden;
-  overscroll-behavior: none;
+  /* 以前这里是 overscroll-behavior: none（两轴全锁），iOS 的边缘返回手势因此
+     被关掉，「返回」只剩退出应用一条路。现在只锁纵向：应用内所有滚动都发生在
+     body/#root 以下的容器里，纵向必须锁住，否则整页会被橡皮筋拽出白边。
+     横向不声明 = 恢复系统默认，iOS 边缘侧滑才能触发 history 回退。
+     这一行是真机行为，模拟器测不出来（见任务 3 的验证清单）。 */
+  overscroll-behavior-y: none;
 }
 
 @media (prefers-color-scheme: dark) {

@@ -119,6 +119,19 @@ assert.match(
   /isFirstStage\b/,
   "the create-task panel edits the first stage, so it must render the start-immediately chip",
 );
+// 附件「+」：面板底部的隐藏 file input 和缩略图 chips 一直都在，
+// 只是没告诉编辑器有这个按钮可点（PromptEditor 的 + 只在传 onAttach 时渲染）。
+// 任务详情面板早就这么传了，新建任务面板漏了 —— 钉住，防止又被悄悄删掉。
+assert.match(
+  createEditor,
+  /onAttach=\{\(\) => taskInlineAttachmentInputRef\.current\?\.click\(\)\}/,
+  "the create-task panel must pass onAttach so PromptEditor renders the add-attachment button",
+);
+assert.match(
+  app,
+  /ref=\{taskInlineAttachmentInputRef\}\s*type="file"/,
+  "the hidden file input the + button clicks must exist in the create-task panel",
+);
 assert.match(
   app,
   /const taskInlineTemplate = taskTemplates\.find\(\(tpl\) => tpl\.id === taskInlineEdit\.templateId\) \|\| null;/,

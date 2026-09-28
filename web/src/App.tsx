@@ -200,6 +200,7 @@ import {
 
 import { APP_DOCUMENT_TITLE, AppProps, CHILD_SESSION_PAGE_SIZE, MULTI_PROJECT_SESSION_LIMIT, ManagedRootPayload, SESSION_PAGE_SIZE } from "./app/appMisc";
 import { MainViewMode, URLState } from "./app/appPath";
+import { closeTopBackLayer, consumeViewHistoryEntry, hasBackLayer, installBackNavigation, pushViewHistoryEntry, useBackLayer } from "./app/useBackNavigation";
 import { AttachedFileContext, Exchange, GitFileStat, MultiProjectSessionGroup, PendingSend, RelatedFileClickTarget, SessionItem, SessionMode, SessionQueueItem, SlashCommandResult, ViewerSelection, WSStatus } from "./app/appSession";
 import { CANDIDATE_FETCH_DEBOUNCE_MS, DIRECTORY_SORT_OVERRIDES_STORAGE_KEY, GIT_DIFF_SIDE_BY_SIDE_STORAGE_KEY, GIT_HISTORY_EXPANDED_STORAGE_KEY, GIT_STATUS_EXPANDED_STORAGE_KEY, LAST_ROOT_NODE_STORAGE_KEY, LAST_ROOT_STORAGE_KEY, loadWorkspaceCollapsed, loadWorkspaceFilter, MAIN_VIEW_STORAGE_KEY, MOBILE_ENTER_KEY_SEND_STORAGE_KEY, PLUGIN_QUERY_STORAGE_PREFIX, saveWorkspaceCollapsed, saveWorkspaceFilter, SIDEBARS_SWAPPED_STORAGE_KEY, TASK_TEMPLATE_ALL_FILTER, TASK_TEMPLATE_SELECTION_STORAGE_KEY, TREE_SORT_STORAGE_KEY, type WorkspaceBoardFilter } from "./app/appStorage";
 import { TaskInlineEditState } from "./app/appTask";
@@ -1589,6 +1590,23 @@ export function App({ onGoHome }: AppProps) {
     mainViewRef.current = mode;
     setMainView(mode);
   }, []);
+
+  /* 覆盖层接进返回栈：按返回/侧滑时先关最上面那一层，而不是退视图或退出应用。
+     四个接线点摆在一起是因为它们互为兄弟（都是「盖在主区之上」的东西），
+     放在一起才看得出「返回」的优先级：弹窗 > 面板 > 悬浮框 > 退视图。
+     关闭动作都复用各层既有的关闭路径，所以 PanelShell 的「放弃改动？」确认照旧生效。 */
+  useBackLayer(scheduledAgentDialogOpen, () => setScheduledAgentDialogOpen(false));
+  useBackLayer(taskTemplateDialogOpen, () => setTaskTemplateDialogOpen(false));
+  useBackLayer(!!taskInlineEdit, () => {
+    // 保存中不给关：和面板上那个 × 按钮同一条规则。
+    if (!taskInlineSaving) closeTaskEditDialog();
+  });
+  useBackLayer(isDrawerOpen && mainView === "files", () => {
+    interactionModeRef.current = "main";
+    setInteractionMode("main");
+    setDrawerOpenForRoot(currentRootIdRef.current, false);
+  });
+
   const currentDirectorySortMode = currentDirectorySortOverride || treeSortMode;
 
   const replaceURLState = useCallback((next: URLState) => {
@@ -1608,6 +1626,12 @@ export function App({ onGoHome }: AppProps) {
     const target = `${window.location.pathname}${search}`;
     window.history.replaceState(null, "", target);
   }, []);
+
+  /* Android 硬件返回键。刻意不接回调：installBackNavigation 内部一律走
+     history.back()，让返回键汇进 popstate 那条路，和浏览器后退 / iOS 侧滑
+     保持同一套语义。以前这里是独立的一套「关层 / 退视图」逻辑，两套各走一遍，
+     一次返回要按两下才对。 */
+  useEffect(() => installBackNavigation(), []);
 
   const handleOnboardingStepChange = useCallback((stepId: string) => {
     const showingSidebar = stepId === "sidebar-menu" || stepId === "project-tabs";
@@ -7207,8 +7231,36 @@ export function App({ onGoHome }: AppProps) {
       })();
     }
 
-    window.addEventListener("popstate", handlePopState);
-    return () => window.removeEventListener("popstate", handlePopState);
+    const onPopState = (event: PopStateEvent) => {
+      // 覆盖层开着的时候，浏览器后退/iOS 侧滑应该只关那一层，而不是连视图一起换掉。
+      // 刚被弹掉的那一条立刻 push 回去，否则历史被吃掉一次，
+      // 下一次后退就直接退到站外（用户看到的是「按两次返回就出去了」）。
+      if (hasBackLayer()) {
+        window.history.pushState(event.state, "", window.location.href);
+        closeTopBackLayer();
+        return;
+      }
+      // 视图切换留下的那条记录：它带的是「切之前」那个视图，直接退回去。
+      // 不走 handlePopState —— 那套按 URL 恢复，而 pushViewHistoryEntry 存的
+      // 是切换瞬间的 URL，view 字段可能还没写进去，判据只能是 state 里的视图。
+      // 退到哪个视图后要 replaceState 把 URL 对齐（按钮高亮与实际视图同源），
+      // 只换 view、其余 root/file/session 原样带回，否则会把当前项目/文件抹掉。
+      const fromView = (event.state as { mindfsView?: MainViewMode } | null)?.mindfsView;
+      if (fromView) {
+        consumeViewHistoryEntry();
+        mainViewRef.current = fromView;
+        setMainView(fromView);
+        if (fromView !== "chat") {
+          lastNonChatViewRef.current = fromView;
+        }
+        const now = readURLState();
+        replaceURLState({ ...now, view: fromView });
+        return;
+      }
+      handlePopState();
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
   }, [actionHandlers, loadSessionsForRoot, refreshTreeDir, showBoundSessionOrRootDir]);
 
   const selectedRoot =
@@ -8341,6 +8393,9 @@ export function App({ onGoHome }: AppProps) {
     if (rootID) setDrawerOpenForRoot(rootID, false);
     interactionModeRef.current = "main";
     setInteractionMode("main");
+    // 先落一条历史（存切之前的视图），再切。没有这条浏览器历史就永远只有一项，
+    // 侧滑/后退无路可退 —— 这正是「侧滑直接退出」的直接原因。
+    pushViewHistoryEntry(mainViewRef.current);
     switchMainView(mode);
     // 切到文件面板但从没点过任何目录时，主区是空的：把当前项目顶层目录补上。
     // 已经有内容（含报错态）就别动，用户点过的目录优先于这个默认值。
@@ -9694,6 +9749,10 @@ export function App({ onGoHome }: AppProps) {
                    用哪个 agent/模型，所以把 PromptEditor 自带的 AgentSelector 打开。
                    默认值取模板里第一个 agent 段的 agent/model（createTaskInputStage）。 */
                 showAgentSelector={taskInlineHasAgentStage}
+                /* 附件「+」：面板底部的隐藏 file input 一直在（App.tsx:9782），
+                   chips 也在渲染，只是没告诉编辑器有这个按钮可点。
+                   任务详情面板（TaskDetailPanel.tsx:445）早就这么传了。 */
+                onAttach={() => taskInlineAttachmentInputRef.current?.click()}
                 onSend={() => void saveTaskInlineEdit()}
                 sending={taskInlineSaving}
                 sendDisabled={!taskInlineEdit.text.trim()}
