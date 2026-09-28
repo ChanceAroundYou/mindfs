@@ -6,6 +6,7 @@
 
 import { normalizeFastService } from "./appTask";
 
+import { sessionKeyNodeId } from "../services/scope";
 import {  QueuedUserMessage ,  RelatedFile ,  RelatedWorktree ,  Session ,  TokenUsage  } from "../services/session";
 
 export type SessionMode = "chat" | "plugin" | "command";
@@ -119,6 +120,32 @@ export function latestExchangeText(
     }
   }
   return "";
+}
+
+/**
+ * 多节点「正在回复」刷新后的合并：只重算本轮**成功**拉到的那几个节点，其余节点原样保留。
+ *
+ * 整体替换会同时踩两个坑，所以这里是逐节点增量：
+ *  - 节点不可达却当成「没有在回复」→ 灯被误灭；
+ *  - 切节点时（selectRootNode → nodes-changed → 立即刷新）整体替换 → 旧节点在跑的
+ *    会话当场全灭，正是「切节点一定丢运行状态」那个机制。
+ * 空 nodeId 键（历史单节点格式）无法反推归属，一律保留。
+ */
+export function mergeReplyingStateByNode(
+  previous: Record<string, boolean>,
+  fresh: Record<string, boolean>,
+  okNodeIds: Iterable<string>,
+): Record<string, boolean> {
+  const ok = new Set(Array.from(okNodeIds, (v) => String(v || "").trim()).filter(Boolean));
+  const next: Record<string, boolean> = {};
+  for (const [key, value] of Object.entries(previous || {})) {
+    const nid = sessionKeyNodeId(key);
+    if (nid && ok.has(nid)) {
+      continue; // 本轮成功拉到，会用新值覆盖
+    }
+    next[key] = value;
+  }
+  return Object.assign(next, fresh);
 }
 
 export function sessionInputHistory(session: { exchanges?: Array<{ role?: string; content?: string }> } | null | undefined): string[] {
