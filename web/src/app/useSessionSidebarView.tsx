@@ -374,12 +374,13 @@ export function useSessionSidebarView({
     );
 
   // 归档视图浮在右栏**列内**的绝对定位层上，遮罩只盖右栏自己的内容。
-  // aside 是 overflow:auto，absolute 子元素会跟着内容滚，所以这一层
-  // 固定尺寸（flex:1 拿满右栏列高），里面的 sheet/scrim 才是钉住的。
-  // 收起时整个层 hidden，主面板和左栏完全不受影响。
+  // 这一层 relative + 占满整列：面板 absolute inset:0 盖住它，就真正浮在
+  // 会话列表上面（而不是跟列表上下分栏）。列表是普通流内容，一直在下面，
+  // 滚动位置/展开态不丢。
   const archiveView = (
     <div
       style={{
+        position: "relative",
         flex: 1,
         minHeight: 0,
         display: "flex",
@@ -387,16 +388,6 @@ export function useSessionSidebarView({
         overflow: "hidden",
       }}
     >
-      {archiveOpen ? (
-        <ArchivedSessionsPanel
-          onClose={closeArchivePanel}
-          groups={archivedGroups}
-          loading={archiveLoading}
-          selectedKey={activeBoundSessionKey || ""}
-          onSelect={handleSelectArchivedSession}
-          onArchive={handleArchiveSession}
-        />
-      ) : null}
       <div
         style={{
           flex: 1,
@@ -408,6 +399,16 @@ export function useSessionSidebarView({
       >
         {sessionSidebar}
       </div>
+      {archiveOpen ? (
+        <ArchivedSessionsPanel
+          onClose={closeArchivePanel}
+          groups={archivedGroups}
+          loading={archiveLoading}
+          selectedKey={activeBoundSessionKey || ""}
+          onSelect={handleSelectArchivedSession}
+          onArchive={handleArchiveSession}
+        />
+      ) : null}
     </div>
   );
 

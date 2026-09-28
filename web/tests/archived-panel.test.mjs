@@ -40,11 +40,17 @@ test("面板上浮（关键帧在全局 css 里，不是临时内联）", () => 
   assert.match(css, /@keyframes mindfs-archived-rise \{[\s\S]*?translateY\(/);
 });
 
-test("定位上下文钉在右栏列内，不溢出到主面板/左栏", () => {
-  // layer 撑满右栏列高且自身不滚动：aside 是 overflow:auto，
-  // absolute 子元素不钉在这个不滚动的根上就会跟着内容跑。
-  assert.match(panel, /data-archived-panel="layer"[\s\S]*?position: "relative"/);
-  assert.match(hook, /flex: 1,\s*minHeight: 0,[\s\S]*?overflow: "hidden"/);
+test("归档层 absolute 盖满右栏列，不是跟会话列表并排的 flex item", () => {
+  // 写成 flex item（flex:1）会跟列表上下分栏 —— 就是「堆在原有会话面板上方」
+  // 那个 bug。它必须 absolute inset:0，浮在列表上面。
+  assert.match(panel, /data-archived-panel="layer"[\s\S]*?position: "absolute",\s*inset: 0/);
+  assert.doesNotMatch(
+    panel.slice(panel.indexOf('data-archived-panel="layer"'), panel.indexOf('data-archived-panel="scrim"')),
+    /flex: 1/,
+    "归档层不能再是 flex item",
+  );
+  // 定位上下文由 hook 里那层 relative + 占满整列的 wrapper 提供
+  assert.match(hook, /position: "relative",\s*flex: 1,\s*minHeight: 0,[\s\S]*?overflow: "hidden"/);
   const shell = read("src/layout/AppShell.tsx");
   const rightStyle = shell.slice(
     shell.indexOf("const rightStyle"),
@@ -84,8 +90,7 @@ test("归档视图不重复画一遍空操作栏", () => {
 
 test("收起时归档层整体卸载，会话列表不受影响", () => {
   // 浮层压不住列表：它盖的是自己那一层，列表在下面继续挂着（滚动位置/展开态不丢）。
-  assert.match(hook, /\{archiveOpen \? \(\s*<ArchivedSessionsPanel/);
-  assert.match(hook, /\{sessionSidebar\}/);
+  assert.match(hook, /\{sessionSidebar\}[\s\S]*?\{archiveOpen \? \(\s*<ArchivedSessionsPanel/);
   assert.doesNotMatch(hook, /flex: archiveOpen \?/);
 });
 

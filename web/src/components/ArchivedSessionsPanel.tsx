@@ -48,13 +48,15 @@ export function ArchivedSessionsPanel({
   const total = groups.reduce((sum, g) => sum + (g.sessions?.length || 0), 0);
 
   return (
-    // 定位上下文：面板/遮罩都相对这一块 absolute，绝不溢出右栏。
+    // 定位上下文由调用方（占满右栏整列的 relative wrapper）提供。
+    // 这一层必须 absolute 盖满整列：写成 flex item 会跟会话列表并排，
+    // 变成「上下分栏」而不是「浮在上面」。
     <div
       data-archived-panel="layer"
       style={{
-        position: "relative",
-        flex: 1,
-        minHeight: 0,
+        position: "absolute",
+        inset: 0,
+        zIndex: 2,
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",
