@@ -1,5 +1,6 @@
 import React from "react";
 import { useI18n } from "../../i18n";
+import { useResponsive } from "../action/styleHelpers";
 import { TaskGroupChevronIcon } from "../../app/taskIcons";
 import type { SessionItem } from "../../app/appSession";
 import type { WorkspaceProjectGroup, WorkspaceTaskItem } from "../../app/useWorkspaceBoard";
@@ -53,6 +54,9 @@ export function WorkspaceProjectRow({
   onShowSessionError: (payload: TaskSessionErrorDialog) => void;
 }) {
   const { t } = useI18n();
+  // 卡片列数跟着看板对齐：移动端一排 2 张、桌面 4 张。放在本组件里就地取，
+  // 免得 WorkspaceBoard → 每行 → 网格一路透传 isMobile。
+  const { isMobile } = useResponsive();
   const openProject = () => onOpenProject(group.rootId, group.nodeId);
   return (
     <section style={workspaceProjectGroupStyle}>
@@ -78,7 +82,7 @@ export function WorkspaceProjectRow({
         </button>
       </div>
       {collapsed ? null : (
-        <div style={workspaceTaskGridStyle}>
+        <div style={workspaceTaskGridStyle(isMobile)}>
           {group.tasks.map((item) => (
             <WorkspaceTaskRow
               key={`${item.nodeId}::${item.root_id}::${item.task.id}`}
