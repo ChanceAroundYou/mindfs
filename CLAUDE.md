@@ -140,6 +140,16 @@ make dev-web          # 仅 Vite
       本机 WS 被误判成跨节点而丢掉 `user=`，**所有账户的实时流落到主账户 hub**（实测踩过，见 `web/tests/multi-account-partition.test.mjs`）。
       跨节点请求不带本机账户 id（账户表每台机器独立，带过去对方会 404）。
     - 共享契约有测试守着：`server/app/workspace_test.go`（共享必须是同一实例、项目/会话必须分开）。
+    - **旁路状态必须逐节点拉，且合并只能增量**（2026-09-28 修蓝灯不亮）：
+      `SessionItem` **没有** `running` 字段，小蓝灯只由 `session.pending` 决定，而它的真值来自独立的
+      `multiProjectPendingByKey` —— 这类「不随主数据返回」的状态要跟 `loadMultiProjectSessionGroups` 一样遍历节点表。
+      两个坑：① `appPath(path)` 不传 `nodeId` 会**静默打当前激活节点**（`getApiBaseURL(undefined)` → `getActiveNode()`），
+      跨节点场景必须显式传；② 合并**不能整体替换**——切节点时 `nodes-changed` 会立刻刷新，整体替换会让旧节点在跑的
+      会话当场全灭，节点请求失败也会被误当成「没有在回复」。只重算本轮成功节点的键，其余原样保留，
+      实现见 `appSession.ts` 的 `mergeReplyingStateByNode` + `scope.ts` 的 `sessionKeyNodeId`。
+      建键用 `scopeSessionKey(nid,…)` 而非 `rootSessionKey()`：后者走 `getNodeIdForRoot`，同名项目跨节点会错记。
+      远端节点的 `session.done` 收不到（没订阅那些会话），靠 `App.tsx` 里 5s/visible-only 轮询兜。
+      回归测试 `web/tests/cross-node-replying-state.test.mjs`。
 
 13. **看板模型（2026-09 重做）**：卡=任务，列=全局状态（待开始/进行中/等待你/已完成/失败·取消，前端 `kanbanStageColumns`）；
     - **任务自带流水**：`Task.Stages []StageTemplate` 是创建时从预设拷贝的**快照**，之后与预设无关（改/删预设不影响在途任务）。
