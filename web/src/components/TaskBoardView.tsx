@@ -535,17 +535,19 @@ export function TaskBoardView({
     ) : !isAllTaskTemplateFilter && !selectedTaskTemplateForFilter ? (
       <div style={{ padding: "12px", fontSize: "12px", color: "var(--text-secondary)" }}>{t("task.createTemplateFirst")}</div>
     ) : (
-        <div style={{ overflowX: isMobile ? "hidden" : "auto", overflowY: "hidden", padding: "0 0 12px 1px", minHeight: 0, flex: 1 }}>
+        <div style={{ overflowX: isMobile ? "hidden" : "auto", overflowY: "hidden", padding: "0 0 12px 1px", minHeight: 0, flex: 1, minWidth: 0 }}>
           <div
             style={{
               display: "grid",
-              // 百分比行高要有个确定高度才能解析：外层那个滚动容器是 flex:1 的
-              // flex item，高度由 flex 布局定死，所以这里 height:100% 拿得到值。
-              // 缺了它下面的 50% 会退回 auto，列又变内容高度 —— 也就是老问题复发。
+              // 百分比行高要有个**确定**高度才能解析。这一层拿得到值，是因为 DefaultListView
+              // 的 topContent 包裹层声明了 height:"100%" + display:flex/column，
+              // 本组件根因此是个高度已定的 flex item，网格容器 flex:1 又是已定的 flex item。
+              // 链条上任何一环退回 auto，下面的 50% 就解析不出来、行高变内容高度 —— 老问题复发。
               height: "100%",
               // 移动端横滑空间浪费：列改为换行（每行两列），列内上下滑看卡片。
               gridAutoFlow: isMobile ? "row" : "column",
-              gridTemplateColumns: isMobile ? "repeat(2, 1fr)" : undefined,
+              // minmax(0,1fr) 而不是 1fr：默认的 auto 下限会被卡片内容顶宽，窄屏挤成一条。
+              gridTemplateColumns: isMobile ? "repeat(2, minmax(0, 1fr))" : undefined,
               gridAutoColumns: isMobile ? undefined : "minmax(220px, 1fr)",
               // 行高：桌面四块同排，撑满即可；移动端两行必须**封顶**。
               // 这里踩过坑：写 minmax(0,1fr) 时父容器高度 auto、无上限，1fr 退化成

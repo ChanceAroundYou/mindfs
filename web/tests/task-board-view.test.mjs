@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 const bar = readFileSync(new URL("../src/components/ActionBar.tsx", import.meta.url), "utf8");
 const board = readFileSync(new URL("../src/components/TaskBoardView.tsx", import.meta.url), "utf8");
+const listView = readFileSync(new URL("../src/components/DefaultListView.tsx", import.meta.url), "utf8");
 const zh = readFileSync(new URL("../src/i18n/locales/zh-CN.ts", import.meta.url), "utf8");
 const en = readFileSync(new URL("../src/i18n/locales/en-US.ts", import.meta.url), "utf8");
 
@@ -67,10 +68,24 @@ assert.match(
   "mobile blocks must each be capped at half the available height, or four blocks span two screens",
 );
 // 百分比行高要有个确定高度才能解析，缺了它 50% 会退回 auto（等于没封顶）。
+// height:"100%" 必须落在这层网格自己的 style 上，DefaultListView 的 topContent
+// 包裹层负责把确定高度一路传下来（那层也要有 height + display:flex）。
 assert.match(
   board,
-  /display: "grid",[\s\S]{0,220}?height: "100%",/,
+  /display: "grid",[\s\S]{0,300}?height: "100%",/,
   "the grid needs a definite height for the percentage rows to resolve",
+);
+assert.match(
+  listView,
+  /showTaskKanban && topContent[\s\S]{0,900}?height: "100%",[\s\S]{0,120}?display: "flex"/,
+  "the topContent wrapper must be a sized flex column, or nothing below it can flex",
+);
+// 内边距跟着设备走。移动端底部那条 24px 紧贴输入区，是一道永远用不上的空带；
+// 顶部 8px 比左右两侧的 16px 窄一截，看着像没对齐。桌面四边 16px 保持不变。
+assert.match(
+  listView,
+  /padding: isMobile \? "16px 16px 0" : "8px 16px 24px"/,
+  "mobile drops the dead bottom padding and widens the top to match the 16px sides; desktop keeps 8/16/24",
 );
 // 桌面列高曾经写死 calc(100dvh - 96px)，那套魔法数已随根容器的 flex:1 退休。
 // 只看样式值不看注释 —— 注释里得留着「为什么删掉」，否则下一个人会再加回来。

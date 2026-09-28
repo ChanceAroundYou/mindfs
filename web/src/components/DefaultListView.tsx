@@ -1,6 +1,7 @@
 import React from "react";
 import { rootBadgeButtonStyle } from "./rootBadgeStyle";
 import { SymlinkBadge } from "./SymlinkBadge";
+import { useResponsive } from "./action/styleHelpers";
 import {
   DIRECTORY_SORT_OPTIONS,
   type DirectorySortMode,
@@ -517,6 +518,9 @@ export function DefaultListView({
   const isRootView = !!root && (!!path ? path === root : true);
   const showTaskKanban = currentViewMode === "task-kanban";
   const showFileBrowser = currentViewMode === "file-browser";
+  // 看板/工作台的内边距跟着设备走：移动端底部贴着输入区，再留 24px 会多出一道
+  // 永远用不上的空带；顶部反而要加大（8px → 16px）才和左右侧的 16px 对齐。
+  const { isMobile } = useResponsive();
   const sortLabel = (value: DirectorySortControlValue): string => {
     if (value === "inherit") return t("directory.followGlobal");
     const key = sortLabelKeys[value];
@@ -1198,10 +1202,14 @@ export function DefaultListView({
 
       <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
         {showTaskKanban && topContent ? (
-          /* 看板/工作台靠 flex 链铺满主区，这一层是链子的起点：
-             没有 minHeight:"100%"，子级的 flex:1 落在高度 auto 的祖先里就无效，
-             底部又空回一大截。 */
-          <div style={{ padding: "8px 16px 24px", minHeight: "100%" }}>{topContent}</div>
+          /* 看板/工作台靠 flex 链铺满主区，这一层是链子的起点。
+             必须是**确定高度**（height）而不是 minHeight：子级是 grid，
+             行高用百分比（移动端 50% 切两行）。minHeight 只给下限、
+             本身是 auto，百分比在 auto 高度里解析不出来 —— 行高退回内容高度，
+             四块两行又撑出屏幕。父级是 display:block，所以还得自己声明 flex 列，
+             否则子级的 flex:1 完全不生效（它不是 flex item）。
+             box-sizing 是全局 border-box，padding 算在这 100% 里面，不会外溢。 */
+          <div style={{ padding: isMobile ? "16px 16px 0" : "8px 16px 24px", height: "100%", display: "flex", flexDirection: "column" }}>{topContent}</div>
         ) : null}
         {showFileBrowser ? (
           <div style={{ padding: "24px 16px" }}>
