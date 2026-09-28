@@ -583,7 +583,7 @@ func TestDeleteSessionReturnsCascadeKeys(t *testing.T) {
 	}
 }
 
-func TestArchiveSessionCascadesToSubtreeAndKeepsContent(t *testing.T) {
+func TestArchiveSessionDeletesSubtreeButKeepsSelfContent(t *testing.T) {
 	ctx := context.Background()
 	root := rootfs.NewRootInfo("mindfs", "mindfs", t.TempDir())
 	manager := session.NewManager(root)
@@ -609,34 +609,42 @@ func TestArchiveSessionCascadesToSubtreeAndKeepsContent(t *testing.T) {
 		t.Fatalf("add exchange: %v", err)
 	}
 
-	archived, err := service.ArchiveSession(ctx, ArchiveSessionInput{RootID: root.ID, Key: parent.Key, Archived: true})
+	out, err := service.ArchiveSession(ctx, ArchiveSessionInput{RootID: root.ID, Key: parent.Key, Archived: true})
 	if err != nil {
 		t.Fatalf("archive parent: %v", err)
 	}
-	if archived == nil || archived.ArchivedAt == nil {
+	if out.Session == nil || out.Session.ArchivedAt == nil {
 		t.Fatal("archive should return the archived session")
 	}
-	// 整棵子树都打上标记
-	for _, item := range []*session.Session{parent, child, grandchild} {
-		got, err := manager.Get(ctx, item.Key, 0)
-		if err != nil {
-			t.Fatalf("reload %s: %v", item.Key, err)
-		}
-		if got.ArchivedAt == nil {
-			t.Fatalf("descendant %s should be archived too", item.Key)
-		}
-	}
-	if other, err := manager.Get(ctx, sibling.Key, 0); err != nil || other.ArchivedAt != nil {
-		t.Fatalf("sibling must stay visible: err=%v archivedAt=%v", err, other.ArchivedAt)
-	}
-
-	// 归档不是删除：正文必须还在（深链接/搜索仍要能打开它）
-	loaded, err := manager.Get(ctx, parent.Key, 0)
+	// 父会话：只打归档标记，正文完好（深链接/搜索仍要能打开它）
+	reloaded, err := manager.Get(ctx, parent.Key, 0)
 	if err != nil {
 		t.Fatalf("archived session must still be readable: %v", err)
 	}
-	if len(loaded.Exchanges) == 0 {
+	if reloaded.ArchivedAt == nil {
+		t.Fatal("parent should be archived")
+	}
+	if len(reloaded.Exchanges) == 0 {
 		t.Fatal("archived session lost its exchanges")
+	}
+	// 子会话：是**删除**，不是归档 —— 两种不同的状态
+	gotDeleted := make(map[string]bool)
+	for _, key := range out.DeletedKeys {
+		gotDeleted[key] = true
+	}
+	for _, item := range []*session.Session{child, grandchild} {
+		if !gotDeleted[item.Key] {
+			t.Fatalf("descendant %s should be reported deleted, got %v", item.Key, out.DeletedKeys)
+		}
+		if _, err := manager.Get(ctx, item.Key, 0); err == nil {
+			t.Fatalf("descendant %s should be gone from the store", item.Key)
+		}
+	}
+	if gotDeleted[parent.Key] {
+		t.Fatal("the archived session itself must not be reported deleted")
+	}
+	if other, err := manager.Get(ctx, sibling.Key, 0); err != nil || other.ArchivedAt != nil {
+		t.Fatalf("sibling must stay visible: err=%v archivedAt=%v", err, other.ArchivedAt)
 	}
 }
 
@@ -666,7 +674,8 @@ func TestArchiveSessionUnarchiveRestoresVisibility(t *testing.T) {
 }
 
 func TestArchiveSessionKeepsForkSession(t *testing.T) {
-	// 与 TestDeleteSessionKeepsForkSession 对称：fork 只记来源，不是子会话。
+	// 与 TestDeleteSessionKeepsForkSession 对称：fork 只记来源，不是子会话，
+	// 所以既不会被归档连带删掉，也不会被取消归档波及。
 	ctx := context.Background()
 	root := rootfs.NewRootInfo("mindfs", "mindfs", t.TempDir())
 	manager := session.NewManager(root)
@@ -685,15 +694,16 @@ func TestArchiveSessionKeepsForkSession(t *testing.T) {
 		t.Fatalf("create subagent: %v", err)
 	}
 
-	if _, err := service.ArchiveSession(ctx, ArchiveSessionInput{RootID: root.ID, Key: parent.Key, Archived: true}); err != nil {
+	out, err := service.ArchiveSession(ctx, ArchiveSessionInput{RootID: root.ID, Key: parent.Key, Archived: true})
+	if err != nil {
 		t.Fatalf("archive parent: %v", err)
 	}
-	got, err := manager.Get(ctx, subagent.Key, 0)
-	if err != nil {
-		t.Fatalf("subagent must still exist after archiving its parent: %v", err)
+	// 子会话是被删掉的（不是被归档）
+	if _, err := manager.Get(ctx, subagent.Key, 0); err == nil {
+		t.Fatal("subagent should be deleted along with its parent")
 	}
-	if got.ArchivedAt == nil {
-		t.Fatal("subagent should be archived with its parent")
+	if len(out.DeletedKeys) != 1 || out.DeletedKeys[0] != subagent.Key {
+		t.Fatalf("DeletedKeys = %v, want [%s]", out.DeletedKeys, subagent.Key)
 	}
 	forkGot, err := manager.Get(ctx, fork.Key, 0)
 	if err != nil {
@@ -739,6 +749,41 @@ func TestListSessionsArchivedOnlyViaUsecase(t *testing.T) {
 	}
 	if len(archived.Sessions) != 1 || archived.Sessions[0].Key != hidden.Key {
 		t.Fatalf("archived list = %v, want only %s", keysOfSessions(archived.Sessions), hidden.Key)
+	}
+}
+
+func TestArchivePanelListsTopLevelOnly(t *testing.T) {
+	// 归档面板按项目平铺，已归档的子会话不能再占一行（它们会在归档时被删掉，
+	// 这条只防历史脏数据：老版本把整棵子树都标了归档）。
+	ctx := context.Background()
+	root := rootfs.NewRootInfo("mindfs", "mindfs", t.TempDir())
+	manager := session.NewManager(root)
+	service := Service{Registry: &commandTestRegistry{root: root, manager: manager}}
+
+	parent, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, Name: "parent"})
+	if err != nil {
+		t.Fatalf("create parent: %v", err)
+	}
+	child, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, ParentSessionKey: parent.Key, Name: "child"})
+	if err != nil {
+		t.Fatalf("create child: %v", err)
+	}
+	for _, item := range []*session.Session{parent, child} {
+		if _, err := manager.SetArchived(ctx, item.Key, true); err != nil {
+			t.Fatalf("mark archived %s: %v", item.Key, err)
+		}
+	}
+
+	out, err := service.ListSessions(ctx, ListSessionsInput{
+		RootID:       root.ID,
+		ArchivedOnly: true,
+		TopLevelOnly: true,
+	})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(out.Sessions) != 1 || out.Sessions[0].Key != parent.Key {
+		t.Fatalf("archived top-level list = %v, want only %s", keysOfSessions(out.Sessions), parent.Key)
 	}
 }
 

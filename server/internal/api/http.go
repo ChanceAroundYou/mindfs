@@ -1344,10 +1344,11 @@ func (h *HTTPHandler) handleSessionDelete(w http.ResponseWriter, r *http.Request
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleSessionArchive 归档/取消归档整棵子树。形状照 handleSessionPin。
+// handleSessionArchive 归档/取消归档。
 //
-// 这里刻意**不**碰任务：归档的会话还能打开，任务里指向它的链接必须继续有效
-// （解绑只发生在真删除时，见 detachTaskFromSession）。
+// 归档会把子会话真删掉（见 usecase.ArchiveSession），所以这里**要**碰任务：
+// 和删除一样，被删掉的子会话可能绑着别的任务，不解绑任务点进去就是空白。
+// 被点的那个会话自己不碰任务 —— 它只是归档，还能打开，链接必须继续有效。
 func (h *HTTPHandler) handleSessionArchive(w http.ResponseWriter, r *http.Request) {
 	rootID := r.URL.Query().Get("root")
 	key := chi.URLParam(r, "key")
@@ -1362,7 +1363,7 @@ func (h *HTTPHandler) handleSessionArchive(w http.ResponseWriter, r *http.Reques
 		respondError(w, http.StatusBadRequest, errInvalidRequest("invalid json body"))
 		return
 	}
-	updated, err := h.service().ArchiveSession(r.Context(), usecase.ArchiveSessionInput{
+	out, err := h.service().ArchiveSession(r.Context(), usecase.ArchiveSessionInput{
 		RootID:   rootID,
 		Key:      key,
 		Archived: req.Archived,
@@ -1371,16 +1372,20 @@ func (h *HTTPHandler) handleSessionArchive(w http.ResponseWriter, r *http.Reques
 		respondError(w, http.StatusBadRequest, err)
 		return
 	}
+	// 被删的是子会话，任务里指向它们的链接一并清掉。
+	if len(out.DeletedKeys) > 0 {
+		h.detachTaskFromSession(r.Context(), rootID, out.DeletedKeys)
+	}
 	if h.AppContext != nil {
 		h.AppContext.GetSessionStreamHub().BroadcastAll(WSResponse{
 			Type: "session.meta.updated",
 			Payload: map[string]any{
 				"root_id": rootID,
-				"session": h.sessionListResponse(updated),
+				"session": h.sessionListResponse(out.Session),
 			},
 		})
 	}
-	respondJSON(w, http.StatusOK, h.sessionListResponse(updated))
+	respondJSON(w, http.StatusOK, h.sessionListResponse(out.Session))
 }
 
 // projectSessionExchangesForResponse 折叠「同一轮被多个写入者各写一份」的重复行，并把被

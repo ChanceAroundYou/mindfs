@@ -981,20 +981,34 @@ func (s *Service) DeleteSession(ctx context.Context, in DeleteSessionInput) ([]s
 	if err != nil {
 		return nil, err
 	}
+	if err := s.deleteSessionKeys(ctx, root, manager, keys); err != nil {
+		return nil, err
+	}
+	return keys, nil
+}
+
+// deleteSessionKeys 真删一批会话的完整清理序列：先掐断在跑的 turn，再逐个收资源。
+// 归档要删子树时也走这里 —— 归档过的子会话和普通删除在资源层面没有区别。
+func (s *Service) deleteSessionKeys(
+	ctx context.Context,
+	root fs.RootInfo,
+	manager *session.Manager,
+	keys []string,
+) error {
 	for _, key := range keys {
-		cancelActiveSessionTurn(in.RootID, key)
+		cancelActiveSessionTurn(root.ID, key)
 	}
 	for _, key := range keys {
 		if err := manager.Delete(ctx, key); err != nil {
-			return nil, err
+			return err
 		}
 		if err := root.RemoveSessionFileMeta(key); err != nil {
-			return nil, err
+			return err
 		}
-		commandexec.CloseSession(in.RootID, key)
-		s.Registry.ReleaseFileWatcher(in.RootID, key)
+		commandexec.CloseSession(root.ID, key)
+		s.Registry.ReleaseFileWatcher(root.ID, key)
 	}
-	return keys, nil
+	return nil
 }
 
 // sessionSubtreeKeys 收集 key 及其全部后代（子会话）的 key 集合。
@@ -1056,38 +1070,78 @@ func deleteSessionCascadeKeys(ctx context.Context, manager *session.Manager, key
 type ArchiveSessionInput struct {
 	RootID string
 	Key    string
-	// Archived = true 归档（整棵子树），false 取消归档。
+	// Archived = true 归档（自己），false 取消归档。
 	Archived bool
 }
 
-// ArchiveSession 归档/取消归档**整棵子树**，返回受影响的会话（已归档的那个）。
+type ArchiveSessionOutput struct {
+	// Session 是被归档/取消归档的那个会话本身（请求的那个 key）。
+	Session *session.Session
+	// DeletedKeys 是随这次归档被**删掉**的子会话。父会话只被标记，子会话是真删除 ——
+	// 两种不同的状态：父会话留在归档区，子会话从主面板和归档区都消失。
+	DeletedKeys []string
+}
+
+// ArchiveSession 归档一个会话：**只把它自己**打归档标记，它整棵子树的子会话**直接删除**。
 //
-// 与 DeleteSession 的关键差别：这里只打归档标记，**不做**任何资源清理
-// （不 cancelActiveSessionTurn / CloseSession / ReleaseFileWatcher / 删文件元数据）。
-// 归档的会话正文完好 —— 深链接能打开、搜索搜得到、还能继续跑；只有删除才真正收资源。
-func (s *Service) ArchiveSession(ctx context.Context, in ArchiveSessionInput) (*session.Session, error) {
+// 为什么子会话是删而不是跟着归档：归档区按项目分组平铺，子会话挂在那儿只会变成
+// 孤儿行（父被折叠就找不到，或撑成两层）。而归档本来就不该保留过程噪声 —— 用户
+// 归档的是「这段对话到此为止」，子会话是它内部的展开步骤，不值得单独占一行。
+//
+// 与 DeleteSession 的差别在**对象**：删除要收掉整棵树（包括被点的那个），归档只删
+// 后代、被点的那个只打标记不动内容（深链接能打开、还能继续跑）。
+//
+// 取消归档维持原样（整棵子树一起解标记）：删除不可逆，逆操作没法补偿，只解标记
+// 是当前能给出的最接近还原的行为。
+func (s *Service) ArchiveSession(ctx context.Context, in ArchiveSessionInput) (ArchiveSessionOutput, error) {
 	if err := s.ensureRegistry(); err != nil {
-		return nil, err
+		return ArchiveSessionOutput{}, err
+	}
+	root, err := s.Registry.GetRoot(in.RootID)
+	if err != nil {
+		return ArchiveSessionOutput{}, err
 	}
 	manager, err := s.Registry.GetSessionManager(in.RootID)
 	if err != nil {
-		return nil, err
+		return ArchiveSessionOutput{}, err
 	}
-	keys, err := sessionSubtreeKeys(ctx, manager, in.Key)
+	self := strings.TrimSpace(in.Key)
+	keys, err := sessionSubtreeKeys(ctx, manager, self)
 	if err != nil {
-		return nil, err
+		return ArchiveSessionOutput{}, err
 	}
-	var updated *session.Session
-	for _, key := range keys {
-		item, err := manager.SetArchived(ctx, key, in.Archived)
+	if !in.Archived {
+		// 取消归档：整棵子树一起解标记。
+		for _, key := range keys {
+			if _, err := manager.SetArchived(ctx, key, false); err != nil {
+				return ArchiveSessionOutput{}, err
+			}
+		}
+		updated, err := manager.SetArchived(ctx, self, false)
 		if err != nil {
-			return nil, err
+			return ArchiveSessionOutput{}, err
 		}
-		if key == strings.TrimSpace(in.Key) {
-			updated = item
+		return ArchiveSessionOutput{Session: updated}, nil
+	}
+	// 归档：先删子树（删的是后代，自己不在里面），再给自己打标记。
+	// 顺序反了会出问题 —— 删完子树后 self 的后代链已不存在，但 self 本身仍在，
+	// 两种顺序都能跑；先删是为了中途失败时不留下「已归档但子会话还在」的窗口。
+	children := make([]string, 0, len(keys))
+	for _, key := range keys {
+		if key != self {
+			children = append(children, key)
 		}
 	}
-	return updated, nil
+	if len(children) > 0 {
+		if err := s.deleteSessionKeys(ctx, root, manager, children); err != nil {
+			return ArchiveSessionOutput{}, err
+		}
+	}
+	updated, err := manager.SetArchived(ctx, self, true)
+	if err != nil {
+		return ArchiveSessionOutput{}, err
+	}
+	return ArchiveSessionOutput{Session: updated, DeletedKeys: children}, nil
 }
 
 func cancelActiveSessionTurn(rootID, sessionKey string) {
