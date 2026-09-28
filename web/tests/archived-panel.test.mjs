@@ -43,11 +43,11 @@ test("面板上浮靠 transition 终态切换，不是只进不退的 animation"
   assert.doesNotMatch(css, /mindfs-archived-rise/, "旧关键帧应已删");
 });
 
-test("进出完全对称：一套时长、一条曲线", () => {
+test("进出完全对称：一套时长、一条自反曲线", () => {
   // 淡出顺了，淡入就用一样的。拆成 OPEN_*/CLOSE_* 两套没有直觉依据，
   // 「怎么收就怎么开」才是可靠的一致性。
-  assert.match(panel, /const TRANSITION_MS = 3\d\d/);
-  assert.match(panel, /const TRANSITION_EASE = "cubic-bezier\(0\.22, 1, 0\.36, 1\)"/);
+  assert.match(panel, /const TRANSITION_MS = \d\d\d/);
+  assert.match(panel, /const TRANSITION_EASE = "cubic-bezier\([\d.]+, [\d.]+, [\d.]+, [\d.]+\)"/);
   assert.match(panel, /const timing = `\$\{TRANSITION_MS\}ms \$\{TRANSITION_EASE\}`/);
   // 方向相关的分支不许回来（那会让两侧悄悄跑成两套）
   assert.doesNotMatch(panel, /OPEN_MS|CLOSE_MS|OPEN_EASE|CLOSE_EASE/);
@@ -63,6 +63,27 @@ test("进出完全对称：一套时长、一条曲线", () => {
   // 遮罩和面板两条 transition 都得是这一串
   assert.match(panel, /transition: `opacity \$\{timing\}`/);
   assert.match(panel, /transition: `transform \$\{timing\}, opacity \$\{timing\}`/);
+});
+
+test("缓动曲线必须自反：两侧逐帧镜像，否则「同一串 CSS」仍是两种观感", () => {
+  // 一条 decelerate 曲线（尾部拖长）看着对称其实不是：进场时那段尾巴看得见
+  // （面板在半空缓慢落位）读成「慢而顺」，退场时同样的尾巴面板早跑出视野
+  // 看不见，读成「快」。自反的条件是控制点集绕 (0.5,0.5) 旋转 180° 后不变，
+  // 即 (x2, y2) == (1 - x1, 1 - y1)。注意这不是「x1+y1=1 且 x2+y2=1」——
+  //   那个错判会让 Material 标准曲线 0.4,0,0.2,1 假通过（1-0.4=0.6≠0.2，
+  //   它其实并不自反）。
+  const m = panel.match(/TRANSITION_EASE = "cubic-bezier\(([\d.]+), ([\d.]+), ([\d.]+), ([\d.]+)\)"/);
+  assert.ok(m, "应能从源码解析出缓动曲线");
+  const [, x1, y1, x2, y2] = m.map(Number);
+  const near = (a, b) => Math.abs(a - b) < 1e-6;
+  assert.ok(
+    near(x2, 1 - x1) && near(y2, 1 - y1),
+    `曲线 (${x1}, ${y1}, ${x2}, ${y2}) 不是自反的；` +
+      "自反要求 (x2, y2) == (1 - x1, 1 - y1)，如 ease-in-out 的 0.45,0,0.55,1",
+  );
+  // 顺带钉住取值：360ms 的对称 ease-in-out
+  assert.deepEqual([x1, y1, x2, y2], [0.45, 0, 0.55, 1]);
+  assert.equal(panel.match(/_MS = (\d+)/)[1], "360", "时长应为 360ms");
 });
 
 test("遮罩跟着淡入淡出（不是瞬间满不透明）", () => {
