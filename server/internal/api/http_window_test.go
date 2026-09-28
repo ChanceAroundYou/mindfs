@@ -34,7 +34,7 @@ func TestSessionResponseWindowFiltersAux(t *testing.T) {
 	}
 	// window mode: only seq 2,3 should remain
 	meta := &session.SessionWindowMeta{Total: 4, HasMore: true, MinSeq: 2, MaxSeq: 3}
-	resp := h.sessionResponse(s, nil, agenttypes.ContextWindow{}, aux, meta)
+	resp := h.sessionResponse(s, agenttypes.ContextWindow{}, aux, meta)
 	auxPayload, ok := resp["exchange_aux"].(map[string][]session.ExchangeAux)
 	if !ok {
 		t.Fatalf("exchange_aux type = %T", resp["exchange_aux"])
@@ -52,7 +52,7 @@ func TestSessionResponseWindowFiltersAux(t *testing.T) {
 		t.Fatalf("window_meta missing in window mode")
 	}
 	// non-window mode: all seqs pass through
-	resp2 := h.sessionResponse(s, nil, agenttypes.ContextWindow{}, aux, nil)
+	resp2 := h.sessionResponse(s, agenttypes.ContextWindow{}, aux, nil)
 	auxPayload2 := resp2["exchange_aux"].(map[string][]session.ExchangeAux)
 	if len(auxPayload2) != 4 {
 		t.Fatalf("non-window aux len = %d, want 4", len(auxPayload2))
@@ -249,24 +249,29 @@ func TestHandleSessionSyncWindow(t *testing.T) {
 	}
 }
 
-// 复现 2026-09-12 症状 2：点「同步」后正在等待回答的 ask_user 卡（pending, seq=0）消失。
-// GET 路径会取 GetPendingUserExchange（http.go:891-894），但 sync 路径硬编码传 nil
-// （http.go:1012），于是 sync 响应里没有这条 seq=0 条目 → 前端同步后卡片消失。
-func TestHandleSessionSyncCarriesPendingUser(t *testing.T) {
+// 复现 2026-09-28 症状：agent 执行中，用户自己那条消息从对话列表消失、点「同步」也刷不回来。
+//
+// 旧实现：user 行到回合结束才落盘，回合进行中读接口只能返回 StreamHub 的 pendingUser 内存
+// 副本，且 sessionResponse 强制把它降级成 seq=0。客户端却已按广播的「预测 seq」认定该行持久化，
+// overlay 的「seq<=latestSeq 即让位给窗口」规则在任意一次重锚定时把它丢掉。
+//
+// 新实现：user 行在回合开始前就落盘，读接口直接返回它自己的真 seq。
+func TestHandleSessionSyncCarriesInFlightUserWithRealSeq(t *testing.T) {
 	app, rootID, manager := newWindowTestApp(t)
 	ctx := context.Background()
 	s, _ := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, Name: "SyncPending"})
 	if err := manager.AddExchangeForAgent(ctx, s, "user", "hi", "claude", "", "", ""); err != nil {
 		t.Fatalf("AddExchange: %v", err)
 	}
-	// 模拟一轮正在等待 ask_user 回答：hub 里挂着一条尚未落库的 pending user 消息
-	app.GetSessionStreamHub().SetPendingUserAt(
-		rootID, s.Key, "SyncPending", "claude", "test-model", "", "", "", "", false,
-		"pending question", time.Now().UTC(),
-	)
+	// 回合进行中：user 行已落盘、助手行还没写。这是本 bug 的时间窗。
+	if err := manager.AddExchangeForAgentAt(ctx, s, "user", "pending question", "claude", "", "", "", time.Now().UTC()); err != nil {
+		t.Fatalf("AddExchangeForAgentAt(user): %v", err)
+	}
 	h := &HTTPHandler{AppContext: app}
 
-	rec := doSessionSync(t, h, rootID, s.Key, "")
+	// 走窗口模式（latest=20），这样响应带 window_meta——前端正是拿它的 maxSeq 做
+	// 「seq<=latestSeq 即让位给窗口」的判定。
+	rec := doSessionSync(t, h, rootID, s.Key, "&latest=20")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("sync status = %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -278,19 +283,36 @@ func TestHandleSessionSyncCarriesPendingUser(t *testing.T) {
 	if len(exchanges) == 0 {
 		t.Fatalf("exchanges empty: %s", rec.Body.String())
 	}
-	// pending user 必须以 seq=0 出现在响应里（与 GET 路径同语义）
-	foundPending := false
+	// 本轮 user 行必须带**真实 seq**（>0）出现，且只出现一次。
+	seen := 0
 	for _, raw := range exchanges {
 		item, _ := raw.(map[string]any)
-		if item == nil {
+		if item == nil || item["content"] != "pending question" {
 			continue
 		}
-		if int(item["seq"].(float64)) == 0 && item["content"] == "pending question" {
-			foundPending = true
+		seen++
+		if seq := int(item["seq"].(float64)); seq <= 0 {
+			t.Fatalf("in-flight user row must carry a real seq, got %d: %s", seq, rec.Body.String())
 		}
 	}
-	if !foundPending {
-		t.Fatalf("sync response missing pending user (seq=0): %s", rec.Body.String())
+	if seen != 1 {
+		t.Fatalf("in-flight user row must appear exactly once, got %d: %s", seen, rec.Body.String())
+	}
+	// 窗口 maxSeq 必须已覆盖本轮 user 行：否则前端「seq<=latestSeq 让位」仍会丢它。
+	meta, _ := body["window_meta"].(map[string]any)
+	if meta == nil {
+		t.Fatalf("window_meta missing: %s", rec.Body.String())
+	}
+	maxSeq := int(meta["maxSeq"].(float64))
+	found := false
+	for _, raw := range exchanges {
+		item, _ := raw.(map[string]any)
+		if item != nil && item["content"] == "pending question" && int(item["seq"].(float64)) == maxSeq {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("window maxSeq=%d must cover the in-flight user row: %s", maxSeq, rec.Body.String())
 	}
 }
 

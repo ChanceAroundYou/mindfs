@@ -14,7 +14,6 @@ import (
 	"mindfs/server/internal/api/usecase"
 	"mindfs/server/internal/e2ee"
 	"mindfs/server/internal/notify"
-	"mindfs/server/internal/session"
 
 	"github.com/gorilla/websocket"
 )
@@ -124,23 +123,6 @@ func pendingClientKey(clientID, sessionKey string) string {
 
 func cloneEvent(ev StreamEvent) StreamEvent {
 	return StreamEvent{Type: ev.Type, Data: ev.Data, EventCursor: ev.EventCursor}
-}
-
-func cloneUserExchange(msg *PendingUserMessage) *session.Exchange {
-	if msg == nil {
-		return nil
-	}
-	return &session.Exchange{
-		Role:             "user",
-		Agent:            msg.Agent,
-		Model:            msg.Model,
-		ModelDisplayName: msg.ModelDisplayName,
-		Mode:             msg.Mode,
-		Effort:           msg.Effort,
-		FastService:      msg.FastService,
-		Content:          msg.Content,
-		Timestamp:        msg.Timestamp,
-	}
 }
 
 func buildSessionStreamResponse(rootID, sessionKey string, event *StreamEvent) WSResponse {
@@ -640,16 +622,6 @@ func (h *StreamHub) SetPendingReply(rootID, sessionKey, sessionTitle string) {
 	if state.UpdatedAt.IsZero() {
 		state.UpdatedAt = time.Now().UTC()
 	}
-}
-
-func (h *StreamHub) GetPendingUserExchange(sessionKey string) *session.Exchange {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	state := h.pendingSessions[sessionKey]
-	if state == nil {
-		return nil
-	}
-	return cloneUserExchange(state.User)
 }
 
 func (h *StreamHub) PendingSessionSnapshot(sessionKey string) PendingSessionSnapshot {

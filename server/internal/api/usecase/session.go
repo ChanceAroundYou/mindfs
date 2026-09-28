@@ -1201,6 +1201,13 @@ type BuildPromptInput struct {
 	RuntimeRootAbs                string
 	IsInitial                     bool
 	IncludeReplyTipsInUserMessage bool
+	// LinesBeforeThisTurn 是「本轮 user 行写入之前」的会话行数。本轮 user 行在
+	// SendMessage 起手就已落盘（见 persistUserTurnExchange），所以 Session.Exchanges
+	// 里已经包含它；切 agent 提示要读的「上一轮之后还剩几行」必须用写入前的计数，
+	// 否则每轮都会多算一行。0 表示「没传」，回退到 len(Session.Exchanges)。
+	// 会话首轮的真实值恰好也是 0，回退只多要一行提示，不影响正确性——不值得为它加
+	// 一个 HasXxx 标志位。
+	LinesBeforeThisTurn int
 }
 
 func (s *Service) BuildPrompt(in BuildPromptInput) string {
@@ -1227,6 +1234,9 @@ func prependSwitchHint(in BuildPromptInput, prompt string) string {
 		return prompt
 	}
 	total := contextLineCount(in.Session.Exchanges)
+	if in.LinesBeforeThisTurn > 0 {
+		total = in.LinesBeforeThisTurn
+	}
 	last := 0
 	if in.AgentCtxSeq != nil {
 		last = *in.AgentCtxSeq
@@ -1271,9 +1281,14 @@ type MessageStart struct {
 	Effort           string
 	FastService      string
 	BaseExchangeSeq  int
-	// UserExchangeSeq 是本轮用户消息即将获得的持久化 seq（= BaseExchangeSeq+1，
-	// 与后续 AddExchangeForAgentAt 的 nextSeq 同式）。仅用于下发给客户端做本地
-	// 乐观条目的收敛；0 表示未知，此时不要下发。
+	// UserExchangeSeq 是本轮用户消息**已落盘**的 seq（user 行在回合开始前就写入了，
+	// 见 persistUserTurnExchange），不是「即将获得」的预测值。仅用于下发给客户端做本地
+	// 乐观条目的收敛；0 表示未知（写入失败或会话里没有可落地的行），此时不要下发。
+	//
+	// 为什么必须是真值：客户端据此认定该行已持久化，于是 overlay 的
+	// 「seq<=latestSeq 即让位给窗口」规则不再保留它。若这里给的是预测值，窗口
+	// maxSeq 会在整轮执行期间都看不到它 —— 用户自己的消息就会从列表里消失，
+	// 且点同步也刷不回来（2026-09-28 实测）。
 	UserExchangeSeq int
 }
 
@@ -2301,6 +2316,51 @@ func exchangeAlreadyRecorded(target *session.Session, role, content string, ts t
 	return false
 }
 
+// persistUserTurnExchange 在**回合开始前**把本轮用户消息落盘，返回它真实的 seq。
+//
+// 为什么必须早落：广播给客户端的 seq 若是「预测」而落盘发生在回合结束，就会出现
+// 「客户端已认定该行持久化、而窗口 maxSeq 与读接口都还看不到它」的窗口期。前端
+// overlay 的「seq<=latestSeq 即让位给窗口」规则（SessionViewer.tailOverlay）会在
+// 任何一次重锚定/翻页时把这行丢掉，表现为 agent 执行中自己的消息从列表消失、
+// 点同步也刷不回来（2026-09-28 实测）。早落盘让 seq 从预测变成事实，两条判据不再打架。
+//
+// 判重与导入侧共用 exchangeAlreadyRecorded：转录导入器是另一个写入者，判据必须对称。
+// 命中判重（导入器已抢先写）时返回已存在那条的 seq。
+func persistUserTurnExchange(ctx context.Context, manager *session.Manager, current *session.Session, content, agent, mode, effort, fastService string, ts time.Time) (int, error) {
+	exchangeCtx := session.WithExchangeSource(ctx, session.ExchangeSourceLive)
+	if exchangeAlreadyRecorded(current, "user", content, ts) {
+		return recordedUserExchangeSeq(current, content, ts), nil
+	}
+	if err := manager.AddExchangeForAgentAt(exchangeCtx, current, "user", content, agent, mode, effort, fastService, ts); err != nil {
+		return 0, err
+	}
+	// AddExchangeForAgentAt 内部重新取会话并回写缓存（manager.addExchangeForAgentAt），
+	// current 与缓存是同一指针，所以新行已挂在 current.Exchanges 尾部。
+	// 按内容回查而不是直接取尾部：尾部那条未必就是本函数刚写的那条——一旦将来出现
+	// 不在 sendLock 下写同一会话的路径，广播出去就会变成别人的 seq，正是本次要修的那类 bug。
+	return recordedUserExchangeSeq(current, content, ts), nil
+}
+
+// recordedUserExchangeSeq 返回判重命中的那条已有 user 行的 seq；找不到时返回 0。
+func recordedUserExchangeSeq(target *session.Session, content string, ts time.Time) int {
+	if target == nil {
+		return 0
+	}
+	for i := len(target.Exchanges) - 1; i >= 0; i-- {
+		ex := target.Exchanges[i]
+		if ex.Role != "user" || ex.Timestamp.IsZero() {
+			continue
+		}
+		if !sameRecordedExchangeContent("user", ex.Content, content) {
+			continue
+		}
+		if diff := ex.Timestamp.Sub(ts); diff > -userExchangeRepeatTolerance && diff < userExchangeRepeatTolerance {
+			return ex.Seq
+		}
+	}
+	return 0
+}
+
 // sameRecordedExchangeContent 判断两条同角色内容是否「同一条」。
 // 默认要求完全相等；另容忍两类双写差异（同一轮由实时路径与转录导入各写一次）：
 //
@@ -2387,11 +2447,28 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 	}
 	resolvedMode := resolveRuntimeMode(current, in.Mode)
 	resolvedFastService := resolveRuntimeFastService(in.Agent, current, in.FastService)
-	// 本轮用户消息的持久化 seq：与 manager.addExchangeForAgentAt 的 nextSeq 同式
-	//（max(seq)+1，不是 len+1）——文件与缓存漂移时长度会与最大 seq 不等，按长度预测会错位。
-	// 另：从这一刻起这个会话的持久化归实时路径（"谁驱动，谁落盘"），导入器不再常规增量
-	// 同步——判据是推导的，见 session.SessionIsLiveOwned。
+	// 可在任何东西落盘之前就知道它会失败的校验，必须先跑。模型不被支持时本轮压根不会
+	// 开始，user 行也就没有存在过——否则会留下一条用户没等到任何回复的孤立消息。
+	if current.Type != session.TypeCommand {
+		if err := s.validateAgentModel(in.Agent, in.Model); err != nil {
+			log.Printf("[session/model] validate.error root=%s session=%s agent=%s model=%q err=%v", in.RootID, in.Key, strings.TrimSpace(in.Agent), strings.TrimSpace(in.Model), err)
+			return err
+		}
+	}
+	// 本轮用户消息**在回合开始前**落盘：广播出去的 seq 因此是「已落库的真值」而不是预测。
+	// 晚落盘会留下一个窗口期——客户端已按 seq 认定该行持久化，而窗口 maxSeq 与读接口还
+	// 看不到它，前端 overlay 会在任意一次重锚定/翻页时把这行丢掉（2026-09-28 实测：
+	// agent 执行中自己的消息从列表消失，点同步也刷不回来，回合结束才自愈）。
+	isInitial := len(current.Exchanges) == 0
+	linesBeforeThisTurn := len(current.Exchanges)
 	baseExchangeSeq := session.MaxExchangeSeq(current.Exchanges)
+	// 从这一刻起这个会话的持久化归实时路径（"谁驱动，谁落盘"），导入器不再常规增量
+	// 同步——判据是推导的，见 session.SessionIsLiveOwned。
+	userExchangeSeq, err := persistUserTurnExchange(ctx, manager, current, in.Content, in.Agent, resolvedMode, resolveRuntimeEffort(in.Agent, current, in.Effort), resolvedFastService, userTimestamp)
+	if err != nil {
+		log.Printf("[session] persist.user.error root=%s session=%s agent=%s err=%v", in.RootID, in.Key, in.Agent, err)
+		return err
+	}
 	if in.OnStart != nil {
 		in.OnStart(MessageStart{
 			Model:            in.Model,
@@ -2400,17 +2477,12 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 			Effort:           in.Effort,
 			FastService:      resolvedFastService,
 			BaseExchangeSeq:  baseExchangeSeq,
-			UserExchangeSeq:  baseExchangeSeq + 1,
+			UserExchangeSeq:  userExchangeSeq,
 		})
 	}
 	if current.Type == session.TypeCommand {
 		return s.sendCommandMessage(turnCtx, in, manager, current)
 	}
-	if err := s.validateAgentModel(in.Agent, in.Model); err != nil {
-		log.Printf("[session/model] validate.error root=%s session=%s agent=%s model=%q err=%v", in.RootID, in.Key, strings.TrimSpace(in.Agent), strings.TrimSpace(in.Model), err)
-		return err
-	}
-	isInitial := len(current.Exchanges) == 0
 	agentPool := s.Registry.GetAgentPool()
 	if agentPool == nil {
 		return nil
@@ -2444,14 +2516,15 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 		RuntimeRootAbs:                rootAbs,
 		IsInitial:                     isInitial,
 		IncludeReplyTipsInUserMessage: includeReplyTipsInUserMessage,
+		LinesBeforeThisTurn:           linesBeforeThisTurn,
 	})
 	var responseText string
 	sawAssistantChunk := false
 	var lastContextWindow agenttypes.ContextWindow
 	var turnTokenUsage *agenttypes.TokenUsage
-	// 与 addExchangeForAgentAt 的 nextSeq 同式：max(seq)+2（用户行 +1、助手行 +2）。
+	// 用户行已在上方落盘并占位，所以助手行是 max(seq)+1（不是 +2）。
 	// 文件与缓存漂移时长度 ≠ 最大 seq，按长度预测会把 aux 挂到别的 exchange 上。
-	plannedAssistantSeq := session.MaxExchangeSeq(current.Exchanges) + 2
+	plannedAssistantSeq := session.MaxExchangeSeq(current.Exchanges) + 1
 	auxBuffer := make([]session.ExchangeAux, 0, 8)
 	defer manager.ClearPendingExchangeAux(context.Background(), current.Key)
 	var thoughtBuffer strings.Builder
@@ -2676,15 +2749,7 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 	if err := manager.UpdateModel(ctx, current, resolvedModel); err != nil {
 		return err
 	}
-	// 转录同步可能在回合进行中就先把这条用户消息导进来（导入器在 15:15:08 写 seq=57），
-	// 而这里要等回合结束才写（15:15:11 写 seq=58）——判据不对称时同一句话就落两条。
-	// 用与导入侧同一个 exchangeAlreadyRecorded 收口。
-	if exchangeAlreadyRecorded(current, "user", in.Content, userTimestamp) {
-		log.Printf("[session] persist.user.skip-duplicate root=%s session=%s agent=%s", in.RootID, current.Key, in.Agent)
-	} else if err := manager.AddExchangeForAgentAt(exchangeCtx, current, "user", in.Content, in.Agent, resolvedMode, resolvedEffort, resolvedFastService, userTimestamp); err != nil {
-		log.Printf("[session] persist.user.error root=%s session=%s agent=%s err=%v", in.RootID, current.Key, in.Agent, err)
-		return err
-	}
+	// 用户行已在回合开始前落盘（persistUserTurnExchange），这里只补助手行。
 	if err := manager.AddExchangeForAgent(agentExchangeCtx, current, "agent", responseText, in.Agent, resolvedMode, resolvedEffort, resolvedFastService); err != nil {
 		log.Printf("[session] persist.agent.error root=%s session=%s agent=%s err=%v", in.RootID, current.Key, in.Agent, err)
 		return err
@@ -2698,7 +2763,10 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 			return err
 		}
 	}
-	if err := manager.UpdateAgentState(ctx, current, in.Agent, contextLineCount(current.Exchanges), sess.SessionID()); err != nil {
+	// AgentCtxSeq 记的是「agent 已经看到多少行会话历史」。本轮 user 行在回合开始前就已
+	// 计入 current.Exchanges（那是它该被计入的时机：agent 确实会把它读进去），而助手行
+	// 此刻尚未落盘，因此这里要减掉 user 行、也还没有助手行。
+	if err := manager.UpdateAgentState(ctx, current, in.Agent, linesBeforeThisTurn, sess.SessionID()); err != nil {
 		return err
 	}
 
@@ -3401,14 +3469,14 @@ func (s *Service) sendCommandMessage(ctx context.Context, in SendMessageInput, m
 	if strings.TrimSpace(in.Content) == "" {
 		return errors.New("command required")
 	}
-	userTimestamp := sendMessageUserTimestamp(in, time.Now().UTC())
 	root := manager.Root()
 	rootAbs, err := root.RootDir()
 	if err != nil {
 		return err
 	}
 	callID := "cmd-" + strconv.FormatInt(time.Now().UnixNano(), 36)
-	plannedAssistantSeq := session.MaxExchangeSeq(current.Exchanges) + 2
+	// 用户行已在 SendMessage 起手落盘（与聊天会话同一条规则），助手行是 max(seq)+1。
+	plannedAssistantSeq := session.MaxExchangeSeq(current.Exchanges) + 1
 	startTool := agenttypes.ToolCall{
 		CallID:  callID,
 		Title:   in.Content,
@@ -3449,7 +3517,7 @@ func (s *Service) sendCommandMessage(ctx context.Context, in SendMessageInput, m
 			in.OnUpdate(agenttypes.Event{Type: agenttypes.EventTypeToolUpdate, Data: final})
 			in.OnUpdate(agenttypes.Event{Type: agenttypes.EventTypeMessageDone, Data: agenttypes.MessageDone{}})
 		}
-		if persistErr := persistCommandTurn(ctx, manager, current, in.Content, final, plannedAssistantSeq, userTimestamp); persistErr != nil {
+		if persistErr := persistCommandTurn(ctx, manager, current, final, plannedAssistantSeq); persistErr != nil {
 			return persistErr
 		}
 		return err
@@ -3531,7 +3599,7 @@ func (s *Service) sendCommandMessage(ctx context.Context, in SendMessageInput, m
 		in.OnUpdate(agenttypes.Event{Type: agenttypes.EventTypeToolUpdate, Data: final})
 		in.OnUpdate(agenttypes.Event{Type: agenttypes.EventTypeMessageDone, Data: agenttypes.MessageDone{}})
 	}
-	if err := persistCommandTurn(context.Background(), manager, current, in.Content, final, plannedAssistantSeq, userTimestamp); err != nil {
+	if err := persistCommandTurn(context.Background(), manager, current, final, plannedAssistantSeq); err != nil {
 		log.Printf("[command] persist.error root=%s session=%s call=%s err=%v", in.RootID, current.Key, callID, err)
 		return err
 	}
@@ -3624,14 +3692,10 @@ func configuredShells(registry Registry) []commandexec.ShellSpec {
 	return shells
 }
 
-func persistCommandTurn(ctx context.Context, manager *session.Manager, current *session.Session, command string, final agenttypes.ToolCall, plannedAssistantSeq int, userTimestamp time.Time) error {
+// persistCommandTurn 只补助手行与其 aux：用户行已在 SendMessage 起手、命令真正执行前
+// 落盘（与聊天会话同一条规则），这里再写一次会落重复。
+func persistCommandTurn(ctx context.Context, manager *session.Manager, current *session.Session, final agenttypes.ToolCall, plannedAssistantSeq int) error {
 	ctx = session.WithExchangeSource(ctx, session.ExchangeSourceLive)
-	// 与 SendMessage 同一个双写风险：斜杠命令同样会被转录同步先导入一份。
-	if !exchangeAlreadyRecorded(current, "user", command, userTimestamp) {
-		if err := manager.AddExchangeForAgentAt(ctx, current, "user", command, "", "", "", "", userTimestamp); err != nil {
-			return err
-		}
-	}
 	if err := manager.AddExchangeForAgent(ctx, current, "agent", "", "", "", "", ""); err != nil {
 		return err
 	}
