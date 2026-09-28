@@ -81,9 +81,9 @@ test("缓动曲线必须自反：两侧逐帧镜像，否则「同一串 CSS」�
     `曲线 (${x1}, ${y1}, ${x2}, ${y2}) 不是自反的；` +
       "自反要求 (x2, y2) == (1 - x1, 1 - y1)，如 ease-in-out 的 0.45,0,0.55,1",
   );
-  // 顺带钉住取值：360ms 的对称 ease-in-out
+  // 顺带钉住取值：480ms 的对称 ease-in-out
   assert.deepEqual([x1, y1, x2, y2], [0.45, 0, 0.55, 1]);
-  assert.equal(panel.match(/_MS = (\d+)/)[1], "360", "时长应为 360ms");
+  assert.equal(panel.match(/_MS = (\d+)/)[1], "480", "时长应为 480ms");
 });
 
 test("遮罩跟着淡入淡出（不是瞬间满不透明）", () => {

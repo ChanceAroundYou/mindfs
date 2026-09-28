@@ -29,8 +29,9 @@ const TOP_GAP = 56;
 // 读起来是「慢而顺」；退场时同样的尾巴面板早跑出视野看不见，读起来就是「快」。
 // 同一串 CSS 两种观感 —— 那不是对称。
 // ease-in-out（0.45,0,0.55,1）两端同样缓、中段最快，镜像自身：把时间轴对折，
-// 进场和退场逐帧重合。360ms 是「浮得起来看得清」和「不磨叽」之间取的值。
-const TRANSITION_MS = 360;
+// 进场和退场逐帧重合。480ms：曲线自反后时长成了两侧唯一的旋钮，说「慢一点」就两侧一起慢，
+// 不再有任何东西可以跑偏。
+const TRANSITION_MS = 480;
 const TRANSITION_EASE = "cubic-bezier(0.45, 0, 0.55, 1)";
 
 type ArchivedSessionsPanelProps = {
