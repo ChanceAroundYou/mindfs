@@ -36,15 +36,36 @@ test("遮罩是半透明黑，罩住右栏内容、透出底下的列表", () =>
 test("面板上浮靠 transition 终态切换，不是只进不退的 animation", () => {
   // animation 只能播进场；关闭时整层卸载就是硬切 —— 闪烁的一半来源。
   assert.match(panel, /data-archived-panel="sheet"/);
-  assert.match(panel, /transform: entered \? "translateY\(0\)" : "translateY\(18px\)"/);
-  assert.match(panel, /transition: `transform \$\{transition\}, opacity \$\{transition\}`/);
+  assert.match(panel, /transform: entered\s*\n\s*\? "translateY\(0\) scale\(1\)"\s*\n\s*: "translateY\(64px\) scale\(0\.97\)"/);
+  assert.match(panel, /transition: `transform \$\{timing\}, opacity \$\{timing\}`/);
   assert.doesNotMatch(panel, /animation: "mindfs-archived-rise/);
   const css = read("src/index.css");
   assert.doesNotMatch(css, /mindfs-archived-rise/, "旧关键帧应已删");
 });
 
+test("进出场各用各的时长和曲线，都比 200ms 慢", () => {
+  // 需求：弹出要有「浮起来」的观感、收起不能像被弹射。
+  // 200ms 一晃就没；两条曲线还必须不同（减速进场 / 加速退场）。
+  assert.match(panel, /const OPEN_MS = 3\d\d/);
+  assert.match(panel, /const CLOSE_MS = [23]\d\d/);
+  // 只盯时长声明本身，别去全文搜 "2\d0" —— 曲线常量 0.20/0.22 也会命中
+  const durations = panel.match(/_MS = \d+/g) || [];
+  assert.ok(
+    durations.every((d) => Number(d.replace(/.*= /, "")) >= 260),
+    `进出场时长都应 >= 260ms，实得 ${durations.join(", ")}`,
+  );
+  assert.match(
+    panel,
+    /const timing = entered\s*\n\s*\? `\$\{OPEN_MS\}ms \$\{OPEN_EASE\}`\s*\n\s*: `\$\{CLOSE_MS\}ms \$\{CLOSE_EASE\}`/,
+  );
+  assert.match(panel, /const OPEN_EASE = "cubic-bezier\(0\.22, 1, 0\.36, 1\)"/);
+  assert.match(panel, /const CLOSE_EASE = "cubic-bezier\(0\.4, 0, 1, 1\)"/);
+  // 卸载必须等退场放完，否则又退回硬切
+  assert.match(panel, /setTimeout\(\(\) => setMounted\(false\), CLOSE_MS\)/);
+});
+
 test("遮罩跟着淡入淡出（不是瞬间满不透明）", () => {
-  assert.match(panel, /opacity: entered \? 1 : 0,\s*\n\s*transition: `opacity \$\{transition\}`/);
+  assert.match(panel, /opacity: entered \? 1 : 0,\s*\n\s*transition: `opacity \$\{timing\}`/);
 });
 
 test("进出对称：常驻 DOM，isOpen 只切状态，退场后才卸载", () => {
@@ -53,7 +74,7 @@ test("进出对称：常驻 DOM，isOpen 只切状态，退场后才卸载", () 
   assert.match(panel, /const \[entered, setEntered\] = useState\(false\)/);
   assert.match(panel, /const \[mounted, setMounted\] = useState\(false\)/);
   assert.match(panel, /requestAnimationFrame\(\(\) => setEntered\(true\)\)/);
-  assert.match(panel, /setTimeout\(\(\) => setMounted\(false\), TRANSITION_MS\)/);
+  assert.match(panel, /setTimeout\(\(\) => setMounted\(false\), CLOSE_MS\)/);
   assert.match(panel, /if \(!mounted\) return null/);
   // 收起后仍占整列但不透明、不吃点击，把交互还给底下的列表
   assert.match(panel, /pointerEvents: entered \? "auto" : "none"/);

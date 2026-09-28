@@ -23,8 +23,12 @@ import { useI18n } from "../i18n";
 
 // 遮罩留出的顶部空白：面板比整栏短一截，透出底下的列表。
 const TOP_GAP = 56;
-// 进出场时长，必须和下面两处 transition 的时长一致（关闭后靠它计时卸载）。
-const TRANSITION_MS = 200;
+// 进出场时长**故意不一样**：展开要看得清「浮起来」，200ms 一晃就没了；
+// 收起太快会像被弹射。CLOSE_MS 还要和下面卸载的 setTimeout 对齐。
+const OPEN_MS = 320;
+const CLOSE_MS = 260;
+const OPEN_EASE = "cubic-bezier(0.22, 1, 0.36, 1)";
+const CLOSE_EASE = "cubic-bezier(0.4, 0, 1, 1)";
 
 type ArchivedSessionsPanelProps = {
   isOpen: boolean;
@@ -59,7 +63,7 @@ export function ArchivedSessionsPanel({
   useEffect(() => {
     if (!isOpen) {
       setEntered(false);
-      const timer = window.setTimeout(() => setMounted(false), TRANSITION_MS);
+      const timer = window.setTimeout(() => setMounted(false), CLOSE_MS);
       return () => window.clearTimeout(timer);
     }
     setMounted(true);
@@ -73,7 +77,11 @@ export function ArchivedSessionsPanel({
 
   // 没有归档的会话就什么都别画，别把空视图推给用户
   const total = groups.reduce((sum, g) => sum + (g.sessions?.length || 0), 0);
-  const transition = `${TRANSITION_MS}ms cubic-bezier(0.2, 0.8, 0.2, 1)`;
+  // 曲线跟着方向走：展开用减速曲线（起步快、落位稳），收起用加速曲线
+  // （起步慢、越走越快地退场），两者观感都不是同一条。
+  const timing = entered
+    ? `${OPEN_MS}ms ${OPEN_EASE}`
+    : `${CLOSE_MS}ms ${CLOSE_EASE}`;
 
   return (
     // 定位上下文由调用方（占满右栏整列的 relative wrapper）提供。
@@ -102,7 +110,7 @@ export function ArchivedSessionsPanel({
           zIndex: 1,
           background: "rgba(0, 0, 0, 0.42)",
           opacity: entered ? 1 : 0,
-          transition: `opacity ${transition}`,
+          transition: `opacity ${timing}`,
         }}
       />
       {/* 面板本体：从底部上浮（translateY），盖在遮罩之上 */}
@@ -122,9 +130,13 @@ export function ArchivedSessionsPanel({
           borderTopRightRadius: "12px",
           boxShadow: "0 -8px 24px rgba(0, 0, 0, 0.22)",
           background: "var(--mindfs-topbar-bg, var(--sidebar-bg))",
-          transform: entered ? "translateY(0)" : "translateY(18px)",
+          // 上浮幅度：18px 在 280px 宽的栏里几乎看不出在动，64px 才读得出
+          // 「从底边升起来」。配合 scale 的一点收缩，落位时像被托上来。
+          transform: entered
+            ? "translateY(0) scale(1)"
+            : "translateY(64px) scale(0.97)",
           opacity: entered ? 1 : 0,
-          transition: `transform ${transition}, opacity ${transition}`,
+          transition: `transform ${timing}, opacity ${timing}`,
         }}
       >
         <ArchivedHeader
