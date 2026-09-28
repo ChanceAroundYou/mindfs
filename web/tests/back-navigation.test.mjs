@@ -18,9 +18,11 @@ const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
 // 这是「侧滑还是直接退出」的直接原因：以前 switchMainView 全程 replaceState，
 // 浏览器历史永远只有一项，popstate 压根不触发，侧滑把应用直接带出去。
 // 覆层关掉之后能退视图，靠的就是这条 push 出来的记录。
+// pushState 住在 useBackNavigation.ts：它要同时维护计数器（Android 返回键靠它
+// 判断有没有得退），放在 App.tsx 的 useCallback 里就得回传，徒增一层。
 assert.match(
-  app,
-  /const pushViewHistoryEntry = useCallback\(\(from: MainViewMode\) => \{\s*window\.history\.pushState\(\{ mindfsView: from/,
+  nav,
+  /export function pushViewHistoryEntry\(from: string\): void \{\s*window\.history\.pushState\(\{ mindfsView: from \}/,
   "switching views must push a real history entry, or back has nothing to pop",
 );
 assert.match(
@@ -37,33 +39,73 @@ assert.match(
 );
 assert.match(
   app,
-  /if \(fromView\) \{[\s\S]*?popViewHistory\(\);\s*mainViewRef\.current = fromView;\s*setMainView\(fromView\);/,
-  "popping a view-switch entry must go back to that view and keep both stacks in sync",
+  /if \(fromView\) \{[\s\S]*?consumeViewHistoryEntry\(\);\s*mainViewRef\.current = fromView;\s*setMainView\(fromView\);/,
+  "popping a view-switch entry must go back to that view and keep the counter in sync",
 );
 
-// 覆盖层优先于视图栈：栈非空就先关最上面那一层。
+// —— 单一机制：不能有第二份「视图栈」 ——
+// 这条是真实 bug：曾经一边 pushState、一边往一个 viewHistory 数组里 push，
+// 一次切换记两条、返回一次只弹一条，用户看着就是「返回要按两下」。
+// 现在只有浏览器历史，数组整套删掉，只剩一个计数器。
+assert.doesNotMatch(
+  nav,
+  /const viewHistory: string\[\] = \[\]/,
+  "there must be no parallel view-history array — the browser history is the only stack",
+);
+assert.doesNotMatch(
+  nav,
+  /export function popViewHistory|export function pushViewHistory\b|export function hasViewHistory\(\)/,
+  "the parallel array's push/pop/has trio is gone",
+);
+// 计数器只归这对函数动，push 加一、pop 减一。
 assert.match(
   nav,
-  /if \(hasBackLayer\(\)\) \{[\s\S]*?event\.preventDefault\(\);[\s\S]*?closeTopBackLayer\(\);/,
-  "an open overlay must be closed before anything else, and the event must be cancelled",
+  /export function consumeViewHistoryEntry\(\): void \{\s*if \(pendingViewEntries > 0\) pendingViewEntries -= 1;/,
+  "popstate must decrement the counter, and clamp at zero",
 );
-// 无处可退时把控制权交回系统 —— 也就是允许退出。
+// Android 返回键汇进同一条路：走 history.back()，不再自己消费一层/一视图。
+// 两套机制各走一遍正是「返回要按两下」的另一半原因。
 assert.match(
   nav,
-  /if \(onFallback\(\)\) \{\s*event\.preventDefault\(\);\s*\}/,
-  "the fallback must be able to signal 'handled' so the view switch prevents app exit",
+  /export function installBackNavigation\(\): \(\) => void \{[\s\S]*?window\.history\.back\(\);/,
+  "the android back key must go through history.back() so it shares one path with swipe/browser back",
 );
-// 视图栈还有货时退视图，没有才返回 false。
+assert.doesNotMatch(
+  nav,
+  /installBackNavigation\(onFallback/,
+  "installBackNavigation must not take a second, parallel back route",
+);
+// 覆盖层优先于视图栈：层非空就先关最上面那一层。
+// 两条分支都要 preventDefault，否则 Capacitor 默认退出照做，表现为
+// 「先关掉面板、紧接着整个应用退出」。
+assert.match(
+  nav,
+  /if \(hasBackLayer\(\)\) \{[\s\S]{0,400}?event\.preventDefault\(\);/,
+  "an open overlay must be closed first, and the event must be cancelled",
+);
+assert.match(
+  nav,
+  /if \(hasViewHistoryEntry\(\)\) \{\s*event\.preventDefault\(\);\s*window\.history\.back\(\);/,
+  "with no overlay, a pending view entry must go through back() and cancel the exit",
+);
+// 覆盖层开着但没有视图历史时必须**直接关层**，不能走 back()：
+// 那条路只在视图切换时压过记录，冷启动直接开面板时 back() 是空操作、popstate 不触发，
+// 面板就卡住关不掉，退出又被 preventDefault 挡死。
+assert.match(
+  nav,
+  /if \(hasBackLayer\(\)\) \{[\s\S]{0,400}?hasViewHistoryEntry\(\)[\s\S]{0,80}?window\.history\.back\(\);[\s\S]{0,120}?\} else \{[\s\S]{0,80}?closeTopBackLayer\(\);/,
+  "with an overlay open and no view history, close the layer directly — back() would be a no-op and trap the panel",
+);
 assert.match(
   app,
-  /const previous = popViewHistory\(\);\s*if \(!previous\) return false;/,
-  "back should pop the previous view and report 'not handled' only when the stack is empty",
+  /if \(hasBackLayer\(\)\) \{[\s\S]*?window\.history\.pushState\([\s\S]*?closeTopBackLayer\(\);\s*return;/,
+  "popstate with an open overlay must close only that overlay and push the entry back",
 );
 // 退视图后 URL 必须跟着更新，否则按钮高亮和实际视图不同源。
 // 注意是「合并」而不是整体覆盖：只写 view 的话会把当前项目/文件抹掉。
 assert.match(
   app,
-  /switchMainView\(previous as MainViewMode\);[\s\S]*?const now = readURLState\(\);\s*replaceURLState\(\{ \.\.\.now, view: previous as MainViewMode \}\);/,
+  /const now = readURLState\(\);\s*replaceURLState\(\{ \.\.\.now, view: fromView \}\);/,
   "going back a view must keep the URL in sync with the switcher without dropping root/file/session",
 );
 

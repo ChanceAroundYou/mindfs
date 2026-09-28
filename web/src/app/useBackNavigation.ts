@@ -78,21 +78,33 @@ export function closeTopBackLayer(): boolean {
 
 /**
  * 装一次全局返回监听（Android 硬件返回键）。
- * onFallback 是「覆盖层栈空着」时的下一级路由，返回 true 表示**它处理了** ——
- * 处理了就得 preventDefault，否则 Capacitor 的默认退出照样发生，
- * 表现是「按返回切了视图，紧接着整个应用退出」。
- * 返回 false（真的无处可退）才把控制权交回系统。
+ *
+ * 关键：这里**不自己消费**，而是走 history.back() —— 让返回键和浏览器后退、
+ * iOS 边缘侧滑汇成同一条 popstate 路。以前这里是「关一层 / 退视图」两套逻辑
+ * 各走一遍，和 popstate 各自为政，结果一次侧滑关面板、下一次再退视图，
+ * 用户看着像「返回要按两下」。统一成 back() 后只有一条路。
+ *
+ * 没得退时才 preventDefault，把控制权交回系统（退出应用）。
  */
-export function installBackNavigation(onFallback: () => boolean): () => void {
+export function installBackNavigation(): () => void {
   const onAndroidBack = (event: Event) => {
+    // 覆盖层开着、但没有视图历史可退时**不能**走 back()：那条路只在视图切换时
+    // 压过记录，冷启动直接开面板时历史只有一条，back() 是空操作、popstate 压根
+    // 不触发 —— 面板就卡在那里关不掉，退出也被 preventDefault 挡死。这种情况直接关层。
     if (hasBackLayer()) {
       event.preventDefault();
-      closeTopBackLayer();
+      if (hasViewHistoryEntry()) {
+        window.history.back();
+      } else {
+        closeTopBackLayer();
+      }
       return;
     }
-    if (onFallback()) {
+    if (hasViewHistoryEntry()) {
       event.preventDefault();
+      window.history.back();
     }
+    // 两边都没有 → 不 preventDefault，把控制权交回系统（退出应用）。
   };
 
   window.addEventListener(ANDROID_BACK_EVENT, onAndroidBack);
@@ -100,27 +112,32 @@ export function installBackNavigation(onFallback: () => boolean): () => void {
 }
 
 /**
- * 视图历史栈（瞬态，不落盘）。
+ * 视图历史 = **浏览器历史本身**，不再另起一份数组。
  *
- * 和「记住用户上次选的视图」是两件事：那个落 localStorage、跨会话；
- * 这个只在本次运行内让「返回」有路可退。切到同一个视图不记。
+ * 这里曾经有个 viewHistory 数组和 pushState 各记一次「从哪来」，两套栈必然
+ * 不同步：一次切换压两条记录，返回一次只弹一条，表现就是「按两下才回得去」。
+ * 所以数组整套删掉，只留浏览器历史 —— iOS 边缘侧滑和浏览器后退本来就是
+ * history 导航，走它不用另写手势；Android 返回键改成 history.back()，
+ * 也就并进了同一条路。
+ *
+ * 只剩一个计数器：切换视图 pushState 一次 +1，popstate 消费一次 -1。
+ * 它的唯一用途是让 Android 返回键知道「有没有得退」——没有就把控制权
+ * 交回系统（退出应用）。一个数字，不会和真实历史不同步。
  */
-const VIEW_HISTORY_LIMIT = 20;
-const viewHistory: string[] = [];
+let pendingViewEntries = 0;
 
-/** 记下「从哪来」。切到同一视图不算一次返回目标。 */
-export function pushViewHistory(view: string): void {
-  if (viewHistory[viewHistory.length - 1] === view) return;
-  viewHistory.push(view);
-  // 栈深上限：防止长时间使用后一次返回要连按几十下才回到起点。
-  if (viewHistory.length > VIEW_HISTORY_LIMIT) viewHistory.shift();
+/** 切视图时压一条历史。from 是「切之前」那个视图，popstate 靠它退回去。 */
+export function pushViewHistoryEntry(from: string): void {
+  window.history.pushState({ mindfsView: from }, "");
+  pendingViewEntries += 1;
 }
 
-export function hasViewHistory(): boolean {
-  return viewHistory.length > 0;
+/** popstate 消费掉一条我们自己压的记录。别人压的不动。 */
+export function consumeViewHistoryEntry(): void {
+  if (pendingViewEntries > 0) pendingViewEntries -= 1;
 }
 
-/** 弹出上一个视图，没有则返回 null。 */
-export function popViewHistory(): string | null {
-  return viewHistory.pop() ?? null;
+/** 还有没有视图可退。 */
+export function hasViewHistoryEntry(): boolean {
+  return pendingViewEntries > 0;
 }

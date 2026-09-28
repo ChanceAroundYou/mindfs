@@ -200,7 +200,7 @@ import {
 
 import { APP_DOCUMENT_TITLE, AppProps, CHILD_SESSION_PAGE_SIZE, MULTI_PROJECT_SESSION_LIMIT, ManagedRootPayload, SESSION_PAGE_SIZE } from "./app/appMisc";
 import { MainViewMode, URLState } from "./app/appPath";
-import { closeTopBackLayer, hasBackLayer, installBackNavigation, popViewHistory, pushViewHistory, useBackLayer } from "./app/useBackNavigation";
+import { closeTopBackLayer, consumeViewHistoryEntry, hasBackLayer, installBackNavigation, pushViewHistoryEntry, useBackLayer } from "./app/useBackNavigation";
 import { AttachedFileContext, Exchange, GitFileStat, MultiProjectSessionGroup, PendingSend, RelatedFileClickTarget, SessionItem, SessionMode, SessionQueueItem, SlashCommandResult, ViewerSelection, WSStatus } from "./app/appSession";
 import { CANDIDATE_FETCH_DEBOUNCE_MS, DIRECTORY_SORT_OVERRIDES_STORAGE_KEY, GIT_DIFF_SIDE_BY_SIDE_STORAGE_KEY, GIT_HISTORY_EXPANDED_STORAGE_KEY, GIT_STATUS_EXPANDED_STORAGE_KEY, LAST_ROOT_NODE_STORAGE_KEY, LAST_ROOT_STORAGE_KEY, loadWorkspaceCollapsed, loadWorkspaceFilter, MAIN_VIEW_STORAGE_KEY, MOBILE_ENTER_KEY_SEND_STORAGE_KEY, PLUGIN_QUERY_STORAGE_PREFIX, saveWorkspaceCollapsed, saveWorkspaceFilter, SIDEBARS_SWAPPED_STORAGE_KEY, TASK_TEMPLATE_ALL_FILTER, TASK_TEMPLATE_SELECTION_STORAGE_KEY, TREE_SORT_STORAGE_KEY, type WorkspaceBoardFilter } from "./app/appStorage";
 import { TaskInlineEditState } from "./app/appTask";
@@ -1587,21 +1587,8 @@ export function App({ onGoHome }: AppProps) {
     if (mode !== "chat") {
       lastNonChatViewRef.current = mode;
     }
-    // 记「从哪来」，让返回有路可退（覆盖层关完之后的那一步）。
-    // 冷启动深链恢复也会走到这里，那时栈是空的、退回去等于原地不动，无害。
-    pushViewHistory(mainViewRef.current);
     mainViewRef.current = mode;
     setMainView(mode);
-  }, []);
-
-  /* 切视图时写一条真正的历史记录。
-     以前 switchMainView 全程 replaceState，浏览器历史永远只有一条 ——
-     于是 popstate 那套恢复逻辑写得再全也没东西可退，iOS 边缘侧滑更是
-     直接把应用带出去（压根不进 popstate）。所以这里必须 pushState。
-     调用点紧跟着 replaceURLState 写最终 URL，push 用的是切之前的 URL，
-     两条记录因此各自带着一个完整状态。 */
-  const pushViewHistoryEntry = useCallback((from: MainViewMode) => {
-    window.history.pushState({ mindfsView: from, url: window.location.href }, "");
   }, []);
 
   /* 覆盖层接进返回栈：按返回/侧滑时先关最上面那一层，而不是退视图或退出应用。
@@ -1640,18 +1627,11 @@ export function App({ onGoHome }: AppProps) {
     window.history.replaceState(null, "", target);
   }, []);
 
-  /* Android 硬件返回键。覆盖层栈在 App 层之上（DialogHost 注册），
-     这里先让覆盖层有机会处理，再退到视图栈，两边都没有才把控制权交回系统。 */
-  useEffect(() => installBackNavigation(() => {
-    const previous = popViewHistory();
-    if (!previous) return false;
-    switchMainView(previous as MainViewMode);
-    // 只换视图，其余 URL 字段（root/file/session）原样带回，
-    // 否则 replaceURLState 写出来的 URL 会把当前项目/文件抹掉。
-    const now = readURLState();
-    replaceURLState({ ...now, view: previous as MainViewMode });
-    return true;
-  }), [switchMainView, replaceURLState]);
+  /* Android 硬件返回键。刻意不接回调：installBackNavigation 内部一律走
+     history.back()，让返回键汇进 popstate 那条路，和浏览器后退 / iOS 侧滑
+     保持同一套语义。以前这里是独立的一套「关层 / 退视图」逻辑，两套各走一遍，
+     一次返回要按两下才对。 */
+  useEffect(() => installBackNavigation(), []);
 
   const handleOnboardingStepChange = useCallback((stepId: string) => {
     const showingSidebar = stepId === "sidebar-menu" || stepId === "project-tabs";
@@ -7263,14 +7243,18 @@ export function App({ onGoHome }: AppProps) {
       // 视图切换留下的那条记录：它带的是「切之前」那个视图，直接退回去。
       // 不走 handlePopState —— 那套按 URL 恢复，而 pushViewHistoryEntry 存的
       // 是切换瞬间的 URL，view 字段可能还没写进去，判据只能是 state 里的视图。
+      // 退到哪个视图后要 replaceState 把 URL 对齐（按钮高亮与实际视图同源），
+      // 只换 view、其余 root/file/session 原样带回，否则会把当前项目/文件抹掉。
       const fromView = (event.state as { mindfsView?: MainViewMode } | null)?.mindfsView;
       if (fromView) {
-        popViewHistory();
+        consumeViewHistoryEntry();
         mainViewRef.current = fromView;
         setMainView(fromView);
         if (fromView !== "chat") {
           lastNonChatViewRef.current = fromView;
         }
+        const now = readURLState();
+        replaceURLState({ ...now, view: fromView });
         return;
       }
       handlePopState();
@@ -8436,7 +8420,7 @@ export function App({ onGoHome }: AppProps) {
       file: mode === "files" ? current.file : "",
       view: mode,
     });
-  }, [pushViewHistoryEntry, replaceURLState, setDrawerOpenForRoot, switchMainView]);
+  }, [replaceURLState, setDrawerOpenForRoot, switchMainView]);
 
   const openWorkspaceProject = useCallback(async (rootId: string) => {
     if (!rootId) return;
