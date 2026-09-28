@@ -36,73 +36,58 @@ test("遮罩是半透明黑，罩住右栏内容、透出底下的列表", () =>
 test("面板上浮靠 transition 终态切换，不是只进不退的 animation", () => {
   // animation 只能播进场；关闭时整层卸载就是硬切 —— 闪烁的一半来源。
   assert.match(panel, /data-archived-panel="sheet"/);
-  assert.match(panel, /transform: entered\s*\n\s*\? "translateY\(0\) scale\(1\)"\s*\n\s*: "translateY\(64px\) scale\(0\.97\)"/);
+  assert.match(panel, /transform: isOpen\s*\n\s*\? "translateY\(0\) scale\(1\)"\s*\n\s*: "translateY\(64px\) scale\(0\.97\)"/);
   assert.match(panel, /transition: `transform \$\{timing\}, opacity \$\{timing\}`/);
   assert.doesNotMatch(panel, /animation: "mindfs-archived-rise/);
   const css = read("src/index.css");
   assert.doesNotMatch(css, /mindfs-archived-rise/, "旧关键帧应已删");
 });
 
-test("进出完全对称：一套时长、一条自反曲线", () => {
-  // 淡出顺了，淡入就用一样的。拆成 OPEN_*/CLOSE_* 两套没有直觉依据，
-  // 「怎么收就怎么开」才是可靠的一致性。
+test("进出共用一套时长和一条线性曲线", () => {
+  // 两侧是同一串 CSS 的镜像。曲线取 linear：形态在这里是过度设计，而 linear
+  // 天生自反（把时间轴对折，曲线与自己重合），不可能跑偏。
   assert.match(panel, /const TRANSITION_MS = \d\d\d/);
-  assert.match(panel, /const TRANSITION_EASE = "cubic-bezier\([\d.]+, [\d.]+, [\d.]+, [\d.]+\)"/);
+  assert.match(panel, /const TRANSITION_EASE = "linear"/);
   assert.match(panel, /const timing = `\$\{TRANSITION_MS\}ms \$\{TRANSITION_EASE\}`/);
   // 方向相关的分支不许回来（那会让两侧悄悄跑成两套）
   assert.doesNotMatch(panel, /OPEN_MS|CLOSE_MS|OPEN_EASE|CLOSE_EASE/);
-  // 只解析时长声明，别全文搜 "2\d0" —— 曲线常量 0.22 也会命中
+  // 只解析时长声明，别全文搜数字 —— 曲线常量也会命中
   const durations = panel.match(/_MS = \d+/g) || [];
   assert.equal(durations.length, 1, "只应有一个时长常量");
   assert.ok(
     Number(durations[0].replace(/.*= /, "")) >= 260,
     `时长应 >= 260ms，实得 ${durations[0]}`,
   );
-  // 卸载必须等退场放完，否则又退回硬切
-  assert.match(panel, /setTimeout\(\(\) => setMounted\(false\), TRANSITION_MS\)/);
   // 遮罩和面板两条 transition 都得是这一串
   assert.match(panel, /transition: `opacity \$\{timing\}`/);
   assert.match(panel, /transition: `transform \$\{timing\}, opacity \$\{timing\}`/);
 });
 
-test("缓动曲线必须自反：两侧逐帧镜像，否则「同一串 CSS」仍是两种观感", () => {
-  // 一条 decelerate 曲线（尾部拖长）看着对称其实不是：进场时那段尾巴看得见
-  // （面板在半空缓慢落位）读成「慢而顺」，退场时同样的尾巴面板早跑出视野
-  // 看不见，读成「快」。自反的条件是控制点集绕 (0.5,0.5) 旋转 180° 后不变，
-  // 即 (x2, y2) == (1 - x1, 1 - y1)。注意这不是「x1+y1=1 且 x2+y2=1」——
-  //   那个错判会让 Material 标准曲线 0.4,0,0.2,1 假通过（1-0.4=0.6≠0.2，
-  //   它其实并不自反）。
-  const m = panel.match(/TRANSITION_EASE = "cubic-bezier\(([\d.]+), ([\d.]+), ([\d.]+), ([\d.]+)\)"/);
-  assert.ok(m, "应能从源码解析出缓动曲线");
-  const [, x1, y1, x2, y2] = m.map(Number);
-  const near = (a, b) => Math.abs(a - b) < 1e-6;
-  assert.ok(
-    near(x2, 1 - x1) && near(y2, 1 - y1),
-    `曲线 (${x1}, ${y1}, ${x2}, ${y2}) 不是自反的；` +
-      "自反要求 (x2, y2) == (1 - x1, 1 - y1)，如 ease-in-out 的 0.45,0,0.55,1",
-  );
-  // 顺带钉住取值：480ms 的对称 ease-in-out
-  assert.deepEqual([x1, y1, x2, y2], [0.45, 0, 0.55, 1]);
-  assert.equal(panel.match(/_MS = (\d+)/)[1], "480", "时长应为 480ms");
-});
-
-test("遮罩跟着淡入淡出（不是瞬间满不透明）", () => {
-  assert.match(panel, /opacity: entered \? 1 : 0,\s*\n\s*transition: `opacity \$\{timing\}`/);
-});
-
-test("进出对称：常驻 DOM，isOpen 只切状态，退场后才卸载", () => {
-  // 关闭即卸载 = 没有退场动画；同一帧里同时置 mounted+entered 又会让过渡
-  // 没有起点，遮罩直接糊上去。两处都要挡住。
-  assert.match(panel, /const \[entered, setEntered\] = useState\(false\)/);
-  assert.match(panel, /const \[mounted, setMounted\] = useState\(false\)/);
-  assert.match(panel, /requestAnimationFrame\(\(\) => setEntered\(true\)\)/);
-  assert.match(panel, /setTimeout\(\(\) => setMounted\(false\), TRANSITION_MS\)/);
-  assert.match(panel, /if \(!mounted\) return null/);
+test("面板常驻 DOM：isOpen 直接当终态样式，没有两态和延迟卸载", () => {
+  // 进场「几乎瞬间」的真正原因不是曲线，是进场起点不存在：早先拆成
+  // entered + mounted，靠 rAF 隔一帧再 setEntered，浏览器不给这一帧时，
+  // 挂载和切终态落在同一次绘制里，没有起点就没有 transition —— 面板直接「在」，
+  // 而退场永远有起点，所以是「进场瞬间、退场慢慢」。这套两态 + 卸载定时器
+  // 是那个 bug 本身，不能回来。
+  // 注释里会正面提到这些被删掉的 API（「早先拆成 entered + mounted…」），
+  // 所以先剥掉行注释再断言它们不在代码里。
+  const code = panel.replace(/^\s*\/\/.*$/gm, "");
+  assert.doesNotMatch(code, /useState/, "不再需要任何本组件自有的状态");
+  assert.doesNotMatch(code, /setEntered|setMounted/, "两态开关已删");
+  assert.doesNotMatch(code, /requestAnimationFrame/, "延迟进场就是那个 bug 的成因");
+  assert.doesNotMatch(code, /setTimeout\(\(\) => setMounted/, "不再有延迟卸载");
+  // 终态样式直接由 isOpen 决定
+  assert.match(panel, /opacity: isOpen \? 1 : 0/);
+  assert.match(panel, /transform: isOpen\s*\n\s*\? "translateY\(0\) scale\(1\)"/);
   // 收起后仍占整列但不透明、不吃点击，把交互还给底下的列表
-  assert.match(panel, /pointerEvents: entered \? "auto" : "none"/);
+  assert.match(panel, /pointerEvents: isOpen \? "auto" : "none"/);
   // 挂载交给组件自己，hook 不再条件渲染
   assert.match(hook, /<ArchivedSessionsPanel\s*\n\s*isOpen=\{archiveOpen\}/);
   assert.doesNotMatch(hook, /\{archiveOpen \? \(/);
+});
+
+test("遮罩跟着淡入淡出（不是瞬间满不透明）", () => {
+  assert.match(panel, /opacity: isOpen \? 1 : 0,\s*\n\s*transition: `opacity \$\{timing\}`/);
 });
 
 test("归档层 absolute 盖满右栏列，不是跟会话列表并排的 flex item", () => {

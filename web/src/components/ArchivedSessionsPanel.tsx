@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React from "react";
 import { MultiProjectSessionList } from "./SessionList";
 import type { ProjectSessionGroup, SessionItem } from "./SessionList";
 import { useBackLayer } from "../app/useBackNavigation";
@@ -23,16 +23,11 @@ import { useI18n } from "../i18n";
 
 // 遮罩留出的顶部空白：面板比整栏短一截，透出底下的列表。
 const TOP_GAP = 56;
-// 进出**严格对称**：同一时长、同一曲线，而且这条曲线本身得是自反的。
-// 用强 ease-out（0.22,1,0.36,1）看着对称其实不是：那种曲线前 28% 时间就走完
-// 一半距离，剩下的尾巴慢慢爬。进场时这段尾巴**看得见**（面板在半空缓慢落位），
-// 读起来是「慢而顺」；退场时同样的尾巴面板早跑出视野看不见，读起来就是「快」。
-// 同一串 CSS 两种观感 —— 那不是对称。
-// ease-in-out（0.45,0,0.55,1）两端同样缓、中段最快，镜像自身：把时间轴对折，
-// 进场和退场逐帧重合。480ms：曲线自反后时长成了两侧唯一的旋钮，说「慢一点」就两侧一起慢，
-// 不再有任何东西可以跑偏。
-const TRANSITION_MS = 480;
-const TRANSITION_EASE = "cubic-bezier(0.45, 0, 0.55, 1)";
+// 进出用同一条**线性**曲线。曲线形态在这件事上是过度设计：真正让进场
+// 「几乎瞬间」的不是曲线，是进场那一帧没有过渡起点（见下面 mounted 的注释）。
+// 起点补上之后两侧就都是同一串 CSS 的镜像，线性足够 —— 而且线性天生自反。
+const TRANSITION_MS = 320;
+const TRANSITION_EASE = "linear";
 
 type ArchivedSessionsPanelProps = {
   isOpen: boolean;
@@ -60,25 +55,13 @@ export function ArchivedSessionsPanel({
   // 一级位置，留在返回栈里才和右栏那条 rail 的行为一致。只在展开时挂。
   useBackLayer(isOpen, onClose);
 
-  // 常驻 DOM 才播得了退场动画，所以「开」和「已挂载」得拆成两个状态：
-  // entered 切终态样式，mounted 决定留不留着。关闭时先退场再卸载。
-  // 收起：退场放完再卸载，否则又退回硬切。TRANSITION_MS 是两侧共用的。
-  const [entered, setEntered] = useState(false);
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => {
-    if (!isOpen) {
-      setEntered(false);
-      const timer = window.setTimeout(() => setMounted(false), TRANSITION_MS);
-      return () => window.clearTimeout(timer);
-    }
-    setMounted(true);
-    // 挂载后等一帧再切展开态：同一帧里换 mounted+entered 没有起点可过渡，
-    // 遮罩会直接满不透明地糊上去（就是那下闪）。
-    const raf = window.requestAnimationFrame(() => setEntered(true));
-    return () => window.cancelAnimationFrame(raf);
-  }, [isOpen]);
-
-  if (!mounted) return null;
+  // 面板常驻 DOM，isOpen 直接当终态样式用。两侧于是都是「已绘制元素改样式」，
+  // 天然对称，没有先后帧、没有卸载竞态可言。
+  //
+  // 早先这里拆成 entered + mounted 两态，靠 rAF 隔一帧再 setEntered。那是错的：
+  // 进场起点要靠那一帧的「闭合样式已被绘制」撑着，浏览器不一定给你这一帧 ——
+  // 给不到就是同一次绘制里既挂载又切终态，起点不存在，transition 根本不启动，
+  // 面板直接「在」。表现就是进场瞬间、退场慢慢。
 
   // 没有归档的会话就什么都别画，别把空视图推给用户
   const total = groups.reduce((sum, g) => sum + (g.sessions?.length || 0), 0);
@@ -99,7 +82,7 @@ export function ArchivedSessionsPanel({
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",
-        pointerEvents: entered ? "auto" : "none",
+        pointerEvents: isOpen ? "auto" : "none",
       }}
     >
       {/* 遮罩：半透明黑，盖住右栏自身内容，主面板/左栏不受影响 */}
@@ -111,7 +94,7 @@ export function ArchivedSessionsPanel({
           inset: 0,
           zIndex: 1,
           background: "rgba(0, 0, 0, 0.42)",
-          opacity: entered ? 1 : 0,
+          opacity: isOpen ? 1 : 0,
           transition: `opacity ${timing}`,
         }}
       />
@@ -134,10 +117,10 @@ export function ArchivedSessionsPanel({
           background: "var(--mindfs-topbar-bg, var(--sidebar-bg))",
           // 上浮幅度：18px 在 280px 宽的栏里几乎看不出在动，64px 才读得出
           // 「从底边升起来」。配合 scale 的一点收缩，落位时像被托上来。
-          transform: entered
+          transform: isOpen
             ? "translateY(0) scale(1)"
             : "translateY(64px) scale(0.97)",
-          opacity: entered ? 1 : 0,
+          opacity: isOpen ? 1 : 0,
           transition: `transform ${timing}, opacity ${timing}`,
         }}
       >
