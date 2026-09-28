@@ -191,6 +191,14 @@ test("归档入口行钉在滚动容器最底部，短列表在最下、长列�
   );
   assert.match(row, /position: "sticky"/, "入口行应 sticky 钉底");
   assert.match(row, /bottom: -8/, "应抵消容器 padding，贴真正的底边");
+  // sticky 必须挂在块级盒上：inline-flex 会让行盒由内容定尺寸，贴不住底边
+  // （上一版正是栽在这，刷新后完全看不出钉住）。所以 display 必须是 flex。
+  assert.match(row, /display: "flex"/, "入口行必须是块级 flex，sticky 才生效");
+  // 注释里会正面提到 inline-flex（解释这个 bug），先剥掉行注释再断言
+  const rowCode = row.replace(/^\s*\/\/.*$/gm, "");
+  assert.doesNotMatch(rowCode, /inline-flex/, "inline 级盒上 sticky 不可靠");
+  // 钉底就必须占满整行，否则右边留一道缝
+  assert.match(row, /width: "100%"/, "应占满整行");
   // 钉住 = 内容要从它底下经过，背景必须不透；sidebar-bg 本身半透明
   assert.match(row, /var\(--panel-bg\)/, "需叠一层不透明底，否则字从按钮里滚过去");
   // 两种列表里都还留着这一行

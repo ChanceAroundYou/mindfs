@@ -277,8 +277,7 @@ function ArchiveEntryRow({ onOpen }: { onOpen?: () => void }) {
         marginTop: "8px",
         marginBottom: -8,
         padding: "6px 8px",
-        width: "calc(100% - 2px)",
-        marginLeft: MAIN_SESSION_ICON_OFFSET,
+        width: "100%",
         boxSizing: "border-box",
         border: "none",
         borderTop: "1px solid var(--border-color)",
@@ -290,7 +289,9 @@ function ArchiveEntryRow({ onOpen }: { onOpen?: () => void }) {
         color: "var(--text-secondary)",
         fontSize: "11px",
         lineHeight: 1.2,
-        display: "inline-flex",
+        // 必须是块级盒：sticky 挂在 inline 级盒上不可靠（行盒由内容定尺寸，
+        // 贴不住底边）。之前是 inline-flex，所以「钉在底部」根本没生效。
+        display: "flex",
         alignItems: "center",
         justifyContent: "center",
         gap: "4px",
