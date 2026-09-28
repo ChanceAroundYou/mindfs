@@ -23,12 +23,12 @@ import { useI18n } from "../i18n";
 
 // 遮罩留出的顶部空白：面板比整栏短一截，透出底下的列表。
 const TOP_GAP = 56;
-// 进出场时长**故意不一样**：展开要看得清「浮起来」，200ms 一晃就没了；
-// 收起太快会像被弹射。CLOSE_MS 还要和下面卸载的 setTimeout 对齐。
-const OPEN_MS = 320;
-const CLOSE_MS = 260;
-const OPEN_EASE = "cubic-bezier(0.22, 1, 0.36, 1)";
-const CLOSE_EASE = "cubic-bezier(0.4, 0, 1, 1)";
+// 进出**完全对称**：同一时长、同一曲线。淡出既然顺了，淡入就用一样的 —
+// 两侧不同时长/曲线（拆成 OPEN_*/CLOSE_*）反而没有可凭的直觉依据，
+// 「点开看它怎么收回去，就知道它怎么开」是更可靠的一致性。
+// 320ms 是「浮起来看得清」和「不磨叽」之间取的值。
+const TRANSITION_MS = 320;
+const TRANSITION_EASE = "cubic-bezier(0.22, 1, 0.36, 1)";
 
 type ArchivedSessionsPanelProps = {
   isOpen: boolean;
@@ -58,12 +58,13 @@ export function ArchivedSessionsPanel({
 
   // 常驻 DOM 才播得了退场动画，所以「开」和「已挂载」得拆成两个状态：
   // entered 切终态样式，mounted 决定留不留着。关闭时先退场再卸载。
+  // 收起：退场放完再卸载，否则又退回硬切。TRANSITION_MS 是两侧共用的。
   const [entered, setEntered] = useState(false);
   const [mounted, setMounted] = useState(false);
   useEffect(() => {
     if (!isOpen) {
       setEntered(false);
-      const timer = window.setTimeout(() => setMounted(false), CLOSE_MS);
+      const timer = window.setTimeout(() => setMounted(false), TRANSITION_MS);
       return () => window.clearTimeout(timer);
     }
     setMounted(true);
@@ -77,11 +78,8 @@ export function ArchivedSessionsPanel({
 
   // 没有归档的会话就什么都别画，别把空视图推给用户
   const total = groups.reduce((sum, g) => sum + (g.sessions?.length || 0), 0);
-  // 曲线跟着方向走：展开用减速曲线（起步快、落位稳），收起用加速曲线
-  // （起步慢、越走越快地退场），两者观感都不是同一条。
-  const timing = entered
-    ? `${OPEN_MS}ms ${OPEN_EASE}`
-    : `${CLOSE_MS}ms ${CLOSE_EASE}`;
+  // 进出共用：mask 和 sheet 的每条 transition 都是这一串
+  const timing = `${TRANSITION_MS}ms ${TRANSITION_EASE}`;
 
   return (
     // 定位上下文由调用方（占满右栏整列的 relative wrapper）提供。
