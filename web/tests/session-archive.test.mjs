@@ -92,3 +92,38 @@ test("确认弹窗文案两种语言都有，且提示级联与不可撤销", ()
   }
 });
 
+test("归档面板只拉顶级会话（子会话已在归档时被删，这里再挡一次历史脏数据）", () => {
+  // 归档区按项目平铺，顶级 + 子会话两层没有意义。
+  // top_level 与 archived=only 是 AND 关系（server sessionListWhere），两个一起传才对。
+  const appSrc = read("src/App.tsx");
+  const start = appSrc.indexOf("// 归档面板懒加载");
+  assert.ok(start >= 0, "App.tsx 应有归档懒加载 effect");
+  const body = appSrc.slice(start, appSrc.indexOf("setArchiveCount(", start));
+  assert.match(body, /archivedOnly: true/, "归档查询必须带 archivedOnly");
+  assert.match(body, /topLevel: true/, "归档查询必须同时带 topLevel");
+});
+
+test("归档语义：只归档自己，子会话走删除", () => {
+  // 后端 ArchiveSession 的返回值带出「被删掉的子会话」，供 handler 解绑任务。
+  const src = read("../server/internal/api/usecase/session.go");
+  const start = src.indexOf("func (s *Service) ArchiveSession(");
+  assert.ok(start >= 0, "usecase 应有 ArchiveSession");
+  const body = src.slice(start, src.indexOf("\n}\n", start));
+  // 父会话自己只打归档标记
+  assert.match(body, /manager\.SetArchived\(ctx, self, true\)/);
+  // 子会话被排除出来后交给 deleteSessionKeys 真删
+  assert.match(body, /if key != self \{/);
+  assert.match(body, /s\.deleteSessionKeys\(ctx, root, manager, children\)/);
+  assert.match(body, /DeletedKeys: children/);
+});
+
+test("归档 handler 用被删的子会话解绑任务", () => {
+  // 子会话可能绑着别的任务，不解绑任务点进去就是空白（和 handleSessionDelete 同一套）。
+  const src = read("../server/internal/api/http.go");
+  const start = src.indexOf("func (h *HTTPHandler) handleSessionArchive(");
+  const body = src.slice(start, src.indexOf("\n}\n", start));
+  assert.match(body, /out\.DeletedKeys/);
+  assert.match(body, /h\.detachTaskFromSession\(r\.Context\(\), rootID, out\.DeletedKeys\)/);
+});
+
+

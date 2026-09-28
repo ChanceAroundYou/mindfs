@@ -66,12 +66,8 @@ export type SessionListProps = {
   onLoadOlder?: () => void;
   loadingOlder?: boolean;
   hasMore?: boolean;
-  // 归档区：默认收起，面板底部一行摘要；点开才由上层懒加载 archivedSessions。
-  archivedSessions?: SessionItem[];
-  archiveOpen?: boolean;
-  archiveLoading?: boolean;
-  archiveCount?: number;
-  onToggleArchive?: () => void;
+  // 归档入口行：只负责把「已归档对话」面板叫起来，内容在面板里，不在本列表。
+  onOpenArchivePanel?: () => void;
 };
 
 const COLLAPSED_CHILD_SESSION_LIMIT = 3;
@@ -120,12 +116,8 @@ export type ProjectSessionListProps = {
     session: SessionItem,
     options?: { beforeTime?: string },
   ) => Promise<{ hasMore?: boolean } | void> | { hasMore?: boolean } | void;
-  // 归档区：默认收起，面板底部一行摘要；点开才由上层懒加载 archivedSessions。
-  archivedSessions?: SessionItem[];
-  archiveOpen?: boolean;
-  archiveLoading?: boolean;
-  archiveCount?: number;
-  onToggleArchive?: () => void;
+  // 归档入口行：点它弹出「已归档对话」面板。
+  onOpenArchivePanel?: () => void;
 };
 
 function ToggleRowButton({
@@ -262,65 +254,45 @@ function ArchiveIcon() {
 }
 
 /**
- * 归档区：面板底部默认只有这一行摘要，零渲染成本。
- * 归档会话不进主列表 state（否则会被树构建再算一次、还会撞上孤儿提升），
- * 内容全部由上层在展开时懒加载后传进来。
+ * 归档入口行：列表底部固定一行，点它把「已归档对话」面板叫起来。
+ * 归档内容**不**在这里展开 —— 面板才有遮罩和收起按钮，摊在这里会和主列表糊在一起。
  */
-function ArchiveSection({
-  archivedSessions = [],
-  open = false,
-  loading = false,
-  count = 0,
-  selectedKey = "",
-  onToggle,
-  onSelect,
-  onArchive,
-}: {
-  archivedSessions?: SessionItem[];
-  open?: boolean;
-  loading?: boolean;
-  count?: number;
-  selectedKey?: string;
-  onToggle?: () => void;
-  onSelect?: (session: SessionItem) => void;
-  onArchive?: (session: SessionItem, archived: boolean) => Promise<boolean> | boolean;
-}) {
+function ArchiveEntryRow({ onOpen }: { onOpen?: () => void }) {
   const { t } = useI18n();
-  const total = count || archivedSessions.length;
+  if (!onOpen) return null;
   return (
-    <div
+    <button
+      type="button"
+      data-archive-entry="open"
+      onClick={onOpen}
       style={{
         marginTop: "8px",
-        paddingTop: "6px",
+        padding: "6px 8px",
+        width: "calc(100% - 2px)",
+        marginLeft: MAIN_SESSION_ICON_OFFSET,
+        boxSizing: "border-box",
+        border: "none",
         borderTop: "1px solid var(--border-color)",
-        display: "flex",
-        flexDirection: "column",
-        gap: "2px",
+        background: "transparent",
+        color: "var(--text-secondary)",
+        fontSize: "11px",
+        lineHeight: 1.2,
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: "4px",
+        cursor: "pointer",
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.color = "var(--text-primary)";
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.color = "var(--text-secondary)";
       }}
     >
-      <ToggleRowButton
-        loading={loading}
-        label={t("sessionList.archiveCount", { count: total })}
-        showExpandIcon={!loading && !open}
-        showCollapseIcon={!loading && open}
-        marginLeft={MAIN_SESSION_ICON_OFFSET}
-        onClick={() => onToggle?.()}
-      />
-      {open && !loading
-        ? archivedSessions.map((session) => (
-            <SessionCardMemo
-              key={`archived::${session.key}`}
-              session={session}
-              sessionByKey={new Map()}
-              selected={session.key === selectedKey}
-              parentHighlighted={false}
-              syncing={false}
-              onSelect={onSelect}
-              onArchive={onArchive}
-            />
-          ))
-        : null}
-    </div>
+      <ArchiveIcon />
+      <span>{t("sessionList.archive")}</span>
+    </button>
   );
 }
 
@@ -406,11 +378,7 @@ export function SessionList({
   loadingOlder = false,
   hasMore = false,
   onArchive,
-  archivedSessions,
-  archiveOpen = false,
-  archiveLoading = false,
-  archiveCount = 0,
-  onToggleArchive,
+  onOpenArchivePanel,
 }: SessionListProps) {
   const { t } = useI18n();
   const effectiveEmptyText = emptyText || t("sessionList.empty");
@@ -813,19 +781,7 @@ export function SessionList({
             ) : null}
           </div>
         )}
-        {/* 归档区与搜索态互斥：搜索结果是跨会话的一次性视图，不该混进归档入口 */}
-        {searchOpen || searchResultsMode ? null : (
-          <ArchiveSection
-            archivedSessions={archivedSessions}
-            open={archiveOpen}
-            loading={archiveLoading}
-            count={archiveCount}
-            selectedKey={selectedKey}
-            onToggle={onToggleArchive}
-            onSelect={onSelect}
-            onArchive={onArchive}
-          />
-        )}
+        <ArchiveEntryRow onOpen={onOpenArchivePanel} />
       </div>
       <style>{`
         @keyframes mindfs-bound-pulse {
@@ -885,11 +841,7 @@ export function MultiProjectSessionList({
   onLoadMoreProject,
   onLoadChildren,
   onArchive,
-  archivedSessions,
-  archiveOpen = false,
-  archiveLoading = false,
-  archiveCount = 0,
-  onToggleArchive,
+  onOpenArchivePanel,
 }: ProjectSessionListProps) {
   const { t } = useI18n();
   const effectiveEmptyText = emptyText || t("sessionList.empty");
@@ -1357,18 +1309,9 @@ export function MultiProjectSessionList({
                 </section>
               );
             })}
-            <ArchiveSection
-              archivedSessions={archivedSessions}
-              open={archiveOpen}
-              loading={archiveLoading}
-              count={archiveCount}
-              selectedKey={selectedKey}
-              onToggle={onToggleArchive}
-              onSelect={onSelect}
-              onArchive={onArchive}
-            />
           </div>
         )}
+        <ArchiveEntryRow onOpen={onOpenArchivePanel} />
       </div>
       <style>{`
         @keyframes mindfs-bound-pulse {

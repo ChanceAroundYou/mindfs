@@ -83,11 +83,7 @@ export type SessionSidebarViewParams = {
   handleRenameSession: SessionListProps["onRename"];
   handleDeleteSession: SessionListProps["onDelete"];
   handleArchiveSession: SessionListProps["onArchive"];
-  archiveOpen: boolean;
-  archiveLoading: boolean;
-  archiveCount: number;
-  archivedSessions: SessionItem[];
-  toggleArchiveOpen: () => void;
+  openArchivePanel: () => void;
   loadChildSessionsForParent: SessionListProps["onLoadChildren"];
   handleLoadOlderSessions: () => void;
   loadingOlderSessions: boolean;
@@ -146,11 +142,7 @@ export function useSessionSidebarView({
   handleRenameSession,
   handleDeleteSession,
   handleArchiveSession,
-  archiveOpen,
-  archiveLoading,
-  archiveCount,
-  archivedSessions,
-  toggleArchiveOpen,
+  openArchivePanel,
   loadChildSessionsForParent,
   handleLoadOlderSessions,
   loadingOlderSessions,
@@ -305,11 +297,7 @@ export function useSessionSidebarView({
         onArchive={handleArchiveSession}
         onLoadMoreProject={loadMoreMultiProjectSessions}
         onLoadChildren={loadChildSessionsForParent}
-        archiveOpen={archiveOpen}
-        archiveLoading={archiveLoading}
-        archiveCount={archiveCount}
-        archivedSessions={archivedSessions}
-        onToggleArchive={toggleArchiveOpen}
+        onOpenArchivePanel={openArchivePanel}
       />
     ) : (
       <SessionList
@@ -370,11 +358,7 @@ export function useSessionSidebarView({
             ? false
             : hasMoreSessions
         }
-        archivedSessions={archivedSessions}
-        archiveOpen={archiveOpen}
-        archiveLoading={archiveLoading}
-        archiveCount={archiveCount}
-        onToggleArchive={toggleArchiveOpen}
+        onOpenArchivePanel={openArchivePanel}
       />
     );
 

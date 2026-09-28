@@ -142,6 +142,7 @@ import { ToastContainer } from "./components/Toast";
 import { DialogHost } from "./components/DialogHost";
 import { alertDialog, confirmDialog, promptDialog } from "./services/dialog";
 import { BottomSheet } from "./components/BottomSheet";
+import { ArchivedSessionsPanel } from "./components/ArchivedSessionsPanel";
 import { ScheduledAgentTaskDialog } from "./components/ScheduledAgentTaskDialog";
 import { TaskTemplateDialog, FieldLabelWithInfo } from "./components/TaskTemplateDialog";
 import { TaskDetailPanel } from "./components/TaskDetailPanel";
@@ -303,11 +304,11 @@ export function App({ onGoHome }: AppProps) {
   const [syncingSessionKeys, setSyncingSessionKeys] = useState<Set<string>>(
     () => new Set(),
   );
-  // 归档区：默认不渲染任何归档行，面板底部只留一行摘要，点开才懒加载。
-  const [archivedSessions, setArchivedSessions] = useState<SessionItem[]>([]);
+  // 归档区：默认不拉任何数据，面板底部的入口行只留摘要，点开才懒加载。
+  // 归档数据按项目分组存（面板和主列表一样按项目平铺），不进两棵列表 state。
+  const [archivedGroups, setArchivedGroups] = useState<MultiProjectSessionGroup[]>([]);
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [archiveLoading, setArchiveLoading] = useState(false);
-  const [archiveCount, setArchiveCount] = useState(0);
   // 归档/取消归档后 +1，强制下面的懒加载 effect 重拉一次（否则摘要数字会停留在旧值）。
   const [archiveReloadToken, setArchiveReloadToken] = useState(0);
   const [hasMoreSessions, setHasMoreSessions] = useState(false);
@@ -4052,20 +4053,18 @@ export function App({ onGoHome }: AppProps) {
         sessionNodeId,
       );
       if (!archived) {
-        // 取消归档要把整棵子树放回主列表。只有 root 这个会话有服务端返回的完整元数据，
-        // 后代沿用它（子会话的 root_id/nodeColor 一致），档案行的字段本来就来自同一份列表。
-        const restored = [...affected]
-          .map((key) =>
-            toSessionItem(rootID, {
-              ...(session as any),
-              key,
-              session_key: key,
-              root_id: rootID,
-              _nodeId: sessionNodeId,
-              archived_at: null,
-            }),
-          )
-          .filter((item): item is SessionItem => !!item);
+        // 只把这个会话放回主列表：归档时它的子会话已经被真删掉了，
+        // 连后代一起恢复会凭空造出一批服务端不存在的行（它们早就没有正文了）。
+        const restored = [
+          toSessionItem(rootID, {
+            ...(session as any),
+            key: sessionKey,
+            session_key: sessionKey,
+            root_id: rootID,
+            _nodeId: sessionNodeId,
+            archived_at: null,
+          }),
+        ].filter((item): item is SessionItem => !!item);
         if (restored.length) {
           setSessions((prev) => mergeSessionItems(prev, restored));
           setMultiProjectSessionGroups((prev) => {
@@ -4103,12 +4102,18 @@ export function App({ onGoHome }: AppProps) {
       setSessionSearchResults((prev) =>
         prev.filter((item) => !affected.has(item.key || item.session_key || "")),
       );
-      // 归档区快照已过期（摘掉的可能是里面的行，撤销归档会往里加行），
-      // 重新展开时按下面的 effect 重拉；已展开则立刻重拉一次。
-      setArchivedSessions((prev) =>
-        prev.filter((item) => !affected.has(item.key || item.session_key || "")),
+      // 归档区快照已过期：取消归档会往里加行，归档会摘掉一行。计数也别手动加减 ——
+      // 下面的 effect 是唯一的真相源，重拉一次比在这里猜差多少可靠。
+      setArchivedGroups((prev) =>
+        prev
+          .map((group) => ({
+            ...group,
+            sessions: group.sessions.filter(
+              (item) => !affected.has(item.key || item.session_key || ""),
+            ),
+          }))
+          .filter((group) => group.sessions.length > 0),
       );
-      setArchiveCount((count) => Math.max(0, count - affected.size));
       setArchiveReloadToken((token) => token + 1);
       void deleteCachedSessionLists(rootID, sessionNodeId);
       return true;
@@ -4116,7 +4121,8 @@ export function App({ onGoHome }: AppProps) {
     [pruneSubtreeFromSessionState, t],
   );
 
-  // 归档区懒加载：只有展开过 / 归档状态变过才拉，未展开时面板零成本。
+  // 归档面板懒加载：只有弹出过 / 归档状态变过才拉，未弹出时零成本。
+  // topLevel 是硬要求：归档区按项目平铺，子会话挂在那儿只会变成孤儿行。
   // ponytail: 按多项目分组里出现过的 rootId 逐个查。某个项目的会话被**全部**归档后
   // 该分组就不再出现，它的归档行会漏在列表外；等真出现这种项目再改成查 managedRoot 全集。
   useEffect(() => {
@@ -4139,30 +4145,45 @@ export function App({ onGoHome }: AppProps) {
               nodeId: getNodeIdForRoot(rootId),
               limit: SESSION_PAGE_SIZE,
               archivedOnly: true,
+              topLevel: true,
             }),
           ),
         );
         if (cancelled) return;
-        setArchivedSessions(
-          payloads
-            .flatMap((payload, i) =>
-              payload.items.map((item) =>
-                toSessionItem(rootIds[i], {
+        const groups = rootIds
+          .map((rootId, i) => {
+            const payload = payloads[i];
+            const sessions = payload.items
+              .map((item) =>
+                toSessionItem(rootId, {
                   ...(item as any),
-                  root_id: rootIds[i],
+                  root_id: rootId,
+                  _nodeId: getNodeIdForRoot(rootId),
                 }),
-              ),
-            )
-            .filter((item): item is SessionItem => !!item)
-            .sort(
-              (a, b) =>
-                String(b.updated_at || "").localeCompare(String(a.updated_at || "")) ||
-                String(a.key).localeCompare(String(b.key)),
-            ),
-        );
-        setArchiveCount(
-          payloads.reduce((sum, payload) => sum + (payload.totalCount || payload.items.length), 0),
-        );
+              )
+              .filter((item): item is SessionItem => !!item)
+              .sort(
+                (a, b) =>
+                  String(b.updated_at || "").localeCompare(String(a.updated_at || "")) ||
+                  String(a.key).localeCompare(String(b.key)),
+              );
+            if (sessions.length === 0) return null;
+            const nodeId = getNodeIdForRoot(rootId);
+            const meta = (managedRootByKeyRef.current as Record<string, any>)[
+              rootNodeKey(nodeId, rootId)
+            ];
+            return {
+              rootId,
+              rootName: meta?.display_name || rootId,
+              latestSessionTime: String(sessions[0]?.updated_at || ""),
+              _nodeId: nodeId || undefined,
+              _nodeColor: meta?._nodeColor,
+              sessions,
+              totalCount: payload.totalCount || sessions.length,
+            } as MultiProjectSessionGroup;
+          })
+          .filter((g): g is MultiProjectSessionGroup => !!g);
+        setArchivedGroups(groups);
       } finally {
         if (!cancelled) setArchiveLoading(false);
       }
@@ -8962,9 +8983,10 @@ export function App({ onGoHome }: AppProps) {
   const updateHelp = updateState.message || updateSummaryText(updateState, t);
   const updateSummary = updateSummaryText(updateState, t);
 
-  // 归档区：默认收起，面板底部一行摘要，点开才拉取。
-  const toggleArchiveOpen = useCallback(() => {
-    setArchiveOpen((open) => !open);
+  // 归档面板：只在「打开」这一侧有动作 —— 收起由面板自己的收起按钮负责，
+  // 不做成 toggle，面板开着时列表底部的入口行被遮罩盖住，点不到。
+  const openArchivePanel = useCallback(() => {
+    setArchiveOpen(true);
   }, []);
 
   const { sessionImportMenu, sessionSidebar } = useSessionSidebarView({
@@ -9009,11 +9031,7 @@ export function App({ onGoHome }: AppProps) {
     handleRenameSession,
     handleDeleteSession,
     handleArchiveSession,
-    archiveOpen,
-    archiveLoading,
-    archiveCount,
-    archivedSessions,
-    toggleArchiveOpen,
+    openArchivePanel,
     loadMoreMultiProjectSessions,
     loadChildSessionsForParent,
     sessionSearchResults,
@@ -9364,6 +9382,19 @@ export function App({ onGoHome }: AppProps) {
             )}
           </BottomSheet>
         }
+      />
+      <ArchivedSessionsPanel
+        isOpen={archiveOpen}
+        onClose={() => setArchiveOpen(false)}
+        groups={archivedGroups}
+        loading={archiveLoading}
+        selectedKey={activeBoundSessionKey || ""}
+        onSelect={(session) => {
+          handleSelectSessionAndClose(session);
+          // 选中归档会话 = 要去读它，面板留着只会挡住刚打开的对话
+          setArchiveOpen(false);
+        }}
+        onArchive={handleArchiveSession}
       />
       {!isMobile ? <OnboardingTour
         open={onboardingOpen}
