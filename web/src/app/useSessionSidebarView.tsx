@@ -373,9 +373,10 @@ export function useSessionSidebarView({
       />
     );
 
-  // 归档视图在右栏列内**替换**会话列表，不叠在上面、也不出全屏浮层。
-  // 用 flex 高度 0/100% 切换：底下的列表保持挂载，收起时列表的滚动位置和
-  // 展开态都还在（这跟「整个卸载再挂回」差一截体验）。
+  // 归档视图浮在右栏**列内**的绝对定位层上，遮罩只盖右栏自己的内容。
+  // aside 是 overflow:auto，absolute 子元素会跟着内容滚，所以这一层
+  // 固定尺寸（flex:1 拿满右栏列高），里面的 sheet/scrim 才是钉住的。
+  // 收起时整个层 hidden，主面板和左栏完全不受影响。
   const archiveView = (
     <div
       style={{
@@ -386,18 +387,8 @@ export function useSessionSidebarView({
         overflow: "hidden",
       }}
     >
-      <div
-        style={{
-          flex: archiveOpen ? "1 1 100%" : "0 1 0%",
-          minHeight: 0,
-          display: "flex",
-          flexDirection: "column",
-          overflow: "hidden",
-          transition: "flex-grow 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
-        }}
-      >
+      {archiveOpen ? (
         <ArchivedSessionsPanel
-          isOpen={archiveOpen}
           onClose={closeArchivePanel}
           groups={archivedGroups}
           loading={archiveLoading}
@@ -405,15 +396,14 @@ export function useSessionSidebarView({
           onSelect={handleSelectArchivedSession}
           onArchive={handleArchiveSession}
         />
-      </div>
+      ) : null}
       <div
         style={{
-          flex: archiveOpen ? "0 1 0%" : "1 1 100%",
+          flex: 1,
           minHeight: 0,
           display: "flex",
           flexDirection: "column",
           overflow: "hidden",
-          transition: "flex-grow 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
         }}
       >
         {sessionSidebar}

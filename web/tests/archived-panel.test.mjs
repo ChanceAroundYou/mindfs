@@ -6,12 +6,11 @@ import path from "node:path";
 /**
  * 「已归档对话」视图的形状契约。
  *
- * 这条守的是一条**否定式**需求：归档只能在右栏列里换视图，不能做成全屏浮层。
- * 前一版就是挂在 App 根上的 position:fixed 遮罩，把主面板和左栏一起盖了 ——
- * 所以这里显式断言「没有 fixed / 没有遮罩」，防止有人再改回去。
- *
- * 面板本身零定位、零遮挡：它是右栏 flex 列里的一个普通兄弟节点，
- * 高度切换和侧栏动画都交给 AppShell 那一层。
+ * 这条守的是一条**否定式**需求：归档不能做成全屏浮层。
+ * 但「不遮挡主面板/左栏」和「要蒙一层半透明黑、透出底下的列表」并不矛盾 ——
+ * 关键是遮罩与面板都用 absolute 钉在**右栏自己那根列**里（AppShell 的
+ * rightStyle 带 position: relative），作用域只到右栏。
+ * 所以这里断言「不是 fixed / 不按视口铺开」，同时断言遮罩和上浮都在。
  */
 
 const read = (rel) =>
@@ -20,28 +19,58 @@ const read = (rel) =>
 const panel = read("src/components/ArchivedSessionsPanel.tsx");
 const hook = read("src/app/useSessionSidebarView.tsx");
 
-test("归档视图不做全屏浮层：没有 fixed 定位、没有遮罩", () => {
-  assert.doesNotMatch(panel, /position: "fixed"/, "归档视图不得脱离右栏列");
-  assert.doesNotMatch(panel, /data-archived-panel="scrim"/, "不得有遮罩盖住主面板/左栏");
+test("归档视图不做全屏浮层：遮罩/面板都是 absolute，不是 fixed", () => {
+  assert.doesNotMatch(panel, /position: "fixed"/, "全视口浮层会把主面板和左栏一起盖住");
   assert.doesNotMatch(panel, /100vh/, "不得按视口高度铺开");
-  assert.doesNotMatch(panel, /zIndex/, "右栏内部不需要再叠一层");
+  // 遮罩和面板都靠 layer 定位，所以 zIndex 只需要相对彼此的两级
+  assert.doesNotMatch(panel, /zIndex: [3-9]\d\d/, "不应有全屏级 zIndex");
 });
 
-test("归档视图是右栏 flex 列里的普通子节点", () => {
-  assert.match(panel, /flex: 1,\s*minHeight: 0,\s*display: "flex"/);
+test("遮罩是半透明黑，罩住右栏内容、透出底下的列表", () => {
+  assert.match(panel, /data-archived-panel="scrim"/);
+  assert.match(panel, /position: "absolute",\s*inset: 0,[\s\S]*?background: "rgba\(0, 0, 0, [\d.]+\)"/);
+  // 点遮罩收起
+  assert.match(panel, /data-archived-panel="scrim"\s*\n\s*onClick=\{onClose\}/);
+});
+
+test("面板上浮（关键帧在全局 css 里，不是临时内联）", () => {
   assert.match(panel, /data-archived-panel="sheet"/);
+  assert.match(panel, /animation: "mindfs-archived-rise/);
+  const css = read("src/index.css");
+  assert.match(css, /@keyframes mindfs-archived-rise \{[\s\S]*?translateY\(/);
 });
 
-test("收起按钮在标题栏里（不是关掉整个右栏）", () => {
+test("定位上下文钉在右栏列内，不溢出到主面板/左栏", () => {
+  // layer 撑满右栏列高且自身不滚动：aside 是 overflow:auto，
+  // absolute 子元素不钉在这个不滚动的根上就会跟着内容跑。
+  assert.match(panel, /data-archived-panel="layer"[\s\S]*?position: "relative"/);
+  assert.match(hook, /flex: 1,\s*minHeight: 0,[\s\S]*?overflow: "hidden"/);
+  const shell = read("src/layout/AppShell.tsx");
+  const rightStyle = shell.slice(
+    shell.indexOf("const rightStyle"),
+    shell.indexOf("const footerStyle"),
+  );
+  assert.match(rightStyle, /position: "relative"/, "右栏列必须是定位上下文");
+});
+
+test("收起按钮在标题栏里、朝右，不关掉整个右栏", () => {
   assert.match(panel, /data-archived-panel="header"/);
   assert.match(panel, /data-archived-panel="collapse"/);
   assert.match(panel, /aria-label=\{t\("sessionList\.archivedPanel\.collapse"\)\}/);
   assert.match(panel, /onClick=\{onClose\}/);
+  // chevron 朝右（顶点 x 递增）：中点在右 = 3.5,8 → 8,12.5 → 12.5,8
+  const chevron = panel.slice(panel.indexOf('data-archived-panel="collapse"'));
+  assert.match(
+    chevron,
+    /<polyline points="3\.5 8 8 12\.5 12\.5 8" \/>/,
+    "收起按钮应指向右",
+  );
 });
 
 test("返回键/侧滑能退回会话列表", () => {
   // 不遮挡主面板 ≠ 不是一级视图：它占着右栏，得能退回去。
-  assert.match(panel, /useBackLayer\(isOpen, onClose\)/);
+  // 挂载即打开，所以 useBackLayer 恒为 true。
+  assert.match(panel, /useBackLayer\(true, onClose\)/);
 });
 
 test("归档视图不重复画一遍空操作栏", () => {
@@ -53,12 +82,11 @@ test("归档视图不重复画一遍空操作栏", () => {
   assert.match(panel, /hideHeader/);
 });
 
-test("右栏里归档视图与会话列表按 flex 高度互换，而不是叠着", () => {
-  // 叠着（两个都 flex:1）的话归档会盖在列表上面；用 0/100% 才是真正的「换视图」。
-  assert.match(hook, /flex: archiveOpen \? "1 1 100%" : "0 1 0%"/);
-  assert.match(hook, /flex: archiveOpen \? "0 1 0%" : "1 1 100%"/);
-  // 收起后列表仍然挂载：滚动位置和展开态要留着
+test("收起时归档层整体卸载，会话列表不受影响", () => {
+  // 浮层压不住列表：它盖的是自己那一层，列表在下面继续挂着（滚动位置/展开态不丢）。
+  assert.match(hook, /\{archiveOpen \? \(\s*<ArchivedSessionsPanel/);
   assert.match(hook, /\{sessionSidebar\}/);
+  assert.doesNotMatch(hook, /flex: archiveOpen \?/);
 });
 
 test("归档视图挂在右栏 hook 里，不在 App 根上", () => {
@@ -75,8 +103,8 @@ test("没有归档会话的项目不显示（空分组被丢掉）", () => {
   const body = app.slice(start, app.indexOf("}, [archiveOpen, archiveReloadToken])", start));
   assert.match(body, /if \(sessions\.length === 0\) return null;/);
   assert.match(body, /\.filter\(\(g\): g is MultiProjectSessionGroup => !!g\)/);
-  // 一条归档都没有时不推空视图
-  assert.match(panel, /groups\.length === 0/);
+  // 一条归档都没有时面板也不推空视图
+  assert.match(panel, /groups\.length === 0|emptyText/);
 });
 
 test("归档按全部项目查，不按多项目分组（含全部归档的项目不能漏）", () => {
