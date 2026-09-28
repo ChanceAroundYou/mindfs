@@ -31,8 +31,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Go 不在非交互 shell 的 PATH 里（.zshenv 只对 zsh 生效）。
-export PATH="/usr/local/go/bin:$HOME/.local/share/go/bin:$PATH"
+# Go 通过 ~/.local/bin/{go,gofmt} 符号链接可见（.zshenv 首位，非交互 bash 也继承该 PATH），无需再补 PATH。
 
 step() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 ok()   { printf '    \033[32m✓\033[0m %s\n' "$*"; }
@@ -94,7 +93,6 @@ ok "本机已安装 $VERSION"
 step "WSL 拉取并重建"
 ssh -o BatchMode=yes -o ConnectTimeout=10 "$WSL_HOST" bash -s <<'REMOTE' || die "WSL 部署失败"
 set -euo pipefail
-export PATH="$HOME/.local/share/go/bin:/usr/local/go/bin:$PATH"
 cd ~/projects/mindfs
 git pull --ff-only origin main
 make build

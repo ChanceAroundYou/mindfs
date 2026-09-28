@@ -73,8 +73,24 @@ make dev-backend      # 仅后端
 make dev-web          # 仅 Vite
 ```
 
-**注意**：Bash 工具的非交互 shell 不加载 `.zshrc`，Go 不在 PATH。
-编译前需：`export PATH="$HOME/.local/share/go/bin:$PATH"`（两端 Go 都在此处，只是 `$HOME` 不同：本机 `/home/xiaokubao`，wsl `/home/nnb`）
+**Go 直接可用，不要绕**：工具链统一在 `$HOME/.local/share/go`（1.26.5），系统级 `/usr/local/go`
+已归档为 `/usr/local/go.1.25.0.bak`（**不要**再往 PATH 里加它——两个版本共存时谁先命中取决于顺序，构建不可复现）。
+`~/.zshenv` 第 3 段会自动建 `~/.local/bin/{go,gofmt}` 符号链接（幂等，丢了会自愈）。
+所以 `go` / `make test` **裸跑即可，永久不要**再往命令前加 `export PATH=...`（无效，见下）。
+报 `go: No such file or directory` 时跑一次 `zsh -c 'command -v go'` 即可触发自愈。
+
+工具目录的**唯一上游**是 dotfiles 仓库的 `zsh/user-path.sh`（`~/.local/bin`、`~/.cargo/bin`），
+由 `~/.zshenv` 第 2 段注入。cron / ssh / systemd `--user` 三个不读 rc 的场景，
+由 dotfiles 的 `scripts/install-path-env.sh`（`~/.dotfiles/scripts/`，**不在本仓库**）
+从同一上游展开写进 `/etc/environment` + crontab + `~/.config/environment.d/`。
+改工具目录只改上游一处，然后跑一次那个脚本；它幂等，8 台机器都验过。
+
+> 曾有个错误结论「Bash 工具不加载 .zshrc 所以 Go 不在 PATH」：Bash 工具其实就用 zsh、`.zshenv` 也加载了。
+> 真正原因是它先 source 的 `~/.claude/shell-snapshots/snapshot-zsh-*.sh` 末尾有一行硬编码
+> `export PATH=` 覆盖掉了。**该快照是会话级缓存，会话启动时生成一次就不再更新**——
+> 所以刚改完 PATH 配置时 Bash 工具可能仍是旧值，重开会话即可恢复，配置侧无需改动。
+> 只有 Claude Code 的 Bash 工具受此影响；ssh / cron / systemd / 交互与非交互 zsh 都正常
+> （`zsh -c 'command -v cargo'` 可直接验证）。
 
 **构建/重启分工（必守）**：`make build-web / make build / make install / make test` 等编译与安装验证由 Agent 自行执行并验证通过；本机 `sudo systemctl restart mindfs` 仅由用户显式执行（会杀掉所有托管的 claude 子进程），Agent 不得代为重启。`plan-only` / `只出方案` 时必须先落盘方案并经用户显式批准后才动手，禁止未审先做。
 
