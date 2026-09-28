@@ -5,6 +5,7 @@ import { AgentIcon } from "../components/AgentIcon";
 import { ChevronDownSmallIcon, ImportIcon } from "./taskIcons";
 import { AgentMenuList } from "../components/AgentMenuList";
 import { ExternalSessionList } from "../components/ExternalSessionList";
+import { ArchivedSessionsPanel } from "../components/ArchivedSessionsPanel";
 import {
   MultiProjectSessionList,
   SessionList,
@@ -84,6 +85,11 @@ export type SessionSidebarViewParams = {
   handleDeleteSession: SessionListProps["onDelete"];
   handleArchiveSession: SessionListProps["onArchive"];
   openArchivePanel: () => void;
+  closeArchivePanel: () => void;
+  archiveOpen: boolean;
+  archiveLoading: boolean;
+  archivedGroups: ProjectSessionGroup[];
+  handleSelectArchivedSession: (session: SessionItem) => void;
   loadChildSessionsForParent: SessionListProps["onLoadChildren"];
   handleLoadOlderSessions: () => void;
   loadingOlderSessions: boolean;
@@ -143,6 +149,11 @@ export function useSessionSidebarView({
   handleDeleteSession,
   handleArchiveSession,
   openArchivePanel,
+  closeArchivePanel,
+  archiveOpen,
+  archiveLoading,
+  archivedGroups,
+  handleSelectArchivedSession,
   loadChildSessionsForParent,
   handleLoadOlderSessions,
   loadingOlderSessions,
@@ -362,5 +373,53 @@ export function useSessionSidebarView({
       />
     );
 
-  return { sessionImportMenu, sessionSidebar };
+  // 归档视图在右栏列内**替换**会话列表，不叠在上面、也不出全屏浮层。
+  // 用 flex 高度 0/100% 切换：底下的列表保持挂载，收起时列表的滚动位置和
+  // 展开态都还在（这跟「整个卸载再挂回」差一截体验）。
+  const archiveView = (
+    <div
+      style={{
+        flex: 1,
+        minHeight: 0,
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+      }}
+    >
+      <div
+        style={{
+          flex: archiveOpen ? "1 1 100%" : "0 1 0%",
+          minHeight: 0,
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+          transition: "flex-grow 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
+        }}
+      >
+        <ArchivedSessionsPanel
+          isOpen={archiveOpen}
+          onClose={closeArchivePanel}
+          groups={archivedGroups}
+          loading={archiveLoading}
+          selectedKey={activeBoundSessionKey || ""}
+          onSelect={handleSelectArchivedSession}
+          onArchive={handleArchiveSession}
+        />
+      </div>
+      <div
+        style={{
+          flex: archiveOpen ? "0 1 0%" : "1 1 100%",
+          minHeight: 0,
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+          transition: "flex-grow 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
+        }}
+      >
+        {sessionSidebar}
+      </div>
+    </div>
+  );
+
+  return { sessionImportMenu, sessionSidebar: archiveView };
 }

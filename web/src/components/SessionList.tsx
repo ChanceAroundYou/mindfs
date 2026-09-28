@@ -116,8 +116,10 @@ export type ProjectSessionListProps = {
     session: SessionItem,
     options?: { beforeTime?: string },
   ) => Promise<{ hasMore?: boolean } | void> | { hasMore?: boolean } | void;
-  // 归档入口行：点它弹出「已归档对话」面板。
+  // 归档入口行：点它弹出「已归档对话」视图。
   onOpenArchivePanel?: () => void;
+  // 归档视图自带标题栏，就不要再画一遍空的操作栏（那排是搜索/导入入口，视图里用不上）。
+  hideHeader?: boolean;
 };
 
 function ToggleRowButton({
@@ -842,6 +844,7 @@ export function MultiProjectSessionList({
   onLoadChildren,
   onArchive,
   onOpenArchivePanel,
+  hideHeader = false,
 }: ProjectSessionListProps) {
   const { t } = useI18n();
   const effectiveEmptyText = emptyText || t("sessionList.empty");
@@ -1126,7 +1129,7 @@ export function MultiProjectSessionList({
         data-onboarding="session-actions"
         style={{
           height: "36px",
-          display: "flex",
+          display: hideHeader ? "none" : "flex",
           alignItems: "center",
           justifyContent: "space-between",
           padding: "0 10px 0 2px",

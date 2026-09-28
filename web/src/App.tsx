@@ -142,7 +142,6 @@ import { ToastContainer } from "./components/Toast";
 import { DialogHost } from "./components/DialogHost";
 import { alertDialog, confirmDialog, promptDialog } from "./services/dialog";
 import { BottomSheet } from "./components/BottomSheet";
-import { ArchivedSessionsPanel } from "./components/ArchivedSessionsPanel";
 import { ScheduledAgentTaskDialog } from "./components/ScheduledAgentTaskDialog";
 import { TaskTemplateDialog, FieldLabelWithInfo } from "./components/TaskTemplateDialog";
 import { TaskDetailPanel } from "./components/TaskDetailPanel";
@@ -4121,19 +4120,16 @@ export function App({ onGoHome }: AppProps) {
     [pruneSubtreeFromSessionState, t],
   );
 
-  // 归档面板懒加载：只有弹出过 / 归档状态变过才拉，未弹出时零成本。
+  // 归档视图懒加载：只有打开过 / 归档状态变过才拉，未打开时零成本。
   // topLevel 是硬要求：归档区按项目平铺，子会话挂在那儿只会变成孤儿行。
-  // ponytail: 按多项目分组里出现过的 rootId 逐个查。某个项目的会话被**全部**归档后
-  // 该分组就不再出现，它的归档行会漏在列表外；等真出现这种项目再改成查 managedRoot 全集。
+  // 按**全部**已加载项目查，而不是按多项目分组里出现过的 rootId ——
+  // 某个项目的会话被**全部**归档后该分组就不再出现，按分组查会漏掉它的归档行
+  // （正是「该项目的对话全归档了就再也没法取消归档」的那个 bug）。
   useEffect(() => {
     if (!archiveOpen) return;
-    const rootIds = Array.from(
-      new Set(
-        multiProjectSessionGroupsRef.current
-          .map((group) => String(group.rootId || ""))
-          .filter(Boolean),
-      ),
-    );
+    const rootIds = Array.from(managedRootIdsRef.current)
+      .map((id) => String(id || "").trim())
+      .filter(Boolean);
     if (rootIds.length === 0) return;
     let cancelled = false;
     setArchiveLoading(true);
@@ -8983,11 +8979,22 @@ export function App({ onGoHome }: AppProps) {
   const updateHelp = updateState.message || updateSummaryText(updateState, t);
   const updateSummary = updateSummaryText(updateState, t);
 
-  // 归档面板：只在「打开」这一侧有动作 —— 收起由面板自己的收起按钮负责，
-  // 不做成 toggle，面板开着时列表底部的入口行被遮罩盖住，点不到。
+  // 归档视图：在右栏列内跟会话列表互换，不出全屏浮层。
   const openArchivePanel = useCallback(() => {
     setArchiveOpen(true);
   }, []);
+  const closeArchivePanel = useCallback(() => {
+    setArchiveOpen(false);
+  }, []);
+  // 选中归档会话 = 要去读它。读完顺手退回列表，右栏停在归档视图上会让人
+  // 以为「对话没打开」（主区变了，右栏没变）。
+  const handleSelectArchivedSession = useCallback(
+    (session: SessionItem) => {
+      handleSelectSessionAndClose(session);
+      setArchiveOpen(false);
+    },
+    [handleSelectSessionAndClose],
+  );
 
   const { sessionImportMenu, sessionSidebar } = useSessionSidebarView({
     sessionListMode,
@@ -9032,6 +9039,11 @@ export function App({ onGoHome }: AppProps) {
     handleDeleteSession,
     handleArchiveSession,
     openArchivePanel,
+    closeArchivePanel,
+    archiveOpen,
+    archiveLoading,
+    archivedGroups,
+    handleSelectArchivedSession,
     loadMoreMultiProjectSessions,
     loadChildSessionsForParent,
     sessionSearchResults,
@@ -9382,19 +9394,6 @@ export function App({ onGoHome }: AppProps) {
             )}
           </BottomSheet>
         }
-      />
-      <ArchivedSessionsPanel
-        isOpen={archiveOpen}
-        onClose={() => setArchiveOpen(false)}
-        groups={archivedGroups}
-        loading={archiveLoading}
-        selectedKey={activeBoundSessionKey || ""}
-        onSelect={(session) => {
-          handleSelectSessionAndClose(session);
-          // 选中归档会话 = 要去读它，面板留着只会挡住刚打开的对话
-          setArchiveOpen(false);
-        }}
-        onArchive={handleArchiveSession}
       />
       {!isMobile ? <OnboardingTour
         open={onboardingOpen}

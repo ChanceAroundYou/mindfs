@@ -96,9 +96,9 @@ test("归档面板只拉顶级会话（子会话已在归档时被删，这里�
   // 归档区按项目平铺，顶级 + 子会话两层没有意义。
   // top_level 与 archived=only 是 AND 关系（server sessionListWhere），两个一起传才对。
   const appSrc = read("src/App.tsx");
-  const start = appSrc.indexOf("// 归档面板懒加载");
+  const start = appSrc.indexOf("// 归档视图懒加载");
   assert.ok(start >= 0, "App.tsx 应有归档懒加载 effect");
-  const body = appSrc.slice(start, appSrc.indexOf("setArchiveCount(", start));
+  const body = appSrc.slice(start, appSrc.indexOf("}, [archiveOpen, archiveReloadToken])", start));
   assert.match(body, /archivedOnly: true/, "归档查询必须带 archivedOnly");
   assert.match(body, /topLevel: true/, "归档查询必须同时带 topLevel");
 });
