@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { MultiProjectSessionList } from "./SessionList";
 import type { ProjectSessionGroup, SessionItem } from "./SessionList";
 import { useBackLayer } from "../app/useBackNavigation";
@@ -14,12 +14,20 @@ import { useI18n } from "../i18n";
  *
  * 收起按钮放在标题栏右侧并朝右：右栏已经被「关掉右栏」那条 rail 管着了，
  * 这里要的是退回上一级（会话列表），不是关栏。
+ *
+ * **进出都靠 transition，不靠条件卸载。** 早先那版是 `{open && <Panel/>}`：
+ * 关闭时整层瞬间消失（没有退场），打开时 scrim 无过渡直接满不透明、sheet 却在
+ * 淡入 —— 两者叠加就是闪烁。现在常驻 DOM，`isOpen` 只切两处终态样式，
+ * 遮罩淡入淡出、面板上浮下沉，同一条曲线同一时长。
  */
 
 // 遮罩留出的顶部空白：面板比整栏短一截，透出底下的列表。
 const TOP_GAP = 56;
+// 进出场时长，必须和下面两处 transition 的时长一致（关闭后靠它计时卸载）。
+const TRANSITION_MS = 200;
 
 type ArchivedSessionsPanelProps = {
+  isOpen: boolean;
   onClose: () => void;
   groups: ProjectSessionGroup[];
   loading?: boolean;
@@ -30,6 +38,7 @@ type ArchivedSessionsPanelProps = {
 };
 
 export function ArchivedSessionsPanel({
+  isOpen,
   onClose,
   groups,
   loading = false,
@@ -40,17 +49,37 @@ export function ArchivedSessionsPanel({
 }: ArchivedSessionsPanelProps) {
   const { t } = useI18n();
   // 返回键 / 边缘侧滑退回会话列表：视图虽然不遮挡什么，但它确实占了右栏的
-  // 一级位置，留在返回栈里才和右栏那条 rail 的行为一致。
-  // 挂载即打开（由调用方条件渲染），所以恒为 true。
-  useBackLayer(true, onClose);
+  // 一级位置，留在返回栈里才和右栏那条 rail 的行为一致。只在展开时挂。
+  useBackLayer(isOpen, onClose);
+
+  // 常驻 DOM 才播得了退场动画，所以「开」和「已挂载」得拆成两个状态：
+  // entered 切终态样式，mounted 决定留不留着。关闭时先退场再卸载。
+  const [entered, setEntered] = useState(false);
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    if (!isOpen) {
+      setEntered(false);
+      const timer = window.setTimeout(() => setMounted(false), TRANSITION_MS);
+      return () => window.clearTimeout(timer);
+    }
+    setMounted(true);
+    // 挂载后等一帧再切展开态：同一帧里换 mounted+entered 没有起点可过渡，
+    // 遮罩会直接满不透明地糊上去（就是那下闪）。
+    const raf = window.requestAnimationFrame(() => setEntered(true));
+    return () => window.cancelAnimationFrame(raf);
+  }, [isOpen]);
+
+  if (!mounted) return null;
 
   // 没有归档的会话就什么都别画，别把空视图推给用户
   const total = groups.reduce((sum, g) => sum + (g.sessions?.length || 0), 0);
+  const transition = `${TRANSITION_MS}ms cubic-bezier(0.2, 0.8, 0.2, 1)`;
 
   return (
     // 定位上下文由调用方（占满右栏整列的 relative wrapper）提供。
     // 这一层必须 absolute 盖满整列：写成 flex item 会跟会话列表并排，
     // 变成「上下分栏」而不是「浮在上面」。
+    // 收起后仍占着整列但不透明、也不吃点击，靠 pointerEvents 让位给底下的列表。
     <div
       data-archived-panel="layer"
       style={{
@@ -60,6 +89,7 @@ export function ArchivedSessionsPanel({
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",
+        pointerEvents: entered ? "auto" : "none",
       }}
     >
       {/* 遮罩：半透明黑，盖住右栏自身内容，主面板/左栏不受影响 */}
@@ -71,9 +101,11 @@ export function ArchivedSessionsPanel({
           inset: 0,
           zIndex: 1,
           background: "rgba(0, 0, 0, 0.42)",
+          opacity: entered ? 1 : 0,
+          transition: `opacity ${transition}`,
         }}
       />
-      {/* 面板本体：上浮（translateY 从底部滑上来），盖在遮罩之上 */}
+      {/* 面板本体：从底部上浮（translateY），盖在遮罩之上 */}
       <div
         data-archived-panel="sheet"
         style={{
@@ -90,7 +122,9 @@ export function ArchivedSessionsPanel({
           borderTopRightRadius: "12px",
           boxShadow: "0 -8px 24px rgba(0, 0, 0, 0.22)",
           background: "var(--mindfs-topbar-bg, var(--sidebar-bg))",
-          animation: "mindfs-archived-rise 0.24s cubic-bezier(0.2, 0.8, 0.2, 1)",
+          transform: entered ? "translateY(0)" : "translateY(18px)",
+          opacity: entered ? 1 : 0,
+          transition: `transform ${transition}, opacity ${transition}`,
         }}
       >
         <ArchivedHeader

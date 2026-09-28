@@ -399,16 +399,15 @@ export function useSessionSidebarView({
       >
         {sessionSidebar}
       </div>
-      {archiveOpen ? (
-        <ArchivedSessionsPanel
-          onClose={closeArchivePanel}
-          groups={archivedGroups}
-          loading={archiveLoading}
-          selectedKey={activeBoundSessionKey || ""}
-          onSelect={handleSelectArchivedSession}
-          onArchive={handleArchiveSession}
-        />
-      ) : null}
+      <ArchivedSessionsPanel
+        isOpen={archiveOpen}
+        onClose={closeArchivePanel}
+        groups={archivedGroups}
+        loading={archiveLoading}
+        selectedKey={activeBoundSessionKey || ""}
+        onSelect={handleSelectArchivedSession}
+        onArchive={handleArchiveSession}
+      />
     </div>
   );
 

@@ -103,18 +103,6 @@
   cursor: default;
 }
 
-/* 归档面板从右栏底部上浮 */
-@keyframes mindfs-archived-rise {
-  from {
-    opacity: 0;
-    transform: translateY(18px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
 @keyframes mindfs-task-ask-user-pulse {
   0%, 100% {
     opacity: 1;

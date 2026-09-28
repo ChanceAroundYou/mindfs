@@ -33,11 +33,33 @@ test("遮罩是半透明黑，罩住右栏内容、透出底下的列表", () =>
   assert.match(panel, /data-archived-panel="scrim"\s*\n\s*onClick=\{onClose\}/);
 });
 
-test("面板上浮（关键帧在全局 css 里，不是临时内联）", () => {
+test("面板上浮靠 transition 终态切换，不是只进不退的 animation", () => {
+  // animation 只能播进场；关闭时整层卸载就是硬切 —— 闪烁的一半来源。
   assert.match(panel, /data-archived-panel="sheet"/);
-  assert.match(panel, /animation: "mindfs-archived-rise/);
+  assert.match(panel, /transform: entered \? "translateY\(0\)" : "translateY\(18px\)"/);
+  assert.match(panel, /transition: `transform \$\{transition\}, opacity \$\{transition\}`/);
+  assert.doesNotMatch(panel, /animation: "mindfs-archived-rise/);
   const css = read("src/index.css");
-  assert.match(css, /@keyframes mindfs-archived-rise \{[\s\S]*?translateY\(/);
+  assert.doesNotMatch(css, /mindfs-archived-rise/, "旧关键帧应已删");
+});
+
+test("遮罩跟着淡入淡出（不是瞬间满不透明）", () => {
+  assert.match(panel, /opacity: entered \? 1 : 0,\s*\n\s*transition: `opacity \$\{transition\}`/);
+});
+
+test("进出对称：常驻 DOM，isOpen 只切状态，退场后才卸载", () => {
+  // 关闭即卸载 = 没有退场动画；同一帧里同时置 mounted+entered 又会让过渡
+  // 没有起点，遮罩直接糊上去。两处都要挡住。
+  assert.match(panel, /const \[entered, setEntered\] = useState\(false\)/);
+  assert.match(panel, /const \[mounted, setMounted\] = useState\(false\)/);
+  assert.match(panel, /requestAnimationFrame\(\(\) => setEntered\(true\)\)/);
+  assert.match(panel, /setTimeout\(\(\) => setMounted\(false\), TRANSITION_MS\)/);
+  assert.match(panel, /if \(!mounted\) return null/);
+  // 收起后仍占整列但不透明、不吃点击，把交互还给底下的列表
+  assert.match(panel, /pointerEvents: entered \? "auto" : "none"/);
+  // 挂载交给组件自己，hook 不再条件渲染
+  assert.match(hook, /<ArchivedSessionsPanel\s*\n\s*isOpen=\{archiveOpen\}/);
+  assert.doesNotMatch(hook, /\{archiveOpen \? \(/);
 });
 
 test("归档层 absolute 盖满右栏列，不是跟会话列表并排的 flex item", () => {
@@ -75,8 +97,8 @@ test("收起按钮在标题栏里、朝右，不关掉整个右栏", () => {
 
 test("返回键/侧滑能退回会话列表", () => {
   // 不遮挡主面板 ≠ 不是一级视图：它占着右栏，得能退回去。
-  // 挂载即打开，所以 useBackLayer 恒为 true。
-  assert.match(panel, /useBackLayer\(true, onClose\)/);
+  // 只在展开时挂进返回栈：常驻 DOM 后，恒 true 会让退场途中也占着返回栈。
+  assert.match(panel, /useBackLayer\(isOpen, onClose\)/);
 });
 
 test("归档视图不重复画一遍空操作栏", () => {
@@ -88,9 +110,9 @@ test("归档视图不重复画一遍空操作栏", () => {
   assert.match(panel, /hideHeader/);
 });
 
-test("收起时归档层整体卸载，会话列表不受影响", () => {
-  // 浮层压不住列表：它盖的是自己那一层，列表在下面继续挂着（滚动位置/展开态不丢）。
-  assert.match(hook, /\{sessionSidebar\}[\s\S]*?\{archiveOpen \? \(\s*<ArchivedSessionsPanel/);
+test("会话列表始终在归档层下面挂着", () => {
+  // 浮层压不住列表：它盖的是自己那一层，列表是普通流内容（滚动位置/展开态不丢）。
+  assert.match(hook, /\{sessionSidebar\}/);
   assert.doesNotMatch(hook, /flex: archiveOpen \?/);
 });
 
