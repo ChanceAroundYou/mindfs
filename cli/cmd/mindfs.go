@@ -67,6 +67,7 @@ func main() {
 		fmt.Fprintf(out, "  mindfs <rootid> -task 12\n")
 		fmt.Fprintf(out, "  mindfs <rootid> -task 12 -next\n")
 		fmt.Fprintf(out, "  mindfs <rootid> -tasks\n  mindfs -agents\n  mindfs -task-templates\n")
+		fmt.Fprintln(out, "  mindfs <rootid> -to-session <session-key> < message.json")
 		fmt.Fprintf(out, "  mindfs <rootid> -task-create < task.json\n")
 		fmt.Fprintf(out, "  mindfs <rootid> -task-groups\n")
 		fmt.Fprintf(out, "  mindfs <rootid> -task-group-create < group.json\n")
@@ -96,8 +97,9 @@ func main() {
 	groupCreate := flag.Bool("task-group-create", false, "create an orchestration group linked to a parent session")
 	groupList := flag.Bool("task-groups", false, "list task groups and their parent conversations")
 	groupID := flag.String("task-group", "", "task group ID (defaults to -graph)")
-	toTask := flag.String("to-task", "", "reply to a task; read JSON message from stdin")
+	toTask := flag.String("to-task", "", "send a user message to an ordinary or orchestrated task; read JSON from stdin")
 	fromTask := flag.String("from-task", "", "report from a task to its parent conversation; read JSON message from stdin")
+	toSession := flag.String("to-session", "", "send a user message to an existing chat session; read JSON from stdin")
 	taskCreate := flag.Bool("task-create", false, "create a task from JSON")
 	taskList := flag.Bool("tasks", false, "list tasks, newest created first, 20 per page")
 	taskCursor := flag.String("cursor", "", "task number returned as next_cursor by the previous -tasks response")
@@ -129,12 +131,12 @@ func main() {
 		printVersion()
 		return
 	}
-	action, count := selectedTaskOperation(taskOperations, *taskNumber != "" || *groupID != "" || *toTask != "" || *fromTask != "" || *groupCreate || *groupList || *taskCreate || *taskList || *taskAgents || *taskTemplates)
+	action, count := selectedTaskOperation(taskOperations, *taskNumber != "" || *groupID != "" || *toTask != "" || *fromTask != "" || *toSession != "" || *groupCreate || *groupList || *taskCreate || *taskList || *taskAgents || *taskTemplates)
 	if *taskCursor != "" && !*taskList {
 		fmt.Fprintln(os.Stderr, "-cursor requires -tasks")
 		os.Exit(1)
 	}
-	if *toTask != "" || *fromTask != "" || *groupCreate || *groupList || *groupID != "" || *taskNumber != "" || count > 0 || *taskCreate || *taskList || *taskAgents || *taskTemplates {
+	if *toSession != "" || *toTask != "" || *fromTask != "" || *groupCreate || *groupList || *groupID != "" || *taskNumber != "" || count > 0 || *taskCreate || *taskList || *taskAgents || *taskTemplates {
 		for _, operation := range []struct {
 			enabled bool
 			name    string
@@ -148,7 +150,7 @@ func main() {
 			}
 		}
 		messageTaskID := ""
-		for _, target := range []struct{ id, action string }{{*toTask, "to-task"}, {*fromTask, "from-task"}} {
+		for _, target := range []struct{ id, action string }{{*toTask, "to-task"}, {*fromTask, "from-task"}, {*toSession, "to-session"}} {
 			if target.id != "" {
 				count++
 				action = target.action
@@ -156,7 +158,7 @@ func main() {
 			}
 		}
 		if messageTaskID != "" && (*taskNumber != "" || *groupID != "") {
-			fmt.Fprintln(os.Stderr, "choose one of -task, -task-group, -to-task, or -from-task")
+			fmt.Fprintln(os.Stderr, "choose one of -task, -task-group, -to-task, -from-task, or -to-session")
 			os.Exit(1)
 		}
 		id := *taskNumber
@@ -973,7 +975,7 @@ func containsTaskFlag(args []string) bool {
 			continue
 		}
 		switch name {
-		case "to-task", "from-task", "task-group", "task-groups", "task-group-create", "tasks", "task-create", "agents", "task-templates", "task":
+		case "to-session", "to-task", "from-task", "task-group", "task-groups", "task-group-create", "tasks", "task-create", "agents", "task-templates", "task":
 			return true
 		}
 	}

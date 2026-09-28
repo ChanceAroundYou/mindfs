@@ -238,6 +238,12 @@ func isLocalCLIPath(r *http.Request) bool {
 	if strings.HasSuffix(r.URL.Path, "/approve-plan") {
 		return false
 	}
+	if r.Method == http.MethodPost {
+		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/"), "/")
+		if len(parts) == 4 && parts[0] == "api" && parts[1] == "sessions" && parts[2] != "" && parts[3] == "messages" {
+			return true
+		}
+	}
 	if r.URL.Path == "/api/task-groups" || strings.HasPrefix(r.URL.Path, "/api/task-groups/") {
 		return r.Method == http.MethodGet || r.Method == http.MethodPost
 	}
@@ -341,6 +347,7 @@ func (h *HTTPHandler) Routes() http.Handler {
 	r.Get("/api/sessions/{key}/toolcalls/{callID}", h.protectedEndpoint(h.handleSessionToolCallGet))
 	r.Post("/api/sessions/{key}/sync", h.protectedEndpoint(h.handleSessionSync))
 	r.Get("/api/sessions/{key}", h.protectedEndpoint(h.handleSessionGet))
+	r.Post("/api/sessions/{key}/messages", h.protectedEndpoint(h.handleSessionUserMessage))
 	r.Get("/api/sessions/{key}/related-files", h.protectedEndpoint(h.handleSessionRelatedFilesGet))
 	r.Post("/api/sessions/{key}/pin", h.protectedEndpoint(h.handleSessionPin))
 	r.Post("/api/sessions/{key}/rename", h.protectedEndpoint(h.handleSessionRename))

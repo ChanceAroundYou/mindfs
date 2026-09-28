@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"io"
 	"mindfs/server/app"
@@ -10,6 +11,48 @@ import (
 	"strings"
 	"testing"
 )
+
+func TestToSessionPostsUserMessageWithoutTaskLookup(t *testing.T) {
+	for _, key := range []string{"HOME", "USERPROFILE", "AppData", "XDG_CONFIG_HOME"} {
+		t.Setenv(key, t.TempDir())
+	}
+	var token string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/sessions/123/messages" || r.Header.Get("X-MindFS-Local-CLI-Token") != token {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		var body map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body["root_id"] != "root" || body["message"] != "hello" {
+			t.Errorf("invalid message: %+v %v", body, err)
+		}
+		w.WriteHeader(http.StatusAccepted)
+		io.WriteString(w, `{"queued":true}`)
+	}))
+	defer server.Close()
+	addr := server.Listener.Addr().String()
+	var err error
+	token, err = app.EnsureLocalCLIToken(addr, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, err := os.CreateTemp(t.TempDir(), "message")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer input.Close()
+	if _, err := input.WriteString(`{"message":"hello"}`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := input.Seek(0, 0); err != nil {
+		t.Fatal(err)
+	}
+	previous := os.Stdin
+	os.Stdin = input
+	defer func() { os.Stdin = previous }()
+	if err := handleTaskOperation(addr, false, "root", "123", "to-session", ""); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestTaskOperationsDiscoverServiceTLS(t *testing.T) {
 	for _, useTLS := range []bool{false, true} {
