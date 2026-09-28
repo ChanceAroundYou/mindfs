@@ -1015,6 +1015,7 @@ func (h *HTTPHandler) handleSessionFork(w http.ResponseWriter, r *http.Request) 
 		Seq:    req.Seq,
 	})
 	if err != nil {
+		log.Printf("[session/fork] failed root=%s parent=%s seq=%d err=%v", req.RootID, req.SessionKey, req.Seq, err)
 		respondError(w, http.StatusBadRequest, err)
 		return
 	}
