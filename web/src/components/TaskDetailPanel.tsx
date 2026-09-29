@@ -13,13 +13,15 @@ import {
   removeTaskStage,
   renameTask,
   updateTaskStage,
+  type KanbanTask,
   type StageTemplate,
   type TaskDetail,
 } from "../services/tasks";
 import type { AgentStatus } from "../services/agents";
 import { reportError } from "../services/error";
-import { taskStatusColor } from "../app/appTask";
+import { isTerminalKanbanTask, taskStatusColor } from "../app/appTask";
 import { DEFAULT_TASK_AGENT, DEFAULT_TASK_MODEL, inheritAgentStage } from "../app/appTask";
+import { RunNowIcon } from "../app/taskIcons";
 
 export type TaskDetailPanelProps = {
   detail: TaskDetail | null;
@@ -27,6 +29,8 @@ export type TaskDetailPanelProps = {
   onClose: () => void;
   onOpenSession: (sessionKey: string) => void;
   onMoved?: (detail: TaskDetail) => void;
+  /** 与卡片上的「立即执行」同一条路径：App 侧 handleMoveKanbanTask(task, "run-now") */
+  onRunTask?: (task: KanbanTask) => void | Promise<void>;
   nodeId?: string;
   /** 节点主题色，用于发送/编辑按钮 */
   accentColor?: string;
@@ -54,7 +58,7 @@ function latestStageRun(detail: TaskDetail, index: number): TaskDetail["stage_ru
     .sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1))[0] || null;
 }
 
-export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMoved, nodeId, accentColor }: TaskDetailPanelProps) {
+export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMoved, onRunTask, nodeId, accentColor }: TaskDetailPanelProps) {
   const { t } = useI18n();
   const task = detail?.task || null;
 
@@ -266,6 +270,16 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
     } catch (err) { fail(err); } finally { setSaving(false); }
   };
 
+  // 点播放：复用 App 的 handleMoveKanbanTask，与看板卡片上的「立即执行」同一条路径
+  // （那边还会顺带 refreshTaskWorktree —— run-now 可能顺手建出 worktree，面板这侧不重复造）
+  const runStage = async () => {
+    if (!onRunTask) return;
+    try {
+      setSaving(true);
+      await onRunTask(task);
+    } finally { setSaving(false); }
+  };
+
   const numberLabel = task.task_number ? `#${task.task_number}` : "";
 
   return (
@@ -338,6 +352,19 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
             const executed = !!run && String(run.status) !== "pending";
             const editing = editingStage === index;
             const isAgent = stage.role === "agent";
+            /* 「下一个可以执行的 agent 段」= 指针所在的那一段。服务端 run-now 是
+               **任务级**的：Service.RunNow 只看 task.current_stage_index，压根不读
+               请求里的 stage_index（service.go:707）。所以按钮只敢长在 isCurrent 的
+               卡上 —— 长在别处会出现「点了没跑 UI 却以为跑了下一段」的假象。
+               条件与看板卡片上的「立即执行」对齐（TaskCardRows 的 showAdvance），
+               另外要求是 agent 段：user 段是「等你写输入」，不是「可以跑了」。 */
+            const canRunStage = isAgent
+              && isCurrent
+              && !editing
+              && !executed
+              && !!onRunTask
+              && !isTerminalKanbanTask(task)
+              && !(task.current_stage_status === "running" && task.status === "running");
             const shown = executed ? (run?.rendered_prompt || stage.prompt_template || "") : (stage.prompt_template || "");
             // 编辑态用草稿值渲染，未保存前先让用户看到自己刚改的
             const displayStage: StageTemplate = editing
@@ -370,6 +397,19 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
                   <span style={{ fontSize: "11px", fontWeight: 700, color: taskStatusColor(run?.status || "") }}>
                     {executed ? statusText(run.status, t) : t("task.stage.notExecuted")}
                   </span>
+                  {canRunStage ? (
+                    <button
+                      type="button"
+                      title={t("task.runNow")}
+                      aria-label={t("task.runNow")}
+                      disabled={saving}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => void runStage()}
+                      style={{ ...runIconButtonStyle, opacity: saving ? 0.4 : 1 }}
+                    >
+                      <RunNowIcon />
+                    </button>
+                  ) : null}
                   {run?.session_key ? (
                     <button
                       type="button"
@@ -538,6 +578,14 @@ const sessionIconButtonStyle: React.CSSProperties = {
   cursor: "pointer",
   padding: 0,
   marginLeft: "auto",
+};
+
+/* 「运行」按钮贴左，跳转会话按钮自己带 marginLeft:auto 把它和左侧信息隔开。
+   两个按钮并排落在同一行的右端 —— 视觉顺序 = DOM 顺序。 */
+const runIconButtonStyle: React.CSSProperties = {
+  ...sessionIconButtonStyle,
+  marginLeft: 0,
+  color: "var(--accent-color)",
 };
 
 const tagStyle: React.CSSProperties = {
