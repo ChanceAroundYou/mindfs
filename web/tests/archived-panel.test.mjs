@@ -224,6 +224,27 @@ test("顶栏归档入口必须在搜索三元分支之外，两种列表都接�
   }
 });
 
+test("归档入口与搜索按钮同属一个分组：顶栏 space-between 不会把它推到中间", () => {
+  // 顶栏是 justify-content: space-between，每个直接子元素各占一格均分。
+  // 归档入口若自成一路（自带外层 div 或排在搜索组外），就会被甩到正中间
+  // —— 实测离放大镜 117px。必须嵌进搜索按钮所在的那个 div 才能紧贴。
+  const list = read("src/components/SessionList.tsx");
+  const uses = [...list.matchAll(/<ArchiveHeaderButton onOpen=\{onOpenArchivePanel\} \/>/g)];
+  assert.equal(uses.length, 2, "两个列表各接一处");
+  for (const use of uses) {
+    const WINDOW = 1800; // 搜索按钮连 SVG path 有千余字符
+    // 必须在 onSearchToggle 那个搜索按钮的闭合之后、其父 div 闭合之前
+    assert.ok(
+      /onSearchToggle[\s\S]*<\/button>[\s\S]{0,200}ArchiveHeaderButton/.test(list.slice(Math.max(0, use.index - WINDOW), use.index + 60)),
+      "归档入口应紧跟在搜索按钮之后、同属其父 div",
+    );
+  }
+  // 组件本身不得再自带外层包装（那会让它脱离搜索分组）
+  const fn = list.slice(list.indexOf("function ArchiveHeaderButton({"));
+  const body = fn.slice(0, fn.indexOf("\n}\n"));
+  assert.doesNotMatch(body, /<div[^>]*>\s*<button/, "按钮外不应再包一层 div");
+});
+
 test("面板文案两种语言都有", () => {
   for (const locale of ["zh-CN", "en-US"]) {
     const src = read(`src/i18n/locales/${locale}.ts`);

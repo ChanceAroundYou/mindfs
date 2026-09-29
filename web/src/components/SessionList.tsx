@@ -246,7 +246,6 @@ function ArchiveHeaderButton({ onOpen }: { onOpen?: () => void }) {
   const { t } = useI18n();
   if (!onOpen) return null;
   return (
-    <div style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>
       <button
         type="button"
         data-archive-entry="open"
@@ -273,7 +272,6 @@ function ArchiveHeaderButton({ onOpen }: { onOpen?: () => void }) {
           <ArchiveIcon />
         </span>
       </button>
-    </div>
   );
 }
 
@@ -572,9 +570,9 @@ export function SessionList({
                 </svg>
               </button>
             ) : null}
+            <ArchiveHeaderButton onOpen={onOpenArchivePanel} />
           </div>
         )}
-        <ArchiveHeaderButton onOpen={onOpenArchivePanel} />
         {headerAction ? (
           <div style={{ display: "inline-flex", alignItems: "center" }}>
             {headerAction}
@@ -1183,8 +1181,8 @@ export function MultiProjectSessionList({
               </svg>
             </button>
           ) : null}
+          <ArchiveHeaderButton onOpen={onOpenArchivePanel} />
         </div>
-        <ArchiveHeaderButton onOpen={onOpenArchivePanel} />
         {headerAction ? <div style={{ display: "inline-flex", alignItems: "center" }}>{headerAction}</div> : null}
       </div>
       <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "8px" }}>
