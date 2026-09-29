@@ -312,15 +312,15 @@ func (s *AppContext) EnsureAgentSession(ctx context.Context, exec kanban.AgentSt
 	return created.Key, nil
 }
 
-func (s *AppContext) RunAgentStage(ctx context.Context, exec kanban.AgentStageExecution) error {
+func (s *AppContext) RunAgentStage(ctx context.Context, exec kanban.AgentStageExecution) (kanban.StageResult, error) {
 	if strings.TrimSpace(exec.RootID) == "" {
-		return errors.New("root_id required")
+		return kanban.StageResult{}, errors.New("root_id required")
 	}
 	if strings.TrimSpace(exec.Run.SessionKey) == "" {
-		return errors.New("session_key required")
+		return kanban.StageResult{}, errors.New("session_key required")
 	}
 	if strings.TrimSpace(exec.Prompt) == "" {
-		return errors.New("agent prompt required")
+		return kanban.StageResult{}, errors.New("agent prompt required")
 	}
 	uc := &usecase.Service{Registry: s}
 	sessionKey := strings.TrimSpace(exec.Run.SessionKey)
@@ -328,6 +328,9 @@ func (s *AppContext) RunAgentStage(ctx context.Context, exec kanban.AgentStageEx
 	updateTracker := newTurnUpdateTracker()
 	planMode := exec.Stage.PlanMode
 	userTimestamp := time.Now().UTC()
+	// 本轮 assistant 正文：只用主线的 message_chunk（子代理的带 ParentToolUseID/TaskID，
+	// 不能算进主线）。kanban 要靠它匹配阶段完成标记。
+	var assistantText strings.Builder
 	err := uc.SendMessage(ctx, usecase.SendMessageInput{
 		RootID:          exec.RootID,
 		RuntimeRootPath: exec.RuntimeRootPath,
@@ -346,6 +349,12 @@ func (s *AppContext) RunAgentStage(ctx context.Context, exec kanban.AgentStageEx
 		OnUpdate: func(update agenttypes.Event) {
 			updateTracker.Begin()
 			defer updateTracker.End()
+			if update.Type == agenttypes.EventTypeMessageChunk {
+				if chunk, ok := update.Data.(agenttypes.MessageChunk); ok &&
+					strings.TrimSpace(chunk.ParentToolUseID) == "" && strings.TrimSpace(chunk.TaskID) == "" {
+					assistantText.WriteString(chunk.Content)
+				}
+			}
 			s.BroadcastSessionUpdate(exec.RootID, sessionKey, update)
 		},
 		OnAgentDefaultsChanged: func(agentName string) {
@@ -373,7 +382,12 @@ func (s *AppContext) RunAgentStage(ctx context.Context, exec kanban.AgentStageEx
 		log.Printf("[kanban] session.done.wait_timeout root=%s session=%s task=%s", exec.RootID, sessionKey, exec.Task.ID)
 	}
 	s.BroadcastSessionDone(exec.RootID, sessionKey, "")
-	return err
+	if err != nil {
+		return kanban.StageResult{}, err
+	}
+	// error == nil 只说明消息投递成功，不代表活干完了。判完成与否看 agent 有没有
+	// 显式回报（见 kanban.MatchStageOutcome）。
+	return kanban.MatchStageOutcome(assistantText.String(), exec.Task.CurrentStageIndex), nil
 }
 
 func (s *AppContext) TaskUpdated(rootID string, detail kanban.TaskDetail) {
