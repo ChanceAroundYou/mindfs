@@ -214,4 +214,39 @@ for (const [src, name] of [[panel, "TaskDetailPanel"], [templateDialog, "TaskTem
   );
 }
 
+// 详情面板的「立即执行」：只长在指针所在（isCurrent）的那一段卡上，跳转会话按钮左边。
+// 钉死 isCurrent 这条是必须的 —— 服务端 RunNow 是任务级的，只读 task.current_stage_index，
+// 请求里的 stage_index 根本不参与（service.go:707）。按钮长在别的段上就成了假动作。
+assert.match(
+  panel,
+  /const canRunStage = isAgent\s*&&\s*isCurrent/,
+  "the run button must be gated on the current stage, matching the task-scoped run-now API",
+);
+assert.match(
+  panel,
+  /!isTerminalKanbanTask\(task\)/,
+  "a finished task must not offer the run button",
+);
+assert.match(
+  panel,
+  /title=\{t\("task\.runNow"\)\}/,
+  "the run button must reuse the existing 立即执行 label",
+);
+assert.match(
+  panel,
+  /\{canRunStage \? \([\s\S]{0,900}?<RunNowIcon \/>[\s\S]{0,400}?\{run\?\.session_key \? \(/,
+  "the run button must render before the jump-to-session button",
+);
+assert.match(panel, /<RunNowIcon \/>/, "the run button must use the shared RunNowIcon");
+assert.match(
+  panel,
+  /onClick=\{\(\) => void runStage\(\)\}/,
+  "the run button must go through runStage",
+);
+assert.match(
+  app,
+  /onRunTask=\{\(task\) => handleMoveKanbanTask\(task, "run-now"\)\}/,
+  "the detail panel must reuse App's handleMoveKanbanTask, not call moveTask itself",
+);
+
 console.log("task-stage-panel.test.mjs: OK");
