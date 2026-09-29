@@ -784,6 +784,8 @@ export const enUS = {
   "task.all": "All",
   "task.worktreeTitle": "Worktree enabled",
   "task.noWorktreeTitle": "No worktree",
+  "task.worktreeMissingTitle": "Worktree deleted — rebuild it before running again",
+  "task.rebuildWorktree": "Rebuild worktree",
   "task.unnamedTemplate": "Unnamed template",
   "task.templateMenu": "Task template menu",
   "task.createTemplate": "Create task template",

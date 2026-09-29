@@ -833,6 +833,7 @@ func (s *AppContext) BroadcastSessionMetaUpdated(rootID string, sess *session.Se
 				"fast_service":        session.InferFastServiceFromSession(sess),
 				"plan_mode":           sess.PlanMode,
 				"related_worktree":    sess.RelatedWorktree,
+				"worktree_missing":    sess.RelatedWorktree.WorktreeMissing(),
 				"updated_at":          sess.UpdatedAt,
 			},
 		},

@@ -234,8 +234,29 @@ assert.match(
 );
 assert.match(
   panel,
-  /\{canRunStage \? \([\s\S]{0,900}?<RunNowIcon \/>[\s\S]{0,400}?\{run\?\.session_key \? \(/,
+  /\{canRunStage && !worktreeMissing \? \([\s\S]{0,900}?<RunNowIcon \/>[\s\S]{0,600}?\{run\?\.session_key \? \(/,
   "the run button must render before the jump-to-session button",
+);
+// worktree 目录已删时，播放键换成重建键：执行必然失败（cwd 就是那个不存在的目录）。
+assert.match(
+  panel,
+  /const worktreeMissing = task\?\.create_worktree === true && task\?\.worktree_missing === true;/,
+  "the panel must read the server-derived worktree_missing flag",
+);
+assert.match(
+  panel,
+  /const rebuildWorktree = async \(\) => \{[\s\S]{0,400}?rebuildTaskWorktree\(task\.root_id, task\.id, nodeId\)/,
+  "a missing worktree must offer a rebuild action wired to the rebuild endpoint",
+);
+assert.match(
+  panel,
+  /\{worktreeMissing \? \([\s\S]{0,700}?onClick=\{\(\) => void rebuildWorktree\(\)\}/,
+  "the rebuild button must be reachable from the stage row",
+);
+assert.match(
+  panel,
+  /title=\{t\("task\.rebuildWorktree"\)\}/,
+  "the rebuild button must reuse the existing 重建 worktree label",
 );
 assert.match(panel, /<RunNowIcon \/>/, "the run button must use the shared RunNowIcon");
 assert.match(

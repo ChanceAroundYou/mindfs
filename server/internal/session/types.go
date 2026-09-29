@@ -1,6 +1,7 @@
 package session
 
 import (
+	"os"
 	"strings"
 	"time"
 
@@ -278,6 +279,29 @@ type RelatedWorktree struct {
 	Branch    string    `json:"branch,omitempty"`
 	Head      string    `json:"head,omitempty"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// WorktreeMissing 报告会话的 worktree 归属是否已失效（目录被删了）。
+//
+// 归属路径会事后消失——DELETE /api/git/worktrees、wt-finish.sh cleanup、用户手工 rm，
+// 都不是 mindfs 干的，所以没有任何代码清这个字段。失效的后果是会话在 mindfs 里
+// 读得到、却发不了消息（agent cwd 指向不存在的目录）。
+//
+// 刻意不复用 gitview.IsWorktree：它答的是「这是不是 git linked worktree」，
+// 主 checkout / 普通目录 / 不存在的路径都返回 false，语义不对。
+//
+// 这是**派生状态**，不落库：目录重建后下一次调用自动转 false，不需要迁移。
+func (wt *RelatedWorktree) WorktreeMissing() bool {
+	if wt == nil {
+		return false
+	}
+	p := strings.TrimSpace(wt.Path)
+	if p == "" {
+		return false
+	}
+	// 非目录（路径存在但指向文件）同样算失效：agent 的 cwd 必须是目录。
+	info, err := os.Stat(p)
+	return err != nil || !info.IsDir()
 }
 
 type SearchOptions struct {

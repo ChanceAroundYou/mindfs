@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -39,6 +40,11 @@ type fakeRunner struct {
 	worktreeBranch       string
 	worktreeName         string
 	worktreeCreateCalled bool
+	// createdDirs 记下 fake 真建出来的目录，由 newTestService 注册的 Cleanup 删掉。
+	// 建在 os.TempDir() 下而不是 t.TempDir()：worktree 名字（task-N）跨用例会撞车，
+	// t.TempDir() 每用例一个反而让「同名不同目录」这种真实情况测不到。序号见 dirSeq。
+	createdDirs []string
+	dirSeq      int
 	// gate 非 nil 时 RunAgentStage 记完 exec 后阻塞到 gate 关闭，用来把执行体钉在阶段内部，
 	// 稳定复现并发执行（见 TestRunTaskExecutesStageOnceWhenKickedTwice）。
 	gate chan struct{}
@@ -57,7 +63,25 @@ func (r *fakeRunner) CreateTaskWorktree(ctx context.Context, rootID, name, branc
 	if r.worktreeErr != nil {
 		return WorktreeInfo{}, r.worktreeErr
 	}
-	return WorktreeInfo{RootID: "wt-root", Path: filepath.Join(os.TempDir(), name)}, nil
+	// 真跑一遍建目录：gitview.AddWorktree 建的目录是真实存在的，而任务侧现在按
+	// 「目录还在不在」判 worktree 可用（原先只看字段非空）。fake 只回一个不存在的
+	// 路径的话，测的是 fake 的失真而不是被测逻辑。
+	//
+	// 目录名带 runner 序号：光用 worktree 名（task-1）在同一台机器上跨用例/跨包会撞，
+	// 撞了就是「别的用例留下的目录让本用例的判据为真」—— 那种通过是假的。
+	// worktreeName 仍记真名（renderWorktreeName 的断言要看它）。
+	r.mu.Lock()
+	r.dirSeq++
+	seq := r.dirSeq
+	r.mu.Unlock()
+	path := filepath.Join(os.TempDir(), fmt.Sprintf("wtf-%d-%s", seq, name))
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		return WorktreeInfo{}, err
+	}
+	r.mu.Lock()
+	r.createdDirs = append(r.createdDirs, path)
+	r.mu.Unlock()
+	return WorktreeInfo{RootID: "wt-root", Path: path}, nil
 }
 
 func (r *fakeRunner) EnsureAgentSession(ctx context.Context, exec AgentStageExecution) (string, error) {
@@ -92,6 +116,14 @@ func newTestService(t *testing.T, runner *fakeRunner) (*Service, fs.RootInfo) {
 	svc := NewService(NewTemplateStoreAt(t.TempDir()), testRoots{root: root})
 	if runner != nil {
 		svc.SetRunner(runner)
+		t.Cleanup(func() {
+			runner.mu.Lock()
+			dirs := append([]string(nil), runner.createdDirs...)
+			runner.mu.Unlock()
+			for _, dir := range dirs {
+				_ = os.RemoveAll(dir)
+			}
+		})
 	}
 	return svc, root
 }
@@ -841,8 +873,14 @@ func TestTaskWorktreeNameUsesTaskNumber(t *testing.T) {
 	if len(runner.execs) != 1 {
 		t.Fatalf("runner exec count=%d, want 1", len(runner.execs))
 	}
-	if runner.execs[0].RuntimeRootPath != filepath.Join(os.TempDir(), "task-1") {
-		t.Fatalf("runtime root path=%q, want task worktree path", runner.execs[0].RuntimeRootPath)
+	// agent 的 cwd 必须就是建出来的那个 worktree 目录。比对 fake 记下的真实路径，
+	// 不写死字面量：目录名带序号（见 CreateTaskWorktree），写死就成了测常量。
+	if len(runner.createdDirs) != 1 {
+		t.Fatalf("created dirs=%v, want exactly 1", runner.createdDirs)
+	}
+	if runner.execs[0].RuntimeRootPath != runner.createdDirs[0] {
+		t.Fatalf("runtime root path=%q, want task worktree path %q",
+			runner.execs[0].RuntimeRootPath, runner.createdDirs[0])
 	}
 }
 
@@ -2228,4 +2266,298 @@ func TestTrimTaskSessionNameSuffix(t *testing.T) {
 func TestMain(m *testing.M) {
 	time.Local = time.UTC
 	os.Exit(m.Run())
+}
+
+// ── worktree 目录消失后的行为 ─────────────────────────────────────
+//
+// 背景：WorktreePath 全仓只有 ensureTaskWorktree 一处写入，目录却可能事后被删
+// （DELETE /api/git/worktrees、wt-finish.sh cleanup、手工 rm），没人清这个字段。
+// 原先拿「字段非空」当「目录存在」，于是失效路径一路流到 agent 启动才报 chdir 错。
+
+// 建树 → 把目录删掉 → 再点执行：必须立刻报「worktree 目录已不存在」，
+// 而不是拿失效 cwd 去跑 agent。
+func TestRunNowReportsMissingWorktreeInsteadOfUsingStalePath(t *testing.T) {
+	ctx := context.Background()
+	runner := &fakeRunner{}
+	svc, root := newTestService(t, runner)
+	// 三段：user → agent → user。留最后一段是必需的 —— 只有两段时 agent 段跑完就停在
+	// 末段，RunNow 里的 Next 会在 moveTo 之前先撞上 "target stage out of range"，
+	// 压根走不到 worktree 校验，测的就不是「立即执行」这条路了。
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID:         root.ID,
+		Stages:         []StageTemplate{userStage("Describe"), agentStage("Fix", "Fix this:\n{previous_input}"), userStage("Review")},
+		Input:          "broken save button",
+		CreateWorktree: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	// 先建出 worktree（走到 agent 段才会建）。
+	if _, err := svc.Next(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err != nil {
+		t.Fatalf("Next: %v", err)
+	}
+	waitForCondition(t, func() bool {
+		runner.mu.Lock()
+		defer runner.mu.Unlock()
+		return runner.worktreeCreateCalled
+	})
+	// 同上：先等在跑的那段落地，免得删目录和它的收尾写回抢同一行。
+	waitForCondition(t, func() bool {
+		d, err := svc.GetTask(ctx, root.ID, detail.Task.ID)
+		return err == nil && d.Task.Status == StatusWaitingUser
+	})
+	before, err := svc.GetTask(ctx, root.ID, detail.Task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if !worktreeDirUsable(before.Task.WorktreePath) {
+		t.Fatalf("worktree %q should exist right after creation", before.Task.WorktreePath)
+	}
+	runner.mu.Lock()
+	execsBeforeDelete := len(runner.execs)
+	runner.mu.Unlock()
+
+	// 目录没了，字段还非空 —— 这正是要修的状态。
+	if err := os.RemoveAll(before.Task.WorktreePath); err != nil {
+		t.Fatalf("remove worktree: %v", err)
+	}
+
+	// 关键：点执行必须在**启动 agent 之前**就报出来。
+	// RunNow 自己不能失败：用户点按钮要拿到的是卡片上的那条错误，不是一个 HTTP 500。
+	if _, err := svc.RunNow(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err != nil {
+		t.Fatalf("RunNow: %v", err)
+	}
+	detail, err = svc.GetTask(ctx, root.ID, detail.Task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if !strings.Contains(detail.Task.AuxFlags.SessionError, "worktree 目录已不存在") {
+		t.Fatalf("expected a missing-worktree error, got %q", detail.Task.AuxFlags.SessionError)
+	}
+	if !strings.Contains(detail.Task.AuxFlags.SessionError, before.Task.WorktreePath) {
+		t.Fatalf("session error should name the missing path, got %q", detail.Task.AuxFlags.SessionError)
+	}
+	// agent 不能被启动：它一跑起来就会在失效 cwd 上失败。
+	runner.mu.Lock()
+	execsAfterDelete := len(runner.execs)
+	runner.mu.Unlock()
+	if execsAfterDelete != execsBeforeDelete {
+		t.Fatalf("agent ran %d extra time(s) with a deleted worktree", execsAfterDelete-execsBeforeDelete)
+	}
+}
+
+// 重建：目录没了之后点「重建 worktree」要真把树建回来，路径恢复可用。
+func TestRebuildTaskWorktreeRecreatesDeletedDirectory(t *testing.T) {
+	ctx := context.Background()
+	runner := &fakeRunner{}
+	svc, root := newTestService(t, runner)
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID:         root.ID,
+		Stages:         []StageTemplate{userStage("Describe"), agentStage("Fix", "Fix this:\n{previous_input}")},
+		Input:          "broken save button",
+		CreateWorktree: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if _, err := svc.Next(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err != nil {
+		t.Fatalf("Next: %v", err)
+	}
+	waitForCondition(t, func() bool {
+		runner.mu.Lock()
+		defer runner.mu.Unlock()
+		return runner.worktreeCreateCalled
+	})
+	before, err := svc.GetTask(ctx, root.ID, detail.Task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	// 必须等在跑的 agent 段落地，否则下面删目录会和它收尾时那次 UpdateTask 抢同一行：
+	// executeTask 拿的是自己那份 in-memory task，整行写回会把重建好的新路径覆盖成旧路径。
+	// 顺带把任务留在 waiting_user（首段 user 段批准后即终止），再点执行时
+	// RunNow 走的就是真实生产路径。
+	waitForCondition(t, func() bool {
+		d, err := svc.GetTask(ctx, root.ID, detail.Task.ID)
+		return err == nil && d.Task.Status == StatusWaitingUser
+	})
+	runner.mu.Lock()
+	if n := len(runner.execs); n != 1 {
+		runner.mu.Unlock()
+		t.Fatalf("expected the agent stage to have run once, got %d", n)
+	}
+	runner.mu.Unlock()
+
+	before, err = svc.GetTask(ctx, root.ID, detail.Task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	oldPath := before.Task.WorktreePath
+	if err := os.RemoveAll(oldPath); err != nil {
+		t.Fatalf("remove worktree: %v", err)
+	}
+
+	detail, err = svc.RebuildTaskWorktree(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID})
+	if err != nil {
+		t.Fatalf("RebuildTaskWorktree: %v", err)
+	}
+	if !worktreeDirUsable(detail.Task.WorktreePath) {
+		t.Fatalf("rebuilt worktree %q is still not usable", detail.Task.WorktreePath)
+	}
+	if detail.Task.AuxFlags.SessionError != "" {
+		t.Fatalf("rebuild should clear the stale error, got %q", detail.Task.AuxFlags.SessionError)
+	}
+	// 重建后的路径要落库，不能只在内存里对。
+	reloaded, err := svc.GetTask(ctx, root.ID, detail.Task.ID)
+	if err != nil {
+		t.Fatalf("GetTask after rebuild: %v", err)
+	}
+	if reloaded.Task.WorktreePath != detail.Task.WorktreePath {
+		t.Fatalf("rebuilt path not persisted: %q vs %q", reloaded.Task.WorktreePath, detail.Task.WorktreePath)
+	}
+}
+
+// 幂等：目录还在时重建是 no-op，不重复建树。
+func TestRebuildTaskWorktreeIsNoopWhenDirectoryExists(t *testing.T) {
+	ctx := context.Background()
+	runner := &fakeRunner{}
+	svc, root := newTestService(t, runner)
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID:         root.ID,
+		Stages:         []StageTemplate{userStage("Describe"), agentStage("Fix", "Fix this:\n{previous_input}")},
+		Input:          "broken save button",
+		CreateWorktree: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if _, err := svc.Next(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err != nil {
+		t.Fatalf("Next: %v", err)
+	}
+	waitForCondition(t, func() bool {
+		runner.mu.Lock()
+		defer runner.mu.Unlock()
+		return runner.worktreeCreateCalled
+	})
+	runner.mu.Lock()
+	before := len(runner.createdDirs)
+	runner.mu.Unlock()
+
+	if _, err := svc.RebuildTaskWorktree(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err != nil {
+		t.Fatalf("RebuildTaskWorktree: %v", err)
+	}
+	runner.mu.Lock()
+	after := len(runner.createdDirs)
+	runner.mu.Unlock()
+	if after != before {
+		t.Fatalf("rebuild created another worktree (%d -> %d) while one exists", before, after)
+	}
+}
+
+// worktree_missing 是派生的：目录没了转 true，重建后转回 false。
+//
+// 判据是 WorktreeMissingNow() 而不是 WorktreeMissing 字段：后者是 json:"-" 的派生槽位，
+// 只在 MarshalJSON 内部被赋值，从库里读出来的 Task 上恒为零值。拿它断言等于什么都没测。
+func TestTaskWorktreeMissingIsDerivedFromDirectory(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "afile")
+	if err := os.WriteFile(filePath, []byte("x"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	cases := []struct {
+		name string
+		task Task
+		want bool
+	}{
+		{"没建过 worktree", Task{CreateWorktree: true}, false},
+		{"目录还在", Task{CreateWorktree: true, WorktreePath: dir}, false},
+		{"目录已删", Task{CreateWorktree: true, WorktreePath: filepath.Join(dir, "deleted")}, true},
+		// 没开 worktree 的任务不该被报成失效（那不是它的 worktree）。
+		{"任务本身没开 worktree", Task{CreateWorktree: false, WorktreePath: filepath.Join(dir, "deleted")}, false},
+		// 路径存在但不是目录（cwd 必须是目录）同样算失效。
+		{"路径是文件", Task{CreateWorktree: true, WorktreePath: filePath}, true},
+	}
+	for _, tc := range cases {
+		if got := tc.task.WorktreeMissingNow(); got != tc.want {
+			t.Errorf("%s: WorktreeMissingNow() = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// 序列化后仍带着派生的 worktree_missing：前端靠这个字段改徽标。
+func TestTaskJSONIncludesDerivedWorktreeMissing(t *testing.T) {
+	gone := Task{ID: "t1", CreateWorktree: true, WorktreePath: filepath.Join(t.TempDir(), "deleted")}
+	raw, err := json.Marshal(gone)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out["worktree_missing"] != true {
+		t.Fatalf("worktree_missing=%v, want true", out["worktree_missing"])
+	}
+	// 反序列化不能把派生字段当持久化字段读回来（它每次都该重算）。
+	var back Task
+	if err := json.Unmarshal(raw, &back); err != nil {
+		t.Fatalf("unmarshal into Task: %v", err)
+	}
+	live := Task{ID: "t2", CreateWorktree: true, WorktreePath: t.TempDir()}
+	rawLive, err := json.Marshal(live)
+	if err != nil {
+		t.Fatalf("marshal live: %v", err)
+	}
+	if err := json.Unmarshal(rawLive, &out); err != nil {
+		t.Fatalf("unmarshal live: %v", err)
+	}
+	if out["worktree_missing"] != false {
+		t.Fatalf("worktree_missing=%v, want false", out["worktree_missing"])
+	}
+}
+
+// ClearTaskWorktree：repoint 后任务侧要跟着解绑。
+func TestClearTaskWorktreeDetachesTask(t *testing.T) {
+	ctx := context.Background()
+	runner := &fakeRunner{}
+	svc, root := newTestService(t, runner)
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID:         root.ID,
+		Stages:         []StageTemplate{userStage("Describe"), agentStage("Fix", "Fix this:\n{previous_input}")},
+		Input:          "broken save button",
+		CreateWorktree: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if _, err := svc.Next(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err != nil {
+		t.Fatalf("Next: %v", err)
+	}
+	waitForCondition(t, func() bool {
+		runner.mu.Lock()
+		defer runner.mu.Unlock()
+		return runner.worktreeCreateCalled
+	})
+	before, err := svc.GetTask(ctx, root.ID, detail.Task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if strings.TrimSpace(before.Task.WorktreePath) == "" {
+		t.Fatalf("worktree path should be set before clearing")
+	}
+
+	if err := svc.ClearTaskWorktree(ctx, root.ID, detail.Task.ID); err != nil {
+		t.Fatalf("ClearTaskWorktree: %v", err)
+	}
+	after, err := svc.GetTask(ctx, root.ID, detail.Task.ID)
+	if err != nil {
+		t.Fatalf("GetTask after clear: %v", err)
+	}
+	if after.Task.WorktreePath != "" || after.Task.WorktreeRootID != "" {
+		t.Fatalf("worktree refs should be cleared, got path=%q rootID=%q",
+			after.Task.WorktreePath, after.Task.WorktreeRootID)
+	}
+	// 幂等：再清一次不报错。
+	if err := svc.ClearTaskWorktree(ctx, root.ID, detail.Task.ID); err != nil {
+		t.Fatalf("ClearTaskWorktree should be idempotent, got %v", err)
+	}
 }

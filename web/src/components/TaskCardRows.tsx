@@ -14,6 +14,7 @@ import {
   TaskPauseIcon,
   TaskPlanAuxIcon,
   TaskQueuedSpinnerIcon,
+  TaskRebuildWorktreeIcon,
   TaskResumeIcon,
   TaskRunNowIcon,
   TaskSessionErrorIcon,
@@ -24,7 +25,9 @@ import {
 } from "../app/taskIcons";
 
 /** 卡片能做的状态迁移。cancel 也在这儿：已结束的任务只剩这一个出口。 */
-export type TaskCardAction = "run-now" | "pause" | "resume" | "complete" | "cancel";
+// rebuild-worktree 不是状态迁移，是把已删的树建回来；服务端不自动做（分支还在不在
+// 得用户决定），所以必须是一个能点的动作。
+export type TaskCardAction = "run-now" | "pause" | "resume" | "complete" | "cancel" | "rebuild-worktree";
 
 /**
  * 「· + 内容」合成一个 flex item。
@@ -116,6 +119,10 @@ export function TaskCardRows({
   const showAdvance = !terminal && !stageRunning;
   const statusText = taskStatusLabel(task.status || "", t);
   const worktreeEnabled = task.create_worktree === true;
+  // 服务端派生的失效标记：worktree_path 还指着那个目录，但目录已经被删了
+  // （DELETE /api/git/worktrees、wt-finish.sh cleanup、手工 rm）。
+  // 徽标原来只看 create_worktree，于是树早没了还显示一个自信的绿色标签。
+  const worktreeMissing = worktreeEnabled && task.worktree_missing === true;
   const numberLabel = task.task_number ? `#${task.task_number}` : "";
   const taskName = task.name || task.task_template_name || templateNameFallback || t("task.unnamedTemplate");
   const title = task.task_template_name || templateNameFallback || t("task.defaultTitle");
@@ -200,9 +207,9 @@ export function TaskCardRows({
           </>
         ) : null}
         <span
-          title={worktreeEnabled ? t("task.worktreeTitle") : t("task.noWorktreeTitle")}
-          aria-label={worktreeEnabled ? t("task.worktreeTitle") : t("task.noWorktreeTitle")}
-          style={taskWorktreeTagStyle(worktreeEnabled)}
+          title={worktreeMissing ? t("task.worktreeMissingTitle") : worktreeEnabled ? t("task.worktreeTitle") : t("task.noWorktreeTitle")}
+          aria-label={worktreeMissing ? t("task.worktreeMissingTitle") : worktreeEnabled ? t("task.worktreeTitle") : t("task.noWorktreeTitle")}
+          style={taskWorktreeTagStyle(worktreeEnabled, worktreeMissing)}
         >
           {worktreeEnabled ? null : <NoWorktreeIcon />}
           worktree
@@ -332,7 +339,23 @@ export function TaskCardRows({
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 0, marginLeft: "auto" }}>
           {!terminal ? (
             <>
-              {showAdvance ? (
+              {/* 失效 worktree：给的是「重建」而不是「执行」——
+                  执行必然失败（cwd 就是那个不存在的目录），重建才是有用的下一步。 */}
+              {worktreeMissing ? (
+                <button
+                  type="button"
+                  title={t("task.rebuildWorktree")}
+                  aria-label={t("task.rebuildWorktree")}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onMove(task, "rebuild-worktree");
+                  }}
+                  style={taskCardIconButtonStyle("warning")}
+                >
+                  <TaskRebuildWorktreeIcon />
+                </button>
+              ) : null}
+              {showAdvance && !worktreeMissing ? (
                 <button
                   type="button"
                   title={t("task.runNow")}
