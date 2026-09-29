@@ -3090,13 +3090,18 @@ export function App({ onGoHome }: AppProps) {
       if (!rootID || !parentKey) {
         return { hasMore: false };
       }
+      const childNodeId = (parent as any)?._nodeId || getNodeIdForRoot(rootID);
       const items = await sessionService.fetchChildSessions(rootID, parentKey, {
         beforeTime: options?.beforeTime,
         limit: CHILD_SESSION_PAGE_SIZE,
-        nodeId: (parent as any)?._nodeId || getNodeIdForRoot(rootID),
+        nodeId: childNodeId,
       });
+      // 响应体不带 _nodeId（那是前端传输级打标），必须在这里补：mergeSessionItems
+      // 按 `_nodeId::key` 归并，漏了会让这批子会话归到 `::key` 而既有条目是 `local::key`，
+      // 并存成一整批重复的 React key；重复 key 会让收起子会话时留下孤儿 DOM
+      // （实测展开 131 行只收到 55 行，且这批重复永久留在分组里）。
       const next = items
-        .map((item) => toSessionItem(rootID, item))
+        .map((item) => toSessionItem(rootID, { ...(item as any), _nodeId: childNodeId }))
         .filter((item): item is SessionItem => !!item);
       if (currentRootIdRef.current === rootID && next.length > 0) {
         setSessions((prev) => mergeSessionItems(prev, next));

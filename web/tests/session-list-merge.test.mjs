@@ -69,3 +69,46 @@ const crossNode = mergeSessionItems(
 assert.equal(crossNode.length, 2, "local/pc 同 key 会话应各自保留，不得互相覆盖");
 assert.ok(crossNode.some((item) => item._nodeId === "local"));
 assert.ok(crossNode.some((item) => item._nodeId === "pc"));
+
+// 展开子会话会把同一批子会话再拉一遍。归并后列表长度必须不变 —— 一旦变大，
+// 说明同一会话并存了两条（重复的 React key），收起时就会留下一堆孤儿 DOM
+// （实测展开 131 行只收到 55 行）。这条守的是「子会话节点归属必须打标」这条契约：
+// 调用方漏传 _nodeId 时子会话会归到 `::key`，与既有条目的 `local::key` 并存。
+const batch = Array.from({ length: 50 }, (_, i) => ({
+  key: `child-${i}`,
+  session_key: `child-${i}`,
+  root_id: "proj",
+  _nodeId: "local",
+  updated_at: "2026-09-29T10:00:00.000Z",
+}));
+const existing = [
+  { key: "p", session_key: "p", root_id: "proj", _nodeId: "local", updated_at: "2026-09-29T09:00:00.000Z" },
+  ...batch,
+];
+const afterExpand = mergeSessionItems(existing, batch);
+assert.equal(afterExpand.length, 51, "同节点同 key 重复拉回不得让列表变长");
+
+// 反面：漏打 _nodeId 时子会话确实会翻倍（这正是 App.tsx loadChildSessionsForParent
+// 踩过的坑）。锁住这个行为，任何人再把节点打标删掉，测试立刻红。
+const unstamped = batch.map(({ _nodeId, ...rest }) => rest);
+const duplicated = mergeSessionItems(existing, unstamped);
+assert.equal(
+  duplicated.length,
+  101,
+  "未打 _nodeId 的子会话会与既有条目并存成重复 —— 调用方必须补节点归属",
+);
+
+// 直接守住 App.tsx 里那处打标：子会话从 HTTP 拉回，响应体不带 _nodeId，
+// 漏了就会在分组里并存出重复 key（收起时收不掉）。这里读源码断言它还在。
+const appSource = fs.readFileSync(
+  path.resolve(import.meta.dirname, "../src/App.tsx"),
+  "utf8",
+);
+const childLoader = appSource.slice(
+  appSource.indexOf("const loadChildSessionsForParent"),
+  appSource.indexOf("const loadChildSessionsForParent") + 2400,
+);
+assert.ok(
+  /toSessionItem\(rootID, \{ \.\.\.\(item as any\), _nodeId: childNodeId \}\)/.test(childLoader),
+  "loadChildSessionsForParent 必须给子会话打 _nodeId，否则同一会话并存成重复 key、收起时留下孤儿 DOM",
+);
