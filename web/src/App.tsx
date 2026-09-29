@@ -4466,9 +4466,12 @@ export function App({ onGoHome }: AppProps) {
   }, [handleSelectSession]);
 
   const refreshSessionsAfterExternalImport = useCallback(async (rootID: string) => {
-    const payload = await sessionService.fetchSessions(rootID, { nodeId: getNodeIdForRoot(rootID) });
+    const listNodeId = getNodeIdForRoot(rootID);
+    const payload = await sessionService.fetchSessions(rootID, { nodeId: listNodeId });
     const next = [...payload.items, ...payload.pinnedItems]
-      .map((item) => toSessionItem(rootID, item))
+      // 节点归属必须打：主列表首屏加载打了 _nodeId，这里不打就会与既有条目
+      // 并存成重复的 React key（同一 mergeSessionItems 归并口径）。
+      .map((item) => toSessionItem(rootID, { ...(item as any), _nodeId: (item as any)._nodeId || listNodeId }))
       .filter((item): item is SessionItem => !!item);
     setHasMoreSessions(payload.totalCount > payload.items.length);
     setSessions(applyPinnedSnapshotToSessions(mergeSessionItems([], next), rootID, payload.pinnedKeys));
@@ -7045,12 +7048,14 @@ export function App({ onGoHome }: AppProps) {
     }
     setLoadingOlderSessions(true);
     try {
+      const listNodeId = getNodeIdForRoot(rootID);
       const payload = await sessionService.fetchSessions(rootID, {
         beforeTime: oldest,
-        nodeId: getNodeIdForRoot(rootID),
+        nodeId: listNodeId,
       });
       const next = [...payload.items, ...payload.pinnedItems]
-        .map((item) => toSessionItem(rootID, item))
+        // 同上：加载更多并进的是同一份 sessions，节点归属必须与首屏一致
+        .map((item) => toSessionItem(rootID, { ...(item as any), _nodeId: (item as any)._nodeId || listNodeId }))
         .filter((item): item is SessionItem => !!item);
       setHasMoreSessions(payload.totalCount > payload.items.length);
       setSessions((prev) =>

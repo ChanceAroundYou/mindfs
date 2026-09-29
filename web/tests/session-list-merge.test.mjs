@@ -98,6 +98,27 @@ assert.equal(
   "未打 _nodeId 的子会话会与既有条目并存成重复 —— 调用方必须补节点归属",
 );
 
+// 主列表的每一处拉取都必须打 _nodeId。漏任何一处，它并进 sessions 时就会与
+// 已打标的条目并存成重复的 React key（子会话那条就是这么坏的：展开 131 行
+// 只收到 55 行）。这里逐个点名守。
+const appSource2 = fs.readFileSync(
+  path.resolve(import.meta.dirname, "../src/App.tsx"),
+  "utf8",
+);
+for (const [what, needle] of [
+  ["子会话（loadChildSessionsForParent）", "toSessionItem(rootID, { ...(item as any), _nodeId: childNodeId })"],
+  ["外部导入后刷新（refreshSessionsAfterExternalImport）", "_nodeId: (item as any)._nodeId || listNodeId"],
+]) {
+  assert.ok(
+    appSource2.includes(needle),
+    `${what} 拉到的会话必须打 _nodeId，否则与已打标条目并存成重复 key`,
+  );
+}
+assert.ok(
+  !/\.map\(\(item\) => toSessionItem\(rootID, item\)\)/.test(appSource2),
+  "不应再有裸 toSessionItem(rootID, item) —— 那是不打 _nodeId 的写法",
+);
+
 // 直接守住 App.tsx 里那处打标：子会话从 HTTP 拉回，响应体不带 _nodeId，
 // 漏了就会在分组里并存出重复 key（收起时收不掉）。这里读源码断言它还在。
 const appSource = fs.readFileSync(
