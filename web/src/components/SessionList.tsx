@@ -237,53 +237,43 @@ function ArchiveIcon() {
 }
 
 /**
- * 归档入口行：列表**末尾**的一行，点它把「已归档对话」面板叫起来。
- * 归档内容**不**在这里展开 —— 面板才有遮罩和收起按钮，摊在这里会和主列表糊在一起。
+ * 顶栏归档入口：只留图标，尺寸与旁边的搜索按钮一致（34×34）。
+ * 2026-09-29 用户要求从列表末尾挪到搜索图标右边 —— 原来挂在列表里，不管
+ * 吸不吸底都跟着项目列表跑，得滚动才看得到。两个列表组件（单项目 / 多项目）
+ * 各有一个顶栏且互斥显示，抽成组件给两处共用。
  */
-function ArchiveEntryRow({ onOpen }: { onOpen?: () => void }) {
+function ArchiveHeaderButton({ onOpen }: { onOpen?: () => void }) {
   const { t } = useI18n();
   if (!onOpen) return null;
   return (
-    <button
-      type="button"
-      data-archive-entry="open"
-      onClick={onOpen}
-      style={{
-        // 归档入口**吸底**：sticky + bottom:0 使它永远贴在列表可视区底部，
-        // 会话再多也不会被顶走 —— 不用滚就能点到归档。
-        //
-        // 放在滚动内容里而不是列尾 flexShrink:0 项，是因为后者在空列表下会
-        // 跟着折叠；要 flexShrink:0，否则内容多时它会被压扁。
-        flexShrink: 0,
-        position: "sticky",
-        bottom: 0,
-        marginTop: "8px",
-        padding: "6px 8px",
-        width: "100%",
-        boxSizing: "border-box",
-        border: "none",
-        borderTop: "1px solid var(--border-color)",
-        // 会从它上面滚过去，背景必须不透；panel-bg 是不透明的。
-        background: "var(--panel-bg)",
-        color: "var(--text-secondary)",
-        fontSize: "11px",
-        lineHeight: 1.2,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: "4px",
-        cursor: "pointer",
-      }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.color = "var(--text-primary)";
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.color = "var(--text-secondary)";
-      }}
-    >
-      <ArchiveIcon />
-      <span>{t("sessionList.archive")}</span>
-    </button>
+    <div style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>
+      <button
+        type="button"
+        data-archive-entry="open"
+        aria-label={t("sessionList.archive")}
+        title={t("sessionList.archive")}
+        onClick={onOpen}
+        style={{
+          width: "34px",
+          height: "34px",
+          minWidth: "34px",
+          border: "none",
+          borderRadius: "8px",
+          padding: 0,
+          background: "transparent",
+          color: "var(--text-secondary)",
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          cursor: "pointer",
+          transition: "all 0.15s ease",
+        }}
+      >
+        <span style={{ fontSize: "15px", lineHeight: 1, display: "inline-flex" }}>
+          <ArchiveIcon />
+        </span>
+      </button>
+    </div>
   );
 }
 
@@ -584,6 +574,7 @@ export function SessionList({
             ) : null}
           </div>
         )}
+        <ArchiveHeaderButton onOpen={onOpenArchivePanel} />
         {headerAction ? (
           <div style={{ display: "inline-flex", alignItems: "center" }}>
             {headerAction}
@@ -789,10 +780,6 @@ export function SessionList({
             ) : null}
           </div>
         )}
-        {/* 入口行在滚动容器内、但在「有无会话」这个分支之外：它吸底常驻，会话再多
-            也不用滚就能点到；会话一条不剩时它也还在 —— 放进上面的分支里会连空态
-            一起消失，归档就再也进不去了。 */}
-        <ArchiveEntryRow onOpen={onOpenArchivePanel} />
       </div>
       <style>{`
         @keyframes mindfs-bound-pulse {
@@ -1197,6 +1184,7 @@ export function MultiProjectSessionList({
             </button>
           ) : null}
         </div>
+        <ArchiveHeaderButton onOpen={onOpenArchivePanel} />
         {headerAction ? <div style={{ display: "inline-flex", alignItems: "center" }}>{headerAction}</div> : null}
       </div>
       <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "8px" }}>
@@ -1350,7 +1338,6 @@ export function MultiProjectSessionList({
         {/* 入口行在滚动容器内、但在「有无分组」这个分支之外：分组多到装不下一屏时它跟着
             内容被顶下去（要滚动才看得到），一个分组都没有时它也还在 —— 放进上面的分支
             里会连空态一起消失，归档就再也进不去了。 */}
-        <ArchiveEntryRow onOpen={onOpenArchivePanel} />
       </div>
       <style>{`
         @keyframes mindfs-bound-pulse {

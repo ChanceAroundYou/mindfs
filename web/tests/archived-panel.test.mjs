@@ -180,51 +180,48 @@ test("面板复用主列表的项目分组，且不再有嵌套归档入口", ()
   assert.doesNotMatch(panel, /archivedSessions=/);
 });
 
-test("归档入口行吸底：会话再多也不用滚就能点到", () => {
-  // 2026-09-29 用户改主意了：回到**永远贴底**的形态 —— 会话多到装不下一屏时
-  // 归档入口也不用滚就能点到。
+test("归档入口在顶栏：搜索图标右边，只留图标且与搜索同尺寸", () => {
+  // 2026-09-29 用户要求：归档入口从列表末尾挪到顶栏、搜索图标右边，去掉文字只留图标。
+  // 原来挂在列表里，吸不吸底都跟着项目列表跑，得滚动才看得到。
   const list = read("src/components/SessionList.tsx");
-  const row = list.slice(
-    list.indexOf('data-archive-entry="open"'),
-    list.indexOf("</button>", list.indexOf('data-archive-entry="open"')),
-  );
-  // 在 flex 列里要被压扁，所以 flexShrink:0 仍然要
-  assert.match(row, /flexShrink: 0/, "放在 flex 列里会被压扁");
-  assert.match(row, /width: "100%"/, "应占满整行");
-  assert.match(row, /var\(--panel-bg\)/, "内容从它上面滚过，背景必须不透");
-  // 吸底靠 sticky + bottom:0
-  assert.match(row, /position: "sticky"/);
-  assert.match(row, /bottom: 0/, "sticky 必须配 bottom:0 才会吸底");
+  const fn = list.slice(list.indexOf("function ArchiveHeaderButton({"));
+  const body = fn.slice(0, fn.indexOf("\n}\n"));
+  assert.match(body, /data-archive-entry="open"/, "入口仍需带这个标记供定位");
+  // 尺寸必须与搜索按钮一致，否则两个图标并排会一高一低
+  assert.match(body, /width: "34px"/);
+  assert.match(body, /height: "34px"/);
+  assert.match(body, /minWidth: "34px"/);
+  // 只留图标：文字只能走 aria-label / title，不能作为可见内容
+  assert.match(body, /aria-label=\{t\("sessionList\.archive"\)\}/);
+  assert.match(body, /title=\{t\("sessionList\.archive"\)\}/);
+  assert.doesNotMatch(body, />\s*\{?t\("sessionList\.archive"\)\}?\s*</, "按钮内不得有可见文字");
 
-  // 结构守卫：两个调用点的入口行都在 overflow:auto 滚动容器里、且排在
-  // 「有无会话/分组」那个三元分支的**外面**。放进分支里的话，会话一条不剩时
-  // 它跟着空态一起消失 —— 归档入口就此消失，用户再也进不去归档（死锁）。
-  for (const scroller of [...list.matchAll(/overflow: "auto", padding: "8px" \/\}>/g)]) {
+  // 列表末尾的入口行必须彻底消失：它挂在滚动容器里，会被内容顶走、
+  // 也会随「有无会话」分支消失。
+  assert.doesNotMatch(list, /ArchiveEntryRow/, "列表末尾的归档行应已移除");
+  const scrollers = [...list.matchAll(/overflow: "auto", padding: "8px"/g)];
+  assert.ok(scrollers.length >= 2, "两个列表各有一个滚动容器");
+  for (const scroller of scrollers) {
     const after = list.slice(scroller.index, scroller.index + 4000);
-    const entry = after.indexOf("<ArchiveEntryRow");
-    assert.ok(entry > 0, "每个滚动容器里都应有一处入口行");
-    const close = after.indexOf("</div>");
-    assert.ok(entry < close, "入口行必须排在滚动容器闭合之前（即在其内部）");
-    const branchClose = after.lastIndexOf(")}", entry);
-    assert.ok(branchClose > 0 && branchClose < entry, "入口行必须在有无会话/分组的分支之外");
+    assert.equal(
+      after.indexOf('data-archive-entry="open"'),
+      -1,
+      "滚动容器里不应再有归档入口行",
+    );
   }
-  const entries =
-    list.match(/<ArchiveEntryRow onOpen=\{onOpenArchivePanel\} \/>/g) || [];
-  assert.equal(entries.length, 2, "SessionList 和 MultiProjectSessionList 各一处入口行");
 });
 
-test("侧栏底部只留入口行，归档内容不再内联展开", () => {
+test("顶栏归档入口必须在搜索三元分支之外，两种列表都接了", () => {
   const list = read("src/components/SessionList.tsx");
-  assert.match(list, /data-archive-entry="open"/);
-  assert.doesNotMatch(list, /function ArchiveSection/);
-  assert.match(list, /onOpenArchivePanel/);
-});
-
-test("两种列表（单项目 / 多项目）都接了归档入口", () => {
-  const list = read("src/components/SessionList.tsx");
-  const entries =
-    list.match(/<ArchiveEntryRow onOpen=\{onOpenArchivePanel\} \/>/g) || [];
-  assert.equal(entries.length, 2, "SessionList 和 MultiProjectSessionList 各一处入口行");
+  // 搜索结果态下顶栏是返回箭头，归档入口若放进那个三元分支会随搜索一起消失。
+  const entries = list.match(/<ArchiveHeaderButton onOpen=\{onOpenArchivePanel\} \/>/g) || [];
+  assert.equal(entries.length, 2, "SessionList 和 MultiProjectSessionList 各接一处");
+  for (const at of entries) {
+    const idx = list.indexOf(at);
+    const before = list.slice(Math.max(0, idx - 2600), idx);
+    // 该位置之前必须已经闭合过 searchResultsMode 三元分支
+    assert.ok(before.includes(")}"), "归档入口应排在搜索三元分支之外");
+  }
 });
 
 test("面板文案两种语言都有", () => {
