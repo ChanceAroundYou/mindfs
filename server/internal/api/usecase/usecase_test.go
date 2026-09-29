@@ -1882,7 +1882,9 @@ func TestPromptStoreDeleteRemovesOnlyMatchingPrompt(t *testing.T) {
 	}
 }
 
-func TestSwitchReadHintPathUsesRuntimeRoot(t *testing.T) {
+// switchReadHintPath 一律返回绝对路径：提示文案不含基准目录，agent 无从判断相对路径
+// 该以哪里为准，猜成 home 就读不到文件。worktree 与非 worktree 必须给出同一个路径。
+func TestSwitchReadHintPathIsAbsolute(t *testing.T) {
 	rootDir := t.TempDir()
 	root := rootfs.NewRootInfo("mindfs", "mindfs", rootDir)
 	manager := session.NewManager(root)
@@ -1894,15 +1896,12 @@ func TestSwitchReadHintPathUsesRuntimeRoot(t *testing.T) {
 		t.Fatalf("Create session: %v", err)
 	}
 
-	basePath := switchReadHintPath(manager, created.Key, rootDir)
-	if !strings.HasPrefix(basePath, ".mindfs/") {
-		t.Fatalf("base path = %q, want .mindfs relative path", basePath)
+	basePath := switchReadHintPath(manager, created.Key)
+	if !filepath.IsAbs(basePath) {
+		t.Fatalf("base path = %q, want absolute path", basePath)
 	}
-
-	worktreeRoot := filepath.Join(rootDir, ".worktree", "task-1")
-	worktreePath := switchReadHintPath(manager, created.Key, worktreeRoot)
-	if !strings.HasPrefix(worktreePath, "../../.mindfs/") {
-		t.Fatalf("worktree path = %q, want path relative to worktree cwd", worktreePath)
+	if !strings.HasSuffix(basePath, filepath.ToSlash(filepath.Join(".mindfs", "sessions", created.Key+".jsonl"))) {
+		t.Fatalf("base path = %q, want it to point at this session's exchange log", basePath)
 	}
 }
 
@@ -2697,3 +2696,92 @@ func (*renameManagedDirTestRegistry) GetFileWatcher(string, *session.Manager) (*
 }
 
 func (*renameManagedDirTestRegistry) ReleaseFileWatcher(string, string) {}
+
+// 回合结束时记 AgentCtxSeq 必须把本轮 user 行算进去。
+//
+// 时序（SendMessage 内）：linesBeforeThisTurn=N → persistUserTurnExchange 落 N+1
+// → AddExchangeForAgent 落 N+2 → UpdateAgentState 记「已落盘总行数」N+2。少记则下一轮
+// prependSwitchHint 的 delta 恒 > 0，切 agent 提示在每个正常回合都被重复注入，
+// 而不是只在真切换时出现。
+func TestPrependSwitchHintIsInjectedOncePerRealSwitch(t *testing.T) {
+	rootDir := t.TempDir()
+	manager := session.NewManager(rootfs.NewRootInfo("mindfs", "mindfs", rootDir))
+	created, err := manager.Create(context.Background(), session.CreateInput{
+		Type: session.TypeChat,
+		Name: "Task",
+	})
+	if err != nil {
+		t.Fatalf("Create session: %v", err)
+	}
+
+	sess := created
+	service := &Service{}
+	const agentName = "claude"
+
+	// 两轮对话：每轮 user 行 + agent 行各一条。回合结束时 agent 看到的行数按
+	// 「user 行之前 +1」记账（对应 UpdateAgentState(linesBeforeThisTurn+1)）。
+	total := 0
+	agentSeen := 0
+	agentInjected := 0
+	for turn := 0; turn < 2; turn++ {
+		linesBeforeThisTurn := total
+		// 本轮 user 行落盘（persistUserTurnExchange）。
+		total++
+
+		got := service.BuildPrompt(BuildPromptInput{
+			Session:             sess,
+			Manager:             manager,
+			Agent:               agentName,
+			Message:             "hi",
+			AgentCtxSeq:         &agentSeen,
+			LinesBeforeThisTurn: linesBeforeThisTurn,
+		})
+		if strings.Contains(got, "This session was migrated from elsewhere.") {
+			agentInjected++
+		}
+		if !strings.Contains(got, "hi") {
+			t.Fatalf("turn %d: user message lost from prompt: %q", turn, got)
+		}
+
+		// 助手行落盘（AddExchangeForAgent）。
+		total++
+		// UpdateAgentState 记 agent 已看到的行数 = 已落盘总行数（user + agent 两行）。
+		agentSeen = linesBeforeThisTurn + 2
+	}
+
+	if agentInjected != 0 {
+		t.Fatalf("switch hint injected %d times across 2 turns of the same agent, want 0", agentInjected)
+	}
+}
+
+// 真切换时提示仍要出现，且带绝对路径 —— 这是本次修复要保住的行为。
+func TestPrependSwitchHintOnAgentSwitchUsesAbsolutePath(t *testing.T) {
+	rootDir := t.TempDir()
+	manager := session.NewManager(rootfs.NewRootInfo("mindfs", "mindfs", rootDir))
+	created, err := manager.Create(context.Background(), session.CreateInput{
+		Type: session.TypeChat,
+		Name: "Task",
+	})
+	if err != nil {
+		t.Fatalf("Create session: %v", err)
+	}
+
+	service := &Service{}
+	// 切到 codex：claude 只看过 1 行，会话已有 4 行 → delta=3，提示该出现。
+	claudeSeen := 1
+	got := service.BuildPrompt(BuildPromptInput{
+		Session:             created,
+		Manager:             manager,
+		Agent:               "codex",
+		Message:             "hi",
+		AgentCtxSeq:         &claudeSeen,
+		LinesBeforeThisTurn: 4,
+	})
+	if !strings.Contains(got, "This session was migrated from elsewhere.") {
+		t.Fatalf("switch hint missing on real agent switch: %q", got)
+	}
+	wantPath := filepath.ToSlash(filepath.Join(rootDir, ".mindfs", "sessions", created.Key+".jsonl"))
+	if !strings.Contains(got, wantPath) {
+		t.Fatalf("switch hint does not carry absolute path %q: %q", wantPath, got)
+	}
+}

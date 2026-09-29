@@ -364,3 +364,19 @@ func TestCleanFrontendResourcePathUsesDeployPrefix(t *testing.T) {
 		})
 	}
 }
+
+// 与 usecase 侧同名函数同源：API 层序列化 session 时也要剥掉迁移提示。
+// 覆盖绝对路径形态 —— 相对路径时代的测试早就不存在，剥壳逻辑零覆盖。
+func TestStripExternalSessionPrefixForAPIRemovesAbsolutePathHint(t *testing.T) {
+	hint := "This session was migrated from elsewhere. Your context may lag behind this session;\n" +
+		"Before replying, read the last 20 lines from /abs/root/.mindfs/sessions/1234-abcd.jsonl to recover context.\n" +
+		"If you still need more context, decide and read older history yourself.\n" +
+		"When continuing to read, keep each backward batch to about 20 lines.\n\n" +
+		"Execution order: read history first, then compose the final answer.\n" +
+		"Note: do not send any natural-language response before finishing the required history reads. Start reading immediately via tools/commands.\n" +
+		"Only if reading fails, output a brief error and stop.\n\n"
+	got := stripExternalSessionPrefixForAPI(hint + "真正的问题")
+	if got != "真正的问题" {
+		t.Fatalf("stripped = %q, want just the user message", got)
+	}
+}

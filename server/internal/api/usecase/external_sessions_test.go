@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -777,5 +778,27 @@ func TestSyncExternalSessionDeltaSetsFloorForLiveOwnedOnly(t *testing.T) {
 	}
 	if !importer.input.TimestampFloor.IsZero() {
 		t.Fatalf("import-owned 会话不该带地板，得到 %v", importer.input.TimestampFloor)
+	}
+}
+
+// 迁移提示的剥壳是「首行 + 尾行」双锚点，中间整段（含绝对路径）不参与判断。
+// 路径改成绝对路径后必须仍能剥掉，否则导入会话的首条 user 气泡会一直挂着这段提示。
+func TestStripExternalSessionPrefixRemovesAbsolutePathHint(t *testing.T) {
+	hint := buildSwitchReadHint("/abs/root/.mindfs/sessions/1234-abcd.jsonl", 20)
+	got := stripExternalSessionPrefix(hint + "真正的问题")
+	if got != "真正的问题" {
+		t.Fatalf("stripped = %q, want just the user message", got)
+	}
+
+	if !strings.Contains(hint, "/abs/root/.mindfs/sessions/1234-abcd.jsonl") {
+		t.Fatalf("hint does not carry the absolute path: %q", hint)
+	}
+	if !strings.HasPrefix(strings.ToLower(hint), "this session was migrated from elsewhere.") {
+		t.Fatalf("hint lost its first line, importer would render it as a user bubble: %q", hint)
+	}
+
+	// 非迁移提示不得被误剥。
+	if plain := stripExternalSessionPrefix("普通问题"); plain != "普通问题" {
+		t.Fatalf("plain message = %q, want it untouched", plain)
 	}
 }

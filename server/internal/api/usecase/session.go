@@ -1198,7 +1198,6 @@ type BuildPromptInput struct {
 	Message                       string
 	ClientContext                 ClientContext
 	AgentCtxSeq                   *int
-	RuntimeRootAbs                string
 	IsInitial                     bool
 	IncludeReplyTipsInUserMessage bool
 	// LinesBeforeThisTurn 是「本轮 user 行写入之前」的会话行数。本轮 user 行在
@@ -1247,7 +1246,7 @@ func prependSwitchHint(in BuildPromptInput, prompt string) string {
 	if linesToRead <= 0 {
 		return prompt
 	}
-	logPath := switchReadHintPath(in.Manager, in.Session.Key, in.RuntimeRootAbs)
+	logPath := switchReadHintPath(in.Manager, in.Session.Key)
 	readHint := buildSwitchReadHint(logPath, linesToRead)
 	return readHint + prompt
 }
@@ -1478,27 +1477,22 @@ func calculateSwitchReadLines(total, lastCtxSeq int) int {
 	return delta
 }
 
-func switchReadHintPath(manager *session.Manager, sessionKey, runtimeRootAbs string) string {
+// switchReadHintPath 一律返回绝对路径。
+//
+// 早先项目内 meta（非 MetaLocationHome）会走 filepath.Rel 产出相对 runtime root 的
+// 路径（worktree 下是 ../../.mindfs/...）。但提示文案里没有说明基准目录，agent 只能
+// 猜：猜成 home 就变成 ~/.mindfs/sessions/...，读不到文件，误判成「历史丢失」而停摆。
+// Rel 失败时还会回退到无基准的 .mindfs/... —— 同一段文案出现三种路径形态。
+// 绝对路径把基准歧义整个消掉，worktree 与否不再影响结果，runtimeRootAbs 参数随之作废。
+func switchReadHintPath(manager *session.Manager, sessionKey string) string {
 	if manager == nil {
 		return ""
 	}
-	logPath := manager.ExchangeLogPath(sessionKey)
-	runtimeRootAbs = strings.TrimSpace(runtimeRootAbs)
-	if logPath == "" || runtimeRootAbs == "" {
-		return logPath
-	}
 	absLogPath := manager.ExchangeLogAbsolutePath(sessionKey)
 	if strings.TrimSpace(absLogPath) == "" {
-		return logPath
+		return manager.ExchangeLogPath(sessionKey)
 	}
-	if manager.Root().EffectiveMetaLocation() == fs.MetaLocationHome {
-		return filepath.ToSlash(absLogPath)
-	}
-	rel, err := filepath.Rel(runtimeRootAbs, absLogPath)
-	if err != nil || strings.TrimSpace(rel) == "" {
-		return logPath
-	}
-	return filepath.ToSlash(rel)
+	return filepath.ToSlash(absLogPath)
 }
 
 func buildSwitchReadHint(exchangeLogPath string, lines int) string {
@@ -2513,7 +2507,6 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 		Message:                       in.Content,
 		ClientContext:                 in.ClientCtx,
 		AgentCtxSeq:                   agentCtxSeq,
-		RuntimeRootAbs:                rootAbs,
 		IsInitial:                     isInitial,
 		IncludeReplyTipsInUserMessage: includeReplyTipsInUserMessage,
 		LinesBeforeThisTurn:           linesBeforeThisTurn,
@@ -2763,10 +2756,14 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 			return err
 		}
 	}
-	// AgentCtxSeq 记的是「agent 已经看到多少行会话历史」。本轮 user 行在回合开始前就已
-	// 计入 current.Exchanges（那是它该被计入的时机：agent 确实会把它读进去），而助手行
-	// 此刻尚未落盘，因此这里要减掉 user 行、也还没有助手行。
-	if err := manager.UpdateAgentState(ctx, current, in.Agent, linesBeforeThisTurn, sess.SessionID()); err != nil {
+	// AgentCtxSeq 记的是「agent 已经看到多少行会话历史」，口径是**已落盘的总行数**
+	// （与 external_sessions.go:415 的 len(latest.Exchanges)、
+	// 子会话的 contextLineCount(child.Exchanges) 一致）。此刻 user 行（persistUserTurnExchange）
+	// 与助手行（AddExchangeForAgent）都已落盘，所以是 linesBeforeThisTurn+2。
+	// 早先只记 linesBeforeThisTurn，两行都漏：下一轮 prependSwitchHint 的
+	// total=linesBeforeThisTurn、last=上一轮记的值，delta 恒为 2 > 0，切 agent 提示
+	// 于是在每个正常回合都被重复注入（日志实测 12 小时 140 次），而不是只在真切换时出现。
+	if err := manager.UpdateAgentState(ctx, current, in.Agent, linesBeforeThisTurn+2, sess.SessionID()); err != nil {
 		return err
 	}
 
