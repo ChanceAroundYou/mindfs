@@ -180,11 +180,9 @@ test("面板复用主列表的项目分组，且不再有嵌套归档入口", ()
   assert.doesNotMatch(panel, /archivedSessions=/);
 });
 
-test("归档入口行是滚动内容的最后一项：会话多时会被顶下去", () => {
-  // 2026-09-28 用户明确要的形态：它**不**永远贴底，而是排在滚动内容末尾，
-  // 会话多到装不下一屏时被内容顶下去，要滚动才看得到。
-  // 之前那版把它做成滚动容器的兄弟节点 + flexShrink:0（列尾项），那形态恰恰是
-  // **永远贴底、顶不下去**，与需求正相反。
+test("归档入口行吸底：会话再多也不用滚就能点到", () => {
+  // 2026-09-29 用户改主意了：回到**永远贴底**的形态 —— 会话多到装不下一屏时
+  // 归档入口也不用滚就能点到。
   const list = read("src/components/SessionList.tsx");
   const row = list.slice(
     list.indexOf('data-archive-entry="open"'),
@@ -194,8 +192,9 @@ test("归档入口行是滚动内容的最后一项：会话多时会被顶下�
   assert.match(row, /flexShrink: 0/, "放在 flex 列里会被压扁");
   assert.match(row, /width: "100%"/, "应占满整行");
   assert.match(row, /var\(--panel-bg\)/, "内容从它上面滚过，背景必须不透");
-  // sticky 只是让它滚到末尾时仍可点；不是「贴底」的手段
+  // 吸底靠 sticky + bottom:0
   assert.match(row, /position: "sticky"/);
+  assert.match(row, /bottom: 0/, "sticky 必须配 bottom:0 才会吸底");
 
   // 结构守卫：两个调用点的入口行都在 overflow:auto 滚动容器里、且排在
   // 「有无会话/分组」那个三元分支的**外面**。放进分支里的话，会话一条不剩时
