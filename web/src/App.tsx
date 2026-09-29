@@ -5432,7 +5432,11 @@ export function App({ onGoHome }: AppProps) {
           rootInfo?.root_path,
         );
         if (!path || !root) return;
-        switchMainView("files");
+        // 深链恢复时主面板模式以 URL 的 view 为准，不因为「恢复了文件」就把面板
+        // 硬拉回文件态（与 handleSelectSession 的 preserveMainView 同一约定）。
+        if (!params?.preserveMainView) {
+          switchMainView("files");
+        }
         rememberCurrentFileScroll();
         setGitDiff(null);
         const currentFilePath = fileRef.current?.path || "";
@@ -7148,6 +7152,7 @@ export function App({ onGoHome }: AppProps) {
             root: preferredRoot,
             cursor: urlState.cursor,
             preservePluginQuery: true,
+            preserveMainView: !!urlState.view && urlState.view !== "files",
           });
         } else {
           if (cancelled) return;
@@ -7324,6 +7329,7 @@ export function App({ onGoHome }: AppProps) {
             root: state.root,
             cursor: state.cursor,
             preservePluginQuery: true,
+            preserveMainView: !!state.view && state.view !== "files",
           });
         }
         return;
@@ -8504,7 +8510,9 @@ export function App({ onGoHome }: AppProps) {
     switchMainView(mode);
     // 切到文件面板但从没点过任何目录时，主区是空的：把当前项目顶层目录补上。
     // 已经有内容（含报错态）就别动，用户点过的目录优先于这个默认值。
-    if (mode === "files" && rootID && !mainEntriesRef.current.length && !mainDirectoryErrorRef.current) {
+    // 开着文件/diff 时也不能补：open_dir 会 setFile(null)，补目录等于把用户
+    // 刚看的文件抹掉 —— 那正是「切回文件丢内容」的第二个根因。
+    if (mode === "files" && rootID && !file && !gitDiff && !mainEntriesRef.current.length && !mainDirectoryErrorRef.current) {
       const currentDir = selectedDirRef.current || "";
       // 尚停留在上一个项目时（selectedDir 属于别的 root），直接落在新项目根目录
       if (!currentDir || currentDir === "." || currentDir === rootID || currentDir.startsWith(`${rootID}/`)) {
@@ -8525,7 +8533,7 @@ export function App({ onGoHome }: AppProps) {
       file: mode === "files" ? current.file : "",
       view: mode,
     });
-  }, [replaceURLState, setDrawerOpenForRoot, switchMainView]);
+  }, [file, gitDiff, replaceURLState, setDrawerOpenForRoot, switchMainView]);
 
   const openWorkspaceProject = useCallback(async (rootId: string) => {
     if (!rootId) return;
@@ -8613,6 +8621,11 @@ export function App({ onGoHome }: AppProps) {
 
   );
 
+  // 主区渲染优先级链。chat 空态 > 插件信任 > gitDiff > file > 看板/文件列表。
+  // gitDiff 与 file 这两支只在文件态渲染（各带一道 currentMainContentView 门控），
+  // 否则残留的 file 会把看板/工作台整个挡住 —— 切换器按钮亮了但画面不动。
+  // 门控用 currentMainContentView 而不是 mainView：前者已经把 onboarding 覆盖
+  // 算进去了（引导要看板时 mainView 可能仍是 files）。
   if (mainView === "chat" && !selectedSession) {
     // chat 模式但没有选中会话：给一个明确空态，而不是把看板/文件列表塞回来（否则看起来像「自己跳走了」）
     workspaceView = (
@@ -8732,7 +8745,7 @@ export function App({ onGoHome }: AppProps) {
         </section>
       </div>
     );
-  } else if (gitDiff) {
+  } else if (gitDiff && currentMainContentView === "file-browser") {
     workspaceView = (
       <GitDiffViewer
         diff={gitDiff}
@@ -8747,7 +8760,7 @@ export function App({ onGoHome }: AppProps) {
         onSelectionChange={handleViewerSelectionChange}
       />
     );
-  } else if (file) {
+  } else if (file && currentMainContentView === "file-browser") {
     if (pluginRender && pluginRender.output) {
       workspaceView = (
         <div

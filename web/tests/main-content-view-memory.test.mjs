@@ -152,3 +152,70 @@ assert.match(
   /if \(next\.view\) params\.set\("view", next\.view\);/,
   "the view must be serialized into the URL",
 );
+
+// 主区渲染优先级链必须让 mainView 生效优先于残留的 file/gitDiff state。
+// 少了这两道门控，「开着文件点看板/工作台」就是按钮亮了、画面不动
+// （R1 被绕过：状态机切了，渲染链在 else if (file) 就 return 了）。
+assert.match(
+  app,
+  /\} else if \(file && currentMainContentView === "file-browser"\) \{/,
+  "the file branch must yield to the main view, or an open file blocks the board",
+);
+assert.match(
+  app,
+  /\} else if \(gitDiff && currentMainContentView === "file-browser"\) \{/,
+  "the git-diff branch must yield to the main view too",
+);
+assert.doesNotMatch(
+  app,
+  /\} else if \((file|gitDiff)\) \{/,
+  "the ungated file/gitDiff branches must not come back",
+);
+// 门控必须用派生值而不是裸 mainView：onboarding 覆盖时 mainView 可能仍是 files，
+// 但 currentMainContentView 已经是 task-kanban —— 换成 mainView 会让引导里的看板
+// 被一个打开着的文件顶掉。
+assert.doesNotMatch(
+  app,
+  /\} else if \((file|gitDiff)\) && mainView === "files"\) \{/,
+  "gate on currentMainContentView, not on the raw mainView (onboarding override)",
+);
+
+// 无论当前选中什么（四态按钮都常亮可点），切换器都没有基于路径的禁用逻辑
+assert.doesNotMatch(
+  switcher,
+  /disabled/,
+  "the switcher must never disable a mode based on the current path",
+);
+assert.match(
+  switcher,
+  /onClick=\{\(\) => onChange\(mode\)\}/,
+  "each switcher button forwards its mode straight through",
+);
+
+// 「从没点过目录就补上项目根」的兜底不能吃掉正打开着的文件/diff：
+// open_dir 会 setFile(null)，补目录等于把用户刚看的文件抹掉。
+// 少了这两个前置条件，「切走再切回文件」就会退回目录列表而不是原文件。
+assert.match(
+  app,
+  /if \(mode === "files" && rootID && !file && !gitDiff && !mainEntriesRef\.current\.length/,
+  "the root-dir top-up must stand down while a file or diff is open",
+);
+
+// 深链恢复：URL 里的 view 是主面板模式的唯一真相源。
+// 恢复文件时不能被 open 的无条件 switchMainView("files") 盖回去 ——
+// 与会话恢复的 preserveMainView 是同一约定（App.tsx 两处都传同一个判据）。
+assert.match(
+  app,
+  /if \(!params\?\.preserveMainView\) \{\s*switchMainView\("files"\);/,
+  "open must honour preserveMainView instead of always forcing the files view",
+);
+assert.match(
+  app,
+  /preservePluginQuery: true,\s*\n\s*preserveMainView: !!urlState\.view && urlState\.view !== "files",/,
+  "cold-start deep-link restore must let the URL view win over the restored file",
+);
+assert.match(
+  app,
+  /preservePluginQuery: true,\s*\n\s*preserveMainView: !!state\.view && state\.view !== "files",/,
+  "popstate deep-link restore must let the URL view win too",
+);
