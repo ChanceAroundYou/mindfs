@@ -207,7 +207,7 @@ import { TaskInlineEditState } from "./app/appTask";
 import { buildMatchInputFromPath, buildMessageWithViewContext, hasExplicitFileContext, indexManagedRoots, inferReadModeFromPlugin, managedDirAddErrorMessage, mapManagedRootsToEntries, normalizeUpdateState, shouldShowUpdateButton, toPluginInput, updateButtonLabel, updateSummaryText, useResponsive, waitForNextPaint } from "./app/appMisc";
 import { basenameOfPath, buildDirectorySelectionKey, buildFileScrollKey, buildURLSearch, comparableManagedRootPath, dirnameOfPath, isDirectorySortMode, joinDisplayPath, normalizeCursor, normalizePath, parentDirsOfFile, parseFileLocation, parsePluginQuery, readURLState, relativeDisplayPathFromRoot, rootNodeKey } from "./app/appPath";
 import { useWorkspaceBoard } from "./app/useWorkspaceBoard";
-import { hasSessionExchanges, isTopLevelSessionItem, mergeReplyingStateByNode, normalizeMode, relatedFileSelectionKey, sessionInputHistory, toSessionItem } from "./app/appSession";
+import { hasSessionExchanges, isSessionShownInMain, isTopLevelSessionItem, mergeReplyingStateByNode, normalizeMode, relatedFileSelectionKey, sessionInputHistory, shouldAutoSelectNewSession, toSessionItem } from "./app/appSession";
 import { accountScopedKey, loadGitDiffSideBySide, loadLastRootId, loadLastRootNodeId, loadLegacyMainView, loadMainView, loadMobileEnterKeySends, loadPersistedFileScrollPositions, loadPersistedPluginQuery, loadSidebarsSwapped, loadTaskCreateWorktreePreference, persistFileScrollPositions, persistPluginQuery, removeLocalStorageByPrefix, saveTaskCreateWorktreePreference } from "./app/appStorage";
 import { applyStageOverride, currentTaskInputFromDetail, DEFAULT_TASK_AGENT, DEFAULT_TASK_MODEL, firstAgentStage, firstTaskInputFromDetail, firstUserInputTemplate, isTerminalKanbanTask, latestTaskStageRun, normalizeFastService, parseTaskSessionErrorDetails, parseTaskSessionErrorMessage, previousTaskInputsFromDetail, taskSessionKeysFromDetail, taskStatusLabel } from "./app/appTask";
 import { useCompletionSound } from "./app/useCompletionSound";
@@ -4930,13 +4930,32 @@ export function App({ onGoHome }: AppProps) {
             });
           }
           bumpCacheVersion();
+          // 判据见 appSession.shouldAutoSelectNewSession。
+          if (
+            shouldAutoSelectNewSession({
+              selectedSession: selectedSessionRef.current,
+              mainView: mainViewRef.current,
+              interactionMode: interactionModeRef.current,
+              draftItem,
+            })
+          ) {
+            selectedSessionByRootRef.current[scopedRootKey(activeRoot)] =
+              tempSessionKey;
+            selectedSessionRef.current = draftItem;
+            setSelectedSession(draftItem);
+            interactionModeRef.current = "main";
+            setInteractionMode("main");
+            setDrawerOpenForRoot(activeRoot, false);
+          }
         }
         session = draftSession;
       }
-      const isBoundInMain =
-        !!selectedSessionRef.current &&
-        selectedSessionRef.current.key === sendSessionKey &&
-        interactionModeRef.current !== "drawer";
+      const isBoundInMain = isSessionShownInMain({
+        selectedKey: selectedSessionRef.current?.key || "",
+        sendSessionKey,
+        tempKey: tempKey || "",
+        interactionMode: interactionModeRef.current,
+      });
       if (!isBoundInMain) {
         setInteractionMode("drawer");
         setDrawerOpenForRoot(activeRoot, true);

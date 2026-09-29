@@ -361,3 +361,50 @@ export function normalizeMode(mode: SessionMode | undefined): SessionMode {
   if (mode === "command") return mode;
   return "chat";
 }
+
+/**
+ * 「没选中任何会话时新建并运行」要不要把新会话选进主区。
+ *
+ * 主区 chat 态的空面板只看 selectedSession（App.tsx: mainView==="chat" &&
+ * !selectedSession 分支渲染 view.chatEmpty），不选它就一直停在
+ * 「从右侧会话列表选择一个会话开始对话」——agent 明明在跑，用户看着像什么都没发生。
+ *
+ * 四个前提缺一不可：
+ *   - 主区当前没选中会话：已选中就维持原行为（续聊/排队都走 sendSessionKey 分支）；
+ *   - 主区处于 chat 态：文件态下不把人从正在看的文件里拽走，仍走抽屉；
+ *   - 抽屉没开：开着说明焦点另有归属（浮动会话框）；
+ *   - 乐观会话条目造得出来：toSessionItem 失败就没有可渲染的东西。
+ */
+export function shouldAutoSelectNewSession(input: {
+  selectedSession: unknown;
+  mainView: string;
+  interactionMode: "main" | "drawer";
+  draftItem: unknown;
+}): boolean {
+  return (
+    !input.selectedSession &&
+    input.mainView === "chat" &&
+    input.interactionMode !== "drawer" &&
+    !!input.draftItem
+  );
+}
+
+/**
+ * 新会话是否已经在主区（决定还要不要把抽屉顶开）。
+ *
+ * 新建会话时 sendSessionKey 还是 undefined，真正的身份是 tempKey（pending-* 乐观键），
+ * 刚被选进主区后不能因为 sendSessionKey 为空就判成「不在主区」而把抽屉顶开。
+ */
+export function isSessionShownInMain(input: {
+  selectedKey: string;
+  sendSessionKey: string | null | undefined;
+  tempKey: string;
+  interactionMode: "main" | "drawer";
+}): boolean {
+  if (input.interactionMode === "drawer") return false;
+  if (!input.selectedKey) return false;
+  if (input.sendSessionKey && input.selectedKey === input.sendSessionKey) {
+    return true;
+  }
+  return !!input.tempKey && input.selectedKey === input.tempKey;
+}

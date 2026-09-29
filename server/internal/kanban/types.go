@@ -161,9 +161,34 @@ type AgentStageExecution struct {
 	Prompt          string
 }
 
+// StageOutcome 是 agent 阶段跑完之后的结论。
+//
+// 以前这里只有 error，而 error 只表示「消息投递失败」，不表示「活干完了」——
+// 于是 runAgentStage 把「没抛错」直接写成 success，executeTask 接着推进下一段，
+// 前一段没完成也在错误前提上开跑，阶段就此错乱。
+// 现在必须由 agent 显式回报，回报不了就是 Silent，停下等人。
+type StageOutcome int
+
+const (
+	// StageOutcomeDone：agent 输出了本段的完成标记。
+	StageOutcomeDone StageOutcome = iota
+	// StageOutcomeBlocked：agent 明确说受阻或未完成，Reason 是它给的原因。
+	StageOutcomeBlocked
+	// StageOutcomeSilent：跑完了但没有回报完成。判为未完成。
+	StageOutcomeSilent
+)
+
+// StageResult 随 StageOutcome 一起带回 Reason（agent 给的受阻原因，或空）。
+type StageResult struct {
+	Outcome StageOutcome
+	Reason  string
+}
+
 type Runner interface {
 	CreateTaskWorktree(ctx context.Context, rootID, name, branchMode, branch string) (WorktreeInfo, error)
 	EnsureAgentSession(ctx context.Context, exec AgentStageExecution) (string, error)
-	RunAgentStage(ctx context.Context, exec AgentStageExecution) error
+	// RunAgentStage 返回 error 表示传输层失败（沿用 failTask 路径）；
+	// 返回 nil error 时 StageResult 才有意义，决定这一段算不算完成。
+	RunAgentStage(ctx context.Context, exec AgentStageExecution) (StageResult, error)
 	TaskUpdated(rootID string, detail TaskDetail)
 }

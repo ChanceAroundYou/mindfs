@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -14,6 +15,57 @@ import (
 
 	"mindfs/server/internal/fs"
 )
+
+// 阶段完成契约：agent 必须显式回报，本段才算完成。
+//
+// 以前判据是「没抛错」，于是 agent 撞墙/卡住/只写一半都被记成 success，
+// executeTask 紧接着推进并跑下一段，阶段错乱。现在没回报就停在 waiting_user。
+//
+// 标记带方括号带 MINDFS 前缀，agent 正文里几乎不会自然撞上，误判率远低于裸数字。
+// 段号冗余写进标记：上一段的残留标记不会被当成本段完成。
+const (
+	stageDoneTag    = "MINDFS-STAGE-DONE"
+	stageBlockedTag = "MINDFS-STAGE-BLOCKED"
+)
+
+// stageDoneRe / stageBlockedRe 只在本段编号吻合时才算数（见 matchStageOutcome）。
+var (
+	stageDoneRe    = regexp.MustCompile(`\[` + stageDoneTag + `:(\d+)\]`)
+	stageBlockedRe = regexp.MustCompile(`\[` + stageBlockedTag + `:(\d+)\s*([^\]]*)\]`)
+)
+
+// BuildStageExitContract 拼给 agent 的完成契约。导出是因为真正把它送到 agent
+// 眼前的是 api 层（DeveloperInstructions 通道 / 可见 user message 兜底），
+// 而匹配方在 api 层也要用 —— 文案与判据必须同源。
+func BuildStageExitContract(stageIndex int) string {
+	return fmt.Sprintf(
+		"\n\n<mindfs-stage-exit stage=%q>\n"+
+			"完成本段全部工作后，在回复的最后单独一行输出 [%s:%d]（该行不要加别的内容）。\n"+
+			"若未完成或中途受阻，改为输出 [%s:%d 原因]。\n"+
+			"未输出以上任一标记时，本段会被判为未完成，任务将停下等你处理。\n"+
+			"</mindfs-stage-exit>",
+		strconv.Itoa(stageIndex),
+		stageDoneTag, stageIndex,
+		stageBlockedTag, stageIndex,
+	)
+}
+
+// MatchStageOutcome 从 agent 本轮输出里判定结论。段号必须吻合本段：
+// 上一段的残留标记不算数。优先 Done（agent 先说做完了又补了原因时按做完算）。
+func MatchStageOutcome(text string, stageIndex int) StageResult {
+	return matchStageOutcome(text, stageIndex)
+}
+
+func matchStageOutcome(text string, stageIndex int) StageResult {
+	want := strconv.Itoa(stageIndex)
+	if m := stageDoneRe.FindStringSubmatch(text); m != nil && m[1] == want {
+		return StageResult{Outcome: StageOutcomeDone}
+	}
+	if m := stageBlockedRe.FindStringSubmatch(text); m != nil && m[1] == want {
+		return StageResult{Outcome: StageOutcomeBlocked, Reason: strings.TrimSpace(m[2])}
+	}
+	return StageResult{Outcome: StageOutcomeSilent}
+}
 
 type RootProvider interface {
 	GetRoot(rootID string) (fs.RootInfo, error)
@@ -454,6 +506,14 @@ func (s *Service) AddStage(ctx context.Context, in AddStageInput) (TaskDetail, e
 		stage.Name = defaultStageName(task, len(task.Stages))
 		task.Stages = append(task.Stages, stage)
 		if latest, runErr := store.LatestStageRun(ctx, task.ID, task.CurrentStageIndex); runErr == nil {
+			// 同 moveRelative：agent 段没走完时，追加一句评论不能当成「这段已完成」。
+			// user 段的 waiting_user 是在等输入，补评论正是答案，照常批准。
+			if !canAdvanceFromStage(task.Stages[task.CurrentStageIndex].Role, latest.Status) {
+				return TaskDetail{}, fmt.Errorf(
+					"current stage is %s: 这一段没走完，追加评论不能替代完成本段，重跑本段或改任务后再试",
+					latest.Status,
+				)
+			}
 			if latest.Status != StageStatusSuccess {
 				_ = store.UpdateStageRunStatus(ctx, latest.ID, StageStatusApproved)
 			}
@@ -1093,7 +1153,7 @@ func (s *Service) runAgentStage(ctx context.Context, store *TaskStore, task Task
 		CurrentStageIndex: strconv.Itoa(task.CurrentStageIndex),
 		CurrentStageName:  stage.Name,
 		Enabled:           stage.AgentCanControlStage,
-	})
+	}) + BuildStageExitContract(task.CurrentStageIndex)
 	runtimeRootPath := strings.TrimSpace(task.WorktreePath)
 	sessionKey, err := s.Runner.EnsureAgentSession(ctx, AgentStageExecution{
 		RootID:          task.RootID,
@@ -1129,14 +1189,15 @@ func (s *Service) runAgentStage(ctx context.Context, store *TaskStore, task Task
 	if detail, err := store.GetDetail(ctx, task.ID); err == nil {
 		s.Runner.TaskUpdated(task.RootID, detail)
 	}
-	if err := s.Runner.RunAgentStage(ctx, AgentStageExecution{
+	result, err := s.Runner.RunAgentStage(ctx, AgentStageExecution{
 		RootID:          task.RootID,
 		RuntimeRootPath: runtimeRootPath,
 		Task:            task,
 		Stage:           stage,
 		Run:             run,
 		Prompt:          prompt,
-	}); err != nil {
+	})
+	if err != nil {
 		log.Printf("[kanban] agent_stage.session_error root=%s task=%s run=%s err=%v", task.RootID, task.ID, run.ID, err)
 		message := strings.TrimSpace(err.Error())
 		now = time.Now().UTC()
@@ -1169,6 +1230,35 @@ func (s *Service) runAgentStage(ctx context.Context, store *TaskStore, task Task
 		return err
 	}
 	if run.Status == StageStatusWaitingUser || task.Status == StatusWaitingUser || task.Status == StatusPaused || isTerminalStatus(task.Status) {
+		return nil
+	}
+	// agent 没显式回报完成就不许算成功：Blocked（它自己说受阻）与 Silent（压根没
+	// 回报）都停在 waiting_user，错误摆到卡面上等人处理。AutoAdvance 只看 success，
+	// 停在这里就等于下一段不会被自动植进来。
+	if result.Outcome != StageOutcomeDone {
+		reason := strings.TrimSpace(result.Reason)
+		if reason == "" {
+			reason = "本段未回报完成：agent 既没输出 [" + stageDoneTag + ":N]，也没说受阻"
+		}
+		now = time.Now().UTC()
+		task.Status = StatusWaitingUser
+		task.AuxFlags.SessionError = reason
+		task.UpdatedAt = now
+		run.Status = StageStatusWaitingUser
+		run.FinishedAt = now.Format(time.RFC3339Nano)
+		if err := store.UpdateTaskAndStageRun(ctx, task, run, TaskEvent{
+			ID:         newID("event"),
+			TaskID:     task.ID,
+			StageRunID: run.ID,
+			Type:       "agent_stage_not_done",
+			Payload:    eventPayload(map[string]any{"stage_index": run.StageIndex, "reason": reason}),
+			CreatedAt:  now,
+		}); err != nil {
+			return err
+		}
+		if detail, err := store.GetDetail(ctx, task.ID); err == nil {
+			s.Runner.TaskUpdated(task.RootID, detail)
+		}
 		return nil
 	}
 	now = time.Now().UTC()
@@ -1315,6 +1405,12 @@ func (s *Service) moveRelative(ctx context.Context, in MoveInput, delta int, eve
 	}
 	if delta > 0 && latest.Status == StageStatusRunning {
 		return TaskDetail{}, errors.New("current stage is running")
+	}
+	if delta > 0 && !canAdvanceFromStage(task.Stages[task.CurrentStageIndex].Role, latest.Status) {
+		return TaskDetail{}, fmt.Errorf(
+			"current stage is %s: 这一段没走完，重跑本段或改任务后再试",
+			latest.Status,
+		)
 	}
 	if delta > 0 && stageRequiresCurrentInput(task.Stages[target], task.CurrentStageIndex) && strings.TrimSpace(latest.Input) == "" {
 		return TaskDetail{}, errors.New("current stage input required")
