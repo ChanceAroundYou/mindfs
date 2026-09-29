@@ -205,6 +205,7 @@ export const zhCN = {
   "fileViewer.downloading": "下载中...",
   "fileViewer.previewLoading": "正在加载预览...",
   "fileViewer.previewFailed": "无法预览此文件，请下载后打开。",
+  "fileViewer.previewFailedReason": "原因：{reason}",
   "fileViewer.pdfPage": "PDF 第 {page} 页",
 
   "login.updateAvailable": "发现 {packageLabel} {version} 新版本",

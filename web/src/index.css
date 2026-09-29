@@ -1253,6 +1253,16 @@ body[data-plugin-theme="1"] [data-slot="drawer-content"] {
   color: var(--text-secondary);
 }
 
+/* 失败原因：给一句可复制的小字，别让用户只看到「无法预览」。 */
+.document-preview-error-detail {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  opacity: 0.75;
+  word-break: break-word;
+  user-select: text;
+}
+
 .document-preview-pdf,
 .document-preview-word {
   min-height: 100%;
@@ -1280,6 +1290,17 @@ body[data-plugin-theme="1"] [data-slot="drawer-content"] {
   display: block;
   max-width: 100%;
   height: auto !important;
+  background: #fff;
+  box-shadow: 0 6px 24px rgba(15, 23, 42, 0.14);
+}
+
+/*
+ * 占位块：尺寸已知、canvas 还没画（或已被释放）时由它撑开高度。
+ * flex column + align-items:center 下必须显式 flex:none，否则会被压扁。
+ */
+.document-preview-pdf-slot {
+  flex: none;
+  max-width: 100%;
   background: #fff;
   box-shadow: 0 6px 24px rgba(15, 23, 42, 0.14);
 }
