@@ -66,6 +66,8 @@ export type KanbanTask = {
   main_session_key?: string;
   worktree_root_id?: string;
   worktree_path?: string;
+  /** 派生（服务端算，不落库）：worktree_path 指向的目录已经不在了。 */
+  worktree_missing?: boolean;
   labels?: string[];
   created_at: string;
   updated_at: string;
@@ -431,6 +433,21 @@ export async function moveTask(rootId: string, taskId: string, action: "next" | 
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ root_id: rootId, reason }),
+  });
+}
+
+/**
+ * 重建已删除的任务 worktree。
+ *
+ * 显式动作，服务端不自动重建：目录没了之后那个分支可能还在（代码还在分支上）也可能已经
+ * 跟着删了，自动重建等于替用户做这个决定。失败（如 branch already exists）已经把原因
+ * 记到任务的 session_error 上，所以这里照样 resolve，由调用方刷详情看那条错误。
+ */
+export async function rebuildTaskWorktree(rootId: string, taskId: string, nodeId?: string): Promise<TaskDetail> {
+  return protectedJSON<TaskDetail>(appURL(`/api/tasks/${encodeURIComponent(taskId)}/rebuild-worktree`, undefined, nodeId), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ root_id: rootId }),
   });
 }
 

@@ -209,11 +209,34 @@ assert.doesNotMatch(
 //    标题行/操作行已抽进 TaskCardRows（看板和工作台共用），契约跟着文件走。
 const cardRows = readFileSync(new URL("../src/components/TaskCardRows.tsx", import.meta.url), "utf8");
 assert.equal(
-  (cardRows.match(/taskWorktreeTagStyle\(worktreeEnabled\)/g) || []).length,
+  (cardRows.match(/style=\{taskWorktreeTagStyle\(worktreeEnabled, worktreeMissing\)\}/g) || []).length,
   1,
   "worktree badge 在卡片里只应渲染一次",
 );
-assert.match(cardRows, /style=\{taskWorktreeTagStyle\(worktreeEnabled\)\}/, "标题条应保留 worktree badge");
+// 第二个参数是「目录已被删」的失效态，派生自服务端字段而不是 create_worktree 本身 ——
+// 后者树没了也照样为 true，徽标于是显示一个自信的绿色 worktree。
+assert.match(
+  cardRows,
+  /const worktreeMissing = worktreeEnabled && task\.worktree_missing === true;/,
+  "徽标必须看派生的 worktree_missing，不能只看 create_worktree",
+);
+assert.match(
+  cardRows,
+  /worktreeMissing \? t\("task\.worktreeMissingTitle"\)/,
+  "失效态要有自己的 tooltip，别复用「已开启 worktree」",
+);
+assert.match(cardRows, /style=\{taskWorktreeTagStyle\(worktreeEnabled, worktreeMissing\)\}/, "标题条应保留 worktree badge");
+// 失效时给的是「重建」而不是「执行」：执行必然失败（cwd 就是那个不存在的目录）。
+assert.match(
+  cardRows,
+  /worktreeMissing \? \([\s\S]*?onMove\(task, "rebuild-worktree"\)/,
+  "失效卡片要提供重建入口",
+);
+assert.match(
+  cardRows,
+  /showAdvance && !worktreeMissing/,
+  "失效时不该同时给一个注定失败的「立即执行」",
+);
 // 看板仍要渲染正文（可展开），工作台不传 children —— 那一段因此只存在于看板一侧
 assert.match(
   board,

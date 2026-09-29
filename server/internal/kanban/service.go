@@ -671,6 +671,9 @@ func (s *Service) UpdateCurrentInput(ctx context.Context, in UpdateTaskInput) (T
 		if task.CurrentStageIndex != 0 {
 			return TaskDetail{}, errors.New("create_worktree can only be changed in first stage")
 		}
+		// 建过树就不许再改 create_worktree —— 已经跑在那个目录里了。判据用
+		// 「路径字段非空」而不是「目录还在」：目录被删是失效状态，该走的是重建入口，
+		// 不该让用户借此把任务改成一个和既有历史矛盾的状态。
 		if strings.TrimSpace(task.WorktreePath) != "" {
 			return TaskDetail{}, errors.New("create_worktree cannot be changed after worktree is created")
 		}
@@ -775,7 +778,15 @@ func (s *Service) RunNow(ctx context.Context, in MoveInput) (TaskDetail, error) 
 	}
 	switch task.Status {
 	case StatusWaitingUser:
-		return s.Next(ctx, in)
+		detail, nerr := s.Next(ctx, in)
+		// 推进失败时错误已经记在任务上了（moveRelative 里的 recordTaskError）：
+		// 「立即执行」不该因此失败，返回当前详情让前端显示那条错误。
+		// 典型是 worktree 目录已被删除 —— 用户点按钮要拿到的是卡片上那句人话，
+		// 而不是 HTTP 400 加一串底层报错。
+		if nerr != nil {
+			return store.GetDetail(ctx, task.ID)
+		}
+		return detail, nil
 	case StatusPending:
 		// 未开始态点「开始」= 批准当前 user 段并跑起来。已经停在最后一段时
 		// 没有下一段可进（moveRelative 会报 out of range），直接执行体推进即可。
@@ -787,7 +798,9 @@ func (s *Service) RunNow(ctx context.Context, in MoveInput) (TaskDetail, error) 
 		detail, nerr := s.Next(ctx, in)
 		// worktree 建不起来时 moveRelative 会报错，但错误已经记在任务上了：
 		// 「开始」不该因此失败，返回当前详情让前端显示那条错误。
-		if nerr != nil && task.CreateWorktree && strings.TrimSpace(task.WorktreePath) == "" {
+		// 判据是「此刻有没有可用 worktree」而不是「字段空不空」：目录被删时字段仍非空，
+		// 但那不等于有树可用，错误同样已经记在任务上了。
+		if nerr != nil && task.CreateWorktree && !worktreeDirUsable(task.WorktreePath) {
 			return store.GetDetail(ctx, task.ID)
 		}
 		return detail, nerr
@@ -987,8 +1000,16 @@ func patchPayload(patch TaskAuxFlagsPatch) map[string]any {
 }
 
 func (s *Service) ensureTaskWorktree(ctx context.Context, store *TaskStore, task Task) (Task, error) {
-	if !task.CreateWorktree || strings.TrimSpace(task.WorktreePath) != "" {
+	if !task.CreateWorktree {
 		return task, nil
+	}
+	// 失效时**不自动重建**：重建等于替用户决定那个已删目录里的分支怎么办（分支可能还在、
+	// 也可能已经被删），所以报明确错误，由 RebuildTaskWorktree 显式触发。
+	if p := strings.TrimSpace(task.WorktreePath); p != "" {
+		if worktreeDirUsable(p) {
+			return task, nil
+		}
+		return task, fmt.Errorf("worktree 目录已不存在（%s），点「重建 worktree」恢复后再执行", p)
 	}
 	if s.Runner == nil {
 		return task, errors.New("task runner not configured")
@@ -1008,6 +1029,70 @@ func (s *Service) ensureTaskWorktree(ctx context.Context, store *TaskStore, task
 		return task, err
 	}
 	return task, nil
+}
+
+// ClearTaskWorktree 清掉任务记录的 worktree 归属（路径 + root id）。
+//
+// 给 repoint 用：会话侧 ClearRelatedWorktree 清了归属，任务侧不同步的话，
+// 任务还钉着一个已经不存在的目录 —— 前端 relatedWorktree 是任务优先
+// （App.tsx），于是会去展开一个死目录，点「立即执行」也照样拿它当 cwd。
+//
+// 与 finishTask 保留 worktree_path 的语义不冲突：那个是「目录还在就别擦掉历史」，
+// 这里是「归属已经在会话侧被显式解除了，任务侧必须跟上」。
+func (s *Service) ClearTaskWorktree(ctx context.Context, rootID, taskID string) error {
+	store, task, err := s.loadForMove(ctx, rootID, taskID)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(task.WorktreePath) == "" && strings.TrimSpace(task.WorktreeRootID) == "" {
+		return nil
+	}
+	task.WorktreePath = ""
+	task.WorktreeRootID = ""
+	task.UpdatedAt = time.Now().UTC()
+	if err := store.UpdateTask(ctx, task); err != nil {
+		return err
+	}
+	if detail, err := store.GetDetail(ctx, task.ID); err == nil && s.Runner != nil {
+		s.Runner.TaskUpdated(task.RootID, detail)
+	}
+	return nil
+}
+
+// RebuildTaskWorktree 重建已删除的任务 worktree。
+//
+// 为什么不自动重建：目录没了之后，那个分支可能还在（代码还在分支上）也可能已经跟着
+// 删了。自动重建等于替用户决定哪一种，而 gitview.AddWorktree 的 -b 在分支仍存在时会
+// 报 branch already exists —— 那种错必须让人看见，不该被吞掉。所以这里是显式入口：
+// 用户点了才重建，报错了就原样报上去。
+//
+// 幂等：目录还在时直接返回当前详情，不重复建树。
+func (s *Service) RebuildTaskWorktree(ctx context.Context, in MoveInput) (TaskDetail, error) {
+	store, task, err := s.loadForMove(ctx, in.RootID, in.TaskID)
+	if err != nil {
+		return TaskDetail{}, err
+	}
+	if !task.CreateWorktree {
+		return TaskDetail{}, errors.New("task has no worktree")
+	}
+	if worktreeDirUsable(task.WorktreePath) {
+		return store.GetDetail(ctx, task.ID)
+	}
+	// 清掉陈旧路径，让 ensureTaskWorktree 走建树分支而不是撞上「目录已不存在」那条例外。
+	task.WorktreePath = ""
+	task.WorktreeRootID = ""
+	updated, err := s.ensureTaskWorktree(ctx, store, task)
+	if err != nil {
+		// 失败原因记到任务上：卡片本来就会渲染 session_error，用户不必去翻日志
+		// （典型是 branch already exists，需要他决定怎么处理那个分支）。
+		_ = s.recordTaskError(ctx, store, task, "", err.Error())
+		return store.GetDetail(ctx, task.ID)
+	}
+	detail, err := store.GetDetail(ctx, updated.ID)
+	if err == nil && s.Runner != nil {
+		s.Runner.TaskUpdated(updated.RootID, detail)
+	}
+	return detail, err
 }
 
 func renderWorktreeName(tpl string, task Task) string {
@@ -1096,7 +1181,7 @@ func (s *Service) executeTask(ctx context.Context, rootID, taskID string) error 
 		if run.Status == StageStatusWaitingUser {
 			return nil
 		}
-		if task.CreateWorktree && strings.TrimSpace(task.WorktreePath) == "" {
+		if task.CreateWorktree && !worktreeDirUsable(task.WorktreePath) {
 			updated, werr := s.ensureTaskWorktree(ctx, store, task)
 			if werr != nil {
 				return s.failTask(ctx, store, task, run.ID, werr)
@@ -1154,6 +1239,13 @@ func (s *Service) runAgentStage(ctx context.Context, store *TaskStore, task Task
 		CurrentStageName:  stage.Name,
 		Enabled:           stage.AgentCanControlStage,
 	}) + BuildStageExitContract(task.CurrentStageIndex)
+	// 这里是 cwd 真正被取用的地方，所以独立判一次，不依赖上游那几个 gate 有没有跑过
+	// （rerun / resume 等路径不一定先过 ensureTaskWorktree）。失效就明确报错，别把
+	// 路径流到 agent 启动层再报 chdir 错 —— 那个错看不出是 worktree 被删了。
+	if p := strings.TrimSpace(task.WorktreePath); p != "" && !worktreeDirUsable(p) {
+		return s.failTask(ctx, store, task, run.ID, fmt.Errorf(
+			"worktree 目录已不存在（%s），点「重建 worktree」恢复后再执行", p))
+	}
 	runtimeRootPath := strings.TrimSpace(task.WorktreePath)
 	sessionKey, err := s.Runner.EnsureAgentSession(ctx, AgentStageExecution{
 		RootID:          task.RootID,
@@ -1415,7 +1507,7 @@ func (s *Service) moveRelative(ctx context.Context, in MoveInput, delta int, eve
 	if delta > 0 && stageRequiresCurrentInput(task.Stages[target], task.CurrentStageIndex) && strings.TrimSpace(latest.Input) == "" {
 		return TaskDetail{}, errors.New("current stage input required")
 	}
-	if delta > 0 && task.CreateWorktree && strings.TrimSpace(task.WorktreePath) == "" {
+	if delta > 0 && task.CreateWorktree && !worktreeDirUsable(task.WorktreePath) {
 		updated, err := s.ensureTaskWorktree(ctx, store, task)
 		if err != nil {
 			if recordErr := s.recordTaskError(ctx, store, task, latest.ID, err.Error()); recordErr != nil {

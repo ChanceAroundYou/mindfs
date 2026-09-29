@@ -2,6 +2,9 @@ package kanban
 
 import (
 	"context"
+	"encoding/json"
+	"os"
+	"strings"
 	"time"
 )
 
@@ -98,6 +101,63 @@ type Task struct {
 	CurrentStageName   string          `json:"current_stage_name,omitempty"`
 	CurrentStageStatus string          `json:"current_stage_status,omitempty"`
 	AuxFlags           TaskAuxFlags    `json:"aux_flags"`
+	// WorktreeMissing 是**派生**字段，不落库：序列化时按 WorktreePath 此刻是否还是
+	// 目录算出来。worktree 目录会事后被删（DELETE /api/git/worktrees、
+	// wt-finish.sh cleanup、手工 rm），而 WorktreePath 全仓只有 ensureTaskWorktree
+	// 一处写入、没人负责清 —— 派生比存字段可靠，重建后自动转回 false，不需要迁移。
+	//
+	// 刻意不落库还有个理由：finishTask 保留 worktree_path 是刻意的（任务收尾不该
+	// 依赖 worktree 还在），终态任务带着失效路径是正常状态，客户端需要知道自己
+	// 「这个路径已经不能用了」。
+	WorktreeMissing bool `json:"worktree_missing"`
+}
+
+// WorktreeMissingNow 报告任务记录的 worktree 路径此刻是否还能当 agent cwd 用。
+//
+// 派生值，不落库：worktree 目录会事后被删（DELETE /api/git/worktrees、
+// wt-finish.sh cleanup、手工 rm），而 WorktreePath 全仓只有 ensureTaskWorktree
+// 一处写入、没人负责清。重建后自动转回 false，不需要数据迁移。
+//
+// 「路径为空」不算失效：worktree 是执行到 agent 段时才建的，任务刚建出来、
+// 或者首段还是 user 段时路径本来就该是空的，那不是失效，是还没建。
+func (t Task) WorktreeMissingNow() bool {
+	if !t.CreateWorktree {
+		return false
+	}
+	if strings.TrimSpace(t.WorktreePath) == "" {
+		return false
+	}
+	return !worktreeDirUsable(t.WorktreePath)
+}
+
+// worktreeDirUsable 报告一个路径此刻是否还能当 agent 的 cwd 用。
+//
+// 为什么要 stat 而不是看字段非空：WorktreePath 全仓只有 ensureTaskWorktree 一处写入，
+// 而目录可能事后被 DELETE /api/git/worktrees、wt-finish.sh cleanup 或用户手工删掉，
+// 没有任何代码清这个字段。拿「非空」当「存在」会让失效路径一路流到 agent 启动，
+// 用户看到的是 chdir 报错而不是「worktree 被删了」。
+//
+// 非目录（文件 / 符号链接指到文件）同样判为不可用：cwd 必须是目录。
+func worktreeDirUsable(path string) bool {
+	p := strings.TrimSpace(path)
+	if p == "" {
+		return false
+	}
+	info, err := os.Stat(p)
+	return err == nil && info.IsDir()
+}
+
+// MarshalJSON 在标准字段之外补上派生的 worktree_missing。
+//
+// 走这条路而不是在每个 handler 里手工加字段：Task 从不被整体序列化进 SQLite
+// （task_store.go 是逐字段写列的），所以自定义 marshal 不会影响持久化；
+// 而任务响应的出口很多（详情 / 列表 / overview / WS 广播 / 各动词回包），
+// 逐个加必然漏。
+func (t Task) MarshalJSON() ([]byte, error) {
+	type alias Task // 去掉方法，避免无限递归
+	out := alias(t)
+	out.WorktreeMissing = t.WorktreeMissingNow()
+	return json.Marshal(out)
 }
 
 type TaskAuxFlags struct {

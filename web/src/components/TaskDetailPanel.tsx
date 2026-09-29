@@ -10,6 +10,7 @@ import { uploadFiles } from "../services/upload";
 import { useI18n, type I18nContextValue } from "../i18n";
 import {
   addTaskStage,
+  rebuildTaskWorktree,
   removeTaskStage,
   renameTask,
   updateTaskStage,
@@ -21,7 +22,7 @@ import type { AgentStatus } from "../services/agents";
 import { reportError } from "../services/error";
 import { isTerminalKanbanTask, taskStatusColor } from "../app/appTask";
 import { DEFAULT_TASK_AGENT, DEFAULT_TASK_MODEL, inheritAgentStage } from "../app/appTask";
-import { RunNowIcon } from "../app/taskIcons";
+import { RunNowIcon, TaskRebuildWorktreeIcon } from "../app/taskIcons";
 
 export type TaskDetailPanelProps = {
   detail: TaskDetail | null;
@@ -280,6 +281,20 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
     } finally { setSaving(false); }
   };
 
+  // 重建 worktree：目录已被删时唯一有用的下一步。走和卡片同一个 API，
+  // 但不绕 App 的 handleMoveKanbanTask —— 那边只吃 run-now 这类状态迁移，
+  // 面板自己 apply 回来的 detail 才是这里的数据源。
+  const worktreeMissing = task?.create_worktree === true && task?.worktree_missing === true;
+  const rebuildWorktree = async () => {
+    if (!task) return;
+    try {
+      setSaving(true);
+      apply(await rebuildTaskWorktree(task.root_id, task.id, nodeId));
+    } catch (error) {
+      reportError("file.write_failed", String((error as Error)?.message || t("task.actionFailed")));
+    } finally { setSaving(false); }
+  };
+
   const numberLabel = task.task_number ? `#${task.task_number}` : "";
 
   return (
@@ -397,7 +412,20 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
                   <span style={{ fontSize: "11px", fontWeight: 700, color: taskStatusColor(run?.status || "") }}>
                     {executed ? statusText(run.status, t) : t("task.stage.notExecuted")}
                   </span>
-                  {canRunStage ? (
+                  {worktreeMissing ? (
+                    <button
+                      type="button"
+                      title={t("task.rebuildWorktree")}
+                      aria-label={t("task.rebuildWorktree")}
+                      disabled={saving}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => void rebuildWorktree()}
+                      style={{ ...runIconButtonStyle, color: "#d97706", opacity: saving ? 0.4 : 1 }}
+                    >
+                      <TaskRebuildWorktreeIcon />
+                    </button>
+                  ) : null}
+                  {canRunStage && !worktreeMissing ? (
                     <button
                       type="button"
                       title={t("task.runNow")}
