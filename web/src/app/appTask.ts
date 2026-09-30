@@ -3,8 +3,10 @@
  * 拆自 appSupport.tsx（2026-09 App.tsx 拆分）。
  */
 
-import {  MessageKey ,  MessageParams  } from "../i18n";
-import {  KanbanTask ,  StageRun ,  StageTemplate ,  TaskDetail ,  TaskTemplate  } from "../services/tasks";
+// 全是类型：写成 import type 是因为这里的纯函数要被 node --test 直接 import 跑
+// （tests/task-stage-panel.test.mjs），普通 import 会让 Node 去解析 ../i18n 这个目录而炸掉。
+import type { MessageKey, MessageParams } from "../i18n";
+import type { KanbanTask, StageRun, StageTemplate, TaskDetail, TaskTemplate } from "../services/tasks";
 
 /** 新建 agent 段时的默认 agent/模型：claude + sonnet，别再默认 codex。 */
 export const DEFAULT_TASK_AGENT = "claude";
@@ -128,6 +130,46 @@ export function latestTaskStageRun(detail: TaskDetail, stageIndex: number): Stag
 
 export function currentTaskInputFromDetail(detail: TaskDetail): string {
   return latestTaskStageRun(detail, detail.task.current_stage_index)?.input || "";
+}
+
+/**
+ * 「下一个能点立即执行的 agent 段」= 指针**之后**第一个 agent 段，且没跑过。没有就 -1。
+ *
+ * 从 current+1 起而不是从 current 起：run-now 的语义是**推进**（服务端
+ * `Service.RunNow` → `Next` → `moveRelative(+1)`），把按钮长在指针所在的段上，
+ * 点下去跑的却是下一段 —— 按钮在「没跑过的那张卡」上，动作却是「跳过这张卡」。
+ *
+ * 只给一个、也只长在这一张卡上：run-now 是任务级的，服务端只读
+ * `task.current_stage_index`，请求里的 stage_index 根本不参与（service.go:770）。
+ * 每段都发一个就成了假动作。
+ */
+export function nextRunnableStageIndex(detail: TaskDetail, currentStageIndex: number): number {
+  const stages = detail.task.stages || [];
+  for (let index = currentStageIndex + 1; index < stages.length; index++) {
+    if (stages[index]?.role !== "agent") continue;
+    const run = latestTaskStageRun(detail, index);
+    if (run && String(run.status) !== "pending") continue;
+    return index;
+  }
+  return -1;
+}
+
+/**
+ * 当前段能不能靠「立即执行」推进过去 —— `canAdvanceFromStage`（task_store.go:691）的前端镜像。
+ *
+ * 为什么要镜像而不是直接发按钮：那一段 fail/cancelled/rejected 时 moveRelative 直接报错，
+ * 而 `RunNow` 的 waiting_user 分支把这个错吞掉、只回详情（service.go:786）——
+ * 结果就是按钮点了**什么都不发生**。宁可不给。
+ * 服务端改这条规则时这里要跟着改，两边用同一份 statuses 清单。
+ */
+export function canAdvanceFromCurrentStage(detail: TaskDetail, currentStageIndex: number): boolean {
+  const stage = (detail.task.stages || [])[currentStageIndex];
+  if (!stage) return false;
+  const status = String(latestTaskStageRun(detail, currentStageIndex)?.status || "pending");
+  if (stage.role === "agent") {
+    return status === "pending" || status === "running" || status === "success" || status === "approved";
+  }
+  return ["pending", "running", "waiting_user", "approved", "success", "rejected"].includes(status);
 }
 
 export function previousTaskInputsFromDetail(detail: TaskDetail, t: (key: MessageKey, params?: MessageParams) => string): Array<{ id: string; label: string; input: string }> {

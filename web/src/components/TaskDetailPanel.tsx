@@ -20,7 +20,7 @@ import {
 } from "../services/tasks";
 import type { AgentStatus } from "../services/agents";
 import { reportError } from "../services/error";
-import { isTerminalKanbanTask, taskStatusColor } from "../app/appTask";
+import { canAdvanceFromCurrentStage, isTerminalKanbanTask, nextRunnableStageIndex, taskStatusColor } from "../app/appTask";
 import { DEFAULT_TASK_AGENT, DEFAULT_TASK_MODEL, inheritAgentStage } from "../app/appTask";
 import { RunNowIcon, TaskRebuildWorktreeIcon } from "../app/taskIcons";
 
@@ -124,6 +124,12 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
   // 第一段 user 段 = 任务输入
   const initialInput = (latestStageRun(detail, 0)?.input || stages[0]?.prompt_template || "").trim();
   const bodyStages = stages.slice(1); // 阶段流从 index 1 起
+
+  // 「立即执行」只给一个，长在下一个未执行的 agent 段那一行。
+  // 两个判据分别在 appTask 的 nextRunnableStageIndex / canAdvanceFromCurrentStage 里，
+  // 放那儿是因为它们是纯函数、可以被单测直接跑（组件内的逻辑只能被正则断言）。
+  const runnableStageIndex = nextRunnableStageIndex(detail, task.current_stage_index);
+  const advanceable = canAdvanceFromCurrentStage(detail, task.current_stage_index);
 
   const apply = (next: TaskDetail) => onMoved?.(next);
   const fail = (err: unknown) => reportError("file.write_failed", String((err as Error)?.message || ""));
@@ -341,9 +347,26 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
           <button type="button" onClick={() => { setEditingName(false); setNameDraft(task.name || ""); }} style={panelButtonStyle("secondary")}>{t("common.cancel")}</button>
         </>
       ) : (
-        <button type="button" aria-label={t("task.renameTask")} title={t("task.renameTask")} onClick={() => setEditingName(true)} style={pencilStyle(false)}>
-          <PencilIcon />
-        </button>
+        <>
+          {/* 重建 worktree 放面板头部、不放阶段行：阶段行是一张卡一个按钮，
+              放里面会对**每一段**都渲染一个（task-22 有 6 段 → 6 个一模一样的重建键）。
+              执行键已经不给它让位了（用户定的），这里就是那个唯一的重建入口。 */}
+          {worktreeMissing ? (
+            <button
+              type="button"
+              title={t("task.rebuildWorktree")}
+              aria-label={t("task.rebuildWorktree")}
+              disabled={saving}
+              onClick={() => void rebuildWorktree()}
+              style={{ ...pencilStyle(false), color: "#d97706", opacity: saving ? 0.4 : 1 }}
+            >
+              <TaskRebuildWorktreeIcon />
+            </button>
+          ) : null}
+          <button type="button" aria-label={t("task.renameTask")} title={t("task.renameTask")} onClick={() => setEditingName(true)} style={pencilStyle(false)}>
+            <PencilIcon />
+          </button>
+        </>
       )}
     >
       <div style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: "10px" }}>
@@ -367,16 +390,16 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
             const executed = !!run && String(run.status) !== "pending";
             const editing = editingStage === index;
             const isAgent = stage.role === "agent";
-            /* 「下一个可以执行的 agent 段」= 指针所在的那一段。服务端 run-now 是
-               **任务级**的：Service.RunNow 只看 task.current_stage_index，压根不读
-               请求里的 stage_index（service.go:707）。所以按钮只敢长在 isCurrent 的
-               卡上 —— 长在别处会出现「点了没跑 UI 却以为跑了下一段」的假象。
-               条件与看板卡片上的「立即执行」对齐（TaskCardRows 的 showAdvance），
-               另外要求是 agent 段：user 段是「等你写输入」，不是「可以跑了」。 */
-            const canRunStage = isAgent
-              && isCurrent
+            /* 「立即执行」长在**下一个未执行的 agent 段**这张卡上（runnableStageIndex），
+               跟看板卡片上那个按钮同一个图标、同一个绿（RunNowIcon + runIconButtonStyle）。
+               指针所在的段不给：run-now 的语义是「推进到下一段」，按钮在没跑过的卡上、
+               动作却是「跳过这张卡」，两处对不上就成了假动作。
+               worktree 目录被删**不**顶替这个按钮（用户定的）：点下去服务端会把
+               「worktree 目录已不存在」记到任务上，面板右上角就是那个重建入口。
+               正在跑 / 已暂停 / 终态任务不给 —— 服务端那边也都是 no-op。 */
+            const canRunStage = index === runnableStageIndex
+              && advanceable
               && !editing
-              && !executed
               && !!onRunTask
               && !isTerminalKanbanTask(task)
               && !(task.current_stage_status === "running" && task.status === "running");
@@ -401,77 +424,76 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
             return (
               <div key={stage.id || index} style={{ border: isCurrent ? "1px solid var(--accent-color)" : "1px solid var(--border-color)", borderRadius: "8px", background: "var(--panel-bg)", padding: "10px", display: "flex", flexDirection: "column", gap: "8px" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-                  {!editing ? (
-                    <span style={{ fontWeight: 800, fontSize: "12px", color: isCurrent ? "var(--accent-color)" : "var(--text-color)" }}>
-                      {stage.name || t("task.stageLabel", { index })}
-                    </span>
-                  ) : null}
-                  {!isAgent && !editing ? (
-                    <span style={tagStyle}>{t("task.stage.user")}</span>
-                  ) : null}
-                  <span style={{ fontSize: "11px", fontWeight: 700, color: taskStatusColor(run?.status || "") }}>
-                    {executed ? statusText(run.status, t) : t("task.stage.notExecuted")}
-                  </span>
-                  {worktreeMissing ? (
-                    <button
-                      type="button"
-                      title={t("task.rebuildWorktree")}
-                      aria-label={t("task.rebuildWorktree")}
-                      disabled={saving}
-                      onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => void rebuildWorktree()}
-                      style={{ ...runIconButtonStyle, color: "#d97706", opacity: saving ? 0.4 : 1 }}
-                    >
-                      <TaskRebuildWorktreeIcon />
-                    </button>
-                  ) : null}
-                  {canRunStage && !worktreeMissing ? (
-                    <button
-                      type="button"
-                      title={t("task.runNow")}
-                      aria-label={t("task.runNow")}
-                      disabled={saving}
-                      onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => void runStage()}
-                      style={{ ...runIconButtonStyle, opacity: saving ? 0.4 : 1 }}
-                    >
-                      <RunNowIcon />
-                    </button>
-                  ) : null}
-                  {run?.session_key ? (
-                    <button
-                      type="button"
-                      title={t("task.openSession", { index: 1 })}
-                      aria-label={t("task.openSession", { index: 1 })}
-                      onClick={() => onOpenSession(run.session_key as string)}
-                      style={sessionIconButtonStyle}
-                    >
-                      <span style={{ position: "relative", width: "18px", height: "18px", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
-                        <ModeIcon type="task" size={16} />
-                        <span style={{ position: "absolute", right: "-2px", bottom: "-2px", width: "10px", height: "10px", borderRadius: "999px", background: "var(--content-bg, #fff)", border: "1px solid rgba(255,255,255,0.9)", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
-                          <AgentIcon agentName={stage.agent || ""} style={{ width: "10px", height: "10px", display: "block" }} />
-                        </span>
+                  {/* 左组吃掉剩余空间（flex:1），右边那组自然被顶到行尾 ——
+                      不靠 marginLeft:auto：一行里两个 auto 会把剩余空间对半分，
+                      中间裂出一道缝。运行键因此紧挨着删除键，和看板卡片一致。 */}
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", flex: "1 1 auto", minWidth: 0 }}>
+                    {!editing ? (
+                      <span style={{ fontWeight: 800, fontSize: "12px", color: isCurrent ? "var(--accent-color)" : "var(--text-color)" }}>
+                        {stage.name || t("task.stageLabel", { index })}
                       </span>
-                    </button>
-                  ) : null}
-                  {editing ? (
-                    <button type="button" onClick={cancelEditStage} style={{ ...panelButtonStyle("secondary"), marginLeft: "auto", height: "26px", fontSize: "11px" }}>
-                      {t("common.cancel")}
-                    </button>
-                  ) : null}
-                  {!executed && !isCurrent ? (
-                    <button
-                      type="button"
-                      title={t("task.removeStage")}
-                      aria-label={t("task.removeStage")}
-                      disabled={saving}
-                      onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => requestRemoveStage(index)}
-                      style={{ ...panelIconButtonStyle(true, saving), marginLeft: editing ? 0 : "auto" }}
-                    >
-                      <TrashIcon />
-                    </button>
-                  ) : null}
+                    ) : null}
+                    {!isAgent && !editing ? (
+                      <span style={tagStyle}>{t("task.stage.user")}</span>
+                    ) : null}
+                    <span style={{ fontSize: "11px", fontWeight: 700, color: taskStatusColor(run?.status || "") }}>
+                      {executed ? statusText(run.status, t) : t("task.stage.notExecuted")}
+                    </span>
+                  </div>
+                  {/* 右组：运行（绿）/ 跳会话 / 删除，跟阶段名同一行、同一高度、贴右。
+                      删除键 30px、其余 22px 是仓库既有搭配（面板工具键比阶段键大），
+                      不为对齐去改尺寸 —— 改了两处都得跟着动。
+                      auto 归删除键：跳会话键出现时（那段跑过）要跟运行键之间留位，
+                      而两键不会同时出现 —— 运行键只给没跑过的段。 */}
+                  <div style={{ display: "flex", alignItems: "center", gap: "2px", flexShrink: 0 }}>
+                    {canRunStage ? (
+                      <button
+                        type="button"
+                        title={t("task.runNow")}
+                        aria-label={t("task.runNow")}
+                        disabled={saving}
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => void runStage()}
+                        style={{ ...runIconButtonStyle, opacity: saving ? 0.4 : 1 }}
+                      >
+                        <RunNowIcon />
+                      </button>
+                    ) : null}
+                    {run?.session_key ? (
+                      <button
+                        type="button"
+                        title={t("task.openSession", { index: 1 })}
+                        aria-label={t("task.openSession", { index: 1 })}
+                        onClick={() => onOpenSession(run.session_key as string)}
+                        style={{ ...sessionIconButtonStyle, marginLeft: 0 }}
+                      >
+                        <span style={{ position: "relative", width: "18px", height: "18px", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+                          <ModeIcon type="task" size={16} />
+                          <span style={{ position: "absolute", right: "-2px", bottom: "-2px", width: "10px", height: "10px", borderRadius: "999px", background: "var(--content-bg, #fff)", border: "1px solid rgba(255,255,255,0.9)", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
+                            <AgentIcon agentName={stage.agent || ""} style={{ width: "10px", height: "10px", display: "block" }} />
+                          </span>
+                        </span>
+                      </button>
+                    ) : null}
+                    {editing ? (
+                      <button type="button" onClick={cancelEditStage} style={{ ...panelButtonStyle("secondary"), height: "26px", fontSize: "11px" }}>
+                        {t("common.cancel")}
+                      </button>
+                    ) : null}
+                    {!executed && !isCurrent ? (
+                      <button
+                        type="button"
+                        title={t("task.removeStage")}
+                        aria-label={t("task.removeStage")}
+                        disabled={saving}
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => requestRemoveStage(index)}
+                        style={{ ...panelIconButtonStyle(true, saving), marginLeft: "auto" }}
+                      >
+                        <TrashIcon />
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
 
                 <StageEditor
@@ -608,8 +630,8 @@ const sessionIconButtonStyle: React.CSSProperties = {
   marginLeft: "auto",
 };
 
-/* 「运行」按钮贴左，跳转会话按钮自己带 marginLeft:auto 把它和左侧信息隔开。
-   两个按钮并排落在同一行的右端 —— 视觉顺序 = DOM 顺序。 */
+/* 阶段行右侧那组键里的「运行」键。贴右靠左边那组 flex:1，不靠 marginLeft:auto
+   —— 一行里两个 auto 会把剩余空间对半分，中间裂一道缝（见阶段行那段注释）。 */
 const runIconButtonStyle: React.CSSProperties = {
   ...sessionIconButtonStyle,
   marginLeft: 0,
