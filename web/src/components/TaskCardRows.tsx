@@ -121,14 +121,24 @@ export function TaskCardRows({
   const canResume = task.status === "paused";
   const showAdvance = !terminal && !stageRunning;
   const statusText = taskStatusLabel(task.status || "", t);
+  // 徽标说的是「**现在**有没有 worktree」，不是「当初要不要建树」。create_worktree
+  // 是创建时的配置，永久为 true；收尾之后它一点没变，于是徽标照样显示绿色 worktree，
+  // 用户刚点完收尾看到的还是「我有 worktree」。判据必须看 worktree_path 在不在 ——
+  // 收尾会把它清空，这就是「已收尾」的信号。
   const worktreeEnabled = task.create_worktree === true;
+  // 没开过 worktree 的任务不该因为「path 恰好有值」就显示有树 —— create_worktree
+  // 才是「这个任务用不用 worktree」的开关，path 只是结果。
+  const hasWorktreePath = worktreeEnabled && !!task.worktree_path;
   // 服务端派生的失效标记：worktree_path 还指着那个目录，但目录已经被删了
   // （DELETE /api/git/worktrees、wt-finish.sh cleanup、手工 rm）。
-  // 徽标原来只看 create_worktree，于是树早没了还显示一个自信的绿色标签。
   const worktreeMissing = worktreeEnabled && task.worktree_missing === true;
+  // 收尾过了：当初建过树，现在 path 被清空、目录也没了。
+  const worktreeFinished = worktreeEnabled && !hasWorktreePath && !worktreeMissing;
+  // 三种「不在」要分开：从来没建（amber）、建过但目录被删（red）、收尾拆掉了（灰）。
+  const worktreeTagState = worktreeMissing ? "missing" : worktreeFinished ? "finished" : hasWorktreePath ? "enabled" : "none";
   // 收尾要有可拆的 worktree：目录不在了给的是「重建」，没有 worktree 可拆。
   // 终态任务不给 —— 活已经结束了，没有正在 worktree 里的东西要收。
-  const canFinishWorktree = worktreeEnabled && !worktreeMissing && !!task.worktree_path && !terminal;
+  const canFinishWorktree = worktreeEnabled && !worktreeMissing && hasWorktreePath && !terminal;
   const numberLabel = task.task_number ? `#${task.task_number}` : "";
   const taskName = task.name || task.task_template_name || templateNameFallback || t("task.unnamedTemplate");
   const title = task.task_template_name || templateNameFallback || t("task.defaultTitle");
@@ -213,12 +223,24 @@ export function TaskCardRows({
           </>
         ) : null}
         <span
-          title={worktreeMissing ? t("task.worktreeMissingTitle") : worktreeEnabled ? t("task.worktreeTitle") : t("task.noWorktreeTitle")}
-          aria-label={worktreeMissing ? t("task.worktreeMissingTitle") : worktreeEnabled ? t("task.worktreeTitle") : t("task.noWorktreeTitle")}
-          style={taskWorktreeTagStyle(worktreeEnabled, worktreeMissing)}
+          title={worktreeTagState === "missing"
+            ? t("task.worktreeMissingTitle")
+            : worktreeTagState === "finished"
+              ? t("task.worktreeFinishedTitle")
+              : worktreeTagState === "enabled"
+                ? t("task.worktreeTitle")
+                : t("task.noWorktreeTitle")}
+          aria-label={worktreeTagState === "missing"
+            ? t("task.worktreeMissingTitle")
+            : worktreeTagState === "finished"
+              ? t("task.worktreeFinishedTitle")
+              : worktreeTagState === "enabled"
+                ? t("task.worktreeTitle")
+                : t("task.noWorktreeTitle")}
+          style={taskWorktreeTagStyle(worktreeTagState)}
         >
-          {worktreeEnabled ? null : <NoWorktreeIcon />}
-          worktree
+          {worktreeTagState === "enabled" || worktreeTagState === "missing" ? null : <NoWorktreeIcon />}
+          {worktreeTagState === "finished" ? t("task.worktreeFinishedLabel") : "worktree"}
         </span>
       </div>
       {children}

@@ -209,7 +209,7 @@ assert.doesNotMatch(
 //    标题行/操作行已抽进 TaskCardRows（看板和工作台共用），契约跟着文件走。
 const cardRows = readFileSync(new URL("../src/components/TaskCardRows.tsx", import.meta.url), "utf8");
 assert.equal(
-  (cardRows.match(/style=\{taskWorktreeTagStyle\(worktreeEnabled, worktreeMissing\)\}/g) || []).length,
+  (cardRows.match(/style=\{taskWorktreeTagStyle\(worktreeTagState\)\}/g) || []).length,
   1,
   "worktree badge 在卡片里只应渲染一次",
 );
@@ -222,10 +222,10 @@ assert.match(
 );
 assert.match(
   cardRows,
-  /worktreeMissing \? t\("task\.worktreeMissingTitle"\)/,
+  /worktreeTagState === "missing"\s*\?\s*t\("task\.worktreeMissingTitle"\)/,
   "失效态要有自己的 tooltip，别复用「已开启 worktree」",
 );
-assert.match(cardRows, /style=\{taskWorktreeTagStyle\(worktreeEnabled, worktreeMissing\)\}/, "标题条应保留 worktree badge");
+assert.match(cardRows, /style=\{taskWorktreeTagStyle\(worktreeTagState\)\}/, "标题条应保留 worktree badge");
 // 失效时给的是「重建」而不是「执行」：执行必然失败（cwd 就是那个不存在的目录）。
 assert.match(
   cardRows,

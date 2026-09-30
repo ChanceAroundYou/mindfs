@@ -306,11 +306,23 @@ export function taskAuxBadgeStyle(attention = false): React.CSSProperties {
   };
 }
 
-// enabled = 任务开了 worktree；missing = 开了但目录已经没了。
-// missing 单独一档而不是并进 !enabled：没开是「本来就没有」，开了又没了是「出过事」，
-// 两者给同一个样式等于让用户分不清自己的 worktree 是不是还在。
-export function taskWorktreeTagStyle(enabled: boolean, missing = false): React.CSSProperties {
-  const tone = missing ? "rgba(220, 38, 38, " : enabled ? "rgba(22, 163, 74, " : "rgba(217, 119, 6, ";
+// 四档：enabled（有活着的 worktree）/ missing（开过，目录被删了）/
+// finished（收尾过了，活已经并回主干）/ none（本来就没开）。
+// missing、finished、none 三者不并档：分别是「出过事」「干完了」「本来没有」，
+// 给同一个样式等于让用户分不清自己的 worktree 到底怎么了。
+export type WorktreeTagState = "enabled" | "missing" | "finished" | "none";
+
+export function taskWorktreeTagStyle(state: WorktreeTagState): React.CSSProperties {
+  const missing = state === "missing";
+  const finished = state === "finished";
+  const enabled = state === "enabled";
+  const tone = missing
+    ? "rgba(220, 38, 38, "
+    : finished
+      ? "rgba(100, 116, 139, "
+      : enabled
+        ? "rgba(22, 163, 74, "
+        : "rgba(217, 119, 6, ";
   return {
     flex: "0 0 auto",
     marginLeft: "auto",
@@ -320,11 +332,11 @@ export function taskWorktreeTagStyle(enabled: boolean, missing = false): React.C
     border: `1px solid ${tone}0.28)`,
     borderRadius: "4px",
     background: `${tone}0.08)`,
-    color: missing ? "#b91c1c" : enabled ? "#15803d" : "#b45309",
+    color: missing ? "#b91c1c" : finished ? "#475569" : enabled ? "#15803d" : "#b45309",
     fontSize: "9px",
     fontWeight: 800,
     lineHeight: "12px",
-    padding: enabled && !missing ? "0 4px" : "0 3px 0 2px",
+    padding: enabled || missing ? "0 4px" : "0 3px 0 2px",
   };
 }
 

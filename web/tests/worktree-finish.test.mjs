@@ -209,7 +209,7 @@ assert.match(
 );
 assert.match(
   card,
-  /const canFinishWorktree = worktreeEnabled && !worktreeMissing && !!task\.worktree_path && !terminal;/,
+  /const canFinishWorktree = worktreeEnabled && !worktreeMissing && hasWorktreePath && !terminal;/,
   "the card button must be withheld for missing worktrees and finished tasks alike",
 );
 assert.match(card, /onMove\(task, "finish-worktree"\)/, "the card button must dispatch finish-worktree");

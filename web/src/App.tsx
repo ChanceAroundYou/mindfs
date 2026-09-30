@@ -745,7 +745,24 @@ export function App({ onGoHome }: AppProps) {
             message: result.branch_skip_reason,
             details: (result.orphans || []).map((orphan) => `${orphan.path} (${orphan.files?.join(", ") || "空"})`),
           });
+          return;
         }
+        // 成功也必须说一句话。收尾会拆目录、删分支、清归属 —— 这些在界面上
+        // 只表现为「徽标还在」或「徽标忽然没了」，用户点了按钮却什么都没发生，
+        // 没法区分「做完了」和「按钮坏了」。真的做了什么逐条报出来。
+        const doneLines: string[] = [];
+        if (result.commit) doneLines.push(result.commit);
+        if (result.worktree_removed) doneLines.push(t("task.finishWorktreeRemoved"));
+        if (result.branch_deleted) doneLines.push(t("task.finishWorktreeBranchDeleted"));
+        if (result.branch_skip_reason) doneLines.push(result.branch_skip_reason);
+        for (const orphan of result.orphans || []) {
+          doneLines.push(t("task.finishWorktreeOrphan", { path: orphan.path }));
+        }
+        setTaskSessionErrorDialog({
+          title: t("task.finishWorktreeDone"),
+          message: doneLines.join("\n"),
+          details: [],
+        });
         return;
       }
       const detail = action === "rebuild-worktree"
