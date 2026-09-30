@@ -86,7 +86,14 @@ ok "已推送 main"
 step "本机构建并安装"
 make build >/tmp/mindfs-build.log 2>&1 || { tail -30 /tmp/mindfs-build.log >&2; die "make build 失败"; }
 make install >>/tmp/mindfs-build.log 2>&1 || { tail -30 /tmp/mindfs-build.log >&2; die "make install 失败"; }
-VERSION="$(grep -oE 'version=v[0-9][^ ]*' /tmp/mindfs-build.log | tail -1 | cut -d= -f2)"
+# 版本号不能只认 v[0-9]…：Makefile 的 VERSION 来自 `git describe --tags --always`，
+# 最近的一个 tag 要是叫 backup-pre-v0.5.5（备份 tag），describe 就返回
+# backup-pre-v0.5.5-41-gd1d0df2。老的 `version=v[0-9]` 匹配不上，grep 退出码非 0，
+# 在 set -euo pipefail 下直接把脚本打死在本机装完之后 —— 表现是「推到 origin 了、
+# 本机也装上了，然后没声没响地没了」，WSL 根本没部署。这里匹配 -X main.version= 后面
+# 的整个词，再把尾部引号剥掉。
+VERSION="$(sed -nE 's/.*-X main\.version=([^ "]+).*/\1/p' /tmp/mindfs-build.log | tail -1)"
+[[ -n "$VERSION" ]] || die "从构建日志里读不出版本号（/tmp/mindfs-build.log）"
 ok "本机已安装 $VERSION"
 
 # ── 5. WSL 端：拉取 → 重建 → 安装 → 重启 ──
