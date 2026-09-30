@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import test from "node:test";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -10,6 +11,7 @@ const composer = fs.readFileSync(path.join(root, "src/components/action/composer
 const composerHeight = fs.readFileSync(path.join(root, "src/components/action/useComposerEditorHeight.ts"), "utf8");
 const tasks = fs.readFileSync(path.join(root, "src/services/tasks.ts"), "utf8");
 const app = fs.readFileSync(path.join(root, "src/App.tsx"), "utf8");
+const appTask = fs.readFileSync(path.join(root, "src/app/appTask.ts"), "utf8");
 const zh = fs.readFileSync(path.join(root, "src/i18n/locales/zh-CN.ts"), "utf8");
 const en = fs.readFileSync(path.join(root, "src/i18n/locales/en-US.ts"), "utf8");
 
@@ -172,7 +174,6 @@ assert.doesNotMatch(zh, /"task\.initialInput": "任务初始输入"/, "zh-CN mus
 assert.match(en, /"task\.initialInput": "Task input"/, "en-US must label the first stage Task input");
 
 // 新增阶段：复制上一段的 agent/model，模板面板和任务详情都走同一个函数。
-const appTask = fs.readFileSync(path.join(root, "src/app/appTask.ts"), "utf8");
 const templateDialog = fs.readFileSync(path.join(root, "src/components/TaskTemplateDialog.tsx"), "utf8");
 assert.match(
   appTask,
@@ -214,13 +215,26 @@ for (const [src, name] of [[panel, "TaskDetailPanel"], [templateDialog, "TaskTem
   );
 }
 
-// 详情面板的「立即执行」：只长在指针所在（isCurrent）的那一段卡上，跳转会话按钮左边。
-// 钉死 isCurrent 这条是必须的 —— 服务端 RunNow 是任务级的，只读 task.current_stage_index，
-// 请求里的 stage_index 根本不参与（service.go:707）。按钮长在别的段上就成了假动作。
+// 详情面板的「立即执行」：长在**下一个未执行的 agent 段**那一行，跟删除键并排贴右，
+// 跟看板卡片上那个按钮同一个图标、同一个绿。
+// 钉死「只给一个、且是 current 之后第一个」是必须的 —— 服务端 run-now 是任务级的，
+// 只读 task.current_stage_index，请求里的 stage_index 根本不参与（service.go:770）。
+// 长在指针所在的段上就是假动作（按钮在没跑过的卡上、动作却是「跳过这张卡」），
+// 每段都发一个更是假的。
+assert.match(
+  appTask,
+  /export function nextRunnableStageIndex\(detail: TaskDetail, currentStageIndex: number\): number \{/,
+  "the run target must be a pure helper in appTask, not inline JSX (so it can be unit tested)",
+);
+assert.match(
+  appTask,
+  /for \(let index = currentStageIndex \+ 1; index < stages\.length; index\+\+\) \{[\s\S]{0,400}?stages\[index\]\?\.role !== "agent"[\s\S]{0,300}?return index;/,
+  "the run target must be the first unexecuted agent stage AFTER the current one",
+);
 assert.match(
   panel,
-  /const canRunStage = isAgent\s*&&\s*isCurrent/,
-  "the run button must be gated on the current stage, matching the task-scoped run-now API",
+  /const canRunStage = index === runnableStageIndex/,
+  "the run button must be gated on that single next-stage index",
 );
 assert.match(
   panel,
@@ -232,12 +246,32 @@ assert.match(
   /title=\{t\("task\.runNow"\)\}/,
   "the run button must reuse the existing 立即执行 label",
 );
+// 跟看板卡片对齐：同一个 RunNowIcon、同一个 accent 绿（runIconButtonStyle）。
+assert.match(panel, /<RunNowIcon \/>/, "the run button must use the shared RunNowIcon");
 assert.match(
   panel,
-  /\{canRunStage && !worktreeMissing \? \([\s\S]{0,900}?<RunNowIcon \/>[\s\S]{0,600}?\{run\?\.session_key \? \(/,
-  "the run button must render before the jump-to-session button",
+  /color: "var\(--accent-color\)",/,
+  "the run button must use the same accent green as the kanban card",
 );
-// worktree 目录已删时，播放键换成重建键：执行必然失败（cwd 就是那个不存在的目录）。
+assert.match(panel, /onClick=\{\(\) => void runStage\(\)\}/, "the run button must go through runStage");
+// 位置：右组里、删除键左边，跟阶段名同一行。
+assert.match(
+  panel,
+  /\{canRunStage \? \([\s\S]{0,900}?<RunNowIcon \/>[\s\S]{0,2500}?\{run\?\.session_key \? \([\s\S]{0,2500}?\{!executed && !isCurrent \? \([\s\S]{0,600}?<TrashIcon \/>/,
+  "run / jump-to-session / delete must sit in one right-aligned group, run leftmost of the three",
+);
+assert.match(
+  panel,
+  /flex: "1 1 auto", minWidth: 0 \}\}>\s*\{!editing \? \(/,
+  "the left group must take the free space so the button group is pushed to the row end",
+);
+// worktree 目录已删**不**顶替运行键（用户定的）：运行键无条件给，点了服务端会记下
+// 「worktree 目录已不存在」；重建入口单独放面板头部。
+assert.doesNotMatch(
+  panel,
+  /canRunStage && !worktreeMissing/,
+  "a missing worktree must not suppress the run button",
+);
 assert.match(
   panel,
   /const worktreeMissing = task\?\.create_worktree === true && task\?\.worktree_missing === true;/,
@@ -250,24 +284,112 @@ assert.match(
 );
 assert.match(
   panel,
-  /\{worktreeMissing \? \([\s\S]{0,700}?onClick=\{\(\) => void rebuildWorktree\(\)\}/,
-  "the rebuild button must be reachable from the stage row",
-);
-assert.match(
-  panel,
   /title=\{t\("task\.rebuildWorktree"\)\}/,
   "the rebuild button must reuse the existing 重建 worktree label",
 );
-assert.match(panel, /<RunNowIcon \/>/, "the run button must use the shared RunNowIcon");
+// 重建键只能有一个：放阶段行里会对每一段都渲染一个（task-22 六段 → 六个一样的键）。
+// 钉死它在 headerRight 里、且全文只出现一次。
+assert.equal(
+  (panel.match(/<TaskRebuildWorktreeIcon \/>/g) || []).length,
+  1,
+  "the rebuild button must render exactly once, not once per stage",
+);
 assert.match(
   panel,
-  /onClick=\{\(\) => void runStage\(\)\}/,
-  "the run button must go through runStage",
+  /headerRight=\{editingName \? \([\s\S]{0,600}?\) : \(\s*<>[\s\S]{0,700}?\{worktreeMissing \? \([\s\S]{0,700}?onClick=\{\(\) => void rebuildWorktree\(\)\}[\s\S]{0,400}?<PencilIcon \/>/,
+  "the rebuild button must live in the panel header, left of the rename pencil",
+);
+// 当前段 fail/cancelled/rejected 时不许给：服务端 moveRelative 会报错，而 RunNow 的
+// waiting_user 分支把错吞掉只回详情（service.go:786）—— 按钮点了什么都不发生。
+assert.match(
+  appTask,
+  /export function canAdvanceFromCurrentStage\(detail: TaskDetail, currentStageIndex: number\): boolean \{/,
+  "the advance gate must be a named helper mirroring the server rule",
+);
+assert.match(
+  panel,
+  /const canRunStage = index === runnableStageIndex\s*&&\s*advanceable/,
+  "the run button must also require the current stage to be advanceable",
 );
 assert.match(
   app,
   /onRunTask=\{\(task\) => handleMoveKanbanTask\(task, "run-now"\)\}/,
   "the detail panel must reuse App's handleMoveKanbanTask, not call moveTask itself",
 );
+
+// ---- 上面是「源码长什么样」，下面是「算出来对不对」：直接跑真函数 ----
+// 正则只能钉住结构，钉不住 nextRunnableStageIndex / canAdvanceFromCurrentStage 的分支。
+// 这两个是纯函数，仓库有先例（markdownOutline.test.mjs 直接 import 源码跑）。
+const { canAdvanceFromCurrentStage, nextRunnableStageIndex } = await import("../src/app/appTask.ts");
+
+const mkStages = (roles) => roles.map((role, i) => ({ name: `S${i}`, role, prompt_template: "p" }));
+const mkDetail = (roles, runs) => ({
+  task: { id: "t1", root_id: "r", status: "waiting_user", current_stage_index: 0, stages: mkStages(roles) },
+  stage_runs: runs.map((r) => ({ stage_index: r[0], role: "user", status: r[1], created_at: `2026-01-01T00:00:0${r[0]}Z` })),
+  events: [],
+});
+
+test("run button lands on the first unexecuted agent stage after the pointer", () => {
+  // 真机 task-22 的形状：指针停在已 success 的第 4 段，下一段从没跑过 → 按钮该在第 5 段。
+  const detail = mkDetail(
+    ["user", "agent", "agent", "agent", "agent", "agent"],
+    [[0, "approved"], [1, "success"], [2, "approved"], [3, "approved"], [4, "success"]],
+  );
+  assert.equal(nextRunnableStageIndex(detail, 4), 5, "task-22: button belongs on stage 5");
+  // 指针回到 0：1~4 全跑过了，所以仍然是第 5 段，不是「第一个 agent 段」。
+  assert.equal(nextRunnableStageIndex(detail, 0), 5, "already-run stages are skipped regardless of the pointer");
+});
+
+test("run button lands on the first agent stage when nothing after the pointer has run", () => {
+  const detail = mkDetail(["user", "agent", "agent"], [[0, "approved"]]);
+  assert.equal(nextRunnableStageIndex(detail, 0), 1, "a fresh pointer gets the very first agent stage");
+});
+
+test("run button never lands on the pointer's own stage or an already-run one", () => {
+  const detail = mkDetail(["user", "agent", "agent", "agent"], [[0, "approved"], [1, "success"], [2, "success"]]);
+  assert.equal(
+    nextRunnableStageIndex(detail, 2),
+    3,
+    "the pointer's own stage is skipped even when it never ran — run-now advances, it does not re-run",
+  );
+  assert.equal(nextRunnableStageIndex(detail, 3), -1, "nothing left to run");
+  // 全部跑完 → 没有按钮，而不是退回去给一个已经跑过的段。
+  const done = mkDetail(["user", "agent", "agent"], [[0, "approved"], [1, "success"], [2, "success"]]);
+  assert.equal(nextRunnableStageIndex(done, 2), -1);
+});
+
+test("user stages are skipped when picking the run target", () => {
+  // 下一个是 user 段（等输入），按钮不该长在那儿 —— 那是「等你写输入」，不是「可以跑了」。
+  const detail = mkDetail(["user", "agent", "user", "agent"], [[0, "approved"], [1, "success"]]);
+  assert.equal(nextRunnableStageIndex(detail, 1), 3, "jump over the user stage to the next agent one");
+});
+
+test("a pending stage run still counts as unexecuted", () => {
+  // 段已建但还没跑（run 存在、status=pending）→ 该给按钮。
+  const detail = mkDetail(["user", "agent", "agent"], [[0, "approved"], [1, "success"], [2, "pending"]]);
+  assert.equal(nextRunnableStageIndex(detail, 1), 2);
+});
+
+test("advance gate mirrors the server: failed/cancelled current stage blocks the button", () => {
+  // 服务端 canAdvanceFromStage 对 fail/cancelled 返回 false，moveRelative 报错，
+  // 而 RunNow 的 waiting_user 分支把错吞掉只回详情 → 按钮点了什么都不发生。宁可不给。
+  // rejected 是**允许**的：user 段被否掉也算「你处理过了」，可以往下走（task_store.go:703）。
+  for (const status of ["fail", "cancelled"]) {
+    const detail = mkDetail(["user", "agent", "agent"], [[0, status], [1, "pending"]]);
+    assert.equal(canAdvanceFromCurrentStage(detail, 0), false, `user stage ${status} must not advance`);
+  }
+  for (const status of ["success", "approved", "pending", "running", "waiting_user", "rejected"]) {
+    const detail = mkDetail(["user", "agent", "agent"], [[0, status], [1, "pending"]]);
+    assert.equal(canAdvanceFromCurrentStage(detail, 0), true, `user stage ${status} must advance`);
+  }
+  // agent 段：fail/cancelled/rejected 不许推进，success/approved/running 都算走完了。
+  for (const [status, expected] of [["fail", false], ["cancelled", false], ["rejected", false], ["success", true], ["approved", true], ["running", true]]) {
+    const detail = mkDetail(["user", "agent", "agent"], [[0, "approved"], [1, status], [2, "pending"]]);
+    assert.equal(canAdvanceFromCurrentStage(detail, 1), expected, `agent stage ${status}`);
+  }
+  // 指针越界 / 段不存在 → 不给按钮（而不是当成可推进）。
+  const detail = mkDetail(["user", "agent"], [[0, "approved"]]);
+  assert.equal(canAdvanceFromCurrentStage(detail, 9), false);
+});
 
 console.log("task-stage-panel.test.mjs: OK");
