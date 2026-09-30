@@ -170,6 +170,7 @@ import {
 import { fetchAgents, restartAgent, type AgentStatus } from "./services/agents";
 import { fetchCandidates, type CandidateItem } from "./services/candidates";
 import {
+  beginTaskFinishWorktree,
   createTask,
   deleteTaskTemplate,
   // FinishWorktreeConflict 是 class 不是 type：下面要用 instanceof 分流
@@ -177,7 +178,6 @@ import {
   FinishWorktreeConflict,
   fetchTaskDetails,
   fetchTaskTemplates,
-  finishTaskWorktree,
   getCachedTaskDetails,
   getCachedTaskMeta,
   moveTask,
@@ -732,37 +732,21 @@ export function App({ onGoHome }: AppProps) {
     const nodeId = getNodeIdForRoot(rootId);
     try {
       if (action === "finish-worktree") {
-        // 收尾走独立 API（合并 + 拆 worktree + 删分支），返回的不是 TaskDetail 而是
-        // 「实际做了什么」。任务本身的详情要另外拉一次回来刷新。
-        const result = await finishTaskWorktree(rootId, task.id, { nodeId });
-        // 收尾返回的是「做了什么」，任务详情得另外拉回来（worktree_path 被清掉了）。
-        const refreshed = await fetchTaskDetails(rootId, { taskNumber: task.task_number }, nodeId).catch(() => [] as TaskDetail[]);
-        if (refreshed.length > 0) applyTaskDetails(rootId, refreshed);
-        // 分支没删掉（未合并被 branch -d 拒绝）要说出来，否则「没删」看着像「不用删」。
-        if (!result.branch_deleted && result.branch_skip_reason) {
-          setTaskSessionErrorDialog({
-            title: t("task.finishWorktree"),
-            message: result.branch_skip_reason,
-            details: (result.orphans || []).map((orphan) => `${orphan.path} (${orphan.files?.join(", ") || "空"})`),
-          });
-          return;
-        }
-        // 成功也必须说一句话。收尾会拆目录、删分支、清归属 —— 这些在界面上
-        // 只表现为「徽标还在」或「徽标忽然没了」，用户点了按钮却什么都没发生，
-        // 没法区分「做完了」和「按钮坏了」。真的做了什么逐条报出来。
-        const doneLines: string[] = [];
-        if (result.commit) doneLines.push(result.commit);
-        if (result.worktree_removed) doneLines.push(t("task.finishWorktreeRemoved"));
-        if (result.branch_deleted) doneLines.push(t("task.finishWorktreeBranchDeleted"));
-        if (result.branch_skip_reason) doneLines.push(result.branch_skip_reason);
-        for (const orphan of result.orphans || []) {
-          doneLines.push(t("task.finishWorktreeOrphan", { path: orphan.path }));
-        }
-        setTaskSessionErrorDialog({
-          title: t("task.finishWorktreeDone"),
-          message: doneLines.join("\n"),
-          details: [],
+        // 收尾是不可逆的：合回主干 + 拆目录 + 删分支 + 搬会话，没有撤销。
+        // 而它就长在执行键旁边，位置一撞就点得到 —— 确认弹窗是唯一的闸门。
+        // 用 info 而不是 danger：这不是「删掉就没了」，走完的分支都已并进主干。
+        const ok = await confirmDialog({
+          message: t("task.finishWorktreeConfirm"),
+          confirmLabel: t("task.finishWorktree"),
+          danger: true,
         });
+        if (!ok) return;
+        // 只追加一段收尾阶段并起 agent。清场（拆目录/删分支/搬会话）由服务端在
+        // 那一段成功之后自己做，结论走 WS task.finish_teardown 回来 —— 所以这里
+        // 只把 detail 应用上去让徽标转「收尾中」，不发成功提示：那会儿还什么都没成。
+        const detail = await beginTaskFinishWorktree(rootId, task.id, nodeId);
+        applyTaskDetails(rootId, [detail]);
+        reportError("file.write_failed", t("task.finishWorktreeStarted"), { severity: "info", recoverable: false });
         return;
       }
       const detail = action === "rebuild-worktree"
@@ -7114,6 +7098,7 @@ export function App({ onGoHome }: AppProps) {
       setSessions,
       setSlashCommandResults,
       setStatus,
+      setTaskSessionErrorDialog,
       setUpdateState,
     },
     actions: { // App 的动作

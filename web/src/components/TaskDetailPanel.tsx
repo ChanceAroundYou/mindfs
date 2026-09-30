@@ -10,24 +10,21 @@ import { uploadFiles } from "../services/upload";
 import { useI18n, type I18nContextValue } from "../i18n";
 import {
   addTaskStage,
-  // FinishWorktreeConflict 是 class 不是 type：下面要拿它做 instanceof 分流
-  // （冲突要列文件清单，其它失败只报一句），import type 的话 instanceof 编译不过。
-  FinishWorktreeConflict,
-  finishTaskWorktree,
+  beginTaskFinishWorktree,
   rebuildTaskWorktree,
   removeTaskStage,
   renameTask,
   updateTaskStage,
-  type FinishWorktreeResult,
   type KanbanTask,
   type StageTemplate,
   type TaskDetail,
 } from "../services/tasks";
+import { confirmDialog } from "../services/dialog";
 import type { AgentStatus } from "../services/agents";
 import { reportError } from "../services/error";
-import { canAdvanceFromCurrentStage, isTerminalKanbanTask, nextRunnableStageIndex, taskStatusColor } from "../app/appTask";
+import { canAdvanceFromCurrentStage, isFinishStageActive, isTerminalKanbanTask, nextRunnableStageIndex, taskStatusColor } from "../app/appTask";
 import { DEFAULT_TASK_AGENT, DEFAULT_TASK_MODEL, inheritAgentStage } from "../app/appTask";
-import { RunNowIcon, TaskFinishWorktreeIcon, TaskRebuildWorktreeIcon } from "../app/taskIcons";
+import { RunNowIcon, TaskFinishWorktreeIcon, TaskQueuedSpinnerIcon, TaskRebuildWorktreeIcon } from "../app/taskIcons";
 
 export type TaskDetailPanelProps = {
   detail: TaskDetail | null;
@@ -99,10 +96,6 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
     setEditingName(false);
     setEditingStage(-1);
     setPendingConfirm(null);
-    // 面板是**一个常驻实例**（App.tsx 按 selectedKanbanTask 复用它，没有 key），
-    // 不清的话 A 任务的收尾结果/冲突会顶着 B 任务的头显示出来，而 B 根本没冲突过。
-    setFinishResult(null);
-    setFinishConflict(null);
   }, [task?.id]);
 
   useEffect(() => {
@@ -310,33 +303,32 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
     } finally { setSaving(false); }
   };
 
-  // worktree 收尾：把分支合回主干、拆掉 worktree 和分支。这是 wt-finish 的服务端那一半，
-  // 一次点击走完 merge → remove → branch -d。
+  // worktree 收尾：追加一段收尾阶段，让 agent 自己提交并合并回主干，成功之后
+  // 服务端才拆目录、删分支、搬会话。这一步**不可逆**，所以先弹窗确认。
   //
   // 冲突**不自动 abort**：解到一半的取舍连同 MERGE_MSG 一起丢掉，用户得从头再来。
-  // 所以撞上冲突时把文件清单留在面板上让人工处理（服务端那边仓库停在 MERGE_HEAD，
-  // worktree 和分支都还在，什么都没丢）。
+  // 撞上冲突时服务端会把文件清单播回来（task.finish_teardown），由 App 转成
+  // 那个「标题 + 详情列表」弹窗 —— 面板这边不重复渲染一份。
   //
   // 只在「worktree 还真的在」时给：目录已经没了的（worktree_missing）该点的是重建，
-  // 收尾无从下手 —— 没有 worktree 可拆，合的分支也已经不在了。
+  // 收尾无从下手。已经在收尾流程里的也不给（再点是往同一条流程上叠一段）。
+  const finishActive = isFinishStageActive(task);
   const canFinishWorktree = task?.create_worktree === true
     && !!task?.worktree_path
-    && task?.worktree_missing !== true;
-  const [finishResult, setFinishResult] = useState<FinishWorktreeResult | null>(null);
-  const [finishConflict, setFinishConflict] = useState<FinishWorktreeConflict | null>(null);
+    && task?.worktree_missing !== true
+    && !isTerminalKanbanTask(task)
+    && !finishActive;
   const finishWorktree = async () => {
     if (!task) return;
-    setFinishResult(null);
-    setFinishConflict(null);
+    if (!await confirmDialog({ message: t("task.finishWorktreeConfirm"), confirmLabel: t("task.finishWorktree"), danger: true })) {
+      return;
+    }
     try {
       setSaving(true);
-      const result = await finishTaskWorktree(task.root_id, task.id, { nodeId });
-      setFinishResult(result);
-      apply({ ...detail, task: result.task });
+      apply(await beginTaskFinishWorktree(task.root_id, task.id, nodeId));
+      reportError("file.write_failed", t("task.finishWorktreeStarted"), { severity: "info", recoverable: false });
     } catch (error) {
-      // 冲突要单独渲染（带文件清单），其它失败只报一句 —— 两者要人工处理的程度不同。
-      if (error instanceof FinishWorktreeConflict) setFinishConflict(error);
-      else reportError("file.write_failed", String((error as Error)?.message || t("task.actionFailed")));
+      reportError("file.write_failed", String((error as Error)?.message || t("task.actionFailed")));
     } finally { setSaving(false); }
   };
 
@@ -402,9 +394,19 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
               <TaskRebuildWorktreeIcon />
             </button>
           ) : null}
-          {/* 收尾 worktree：活干完了把分支合回主干、拆掉 worktree 和分支。
-              目录已经没了的不给 —— 那种情况该点的是上面的重建键，没有 worktree 可拆。 */}
-          {canFinishWorktree ? (
+          {/* 收尾 worktree：追加一段收尾阶段让 agent 提交并合并，成功后服务端
+              自己清场。目录已经没了的不给 —— 那种情况该点的是上面的重建键。
+              已经在收尾里就把按钮换成转圈：它必须是个「正在动」的读数，
+              而不是第二个能把收尾再叠一段的按钮。 */}
+          {finishActive ? (
+            <span
+              title={t("task.worktreeFinishingTitle")}
+              aria-label={t("task.worktreeFinishingTitle")}
+              style={{ ...pencilStyle(false), color: "var(--status-ok)", cursor: "default", display: "inline-flex" }}
+            >
+              <TaskQueuedSpinnerIcon />
+            </span>
+          ) : canFinishWorktree ? (
             <button
               type="button"
               title={t("task.finishWorktree")}
@@ -423,43 +425,23 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
       )}
     >
       <div style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: "10px" }}>
-          {/* 收尾结果 / 冲突。冲突要把文件列出来：这是「要人工处理」的信号，
-              只给一句「合并失败」的话用户还得自己去 git 里翻是哪些文件。 */}
-          {finishConflict ? (
+          {/* 收尾进行中：这一段跑着的整段时间里，面板上唯一该说的话就是「在动」。
+              收尾段成功/受阻之后清场由服务端自己接着跑，结论走 WS 的
+              task.finish_teardown 回到 App 那个弹窗 / toast —— 面板不存第二份。 */}
+          {finishActive ? (
             <div
-              data-onboarding="task-finish-conflict"
-              style={{ border: "1px solid var(--status-bad)", borderRadius: "8px", padding: "10px", display: "flex", flexDirection: "column", gap: "6px" }}
+              data-onboarding="task-finish-active"
+              style={{ border: "1px solid var(--status-ok)", borderRadius: "8px", padding: "10px", display: "flex", alignItems: "center", gap: "8px" }}
             >
-              <span style={{ fontSize: "11px", fontWeight: 800, color: "var(--status-bad)" }}>{t("task.finishWorktreeConflict")}</span>
-              {finishConflict.conflictFiles.length > 0 ? (
-                <ul style={{ margin: 0, paddingLeft: "18px", display: "flex", flexDirection: "column", gap: "2px" }}>
-                  {finishConflict.conflictFiles.map((file) => (
-                    <li key={file} style={{ fontSize: "12px", fontFamily: "var(--font-mono, monospace)", color: "var(--text-color)" }}>{file}</li>
-                  ))}
-                </ul>
-              ) : null}
-              <span style={{ fontSize: "11px", color: "var(--text-secondary)" }}>{t("task.finishWorktreeConflictHint")}</span>
-            </div>
-          ) : null}
-          {finishResult && !finishConflict ? (
-            <div
-              data-onboarding="task-finish-result"
-              style={{ border: "1px solid var(--border-color)", borderRadius: "8px", padding: "10px", display: "flex", flexDirection: "column", gap: "4px" }}
-            >
-              <span style={{ fontSize: "11px", fontWeight: 800, color: "var(--status-ok)" }}>{t("task.finishWorktreeDone")}</span>
-              {finishResult.commit ? (
-                <span style={{ fontSize: "11px", fontFamily: "var(--font-mono, monospace)", color: "var(--text-secondary)" }}>{finishResult.commit}</span>
-              ) : null}
-              {/* 分支没删掉时要说原因，不能让「没删」看起来像「不用删」——
-                  典型是未合并被 git branch -d 拒绝。 */}
-              {!finishResult.branch_deleted && finishResult.branch_skip_reason ? (
-                <span style={{ fontSize: "11px", color: "var(--status-warn)" }}>{finishResult.branch_skip_reason}</span>
-              ) : null}
-              {(finishResult.orphans || []).map((orphan) => (
-                <span key={orphan.path} style={{ fontSize: "11px", color: "var(--text-secondary)" }}>
-                  {t("task.finishWorktreeOrphan", { path: orphan.path })}
-                </span>
-              ))}
+              <span
+                aria-hidden="true"
+                style={{
+                  width: "12px", height: "12px", flex: "0 0 auto", borderRadius: "999px",
+                  border: "2px solid var(--status-ok)", borderTopColor: "transparent",
+                  animation: "mindfs-update-spin 0.9s linear infinite",
+                }}
+              />
+              <span style={{ fontSize: "11px", color: "var(--text-secondary)" }}>{t("task.worktreeFinishingTitle")}</span>
             </div>
           ) : null}
           {initialInput ? (
@@ -488,12 +470,15 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
                动作却是「跳过这张卡」，两处对不上就成了假动作。
                worktree 目录被删**不**顶替这个按钮（用户定的）：点下去服务端会把
                「worktree 目录已不存在」记到任务上，面板右上角就是那个重建入口。
-               正在跑 / 已暂停 / 终态任务不给 —— 服务端那边也都是 no-op。 */
+               正在跑 / 已暂停 / 终态 / 收尾中都不给 —— 前三个服务端那边也都是 no-op；
+               收尾中更不能给：清场马上就要拆掉 worktree，那时候推进阶段就是对着
+               一个即将消失的目录干活。 */
             const canRunStage = index === runnableStageIndex
               && advanceable
               && !editing
               && !!onRunTask
               && !isTerminalKanbanTask(task)
+              && !finishActive
               && !(task.current_stage_status === "running" && task.status === "running");
             const shown = executed ? (run?.rendered_prompt || stage.prompt_template || "") : (stage.prompt_template || "");
             // 编辑态用草稿值渲染，未保存前先让用户看到自己刚改的

@@ -12,6 +12,15 @@ const (
 	RoleUser  = "user"
 	RoleAgent = "agent"
 
+	// StageKindWorktreeFinish 标记「收尾段」：由 BeginFinishWorktree 追加的一段
+	// agent 工作，让 agent 自己 commit 并 merge 回主干；这段成功后由服务端接着清场
+	// （合并 → 拆 worktree → 删分支 → 会话 repoint 回主 checkout）。
+	//
+	// 为什么分段跑而不是一键收尾：agent 的活没 commit 时，服务端直接 merge 等于白干；
+	// 有未提交改动时 `git worktree remove` 又会拒绝。commit 这件事只有 agent 知道
+	// 哪些是成品、哪些是半成品 —— 与 wt-finish.sh 把 commit 交给 agent 是同一个分工。
+	StageKindWorktreeFinish = "worktree_finish"
+
 	// 任务状态对齐全局状态列：待开始 / 进行中 / 等待你 / 已完成 / 失败·取消。
 	// 旧数据中的 queued/paused 在迁移时分别归入 pending/running。
 	StatusPending     = "pending"
@@ -45,18 +54,29 @@ type StageTemplate struct {
 	// StartImmediately 只对首段（任务输入）有意义：建完任务立刻开跑，
 	// 不用等用户点「立即执行」。user 段的 AutoAdvance 是引擎不读的死字段
 	// （user 段被批准后一律推进），别拿它表达「要不要开跑」。
-	StartImmediately     bool      `json:"start_immediately,omitempty"`
-	Agent                string    `json:"agent,omitempty"`
-	Model                string    `json:"model,omitempty"`
-	Mode                 string    `json:"mode,omitempty"`
-	Effort               string    `json:"effort,omitempty"`
-	FastService          string    `json:"fast_service,omitempty"`
-	PlanMode             bool      `json:"plan_mode,omitempty"`
-	SessionReusePolicy   string    `json:"session_reuse_policy,omitempty"`
-	PromptTemplate       string    `json:"prompt_template,omitempty"`
-	AgentCanControlStage bool      `json:"agent_can_control_stage,omitempty"`
-	CreatedAt            time.Time `json:"created_at"`
-	UpdatedAt            time.Time `json:"updated_at"`
+	StartImmediately     bool   `json:"start_immediately,omitempty"`
+	Agent                string `json:"agent,omitempty"`
+	Model                string `json:"model,omitempty"`
+	Mode                 string `json:"mode,omitempty"`
+	Effort               string `json:"effort,omitempty"`
+	FastService          string `json:"fast_service,omitempty"`
+	PlanMode             bool   `json:"plan_mode,omitempty"`
+	SessionReusePolicy   string `json:"session_reuse_policy,omitempty"`
+	PromptTemplate       string `json:"prompt_template,omitempty"`
+	AgentCanControlStage bool   `json:"agent_can_control_stage,omitempty"`
+	// Kind 标这一段是「哪一种由服务端生成的段」，空 = 用户/模板定义的普通段。
+	//
+	// 为什么存在独立字段而不是在 Name/PromptTemplate 里塞标记：这两处用户都能在看板上改
+	// （UpdateStage 是整段替换，任务编辑器直接改 name/prompt），标记会被改掉，之后就再也
+	// 认不出这段是收尾段。段定义存在 tasks.task_stages_json 里（task_store.go 的
+	// json.Marshal），加这个字段零迁移、零 SQL 改动。
+	//
+	// 现在只有一个取值 StageKindWorktreeFinish —— 收尾段。它同时意味着「成功后要跟着
+	// 清场」，所以没有再拆第二个布尔字段：等真有第二种内置段、且两者语义开始分叉时再拆。
+	Kind string `json:"kind,omitempty"`
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 type TaskTemplateStage struct {

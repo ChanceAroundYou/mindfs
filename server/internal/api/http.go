@@ -454,6 +454,7 @@ func (h *HTTPHandler) Routes() http.Handler {
 	r.Post("/api/tasks/{id}/fail", h.protectedEndpoint(h.handleKanbanTaskFail))
 	r.Post("/api/tasks/{id}/rebuild-worktree", h.protectedEndpoint(h.handleKanbanTaskRebuildWorktree))
 	r.Post("/api/tasks/{id}/finish-worktree", h.protectedEndpoint(h.handleKanbanTaskFinishWorktree))
+	r.Post("/api/tasks/{id}/begin-finish", h.protectedEndpoint(h.handleKanbanTaskBeginFinish))
 	r.Get("/api/dirs", h.protectedEndpoint(h.handleDirs))
 	r.Post("/api/dirs", h.protectedEndpoint(h.handleAddDir))
 	r.Post("/api/dirs/{id}/rename", h.protectedEndpoint(h.handleRenameDir))

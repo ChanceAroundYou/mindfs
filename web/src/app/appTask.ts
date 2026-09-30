@@ -49,6 +49,42 @@ export function isTerminalKanbanTask(task: KanbanTask): boolean {
   return task.status === "success" || task.status === "fail" || task.status === "cancelled";
 }
 
+/**
+ * 指针后面**还有没有段** —— 看板卡片上唯一能拿到的推进信息。
+ *
+ * 卡片只有 `stages` 和 `current_stage_index`，拿不到每段的执行记录（那是详情面板的
+ * `stage_runs`）。所以这里的判据是「指针后面还有段」，不是「后面那段还没跑过」——
+ * 后者在卡片上无从判断。详情面板用 nextRunnableStageIndex，那边有 stage_runs，判得更准。
+ *
+ * 存在的意义是两个按钮的给法：
+ *   - 还有下一段 → 不给「完成」（收了尾就看不到下一段了，等于替用户提前结束）
+ *   - 没有下一段 → 不给「执行」（推进不动，按钮点了什么都不发生）
+ *
+ * 与服务端同口径：Next 遇到「最后一段 + waiting_user」是直接完成整个任务的
+ * （service.go 的 Next），所以那种局面下该给的是「完成」。
+ */
+export function hasLaterStage(task: KanbanTask): boolean {
+  const stages = task.stages?.length || 0;
+  return task.current_stage_index < stages - 1;
+}
+
+/** 这一段是不是服务端生成的收尾段（StageTemplate.Kind）。 */
+export function isFinishStage(stage: StageTemplate | undefined): boolean {
+  return stage?.kind === "worktree_finish";
+}
+
+/**
+ * 任务是不是正处在收尾流程里 —— 指针停在收尾段上，且那一段还没跑完。
+ *
+ * 收尾中不给「执行 / 完成 / 再次收尾」：清场已经要把 worktree 拆了，这时候再推进
+ * 阶段或再点一次收尾，都是对着一个即将消失的目录干活。
+ */
+export function isFinishStageActive(task: KanbanTask): boolean {
+  const index = task.current_stage_index;
+  if (index < 0 || index >= (task.stages?.length || 0)) return false;
+  return isFinishStage(task.stages?.[index]) && task.status !== "success" && task.status !== "fail" && task.status !== "cancelled";
+}
+
 export function parseTaskSessionErrorMessage(error?: string): string {
   const raw = String(error || "").trim();
   if (!raw) return "";

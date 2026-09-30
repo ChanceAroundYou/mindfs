@@ -606,3 +606,45 @@ func (h *HTTPHandler) broadcastTaskUpdated(rootID string, detail kanban.TaskDeta
 		},
 	})
 }
+
+// handleKanbanTaskBeginFinish 发起收尾流程：追加一段 agent 工作，让 agent 自己把
+// worktree 里的活提交并合并回主干；这段成功之后服务端才接着清场。
+//
+// 与 handleKanbanTaskFinishWorktree 的分工：那个是**直接清场**（跳过 agent 阶段，
+// 用于 agent 已经把活提交好的情况），这个是**走完整流程**。
+//
+// 刻意放在文件末尾：worktree-finish.test.mjs 按
+// 「handleKanbanTaskFinishWorktree → handleKanbanTaskMove」切片断言那个 handler 的
+// 函数体（整文件跑正则会因为 `[\s\S]*?` 一路跳到文件后面而恒真）。插在中间会让
+// 新 handler 的内容落进那个切片里。
+func (h *HTTPHandler) handleKanbanTaskBeginFinish(w http.ResponseWriter, r *http.Request) {
+	svc, ok := h.kanbanService(w)
+	if !ok {
+		return
+	}
+	var req struct {
+		RootID string `json:"root_id"`
+	}
+	_ = json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req)
+	rootID := strings.TrimSpace(req.RootID)
+	taskID := strings.TrimSpace(chi.URLParam(r, "id"))
+	if rootID == "" || taskID == "" {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("root_id and id required"))
+		return
+	}
+	detail, err := svc.BeginFinishWorktree(r.Context(), kanban.BeginFinishInput{
+		RootID: rootID,
+		TaskID: taskID,
+	})
+	// 409 而不是 400：这里的每一条错都是「仓库/任务正处在某个需要人处理的状态」
+	// —— 正在跑、已在收尾、worktree 目录已失效。请求本身是合法的，是**状态**不答应，
+	// 和 finish-worktree 把冲突也归 409 是同一个口径。
+	if err != nil {
+		respondJSON(w, http.StatusConflict, map[string]any{"error": err.Error()})
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{
+		"detail": detail,
+		"task":   detail.Task,
+	})
+}
