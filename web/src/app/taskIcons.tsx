@@ -138,6 +138,31 @@ export function TaskRunNowIcon() {
   );
 }
 
+// 重建 worktree：环 + 顺时针箭头。跟已有的 worktree/git 图标区分开，
+// 一眼能认出是「再来一次」而不是「去看它」。
+export function TaskRebuildWorktreeIcon() {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      style={{ display: "block" }}
+    >
+      <path d="M3 12a9 9 0 0 1 15.3-6.4L21 8" />
+      <path d="M21 3v5h-5" />
+      <path d="M21 12a9 9 0 0 1-15.3 6.4L3 16" />
+      <path d="M3 21v-5h5" />
+    </svg>
+  );
+}
+
 export function TaskSessionErrorIcon() {
   return (
     <svg
@@ -247,21 +272,25 @@ export function taskAuxBadgeStyle(attention = false): React.CSSProperties {
   };
 }
 
-export function taskWorktreeTagStyle(enabled: boolean): React.CSSProperties {
+// enabled = 任务开了 worktree；missing = 开了但目录已经没了。
+// missing 单独一档而不是并进 !enabled：没开是「本来就没有」，开了又没了是「出过事」，
+// 两者给同一个样式等于让用户分不清自己的 worktree 是不是还在。
+export function taskWorktreeTagStyle(enabled: boolean, missing = false): React.CSSProperties {
+  const tone = missing ? "rgba(220, 38, 38, " : enabled ? "rgba(22, 163, 74, " : "rgba(217, 119, 6, ";
   return {
     flex: "0 0 auto",
     marginLeft: "auto",
     display: "inline-flex",
     alignItems: "center",
     gap: "1px",
-    border: enabled ? "1px solid rgba(22, 163, 74, 0.28)" : "1px solid rgba(217, 119, 6, 0.28)",
+    border: `1px solid ${tone}0.28)`,
     borderRadius: "4px",
-    background: enabled ? "rgba(22, 163, 74, 0.08)" : "rgba(217, 119, 6, 0.08)",
-    color: enabled ? "#15803d" : "#b45309",
+    background: `${tone}0.08)`,
+    color: missing ? "#b91c1c" : enabled ? "#15803d" : "#b45309",
     fontSize: "9px",
     fontWeight: 800,
     lineHeight: "12px",
-    padding: enabled ? "0 4px" : "0 3px 0 2px",
+    padding: enabled && !missing ? "0 4px" : "0 3px 0 2px",
   };
 }
 

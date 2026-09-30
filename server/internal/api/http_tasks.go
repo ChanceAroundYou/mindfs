@@ -262,6 +262,38 @@ func (h *HTTPHandler) handleKanbanTaskFail(w http.ResponseWriter, r *http.Reques
 	h.handleKanbanTaskMove(w, r, "fail")
 }
 
+// handleKanbanTaskRebuildWorktree 重建已删除的任务 worktree（显式入口，不自动触发）。
+func (h *HTTPHandler) handleKanbanTaskRebuildWorktree(w http.ResponseWriter, r *http.Request) {
+	svc, ok := h.kanbanService(w)
+	if !ok {
+		return
+	}
+	var req struct {
+		RootID string `json:"root_id"`
+		Reason string `json:"reason"`
+	}
+	_ = json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req)
+	rootID := strings.TrimSpace(req.RootID)
+	taskID := strings.TrimSpace(chi.URLParam(r, "id"))
+	if rootID == "" || taskID == "" {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("root_id and id required"))
+		return
+	}
+	detail, err := svc.RebuildTaskWorktree(r.Context(), kanban.MoveInput{
+		RootID: rootID,
+		TaskID: taskID,
+		Reason: strings.TrimSpace(req.Reason),
+	})
+	// 重建失败（典型是分支还在、-b 报 branch already exists）已经把原因记到任务上了，
+	// 卡片会渲染 session_error，所以这里回详情而不是裸 400 —— 前端一次刷新就能看到。
+	if err != nil {
+		respondJSON(w, http.StatusOK, detail)
+		return
+	}
+	h.broadcastTaskUpdated(rootID, detail)
+	respondJSON(w, http.StatusOK, detail)
+}
+
 func (h *HTTPHandler) handleKanbanTaskMove(w http.ResponseWriter, r *http.Request, action string) {
 	svc, ok := h.kanbanService(w)
 	if !ok {

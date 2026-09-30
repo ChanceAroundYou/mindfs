@@ -178,6 +178,7 @@ import {
   getCachedTaskMeta,
   moveTask,
   pruneCachedTaskDetails,
+  rebuildTaskWorktree,
   saveTaskTemplate,
   upsertCachedTaskDetails,
   type KanbanTask,
@@ -713,7 +714,7 @@ export function App({ onGoHome }: AppProps) {
 
 	  // 跨项目工作台状态与逻辑见 kanbanTaskPanel 定义前（workspaceOpen 等）
 
-  const handleMoveKanbanTask = useCallback(async (task: KanbanTask, action: "next" | "run-now" | "pause" | "resume" | "complete" | "cancel") => {
+  const handleMoveKanbanTask = useCallback(async (task: KanbanTask, action: "next" | "run-now" | "pause" | "resume" | "complete" | "cancel" | "rebuild-worktree") => {
     const rootId = task.root_id || currentRootIdRef.current;
     if (!rootId) return;
     let reason = "";
@@ -725,7 +726,9 @@ export function App({ onGoHome }: AppProps) {
       reason = input.trim();
     }
     try {
-      const detail = await moveTask(rootId, task.id, action, reason, getNodeIdForRoot(rootId));
+      const detail = action === "rebuild-worktree"
+        ? await rebuildTaskWorktree(rootId, task.id, getNodeIdForRoot(rootId))
+        : await moveTask(rootId, task.id, action, reason, getNodeIdForRoot(rootId));
       applyTaskDetails(rootId, [detail]);
       if (detail.task.worktree_path) {
         void refreshTaskWorktree(rootId, detail.task.worktree_path);
@@ -8185,12 +8188,16 @@ export function App({ onGoHome }: AppProps) {
   const relatedSessionNodeId =
     String((relatedSessionSnapshot as any)?._nodeId || "").trim() || undefined;
   const relatedSelectedPath = gitDiff?.path || file?.path || "";
-  const relatedWorktree = selectedKanbanTask?.worktree_path
+  // 任务侧优先，但不是无条件优先：任务记录的 worktree 目录已经被删时（worktree_missing，
+  // 服务端派生），拿它去展开 git 面板只会打开一个不存在的目录 —— 而会话侧可能已经
+  // repoint 干净、指向一个还活着的树。这种情况下让会话侧说话。
+  const taskWorktree = selectedKanbanTask?.worktree_path && selectedKanbanTask.worktree_missing !== true
     ? {
         root_id: selectedKanbanTask.root_id,
         path: selectedKanbanTask.worktree_path,
       }
-    : relatedSessionSnapshot?.related_worktree || null;
+    : null;
+  const relatedWorktree = taskWorktree || relatedSessionSnapshot?.related_worktree || null;
 
   const refreshProjectTreeRelatedFiles = useCallback(async () => {
     try {

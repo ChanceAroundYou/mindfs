@@ -9,6 +9,7 @@ import (
 
 	"mindfs/server/internal/agent/claude"
 	agenttypes "mindfs/server/internal/agent/types"
+	"mindfs/server/internal/kanban"
 	"mindfs/server/internal/session"
 )
 
@@ -128,6 +129,15 @@ func (s *Service) RepointSession(ctx context.Context, in RepointSessionInput) (R
 		return out, err
 	}
 
+	// 5b. 任务侧同步解绑。会话侧清了、任务侧没清的话，任务还钉着一个已删目录：
+	// 前端 relatedWorktree 是任务优先（App.tsx），会拿它当事实用。
+	//
+	// 刻意不阻断 repoint：任务库出问题时，会话已经搬成功了（转录、绑定、游标都到位），
+	// 为此让整个 repoint 报错反而会掩盖「已经搬成了」这个事实。失败只记日志。
+	if taskID := strings.TrimSpace(current.TaskID); taskID != "" {
+		clearTaskWorktree(ctx, s.Registry, in.RootID, taskID)
+	}
+
 	log.Printf("[session/repoint] done root=%s session=%s agent=%s old=%s new=%s transcript=%s bytes=%d worktree=%s",
 		strings.TrimSpace(in.RootID), key, agentName, binding.AgentSessionID, moved.AgentSessionID,
 		moved.TranscriptPath, moved.TranscriptBytes, worktreePath)
@@ -152,4 +162,29 @@ func sessionRuntimeRootPathFor(current *session.Session) string {
 		return ""
 	}
 	return strings.TrimSpace(current.RelatedWorktree.Path)
+}
+
+// kanbanWorktreeClearer 是 AppContext 已实现、但没进 usecase.Registry 接口的那一小块。
+// 用可选接口断言拿而不是给 Registry 加方法：Registry 是被 211 处 AppContext 消费
+// 的窄接口，为一个收尾期的清理动作扩它不划算（而且 AppContext 之外还有测试 fake）。
+type kanbanWorktreeClearer interface {
+	GetKanbanService() (*kanban.Service, error)
+}
+
+// clearTaskWorktree 尽力清掉任务的 worktree 归属。失败只记日志，不影响 repoint 主流程。
+func clearTaskWorktree(ctx context.Context, reg Registry, rootID, taskID string) {
+	provider, ok := reg.(kanbanWorktreeClearer)
+	if !ok {
+		return
+	}
+	svc, err := provider.GetKanbanService()
+	if err != nil {
+		log.Printf("[session/repoint] task worktree clear skipped root=%s task=%s err=%v", rootID, taskID, err)
+		return
+	}
+	if err := svc.ClearTaskWorktree(ctx, rootID, taskID); err != nil {
+		log.Printf("[session/repoint] task worktree clear failed root=%s task=%s err=%v", rootID, taskID, err)
+		return
+	}
+	log.Printf("[session/repoint] task worktree cleared root=%s task=%s", rootID, taskID)
 }

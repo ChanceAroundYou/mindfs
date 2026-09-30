@@ -452,6 +452,7 @@ func (h *HTTPHandler) Routes() http.Handler {
 	r.Post("/api/tasks/{id}/complete", h.protectedEndpoint(h.handleKanbanTaskComplete))
 	r.Post("/api/tasks/{id}/cancel", h.protectedEndpoint(h.handleKanbanTaskCancel))
 	r.Post("/api/tasks/{id}/fail", h.protectedEndpoint(h.handleKanbanTaskFail))
+	r.Post("/api/tasks/{id}/rebuild-worktree", h.protectedEndpoint(h.handleKanbanTaskRebuildWorktree))
 	r.Get("/api/dirs", h.protectedEndpoint(h.handleDirs))
 	r.Post("/api/dirs", h.protectedEndpoint(h.handleAddDir))
 	r.Post("/api/dirs/{id}/rename", h.protectedEndpoint(h.handleRenameDir))
@@ -1484,6 +1485,7 @@ func (h *HTTPHandler) sessionResponse(
 		"exchange_aux":        auxPayload,
 		"related_files":       s.RelatedFiles,
 		"related_worktree":    s.RelatedWorktree,
+		"worktree_missing":    s.RelatedWorktree.WorktreeMissing(),
 		"context_window":      contextWindow,
 		"pinned_at":           s.PinnedAt,
 		"archived_at":         s.ArchivedAt,
@@ -1517,6 +1519,7 @@ func (h *HTTPHandler) sessionListResponse(s *session.Session) map[string]any {
 		"shell":               h.commandShellForSession(s),
 		"name":                s.Name,
 		"related_worktree":    s.RelatedWorktree,
+		"worktree_missing":    s.RelatedWorktree.WorktreeMissing(),
 		"pinned_at":           s.PinnedAt,
 		"archived_at":         s.ArchivedAt,
 		"created_at":          s.CreatedAt,

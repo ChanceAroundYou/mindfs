@@ -842,6 +842,8 @@ export const zhCN = {
   "task.all": "全部",
   "task.worktreeTitle": "已开启worktree",
   "task.noWorktreeTitle": "未开启worktree",
+  "task.worktreeMissingTitle": "worktree 已删除，点「重建 worktree」恢复后再执行",
+  "task.rebuildWorktree": "重建 worktree",
   "task.unnamedTemplate": "未命名模板",
   "task.templateMenu": "任务模板菜单",
   "task.createTemplate": "创建任务模板",
