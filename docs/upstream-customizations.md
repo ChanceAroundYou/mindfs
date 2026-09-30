@@ -1,6 +1,6 @@
 # MindFS 上游定制清单与评估（改动级互斥）
 
-> **当前基准：`bb4244d`（v0.5.5，2026-09-30 合并，`SHA_PLACEHOLDER` 双 parent）。** 本文档 §1-§3 分组为 v0.4.7→v0.4.9 时代沉淀，机制仍适用；v0.5.1 / 7757ca8 合并记录见 §0，v0.5.5 见 §0-B。
+> **当前基准：`bb4244d`（v0.5.5，2026-09-30 合并，`976a5d0` 双 parent）。** 本文档 §1-§3 分组为 v0.4.7→v0.4.9 时代沉淀，机制仍适用；v0.5.1 / 7757ca8 合并记录见 §0，v0.5.5 见 §0-B。
 >
 > 基准: `upstream/main` 标签 `v0.4.7` — `18b10cab75e2f72af24666c6de7ae4a411f63daa`（2026-08-13 update readme）
 > 对比: `HEAD = 0591238`（2026-08-26）/ `origin/main = 3d3417a`
@@ -12,7 +12,7 @@
 
 ## 0-B. v0.5.5 合并记录（2026-09-30）
 
-- **Merge commit `SHA_PLACEHOLDER`**（双 parent：本地 `9ab9572` × 上游 `bb4244d`），merge-base `v0.5.2`(`7757ca8`) → **`bb4244d`**。
+- **Merge commit `976a5d0`**（双 parent：本地 `9ab9572` × 上游 `bb4244d`），merge-base `v0.5.2`(`7757ca8`) → **`bb4244d`**。
   上游 311 commits / 304 files，本地 125 files，重叠 39 files；合并相对本地 +5400 / −488（95 files）。
 - 12 个前端冲突文件 / 51 段，**逐 hunk 定解，无 `--theirs` 整文件**（重文件铁律）：
   `App.tsx` 25 · `ActionBar.tsx` 11 · `SessionViewer.tsx` 3 · `services/tasks.ts` 2 · `SessionList.tsx` 2 ·
