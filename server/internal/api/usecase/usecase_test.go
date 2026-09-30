@@ -2698,6 +2698,41 @@ func (*renameManagedDirTestRegistry) GetFileWatcher(string, *session.Manager) (*
 
 func (*renameManagedDirTestRegistry) ReleaseFileWatcher(string, string) {}
 
+// 全新会话的第一轮不该拿到「本会话从别处迁移而来」的提示。
+//
+// LinesBeforeThisTurn 首轮的真实值恰好是 0。把它当零值哨兵（`> 0` 才采信）会让首轮
+// 回退到 len(Exchanges)=1，而 agent 一个字都还没看过 → delta=1>0，提示照发。agent 于是
+// 被要求「先读回自己的历史」，读到的是用户刚发的那一条 —— 正是「无意义的 read」。
+func TestPrependSwitchHintIsNotInjectedOnFirstTurn(t *testing.T) {
+	rootDir := t.TempDir()
+	manager := session.NewManager(rootfs.NewRootInfo("mindfs", "mindfs", rootDir))
+	created, err := manager.Create(context.Background(), session.CreateInput{
+		Type: session.TypeChat,
+		Name: "Task",
+	})
+	if err != nil {
+		t.Fatalf("Create session: %v", err)
+	}
+	// 本轮 user 行在回合开始前已落盘，Exchanges 里已有它。
+	created.Exchanges = append(created.Exchanges, session.Exchange{Role: "user", Content: "hi"})
+
+	service := &Service{}
+	linesBefore := 0
+	got := service.BuildPrompt(BuildPromptInput{
+		Session:             created,
+		Manager:             manager,
+		Agent:               "claude",
+		Message:             "hi",
+		LinesBeforeThisTurn: &linesBefore,
+	})
+	if strings.Contains(got, "This session was migrated from elsewhere.") {
+		t.Fatalf("first turn of a new session got the migration hint: %q", got)
+	}
+	if !strings.Contains(got, "hi") {
+		t.Fatalf("user message lost: %q", got)
+	}
+}
+
 // 回合结束时记 AgentCtxSeq 必须把本轮 user 行算进去。
 //
 // 时序（SendMessage 内）：linesBeforeThisTurn=N → persistUserTurnExchange 落 N+1
@@ -2735,7 +2770,7 @@ func TestPrependSwitchHintIsInjectedOncePerRealSwitch(t *testing.T) {
 			Agent:               agentName,
 			Message:             "hi",
 			AgentCtxSeq:         &agentSeen,
-			LinesBeforeThisTurn: linesBeforeThisTurn,
+			LinesBeforeThisTurn: &linesBeforeThisTurn,
 		})
 		if strings.Contains(got, "This session was migrated from elsewhere.") {
 			agentInjected++
@@ -2770,13 +2805,14 @@ func TestPrependSwitchHintOnAgentSwitchUsesAbsolutePath(t *testing.T) {
 	service := &Service{}
 	// 切到 codex：claude 只看过 1 行，会话已有 4 行 → delta=3，提示该出现。
 	claudeSeen := 1
+	linesBefore := 4
 	got := service.BuildPrompt(BuildPromptInput{
 		Session:             created,
 		Manager:             manager,
 		Agent:               "codex",
 		Message:             "hi",
 		AgentCtxSeq:         &claudeSeen,
-		LinesBeforeThisTurn: 4,
+		LinesBeforeThisTurn: &linesBefore,
 	})
 	if !strings.Contains(got, "This session was migrated from elsewhere.") {
 		t.Fatalf("switch hint missing on real agent switch: %q", got)

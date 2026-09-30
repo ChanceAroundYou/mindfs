@@ -1204,10 +1204,13 @@ type BuildPromptInput struct {
 	// LinesBeforeThisTurn 是「本轮 user 行写入之前」的会话行数。本轮 user 行在
 	// SendMessage 起手就已落盘（见 persistUserTurnExchange），所以 Session.Exchanges
 	// 里已经包含它；切 agent 提示要读的「上一轮之后还剩几行」必须用写入前的计数，
-	// 否则每轮都会多算一行。0 表示「没传」，回退到 len(Session.Exchanges)。
-	// 会话首轮的真实值恰好也是 0，回退只多要一行提示，不影响正确性——不值得为它加
-	// 一个 HasXxx 标志位。
-	LinesBeforeThisTurn int
+	// 否则会把本轮自己的 user 行当成「需要回读的历史」。
+	//
+	// 必须是 *int 而不是 int：会话首轮的真实值**恰好也是 0**，用零值当「没传」的哨兵
+	// 会让首轮回退到 len(Session.Exchanges)=1，于是 delta=1>0 —— 全新会话的第一轮就被
+	// 告知「本会话从别处迁移而来，去读你自己的历史文件」，读到的是刚收到的那条消息。
+	// 语义与同结构体的 AgentCtxSeq 一致，nil 即「没传」。
+	LinesBeforeThisTurn *int
 }
 
 func (s *Service) BuildPrompt(in BuildPromptInput) string {
@@ -1241,8 +1244,8 @@ func prependSwitchHint(in BuildPromptInput, prompt string) string {
 		return prompt
 	}
 	total := contextLineCount(in.Session.Exchanges)
-	if in.LinesBeforeThisTurn > 0 {
-		total = in.LinesBeforeThisTurn
+	if in.LinesBeforeThisTurn != nil {
+		total = *in.LinesBeforeThisTurn
 	}
 	last := 0
 	if in.AgentCtxSeq != nil {
@@ -2517,7 +2520,7 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 		AgentCtxSeq:                   agentCtxSeq,
 		IsInitial:                     isInitial,
 		IncludeReplyTipsInUserMessage: includeReplyTipsInUserMessage,
-		LinesBeforeThisTurn:           linesBeforeThisTurn,
+		LinesBeforeThisTurn:           &linesBeforeThisTurn,
 	})
 	var responseText string
 	sawAssistantChunk := false
