@@ -1,6 +1,6 @@
 import { appURL } from "./base";
 import { getRootNodeId } from "./rootNode";
-import { protectedJSON } from "./api";
+import { APIError, protectedJSON } from "./api";
 
 export type StageRole = "user" | "agent";
 export type TaskStatus =
@@ -449,6 +449,78 @@ export async function rebuildTaskWorktree(rootId: string, taskId: string, nodeId
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ root_id: rootId }),
   });
+}
+
+/**
+ * 一次 worktree 收尾的结果。
+ *
+ * 字段都是「实际发生了什么」而不是「我们请求了什么」：分支删不掉（未合并）时
+ * BranchDeleted=false 且 BranchSkipReason 里有 git 的原话，合并撞上冲突时抛
+ * FinishWorktreeConflict。所以 UI 能分别渲染「已完成 / 卡在哪一步 / 要人工解冲突」。
+ */
+export type FinishWorktreeResult = {
+  task: KanbanTask;
+  /** false = 源分支本来就在目标分支里（重复收尾），不是失败。 */
+  merged: boolean;
+  commit?: string;
+  /** false = worktree 目录本来就不在了（已拆过或从没建成），不是失败。 */
+  worktree_removed: boolean;
+  /** false = 没请求删分支、未合并被 git 拒绝、或分支已不存在。 */
+  branch_deleted: boolean;
+  /** BranchDeleted=false 的人话原因（不靠猜）。 */
+  branch_skip_reason?: string;
+  /** .worktree/ 下的残留目录，只列不删。 */
+  orphans?: Array<{ path: string; non_empty: boolean; files?: string[] }>;
+};
+
+/**
+ * 合并撞上冲突。**不是普通错误**：仓库现在停在 MERGE_HEAD，需要人工处理，
+ * 所以文件清单要单独拿出来给 UI 列出可点的条目，不能埋在 message 里。
+ *
+ * 服务端回 409 + { error, conflict_files, output, result }。
+ */
+export class FinishWorktreeConflict extends Error {
+  readonly conflictFiles: string[];
+  readonly output: string;
+  constructor(message: string, conflictFiles: string[] = [], output = "") {
+    super(message);
+    this.name = "FinishWorktreeConflict";
+    this.conflictFiles = conflictFiles;
+    this.output = output;
+  }
+}
+
+/**
+ * 收尾任务在 worktree 里的活：合回主 checkout → 拆 worktree → 删分支 → 列残留。
+ *
+ * 撞上冲突时 reject 一个 FinishWorktreeConflict（带文件清单）；其它失败是普通
+ * Error。两条路都要分开处理：前者要引导用户手工解冲突，后者只是报一句。
+ */
+export async function finishTaskWorktree(
+  rootId: string,
+  taskId: string,
+  opts: { target?: string; deleteBranch?: boolean; pruneOrphans?: boolean; nodeId?: string } = {},
+): Promise<FinishWorktreeResult> {
+  const { target, deleteBranch = true, pruneOrphans = true, nodeId } = opts;
+  try {
+    // 走 protectedJSON 而不是裸 fetch：E2EE 封装和「本机账户被删 → 登出」都在里面，
+    // 绕过去就丢了这两条。409 撞上冲突时它抛 APIError（带 status 和 payload），
+    // 正好够下面还原成 FinishWorktreeConflict。
+    return await protectedJSON<FinishWorktreeResult>(
+      appURL(`/api/tasks/${encodeURIComponent(taskId)}/finish-worktree`, undefined, nodeId),
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ root_id: rootId, target, delete_branch: deleteBranch, prune_orphans: pruneOrphans }),
+      },
+    );
+  } catch (error) {
+    if (error instanceof APIError && error.status === 409) {
+      const files = Array.isArray(error.payload?.conflict_files) ? error.payload.conflict_files.map(String) : [];
+      throw new FinishWorktreeConflict(error.message, files, String(error.payload?.output || ""));
+    }
+    throw error;
+  }
 }
 
 export type TaskOverviewItem = {

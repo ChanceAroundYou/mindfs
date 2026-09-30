@@ -81,12 +81,31 @@ type Service struct {
 	stores   map[string]*TaskStore
 	taskRun  map[string]bool
 	taskPend map[string]bool
+	// taskFinish 标记「正在收尾 worktree」的任务。收尾会拆掉 agent 正在用的
+	// 目录，所以必须和执行互斥：RunTask 拿不到锁就退化成挂起（跟 taskRun 的
+	// 处理一样），否则会出现「查完说没在跑，紧接着有人把 agent 起来，收尾把
+	// 它的 cwd 删了」。见 acquireTaskFinish。
+	taskFinish map[string]*finishToken
+	// taskAdmit 标记「正在为这个任务启动执行体」的短暂窗口：动词已经拿到准入、
+	// 正在改状态、还没走到 RunTask。这段窗口里 acquireTaskFinish 必须拒绝 ——
+	// 否则收尾会抢进来把 agent 的 cwd 拆掉，而动词那边已经把状态改成 running 了。
+	//
+	// 为什么不能只是「查一下」：查和改之间不是原子的，中间插进来一个收尾就会留下
+	// 「状态是 running、却没有执行体」的任务 —— 没有 agent 会再碰它，看起来像卡死。
+	taskAdmit map[string]*admitToken
 }
 
+// finishToken 是一次收尾的锁凭证。见 acquireTaskFinish。
+type finishToken struct{}
+
+// admitToken 是一次启动执行体的准入凭证。见 beginRunAdmission。
+type admitToken struct{}
+
 var errStopTaskExecution = errors.New("stop task execution")
+var errTaskFinishing = errors.New("该任务正在收尾 worktree，稍后再执行")
 
 func NewService(templates *TemplateStore, roots RootProvider) *Service {
-	return &Service{Templates: templates, Roots: roots, stores: map[string]*TaskStore{}, taskRun: map[string]bool{}, taskPend: map[string]bool{}}
+	return &Service{Templates: templates, Roots: roots, stores: map[string]*TaskStore{}, taskRun: map[string]bool{}, taskPend: map[string]bool{}, taskFinish: map[string]*finishToken{}, taskAdmit: map[string]*admitToken{}}
 }
 
 func (s *Service) SetRunner(runner Runner) {
@@ -503,6 +522,14 @@ func (s *Service) AddStage(ctx context.Context, in AddStageInput) (TaskDetail, e
 	}
 	stage := normalizeStageTemplate(in.Stage)
 	if task.Status == StatusWaitingUser && strings.TrimSpace(stage.PromptTemplate) != "" {
+		// 准入检查放在**最前面**：下面已经要把当前段批成 approved、要把新段推进上去。
+		// 收尾期间放进来做完这些再返回，留下的是「段已 approved、没有执行体」——
+		// 和「永远 running」是同一种卡死，只是换了张脸。
+		release, admErr := s.beginRunAdmission(in.RootID, task.ID)
+		if admErr != nil {
+			return store.GetDetail(ctx, task.ID)
+		}
+		defer release()
 		stage.Name = defaultStageName(task, len(task.Stages))
 		task.Stages = append(task.Stages, stage)
 		if latest, runErr := store.LatestStageRun(ctx, task.ID, task.CurrentStageIndex); runErr == nil {
@@ -522,7 +549,9 @@ func (s *Service) AddStage(ctx context.Context, in AddStageInput) (TaskDetail, e
 		if err != nil {
 			return TaskDetail{}, err
 		}
-		s.RunTask(detail.Task.RootID, detail.Task.ID)
+		if runErr := s.RunTask(detail.Task.RootID, detail.Task.ID); runErr != nil {
+			return TaskDetail{}, runErr
+		}
 		return detail, nil
 	}
 	stage.Name = defaultStageName(task, len(task.Stages))
@@ -642,12 +671,19 @@ func (s *Service) RerunStage(ctx context.Context, in MoveInput) (TaskDetail, err
 	if in.StageIndex < 0 || in.StageIndex >= len(task.Stages) {
 		return TaskDetail{}, errors.New("stage_index out of range")
 	}
+	release, admErr := s.beginRunAdmission(in.RootID, task.ID)
+	if admErr != nil {
+		return store.GetDetail(ctx, task.ID)
+	}
+	defer release()
 	detail, err := s.moveTo(ctx, store, task, in.StageIndex, "stage_rerun", "", in.Reason)
 	if err != nil {
 		return TaskDetail{}, err
 	}
 	if !isTerminalStatus(detail.Task.Status) {
-		s.RunTask(detail.Task.RootID, detail.Task.ID)
+		if runErr := s.RunTask(detail.Task.RootID, detail.Task.ID); runErr != nil {
+			return TaskDetail{}, runErr
+		}
 	}
 	return detail, err
 }
@@ -759,9 +795,16 @@ func (s *Service) Next(ctx context.Context, in MoveInput) (TaskDetail, error) {
 		}
 		return detail, err
 	}
+	release, admErr := s.beginRunAdmission(in.RootID, in.TaskID)
+	if admErr != nil {
+		return store.GetDetail(ctx, in.TaskID)
+	}
+	defer release()
 	detail, err := s.moveRelative(ctx, in, 1, "user_approved", StageStatusApproved)
 	if err == nil {
-		s.RunTask(detail.Task.RootID, detail.Task.ID)
+		if runErr := s.RunTask(detail.Task.RootID, detail.Task.ID); runErr != nil {
+			return TaskDetail{}, runErr
+		}
 	}
 	return detail, err
 }
@@ -807,6 +850,13 @@ func (s *Service) RunNow(ctx context.Context, in MoveInput) (TaskDetail, error) 
 	case StatusRunning, StatusPaused:
 		return store.GetDetail(ctx, task.ID)
 	}
+	// 准入检查在建事件之前：收尾期间进来的请求不该留下一条「点过立即执行」而
+	// 实际什么都没发生的流水（那会让用户以为按钮生效了）。
+	release, admErr := s.beginRunAdmission(in.RootID, task.ID)
+	if admErr != nil {
+		return store.GetDetail(ctx, task.ID)
+	}
+	defer release()
 	_ = store.AddEvent(ctx, TaskEvent{
 		ID:        newID("event"),
 		TaskID:    task.ID,
@@ -822,7 +872,9 @@ func (s *Service) RunNow(ctx context.Context, in MoveInput) (TaskDetail, error) 
 	}
 	detail, err := store.GetDetail(ctx, task.ID)
 	if err == nil {
-		s.RunTask(detail.Task.RootID, detail.Task.ID)
+		if runErr := s.RunTask(detail.Task.RootID, detail.Task.ID); runErr != nil {
+			return TaskDetail{}, runErr
+		}
 	}
 	return detail, err
 }
@@ -832,12 +884,54 @@ func (s *Service) Pause(ctx context.Context, in MoveInput) (TaskDetail, error) {
 }
 
 func (s *Service) Resume(ctx context.Context, in MoveInput) (TaskDetail, error) {
+	// 先问能不能起，再改状态。反过来（先置 running 再 RunTask）会在收尾撞车时
+	// 留下一个永远 running、却没有执行体的任务 —— 没有 agent 会再碰它。
+	release, admErr := s.beginRunAdmission(in.RootID, in.TaskID)
+	if admErr != nil {
+		return s.GetTask(ctx, in.RootID, in.TaskID)
+	}
+	defer release()
 	detail, err := s.setTaskStatus(ctx, in.RootID, in.TaskID, StatusRunning, "resumed", in.Reason, false)
 	if err == nil {
-		s.RunTask(detail.Task.RootID, detail.Task.ID)
+		if runErr := s.RunTask(detail.Task.RootID, detail.Task.ID); runErr != nil {
+			return TaskDetail{}, runErr
+		}
 	}
 	return detail, err
 }
+
+// beginRunAdmission 为「要起执行体的动词」开一段准入窗口：查没有收尾 → 放动词改状态
+// → RunTask 接手。整段由返回的 release 结束。
+//
+// 为什么需要一把真的锁而不是「查一下」：查和改之间不是原子的。查通过之后、
+// 状态还没改的这一刻，一个收尾请求可以抢进来把 worktree 拆掉；等动词改完状态
+// 再去 RunTask 已经被拒 —— 结果是「状态 running、没有执行体」，没有 agent 会再
+// 碰它，看起来像卡死。把准入和状态变更绑在一段互斥区间里，收尾要么进不来，
+// 要么等这段走完。
+func (s *Service) beginRunAdmission(rootID, taskID string) (func(), error) {
+	key := rootID + "\x00" + taskID
+	token := &admitToken{}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, finishing := s.taskFinish[key]; finishing {
+		return nil, errTaskFinishing
+	}
+	// 已经有一次启动在途（另一个动词正在改状态）：让它先走完，别让两处同时改。
+	if _, admitted := s.taskAdmit[key]; admitted {
+		return nil, errTaskAlreadyAdmitted
+	}
+	s.taskAdmit[key] = token
+	return func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if held, ok := s.taskAdmit[key]; ok && held == token {
+			delete(s.taskAdmit, key)
+		}
+	}, nil
+}
+
+// errTaskAlreadyAdmitted 内部用：同一任务的启动准入已被别人占着。
+var errTaskAlreadyAdmitted = errors.New("该任务正在启动中")
 
 func (s *Service) Fail(ctx context.Context, in MoveInput) (TaskDetail, error) {
 	return s.setTaskStatus(ctx, in.RootID, in.TaskID, StatusFail, "stage_failed", in.Reason, true)
@@ -873,23 +967,29 @@ func (s *Service) Status(ctx context.Context, rootID, taskID string) (TaskDetail
 	return s.GetTask(ctx, rootID, taskID)
 }
 
-func (s *Service) RunTask(rootID, taskID string) {
+func (s *Service) RunTask(rootID, taskID string) error {
 	if s == nil || s.Runner == nil {
-		return
+		return nil
 	}
 	rootID = strings.TrimSpace(rootID)
 	taskID = strings.TrimSpace(taskID)
 	if rootID == "" || taskID == "" {
-		return
+		return nil
 	}
 	// 同一任务同时只允许一个执行体。Next/Resume/RunNow 等重复请求不应把同一 agent 阶段跑两次
 	// （重复创建 agent 会话、重复消耗 token）。重复请求记为待补跑。
 	key := rootID + "\x00" + taskID
 	s.mu.Lock()
+	// 正在收尾 worktree：不能起 agent。收尾会把 agent 的 cwd 拆掉，而这里起的话
+	// agent 会在一个即将消失的目录里跑。宁可不跑，也不跑一个必死的。
+	if _, finishing := s.taskFinish[key]; finishing {
+		s.mu.Unlock()
+		return errTaskFinishing
+	}
 	if s.taskRun[key] {
 		s.taskPend[key] = true
 		s.mu.Unlock()
-		return
+		return nil
 	}
 	s.taskRun[key] = true
 	s.mu.Unlock()
@@ -910,6 +1010,45 @@ func (s *Service) RunTask(rootID, taskID string) {
 			break
 		}
 	}()
+	return nil
+}
+
+// acquireTaskFinish 独占这个任务的「收尾权」，收尾期间挡住新的执行。
+//
+// 为什么必须锁住整个流程而不只是开头查一次：查完「没在跑」到 merge/remove 之间
+// 有几秒，任何 Next/RunNow/Rerun 都能在这窗口里把 agent 起来，而它的 cwd 就是
+// 那个即将被拆掉的目录。所以锁要一直持到拆完、删完为止。
+func (s *Service) acquireTaskFinish(rootID, taskID string) (func(), error) {
+	key := rootID + "\x00" + taskID
+	// 令牌：release 只认自己那一份。两个并发收尾如果共用一个 bool，先完成的那个
+	// release 会把还在跑的另一个的锁一起放开，RunTask 就能对着一个正在被拆的目录
+	// 起来。所以锁的「所有权」必须是可辨认的一份，不是一个开关。
+	token := &finishToken{}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.taskRun[key] {
+		return nil, errors.New("任务正在执行中，先停止再收尾")
+	}
+	// 有人正在为这个任务启动执行体（beginRunAdmission 的窗口里）：那一次会把状态
+	// 改成 running 再起 agent。等它走完再收尾，否则收尾插进去就是「状态已改、
+	// agent 起不来」。
+	if _, admitted := s.taskAdmit[key]; admitted {
+		return nil, errors.New("该任务正在启动中，稍后再收尾")
+	}
+	// 已经在收尾：第二个收尾不能并着跑 —— 它们会对着同一个 worktree 一起
+	// merge / remove，其中一个的 release 还会提前放开另一个的锁。
+	if _, busy := s.taskFinish[key]; busy {
+		return nil, errors.New("该任务正在收尾中，请等它结束")
+	}
+	s.taskFinish[key] = token
+	return func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		// 只删自己那份：别人的收尾不该被自己的 release 解锁。
+		if held, ok := s.taskFinish[key]; ok && held == token {
+			delete(s.taskFinish, key)
+		}
+	}, nil
 }
 
 // KickPending 会启动时进入：仅兜底执行既存任务指针所在段落，不再有排队/槽位语义。
@@ -938,7 +1077,9 @@ func (s *Service) KickPending(rootID string) {
 			if strings.TrimSpace(task.AuxFlags.SessionError) != "" {
 				continue
 			}
-			s.RunTask(rootID, task.ID)
+			if runErr := s.RunTask(rootID, task.ID); runErr != nil {
+				log.Printf("[kanban] task.kick.skipped root=%s task=%s err=%v", rootID, task.ID, runErr)
+			}
 		}
 	}()
 }
@@ -1025,7 +1166,9 @@ func (s *Service) ensureTaskWorktree(ctx context.Context, store *TaskStore, task
 	task.WorktreePath = wt.Path
 	task.AuxFlags.SessionError = ""
 	task.UpdatedAt = now
-	if err := store.UpdateTask(ctx, task); err != nil {
+	// 归属只有一个写入出口（SetWorktreeRefsAndTask），且与状态更新同一事务 ——
+	// 理由见 task_store.go 的 updateTaskCore。
+	if err := store.SetWorktreeRefsAndTask(ctx, task); err != nil {
 		return task, err
 	}
 	return task, nil
@@ -1047,10 +1190,8 @@ func (s *Service) ClearTaskWorktree(ctx context.Context, rootID, taskID string) 
 	if strings.TrimSpace(task.WorktreePath) == "" && strings.TrimSpace(task.WorktreeRootID) == "" {
 		return nil
 	}
-	task.WorktreePath = ""
-	task.WorktreeRootID = ""
-	task.UpdatedAt = time.Now().UTC()
-	if err := store.UpdateTask(ctx, task); err != nil {
+	// 只清归属两列，不整行写回 —— 理由见 TaskStore.ClearWorktreeRefs。
+	if err := store.ClearWorktreeRefs(ctx, task.ID); err != nil {
 		return err
 	}
 	if detail, err := store.GetDetail(ctx, task.ID); err == nil && s.Runner != nil {

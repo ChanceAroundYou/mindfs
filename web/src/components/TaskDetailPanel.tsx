@@ -10,10 +10,15 @@ import { uploadFiles } from "../services/upload";
 import { useI18n, type I18nContextValue } from "../i18n";
 import {
   addTaskStage,
+  // FinishWorktreeConflict 是 class 不是 type：下面要拿它做 instanceof 分流
+  // （冲突要列文件清单，其它失败只报一句），import type 的话 instanceof 编译不过。
+  FinishWorktreeConflict,
+  finishTaskWorktree,
   rebuildTaskWorktree,
   removeTaskStage,
   renameTask,
   updateTaskStage,
+  type FinishWorktreeResult,
   type KanbanTask,
   type StageTemplate,
   type TaskDetail,
@@ -22,7 +27,7 @@ import type { AgentStatus } from "../services/agents";
 import { reportError } from "../services/error";
 import { canAdvanceFromCurrentStage, isTerminalKanbanTask, nextRunnableStageIndex, taskStatusColor } from "../app/appTask";
 import { DEFAULT_TASK_AGENT, DEFAULT_TASK_MODEL, inheritAgentStage } from "../app/appTask";
-import { RunNowIcon, TaskRebuildWorktreeIcon } from "../app/taskIcons";
+import { RunNowIcon, TaskFinishWorktreeIcon, TaskRebuildWorktreeIcon } from "../app/taskIcons";
 
 export type TaskDetailPanelProps = {
   detail: TaskDetail | null;
@@ -94,6 +99,10 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
     setEditingName(false);
     setEditingStage(-1);
     setPendingConfirm(null);
+    // 面板是**一个常驻实例**（App.tsx 按 selectedKanbanTask 复用它，没有 key），
+    // 不清的话 A 任务的收尾结果/冲突会顶着 B 任务的头显示出来，而 B 根本没冲突过。
+    setFinishResult(null);
+    setFinishConflict(null);
   }, [task?.id]);
 
   useEffect(() => {
@@ -301,6 +310,36 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
     } finally { setSaving(false); }
   };
 
+  // worktree 收尾：把分支合回主干、拆掉 worktree 和分支。这是 wt-finish 的服务端那一半，
+  // 一次点击走完 merge → remove → branch -d。
+  //
+  // 冲突**不自动 abort**：解到一半的取舍连同 MERGE_MSG 一起丢掉，用户得从头再来。
+  // 所以撞上冲突时把文件清单留在面板上让人工处理（服务端那边仓库停在 MERGE_HEAD，
+  // worktree 和分支都还在，什么都没丢）。
+  //
+  // 只在「worktree 还真的在」时给：目录已经没了的（worktree_missing）该点的是重建，
+  // 收尾无从下手 —— 没有 worktree 可拆，合的分支也已经不在了。
+  const canFinishWorktree = task?.create_worktree === true
+    && !!task?.worktree_path
+    && task?.worktree_missing !== true;
+  const [finishResult, setFinishResult] = useState<FinishWorktreeResult | null>(null);
+  const [finishConflict, setFinishConflict] = useState<FinishWorktreeConflict | null>(null);
+  const finishWorktree = async () => {
+    if (!task) return;
+    setFinishResult(null);
+    setFinishConflict(null);
+    try {
+      setSaving(true);
+      const result = await finishTaskWorktree(task.root_id, task.id, { nodeId });
+      setFinishResult(result);
+      apply({ ...detail, task: result.task });
+    } catch (error) {
+      // 冲突要单独渲染（带文件清单），其它失败只报一句 —— 两者要人工处理的程度不同。
+      if (error instanceof FinishWorktreeConflict) setFinishConflict(error);
+      else reportError("file.write_failed", String((error as Error)?.message || t("task.actionFailed")));
+    } finally { setSaving(false); }
+  };
+
   const numberLabel = task.task_number ? `#${task.task_number}` : "";
 
   return (
@@ -363,6 +402,20 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
               <TaskRebuildWorktreeIcon />
             </button>
           ) : null}
+          {/* 收尾 worktree：活干完了把分支合回主干、拆掉 worktree 和分支。
+              目录已经没了的不给 —— 那种情况该点的是上面的重建键，没有 worktree 可拆。 */}
+          {canFinishWorktree ? (
+            <button
+              type="button"
+              title={t("task.finishWorktree")}
+              aria-label={t("task.finishWorktree")}
+              disabled={saving}
+              onClick={() => void finishWorktree()}
+              style={{ ...pencilStyle(false), color: "var(--status-ok)", opacity: saving ? 0.4 : 1 }}
+            >
+              <TaskFinishWorktreeIcon />
+            </button>
+          ) : null}
           <button type="button" aria-label={t("task.renameTask")} title={t("task.renameTask")} onClick={() => setEditingName(true)} style={pencilStyle(false)}>
             <PencilIcon />
           </button>
@@ -370,6 +423,45 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
       )}
     >
       <div style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: "10px" }}>
+          {/* 收尾结果 / 冲突。冲突要把文件列出来：这是「要人工处理」的信号，
+              只给一句「合并失败」的话用户还得自己去 git 里翻是哪些文件。 */}
+          {finishConflict ? (
+            <div
+              data-onboarding="task-finish-conflict"
+              style={{ border: "1px solid var(--status-bad)", borderRadius: "8px", padding: "10px", display: "flex", flexDirection: "column", gap: "6px" }}
+            >
+              <span style={{ fontSize: "11px", fontWeight: 800, color: "var(--status-bad)" }}>{t("task.finishWorktreeConflict")}</span>
+              {finishConflict.conflictFiles.length > 0 ? (
+                <ul style={{ margin: 0, paddingLeft: "18px", display: "flex", flexDirection: "column", gap: "2px" }}>
+                  {finishConflict.conflictFiles.map((file) => (
+                    <li key={file} style={{ fontSize: "12px", fontFamily: "var(--font-mono, monospace)", color: "var(--text-color)" }}>{file}</li>
+                  ))}
+                </ul>
+              ) : null}
+              <span style={{ fontSize: "11px", color: "var(--text-secondary)" }}>{t("task.finishWorktreeConflictHint")}</span>
+            </div>
+          ) : null}
+          {finishResult && !finishConflict ? (
+            <div
+              data-onboarding="task-finish-result"
+              style={{ border: "1px solid var(--border-color)", borderRadius: "8px", padding: "10px", display: "flex", flexDirection: "column", gap: "4px" }}
+            >
+              <span style={{ fontSize: "11px", fontWeight: 800, color: "var(--status-ok)" }}>{t("task.finishWorktreeDone")}</span>
+              {finishResult.commit ? (
+                <span style={{ fontSize: "11px", fontFamily: "var(--font-mono, monospace)", color: "var(--text-secondary)" }}>{finishResult.commit}</span>
+              ) : null}
+              {/* 分支没删掉时要说原因，不能让「没删」看起来像「不用删」——
+                  典型是未合并被 git branch -d 拒绝。 */}
+              {!finishResult.branch_deleted && finishResult.branch_skip_reason ? (
+                <span style={{ fontSize: "11px", color: "var(--status-warn)" }}>{finishResult.branch_skip_reason}</span>
+              ) : null}
+              {(finishResult.orphans || []).map((orphan) => (
+                <span key={orphan.path} style={{ fontSize: "11px", color: "var(--text-secondary)" }}>
+                  {t("task.finishWorktreeOrphan", { path: orphan.path })}
+                </span>
+              ))}
+            </div>
+          ) : null}
           {initialInput ? (
             <div style={{ border: "1px dashed var(--border-color)", borderRadius: "8px", padding: "10px", display: "flex", flexDirection: "column", gap: "6px", background: "var(--panel-bg)" }}>
               <span style={{ fontSize: "11px", fontWeight: 800, color: "var(--text-secondary)" }}>{t("task.initialInput")}</span>

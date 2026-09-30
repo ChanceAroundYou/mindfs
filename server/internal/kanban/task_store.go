@@ -473,6 +473,16 @@ func (s *TaskStore) ClearSessionRefs(ctx context.Context, taskID, sessionKey str
 	return tx.Commit()
 }
 
+// ClearWorktreeRefs 清掉任务的 worktree 归属。写/清都走 setWorktreeRefs —— 归属
+// 只有这一个出口，后台流程的整行 UPDATE 不碰这两格（理由见 updateTaskCore）。
+func (s *TaskStore) ClearWorktreeRefs(ctx context.Context, taskID string) error {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return nil
+	}
+	return s.setWorktreeRefs(ctx, taskID, "", "")
+}
+
 func (s *TaskStore) UpdateTask(ctx context.Context, task Task) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -586,9 +596,45 @@ func insertTask(ctx context.Context, tx *sql.Tx, task Task) error {
 func updateTaskCore(ctx context.Context, tx *sql.Tx, task Task) error {
 	labels, _ := json.Marshal(task.Labels)
 	stages, _ := json.Marshal(task.Stages)
-	_, err := tx.ExecContext(ctx, `UPDATE tasks SET create_worktree = ?, worktree_branch_mode = ?, worktree_branch = ?, current_stage_index = ?, status = ?, scheduler_admitted = ?, main_session_key = ?, worktree_root_id = ?, worktree_path = ?, aux_ask_user_waiting = ?, aux_has_plan = ?, aux_has_todos = ?, aux_has_task = ?, aux_session_error = ?, labels_json = ?, updated_at = ?, completed_at = ?, name = ?, task_stages_json = ? WHERE id = ?`,
-		boolInt(task.CreateWorktree), task.WorktreeBranchMode, task.WorktreeBranch, task.CurrentStageIndex, task.Status, boolInt(task.SchedulerAdmitted), task.MainSessionKey, task.WorktreeRootID, task.WorktreePath, boolInt(task.AuxFlags.AskUserWaiting), boolInt(task.AuxFlags.HasPlan), boolInt(task.AuxFlags.HasTodos), boolInt(task.AuxFlags.HasTask), strings.TrimSpace(task.AuxFlags.SessionError), string(labels), task.UpdatedAt.UTC().Format(time.RFC3339Nano), task.CompletedAt, task.Name, string(stages), task.ID)
+	// 刻意**不含** worktree_root_id / worktree_path：这两个列只有一个写入点
+	// （Service.ensureTaskWorktree，见 setWorktreeRefs）。留在整行 UPDATE 里，
+	// 任何拿着旧快照的后台写入（executeTask 是异步的，跑完一整段才写回）都会把
+	// 已清空的归属又写回去 —— 症状是「清完 worktree，路径又回来了」，且只在后台
+	// 流程还没结束时出现。归属是「谁建的树」这种一次性事实，不该跟着每次状态更新漂。
+	_, err := tx.ExecContext(ctx, `UPDATE tasks SET create_worktree = ?, worktree_branch_mode = ?, worktree_branch = ?, current_stage_index = ?, status = ?, scheduler_admitted = ?, main_session_key = ?, aux_ask_user_waiting = ?, aux_has_plan = ?, aux_has_todos = ?, aux_has_task = ?, aux_session_error = ?, labels_json = ?, updated_at = ?, completed_at = ?, name = ?, task_stages_json = ? WHERE id = ?`,
+		boolInt(task.CreateWorktree), task.WorktreeBranchMode, task.WorktreeBranch, task.CurrentStageIndex, task.Status, boolInt(task.SchedulerAdmitted), task.MainSessionKey, boolInt(task.AuxFlags.AskUserWaiting), boolInt(task.AuxFlags.HasPlan), boolInt(task.AuxFlags.HasTodos), boolInt(task.AuxFlags.HasTask), strings.TrimSpace(task.AuxFlags.SessionError), string(labels), task.UpdatedAt.UTC().Format(time.RFC3339Nano), task.CompletedAt, task.Name, string(stages), task.ID)
 	return err
+}
+
+// setWorktreeRefs 写/清任务的 worktree 归属。建树与清归属共用一个出口，
+// 这样「这两个列归谁管」在 schema 旁边就能看全，不用去数整行 UPDATE 里的字段。
+func (s *TaskStore) setWorktreeRefs(ctx context.Context, taskID, rootID, path string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE tasks SET worktree_root_id = ?, worktree_path = ?, updated_at = ? WHERE id = ?`,
+		rootID, path, s.now().UTC().Format(time.RFC3339Nano), taskID)
+	return err
+}
+
+// SetWorktreeRefsAndTask 在**一个事务**里写归属 + 更新任务其余字段。
+//
+// 建树时两者必须一起生效：只有归属没有状态更新会留下「路径可用但 session_error
+// 还挂着」的中间态，而分开两次写中间撞上读就是那种状态。分开两个方法是为了让
+// ClearWorktreeRefs（只清归属、不碰别的）也能走同一个出口。
+func (s *TaskStore) SetWorktreeRefsAndTask(ctx context.Context, task Task) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := updateTaskCore(ctx, tx, task); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE tasks SET worktree_root_id = ?, worktree_path = ? WHERE id = ?`,
+		task.WorktreeRootID, task.WorktreePath, task.ID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func insertStageRun(ctx context.Context, tx *sql.Tx, run StageRun) error {

@@ -163,6 +163,40 @@ export function TaskRebuildWorktreeIcon() {
   );
 }
 
+/**
+ * worktree 收尾：把分支合回主干然后拆掉（git merge + worktree remove + branch -d）。
+ *
+ * 跟 TaskRebuildWorktreeIcon 刻意区分：那个是**重建**（目录没了要造回来，圆箭头），
+ * 这个是**收尾**（活干完要落地，箭头朝内汇入主干）。两个动作长得像会让人以为是一回事，
+ * 而一个修状态、一个改代码历史。
+ */
+export function TaskFinishWorktreeIcon() {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      style={{ display: "block" }}
+    >
+      {/* 源分支 */}
+      <circle cx="6" cy="5" r="2.4" />
+      <path d="M6 7.4V16" />
+      <circle cx="6" cy="19" r="2.4" />
+      {/* 汇入主干 */}
+      <circle cx="18" cy="12" r="2.4" />
+      <path d="M6 12h6" />
+      <path d="M9.6 9.2 12 12l-2.4 2.8" />
+    </svg>
+  );
+}
+
 export function TaskSessionErrorIcon() {
   return (
     <svg
