@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net/http"
@@ -292,6 +293,61 @@ func (h *HTTPHandler) handleKanbanTaskRebuildWorktree(w http.ResponseWriter, r *
 	}
 	h.broadcastTaskUpdated(rootID, detail)
 	respondJSON(w, http.StatusOK, detail)
+}
+
+// handleKanbanTaskFinishWorktree 收尾任务在 worktree 里的活：合回主 checkout →
+// 拆 worktree → 删分支 → 列残留。
+//
+// 冲突走 409 而不是 400：合并撞上冲突是「需要人工处理」，不是「请求写错了」。
+// body 里带 conflict_files 让前端能列出可点的文件清单 —— 冲突要人工解决这件事
+// 藏在一句 error 字符串里等于没有。
+func (h *HTTPHandler) handleKanbanTaskFinishWorktree(w http.ResponseWriter, r *http.Request) {
+	svc, ok := h.kanbanService(w)
+	if !ok {
+		return
+	}
+	var req struct {
+		RootID       string `json:"root_id"`
+		Target       string `json:"target"`
+		DeleteBranch bool   `json:"delete_branch"`
+		PruneOrphans bool   `json:"prune_orphans"`
+	}
+	_ = json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req)
+	rootID := strings.TrimSpace(req.RootID)
+	taskID := strings.TrimSpace(chi.URLParam(r, "id"))
+	if rootID == "" || taskID == "" {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("root_id and id required"))
+		return
+	}
+	result, err := svc.FinishTaskWorktree(r.Context(), kanban.FinishWorktreeInput{
+		RootID:       rootID,
+		TaskID:       taskID,
+		Target:       strings.TrimSpace(req.Target),
+		DeleteBranch: req.DeleteBranch,
+		PruneOrphans: req.PruneOrphans,
+	})
+	// 合并已经成功、只是后面某步失败时（典型：worktree 里有未跟踪的 .mindfs/
+	// 会话库，git worktree remove 拒绝），result 带着已完成的进度一起回 500，
+	// 前端能显示「合并已完成，卡在拆 worktree」而不是笼统一句失败。
+	var conflict *kanban.FinishWorktreeConflict
+	if errors.As(err, &conflict) {
+		respondJSON(w, http.StatusConflict, map[string]any{
+			"error":          conflict.Error(),
+			"conflict_files": conflict.ConflictFiles,
+			"output":         conflict.Output,
+			"result":         result,
+		})
+		return
+	}
+	if err != nil {
+		respondJSON(w, http.StatusInternalServerError, map[string]any{
+			"error":  err.Error(),
+			"result": result,
+		})
+		return
+	}
+	// 广播已经在 service 末尾做过（Runner.TaskUpdated → task.updated），这里不再重复。
+	respondJSON(w, http.StatusOK, result)
 }
 
 func (h *HTTPHandler) handleKanbanTaskMove(w http.ResponseWriter, r *http.Request, action string) {

@@ -167,8 +167,12 @@ import { fetchCandidates, type CandidateItem } from "./services/candidates";
 import {
   createTask,
   deleteTaskTemplate,
+  // FinishWorktreeConflict 是 class 不是 type：下面要用 instanceof 分流
+  // （冲突要列文件清单，其它失败只报一句）。
+  FinishWorktreeConflict,
   fetchTaskDetails,
   fetchTaskTemplates,
+  finishTaskWorktree,
   getCachedTaskDetails,
   getCachedTaskMeta,
   moveTask,
@@ -707,7 +711,7 @@ export function App({ onGoHome }: AppProps) {
 
 	  // 跨项目工作台状态与逻辑见 kanbanTaskPanel 定义前（workspaceOpen 等）
 
-  const handleMoveKanbanTask = useCallback(async (task: KanbanTask, action: "next" | "run-now" | "pause" | "resume" | "complete" | "cancel" | "rebuild-worktree") => {
+  const handleMoveKanbanTask = useCallback(async (task: KanbanTask, action: "next" | "run-now" | "pause" | "resume" | "complete" | "cancel" | "rebuild-worktree" | "finish-worktree") => {
     const rootId = task.root_id || currentRootIdRef.current;
     if (!rootId) return;
     let reason = "";
@@ -718,15 +722,44 @@ export function App({ onGoHome }: AppProps) {
       }
       reason = input.trim();
     }
+    const nodeId = getNodeIdForRoot(rootId);
     try {
+      if (action === "finish-worktree") {
+        // 收尾走独立 API（合并 + 拆 worktree + 删分支），返回的不是 TaskDetail 而是
+        // 「实际做了什么」。任务本身的详情要另外拉一次回来刷新。
+        const result = await finishTaskWorktree(rootId, task.id, { nodeId });
+        // 收尾返回的是「做了什么」，任务详情得另外拉回来（worktree_path 被清掉了）。
+        const refreshed = await fetchTaskDetails(rootId, { taskNumber: task.task_number }, nodeId).catch(() => [] as TaskDetail[]);
+        if (refreshed.length > 0) applyTaskDetails(rootId, refreshed);
+        // 分支没删掉（未合并被 branch -d 拒绝）要说出来，否则「没删」看着像「不用删」。
+        if (!result.branch_deleted && result.branch_skip_reason) {
+          setTaskSessionErrorDialog({
+            title: t("task.finishWorktree"),
+            message: result.branch_skip_reason,
+            details: (result.orphans || []).map((orphan) => `${orphan.path} (${orphan.files?.join(", ") || "空"})`),
+          });
+        }
+        return;
+      }
       const detail = action === "rebuild-worktree"
-        ? await rebuildTaskWorktree(rootId, task.id, getNodeIdForRoot(rootId))
-        : await moveTask(rootId, task.id, action, reason, getNodeIdForRoot(rootId));
+        ? await rebuildTaskWorktree(rootId, task.id, nodeId)
+        : await moveTask(rootId, task.id, action, reason, nodeId);
       applyTaskDetails(rootId, [detail]);
       if (detail.task.worktree_path) {
         void refreshTaskWorktree(rootId, detail.task.worktree_path);
       }
     } catch (err) {
+      // 冲突要列出文件清单，不能只 toast 一句：仓库现在停在 MERGE_HEAD，
+      // 用户得知道具体是哪些文件、然后自己去解。taskSessionErrorDialog 已经是
+      // 「标题 + 详情列表」这个形状，直接复用而不是再造一个弹窗。
+      if (err instanceof FinishWorktreeConflict) {
+        setTaskSessionErrorDialog({
+          title: t("task.finishWorktreeConflict"),
+          message: err.message,
+          details: err.conflictFiles,
+        });
+        return;
+      }
       reportError("file.write_failed", String((err as Error)?.message || t("task.actionFailed")));
     }
   }, [applyTaskDetails, t]);

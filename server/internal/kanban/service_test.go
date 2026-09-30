@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -27,6 +28,25 @@ func (r testRoots) GetRoot(rootID string) (fs.RootInfo, error) {
 
 func (r testRoots) ListRoots() []fs.RootInfo {
 	return []fs.RootInfo{r.root}
+}
+
+// fakeRunnerID 给每个 fakeRunner 一个进程内唯一的短 id，用在它建的临时目录名里。
+//
+// 为什么需要：所有 fakeRunner 建在同一个 os.TempDir() 下，而各自的 dirSeq 都从 1
+// 起数 —— 两个不同用例的第 1 次建树会拿到完全一样的路径。撞名之后 A 用例的
+// t.Cleanup 会删掉 B 用例正在用的目录，那种失败看起来跟 worktree 逻辑毫无关系。
+// 带 PID + 单调计数是最低成本的错开方式（不需要 crypto/rand 那种重家伙）。
+var fakeRunnerSeq atomic.Int64
+
+func fakeRunnerID() string {
+	return fmt.Sprintf("%d-%d", os.Getpid(), fakeRunnerSeq.Add(1))
+}
+
+// 残留的同名目录不能被「继承」：os.MkdirAll 撞到已存在的目录会**静默成功**，于是
+// 判据「目录存在 → worktree 可用」拿到一个别的（可能是上次被 kill 的 run 留下的）
+// 目录，测试照样绿 —— 那是假通过。独占创建撞名即失败，不悄悄复用。
+func mkdirExclusive(path string) error {
+	return os.Mkdir(path, 0o755)
 }
 
 type fakeRunner struct {
@@ -67,16 +87,21 @@ func (r *fakeRunner) CreateTaskWorktree(ctx context.Context, rootID, name, branc
 	// 「目录还在不在」判 worktree 可用（原先只看字段非空）。fake 只回一个不存在的
 	// 路径的话，测的是 fake 的失真而不是被测逻辑。
 	//
-	// 目录名带 runner 序号：光用 worktree 名（task-1）在同一台机器上跨用例/跨包会撞，
+	// 目录名带**进程内全局**序号：光用 worktree 名（task-1）在同一台机器上跨用例/跨包会撞，
 	// 撞了就是「别的用例留下的目录让本用例的判据为真」—— 那种通过是假的。
+	// 用包级计数器而不是每个 runner 自己的 dirSeq：每个 fakeRunner 都从 1 起数，
+	// 而它们建在同一个 os.TempDir() 下，于是**两个不同用例的第 1 次建树会撞名**。
+	// 撞名的后果不是报错而是更难查的静默串味：A 用例的 cleanup 删掉 B 用例正在用的目录。
+	// 跨进程残留（上次 run 被 kill）同样靠它错开：进程内计数器从 1 起，但上次的
+	// 目录名带的是上次的序号加随机尾巴。
 	// worktreeName 仍记真名（renderWorktreeName 的断言要看它）。
 	r.mu.Lock()
 	r.dirSeq++
 	seq := r.dirSeq
 	r.mu.Unlock()
-	path := filepath.Join(os.TempDir(), fmt.Sprintf("wtf-%d-%s", seq, name))
-	if err := os.MkdirAll(path, 0o755); err != nil {
-		return WorktreeInfo{}, err
+	path := filepath.Join(os.TempDir(), fmt.Sprintf("wtf-%s-%d-%s", fakeRunnerID(), seq, name))
+	if err := mkdirExclusive(path); err != nil {
+		return WorktreeInfo{}, fmt.Errorf("建假 worktree 目录 %s: %w", path, err)
 	}
 	r.mu.Lock()
 	r.createdDirs = append(r.createdDirs, path)
@@ -2532,15 +2557,19 @@ func TestClearTaskWorktreeDetachesTask(t *testing.T) {
 	if _, err := svc.Next(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err != nil {
 		t.Fatalf("Next: %v", err)
 	}
+	// 等**落库后的**路径，不是 fake 的 worktreeCreateCalled：那个标志在
+	// CreateTaskWorktree 入口就置位了，早于 service.go:1028 的 UpdateTask。
+	// 按标志等会在两个方向上翻车 —— 抢在写库之前读会看到空路径，之后清完再看
+	// 又会被后台那次写入把路径写回来（两种失败都跟 ClearTaskWorktree 无关）。
+	var before TaskDetail
 	waitForCondition(t, func() bool {
-		runner.mu.Lock()
-		defer runner.mu.Unlock()
-		return runner.worktreeCreateCalled
+		got, err := svc.GetTask(ctx, root.ID, detail.Task.ID)
+		if err != nil {
+			return false
+		}
+		before = got
+		return strings.TrimSpace(got.Task.WorktreePath) != ""
 	})
-	before, err := svc.GetTask(ctx, root.ID, detail.Task.ID)
-	if err != nil {
-		t.Fatalf("GetTask: %v", err)
-	}
 	if strings.TrimSpace(before.Task.WorktreePath) == "" {
 		t.Fatalf("worktree path should be set before clearing")
 	}

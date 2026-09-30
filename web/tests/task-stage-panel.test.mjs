@@ -294,10 +294,16 @@ assert.equal(
   1,
   "the rebuild button must render exactly once, not once per stage",
 );
+// 重建键只能在 headerRight 那一段里（不在 bodyStages.map 里）。
+// 钉「与铅笔紧邻」是错的：收尾键也在这段里，钉死了加一个同级按钮就得改断言，
+// 而真正要防的是「回到阶段行里、对每一段都渲染一个」。改成量 headerRight 的范围。
+const headerRightAt = panel.indexOf("headerRight={editingName");
+assert.ok(headerRightAt > 0, "TaskDetailPanel must pass a headerRight block");
+const headerRightSlice = panel.slice(headerRightAt, headerRightAt + 1800);
 assert.match(
-  panel,
-  /headerRight=\{editingName \? \([\s\S]{0,600}?\) : \(\s*<>[\s\S]{0,700}?\{worktreeMissing \? \([\s\S]{0,700}?onClick=\{\(\) => void rebuildWorktree\(\)\}[\s\S]{0,400}?<PencilIcon \/>/,
-  "the rebuild button must live in the panel header, left of the rename pencil",
+  headerRightSlice,
+  /\{worktreeMissing \? \([\s\S]{0,700}?onClick=\{\(\) => void rebuildWorktree\(\)\}[\s\S]{0,400}?<TaskRebuildWorktreeIcon \/>/,
+  "the rebuild button must live in the panel header, not in the per-stage map",
 );
 // 当前段 fail/cancelled/rejected 时不许给：服务端 moveRelative 会报错，而 RunNow 的
 // waiting_user 分支把错吞掉只回详情（service.go:786）—— 按钮点了什么都不发生。

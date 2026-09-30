@@ -11,6 +11,7 @@ import {
   DeleteIcon,
   RunNowIcon,
   TaskCompleteIcon,
+  TaskFinishWorktreeIcon,
   TaskPauseIcon,
   TaskPlanAuxIcon,
   TaskQueuedSpinnerIcon,
@@ -27,7 +28,9 @@ import {
 /** 卡片能做的状态迁移。cancel 也在这儿：已结束的任务只剩这一个出口。 */
 // rebuild-worktree 不是状态迁移，是把已删的树建回来；服务端不自动做（分支还在不在
 // 得用户决定），所以必须是一个能点的动作。
-export type TaskCardAction = "run-now" | "pause" | "resume" | "complete" | "cancel" | "rebuild-worktree";
+// finish-worktree 也不是状态迁移：它把分支合回主干并拆掉 worktree（wt-finish 的
+// 服务端那一半），跑完之后任务本身的状态不变。
+export type TaskCardAction = "run-now" | "pause" | "resume" | "complete" | "cancel" | "rebuild-worktree" | "finish-worktree";
 
 /**
  * 「· + 内容」合成一个 flex item。
@@ -123,6 +126,9 @@ export function TaskCardRows({
   // （DELETE /api/git/worktrees、wt-finish.sh cleanup、手工 rm）。
   // 徽标原来只看 create_worktree，于是树早没了还显示一个自信的绿色标签。
   const worktreeMissing = worktreeEnabled && task.worktree_missing === true;
+  // 收尾要有可拆的 worktree：目录不在了给的是「重建」，没有 worktree 可拆。
+  // 终态任务不给 —— 活已经结束了，没有正在 worktree 里的东西要收。
+  const canFinishWorktree = worktreeEnabled && !worktreeMissing && !!task.worktree_path && !terminal;
   const numberLabel = task.task_number ? `#${task.task_number}` : "";
   const taskName = task.name || task.task_template_name || templateNameFallback || t("task.unnamedTemplate");
   const title = task.task_template_name || templateNameFallback || t("task.defaultTitle");
@@ -367,6 +373,23 @@ export function TaskCardRows({
                   style={taskCardIconButtonStyle("accent")}
                 >
                   <RunNowIcon />
+                </button>
+              ) : null}
+              {/* 收尾 worktree：活干完了把分支合回主干、拆掉 worktree 和分支。
+                  放在执行键右边 —— 两者是任务生命周期的两端（继续跑 / 跑完收掉），
+                  挨着才看得出这是一对。目录已经没了的不给，那种情况给的是上面的重建键。 */}
+              {canFinishWorktree ? (
+                <button
+                  type="button"
+                  title={t("task.finishWorktree")}
+                  aria-label={t("task.finishWorktree")}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onMove(task, "finish-worktree");
+                  }}
+                  style={taskCardIconButtonStyle("success")}
+                >
+                  <TaskFinishWorktreeIcon />
                 </button>
               ) : null}
               {canPause ? (
