@@ -231,6 +231,7 @@ func (m *workspaceManager) emptyWorkspace() (*api.AppContext, error) {
 	services.Scheduled = scheduled.NewService(services, services)
 	services.Kanban = kanban.NewService(m.shared.templates, services)
 	services.Kanban.SetRunner(services)
+	services.WireFinishStageTeardown(services.Kanban)
 	githubImportSvc, err := githubimport.NewService(services)
 	if err != nil {
 		return nil, err
@@ -319,6 +320,7 @@ func (m *workspaceManager) build(userID string) (*api.AppContext, error) {
 	// 共享实例会让同一个任务被两边各跑一次。
 	services.Kanban = kanban.NewService(m.shared.templates, services)
 	services.Kanban.SetRunner(services)
+	services.WireFinishStageTeardown(services.Kanban)
 	githubImportSvc, err := githubimport.NewService(services)
 	if err != nil {
 		return nil, err

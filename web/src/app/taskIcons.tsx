@@ -306,21 +306,25 @@ export function taskAuxBadgeStyle(attention = false): React.CSSProperties {
   };
 }
 
-// 四档：enabled（有活着的 worktree）/ missing（开过，目录被删了）/
-// finished（收尾过了，活已经并回主干）/ none（本来就没开）。
+// 五档：enabled（有活着的 worktree）/ finishing（收尾流程正在跑）/
+// missing（开过，目录被删了）/ finished（收尾过了，活已经并回主干）/ none（本来就没开）。
 // missing、finished、none 三者不并档：分别是「出过事」「干完了」「本来没有」，
 // 给同一个样式等于让用户分不清自己的 worktree 到底怎么了。
-export type WorktreeTagState = "enabled" | "missing" | "finished" | "none";
+// finishing 单列一档而不是拿 running 去顶：收尾会**拆掉**这个目录，
+// 期间 worktree 确实还在、也还挂着分支，混进 enabled 会让用户以为「还没开始」，
+// 于是再去点一次收尾。
+export type WorktreeTagState = "enabled" | "finishing" | "missing" | "finished" | "none";
 
 export function taskWorktreeTagStyle(state: WorktreeTagState): React.CSSProperties {
   const missing = state === "missing";
   const finished = state === "finished";
   const enabled = state === "enabled";
+  const finishing = state === "finishing";
   const tone = missing
     ? "rgba(220, 38, 38, "
     : finished
       ? "rgba(100, 116, 139, "
-      : enabled
+      : enabled || finishing
         ? "rgba(22, 163, 74, "
         : "rgba(217, 119, 6, ";
   return {
@@ -332,11 +336,14 @@ export function taskWorktreeTagStyle(state: WorktreeTagState): React.CSSProperti
     border: `1px solid ${tone}0.28)`,
     borderRadius: "4px",
     background: `${tone}0.08)`,
-    color: missing ? "#b91c1c" : finished ? "#475569" : enabled ? "#15803d" : "#b45309",
+    color: missing ? "#b91c1c" : finished ? "#475569" : enabled || finishing ? "#15803d" : "#b45309",
     fontSize: "9px",
     fontWeight: 800,
     lineHeight: "12px",
     padding: enabled || missing ? "0 4px" : "0 3px 0 2px",
+    // 收尾中要一眼看得出「这玩意儿正在动」：绿是「有一个 worktree」，
+    // 不动的话和 enabled 一模一样，脉冲动画是唯一区分两者的信号。
+    animation: finishing ? "mindfs-task-ask-user-pulse 2.2s ease-in-out infinite" : "none",
   };
 }
 

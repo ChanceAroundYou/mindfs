@@ -93,6 +93,10 @@ type Service struct {
 	// 为什么不能只是「查一下」：查和改之间不是原子的，中间插进来一个收尾就会留下
 	// 「状态是 running、却没有执行体」的任务 —— 没有 agent 会再碰它，看起来像卡死。
 	taskAdmit map[string]*admitToken
+	// finishStageFinished 是「收尾段跑完之后」的回调，由 api 层在装配时挂上。
+	// 见 worktree_finish_stage.go 的 notifyFinishStageOutcome —— 它必须挂在
+	// executeTask 之外，因为清场要抢 taskFinish 锁而那条锁见到 taskRun 就拒绝。
+	finishStageFinished FinishStageFinishedFunc
 }
 
 // finishToken 是一次收尾的锁凭证。见 acquireTaskFinish。
@@ -328,9 +332,9 @@ func (s *Service) ListTaskDetails(ctx context.Context, rootID string, opts ListT
 
 // TaskOverviewItem 是跨项目工作台的一行：任务 + 所属项目。
 type TaskOverviewItem struct {
-	RootID   string            `json:"root_id"`
-	RootName string            `json:"root_name"`
-	Task     Task              `json:"task"`
+	RootID   string `json:"root_id"`
+	RootName string `json:"root_name"`
+	Task     Task   `json:"task"`
 }
 
 // Overview 汇总所有项目的在途任务（未终态 + 最近完成的少量，供归档区查看）。
@@ -998,6 +1002,12 @@ func (s *Service) RunTask(rootID, taskID string) error {
 			if err := s.executeTask(context.Background(), rootID, taskID); err != nil {
 				log.Printf("[kanban] task.execute.error root=%s task=%s err=%v", rootID, taskID, err)
 			}
+			// 收尾段跑完（成功或受阻）就在这里报给外层。**必须在 executeTask 返回之后、
+			// 且在 taskRun 标记摘掉之后**：清场要抢 taskFinish 锁，而 acquireTaskFinish
+			// 见到 s.taskRun[key] 就拒绝（它就是「还有执行体在跑」）。挂在 executeTask
+			// 内部必然被这条锁拒掉 —— agent 收工那一刻执行体确实还占着这个标记。
+			// 见 notifyFinishStageOutcome。
+			s.notifyFinishStageOutcome(rootID, taskID)
 			s.mu.Lock()
 			// 执行期间又有请求进来 → 补跑一次（此时阶段多已 waiting_user，补跑不会重复执行 agent）。
 			if s.taskPend[key] {

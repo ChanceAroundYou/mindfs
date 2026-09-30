@@ -186,31 +186,32 @@ assert.doesNotMatch(
 assert.match(kanbanFinish, /Orphans = orphans/, "orphans must be reported back to the caller");
 
 // ── 前端：冲突要分流，不能只 toast 一句 ──
+// 收尾改成流水线阶段（2026-09）之后冲突的**唯一**来源是服务端在清场 goroutine
+// 里播回来的 task.finish_teardown：HTTP 响应早就回来了（那是「阶段已发起」），
+// 面板也早就把上下文丢了。于是分流点从「catch 里 instanceof」移到了 WS 处理器。
 assert.match(
-  app,
-  /if \(err instanceof FinishWorktreeConflict\) \{[\s\S]{0,400}details: err\.conflictFiles/,
-  "App must surface the conflict as a titled dialog listing the files, not a toast",
+  read("src/app/useRealtimeEvents.ts"),
+  /if \(payload\.error\) \{[\s\S]{0,400}details: conflicts/,
+  "the teardown receipt must surface a conflict as a titled dialog listing the files, not a toast",
 );
-assert.match(
+assert.doesNotMatch(
   panel,
-  /if \(error instanceof FinishWorktreeConflict\) setFinishConflict\(error\)/,
-  "the detail panel must keep the conflict on screen so the file list stays readable",
+  /setFinishConflict/,
+  "the detail panel must not keep a second copy of the conflict state — there is no HTTP response to catch it from any more",
 );
-assert.match(panel, /data-onboarding="task-finish-conflict"/, "the conflict block must be findable in tests");
-assert.match(panel, /finishConflict\.conflictFiles\.map\(/, "the conflict block must list the files");
 
 // ── 前端：按钮的给法 ──
 // 目录已经没了的只能重建，没有 worktree 可拆 —— 两个键不能同时出现，
 // 更不能让收尾键在失效路径上假装能点。
 assert.match(
   panel,
-  /const canFinishWorktree = task\?\.create_worktree === true\s*&&\s*!!task\?\.worktree_path\s*&&\s*task\?\.worktree_missing !== true;/,
-  "the finish button requires a live worktree, and must be withheld when worktree_missing is set",
+  /const canFinishWorktree = task\?\.create_worktree === true\s*&&\s*!!task\?\.worktree_path\s*&&\s*task\?\.worktree_missing !== true\s*&&\s*!isTerminalKanbanTask\(task\)\s*&&\s*!finishActive;/,
+  "the finish button requires a live worktree, and must be withheld for missing worktrees, finished tasks and a running finish alike",
 );
 assert.match(
   card,
-  /const canFinishWorktree = worktreeEnabled && !worktreeMissing && hasWorktreePath && !terminal;/,
-  "the card button must be withheld for missing worktrees and finished tasks alike",
+  /const canFinishWorktree = worktreeEnabled && !worktreeMissing && hasWorktreePath && !terminal && !finishActive;/,
+  "the card button must be withheld for missing worktrees, finished tasks and a running finish alike",
 );
 assert.match(card, /onMove\(task, "finish-worktree"\)/, "the card button must dispatch finish-worktree");
 assert.match(app, /action === "finish-worktree"/, "App must handle the finish-worktree card action");

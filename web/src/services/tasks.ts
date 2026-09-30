@@ -29,6 +29,14 @@ export type StageTemplate = {
   session_reuse_policy?: "task_main" | "same_stage" | "always_new";
   prompt_template?: string;
   agent_can_control_stage?: boolean;
+  /**
+   * 服务端生成的段标记（"" = 普通段，"worktree_finish" = 收尾段）。
+   *
+   * **必须在这里带上**：updateTaskStage 发的是整个 stage 对象，服务端那边是整段替换
+   * （UpdateStage）。类型里没有这个字段的话，用户在面板上编辑一次收尾段，标记就被
+   * 静默抹掉，那个任务再也认不出自己走过收尾流程。
+   */
+  kind?: string;
   created_at?: string;
   updated_at?: string;
 };
@@ -522,6 +530,44 @@ export async function finishTaskWorktree(
     throw error;
   }
 }
+
+/**
+ * 发起收尾流程：追加一段收尾阶段并起 agent，由它自己去 commit + merge。
+ *
+ * 与 finishTaskWorktree 的分工：那个是**直接清场**（跳过 agent 阶段，用于
+ * agent 已经把活提交好的情况），这个是**走完整流程** —— 清场发生在收尾段成功
+ * **之后**，由服务端自己接着做（拆目录 → 删分支 → 搬会话），前端不用等。
+ *
+ * 所以这里返回的 detail 是「刚刚追加了收尾段」那一刻的快照，worktree_path 还在。
+ * 服务端 409（正在执行 / 已在收尾 / 目录已失效）由 APIError 带出，调用方按
+ * 普通错误处理即可。
+ */
+export async function beginTaskFinishWorktree(rootId: string, taskId: string, nodeId?: string): Promise<TaskDetail> {
+  return protectedJSON<TaskDetail>(appURL(`/api/tasks/${encodeURIComponent(taskId)}/begin-finish`, undefined, nodeId), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ root_id: rootId }),
+  });
+}
+
+/**
+ * 收尾段跑完之后服务端清场的结论（WS `task.finish_teardown`）。
+ *
+ * 前端在 beginTaskFinishWorktree 之后就撒手了：清场是服务端自己的 goroutine 在跑，
+ * 没有任何 HTTP 响应会回来告诉用户成没成。这一条推送就是那个回执。
+ *
+ * 字段与 FinishWorktreeResult 同源，error/conflict_files 沿用 finish-worktree
+ * 的口径：409 类冲突 = 仓库停在 MERGE_HEAD 等人处理（要列文件），其它错只给一句。
+ */
+export type TaskFinishTeardown = {
+  root_id: string;
+  task_id: string;
+  result?: FinishWorktreeResult;
+  conflict_files?: string[];
+  error?: string;
+  session_note?: string;
+  session_warning?: string;
+};
 
 export type TaskOverviewItem = {
   root_id: string;

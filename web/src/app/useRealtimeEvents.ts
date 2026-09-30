@@ -82,6 +82,9 @@ export type RealtimeEventsContext = {
     setSessions: Dispatch<SetStateAction<SessionItem[]>>;
     setSlashCommandResults: Dispatch<SetStateAction<Record<string, SlashCommandResult>>>;
     setStatus: Dispatch<SetStateAction<WSStatus>>;
+    // 「标题 + 正文 + 详情清单」那个弹窗。收尾撞上冲突要走它：仓库停在 MERGE_HEAD，
+    // 得把冲突文件逐条列出来，toast 里塞不下、也不会自己消失。
+    setTaskSessionErrorDialog: Dispatch<SetStateAction<{ title: string; message: string; details: string[] } | null>>;
     setUpdateState: Dispatch<SetStateAction<UpdateState>>;
   };
   /** App 的回调与动作 */
@@ -182,6 +185,7 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
       setSessions,
       setSlashCommandResults,
       setStatus,
+      setTaskSessionErrorDialog,
       setUpdateState,
     },
     actions: {
@@ -1559,6 +1563,49 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
               void refreshTaskWorktree(payload.root_id, nextTask.worktree_path, false);
             }
           }
+      },
+      "task.finish_teardown": (event: any, payload: any) => {
+          // 收尾段成功之后，服务端在**自己的** goroutine 里做清场（拆目录 → 删分支
+          // → 搬会话）。那条路没有任何 HTTP 响应会回来，界面唯一能知道结果的
+          // 就是这一条推送 —— 不接的话收尾就变成「点了没反应，徽标悄悄变了」。
+          if (typeof payload?.root_id !== "string" || typeof payload?.task_id !== "string") {
+            return;
+          }
+          const conflicts: string[] = Array.isArray(payload.conflict_files)
+            ? payload.conflict_files.map(String).filter(Boolean)
+            : [];
+          const lines: string[] = [];
+          const result = payload.result;
+          if (result?.commit) lines.push(String(result.commit));
+          if (result?.worktree_removed) lines.push(t("task.finishWorktreeRemoved"));
+          if (result?.branch_deleted) lines.push(t("task.finishWorktreeBranchDeleted"));
+          if (result?.branch_skip_reason) lines.push(String(result.branch_skip_reason));
+          for (const orphan of (result?.orphans || []) as Array<{ path: string; files?: string[] }>) {
+            lines.push(t("task.finishWorktreeOrphan", { path: orphan.path }));
+          }
+          const sessionWarning = String(payload.session_warning || "").trim();
+          if (sessionWarning) lines.push(sessionWarning);
+
+          if (payload.error) {
+            // 合并撞上冲突：仓库停在 MERGE_HEAD，worktree 和分支都还在、代码没丢，
+            // 但要人工解 —— 列出文件，别只丢一句「合并失败」。
+            if (conflicts.length > 0) {
+              setTaskSessionErrorDialog({
+                title: t("task.finishWorktreeConflict"),
+                message: String(payload.error),
+                details: conflicts,
+              });
+            } else {
+              reportError("file.write_failed", String(payload.error), { severity: "error", recoverable: true });
+            }
+            return;
+          }
+          // 成功：info 档（accent 色、自动消失）而不是红的错误色 —— 这是个好消息，
+          // 红色会让用户以为收尾炸了，反而不敢去动那个已经拆掉的目录。
+          reportError("file.write_failed", lines.length > 0 ? lines.join(" / ") : t("task.finishWorktreeDone"), {
+            severity: "info",
+            recoverable: false,
+          });
       },
       "session.meta.updated": (event: any, payload: any) => {
           if (

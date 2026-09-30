@@ -1,6 +1,6 @@
 import React from "react";
 import { useI18n } from "../i18n";
-import { isTerminalKanbanTask, parseTaskSessionErrorDetails, parseTaskSessionErrorMessage, taskStatusColor, taskStatusLabel } from "../app/appTask";
+import { isFinishStageActive, isTerminalKanbanTask, hasLaterStage, parseTaskSessionErrorDetails, parseTaskSessionErrorMessage, taskStatusColor, taskStatusLabel } from "../app/appTask";
 import { AgentIcon } from "./AgentIcon";
 import { ModeIcon } from "./ModeIcon";
 import { NoWorktreeIcon } from "./NoWorktreeIcon";
@@ -23,6 +23,7 @@ import {
   taskCardIconButtonStyle,
   taskReplyPulseStyle,
   taskWorktreeTagStyle,
+  type WorktreeTagState,
 } from "../app/taskIcons";
 
 /** 卡片能做的状态迁移。cancel 也在这儿：已结束的任务只剩这一个出口。 */
@@ -114,12 +115,20 @@ export function TaskCardRows({
   const terminal = isTerminalKanbanTask(task);
   // 暂停只在阶段真在跑时给；等待/未开始没有「暂停」可言。恢复同理。
   const stageRunning = task.current_stage_status === "running" && task.status === "running";
-  // 完成是纯任务状态操作：不碰会话/worktree，所以任何非终态卡都该给这个出口。
-  // 会话被删或 worktree 丢失的任务永远停在 running，只有这条能救。
-  const canComplete = !terminal;
+  // 收尾流程进行中：指针停在收尾段上、那一段还没跑完。这时候不给推进类按钮 ——
+  // 清场就要拆 worktree 了，再推进阶段或再点一次收尾，都是对着一个即将消失的目录干活。
+  const finishActive = isFinishStageActive(task);
+  // 指针后面还有没有段。见 appTask 的 hasLaterStage：卡片拿不到 stage_runs，
+  // 「还有段」是这里唯一能判的推进信息。
+  const moreStages = hasLaterStage(task);
+  // 完成是纯任务状态操作，但**还有下一段就不给**：收了尾就看不到下一段了，
+  // 等于替用户提前结束一个还没做完的任务。
+  const canComplete = !terminal && !moreStages && !finishActive;
   const canPause = stageRunning;
   const canResume = task.status === "paused";
-  const showAdvance = !terminal && !stageRunning;
+  // 立即执行是**推进**（服务端 RunNow → Next → moveRelative(+1)）。没有下一段可推进时
+  // 它什么都不会发生，所以那种局面下不给这个键，该给的是「完成」。
+  const showAdvance = !terminal && !stageRunning && moreStages && !finishActive;
   const statusText = taskStatusLabel(task.status || "", t);
   // 徽标说的是「**现在**有没有 worktree」，不是「当初要不要建树」。create_worktree
   // 是创建时的配置，永久为 true；收尾之后它一点没变，于是徽标照样显示绿色 worktree，
@@ -134,11 +143,29 @@ export function TaskCardRows({
   const worktreeMissing = worktreeEnabled && task.worktree_missing === true;
   // 收尾过了：当初建过树，现在 path 被清空、目录也没了。
   const worktreeFinished = worktreeEnabled && !hasWorktreePath && !worktreeMissing;
-  // 三种「不在」要分开：从来没建（amber）、建过但目录被删（red）、收尾拆掉了（灰）。
-  const worktreeTagState = worktreeMissing ? "missing" : worktreeFinished ? "finished" : hasWorktreePath ? "enabled" : "none";
+  // 五种「不在」要分开：从来没建（amber）、收尾中（绿+脉冲）、建过但目录被删（red）、
+  // 收尾拆掉了（灰）。收尾中单列一档而不是并进 enabled：期间目录还在、徽标看着
+  // 和平时一模一样，用户会以为「还没开始」于是再点一次。
+  const worktreeTagState: WorktreeTagState = worktreeMissing
+    ? "missing"
+    : worktreeFinished
+      ? "finished"
+      : hasWorktreePath
+        ? (finishActive ? "finishing" : "enabled")
+        : "none";
+  const worktreeTagTitle = worktreeTagState === "missing"
+    ? t("task.worktreeMissingTitle")
+    : worktreeTagState === "finished"
+      ? t("task.worktreeFinishedTitle")
+      : worktreeTagState === "finishing"
+        ? t("task.worktreeFinishingTitle")
+        : worktreeTagState === "enabled"
+          ? t("task.worktreeTitle")
+          : t("task.noWorktreeTitle");
   // 收尾要有可拆的 worktree：目录不在了给的是「重建」，没有 worktree 可拆。
   // 终态任务不给 —— 活已经结束了，没有正在 worktree 里的东西要收。
-  const canFinishWorktree = worktreeEnabled && !worktreeMissing && hasWorktreePath && !terminal;
+  // 收尾流程进行中也不给：那正是「已经在收尾」，再点是往同一条流程上叠一段。
+  const canFinishWorktree = worktreeEnabled && !worktreeMissing && hasWorktreePath && !terminal && !finishActive;
   const numberLabel = task.task_number ? `#${task.task_number}` : "";
   const taskName = task.name || task.task_template_name || templateNameFallback || t("task.unnamedTemplate");
   const title = task.task_template_name || templateNameFallback || t("task.defaultTitle");
@@ -223,24 +250,16 @@ export function TaskCardRows({
           </>
         ) : null}
         <span
-          title={worktreeTagState === "missing"
-            ? t("task.worktreeMissingTitle")
-            : worktreeTagState === "finished"
-              ? t("task.worktreeFinishedTitle")
-              : worktreeTagState === "enabled"
-                ? t("task.worktreeTitle")
-                : t("task.noWorktreeTitle")}
-          aria-label={worktreeTagState === "missing"
-            ? t("task.worktreeMissingTitle")
-            : worktreeTagState === "finished"
-              ? t("task.worktreeFinishedTitle")
-              : worktreeTagState === "enabled"
-                ? t("task.worktreeTitle")
-                : t("task.noWorktreeTitle")}
+          title={worktreeTagTitle}
+          aria-label={worktreeTagTitle}
           style={taskWorktreeTagStyle(worktreeTagState)}
         >
           {worktreeTagState === "enabled" || worktreeTagState === "missing" ? null : <NoWorktreeIcon />}
-          {worktreeTagState === "finished" ? t("task.worktreeFinishedLabel") : "worktree"}
+          {worktreeTagState === "finished"
+            ? t("task.worktreeFinishedLabel")
+            : worktreeTagState === "finishing"
+              ? t("task.worktreeFinishingLabel")
+              : "worktree"}
         </span>
       </div>
       {children}
@@ -397,10 +416,21 @@ export function TaskCardRows({
                   <RunNowIcon />
                 </button>
               ) : null}
-              {/* 收尾 worktree：活干完了把分支合回主干、拆掉 worktree 和分支。
-                  放在执行键右边 —— 两者是任务生命周期的两端（继续跑 / 跑完收掉），
-                  挨着才看得出这是一对。目录已经没了的不给，那种情况给的是上面的重建键。 */}
-              {canFinishWorktree ? (
+              {/* 收尾 worktree：把这一段交给 agent 去 commit + merge，成功之后服务端
+                  才拆目录搬会话。放在执行键右边 —— 两者是任务生命周期的两端
+                  （继续跑 / 跑完收掉），挨着才看得出这是一对。
+                  目录已经没了的不给，那种情况给的是上面的重建键。
+                  收尾流程进行中（finishActive）把按钮换成转圈：清场要拆 worktree 了，
+                  这时候它必须是个「正在动」的读数，而不是一个还能再点的按钮。 */}
+              {worktreeTagState === "finishing" ? (
+                <span
+                  title={t("task.worktreeFinishingTitle")}
+                  aria-label={t("task.worktreeFinishingTitle")}
+                  style={{ ...taskCardIconButtonStyle("success"), cursor: "default" }}
+                >
+                  <TaskQueuedSpinnerIcon />
+                </span>
+              ) : canFinishWorktree ? (
                 <button
                   type="button"
                   title={t("task.finishWorktree")}
