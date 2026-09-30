@@ -327,7 +327,7 @@ func (h *HTTPHandler) handleKanbanTaskFinishWorktree(w http.ResponseWriter, r *h
 		PruneOrphans: req.PruneOrphans,
 	})
 	// 合并已经成功、只是后面某步失败时（典型：worktree 里有未跟踪的 .mindfs/
-	// 会话库，git worktree remove 拒绝），result 带着已完成的进度一起回 500，
+	// 会话库，git worktree remove 拒绝），result 带着已完成的进度一起回去，
 	// 前端能显示「合并已完成，卡在拆 worktree」而不是笼统一句失败。
 	var conflict *kanban.FinishWorktreeConflict
 	if errors.As(err, &conflict) {
@@ -340,7 +340,10 @@ func (h *HTTPHandler) handleKanbanTaskFinishWorktree(w http.ResponseWriter, r *h
 		return
 	}
 	if err != nil {
-		respondJSON(w, http.StatusInternalServerError, map[string]any{
+		// 400 而不是 500：到这里的错是「root/task 找不到」「worktree 身份对不上」
+		// 这类请求本身不成立，和同文件里 next/run-now 等动词一个口径（它们也是 400）。
+		// 回 500 会让前端按「服务端炸了」处理，还顺带吐一个全零的 result 出去。
+		respondJSON(w, http.StatusBadRequest, map[string]any{
 			"error":  err.Error(),
 			"result": result,
 		})

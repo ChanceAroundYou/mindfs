@@ -37,6 +37,28 @@ assert.match(
 assert.match(httpTasks, /"conflict_files": conflict\.ConflictFiles/, "the conflict file list must travel as its own field");
 // 合并成功但后面某步失败时，已完成的进度要一起回去，否则用户以为全白做了。
 assert.match(httpTasks, /"result":\s*result,/, "a partial failure must still carry the work that did land");
+// 非冲突的失败是 400 不是 500：root/task 找不到、worktree 身份对不上，都是请求
+// 本身不成立，和同文件里 next/run-now 一个口径。回 500 会让前端按「服务端炸了」
+// 处理，还顺带吐一个全零的 task 出去。运行期行为由 Go 侧
+// http_tasks_finish_test.go 钉（这里只守源码形态）。
+//
+// 只在**这个 handler 的函数体**里找：在整文件上跑正则的话，`[\s\S]*?` 会一路
+// 跳到文件后面随便哪个 StatusBadRequest，断言恒真 —— 改回 500 也照样绿。
+const finishHandlerSrc = httpTasks.slice(
+  httpTasks.indexOf("func (h *HTTPHandler) handleKanbanTaskFinishWorktree("),
+  httpTasks.indexOf("func (h *HTTPHandler) handleKanbanTaskMove("),
+);
+assert.ok(finishHandlerSrc.length > 0, "the finish handler must exist to assert against");
+assert.match(
+  finishHandlerSrc,
+  /if err != nil \{[\s\S]{0,200}?http\.StatusBadRequest/,
+  "a non-conflict failure must be 400, matching the sibling task verbs",
+);
+assert.doesNotMatch(
+  finishHandlerSrc,
+  /http\.StatusInternalServerError/,
+  "the finish handler must not answer 500; every failure here is either 409 (conflict) or 400 (bad request)",
+);
 
 // ── 服务端：顺序不可换 ──
 // 先合后拆。反过来会先把分支删掉，合的就不是那份活 —— 这种顺序错了测试全绿、
