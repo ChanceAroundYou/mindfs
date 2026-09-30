@@ -1528,7 +1528,7 @@ func TestAutoAdvanceAgentStageFailureWaitsForUserAtCurrentStage(t *testing.T) {
 
 // 失败段不许被一句「下一段」推过去。这条曾经是反着写的
 // （TestNextAdvancesFailedCurrentStageAfterUserReview），当时把
-//「失败段可以靠下一次 Next 强推」当成期望行为，实际就是阶段错乱的来源：
+// 「失败段可以靠下一次 Next 强推」当成期望行为，实际就是阶段错乱的来源：
 // 前一段的活没干完，下一段已经在错误前提上开跑。
 // 现在失败段只能靠 RerunStage 重跑或改任务离开，Next 必须被拒。
 func TestNextRejectsFailedAgentStageUntilRerun(t *testing.T) {
