@@ -33,7 +33,7 @@ func (h *HTTPHandler) handleSessionUserMessage(w http.ResponseWriter, r *http.Re
 		respondError(w, http.StatusBadRequest, errInvalidRequest("root_id, session key and message required"))
 		return
 	}
-	current, err := h.service().GetSession(r.Context(), usecase.GetSessionInput{RootID: input.RootID, Key: key})
+	current, _, err := h.service().GetSession(r.Context(), usecase.GetSessionInput{RootID: input.RootID, Key: key})
 	if err != nil || current == nil {
 		respondError(w, http.StatusNotFound, errInvalidRequest("session not found"))
 		return

@@ -2,7 +2,7 @@ import React from "react";
 import type { SessionItem } from "./SessionList";
 import { useI18n, type Locale } from "../i18n";
 
-type ExternalSessionListProps = {
+export type ExternalSessionListProps = {
   sessions: SessionItem[];
   selectedKey?: string;
   selectedAgent?: string;
@@ -287,7 +287,7 @@ function ExternalSessionCard({
           background: checked
             ? "var(--selection-bg)"
             : selected
-              ? "rgba(59, 130, 246, 0.1)"
+              ? "var(--selection-bg)"
               : "transparent",
           cursor: "pointer",
           flex: 1,

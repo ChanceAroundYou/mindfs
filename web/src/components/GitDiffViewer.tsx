@@ -1,6 +1,6 @@
 import React from "react";
 import type { GitDiffPayload } from "../services/git";
-import { rootBadgeStyle } from "./rootBadgeStyle";
+import { rootBadgeButtonStyle } from "./rootBadgeStyle";
 import {
   buildDiffLines,
   buildSideBySideRows,
@@ -12,6 +12,8 @@ import {
 type GitDiffViewerProps = {
   diff: GitDiffPayload;
   root?: string | null;
+  rootDisplayName?: string | null;
+  rootColor?: string | null;
   sideBySide?: boolean;
   onPathClick?: (path: string) => void;
   onSessionClick?: (sessionKey: string) => void;
@@ -31,7 +33,7 @@ type RelatedSession = {
   updated_at?: string;
 };
 
-function Breadcrumbs({ root, path, onPathClick }: { root?: string | null; path: string; onPathClick?: (path: string) => void }) {
+function Breadcrumbs({ root, rootDisplayName, path, rootColor, onPathClick }: { root?: string | null; rootDisplayName?: string | null; path: string; rootColor?: string | null; onPathClick?: (path: string) => void }) {
   const parts = path.split("/").filter(Boolean);
   const getPathAt = (index: number) => parts.slice(0, index + 1).join("/");
 
@@ -39,19 +41,21 @@ function Breadcrumbs({ root, path, onPathClick }: { root?: string | null; path: 
     <div style={{ display: "flex", alignItems: "center", gap: "4px", fontSize: "13px", color: "var(--text-secondary)", overflow: "hidden", whiteSpace: "nowrap", flexShrink: 1, justifyContent: "flex-start" }}>
       {root ? (
         <>
-          <span
+          <button
+            type="button"
+            data-onboarding="project-home"
             onClick={() => onPathClick?.(".")}
             style={{
-              ...rootBadgeStyle,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
+              ...rootBadgeButtonStyle,
+              background: "var(--node-badge-bg)",
+              color: String(rootColor || "").trim() || "var(--text-primary)",
               cursor: "pointer",
             }}
             onMouseEnter={(e) => { e.currentTarget.style.textDecoration = "underline"; }}
             onMouseLeave={(e) => { e.currentTarget.style.textDecoration = "none"; }}
           >
-            {root}
-          </span>
+            {rootDisplayName || root}
+          </button>
           {parts.length > 0 ? <span style={{ opacity: 0.4, fontSize: "10px", flexShrink: 0 }}>❯</span> : null}
         </>
       ) : null}
@@ -101,7 +105,7 @@ function lineBackground(kind: DiffLine["kind"]): string {
     case "del":
       return "rgba(239, 68, 68, 0.14)";
     case "hunk":
-      return "rgba(59, 130, 246, 0.10)";
+      return "color-mix(in srgb, var(--accent-color) 10%, transparent)";
     default:
       return "transparent";
   }
@@ -218,7 +222,7 @@ function normalizeRelatedSessions(raw: unknown): RelatedSession[] {
   });
 }
 
-export function GitDiffViewer({ diff, root, sideBySide = false, onPathClick, onSessionClick, onSelectionChange }: GitDiffViewerProps) {
+export function GitDiffViewer({ diff, root, rootDisplayName = null, rootColor = null, sideBySide = false, onPathClick, onSessionClick, onSelectionChange }: GitDiffViewerProps) {
   const lines = React.useMemo(() => buildDiffLines(diff.content), [diff.content]);
   const sideBySideRows = React.useMemo(() => buildSideBySideRows(lines), [lines]);
   const unifiedRows = React.useMemo(() => buildUnifiedRows(lines), [lines]);
@@ -300,7 +304,7 @@ export function GitDiffViewer({ diff, root, sideBySide = false, onPathClick, onS
     <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
       <header style={{ height: "36px", padding: "0 16px", borderBottom: "1px solid var(--border-color)", display: "flex", alignItems: "center", gap: "10px", background: "var(--mindfs-topbar-bg, transparent)", boxSizing: "border-box", flexShrink: 0 }}>
         <div style={{ display: "flex", alignItems: "center", overflow: "hidden", flex: 1, minWidth: 0 }}>
-          <Breadcrumbs root={root} path={displayPath} onPathClick={onPathClick} />
+          <Breadcrumbs root={root} rootDisplayName={rootDisplayName} path={displayPath} rootColor={rootColor} onPathClick={onPathClick} />
 
           {relatedSessions.length > 0 ? (
             <div style={{ marginLeft: "16px", display: "flex", alignItems: "center", gap: "6px", minWidth: 0, flexShrink: 0 }}>
@@ -342,9 +346,9 @@ export function GitDiffViewer({ diff, root, sideBySide = false, onPathClick, onS
                       transition: "all 0.2s ease",
                     }}
                     onMouseEnter={(e) => {
-                      e.currentTarget.style.background = "rgba(59, 130, 246, 0.08)";
+                      e.currentTarget.style.background = "var(--selection-bg)";
                       e.currentTarget.style.color = "var(--accent-color)";
-                      e.currentTarget.style.borderColor = "rgba(59, 130, 246, 0.2)";
+                      e.currentTarget.style.borderColor = "color-mix(in srgb, var(--accent-color) 20%, transparent)";
                     }}
                     onMouseLeave={(e) => {
                       e.currentTarget.style.background = "rgba(0, 0, 0, 0.03)";

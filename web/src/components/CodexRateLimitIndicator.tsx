@@ -12,6 +12,7 @@ const FOCUS_REFRESH_MAX_AGE_MS = 30 * 60 * 1000;
 type Props = {
   agent: string;
   refreshToken?: number;
+  nodeId?: string;
   onStatusChange?: (status: CodexRateLimitStatus | null) => void;
 };
 
@@ -42,7 +43,7 @@ function formatResetCountdown(unixSeconds: number | undefined, nowMs: number): s
   return `${minutes}m`;
 }
 
-export function CodexRateLimitIndicator({ agent, refreshToken = 0, onStatusChange }: Props) {
+export function CodexRateLimitIndicator({ agent, refreshToken = 0, nodeId, onStatusChange }: Props) {
   const { t } = useI18n();
   const [status, setStatus] = useState<CodexRateLimitStatus | null>(null);
   const [loading, setLoading] = useState(false);
@@ -63,7 +64,7 @@ export function CodexRateLimitIndicator({ agent, refreshToken = 0, onStatusChang
     setLoading(true);
     setError("");
     try {
-      const next = await fetchCodexRateLimits(agent);
+      const next = await fetchCodexRateLimits(agent, nodeId);
       if (request !== requestRef.current) return;
       lastSuccessfulFetchAtRef.current = Date.now();
       setStatus(next);
@@ -92,7 +93,7 @@ export function CodexRateLimitIndicator({ agent, refreshToken = 0, onStatusChang
     void refresh();
     // Keep the message_done-triggered refresh in addition to focus-based staleness checks.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agent, refreshToken]);
+  }, [agent, refreshToken, nodeId]);
 
   useEffect(() => {
     if (agent !== "codex") return;
@@ -147,6 +148,7 @@ export function CodexRateLimitIndicator({ agent, refreshToken = 0, onStatusChang
         idempotencyKeyRef.current,
         firstCredit?.id,
         agent,
+        nodeId,
       );
       setStatus(result.status);
       onStatusChange?.(result.status);
@@ -215,8 +217,8 @@ export function CodexRateLimitIndicator({ agent, refreshToken = 0, onStatusChang
 
   return (
     <>
-      <div style={{ display: "inline-flex", flex: "0 0 auto", alignItems: "flex-end", gap: "5px" }}>
-        <div title={resetTime ? t("codexLimit.weeklyTitleWithReset", { percent: remaining ?? "—", time: resetTime }) : t("codexLimit.weeklyTitle", { percent: remaining ?? "—" })} style={{ display: "inline-flex", alignItems: "center", height: "20px", padding: "0 8px", borderRadius: "999px", border: "1px solid rgba(37, 99, 235, 0.22)", background: "linear-gradient(rgba(37, 99, 235, 0.10), rgba(37, 99, 235, 0.10)), var(--mobile-overlay-bg)", color: "#2563eb", fontSize: "11px", fontWeight: 700, lineHeight: 1, whiteSpace: "nowrap" }}>
+      <div style={{ display: "inline-flex", flex: "0 0 auto", alignItems: "center", gap: "5px", height: "24px" }}>
+        <div title={resetTime ? t("codexLimit.weeklyTitleWithReset", { percent: remaining ?? "—", time: resetTime }) : t("codexLimit.weeklyTitle", { percent: remaining ?? "—" })} style={{ display: "inline-flex", alignItems: "center", height: "20px", padding: "0 8px", borderRadius: "999px", border: "1px solid color-mix(in srgb, var(--accent-color) 22%, transparent)", background: "linear-gradient(color-mix(in srgb, var(--accent-color) 10%, transparent), color-mix(in srgb, var(--accent-color) 10%, transparent)), var(--mobile-overlay-bg)", color: "var(--accent-color)", fontSize: "11px", fontWeight: 700, lineHeight: 1, whiteSpace: "nowrap" }}>
           {t("codexLimit.weekly")} {loading && remaining === null ? "··" : remaining === null ? "—" : `${remaining}%`}
         </div>
         <button type="button" disabled={!canReset} onClick={() => { setResetOutcome(""); setError(""); setConfirmOpen(true); }} title={canReset ? t("codexLimit.resetAvailable", { count: resetCount }) : error || t("codexLimit.resetUnavailable")} aria-label={canReset ? t("codexLimit.resetAvailable", { count: resetCount }) : t("codexLimit.resetUnavailable")} style={{ display: "inline-flex", alignItems: "center", height: "20px", padding: "0 8px", borderRadius: "999px", border: canReset ? "1px solid rgba(180, 83, 9, 0.24)" : "1px solid var(--border-color)", background: canReset ? "linear-gradient(rgba(245, 158, 11, 0.10), rgba(245, 158, 11, 0.10)), var(--mobile-overlay-bg)" : "linear-gradient(rgba(100, 116, 139, 0.08), rgba(100, 116, 139, 0.08)), var(--mobile-overlay-bg)", color: canReset ? "#b45309" : "var(--text-secondary)", fontSize: "11px", fontWeight: 700, lineHeight: 1, whiteSpace: "nowrap", cursor: canReset ? "pointer" : "default" }}>

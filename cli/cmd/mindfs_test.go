@@ -3,38 +3,40 @@ package main
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"testing"
 	"time"
+
+	"mindfs/internal/deploy"
 )
 
-func TestNormalizeTaskRootFirstArgs(t *testing.T) {
-	for _, flag := range []string{"-to-session", "--to-session"} {
-		got := normalizeTaskRootFirstArgs([]string{"root", flag, "123"})
-		if !reflect.DeepEqual(got, []string{flag, "123", "root"}) {
-			t.Fatalf("session args = %v", got)
-		}
+func TestServerRunningUsesDeployPrefix(t *testing.T) {
+	previous := deploy.Prefix
+	deploy.Prefix = "/mindfs"
+	t.Cleanup(func() { deploy.Prefix = previous })
+
+	var requestedPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestedPath = r.URL.Path
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	if !serverRunning(server.Listener.Addr().String(), false) {
+		t.Fatal("serverRunning() = false, want true for prefixed health endpoint")
 	}
-	got := normalizeTaskRootFirstArgs([]string{"mindfs", "-task", "12", "-next"})
-	want := []string{"-task", "12", "-next", "mindfs"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("args = %#v, want %#v", got, want)
+	if requestedPath != "/mindfs/health" {
+		t.Fatalf("health check path = %q, want /mindfs/health", requestedPath)
 	}
 }
 
-func TestNormalizeTaskGroupRootFirstArgs(t *testing.T) {
-	for _, flag := range []string{"-to-task", "--to-task", "-to-task=id", "-from-task", "--from-task=id", "-task-group", "--task-group", "-task-group=id", "--task-group=id", "-task-groups", "--task-groups", "-task-group-create", "--task-group-create"} {
-		args := []string{"root-id", flag}
-		want := []string{flag, "root-id"}
-		if got := normalizeTaskRootFirstArgs(args); !reflect.DeepEqual(got, want) {
-			t.Fatalf("%s: got %v, want %v", flag, got, want)
-		}
-	}
-	for _, flag := range []string{"-task-templates", "-agents", "-orchestration"} {
-		args := []string{flag}
-		if got := normalizeTaskRootFirstArgs(args); !reflect.DeepEqual(got, args) {
-			t.Fatalf("global flag changed: %v", got)
-		}
+func TestNormalizeTaskRootFirstArgs(t *testing.T) {
+	got := normalizeTaskRootFirstArgs([]string{"mindfs", "-task", "12"})
+	want := []string{"-task", "12", "mindfs"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("args = %#v, want %#v", got, want)
 	}
 }
 

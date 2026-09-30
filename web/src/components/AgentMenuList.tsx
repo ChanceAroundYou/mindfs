@@ -49,7 +49,7 @@ export function AgentMenuList({
               gap: "8px",
               width: "100%",
               border: "1px solid transparent",
-              background: selected ? "rgba(59, 130, 246, 0.1)" : "transparent",
+              background: selected ? "var(--selection-bg)" : "transparent",
               color: selected ? "var(--accent-color)" : "var(--text-primary)",
               borderRadius: "8px",
               padding: "8px 10px",

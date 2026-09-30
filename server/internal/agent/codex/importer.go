@@ -121,7 +121,7 @@ func (i *Importer) ImportExternalSession(_ context.Context, in agenttypes.Import
 		return agenttypes.ImportedExternalSession{}, errors.New("agent session id required")
 	}
 	if file, ok := i.lookupSessionFile(targetID, rootPath); ok {
-		return i.importSessionFile(file, in.AfterTimestamp, in.Cursor)
+		return i.importSessionFile(file, in.AfterTimestamp, in.Cursor, in.ForceRead)
 	}
 	files, err := i.scanSessionFiles(context.Background(), time.Time{}, time.Time{}, int(^uint(0)>>1), nil)
 	if err != nil {
@@ -131,17 +131,17 @@ func (i *Importer) ImportExternalSession(_ context.Context, in agenttypes.Import
 		if file.AgentSessionID != targetID {
 			continue
 		}
-		return i.importSessionFile(file, in.AfterTimestamp, in.Cursor)
+		return i.importSessionFile(file, in.AfterTimestamp, in.Cursor, in.ForceRead)
 	}
 	return agenttypes.ImportedExternalSession{}, errors.New("external session not found")
 }
 
-func (i *Importer) importSessionFile(file codexSessionFile, after time.Time, previous agenttypes.ExternalSessionCursor) (agenttypes.ImportedExternalSession, error) {
+func (i *Importer) importSessionFile(file codexSessionFile, after time.Time, previous agenttypes.ExternalSessionCursor, forceRead bool) (agenttypes.ImportedExternalSession, error) {
 	cursor, unchanged, err := externalSessionFileCursor(file.Path, previous)
 	if err != nil {
 		return agenttypes.ImportedExternalSession{}, err
 	}
-	if unchanged {
+	if unchanged && !forceRead {
 		return agenttypes.ImportedExternalSession{Agent: i.agentName, AgentSessionID: file.AgentSessionID, Cwd: file.Cwd, Title: file.Title, Cursor: cursor}, nil
 	}
 	exchanges, err := readCodexImportedExchanges(file.Path, after)
@@ -305,7 +305,7 @@ func (i *Importer) ResolveForkPointByAgentTurnIndex(ctx context.Context, in agen
 			return agenttypes.ResolveForkPointOutput{}, err
 		}
 		for _, candidate := range files {
-			if candidate.AgentSessionID == targetID && normalizeComparablePath(candidate.Cwd) == rootPath {
+			if candidate.AgentSessionID == targetID && cwdMatchesRoot(candidate.Cwd, rootPath) {
 				file = candidate
 				ok = true
 				break
@@ -451,10 +451,21 @@ func (i *Importer) lookupSessionFile(sessionID, rootPath string) (codexSessionFi
 	if !ok {
 		return codexSessionFile{}, false
 	}
-	if normalizeComparablePath(item.Cwd) != normalizeComparablePath(rootPath) {
+	if !cwdMatchesRoot(item.Cwd, rootPath) {
 		return codexSessionFile{}, false
 	}
 	return item, true
+}
+
+// cwdMatchesRoot 报告转录文件记录的 cwd 是否归属该托管目录：根目录本身，
+// 或其 .worktree/* 下的工作树（转录按 spawn cwd 归档，worktree 会话的 cwd 是工作树路径）。
+func cwdMatchesRoot(cwd, rootPath string) bool {
+	cwd = normalizeComparablePath(cwd)
+	rootPath = normalizeComparablePath(rootPath)
+	if cwd == rootPath {
+		return true
+	}
+	return strings.HasPrefix(cwd, rootPath+"/.worktree/")
 }
 
 func readCodexSessionTitles(path string) map[string]string {

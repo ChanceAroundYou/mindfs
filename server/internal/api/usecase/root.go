@@ -16,6 +16,7 @@ type Registry interface {
 	UpsertRoot(path string) (fs.RootInfo, error)
 	RemoveRoot(path string) (fs.RootInfo, error)
 	RenameRoot(rootID, name, rootPath string) (fs.RootInfo, error)
+	UpdateDisplayName(rootID, displayName string) (fs.RootInfo, error)
 	ListRoots() []fs.RootInfo
 	GetAgentPool() *agent.Pool
 	GetPreferences() *preferences.Store
@@ -28,6 +29,25 @@ type Registry interface {
 
 type Service struct {
 	Registry Registry
+}
+
+// accountMetaRoot 取本账户私有的 meta 根（主账户/测试替身没有这个能力 → 空串）。
+// 做成可选能力而不是 Registry 接口方法：只有真正按账户分区的实现才需要提供它。
+func accountMetaRoot(registry Registry) string {
+	provider, ok := registry.(interface{ MetaRoot() string })
+	if !ok {
+		return ""
+	}
+	return provider.MetaRoot()
+}
+
+// accountConfigDir 取本账户私有的配置目录（主账户/测试替身 → 空串，落回默认目录）。
+func accountConfigDir(registry Registry) string {
+	provider, ok := registry.(interface{ ConfigDir() string })
+	if !ok {
+		return ""
+	}
+	return provider.ConfigDir()
 }
 
 func (s *Service) ensureRegistry() error {

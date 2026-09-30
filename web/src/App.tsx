@@ -1,7 +1,3 @@
-import { TaskGroupPanel } from "./components/TaskGroupPanel";
-import { TaskCardText } from "./components/TaskCardText";
-import { AgentSelector } from "./components/AgentSelector";
-import { patchTask, fetchTaskDetail, deleteCachedTask } from "./services/tasks";
 import React, {
   useCallback,
   useEffect,
@@ -17,14 +13,19 @@ import { getViewModeSystemPrompt } from "./renderer/viewCatalog";
 import { Renderer } from "./renderer/Renderer";
 import {
   clearCachedSessionsForRoot,
+  clearWindowedView,
   deleteCachedSession,
+  deleteCachedSessionLists,
   getCachedMultiRootSessionList,
   getCachedSession,
   getCachedSessionList,
+  getSessionWindow,
   saveCachedMultiRootSessionList,
   saveCachedSessionList,
   sessionService,
   setCachedSessionRelatedFiles,
+  setWindowedView,
+  SESSION_WINDOW_SIZE,
   syncSession,
   type MultiRootSessionGroup,
   type SyncSessionResult,
@@ -39,19 +40,13 @@ import { e2eeService, type E2EEState } from "./services/e2ee";
 import {
   bootstrapService,
   type BootstrapState,
-  type RelayStatusPayload,
 } from "./services/bootstrap";
-import {
-  fetchTokenStationInfo,
-  startTokenStationBinding,
-  type TokenStationInfo,
-} from "./services/tokenStation";
-import { syncAgentAPIProviders } from "./services/agentConfig";
 import { syncNativeReplyPollerE2EE } from "./services/replyPoller";
 import {
   ProtectedAPIError,
   protectedAPIReady,
   protectedJSON as apiProtectedJSON,
+  withNodeRetry,
 } from "./services/api";
 import { reportError } from "./services/error";
 import {
@@ -69,39 +64,22 @@ import {
   fetchEditableFile,
   saveTextFile,
   clearFileCacheForRoot,
+  clearFileMemoryCacheForView,
   getCachedFile,
   invalidateFileCache,
   type FilePayload,
 } from "./services/file";
+import { getRootNodeId, setRootNodeId, setRootNodeMap } from "./services/rootNode";
+import { scopeKey, scopeSessionKey, treeKey, expandKey, dirSelKey } from "./services/scope";
 import {
   buildGitDiffCacheSignature,
-  checkoutGitBranch,
   clearGitHistoryCache,
-  commitGit,
-  createGitWorktree,
-  discardGitItem,
-  fetchGitCommitDiff,
   fetchGitDiff,
   fetchGitRelatedFileDiff,
   fetchGitBranches,
-  fetchGitHistory,
-  fetchGitStatus,
-  fetchGitStatusByPath,
-  fetchGitWorktrees,
-  getCachedGitHistory,
-  getCachedGitHistoryHead,
-  pullGit,
-  pushGit,
   removeGitWorktree,
-  stageGitItem,
-  unstageGitItem,
   type GitBranchesPayload,
   type GitDiffPayload,
-  type GitHistoryItem,
-  type GitHistoryPayload,
-  type GitStatusItem,
-  type GitStatusPayload,
-  type GitWorktreeItem,
 } from "./services/git";
 import {
   relatedFileStatKey,
@@ -126,7 +104,7 @@ import {
   readTrustedPluginSet,
   saveTrustedPluginSet,
 } from "./plugins/trust";
-import { appPath, appURL, isRelayNodePage } from "./services/base";
+import { appPath, appURL } from "./services/base";
 import { useRefreshSpin } from "./hooks";
 import { copyText } from "./services/clipboard";
 import { triggerUpdate, type UpdateState } from "./services/update";
@@ -134,12 +112,12 @@ import {
   cancelScheduledWebViewCacheClear,
   scheduleWebViewCacheClearOnNextLaunch,
 } from "./services/nativeCacheControl";
-import { storeRelayNodes } from "./services/launcherNodeSync";
-import { isNativeShellRuntime } from "./services/runtime";
 import {
   applyPinnedSnapshotToSessions,
   mergeSessionItems,
 } from "./services/sessionListMerge";
+import { collectSessionSubtreeKeys, type SessionTreeItem } from "./services/sessionTree";
+import { currentUser } from "./services/authGate";
 // 直接导入标准组件
 import { AppShell } from "./layout/AppShell";
 import { ModeIcon } from "./components/ModeIcon";
@@ -148,28 +126,41 @@ import {
   type AgentConfigSwitchRequest,
   type ProjectTreeTab,
 } from "./components/FileTree";
+
+import { applyNodesFromServer, getActiveNode, getActiveNodeId, getNodeById, getNodes, migrateLegacySingleBase, setActiveNodeId, syncNodesFromServer } from "./services/nodeRegistry";
+
 import { FileViewer } from "./components/FileViewer";
+import { resolveGroupColor } from "./services/sessionGroupDisplay";
 import { GitDiffViewer } from "./components/GitDiffViewer";
-import { GitHistoryPanel } from "./components/GitHistoryPanel";
 import { GitStatusPanel } from "./components/GitStatusPanel";
+import { RootGitContentView } from "./components/RootGitContentView";
+import { RootRelatedContentView } from "./components/RootRelatedContentView";
+import { RootWorktreeContentView } from "./components/RootWorktreeContentView";
 import { SessionViewer } from "./components/SessionViewer";
+import { TaskBoardView } from "./components/TaskBoardView";
 import { DefaultListView, type MainContentViewMode } from "./components/DefaultListView";
-import { MultiProjectSessionList, SessionList, type ProjectSessionGroup } from "./components/SessionList";
-import { ExternalSessionList } from "./components/ExternalSessionList";
+import { type ProjectSessionGroup } from "./components/SessionList";
 import { InlineTokenText } from "./components/InlineTokenText";
-import { AgentIcon } from "./components/AgentIcon";
-import { AgentMenuList } from "./components/AgentMenuList";
 import { ActionBar } from "./components/ActionBar";
 import { CompactUploadProgress } from "./components/CompactUploadProgress";
 import { ToastContainer } from "./components/Toast";
+import { DialogHost } from "./components/DialogHost";
+import { alertDialog, confirmDialog, promptDialog } from "./services/dialog";
 import { BottomSheet } from "./components/BottomSheet";
 import { ScheduledAgentTaskDialog } from "./components/ScheduledAgentTaskDialog";
-import { TaskTemplateDialog } from "./components/TaskTemplateDialog";
+import { TaskTemplateDialog, FieldLabelWithInfo } from "./components/TaskTemplateDialog";
+import { TaskDetailPanel } from "./components/TaskDetailPanel";
+import { MainViewSwitcher } from "./components/MainViewSwitcher";
 import { OnboardingTour } from "./components/OnboardingTour";
 import { WorktreeBranchSelector } from "./components/WorktreeBranchSelector";
 import { NoWorktreeIcon } from "./components/NoWorktreeIcon";
 import { renderToolIcon } from "./components/stream/ToolCallCard";
 import TokenEditor, { type TokenEditorHandle } from "./components/editor/TokenEditor";
+import { PromptEditor } from "./components/PromptEditor";
+import { StageEditor } from "./components/StageEditor";
+import { Select } from "./components/Select";
+import { PanelShell } from "./components/PanelShell";
+import { composerInputStyle } from "./components/action/composerStyles";
 import {
   type GitHubImportState,
   type LocalDirBrowserState,
@@ -186,17 +177,23 @@ import {
   getCachedTaskDetails,
   getCachedTaskMeta,
   moveTask,
+  pruneCachedTaskDetails,
   saveTaskTemplate,
   upsertCachedTaskDetails,
-  updateTaskInput,
   type KanbanTask,
   type StageRun,
   type TaskDetail,
+  type TaskOverviewItem,
   type StageTemplate,
   type TaskTemplate,
 } from "./services/tasks";
 import { shouldApplyTaskDetail } from "./services/taskDetailOrder";
 import { mergeRelatedFileGroups, taskIdsForUpdatedSession } from "./services/taskRelatedFiles";
+import {
+
+  resolveLockedSessionKey,
+  shouldResetSessionLockForRootChange,
+} from "./services/sessionLock";
 import { useI18n, type MessageKey, type MessageParams } from "./i18n";
 import {
   completeOnboarding,
@@ -205,1330 +202,38 @@ import {
 } from "./services/onboarding";
 
 // 类型定义
-type SessionMode = "chat" | "plugin" | "command";
-type WSStatus = "connecting" | "connected" | "reconnecting" | "disconnected";
 
-const CHILD_SESSION_PAGE_SIZE = 100;
-const MULTI_PROJECT_SESSION_LIMIT = 6;
-const SESSION_PAGE_SIZE = 50;
-const MULTI_PROJECT_SESSION_STORAGE_KEY = "mindfs-multi-project-session-list";
-const APP_DOCUMENT_TITLE = "MindFS";
+import { APP_DOCUMENT_TITLE, AppProps, CHILD_SESSION_PAGE_SIZE, MULTI_PROJECT_SESSION_LIMIT, ManagedRootPayload, SESSION_PAGE_SIZE } from "./app/appMisc";
+import { MainViewMode, URLState } from "./app/appPath";
+import { closeTopBackLayer, consumeViewHistoryEntry, hasBackLayer, installBackNavigation, pushViewHistoryEntry, useBackLayer } from "./app/useBackNavigation";
+import { AttachedFileContext, Exchange, GitFileStat, MultiProjectSessionGroup, PendingSend, RelatedFileClickTarget, SessionItem, SessionMode, SessionQueueItem, SlashCommandResult, ViewerSelection, WSStatus } from "./app/appSession";
+import { CANDIDATE_FETCH_DEBOUNCE_MS, DIRECTORY_SORT_OVERRIDES_STORAGE_KEY, GIT_DIFF_SIDE_BY_SIDE_STORAGE_KEY, GIT_HISTORY_EXPANDED_STORAGE_KEY, GIT_STATUS_EXPANDED_STORAGE_KEY, LAST_ROOT_NODE_STORAGE_KEY, LAST_ROOT_STORAGE_KEY, loadWorkspaceCollapsed, loadWorkspaceFilter, MAIN_VIEW_STORAGE_KEY, MOBILE_ENTER_KEY_SEND_STORAGE_KEY, PLUGIN_QUERY_STORAGE_PREFIX, saveWorkspaceCollapsed, saveWorkspaceFilter, SIDEBARS_SWAPPED_STORAGE_KEY, TASK_TEMPLATE_ALL_FILTER, TASK_TEMPLATE_SELECTION_STORAGE_KEY, TREE_SORT_STORAGE_KEY, type WorkspaceBoardFilter } from "./app/appStorage";
+import { TaskInlineEditState } from "./app/appTask";
+import { buildMatchInputFromPath, buildMessageWithViewContext, hasExplicitFileContext, indexManagedRoots, inferReadModeFromPlugin, managedDirAddErrorMessage, mapManagedRootsToEntries, normalizeUpdateState, shouldShowUpdateButton, toPluginInput, updateButtonLabel, updateSummaryText, useResponsive, waitForNextPaint } from "./app/appMisc";
+import { basenameOfPath, buildDirectorySelectionKey, buildFileScrollKey, buildURLSearch, comparableManagedRootPath, dirnameOfPath, isDirectorySortMode, joinDisplayPath, normalizeCursor, normalizePath, parentDirsOfFile, parseFileLocation, parsePluginQuery, readURLState, relativeDisplayPathFromRoot, rootNodeKey } from "./app/appPath";
+import { useWorkspaceBoard } from "./app/useWorkspaceBoard";
+import { hasSessionExchanges, isSessionShownInMain, isTopLevelSessionItem, mergeReplyingStateByNode, normalizeMode, relatedFileSelectionKey, sessionInputHistory, shouldAutoSelectNewSession, toSessionItem } from "./app/appSession";
+import { accountScopedKey, loadGitDiffSideBySide, loadLastRootId, loadLastRootNodeId, loadLegacyMainView, loadMainView, loadMobileEnterKeySends, loadPersistedFileScrollPositions, loadPersistedPluginQuery, loadSidebarsSwapped, loadTaskCreateWorktreePreference, persistFileScrollPositions, persistPluginQuery, removeLocalStorageByPrefix, saveTaskCreateWorktreePreference } from "./app/appStorage";
+import { applyStageOverride, currentTaskInputFromDetail, DEFAULT_TASK_AGENT, DEFAULT_TASK_MODEL, firstAgentStage, firstTaskInputFromDetail, firstUserInputTemplate, isTerminalKanbanTask, latestTaskStageRun, normalizeFastService, parseTaskSessionErrorDetails, parseTaskSessionErrorMessage, previousTaskInputsFromDetail, taskSessionKeysFromDetail, taskStatusLabel } from "./app/appTask";
+import { useCompletionSound } from "./app/useCompletionSound";
+import { useExternalSessionImport } from "./app/useExternalSessionImport";
+import { useGitActions } from "./app/useGitActions";
+import { useSessionSearch } from "./app/useSessionSearch";
+import { useGitData } from "./app/useGitData";
+import { useProjectTreeWorktrees } from "./app/useProjectTreeWorktrees";
+import { useProjectLifecycle } from "./app/useProjectLifecycle";
+import { useSessionSidebarView } from "./app/useSessionSidebarView";
+import { useSessionStreamCache } from "./app/useSessionStreamCache";
+import { useRealtimeEvents } from "./app/useRealtimeEvents";
+import { useTaskTemplates } from "./app/useTaskTemplates";
+import { CheckIconSmall, PlusSmallIcon, taskCardIconButtonStyle } from "./app/taskIcons";
 
-function formatDocumentTitle(relayStatus: RelayStatusPayload | null): string {
-  if (!isRelayNodePage()) {
-    return APP_DOCUMENT_TITLE;
-  }
-  const nodeName = String(relayStatus?.node_name || "").trim();
-  return nodeName ? `${nodeName} - ${APP_DOCUMENT_TITLE}` : APP_DOCUMENT_TITLE;
-}
-
-function isTopLevelSessionItem(session: SessionItem): boolean {
-  return !String(session?.parent_session_key || "").trim();
-}
-
-function firstUserInputTemplate(template: TaskTemplate | null): string {
-  const first = template?.stages?.[0]?.snapshot;
-  return first?.role === "user" ? first.prompt_template || "" : "";
-}
-
-function firstAgentStage(template: TaskTemplate | null): StageTemplate | null {
-  return template?.stages?.map((stage) => stage.snapshot).find((stage) => stage.role === "agent") || null;
-}
-
-function taskAgentStage(task: KanbanTask, template?: TaskTemplate): StageTemplate | null {
-  const stage = firstAgentStage(template || null);
-  if (!stage) return null;
-  return { ...stage, agent: task.agent || stage.agent, model: task.model ?? (task.agent ? "" : stage.model) };
-}
-
-function isUnfinishedKanbanTask(task: KanbanTask): boolean {
-  return task.status !== "success" && task.status !== "fail" && task.status !== "cancelled";
-}
-
-function isTerminalKanbanTask(task: KanbanTask): boolean {
-  return task.status === "success" || task.status === "fail" || task.status === "cancelled";
-}
-
-function parseTaskSessionErrorMessage(error?: string): string {
-  const raw = String(error || "").trim();
-  if (!raw) return "";
-  try {
-    const parsed = JSON.parse(raw) as { message?: unknown };
-    return typeof parsed.message === "string" && parsed.message.trim() ? parsed.message.trim() : raw;
-  } catch {
-    return raw;
-  }
-}
-
-function parseTaskSessionErrorDetails(error?: string): string[] {
-  const raw = String(error || "").trim();
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw) as { data?: unknown };
-    if (Array.isArray(parsed.data)) return parsed.data.map((item) => String(item)).filter(Boolean);
-    if (parsed.data === undefined || parsed.data === null) return [];
-    return [String(parsed.data)];
-  } catch {
-    return [];
-  }
-}
-
-function taskStatusLabel(status: string, t: (key: MessageKey, params?: MessageParams) => string): string {
-  const labels: Record<string, MessageKey> = {
-    pending: "task.status.pending",
-    queued: "task.status.queued",
-    running: "task.status.running",
-    waiting_user: "task.status.waitingUser",
-    paused: "task.status.paused",
-    success: "task.status.success",
-    fail: "task.status.fail",
-    cancelled: "task.status.cancelled",
-    approved: "task.status.approved",
-    rejected: "task.status.rejected",
-  };
-  return labels[status] ? t(labels[status]) : status || "-";
-}
-
-function firstTaskInputFromDetail(detail: TaskDetail): string {
-  return detail.stage_runs.find((run) => run.stage_index === 0)?.input || "";
-}
-
-function latestTaskStageRun(detail: TaskDetail, stageIndex: number): StageRun | null {
-  const runs = detail.stage_runs
-    .filter((run) => run.stage_index === stageIndex)
-    .sort((a, b) => {
-      const aTime = Date.parse(a.created_at || a.updated_at || "");
-      const bTime = Date.parse(b.created_at || b.updated_at || "");
-      return (Number.isFinite(bTime) ? bTime : 0) - (Number.isFinite(aTime) ? aTime : 0);
-    });
-  return runs[0] || null;
-}
-
-function currentTaskInputFromDetail(detail: TaskDetail): string {
-  return latestTaskStageRun(detail, detail.task.current_stage_index)?.input || "";
-}
-
-function previousTaskInputsFromDetail(detail: TaskDetail, t: (key: MessageKey, params?: MessageParams) => string): Array<{ id: string; label: string; input: string }> {
-  const items: Array<{ id: string; label: string; input: string }> = [];
-  for (let index = 0; index < detail.task.current_stage_index; index += 1) {
-    const run = latestTaskStageRun(detail, index);
-    const input = run?.input || "";
-    if (!run || !input.trim()) continue;
-    items.push({
-      id: run.id,
-      label: run.stage_name || t("task.stageLabel", { index: index + 1 }),
-      input,
-    });
-  }
-  return items;
-}
-
-function taskSessionKeysFromDetail(detail: TaskDetail): string[] {
-  const seen = new Set<string>();
-  const keys: string[] = [];
-  for (const run of detail.stage_runs) {
-    const key = String(run.session_key || "").trim();
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    keys.push(key);
-  }
-  const mainKey = String(detail.task.main_session_key || "").trim();
-  if (mainKey && !seen.has(mainKey)) {
-    keys.push(mainKey);
-  }
-  return keys;
-}
-
-function normalizeFastService(
-  value: unknown,
-): "" | "on" | "off" {
-  return value === "on" || value === "off" ? value : "";
-}
-
-export type SessionItem = {
-  key: string;
-  session_key: string;
-  root_id?: string;
-  name?: string;
-  type?: SessionMode;
-  parent_session_key?: string;
-  parent_tool_call_id?: string;
-  agent?: string;
-  model?: string;
-  shell?: string;
-  source?: string;
-  task_id?: string;
-  mode?: string;
-  effort?: string;
-  fast_service?: "" | "on" | "off";
-  plan_mode?: boolean;
-  scope?: string;
-  purpose?: string;
-  created_at?: string;
-  updated_at?: string;
-  pinned_at?: string | null;
-  closed_at?: string;
-  title?: string;
-  agent_session_id?: string;
-  context_window?: {
-    totalTokens: number;
-    modelContextWindow: number;
-  };
-  search_seq?: number;
-  search_target_id?: string;
-  search_snippet?: string;
-  search_match_type?: "name" | "user" | "reply";
-  related_files?: RelatedFile[];
-  related_worktree?: RelatedWorktree | null;
-  exchanges?: Array<{
-    seq?: number;
-    role?: string;
-    agent?: string;
-    content?: string;
-    thought_id?: string;
-    timestamp?: string;
-    model?: string;
-    model_display_name?: string;
-	    mode?: string;
-	    effort?: string;
-	    fast_service?: "" | "on" | "off";
-	    context_window?: {
-      totalTokens: number;
-      modelContextWindow: number;
-    };
-    token_usage?: TokenUsage;
-  }>;
-  pending?: boolean;
-};
-
-type MultiProjectSessionGroup = {
-  rootId: string;
-  rootName: string;
-  latestSessionTime: string;
-  sessions: SessionItem[];
-  totalCount: number;
-};
-
-type SlashCommandResult = {
-  rootId: string;
-  sessionKey: string;
-  requestId: string;
-  command: string;
-  content: string;
-  status: "running" | "complete" | "failed";
-  error?: string;
-  createdAt?: number;
-  loginNotice?: {
-    status?: string;
-    loginId?: string;
-    verificationUrl?: string;
-    userCode?: string;
-    error?: string;
-    authMode?: string;
-    planType?: string;
-  };
-};
-
-type TaskInlineAttachment = {
-  id: string;
-  file: File;
-  previewUrl?: string;
-  isImage: boolean;
-};
-
-type TaskInlineEditState = {
-  agent?: string;
-  model?: string;
-  canEditExecution?: boolean;
-  taskId?: string;
-  templateId: string;
-  templateName: string;
-  text: string;
-  previousInputs: Array<{ id: string; label: string; input: string }>;
-  createWorktree: boolean;
-  worktreeBranchMode: "new" | "existing";
-  worktreeBranch: string;
-  canToggleWorktree: boolean;
-  attachments: TaskInlineAttachment[];
-};
-
-function latestExchangeText(
-  exchanges: unknown,
-  field: "agent" | "mode" | "effort" | "fast_service",
-): string {
-  if (!Array.isArray(exchanges)) {
-    return "";
-  }
-  for (let i = exchanges.length - 1; i >= 0; i -= 1) {
-    const value = (exchanges[i] as Record<string, unknown> | null)?.[field];
-    if (typeof value === "string" && value.trim()) {
-      return value;
-    }
-  }
-  return "";
-}
-
-function sessionInputHistory(session: { exchanges?: Array<{ role?: string; content?: string }> } | null | undefined): string[] {
-  const exchanges = Array.isArray(session?.exchanges) ? session.exchanges : [];
-  const items: string[] = [];
-  for (const exchange of exchanges) {
-    if (exchange?.role !== "user") {
-      continue;
-    }
-    const content = String(exchange.content || "").trim();
-    if (content) {
-      items.push(content);
-    }
-  }
-  return items;
-}
-
-function toSessionItem(
-  rootID: string | null | undefined,
-  session: any,
-): SessionItem | null {
-  if (!session) {
-    return null;
-  }
-  const key = session?.key || session?.session_key || "";
-  const nextRoot =
-    (session?.root_id as string | undefined) || String(rootID || "");
-  if (!key || !nextRoot) {
-    return null;
-  }
-  return {
-    key,
-    session_key: key,
-    root_id: nextRoot,
-    name: typeof session?.name === "string" ? session.name : "",
-    type: normalizeMode(session?.type),
-    parent_session_key:
-      typeof session?.parent_session_key === "string"
-        ? session.parent_session_key
-        : undefined,
-    parent_tool_call_id:
-      typeof session?.parent_tool_call_id === "string"
-        ? session.parent_tool_call_id
-        : undefined,
-    source: typeof session?.source === "string" ? session.source : undefined,
-    task_id: typeof session?.task_id === "string" ? session.task_id : undefined,
-    agent:
-      typeof session?.agent === "string" && session.agent.trim()
-        ? session.agent
-        : latestExchangeText(session?.exchanges, "agent"),
-    model: typeof session?.model === "string" ? session.model : "",
-    shell: typeof session?.shell === "string" ? session.shell : "",
-    mode:
-      typeof session?.mode === "string" && session.mode.trim()
-        ? session.mode
-        : latestExchangeText(session?.exchanges, "mode"),
-    effort:
-      typeof session?.effort === "string" && session.effort.trim()
-        ? session.effort
-        : latestExchangeText(session?.exchanges, "effort"),
-    fast_service:
-      normalizeFastService(session?.fast_service) ||
-      normalizeFastService(latestExchangeText(session?.exchanges, "fast_service")),
-    plan_mode:
-      typeof session?.plan_mode === "boolean"
-        ? session.plan_mode
-        : false,
-    scope: typeof session?.scope === "string" ? session.scope : "",
-    purpose: typeof session?.purpose === "string" ? session.purpose : "",
-    created_at:
-      typeof session?.created_at === "string" ? session.created_at : undefined,
-    updated_at:
-      typeof session?.updated_at === "string" ? session.updated_at : undefined,
-    pinned_at:
-      typeof session?.pinned_at === "string" && session.pinned_at
-        ? session.pinned_at
-        : undefined,
-    closed_at:
-      typeof session?.closed_at === "string" ? session.closed_at : undefined,
-    context_window:
-      session?.context_window &&
-      Number(session.context_window.totalTokens) > 0 &&
-      Number(session.context_window.modelContextWindow) > 0
-        ? {
-            totalTokens: Number(session.context_window.totalTokens),
-            modelContextWindow: Number(session.context_window.modelContextWindow),
-          }
-        : undefined,
-    search_seq:
-      typeof session?.search_seq === "number" ? session.search_seq : undefined,
-    search_target_id:
-      typeof session?.search_target_id === "string"
-        ? session.search_target_id
-        : undefined,
-    search_snippet:
-      typeof session?.search_snippet === "string"
-        ? session.search_snippet
-        : undefined,
-    search_match_type:
-      session?.search_match_type === "name" ||
-      session?.search_match_type === "user" ||
-      session?.search_match_type === "reply"
-        ? session.search_match_type
-        : undefined,
-    related_files: Array.isArray(session?.related_files)
-      ? session.related_files
-      : undefined,
-    related_worktree:
-      session?.related_worktree === null
-        ? null
-        : session?.related_worktree && typeof session.related_worktree === "object"
-          ? session.related_worktree
-          : undefined,
-    pending: typeof session?.pending === "boolean" ? session.pending : undefined,
-  };
-}
-type Exchange = {
-  role: string;
-  agent?: string;
-  model?: string;
-  model_display_name?: string;
-  mode?: string;
-  effort?: string;
-  fast_service?: "" | "on" | "off";
-  content?: string;
-  thought_id?: string;
-  context_window?: {
-    totalTokens: number;
-    modelContextWindow: number;
-  };
-  token_usage?: TokenUsage;
-  timestamp?: string;
-  toolCall?: any;
-  todoUpdate?: any;
-  planUpdate?: any;
-  compactNotice?: any;
-  pending_ack?: boolean;
-};
-type PendingSend = {
-  rootId: string;
-  mode: SessionMode;
-  agent: string;
-  model?: string;
-  agentMode?: string;
-  effort?: string;
-  fastService?: "" | "on" | "off";
-  shell?: string;
-  message: string;
-  timestamp: string;
-  requestId?: string;
-  sessionKey?: string;
-  tempKey?: string;
-};
-type SessionQueueItem = QueuedUserMessage;
-type ViewerSelection = {
-  filePath: string;
-  text?: string;
-  startLine?: number;
-  endLine?: number;
-};
-
-type AttachedFileContext = {
-  filePath: string;
-  fileName: string;
-  startLine?: number;
-  endLine?: number;
-  text?: string;
-};
-type GitFileStat = {
-  status: string;
-  additions: number;
-  deletions: number;
-};
-type RelatedFileClickTarget = {
-  path: string;
-  head?: string;
-  repo_path?: string;
-  repo_name?: string;
-  repo_kind?: string;
-};
-
-function relatedFileSelectionKey(file: RelatedFileClickTarget | null | undefined): string {
-  if (!file?.path) return "";
-  return [
-    file.repo_kind || "",
-    file.repo_path || "",
-    file.head || "",
-    file.path,
-  ].join("\0");
-}
-type URLState = {
-  root: string;
-  file: string;
-  session: string;
-  cursor: number;
-  pluginQuery: Record<string, string>;
-};
-type ManagedRootPayload = {
-  id: string;
-  display_name?: string;
-  root_path?: string;
-  is_git_repo?: boolean;
-  is_git_worktree?: boolean;
-  size?: number;
-  mtime?: string;
-};
-type LocalDirItemPayload = {
-  name?: string;
-  path?: string;
-  is_dir?: boolean;
-  is_added_root?: boolean;
-  root_id?: string;
-};
-type LocalDirsPayload = {
-  path?: string;
-  parent?: string;
-  volumes?: LocalDirItemPayload[];
-  items?: LocalDirItemPayload[];
-};
-
-function managedDirAddErrorMessage(error: unknown, fallback: string, t: (key: MessageKey, params?: MessageParams) => string): string {
-  const message = error instanceof Error ? error.message : String(error || "");
-  if (message.includes("root name already exists")) {
-    return t("root.nameAlreadyExists");
-  }
-  return message || fallback;
-}
-
-const RELAY_LAST_NODE_ID_STORAGE_KEY = "mindfs.relay.last_node_id";
-const PLUGIN_QUERY_STORAGE_PREFIX = "vp-progress:";
-const TREE_SORT_STORAGE_KEY = "mindfs-tree-sort-mode";
-const DIRECTORY_SORT_OVERRIDES_STORAGE_KEY = "mindfs-directory-sort-overrides";
-const FILE_SCROLL_STORAGE_KEY = "mindfs-file-scroll-positions";
-const LAST_ROOT_STORAGE_KEY = "mindfs-last-root-id";
-const GIT_STATUS_EXPANDED_STORAGE_KEY = "mindfs-git-status-expanded";
-const GIT_HISTORY_EXPANDED_STORAGE_KEY = "mindfs-git-history-expanded";
-const TASK_TEMPLATE_SELECTION_STORAGE_KEY = "mindfs-task-template-selection";
-const TASK_TEMPLATE_ALL_FILTER = "__all__";
-const CANDIDATE_FETCH_DEBOUNCE_MS = 512;
-const FILE_TOKEN_PATTERN = /\[(?:read file|file):\s*[^\]]+\]/i;
-
-function normalizeUpdateState(
-  input: UpdateState | null | undefined,
-): UpdateState {
-  return {
-    current_version: input?.current_version || "",
-    latest_version: input?.latest_version || "",
-    has_update: input?.has_update === true,
-    status: input?.status || "idle",
-    message: input?.message || "",
-    release_name: input?.release_name || "",
-    release_body: input?.release_body || "",
-    release_url: input?.release_url || "",
-    published_at: input?.published_at || "",
-    last_checked_at: input?.last_checked_at || "",
-    auto_update_supported: input?.auto_update_supported === true,
-  };
-}
-
-function updateButtonLabel(state: UpdateState, t: (key: MessageKey, params?: MessageParams) => string): string {
-  const status = (state.status || "idle").toLowerCase();
-  switch (status) {
-    case "available":
-      if (state.current_version && state.latest_version) {
-        return t("update.available", { current: state.current_version, latest: state.latest_version });
-      }
-      return state.latest_version ? t("update.toVersion", { version: state.latest_version }) : t("update.newVersion");
-    case "downloading":
-      return t("update.downloading");
-    case "installing":
-      return t("update.installing");
-    case "restarting":
-      return t("update.restarting");
-    case "failed":
-      return t("update.failed");
-    default:
-      return t("update.latest");
-  }
-}
-
-function updateSummaryText(state: UpdateState, t: (key: MessageKey, params?: MessageParams) => string): string {
-  const body = String(state.release_body || "").trim();
-  if (body) {
-    return body;
-  }
-  const name = String(state.release_name || "").trim();
-  if (name) {
-    return name;
-  }
-  if (state.latest_version) {
-    return t("update.foundVersion", { version: state.latest_version });
-  }
-  return "";
-}
-
-function shouldShowUpdateButton(state: UpdateState): boolean {
-  const status = (state.status || "idle").toLowerCase();
-  if (
-    status === "downloading" ||
-    status === "installing" ||
-    status === "restarting" ||
-    status === "failed"
-  ) {
-    return true;
-  }
-  return state.auto_update_supported === true && state.has_update === true;
-}
-
-function buildFileScrollKey(
-  rootId: string | null | undefined,
-  path: string | null | undefined,
-): string {
-  if (!rootId || !path) {
-    return "";
-  }
-  return `${rootId}::${path}`;
-}
-
-function hasSessionExchanges(session: Session | null | undefined): boolean {
-  return Array.isArray(session?.exchanges) && session.exchanges.length > 0;
-}
-
-function openPendingPopup(): Window | null {
-  if (typeof window === "undefined") {
-    return null;
-  }
-  const popup = window.open("", "_blank");
-  if (!popup) {
-    return null;
-  }
-  try {
-    popup.document.title = "Opening Relayer...";
-    popup.document.body.innerHTML =
-      '<p style="font-family: system-ui, sans-serif; padding: 16px; color: #111827;">Opening Relayer...</p>';
-  } catch {}
-  return popup;
-}
-
-function navigatePopup(popup: Window | null, url: string): void {
-  if (!popup || popup.closed) {
-    window.open(url, "_blank", "noopener,noreferrer");
-    return;
-  }
-  try {
-    popup.opener = null;
-  } catch {}
-  try {
-    popup.location.replace(url);
-  } catch {
-    popup.location.href = url;
-  }
-}
-
-function relayNodeIdFromPathname(pathname: string): string {
-  const match = /^\/n\/([^/]+)/.exec(String(pathname || ""));
-  return match?.[1] || "";
-}
-
-function isStandaloneDisplayMode(): boolean {
-  if (typeof window === "undefined") {
-    return false;
-  }
-  const navigatorWithStandalone = navigator as Navigator & {
-    standalone?: boolean;
-  };
-  return (
-    window.matchMedia?.("(display-mode: standalone)")?.matches === true ||
-    navigatorWithStandalone.standalone === true
-  );
-}
-
-function isRelayPWAContext(): boolean {
-  if (typeof window === "undefined") {
-    return false;
-  }
-  return (
-    isStandaloneDisplayMode() &&
-    (/^\/n\/[^/]+/.test(window.location.pathname) ||
-      window.location.pathname === "/nodes" ||
-      window.location.pathname === "/login")
-  );
-}
-
-function isRelayNodesPage(): boolean {
-  if (typeof window === "undefined") {
-    return false;
-  }
-  return (window.location.pathname.replace(/\/+$/, "") || "/") === "/nodes";
-}
-
-function relayNodeURL(rootID: string): string {
-  if (typeof window === "undefined") {
-    return "";
-  }
-  const trimmed = String(rootID || "").trim();
-  if (!trimmed) {
-    return "";
-  }
-  return new URL(`/n/${encodeURIComponent(trimmed)}/`, window.location.origin).toString();
-}
-
-function syncRelayNodesToNative(dirs: ManagedRootPayload[]): void {
-  if ((!isNativeShellRuntime() && !isRelayPWAContext()) || !isRelayNodesPage()) {
-    return;
-  }
-  const nodes = dirs
-    .map((dir) => {
-      const id = String(dir.id || "").trim();
-      const url = relayNodeURL(id);
-      const name = String(
-        dir.display_name || dir.root_path?.split("/").filter(Boolean).pop() || id,
-      ).trim();
-      if (!id || !url || !name) {
-        return null;
-      }
-      return { name, url };
-    })
-    .filter((node): node is { name: string; url: string } => node !== null);
-  void storeRelayNodes(nodes);
-}
-
-function extractHTTPStatusFromErrorMessage(message: string): number | null {
-  const match = /status=(\d{3})|(?:^|:\s)(\d{3})\s[A-Z]/.exec(
-    String(message || ""),
-  );
-  const raw = match?.[1] || match?.[2];
-  if (!raw) {
-    return null;
-  }
-  const parsed = Number.parseInt(raw, 10);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function loadPersistedFileScrollPositions(): Record<string, number> {
-  if (typeof window === "undefined") {
-    return {};
-  }
-  try {
-    const raw = window.localStorage.getItem(FILE_SCROLL_STORAGE_KEY);
-    if (!raw) {
-      return {};
-    }
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return {};
-    }
-    const next: Record<string, number> = {};
-    Object.entries(parsed).forEach(([key, value]) => {
-      const scrollTop = Number(value);
-      if (!key || !Number.isFinite(scrollTop) || scrollTop < 0) {
-        return;
-      }
-      next[key] = scrollTop;
-    });
-    return next;
-  } catch {
-    return {};
-  }
-}
-
-function persistFileScrollPositions(positions: Record<string, number>): void {
-  if (typeof window === "undefined") {
-    return;
-  }
-  try {
-    window.localStorage.setItem(
-      FILE_SCROLL_STORAGE_KEY,
-      JSON.stringify(positions),
-    );
-  } catch {}
-}
-
-function normalizeMode(mode: SessionMode | undefined): SessionMode {
-  if (mode === "plugin") return mode;
-  if (mode === "command") return mode;
-  return "chat";
-}
-
-function parsePluginQuery(search: string): Record<string, string> {
-  const params = new URLSearchParams(search);
-  const query: Record<string, string> = {};
-  params.forEach((value, key) => {
-    if (key.startsWith("vp_")) {
-      query[key.slice("vp_".length)] = value;
-    }
-  });
-  return query;
-}
-
-function waitForNextPaint(): Promise<void> {
-  if (typeof window === "undefined" || typeof window.requestAnimationFrame !== "function") {
-    return new Promise((resolve) => setTimeout(resolve, 0));
-  }
-  return new Promise((resolve) => {
-    window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(() => resolve());
-    });
-  });
-}
-
-function parseCursor(value: string | null): number {
-  if (!value) return 0;
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed) || parsed < 0) return 0;
-  return parsed;
-}
-
-function normalizeCursor(value: unknown): number | null {
-  if (value === undefined || value === null || value === "") {
-    return null;
-  }
-  const parsed = Number.parseInt(String(value), 10);
-  if (!Number.isFinite(parsed) || parsed < 0) {
-    return 0;
-  }
-  return parsed;
-}
-
-function isDirectorySortMode(
-  value: string | null | undefined,
-): value is DirectorySortMode {
-  return (
-    value === "name-asc" ||
-    value === "name-desc" ||
-    value === "mtime-desc" ||
-    value === "mtime-asc" ||
-    value === "size-desc" ||
-    value === "size-asc"
-  );
-}
-
-function readURLState(): URLState {
-  const params = new URLSearchParams(window.location.search);
-  return {
-    root: params.get("root") || "",
-    file: params.get("file") || "",
-    session: params.get("session") || "",
-    cursor: parseCursor(params.get("cursor")),
-    pluginQuery: parsePluginQuery(window.location.search),
-  };
-}
-
-function buildURLSearch(next: URLState): string {
-  const params = new URLSearchParams();
-  if (next.root) params.set("root", next.root);
-  if (next.file) params.set("file", next.file);
-  if (next.session) params.set("session", next.session);
-  if (next.cursor > 0) params.set("cursor", String(next.cursor));
-  Object.entries(next.pluginQuery).forEach(([key, value]) => {
-    if (!key) return;
-    params.set(`vp_${key}`, String(value));
-  });
-  const encoded = params.toString();
-  return encoded ? `?${encoded}` : "";
-}
-
-function pluginQueryStorageKey(root: string, file: string): string {
-  return `${PLUGIN_QUERY_STORAGE_PREFIX}${root}:${file}`;
-}
-
-function loadPersistedPluginQuery(
-  root: string,
-  file: string,
-): Record<string, string> {
-  if (!root || !file) return {};
-  try {
-    const raw = window.localStorage.getItem(pluginQueryStorageKey(root, file));
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
-      return {};
-    const next: Record<string, string> = {};
-    Object.entries(parsed as Record<string, unknown>).forEach(
-      ([key, value]) => {
-        if (!key) return;
-        next[key] = String(value);
-      },
-    );
-    return next;
-  } catch {
-    return {};
-  }
-}
-
-function persistPluginQuery(
-  root: string,
-  file: string,
-  query: Record<string, string>,
-): void {
-  if (!root || !file) return;
-  try {
-    window.localStorage.setItem(
-      pluginQueryStorageKey(root, file),
-      JSON.stringify(query || {}),
-    );
-  } catch {}
-}
-
-function removeLocalStorageByPrefix(prefix: string): void {
-  if (typeof window === "undefined" || !prefix) {
-    return;
-  }
-  try {
-    for (const key of Array.from(
-      { length: window.localStorage.length },
-      (_, index) => window.localStorage.key(index),
-    ).filter(Boolean) as string[]) {
-      if (key.startsWith(prefix)) {
-        window.localStorage.removeItem(key);
-      }
-    }
-  } catch {}
-}
-
-function toPluginInput(
-  file: FilePayload,
-  query: Record<string, string>,
-): PluginInput {
-  return {
-    name: file.name,
-    path: file.path,
-    content: file.content,
-    ext: file.ext || "",
-    mime: file.mime || "",
-    size: typeof file.size === "number" ? file.size : 0,
-    truncated: !!file.truncated,
-    next_cursor:
-      typeof file.next_cursor === "number" ? file.next_cursor : undefined,
-    query,
-  };
-}
-
-function inferReadModeFromPlugin(plugin: any): "incremental" | "full" {
-  if (!plugin) return "incremental";
-  if (plugin?.fileLoadMode === "full") return "full";
-  if (plugin?.fileLoadMode === "incremental") return "incremental";
-  return "incremental";
-}
-
-function buildMatchInputFromPath(
-  path: string,
-  query: Record<string, string>,
-): PluginInput {
-  const normalized = (path || "").replace(/\\/g, "/");
-  const name = normalized.split("/").pop() || normalized;
-  const dot = name.lastIndexOf(".");
-  const ext = dot >= 0 ? name.slice(dot).toLowerCase() : "";
-  return {
-    name,
-    path: normalized,
-    content: "",
-    ext,
-    mime: "",
-    size: 0,
-    truncated: false,
-    query,
-  };
-}
-
-function formatPluginViewContext(value: unknown): string {
-  if (typeof value === "string") return value.trim();
-  if (value == null) return "";
-  try {
-    return JSON.stringify(value, null, 2).trim();
-  } catch {
-    return String(value).trim();
-  }
-}
-
-function buildMessageWithViewContext(
-  message: string,
-  viewContext: unknown,
-): string {
-  const contextText = formatPluginViewContext(viewContext);
-  if (!contextText) return message;
-  return [contextText, "", message].join("\n");
-}
-
-function normalizePath(value: string): string {
-  return String(value || "")
-    .replace(/\\/g, "/")
-    .replace(/^\/+|\/+$/g, "");
-}
-
-function relativeDisplayPathFromRoot(rootPath: string | undefined, absolutePath: string): string {
-  const root = normalizePath(rootPath || "");
-  const target = normalizePath(absolutePath);
-  if (!target) return "";
-  if (!root) return target;
-  if (target === root) return ".";
-  if (target.startsWith(`${root}/`)) {
-    return target.slice(root.length + 1);
-  }
-  const rootParts = root.split("/").filter(Boolean);
-  const targetParts = target.split("/").filter(Boolean);
-  let shared = 0;
-  while (
-    shared < rootParts.length &&
-    shared < targetParts.length &&
-    rootParts[shared] === targetParts[shared]
-  ) {
-    shared += 1;
-  }
-  const upward = Array(Math.max(0, rootParts.length - shared)).fill("..");
-  const downward = targetParts.slice(shared);
-  return [...upward, ...downward].join("/") || ".";
-}
-
-function joinDisplayPath(base: string, path: string): string {
-  const normalizedBase = normalizePath(base);
-  const normalizedPath = normalizePath(path);
-  if (!normalizedBase) return normalizedPath;
-  if (!normalizedPath) return normalizedBase;
-  return `${normalizedBase}/${normalizedPath}`;
-}
-
-function parseFileLocation(path: string): {
-  path: string;
-  targetLine?: number;
-  targetColumn?: number;
-} {
-  const raw = String(path || "");
-  const [base, fragment = ""] = raw.split("#", 2);
-  if (fragment) {
-    const match = /^L(\d+)(?:C(\d+))?$/i.exec(fragment.trim());
-    if (match) {
-      const targetLine = Number.parseInt(match[1], 10);
-      const targetColumn = match[2] ? Number.parseInt(match[2], 10) : undefined;
-      return {
-        path: base,
-        targetLine:
-          Number.isFinite(targetLine) && targetLine > 0 ? targetLine : undefined,
-        targetColumn:
-          targetColumn && Number.isFinite(targetColumn) && targetColumn > 0
-            ? targetColumn
-            : undefined,
-      };
-    }
-  }
-
-  const colonMatch = /^(.*):(\d+)(?::(\d+))?$/.exec(base.trim());
-  if (!colonMatch) {
-    return { path: base };
-  }
-  const targetLine = Number.parseInt(colonMatch[2], 10);
-  const targetColumn = colonMatch[3]
-    ? Number.parseInt(colonMatch[3], 10)
-    : undefined;
-  return {
-    path: colonMatch[1],
-    targetLine:
-      Number.isFinite(targetLine) && targetLine > 0 ? targetLine : undefined,
-    targetColumn:
-      targetColumn && Number.isFinite(targetColumn) && targetColumn > 0
-        ? targetColumn
-        : undefined,
-  };
-}
-
-function parentDirsOfFile(path: string): string[] {
-  const normalized = normalizePath(path);
-  if (!normalized) return [];
-  const parts = normalized.split("/").filter(Boolean);
-  if (parts.length <= 1) return [];
-  const dirs: string[] = [];
-  for (let i = 1; i < parts.length; i++) {
-    dirs.push(parts.slice(0, i).join("/"));
-  }
-  return dirs;
-}
-
-function dirnameOfPath(path: string): string {
-  const normalized = normalizePath(path);
-  if (!normalized) return ".";
-  const parts = normalized.split("/").filter(Boolean);
-  if (parts.length <= 1) return ".";
-  return parts.slice(0, -1).join("/");
-}
-
-function basenameOfPath(path: string): string {
-  const normalized = normalizePath(path);
-  if (!normalized) return "";
-  const parts = normalized.split("/").filter(Boolean);
-  return parts[parts.length - 1] || normalized;
-}
-
-function mapManagedRootsToEntries(dirs: ManagedRootPayload[]): FileEntry[] {
-  return dirs.map((dir) => ({
-    name: dir.display_name || dir.id.split("/").filter(Boolean).pop() || dir.id,
-    path: dir.id,
-    is_dir: true,
-    is_root: true,
-    size: typeof dir.size === "number" ? dir.size : undefined,
-    mtime: typeof dir.mtime === "string" ? dir.mtime : undefined,
-  }));
-}
-
-function comparableManagedRootPath(value: string | undefined): string {
-  return String(value || "").trim().replace(/\\/g, "/").replace(/\/+$/, "");
-}
-
-function buildDirectorySelectionKey(
-  root: string,
-  path: string,
-  isRoot: boolean,
-): string {
-  return isRoot ? root : `${root}:${path}`;
-}
-
-function loadLastRootId(): string {
-  if (typeof window === "undefined") {
-    return "";
-  }
-  return window.localStorage.getItem(LAST_ROOT_STORAGE_KEY) || "";
-}
-
-function loadBooleanRecord(key: string): Record<string, boolean> {
-  if (typeof window === "undefined") {
-    return {};
-  }
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(key) || "{}") as Record<string, unknown>;
-    return Object.fromEntries(
-      Object.entries(parsed).filter(([, value]) => typeof value === "boolean"),
-    ) as Record<string, boolean>;
-  } catch {
-    return {};
-  }
-}
-
-function loadStringBooleanRecord(key: string): Record<string, Record<string, boolean>> {
-  if (typeof window === "undefined") {
-    return {};
-  }
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(key) || "{}") as Record<string, unknown>;
-    return Object.fromEntries(
-      Object.entries(parsed).map(([root, value]) => [
-        root,
-        value && typeof value === "object"
-          ? Object.fromEntries(
-              Object.entries(value as Record<string, unknown>).filter(([, expanded]) => typeof expanded === "boolean"),
-            )
-          : {},
-      ]),
-    ) as Record<string, Record<string, boolean>>;
-  } catch {
-    return {};
-  }
-}
-
-const NEW_API_QUOTA_PER_UNIT = 500000;
-
-function formatTokenStationBalance(info: TokenStationInfo | null): string {
-  const data = info?.data;
-  if (!info?.success || !data) {
-    return "--";
-  }
-  const text = data.balance_text || data.quota_display_text || "";
-  const formattedText = formatBalanceText(text);
-  if (formattedText) {
-    return formattedText;
-  }
-  const raw = typeof data.balance === "number" ? data.balance : data.quota;
-  if (typeof raw === "number" && Number.isFinite(raw)) {
-    return (raw / NEW_API_QUOTA_PER_UNIT).toFixed(2);
-  }
-  return text || "--";
-}
-
-function parseTokenStationBalance(info: TokenStationInfo | null): number {
-  const data = info?.data;
-  if (!info?.success || !data) {
-    return 0;
-  }
-  const text = data.balance_text || data.quota_display_text || "";
-  const parsed = parseFirstNumber(text);
-  if (parsed !== null) {
-    return parsed;
-  }
-  const raw = typeof data.balance === "number" ? data.balance : data.quota;
-  return typeof raw === "number" && Number.isFinite(raw)
-    ? raw / NEW_API_QUOTA_PER_UNIT
-    : 0;
-}
-
-function formatBalanceText(text: string): string {
-  const value = String(text || "").trim();
-  if (!value) {
-    return "";
-  }
-  const match = value.match(/(-?\d+(?:\.\d+)?)/);
-  if (!match || match.index === undefined) {
-    return "";
-  }
-  const parsed = Number(match[1]);
-  if (!Number.isFinite(parsed)) {
-    return "";
-  }
-  return `${value.slice(0, match.index)}${parsed.toFixed(2)}${value.slice(match.index + match[1].length)}`;
-}
-
-function parseFirstNumber(text: string): number | null {
-  const match = String(text || "").match(/-?\d+(?:\.\d+)?/);
-  if (!match) {
-    return null;
-  }
-  const parsed = Number(match[0]);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function tokenStationWalletURL(baseURL: string): string {
-  const fallback = "http://localhost:3000";
-  const trimmed = String(baseURL || "").trim().replace(/\/+$/, "");
-  const target = `${trimmed || fallback}/wallet`;
-  try {
-    return new URL(target).toString();
-  } catch {
-    return `${fallback}/wallet`;
-  }
-}
-
-function normalizeTokenStationAPIKey(value: string): string {
-  const apiKey = String(value || "").trim();
-  if (!apiKey) {
-    return "";
-  }
-  return apiKey.toLowerCase().startsWith("sk-") ? apiKey : `sk-${apiKey}`;
-}
-
-function hasExplicitFileContext(message: string): boolean {
-  return FILE_TOKEN_PATTERN.test(message);
-}
-
-// Hook for responsive detection
-function useResponsive() {
-  const [isMobile, setIsMobile] = useState(false);
-  const [isTablet, setIsTablet] = useState(false);
-  useEffect(() => {
-    const checkSize = () => {
-      const width = window.innerWidth;
-      setIsMobile(width < 768);
-      setIsTablet(width >= 768 && width < 1024);
-    };
-    checkSize();
-    window.addEventListener("resize", checkSize);
-    return () => window.removeEventListener("resize", checkSize);
-  }, []);
-  return { isMobile, isTablet };
-}
-
-type AppProps = {
-  onGoHome?: () => void;
-};
-
-const MOBILE_ENTER_KEY_SEND_STORAGE_KEY = "mindfs-mobile-enter-key-sends";
-const SIDEBARS_SWAPPED_STORAGE_KEY = "mindfs-sidebars-swapped";
-const GIT_DIFF_SIDE_BY_SIDE_STORAGE_KEY = "mindfs-git-diff-side-by-side";
-const TASK_CREATE_WORKTREE_PREF_STORAGE_KEY = "mindfs-task-create-worktree-pref";
-const MAIN_CONTENT_VIEW_STORAGE_KEY = "mindfs-main-content-view";
-const DEFAULT_MAIN_CONTENT_VIEW_STORAGE_KEY = "mindfs-default-main-content-view";
-
-type TaskCreateWorktreePreference = {
-  createWorktree: boolean;
-  worktreeBranchMode: "new" | "existing";
-  worktreeBranch: string;
-};
-
-function isMainContentViewMode(value: unknown): value is MainContentViewMode {
-  return value === "task-kanban" || value === "file-browser";
-}
-
-function loadMainContentViewByRoot(): Record<string, MainContentViewMode> {
-  if (typeof window === "undefined") return {};
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(MAIN_CONTENT_VIEW_STORAGE_KEY) || "{}") as Record<string, unknown>;
-    return Object.fromEntries(
-      Object.entries(parsed).filter(([, value]) => isMainContentViewMode(value)),
-    ) as Record<string, MainContentViewMode>;
-  } catch {
-    return {};
-  }
-}
-
-function loadDefaultMainContentView(): MainContentViewMode {
-  if (typeof window === "undefined") return "task-kanban";
-  try {
-    const saved = window.localStorage.getItem(DEFAULT_MAIN_CONTENT_VIEW_STORAGE_KEY);
-    return isMainContentViewMode(saved) ? saved : "task-kanban";
-  } catch {
-    return "task-kanban";
-  }
-}
-
-function loadMobileEnterKeySends(): boolean {
-  if (typeof window === "undefined") {
-    return false;
-  }
-  try {
-    return window.localStorage.getItem(MOBILE_ENTER_KEY_SEND_STORAGE_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-function loadSidebarsSwapped(): boolean {
-  if (typeof window === "undefined") {
-    return false;
-  }
-  try {
-    return window.localStorage.getItem(SIDEBARS_SWAPPED_STORAGE_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-function loadGitDiffSideBySide(): boolean {
-  if (typeof window === "undefined") {
-    return false;
-  }
-  try {
-    return window.localStorage.getItem(GIT_DIFF_SIDE_BY_SIDE_STORAGE_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-function loadTaskCreateWorktreePreference(rootId: string): TaskCreateWorktreePreference {
-  if (typeof window === "undefined" || !rootId) {
-    return { createWorktree: false, worktreeBranchMode: "new", worktreeBranch: "" };
-  }
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(TASK_CREATE_WORKTREE_PREF_STORAGE_KEY) || "{}") as Record<string, unknown>;
-    const value = parsed[rootId] as Record<string, unknown> | undefined;
-    return {
-      createWorktree: value?.createWorktree === true,
-      worktreeBranchMode: value?.worktreeBranchMode === "existing" ? "existing" : "new",
-      worktreeBranch: typeof value?.worktreeBranch === "string" ? value.worktreeBranch : "",
-    };
-  } catch {
-    return { createWorktree: false, worktreeBranchMode: "new", worktreeBranch: "" };
-  }
-}
-
-function saveTaskCreateWorktreePreference(rootId: string, pref: TaskCreateWorktreePreference): void {
-  if (typeof window === "undefined" || !rootId) return;
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(TASK_CREATE_WORKTREE_PREF_STORAGE_KEY) || "{}") as Record<string, unknown>;
-    window.localStorage.setItem(TASK_CREATE_WORKTREE_PREF_STORAGE_KEY, JSON.stringify({
-      ...parsed,
-      [rootId]: pref,
-    }));
-  } catch {
-    // Ignore storage failures; the current dialog state can still be used.
-  }
-}
 
 export function App({ onGoHome }: AppProps) {
   const [fileEditStore] = useState(() => new FileEditStore({ load: fetchEditableFile, save: saveTextFile }));
   const { t } = useI18n();
+  const { playCompletionSound } = useCompletionSound();
   const pluginManagerRef = useRef<PluginManager>(new PluginManager());
-  const completionAudioContextRef = useRef<AudioContext | null>(null);
-  const completionAudioUnlockedRef = useRef(false);
   const managedRootIdsRef = useRef<Set<string>>(new Set());
   const expandedRef = useRef<string[]>([]);
   const selectedDirRef = useRef<string | null>(null);
@@ -1550,14 +255,19 @@ export function App({ onGoHome }: AppProps) {
   const loadingSessionRef = useRef<Partial<Record<string, Promise<SyncSessionResult>>>>({});
   const staleSessionKeysRef = useRef<Set<string>>(new Set());
   const invalidTreeCacheKeysRef = useRef<Set<string>>(new Set());
+  // 上一轮跨节点抓取里失败的节点。refreshManagedRoots 消费它：提示用户 + 给出重试入口。
+  // 跨节点失败原本被静默吞成 []，整个节点凭空缺席且无人重拉（实测可长时间不恢复）。
+  const nodeLoadFailuresRef = useRef<Array<{ id: string; name: string }>>([]);
+  const notifiedNodeFailuresRef = useRef<Set<string>>(new Set());
+  const notifyNodeLoadFailedRef = useRef<(node: { id: string; name: string }) => void>(() => {});
+  // 目录树刷新并发守卫：按缓存键记录最后发起的请求序号，旧响应后到时直接丢弃
+  const treeFetchSeqRef = useRef<Record<string, number>>({});
   const boundSessionByRootRef = useRef<Record<string, string | null>>({});
   const suppressedAutoBindSessionByRootRef = useRef<Record<string, string | null>>({});
   const drawerSessionByRootRef = useRef<Record<string, SessionItem | null>>({});
   const selectedSessionByRootRef = useRef<Record<string, string | null>>({});
-  const mainViewPreferenceByRootRef = useRef<
-    Record<string, "session" | "file" | "directory" | "git-diff">
-  >({});
   const drawerOpenByRootRef = useRef<Record<string, boolean>>({});
+  const drawerScrollRef = useRef<HTMLDivElement | null>(null);
   const fileCursorRef = useRef<number>(0);
   const fileScrollPositionsRef = useRef<Record<string, number>>(
     loadPersistedFileScrollPositions(),
@@ -1575,67 +285,47 @@ export function App({ onGoHome }: AppProps) {
   const pluginsLoadingByRootRef = useRef<Record<string, Promise<void>>>({});
   const pluginsTrustPendingByRootRef = useRef<Record<string, boolean>>({});
   const didInitRef = useRef(false);
-  const relayWSAuthCheckRef = useRef(false);
   const managedRootsRequestRef = useRef<Promise<ManagedRootPayload[] | null> | null>(null);
   const handleSelectSessionRef = useRef<
-    ((session: any) => Promise<void>) | null
+    | ((
+        session: any,
+        options?: { preserveTaskSelection?: boolean; preserveMainView?: boolean },
+      ) => Promise<void>)
+    | null
   >(null);
 
   const [sessions, setSessions] = useState<SessionItem[]>([]);
   const sessionsRef = useRef<SessionItem[]>([]);
-  const [multiProjectSessionsEnabled, setMultiProjectSessionsEnabled] = useState(() => {
-    if (typeof window === "undefined") return false;
-    return window.localStorage.getItem(MULTI_PROJECT_SESSION_STORAGE_KEY) === "1";
-  });
+  const multiProjectSessionsEnabled = true;
+  // 跨节点时远端的「开始/结束」没有 WS 兜底（没订阅那些会话），只能低频问一次。
+  // ponytail: 固定 5s。调小更跟手但请求翻倍；要零延迟得让远端节点跨机广播 pending 变更。
+  const REMOTE_REPLY_POLL_MS = 5000;
   const [multiProjectSessionGroups, setMultiProjectSessionGroups] = useState<MultiProjectSessionGroup[]>([]);
+  // 多项目分组的 ref 镜像：删除会话时要跨分组收集整棵子树，只看 sessionsRef 会漏掉
+  // 只存在于分组里的子会话（它们随后会被提升成顶层行，把面板撑爆）。
+  const multiProjectSessionGroupsRef = useRef<MultiProjectSessionGroup[]>([]);
   const [multiProjectSessionsLoading, setMultiProjectSessionsLoading] = useState(false);
+  // 多项目列表全量重拉竞态守卫：只应用最后一次发起的请求结果，避免旧响应覆盖新数据
+  const multiProjectLoadSeqRef = useRef(0);
   const [multiProjectPendingByKey, setMultiProjectPendingByKey] = useState<Record<string, boolean>>({});
   const multiProjectPendingRef = useRef<Record<string, boolean>>({});
-  const [sessionSearchOpen, setSessionSearchOpen] = useState(false);
-  const [sessionSearchResultsMode, setSessionSearchResultsMode] = useState(false);
-  const [sessionSearchQuery, setSessionSearchQuery] = useState("");
-  const [sessionSearchAppliedQuery, setSessionSearchAppliedQuery] = useState("");
-  const [sessionSearchResults, setSessionSearchResults] = useState<SessionItem[]>([]);
-  const [sessionSearchLoading, setSessionSearchLoading] = useState(false);
   const [syncingSessionKeys, setSyncingSessionKeys] = useState<Set<string>>(
     () => new Set(),
   );
+  // 归档区：默认不拉任何数据，面板底部的入口行只留摘要，点开才懒加载。
+  // 归档数据按项目分组存（面板和主列表一样按项目平铺），不进两棵列表 state。
+  const [archivedGroups, setArchivedGroups] = useState<MultiProjectSessionGroup[]>([]);
+  const [archiveOpen, setArchiveOpen] = useState(false);
+  const [archiveLoading, setArchiveLoading] = useState(false);
+  // 归档/取消归档后 +1，强制下面的懒加载 effect 重拉一次（否则摘要数字会停留在旧值）。
+  const [archiveReloadToken, setArchiveReloadToken] = useState(0);
   const [hasMoreSessions, setHasMoreSessions] = useState(false);
   const [loadingOlderSessions, setLoadingOlderSessions] = useState(false);
   const [sessionListMode, setSessionListMode] = useState<"local" | "import">(
     "local",
   );
-  const sessionListModeRef = useRef<"local" | "import">("local");
-  const [externalSessions, setExternalSessions] = useState<SessionItem[]>([]);
-  const externalSessionsRef = useRef<SessionItem[]>([]);
-  const [hasMoreExternalSessions, setHasMoreExternalSessions] = useState(false);
-  const [loadingOlderExternalSessions, setLoadingOlderExternalSessions] =
-    useState(false);
-  const [loadingExternalSessions, setLoadingExternalSessions] = useState(false);
-  const [externalSessionsError, setExternalSessionsError] = useState("");
-  const [externalSelectedKey, setExternalSelectedKey] = useState("");
-  const [externalImportAgent, setExternalImportAgent] = useState("");
-  const externalImportAgentRef = useRef("");
-  const [externalFilterBound, setExternalFilterBound] = useState(true);
-  const [selectedExternalImportKeys, setSelectedExternalImportKeys] = useState<
-    Set<string>
-  >(() => new Set());
-  const [importingExternalSessionKeys, setImportingExternalSessionKeys] =
-    useState<Set<string>>(() => new Set());
-  const [confirmingExternalImport, setConfirmingExternalImport] =
-    useState(false);
-  const [importMenuOpen, setImportMenuOpen] = useState(false);
-  const importMenuRef = useRef<HTMLDivElement | null>(null);
-  const projectAddPopoverRef = useRef<HTMLDivElement | null>(null);
-  const worktreeCreatePopoverRef = useRef<HTMLDivElement | null>(null);
-  const worktreeSwitchPopoverRef = useRef<HTMLDivElement | null>(null);
-  const taskTemplateActionMenuRef = useRef<HTMLDivElement | null>(null);
-  const taskCreateTemplateMenuRef = useRef<HTMLDivElement | null>(null);
   const [availableAgents, setAvailableAgents] = useState<AgentStatus[]>([]);
   const [scheduledAgentDialogOpen, setScheduledAgentDialogOpen] = useState(false);
-  const [taskTemplates, setTaskTemplates] = useState<TaskTemplate[]>([]);
-  const [taskTemplateDialogOpen, setTaskTemplateDialogOpen] = useState(false);
-  const [taskTemplateDialogTemplate, setTaskTemplateDialogTemplate] = useState<TaskTemplate | null>(null);
 	  const [kanbanTasks, setKanbanTasks] = useState<KanbanTask[]>([]);
 	  const [kanbanTaskCountItems, setKanbanTaskCountItems] = useState<KanbanTask[]>([]);
 	  const [taskDetailsById, setTaskDetailsById] = useState<Record<string, TaskDetail>>({});
@@ -1647,23 +337,29 @@ export function App({ onGoHome }: AppProps) {
 	  const [selectedKanbanTaskId, setSelectedKanbanTaskId] = useState("");
 	  const [expandedTaskInputIds, setExpandedTaskInputIds] = useState<Set<string>>(() => new Set());
   const [overflowingTaskInputs, setOverflowingTaskInputs] = useState<Set<string>>(() => new Set());
-  const [collapsedTaskCompletionGroups, setCollapsedTaskCompletionGroups] = useState<Set<string>>(() => new Set(["success", "fail", "cancelled"]));
+  const [collapsedTaskCompletionGroups, setCollapsedTaskCompletionGroups] = useState<Set<string>>(() => new Set());
+  // 看板列折叠（移动端多列换行后空间宝贵，长列默认可收起只留表头）。
+  const [collapsedKanbanColumns, setCollapsedKanbanColumns] = useState<Set<string>>(() => new Set());
   const [taskInlineEdit, setTaskInlineEdit] = useState<TaskInlineEditState | null>(null);
   const [taskSessionErrorDialog, setTaskSessionErrorDialog] = useState<{ title: string; message: string; details: string[] } | null>(null);
   const [taskInlineActiveToken, setTaskInlineActiveToken] = useState<{ type: "file" | "slash" | "prompt" | "command"; query: string } | null>(null);
   const [taskInlineCandidates, setTaskInlineCandidates] = useState<CandidateItem[]>([]);
   const [taskInlineCandidateIndex, setTaskInlineCandidateIndex] = useState(0);
   const [taskInlineSaving, setTaskInlineSaving] = useState(false);
+  // 新建任务面板里「用户输入模板」字段说明的展开态（与模板编辑面板同一套组件）。
+  const [taskInlineHelpKey, setTaskInlineHelpKey] = useState("");
   const [taskInlineUploadProgress, setTaskInlineUploadProgress] = useState<UploadProgress | null>(null);
 	  const [directoryUploadProgress, setDirectoryUploadProgress] = useState<UploadProgress | null>(null);
 	  const [taskWorktreeBranches, setTaskWorktreeBranches] = useState<GitBranchesPayload>({ branches: [] });
 	  const [taskWorktreeBranchesLoading, setTaskWorktreeBranchesLoading] = useState(false);
 	  const [taskWorktreeBranchError, setTaskWorktreeBranchError] = useState("");
 	  const [kanbanTasksLoading, setKanbanTasksLoading] = useState(false);
-  const [taskTemplateFilter, setTaskTemplateFilter] = useState("");
-  const [taskTemplateActionMenuOpen, setTaskTemplateActionMenuOpen] = useState(false);
-  const [taskTemplateConcurrencyOpen, setTaskTemplateConcurrencyOpen] = useState(false);
-  const [taskCreateTemplateMenuOpen, setTaskCreateTemplateMenuOpen] = useState(false);
+	  const kanbanLoadSeqRef = useRef(0);
+	  const kanbanAbortRef = useRef<AbortController | null>(null);
+	  const sessionListLoadSeqRef = useRef(0);
+	  const sessionListAbortRef = useRef<AbortController | null>(null);
+  // 列表拉取失败告警冷却：断网/抖动时重拉被多个事件反复触发，避免告警刷屏。
+  const listLoadErrorAtRef = useRef(0);
   const taskInlineEditorRef = useRef<TokenEditorHandle | null>(null);
   const taskInlineCandidateItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const taskInlineAttachmentInputRef = useRef<HTMLInputElement | null>(null);
@@ -1721,146 +417,64 @@ export function App({ onGoHome }: AppProps) {
   const onboardingAutoStartRef = useRef(false);
   const [currentRootId, setCurrentRootId] = useState<string | null>(null);
   const currentRootIdRef = useRef<string | null>(null);
+  const [currentRootNodeId, setCurrentRootNodeId] = useState<string | null>(null);
+  const currentRootNodeIdRef = useRef<string | null>(null);
+  const managedRootByIdRef = useRef<Record<string, ManagedRootPayload>>({});
+  // 多节点同名项目的完整索引：nodeId::rootId → payload（byId 回退表只保留一份）
+  const managedRootByKeyRef = useRef<Record<string, ManagedRootPayload>>({});
 
-  const loadTaskTemplates = useCallback(async () => {
-    if (!protectedAPIReady()) {
-      return;
+  const getNodeIdForRoot = useCallback((rootId: string): string | undefined => {
+    const rid = String(rootId || "").trim();
+    if (!rid) return undefined;
+    // 当前选中的项目优先按其选中节点路由，避免同名项目被多节点表覆盖到错误节点
+    if (rid === String(currentRootIdRef.current || "")) {
+      const nid = String(currentRootNodeIdRef.current || "").trim();
+      if (nid) return nid;
     }
-    try {
-      setTaskTemplates(await fetchTaskTemplates());
-    } catch (err) {
-      reportError("file.write_failed", String((err as Error)?.message || t("taskTemplate.loadFailed")));
-    }
-  }, [t]);
-
-  const openTaskTemplateEditor = useCallback((template: TaskTemplate | null) => {
-    setTaskTemplateDialogTemplate(template);
-    setTaskTemplateDialogOpen(true);
+    const entry = (managedRootByIdRef.current as Record<string, any>)[rid];
+    const nid = String(entry?._nodeId || "").trim();
+    return nid || undefined;
   }, []);
 
-  const handleTaskTemplateSaved = useCallback((template: TaskTemplate) => {
-    setTaskTemplates((prev) => {
-      const id = template.id || "";
-      if (!id) return prev;
-      const index = prev.findIndex((item) => item.id === id);
-      if (index < 0) return [template, ...prev];
-      const next = [...prev];
-      next[index] = template;
-      return next;
-    });
-    setTaskTemplateDialogTemplate(template);
-  }, []);
+  // 按当前作用域解析复合键：当前根 → 选中节点；其他根 → 模块 map/裸回退
+  const scopedRootKey = useCallback(
+    (rootId: string): string =>
+      scopeKey(getNodeIdForRoot(String(rootId || "")) ?? "", String(rootId || "")),
+    [getNodeIdForRoot],
+  );
 
-  const handleDeleteTaskTemplate = useCallback(async (template: TaskTemplate) => {
-    const id = template.id || "";
-    if (!id) return;
-    if (!window.confirm(t("taskTemplate.deleteConfirm", { name: template.name || id }))) return;
-    try {
-      await deleteTaskTemplate(id);
-      setTaskTemplates((prev) => prev.filter((item) => item.id !== id));
-      setTaskTemplateDialogTemplate((prev) => prev?.id === id ? null : prev);
-      setTaskTemplateFilter((prev) => prev === id ? "" : prev);
-    } catch (err) {
-      reportError("file.write_failed", String((err as Error)?.message || t("taskTemplate.deleteFailed")));
-    }
-  }, [t]);
-
-  const handleTaskTemplateConcurrencyChange = useCallback(async (templateId: string, value: number) => {
-    const template = taskTemplates.find((item) => item.id === templateId);
-    if (!template) return;
-    const nextValue = Math.max(1, Math.min(10, value || 1));
-    const optimistic = { ...template, max_concurrency: nextValue };
-    setTaskTemplates((prev) => prev.map((item) => item.id === templateId ? optimistic : item));
-    try {
-      const saved = await saveTaskTemplate(optimistic);
-      setTaskTemplates((prev) => prev.map((item) => item.id === templateId ? saved : item));
-      setTaskTemplateDialogTemplate((prev) => prev?.id === templateId ? saved : prev);
-    } catch (err) {
-      setTaskTemplates((prev) => prev.map((item) => item.id === templateId ? template : item));
-      reportError("file.write_failed", String((err as Error)?.message || t("taskTemplate.concurrencySaveFailed")));
-    }
-  }, [taskTemplates, t]);
-
-  useEffect(() => {
-    void loadTaskTemplates();
-  }, [loadTaskTemplates]);
-
-  useEffect(() => {
-    if (!currentRootId) {
-      if (taskTemplateFilter) setTaskTemplateFilter("");
-      return;
-    }
-    if (taskTemplateFilter === TASK_TEMPLATE_ALL_FILTER || (taskTemplateFilter && taskTemplates.some((template) => template.id === taskTemplateFilter))) {
-      return;
-    }
-    let remembered = "";
-    try {
-      const parsed = JSON.parse(window.localStorage.getItem(TASK_TEMPLATE_SELECTION_STORAGE_KEY) || "{}") as Record<string, unknown>;
-      const value = parsed[currentRootId];
-      remembered = typeof value === "string" ? value : "";
-    } catch {
-      remembered = "";
-    }
-    const rememberedValid = remembered === TASK_TEMPLATE_ALL_FILTER || taskTemplates.some((template) => template.id === remembered);
-    const next = rememberedValid ? remembered : TASK_TEMPLATE_ALL_FILTER;
-    if (next && next !== taskTemplateFilter) {
-      setTaskTemplateFilter(next);
-    }
-  }, [currentRootId, taskTemplateFilter, taskTemplates]);
-
-  useEffect(() => {
-    if (!currentRootId || !taskTemplateFilter) return;
-    try {
-      const parsed = JSON.parse(window.localStorage.getItem(TASK_TEMPLATE_SELECTION_STORAGE_KEY) || "{}") as Record<string, unknown>;
-      window.localStorage.setItem(TASK_TEMPLATE_SELECTION_STORAGE_KEY, JSON.stringify({
-        ...parsed,
-        [currentRootId]: taskTemplateFilter,
-      }));
-    } catch {
-    }
-  }, [currentRootId, taskTemplateFilter]);
-
-  useEffect(() => {
-    if (!taskTemplateActionMenuOpen) return;
-    const onPointerDown = (event: MouseEvent) => {
-      if (taskTemplateActionMenuRef.current?.contains(event.target as Node)) {
-        return;
-      }
-      setTaskTemplateActionMenuOpen(false);
-    };
-    document.addEventListener("mousedown", onPointerDown);
-    return () => document.removeEventListener("mousedown", onPointerDown);
-  }, [taskTemplateActionMenuOpen]);
-
-  useEffect(() => {
-    if (!taskCreateTemplateMenuOpen) return;
-    const onPointerDown = (event: MouseEvent) => {
-      if (taskCreateTemplateMenuRef.current?.contains(event.target as Node)) {
-        return;
-      }
-      setTaskCreateTemplateMenuOpen(false);
-    };
-    document.addEventListener("mousedown", onPointerDown);
-    return () => document.removeEventListener("mousedown", onPointerDown);
-  }, [taskCreateTemplateMenuOpen]);
-
-  useEffect(() => {
-    if (!taskTemplateActionMenuOpen) {
-      setTaskTemplateConcurrencyOpen(false);
-    } else {
-      setTaskCreateTemplateMenuOpen(false);
-    }
-  }, [taskTemplateActionMenuOpen]);
+  const {
+    taskTemplateActionMenuRef,
+    taskCreateTemplateMenuRef,
+    taskTemplates,
+    taskTemplateDialogOpen,
+    setTaskTemplateDialogOpen,
+    taskTemplateDialogTemplate,
+    taskTemplateFilter,
+    setTaskTemplateFilter,
+    taskTemplateActionMenuOpen,
+    setTaskTemplateActionMenuOpen,
+    taskCreateTemplateMenuOpen,
+    setTaskCreateTemplateMenuOpen,
+    loadTaskTemplates,
+    openTaskTemplateEditor,
+    handleTaskTemplateSaved,
+    handleDeleteTaskTemplate,
+  } = useTaskTemplates({ currentRootId, scopedRootKey, getNodeIdForRoot });
 
   useEffect(() => {
     if (!taskInlineEdit) return;
     window.setTimeout(() => {
       taskInlineEditorRef.current?.setText(taskInlineEdit.text || "");
+      // TokenEditor 的 setText 不再抢焦点（常驻挂载的编辑器会夺走整页焦点），开面板时自己聚焦。
+      taskInlineEditorRef.current?.focus();
     }, 0);
-  }, [taskInlineEdit?.taskId, taskInlineEdit?.templateId]);
+  }, [taskInlineEdit?.templateId]);
 
   useEffect(() => {
-    if (!taskInlineActiveToken || !currentRootId) {
+    // 候选跟着面板的目标项目走，不跟着「当前选中项目」走 —— 工作台发起时两者不是一个。
+    const tokenRootId = taskInlineEdit?.targetRootId || currentRootId;
+    if (!taskInlineActiveToken || !tokenRootId) {
       setTaskInlineCandidates([]);
       setTaskInlineCandidateIndex(0);
       return;
@@ -1870,7 +484,7 @@ export function App({ onGoHome }: AppProps) {
       const selectedTemplate = taskTemplates.find((template) => template.id === taskTemplateFilter) || null;
       const agent = firstAgentStage(selectedTemplate)?.agent || "";
       fetchCandidates({
-        rootId: currentRootId,
+        rootId: tokenRootId,
         type: taskInlineActiveToken.type === "file"
           ? "file"
           : taskInlineActiveToken.type === "prompt"
@@ -1881,6 +495,7 @@ export function App({ onGoHome }: AppProps) {
         query: taskInlineActiveToken.query,
         agent: taskInlineActiveToken.type === "slash" ? agent : undefined,
         signal: controller.signal,
+        nodeId: getNodeIdForRoot(tokenRootId),
       })
         .then((items) => {
           setTaskInlineCandidates(items);
@@ -1897,9 +512,22 @@ export function App({ onGoHome }: AppProps) {
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [currentRootId, taskInlineActiveToken, taskTemplateFilter, taskTemplates]);
+  }, [currentRootId, taskInlineEdit?.targetRootId, taskInlineActiveToken, taskTemplateFilter, taskTemplates]);
 
   const applyTaskDetails = useCallback((rootId: string, details: TaskDetail[], persist = true) => {
+    const curNid = String(currentRootNodeIdRef.current || "").trim();
+    const curRoot = String(currentRootIdRef.current || "");
+    // 节点隔离：当前根的旧节点数据不污染视图（旧请求迟到或 WS 跨节点）
+    // 不直接依赖 getNodeIdForRoot（前向引用），改用 ref + 回退表
+    const sid = rootId === curRoot ? curNid : String((managedRootByIdRef.current as Record<string, any>)[rootId]?._nodeId || getRootNodeId(rootId) || "").trim();
+    if (sid && curNid && sid !== curNid && rootId === curRoot) {
+      const filteredByNode = details.filter((d) => {
+        const did = String((d.task as any)?._nodeId || "").trim();
+        return !did || did === sid;
+      });
+      if (filteredByNode.length === 0) return;
+      details = filteredByNode;
+    }
     const accepted = details.filter(
       (detail) =>
         detail?.task?.id &&
@@ -1940,8 +568,41 @@ export function App({ onGoHome }: AppProps) {
       return Array.from(byId.values()).sort((a, b) => String(b.updated_at || "").localeCompare(String(a.updated_at || "")));
     });
     if (persist) {
-      void upsertCachedTaskDetails(rootId, accepted);
+      const persistNode = String(currentRootNodeIdRef.current || "").trim() || String((managedRootByIdRef.current as Record<string, any>)[rootId]?._nodeId || getRootNodeId(rootId) || "").trim() || undefined;
+      void upsertCachedTaskDetails(rootId, accepted, persistNode);
     }
+  }, []);
+
+  /**
+   * 把「服务端全量响应里已经没有」的任务从内存里摘掉。
+   *
+   * 缓存以前只写不删，内存这边同样只有合并（applyTaskDetails）没有移除，于是
+   * 服务端删掉的任务会被一直渲染。必须真的 delete 键：kanbanTasks 和
+   * kanbanTaskCountItems 都是从 taskDetailsById 派生的，只过滤数组不改 map 的话
+   * 下一轮派生又会把它们带回来。
+   */
+  const pruneTaskDetails = useCallback((rootId: string, keepTaskIds: Iterable<string>) => {
+    const keep = new Set(Array.from(keepTaskIds, (id) => String(id || "")).filter(Boolean));
+    // taskDetailsById 是跨 root 共享的，权威集合只覆盖本次拉取的那个 root ——
+    // 不按 root_id 圈定的话，刷新 A 项目会把 B 项目的任务一起清掉。
+    const inScope = (task: KanbanTask) => task.root_id === rootId;
+    const dropped = Object.entries(taskDetailsByIdRef.current)
+      .filter(([taskId, detail]) => !keep.has(String(taskId)) && inScope((detail as TaskDetail).task))
+      .map(([taskId]) => taskId);
+    if (dropped.length === 0) return;
+    const droppedSet = new Set(dropped);
+    const kept = <V,>(entries: [string, V][]) =>
+      Object.fromEntries(entries.filter(([taskId]) => !droppedSet.has(taskId))) as Record<string, V>;
+    taskDetailsByIdRef.current = kept(Object.entries(taskDetailsByIdRef.current));
+    setTaskDetailsById((prev) => kept(Object.entries(prev)));
+    // 这两张表只有 taskId → 值，没有 root 信息可判归属，所以直接吃上面算好的
+    // 淘汰名单：跟着 taskDetailsById 一起摘掉，不自己再推导一遍。
+    setTaskFirstInputById((prev) => kept(Object.entries(prev)));
+    setTaskSessionKeysById((prev) => kept(Object.entries(prev)));
+    setKanbanTaskCountItems((prev) => {
+      const next = prev.filter((task) => !inScope(task) || keep.has(String(task.id)));
+      return next.length === prev.length ? prev : next;
+    });
   }, []);
 
   const loadKanbanTasks = useCallback(async (rootId?: string | null, force = false) => {
@@ -1957,43 +618,76 @@ export function App({ onGoHome }: AppProps) {
       setTaskSessionKeysById({});
       return;
     }
+    // 不直接依赖 getNodeIdForRoot（前向引用），内联解析避免 TSC 提前引用
+    const resolveNodeId = (rid: string): string | undefined => {
+      const r = String(rid || "").trim();
+      if (!r) return undefined;
+      if (r === String(currentRootIdRef.current || "")) {
+        const nid = String(currentRootNodeIdRef.current || "").trim();
+        if (nid) return nid;
+      }
+      const entry = (managedRootByIdRef.current as Record<string, any>)[r];
+      const enid = String(entry?._nodeId || "").trim();
+      if (enid) return enid;
+      return String(getRootNodeId(r) || "").trim() || undefined;
+    };
+    const snapNode = resolveNodeId(targetRoot) || null;
+    const seq = ++kanbanLoadSeqRef.current;
+    kanbanAbortRef.current?.abort();
+    const controller = new AbortController();
+    kanbanAbortRef.current = controller;
     setKanbanTasksLoading(true);
     try {
-      const cached = await getCachedTaskDetails(targetRoot);
-      if (cached.length > 0) {
+      const cached = await getCachedTaskDetails(targetRoot, snapNode || undefined);
+      if (cached.length > 0 && seq === kanbanLoadSeqRef.current && !controller.signal.aborted && (resolveNodeId(targetRoot) || null) === snapNode) {
         applyTaskDetails(targetRoot, cached, false);
-        setKanbanTasksLoading(false);
+        if (seq === kanbanLoadSeqRef.current) setKanbanTasksLoading(false);
       }
-      const meta = await getCachedTaskMeta(targetRoot);
+      const meta = await getCachedTaskMeta(targetRoot, snapNode || undefined);
       const [details, recent] = await Promise.all([
-        fetchTaskDetails(targetRoot, force ? undefined : { after: meta?.newestUpdatedAt || "" }),
+        fetchTaskDetails(targetRoot, force ? undefined : { after: meta?.newestUpdatedAt || "" }, resolveNodeId(targetRoot)),
         !force && meta?.newestUpdatedAt
-          ? fetchTaskDetails(targetRoot, { limit: 20 })
-          : Promise.resolve([]),
+          ? fetchTaskDetails(targetRoot, { limit: 20 }, resolveNodeId(targetRoot))
+          : Promise.resolve([] as TaskDetail[]),
       ]);
-      if (details.length > 0) {
-        applyTaskDetails(targetRoot, details);
-      }
-      if (recent.length > 0) {
-        applyTaskDetails(targetRoot, recent);
+      if (controller.signal.aborted || seq !== kanbanLoadSeqRef.current) { return; }
+      if ((resolveNodeId(targetRoot) || null) !== snapNode) { return; }
+      const tagDetails = (arr: TaskDetail[]) => { for (const d of arr) (d.task as any)._nodeId = (d.task as any)._nodeId || snapNode; };
+      if (details.length > 0) { tagDetails(details); applyTaskDetails(targetRoot, details); }
+      if (recent.length > 0) { tagDetails(recent); applyTaskDetails(targetRoot, recent); }
+      // 只有全量响应才是权威集合：增量只含更新的行、限流只含前 20 条，
+      // 拿它们去淘汰会把「没被这次响应覆盖到」的任务误删。
+      if (force) {
+        const keepTaskIds = details.map((d) => d.task?.id);
+        pruneTaskDetails(targetRoot, keepTaskIds);
+        void pruneCachedTaskDetails(targetRoot, keepTaskIds, snapNode || undefined);
       }
     } catch (err) {
+      if ((err as any)?.name === "AbortError") return;
+      if (kanbanAbortRef.current?.signal.aborted) return;
       reportError("file.write_failed", String((err as Error)?.message || t("task.loadFailed")));
     } finally {
-      setKanbanTasksLoading(false);
+      if (seq === kanbanLoadSeqRef.current && !controller.signal.aborted) setKanbanTasksLoading(false);
     }
-  }, [applyTaskDetails, t]);
+  }, [applyTaskDetails, pruneTaskDetails, t]);
 
-  const kanbanRefreshSpin = useRefreshSpin(() => loadKanbanTasks(currentRootId));
+  // 刷新必须走全量：增量响应在结构上就看不见「少了谁」，删除永远刷不掉。
+  const kanbanRefreshSpin = useRefreshSpin(() => loadKanbanTasks(currentRootId, true));
 
 	  useEffect(() => {
 	    void loadKanbanTasks(currentRootId);
-	  }, [currentRootId, loadKanbanTasks]);
+	  }, [currentRootId, currentRootNodeId, loadKanbanTasks]);
 
 	  useEffect(() => {
+	    const curNid = String(currentRootNodeIdRef.current || "").trim();
 	    const allTasks = Object.values(taskDetailsById)
 	      .map((detail) => detail.task)
-	      .filter((task) => !currentRootId || task.root_id === currentRootId)
+	      .filter((task) => {
+	        if (currentRootId && task.root_id !== currentRootId) return false;
+	        const tid = String((task as any)._nodeId || "").trim();
+	        if (tid && curNid && tid !== curNid) return false;
+	        return true;
+	      })
 	      .sort((a, b) => String(b.updated_at || "").localeCompare(String(a.updated_at || "")));
 	    const selectedTemplateId = taskTemplateFilter || "";
 	    const allTemplatesSelected = selectedTemplateId === TASK_TEMPLATE_ALL_FILTER;
@@ -2001,29 +695,37 @@ export function App({ onGoHome }: AppProps) {
 	      ? allTasks.filter((task) => task.task_template_id === selectedTemplateId)
 	      : allTasks;
 	    setKanbanTaskCountItems(allTasks);
-	    setKanbanTasks(allTemplatesSelected ? filtered : filtered.filter(isUnfinishedKanbanTask));
+	    // 模板筛选只按 task_template_id 收窄，不要在这里再滤终态：
+	    // 四块看板里「已结束」那一列唯一的任务来源就是 success/fail/cancelled，
+	    // 前面多滤一道，终态卡在子看板里就凭空消失（连已完成列都进不去）。
+	    setKanbanTasks(filtered);
 	  }, [currentRootId, taskDetailsById, taskTemplateFilter]);
 
 	  useEffect(() => {
 	    if (!selectedKanbanTaskId) return;
 	    if (kanbanTasks.some((task) => task.id === selectedKanbanTaskId)) return;
+	    // 工作台上选中的任务往往属于**别的**项目，而 kanbanTasks 按 currentRootId 过滤，
+	    // 天然不含它们 —— 不放行的话，刚弹出来的详情会被这个守卫立刻关掉。
+	    // 详情已经在 taskDetailsById 里（openWorkspaceTaskDetail 灌的），选中是合法的。
+	    if (workspaceOpenRef.current && taskDetailsByIdRef.current[selectedKanbanTaskId]) return;
 	    setSelectedKanbanTaskId("");
 	  }, [kanbanTasks, selectedKanbanTaskId]);
 
-	  const handleMoveKanbanTask = useCallback(async (task: KanbanTask, action: "next" | "run-now" | "prev" | "pause" | "resume" | "complete" | "cancel") => {
+	  // 跨项目工作台状态与逻辑见 kanbanTaskPanel 定义前（workspaceOpen 等）
+
+  const handleMoveKanbanTask = useCallback(async (task: KanbanTask, action: "next" | "run-now" | "pause" | "resume" | "complete" | "cancel") => {
     const rootId = task.root_id || currentRootIdRef.current;
     if (!rootId) return;
     let reason = "";
-    if (action === "prev" || action === "pause") {
-      const label = action === "prev" ? t("task.actionPrevious") : t("task.actionPause");
-      const input = window.prompt(t("task.reasonPrompt", { action: label }), "");
+    if (action === "pause") {
+      const input = await promptDialog({ message: t("task.reasonPrompt", { action: t("task.actionPause") }) });
       if (input === null) {
         return;
       }
       reason = input.trim();
     }
     try {
-      const detail = await moveTask(rootId, task.id, action, reason);
+      const detail = await moveTask(rootId, task.id, action, reason, getNodeIdForRoot(rootId));
       applyTaskDetails(rootId, [detail]);
       if (detail.task.worktree_path) {
         void refreshTaskWorktree(rootId, detail.task.worktree_path);
@@ -2033,49 +735,12 @@ export function App({ onGoHome }: AppProps) {
     }
   }, [applyTaskDetails, t]);
 
-  const openTaskEditDialog = useCallback(async (task: KanbanTask, openAttachmentPicker = false) => {
-    const rootId = task.root_id || currentRootIdRef.current;
-    if (!rootId) return;
-    try {
-      const detail = taskDetailsById[task.id] || await fetchTaskDetail(rootId,task.id);
-      const firstInput = firstTaskInputFromDetail(detail);
-      const currentInput = currentTaskInputFromDetail(detail);
-      const agentStage = taskAgentStage(detail.task, taskTemplates.find(item => item.id === detail.task.task_template_id));
-	      setTaskInlineEdit({
-	        taskId: task.id,
-            agent: agentStage?.agent,
-            model: agentStage?.model,
-            canEditExecution: !detail.task.main_session_key && !detail.task.scheduler_admitted && detail.task.current_stage_index===0,
-	        templateId: task.task_template_id,
-	        templateName: task.task_template_name || t("task.defaultTitle"),
-	        text: currentInput,
-	        previousInputs: previousTaskInputsFromDetail(detail, t),
-	        createWorktree: detail.task.create_worktree === true,
-	        worktreeBranchMode: detail.task.worktree_branch_mode === "existing" ? "existing" : "new",
-	        worktreeBranch: detail.task.worktree_branch || "",
-	        canToggleWorktree: detail.task.current_stage_index === 0 && !detail.task.worktree_path && !detail.task.scheduler_admitted,
-	        attachments: [],
-	      });
-      setTaskInlineActiveToken(null);
-      setTaskInlineCandidates([]);
-      setTaskInlineCandidateIndex(0);
-      setTaskFirstInputById((prev) => ({ ...prev, [task.id]: firstInput }));
-      window.setTimeout(() => {
-        if (openAttachmentPicker) {
-          taskInlineAttachmentInputRef.current?.click();
-        }
-      }, 0);
-    } catch (err) {
-      reportError("file.write_failed", String((err as Error)?.message || t("task.editFailed")));
-    }
-  }, [taskDetailsById, taskTemplates, t]);
-
   const loadTaskWorktreeBranches = useCallback(async (rootId: string) => {
     if (!rootId) return;
     setTaskWorktreeBranchesLoading(true);
     setTaskWorktreeBranchError("");
     try {
-      setTaskWorktreeBranches(await fetchGitBranches(rootId));
+      setTaskWorktreeBranches(await fetchGitBranches(rootId, getNodeIdForRoot(rootId)));
     } catch (error) {
       setTaskWorktreeBranches({ branches: [] });
       setTaskWorktreeBranchError(error instanceof Error ? error.message : t("worktree.loadBranchFailed"));
@@ -2084,50 +749,63 @@ export function App({ onGoHome }: AppProps) {
     }
   }, [t]);
 
+	  // 分支列表跟的是**面板的目标项目**：从工作台发起时那不是 currentRootId，
+	  // 照 currentRootId 拉会把别的项目的分支带进分支选择器。
 	  useEffect(() => {
-	    if (
-	      !taskInlineEdit?.createWorktree ||
-	      !taskInlineEdit.canToggleWorktree ||
-      !currentRootId ||
-      managedRootByIdRef.current[currentRootId]?.is_git_repo !== true
-    ) {
-      setTaskWorktreeBranchError("");
-      return;
-    }
-	    void loadTaskWorktreeBranches(currentRootId);
-	  }, [currentRootId, loadTaskWorktreeBranches, taskInlineEdit?.canToggleWorktree, taskInlineEdit?.createWorktree]);
+	    const edit = taskInlineEdit;
+	    if (!edit) return;
+	    const rootId = edit.targetRootId || currentRootId || "";
+	    if (!edit.createWorktree || !edit.canToggleWorktree || !rootId || managedRootByIdRef.current[rootId]?.is_git_repo !== true) {
+	      setTaskWorktreeBranchError("");
+	      return;
+	    }
+	    void loadTaskWorktreeBranches(rootId);
+	  }, [currentRootId, loadTaskWorktreeBranches, taskInlineEdit?.canToggleWorktree, taskInlineEdit?.createWorktree, taskInlineEdit?.targetRootId]);
 
 	  useEffect(() => {
-	    if (!taskInlineEdit || taskInlineEdit.taskId || !taskInlineEdit.canToggleWorktree) return;
-	    const rootId = currentRootIdRef.current || "";
+	    const edit = taskInlineEdit;
+	    if (!edit || !edit.canToggleWorktree) return;
+	    // 同样按目标项目存：从工作台发起时把 A 项目的偏好写到 B 项目上是错的。
+	    const rootId = edit.targetRootId || currentRootIdRef.current || "";
 	    if (!rootId) return;
 	    saveTaskCreateWorktreePreference(rootId, {
-	      createWorktree: taskInlineEdit.createWorktree,
-	      worktreeBranchMode: taskInlineEdit.worktreeBranchMode,
-	      worktreeBranch: taskInlineEdit.worktreeBranch,
+	      createWorktree: edit.createWorktree,
+	      worktreeBranchMode: edit.worktreeBranchMode,
+	      worktreeBranch: edit.worktreeBranch,
 	    });
 	  }, [
 	    taskInlineEdit?.canToggleWorktree,
 	    taskInlineEdit?.createWorktree,
-	    taskInlineEdit?.taskId,
 	    taskInlineEdit?.worktreeBranch,
 	    taskInlineEdit?.worktreeBranchMode,
+	    taskInlineEdit?.targetRootId,
 	  ]);
 
-	  const openTaskCreateDialog = useCallback((template: TaskTemplate | null) => {
+	  const openTaskCreateDialog = useCallback((template: TaskTemplate | null, targetRootId?: string) => {
 	    const templateId = template?.id || "";
 	    if (!templateId) return;
 	    const initialText = firstUserInputTemplate(template);
-	    const rootId = currentRootIdRef.current || "";
+	    // 工作台发起时可以指定项目；看板入口不传，落在当前项目上。
+	    const rootId = targetRootId || currentRootIdRef.current || "";
 	    const taskCanCreateWorktree = managedRootByIdRef.current[rootId]?.is_git_repo === true;
 	    const worktreePref = loadTaskCreateWorktreePreference(rootId);
 	    setTaskInlineEdit({
 	      templateId,
 	      templateName: template?.name || t("task.defaultTitle"),
-        agent: template?.stages.find(s=>s.snapshot.role==="agent")?.snapshot.agent,
-        model: template?.stages.find(s=>s.snapshot.role==="agent")?.snapshot.model,
-        canEditExecution: true,
 	      text: initialText,
+	      targetRootId: targetRootId || undefined,
+	      // 只有工作台来的才带项目下拉：那里没有「当前项目」这个默认落点。
+	      allowProjectSwitch: Boolean(targetRootId),
+	      createWorktreePerRoot: {
+	        [rootId]: {
+	          createWorktree: taskCanCreateWorktree && worktreePref.createWorktree,
+	          worktreeBranchMode: worktreePref.worktreeBranchMode,
+	          worktreeBranch: worktreePref.worktreeBranch,
+	        },
+	      },
+	      name: "",
+	      // 首段的「立即执行」：面板开出来就照模板的面板值。
+	      startImmediately: template?.stages?.[0]?.snapshot?.start_immediately === true,
 	      previousInputs: [],
 	      createWorktree: taskCanCreateWorktree && worktreePref.createWorktree,
 	      worktreeBranchMode: worktreePref.worktreeBranchMode,
@@ -2140,6 +818,39 @@ export function App({ onGoHome }: AppProps) {
     setTaskInlineCandidateIndex(0);
   }, [t]);
 
+  // 面板上换项目：worktree 三个开关是**按项目存**的，换回去要还原回这个项目那份，
+  // 第一次切到某项目则从 localStorage 的偏好起头。切项目不碰正文/模板/附件。
+  const switchTaskInlineEditProject = useCallback((nextRootId: string) => {
+    setTaskInlineEdit((prev) => {
+      if (!prev || !nextRootId || nextRootId === (prev.targetRootId || currentRootIdRef.current || "")) return prev;
+      const prevRootId = prev.targetRootId || currentRootIdRef.current || "";
+      const stash = (state: TaskInlineEditState, rootId: string) => ({
+        createWorktree: state.createWorktree,
+        worktreeBranchMode: state.worktreeBranchMode,
+        worktreeBranch: state.worktreeBranch,
+      });
+      const perRoot = {
+        ...(prev.createWorktreePerRoot || {}),
+        [prevRootId]: stash(prev, prevRootId),
+      };
+      const restored = perRoot[nextRootId];
+      const canCreate = managedRootByIdRef.current[nextRootId]?.is_git_repo === true;
+      const pref = restored || (() => {
+        const stored = loadTaskCreateWorktreePreference(nextRootId);
+        return { createWorktree: canCreate && stored.createWorktree, worktreeBranchMode: stored.worktreeBranchMode, worktreeBranch: stored.worktreeBranch };
+      })();
+      return {
+        ...prev,
+        targetRootId: nextRootId,
+        createWorktreePerRoot: { ...perRoot, [nextRootId]: pref },
+        createWorktree: pref.createWorktree,
+        worktreeBranchMode: pref.worktreeBranchMode,
+        worktreeBranch: pref.worktreeBranch,
+        canToggleWorktree: true,
+      };
+    });
+  }, []);
+
   const closeTaskEditDialog = useCallback(() => {
     setTaskInlineEdit((prev) => {
       prev?.attachments.forEach((attachment) => {
@@ -2150,6 +861,7 @@ export function App({ onGoHome }: AppProps) {
     setTaskInlineActiveToken(null);
     setTaskInlineCandidates([]);
     setTaskInlineCandidateIndex(0);
+    setTaskInlineHelpKey("");
     setTaskInlineSaving(false);
     setTaskInlineUploadProgress(null);
     taskInlineUploadAbortRef.current?.abort();
@@ -2199,17 +911,6 @@ export function App({ onGoHome }: AppProps) {
     event.currentTarget.value = "";
   }, [appendTaskInlineAttachments]);
 
-  const handleTaskInlinePaste = useCallback((event: React.ClipboardEvent<HTMLDivElement>) => {
-    if (taskInlineSaving || !currentRootIdRef.current) return;
-    const clipboardItems = Array.from(event.clipboardData?.items || []);
-    const imageFiles = clipboardItems
-      .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
-      .map((item) => item.getAsFile())
-      .filter((file): file is File => !!file);
-    if (imageFiles.length === 0) return;
-    event.preventDefault();
-    appendTaskInlineAttachments(imageFiles);
-  }, [appendTaskInlineAttachments, taskInlineSaving]);
 
   const removeTaskInlineAttachment = useCallback((id: string) => {
     setTaskInlineEdit((prev) => prev
@@ -2224,53 +925,9 @@ export function App({ onGoHome }: AppProps) {
       : prev);
   }, []);
 
-  async function refreshTaskWorktree(rootId: string, worktreePath: string, force = true) {
-    const normalizedRootId = String(rootId || "").trim();
-    const normalizedWorktreePath = String(worktreePath || "").trim();
-    if (!normalizedRootId || !normalizedWorktreePath) {
-      return;
-    }
-    if (!force && knownTaskWorktreePathsRef.current.has(normalizedWorktreePath)) {
-      return;
-    }
-    knownTaskWorktreePathsRef.current.add(normalizedWorktreePath);
-    setExpandedWorktreeByRoot((prev) => ({ ...prev, [normalizedRootId]: normalizedWorktreePath }));
-    setWorktreeLoadingByRoot((prev) => ({ ...prev, [normalizedRootId]: true }));
-    setWorktreeErrorByRoot((prev) => ({ ...prev, [normalizedRootId]: "" }));
-    try {
-      const payload = await fetchGitWorktrees(normalizedRootId);
-      (payload.items || []).forEach((item) => {
-        if (item.path) {
-          knownTaskWorktreePathsRef.current.add(item.path);
-        }
-      });
-      setWorktreeItemsByRoot((prev) => ({
-        ...prev,
-        [normalizedRootId]: (payload.items || []).filter((item) => !!item.branch),
-      }));
-    } catch (error) {
-      knownTaskWorktreePathsRef.current.delete(normalizedWorktreePath);
-      setWorktreeErrorByRoot((prev) => ({
-        ...prev,
-        [normalizedRootId]: error instanceof Error ? error.message : t("worktree.loadFailed"),
-      }));
-    } finally {
-      setWorktreeLoadingByRoot((prev) => ({ ...prev, [normalizedRootId]: false }));
-    }
-    setWorktreeStatusLoadingByPath((prev) => ({ ...prev, [normalizedWorktreePath]: true }));
-    try {
-      const status = await fetchGitStatusByPath(normalizedWorktreePath);
-      setWorktreeStatusByPath((prev) => ({ ...prev, [normalizedWorktreePath]: status }));
-    } catch {
-      setWorktreeStatusByPath((prev) => ({ ...prev, [normalizedWorktreePath]: null }));
-    } finally {
-      setWorktreeStatusLoadingByPath((prev) => ({ ...prev, [normalizedWorktreePath]: false }));
-    }
-  }
-
   const saveTaskInlineEdit = useCallback(async () => {
     const edit = taskInlineEdit;
-    const rootId = currentRootIdRef.current;
+    const rootId = edit?.targetRootId || currentRootIdRef.current;
     if (!edit || !rootId) return;
     setTaskInlineSaving(true);
     setTaskInlineUploadProgress(null);
@@ -2284,20 +941,33 @@ export function App({ onGoHome }: AppProps) {
           files: edit.attachments.map((attachment) => attachment.file),
           onProgress: setTaskInlineUploadProgress,
           signal: uploadAbort.signal,
+          nodeId: getNodeIdForRoot(rootId),
         });
         attachmentTokens = uploaded.map((file) => `[file: ${file.agent_path || file.path}]`).join("\n");
       }
       const payload = [edit.text.trim(), attachmentTokens].filter(Boolean).join("\n");
       const taskCanCreateWorktree = managedRootByIdRef.current[rootId]?.is_git_repo === true;
       const createWorktree = taskCanCreateWorktree && edit.createWorktree;
-      const detail = edit.taskId
-        ? (edit.canEditExecution
-          ? await patchTask(rootId, edit.taskId, {
-              ...(edit.canEditExecution ? {input:payload,agent:edit.agent,model:edit.model,
-                ...(edit.canToggleWorktree ? {create_worktree:createWorktree,worktree_branch_mode:edit.worktreeBranchMode,worktree_branch:edit.worktreeBranch}:{})}:{}),
-            })
-          : await updateTaskInput(rootId,edit.taskId,payload))
-        : await createTask(rootId, edit.templateId, payload, createWorktree, edit.worktreeBranchMode, edit.worktreeBranch, {agent:edit.agent,model:edit.model});
+      // 有 agent/模型/立即执行覆盖才带 stages（applyStageOverride 内部处理：
+      // agent/model/effort 只改第一个 agent 段、startImmediately 只改首段，
+      // 没覆盖时返回 undefined 让后端照模板走）。
+      const overrideStages = applyStageOverride(
+        taskTemplates.find((tpl) => tpl.id === edit.templateId) || null,
+        { agent: edit.agentOverride, model: edit.modelOverride, effort: edit.effortOverride, startImmediately: edit.startImmediately },
+      );
+      const detail = await createTask(
+        rootId,
+        edit.templateId,
+        payload,
+        createWorktree,
+        edit.worktreeBranchMode,
+        edit.worktreeBranch,
+        getNodeIdForRoot(rootId),
+        {
+          ...(edit.name?.trim() ? { name: edit.name.trim() } : {}),
+          ...(overrideStages ? { stages: overrideStages } : {}),
+        },
+      );
       applyTaskDetails(rootId, [detail]);
       if (detail.task.worktree_path) {
         void refreshTaskWorktree(rootId, detail.task.worktree_path);
@@ -2311,48 +981,9 @@ export function App({ onGoHome }: AppProps) {
       setTaskInlineUploadProgress(null);
       taskInlineUploadAbortRef.current = null;
     }
-  }, [applyTaskDetails, closeTaskEditDialog, taskInlineEdit, t]);
+  }, [applyTaskDetails, closeTaskEditDialog, taskInlineEdit, taskTemplates, t]);
 
-  const handleTaskInlineEditorKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (taskInlineCandidates.length === 0) {
-      return;
-    }
-    if (event.key === "ArrowDown") {
-      event.preventDefault();
-      setTaskInlineCandidateIndex((prev) => (prev + 1) % taskInlineCandidates.length);
-      return;
-    }
-    if (event.key === "ArrowUp") {
-      event.preventDefault();
-      setTaskInlineCandidateIndex((prev) => (prev - 1 + taskInlineCandidates.length) % taskInlineCandidates.length);
-      return;
-    }
-    if (event.key === "Tab") {
-      event.preventDefault();
-      applyTaskInlineCandidate(taskInlineCandidates[taskInlineCandidateIndex] || taskInlineCandidates[0]);
-      return;
-    }
-    if (event.key === "Escape") {
-      event.preventDefault();
-      event.stopPropagation();
-      setTaskInlineCandidates([]);
-      setTaskInlineCandidateIndex(0);
-    }
-  }, [applyTaskInlineCandidate, taskInlineCandidates, taskInlineCandidateIndex]);
 
-  const handleTaskInlineEditorEnter = useCallback((event: KeyboardEvent | null) => {
-    if (event?.shiftKey) {
-      return false;
-    }
-    if (taskInlineCandidates.length > 0) {
-      event?.preventDefault();
-      event?.stopPropagation();
-      applyTaskInlineCandidate(taskInlineCandidates[taskInlineCandidateIndex] || taskInlineCandidates[0]);
-      return true;
-    }
-    void saveTaskInlineEdit();
-    return true;
-  }, [applyTaskInlineCandidate, saveTaskInlineEdit, taskInlineCandidates, taskInlineCandidateIndex]);
 
   useEffect(() => {
     try {
@@ -2405,60 +1036,136 @@ export function App({ onGoHome }: AppProps) {
   }, [gitDiffSideBySide]);
 
   const [managedRootIds, setManagedRootIds] = useState<string[]>([]);
-  const managedRootByIdRef = useRef<Record<string, ManagedRootPayload>>({});
+  const getRootDisplayName = useCallback((rootId: string | null | undefined): string => {
+    const id = String(rootId || "").trim();
+    if (!id) return "";
+    const entry: any = managedRootByIdRef.current[id];
+    const dn = String(entry?.display_name || "").trim();
+    if (dn) return dn;
+    return String(entry?.id || id);
+  }, []);
+  const currentRootDisplayName = getRootDisplayName(currentRootId);
+
+  const getDisplayNodeColor = useCallback((rootId: string): string | null => {
+    const rid = String(rootId || "").trim();
+    if (!rid) return null;
+    const curNid = String(currentRootNodeIdRef.current || "").trim();
+    if (curNid) {
+      const scoped = scopeKey(curNid, rid);
+      const c = String((managedRootByKeyRef.current as any)[scoped]?._nodeColor || "").trim();
+      if (c) return c;
+    }
+    return String((managedRootByIdRef.current as any)[rid]?._nodeColor || "").trim() || null;
+  }, []);
+
+  // 新建任务面板上的「项目」下拉选项。只有工作台发起的面板会用到它（看板入口
+  // 项目已定），范围取跨项目会话那份清单，挂在 taskInlineEdit.targetRootId 上
+  // 是为了项目增删后重算一次，不额外订阅一份 state。
+  //
+  // 项目名各用各的节点色，和工作台项目行、DefaultListView 的项目徽章是同一套口径。
+  // 位置必须在 getDisplayNodeColor 之后 —— const 不提升，提前引用会吃到 TDZ。
+  const taskCreateProjectOptions = useMemo(() => {
+    const ids = Array.from(managedRootIdsRef.current);
+    if (ids.length === 0 && currentRootId) ids.push(currentRootId);
+    return ids
+      .filter((id) => String(id || "").trim())
+      .map((id) => ({
+        value: id,
+        label: getRootDisplayName(id) || id,
+        color: getDisplayNodeColor(id) || undefined,
+      }));
+  }, [currentRootId, getRootDisplayName, getDisplayNodeColor, taskInlineEdit?.targetRootId]);
+
+  // 复合键还原为裸 rootId（scoped 键为 n::r 或 r；rootId 自身不含 "::"）
+  const unscopedRootId = useCallback((scoped: string): string => {
+    const k = String(scoped || "");
+    const idx = k.lastIndexOf("::");
+    return idx >= 0 ? k.slice(idx + 2) : k;
+  }, []);
+
+  const selectRootNode = useCallback((rootId: string, nodeId?: string) => {
+    const rid = String(rootId || "").trim();
+    if (!rid) return;
+    const nid = String(nodeId || "").trim();
+    const prevNid = String(currentRootNodeIdRef.current || "").trim();
+    const isSameRootSwitch = rid === String(currentRootIdRef.current || "");
+    if (prevNid && nid && prevNid !== nid && isSameRootSwitch) {
+      // 同名项目跨节点切换：取消上一节点的防抖重拉与请求守卫，避免旧定时器覆盖新节点
+      if (sessionListReloadTimerRef.current) {
+        window.clearTimeout(sessionListReloadTimerRef.current);
+        sessionListReloadTimerRef.current = null;
+      }
+      sessionListAbortRef.current?.abort();
+      kanbanAbortRef.current?.abort();
+      // 递增序号使旧 in-flight 请求的 seq 校验直接失效
+      kanbanLoadSeqRef.current += 1;
+      sessionListLoadSeqRef.current += 1;
+    }
+    currentRootNodeIdRef.current = nid || null;
+    setCurrentRootNodeId(nid || null);
+    // 无条件更新模块级 root→node 映射，保证路由/作用域解析在任何时机都正确
+    setRootNodeId(rid, nid || undefined);
+    // active node 跟着选中的项目走：选中哪个项目，请求就该发到那台机器。
+    // 之前 active node 只由节点切换器改，于是「本机项目 + 上次点过 pc」的组合下，
+    // 所有不带 nodeId 的请求（模板、会话…）都发去了 pc，页面看着在本机、数据却是
+    // 另一台机器的。项目本身知道自己在哪个节点，选中它时把 active 一起切过去。
+    if (nid) {
+      const known = getNodeById(nid);
+      if (known && getActiveNodeId() !== nid) {
+        setActiveNodeId(nid);
+        window.dispatchEvent(new CustomEvent("mindfs:nodes-changed"));
+      }
+    }
+    if (prevNid && nid && prevNid !== nid) {
+      // 同名项目跨节点切换：清掉该 root 的会话选择状态，避免把另一节点的会话恢复到错误节点
+      const scopedRid = scopeKey(nid, rid);
+      selectedSessionByRootRef.current[scopedRid] = "";
+      boundSessionByRootRef.current[scopedRid] = "";
+      delete drawerSessionByRootRef.current[scopedRid];
+      setSelectedSession(null);
+      const prefix = scopeSessionKey(nid, rid, "");
+      for (const k of Object.keys(sessionCacheRef.current)) {
+        if (k.startsWith(prefix)) delete sessionCacheRef.current[k];
+      }
+      if (isSameRootSwitch) {
+        // 同名项目跨节点：清空 Kanban/文件/git 历史/会话视图残留，避免旧节点 incrementally merged 的 taskDetailsById/旧历史/旧会话串台
+        taskDetailsByIdRef.current = {};
+        setTaskDetailsById({});
+        setTaskFirstInputById({});
+        setTaskSessionKeysById({});
+        setTaskRelatedFilesById({});
+        setKanbanTasks([]);
+        setKanbanTaskCountItems([]);
+        setKanbanTasksLoading(true);
+        setSessions([]);
+        clearFileMemoryCacheForView();
+        clearGitHistoryCache(rid, prevNid);
+        setGitStatus(null);
+        setGitHistory(null);
+        setGitDiff(null);
+        setGitStatusLoading(true);
+        setGitHistoryLoading(true);
+      }
+    }
+    // 让按裸 rootId 的 payload 读取命中当前选中节点的数据
+    const entry = managedRootByKeyRef.current[rootNodeKey(nid, rid)];
+    if (entry && managedRootByIdRef.current[rid] !== entry) {
+      managedRootByIdRef.current = {
+        ...managedRootByIdRef.current,
+        [rid]: entry,
+      };
+      setRootNodeMap(managedRootByIdRef.current as Record<string, any>);
+    }
+  }, []);
+
   const [rootEntries, setRootEntries] = useState<FileEntry[]>([]);
-  const [creatingRootName, setCreatingRootName] = useState<string | null>(null);
-  const [creatingRootParentPath, setCreatingRootParentPath] = useState<string | null>(null);
-  const [creatingRootKind, setCreatingRootKind] = useState<"root" | "worktree">("root");
-  const [creatingRootBusy, setCreatingRootBusy] = useState(false);
-  const [worktreeBranches, setWorktreeBranches] = useState<GitBranchesPayload>({
-    branches: [],
-  });
-  const [worktreeBranchesLoading, setWorktreeBranchesLoading] = useState(false);
-  const [worktreeBranchError, setWorktreeBranchError] = useState("");
-  const [worktreeBranchMode, setWorktreeBranchMode] = useState<"new" | "existing">("new");
-  const [worktreeBranch, setWorktreeBranch] = useState("");
-  const [worktreeSwitchOpen, setWorktreeSwitchOpen] = useState(false);
-  const [worktreeSwitchItems, setWorktreeSwitchItems] = useState<GitWorktreeItem[]>([]);
-  const [worktreeSwitchLoading, setWorktreeSwitchLoading] = useState(false);
-  const [worktreeSwitchError, setWorktreeSwitchError] = useState("");
-  const [switchingWorktreePath, setSwitchingWorktreePath] = useState("");
-  const [projectAddMode, setProjectAddMode] = useState<ProjectAddMode | null>(
-    null,
-  );
-  const [localDirState, setLocalDirState] = useState<LocalDirBrowserState>({
-    path: "",
-    parent: "",
-    volumes: [],
-    items: [],
-    loading: false,
-    selectedPath: "",
-    adding: false,
-    error: "",
-  });
-  const [githubImportState, setGitHubImportState] = useState<GitHubImportState>({
-    url: "",
-    parentPath: "",
-    taskId: "",
-    status: "",
-    message: "",
-    running: false,
-    submitting: false,
-    done: false,
-    error: "",
-  });
-  const [relayStatus, setRelayStatus] = useState<RelayStatusPayload | null>(
-    null,
-  );
-  const [tokenStationInfo, setTokenStationInfo] =
-    useState<TokenStationInfo | null>(null);
-  const [tokenStationLoading, setTokenStationLoading] = useState(false);
-  const [tokenStationBusy, setTokenStationBusy] = useState(false);
-  const [tokenStationApplyBusy, setTokenStationApplyBusy] = useState(false);
-  const [tokenStationErrorOpen, setTokenStationErrorOpen] = useState(false);
+  // open_dir 回调需要根列表做根展开互斥，经 ref 引用避免依赖抖动
+  const rootEntriesRef = useRef<FileEntry[]>([]);
+  useEffect(() => {
+    rootEntriesRef.current = rootEntries;
+  }, [rootEntries]);
   const [agentConfigSwitchRequest, setAgentConfigSwitchRequest] =
     useState<AgentConfigSwitchRequest | null>(null);
-  const tokenStationRefreshRef = useRef<(() => void) | null>(null);
   const [bootstrapState, setBootstrapState] = useState<BootstrapState>(() =>
     bootstrapService.snapshot(),
   );
@@ -2487,6 +1194,7 @@ export function App({ onGoHome }: AppProps) {
     }
   }, [isMobile, onboardingOpen]);
   const [e2eeSecretInput, setE2eeSecretInput] = useState("");
+  useEffect(() => { syncNodesFromServer().catch(()=>{}); }, []);
   const [e2eePromptError, setE2eePromptError] = useState("");
   const [e2eePromptBusy, setE2eePromptBusy] = useState(false);
   const [editDraftRequest, setEditDraftRequest] = useState<{
@@ -2502,21 +1210,45 @@ export function App({ onGoHome }: AppProps) {
   const [selectedDirKey, setSelectedDirKey] = useState<string | null>(null);
   const [mainEntries, setMainEntries] = useState<FileEntry[]>([]);
   const [mainDirectoryError, setMainDirectoryError] = useState("");
-  const [gitStatus, setGitStatus] = useState<GitStatusPayload | null>(null);
-  const [gitStatusLoading, setGitStatusLoading] = useState(false);
-  const [gitHistory, setGitHistory] = useState<GitHistoryPayload | null>(null);
-  const [gitHistoryLoading, setGitHistoryLoading] = useState(false);
-  const [gitHistoryLoadingMore, setGitHistoryLoadingMore] = useState(false);
-  const [gitStatusByRoot, setGitStatusByRoot] = useState<Record<string, GitStatusPayload | null>>({});
-  const [gitStatusLoadingByRoot, setGitStatusLoadingByRoot] = useState<Record<string, boolean>>({});
-  const [gitHistoryByRoot, setGitHistoryByRoot] = useState<Record<string, GitHistoryPayload | null>>({});
-  const [gitHistoryLoadingByRoot, setGitHistoryLoadingByRoot] = useState<Record<string, boolean>>({});
-  const [gitStatusExpandedByRoot, setGitStatusExpandedByRoot] = useState<Record<string, boolean>>(() =>
-    loadBooleanRecord(GIT_STATUS_EXPANDED_STORAGE_KEY),
+  const mainEntriesRef = useRef<FileEntry[]>([]);
+  mainEntriesRef.current = mainEntries;
+  const mainDirectoryErrorRef = useRef("");
+  mainDirectoryErrorRef.current = mainDirectoryError;
+  const isGitRepo = useCallback(
+    (rootID: string) => managedRootByIdRef.current[rootID]?.is_git_repo === true,
+    [],
   );
-  const [gitHistoryExpandedByRoot, setGitHistoryExpandedByRoot] = useState<Record<string, Record<string, boolean>>>(() =>
-    loadStringBooleanRecord(GIT_HISTORY_EXPANDED_STORAGE_KEY),
-  );
+
+  const {
+    gitStatus,
+    setGitStatus,
+    gitStatusLoading,
+    setGitStatusLoading,
+    gitHistory,
+    setGitHistory,
+    gitHistoryLoading,
+    setGitHistoryLoading,
+    gitHistoryLoadingMore,
+    gitStatusByRoot,
+    setGitStatusByRoot,
+    gitStatusLoadingByRoot,
+    gitHistoryByRoot,
+    setGitHistoryByRoot,
+    gitHistoryLoadingByRoot,
+    gitStatusExpandedByRoot,
+    setGitStatusExpandedByRoot,
+    gitHistoryExpandedByRoot,
+    setGitHistoryExpandedByRoot,
+    refreshGitStatus,
+    refreshGitHistory,
+    loadMoreGitHistory,
+  } = useGitData({
+    currentRootId,
+    currentRootIdRef,
+    scopedRootKey,
+    getNodeIdForRoot,
+    isGitRepo,
+  });
   const [gitDiff, setGitDiff] = useState<GitDiffPayload | null>(null);
   const [relatedSelectedFileKey, setRelatedSelectedFileKey] = useState("");
   const [treeSortMode, setTreeSortMode] = useState<DirectorySortMode>(() => {
@@ -2549,12 +1281,12 @@ export function App({ onGoHome }: AppProps) {
       return {};
     }
   });
-  const [mainContentViewByRoot, setMainContentViewByRoot] = useState<Record<string, MainContentViewMode>>(
-    () => loadMainContentViewByRoot(),
+  const [mainView, setMainView] = useState<MainViewMode>(
+    () => loadLegacyMainView() || loadMainView(),
   );
-  const [defaultMainContentView, setDefaultMainContentView] = useState<MainContentViewMode>(
-    () => loadDefaultMainContentView(),
-  );
+  const mainViewRef = useRef<MainViewMode>(mainView);
+  // 从 chat 返回时回到上一个非 chat 模式（瞬态，不落盘）
+  const lastNonChatViewRef = useRef<MainViewMode>("board");
   const [status, setStatus] = useState<WSStatus>("disconnected");
   const [file, setFile] = useState<FilePayload | null>(null);
   const currentFileEditing = useSyncExternalStore(fileEditStore.subscribe, () => !!file?.root && fileEditStore.has(file.root, file.path));
@@ -2575,73 +1307,37 @@ export function App({ onGoHome }: AppProps) {
   const pluginQueryRef = useRef<Record<string, string>>(
     readURLState().pluginQuery,
   );
-  const [showHiddenFiles, setShowHiddenFiles] = useState(false);
+  const showHiddenFiles = true;
   const [projectTreeTabRequest, setProjectTreeTabRequest] = useState<{
     tab: ProjectTreeTab;
     nonce: number;
   } | null>(null);
   const [projectTreeTab, setProjectTreeTab] = useState<ProjectTreeTab>("files");
-  const [worktreeItemsByRoot, setWorktreeItemsByRoot] = useState<Record<string, GitWorktreeItem[]>>({});
-  const [worktreeLoadingByRoot, setWorktreeLoadingByRoot] = useState<Record<string, boolean>>({});
-  const [worktreeErrorByRoot, setWorktreeErrorByRoot] = useState<Record<string, string>>({});
-  const [expandedWorktreeByRoot, setExpandedWorktreeByRoot] = useState<Record<string, string>>({});
-  const [worktreeStatusByPath, setWorktreeStatusByPath] = useState<Record<string, GitStatusPayload | null>>({});
-  const [worktreeStatusLoadingByPath, setWorktreeStatusLoadingByPath] = useState<Record<string, boolean>>({});
+  const {
+    worktreeItemsByRoot,
+    worktreeLoadingByRoot,
+    worktreeErrorByRoot,
+    expandedWorktreeByRoot,
+    worktreeStatusByPath,
+    worktreeStatusLoadingByPath,
+    loadProjectTreeWorktrees,
+    loadProjectTreeWorktreeStatus,
+    toggleProjectTreeWorktree,
+    expandProjectTreeWorktree,
+    refreshProjectTreeWorktrees,
+    refreshTaskWorktree,
+  } = useProjectTreeWorktrees({
+    currentRootId,
+    currentRootIdRef,
+    projectTreeTab,
+    scopedRootKey,
+    getNodeIdForRoot,
+    knownTaskWorktreePathsRef,
+  });
   const [updateState, setUpdateState] = useState<UpdateState>(() =>
     normalizeUpdateState(null),
   );
   const [updateSubmitting, setUpdateSubmitting] = useState(false);
-
-  const ensureCompletionAudioContext = useCallback((): AudioContext | null => {
-    if (typeof window === "undefined") {
-      return null;
-    }
-    const AudioContextCtor =
-      window.AudioContext ||
-      (
-        window as typeof window & {
-          webkitAudioContext?: typeof AudioContext;
-        }
-      ).webkitAudioContext;
-    if (!AudioContextCtor) {
-      return null;
-    }
-    if (!completionAudioContextRef.current) {
-      completionAudioContextRef.current = new AudioContextCtor();
-    }
-    return completionAudioContextRef.current;
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    const unlockAudio = () => {
-      const audioContext = ensureCompletionAudioContext();
-      if (!audioContext) {
-        return;
-      }
-      if (audioContext.state === "running") {
-        completionAudioUnlockedRef.current = true;
-        return;
-      }
-      void audioContext
-        .resume()
-        .then(() => {
-          completionAudioUnlockedRef.current = audioContext.state === "running";
-        })
-        .catch(() => {});
-    };
-    const options: AddEventListenerOptions = { passive: true };
-    window.addEventListener("pointerdown", unlockAudio, options);
-    window.addEventListener("keydown", unlockAudio, options);
-    window.addEventListener("touchstart", unlockAudio, options);
-    return () => {
-      window.removeEventListener("pointerdown", unlockAudio);
-      window.removeEventListener("keydown", unlockAudio);
-      window.removeEventListener("touchstart", unlockAudio);
-    };
-  }, [ensureCompletionAudioContext]);
 
   const handleStartUpdate = useCallback(async () => {
     const next = normalizeUpdateState(updateState);
@@ -2657,11 +1353,11 @@ export function App({ onGoHome }: AppProps) {
       const target = next.latest_version
         ? `v${next.latest_version}`
         : "the latest version";
-      if (
-        !window.confirm(
-          `Install ${target} now? MindFS will restart after the update finishes.`,
-        )
-      ) {
+      const confirmed = await confirmDialog({
+        message: t("update.confirmInstall", { target }),
+        confirmLabel: t("update.install"),
+      });
+      if (!confirmed) {
         return;
       }
     }
@@ -2685,45 +1381,18 @@ export function App({ onGoHome }: AppProps) {
     }
   }, [updateState]);
 
-  const playCompletionSound = useCallback(() => {
-    const audioContext = ensureCompletionAudioContext();
-    if (!audioContext) {
-      return;
-    }
-    try {
-      if (audioContext.state !== "running") {
-        return;
-      }
-      completionAudioUnlockedRef.current = true;
-      const now = audioContext.currentTime;
-      const oscillator = audioContext.createOscillator();
-      const gainNode = audioContext.createGain();
-      oscillator.type = "sine";
-      oscillator.frequency.setValueAtTime(880, now);
-      oscillator.frequency.exponentialRampToValueAtTime(1174, now + 0.09);
-      gainNode.gain.setValueAtTime(0.0001, now);
-      gainNode.gain.exponentialRampToValueAtTime(0.24, now + 0.012);
-      gainNode.gain.exponentialRampToValueAtTime(0.0001, now + 0.2);
-      oscillator.connect(gainNode);
-      gainNode.connect(audioContext.destination);
-      oscillator.start(now);
-      oscillator.stop(now + 0.2);
-    } catch (error) {
-      if (completionAudioUnlockedRef.current) {
-        console.error("Failed to play completion sound:", error);
-      }
-    }
-  }, [ensureCompletionAudioContext]);
-
   useEffect(() => {
     currentRootIdRef.current = currentRootId;
   }, [currentRootId]);
+  useEffect(() => {
+    currentRootNodeIdRef.current = currentRootNodeId;
+  }, [currentRootNodeId]);
   useEffect(() => {
     let cancelled = false;
     if (!e2eeState.configured || (e2eeState.required && !e2eeState.unlocked)) {
       return;
     }
-    fetchAgents(true)
+    fetchAgents(true, getNodeIdForRoot(currentRootId || "") as any)
       .then((items) => {
         if (cancelled) return;
         setAvailableAgents(items);
@@ -2732,37 +1401,16 @@ export function App({ onGoHome }: AppProps) {
     return () => {
       cancelled = true;
     };
-  }, [agentsVersion, e2eeState.configured, e2eeState.required, e2eeState.unlocked]);
-  useEffect(() => {
-    if (!importMenuOpen) return;
-    const handlePointerDown = (event: MouseEvent) => {
-      if (!importMenuRef.current?.contains(event.target as Node)) {
-        setImportMenuOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handlePointerDown);
-    return () => document.removeEventListener("mousedown", handlePointerDown);
-  }, [importMenuOpen]);
-  useEffect(() => {
-    if (!projectAddMode) {
-      return;
-    }
-    const handlePointerDown = (event: MouseEvent) => {
-      if (!projectAddPopoverRef.current?.contains(event.target as Node)) {
-        setProjectAddMode(null);
-      }
-    };
-    document.addEventListener("mousedown", handlePointerDown);
-    return () => document.removeEventListener("mousedown", handlePointerDown);
-  }, [projectAddMode]);
+  }, [agentsVersion, currentRootId, e2eeState.configured, e2eeState.required, e2eeState.unlocked]);
   useEffect(() => {
     if (typeof window === "undefined") {
       return;
     }
     if (currentRootId) {
-      window.localStorage.setItem(LAST_ROOT_STORAGE_KEY, currentRootId);
+      window.localStorage.setItem(accountScopedKey(LAST_ROOT_STORAGE_KEY), currentRootId);
+      window.localStorage.setItem(accountScopedKey(LAST_ROOT_NODE_STORAGE_KEY), currentRootNodeId || "");
     }
-  }, [currentRootId]);
+  }, [currentRootId, currentRootNodeId]);
   useEffect(() => {
     expandedRef.current = expanded;
   }, [expanded]);
@@ -2805,41 +1453,14 @@ export function App({ onGoHome }: AppProps) {
     sessionsRef.current = sessions;
   }, [sessions]);
   useEffect(() => {
+    multiProjectSessionGroupsRef.current = multiProjectSessionGroups;
+  }, [multiProjectSessionGroups]);
+  useEffect(() => {
     multiProjectPendingRef.current = multiProjectPendingByKey;
   }, [multiProjectPendingByKey]);
   useEffect(() => {
-    window.localStorage.setItem(
-      MULTI_PROJECT_SESSION_STORAGE_KEY,
-      multiProjectSessionsEnabled ? "1" : "0",
-    );
-  }, [multiProjectSessionsEnabled]);
-  useEffect(() => {
-    sessionListModeRef.current = sessionListMode;
-    if (sessionListMode !== "local") {
-      setSessionSearchOpen(false);
-      setSessionSearchResultsMode(false);
-      setSessionSearchQuery("");
-      setSessionSearchAppliedQuery("");
-      setSessionSearchResults([]);
-      setSessionSearchLoading(false);
-    }
-  }, [sessionListMode]);
-  useEffect(() => {
-    setSessionSearchQuery("");
-    setSessionSearchResultsMode(false);
-    setSessionSearchAppliedQuery("");
-    setSessionSearchResults([]);
-    setSessionSearchLoading(false);
-  }, [currentRootId]);
-  useEffect(() => {
     setPendingPlanMode(false);
   }, [currentRootId]);
-  useEffect(() => {
-    externalSessionsRef.current = externalSessions;
-  }, [externalSessions]);
-  useEffect(() => {
-    externalImportAgentRef.current = externalImportAgent;
-  }, [externalImportAgent]);
   useEffect(() => {
     currentSessionRef.current = currentSession;
   }, [currentSession]);
@@ -2856,18 +1477,6 @@ export function App({ onGoHome }: AppProps) {
     if (typeof window === "undefined") {
       return;
     }
-    window.localStorage.setItem(GIT_STATUS_EXPANDED_STORAGE_KEY, JSON.stringify(gitStatusExpandedByRoot));
-  }, [gitStatusExpandedByRoot]);
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    window.localStorage.setItem(GIT_HISTORY_EXPANDED_STORAGE_KEY, JSON.stringify(gitHistoryExpandedByRoot));
-  }, [gitHistoryExpandedByRoot]);
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
     window.localStorage.setItem(
       DIRECTORY_SORT_OVERRIDES_STORAGE_KEY,
       JSON.stringify(directorySortOverrides),
@@ -2877,32 +1486,20 @@ export function App({ onGoHome }: AppProps) {
     if (typeof window === "undefined") {
       return;
     }
-    window.localStorage.setItem(
-      MAIN_CONTENT_VIEW_STORAGE_KEY,
-      JSON.stringify(mainContentViewByRoot),
-    );
-  }, [mainContentViewByRoot]);
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    window.localStorage.setItem(
-      DEFAULT_MAIN_CONTENT_VIEW_STORAGE_KEY,
-      defaultMainContentView,
-    );
-  }, [defaultMainContentView]);
+    window.localStorage.setItem(MAIN_VIEW_STORAGE_KEY, mainView);
+  }, [mainView]);
   useEffect(() => {
     const rootID = currentRootId;
     if (!rootID) return;
-    setActiveBoundSessionKey(boundSessionByRootRef.current[rootID] || null);
-    setCurrentSession(drawerSessionByRootRef.current[rootID] || null);
-    setIsDrawerOpen(!!drawerOpenByRootRef.current[rootID]);
+    setActiveBoundSessionKey(boundSessionByRootRef.current[scopedRootKey(rootID)] || null);
+    setCurrentSession(drawerSessionByRootRef.current[scopedRootKey(rootID)] || null);
+    setIsDrawerOpen(!!drawerOpenByRootRef.current[scopedRootKey(rootID)]);
   }, [currentRootId]);
 
   const setBoundSessionForRoot = useCallback(
     (rootID: string | null | undefined, key: string | null) => {
       if (!rootID) return;
-      boundSessionByRootRef.current[rootID] = key;
+      boundSessionByRootRef.current[scopedRootKey(rootID)] = key;
       if (currentRootIdRef.current === rootID) {
         setActiveBoundSessionKey(key);
       }
@@ -2914,7 +1511,7 @@ export function App({ onGoHome }: AppProps) {
     (rootID: string | null | undefined, session: Session | SessionItem | null) => {
       if (!rootID) return;
       const next = toSessionItem(rootID, session);
-      drawerSessionByRootRef.current[rootID] = next;
+      drawerSessionByRootRef.current[scopedRootKey(rootID)] = next;
       if (currentRootIdRef.current === rootID) {
         setCurrentSession(next);
       }
@@ -2925,7 +1522,7 @@ export function App({ onGoHome }: AppProps) {
   const setDrawerOpenForRoot = useCallback(
     (rootID: string | null | undefined, open: boolean) => {
       if (!rootID) return;
-      drawerOpenByRootRef.current[rootID] = open;
+      drawerOpenByRootRef.current[scopedRootKey(rootID)] = open;
       if (currentRootIdRef.current === rootID) {
         setIsDrawerOpen(open);
       }
@@ -2933,15 +1530,34 @@ export function App({ onGoHome }: AppProps) {
     [],
   );
 
-  const setMainViewPreferenceForRoot = useCallback(
-    (
-      rootID: string | null | undefined,
-      preference: "session" | "file" | "directory" | "git-diff",
-    ) => {
-      if (!rootID) return;
-      mainViewPreferenceByRootRef.current[rootID] = preference;
+  const resetSessionLockForRoot = useCallback(
+    (rootID: string | null | undefined) => {
+      const root = String(rootID || "").trim();
+      if (!root) return;
+      setBoundSessionForRoot(root, null);
+      setDrawerSessionForRoot(root, null);
+      selectedSessionByRootRef.current[scopedRootKey(root)] = null;
+      setDrawerOpenForRoot(root, false);
+      if (currentRootIdRef.current === root) {
+        selectedSessionRef.current = null;
+        setSelectedSession(null);
+        setSelectedSessionLoading(false);
+        interactionModeRef.current = "main";
+        setInteractionMode("main");
+      }
     },
-    [],
+    [setBoundSessionForRoot, setDrawerOpenForRoot, setDrawerSessionForRoot],
+  );
+
+  const resetLocksForRootTransition = useCallback(
+    (targetRoot: string | null | undefined) => {
+      const sourceRoot = currentRootIdRef.current;
+      if (shouldResetSessionLockForRootChange(sourceRoot, targetRoot)) {
+        resetSessionLockForRoot(sourceRoot);
+        resetSessionLockForRoot(targetRoot);
+      }
+    },
+    [resetSessionLockForRoot],
   );
 
   const getDirectorySortKey = useCallback(
@@ -2962,35 +1578,71 @@ export function App({ onGoHome }: AppProps) {
   const currentDirectorySortOverride = currentDirectorySortKey
     ? directorySortOverrides[currentDirectorySortKey]
     : undefined;
+  // 主区内容派生：workspace/board 走看板容器，files 走文件列表；chat 由会话视图占据主区。
   const currentMainContentView: MainContentViewMode =
     currentRootId && onboardingMainContentViewRoot === currentRootId
       ? "task-kanban"
-      : (currentRootId && mainContentViewByRoot[currentRootId]) ||
-        defaultMainContentView;
-  const setMainContentViewForRoot = useCallback(
-    (rootID: string, mode: MainContentViewMode) => {
-      if (!rootID) return;
-      setMainContentViewByRoot((prev) => {
-        if (prev[rootID] === mode) return prev;
-        return { ...prev, [rootID]: mode };
-      });
-    },
-    [],
-  );
-  const handleMainContentViewChange = useCallback((mode: MainContentViewMode) => {
-    const rootID = currentRootIdRef.current;
-    if (!rootID) return;
-    setOnboardingMainContentViewRoot(null);
-    setMainContentViewForRoot(rootID, mode);
-    setDefaultMainContentView(mode);
-  }, [setMainContentViewForRoot]);
+      : mainView === "files"
+        ? "file-browser"
+        : "task-kanban";
+  // 跨项目工作台是「模式」，不再是「没有打开项目」的副产物（后者会被自动选根冲掉）。
+  const workspaceOpen = mainView === "workspace";
+  // task.updated 的处理器要按这个放行跨项目推送（板态只收当前项目），
+  // 而它是被 useRealtimeEvents 消费的——只能走 ref，不能直接传值。
+  const workspaceOpenRef = useRef(workspaceOpen);
+  workspaceOpenRef.current = workspaceOpen;
+  // 会话面板只在对话态显示。判据是 mainView 而不是 selectedSession——
+  // 否则看板/文件/工作台态下，仍被选中的会话会盖住主区（切面板不解除选中）。
+  const showSessionPane = mainView === "chat" && !!selectedSession;
+  const switchMainView = useCallback((mode: MainViewMode) => {
+    if (mode !== "chat") {
+      lastNonChatViewRef.current = mode;
+    }
+    mainViewRef.current = mode;
+    setMainView(mode);
+  }, []);
+
+  /* 覆盖层接进返回栈：按返回/侧滑时先关最上面那一层，而不是退视图或退出应用。
+     四个接线点摆在一起是因为它们互为兄弟（都是「盖在主区之上」的东西），
+     放在一起才看得出「返回」的优先级：弹窗 > 面板 > 悬浮框 > 退视图。
+     关闭动作都复用各层既有的关闭路径，所以 PanelShell 的「放弃改动？」确认照旧生效。 */
+  useBackLayer(scheduledAgentDialogOpen, () => setScheduledAgentDialogOpen(false));
+  useBackLayer(taskTemplateDialogOpen, () => setTaskTemplateDialogOpen(false));
+  useBackLayer(!!taskInlineEdit, () => {
+    // 保存中不给关：和面板上那个 × 按钮同一条规则。
+    if (!taskInlineSaving) closeTaskEditDialog();
+  });
+  useBackLayer(isDrawerOpen && mainView === "files", () => {
+    interactionModeRef.current = "main";
+    setInteractionMode("main");
+    setDrawerOpenForRoot(currentRootIdRef.current, false);
+  });
+
   const currentDirectorySortMode = currentDirectorySortOverride || treeSortMode;
 
   const replaceURLState = useCallback((next: URLState) => {
-    const search = buildURLSearch(next);
+    // 主面板模式默认取当前状态：调用点一律紧跟在 switchMainView 之后（或本就不切面板），
+    // 因此这里补默认值即可让 URL 与按钮高亮保持同源，无需逐个调用点传参。
+    const merged: URLState = { view: mainViewRef.current, ...next };
+    // 多节点同名项目：URL 始终携带当前选中节点，防止刷新/回退还原到错误节点
+    if (
+      merged.root &&
+      merged.root === currentRootIdRef.current &&
+      currentRootNodeIdRef.current &&
+      !merged.node
+    ) {
+      merged.node = currentRootNodeIdRef.current;
+    }
+    const search = buildURLSearch(merged);
     const target = `${window.location.pathname}${search}`;
     window.history.replaceState(null, "", target);
   }, []);
+
+  /* Android 硬件返回键。刻意不接回调：installBackNavigation 内部一律走
+     history.back()，让返回键汇进 popstate 那条路，和浏览器后退 / iOS 侧滑
+     保持同一套语义。以前这里是独立的一套「关层 / 退视图」逻辑，两套各走一遍，
+     一次返回要按两下才对。 */
+  useEffect(() => installBackNavigation(), []);
 
   const handleOnboardingStepChange = useCallback((stepId: string) => {
     const showingSidebar = stepId === "sidebar-menu" || stepId === "project-tabs";
@@ -3017,92 +1669,29 @@ export function App({ onGoHome }: AppProps) {
     setIsRightOpen(showingSessions);
   }, [currentRootId, isMobile, replaceURLState]);
 
-  const redirectToRelayLogin = useCallback(() => {
-    const next = encodeURIComponent(
-      `${window.location.pathname}${window.location.search}`,
-    );
-    window.location.replace(`/login?next=${next}`);
-  }, []);
-
-  const redirectToRelayNodes = useCallback(() => {
-    window.location.replace("/nodes");
-  }, []);
-
-  const handleRelayWebSocketClosed = useCallback(async () => {
-    if (!isRelayNodePage() || relayWSAuthCheckRef.current) {
-      return;
-    }
-    relayWSAuthCheckRef.current = true;
-    try {
-      const response = await fetch("/api/auth/me", { cache: "no-cache" });
-      if (!response.ok) {
-        redirectToRelayLogin();
-        return;
-      }
-      const nodeID = relayNodeIdFromPathname(window.location.pathname);
-      if (!nodeID) {
-        return;
-      }
-      const nodeResponse = await fetch(`/n/${encodeURIComponent(nodeID)}/`, {
-        cache: "no-cache",
-        headers: {
-          Accept: "application/json",
-        },
-      });
-      if (
-        nodeResponse.status === 403 ||
-        nodeResponse.status === 404 ||
-        nodeResponse.status === 502 ||
-        nodeResponse.status === 503
-      ) {
-        redirectToRelayNodes();
-      }
-    } catch {
-      // Network failures and connector outages also close the socket. Keep the
-      // normal reconnect path unless the auth probe can prove the session died.
-    } finally {
-      relayWSAuthCheckRef.current = false;
-    }
-  }, [redirectToRelayLogin, redirectToRelayNodes]);
-
-  const handleRelayNavigationFailure = useCallback(
-    async (status: number, errorCode?: string | null) => {
-      if (!isRelayPWAContext()) {
-        return false;
-      }
-      const code = String(errorCode || "").trim();
-      if (status === 401 || code === "unauthorized") {
-        try {
-          const response = await fetch("/api/auth/me");
-          if (response.ok) {
-            return false;
-          }
-        } catch {}
-        redirectToRelayLogin();
-        return true;
-      }
-      if (await shouldRedirectToRelayNodes(status, code, async () => {
-        const nodeID = relayNodeIdFromPathname(window.location.pathname);
-        if (!nodeID) return 200;
-        const response = await fetch(`/n/${encodeURIComponent(nodeID)}/`, {
-          cache: "no-cache",
-          headers: { Accept: "application/json" },
-        });
-        return response.status;
-      })) {
-        redirectToRelayNodes();
-        return true;
-      }
-      return false;
-    },
-    [redirectToRelayLogin, redirectToRelayNodes],
-  );
-
   const rootSessionKey = useCallback(
-    (rootId: string, sessionKey: string) => `${rootId}::${sessionKey}`,
-    [],
+    (rootId: string, sessionKey: string) =>
+      scopeSessionKey(getNodeIdForRoot(rootId) ?? "", rootId, sessionKey),
+    [getNodeIdForRoot],
   );
   const bumpCacheVersion = useCallback(() => setCacheVersion((v) => v + 1), []);
+  // 流式高频 bump 合并：30ms 窗口内多次 bump 只触发一次 setState（渲染 1 次而非 N 次）。
+  const bumpCacheVersionDebouncedRef = useRef<number | null>(null);
+  const bumpCacheVersionDebounced = useCallback(() => {
+    if (bumpCacheVersionDebouncedRef.current !== null) return;
+    bumpCacheVersionDebouncedRef.current = window.setTimeout(() => {
+      bumpCacheVersionDebouncedRef.current = null;
+      bumpCacheVersion();
+    }, 30);
+  }, [bumpCacheVersion]);
+  useEffect(
+    () => () => {
+      if (bumpCacheVersionDebouncedRef.current !== null) {
+        window.clearTimeout(bumpCacheVersionDebouncedRef.current);
+      }
+    },
+    [],
+  );
   const clearRootScopedClientState = useCallback((rootID: string, options?: { removeLastRoot?: boolean }) => {
     const root = String(rootID || "").trim();
     if (!root) {
@@ -3124,17 +1713,16 @@ export function App({ onGoHome }: AppProps) {
 
     clearGitHistoryCache(root);
     clearFileCacheForRoot(root);
-    void clearCachedSessionsForRoot(root);
+    void clearCachedSessionsForRoot(root, getNodeIdForRoot(root));
 
-    delete boundSessionByRootRef.current[root];
-    delete suppressedAutoBindSessionByRootRef.current[root];
-    delete drawerSessionByRootRef.current[root];
-    delete selectedSessionByRootRef.current[root];
-    delete mainViewPreferenceByRootRef.current[root];
-    delete drawerOpenByRootRef.current[root];
-    delete pluginsLoadedByRootRef.current[root];
-    delete pluginsLoadingByRootRef.current[root];
-    delete pluginsTrustPendingByRootRef.current[root];
+    delete boundSessionByRootRef.current[scopedRootKey(root)];
+    delete suppressedAutoBindSessionByRootRef.current[scopedRootKey(root)];
+    delete drawerSessionByRootRef.current[scopedRootKey(root)];
+    delete selectedSessionByRootRef.current[scopedRootKey(root)];
+    delete drawerOpenByRootRef.current[scopedRootKey(root)];
+    delete pluginsLoadedByRootRef.current[scopedRootKey(root)];
+    delete pluginsLoadingByRootRef.current[scopedRootKey(root)];
+    delete pluginsTrustPendingByRootRef.current[scopedRootKey(root)];
 
     deleteSessionRecordKeys(sessionCacheRef.current);
     deleteSessionRecordKeys(loadedSessionRef.current);
@@ -3162,21 +1750,17 @@ export function App({ onGoHome }: AppProps) {
     );
 
     setGitStatusExpandedByRoot((prev) => {
-      if (!(root in prev)) return prev;
+      const scoped = scopedRootKey(root);
+      if (!(scoped in prev)) return prev;
       const next = { ...prev };
-      delete next[root];
+      delete next[scoped];
       return next;
     });
     setGitHistoryExpandedByRoot((prev) => {
-      if (!(root in prev)) return prev;
+      const scoped = scopedRootKey(root);
+      if (!(scoped in prev)) return prev;
       const next = { ...prev };
-      delete next[root];
-      return next;
-    });
-    setMainContentViewByRoot((prev) => {
-      if (!(root in prev)) return prev;
-      const next = { ...prev };
-      delete next[root];
+      delete next[scoped];
       return next;
     });
     setDirectorySortOverrides((prev) => {
@@ -3226,9 +1810,10 @@ export function App({ onGoHome }: AppProps) {
     if (
       options?.removeLastRoot === true &&
       typeof window !== "undefined" &&
-      window.localStorage.getItem(LAST_ROOT_STORAGE_KEY) === root
+      window.localStorage.getItem(accountScopedKey(LAST_ROOT_STORAGE_KEY)) === root
     ) {
-      window.localStorage.removeItem(LAST_ROOT_STORAGE_KEY);
+      window.localStorage.removeItem(accountScopedKey(LAST_ROOT_STORAGE_KEY));
+      window.localStorage.removeItem(accountScopedKey(LAST_ROOT_NODE_STORAGE_KEY));
     }
 
     bumpCacheVersion();
@@ -3295,14 +1880,14 @@ export function App({ onGoHome }: AppProps) {
         boundSessionByRootRef.current,
       )) {
         if (key === sessionKey) {
-          return rootID;
+          return unscopedRootId(rootID);
         }
       }
       for (const [rootID, session] of Object.entries(
         drawerSessionByRootRef.current,
       )) {
         if (session?.key === sessionKey) {
-          return rootID;
+          return unscopedRootId(rootID);
         }
       }
       const suffix = `::${sessionKey}`;
@@ -3310,7 +1895,7 @@ export function App({ onGoHome }: AppProps) {
         key.endsWith(suffix),
       );
       if (!matched) return null;
-      return matched.slice(0, matched.length - suffix.length);
+      return unscopedRootId(matched.slice(0, matched.length - suffix.length));
     },
     [rootSessionKey],
   );
@@ -3324,7 +1909,7 @@ export function App({ onGoHome }: AppProps) {
       if (!key) return null;
       const ck = rootSessionKey(rootId, key);
       const cached = sessionCacheRef.current[ck];
-      const drawerSession = drawerSessionByRootRef.current[rootId];
+      const drawerSession = drawerSessionByRootRef.current[scopedRootKey(rootId)];
       const fallbackExchanges = Array.isArray((session as any).exchanges)
         ? ((session as any).exchanges as Exchange[])
         : [];
@@ -3381,7 +1966,7 @@ export function App({ onGoHome }: AppProps) {
       if (pendingBySessionRef.current[cacheKey]) {
         return true;
       }
-      const drawer = drawerSessionByRootRef.current[resolvedRoot] as
+      const drawer = drawerSessionByRootRef.current[scopedRootKey(resolvedRoot)] as
         | ({ pending?: boolean; key?: string; session_key?: string } & Record<string, unknown>)
         | null
         | undefined;
@@ -3459,7 +2044,7 @@ export function App({ onGoHome }: AppProps) {
           pending: false,
         } as SessionItem);
       });
-      const drawer = drawerSessionByRootRef.current[resolvedRoot];
+      const drawer = drawerSessionByRootRef.current[scopedRootKey(resolvedRoot)];
       if (drawer && (drawer.key || (drawer as any).session_key) === resolvedKey) {
         setDrawerSessionForRoot(resolvedRoot, clearPendingAck({
           ...(drawer as any),
@@ -3522,6 +2107,9 @@ export function App({ onGoHome }: AppProps) {
     [rootSessionKey],
   );
 
+  // 方案 C 重锚定序号：每次 restoreActiveSession 换窗时递增，viewer 按 _anchoredAt 一次性应用。
+  const anchorSeqRef = useRef(0);
+
   const restoreActiveSession = useCallback(
     async (
       rootID: string | null | undefined,
@@ -3538,69 +2126,156 @@ export function App({ onGoHome }: AppProps) {
         resolvedRoot,
         resolvedKey,
       );
-      const inflight = loadingSessionRef.current[cacheKey];
-      const request =
-        inflight ||
-        syncSession(resolvedRoot, resolvedKey).finally(() => {
-          delete loadingSessionRef.current[cacheKey];
-        });
-      if (!inflight) {
-        loadingSessionRef.current[cacheKey] = request;
+      const inflight = loadingSessionRef.current[cacheKey] as unknown as Promise<Session | null> | undefined;
+      if (inflight) {
+        const hit = await inflight;
+        return hit;
       }
-      const syncResult = await request;
-      let fullSession = syncResult?.session;
-      if (!fullSession) {
-        return null;
-      }
-      if (resumeCursor) {
-        const incomingExchanges = Array.isArray((fullSession as any).exchanges)
-          ? ((fullSession as any).exchanges as Exchange[])
-          : [];
-        const hasPendingTurn = incomingExchanges.some(
-          (exchange) => Number((exchange as any)?.seq || 0) === 0,
-        );
-        const localTransient = Array.isArray((cachedBeforeSync as any)?.exchanges)
-          ? (((cachedBeforeSync as any).exchanges as Exchange[]).filter(
-              (exchange) => Number((exchange as any)?.seq || 0) === 0,
-            ))
-          : [];
-        if (hasPendingTurn && localTransient.length > 0) {
-          fullSession = {
-            ...(fullSession as any),
-            exchanges: [
-              ...incomingExchanges.filter(
-                (exchange) => Number((exchange as any)?.seq || 0) > 0,
-              ),
-              ...localTransient,
-            ],
-          } as Session;
-        } else {
-          sessionService.clearEventCursor(resolvedRoot, resolvedKey);
+      const promise = (async (): Promise<Session | null> => {
+        // 方案 B 首屏按需：先尝试窗口化拉取最新 50 条，失败回退全量 syncSession
+        try {
+          setWindowedView(resolvedKey, true);
+          const win = await getSessionWindow(resolvedRoot, resolvedKey, {
+            latest: SESSION_WINDOW_SIZE,
+            nodeId: getNodeIdForRoot(resolvedRoot),
+          });
+          if (win && (win as any).session) {
+            let sess: any = (win as any).session;
+            sess = { ...sess, key: resolvedKey, session_key: resolvedKey };
+            // 复用原 resumeCursor 的 pending 转瞬态合并逻辑
+            if (resumeCursor) {
+              const incomingExchanges = Array.isArray(sess.exchanges)
+                ? (sess.exchanges as Exchange[])
+                : [];
+              const hasPendingTurn = incomingExchanges.some(
+                (exchange) => Number((exchange as any)?.seq || 0) === 0,
+              );
+              const localTransient = Array.isArray((cachedBeforeSync as any)?.exchanges)
+                ? (((cachedBeforeSync as any).exchanges as Exchange[]).filter(
+                    (exchange) => Number((exchange as any)?.seq || 0) === 0,
+                  ))
+                : [];
+              if (hasPendingTurn && localTransient.length > 0) {
+                sess = {
+                  ...sess,
+                  exchanges: [
+                    ...incomingExchanges.filter(
+                      (exchange) => Number((exchange as any)?.seq || 0) > 0,
+                    ),
+                    ...localTransient,
+                  ],
+                };
+              } else {
+                sessionService.clearEventCursor(resolvedRoot, resolvedKey);
+              }
+            }
+            const serverPending =
+              typeof sess?.pending === "boolean" ? !!sess.pending : undefined;
+            if (serverPending === false) {
+              clearLocalPendingForSession(resolvedRoot, resolvedKey);
+            }
+            const pending =
+              serverPending === false
+                ? false
+                : resolvePendingForSession(resolvedRoot, resolvedKey, !!serverPending);
+            const anchorAt = ++anchorSeqRef.current;
+            const toCache = {
+              ...sess,
+              key: resolvedKey,
+              pending,
+              _windowMeta: win.meta,
+              _anchoredAt: anchorAt,
+            } as Session;
+            sessionCacheRef.current[cacheKey] = toCache;
+            bumpCacheVersion();
+            await sessionService.markSessionReady(resolvedRoot, resolvedKey);
+            return toCache;
+          }
+          // 窗口未命中则清标记，走全量回退
+          clearWindowedView(resolvedKey);
+        } catch {
+          clearWindowedView(resolvedKey);
         }
+        // 回退：全量 syncSession（保持原有 pending/转瞬态逻辑）
+        const syncResult = await syncSession(resolvedRoot, resolvedKey, {
+          nodeId: getNodeIdForRoot(resolvedRoot),
+        });
+        let fullSession = syncResult?.session as any;
+        if (!fullSession) {
+          return null;
+        }
+        if (resumeCursor) {
+          const incomingExchanges = Array.isArray((fullSession as any).exchanges)
+            ? ((fullSession as any).exchanges as Exchange[])
+            : [];
+          const hasPendingTurn = incomingExchanges.some(
+            (exchange) => Number((exchange as any)?.seq || 0) === 0,
+          );
+          const localTransient = Array.isArray((cachedBeforeSync as any)?.exchanges)
+            ? (((cachedBeforeSync as any).exchanges as Exchange[]).filter(
+                (exchange) => Number((exchange as any)?.seq || 0) === 0,
+              ))
+            : [];
+          if (hasPendingTurn && localTransient.length > 0) {
+            fullSession = {
+              ...(fullSession as any),
+              exchanges: [
+                ...incomingExchanges.filter(
+                  (exchange) => Number((exchange as any)?.seq || 0) > 0,
+                ),
+                ...localTransient,
+              ],
+            } as Session;
+          } else {
+            sessionService.clearEventCursor(resolvedRoot, resolvedKey);
+          }
+        }
+        const serverPending =
+          typeof (fullSession as any)?.pending === "boolean"
+            ? !!(fullSession as any).pending
+            : undefined;
+        if (serverPending === false) {
+          clearLocalPendingForSession(resolvedRoot, resolvedKey);
+        }
+        const pending =
+          serverPending === false
+            ? false
+            : resolvePendingForSession(resolvedRoot, resolvedKey, !!serverPending);
+        const anchorAt = ++anchorSeqRef.current;
+        const anchoredExs = Array.isArray((fullSession as any)?.exchanges)
+          ? ((fullSession as any).exchanges as any[])
+          : [];
+        const anchoredMeta = {
+          total: anchoredExs.length,
+          hasMore: false,
+          minSeq: anchoredExs.length ? Number(anchoredExs[0]?.seq || 0) : 0,
+          maxSeq: anchoredExs.length
+            ? Number(anchoredExs[anchoredExs.length - 1]?.seq || 0)
+            : 0,
+        };
+        sessionCacheRef.current[cacheKey] = {
+          ...(fullSession as any),
+          key: resolvedKey,
+          pending,
+          _windowMeta: anchoredMeta as any,
+          _anchoredAt: anchorAt,
+        } as Session;
+        bumpCacheVersion();
+        await sessionService.markSessionReady(resolvedRoot, resolvedKey);
+        return {
+          ...(fullSession as any),
+          key: resolvedKey,
+          pending,
+          _windowMeta: anchoredMeta as any,
+          _anchoredAt: anchorAt,
+        } as Session;
+      })();
+      loadingSessionRef.current[cacheKey] = promise as any;
+      try {
+        return await promise;
+      } finally {
+        delete loadingSessionRef.current[cacheKey];
       }
-      const serverPending =
-        typeof (fullSession as any)?.pending === "boolean"
-          ? !!(fullSession as any).pending
-          : undefined;
-      if (serverPending === false) {
-        clearLocalPendingForSession(resolvedRoot, resolvedKey);
-      }
-      const pending =
-        serverPending === false
-          ? false
-          : resolvePendingForSession(resolvedRoot, resolvedKey, !!serverPending);
-      sessionCacheRef.current[cacheKey] = {
-        ...(fullSession as any),
-        key: resolvedKey,
-        pending,
-      } as Session;
-      bumpCacheVersion();
-      await sessionService.markSessionReady(resolvedRoot, resolvedKey);
-      return {
-        ...(fullSession as any),
-        key: resolvedKey,
-        pending,
-      } as Session;
     },
     [bumpCacheVersion, clearLocalPendingForSession, resolvePendingForSession, rootSessionKey],
   );
@@ -3639,7 +2314,7 @@ export function App({ onGoHome }: AppProps) {
           related_files: nextRelatedFiles,
         } as SessionItem;
       });
-      const current = drawerSessionByRootRef.current[rootID];
+      const current = drawerSessionByRootRef.current[scopedRootKey(rootID)];
       if (current && current.key === sessionKey) {
         setDrawerSessionForRoot(rootID, {
           ...(current as any),
@@ -3685,7 +2360,7 @@ export function App({ onGoHome }: AppProps) {
         } as SessionItem;
       });
 
-      const current = drawerSessionByRootRef.current[rootID];
+      const current = drawerSessionByRootRef.current[scopedRootKey(rootID)];
       if (current && current.key === sessionKey) {
         setDrawerSessionForRoot(rootID, {
           ...(current as any),
@@ -3740,7 +2415,7 @@ export function App({ onGoHome }: AppProps) {
           ...(hasPlanMode ? { plan_mode: planMode } : {}),
         } as SessionItem;
       });
-      const current = drawerSessionByRootRef.current[rootID];
+      const current = drawerSessionByRootRef.current[scopedRootKey(rootID)];
       if (
         current &&
         current.key === sessionKey &&
@@ -3797,7 +2472,7 @@ export function App({ onGoHome }: AppProps) {
         } as SessionItem;
       });
 
-      const drawer = drawerSessionByRootRef.current[rootID];
+      const drawer = drawerSessionByRootRef.current[scopedRootKey(rootID)];
       if (drawer?.key === sessionKey && drawer.name !== sessionName) {
         setDrawerSessionForRoot(rootID, {
           ...(drawer as any),
@@ -3860,7 +2535,7 @@ export function App({ onGoHome }: AppProps) {
         if (!prev || prevKey !== sessionKey || prevRoot !== activeRoot) return prev;
         return { ...(prev as any), plan_mode: enabled, updated_at: now } as SessionItem;
       });
-      const drawer = drawerSessionByRootRef.current[activeRoot];
+      const drawer = drawerSessionByRootRef.current[scopedRootKey(activeRoot)];
       if (drawer?.key === sessionKey) {
         setDrawerSessionForRoot(activeRoot, {
           ...(drawer as any),
@@ -3893,7 +2568,7 @@ export function App({ onGoHome }: AppProps) {
       const realCacheKey = rootSessionKey(rootID, sessionKey);
       const pendingCached = sessionCacheRef.current[pendingCacheKey];
       const realCached = sessionCacheRef.current[realCacheKey];
-      const drawer = drawerSessionByRootRef.current[rootID];
+      const drawer = drawerSessionByRootRef.current[scopedRootKey(rootID)];
       const selected = selectedSessionRef.current;
       const selectedKey = selected?.key || selected?.session_key;
       const selectedRoot =
@@ -3945,11 +2620,11 @@ export function App({ onGoHome }: AppProps) {
         cacheChanged = true;
       }
 
-      if (boundSessionByRootRef.current[rootID] === pendingKey) {
+      if (boundSessionByRootRef.current[scopedRootKey(rootID)] === pendingKey) {
         setBoundSessionForRoot(rootID, sessionKey);
       }
-      if (selectedSessionByRootRef.current[rootID] === pendingKey) {
-        selectedSessionByRootRef.current[rootID] = sessionKey;
+      if (selectedSessionByRootRef.current[scopedRootKey(rootID)] === pendingKey) {
+        selectedSessionByRootRef.current[scopedRootKey(rootID)] = sessionKey;
       }
       if (drawer?.key === pendingKey) {
         setDrawerSessionForRoot(rootID, {
@@ -3987,6 +2662,35 @@ export function App({ onGoHome }: AppProps) {
         );
       }
 
+      // pending 会话 promote 为真实会话时，同步替换右侧多项目列表中的临时条目
+      setMultiProjectSessionGroups((prev) =>
+        prev.map((group) => {
+          if (group.rootId !== rootID) {
+            return group;
+          }
+          const sessions = group.sessions.map((item) => {
+            const itemKey = item.key || item.session_key;
+            if (itemKey !== pendingKey) {
+              return item;
+            }
+            return {
+              ...(item as any),
+              ...(latestReal as any),
+              key: sessionKey,
+              session_key: sessionKey,
+              root_id: rootID,
+              name:
+                (typeof (latestReal as any)?.name === "string" &&
+                (latestReal as any).name
+                  ? (latestReal as any).name
+                  : "") || pendingName,
+              pending: true,
+            } as SessionItem;
+          });
+          return { ...group, sessions: mergeSessionItems(sessions, []) };
+        }),
+      );
+
       setSelectedSession((prev) => {
         const prevKey = prev?.key || prev?.session_key;
         const prevRoot =
@@ -4013,467 +2717,21 @@ export function App({ onGoHome }: AppProps) {
     [rootSessionKey, setBoundSessionForRoot, setDrawerSessionForRoot, bumpCacheVersion],
   );
 
-  const resolveRuntimeMetaForSession = useCallback(
-    (
-      rootID: string,
-      sessionKey: string,
-      fallback?: {
-        agent?: string;
-        model?: string;
-	        mode?: string;
-	        effort?: string;
-	        fast_service?: "" | "on" | "off";
-	      },
-    ) => {
-      const cacheKey = rootSessionKey(rootID, sessionKey);
-      const cachedSession = sessionCacheRef.current[cacheKey] as any;
-      const exchanges = Array.isArray(cachedSession?.exchanges)
-        ? ((cachedSession.exchanges || []) as Exchange[])
-        : [];
-      const latestMatchingExchange = [...exchanges]
-        .reverse()
-        .find(
-          (item) =>
-            item?.agent ||
-	            item?.model ||
-	            item?.mode ||
-	            item?.effort ||
-	            item?.fast_service,
-        );
-      const candidates = [
-        fallback,
-        latestMatchingExchange as any,
-        sessionCacheRef.current[cacheKey] as any,
-        currentSessionRef.current?.key === sessionKey
-          ? (currentSessionRef.current as any)
-          : null,
-        (selectedSessionRef.current?.key ||
-          selectedSessionRef.current?.session_key) === sessionKey
-          ? (selectedSessionRef.current as any)
-          : null,
-      ];
-
-      const pickText = (field: "agent" | "model" | "mode" | "effort") => {
-        for (const item of candidates) {
-          const value = `${item?.[field] || ""}`.trim();
-          if (value) return value;
-        }
-        return "";
-      };
-      const pickFastService = (): "" | "on" | "off" => {
-        for (const item of candidates) {
-          const value = normalizeFastService(item?.fast_service);
-          if (value) return value;
-        }
-        return "";
-      };
-	      return {
-	        agent: pickText("agent"),
-	        model: pickText("model"),
-	        mode: pickText("mode"),
-	        effort: pickText("effort"),
-	        fast_service: pickFastService(),
-	      };
-    },
-    [rootSessionKey],
-  );
-
-  const appendAgentChunkForSession = useCallback(
-    (
-      rootID: string,
-      sessionKey: string,
-      content: string,
-      runtimeHint?: {
-        agent?: string;
-        model?: string;
-	        mode?: string;
-	        effort?: string;
-	        fast_service?: "" | "on" | "off";
-	      },
-    ) => {
-      if (!content) return;
-      const now = new Date().toISOString();
-      const cacheKey = rootSessionKey(rootID, sessionKey);
-      const runtimeMeta = resolveRuntimeMetaForSession(
-        rootID,
-        sessionKey,
-        runtimeHint,
-      );
-      const updateList = (prevList: Exchange[]) => {
-        const list = [...(prevList || [])];
-        const last = list.length > 0 ? list[list.length - 1] : null;
-        if (last && (last.role === "agent" || last.role === "assistant")) {
-          list[list.length - 1] = {
-            ...last,
-            agent: runtimeMeta.agent || last.agent,
-            model: runtimeMeta.model || last.model,
-	            mode: runtimeMeta.mode || last.mode,
-	            effort: runtimeMeta.effort || last.effort,
-	            fast_service: runtimeMeta.fast_service || last.fast_service,
-	            content: `${last.content || ""}${content}`,
-            timestamp: now,
-          };
-          return list;
-        }
-        list.push({
-          role: "agent",
-          agent: runtimeMeta.agent,
-          model: runtimeMeta.model,
-	          mode: runtimeMeta.mode,
-	          effort: runtimeMeta.effort,
-	          fast_service: runtimeMeta.fast_service,
-	          content,
-          timestamp: now,
-        });
-        return list;
-      };
-      const cached = sessionCacheRef.current[cacheKey];
-      const base =
-        cached ||
-        ({
-          key: sessionKey,
-          type: "chat",
-          agent: runtimeMeta.agent,
-          model: runtimeMeta.model,
-	          mode: runtimeMeta.mode,
-	          effort: runtimeMeta.effort,
-	          fast_service: runtimeMeta.fast_service,
-	          name: "",
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          exchanges: [],
-        } as any);
-      const nextList = updateList(
-        ((base as any).exchanges || []) as Exchange[],
-      );
-      sessionCacheRef.current[cacheKey] = {
-        ...(base as any),
-        agent: runtimeMeta.agent || (base as any).agent,
-        model: runtimeMeta.model || (base as any).model,
-	        mode: runtimeMeta.mode || (base as any).mode,
-	        effort: runtimeMeta.effort || (base as any).effort,
-	        fast_service: runtimeMeta.fast_service || (base as any).fast_service,
-	        exchanges: nextList,
-        updated_at: new Date().toISOString(),
-      } as Session;
-      bumpCacheVersion();
-    },
-    [rootSessionKey, resolveRuntimeMetaForSession, bumpCacheVersion],
-  );
-
-  const appendThoughtChunkForSession = useCallback(
-    (rootID: string, sessionKey: string, content: string, thoughtID?: string) => {
-      if (!content) return;
-      const now = new Date().toISOString();
-      const cacheKey = rootSessionKey(rootID, sessionKey);
-      const updateList = (prevList: Exchange[]) => {
-        const list = [...(prevList || [])];
-        if (thoughtID) {
-          const existingIndex = list.findIndex(
-            (item) => item.role === "thought" && item.thought_id === thoughtID,
-          );
-          if (existingIndex >= 0) {
-            const existing = list[existingIndex];
-            const existingContent = existing.content || "";
-            let nextContent = existingContent;
-            if (content.includes(existingContent)) {
-              nextContent = content;
-            } else if (!existingContent.includes(content)) {
-              nextContent = `${existingContent}${content}`;
-            }
-            list[existingIndex] = {
-              ...existing,
-              content: nextContent,
-              timestamp: now,
-            };
-            return list;
-          }
-        }
-        const last = list.length > 0 ? list[list.length - 1] : null;
-        if (last && last.role === "thought" && (!thoughtID || !last.thought_id)) {
-          list[list.length - 1] = {
-            ...last,
-            content: `${last.content || ""}${content}`,
-            thought_id: thoughtID || last.thought_id,
-            timestamp: now,
-          };
-          return list;
-        }
-        list.push({ role: "thought", content, thought_id: thoughtID, timestamp: now });
-        return list;
-      };
-      const cached = sessionCacheRef.current[cacheKey];
-      const base =
-        cached ||
-        ({
-          key: sessionKey,
-          type: "chat",
-          agent: "",
-          name: "",
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          exchanges: [],
-        } as any);
-      const nextList = updateList(
-        ((base as any).exchanges || []) as Exchange[],
-      );
-      sessionCacheRef.current[cacheKey] = {
-        ...(base as any),
-        exchanges: nextList,
-        updated_at: new Date().toISOString(),
-      } as Session;
-      bumpCacheVersion();
-    },
-    [rootSessionKey, bumpCacheVersion],
-  );
-
-  const appendToolCallForSession = useCallback(
-    (rootID: string, sessionKey: string, toolCall: any, update: boolean) => {
-      if (!toolCall) return;
-      const now = new Date().toISOString();
-      const cacheKey = rootSessionKey(rootID, sessionKey);
-      const mergeToolCall = (existing: any, incoming: any) => {
-        const merged = { ...(existing || {}), ...incoming };
-        const incomingMeta = (incoming?.meta || {}) as Record<string, unknown>;
-        if (existing?.meta || incoming?.meta) {
-          merged.meta = { ...(existing?.meta || {}), ...incomingMeta };
-        }
-        const isUserShellStream =
-          incomingMeta.source === "userShell" && incomingMeta.phase === "stream";
-        if (isUserShellStream) {
-          const mergedContent = incomingMeta.replaySnapshot === true
-            ? [...((incoming?.content || []) as any[])]
-            : [
-                ...((existing?.content || []) as any[]),
-                ...((incoming?.content || []) as any[]),
-              ];
-          const totalText = mergedContent.map((item) => item?.text || "").join("");
-          if (totalText.length > 256 * 1024) {
-            merged.content = [{ type: "text", text: totalText.slice(-256 * 1024) }];
-          } else {
-            merged.content = mergedContent;
-          }
-          merged.meta = { ...(existing?.meta || {}), ...incomingMeta };
-        }
-        if (!incoming.kind && existing?.kind) merged.kind = existing.kind;
-        if (!incoming.title && existing?.title) merged.title = existing.title;
-        const existingStatus = `${existing?.status || ""}`.toLowerCase();
-        const incomingStatus = `${incoming?.status || ""}`.toLowerCase();
-        if (
-          (existingStatus === "failed" ||
-            existingStatus === "error" ||
-            existingStatus === "complete" ||
-            existingStatus === "success") &&
-          (incomingStatus === "running" ||
-            incomingStatus === "pending" ||
-            incomingStatus === "in_progress")
-        ) {
-          merged.status = existing.status;
-        }
-        return merged;
-      };
-      const updateList = (prevList: Exchange[]) => {
-        const list = [...(prevList || [])];
-        const callId =
-          toolCall.callId || toolCall.toolCallId || toolCall.tool_call_id || "";
-        if (callId) {
-          for (let i = list.length - 1; i >= 0; i--) {
-            if (
-              list[i]?.role === "tool" &&
-              (list[i]?.toolCall?.callId === callId ||
-                list[i]?.toolCall?.toolCallId === callId ||
-                list[i]?.toolCall?.tool_call_id === callId)
-            ) {
-              list[i] = {
-                ...list[i],
-                timestamp: now,
-                toolCall: mergeToolCall(list[i].toolCall, toolCall),
-              };
-              return list;
-            }
-          }
-        }
-        list.push({ role: "tool", content: "", timestamp: now, toolCall });
-        return list;
-      };
-      const cached = sessionCacheRef.current[cacheKey];
-      const base =
-        cached ||
-        ({
-          key: sessionKey,
-          type: "chat",
-          agent: "",
-          name: "",
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          exchanges: [],
-        } as any);
-      const nextList = updateList(
-        ((base as any).exchanges || []) as Exchange[],
-      );
-      sessionCacheRef.current[cacheKey] = {
-        ...(base as any),
-        exchanges: nextList,
-        updated_at: new Date().toISOString(),
-      } as Session;
-      bumpCacheVersion();
-    },
-    [rootSessionKey, bumpCacheVersion],
-  );
-
-  const appendTodoUpdateForSession = useCallback(
-    (rootID: string, sessionKey: string, todoUpdate: any) => {
-      if (!todoUpdate) return;
-      const now = new Date().toISOString();
-      const cacheKey = rootSessionKey(rootID, sessionKey);
-      const updateList = (prevList: Exchange[]) => {
-        const list = [...(prevList || [])];
-        for (let i = list.length - 1; i >= 0; i -= 1) {
-          if (list[i]?.role !== "todo") continue;
-          list[i] = {
-            ...list[i],
-            timestamp: now,
-            todoUpdate,
-          };
-          return list;
-        }
-        list.push({ role: "todo", content: "", timestamp: now, todoUpdate });
-        return list;
-      };
-      const cached = sessionCacheRef.current[cacheKey];
-      const base =
-        cached ||
-        ({
-          key: sessionKey,
-          type: "chat",
-          agent: "",
-          name: "",
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          exchanges: [],
-        } as any);
-      const nextList = updateList(
-        ((base as any).exchanges || []) as Exchange[],
-      );
-      sessionCacheRef.current[cacheKey] = {
-        ...(base as any),
-        exchanges: nextList,
-        updated_at: new Date().toISOString(),
-      } as Session;
-      bumpCacheVersion();
-    },
-    [rootSessionKey, bumpCacheVersion],
-  );
-
-  const appendPlanUpdateForSession = useCallback(
-    (rootID: string, sessionKey: string, planUpdate: any) => {
-      if (!planUpdate) return;
-      const content = `${planUpdate.content || ""}`;
-      if (!content) return;
-      const now = new Date().toISOString();
-      const cacheKey = rootSessionKey(rootID, sessionKey);
-      const updateList = (prevList: Exchange[]) => {
-        const list = [...(prevList || [])];
-        const planId = `${planUpdate.id || ""}`;
-        if (planId) {
-          for (let i = list.length - 1; i >= 0; i -= 1) {
-            if (list[i]?.role !== "plan") continue;
-            if (`${list[i]?.planUpdate?.id || ""}` !== planId) continue;
-            const existingContent = `${list[i].planUpdate?.content || ""}`;
-            const nextContent = planUpdate.delta
-              ? `${existingContent}${content}`
-              : content;
-            list[i] = {
-              ...list[i],
-              timestamp: now,
-              planUpdate: { ...list[i].planUpdate, ...planUpdate, content: nextContent },
-            };
-            return list;
-          }
-        }
-        const last = list.length > 0 ? list[list.length - 1] : null;
-        if (last?.role === "plan" && !planId) {
-          const existingContent = `${last.planUpdate?.content || ""}`;
-          list[list.length - 1] = {
-            ...last,
-            timestamp: now,
-            planUpdate: {
-              ...last.planUpdate,
-              ...planUpdate,
-              content: planUpdate.delta ? `${existingContent}${content}` : content,
-            },
-          };
-          return list;
-        }
-        list.push({ role: "plan", content: "", timestamp: now, planUpdate });
-        return list;
-      };
-      const cached = sessionCacheRef.current[cacheKey];
-      const base =
-        cached ||
-        ({
-          key: sessionKey,
-          type: "chat",
-          agent: "",
-          name: "",
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          exchanges: [],
-        } as any);
-      sessionCacheRef.current[cacheKey] = {
-        ...(base as any),
-        exchanges: updateList(((base as any).exchanges || []) as Exchange[]),
-        updated_at: new Date().toISOString(),
-      } as Session;
-      bumpCacheVersion();
-    },
-    [rootSessionKey, bumpCacheVersion],
-  );
-
-  const appendCompactNoticeForSession = useCallback(
-    (rootID: string, sessionKey: string, compactNotice: any) => {
-      if (!compactNotice) return;
-      const now = new Date().toISOString();
-      const cacheKey = rootSessionKey(rootID, sessionKey);
-      const updateList = (prevList: Exchange[]) => {
-        const list = [...(prevList || [])];
-        const compactId = `${compactNotice.id || ""}`;
-        if (compactId) {
-          for (let i = list.length - 1; i >= 0; i -= 1) {
-            if (list[i]?.role !== "compact") continue;
-            if (`${list[i]?.compactNotice?.id || ""}` !== compactId) continue;
-            list[i] = {
-              ...list[i],
-              timestamp: now,
-              compactNotice: { ...list[i].compactNotice, ...compactNotice },
-            };
-            return list;
-          }
-        }
-        list.push({ role: "compact", content: "", timestamp: now, compactNotice });
-        return list;
-      };
-      const cached = sessionCacheRef.current[cacheKey];
-      const base =
-        cached ||
-        ({
-          key: sessionKey,
-          type: "chat",
-          agent: "",
-          name: "",
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          exchanges: [],
-        } as any);
-      sessionCacheRef.current[cacheKey] = {
-        ...(base as any),
-        exchanges: updateList(((base as any).exchanges || []) as Exchange[]),
-        updated_at: new Date().toISOString(),
-      } as Session;
-      bumpCacheVersion();
-    },
-    [rootSessionKey, bumpCacheVersion],
-  );
+  const {
+    resolveRuntimeMetaForSession,
+    appendAgentChunkForSession,
+    appendThoughtChunkForSession,
+    appendToolCallForSession,
+    appendTodoUpdateForSession,
+    appendPlanUpdateForSession,
+    appendCompactNoticeForSession,
+  } = useSessionStreamCache({
+    sessionCacheRef,
+    rootSessionKey,
+    bumpCacheVersionDebounced,
+    currentSessionRef,
+    selectedSessionRef,
+  });
 
   const attachContextWindowToLatestAssistant = useCallback(
     (
@@ -4549,7 +2807,7 @@ export function App({ onGoHome }: AppProps) {
             : {}),
         } as SessionItem;
       });
-      const drawer = drawerSessionByRootRef.current[rootID];
+      const drawer = drawerSessionByRootRef.current[scopedRootKey(rootID)];
       if (drawer && drawer.key === sessionKey) {
         setDrawerSessionForRoot(rootID, {
           ...(drawer as any),
@@ -4559,9 +2817,29 @@ export function App({ onGoHome }: AppProps) {
             : {}),
         } as Session);
       }
+      // 列表 state 同步：message_done 直推的 context_window 只进了 cache/drawer/selected，
+      // 会话列表项没有数据源（列表接口不含该字段），不补这里则徽标停在旧值，直到全量重拉。
+      setSessions((prev) =>
+        prev.map((item) => {
+          const itemKey = item.key || item.session_key;
+          if (
+            itemKey !== sessionKey ||
+            (item.root_id as string | undefined) !== rootID
+          ) {
+            return item;
+          }
+          return {
+            ...item,
+            context_window: {
+              totalTokens,
+              modelContextWindow,
+            },
+          };
+        }),
+      );
       bumpCacheVersion();
     },
-    [bumpCacheVersion, rootSessionKey],
+    [bumpCacheVersion, rootSessionKey, setSessions],
   );
 
   const normalizeTreeResponse = useCallback((payload: any) => {
@@ -4589,29 +2867,56 @@ export function App({ onGoHome }: AppProps) {
   }, [t]);
 
   const treeCacheKey = useCallback(
-    (rootID: string, dirPath: string) => `${rootID}:${dirPath || "."}`,
-    [],
+    (rootID: string, dirPath: string) =>
+      treeKey(getNodeIdForRoot(rootID) ?? "", rootID, dirPath || "."),
+    [getNodeIdForRoot],
   );
 
   const refreshTreeDir = useCallback(
     async (rootID: string, dirPath: string, syncMain: boolean) => {
+      const cacheKey = treeCacheKey(rootID, dirPath);
+      // 并发守卫：同目录并发刷新（按钮 × WS 事件 × 导航）时只让最后发起的请求生效，
+      // 防止先发起的旧响应后返回覆盖新数据（“点了刷新仍显示旧内容”的来源之一）。
+      treeFetchSeqRef.current[cacheKey] = (treeFetchSeqRef.current[cacheKey] || 0) + 1;
+      const seq = treeFetchSeqRef.current[cacheKey];
+      // syncMain 时须仍在查看该目录才允许回写主视图，防止导航后旧响应覆盖新视图
+      const matchesView = () =>
+        rootID === currentRootIdRef.current &&
+        (selectedDirRef.current === rootID ? "." : selectedDirRef.current || ".") === dirPath;
       try {
         const payload = await apiProtectedJSON<any>(
-          appURL("/api/tree", new URLSearchParams({ root: rootID, dir: dirPath })),
+          appURL("/api/tree", new URLSearchParams({ root: rootID, dir: dirPath }), getNodeIdForRoot(rootID)),
         );
+        if (treeFetchSeqRef.current[cacheKey] !== seq) {
+          return; // 旧响应已过时，丢弃
+        }
         const parsed = normalizeTreeResponse(payload);
-        invalidTreeCacheKeysRef.current.delete(treeCacheKey(rootID, dirPath));
-        setMainDirectoryError("");
+        invalidTreeCacheKeysRef.current.delete(cacheKey);
         setEntriesByPath((prev) => ({
           ...prev,
-          [treeCacheKey(rootID, dirPath)]: parsed.entries,
+          [cacheKey]: parsed.entries,
         }));
-        if (syncMain) {
+        if (syncMain && matchesView()) {
+          setMainDirectoryError("");
           setMainEntries(parsed.entries);
         }
-      } catch {}
+      } catch (error) {
+        if (treeFetchSeqRef.current[cacheKey] !== seq) {
+          return; // 已被更新的请求取代，错误也一并丢弃
+        }
+        // 失败后不信任旧缓存：标记该目录缓存失效，下次查看/刷新强制重拉真实状态
+        invalidTreeCacheKeysRef.current.add(cacheKey);
+        if (syncMain && matchesView()) {
+          const message = String(
+            (error as any)?.payload?.error || (error as any)?.payload?.message || (error as Error)?.message || "",
+          );
+          const display = formatDirectoryLoadError(message);
+          setMainDirectoryError(display);
+          reportError("file.read_failed", display, { severity: "warning", recoverable: true });
+        }
+      }
     },
-    [normalizeTreeResponse, treeCacheKey],
+    [formatDirectoryLoadError, getNodeIdForRoot, treeCacheKey],
   );
 
   const refreshCurrentFileContent = useCallback(
@@ -4639,6 +2944,7 @@ export function App({ onGoHome }: AppProps) {
         const next = await fetchFile({
           rootId: rootID,
           path: changedPath,
+          nodeId: getNodeIdForRoot(String(rootID)),
           readMode,
           cursor: fileCursorRef.current || 0,
         });
@@ -4669,198 +2975,6 @@ export function App({ onGoHome }: AppProps) {
     [],
   );
 
-  const refreshGitStatus = useCallback(async (rootID: string) => {
-    if (!rootID) {
-      if (!currentRootIdRef.current) {
-        setGitStatus(null);
-        setGitStatusLoading(false);
-      }
-      return null;
-    }
-    const shouldApply = () => currentRootIdRef.current === rootID;
-    if (managedRootByIdRef.current[rootID]?.is_git_repo !== true) {
-      const fallback = {
-        available: false,
-        dirty_count: 0,
-        items: [],
-      } as GitStatusPayload;
-      setGitStatusByRoot((prev) => ({ ...prev, [rootID]: fallback }));
-      setGitStatusLoadingByRoot((prev) => ({ ...prev, [rootID]: false }));
-      if (shouldApply()) {
-        setGitStatus(fallback);
-        setGitStatusLoading(false);
-      }
-      return fallback;
-    }
-    setGitStatusLoadingByRoot((prev) => ({ ...prev, [rootID]: true }));
-    if (shouldApply()) {
-      setGitStatusLoading(true);
-    }
-    try {
-      const next = await fetchGitStatus(rootID);
-      setGitStatusByRoot((prev) => ({ ...prev, [rootID]: next }));
-      if (shouldApply()) {
-        setGitStatus(next);
-      }
-      return next;
-    } catch (err) {
-      console.error("[git.status] failed", { rootID, err });
-      const fallback = {
-        available: false,
-        dirty_count: 0,
-        items: [],
-      } as GitStatusPayload;
-      setGitStatusByRoot((prev) => ({ ...prev, [rootID]: fallback }));
-      if (shouldApply()) {
-        setGitStatus(fallback);
-      }
-      return fallback;
-    } finally {
-      setGitStatusLoadingByRoot((prev) => ({ ...prev, [rootID]: false }));
-      if (shouldApply()) {
-        setGitStatusLoading(false);
-      }
-    }
-  }, []);
-
-  const refreshGitHistory = useCallback(async (
-    rootID: string,
-    options?: { force?: boolean; waitForIncremental?: boolean },
-  ) => {
-    if (!rootID) {
-      setGitHistory(null);
-      setGitHistoryLoading(false);
-      return null;
-    }
-    if (!options?.force) {
-      const cachedHead = getCachedGitHistoryHead(rootID);
-      if (cachedHead && cachedHead.items.length > 0) {
-        setGitHistoryByRoot((prev) => ({ ...prev, [rootID]: cachedHead }));
-        if (currentRootIdRef.current === rootID) {
-          setGitHistory(cachedHead);
-        }
-        const newest = cachedHead.items[0]?.hash || "";
-        if (newest) {
-          const refreshAfterNewest = async () => {
-            try {
-              const next = await fetchGitHistory(rootID, { afterCommit: newest });
-              if (next.commit_missing || (next.items || []).length > 0) {
-                clearGitHistoryCache(rootID);
-                const fresh = await fetchGitHistory(rootID, { force: true });
-                setGitHistoryByRoot((prev) => ({ ...prev, [rootID]: fresh }));
-                if (currentRootIdRef.current === rootID) {
-                  setGitHistory(fresh);
-                }
-                return fresh;
-              }
-              const fresh = getCachedGitHistoryHead(rootID) || next;
-              setGitHistoryByRoot((prev) => ({ ...prev, [rootID]: fresh }));
-              if (currentRootIdRef.current === rootID) {
-                setGitHistory(fresh);
-              }
-              return fresh;
-            } catch (err) {
-              console.error("[git.history.after] failed", { rootID, afterCommit: newest, err });
-              return cachedHead;
-            }
-          };
-          if (options?.waitForIncremental) {
-            return refreshAfterNewest();
-          }
-          void refreshAfterNewest();
-        }
-        return cachedHead;
-      }
-    }
-    setGitHistoryLoadingByRoot((prev) => ({ ...prev, [rootID]: true }));
-    if (currentRootIdRef.current === rootID) {
-      setGitHistoryLoading(true);
-    }
-    try {
-      const next = await fetchGitHistory(rootID, { force: options?.force });
-      if (next.commit_missing) {
-        clearGitHistoryCache(rootID);
-        const fresh = await fetchGitHistory(rootID, { force: true });
-        setGitHistoryByRoot((prev) => ({ ...prev, [rootID]: fresh }));
-        if (currentRootIdRef.current === rootID) {
-          setGitHistory(fresh);
-        }
-        return fresh;
-      }
-      setGitHistoryByRoot((prev) => ({ ...prev, [rootID]: next }));
-      if (currentRootIdRef.current === rootID) {
-        setGitHistory(next);
-      }
-      return next;
-    } catch (err) {
-      console.error("[git.history] failed", { rootID, err });
-      const fallback = { available: false, items: [], has_more: false } as GitHistoryPayload;
-      setGitHistoryByRoot((prev) => ({ ...prev, [rootID]: fallback }));
-      if (currentRootIdRef.current === rootID) {
-        setGitHistory(fallback);
-      }
-      return fallback;
-    } finally {
-      setGitHistoryLoadingByRoot((prev) => ({ ...prev, [rootID]: false }));
-      if (currentRootIdRef.current === rootID) {
-        setGitHistoryLoading(false);
-      }
-    }
-  }, []);
-
-  const loadMoreGitHistory = useCallback(async (targetRootID?: string) => {
-    const rootID = targetRootID || currentRootIdRef.current;
-    if (!rootID || gitHistoryLoadingMore) {
-      return;
-    }
-    const currentItems =
-      (targetRootID ? gitHistoryByRoot[rootID]?.items : gitHistory?.items) || [];
-    const beforeCommit = currentItems[currentItems.length - 1]?.hash || "";
-    if (!beforeCommit) {
-      return;
-    }
-    setGitHistoryLoadingMore(true);
-    try {
-      const next = await fetchGitHistory(rootID, { beforeCommit });
-      if (next.commit_missing) {
-        clearGitHistoryCache(rootID);
-        const fresh = await fetchGitHistory(rootID, { force: true });
-        setGitHistoryByRoot((prev) => ({ ...prev, [rootID]: fresh }));
-        if (currentRootIdRef.current === rootID) {
-          setGitHistory(fresh);
-        }
-        return;
-      }
-      const cached = getCachedGitHistory(rootID);
-      const loadedCount = currentItems.length + next.items.length;
-      if (currentRootIdRef.current === rootID) {
-        if (cached) {
-          setGitHistory({
-            ...cached,
-            items: cached.items.slice(0, loadedCount),
-            has_more: cached.items.length > loadedCount || cached.has_more,
-          });
-        } else {
-          setGitHistory(next);
-        }
-      }
-      setGitHistoryByRoot((prev) => ({
-        ...prev,
-        [rootID]: cached
-          ? {
-              ...cached,
-              items: cached.items.slice(0, loadedCount),
-              has_more: cached.items.length > loadedCount || cached.has_more,
-            }
-          : next,
-      }));
-    } catch (err) {
-      console.error("[git.history.more] failed", { rootID, beforeCommit, err });
-    } finally {
-      setGitHistoryLoadingMore(false);
-    }
-  }, [gitHistory, gitHistoryByRoot, gitHistoryLoadingMore]);
-
   const loadSessionsForRoot = useCallback(
     async (
       rootID: string,
@@ -4871,13 +2985,22 @@ export function App({ onGoHome }: AppProps) {
         force?: boolean;
       },
     ) => {
+      const _nid = getNodeIdForRoot(rootID);
+      const snapNode = String(_nid || "").trim();
+      const snapRoot = String(rootID || "").trim();
+      const seq = ++sessionListLoadSeqRef.current;
+      sessionListAbortRef.current?.abort();
+      const controller = new AbortController();
+      sessionListAbortRef.current = controller;
       try {
         const shouldReplace = options?.replace || (!options?.beforeTime && !options?.afterTime);
         if (shouldReplace) {
-          const cached = await getCachedSessionList(rootID);
+          const cached = await getCachedSessionList(rootID, _nid);
+          if (controller.signal.aborted || seq !== sessionListLoadSeqRef.current) { return; }
+          if ((String(getNodeIdForRoot(rootID) || "").trim()) !== snapNode) { return; }
           if (cached && (options?.force || currentRootIdRef.current === rootID)) {
             const cachedItems = [...cached.items, ...cached.pinnedItems]
-              .map((item) => toSessionItem(rootID, item))
+              .map((item) => toSessionItem(rootID, { ...(item as any), _nodeId: (item as any)._nodeId || snapNode }))
               .filter((item): item is SessionItem => !!item);
             setHasMoreSessions(cached.totalCount > cached.items.length);
             setSessions(
@@ -4890,26 +3013,90 @@ export function App({ onGoHome }: AppProps) {
           }
         }
         const payload = await sessionService.fetchSessions(rootID, {
+          nodeId: _nid,
           beforeTime: options?.beforeTime,
           afterTime: options?.afterTime,
         });
+        if (controller.signal.aborted || seq !== sessionListLoadSeqRef.current) { return; }
+        if ((String(getNodeIdForRoot(rootID) || "").trim()) !== snapNode) { return; }
+        if (String(currentRootIdRef.current || "").trim() !== snapRoot && !options?.force) { return; }
         const next = [
           ...payload.items,
           ...payload.pinnedItems,
-        ].map((item) => toSessionItem(rootID, item)).filter((item): item is SessionItem => !!item);
+        ].map((item) => toSessionItem(rootID, { ...(item as any), _nodeId: (item as any)._nodeId || snapNode })).filter((item): item is SessionItem => !!item);
+        // D3: 会话打标，便于切节点过滤与 key 隔离
         if (!options?.force && currentRootIdRef.current !== rootID) return;
+        // 迟到覆盖已在 seq/snap 校验后再次用 currentRootId 守卫
+        if (!options?.force && String(currentRootIdRef.current || "").trim() !== snapRoot) return;
         setHasMoreSessions(payload.totalCount > payload.items.length);
         if (shouldReplace) {
-          setSessions(applyPinnedSnapshotToSessions(mergeSessionItems([], next), rootID, payload.pinnedKeys));
-          void saveCachedSessionList(rootID, payload);
+          // 服务端列表接口不含 context_window，全量重拉会把它清掉（WS message_done 已同步进本地列表）。
+          // 用 setSessions 回调继承旧列表的 context_window，避免徽标闪没。
+          setSessions((prev) => {
+            const prevContext = new Map(
+              prev
+                .filter((item) => item.context_window)
+                .map((item) => [
+                  String(item.key || item.session_key || ""),
+                  item.context_window,
+                ]),
+            );
+            const merged = mergeSessionItems([], next).map((item) => {
+              const itemKey = String(item.key || item.session_key || "");
+              const inherited = prevContext.get(itemKey);
+              return inherited
+                ? { ...item, context_window: inherited }
+                : item;
+            });
+            return applyPinnedSnapshotToSessions(merged, rootID, payload.pinnedKeys);
+          });
+          void saveCachedSessionList(rootID, payload, _nid);
           return;
         }
         setSessions((prev) =>
           applyPinnedSnapshotToSessions(mergeSessionItems(prev, next), rootID, payload.pinnedKeys),
         );
-      } catch {}
+      } catch (err) {
+        if ((err as any)?.name === "AbortError") return;
+        if (controller.signal.aborted) return;
+        // 列表拉取失败不再静默：WS 抖动时列表会停留旧状态（2026-09-09 排查），
+        // 可见告警让用户知道需要手动同步；10s 冷却防断网期间刷屏。
+        if (Date.now() - listLoadErrorAtRef.current > 10000) {
+          listLoadErrorAtRef.current = Date.now();
+          reportError(
+            "session.list_load_failed",
+            String((err as Error)?.message || err),
+            { severity: "warning", recoverable: true },
+          );
+        }
+      }
     },
-    [],
+    [getNodeIdForRoot],
+  );
+
+  const sessionListReloadTimerRef = useRef<number | null>(null);
+
+  // WS 高频事件（session.done / ws.reconnected / session.imported / session.created）都会触发会话列表全量重拉，
+  // 合并 300ms 窗口内的多次调用为最后一次，避免 agent 密集工具调用时连发 /api/sessions。
+  const scheduleSessionListReload = useCallback(
+    (
+      rootID: string,
+      options?: {
+        beforeTime?: string;
+        afterTime?: string;
+        replace?: boolean;
+        force?: boolean;
+      },
+    ) => {
+      if (sessionListReloadTimerRef.current) {
+        window.clearTimeout(sessionListReloadTimerRef.current);
+      }
+      sessionListReloadTimerRef.current = window.setTimeout(() => {
+        sessionListReloadTimerRef.current = null;
+        void loadSessionsForRoot(rootID, options);
+      }, 300);
+    },
+    [loadSessionsForRoot],
   );
 
   const loadChildSessionsForParent = useCallback(
@@ -4923,12 +3110,18 @@ export function App({ onGoHome }: AppProps) {
       if (!rootID || !parentKey) {
         return { hasMore: false };
       }
+      const childNodeId = (parent as any)?._nodeId || getNodeIdForRoot(rootID);
       const items = await sessionService.fetchChildSessions(rootID, parentKey, {
         beforeTime: options?.beforeTime,
         limit: CHILD_SESSION_PAGE_SIZE,
+        nodeId: childNodeId,
       });
+      // 响应体不带 _nodeId（那是前端传输级打标），必须在这里补：mergeSessionItems
+      // 按 `_nodeId::key` 归并，漏了会让这批子会话归到 `::key` 而既有条目是 `local::key`，
+      // 并存成一整批重复的 React key；重复 key 会让收起子会话时留下孤儿 DOM
+      // （实测展开 131 行只收到 55 行，且这批重复永久留在分组里）。
       const next = items
-        .map((item) => toSessionItem(rootID, item))
+        .map((item) => toSessionItem(rootID, { ...(item as any), _nodeId: childNodeId }))
         .filter((item): item is SessionItem => !!item);
       if (currentRootIdRef.current === rootID && next.length > 0) {
         setSessions((prev) => mergeSessionItems(prev, next));
@@ -4937,7 +3130,7 @@ export function App({ onGoHome }: AppProps) {
         setMultiProjectSessionGroups((prev) =>
           applyPendingToMultiProjectGroups(
             prev.map((group) =>
-              group.rootId === rootID
+              group.rootId === rootID && (group as any)._nodeId === (parent as any)?._nodeId
                 ? { ...group, sessions: mergeSessionItems(group.sessions, next) }
                 : group,
             ),
@@ -4954,42 +3147,111 @@ export function App({ onGoHome }: AppProps) {
     if (!multiProjectSessionsEnabled || !protectedAPIReady()) {
       return;
     }
+    const seq = ++multiProjectLoadSeqRef.current;
     setMultiProjectSessionsLoading(true);
     try {
       const cachedGroups = await getCachedMultiRootSessionList();
       if (cachedGroups?.length) {
+        // 缓存先渲染（避免闪空），但**必须整体替换**而不是merge：这份缓存是按账户存的，
+        // 换账户后它就是空的，若还往里合并就会把上一账户的会话留在屏上。
         setMultiProjectSessionGroups(
           applyPendingToMultiProjectGroups(
-            cachedGroups.map((group): MultiProjectSessionGroup => ({
+            cachedGroups.map((group): MultiProjectSessionGroup => {
+              const cacheNid = String((group as any)?._nodeId || "").trim();
+              return {
               rootId: group.rootId,
               rootName: group.rootName || managedRootByIdRef.current[group.rootId]?.display_name || group.rootId,
+              // C1: 缓存重建必须补节点与颜色，否则整帧回退 PALETTE[0] 蓝 + nodeIndex=99 乱序
+              _nodeId: cacheNid || undefined,
+              _nodeColor: resolveGroupColor(group as any, managedRootByKeyRef.current as any, getNodes() as any) || undefined,
               latestSessionTime: group.latestSessionTime,
               sessions: applyPinnedSnapshotToSessions(
                 mergeSessionItems(
                   [],
                   [...group.items, ...group.pinnedItems]
-                    .map((item) => toSessionItem(group.rootId, { ...(item as any), root_id: group.rootId }))
+                    .map((item) => toSessionItem(group.rootId, { ...(item as any), root_id: group.rootId, _nodeId: cacheNid || undefined }))
                     .filter((item): item is SessionItem => !!item),
                 ),
                 group.rootId,
                 group.pinnedKeys,
               ),
               totalCount: group.totalCount,
-            })),
+            };}),
             multiProjectPendingRef.current,
           ),
         );
       }
-      const groups = await sessionService.fetchMultiRootSessions(MULTI_PROJECT_SESSION_LIMIT);
-      const nextGroups = groups.map((group: MultiRootSessionGroup): MultiProjectSessionGroup => ({
+      const nodeIdsFromNodes = getNodes()
+        .map((n) => String((n as any)?.id || "").trim())
+        .filter(Boolean);
+      const nodeIdsFromRoots = Array.from(
+        new Set(
+          Object.values(managedRootByKeyRef.current as Record<string, any>)
+            .map((v) => String((v as any)?._nodeId || "").trim())
+            .filter(Boolean),
+        ),
+      );
+      const nodeIds = Array.from(new Set([...nodeIdsFromNodes, ...nodeIdsFromRoots]));
+      const allGroups: Array<MultiRootSessionGroup & { _nodeId?: string }> = [];
+      let nodeFetchResults: Array<Array<MultiRootSessionGroup & { _nodeId?: string }>> = [];
+      // 只有**真的请求失败**的节点才保留旧分组（网络抖动时不清屏）；
+      // 成功但为空 = 该账户在这个节点下确实没有会话，必须让空结果生效。
+      let failedNids = new Set<string>();
+      if (nodeIds.length === 0) {
+        // managedRootByKeyRef 未就绪（初始化竞态）：以当前激活节点回退打标，
+        // 避免首批分组 _nodeId 为空串、与 selectRootNode 后的 currentRootNodeId 不等而全部收起
+        const fallbackNodeId =
+          getNodeIdForRoot(String(currentRootIdRef.current || "")) ||
+          String(getActiveNode()?.id || "").trim();
+        try {
+          const groups = await sessionService.fetchMultiRootSessions(MULTI_PROJECT_SESSION_LIMIT);
+          for (const g of groups) allGroups.push({ ...g, _nodeId: fallbackNodeId });
+        } catch {
+          notifyNodeLoadFailedRef.current({
+            id: fallbackNodeId,
+            name: String(getActiveNode()?.name || fallbackNodeId),
+          });
+        }
+      } else {
+        // 跨机器也带 user=（用户名），服务端解析到对方本地的账户；对方没有这个账户时
+        // 回 **200 空列表**，所以这里不需要「缺账户」分支——空就是空。
+        // 但要区分「拉取失败」与「成功但为空」：两者都是 []，混为一谈会让下面把**上一个账户**
+        // 的分组当成「该节点本次没返回」保留下来，于是新账户看到旧账户的全部会话（实测踩过）。
+        const failed: boolean[] = [];
+        nodeFetchResults = await Promise.all(nodeIds.map(async (nid, i) => {
+          try {
+            const gs = await sessionService.fetchMultiRootSessions(MULTI_PROJECT_SESSION_LIMIT, nid);
+            failed[i] = false;
+            return gs.map((g) => ({ ...g, _nodeId: nid }));
+          } catch (err) {
+            failed[i] = true;
+            notifyNodeLoadFailedRef.current({
+              id: String(nid),
+              name: String(getNodeById(String(nid))?.name || nid),
+            });
+            return [] as Array<MultiRootSessionGroup & { _nodeId?: string }>;
+          }
+        }));
+        failedNids = new Set(nodeIds.filter((_, i) => failed[i]));
+        for (const groups of nodeFetchResults) allGroups.push(...groups);
+      }
+      const dedup = new Map<string, MultiRootSessionGroup & { _nodeId?: string }>();
+      for (const g of allGroups) { const key = `${(g as any)._nodeId || ""}::${g.rootId}`; const prev = dedup.get(key); if (!prev || String((g as any).latestSessionTime || "") > String((prev as any).latestSessionTime || "")) dedup.set(key, g); }
+      const groups = Array.from(dedup.values());
+      const nextGroups = groups.map((group: MultiRootSessionGroup): MultiProjectSessionGroup => {
+        const gNid = String((group as any)._nodeId || "").trim();
+        const gMeta = (managedRootByKeyRef.current as Record<string, any>)[rootNodeKey(gNid, group.rootId)];
+        return {
         rootId: group.rootId,
-        rootName: group.rootName || managedRootByIdRef.current[group.rootId]?.display_name || group.rootId,
+        rootName: group.rootName || gMeta?.display_name || group.rootId,
+        _nodeColor: (gMeta?._nodeColor as string | undefined),
+        _nodeId: (gMeta?._nodeId as string | undefined) || gNid || undefined,
         latestSessionTime: group.latestSessionTime,
         sessions: applyPinnedSnapshotToSessions(
           mergeSessionItems(
             [],
             [...group.items, ...group.pinnedItems]
-              .map((item) => toSessionItem(group.rootId, { ...(item as any), root_id: group.rootId }))
+              .map((item) => toSessionItem(group.rootId, { ...(item as any), root_id: group.rootId, _nodeId: gNid }))
               .filter((item): item is SessionItem => !!item),
           ),
           group.rootId,
@@ -4997,13 +3259,55 @@ export function App({ onGoHome }: AppProps) {
         )
           .filter((item): item is SessionItem => !!item),
         totalCount: group.totalCount,
-      }));
-      setMultiProjectSessionGroups(
-        applyPendingToMultiProjectGroups(nextGroups, multiProjectPendingRef.current),
+      }});
+      if (seq !== multiProjectLoadSeqRef.current) return; // 丢弃过期响应
+      // C2: 按 nid::rootId 逐组合并（保留本次未返回节点的上次分组），消除整体替换造成的项目消失/穿插帧。
+      // 换账户后必须清掉旧账户的分组：凡本轮**成功**拉取过的节点，其旧分组一律不得保留——
+      // 空结果（该账户在此节点没有会话）同样是有效答案，不是「没拉到」。
+      setMultiProjectSessionGroups((prev) => {
+        const prevList = Array.isArray(prev) ? prev : [];
+        const scopeOf = (g: any) => `${String(g?._nodeId || "").trim()}::${String(g?.rootId || "")}`;
+        const nextMap = new Map(nextGroups.map((g) => [scopeOf(g), g]));
+        const ridSet = new Set(nextGroups.map((g) => String(g.rootId || "")).filter(Boolean));
+        const queriedNids = new Set(nodeIds); // 本轮实际请求过的节点
+        const merged: MultiProjectSessionGroup[] = [];
+        const seen = new Set<string>();
+        for (const g of prevList) {
+          const nid = String((g as any)?._nodeId || "").trim();
+          if (failedNids.has(nid)) {
+            merged.push(g);
+            continue;
+          }
+          const k = scopeOf(g);
+          if (nextMap.has(k)) {
+            merged.push(nextMap.get(k)!);
+            seen.add(k);
+            continue;
+          }
+          if (queriedNids.has(nid)) continue; // 成功拉取却未返回此分组 → 该账户下确实没有，清掉
+          if (!nid && ridSet.has(String(g.rootId || ""))) continue; // 节点盲缓存组：被新数据取代
+          merged.push(g);
+        }
+        for (const g of nextGroups) {
+          const k = scopeOf(g);
+          if (!seen.has(k)) {
+            merged.push(g);
+            seen.add(k);
+          }
+        }
+        return applyPendingToMultiProjectGroups(merged, multiProjectPendingRef.current);
+      });
+      // 保存时补 _nodeColor，令缓存重建帧直接有色（C1 双保险）
+      void saveCachedMultiRootSessionList(
+        groups.map((g) => ({
+          ...g,
+          _nodeColor: resolveGroupColor(g as any, managedRootByKeyRef.current as any, getNodes() as any) || undefined,
+        })) as any,
       );
-      void saveCachedMultiRootSessionList(groups);
     } finally {
-      setMultiProjectSessionsLoading(false);
+      if (seq === multiProjectLoadSeqRef.current) {
+        setMultiProjectSessionsLoading(false);
+      }
     }
   }, [applyPendingToMultiProjectGroups, multiProjectSessionsEnabled]);
 
@@ -5015,7 +3319,9 @@ export function App({ onGoHome }: AppProps) {
         return;
       }
       const previousLoaded = topLevelSessions.length;
+      const groupNid = String((group as any)._nodeId || "").trim();
       const payload = await sessionService.fetchSessions(group.rootId, {
+        nodeId: groupNid || getNodeIdForRoot(group.rootId),
         beforeTime: oldest,
         limit: SESSION_PAGE_SIZE,
         topLevel: true,
@@ -5023,12 +3329,12 @@ export function App({ onGoHome }: AppProps) {
       });
       const nextItems = payload.items
         .concat(payload.pinnedItems)
-        .map((item) => toSessionItem(group.rootId, { ...(item as any), root_id: group.rootId }))
+        .map((item) => toSessionItem(group.rootId, { ...(item as any), root_id: group.rootId, _nodeId: groupNid }))
         .filter((item): item is SessionItem => !!item);
       setMultiProjectSessionGroups((prev) =>
         applyPendingToMultiProjectGroups(
           prev.map((current) => {
-            if (current.rootId !== group.rootId) {
+            if (String((current as any)._nodeId || "").trim() !== groupNid || current.rootId !== group.rootId) {
               return current;
             }
             const sessions = applyPinnedSnapshotToSessions(
@@ -5049,25 +3355,83 @@ export function App({ onGoHome }: AppProps) {
     [applyPendingToMultiProjectGroups, mergeSessionItems],
   );
 
-  const refreshMultiProjectReplyingSessions = useCallback(async () => {
-    try {
-      const payload = await apiProtectedJSON<any>(appPath("/api/replying-sessions"));
-      const items = Array.isArray(payload?.sessions) ? payload.sessions : [];
-      const next: Record<string, boolean> = {};
-      for (const item of items) {
-        const rootID = String(item?.rootId || item?.root_id || "");
-        const sessionKey = String(item?.sessionKey || item?.session_key || "");
-        if (rootID && sessionKey) {
-          next[rootSessionKey(rootID, sessionKey)] = true;
-        }
+  /**
+   * 本轮要问的节点集合：与 loadMultiProjectSessionGroups 同源（getNodes() ∪
+   * managedRootByKeyRef 里的 _nodeId），但走 ref 读最新值——refreshMultiProjectReplyingSessions
+   * 的引用必须稳定，否则下面每 REMOTE_REPLY_POLL_MS 的轮询 effect 会跟着重建。
+   */
+  const multiProjectReplyNodeIdsRef = useRef<() => string[]>(() => []);
+  useEffect(() => {
+    multiProjectReplyNodeIdsRef.current = () => {
+      const fromNodes = getNodes()
+        .map((n) => String((n as any)?.id || "").trim())
+        .filter(Boolean);
+      const fromRoots = Array.from(
+        new Set(
+          Object.values(managedRootByKeyRef.current as Record<string, any>)
+            .map((v) => String((v as any)?._nodeId || "").trim())
+            .filter(Boolean),
+        ),
+      );
+      const all = Array.from(new Set([...fromNodes, ...fromRoots]));
+      if (all.length > 0) {
+        return all;
       }
-      multiProjectPendingRef.current = next;
-      setMultiProjectPendingByKey(next);
-      setMultiProjectSessionGroups((groups) => applyPendingToMultiProjectGroups(groups, next));
-    } catch (error) {
-      console.warn("[multi-project-sessions] replying refresh failed", error);
+      // 节点表未就绪（初始化竞态）：回退当前选中/激活节点，否则会只建出一批空 nodeId 的键。
+      return [
+        String(currentRootNodeIdRef.current || "").trim() || String(getActiveNodeId() || "").trim(),
+      ];
+    };
+  });
+
+  /**
+   * 「正在回复」是独立于会话列表数据的旁路状态（SessionItem 没有 running 字段，
+   * 蓝灯只由 session.pending 决定），所以必须自己按节点去问。
+   *
+   * 曾经只发一个不带 nodeId 的 appPath(...) —— 那会打到**当前激活节点**，于是
+   * 「在 PC 上看、任务跑在 Local」时 Local 的在跑会话永远不进 map，灯不亮、结束也不灭。
+   * 会话列表本身早就是多节点正确的（loadMultiProjectSessionGroups 逐节点遍历），
+   * 这里补上同一个对称：逐节点拉、逐节点建键。
+   */
+  const refreshMultiProjectReplyingSessions = useCallback(async () => {
+    const nodeIds = multiProjectReplyNodeIdsRef.current();
+    const okNodeIds = new Set<string>();
+    const fresh: Record<string, boolean> = {};
+    await Promise.all(
+      nodeIds.map(async (nid) => {
+        try {
+          const payload = await withNodeRetry(() =>
+            apiProtectedJSON<any>(appPath("/api/replying-sessions", nid)),
+          );
+          const items = Array.isArray(payload?.sessions) ? payload.sessions : [];
+          for (const item of items) {
+            const rootID = String(item?.rootId || item?.root_id || "");
+            const sessionKey = String(item?.sessionKey || item?.session_key || "");
+            if (rootID && sessionKey) {
+              // 必须用「该节点自己的 nid」，不能用 rootSessionKey()：后者走
+              // getNodeIdForRoot(rootId)，同名项目在多节点各有一份时会解析到当前
+              // 选中节点，把 Local 的条目错记到 PC 名下。
+              fresh[scopeSessionKey(nid, rootID, sessionKey)] = true;
+            }
+          }
+          okNodeIds.add(nid);
+        } catch (error) {
+          // 该节点没拉到：既不并入也不清除它的旧值，灯不会被误灭。
+          console.warn("[multi-project-sessions] replying refresh failed", nid, error);
+        }
+      }),
+    );
+    if (okNodeIds.size === 0) {
+      return;
     }
-  }, [applyPendingToMultiProjectGroups, rootSessionKey]);
+    // **只重算本轮成功节点自己的键**，其余节点原样保留。
+    // 整体替换会让切节点时旧节点在跑的会话当场全灭（切节点 → nodes-changed →
+    // 本函数 → 新响应里没有旧节点 → 灯全没）。
+    const next = mergeReplyingStateByNode(multiProjectPendingRef.current, fresh, okNodeIds);
+    multiProjectPendingRef.current = next;
+    setMultiProjectPendingByKey(next);
+    setMultiProjectSessionGroups((groups) => applyPendingToMultiProjectGroups(groups, next));
+  }, [applyPendingToMultiProjectGroups]);
 
   useEffect(() => {
     if (!multiProjectSessionsEnabled) {
@@ -5077,291 +3441,85 @@ export function App({ onGoHome }: AppProps) {
     void loadMultiProjectSessionGroups();
   }, [loadMultiProjectSessionGroups, multiProjectSessionsEnabled, refreshMultiProjectReplyingSessions]);
 
-  const executeSessionSearch = useCallback(() => {
-    const trimmed = sessionSearchQuery.trim();
-    if (trimmed.length < 2) {
-      return;
-    }
-    setSessionSearchResultsMode(true);
-    setSessionSearchAppliedQuery(trimmed);
-  }, [sessionSearchQuery]);
-
+  // 跨节点时远端节点的 session.user_message / session.done 都收不到（没订阅那些会话），
+  // 低频轮询兜住「开始/结束」这两个时刻 —— 有 WS 实时兜底的本机节点不必重复问。
+  // ponytail: 固定 5s + visible-only。调小到 2s 更跟手但请求翻倍；
+  // 要零延迟得让远端节点把 pending 变更跨机广播出去，那是另一个议题。
   useEffect(() => {
-    if (
-      sessionListMode !== "local" ||
-      !sessionSearchOpen ||
-      !currentRootId ||
-      !sessionSearchAppliedQuery
-    ) {
-      setSessionSearchLoading(false);
+    if (!multiProjectSessionsEnabled) {
       return;
     }
-
-    let cancelled = false;
-    const searchAcrossRoots = multiProjectSessionsEnabled;
-    setSessionSearchLoading(true);
-    void sessionService
-      .searchSessions(currentRootId, sessionSearchAppliedQuery, 20, {
-        multiRoot: searchAcrossRoots,
-      })
-      .then((hits) => {
-        if (cancelled) return;
-        const mapped = hits
-          .map((hit) => {
-            const hitRootId = String(hit.root_id || currentRootId || "");
-            const item = toSessionItem(hitRootId, {
-              ...hit,
-              root_id: hitRootId,
-              search_seq: hit.seq,
-              search_snippet: hit.snippet,
-              search_match_type: hit.match_type,
-            });
-            return item;
-          })
-          .filter((item): item is SessionItem => !!item);
-        setSessionSearchResults(mapped);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        console.error("[session.search] failed", {
-          rootId: currentRootId,
-          query: sessionSearchAppliedQuery,
-          err,
-        });
-        setSessionSearchResults([]);
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setSessionSearchLoading(false);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [currentRootId, multiProjectSessionsEnabled, sessionListMode, sessionSearchAppliedQuery, sessionSearchOpen]);
-
-  const openGitDiff = useCallback(
-    async (rootID: string, item: GitStatusItem, options?: { preserveRelatedSelection?: boolean; repoPath?: string }) => {
-      if (!rootID || !item?.path) {
+    const timer = window.setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") {
         return;
       }
-      fileOpenRequestRef.current += 1;
-      if (!options?.preserveRelatedSelection) {
-        setRelatedSelectedFileKey("");
-      }
-      setMainViewPreferenceForRoot(rootID, "git-diff");
-      setSelectedSession(null);
-      setSelectedSessionLoading(false);
-      setFile(null);
-      setGitDiff(null);
-      replaceURLState({
-        root: rootID,
-        file: "",
-        session: "",
-        cursor: 0,
-        pluginQuery: {},
-      });
-      try {
-        const next = await fetchGitDiff(rootID, item.path, {
-          cacheSignature: buildGitDiffCacheSignature(item),
-          repoPath: options?.repoPath,
-        });
-        setGitDiff(next);
-        if (currentRootIdRef.current !== rootID) {
-          setCurrentRootId(rootID);
-        }
-        if (isMobile) {
-          setIsLeftOpen(false);
-        }
-      } catch (err) {
-        console.error("[git.diff] failed", { rootID, path: item.path, err });
-      }
-    },
-    [isMobile, replaceURLState, setMainViewPreferenceForRoot],
-  );
+      void refreshMultiProjectReplyingSessions();
+    }, REMOTE_REPLY_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [multiProjectSessionsEnabled, refreshMultiProjectReplyingSessions]);
 
-  const openGitCommitDiff = useCallback(
-    async (rootID: string, commit: GitHistoryItem, item: GitStatusItem) => {
-      if (!rootID || !commit?.hash || !item?.path) {
-        return;
-      }
-      fileOpenRequestRef.current += 1;
-      setRelatedSelectedFileKey("");
-      setMainViewPreferenceForRoot(rootID, "git-diff");
-      setSelectedSession(null);
-      setSelectedSessionLoading(false);
-      setFile(null);
-      setGitDiff(null);
-      replaceURLState({
-        root: rootID,
-        file: "",
-        session: "",
-        cursor: 0,
-        pluginQuery: {},
-      });
-      try {
-        const next = await fetchGitCommitDiff(rootID, commit.hash, item);
-        setGitDiff(next);
-        if (currentRootIdRef.current !== rootID) {
-          setCurrentRootId(rootID);
-        }
-        if (isMobile) {
-          setIsLeftOpen(false);
-        }
-      } catch (err) {
-        console.error("[git.commit.diff] failed", {
-          rootID,
-          commit: commit.hash,
-          path: item.path,
-          err,
-        });
-      }
-    },
-    [isMobile, replaceURLState, setMainViewPreferenceForRoot],
-  );
+  const {
+    sessionSearchOpen,
+    sessionSearchResultsMode,
+    sessionSearchQuery,
+    sessionSearchResults,
+    sessionSearchLoading,
+    executeSessionSearch,
+    openSessionSearch,
+    closeSessionSearch,
+    toggleSessionSearch,
+    handleSearchQueryChange,
+    setSessionSearchResults,
+  } = useSessionSearch({
+    currentRootId,
+    sessionListMode,
+    multiProjectSessionsEnabled,
+    getNodeIdForRoot,
+  });
 
-  const switchGitBranch = useCallback(
-    async (rootID: string, branch: string) => {
-      if (!rootID || !branch) {
-        return;
-      }
-      try {
-        const nextStatus = await checkoutGitBranch(rootID, branch);
-        clearGitHistoryCache(rootID);
-        setGitStatusByRoot((prev) => ({ ...prev, [rootID]: nextStatus }));
-        await refreshGitHistory(rootID, { force: true });
-        if (currentRootIdRef.current === rootID) {
-          setGitStatus(nextStatus);
-          setGitDiff(null);
-          setFile(null);
-          await refreshTreeDir(rootID, selectedDirRef.current || ".", true);
-        }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : t("git.checkoutFailed");
-        console.error("[git.checkout] failed", {
-          rootID,
-          branch,
-          message,
-          payload: err instanceof ProtectedAPIError ? err.payload : undefined,
-          err,
-        });
-        reportError("git.checkout_failed", message, {
-          severity: "error",
-          recoverable: true,
-          details: {
-            root: rootID,
-            branch,
-            payload: err instanceof ProtectedAPIError ? err.payload : undefined,
-          },
-        });
-        throw err;
-      }
-    },
-    [refreshGitHistory, refreshTreeDir, t],
-  );
+  const {
+    openGitDiff,
+    openGitCommitDiff,
+    switchGitBranch,
+    handleGitPull,
+    handleGitPush,
+    handleGitCommit,
+    handleGitStageItem,
+    handleGitUnstageItem,
+    handleGitDiscardItem,
+  } = useGitActions({
+    currentRootIdRef,
+    getNodeIdForRoot,
+    scopedRootKey,
+    selectedDirRef,
+    fileOpenRequestRef,
+    refreshGitHistory,
+    refreshTreeDir,
+    resetLocksForRootTransition,
+    switchMainView,
+    replaceURLState,
+    isMobile,
+    setGitStatus,
+    setGitStatusByRoot,
+    setGitDiff,
+    setFile,
+    setCurrentRootId,
+    setIsLeftOpen,
+    setRelatedSelectedFileKey,
+    setSelectedSession,
+    setSelectedSessionLoading,
+  });
 
-  const applyGitActionResult = useCallback(
-    async (rootID: string, nextStatus: GitStatusPayload, options?: { refreshHistory?: boolean; clearDiff?: boolean }) => {
-      clearGitHistoryCache(rootID);
-      setGitStatusByRoot((prev) => ({ ...prev, [rootID]: nextStatus }));
-      if (options?.refreshHistory !== false) {
-        await refreshGitHistory(rootID, { force: true });
-      }
-      if (currentRootIdRef.current !== rootID) {
-        return;
-      }
-      setGitStatus(nextStatus);
-      if (options?.clearDiff) {
-        setGitDiff(null);
-      }
-      await refreshTreeDir(rootID, selectedDirRef.current || ".", true);
-    },
-    [refreshGitHistory, refreshTreeDir],
-  );
-
-  const runGitAction = useCallback(
-    async (
-      rootID: string,
-      action: string,
-      run: () => Promise<{ status: GitStatusPayload; output?: string }>,
-      options?: { refreshHistory?: boolean; clearDiff?: boolean },
-    ) => {
-      if (!rootID) {
-        return;
-      }
-      try {
-        const result = await run();
-        await applyGitActionResult(rootID, result.status, options);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : t("common.actionFailed", { action });
-        console.error(`[git.${action}] failed`, {
-          rootID,
-          message,
-          payload: err instanceof ProtectedAPIError ? err.payload : undefined,
-          err,
-        });
-        window.alert(message);
-        throw err;
-      }
-    },
-    [applyGitActionResult, t],
-  );
-
-  const handleGitPull = useCallback(
-    (rootID: string) =>
-      runGitAction(rootID, "pull", () => pullGit(rootID), { clearDiff: true }),
-    [runGitAction],
-  );
-
-  const handleGitPush = useCallback(
-    (rootID: string) =>
-      runGitAction(rootID, "push", () => pushGit(rootID)),
-    [runGitAction],
-  );
-
-  const handleGitCommit = useCallback(
-    (rootID: string, message: string) =>
-      runGitAction(rootID, "commit", () => commitGit(rootID, message), { clearDiff: true }),
-    [runGitAction],
-  );
-
-  const handleGitStageItem = useCallback(
-    (rootID: string, item: GitStatusItem) =>
-      runGitAction(rootID, "stage", () => stageGitItem(rootID, item), {
-        refreshHistory: false,
-        clearDiff: true,
-      }),
-    [runGitAction],
-  );
-
-  const handleGitUnstageItem = useCallback(
-    (rootID: string, item: GitStatusItem) =>
-      runGitAction(rootID, "unstage", () => unstageGitItem(rootID, item), {
-        refreshHistory: false,
-        clearDiff: true,
-      }),
-    [runGitAction],
-  );
-
-  const handleGitDiscardItem = useCallback(
-    (rootID: string, item: GitStatusItem) =>
-      runGitAction(rootID, "discard", () => discardGitItem(rootID, item), {
-        refreshHistory: false,
-        clearDiff: true,
-      }),
-    [runGitAction],
-  );
 
   const handleCreateBlankFile = useCallback(async () => {
     const rootID = currentRootIdRef.current;
     if (!rootID) return;
     const targetDir = (selectedDirRef.current === rootID ? "." : selectedDirRef.current) || ".";
-    const input = window.prompt(t("directory.fileNamePrompt"), "");
+    const input = await promptDialog({ message: t("directory.fileNamePrompt") });
     if (input === null) return;
     const name = input.trim();
     if (!name || name === "." || name === ".." || /[/\\\x00]/.test(name)) {
-      window.alert(t("directory.invalidFileName"));
+      alertDialog(t("directory.invalidFileName"));
       return;
     }
     try {
@@ -5399,6 +3557,7 @@ export function App({ onGoHome }: AppProps) {
           files,
           onProgress: setDirectoryUploadProgress,
           signal: uploadAbort.signal,
+          nodeId: getNodeIdForRoot(rootID),
         });
         uploaded.forEach((item) => {
           if (typeof item?.path === "string" && item.path) {
@@ -5415,8 +3574,13 @@ export function App({ onGoHome }: AppProps) {
           Array.from(
             new Set([
               ...prev,
-              rootID,
-              targetDir === "." ? rootID : `${rootID}:${targetDir}`,
+              scopeKey(getNodeIdForRoot(rootID) ?? "", rootID),
+              expandKey(
+                getNodeIdForRoot(rootID),
+                rootID,
+                targetDir === "." ? rootID : targetDir,
+                targetDir === ".",
+              ),
             ]),
           ),
         );
@@ -5438,7 +3602,7 @@ export function App({ onGoHome }: AppProps) {
   const handleSelectSession = useCallback(
     async (
       session: any,
-      options?: { preserveTaskSelection?: boolean },
+      options?: { preserveTaskSelection?: boolean; preserveMainView?: boolean },
     ) => {
       const key = session?.key || session?.session_key;
       const targetRoot =
@@ -5447,15 +3611,33 @@ export function App({ onGoHome }: AppProps) {
       if (!options?.preserveTaskSelection) {
         setSelectedKanbanTaskId("");
       }
-      if (currentRootIdRef.current !== targetRoot) {
+      // 多节点同名项目：会话归属节点优先于当前选中节点（跨节点切换会清理旧会话态）
+      const sessionNode = String((session as any)?._nodeId || "").trim();
+      const nextNode =
+        sessionNode ||
+        (targetRoot === String(currentRootIdRef.current || "")
+          ? String(currentRootNodeIdRef.current || "")
+          : "") ||
+        getNodeIdForRoot(targetRoot) ||
+        "";
+      if (
+        targetRoot !== String(currentRootIdRef.current || "") ||
+        (sessionNode && sessionNode !== String(currentRootNodeIdRef.current || ""))
+      ) {
         setCurrentRootId(targetRoot);
+        selectRootNode(targetRoot, nextNode || undefined);
       }
+      setBoundSessionForRoot(targetRoot, key);
+      setDrawerSessionForRoot(targetRoot, toSessionItem(targetRoot, session));
       setSelectedDir(targetRoot);
       setSelectedDirKey(
-        buildDirectorySelectionKey(targetRoot, targetRoot, true),
+        buildDirectorySelectionKey(getNodeIdForRoot(targetRoot), targetRoot, targetRoot, true),
       );
-      setMainViewPreferenceForRoot(targetRoot, "session");
-      const currentDrawer = drawerSessionByRootRef.current[targetRoot];
+      // 深链恢复时主面板模式以 URL 的 view 为准，不因为「有 session」就把面板硬拉回对话态。
+      if (!options?.preserveMainView) {
+        switchMainView("chat");
+      }
+      const currentDrawer = drawerSessionByRootRef.current[scopedRootKey(targetRoot)];
       const preservePending =
         currentDrawer?.key === key
           ? !!(currentDrawer as any)?.pending
@@ -5471,13 +3653,8 @@ export function App({ onGoHome }: AppProps) {
         cursor: 0,
         pluginQuery: {},
       });
-      selectedSessionByRootRef.current[targetRoot] = key;
+      selectedSessionByRootRef.current[scopedRootKey(targetRoot)] = key;
       const cacheKey = rootSessionKey(targetRoot, key);
-      const wasStale = isSessionStale(targetRoot, key);
-      const hadInMemoryState =
-        !!pendingBySessionRef.current[cacheKey] ||
-        hasSessionExchanges(sessionCacheRef.current[cacheKey]);
-      const shouldSyncHistory = wasStale || !hadInMemoryState;
       setSelectedSessionLoading(true);
       setSelectedSession(
         toSessionItem(targetRoot, {
@@ -5526,7 +3703,7 @@ export function App({ onGoHome }: AppProps) {
             root_id: targetRoot,
           });
         });
-        if ((boundSessionByRootRef.current[targetRoot] || null) === key) {
+        if ((boundSessionByRootRef.current[scopedRootKey(targetRoot)] || null) === key) {
           setDrawerSessionForRoot(targetRoot, {
             ...(normalized as any),
           } as Session);
@@ -5536,25 +3713,16 @@ export function App({ onGoHome }: AppProps) {
           bumpCacheVersion();
         }
       };
+      // 先即时渲染本地缓存（快），再始终同步到最新：
+      // 移除原"已缓存/已加载就跳过 sync"的短路，避免陈旧缓存导致历史加载/更新滞后（#sync-lag）。
       const cached = sessionCacheRef.current[cacheKey];
       if (cached) {
         applySession(cached);
-        if (!shouldSyncHistory && hasSessionExchanges(cached)) {
-          loadedSessionRef.current[cacheKey] = true;
-          return;
-        }
       } else {
-        const persisted = await getCachedSession(targetRoot, key);
+        const persisted = await getCachedSession(targetRoot, key, getNodeIdForRoot(targetRoot));
         if (persisted) {
           applySession(persisted);
-          if (!shouldSyncHistory && hasSessionExchanges(persisted)) {
-            loadedSessionRef.current[cacheKey] = true;
-            return;
-          }
         }
-      }
-      if (!shouldSyncHistory && loadedSessionRef.current[cacheKey]) {
-        return;
       }
       try {
         const restored = await restoreActiveSession(targetRoot, key);
@@ -5579,7 +3747,7 @@ export function App({ onGoHome }: AppProps) {
       restoreActiveSession,
       setDrawerOpenForRoot,
       setDrawerSessionForRoot,
-      setMainViewPreferenceForRoot,
+      switchMainView,
       replaceURLState,
     ],
   );
@@ -5596,17 +3764,17 @@ export function App({ onGoHome }: AppProps) {
       if (!resolvedRoot) {
         return false;
       }
-      if (mainViewPreferenceByRootRef.current[resolvedRoot] !== "session") {
+      if (mainViewRef.current !== "chat") {
         return false;
       }
       const selectedKey = String(
-        selectedSessionByRootRef.current[resolvedRoot] || "",
+        selectedSessionByRootRef.current[scopedRootKey(resolvedRoot)] || "",
       ).trim();
       const boundKey = String(
-        boundSessionByRootRef.current[resolvedRoot] || "",
+        boundSessionByRootRef.current[scopedRootKey(resolvedRoot)] || "",
       ).trim();
       const drawerKey = String(
-        drawerSessionByRootRef.current[resolvedRoot]?.key || "",
+        drawerSessionByRootRef.current[scopedRootKey(resolvedRoot)]?.key || "",
       ).trim();
       const preferredKey =
         (selectedKey && !selectedKey.startsWith("pending-") ? selectedKey : "") ||
@@ -5624,13 +3792,13 @@ export function App({ onGoHome }: AppProps) {
       setPluginQuery(options?.pluginQuery || {});
       setSelectedDir(resolvedRoot);
       setSelectedDirKey(
-        buildDirectorySelectionKey(resolvedRoot, resolvedRoot, true),
+        buildDirectorySelectionKey(getNodeIdForRoot(resolvedRoot), resolvedRoot, resolvedRoot, true),
       );
       fileCursorRef.current = 0;
       const cacheKey = rootSessionKey(resolvedRoot, preferredKey);
       let initialSession =
         sessionCacheRef.current[cacheKey] ||
-        (await getCachedSession(resolvedRoot, preferredKey));
+        (await getCachedSession(resolvedRoot, preferredKey, getNodeIdForRoot(resolvedRoot)));
       if (initialSession) {
         sessionCacheRef.current[cacheKey] = {
           ...(initialSession as any),
@@ -5659,6 +3827,15 @@ export function App({ onGoHome }: AppProps) {
     [handleSelectSession, isMobile, rootSessionKey, bumpCacheVersion],
   );
 
+  // 稳定回调：SessionList/SessionCard 的 memo 依赖 props 引用稳定（onSelect 之前是 inline 箭头，每次父渲染都变）。
+  const handleSelectSessionAndClose = useCallback(
+    (session: SessionItem) => {
+      void handleSelectSession(session);
+      if (isMobile) setIsRightOpen(false);
+    },
+    [handleSelectSession, isMobile],
+  );
+
   const handleDeleteSession = useCallback(
     async (session: SessionItem) => {
       const sessionKey = session?.key || session?.session_key;
@@ -5666,24 +3843,32 @@ export function App({ onGoHome }: AppProps) {
         (session?.root_id as string | undefined) || currentRootIdRef.current;
       if (!rootID || !sessionKey) return;
 
-      const deleted = await sessionService.deleteSession(rootID, sessionKey);
+      // 删除是不可撤销的（归档才是那条可回头的路），且后端会连带删掉整棵子树。
+      // 放在唯一的删除出口而不是每个调用点，菜单/快捷键/未来入口全都覆盖到。
+      const sessionName = String(session?.name || sessionKey.slice(0, 8));
+      if (
+        !(await confirmDialog({
+          message: t("sessionList.confirmDeleteSession", { name: sessionName }),
+          danger: true,
+        }))
+      ) {
+        return;
+      }
+
+      const deleted = await sessionService.deleteSession(rootID, sessionKey, String((session as any)?._nodeId || "") || getNodeIdForRoot(rootID));
       if (!deleted) {
         reportError("session.delete_failed", t("session.deleteFailed"));
         return;
       }
 
-      const deletedKeys = new Set<string>();
-      const collectDeletedKeys = (key: string) => {
-        if (!key || deletedKeys.has(key)) return;
-        deletedKeys.add(key);
-        for (const item of sessionsRef.current) {
-          const itemKey = item.key || item.session_key || "";
-          if (String(item.parent_session_key || "").trim() === key) {
-            collectDeletedKeys(itemKey);
-          }
-        }
-      };
-      collectDeletedKeys(sessionKey);
+      // 后端已按 parent_session_key 级联删掉整棵子树；这里要在**全部**本地状态里
+      // 摘掉同一批 key。只看 sessionsRef 会漏掉只存在于多项目分组里的子会话，
+      // 漏掉的那些会被树构建当成孤儿提升成顶层整宽行 —— 面板就此撑爆且收不回去。
+      const knownItems: SessionTreeItem[] = [
+        ...sessionsRef.current,
+        ...multiProjectSessionGroupsRef.current.flatMap((group) => group.sessions || []),
+      ];
+      const deletedKeys = new Set<string>(collectSessionSubtreeKeys(knownItems, sessionKey));
 
       setSessions((prev) =>
         prev.filter((item) => !deletedKeys.has(item.key || item.session_key || "")),
@@ -5697,22 +3882,29 @@ export function App({ onGoHome }: AppProps) {
         delete pendingBySessionRef.current[cacheKey];
         delete cancelRequestedBySessionRef.current[cacheKey];
         staleSessionKeysRef.current.delete(cacheKey);
-        void deleteCachedSession(rootID, deletedKey);
+        void deleteCachedSession(rootID, deletedKey, getNodeIdForRoot(rootID));
       }
 
-      if (deletedKeys.has(boundSessionByRootRef.current[rootID] || "")) {
-        setBoundSessionForRoot(rootID, null);
+      // 搜索结果独立于两棵列表 state，删掉的会话会继续挂在结果里；
+      // 列表快照同理——只删单个会话记录不动列表快照的话，下次进面板已删的行会从缓存里复活。
+      setSessionSearchResults((prev) =>
+        prev.filter((item) => !deletedKeys.has(item.key || item.session_key || "")),
+      );
+      void deleteCachedSessionLists(rootID, getNodeIdForRoot(rootID));
+
+      if (deletedKeys.has(boundSessionByRootRef.current[scopedRootKey(rootID)] || "")) {
+        resetSessionLockForRoot(rootID);
       }
-      if (deletedKeys.has(selectedSessionByRootRef.current[rootID] || "")) {
-        selectedSessionByRootRef.current[rootID] = null;
+      if (deletedKeys.has(selectedSessionByRootRef.current[scopedRootKey(rootID)] || "")) {
+        selectedSessionByRootRef.current[scopedRootKey(rootID)] = null;
       }
-      if (deletedKeys.has(drawerSessionByRootRef.current[rootID]?.key || "")) {
+      if (deletedKeys.has(drawerSessionByRootRef.current[scopedRootKey(rootID)]?.key || "")) {
         setDrawerSessionForRoot(rootID, null);
         setDrawerOpenForRoot(rootID, false);
       }
       setMultiProjectSessionGroups((prev) =>
         prev.map((group) => {
-          if (group.rootId !== rootID) {
+          if (group.rootId !== rootID || ((session as any)?._nodeId && (group as any)._nodeId !== (session as any)?._nodeId)) {
             return group;
           }
           const sessions = group.sessions.filter(
@@ -5758,6 +3950,7 @@ export function App({ onGoHome }: AppProps) {
       setDrawerOpenForRoot,
       setDrawerSessionForRoot,
       setMultiProjectSessionPending,
+      resetSessionLockForRoot,
     ],
   );
 
@@ -5777,6 +3970,7 @@ export function App({ onGoHome }: AppProps) {
         rootID,
         sessionKey,
         trimmedName,
+        String((session as any)?._nodeId || "") || getNodeIdForRoot(rootID),
       );
       if (!renamed) {
         reportError("session.rename_failed", t("session.renameFailed"));
@@ -5820,7 +4014,7 @@ export function App({ onGoHome }: AppProps) {
         );
       }
 
-      if (boundSessionByRootRef.current[rootID] === sessionKey) {
+      if (boundSessionByRootRef.current[scopedRootKey(rootID)] === sessionKey) {
         const latest = sessionCacheRef.current[cacheKey];
         if (latest) {
           setDrawerSessionForRoot(rootID, latest);
@@ -5828,7 +4022,7 @@ export function App({ onGoHome }: AppProps) {
       }
       setMultiProjectSessionGroups((prev) =>
         prev.map((group) =>
-          group.rootId === rootID
+          group.rootId === rootID && (!(session as any)?._nodeId || (group as any)._nodeId === (session as any)?._nodeId)
             ? {
                 ...group,
                 sessions: group.sessions.map((item) =>
@@ -5858,7 +4052,7 @@ export function App({ onGoHome }: AppProps) {
         (session?.root_id as string | undefined) || currentRootIdRef.current;
       if (!rootID || !sessionKey) return false;
 
-      const updated = await sessionService.setSessionPinned(rootID, sessionKey, pinned);
+      const updated = await sessionService.setSessionPinned(rootID, sessionKey, pinned, String((session as any)?._nodeId || "") || getNodeIdForRoot(rootID));
       if (!updated) {
         reportError("session.pin_failed", t("session.pinFailed"));
         return false;
@@ -5869,7 +4063,7 @@ export function App({ onGoHome }: AppProps) {
         setSessions((prev) => mergeSessionItems(prev, [nextItem]));
         setMultiProjectSessionGroups((prev) =>
           prev.map((group) =>
-            group.rootId === rootID
+            group.rootId === rootID && (!(session as any)?._nodeId || (group as any)._nodeId === (session as any)?._nodeId)
               ? {
                   ...group,
                   sessions: mergeSessionItems(group.sessions, [nextItem]),
@@ -5902,7 +4096,7 @@ export function App({ onGoHome }: AppProps) {
         );
       }
 
-      if (boundSessionByRootRef.current[rootID] === sessionKey) {
+      if (boundSessionByRootRef.current[scopedRootKey(rootID)] === sessionKey) {
         const latest = sessionCacheRef.current[cacheKey];
         if (latest) {
           setDrawerSessionForRoot(rootID, latest);
@@ -5914,6 +4108,215 @@ export function App({ onGoHome }: AppProps) {
     },
     [bumpCacheVersion, rootSessionKey, setDrawerSessionForRoot, t],
   );
+
+  // 归档/取消归档。后端按 parent_session_key 级联整棵子树，前端要摘掉的是同一批 key
+  // ——和 handleDeleteSession 完全同一套收集+摘除逻辑，只是摘除后不销毁缓存（内容还在）。
+  const pruneSubtreeFromSessionState = useCallback(
+    (rootID: string, sessionKey: string, sessionNodeId: string) => {
+      const knownItems: SessionTreeItem[] = [
+        ...sessionsRef.current,
+        ...multiProjectSessionGroupsRef.current.flatMap((group) => group.sessions || []),
+      ];
+      const affected = new Set<string>(
+        collectSessionSubtreeKeys(knownItems, sessionKey),
+      );
+      if (affected.size <= 0) {
+        return affected;
+      }
+      setSessions((prev) =>
+        prev.filter((item) => !affected.has(item.key || item.session_key || "")),
+      );
+      setMultiProjectSessionGroups((prev) =>
+        prev
+          .map((group) => {
+            if (
+              group.rootId !== rootID ||
+              (sessionNodeId && (group as any)._nodeId !== sessionNodeId)
+            ) {
+              return group;
+            }
+            const sessions = group.sessions.filter(
+              (item) => !affected.has(item.key || item.session_key || ""),
+            );
+            return {
+              ...group,
+              sessions,
+              totalCount: Math.max(0, group.totalCount - (group.sessions.length - sessions.length)),
+            };
+          })
+          .filter((group) => group.totalCount > 0 || group.sessions.length > 0),
+      );
+      return affected;
+    },
+    [],
+  );
+
+  const handleArchiveSession = useCallback(
+    async (session: SessionItem, archived: boolean) => {
+      const sessionKey = session?.key || session?.session_key;
+      const rootID =
+        (session?.root_id as string | undefined) || currentRootIdRef.current;
+      if (!rootID || !sessionKey) return false;
+      const sessionNodeId =
+        String((session as any)?._nodeId || "") ||
+        getNodeIdForRoot(rootID) ||
+        "";
+
+      const updated = await sessionService.setSessionArchived(
+        rootID,
+        sessionKey,
+        archived,
+        sessionNodeId,
+      );
+      if (!updated) {
+        reportError("session.archive_failed", t("session.archiveFailed"));
+        return false;
+      }
+
+      // 归档态只由归档区的懒加载结果持有，不进两棵列表 state ——
+      // 同一批 key 出现在两个视图里会被树构建各算一次，还会撞上孤儿提升。
+      const affected = pruneSubtreeFromSessionState(
+        rootID,
+        sessionKey,
+        sessionNodeId,
+      );
+      if (!archived) {
+        // 只把这个会话放回主列表：归档时它的子会话已经被真删掉了，
+        // 连后代一起恢复会凭空造出一批服务端不存在的行（它们早就没有正文了）。
+        const restored = [
+          toSessionItem(rootID, {
+            ...(session as any),
+            key: sessionKey,
+            session_key: sessionKey,
+            root_id: rootID,
+            _nodeId: sessionNodeId,
+            archived_at: null,
+          }),
+        ].filter((item): item is SessionItem => !!item);
+        if (restored.length) {
+          setSessions((prev) => mergeSessionItems(prev, restored));
+          setMultiProjectSessionGroups((prev) => {
+            const matches = (group: MultiProjectSessionGroup) =>
+              group.rootId === rootID &&
+              (!sessionNodeId || (group as any)._nodeId === sessionNodeId);
+            // 分组可能在上面的摘除里被整个丢掉（该项目可见会话归零），
+            // 多项目面板只渲染分组，所以取消归档必须把它建回来。
+            const next = prev.some(matches)
+              ? prev
+              : [
+                  ...prev,
+                  {
+                    rootId: rootID,
+                    rootName:
+                      managedRootByIdRef.current[rootID]?.display_name || rootID,
+                    latestSessionTime: String(session.updated_at || ""),
+                    _nodeId: sessionNodeId || undefined,
+                    sessions: [],
+                    totalCount: 0,
+                  } satisfies MultiProjectSessionGroup,
+                ];
+            return next.map((group) =>
+              matches(group)
+                ? {
+                    ...group,
+                    sessions: mergeSessionItems(group.sessions, restored),
+                    totalCount: group.totalCount + restored.length,
+                  }
+                : group,
+            );
+          });
+        }
+      }
+      setSessionSearchResults((prev) =>
+        prev.filter((item) => !affected.has(item.key || item.session_key || "")),
+      );
+      // 归档区快照已过期：取消归档会往里加行，归档会摘掉一行。计数也别手动加减 ——
+      // 下面的 effect 是唯一的真相源，重拉一次比在这里猜差多少可靠。
+      setArchivedGroups((prev) =>
+        prev
+          .map((group) => ({
+            ...group,
+            sessions: group.sessions.filter(
+              (item) => !affected.has(item.key || item.session_key || ""),
+            ),
+          }))
+          .filter((group) => group.sessions.length > 0),
+      );
+      setArchiveReloadToken((token) => token + 1);
+      void deleteCachedSessionLists(rootID, sessionNodeId);
+      return true;
+    },
+    [pruneSubtreeFromSessionState, t],
+  );
+
+  // 归档视图懒加载：只有打开过 / 归档状态变过才拉，未打开时零成本。
+  // topLevel 是硬要求：归档区按项目平铺，子会话挂在那儿只会变成孤儿行。
+  // 按**全部**已加载项目查，而不是按多项目分组里出现过的 rootId ——
+  // 某个项目的会话被**全部**归档后该分组就不再出现，按分组查会漏掉它的归档行
+  // （正是「该项目的对话全归档了就再也没法取消归档」的那个 bug）。
+  useEffect(() => {
+    if (!archiveOpen) return;
+    const rootIds = Array.from(managedRootIdsRef.current)
+      .map((id) => String(id || "").trim())
+      .filter(Boolean);
+    if (rootIds.length === 0) return;
+    let cancelled = false;
+    setArchiveLoading(true);
+    (async () => {
+      try {
+        const payloads = await Promise.all(
+          rootIds.map((rootId) =>
+            sessionService.fetchSessions(rootId, {
+              nodeId: getNodeIdForRoot(rootId),
+              limit: SESSION_PAGE_SIZE,
+              archivedOnly: true,
+              topLevel: true,
+            }),
+          ),
+        );
+        if (cancelled) return;
+        const groups = rootIds
+          .map((rootId, i) => {
+            const payload = payloads[i];
+            const sessions = payload.items
+              .map((item) =>
+                toSessionItem(rootId, {
+                  ...(item as any),
+                  root_id: rootId,
+                  _nodeId: getNodeIdForRoot(rootId),
+                }),
+              )
+              .filter((item): item is SessionItem => !!item)
+              .sort(
+                (a, b) =>
+                  String(b.updated_at || "").localeCompare(String(a.updated_at || "")) ||
+                  String(a.key).localeCompare(String(b.key)),
+              );
+            if (sessions.length === 0) return null;
+            const nodeId = getNodeIdForRoot(rootId);
+            const meta = (managedRootByKeyRef.current as Record<string, any>)[
+              rootNodeKey(nodeId, rootId)
+            ];
+            return {
+              rootId,
+              rootName: meta?.display_name || rootId,
+              latestSessionTime: String(sessions[0]?.updated_at || ""),
+              _nodeId: nodeId || undefined,
+              _nodeColor: meta?._nodeColor,
+              sessions,
+              totalCount: payload.totalCount || sessions.length,
+            } as MultiProjectSessionGroup;
+          })
+          .filter((g): g is MultiProjectSessionGroup => !!g);
+        setArchivedGroups(groups);
+      } finally {
+        if (!cancelled) setArchiveLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [archiveOpen, archiveReloadToken]);
 
   const handleSyncSession = useCallback(
     async (session: SessionItem) => {
@@ -5930,15 +4333,78 @@ export function App({ onGoHome }: AppProps) {
         return next;
       });
       try {
-        const result = await syncSession(rootID, sessionKey, { full: true });
+        const result = await syncSession(rootID, sessionKey, { full: true, nodeId: String((session as any)?._nodeId || "") || getNodeIdForRoot(rootID) });
         const synced = result.session;
         if (!synced) {
           reportError("session.sync_failed", t("session.syncFailed"));
           return;
         }
+        // 点「同步」必须保住「正在等待回答的 ask_user 卡」。
+        // 该卡是纯瞬时态：只存在于前端内存缓存（WS tool_call 追加的 seq=0 role=tool 条目）
+        // 与服务端内存（manager.pendingToolCalls）里，两边都不会经 HTTP 下发
+        // （session.Exchange 结构体没有 ToolCall 字段）。syncSession 以 IDB 缓存为 base，
+        // 而 IDB 里从来没有这些瞬时条目，于是同步后卡片凭空消失（实测 2026-09-12 症状 2）。
+        // 这里从内存缓存按 callId 去重后把它们合并回来；落盘后同一 callId 会出现在窗口 aux
+        // 中，SessionViewer 的 overlay 对账（windowToolCallIds）会自然让位，不会重复渲染。
+        // 同步会把整个会话的持久化交换灌回来（实测缓存 24 → 92），但**本轮尚未落盘的内容**
+        // 只存在于内存缓存的 seq=0 瞬时条目里。原先这里只保留 role=tool 一类，于是
+        // 「点同步的瞬间，正在流式输出的正文凭空消失，而 ask 卡还在」——2026-09-13 实测
+        // cacheBeforeTransient=4 只保住 1 条（keptToolTransient=1），丢掉的 3 条正是非 tool
+        // 的直播正文。
+        // 现在两类都保留，各按「同步结果里是否已有」去重：
+        //   · tool 条目按 callId（落盘后同一 callId 会出现在窗口 aux，SessionViewer 的
+        //     overlay 对账 windowToolCallIds 会自然让位，不会重复渲染）
+        //   · 其余条目按 role+内容（已持久化的轮次不会以 seq=0 形式被重复追加，这正是当初
+        //     只留 tool 想防的事；用内容比对同样防得住）
+        const localTransientTail = (() => {
+          const cachedExchanges = Array.isArray(
+            (sessionCacheRef.current[cacheKey] as any)?.exchanges,
+          )
+            ? ((sessionCacheRef.current[cacheKey] as any).exchanges as any[])
+            : [];
+          const present = new Set<string>();
+          const presentText = new Set<string>();
+          const syncedExchanges = Array.isArray((synced as any)?.exchanges)
+            ? ((synced as any).exchanges as any[])
+            : [];
+          for (const ex of syncedExchanges) {
+            const callId = `${(ex as any)?.toolCall?.callId || ""}`.trim();
+            if (callId) present.add(callId);
+            presentText.add(
+              `${String((ex as any)?.role || "").toLowerCase()}|${String(
+                (ex as any)?.content || "",
+              )}`,
+            );
+          }
+          const syncedAux = ((synced as any)?.exchange_aux || {}) as Record<
+            string,
+            any[]
+          >;
+          for (const items of Object.values(syncedAux)) {
+            for (const aux of items || []) {
+              const callId = `${(aux as any)?.toolcall?.callId || ""}`.trim();
+              if (callId) present.add(callId);
+            }
+          }
+          return cachedExchanges.filter((ex) => {
+            if (Number((ex as any)?.seq || 0) !== 0) return false;
+            const role = String((ex as any)?.role || "").toLowerCase();
+            if (role === "tool") {
+              const callId = `${(ex as any)?.toolCall?.callId || ""}`.trim();
+              return !callId || !present.has(callId);
+            }
+            const content = String((ex as any)?.content || "");
+            if (!content) return false;
+            return !presentText.has(`${role}|${content}`);
+          });
+        })();
+        const syncedExchanges = Array.isArray((synced as any)?.exchanges)
+          ? ((synced as any).exchanges as any[])
+          : [];
         const normalized = {
           ...(synced as any),
           key: sessionKey,
+          exchanges: [...syncedExchanges, ...localTransientTail],
         } as Session;
         sessionCacheRef.current[cacheKey] = normalized;
         loadedSessionRef.current[cacheKey] = true;
@@ -5965,7 +4431,7 @@ export function App({ onGoHome }: AppProps) {
           });
         });
 
-        if (drawerSessionByRootRef.current[rootID]?.key === sessionKey) {
+        if (drawerSessionByRootRef.current[scopedRootKey(rootID)]?.key === sessionKey) {
           setDrawerSessionForRoot(rootID, normalized);
         }
 
@@ -6004,7 +4470,7 @@ export function App({ onGoHome }: AppProps) {
       }
       let result: Awaited<ReturnType<typeof sessionService.forkSession>>;
       try {
-        result = await sessionService.forkSession(resolvedRoot, resolvedKey, seq);
+        result = await sessionService.forkSession(resolvedRoot, resolvedKey, seq, getNodeIdForRoot(resolvedRoot));
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
         reportError("session.sync_failed", `${t("session.forkFailed")}: ${detail}`);
@@ -6052,228 +4518,56 @@ export function App({ onGoHome }: AppProps) {
     handleSelectSessionRef.current = handleSelectSession;
   }, [handleSelectSession]);
 
-  const loadExternalSessions = useCallback(
-    async (
-      rootID: string,
-      agent: string,
-      options?: { beforeTime?: string; afterTime?: string; replace?: boolean },
-    ) => {
-      if (!rootID || !agent) {
-        setExternalSessions([]);
-        setHasMoreExternalSessions(false);
-        setExternalSessionsError("");
-        return;
-      }
-      try {
-        if (!options?.beforeTime) {
-          setLoadingExternalSessions(true);
-        }
-        const next = (await sessionService.fetchExternalSessions(
-          rootID,
-          agent,
-          {
-            beforeTime: options?.beforeTime,
-            afterTime: options?.afterTime,
-            filterBound: externalFilterBound,
-            limit: 50,
-          },
-        )) as SessionItem[];
-        setExternalSessionsError("");
-        setHasMoreExternalSessions(next.length >= 50);
-        if (options?.replace || (!options?.beforeTime && !options?.afterTime)) {
-          setExternalSessions(next);
-          return;
-        }
-        setExternalSessions((prev) => mergeSessionItems(prev, next));
-      } catch (err) {
-        const message =
-          err instanceof Error ? err.message : String(err || t("session.importLoadFailed"));
-        setExternalSessionsError(message || t("session.importLoadFailed"));
-        if (options?.replace || (!options?.beforeTime && !options?.afterTime)) {
-          setExternalSessions([]);
-          setHasMoreExternalSessions(false);
-        }
-        console.error("[Session] Failed to fetch external sessions:", err);
-      } finally {
-        setLoadingExternalSessions(false);
-      }
-    },
-    [externalFilterBound, mergeSessionItems],
-  );
+  const refreshSessionsAfterExternalImport = useCallback(async (rootID: string) => {
+    const listNodeId = getNodeIdForRoot(rootID);
+    const payload = await sessionService.fetchSessions(rootID, { nodeId: listNodeId });
+    const next = [...payload.items, ...payload.pinnedItems]
+      // 节点归属必须打：主列表首屏加载打了 _nodeId，这里不打就会与既有条目
+      // 并存成重复的 React key（同一 mergeSessionItems 归并口径）。
+      .map((item) => toSessionItem(rootID, { ...(item as any), _nodeId: (item as any)._nodeId || listNodeId }))
+      .filter((item): item is SessionItem => !!item);
+    setHasMoreSessions(payload.totalCount > payload.items.length);
+    setSessions(applyPinnedSnapshotToSessions(mergeSessionItems([], next), rootID, payload.pinnedKeys));
+  }, [getNodeIdForRoot]);
 
-  const exitImportMode = useCallback(() => {
-    setSessionListMode("local");
-    setExternalSelectedKey("");
-    setExternalSessionsError("");
-    setSelectedExternalImportKeys(new Set());
-    setImportingExternalSessionKeys(new Set());
-    setImportMenuOpen(false);
-  }, []);
-
-  const enterImportMode = useCallback(
-    async (agentName: string) => {
-      const rootID = currentRootIdRef.current || "";
-      const trimmedAgent = String(agentName || "").trim();
-      if (!rootID || !trimmedAgent) {
-        return;
-      }
-      setExternalImportAgent(trimmedAgent);
-      setExternalSelectedKey("");
-      setExternalSessionsError("");
-      setSelectedExternalImportKeys(new Set());
-      setImportingExternalSessionKeys(new Set());
-      setSessionListMode("import");
-      await loadExternalSessions(rootID, trimmedAgent, { replace: true });
-    },
-    [loadExternalSessions],
-  );
-
-  const handleLoadOlderExternalSessions = useCallback(async () => {
-    const rootID = currentRootIdRef.current || "";
-    const oldest =
-      externalSessionsRef.current[externalSessionsRef.current.length - 1]
-        ?.updated_at || "";
-    if (
-      !rootID ||
-      !externalImportAgent ||
-      !oldest ||
-      loadingOlderExternalSessions
-    ) {
-      return;
-    }
-    setLoadingOlderExternalSessions(true);
-    try {
-      await loadExternalSessions(rootID, externalImportAgent, {
-        beforeTime: oldest,
-      });
-    } finally {
-      setLoadingOlderExternalSessions(false);
-    }
-  }, [externalImportAgent, loadExternalSessions, loadingOlderExternalSessions]);
-
-  const toggleExternalImportSelection = useCallback((session: SessionItem) => {
-    const sessionKey = String(
-      session.agent_session_id || session.key || "",
-    ).trim();
-    if (!sessionKey) {
-      return;
-    }
-    setSelectedExternalImportKeys((current) => {
-      const next = new Set(current);
-      if (next.has(sessionKey)) {
-        next.delete(sessionKey);
-      } else {
-        next.add(sessionKey);
-      }
-      return next;
-    });
-  }, []);
-
-  const toggleAllExternalImportSelection = useCallback((checked: boolean) => {
-    const visibleKeys = externalSessionsRef.current
-      .map((session) =>
-        String(session.agent_session_id || session.key || "").trim(),
-      )
-      .filter(Boolean);
-    setSelectedExternalImportKeys((current) => {
-      const next = new Set(current);
-      visibleKeys.forEach((key) => {
-        if (checked) {
-          next.add(key);
-        } else {
-          next.delete(key);
-        }
-      });
-      return next;
-    });
-  }, []);
-
-  const handleConfirmExternalImport = useCallback(async () => {
-    const rootID = currentRootIdRef.current || "";
-    const sessionKeys = [...selectedExternalImportKeys].filter(Boolean);
-    if (
-      !rootID ||
-      !externalImportAgent ||
-      !sessionKeys.length ||
-      confirmingExternalImport
-    ) {
-      return;
-    }
-    setConfirmingExternalImport(true);
-    setImportingExternalSessionKeys(new Set(sessionKeys));
-    try {
-      const imported = await sessionService.importExternalSessionsBatch(
-        rootID,
-        externalImportAgent,
-        sessionKeys,
-      );
-      const results = imported?.items || [];
-      const successItems = results.filter((item) => item.success && item.session_key);
-      if (!imported || !successItems.length) {
-        const firstError = results.find((item) => !item.success)?.error;
-        reportError(
-          "session.import_failed",
-          firstError ? t("session.importFailedWithReason", { reason: firstError }) : t("session.importFailed"),
-        );
-        return;
-      }
-      setConfirmingExternalImport(false);
-      setImportingExternalSessionKeys(new Set());
-      const failedKeys = new Set(
-        results
-          .filter((item) => !item.success)
-          .map((item) => String(item.agent_session_id || "").trim())
-          .filter(Boolean),
-      );
-      if (failedKeys.size > 0) {
-        const firstError = results.find((item) => !item.success)?.error;
-        const message = firstError
-          ? t("session.importPartialFailedWithReason", { count: failedKeys.size, reason: firstError })
-          : t("session.importPartialFailed", { count: failedKeys.size });
-        reportError(
-          "session.import_failed",
-          message,
-        );
-      }
-      setSelectedExternalImportKeys(failedKeys);
-      if (failedKeys.size === 0) {
-        exitImportMode();
-      }
-      const payload = await sessionService.fetchSessions(rootID, {});
-      const next = [...payload.items, ...payload.pinnedItems]
-        .map((item) => toSessionItem(rootID, item))
-        .filter((item): item is SessionItem => !!item);
-      setHasMoreSessions(payload.totalCount > payload.items.length);
-      setSessions(applyPinnedSnapshotToSessions(mergeSessionItems([], next), rootID, payload.pinnedKeys));
-      const firstImported = successItems[0];
-      if (firstImported?.session_key) {
-        const source = externalSessionsRef.current.find((item) =>
-          String(item.agent_session_id || item.key || "").trim() ===
-          String(firstImported.agent_session_id || "").trim(),
-        );
-        await handleSelectSession({
-          key: firstImported.session_key,
-          root_id: rootID,
-          type: "chat",
-          agent: externalImportAgent,
-          name: source?.name,
-        } as SessionItem);
-      }
-      if (isMobile && failedKeys.size === 0) {
-        setIsRightOpen(false);
-      }
-    } finally {
-      setConfirmingExternalImport(false);
-      setImportingExternalSessionKeys(new Set());
-    }
-  }, [
-    confirmingExternalImport,
-    exitImportMode,
+  const {
+    externalSessions,
+    setExternalSessions,
+    externalSessionsRef,
+    hasMoreExternalSessions,
+    loadingOlderExternalSessions,
+    loadingExternalSessions,
+    externalSessionsError,
+    externalSelectedKey,
+    setExternalSelectedKey,
     externalImportAgent,
-    handleSelectSession,
-    isMobile,
+    setExternalImportAgent,
+    externalFilterBound,
+    setExternalFilterBound,
     selectedExternalImportKeys,
-  ]);
+    importingExternalSessionKeys,
+    confirmingExternalImport,
+    importMenuOpen,
+    setImportMenuOpen,
+    importMenuRef,
+    loadExternalSessions,
+    enterImportMode,
+    exitImportMode,
+    handleLoadOlderExternalSessions,
+    toggleExternalImportSelection,
+    toggleAllExternalImportSelection,
+    handleConfirmExternalImport,
+    handleImportedSessionConfirmed,
+  } = useExternalSessionImport({
+    currentRootIdRef,
+    getNodeIdForRoot,
+    sessionListMode,
+    setSessionListMode,
+    isMobile,
+    onSelectSession: handleSelectSession,
+    onImported: refreshSessionsAfterExternalImport,
+    closeRightSidebar: () => setIsRightOpen(false),
+  });
 
   const handleSendMessage = useCallback(
     async (
@@ -6293,14 +4587,30 @@ export function App({ onGoHome }: AppProps) {
     ) => {
       const activeRoot = currentRootIdRef.current;
       if (!activeRoot) return;
-      const target = getInputSession();
-      let sendSessionKey: string | null | undefined = target?.key || target?.session_key;
+      const selected = selectedSessionRef.current;
+      const selectedKey = selected?.key || selected?.session_key;
+      const selectedRoot =
+        (selected?.root_id as string | undefined) || activeRoot;
+      const currentBoundSessionKey =
+        boundSessionByRootRef.current[scopedRootKey(activeRoot)] || null;
+      const resolvedBoundKey = resolveLockedSessionKey(currentBoundSessionKey);
+      let sendSessionKey: string | null | undefined = resolvedBoundKey;
       // The server must assign a real key before this draft can receive more input.
       if (sendSessionKey?.startsWith("pending-")) return;
-      let session: Session | null = sendSessionKey
-        ? sessionCacheRef.current[rootSessionKey(activeRoot, sendSessionKey)]
-          || ({ ...target, key: sendSessionKey } as Session)
-        : null;
+      let session: Session | null = null;
+      if (sendSessionKey) {
+        session =
+          sessionCacheRef.current[rootSessionKey(activeRoot, sendSessionKey)];
+        if (!session) {
+          const current = currentSessionRef.current;
+          if (current?.key === sendSessionKey) {
+            session = current as Session;
+          }
+        }
+        if (!session && selectedKey === sendSessionKey) {
+          session = { ...(selected as any), key: sendSessionKey } as Session;
+        }
+      }
       let effectiveMode = mode,
         effectiveAgent = agent,
         effectiveModel = model || "",
@@ -6446,7 +4756,7 @@ export function App({ onGoHome }: AppProps) {
 	            return { ...(item as any), pending: false } as SessionItem;
 	          }),
 	        );
-	        const drawerSession = drawerSessionByRootRef.current[activeRoot];
+	        const drawerSession = drawerSessionByRootRef.current[scopedRootKey(activeRoot)];
 	        if (drawerSession && drawerSession.key === targetSessionKey) {
 	          setDrawerSessionForRoot(activeRoot, {
 	            ...(drawerSession as any),
@@ -6645,15 +4955,58 @@ export function App({ onGoHome }: AppProps) {
           });
           if (draftItem) {
             setSessions((prev) => mergeSessionItems(prev, [draftItem]));
+            // 新建会话立即同步进右侧多项目列表，避免依赖 WS 重拉（断连/竞态时永不出现）
+            setMultiProjectSessionGroups((prev) => {
+              const existing = prev.find((g) => g.rootId === activeRoot);
+              if (existing) {
+                return prev.map((g) =>
+                  g.rootId === activeRoot
+                    ? { ...g, sessions: mergeSessionItems(g.sessions, [draftItem]) }
+                    : g,
+                );
+              }
+              const rootName =
+                (managedRootByIdRef.current as Record<string, any>)[activeRoot]?.display_name ||
+                activeRoot;
+              return [
+                {
+                  rootId: activeRoot,
+                  rootName,
+                  latestSessionTime: draftItem.updated_at || now,
+                  sessions: [draftItem],
+                  totalCount: 1,
+                },
+                ...prev,
+              ];
+            });
           }
           bumpCacheVersion();
+          // 判据见 appSession.shouldAutoSelectNewSession。
+          if (
+            shouldAutoSelectNewSession({
+              selectedSession: selectedSessionRef.current,
+              mainView: mainViewRef.current,
+              interactionMode: interactionModeRef.current,
+              draftItem,
+            })
+          ) {
+            selectedSessionByRootRef.current[scopedRootKey(activeRoot)] =
+              tempSessionKey;
+            selectedSessionRef.current = draftItem;
+            setSelectedSession(draftItem);
+            interactionModeRef.current = "main";
+            setInteractionMode("main");
+            setDrawerOpenForRoot(activeRoot, false);
+          }
         }
         session = draftSession;
       }
-      const isBoundInMain =
-        !!selectedSessionRef.current &&
-        selectedSessionRef.current.key === sendSessionKey &&
-        interactionModeRef.current !== "drawer";
+      const isBoundInMain = isSessionShownInMain({
+        selectedKey: selectedSessionRef.current?.key || "",
+        sendSessionKey,
+        tempKey: tempKey || "",
+        interactionMode: interactionModeRef.current,
+      });
       if (!isBoundInMain) {
         setInteractionMode("drawer");
         setDrawerOpenForRoot(activeRoot, true);
@@ -6678,7 +5031,7 @@ export function App({ onGoHome }: AppProps) {
         currentRoot: activeRoot,
         selection,
         pluginCatalog:
-          effectiveMode === "plugin" ? getViewModeSystemPrompt() : undefined,
+          effectiveMode === "plugin" ? await getViewModeSystemPrompt() : undefined,
       });
       let outgoingMessage = message;
       const applyPendingPlanPrefix = pendingPlanMode && !sendSessionKey;
@@ -6742,7 +5095,7 @@ export function App({ onGoHome }: AppProps) {
             return { ...(item as any), pending: false } as SessionItem;
           }),
         );
-        const latest = drawerSessionByRootRef.current[activeRoot];
+        const latest = drawerSessionByRootRef.current[scopedRootKey(activeRoot)];
         if (latest && latest.key === failedSessionKey) {
           setDrawerSessionForRoot(activeRoot, {
             ...(latest as any),
@@ -6756,10 +5109,10 @@ export function App({ onGoHome }: AppProps) {
           prev.filter((item) => (item.key || item.session_key) !== tempKey),
         );
         delete sessionCacheRef.current[rootSessionKey(activeRoot, tempKey)];
-        if (boundSessionByRootRef.current[activeRoot] === tempKey) {
+        if (boundSessionByRootRef.current[scopedRootKey(activeRoot)] === tempKey) {
           setBoundSessionForRoot(activeRoot, null);
         }
-        const latest = drawerSessionByRootRef.current[activeRoot];
+        const latest = drawerSessionByRootRef.current[scopedRootKey(activeRoot)];
         if (latest && latest.key === tempKey) {
           setDrawerSessionForRoot(activeRoot, {
             ...(latest as any),
@@ -6770,7 +5123,6 @@ export function App({ onGoHome }: AppProps) {
     },
     [
       attachedFileContext,
-      getInputSession,
       rootSessionKey,
       mergeSessionItems,
       setSelectedPendingByKey,
@@ -6796,14 +5148,14 @@ export function App({ onGoHome }: AppProps) {
       if (!script) {
         throw new Error(t("agentConfig.noCommand"));
       }
-      const previousBoundKey = boundSessionByRootRef.current[activeRoot];
+      const previousBoundKey = boundSessionByRootRef.current[scopedRootKey(activeRoot)];
       if (previousBoundKey && !previousBoundKey.startsWith("pending-")) {
-        suppressedAutoBindSessionByRootRef.current[activeRoot] = previousBoundKey;
+        suppressedAutoBindSessionByRootRef.current[scopedRootKey(activeRoot)] = previousBoundKey;
       }
       selectedSessionRef.current = null;
       currentSessionRef.current = null;
       setSelectedSession(null);
-      selectedSessionByRootRef.current[activeRoot] = null;
+      selectedSessionByRootRef.current[scopedRootKey(activeRoot)] = null;
       setBoundSessionForRoot(activeRoot, null);
       setDrawerSessionForRoot(activeRoot, null);
       setInteractionMode("drawer");
@@ -6825,8 +5177,9 @@ export function App({ onGoHome }: AppProps) {
   );
 
   const handleRestartAgent = useCallback(async (agentName: string) => {
-    await restartAgent(agentName);
-    const items = await fetchAgents(true);
+    const nid = getNodeIdForRoot(currentRootIdRef.current || "") as any;
+    await restartAgent(agentName, nid);
+    const items = await fetchAgents(true, nid);
     setAvailableAgents(items);
     setAgentsVersion((v) => v + 1);
   }, []);
@@ -6850,19 +5203,31 @@ export function App({ onGoHome }: AppProps) {
   const markSessionPending = useCallback(
     (rootID: string, sessionKey: string) => {
       if (!rootID || !sessionKey) return;
-      const now = new Date().toISOString();
+      // 幂等：流式期间每 chunk 调用一次，已在 pending 则只更新缓存 ref，不再重复 setState。
       const cacheKey = rootSessionKey(rootID, sessionKey);
       const cached = sessionCacheRef.current[cacheKey];
+      const drawer = drawerSessionByRootRef.current[scopedRootKey(rootID)];
+      const alreadyPending =
+        !!(cached as any)?.pending &&
+        !!(drawer as any)?.pending &&
+        (selectedSessionRef.current?.key || selectedSessionRef.current?.session_key) ===
+          sessionKey &&
+        !!(selectedSessionRef.current as any)?.pending;
+      const now = new Date().toISOString();
       if (cached) {
         sessionCacheRef.current[cacheKey] = {
           ...(cached as any),
           pending: true,
           updated_at: now,
         } as Session;
+      }
+      if (alreadyPending) {
+        return;
+      }
+      if (cached) {
         bumpCacheVersion();
       }
       setSelectedPendingByKey(sessionKey, true);
-      const drawer = drawerSessionByRootRef.current[rootID];
       if (drawer && (drawer.key || (drawer as any).session_key) === sessionKey) {
         setDrawerSessionForRoot(rootID, {
           ...(drawer as any),
@@ -6893,30 +5258,60 @@ export function App({ onGoHome }: AppProps) {
   const handleRemoveQueuedMessage = useCallback(
     async (queueId: string) => {
       const activeRoot = currentRootIdRef.current;
-      const target = getInputSession();
-      const sessionKey = target?.key || target?.session_key || "";
+      const selected = selectedSessionRef.current;
+      const selectedRoot =
+        (selected?.root_id as string | undefined) || activeRoot || "";
+      const selectedKey = selected?.key || selected?.session_key || "";
+      const resolvedSelected = resolveLockedSessionKey(selectedKey);
+      const boundKey = boundSessionByRootRef.current[scopedRootKey(activeRoot || "")] || null;
+      const sessionKey =
+        interactionModeRef.current !== "drawer" &&
+        selectedRoot === activeRoot &&
+        resolvedSelected
+          ? resolvedSelected
+          : (resolveLockedSessionKey(boundKey) ?? "");
       if (!activeRoot || !sessionKey || !queueId) return;
       await sessionService.removeQueuedMessage(activeRoot, sessionKey, queueId);
     },
-    [getInputSession],
+    [],
   );
 
   const handleUpdateQueuedMessage = useCallback(
     async (queueId: string, content: string) => {
       const activeRoot = currentRootIdRef.current;
-      const target = getInputSession();
-      const sessionKey = target?.key || target?.session_key || "";
+      const selected = selectedSessionRef.current;
+      const selectedRoot =
+        (selected?.root_id as string | undefined) || activeRoot || "";
+      const selectedKey = selected?.key || selected?.session_key || "";
+      const resolvedSelected = resolveLockedSessionKey(selectedKey);
+      const boundKey = boundSessionByRootRef.current[scopedRootKey(activeRoot || "")] || null;
+      const sessionKey =
+        interactionModeRef.current !== "drawer" &&
+        selectedRoot === activeRoot &&
+        resolvedSelected
+          ? resolvedSelected
+          : (resolveLockedSessionKey(boundKey) ?? "");
       if (!activeRoot || !sessionKey || !queueId || !content.trim()) return;
       await sessionService.updateQueuedMessage(activeRoot, sessionKey, queueId, content);
     },
-    [getInputSession],
+    [],
   );
 
   const handleSendQueuedMessageNow = useCallback(
     async (queueId: string) => {
       const activeRoot = currentRootIdRef.current;
-      const target = getInputSession();
-      const sessionKey = target?.key || target?.session_key || "";
+      const selected = selectedSessionRef.current;
+      const selectedRoot =
+        (selected?.root_id as string | undefined) || activeRoot || "";
+      const selectedKey = selected?.key || selected?.session_key || "";
+      const resolvedSelected = resolveLockedSessionKey(selectedKey);
+      const boundKey = boundSessionByRootRef.current[scopedRootKey(activeRoot || "")] || null;
+      const sessionKey =
+        interactionModeRef.current !== "drawer" &&
+        selectedRoot === activeRoot &&
+        resolvedSelected
+          ? resolvedSelected
+          : (resolveLockedSessionKey(boundKey) ?? "");
       if (!activeRoot || !sessionKey || !queueId) return;
       const cacheKey = rootSessionKey(activeRoot, sessionKey);
       const previousQueue = queuedMessagesBySessionRef.current[cacheKey] || [];
@@ -6935,8 +5330,28 @@ export function App({ onGoHome }: AppProps) {
         setQueueVersion((v) => v + 1);
       }
     },
-    [getInputSession, markSessionPending, rootSessionKey],
+    [markSessionPending, rootSessionKey],
   );
+
+  const handleNewSession = useCallback(() => {
+    const rootID = currentRootIdRef.current;
+    const previousBoundKey = rootID ? boundSessionByRootRef.current[scopedRootKey(rootID)] : "";
+    if (rootID && previousBoundKey && !previousBoundKey.startsWith("pending-")) {
+      suppressedAutoBindSessionByRootRef.current[scopedRootKey(rootID)] = previousBoundKey;
+    }
+    switchMainView("chat");
+    selectedSessionRef.current = null;
+    currentSessionRef.current = null;
+    interactionModeRef.current = "main";
+    setSelectedSession(null);
+    if (rootID) {
+      selectedSessionByRootRef.current[scopedRootKey(rootID)] = null;
+    }
+    resetSessionLockForRoot(rootID);
+  }, [
+    resetSessionLockForRoot,
+    switchMainView,
+  ]);
 
   const currentSelectionSource = useMemo(() => {
     if (file?.path) {
@@ -7087,7 +5502,11 @@ export function App({ onGoHome }: AppProps) {
           rootInfo?.root_path,
         );
         if (!path || !root) return;
-        setMainViewPreferenceForRoot(String(root), "file");
+        // 深链恢复时主面板模式以 URL 的 view 为准，不因为「恢复了文件」就把面板
+        // 硬拉回文件态（与 handleSelectSession 的 preserveMainView 同一约定）。
+        if (!params?.preserveMainView) {
+          switchMainView("files");
+        }
         rememberCurrentFileScroll();
         setGitDiff(null);
         const currentFilePath = fileRef.current?.path || "";
@@ -7103,17 +5522,26 @@ export function App({ onGoHome }: AppProps) {
           // preserve the existing scroll position and DOM state until fresh content arrives.
           setFile(null);
         }
+        resetLocksForRootTransition(root);
         if (currentRootIdRef.current !== root) {
           setCurrentRootId(root);
+          selectRootNode(
+            String(root),
+            String(params.nodeId || "") ||
+              getNodeIdForRoot(String(root)) ||
+              undefined,
+          );
         }
         setSelectedDir(String(root));
         setSelectedDirKey(null);
         const requestedCursor = normalizeCursor(params.cursor);
         const cursor = requestedCursor === null ? 0 : requestedCursor;
         const preserveQuery = !!params.preservePluginQuery;
+        const pqNodeId = getNodeIdForRoot(String(root));
         const persistedQuery = loadPersistedPluginQuery(
           String(root),
           String(path),
+          pqNodeId,
         );
         const urlQuery = preserveQuery
           ? parsePluginQuery(window.location.search)
@@ -7130,14 +5558,17 @@ export function App({ onGoHome }: AppProps) {
           cursor,
           pluginQuery: nextPluginQuery,
         });
-        persistPluginQuery(String(root), String(path), nextPluginQuery);
+        persistPluginQuery(String(root), String(path), nextPluginQuery, pqNodeId);
 
         const expandAndLoadTreeForFile = async () => {
           const dirs = parentDirsOfFile(String(path));
+          const fileNodeId = getNodeIdForRoot(String(root));
           setExpanded((prev) => {
             const next = new Set(prev);
-            next.add(String(root));
-            dirs.forEach((dir) => next.add(`${root}:${dir}`));
+            next.add(scopeKey(fileNodeId ?? "", String(root)));
+            dirs.forEach((dir) =>
+              next.add(dirSelKey(fileNodeId, String(root), dir, false)),
+            );
             return Array.from(next);
           });
           const toLoad = [".", ...dirs];
@@ -7157,6 +5588,7 @@ export function App({ onGoHome }: AppProps) {
                 appURL(
                   "/api/tree",
                   new URLSearchParams({ root: String(root), dir }),
+                  getNodeIdForRoot(String(root)),
                 ),
               );
               const parsed = normalizeTreeResponse(payload);
@@ -7180,6 +5612,7 @@ export function App({ onGoHome }: AppProps) {
             return fetchFile({
               rootId: String(root),
               path: String(path),
+              nodeId: getNodeIdForRoot(String(root)),
               readMode: mode,
               cursor,
               timeoutMs,
@@ -7254,17 +5687,10 @@ export function App({ onGoHome }: AppProps) {
             });
           }
           fileCursorRef.current = cursor;
-          setSelectedSession(null);
-          setSelectedSessionLoading(false);
+          // 打开文件不解除会话选中：面板切到文件态而已，切回对话仍应看到原来那个会话。
           setDrawerOpenForRoot(root, false);
           if (isMobile) setIsLeftOpen(false);
         } catch (err) {
-          const status = extractHTTPStatusFromErrorMessage(
-            (err as Error)?.message || "",
-          );
-          if (status && (await handleRelayNavigationFailure(status, ""))) {
-            return;
-          }
           console.error("[file.open] failed", { root, path, cursor, err });
         }
       },
@@ -7279,7 +5705,21 @@ export function App({ onGoHome }: AppProps) {
         setGitDiff(null);
         const isActuallyRoot = params.isRoot === true;
         const root = isActuallyRoot ? path : rootParam;
-        const expandedKey = isActuallyRoot ? path : `${root}:${path}`;
+        // 多节点同名项目：根级/换根打开时携带节点信息并应用为当前选中节点
+        const resolvedNodeId =
+          String(params.nodeId || "").trim() ||
+          (root === String(currentRootIdRef.current || "")
+            ? String(currentRootNodeIdRef.current || "")
+            : "") ||
+          getNodeIdForRoot(root) ||
+          "";
+        if (
+          isActuallyRoot ||
+          root !== String(currentRootIdRef.current || "")
+        ) {
+          selectRootNode(root, resolvedNodeId || undefined);
+        }
+        const expandedKey = expandKey(resolvedNodeId, root, path, isActuallyRoot);
         const preserveCollapsedRoot =
           isActuallyRoot &&
           suppressTreeExpand &&
@@ -7300,13 +5740,19 @@ export function App({ onGoHome }: AppProps) {
         ) => {
           const apiDir = targetIsRoot ? "." : targetPath;
           const cacheKey = treeCacheKey(root, apiDir);
+          resetLocksForRootTransition(root);
           if (currentRootIdRef.current !== root) {
+            // 换项目也算一次切换操作：关掉旧根的悬浮框，别留在 per-root 记忆里
+            setDrawerOpenForRoot(currentRootIdRef.current, false);
+            interactionModeRef.current = "main";
+            setInteractionMode("main");
             setCurrentRootId(root);
           }
-          setMainViewPreferenceForRoot(root, "directory");
+          // 只有「用户在左树里点文件夹/文件名」才切到文件列表；程序化打开目录一律保持当前模式
+          if (params.switchToFiles === true) switchMainView("files");
           setFile(null);
-          setSelectedSession(null);
-          setSelectedSessionLoading(false);
+          // 会话选中不在这里清：换根由上面 resetLocksForRootTransition 负责，
+          // 同根内的目录切换必须保持选中（面板切走不解除选中）。
           setMainEntries([]);
           setMainDirectoryError("");
           setPluginQuery(nextPluginQuery);
@@ -7329,11 +5775,9 @@ export function App({ onGoHome }: AppProps) {
             setMainDirectoryError("");
             setSelectedDir(targetPath);
             setSelectedDirKey(
-              buildDirectorySelectionKey(root, targetPath, targetIsRoot),
+              buildDirectorySelectionKey(resolvedNodeId, root, targetPath, targetIsRoot),
             );
             setFile(null);
-            setSelectedSession(null);
-            setSelectedSessionLoading(false);
             fileCursorRef.current = 0;
             setDrawerOpenForRoot(root, false);
             if (!isToggle && isMobile) setIsLeftOpen(false);
@@ -7341,7 +5785,7 @@ export function App({ onGoHome }: AppProps) {
           }
           try {
             const payload = await apiProtectedJSON<any>(
-              appURL("/api/tree", new URLSearchParams({ root, dir: apiDir })),
+              appURL("/api/tree", new URLSearchParams({ root, dir: apiDir }), getNodeIdForRoot(root)),
             );
             const parsed = normalizeTreeResponse(payload);
             invalidTreeCacheKeysRef.current.delete(cacheKey);
@@ -7353,30 +5797,20 @@ export function App({ onGoHome }: AppProps) {
             setMainEntries(parsed.entries);
             setSelectedDir(targetPath);
             setSelectedDirKey(
-              buildDirectorySelectionKey(root, targetPath, targetIsRoot),
+              buildDirectorySelectionKey(resolvedNodeId, root, targetPath, targetIsRoot),
             );
             setFile(null);
-            setSelectedSession(null);
-            setSelectedSessionLoading(false);
             fileCursorRef.current = 0;
             setDrawerOpenForRoot(root, false);
             if (!isToggle && isMobile) setIsLeftOpen(false);
           } catch (error) {
             if (error instanceof ProtectedAPIError) {
-              if (
-                await handleRelayNavigationFailure(
-                  error.status,
-                  typeof error.payload?.error === "string" ? error.payload.error : "",
-                )
-              ) {
-                return;
-              }
               const message = formatDirectoryLoadError(
                 typeof error.payload?.error === "string" ? error.payload.error : "",
               );
               setSelectedDir(targetPath);
               setSelectedDirKey(
-                buildDirectorySelectionKey(root, targetPath, targetIsRoot),
+                buildDirectorySelectionKey(resolvedNodeId, root, targetPath, targetIsRoot),
               );
               setMainEntries([]);
               setMainDirectoryError(message);
@@ -7386,7 +5820,7 @@ export function App({ onGoHome }: AppProps) {
             const message = t("directory.loadFailedRetry");
             setSelectedDir(targetPath);
             setSelectedDirKey(
-              buildDirectorySelectionKey(root, targetPath, targetIsRoot),
+              buildDirectorySelectionKey(resolvedNodeId, root, targetPath, targetIsRoot),
             );
             setMainEntries([]);
             setMainDirectoryError(message);
@@ -7409,9 +5843,32 @@ export function App({ onGoHome }: AppProps) {
           return;
         }
         if (isActuallyRoot) {
+          resetLocksForRootTransition(path);
           setCurrentRootId(path);
+          // 根树互斥：打开/激活一个根，收起其它根的展开树（只保留根自身键，子目录键原样保留）
+          const otherRootKeys = new Set(
+            rootEntriesRef.current
+              .filter((entry) => entry.is_root === true && entry.path !== root)
+              .map((entry) =>
+                expandKey(String((entry as any)._nodeId || ""), entry.path, entry.path, true),
+              ),
+          );
           if (!suppressTreeExpand) {
-            setExpanded((prev) => Array.from(new Set([...prev, path])));
+            setExpanded((prev) => {
+              const kept = prev.filter((k) => !otherRootKeys.has(k));
+              const rootKey = expandKey(resolvedNodeId, path, path, true);
+              // 换根是「减一个加一个」：长度可能不变，必须按内容判断是否已就位，
+              // 不能用 prev.length===next.length 当 identity 守卫（会吞掉换根更新）。
+              if (kept.length === prev.length && kept.includes(rootKey)) {
+                return prev;
+              }
+              return Array.from(new Set([...kept, rootKey]));
+            });
+          } else {
+            setExpanded((prev) => {
+              const next = prev.filter((k) => !otherRootKeys.has(k));
+              return prev.length === next.length ? prev : next;
+            });
           }
           if (!forceDirectory) {
             const restored = await tryShowBoundSessionForRoot(path, {
@@ -7420,7 +5877,17 @@ export function App({ onGoHome }: AppProps) {
             });
             if (restored) {
               void loadSessionsForRoot(path, { replace: true, force: true });
-              await refreshTreeDir(path, ".", false);
+              if (mainViewRef.current === "files" && !mainEntriesRef.current.length && !mainDirectoryErrorRef.current) {
+                // 文件态没有内容可显示：补上项目顶层目录，行为与手动切面板一致
+                await actionHandlersRef.current.open_dir({
+                  path,
+                  root: path,
+                  isRoot: true,
+                  forceDirectory: true,
+                });
+              } else {
+                await refreshTreeDir(path, ".", false);
+              }
               restoreSuppressedRootExpansion();
               return;
             }
@@ -7433,22 +5900,71 @@ export function App({ onGoHome }: AppProps) {
       },
     }),
     [
-      handleRelayNavigationFailure,
       isMobile,
       normalizeTreeResponse,
-      setMainViewPreferenceForRoot,
+      switchMainView,
       setDrawerOpenForRoot,
       replaceURLState,
       rememberCurrentFileScroll,
       treeCacheKey,
       tryShowBoundSessionForRoot,
       loadSessionsForRoot,
+      resetLocksForRootTransition,
     ],
   );
   const actionHandlersRef = useRef(actionHandlers);
   useEffect(() => {
     actionHandlersRef.current = actionHandlers;
   }, [actionHandlers]);
+
+  // 会话恢复入口（open_dir 开根 / 首屏 boot / popstate）共用：
+  // 会话在场就直接返回，目录一次都不加载——带着 view=files 进来时主区就是空的。
+  const showBoundSessionOrRootDir = useCallback(
+    async (
+      rootID: string,
+      options?: {
+        pluginQuery?: Record<string, string>;
+        closeLeftSidebar?: boolean;
+        loadSessionsOnRestore?: boolean;
+        suppressTreeExpand?: boolean;
+      },
+    ) => {
+      const restored = await tryShowBoundSessionForRoot(rootID, {
+        pluginQuery: options?.pluginQuery,
+        closeLeftSidebar: options?.closeLeftSidebar,
+      });
+      if (!restored) {
+        await actionHandlersRef.current.open_dir({
+          path: rootID,
+          root: rootID,
+          isRoot: true,
+          forceDirectory: true,
+          suppressTreeExpand: options?.suppressTreeExpand,
+        });
+        return;
+      }
+      if (options?.loadSessionsOnRestore) {
+        void loadSessionsForRoot(rootID, { replace: true, force: true });
+      }
+      // 文件态没有内容可显示：把当前项目顶层目录补上，行为与手动切面板一致
+      if (
+        mainViewRef.current === "files" &&
+        !mainEntriesRef.current.length &&
+        !mainDirectoryErrorRef.current
+      ) {
+        await actionHandlersRef.current.open_dir({
+          path: rootID,
+          root: rootID,
+          isRoot: true,
+          forceDirectory: true,
+          suppressTreeExpand: true,
+        });
+        return;
+      }
+      await refreshTreeDir(rootID, ".", false);
+    },
+    [loadSessionsForRoot, refreshTreeDir, tryShowBoundSessionForRoot],
+  );
 
   const openRelatedFileDiff = useCallback(
     async (rootID: string, file: RelatedFileClickTarget) => {
@@ -7475,7 +5991,7 @@ export function App({ onGoHome }: AppProps) {
         return;
       }
       fileOpenRequestRef.current += 1;
-      setMainViewPreferenceForRoot(rootID, "git-diff");
+      switchMainView("files");
       setSelectedSession(null);
       setSelectedSessionLoading(false);
       setFile(null);
@@ -7488,7 +6004,7 @@ export function App({ onGoHome }: AppProps) {
         pluginQuery: {},
       });
       try {
-        const next = await fetchGitRelatedFileDiff(rootID, file);
+        const next = await fetchGitRelatedFileDiff(rootID, file, getNodeIdForRoot(rootID));
         const rootPath = managedRootByIdRef.current[rootID]?.root_path;
         const repoPath = String(file?.repo_path || "").trim();
         const displayPath = repoPath
@@ -7498,6 +6014,7 @@ export function App({ onGoHome }: AppProps) {
           next.display_path = displayPath;
         }
         setGitDiff(next);
+        resetLocksForRootTransition(rootID);
         if (currentRootIdRef.current !== rootID) {
           setCurrentRootId(rootID);
         }
@@ -7531,33 +6048,58 @@ export function App({ onGoHome }: AppProps) {
       isMobile,
       openGitDiff,
       replaceURLState,
-      setMainViewPreferenceForRoot,
+      switchMainView,
+      resetLocksForRootTransition,
     ],
   );
 
-  const loadManagedRootPayloads = useCallback(async () => {
+  const loadManagedRootPayloads = useCallback(async (opts?: { force?: boolean }) => {
     if (bootstrapService.snapshot().phase !== "ready") {
       return null;
     }
-    if (managedRootsRequestRef.current) {
+    if (!opts?.force && managedRootsRequestRef.current) {
       return managedRootsRequestRef.current;
     }
+    if (opts?.force) {
+      managedRootsRequestRef.current = null;
+    }
     const request = (async () => {
+      nodeLoadFailuresRef.current = [];
       try {
-        const dirs = await apiProtectedJSON<ManagedRootPayload[]>(appPath("/api/dirs"));
-        return Array.isArray(dirs) ? dirs : [];
-      } catch (error) {
-        if (!(error instanceof ProtectedAPIError)) {
-          return null;
+        try { migrateLegacySingleBase(); } catch {}
+        // 冷启动时 getNodes() 首屏只有 local，需等待服务端节点同步后再取全量
+        try {
+          if (!opts?.force) {
+            await syncNodesFromServer().catch(() => {});
+          }
+        } catch {}
+        const nodes = getNodes();
+        const targets = nodes;
+        if (!targets.length) {
+          const dirs = await apiProtectedJSON<ManagedRootPayload[]>(appPath("/api/dirs"));
+          return Array.isArray(dirs) ? dirs : [];
         }
-        if (
-          await handleRelayNavigationFailure(
-            error.status,
-            typeof error.payload?.error === "string" ? error.payload.error : "",
-          )
-        ) {
-          return null;
-        }
+        const nodeFailures: Array<{ id: string; name: string }> = [];
+        // 跨机器也带 user=（用户名，见 base.ts）：对方按用户名解析到它本地的账户，
+        // 取到的确实是「我的」数据，不再是它主账户的回落。
+        // 对方没有这个账户时服务端回 **200 空列表**（不是 404）——所以这里没有
+        // 缺账户的特殊分支：空就是空，节点照常显示，只是没有项目。
+        const results = await Promise.all(targets.map(async (n) => {
+          try {
+            const dirs = await withNodeRetry(() => apiProtectedJSON<ManagedRootPayload[]>(appPath("/api/dirs", n.id)));
+            return (Array.isArray(dirs) ? dirs : []).map((d: any) => ({ ...d, _nodeId: (d as any)._nodeId || n.id, _nodeColor: n.color, _nodeName: n.name }));
+          } catch (err) {
+            nodeFailures.push({ id: String(n.id), name: String(n.name || n.id) });
+            return [] as ManagedRootPayload[];
+          }
+        }));
+        nodeLoadFailuresRef.current = nodeFailures;
+        const flat = results.flat() as ManagedRootPayload[];
+        const seen = new Set<string>();
+        const deduped: ManagedRootPayload[] = [];
+        for (const d of flat) { const id = String((d as any).id || ""); const nid = String((d as any)._nodeId || ""); const key = `${nid}::${id}`; if (!id || seen.has(key)) continue; seen.add(key); deduped.push(d); }
+        return deduped;
+      } catch {
         return null;
       }
     })().finally(() => {
@@ -7565,20 +6107,26 @@ export function App({ onGoHome }: AppProps) {
     });
     managedRootsRequestRef.current = request;
     return request;
-  }, [bootstrapState.phase, handleRelayNavigationFailure]);
+  }, [bootstrapState.phase]);
 
   const refreshManagedRoots = useCallback(async () => {
     const dirs = await loadManagedRootPayloads();
     if (!dirs) {
       return;
     }
+    // 抓取失败的节点：提示 + 给重试入口。恢复后清掉记录，下次再失败能重新提示。
+    const failedNodeIds = new Set(nodeLoadFailuresRef.current.map((f) => f.id));
+    for (const id of Array.from(notifiedNodeFailuresRef.current)) {
+      if (!failedNodeIds.has(id)) notifiedNodeFailuresRef.current.delete(id);
+    }
+    for (const failed of nodeLoadFailuresRef.current) {
+      notifyNodeLoadFailedRef.current(failed);
+    }
     const nextDirs = Array.isArray(dirs) ? dirs : [];
-    syncRelayNodesToNative(nextDirs);
     const nextRootIds = nextDirs.map((dir) => dir.id).filter(Boolean);
     const previousRootById = managedRootByIdRef.current;
-    const nextRootById = Object.fromEntries(
-      nextDirs.filter((dir) => !!dir.id).map((dir) => [dir.id, dir]),
-    );
+    const indexed = indexManagedRoots(nextDirs as ManagedRootPayload[]);
+    const nextRootById = indexed.byId;
     let clearedRootScopedState = false;
     for (const rootID of Object.keys(previousRootById)) {
       if (!(rootID in nextRootById)) {
@@ -7594,8 +6142,27 @@ export function App({ onGoHome }: AppProps) {
         clearedRootScopedState = true;
       }
     }
+    managedRootByKeyRef.current = { ...managedRootByKeyRef.current, ...indexed.byKey };
+    // D2: 保留当前选中根的 bare 槽位，避免同名项目被本地蓝覆盖（瞬时全蓝根因）
+    {
+      const rid = String(currentRootIdRef.current || "").trim();
+      const curNid = String(currentRootNodeIdRef.current || "").trim();
+      if (rid && curNid) {
+        const scoped = scopeKey(curNid, rid);
+        const keep = (indexed.byKey as any)[scoped] || (managedRootByKeyRef.current as any)[scoped];
+        if (keep) nextRootById[rid] = keep;
+      }
+    }
     managedRootByIdRef.current = nextRootById;
-    if (clearedRootScopedState && multiProjectSessionsEnabled) {
+    setRootNodeMap(managedRootByIdRef.current as Record<string, any>);
+    {
+      const curRid = String(currentRootIdRef.current || "").trim();
+      const curNid = String(currentRootNodeIdRef.current || "").trim();
+      const curSlot = curRid && curNid ? `${curNid}::${curRid}` : "(none)";
+    }
+    // 任何索引变化（新增节点/项目/路径）都应重拉多节点会话，确保 PC 等远端分组首屏即出现
+    // 之前仅在 cleared/keySetChanged 时触发，导致清缓存冷启动 PC 迟迟不出现、需点会话才补齐
+    if (multiProjectSessionsEnabled) {
       void refreshMultiProjectReplyingSessions();
       void loadMultiProjectSessionGroups();
     }
@@ -7605,7 +6172,7 @@ export function App({ onGoHome }: AppProps) {
     setRootEntries(mapManagedRootsToEntries(nextDirs));
     Object.keys(selectedSessionByRootRef.current).forEach((rootID) => {
       if (!nextRootIds.includes(rootID)) {
-        delete selectedSessionByRootRef.current[rootID];
+        delete selectedSessionByRootRef.current[scopedRootKey(rootID)];
       }
     });
 
@@ -7639,13 +6206,20 @@ export function App({ onGoHome }: AppProps) {
     }
 
     const lastRoot = loadLastRootId();
+    const lastNode = loadLastRootNodeId();
     const nextRoot =
       lastRoot && nextRootIds.includes(lastRoot) ? lastRoot : nextRootIds[0];
+    const preferredDir =
+      nextDirs.find(
+        (d) => d.id === nextRoot && (!lastNode || (d as any)._nodeId === lastNode),
+      ) ||
+      nextDirs.find((d) => d.id === nextRoot);
     await actionHandlersRef.current.open_dir({
       path: nextRoot,
       root: nextRoot,
       preservePluginQuery: true,
       isRoot: true,
+      nodeId: (preferredDir as any)?._nodeId || undefined,
     });
   }, [
     clearRootScopedClientState,
@@ -7655,6 +6229,33 @@ export function App({ onGoHome }: AppProps) {
     refreshMultiProjectReplyingSessions,
     replaceURLState,
   ]);
+
+  useEffect(() => {
+    const h = () => { void refreshManagedRoots(); };
+    window.addEventListener("mindfs:nodes-changed", h);
+    return () => window.removeEventListener("mindfs:nodes-changed", h);
+  }, [refreshManagedRoots]);
+
+  // 同一节点在一次故障里只提示一次（刷新很频繁，每次都弹会淹掉界面）。
+  const notifyNodeLoadFailed = useCallback(
+    (node: { id: string; name: string }) => {
+      if (notifiedNodeFailuresRef.current.has(node.id)) return;
+      notifiedNodeFailuresRef.current.add(node.id);
+      reportError("node.load_failed", t("error.node.loadFailed", { name: node.name }), {
+        severity: "warning",
+        recoverable: true,
+        details: { nodeId: node.id },
+        retryAction: async () => {
+          notifiedNodeFailuresRef.current.delete(node.id);
+          await refreshManagedRoots();
+        },
+      });
+    },
+    [refreshManagedRoots, t],
+  );
+  useEffect(() => {
+    notifyNodeLoadFailedRef.current = notifyNodeLoadFailed;
+  }, [notifyNodeLoadFailed]);
 
   const applyManagedRootRename = useCallback(
     (oldRootID: string, rootPayload: ManagedRootPayload | null | undefined) => {
@@ -7678,45 +6279,66 @@ export function App({ onGoHome }: AppProps) {
       delete nextRootById[oldID];
       nextRootById[nextID] = nextRoot;
       managedRootByIdRef.current = nextRootById;
+      setRootNodeMap(nextRootById as Record<string, any>);
 
       const moveRecordKey = <T,>(record: Record<string, T>) => {
-        if (oldID === nextID || !(oldID in record)) {
+        if (oldID === nextID) {
           return;
         }
-        record[nextID] = record[oldID];
-        delete record[oldID];
+        for (const k of Object.keys(record)) {
+          const idx = k.lastIndexOf("::");
+          const rid = idx >= 0 ? k.slice(idx + 2) : k;
+          if (rid !== oldID) {
+            continue;
+          }
+          const nextKey = idx >= 0 ? `${k.slice(0, idx + 2)}${nextID}` : nextID;
+          record[nextKey] = record[k];
+          delete record[k];
+        }
       };
       moveRecordKey(boundSessionByRootRef.current);
       moveRecordKey(suppressedAutoBindSessionByRootRef.current);
       moveRecordKey(drawerSessionByRootRef.current);
       moveRecordKey(selectedSessionByRootRef.current);
-      moveRecordKey(mainViewPreferenceByRootRef.current);
       moveRecordKey(drawerOpenByRootRef.current);
       moveRecordKey(pluginsLoadedByRootRef.current);
       moveRecordKey(pluginsLoadingByRootRef.current);
 
       const moveStateRecord = <T,>(record: Record<string, T>) => {
-        if (oldID === nextID || !(oldID in record)) {
+        if (oldID === nextID) {
           return record;
         }
-        const next = { ...record, [nextID]: record[oldID] };
-        delete next[oldID];
+        const next: Record<string, T> = {};
+        for (const [k, v] of Object.entries(record)) {
+          const idx = k.lastIndexOf("::");
+          const rid = idx >= 0 ? k.slice(idx + 2) : k;
+          const nextKey = idx >= 0 ? `${k.slice(0, idx + 2)}${nextID}` : nextID;
+          next[rid === oldID ? nextKey : k] = v;
+        }
         return next;
       };
       setGitStatusExpandedByRoot((prev) => moveStateRecord(prev));
       setGitHistoryExpandedByRoot((prev) => moveStateRecord(prev));
-      setMainContentViewByRoot((prev) => moveStateRecord(prev));
 
+      const remapSessionCacheKey = (key: string): string | null => {
+        const parts = key.split("::");
+        if (parts.length === 3) {
+          if (parts[1] !== oldID) return null;
+          return `${parts[0]}::${nextID}::${parts.slice(2).join("::")}`;
+        }
+        if (parts.length === 2) {
+          if (parts[0] !== oldID) return null;
+          return `${nextID}::${parts[1]}`;
+        }
+        return null;
+      };
       const moveCacheRecord = <T,>(record: Record<string, T>) => {
         if (oldID === nextID) {
           return;
         }
-        const oldPrefix = `${oldID}::`;
         for (const key of Object.keys(record)) {
-          if (!key.startsWith(oldPrefix)) {
-            continue;
-          }
-          const nextKey = `${nextID}::${key.slice(oldPrefix.length)}`;
+          const nextKey = remapSessionCacheKey(key);
+          if (nextKey === null) continue;
           record[nextKey] = record[key];
           delete record[key];
         }
@@ -7725,11 +6347,8 @@ export function App({ onGoHome }: AppProps) {
       moveCacheRecord(loadedSessionRef.current);
       if (oldID !== nextID) {
         staleSessionKeysRef.current = new Set(
-          Array.from(staleSessionKeysRef.current).map((key) =>
-            key.startsWith(`${oldID}::`)
-              ? `${nextID}::${key.slice(`${oldID}::`.length)}`
-              : key,
-          ),
+          Array.from(staleSessionKeysRef.current)
+            .map((key) => remapSessionCacheKey(key) ?? key),
         );
       }
 
@@ -7738,13 +6357,18 @@ export function App({ onGoHome }: AppProps) {
           return record;
         }
         const next = { ...record };
-        const oldPrefix = `${oldID}:`;
         for (const key of Object.keys(record)) {
-          if (!key.startsWith(oldPrefix)) {
+          const afterScope = key.includes("::")
+            ? key.slice(key.lastIndexOf("::") + 2)
+            : key;
+          const idx = afterScope.indexOf(":");
+          const rid = idx >= 0 ? afterScope.slice(0, idx) : afterScope;
+          if (rid !== oldID) {
             continue;
           }
-          const nextKey = `${nextID}:${key.slice(oldPrefix.length)}`;
-          next[nextKey] = record[key];
+          const head = key.slice(0, key.length - afterScope.length);
+          const nextAfter = `${nextID}${idx >= 0 ? afterScope.slice(idx) : ""}`;
+          next[`${head}${nextAfter}`] = record[key];
           delete next[key];
         }
         return next;
@@ -7753,11 +6377,16 @@ export function App({ onGoHome }: AppProps) {
       setEntriesByPath((prev) => moveTreeRecord(prev));
       if (oldID !== nextID) {
         invalidTreeCacheKeysRef.current = new Set(
-          Array.from(invalidTreeCacheKeysRef.current).map((key) =>
-            key.startsWith(`${oldID}:`)
-              ? `${nextID}:${key.slice(`${oldID}:`.length)}`
-              : key,
-          ),
+          Array.from(invalidTreeCacheKeysRef.current).map((key) => {
+            const afterScope = key.includes("::")
+              ? key.slice(key.lastIndexOf("::") + 2)
+              : key;
+            const idx = afterScope.indexOf(":");
+            const rid = idx >= 0 ? afterScope.slice(0, idx) : afterScope;
+            if (rid !== oldID) return key;
+            const head = key.slice(0, key.length - afterScope.length);
+            return `${head}${nextID}${idx >= 0 ? afterScope.slice(idx) : ""}`;
+          }),
         );
       }
 
@@ -7790,10 +6419,6 @@ export function App({ onGoHome }: AppProps) {
     [],
   );
 
-  const startRelayBinding = useCallback(async () => {
-    return bootstrapService.startRelayBinding();
-  }, []);
-
   const normalizeComparableRootPath = useCallback((value: string): string => {
     let normalized = String(value || "").trim().replace(/\\/g, "/").replace(/\/+$/, "");
     if (/^[a-z]:/i.test(normalized)) {
@@ -7815,441 +6440,40 @@ export function App({ onGoHome }: AppProps) {
     return null;
   }, [normalizeComparableRootPath]);
 
-  const handleCreateRootStart = useCallback((parentPath?: string | null) => {
-    if (creatingRootBusy) {
-      return;
-    }
-    const existing = new Set(managedRootIdsRef.current);
-    let nextName = "new-root";
-    let suffix = 2;
-    while (existing.has(nextName)) {
-      nextName = `new-root-${suffix}`;
-      suffix += 1;
-    }
-    setCreatingRootParentPath(
-      parentPath && String(parentPath).trim() ? String(parentPath).trim() : null,
-    );
-    setCreatingRootKind("root");
-    setCreatingRootName(nextName);
-  }, [creatingRootBusy]);
+  const openManagedDir = useCallback(
+    (payload: { path: string; root: string; isRoot: boolean; forceDirectory?: boolean }) =>
+      actionHandlersRef.current.open_dir(payload),
+    [],
+  );
 
-  const loadWorktreeBranches = useCallback(async (rootID: string) => {
-    setWorktreeBranchesLoading(true);
-    setWorktreeBranchError("");
-    try {
-      const payload = await fetchGitBranches(rootID);
-      setWorktreeBranches(payload);
-    } catch (error) {
-      setWorktreeBranches({ branches: [] });
-      setWorktreeBranchError(error instanceof Error ? error.message : t("worktree.loadBranchFailed"));
-    } finally {
-      setWorktreeBranchesLoading(false);
-    }
-  }, [t]);
-
-  const loadWorktreeList = useCallback(async (rootID: string) => {
-    setWorktreeSwitchLoading(true);
-    setWorktreeSwitchError("");
-    try {
-      const payload = await fetchGitWorktrees(rootID);
-      setWorktreeSwitchItems(payload.items || []);
-    } catch (error) {
-      setWorktreeSwitchItems([]);
-      setWorktreeSwitchError(error instanceof Error ? error.message : t("worktree.loadFailed"));
-    } finally {
-      setWorktreeSwitchLoading(false);
-    }
-  }, [t]);
-
-  const loadProjectTreeWorktrees = useCallback(async (rootID: string): Promise<GitWorktreeItem[]> => {
-    if (!rootID) {
-      return [];
-    }
-    setWorktreeLoadingByRoot((prev) => ({ ...prev, [rootID]: true }));
-    setWorktreeErrorByRoot((prev) => ({ ...prev, [rootID]: "" }));
-    try {
-      const payload = await fetchGitWorktrees(rootID);
-      (payload.items || []).forEach((item) => {
-        if (item.path) {
-          knownTaskWorktreePathsRef.current.add(item.path);
-        }
-      });
-      const items = (payload.items || []).filter((item) => !!item.branch);
-      setWorktreeItemsByRoot((prev) => ({
-        ...prev,
-        [rootID]: items,
-      }));
-      return items;
-    } catch (error) {
-      setWorktreeItemsByRoot((prev) => ({ ...prev, [rootID]: [] }));
-      setWorktreeErrorByRoot((prev) => ({
-        ...prev,
-        [rootID]: error instanceof Error ? error.message : t("worktree.loadFailed"),
-      }));
-      return [];
-    } finally {
-      setWorktreeLoadingByRoot((prev) => ({ ...prev, [rootID]: false }));
-    }
-  }, [t]);
-
-  const loadProjectTreeWorktreeStatus = useCallback(async (worktreePath: string) => {
-    if (!worktreePath) {
-      return;
-    }
-    setWorktreeStatusLoadingByPath((prev) => ({ ...prev, [worktreePath]: true }));
-    try {
-      const status = await fetchGitStatusByPath(worktreePath);
-      setWorktreeStatusByPath((prev) => ({ ...prev, [worktreePath]: status }));
-    } catch (error) {
-      console.error("[git.worktree.status] failed", { worktreePath, error });
-      setWorktreeStatusByPath((prev) => ({
-        ...prev,
-        [worktreePath]: { available: false, dirty_count: 0, items: [] } as GitStatusPayload,
-      }));
-    } finally {
-      setWorktreeStatusLoadingByPath((prev) => ({ ...prev, [worktreePath]: false }));
-    }
-  }, []);
-
-  const handleCreateWorktreeStart = useCallback((parentPath: string) => {
-    if (creatingRootBusy) {
-      return;
-    }
-    const rootID = currentRootIdRef.current;
-    if (!rootID) {
-      return;
-    }
-    const existing = new Set(managedRootIdsRef.current);
-    const baseName = `${rootID}-worktree`;
-    let nextName = baseName;
-    let suffix = 2;
-    while (existing.has(nextName)) {
-      nextName = `${baseName}-${suffix}`;
-      suffix += 1;
-    }
-    setCreatingRootKind("worktree");
-    setCreatingRootParentPath(parentPath);
-    setCreatingRootName(nextName);
-    setWorktreeBranchMode("new");
-    setWorktreeBranch("");
-    setWorktreeBranches({ branches: [] });
-    setWorktreeBranchError("");
-    void loadWorktreeBranches(rootID);
-  }, [creatingRootBusy, loadWorktreeBranches]);
-
-  const handleSwitchWorktreeStart = useCallback(() => {
-    const rootID = currentRootIdRef.current;
-    if (!rootID) {
-      return;
-    }
-    setProjectAddMode(null);
-    setCreatingRootName(null);
-    setWorktreeSwitchOpen(true);
-    setWorktreeSwitchItems([]);
-    setWorktreeSwitchError("");
-    void loadWorktreeList(rootID);
-  }, [loadWorktreeList]);
-
-  useEffect(() => {
-    if (projectTreeTab !== "worktrees" || !currentRootId) {
-      return;
-    }
-    if (worktreeItemsByRoot[currentRootId] || worktreeLoadingByRoot[currentRootId]) {
-      return;
-    }
-    void loadProjectTreeWorktrees(currentRootId);
-  }, [currentRootId, loadProjectTreeWorktrees, projectTreeTab, worktreeItemsByRoot, worktreeLoadingByRoot]);
-
-  const handleSwitchWorktree = useCallback(async (item: GitWorktreeItem) => {
-    const targetPath = String(item.path || "").trim();
-    if (!targetPath || switchingWorktreePath) {
-      return;
-    }
-    setSwitchingWorktreePath(targetPath);
-    try {
-      let targetRoot = findManagedRootByPath(targetPath);
-      if (!targetRoot?.id) {
-        const created = await apiProtectedJSON<ManagedRootPayload>(appPath("/api/dirs"), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ path: targetPath, create: false }),
-        });
-        targetRoot = created;
-        await refreshManagedRoots();
-      }
-      if (targetRoot?.id) {
-        setWorktreeSwitchOpen(false);
-        await actionHandlersRef.current.open_dir({
-          path: targetRoot.id,
-          root: targetRoot.id,
-          isRoot: true,
-          forceDirectory: true,
-        });
-        return targetRoot.id;
-      }
-    } catch (error) {
-      reportError(
-        "git.worktree_switch_failed",
-        managedDirAddErrorMessage(error, t("root.switchWorktreeFailed"), t),
-      );
-    } finally {
-      setSwitchingWorktreePath("");
-    }
-    return undefined;
-  }, [findManagedRootByPath, refreshManagedRoots, switchingWorktreePath, t]);
-
-  const handleOpenProjectAdd = useCallback(() => {
-    if (creatingRootBusy) {
-      return;
-    }
-    setProjectAddMode("mode");
-  }, [creatingRootBusy]);
-
-  const inferParentPath = useCallback((absolutePath: string): string => {
-    const trimmed = absolutePath.trim().replace(/[\\/]+$/, "");
-    const parts = trimmed.split(/[\\/]/).filter(Boolean);
-    if (parts.length <= 1) {
-      return "";
-    }
-    if (/^[A-Za-z]:/.test(trimmed)) {
-      const drive = parts[0];
-      const rest = parts.slice(1, -1);
-      return rest.length > 0 ? `${drive}\\${rest.join("\\")}` : `${drive}\\`;
-    }
-    if (trimmed.startsWith("/")) {
-      return `/${parts.slice(0, -1).join("/")}`;
-    }
-    return parts.slice(0, -1).join("/");
-  }, []);
-
-  const loadLocalDirs = useCallback(async (path: string) => {
-    const trimmed = String(path || "").trim();
-    setLocalDirState((prev) => ({
-      ...prev,
-      loading: true,
-      error: "",
-      path: trimmed,
-      selectedPath: "",
-    }));
-    try {
-      const params = trimmed ? new URLSearchParams({ path: trimmed }) : undefined;
-      const payload = await apiProtectedJSON<LocalDirsPayload>(
-        appURL("/api/local_dirs", params),
-      );
-      setLocalDirState({
-        path: String(payload.path || trimmed),
-        parent: String(payload.parent || ""),
-        volumes: Array.isArray(payload.volumes)
-          ? payload.volumes.map((item) => ({
-              name: String(item.name || ""),
-              path: String(item.path || ""),
-              is_dir: item.is_dir !== false,
-              is_added_root: item.is_added_root === true,
-              root_id: String(item.root_id || ""),
-            }))
-          : [],
-        items: Array.isArray(payload.items)
-          ? payload.items.map((item) => ({
-              name: String(item.name || ""),
-              path: String(item.path || ""),
-              is_dir: item.is_dir !== false,
-              is_added_root: item.is_added_root === true,
-              root_id: String(item.root_id || ""),
-            }))
-          : [],
-        loading: false,
-        selectedPath: "",
-        adding: false,
-        error: "",
-      });
-    } catch (error) {
-      setLocalDirState((prev) => ({
-        ...prev,
-        loading: false,
-        error: error instanceof Error ? error.message : t("directory.loadFailed"),
-      }));
-    }
-  }, [t]);
-
-  const openDirectoryPicker = useCallback((nextMode: ProjectAddMode) => {
-    const rootID = currentRootIdRef.current;
-    const rootPath = rootID
-      ? String(managedRootByIdRef.current[rootID]?.root_path || "")
-      : "";
-    const initialPath = rootPath ? inferParentPath(rootPath) : "";
-    setProjectAddMode(nextMode);
-    if (!initialPath || initialPath === ".") {
-      if (!rootPath) {
-        void loadLocalDirs("");
-        return;
-      }
-      setLocalDirState((prev) => ({
-        ...prev,
-        path: rootPath,
-        parent: "",
-        items: [],
-        loading: false,
-        selectedPath: "",
-        adding: false,
-        error: t("directory.noBrowsableParent"),
-      }));
-      return;
-    }
-    void loadLocalDirs(initialPath);
-  }, [inferParentPath, loadLocalDirs, t]);
-
-  const handleOpenLocalProjectAdd = useCallback(() => {
-    void openDirectoryPicker("local");
-  }, [openDirectoryPicker]);
-
-  const handleOpenBlankProjectLocation = useCallback(() => {
-    void openDirectoryPicker("blank_location");
-  }, [openDirectoryPicker]);
-
-  const handleOpenGitHubProjectAdd = useCallback(() => {
-    void openDirectoryPicker("github_location");
-    setGitHubImportState((prev) => ({
-      ...prev,
-      parentPath: "",
-      taskId: "",
-      status: "",
-      message: "",
-      running: false,
-      submitting: false,
-      done: false,
-      error: "",
-    }));
-  }, [openDirectoryPicker]);
-
-  const handleOpenWorktreeLocation = useCallback(() => {
-    setWorktreeSwitchOpen(false);
-    void openDirectoryPicker("worktree_location");
-  }, [openDirectoryPicker]);
-
-  const handleSelectBlankProject = useCallback(() => {
-    setProjectAddMode(null);
-    handleCreateRootStart();
-  }, [handleCreateRootStart]);
-
-  const handleCreateRootCancel = useCallback(() => {
-    if (creatingRootBusy) {
-      return;
-    }
-    setCreatingRootName(null);
-    setCreatingRootParentPath(null);
-    setCreatingRootKind("root");
-    setWorktreeBranchMode("new");
-    setWorktreeBranch("");
-    setWorktreeBranchError("");
-    setWorktreeSwitchOpen(false);
-  }, [creatingRootBusy]);
-
-  useEffect(() => {
-    if (creatingRootKind !== "worktree" || creatingRootName === null) {
-      return;
-    }
-    const handlePointerDown = (event: MouseEvent) => {
-      if (worktreeCreatePopoverRef.current?.contains(event.target as Node)) {
-        return;
-      }
-      handleCreateRootCancel();
-    };
-    document.addEventListener("mousedown", handlePointerDown);
-    return () => document.removeEventListener("mousedown", handlePointerDown);
-  }, [creatingRootKind, creatingRootName, handleCreateRootCancel]);
-
-  useEffect(() => {
-    if (!worktreeSwitchOpen) {
-      return;
-    }
-    const handlePointerDown = (event: MouseEvent) => {
-      if (worktreeSwitchPopoverRef.current?.contains(event.target as Node)) {
-        return;
-      }
-      setWorktreeSwitchOpen(false);
-    };
-    document.addEventListener("mousedown", handlePointerDown);
-    return () => document.removeEventListener("mousedown", handlePointerDown);
-  }, [worktreeSwitchOpen]);
-
-  const handleCreateRootSubmit = useCallback(async () => {
-    const name = String(creatingRootName || "").trim();
-    if (!name) {
-      setCreatingRootName(null);
-      setCreatingRootParentPath(null);
-      return;
-    }
-    if (creatingRootBusy) {
-      return;
-    }
-    setCreatingRootBusy(true);
-    try {
-      if (creatingRootKind === "worktree") {
-        const rootID = currentRootIdRef.current;
-        const parentPath = String(creatingRootParentPath || "").trim();
-        if (!rootID || !parentPath) {
-          throw new Error(t("worktree.createLocationMissing"));
-        }
-        const created = await createGitWorktree({
-          rootId: rootID,
-          parentPath,
-          name,
-          branchMode: worktreeBranchMode,
-          branch: worktreeBranchMode === "existing" ? worktreeBranch : "",
-        }) as ManagedRootPayload;
-        setCreatingRootName(null);
-        setCreatingRootParentPath(null);
-        setCreatingRootKind("root");
-        setWorktreeBranchMode("new");
-        setWorktreeBranch("");
-        await refreshManagedRoots();
-        if (created?.id) {
-          await actionHandlersRef.current.open_dir({
-            path: created.id,
-            root: created.id,
-            isRoot: true,
-          });
-        }
-        return;
-      }
-      const targetPath =
-        creatingRootParentPath && creatingRootParentPath.trim()
-          ? `${creatingRootParentPath.replace(/[\\/]+$/, "")}/${name}`
-          : name;
-      const payload = await apiProtectedJSON<any>(appPath("/api/dirs"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path: targetPath, create: true }),
-      });
-      const created = payload as ManagedRootPayload;
-      setCreatingRootName(null);
-      setCreatingRootParentPath(null);
-      await refreshManagedRoots();
-      if (created?.id) {
-        await actionHandlersRef.current.open_dir({
-          path: created.id,
-          root: created.id,
-          isRoot: true,
-        });
-      }
-    } catch (err) {
-      reportError(
-        "root.create_failed",
-        managedDirAddErrorMessage(err, t("root.createProjectFailed"), t),
-      );
-    } finally {
-      setCreatingRootBusy(false);
-    }
-  }, [
-    creatingRootBusy,
-    creatingRootKind,
+  const {
+    projectAddOverlay,
+    worktreeCreateOverlay,
+    worktreeSwitchOverlay,
     creatingRootName,
-    creatingRootParentPath,
+    setCreatingRootName,
+    creatingRootKind,
+    creatingRootBusy,
+    worktreeSwitchOpen,
+    projectAddMode,
+    handleCreateRootStart,
+    handleSwitchWorktreeStart,
+    handleOpenProjectAdd,
+    handleOpenWorktreeLocation,
+    handleCreateRootCancel,
+    handleCreateRootSubmit,
+    setGitHubImportState,
+    setProjectAddMode,
+  } = useProjectLifecycle({
+    currentRootId,
+    currentRootIdRef,
+    getNodeIdForRoot,
     refreshManagedRoots,
-    t,
-    worktreeBranch,
-    worktreeBranchMode,
-  ]);
+    findManagedRootByPath,
+    managedRootIdsRef,
+    managedRootByIdRef,
+    openManagedDir,
+  });
 
   const handleRenameCurrentRoot = useCallback(
     async (nextName: string) => {
@@ -8258,26 +6482,45 @@ export function App({ onGoHome }: AppProps) {
       if (!rootID || !trimmedName) {
         return false;
       }
-      if (trimmedName === rootID) {
+      const currentDisplayName = String((managedRootByIdRef.current[rootID] as any)?.display_name || managedRootByIdRef.current[rootID]?.id || "").trim();
+      if (trimmedName === currentDisplayName) {
         return true;
       }
       try {
         const renamed = await apiProtectedJSON<ManagedRootPayload>(
-          appPath(`/api/dirs/${encodeURIComponent(rootID)}/rename`),
+          appPath(`/api/dirs/${encodeURIComponent(rootID)}/display-name`),
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ name: trimmedName }),
+            body: JSON.stringify({ display_name: trimmedName }),
           },
         );
-        applyManagedRootRename(rootID, renamed);
-        if (renamed?.id) {
+        // Display-name rename never changes id/path: patch local map in place via refresh; keep compatibility with physical rename helper
+        if (String(renamed?.id || "").trim() && String(renamed.id).trim() !== rootID) {
+          applyManagedRootRename(rootID, renamed);
           await actionHandlersRef.current.open_dir({
             path: renamed.id,
             root: renamed.id,
             isRoot: true,
             forceDirectory: true,
           });
+        } else {
+          // Same id: merge display_name in place without shuffling per-root caches (session keys stay valid)
+          const merged = { ...(managedRootByIdRef.current[rootID] || {} as ManagedRootPayload), ...(renamed || {}), id: rootID } as ManagedRootPayload;
+          const nextById = { ...managedRootByIdRef.current, [rootID]: merged };
+          managedRootByIdRef.current = nextById as Record<string, ManagedRootPayload>;
+          const renameNid = String((merged as any)._nodeId || "").trim();
+          if (renameNid) managedRootByKeyRef.current[rootNodeKey(renameNid, rootID)] = merged;
+          setRootNodeMap(nextById as Record<string, any>);
+          const ids = Array.from(managedRootIdsRef.current);
+          setRootEntries(mapManagedRootsToEntries(ids.map((id) => nextById[id]).filter(Boolean) as ManagedRootPayload[]));
+          setMultiProjectSessionGroups((prev) =>
+            prev.map((g) =>
+              g.rootId === rootID
+                ? { ...g, rootName: String((merged as any)?.display_name || (merged as any)?.id || g.rootName || rootID) }
+                : g,
+            ),
+          );
         }
         return true;
       } catch (err) {
@@ -8291,174 +6534,6 @@ export function App({ onGoHome }: AppProps) {
     [applyManagedRootRename, t],
   );
 
-  const handleLocalDirSelect = useCallback((path: string) => {
-    setLocalDirState((prev) => {
-      const target = prev.items.find((item) => item.path === path);
-      if (!target) {
-        return prev;
-      }
-      if (projectAddMode === "local" && target.is_added_root) {
-        return prev;
-      }
-      return { ...prev, selectedPath: path };
-    });
-  }, [projectAddMode]);
-
-  const handleLocalDirAdd = useCallback(async () => {
-    const path = String(localDirState.selectedPath || "").trim();
-    if (localDirState.adding) {
-      return;
-    }
-    if (projectAddMode === "blank_location") {
-      setProjectAddMode(null);
-      handleCreateRootStart(localDirState.path);
-      return;
-    }
-    if (projectAddMode === "github_location") {
-      setProjectAddMode("github");
-      setGitHubImportState((prev) => ({
-        ...prev,
-        parentPath: localDirState.path,
-        taskId: "",
-        status: "",
-        message: "",
-        running: false,
-        submitting: false,
-        done: false,
-        error: "",
-      }));
-      return;
-    }
-    if (projectAddMode === "worktree_location") {
-      setProjectAddMode(null);
-      handleCreateWorktreeStart(localDirState.path);
-      return;
-    }
-    if (!path) {
-      return;
-    }
-    setLocalDirState((prev) => ({ ...prev, adding: true, error: "" }));
-    try {
-      const payload = await apiProtectedJSON<any>(appPath("/api/dirs"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path, create: false }),
-      });
-      setLocalDirState((prev) => ({
-        ...prev,
-        adding: false,
-        selectedPath: "",
-      }));
-      setProjectAddMode(null);
-      await refreshManagedRoots();
-      const created = payload as ManagedRootPayload;
-      if (created?.id) {
-        await actionHandlersRef.current.open_dir({
-          path: created.id,
-          root: created.id,
-          isRoot: true,
-        });
-      }
-      void loadLocalDirs(localDirState.path);
-    } catch (error) {
-      setLocalDirState((prev) => ({
-        ...prev,
-        adding: false,
-        error: managedDirAddErrorMessage(error, t("root.addDirectoryFailed"), t),
-      }));
-    }
-  }, [handleCreateRootStart, handleCreateWorktreeStart, loadLocalDirs, localDirState.adding, localDirState.path, localDirState.selectedPath, projectAddMode, refreshManagedRoots, t]);
-
-  const handleGitHubImportStart = useCallback(async () => {
-    const url = String(githubImportState.url || "").trim();
-    const parentPath = String(githubImportState.parentPath || "").trim();
-    if (
-      !url ||
-      !parentPath ||
-      githubImportState.running ||
-      githubImportState.submitting
-    ) {
-      return;
-    }
-    setGitHubImportState((prev) => ({
-      ...prev,
-      submitting: true,
-      done: false,
-      error: "",
-      taskId: "",
-      status: "",
-      message: "",
-    }));
-    try {
-      const payload = await apiProtectedJSON<any>(appPath("/api/imports/github"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url, parent_path: parentPath }),
-      });
-      setGitHubImportState((prev) => ({
-        ...prev,
-        taskId: String(payload?.task_id || ""),
-        status: "pending",
-        message: t("projectAdd.cloning"),
-        submitting: false,
-        running: true,
-        done: false,
-        error: "",
-      }));
-    } catch (error) {
-      setGitHubImportState((prev) => ({
-        ...prev,
-        submitting: false,
-        running: false,
-        done: false,
-        error: error instanceof Error ? error.message : t("root.githubImportFailed"),
-      }));
-    }
-  }, [githubImportState.parentPath, githubImportState.running, githubImportState.submitting, githubImportState.url, t]);
-
-  const projectAddOverlay = projectAddMode ? (
-    <div ref={projectAddPopoverRef}>
-      <ProjectAddPopover
-        mode={projectAddMode}
-        onSelectMode={() => setProjectAddMode("mode")}
-        onSelectLocal={handleOpenLocalProjectAdd}
-        onSelectBlankLocation={handleOpenBlankProjectLocation}
-        onSelectGitHubLocation={handleOpenGitHubProjectAdd}
-        onSelectGitHub={handleOpenGitHubProjectAdd}
-        onSelectBlank={handleSelectBlankProject}
-        localState={localDirState}
-        onLocalNavigate={(path) => {
-          void loadLocalDirs(path);
-        }}
-        onLocalSelect={handleLocalDirSelect}
-        onLocalAdd={() => {
-          void handleLocalDirAdd();
-        }}
-        localActionLabel={
-          projectAddMode === "local" ? t("projectAdd.add") : t("projectAdd.placeHere")
-        }
-        localDisabledAddedRoot={projectAddMode === "local"}
-        localBrowseOnly={
-          projectAddMode === "blank_location" ||
-          projectAddMode === "github_location" ||
-          projectAddMode === "worktree_location"
-        }
-        githubState={githubImportState}
-        onGitHubUrlChange={(value) =>
-          setGitHubImportState((prev) => ({
-            ...prev,
-            url: value,
-            error: "",
-            done: false,
-          }))
-        }
-        onGitHubImport={() => {
-          void handleGitHubImportStart();
-        }}
-      />
-    </div>
-  ) : null;
-
   const handleRemoveCurrentRoot = useCallback(async () => {
     const rootID = currentRootIdRef.current;
     if (!rootID) {
@@ -8470,12 +6545,12 @@ export function App({ onGoHome }: AppProps) {
       reportError("root.delete_failed", t("root.missingPathRemove"));
       return;
     }
-    if (!window.confirm(t("root.confirmRemove", { name: rootID }))) {
+    if (!await confirmDialog({ message: t("root.confirmRemove", { name: rootID }), danger: true })) {
       return;
     }
     try {
       await apiProtectedJSON<any>(
-        appURL("/api/dirs", new URLSearchParams({ path: rootPath })),
+        appURL("/api/dirs", new URLSearchParams({ path: rootPath }), getNodeIdForRoot(rootID)),
         {
           method: "DELETE",
         },
@@ -8495,7 +6570,7 @@ export function App({ onGoHome }: AppProps) {
     if (!rootID) {
       return;
     }
-    if (!window.confirm(t("worktree.confirmRemove", { name: rootID }))) {
+    if (!await confirmDialog({ message: t("worktree.confirmRemove", { name: rootID }), danger: true })) {
       return;
     }
     try {
@@ -8511,43 +6586,43 @@ export function App({ onGoHome }: AppProps) {
   }, [clearRootScopedClientState, refreshManagedRoots, t]);
 
   const ensurePluginsLoaded = useCallback(async (rootId: string) => {
-    if (!rootId || pluginsLoadedByRootRef.current[rootId]) {
+    if (!rootId || pluginsLoadedByRootRef.current[scopedRootKey(rootId)]) {
       return;
     }
-    if (pluginsTrustPendingByRootRef.current[rootId]) {
+    if (pluginsTrustPendingByRootRef.current[scopedRootKey(rootId)]) {
       return;
     }
-    const inflight = pluginsLoadingByRootRef.current[rootId];
+    const inflight = pluginsLoadingByRootRef.current[scopedRootKey(rootId)];
     if (inflight) {
       await inflight;
       return;
     }
     setPluginLoading(true);
-    const request = scanPluginSources(rootId, managedRootByIdRef.current[rootId]?.root_path || rootId)
+    const request = scanPluginSources(rootId, managedRootByIdRef.current[rootId]?.root_path || rootId, getNodeIdForRoot(rootId))
       .then(async (bundle) => {
         const snapshot = snapshotFromPluginSources(bundle);
         if (bundle.plugins.length > 0 && !isPluginSnapshotTrusted(snapshot, readTrustedPluginSet(rootId))) {
           pluginManagerRef.current.clear(rootId);
-          pluginsTrustPendingByRootRef.current[rootId] = true;
+          pluginsTrustPendingByRootRef.current[scopedRootKey(rootId)] = true;
           setPendingPluginTrust({ rootId, bundle });
           setPluginVersion((v) => v + 1);
           return;
         }
         const plugins = await loadPluginsFromSources(bundle.plugins);
         pluginManagerRef.current.set(rootId, plugins);
-        pluginsLoadedByRootRef.current[rootId] = true;
+        pluginsLoadedByRootRef.current[scopedRootKey(rootId)] = true;
         setPluginVersion((v) => v + 1);
       })
       .catch(() => {
         pluginManagerRef.current.clear(rootId);
-        pluginsLoadedByRootRef.current[rootId] = true;
+        pluginsLoadedByRootRef.current[scopedRootKey(rootId)] = true;
         setPluginVersion((v) => v + 1);
       })
       .finally(() => {
-        delete pluginsLoadingByRootRef.current[rootId];
+        delete pluginsLoadingByRootRef.current[scopedRootKey(rootId)];
         setPluginLoading(false);
       });
-    pluginsLoadingByRootRef.current[rootId] = request;
+    pluginsLoadingByRootRef.current[scopedRootKey(rootId)] = request;
     await request;
   }, []);
 
@@ -8560,8 +6635,8 @@ export function App({ onGoHome }: AppProps) {
       saveTrustedPluginSet(pending.rootId, snapshot);
       const plugins = await loadPluginsFromSources(pending.bundle.plugins);
       pluginManagerRef.current.set(pending.rootId, plugins);
-      pluginsLoadedByRootRef.current[pending.rootId] = true;
-      delete pluginsTrustPendingByRootRef.current[pending.rootId];
+      pluginsLoadedByRootRef.current[scopedRootKey(pending.rootId)] = true;
+      delete pluginsTrustPendingByRootRef.current[scopedRootKey(pending.rootId)];
       setPendingPluginTrust((current) => current?.rootId === pending.rootId ? null : current);
       setPluginVersion((v) => v + 1);
     } finally {
@@ -8573,8 +6648,8 @@ export function App({ onGoHome }: AppProps) {
     const pending = pendingPluginTrust;
     if (!pending) return;
     pluginManagerRef.current.clear(pending.rootId);
-    pluginsLoadedByRootRef.current[pending.rootId] = true;
-    delete pluginsTrustPendingByRootRef.current[pending.rootId];
+    pluginsLoadedByRootRef.current[scopedRootKey(pending.rootId)] = true;
+    delete pluginsTrustPendingByRootRef.current[scopedRootKey(pending.rootId)];
     setPendingPluginTrust((current) => current?.rootId === pending.rootId ? null : current);
     setPluginVersion((v) => v + 1);
   }, [pendingPluginTrust]);
@@ -8582,9 +6657,9 @@ export function App({ onGoHome }: AppProps) {
   const invalidatePluginsForRoot = useCallback((rootId: string) => {
     if (!rootId) return;
     pluginManagerRef.current.clear(rootId);
-    delete pluginsLoadedByRootRef.current[rootId];
-    delete pluginsLoadingByRootRef.current[rootId];
-    delete pluginsTrustPendingByRootRef.current[rootId];
+    delete pluginsLoadedByRootRef.current[scopedRootKey(rootId)];
+    delete pluginsLoadingByRootRef.current[scopedRootKey(rootId)];
+    delete pluginsTrustPendingByRootRef.current[scopedRootKey(rootId)];
     setPendingPluginTrust((current) => current?.rootId === rootId ? null : current);
     setPluginVersion((v) => v + 1);
     if (rootId === currentRootIdRef.current) {
@@ -8663,6 +6738,7 @@ export function App({ onGoHome }: AppProps) {
             nextState.root,
             nextState.file,
             nextState.pluginQuery,
+            getNodeIdForRoot(nextState.root),
           );
         }
 
@@ -8729,97 +6805,30 @@ export function App({ onGoHome }: AppProps) {
 	  const handleTaskSessionDrawerOpen = useCallback(
     (sessionKey: string, rootOverride?: string | null, taskId?: string) => {
       const key = String(sessionKey || "").trim();
-      if (!key) return;
       const root = rootOverride || currentRootIdRef.current;
-      if (!root) return;
+      if (!key || !root) return;
+      // 任务会话就是普通会话：直接走主面板装配（selectedSession + main 模式 + URL + 同步），
+      // 不再走 drawer 浮层——drawer 模式下在会话面板里切换工作台/看板没有全屏语境。
       const matched = sessions.find((item) => (item.key || item.session_key) === key);
-      const cacheKey = rootSessionKey(root, key);
-      const cached = sessionCacheRef.current[cacheKey];
+      const cached = sessionCacheRef.current[rootSessionKey(root, key)];
       const initial = cached || matched || {
         key,
         session_key: key,
         root_id: root,
         task_id: taskId || "",
       };
-      setDrawerLoadingSessionByRoot((prev) => ({
-        ...prev,
-        [root]: hasSessionExchanges(initial) ? "" : key,
-      }));
-      setDrawerSessionForRoot(root, {
-        ...(initial as any),
-        key,
-        session_key: key,
-        root_id: root,
-        task_id: (initial as any)?.task_id || taskId || "",
-      } as SessionItem);
-      setBoundSessionForRoot(root, key);
-      interactionModeRef.current = "drawer";
-      setInteractionMode("drawer");
-      setDrawerOpenForRoot(root, true);
-      const applyDrawerSession = (session: Session) => {
-        const activeDrawer = drawerSessionByRootRef.current[root];
-        if ((activeDrawer?.key || activeDrawer?.session_key) !== key) return;
-        setDrawerLoadingSessionByRoot((prev) =>
-          prev[root] === key ? { ...prev, [root]: "" } : prev,
-        );
-        setDrawerSessionForRoot(root, {
-          ...(activeDrawer as any),
-          ...(session as any),
-          key,
-          session_key: key,
-          root_id: root,
-          task_id: (session as any)?.task_id || taskId || "",
-        } as Session);
-      };
-      void (async () => {
-        const restorePromise = restoreActiveSession(root, key);
-        if (!hasSessionExchanges(cached)) {
-          const persisted = await getCachedSession(root, key);
-          const latest = sessionCacheRef.current[cacheKey];
-          const immediate = hasSessionExchanges(latest) ? latest : persisted;
-          if (immediate) {
-            sessionCacheRef.current[cacheKey] = {
-              ...(immediate as any),
-              key,
-            } as Session;
-            bumpCacheVersion();
-            applyDrawerSession(immediate);
-          }
-        }
-        const restored = await restorePromise;
-        if (!restored) {
-          setDrawerLoadingSessionByRoot((prev) =>
-            prev[root] === key ? { ...prev, [root]: "" } : prev,
-          );
-          return;
-        }
-        applyDrawerSession(restored);
-        loadedSessionRef.current[cacheKey] = true;
-        clearSessionStale(root, key);
-      })().catch((error) => {
-        setDrawerLoadingSessionByRoot((prev) =>
-          prev[root] === key ? { ...prev, [root]: "" } : prev,
-        );
-        console.error("[task.session] failed to open drawer session", {
-          root,
-          sessionKey: key,
-          error,
-        });
-      });
+      void handleSelectSession(initial as any, { preserveTaskSelection: true });
     },
     [
-      bumpCacheVersion,
-      clearSessionStale,
-      restoreActiveSession,
+      currentRootIdRef,
+      handleSelectSession,
       rootSessionKey,
+      sessionCacheRef,
       sessions,
-      setBoundSessionForRoot,
-      setDrawerOpenForRoot,
-      setDrawerSessionForRoot,
-	    ],
-	  );
+    ],
+  );
 
-	  const refreshTaskRelatedFiles = useCallback(async (
+  const refreshTaskRelatedFiles = useCallback(async (
 	    root: string,
 	    taskId: string,
 	    sessionKeys: string[],
@@ -8832,8 +6841,8 @@ export function App({ onGoHome }: AppProps) {
 	    if (!root || !taskId || keys.length === 0) return;
 	    const relatedFileGroups = await Promise.all(
 	      keys.map(async (sessionKey) => {
-	        const relatedFiles = await sessionService.getSessionRelatedFiles(root, sessionKey);
-	        await setCachedSessionRelatedFiles(root, sessionKey, relatedFiles);
+	        const relatedFiles = await sessionService.getSessionRelatedFiles(root, sessionKey, getNodeIdForRoot(root));
+	        await setCachedSessionRelatedFiles(root, sessionKey, relatedFiles, getNodeIdForRoot(root));
 	        updateSessionRelatedFilesForKey(root, sessionKey, relatedFiles);
 	        return relatedFiles;
 	      }),
@@ -8975,21 +6984,8 @@ export function App({ onGoHome }: AppProps) {
 
   useEffect(() => {
     if (!currentRootId) return;
-    sessionService.connect(currentRootId);
-  }, [currentRootId]);
-
-  useEffect(() => {
-    if (sessionListMode !== "import") return;
-    const rootID = currentRootIdRef.current || "";
-    if (!rootID || !externalImportAgent) return;
-    setSelectedExternalImportKeys(new Set());
-    void loadExternalSessions(rootID, externalImportAgent, { replace: true });
-  }, [
-    sessionListMode,
-    externalImportAgent,
-    externalFilterBound,
-    loadExternalSessions,
-  ]);
+    sessionService.connect(currentRootId, getNodeIdForRoot(currentRootId));
+  }, [currentRootId, currentRootNodeId]);
 
   useEffect(
     () => () => {
@@ -9012,1529 +7008,111 @@ export function App({ onGoHome }: AppProps) {
     void refreshGitStatus(currentRootId);
     void refreshGitHistory(currentRootId);
     setGitDiff(null);
-  }, [currentRootId, refreshGitHistory, refreshGitStatus]);
+  }, [currentRootId, currentRootNodeId, refreshGitHistory, refreshGitStatus]);
+
+  // 2026-09 App.tsx 拆分：25 个 WS 事件处理器（含 9 个 handleSessionStream 内部 case）
+  // 与其 13 个内部 helper 整体搬到 app/useRealtimeEvents.ts。参数按用途分四组、组内同名简写，
+  // 所以搬过去的 1600 行代码一个标识符都没改。
+  useRealtimeEvents({
+    refs: { // App 的 ref 池
+      actionHandlersRef,
+      boundSessionByRootRef,
+      cancelRequestedBySessionRef,
+      currentRootIdRef,
+      currentRootNodeIdRef,
+      currentSessionRef,
+      drawerSessionByRootRef,
+      fileRef,
+      invalidTreeCacheKeysRef,
+      loadedSessionRef,
+      managedRootByIdRef,
+      managedRootByKeyRef,
+      managedRootIdsRef,
+      optimisticDequeuedIdsRef,
+      pendingBySessionRef,
+      pendingDraftRef,
+      pendingRequestRef,
+      queueFrozenBySessionRef,
+      queuedMessagesBySessionRef,
+      selectedDirRef,
+      selectedSessionByRootRef,
+      selectedSessionRef,
+      sessionCacheRef,
+      sessionListReloadTimerRef,
+      sessionsRef,
+      suppressedAutoBindSessionByRootRef,
+      taskDetailsByIdRef,
+      workspaceOpenRef,
+    },
+    setters: { // App 的 setState
+      setAgentsVersion,
+      setBoundSessionForRoot,
+      setCodexRateLimitsRefreshToken,
+      setDrawerSessionForRoot,
+      setGitDiff,
+      setGitHubImportState,
+      setMultiProjectSessionGroups,
+      setMultiProjectSessionPending,
+      setProjectAddMode,
+      setQueueVersion,
+      setRootEntries,
+      setSelectedPendingByKey,
+      setSelectedSession,
+      setSessions,
+      setSlashCommandResults,
+      setStatus,
+      setUpdateState,
+    },
+    actions: { // App 的动作
+      appendAgentChunkForSession,
+      appendCompactNoticeForSession,
+      appendPlanUpdateForSession,
+      appendThoughtChunkForSession,
+      appendTodoUpdateForSession,
+      appendToolCallForSession,
+      applyManagedRootRename,
+      applyTaskDetails,
+      attachContextWindowToLatestAssistant,
+      bumpCacheVersion,
+      clearSessionStale,
+      getNodeIdForRoot,
+      invalidatePluginsForRoot,
+      loadManagedRootPayloads,
+      loadMultiProjectSessionGroups,
+      loadSessionsForRoot,
+      markSessionPending,
+      markSessionStale,
+      playCompletionSound,
+      promotePendingSessionForRoot,
+      refreshCurrentFileContent,
+      refreshGitStatus,
+      refreshManagedRoots,
+      refreshMultiProjectReplyingSessions,
+      refreshTaskWorktree,
+      refreshTasksForRelatedSession,
+      refreshTreeDir,
+      resolveRootForSessionKey,
+      restoreActiveSession,
+      scheduleSessionListReload,
+      updateSessionAgentForKey,
+      updateSessionRelatedFilesForKey,
+      updateSessionRelatedWorktreeForKey,
+    },
+    values: { // 稳定值
+      currentRootId,
+      gitDiff,
+      handleImportedSessionConfirmed,
+      multiProjectSessionsEnabled,
+      rootSessionKey,
+      scopedRootKey,
+      t,
+      treeCacheKey,
+    },
+  });
 
   useEffect(() => {
     if (!currentRootId) return;
-    let cancelled = false;
-    const reloadSessionForReplay = async (
-      rootID: string,
-      sessionKey: string,
-    ) => {
-      if (!rootID || !sessionKey) return;
-      const restored = await restoreActiveSession(rootID, sessionKey);
-      if (cancelled) return;
-      if (!restored) return;
-      const cacheKey = rootSessionKey(rootID, sessionKey);
-      loadedSessionRef.current[cacheKey] = true;
-      clearSessionStale(rootID, sessionKey);
-      if (
-        (selectedSessionRef.current?.key ||
-          selectedSessionRef.current?.session_key) === sessionKey
-      ) {
-        setSelectedSession((prev) =>
-          prev
-            ? toSessionItem(rootID, {
-                ...(prev as any),
-                ...(restored as any),
-              })
-            : prev,
-        );
-      }
-      if (boundSessionByRootRef.current[rootID] === sessionKey) {
-        setDrawerSessionForRoot(rootID, restored);
-      }
-    };
-    const getReplayTargetsForRoot = (rootID: string): string[] => {
-      if (!rootID) return [];
-      const keys = new Set<string>();
-      const rememberedSelectedKey =
-        selectedSessionByRootRef.current[rootID] || "";
-      if (
-        rememberedSelectedKey &&
-        !rememberedSelectedKey.startsWith("pending-")
-      ) {
-        keys.add(rememberedSelectedKey);
-      }
-      const boundKey = boundSessionByRootRef.current[rootID] || "";
-      if (boundKey && !boundKey.startsWith("pending-")) {
-        keys.add(boundKey);
-      }
-      const drawerKey = drawerSessionByRootRef.current[rootID]?.key || "";
-      if (drawerKey && !drawerKey.startsWith("pending-")) {
-        keys.add(drawerKey);
-      }
-      const selected = selectedSessionRef.current;
-      const selectedKey = selected?.key || selected?.session_key || "";
-      const selectedRoot =
-        (selected?.root_id as string | undefined) || currentRootIdRef.current;
-      if (
-        selectedRoot === rootID &&
-        selectedKey &&
-        !selectedKey.startsWith("pending-")
-      ) {
-        keys.add(selectedKey);
-      }
-      return Array.from(keys);
-    };
-    const replayTargetsForAllRoots = () => {
-      const replayCacheKeys = new Set<string>();
-      for (const rootID of managedRootIdsRef.current) {
-        if (!rootID) continue;
-        const replayTargets = getReplayTargetsForRoot(rootID);
-        for (const sessionKey of replayTargets) {
-          replayCacheKeys.add(rootSessionKey(rootID, sessionKey));
-          void reloadSessionForReplay(rootID, sessionKey);
-        }
-      }
-      for (const cacheKey of Object.keys(sessionCacheRef.current)) {
-        if (replayCacheKeys.has(cacheKey)) {
-          continue;
-        }
-        const separator = cacheKey.indexOf("::");
-        if (separator <= 0) {
-          continue;
-        }
-        const rootID = cacheKey.slice(0, separator);
-        const sessionKey = cacheKey.slice(separator + 2);
-        if (!rootID || !sessionKey || !hasSessionExchanges(sessionCacheRef.current[cacheKey])) {
-          continue;
-        }
-        markSessionStale(rootID, sessionKey);
-      }
-    };
-    const refreshSessionRelatedFiles = async (
-      rootID: string,
-      sessionKey: string,
-    ) => {
-      if (!rootID || !sessionKey) return;
-      const relatedFiles = await sessionService.getSessionRelatedFiles(
-        rootID,
-        sessionKey,
-      );
-      if (cancelled) return;
-      await setCachedSessionRelatedFiles(rootID, sessionKey, relatedFiles);
-      updateSessionRelatedFilesForKey(rootID, sessionKey, relatedFiles);
-    };
-    const handleSessionStreamDone = (rootID: string, sessionKey: string) => {
-      const cacheKey = rootSessionKey(rootID, sessionKey);
-      const wasCanceled = !!cancelRequestedBySessionRef.current[cacheKey];
-      if (wasCanceled) {
-        delete cancelRequestedBySessionRef.current[cacheKey];
-      }
-      delete pendingBySessionRef.current[cacheKey];
-      const clearPendingAck = <T,>(session: T): T => {
-        const exchanges = (session as any)?.exchanges;
-        if (!wasCanceled || !Array.isArray(exchanges)) {
-          return session;
-        }
-        return {
-          ...(session as any),
-          exchanges: exchanges.map((exchange: any) =>
-            exchange?.pending_ack === true
-              ? { ...exchange, pending_ack: false }
-              : exchange,
-          ),
-        } as T;
-      };
-      const queued = queuedMessagesBySessionRef.current[cacheKey] || [];
-      const queueFrozen = !!queueFrozenBySessionRef.current[cacheKey];
-      const hiddenQueued = optimisticDequeuedIdsRef.current[cacheKey];
-      const hasQueuedContinuation =
-        (queued.length > 0 && !queueFrozen) ||
-        !!(hiddenQueued && hiddenQueued.size > 0);
-      if (hasQueuedContinuation && !wasCanceled) {
-        markSessionPending(rootID, sessionKey);
-        return;
-      }
-      const cached = sessionCacheRef.current[cacheKey];
-      if (cached && cached.key === sessionKey) {
-        sessionCacheRef.current[cacheKey] = clearPendingAck({
-          ...(cached as any),
-          pending: false,
-        } as Session);
-      }
-      setSelectedPendingByKey(sessionKey, false);
-      setSelectedSession((prev) => {
-        const prevKey = prev?.key || prev?.session_key;
-        const prevRoot =
-          (prev?.root_id as string | undefined) || currentRootIdRef.current;
-        if (
-          !prev ||
-          prevKey !== sessionKey ||
-          prevRoot !== rootID ||
-          !(prev as any).pending
-        ) {
-          return prev;
-        }
-        return clearPendingAck({
-          ...(prev as any),
-          pending: false,
-        } as SessionItem);
-      });
-      const drawer = drawerSessionByRootRef.current[rootID];
-      if (drawer && drawer.key === sessionKey) {
-        const latest = wasCanceled
-          ? sessionCacheRef.current[cacheKey] || drawer
-          : drawer;
-        setDrawerSessionForRoot(rootID, clearPendingAck({
-          ...(latest as any),
-          pending: false,
-        } as Session));
-      }
-      if (currentRootIdRef.current === rootID) {
-        setSessions((prev) =>
-          prev.map((item) => {
-            const itemKey = item.key || item.session_key;
-            if (itemKey !== sessionKey) {
-              return item;
-            }
-            return clearPendingAck({
-              ...(item as any),
-              pending: false,
-            } as SessionItem);
-          }),
-        );
-      }
-      setMultiProjectSessionPending(rootID, sessionKey, false);
-      bumpCacheVersion();
-    };
-
-    const handleSessionStream = (payload: any) => {
-      const streamKey =
-        typeof payload?.session_key === "string" ? payload.session_key : "";
-      const activeRoot =
-        typeof payload?.root_id === "string" && payload.root_id
-          ? payload.root_id
-          : resolveRootForSessionKey(streamKey) || currentRootIdRef.current;
-      if (!streamKey || !activeRoot) return;
-      const ck = rootSessionKey(activeRoot, streamKey);
-      let pending = pendingBySessionRef.current[ck];
-      if (!pending) {
-        const draft = pendingDraftRef.current;
-        if (
-          draft &&
-          draft.rootId === activeRoot &&
-          streamKey !==
-            (suppressedAutoBindSessionByRootRef.current[activeRoot] || "")
-        ) {
-          pending = draft;
-          pendingBySessionRef.current[ck] = draft;
-          pendingDraftRef.current = null;
-          console.info("[session/stream] attach_pending_draft", { rootId: activeRoot, streamKey, requestId: draft.requestId, tempKey: draft.tempKey || null });
-        }
-      }
-      const boundKey = boundSessionByRootRef.current[activeRoot] || "";
-      const suppressedAutoBindKey =
-        suppressedAutoBindSessionByRootRef.current[activeRoot] || "";
-      if (
-        streamKey !== suppressedAutoBindKey &&
-        (!boundKey ||
-          (typeof boundKey === "string" && boundKey.startsWith("pending-")))
-      ) {
-        if (suppressedAutoBindKey && streamKey !== suppressedAutoBindKey) {
-          suppressedAutoBindSessionByRootRef.current[activeRoot] = null;
-        }
-        setBoundSessionForRoot(activeRoot, streamKey);
-        if (pending) {
-          const pendingName =
-            (drawerSessionByRootRef.current[activeRoot]?.key ===
-            pending.tempKey &&
-            typeof (drawerSessionByRootRef.current[activeRoot] as any)?.name ===
-              "string"
-              ? ((drawerSessionByRootRef.current[activeRoot] as any).name as string)
-              : "") ||
-            ((selectedSessionRef.current?.key ||
-              selectedSessionRef.current?.session_key) === pending.tempKey &&
-            (((selectedSessionRef.current?.root_id as string | undefined) ||
-              currentRootIdRef.current) === activeRoot) &&
-            typeof selectedSessionRef.current?.name === "string"
-              ? selectedSessionRef.current.name
-              : "") ||
-            t("session.new");
-          const userEx = {
-            role: "user",
-            content: pending.message,
-            timestamp: pending.timestamp,
-            model: pending.model,
-	            mode: pending.agentMode,
-	            effort: pending.effort,
-	            fast_service: pending.fastService || "",
-	            shell: pending.shell || "",
-          };
-          const cached =
-            sessionCacheRef.current[ck] ||
-            ({
-              key: streamKey,
-              type: pending.mode,
-              agent: pending.agent,
-              model: pending.model,
-	              mode: pending.agentMode,
-	              effort: pending.effort,
-	              fast_service: pending.fastService || "",
-	              shell: pending.shell || "",
-              name: pendingName,
-              created_at: pending.timestamp,
-              updated_at: pending.timestamp,
-              exchanges: [],
-            } as any);
-          const prevExchanges = Array.isArray((cached as any).exchanges)
-            ? ((cached as any).exchanges as Exchange[])
-            : [];
-          sessionCacheRef.current[ck] = {
-            ...(cached as any),
-            exchanges: prevExchanges.length > 0 ? prevExchanges : [userEx],
-            updated_at: new Date().toISOString(),
-          } as Session;
-          bumpCacheVersion();
-        }
-        const seeded = sessionCacheRef.current[ck];
-        if (seeded) {
-          setDrawerSessionForRoot(activeRoot, {
-            ...(seeded as any),
-            pending: true,
-          } as Session);
-        }
-      }
-      if (pending?.tempKey) {
-        console.info("[session/stream] promote_pending", { rootId: activeRoot, tempKey: pending.tempKey, streamKey, requestId: pending.requestId });
-        promotePendingSessionForRoot(
-          activeRoot,
-          pending.tempKey,
-          streamKey,
-          sessionCacheRef.current[ck] || null,
-        );
-      }
-      const event = payload.event;
-      if (!event?.type) return;
-      const markStreamPending = () => {
-        if (event.type === "message_done" || event.type === "error") return;
-        markSessionPending(activeRoot, streamKey);
-      };
-      const updateDrawerIfShowingStream = () => {
-        const drawerKey = drawerSessionByRootRef.current[activeRoot]?.key || "";
-        if (
-          drawerKey !== streamKey &&
-          (!pending?.tempKey || drawerKey !== pending.tempKey)
-        ) {
-          return;
-        }
-        const latest = sessionCacheRef.current[ck];
-        if (latest) {
-          setDrawerSessionForRoot(activeRoot, {
-            ...(latest as any),
-            pending: true,
-          } as Session);
-        }
-      };
-      markStreamPending();
-      switch (event.type) {
-        case "message_chunk":
-          appendAgentChunkForSession(
-            activeRoot,
-            streamKey,
-            event.data?.content || "",
-            pending
-              ? {
-                  agent: pending.agent,
-                  model: pending.model,
-	                  mode: pending.agentMode,
-	                  effort: pending.effort,
-	                  fast_service: pending.fastService || "",
-	                }
-              : undefined,
-          );
-          updateDrawerIfShowingStream();
-          break;
-        case "thought_chunk":
-          appendThoughtChunkForSession(
-            activeRoot,
-            streamKey,
-            event.data?.content || "",
-            event.data?.id || "",
-          );
-          updateDrawerIfShowingStream();
-          break;
-        case "tool_call":
-          appendToolCallForSession(
-            activeRoot,
-            streamKey,
-            event.data || {},
-            false,
-          );
-          updateDrawerIfShowingStream();
-          break;
-        case "tool_call_update":
-          appendToolCallForSession(
-            activeRoot,
-            streamKey,
-            event.data || {},
-            true,
-          );
-          updateDrawerIfShowingStream();
-          break;
-        case "todo_update":
-          appendTodoUpdateForSession(
-            activeRoot,
-            streamKey,
-            event.data || {},
-          );
-          updateDrawerIfShowingStream();
-          break;
-        case "plan_update":
-          appendPlanUpdateForSession(
-            activeRoot,
-            streamKey,
-            event.data || {},
-          );
-          updateDrawerIfShowingStream();
-          break;
-        case "compact_notice":
-          appendCompactNoticeForSession(
-            activeRoot,
-            streamKey,
-            event.data || {},
-          );
-          updateDrawerIfShowingStream();
-          break;
-        case "message_done":
-          attachContextWindowToLatestAssistant(
-            activeRoot,
-            streamKey,
-            event.data?.contextWindow,
-            event.data?.tokenUsage,
-          );
-          tokenStationRefreshRef.current?.();
-          setCodexRateLimitsRefreshToken((value) => value + 1);
-          break;
-        case "error":
-          reportError(
-            "session.resume_failed",
-            event.data?.message || t("session.resumeFailed"),
-            {
-              details: {
-                rootId: activeRoot,
-                sessionKey: streamKey,
-                eventType: event.type,
-              },
-            },
-          );
-          handleSessionStreamDone(activeRoot, streamKey);
-          break;
-      }
-    };
-    const handleSlashCommandStream = (payload: any) => {
-      const sessionKey =
-        typeof payload?.session_key === "string" ? payload.session_key : "";
-      const rootID =
-        typeof payload?.root_id === "string" && payload.root_id
-          ? payload.root_id
-          : resolveRootForSessionKey(sessionKey) || currentRootIdRef.current;
-      const command =
-        typeof payload?.command === "string" ? payload.command : "status";
-      const requestId =
-        typeof payload?.request_id === "string"
-          ? payload.request_id
-          : typeof payload?.id === "string"
-            ? payload.id
-            : "";
-      const event = payload?.event;
-      if (!rootID || !sessionKey || !event?.type) {
-        return;
-      }
-      const resultKey = rootSessionKey(rootID, sessionKey);
-      if (event.type === "message_chunk") {
-        const chunk = typeof event.data?.content === "string" ? event.data.content : "";
-        if (!chunk) {
-          return;
-        }
-        setSlashCommandResults((prev) => {
-          const current = prev[resultKey];
-          if (!current && sessionKey.startsWith("transient-")) {
-            return prev;
-          }
-          if (
-            current?.requestId &&
-            requestId &&
-            current.requestId !== requestId
-          ) {
-            return prev;
-          }
-          return {
-            ...prev,
-            [resultKey]: {
-              rootId: rootID,
-              sessionKey,
-              requestId: current?.requestId || requestId,
-              command: current?.command || command,
-              content: `${current?.content || ""}${chunk}`,
-              status: "running",
-            },
-          };
-        });
-        return;
-      }
-      if (event.type === "login_notice") {
-        const notice = event.data || {};
-        const noticeStatus = typeof notice.status === "string" ? notice.status : "";
-        const failed = noticeStatus === "error";
-        const complete = noticeStatus === "success";
-        setSlashCommandResults((prev) => {
-          const current = prev[resultKey];
-          if (!current && sessionKey.startsWith("transient-")) {
-            return prev;
-          }
-          if (
-            current?.requestId &&
-            requestId &&
-            current.requestId !== requestId
-          ) {
-            return prev;
-          }
-          return {
-            ...prev,
-            [resultKey]: {
-              rootId: rootID,
-              sessionKey,
-              requestId: current?.requestId || requestId,
-              command: current?.command || command || "login",
-              content: current?.content || "",
-              status: failed ? "failed" : complete ? "complete" : "running",
-              error:
-                failed && typeof notice.error === "string"
-                  ? notice.error
-                  : current?.error,
-              createdAt: current?.createdAt || Date.now(),
-              loginNotice: {
-                ...current?.loginNotice,
-                status: noticeStatus,
-                loginId: typeof notice.loginId === "string" ? notice.loginId : current?.loginNotice?.loginId,
-                verificationUrl:
-                  typeof notice.verificationUrl === "string"
-                    ? notice.verificationUrl
-                    : current?.loginNotice?.verificationUrl,
-                userCode:
-                  typeof notice.userCode === "string"
-                    ? notice.userCode
-                    : current?.loginNotice?.userCode,
-                error: typeof notice.error === "string" ? notice.error : current?.loginNotice?.error,
-                authMode:
-                  typeof notice.authMode === "string"
-                    ? notice.authMode
-                    : current?.loginNotice?.authMode,
-                planType:
-                  typeof notice.planType === "string"
-                    ? notice.planType
-                    : current?.loginNotice?.planType,
-              },
-            },
-          };
-        });
-        if (failed) {
-          reportError("session.slash_command_failed", notice.error || t("session.loginFailed"), {
-            details: { rootId: rootID, sessionKey, command },
-          });
-        }
-        return;
-      }
-      if (event.type === "error") {
-        const message =
-          typeof event.data?.message === "string"
-            ? event.data.message
-            : t("session.commandFailed");
-        setSlashCommandResults((prev) => {
-          const current = prev[resultKey];
-          if (!current && sessionKey.startsWith("transient-")) {
-            return prev;
-          }
-          if (
-            current?.requestId &&
-            requestId &&
-            current.requestId !== requestId
-          ) {
-            return prev;
-          }
-          return {
-            ...prev,
-            [resultKey]: {
-              rootId: rootID,
-              sessionKey,
-              requestId: current?.requestId || requestId,
-              command: current?.command || command,
-              content: current?.content || "",
-              status: "failed",
-              error: message,
-            },
-          };
-        });
-        reportError("session.slash_command_failed", message, {
-          details: { rootId: rootID, sessionKey, command },
-        });
-      }
-    };
-    const handleSlashCommandDone = (payload: any) => {
-      const sessionKey =
-        typeof payload?.session_key === "string" ? payload.session_key : "";
-      const rootID =
-        typeof payload?.root_id === "string" && payload.root_id
-          ? payload.root_id
-          : resolveRootForSessionKey(sessionKey) || currentRootIdRef.current;
-      if (!rootID || !sessionKey) {
-        return;
-      }
-      const resultKey = rootSessionKey(rootID, sessionKey);
-      setSlashCommandResults((prev) => {
-        const current = prev[resultKey];
-        if (!current || current.status === "failed") {
-          return prev;
-        }
-        const requestId =
-          typeof payload?.request_id === "string"
-            ? payload.request_id
-            : typeof payload?.id === "string"
-              ? payload.id
-              : "";
-        if (
-          current.requestId &&
-          requestId &&
-          current.requestId !== requestId
-        ) {
-          return prev;
-        }
-        return {
-          ...prev,
-          [resultKey]: {
-            ...current,
-            status: "complete",
-          },
-        };
-      });
-    };
-    const dirname = (path: string): string => {
-      const clean = (path || "").replace(/^\/+|\/+$/g, "");
-      if (!clean || clean === ".") return ".";
-      const idx = clean.lastIndexOf("/");
-      return idx <= 0 ? "." : clean.slice(0, idx);
-    };
-    const currentDirAPI = (rootID: string): string => {
-      const selected = selectedDirRef.current;
-      if (!selected || selected === rootID) return ".";
-      return selected;
-    };
-    const stringList = (value: unknown): string[] => {
-      if (!Array.isArray(value)) return [];
-      return Array.from(
-        new Set(
-          value.filter(
-            (item): item is string => typeof item === "string" && item !== "",
-          ),
-        ),
-      );
-    };
-    const handleFileChangedBatch = (payload: any) => {
-      const rootID =
-        typeof payload?.root_id === "string" ? payload.root_id : "";
-      if (!rootID) return;
-
-      const paths = stringList(payload?.paths);
-      const events = Array.isArray(payload?.events) ? payload.events : [];
-      const dirPathSet = new Set(stringList(payload?.dirs));
-      for (const path of paths) {
-        const parentDir = dirname(path);
-        dirPathSet.add(parentDir);
-        const event = events.find((item: any) => item?.path === path);
-        const op = typeof event?.op === "string" ? event.op : "";
-        if (
-          event?.is_dir === true ||
-          op.includes("REMOVE") ||
-          op.includes("RENAME")
-        ) {
-          dirPathSet.add(path);
-        }
-      }
-      const dirs = Array.from(dirPathSet);
-      if (paths.length === 0 && dirs.length === 0) return;
-
-      for (const path of paths) {
-        invalidateFileCache(rootID, path);
-      }
-      if (
-        [...paths, ...dirs].some((path) => {
-          const normalized = String(path || "").replace(/\\/g, "/").replace(/^\/+/, "");
-          return normalized === ".mindfs/plugins" || normalized.startsWith(".mindfs/plugins/");
-        })
-      ) {
-        invalidatePluginsForRoot(rootID);
-      }
-
-      const currentFile = fileRef.current;
-      const currentFileRoot =
-        currentFile?.root || currentRootIdRef.current || "";
-      if (
-        currentFile &&
-        currentFileRoot === rootID &&
-        paths.includes(currentFile.path)
-      ) {
-        void refreshCurrentFileContent(rootID, currentFile.path);
-      }
-
-      void refreshGitStatus(rootID).then((next) => {
-        if (!next?.available) {
-          if (rootID === currentRootIdRef.current) {
-            setGitDiff(null);
-          }
-          return;
-        }
-        const changedDiffPath = gitDiff?.path || "";
-        if (
-          rootID === currentRootIdRef.current &&
-          changedDiffPath &&
-          paths.includes(changedDiffPath)
-        ) {
-          const target = next.items.find(
-            (item) => item.path === changedDiffPath,
-          );
-          if (!target) {
-            setGitDiff(null);
-            return;
-          }
-          void fetchGitDiff(rootID, changedDiffPath, {
-            cacheSignature: buildGitDiffCacheSignature(target),
-          })
-            .then(setGitDiff)
-            .catch((err) => {
-              console.error("[git.diff.refresh] failed", {
-                rootID,
-                changedPath: changedDiffPath,
-                err,
-              });
-            });
-        }
-      });
-
-      const currentDir = currentDirAPI(rootID);
-      for (const dir of dirs) {
-        invalidTreeCacheKeysRef.current.add(treeCacheKey(rootID, dir));
-        if (rootID === currentRootIdRef.current && dir === currentDir) {
-          void refreshTreeDir(rootID, dir, true);
-        }
-      }
-    };
-    const handleFileChanged = (payload: any) => {
-      const rootID =
-        typeof payload?.root_id === "string" ? payload.root_id : "";
-      const changedPath = typeof payload?.path === "string" ? payload.path : "";
-      if (!rootID || !changedPath) return;
-      const dirs = [dirname(changedPath)];
-      if (payload?.is_dir === true) {
-        dirs.push(changedPath);
-      }
-      handleFileChangedBatch({
-        root_id: rootID,
-        paths: [changedPath],
-        dirs,
-        events: [
-          { path: changedPath, op: payload?.op, is_dir: payload?.is_dir },
-        ],
-      });
-    };
-    const unsubscribeEvents = sessionService.subscribeEvents((event) => {
-      const payload = (event.payload || {}) as any;
-      switch (event.type) {
-        case "ws.connecting":
-          setStatus("connecting");
-          break;
-        case "ws.connected":
-          setStatus("connected");
-          void refreshManagedRoots();
-          if (currentRootIdRef.current) {
-            const newest = sessionsRef.current[0]?.updated_at || "";
-            void loadSessionsForRoot(
-              currentRootIdRef.current,
-              newest ? { afterTime: newest } : { replace: true },
-            );
-          }
-          if (multiProjectSessionsEnabled) {
-            void refreshMultiProjectReplyingSessions();
-            void loadMultiProjectSessionGroups();
-          }
-          replayTargetsForAllRoots();
-          break;
-        case "ws.reconnecting":
-          setStatus("reconnecting");
-          break;
-        case "ws.reconnected":
-          setStatus("connected");
-          void refreshManagedRoots();
-          if (currentRootIdRef.current) {
-            const newest = sessionsRef.current[0]?.updated_at || "";
-            void loadSessionsForRoot(
-              currentRootIdRef.current,
-              newest ? { afterTime: newest } : { replace: true },
-            );
-          }
-          if (multiProjectSessionsEnabled) {
-            void refreshMultiProjectReplyingSessions();
-            void loadMultiProjectSessionGroups();
-          }
-          replayTargetsForAllRoots();
-          break;
-        case "ws.closed":
-          setStatus(currentRootIdRef.current ? "reconnecting" : "disconnected");
-          void handleRelayWebSocketClosed();
-          break;
-        case "root.changed":
-          if (
-            payload?.action === "renamed" &&
-            typeof payload?.old_root_id === "string" &&
-            typeof payload?.root_id === "string"
-          ) {
-            const rootPayload =
-              payload?.root && typeof payload.root === "object"
-                ? ({ ...(payload.root as ManagedRootPayload), id: payload.root_id } as ManagedRootPayload)
-                : null;
-            if (!rootPayload) {
-              break;
-            }
-            applyManagedRootRename(payload.old_root_id, rootPayload);
-            if (currentRootIdRef.current === payload.old_root_id) {
-              void actionHandlersRef.current.open_dir({
-                path: payload.root_id,
-                root: payload.root_id,
-                isRoot: true,
-                forceDirectory: true,
-                preservePluginQuery: true,
-              });
-            }
-            break;
-          }
-          void refreshManagedRoots();
-          break;
-        case "session.imported": {
-          const rootID =
-            typeof payload?.root_id === "string" ? payload.root_id : "";
-          const agentName =
-            typeof payload?.agent === "string" ? payload.agent : "";
-          const agentSessionID =
-            typeof payload?.agent_session_id === "string"
-              ? payload.agent_session_id.trim()
-              : "";
-          if (!rootID) {
-            break;
-          }
-          if (rootID === currentRootIdRef.current) {
-            void loadSessionsForRoot(rootID, { replace: true });
-            if (
-              sessionListModeRef.current === "import" &&
-              agentSessionID &&
-              (!agentName || agentName === externalImportAgentRef.current)
-            ) {
-              setImportingExternalSessionKeys((current) => {
-                if (!current.has(agentSessionID)) {
-                  return current;
-                }
-                const next = new Set(current);
-                next.delete(agentSessionID);
-                return next;
-              });
-              setSelectedExternalImportKeys((current) => {
-                if (!current.has(agentSessionID)) {
-                  return current;
-                }
-                const next = new Set(current);
-                next.delete(agentSessionID);
-                return next;
-              });
-              setConfirmingExternalImport(false);
-              if (externalImportAgentRef.current) {
-                void loadExternalSessions(rootID, externalImportAgentRef.current, {
-                  replace: true,
-                });
-              }
-            }
-          }
-          if (multiProjectSessionsEnabled) {
-            void loadMultiProjectSessionGroups();
-          }
-          break;
-        }
-        case "session.created": {
-          const rootID =
-            typeof payload?.root_id === "string" ? payload.root_id : "";
-          if (rootID && rootID === currentRootIdRef.current) {
-            void loadSessionsForRoot(rootID, { replace: true });
-          }
-          if (rootID && multiProjectSessionsEnabled) {
-            void loadMultiProjectSessionGroups();
-          }
-          break;
-        }
-        case "session.stream":
-          handleSessionStream(payload);
-          break;
-        case "session.slash_command.stream":
-          handleSlashCommandStream(payload);
-          break;
-        case "session.slash_command.done":
-          handleSlashCommandDone(payload);
-          break;
-        case "session.queue.updated": {
-          const rootID =
-            typeof payload?.root_id === "string" ? payload.root_id : "";
-          const sessionKey =
-            typeof payload?.session_key === "string" ? payload.session_key : "";
-          if (!rootID || !sessionKey) {
-            break;
-          }
-          const incomingQueue = Array.isArray(payload?.queue)
-            ? (payload.queue.filter(
-                (item: any) =>
-                  item &&
-                  typeof item.id === "string" &&
-                  typeof item.content === "string",
-              ) as SessionQueueItem[])
-            : [];
-          const cacheKey = rootSessionKey(rootID, sessionKey);
-          const hidden = optimisticDequeuedIdsRef.current[cacheKey];
-          const queue = hidden && hidden.size > 0
-            ? incomingQueue.filter((item) => !hidden.has(item.id))
-            : incomingQueue;
-          queueFrozenBySessionRef.current[cacheKey] = payload?.queue_frozen === true;
-          if (hidden) {
-            for (const queueId of Array.from(hidden)) {
-              if (!incomingQueue.some((item) => item.id === queueId)) {
-                hidden.delete(queueId);
-              }
-            }
-            if (hidden.size === 0) {
-              delete optimisticDequeuedIdsRef.current[cacheKey];
-            }
-          }
-          queuedMessagesBySessionRef.current[cacheKey] = queue;
-          setQueueVersion((v) => v + 1);
-          break;
-        }
-        case "session.accepted": {
-          const requestId =
-            typeof payload?.request_id === "string" ? payload.request_id : "";
-          const pending = pendingRequestRef.current[requestId];
-          if (!requestId || !pending) {
-            console.warn("[session/ws] accepted_without_pending", { requestId, payloadSessionKey: typeof payload?.session_key === "string" ? payload.session_key : null });
-            break;
-          }
-          console.info("[session/ws] accepted", { requestId, rootId: pending.rootId, sessionKey: pending.sessionKey || null, tempKey: pending.tempKey || null });
-          delete pendingRequestRef.current[requestId];
-          const acceptedTimestamp =
-            typeof payload?.timestamp === "string" &&
-            !Number.isNaN(Date.parse(payload.timestamp))
-              ? payload.timestamp
-              : pending.timestamp;
-          const acceptedSessionKey =
-            typeof payload?.session_key === "string" ? payload.session_key : "";
-          if (!pending.sessionKey && pending.tempKey && acceptedSessionKey) {
-            const cacheKey = rootSessionKey(pending.rootId, acceptedSessionKey);
-            pendingBySessionRef.current[cacheKey] = {
-              ...pending,
-              timestamp: acceptedTimestamp,
-              sessionKey: acceptedSessionKey,
-            };
-            setMultiProjectSessionPending(pending.rootId, pending.tempKey, false);
-            setMultiProjectSessionPending(pending.rootId, acceptedSessionKey, true);
-            if (pendingDraftRef.current?.requestId === pending.requestId) {
-              pendingDraftRef.current = null;
-            }
-            promotePendingSessionForRoot(
-              pending.rootId,
-              pending.tempKey,
-              acceptedSessionKey,
-              sessionCacheRef.current[cacheKey] || null,
-            );
-          }
-          const markAccepted = (
-            sess: Session | SessionItem | null | undefined,
-          ): Session | null => {
-            if (!sess) return null;
-            const exchanges = Array.isArray((sess as any).exchanges)
-              ? ((sess as any).exchanges as Exchange[]).map((exchange) =>
-                  exchange.pending_ack === true &&
-                  exchange.content === pending.message &&
-                  exchange.timestamp === pending.timestamp
-                    ? {
-                        ...exchange,
-                        timestamp: acceptedTimestamp,
-                        pending_ack: false,
-                      }
-                    : exchange,
-                )
-              : [];
-            return {
-              ...(sess as any),
-              exchanges,
-              updated_at: acceptedTimestamp,
-            } as Session;
-          };
-          const acceptedTargetKey = pending.sessionKey || acceptedSessionKey;
-          if (acceptedTargetKey) {
-            const cacheKey = rootSessionKey(pending.rootId, acceptedTargetKey);
-            const accepted = markAccepted(sessionCacheRef.current[cacheKey]);
-            if (accepted) {
-              sessionCacheRef.current[cacheKey] = accepted;
-              bumpCacheVersion();
-            }
-          }
-          const latestDrawer = drawerSessionByRootRef.current[pending.rootId];
-          const drawerKey = latestDrawer?.key || "";
-          if (
-            drawerKey &&
-            (drawerKey === pending.sessionKey ||
-              drawerKey === pending.tempKey ||
-              drawerKey === acceptedSessionKey)
-          ) {
-            const accepted = markAccepted(latestDrawer);
-            if (accepted) {
-              setDrawerSessionForRoot(pending.rootId, accepted);
-            }
-          }
-          break;
-        }
-        case "session.error": {
-          const requestId =
-            typeof payload?.request_id === "string" ? payload.request_id : "";
-          const pending = requestId
-            ? pendingRequestRef.current[requestId]
-            : null;
-          if (!requestId || !pending) {
-            console.warn("[session/ws] error_without_pending", { requestId, payloadSessionKey: typeof payload?.session_key === "string" ? payload.session_key : null });
-            break;
-          }
-          console.warn("[session/ws] error", { requestId, rootId: pending.rootId, sessionKey: pending.sessionKey || null, tempKey: pending.tempKey || null });
-          delete pendingRequestRef.current[requestId];
-          const targetKey = pending.tempKey || "";
-          const failedKey = pending.sessionKey || targetKey;
-          const rootID = pending.rootId;
-          if (failedKey) {
-            setMultiProjectSessionPending(rootID, failedKey, false);
-          }
-          const latestDrawer = drawerSessionByRootRef.current[rootID];
-          if (targetKey && latestDrawer?.key === targetKey) {
-            const exchanges = Array.isArray((latestDrawer as any).exchanges)
-              ? ((latestDrawer as any).exchanges as Exchange[]).map(
-                  (exchange) =>
-                    exchange.pending_ack === true &&
-                    exchange.content === pending.message &&
-                    exchange.timestamp === pending.timestamp
-                      ? { ...exchange, pending_ack: false }
-                      : exchange,
-                )
-              : [];
-            setDrawerSessionForRoot(rootID, {
-              ...(latestDrawer as any),
-              pending: false,
-              exchanges,
-            } as Session);
-          }
-          break;
-        }
-        case "session.done": {
-          const sessionKey =
-            typeof payload?.session_key === "string" ? payload.session_key : "";
-          const rootID =
-            typeof payload?.root_id === "string" && payload.root_id
-              ? payload.root_id
-              : resolveRootForSessionKey(sessionKey) ||
-                currentRootIdRef.current ||
-                "";
-          if (rootID && sessionKey) {
-            if (payload?.replay !== true) {
-              playCompletionSound();
-            }
-            setMultiProjectSessionPending(rootID, sessionKey, false);
-            handleSessionStreamDone(rootID, sessionKey);
-            const newest = sessionsRef.current[0]?.updated_at || "";
-            void loadSessionsForRoot(
-              rootID,
-              newest ? { afterTime: newest } : { replace: true },
-            );
-            if (multiProjectSessionsEnabled) {
-              void loadMultiProjectSessionGroups();
-            }
-          } else if (currentRootIdRef.current) {
-            const newest = sessionsRef.current[0]?.updated_at || "";
-            void loadSessionsForRoot(
-              currentRootIdRef.current,
-              newest ? { afterTime: newest } : { replace: true },
-            );
-            if (multiProjectSessionsEnabled) {
-              void refreshMultiProjectReplyingSessions();
-              void loadMultiProjectSessionGroups();
-            }
-          }
-          break;
-        }
-        case "session.user_message":
-          if (
-            typeof payload?.session_key === "string" &&
-            typeof payload?.root_id === "string"
-          ) {
-            const rootID = payload.root_id;
-            const sessionKey = payload.session_key;
-            setMultiProjectSessionPending(rootID, sessionKey, true);
-            const exchange = payload.exchange;
-            const sessionMeta = payload.session;
-            const cacheKey = rootSessionKey(rootID, sessionKey);
-            console.info("[session/ws] user_message", {
-              rootID,
-              sessionKey,
-              sessionAgent: sessionMeta?.agent || "",
-              exchangeAgent: exchange?.agent || "",
-              cachedAgent: (sessionCacheRef.current[cacheKey] as any)?.agent || "",
-              currentAgent:
-                currentSessionRef.current?.key === sessionKey
-                  ? ((currentSessionRef.current as any)?.agent || "")
-                  : "",
-              selectedAgent:
-                (selectedSessionRef.current?.key || selectedSessionRef.current?.session_key) === sessionKey
-                  ? ((selectedSessionRef.current as any)?.agent || "")
-                  : "",
-            });
-            const cached =
-              sessionCacheRef.current[cacheKey] ||
-              ({
-                key: sessionKey,
-                type: sessionMeta?.type || "chat",
-                agent: sessionMeta?.agent || exchange?.agent || "",
-                model: sessionMeta?.model || exchange?.model || "",
-                mode: sessionMeta?.mode || exchange?.mode || "",
-                effort: sessionMeta?.effort || exchange?.effort || "",
-                fast_service:
-                  normalizeFastService(sessionMeta?.fast_service) ||
-                  normalizeFastService(exchange?.fast_service),
-	                plan_mode:
-	                  typeof sessionMeta?.plan_mode === "boolean"
-	                    ? sessionMeta.plan_mode
-	                    : false,
-                name: sessionMeta?.name || t("session.new"),
-                created_at:
-                  sessionMeta?.created_at ||
-                  exchange?.timestamp ||
-                  new Date().toISOString(),
-                updated_at:
-                  sessionMeta?.updated_at ||
-                  exchange?.timestamp ||
-                  new Date().toISOString(),
-                exchanges: [],
-              } as any);
-            const prevExchanges = Array.isArray((cached as any).exchanges)
-              ? ((cached as any).exchanges as Exchange[])
-              : [];
-            const duplicate = prevExchanges.some(
-              (item) =>
-                item.role === "user" &&
-                item.content === exchange?.content &&
-                item.timestamp === exchange?.timestamp,
-            );
-            sessionCacheRef.current[cacheKey] = {
-              ...(cached as any),
-              ...(sessionMeta || {}),
-              key: sessionKey,
-              agent:
-                sessionMeta?.agent ||
-                exchange?.agent ||
-                (cached as any).agent ||
-                "",
-              model:
-                sessionMeta?.model ||
-                exchange?.model ||
-                (cached as any).model ||
-                "",
-              mode:
-                sessionMeta?.mode ||
-                exchange?.mode ||
-                (cached as any).mode ||
-                "",
-              effort:
-                sessionMeta?.effort ||
-                exchange?.effort ||
-                (cached as any).effort ||
-                "",
-              fast_service:
-                normalizeFastService(sessionMeta?.fast_service) ||
-                normalizeFastService(exchange?.fast_service) ||
-                normalizeFastService((cached as any).fast_service),
-	              plan_mode:
-	                typeof sessionMeta?.plan_mode === "boolean"
-	                  ? sessionMeta.plan_mode
-	                  : !!(cached as any).plan_mode,
-              exchanges: duplicate
-                ? prevExchanges
-                : [
-                    ...prevExchanges,
-                    {
-                      role: "user",
-                      agent: exchange?.agent || "",
-                      model: exchange?.model || "",
-	                      mode: exchange?.mode || "",
-	                      effort: exchange?.effort || "",
-	                      fast_service: exchange?.fast_service || "",
-	                      content: exchange?.content || "",
-                      timestamp:
-                        exchange?.timestamp || new Date().toISOString(),
-                      pending_ack: false,
-                    },
-                  ],
-              updated_at:
-                sessionMeta?.updated_at ||
-                exchange?.timestamp ||
-                new Date().toISOString(),
-            } as Session;
-            const runtimeAgent = sessionMeta?.agent || exchange?.agent || "";
-            if (runtimeAgent) {
-              updateSessionAgentForKey(
-                rootID,
-                sessionKey,
-                runtimeAgent,
-                sessionMeta?.model || exchange?.model || "",
-                sessionMeta?.mode || exchange?.mode || "",
-                sessionMeta?.effort || exchange?.effort || "",
-                normalizeFastService(sessionMeta?.fast_service) ||
-                  normalizeFastService(exchange?.fast_service),
-                typeof sessionMeta?.plan_mode === "boolean"
-                  ? sessionMeta.plan_mode
-                  : undefined,
-              );
-            }
-            bumpCacheVersion();
-            const newest = sessionsRef.current[0]?.updated_at || "";
-            void loadSessionsForRoot(
-              rootID,
-              newest ? { afterTime: newest } : { replace: true },
-            );
-            if (multiProjectSessionsEnabled) {
-              void loadMultiProjectSessionGroups();
-            }
-          }
-          break;
-        case "task.deleted":
-          if(payload?.root_id===currentRootIdRef.current && typeof payload?.task_id==="string"){
-            const id=payload.task_id;const next={...taskDetailsByIdRef.current};delete next[id];taskDetailsByIdRef.current=next;setTaskDetailsById(next);
-            setKanbanTaskCountItems(prev=>prev.filter(task=>task.id!==id));
-            void deleteCachedTask(payload.root_id,id).catch(console.error);
-          }
-          break;
-        case "task.updated":
-          if (
-            typeof payload?.root_id === "string" &&
-            payload.root_id === currentRootIdRef.current &&
-            typeof payload?.task?.id === "string"
-          ) {
-            const nextTask = payload.task as KanbanTask;
-            const detail = payload.detail as TaskDetail | undefined;
-            if (detail?.task?.id) {
-              applyTaskDetails(payload.root_id, [detail]);
-            } else {
-              const current = taskDetailsByIdRef.current[nextTask.id];
-              applyTaskDetails(payload.root_id, [{
-                task: nextTask,
-                stage_runs: current?.stage_runs || [],
-                events: current?.events || [],
-              }]);
-            }
-            if (nextTask.worktree_path) {
-              void refreshTaskWorktree(payload.root_id, nextTask.worktree_path, false);
-            }
-          }
-          break;
-        case "session.meta.updated":
-          if (
-            typeof payload?.root_id === "string" &&
-            typeof payload?.session?.key === "string"
-          ) {
-            const rootID = payload.root_id;
-            const sessionKey = payload.session.key;
-            const cacheKey = rootSessionKey(rootID, sessionKey);
-            const cached =
-              sessionCacheRef.current[cacheKey] ||
-              ({
-                key: sessionKey,
-                root_id: rootID,
-                type: normalizeMode(payload.session.type),
-                name:
-                  typeof payload.session.name === "string"
-                    ? payload.session.name
-                    : "",
-                created_at: payload.session.updated_at || new Date().toISOString(),
-                updated_at: payload.session.updated_at || new Date().toISOString(),
-                exchanges: [],
-              } as Session);
-            sessionCacheRef.current[cacheKey] = {
-                ...cached,
-                name:
-                  typeof payload.session.name === "string"
-                    ? payload.session.name
-                    : cached.name,
-                agent:
-                  typeof payload.session.agent === "string"
-                    ? payload.session.agent
-                    : (cached as any).agent,
-                model:
-                  typeof payload.session.model === "string"
-                    ? payload.session.model
-                    : (cached as any).model,
-                mode:
-                  typeof payload.session.mode === "string"
-                    ? payload.session.mode
-                    : (cached as any).mode,
-                effort:
-                  typeof payload.session.effort === "string"
-                    ? payload.session.effort
-                    : (cached as any).effort,
-                fast_service:
-                  normalizeFastService(payload.session.fast_service) ||
-                  normalizeFastService((cached as any).fast_service),
-                plan_mode:
-                  typeof payload.session.plan_mode === "boolean"
-                    ? payload.session.plan_mode
-                    : !!(cached as any).plan_mode,
-                parent_session_key:
-                  typeof payload.session.parent_session_key === "string"
-                    ? payload.session.parent_session_key
-                    : (cached as any).parent_session_key,
-                parent_tool_call_id:
-                  typeof payload.session.parent_tool_call_id === "string"
-                    ? payload.session.parent_tool_call_id
-                    : (cached as any).parent_tool_call_id,
-                source:
-                  typeof payload.session.source === "string"
-                    ? payload.session.source
-                    : (cached as any).source,
-                task_id:
-                  typeof payload.session.task_id === "string"
-                    ? payload.session.task_id
-                    : (cached as any).task_id,
-                related_worktree:
-                  payload.session.related_worktree !== undefined
-                    ? payload.session.related_worktree
-                    : (cached as any).related_worktree,
-                pinned_at:
-                  payload.session.pinned_at !== undefined
-                    ? payload.session.pinned_at || undefined
-                    : (cached as any).pinned_at,
-                updated_at: payload.session.updated_at || cached.updated_at,
-              } as Session;
-            bumpCacheVersion();
-            if (
-              (selectedSessionRef.current?.key ||
-                selectedSessionRef.current?.session_key) === sessionKey
-            ) {
-              setSelectedSession((prev) =>
-                prev
-                  ? ({
-                      ...(prev as any),
-                      name:
-                        typeof payload.session.name === "string"
-                          ? payload.session.name
-                          : prev.name,
-                      agent:
-                        typeof payload.session.agent === "string"
-                          ? payload.session.agent
-                          : (prev as any).agent,
-                      model:
-                        typeof payload.session.model === "string"
-                          ? payload.session.model
-                          : (prev as any).model,
-                      mode:
-                        typeof payload.session.mode === "string"
-                          ? payload.session.mode
-                          : (prev as any).mode,
-                      effort:
-                        typeof payload.session.effort === "string"
-                          ? payload.session.effort
-                          : (prev as any).effort,
-                      fast_service:
-                        normalizeFastService(payload.session.fast_service) ||
-                        normalizeFastService((prev as any).fast_service),
-                      plan_mode:
-                        typeof payload.session.plan_mode === "boolean"
-                          ? payload.session.plan_mode
-                          : !!(prev as any).plan_mode,
-                      parent_session_key:
-                        typeof payload.session.parent_session_key === "string"
-                          ? payload.session.parent_session_key
-                          : (prev as any).parent_session_key,
-                      parent_tool_call_id:
-                        typeof payload.session.parent_tool_call_id === "string"
-                          ? payload.session.parent_tool_call_id
-                          : (prev as any).parent_tool_call_id,
-                      source:
-                        typeof payload.session.source === "string"
-                          ? payload.session.source
-                          : (prev as any).source,
-                      task_id:
-                        typeof payload.session.task_id === "string"
-                          ? payload.session.task_id
-                          : (prev as any).task_id,
-                      related_worktree:
-                        payload.session.related_worktree !== undefined
-                          ? payload.session.related_worktree
-                          : (prev as any).related_worktree,
-                      pinned_at:
-                        payload.session.pinned_at !== undefined
-                          ? payload.session.pinned_at || undefined
-                          : (prev as any).pinned_at,
-                      updated_at: payload.session.updated_at || prev.updated_at,
-                    } as SessionItem)
-                  : prev,
-              );
-            }
-            if (boundSessionByRootRef.current[rootID] === sessionKey) {
-              const latest = sessionCacheRef.current[cacheKey];
-              if (latest) {
-                setDrawerSessionForRoot(rootID, latest);
-              }
-            }
-            const relatedWorktreePath =
-              typeof payload.session.related_worktree?.path === "string"
-                ? payload.session.related_worktree.path.trim()
-                : "";
-            if (relatedWorktreePath) {
-              void refreshTaskWorktree(rootID, relatedWorktreePath, false);
-            }
-            const newest = sessionsRef.current[0]?.updated_at || "";
-            void loadSessionsForRoot(
-              rootID,
-              newest ? { afterTime: newest } : { replace: true },
-            );
-            if (multiProjectSessionsEnabled) {
-              void loadMultiProjectSessionGroups();
-            }
-          }
-          break;
-        case "session.related_files.updated": {
-          const rootID =
-            typeof payload?.root_id === "string" ? payload.root_id : "";
-          const sessionKey =
-            typeof payload?.session_key === "string" ? payload.session_key : "";
-          if (rootID && sessionKey) {
-            void refreshSessionRelatedFiles(rootID, sessionKey);
-            refreshTasksForRelatedSession(rootID, sessionKey);
-            const cachedSession =
-              sessionCacheRef.current[rootSessionKey(rootID, sessionKey)];
-            const parentSessionKey = String(
-              cachedSession?.parent_session_key || "",
-            ).trim();
-            if (parentSessionKey) {
-              void refreshSessionRelatedFiles(rootID, parentSessionKey);
-              refreshTasksForRelatedSession(rootID, parentSessionKey);
-            }
-            if (payload?.related_worktree && typeof payload.related_worktree === "object") {
-              updateSessionRelatedWorktreeForKey(
-                rootID,
-                sessionKey,
-                payload.related_worktree as RelatedWorktree,
-              );
-            }
-          }
-          break;
-        }
-        case "file.changed.batch":
-          handleFileChangedBatch(payload);
-          break;
-        case "file.changed":
-          handleFileChanged(payload);
-          break;
-        case "agent.status.changed":
-          setAgentsVersion((v) => v + 1);
-          break;
-        case "app.update":
-          setUpdateState(normalizeUpdateState(payload?.state as UpdateState));
-          break;
-        case "github.import": {
-          const status = (payload?.status || {}) as any;
-          const taskID = typeof status?.task_id === "string" ? status.task_id : "";
-          if (!taskID) {
-            break;
-          }
-          setGitHubImportState((prev) => {
-            if (prev.taskId && prev.taskId !== taskID) {
-              return prev;
-            }
-            const nextStatus = String(status?.status || "");
-            const done = nextStatus === "done";
-            const failed = nextStatus === "failed";
-            return {
-              ...prev,
-              taskId: taskID,
-              status: nextStatus,
-              message: String(status?.message || ""),
-              running: !done && !failed,
-              submitting: false,
-              done,
-              error: failed ? String(status?.message || t("root.githubImportFailed")) : "",
-            };
-          });
-          if (String(status?.status || "") === "done") {
-            setProjectAddMode(null);
-            void refreshManagedRoots();
-            const rootID = typeof status?.root_id === "string" ? status.root_id : "";
-            if (rootID) {
-              void actionHandlersRef.current.open_dir({
-                path: rootID,
-                root: rootID,
-                isRoot: true,
-              });
-            }
-          }
-          break;
-        }
-      }
-    });
-    void loadSessionsForRoot(currentRootId, { replace: true });
-    return () => {
-      cancelled = true;
-      unsubscribeEvents();
-    };
-  }, [
-    currentRootId,
-    loadExternalSessions,
-    loadMultiProjectSessionGroups,
-    loadSessionsForRoot,
-    multiProjectSessionsEnabled,
-    refreshMultiProjectReplyingSessions,
-    rootSessionKey,
-    resolveRootForSessionKey,
-    promotePendingSessionForRoot,
-    appendAgentChunkForSession,
-    appendThoughtChunkForSession,
-    appendToolCallForSession,
-    appendTodoUpdateForSession,
-    appendPlanUpdateForSession,
-    appendCompactNoticeForSession,
-    clearSessionStale,
-    markSessionPending,
-    markSessionStale,
-    resolvePendingForSession,
-    setSelectedPendingByKey,
-    setBoundSessionForRoot,
-    setDrawerSessionForRoot,
-    setMultiProjectSessionPending,
-    refreshManagedRoots,
-    handleRelayWebSocketClosed,
-    invalidatePluginsForRoot,
-    refreshTreeDir,
-    refreshCurrentFileContent,
-    refreshGitStatus,
-    refreshManagedRoots,
-    updateSessionRelatedWorktreeForKey,
-    updateSessionRelatedFilesForKey,
-    refreshTasksForRelatedSession,
-    updateSessionAgentForKey,
-    treeCacheKey,
-    t,
-  ]);
-
-  useEffect(() => {
-    if (!currentRootId) return;
-    if (pluginsLoadedByRootRef.current[currentRootId]) return;
+    if (pluginsLoadedByRootRef.current[scopedRootKey(currentRootId)]) return;
     void ensurePluginsLoaded(currentRootId).catch(() => {});
   }, [currentRootId, ensurePluginsLoaded]);
 
@@ -10547,11 +7125,14 @@ export function App({ onGoHome }: AppProps) {
     }
     setLoadingOlderSessions(true);
     try {
+      const listNodeId = getNodeIdForRoot(rootID);
       const payload = await sessionService.fetchSessions(rootID, {
         beforeTime: oldest,
+        nodeId: listNodeId,
       });
       const next = [...payload.items, ...payload.pinnedItems]
-        .map((item) => toSessionItem(rootID, item))
+        // 同上：加载更多并进的是同一份 sessions，节点归属必须与首屏一致
+        .map((item) => toSessionItem(rootID, { ...(item as any), _nodeId: (item as any)._nodeId || listNodeId }))
         .filter((item): item is SessionItem => !!item);
       setHasMoreSessions(payload.totalCount > payload.items.length);
       setSessions((prev) =>
@@ -10560,7 +7141,7 @@ export function App({ onGoHome }: AppProps) {
     } finally {
       setLoadingOlderSessions(false);
     }
-  }, [loadingOlderSessions]);
+  }, [getNodeIdForRoot, loadingOlderSessions]);
 
   useEffect(() => {
     if (didInitRef.current) {
@@ -10569,15 +7150,6 @@ export function App({ onGoHome }: AppProps) {
     didInitRef.current = true;
     let cancelled = false;
     let settled = false;
-    if (isRelayPWAContext() && !isRelayNodePage()) {
-      const lastNodeID = window.localStorage.getItem(
-        RELAY_LAST_NODE_ID_STORAGE_KEY,
-      );
-      if (lastNodeID) {
-        window.location.replace(`/n/${lastNodeID}/`);
-        return;
-      }
-    }
     void (async () => {
       try {
         const bootstrap = await bootstrapService.start();
@@ -10593,31 +7165,58 @@ export function App({ onGoHome }: AppProps) {
           return;
         }
         const nextDirs = dirs as ManagedRootPayload[];
-        syncRelayNodesToNative(nextDirs);
         const ids = nextDirs.map((d) => d.id);
-        managedRootByIdRef.current = Object.fromEntries(
-          nextDirs.filter((dir) => !!dir.id).map((dir) => [dir.id, dir]),
-        );
+        const indexed = indexManagedRoots(nextDirs);
+        managedRootByKeyRef.current = indexed.byKey;
+        managedRootByIdRef.current = indexed.byId;
+        setRootNodeMap(managedRootByIdRef.current as Record<string, any>);
         managedRootIdsRef.current = new Set(ids);
         setManagedRootIds(ids);
         setRootEntries(mapManagedRootsToEntries(nextDirs));
         const urlState = readURLState();
         const lastRoot = loadLastRootId();
+        const lastNode = loadLastRootNodeId();
+        const urlNode = String(urlState.node || "");
+        const nodeHint = urlNode || lastNode || "";
         const preferredRoot =
           urlState.root && ids.includes(urlState.root)
             ? urlState.root
             : lastRoot && ids.includes(lastRoot)
               ? lastRoot
               : ids[0];
+        const preferredDir =
+          nextDirs.find(
+            (d) => d.id === preferredRoot && (!nodeHint || (d as any)._nodeId === nodeHint),
+          ) ||
+          nextDirs.find((d) => d.id === preferredRoot);
         setCurrentRootId(preferredRoot);
+        selectRootNode(
+          preferredRoot,
+          urlNode || (preferredDir as any)?._nodeId || undefined,
+        );
+        // 初始化竞态兜底：refs 就绪后补一次多项目会话加载，覆盖首屏早期空/回退 _nodeId 批次
+        if (multiProjectSessionsEnabled) {
+          void loadMultiProjectSessionGroups();
+        }
         setPluginQuery(urlState.pluginQuery);
+        // URL 里的 view 是主面板模式的唯一真相源；没有才回落 localStorage（useState 初值已读）。
+        if (urlState.view) {
+          switchMainView(urlState.view);
+        }
         if (urlState.session) {
           if (cancelled) return;
-          await handleSelectSessionRef.current?.({
-            key: urlState.session,
-            session_key: urlState.session,
-            root_id: preferredRoot,
-          });
+          await handleSelectSessionRef.current?.(
+            {
+              key: urlState.session,
+              session_key: urlState.session,
+              root_id: preferredRoot,
+            },
+            // 深链恢复：URL 明确写了非 chat 的面板时，别被「有 session」拉回对话态
+            {
+              preserveMainView:
+                !!urlState.view && urlState.view !== "chat",
+            },
+          );
         } else if (urlState.file) {
           await ensurePluginsLoaded(preferredRoot);
           if (cancelled) return;
@@ -10626,25 +7225,14 @@ export function App({ onGoHome }: AppProps) {
             root: preferredRoot,
             cursor: urlState.cursor,
             preservePluginQuery: true,
+            preserveMainView: !!urlState.view && urlState.view !== "files",
           });
         } else {
-          const restored = await tryShowBoundSessionForRoot(preferredRoot, {
+          if (cancelled) return;
+          await showBoundSessionOrRootDir(preferredRoot, {
             pluginQuery: urlState.pluginQuery,
+            loadSessionsOnRestore: true,
           });
-          if (!restored) {
-            actionHandlersRef.current.open_dir({
-              path: preferredRoot,
-              root: preferredRoot,
-              preservePluginQuery: true,
-              isRoot: true,
-            });
-          } else {
-            void loadSessionsForRoot(preferredRoot, {
-              replace: true,
-              force: true,
-            });
-            await refreshTreeDir(preferredRoot, ".", false);
-          }
         }
       } catch (err) {
         if (cancelled) {
@@ -10666,25 +7254,24 @@ export function App({ onGoHome }: AppProps) {
     };
   }, [
     ensurePluginsLoaded,
-    handleRelayNavigationFailure,
     loadManagedRootPayloads,
+    loadMultiProjectSessionGroups,
     loadSessionsForRoot,
     refreshTreeDir,
-    tryShowBoundSessionForRoot,
+    showBoundSessionOrRootDir,
     bootstrapState.phase,
   ]);
 
   useEffect(() => {
     return bootstrapService.subscribe((state) => {
       setBootstrapState(state);
-      setRelayStatus(state.relayStatus);
       setE2eeState(state.e2ee);
     });
   }, []);
 
   useEffect(() => {
-    document.title = formatDocumentTitle(relayStatus);
-  }, [relayStatus]);
+    document.title = APP_DOCUMENT_TITLE;
+  }, []);
 
   useEffect(() => {
     return e2eeService.subscribe((state) => {
@@ -10760,26 +7347,20 @@ export function App({ onGoHome }: AppProps) {
     } finally {
       setE2eePromptBusy(false);
     }
-  }, [describeE2EEPromptError, e2eeSecretInput, t]);
-
-  useEffect(() => {
-    if (!isRelayPWAContext()) {
-      return;
-    }
-    const nodeID = relayNodeIdFromPathname(window.location.pathname);
-    if (!nodeID) {
-      return;
-    }
-    window.localStorage.setItem(RELAY_LAST_NODE_ID_STORAGE_KEY, nodeID);
-  }, []);
+  }, [describeE2EEPromptError, e2eeSecretInput, t]); // ponytail: e2ee removed, pairing dead code kept for type compat
 
   useEffect(() => {
     function handlePopState() {
       const state = readURLState();
       if (state.root) {
         setCurrentRootId(state.root);
+        selectRootNode(state.root, state.node || undefined);
       }
       setPluginQuery(state.pluginQuery);
+      if (state.view) {
+        // 后退/前进时按钮高亮与面板都从 URL 的 view 恢复，保持同源
+        switchMainView(state.view);
+      }
       if (!state.root) {
         return;
       }
@@ -10796,11 +7377,14 @@ export function App({ onGoHome }: AppProps) {
           state.session !== currentSessionKey ||
           state.root !== currentSessionRoot
         ) {
-          void handleSelectSessionRef.current?.({
-            key: state.session,
-            session_key: state.session,
-            root_id: state.root,
-          });
+          void handleSelectSessionRef.current?.(
+            {
+              key: state.session,
+              session_key: state.session,
+              root_id: state.root,
+            },
+            { preserveMainView: !!state.view && state.view !== "chat" },
+          );
         }
         return;
       }
@@ -10818,38 +7402,92 @@ export function App({ onGoHome }: AppProps) {
             root: state.root,
             cursor: state.cursor,
             preservePluginQuery: true,
+            preserveMainView: !!state.view && state.view !== "files",
           });
         }
         return;
       }
       void (async () => {
-        const restored = await tryShowBoundSessionForRoot(state.root, {
+        await showBoundSessionOrRootDir(state.root, {
           pluginQuery: state.pluginQuery,
-        });
-        if (restored) {
-          void loadSessionsForRoot(state.root, { replace: true, force: true });
-          await refreshTreeDir(state.root, ".", false);
-          return;
-        }
-        actionHandlers.open_dir({
-          path: state.root,
-          root: state.root,
-          preservePluginQuery: true,
-          isRoot: true,
+          loadSessionsOnRestore: true,
         });
       })();
     }
 
-    window.addEventListener("popstate", handlePopState);
-    return () => window.removeEventListener("popstate", handlePopState);
-  }, [actionHandlers, loadSessionsForRoot, refreshTreeDir, tryShowBoundSessionForRoot]);
+    const onPopState = (event: PopStateEvent) => {
+      // 覆盖层开着的时候，浏览器后退/iOS 侧滑应该只关那一层，而不是连视图一起换掉。
+      // 刚被弹掉的那一条立刻 push 回去，否则历史被吃掉一次，
+      // 下一次后退就直接退到站外（用户看到的是「按两次返回就出去了」）。
+      if (hasBackLayer()) {
+        window.history.pushState(event.state, "", window.location.href);
+        closeTopBackLayer();
+        return;
+      }
+      // 视图切换留下的那条记录：它带的是「切之前」那个视图，直接退回去。
+      // 不走 handlePopState —— 那套按 URL 恢复，而 pushViewHistoryEntry 存的
+      // 是切换瞬间的 URL，view 字段可能还没写进去，判据只能是 state 里的视图。
+      // 退到哪个视图后要 replaceState 把 URL 对齐（按钮高亮与实际视图同源），
+      // 只换 view、其余 root/file/session 原样带回，否则会把当前项目/文件抹掉。
+      const fromView = (event.state as { mindfsView?: MainViewMode } | null)?.mindfsView;
+      if (fromView) {
+        consumeViewHistoryEntry();
+        mainViewRef.current = fromView;
+        setMainView(fromView);
+        if (fromView !== "chat") {
+          lastNonChatViewRef.current = fromView;
+        }
+        const now = readURLState();
+        replaceURLState({ ...now, view: fromView });
+        return;
+      }
+      handlePopState();
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, [actionHandlers, loadSessionsForRoot, refreshTreeDir, showBoundSessionOrRootDir]);
 
-  const actionBarSession = resolveInputSession(
-    currentRootId,
-    isDrawerOpen,
-    selectedSession,
-    currentSession,
-  );
+  const selectedRoot =
+    (selectedSession?.root_id as string | undefined) || currentRootId || "";
+  const selectedInCurrentRoot =
+    !!selectedSession && !!currentRootId && selectedRoot === currentRootId;
+  const selectedKey =
+    selectedSession?.key || selectedSession?.session_key || "";
+  const lockedSessionKey = resolveLockedSessionKey(activeBoundSessionKey);
+  const lockedSessionSnapshot = lockedSessionKey && currentRootId
+    ? getSessionSnapshot(
+        currentRootId,
+        drawerSessionByRootRef.current[scopedRootKey(currentRootId)] ||
+          sessionCacheRef.current[rootSessionKey(currentRootId, lockedSessionKey)] ||
+          null,
+      )
+    : null;
+  const boundFromSelected =
+    selectedInCurrentRoot && selectedKey === activeBoundSessionKey
+      ? (selectedSession as any)
+      : null;
+  const boundFromCache =
+    activeBoundSessionKey && currentRootId
+      ? (sessionCacheRef.current[
+          rootSessionKey(currentRootId, activeBoundSessionKey)
+        ] as any)
+      : null;
+  const isDetachedMainSessionTarget =
+    !!activeBoundSessionKey &&
+    selectedInCurrentRoot &&
+    !!selectedKey &&
+    selectedKey !== activeBoundSessionKey &&
+    interactionMode !== "drawer";
+  const actionBarSession = lockedSessionKey
+    ? isDetachedMainSessionTarget
+      ? (selectedSession as any)
+      : (lockedSessionSnapshot as any) ||
+        (currentSession as any) ||
+        boundFromCache ||
+        boundFromSelected
+    : selectedInCurrentRoot
+      ? (selectedSession as any)
+      : null;
   const actionBarSessionKey =
     (actionBarSession as any)?.key ||
     (actionBarSession as any)?.session_key ||
@@ -10860,6 +7498,16 @@ export function App({ onGoHome }: AppProps) {
       actionBarSession as any,
     ) || (actionBarSession as any),
   );
+  // 「会话就在主区」必须同时满足：主面板确实是对话态。否则在文件态下会话被选中却看不见，
+  // 蓝环会被误判成「已在主区」而隐藏，文件态的悬浮框就再也打不开了。
+  const isBoundSessionInMain =
+    !!activeBoundSessionKey &&
+    selectedKey === activeBoundSessionKey &&
+    interactionMode !== "drawer" &&
+    mainView === "chat";
+  const canOpenSessionDrawer = !!activeBoundSessionKey && !isBoundSessionInMain;
+  const detachedBoundSession =
+    isDetachedMainSessionTarget && !isDrawerOpen;
   const actionBarQueuedMessages = useMemo(() => {
     void queueVersion;
     if (!currentRootId || !actionBarSessionKey) return [];
@@ -11084,7 +7732,7 @@ export function App({ onGoHome }: AppProps) {
           root_id: rootID,
         });
       });
-      if (boundSessionByRootRef.current[rootID] === sessionKey) {
+      if (boundSessionByRootRef.current[scopedRootKey(rootID)] === sessionKey) {
         setDrawerSessionForRoot(rootID, restored);
       }
     });
@@ -11112,7 +7760,9 @@ export function App({ onGoHome }: AppProps) {
         (selectedSessionRef.current?.root_id as string | undefined) ||
         currentRootIdRef.current;
       if (!root) return;
-      setExpanded((prev) => Array.from(new Set([...prev, root])));
+      setExpanded((prev) =>
+        Array.from(new Set([...prev, scopeKey(getNodeIdForRoot(root) ?? "", root)])),
+      );
       const file =
         typeof target === "string" ? { path: target } : target;
       void openRelatedFileDiff(root, file);
@@ -11128,17 +7778,24 @@ export function App({ onGoHome }: AppProps) {
 
   const rootSessionIndicators = useMemo(() => {
     const next: Record<string, { bound?: boolean; pending?: boolean }> = {};
-    for (const root of managedRootIds) {
-      const boundKey = String(boundSessionByRootRef.current[root] || "").trim();
+    for (const [scopedRid, dir] of Object.entries(
+      managedRootByKeyRef.current as Record<string, any>,
+    )) {
+      const root = String(dir?.id || "");
+      if (!root) continue;
+      const nid = scopedRid.includes("::")
+        ? scopedRid.slice(0, scopedRid.lastIndexOf("::"))
+        : "";
+      const boundKey = String(boundSessionByRootRef.current[scopedRid] || "").trim();
       const hasBound = !!boundKey && !boundKey.startsWith("pending-");
-      const pendingPrefix = rootSessionKey(root, "");
+      const pendingPrefix = scopeSessionKey(nid, root, "");
       const hasPendingSession = Object.entries(multiProjectPendingByKey).some(
         ([key, pending]) => pending && key.startsWith(pendingPrefix),
       );
       if (!hasBound && !hasPendingSession) {
         continue;
       }
-      const drawer = drawerSessionByRootRef.current[root] as
+      const drawer = drawerSessionByRootRef.current[scopedRid] as
         | (Session & { pending?: boolean })
         | null
         | undefined;
@@ -11152,7 +7809,7 @@ export function App({ onGoHome }: AppProps) {
         hasPendingSession ||
         (drawer?.key === boundKey && !!drawer?.pending) ||
         !!selected?.pending;
-      next[root] = { bound: hasBound || hasPendingSession, pending };
+      next[scopedRid] = { bound: hasBound || hasPendingSession, pending };
     }
     return next;
   }, [
@@ -11201,8 +7858,9 @@ export function App({ onGoHome }: AppProps) {
       const relatedFiles = await sessionService.getSessionRelatedFiles(
         resolvedRoot,
         resolvedKey,
+        getNodeIdForRoot(resolvedRoot),
       );
-      await setCachedSessionRelatedFiles(resolvedRoot, resolvedKey, relatedFiles);
+      await setCachedSessionRelatedFiles(resolvedRoot, resolvedKey, relatedFiles, getNodeIdForRoot(resolvedRoot));
       updateSessionRelatedFilesForKey(resolvedRoot, resolvedKey, relatedFiles);
       if (selectedKanbanTaskId) {
         const removedKey = [repoKind || "", repoPath || "", head || "", path || ""].join("\0");
@@ -11461,6 +8119,8 @@ export function App({ onGoHome }: AppProps) {
       composerOverlayInset={sessionViewerComposerOverlayInset}
       loading={selectedSessionLoading}
       rootId={selectedSession?.root_id || currentRootId}
+      rootDisplayName={getRootDisplayName(selectedSession?.root_id || currentRootId)}
+      rootColor={getDisplayNodeColor(String(selectedSession?.root_id || currentRootId || ""))}
       rootPath={
         managedRootByIdRef.current[
           selectedSession?.root_id || currentRootId || ""
@@ -11499,203 +8159,12 @@ export function App({ onGoHome }: AppProps) {
     />
   );
 
-  const worktreeBranchSelector =
-    creatingRootKind === "worktree" ? (
-      <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
-        <select
-          value={worktreeBranchMode === "new" ? "__new__" : worktreeBranch}
-          disabled={creatingRootBusy}
-          onChange={(event) => {
-            const value = event.target.value;
-            if (value === "__new__") {
-              setWorktreeBranchMode("new");
-              setWorktreeBranch("");
-              return;
-            }
-            setWorktreeBranchMode("existing");
-            setWorktreeBranch(value);
-          }}
-          style={{
-            width: "100%",
-            borderRadius: "7px",
-            border: "1px solid var(--border-color)",
-            background: "var(--menu-bg)",
-            color: "var(--text-primary)",
-            fontSize: "12px",
-            padding: "6px 8px",
-            outline: "none",
-          }}
-        >
-          <option value="__new__">{t("worktree.createBranch")}</option>
-          {worktreeBranches.branches.map((branch) => (
-            <option key={branch.name} value={branch.name}>
-              {branch.current ? `${branch.name} ${t("worktree.current")}` : branch.name}
-            </option>
-          ))}
-        </select>
-        {worktreeBranchesLoading ? (
-          <span style={{ fontSize: "11px", color: "var(--text-secondary)" }}>{t("worktree.loadingBranches")}</span>
-        ) : worktreeBranchError ? (
-          <span style={{ fontSize: "11px", color: "#b45309" }}>{worktreeBranchError}</span>
-        ) : null}
-      </div>
-    ) : null;
-
-  const worktreeCreateOverlay =
-    creatingRootKind === "worktree" && creatingRootName !== null ? (
-      <div
-        ref={worktreeCreatePopoverRef}
-        style={{
-          width: "248px",
-          maxWidth: "calc(100vw - 32px)",
-          padding: "10px",
-          borderRadius: "12px",
-          border: "1px solid var(--border-color)",
-          background: "var(--menu-bg)",
-          boxShadow: "0 12px 30px rgba(15, 23, 42, 0.14)",
-          display: "flex",
-          flexDirection: "column",
-          gap: "10px",
-        }}
-      >
-        <div style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-primary)" }}>
-          worktree
-        </div>
-        <input
-          value={creatingRootName}
-          disabled={creatingRootBusy}
-          autoFocus
-          onChange={(event) => setCreatingRootName(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") {
-              event.preventDefault();
-              void handleCreateRootSubmit();
-            } else if (event.key === "Escape") {
-              event.preventDefault();
-              handleCreateRootCancel();
-            }
-          }}
-          style={{
-            width: "100%",
-            borderRadius: "8px",
-            border: "1px solid var(--border-color)",
-            background: "transparent",
-            color: "var(--text-primary)",
-            fontSize: "12px",
-            padding: "8px 10px",
-            outline: "none",
-            boxSizing: "border-box",
-          }}
-        />
-        {worktreeBranchSelector}
-        <div style={{ display: "flex" }}>
-          <button
-            type="button"
-            disabled={creatingRootBusy || !String(creatingRootName || "").trim()}
-            onClick={() => {
-              void handleCreateRootSubmit();
-            }}
-            style={{
-              width: "100%",
-              border: "none",
-              background: creatingRootBusy || !String(creatingRootName || "").trim()
-                ? "rgba(59, 130, 246, 0.65)"
-                : "var(--accent-color)",
-              color: "#fff",
-              borderRadius: "8px",
-              padding: "8px 10px",
-              fontSize: "12px",
-              fontWeight: 600,
-              cursor: creatingRootBusy || !String(creatingRootName || "").trim()
-                ? "not-allowed"
-                : "pointer",
-            }}
-          >
-            {creatingRootBusy ? t("worktree.processing") : t("worktree.create")}
-          </button>
-        </div>
-      </div>
-    ) : null;
-
-  const worktreeSwitchOverlay =
-    worktreeSwitchOpen ? (
-      <div
-        ref={worktreeSwitchPopoverRef}
-        style={{
-          width: "248px",
-          maxWidth: "calc(100vw - 32px)",
-          maxHeight: "360px",
-          padding: "8px",
-          borderRadius: "12px",
-          border: "1px solid var(--border-color)",
-          background: "var(--menu-bg)",
-          boxShadow: "0 12px 30px rgba(15, 23, 42, 0.14)",
-          display: "flex",
-          flexDirection: "column",
-          gap: "6px",
-          overflow: "auto",
-        }}
-      >
-        <div style={{ padding: "4px 6px 6px", fontSize: "12px", fontWeight: 600, color: "var(--text-primary)" }}>
-          {t("worktree.switchTitle")}
-        </div>
-        {worktreeSwitchLoading ? (
-          <div style={{ padding: "8px 6px", fontSize: "12px", color: "var(--text-secondary)" }}>{t("common.loading")}</div>
-        ) : worktreeSwitchError ? (
-          <div style={{ padding: "8px 6px", fontSize: "12px", color: "#b45309" }}>{worktreeSwitchError}</div>
-        ) : worktreeSwitchItems.length === 0 ? (
-          <div style={{ padding: "8px 6px", fontSize: "12px", color: "var(--text-secondary)" }}>{t("worktree.noSwitchable")}</div>
-        ) : worktreeSwitchItems.map((item) => {
-          const managed = findManagedRootByPath(item.path);
-          const active = item.current || managed?.id === currentRootId;
-          const busy = switchingWorktreePath === item.path;
-          const name = String(item.path || "").replace(/[\\/]+$/, "").split(/[\\/]/).filter(Boolean).pop() || item.path;
-          return (
-            <button
-              key={item.path}
-              type="button"
-              disabled={active || !!switchingWorktreePath}
-              onClick={() => {
-                void handleSwitchWorktree(item);
-              }}
-              style={{
-                width: "100%",
-                border: "none",
-                background: active ? "var(--selection-bg)" : "transparent",
-                color: active ? "var(--accent-color)" : "var(--text-primary)",
-                borderRadius: "8px",
-                padding: "8px 10px",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: "12px",
-                textAlign: "left",
-                cursor: active || switchingWorktreePath ? "default" : "pointer",
-                opacity: switchingWorktreePath && !busy ? 0.56 : 1,
-              }}
-            >
-              <span style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: "2px" }}>
-                <span style={{ fontSize: "12px", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {name}
-                </span>
-                <span style={{ fontSize: "11px", color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {item.branch || item.head?.slice(0, 8) || item.path}
-                </span>
-              </span>
-              <span style={{ fontSize: "11px", color: active ? "var(--accent-color)" : "var(--text-secondary)", flexShrink: 0 }}>
-                {busy ? "..." : active ? t("worktree.current") : managed ? t("worktree.switch") : t("worktree.join")}
-              </span>
-            </button>
-          );
-        })}
-      </div>
-    ) : null;
 
   let workspaceView: React.ReactNode;
   const gitStatusAvailable = gitStatus?.available === true;
   const gitHistoryAvailable = gitHistory?.available === true;
-  const gitStatusExpanded = currentRootId ? gitStatusExpandedByRoot[currentRootId] !== false : true;
-  const gitHistoryExpandedCommits = currentRootId ? gitHistoryExpandedByRoot[currentRootId] || {} : {};
+  const gitStatusExpanded = currentRootId ? gitStatusExpandedByRoot[scopedRootKey(currentRootId)] !== false : true;
+  const gitHistoryExpandedCommits = currentRootId ? gitHistoryExpandedByRoot[scopedRootKey(currentRootId)] || {} : {};
   const shouldRenderGitPanel =
     gitStatusLoading || gitStatusAvailable;
   const shouldRenderGitHistoryPanel =
@@ -11713,6 +8182,8 @@ export function App({ onGoHome }: AppProps) {
     (selectedSession?.root_id as string | undefined) ||
     currentRootId;
   const relatedSessionKey = relatedSessionSnapshot?.key || relatedSessionSnapshot?.session_key;
+  const relatedSessionNodeId =
+    String((relatedSessionSnapshot as any)?._nodeId || "").trim() || undefined;
   const relatedSelectedPath = gitDiff?.path || file?.path || "";
   const relatedWorktree = selectedKanbanTask?.worktree_path
     ? {
@@ -11759,6 +8230,14 @@ export function App({ onGoHome }: AppProps) {
     updateSessionRelatedFilesForKey,
   ]);
 
+  // 「管理节点」面板的刷新：先拉节点注册表（拿别的设备改过的节点），
+  // 再让 refreshManagedRoots 逐节点重拉 dirs 并触发多项目会话/回复态重载。
+  // 不要再额外调 loadManagedRootPayloads({force:true})——refreshManagedRoots 内部已经会调它。
+  const handleNodeManagerRefresh = useCallback(async () => {
+    await syncNodesFromServer().catch(() => {});
+    await refreshManagedRoots();
+  }, [refreshManagedRoots]);
+
   const handleProjectTreeRefresh = useCallback(async (tab: ProjectTreeTab) => {
     const root = currentRootIdRef.current;
     if (!root) {
@@ -11766,8 +8245,25 @@ export function App({ onGoHome }: AppProps) {
     }
     switch (tab) {
       case "files": {
-        const dir = selectedDirRef.current === root ? "." : (selectedDirRef.current || ".");
-        await refreshTreeDir(root, dir, true);
+        // 强制拉取真实状态：当前目录 + 侧边栏已加载（展开/访问过）的所有目录全部重拉，
+        // 而非仅刷新选中目录——展开的子目录若不重拉，刷新后仍显示旧条目。
+        const selDir = selectedDirRef.current === root ? "." : (selectedDirRef.current || ".");
+        const treeBase = scopeKey(getNodeIdForRoot(root) ?? "", root);
+        const targets = new Set<string>([selDir]);
+        for (const key of Object.keys(entriesByPathRef.current)) {
+          if (key === treeBase) {
+            targets.add(".");
+          } else if (key.startsWith(`${treeBase}:`)) {
+            targets.add(key.slice(treeBase.length + 1));
+          }
+        }
+        await Promise.all(
+          [...targets].map((dir) => refreshTreeDir(root, dir, dir === selDir)),
+        );
+        if (fileRef.current?.path) {
+          // 主视图正打开文件时，刷新同时强制重读该文件内容（WS 断开时唯一的重读入口）
+          void refreshCurrentFileContent(root, fileRef.current.path);
+        }
         return;
       }
       case "git":
@@ -11776,14 +8272,9 @@ export function App({ onGoHome }: AppProps) {
           refreshGitHistory(root, { waitForIncremental: true }),
         ]);
         return;
-      case "worktrees": {
-        const items = await loadProjectTreeWorktrees(root);
-        const expandedPath = expandedWorktreeByRoot[root] || "";
-        if (expandedPath && items.some((item) => item.path === expandedPath)) {
-          await loadProjectTreeWorktreeStatus(expandedPath);
-        }
+      case "worktrees":
+        await refreshProjectTreeWorktrees(root);
         return;
-      }
       case "related":
         await Promise.all([
           refreshProjectTreeRelatedFiles(),
@@ -11791,12 +8282,12 @@ export function App({ onGoHome }: AppProps) {
         ]);
     }
   }, [
-    expandedWorktreeByRoot,
-    loadProjectTreeWorktreeStatus,
-    loadProjectTreeWorktrees,
+    getNodeIdForRoot,
+    refreshCurrentFileContent,
     refreshGitHistory,
     refreshGitStatus,
     refreshProjectTreeRelatedFiles,
+    refreshProjectTreeWorktrees,
     refreshTreeDir,
   ]);
 
@@ -11806,184 +8297,35 @@ export function App({ onGoHome }: AppProps) {
     if (projectTreeTab !== "worktrees" || !rootID || !worktreePath) {
       return;
     }
-	    setExpandedWorktreeByRoot((prev) => {
-	      if (prev[rootID] === worktreePath) {
-	        return prev;
-	      }
-	      return { ...prev, [rootID]: worktreePath };
-    });
-    void loadProjectTreeWorktreeStatus(worktreePath);
+    void expandProjectTreeWorktree(rootID, worktreePath);
   }, [
-    loadProjectTreeWorktreeStatus,
+    expandProjectTreeWorktree,
     projectTreeTab,
     relatedWorktree?.path,
     relatedWorktree?.root_id,
   ]);
 
-  const renderRootWorktreeContent = (root: string): React.ReactNode => {
-    const relatedPath =
-      relatedWorktree?.root_id === root ? String(relatedWorktree?.path || "") : "";
-    const items = [...(worktreeItemsByRoot[root] || [])].sort((left, right) => {
-      if (!relatedPath) {
-        return 0;
-      }
-      if (left.path === relatedPath) {
-        return -1;
-      }
-      if (right.path === relatedPath) {
-        return 1;
-      }
-      return 0;
-    });
-    const loading = worktreeLoadingByRoot[root] === true;
-    const error = worktreeErrorByRoot[root] || "";
-    const expandedPath = expandedWorktreeByRoot[root] || "";
-    if (loading) {
-      return (
-        <div style={{ padding: "8px 4px", fontSize: "12px", color: "var(--text-secondary)" }}>
-          {t("worktree.loading")}
-        </div>
-      );
-    }
-    if (error) {
-      return (
-        <div style={{ padding: "8px 4px", fontSize: "12px", color: "#b45309" }}>
-          {error}
-        </div>
-      );
-    }
-    if (items.length === 0) {
-      return (
-        <div style={{ padding: "8px 4px", fontSize: "12px", color: "var(--text-secondary)" }}>
-          {t("worktree.empty")}
-        </div>
-      );
-    }
-    return (
-      <div style={{ display: "flex", flexDirection: "column", gap: "5px", minWidth: 0 }}>
-        {items.map((item) => {
-          const managed = findManagedRootByPath(item.path);
-          const targetRootId = managed?.id || "";
-          const selected = expandedPath === item.path;
-          const status = worktreeStatusByPath[item.path] || null;
-          const statusLoading = worktreeStatusLoadingByPath[item.path] === true;
-          const dirtyCount = status?.items?.length || 0;
-          const branchLabel = item.branch || item.head?.slice(0, 8) || item.path;
-          const statusCountLabel = statusLoading ? "..." : status ? String(dirtyCount) : "";
-          return (
-            <div key={item.path} style={{ minWidth: 0 }}>
-              <button
-                type="button"
-                onClick={async () => {
-                  if (selected) {
-                    setExpandedWorktreeByRoot((prev) => ({ ...prev, [root]: "" }));
-                    return;
-                  }
-                  setExpandedWorktreeByRoot((prev) => ({ ...prev, [root]: item.path }));
-                  await loadProjectTreeWorktreeStatus(item.path);
-                }}
-                style={{
-                  width: "100%",
-                  border: "none",
-                  borderRadius: "7px",
-                  background: selected ? "var(--selection-bg)" : "transparent",
-                  color: selected ? "var(--accent-color)" : "var(--text-primary)",
-                  padding: "6px 4px 6px 0",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  gap: "8px",
-                  textAlign: "left",
-                  cursor: "pointer",
-                }}
-              >
-                <span style={{ minWidth: 0, display: "inline-flex", alignItems: "center", gap: "8px" }}>
-                  <span
-                    title={t("git.changes")}
-                    aria-label={t("git.changes")}
-                    style={{
-                      width: "18px",
-                      height: "18px",
-                      display: "inline-flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      color: "var(--text-primary)",
-                      flexShrink: 0,
-                    }}
-                  >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                      <path
-                        fill="currentColor"
-                        d="M7 5a2 2 0 1 1 3.763.945h.58a4 4 0 0 1 4 4v1.28a2 2 0 0 1-1.02 3.72a2 2 0 0 1-.98-3.745V9.945a2 2 0 0 0-2-2H10v9.323A2 2 0 0 1 9 21a2 2 0 0 1-1-3.732V6.732A2 2 0 0 1 7 5"
-                      />
-                    </svg>
-                  </span>
-                  <span style={{ fontSize: "12px", fontWeight: selected ? 700 : 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {branchLabel}
-                  </span>
-                </span>
-                <span style={{ display: "inline-flex", alignItems: "center", gap: "6px", fontSize: "11px", color: selected ? "var(--accent-color)" : "var(--text-secondary)", flexShrink: 0 }}>
-                  <span>{statusCountLabel}</span>
-                  <svg
-                    width="12"
-                    height="12"
-                    viewBox="0 0 20 20"
-                    fill="currentColor"
-                    aria-hidden="true"
-                    style={{
-                      transform: selected ? "rotate(180deg)" : "rotate(0deg)",
-                      transition: "transform 0.15s",
-                    }}
-                  >
-                    <path
-                      fillRule="evenodd"
-                      d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 11.17l3.71-3.94a.75.75 0 1 1 1.08 1.04l-4.25 4.5a.75.75 0 0 1-1.08 0l-4.25-4.5a.75.75 0 0 1 .02-1.06"
-                      clipRule="evenodd"
-                    />
-                  </svg>
-                </span>
-              </button>
-              {selected ? (
-                <div style={{ padding: "4px 0 4px 0" }}>
-                  {statusLoading || status ? (
-                    <GitStatusPanel
-                      rootId={targetRootId || currentRootId || undefined}
-                      status={status}
-                      loading={statusLoading}
-                      compact
-                      expanded
-                      showHeader={false}
-                      showHeaderActions={false}
-                      showExpandedToggle={false}
-                      enableBranchMenu={false}
-                      onSelectItem={(statusItem) => {
-                        const nextRoot = targetRootId || root;
-                        if (!nextRoot) {
-                          return;
-                        }
-                        void openGitDiff(nextRoot, statusItem, targetRootId ? undefined : { repoPath: item.path });
-                      }}
-                      onOpenItem={(statusItem) => {
-                        const nextRoot = targetRootId;
-                        if (!nextRoot || statusItem.is_dir === true) {
-                          return;
-                        }
-                        actionHandlers.open({ path: statusItem.path, root: nextRoot });
-                      }}
-                    />
-                  ) : (
-                    <div style={{ padding: "6px 4px", fontSize: "12px", color: "var(--text-secondary)" }}>
-                      {t("git.loadingStatusInline")}
-                    </div>
-                  )}
-                </div>
-              ) : null}
-            </div>
-          );
-        })}
-      </div>
-    );
-  };
+  const renderRootWorktreeContent = (root: string): React.ReactNode => (
+    <RootWorktreeContentView
+      root={root}
+      currentRootId={currentRootId}
+      scopedRootKey={scopedRootKey}
+      managedRootByIdRef={managedRootByIdRef}
+      relatedWorktree={relatedWorktree}
+      worktrees={{
+        worktreeItemsByRoot,
+        worktreeLoadingByRoot,
+        worktreeErrorByRoot,
+        expandedWorktreeByRoot,
+        worktreeStatusByPath,
+        worktreeStatusLoadingByPath,
+        toggleProjectTreeWorktree,
+      }}
+      findManagedRootByPath={findManagedRootByPath}
+      openGitDiff={openGitDiff}
+      actionHandlers={actionHandlers}
+    />
+  );
   const selectedSessionRelatedFiles = useMemo(() => {
     const rawRelated = selectedKanbanTask
       ? taskRelatedFilesById[selectedKanbanTask.id] || []
@@ -12094,1244 +8436,289 @@ export function App({ onGoHome }: AppProps) {
     relatedSessionRootId || currentRootId,
     selectedSessionRelatedFiles,
     gitStatsRefreshKey,
+    relatedSessionNodeId,
   );
-  const renderRootRelatedContent = (root: string): React.ReactNode => {
-    if (!root || root !== currentRootId || root !== relatedSessionRootId) {
-      return null;
-    }
-    if (!relatedSessionSnapshot && !selectedKanbanTask) {
-      return (
-        <div style={{ padding: "8px 4px", fontSize: "12px", color: "var(--text-secondary)" }}>
-          {t("session.empty")}
-        </div>
-      );
-    }
-    if (selectedSessionRelatedFiles.length === 0) {
-      return (
-        <div style={{ padding: "8px 4px", fontSize: "12px", color: "var(--text-secondary)" }}>
-          {t("session.relatedFiles", { count: 0 })}
-        </div>
-      );
-    }
-    return (
-      <div style={{ display: "flex", flexDirection: "column", gap: "4px", minWidth: 0 }}>
-        {selectedSessionRelatedFileGroups.map((group) => {
-          const isCurrentRepo =
-            !group.repoPath ||
-            normalizePath(group.repoPath) ===
-              normalizePath(managedRootByIdRef.current[root]?.root_path || "");
-          const showGroupHeader = group.repoKind === "plain" || group.head || !isCurrentRepo;
-          return (
-            <div key={group.key} style={{ display: "flex", flexDirection: "column", gap: "4px", minWidth: 0 }}>
-              {showGroupHeader ? (
-                <div
-                  title={[group.repoPath, group.head].filter(Boolean).join(" · ") || group.repoName || t("session.currentProject")}
-                  style={{
-                    padding: "3px 6px 0",
-                    fontSize: "11px",
-                    color: "var(--text-secondary)",
-                    fontFamily: group.head ? "var(--mono-font, monospace)" : undefined,
-                  }}
-                >
-                  {group.repoKind === "plain"
-                    ? `${group.repoName || t("session.currentProject")} · ${t("session.nonGit")}`
-                    : group.head
-                      ? isCurrentRepo
-                        ? `HEAD ${group.head.slice(0, 8)}`
-                        : `${group.repoName || t("session.currentProject")} · HEAD ${group.head.slice(0, 8)}`
-                      : group.repoName || t("session.currentProject")}
-                </div>
-              ) : null}
-              {group.files.map((file) => {
-                const stats =
-                  selectedRelatedFileStatsByKey[relatedFileStatKey(file)] ||
-                  gitFileStatsByPath[file.path];
-                const fileSelectionKey = relatedFileSelectionKey(file);
-                const isSelected = relatedSelectedFileKey
-                  ? fileSelectionKey === relatedSelectedFileKey
-                  : file.path === relatedSelectedPath;
-                return (
-            <div key={`${file.head || "legacy"}:${file.path}`} style={{ display: "flex", alignItems: "center", gap: "4px", minWidth: 0 }}>
-              <button
-                type="button"
-                onClick={() => handleSelectedSessionFileClick(file)}
-                title={file.path}
-                style={{
-                  flex: 1,
-                  minWidth: 0,
-                  border: "none",
-                  background: isSelected ? "var(--selection-bg)" : "transparent",
-                  color: isSelected ? "var(--accent-color)" : "var(--text-primary)",
-                  borderRadius: "6px",
-                  padding: "5px 6px",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "7px",
-                  textAlign: "left",
-                  cursor: "pointer",
-                  fontSize: "12px",
-                  fontWeight: isSelected ? 700 : 400,
-                }}
-              >
-                <span style={{ width: "16px", display: "inline-flex", justifyContent: "center", color: "#94a3b8", flexShrink: 0 }}>
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                    <polyline points="14 2 14 8 20 8" />
-                    <line x1="16" x2="8" y1="13" y2="13" />
-                    <line x1="16" x2="8" y1="17" y2="17" />
-                  </svg>
-                </span>
-                <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {file.name}
-                </span>
-                {stats ? (
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: "5px", fontSize: "11px", color: "var(--text-secondary)", flexShrink: 0 }}>
-                    <span style={{ color: "#15803d", fontVariantNumeric: "tabular-nums" }}>+{stats.additions}</span>
-                    <span style={{ color: "#b91c1c", fontVariantNumeric: "tabular-nums" }}>-{stats.deletions}</span>
-                  </span>
-                ) : null}
-              </button>
-              <button
-                type="button"
-                aria-label={t("session.removeRelatedFile", { name: file.name || file.path })}
-                title={t("session.removeRelatedFile", { name: file.name || file.path })}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  void handleRemoveSessionRelatedFile(
-                    relatedSessionRootId,
-                    relatedSessionKey,
-                    file.path,
-                    file.head,
-                    file.repo_path,
-                    file.repo_kind,
-                  );
-                }}
-                style={{
-                  width: "18px",
-                  height: "18px",
-                  border: "none",
-                  borderRadius: "5px",
-                  background: "transparent",
-                  color: "#dc2626",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  padding: 0,
-                  cursor: "pointer",
-                  flexShrink: 0,
-                  fontSize: "13px",
-                }}
-              >
-                x
-              </button>
-            </div>
-          );
-              })}
-            </div>
-          );
-        })}
-      </div>
-    );
-  };
-  const renderRootGitContent = (root: string): React.ReactNode => {
-    const rootGitStatus = root === currentRootId ? gitStatus : gitStatusByRoot[root] || null;
-    const rootGitHistory = root === currentRootId ? gitHistory : gitHistoryByRoot[root] || null;
-    const rootGitStatusLoading =
-      root === currentRootId ? gitStatusLoading : gitStatusLoadingByRoot[root] === true;
-    const rootGitHistoryLoading =
-      root === currentRootId ? gitHistoryLoading : gitHistoryLoadingByRoot[root] === true;
-    const rootGitStatusAvailable = rootGitStatus?.available === true;
-    const rootGitHistoryAvailable = rootGitHistory?.available === true;
-    const rootGitStatusExpanded = gitStatusExpandedByRoot[root] !== false;
-    const rootGitHistoryExpandedCommits = gitHistoryExpandedByRoot[root] || {};
-    const rootShouldRenderGitPanel = rootGitStatusLoading || rootGitStatusAvailable;
-    const rootShouldRenderGitHistoryPanel =
-      rootGitHistoryLoading || (rootGitHistoryAvailable && (rootGitHistory?.items.length || 0) > 0);
-    if (managedRootByIdRef.current[root]?.is_git_repo !== true) {
-      return (
-        <div style={{ padding: "8px 4px", fontSize: "12px", color: "var(--text-secondary)" }}>
-          {t("git.notRepository")}
-        </div>
-      );
-    }
-    if (!rootGitStatus && !rootGitHistory && !rootGitStatusLoading && !rootGitHistoryLoading) {
-      return (
-        <button
-          type="button"
-          onClick={() => {
-            void refreshGitStatus(root);
-            void refreshGitHistory(root);
-          }}
-          style={{
-            border: "none",
-            background: "transparent",
-            color: "var(--text-secondary)",
-            borderRadius: "6px",
-            padding: "8px 4px",
-            fontSize: "12px",
-            cursor: "pointer",
-            textAlign: "left",
-            width: "100%",
-          }}
-        >
-          {t("git.loadingStatus")}
-        </button>
-      );
-    }
-    if (!rootGitStatusLoading && !rootGitHistoryLoading && !rootShouldRenderGitPanel && !rootShouldRenderGitHistoryPanel) {
-      return (
-        <div style={{ padding: "8px 4px", fontSize: "12px", color: "var(--text-secondary)" }}>
-          {t("git.emptyChangesOrHistory")}
-        </div>
-      );
-    }
-    return (
-      <div style={{ display: "flex", flexDirection: "column", gap: "14px", minWidth: 0 }}>
-        {rootShouldRenderGitPanel ? (
-          <GitStatusPanel
-            rootId={root}
-            status={rootGitStatus}
-            loading={rootGitStatusLoading}
-            compact
-            expanded={rootGitStatusExpanded}
-            onExpandedChange={(expanded) => {
-              if (!root) {
-                return;
-              }
-              setGitStatusExpandedByRoot((prev) => ({ ...prev, [root]: expanded }));
-            }}
-            onSelectItem={(item) => {
-              if (!root) {
-                return;
-              }
-              void openGitDiff(root, item);
-            }}
-            onOpenItem={(item) => {
-              if (!root || item.is_dir === true) {
-                return;
-              }
-              actionHandlers.open({ path: item.path, root });
-            }}
-            onDiscardItem={(item) => {
-              if (!root) {
-                return;
-              }
-              return handleGitDiscardItem(root, item);
-            }}
-            onStageItem={(item) => {
-              if (!root) {
-                return;
-              }
-              return item.staged === true
-                ? handleGitUnstageItem(root, item)
-                : handleGitStageItem(root, item);
-            }}
-            onPull={() => {
-              if (!root) {
-                return;
-              }
-              return handleGitPull(root);
-            }}
-            onPush={() => {
-              if (!root) {
-                return;
-              }
-              return handleGitPush(root);
-            }}
-            onCommit={(message) => {
-              if (!root) {
-                return;
-              }
-              return handleGitCommit(root, message);
-            }}
-            onSwitchBranch={(branch) => {
-              if (!root) {
-                return;
-              }
-              return switchGitBranch(root, branch);
-            }}
-          />
-        ) : null}
-        {rootShouldRenderGitHistoryPanel ? (
-          <GitHistoryPanel
-            rootId={root}
-            items={rootGitHistory?.items || []}
-            loading={rootGitHistoryLoading}
-            loadingMore={gitHistoryLoadingMore}
-            hasMore={rootGitHistory?.has_more === true}
-            compact
-            expandedCommits={rootGitHistoryExpandedCommits}
-            onToggleCommit={(hash) => {
-              if (!root) {
-                return;
-              }
-              setGitHistoryExpandedByRoot((prev) => {
-                const current = prev[root] || {};
-                return {
-                  ...prev,
-                  [root]: {
-                    ...current,
-                    [hash]: current[hash] !== true,
-                  },
-                };
-              });
-            }}
-            onLoadMore={() => {
-              void loadMoreGitHistory(root);
-            }}
-            onSelectFile={(commit, item) => {
-              if (!root) {
-                return;
-              }
-              void openGitCommitDiff(root, commit, item);
-            }}
-          />
-        ) : null}
-      </div>
-    );
-  };
-  const isAllTaskTemplateFilter = taskTemplateFilter === TASK_TEMPLATE_ALL_FILTER;
-  const selectedTaskTemplateForFilter = isAllTaskTemplateFilter ? null : taskTemplates.find((template) => template.id === taskTemplateFilter) || null;
-  const taskTemplateById = taskTemplates.reduce<Record<string, TaskTemplate>>((acc, template) => {
-    if (template.id) acc[template.id] = template;
-    return acc;
-  }, {});
-	  const unfinishedKanbanTasks = kanbanTaskCountItems.filter(isUnfinishedKanbanTask);
-  const unfinishedKanbanTaskCountByTemplate = unfinishedKanbanTasks.reduce<Record<string, number>>((acc, task) => {
-    const key = task.task_template_id || "";
-    if (key) acc[key] = (acc[key] || 0) + 1;
-    return acc;
-  }, {});
-  const selectedTaskTemplateUnfinishedCount = selectedTaskTemplateForFilter?.id ? unfinishedKanbanTaskCountByTemplate[selectedTaskTemplateForFilter.id] || 0 : 0;
-  const isTaskAtLastKnownStage = (task: KanbanTask) => {
-    const template = taskTemplateById[task.task_template_id || ""];
-    if (!template || template.stages.length === 0) return false;
-    return task.current_stage_index >= template.stages.length - 1;
-  };
-  const kanbanStageColumns = isAllTaskTemplateFilter
-    ? [{
-        index: 0,
-        name: t("task.column.pending"),
-        role: "user" as const,
-        tasks: kanbanTasks.filter((task) => task.current_stage_index === 0 && !isTerminalKanbanTask(task)),
+  const renderRootRelatedContent = (root: string): React.ReactNode => (
+    <RootRelatedContentView
+      root={root}
+      currentRootId={currentRootId}
+      relatedSessionRootId={relatedSessionRootId}
+      relatedSessionSnapshot={relatedSessionSnapshot}
+      relatedSessionKey={relatedSessionKey}
+      relatedSelectedPath={relatedSelectedPath}
+      relatedSelectedFileKey={relatedSelectedFileKey}
+      relatedFileSelectionKey={relatedFileSelectionKey}
+      managedRootByIdRef={managedRootByIdRef}
+      selectedKanbanTask={selectedKanbanTask}
+      selectedSessionRelatedFiles={selectedSessionRelatedFiles}
+      selectedSessionRelatedFileGroups={selectedSessionRelatedFileGroups}
+      selectedRelatedFileStatsByKey={selectedRelatedFileStatsByKey}
+      gitFileStatsByPath={gitFileStatsByPath}
+      normalizePath={normalizePath}
+      handleSelectedSessionFileClick={handleSelectedSessionFileClick}
+      handleRemoveSessionRelatedFile={handleRemoveSessionRelatedFile}
+    />
+  );
+  const renderRootGitContent = (root: string): React.ReactNode => (
+    <RootGitContentView
+      root={root}
+      currentRootId={currentRootId}
+      scopedRootKey={scopedRootKey}
+      managedRootByIdRef={managedRootByIdRef}
+      gitStatus={gitStatus}
+      gitStatusByRoot={gitStatusByRoot}
+      gitStatusLoading={gitStatusLoading}
+      gitStatusLoadingByRoot={gitStatusLoadingByRoot}
+      gitHistory={gitHistory}
+      gitHistoryByRoot={gitHistoryByRoot}
+      gitHistoryLoading={gitHistoryLoading}
+      gitHistoryLoadingMore={gitHistoryLoadingMore}
+      gitHistoryLoadingByRoot={gitHistoryLoadingByRoot}
+      gitStatusExpandedByRoot={gitStatusExpandedByRoot}
+      gitHistoryExpandedByRoot={gitHistoryExpandedByRoot}
+      setGitStatusExpandedByRoot={setGitStatusExpandedByRoot}
+      setGitHistoryExpandedByRoot={setGitHistoryExpandedByRoot}
+      refreshGitStatus={refreshGitStatus}
+      refreshGitHistory={refreshGitHistory}
+      loadMoreGitHistory={loadMoreGitHistory}
+      openGitDiff={openGitDiff}
+      openGitCommitDiff={openGitCommitDiff}
+      handleGitPull={handleGitPull}
+      handleGitPush={handleGitPush}
+      handleGitCommit={handleGitCommit}
+      handleGitStageItem={handleGitStageItem}
+      handleGitUnstageItem={handleGitUnstageItem}
+      handleGitDiscardItem={handleGitDiscardItem}
+      switchGitBranch={switchGitBranch}
+      actionHandlers={actionHandlers}
+      projectSortMode={treeSortMode}
+    />
+  );
+  // 四块 = 未开始 / 执行中 / 待审核 / 已结束（已结束内分 完成、取消；失败并入取消）。
+  const kanbanStageColumns: Array<{
+    index: number;
+    name: string;
+    role: "user" | "agent";
+    tasks: KanbanTask[];
+    groups?: Array<{ key: string; name: string; tone: "success" | "danger" | "muted"; tasks: KanbanTask[] }>;
+  }> = [
+    {
+      index: 0,
+      name: t("task.column.pending"),
+      role: "user" as const,
+      tasks: kanbanTasks.filter((task) => task.status === "pending"),
+    },
+    {
+      index: 1,
+      name: t("task.column.running"),
+      role: "agent" as const,
+      tasks: kanbanTasks.filter((task) => task.status === "running" || task.status === "queued" || task.status === "paused"),
+    },
+    {
+      index: 2,
+      name: t("task.column.waitingUser"),
+      role: "user" as const,
+      tasks: kanbanTasks.filter((task) => task.status === "waiting_user"),
+    },
+    {
+      index: 3,
+      // 已结束 = 完成 + 取消；失败合并进取消。
+      name: t("task.column.ended"),
+      role: "user" as const,
+      tasks: kanbanTasks.filter((task) => task.status === "success" || task.status === "fail" || task.status === "cancelled"),
+      groups: [{
+        key: "success",
+        name: t("task.group.completed"),
+        tone: "success" as const,
+        tasks: kanbanTasks.filter((task) => task.status === "success"),
       }, {
-        index: 1,
-        name: t("task.column.running"),
-        role: "agent" as const,
-        tasks: kanbanTasks.filter((task) => task.current_stage_index !== 0 && !isTerminalKanbanTask(task)),
-      }, {
-        index: 2,
-        name: t("task.column.done"),
-        role: "user" as const,
-        tasks: kanbanTasks.filter(isTerminalKanbanTask),
-        groups: [{
-          key: "success",
-          name: t("task.group.completed"),
-          tone: "success" as const,
-          tasks: kanbanTasks.filter((task) => task.status === "success"),
-        }, {
-          key: "fail",
-          name: t("task.group.failed"),
-          tone: "danger" as const,
-          tasks: kanbanTasks.filter((task) => task.status === "fail"),
-        }, {
-          key: "cancelled",
-          name: t("task.group.cancelled"),
-          tone: "muted" as const,
-          tasks: kanbanTasks.filter((task) => task.status === "cancelled"),
-        }].filter((group) => group.tasks.length > 0),
-      }]
-    : selectedTaskTemplateForFilter
-      ? selectedTaskTemplateForFilter.stages.map((stage, index) => ({
-        index,
-        name: stage.snapshot.name || (stage.snapshot.role === "agent" ? t("task.stage.agent") : t("task.stage.user")),
-        role: stage.snapshot.role,
-        tasks: kanbanTasks.filter((task) => task.current_stage_index === index),
-      }))
-    : [];
-  if (!isAllTaskTemplateFilter) {
-    kanbanTasks.forEach((task) => {
-      if (task.current_stage_index < 0 || task.current_stage_index >= kanbanStageColumns.length) {
-        const existing = kanbanStageColumns.find((column) => column.index === task.current_stage_index);
-        if (existing) {
-          existing.tasks.push(task);
-        } else {
-          kanbanStageColumns.push({
-            index: task.current_stage_index,
-            name: task.current_stage_name || t("task.stageLabel", { index: task.current_stage_index + 1 }),
-            role: "user",
-            tasks: [task],
-          });
-        }
-      }
+        key: "cancelled",
+        name: t("task.group.cancelled"),
+        tone: "muted" as const,
+        tasks: kanbanTasks.filter((task) => task.status === "fail" || task.status === "cancelled"),
+      }],
+      // 别在这里滤掉空分组：TaskBoardView 用「groups 非空」决定走不走分组渲染，
+      // 滤掉「已完成」后，只要「已取消」有任务就整组看不见——列头却仍按 tasks.length
+      // 显示两状态总和，于是出现「列头有数字、里面找不到对应组」。空组由渲染层显示成 0。
+    },
+  ];
+  // 跨项目工作台：按项目聚合的跨节点任务总览（扇出与建组都在 useWorkspaceBoard 内）。
+  // refreshToken 由刷新按钮驱动；WS 的高频推送靠 C1 放行的 task.updated 增量更新就地生效，
+  // 不驱动整包重拉（否则多节点扇出会被事件风暴打爆）。
+  const [workspaceBoardToken, setWorkspaceBoardToken] = useState(0);
+  const [workspaceFilter, setWorkspaceFilter] = useState<WorkspaceBoardFilter>(loadWorkspaceFilter);
+  const [workspaceCollapsedKeys, setWorkspaceCollapsedKeys] = useState<Set<string>>(loadWorkspaceCollapsed);
+  const toggleWorkspaceProject = useCallback((key: string) => {
+    setWorkspaceCollapsedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      saveWorkspaceCollapsed(next);
+      return next;
     });
-  }
-  kanbanStageColumns.sort((a, b) => a.index - b.index);
-  const renderKanbanTaskCard = (task: KanbanTask, columnName: string, detail?: TaskDetail, allTemplates = isAllTaskTemplateFilter, onNavigate?: () => void) => {
-    const isAllTaskTemplateFilter = allTemplates;
-                    const firstInput = detail?.stage_runs[0]?.input || taskFirstInputById[task.id] || "";
-                    const agentStage = taskAgentStage(task, taskTemplateById[task.task_template_id]);
-                    const agentBadge = agentStage?.agent ? (
-                      <span
-                        title={[agentStage.agent, agentStage.model].filter(Boolean).join(" / ")}
-                        aria-label={[agentStage.agent, agentStage.model].filter(Boolean).join(" / ")}
-                        style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 10, color: "var(--text-secondary)" }}
-                      >
-                        <AgentIcon agentName={agentStage.agent} style={{ width: 14, height: 14, display: "block", flexShrink: 0 }} />
-                      </span>
-                    ) : null;
-                    const taskSessionKeys = detail?.stage_runs.some(run => run.session_key)
-                      ? [...new Set(detail.stage_runs.map(run => run.session_key).filter((key): key is string => Boolean(key)))]
-                      : taskSessionKeysById[task.id]?.length
-                      ? taskSessionKeysById[task.id]
-                      : task.main_session_key
-                        ? [task.main_session_key]
-                        : [];
-                    const taskSessionPending = taskSessionKeys.some((key) => !!sessionByKey[key]?.pending);
-                    const taskQueued = task.status === "queued";
-                    const taskCanRunImmediately = taskQueued && !task.scheduler_admitted && !taskSessionKeys.length;
-                    const auxFlags = task.aux_flags || {};
-                    const taskSessionError = parseTaskSessionErrorMessage(auxFlags.session_error);
-                    const taskSessionErrorDetails = parseTaskSessionErrorDetails(auxFlags.session_error);
-                    const taskAuxBadges = [
-                      auxFlags.ask_user_waiting ? { key: "ask_user", label: t("task.waitingUser"), icon: renderToolIcon("ask_user"), attention: true } : null,
-                      auxFlags.has_plan ? { key: "plan", label: t("task.hasPlan"), icon: <TaskPlanAuxIcon />, attention: false } : null,
-                      auxFlags.has_todos ? { key: "todos", label: t("task.hasTodos"), icon: renderToolIcon("todo"), attention: false } : null,
-                      auxFlags.has_task ? { key: "task", label: t("task.hasTask"), icon: renderToolIcon("task"), attention: false } : null,
-                    ].filter((item): item is { key: string; label: string; icon: React.ReactNode; attention: boolean } => Boolean(item));
-                    const inputExpanded = expandedTaskInputIds.has(task.id);
-                    const inputLayoutKey = `${detail ? "group" : "board"}:${task.id}`;
-                    const inputNeedsToggle = inputExpanded || overflowingTaskInputs.has(inputLayoutKey);
-                    const taskTerminal = isTerminalKanbanTask(task);
-                    const taskStageRunning = task.current_stage_status === "running";
-                    const taskCanComplete = !taskTerminal && task.status === "waiting_user" && isTaskAtLastKnownStage(task);
-                    const showTaskAdvanceButton = !taskTerminal && !taskStageRunning && !taskQueued;
-                    const taskStatusText = taskStatusLabel(task.status || "", t);
-                    const taskWorktreeEnabled = task.create_worktree === true;
-	                    const taskNumberLabel = task.task_number ? `#${task.task_number}` : "";
-	                    const taskStageName = task.current_stage_name || (task.current_stage_index >= 0 ? t("task.stageLabel", { index: task.current_stage_index + 1 }) : "");
-	                    const showStageName = isAllTaskTemplateFilter ? columnName === t("task.column.running") : Boolean(taskStageName);
-	                    const showTaskStatus = isAllTaskTemplateFilter && columnName === t("task.column.done");
-	                    const taskSelected = selectedKanbanTaskId === task.id;
-	                    return (
-	                      <article
-	                        key={task.id}
-	                        onClick={() => handleSelectKanbanTask(task)}
-	                        style={{
-	                          position: "relative",
-	                          border: taskSelected ? "1px solid rgba(14, 165, 233, 0.95)" : "1px solid rgba(96, 165, 250, 0.42)",
-	                          borderRadius: "8px",
-	                          background: "var(--menu-bg)",
-	                          padding: "8px",
-	                          boxShadow: taskSelected ? "0 0 0 2px rgba(14, 165, 233, 0.16)" : "0 1px 2px rgba(15, 23, 42, 0.06)",
-	                          cursor: "pointer",
-	                        }}
-	                      >
-                        {taskSessionPending ? (
-                          <span
-                            aria-label={t("task.replying")}
-                            title={t("task.replying")}
-                            style={taskReplyPulseStyle()}
-                          />
-                        ) : null}
-                        {isAllTaskTemplateFilter ? (
-                          <div
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: "5px",
-                              minWidth: 0,
-                              color: "var(--text-secondary)",
-                              fontSize: "10px",
-                              fontWeight: 700,
-                              lineHeight: "14px",
-                            }}
-                          >
-                            {taskNumberLabel ? (
-                              <span style={{ flex: "0 0 auto", color: "#0ea5e9", fontWeight: 800 }}>{taskNumberLabel}</span>
-                            ) : null}
-                            <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                              {task.task_template_name || selectedTaskTemplateForFilter?.name || t("task.unnamedTemplate")}
-                            </span>
-                            {showStageName ? (
-                              <>
-                                <span style={{ flex: "0 0 auto", opacity: 0.55 }}>·</span>
-                                <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                  {taskStageName}
-                                </span>
-                              </>
-                            ) : null}
-	                            {showTaskStatus ? (
-	                              <>
-	                                <span style={{ flex: "0 0 auto", opacity: 0.55 }}>·</span>
-	                                <span style={{ flex: "0 0 auto" }}>{taskStatusText}</span>
-	                                {task.status === "fail" && taskSessionError ? (
-	                                  <button
-	                                    type="button"
-	                                    title={t("task.viewError")}
-	                                    aria-label={t("task.viewTaskError")}
-		                                    onClick={(event) => {
-		                                      event.stopPropagation();
-		                                      setTaskSessionErrorDialog({
-		                                        title: task.task_template_name || selectedTaskTemplateForFilter?.name || t("task.defaultTitle"),
-		                                        message: taskSessionError,
-		                                        details: taskSessionErrorDetails,
-		                                      });
-		                                    }}
-	                                    style={{ ...taskCardIconButtonStyle("warning"), width: "16px", height: "16px" }}
-	                                  >
-	                                    <TaskSessionErrorIcon />
-	                                  </button>
-	                                ) : null}
-	                              </>
-                            ) : null}
-                            <span
-                              title={taskWorktreeEnabled ? t("task.worktreeTitle") : t("task.noWorktreeTitle")}
-                              aria-label={taskWorktreeEnabled ? t("task.worktreeTitle") : t("task.noWorktreeTitle")}
-                              style={taskWorktreeTagStyle(taskWorktreeEnabled)}
-                            >
-                              {taskWorktreeEnabled ? null : <NoWorktreeIcon />}
-                              worktree
-                            </span>
-                            {agentBadge}
-                          </div>
-                        ) : null}
-                        <div
-                          style={{
-                            marginTop: isAllTaskTemplateFilter ? "5px" : 0,
-                            color: firstInput ? "var(--text-color)" : "var(--text-secondary)",
-                            fontSize: "12px",
-                            lineHeight: "18px",
-                            fontWeight: firstInput ? 700 : 500,
-                            ...(!isAllTaskTemplateFilter
-                              ? {
-                                  display: "flex",
-                                  alignItems: "flex-start",
-                                  gap: "6px",
-                                  minWidth: 0,
-                                }
-                              : {}),
-                          }}
-                        >
-                          <TaskCardText
-                            expanded={inputExpanded}
-                            onOverflowChange={overflow => setOverflowingTaskInputs(previous => {
-                              if (previous.has(inputLayoutKey) === overflow) return previous;
-                              const next = new Set(previous);
-                              if (overflow) next.add(inputLayoutKey);
-                              else next.delete(inputLayoutKey);
-                              return next;
-                            })}
-                            style={{
-                              ...(!isAllTaskTemplateFilter ? { flex: "1 1 auto", minWidth: 0 } : {}),
-                              whiteSpace: "pre-wrap",
-                              wordBreak: "break-word",
-                              ...(!inputExpanded
-                                ? {
-                                    display: "-webkit-box",
-                                    WebkitLineClamp: 3,
-                                    WebkitBoxOrient: "vertical",
-                                    overflow: "hidden",
-                                  }
-                                : {}),
-                            }}
-                          >
-                            {!isAllTaskTemplateFilter && taskNumberLabel ? (
-                              <span style={{ color: "#0ea5e9", fontWeight: 800, marginRight: "6px" }}>{taskNumberLabel}</span>
-                            ) : null}
-                            {firstInput ? <InlineTokenText content={firstInput} /> : <span>{t("task.noInput")}</span>}
-                          </TaskCardText>
-                          {!isAllTaskTemplateFilter ? (
-                            <span
-                              title={taskWorktreeEnabled ? t("task.worktreeTitle") : t("task.noWorktreeTitle")}
-                              aria-label={taskWorktreeEnabled ? t("task.worktreeTitle") : t("task.noWorktreeTitle")}
-                              style={taskWorktreeTagStyle(taskWorktreeEnabled)}
-                            >
-                              {taskWorktreeEnabled ? null : <NoWorktreeIcon />}
-                              worktree
-                            </span>
-                          ) : null}
-                          {!isAllTaskTemplateFilter && agentBadge}
-                        </div>
-                        {task.block_reason && <div style={{fontSize:11,color:"#b45309"}}>{task.block_reason}</div>}
-                        <div style={{ marginTop: "8px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "4px" }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-                            {taskSessionKeys.length > 0 ? (
-                              taskSessionKeys.map((sessionKey, sessionIndex) => {
-                                const taskSession = sessionByKey[sessionKey] || null;
-                                return (
-                                  <button
-                                    key={`${task.id}-${sessionKey}`}
-                                    type="button"
-                                    title={taskSession?.name || t("task.openSession", { index: sessionIndex + 1 })}
-                                    aria-label={t("task.openSession", { index: sessionIndex + 1 })}
-	                                    onClick={(event) => {
-	                                      event.stopPropagation();
-	                                      onNavigate?.(); handleTaskSessionDrawerOpen(sessionKey, task.root_id || currentRootIdRef.current, task.id);
-	                                    }}
-                                    style={taskCardIconButtonStyle()}
-                                  >
-                                    <span
-                                      style={{
-                                        position: "relative",
-                                        width: "18px",
-                                        height: "18px",
-                                        display: "inline-flex",
-                                        alignItems: "center",
-                                        justifyContent: "center",
-                                      }}
-                                    >
-                                      <ModeIcon type="task" size={16} />
-                                      <span
-                                        style={{
-                                          position: "absolute",
-                                          right: "-2px",
-                                          bottom: "-2px",
-                                          width: "10px",
-                                          height: "10px",
-                                          borderRadius: "999px",
-                                          background: "var(--content-bg, #fff)",
-                                          border: "1px solid rgba(255,255,255,0.9)",
-                                          display: "flex",
-                                          alignItems: "center",
-                                          justifyContent: "center",
-                                          overflow: "hidden",
-                                        }}
-                                      >
-                                        <AgentIcon
-                                          agentName={taskSession?.agent || ""}
-                                          style={{ width: "10px", height: "10px", display: "block" }}
-                                        />
-                                      </span>
-                                    </span>
-                                  </button>
-                                );
-                              })
-                            ) : taskQueued ? (
-                              <>
-                                <span
-                                  title={t("task.waitingSchedule")}
-                                  aria-label={t("task.waitingSchedule")}
-                                  style={{
-                                    ...taskCardIconButtonStyle(),
-                                    cursor: "default",
-                                    color: "var(--accent-color)",
-                                  }}
-                                >
-                                  <TaskQueuedSpinnerIcon />
-                                </span>
-                                {taskCanRunImmediately ? (
-                                  <button
-                                    type="button"
-                                    title={t("task.runNow")}
-                                    aria-label={t("task.runNow")}
-                                    onClick={(event) => {
-                                      event.stopPropagation();
-                                      void handleMoveKanbanTask(task, "run-now");
-                                    }}
-                                    style={{
-                                      ...taskCardIconButtonStyle(),
-                                      width: "17px",
-                                      marginLeft: "-3px",
-                                      color: "#2563eb",
-                                    }}
-                                  >
-                                    <TaskRunNowIcon />
-                                  </button>
-                                ) : null}
-                              </>
-                            ) : null}
-	                            {taskSessionError && !(showTaskStatus && task.status === "fail") ? (
-                              <button
-                                type="button"
-                                title={t("task.viewError")}
-                                aria-label={t("task.viewTaskSessionError")}
-	                                onClick={(event) => {
-	                                  event.stopPropagation();
-	                                  setTaskSessionErrorDialog({
-	                                    title: task.task_template_name || selectedTaskTemplateForFilter?.name || t("task.sessionTitle"),
-	                                    message: taskSessionError,
-	                                    details: taskSessionErrorDetails,
-	                                  });
-	                                }}
-                                style={taskCardIconButtonStyle("warning")}
-                              >
-                                <TaskSessionErrorIcon />
-                              </button>
-                            ) : null}
-                            {taskAuxBadges.length > 0 ? (
-                              <div style={{ display: "inline-flex", alignItems: "center", gap: "2px" }}>
-                                {taskAuxBadges.map((badge) => (
-                                  <span
-                                    key={badge.key}
-                                    title={badge.label}
-                                    aria-label={badge.label}
-                                    style={taskAuxBadgeStyle(badge.attention)}
-                                  >
-                                    {badge.icon}
-                                  </span>
-                                ))}
-                              </div>
-                            ) : null}
-                            {inputNeedsToggle ? (
-                              <button
-                                type="button"
-                                title={inputExpanded ? t("common.collapse") : t("common.expand")}
-                                aria-label={inputExpanded ? t("task.collapseContent") : t("task.expandContent")}
-                                aria-expanded={inputExpanded}
-	                                onClick={(event) => {
-	                                  event.stopPropagation();
-	                                  setExpandedTaskInputIds((prev) => {
-                                    const next = new Set(prev);
-                                    if (next.has(task.id)) {
-                                      next.delete(task.id);
-                                    } else {
-                                      next.add(task.id);
-                                    }
-                                    return next;
-                                  });
-                                }}
-                                style={taskCardIconButtonStyle()}
-                              >
-                                <TaskExpandIcon collapsed={!inputExpanded} />
-                              </button>
-                            ) : null}
-                          </div>
-                          {!taskTerminal ? (
-                            <div style={{ display: "flex", justifyContent: "flex-end", gap: 0 }}>
-                              {showTaskAdvanceButton ? (
-                                <button
-                                  type="button"
-                                  title={taskCanComplete ? t("task.completeShort") : t("task.nextStage")}
-                                  aria-label={taskCanComplete ? t("task.complete") : t("task.nextStage")}
-	                                  onClick={(event) => {
-	                                    event.stopPropagation();
-	                                    void handleMoveKanbanTask(task, taskCanComplete ? "complete" : "next");
-	                                  }}
-                                  style={taskCardIconButtonStyle(taskCanComplete ? "success" : "accent")}
-                                >
-                                  {taskCanComplete ? <TaskCompleteIcon /> : <RunNowIcon />}
-                                </button>
-                              ) : null}
-	                              <button type="button" title={t("common.edit")} aria-label={t("task.edit")} onClick={(event) => {
-	                                event.stopPropagation();
-	                                onNavigate?.(); void openTaskEditDialog(task);
-	                              }} style={taskCardIconButtonStyle()}>
-                                {renderToolIcon("edit")}
-                              </button>
-	                              <button type="button" title={t("common.delete")} aria-label={t("task.delete")} onClick={(event) => {
-	                                event.stopPropagation();
-	                                void handleMoveKanbanTask(task, "cancel");
-	                              }} style={taskCardIconButtonStyle("danger")}>
-                                <DeleteIcon />
-                              </button>
-                            </div>
-                          ) : null}
-                        </div>
-	                      </article>
-	                    );
+  }, []);
+  const changeWorkspaceFilter = useCallback((filter: WorkspaceBoardFilter) => {
+    setWorkspaceFilter(filter);
+    saveWorkspaceFilter(filter);
+  }, []);
+  const workspaceBoard = useWorkspaceBoard({
+    enabled: workspaceOpen,
+    refreshToken: workspaceBoardToken,
+    managedRootIds,
+    getRootDisplayName,
+    getNodeColor: getDisplayNodeColor,
+    getNodeId: getNodeIdForRoot,
+    fallbackNodeId: getNodeIdForRoot(String(currentRootIdRef.current || "")) || String(getActiveNode()?.id || ""),
+    filter: workspaceFilter,
+  });
+  // 左下角四态切换器：只切面板 + 关掉悬浮框。
+  // 会话选中与面板是正交的两条线——切面板一律不解除选中（面板不显示而已）。
+  const handleMainViewSwitcherChange = useCallback((mode: MainViewMode) => {
+    const rootID = currentRootIdRef.current;
+    if (rootID) setDrawerOpenForRoot(rootID, false);
+    interactionModeRef.current = "main";
+    setInteractionMode("main");
+    // 先落一条历史（存切之前的视图），再切。没有这条浏览器历史就永远只有一项，
+    // 侧滑/后退无路可退 —— 这正是「侧滑直接退出」的直接原因。
+    pushViewHistoryEntry(mainViewRef.current);
+    switchMainView(mode);
+    // 切到文件面板但从没点过任何目录时，主区是空的：把当前项目顶层目录补上。
+    // 已经有内容（含报错态）就别动，用户点过的目录优先于这个默认值。
+    // 开着文件/diff 时也不能补：open_dir 会 setFile(null)，补目录等于把用户
+    // 刚看的文件抹掉 —— 那正是「切回文件丢内容」的第二个根因。
+    if (mode === "files" && rootID && !file && !gitDiff && !mainEntriesRef.current.length && !mainDirectoryErrorRef.current) {
+      const currentDir = selectedDirRef.current || "";
+      // 尚停留在上一个项目时（selectedDir 属于别的 root），直接落在新项目根目录
+      if (!currentDir || currentDir === "." || currentDir === rootID || currentDir.startsWith(`${rootID}/`)) {
+        void actionHandlersRef.current.open_dir({
+          path: rootID,
+          root: rootID,
+          isRoot: true,
+          forceDirectory: true,
+        });
+      }
+    }
+    // 只改 URL 的 view，保留 root/node/session/pluginQuery。
+    // 离开文件态时把 file 摘掉，否则会写出「view=board 且 file=…」的自相矛盾深链。
+    const current = readURLState();
+    replaceURLState({
+      ...current,
+      root: current.root || rootID || "",
+      file: mode === "files" ? current.file : "",
+      view: mode,
+    });
+  }, [file, gitDiff, replaceURLState, setDrawerOpenForRoot, switchMainView]);
 
-  };
-	  const kanbanTaskPanel = currentRootId ? (
-	    <div
-	      data-onboarding="task-board"
-	      style={{
-	        maxHeight: "calc(100dvh - 92px)",
-	        overflow: "visible",
-	        display: "flex",
-	        flexDirection: "column",
-	        minWidth: 0,
-	      }}
-	    >
-	      <div
-	        style={{
-	          display: "flex",
+  const openWorkspaceProject = useCallback(async (rootId: string) => {
+    if (!rootId) return;
+    // R6：工作台里点项目 = 切到该项目并落到「项目看板」，而不是回到文件列表
+    await actionHandlersRef.current.open_dir({
+      path: rootId,
+      root: rootId,
+      isRoot: true,
+      nodeId: getNodeIdForRoot(rootId) || undefined,
+      preservePluginQuery: true,
+    });
+    switchMainView("board");
+    setTaskTemplateFilter(TASK_TEMPLATE_ALL_FILTER);
+  }, [setTaskTemplateFilter, switchMainView]);
+  // 工作台的快速发起不自己建任务：挑完项目 + 模板就打开看板那套新建任务面板，
+  // 模板、worktree、agent、附件全都跟项目看板里一致，不在工作台上复制第二份实现。
+  const handleWorkspaceCreateTask = useCallback((rootId: string, _nodeId: string, template: TaskTemplate) => {
+    openTaskCreateDialog(template, rootId);
+  }, [openTaskCreateDialog]);
+  // 工作台里点任务卡：留在工作台，就地弹任务详情面板。
+  // 不走 openWorkspaceProject —— 那会切项目、切看板、改 URL，等于把人甩出工作台。
+  // overview 只带任务不带 stage_runs/events（详情面板要后者），所以按项目内任务号
+  // 取那一条完整详情，灌进 taskDetailsById 后由 selectedKanbanTask 接手。
+  const openWorkspaceTaskDetail = useCallback(async (item: { root_id: string; nodeId: string; task: KanbanTask }) => {
+    const rootId = item.root_id;
+    const taskNumber = Number(item.task?.task_number || 0);
+    if (!rootId || !item.task?.id) return;
+    // 先选中，卡片立刻有选中态；详情随后补上。面板此时短暂显示 overview 那份基础信息。
+    setSelectedKanbanTaskId(item.task.id);
+    const details = await fetchTaskDetails(rootId, { taskNumber }, item.nodeId).catch(() => [] as TaskDetail[]);
+    const detail = details.find((entry) => entry.task?.id === item.task.id) || details[0];
+    if (!detail) return;
+    applyTaskDetails(rootId, [detail]);
+  }, [applyTaskDetails]);
+  const kanbanTaskPanel = (
+    <TaskBoardView
+      workspaceOpen={workspaceOpen}
+      currentRootId={currentRootId}
+      currentRootIdRef={currentRootIdRef}
+      workspaceBoard={workspaceBoard}
+      workspaceFilter={workspaceFilter}
+      onWorkspaceFilterChange={changeWorkspaceFilter}
+      workspaceCollapsedKeys={workspaceCollapsedKeys}
+      onToggleWorkspaceProject={toggleWorkspaceProject}
+      onRefreshWorkspaceBoard={() => setWorkspaceBoardToken((token) => token + 1)}
+      managedRootIds={managedRootIds}
+      getRootDisplayName={getRootDisplayName}
+      openWorkspaceProject={openWorkspaceProject}
+      openWorkspaceTaskDetail={openWorkspaceTaskDetail}
+      handleWorkspaceCreateTask={handleWorkspaceCreateTask}
+      setSelectedKanbanTaskId={setSelectedKanbanTaskId}
+      kanbanTasksLoading={kanbanTasksLoading}
+      kanbanStageColumns={kanbanStageColumns}
+      selectedKanbanTaskId={selectedKanbanTaskId}
+      expandedTaskInputIds={expandedTaskInputIds}
+      setExpandedTaskInputIds={setExpandedTaskInputIds}
+      collapsedTaskCompletionGroups={collapsedTaskCompletionGroups}
+      setCollapsedTaskCompletionGroups={setCollapsedTaskCompletionGroups}
+      collapsedKanbanColumns={collapsedKanbanColumns}
+      setCollapsedKanbanColumns={setCollapsedKanbanColumns}
+      taskFirstInputById={taskFirstInputById}
+      taskSessionKeysById={taskSessionKeysById}
+      sessionByKey={sessionByKey}
+      getDisplayNodeColor={getDisplayNodeColor}
+      handleSelectKanbanTask={handleSelectKanbanTask}
+      handleMoveKanbanTask={handleMoveKanbanTask}
+      openTaskCreateDialog={openTaskCreateDialog}
+      handleTaskSessionDrawerOpen={handleTaskSessionDrawerOpen}
+      setTaskSessionErrorDialog={setTaskSessionErrorDialog}
+      loadKanbanTasks={loadKanbanTasks}
+      templateControls={{
+        taskTemplateActionMenuRef,
+        taskTemplateActionMenuOpen,
+        setTaskTemplateActionMenuOpen,
+        taskCreateTemplateMenuRef,
+        taskCreateTemplateMenuOpen,
+        setTaskCreateTemplateMenuOpen,
+        taskTemplates,
+        taskTemplateFilter,
+        setTaskTemplateFilter,
+        openTaskTemplateEditor,
+        handleDeleteTaskTemplate,
+      }}
+    />
+
+  );
+
+  // 主区渲染优先级链。chat 空态 > 插件信任 > gitDiff > file > 看板/文件列表。
+  // gitDiff 与 file 这两支只在文件态渲染（各带一道 currentMainContentView 门控），
+  // 否则残留的 file 会把看板/工作台整个挡住 —— 切换器按钮亮了但画面不动。
+  // 门控用 currentMainContentView 而不是 mainView：前者已经把 onboarding 覆盖
+  // 算进去了（引导要看板时 mainView 可能仍是 files）。
+  if (mainView === "chat" && !selectedSession) {
+    // chat 模式但没有选中会话：给一个明确空态，而不是把看板/文件列表塞回来（否则看起来像「自己跳走了」）
+    workspaceView = (
+      <div
+        style={{
+          flex: 1,
+          minHeight: 0,
+          display: "flex",
           alignItems: "center",
-	          justifyContent: "space-between",
-	          gap: 0,
-	          padding: "0 0 8px",
-	          flexShrink: 0,
-	        }}
-	      >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "6px",
-            minWidth: 0,
-            flex: 1,
-          }}
-        >
-          <div
-            role="tablist"
-            data-onboarding="task-templates"
-            aria-label={t("task.templates")}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "2px",
-              overflowX: "auto",
-              padding: "3px",
-              borderRadius: "10px",
-              border: "1px solid rgba(100, 116, 139, 0.36)",
-              background: "rgba(148, 163, 184, 0.10)",
-              minWidth: 0,
-              scrollbarWidth: "none",
-            }}
-          >
-            {(() => {
-              const active = isAllTaskTemplateFilter;
-              return (
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={active}
-                  onClick={() => {
-                    setTaskTemplateFilter(TASK_TEMPLATE_ALL_FILTER);
-                    setTaskTemplateActionMenuOpen(false);
-                  }}
-                  style={{
-                    border: "none",
-                    borderRadius: "6px",
-                    background: active ? "var(--accent-color)" : "transparent",
-                    color: active ? "#fff" : "var(--text-secondary)",
-                    padding: "3px 7px",
-                    fontSize: "11px",
-                    fontWeight: 700,
-                    lineHeight: "14px",
-                    cursor: "pointer",
-                    whiteSpace: "nowrap",
-                    boxShadow: active ? "0 1px 3px rgba(37, 99, 235, 0.28)" : "none",
-                  }}
-                >
-                  {t("task.all")}
-                </button>
-              );
-            })()}
-            {taskTemplates.length > 0 ? (
-              <span
-                aria-hidden="true"
-                style={{
-                  width: "1px",
-                  height: "16px",
-                  background: "rgba(100, 116, 139, 0.32)",
-                  margin: "0 1px",
-                  flexShrink: 0,
-                }}
-              />
-            ) : null}
-            {taskTemplates.map((template, index) => {
-              const templateId = template.id || "";
-              const active = selectedTaskTemplateForFilter?.id === templateId;
-              return (
-                <React.Fragment key={templateId || template.name}>
-                  {index > 0 ? (
-                    <span
-                      aria-hidden="true"
-                      style={{
-                        width: "1px",
-                        height: "16px",
-                        background: "rgba(100, 116, 139, 0.32)",
-                        margin: "0 1px",
-                        flexShrink: 0,
-                      }}
-                    />
-                  ) : null}
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={active}
-                    onClick={() => {
-                      setTaskTemplateFilter(templateId);
-                      setTaskTemplateActionMenuOpen(false);
-                    }}
-                    style={{
-                      border: "none",
-                      borderRadius: "6px",
-                      background: active ? "var(--accent-color)" : "transparent",
-                      color: active ? "#fff" : "var(--text-secondary)",
-                      padding: "3px 7px",
-                      fontSize: "11px",
-                      fontWeight: 700,
-                      lineHeight: "14px",
-                      cursor: "pointer",
-                      whiteSpace: "nowrap",
-                      boxShadow: active ? "0 1px 3px rgba(37, 99, 235, 0.28)" : "none",
-                  }}
-                >
-                  <span>{template.name || t("task.unnamedTemplate")}</span>
-                </button>
-                </React.Fragment>
-              );
-            })}
-          </div>
-          <div ref={taskTemplateActionMenuRef} style={{ position: "relative", flexShrink: 0 }}>
-            <button
-              type="button"
-              data-onboarding="task-template-menu"
-              aria-label={t("task.templateMenu")}
-              title={t("task.templateMenu")}
-              onClick={() => setTaskTemplateActionMenuOpen((open) => !open)}
-              style={{
-                width: "28px",
-                height: "28px",
-                borderRadius: "8px",
-                border: "none",
-                background: taskTemplateActionMenuOpen ? "rgba(0, 0, 0, 0.06)" : "transparent",
-                color: "var(--text-secondary)",
-                opacity: 1,
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                cursor: "pointer",
-                padding: 0,
-              }}
-            >
-              <HorizontalDotsIcon />
-            </button>
-            {taskTemplateActionMenuOpen ? (
-              <div
-                style={{
-                  position: "absolute",
-                  top: "calc(100% + 6px)",
-                  left: "50%",
-                  transform: "translateX(-50%)",
-                  minWidth: "160px",
-                  padding: "6px",
-                  borderRadius: "10px",
-                  border: "1px solid var(--border-color)",
-                  background: "var(--menu-bg)",
-                  boxShadow: "0 12px 30px rgba(15, 23, 42, 0.14)",
-                  zIndex: 40,
-                }}
-              >
-                <button
-                  type="button"
-                  onClick={() => {
-                    setTaskTemplateActionMenuOpen(false);
-                    openTaskTemplateEditor(null);
-                  }}
-                  style={taskTemplateMenuItemStyle()}
-                >
-                  <PlusSmallIcon />
-                  <span>{t("task.createTemplate")}</span>
-                </button>
-                <button
-                  type="button"
-                  disabled={!selectedTaskTemplateForFilter}
-                  onClick={() => {
-                    if (!selectedTaskTemplateForFilter) return;
-                    setTaskTemplateActionMenuOpen(false);
-                    openTaskTemplateEditor(selectedTaskTemplateForFilter);
-                  }}
-                  style={taskTemplateMenuItemStyle(!selectedTaskTemplateForFilter)}
-                >
-                  <EditPencilIcon />
-                  <span>{t("task.editTemplate")}</span>
-                </button>
-                <button
-                  type="button"
-                  disabled={!selectedTaskTemplateForFilter || selectedTaskTemplateUnfinishedCount > 0}
-                  title={!selectedTaskTemplateForFilter ? t("task.selectTemplate") : selectedTaskTemplateUnfinishedCount > 0 ? t("task.deleteBlocked") : t("task.deleteTemplate")}
-                  onClick={() => {
-                    if (!selectedTaskTemplateForFilter || selectedTaskTemplateUnfinishedCount > 0) return;
-                    setTaskTemplateActionMenuOpen(false);
-                    void handleDeleteTaskTemplate(selectedTaskTemplateForFilter);
-                  }}
-                  style={taskTemplateMenuItemStyle(!selectedTaskTemplateForFilter || selectedTaskTemplateUnfinishedCount > 0)}
-                >
-                  <DeleteIcon />
-                  <span>{t("task.deleteTemplate")}</span>
-                </button>
-                <div style={{ height: "1px", background: "var(--border-color)", margin: "6px 2px" }} />
-                <button
-                  type="button"
-                  disabled={!selectedTaskTemplateForFilter}
-                  onClick={() => setTaskTemplateConcurrencyOpen((open) => !open)}
-                  style={taskTemplateMenuItemStyle(!selectedTaskTemplateForFilter)}
-                >
-                  <span style={{ flex: 1 }}>{t("task.concurrency")}</span>
-                  <span style={{ fontSize: "12px", fontWeight: 800, color: "var(--text-primary)" }}>
-                    {selectedTaskTemplateForFilter?.max_concurrency || 1}
-                  </span>
-                  <ChevronDownSmallIcon />
-                </button>
-                {taskTemplateConcurrencyOpen && selectedTaskTemplateForFilter ? (
-                  <div style={{ borderTop: "1px solid var(--border-color)", borderBottom: "1px solid var(--border-color)", margin: "2px 2px 6px", padding: "4px 0" }}>
-                    {Array.from({ length: 10 }, (_, index) => index + 1).map((value) => {
-                      const active = (selectedTaskTemplateForFilter.max_concurrency || 1) === value;
-                      return (
-                        <button
-                          key={value}
-                          type="button"
-                          onClick={() => {
-                            void handleTaskTemplateConcurrencyChange(selectedTaskTemplateForFilter.id || "", value);
-                          }}
-                          style={{
-                            width: "100%",
-                            minHeight: "28px",
-                            border: "none",
-                            borderRadius: "6px",
-                            background: active ? "rgba(37, 99, 235, 0.10)" : "transparent",
-                            color: active ? "var(--accent-color)" : "var(--text-primary)",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "space-between",
-                            padding: "5px 8px 5px 24px",
-                            fontSize: "12px",
-                            fontWeight: active ? 800 : 600,
-                            cursor: "pointer",
-                          }}
-                        >
-                          <span>{value}</span>
-                          {active ? <CheckIconSmall /> : null}
-                        </button>
-                      );
-                    })}
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
-        </div>
-        <button
-          type="button"
-          data-onboarding="task-refresh"
-          title={t("task.refresh")}
-          aria-label={t("task.refresh")}
-          onClick={() => void kanbanRefreshSpin.handleClick()}
-          onMouseDown={() => kanbanRefreshSpin.setPressed(true)}
-          onMouseUp={() => kanbanRefreshSpin.setPressed(false)}
-          onMouseLeave={() => kanbanRefreshSpin.setPressed(false)}
-          style={{
-            width: "22px",
-            height: "28px",
-            borderRadius: "8px",
-            border: "none",
-            background: "transparent",
-            color: "var(--text-color)",
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "flex-end",
-            cursor: "pointer",
-            flexShrink: 0,
-            padding: 0,
-          }}
-        >
-          <span
-            data-task-refresh-visual
-            style={{
-              width: "18px",
-              height: "28px",
-              borderRadius: "8px",
-              background: kanbanRefreshSpin.pressed || kanbanRefreshSpin.refreshing ? "rgba(0, 0, 0, 0.06)" : "transparent",
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <SyncIcon
-              style={kanbanRefreshSpin.refreshing ? { animation: "mindfs-update-spin 0.8s linear infinite" } : undefined}
-            />
-          </span>
-        </button>
-        <div ref={taskCreateTemplateMenuRef} style={{ position: "relative", flexShrink: 0 }}>
-          <button
-            type="button"
-            data-onboarding="task-create"
-            title={t("task.create")}
-            aria-label={t("task.create")}
-            disabled={!isAllTaskTemplateFilter && !selectedTaskTemplateForFilter}
-            onClick={() => {
-              if (isAllTaskTemplateFilter) {
-                setTaskTemplateActionMenuOpen(false);
-                setTaskCreateTemplateMenuOpen((open) => !open);
-                return;
-              }
-              openTaskCreateDialog(selectedTaskTemplateForFilter);
-            }}
-            style={{
-              width: "28px",
-              height: "28px",
-              borderRadius: "8px",
-              border: "none",
-              background: taskCreateTemplateMenuOpen ? "rgba(0, 0, 0, 0.06)" : "transparent",
-              color: isAllTaskTemplateFilter || selectedTaskTemplateForFilter ? "var(--text-color)" : "var(--muted-text)",
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              cursor: isAllTaskTemplateFilter || selectedTaskTemplateForFilter ? "pointer" : "not-allowed",
-              flexShrink: 0,
-              padding: 0,
-              opacity: isAllTaskTemplateFilter || selectedTaskTemplateForFilter ? 1 : 0.55,
-            }}
-          >
-            <PlusSmallIcon />
-          </button>
-          {taskCreateTemplateMenuOpen ? (
-            <div
-              style={{
-                position: "absolute",
-                top: "calc(100% + 6px)",
-                right: 0,
-                minWidth: "136px",
-                maxWidth: "220px",
-                maxHeight: "260px",
-                overflowY: "auto",
-                padding: "5px",
-                borderRadius: "10px",
-                border: "1px solid var(--border-color)",
-                background: "var(--menu-bg)",
-                boxShadow: "0 12px 30px rgba(15, 23, 42, 0.14)",
-                zIndex: 40,
-              }}
-            >
-              {taskTemplates.length === 0 ? (
-                <div style={{ padding: "8px", fontSize: "12px", color: "var(--text-secondary)", whiteSpace: "nowrap" }}>{t("task.noTemplates")}</div>
-              ) : taskTemplates.map((template) => (
-                <button
-                  key={template.id || template.name}
-                  type="button"
-                  onClick={() => {
-                    setTaskCreateTemplateMenuOpen(false);
-                    openTaskCreateDialog(template);
-                  }}
-                  style={{
-                    width: "100%",
-                    minHeight: "28px",
-                    border: "none",
-                    borderRadius: "7px",
-                    background: "transparent",
-                    color: "var(--text-primary)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "flex-start",
-                    padding: "5px 8px",
-                    fontSize: "12px",
-                    fontWeight: 700,
-                    cursor: "pointer",
-                    textAlign: "left",
-                  }}
-                >
-                  <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{template.name || t("task.unnamedTemplate")}</span>
-                </button>
-              ))}
-            </div>
-          ) : null}
-        </div>
+          justifyContent: "center",
+          padding: 24,
+          color: "var(--text-secondary)",
+          fontSize: 13,
+        }}
+      >
+        {t("view.chatEmpty")}
       </div>
-      {kanbanTasksLoading ? (
-        <div style={{ padding: "12px", fontSize: "12px", color: "var(--text-secondary)" }}>{t("task.loading")}</div>
-      ) : !isAllTaskTemplateFilter && !selectedTaskTemplateForFilter ? (
-        <div style={{ padding: "12px", fontSize: "12px", color: "var(--text-secondary)" }}>{t("task.createTemplateFirst")}</div>
-      ) : (
-	        <div style={{ overflowX: "auto", overflowY: "hidden", padding: "0 0 12px 1px", minHeight: 0 }}>
-	          <div
-	            style={{
-	              display: "grid",
-	              gridAutoFlow: "column",
-	              gridAutoColumns: isMobile ? "calc((100% - 6px) / 2)" : "minmax(220px, 1fr)",
-	              gap: "6px",
-	              minWidth: isMobile ? undefined : `${Math.max(kanbanStageColumns.length, 1) * 220}px`,
-	              alignItems: "start",
-	            }}
-	          >
-	            {kanbanStageColumns.map((column) => {
-	              const taskSections = "groups" in column && Array.isArray(column.groups) && column.groups.length > 0
-	                ? column.groups
-	                : [{ key: "tasks", name: "", tone: "default" as const, tasks: column.tasks }];
-	              return (
-	              <section
-	                key={column.index}
-                style={{
-		                  border: "1px solid var(--border-color)",
-	                  borderRadius: "8px",
-	                  background: "rgba(148, 163, 184, 0.06)",
-	                  overflow: "hidden",
-	                  display: "flex",
-	                  flexDirection: "column",
-	                  minHeight: 0,
-	                  maxHeight: "calc(100dvh - 148px)",
-	                }}
-	              >
-                <div
-                  style={{
-                    minHeight: "34px",
-                    borderBottom: "1px solid var(--border-color)",
-                    padding: "7px 9px",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-	                    gap: "8px",
-	                    flexShrink: 0,
-	                  }}
-	                >
-                  <div style={{ minWidth: 0, display: "flex", alignItems: "center", gap: "6px" }}>
-                    <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: "12px", fontWeight: 800, color: "var(--text-color)" }}>
-                      {column.name}
-                    </span>
-                  </div>
-                  <span style={{ fontSize: "11px", fontWeight: 800, color: "var(--text-secondary)" }}>{column.tasks.length}</span>
-                </div>
-	                <div style={{ padding: "8px", display: "flex", flexDirection: "column", gap: "8px", overflowY: "auto", minHeight: 0 }}>
-	                  {column.tasks.length === 0 ? (
-	                    <div style={{ padding: "10px 4px", fontSize: "12px", color: "var(--text-secondary)", textAlign: "center" }}>{t("task.empty")}</div>
-	                      ) : taskSections.map((section) => {
-                      const sectionCollapsed = Boolean(section.name && collapsedTaskCompletionGroups.has(section.key));
-                      const sectionColor = section.tone === "danger" ? "#dc2626" : section.tone === "success" ? "#16a34a" : "var(--text-secondary)";
-                      return (
-	                    <React.Fragment key={section.key}>
-	                      {section.name ? (
-	                        <button
-                            type="button"
-                            onClick={() => {
-                              setCollapsedTaskCompletionGroups((prev) => {
-                                const next = new Set(prev);
-                                if (next.has(section.key)) {
-                                  next.delete(section.key);
-                                } else {
-                                  next.add(section.key);
-                                }
-                                return next;
-                              });
-                            }}
-	                          style={{
-	                            marginTop: "2px",
-	                            padding: "2px 2px 0",
-	                            display: "flex",
-	                            alignItems: "center",
-	                            justifyContent: "space-between",
-	                            gap: "8px",
-                              width: "100%",
-                              border: "none",
-                              background: "transparent",
-	                            color: sectionColor,
-	                            fontSize: "11px",
-	                            fontWeight: 800,
-                              cursor: "pointer",
-	                          }}
-	                        >
-                            <span style={{ display: "inline-flex", alignItems: "center", gap: "4px", minWidth: 0 }}>
-                              <TaskGroupChevronIcon collapsed={sectionCollapsed} />
-	                            <span>{section.name}</span>
-                            </span>
-	                          <span>{section.tasks.length}</span>
-	                        </button>
-	                      ) : null}
-	                      {!sectionCollapsed ? section.tasks.map(task => renderKanbanTaskCard(task, column.name)) : null}
-	                    </React.Fragment>
-                      );
-	                  })}
-	                </div>
-	              </section>
-	              );
-	            })}
-          </div>
-        </div>
-      )}
-    </div>
-  ) : null;
-  if (activePendingPluginTrust) {
+    );
+  } else if (activePendingPluginTrust) {
     workspaceView = (
       <div
         style={{
@@ -13432,11 +8819,13 @@ export function App({ onGoHome }: AppProps) {
         </section>
       </div>
     );
-  } else if (gitDiff) {
+  } else if (gitDiff && currentMainContentView === "file-browser") {
     workspaceView = (
       <GitDiffViewer
         diff={gitDiff}
         root={currentRootId}
+        rootDisplayName={currentRootDisplayName}
+        rootColor={getDisplayNodeColor(String(currentRootId || ""))}
         sideBySide={gitDiffSideBySide}
         onPathClick={handleGitDiffPathClick}
         onSessionClick={(sessionKey) =>
@@ -13445,8 +8834,8 @@ export function App({ onGoHome }: AppProps) {
         onSelectionChange={handleViewerSelectionChange}
       />
     );
-  } else if (file) {
-    if (pluginRender && pluginRender.output && !currentFileEditing) {
+  } else if (file && currentMainContentView === "file-browser") {
+    if (pluginRender && pluginRender.output) {
       workspaceView = (
         <div
           style={{
@@ -13616,7 +9005,9 @@ export function App({ onGoHome }: AppProps) {
               }
               if (next.root) void refreshGitStatus(next.root);
             }}
+            rootDisplayName={getRootDisplayName(file?.root || currentRootId)}
             isVisible={!selectedSession}
+            rootColor={getDisplayNodeColor(String(file?.root || currentRootId || ""))}
             onSelectionChange={handleViewerSelectionChange}
             initialScrollTop={
               fileScrollPositionsRef.current[currentFileScrollKey] || 0
@@ -13652,6 +9043,7 @@ export function App({ onGoHome }: AppProps) {
           await actionHandlers.open_dir({ root: currentRootId, path: parent === "." ? currentRootId : parent, isRoot: parent === ".", forceDirectory: true });
           void refreshGitStatus(currentRootId);
         }}
+        rootDisplayName={currentRootDisplayName || undefined}
         path={selectedDir || ""}
         entries={currentMainContentView === "file-browser" ? visibleMainEntries : []}
         errorMessage={currentMainContentView === "file-browser" ? mainDirectoryError : ""}
@@ -13660,7 +9052,8 @@ export function App({ onGoHome }: AppProps) {
         sortMode={currentDirectorySortMode}
         sortControlValue={currentDirectorySortOverride || "inherit"}
         currentViewMode={currentMainContentView}
-        onViewModeChange={handleMainContentViewChange}
+        workspaceMode={workspaceOpen}
+        workspaceProjectCount={workspaceBoard.projects.length}
         uploadProgress={directoryUploadProgress}
         onCancelUpload={() => directoryUploadAbortRef.current?.abort()}
         onSortModeChange={(nextMode) => {
@@ -13705,6 +9098,7 @@ export function App({ onGoHome }: AppProps) {
             : actionHandlers.open({ path: e.path })
         }
         onPathClick={handleDirectoryPathClick}
+        rootColor={getDisplayNodeColor(String(currentRootId || ""))}
       />
     );
   }
@@ -13781,178 +9175,11 @@ export function App({ onGoHome }: AppProps) {
     });
   }, [file, actionHandlers]);
 
-  const handleRelayAction = useCallback(async () => {
-    if (!currentRootId) {
-      return;
-    }
-    const pendingPopup = openPendingPopup();
-    const latestStatus = await startRelayBinding();
-    const nextStatus = latestStatus || relayStatus;
-    if (!nextStatus) {
-      pendingPopup?.close();
-      return;
-    }
-    const nodeURL = String(nextStatus?.node_url || "");
-    if (nextStatus?.relay_bound && nodeURL) {
-      const target = new URL(nodeURL, window.location.origin);
-      target.searchParams.set("root", currentRootId);
-      navigatePopup(pendingPopup, target.toString());
-      return;
-    }
-    const pendingCode = String(nextStatus?.pending_code || "");
-    const nodeName = String(nextStatus?.node_name || "");
-    const relayBaseURL = String(nextStatus?.relay_base_url || "");
-    if (!pendingCode || !relayBaseURL) {
-      pendingPopup?.close();
-      return;
-    }
-    const target = new URL("/bind", relayBaseURL);
-    target.searchParams.set("code", pendingCode);
-    target.searchParams.set("root", currentRootId);
-    if (nodeName) {
-      target.searchParams.set("node_name", nodeName);
-    }
-    navigatePopup(pendingPopup, target.toString());
-  }, [currentRootId, startRelayBinding, relayStatus]);
-
-  const refreshTokenStationInfo = useCallback(async () => {
-    setTokenStationLoading(true);
-    setTokenStationErrorOpen(false);
-    try {
-      const info = await fetchTokenStationInfo();
-      setTokenStationInfo(info);
-    } catch (error) {
-      setTokenStationInfo({
-        success: false,
-        message: error instanceof Error ? error.message : "token_station_failed",
-      });
-    } finally {
-      setTokenStationLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    tokenStationRefreshRef.current = () => {
-      void refreshTokenStationInfo();
-    };
-    return () => {
-      tokenStationRefreshRef.current = null;
-    };
-  }, [refreshTokenStationInfo]);
-
-  useEffect(() => {
-    if (!bootstrapService.canUseProtectedAPI()) {
-      return;
-    }
-    void refreshTokenStationInfo();
-  }, [refreshTokenStationInfo, bootstrapState.phase]);
-
-  useEffect(() => {
-    if (!bootstrapService.canUseProtectedAPI() || !selectedSession?.updated_at) {
-      return;
-    }
-    void refreshTokenStationInfo();
-  }, [refreshTokenStationInfo, selectedSession?.updated_at]);
-
-  const handleTokenStationAction = useCallback(async () => {
-    setTokenStationErrorOpen(false);
-    const topupURL = String(tokenStationInfo?.data?.topup_url || "http://localhost:3000");
-    const walletURL = tokenStationWalletURL(topupURL);
-    if (relayStatus?.relay_bound || relayStatus?.token_station_bound) {
-      window.open(walletURL, "_blank", "noopener,noreferrer");
-      return;
-    }
-    const pendingPopup = openPendingPopup();
-    setTokenStationBusy(true);
-    try {
-      const status = await startTokenStationBinding();
-      if (status.bound) {
-        window.open(tokenStationWalletURL(String(status.topup_url || topupURL)), "_blank", "noopener,noreferrer");
-        pendingPopup?.close();
-        return;
-      }
-      const pendingCode = String(status.pending_code || "");
-      const relayBaseURL = String(status.relay_base_url || relayStatus?.relay_base_url || "");
-      if (!pendingCode || !relayBaseURL) {
-        pendingPopup?.close();
-        return;
-      }
-      const target = new URL("/bind", relayBaseURL);
-      target.searchParams.set("code", pendingCode);
-      target.searchParams.set("purpose", "token_station");
-      navigatePopup(pendingPopup, target.toString());
-    } finally {
-      setTokenStationBusy(false);
-    }
-  }, [relayStatus, tokenStationInfo]);
-
-  const handleTokenStationApply = useCallback(async () => {
-    setTokenStationErrorOpen(false);
-    setTokenStationApplyBusy(true);
-    try {
-      const info = await fetchTokenStationInfo("apply");
-      setTokenStationInfo(info);
-      if (!info.success) {
-        setTokenStationInfo({
-          ...info,
-          message: info.message || t("tokenStation.loadFailed"),
-        });
-        setTokenStationErrorOpen(true);
-        return;
-      }
-      const topupURL = String(info.data?.topup_url || tokenStationInfo?.data?.topup_url || "").trim();
-      const byName = new Map<string, { name: string; baseUrl: string; apiKey: string }>();
-      for (const item of info.data?.api_keys || []) {
-        const name = String(item?.name || "").trim();
-        const apiKey = normalizeTokenStationAPIKey(String(item?.api_key || ""));
-        if (!name || !apiKey || !topupURL) {
-          continue;
-        }
-        if (!byName.has(name)) {
-          byName.set(name, { name, baseUrl: topupURL, apiKey });
-        }
-      }
-      const providers = Array.from(byName.values());
-      if (providers.length === 0) {
-        setTokenStationInfo({
-          ...info,
-          success: false,
-          message: t("tokenStation.noAPIKey"),
-        });
-        setTokenStationErrorOpen(true);
-        return;
-      }
-      const result = await syncAgentAPIProviders(providers);
-      setAgentConfigSwitchRequest({
-        nonce: Date.now(),
-        providerIDs: (result.providers || []).map((provider) => provider.id),
-      });
-    } catch (error) {
-      setTokenStationInfo({
-        success: false,
-        message: error instanceof Error ? error.message : t("tokenStation.applyFailed"),
-      });
-      setTokenStationErrorOpen(true);
-    } finally {
-      setTokenStationApplyBusy(false);
-    }
-  }, [tokenStationInfo, t]);
-
-  const relayActionLabel = useMemo(() => {
-    if (isRelayNodePage()) {
-      return null;
-    }
-    if (relayStatus?.no_relayer) {
-      return null;
-    }
-    return t("relay.publicAccess");
-  }, [relayStatus, t]);
-
-  const relayActionDisabled =
-    !currentRootId ||
-    (!relayStatus?.relay_bound &&
-      !relayStatus?.relay_base_url);
-  const showUpdateButton = shouldShowUpdateButton(updateState);
+  // 更新状态由 WS 的 app.update 推送（pushInitialAppUpdate 在连接时推一次），
+  // 不是启动时同步就绪的。首帧 updateState 还是 normalizeUpdateState(null) 的全空
+  // 初值，若直接拿它判可见性，就会先按「没更新」画一帧、收到推送后再翻出来 ——
+  // 与 PWA 安装按钮同一种闪烁。WS 连上之前一律不画，连上后状态已由服务端推来。
+  const showUpdateButton = status === "connected" && shouldShowUpdateButton(updateState);
   const updateBusy =
     updateSubmitting ||
     ["downloading", "installing", "restarting"].includes(
@@ -13961,424 +9188,87 @@ export function App({ onGoHome }: AppProps) {
   const updateLabel = updateButtonLabel(updateState, t);
   const updateHelp = updateState.message || updateSummaryText(updateState, t);
   const updateSummary = updateSummaryText(updateState, t);
-  const sessionImportMenu = (
-    <div ref={importMenuRef} style={{ position: "relative" }}>
-      <button
-        type="button"
-        onClick={() => setImportMenuOpen((open) => !open)}
-        aria-label={t("externalImport.open")}
-        style={{
-          border: "none",
-          background: "transparent",
-          color:
-            sessionListMode === "import" && externalImportAgent
-              ? "var(--text-secondary)"
-              : "#0f766e",
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-          height: "34px",
-          minWidth: "34px",
-          borderRadius: "8px",
-          cursor: "pointer",
-          padding:
-            sessionListMode === "import" && externalImportAgent ? 0 : "0 2px",
-        }}
-      >
-        {sessionListMode === "import" && externalImportAgent ? (
-          <>
-            <AgentIcon
-              agentName={externalImportAgent}
-              style={{ width: "14px", height: "14px", display: "block" }}
-            />
-            <ChevronDownSmallIcon />
-          </>
-        ) : (
-          <ImportIcon />
-        )}
-      </button>
-      {importMenuOpen ? (
-        <div
-          style={{
-            position: "absolute",
-            top: "calc(100% + 6px)",
-            right: 0,
-            width: "260px",
-            padding: "10px",
-            borderRadius: "12px",
-            border: "1px solid var(--border-color)",
-            background: "var(--menu-bg)",
-            boxShadow: "0 12px 30px rgba(15, 23, 42, 0.14)",
-            zIndex: 40,
-            display: "flex",
-            flexDirection: "column",
-            gap: "10px",
-          }}
-        >
-          <div
-            style={{
-              fontSize: "12px",
-              fontWeight: 700,
-              color: "var(--text-primary)",
-            }}
-          >
-            {t("externalImport.chooseAgent")}
-          </div>
-          <AgentMenuList
-            agents={availableAgents}
-            selectedAgent={externalImportAgent}
-            maxHeight="180px"
-            onSelect={(agentName) => {
-              setImportMenuOpen(false);
-              setExternalImportAgent(agentName);
-              setExternalSelectedKey("");
-              void enterImportMode(agentName);
-            }}
-          />
-          <label
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "8px",
-              fontSize: "12px",
-              color: "var(--text-primary)",
-              cursor: "pointer",
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={externalFilterBound}
-              onChange={(e) => setExternalFilterBound(e.target.checked)}
-            />
-            <span>{t("externalImport.hideImported")}</span>
-          </label>
-        </div>
-      ) : null}
-    </div>
+
+  // 归档视图：在右栏列内跟会话列表互换，不出全屏浮层。
+  const openArchivePanel = useCallback(() => {
+    setArchiveOpen(true);
+  }, []);
+  const closeArchivePanel = useCallback(() => {
+    setArchiveOpen(false);
+  }, []);
+  // 选中归档会话 = 要去读它。读完顺手退回列表，右栏停在归档视图上会让人
+  // 以为「对话没打开」（主区变了，右栏没变）。
+  const handleSelectArchivedSession = useCallback(
+    (session: SessionItem) => {
+      handleSelectSessionAndClose(session);
+      setArchiveOpen(false);
+    },
+    [handleSelectSessionAndClose],
   );
-  const sessionSidebar =
-    sessionListMode === "import" ? (
-      <ExternalSessionList
-        sessions={externalSessions}
-        selectedKey={externalSelectedKey}
-        selectedAgent={externalImportAgent}
-        importingKeys={importingExternalSessionKeys}
-        selectedImportKeys={selectedExternalImportKeys}
-        filterBound={externalFilterBound}
-        headerAction={sessionImportMenu}
-        loading={loadingExternalSessions}
-        error={externalSessionsError}
-        loadingOlder={loadingOlderExternalSessions}
-        confirmingImport={confirmingExternalImport}
-        hasMore={hasMoreExternalSessions}
-        onBack={exitImportMode}
-        onSelect={(session) =>
-          setExternalSelectedKey(
-            String(session.key || session.session_key || ""),
-          )
-        }
-        onToggleImport={toggleExternalImportSelection}
-        onToggleSelectAllImport={toggleAllExternalImportSelection}
-        onConfirmImport={() => {
-          void handleConfirmExternalImport();
-        }}
-        onLoadOlder={() => {
-          void handleLoadOlderExternalSessions();
-        }}
-      />
-    ) : multiProjectSessionsEnabled && !sessionSearchOpen && !sessionSearchResultsMode ? (
-      <MultiProjectSessionList
-        groups={multiProjectSessionGroups}
-        selectedKey={selectedSession?.key}
-        selectedRootId={(selectedSession?.root_id as string | undefined) || currentRootId || ""}
-        headerAction={sessionImportMenu}
-        loading={multiProjectSessionsLoading}
-        emptyText={t("externalImport.empty")}
-        syncingSessionKeys={syncingSessionKeys}
-        onSearchToggle={() => {
-          setSessionSearchOpen(true);
-          setSessionSearchResultsMode(false);
-          setSessionSearchQuery("");
-          setSessionSearchAppliedQuery("");
-          setSessionSearchResults([]);
-          setSessionSearchLoading(false);
-        }}
-        onSelect={(s) => {
-          handleSelectSession(s);
-          if (isMobile) setIsRightOpen(false);
-        }}
-        onSync={handleSyncSession}
-        onPin={handlePinSession}
-        onRename={handleRenameSession}
-        onDelete={handleDeleteSession}
-        onProjectClick={(rootId) => {
-          actionHandlers.open_dir({
-            path: rootId,
-            root: rootId,
-            isRoot: true,
-            suppressTreeExpand: true,
-          });
-          if (isMobile) setIsRightOpen(false);
-        }}
-        onLoadMoreProject={loadMoreMultiProjectSessions}
-        onLoadChildren={loadChildSessionsForParent}
-      />
-    ) : (
-      <SessionList
-        sessions={
-          sessionSearchOpen && sessionSearchResultsMode
-            ? sessionSearchResults
-            : sessions
-        }
-        selectedKey={selectedSession?.key}
-        headerAction={sessionImportMenu}
-        searchOpen={sessionSearchOpen}
-        searchResultsMode={sessionSearchResultsMode}
-        searchQuery={sessionSearchQuery}
-        searchLoading={sessionSearchLoading}
-        syncingSessionKeys={syncingSessionKeys}
-        emptyText={
-          sessionSearchResultsMode
-            ? t("externalImport.noSearchMatch")
-            : sessionSearchOpen
-              ? ""
-            : (
-              <span>
-                {t("externalImport.emptyHintPrefix")}
-                <strong style={{ color: "var(--text-primary)", fontWeight: 800 }}>
-                  {t("externalImport.emptyHintAction")}
-                </strong>
-              </span>
-            )
-        }
-        onSearchToggle={() => {
-          setSessionSearchOpen((prev) => {
-            const next = !prev;
-            if (!next) {
-              setSessionSearchResultsMode(false);
-              setSessionSearchQuery("");
-              setSessionSearchAppliedQuery("");
-              setSessionSearchResults([]);
-              setSessionSearchLoading(false);
-            }
-            return next;
-          });
-        }}
-        onSearchQueryChange={(value) => {
-          setSessionSearchQuery(value);
-          if (!value.trim() && !sessionSearchResultsMode) {
-            setSessionSearchAppliedQuery("");
-            setSessionSearchResults([]);
-            setSessionSearchLoading(false);
-          }
-        }}
-        onSearchSubmit={executeSessionSearch}
-        onSearchBlur={() => {
-          setSessionSearchOpen(false);
-          setSessionSearchResultsMode(false);
-          setSessionSearchQuery("");
-          setSessionSearchAppliedQuery("");
-          setSessionSearchResults([]);
-          setSessionSearchLoading(false);
-        }}
-        onSearchBack={() => {
-          setSessionSearchResultsMode(false);
-          setSessionSearchQuery("");
-          setSessionSearchAppliedQuery("");
-          setSessionSearchResults([]);
-          setSessionSearchLoading(false);
-          setSessionSearchOpen(false);
-        }}
-        onSelect={(s) => {
-          handleSelectSession(s);
-          if (isMobile) setIsRightOpen(false);
-        }}
-        onSync={handleSyncSession}
-        onPin={handlePinSession}
-        onRename={handleRenameSession}
-        onDelete={handleDeleteSession}
-        onLoadChildren={
-          sessionSearchOpen && sessionSearchResultsMode
-            ? undefined
-            : loadChildSessionsForParent
-        }
-        onLoadOlder={
-          sessionSearchOpen && sessionSearchResultsMode
-            ? undefined
-            : handleLoadOlderSessions
-        }
-        loadingOlder={
-          sessionSearchOpen && sessionSearchResultsMode
-            ? false
-            : loadingOlderSessions
-        }
-        hasMore={
-          sessionSearchOpen && sessionSearchResultsMode
-            ? false
-            : hasMoreSessions
-        }
-      />
-    );
-  const tokenStationBalanceText = tokenStationLoading
-    ? t("tokenStation.reading")
-    : formatTokenStationBalance(tokenStationInfo);
-  const canApplyTokenStationConfig =
-    tokenStationInfo?.success === true && parseTokenStationBalance(tokenStationInfo) > 0;
-  const tokenStationCard = (
-      <section
-        aria-label={t("tokenStation.title")}
-        style={{
-          position: "relative",
-          width: "100%",
-          height: 36,
-          display: "flex",
-          alignItems: "center",
-          gap: 6,
-          border: "1px solid var(--panel-border)",
-          background: "var(--panel-bg)",
-          backdropFilter: "blur(14px)",
-          boxShadow: "var(--panel-shadow)",
-          borderRadius: 8,
-          boxSizing: "border-box",
-          padding: "0 5px 0 8px",
-          color: "var(--text-primary)",
-        }}
-      >
-        {tokenStationInfo?.success === false && tokenStationErrorOpen ? (
-          <div
-            role="status"
-            style={{
-              position: "absolute",
-              left: 0,
-              bottom: 42,
-              width: "100%",
-              border:
-                "1px solid color-mix(in srgb, var(--mindfs-launcher-error-text) 24%, transparent)",
-              background: "var(--mindfs-launcher-error-bg)",
-              color: "var(--mindfs-launcher-error-text)",
-              borderRadius: 8,
-              boxShadow: "var(--panel-shadow)",
-              padding: "7px 9px",
-              fontSize: 11,
-              lineHeight: "15px",
-              wordBreak: "break-word",
-            }}
-          >
-            {tokenStationInfo.message || t("tokenStation.unbound")}
-          </div>
-        ) : null}
-        <div
-          style={{
-            width: "100%",
-            height: 28,
-            display: "flex",
-            alignItems: "center",
-            gap: 5,
-            minWidth: 0,
-          }}
-        >
-          <svg
-            aria-hidden="true"
-            width="1em"
-            height="1em"
-            viewBox="0 0 24 24"
-            style={{
-              flex: "0 0 auto",
-              width: 21,
-              height: 21,
-              color: "#f97316",
-            }}
-          >
-            <path d="M0 0h24v24H0z" fill="none" />
-            <path
-              fill="currentColor"
-              d="M3 21a1 1 0 0 1 0-2V6a3 3 0 0 1 3-3h6a3 3 0 0 1 3 3v4a3 3 0 0 1 3 3v3a.5.5 0 1 0 1 0v-6a2 2 0 0 1-2-2v-.585l-.707-.708a1 1 0 0 1-.083-1.32l.083-.094a1 1 0 0 1 1.414 0l3.003 3.002l.095.112l.028.04l.044.073l.052.11l.031.09l.02.076l.012.078L21 9v7a2.5 2.5 0 1 1-5 0v-3a1 1 0 0 0-1-1v7a1 1 0 0 1 0 2zm9-16H6a1 1 0 0 0-1 1v4h8V6a1 1 0 0 0-1-1"
-            />
-          </svg>
-          <span
-            title={
-              tokenStationInfo?.success
-                ? tokenStationBalanceText
-                : tokenStationInfo?.message || t("tokenStation.unbound")
-            }
-            style={{
-              minWidth: "max-content",
-              flex: "1 0 auto",
-              overflow: "visible",
-              whiteSpace: "nowrap",
-              fontSize: tokenStationBalanceText.length > 9 ? 11 : 12,
-              fontWeight: 700,
-              lineHeight: "18px",
-              fontVariantNumeric: "tabular-nums",
-            }}
-          >
-            {tokenStationBalanceText}
-          </span>
-          {canApplyTokenStationConfig ? (
-            <button
-              type="button"
-              onClick={() => void handleTokenStationApply()}
-              disabled={tokenStationApplyBusy}
-              style={{
-                flex: "0 0 auto",
-                height: 23,
-                border: "1px solid var(--accent-color)",
-                borderRadius: 6,
-                background: "transparent",
-                color: "var(--accent-color)",
-                fontSize: 11,
-                fontWeight: 650,
-                cursor: tokenStationApplyBusy ? "default" : "pointer",
-                opacity: tokenStationApplyBusy ? 0.65 : 1,
-                padding: "0 4px",
-                whiteSpace: "nowrap",
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 4,
-              }}
-            >
-              {tokenStationApplyBusy ? (
-                <svg
-                  aria-hidden="true"
-                  width="12"
-                  height="12"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="3"
-                  strokeLinecap="round"
-                  style={{ animation: "mindfs-update-spin 0.9s linear infinite" }}
-                >
-                  <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-                </svg>
-              ) : null}
-              <span style={{ fontSize: isTablet ? 10 : 11 }}>{t("tokenStation.apply")}</span>
-            </button>
-          ) : null}
-          <button
-            type="button"
-            onClick={() => void handleTokenStationAction()}
-            disabled={tokenStationBusy}
-            style={{
-              flex: "0 0 auto",
-              height: 23,
-              border: "none",
-              borderRadius: 6,
-              background: "var(--accent-color)",
-              color: "#fff",
-              fontSize: 11,
-              fontWeight: 650,
-              cursor: tokenStationBusy ? "default" : "pointer",
-              opacity: tokenStationBusy ? 0.65 : 1,
-              padding: "0 5px",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {tokenStationBusy ? t("tokenStation.processing") : t("tokenStation.topUp")}
-          </button>
-        </div>
-      </section>
-  );
+
+  const { sessionImportMenu, sessionSidebar } = useSessionSidebarView({
+    sessionListMode,
+    importMenuRef,
+    importMenuOpen,
+    setImportMenuOpen,
+    availableAgents,
+    externalImportAgent,
+    setExternalImportAgent,
+    setExternalSelectedKey,
+    enterImportMode,
+    externalFilterBound,
+    setExternalFilterBound,
+    externalSessions,
+    externalSelectedKey,
+    importingExternalSessionKeys,
+    selectedExternalImportKeys,
+    loadingExternalSessions,
+    externalSessionsError,
+    loadingOlderExternalSessions,
+    confirmingExternalImport,
+    hasMoreExternalSessions,
+    exitImportMode,
+    toggleExternalImportSelection,
+    toggleAllExternalImportSelection,
+    handleConfirmExternalImport,
+    handleLoadOlderExternalSessions,
+    multiProjectSessionsEnabled,
+    sessionSearchOpen,
+    sessionSearchResultsMode,
+    multiProjectSessionGroups,
+    activeBoundSessionKey,
+    currentRootId,
+    currentRootNodeId,
+    treeSortMode,
+    multiProjectSessionsLoading,
+    syncingSessionKeys,
+    handleSelectSessionAndClose,
+    handleSyncSession,
+    handlePinSession,
+    handleRenameSession,
+    handleDeleteSession,
+    handleArchiveSession,
+    openArchivePanel,
+    closeArchivePanel,
+    archiveOpen,
+    archiveLoading,
+    archivedGroups,
+    handleSelectArchivedSession,
+    loadMoreMultiProjectSessions,
+    loadChildSessionsForParent,
+    sessionSearchResults,
+    sessions,
+    sessionSearchQuery,
+    sessionSearchLoading,
+    toggleSessionSearch,
+    handleSearchQueryChange,
+    executeSessionSearch,
+    closeSessionSearch,
+    openSessionSearch,
+    handleLoadOlderSessions,
+    loadingOlderSessions,
+    hasMoreSessions,
+  });
 
   return (
     <>
@@ -14394,25 +9284,28 @@ export function App({ onGoHome }: AppProps) {
         onOpenLeft={() => setIsLeftOpen(true)}
         onOpenRight={() => setIsRightOpen(true)}
         sidebar={
-          <FileTree
+          <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+            <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+              <FileTree
             entries={rootEntries}
             childrenByPath={entriesByPath}
             expanded={expanded}
             sortMode={treeSortMode}
             showHiddenFiles={showHiddenFiles}
             onSortModeChange={setTreeSortMode}
-            onShowHiddenFilesChange={setShowHiddenFiles}
             onRefresh={handleProjectTreeRefresh}
+            onNodeManagerRefresh={handleNodeManagerRefresh}
             selectedDirKey={selectedDirKey}
             selectedPath={file?.path}
             rootId={currentRootId}
+            rootNodeId={currentRootNodeId}
+            rootColor={getDisplayNodeColor(String(currentRootId || ""))}
             rootSessionIndicators={rootSessionIndicators}
             creatingRootName={
               creatingRootKind === "worktree" ? null : creatingRootName
             }
             creatingRootBusy={creatingRootBusy}
             onOpenProjectAdd={handleOpenProjectAdd}
-            onStartOnboarding={isMobile ? undefined : () => setOnboardingOpen(true)}
             onCreateRootStart={handleCreateRootStart}
             onCreateRootNameChange={setCreatingRootName}
             onCreateRootSubmit={() => {
@@ -14423,15 +9316,40 @@ export function App({ onGoHome }: AppProps) {
               projectAddMode === "worktree_location" ? null : projectAddOverlay
             }
             onSelectFile={(e, r) => {
-              actionHandlers.open({ path: e.path, root: r });
+              actionHandlers.open({ path: e.path, root: r, nodeId: (e as any)._nodeId });
               if (isMobile) setIsLeftOpen(false);
             }}
-            onSelectRoot={(e, r) =>
-              actionHandlers.open_dir({
+            onSelectRoot={(e, r) => {
+              // 点项目名不切主面板（工作台除外），只按当前面板语境换内容。
+              const mode = mainViewRef.current;
+              const target = String(r || e.path || "");
+              if (
+                mode === "chat" &&
+                target === String(currentRootIdRef.current || "")
+              ) {
+                // 对话态点本项目名：无动作
+                return;
+              }
+              void actionHandlers.open_dir({
                 path: e.path,
                 root: r,
                 isRoot: e.is_root === true,
-                suppressTreeExpand: true,
+                // 点根行即展开该项目根的树（配合根树互斥，其它根自动收起）
+                toggle: false,
+                nodeId: (e as any)._nodeId,
+              });
+              // 工作台：点任何项目 = 进该项目的项目看板
+              if (mode === "workspace") switchMainView("board");
+            }}
+            onSelectDir={(e, r) =>
+              // 点文件夹名：无条件切到文件面板并显示该目录
+              actionHandlers.open_dir({
+                path: e.path,
+                root: r,
+                toggle: false,
+                isRoot: false,
+                nodeId: (e as any)._nodeId,
+                switchToFiles: true,
               })
             }
             onToggleDir={(e, r) =>
@@ -14440,6 +9358,7 @@ export function App({ onGoHome }: AppProps) {
                 root: r,
                 toggle: true,
                 isRoot: e.is_root === true,
+                nodeId: (e as any)._nodeId,
               })
             }
             renderRootExtraContent={renderRootGitContent}
@@ -14453,13 +9372,6 @@ export function App({ onGoHome }: AppProps) {
               }
             }}
             onProjectTreeTabChange={setProjectTreeTab}
-            relayActionLabel={relayActionLabel}
-            relayActionDisabled={relayActionDisabled}
-            relayActionHelp={null}
-            onRelayAction={handleRelayAction}
-            relayNodeId={relayStatus?.node_id || ""}
-            relayBaseURL={relayStatus?.relay_base_url || ""}
-            relayNoRelayer={relayStatus?.no_relayer === true}
             updateActionLabel={showUpdateButton ? updateLabel : null}
             updateActionDisabled={updateBusy}
             updateActionHelp={showUpdateButton ? updateHelp : ""}
@@ -14468,7 +9380,6 @@ export function App({ onGoHome }: AppProps) {
             onUpdateAction={() => {
               void handleStartUpdate();
             }}
-            footerTopContent={tokenStationCard}
             showEnterKeySendOption={isMobile}
             enterKeySends={mobileEnterKeySends}
             onEnterKeySendsChange={setMobileEnterKeySends}
@@ -14479,14 +9390,19 @@ export function App({ onGoHome }: AppProps) {
             onSidebarsSwappedChange={setSidebarsSwapped}
             gitDiffSideBySide={gitDiffSideBySide}
             onGitDiffSideBySideChange={setGitDiffSideBySide}
-            multiProjectSessionsEnabled={multiProjectSessionsEnabled}
-            onMultiProjectSessionsChange={setMultiProjectSessionsEnabled}
             fontSizePreferences={fontSizePreferences}
             onFontSizePreferencesChange={setFontSizePreferences}
             onRunAgentLifecycleCommand={handleRunAgentLifecycleCommand}
             onRestartAgent={handleRestartAgent}
             onGoHome={onGoHome}
           />
+            </div>
+            <MainViewSwitcher
+              value={mainView}
+              onChange={handleMainViewSwitcherChange}
+              accentColor={getDisplayNodeColor(String(currentRootId || "")) || undefined}
+            />
+          </div>
         }
         rightSidebar={sessionSidebar}
         main={
@@ -14514,8 +9430,7 @@ export function App({ onGoHome }: AppProps) {
             >
               <div
                 style={{
-                  display: selectedSession ? "flex" : "none",
-                  flexDirection: "column",
+                  display: showSessionPane ? "flex" : "none",
                   flex: 1,
                   minHeight: 0,
                   minWidth: 0,
@@ -14525,7 +9440,7 @@ export function App({ onGoHome }: AppProps) {
               </div>
               <div
                 style={{
-                  display: selectedSession ? "none" : "flex",
+                  display: showSessionPane ? "none" : "flex",
                   flex: 1,
                   minHeight: 0,
                   minWidth: 0,
@@ -14560,24 +9475,11 @@ export function App({ onGoHome }: AppProps) {
               </div>
             ) : null}
             <ActionBar
-              onNewSession={() => {
-                const root = currentRootIdRef.current;
-                if (!root) return;
-                setPendingPlanMode(false);
-                selectedSessionRef.current = null;
-                currentSessionRef.current = null;
-                selectedSessionByRootRef.current[root] = null;
-                setSelectedSession(null);
-                setDrawerSessionForRoot(root, null);
-                interactionModeRef.current = "main";
-                setInteractionMode("main");
-                setDrawerOpenForRoot(root, false);
-              }}
+              onNewSession={handleNewSession}
               onSelectProject={(root) => {
                 void actionHandlers.open_dir({ path: root, root, isRoot: true, suppressTreeExpand: true });
               }}
               onSelectSession={(session) => { void handleSelectSession(session); }}
-              taskGroupBadge={actionBarSessionKey ? <TaskGroupPanel key={`${actionBarSession?.root_id || currentRootId}:${actionBarSessionKey}`} rootId={actionBarSession?.root_id || currentRootId || ""} sessionKey={actionBarSessionKey} renderTask={(detail, close) => renderKanbanTaskCard(detail.task, isTerminalKanbanTask(detail.task) ? t("task.column.done") : t("task.column.running"), detail, true, close)} /> : null}
               status={status}
               agentsVersion={agentsVersion}
               codexRateLimitsRefreshToken={codexRateLimitsRefreshToken}
@@ -14585,7 +9487,12 @@ export function App({ onGoHome }: AppProps) {
               currentRootIsGitRepo={managedRootByIdRef.current[currentRootId || ""]?.is_git_repo === true}
               currentSession={actionBarSession ? { ...actionBarSession, name: actionBarSession.name || "", type: normalizeMode(actionBarSession.type), agent: actionBarSession.agent || "" } : null}
               pendingPlanMode={pendingPlanMode}
+              rootColor={getDisplayNodeColor(String(currentRootId || ""))}
               attachedFileContext={attachedFileContext}
+              canOpenSessionDrawer={canOpenSessionDrawer}
+              hideComposer={mainView === "board" || mainView === "workspace"}
+              sessionDrawerOpen={isDrawerOpen}
+              detachedBoundSession={detachedBoundSession}
               editDraftRequest={editDraftRequest}
               queuedMessages={actionBarQueuedMessages}
               inputHistory={actionBarInputHistory}
@@ -14602,12 +9509,30 @@ export function App({ onGoHome }: AppProps) {
               onToggleLeftSidebar={() => setIsLeftOpen((v) => !v)}
               onToggleRightSidebar={() => setIsRightOpen((v) => !v)}
               sidebarsSwapped={sidebarsSwapped}
+              onSessionClick={() => {
+              const rootID = currentRootIdRef.current;
+              // 直接用 canOpenSessionDrawer：它已经把「会话是否真的在主区」算全了。
+              // 这里若单独重算一份（漏掉 mainView 前提），文件态会被误判成「已在主区」而点了没反应。
+              if (!canOpenSessionDrawer) return;
+              const isDrawerCurrentlyOpen =
+                !!drawerOpenByRootRef.current[scopedRootKey(rootID || "")];
+              if (isDrawerCurrentlyOpen) {
+                interactionModeRef.current = "main";
+                setInteractionMode("main");
+                setDrawerOpenForRoot(rootID, false);
+                return;
+              }
+              setInteractionMode("drawer");
+              setDrawerOpenForRoot(rootID, true);
+              }}
             />
           </div>
         }
         drawer={
           <BottomSheet
-            isOpen={isDrawerOpen}
+            // 悬浮框只属于文件态：离开文件态一律不显示。
+            isOpen={isDrawerOpen && mainView === "files"}
+            contentRef={drawerScrollRef}
             onClose={() => {
               interactionModeRef.current = "main";
               setInteractionMode("main");
@@ -14638,11 +9563,13 @@ export function App({ onGoHome }: AppProps) {
                   (drawerSessionSnapshot.key || drawerSessionSnapshot.session_key)
                 }
                 rootId={currentRootId}
+                rootColor={getDisplayNodeColor(String(currentRootId || ""))}
                 rootPath={
                   managedRootByIdRef.current[currentRootId || ""]?.root_path ||
                   null
                 }
                 interactionMode="drawer"
+                scrollContainerRef={drawerScrollRef}
                 gitFileStatsByPath={gitFileStatsByPath}
                 onFileClick={handleDrawerSessionFileClick}
                 onRootClick={(root) => {
@@ -14805,123 +9732,127 @@ export function App({ onGoHome }: AppProps) {
       ) : null}
       {taskInlineEdit ? (
 	        (() => {
-	          const taskInlineCanCreateWorktree = managedRootByIdRef.current[currentRootId || ""]?.is_git_repo === true;
-	          const showTaskWorktreeControls = taskInlineCanCreateWorktree && (taskInlineEdit.canToggleWorktree || taskInlineEdit.taskId);
+	          // worktree 开关跟的是**面板的目标项目**：从工作台发起时那不是当前项目，
+	          // 写死 currentRootId 会让「非 git 项目也显示 worktree 开关」。
+	          const taskInlineTargetRootId = taskInlineEdit.targetRootId || currentRootId || "";
+	          const taskInlineCanCreateWorktree = managedRootByIdRef.current[taskInlineTargetRootId]?.is_git_repo === true;
+	          const showTaskWorktreeControls = taskInlineCanCreateWorktree && taskInlineEdit.canToggleWorktree;
 	          const taskWorktreeControlsEditable = taskInlineEdit.canToggleWorktree;
+	          // 编辑区里的 agent 选择器：默认值就是「下一个 agent 阶段」在模板里
+	          // 的 agent/model，用户没动过就不写覆盖，让后端照模板走。
+	          const taskInlineTemplate = taskTemplates.find((tpl) => tpl.id === taskInlineEdit.templateId) || null;
+	          const taskInlineTemplateAgent = firstAgentStage(taskInlineTemplate);
+	          const taskInlineHasAgentStage = !!taskInlineTemplateAgent;
+	          // 喂给 StageEditor 的那一段：user 段（角色不可切、没有段名），
+	          // 但带上「下一个 agent 阶段」的 agent/model/effort，选择器才有默认值。
+	          // auto_advance 照模板首段的来，面板上可以临时改。
+	          const createTaskInputStage: StageTemplate = {
+	            name: "",
+	            role: "user",
+	            prompt_template: taskInlineEdit.text,
+	            // 模板里第一个 agent 段没写 agent/model 时退回 claude + sonnet。
+	            agent: taskInlineEdit.agentOverride || taskInlineTemplateAgent?.agent || DEFAULT_TASK_AGENT,
+	            model: taskInlineEdit.modelOverride || taskInlineTemplateAgent?.model || DEFAULT_TASK_MODEL,
+	            effort: taskInlineEdit.effortOverride || taskInlineTemplateAgent?.effort || "",
+	            start_immediately: taskInlineEdit.startImmediately === true,
+	          };
 	          return (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            zIndex: 95,
-            background: "rgba(15, 23, 42, 0.36)",
-            display: "flex",
-            alignItems: isMobile ? "flex-start" : "center",
-            justifyContent: "center",
-            padding: isMobile ? "38px 12px 12px" : "24px",
-          }}
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget && !taskInlineSaving) {
-              closeTaskEditDialog();
-            }
-          }}
-        >
-          <section
-            style={{
-              width: isMobile ? "100%" : "min(640px, 100%)",
-              maxHeight: isMobile ? "70dvh" : "82vh",
-              borderRadius: "10px",
-              border: "1px solid var(--border-color)",
-              background: "var(--menu-bg)",
-              boxShadow: "0 24px 60px rgba(15, 23, 42, 0.24)",
-              display: "flex",
-              flexDirection: "column",
-              overflow: "visible",
-            }}
-          >
-            <div
-              style={{
-                minHeight: "42px",
-                padding: "8px 12px",
-                borderBottom: "1px solid var(--border-color)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: "10px",
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "8px", minWidth: 0 }}>
-                <div style={{ fontSize: "13px", fontWeight: 800, color: "var(--text-color)", whiteSpace: "nowrap" }}>
-                  {t(taskInlineEdit.taskId ? "task.editDialogTitle" : "task.createDialogTitle", {
-                    name: taskInlineEdit.templateName || t("task.defaultTitle"),
-                  })}
-                </div>
-	                {showTaskWorktreeControls ? (
-	                  <>
-	                    <button
-	                      type="button"
-	                      onClick={() => {
-	                        if (!taskWorktreeControlsEditable) return;
-	                        setTaskInlineEdit((prev) => prev ? { ...prev, createWorktree: !prev.createWorktree } : prev);
-	                      }}
-	                      disabled={taskInlineSaving || !taskWorktreeControlsEditable}
-                      aria-label={taskInlineEdit.createWorktree ? t("task.worktreeTitle") : t("task.noWorktreeTitle")}
-                      title={taskInlineEdit.createWorktree ? t("task.worktreeTitle") : t("task.noWorktreeTitle")}
-                      style={{
-                        height: "26px",
-                        borderRadius: "6px",
-                        border: taskInlineEdit.createWorktree ? "1px solid rgba(22, 163, 74, 0.28)" : "1px solid var(--border-color)",
-                        background: taskInlineEdit.createWorktree ? "rgba(22, 163, 74, 0.08)" : "rgba(100, 116, 139, 0.10)",
-                        color: taskInlineEdit.createWorktree ? "#15803d" : "var(--text-secondary)",
-                        padding: taskInlineEdit.createWorktree ? "0 8px" : "0 8px 0 5px",
-                        fontSize: "12px",
-                        fontWeight: 800,
-	                        cursor: taskInlineSaving || !taskWorktreeControlsEditable ? "not-allowed" : "pointer",
-	                        whiteSpace: "nowrap",
-	                        opacity: taskInlineSaving || !taskWorktreeControlsEditable ? 0.72 : 1,
-                        display: "inline-flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        gap: "3px",
-                      }}
-                    >
-                      {taskInlineEdit.createWorktree ? "worktree" : (
-                        <>
-                          <NoWorktreeIcon size={12} />
-                          worktree
-                        </>
-                      )}
-                    </button>
-                    {taskInlineEdit.createWorktree ? (
-                      <div style={{ display: "flex", alignItems: "center", gap: "6px", minWidth: 0 }}>
-	                        <WorktreeBranchSelector
-	                          branchMode={taskInlineEdit.worktreeBranchMode}
-	                          branch={taskInlineEdit.worktreeBranch}
-	                          branches={taskWorktreeBranches.branches}
-                          disabled={taskInlineSaving || !taskWorktreeControlsEditable}
-                          height={26}
-                          maxWidth={isMobile ? 160 : 240}
-                          menuAlign={isMobile ? "left" : "right"}
-                          menuPlacement="bottom"
-                          onChange={(nextMode, nextBranch) => {
-                            setTaskInlineEdit((prev) => {
-                              if (!prev) return prev;
-                              return { ...prev, worktreeBranchMode: nextMode, worktreeBranch: nextBranch };
-                            });
-                          }}
-                        />
-                        {taskWorktreeBranchesLoading ? (
-                          <span style={{ fontSize: "11px", color: "var(--text-secondary)", whiteSpace: "nowrap" }}>{t("common.loading")}</span>
-                        ) : taskWorktreeBranchError ? (
-                          <span title={taskWorktreeBranchError} style={{ fontSize: "11px", color: "#b45309", whiteSpace: "nowrap" }}>{t("common.loadingFailed")}</span>
-                        ) : null}
-                      </div>
-                    ) : null}
-                  </>
-                ) : null}
-                {taskInlineEdit.canEditExecution ? <AgentSelector agent={taskInlineEdit.agent || "codex"} model={taskInlineEdit.model} agents={availableAgents} compact viewportMenu menuPlacement="bottom" onAgentChange={(agent,model)=>setTaskInlineEdit(prev=>prev?{...prev,agent,model:model||""}:prev)}/> : <span>{taskInlineEdit.agent} {taskInlineEdit.model}</span>}
+        <PanelShell
+          width={640}
+          onClose={() => { if (!taskInlineSaving) closeTaskEditDialog(); }}
+          hasUnsavedChanges={() => String(taskInlineEdit?.text || "").trim() !== ""}
+          title={(
+            <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "8px", minWidth: 0 }}>
+              <div style={{ fontSize: "13px", fontWeight: 800, color: "var(--text-color)", whiteSpace: "nowrap" }}>
+                {t("task.createDialogTitle", {
+                  name: taskInlineEdit.templateName || t("task.defaultTitle"),
+                })}
               </div>
+              {taskInlineEdit.allowProjectSwitch && taskCreateProjectOptions.length > 1 ? (
+                <div style={{ minWidth: "120px", maxWidth: "160px" }}>
+                  <Select
+                    value={taskInlineTargetRootId}
+                    ariaLabel={t("task.workspaceSelectProject")}
+                    onChange={(value) => switchTaskInlineEditProject(value)}
+                    options={taskCreateProjectOptions}
+                    size="panel"
+                  />
+                </div>
+              ) : null}
+              {taskTemplates.length > 0 ? (
+                <div style={{ minWidth: "120px", maxWidth: "160px" }}>
+                  <Select
+                    value={taskInlineEdit.templateId}
+                    ariaLabel={t("task.selectTemplate")}
+                    onChange={(value) => {
+                      const picked = taskTemplates.find((tpl) => tpl.id === value);
+                      if (!picked) return;
+                      setTaskInlineEdit((prev) => prev ? { ...prev, templateId: picked.id || "", templateName: picked.name, text: firstUserInputTemplate(picked), startImmediately: picked.stages?.[0]?.snapshot?.start_immediately === true } : prev);
+                      setTaskInlineActiveToken(null);
+                      setTaskInlineCandidates([]);
+                    }}
+                    options={taskTemplates.map((tpl) => ({ value: tpl.id || "", label: tpl.name }))}
+                    size="panel"
+                  />
+                </div>
+              ) : null}
+              {showTaskWorktreeControls ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!taskWorktreeControlsEditable) return;
+                    setTaskInlineEdit((prev) => prev ? { ...prev, createWorktree: !prev.createWorktree } : prev);
+                  }}
+                  disabled={taskInlineSaving || !taskWorktreeControlsEditable}
+                  aria-label={taskInlineEdit.createWorktree ? t("task.worktreeTitle") : t("task.noWorktreeTitle")}
+                  title={taskInlineEdit.createWorktree ? t("task.worktreeTitle") : t("task.noWorktreeTitle")}
+                  style={{
+                    height: "26px",
+                    borderRadius: "6px",
+                    border: taskInlineEdit.createWorktree ? "1px solid rgba(22, 163, 74, 0.28)" : "1px solid var(--border-color)",
+                    background: taskInlineEdit.createWorktree ? "rgba(22, 163, 74, 0.08)" : "rgba(100, 116, 139, 0.10)",
+                    color: taskInlineEdit.createWorktree ? "#15803d" : "var(--text-secondary)",
+                    padding: "0 8px",
+                    fontSize: "12px",
+                    fontWeight: 700,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: "3px",
+                    flexShrink: 0,
+                  }}
+                >
+                  {taskInlineEdit.createWorktree ? "worktree" : (
+                    <>
+                      <NoWorktreeIcon size={12} />
+                      worktree
+                    </>
+                  )}
+                </button>
+              ) : null}
+              {showTaskWorktreeControls && taskInlineEdit.createWorktree ? (
+                <div style={{ display: "flex", alignItems: "center", gap: "6px", minWidth: 0 }}>
+                  <WorktreeBranchSelector
+                    branchMode={taskInlineEdit.worktreeBranchMode}
+                    branch={taskInlineEdit.worktreeBranch}
+                    branches={taskWorktreeBranches.branches}
+                    disabled={taskInlineSaving || !taskWorktreeControlsEditable}
+                    height={26}
+                    maxWidth={isMobile ? 160 : 240}
+                    menuAlign={isMobile ? "left" : "right"}
+                    menuPlacement="bottom"
+                    onChange={(nextMode, nextBranch) => {
+                      setTaskInlineEdit((prev) => {
+                        if (!prev) return prev;
+                        return { ...prev, worktreeBranchMode: nextMode, worktreeBranch: nextBranch };
+                      });
+                    }}
+                  />
+                </div>
+              ) : null}
             </div>
+          )}
+        >
             {taskInlineEdit.createWorktree && taskInlineEdit.worktreeBranchMode === "new" && taskInlineEdit.canToggleWorktree && <input aria-label={t("task.newBranchName")} placeholder={t("task.newBranchName")} value={taskInlineEdit.worktreeBranch} onChange={e=>setTaskInlineEdit(prev=>prev?{...prev,worktreeBranch:e.target.value}:prev)} style={{margin:"8px 12px",padding:8}}/>}
             <div style={{ padding: "12px", overflow: "visible", position: "relative", minHeight: 0, display: "flex", flexDirection: "column" }}>
               {taskInlineActiveToken && taskInlineCandidates.length > 0 ? (
@@ -15023,72 +9954,55 @@ export function App({ onGoHome }: AppProps) {
                   ))}
                 </div>
               ) : null}
-              <div style={{ position: "relative" }}>
-                <div
-                  style={{
-                    position: "relative",
-                    height: "112px",
-                    border: "1px solid var(--border-color)",
-                    borderRadius: "8px",
-                    background: "var(--input-bg)",
-                    overflow: "auto",
-                  }}
-                >
-                  <TokenEditor
-                    ref={taskInlineEditorRef}
-                    placeholder={t("task.editPlaceholder")}
-                    disabled={taskInlineSaving}
-                    isDark={false}
-                    rightInset={42}
-                    topInset={0}
-                    bottomInset={12}
-                    fillHeight
-                    onChange={(payload) => {
-                      setTaskInlineEdit((prev) => prev ? { ...prev, text: payload.serializedText } : prev);
-                      setTaskInlineActiveToken(payload.activeToken);
-                    }}
-                    onFocusChange={(focused) => {
-                      if (!focused) {
-                        setTaskInlineActiveToken(null);
-                        setTaskInlineCandidates([]);
-                        setTaskInlineCandidateIndex(0);
-                      }
-                    }}
-                    onPaste={handleTaskInlinePaste}
-                    onKeyDown={handleTaskInlineEditorKeyDown}
-                    onEnter={handleTaskInlineEditorEnter}
+              <StageEditor
+                editorRef={taskInlineEditorRef}
+                stage={createTaskInputStage}
+                agents={availableAgents}
+                isFirstStage
+                /* 任务名和 user 开关同排：以前这个输入框在 StageEditor 外面
+                   自己占一行，user 芯片被挤到下一排去了。样式照抄模板编辑
+                   面板的段名输入框。 */
+                leading={(
+                  <input
+                    value={taskInlineEdit.name}
+                    onChange={(event) => setTaskInlineEdit((prev) => prev ? { ...prev, name: event.target.value } : prev)}
+                    placeholder={t("task.namePlaceholder")}
+                    style={{ ...composerInputStyle, height: "26px", width: "180px", flex: "0 0 180px", fontWeight: 800 }}
                   />
-                </div>
-                <button
-                  type="button"
-                  title={t("task.addAttachment")}
-                  aria-label={t("task.addAttachment")}
-	                  disabled={taskInlineSaving}
-	                  onClick={() => {
-	                    taskInlineAttachmentInputRef.current?.click();
-	                  }}
-                  style={{
-                    position: "absolute",
-                    right: "6px",
-                    bottom: "6px",
-                    zIndex: 3,
-                    width: "28px",
-                    height: "28px",
-                    border: "none",
-                    borderRadius: "8px",
-                    background: "var(--button-bg)",
-                    color: "var(--text-secondary)",
-                    cursor: taskInlineSaving ? "not-allowed" : "pointer",
-                    opacity: taskInlineSaving ? 0.55 : 1,
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    padding: 0,
-                  }}
-                >
-                  <PlusSmallIcon />
-                </button>
-              </div>
+                )}
+                onChange={(patch) => setTaskInlineEdit((prev) => prev ? {
+                  ...prev,
+                  text: patch.prompt_template ?? prev.text,
+                  ...(patch.agent ? { agentOverride: patch.agent } : {}),
+                  ...(patch.model !== undefined ? { modelOverride: patch.model } : {}),
+                  ...(patch.effort !== undefined ? { effortOverride: patch.effort } : {}),
+                  // 首段的「立即执行」：面板上可临时改，勾上创建后直接开跑。
+                  ...(patch.start_immediately !== undefined ? { startImmediately: patch.start_immediately } : {}),
+                } : prev)}
+                /* 字段说明跟模板编辑面板共用一套：新建任务这里填的就是模板里
+                   那个「用户输入模板」的预填内容。 */
+                label={(
+                  <FieldLabelWithInfo
+                    label={t("taskTemplate.userInputTemplate")}
+                    info={t("taskTemplate.userInputTemplateInfo")}
+                    helpKey="task-input"
+                    openHelpKey={taskInlineHelpKey}
+                    setOpenHelpKey={setTaskInlineHelpKey}
+                  />
+                )}
+                /* 这个编辑区本身是 user 段，但新建时要在这里挑「下一个 agent 阶段」
+                   用哪个 agent/模型，所以把 PromptEditor 自带的 AgentSelector 打开。
+                   默认值取模板里第一个 agent 段的 agent/model（createTaskInputStage）。 */
+                showAgentSelector={taskInlineHasAgentStage}
+                /* 附件「+」：面板底部的隐藏 file input 一直在（App.tsx:9782），
+                   chips 也在渲染，只是没告诉编辑器有这个按钮可点。
+                   任务详情面板（TaskDetailPanel.tsx:445）早就这么传了。 */
+                onAttach={() => taskInlineAttachmentInputRef.current?.click()}
+                onSend={() => void saveTaskInlineEdit()}
+                sending={taskInlineSaving}
+                sendDisabled={!taskInlineEdit.text.trim()}
+                placeholder={t("task.editPlaceholder")}
+              />
               {taskInlineEdit.attachments.length > 0 || taskInlineUploadProgress ? (
                 <div style={{ marginTop: "10px", display: "flex", flexWrap: "wrap", gap: "8px" }}>
                   {taskInlineEdit.attachments.map((attachment) => attachment.isImage && attachment.previewUrl ? (
@@ -15178,38 +10092,7 @@ export function App({ onGoHome }: AppProps) {
                 onChange={handleTaskInlineAttachmentChange}
               />
             </div>
-            <div
-              style={{
-                padding: "10px 12px",
-                borderTop: "1px solid var(--border-color)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: "8px",
-              }}
-            >
-              <span />
-              <div style={{ display: "flex", gap: "8px" }}>
-                <button
-                  type="button"
-                  onClick={closeTaskEditDialog}
-                  disabled={taskInlineSaving}
-                  style={{ height: "30px", borderRadius: "6px", border: "1px solid var(--border-color)", background: "transparent", color: "var(--text-color)", padding: "0 12px", cursor: taskInlineSaving ? "not-allowed" : "pointer" }}
-                >
-                  {t("common.cancel")}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void saveTaskInlineEdit()}
-                  disabled={taskInlineSaving}
-                  style={{ height: "30px", borderRadius: "6px", border: "1px solid var(--accent-color)", background: "var(--accent-color)", color: "#fff", padding: "0 14px", fontWeight: 800, cursor: taskInlineSaving ? "not-allowed" : "pointer", opacity: taskInlineSaving ? 0.7 : 1 }}
-                >
-                  {taskInlineSaving ? t("common.saving") : t("common.save")}
-                </button>
-              </div>
-            </div>
-          </section>
-        </div>
+    </PanelShell>
           );
         })()
       ) : null}
@@ -15299,355 +10182,24 @@ export function App({ onGoHome }: AppProps) {
         template={taskTemplateDialogTemplate}
         onClose={() => setTaskTemplateDialogOpen(false)}
         onSaved={handleTaskTemplateSaved}
+        nodeId={currentRootId ? getNodeIdForRoot(currentRootId) : undefined}
       />
+      {selectedKanbanTask ? (
+        <TaskDetailPanel
+          detail={taskDetailsById[selectedKanbanTask.id] || { task: selectedKanbanTask, stage_runs: [], events: [] }}
+          agents={availableAgents}
+          // 详情面板可能从工作台的就地入口打开（任务属于别的项目/节点），
+          // 路由必须按任务自己的项目走，写死当前项目会把编辑打到错节点。
+          nodeId={getNodeIdForRoot(selectedKanbanTask.root_id || currentRootId || "")}
+          onClose={() => setSelectedKanbanTaskId("")}
+          onOpenSession={(sessionKey) => handleTaskSessionDrawerOpen(sessionKey, selectedKanbanTask.root_id || currentRootIdRef.current, selectedKanbanTask.id)}
+          onMoved={(next) => applyTaskDetails(next.task.root_id || currentRootIdRef.current || "", [next])}
+          onRunTask={(task) => handleMoveKanbanTask(task, "run-now")}
+          accentColor={getDisplayNodeColor(String(selectedKanbanTask.root_id || currentRootId || "")) || undefined}
+        />
+      ) : null}
       <ToastContainer />
+      <DialogHost />
     </>
-  );
-}
-
-function ImportIcon() {
-  return (
-    <svg
-      width="20"
-      height="20"
-      viewBox="0 0 24 24"
-      fill="currentColor"
-      aria-hidden="true"
-    >
-      <path d="m14 12l-4-4v3H2v2h8v3m10 2V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v3h2V6h12v12H6v-3H4v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2" />
-    </svg>
-  );
-}
-
-function EditPencilIcon() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path
-        d="M4 20h4.2L18.7 9.5a2.1 2.1 0 0 0 0-3L17.5 5.3a2.1 2.1 0 0 0-3 0L4 15.8V20Z"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path
-        d="m13.5 6.3 4.2 4.2"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
-
-function HorizontalDotsIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-      <circle cx="5" cy="12" r="1.8" />
-      <circle cx="12" cy="12" r="1.8" />
-      <circle cx="19" cy="12" r="1.8" />
-    </svg>
-  );
-}
-
-function PlusSmallIcon() {
-  return (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
-      <path d="M12 5v14" />
-      <path d="M5 12h14" />
-    </svg>
-  );
-}
-
-function CheckIconSmall() {
-  return (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path d="m5 12 4 4L19 6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-function TaskCompleteIcon() {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
-      <path d="M0 0h16v16H0z" fill="none" />
-      <path fill="currentColor" fillRule="evenodd" d="M3 13.5a.5.5 0 0 1-.5-.5V3a.5.5 0 0 1 .5-.5h9.25a.75.75 0 0 0 0-1.5H3a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9.75a.75.75 0 0 0-1.5 0V13a.5.5 0 0 1-.5.5zm12.78-8.82a.75.75 0 0 0-1.06-1.06L9.162 9.177 7.289 7.241a.75.75 0 1 0-1.078 1.043l2.403 2.484a.75.75 0 0 0 1.07.01z" clipRule="evenodd" />
-    </svg>
-  );
-}
-
-function TaskQueuedSpinnerIcon() {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2.5"
-      strokeLinecap="round"
-      aria-hidden="true"
-      style={{ animation: "mindfs-update-spin 0.9s linear infinite" }}
-    >
-      <path d="M21 12a9 9 0 1 1-6.2-8.56" />
-    </svg>
-  );
-}
-
-function TaskRunNowIcon() {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      aria-hidden="true"
-      style={{ display: "block", transform: "translateX(-1px) scale(1.06)", transformOrigin: "center" }}
-    >
-      <path d="M0 0h24v24H0z" fill="none" />
-      <path
-        fill="currentColor"
-        d="M14.5 4h.005M14.5 4L12 10l5 2.898L9.5 20l2.5-6l-5-2.9zm0-2a2.02 2.02 0 0 0-1.379.551L5.624 9.646a2 2 0 0 0-.61 1.686c.072.626.437 1.182.982 1.498l3.482 2.021l-1.826 4.381a2.003 2.003 0 0 0 1.847 2.77c.498 0 .993-.186 1.375-.548l7.5-7.103a2 2 0 0 0 .61-1.685a2 2 0 0 0-.982-1.498L14.52 9.15l1.789-4.293A2 2 0 0 0 14.5 2"
-      />
-    </svg>
-  );
-}
-
-function TaskSessionErrorIcon() {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2.2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <circle cx="12" cy="12" r="9" />
-      <path d="M12 7v6" />
-      <path d="M12 17h.01" />
-    </svg>
-  );
-}
-
-function DeleteIcon() {
-  return (
-    <svg
-      width="13"
-      height="13"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <polyline points="3 6 5 6 21 6" />
-      <path d="M19 6l-1 14H6L5 6" />
-      <path d="M10 11v6" />
-      <path d="M14 11v6" />
-      <path d="M9 6V4h6v2" />
-    </svg>
-  );
-}
-
-function taskTemplateMenuItemStyle(disabled = false): React.CSSProperties {
-  return {
-    width: "100%",
-    minHeight: "30px",
-    border: "none",
-    borderRadius: "8px",
-    background: "transparent",
-    color: "var(--text-primary)",
-    display: "flex",
-    alignItems: "center",
-    gap: "8px",
-    padding: "6px 8px",
-    textAlign: "left",
-    fontSize: "12px",
-    cursor: disabled ? "not-allowed" : "pointer",
-    opacity: disabled ? 0.45 : 1,
-    boxSizing: "border-box",
-  };
-}
-
-function taskCardIconButtonStyle(tone: "default" | "accent" | "success" | "danger" | "warning" = "default"): React.CSSProperties {
-  return {
-    width: "22px",
-    height: "22px",
-    border: "none",
-    borderRadius: "6px",
-    background: "transparent",
-    color: tone === "accent" ? "var(--accent-color)" : tone === "success" ? "#16a34a" : tone === "danger" ? "#dc2626" : tone === "warning" ? "#d97706" : "var(--text-secondary)",
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    cursor: "pointer",
-    padding: 0,
-  };
-}
-
-function taskAuxBadgeStyle(attention = false): React.CSSProperties {
-  return {
-    width: "18px",
-    height: "18px",
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: "5px",
-    background: attention ? "rgba(239, 68, 68, 0.10)" : "transparent",
-    color: "var(--text-secondary)",
-    animation: attention ? "mindfs-task-ask-user-pulse 2.2s ease-in-out infinite" : "none",
-  };
-}
-
-function taskWorktreeTagStyle(enabled: boolean): React.CSSProperties {
-  return {
-    flex: "0 0 auto",
-    marginLeft: "auto",
-    display: "inline-flex",
-    alignItems: "center",
-    gap: "1px",
-    border: enabled ? "1px solid rgba(22, 163, 74, 0.28)" : "1px solid rgba(217, 119, 6, 0.28)",
-    borderRadius: "4px",
-    background: enabled ? "rgba(22, 163, 74, 0.08)" : "rgba(217, 119, 6, 0.08)",
-    color: enabled ? "#15803d" : "#b45309",
-    fontSize: "9px",
-    fontWeight: 800,
-    lineHeight: "12px",
-    padding: enabled ? "0 4px" : "0 3px 0 2px",
-  };
-}
-
-function taskReplyPulseStyle(): React.CSSProperties {
-  return {
-    position: "absolute",
-    top: "6px",
-    right: "6px",
-    width: "8px",
-    height: "8px",
-    borderRadius: "999px",
-    boxSizing: "border-box",
-    border: "1.5px solid #2563eb",
-    background: "#2563eb",
-    animation: "mindfs-bound-pulse 2.2s ease-in-out infinite",
-    boxShadow: "0 0 0 1.5px rgba(37,99,235,0.14)",
-    pointerEvents: "none",
-  };
-}
-
-function TaskPlanAuxIcon() {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path d="M7 6h10M7 12h10M7 18h6" stroke="#2563eb" strokeWidth="2" strokeLinecap="round" />
-      <path d="M4 6h.01M4 12h.01M4 18h.01" stroke="#2563eb" strokeWidth="3" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-function TaskExpandIcon({ collapsed }: { collapsed: boolean }) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      width="13"
-      height="13"
-      viewBox="0 0 16 16"
-      aria-hidden="true"
-      style={{
-        display: "block",
-        transform: collapsed ? "none" : "rotate(180deg)",
-      }}
-    >
-      <path d="M0 0h16v16H0z" fill="none" />
-      <path fill="currentColor" d="M12.146 7.146a.5.5 0 0 1 .708.708l-4.5 4.5a.5.5 0 0 1-.708 0l-4.5-4.5a.5.5 0 1 1 .708-.708L8 11.293zm0-4a.5.5 0 0 1 .708.708l-4.5 4.5a.5.5 0 0 1-.708 0l-4.5-4.5a.5.5 0 1 1 .708-.708L8 7.293z" />
-    </svg>
-  );
-}
-
-function TaskGroupChevronIcon({ collapsed }: { collapsed: boolean }) {
-  return (
-    <span
-      aria-hidden="true"
-      style={{
-        flexShrink: 0,
-        transform: collapsed ? "rotate(0deg)" : "rotate(90deg)",
-        transition: "transform 0.2s",
-        color: "currentColor",
-        display: "inline-flex",
-        alignItems: "center",
-      }}
-    >
-      <svg
-        width="12"
-        height="12"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2.25"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <polyline points="9 18 15 12 9 6" />
-      </svg>
-    </span>
-  );
-}
-
-function RunNowIcon() {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      width="13"
-      height="13"
-      viewBox="0 0 24 24"
-      aria-hidden="true"
-    >
-      <path d="M0 0h24v24H0z" fill="none" />
-      <path
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        d="M20.409 9.353a2.998 2.998 0 0 1 0 5.294L7.597 21.614C5.534 22.737 3 21.277 3 18.968V5.033c0-2.31 2.534-3.769 4.597-2.648z"
-      />
-    </svg>
-  );
-}
-
-function SyncIcon({ style }: { style?: React.CSSProperties }) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      width="13"
-      height="13"
-      viewBox="0 0 24 24"
-      aria-hidden="true"
-      style={style}
-    >
-      <path
-        fill="currentColor"
-        d="M19.91 15.51h-4.53a1 1 0 0 0 0 2h2.4A8 8 0 0 1 4 12a1 1 0 0 0-2 0a10 10 0 0 0 16.88 7.23V21a1 1 0 0 0 2 0v-4.5a1 1 0 0 0-.97-.99M12 2a10 10 0 0 0-6.88 2.77V3a1 1 0 0 0-2 0v4.5a1 1 0 0 0 1 1h4.5a1 1 0 0 0 0-2h-2.4A8 8 0 0 1 20 12a1 1 0 0 0 2 0A10 10 0 0 0 12 2"
-      />
-    </svg>
-  );
-}
-
-function ChevronDownSmallIcon() {
-  return (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="m6 9 6 6 6-6" />
-    </svg>
   );
 }

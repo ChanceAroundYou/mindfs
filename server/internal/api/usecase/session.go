@@ -17,6 +17,7 @@ import (
 	"unicode"
 
 	"mindfs/server/internal/agent"
+	"mindfs/server/internal/agent/claude"
 	agenttypes "mindfs/server/internal/agent/types"
 	"mindfs/server/internal/commandexec"
 	"mindfs/server/internal/fs"
@@ -43,6 +44,8 @@ type ListSessionsInput struct {
 	Limit           int
 	TopLevelOnly    bool
 	IncludeChildren bool
+	// ArchivedOnly = 只列已归档（归档区）。默认 false = 排除已归档（主面板）。
+	ArchivedOnly bool
 }
 
 type ListSessionsOutput struct {
@@ -107,6 +110,15 @@ type SessionSearchHit struct {
 	Snippet          string     `json:"snippet,omitempty"`
 }
 
+// archivedMode 把「只列归档」这个 bool 翻成 manager 的枚举值。
+// 零值 "" 即「排除归档」，也就是主面板的老行为。
+func archivedMode(only bool) string {
+	if only {
+		return "only"
+	}
+	return ""
+}
+
 func (s *Service) ListSessions(ctx context.Context, in ListSessionsInput) (ListSessionsOutput, error) {
 	if err := s.ensureRegistry(); err != nil {
 		return ListSessionsOutput{}, err
@@ -120,6 +132,7 @@ func (s *Service) ListSessions(ctx context.Context, in ListSessionsInput) (ListS
 		AfterTime:    in.AfterTime,
 		TopLevelOnly: in.TopLevelOnly,
 		Limit:        in.Limit,
+		ArchivedMode: archivedMode(in.ArchivedOnly),
 	})
 	if err != nil {
 		return ListSessionsOutput{}, err
@@ -128,6 +141,7 @@ func (s *Service) ListSessions(ctx context.Context, in ListSessionsInput) (ListS
 		BeforeTime:   in.BeforeTime,
 		AfterTime:    in.AfterTime,
 		TopLevelOnly: in.TopLevelOnly,
+		ArchivedMode: archivedMode(in.ArchivedOnly),
 	})
 	if err != nil {
 		return ListSessionsOutput{}, err
@@ -194,7 +208,7 @@ func (s *Service) ListMultiRootSessions(ctx context.Context, in ListMultiRootSes
 		}
 		groups = append(groups, SessionRootGroup{
 			RootID:            root.ID,
-			RootName:          root.Name,
+			RootName:          root.EffectiveName(),
 			LatestSessionTime: latest,
 			Sessions:          items,
 			PinnedSessions:    pinnedItems,
@@ -493,13 +507,12 @@ func (s *Service) ForkSession(ctx context.Context, in ForkSessionInput) (ForkSes
 		return ForkSessionOutput{}, err
 	}
 	created, err := manager.Create(ctx, session.CreateInput{
-		Type:             session.TypeChat,
-		ParentSessionKey: current.Key,
-		Source:           string(sourceJSON),
-		Agent:            agentName,
-		Model:            resolveForkModel(current, target),
-		Name:             buildForkSessionName(current, target.Seq),
-		PlanMode:         current.PlanMode,
+		Type:     session.TypeChat,
+		Source:   string(sourceJSON),
+		Agent:    agentName,
+		Model:    resolveForkModel(current, target),
+		Name:     buildForkSessionName(current, target.Seq),
+		PlanMode: current.PlanMode,
 	})
 	if err != nil {
 		return ForkSessionOutput{}, err
@@ -670,6 +683,7 @@ func copyForkHistory(ctx context.Context, manager *session.Manager, from, to *se
 		}
 		exchangeCtx := session.WithExchangeModelDisplayName(ctx, exchange.ModelDisplayName)
 		exchangeCtx = session.WithExchangeTokenUsage(exchangeCtx, exchange.TokenUsage)
+		exchangeCtx = session.WithExchangeSource(exchangeCtx, exchange.Source)
 		if err := manager.AddExchangeForAgentAt(exchangeCtx, to, exchange.Role, exchange.Content, agentName, exchange.Mode, exchange.Effort, exchange.FastService, exchange.Timestamp); err != nil {
 			return copied, err
 		}
@@ -697,20 +711,30 @@ func copyForkHistory(ctx context.Context, manager *session.Manager, from, to *se
 }
 
 type GetSessionInput struct {
-	RootID string
-	Key    string
-	Seq    int
+	RootID    string
+	Key       string
+	Seq       int
+	BeforeSeq int
+	Limit     int
+	Latest    int
 }
 
-func (s *Service) GetSession(ctx context.Context, in GetSessionInput) (*session.Session, error) {
+// GetSession returns the session. When BeforeSeq>0 or Latest>0 it serves a
+// windowed slice via manager.GetWindow and the returned SessionWindowMeta is
+// non-nil; otherwise it serves a seq-incremental (Seq>0) or full (Seq<=0) view.
+func (s *Service) GetSession(ctx context.Context, in GetSessionInput) (*session.Session, *session.SessionWindowMeta, error) {
 	if err := s.ensureRegistry(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	manager, err := s.Registry.GetSessionManager(in.RootID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return manager.Get(ctx, in.Key, in.Seq)
+	if in.BeforeSeq > 0 || in.Latest > 0 {
+		return manager.GetWindow(ctx, in.Key, in.BeforeSeq, in.Limit, in.Latest)
+	}
+	out, err := manager.Get(ctx, in.Key, in.Seq)
+	return out, nil, err
 }
 
 type GetSessionExchangeAuxInput struct {
@@ -728,6 +752,26 @@ func (s *Service) GetSessionExchangeAux(ctx context.Context, in GetSessionExchan
 		return nil, err
 	}
 	return manager.GetExchangeAux(ctx, in.Key, in.Seq)
+}
+
+// GetSessionExchangeAuxWindow 只取窗口内 seq 的 aux。窗口请求原先经 GetSessionExchangeAux(Seq=0)
+// 全量读取整个 aux 文件再按窗口过滤（实测某会话 11.8MB/~300ms），纯属浪费；此处按窗口 seqSet
+// 走尾部读（见 Manager.readAuxWindowTail）。
+func (s *Service) GetSessionExchangeAuxWindow(ctx context.Context, in GetSessionExchangeAuxWindowInput) (map[int][]session.ExchangeAux, error) {
+	if err := s.ensureRegistry(); err != nil {
+		return nil, err
+	}
+	manager, err := s.Registry.GetSessionManager(in.RootID)
+	if err != nil {
+		return nil, err
+	}
+	return manager.GetExchangeAuxWindow(ctx, in.Key, in.Seqs)
+}
+
+type GetSessionExchangeAuxWindowInput struct {
+	RootID string
+	Key    string
+	Seqs   map[int]bool
 }
 
 type GetSessionToolCallInput struct {
@@ -917,78 +961,62 @@ type DeleteSessionInput struct {
 	Key    string
 }
 
-func (s *Service) DeleteSession(ctx context.Context, in DeleteSessionInput) error {
+// DeleteSession 删除会话**整棵子树**，返回被删掉的 key 集合（父 + 全部子会话）。
+//
+// 返回 key 列表是给调用方的：上层要拿它去解绑任务引用（Task.MainSessionKey /
+// StageRun.SessionKey），否则任务会一直指向一个已不存在的会话。
+func (s *Service) DeleteSession(ctx context.Context, in DeleteSessionInput) ([]string, error) {
 	if err := s.ensureRegistry(); err != nil {
-		return err
+		return nil, err
 	}
 	root, err := s.Registry.GetRoot(in.RootID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	manager, err := s.Registry.GetSessionManager(in.RootID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	keys, err := deleteSessionCascadeKeys(ctx, manager, in.Key)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	for _, key := range keys {
-		cancelActiveSessionTurn(in.RootID, key)
+	if err := s.deleteSessionKeys(ctx, root, manager, keys); err != nil {
+		return nil, err
 	}
-	if cleaner, ok := s.Registry.(interface {
-		DeleteSessionTaskGroups(context.Context, string, []string) ([]string, error)
-	}); ok {
-		executionKeys, err := cleaner.DeleteSessionTaskGroups(ctx, in.RootID, keys)
-		if err != nil {
-			return err
-		}
-		metas, err := manager.ListMetas(ctx)
-		if err != nil {
-			return err
-		}
-		existing := map[string]bool{}
-		for _, meta := range metas {
-			if meta != nil {
-				existing[meta.Key] = true
-			}
-		}
-		seen := map[string]bool{}
-		for _, key := range keys {
-			seen[key] = true
-		}
-		for _, key := range executionKeys {
-			if !existing[key] || seen[key] {
-				continue
-			}
-			children, err := deleteSessionCascadeKeys(ctx, manager, key)
-			if err != nil {
-				return err
-			}
-			for _, child := range children {
-				if !seen[child] {
-					keys = append(keys, child)
-					seen[child] = true
-				}
-			}
-		}
-	}
-	for _, key := range keys {
-		cancelActiveSessionTurn(in.RootID, key)
+	return keys, nil
+}
 
+// deleteSessionKeys 真删一批会话的完整清理序列：先掐断在跑的 turn，再逐个收资源。
+// 归档要删子树时也走这里 —— 归档过的子会话和普通删除在资源层面没有区别。
+func (s *Service) deleteSessionKeys(
+	ctx context.Context,
+	root fs.RootInfo,
+	manager *session.Manager,
+	keys []string,
+) error {
+	for _, key := range keys {
+		cancelActiveSessionTurn(root.ID, key)
+	}
+	for _, key := range keys {
+		cancelActiveSessionTurn(root.ID, key)
 		if err := manager.Delete(ctx, key); err != nil {
 			return err
 		}
 		if err := root.RemoveSessionFileMeta(key); err != nil {
 			return err
 		}
-		commandexec.CloseSession(in.RootID, key)
-		s.Registry.ReleaseFileWatcher(in.RootID, key)
+		commandexec.CloseSession(root.ID, key)
+		s.Registry.ReleaseFileWatcher(root.ID, key)
 	}
 	return nil
 }
 
-func deleteSessionCascadeKeys(ctx context.Context, manager *session.Manager, key string) ([]string, error) {
+// sessionSubtreeKeys 收集 key 及其全部后代（子会话）的 key 集合。
+//
+// 删除和归档共用：两者都是「整棵树一起处理」，区别只在最后一步是删还是打归档标记。
+// 按 ParentSessionKey 遍历，fork 会话不在其中（fork 只是 source 里记了来源，不是父子关系）。
+func sessionSubtreeKeys(ctx context.Context, manager *session.Manager, key string) ([]string, error) {
 	rootKey := strings.TrimSpace(key)
 	if rootKey == "" {
 		return nil, errors.New("session key required")
@@ -1033,6 +1061,88 @@ func deleteSessionCascadeKeys(ctx context.Context, manager *session.Manager, key
 	}
 	visit(rootKey)
 	return keys, nil
+}
+
+// deleteSessionCascadeKeys 保留旧名：删除用例用它，语义就是「要删的整棵子树」。
+func deleteSessionCascadeKeys(ctx context.Context, manager *session.Manager, key string) ([]string, error) {
+	return sessionSubtreeKeys(ctx, manager, key)
+}
+
+type ArchiveSessionInput struct {
+	RootID string
+	Key    string
+	// Archived = true 归档（自己），false 取消归档。
+	Archived bool
+}
+
+type ArchiveSessionOutput struct {
+	// Session 是被归档/取消归档的那个会话本身（请求的那个 key）。
+	Session *session.Session
+	// DeletedKeys 是随这次归档被**删掉**的子会话。父会话只被标记，子会话是真删除 ——
+	// 两种不同的状态：父会话留在归档区，子会话从主面板和归档区都消失。
+	DeletedKeys []string
+}
+
+// ArchiveSession 归档一个会话：**只把它自己**打归档标记，它整棵子树的子会话**直接删除**。
+//
+// 为什么子会话是删而不是跟着归档：归档区按项目分组平铺，子会话挂在那儿只会变成
+// 孤儿行（父被折叠就找不到，或撑成两层）。而归档本来就不该保留过程噪声 —— 用户
+// 归档的是「这段对话到此为止」，子会话是它内部的展开步骤，不值得单独占一行。
+//
+// 与 DeleteSession 的差别在**对象**：删除要收掉整棵树（包括被点的那个），归档只删
+// 后代、被点的那个只打标记不动内容（深链接能打开、还能继续跑）。
+//
+// 取消归档维持原样（整棵子树一起解标记）：删除不可逆，逆操作没法补偿，只解标记
+// 是当前能给出的最接近还原的行为。
+func (s *Service) ArchiveSession(ctx context.Context, in ArchiveSessionInput) (ArchiveSessionOutput, error) {
+	if err := s.ensureRegistry(); err != nil {
+		return ArchiveSessionOutput{}, err
+	}
+	root, err := s.Registry.GetRoot(in.RootID)
+	if err != nil {
+		return ArchiveSessionOutput{}, err
+	}
+	manager, err := s.Registry.GetSessionManager(in.RootID)
+	if err != nil {
+		return ArchiveSessionOutput{}, err
+	}
+	self := strings.TrimSpace(in.Key)
+	keys, err := sessionSubtreeKeys(ctx, manager, self)
+	if err != nil {
+		return ArchiveSessionOutput{}, err
+	}
+	if !in.Archived {
+		// 取消归档：整棵子树一起解标记。
+		for _, key := range keys {
+			if _, err := manager.SetArchived(ctx, key, false); err != nil {
+				return ArchiveSessionOutput{}, err
+			}
+		}
+		updated, err := manager.SetArchived(ctx, self, false)
+		if err != nil {
+			return ArchiveSessionOutput{}, err
+		}
+		return ArchiveSessionOutput{Session: updated}, nil
+	}
+	// 归档：先删子树（删的是后代，自己不在里面），再给自己打标记。
+	// 顺序反了会出问题 —— 删完子树后 self 的后代链已不存在，但 self 本身仍在，
+	// 两种顺序都能跑；先删是为了中途失败时不留下「已归档但子会话还在」的窗口。
+	children := make([]string, 0, len(keys))
+	for _, key := range keys {
+		if key != self {
+			children = append(children, key)
+		}
+	}
+	if len(children) > 0 {
+		if err := s.deleteSessionKeys(ctx, root, manager, children); err != nil {
+			return ArchiveSessionOutput{}, err
+		}
+	}
+	updated, err := manager.SetArchived(ctx, self, true)
+	if err != nil {
+		return ArchiveSessionOutput{}, err
+	}
+	return ArchiveSessionOutput{Session: updated, DeletedKeys: children}, nil
 }
 
 func cancelActiveSessionTurn(rootID, sessionKey string) {
@@ -1089,9 +1199,15 @@ type BuildPromptInput struct {
 	Message                       string
 	ClientContext                 ClientContext
 	AgentCtxSeq                   *int
-	RuntimeRootAbs                string
 	IsInitial                     bool
 	IncludeReplyTipsInUserMessage bool
+	// LinesBeforeThisTurn 是「本轮 user 行写入之前」的会话行数。本轮 user 行在
+	// SendMessage 起手就已落盘（见 persistUserTurnExchange），所以 Session.Exchanges
+	// 里已经包含它；切 agent 提示要读的「上一轮之后还剩几行」必须用写入前的计数，
+	// 否则每轮都会多算一行。0 表示「没传」，回退到 len(Session.Exchanges)。
+	// 会话首轮的真实值恰好也是 0，回退只多要一行提示，不影响正确性——不值得为它加
+	// 一个 HasXxx 标志位。
+	LinesBeforeThisTurn int
 }
 
 func (s *Service) BuildPrompt(in BuildPromptInput) string {
@@ -1125,6 +1241,9 @@ func prependSwitchHint(in BuildPromptInput, prompt string) string {
 		return prompt
 	}
 	total := contextLineCount(in.Session.Exchanges)
+	if in.LinesBeforeThisTurn > 0 {
+		total = in.LinesBeforeThisTurn
+	}
 	last := 0
 	if in.AgentCtxSeq != nil {
 		last = *in.AgentCtxSeq
@@ -1135,7 +1254,7 @@ func prependSwitchHint(in BuildPromptInput, prompt string) string {
 	if linesToRead <= 0 {
 		return prompt
 	}
-	logPath := switchReadHintPath(in.Manager, in.Session.Key, in.RuntimeRootAbs)
+	logPath := switchReadHintPath(in.Manager, in.Session.Key)
 	readHint := buildSwitchReadHint(logPath, linesToRead)
 	return readHint + prompt
 }
@@ -1163,11 +1282,21 @@ type SendMessageInput struct {
 }
 
 type MessageStart struct {
-	Model           string
-	Mode            string
-	Effort          string
-	FastService     string
-	BaseExchangeSeq int
+	Model            string
+	ModelDisplayName string
+	Mode             string
+	Effort           string
+	FastService      string
+	BaseExchangeSeq  int
+	// UserExchangeSeq 是本轮用户消息**已落盘**的 seq（user 行在回合开始前就写入了，
+	// 见 persistUserTurnExchange），不是「即将获得」的预测值。仅用于下发给客户端做本地
+	// 乐观条目的收敛；0 表示未知（写入失败或会话里没有可落地的行），此时不要下发。
+	//
+	// 为什么必须是真值：客户端据此认定该行已持久化，于是 overlay 的
+	// 「seq<=latestSeq 即让位给窗口」规则不再保留它。若这里给的是预测值，窗口
+	// maxSeq 会在整轮执行期间都看不到它 —— 用户自己的消息就会从列表里消失，
+	// 且点同步也刷不回来（2026-09-28 实测）。
+	UserExchangeSeq int
 }
 
 func applyMessageRuntimeDefaultsFromStatus(
@@ -1356,27 +1485,22 @@ func calculateSwitchReadLines(total, lastCtxSeq int) int {
 	return delta
 }
 
-func switchReadHintPath(manager *session.Manager, sessionKey, runtimeRootAbs string) string {
+// switchReadHintPath 一律返回绝对路径。
+//
+// 早先项目内 meta（非 MetaLocationHome）会走 filepath.Rel 产出相对 runtime root 的
+// 路径（worktree 下是 ../../.mindfs/...）。但提示文案里没有说明基准目录，agent 只能
+// 猜：猜成 home 就变成 ~/.mindfs/sessions/...，读不到文件，误判成「历史丢失」而停摆。
+// Rel 失败时还会回退到无基准的 .mindfs/... —— 同一段文案出现三种路径形态。
+// 绝对路径把基准歧义整个消掉，worktree 与否不再影响结果，runtimeRootAbs 参数随之作废。
+func switchReadHintPath(manager *session.Manager, sessionKey string) string {
 	if manager == nil {
 		return ""
 	}
-	logPath := manager.ExchangeLogPath(sessionKey)
-	runtimeRootAbs = strings.TrimSpace(runtimeRootAbs)
-	if logPath == "" || runtimeRootAbs == "" {
-		return logPath
-	}
 	absLogPath := manager.ExchangeLogAbsolutePath(sessionKey)
 	if strings.TrimSpace(absLogPath) == "" {
-		return logPath
+		return manager.ExchangeLogPath(sessionKey)
 	}
-	if manager.Root().EffectiveMetaLocation() == fs.MetaLocationHome {
-		return filepath.ToSlash(absLogPath)
-	}
-	rel, err := filepath.Rel(runtimeRootAbs, absLogPath)
-	if err != nil || strings.TrimSpace(rel) == "" {
-		return logPath
-	}
-	return filepath.ToSlash(rel)
+	return filepath.ToSlash(absLogPath)
 }
 
 func buildSwitchReadHint(exchangeLogPath string, lines int) string {
@@ -2031,11 +2155,40 @@ func resolveRuntimeModel(current *session.Session, runtime agenttypes.Session, r
 	return strings.TrimSpace(current.Model)
 }
 
-func (s *Service) resolveExchangeModelDisplayName(agentName, model string) string {
+func (s *Service) resolveExchangeModelDisplayName(agentName, model string, rootDir string) string {
 	agentName = strings.TrimSpace(agentName)
 	model = strings.TrimSpace(model)
 	if agentName != "claude" || model == "" || s == nil || s.Registry == nil {
 		return ""
+	}
+	// 同分层 env 解析：display(alias) → effective(真实上游模型)，与 session.go 发送边界同源。
+	if claudeName := strings.TrimSpace(agentName); claudeName == "claude" {
+		env := s.claudeEnvForExchange(rootDir)
+		if effective := claude.ResolveClaudeModelArg(model, env); effective != "" {
+			if claude.TierKey(effective) != claude.TierKey(model) {
+				return effective // 第三方：直接展示真实上游 ID（如 deepseek-v4-flash[1M]）
+			}
+			// Anthropic 原生：effective 仍为 tier 名，回退到目录 Name 保持可读（如 Sonnet）
+			if prober := s.Registry.GetProber(); prober != nil {
+				if status, ok := prober.GetStatus(agentName); ok {
+					for _, item := range status.Models {
+						if strings.TrimSpace(item.ID) == model {
+							if name := strings.TrimSpace(item.Name); name != "" {
+								return name
+							}
+						}
+					}
+					for _, item := range status.Models {
+						if claude.TierKey(item.ID) == claude.TierKey(model) {
+							if name := strings.TrimSpace(item.Name); name != "" {
+								return name
+							}
+						}
+					}
+				}
+			}
+			return effective
+		}
 	}
 	prober := s.Registry.GetProber()
 	if prober == nil {
@@ -2051,6 +2204,30 @@ func (s *Service) resolveExchangeModelDisplayName(agentName, model string) strin
 		}
 	}
 	return ""
+}
+
+func (s *Service) ResolveModelDisplayName(agentName, model, rootDir string) string {
+	return s.resolveExchangeModelDisplayName(agentName, model, rootDir)
+}
+
+func (s *Service) claudeEnvForExchange(rootDir string) map[string]string {
+	if s == nil || s.Registry == nil {
+		return nil
+	}
+	var baseEnv map[string]string
+	if pool := s.Registry.GetAgentPool(); pool != nil {
+		if def, ok := pool.Config().GetAgent("claude"); ok {
+			baseEnv = def.Env
+		}
+	}
+	if strings.TrimSpace(rootDir) == "" {
+		if roots := s.Registry.ListRoots(); len(roots) > 0 {
+			if dir, err := roots[0].RootDir(); err == nil {
+				rootDir = dir
+			}
+		}
+	}
+	return claude.ClaudeEffectiveEnv(baseEnv, rootDir)
 }
 
 func resolveRuntimeEffort(_ string, current *session.Session, requested string) string {
@@ -2113,6 +2290,132 @@ func resolveSessionExchangeMode(current *session.Session) string {
 	return ""
 }
 
+// userExchangeRepeatTolerance：同一轮用户条目的两个写入者之间的时间窗。
+// 外部转录同步会在回合进行中先导入一条（ts 带 Z、来自 transcript），回合结束时
+// SendMessage 再写一条（ts 无 Z、time.Now()），实测差 21ms。落在窗内且 role+内容
+// 相同 → 判为同一轮重复，不再落库。
+// ponytail: 5s 窗。只挡同一次发言的双写，不吞用户隔久了的真实重发（「继续」「ok」必须保留），
+// 也不按内容批量去重存量数据。
+const userExchangeRepeatTolerance = 5 * time.Second
+
+// exchangeAlreadyRecorded 判定 target 里是否已有同 role+内容、且时间戳落在
+// ±userExchangeRepeatTolerance 内的条目。导入侧与发送侧共用，保证两个写入者判据对称。
+func exchangeAlreadyRecorded(target *session.Session, role, content string, ts time.Time) bool {
+	if target == nil || ts.IsZero() {
+		return false
+	}
+	for _, ex := range target.Exchanges {
+		if ex.Role != role || ex.Timestamp.IsZero() {
+			continue
+		}
+		if !sameRecordedExchangeContent(role, ex.Content, content) {
+			continue
+		}
+		if diff := ex.Timestamp.Sub(ts); diff > -userExchangeRepeatTolerance && diff < userExchangeRepeatTolerance {
+			return true
+		}
+	}
+	return false
+}
+
+// persistUserTurnExchange 在**回合开始前**把本轮用户消息落盘，返回它真实的 seq。
+//
+// 为什么必须早落：广播给客户端的 seq 若是「预测」而落盘发生在回合结束，就会出现
+// 「客户端已认定该行持久化、而窗口 maxSeq 与读接口都还看不到它」的窗口期。前端
+// overlay 的「seq<=latestSeq 即让位给窗口」规则（SessionViewer.tailOverlay）会在
+// 任何一次重锚定/翻页时把这行丢掉，表现为 agent 执行中自己的消息从列表消失、
+// 点同步也刷不回来（2026-09-28 实测）。早落盘让 seq 从预测变成事实，两条判据不再打架。
+//
+// 判重与导入侧共用 exchangeAlreadyRecorded：转录导入器是另一个写入者，判据必须对称。
+// 命中判重（导入器已抢先写）时返回已存在那条的 seq。
+func persistUserTurnExchange(ctx context.Context, manager *session.Manager, current *session.Session, content, agent, mode, effort, fastService string, ts time.Time) (int, error) {
+	exchangeCtx := session.WithExchangeSource(ctx, session.ExchangeSourceLive)
+	if exchangeAlreadyRecorded(current, "user", content, ts) {
+		return recordedUserExchangeSeq(current, content, ts), nil
+	}
+	if err := manager.AddExchangeForAgentAt(exchangeCtx, current, "user", content, agent, mode, effort, fastService, ts); err != nil {
+		return 0, err
+	}
+	// AddExchangeForAgentAt 内部重新取会话并回写缓存（manager.addExchangeForAgentAt），
+	// current 与缓存是同一指针，所以新行已挂在 current.Exchanges 尾部。
+	// 按内容回查而不是直接取尾部：尾部那条未必就是本函数刚写的那条——一旦将来出现
+	// 不在 sendLock 下写同一会话的路径，广播出去就会变成别人的 seq，正是本次要修的那类 bug。
+	return recordedUserExchangeSeq(current, content, ts), nil
+}
+
+// recordedUserExchangeSeq 返回判重命中的那条已有 user 行的 seq；找不到时返回 0。
+func recordedUserExchangeSeq(target *session.Session, content string, ts time.Time) int {
+	if target == nil {
+		return 0
+	}
+	for i := len(target.Exchanges) - 1; i >= 0; i-- {
+		ex := target.Exchanges[i]
+		if ex.Role != "user" || ex.Timestamp.IsZero() {
+			continue
+		}
+		if !sameRecordedExchangeContent("user", ex.Content, content) {
+			continue
+		}
+		if diff := ex.Timestamp.Sub(ts); diff > -userExchangeRepeatTolerance && diff < userExchangeRepeatTolerance {
+			return ex.Seq
+		}
+	}
+	return 0
+}
+
+// sameRecordedExchangeContent 判断两条同角色内容是否「同一条」。
+// 默认要求完全相等；另容忍两类双写差异（同一轮由实时路径与转录导入各写一次）：
+//
+//  1. 空白归一化后相等 —— 两个写入者对段落空行的处理不同。实测 2026-09-14 16:18 的
+//     一轮：实时版 1765 字、导入版 1761 字，逐字符 diff 只有 2 处 "\n\n" 之差
+//     （相似度 0.9989），只比字面量必然漏判。
+//  2. 助手侧的前缀关系 —— 两边抓到的快照长度可能差很多（实测实时 21 字 seq=128、
+//     转录导入 556 字 seq=129＝前者 + "\n\nAPI Error: 502 …"）。
+//
+// 用户侧不吃前缀容忍：「继续」是「继续吧」的前缀，但那是两句不同的话。前缀关系还要求
+// 较短一侧够长（≥16 字），避免「好」/「好的，我这就去…」这种短应答误判。
+// 两条判据都只在 ±5s 容忍窗内生效（见 exchangeAlreadyRecorded）。
+func sameRecordedExchangeContent(role, a, b string) bool {
+	if a == b {
+		return true
+	}
+	if a == "" || b == "" {
+		return false
+	}
+	na, nb := normalizeExchangeContent(a), normalizeExchangeContent(b)
+	if na == nb {
+		return true
+	}
+	if role != "agent" {
+		return false
+	}
+	shorter := na
+	if len([]rune(nb)) < len([]rune(shorter)) {
+		shorter = nb
+	}
+	if len([]rune(shorter)) < 16 {
+		return false
+	}
+	return strings.HasPrefix(na, nb) || strings.HasPrefix(nb, na)
+}
+
+// normalizeExchangeContent 用于「同一条消息的两种渲染」比较：先剥掉 CLI 自注入的标记
+// （名单见 agenttypes.TranscriptNoisePrefixes，与导入侧共用），再抹掉所有空白。
+//
+// 抹掉而不是折叠：折叠成单空格是错的 —— 实时路径会把 \n\n 插进 Markdown 标记内部
+// （实测 `**支具\n\n+康复总市场**` vs 导入版 `**支具+康复总市场**`），折叠后前者多一个
+// 空格，仍判不相等。代价是 "a b" 与 "ab" 视为相同，但这只发生在 ±5s 容忍窗内，
+// 同一轮的两个写入者本来就该是同一条。
+func normalizeExchangeContent(s string) string {
+	stripped := agenttypes.StripTranscriptNoisePrefixes(s)
+	return strings.Map(func(r rune) rune {
+		if unicode.IsSpace(r) {
+			return -1
+		}
+		return r
+	}, stripped)
+}
+
 func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 	if err := s.ensureRegistry(); err != nil {
 		return err
@@ -2138,25 +2441,50 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 			return err
 		}
 	}
+	root := manager.Root()
+	managedRootAbs, _ := root.RootDir()
+	rootAbs := managedRootAbs
+	if runtimeRootPath := strings.TrimSpace(in.RuntimeRootPath); runtimeRootPath != "" {
+		rootAbs = filepath.Clean(runtimeRootPath)
+	}
 	resolvedMode := resolveRuntimeMode(current, in.Mode)
 	resolvedFastService := resolveRuntimeFastService(in.Agent, current, in.FastService)
+	// 可在任何东西落盘之前就知道它会失败的校验，必须先跑。模型不被支持时本轮压根不会
+	// 开始，user 行也就没有存在过——否则会留下一条用户没等到任何回复的孤立消息。
+	if current.Type != session.TypeCommand {
+		if err := s.validateAgentModel(in.Agent, in.Model); err != nil {
+			log.Printf("[session/model] validate.error root=%s session=%s agent=%s model=%q err=%v", in.RootID, in.Key, strings.TrimSpace(in.Agent), strings.TrimSpace(in.Model), err)
+			return err
+		}
+	}
+	// 本轮用户消息**在回合开始前**落盘：广播出去的 seq 因此是「已落库的真值」而不是预测。
+	// 晚落盘会留下一个窗口期——客户端已按 seq 认定该行持久化，而窗口 maxSeq 与读接口还
+	// 看不到它，前端 overlay 会在任意一次重锚定/翻页时把这行丢掉（2026-09-28 实测：
+	// agent 执行中自己的消息从列表消失，点同步也刷不回来，回合结束才自愈）。
+	isInitial := len(current.Exchanges) == 0
+	linesBeforeThisTurn := len(current.Exchanges)
+	baseExchangeSeq := session.MaxExchangeSeq(current.Exchanges)
+	// 从这一刻起这个会话的持久化归实时路径（"谁驱动，谁落盘"），导入器不再常规增量
+	// 同步——判据是推导的，见 session.SessionIsLiveOwned。
+	userExchangeSeq, err := persistUserTurnExchange(ctx, manager, current, in.Content, in.Agent, resolvedMode, resolveRuntimeEffort(in.Agent, current, in.Effort), resolvedFastService, userTimestamp)
+	if err != nil {
+		log.Printf("[session] persist.user.error root=%s session=%s agent=%s err=%v", in.RootID, in.Key, in.Agent, err)
+		return err
+	}
 	if in.OnStart != nil {
 		in.OnStart(MessageStart{
-			Model:           in.Model,
-			Mode:            resolvedMode,
-			Effort:          in.Effort,
-			FastService:     resolvedFastService,
-			BaseExchangeSeq: len(current.Exchanges),
+			Model:            in.Model,
+			ModelDisplayName: s.resolveExchangeModelDisplayName(in.Agent, in.Model, rootAbs),
+			Mode:             resolvedMode,
+			Effort:           in.Effort,
+			FastService:      resolvedFastService,
+			BaseExchangeSeq:  baseExchangeSeq,
+			UserExchangeSeq:  userExchangeSeq,
 		})
 	}
 	if current.Type == session.TypeCommand {
 		return s.sendCommandMessage(turnCtx, in, manager, current)
 	}
-	if err := s.validateAgentModel(in.Agent, in.Model); err != nil {
-		log.Printf("[session/model] validate.error root=%s session=%s agent=%s model=%q err=%v", in.RootID, in.Key, strings.TrimSpace(in.Agent), strings.TrimSpace(in.Model), err)
-		return err
-	}
-	isInitial := len(current.Exchanges) == 0
 	agentPool := s.Registry.GetAgentPool()
 	if agentPool == nil {
 		return nil
@@ -2165,12 +2493,6 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 	if watcher != nil {
 		watcher.RegisterSession(current.Key)
 		watcher.MarkSessionActive(current.Key)
-	}
-	root := manager.Root()
-	managedRootAbs, _ := root.RootDir()
-	rootAbs := managedRootAbs
-	if runtimeRootPath := strings.TrimSpace(in.RuntimeRootPath); runtimeRootPath != "" {
-		rootAbs = filepath.Clean(runtimeRootPath)
 	}
 	planMode := current != nil && current.PlanMode
 
@@ -2193,15 +2515,17 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 		Message:                       in.Content,
 		ClientContext:                 in.ClientCtx,
 		AgentCtxSeq:                   agentCtxSeq,
-		RuntimeRootAbs:                rootAbs,
 		IsInitial:                     isInitial,
 		IncludeReplyTipsInUserMessage: includeReplyTipsInUserMessage,
+		LinesBeforeThisTurn:           linesBeforeThisTurn,
 	})
 	var responseText string
 	sawAssistantChunk := false
 	var lastContextWindow agenttypes.ContextWindow
 	var turnTokenUsage *agenttypes.TokenUsage
-	plannedAssistantSeq := len(current.Exchanges) + 2
+	// 用户行已在上方落盘并占位，所以助手行是 max(seq)+1（不是 +2）。
+	// 文件与缓存漂移时长度 ≠ 最大 seq，按长度预测会把 aux 挂到别的 exchange 上。
+	plannedAssistantSeq := session.MaxExchangeSeq(current.Exchanges) + 1
 	auxBuffer := make([]session.ExchangeAux, 0, 8)
 	defer manager.ClearPendingExchangeAux(context.Background(), current.Key)
 	var thoughtBuffer strings.Builder
@@ -2419,16 +2743,14 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 			}
 		}
 	}
-	modelDisplayName := s.resolveExchangeModelDisplayName(in.Agent, resolvedModel)
+	modelDisplayName := s.resolveExchangeModelDisplayName(in.Agent, resolvedModel, rootAbs)
 	exchangeCtx := session.WithExchangeModelDisplayName(ctx, modelDisplayName)
+	exchangeCtx = session.WithExchangeSource(exchangeCtx, session.ExchangeSourceLive)
 	agentExchangeCtx := session.WithExchangeTokenUsage(exchangeCtx, turnTokenUsage)
 	if err := manager.UpdateModel(ctx, current, resolvedModel); err != nil {
 		return err
 	}
-	if err := manager.AddExchangeForAgentAt(exchangeCtx, current, "user", in.Content, in.Agent, resolvedMode, resolvedEffort, resolvedFastService, userTimestamp); err != nil {
-		log.Printf("[session] persist.user.error root=%s session=%s agent=%s err=%v", in.RootID, current.Key, in.Agent, err)
-		return err
-	}
+	// 用户行已在回合开始前落盘（persistUserTurnExchange），这里只补助手行。
 	if err := manager.AddExchangeForAgent(agentExchangeCtx, current, "agent", responseText, in.Agent, resolvedMode, resolvedEffort, resolvedFastService); err != nil {
 		log.Printf("[session] persist.agent.error root=%s session=%s agent=%s err=%v", in.RootID, current.Key, in.Agent, err)
 		return err
@@ -2442,7 +2764,14 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 			return err
 		}
 	}
-	if err := manager.UpdateAgentState(ctx, current, in.Agent, contextLineCount(current.Exchanges), sess.SessionID()); err != nil {
+	// AgentCtxSeq 记的是「agent 已经看到多少行会话历史」，口径是**已落盘的总行数**
+	// （与 external_sessions.go:415 的 len(latest.Exchanges)、
+	// 子会话的 contextLineCount(child.Exchanges) 一致）。此刻 user 行（persistUserTurnExchange）
+	// 与助手行（AddExchangeForAgent）都已落盘，所以是 linesBeforeThisTurn+2。
+	// 早先只记 linesBeforeThisTurn，两行都漏：下一轮 prependSwitchHint 的
+	// total=linesBeforeThisTurn、last=上一轮记的值，delta 恒为 2 > 0，切 agent 提示
+	// 于是在每个正常回合都被重复注入（日志实测 12 小时 140 次），而不是只在真切换时出现。
+	if err := manager.UpdateAgentState(ctx, current, in.Agent, linesBeforeThisTurn+2, sess.SessionID()); err != nil {
 		return err
 	}
 
@@ -3003,7 +3332,7 @@ func (s *Service) startSubagentSubscription(in subagentSessionInput, child *sess
 
 func attachBackgroundSessionUpdates(ctx context.Context, in subagentSessionInput, child *session.Session, runtime agenttypes.Session) func() {
 	var responseText string
-	plannedAssistantSeq := len(child.Exchanges) + 1
+	plannedAssistantSeq := session.MaxExchangeSeq(child.Exchanges) + 1
 	auxBuffer := make([]session.ExchangeAux, 0, 8)
 	var thoughtBuffer strings.Builder
 	lastResponseUpdateType := ""
@@ -3035,6 +3364,7 @@ func attachBackgroundSessionUpdates(ctx context.Context, in subagentSessionInput
 		}
 		doneSent = true
 		doneMu.Unlock()
+		ctx = session.WithExchangeSource(ctx, session.ExchangeSourceLive)
 		defer in.Manager.ClearPendingExchangeAux(context.Background(), child.Key)
 		flushThought()
 		if err := in.Manager.AddExchangeForAgent(ctx, child, "agent", responseText, in.Agent, in.Mode, in.Effort, in.FastService); err != nil {
@@ -3144,14 +3474,14 @@ func (s *Service) sendCommandMessage(ctx context.Context, in SendMessageInput, m
 	if strings.TrimSpace(in.Content) == "" {
 		return errors.New("command required")
 	}
-	userTimestamp := sendMessageUserTimestamp(in, time.Now().UTC())
 	root := manager.Root()
 	rootAbs, err := root.RootDir()
 	if err != nil {
 		return err
 	}
 	callID := "cmd-" + strconv.FormatInt(time.Now().UnixNano(), 36)
-	plannedAssistantSeq := len(current.Exchanges) + 2
+	// 用户行已在 SendMessage 起手落盘（与聊天会话同一条规则），助手行是 max(seq)+1。
+	plannedAssistantSeq := session.MaxExchangeSeq(current.Exchanges) + 1
 	startTool := agenttypes.ToolCall{
 		CallID:  callID,
 		Title:   in.Content,
@@ -3192,7 +3522,7 @@ func (s *Service) sendCommandMessage(ctx context.Context, in SendMessageInput, m
 			in.OnUpdate(agenttypes.Event{Type: agenttypes.EventTypeToolUpdate, Data: final})
 			in.OnUpdate(agenttypes.Event{Type: agenttypes.EventTypeMessageDone, Data: agenttypes.MessageDone{}})
 		}
-		if persistErr := persistCommandTurn(ctx, manager, current, in.Content, final, plannedAssistantSeq, userTimestamp); persistErr != nil {
+		if persistErr := persistCommandTurn(ctx, manager, current, final, plannedAssistantSeq); persistErr != nil {
 			return persistErr
 		}
 		return err
@@ -3274,7 +3604,7 @@ func (s *Service) sendCommandMessage(ctx context.Context, in SendMessageInput, m
 		in.OnUpdate(agenttypes.Event{Type: agenttypes.EventTypeToolUpdate, Data: final})
 		in.OnUpdate(agenttypes.Event{Type: agenttypes.EventTypeMessageDone, Data: agenttypes.MessageDone{}})
 	}
-	if err := persistCommandTurn(context.Background(), manager, current, in.Content, final, plannedAssistantSeq, userTimestamp); err != nil {
+	if err := persistCommandTurn(context.Background(), manager, current, final, plannedAssistantSeq); err != nil {
 		log.Printf("[command] persist.error root=%s session=%s call=%s err=%v", in.RootID, current.Key, callID, err)
 		return err
 	}
@@ -3367,10 +3697,10 @@ func configuredShells(registry Registry) []commandexec.ShellSpec {
 	return shells
 }
 
-func persistCommandTurn(ctx context.Context, manager *session.Manager, current *session.Session, command string, final agenttypes.ToolCall, plannedAssistantSeq int, userTimestamp time.Time) error {
-	if err := manager.AddExchangeForAgentAt(ctx, current, "user", command, "", "", "", "", userTimestamp); err != nil {
-		return err
-	}
+// persistCommandTurn 只补助手行与其 aux：用户行已在 SendMessage 起手、命令真正执行前
+// 落盘（与聊天会话同一条规则），这里再写一次会落重复。
+func persistCommandTurn(ctx context.Context, manager *session.Manager, current *session.Session, final agenttypes.ToolCall, plannedAssistantSeq int) error {
+	ctx = session.WithExchangeSource(ctx, session.ExchangeSourceLive)
 	if err := manager.AddExchangeForAgent(ctx, current, "agent", "", "", "", "", ""); err != nil {
 		return err
 	}
@@ -3878,11 +4208,97 @@ func normalizeDiffRef(root pathNormalizer, ref string) (string, bool) {
 	return prefix + normalized, true
 }
 
+func isClaudeAliasModelForValidate(model string) bool {
+	trimmed := strings.TrimSpace(model)
+	if trimmed == "" {
+		return false
+	}
+	has := len(trimmed) >= 4 && strings.EqualFold(trimmed[len(trimmed)-4:], "[1m]")
+	base := trimmed
+	if has {
+		base = strings.TrimSpace(trimmed[:len(trimmed)-4])
+	}
+	lower := strings.ToLower(strings.TrimSpace(base))
+	switch lower {
+	case "fable", "opus", "sonnet", "haiku", "of", "op", "os", "ok", "default":
+		return true
+	default:
+		return false
+	}
+}
+
+func canonicalClaudeModelForValidate(model string) string {
+	trimmed := strings.TrimSpace(model)
+	if trimmed == "" {
+		return ""
+	}
+	if strings.EqualFold(trimmed, "default") {
+		return trimmed
+	}
+	if !isClaudeAliasModelForValidate(trimmed) {
+		return trimmed
+	}
+	has := len(trimmed) >= 4 && strings.EqualFold(trimmed[len(trimmed)-4:], "[1m]")
+	base := trimmed
+	if has {
+		base = strings.TrimSpace(trimmed[:len(trimmed)-4])
+	}
+	lower := strings.ToLower(strings.TrimSpace(base))
+	switch lower {
+	case "fable":
+		lower = "of"
+	case "opus":
+		lower = "op"
+	case "sonnet":
+		lower = "os"
+	case "haiku":
+		lower = "ok"
+	}
+	if has {
+		return lower + "[1m]"
+	}
+	return lower
+}
+
+func claudeModelBaseForValidate(model string) string {
+	trimmed := strings.TrimSpace(model)
+	if trimmed == "" {
+		return ""
+	}
+	if strings.EqualFold(trimmed, "default") {
+		return "default"
+	}
+	has := len(trimmed) >= 4 && strings.EqualFold(trimmed[len(trimmed)-4:], "[1m]")
+	base := trimmed
+	if has {
+		base = strings.TrimSpace(trimmed[:len(trimmed)-4])
+	}
+	if !isClaudeAliasModelForValidate(trimmed) {
+		return strings.TrimSpace(base)
+	}
+	lower := strings.ToLower(strings.TrimSpace(base))
+	switch lower {
+	case "fable":
+		lower = "of"
+	case "opus":
+		lower = "op"
+	case "sonnet":
+		lower = "os"
+	case "haiku":
+		lower = "ok"
+	}
+	return lower
+}
+
 func (s *Service) validateAgentModel(agentName, model string) error {
 	agentName = strings.TrimSpace(agentName)
 	model = strings.TrimSpace(model)
 	if agentName == "" || model == "" || s.Registry == nil {
 		return nil
+	}
+	isClaude := strings.EqualFold(agentName, "claude")
+	if isClaude {
+		model = canonicalClaudeModelForValidate(model)
 	}
 	prober := s.Registry.GetProber()
 	if prober == nil {
@@ -3893,11 +4309,30 @@ func (s *Service) validateAgentModel(agentName, model string) error {
 		return nil
 	}
 	for _, item := range status.Models {
-		if strings.TrimSpace(item.ID) == model {
+		candidate := strings.TrimSpace(item.ID)
+		if isClaude {
+			candidate = canonicalClaudeModelForValidate(candidate)
+		}
+		if candidate == model {
+			return nil
+		}
+		// 1M suffix is an explicit user toggle, not a separate model entry.
+		// Prober advertises base ids without [1m] (both Anthropic aliases and generic provider ids like glm-*/deepseek-*),
+		// so base and base[1m] are the same model.
+		if isClaude && claudeModelBaseForValidate(candidate) != "" && claudeModelBaseForValidate(candidate) == claudeModelBaseForValidate(model) {
 			return nil
 		}
 	}
-	return fmt.Errorf("model %q is not supported by agent %q", model, agentName)
+	supported := make([]string, 0, len(status.Models))
+	for i, item := range status.Models {
+		if i >= 12 {
+			break
+		}
+		if id := strings.TrimSpace(item.ID); id != "" {
+			supported = append(supported, id)
+		}
+	}
+	return fmt.Errorf("model %q is not supported by agent %q (supported models: %s)", model, agentName, strings.Join(supported, ", "))
 }
 
 func (s *Service) CancelSessionTurn(ctx context.Context, in CancelSessionTurnInput) error {

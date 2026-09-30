@@ -1,8 +1,16 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { memo, useEffect, useMemo, useRef, useState } from "react";
 import { AgentIcon } from "./AgentIcon";
 import { ModeIcon } from "./ModeIcon";
-import { rootBadgeButtonStyle, rootBadgeStyle } from "./rootBadgeStyle";
+import { NodeBadgeHeader } from "./NodeBadgeHeader";
+import { getNodes, PALETTE, DEFAULT_NODE_COLOR } from "../services/nodeRegistry";
+import { hexToRgbaApp } from "../app/taskIcons";
+import { resolveGroupColor } from "../services/sessionGroupDisplay";
+import { scopeKey } from "../services/scope";
+import { pruneChildState } from "../services/sessionTree";
+import { fetchSessionProjectPins, updateSessionProjectPins } from "../services/preferences";
 import { useI18n, type Locale } from "../i18n";
+import { type DirectorySortMode, sortDirectoryEntries } from "../services/directorySort";
+
 
 export type SessionType = "chat" | "plugin" | "command";
 
@@ -21,6 +29,7 @@ export type SessionItem = {
   created_at?: string;
   updated_at?: string;
   pinned_at?: string | null;
+  archived_at?: string | null;
   closed_at?: string;
   pending?: boolean;
   related_files?: Array<{ path: string }>;
@@ -29,7 +38,7 @@ export type SessionItem = {
   search_match_type?: "name" | "user" | "reply";
 };
 
-type SessionListProps = {
+export type SessionListProps = {
   sessions: SessionItem[];
   selectedKey?: string;
   headerAction?: React.ReactNode;
@@ -49,6 +58,7 @@ type SessionListProps = {
   onPin?: (session: SessionItem, pinned: boolean) => Promise<boolean> | boolean;
   onRename?: (session: SessionItem, nextName: string) => Promise<boolean> | boolean;
   onDelete?: (session: SessionItem) => void;
+  onArchive?: (session: SessionItem, archived: boolean) => Promise<boolean> | boolean;
   onLoadChildren?: (
     session: SessionItem,
     options?: { beforeTime?: string },
@@ -56,6 +66,8 @@ type SessionListProps = {
   onLoadOlder?: () => void;
   loadingOlder?: boolean;
   hasMore?: boolean;
+  // 归档入口行：只负责把「已归档对话」面板叫起来，内容在面板里，不在本列表。
+  onOpenArchivePanel?: () => void;
 };
 
 const COLLAPSED_CHILD_SESSION_LIMIT = 3;
@@ -82,13 +94,15 @@ export type ProjectSessionGroup = {
   totalCount: number;
 };
 
-type ProjectSessionListProps = {
+export type ProjectSessionListProps = {
   groups: ProjectSessionGroup[];
   selectedKey?: string;
   selectedRootId?: string;
+  selectedNodeId?: string;
   headerAction?: React.ReactNode;
   loading?: boolean;
   emptyText?: React.ReactNode;
+  projectSortMode?: DirectorySortMode;
   syncingSessionKeys?: Set<string>;
   onSearchToggle?: () => void;
   onSelect?: (session: SessionItem) => void;
@@ -96,12 +110,16 @@ type ProjectSessionListProps = {
   onPin?: (session: SessionItem, pinned: boolean) => Promise<boolean> | boolean;
   onRename?: (session: SessionItem, nextName: string) => Promise<boolean> | boolean;
   onDelete?: (session: SessionItem) => void;
-  onProjectClick?: (rootId: string) => void;
+  onArchive?: (session: SessionItem, archived: boolean) => Promise<boolean> | boolean;
   onLoadMoreProject?: (group: ProjectSessionGroup) => Promise<void> | void;
   onLoadChildren?: (
     session: SessionItem,
     options?: { beforeTime?: string },
   ) => Promise<{ hasMore?: boolean } | void> | { hasMore?: boolean } | void;
+  // 归档入口行：点它弹出「已归档对话」视图。
+  onOpenArchivePanel?: () => void;
+  // 归档视图自带标题栏，就不要再画一遍空的操作栏（那排是搜索/导入入口，视图里用不上）。
+  hideHeader?: boolean;
 };
 
 function ToggleRowButton({
@@ -141,11 +159,18 @@ function ToggleRowButton({
     </svg>
   );
 
+  // 展开态这一行有两个动作：拉下一批子会话 / 全部收起。所以收起图标是**整行
+  // 可点**的 —— 它就长在「展开 N 条」这一行里，点这一行任何位置都该能收回去。
+  // 行内不再套一个可点的子元素：嵌套 button 是非法 HTML，浏览器会把子 button
+  // 从父 button 里拆出来，事件到不了父级，再叠上 stopPropagation，那个收起图标
+  // 就永远按不动（只能继续展开）。所以收起 = 整行换 onCollapse，不是第二个按钮。
+  const collapsed = showCollapseIcon && !!onCollapse;
   return (
     <button
       type="button"
       disabled={loading}
-      onClick={onClick}
+      onClick={collapsed ? onCollapse : onClick}
+      title={collapsed ? t("common.collapse") : undefined}
       style={{
         marginLeft,
         marginTop: "-2px",
@@ -170,38 +195,12 @@ function ToggleRowButton({
       <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: "6px", minWidth: 0, flexShrink: 1 }}>
         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
         {showExpandIcon ? icon(false) : null}
-        {showCollapseIcon ? (
-          <span
-            role="button"
-            tabIndex={0}
-            aria-label={t("common.collapse")}
-            title={t("common.collapse")}
-            onClick={(event) => {
-              event.stopPropagation();
-              onCollapse?.();
-            }}
-            onKeyDown={(event) => {
-              if (event.key !== "Enter" && event.key !== " ") {
-                return;
-              }
-              event.preventDefault();
-              event.stopPropagation();
-              onCollapse?.();
-            }}
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              cursor: loading ? "default" : "pointer",
-            }}
-          >
-            {icon(true)}
-          </span>
-        ) : null}
+        {showCollapseIcon ? icon(true) : null}
       </span>
     </button>
   );
 }
+
 
 function PinIcon({ pinned }: { pinned: boolean }) {
   return (
@@ -216,6 +215,63 @@ function PinIcon({ pinned }: { pinned: boolean }) {
       />
       <path fill="currentColor" d="m3.302 21.776l4.476-4.48l-1.079-1.08l-4.476 4.48a.764.764 0 0 0 1.08 1.08" />
     </svg>
+  );
+}
+
+function ArchiveIcon() {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="1em"
+      height="1em"
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+    >
+      <path d="M0 0h24v24H0z" fill="none" />
+      <path
+        fill="currentColor"
+        d="M3 4.5A1.5 1.5 0 0 1 4.5 3h15A1.5 1.5 0 0 1 21 4.5V6H3zm-.5 3A1.5 1.5 0 0 0 1 8.5V19a2 2 0 0 0 2 2h18a2 2 0 0 0 2-2V8.5a1.5 1.5 0 0 0-1.5-1.5zm5 3.5a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-7a1 1 0 0 0-1-1zm2.5 3h5v2h-5z"
+      />
+    </svg>
+  );
+}
+
+/**
+ * 顶栏归档入口：只留图标，尺寸与旁边的搜索按钮一致（34×34）。
+ * 2026-09-29 用户要求从列表末尾挪到搜索图标右边 —— 原来挂在列表里，不管
+ * 吸不吸底都跟着项目列表跑，得滚动才看得到。两个列表组件（单项目 / 多项目）
+ * 各有一个顶栏且互斥显示，抽成组件给两处共用。
+ */
+function ArchiveHeaderButton({ onOpen }: { onOpen?: () => void }) {
+  const { t } = useI18n();
+  if (!onOpen) return null;
+  return (
+      <button
+        type="button"
+        data-archive-entry="open"
+        aria-label={t("sessionList.archive")}
+        title={t("sessionList.archive")}
+        onClick={onOpen}
+        style={{
+          width: "34px",
+          height: "34px",
+          minWidth: "34px",
+          border: "none",
+          borderRadius: "8px",
+          padding: 0,
+          background: "transparent",
+          color: "var(--text-secondary)",
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          cursor: "pointer",
+          transition: "all 0.15s ease",
+        }}
+      >
+        <span style={{ fontSize: "15px", lineHeight: 1, display: "inline-flex" }}>
+          <ArchiveIcon />
+        </span>
+      </button>
   );
 }
 
@@ -286,9 +342,11 @@ function isSessionSyncing(
     return false;
   }
   const rootId = session.root_id || "";
+  const nodeId = String((session as any)?._nodeId || "").trim();
   return (
     syncingSessionKeys.has(key) ||
-    (!!rootId && syncingSessionKeys.has(`${rootId}::${key}`))
+    (!!rootId && syncingSessionKeys.has(`${rootId}::${key}`)) ||
+    (!!rootId && !!nodeId && syncingSessionKeys.has(`${nodeId}::${rootId}::${key}`))
   );
 }
 
@@ -316,6 +374,8 @@ export function SessionList({
   onLoadOlder,
   loadingOlder = false,
   hasMore = false,
+  onArchive,
+  onOpenArchivePanel,
 }: SessionListProps) {
   const { t } = useI18n();
   const effectiveEmptyText = emptyText || t("sessionList.empty");
@@ -324,15 +384,30 @@ export function SessionList({
   const [expandedChildren, setExpandedChildren] = useState<Record<string, boolean>>({});
   const [loadingChildren, setLoadingChildren] = useState<Record<string, boolean>>({});
   const [childrenHasMore, setChildrenHasMore] = useState<Record<string, boolean>>({});
+  // 折叠态的子会话基数：展开**之前**记下当时的已加载数，折叠态的「还有几个」用它算。
+  // 展开会再拉一批子会话合并进 sessions，若按新的总数算，收起后的数字会大于展开前。
+  const [collapsedBaseCount, setCollapsedBaseCount] = useState<Record<string, number>>({});
+  // 展开态回收：会话被删除/归档后，其条目必须随之消失（见 pruneChildState 注释）
+  useEffect(() => {
+    const live = new Set(sessions.map((item) => item.key).filter(Boolean));
+    setExpandedChildren((prev) => pruneChildState(prev, live));
+    setLoadingChildren((prev) => pruneChildState(prev, live));
+    setChildrenHasMore((prev) => pruneChildState(prev, live));
+  }, [sessions]);
   const visibleSessions = useMemo(() => {
     if (searchResultsMode) {
       return sessions.map((session): VisibleSessionRow => ({ type: "session", session }));
     }
+    const isForkItem = (item: SessionItem) => !!parseForkSessionSource(item.source);
     const childrenByParent = new Map<string, SessionItem[]>();
     const topLevel: SessionItem[] = [];
     const keys = new Set(sessions.map((item) => item.key));
     const parentByKey = new Map<string, string>();
     for (const item of sessions) {
+      if (isForkItem(item)) {
+        topLevel.push(item);
+        continue;
+      }
       const parentKey = String(item.parent_session_key || "").trim();
       if (parentKey && keys.has(parentKey)) {
         const children = childrenByParent.get(parentKey) || [];
@@ -366,12 +441,17 @@ export function SessionList({
       for (const child of visibleChildren) {
         append(child);
       }
-      const hiddenCount = Math.max(0, children.length - COLLAPSED_CHILD_SESSION_LIMIT);
-      if (active && (children.length > COLLAPSED_CHILD_SESSION_LIMIT || expanded || childrenHasMore[item.key])) {
+      // 折叠态显示的是「**展开那一刻**已加载的子会话里还剩几个」，不是当前总数：
+      // 展开会再拉一批（每批最多 50 条）合并进 children，总数只增不减。用总数算，
+      // 收起后的数字就会大于展开前的（用户报的 a=2 收起变 102 就是这么来的）。
+      // 基数在**展开前**钉一次（见 handleChildToggle），来回切换多少次都稳定。
+      const collapsedBase = collapsedBaseCount[item.key] ?? children.length;
+      const hiddenCount = Math.max(0, collapsedBase - COLLAPSED_CHILD_SESSION_LIMIT);
+      if (active && (hiddenCount > 0 || expanded || childrenHasMore[item.key])) {
         out.push({
           type: "child-toggle",
           parent: item,
-          loadedChildCount: children.length,
+          loadedChildCount: collapsedBase,
           hiddenCount,
           expanded,
         });
@@ -379,18 +459,7 @@ export function SessionList({
     };
     topLevel.forEach((item) => append(item));
     return out;
-  }, [childrenHasMore, expandedChildren, searchResultsMode, selectedKey, sessions]);
-  const childCountByParent = useMemo(() => {
-    const counts = new Map<string, number>();
-    const keys = new Set(sessions.map((item) => item.key));
-    for (const item of sessions) {
-      const parentKey = String(item.parent_session_key || "").trim();
-      if (parentKey && keys.has(parentKey)) {
-        counts.set(parentKey, (counts.get(parentKey) || 0) + 1);
-      }
-    }
-    return counts;
-  }, [sessions]);
+  }, [collapsedBaseCount, childrenHasMore, expandedChildren, searchResultsMode, selectedKey, sessions]);
   const selectedParentKey = useMemo(() => {
     if (!selectedKey) return "";
     return sessions.find((item) => item.key === selectedKey)?.parent_session_key || "";
@@ -430,9 +499,16 @@ export function SessionList({
     }
   };
 
+
   const handleChildToggle = async (row: Extract<VisibleSessionRow, { type: "child-toggle" }>) => {
     const parentKey = row.parent.key;
     if (!row.expanded) {
+      // 折叠基数在**展开前**钉，不是收起时：展开会再拉一批子会话合并进 sessions，
+      // 收起后若按新的总数算，「还有 N 个」必然大于展开前（用户报的 a=2 → b=102）。
+      setCollapsedBaseCount((prev) => ({
+        ...prev,
+        [parentKey]: sessions.filter((item) => item.parent_session_key === parentKey).length,
+      }));
       setExpandedChildren((prev) => ({ ...prev, [parentKey]: true }));
       await loadChildren(row.parent);
       return;
@@ -512,6 +588,7 @@ export function SessionList({
                 </svg>
               </button>
             ) : null}
+            <ArchiveHeaderButton onOpen={onOpenArchivePanel} />
           </div>
         )}
         {headerAction ? (
@@ -664,11 +741,13 @@ export function SessionList({
                     key={`children-toggle-${row.parent.key}`}
                     loading={loading}
                     label={label}
-                    showExpandIcon={!loading && (!row.expanded || hasMoreChildren)}
+                    showExpandIcon={!loading && !row.expanded}
                     showCollapseIcon={!loading && row.expanded}
                     marginLeft={SUB_SESSION_ICON_OFFSET}
                     onClick={() => void handleChildToggle(row)}
                     onCollapse={() =>
+                      // 整行点 = 收起。折叠基数已在展开那一刻钉好，这里不再动它 ——
+                      // 收起时按当时的总数钉，钉进去的就是展开拉回来的新批次（b > a）。
                       setExpandedChildren((prev) => ({
                         ...prev,
                         [row.parent.key]: false,
@@ -679,20 +758,20 @@ export function SessionList({
               }
               const session = row.session;
               return (
-                <SessionCard
-                  key={session.key}
+                <SessionCardMemo
+                  key={`${String((session as any)._nodeId || "")}::${session.key}`}
                   session={session}
                   sessionByKey={sessionByKey}
                   selected={session.key === selectedKey}
                   parentHighlighted={!!selectedParentKey && session.key === selectedParentKey}
                   highlightQuery={searchResultsMode ? searchQuery : ""}
                   syncing={isSessionSyncing(session, syncingSessionKeys)}
-                  childCount={childCountByParent.get(session.key) || 0}
                   onSelect={onSelect}
                   onSync={onSync}
                   onPin={onPin}
                   onRename={onRename}
                   onDelete={onDelete}
+                  onArchive={onArchive}
                 />
               );
             })}
@@ -732,6 +811,31 @@ export function SessionList({
   );
 }
 
+// 项目置顶的本地缓存：右栏每次打开都重挂载本组件，同步读 localStorage 起始态，
+// 避免「先按无置顶渲染、偏好到达后重排」的闪动；服务端偏好仍是事实源
+function readLocalProjectPins(): Record<string, number> {
+  if (typeof window === "undefined") return {};
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(PINNED_PROJECTS_STORAGE_KEY) || "{}");
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const next: Record<string, number> = {};
+      for (const [key, value] of Object.entries(parsed)) {
+        const timestamp = Number(value);
+        if (key && Number.isFinite(timestamp) && timestamp > 0) next[key] = timestamp;
+      }
+      return next;
+    }
+  } catch {}
+  return {};
+}
+
+function writeLocalProjectPins(pins: Record<string, number>): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(PINNED_PROJECTS_STORAGE_KEY, JSON.stringify(pins));
+  } catch {}
+}
+
 export function MultiProjectSessionList({
   groups,
   selectedKey = "",
@@ -739,6 +843,7 @@ export function MultiProjectSessionList({
   headerAction,
   loading = false,
   emptyText = "",
+  projectSortMode = "name-asc",
   syncingSessionKeys,
   onSearchToggle,
   onSelect,
@@ -746,9 +851,12 @@ export function MultiProjectSessionList({
   onPin,
   onRename,
   onDelete,
-  onProjectClick,
+  selectedNodeId = "",
   onLoadMoreProject,
   onLoadChildren,
+  onArchive,
+  onOpenArchivePanel,
+  hideHeader = false,
 }: ProjectSessionListProps) {
   const { t } = useI18n();
   const effectiveEmptyText = emptyText || t("sessionList.empty");
@@ -757,73 +865,120 @@ export function MultiProjectSessionList({
   const [expandedChildren, setExpandedChildren] = useState<Record<string, boolean>>({});
   const [loadingChildren, setLoadingChildren] = useState<Record<string, boolean>>({});
   const [childrenHasMore, setChildrenHasMore] = useState<Record<string, boolean>>({});
-  const [pinnedProjects, setPinnedProjects] = useState<Record<string, number>>(() => {
-    if (typeof window === "undefined") {
-      return {};
-    }
-    try {
-      const parsed = JSON.parse(window.localStorage.getItem(PINNED_PROJECTS_STORAGE_KEY) || "{}");
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        return {};
-      }
-      const next: Record<string, number> = {};
-      for (const [key, value] of Object.entries(parsed)) {
-        const timestamp = Number(value);
-        if (key && Number.isFinite(timestamp) && timestamp > 0) {
-          next[key] = timestamp;
-        }
-      }
-      return next;
-    } catch {
-      return {};
-    }
-  });
+  // 折叠态的子会话基数（键与 expandedChildren 同形）：展开**之前**记下当时的已加载数，
+  // 折叠态按它算，不受展开时陆续拉回来的批次影响。
+  const [collapsedBaseCount, setCollapsedBaseCount] = useState<Record<string, number>>({});
+  const [pinnedProjects, setPinnedProjects] = useState<Record<string, number>>(readLocalProjectPins);
+  // 展开态回收：分组里的会话消失（删除/归档/切节点）后，其条目必须随之消失
   useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    window.localStorage.setItem(PINNED_PROJECTS_STORAGE_KEY, JSON.stringify(pinnedProjects));
-  }, [pinnedProjects]);
-  const orderedGroups = useMemo(
-    () =>
-      groups.slice().sort((left, right) => {
-        const leftPinnedAt = pinnedProjects[left.rootId] || 0;
-        const rightPinnedAt = pinnedProjects[right.rootId] || 0;
-        if (leftPinnedAt || rightPinnedAt) {
-          if (leftPinnedAt !== rightPinnedAt) {
-            return rightPinnedAt - leftPinnedAt;
-          }
-        }
-        return 0;
-      }),
-    [groups, pinnedProjects],
-  );
-  const togglePinnedProject = (rootId: string) => {
-    setPinnedProjects((prev) => {
-      const next = { ...prev };
-      if (next[rootId]) {
-        delete next[rootId];
-      } else {
-        next[rootId] = Date.now();
+    const live = new Set<string>();
+    for (const group of groups) {
+      for (const item of group.sessions || []) {
+        if (item.key) live.add(item.key);
       }
-      return next;
+    }
+    setExpandedChildren((prev) => pruneChildState(prev, live));
+    setLoadingChildren((prev) => pruneChildState(prev, live));
+    setChildrenHasMore((prev) => pruneChildState(prev, live));
+  }, [groups]);
+  // 项目置顶持久化到服务端偏好（跨设备/清缓存不丢）；本地缓存先出帧，服务端返回后校正并回写
+  useEffect(() => {
+    let cancelled = false;
+    fetchSessionProjectPins()
+      .then((pins) => {
+        if (cancelled) return;
+        setPinnedProjects(pins);
+        writeLocalProjectPins(pins);
+      })
+      .catch(() => {
+        if (!cancelled) setPinnedProjects(readLocalProjectPins());
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const groupScopeKey = (group: ProjectSessionGroup) =>
+    scopeKey(String((group as any)?._nodeId || "").trim(), group.rootId);
+  // 右侧多项目列表：与左侧 FileTree 保持一致的分层排序
+  // 层级：节点时序(按 getNodes() 添加顺序) > 同节点内项目置顶 > 同节点内项目设置排序(默认 name-asc)
+  // 项目置顶不跨节点越位，修复 hbsn 跑到其他节点上方的问题；项目内会话由 sessionListMerge 负责置顶在前+时间降序
+  const orderedGroups = useMemo(() => {
+    const nodes = getNodes();
+    const orderById = new Map(nodes.map((n, i) => [String(n.id), i] as const));
+    const orderByName = new Map(nodes.map((n, i) => [String(n.name), i] as const));
+    const nodeIndex = (group: ProjectSessionGroup): number => {
+      const nid = String((group as any)?._nodeId || "").trim();
+      if (nid && orderById.has(nid)) return orderById.get(nid)!;
+      const nname = String((group as any)?._nodeName || "").trim();
+      if (nname && orderByName.has(nname)) return orderByName.get(nname)!;
+      return 99;
+    };
+    // 同节点内的项目按 DirectorySort 规则排；复用左侧同款比较，避免两处分叉
+    const compareByProjectSort = (a: ProjectSessionGroup, b: ProjectSessionGroup): number => {
+      const ea = { name: a.rootName || a.rootId, path: a.rootId, is_dir: true } as Parameters<typeof sortDirectoryEntries>[0][number];
+      const eb = { name: b.rootName || b.rootId, path: b.rootId, is_dir: true } as Parameters<typeof sortDirectoryEntries>[0][number];
+      const sorted = sortDirectoryEntries([ea, eb], projectSortMode);
+      if (sorted[0] === ea && sorted[1] === eb) return -1;
+      if (sorted[0] === eb && sorted[1] === ea) return 1;
+      return 0;
+    };
+    return groups.slice().sort((left, right) => {
+      const li = nodeIndex(left);
+      const ri = nodeIndex(right);
+      if (li !== ri) return li - ri;
+      const leftPinnedAt = pinnedProjects[groupScopeKey(left)] || 0;
+      const rightPinnedAt = pinnedProjects[groupScopeKey(right)] || 0;
+      const leftPinned = leftPinnedAt > 0;
+      const rightPinned = rightPinnedAt > 0;
+      if (leftPinned !== rightPinned) return rightPinned ? 1 : -1;
+      if (leftPinned && rightPinned && leftPinnedAt !== rightPinnedAt) {
+        return rightPinnedAt - leftPinnedAt;
+      }
+      return compareByProjectSort(left, right);
     });
+  }, [groups, pinnedProjects, projectSortMode]);
+  const togglePinnedProject = (group: ProjectSessionGroup) => {
+    const key = groupScopeKey(group);
+    const next = { ...pinnedProjects };
+    if (next[key]) {
+      delete next[key];
+    } else {
+      next[key] = Date.now();
+    }
+    setPinnedProjects(next);
+    writeLocalProjectPins(next);
+    // 置顶状态写服务端偏好；失败只回退本地 UI，下次拉取会纠正
+    void updateSessionProjectPins(next).catch(() => {});
   };
   const sessionByKey = useMemo(() => {
     const byKey = new Map<string, SessionItem>();
     for (const group of groups) {
       for (const item of group.sessions) {
         const sessionRoot = item.root_id || group.rootId;
+        const itemNodeId = String((item as any)?._nodeId || (group as any)?._nodeId || "").trim();
         byKey.set(`${sessionRoot}:${item.key}`, item);
+        byKey.set(scopeKey(itemNodeId, sessionRoot ? `${sessionRoot}:${item.key}` : item.key), item);
         byKey.set(item.key, item);
       }
     }
     return byKey;
   }, [groups]);
-  const childStateKey = (session: SessionItem, fallbackRootId = "") => `${session.root_id || fallbackRootId}:${session.key}`;
+  const childStateKey = (session: SessionItem, fallbackRootId = "", fallbackNodeId = "") => {
+    const rootId = session.root_id || fallbackRootId;
+    const nodeId = String((session as any)?._nodeId || fallbackNodeId || "").trim();
+    return `${scopeKey(nodeId, rootId)}:${session.key}`;
+  };
 
-  const loadChildren = async (parent: SessionItem, beforeTime?: string) => {
-    const stateKey = childStateKey(parent);
+  // fallbackRootId / fallbackNodeId 必须一起传：读侧（render / handleChildToggle）
+  // 用的是三参数版本，这里少传就会写到另一个键上 —— childrenHasMore 写进去读不回来，
+  // 表现是「还有下一批」永远不出现、点收起也只能收不能继续加载。
+  const loadChildren = async (
+    parent: SessionItem,
+    beforeTime?: string,
+    fallbackRootId = "",
+    fallbackNodeId = "",
+  ) => {
+    const stateKey = childStateKey(parent, fallbackRootId, fallbackNodeId);
     if (!onLoadChildren || loadingChildren[stateKey]) {
       return;
     }
@@ -836,12 +991,18 @@ export function MultiProjectSessionList({
     }
   };
 
-  const buildRows = (sessions: SessionItem[], fallbackRootId: string): VisibleSessionRow[] => {
+  const buildRows = (sessions: SessionItem[], fallbackRootId: string, fallbackNodeId = ""): VisibleSessionRow[] => {
+    if (sessions.length === 0) return [];
+    const isForkItem = (item: SessionItem) => !!parseForkSessionSource(item.source);
     const childrenByParent = new Map<string, SessionItem[]>();
     const topLevel: SessionItem[] = [];
     const keys = new Set(sessions.map((item) => item.key));
     const parentByKey = new Map<string, string>();
     for (const item of sessions) {
+      if (isForkItem(item)) {
+        topLevel.push(item);
+        continue;
+      }
       const parentKey = String(item.parent_session_key || "").trim();
       if (parentKey && keys.has(parentKey)) {
         const children = childrenByParent.get(parentKey) || [];
@@ -853,7 +1014,11 @@ export function MultiProjectSessionList({
       }
     }
     const activeParentKeys = new Set<string>();
-    if (selectedKey && selectedRootId === fallbackRootId) {
+    if (
+      selectedKey &&
+      selectedRootId === fallbackRootId &&
+      String(selectedNodeId || "") === String(fallbackNodeId || "")
+    ) {
       activeParentKeys.add(selectedKey);
       let parentKey = parentByKey.get(selectedKey) || "";
       while (parentKey) {
@@ -865,7 +1030,7 @@ export function MultiProjectSessionList({
     const append = (item: SessionItem) => {
       out.push({ type: "session", session: item });
       const children = childrenByParent.get(item.key) || [];
-      const stateKey = childStateKey(item, fallbackRootId);
+      const stateKey = childStateKey(item, fallbackRootId, fallbackNodeId);
       const active = activeParentKeys.has(item.key);
       const expanded = !!expandedChildren[stateKey];
       const visibleChildren = active
@@ -876,12 +1041,15 @@ export function MultiProjectSessionList({
       for (const child of visibleChildren) {
         append(child);
       }
-      const hiddenCount = Math.max(0, children.length - COLLAPSED_CHILD_SESSION_LIMIT);
-      if (active && (children.length > COLLAPSED_CHILD_SESSION_LIMIT || expanded || childrenHasMore[stateKey])) {
+      // 同单项目列表：折叠基数取「展开那一刻」的已加载数，展开后陆续拉回的批次
+      // 不参与计数，所以收起后的「还有几个」不会大于展开前。
+      const collapsedBase = collapsedBaseCount[stateKey] ?? children.length;
+      const hiddenCount = Math.max(0, collapsedBase - COLLAPSED_CHILD_SESSION_LIMIT);
+      if (active && (hiddenCount > 0 || expanded || childrenHasMore[stateKey])) {
         out.push({
           type: "child-toggle",
           parent: item,
-          loadedChildCount: children.length,
+          loadedChildCount: collapsedBase,
           hiddenCount,
           expanded,
         });
@@ -895,68 +1063,96 @@ export function MultiProjectSessionList({
     row: Extract<VisibleSessionRow, { type: "child-toggle" }>,
     groupSessions: SessionItem[],
     fallbackRootId: string,
+    fallbackNodeId = "",
   ) => {
     const parentKey = row.parent.key;
-    const stateKey = childStateKey(row.parent, fallbackRootId);
+    const stateKey = childStateKey(row.parent, fallbackRootId, fallbackNodeId);
     if (!row.expanded) {
+      // 折叠基数在**展开前**钉（不是收起时）：展开会再拉一批合并进 group.sessions，
+      // 收起后按新的总数算，「还有 N 个」必然大于展开前。
+      setCollapsedBaseCount((prev) => ({
+        ...prev,
+        [stateKey]: groupSessions.filter((item) => item.parent_session_key === parentKey).length,
+      }));
       setExpandedChildren((prev) => ({ ...prev, [stateKey]: true }));
-      await loadChildren(row.parent);
+      await loadChildren(row.parent, undefined, fallbackRootId, fallbackNodeId);
       return;
     }
     if (childrenHasMore[stateKey]) {
       const lastChild = groupSessions
         .filter((item) => item.parent_session_key === parentKey)
         .sort((left, right) => (Date.parse(left.updated_at || "") || 0) - (Date.parse(right.updated_at || "") || 0))[0];
-      await loadChildren(row.parent, lastChild?.updated_at);
+      await loadChildren(row.parent, lastChild?.updated_at, fallbackRootId, fallbackNodeId);
     } else {
       setExpandedChildren((prev) => ({ ...prev, [stateKey]: false }));
     }
   };
 
+  const topLevelSessionsForGroup = (sessions: SessionItem[]) =>
+    sessions.filter((session) => !String(session.parent_session_key || "").trim());
+
+  // 两端皆空视为节点信息未就绪：避免空串互等把全部分组误展开
+  const groupIsCurrentNode = (group: ProjectSessionGroup) => {
+    const groupNodeId = String((group as any)?._nodeId || "").trim();
+    const selectedNid = String(selectedNodeId || "").trim();
+    return !!groupNodeId && !!selectedNid && groupNodeId === selectedNid;
+  };
+
+  // 默认折叠态：当前节点 + 被图钉置顶的项目展开
+  const groupDefaultExpanded = (group: ProjectSessionGroup) =>
+    groupIsCurrentNode(group) || !!pinnedProjects[groupScopeKey(group)];
+
   const handleProjectToggle = async (group: ProjectSessionGroup) => {
-    const expanded = !!expandedProjects[group.rootId];
-    const remaining = Math.max(0, group.totalCount - group.sessions.length);
+    const groupKey = groupScopeKey(group);
+    const expanded = expandedProjects[groupKey] ?? groupDefaultExpanded(group);
+    const topLevelCount = topLevelSessionsForGroup(group.sessions).length;
+    const remaining = Math.max(0, group.totalCount - topLevelCount);
     if (!expanded) {
-      setExpandedProjects((prev) => ({ ...prev, [group.rootId]: true }));
+      setExpandedProjects((prev) => ({ ...prev, [groupKey]: true }));
       if (remaining > 0 && onLoadMoreProject) {
-        setLoadingProjects((prev) => ({ ...prev, [group.rootId]: true }));
+        setLoadingProjects((prev) => ({ ...prev, [groupKey]: true }));
         try {
           await onLoadMoreProject(group);
         } finally {
-          setLoadingProjects((prev) => ({ ...prev, [group.rootId]: false }));
+          setLoadingProjects((prev) => ({ ...prev, [groupKey]: false }));
         }
       }
       return;
     }
     if (remaining > 0 && onLoadMoreProject) {
-      setLoadingProjects((prev) => ({ ...prev, [group.rootId]: true }));
+      setLoadingProjects((prev) => ({ ...prev, [groupKey]: true }));
       try {
         await onLoadMoreProject(group);
       } finally {
-        setLoadingProjects((prev) => ({ ...prev, [group.rootId]: false }));
+        setLoadingProjects((prev) => ({ ...prev, [groupKey]: false }));
       }
     } else {
-      setExpandedProjects((prev) => ({ ...prev, [group.rootId]: false }));
+      setExpandedProjects((prev) => ({ ...prev, [groupKey]: false }));
     }
   };
 
-  const handleProjectCollapse = (rootId: string) => {
-    setExpandedProjects((prev) => ({ ...prev, [rootId]: false }));
+  const handleProjectCollapse = (group: ProjectSessionGroup) => {
+    setExpandedProjects((prev) => ({ ...prev, [groupScopeKey(group)]: false }));
   };
 
-  const topLevelSessionsForGroup = (sessions: SessionItem[]) =>
-    sessions.filter((session) => !String(session.parent_session_key || "").trim());
-
-  const sessionsForTopLevelLimit = (sessions: SessionItem[], limit: number) => {
-    const topLevel = topLevelSessionsForGroup(sessions);
-    if (limit >= topLevel.length) {
-      return sessions;
+  const handleProjectHeaderToggle = async (group: ProjectSessionGroup) => {
+    const key = groupScopeKey(group);
+    const expanded = expandedProjects[key] ?? groupDefaultExpanded(group);
+    if (expanded) {
+      setExpandedProjects((prev) => ({ ...prev, [key]: false }));
+      return;
     }
-    const visibleParentKeys = new Set(topLevel.slice(0, limit).map((session) => session.key));
-    return sessions.filter((session) => {
-      const parentKey = String(session.parent_session_key || "").trim();
-      return !parentKey ? visibleParentKeys.has(session.key) : visibleParentKeys.has(parentKey);
-    });
+    setExpandedProjects((prev) => ({ ...prev, [key]: true }));
+    const topLevelCount = topLevelSessionsForGroup(group.sessions).length;
+    const remaining = Math.max(0, group.totalCount - topLevelCount);
+    if (remaining > 0 && onLoadMoreProject) {
+      setLoadingProjects((prev) => ({ ...prev, [key]: true }));
+      try {
+        await onLoadMoreProject(group);
+      } finally {
+        setLoadingProjects((prev) => ({ ...prev, [key]: false }));
+      }
+    }
   };
 
   return (
@@ -965,7 +1161,7 @@ export function MultiProjectSessionList({
         data-onboarding="session-actions"
         style={{
           height: "36px",
-          display: "flex",
+          display: hideHeader ? "none" : "flex",
           alignItems: "center",
           justifyContent: "space-between",
           padding: "0 10px 0 2px",
@@ -1003,6 +1199,7 @@ export function MultiProjectSessionList({
               </svg>
             </button>
           ) : null}
+          <ArchiveHeaderButton onOpen={onOpenArchivePanel} />
         </div>
         {headerAction ? <div style={{ display: "inline-flex", alignItems: "center" }}>{headerAction}</div> : null}
       </div>
@@ -1016,77 +1213,30 @@ export function MultiProjectSessionList({
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: "9px" }}>
             {orderedGroups.map((group) => {
-              const expanded = !!expandedProjects[group.rootId];
-              const pinned = !!pinnedProjects[group.rootId];
+              const groupKey = groupScopeKey(group);
+              const groupNodeId = String((group as any)?._nodeId || "").trim();
+              const expanded = expandedProjects[groupKey] ?? groupDefaultExpanded(group);
+              const pinned = !!pinnedProjects[groupKey];
+              const groupColor = String((group as any)._nodeColor || resolveGroupColor(group as any, {}, getNodes() as any) || PALETTE[0]);
               const topLevelSessions = topLevelSessionsForGroup(group.sessions);
-              const sessions = expanded
-                ? group.sessions
-                : sessionsForTopLevelLimit(group.sessions, MULTI_PROJECT_VISIBLE_LIMIT);
-              const rows = buildRows(sessions, group.rootId);
-              const childCountByParent = new Map<string, number>();
-              const sessionKeys = new Set(group.sessions.map((item) => item.key));
-              for (const item of group.sessions) {
-                const parentKey = String(item.parent_session_key || "").trim();
-                if (parentKey && sessionKeys.has(parentKey)) {
-                  childCountByParent.set(parentKey, (childCountByParent.get(parentKey) || 0) + 1);
-                }
-              }
+              const sessions = expanded ? group.sessions : [];
+              const rows = buildRows(sessions, group.rootId, groupNodeId);
               const remaining = Math.max(0, group.totalCount - topLevelSessions.length);
-              const projectLoading = !!loadingProjects[group.rootId];
+              const projectLoading = !!loadingProjects[groupKey];
               return (
-                <section key={group.rootId} style={{ minWidth: 0 }}>
-                  <div
-                    style={{
-                      minWidth: 0,
-                      height: "22px",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      gap: "8px",
-                      padding: "0 24px 0 2px",
-                      background: "transparent",
-                      boxSizing: "border-box",
-                      position: "relative",
-                    }}
-                  >
-                    <span
-                      aria-hidden="true"
-                      style={{
-                        height: "1px",
-                        flex: 1,
-                        minWidth: "12px",
-                        background: "var(--border-color)",
-                      }}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => onProjectClick?.(group.rootId)}
-                      style={{
-                        ...rootBadgeButtonStyle,
-                        flexShrink: 1,
-                        maxWidth: "100%",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                        cursor: onProjectClick ? "pointer" : "default",
-                      }}
-                    >
-                      {group.rootName || group.rootId}
-                    </button>
-                    <span
-                      aria-hidden="true"
-                      style={{
-                        height: "1px",
-                        flex: 1,
-                        minWidth: "12px",
-                        background: "var(--border-color)",
-                      }}
+                <section key={`${(group as any)._nodeId || ""}::${group.rootId}`} style={{ minWidth: 0 }}>
+                  <div style={{ position: "relative" }}>
+                    <NodeBadgeHeader
+                      color={groupColor}
+                      label={group.rootName || group.rootId}
+                      collapsed={!expanded}
+                      onClick={() => void handleProjectHeaderToggle(group)}
                     />
                     <button
                       type="button"
                       aria-label={pinned ? t("sessionList.unpinProject") : t("sessionList.pinProject")}
                       title={pinned ? t("sessionList.unpin") : t("sessionList.pin")}
-                      onClick={() => togglePinnedProject(group.rootId)}
+                      onClick={() => togglePinnedProject(group)}
                       style={{
                         position: "absolute",
                         right: 0,
@@ -1098,7 +1248,7 @@ export function MultiProjectSessionList({
                         borderRadius: "6px",
                         padding: 0,
                         background: "transparent",
-                        color: pinned ? "#4b5563" : "var(--text-secondary)",
+                        color: pinned ? groupColor : "var(--text-secondary)",
                         display: "inline-flex",
                         alignItems: "center",
                         justifyContent: "center",
@@ -1120,7 +1270,10 @@ export function MultiProjectSessionList({
                   <div style={{ display: "flex", flexDirection: "column", gap: "2px", paddingTop: 0 }}>
                     {rows.map((row) => {
                       if (row.type === "child-toggle") {
-                        const stateKey = childStateKey(row.parent, group.rootId);
+                        // nodeId 必须一起传：写键的地方（handleChildToggle / onCollapse）
+                        // 传的是三参数版本，这里少传一个就会算出另一个键，于是读到
+                        // 未定义 —— 表现正是「行显示已展开、点它却毫无反应」。
+                        const stateKey = childStateKey(row.parent, group.rootId, groupNodeId);
                         const loadingChild = !!loadingChildren[stateKey];
                         const hasMoreChildren = !!childrenHasMore[stateKey];
                         const label = loadingChild
@@ -1137,14 +1290,15 @@ export function MultiProjectSessionList({
                             key={`children-toggle-${group.rootId}-${row.parent.key}`}
                             loading={loadingChild}
                             label={label}
-                            showExpandIcon={!loadingChild && (!row.expanded || hasMoreChildren)}
+                            showExpandIcon={!loadingChild && !row.expanded}
                             showCollapseIcon={!loadingChild && row.expanded}
                             marginLeft={SUB_SESSION_ICON_OFFSET}
-                            onClick={() => void handleChildToggle(row, group.sessions, group.rootId)}
+                            onClick={() => void handleChildToggle(row, group.sessions, group.rootId, groupNodeId)}
                             onCollapse={() =>
+                              // 整行点 = 收起；折叠基数已在展开那一刻钉好，这里不动。
                               setExpandedChildren((prev) => ({
                                 ...prev,
-                                [childStateKey(row.parent, group.rootId)]: false,
+                                [childStateKey(row.parent, group.rootId, groupNodeId)]: false,
                               }))
                             }
                           />
@@ -1152,25 +1306,27 @@ export function MultiProjectSessionList({
                       }
                       const session = row.session;
                       const sessionRoot = session.root_id || group.rootId;
+                      const groupColor = String((group as any)._nodeColor || "").trim();
                       return (
-                        <SessionCard
-                          key={`${sessionRoot}:${session.key}`}
+                        <SessionCardMemo
+                          key={`${String((group as any)._nodeId || "")}::${sessionRoot}:${session.key}`}
                           session={{ ...session, root_id: sessionRoot }}
+                          nodeColor={groupColor}
                           sessionByKey={sessionByKey}
-                          selected={session.key === selectedKey && sessionRoot === selectedRootId}
+                          selected={session.key === selectedKey && sessionRoot === selectedRootId && String((group as any)._nodeId || "") === String(selectedNodeId || "")}
                           parentHighlighted={false}
                           highlightQuery=""
                           syncing={isSessionSyncing({ ...session, root_id: sessionRoot }, syncingSessionKeys)}
-                          childCount={childCountByParent.get(session.key) || 0}
                           onSelect={onSelect}
                           onSync={onSync}
                           onPin={onPin}
                           onRename={onRename}
                           onDelete={onDelete}
+                          onArchive={onArchive}
                         />
                       );
                     })}
-                    {group.totalCount > MULTI_PROJECT_VISIBLE_LIMIT ? (
+                    {expanded && group.totalCount > MULTI_PROJECT_VISIBLE_LIMIT ? (
                       <ToggleRowButton
                         loading={projectLoading}
                         label={
@@ -1182,11 +1338,11 @@ export function MultiProjectSessionList({
                                 : t("common.collapse")
                               : t("sessionList.remainingSessions", { count: Math.max(0, group.totalCount - MULTI_PROJECT_VISIBLE_LIMIT) })
                         }
-                        showExpandIcon={!projectLoading && (!expanded || remaining > 0)}
+                        showExpandIcon={!projectLoading && !expanded}
                         showCollapseIcon={!projectLoading && expanded}
                         marginLeft={MAIN_SESSION_ICON_OFFSET}
                         onClick={() => void handleProjectToggle(group)}
-                        onCollapse={() => handleProjectCollapse(group.rootId)}
+                        onCollapse={() => handleProjectCollapse(group)}
                       />
                     ) : null}
                   </div>
@@ -1195,6 +1351,9 @@ export function MultiProjectSessionList({
             })}
           </div>
         )}
+        {/* 入口行在滚动容器内、但在「有无分组」这个分支之外：分组多到装不下一屏时它跟着
+            内容被顶下去（要滚动才看得到），一个分组都没有时它也还在 —— 放进上面的分支
+            里会连空态一起消失，归档就再也进不去了。 */}
       </div>
       <style>{`
         @keyframes mindfs-bound-pulse {
@@ -1214,33 +1373,36 @@ function SessionCard({
   session,
   sessionByKey,
   selected,
+  nodeColor,
   parentHighlighted,
   highlightQuery,
   syncing = false,
-  childCount = 0,
   onSelect,
   onSync,
   onPin,
   onRename,
   onDelete,
+  onArchive,
 }: {
   session: SessionItem;
   sessionByKey: Map<string, SessionItem>;
   selected: boolean;
+  nodeColor?: string;
   parentHighlighted?: boolean;
   highlightQuery?: string;
   syncing?: boolean;
-  childCount?: number;
   onSelect?: (session: SessionItem) => void;
   onSync?: (session: SessionItem) => Promise<void> | void;
   onPin?: (session: SessionItem, pinned: boolean) => Promise<boolean> | boolean;
   onRename?: (session: SessionItem, nextName: string) => Promise<boolean> | boolean;
   onDelete?: (session: SessionItem) => void;
+  onArchive?: (session: SessionItem, archived: boolean) => Promise<boolean> | boolean;
 }) {
   const { locale, t } = useI18n();
   const isClosed = !!session.closed_at;
   const isPinned = !!session.pinned_at;
-  const isSubagent = !!session.parent_session_key;
+  const isArchived = !!session.archived_at;
+  const isSubagent = !!session.parent_session_key && !parseForkSessionSource(session.source);
   const forkSource = parseForkSessionSource(session.source);
   const isForkSession = !!forkSource;
   const storedName = session.name || `Session ${session.key.slice(0, 8)}`;
@@ -1253,8 +1415,18 @@ function SessionCard({
   const [editing, setEditing] = useState(false);
   const [draftName, setDraftName] = useState(storedName);
   const [saving, setSaving] = useState(false);
+  const effectiveNodeColor = String(
+    nodeColor ||
+    (session as any)?._nodeColor ||
+    resolveGroupColor(
+      { rootId: String((session as any)?.root_id || ""), _nodeId: String((session as any)?._nodeId || "") },
+      {},
+      getNodes() as any,
+    ) ||
+    "",
+  ).trim();
   const rowBackground = selected
-    ? "rgba(59, 130, 246, 0.1)"
+    ? "var(--node-row-selected-bg)"
     : parentHighlighted
       ? "rgba(0,0,0,0.03)"
       : "transparent";
@@ -1373,19 +1545,7 @@ function SessionCard({
               justifyContent: "center",
             }}
           >
-            {isSubagent ? (
-              isForkSession ? (
-                <ForkSessionIcon />
-              ) : (
-                <SubSessionIcon />
-              )
-            ) : (
-              isForkSession ? (
-                <ForkSessionIcon />
-              ) : (
-                <ModeIcon type={session.task_id ? "task" : session.type || "chat"} size={16} />
-              )
-            )}
+            {isSubagent ? <SubSessionIcon color={effectiveNodeColor ? `color-mix(in srgb, ${effectiveNodeColor} 78%, var(--text-secondary))` : undefined} /> : <ModeIcon type={session.task_id ? "task" : session.type || "chat"} size={16} color={effectiveNodeColor || undefined} />}
             {!isSubagent && session.type === "command" ? (
               <span
                 title={session.shell || "shell"}
@@ -1436,33 +1596,6 @@ function SessionCard({
                   agentName={session.agent || ""}
                   style={{ width: "10px", height: "10px", display: "block" }}
                 />
-              </span>
-            ) : null}
-            {!isSubagent && childCount > 0 ? (
-              <span
-                title={t("sessionList.childCount", { count: childCount })}
-                style={{
-                  position: "absolute",
-                  right: "-7px",
-                  top: "-7px",
-                  minWidth: "14px",
-                  height: "14px",
-                  padding: "0 3px",
-                  borderRadius: "999px",
-                  background: "var(--accent-color)",
-                  border: "1px solid var(--content-bg, #fff)",
-                  color: "#fff",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  boxSizing: "border-box",
-                  fontSize: "9px",
-                  fontWeight: 700,
-                  lineHeight: 1,
-                  letterSpacing: 0,
-                }}
-              >
-                {childCount > 99 ? "99+" : childCount}
               </span>
             ) : null}
           </span>
@@ -1532,7 +1665,7 @@ function SessionCard({
               padding: 0,
               cursor: "pointer",
               textAlign: "left",
-              color: selected ? "var(--accent-color)" : "var(--text-primary)",
+              color: selected ? (effectiveNodeColor || "var(--accent-color)") : "var(--text-primary)",
             }}
             onMouseEnter={(e) => {
               const container = e.currentTarget.parentElement;
@@ -1558,7 +1691,7 @@ function SessionCard({
               }}
             >
               {renderHighlightedText(displayName, highlightQuery, {
-                color: selected ? "var(--accent-color)" : "var(--text-primary)",
+                color: selected ? (effectiveNodeColor || "var(--accent-color)") : "var(--text-primary)",
               })}
             </span>
             {snippet ? (
@@ -1694,10 +1827,10 @@ function SessionCard({
                 borderRadius: "999px",
                 flexShrink: 0,
                 boxSizing: "border-box",
-                border: "1.5px solid #2563eb",
-                background: "#2563eb",
+                border: `1.5px solid ${effectiveNodeColor || "var(--accent-color)"}`,
+                background: effectiveNodeColor || "var(--accent-color)",
                 animation: "mindfs-bound-pulse 2.2s ease-in-out infinite",
-                boxShadow: "0 0 0 1.5px rgba(37,99,235,0.14)",
+                boxShadow: `0 0 0 1.5px ${hexToRgbaApp(effectiveNodeColor || "var(--accent-color)", 0.14)}`,
               }}
             />
           ) : (
@@ -1874,6 +2007,25 @@ function SessionCard({
               </svg>
               {t("sessionList.rename")}
             </button>
+            {onArchive ? (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setMenuOpen(false);
+                  void onArchive(session, !isArchived);
+                }}
+                style={{
+                  ...menuItemStyle,
+                  color: "var(--text-primary)",
+                }}
+              >
+                <span style={{ width: "13px", height: "13px", display: "inline-flex" }}>
+                  <ArchiveIcon />
+                </span>
+                {isArchived ? t("sessionList.unarchive") : t("sessionList.archive")}
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={(e) => {
@@ -2008,7 +2160,8 @@ function ChevronLeftIcon() {
   );
 }
 
-function SubSessionIcon() {
+function SubSessionIcon({ color }: { color?: string }) {
+  const c = String(color || "").trim() || "var(--accent-color)";
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
@@ -2016,7 +2169,7 @@ function SubSessionIcon() {
       height="18"
       viewBox="0 0 32 32"
       aria-hidden="true"
-      style={{ color: "var(--accent-color)", display: "block" }}
+      style={{ color: c, display: "block" }}
     >
       <path d="M0 0h32v32H0z" fill="none" />
       <path
@@ -2027,33 +2180,9 @@ function SubSessionIcon() {
   );
 }
 
-function ForkSessionIcon() {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      width="22"
-      height="22"
-      viewBox="0 0 24 24"
-      aria-hidden="true"
-      style={{
-        color: "var(--accent-color)",
-        display: "block",
-        transform: "rotate(180deg) scaleX(-1)",
-      }}
-    >
-      <path d="M0 0h24v24H0z" fill="none" />
-      <path
-        fill="none"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth="1.8"
-        d="M17 7a2 2 0 1 0 0-4a2 2 0 0 0 0 4M7 7a2 2 0 1 0 0-4a2 2 0 0 0 0 4m0 14a2 2 0 1 0 0-4a2 2 0 0 0 0 4M7 7v10M17 7v1c0 2.5-2 3-2 3l-6 2s-2 .5-2 3v1"
-      />
-      <circle cx="17" cy="5" r="2" fill="currentColor" />
-    </svg>
-  );
-}
+// memo 化 SessionCard：父组件（SessionList / MultiProjectSessionList）重渲染时，
+// 若 props 引用未变则跳过整卡重渲染（含 useI18n / 多个 useEffect）。
+const SessionCardMemo = memo(SessionCard);
 
 const menuItemStyle: React.CSSProperties = {
   width: "100%",

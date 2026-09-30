@@ -1,4 +1,5 @@
 import { appURL } from "./base";
+import { getRootNodeId } from "./rootNode";
 import { protectedJSON } from "./api";
 
 export type CandidateType = "file" | "skill" | "prompt" | "command";
@@ -16,7 +17,9 @@ export async function fetchCandidates(params: {
   query: string;
   agent?: string;
   signal?: AbortSignal;
+  nodeId?: string;
 }): Promise<CandidateItem[]> {
+  params.nodeId = params.nodeId || getRootNodeId(params.rootId);
   const search = new URLSearchParams();
   search.set("root", params.rootId);
   search.set("type", params.type);
@@ -26,7 +29,7 @@ export async function fetchCandidates(params: {
   if (params.type === "skill" && params.agent) {
     search.set("agent", params.agent);
   }
-  const data = await protectedJSON<any[]>(appURL("/api/candidates", search), {
+  const data = await protectedJSON<any[]>(appURL("/api/candidates", search, params.nodeId), {
     signal: params.signal,
   });
   return Array.isArray(data) ? data : [];

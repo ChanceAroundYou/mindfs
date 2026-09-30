@@ -13,17 +13,19 @@ import (
 	"strings"
 	"time"
 
+	"mindfs/internal/deploy"
 	"mindfs/server/internal/agent"
 	"mindfs/server/internal/api"
+	"mindfs/server/internal/auth"
+	"mindfs/server/internal/config"
 	"mindfs/server/internal/e2ee"
 	"mindfs/server/internal/fs"
-	"mindfs/server/internal/githubimport"
 	"mindfs/server/internal/gitview"
 	"mindfs/server/internal/kanban"
+	"mindfs/server/internal/nodes"
 	"mindfs/server/internal/notifyscript"
 	"mindfs/server/internal/preferences"
 	"mindfs/server/internal/relay"
-	"mindfs/server/internal/scheduled"
 	"mindfs/server/internal/tlsutil"
 	"mindfs/server/internal/update"
 	"mindfs/server/internal/webpush"
@@ -75,20 +77,6 @@ func EnsureE2EEConfig(enabled bool) (E2EEEnsureResult, error) {
 
 // Start boots the HTTP/WS server.
 func Start(ctx context.Context, addr string, opts StartOptions) error {
-	registry, err := fs.NewDefaultRegistry()
-	if err != nil {
-		return err
-	}
-	if err := registry.Load(); err != nil {
-		return err
-	}
-	prefs, prefsErr := preferences.NewStore()
-	if prefsErr != nil {
-		log.Printf("[preferences] init.error err=%v", prefsErr)
-	}
-	autoAddExternalProjectRoots(registry, prefs)
-	startExternalProjectDiscoveryLoop(ctx, registry, prefs)
-
 	agentConfig, err := agent.LoadConfigWithExtra(opts.AgentConfigPath)
 	if err != nil {
 		return err
@@ -97,69 +85,107 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 	if relayBaseURL == "" {
 		relayBaseURL = agentConfig.RelayBaseURL
 	}
-	agentPool := agent.NewPool(agentConfig)
-	agentProber := agent.NewProber(&agentConfig, agentPool, 5*time.Minute)
-	agentProber.Start(ctx)
-	startHostedAgentConfigLoop(ctx, relayBaseURL, agentConfig, agentPool, agentProber)
-	agentPool.StartIdleReleaseLoop(ctx, func() time.Duration {
-		hours := preferences.DefaultIdleSessionResourceReleaseHours
-		if prefs != nil {
-			hours = prefs.IdleSessionResourceReleaseHours()
-		}
-		return time.Duration(hours) * time.Hour
-	})
-	webPushStore, err := webpush.NewStore()
+	executable, _ := os.Executable()
+	updateSvc := update.NewService("a9gent/mindfs", opts.Version, executable, opts.Args, 10*time.Minute)
+	updateSvc.Start(ctx)
+
+	// 主页面登录/账户：只用于按账户分区，不参与 API 鉴权。
+	authStore, err := auth.EnsureStore()
 	if err != nil {
-		log.Printf("[webpush] init.error err=%v", err)
+		log.Printf("[auth] init.error err=%v", err)
+	}
+
+	configDir, err := config.MindFSConfigDir()
+	if err != nil {
+		return err
 	}
 	webPushConfig, err := webpush.EnsureConfig(opts.WebPushEnabled)
 	if err != nil {
 		log.Printf("[webpush] config.error err=%v", err)
 	}
-	executable, _ := os.Executable()
-	updateSvc := update.NewService("a9gent/mindfs", opts.Version, executable, opts.Args, 10*time.Minute)
-	updateSvc.Start(ctx)
 
-	services := &api.AppContext{
-		Dirs:   registry,
-		Agents: agentPool,
-		Prober: agentProber,
-		Update: updateSvc,
-		Prefs:  prefs,
-		E2EE: e2ee.NewManager(e2ee.Config{
+	// relay 是进程级的（一台机器一条隧道），先建好再交给各账户共享
+	relayMgr, err := relay.NewManager(addr, opts.NoRelayer, relayBaseURL, opts.UseTLS)
+	if err != nil {
+		return err
+	}
+	relayTips := relay.NewTipsService(relayMgr)
+
+	// 共享设置与资源：建一次，所有账户共用同一份实例
+	sharedPrefs, prefsErr := preferences.NewStore()
+	if prefsErr != nil {
+		log.Printf("[preferences] init.error err=%v", prefsErr)
+	}
+	sharedNodes, err := nodes.NewStore()
+	if err != nil {
+		log.Printf("[nodes] init.error err=%v", err)
+	}
+	sharedWebPush := webpush.NewService(webPushConfig, webpush.NewStoreAt(configDir))
+	sharedTemplates, err := kanban.NewTemplateStore()
+	if err != nil {
+		return err
+	}
+	sharedPool := agent.NewPool(agentConfig)
+	sharedProber := agent.NewProber(&agentConfig, sharedPool, 5*time.Minute)
+	sharedProber.Start(ctx)
+	startHostedAgentConfigLoop(ctx, relayBaseURL, agentConfig, sharedPool, sharedProber)
+	sharedPool.StartIdleReleaseLoop(ctx, func() time.Duration {
+		hours := preferences.DefaultIdleSessionResourceReleaseHours
+		if sharedPrefs != nil {
+			hours = sharedPrefs.IdleSessionResourceReleaseHours()
+		}
+		return time.Duration(hours) * time.Hour
+	})
+
+	workspaces := newWorkspaceManager(ctx, sharedServices{
+		agentConfig:  agentConfig,
+		relayBaseURL: relayBaseURL,
+		update:       updateSvc,
+		auth:         authStore,
+		e2ee: e2ee.NewManager(e2ee.Config{
 			Enabled:       opts.E2EEConfig.Enabled,
 			NodeID:        opts.E2EEConfig.NodeID,
 			PairingSecret: opts.E2EEConfig.PairingSecret,
 		}),
-		WebPush: webpush.NewService(webPushConfig, webPushStore),
-		Notify:  notifyscript.NewService(notifyscript.Config{Script: opts.NotifyScript}),
-	}
-	services.Scheduled = scheduled.NewService(services, services)
-	services.Scheduled.Start(ctx)
-	taskTemplates, err := kanban.NewTemplateStore()
+		notify:     notifyscript.NewService(notifyscript.Config{Script: opts.NotifyScript}),
+		relay:      relayMgr,
+		relayTips:  relayTips,
+		prefs:      sharedPrefs,
+		nodes:      sharedNodes,
+		webPush:    sharedWebPush,
+		templates:  sharedTemplates,
+		pool:       sharedPool,
+		prober:     sharedProber,
+	})
+	workspaces.SetBaseDir(filepath.Join(configDir, "users"))
+
+	// 主账户先建一次：启动期就把配置问题暴露出来，而不是等第一个请求 500
+	primary, err := workspaces.Workspace("")
 	if err != nil {
 		return err
 	}
-	services.Kanban = kanban.NewService(taskTemplates, services)
-	services.Kanban.SetRunner(services)
-	services.Kanban.Start(ctx)
-	githubImportSvc, err := githubimport.NewService(services)
+	// 上游的 kanban.Start(ctx) 走并发调度器，本地已删（CLAUDE.md 事实 13：无并发调度），
+	// 看板实例由每账户 AppContext 惰性构建（app/workspace.go）。
+	localCLIToken, err := EnsureLocalCLIToken(addr, opts.UseTLS)
 	if err != nil {
 		return err
 	}
-	services.GitHub = githubImportSvc
-	httpHandler := &api.HTTPHandler{
-		AppContext: services,
-		StaticDir:  resolveStaticDir(),
-		Version:    opts.Version,
-	}
-	wsHandler := &api.WSHandler{AppContext: services}
+	workspaces.SetHandlerDefaults(resolveStaticDir(), func() string { return localCLIToken })
+
+	httpRoutes := api.NewScopedRouter(workspaces, func(appCtx *api.AppContext) http.Handler {
+		return workspaces.NewHTTPHandler(appCtx, opts.Version).Routes()
+	})
+	wsRoutes := api.NewScopedRouter(workspaces, func(appCtx *api.AppContext) http.Handler {
+		return &api.WSHandler{AppContext: appCtx}
+	})
 
 	mux := http.NewServeMux()
-	mux.Handle("/", httpHandler.Routes())
-	mux.Handle("/ws", wsHandler)
+	inner := http.NewServeMux()
+	inner.Handle("/", httpRoutes)
+	inner.Handle("/ws", wsRoutes)
+	mux.Handle("/", api.StripDeployPrefix(deploy.NormalizedPrefix(), inner))
 
-	handler := api.LoggingMiddleware(api.CORSMiddleware(mux))
+	handler := api.LoggingMiddleware(mux)
 
 	server := &http.Server{
 		Addr:              addr,
@@ -171,41 +197,44 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 		return err
 	}
 	defer listener.Close()
-	localCLIToken, err := EnsureLocalCLIToken(addr, opts.UseTLS)
-	if err != nil {
-		return err
-	}
-	httpHandler.LocalCLIToken = localCLIToken
 
-	relayMgr, err := relay.NewManager(addr, opts.NoRelayer, relayBaseURL, opts.UseTLS)
-	if err != nil {
-		return err
-	}
-	services.Relay = relayMgr
-	services.RelayTips = relay.NewTipsService(relayMgr)
 	if err := relayMgr.Start(ctx); err != nil {
 		return err
 	}
-	services.RelayTips.Start(ctx)
-	for _, root := range services.ListRoots() {
-		services.Kanban.Schedule(root.ID)
-	}
+	relayTips.Start(ctx)
 
 	go func() {
 		<-ctx.Done()
-		agentProber.Stop()
-		agentPool.CloseAll()
+		if primary.Prober != nil {
+			primary.Prober.Stop()
+		}
+		if primary.Agents != nil {
+			primary.Agents.CloseAll()
+		}
 		server.Shutdown(context.Background())
 	}()
 
-	if services.E2EE != nil {
-		services.E2EE.StartCleanup(ctx.Done())
+	if workspaces.shared.e2ee != nil {
+		workspaces.shared.e2ee.StartCleanup(ctx.Done())
 	}
 
 	if opts.UseTLS {
 		return server.ServeTLS(listener, opts.CertFile, opts.KeyFile)
 	}
 	return server.Serve(listener)
+}
+
+func normalizeRegisteredForkSessions(ctx context.Context, services *api.AppContext) error {
+	for _, root := range services.ListRoots() {
+		manager, err := services.GetSessionManager(root.ID)
+		if err != nil {
+			return fmt.Errorf("initialize session store for root %s: %w", root.ID, err)
+		}
+		if _, err := manager.ListMetas(ctx); err != nil {
+			return fmt.Errorf("normalize fork sessions for root %s: %w", root.ID, err)
+		}
+	}
+	return nil
 }
 
 func startHostedAgentConfigLoop(ctx context.Context, relayBaseURL string, localConfig agent.Config, pool *agent.Pool, prober *agent.Prober) {
@@ -294,6 +323,9 @@ func autoAddExternalProjectRoots(registry *fs.Registry, prefs *preferences.Store
 			existing[normalized] = struct{}{}
 		}
 	}
+	// 清理历史遗留：任务工作树被误收进来的那几笔（task-9 之类）。只摘注册表，不动磁盘
+	// 上的目录 —— 任务还在用它，文件得留着。
+	pruneTaskWorktreeRoots(registry, existing)
 	added := 0
 	for _, projectPath := range agent.DiscoverExternalProjectPaths() {
 		normalized := agent.NormalizeComparablePath(projectPath)
@@ -307,6 +339,12 @@ func autoAddExternalProjectRoots(registry *fs.Registry, prefs *preferences.Store
 			continue
 		}
 		if agent.IsTemporaryWorkDir(projectPath) {
+			continue
+		}
+		// 任务工作树（<root>/.worktree/task-N）不是项目：任务在里头跑，agent 把这个
+		// cwd 记进 ~/.claude/projects，下次扫描就会把它当外部项目收进来（历史上确实
+		// 冒出过 task-9）。git 那条判据拦不住它 —— 见 agent.TaskWorktreeParentRoot 注释。
+		if isTaskWorktreeOfRegisteredProject(projectPath, existing) {
 			continue
 		}
 		gitCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -335,6 +373,41 @@ func autoAddExternalProjectRoots(registry *fs.Registry, prefs *preferences.Store
 	}
 	if added > 0 {
 		log.Printf("[startup/projects] auto added external project roots count=%d", added)
+	}
+}
+
+// isTaskWorktreeOfRegisteredProject 判断 path 是不是某个**已注册项目**下的任务工作树。
+//
+// 只有宿主在册时才当任务工作树排除；只是碰巧长成 <某目录>/.worktree/<name> 这个形状、
+// 而宿主并不在注册表里的，照旧按普通外部项目处理，免得误伤真项目。
+func isTaskWorktreeOfRegisteredProject(path string, existing map[string]struct{}) bool {
+	host := agent.TaskWorktreeParentRoot(path)
+	if host == "" {
+		return false
+	}
+	_, ok := existing[host]
+	return ok
+}
+
+// pruneTaskWorktreeRoots 把历史上被误收进来的任务工作树从注册表里摘掉。
+//
+// 只在「宿主项目确实已注册」时才摘，且只动注册表不动磁盘 —— 任务可能正在这个目录里跑，
+// 删文件会把在跑的任务连坐掉（RemoveManagedDir 同样只摘注册表，正是这个理由）。
+func pruneTaskWorktreeRoots(registry *fs.Registry, existing map[string]struct{}) {
+	for _, root := range registry.List() {
+		host := agent.TaskWorktreeParentRoot(root.RootPath)
+		if host == "" {
+			continue
+		}
+		if _, ok := existing[host]; !ok {
+			continue
+		}
+		if _, err := registry.Remove(root.RootPath); err != nil {
+			log.Printf("[startup/projects] prune task worktree root failed id=%s path=%s err=%v", root.ID, root.RootPath, err)
+			continue
+		}
+		delete(existing, agent.NormalizeComparablePath(root.RootPath))
+		log.Printf("[startup/projects] pruned task worktree root id=%s path=%s host=%s", root.ID, root.RootPath, host)
 	}
 }
 

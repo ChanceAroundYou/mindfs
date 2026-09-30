@@ -22,10 +22,19 @@ type Registry struct {
 	path  string
 	dirs  map[string]RootInfo
 	order []string
+
+	// metaRoot 非空表示本注册表属于某个非主账户：装载与新增的每个根都会被盖上
+	// MetaRoot，其 meta（会话库/任务库/文件元数据）只落在这个账户私有目录下。
+	metaRoot string
 }
 
 func NewRegistry(path string) *Registry {
 	return &Registry{path: path, dirs: make(map[string]RootInfo)}
+}
+
+// NewRegistryAt 建一个归属指定账户的注册表。metaRoot 为空即主账户（沿用旧行为）。
+func NewRegistryAt(path, metaRoot string) *Registry {
+	return &Registry{path: path, dirs: make(map[string]RootInfo), metaRoot: strings.TrimSpace(metaRoot)}
 }
 
 func NewDefaultRegistry() (*Registry, error) {
@@ -35,6 +44,20 @@ func NewDefaultRegistry() (*Registry, error) {
 	}
 	path := filepath.Join(configDir, "registry.json")
 	return NewRegistry(path), nil
+}
+
+// stamp 给根盖上本账户的 meta 根（主账户保持不动）。
+func (r *Registry) stamp(info RootInfo) RootInfo {
+	info.MetaRoot = r.metaRoot
+	return info
+}
+
+// MetaRoot 返回本注册表的账户私有 meta 根（主账户为空串）。
+func (r *Registry) MetaRoot() string {
+	if r == nil {
+		return ""
+	}
+	return r.metaRoot
 }
 
 func (r *Registry) Load() error {
@@ -75,6 +98,7 @@ func (r *Registry) Load() error {
 		seen[id] = struct{}{}
 		info.Name = name
 		info.ID = id
+		info = r.stamp(info)
 		r.dirs[id] = info
 		r.order = append(r.order, id)
 	}
@@ -148,6 +172,8 @@ func (r *Registry) UpsertWithMetaLocation(root, metaLocation string) (RootInfo, 
 			return RootInfo{}, err
 		}
 		dir = NewRootInfo(name, name, root)
+		// MetaLocation 决定「共享 meta」（上传/文件批注）落在项目内还是 ~/.mindfs，
+		// 两个账户必须算出一致结果，所以按正常的偏好走，不因账户而改。
 		dir.MetaLocation = metaLocation
 		dir.CreatedAt = now
 		r.order = append(r.order, name)
@@ -155,6 +181,7 @@ func (r *Registry) UpsertWithMetaLocation(root, metaLocation string) (RootInfo, 
 		return RootInfo{}, fmt.Errorf("%w: %q is already managed at %s; rename the directory before adding %s", ErrRootNameConflict, name, dir.RootPath, root)
 	}
 	dir.UpdatedAt = now
+	dir = r.stamp(dir)
 	r.dirs[name] = dir
 	return dir, r.saveLocked()
 }
@@ -245,6 +272,7 @@ func (r *Registry) Rename(id, name, rootPath string) (RootInfo, error) {
 	dir.Name = name
 	dir.RootPath = filepath.Clean(rootPath)
 	dir.UpdatedAt = time.Now().UTC()
+	dir = r.stamp(dir)
 	delete(r.dirs, id)
 	r.dirs[name] = dir
 	for i, item := range r.order {
@@ -257,6 +285,27 @@ func (r *Registry) Rename(id, name, rootPath string) (RootInfo, error) {
 		r.dirs = previousDirs
 		r.order = previousOrder
 		rollbackMeta()
+		return RootInfo{}, err
+	}
+	return dir, nil
+}
+
+func (r *Registry) UpdateDisplayName(id, displayName string) (RootInfo, error) {
+	id = strings.TrimSpace(id)
+	displayName = strings.TrimSpace(displayName)
+	if id == "" {
+		return RootInfo{}, errors.New("root id required")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	dir, ok := r.dirs[id]
+	if !ok {
+		return RootInfo{}, errors.New("root not found")
+	}
+	dir.DisplayName = displayName
+	dir.UpdatedAt = time.Now().UTC()
+	r.dirs[id] = dir
+	if err := r.saveLocked(); err != nil {
 		return RootInfo{}, err
 	}
 	return dir, nil

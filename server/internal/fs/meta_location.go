@@ -150,10 +150,18 @@ func renameHomeMeta(old RootInfo, nextID, nextRootPath string) (func(), error) {
 	if old.effectiveMetaLocation() != MetaLocationHome {
 		return func() {}, nil
 	}
+	// 根还没有产生任何 meta（加了目录但没开过会话）时没什么可搬的。
+	// 账户私有 meta 恒为 home 语义，会走到这里，不能因此把改名卡住。
+	oldDir := old.MetaDir()
+	if _, err := os.Stat(oldDir); err != nil {
+		if os.IsNotExist(err) {
+			return func() {}, nil
+		}
+		return nil, err
+	}
 	if err := old.ensureHomeMetaIdentity(); err != nil {
 		return nil, err
 	}
-	oldDir := old.MetaDir()
 	next := old
 	next.ID = nextID
 	next.Name = nextID

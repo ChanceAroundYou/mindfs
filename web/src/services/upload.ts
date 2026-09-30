@@ -1,4 +1,5 @@
 import { appURL } from "./base";
+import { getRootNodeId } from "./rootNode";
 import { e2eeService } from "./e2ee";
 
 export type UploadedFile = {
@@ -26,7 +27,9 @@ export async function uploadFiles(params: {
   dir?: string;
   onProgress?: (progress: UploadProgress) => void;
   signal?: AbortSignal;
+  nodeId?: string;
 }): Promise<UploadedFile[]> {
+  params.nodeId = params.nodeId || getRootNodeId(params.rootId);
   const formData = new FormData();
   params.files.forEach((file) => {
     formData.append("files", file);
@@ -36,7 +39,7 @@ export async function uploadFiles(params: {
   }
 
   const query = new URLSearchParams({ root: params.rootId });
-  const requestURL = appURL("/api/upload", query);
+  const requestURL = appURL("/api/upload", query, params.nodeId);
   const headers = e2eeService.isRequired()
     ? await e2eeService.fileProofHeaders("POST", requestURL)
     : undefined;

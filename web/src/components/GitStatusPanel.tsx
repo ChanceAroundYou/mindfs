@@ -6,6 +6,7 @@ import {
   type GitStatusPayload,
 } from "../services/git";
 import { useI18n } from "../i18n";
+import { confirmDialog } from "../services/dialog";
 
 type GitStatusPanelProps = {
   rootId?: string;
@@ -638,8 +639,8 @@ export function GitStatusPanel({
                   width: "100%",
                   border: "none",
                   background: selectedActionPath === actionKey
-                    ? "linear-gradient(180deg, rgba(59, 130, 246, 0.14), rgba(59, 130, 246, 0.06))"
-                    : "linear-gradient(180deg, rgba(59, 130, 246, 0.08), rgba(59, 130, 246, 0.03))",
+                    ? "linear-gradient(180deg, color-mix(in srgb, var(--accent-color) 14%, transparent), color-mix(in srgb, var(--accent-color) 6%, transparent))"
+                    : "linear-gradient(180deg, color-mix(in srgb, var(--accent-color) 8%, transparent), color-mix(in srgb, var(--accent-color) 3%, transparent))",
                   padding: compact ? "6px 7px" : "6px 10px",
                   cursor: item.is_dir === true ? "default" : "pointer",
                   textAlign: "left",
@@ -649,13 +650,13 @@ export function GitStatusPanel({
                 }}
                 onMouseEnter={(e) => {
                   setHoveredActionPath(actionKey);
-                  e.currentTarget.style.background = "linear-gradient(180deg, rgba(59, 130, 246, 0.12), rgba(59, 130, 246, 0.05))";
+                  e.currentTarget.style.background = "linear-gradient(180deg, color-mix(in srgb, var(--accent-color) 12%, transparent), color-mix(in srgb, var(--accent-color) 5%, transparent))";
                 }}
                 onMouseLeave={(e) => {
                   setHoveredActionPath((current) => current === actionKey ? "" : current);
                   e.currentTarget.style.background = selectedActionPath === actionKey
-                    ? "linear-gradient(180deg, rgba(59, 130, 246, 0.14), rgba(59, 130, 246, 0.06))"
-                    : "linear-gradient(180deg, rgba(59, 130, 246, 0.08), rgba(59, 130, 246, 0.03))";
+                    ? "linear-gradient(180deg, color-mix(in srgb, var(--accent-color) 14%, transparent), color-mix(in srgb, var(--accent-color) 6%, transparent))"
+                    : "linear-gradient(180deg, color-mix(in srgb, var(--accent-color) 8%, transparent), color-mix(in srgb, var(--accent-color) 3%, transparent))";
                 }}
               >
                 <span style={{ width: compact ? "18px" : "24px", color: renderStatusColor(item.status), fontSize: "12px", fontWeight: 700, flexShrink: 0 }}>
@@ -697,13 +698,20 @@ export function GitStatusPanel({
                       title={t("git.discardChanges")}
                       disabled={!onDiscardItem || !!actionBusy}
                       onClick={() => {
-                        if (item.status === "??") {
-                          const ok = window.confirm(t("git.confirmDeleteUntracked", { path: item.path }));
-                          if (!ok) {
-                            return;
-                          }
+                        const runDiscard = () =>
+                          runPanelAction(`discard:${item.path}`, () => onDiscardItem?.(item));
+                        if (item.status !== "??") {
+                          return runDiscard();
                         }
-                        return runPanelAction(`discard:${item.path}`, () => onDiscardItem?.(item));
+                        void confirmDialog({
+                          message: t("git.confirmDeleteUntracked", { path: item.path }),
+                          danger: true,
+                        }).then((ok) => {
+                          if (ok) {
+                            return runDiscard();
+                          }
+                          return undefined;
+                        });
                       }}
                     >
                       <UndoIcon />

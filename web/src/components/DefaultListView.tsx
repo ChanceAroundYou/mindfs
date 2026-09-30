@@ -1,7 +1,8 @@
 import React from "react";
 import { FileOperationItems, MoreMenuButton, moreMenuPopoverStyle, menuOverlayStyle, MoveFilePopover } from "./FileOperations";
-import { rootBadgeStyle } from "./rootBadgeStyle";
+import { rootBadgeButtonStyle } from "./rootBadgeStyle";
 import { SymlinkBadge } from "./SymlinkBadge";
+import { useResponsive } from "./action/styleHelpers";
 import {
   DIRECTORY_SORT_OPTIONS,
   type DirectorySortMode,
@@ -48,6 +49,7 @@ type DefaultListViewProps = {
   rootPath?: string;
   onFileOperationComplete?: () => void | Promise<void>;
   root?: string;
+  rootDisplayName?: string;
   path?: string;
   entries: FileEntry[];
   errorMessage?: string;
@@ -74,8 +76,12 @@ type DefaultListViewProps = {
   onRemoveWorktree?: () => void;
   onOpenScheduledAgentTasks?: () => void;
   currentViewMode?: MainContentViewMode;
-  onViewModeChange?: (mode: MainContentViewMode) => void;
+  /** 跨项目工作台态：顶部不显示项目名面包屑（工作台不属于任何项目），改显示视图名 */
+  workspaceMode?: boolean;
+  /** 配合 workspaceMode，显示「N 个项目」 */
+  workspaceProjectCount?: number;
   menuOverlay?: React.ReactNode;
+  rootColor?: string | null;
 };
 
 function formatCompactTime(value?: string): string {
@@ -196,6 +202,7 @@ function GitBranchMenuIcon({
 // 路径导航组件
 function Breadcrumbs({
   root,
+  rootDisplayName,
   path,
   onPathClick,
   editingRoot = false,
@@ -205,8 +212,10 @@ function Breadcrumbs({
   onRootDraftChange,
   onRootRenameSubmit,
   onRootRenameCancel,
+  rootColor = null,
 }: {
   root?: string;
+  rootDisplayName?: string;
   path: string;
   onPathClick?: (path: string) => void;
   editingRoot?: boolean;
@@ -216,6 +225,7 @@ function Breadcrumbs({
   onRootDraftChange?: (value: string) => void;
   onRootRenameSubmit?: () => void;
   onRootRenameCancel?: () => void;
+  rootColor?: string | null;
 }) {
   const { t } = useI18n();
   const normalizedPath =
@@ -324,6 +334,42 @@ function Breadcrumbs({
               <button
                 type="button"
                 onMouseDown={(event) => event.preventDefault()}
+                onClick={onRootRenameSubmit}
+                disabled={rootRenaming}
+                aria-label={t("sessionList.confirmRename")}
+                style={{
+                  width: "22px",
+                  height: "22px",
+                  borderRadius: "6px",
+                  border: "none",
+                  background: "transparent",
+                  color: "var(--accent-color)",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  cursor: rootRenaming ? "default" : "pointer",
+                  opacity: rootRenaming ? 0.6 : 1,
+                  padding: 0,
+                  flexShrink: 0,
+                }}
+              >
+                <svg
+                  width="13"
+                  height="13"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                onMouseDown={(event) => event.preventDefault()}
                 onClick={onRootRenameCancel}
                 disabled={rootRenaming}
                 aria-label={t("directory.cancelRename")}
@@ -360,11 +406,14 @@ function Breadcrumbs({
               </button>
             </span>
           ) : (
-            <span
+            <button
+              type="button"
               data-onboarding="project-home"
               onClick={() => onPathClick?.(".")}
               style={{
-                ...rootBadgeStyle,
+                ...rootBadgeButtonStyle,
+                background: "var(--node-badge-bg)",
+                color: String(rootColor || "").trim() || "var(--text-primary)",
                 cursor: "pointer",
               }}
               onMouseEnter={(e) => {
@@ -374,8 +423,8 @@ function Breadcrumbs({
                 e.currentTarget.style.textDecoration = "none";
               }}
             >
-              {root}
-            </span>
+              {rootDisplayName || root}
+            </button>
           )}
           {parts.length > 0 && (
             <span style={{ opacity: 0.4, fontSize: "10px", flexShrink: 0 }}>
@@ -419,6 +468,7 @@ function Breadcrumbs({
 
 export function DefaultListView({
   root,
+  rootDisplayName,
   path = "",
   entries,
   errorMessage,
@@ -447,8 +497,10 @@ export function DefaultListView({
   onRemoveWorktree,
   onOpenScheduledAgentTasks,
   currentViewMode = "task-kanban",
-  onViewModeChange,
+  workspaceMode = false,
+  workspaceProjectCount = 0,
   menuOverlay = null,
+  rootColor = null,
 }: DefaultListViewProps) {
   const { t } = useI18n();
   const inputRef = React.useRef<HTMLInputElement>(null);
@@ -458,9 +510,8 @@ export function DefaultListView({
   const [moveOpen, setMoveOpen] = React.useState(false);
   React.useEffect(() => { setMoveOpen(false); }, [root, path]);
   const [isSortMenuOpen, setIsSortMenuOpen] = React.useState(false);
-  const [isViewMenuOpen, setIsViewMenuOpen] = React.useState(false);
   const [editingRoot, setEditingRoot] = React.useState(false);
-  const [rootDraft, setRootDraft] = React.useState(root || "");
+  const [rootDraft, setRootDraft] = React.useState(rootDisplayName || root || "");
   const [rootRenaming, setRootRenaming] = React.useState(false);
   const sortedEntries = React.useMemo(() => {
     const visibleEntries = showHiddenFiles
@@ -476,7 +527,9 @@ export function DefaultListView({
   const isRootView = !!root && (!path || path === root || path === ".");
   const showTaskKanban = currentViewMode === "task-kanban";
   const showFileBrowser = currentViewMode === "file-browser";
-  const currentViewLabel = showTaskKanban ? t("directory.taskKanban") : t("directory.fileBrowser");
+  // 看板/工作台的内边距跟着设备走：移动端底部贴着输入区，再留 24px 会多出一道
+  // 永远用不上的空带；顶部反而要加大（8px → 16px）才和左右侧的 16px 对齐。
+  const { isMobile } = useResponsive();
   const sortLabel = (value: DirectorySortControlValue): string => {
     if (value === "inherit") return t("directory.followGlobal");
     const key = sortLabelKeys[value];
@@ -485,9 +538,9 @@ export function DefaultListView({
 
   React.useEffect(() => {
     if (!editingRoot) {
-      setRootDraft(root || "");
+      setRootDraft(rootDisplayName || root || "");
     }
-  }, [editingRoot, root]);
+  }, [editingRoot, root, rootDisplayName]);
 
   React.useEffect(() => {
     if (!editingRoot) {
@@ -514,15 +567,15 @@ export function DefaultListView({
   const cancelRootRename = React.useCallback(() => {
     setEditingRoot(false);
     setRootRenaming(false);
-    setRootDraft(root || "");
-  }, [root]);
+    setRootDraft(rootDisplayName || root || "");
+  }, [root, rootDisplayName]);
 
   const submitRootRename = React.useCallback(async () => {
     if (rootRenaming) {
       return;
     }
     const trimmed = rootDraft.trim();
-    if (!trimmed || trimmed === String(root || "").trim()) {
+    if (!trimmed || trimmed === String(rootDisplayName || root || "").trim()) {
       cancelRootRename();
       return;
     }
@@ -542,7 +595,7 @@ export function DefaultListView({
     } finally {
       setRootRenaming(false);
     }
-  }, [cancelRootRename, onRenameRoot, root, rootDraft, rootRenaming]);
+  }, [cancelRootRename, onRenameRoot, root, rootDisplayName, rootDraft, rootRenaming]);
 
   return (
     <div
@@ -575,10 +628,25 @@ export function DefaultListView({
             flex: 1,
           }}
         >
+          {/* 跨项目工作台不属于任何项目，面包屑（项目名 + 路径）在它是错的：
+              顶部写着当前选中的项目名，人会以为自己正看着那个项目。
+              换成视图名，和 MainViewSwitcher 的「工作台/看板/文件/对话」对齐。 */}
+          {workspaceMode ? (
+            <div style={{ display: "flex", alignItems: "baseline", gap: "8px", minWidth: 0 }}>
+              <span style={{ fontSize: "13px", fontWeight: 800, color: "var(--text-color)", whiteSpace: "nowrap" }}>
+                {t("view.workspace")}
+              </span>
+              <span style={{ fontSize: "11px", color: "var(--text-secondary)", whiteSpace: "nowrap" }}>
+                {t("task.workspaceProjectCount", { count: workspaceProjectCount })}
+              </span>
+            </div>
+          ) : (
           <Breadcrumbs
             root={root}
+            rootDisplayName={rootDisplayName || root}
             path={path || ""}
             onPathClick={onPathClick}
+            rootColor={rootColor}
             editingRoot={editingRoot}
             rootDraft={rootDraft}
             rootRenaming={rootRenaming}
@@ -589,7 +657,8 @@ export function DefaultListView({
             }}
             onRootRenameCancel={cancelRootRename}
           />
-          {uploadProgress ? (
+          )}
+          {!workspaceMode && uploadProgress ? (
           <div style={{ marginLeft: "10px", flexShrink: 0 }}>
             <CompactUploadProgress
               progress={uploadProgress}
@@ -631,7 +700,6 @@ export function DefaultListView({
                   const nextOpen = !open;
                   if (nextOpen) {
                     setIsSortMenuOpen(false);
-                    setIsViewMenuOpen(false);
                   }
                   return nextOpen;
                 });
@@ -645,7 +713,6 @@ export function DefaultListView({
                   type="button"
                   onClick={() => {
                     setIsSortMenuOpen((open) => !open);
-                    setIsViewMenuOpen(false);
                   }}
                   style={{
                     width: "100%",
@@ -757,86 +824,7 @@ export function DefaultListView({
                     })}
                   </>
                 ) : null}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsViewMenuOpen((open) => !open);
-                    setIsSortMenuOpen(false);
-                  }}
-                  style={{
-                    width: "100%",
-                    border: "none",
-                    background: "transparent",
-                    color: "var(--text-primary)",
-                    borderRadius: "8px",
-                    padding: "8px 10px",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "8px",
-                    textAlign: "left",
-                    cursor: "pointer",
-                    fontSize: "12px",
-                  }}
-                  aria-expanded={isViewMenuOpen}
-                >
-                  <span style={{ flex: 1 }}>{t("directory.currentView")}</span>
-                  <span
-                    style={{ color: "var(--text-secondary)", fontSize: "11px" }}
-                  >
-                    {currentViewLabel}
-                  </span>
-                  <ChevronRight isOpen={isViewMenuOpen} />
-                </button>
-                {isViewMenuOpen ? (
-                  <>
-                    {([
-                      ["task-kanban", t("directory.taskKanban")],
-                      ["file-browser", t("directory.fileBrowser")],
-                    ] as const).map(([mode, label]) => {
-                      const active = currentViewMode === mode;
-                      return (
-                        <button
-                          key={mode}
-                          type="button"
-                          onClick={() => {
-                            onViewModeChange?.(mode);
-                            setIsMenuOpen(false);
-                            setIsSortMenuOpen(false);
-                            setIsViewMenuOpen(false);
-                          }}
-                          style={{
-                            width: "100%",
-                            border: "none",
-                            background: active
-                              ? "var(--selection-bg)"
-                              : "transparent",
-                            color: active
-                              ? "var(--accent-color)"
-                              : "var(--text-primary)",
-                            borderRadius: "8px",
-                            padding: "8px 10px",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "space-between",
-                            textAlign: "left",
-                            cursor: "pointer",
-                            fontSize: "12px",
-                          }}
-                        >
-                          <span>{label}</span>
-                          <span
-                            style={{
-                              fontSize: "11px",
-                              opacity: active ? 1 : 0,
-                            }}
-                          >
-                            ✓
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </>
-                ) : null}
+                {/* 主视图切换已收敛到左栏底部的 MainViewSwitcher（唯一入口），此处不再显示模式字样 */}
                 <div
                   style={{
                     height: "1px",
@@ -1037,7 +1025,7 @@ export function DefaultListView({
                     <button
                       type="button"
                       onClick={() => {
-                        setRootDraft(root || "");
+                        setRootDraft(rootDisplayName || root || "");
                         setEditingRoot(true);
                         setIsMenuOpen(false);
                       }}
@@ -1201,7 +1189,14 @@ export function DefaultListView({
 
       <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
         {showTaskKanban && topContent ? (
-          <div style={{ padding: "8px 16px 24px" }}>{topContent}</div>
+          /* 看板/工作台靠 flex 链铺满主区，这一层是链子的起点。
+             必须是**确定高度**（height）而不是 minHeight：子级是 grid，
+             行高用百分比（移动端 50% 切两行）。minHeight 只给下限、
+             本身是 auto，百分比在 auto 高度里解析不出来 —— 行高退回内容高度，
+             四块两行又撑出屏幕。父级是 display:block，所以还得自己声明 flex 列，
+             否则子级的 flex:1 完全不生效（它不是 flex item）。
+             box-sizing 是全局 border-box，padding 算在这 100% 里面，不会外溢。 */
+          <div style={{ padding: isMobile ? "16px 16px 0" : "8px 16px 24px", height: "100%", display: "flex", flexDirection: "column" }}>{topContent}</div>
         ) : null}
         {showFileBrowser ? (
           <div style={{ padding: "24px 16px" }}>

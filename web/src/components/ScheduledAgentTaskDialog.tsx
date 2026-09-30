@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { AgentIcon } from "./AgentIcon";
 import { AgentSelector } from "./AgentSelector";
 import { renderToolIcon } from "./stream/ToolCallCard";
+import { has1MSuffix, resolveEffortOnSwitch, resolveLongContextOnSwitch, strip1MSuffix, with1MSuffix } from "./action/modelUtils";
 import type { AgentStatus } from "../services/agents";
 import {
   createScheduledAgentTask,
@@ -12,6 +13,7 @@ import {
   type ScheduledAgentTask,
 } from "../services/scheduledTasks";
 import { useI18n, type Locale, type MessageKey } from "../i18n";
+import { confirmDialog } from "../services/dialog";
 
 type DialogView = "list" | "create" | "edit";
 
@@ -527,8 +529,10 @@ export function ScheduledAgentTaskDialog({
   };
 
   const remove = async (task: ScheduledAgentTask) => {
-    if (!rootId || !window.confirm(t("scheduled.confirmDelete", { name: task.name || task.id })))
+    if (!rootId) return;
+    if (!await confirmDialog({ message: t("scheduled.confirmDelete", { name: task.name || task.id }), danger: true })) {
       return;
+    }
     setError("");
     try {
       await deleteScheduledAgentTask(rootId, task.id);
@@ -991,16 +995,37 @@ export function ScheduledAgentTaskDialog({
                 compact
                 menuPlacement="bottom"
                 showChevron
-                onAgentChange={(agent, model) =>
+                onAgentChange={(agent, model) => {
+                  const status = agents.find((item) => item.name === agent) || null;
+                  const nextBaseModel = String(model || "").trim();
+                  const nextModelInfo = status?.models?.find(
+                    (item) => item.id === nextBaseModel || strip1MSuffix(item.id) === strip1MSuffix(nextBaseModel),
+                  );
+                  const nextAvailableEfforts = nextModelInfo?.efforts ?? status?.efforts ?? [];
                   setForm((prev) => ({
                     ...prev,
                     agent,
-                    model: model || "",
+                    // form.model 会被原样 POST 出去（见提交处），所以这里丢了 [1m] 是真的
+                    // 影响执行，不只是显示。下拉回传裸 id，须按继承规则补回后缀。
+                    model: with1MSuffix(
+                      nextBaseModel,
+                      resolveLongContextOnSwitch({
+                        nextAgent: agent,
+                        nextModel: nextBaseModel,
+                        prevLongContext: has1MSuffix(form.model),
+                      }),
+                    ),
                     mode: "",
-                    effort: "",
+                    effort: resolveEffortOnSwitch({
+                      nextAgent: agent,
+                      nextModel: nextBaseModel,
+                      prevEffort: form.effort,
+                      defaultEffort: status?.default_effort || "",
+                      availableEfforts: nextAvailableEfforts,
+                    }),
                     fast_service: "",
-                  }))
-                }
+                  }));
+                }}
                 onModeChange={(mode) =>
                   setForm((prev) => ({ ...prev, mode: mode || "" }))
                 }

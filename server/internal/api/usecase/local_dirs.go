@@ -61,14 +61,28 @@ func (s *Service) ListLocalDirs(_ context.Context, in ListLocalDirsInput) (ListL
 	}
 	items := make([]LocalDirItem, 0, len(entries))
 	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
 		name := strings.TrimSpace(entry.Name())
 		if name == "" {
 			continue
 		}
 		childPath := filepath.Join(absPath, name)
+		info, err := entry.Info()
+		if err != nil {
+			// Permission-gated or special entries: skip rather than blank the listing.
+			continue
+		}
+		isDir := entry.IsDir()
+		if info.Mode()&os.ModeSymlink != 0 {
+			target, err := os.Stat(childPath)
+			if err != nil {
+				// Broken symlink.
+				continue
+			}
+			isDir = target.IsDir()
+		}
+		if !isDir {
+			continue
+		}
 		normalizedChild := normalizeLocalDirPath(childPath)
 		item := LocalDirItem{
 			Name:  name,

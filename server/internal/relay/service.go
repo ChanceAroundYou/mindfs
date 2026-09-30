@@ -15,6 +15,8 @@ import (
 	"strings"
 	"time"
 
+	"mindfs/internal/deploy"
+
 	"github.com/gorilla/websocket"
 	"github.com/hashicorp/yamux"
 )
@@ -497,7 +499,7 @@ func (s *Service) proxyWebSocketToBase(req *http.Request, stream io.ReadWriter, 
 }
 
 func (s *Service) waitForLocalServer(ctx context.Context) error {
-	healthURL := strings.TrimSuffix(s.localURL, "/") + "/health"
+	healthURL := strings.TrimSuffix(s.localURL, "/") + deploy.PrefixedPath("/health")
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
 

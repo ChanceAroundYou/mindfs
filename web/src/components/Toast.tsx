@@ -103,7 +103,7 @@ function Toast({ error, onClose, onRetry }: ToastProps): React.ReactElement {
       ? "rgba(239, 68, 68, 0.95)"
       : error.severity === "warning"
       ? "rgba(245, 158, 11, 0.95)"
-      : "rgba(59, 130, 246, 0.95)";
+      : "var(--accent-color)";
 
   const message = error.usesDefaultMessage && error.messageKey ? t(error.messageKey) : error.message;
 

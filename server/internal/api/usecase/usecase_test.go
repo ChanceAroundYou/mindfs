@@ -20,125 +20,7 @@ import (
 	rootfs "mindfs/server/internal/fs"
 	"mindfs/server/internal/preferences"
 	"mindfs/server/internal/session"
-	"mindfs/server/internal/testutil"
 )
-
-func TestFileOperations(t *testing.T) {
-	for _, directory := range []bool{false, true} {
-		name := "file"
-		if directory {
-			name = "directory"
-		}
-		t.Run(name, func(t *testing.T) {
-			root := rootfs.NewRootInfo("test", "test", t.TempDir())
-			service := Service{Registry: uploadTestRegistry{root: root}}
-			source := filepath.Join(root.RootPath, "source")
-			contentPath := source
-			if directory {
-				if err := os.Mkdir(source, 0700); err != nil {
-					t.Fatal(err)
-				}
-				contentPath = filepath.Join(source, "child")
-			}
-			if err := os.WriteFile(contentPath, []byte("keep content"), 0600); err != nil {
-				t.Fatal(err)
-			}
-			run := func(path, action, name, destination string) error {
-				return service.OperateFile(FileOperationInput{Root: root.ID, Path: path, Action: action, Name: name, Destination: destination})
-			}
-			if err := run(".", "delete", "", ""); err == nil {
-				t.Fatal("root deletion allowed")
-			}
-			if err := run("../outside", "delete", "", ""); err == nil {
-				t.Fatal("traversal allowed")
-			}
-			if err := run("source", "rename", "../outside", ""); err == nil {
-				t.Fatal("invalid name allowed")
-			}
-			if directory {
-				if err := run("source", "move", "", source); err == nil {
-					t.Fatal("move into self allowed")
-				}
-			}
-			if err := os.WriteFile(filepath.Join(root.RootPath, "existing"), []byte("existing"), 0600); err != nil {
-				t.Fatal(err)
-			}
-			if err := run("source", "rename", "existing", ""); !errors.Is(err, os.ErrExist) {
-				t.Fatalf("conflict: %v", err)
-			}
-			if err := run("source", "rename", "renamed", ""); err != nil {
-				t.Fatal(err)
-			}
-			target := filepath.Join(root.RootPath, "target")
-			if err := os.Mkdir(target, 0700); err != nil {
-				t.Fatal(err)
-			}
-			if err := run("renamed", "move", "", target); err != nil {
-				t.Fatal(err)
-			}
-			moved := filepath.Join(target, "renamed")
-			if directory {
-				moved = filepath.Join(moved, "child")
-			}
-			if content, err := os.ReadFile(moved); err != nil || string(content) != "keep content" {
-				t.Fatalf("content lost: %q %v", content, err)
-			}
-			if err := run("target/renamed", "delete", "", ""); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := os.Stat(filepath.Join(target, "renamed")); !os.IsNotExist(err) {
-				t.Fatalf("not deleted: %v", err)
-			}
-		})
-	}
-}
-
-func TestFileOperationSymlinkAndExternalMove(t *testing.T) {
-	root := rootfs.NewRootInfo("test", "test", t.TempDir())
-	service := Service{Registry: uploadTestRegistry{root: root}}
-	external := t.TempDir()
-	target := filepath.Join(external, "keep")
-	if err := os.WriteFile(target, []byte("keep"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(target, filepath.Join(root.RootPath, "link")); err != nil {
-		t.Skip(err)
-	}
-	if err := service.OperateFile(FileOperationInput{Root: root.ID, Path: "link", Action: "delete"}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(target); err != nil {
-		t.Fatalf("deleted link target: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(root.RootPath, "move"), []byte("move"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := service.OperateFile(FileOperationInput{Root: root.ID, Path: "move", Action: "move", Destination: external}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(external, "move")); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestFileOperationUsesLiteralNames(t *testing.T) {
-	root := rootfs.NewRootInfo("test", "test", t.TempDir())
-	service := Service{Registry: uploadTestRegistry{root: root}}
-	for _, name := range []string{"report", "report#1"} {
-		if err := os.WriteFile(filepath.Join(root.RootPath, name), []byte(name), 0600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := service.OperateFile(FileOperationInput{Root: root.ID, Path: "report#1", Action: "delete"}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(root.RootPath, "report#1")); !os.IsNotExist(err) {
-		t.Fatalf("literal file not deleted: %v", err)
-	}
-	if content, err := os.ReadFile(filepath.Join(root.RootPath, "report")); err != nil || string(content) != "report" {
-		t.Fatalf("unrelated file modified: %q, %v", content, err)
-	}
-}
 
 func TestSaveUploadedFilesDefaultsToAttachmentDirAndRenamesConflicts(t *testing.T) {
 	rootDir := t.TempDir()
@@ -606,7 +488,7 @@ func TestDeleteSessionDeletesSubSessionTree(t *testing.T) {
 		t.Fatalf("create sibling: %v", err)
 	}
 
-	if err := service.DeleteSession(ctx, DeleteSessionInput{RootID: root.ID, Key: parent.Key}); err != nil {
+	if _, err := service.DeleteSession(ctx, DeleteSessionInput{RootID: root.ID, Key: parent.Key}); err != nil {
 		t.Fatalf("delete parent: %v", err)
 	}
 	for _, deleted := range []*session.Session{parent, child, grandchild} {
@@ -617,6 +499,303 @@ func TestDeleteSessionDeletesSubSessionTree(t *testing.T) {
 	if _, err := manager.Get(ctx, sibling.Key, 0); err != nil {
 		t.Fatalf("sibling should remain: %v", err)
 	}
+}
+
+func TestDeleteSessionKeepsForkSession(t *testing.T) {
+	ctx := context.Background()
+	root := rootfs.NewRootInfo("mindfs", "mindfs", t.TempDir())
+	manager := session.NewManager(root)
+	service := Service{Registry: &commandTestRegistry{root: root, manager: manager}}
+
+	parent, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, Name: "parent"})
+	if err != nil {
+		t.Fatalf("create parent: %v", err)
+	}
+	fork, err := manager.Create(ctx, session.CreateInput{
+		Type:   session.TypeChat,
+		Source: `{"type":"fork"}`,
+		Name:   "fork",
+	})
+	if err != nil {
+		t.Fatalf("create fork: %v", err)
+	}
+	subagent, err := manager.Create(ctx, session.CreateInput{
+		Type:             session.TypeChat,
+		ParentSessionKey: parent.Key,
+		Name:             "subagent",
+	})
+	if err != nil {
+		t.Fatalf("create subagent: %v", err)
+	}
+
+	if _, err := service.DeleteSession(ctx, DeleteSessionInput{RootID: root.ID, Key: parent.Key}); err != nil {
+		t.Fatalf("delete parent: %v", err)
+	}
+	if _, err := manager.Get(ctx, parent.Key, 0); err == nil {
+		t.Fatal("parent still exists")
+	}
+	if _, err := manager.Get(ctx, fork.Key, 0); err != nil {
+		t.Fatalf("fork should remain: %v", err)
+	}
+	if _, err := manager.Get(ctx, subagent.Key, 0); err == nil {
+		t.Fatal("subagent still exists")
+	}
+}
+
+func TestDeleteSessionReturnsCascadeKeys(t *testing.T) {
+	// 返回值给上层解绑任务引用用：必须含整棵子树，不能只有被点的那个。
+	ctx := context.Background()
+	root := rootfs.NewRootInfo("mindfs", "mindfs", t.TempDir())
+	manager := session.NewManager(root)
+	service := Service{Registry: &commandTestRegistry{root: root, manager: manager}}
+
+	parent, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, Name: "parent"})
+	if err != nil {
+		t.Fatalf("create parent: %v", err)
+	}
+	child, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, ParentSessionKey: parent.Key, Name: "child"})
+	if err != nil {
+		t.Fatalf("create child: %v", err)
+	}
+	grandchild, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, ParentSessionKey: child.Key, Name: "grandchild"})
+	if err != nil {
+		t.Fatalf("create grandchild: %v", err)
+	}
+	sibling, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, Name: "sibling"})
+	if err != nil {
+		t.Fatalf("create sibling: %v", err)
+	}
+
+	keys, err := service.DeleteSession(ctx, DeleteSessionInput{RootID: root.ID, Key: parent.Key})
+	if err != nil {
+		t.Fatalf("delete parent: %v", err)
+	}
+	got := map[string]bool{}
+	for _, key := range keys {
+		got[key] = true
+	}
+	for _, want := range []string{parent.Key, child.Key, grandchild.Key} {
+		if !got[want] {
+			t.Fatalf("deleted keys %v missing %s", keys, want)
+		}
+	}
+	if got[sibling.Key] {
+		t.Fatalf("sibling must not be reported deleted: %v", keys)
+	}
+}
+
+func TestArchiveSessionDeletesSubtreeButKeepsSelfContent(t *testing.T) {
+	ctx := context.Background()
+	root := rootfs.NewRootInfo("mindfs", "mindfs", t.TempDir())
+	manager := session.NewManager(root)
+	service := Service{Registry: &commandTestRegistry{root: root, manager: manager}}
+
+	parent, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, Name: "parent"})
+	if err != nil {
+		t.Fatalf("create parent: %v", err)
+	}
+	child, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, ParentSessionKey: parent.Key, Name: "child"})
+	if err != nil {
+		t.Fatalf("create child: %v", err)
+	}
+	grandchild, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, ParentSessionKey: child.Key, Name: "grandchild"})
+	if err != nil {
+		t.Fatalf("create grandchild: %v", err)
+	}
+	sibling, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, Name: "sibling"})
+	if err != nil {
+		t.Fatalf("create sibling: %v", err)
+	}
+	if err := manager.AddExchangeForAgent(ctx, parent, "user", "hello", "", "", "", ""); err != nil {
+		t.Fatalf("add exchange: %v", err)
+	}
+
+	out, err := service.ArchiveSession(ctx, ArchiveSessionInput{RootID: root.ID, Key: parent.Key, Archived: true})
+	if err != nil {
+		t.Fatalf("archive parent: %v", err)
+	}
+	if out.Session == nil || out.Session.ArchivedAt == nil {
+		t.Fatal("archive should return the archived session")
+	}
+	// 父会话：只打归档标记，正文完好（深链接/搜索仍要能打开它）
+	reloaded, err := manager.Get(ctx, parent.Key, 0)
+	if err != nil {
+		t.Fatalf("archived session must still be readable: %v", err)
+	}
+	if reloaded.ArchivedAt == nil {
+		t.Fatal("parent should be archived")
+	}
+	if len(reloaded.Exchanges) == 0 {
+		t.Fatal("archived session lost its exchanges")
+	}
+	// 子会话：是**删除**，不是归档 —— 两种不同的状态
+	gotDeleted := make(map[string]bool)
+	for _, key := range out.DeletedKeys {
+		gotDeleted[key] = true
+	}
+	for _, item := range []*session.Session{child, grandchild} {
+		if !gotDeleted[item.Key] {
+			t.Fatalf("descendant %s should be reported deleted, got %v", item.Key, out.DeletedKeys)
+		}
+		if _, err := manager.Get(ctx, item.Key, 0); err == nil {
+			t.Fatalf("descendant %s should be gone from the store", item.Key)
+		}
+	}
+	if gotDeleted[parent.Key] {
+		t.Fatal("the archived session itself must not be reported deleted")
+	}
+	if other, err := manager.Get(ctx, sibling.Key, 0); err != nil || other.ArchivedAt != nil {
+		t.Fatalf("sibling must stay visible: err=%v archivedAt=%v", err, other.ArchivedAt)
+	}
+}
+
+func TestArchiveSessionUnarchiveRestoresVisibility(t *testing.T) {
+	ctx := context.Background()
+	root := rootfs.NewRootInfo("mindfs", "mindfs", t.TempDir())
+	manager := session.NewManager(root)
+	service := Service{Registry: &commandTestRegistry{root: root, manager: manager}}
+
+	created, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, Name: "s"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := service.ArchiveSession(ctx, ArchiveSessionInput{RootID: root.ID, Key: created.Key, Archived: true}); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+	if _, err := service.ArchiveSession(ctx, ArchiveSessionInput{RootID: root.ID, Key: created.Key, Archived: false}); err != nil {
+		t.Fatalf("unarchive: %v", err)
+	}
+	got, err := manager.Get(ctx, created.Key, 0)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if got.ArchivedAt != nil {
+		t.Fatalf("ArchivedAt = %v, want nil", got.ArchivedAt)
+	}
+}
+
+func TestArchiveSessionKeepsForkSession(t *testing.T) {
+	// 与 TestDeleteSessionKeepsForkSession 对称：fork 只记来源，不是子会话，
+	// 所以既不会被归档连带删掉，也不会被取消归档波及。
+	ctx := context.Background()
+	root := rootfs.NewRootInfo("mindfs", "mindfs", t.TempDir())
+	manager := session.NewManager(root)
+	service := Service{Registry: &commandTestRegistry{root: root, manager: manager}}
+
+	parent, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, Name: "parent"})
+	if err != nil {
+		t.Fatalf("create parent: %v", err)
+	}
+	fork, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, Source: `{"type":"fork"}`, Name: "fork"})
+	if err != nil {
+		t.Fatalf("create fork: %v", err)
+	}
+	subagent, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, ParentSessionKey: parent.Key, Name: "subagent"})
+	if err != nil {
+		t.Fatalf("create subagent: %v", err)
+	}
+
+	out, err := service.ArchiveSession(ctx, ArchiveSessionInput{RootID: root.ID, Key: parent.Key, Archived: true})
+	if err != nil {
+		t.Fatalf("archive parent: %v", err)
+	}
+	// 子会话是被删掉的（不是被归档）
+	if _, err := manager.Get(ctx, subagent.Key, 0); err == nil {
+		t.Fatal("subagent should be deleted along with its parent")
+	}
+	if len(out.DeletedKeys) != 1 || out.DeletedKeys[0] != subagent.Key {
+		t.Fatalf("DeletedKeys = %v, want [%s]", out.DeletedKeys, subagent.Key)
+	}
+	forkGot, err := manager.Get(ctx, fork.Key, 0)
+	if err != nil {
+		t.Fatalf("fork must remain: %v", err)
+	}
+	if forkGot.ArchivedAt != nil {
+		t.Fatal("fork must not be archived")
+	}
+}
+
+func TestListSessionsArchivedOnlyViaUsecase(t *testing.T) {
+	ctx := context.Background()
+	root := rootfs.NewRootInfo("mindfs", "mindfs", t.TempDir())
+	manager := session.NewManager(root)
+	service := Service{Registry: &commandTestRegistry{root: root, manager: manager}}
+
+	visible, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, Name: "visible"})
+	if err != nil {
+		t.Fatalf("create visible: %v", err)
+	}
+	hidden, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, Name: "hidden"})
+	if err != nil {
+		t.Fatalf("create hidden: %v", err)
+	}
+	if _, err := service.ArchiveSession(ctx, ArchiveSessionInput{RootID: root.ID, Key: hidden.Key, Archived: true}); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+
+	out, err := service.ListSessions(ctx, ListSessionsInput{RootID: root.ID})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(out.Sessions) != 1 || out.Sessions[0].Key != visible.Key {
+		t.Fatalf("default list = %v, want only %s", keysOfSessions(out.Sessions), visible.Key)
+	}
+	if out.TotalCount != 1 {
+		t.Fatalf("TotalCount = %d, want 1", out.TotalCount)
+	}
+
+	archived, err := service.ListSessions(ctx, ListSessionsInput{RootID: root.ID, ArchivedOnly: true})
+	if err != nil {
+		t.Fatalf("list archived: %v", err)
+	}
+	if len(archived.Sessions) != 1 || archived.Sessions[0].Key != hidden.Key {
+		t.Fatalf("archived list = %v, want only %s", keysOfSessions(archived.Sessions), hidden.Key)
+	}
+}
+
+func TestArchivePanelListsTopLevelOnly(t *testing.T) {
+	// 归档面板按项目平铺，已归档的子会话不能再占一行（它们会在归档时被删掉，
+	// 这条只防历史脏数据：老版本把整棵子树都标了归档）。
+	ctx := context.Background()
+	root := rootfs.NewRootInfo("mindfs", "mindfs", t.TempDir())
+	manager := session.NewManager(root)
+	service := Service{Registry: &commandTestRegistry{root: root, manager: manager}}
+
+	parent, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, Name: "parent"})
+	if err != nil {
+		t.Fatalf("create parent: %v", err)
+	}
+	child, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, ParentSessionKey: parent.Key, Name: "child"})
+	if err != nil {
+		t.Fatalf("create child: %v", err)
+	}
+	for _, item := range []*session.Session{parent, child} {
+		if _, err := manager.SetArchived(ctx, item.Key, true); err != nil {
+			t.Fatalf("mark archived %s: %v", item.Key, err)
+		}
+	}
+
+	out, err := service.ListSessions(ctx, ListSessionsInput{
+		RootID:       root.ID,
+		ArchivedOnly: true,
+		TopLevelOnly: true,
+	})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(out.Sessions) != 1 || out.Sessions[0].Key != parent.Key {
+		t.Fatalf("archived top-level list = %v, want only %s", keysOfSessions(out.Sessions), parent.Key)
+	}
+}
+
+func keysOfSessions(items []*session.Session) []string {
+	keys := make([]string, 0, len(items))
+	for _, item := range items {
+		if item != nil {
+			keys = append(keys, item.Key)
+		}
+	}
+	return keys
 }
 
 func TestSubSessionSyntheticDonePersistsPartialResponse(t *testing.T) {
@@ -1335,7 +1514,7 @@ func TestRenameManagedDirRollsBackDirectoryWhenRegistryFails(t *testing.T) {
 
 func TestSkillCandidateProviderSearch(t *testing.T) {
 	homeDir := t.TempDir()
-	testutil.IsolateUserDirs(t, homeDir)
+	t.Setenv("HOME", homeDir)
 	rootDir := t.TempDir()
 	mustWriteFile(t, filepath.Join(homeDir, ".codex", "skills", "status", "SKILL.md"), "---\nname: status\ndescription: Home status skill\n---\n")
 	mustWriteFile(t, filepath.Join(homeDir, ".agents", "skills", "review", "SKILL.md"), "---\nname: review\ndescription: Shared review skill\n---\n")
@@ -1371,7 +1550,7 @@ func TestSkillCandidateProviderSearch(t *testing.T) {
 
 func TestSkillCandidateProviderSearchIncludesCodexPluginCacheSkills(t *testing.T) {
 	homeDir := t.TempDir()
-	testutil.IsolateUserDirs(t, homeDir)
+	t.Setenv("HOME", homeDir)
 	rootDir := t.TempDir()
 	mustWriteFile(t, filepath.Join(homeDir, ".codex", "plugins", "cache", "openai-primary-runtime", "documents", "26.1.0", "skills", "documents", "SKILL.md"), "---\nname: documents\ndescription: Old documents skill\n---\n")
 	mustWriteFile(t, filepath.Join(homeDir, ".codex", "plugins", "cache", "openai-primary-runtime", "documents", "26.10.0", "skills", "documents", "SKILL.md"), "---\nname: documents\ndescription: Current documents skill\n---\n")
@@ -1397,7 +1576,7 @@ func TestSkillCandidateProviderSearchIncludesCodexPluginCacheSkills(t *testing.T
 
 func TestSkillCandidateProviderSearchFollowsSymlinkedSkillDir(t *testing.T) {
 	homeDir := t.TempDir()
-	testutil.IsolateUserDirs(t, homeDir)
+	t.Setenv("HOME", homeDir)
 	rootDir := t.TempDir()
 	ssotDir := t.TempDir()
 	targetDir := filepath.Join(ssotDir, "linked")
@@ -1429,7 +1608,7 @@ func TestSkillCandidateProviderSearchFollowsSymlinkedSkillDir(t *testing.T) {
 
 func TestSkillCandidateProviderSearchExpandsNamespacedSkillBundle(t *testing.T) {
 	homeDir := t.TempDir()
-	testutil.IsolateUserDirs(t, homeDir)
+	t.Setenv("HOME", homeDir)
 	rootDir := t.TempDir()
 	ssotDir := t.TempDir()
 	targetDir := filepath.Join(ssotDir, "aegis-skills")
@@ -1469,7 +1648,7 @@ func TestSkillCandidateProviderSearchExpandsNamespacedSkillBundle(t *testing.T) 
 
 func TestSkillCandidateProviderSearchMatchesNamespacedChildName(t *testing.T) {
 	homeDir := t.TempDir()
-	testutil.IsolateUserDirs(t, homeDir)
+	t.Setenv("HOME", homeDir)
 	rootDir := t.TempDir()
 	mustWriteFile(t, filepath.Join(homeDir, ".agents", "skills", "aegis", "brainstorming", "SKILL.md"), "---\nname: brainstorming\ndescription: Aegis brainstorm\n---\n")
 	root := rootfs.NewRootInfo("mindfs", "mindfs", rootDir)
@@ -1489,7 +1668,7 @@ func TestSkillCandidateProviderSearchMatchesNamespacedChildName(t *testing.T) {
 
 func TestSkillCandidateProviderSearchSkipsNonDirectoryScanPath(t *testing.T) {
 	homeDir := t.TempDir()
-	testutil.IsolateUserDirs(t, homeDir)
+	t.Setenv("HOME", homeDir)
 	rootDir := t.TempDir()
 	mustWriteFile(t, filepath.Join(homeDir, ".codex"), "not a directory")
 	mustWriteFile(t, filepath.Join(homeDir, ".agents", "skills", "review", "SKILL.md"), "---\nname: review\ndescription: Shared review skill\n---\n")
@@ -1510,7 +1689,8 @@ func TestSkillCandidateProviderSearchSkipsNonDirectoryScanPath(t *testing.T) {
 
 func TestListLocalDirsDefaultsEmptyPathToHome(t *testing.T) {
 	homeDir := t.TempDir()
-	testutil.IsolateUserDirs(t, homeDir)
+	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir)
 	mustWriteFile(t, filepath.Join(homeDir, "project-a", "README.md"), "a")
 	if err := os.MkdirAll(filepath.Join(homeDir, "project-b"), 0o755); err != nil {
 		t.Fatalf("mkdir project-b: %v", err)
@@ -1530,6 +1710,37 @@ func TestListLocalDirsDefaultsEmptyPathToHome(t *testing.T) {
 	}
 	if strings.Join(names, ",") != "project-a,project-b" {
 		t.Fatalf("items = %q, want project-a,project-b", strings.Join(names, ","))
+	}
+}
+
+func TestListLocalDirsIncludesSymlinkedDirectory(t *testing.T) {
+	baseDir := t.TempDir()
+	targetDir := filepath.Join(baseDir, "outside", "target")
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+		t.Fatalf("mkdir target: %v", err)
+	}
+	mustWriteFile(t, filepath.Join(baseDir, "file.txt"), "x")
+	if err := os.Symlink(targetDir, filepath.Join(baseDir, "linked-dir")); err != nil {
+		t.Skipf("Symlink unavailable: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(baseDir, "file.txt"), filepath.Join(baseDir, "linked-file")); err != nil {
+		t.Fatalf("symlink file: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(baseDir, "missing"), filepath.Join(baseDir, "broken-link")); err != nil {
+		t.Fatalf("symlink broken: %v", err)
+	}
+
+	service := Service{Registry: uploadTestRegistry{}}
+	out, err := service.ListLocalDirs(context.Background(), ListLocalDirsInput{Path: baseDir})
+	if err != nil {
+		t.Fatalf("ListLocalDirs returned error: %v", err)
+	}
+	names := make([]string, 0, len(out.Items))
+	for _, item := range out.Items {
+		names = append(names, item.Name)
+	}
+	if strings.Join(names, ",") != "linked-dir,outside" {
+		t.Fatalf("items = %q, want linked-dir,outside", strings.Join(names, ","))
 	}
 }
 
@@ -1672,7 +1883,9 @@ func TestPromptStoreDeleteRemovesOnlyMatchingPrompt(t *testing.T) {
 	}
 }
 
-func TestSwitchReadHintPathUsesRuntimeRoot(t *testing.T) {
+// switchReadHintPath 一律返回绝对路径：提示文案不含基准目录，agent 无从判断相对路径
+// 该以哪里为准，猜成 home 就读不到文件。worktree 与非 worktree 必须给出同一个路径。
+func TestSwitchReadHintPathIsAbsolute(t *testing.T) {
 	rootDir := t.TempDir()
 	root := rootfs.NewRootInfo("mindfs", "mindfs", rootDir)
 	manager := session.NewManager(root)
@@ -1684,15 +1897,12 @@ func TestSwitchReadHintPathUsesRuntimeRoot(t *testing.T) {
 		t.Fatalf("Create session: %v", err)
 	}
 
-	basePath := switchReadHintPath(manager, created.Key, rootDir)
-	if !strings.HasPrefix(basePath, ".mindfs/") {
-		t.Fatalf("base path = %q, want .mindfs relative path", basePath)
+	basePath := switchReadHintPath(manager, created.Key)
+	if !filepath.IsAbs(basePath) {
+		t.Fatalf("base path = %q, want absolute path", basePath)
 	}
-
-	worktreeRoot := filepath.Join(rootDir, ".worktree", "task-1")
-	worktreePath := switchReadHintPath(manager, created.Key, worktreeRoot)
-	if !strings.HasPrefix(worktreePath, "../../.mindfs/") {
-		t.Fatalf("worktree path = %q, want path relative to worktree cwd", worktreePath)
+	if !strings.HasSuffix(basePath, filepath.ToSlash(filepath.Join(".mindfs", "sessions", created.Key+".jsonl"))) {
+		t.Fatalf("base path = %q, want it to point at this session's exchange log", basePath)
 	}
 }
 
@@ -1875,45 +2085,6 @@ func TestSessionNameRunnerSkipsWithoutAgentOrPool(t *testing.T) {
 			got, err := sessionNameRunner(context.Background(), nil, "/tmp/root", tc.input)
 			if err != nil || got != "" {
 				t.Fatalf("sessionNameRunner = (%q, %v), want empty nil", got, err)
-			}
-		})
-	}
-}
-
-func TestAssistantAuxLineBeforeFollowingText(t *testing.T) {
-	for _, tc := range []struct {
-		before string
-		line   int
-	}{
-		{"", 0},
-		{"\n\n", 0},
-		{"说明", 1},
-		{"说明\n", 1},
-		{"说明\n\n", 1},
-		{"第一行\n第二行\n", 2},
-		{"第一行\n\n第二行\n\n", 3},
-	} {
-		before := tc.before
-		t.Run(fmt.Sprintf("prefix_%q", before), func(t *testing.T) {
-			line := currentAssistantLine(before)
-			if line != tc.line {
-				t.Fatalf("aux line = %d, want %d", line, tc.line)
-			}
-			content := appendResponseChunk(before, string(agenttypes.EventTypeToolCall), "工具后的回复\n后续内容")
-			if before == "" || strings.HasSuffix(before, "\n") {
-				if content != before+"工具后的回复\n后续内容" {
-					t.Fatalf("response whitespace changed: %q", content)
-				}
-			}
-			// Match the history viewer's line-based split around an auxiliary event.
-			lines := strings.Split(content, "\n")
-			preceding := strings.Join(lines[:line], "\n")
-			following := strings.Join(lines[line:], "\n")
-			if strings.TrimRight(preceding, "\n") != strings.TrimRight(before, "\n") {
-				t.Fatalf("text before tool = %q, want %q", preceding, before)
-			}
-			if strings.TrimLeft(following, "\n") != "工具后的回复\n后续内容" {
-				t.Fatalf("text after tool = %q", following)
 			}
 		})
 	}
@@ -2195,6 +2366,10 @@ func (uploadTestRegistry) RemoveRoot(string) (rootfs.RootInfo, error) {
 	return rootfs.RootInfo{}, nil
 }
 
+func (uploadTestRegistry) UpdateDisplayName(string, string) (rootfs.RootInfo, error) {
+	return rootfs.RootInfo{}, errors.New("not implemented")
+}
+
 func (uploadTestRegistry) RenameRoot(string, string, string) (rootfs.RootInfo, error) {
 	return rootfs.RootInfo{}, nil
 }
@@ -2338,6 +2513,10 @@ func (r *commandTestRegistry) RemoveRoot(string) (rootfs.RootInfo, error) {
 	return rootfs.RootInfo{}, nil
 }
 
+func (r *commandTestRegistry) UpdateDisplayName(string, string) (rootfs.RootInfo, error) {
+	return rootfs.RootInfo{}, errors.New("not implemented")
+}
+
 func (r *commandTestRegistry) RenameRoot(string, string, string) (rootfs.RootInfo, error) {
 	return rootfs.RootInfo{}, nil
 }
@@ -2402,6 +2581,10 @@ func (r *multiRootSearchTestRegistry) RemoveRoot(string) (rootfs.RootInfo, error
 	return rootfs.RootInfo{}, nil
 }
 
+func (r *multiRootSearchTestRegistry) UpdateDisplayName(string, string) (rootfs.RootInfo, error) {
+	return rootfs.RootInfo{}, errors.New("not implemented")
+}
+
 func (r *multiRootSearchTestRegistry) RenameRoot(string, string, string) (rootfs.RootInfo, error) {
 	return rootfs.RootInfo{}, nil
 }
@@ -2462,6 +2645,10 @@ func (*renameManagedDirTestRegistry) RemoveRoot(string) (rootfs.RootInfo, error)
 	return rootfs.RootInfo{}, nil
 }
 
+func (r *renameManagedDirTestRegistry) UpdateDisplayName(string, string) (rootfs.RootInfo, error) {
+	return rootfs.RootInfo{}, errors.New("not implemented")
+}
+
 func (r *renameManagedDirTestRegistry) RenameRoot(rootID, name, rootPath string) (rootfs.RootInfo, error) {
 	if r.renameErr != nil {
 		return rootfs.RootInfo{}, r.renameErr
@@ -2511,86 +2698,249 @@ func (*renameManagedDirTestRegistry) GetFileWatcher(string, *session.Manager) (*
 
 func (*renameManagedDirTestRegistry) ReleaseFileWatcher(string, string) {}
 
-type sessionCleanupRegistry struct {
-	*commandTestRegistry
-	cleanup func(context.Context, string, []string) ([]string, error)
-}
+// 回合结束时记 AgentCtxSeq 必须把本轮 user 行算进去。
+//
+// 时序（SendMessage 内）：linesBeforeThisTurn=N → persistUserTurnExchange 落 N+1
+// → AddExchangeForAgent 落 N+2 → UpdateAgentState 记「已落盘总行数」N+2。少记则下一轮
+// prependSwitchHint 的 delta 恒 > 0，切 agent 提示在每个正常回合都被重复注入，
+// 而不是只在真切换时出现。
+func TestPrependSwitchHintIsInjectedOncePerRealSwitch(t *testing.T) {
+	rootDir := t.TempDir()
+	manager := session.NewManager(rootfs.NewRootInfo("mindfs", "mindfs", rootDir))
+	created, err := manager.Create(context.Background(), session.CreateInput{
+		Type: session.TypeChat,
+		Name: "Task",
+	})
+	if err != nil {
+		t.Fatalf("Create session: %v", err)
+	}
 
-func (r *sessionCleanupRegistry) DeleteSessionTaskGroups(ctx context.Context, root string, keys []string) ([]string, error) {
-	return r.cleanup(ctx, root, keys)
-}
+	sess := created
+	service := &Service{}
+	const agentName = "claude"
 
-func TestDeleteSessionCleansTaskGroupsBeforeDeletingSessions(t *testing.T) {
-	for _, fails := range []bool{false, true} {
-		name := "success"
-		if fails {
-			name = "cleanup failure"
+	// 两轮对话：每轮 user 行 + agent 行各一条。回合结束时 agent 看到的行数按
+	// 「user 行之前 +1」记账（对应 UpdateAgentState(linesBeforeThisTurn+1)）。
+	total := 0
+	agentSeen := 0
+	agentInjected := 0
+	for turn := 0; turn < 2; turn++ {
+		linesBeforeThisTurn := total
+		// 本轮 user 行落盘（persistUserTurnExchange）。
+		total++
+
+		got := service.BuildPrompt(BuildPromptInput{
+			Session:             sess,
+			Manager:             manager,
+			Agent:               agentName,
+			Message:             "hi",
+			AgentCtxSeq:         &agentSeen,
+			LinesBeforeThisTurn: linesBeforeThisTurn,
+		})
+		if strings.Contains(got, "This session was migrated from elsewhere.") {
+			agentInjected++
 		}
-		t.Run(name, func(t *testing.T) {
-			ctx := context.Background()
-			root := rootfs.NewRootInfo("root", "root", t.TempDir())
-			manager := session.NewManager(root)
-			parent, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, Name: "parent"})
-			if err != nil {
-				t.Fatal(err)
+		if !strings.Contains(got, "hi") {
+			t.Fatalf("turn %d: user message lost from prompt: %q", turn, got)
+		}
+
+		// 助手行落盘（AddExchangeForAgent）。
+		total++
+		// UpdateAgentState 记 agent 已看到的行数 = 已落盘总行数（user + agent 两行）。
+		agentSeen = linesBeforeThisTurn + 2
+	}
+
+	if agentInjected != 0 {
+		t.Fatalf("switch hint injected %d times across 2 turns of the same agent, want 0", agentInjected)
+	}
+}
+
+// 真切换时提示仍要出现，且带绝对路径 —— 这是本次修复要保住的行为。
+func TestPrependSwitchHintOnAgentSwitchUsesAbsolutePath(t *testing.T) {
+	rootDir := t.TempDir()
+	manager := session.NewManager(rootfs.NewRootInfo("mindfs", "mindfs", rootDir))
+	created, err := manager.Create(context.Background(), session.CreateInput{
+		Type: session.TypeChat,
+		Name: "Task",
+	})
+	if err != nil {
+		t.Fatalf("Create session: %v", err)
+	}
+
+	service := &Service{}
+	// 切到 codex：claude 只看过 1 行，会话已有 4 行 → delta=3，提示该出现。
+	claudeSeen := 1
+	got := service.BuildPrompt(BuildPromptInput{
+		Session:             created,
+		Manager:             manager,
+		Agent:               "codex",
+		Message:             "hi",
+		AgentCtxSeq:         &claudeSeen,
+		LinesBeforeThisTurn: 4,
+	})
+	if !strings.Contains(got, "This session was migrated from elsewhere.") {
+		t.Fatalf("switch hint missing on real agent switch: %q", got)
+	}
+	wantPath := filepath.ToSlash(filepath.Join(rootDir, ".mindfs", "sessions", created.Key+".jsonl"))
+	if !strings.Contains(got, wantPath) {
+		t.Fatalf("switch hint does not carry absolute path %q: %q", wantPath, got)
+	}
+}
+
+// ---- 以下为上游 v0.5.5 独有、与任务组无关的回归测试（合并时保留） ----
+
+func TestAssistantAuxLineBeforeFollowingText(t *testing.T) {
+	for _, tc := range []struct {
+		before string
+		line   int
+	}{
+		{"", 0},
+		{"\n\n", 0},
+		{"说明", 1},
+		{"说明\n", 1},
+		{"说明\n\n", 1},
+		{"第一行\n第二行\n", 2},
+		{"第一行\n\n第二行\n\n", 3},
+	} {
+		before := tc.before
+		t.Run(fmt.Sprintf("prefix_%q", before), func(t *testing.T) {
+			line := currentAssistantLine(before)
+			if line != tc.line {
+				t.Fatalf("aux line = %d, want %d", line, tc.line)
 			}
-			execution, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, Name: "execution"})
-			if err != nil {
-				t.Fatal(err)
-			}
-			child, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, ParentSessionKey: execution.Key, Name: "nested"})
-			if err != nil {
-				t.Fatal(err)
-			}
-			called := false
-			registry := &sessionCleanupRegistry{commandTestRegistry: &commandTestRegistry{root: root, manager: manager}}
-			registry.cleanup = func(_ context.Context, id string, keys []string) ([]string, error) {
-				called = true
-				if id != root.ID || len(keys) != 1 || keys[0] != parent.Key {
-					t.Fatalf("wrong cleanup target: %s %v", id, keys)
+			content := appendResponseChunk(before, string(agenttypes.EventTypeToolCall), "工具后的回复\n后续内容")
+			if before == "" || strings.HasSuffix(before, "\n") {
+				if content != before+"工具后的回复\n后续内容" {
+					t.Fatalf("response whitespace changed: %q", content)
 				}
-				if _, err := manager.Get(ctx, parent.Key, 0); err != nil {
-					t.Fatal("parent deleted before cleanup", err)
-				}
-				if fails {
-					return nil, errors.New("could not stop execution")
-				}
-				return []string{execution.Key}, nil
 			}
-			svc := Service{Registry: registry}
-			err = svc.DeleteSession(ctx, DeleteSessionInput{RootID: root.ID, Key: parent.Key})
-			if !called || (err != nil) != fails {
-				t.Fatalf("called=%v err=%v", called, err)
+			// Match the history viewer's line-based split around an auxiliary event.
+			lines := strings.Split(content, "\n")
+			preceding := strings.Join(lines[:line], "\n")
+			following := strings.Join(lines[line:], "\n")
+			if strings.TrimRight(preceding, "\n") != strings.TrimRight(before, "\n") {
+				t.Fatalf("text before tool = %q, want %q", preceding, before)
 			}
-			for _, key := range []string{parent.Key, execution.Key, child.Key} {
-				_, err := manager.Get(ctx, key, 0)
-				if (err == nil) != fails {
-					t.Fatalf("incorrect session retention %s: %v", key, err)
-				}
+			if strings.TrimLeft(following, "\n") != "工具后的回复\n后续内容" {
+				t.Fatalf("text after tool = %q", following)
 			}
 		})
 	}
 }
 
-func TestBuildPromptAddsMindFSContextOnlyToInitialMessage(t *testing.T) {
-	root := rootfs.NewRootInfo("root", "root", t.TempDir())
-	manager := session.NewManager(root)
-	service := &Service{}
-	for _, taskID := range []string{"", "task-test"} {
-		for _, initial := range []bool{true, false} {
-			prompt := service.BuildPrompt(BuildPromptInput{Message: "Task instructions", IsInitial: initial, Manager: manager, Session: &session.Session{Key: "session-test", TaskID: taskID}})
-			if strings.Count(prompt, "MindFS context:") != map[bool]int{true: 1, false: 0}[initial] {
-				t.Fatalf("wrong context count for task=%q initial=%v: %s", taskID, initial, prompt)
-			}
-			if initial && !strings.Contains(prompt, "root_id=root session_key=session-test") {
-				t.Fatalf("missing session identity: %s", prompt)
-			}
-			if strings.Contains(prompt, "task_id=") != (initial && taskID != "") {
-				t.Fatalf("wrong task identity for task=%q initial=%v: %s", taskID, initial, prompt)
-			}
-			if initial && taskID != "" && !strings.Contains(prompt, "task_id="+taskID) {
-				t.Fatalf("missing task identity: %s", prompt)
-			}
+func TestFileOperationSymlinkAndExternalMove(t *testing.T) {
+	root := rootfs.NewRootInfo("test", "test", t.TempDir())
+	service := Service{Registry: uploadTestRegistry{root: root}}
+	external := t.TempDir()
+	target := filepath.Join(external, "keep")
+	if err := os.WriteFile(target, []byte("keep"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(root.RootPath, "link")); err != nil {
+		t.Skip(err)
+	}
+	if err := service.OperateFile(FileOperationInput{Root: root.ID, Path: "link", Action: "delete"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(target); err != nil {
+		t.Fatalf("deleted link target: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root.RootPath, "move"), []byte("move"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.OperateFile(FileOperationInput{Root: root.ID, Path: "move", Action: "move", Destination: external}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(external, "move")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFileOperationUsesLiteralNames(t *testing.T) {
+	root := rootfs.NewRootInfo("test", "test", t.TempDir())
+	service := Service{Registry: uploadTestRegistry{root: root}}
+	for _, name := range []string{"report", "report#1"} {
+		if err := os.WriteFile(filepath.Join(root.RootPath, name), []byte(name), 0600); err != nil {
+			t.Fatal(err)
 		}
+	}
+	if err := service.OperateFile(FileOperationInput{Root: root.ID, Path: "report#1", Action: "delete"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root.RootPath, "report#1")); !os.IsNotExist(err) {
+		t.Fatalf("literal file not deleted: %v", err)
+	}
+	if content, err := os.ReadFile(filepath.Join(root.RootPath, "report")); err != nil || string(content) != "report" {
+		t.Fatalf("unrelated file modified: %q, %v", content, err)
+	}
+}
+
+func TestFileOperations(t *testing.T) {
+	for _, directory := range []bool{false, true} {
+		name := "file"
+		if directory {
+			name = "directory"
+		}
+		t.Run(name, func(t *testing.T) {
+			root := rootfs.NewRootInfo("test", "test", t.TempDir())
+			service := Service{Registry: uploadTestRegistry{root: root}}
+			source := filepath.Join(root.RootPath, "source")
+			contentPath := source
+			if directory {
+				if err := os.Mkdir(source, 0700); err != nil {
+					t.Fatal(err)
+				}
+				contentPath = filepath.Join(source, "child")
+			}
+			if err := os.WriteFile(contentPath, []byte("keep content"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			run := func(path, action, name, destination string) error {
+				return service.OperateFile(FileOperationInput{Root: root.ID, Path: path, Action: action, Name: name, Destination: destination})
+			}
+			if err := run(".", "delete", "", ""); err == nil {
+				t.Fatal("root deletion allowed")
+			}
+			if err := run("../outside", "delete", "", ""); err == nil {
+				t.Fatal("traversal allowed")
+			}
+			if err := run("source", "rename", "../outside", ""); err == nil {
+				t.Fatal("invalid name allowed")
+			}
+			if directory {
+				if err := run("source", "move", "", source); err == nil {
+					t.Fatal("move into self allowed")
+				}
+			}
+			if err := os.WriteFile(filepath.Join(root.RootPath, "existing"), []byte("existing"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := run("source", "rename", "existing", ""); !errors.Is(err, os.ErrExist) {
+				t.Fatalf("conflict: %v", err)
+			}
+			if err := run("source", "rename", "renamed", ""); err != nil {
+				t.Fatal(err)
+			}
+			target := filepath.Join(root.RootPath, "target")
+			if err := os.Mkdir(target, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := run("renamed", "move", "", target); err != nil {
+				t.Fatal(err)
+			}
+			moved := filepath.Join(target, "renamed")
+			if directory {
+				moved = filepath.Join(moved, "child")
+			}
+			if content, err := os.ReadFile(moved); err != nil || string(content) != "keep content" {
+				t.Fatalf("content lost: %q %v", content, err)
+			}
+			if err := run("target/renamed", "delete", "", ""); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(filepath.Join(target, "renamed")); !os.IsNotExist(err) {
+				t.Fatalf("not deleted: %v", err)
+			}
+		})
 	}
 }

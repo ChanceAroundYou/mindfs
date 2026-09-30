@@ -3,6 +3,7 @@ import { useI18n } from "../i18n";
 import { protectedJSON, ProtectedAPIError } from "../services/api";
 import { appURL } from "../services/base";
 import { reportError } from "../services/error";
+import { alertDialog, confirmDialog, promptDialog } from "../services/dialog";
 import { renderToolIcon } from "./stream/ToolCallCard";
 import { LocalPanel, type LocalDirBrowserState } from "./ProjectAddPopover";
 
@@ -47,15 +48,15 @@ export function FileOperationItems({ root, path, onComplete, onMove }: {
     let name: string | undefined;
     if (action === "rename") {
       const currentName = path.replace(/\\/g, "/").split("/").pop() || "";
-      const input = window.prompt(t("fileOperation.namePrompt"), currentName);
+      const input = await promptDialog({ message: t("fileOperation.namePrompt"), defaultValue: currentName });
       if (input === null) return;
       name = input.trim();
       if (!name || name === "." || name === ".." || /[/\\\x00]/.test(name)) {
-        window.alert(t("directory.invalidFileName"));
+        alertDialog(t("directory.invalidFileName"));
         return;
       }
       if (name === currentName) return;
-    } else if (!window.confirm(t("fileOperation.confirmDelete", { name: path }))) {
+    } else if (!await confirmDialog({ message: t("fileOperation.confirmDelete", { name: path }), danger: true })) {
       return;
     }
     busyRef.current = true;

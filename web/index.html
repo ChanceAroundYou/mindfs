@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/svg+xml" href="<!--MINDFS_FAVICON_HREF-->" />
     <!--APP_SHELL_PWA_LINKS-->
     <meta name="theme-color" content="#f3f4f6" />
     <script>
@@ -49,6 +49,8 @@
         function isRelayNodePage() {
           return /^\/n\/[^/]+(?:\/|$)/.test(window.location.pathname);
         }
+        // 由 vite 构建期按 VITE_MIND_FS_BASE 注入，匹配部署前缀下主包与 relay 别名主包
+        var MINDFS_MAIN_ASSET_RE = /<__MINDFS_MAIN_ASSET_RE__>/;
         function isMainAsset(url) {
           if (!url) {
             return false;
@@ -62,7 +64,7 @@
           if (parsed.origin !== window.location.origin) {
             return false;
           }
-          return /^\/(?:mindfs-assets|assets)\/index-[^/]+\.(?:js|css)$/i.test(parsed.pathname);
+          return MINDFS_MAIN_ASSET_RE.test(parsed.pathname);
         }
         function showNotice() {
           if (shown || !isRelayNodePage()) {

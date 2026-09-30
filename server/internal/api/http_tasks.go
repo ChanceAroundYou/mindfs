@@ -1,12 +1,15 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
 
+	"mindfs/server/internal/api/usecase"
 	"mindfs/server/internal/kanban"
 
 	"github.com/go-chi/chi/v5"
@@ -151,56 +154,9 @@ func (h *HTTPHandler) handleKanbanTasksList(w http.ResponseWriter, r *http.Reque
 		opts.Stage = stage
 		opts.HasStage = true
 	}
-	summary := r.URL.Query().Get("summary") == "1"
-	if summary {
-		opts.CreatedDesc = true
-		opts.Limit = 21 // One extra row determines whether another page exists.
-		if raw := r.URL.Query().Get("cursor"); raw != "" {
-			cursor, err := strconv.Atoi(raw)
-			if err != nil || cursor <= 0 {
-				respondError(w, http.StatusBadRequest, errInvalidRequest("cursor must be a positive task number"))
-				return
-			}
-			opts.CursorTaskNumber = cursor
-		}
-	}
 	items, err := svc.ListTaskDetails(r.Context(), rootID, opts)
 	if err != nil {
 		respondError(w, http.StatusBadRequest, err)
-		return
-	}
-	if summary {
-		nextCursor := ""
-		if len(items) > 20 {
-			items = items[:20]
-			last := items[len(items)-1].Task
-			nextCursor = strconv.Itoa(last.TaskNumber)
-		}
-		summaries := []map[string]any{}
-		for _, d := range items {
-			input := ""
-			for _, run := range d.StageRuns {
-				if run.StageIndex == 0 {
-					input = run.Input
-					break
-				}
-			}
-			runes := []rune(input)
-			if len(runes) > 240 {
-				input = string(runes[:240]) + "…"
-			}
-			agentName, model := "", ""
-			tmpl, _ := svc.TaskExecutionTemplate(d.Task)
-			for _, stage := range tmpl.Stages {
-				if stage.Snapshot.Role == kanban.RoleAgent {
-					agentName = stage.Snapshot.Agent
-					model = stage.Snapshot.Model
-					break
-				}
-			}
-			summaries = append(summaries, map[string]any{"id": d.Task.ID, "task_number": d.Task.TaskNumber, "group_id": d.Task.GroupID, "status": d.Task.Status, "published": d.Task.Published, "input_summary": input, "block_reason": d.Task.BlockReason, "depends_on": d.Task.DependsOn, "agent": agentName, "model": model})
-		}
-		respondJSON(w, http.StatusOK, map[string]any{"items": summaries, "next_cursor": nextCursor})
 		return
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"items": items})
@@ -211,14 +167,33 @@ func (h *HTTPHandler) handleKanbanTaskCreate(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	var req kanban.CreateTaskInput
-	decoder := json.NewDecoder(io.LimitReader(r.Body, 4<<20))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&req); err != nil {
+	var req struct {
+		RootID             string                  `json:"root_id"`
+		TaskTemplateID     string                  `json:"task_template_id"`
+		Input              string                  `json:"input"`
+		Name               string                  `json:"name"`
+		Stages             *[]kanban.StageTemplate `json:"stages"`
+		CreateWorktree     bool                    `json:"create_worktree"`
+		WorktreeBranchMode string                  `json:"worktree_branch_mode"`
+		WorktreeBranch     string                  `json:"worktree_branch"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<20)).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, errInvalidRequest("invalid json body"))
 		return
 	}
-	detail, err := svc.CreateTask(r.Context(), req)
+	create := kanban.CreateTaskInput{
+		RootID:             req.RootID,
+		TaskTemplateID:     req.TaskTemplateID,
+		Input:              req.Input,
+		Name:               req.Name,
+		CreateWorktree:     req.CreateWorktree,
+		WorktreeBranchMode: req.WorktreeBranchMode,
+		WorktreeBranch:     req.WorktreeBranch,
+	}
+	if req.Stages != nil {
+		create.Stages = *req.Stages
+	}
+	detail, err := svc.CreateTask(r.Context(), create)
 	if err != nil {
 		respondError(w, http.StatusBadRequest, err)
 		return
@@ -267,14 +242,6 @@ func (h *HTTPHandler) handleKanbanTaskRunNow(w http.ResponseWriter, r *http.Requ
 	h.handleKanbanTaskMove(w, r, "run-now")
 }
 
-func (h *HTTPHandler) handleKanbanTaskPrev(w http.ResponseWriter, r *http.Request) {
-	h.handleKanbanTaskMove(w, r, "prev")
-}
-
-func (h *HTTPHandler) handleKanbanTaskJump(w http.ResponseWriter, r *http.Request) {
-	h.handleKanbanTaskMove(w, r, "jump")
-}
-
 func (h *HTTPHandler) handleKanbanTaskPause(w http.ResponseWriter, r *http.Request) {
 	h.handleKanbanTaskMove(w, r, "pause")
 }
@@ -316,10 +283,6 @@ func (h *HTTPHandler) handleKanbanTaskMove(w http.ResponseWriter, r *http.Reques
 		detail, err = svc.Next(r.Context(), in)
 	case "run-now":
 		detail, err = svc.RunNow(r.Context(), in)
-	case "prev":
-		detail, err = svc.Prev(r.Context(), in)
-	case "jump":
-		detail, err = svc.Jump(r.Context(), in)
 	case "pause":
 		detail, err = svc.Pause(r.Context(), in)
 	case "resume":
@@ -333,6 +296,205 @@ func (h *HTTPHandler) handleKanbanTaskMove(w http.ResponseWriter, r *http.Reques
 	default:
 		err = errInvalidRequest("unsupported task action")
 	}
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err)
+		return
+	}
+	h.broadcastTaskUpdated(req.RootID, detail)
+	respondJSON(w, http.StatusOK, detail)
+}
+
+func (h *HTTPHandler) handleKanbanTasksOverview(w http.ResponseWriter, r *http.Request) {
+	svc, ok := h.kanbanService(w)
+	if !ok {
+		return
+	}
+	items, err := svc.Overview(r.Context())
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (h *HTTPHandler) handleKanbanTaskRename(w http.ResponseWriter, r *http.Request) {
+	svc, ok := h.kanbanService(w)
+	if !ok {
+		return
+	}
+	var req struct {
+		RootID string `json:"root_id"`
+		Name   string `json:"name"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("invalid json body"))
+		return
+	}
+	detail, err := svc.RenameTask(r.Context(), req.RootID, chi.URLParam(r, "id"), req.Name)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err)
+		return
+	}
+	h.broadcastTaskUpdated(req.RootID, detail)
+	// 任务名与会话名双向绑定：任务改名把名字同步到绑定的全部会话
+	//（请求返回后再同步的小尾巴用 WithoutCancel，避免 response 结束即 ctx 取消）。
+	go h.bindTaskSessionNames(context.WithoutCancel(r.Context()), req.RootID, detail)
+	respondJSON(w, http.StatusOK, detail)
+}
+
+// bindTaskSessionNames（任务→会话）：任务绑定到的所有 agent 会话统一改成
+// 「任务名 / #编号」——和建会话那步（EnsureAgentSession）同一条派生，改名不丢后缀。
+// 名字从 detail 现场派生，不接调用方的裸名入参。
+// 单个会话改名失败（会话被删等）不影响其余，也不让任务改名本身失败。
+func (h *HTTPHandler) bindTaskSessionNames(ctx context.Context, rootID string, detail kanban.TaskDetail) {
+	if h == nil || h.AppContext == nil {
+		return
+	}
+	name := kanban.TaskSessionName(detail.Task.Name, detail.Task.TaskNumber)
+	if strings.TrimSpace(name) == "" {
+		return
+	}
+	seen := map[string]bool{}
+	keys := []string{}
+	if key := strings.TrimSpace(detail.Task.MainSessionKey); key != "" {
+		keys = append(keys, key)
+		seen[key] = true
+	}
+	for _, run := range detail.StageRuns {
+		key := strings.TrimSpace(run.SessionKey)
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		keys = append(keys, key)
+	}
+	uc := &usecase.Service{Registry: h.AppContext}
+	for _, key := range keys {
+		renamed, err := uc.RenameSession(ctx, usecase.RenameSessionInput{RootID: rootID, Key: key, Name: name})
+		if err != nil {
+			log.Printf("[task/rename] sync session name skipped root=%s session=%s err=%v", rootID, key, err)
+			continue
+		}
+		h.AppContext.BroadcastSessionMetaUpdated(rootID, renamed)
+	}
+}
+
+// syncTaskNameFromSession（会话→任务）：任务主会话改名时同步任务名。
+func (h *HTTPHandler) syncTaskNameFromSession(ctx context.Context, rootID, sessionKey, name string) {
+	if h == nil || h.AppContext == nil || strings.TrimSpace(name) == "" {
+		return
+	}
+	svc, err := h.AppContext.GetKanbanService()
+	if err != nil {
+		return
+	}
+	detail, changed := svc.TaskNameFromSession(ctx, rootID, sessionKey, name)
+	if changed {
+		h.broadcastTaskUpdated(rootID, detail)
+	}
+}
+
+// detachTaskFromSession（会话→任务）：会话被删除时，把任务里指向这些 key 的
+// main_session_key / StageRun.session_key 清空并留痕，避免任务跳进空会话。
+//
+// 与 syncTaskNameFromSession 同一层同一形状：usecase 只管会话树，跨层协调放在 HTTP 层。
+// keys 要传整棵被删子树的 key，不只是被点的那个 —— 子会话也可能绑着别的任务。
+func (h *HTTPHandler) detachTaskFromSession(ctx context.Context, rootID string, keys []string) {
+	if h == nil || h.AppContext == nil || len(keys) == 0 {
+		return
+	}
+	svc, err := h.AppContext.GetKanbanService()
+	if err != nil {
+		return
+	}
+	detail, changed := svc.DetachFromSession(ctx, rootID, keys)
+	if changed {
+		h.broadcastTaskUpdated(rootID, detail)
+	}
+}
+
+func (h *HTTPHandler) handleKanbanTaskRerun(w http.ResponseWriter, r *http.Request) {
+	svc, ok := h.kanbanService(w)
+	if !ok {
+		return
+	}
+	var req struct {
+		RootID     string `json:"root_id"`
+		Reason     string `json:"reason"`
+		StageIndex int    `json:"stage_index"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("invalid json body"))
+		return
+	}
+	detail, err := svc.RerunStage(r.Context(), kanban.MoveInput{RootID: req.RootID, TaskID: chi.URLParam(r, "id"), Reason: req.Reason, StageIndex: req.StageIndex})
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err)
+		return
+	}
+	h.broadcastTaskUpdated(req.RootID, detail)
+	respondJSON(w, http.StatusOK, detail)
+}
+
+func (h *HTTPHandler) handleKanbanTaskAddStage(w http.ResponseWriter, r *http.Request) {
+	svc, ok := h.kanbanService(w)
+	if !ok {
+		return
+	}
+	var req struct {
+		RootID string               `json:"root_id"`
+		Stage  kanban.StageTemplate `json:"stage"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<20)).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("invalid json body"))
+		return
+	}
+	detail, err := svc.AddStage(r.Context(), kanban.AddStageInput{RootID: req.RootID, TaskID: chi.URLParam(r, "id"), Stage: req.Stage})
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err)
+		return
+	}
+	h.broadcastTaskUpdated(req.RootID, detail)
+	respondJSON(w, http.StatusOK, detail)
+}
+
+func (h *HTTPHandler) handleKanbanTaskUpdateStage(w http.ResponseWriter, r *http.Request) {
+	svc, ok := h.kanbanService(w)
+	if !ok {
+		return
+	}
+	var req struct {
+		RootID string                `json:"root_id"`
+		Index  int                   `json:"index"`
+		Stage  *kanban.StageTemplate `json:"stage"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<20)).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("invalid json body"))
+		return
+	}
+	detail, err := svc.UpdateStage(r.Context(), kanban.UpdateStageInput{RootID: req.RootID, TaskID: chi.URLParam(r, "id"), Index: req.Index, Stage: req.Stage})
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err)
+		return
+	}
+	h.broadcastTaskUpdated(req.RootID, detail)
+	respondJSON(w, http.StatusOK, detail)
+}
+
+func (h *HTTPHandler) handleKanbanTaskRemoveStage(w http.ResponseWriter, r *http.Request) {
+	svc, ok := h.kanbanService(w)
+	if !ok {
+		return
+	}
+	var req struct {
+		RootID string `json:"root_id"`
+		Index  int    `json:"index"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<20)).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("invalid json body"))
+		return
+	}
+	detail, err := svc.RemoveStage(r.Context(), kanban.RemoveStageInput{RootID: req.RootID, TaskID: chi.URLParam(r, "id"), Index: req.Index})
 	if err != nil {
 		respondError(w, http.StatusBadRequest, err)
 		return

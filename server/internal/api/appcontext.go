@@ -15,12 +15,14 @@ import (
 	"mindfs/server/internal/agent"
 	agenttypes "mindfs/server/internal/agent/types"
 	"mindfs/server/internal/api/usecase"
+	"mindfs/server/internal/auth"
 	"mindfs/server/internal/commandexec"
 	"mindfs/server/internal/e2ee"
 	"mindfs/server/internal/fs"
 	"mindfs/server/internal/githubimport"
 	"mindfs/server/internal/gitview"
 	"mindfs/server/internal/kanban"
+	"mindfs/server/internal/nodes"
 	"mindfs/server/internal/notify"
 	"mindfs/server/internal/notifyscript"
 	"mindfs/server/internal/preferences"
@@ -46,11 +48,16 @@ type AppContext struct {
 	Update    *update.Service
 	GitHub    *githubimport.Service
 	E2EE      *e2ee.Manager
-	WebPush   *webpush.Service
-	Notify    *notifyscript.Service
-	Prefs     *preferences.Store
-	Scheduled *scheduled.Service
-	Kanban    *kanban.Service
+	Auth      *auth.Store
+	// AccountDir 是本账户私有的配置目录（registry/preferences/nodes/prompts/看板模板）。
+	// 主账户为空串时，各 store 会落回进程默认目录。
+	AccountDir string
+	WebPush    *webpush.Service
+	Notify     *notifyscript.Service
+	Prefs      *preferences.Store
+	Nodes      *nodes.Store
+	Scheduled  *scheduled.Service
+	Kanban     *kanban.Service
 
 	mu                       sync.RWMutex
 	sessionWorktreeMu        sync.Mutex
@@ -266,7 +273,7 @@ func (s *AppContext) EnsureAgentSession(ctx context.Context, exec kanban.AgentSt
 		if strings.TrimSpace(key) == "" {
 			return false
 		}
-		existing, err := uc.GetSession(ctx, usecase.GetSessionInput{RootID: exec.RootID, Key: key})
+		existing, _, err := uc.GetSession(ctx, usecase.GetSessionInput{RootID: exec.RootID, Key: key})
 		return err == nil && existing != nil
 	}
 	if reusable(exec.Run.SessionKey) && exec.Stage.SessionReusePolicy != kanban.SessionReuseAlwaysNew {
@@ -282,15 +289,15 @@ func (s *AppContext) EnsureAgentSession(ctx context.Context, exec kanban.AgentSt
 			return strings.TrimSpace(exec.Run.SessionKey), nil
 		}
 	}
-	name := strings.TrimSpace(exec.Task.TaskTemplateName)
-	number := "#" + strconv.Itoa(exec.Task.TaskNumber)
-	if exec.Task.TaskNumber > 0 {
-		if name == "" {
-			name = number
-		} else {
-			name = name + " / " + number
-		}
+	// 任务名优先：任务名在建会话之前就定了，而「任务改名 → 同步会话名」只在
+	// 会话已经存在时才跑得到（bindTaskSessionNames），首段建会话这步是唯一的兜底，
+	// 不兜底会话就一直挂着模板名。任务没名字才退回模板名 / #编号 / prompt。
+	// #编号由 kanban.TaskSessionName 统一拼，和改名那条路径共用一处派生。
+	name := strings.TrimSpace(exec.Task.Name)
+	if name == "" {
+		name = strings.TrimSpace(exec.Task.TaskTemplateName)
 	}
+	name = kanban.TaskSessionName(name, exec.Task.TaskNumber)
 	if strings.TrimSpace(name) == "" {
 		name = usecase.BuildFallbackSessionName(exec.Prompt)
 	}
@@ -312,15 +319,15 @@ func (s *AppContext) EnsureAgentSession(ctx context.Context, exec kanban.AgentSt
 	return created.Key, nil
 }
 
-func (s *AppContext) RunAgentStage(ctx context.Context, exec kanban.AgentStageExecution) error {
+func (s *AppContext) RunAgentStage(ctx context.Context, exec kanban.AgentStageExecution) (kanban.StageResult, error) {
 	if strings.TrimSpace(exec.RootID) == "" {
-		return errors.New("root_id required")
+		return kanban.StageResult{}, errors.New("root_id required")
 	}
 	if strings.TrimSpace(exec.Run.SessionKey) == "" {
-		return errors.New("session_key required")
+		return kanban.StageResult{}, errors.New("session_key required")
 	}
 	if strings.TrimSpace(exec.Prompt) == "" {
-		return errors.New("agent prompt required")
+		return kanban.StageResult{}, errors.New("agent prompt required")
 	}
 	uc := &usecase.Service{Registry: s}
 	sessionKey := strings.TrimSpace(exec.Run.SessionKey)
@@ -328,6 +335,9 @@ func (s *AppContext) RunAgentStage(ctx context.Context, exec kanban.AgentStageEx
 	updateTracker := newTurnUpdateTracker()
 	planMode := exec.Stage.PlanMode
 	userTimestamp := time.Now().UTC()
+	// 本轮 assistant 正文：只用主线的 message_chunk（子代理的带 ParentToolUseID/TaskID，
+	// 不能算进主线）。kanban 要靠它匹配阶段完成标记。
+	var assistantText strings.Builder
 	err := uc.SendMessage(ctx, usecase.SendMessageInput{
 		RootID:          exec.RootID,
 		RuntimeRootPath: exec.RuntimeRootPath,
@@ -341,11 +351,17 @@ func (s *AppContext) RunAgentStage(ctx context.Context, exec kanban.AgentStageEx
 		Content:         exec.Prompt,
 		UserTimestamp:   userTimestamp,
 		OnStart: func(start usecase.MessageStart) {
-			s.BroadcastSessionUserMessageAt(exec.RootID, sessionKey, session.TypeChat, sessionName, exec.Stage.Agent, start.Model, start.Mode, start.Effort, start.FastService, planMode, exec.Prompt, userTimestamp, start.BaseExchangeSeq)
+			s.BroadcastSessionUserMessageAt(exec.RootID, sessionKey, session.TypeChat, sessionName, exec.Stage.Agent, start.Model, start.ModelDisplayName, start.Mode, start.Effort, start.FastService, planMode, exec.Prompt, userTimestamp, start.UserExchangeSeq, start.BaseExchangeSeq)
 		},
 		OnUpdate: func(update agenttypes.Event) {
 			updateTracker.Begin()
 			defer updateTracker.End()
+			if update.Type == agenttypes.EventTypeMessageChunk {
+				if chunk, ok := update.Data.(agenttypes.MessageChunk); ok &&
+					strings.TrimSpace(chunk.ParentToolUseID) == "" && strings.TrimSpace(chunk.TaskID) == "" {
+					assistantText.WriteString(chunk.Content)
+				}
+			}
 			s.BroadcastSessionUpdate(exec.RootID, sessionKey, update)
 		},
 		OnAgentDefaultsChanged: func(agentName string) {
@@ -373,7 +389,12 @@ func (s *AppContext) RunAgentStage(ctx context.Context, exec kanban.AgentStageEx
 		log.Printf("[kanban] session.done.wait_timeout root=%s session=%s task=%s", exec.RootID, sessionKey, exec.Task.ID)
 	}
 	s.BroadcastSessionDone(exec.RootID, sessionKey, "")
-	return err
+	if err != nil {
+		return kanban.StageResult{}, err
+	}
+	// error == nil 只说明消息投递成功，不代表活干完了。判完成与否看 agent 有没有
+	// 显式回报（见 kanban.MatchStageOutcome）。
+	return kanban.MatchStageOutcome(assistantText.String(), exec.Task.CurrentStageIndex), nil
 }
 
 func (s *AppContext) TaskUpdated(rootID string, detail kanban.TaskDetail) {
@@ -577,6 +598,26 @@ func (s *AppContext) GetE2EEManager() *e2ee.Manager {
 	return s.E2EE
 }
 
+func (s *AppContext) GetAuthStore() *auth.Store {
+	return s.Auth
+}
+
+// MetaRoot 是本账户私有的 meta 根（会话库/任务库/文件元数据），主账户为空串。
+func (s *AppContext) MetaRoot() string {
+	if s == nil || s.Dirs == nil {
+		return ""
+	}
+	return s.Dirs.MetaRoot()
+}
+
+// ConfigDir 是本账户私有的配置目录（usecase 侧按账户打开 prompts 等按需 store 用）。
+func (s *AppContext) ConfigDir() string {
+	if s == nil {
+		return ""
+	}
+	return s.AccountDir
+}
+
 func (s *AppContext) UpsertRoot(path string) (fs.RootInfo, error) {
 	return s.UpsertRootWithMetaLocation(path, fs.MetaLocationProject)
 }
@@ -653,6 +694,13 @@ func (s *AppContext) RenameRoot(rootID, name, rootPath string) (fs.RootInfo, err
 		}
 	}
 	return dir, nil
+}
+
+func (s *AppContext) UpdateDisplayName(rootID, displayName string) (fs.RootInfo, error) {
+	if s.Dirs == nil {
+		return fs.RootInfo{}, errors.New("registry not configured")
+	}
+	return s.Dirs.UpdateDisplayName(rootID, displayName)
 }
 
 func (s *AppContext) ListRoots() []fs.RootInfo {
@@ -845,13 +893,13 @@ func (s *AppContext) SetSessionPendingReply(rootID, sessionKey, sessionTitle str
 	s.GetSessionStreamHub().SetPendingReply(rootID, sessionKey, sessionTitle)
 }
 
-func (s *AppContext) BroadcastSessionUserMessage(rootID, sessionKey, sessionType, sessionName, agentName, model, mode, effort, fastService string, planMode bool, content string) {
-	s.BroadcastSessionUserMessageAt(rootID, sessionKey, sessionType, sessionName, agentName, model, mode, effort, fastService, planMode, content, time.Now().UTC())
+func (s *AppContext) BroadcastSessionUserMessage(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService string, planMode bool, content string) {
+	s.BroadcastSessionUserMessageAt(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService, planMode, content, time.Now().UTC(), 0)
 }
 
-func (s *AppContext) BroadcastSessionUserMessageAt(rootID, sessionKey, sessionType, sessionName, agentName, model, mode, effort, fastService string, planMode bool, content string, timestamp time.Time, baseExchangeSeq ...int) {
+func (s *AppContext) BroadcastSessionUserMessageAt(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService string, planMode bool, content string, timestamp time.Time, userExchangeSeq int, baseExchangeSeq ...int) {
 	s.ClearTaskAuxFlagsForSession(rootID, sessionKey)
-	s.GetSessionStreamHub().BroadcastSessionUserMessageAt(rootID, sessionKey, sessionType, sessionName, agentName, model, mode, effort, fastService, planMode, content, timestamp, "", false, baseExchangeSeq...)
+	s.GetSessionStreamHub().BroadcastSessionUserMessageAt(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService, planMode, content, timestamp, userExchangeSeq, "", false, baseExchangeSeq...)
 }
 
 func (s *AppContext) BroadcastSessionUpdate(rootID, sessionKey string, update agenttypes.Event) {
@@ -900,9 +948,6 @@ func (s *AppContext) BroadcastSessionDone(rootID, sessionKey, requestID string) 
 	s.notifySessionDone(rootID, sessionKey, requestID, pending)
 	hub.ClearSessionPending(sessionKey)
 	hub.BroadcastSessionDone(rootID, sessionKey, requestID)
-	if service, err := s.GetKanbanService(); err == nil {
-		service.Schedule(rootID)
-	}
 }
 
 func (s *AppContext) BroadcastScheduledTaskDone(rootID, taskID, taskName, sessionKey, summary string) {
@@ -1071,7 +1116,7 @@ func (s *AppContext) rootTitle(rootID string) string {
 	if !ok {
 		return strings.TrimSpace(rootID)
 	}
-	return firstNonBlank(root.Name, root.ID)
+	return firstNonBlank(root.EffectiveName(), root.Name, root.ID)
 }
 
 func (s *AppContext) sessionTitle(rootID, sessionKey string) string {
@@ -1151,7 +1196,7 @@ func (s *AppContext) GetCandidateRegistry() *usecase.CandidateRegistry {
 	if s.candidateRegistry == nil {
 		registry := usecase.NewCandidateRegistry()
 		registry.Register(usecase.NewFileCandidateProvider())
-		if store, err := usecase.NewPromptStore(); err == nil {
+		if store, err := usecase.OpenPromptStore(s.ConfigDir()); err == nil {
 			registry.Register(usecase.NewPromptCandidateProvider(store))
 		}
 		registry.Register(usecase.NewSkillCandidateProvider())

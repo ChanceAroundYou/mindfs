@@ -80,7 +80,7 @@ const toolIcons: Record<string, string> = {
   other: "🔧",
 };
 
-export function renderToolIcon(kind: string): React.ReactNode {
+export function renderToolIcon(kind: string, color?: string): React.ReactNode {
   if (kind === "read") {
     return (
       <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 32 32" aria-hidden="true" style={{ color: "#2f80ed" }}>
@@ -132,6 +132,19 @@ export function renderToolIcon(kind: string): React.ReactNode {
     );
   }
   if (kind === "edit") {
+    const themed = String(color || "").trim() !== "";
+    const themedColor = themed ? String(color).trim() : "";
+    if (themed) {
+      return (
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 80 80" aria-hidden="true" style={{ color: themedColor }}>
+          <g fill="none">
+            <path fill="currentColor" stroke="currentColor" strokeLinejoin="round" strokeWidth="1.6" d="M38.4 22.742a2 2 0 1 0 0-4zm23.6 19.6a2 2 0 1 0-4 0zm-52-19.6v44h4v-44zm4 48h44v-4H14zm24.4-52H14v4h24.4zm23.6 48v-24.4h-4v24.4zm-4 4a4 4 0 0 0 4-4h-4zm-48-4a4 4 0 0 0 4 4v-4zm4-44v-4a4 4 0 0 0-4 4z" />
+            <path fill="currentColor" stroke="currentColor" strokeLinejoin="round" strokeWidth="1.4" fillRule="evenodd" d="M68.015 21.897c.78-.78.78-2.044 0-2.824l-5.657-5.657a2.003 2.003 0 0 0-2.833 0L30.7 42.242a16 16 0 0 0-4.555 9.267l-.308 2.384l-.125.974a.758.758 0 0 0 .848.849l.975-.126l2.384-.307a16 16 0 0 0 9.266-4.555z" clipRule="evenodd" />
+            <path stroke="currentColor" strokeLinejoin="round" strokeWidth="5.2" d="m52.147 20.804l8.48 8.48" />
+          </g>
+        </svg>
+      );
+    }
     return (
       <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 80 80" aria-hidden="true">
         <g fill="none">
@@ -668,9 +681,9 @@ export const ToolCallCard = memo(function ToolCallCard({
         width: "100%",
         minWidth: 0,
         borderRadius: "10px",
-        border: isFileChange ? "1px solid rgba(59, 130, 246, 0.22)" : "1px solid var(--border-color)",
+        border: isFileChange ? "1px solid color-mix(in srgb, var(--accent-color) 22%, transparent)" : "1px solid var(--border-color)",
         background: isFileChange
-          ? "linear-gradient(180deg, rgba(59, 130, 246, 0.08), rgba(59, 130, 246, 0.03))"
+          ? "linear-gradient(180deg, color-mix(in srgb, var(--accent-color) 8%, transparent), color-mix(in srgb, var(--accent-color) 3%, transparent))"
           : "var(--content-bg)",
         boxShadow: isFileChange ? "inset 0 1px 0 rgba(255,255,255,0.35)" : "none",
         overflow: "hidden",
@@ -685,7 +698,7 @@ export const ToolCallCard = memo(function ToolCallCard({
           alignItems: "center",
           justifyContent: "flex-start",
           padding: "6px 8px",
-          background: isFileChange ? "rgba(59, 130, 246, 0.04)" : "none",
+          background: isFileChange ? "color-mix(in srgb, var(--accent-color) 4%, transparent)" : "none",
           border: "none",
           cursor: hasDetails ? "pointer" : "default",
           fontSize: "12px",
@@ -706,7 +719,7 @@ export const ToolCallCard = memo(function ToolCallCard({
                 minWidth: 0,
                 padding: "1px 6px",
                 borderRadius: "999px",
-                background: "rgba(37, 99, 235, 0.10)",
+                background: "color-mix(in srgb, var(--accent-color) 10%, transparent)",
                 color: "#1d4ed8",
                 fontSize: "10px",
                 fontWeight: 600,

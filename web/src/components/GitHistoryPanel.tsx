@@ -121,7 +121,7 @@ export function GitHistoryPanel({
           {items.map((commit, index) => {
             const isExpanded = expandedCommits[commit.hash] === true;
             const files = filesByCommit[commit.hash] || [];
-            const dotColor = commit.remote === true ? "#7c3aed" : "#2563eb";
+            const dotColor = commit.remote === true ? "#7c3aed" : "var(--accent-color)";
             return (
               <div key={commit.hash} style={{ display: "grid", gridTemplateColumns: "8px minmax(0, 1fr)", columnGap: "2px", position: "relative" }}>
                 {index < items.length - 1 || hasMore ? (
@@ -193,14 +193,14 @@ export function GitHistoryPanel({
                           gap: compact ? "6px" : "10px",
                           width: "100%",
                           border: "none",
-                          background: "linear-gradient(180deg, rgba(59, 130, 246, 0.08), rgba(59, 130, 246, 0.03))",
+                          background: "linear-gradient(180deg, color-mix(in srgb, var(--accent-color) 8%, transparent), color-mix(in srgb, var(--accent-color) 3%, transparent))",
                           padding: compact ? "5px 7px" : "5px 10px",
                           cursor: "pointer",
                           textAlign: "left",
                           borderRadius: "8px",
                         }}
-                        onMouseEnter={(e) => { e.currentTarget.style.background = "linear-gradient(180deg, rgba(59, 130, 246, 0.12), rgba(59, 130, 246, 0.05))"; }}
-                        onMouseLeave={(e) => { e.currentTarget.style.background = "linear-gradient(180deg, rgba(59, 130, 246, 0.08), rgba(59, 130, 246, 0.03))"; }}
+                        onMouseEnter={(e) => { e.currentTarget.style.background = "linear-gradient(180deg, color-mix(in srgb, var(--accent-color) 12%, transparent), color-mix(in srgb, var(--accent-color) 5%, transparent))"; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.background = "linear-gradient(180deg, color-mix(in srgb, var(--accent-color) 8%, transparent), color-mix(in srgb, var(--accent-color) 3%, transparent))"; }}
                       >
                         <span style={{ width: compact ? "18px" : "24px", color: renderStatusColor(file.status), fontSize: "12px", fontWeight: 700, flexShrink: 0 }}>
                           {file.status === "??" ? "U" : file.status}

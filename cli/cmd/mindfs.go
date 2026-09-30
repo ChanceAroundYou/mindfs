@@ -23,6 +23,7 @@ import (
 	"syscall"
 	"time"
 
+	"mindfs/internal/deploy"
 	"mindfs/server/app"
 )
 
@@ -66,16 +67,8 @@ func main() {
 		fmt.Fprintf(out, "  mindfs -remove /path/to/project\n")
 		fmt.Fprintf(out, "  mindfs <rootid> -task 12\n")
 		fmt.Fprintf(out, "  mindfs <rootid> -task 12 -next\n")
-		fmt.Fprintf(out, "  mindfs <rootid> -tasks\n  mindfs -agents\n  mindfs -task-templates\n")
-		fmt.Fprintln(out, "  mindfs <rootid> -to-session <session-key> < message.json")
-		fmt.Fprintf(out, "  mindfs <rootid> -task-create < task.json\n")
-		fmt.Fprintf(out, "  mindfs <rootid> -task-groups\n")
-		fmt.Fprintf(out, "  mindfs <rootid> -task-group-create < group.json\n")
-		fmt.Fprintf(out, "  mindfs <rootid> -task-group <group-id> -graph\n")
-		fmt.Fprintln(out, "  mindfs -orchestration  # detailed orchestration guide (Markdown)")
 	}
 
-	orchestrationHelp := flag.Bool("orchestration", false, "print task and conversation orchestration guide as Markdown; no service required")
 	addr := flag.String("addr", "127.0.0.1:7331", "listen address")
 	noRelayer := flag.Bool("no-relayer", false, "disable relay integration")
 	e2eeFlag := flag.Bool("e2ee", false, "enable end-to-end encryption for sensitive data")
@@ -85,36 +78,20 @@ func main() {
 	internalAutoStartFlag := flag.Bool("internal-autostart", false, "internal flag used by the automatic startup entry")
 	stop := flag.Bool("stop", false, "stop the background mindfs service")
 	restart := flag.Bool("restart", false, "restart the background mindfs service")
-	statusFlag := flag.Bool("status", false, "show service status, or task/group status with -task/-task-group")
+	statusFlag := flag.Bool("status", false, "show background service status")
 	versionFlag := flag.Bool("version", false, "show version")
-	updateFlag := flag.Bool("update", false, "update MindFS, or edit a task with -task (JSON from stdin)")
+	updateFlag := flag.Bool("update", false, "check for and install the latest MindFS release")
 	uninstallFlag := flag.Bool("uninstall", false, "print the MindFS uninstall command")
 	bindRelay := flag.Bool("bind-relay", false, "start relay binding and print the relayer bind URL")
 	configFlag := flag.String("config", "", "mindfs startup config file; command-line flags override file values")
 	agentConfigFlag := flag.String("agent-config", "", "extra agents.json file for customizable agent(ACP-protocol) and shell")
 	notifyScriptFlag := flag.String("notify-script", "", "executable script for notification events; receives JSON payload on stdin")
 	remove := flag.Bool("remove", false, "remove the managed directory")
-	groupCreate := flag.Bool("task-group-create", false, "create an orchestration group linked to a parent session")
-	groupList := flag.Bool("task-groups", false, "list task groups and their parent conversations")
-	groupID := flag.String("task-group", "", "task group ID (defaults to -graph)")
-	toTask := flag.String("to-task", "", "send a user message to an ordinary or orchestrated task; read JSON from stdin")
-	fromTask := flag.String("from-task", "", "report from a task to its parent conversation; read JSON message from stdin")
-	toSession := flag.String("to-session", "", "send a user message to an existing chat session; read JSON from stdin")
-	taskCreate := flag.Bool("task-create", false, "create a task from JSON")
-	taskList := flag.Bool("tasks", false, "list tasks, newest created first, 20 per page")
-	taskCursor := flag.String("cursor", "", "task number returned as next_cursor by the previous -tasks response")
-	taskAgents := flag.Bool("agents", false, "list global agents and model capabilities (no root ID required)")
-	taskTemplates := flag.Bool("task-templates", false, "list global task templates (no root ID required)")
-	taskNumber := flag.String("task", "", "task ID or project task number (defaults to -status)")
-	taskOperations := registerTaskOperationFlags(flag.CommandLine, statusFlag, updateFlag)
+	taskNumber := flag.String("task", "", "task number to inspect; prints task detail (read-only)")
 	tlsFlag := flag.Bool("tls", false, "enable HTTPS (auto-generates self-signed cert if -cert/-key not provided)")
 	certFlag := flag.String("cert", "", "TLS certificate file (PEM); auto-generated if empty with -tls")
 	keyFlag := flag.String("key", "", "TLS private key file (PEM); auto-generated if empty with -tls")
 	_ = flag.CommandLine.Parse(normalizeTaskRootFirstArgs(os.Args[1:]))
-	if *orchestrationHelp {
-		fmt.Print(taskCLIHelp)
-		return
-	}
 	explicitFlags := visitedFlags(flag.CommandLine)
 	startupCfg, err := loadStartupConfig(*configFlag)
 	if err != nil {
@@ -131,68 +108,13 @@ func main() {
 		printVersion()
 		return
 	}
-	action, count := selectedTaskOperation(taskOperations, *taskNumber != "" || *groupID != "" || *toTask != "" || *fromTask != "" || *toSession != "" || *groupCreate || *groupList || *taskCreate || *taskList || *taskAgents || *taskTemplates)
-	if *taskCursor != "" && !*taskList {
-		fmt.Fprintln(os.Stderr, "-cursor requires -tasks")
-		os.Exit(1)
-	}
-	if *toSession != "" || *toTask != "" || *fromTask != "" || *groupCreate || *groupList || *groupID != "" || *taskNumber != "" || count > 0 || *taskCreate || *taskList || *taskAgents || *taskTemplates {
-		for _, operation := range []struct {
-			enabled bool
-			name    string
-		}{
-			{*taskCreate, "create"}, {*taskList, "list"}, {*taskAgents, "agents"},
-			{*taskTemplates, "templates"}, {*groupCreate, "group:create"}, {*groupList, "group:list"},
-		} {
-			if operation.enabled {
-				action = operation.name
-				count++
-			}
-		}
-		messageTaskID := ""
-		for _, target := range []struct{ id, action string }{{*toTask, "to-task"}, {*fromTask, "from-task"}, {*toSession, "to-session"}} {
-			if target.id != "" {
-				count++
-				action = target.action
-				messageTaskID = target.id
-			}
-		}
-		if messageTaskID != "" && (*taskNumber != "" || *groupID != "") {
-			fmt.Fprintln(os.Stderr, "choose one of -task, -task-group, -to-task, -from-task, or -to-session")
-			os.Exit(1)
-		}
-		id := *taskNumber
-		if messageTaskID != "" {
-			id = messageTaskID
-		}
-		if *groupID != "" {
-			if id != "" || *groupCreate || *groupList || *taskCreate || *taskList || *taskAgents || *taskTemplates {
-				fmt.Fprintln(os.Stderr, "choose either -task-group or -task")
-				os.Exit(1)
-			}
-			id = *groupID
-			if count == 0 {
-				action, count = "graph", 1
-			}
-			action = "group:" + action
-		} else if id != "" && count == 0 {
-			action, count = "status", 1
-		}
-		if count != 1 {
-			fmt.Fprintln(os.Stderr, "exactly one task operation required")
-			os.Exit(1)
-		}
-		root := ""
+	if strings.TrimSpace(*taskNumber) != "" {
+		rootID := ""
 		if flag.NArg() > 0 {
-			root = flag.Arg(0)
+			rootID = flag.Arg(0)
 		}
-		useTLS, err := resolveClientTLS(*addr, *tlsFlag, explicitFlags["tls"] || startupCfg.TLS != nil)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-		if err := handleTaskOperation(*addr, useTLS, root, id, action, *taskCursor); err != nil {
-			fmt.Fprintln(os.Stderr, err)
+		if err := handleTaskCommand(*addr, *tlsFlag, rootID, strings.TrimSpace(*taskNumber)); err != nil {
+			fmt.Fprintln(os.Stderr, err.Error())
 			os.Exit(1)
 		}
 		return
@@ -224,15 +146,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Discover the existing service's transport without changing startup flags:
-	// a new service must use this invocation's requested TLS configuration.
-	clientTLS, err := resolveClientTLS(*addr, *tlsFlag, explicitFlags["tls"] || startupCfg.TLS != nil)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		os.Exit(1)
-	}
 	if *updateFlag {
-		if err := handleUpdateCommand(context.Background(), *addr, clientTLS); err != nil {
+		if err := handleUpdateCommand(context.Background(), *addr, *tlsFlag); err != nil {
 			fmt.Fprintln(os.Stderr, err.Error())
 			os.Exit(1)
 		}
@@ -240,14 +155,14 @@ func main() {
 	}
 
 	if *statusFlag {
-		if err := printServiceStatus(*addr, clientTLS, pidPath, logPath); err != nil {
+		if err := printServiceStatus(*addr, *tlsFlag, pidPath, logPath); err != nil {
 			fmt.Fprintln(os.Stderr, err.Error())
 			os.Exit(1)
 		}
 		return
 	}
 	if *stop {
-		if err := stopService(*addr, clientTLS, pidPath); err != nil {
+		if err := stopService(*addr, *tlsFlag, pidPath); err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				fmt.Fprintln(os.Stdout, "mindfs service already stopped")
 				return
@@ -259,7 +174,7 @@ func main() {
 		return
 	}
 	if *restart {
-		if err := stopService(*addr, clientTLS, pidPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := stopService(*addr, *tlsFlag, pidPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 			fmt.Fprintln(os.Stderr, err.Error())
 			os.Exit(1)
 		}
@@ -271,7 +186,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, err.Error())
 			os.Exit(1)
 		}
-		if err := handleRemoveRoot(*addr, clientTLS, absRoot); err != nil {
+		if err := handleRemoveRoot(*addr, *tlsFlag, absRoot); err != nil {
 			fmt.Fprintln(os.Stderr, err.Error())
 			os.Exit(1)
 		}
@@ -279,10 +194,18 @@ func main() {
 		return
 	}
 
-	reuseService := !internalRestart && !*restart && serverRunning(*addr, clientTLS)
+	e2eeResult, err := app.EnsureE2EEConfig(*e2eeFlag)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		os.Exit(1)
+	}
+	if *e2eeFlag && !internalAutoStart && strings.TrimSpace(e2eeResult.Config.PairingSecret) != "" {
+		fmt.Fprintln(os.Stdout, "E2EE enabled")
+		fmt.Fprintln(os.Stdout, "pairing secret:", e2eeResult.Config.PairingSecret)
+	}
 	if !daemonMode && !internalRestart && !internalAutoStart {
 		autoStartExplicit := explicitFlags["autostart"]
-		if *autoStart || (!reuseService && !autoStartExplicit && autoStartConfigured()) {
+		if *autoStart || (!autoStartExplicit && autoStartConfigured()) {
 			autoArgs := autoStartArguments(
 				*addr,
 				*noRelayer,
@@ -304,7 +227,7 @@ func main() {
 		}
 	}
 
-	if reuseService {
+	if !internalRestart && !*restart && serverRunning(*addr, *tlsFlag) {
 		fmt.Fprintf(os.Stdout, "server already running on %s, reusing existing process\n", *addr)
 		rootID := ""
 		if hasRootArg {
@@ -313,7 +236,7 @@ func main() {
 				fmt.Fprintln(os.Stderr, err.Error())
 				os.Exit(1)
 			}
-			rootInfo, err := addManagedDir(*addr, clientTLS, absRoot)
+			rootInfo, err := addManagedDir(*addr, *tlsFlag, absRoot)
 			if err != nil {
 				fmt.Fprintln(os.Stderr, err.Error())
 				os.Exit(1)
@@ -322,28 +245,18 @@ func main() {
 			fmt.Fprintln(os.Stdout, "added managed directory:", rootInfo.RootPath)
 		}
 		if *bindRelay {
-			if err := printRelayBindTarget(os.Stdout, *addr, clientTLS, rootID); err != nil {
+			if err := printRelayBindTarget(os.Stdout, *addr, *tlsFlag, rootID); err != nil {
 				fmt.Fprintln(os.Stderr, err.Error())
 				os.Exit(1)
 			}
 		} else if !internalAutoStart {
-			if err := openTarget(*addr, clientTLS, rootID); err != nil {
+			if err := openTarget(*addr, *tlsFlag, rootID); err != nil {
 				reportOpenTargetError(os.Stderr, err)
 			}
 		}
 		return
 	}
 
-	// Only persist E2EE settings when starting a service, not when reusing it.
-	e2eeResult, err := app.EnsureE2EEConfig(*e2eeFlag)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		os.Exit(1)
-	}
-	if *e2eeFlag && !internalAutoStart && strings.TrimSpace(e2eeResult.Config.PairingSecret) != "" {
-		fmt.Fprintln(os.Stdout, "E2EE enabled")
-		fmt.Fprintln(os.Stdout, "pairing secret:", e2eeResult.Config.PairingSecret)
-	}
 	// Resolve TLS certificate/key paths when TLS is enabled.
 	resolvedCert, resolvedKey := *certFlag, *keyFlag
 	if *tlsFlag && (resolvedCert == "" || resolvedKey == "") {
@@ -846,6 +759,11 @@ func processExists(pid int) bool {
 	return processExistsPlatform(pid)
 }
 
+// resolveClientTLS 判定这次 CLI 调用该不该走 https。
+//
+// 显式 scheme 优先（用户写了 https:// 就别去读配置），其次是本次显式传入的
+// -tls 开关；都没给才回读本机服务登记的 TLS 状态。少了最后一步，CLI 就会拿
+// http 去敲一个 https 的本机服务（上游 bab545f 修的就是这个）。
 func resolveClientTLS(addr string, useTLS, configured bool) (bool, error) {
 	if strings.HasPrefix(addr, "https://") {
 		return true, nil
@@ -873,7 +791,7 @@ func newHTTPClient(useTLS bool, timeout time.Duration) *http.Client {
 }
 
 func serverRunning(addr string, useTLS bool) bool {
-	url := addrToURL(addr, "/health", useTLS)
+	url := addrToURL(addr, deploy.PrefixedPath("/health"), useTLS)
 	client := newHTTPClient(useTLS, 800*time.Millisecond)
 	resp, err := client.Get(url)
 	if err != nil {
@@ -970,16 +888,10 @@ func normalizeTaskRootFirstArgs(args []string) []string {
 
 func containsTaskFlag(args []string) bool {
 	for _, arg := range args {
-		name := strings.SplitN(strings.TrimLeft(arg, "-"), "=", 2)[0]
-		if !strings.HasPrefix(arg, "-") {
-			continue
-		}
-		switch name {
-		case "to-session", "to-task", "from-task", "task-group", "task-groups", "task-group-create", "tasks", "task-create", "agents", "task-templates", "task":
+		if arg == "-task" || arg == "--task" || strings.HasPrefix(arg, "-task=") || strings.HasPrefix(arg, "--task=") {
 			return true
 		}
 	}
-
 	return false
 }
 
@@ -992,6 +904,31 @@ type taskCLIDetailHeader struct {
 		ID         string `json:"id"`
 		TaskNumber int    `json:"task_number"`
 	} `json:"task"`
+}
+
+// handleTaskCommand 只读：打印指定编号的任务详情。阶段推进/暂停一律走面板。
+func handleTaskCommand(addr string, useTLS bool, rootID, taskNumberRaw string) error {
+	rootID = strings.TrimSpace(rootID)
+	taskNumberRaw = strings.TrimSpace(strings.TrimPrefix(taskNumberRaw, "#"))
+	if rootID == "" {
+		return errors.New("root id argument required: mindfs <rootid> -task <task_number>")
+	}
+	taskNumber, err := strconv.Atoi(taskNumberRaw)
+	if err != nil || taskNumber <= 0 {
+		return errors.New("task number must be a positive integer")
+	}
+	token, err := app.ReadLocalCLIToken(addr)
+	if err != nil {
+		return err
+	}
+	_, detail, err := fetchTaskDetailByNumber(addr, useTLS, token, rootID, taskNumber)
+	if err != nil {
+		return err
+	}
+	if _, err = os.Stdout.Write(detail); err == nil {
+		fmt.Fprintln(os.Stdout)
+	}
+	return err
 }
 
 func fetchTaskDetailByNumber(addr string, useTLS bool, token, rootID string, taskNumber int) (string, json.RawMessage, error) {
@@ -1057,18 +994,9 @@ func handleRemoveRoot(addr string, useTLS bool, path string) error {
 }
 
 func fetchRelayStatus(addr string, useTLS bool) (relayStatusResponse, error) {
-	token, err := app.ReadLocalCLIToken(addr)
-	if err != nil {
-		return relayStatusResponse{}, err
-	}
 	url := addrToURL(addr, "/api/relay/status", useTLS)
 	client := newHTTPClient(useTLS, 3*time.Second)
-	req, err := http.NewRequest(http.MethodGet, url, nil)
-	if err != nil {
-		return relayStatusResponse{}, err
-	}
-	req.Header.Set("X-MindFS-Local-CLI-Token", token)
-	resp, err := client.Do(req)
+	resp, err := client.Get(url)
 	if err != nil {
 		return relayStatusResponse{}, err
 	}
@@ -1245,6 +1173,8 @@ func addrToURL(addr, path string, useTLS bool) string {
 	if host == "" {
 		host = "localhost"
 	}
+	// "::" 和 "0.0.0.0" 都是监听通配地址，不能直接拿去连：前者拼出来是
+	// https://:::7331 这种非法 URL，后者在本机以外的语境下也不可达。
 	if host == "0.0.0.0" || host == "::" {
 		host = "127.0.0.1"
 	}
@@ -1255,6 +1185,8 @@ func addrToURL(addr, path string, useTLS bool) string {
 	if useTLS {
 		scheme = "https"
 	}
+	// JoinHostPort 而不是 "%s:%s"：IPv6 字面量必须加方括号，
+	// 否则拼出的是 https://::1:7331 这种非法 URL。
 	return fmt.Sprintf("%s://%s%s", scheme, net.JoinHostPort(host, port), path)
 }
 

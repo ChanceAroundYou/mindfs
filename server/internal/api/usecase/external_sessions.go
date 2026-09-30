@@ -75,6 +75,13 @@ type SyncExternalSessionDeltaOutput struct {
 
 var externalSessionSyncLocks sync.Map
 
+// externalSessionSyncTimes 记录每个 (rootID,key) 最近一次 best-effort 同步时间，用于节流。
+// externalSyncThrottle 内重复的非 Full 同步直接跳过，避免 handleSessionGet 高频轮询重复磁盘扫描。
+// ponytail: 无清理（外部会话绑定数量有限），若会话海量需换成带 TTL 的 map。
+var externalSessionSyncTimes sync.Map
+
+const externalSyncThrottle = 2 * time.Second
+
 func (s *Service) ListExternalSessions(ctx context.Context, in ListExternalSessionsInput) (ListExternalSessionsOutput, error) {
 	if err := s.ensureRegistry(); err != nil {
 		return ListExternalSessionsOutput{}, err
@@ -120,6 +127,14 @@ func (s *Service) ListExternalSessions(ctx context.Context, in ListExternalSessi
 			}
 		}
 		item.FirstUserText = stripExternalSessionPrefix(item.FirstUserText)
+		if alias, ok := manager.LookupAliasForAgent(in.Agent, item.AgentSessionID); ok {
+			item.Title = alias
+		} else if strings.TrimSpace(item.Title) == "" {
+			// No alias & no claude resume title: use stripped lastUserText front 20 chars (no REPLY_TIPS).
+			if short := shortExternalSessionTitle(item.FirstUserText); short != "" {
+				item.Title = short
+			}
+		}
 		items = append(items, item)
 		return len(items) < limit, nil
 	}
@@ -186,6 +201,9 @@ func (s *Service) ImportExternalSession(ctx context.Context, in ImportExternalSe
 	}
 
 	name := buildImportedSessionName(imported)
+	if alias, ok := manager.LookupAliasForAgent(in.Agent, imported.AgentSessionID); ok {
+		name = alias
+	}
 	created, err := manager.Create(ctx, session.CreateInput{
 		Type:  session.TypeChat,
 		Agent: in.Agent,
@@ -273,6 +291,18 @@ func (s *Service) SyncExternalSessionDelta(ctx context.Context, in SyncExternalS
 	lock.Lock()
 	defer lock.Unlock()
 
+	// 节流：非 Full 的 best-effort 同步（每次 handleSessionGet 都会触发）在时间窗内直接跳过，
+	// 避免高频轮询重复跑磁盘扫描 + SQLite 查询。Full 同步（用户主动 sync）不受限。
+	if !in.Full {
+		lockKey := externalSyncLockKey(in.RootID, in.Key)
+		if last, ok := externalSessionSyncTimes.Load(lockKey); ok {
+			if elapsed := time.Since(last.(time.Time)); elapsed < externalSyncThrottle {
+				return out, nil
+			}
+		}
+		externalSessionSyncTimes.Store(lockKey, time.Now().UTC())
+	}
+
 	root, err := s.Registry.GetRoot(in.RootID)
 	if err != nil {
 		return out, err
@@ -302,6 +332,22 @@ func (s *Service) SyncExternalSessionDelta(ctx context.Context, in SyncExternalS
 	}
 	out.LastTimestamp = lastTimestamp
 
+	// 所有权守卫：MindFS 自己在驱动的会话由实时路径独占持久化，导入器**一律不做自动增量
+	// 同步**。双写（同一轮两个写入者各落一行）是 2026-04-29 自动同步上线时的副作用，判重
+	// 只能靠「内容相似 + ±5 秒」猜，实测 6.4s / 15.6s / 36.7s 的差值全会漏。
+	//
+	// 这里曾经留过「进程启动后每会话一次兜底补齐」的例外，2026-09-16 被真实事故证伪并撤掉：
+	// live-owned 会话的字节游标是**冻结**的（导入器平时不跑），拿它当起点会把早已落库的旧
+	// 回合整段重导；而导入器会把相邻同角色条目**合并**，重导出来的行与实时路径写的行并不
+	// 逐字相同 —— 写入侧判重（±5s）和读取投影（内容相等 / 600s 前缀窗）都折叠不掉，于是
+	// 用户看到「ask 下面又渲染了一轮出现过的文字」（AIS/docs 的 BP 会话，重导了 09-14 的内容）。
+	//
+	// 需要补历史时走用户手点的「同步」（Full）：那是显式意图，且带时间地板（见下），
+	// 只会补「比库里最新一条更新」的部分。
+	if !in.Full && session.SessionIsLiveOwned(current.Exchanges) {
+		return out, nil
+	}
+
 	importer, err := s.resolveExternalSessionImporter(agentName)
 	if err != nil {
 		return out, err
@@ -311,6 +357,15 @@ func (s *Service) SyncExternalSessionDelta(ctx context.Context, in SyncExternalS
 		Agent:          agentName,
 		AgentSessionID: binding.AgentSessionID,
 	}
+	// live-owned 会话的游标是**冻结**的（导入器平时不跑），只按偏移读会把早已落库的旧回合
+	// 整段重导一遍——实测 2026-09-16：BP 会话被重导了 09-14 的内容，且因为导入器会把相邻
+	// 同角色条目合并，那些重导行的内容与实时路径写的行并不逐字相同，写入侧判重和读取投影
+	// 都折叠不掉，用户看到「ask 下面又渲染了一轮出现过的文字」。
+	// 所以给这种会话一道时间地板：只接受比库里最新一条更新的条目，兜底补齐真正要的
+	// 只是「进程重启时被中断的那一轮」。
+	if session.SessionIsLiveOwned(current.Exchanges) {
+		importInput.TimestampFloor = lastTimestamp
+	}
 	// Child-agent JSONL files may keep growing without changing the root file.
 	// Keep the root cursor fast path only when there are no imported children.
 	children, err := manager.List(ctx, session.ListOptions{ParentSessionKey: current.Key, Limit: 1})
@@ -319,9 +374,13 @@ func (s *Service) SyncExternalSessionDelta(ctx context.Context, in SyncExternalS
 	}
 	if !in.Full {
 		importInput.AfterTimestamp = lastTimestamp
-		if len(children) == 0 {
-			importInput.Cursor = binding.ExternalCursor()
-		}
+		// 始终传字节游标：root 转录据此从上次结束位置增量读，而非每次全量解析
+		// （实测某会话转录 72MB，全量解析 3.6s，而实际只落后 76KB）。
+		importInput.Cursor = binding.ExternalCursor()
+		// 有子会话时额外强制重读：子代理转录可能在 root 文件不变的情况下增长，
+		// 「未变即跳过」会漏掉它们。这与游标是两件事——原先二者被同一个
+		// `len(children)==0` 条件捆在一起，导致有子会话的会话连增量读也一并失效。
+		importInput.ForceRead = len(children) > 0
 	}
 	imported, err := importer.ImportExternalSession(ctx, importInput)
 	if err != nil {
@@ -342,19 +401,19 @@ func (s *Service) SyncExternalSessionDelta(ctx context.Context, in SyncExternalS
 			importedCount++
 		}
 	}
-	latest := current
-	if importedCount > 0 {
-		latest, err = manager.Get(ctx, current.Key, 0)
-		if err != nil {
-			return out, err
-		}
-		agentSessionID := strings.TrimSpace(imported.AgentSessionID)
-		if agentSessionID == "" {
-			agentSessionID = binding.AgentSessionID
-		}
-		if err := manager.UpdateAgentState(ctx, latest, agentName, len(latest.Exchanges), agentSessionID); err != nil {
-			return out, err
-		}
+	// 即使本轮 ImportedCount=0 也要刷新 agent_ctx_seq：live 写入与 count=0 的增量
+	// 会让 ctx_seq 落后于库长度，下次 Full 同步按陈旧游标切片就会重放尾段（实测
+	// 「点同步整段重放 count=13」根因之一）。幂等护栏只挡重放，刷游标消根因。
+	latest, err := manager.Get(ctx, current.Key, 0)
+	if err != nil {
+		return out, err
+	}
+	agentSessionID := strings.TrimSpace(imported.AgentSessionID)
+	if agentSessionID == "" {
+		agentSessionID = binding.AgentSessionID
+	}
+	if err := manager.UpdateAgentState(ctx, latest, agentName, len(latest.Exchanges), agentSessionID); err != nil {
+		return out, err
 	}
 	subagentCount, err := syncImportedSubagentSessions(ctx, manager, latest, agentName, imported.Subagents)
 	if err != nil {
@@ -412,6 +471,9 @@ func syncImportedSubagentSessions(
 				name := strings.TrimSpace(item.Title)
 				if name == "" {
 					name = "Subagent"
+				}
+				if alias, ok := manager.LookupAliasForAgent(agentName, agentSessionID); ok {
+					name = alias
 				}
 				child, err = manager.Create(ctx, session.CreateInput{
 					Type:             session.TypeChat,
@@ -479,8 +541,17 @@ func appendImportedExchange(
 	if role == "user" && strings.TrimSpace(exchange.Content) == "" {
 		return false, nil
 	}
+	// 幂等护栏：Full 同步按 ctx_seq 切片，而 ctx_seq 在「live 写入 + ImportedCount=0
+	// 的增量（ts 相同被 after 过滤）」期间不会推进，点「同步」时会把库内已有的
+	// 历史尾段整块重放（2026-09-12 WSL 实测：count=13 重放、old 时间戳、字段缺
+	// model_display_name/effort）。
+	// 判据与发送侧共用（exchangeAlreadyRecorded）：同一轮的用户条目本来就由这个导入器
+	// 和回合结束的 SendMessage 两个人写，护栏必须对称，否则后写的那个照样落重复。
+	if exchangeAlreadyRecorded(target, role, exchange.Content, exchange.Timestamp) {
+		return false, nil
+	}
 	if err := manager.AddExchangeForAgentAt(
-		ctx,
+		session.WithExchangeSource(ctx, session.ExchangeSourceImport),
 		target,
 		role,
 		exchange.Content,
@@ -492,7 +563,8 @@ func appendImportedExchange(
 	); err != nil {
 		return false, err
 	}
-	seq := len(target.Exchanges)
+	// aux 以 seq 为键：必须取刚落下那行的真实 seq（max+1 分配下 len ≠ seq）
+	seq := session.MaxExchangeSeq(target.Exchanges)
 	for _, importedAux := range exchange.Aux {
 		if importedAux.Plan != nil {
 			plan := *importedAux.Plan
@@ -536,9 +608,12 @@ func (s *Service) resolveExternalSessionImporter(agentName string) (agenttypes.E
 	return importer, nil
 }
 
+func externalSyncLockKey(rootID, key string) string {
+	return strings.TrimSpace(rootID) + ":" + strings.TrimSpace(key)
+}
+
 func externalSessionSyncLock(rootID, key string) *sync.Mutex {
-	lockKey := strings.TrimSpace(rootID) + ":" + strings.TrimSpace(key)
-	lock, _ := externalSessionSyncLocks.LoadOrStore(lockKey, &sync.Mutex{})
+	lock, _ := externalSessionSyncLocks.LoadOrStore(externalSyncLockKey(rootID, key), &sync.Mutex{})
 	return lock.(*sync.Mutex)
 }
 
@@ -559,24 +634,30 @@ func buildImportedSessionName(imported agenttypes.ImportedExternalSession) strin
 		}
 		return title
 	}
-	preview := ""
-	for _, item := range imported.Exchanges {
-		if item.Role != "user" {
+	// Use last user message (剥离 REPLY_TIPS) 的前20，满足导入后短标题需求；无内容回退到 Imported agent
+	var last string
+	for i := len(imported.Exchanges) - 1; i >= 0; i-- {
+		if strings.TrimSpace(imported.Exchanges[i].Role) != "user" {
 			continue
 		}
-		preview = strings.TrimSpace(item.Content)
-		if preview != "" {
-			break
+		c := strings.TrimSpace(imported.Exchanges[i].Content)
+		if c == "" {
+			continue
 		}
+		last = c
+		break
 	}
-	if preview == "" {
-		return "Imported " + strings.TrimSpace(imported.Agent)
+	if short := shortExternalSessionTitle(last); short != "" {
+		return short
 	}
-	runes := []rune(preview)
-	if len(runes) > 40 {
-		preview = string(runes[:40])
+	if preview := strings.TrimSpace(last); preview != "" {
+		runes := []rune(preview)
+		if len(runes) > 20 {
+			preview = string(runes[:20])
+		}
+		return preview
 	}
-	return preview
+	return "Imported " + strings.TrimSpace(imported.Agent)
 }
 
 func normalizeExternalSessionPath(path string) string {
@@ -592,6 +673,36 @@ func normalizeExternalSessionPath(path string) string {
 		clean = abs
 	}
 	return filepath.Clean(clean)
+}
+
+func stripReplyTipsPrefix(text string) string {
+	text = strings.TrimSpace(text)
+	if strings.HasPrefix(text, "[REPLY_TIPS]") {
+		if idx := strings.Index(text, "[USER_PROMPT]"); idx >= 0 {
+			return strings.TrimSpace(text[idx+len("[USER_PROMPT]"):])
+		}
+		// No USER_PROMPT marker: fallback to tail after replyTips block
+		if idx := strings.Index(text, "\n\n"); idx >= 0 {
+			return strings.TrimSpace(text[idx:])
+		}
+	}
+	return text
+}
+
+func shortExternalSessionTitle(text string) string {
+	text = strings.TrimSpace(stripReplyTipsPrefix(stripExternalSessionPrefix(text)))
+	if text == "" {
+		return ""
+	}
+	// 取首行/首段，避免跨行长尾
+	if idx := strings.Index(text, "\n"); idx >= 0 {
+		text = strings.TrimSpace(text[:idx])
+	}
+	runes := []rune(text)
+	if len(runes) > 20 {
+		text = string(runes[:20])
+	}
+	return strings.TrimSpace(text)
 }
 
 func stripExternalSessionPrefix(text string) string {

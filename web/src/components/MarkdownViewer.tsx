@@ -1,4 +1,4 @@
-import React, { memo, useEffect, useMemo, useRef, useState } from "react";
+import React, { memo, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -201,7 +201,7 @@ function diffCodeRowStyle(kind: DiffCodeRow["kind"]): { background: string; colo
     return { background: "rgba(239, 68, 68, 0.14)", color: "#991b1b" };
   }
   if (kind === "hunk") {
-    return { background: "rgba(59, 130, 246, 0.10)", color: "#1d4ed8" };
+    return { background: "color-mix(in srgb, var(--accent-color) 10%, transparent)", color: "var(--accent-color)" };
   }
   if (kind === "meta") {
     return { background: "rgba(100, 116, 139, 0.10)", color: "#475569" };
@@ -338,7 +338,7 @@ function MarkdownCodeBlock({
           borderRadius: "6px",
           border: "none",
           background: "transparent",
-          color: isFailed ? "#b91c1c" : "#2563eb",
+          color: isFailed ? "#b91c1c" : "var(--accent-color)",
           cursor: "pointer",
           opacity: isFailed ? 1 : 0.5,
           padding: 0,
@@ -438,6 +438,14 @@ function MarkdownCodeBlock({
     </div>
   );
 }
+
+// memo 化代码块：rawContent/language 不变时跳过整块重渲染（含 Prism.highlight 与复制按钮状态）。
+// 忽略 sourceLineProps（data-source-line 属性对象每次新建，不影响内容）。
+const MarkdownCodeBlockMemo = memo(MarkdownCodeBlock, (prev, next) =>
+  prev.className === next.className &&
+  prev.rawContent === next.rawContent &&
+  prev.language === next.language,
+);
 
 function normalizePosixPath(input: string): string {
   const absolute = input.startsWith("/");
@@ -635,7 +643,13 @@ function MarkdownViewerInner({
     if (!targetLine || targetLine < 1) return "";
     return "[data-source-line]";
   }, [targetLine]);
-  const normalizedContent = useMemo(() => normalizeMarkdownMathDelimiters(content), [content]);
+  // 流式 chunk 高频更新时让 markdown 解析管线走低优先级（React 19 并发特性），
+  // 保证输入/滚动等交互不被阻塞；内容静止后自动补渲染最新帧。
+  const deferredContent = useDeferredValue(content);
+  const normalizedContent = useMemo(
+    () => normalizeMarkdownMathDelimiters(deferredContent),
+    [deferredContent],
+  );
   const outline = useMemo(
     () => (showOutline ? extractMarkdownOutline(normalizedContent) : EMPTY_OUTLINE),
     [normalizedContent, showOutline],
@@ -957,7 +971,7 @@ function MarkdownViewerInner({
             }
 
             return (
-              <MarkdownCodeBlock
+              <MarkdownCodeBlockMemo
                 className={className}
                 rawContent={rawContent}
                 language={language}

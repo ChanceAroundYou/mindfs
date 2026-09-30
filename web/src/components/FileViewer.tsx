@@ -5,7 +5,7 @@ import { ImageViewer } from "./ImageViewer";
 import { BinaryViewer } from "./BinaryViewer";
 import { DocumentViewer } from "./DocumentViewer";
 import { getDocumentPreviewKind } from "../services/documentPreview";
-import { rootBadgeStyle } from "./rootBadgeStyle";
+import { rootBadgeButtonStyle } from "./rootBadgeStyle";
 import { downloadFile } from "../services/download";
 import { isNativeShellRuntime } from "../services/runtime";
 import { useI18n } from "../i18n";
@@ -55,6 +55,8 @@ type FileViewerProps = {
   onFileUpdated: (file: FilePayload) => void;
   onFileSaved: (file: FilePayload) => void;
   file?: FilePayload | null;
+  rootDisplayName?: string | null;
+  rootColor?: string | null;
   onSessionClick?: (sessionKey: string) => void;
   onPathClick?: (path: string) => void;
   onFileClick?: (path: string) => void;
@@ -103,7 +105,7 @@ function getSelectionOffsets(root: Node, range: Range): { start: number; end: nu
   }
 }
 
-function Breadcrumbs({ root, path, onPathClick }: { root?: string; path: string; onPathClick?: (path: string) => void }) {
+function Breadcrumbs({ root, rootDisplayName, path, rootColor, onPathClick }: { root?: string; rootDisplayName?: string | null; path: string; rootColor?: string | null; onPathClick?: (path: string) => void }) {
   const parts = path.split('/').filter(Boolean);
   const getPathAt = (index: number) => parts.slice(0, index + 1).join('/');
 
@@ -111,19 +113,21 @@ function Breadcrumbs({ root, path, onPathClick }: { root?: string; path: string;
     <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '13px', color: 'var(--text-secondary)', overflow: 'hidden', whiteSpace: 'nowrap', flexShrink: 1, justifyContent: 'flex-start' }}>
       {root && (
         <>
-          <span
+          <button
+            type="button"
+            data-onboarding="project-home"
             onClick={() => onPathClick?.(".")}
             style={{
-              ...rootBadgeStyle,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
+              ...rootBadgeButtonStyle,
+              background: "var(--node-badge-bg)",
+              color: String(rootColor || "").trim() || "var(--text-primary)",
               cursor: "pointer",
             }}
             onMouseEnter={(e) => { e.currentTarget.style.textDecoration = "underline"; }}
             onMouseLeave={(e) => { e.currentTarget.style.textDecoration = "none"; }}
           >
-            {root}
-          </span>
+            {rootDisplayName || root}
+          </button>
           {parts.length > 0 && <span style={{ opacity: 0.4, fontSize: '10px', flexShrink: 0 }}>❯</span>}
         </>
       )}
@@ -144,7 +148,7 @@ function Breadcrumbs({ root, path, onPathClick }: { root?: string; path: string;
   );
 }
 
-export function FileViewer({ rootPath, onFileOperationComplete, editStore, onFileUpdated, onFileSaved, file, onSessionClick, onPathClick, onFileClick, onSelectionChange, initialScrollTop = 0, onScrollTopChange, isVisible = true }: FileViewerProps) {
+export function FileViewer({ rootPath, onFileOperationComplete, editStore, onFileUpdated, onFileSaved, file, rootDisplayName = null, rootColor = null, onSessionClick, onPathClick, onFileClick, onSelectionChange, initialScrollTop = 0, onScrollTopChange, isVisible = true }: FileViewerProps) {
   const { t } = useI18n();
   const editKey = fileEditKey(file?.root || "", file?.path || "");
   const editSession = useSyncExternalStore(editStore.subscribe, () => editStore.get(editKey));
@@ -383,7 +387,7 @@ export function FileViewer({ rootPath, onFileOperationComplete, editStore, onFil
       )}
       <header style={{ height: "36px", padding: "0 3px 0 16px", borderBottom: "1px solid var(--border-color)", display: "flex", alignItems: "center", gap: "10px", background: "var(--mindfs-topbar-bg, transparent)", boxSizing: "border-box", zIndex: 10, flexShrink: 0 }}>
         <div style={{ display: "flex", alignItems: "center", overflow: "hidden", flex: 1, minWidth: 0 }}>
-          <Breadcrumbs root={file.root} path={file.path} onPathClick={onPathClick} />
+          <Breadcrumbs root={file.root} rootDisplayName={rootDisplayName} path={file.path} rootColor={rootColor} onPathClick={onPathClick} />
 
           {relatedSessions.length > 0 && (
             <div style={{ 
@@ -425,9 +429,9 @@ export function FileViewer({ rootPath, onFileOperationComplete, editStore, onFil
                       transition: "all 0.2s ease"
                     }}
                     onMouseEnter={(e) => {
-                      e.currentTarget.style.background = "rgba(59, 130, 246, 0.08)";
+                      e.currentTarget.style.background = "var(--selection-bg)";
                       e.currentTarget.style.color = "var(--accent-color)";
-                      e.currentTarget.style.borderColor = "rgba(59, 130, 246, 0.2)";
+                      e.currentTarget.style.borderColor = "color-mix(in srgb, var(--accent-color) 20%, transparent)";
                     }}
                     onMouseLeave={(e) => {
                       e.currentTarget.style.background = "rgba(0, 0, 0, 0.03)";

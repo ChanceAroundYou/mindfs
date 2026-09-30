@@ -396,7 +396,9 @@ class E2EEService {
     const clientNonce = encodeBase64(clientNonceBytes);
     const proof = await buildOpenProof(secret, this.nodeId, clientEphPK, clientNonce);
 
-    const response = await fetch(appURL("/api/e2ee/open"), {
+    // Minimal multi-node adaptation: pair against the specific node URL so the
+    // pairing secret stays node-scoped (same as the backend e2ee.NodeID gate).
+    const response = await fetch(appURL("/api/e2ee/open", undefined, this.nodeId), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

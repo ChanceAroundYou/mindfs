@@ -1,0 +1,242 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+
+// 项目内四块看板的契约。跨项目工作台的契约已拆到 workspace-board.test.mjs。
+// 2026-09 App.tsx 拆分：项目看板搬到 components/TaskBoardView.tsx，契约随文件走。
+const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
+const bar = readFileSync(new URL("../src/components/ActionBar.tsx", import.meta.url), "utf8");
+const board = readFileSync(new URL("../src/components/TaskBoardView.tsx", import.meta.url), "utf8");
+const listView = readFileSync(new URL("../src/components/DefaultListView.tsx", import.meta.url), "utf8");
+const zh = readFileSync(new URL("../src/i18n/locales/zh-CN.ts", import.meta.url), "utf8");
+const en = readFileSync(new URL("../src/i18n/locales/en-US.ts", import.meta.url), "utf8");
+
+// 有项目时项目看板胜出，工作台只是「无项目」时的兜底。
+assert.match(
+  board,
+  /if \(workspaceOpen\) return workspacePanel;\s*\n\s*if \(!currentRootId\) return null;/,
+  "project board should win when a project is open; workspace is the no-project fallback",
+);
+
+// 工作台快速发起不再自己 createTask —— 它挑完项目 + 模板就打开看板那套新建任务面板，
+// 模板/worktree/agent/附件只有一份实现。存活的唯一「无模板建任务」入口因此消失，
+// 后端 stages[0].role === "user" 的要求改由 openTaskCreateDialog 选的模板保证。
+assert.match(
+  app,
+  /const handleWorkspaceCreateTask = useCallback\(\(rootId: string, _nodeId: string, template: TaskTemplate\) => \{\s*\n\s*openTaskCreateDialog\(template, rootId\);/,
+  "workspace quick launch must hand off to the shared create-task dialog, not build a second one",
+);
+// 面板得知道自己往哪个项目建：targetRootId 缺省才是当前项目（看板入口走这条）
+assert.match(
+  app,
+  /const openTaskCreateDialog = useCallback\(\(template: TaskTemplate \| null, targetRootId\?: string\)/,
+  "openTaskCreateDialog must accept the target project",
+);
+assert.match(
+  app,
+  /const rootId = edit\?\.targetRootId \|\| currentRootIdRef\.current;/,
+  "saving must target the dialog's project, not whatever project happens to be selected",
+);
+assert.doesNotMatch(
+  app,
+  /createTask\(rootId, "", text, false, "new", "", getNodeIdForRoot\(rootId\)/,
+  "the template-less createTask path must be gone",
+);
+
+// 项目看板四块布局（未开始/执行中/待审核/已结束）—— 末列是「已结束」，失败并入取消。
+// 这段曾被别的改动悄悄拆回 done+failed 两列，加断言钉住。
+assert.match(
+  app,
+  /const kanbanStageColumns:[\s\S]*?t\("task\.column\.pending"\)[\s\S]*?t\("task\.column\.running"\)[\s\S]*?t\("task\.column\.waitingUser"\)[\s\S]*?t\("task\.column\.ended"\)/,
+  "the board should have exactly four blocks, ending with 已结束",
+);
+assert.doesNotMatch(
+  app,
+  /name: t\("task\.column\.failed"\)/,
+  "失败/取消 must be merged into the 已结束 block, not its own column",
+);
+assert.match(
+  app,
+  /t\("task\.column\.ended"\)[\s\S]*?key: "success"[\s\S]*?key: "cancelled"[\s\S]*?task\.status === "fail" \|\| task\.status === "cancelled"/,
+  "已结束 must group 完成 and 取消, with 失败 folded into 取消",
+);
+// 每块高度必须封顶，不能是 minmax(0,1fr)：父容器高度 auto、无上限时 1fr 退化成
+// 「视口的一半」，移动端四块两行直接撑到两个屏 —— 那正是 minmax(0,1fr) 那版的 bug。
+// 移动端 calc(50% - 3px) 两行加 gap 恰好等于可用高度；桌面四块同排 100%。
+assert.match(
+  board,
+  /gridAutoRows: isMobile \? "calc\(50% - 3px\)" : "100%",/,
+  "mobile blocks must each be capped at half the available height, or four blocks span two screens",
+);
+// 百分比行高要有个确定高度才能解析，缺了它 50% 会退回 auto（等于没封顶）。
+// height:"100%" 必须落在这层网格自己的 style 上，DefaultListView 的 topContent
+// 包裹层负责把确定高度一路传下来（那层也要有 height + display:flex）。
+assert.match(
+  board,
+  /display: "grid",[\s\S]{0,300}?height: "100%",/,
+  "the grid needs a definite height for the percentage rows to resolve",
+);
+assert.match(
+  listView,
+  /showTaskKanban && topContent[\s\S]{0,900}?height: "100%",[\s\S]{0,120}?display: "flex"/,
+  "the topContent wrapper must be a sized flex column, or nothing below it can flex",
+);
+// 内边距跟着设备走。移动端底部那条 24px 紧贴输入区，是一道永远用不上的空带；
+// 顶部 8px 比左右两侧的 16px 窄一截，看着像没对齐。桌面四边 16px 保持不变。
+assert.match(
+  listView,
+  /padding: isMobile \? "16px 16px 0" : "8px 16px 24px"/,
+  "mobile drops the dead bottom padding and widens the top to match the 16px sides; desktop keeps 8/16/24",
+);
+// 桌面列高曾经写死 calc(100dvh - 96px)，那套魔法数已随根容器的 flex:1 退休。
+// 只看样式值不看注释 —— 注释里得留着「为什么删掉」，否则下一个人会再加回来。
+// 剥 /* */ 块注释：从 /* 起跳到最近的 */ 为止（.tsx 里没有嵌套）。
+const boardStyleValues = board.replace(/\/\*[\s\S]*?\*\//g, "");
+assert.doesNotMatch(
+  boardStyleValues,
+  /100dvh/,
+  "no dvh magic numbers left in the board styles — height comes from the flex chain",
+);
+// 列必须能撑满网格行：默认的 stretch 才行，alignItems:"start" 会退回内容高度。
+assert.doesNotMatch(
+  board,
+  /alignItems: "start"/,
+  "columns must stretch to the grid row, or the bottom gap comes right back",
+);
+assert.match(
+  board,
+  /height: columnCollapsed \? "auto" : "100%",/,
+  "collapsed columns may shrink, open ones fill their row",
+);
+assert.match(
+  app,
+  /const \[collapsedTaskCompletionGroups, setCollapsedTaskCompletionGroups\] = useState<Set<string>>\(\(\) => new Set\(\)\);/,
+  "completion groups should start expanded",
+);
+
+// 会话界面只在对话态（主区）与文件态（悬浮框）出现；看板/工作台不得有输入区，
+// 但移动端呼出左右侧栏的按钮必须留下（否则进了这两个界面就再也开不出侧栏）。
+assert.match(
+  app,
+  /hideComposer=\{mainView === "board" \|\| mainView === "workspace"\}/,
+  "the conversation composer must not render in the board or workspace views",
+);
+assert.match(
+  bar,
+  /if \(hideComposer\) \{\s*return isMobile \? \(/,
+  "hiding the composer must still render the mobile sidebar toggles",
+);
+assert.match(
+  bar,
+  /\{sidebarsSwapped \? mobileSessionSidebarButton : mobileFileSidebarButton\}[\s\S]*?\{sidebarsSwapped \? mobileFileSidebarButton : mobileSessionSidebarButton\}/,
+  "both sidebar toggles must survive the composer-less bar",
+);
+assert.match(
+  app,
+  /onSessionClick=\{\(\) => \{[\s\S]*?if \(!canOpenSessionDrawer\) return;/,
+  "the drawer toggle must reuse canOpenSessionDrawer instead of recomputing a narrower predicate",
+);
+assert.match(
+  app,
+  /const isBoundSessionInMain =[\s\S]*?mainView === "chat";/,
+  "「session is in the main pane」must require the chat mode, or the files-view drawer becomes unreachable",
+);
+
+// 四块的文案是定死的：未开始 / 执行中 / 待审核 / 已结束，已结束内分 完成 / 取消
+for (const [key, label] of [
+  ["task.column.pending", "未开始"],
+  ["task.column.running", "执行中"],
+  ["task.column.waitingUser", "待审核"],
+  ["task.column.ended", "已结束"],
+  ["task.group.completed", "完成"],
+  ["task.group.cancelled", "取消"],
+]) {
+  assert.ok(
+    zh.includes(`"${key}": "${label}"`),
+    `${key} should read 「${label}」`,
+  );
+}
+
+// 模板子看板不得丢弃终态任务：#11(cancelled)/#13(success) 曾因此在「新功能」下整张消失，
+// 连「已结束」列都进不去。「已结束」列唯一的任务来源就是 success/fail/cancelled，
+// 筛选阶段再滤一道终态，列就必然是空的。
+assert.match(
+  app,
+  /setKanbanTasks\(filtered\);/,
+  "template filtering should narrow by template id only, not drop terminal tasks",
+);
+assert.doesNotMatch(
+  app,
+  /filtered\.filter\(isUnfinishedKanbanTask\)/,
+  "no extra 'unfinished' filter — it silently empties the 已结束 column in sub-boards",
+);
+assert.doesNotMatch(
+  app,
+  /import[^;]*isUnfinishedKanbanTask[^;]*from "\.\/app\/appTask"/,
+  "isUnfinishedKanbanTask should be gone once nothing calls it",
+);
+// —— 2026-09-24 两处回归守卫 ——
+
+// 1) 「已完成」分组曾整组消失
+//    App 侧构造已结束列的 groups 时带 .filter(g => g.tasks.length > 0)，空组被删；
+//    而 TaskBoardView 用「groups 非空」决定走不走分组渲染 —— 于是「已完成」没任务、
+//    「已取消」有任务时，前者连标题都不渲染，列头却仍按 tasks.length 显示两状态总和。
+//    观感就是「列头有数字、里面是空的 / 找不到该组」。
+assert.doesNotMatch(
+  app,
+  /\}\]\.filter\(\(group\) => group\.tasks\.length > 0\)/,
+  "已结束列的 groups 不能滤掉空分组，否则「已完成」会整组消失",
+);
+
+// 2) 全部看板与子看板的卡片必须是同一套 DOM
+//    以前用 isAllTaskTemplateFilter 把卡片劈成两套：全部看板有标题条，子看板没有，
+//    #编号 与输入顶格同行、worktree badge 又在输入行右侧重复渲染一份。
+//    已统一为「以全部看板为准」，卡片区不该再按筛选态分叉。
+const cardStart = board.indexOf("<article");
+const cardEnd = board.indexOf("</article>", cardStart);
+const cardJsx = board.slice(cardStart, cardEnd);
+assert.doesNotMatch(
+  cardJsx,
+  /isAllTaskTemplateFilter/,
+  "看板卡片不应再按「全部/子」筛选态分叉渲染（已统一为全部看板样式）",
+);
+assert.doesNotMatch(
+  cardJsx,
+  /!isAllTaskTemplateFilter && taskNumberLabel/,
+  "编号只由标题条渲染一次，不该在输入行里再来一份",
+);
+
+// 3) worktree badge 曾经渲染两份（标题条一份、输入行右侧一份），只留标题条那份。
+//    标题行/操作行已抽进 TaskCardRows（看板和工作台共用），契约跟着文件走。
+const cardRows = readFileSync(new URL("../src/components/TaskCardRows.tsx", import.meta.url), "utf8");
+assert.equal(
+  (cardRows.match(/taskWorktreeTagStyle\(worktreeEnabled\)/g) || []).length,
+  1,
+  "worktree badge 在卡片里只应渲染一次",
+);
+assert.match(cardRows, /style=\{taskWorktreeTagStyle\(worktreeEnabled\)\}/, "标题条应保留 worktree badge");
+// 看板仍要渲染正文（可展开），工作台不传 children —— 那一段因此只存在于看板一侧
+assert.match(
+  board,
+  /<TaskCardRows[\s\S]*?>\s*<div\s*\n\s*style=\{\{\s*\n\s*marginTop: "5px"/,
+  "the board keeps the task body row, passed as TaskCardRows children",
+);
+// 长正文必须还能展开。展开开关跟着正文住在看板这一侧的 children 里 ——
+// 共享的 TaskCardRows 不碰正文，也就不该有它的开关。曾经把开关连同正文一起
+// 搬进共享组件，结果工作台不传 children 时开关也没了，看板上的长正文永久卡在 3 行。
+assert.match(
+  board,
+  /const inputNeedsToggle = firstInput\.length > 120 \|\| firstInput\.split\(\/\\r\?\\n\/\)\.length > 3;/,
+  "a body longer than 3 lines must still be expandable",
+);
+assert.match(
+  board,
+  /\{inputNeedsToggle \? \([\s\S]*?setExpandedTaskInputIds\(\(prev\) =>[\s\S]*?<TaskExpandIcon collapsed=\{!inputExpanded\} \/>[\s\S]*?<\/TaskCardRows>/,
+  "the expand toggle must render on the board side, inside the body children",
+);
+assert.doesNotMatch(
+  cardRows,
+  /TaskExpandIcon|expandedTaskInputIds|setExpandedTaskInputIds/,
+  "the shared card rows must not own the body expand toggle — it controls something the workbench does not render",
+);
+
+console.log("task-board-view.test.mjs: OK");

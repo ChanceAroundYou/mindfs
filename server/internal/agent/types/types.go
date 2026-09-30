@@ -2,6 +2,7 @@ package types
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -172,12 +173,72 @@ type ImportExternalSessionInput struct {
 	AgentSessionID string
 	AfterTimestamp time.Time
 	Cursor         ExternalSessionCursor
+	// TimestampFloor 非零时，无论有没有字节游标，都只接受「时间戳晚于它」的条目。
+	// 用途：MindFS 自己在驱动的会话（live-owned）平时不让导入器写，只在重启后兜底补齐一次；
+	// 那一次的游标是**冻结已久**的，直接按游标读会把已经落过库的旧回合整段重导一遍
+	// （实测 2026-09-16：BP 会话被重导 09-14 的内容，与实时路径写的行并排显示成重复）。
+	// 兜底补齐真正要的只是「比库里最新一条还新」的尾轮，所以给它一道时间地板。
+	TimestampFloor time.Time
+	// ForceRead 为 true 时禁用「源文件未变即整个跳过导入」的快速路径，强制重新读取。
+	// 有子代理会话的会话必须置 true：子代理转录可能在 root 文件不变的情况下增长，
+	// 跳过会漏掉它们。注意它与 Cursor 是两件事——Cursor 提供增量起点（byte offset），
+	// 二者不可混淆（曾因此让增量读失效、每次全量解析数十 MB 转录）。
+	ForceRead bool
+}
+
+// TranscriptNoisePrefixes 是 Claude CLI 自己写进转录、比较时应忽略的标记（小写）。
+//
+// 它们与 <local-command-caveat> 那批同类：不是用户输入，但 isMeta 为 None（实测），
+// 所以按 isMeta 过滤拦不住，只能按内容认。标记通常是**独立的一条 user 条目**，
+// 紧跟着才是真人正文，而「相邻同角色合并」会把两者粘成 "[请求标记]\n\n正文" ——
+// 正文此前已被实时路径写过一次，粘连版多 31 字前缀、与干净版既不相等也不构成前缀
+// 关系，判重于是放行、落成第二条。实测 2026-09-14 17:21 的会话 1789190353：
+// seq 136（干净正文）与 seq 138（标记+正文）并存，后者还排在助手回复之后。
+//
+// 导入侧用它判定「剥完什么都不剩 = 整条是噪声」，判重侧用它剥掉粘连的标记。
+// 一侧定义、两侧共用，避免名单走散。
+var TranscriptNoisePrefixes = []string{
+	"[request interrupted by user]",
+	"[request interrupted by user for tool use]",
+	"[request interrupted for tool use]",
+	"[your previous response had no visible output. please continue and produce a user-visible response.]",
+}
+
+// StripTranscriptNoisePrefixes 反复剥掉开头的已知标记（可叠加出现），
+// 并去掉首尾空白。剥完为空说明整条就是标记。
+func StripTranscriptNoisePrefixes(s string) string {
+	for {
+		trimmed := strings.TrimSpace(s)
+		lower := strings.ToLower(trimmed)
+		matched := ""
+		for _, prefix := range TranscriptNoisePrefixes {
+			if strings.HasPrefix(lower, prefix) {
+				matched = prefix
+				break
+			}
+		}
+		if matched == "" {
+			return trimmed
+		}
+		s = trimmed[len(matched):]
+	}
+}
+
+// IsTranscriptNoiseEntry 判断整条内容是否只是 CLI 标记（剥完为空）。
+func IsTranscriptNoiseEntry(s string) bool {
+	return strings.TrimSpace(s) != "" && StripTranscriptNoisePrefixes(s) == ""
 }
 
 type ExternalSessionCursor struct {
-	SourcePath      string
+	SourcePath string
+	// Offset 是上次读取时的**文件长度**，只用于「文件没变就跳过」的判据。
 	Offset          int64
 	ModTimeUnixNano int64
+	// CommittedOffset 是**已提交给 MindFS 的字节位置**，也是下次增量读的起点。
+	// 它必须落在 item 边界上：轮次还在进行时不推进，避免把半成品当成一条 exchange 落库，
+	// 也避免同一轮被反复当作「新内容」追加（旧实现用会被 tool_result 持续改写的 Timestamp
+	// 当判据，实测同一轮落库 6 次）。
+	CommittedOffset int64
 }
 
 type ImportedExchange struct {

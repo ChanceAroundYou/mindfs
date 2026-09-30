@@ -17,7 +17,7 @@ import (
 )
 
 const taskDBMetaPath = "tasks/task-kanban.db"
-const taskSelectColumns = "id, task_number, root_id, task_template_id, task_template_name, create_worktree, worktree_branch_mode, worktree_branch, current_stage_index, status, scheduler_admitted, main_session_key, worktree_root_id, worktree_path, aux_ask_user_waiting, aux_has_plan, aux_has_todos, aux_has_task, aux_session_error, labels_json, created_at, updated_at, completed_at, published, block_reason, group_id, agent_override, model_override"
+const taskSelectColumns = "id, task_number, root_id, task_template_id, task_template_name, template_snapshot_json, create_worktree, worktree_branch_mode, worktree_branch, current_stage_index, status, scheduler_admitted, main_session_key, worktree_root_id, worktree_path, aux_ask_user_waiting, aux_has_plan, aux_has_todos, aux_has_task, aux_session_error, labels_json, created_at, updated_at, completed_at, name, task_stages_json"
 
 type TaskStore struct {
 	root fs.RootInfo
@@ -69,6 +69,7 @@ CREATE TABLE IF NOT EXISTS tasks (
 	root_id TEXT NOT NULL,
 	task_template_id TEXT NOT NULL,
 	task_template_name TEXT NOT NULL,
+	template_snapshot_json TEXT NOT NULL,
 	create_worktree INTEGER NOT NULL DEFAULT 0,
 	worktree_branch_mode TEXT NOT NULL DEFAULT '',
 	worktree_branch TEXT NOT NULL DEFAULT '',
@@ -145,55 +146,21 @@ CREATE INDEX IF NOT EXISTS idx_task_events_task_created ON task_events(task_id, 
 	if _, err := s.db.Exec(`ALTER TABLE tasks ADD COLUMN aux_session_error TEXT NOT NULL DEFAULT ''`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
 		return err
 	}
-	if err := s.dropLegacyTaskColumns(); err != nil {
+	// 任务命名与任务自有流水（阶段快照）；存在任务身上的 stage 定义不再回查模板。
+	if _, err := s.db.Exec(`ALTER TABLE tasks ADD COLUMN name TEXT NOT NULL DEFAULT ''`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
 		return err
 	}
-	if err := s.migrateOrchestration(); err != nil {
+	if _, err := s.db.Exec(`ALTER TABLE tasks ADD COLUMN task_stages_json TEXT NOT NULL DEFAULT '[]'`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+		return err
+	}
+	// 旧数据：颓废状态归入新模型（queued→pending）；旧任务若只有模板无快照，在读取时惰性补齐。
+	if _, err := s.db.Exec(`UPDATE tasks SET status = 'pending' WHERE status = 'queued'`); err != nil {
 		return err
 	}
 	if err := s.backfillTaskNumbers(); err != nil {
 		return err
 	}
 	return err
-}
-
-func (s *TaskStore) dropLegacyTaskColumns() error {
-	legacyColumns := []string{"template_snapshot_json", "is_parent_task", "parent_task_id", "plan_version", "project_context"}
-	rows, err := s.db.Query(`PRAGMA table_info(tasks)`)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	existing := map[string]bool{}
-	for rows.Next() {
-		var cid int
-		var name, colType string
-		var notNull, pk int
-		var dfltValue any
-		if err := rows.Scan(&cid, &name, &colType, &notNull, &dfltValue, &pk); err != nil {
-			return err
-		}
-		existing[name] = true
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	// Release the sole SQLite connection before executing schema changes.
-	if err := rows.Close(); err != nil {
-		return err
-	}
-	if _, err := s.db.Exec("DROP INDEX IF EXISTS idx_tasks_parent"); err != nil {
-		return err
-	}
-	for _, column := range legacyColumns {
-		if !existing[column] {
-			continue
-		}
-		if _, err := s.db.Exec(`ALTER TABLE tasks DROP COLUMN ` + column); err != nil && !strings.Contains(strings.ToLower(err.Error()), "no such column") {
-			return err
-		}
-	}
-	return nil
 }
 
 func (s *TaskStore) backfillTaskNumbers() error {
@@ -235,23 +202,17 @@ func (s *TaskStore) backfillTaskNumbers() error {
 }
 
 type ListTasksOptions struct {
-	TemplateID       string
-	Status           string
-	TaskNumber       int
-	Stage            int
-	HasStage         bool
-	After            string
-	Before           string
-	Limit            int
-	CreatedDesc      bool
-	CursorTaskNumber int
+	TemplateID string
+	Status     string
+	TaskNumber int
+	Stage      int
+	HasStage   bool
+	After      string
+	Before     string
+	Limit      int
 }
 
 func (s *TaskStore) CreateTask(ctx context.Context, task Task, firstRun StageRun, event TaskEvent) (Task, error) {
-	return s.CreateTaskWithDependencies(ctx, task, firstRun, event, nil)
-}
-
-func (s *TaskStore) CreateTaskWithDependencies(ctx context.Context, task Task, firstRun StageRun, event TaskEvent, deps []string) (Task, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Task{}, err
@@ -271,12 +232,6 @@ func (s *TaskStore) CreateTaskWithDependencies(ctx context.Context, task Task, f
 		return Task{}, err
 	}
 	if err := insertTaskEvent(ctx, tx, event); err != nil {
-		return Task{}, err
-	}
-	if err := replaceDependencies(ctx, tx, task.ID, deps); err != nil {
-		return Task{}, err
-	}
-	if err := appendToGroup(ctx, tx, task.GroupID); err != nil {
 		return Task{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -313,29 +268,11 @@ func (s *TaskStore) ListTasks(ctx context.Context, opts ListTasksOptions) ([]Tas
 		args = append(args, strings.TrimSpace(opts.Before))
 	}
 	limitClause := ""
-	order := "updated_at DESC, created_at DESC"
-	if opts.CreatedDesc {
-		// Stored timestamps are UTC RFC3339Nano. Strip Z so whole seconds
-		// sort before fractional seconds, including variable precision.
-		order = "rtrim(created_at, 'Z') DESC, id DESC"
-		if opts.CursorTaskNumber > 0 {
-			var createdAt, id string
-			err := s.db.QueryRowContext(ctx, "SELECT created_at, id FROM tasks WHERE task_number = ?", opts.CursorTaskNumber).Scan(&createdAt, &id)
-			if errors.Is(err, sql.ErrNoRows) {
-				return nil, errors.New("cursor task not found; restart pagination without -cursor")
-			}
-			if err != nil {
-				return nil, err
-			}
-			where = append(where, "(rtrim(created_at, 'Z') < rtrim(?, 'Z') OR (created_at = ? AND id < ?))")
-			args = append(args, createdAt, createdAt, id)
-		}
-	}
 	if opts.Limit > 0 {
 		limitClause = " LIMIT ?"
 		args = append(args, opts.Limit)
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT `+taskSelectColumns+` FROM tasks WHERE `+strings.Join(where, " AND ")+` ORDER BY `+order+limitClause, args...)
+	rows, err := s.db.QueryContext(ctx, `SELECT `+taskSelectColumns+` FROM tasks WHERE `+strings.Join(where, " AND ")+` ORDER BY updated_at DESC, created_at DESC`+limitClause, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -378,47 +315,6 @@ func (s *TaskStore) ListTaskDetails(ctx context.Context, opts ListTasksOptions) 
 	return items, nil
 }
 
-func (s *TaskStore) ListQueuedTasks(ctx context.Context) ([]Task, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT `+taskSelectColumns+` FROM tasks WHERE status = ? ORDER BY created_at ASC`, StatusQueued)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []Task{}
-	for rows.Next() {
-		task, err := scanTask(rows)
-		if err != nil {
-			return nil, err
-		}
-		items = append(items, task)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	rows.Close()
-	for i := range items {
-		s.decorateCurrentStage(ctx, &items[i])
-	}
-	return items, nil
-}
-
-func (s *TaskStore) CountUnfinishedTasksByTemplate(ctx context.Context, templateID string) (int, error) {
-	templateID = strings.TrimSpace(templateID)
-	if templateID == "" {
-		return 0, nil
-	}
-	var count int
-	err := s.db.QueryRowContext(
-		ctx,
-		`SELECT COUNT(*) FROM tasks WHERE task_template_id = ? AND status NOT IN (?, ?, ?)`,
-		templateID,
-		StatusSuccess,
-		StatusFail,
-		StatusCancelled,
-	).Scan(&count)
-	return count, err
-}
-
 func (s *TaskStore) GetTask(ctx context.Context, id string) (Task, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT `+taskSelectColumns+` FROM tasks WHERE id = ?`, strings.TrimSpace(id))
 	task, err := scanTask(row)
@@ -427,6 +323,17 @@ func (s *TaskStore) GetTask(ctx context.Context, id string) (Task, error) {
 	}
 	s.decorateCurrentStage(ctx, &task)
 	return task, nil
+}
+
+// TaskIDForMainSession 反查绑定了该会话的任务（main_session_key 匹配）；无则返回空串。
+func (s *TaskStore) TaskIDForMainSession(ctx context.Context, sessionKey string) (string, error) {
+	var id string
+	err := s.db.QueryRowContext(ctx, `SELECT id FROM tasks WHERE main_session_key = ? LIMIT 1`,
+		strings.TrimSpace(sessionKey)).Scan(&id)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return id, err
 }
 
 func (s *TaskStore) GetDetail(ctx context.Context, id string) (TaskDetail, error) {
@@ -442,15 +349,11 @@ func (s *TaskStore) GetDetail(ctx context.Context, id string) (TaskDetail, error
 	if err != nil {
 		return TaskDetail{}, err
 	}
-	task.DependsOn, err = s.Dependencies(ctx, task.ID)
-	if err != nil {
-		return TaskDetail{}, err
-	}
 	return TaskDetail{Task: task, StageRuns: runs, Events: events}, nil
 }
 
 func (s *TaskStore) ListStageRuns(ctx context.Context, taskID string) ([]StageRun, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, task_id, stage_index, stage_name, role, status, session_key, input, rendered_prompt, started_at, finished_at, created_at, updated_at, trigger, result FROM stage_runs WHERE task_id = ? ORDER BY created_at ASC`, strings.TrimSpace(taskID))
+	rows, err := s.db.QueryContext(ctx, `SELECT id, task_id, stage_index, stage_name, role, status, session_key, input, rendered_prompt, started_at, finished_at, created_at, updated_at FROM stage_runs WHERE task_id = ? ORDER BY created_at ASC`, strings.TrimSpace(taskID))
 	if err != nil {
 		return nil, err
 	}
@@ -467,7 +370,7 @@ func (s *TaskStore) ListStageRuns(ctx context.Context, taskID string) ([]StageRu
 }
 
 func (s *TaskStore) ListEvents(ctx context.Context, taskID string) ([]TaskEvent, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, task_id, stage_run_id, type, payload_json, created_at, receiver_task_id, handled_at FROM task_events WHERE task_id = ? ORDER BY created_at ASC`, strings.TrimSpace(taskID))
+	rows, err := s.db.QueryContext(ctx, `SELECT id, task_id, stage_run_id, type, payload_json, created_at FROM task_events WHERE task_id = ? ORDER BY created_at ASC`, strings.TrimSpace(taskID))
 	if err != nil {
 		return nil, err
 	}
@@ -484,7 +387,7 @@ func (s *TaskStore) ListEvents(ctx context.Context, taskID string) ([]TaskEvent,
 }
 
 func (s *TaskStore) LatestStageRun(ctx context.Context, taskID string, stageIndex int) (StageRun, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, task_id, stage_index, stage_name, role, status, session_key, input, rendered_prompt, started_at, finished_at, created_at, updated_at, trigger, result FROM stage_runs WHERE task_id = ? AND stage_index = ? ORDER BY created_at DESC LIMIT 1`, strings.TrimSpace(taskID), stageIndex)
+	row := s.db.QueryRowContext(ctx, `SELECT id, task_id, stage_index, stage_name, role, status, session_key, input, rendered_prompt, started_at, finished_at, created_at, updated_at FROM stage_runs WHERE task_id = ? AND stage_index = ? ORDER BY created_at DESC LIMIT 1`, strings.TrimSpace(taskID), stageIndex)
 	return scanStageRun(row)
 }
 
@@ -541,6 +444,33 @@ func (s *TaskStore) UpdateTaskAuxFlags(ctx context.Context, taskID string, patch
 	args = append(args, strings.TrimSpace(taskID))
 	_, err := s.db.ExecContext(ctx, `UPDATE tasks SET `+strings.Join(set, ", ")+` WHERE id = ?`, args...)
 	return err
+}
+
+// ClearSessionRefs 清掉任务指向某个会话的所有引用（main_session_key + 阶段运行的 session_key）。
+//
+// 会话被删除后必须调它：否则任务仍指向一个不存在的 key，任务面板点进去是空白。
+// 归档不走这里 —— 归档的会话还能打开，链接必须留着。
+func (s *TaskStore) ClearSessionRefs(ctx context.Context, taskID, sessionKey string) error {
+	taskID = strings.TrimSpace(taskID)
+	key := strings.TrimSpace(sessionKey)
+	if taskID == "" || key == "" {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	// 只清「确实指向这个会话」的那一条：任务的主会话可能已被改成别的 key。
+	if _, err := tx.ExecContext(ctx, `UPDATE tasks SET main_session_key = '', updated_at = ? WHERE id = ? AND main_session_key = ?`,
+		s.now().UTC().Format(time.RFC3339Nano), taskID, key); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE stage_runs SET session_key = '', updated_at = ? WHERE task_id = ? AND session_key = ?`,
+		s.now().UTC().Format(time.RFC3339Nano), taskID, key); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *TaskStore) UpdateTask(ctx context.Context, task Task) error {
@@ -632,7 +562,7 @@ func (s *TaskStore) UpdateTaskAndStageRun(ctx context.Context, task Task, run St
 }
 
 func (s *TaskStore) AddEvent(ctx context.Context, event TaskEvent) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO task_events (id, task_id, stage_run_id, type, payload_json, created_at, receiver_task_id, handled_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, event.ID, event.TaskID, event.StageRunID, event.Type, event.Payload, event.CreatedAt.UTC().Format(time.RFC3339Nano), event.ReceiverTaskID, event.HandledAt)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO task_events (id, task_id, stage_run_id, type, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?)`, event.ID, event.TaskID, event.StageRunID, event.Type, event.Payload, event.CreatedAt.UTC().Format(time.RFC3339Nano))
 	return err
 }
 
@@ -647,32 +577,28 @@ func (s *TaskStore) decorateCurrentStage(ctx context.Context, task *Task) {
 
 func insertTask(ctx context.Context, tx *sql.Tx, task Task) error {
 	labels, _ := json.Marshal(task.Labels)
-	_, err := tx.ExecContext(ctx, `INSERT INTO tasks (id, task_number, root_id, task_template_id, task_template_name, create_worktree, worktree_branch_mode, worktree_branch, current_stage_index, status, scheduler_admitted, main_session_key, worktree_root_id, worktree_path, aux_ask_user_waiting, aux_has_plan, aux_has_todos, aux_has_task, aux_session_error, labels_json, created_at, updated_at, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		task.ID, task.TaskNumber, task.RootID, task.TaskTemplateID, task.TaskTemplateName, boolInt(task.CreateWorktree), task.WorktreeBranchMode, task.WorktreeBranch, task.CurrentStageIndex, task.Status, boolInt(task.SchedulerAdmitted), task.MainSessionKey, task.WorktreeRootID, task.WorktreePath, boolInt(task.AuxFlags.AskUserWaiting), boolInt(task.AuxFlags.HasPlan), boolInt(task.AuxFlags.HasTodos), boolInt(task.AuxFlags.HasTask), strings.TrimSpace(task.AuxFlags.SessionError), string(labels), task.CreatedAt.UTC().Format(time.RFC3339Nano), task.UpdatedAt.UTC().Format(time.RFC3339Nano), task.CompletedAt)
-	if err == nil {
-		err = updateTaskOrchestration(ctx, tx, task)
-	}
+	stages, _ := json.Marshal(task.Stages)
+	_, err := tx.ExecContext(ctx, `INSERT INTO tasks (id, task_number, root_id, task_template_id, task_template_name, template_snapshot_json, create_worktree, worktree_branch_mode, worktree_branch, current_stage_index, status, scheduler_admitted, main_session_key, worktree_root_id, worktree_path, aux_ask_user_waiting, aux_has_plan, aux_has_todos, aux_has_task, aux_session_error, labels_json, created_at, updated_at, completed_at, name, task_stages_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		task.ID, task.TaskNumber, task.RootID, task.TaskTemplateID, task.TaskTemplateName, "", boolInt(task.CreateWorktree), task.WorktreeBranchMode, task.WorktreeBranch, task.CurrentStageIndex, task.Status, boolInt(task.SchedulerAdmitted), task.MainSessionKey, task.WorktreeRootID, task.WorktreePath, boolInt(task.AuxFlags.AskUserWaiting), boolInt(task.AuxFlags.HasPlan), boolInt(task.AuxFlags.HasTodos), boolInt(task.AuxFlags.HasTask), strings.TrimSpace(task.AuxFlags.SessionError), string(labels), task.CreatedAt.UTC().Format(time.RFC3339Nano), task.UpdatedAt.UTC().Format(time.RFC3339Nano), task.CompletedAt, task.Name, string(stages))
 	return err
 }
 
 func updateTaskCore(ctx context.Context, tx *sql.Tx, task Task) error {
 	labels, _ := json.Marshal(task.Labels)
-	_, err := tx.ExecContext(ctx, `UPDATE tasks SET create_worktree = ?, worktree_branch_mode = ?, worktree_branch = ?, current_stage_index = ?, status = ?, scheduler_admitted = ?, main_session_key = ?, worktree_root_id = ?, worktree_path = ?, aux_ask_user_waiting = ?, aux_has_plan = ?, aux_has_todos = ?, aux_has_task = ?, aux_session_error = ?, labels_json = ?, updated_at = ?, completed_at = ? WHERE id = ?`,
-		boolInt(task.CreateWorktree), task.WorktreeBranchMode, task.WorktreeBranch, task.CurrentStageIndex, task.Status, boolInt(task.SchedulerAdmitted), task.MainSessionKey, task.WorktreeRootID, task.WorktreePath, boolInt(task.AuxFlags.AskUserWaiting), boolInt(task.AuxFlags.HasPlan), boolInt(task.AuxFlags.HasTodos), boolInt(task.AuxFlags.HasTask), strings.TrimSpace(task.AuxFlags.SessionError), string(labels), task.UpdatedAt.UTC().Format(time.RFC3339Nano), task.CompletedAt, task.ID)
-	if err == nil {
-		err = updateTaskOrchestration(ctx, tx, task)
-	}
+	stages, _ := json.Marshal(task.Stages)
+	_, err := tx.ExecContext(ctx, `UPDATE tasks SET create_worktree = ?, worktree_branch_mode = ?, worktree_branch = ?, current_stage_index = ?, status = ?, scheduler_admitted = ?, main_session_key = ?, worktree_root_id = ?, worktree_path = ?, aux_ask_user_waiting = ?, aux_has_plan = ?, aux_has_todos = ?, aux_has_task = ?, aux_session_error = ?, labels_json = ?, updated_at = ?, completed_at = ?, name = ?, task_stages_json = ? WHERE id = ?`,
+		boolInt(task.CreateWorktree), task.WorktreeBranchMode, task.WorktreeBranch, task.CurrentStageIndex, task.Status, boolInt(task.SchedulerAdmitted), task.MainSessionKey, task.WorktreeRootID, task.WorktreePath, boolInt(task.AuxFlags.AskUserWaiting), boolInt(task.AuxFlags.HasPlan), boolInt(task.AuxFlags.HasTodos), boolInt(task.AuxFlags.HasTask), strings.TrimSpace(task.AuxFlags.SessionError), string(labels), task.UpdatedAt.UTC().Format(time.RFC3339Nano), task.CompletedAt, task.Name, string(stages), task.ID)
 	return err
 }
 
 func insertStageRun(ctx context.Context, tx *sql.Tx, run StageRun) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO stage_runs (id, task_id, stage_index, stage_name, role, status, session_key, input, rendered_prompt, started_at, finished_at, created_at, updated_at, trigger, result) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		run.ID, run.TaskID, run.StageIndex, run.StageName, run.Role, run.Status, run.SessionKey, run.Input, run.RenderedPrompt, run.StartedAt, run.FinishedAt, run.CreatedAt.UTC().Format(time.RFC3339Nano), run.UpdatedAt.UTC().Format(time.RFC3339Nano), run.Trigger, run.Result)
+	_, err := tx.ExecContext(ctx, `INSERT INTO stage_runs (id, task_id, stage_index, stage_name, role, status, session_key, input, rendered_prompt, started_at, finished_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		run.ID, run.TaskID, run.StageIndex, run.StageName, run.Role, run.Status, run.SessionKey, run.Input, run.RenderedPrompt, run.StartedAt, run.FinishedAt, run.CreatedAt.UTC().Format(time.RFC3339Nano), run.UpdatedAt.UTC().Format(time.RFC3339Nano))
 	return err
 }
 
 func insertTaskEvent(ctx context.Context, tx *sql.Tx, event TaskEvent) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO task_events (id, task_id, stage_run_id, type, payload_json, created_at, receiver_task_id, handled_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, event.ID, event.TaskID, event.StageRunID, event.Type, event.Payload, event.CreatedAt.UTC().Format(time.RFC3339Nano), event.ReceiverTaskID, event.HandledAt)
+	_, err := tx.ExecContext(ctx, `INSERT INTO task_events (id, task_id, stage_run_id, type, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?)`, event.ID, event.TaskID, event.StageRunID, event.Type, event.Payload, event.CreatedAt.UTC().Format(time.RFC3339Nano))
 	return err
 }
 
@@ -682,9 +608,10 @@ func scanTask(row scanner) (Task, error) {
 	var task Task
 	var createWorktree, admitted, askUserWaiting, hasPlan, hasTodos, hasTask int
 	var sessionError string
-	var labels string
+	var labels, stagesJSON string
+	var templateSnapshot string
 	var created, updated string
-	if err := row.Scan(&task.ID, &task.TaskNumber, &task.RootID, &task.TaskTemplateID, &task.TaskTemplateName, &createWorktree, &task.WorktreeBranchMode, &task.WorktreeBranch, &task.CurrentStageIndex, &task.Status, &admitted, &task.MainSessionKey, &task.WorktreeRootID, &task.WorktreePath, &askUserWaiting, &hasPlan, &hasTodos, &hasTask, &sessionError, &labels, &created, &updated, &task.CompletedAt, &task.Published, &task.BlockReason, &task.GroupID, &task.Agent, &task.Model); err != nil {
+	if err := row.Scan(&task.ID, &task.TaskNumber, &task.RootID, &task.TaskTemplateID, &task.TaskTemplateName, &templateSnapshot, &createWorktree, &task.WorktreeBranchMode, &task.WorktreeBranch, &task.CurrentStageIndex, &task.Status, &admitted, &task.MainSessionKey, &task.WorktreeRootID, &task.WorktreePath, &askUserWaiting, &hasPlan, &hasTodos, &hasTask, &sessionError, &labels, &created, &updated, &task.CompletedAt, &task.Name, &stagesJSON); err != nil {
 		return Task{}, err
 	}
 	task.CreateWorktree = createWorktree != 0
@@ -697,6 +624,15 @@ func scanTask(row scanner) (Task, error) {
 		SessionError:   strings.TrimSpace(sessionError),
 	}
 	_ = json.Unmarshal([]byte(labels), &task.Labels)
+	if task.Stages == nil {
+		task.Stages = []StageTemplate{}
+	}
+	if strings.TrimSpace(stagesJSON) != "" && stagesJSON != "[]" {
+		_ = json.Unmarshal([]byte(stagesJSON), &task.Stages)
+	}
+	if task.Stages == nil {
+		task.Stages = []StageTemplate{}
+	}
 	task.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
 	task.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updated)
 	return task, nil
@@ -705,7 +641,7 @@ func scanTask(row scanner) (Task, error) {
 func scanStageRun(row scanner) (StageRun, error) {
 	var run StageRun
 	var created, updated string
-	if err := row.Scan(&run.ID, &run.TaskID, &run.StageIndex, &run.StageName, &run.Role, &run.Status, &run.SessionKey, &run.Input, &run.RenderedPrompt, &run.StartedAt, &run.FinishedAt, &created, &updated, &run.Trigger, &run.Result); err != nil {
+	if err := row.Scan(&run.ID, &run.TaskID, &run.StageIndex, &run.StageName, &run.Role, &run.Status, &run.SessionKey, &run.Input, &run.RenderedPrompt, &run.StartedAt, &run.FinishedAt, &created, &updated); err != nil {
 		return StageRun{}, err
 	}
 	run.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
@@ -716,7 +652,7 @@ func scanStageRun(row scanner) (StageRun, error) {
 func scanTaskEvent(row scanner) (TaskEvent, error) {
 	var event TaskEvent
 	var created string
-	if err := row.Scan(&event.ID, &event.TaskID, &event.StageRunID, &event.Type, &event.Payload, &created, &event.ReceiverTaskID, &event.HandledAt); err != nil {
+	if err := row.Scan(&event.ID, &event.TaskID, &event.StageRunID, &event.Type, &event.Payload, &created); err != nil {
 		return TaskEvent{}, err
 	}
 	event.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
@@ -735,6 +671,40 @@ func isTerminalStatus(status string) bool {
 	case StatusSuccess, StatusFail, StatusCancelled:
 		return true
 	default:
+		return false
+	}
+}
+
+// canAdvanceFromStage 报告是否允许离开由 role/runStatus 代表的这一段。
+//
+// 拦的是「跑过但没走完」：fail / cancelled / rejected。以前 moveRelative 只拦
+// running，其余一律被 Next 当成「已批准」强行推进（曾被
+// TestNextAdvancesFailedCurrentStageAfterUserReview 固化成期望行为），
+// 于是前一段没干完，下一段就在错误前提上开跑，阶段错乱。
+//
+// role 必须一起看，两种「waiting_user」含义相反：
+//   - user 段的 waiting_user 是「在等你的输入」，补一句评论就是答案，照常放行；
+//   - agent 段的 waiting_user 是「agent 自己没回报完成」，停下等你，别当成答完。
+//
+// pending（还没跑过，首段等人批准）和 running（正在跑）另说：前者正是「用户批准
+// 首段」这条正常流程，后者由调用方的 running 检查单独拦（并发推进会重复执行）。
+func canAdvanceFromStage(role, runStatus string) bool {
+	if role == RoleAgent {
+		switch runStatus {
+		case StageStatusPending, StageStatusRunning, StageStatusSuccess, StageStatusApproved:
+			return true
+		default:
+			// fail / cancelled / rejected / waiting_user：agent 没走完，不许推进。
+			return false
+		}
+	}
+	// user 段：等的就是你，pending（等输入）与 waiting_user（还在等）都算可推进。
+	switch runStatus {
+	case StageStatusPending, StageStatusRunning, StageStatusWaitingUser,
+		StageStatusApproved, StageStatusSuccess, StageStatusRejected:
+		return true
+	default:
+		// fail / cancelled：user 段自己失败/被取消，不能靠一句评论跳过。
 		return false
 	}
 }

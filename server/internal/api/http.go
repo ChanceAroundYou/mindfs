@@ -22,8 +22,10 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	"mindfs/internal/deploy"
 	"mindfs/server/internal/agent"
 	agenttypes "mindfs/server/internal/agent/types"
 	"mindfs/server/internal/api/usecase"
@@ -127,7 +129,7 @@ func requestProofPath(r *http.Request) string {
 	if r == nil || r.URL == nil {
 		return ""
 	}
-	path := r.URL.EscapedPath()
+	path := OriginalPath(r)
 	if r.URL.RawQuery == "" {
 		return path
 	}
@@ -297,11 +299,70 @@ func (h *HTTPHandler) broadcastRootChanged(action, rootID string, extra ...map[s
 	})
 }
 
+func (h *HTTPHandler) corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := strings.TrimSpace(r.Header.Get("Origin"))
+		shouldEmit := false
+		emitOrigin := origin
+		if manager := h.AppContext.GetE2EEManager(); manager != nil && manager.Enabled() {
+			shouldEmit = origin != ""
+		} else {
+			prefs := h.AppContext.GetPreferences()
+			mode := ""
+			if prefs != nil {
+				mode = prefs.CORSMode()
+			}
+			if mode == "" {
+				mode = "open"
+			}
+			mode = strings.ToLower(strings.TrimSpace(mode))
+			switch mode {
+			case "open", "auto", "allow_all", "all", "*":
+				shouldEmit = origin != ""
+			case "allowlist", "whitelist":
+				shouldEmit = prefs != nil && prefs.IsCORSOriginAllowed(origin)
+			case "disabled", "off", "closed", "same_origin":
+				shouldEmit = false
+			default:
+				shouldEmit = origin != ""
+			}
+		}
+		if shouldEmit && emitOrigin != "" {
+			w.Header().Set("Access-Control-Allow-Origin", emitOrigin)
+			w.Header().Set("Vary", "Origin")
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-MindFS-E2EE, X-MindFS-Client-ID, X-MindFS-Proof, X-MindFS-TS, X-MindFS-Local-CLI-Token, Authorization, X-Requested-With")
+			w.Header().Set("Access-Control-Max-Age", "86400")
+			w.Header().Set("Access-Control-Allow-Private-Network", "true")
+		}
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(204)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // Routes constructs the chi router with all endpoints.
+// The deployment prefix is stripped once at the top-level mux (StripDeployPrefix),
+// so every route here is registered prefix-free.
 func (h *HTTPHandler) Routes() http.Handler {
 	r := chi.NewRouter()
+	r.Use(h.corsMiddleware)
+	r.Options("/*", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) })
+	r.NotFound(h.handleNotFound)
+	r.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) { h.handleNotFound(w, r) })
 	r.Get("/", h.handleFrontend)
 	r.Get("/health", h.handleHealth)
+	// 主页面登录 + 账户管理：公开端点，不参与 protectedEndpoint / e2ee。
+	r.Get("/api/auth/status", h.handleAuthStatus)
+	r.Post("/api/auth/login", h.handleAuthLogin)
+	r.Get("/api/users", h.handleUsersList)
+	r.Post("/api/users", h.handleUserCreate)
+	r.Put("/api/users/{id}", h.handleUserUpdate)
+	r.Post("/api/users/{id}/primary", h.handleUserSetPrimary)
+	r.Delete("/api/users/{id}", h.handleUserDelete)
 	r.Get("/api/tree", h.protectedEndpoint(h.handleTree))
 	r.Get("/api/file", h.handleFile)
 	r.Put("/api/file", h.protectedEndpoint(h.handleFileSave))
@@ -337,6 +398,10 @@ func (h *HTTPHandler) Routes() http.Handler {
 	r.Post("/api/agents/release-idle", h.protectedEndpoint(h.handleAgentIdleRelease))
 	r.Get("/api/preferences/new-project-meta-location", h.protectedEndpoint(h.handleNewProjectMetaLocationPreferenceGet))
 	r.Put("/api/preferences/new-project-meta-location", h.protectedEndpoint(h.handleNewProjectMetaLocationPreferencePut))
+	r.Get("/api/preferences/cors", h.protectedEndpoint(h.handleCORSPreferenceGet))
+	r.Put("/api/preferences/cors", h.protectedEndpoint(h.handleCORSPreferencePut))
+	r.Get("/api/preferences/session-project-pins", h.protectedEndpoint(h.handleSessionProjectPinsGet))
+	r.Put("/api/preferences/session-project-pins", h.protectedEndpoint(h.handleSessionProjectPinsPut))
 	r.Get("/api/replying-sessions", h.protectedEndpoint(h.handleReplyingSessions))
 	r.Get("/api/sessions/search", h.protectedEndpoint(h.handleSessionSearch))
 	r.Get("/api/sessions/children", h.protectedEndpoint(h.handleSessionChildren))
@@ -344,12 +409,18 @@ func (h *HTTPHandler) Routes() http.Handler {
 	r.Post("/api/sessions/import", h.protectedEndpoint(h.handleExternalSessionImport))
 	r.Post("/api/sessions/import/batch", h.protectedEndpoint(h.handleExternalSessionImportBatch))
 	r.Post("/api/sessions/fork", h.protectedEndpoint(h.handleSessionFork))
+	r.Post("/api/sessions/{key}/repoint", h.protectedEndpoint(h.handleSessionRepoint))
+	// 无 path 参数的同一操作：给 wt-finish 这类只有 CLAUDE_CODE_SESSION_ID 的脚本用，
+	// body 里带 agent_session_id，服务端反查 mindfs 会话。
+	r.Post("/api/sessions/repoint", h.protectedEndpoint(h.handleSessionRepoint))
 	r.Get("/api/sessions/{key}/toolcalls/{callID}", h.protectedEndpoint(h.handleSessionToolCallGet))
 	r.Post("/api/sessions/{key}/sync", h.protectedEndpoint(h.handleSessionSync))
 	r.Get("/api/sessions/{key}", h.protectedEndpoint(h.handleSessionGet))
 	r.Post("/api/sessions/{key}/messages", h.protectedEndpoint(h.handleSessionUserMessage))
+	r.Get("/api/sessions/{key}/audit", h.protectedEndpoint(h.handleSessionAudit))
 	r.Get("/api/sessions/{key}/related-files", h.protectedEndpoint(h.handleSessionRelatedFilesGet))
 	r.Post("/api/sessions/{key}/pin", h.protectedEndpoint(h.handleSessionPin))
+	r.Post("/api/sessions/{key}/archive", h.protectedEndpoint(h.handleSessionArchive))
 	r.Post("/api/sessions/{key}/rename", h.protectedEndpoint(h.handleSessionRename))
 	r.Delete("/api/sessions/{key}/related-files", h.protectedEndpoint(h.handleSessionRelatedFilesDelete))
 	r.Delete("/api/sessions/{key}", h.protectedEndpoint(h.handleSessionDelete))
@@ -365,23 +436,17 @@ func (h *HTTPHandler) Routes() http.Handler {
 	r.Post("/api/task-templates", h.protectedEndpoint(h.handleTaskTemplateSave))
 	r.Put("/api/task-templates/{id}", h.protectedEndpoint(h.handleTaskTemplateSave))
 	r.Delete("/api/task-templates/{id}", h.protectedEndpoint(h.handleTaskTemplateDelete))
-	r.Get("/api/task-groups", h.protectedEndpoint(h.handleTaskGroups))
-	r.Post("/api/task-groups", h.protectedEndpoint(h.handleTaskGroups))
-	r.Get("/api/task-groups/{id}", h.protectedEndpoint(h.handleTaskGroup))
-	r.Patch("/api/task-groups/{id}/context", h.protectedEndpoint(h.handleTaskGroupContext))
-	r.Post("/api/task-groups/{id}/{operation}", h.protectedEndpoint(h.handleTaskGroupAction))
 	r.Get("/api/tasks", h.protectedEndpoint(h.handleKanbanTasksList))
+	r.Get("/api/tasks/overview", h.protectedEndpoint(h.handleKanbanTasksOverview))
 	r.Post("/api/tasks", h.protectedEndpoint(h.handleKanbanTaskCreate))
-	r.Get("/api/tasks/{id}", h.protectedEndpoint(h.handleTaskDetail))
-	r.Patch("/api/tasks/{id}", h.protectedEndpoint(h.handleTaskPatch))
-	r.Delete("/api/tasks/{id}", h.protectedEndpoint(h.handleTaskDelete))
-	r.Get("/api/tasks/{id}/read/{resource}", h.protectedEndpoint(h.handleTaskRead))
-	r.Post("/api/tasks/{id}/orchestration/{operation}", h.protectedEndpoint(h.handleTaskOrchestration))
 	r.Post("/api/tasks/{id}/input", h.protectedEndpoint(h.handleKanbanTaskInputUpdate))
+	r.Post("/api/tasks/{id}/rename", h.protectedEndpoint(h.handleKanbanTaskRename))
+	r.Post("/api/tasks/{id}/add-stage", h.protectedEndpoint(h.handleKanbanTaskAddStage))
+	r.Post("/api/tasks/{id}/update-stage", h.protectedEndpoint(h.handleKanbanTaskUpdateStage))
+	r.Post("/api/tasks/{id}/remove-stage", h.protectedEndpoint(h.handleKanbanTaskRemoveStage))
+	r.Post("/api/tasks/{id}/rerun", h.protectedEndpoint(h.handleKanbanTaskRerun))
 	r.Post("/api/tasks/{id}/next", h.protectedEndpoint(h.handleKanbanTaskNext))
 	r.Post("/api/tasks/{id}/run-now", h.protectedEndpoint(h.handleKanbanTaskRunNow))
-	r.Post("/api/tasks/{id}/prev", h.protectedEndpoint(h.handleKanbanTaskPrev))
-	r.Post("/api/tasks/{id}/jump", h.protectedEndpoint(h.handleKanbanTaskJump))
 	r.Post("/api/tasks/{id}/pause", h.protectedEndpoint(h.handleKanbanTaskPause))
 	r.Post("/api/tasks/{id}/resume", h.protectedEndpoint(h.handleKanbanTaskResume))
 	r.Post("/api/tasks/{id}/complete", h.protectedEndpoint(h.handleKanbanTaskComplete))
@@ -390,7 +455,12 @@ func (h *HTTPHandler) Routes() http.Handler {
 	r.Get("/api/dirs", h.protectedEndpoint(h.handleDirs))
 	r.Post("/api/dirs", h.protectedEndpoint(h.handleAddDir))
 	r.Post("/api/dirs/{id}/rename", h.protectedEndpoint(h.handleRenameDir))
+	r.Post("/api/dirs/{id}/display-name", h.protectedEndpoint(h.handleUpdateDirDisplayName))
 	r.Delete("/api/dirs", h.protectedEndpoint(h.handleRemoveDir))
+	r.Get("/api/nodes", h.protectedEndpoint(h.handleNodesList))
+	r.Put("/api/nodes", h.protectedEndpoint(h.handleNodesPut))
+	r.Post("/api/nodes", h.protectedEndpoint(h.handleNodesPost))
+	r.Delete("/api/nodes/{id}", h.protectedEndpoint(h.handleNodesDelete))
 	r.Get("/api/local_dirs", h.protectedEndpoint(h.handleLocalDirs))
 	r.Get("/api/relay/status", h.handleRelayStatus)
 	r.Post("/api/relay/bind/start", h.protectedEndpoint(h.handleRelayBindStart))
@@ -467,6 +537,8 @@ func (h *HTTPHandler) handleSessions(w http.ResponseWriter, r *http.Request) {
 		Limit:           limit,
 		TopLevelOnly:    truthyQuery(r, "top_level"),
 		IncludeChildren: truthyQuery(r, "include_children"),
+		// 默认排除已归档（主面板）；archived=only 时只返回归档区的那批。
+		ArchivedOnly: strings.TrimSpace(r.URL.Query().Get("archived")) == "only",
 	})
 	if err != nil {
 		respondError(w, http.StatusServiceUnavailable, err)
@@ -586,7 +658,8 @@ func (h *HTTPHandler) handleReplyingSessions(w http.ResponseWriter, r *http.Requ
 			}
 			if sessionTitle == "" {
 				if manager, err := h.AppContext.GetSessionManager(item.RootID); err == nil {
-					if sess, err := manager.Get(r.Context(), item.SessionKey, 0); err == nil && sess != nil {
+					// 只需 name，走 SQLite meta-only，避免全量加载 JSONL（agent 活跃时该端点高频轮询）。
+					if sess, err := manager.GetMeta(r.Context(), item.SessionKey); err == nil && sess != nil {
 						sessionTitle = sess.Name
 					}
 				}
@@ -837,23 +910,45 @@ func (h *HTTPHandler) handleSessionGet(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, errInvalidRequest("seq must be a positive integer"))
 		return
 	}
+	beforeSeq, err := parsePositiveIntQuery(r, "before_seq")
+	if err != nil {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("before_seq must be a positive integer"))
+		return
+	}
+	latest, err := parsePositiveIntQuery(r, "latest")
+	if err != nil {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("latest must be a positive integer"))
+		return
+	}
+	// seq 与 before_seq/latest 互斥：增量语义与窗口语义不可同时请求
+	if afterSeq > 0 && (beforeSeq > 0 || latest > 0) {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("seq 与 before_seq/latest 互斥"))
+		return
+	}
+	limit, err := parsePositiveIntQuery(r, "limit")
+	if err != nil {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("limit must be a positive integer"))
+		return
+	}
+	if limit <= 0 {
+		limit = 50
+	} else if limit > 200 {
+		limit = 200
+	}
 	uc := h.service()
-	var pendingUser *session.Exchange
-	if h.AppContext != nil {
-		pendingUser = h.AppContext.GetSessionStreamHub().GetPendingUserExchange(key)
-	}
-	if pendingUser == nil {
-		if _, err := uc.SyncExternalSessionDelta(r.Context(), usecase.SyncExternalSessionDeltaInput{
-			RootID: rootID,
-			Key:    key,
-		}); err != nil {
-			log.Printf("[session/sync] external delta best-effort failed root=%s session=%s err=%v", strings.TrimSpace(rootID), strings.TrimSpace(key), err)
-		}
-	}
-	out, err := uc.GetSession(r.Context(), usecase.GetSessionInput{
+	if _, err := uc.SyncExternalSessionDelta(r.Context(), usecase.SyncExternalSessionDeltaInput{
 		RootID: rootID,
 		Key:    key,
-		Seq:    afterSeq,
+	}); err != nil {
+		log.Printf("[session/sync] external delta best-effort failed root=%s session=%s err=%v", strings.TrimSpace(rootID), strings.TrimSpace(key), err)
+	}
+	out, windowMeta, err := uc.GetSession(r.Context(), usecase.GetSessionInput{
+		RootID:    rootID,
+		Key:       key,
+		Seq:       afterSeq,
+		BeforeSeq: beforeSeq,
+		Limit:     limit,
+		Latest:    latest,
 	})
 	if err != nil {
 		respondError(w, http.StatusNotFound, err)
@@ -863,12 +958,46 @@ func (h *HTTPHandler) handleSessionGet(w http.ResponseWriter, r *http.Request) {
 		RootID: rootID,
 		Key:    key,
 	})
-	exchangeAux, _ := uc.GetSessionExchangeAux(r.Context(), usecase.GetSessionExchangeAuxInput{
-		RootID: rootID,
-		Key:    key,
-		Seq:    afterSeq,
-	})
-	respondJSON(w, http.StatusOK, h.sessionResponse(out, pendingUser, contextWindow, exchangeAux))
+	// 窗口请求只需窗口内 seq 的 aux：原先传 Seq=0 会让 manager 全量读整个 aux 文件
+	// （实测某会话 11.8MB/约 300ms 且持 m.mu），再在下面按 windowSeqs 过滤掉绝大部分。
+	var exchangeAux map[int][]session.ExchangeAux
+	if windowMeta != nil {
+		windowSeqs := make(map[int]bool, len(out.Exchanges))
+		for _, ex := range out.Exchanges {
+			if ex.Seq > 0 {
+				windowSeqs[ex.Seq] = true
+			}
+		}
+		exchangeAux, _ = uc.GetSessionExchangeAuxWindow(r.Context(), usecase.GetSessionExchangeAuxWindowInput{
+			RootID: rootID,
+			Key:    key,
+			Seqs:   windowSeqs,
+		})
+	} else {
+		exchangeAux, _ = uc.GetSessionExchangeAux(r.Context(), usecase.GetSessionExchangeAuxInput{
+			RootID: rootID,
+			Key:    key,
+			Seq:    afterSeq,
+		})
+	}
+	respondJSON(w, http.StatusOK, h.sessionResponse(out, contextWindow, projectSessionExchangesForResponse(out, exchangeAux), windowMeta))
+}
+
+// handleSessionAudit 只读体检：文件层（seq 空洞/重复、坏行、aux 悬空）+ 投影层的重复分类。
+// 只报告不修：清理必须先看这份报告再人工决定（红线：不可按内容批量去重）。
+func (h *HTTPHandler) handleSessionAudit(w http.ResponseWriter, r *http.Request) {
+	rootID := r.URL.Query().Get("root")
+	key := chi.URLParam(r, "key")
+	if strings.TrimSpace(key) == "" {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("session key required"))
+		return
+	}
+	out, err := h.service().AuditSession(r.Context(), usecase.AuditSessionInput{RootID: rootID, Key: key})
+	if err != nil {
+		respondError(w, http.StatusNotFound, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, out)
 }
 
 func (h *HTTPHandler) handleSessionSync(w http.ResponseWriter, r *http.Request) {
@@ -883,19 +1012,59 @@ func (h *HTTPHandler) handleSessionSync(w http.ResponseWriter, r *http.Request) 
 		respondError(w, http.StatusBadRequest, errInvalidRequest("seq must be a positive integer"))
 		return
 	}
+	// 窗口参数与 handleSessionGet 同义，透传至 usecase；与 seq 互斥
+	beforeSeq, err := parsePositiveIntQuery(r, "before_seq")
+	if err != nil {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("before_seq must be a positive integer"))
+		return
+	}
+	latest, err := parsePositiveIntQuery(r, "latest")
+	if err != nil {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("latest must be a positive integer"))
+		return
+	}
+	if afterSeq > 0 && (beforeSeq > 0 || latest > 0) {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("seq 与 before_seq/latest 互斥"))
+		return
+	}
+	limit, err := parsePositiveIntQuery(r, "limit")
+	if err != nil {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("limit must be a positive integer"))
+		return
+	}
+	if limit <= 0 {
+		limit = 50
+	} else if limit > 200 {
+		limit = 200
+	}
 	uc := h.service()
 	if _, err := uc.SyncExternalSessionDelta(r.Context(), usecase.SyncExternalSessionDeltaInput{
 		RootID: rootID,
 		Key:    key,
 		Full:   true,
 	}); err != nil {
-		respondError(w, http.StatusBadRequest, err)
-		return
+		// 外部转录同步只是「尽力而为」的补充，请求的目的是刷新会话视图，不该被它拖垮 ——
+		// GET 路径（handleSessionGet）一直就是这个语义，这里却把错误直接变成 400。
+		// 实测 2026-09-22 会话 1790064991（root=mindfs）：agent 跑在 <root>/.worktree/task-10，
+		// 任务结束后工作树被移除，而转录仍在 ~/.claude/projects/-home-...-mindfs--worktree-task-10/
+		// 下且还在写；worktreeCandidateRoots 只枚举**现存**的 .worktree/* 目录，于是永远找不到
+		// → external session not found → 「同步」按钮永久 400。刷新视图不该因此失败。
+		// 注意这里**不**去修「按残留 slug 目录找转录」：live-owned 会话的字节游标是冻结的
+		// （external_source_* 全空），一旦找到就会从 offset 0 整份重读，正是 2026-09-16 那次
+		// 「ask 下面又渲染了一轮出现过的文字」的成因。找不到反而是安全的。
+		// 补充（repoint 落地后）：对**已 repoint** 的会话，本条路径的触发条件已经消失——
+		// related_worktree 被清空、转录落在主 slug 目录下，worktreeCandidateRoots 的第一项
+		// 就是主 checkout，所以一定找得到；cursor 也在 repoint 时被推进到了新转录末尾，
+		// 找到之后也不会从 0 重读。没 repoint 的会话仍旧走「找不到」这条安全路径。
+		log.Printf("[session/sync] external sync failed root=%s session=%s err=%v", strings.TrimSpace(rootID), strings.TrimSpace(key), err)
 	}
-	out, err := uc.GetSession(r.Context(), usecase.GetSessionInput{
-		RootID: rootID,
-		Key:    key,
-		Seq:    afterSeq,
+	out, windowMeta, err := uc.GetSession(r.Context(), usecase.GetSessionInput{
+		RootID:    rootID,
+		Key:       key,
+		Seq:       afterSeq,
+		BeforeSeq: beforeSeq,
+		Limit:     limit,
+		Latest:    latest,
 	})
 	if err != nil {
 		respondError(w, http.StatusNotFound, err)
@@ -910,7 +1079,9 @@ func (h *HTTPHandler) handleSessionSync(w http.ResponseWriter, r *http.Request) 
 		Key:    key,
 		Seq:    afterSeq,
 	})
-	respondJSON(w, http.StatusOK, h.sessionResponse(out, nil, contextWindow, exchangeAux))
+	exchangeAux = projectSessionExchangesForResponse(out, exchangeAux)
+	// 注：sync 先做全量外部增量拉取（Full:true），再按窗口切片，保证窗口数据最新。
+	respondJSON(w, http.StatusOK, h.sessionResponse(out, contextWindow, exchangeAux, windowMeta))
 }
 
 func (h *HTTPHandler) handleSessionToolCallGet(w http.ResponseWriter, r *http.Request) {
@@ -1030,8 +1201,54 @@ func (h *HTTPHandler) handleSessionFork(w http.ResponseWriter, r *http.Request) 
 	}
 	respondJSON(w, http.StatusOK, map[string]any{
 		"session_key": out.Session.Key,
-		"session":     h.sessionResponse(out.Session, nil, agenttypes.ContextWindow{}, nil),
+		"session":     h.sessionResponse(out.Session, agenttypes.ContextWindow{}, nil, nil),
 	})
+}
+
+func (h *HTTPHandler) handleSessionRepoint(w http.ResponseWriter, r *http.Request) {
+	// path 里的 key 可选：wt-finish 这类脚本手里只有 CLAUDE_CODE_SESSION_ID，
+	// 没有 mindfs 的 session key，所以也允许放 agent_session_id 让服务端反查。
+	key := strings.TrimSpace(chi.URLParam(r, "key"))
+	var req struct {
+		RootID         string `json:"root_id"`
+		AgentSessionID string `json:"agent_session_id"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("invalid json body"))
+		return
+	}
+	agentSessionID := strings.TrimSpace(req.AgentSessionID)
+	if key == "" && agentSessionID == "" {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("session key or agent_session_id required"))
+		return
+	}
+	if strings.TrimSpace(req.RootID) == "" {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("root_id is required"))
+		return
+	}
+	out, err := h.service().RepointSession(r.Context(), usecase.RepointSessionInput{
+		RootID:         strings.TrimSpace(req.RootID),
+		Key:            key,
+		AgentSessionID: agentSessionID,
+	})
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err)
+		return
+	}
+	// 搬完之后前端持有的还是旧会话视图（worktree 标签、agent_session_id），广播一次强制刷新。
+	if h.AppContext != nil {
+		h.AppContext.GetSessionStreamHub().BroadcastAll(WSResponse{
+			Type: "session.repointed",
+			Payload: map[string]any{
+				"root_id":                   strings.TrimSpace(req.RootID),
+				"session_key":               out.SessionKey,
+				"agent":                     out.Agent,
+				"previous_agent_session_id": out.PreviousAgentSessionID,
+				"agent_session_id":          out.AgentSessionID,
+			},
+		})
+	}
+	respondJSON(w, http.StatusOK, out)
 }
 
 func (h *HTTPHandler) handleSessionRename(w http.ResponseWriter, r *http.Request) {
@@ -1076,6 +1293,10 @@ func (h *HTTPHandler) handleSessionRename(w http.ResponseWriter, r *http.Request
 				},
 			},
 		})
+	}
+	// 任务名与会话名双向绑定：任务主会话改名时同步任务名。
+	if strings.TrimSpace(req.Name) != "" {
+		h.syncTaskNameFromSession(r.Context(), rootID, renamed.Key, strings.TrimSpace(req.Name))
 	}
 	respondJSON(w, http.StatusOK, h.sessionListResponse(renamed))
 }
@@ -1123,38 +1344,128 @@ func (h *HTTPHandler) handleSessionDelete(w http.ResponseWriter, r *http.Request
 		return
 	}
 	uc := h.service()
-	if err := uc.DeleteSession(r.Context(), usecase.DeleteSessionInput{
+	deletedKeys, err := uc.DeleteSession(r.Context(), usecase.DeleteSessionInput{
 		RootID: rootID,
 		Key:    key,
-	}); err != nil {
+	})
+	if err != nil {
 		respondError(w, http.StatusNotFound, err)
 		return
 	}
+	// 会话没了，任务里指向它的链接必须一并清掉，否则任务点进去是空白。
+	// 要传整棵子树的 key：子会话也可能绑着别的任务。
+	h.detachTaskFromSession(r.Context(), rootID, deletedKeys)
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// handleSessionArchive 归档/取消归档。
+//
+// 归档会把子会话真删掉（见 usecase.ArchiveSession），所以这里**要**碰任务：
+// 和删除一样，被删掉的子会话可能绑着别的任务，不解绑任务点进去就是空白。
+// 被点的那个会话自己不碰任务 —— 它只是归档，还能打开，链接必须继续有效。
+func (h *HTTPHandler) handleSessionArchive(w http.ResponseWriter, r *http.Request) {
+	rootID := r.URL.Query().Get("root")
+	key := chi.URLParam(r, "key")
+	if strings.TrimSpace(key) == "" {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("session key required"))
+		return
+	}
+	var req struct {
+		Archived bool `json:"archived"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("invalid json body"))
+		return
+	}
+	out, err := h.service().ArchiveSession(r.Context(), usecase.ArchiveSessionInput{
+		RootID:   rootID,
+		Key:      key,
+		Archived: req.Archived,
+	})
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err)
+		return
+	}
+	// 被删的是子会话，任务里指向它们的链接一并清掉。
+	if len(out.DeletedKeys) > 0 {
+		h.detachTaskFromSession(r.Context(), rootID, out.DeletedKeys)
+	}
+	if h.AppContext != nil {
+		h.AppContext.GetSessionStreamHub().BroadcastAll(WSResponse{
+			Type: "session.meta.updated",
+			Payload: map[string]any{
+				"root_id": rootID,
+				"session": h.sessionListResponse(out.Session),
+			},
+		})
+	}
+	respondJSON(w, http.StatusOK, h.sessionListResponse(out.Session))
+}
+
+// projectSessionExchangesForResponse 折叠「同一轮被多个写入者各写一份」的重复行，并把被
+// 隐藏行的 aux 重挂到保留行（aux 以 seq 为键；重挂后由前端已有的按 callId 去重收口）。
+//
+// ⚠ 只许在响应边界调用：SendMessage 的判重正是读同一份 Exchanges（session.go 的
+// exchangeAlreadyRecorded），若在 manager 层投影，被隐藏的行会被当成「没写过」而重复落盘。
+func projectSessionExchangesForResponse(s *session.Session, exchangeAux map[int][]session.ExchangeAux) map[int][]session.ExchangeAux {
+	if s == nil || len(s.Exchanges) < 2 || !usecase.SessionProjectionEnabled() {
+		return exchangeAux
+	}
+	kept, hidden, _ := usecase.ProjectExchanges(s.Exchanges)
+	if len(hidden) == 0 {
+		return exchangeAux
+	}
+	if _, seen := projectedSessions.LoadOrStore(s.Key, struct{}{}); !seen {
+		log.Printf("[session/projection] session=%s hidden=%d（同一轮被两个写入者各写一份，已折叠展示；文件里的数据一行未删）", s.Key, len(hidden))
+	}
+	keptSeqs := make(map[int]bool, len(kept))
+	for _, exchange := range kept {
+		keptSeqs[exchange.Seq] = true
+	}
+	s.Exchanges = kept
+	return usecase.RemapExchangeAux(exchangeAux, hidden, keptSeqs)
+}
+
+// projectedSessions 只为让投影日志每个会话最多打一次（读路径调用频繁，不能每请求一条）。
+var projectedSessions sync.Map
+
 func (h *HTTPHandler) sessionResponse(
 	s *session.Session,
-	pendingUser *session.Exchange,
 	contextWindow agenttypes.ContextWindow,
 	exchangeAux map[int][]session.ExchangeAux,
+	windowMeta *session.SessionWindowMeta,
 ) map[string]any {
 	if s == nil {
 		return map[string]any{}
 	}
 	exchanges := append([]session.Exchange{}, s.Exchanges...)
-	if pendingUser != nil {
-		pendingUser.Seq = 0
-		exchanges = append(exchanges, *pendingUser)
-	}
 	auxPayload := make(map[string][]session.ExchangeAux, len(exchangeAux))
-	for seq, items := range exchangeAux {
-		if seq <= 0 || len(items) == 0 {
-			continue
+	if windowMeta != nil {
+		// 窗口模式：仅保留窗口内 exchange 的 aux，避免 aux.line 错位
+		windowSeqs := make(map[int]struct{}, len(exchanges))
+		for _, ex := range exchanges {
+			if ex.Seq > 0 {
+				windowSeqs[ex.Seq] = struct{}{}
+			}
 		}
-		auxPayload[strconv.Itoa(seq)] = append([]session.ExchangeAux(nil), items...)
+		for seq, items := range exchangeAux {
+			if seq <= 0 || len(items) == 0 {
+				continue
+			}
+			if _, ok := windowSeqs[seq]; !ok {
+				continue
+			}
+			auxPayload[strconv.Itoa(seq)] = append([]session.ExchangeAux(nil), items...)
+		}
+	} else {
+		for seq, items := range exchangeAux {
+			if seq <= 0 || len(items) == 0 {
+				continue
+			}
+			auxPayload[strconv.Itoa(seq)] = append([]session.ExchangeAux(nil), items...)
+		}
 	}
-	return map[string]any{
+	resp := map[string]any{
 		"key":                 s.Key,
 		"type":                s.Type,
 		"parent_session_key":  s.ParentSessionKey,
@@ -1175,10 +1486,15 @@ func (h *HTTPHandler) sessionResponse(
 		"related_worktree":    s.RelatedWorktree,
 		"context_window":      contextWindow,
 		"pinned_at":           s.PinnedAt,
+		"archived_at":         s.ArchivedAt,
 		"created_at":          s.CreatedAt,
 		"updated_at":          s.UpdatedAt,
 		"closed_at":           s.ClosedAt,
 	}
+	if windowMeta != nil {
+		resp["window_meta"] = windowMeta
+	}
+	return resp
 }
 
 func (h *HTTPHandler) sessionListResponse(s *session.Session) map[string]any {
@@ -1202,6 +1518,7 @@ func (h *HTTPHandler) sessionListResponse(s *session.Session) map[string]any {
 		"name":                s.Name,
 		"related_worktree":    s.RelatedWorktree,
 		"pinned_at":           s.PinnedAt,
+		"archived_at":         s.ArchivedAt,
 		"created_at":          s.CreatedAt,
 		"updated_at":          s.UpdatedAt,
 		"closed_at":           s.ClosedAt,
@@ -1246,9 +1563,20 @@ func (h *HTTPHandler) commandShellForResponse(s *session.Session, aux map[int][]
 }
 
 func externalSessionListResponse(s agenttypes.ExternalSessionSummary) map[string]any {
+	// Title already overlaid with manual alias or stripped 20-char prefix in ListExternalSessions;
+	// never expose raw REPLY_TIPS to clients — fall back to stripped firstUserText only.
 	name := strings.TrimSpace(s.Title)
 	if name == "" {
-		name = strings.TrimSpace(s.FirstUserText)
+		name = shortExternalSessionTitleForAPI(s.FirstUserText)
+	}
+	if name == "" {
+		cleaned := strings.TrimSpace(stripReplyTipsPrefixForAPI(stripExternalSessionPrefixForAPI(s.FirstUserText)))
+		if cleaned != "" {
+			if idx := strings.Index(cleaned, "\n"); idx >= 0 {
+				cleaned = strings.TrimSpace(cleaned[:idx])
+			}
+			name = cleaned
+		}
 	}
 	if name == "" {
 		name = s.AgentSessionID
@@ -1265,6 +1593,49 @@ func externalSessionListResponse(s agenttypes.ExternalSessionSummary) map[string
 		"closed_at":        nil,
 		"agent_session_id": s.AgentSessionID,
 	}
+}
+
+func stripReplyTipsPrefixForAPI(text string) string {
+	text = strings.TrimSpace(text)
+	if strings.HasPrefix(text, "[REPLY_TIPS]") {
+		if idx := strings.Index(text, "[USER_PROMPT]"); idx >= 0 {
+			return strings.TrimSpace(text[idx+len("[USER_PROMPT]"):])
+		}
+		if idx := strings.Index(text, "\n\n"); idx >= 0 {
+			return strings.TrimSpace(text[idx:])
+		}
+	}
+	return text
+}
+
+func shortExternalSessionTitleForAPI(text string) string {
+	text = strings.TrimSpace(stripReplyTipsPrefixForAPI(stripExternalSessionPrefixForAPI(text)))
+	if text == "" {
+		return ""
+	}
+	if idx := strings.Index(text, "\n"); idx >= 0 {
+		text = strings.TrimSpace(text[:idx])
+	}
+	runes := []rune(text)
+	if len(runes) > 20 {
+		text = string(runes[:20])
+	}
+	return strings.TrimSpace(text)
+}
+
+func stripExternalSessionPrefixForAPI(text string) string {
+	text = strings.TrimSpace(text)
+	const prefix = "This session was migrated from elsewhere. Your context may lag behind this session;"
+	const tail = "Only if reading fails, output a brief error and stop."
+	normalized := strings.ReplaceAll(text, "\\n", "\n")
+	if !strings.HasPrefix(normalized, prefix) {
+		return text
+	}
+	idx := strings.Index(normalized, tail)
+	if idx < 0 {
+		return text
+	}
+	return strings.TrimSpace(normalized[idx+len(tail):])
 }
 
 func (h *HTTPHandler) handleAgentsList(w http.ResponseWriter, r *http.Request) {
@@ -1432,6 +1803,85 @@ func (h *HTTPHandler) handleSessionNamingPreferencePut(w http.ResponseWriter, r 
 		"agent":    req.Agent,
 		"model":    req.Model,
 		"disabled": req.Disabled,
+	})
+}
+
+type corsPreferenceRequest struct {
+	Mode         string   `json:"mode"`
+	AllowOrigins []string `json:"allow_origins"`
+}
+
+func (h *HTTPHandler) handleCORSPreferenceGet(w http.ResponseWriter, _ *http.Request) {
+	if h.AppContext == nil || h.AppContext.GetPreferences() == nil {
+		respondError(w, http.StatusServiceUnavailable, errInvalidRequest("preferences not configured"))
+		return
+	}
+	prefs := h.AppContext.GetPreferences()
+	mode := prefs.CORSMode()
+	if mode == "" {
+		mode = "open"
+	}
+	respondJSON(w, http.StatusOK, map[string]any{
+		"mode":          mode,
+		"allow_origins": prefs.CORSAllowOrigins(),
+	})
+}
+
+func (h *HTTPHandler) handleCORSPreferencePut(w http.ResponseWriter, r *http.Request) {
+	if h.AppContext == nil || h.AppContext.GetPreferences() == nil {
+		respondError(w, http.StatusServiceUnavailable, errInvalidRequest("preferences not configured"))
+		return
+	}
+	var req corsPreferenceRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, errInvalidRequest(err.Error()))
+		return
+	}
+	if err := h.AppContext.GetPreferences().UpdateCORSPreferences(req.Mode, req.AllowOrigins); err != nil {
+		respondError(w, http.StatusBadRequest, errInvalidRequest(err.Error()))
+		return
+	}
+	prefs := h.AppContext.GetPreferences()
+	mode := prefs.CORSMode()
+	if mode == "" {
+		mode = "open"
+	}
+	respondJSON(w, http.StatusOK, map[string]any{
+		"mode":          mode,
+		"allow_origins": prefs.CORSAllowOrigins(),
+	})
+}
+
+func (h *HTTPHandler) handleSessionProjectPinsGet(w http.ResponseWriter, _ *http.Request) {
+	if h.AppContext == nil || h.AppContext.GetPreferences() == nil {
+		respondError(w, http.StatusServiceUnavailable, errInvalidRequest("preferences not configured"))
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{
+		"pins": h.AppContext.GetPreferences().SessionProjectPins(),
+	})
+}
+
+type sessionProjectPinsRequest struct {
+	Pins map[string]int64 `json:"pins"`
+}
+
+func (h *HTTPHandler) handleSessionProjectPinsPut(w http.ResponseWriter, r *http.Request) {
+	if h.AppContext == nil || h.AppContext.GetPreferences() == nil {
+		respondError(w, http.StatusServiceUnavailable, errInvalidRequest("preferences not configured"))
+		return
+	}
+	var req sessionProjectPinsRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, errInvalidRequest(err.Error()))
+		return
+	}
+	if err := h.AppContext.GetPreferences().UpdateSessionProjectPins(req.Pins); err != nil {
+		respondError(w, http.StatusInternalServerError, errInvalidRequest(err.Error()))
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{
+		"pins": h.AppContext.GetPreferences().SessionProjectPins(),
 	})
 }
 
@@ -1619,8 +2069,14 @@ func cleanFrontendResourcePath(raw string) string {
 	if idx := strings.IndexAny(value, "?#"); idx >= 0 {
 		value = value[:idx]
 	}
+	value = strings.TrimSpace(value)
 	value = strings.TrimPrefix(value, "./")
 	value = strings.TrimPrefix(value, "/")
+	// vite 以部署前缀为 base 时，index.html 引用形如 /<prefix>/assets/... /<prefix>/favicon.svg，
+	// 需剥掉前缀再判本地文件是否存在，与 pathForStaticAsset 同构。空前缀（根部署）无需剥离。
+	if prefix := deploy.NormalizedPrefix(); prefix != "" {
+		value = strings.TrimPrefix(value, strings.TrimPrefix(prefix, "/")+"/")
+	}
 	value = filepath.Clean(value)
 	if value == "." || strings.HasPrefix(value, ".."+string(filepath.Separator)) || value == ".." || filepath.IsAbs(value) {
 		return ""
@@ -1644,6 +2100,8 @@ func renderFallbackFrontend(content, notice string) string {
 		noticeHTML = `<div class="notice is-visible">` + htmpl.HTMLEscapeString(notice) + `</div>`
 	}
 	out = strings.ReplaceAll(out, "__FALLBACK_NOTICE__", noticeHTML)
+	// 兜底页文档 URL 由反代前缀决定（与运行时部署前缀一致）。
+	out = strings.ReplaceAll(out, "/api/tree?", deploy.PrefixedPath("/api/tree")+"?")
 	return out
 }
 
@@ -1664,7 +2122,9 @@ func isRelayedRequest(r *http.Request) bool {
 }
 
 func (h *HTTPHandler) shouldRewriteRelayedAssets(r *http.Request) bool {
-	return isRelayedRequest(r) && isStandardReleaseVersion(h.Version)
+	// 仅由 relay 反代标记决定：被代理的前端需要绝对化资源引用。
+	// 不再与发布版本号耦合——本地直连本就不会带 X-MindFS-Relayed。
+	return isRelayedRequest(r)
 }
 
 func isStandardReleaseVersion(version string) bool {
@@ -1700,7 +2160,9 @@ func shouldRewriteRelayedStaticAsset(cleanPath string) bool {
 }
 
 func rewriteRelayedFrontendContent(content string) string {
-	return strings.ReplaceAll(content, "./assets/", "/mindfs-assets/")
+	// relay 反代下，前端文档 URL 与后端不在同域/同路径，需把相对资源引用
+	// 改写为随部署前缀派生的绝对别名（见 deploy.RelayAssetsAlias）。
+	return strings.ReplaceAll(content, "./assets/", deploy.RelayAssetsAlias())
 }
 
 func serveRewrittenStaticAsset(w http.ResponseWriter, r *http.Request, assetPath string) {
@@ -1721,6 +2183,8 @@ func serveRewrittenStaticAsset(w http.ResponseWriter, r *http.Request, assetPath
 func pathForStaticAsset(requestPath string) string {
 	// requestPath 是 URL path，分隔符固定为正斜杠。这里不能用 filepath，
 	// 否则 Windows 会把前导 // 当成 UNC 路径，最终泄漏成 web/// 这类路径。
+	// 部署前缀已在顶层 mux 统一剥离（StripDeployPrefix），此处收到的已是
+	// /assets/...、/index.html 等去前缀路径。
 	cleaned := stdpath.Clean("/" + requestPath)
 	if cleaned == "/" {
 		return ""
@@ -2451,6 +2915,41 @@ func (h *HTTPHandler) handleRenameDir(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, managedDirResponse(out.Dir))
 }
 
+func (h *HTTPHandler) handleUpdateDirDisplayName(w http.ResponseWriter, r *http.Request) {
+	rootID := strings.TrimSpace(chi.URLParam(r, "id"))
+	var req struct {
+		DisplayName string `json:"display_name"`
+		Name        string `json:"name"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("invalid json"))
+		return
+	}
+	displayName := strings.TrimSpace(req.DisplayName)
+	if displayName == "" {
+		displayName = strings.TrimSpace(req.Name)
+	}
+	uc := h.service()
+	out, err := uc.UpdateRootDisplayName(r.Context(), usecase.UpdateRootDisplayNameInput{
+		RootID:      rootID,
+		DisplayName: displayName,
+	})
+	if err != nil {
+		status := http.StatusBadRequest
+		if strings.Contains(err.Error(), "root not found") {
+			status = http.StatusNotFound
+		}
+		respondError(w, status, err)
+		return
+	}
+	if h.AppContext != nil {
+		h.broadcastRootChanged("display_name_changed", out.Dir.ID, map[string]any{
+			"root": managedDirResponse(out.Dir),
+		})
+	}
+	respondJSON(w, http.StatusOK, managedDirResponse(out.Dir))
+}
+
 func (h *HTTPHandler) handleRemoveDir(w http.ResponseWriter, r *http.Request) {
 	path := readManagedDirPath(r)
 	uc := h.service()
@@ -2644,13 +3143,15 @@ func (h *HTTPHandler) handleE2EEOpen(w http.ResponseWriter, r *http.Request) {
 }
 
 func managedDirResponse(dir fs.RootInfo) map[string]any {
+	effectiveName := dir.EffectiveName()
 	resp := map[string]any{
-		"id":            dir.ID,
-		"display_name":  dir.Name,
-		"root_path":     dir.RootPath,
-		"meta_location": dir.EffectiveMetaLocation(),
-		"created_at":    dir.CreatedAt,
-		"updated_at":    dir.UpdatedAt,
+		"id":               dir.ID,
+		"display_name":     effectiveName,
+		"display_name_raw": dir.DisplayName,
+		"root_path":        dir.RootPath,
+		"meta_location":    dir.EffectiveMetaLocation(),
+		"created_at":       dir.CreatedAt,
+		"updated_at":       dir.UpdatedAt,
 	}
 	if info, err := dir.StatRoot(); err == nil {
 		resp["size"] = info.Size()

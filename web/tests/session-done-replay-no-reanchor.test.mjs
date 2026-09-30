@@ -1,0 +1,35 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+
+const app = readFileSync(new URL("../src/app/useRealtimeEvents.ts", import.meta.url), "utf8");
+// 2026-09 App.tsx 拆分：WS 事件处理器整块搬到 app/useRealtimeEvents.ts，契约随文件走。
+// 更早的一轮拆分已把 `switch (event.type) { case "x": … }` 变成
+// `"x": (event, payload) => { … }` 的 handler map，切片锚点用后者。
+// 契约（replay 的 done 不重锚 / 真 done 仍重锚）一条没少，只是换了所在文件与写法。
+const doneStart = app.indexOf('"session.done": (event: any, payload: any) => {');
+const doneBody = app.slice(
+  doneStart,
+  app.indexOf('"session.user_message": (event: any, payload: any) => {'),
+);
+
+assert.ok(doneStart >= 0 && doneBody.length > 0, 'the "session.done" handler should be found in useRealtimeEvents.ts');
+
+// 服务端在每次 session.ready 之后都会补发一条 replay=true 的 session.done
+// （h.completed 只在新回合开始时清空，回合结束后一直留着），而 restoreActiveSession
+// 自己又会发 session.ready。若 replay 的 done 也触发 reloadSessionForReplay，就闭合为
+//   done → restoreActiveSession → session.ready → ReplayPending → done
+// 的自持环。2026-09-13 实测：空闲时 18 次/秒、session.done / session.ready /
+// ?latest=20 严格 1:1:1，且永不衰减。
+assert.match(
+  doneBody,
+  /payload\?\.replay !== true\s*&&[\s\S]{0,80}?getReplayTargetsForRoot\(rootID\)\.includes\(sessionKey\)/,
+  "a replayed done must not trigger reloadSessionForReplay (it closes the replay loop)",
+);
+
+// 真·回合结束的 done 仍然要重锚定，否则 done 后不再用持久化窗口替换缓存，
+// 瞬时尾巴会以 seq=0 形式重复追加在窗口后面。
+assert.match(
+  doneBody,
+  /void reloadSessionForReplay\(rootID, sessionKey\)/,
+  "a live (non-replay) done must still re-anchor the window",
+);

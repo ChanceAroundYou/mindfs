@@ -6,6 +6,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -31,12 +33,19 @@ type fakeRunner struct {
 	execs                []AgentStageExecution
 	prompts              []string
 	runErr               error
+	result               StageResult
 	worktreeErr          error
 	worktreeBranchMode   string
 	worktreeBranch       string
 	worktreeName         string
 	worktreeCreateCalled bool
+	// gate 非 nil 时 RunAgentStage 记完 exec 后阻塞到 gate 关闭，用来把执行体钉在阶段内部，
+	// 稳定复现并发执行（见 TestRunTaskExecutesStageOnceWhenKickedTwice）。
+	gate chan struct{}
 }
+
+// result 零值 = StageOutcomeDone：不显式设置的老用例照旧判完成，
+// 只有验证「没回报就不许算完成」的新用例才需要构造它。
 
 func (r *fakeRunner) CreateTaskWorktree(ctx context.Context, rootID, name, branchMode, branch string) (WorktreeInfo, error) {
 	r.mu.Lock()
@@ -55,23 +64,74 @@ func (r *fakeRunner) EnsureAgentSession(ctx context.Context, exec AgentStageExec
 	return "session-" + exec.Run.ID, nil
 }
 
-func (r *fakeRunner) RunAgentStage(ctx context.Context, exec AgentStageExecution) error {
+func (r *fakeRunner) RunAgentStage(ctx context.Context, exec AgentStageExecution) (StageResult, error) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	r.execs = append(r.execs, exec)
 	r.prompts = append(r.prompts, exec.Prompt)
-	return r.runErr
+	result := r.result
+	r.mu.Unlock()
+	if r.gate != nil {
+		select {
+		case <-r.gate:
+		case <-ctx.Done():
+			return StageResult{}, ctx.Err()
+		}
+	}
+	if r.runErr != nil {
+		return StageResult{}, r.runErr
+	}
+	return result, nil
 }
 
 func (r *fakeRunner) TaskUpdated(rootID string, detail TaskDetail) {}
+
+// newTestService 是常见测试组合：干净的任务库 + fakeRunner。
+func newTestService(t *testing.T, runner *fakeRunner) (*Service, fs.RootInfo) {
+	t.Helper()
+	root := fs.NewRootInfo("root", "root", t.TempDir())
+	svc := NewService(NewTemplateStoreAt(t.TempDir()), testRoots{root: root})
+	if runner != nil {
+		svc.SetRunner(runner)
+	}
+	return svc, root
+}
+
+// agentStage 构造一个常见的 agent 段定义。
+func agentStage(name, prompt string) StageTemplate {
+	return StageTemplate{
+		Name:               name,
+		Role:               RoleAgent,
+		Agent:              "codex",
+		Model:              "gpt-5",
+		PromptTemplate:     prompt,
+		SessionReusePolicy: SessionReuseTaskMain,
+	}
+}
+
+func userStage(name string) StageTemplate {
+	return StageTemplate{Name: name, Role: RoleUser}
+}
+
+// waitForCondition 轮询直到 cond 为真或超时；超时视为失败（静默返回会把真超时
+// 转化成下游莫名其妙的断言失败，反而更难定位）。
+func waitForCondition(t *testing.T, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("waitForCondition: timeout")
+}
 
 func TestTaskTemplateStoreSeedsBundledTemplatesWhenUserFileMissing(t *testing.T) {
 	dir := t.TempDir()
 	bundledPath := filepath.Join(t.TempDir(), taskTemplateFile)
 	bundled := []TaskTemplate{{
-		ID:             "tmpl_default",
-		Name:           "Default task",
-		MaxConcurrency: 2,
+		ID:   "tmpl_default",
+		Name: "Default task",
 		Stages: []TaskTemplateStage{{
 			ID:       "stage_default",
 			Position: 0,
@@ -124,7 +184,7 @@ func TestTaskTemplateStoreDoesNotSeedWhenUserFileExists(t *testing.T) {
 				t.Fatalf("write user templates: %v", err)
 			}
 			bundledPath := filepath.Join(t.TempDir(), taskTemplateFile)
-			if err := os.WriteFile(bundledPath, []byte(`[{"id":"tmpl_default","name":"Default task","max_concurrency":1,"stages":[{"id":"stage_default","position":0,"snapshot":{"id":"stage_user","name":"Describe","role":"user"}}]}]`), 0o644); err != nil {
+			if err := os.WriteFile(bundledPath, []byte(`[{"id":"tmpl_default","name":"Default task","stages":[{"id":"stage_default","position":0,"snapshot":{"id":"stage_user","name":"Describe","role":"user"}}]}]`), 0o644); err != nil {
 				t.Fatalf("write bundled templates: %v", err)
 			}
 
@@ -181,7 +241,7 @@ func TestTemplateStoreJSONAndFirstStageValidation(t *testing.T) {
 	if err == nil {
 		t.Fatalf("SaveTaskTemplate accepted non-user first stage")
 	}
-	tmpl, err := store.SaveTaskTemplate(TaskTemplate{
+	_, err = store.SaveTaskTemplate(TaskTemplate{
 		Name: "Good",
 		Stages: []TaskTemplateStage{{
 			Position: 0,
@@ -191,116 +251,389 @@ func TestTemplateStoreJSONAndFirstStageValidation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SaveTaskTemplate: %v", err)
 	}
-	if tmpl.MaxConcurrency != 1 {
-		t.Fatalf("MaxConcurrency = %d, want 1", tmpl.MaxConcurrency)
-	}
 }
 
-func TestCreateTaskAutoAdvanceControlsQueueAdmission(t *testing.T) {
+func TestCreateTaskCopiesTaskStagesAndWaitsForUser(t *testing.T) {
 	ctx := context.Background()
-	root := fs.NewRootInfo("root", "root", t.TempDir())
-	store := NewTemplateStoreAt(t.TempDir())
-	svc := NewService(store, testRoots{root: root})
-	t.Cleanup(svc.Close)
-
-	manual, err := store.SaveTaskTemplate(TaskTemplate{
-		Name: "Manual",
-		Stages: []TaskTemplateStage{{
-			Position: 0,
-			Snapshot: StageTemplate{
-				Name:        "Describe",
-				Role:        RoleUser,
-				AutoAdvance: false,
-			},
-		}, {
-			Position: 1,
-			Snapshot: StageTemplate{
-				Name:  "Fix",
-				Role:  RoleAgent,
-				Agent: "codex",
-				Model: "gpt-5",
-			},
-		}},
+	svc, root := newTestService(t, &fakeRunner{})
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID: root.ID,
+		Name:   "修登录按钮",
+		Stages: []StageTemplate{
+			userStage("Describe"),
+			agentStage("Fix", "Fix this:\n{previous_input}"),
+		},
+		Input: "broken button",
 	})
 	if err != nil {
-		t.Fatalf("SaveTaskTemplate manual: %v", err)
+		t.Fatalf("CreateTask: %v", err)
 	}
-	detail, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, TaskTemplateID: manual.ID, Input: "broken button"})
-	if err != nil {
-		t.Fatalf("CreateTask manual: %v", err)
+	// 新建任务是未开始态：要有用户输入才开跑（用户点「开始」→ RunNow）。
+	if detail.Task.Status != StatusPending {
+		t.Fatalf("task status=%s, want pending（新建任务未开始）", detail.Task.Status)
 	}
-	if detail.Task.Status != StatusWaitingUser || detail.Task.SchedulerAdmitted {
-		t.Fatalf("manual task status=%s admitted=%t, want waiting_user/not admitted", detail.Task.Status, detail.Task.SchedulerAdmitted)
+	if detail.Task.Name != "修登录按钮" {
+		t.Fatalf("task name=%q, want 修登录按钮", detail.Task.Name)
+	}
+	if len(detail.Task.Stages) != 2 || detail.Task.Stages[1].Name != "Fix" {
+		t.Fatalf("task stages not stored on task: %#v", detail.Task.Stages)
 	}
 	if len(detail.StageRuns) != 1 || detail.StageRuns[0].Input != "broken button" {
 		t.Fatalf("stage input not stored in run: %#v", detail.StageRuns)
 	}
-	next, err := svc.Next(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID, Reason: "ready"})
-	if err != nil {
-		t.Fatalf("Next manual: %v", err)
-	}
-	if next.Task.Status != StatusQueued {
-		t.Fatalf("after next status=%s, want queued", next.Task.Status)
-	}
+}
 
-	auto, err := store.SaveTaskTemplate(TaskTemplate{
-		Name: "Auto",
-		Stages: []TaskTemplateStage{{
-			Position: 0,
-			Snapshot: StageTemplate{
-				Name:        "Describe",
-				Role:        RoleUser,
-				AutoAdvance: true,
-			},
-		}},
+// 首段勾了「立即执行」：创建后不用手动点「立即执行」就自己跑起来。
+func TestCreateTaskStartsImmediatelyWhenFirstStageSaysSo(t *testing.T) {
+	ctx := context.Background()
+	svc, root := newTestService(t, &fakeRunner{})
+	first := userStage("Describe")
+	first.StartImmediately = true
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID: root.ID,
+		Stages: []StageTemplate{first, agentStage("Fix", "Fix this:\n{previous_input}")},
+		Input:  "broken button",
 	})
 	if err != nil {
-		t.Fatalf("SaveTaskTemplate auto: %v", err)
+		t.Fatalf("CreateTask: %v", err)
 	}
-	autoDetail, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, TaskTemplateID: auto.ID, Input: "ship it"})
+	waitForCondition(t, func() bool {
+		d, err := svc.GetTask(ctx, root.ID, detail.Task.ID)
+		return err == nil && d.Task.Status == StatusRunning
+	})
+	detail, err = svc.GetTask(ctx, root.ID, detail.Task.ID)
 	if err != nil {
-		t.Fatalf("CreateTask auto: %v", err)
+		t.Fatalf("GetTask: %v", err)
 	}
-	if autoDetail.Task.Status != StatusQueued {
-		t.Fatalf("auto task status=%s, want queued", autoDetail.Task.Status)
+	if detail.Task.CurrentStageIndex != 1 {
+		t.Fatalf("current stage=%d, want 1（首段勾了立即执行就该直接进 agent 段）", detail.Task.CurrentStageIndex)
 	}
-	if autoDetail.StageRuns[0].Status != StageStatusApproved {
-		t.Fatalf("auto first run status=%s, want approved", autoDetail.StageRuns[0].Status)
+	// 开跑这一次就把 user 段批准掉了，不该留在待审核。
+	for _, run := range detail.StageRuns {
+		if run.StageIndex == 0 && run.Status == StageStatusWaitingUser {
+			t.Fatalf("stage 0 still waiting_user after start immediately")
+		}
 	}
 }
 
-func TestNextRequiresCurrentUserInputWhenTargetReferencesIt(t *testing.T) {
+// 没勾「立即执行」：安静停在「未开始」，等用户手动点「立即执行」。
+func TestCreateTaskStaysPendingWithoutStartImmediately(t *testing.T) {
 	ctx := context.Background()
-	root := fs.NewRootInfo("root", "root", t.TempDir())
-	store := NewTemplateStoreAt(t.TempDir())
-	svc := NewService(store, testRoots{root: root})
-	t.Cleanup(svc.Close)
-	runner := &fakeRunner{}
-	svc.SetRunner(runner)
-	tmpl, err := store.SaveTaskTemplate(TaskTemplate{
-		Name: "Input required",
+	svc, root := newTestService(t, &fakeRunner{})
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID: root.ID,
+		Stages: []StageTemplate{userStage("Describe"), agentStage("Fix", "Fix this:\n{previous_input}")},
+		Input:  "broken button",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if detail.Task.Status != StatusPending || detail.Task.CurrentStageIndex != 0 {
+		t.Fatalf("task stage/status = %d/%s, want 0/%s（没勾就该停在未开始）",
+			detail.Task.CurrentStageIndex, detail.Task.Status, StatusPending)
+	}
+}
+
+// user 段的 AutoAdvance 是死字段（引擎对 user 段一律推进，不读它）：
+// 它为 true 也不能触发开跑，否则模板里一个改不动的值就能决定任务跑不跑。
+func TestCreateTaskIgnoresUserStageAutoAdvance(t *testing.T) {
+	ctx := context.Background()
+	svc, root := newTestService(t, &fakeRunner{})
+	first := userStage("Describe")
+	first.AutoAdvance = true
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID: root.ID,
+		Stages: []StageTemplate{first, agentStage("Fix", "Fix this:\n{previous_input}")},
+		Input:  "broken button",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if detail.Task.Status != StatusPending || detail.Task.CurrentStageIndex != 0 {
+		t.Fatalf("task stage/status = %d/%s, want 0/%s（user 段的 auto_advance 管不了开跑）",
+			detail.Task.CurrentStageIndex, detail.Task.Status, StatusPending)
+	}
+}
+
+// 面板上把模板勾上的那颗取消掉：前端会把首段的 start_immediately 显式发回 false，
+// 任务必须尊重它、停在「未开始」（不能因为模板是 true 就自己跑起来）。
+func TestCreateTaskRespectsExplicitStartImmediatelyOffOverTemplate(t *testing.T) {
+	ctx := context.Background()
+	svc, root := newTestService(t, &fakeRunner{})
+	tmpl, err := svc.SaveTaskTemplate(ctx, TaskTemplate{
+		Name: "Autostart",
+		Stages: []TaskTemplateStage{
+			{Position: 0, Snapshot: StageTemplate{Name: "Describe", Role: RoleUser, StartImmediately: true}},
+			{Position: 1, Snapshot: agentStage("Fix", "Fix this:\n{previous_input}")},
+		},
+	})
+	if err != nil {
+		t.Fatalf("SaveTaskTemplate: %v", err)
+	}
+	// 前端 applyStageOverride 的输出形状：拍平的 stages，首段 start_immediately=false。
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID:         root.ID,
+		TaskTemplateID: tmpl.ID,
+		Input:          "broken button",
+		Stages: []StageTemplate{
+			{Name: "Describe", Role: RoleUser, StartImmediately: false},
+			agentStage("Fix", "Fix this:\n{previous_input}"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if detail.Task.Status != StatusPending || detail.Task.CurrentStageIndex != 0 {
+		t.Fatalf("task stage/status = %d/%s, want 0/%s（面板显式取消就该停在未开始）",
+			detail.Task.CurrentStageIndex, detail.Task.Status, StatusPending)
+	}
+}
+
+// 模板首段勾了「立即执行」且客户端没发 stages（老客户端）：后端照模板的开跑。
+func TestCreateTaskFollowsTemplateStartImmediatelyWhenNoStagesSent(t *testing.T) {
+	ctx := context.Background()
+	svc, root := newTestService(t, &fakeRunner{})
+	tmpl, err := svc.SaveTaskTemplate(ctx, TaskTemplate{
+		Name: "Autostart",
+		Stages: []TaskTemplateStage{
+			{Position: 0, Snapshot: StageTemplate{Name: "Describe", Role: RoleUser, StartImmediately: true}},
+			{Position: 1, Snapshot: agentStage("Fix", "Fix this:\n{previous_input}")},
+		},
+	})
+	if err != nil {
+		t.Fatalf("SaveTaskTemplate: %v", err)
+	}
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID:         root.ID,
+		TaskTemplateID: tmpl.ID,
+		Input:          "broken button",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	waitForCondition(t, func() bool {
+		d, err := svc.GetTask(ctx, root.ID, detail.Task.ID)
+		return err == nil && d.Task.Status == StatusRunning
+	})
+	detail, err = svc.GetTask(ctx, root.ID, detail.Task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if detail.Task.CurrentStageIndex != 1 {
+		t.Fatalf("current stage=%d, want 1（没发 stages 就该照模板立即执行）", detail.Task.CurrentStageIndex)
+	}
+}
+
+// 勾了立即执行但没给输入：停在「未开始」，创建请求不能因此报错
+// （目标段引用 {previous_input}，RunNow 本会因「input required」失败）。
+func TestCreateTaskStartImmediatelyRequiresNonEmptyInput(t *testing.T) {
+	ctx := context.Background()
+	svc, root := newTestService(t, &fakeRunner{})
+	first := userStage("Describe")
+	first.StartImmediately = true
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID: root.ID,
+		Stages: []StageTemplate{first, agentStage("Fix", "Fix this:\n{previous_input}")},
+	})
+	if err != nil {
+		t.Fatalf("CreateTask with empty input returned error: %v", err)
+	}
+	if detail.Task.Status != StatusPending || detail.Task.CurrentStageIndex != 0 {
+		t.Fatalf("task stage/status = %d/%s, want 0/%s（没有输入不该立即执行）",
+			detail.Task.CurrentStageIndex, detail.Task.Status, StatusPending)
+	}
+}
+
+// 存模板时把 user 段的 auto_advance 归一成 true：引擎对 user 段一律推进，
+// 面板上那颗开关是灰的、改不了，存成 false 只会让 JSON 里躺着个假值。
+// 存量模板（AutoAdvance 缺失 = false）下次一存就自愈。
+func TestSaveTaskTemplateNormalizesUserStageAutoAdvance(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newTestService(t, nil)
+	tmpl, err := svc.SaveTaskTemplate(ctx, TaskTemplate{
+		Name: "Legacy",
+		Stages: []TaskTemplateStage{
+			{Position: 0, Snapshot: StageTemplate{Name: "Describe", Role: RoleUser, AutoAdvance: false, StartImmediately: true}},
+			{Position: 1, Snapshot: agentStage("Fix", "Fix this:\n{previous_input}")},
+		},
+	})
+	if err != nil {
+		t.Fatalf("SaveTaskTemplate: %v", err)
+	}
+	if !tmpl.Stages[0].Snapshot.AutoAdvance {
+		t.Fatalf("user stage auto_advance=%v, want true（user 段一律推进，存 false 是假值）",
+			tmpl.Stages[0].Snapshot.AutoAdvance)
+	}
+	// 首段的「立即执行」不该被这次归一化碰到。
+	if !tmpl.Stages[0].Snapshot.StartImmediately {
+		t.Fatalf("user stage start_immediately=%v, want true", tmpl.Stages[0].Snapshot.StartImmediately)
+	}
+	// agent 段的 auto_advance 仍由用户自己管。
+	agent := agentStage("Fix", "Fix this:\n{previous_input}")
+	agent.AutoAdvance = false
+	tmpl.Stages[1].Snapshot = agent
+	saved, err := svc.SaveTaskTemplate(ctx, tmpl)
+	if err != nil {
+		t.Fatalf("SaveTaskTemplate again: %v", err)
+	}
+	if saved.Stages[1].Snapshot.AutoAdvance {
+		t.Fatalf("agent stage auto_advance was forced true, want false")
+	}
+}
+
+// 模板是预设：创建时拷贝快照，之后改/删预设与在途任务完全无关。
+func TestPresetSnapshotIndependentOfTask(t *testing.T) {
+	ctx := context.Background()
+	svc, root := newTestService(t, nil)
+	tmpl, err := svc.SaveTaskTemplate(ctx, TaskTemplate{
+		Name: "Bug fix",
 		Stages: []TaskTemplateStage{{
 			Position: 0,
-			Snapshot: StageTemplate{
-				Name:        "Describe",
-				Role:        RoleUser,
-				AutoAdvance: false,
-			},
-		}, {
-			Position: 1,
-			Snapshot: StageTemplate{
-				Name:           "Fix",
-				Role:           RoleAgent,
-				Agent:          "codex",
-				Model:          "gpt-5",
-				PromptTemplate: "Fix this:\n{previous_input}",
-			},
+			Snapshot: userStage("Describe"),
 		}},
 	})
 	if err != nil {
 		t.Fatalf("SaveTaskTemplate: %v", err)
 	}
-	detail, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, TaskTemplateID: tmpl.ID, Input: ""})
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, TaskTemplateID: tmpl.ID, Input: "one"})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if detail.Task.Name != "Bug fix" || detail.Task.TaskTemplateName != "Bug fix" {
+		t.Fatalf("task name=%q/%q, want Bug fix", detail.Task.Name, detail.Task.TaskTemplateName)
+	}
+
+	// 在途任务依然在：改预设名、删预设都应成功（解耦），任务身上的快照不变。
+	tmpl.Name = "Renamed"
+	if _, err := svc.SaveTaskTemplate(ctx, tmpl); err != nil {
+		t.Fatalf("SaveTaskTemplate renamed returned error (template should be freely editable): %v", err)
+	}
+	if err := svc.DeleteTaskTemplate(ctx, tmpl.ID); err != nil {
+		t.Fatalf("DeleteTaskTemplate with in-flight task returned error: %v", err)
+	}
+	got, err := svc.GetTask(ctx, root.ID, detail.Task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if got.Task.Name != "Bug fix" || got.Task.TaskTemplateName != "Bug fix" {
+		t.Fatalf("task snapshot changed after preset edits: %q/%q", got.Task.Name, got.Task.TaskTemplateName)
+	}
+	if len(got.Task.Stages) != 1 || got.Task.Stages[0].Name != "Describe" {
+		t.Fatalf("task stages not snapshotted at creation: %#v", got.Task.Stages)
+	}
+}
+
+// 兼容：老任务（存预设时代，无任务流水）推进时从预设惰性回填一次并落盘。
+func TestLegacyTaskStagesBackfilledFromTemplate(t *testing.T) {
+	ctx := context.Background()
+	svc, root := newTestService(t, nil)
+	tmpl, err := svc.SaveTaskTemplate(ctx, TaskTemplate{
+		Name: "Legacy",
+		Stages: []TaskTemplateStage{{
+			Position: 0,
+			Snapshot: userStage("Old Describe"),
+		}},
+	})
+	if err != nil {
+		t.Fatalf("SaveTaskTemplate: %v", err)
+	}
+	// 模拟老数据：直接用 store 插一个没有任务流水、只有预设 ID 的任务。
+	store, err := svc.taskStore(root.ID)
+	if err != nil {
+		t.Fatalf("taskStore: %v", err)
+	}
+	now := time.Now().UTC()
+	legacy := Task{
+		ID:                "task_legacy",
+		RootID:            root.ID,
+		TaskTemplateID:    tmpl.ID,
+		Stages:            nil,
+		CurrentStageIndex: 0,
+		Status:            StatusWaitingUser,
+		Labels:            []string{},
+		CreatedAt:         now,
+		UpdatedAt:         now,
+	}
+	if _, err := store.CreateTask(ctx, legacy, StageRun{
+		ID:         "run_legacy",
+		TaskID:     "task_legacy",
+		StageIndex: 0,
+		Role:       RoleUser,
+		Status:     StageStatusWaitingUser,
+		Input:      "first",
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}, TaskEvent{ID: "event_legacy", TaskID: "task_legacy", Type: "task_created", CreatedAt: now}); err != nil {
+		t.Fatalf("store.CreateTask legacy: %v", err)
+	}
+
+	before, err := svc.GetTask(ctx, root.ID, "task_legacy")
+	if err != nil {
+		t.Fatalf("GetTask before move: %v", err)
+	}
+	if len(before.Task.Stages) != 0 {
+		t.Fatalf("legacy task unexpectedly has stages: %#v", before.Task.Stages)
+	}
+	if _, err := svc.RerunStage(ctx, MoveInput{RootID: root.ID, TaskID: "task_legacy", StageIndex: 0}); err != nil {
+		t.Fatalf("RerunStage on legacy task: %v", err)
+	}
+	after, err := svc.GetTask(ctx, root.ID, "task_legacy")
+	if err != nil {
+		t.Fatalf("GetTask after move: %v", err)
+	}
+	if len(after.Task.Stages) != 1 || after.Task.Stages[0].Name != "Old Describe" {
+		t.Fatalf("legacy task stages not backfilled from preset: %#v", after.Task.Stages)
+	}
+	if after.Task.Status != StatusWaitingUser {
+		t.Fatalf("legacy task status=%s, want waiting_user after rerun", after.Task.Status)
+	}
+}
+
+func TestNextFinishesFinalStageWaitingUser(t *testing.T) {
+	ctx := context.Background()
+	svc, root := newTestService(t, &fakeRunner{})
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID: root.ID,
+		Stages: []StageTemplate{
+			userStage("Describe"),
+			agentStage("Do it", "Do this:\n{previous_input}"),
+		},
+		Input: "hello",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if _, err := svc.Next(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err != nil {
+		t.Fatalf("Next: %v", err)
+	}
+	waitForCondition(t, func() bool {
+		detail, err = svc.GetTask(ctx, root.ID, detail.Task.ID)
+		return err == nil && detail.Task.Status == StatusWaitingUser && detail.Task.CurrentStageIndex == 1
+	})
+	if detail.Task.Status != StatusWaitingUser || detail.Task.CurrentStageIndex != 1 {
+		t.Fatalf("status = %s stage = %d, want waiting_user @1", detail.Task.Status, detail.Task.CurrentStageIndex)
+	}
+	// 最后一阶段等待用户时 Next 应完成而不是报 stage out of range。
+	detail, err = svc.Next(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID, Reason: "done"})
+	if err != nil {
+		t.Fatalf("Next at final stage: %v", err)
+	}
+	if detail.Task.Status != StatusSuccess {
+		t.Fatalf("status = %s, want success", detail.Task.Status)
+	}
+}
+
+func TestNextRequiresCurrentUserInputWhenTargetReferencesIt(t *testing.T) {
+	ctx := context.Background()
+	svc, root := newTestService(t, &fakeRunner{})
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID: root.ID,
+		Stages: []StageTemplate{
+			userStage("Describe"),
+			agentStage("Fix", "Fix this:\n{previous_input}"),
+		},
+		Input: "",
+	})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
@@ -311,9 +644,11 @@ func TestNextRequiresCurrentUserInputWhenTargetReferencesIt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetTask: %v", err)
 	}
-	if detail.Task.CurrentStageIndex != 0 || detail.Task.Status != StatusWaitingUser {
-		t.Fatalf("task stage/status = %d/%s, want 0/%s", detail.Task.CurrentStageIndex, detail.Task.Status, StatusWaitingUser)
+	// 校验失败不改写状态：仍停在未开始态的第 0 段。
+	if detail.Task.CurrentStageIndex != 0 || detail.Task.Status != StatusPending {
+		t.Fatalf("task stage/status = %d/%s, want 0/%s", detail.Task.CurrentStageIndex, detail.Task.Status, StatusPending)
 	}
+	runner := svc.Runner.(*fakeRunner)
 	runner.mu.Lock()
 	execCount := len(runner.execs)
 	runner.mu.Unlock()
@@ -324,36 +659,15 @@ func TestNextRequiresCurrentUserInputWhenTargetReferencesIt(t *testing.T) {
 
 func TestNextAllowsEmptyInputWhenTargetDoesNotReferenceIt(t *testing.T) {
 	ctx := context.Background()
-	root := fs.NewRootInfo("root", "root", t.TempDir())
-	store := NewTemplateStoreAt(t.TempDir())
-	svc := NewService(store, testRoots{root: root})
-	t.Cleanup(svc.Close)
-	runner := &fakeRunner{}
-	svc.SetRunner(runner)
-	tmpl, err := store.SaveTaskTemplate(TaskTemplate{
-		Name: "Input optional",
-		Stages: []TaskTemplateStage{{
-			Position: 0,
-			Snapshot: StageTemplate{
-				Name:        "Gate",
-				Role:        RoleUser,
-				AutoAdvance: false,
-			},
-		}, {
-			Position: 1,
-			Snapshot: StageTemplate{
-				Name:           "Static",
-				Role:           RoleAgent,
-				Agent:          "codex",
-				Model:          "gpt-5",
-				PromptTemplate: "Run the static check.",
-			},
-		}},
+	svc, root := newTestService(t, &fakeRunner{})
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID: root.ID,
+		Stages: []StageTemplate{
+			userStage("Gate"),
+			agentStage("Static", "Run the static check."),
+		},
+		Input: "",
 	})
-	if err != nil {
-		t.Fatalf("SaveTaskTemplate: %v", err)
-	}
-	detail, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, TaskTemplateID: tmpl.ID, Input: ""})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
@@ -368,46 +682,16 @@ func TestNextAllowsEmptyInputWhenTargetDoesNotReferenceIt(t *testing.T) {
 
 func TestNextRequiresCurrentInputFromAgentStageWhenTargetReferencesIt(t *testing.T) {
 	ctx := context.Background()
-	root := fs.NewRootInfo("root", "root", t.TempDir())
-	store := NewTemplateStoreAt(t.TempDir())
-	svc := NewService(store, testRoots{root: root})
-	t.Cleanup(svc.Close)
-	runner := &fakeRunner{}
-	svc.SetRunner(runner)
-	tmpl, err := store.SaveTaskTemplate(TaskTemplate{
-		Name: "Agent input required",
-		Stages: []TaskTemplateStage{{
-			Position: 0,
-			Snapshot: StageTemplate{
-				Name:        "Describe",
-				Role:        RoleUser,
-				AutoAdvance: false,
-			},
-		}, {
-			Position: 1,
-			Snapshot: StageTemplate{
-				Name:           "Fix",
-				Role:           RoleAgent,
-				AutoAdvance:    false,
-				Agent:          "codex",
-				Model:          "gpt-5",
-				PromptTemplate: "Fix this:\n{previous_input}",
-			},
-		}, {
-			Position: 2,
-			Snapshot: StageTemplate{
-				Name:           "Review",
-				Role:           RoleAgent,
-				Agent:          "codex",
-				Model:          "gpt-5",
-				PromptTemplate: "Review this:\n{previous_input}",
-			},
-		}},
+	svc, root := newTestService(t, &fakeRunner{})
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID: root.ID,
+		Stages: []StageTemplate{
+			userStage("Describe"),
+			agentStage("Fix", "Fix this:\n{previous_input}"),
+			agentStage("Review", "Review this:\n{previous_input}"),
+		},
+		Input: "first",
 	})
-	if err != nil {
-		t.Fatalf("SaveTaskTemplate: %v", err)
-	}
-	detail, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, TaskTemplateID: tmpl.ID, Input: "first"})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
@@ -415,17 +699,10 @@ func TestNextRequiresCurrentInputFromAgentStageWhenTargetReferencesIt(t *testing
 	if err != nil {
 		t.Fatalf("Next to agent: %v", err)
 	}
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
+	waitForCondition(t, func() bool {
 		detail, err = svc.GetTask(ctx, root.ID, detail.Task.ID)
-		if err == nil && detail.Task.CurrentStageIndex == 1 && detail.Task.Status == StatusWaitingUser {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if err != nil {
-		t.Fatalf("GetTask: %v", err)
-	}
+		return err == nil && detail.Task.CurrentStageIndex == 1 && detail.Task.Status == StatusWaitingUser
+	})
 	if _, err := svc.Next(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err == nil {
 		t.Fatalf("Next from empty agent input succeeded, want error")
 	}
@@ -440,28 +717,10 @@ func TestNextRequiresCurrentInputFromAgentStageWhenTargetReferencesIt(t *testing
 
 func TestTaskCreateWorktreeIsTaskScoped(t *testing.T) {
 	ctx := context.Background()
-	root := fs.NewRootInfo("root", "root", t.TempDir())
-	store := NewTemplateStoreAt(t.TempDir())
-	svc := NewService(store, testRoots{root: root})
-	t.Cleanup(svc.Close)
-
-	tmpl, err := store.SaveTaskTemplate(TaskTemplate{
-		Name: "Task scoped worktree",
-		Stages: []TaskTemplateStage{{
-			Position: 0,
-			Snapshot: StageTemplate{
-				Name:        "Describe",
-				Role:        RoleUser,
-				AutoAdvance: false,
-			},
-		}},
-	})
-	if err != nil {
-		t.Fatalf("SaveTaskTemplate: %v", err)
-	}
+	svc, root := newTestService(t, nil)
 	detail, err := svc.CreateTask(ctx, CreateTaskInput{
 		RootID:             root.ID,
-		TaskTemplateID:     tmpl.ID,
+		Stages:             []StageTemplate{userStage("Describe")},
 		Input:              "one",
 		CreateWorktree:     true,
 		WorktreeBranchMode: "existing",
@@ -486,85 +745,67 @@ func TestTaskCreateWorktreeIsTaskScoped(t *testing.T) {
 	}
 }
 
-func TestTaskTemplateEditBlockedByUnfinishedTasksExceptConcurrency(t *testing.T) {
+// Next/Resume/RunNow 等处都会触发 RunTask：守卫防止同一个 agent 阶段被并发跑两次。
+// 用一个会阻塞的 runner 把第一个执行体钉在阶段内部，再补一次 RunTask —— 没有守卫时 exec 会变成 2。
+func TestRunTaskExecutesStageOnceWhenKickedTwice(t *testing.T) {
 	ctx := context.Background()
-	root := fs.NewRootInfo("root", "root", t.TempDir())
-	store := NewTemplateStoreAt(t.TempDir())
-	svc := NewService(store, testRoots{root: root})
-	t.Cleanup(svc.Close)
+	svc, root := newTestService(t, nil)
+	gate := make(chan struct{})
+	runner := &fakeRunner{gate: gate}
+	svc.SetRunner(runner)
 
-	tmpl, err := store.SaveTaskTemplate(TaskTemplate{
-		Name:           "Bug fix",
-		MaxConcurrency: 1,
-		Stages: []TaskTemplateStage{{
-			Position: 0,
-			Snapshot: StageTemplate{
-				Name:        "Describe",
-				Role:        RoleUser,
-				AutoAdvance: false,
-			},
-		}},
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID: root.ID,
+		Stages: []StageTemplate{
+			userStage("Describe"),
+			agentStage("Fix", "Fix this:\n{previous_input}"),
+		},
+		Input: "broken save button",
 	})
 	if err != nil {
-		t.Fatalf("SaveTaskTemplate: %v", err)
-	}
-	if _, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, TaskTemplateID: tmpl.ID, Input: "broken"}); err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
-
-	renamed := tmpl
-	renamed.Name = "Renamed"
-	if _, err := svc.SaveTaskTemplate(ctx, renamed); err == nil {
-		t.Fatal("SaveTaskTemplate renamed with unfinished task succeeded, want error")
+	if _, err := svc.Next(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err != nil {
+		t.Fatalf("Next: %v", err)
 	}
-
-	concurrency := tmpl
-	concurrency.MaxConcurrency = 4
-	if _, err := svc.SaveTaskTemplate(ctx, concurrency); err != nil {
-		t.Fatalf("SaveTaskTemplate concurrency-only returned error: %v", err)
+	// 等第一个执行体真正进入 agent 阶段（gate 会把它留在里面）。
+	waitForCondition(t, func() bool {
+		runner.mu.Lock()
+		defer runner.mu.Unlock()
+		return len(runner.execs) > 0
+	})
+	runner.mu.Lock()
+	entered := len(runner.execs) > 0
+	runner.mu.Unlock()
+	if !entered {
+		close(gate)
+		t.Fatalf("agent stage never started")
 	}
+	// 第二个执行体：守卫生效时应被挡下。
+	svc.RunTask(root.ID, detail.Task.ID)
+	time.Sleep(50 * time.Millisecond)
+	close(gate)
 
-	if err := svc.DeleteTaskTemplate(ctx, tmpl.ID); err == nil {
-		t.Fatal("DeleteTaskTemplate with unfinished task succeeded, want error")
+	waitForCondition(t, func() bool {
+		got, err := svc.GetTask(ctx, root.ID, detail.Task.ID)
+		return err == nil && got.Task.Status == StatusWaitingUser
+	})
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	if len(runner.execs) != 1 {
+		t.Fatalf("runner exec count=%d, want 1（同一阶段被执行了多次）", len(runner.execs))
 	}
 }
 
 func TestTaskWorktreeNameUsesTaskNumber(t *testing.T) {
 	ctx := context.Background()
-	root := fs.NewRootInfo("root", "root", t.TempDir())
-	store := NewTemplateStoreAt(t.TempDir())
-	svc := NewService(store, testRoots{root: root})
-	t.Cleanup(svc.Close)
-	runner := &fakeRunner{}
-	svc.SetRunner(runner)
-
-	tmpl, err := store.SaveTaskTemplate(TaskTemplate{
-		Name: "Worktree Number",
-		Stages: []TaskTemplateStage{{
-			Position: 0,
-			Snapshot: StageTemplate{
-				Name:        "Describe",
-				Role:        RoleUser,
-				AutoAdvance: false,
-			},
-		}, {
-			Position: 1,
-			Snapshot: StageTemplate{
-				Name:               "Fix",
-				Role:               RoleAgent,
-				Agent:              "codex",
-				Model:              "gpt-5",
-				SessionReusePolicy: SessionReuseTaskMain,
-				PromptTemplate:     "Fix this:\n{previous_input}",
-			},
-		}},
-	})
-	if err != nil {
-		t.Fatalf("SaveTaskTemplate: %v", err)
-	}
+	svc, root := newTestService(t, &fakeRunner{})
 	detail, err := svc.CreateTask(ctx, CreateTaskInput{
-		RootID:             root.ID,
-		TaskTemplateID:     tmpl.ID,
+		RootID: root.ID,
+		Stages: []StageTemplate{
+			userStage("Describe"),
+			agentStage("Fix", "Fix this:\n{previous_input}"),
+		},
 		Input:              "broken save button",
 		CreateWorktree:     true,
 		WorktreeBranchMode: "existing",
@@ -579,17 +820,13 @@ func TestTaskWorktreeNameUsesTaskNumber(t *testing.T) {
 	if _, err := svc.Next(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err != nil {
 		t.Fatalf("Next: %v", err)
 	}
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
+	waitForCondition(t, func() bool {
+		runner := svc.Runner.(*fakeRunner)
 		runner.mu.Lock()
-		called := runner.worktreeCreateCalled
-		execCount := len(runner.execs)
-		runner.mu.Unlock()
-		if called && execCount > 0 {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+		defer runner.mu.Unlock()
+		return runner.worktreeCreateCalled && len(runner.execs) > 0
+	})
+	runner := svc.Runner.(*fakeRunner)
 	runner.mu.Lock()
 	defer runner.mu.Unlock()
 	if !runner.worktreeCreateCalled {
@@ -611,61 +848,29 @@ func TestTaskWorktreeNameUsesTaskNumber(t *testing.T) {
 
 func TestTaskWorktreeCreateErrorStoredOnTask(t *testing.T) {
 	ctx := context.Background()
-	root := fs.NewRootInfo("root", "root", t.TempDir())
-	store := NewTemplateStoreAt(t.TempDir())
-	svc := NewService(store, testRoots{root: root})
-	t.Cleanup(svc.Close)
-	runner := &fakeRunner{worktreeErr: errors.New("git worktree add failed")}
-	svc.SetRunner(runner)
-
-	tmpl, err := store.SaveTaskTemplate(TaskTemplate{
-		Name: "Worktree Error",
-		Stages: []TaskTemplateStage{{
-			Position: 0,
-			Snapshot: StageTemplate{
-				Name:        "Describe",
-				Role:        RoleUser,
-				AutoAdvance: false,
-			},
-		}, {
-			Position: 1,
-			Snapshot: StageTemplate{
-				Name:           "Fix",
-				Role:           RoleAgent,
-				Agent:          "codex",
-				Model:          "gpt-5",
-				PromptTemplate: "Fix this:\n{previous_input}",
-			},
-		}},
-	})
-	if err != nil {
-		t.Fatalf("SaveTaskTemplate: %v", err)
-	}
+	svc, root := newTestService(t, &fakeRunner{worktreeErr: errors.New("git worktree add failed")})
 	detail, err := svc.CreateTask(ctx, CreateTaskInput{
 		RootID:         root.ID,
-		TaskTemplateID: tmpl.ID,
+		Stages:         []StageTemplate{userStage("Describe"), agentStage("Fix", "Fix this:\n{previous_input}")},
 		Input:          "broken save button",
 		CreateWorktree: true,
 	})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
-	if _, err := svc.Next(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err == nil {
-		t.Fatalf("Next succeeded, want worktree error")
+	if detail.Task.Status != StatusPending {
+		t.Fatalf("task status=%s, want pending（新建任务未开始）", detail.Task.Status)
 	}
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
+	// 「开始」才真正进执行体；worktree 创建失败在那里被记下。
+	if _, err := svc.RunNow(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err != nil {
+		t.Fatalf("RunNow: %v", err)
+	}
+	waitForCondition(t, func() bool {
 		detail, err = svc.GetTask(ctx, root.ID, detail.Task.ID)
-		if err == nil && detail.Task.AuxFlags.SessionError != "" {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+		return err == nil && detail.Task.AuxFlags.SessionError != ""
+	})
 	if err != nil {
 		t.Fatalf("GetTask: %v", err)
-	}
-	if detail.Task.Status != StatusWaitingUser {
-		t.Fatalf("task status=%s, want waiting_user", detail.Task.Status)
 	}
 	if detail.Task.CurrentStageIndex != 0 {
 		t.Fatalf("current stage=%d, want 0", detail.Task.CurrentStageIndex)
@@ -673,41 +878,59 @@ func TestTaskWorktreeCreateErrorStoredOnTask(t *testing.T) {
 	if detail.Task.AuxFlags.SessionError != "git worktree add failed" {
 		t.Fatalf("session error=%q, want git worktree add failed", detail.Task.AuxFlags.SessionError)
 	}
-	if detail.Task.SchedulerAdmitted {
-		t.Fatalf("scheduler admitted=true, want false")
+}
+
+// 待开始态点「开始」必须直接进执行中：先过掉 user 段再跑 agent 段。
+// 曾经 RunNow 对 pending 只调 RunTask 不推进阶段，任务卡在待审核，
+// 用户得再点一次「执行」才真的跑起来。
+func TestRunNowFromPendingStartsAgentStage(t *testing.T) {
+	ctx := context.Background()
+	svc, root := newTestService(t, &fakeRunner{})
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID: root.ID,
+		Stages: []StageTemplate{userStage("Describe"), agentStage("Fix", "Fix this:\n{previous_input}")},
+		Input:  "broken save button",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if detail.Task.Status != StatusPending || detail.Task.CurrentStageIndex != 0 {
+		t.Fatalf("new task stage/status = %d/%s, want 0/%s", detail.Task.CurrentStageIndex, detail.Task.Status, StatusPending)
+	}
+
+	if _, err := svc.RunNow(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err != nil {
+		t.Fatalf("RunNow: %v", err)
+	}
+	waitForCondition(t, func() bool {
+		d, err := svc.GetTask(ctx, root.ID, detail.Task.ID)
+		return err == nil && d.Task.Status == StatusRunning
+	})
+	detail, err = svc.GetTask(ctx, root.ID, detail.Task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if detail.Task.CurrentStageIndex != 1 {
+		t.Fatalf("current stage=%d, want 1（「开始」应直接进入 agent 段）", detail.Task.CurrentStageIndex)
+	}
+	// user 段被「开始」这一次动作批准掉，不该留在待审核。
+	for _, run := range detail.StageRuns {
+		if run.StageIndex == 0 && run.Status == StageStatusWaitingUser {
+			t.Fatalf("stage 0 still waiting_user after one RunNow")
+		}
 	}
 }
 
 func TestUpdateCurrentInputKeepsPreviousStageInput(t *testing.T) {
 	ctx := context.Background()
-	root := fs.NewRootInfo("root", "root", t.TempDir())
-	store := NewTemplateStoreAt(t.TempDir())
-	svc := NewService(store, testRoots{root: root})
-	t.Cleanup(svc.Close)
-
-	tmpl, err := store.SaveTaskTemplate(TaskTemplate{
-		Name: "Current input",
-		Stages: []TaskTemplateStage{{
-			Position: 0,
-			Snapshot: StageTemplate{
-				Name:        "Describe",
-				Role:        RoleUser,
-				AutoAdvance: false,
-			},
-		}, {
-			Position: 1,
-			Snapshot: StageTemplate{
-				Name:  "Fix",
-				Role:  RoleAgent,
-				Agent: "codex",
-				Model: "gpt-5",
-			},
-		}},
+	svc, root := newTestService(t, nil)
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID: root.ID,
+		Stages: []StageTemplate{
+			userStage("Describe"),
+			agentStage("Fix", "Fix this:\n{previous_input}"),
+		},
+		Input: "first input",
 	})
-	if err != nil {
-		t.Fatalf("SaveTaskTemplate: %v", err)
-	}
-	detail, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, TaskTemplateID: tmpl.ID, Input: "first input"})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
@@ -744,32 +967,26 @@ func TestUpdateCurrentInputKeepsPreviousStageInput(t *testing.T) {
 
 func TestCompleteFinalWaitingTask(t *testing.T) {
 	ctx := context.Background()
-	root := fs.NewRootInfo("root", "root", t.TempDir())
-	store := NewTemplateStoreAt(t.TempDir())
-	svc := NewService(store, testRoots{root: root})
-	t.Cleanup(svc.Close)
-
-	tmpl, err := store.SaveTaskTemplate(TaskTemplate{
-		Name: "Final review",
-		Stages: []TaskTemplateStage{{
-			Position: 0,
-			Snapshot: StageTemplate{
-				Name:        "Describe",
-				Role:        RoleUser,
-				AutoAdvance: false,
-			},
-		}},
+	svc, root := newTestService(t, &fakeRunner{})
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID: root.ID,
+		Stages: []StageTemplate{userStage("Describe")},
+		Input:  "done",
 	})
-	if err != nil {
-		t.Fatalf("SaveTaskTemplate: %v", err)
-	}
-	detail, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, TaskTemplateID: tmpl.ID, Input: "done"})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
-	if detail.Task.Status != StatusWaitingUser {
-		t.Fatalf("task status=%s, want waiting_user", detail.Task.Status)
+	if detail.Task.Status != StatusPending {
+		t.Fatalf("task status=%s, want pending（新建任务未开始）", detail.Task.Status)
 	}
+	// Complete 只接受等待用户态；未开始态先「开始」，由执行体把单段 user 任务推到等待用户。
+	if _, err := svc.RunNow(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err != nil {
+		t.Fatalf("RunNow: %v", err)
+	}
+	waitForCondition(t, func() bool {
+		got, err := svc.GetTask(ctx, root.ID, detail.Task.ID)
+		return err == nil && got.Task.Status == StatusWaitingUser
+	})
 	completed, err := svc.Complete(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID, Reason: "approved"})
 	if err != nil {
 		t.Fatalf("Complete: %v", err)
@@ -777,38 +994,145 @@ func TestCompleteFinalWaitingTask(t *testing.T) {
 	if completed.Task.Status != StatusSuccess {
 		t.Fatalf("task status=%s, want success", completed.Task.Status)
 	}
-	if completed.Task.SchedulerAdmitted {
-		t.Fatalf("completed task still admitted")
+	if completed.Task.CompletedAt == "" {
+		t.Fatalf("completed_at empty")
+	}
+}
+
+// 任务状态不跟会话/worktree 绑死：会话被删、worktree 丢失后任务会一直卡在 running，
+// 此时必须还能被人工完成，否则这些任务永远动不了。
+func TestCompleteStuckRunningTaskAfterSessionLost(t *testing.T) {
+	ctx := context.Background()
+	svc, root := newTestService(t, nil)
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID: root.ID,
+		Stages: []StageTemplate{
+			userStage("Describe"),
+			agentStage("Fix", "Fix this:\n{previous_input}"),
+		},
+		Input: "broken save button",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if _, err := svc.Next(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err != nil {
+		t.Fatalf("Next: %v", err)
+	}
+	// 任务已经进入 agent 段（running）后，会话/worktree 丢失：执行体不再回来。
+	store, err := svc.taskStore(root.ID)
+	if err != nil {
+		t.Fatalf("taskStore: %v", err)
+	}
+	if err := store.UpdateTaskStatus(ctx, detail.Task.ID, StatusRunning, nil, false); err != nil {
+		t.Fatalf("UpdateTaskStatus: %v", err)
+	}
+	stuck, err := store.GetTask(ctx, detail.Task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if stuck.Status != StatusRunning {
+		t.Fatalf("precondition status=%s, want running", stuck.Status)
+	}
+
+	completed, err := svc.Complete(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID, Reason: "session gone"})
+	if err != nil {
+		t.Fatalf("Complete on a stuck running task must succeed, got: %v", err)
+	}
+	if completed.Task.Status != StatusSuccess {
+		t.Fatalf("task status=%s, want success", completed.Task.Status)
 	}
 	if completed.Task.CompletedAt == "" {
 		t.Fatalf("completed_at empty")
 	}
 }
 
+// 终态任务不能被状态操作复活：Pause/Resume 走 setTaskStatus，终态时必须原样返回。
+func TestTerminalTaskCannotBeResurrected(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name  string
+		kill  func(*Service, string, string) error
+		after string
+	}{
+		{"success+resume", func(s *Service, r, id string) error {
+			_, err := s.Resume(ctx, MoveInput{RootID: r, TaskID: id})
+			return err
+		}, StatusSuccess},
+		{"success+pause", func(s *Service, r, id string) error {
+			_, err := s.Pause(ctx, MoveInput{RootID: r, TaskID: id})
+			return err
+		}, StatusSuccess},
+		{"cancelled+pause", func(s *Service, r, id string) error {
+			_, err := s.Pause(ctx, MoveInput{RootID: r, TaskID: id})
+			return err
+		}, StatusCancelled},
+		{"cancelled+resume", func(s *Service, r, id string) error {
+			_, err := s.Resume(ctx, MoveInput{RootID: r, TaskID: id})
+			return err
+		}, StatusCancelled},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, root := newTestService(t, nil)
+			d, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, Stages: []StageTemplate{userStage("Describe")}, Input: "x"})
+			if err != nil {
+				t.Fatalf("CreateTask: %v", err)
+			}
+			// 从非终态进入终态：cancelled 用 Cancel，success 用 Complete。
+			// 不能拿 success 再 Cancel——终态已不可改写，那是本测试要守的行为本身。
+			if tc.after == StatusCancelled {
+				if _, err := svc.Cancel(ctx, MoveInput{RootID: root.ID, TaskID: d.Task.ID}); err != nil {
+					t.Fatalf("Cancel: %v", err)
+				}
+			} else if _, err := svc.Complete(ctx, MoveInput{RootID: root.ID, TaskID: d.Task.ID}); err != nil {
+				t.Fatalf("Complete: %v", err)
+			}
+			if err := tc.kill(svc, root.ID, d.Task.ID); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			got, err := svc.GetTask(ctx, root.ID, d.Task.ID)
+			if err != nil {
+				t.Fatalf("GetTask: %v", err)
+			}
+			if got.Task.Status != tc.after {
+				t.Fatalf("terminal task was resurrected: status=%s, want %s", got.Task.Status, tc.after)
+			}
+		})
+	}
+}
+
+// 暂停/恢复往返：暂停后状态保持，恢复后继续跑（非终态才允许）。
+func TestPauseResumeRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	svc, root := newTestService(t, nil)
+	d, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID,
+		Stages: []StageTemplate{userStage("A"), agentStage("B", "do {previous_input}")}, Input: "x"})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	paused, err := svc.Pause(ctx, MoveInput{RootID: root.ID, TaskID: d.Task.ID})
+	if err != nil {
+		t.Fatalf("Pause: %v", err)
+	}
+	if paused.Task.Status != StatusPaused {
+		t.Fatalf("status=%s, want paused", paused.Task.Status)
+	}
+	resumed, err := svc.Resume(ctx, MoveInput{RootID: root.ID, TaskID: d.Task.ID})
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	if resumed.Task.Status != StatusRunning {
+		t.Fatalf("status=%s, want running", resumed.Task.Status)
+	}
+}
+
 func TestTaskNumbersIncrement(t *testing.T) {
 	ctx := context.Background()
-	root := fs.NewRootInfo("root", "root", t.TempDir())
-	store := NewTemplateStoreAt(t.TempDir())
-	svc := NewService(store, testRoots{root: root})
-	t.Cleanup(svc.Close)
-	tmpl, err := store.SaveTaskTemplate(TaskTemplate{
-		Name: "Numbered",
-		Stages: []TaskTemplateStage{{
-			Position: 0,
-			Snapshot: StageTemplate{
-				Name: "Describe",
-				Role: RoleUser,
-			},
-		}},
-	})
-	if err != nil {
-		t.Fatalf("SaveTaskTemplate: %v", err)
-	}
-	first, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, TaskTemplateID: tmpl.ID, Input: "one"})
+	svc, root := newTestService(t, nil)
+	first, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, Stages: []StageTemplate{userStage("Describe")}, Input: "one"})
 	if err != nil {
 		t.Fatalf("CreateTask first: %v", err)
 	}
-	second, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, TaskTemplateID: tmpl.ID, Input: "two"})
+	second, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, Stages: []StageTemplate{userStage("Describe")}, Input: "two"})
 	if err != nil {
 		t.Fatalf("CreateTask second: %v", err)
 	}
@@ -824,60 +1148,221 @@ func TestTaskNumbersIncrement(t *testing.T) {
 	}
 }
 
-func TestBuildAgentPromptReplacesOnlyProvidedVariables(t *testing.T) {
+func TestBuildAgentPromptAppendsOnlyConfiguredContext(t *testing.T) {
 	values := map[string]string{
 		"previous_input":     "fix this",
 		"task_initial_input": "first input",
 		"task_number":        "12",
 	}
-	prompt := BuildAgentPrompt("Do: {previous_input}", values)
+	prompt := BuildAgentPrompt("Do: {previous_input}", values, TaskControlPromptContext{})
 	if prompt != "Do: fix this" {
 		t.Fatalf("prompt = %q", prompt)
 	}
-	withTaskNumber := BuildAgentPrompt("Do: {task_initial_input} #{task_number}", values)
+	withTaskNumber := BuildAgentPrompt("Do: {task_initial_input} #{task_number}", values, TaskControlPromptContext{})
 	if withTaskNumber != "Do: first input #12" {
 		t.Fatalf("task placeholders not replaced: %q", withTaskNumber)
 	}
-	legacy := BuildAgentPrompt("Root: {root_id}", values)
+	legacy := BuildAgentPrompt("Root: {root_id}", values, TaskControlPromptContext{})
 	if legacy != "Root: {root_id}" {
 		t.Fatalf("legacy placeholder was replaced: %q", legacy)
+	}
+	withControl := BuildAgentPrompt("Do: {previous_input}", values, TaskControlPromptContext{
+		RootID:            "root",
+		TaskNumber:        12,
+		CurrentStageIndex: "1",
+		CurrentStageName:  "Agent",
+		Enabled:           true,
+	})
+	if !containsAll(withControl, []string{"Task control context:", "task_number: 12", "mindfs root -task 12", "mindfs root -task 12 -next"}) {
+		t.Fatalf("control prompt missing context: %q", withControl)
+	}
+}
+
+// 完成契约与匹配判据必须同源：契约里让 agent 输出的那个标记，得是匹配时认的那个。
+// 直接从契约文本里把标记抠出来再喂给 matcher —— 手抄一份字面量的话，
+// 契约里段号写错这类错位就测不出来。
+func TestStageExitContractMatchesTheMarkerItAsksFor(t *testing.T) {
+	markerRe := regexp.MustCompile(`\[` + stageDoneTag + `:\d+\]`)
+	for _, stageIndex := range []int{0, 1, 7} {
+		contract := BuildStageExitContract(stageIndex)
+		marker := markerRe.FindString(contract)
+		if marker == "" {
+			t.Fatalf("stage %d: contract asks for no done marker: %q", stageIndex, contract)
+		}
+		if want := "[" + stageDoneTag + ":" + strconv.Itoa(stageIndex) + "]"; marker != want {
+			t.Fatalf("stage %d: contract asks for %q, want %q", stageIndex, marker, want)
+		}
+		if got := matchStageOutcome("干完了\n"+marker, stageIndex); got.Outcome != StageOutcomeDone {
+			t.Fatalf("stage %d: matcher rejects the marker the contract asked for: %+v", stageIndex, got)
+		}
+		blockedMarker := "[" + stageBlockedTag + ":" + strconv.Itoa(stageIndex) + " 缺凭证]"
+		if !strings.Contains(contract, blockedMarker[:len(blockedMarker)-len(" 缺凭证]")]) {
+			t.Fatalf("stage %d: contract asks for no blocked marker: %q", stageIndex, contract)
+		}
+		got := matchStageOutcome(blockedMarker, stageIndex)
+		if got.Outcome != StageOutcomeBlocked || got.Reason != "缺凭证" {
+			t.Fatalf("stage %d: blocked = %+v, want Blocked/缺凭证", stageIndex, got)
+		}
+	}
+}
+
+func TestMatchStageOutcome(t *testing.T) {
+	tests := []struct {
+		name       string
+		text       string
+		stageIndex int
+		want       StageOutcome
+		wantReason string
+	}{
+		{"done", "改完了，看过测试\n[MINDFS-STAGE-DONE:1]", 1, StageOutcomeDone, ""},
+		{"done on first stage", "[MINDFS-STAGE-DONE:0]", 0, StageOutcomeDone, ""},
+		{"blocked with reason", "跑不动，缺数据库迁移文件\n[MINDFS-STAGE-BLOCKED:1 缺数据库迁移文件]", 1, StageOutcomeBlocked, "缺数据库迁移文件"},
+		{"blocked without reason", "[MINDFS-STAGE-BLOCKED:2]", 2, StageOutcomeBlocked, ""},
+		// 段号不吻合 = 上一段的残留标记，不许拿来当本段完成。
+		{"stale marker from previous stage", "上轮标记\n[MINDFS-STAGE-DONE:1]", 2, StageOutcomeSilent, ""},
+		{"stale blocked marker from previous stage", "[MINDFS-STAGE-BLOCKED:0 旧的]", 1, StageOutcomeSilent, ""},
+		{"silent", "我先看看代码", 1, StageOutcomeSilent, ""},
+		{"empty", "", 1, StageOutcomeSilent, ""},
+		// 先说做完了又补一句「其实有地方要确认」：按做完算（marker 是显式契约，
+		// 比正文里的语气可信）。
+		{"done wins over blocked", "[MINDFS-STAGE-DONE:1]\n[MINDFS-STAGE-BLOCKED:1 顺带一提]", 1, StageOutcomeDone, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := matchStageOutcome(tt.text, tt.stageIndex)
+			if got.Outcome != tt.want || got.Reason != tt.wantReason {
+				t.Fatalf("matchStageOutcome(%q, %d) = %+v, want outcome %v reason %q", tt.text, tt.stageIndex, got, tt.want, tt.wantReason)
+			}
+		})
+	}
+}
+
+// agent 没显式回报完成，本段就不许算成功——否则 AutoAdvance 会把下一段植进来，
+// 前一段的活没干完，下一段已经在错误前提上开跑（本次要消灭的阶段错乱）。
+func TestAgentStageWithoutDoneMarkerStopsAtCurrentStage(t *testing.T) {
+	ctx := context.Background()
+	svc, root := newTestService(t, &fakeRunner{result: StageResult{Outcome: StageOutcomeSilent}})
+	implement := agentStage("Implement", "Implement {previous_input}")
+	implement.AutoAdvance = true
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID: root.ID,
+		Stages: []StageTemplate{
+			userStage("Describe"),
+			implement,
+			userStage("Review"),
+		},
+		Input: "change",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if _, err := svc.Next(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err != nil {
+		t.Fatalf("Next: %v", err)
+	}
+	waitForCondition(t, func() bool {
+		detail, err = svc.GetTask(ctx, root.ID, detail.Task.ID)
+		return err == nil && detail.Task.Status == StatusWaitingUser
+	})
+	// 停在第 1 段，下一段没被植进来。
+	if detail.Task.CurrentStageIndex != 1 {
+		t.Fatalf("current stage = %d, want 1（没回报完成不许推进）", detail.Task.CurrentStageIndex)
+	}
+	if len(detail.StageRuns) != 2 {
+		t.Fatalf("stage run count = %d, want 2（下一段不许开跑）", len(detail.StageRuns))
+	}
+	latest := detail.StageRuns[len(detail.StageRuns)-1]
+	if latest.Status != StageStatusWaitingUser {
+		t.Fatalf("stage status = %s, want waiting_user", latest.Status)
+	}
+	if !strings.Contains(detail.Task.AuxFlags.SessionError, "未回报完成") {
+		t.Fatalf("session error = %q, want it to say the stage never reported done", detail.Task.AuxFlags.SessionError)
+	}
+	// 人工补一句评论也不许顶掉没走完的 agent 段。
+	if _, err := svc.AddStage(ctx, AddStageInput{
+		RootID: root.ID,
+		TaskID: detail.Task.ID,
+		Stage:  StageTemplate{PromptTemplate: "补一句"},
+	}); err == nil {
+		t.Fatalf("AddStage on an unfinished agent stage must be rejected, got nil error")
+	}
+}
+
+// agent 自己说受阻：原因原样摆到卡面上等人处理，同样不许推进。
+func TestAgentStageBlockedStopsWithAgentReason(t *testing.T) {
+	ctx := context.Background()
+	svc, root := newTestService(t, &fakeRunner{
+		result: StageResult{Outcome: StageOutcomeBlocked, Reason: "缺数据库迁移文件"},
+	})
+	implement := agentStage("Implement", "Implement {previous_input}")
+	implement.AutoAdvance = true
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID: root.ID,
+		Stages: []StageTemplate{userStage("Describe"), implement, userStage("Review")},
+		Input:  "change",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if _, err := svc.Next(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err != nil {
+		t.Fatalf("Next: %v", err)
+	}
+	waitForCondition(t, func() bool {
+		detail, err = svc.GetTask(ctx, detail.Task.RootID, detail.Task.ID)
+		return err == nil && detail.Task.Status == StatusWaitingUser
+	})
+	if detail.Task.CurrentStageIndex != 1 || len(detail.StageRuns) != 2 {
+		t.Fatalf("blocked stage advanced: index=%d runs=%d", detail.Task.CurrentStageIndex, len(detail.StageRuns))
+	}
+	if detail.Task.AuxFlags.SessionError != "缺数据库迁移文件" {
+		t.Fatalf("session error = %q, want the agent's own reason", detail.Task.AuxFlags.SessionError)
+	}
+}
+
+// 回报完成后照旧推进（第一段之外的行为不许被新契约改掉）。
+func TestAgentStageWithDoneMarkerAutoAdvances(t *testing.T) {
+	ctx := context.Background()
+	svc, root := newTestService(t, &fakeRunner{result: StageResult{Outcome: StageOutcomeDone}})
+	implement := agentStage("Implement", "Implement {previous_input}")
+	implement.AutoAdvance = true
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID: root.ID,
+		Stages: []StageTemplate{userStage("Describe"), implement, userStage("Review")},
+		Input:  "change",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if _, err := svc.Next(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err != nil {
+		t.Fatalf("Next: %v", err)
+	}
+	waitForCondition(t, func() bool {
+		detail, err = svc.GetTask(ctx, root.ID, detail.Task.ID)
+		return err == nil && detail.Task.CurrentStageIndex == 2 && detail.Task.Status == StatusWaitingUser
+	})
+	// 契约必须真的随 prompt 送出去了，否则 agent 不知道要输出什么。
+	runner := svc.Runner.(*fakeRunner)
+	runner.mu.Lock()
+	prompts := append([]string(nil), runner.prompts...)
+	runner.mu.Unlock()
+	if len(prompts) == 0 {
+		t.Fatalf("agent stage ran without a prompt")
+	}
+	if !strings.Contains(prompts[len(prompts)-1], "[MINDFS-STAGE-DONE:1]") {
+		t.Fatalf("stage exit contract missing from the rendered prompt: %q", prompts[len(prompts)-1])
 	}
 }
 
 func TestSchedulerRunsAgentStageAndStoresSessionKey(t *testing.T) {
 	ctx := context.Background()
-	root := fs.NewRootInfo("root", "root", t.TempDir())
-	store := NewTemplateStoreAt(t.TempDir())
-	svc := NewService(store, testRoots{root: root})
-	t.Cleanup(svc.Close)
-	runner := &fakeRunner{}
-	svc.SetRunner(runner)
-	tmpl, err := store.SaveTaskTemplate(TaskTemplate{
-		Name: "Agent Flow",
-		Stages: []TaskTemplateStage{{
-			Position: 0,
-			Snapshot: StageTemplate{
-				Name:        "Describe",
-				Role:        RoleUser,
-				AutoAdvance: false,
-			},
-		}, {
-			Position: 1,
-			Snapshot: StageTemplate{
-				Name:               "Fix",
-				Role:               RoleAgent,
-				AutoAdvance:        false,
-				Agent:              "codex",
-				Model:              "gpt-5",
-				SessionReusePolicy: SessionReuseTaskMain,
-				PromptTemplate:     "Fix #{task_number}:\n{previous_input}",
-			},
-		}},
+	svc, root := newTestService(t, &fakeRunner{})
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID: root.ID,
+		Stages: []StageTemplate{
+			userStage("Describe"),
+			agentStage("Fix", "Fix #{task_number}:\n{previous_input}"),
+		},
+		Input: "broken save button",
 	})
-	if err != nil {
-		t.Fatalf("SaveTaskTemplate: %v", err)
-	}
-	detail, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, TaskTemplateID: tmpl.ID, Input: "broken save button"})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
@@ -885,14 +1370,10 @@ func TestSchedulerRunsAgentStageAndStoresSessionKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Next: %v", err)
 	}
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
+	waitForCondition(t, func() bool {
 		detail, err = svc.GetTask(ctx, root.ID, detail.Task.ID)
-		if err == nil && detail.Task.CurrentStageIndex == 1 && detail.Task.Status == StatusWaitingUser {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+		return err == nil && detail.Task.CurrentStageIndex == 1 && detail.Task.Status == StatusWaitingUser
+	})
 	if err != nil {
 		t.Fatalf("GetTask: %v", err)
 	}
@@ -912,6 +1393,7 @@ func TestSchedulerRunsAgentStageAndStoresSessionKey(t *testing.T) {
 	if !strings.Contains(agentRun.RenderedPrompt, "Fix #1") {
 		t.Fatalf("rendered prompt missing task number: %q", agentRun.RenderedPrompt)
 	}
+	runner := svc.Runner.(*fakeRunner)
 	runner.mu.Lock()
 	defer runner.mu.Unlock()
 	if len(runner.execs) != 1 {
@@ -924,38 +1406,15 @@ func TestSchedulerRunsAgentStageAndStoresSessionKey(t *testing.T) {
 
 func TestAgentStageSessionErrorWaitsForUser(t *testing.T) {
 	ctx := context.Background()
-	root := fs.NewRootInfo("root", "root", t.TempDir())
-	store := NewTemplateStoreAt(t.TempDir())
-	svc := NewService(store, testRoots{root: root})
-	t.Cleanup(svc.Close)
-	runner := &fakeRunner{runErr: errors.New("agent unavailable")}
-	svc.SetRunner(runner)
-	tmpl, err := store.SaveTaskTemplate(TaskTemplate{
-		Name: "Agent Error Flow",
-		Stages: []TaskTemplateStage{{
-			Position: 0,
-			Snapshot: StageTemplate{
-				Name:        "Describe",
-				Role:        RoleUser,
-				AutoAdvance: false,
-			},
-		}, {
-			Position: 1,
-			Snapshot: StageTemplate{
-				Name:               "Fix",
-				Role:               RoleAgent,
-				AutoAdvance:        false,
-				Agent:              "codex",
-				Model:              "gpt-5",
-				SessionReusePolicy: SessionReuseTaskMain,
-				PromptTemplate:     "Fix this:\n{previous_input}",
-			},
-		}},
+	svc, root := newTestService(t, &fakeRunner{runErr: errors.New("agent unavailable")})
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID: root.ID,
+		Stages: []StageTemplate{
+			userStage("Describe"),
+			agentStage("Fix", "Fix this:\n{previous_input}"),
+		},
+		Input: "broken",
 	})
-	if err != nil {
-		t.Fatalf("SaveTaskTemplate: %v", err)
-	}
-	detail, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, TaskTemplateID: tmpl.ID, Input: "broken"})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
@@ -963,19 +1422,15 @@ func TestAgentStageSessionErrorWaitsForUser(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Next: %v", err)
 	}
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
+	waitForCondition(t, func() bool {
 		detail, err = svc.GetTask(ctx, root.ID, detail.Task.ID)
-		if err == nil && detail.Task.AuxFlags.SessionError != "" {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+		return err == nil && detail.Task.AuxFlags.SessionError != ""
+	})
 	if err != nil {
 		t.Fatalf("GetTask: %v", err)
 	}
-	if detail.Task.Status != StatusWaitingUser || !detail.Task.SchedulerAdmitted {
-		t.Fatalf("task status/admitted = %s/%t, want waiting_user/true", detail.Task.Status, detail.Task.SchedulerAdmitted)
+	if detail.Task.Status != StatusWaitingUser {
+		t.Fatalf("task status = %s, want waiting_user", detail.Task.Status)
 	}
 	run := detail.StageRuns[len(detail.StageRuns)-1]
 	if run.Status != StageStatusFail || run.FinishedAt == "" {
@@ -985,6 +1440,7 @@ func TestAgentStageSessionErrorWaitsForUser(t *testing.T) {
 		t.Fatalf("session error = %q, want agent unavailable", detail.Task.AuxFlags.SessionError)
 	}
 	time.Sleep(50 * time.Millisecond)
+	runner := svc.Runner.(*fakeRunner)
 	runner.mu.Lock()
 	execCount := len(runner.execs)
 	runner.mu.Unlock()
@@ -995,54 +1451,28 @@ func TestAgentStageSessionErrorWaitsForUser(t *testing.T) {
 
 func TestAutoAdvanceAgentStageFailureWaitsForUserAtCurrentStage(t *testing.T) {
 	ctx := context.Background()
-	root := fs.NewRootInfo("root", "root", t.TempDir())
-	store := NewTemplateStoreAt(t.TempDir())
-	svc := NewService(store, testRoots{root: root})
-	t.Cleanup(svc.Close)
-	svc.SetRunner(&fakeRunner{runErr: errors.New("agent unavailable")})
-	tmpl, err := store.SaveTaskTemplate(TaskTemplate{
-		Name: "Auto advance failure",
-		Stages: []TaskTemplateStage{{
-			Position: 0,
-			Snapshot: StageTemplate{
-				Name: "Describe",
-				Role: RoleUser,
-			},
-		}, {
-			Position: 1,
-			Snapshot: StageTemplate{
-				Name:           "Implement",
-				Role:           RoleAgent,
-				AutoAdvance:    true,
-				Agent:          "codex",
-				PromptTemplate: "Implement {previous_input}",
-			},
-		}, {
-			Position: 2,
-			Snapshot: StageTemplate{
-				Name: "Review",
-				Role: RoleUser,
-			},
-		}},
+	svc, root := newTestService(t, &fakeRunner{runErr: errors.New("agent unavailable")})
+	implement := agentStage("Implement", "Implement {previous_input}")
+	implement.AutoAdvance = true
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID: root.ID,
+		Stages: []StageTemplate{
+			userStage("Describe"),
+			implement,
+			userStage("Review"),
+		},
+		Input: "change",
 	})
-	if err != nil {
-		t.Fatalf("SaveTaskTemplate: %v", err)
-	}
-	detail, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, TaskTemplateID: tmpl.ID, Input: "change"})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
 	if _, err := svc.Next(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err != nil {
 		t.Fatalf("Next: %v", err)
 	}
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
+	waitForCondition(t, func() bool {
 		detail, err = svc.GetTask(ctx, root.ID, detail.Task.ID)
-		if err == nil && detail.Task.Status == StatusWaitingUser && detail.Task.AuxFlags.SessionError != "" {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+		return err == nil && detail.Task.Status == StatusWaitingUser && detail.Task.AuxFlags.SessionError != ""
+	})
 	if err != nil {
 		t.Fatalf("GetTask: %v", err)
 	}
@@ -1058,396 +1488,683 @@ func TestAutoAdvanceAgentStageFailureWaitsForUserAtCurrentStage(t *testing.T) {
 	}
 }
 
-func TestNextAdvancesFailedCurrentStageAfterUserReview(t *testing.T) {
+// 失败段不许被一句「下一段」推过去。这条曾经是反着写的
+// （TestNextAdvancesFailedCurrentStageAfterUserReview），当时把
+//「失败段可以靠下一次 Next 强推」当成期望行为，实际就是阶段错乱的来源：
+// 前一段的活没干完，下一段已经在错误前提上开跑。
+// 现在失败段只能靠 RerunStage 重跑或改任务离开，Next 必须被拒。
+func TestNextRejectsFailedAgentStageUntilRerun(t *testing.T) {
 	ctx := context.Background()
-	root := fs.NewRootInfo("root", "root", t.TempDir())
-	store := NewTemplateStoreAt(t.TempDir())
-	svc := NewService(store, testRoots{root: root})
-	t.Cleanup(svc.Close)
-	runner := &fakeRunner{runErr: errors.New("agent unavailable")}
-	svc.SetRunner(runner)
-	tmpl, err := store.SaveTaskTemplate(TaskTemplate{
-		Name: "Running stage",
-		Stages: []TaskTemplateStage{{
-			Position: 0,
-			Snapshot: StageTemplate{
-				Name:        "Describe",
-				Role:        RoleUser,
-				AutoAdvance: false,
-			},
-		}, {
-			Position: 1,
-			Snapshot: StageTemplate{
-				Name:               "Fix",
-				Role:               RoleAgent,
-				AutoAdvance:        false,
-				Agent:              "codex",
-				Model:              "gpt-5",
-				SessionReusePolicy: SessionReuseTaskMain,
-				PromptTemplate:     "Fix this:\n{previous_input}",
-			},
-		}, {
-			Position: 2,
-			Snapshot: StageTemplate{
-				Name:           "Review",
-				Role:           RoleAgent,
-				Agent:          "codex",
-				Model:          "gpt-5",
-				PromptTemplate: "Review.",
-			},
-		}},
+	svc, root := newTestService(t, &fakeRunner{runErr: errors.New("agent unavailable")})
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID: root.ID,
+		Stages: []StageTemplate{
+			userStage("Describe"),
+			agentStage("Fix", "Fix this:\n{previous_input}"),
+			agentStage("Review", "Review."),
+		},
+		Input: "broken",
 	})
-	if err != nil {
-		t.Fatalf("SaveTaskTemplate: %v", err)
-	}
-	detail, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, TaskTemplateID: tmpl.ID, Input: "broken"})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
-	detail, err = svc.Next(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID})
-	if err != nil {
+	if _, err := svc.Next(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err != nil {
 		t.Fatalf("Next to agent: %v", err)
 	}
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
+	waitForCondition(t, func() bool {
 		detail, err = svc.GetTask(ctx, root.ID, detail.Task.ID)
-		if err == nil && detail.Task.CurrentStageIndex == 1 && detail.Task.AuxFlags.SessionError != "" {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
+		return err == nil && detail.Task.CurrentStageIndex == 1 && detail.Task.AuxFlags.SessionError != ""
+	})
+	if _, err := svc.Next(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err == nil {
+		t.Fatalf("Next from a failed stage must be rejected, got nil error")
 	}
+	detail, err = svc.GetTask(ctx, root.ID, detail.Task.ID)
 	if err != nil {
 		t.Fatalf("GetTask: %v", err)
 	}
-	if _, err := svc.Next(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err != nil {
-		t.Fatalf("Next from failed stage: %v", err)
+	if detail.Task.CurrentStageIndex != 1 {
+		t.Fatalf("current stage = %d, want 1（失败段不许被推走）", detail.Task.CurrentStageIndex)
 	}
-	deadline = time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		detail, err = svc.GetTask(ctx, root.ID, detail.Task.ID)
-		if err == nil && detail.Task.CurrentStageIndex == 2 {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if err != nil {
-		t.Fatalf("GetTask after next: %v", err)
-	}
-	if detail.Task.CurrentStageIndex != 2 {
-		t.Fatalf("current stage = %d, want 2", detail.Task.CurrentStageIndex)
-	}
-}
-
-func TestCompletingAdmittedTaskSchedulesNextQueuedTask(t *testing.T) {
-	ctx := context.Background()
-	root := fs.NewRootInfo("root", "root", t.TempDir())
-	store := NewTemplateStoreAt(t.TempDir())
-	svc := NewService(store, testRoots{root: root})
-	t.Cleanup(svc.Close)
-	runner := &fakeRunner{}
-	svc.SetRunner(runner)
-	tmpl, err := store.SaveTaskTemplate(TaskTemplate{
-		Name:           "Serial Agent Flow",
-		MaxConcurrency: 1,
-		Stages: []TaskTemplateStage{{
-			Position: 0,
-			Snapshot: StageTemplate{
-				Name:        "Describe",
-				Role:        RoleUser,
-				AutoAdvance: true,
-			},
-		}, {
-			Position: 1,
-			Snapshot: StageTemplate{
-				Name:               "Fix",
-				Role:               RoleAgent,
-				AutoAdvance:        false,
-				Agent:              "codex",
-				Model:              "gpt-5",
-				SessionReusePolicy: SessionReuseTaskMain,
-				PromptTemplate:     "Fix this:\n{previous_input}",
-			},
-		}},
-	})
-	if err != nil {
-		t.Fatalf("SaveTaskTemplate: %v", err)
-	}
-	first, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, TaskTemplateID: tmpl.ID, Input: "first"})
-	if err != nil {
-		t.Fatalf("CreateTask first: %v", err)
-	}
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		first, err = svc.GetTask(ctx, root.ID, first.Task.ID)
-		if err == nil && first.Task.CurrentStageIndex == 1 && first.Task.Status == StatusWaitingUser && first.Task.SchedulerAdmitted {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if err != nil {
-		t.Fatalf("GetTask first: %v", err)
-	}
-	if first.Task.Status != StatusWaitingUser || !first.Task.SchedulerAdmitted {
-		t.Fatalf("first task status/admitted = %s/%t, want waiting_user/true", first.Task.Status, first.Task.SchedulerAdmitted)
-	}
-	second, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, TaskTemplateID: tmpl.ID, Input: "second"})
-	if err != nil {
-		t.Fatalf("CreateTask second: %v", err)
-	}
-	time.Sleep(50 * time.Millisecond)
-	second, err = svc.GetTask(ctx, root.ID, second.Task.ID)
-	if err != nil {
-		t.Fatalf("GetTask second before complete: %v", err)
-	}
-	if second.Task.Status != StatusQueued || second.Task.SchedulerAdmitted {
-		t.Fatalf("second task status/admitted before complete = %s/%t, want queued/false", second.Task.Status, second.Task.SchedulerAdmitted)
-	}
-	if _, err := svc.Complete(ctx, MoveInput{RootID: root.ID, TaskID: first.Task.ID}); err != nil {
-		t.Fatalf("Complete first: %v", err)
-	}
-	deadline = time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		second, err = svc.GetTask(ctx, root.ID, second.Task.ID)
-		if err == nil && second.Task.CurrentStageIndex == 1 && second.Task.Status == StatusWaitingUser && second.Task.SchedulerAdmitted {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if err != nil {
-		t.Fatalf("GetTask second after complete: %v", err)
-	}
-	if second.Task.Status != StatusWaitingUser || !second.Task.SchedulerAdmitted {
-		t.Fatalf("second task status/admitted after complete = %s/%t, want waiting_user/true", second.Task.Status, second.Task.SchedulerAdmitted)
+	latest := detail.StageRuns[len(detail.StageRuns)-1]
+	if latest.Status != StageStatusFail {
+		t.Fatalf("stage status = %s, want fail（不许被改成 approved）", latest.Status)
 	}
 }
 
 func TestAgentStageAllowsBlankModel(t *testing.T) {
 	ctx := context.Background()
-	root := fs.NewRootInfo("root", "root", t.TempDir())
-	store := NewTemplateStoreAt(t.TempDir())
-	svc := NewService(store, testRoots{root: root})
-	t.Cleanup(svc.Close)
-	runner := &fakeRunner{}
-	svc.SetRunner(runner)
-	tmpl, err := store.SaveTaskTemplate(TaskTemplate{
-		Name: "Default Model Flow",
-		Stages: []TaskTemplateStage{{
-			Position: 0,
-			Snapshot: StageTemplate{
-				Name:        "Describe",
-				Role:        RoleUser,
-				AutoAdvance: true,
-			},
-		}, {
-			Position: 1,
-			Snapshot: StageTemplate{
-				Name:               "Fix",
-				Role:               RoleAgent,
-				Agent:              "codex",
-				SessionReusePolicy: SessionReuseTaskMain,
-				PromptTemplate:     "Fix this:\n{previous_input}",
-			},
-		}},
+	svc, root := newTestService(t, &fakeRunner{})
+	blank := agentStage("Fix", "Fix this:\n{previous_input}")
+	blank.Model = ""
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID: root.ID,
+		Stages: []StageTemplate{userStage("Describe"), blank},
+		Input:  "use defaults",
 	})
-	if err != nil {
-		t.Fatalf("SaveTaskTemplate: %v", err)
-	}
-	detail, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, TaskTemplateID: tmpl.ID, Input: "use defaults"})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
+	if _, err := svc.Next(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err != nil {
+		t.Fatalf("Next: %v", err)
+	}
+	waitForCondition(t, func() bool {
+		runner := svc.Runner.(*fakeRunner)
+		runner.mu.Lock()
+		defer runner.mu.Unlock()
+		return len(runner.execs) > 0
+	})
+	runner := svc.Runner.(*fakeRunner)
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	if len(runner.execs) > 0 && runner.execs[0].Stage.Model != "" {
+		t.Fatalf("execution model = %q, want empty", runner.execs[0].Stage.Model)
+	}
+}
+
+func TestRenameTask(t *testing.T) {
+	ctx := context.Background()
+	svc, root := newTestService(t, nil)
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, Stages: []StageTemplate{userStage("Describe")}, Name: "旧名", Input: "x"})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	renamed, err := svc.RenameTask(ctx, root.ID, detail.Task.ID, "  修登录按钮  ")
+	if err != nil {
+		t.Fatalf("RenameTask: %v", err)
+	}
+	if renamed.Task.Name != "修登录按钮" {
+		t.Fatalf("task name=%q, want trimmed new name", renamed.Task.Name)
+	}
+	got, err := svc.GetTask(ctx, root.ID, detail.Task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if got.Task.Name != "修登录按钮" {
+		t.Fatalf("rename not persisted: %q", got.Task.Name)
+	}
+	// 带本任务编号后缀的名字进来要剥掉：任务名不背后缀，后缀只归会话名。
+	suffixed, err := svc.RenameTask(ctx, root.ID, detail.Task.ID, "修登录按钮 / #1")
+	if err != nil {
+		t.Fatalf("RenameTask(suffixed): %v", err)
+	}
+	if suffixed.Task.Name != "修登录按钮" {
+		t.Fatalf("task name=%q, want suffix stripped", suffixed.Task.Name)
+	}
+}
+
+// 会话名 ↔ 任务名双向绑定（kanban 侧）：main_session_key 反查任务后改名；
+// 名字相同时不动，避免会话改名触发的回流造成事件抖动。
+func TestTaskNameFromSession(t *testing.T) {
+	ctx := context.Background()
+	svc, root := newTestService(t, nil)
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID: root.ID,
+		Stages: []StageTemplate{userStage("Describe")},
+		Name:   "初名",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	store, err := svc.taskStore(root.ID)
+	if err != nil {
+		t.Fatalf("taskStore: %v", err)
+	}
+	task, err := store.GetTask(ctx, detail.Task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	task.MainSessionKey = "sess-1"
+	if err := store.UpdateTask(ctx, task); err != nil {
+		t.Fatalf("UpdateTask: %v", err)
+	}
+	if _, changed := svc.TaskNameFromSession(ctx, root.ID, "sess-1", "初名"); changed {
+		t.Fatal("same name should be no-op")
+	}
+	got, changed := svc.TaskNameFromSession(ctx, root.ID, "sess-1", "新名")
+	if !changed {
+		t.Fatal("expected task renamed")
+	}
+	if got.Task.Name != "新名" {
+		t.Fatalf("task name=%q", got.Task.Name)
+	}
+	if _, changed := svc.TaskNameFromSession(ctx, root.ID, "sess-other", "再新"); changed {
+		t.Fatal("unbound session must not touch any task")
+	}
+}
+
+// 会话名带着 " / #编号" 回流时，剥成 base 再比：原样重命名一个带后缀的会话
+// 必须判成 no-op，否则每次都会白跑一遍 RenameTask + 广播。
+func TestTaskNameFromSessionStripsNumberSuffix(t *testing.T) {
+	ctx := context.Background()
+	svc, root := newTestService(t, nil)
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID: root.ID,
+		Stages: []StageTemplate{userStage("Describe")},
+		Name:   "初名",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	store, err := svc.taskStore(root.ID)
+	if err != nil {
+		t.Fatalf("taskStore: %v", err)
+	}
+	task, err := store.GetTask(ctx, detail.Task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	task.MainSessionKey = "sess-1"
+	if err := store.UpdateTask(ctx, task); err != nil {
+		t.Fatalf("UpdateTask: %v", err)
+	}
+	number := task.TaskNumber
+
+	// 会话现名「初名 / #N」，任务现名「初名」：剥完相等 → 不动。
+	if _, changed := svc.TaskNameFromSession(ctx, root.ID, "sess-1", TaskSessionName("初名", number)); changed {
+		t.Fatalf("renaming to the same suffixed name must be a no-op (task_number=%d)", number)
+	}
+
+	got, changed := svc.TaskNameFromSession(ctx, root.ID, "sess-1", TaskSessionName("新名", number))
+	if !changed {
+		t.Fatal("expected task renamed")
+	}
+	if got.Task.Name != "新名" {
+		t.Fatalf("task name=%q, want %q (suffix must not land on the task)", got.Task.Name, "新名")
+	}
+}
+
+// 删会话时清空任务链接：会话没了，任务不能再指向它，且要在 aux_session_error 留痕。
+func TestDetachFromSessionClearsTaskLink(t *testing.T) {
+	ctx := context.Background()
+	svc, root := newTestService(t, nil)
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID: root.ID,
+		Stages: []StageTemplate{userStage("Describe")},
+		Name:   "任务",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	store, err := svc.taskStore(root.ID)
+	if err != nil {
+		t.Fatalf("taskStore: %v", err)
+	}
+	task, err := store.GetTask(ctx, detail.Task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	task.MainSessionKey = "sess-dead"
+	if err := store.UpdateTask(ctx, task); err != nil {
+		t.Fatalf("UpdateTask: %v", err)
+	}
+	// 让阶段运行也指向这个会话：任务面板的会话列表同时收 stage_run.session_key
+	runs, err := store.ListStageRuns(ctx, task.ID)
+	if err != nil || len(runs) == 0 {
+		t.Fatalf("ListStageRuns: %v runs=%d", err, len(runs))
+	}
+	runs[0].SessionKey = "sess-dead"
+	if err := store.UpdateStageRunExecution(ctx, runs[0]); err != nil {
+		t.Fatalf("UpdateStageRunExecution: %v", err)
+	}
+
+	got, changed := svc.DetachFromSession(ctx, root.ID, []string{"sess-dead"})
+	if !changed {
+		t.Fatal("expected task updated")
+	}
+	if got.Task.MainSessionKey != "" {
+		t.Fatalf("main_session_key should be cleared, got %q", got.Task.MainSessionKey)
+	}
+	if strings.TrimSpace(got.Task.AuxFlags.SessionError) == "" {
+		t.Fatal("expected session_error trace left on the task")
+	}
+	// 留痕要能被前端解析：形状是 {"message":..., "data":[...]}
+	var notice struct {
+		Message string   `json:"message"`
+		Data    []string `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(got.Task.AuxFlags.SessionError), &notice); err != nil {
+		t.Fatalf("session_error is not the expected JSON shape: %v (%q)", err, got.Task.AuxFlags.SessionError)
+	}
+	if strings.TrimSpace(notice.Message) == "" {
+		t.Fatalf("session_error.message empty: %q", got.Task.AuxFlags.SessionError)
+	}
+	runs, err = store.ListStageRuns(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("ListStageRuns: %v", err)
+	}
+	if runs[0].SessionKey != "" {
+		t.Fatalf("stage run session_key should be cleared, got %q", runs[0].SessionKey)
+	}
+}
+
+func TestDetachFromSessionIgnoresUnboundAndForeignSessions(t *testing.T) {
+	ctx := context.Background()
+	svc, root := newTestService(t, nil)
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID: root.ID,
+		Stages: []StageTemplate{userStage("Describe")},
+		Name:   "任务",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	store, err := svc.taskStore(root.ID)
+	if err != nil {
+		t.Fatalf("taskStore: %v", err)
+	}
+	task, err := store.GetTask(ctx, detail.Task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	task.MainSessionKey = "sess-alive"
+	if err := store.UpdateTask(ctx, task); err != nil {
+		t.Fatalf("UpdateTask: %v", err)
+	}
+	if _, changed := svc.DetachFromSession(ctx, root.ID, []string{"sess-unbound", ""}); changed {
+		t.Fatal("unbound session must not touch any task")
+	}
+	after, err := store.GetTask(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if after.MainSessionKey != "sess-alive" {
+		t.Fatalf("main_session_key must survive unrelated detach, got %q", after.MainSessionKey)
+	}
+}
+
+// ClearSessionRefs 只清确实指向该会话的引用：主会话被改成别的 key 后不该被误清。
+func TestClearSessionRefsKeepsRepointedTask(t *testing.T) {
+	ctx := context.Background()
+	svc, root := newTestService(t, nil)
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID: root.ID,
+		Stages: []StageTemplate{userStage("Describe")},
+		Name:   "任务",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	store, err := svc.taskStore(root.ID)
+	if err != nil {
+		t.Fatalf("taskStore: %v", err)
+	}
+	task, err := store.GetTask(ctx, detail.Task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	task.MainSessionKey = "sess-new"
+	if err := store.UpdateTask(ctx, task); err != nil {
+		t.Fatalf("UpdateTask: %v", err)
+	}
+	if err := store.ClearSessionRefs(ctx, task.ID, "sess-old"); err != nil {
+		t.Fatalf("ClearSessionRefs: %v", err)
+	}
+	after, err := store.GetTask(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if after.MainSessionKey != "sess-new" {
+		t.Fatalf("repointed task must keep its key, got %q", after.MainSessionKey)
+	}
+}
+
+// 等待用户时追加 comment：当前段标记 approved、新增段默认命令名并立即进入执行。
+func TestAddStageApprovesAndRunsWhenWaiting(t *testing.T) {
+	ctx := context.Background()
+	svc, root := newTestService(t, &fakeRunner{})
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID: root.ID,
+		Stages: []StageTemplate{userStage("Describe")},
+		Input:  "第一版",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	// 新建任务是未开始态 → 先「开始」，让首段被执行体推进到等待用户。
+	if _, err := svc.RunNow(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err != nil {
+		t.Fatalf("RunNow: %v", err)
+	}
+	waitForCondition(t, func() bool {
+		got, err := svc.GetTask(ctx, root.ID, detail.Task.ID)
+		return err == nil && got.Task.Status == StatusWaitingUser
+	})
+	detail, err = svc.AddStage(ctx, AddStageInput{
+		RootID: root.ID,
+		TaskID: detail.Task.ID,
+		Stage:  agentStage("", "再走一遍流程：\n{previous_input}"),
+	})
+	if err != nil {
+		t.Fatalf("AddStage: %v", err)
+	}
+	if len(detail.Task.Stages) != 2 {
+		t.Fatalf("stages len=%d, want 2", len(detail.Task.Stages))
+	}
+	if detail.Task.Stages[1].Name != "阶段 2" {
+		t.Fatalf("appended stage name=%q, want 阶段 2（缺省命名）", detail.Task.Stages[1].Name)
+	}
+	waitForCondition(t, func() bool {
+		got, err := svc.GetTask(ctx, root.ID, detail.Task.ID)
+		return err == nil && got.Task.Status == StatusWaitingUser && got.Task.CurrentStageIndex == 1
+	})
+	got, err := svc.GetTask(ctx, root.ID, detail.Task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	runner := svc.Runner.(*fakeRunner)
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	if len(runner.execs) != 1 {
+		t.Fatalf("runner exec count=%d, want 1", len(runner.execs))
+	}
+	if !strings.Contains(runner.prompts[0], "再走一遍流程") || !strings.Contains(runner.prompts[0], "第一版") {
+		t.Fatalf("appended prompt not rendered with previous input: %q", runner.prompts[0])
+	}
+	if got.Task.Status != StatusWaitingUser {
+		t.Fatalf("task status=%s, want waiting_user", got.Task.Status)
+	}
+}
+
+// 运行中追加：只排入流水尾，不立即执行；当前段结束后等待用户，验收再推进。
+func TestAddStageQueuesTailWhileRunning(t *testing.T) {
+	ctx := context.Background()
+	gate := make(chan struct{})
+	svc, root := newTestService(t, nil)
+	runner := &fakeRunner{gate: gate}
+	svc.SetRunner(runner)
+	fix := agentStage("Fix", "Fix this:\n{previous_input}")
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID: root.ID,
+		Stages: []StageTemplate{userStage("Describe"), fix},
+		Input:  "第一版",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if _, err := svc.Next(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err != nil {
+		t.Fatalf("Next: %v", err)
+	}
+	waitForCondition(t, func() bool {
+		runner.mu.Lock()
+		defer runner.mu.Unlock()
+		return len(runner.execs) > 0
+	})
+
+	// 任务 running：追加段应只入流水尾。
+	updated, err := svc.AddStage(ctx, AddStageInput{
+		RootID: root.ID,
+		TaskID: detail.Task.ID,
+		Stage:  agentStage("Follow-up", "Follow up."),
+	})
+	if err != nil {
+		t.Fatalf("AddStage while running: %v", err)
+	}
+	if len(updated.Task.Stages) != 3 {
+		t.Fatalf("stages len=%d, want 3", len(updated.Task.Stages))
+	}
+	if updated.Task.Status != StatusRunning {
+		t.Fatalf("task status=%s, want running（追加不打断运行）", updated.Task.Status)
+	}
+	runner.mu.Lock()
+	execBefore := len(runner.execs)
+	runner.mu.Unlock()
+	time.Sleep(50 * time.Millisecond)
+	runner.mu.Lock()
+	execAfter := len(runner.execs)
+	runner.mu.Unlock()
+	if execAfter != execBefore {
+		t.Fatalf("appended stage started executing while running (exec %d->%d)", execBefore, execAfter)
+	}
+	close(gate)
+
+	// Fix 段结束、非 auto_advance → 等待用户；此时追加过的段还没跑。
+	waitForCondition(t, func() bool {
+		got, err := svc.GetTask(ctx, root.ID, detail.Task.ID)
+		return err == nil && got.Task.Status == StatusWaitingUser && got.Task.CurrentStageIndex == 1
+	})
+	if _, err := svc.Next(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID, Reason: "continue"}); err != nil {
+		t.Fatalf("Next after approval: %v", err)
+	}
+	// Next 里那次 RunTask 可能被并发守卫吞掉（第一个执行体还没完全退出）；兜底再踢一次。
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		runner.mu.Lock()
 		execCount := len(runner.execs)
-		model := ""
-		if execCount > 0 {
-			model = runner.execs[0].Stage.Model
-		}
 		runner.mu.Unlock()
-		if execCount > 0 {
-			if model != "" {
-				t.Fatalf("execution model = %q, want empty", model)
-			}
-			return
+		if execCount >= 2 {
+			break
 		}
-		detail, err = svc.GetTask(ctx, root.ID, detail.Task.ID)
-		if err != nil {
-			t.Fatalf("GetTask: %v", err)
-		}
-		if detail.Task.AuxFlags.SessionError != "" {
-			t.Fatalf("session error = %q", detail.Task.AuxFlags.SessionError)
-		}
+		svc.RunTask(root.ID, detail.Task.ID)
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatal("agent stage did not start")
-}
-
-func TestRunNowBypassesConcurrencySlot(t *testing.T) {
-	ctx := context.Background()
-	root := fs.NewRootInfo("root", "root", t.TempDir())
-	store := NewTemplateStoreAt(t.TempDir())
-	svc := NewService(store, testRoots{root: root})
-	t.Cleanup(svc.Close)
-	svc.SetRunner(&fakeRunner{})
-	tmpl, err := store.SaveTaskTemplate(TaskTemplate{
-		Name:           "Serial Agent Flow",
-		MaxConcurrency: 1,
-		Stages: []TaskTemplateStage{{
-			Position: 0,
-			Snapshot: StageTemplate{
-				Name:        "Describe",
-				Role:        RoleUser,
-				AutoAdvance: true,
-			},
-		}, {
-			Position: 1,
-			Snapshot: StageTemplate{
-				Name:               "Fix",
-				Role:               RoleAgent,
-				Agent:              "codex",
-				Model:              "gpt-5",
-				SessionReusePolicy: SessionReuseTaskMain,
-				PromptTemplate:     "Fix this:\n{previous_input}",
-			},
-		}},
+	waitForCondition(t, func() bool {
+		got, err := svc.GetTask(ctx, root.ID, detail.Task.ID)
+		return err == nil && got.Task.CurrentStageIndex == 2
 	})
-	if err != nil {
-		t.Fatalf("SaveTaskTemplate: %v", err)
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	if len(runner.execs) != 2 {
+		t.Fatalf("runner exec count=%d, want 2（排队段未在验收后执行）", len(runner.execs))
 	}
-	first, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, TaskTemplateID: tmpl.ID, Input: "first"})
-	if err != nil {
-		t.Fatalf("CreateTask first: %v", err)
-	}
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		first, err = svc.GetTask(ctx, root.ID, first.Task.ID)
-		if err == nil && first.Task.Status == StatusWaitingUser && first.Task.SchedulerAdmitted {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if err != nil {
-		t.Fatalf("GetTask first: %v", err)
-	}
-	if first.Task.Status != StatusWaitingUser || !first.Task.SchedulerAdmitted {
-		t.Fatalf("first task status/admitted = %s/%t, want waiting_user/true", first.Task.Status, first.Task.SchedulerAdmitted)
-	}
-	second, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, TaskTemplateID: tmpl.ID, Input: "second"})
-	if err != nil {
-		t.Fatalf("CreateTask second: %v", err)
-	}
-	time.Sleep(50 * time.Millisecond)
-	second, err = svc.GetTask(ctx, root.ID, second.Task.ID)
-	if err != nil {
-		t.Fatalf("GetTask second before run now: %v", err)
-	}
-	if second.Task.Status != StatusQueued || second.Task.SchedulerAdmitted {
-		t.Fatalf("second task status/admitted before run now = %s/%t, want queued/false", second.Task.Status, second.Task.SchedulerAdmitted)
-	}
-	if _, err := svc.RunNow(ctx, MoveInput{RootID: root.ID, TaskID: second.Task.ID}); err != nil {
-		t.Fatalf("RunNow second: %v", err)
-	}
-	deadline = time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		second, err = svc.GetTask(ctx, root.ID, second.Task.ID)
-		if err == nil && second.Task.Status == StatusWaitingUser && second.Task.SchedulerAdmitted {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if err != nil {
-		t.Fatalf("GetTask second after run now: %v", err)
-	}
-	if second.Task.Status != StatusWaitingUser || !second.Task.SchedulerAdmitted {
-		t.Fatalf("second task status/admitted after run now = %s/%t, want waiting_user/true", second.Task.Status, second.Task.SchedulerAdmitted)
+	if !strings.Contains(runner.prompts[1], "Follow up") {
+		t.Fatalf("second exec prompt=%q, want appended stage prompt", runner.prompts[1])
 	}
 }
 
-func TestCancellingAdmittedTaskSchedulesNextQueuedTask(t *testing.T) {
+func TestUpdateStageEditsFutureStagePrompt(t *testing.T) {
 	ctx := context.Background()
-	root := fs.NewRootInfo("root", "root", t.TempDir())
-	store := NewTemplateStoreAt(t.TempDir())
-	svc := NewService(store, testRoots{root: root})
-	t.Cleanup(svc.Close)
-	svc.SetRunner(&fakeRunner{})
-	tmpl, err := store.SaveTaskTemplate(TaskTemplate{
-		Name:           "Two Slot Agent Flow",
-		MaxConcurrency: 2,
-		Stages: []TaskTemplateStage{{
-			Position: 0,
-			Snapshot: StageTemplate{
-				Name:        "Describe",
-				Role:        RoleUser,
-				AutoAdvance: true,
-			},
-		}, {
-			Position: 1,
-			Snapshot: StageTemplate{
-				Name:               "Fix",
-				Role:               RoleAgent,
-				Agent:              "codex",
-				Model:              "gpt-5",
-				SessionReusePolicy: SessionReuseTaskMain,
-				PromptTemplate:     "Fix this:\n{previous_input}",
-			},
-		}},
+	svc, root := newTestService(t, &fakeRunner{})
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID: root.ID,
+		Stages: []StageTemplate{
+			userStage("Describe"),
+			agentStage("Fix", "v1 {previous_input}"),
+		},
+		Input: "input",
 	})
 	if err != nil {
-		t.Fatalf("SaveTaskTemplate: %v", err)
+		t.Fatalf("CreateTask: %v", err)
 	}
-	first, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, TaskTemplateID: tmpl.ID, Input: "first", CreateWorktree: true})
+	newStage := agentStage("Fix improved", "v2 {previous_input}")
+	if _, err := svc.UpdateStage(ctx, UpdateStageInput{RootID: root.ID, TaskID: detail.Task.ID, Index: 1, Stage: &newStage}); err != nil {
+		t.Fatalf("UpdateStage: %v", err)
+	}
+	if _, err := svc.Next(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err != nil {
+		t.Fatalf("Next: %v", err)
+	}
+	waitForCondition(t, func() bool {
+		runner := svc.Runner.(*fakeRunner)
+		runner.mu.Lock()
+		defer runner.mu.Unlock()
+		return len(runner.execs) > 0
+	})
+	runner := svc.Runner.(*fakeRunner)
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	if !strings.Contains(runner.prompts[0], "v2") {
+		t.Fatalf("edited prompt not used: %q", runner.prompts[0])
+	}
+	got, err := svc.GetTask(ctx, root.ID, detail.Task.ID)
 	if err != nil {
-		t.Fatalf("CreateTask first: %v", err)
+		t.Fatalf("GetTask: %v", err)
 	}
-	second, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, TaskTemplateID: tmpl.ID, Input: "second", CreateWorktree: true})
+	if got.Task.Stages[1].Name != "Fix improved" {
+		t.Fatalf("stage name not updated: %q", got.Task.Stages[1].Name)
+	}
+}
+
+// 删除未执行段：只允许删尚未产生 StageRun、且不在指针上的段；index 0 与当前段不可删。
+func TestRemoveStageDeletesUnexecutedStage(t *testing.T) {
+	ctx := context.Background()
+	svc, root := newTestService(t, &fakeRunner{})
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID: root.ID,
+		Stages: []StageTemplate{
+			userStage("Describe"),
+			agentStage("Fix", "Fix {previous_input}"),
+			agentStage("Extra", "Extra {previous_input}"),
+		},
+		Input: "input",
+	})
 	if err != nil {
-		t.Fatalf("CreateTask second: %v", err)
+		t.Fatalf("CreateTask: %v", err)
 	}
-	third, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID, TaskTemplateID: tmpl.ID, Input: "third", CreateWorktree: true})
+	taskID := detail.Task.ID
+
+	// index 0 是任务输入段，不可删。
+	if _, err := svc.RemoveStage(ctx, RemoveStageInput{RootID: root.ID, TaskID: taskID, Index: 0}); err == nil {
+		t.Fatal("RemoveStage(index 0) succeeded, want rejection")
+	}
+	// 越界。
+	if _, err := svc.RemoveStage(ctx, RemoveStageInput{RootID: root.ID, TaskID: taskID, Index: 3}); err == nil {
+		t.Fatal("RemoveStage(out of range) succeeded, want rejection")
+	}
+	// 新建任务的指针在 0，index 1/2 都还没跑过 → 指针之外的尾部可删。
+	got, err := svc.RemoveStage(ctx, RemoveStageInput{RootID: root.ID, TaskID: taskID, Index: 2})
 	if err != nil {
-		t.Fatalf("CreateTask third: %v", err)
+		t.Fatalf("RemoveStage(untouched tail): %v", err)
 	}
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		first, _ = svc.GetTask(ctx, root.ID, first.Task.ID)
-		second, _ = svc.GetTask(ctx, root.ID, second.Task.ID)
-		third, err = svc.GetTask(ctx, root.ID, third.Task.ID)
-		if err == nil &&
-			first.Task.Status == StatusWaitingUser && first.Task.SchedulerAdmitted &&
-			second.Task.Status == StatusWaitingUser && second.Task.SchedulerAdmitted &&
-			third.Task.Status == StatusQueued && !third.Task.SchedulerAdmitted {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
+	if len(got.Task.Stages) != 2 {
+		t.Fatalf("stages len=%d, want 2", len(got.Task.Stages))
 	}
+	if got.Task.CurrentStageIndex != 0 {
+		t.Fatalf("current_stage_index=%d, want 0（指针在删除点之前，不动）", got.Task.CurrentStageIndex)
+	}
+
+	// 跑到 index 1 → 等待用户，该段已产生 success 的 StageRun。
+	if _, err := svc.Next(ctx, MoveInput{RootID: root.ID, TaskID: taskID}); err != nil {
+		t.Fatalf("Next: %v", err)
+	}
+	waitForCondition(t, func() bool {
+		got, err := svc.GetTask(ctx, root.ID, taskID)
+		return err == nil && got.Task.Status == StatusWaitingUser && got.Task.CurrentStageIndex == 1
+	})
+	// 已执行段不可删。
+	if _, err := svc.RemoveStage(ctx, RemoveStageInput{RootID: root.ID, TaskID: taskID, Index: 1}); err == nil {
+		t.Fatal("RemoveStage(executed stage) succeeded, want rejection")
+	}
+
+	// 尾段（index 1）现在是当前段：即便被 `Next` 判成末段收尾，也不能删当前指针段。
+	if _, err := svc.RemoveStage(ctx, RemoveStageInput{RootID: root.ID, TaskID: taskID, Index: 1}); err == nil {
+		t.Fatal("RemoveStage(current stage) succeeded, want rejection")
+	}
+
+	// 追加一段空 prompt 的段（UI「+ 新增阶段」就是这种）→ 只入流水尾，不推进。
+	// 然后删掉它：指针仍停在 1。
+	added, err := svc.AddStage(ctx, AddStageInput{
+		RootID: root.ID,
+		TaskID: taskID,
+		Stage:  agentStage("Follow-up", ""),
+	})
 	if err != nil {
-		t.Fatalf("GetTask third before cancel: %v", err)
+		t.Fatalf("AddStage: %v", err)
 	}
-	if first.Task.Status != StatusWaitingUser || !first.Task.SchedulerAdmitted ||
-		second.Task.Status != StatusWaitingUser || !second.Task.SchedulerAdmitted ||
-		third.Task.Status != StatusQueued || third.Task.SchedulerAdmitted {
-		t.Fatalf("before cancel statuses: first=%s/%t second=%s/%t third=%s/%t",
-			first.Task.Status, first.Task.SchedulerAdmitted,
-			second.Task.Status, second.Task.SchedulerAdmitted,
-			third.Task.Status, third.Task.SchedulerAdmitted)
+	if len(added.Task.Stages) != 3 {
+		t.Fatalf("stages len=%d, want 3", len(added.Task.Stages))
 	}
-	if _, err := svc.Cancel(ctx, MoveInput{RootID: root.ID, TaskID: first.Task.ID}); err != nil {
-		t.Fatalf("Cancel first: %v", err)
+	if added.Task.CurrentStageIndex != 1 {
+		t.Fatalf("current_stage_index=%d, want 1（空 prompt 追加不推进）", added.Task.CurrentStageIndex)
 	}
-	deadline = time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		third, err = svc.GetTask(ctx, root.ID, third.Task.ID)
-		if err == nil && third.Task.Status == StatusWaitingUser && third.Task.SchedulerAdmitted {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	got, err = svc.RemoveStage(ctx, RemoveStageInput{RootID: root.ID, TaskID: taskID, Index: 2})
 	if err != nil {
-		t.Fatalf("GetTask third after cancel: %v", err)
+		t.Fatalf("RemoveStage(appended tail): %v", err)
 	}
-	if third.Task.Status != StatusWaitingUser || !third.Task.SchedulerAdmitted {
-		t.Fatalf("third task status/admitted after cancel = %s/%t, want waiting_user/true", third.Task.Status, third.Task.SchedulerAdmitted)
+	if len(got.Task.Stages) != 2 {
+		t.Fatalf("stages len=%d, want 2", len(got.Task.Stages))
+	}
+	if got.Task.CurrentStageIndex != 1 {
+		t.Fatalf("current_stage_index=%d, want 1", got.Task.CurrentStageIndex)
+	}
+}
+
+// 删掉指针之前的段时，指针要跟着回移，不能指到别的段上。
+func TestRemoveStageBeforeCurrentShiftsPointer(t *testing.T) {
+	ctx := context.Background()
+	svc, root := newTestService(t, &fakeRunner{})
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID: root.ID,
+		Stages: []StageTemplate{
+			userStage("Describe"),
+			agentStage("Fix", "Fix {previous_input}"),
+			userStage("Review"),
+			agentStage("Polish", "Polish {previous_input}"),
+		},
+		Input: "input",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	taskID := detail.Task.ID
+
+	// 走到 index 2（user 段，等待用户）。RerunStage 顶替了 Jump（d1f0e6e 删了后者）。
+	if _, err := svc.RerunStage(ctx, MoveInput{RootID: root.ID, TaskID: taskID, StageIndex: 2}); err != nil {
+		t.Fatalf("RerunStage: %v", err)
+	}
+	before, err := svc.GetTask(ctx, root.ID, taskID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if before.Task.CurrentStageIndex != 2 {
+		t.Fatalf("current_stage_index=%d, want 2", before.Task.CurrentStageIndex)
+	}
+
+	// index 1 在指针之前且未执行 → 可删，指针 2 回移到 1。
+	got, err := svc.RemoveStage(ctx, RemoveStageInput{RootID: root.ID, TaskID: taskID, Index: 1})
+	if err != nil {
+		t.Fatalf("RemoveStage(before current): %v", err)
+	}
+	if len(got.Task.Stages) != 3 {
+		t.Fatalf("stages len=%d, want 3", len(got.Task.Stages))
+	}
+	if got.Task.CurrentStageIndex != 1 {
+		t.Fatalf("current_stage_index=%d, want 1（指针随删除回移）", got.Task.CurrentStageIndex)
+	}
+	if got.Task.Stages[1].Name != "Review" {
+		t.Fatalf("stages[1].name=%q, want Review", got.Task.Stages[1].Name)
+	}
+}
+
+// 重跑：把指针移回某段并再次执行（任务不在运行中时）。
+func TestRerunStageReexecutesStage(t *testing.T) {
+	ctx := context.Background()
+	svc, root := newTestService(t, &fakeRunner{})
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID: root.ID,
+		Stages: []StageTemplate{userStage("Describe"), agentStage("Fix", "Fix {previous_input}")},
+		Input:  "input",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if _, err := svc.Next(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err != nil {
+		t.Fatalf("Next: %v", err)
+	}
+	waitForCondition(t, func() bool {
+		got, err := svc.GetTask(ctx, root.ID, detail.Task.ID)
+		return err == nil && got.Task.Status == StatusWaitingUser && got.Task.CurrentStageIndex == 1
+	})
+	if _, err := svc.RerunStage(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID, StageIndex: 1}); err != nil {
+		t.Fatalf("RerunStage: %v", err)
+	}
+	// 等 goroutine 把任务状态落定（RerunStage 失败 → waiting_user），再断言确实执行了第二段。
+	// 不能等 len(runner.execs)==2：那在 goroutine 头几条语句就满足，同步 GetTask 会跑赢
+	// 剩余的 SQLite 落库尾巴，读到中间态（-count=10 下约 9/10 复现）。
+	waitForCondition(t, func() bool {
+		got, err := svc.GetTask(ctx, root.ID, detail.Task.ID)
+		runner := svc.Runner.(*fakeRunner)
+		return err == nil && got.Task.Status == StatusWaitingUser &&
+			func() bool {
+				runner.mu.Lock()
+				defer runner.mu.Unlock()
+				return len(runner.execs) == 2
+			}()
+	})
+	// 重跑再次失败后应回到等待用户。
+	got, err := svc.GetTask(ctx, root.ID, detail.Task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if got.Task.Status != StatusWaitingUser || got.Task.CurrentStageIndex != 1 {
+		t.Fatalf("after rerun status/stage = %s/%d, want waiting_user/1", got.Task.Status, got.Task.CurrentStageIndex)
 	}
 }
 
@@ -1458,6 +2175,54 @@ func containsAll(value string, parts []string) bool {
 		}
 	}
 	return true
+}
+
+// 会话名的 " / #编号" 只有一处派生（TaskSessionName），建会话和两条改名路径都走它，
+// 改名才不会把后缀丢掉。表驱动钉住建会话那侧一直以来的行为。
+func TestTaskSessionName(t *testing.T) {
+	cases := []struct {
+		name       string
+		base       string
+		taskNumber int
+		want       string
+	}{
+		{name: "名 + 编号", base: "登录页闪退", taskNumber: 8, want: "登录页闪退 / #8"},
+		{name: "没名字只留编号", base: "", taskNumber: 7, want: "#7"},
+		{name: "legacy 无编号", base: "名", taskNumber: 0, want: "名"},
+		{name: "已带本编号后缀不叠加", base: "名 / #8", taskNumber: 8, want: "名 / #8"},
+		{name: "尾随空白先去掉", base: "  名  ", taskNumber: 8, want: "名 / #8"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := TaskSessionName(tc.base, tc.taskNumber); got != tc.want {
+				t.Fatalf("TaskSessionName(%q, %d) = %q, want %q", tc.base, tc.taskNumber, got, tc.want)
+			}
+		})
+	}
+}
+
+// 剥离只认「自己的编号」：任务真名叫 foo / #3 而编号是 8 时不能被误伤。
+func TestTrimTaskSessionNameSuffix(t *testing.T) {
+	cases := []struct {
+		name       string
+		name_      string
+		taskNumber int
+		want       string
+	}{
+		{name: "剥掉本编号后缀", name_: "名 / #8", taskNumber: 8, want: "名"},
+		{name: "编号不匹配保持原样", name_: "foo / #3", taskNumber: 8, want: "foo / #3"},
+		{name: "不是数字保持原样", name_: "名 / #abc", taskNumber: 8, want: "名 / #abc"},
+		{name: "无后缀原样返回", name_: "名", taskNumber: 8, want: "名"},
+		{name: "legacy 无编号不动", name_: "名 / #8", taskNumber: 0, want: "名 / #8"},
+		{name: "只剥最后一段", name_: "a / #1 / #8", taskNumber: 8, want: "a / #1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := TrimTaskSessionNameSuffix(tc.name_, tc.taskNumber); got != tc.want {
+				t.Fatalf("TrimTaskSessionNameSuffix(%q, %d) = %q, want %q", tc.name_, tc.taskNumber, got, tc.want)
+			}
+		})
+	}
 }
 
 func TestMain(m *testing.M) {

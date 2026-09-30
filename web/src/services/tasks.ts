@@ -1,4 +1,5 @@
 import { appURL } from "./base";
+import { getRootNodeId } from "./rootNode";
 import { protectedJSON } from "./api";
 
 export type StageRole = "user" | "agent";
@@ -17,6 +18,8 @@ export type StageTemplate = {
   name: string;
   role: StageRole;
   auto_advance?: boolean;
+  /** 首段（任务输入）专用：建完立刻开跑，不用等用户点「立即执行」 */
+  start_immediately?: boolean;
   agent?: string;
   model?: string;
   mode?: string;
@@ -25,6 +28,7 @@ export type StageTemplate = {
   plan_mode?: boolean;
   session_reuse_policy?: "task_main" | "same_stage" | "always_new";
   prompt_template?: string;
+  agent_can_control_stage?: boolean;
   created_at?: string;
   updated_at?: string;
 };
@@ -40,24 +44,19 @@ export type TaskTemplate = {
   id?: string;
   name: string;
   description?: string;
-  max_concurrency?: number;
   stages: TaskTemplateStage[];
   created_at?: string;
   updated_at?: string;
 };
 
 export type KanbanTask = {
-  group_id?: string;
-  agent?: string;
-  model?: string | null;
-  published?: boolean;
-  block_reason?: string;
-  depends_on?: string[];
   id: string;
   task_number?: number;
   root_id: string;
+  name?: string;
   task_template_id: string;
   task_template_name: string;
+  stages?: StageTemplate[];
   create_worktree?: boolean;
   worktree_branch_mode?: "new" | "existing";
   worktree_branch?: string;
@@ -83,8 +82,6 @@ export type KanbanTask = {
 };
 
 export type StageRun = {
-  result?: string;
-  trigger?: string;
   id: string;
   task_id: string;
   stage_index: number;
@@ -101,8 +98,6 @@ export type StageRun = {
 };
 
 export type TaskEvent = {
-  receiver_task_id?: string;
-  handled_at?: string;
   id: string;
   task_id: string;
   stage_run_id?: string;
@@ -138,13 +133,16 @@ const TASK_CACHE_VERSION = 1;
 const TASK_STORE = "tasks";
 const TASK_META_STORE = "meta";
 
-function taskCacheKey(rootId: string, taskId: string): string {
-  return `${rootId}::${taskId}`;
+function taskCacheKey(rootId: string, taskId: string, nodeId?: string): string {
+  const nid = String(nodeId || "").trim();
+  return nid ? `${nid}::${rootId}::${taskId}` : `${rootId}::${taskId}`;
 }
 
-function taskMetaKey(rootId: string): string {
-  return `root::${rootId}`;
+function taskMetaKey(rootId: string, nodeId?: string): string {
+  const nid = String(nodeId || "").trim();
+  return nid ? `${nid}::root::${rootId}` : `root::${rootId}`;
 }
+
 
 function taskRequest<T>(request: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -197,12 +195,33 @@ async function withTaskStore<T>(
   }
 }
 
-export async function getCachedTaskDetails(rootId: string): Promise<TaskDetail[]> {
+export async function getCachedTaskDetails(rootId: string, nodeId?: string): Promise<TaskDetail[]> {
+  const nid = String(nodeId || "").trim();
   try {
     return await withTaskStore("readonly", async ({ tasks }) => {
       const index = tasks.index("rootId");
       const records = await taskRequest(index.getAll(rootId) as IDBRequest<CachedTaskRecord[]>);
-      return (records || [])
+      if (nid) {
+        const scoped = records.filter((r) => String(r.cacheKey || "").startsWith(`${nid}::`));
+        if (scoped.length > 0) {
+          const byId = new Map<string, CachedTaskRecord>();
+          for (const rec of scoped) {
+            const prev = byId.get(rec.taskId);
+            if (!prev || String(rec.updatedAt || "") > String(prev.updatedAt || "")) byId.set(rec.taskId, rec);
+          }
+          return Array.from(byId.values())
+            .map((record) => record.detail)
+            .filter((detail) => detail?.task?.id)
+            .sort((a, b) => String(b.task.updated_at || "").localeCompare(String(a.task.updated_at || "")));
+        }
+        return [];
+      }
+      const byId = new Map<string, CachedTaskRecord>();
+      for (const rec of records) {
+        const prev = byId.get(rec.taskId);
+        if (!prev || String(rec.updatedAt || "") > String(prev.updatedAt || "")) byId.set(rec.taskId, rec);
+      }
+      return Array.from(byId.values())
         .map((record) => record.detail)
         .filter((detail) => detail?.task?.id)
         .sort((a, b) => String(b.task.updated_at || "").localeCompare(String(a.task.updated_at || "")));
@@ -212,9 +231,14 @@ export async function getCachedTaskDetails(rootId: string): Promise<TaskDetail[]
   }
 }
 
-export async function getCachedTaskMeta(rootId: string): Promise<CachedTaskMeta | null> {
+export async function getCachedTaskMeta(rootId: string, nodeId?: string): Promise<CachedTaskMeta | null> {
+  const nid = String(nodeId || "").trim();
   try {
     return await withTaskStore("readonly", async ({ meta }) => {
+      if (nid) {
+        const scoped = await taskRequest(meta.get(taskMetaKey(rootId, nid)) as IDBRequest<CachedTaskMeta | undefined>);
+        if (scoped) return scoped;
+      }
       const value = await taskRequest(meta.get(taskMetaKey(rootId)) as IDBRequest<CachedTaskMeta | undefined>);
       return value || null;
     });
@@ -223,19 +247,21 @@ export async function getCachedTaskMeta(rootId: string): Promise<CachedTaskMeta 
   }
 }
 
-export async function upsertCachedTaskDetails(rootId: string, details: TaskDetail[]): Promise<void> {
+export async function upsertCachedTaskDetails(rootId: string, details: TaskDetail[], nodeId?: string): Promise<void> {
   const valid = details.filter((detail) => detail?.task?.id);
   if (valid.length === 0) return;
+  const nid = String(nodeId || "").trim();
   try {
     await withTaskStore("readwrite", async ({ tasks, meta }) => {
-      let currentMeta = await taskRequest(meta.get(taskMetaKey(rootId)) as IDBRequest<CachedTaskMeta | undefined>);
+      const metaKey = taskMetaKey(rootId, nid || undefined);
+      let currentMeta = await taskRequest(meta.get(metaKey) as IDBRequest<CachedTaskMeta | undefined>);
       const updatedValues = valid
         .map((detail) => String(detail.task.updated_at || ""))
         .filter(Boolean);
       for (const detail of valid) {
         const taskId = detail.task.id;
         await taskRequest(tasks.put({
-          cacheKey: taskCacheKey(rootId, taskId),
+          cacheKey: taskCacheKey(rootId, taskId, nid || undefined),
           rootId,
           taskId,
           updatedAt: String(detail.task.updated_at || ""),
@@ -245,7 +271,7 @@ export async function upsertCachedTaskDetails(rootId: string, details: TaskDetai
       const newest = updatedValues.reduce((max, value) => value > max ? value : max, currentMeta?.newestUpdatedAt || "");
       const oldest = updatedValues.reduce((min, value) => !min || value < min ? value : min, currentMeta?.oldestUpdatedAt || "");
       currentMeta = {
-        key: taskMetaKey(rootId),
+        key: metaKey,
         rootId,
         newestUpdatedAt: newest,
         oldestUpdatedAt: oldest,
@@ -256,41 +282,73 @@ export async function upsertCachedTaskDetails(rootId: string, details: TaskDetai
   } catch {}
 }
 
-export async function fetchStageTemplates(): Promise<StageTemplate[]> {
-  const payload = await protectedJSON<any>(appURL("/api/task-stage-templates"));
+/**
+ * 淘汰「服务端已经没有、缓存里还留着」的任务。
+ *
+ * 缓存以前只 put 不 delete，配合增量拉取（after=newestUpdatedAt，只取更新的行）
+ * 就等于把删除永久吞掉：任务在服务端消失后，响应里永远不会出现它，缓存就一直
+ * 喂给你，跨设备还各存各的。实测手机上看得到 #11/#13，而两台机器的库里都查不到。
+ *
+ * keepTaskIds 必须是**全量**响应的集合（不带 after / limit，服务端会返回该 root
+ * 的全部任务，见 task_store.go:275）。拿增量或限流响应当权威集合会误删。
+ */
+export async function pruneCachedTaskDetails(rootId: string, keepTaskIds: Iterable<string>, nodeId?: string): Promise<string[]> {
+  const keep = new Set(Array.from(keepTaskIds, (id) => String(id || "")).filter(Boolean));
+  const nid = String(nodeId || "").trim();
+  try {
+    return await withTaskStore("readwrite", async ({ tasks }) => {
+      const index = tasks.index("rootId");
+      const records = await taskRequest(index.getAll(rootId) as IDBRequest<CachedTaskRecord[]>);
+      // 按 root + node 圈定：同名项目跨节点时各存各的，淘汰不能波及另一台机器。
+      const scoped = nid ? records.filter((r) => String(r.cacheKey || "").startsWith(`${nid}::`)) : records;
+      const dropped: string[] = [];
+      for (const rec of scoped) {
+        if (keep.has(String(rec.taskId || ""))) continue;
+        dropped.push(String(rec.taskId || ""));
+        await taskRequest(tasks.delete(rec.cacheKey));
+      }
+      return dropped;
+    });
+  } catch {
+    return [];
+  }
+}
+
+export async function fetchStageTemplates(nodeId?: string): Promise<StageTemplate[]> {
+  const payload = await protectedJSON<any>(appURL("/api/task-stage-templates", undefined, nodeId));
   return Array.isArray(payload?.items) ? payload.items : [];
 }
 
-export async function saveStageTemplate(template: StageTemplate): Promise<StageTemplate> {
-  return protectedJSON<StageTemplate>(appURL("/api/task-stage-templates"), {
+export async function saveStageTemplate(template: StageTemplate, nodeId?: string): Promise<StageTemplate> {
+  return protectedJSON<StageTemplate>(appURL("/api/task-stage-templates", undefined, nodeId), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(template),
   });
 }
 
-export async function deleteStageTemplate(id: string): Promise<void> {
-  await protectedJSON(appURL(`/api/task-stage-templates/${encodeURIComponent(id)}`), {
+export async function deleteStageTemplate(id: string, nodeId?: string): Promise<void> {
+  await protectedJSON(appURL(`/api/task-stage-templates/${encodeURIComponent(id)}`, undefined, nodeId), {
     method: "DELETE",
   });
 }
 
-export async function fetchTaskTemplates(): Promise<TaskTemplate[]> {
-  const payload = await protectedJSON<any>(appURL("/api/task-templates"));
+export async function fetchTaskTemplates(nodeId?: string): Promise<TaskTemplate[]> {
+  const payload = await protectedJSON<any>(appURL("/api/task-templates", undefined, nodeId));
   return Array.isArray(payload?.items) ? payload.items : [];
 }
 
-export async function saveTaskTemplate(template: TaskTemplate): Promise<TaskTemplate> {
+export async function saveTaskTemplate(template: TaskTemplate, nodeId?: string): Promise<TaskTemplate> {
   const path = template.id ? `/api/task-templates/${encodeURIComponent(template.id)}` : "/api/task-templates";
-  return protectedJSON<TaskTemplate>(appURL(path), {
+  return protectedJSON<TaskTemplate>(appURL(path, undefined, nodeId), {
     method: template.id ? "PUT" : "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(template),
   });
 }
 
-export async function deleteTaskTemplate(id: string): Promise<void> {
-  await protectedJSON(appURL(`/api/task-templates/${encodeURIComponent(id)}`), {
+export async function deleteTaskTemplate(id: string, nodeId?: string): Promise<void> {
+  await protectedJSON(appURL(`/api/task-templates/${encodeURIComponent(id)}`, undefined, nodeId), {
     method: "DELETE",
   });
 }
@@ -302,7 +360,9 @@ export async function fetchTaskDetails(rootId: string, filters?: {
   after?: string;
   before?: string;
   limit?: number;
-}): Promise<TaskDetail[]> {
+  /** 项目内的任务号（每项目自增）。命中即一条 —— 工作台就地开详情就走这条 */
+  taskNumber?: number;
+}, nodeId?: string): Promise<TaskDetail[]> {
   const params = new URLSearchParams({ root: rootId });
   if (filters?.templateId) params.set("template_id", filters.templateId);
   if (filters?.status) params.set("status", filters.status);
@@ -310,7 +370,9 @@ export async function fetchTaskDetails(rootId: string, filters?: {
   if (filters?.after) params.set("after", filters.after);
   if (filters?.before) params.set("before", filters.before);
   if (typeof filters?.limit === "number" && filters.limit > 0) params.set("limit", String(filters.limit));
-  const payload = await protectedJSON<any>(appURL("/api/tasks", params));
+  if (typeof filters?.taskNumber === "number" && filters.taskNumber > 0) params.set("task_number", String(filters.taskNumber));
+  nodeId = nodeId || getRootNodeId(rootId);
+  const payload = await protectedJSON<any>(appURL("/api/tasks", params, nodeId));
   return Array.isArray(payload?.items) ? payload.items : [];
 }
 
@@ -321,19 +383,22 @@ export async function createTask(
   createWorktree = false,
   worktreeBranchMode: "new" | "existing" = "new",
   worktreeBranch = "",
-  execution?: { agent?: string; model?: string },
+  nodeId?: string,
+  options?: { name?: string; stages?: StageTemplate[] },
 ): Promise<TaskDetail> {
-  return protectedJSON<TaskDetail>(appURL("/api/tasks"), {
+  nodeId = nodeId || getRootNodeId(rootId);
+  return protectedJSON<TaskDetail>(appURL("/api/tasks", undefined, nodeId), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       root_id: rootId,
       task_template_id: taskTemplateId,
-      ...execution,
       input,
       create_worktree: createWorktree,
       worktree_branch_mode: worktreeBranchMode,
       worktree_branch: worktreeBranch,
+      ...(options?.name ? { name: options.name } : {}),
+      ...(options?.stages?.length ? { stages: options.stages } : {}),
     }),
   });
 }
@@ -345,8 +410,10 @@ export async function updateTaskInput(
   createWorktree?: boolean,
   worktreeBranchMode?: "new" | "existing",
   worktreeBranch?: string,
+  nodeId?: string,
 ): Promise<TaskDetail> {
-  return protectedJSON<TaskDetail>(appURL(`/api/tasks/${encodeURIComponent(taskId)}/input`), {
+  nodeId = nodeId || getRootNodeId(rootId);
+  return protectedJSON<TaskDetail>(appURL(`/api/tasks/${encodeURIComponent(taskId)}/input`, undefined, nodeId), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -359,47 +426,62 @@ export async function updateTaskInput(
   });
 }
 
-export async function moveTask(rootId: string, taskId: string, action: "next" | "run-now" | "prev" | "pause" | "resume" | "complete" | "cancel" | "fail", reason = ""): Promise<TaskDetail> {
-  return protectedJSON<TaskDetail>(appURL(`/api/tasks/${encodeURIComponent(taskId)}/${action}`), {
+export async function moveTask(rootId: string, taskId: string, action: "next" | "run-now" | "pause" | "resume" | "complete" | "cancel" | "fail", reason = "", nodeId?: string): Promise<TaskDetail> {
+  return protectedJSON<TaskDetail>(appURL(`/api/tasks/${encodeURIComponent(taskId)}/${action}`, undefined, nodeId), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ root_id: rootId, reason }),
   });
 }
 
-export async function patchTask(root: string, id: string, patch: Record<string,unknown>): Promise<TaskDetail> {
- return protectedJSON<TaskDetail>(appURL(`/api/tasks/${encodeURIComponent(id)}`), {method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({root_id:root,...patch})});
-}
-
-export async function fetchTaskDetail(root: string,id: string): Promise<TaskDetail> {
- return protectedJSON<TaskDetail>(appURL(`/api/tasks/${encodeURIComponent(id)}`,new URLSearchParams({root})));
-}
-
-export async function deleteCachedTask(root:string,id:string):Promise<void> {
- await withTaskStore("readwrite",async({tasks})=>{await taskRequest(tasks.delete(taskCacheKey(root,id)))});
-}
-
-export type TaskGroup = {
-  id: string; root_id: string; session_key: string; title: string;
-  project_context: string; published: boolean;
-  plan_version: number; status: string; block_reason: string; updated_at: string;
+export type TaskOverviewItem = {
+  root_id: string;
+  root_name: string;
+  task: KanbanTask;
+  /**
+   * 前端跨节点扇出时打的标，**后端不返**（后端 Overview 遍历本节点 roots，不知道自己在哪个节点上）。
+   * 可选是为了让直接用 /api/tasks/overview 的调用方类型照旧成立。
+   */
+  nodeId?: string;
 };
-export type GroupMessage = { from: string; to: string; message: string; timestamp: string };
-export type GroupGraph = { group: TaskGroup; tasks: TaskDetail[]; edges: Record<string,string[]>; messages: TaskEvent[]; message_history?: GroupMessage[] };
-export async function fetchTaskGroups(root: string): Promise<TaskGroup[]> {
-  const data = await protectedJSON<{items:TaskGroup[]}>(appURL(`/api/task-groups?root=${encodeURIComponent(root)}`));
-  return data.items || [];
-}
-export function fetchGroupGraph(root:string,id:string):Promise<GroupGraph> {
-  return protectedJSON(appURL(`/api/task-groups/${encodeURIComponent(id)}?root=${encodeURIComponent(root)}`));
-}
-export function groupOperation(root:string,id:string,operation:string,input:Record<string,unknown>={}):Promise<TaskGroup> {
-  return protectedJSON(appURL(`/api/task-groups/${encodeURIComponent(id)}/${operation}`),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({...input,root_id:root})});
+
+export async function fetchTasksOverview(nodeId?: string): Promise<TaskOverviewItem[]> {
+  const payload = await protectedJSON<any>(appURL("/api/tasks/overview", undefined, nodeId));
+  return Array.isArray(payload?.items) ? payload.items : [];
 }
 
-export function updateGroupContext(root: string, id: string, projectContext: string, planVersion: number): Promise<TaskGroup> {
-  return protectedJSON(appURL(`/api/task-groups/${encodeURIComponent(id)}/context`), {
-    method: "PATCH", headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({root_id: root, project_context: projectContext, plan_version: planVersion}),
+export async function renameTask(rootId: string, taskId: string, name: string, nodeId?: string): Promise<TaskDetail> {
+  nodeId = nodeId || getRootNodeId(rootId);
+  return protectedJSON<TaskDetail>(appURL(`/api/tasks/${encodeURIComponent(taskId)}/rename`, undefined, nodeId), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ root_id: rootId, name }),
+  });
+}
+
+export async function addTaskStage(rootId: string, taskId: string, stage: StageTemplate, nodeId?: string): Promise<TaskDetail> {
+  nodeId = nodeId || getRootNodeId(rootId);
+  return protectedJSON<TaskDetail>(appURL(`/api/tasks/${encodeURIComponent(taskId)}/add-stage`, undefined, nodeId), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ root_id: rootId, stage }),
+  });
+}
+
+export async function updateTaskStage(rootId: string, taskId: string, index: number, stage: StageTemplate, nodeId?: string): Promise<TaskDetail> {
+  nodeId = nodeId || getRootNodeId(rootId);
+  return protectedJSON<TaskDetail>(appURL(`/api/tasks/${encodeURIComponent(taskId)}/update-stage`, undefined, nodeId), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ root_id: rootId, index, stage }),
+  });
+}
+
+export async function removeTaskStage(rootId: string, taskId: string, index: number, nodeId?: string): Promise<TaskDetail> {
+  nodeId = nodeId || getRootNodeId(rootId);
+  return protectedJSON<TaskDetail>(appURL(`/api/tasks/${encodeURIComponent(taskId)}/remove-stage`, undefined, nodeId), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ root_id: rootId, index }),
   });
 }
