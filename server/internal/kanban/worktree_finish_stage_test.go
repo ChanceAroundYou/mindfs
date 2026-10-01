@@ -2,8 +2,12 @@ package kanban
 
 import (
 	"context"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -314,16 +318,19 @@ func TestFinishStageTeardownDue(t *testing.T) {
 
 // 清场必须发生在搬会话**之前**。
 //
-// 这不是风格问题，是正确性：RepointSession 的收尾会调 ClearTaskWorktree 清掉任务的
-// worktree_path，而 FinishTaskWorktree 开头就判「路径为空 → 该任务还没有 worktree」
-// 直接返回。于是顺序一旦反过来，目录不拆、分支不删、还不报错 —— 静默失败。
-// 这里把「先清场会清掉路径」这件事本身钉住：谁改动 ClearTaskWorktree 让它不清路径，
-// 这个测试就得跟着更新，好过悄悄换语义。
+// 这不是风格问题，是正确性：搬会话会读 main_session_key，而清场第 4 步
+// ClearWorktreeRefs 会清掉任务的 worktree 归属。顺序一旦反过来，最直接的后果是
+// 清场开头就判「路径为空 → 该任务还没有 worktree」直接返回 —— 目录不拆、分支不删、
+// 还不报错，静默失败。
+//
+// 这里钉的是「清场自己会清路径」这个不变量（顺序依赖它），而不是钉某个具体调用者：
+// 2026-10-01 之前 repoint 也会清路径，于是「先搬会话」会同样触发静默失败。
+// repoint 那条路已经拆掉了（搬会话与任务收工不再焊死），本测试守住的是清场自身。
 func TestRepointingFirstWouldStrandTheWorktree(t *testing.T) {
 	svc, root, _, worktreePath := finishFixture(t, "")
 	task := parkAtWaitingUser(t, svc, root.ID, finishTaskID(t, svc, root.ID))
 
-	// 搬会话的最后一件事：清任务侧归属。清完路径就没了。
+	// 清场的第 4 步会清掉归属。清完路径就没了。
 	if err := svc.ClearTaskWorktree(context.Background(), root.ID, task.ID); err != nil {
 		t.Fatalf("ClearTaskWorktree: %v", err)
 	}
@@ -340,6 +347,93 @@ func TestRepointingFirstWouldStrandTheWorktree(t *testing.T) {
 	}); err == nil || !strings.Contains(err.Error(), "该任务还没有 worktree") {
 		t.Fatalf("finish after clear must bail out, not silently no-op; got %v", err)
 	}
+}
+
+// 搬会话**不许**清掉任务的 worktree 归属 —— 这条是 2026-10-01 修的真 bug：
+// 一次纯搬会话的 repoint 把还在用的任务目录记录清成空，卡片随即显示「已收尾」，
+// 一个从未收过尾的任务声称收工了。
+//
+// 收尾该清的由清场自己清（ClearWorktreeRefs），两边语义对等，谁也不替谁代劳。
+func TestRepointDoesNotStealTheTasksWorktreeRecord(t *testing.T) {
+	svc, root, _, worktreePath := finishFixture(t, "")
+	task := parkAtWaitingUser(t, svc, root.ID, finishTaskID(t, svc, root.ID))
+
+	before := mustGetTask(t, svc, root.ID, task.ID)
+	if strings.TrimSpace(before.WorktreePath) == "" {
+		t.Fatal("fixture must start with a live worktree path")
+	}
+
+	// 走一遍任务侧那个「清归属」的公开出口，确认**只有**清场在用它：repoint 的
+	// 源码里不许再出现 ClearTaskWorktree。这里解析 AST 而不是 grep 文本 ——
+	// grep 会把注释里那句「刻意不调 ClearTaskWorktree」也算成命中。
+	if callsClearTaskWorktree(t) {
+		t.Fatal("repoint must not clear the task's worktree record: it moves a session, it does not retire a task")
+	}
+	// 反过来确认：清场那条路**要**清 —— 别把修复做成「repoint 不清、于是谁都不清了」。
+	if !strings.Contains(readRepoFile(t, "worktree_finish.go"), "ClearWorktreeRefs") {
+		t.Fatal("the teardown must still clear worktree refs; otherwise nothing ever retires a task's worktree")
+	}
+	// 目录也还在，没被谁顺手拆掉。
+	if _, err := os.Stat(worktreePath); err != nil {
+		t.Fatalf("the worktree directory should be untouched: %v", err)
+	}
+	_ = task
+}
+
+// callsClearTaskWorktree 解析 repoint 的源码，找有没有**真的调用**清归属那个出口。
+//
+// 用 AST 而不是字符串查找：session_repoint.go 里现在有一整段注释在解释「为什么这里
+// 刻意不调 ClearTaskWorktree」，grep 'ClearTaskWorktree' 必然命中，测试就成了永远绿。
+func callsClearTaskWorktree(t *testing.T) bool {
+	t.Helper()
+	f, err := parser.ParseFile(token.NewFileSet(), repointSourcePath(t), nil, 0)
+	if err != nil {
+		t.Fatalf("parse repoint source: %v", err)
+	}
+	found := false
+	ast.Inspect(f, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		switch fun := call.Fun.(type) {
+		case *ast.SelectorExpr:
+			if fun.Sel.Name == "ClearTaskWorktree" {
+				found = true
+			}
+		case *ast.Ident:
+			if fun.Name == "ClearTaskWorktree" || fun.Name == "clearTaskWorktree" {
+				found = true
+			}
+		}
+		return true
+	})
+	return found
+}
+
+// repointSourcePath 定位 session_repoint.go：本测试在 kanban 包里，包目录是
+// server/internal/kanban，而目标在隔壁的 api/usecase。
+func repointSourcePath(t *testing.T) string {
+	t.Helper()
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("cannot locate the test source file")
+	}
+	return filepath.Join(filepath.Dir(thisFile), "..", "api", "usecase", "session_repoint.go")
+}
+
+// readRepoFile 读 kanban 包内的源文件，供「这一侧**要**有那个调用」的反向断言用。
+func readRepoFile(t *testing.T, name string) string {
+	t.Helper()
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("cannot locate the test source file")
+	}
+	raw, err := os.ReadFile(filepath.Join(filepath.Dir(thisFile), name))
+	if err != nil {
+		t.Fatalf("read %s: %v", name, err)
+	}
+	return string(raw)
 }
 
 // 收尾段要继承 agent，但一个 agent 段都没有的任务不许硬造一个：后端没有「默认

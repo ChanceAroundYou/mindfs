@@ -17,15 +17,13 @@ import (
 // api 层有现成的取法 —— (&HTTPHandler).service() 就是 &usecase.Service{Registry: AppContext}
 // （http.go 的 service 方法），这里直接用 AppContext 造一份同样的。
 //
-// **顺序：先清场、后搬会话**，和直觉相反，但反过来会静默失败：
-// RepointSession 最后一步会调 ClearTaskWorktree 清掉任务的 worktree_path
-// （session_repoint.go 的 clearTaskWorktree）。而 FinishTaskWorktree 开头就判
-// 「WorktreePath 为空 → 该任务还没有 worktree」直接返回 —— 于是目录不拆、分支不删，
-// 还没有任何报错。这正是脚本把 repoint 放在 cleanup 之后的原因。
+// **顺序：先清场、后搬会话**。清场第 4 步 ClearWorktreeRefs 会把任务的 worktree 归属
+// 清空，而搬会话要读 main_session_key —— 所以先把 key 读出来兜住。
 //
-// 反过来还有一个好处：会话还钉在 worktree 上时它能被 kill 掉（repoint 第一步
-// pool.Close）。此刻 agent 早已收工（收尾段 success 落库才走到这里），关的是一个
-// 已经空闲的进程 —— 脚本要用 setsid + sleep 30 绕开的那个问题，在这里不存在。
+// 之所以敢让这两件事各管各的（2026-10-01 起）：repoint 曾经顺手调 ClearTaskWorktree，
+// 于是「搬会话」和「任务收工」被焊死 —— 一次纯搬会话的 repoint 把还在用的任务目录记录
+// 清成了空，卡片随即显示「已收尾」。现在 repoint 只清会话侧归属，任务侧由清场自己清，
+// 两边语义对等，谁也不替谁代劳。
 
 // FinishWorktreeAndRepoint 清场 + 搬会话，并返回前端要显示的东西。
 //
@@ -38,9 +36,8 @@ func (s *AppContext) FinishWorktreeAndRepoint(rootID, taskID string) FinishTeard
 		report.Error = err.Error()
 		return report
 	}
-	// 搬会话要在清场**之前**把 key 读出来：清场第 4 步 ClearWorktreeRefs 只清 worktree
-	// 归属，但 repoint 自己的 clearTaskWorktree 会清 main_session_key 之外的东西 ——
-	// 顺序一旦调过来这里就拿不到 key 了。所以先读。
+	// 搬会话要在清场**之前**把 key 读出来：清场第 4 步 ClearWorktreeRefs 会清 worktree
+	// 归属。key 读不出来也不要紧 —— 那意味着没有会话可搬，清场照做，最后报一句。
 	detail, err := svc.GetTask(context.Background(), rootID, taskID)
 	var sessionKey string
 	if err == nil {

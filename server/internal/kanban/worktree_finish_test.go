@@ -109,6 +109,39 @@ func pinWorktree(t *testing.T, store *TaskStore, task Task, rootID, path string)
 	return task
 }
 
+// 清归属不许抹掉「建过 worktree」这个事实（2026-10-01 加的字段存在的全部理由）。
+//
+// 丢了这个事实，客户端就分不出「还没建树」（首段还是 user 段）和「建过、目录已拆」，
+// 于是把一棵还在被人用的树显示成「已收尾」—— 2026-09-29 实测的正是这个。
+func TestClearingTheWorktreeRecordKeepsTheBuiltFact(t *testing.T) {
+	svc, root, _, _ := finishFixture(t, "work")
+	store, err := svc.taskStore(root.ID)
+	if err != nil {
+		t.Fatalf("taskStore: %v", err)
+	}
+	taskID := finishTaskID(t, svc, root.ID)
+	pinned := pinWorktree(t, store, mustGetTask(t, svc, root.ID, taskID), root.ID, "/tmp/pinned")
+
+	if !pinned.WorktreeBuilt {
+		t.Fatal("pinning a worktree must record that one was built")
+	}
+
+	if err := store.ClearWorktreeRefs(context.Background(), taskID); err != nil {
+		t.Fatalf("ClearWorktreeRefs: %v", err)
+	}
+	after := mustGetTask(t, svc, root.ID, taskID)
+	if strings.TrimSpace(after.WorktreePath) != "" || strings.TrimSpace(after.WorktreeRootID) != "" {
+		t.Fatalf("clearing must drop the path/root binding, got path=%q root=%q", after.WorktreePath, after.WorktreeRootID)
+	}
+	if !after.WorktreeBuilt {
+		t.Fatal("clearing the binding must NOT forget that a worktree was built: that is the only field telling \"not yet built\" apart from \"built and torn down\"")
+	}
+	// 界面靠这条组合判「已收尾」：清过归属（路径空）+ 建过 + 目录确实没了。
+	if !after.WorktreeBuilt || after.WorktreeMissingNow() {
+		t.Fatalf("a torn-down task must read as finished (built=true, missing=false), got built=%v missing=%v", after.WorktreeBuilt, after.WorktreeMissingNow())
+	}
+}
+
 func TestFinishTaskWorktreeMergesThenRemovesAndDeletesBranch(t *testing.T) {
 	ctx := context.Background()
 	svc, root, mainDir, worktreePath := finishFixture(t, "from worktree\n")

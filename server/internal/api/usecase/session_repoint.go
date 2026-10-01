@@ -9,7 +9,6 @@ import (
 
 	"mindfs/server/internal/agent/claude"
 	agenttypes "mindfs/server/internal/agent/types"
-	"mindfs/server/internal/kanban"
 	"mindfs/server/internal/session"
 )
 
@@ -129,14 +128,17 @@ func (s *Service) RepointSession(ctx context.Context, in RepointSessionInput) (R
 		return out, err
 	}
 
-	// 5b. 任务侧同步解绑。会话侧清了、任务侧没清的话，任务还钉着一个已删目录：
-	// 前端 relatedWorktree 是任务优先（App.tsx），会拿它当事实用。
+	// 刻意**不**动任务侧的 worktree 归属。
 	//
-	// 刻意不阻断 repoint：任务库出问题时，会话已经搬成功了（转录、绑定、游标都到位），
-	// 为此让整个 repoint 报错反而会掩盖「已经搬成了」这个事实。失败只记日志。
-	if taskID := strings.TrimSpace(current.TaskID); taskID != "" {
-		clearTaskWorktree(ctx, s.Registry, in.RootID, taskID)
-	}
+	// 曾经在这里调 ClearTaskWorktree，理由是「会话侧清了、任务侧没清的话，任务还钉着一个
+	// 已删目录」。实测那是把两件事焊死了：repoint 的语义是「这个**会话**搬回主 checkout」，
+	// 而 ClearTaskWorktree 的语义是「这个**任务**的活收工了、worktree 该拆」。
+	// 2026-09-29 实测的代价：一次纯搬会话的 repoint 把任务 #23 的 worktree_path 清成了空，
+	// 而那个任务的目录其实还在（手工建、还在用）。于是卡片命中「路径为空 + missing=false」
+	// 这组形状，被渲染成「已收尾」—— 一个从未收过尾的任务声称收工了。
+	//
+	// 任务侧该清的时候由收尾流程清：FinishTaskWorktree 第 4 步本来就会 ClearWorktreeRefs
+	//（worktree_finish.go），语义正确，也不需要谁来代劳。
 
 	log.Printf("[session/repoint] done root=%s session=%s agent=%s old=%s new=%s transcript=%s bytes=%d worktree=%s",
 		strings.TrimSpace(in.RootID), key, agentName, binding.AgentSessionID, moved.AgentSessionID,
@@ -162,29 +164,4 @@ func sessionRuntimeRootPathFor(current *session.Session) string {
 		return ""
 	}
 	return strings.TrimSpace(current.RelatedWorktree.Path)
-}
-
-// kanbanWorktreeClearer 是 AppContext 已实现、但没进 usecase.Registry 接口的那一小块。
-// 用可选接口断言拿而不是给 Registry 加方法：Registry 是被 211 处 AppContext 消费
-// 的窄接口，为一个收尾期的清理动作扩它不划算（而且 AppContext 之外还有测试 fake）。
-type kanbanWorktreeClearer interface {
-	GetKanbanService() (*kanban.Service, error)
-}
-
-// clearTaskWorktree 尽力清掉任务的 worktree 归属。失败只记日志，不影响 repoint 主流程。
-func clearTaskWorktree(ctx context.Context, reg Registry, rootID, taskID string) {
-	provider, ok := reg.(kanbanWorktreeClearer)
-	if !ok {
-		return
-	}
-	svc, err := provider.GetKanbanService()
-	if err != nil {
-		log.Printf("[session/repoint] task worktree clear skipped root=%s task=%s err=%v", rootID, taskID, err)
-		return
-	}
-	if err := svc.ClearTaskWorktree(ctx, rootID, taskID); err != nil {
-		log.Printf("[session/repoint] task worktree clear failed root=%s task=%s err=%v", rootID, taskID, err)
-		return
-	}
-	log.Printf("[session/repoint] task worktree cleared root=%s task=%s", rootID, taskID)
 }

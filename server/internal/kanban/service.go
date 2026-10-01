@@ -1171,9 +1171,22 @@ func (s *Service) ensureTaskWorktree(ctx context.Context, store *TaskStore, task
 	if err != nil {
 		return task, err
 	}
+	// 拿到一个不可用的路径就当没建过：**不写库、不写 worktree_built**。
+	//
+	// 为什么必须在这里拦：空路径会让下游两处同时说谎 —— agent 拿到空的
+	// RuntimeRootPath（service.go 取的就是 task.WorktreePath），于是**在主 checkout
+	// 里跑**，改的是主干；界面那边看到「建过 + 路径为空」，把没建过树的活说成
+	// 「已收尾」。两个后果都不可逆，所以宁可当失败、让用户重建。
+	// 不自动重建的理由与上面「失效时不自动重建」一致：不替用户决定那个目录怎么办。
+	if !worktreeDirUsable(wt.Path) {
+		return task, fmt.Errorf("worktree 创建没有产出可用目录（路径=%q），请点「重建 worktree」重试", strings.TrimSpace(wt.Path))
+	}
 	now := time.Now().UTC()
 	task.WorktreeRootID = wt.RootID
 	task.WorktreePath = wt.Path
+	// 记住「建过」：之后清归属（收尾拆目录）会清掉路径，但不该把这条事实一起抹掉，
+	// 否则界面分不出「从没建过」和「建过、记录丢了」。
+	task.WorktreeBuilt = true
 	task.AuxFlags.SessionError = ""
 	task.UpdatedAt = now
 	// 归属只有一个写入出口（SetWorktreeRefsAndTask），且与状态更新同一事务 ——
@@ -1186,12 +1199,12 @@ func (s *Service) ensureTaskWorktree(ctx context.Context, store *TaskStore, task
 
 // ClearTaskWorktree 清掉任务记录的 worktree 归属（路径 + root id）。
 //
-// 给 repoint 用：会话侧 ClearRelatedWorktree 清了归属，任务侧不同步的话，
-// 任务还钉着一个已经不存在的目录 —— 前端 relatedWorktree 是任务优先
-// （App.tsx），于是会去展开一个死目录，点「立即执行」也照样拿它当 cwd。
+// **只给收尾流程用**（它拆掉目录之后清归属）。搬会话不要调它 —— repoint 曾经调过，
+// 一次纯搬会话把还在用的任务目录记录清成空，卡片随即显示「已收尾」。见
+// usecase/session_repoint.go 里那段刻意不调的注释。
 //
-// 与 finishTask 保留 worktree_path 的语义不冲突：那个是「目录还在就别擦掉历史」，
-// 这里是「归属已经在会话侧被显式解除了，任务侧必须跟上」。
+// 保留 worktree_built：拆掉目录不等于没建过，界面要靠它显示「已收尾」而不是
+// 退回「没建过」。
 func (s *Service) ClearTaskWorktree(ctx context.Context, rootID, taskID string) error {
 	store, task, err := s.loadForMove(ctx, rootID, taskID)
 	if err != nil {

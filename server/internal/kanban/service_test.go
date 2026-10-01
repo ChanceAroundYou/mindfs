@@ -60,6 +60,9 @@ type fakeRunner struct {
 	worktreeBranch       string
 	worktreeName         string
 	worktreeCreateCalled bool
+	// worktreeInfo 非零时 CreateTaskWorktree 原样返回它（不真建目录），
+	// 用来模拟「建树返回成功但产出不可用」—— 判据不能只信 err == nil。
+	worktreeInfo WorktreeInfo
 	// createdDirs 记下 fake 真建出来的目录，由 newTestService 注册的 Cleanup 删掉。
 	// 建在 os.TempDir() 下而不是 t.TempDir()：worktree 名字（task-N）跨用例会撞车，
 	// t.TempDir() 每用例一个反而让「同名不同目录」这种真实情况测不到。序号见 dirSeq。
@@ -82,6 +85,11 @@ func (r *fakeRunner) CreateTaskWorktree(ctx context.Context, rootID, name, branc
 	r.mu.Unlock()
 	if r.worktreeErr != nil {
 		return WorktreeInfo{}, r.worktreeErr
+	}
+	// worktreeInfo 非零时原样返回，用来喂「建树成功但产出不可用」的形状
+	// （空路径 / 指向文件）。默认零值走下面的真建目录。
+	if r.worktreeInfo != (WorktreeInfo{}) {
+		return r.worktreeInfo, nil
 	}
 	// 真跑一遍建目录：gitview.AddWorktree 建的目录是真实存在的，而任务侧现在按
 	// 「目录还在不在」判 worktree 可用（原先只看字段非空）。fake 只回一个不存在的
@@ -2588,5 +2596,81 @@ func TestClearTaskWorktreeDetachesTask(t *testing.T) {
 	// 幂等：再清一次不报错。
 	if err := svc.ClearTaskWorktree(ctx, root.ID, detail.Task.ID); err != nil {
 		t.Fatalf("ClearTaskWorktree should be idempotent, got %v", err)
+	}
+}
+
+// 建树返回「成功」但产出不可用时，必须当失败，绝不能当成建过了。
+//
+// err == nil 不等于树建起来了。空路径一旦被当成成功写进库，两个不可逆的后果同时
+// 发生：agent 拿到空的 RuntimeRootPath（见 service.go 取的就是 task.WorktreePath），
+// 于是在**主 checkout** 里跑、改的是主干；界面那边看到「建过 + 路径为空」，把一棵
+// 根本没建出来的活说成「已收尾」。
+func TestBuildingAnUnusableWorktreeIsNotRecordedAsBuilt(t *testing.T) {
+	runner := &fakeRunner{worktreeInfo: WorktreeInfo{RootID: "wt-root"}} // 成功，但没有 Path
+	svc, root := newTestService(t, runner)
+	ctx := context.Background()
+
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID:         root.ID,
+		Stages:         []StageTemplate{userStage("Describe"), agentStage("Fix", "Fix:\n{previous_input}")},
+		Input:          "something to fix",
+		CreateWorktree: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	// Next 必须当场拒绝：建树没产出可用目录，推到 agent 段就会在主 checkout 里跑。
+	_, err = svc.Next(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID})
+	if err == nil {
+		t.Fatal("advancing into an agent stage must fail when the worktree creation produced nothing usable")
+	}
+
+	after := mustGetTask(t, svc, root.ID, detail.Task.ID)
+	if strings.TrimSpace(after.WorktreePath) != "" {
+		t.Fatalf("an unusable path must not be persisted as the task's worktree, got %q", after.WorktreePath)
+	}
+	if after.WorktreeBuilt {
+		t.Fatal("a worktree that was never actually created must not be recorded as built — that flag drives the \"finished\" badge")
+	}
+	// 更要紧的：agent 绝不能因此在主 checkout 里跑起来。
+	runner.mu.Lock()
+	execs := append([]AgentStageExecution(nil), runner.execs...)
+	runner.mu.Unlock()
+	for _, exec := range execs {
+		if strings.TrimSpace(exec.RuntimeRootPath) == "" && after.CreateWorktree {
+			t.Fatalf("the agent ran with no worktree cwd (task=%s): it would edit the main checkout", exec.Task.ID)
+		}
+	}
+}
+
+// 路径指向文件而不是目录时同样不可用：cwd 必须是目录。
+func TestBuildingAWorktreeThatIsAFileIsNotRecordedAsBuilt(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatalf("write decoy file: %v", err)
+	}
+	runner := &fakeRunner{worktreeInfo: WorktreeInfo{RootID: "wt-root", Path: file}}
+	svc, root := newTestService(t, runner)
+	ctx := context.Background()
+
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID:         root.ID,
+		Stages:         []StageTemplate{userStage("Describe"), agentStage("Fix", "Fix:\n{previous_input}")},
+		Input:          "something to fix",
+		CreateWorktree: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if _, err := svc.Next(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err == nil {
+		t.Fatal("a path that is not a directory must not be accepted as a worktree")
+	}
+	if !runner.worktreeCreateCalled {
+		t.Fatal("the fixture must actually have reached worktree creation")
+	}
+
+	after := mustGetTask(t, svc, root.ID, detail.Task.ID)
+	if after.WorktreeBuilt {
+		t.Fatal("a path that is not a directory must not be recorded as a built worktree")
 	}
 }

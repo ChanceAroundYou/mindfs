@@ -114,6 +114,17 @@ type Task struct {
 	MainSessionKey     string          `json:"main_session_key,omitempty"`
 	WorktreeRootID     string          `json:"worktree_root_id,omitempty"`
 	WorktreePath       string          `json:"worktree_path,omitempty"`
+	// WorktreeBuilt 报告这个任务**曾经建出过一个 worktree**。
+	//
+	// 为什么要有它：WorktreePath 为空有两种相反的含义 ——
+	// 「还没建」（首段还是 user 段）和「建过、记录被清掉了」。而客户端只看到
+	// 「路径为空」，没有别的列能把这两种分开，于是会把「目录还在被人用」的情况
+	// 显示成「已收尾」。2026-10-01 实测就是这个：repoint 顺手清了任务的归属，
+	// 一个仍在使用的 worktree 被标成活已经并回主干。
+	//
+	// 清归属时**不**清这一列（见 TaskStore.ClearWorktreeRefs）：拆掉目录不等于
+	// 没建过。存量数据默认 false —— 判据宁保守，也不要把没证据的任务说成收过尾。
+	WorktreeBuilt bool `json:"worktree_built"`
 	Labels             []string        `json:"labels"`
 	CreatedAt          time.Time       `json:"created_at"`
 	UpdatedAt          time.Time       `json:"updated_at"`
