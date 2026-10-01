@@ -1171,6 +1171,16 @@ func (s *Service) ensureTaskWorktree(ctx context.Context, store *TaskStore, task
 	if err != nil {
 		return task, err
 	}
+	// 拿到一个不可用的路径就当没建过：**不写库、不写 worktree_built**。
+	//
+	// 为什么必须在这里拦：空路径会让下游两处同时说谎 —— agent 拿到空的
+	// RuntimeRootPath（service.go 取的就是 task.WorktreePath），于是**在主 checkout
+	// 里跑**，改的是主干；界面那边看到「建过 + 路径为空」，把没建过树的活说成
+	// 「已收尾」。两个后果都不可逆，所以宁可当失败、让用户重建。
+	// 不自动重建的理由与上面「失效时不自动重建」一致：不替用户决定那个目录怎么办。
+	if !worktreeDirUsable(wt.Path) {
+		return task, fmt.Errorf("worktree 创建没有产出可用目录（路径=%q），请点「重建 worktree」重试", strings.TrimSpace(wt.Path))
+	}
 	now := time.Now().UTC()
 	task.WorktreeRootID = wt.RootID
 	task.WorktreePath = wt.Path

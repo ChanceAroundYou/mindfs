@@ -122,6 +122,25 @@ test("a finished task never wears the red missing badge", () => {
   assert.equal(badgeState({ ...finishedButTornDown, status: "running" }), "missing", "a running task with a deleted worktree must still warn");
 });
 
+// 终态**不等于**目录被拆了。这条钉的是「已收尾」不能只看 status：徽标的文案逐字是
+// 「活已并回主干，目录已拆」，目录明明还在却这么说，是另一句谎话。failed / cancelled
+// 尤其危险 —— 终态只说明活停了，从来不说明收尾跑过。
+test("a terminal task whose worktree is still on disk is not 'finished'", () => {
+  const stillThere = {
+    create_worktree: true,
+    worktree_path: "/x/.worktree/t9",
+    worktree_missing: false,
+    worktree_built: true,
+    status: "fail",
+  };
+  assert.notEqual(badgeState(stillThere), "finished", "a failed task with a live worktree must not claim the directory was torn down");
+  assert.equal(badgeState(stillThere), "enabled", "the directory is still there — say so");
+  // success 同理：状态终结不等于收尾流程跑过。
+  assert.notEqual(badgeState({ ...stillThere, status: "success" }), "finished");
+  // 目录被删 + 终态才是「已收尾」那档（上一条已验）。
+  assert.equal(badgeState({ ...stillThere, worktree_missing: true }), "finished");
+});
+
 test("a task that never asked for a worktree is still 'none'", () => {
   assert.equal(badgeState({ create_worktree: false, worktree_path: "" }), "none");
   assert.equal(badgeState({ create_worktree: false, worktree_path: "/x/.worktree/t1" }), "none");
