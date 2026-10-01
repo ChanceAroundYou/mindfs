@@ -76,6 +76,15 @@ export type KanbanTask = {
   worktree_path?: string;
   /** 派生（服务端算，不落库）：worktree_path 指向的目录已经不在了。 */
   worktree_missing?: boolean;
+  /**
+   * 这个任务**曾经建出过一个 worktree**（服务端落库，清归属时不清它）。
+   *
+   * 为什么必须要：worktree_path 为空有两种相反的含义 ——
+   * 「还没建」（首段还是 user 段）和「建过、记录被清掉了」。只有这一个字段能
+   * 把两者分开。没有它，「路径为空」会被一律显示成「已收尾」—— 2026-10-01 实测
+   * 就是这样：一个仍在使用的 worktree 被标成了活已经并回主干。
+   */
+  worktree_built?: boolean;
   labels?: string[];
   created_at: string;
   updated_at: string;

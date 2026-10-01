@@ -141,18 +141,34 @@ export function TaskCardRows({
   // 服务端派生的失效标记：worktree_path 还指着那个目录，但目录已经被删了
   // （DELETE /api/git/worktrees、wt-finish.sh cleanup、手工 rm）。
   const worktreeMissing = worktreeEnabled && task.worktree_missing === true;
-  // 收尾过了：当初建过树，现在 path 被清空、目录也没了。
-  const worktreeFinished = worktreeEnabled && !hasWorktreePath && !worktreeMissing;
+  // 收尾过了：当初**确实建过**树，现在 path 被清空、目录也没了。
+  //
+  // worktree_built 是这里的关键守卫：没有它，「path 为空」会同时命中两种相反的
+  // 状态 —— 「还没建」（首段还是 user 段，本来就空）和「建过、记录被清掉了」。
+  // 后者目录可能还在被人用，却被显示成「已收尾」。2026-10-01 实测就是这样：
+  // 一次纯搬会话的 repoint 清掉了归属，一个仍在使用的 worktree 被标成收工了。
+  // 老数据没有这个字段（undefined），读作「没建过」—— 与修复前行为一致，不回归。
+  const worktreeFinished = worktreeEnabled && !hasWorktreePath && !worktreeMissing && task.worktree_built === true;
+  // 终态任务一律读「已收尾」，不管目录还在不在。
+  //
+  // 为什么：终态 = 活已经干完了，它的 worktree 不可能还有活要干。而红色 missing 那档
+  // 承诺的是「点『重建 worktree』恢复后再执行」，可重建按钮只对未结束的任务显示
+  // （下面 !terminal 那道门），于是终态任务挂着一个没法兑现的红色警报 —— 2026-10-01
+  // 实测：14 个早已收完尾、目录已删的历史任务全是这个形状，卡片一片飘红。
+  // 「目录被删」在终态下不是事故，是收完尾之后的正常状态，归档事实由 status 表达。
+  const worktreeFinishedTerminal = worktreeEnabled && terminal && task.worktree_built === true;
   // 五种「不在」要分开：从来没建（amber）、收尾中（绿+脉冲）、建过但目录被删（red）、
   // 收尾拆掉了（灰）。收尾中单列一档而不是并进 enabled：期间目录还在、徽标看着
   // 和平时一模一样，用户会以为「还没开始」于是再点一次。
-  const worktreeTagState: WorktreeTagState = worktreeMissing
-    ? "missing"
-    : worktreeFinished
-      ? "finished"
-      : hasWorktreePath
-        ? (finishActive ? "finishing" : "enabled")
-        : "none";
+  const worktreeTagState: WorktreeTagState = worktreeFinishedTerminal
+    ? "finished"
+    : worktreeMissing
+      ? "missing"
+      : worktreeFinished
+        ? "finished"
+        : hasWorktreePath
+          ? (finishActive ? "finishing" : "enabled")
+          : "none";
   const worktreeTagTitle = worktreeTagState === "missing"
     ? t("task.worktreeMissingTitle")
     : worktreeTagState === "finished"

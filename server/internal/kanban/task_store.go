@@ -17,7 +17,7 @@ import (
 )
 
 const taskDBMetaPath = "tasks/task-kanban.db"
-const taskSelectColumns = "id, task_number, root_id, task_template_id, task_template_name, template_snapshot_json, create_worktree, worktree_branch_mode, worktree_branch, current_stage_index, status, scheduler_admitted, main_session_key, worktree_root_id, worktree_path, aux_ask_user_waiting, aux_has_plan, aux_has_todos, aux_has_task, aux_session_error, labels_json, created_at, updated_at, completed_at, name, task_stages_json"
+const taskSelectColumns = "id, task_number, root_id, task_template_id, task_template_name, template_snapshot_json, create_worktree, worktree_branch_mode, worktree_branch, current_stage_index, status, scheduler_admitted, main_session_key, worktree_root_id, worktree_path, worktree_built, aux_ask_user_waiting, aux_has_plan, aux_has_todos, aux_has_task, aux_session_error, labels_json, created_at, updated_at, completed_at, name, task_stages_json"
 
 type TaskStore struct {
 	root fs.RootInfo
@@ -79,6 +79,7 @@ CREATE TABLE IF NOT EXISTS tasks (
 	main_session_key TEXT NOT NULL DEFAULT '',
 	worktree_root_id TEXT NOT NULL DEFAULT '',
 	worktree_path TEXT NOT NULL DEFAULT '',
+	worktree_built INTEGER NOT NULL DEFAULT 0,
 	aux_ask_user_waiting INTEGER NOT NULL DEFAULT 0,
 	aux_has_plan INTEGER NOT NULL DEFAULT 0,
 	aux_has_todos INTEGER NOT NULL DEFAULT 0,
@@ -151,6 +152,25 @@ CREATE INDEX IF NOT EXISTS idx_task_events_task_created ON task_events(task_id, 
 		return err
 	}
 	if _, err := s.db.Exec(`ALTER TABLE tasks ADD COLUMN task_stages_json TEXT NOT NULL DEFAULT '[]'`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+		return err
+	}
+	// worktree_built：这个任务**曾经建过** worktree（2026-10-01 加）。
+	//
+	// 为什么需要这一列：worktree_path 被清空有两种完全不同的原因，而它们对用户
+	// 意味着相反的事 ——
+	//   「还没建」  ：首段还是 user 段，路径本来就该是空的，不是问题；
+	//   「建过、被清」：路径记录丢了，但那个目录可能还在、还在被人用。
+	// 前端只看到「路径为空」一律渲染成「已收尾」，于是第二种会被说成「活已经并回
+	// 主干了」—— 2026-10-01 实测就是一个仍在使用的 worktree 被标成了已收尾。
+	//
+	// 存量数据一律补 0（读作「没建过」，与今天的行为一致，零回归）：判据宁保守，
+	// 也不要把没证据的任务说成收过尾。
+	if _, err := s.db.Exec(`ALTER TABLE tasks ADD COLUMN worktree_built INTEGER NOT NULL DEFAULT 0`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+		return err
+	}
+	// 存量回填：凡是**当前**还带着 worktree 路径的行，一定建过树。这一步只让新列
+	// 对现存活着的 worktree 立刻可用，其余保持 0。
+	if _, err := s.db.Exec(`UPDATE tasks SET worktree_built = 1 WHERE create_worktree = 1 AND TRIM(worktree_path) != ''`); err != nil {
 		return err
 	}
 	// 旧数据：颓废状态归入新模型（queued→pending）；旧任务若只有模板无快照，在读取时惰性补齐。
@@ -475,12 +495,27 @@ func (s *TaskStore) ClearSessionRefs(ctx context.Context, taskID, sessionKey str
 
 // ClearWorktreeRefs 清掉任务的 worktree 归属。写/清都走 setWorktreeRefs —— 归属
 // 只有这一个出口，后台流程的整行 UPDATE 不碰这两格（理由见 updateTaskCore）。
+//
+// 刻意**不清** worktree_built：「清掉路径」和「没建过树」是两件事。目录被拆掉之后
+// 归属要清，但「这个任务开过 worktree」这个事实得留着，否则界面会把一个曾经干过活
+// 的目录说成「从没建过」。
 func (s *TaskStore) ClearWorktreeRefs(ctx context.Context, taskID string) error {
 	taskID = strings.TrimSpace(taskID)
 	if taskID == "" {
 		return nil
 	}
-	return s.setWorktreeRefs(ctx, taskID, "", "")
+	return s.setWorktreeRefsKeepBuilt(ctx, taskID, "", "")
+}
+
+// setWorktreeRefsKeepBuilt 清归属但保留 worktree_built。
+//
+// 之所以不直接复用 setWorktreeRefs：那个方法的 built 参数是给**建树**用的，
+// 清这一路必须原样保留旧值，否则清一次就把「建过」这个事实抹了。
+func (s *TaskStore) setWorktreeRefsKeepBuilt(ctx context.Context, taskID, rootID, path string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE tasks SET worktree_root_id = ?, worktree_path = ?, updated_at = ? WHERE id = ?`,
+		rootID, path, s.now().UTC().Format(time.RFC3339Nano), taskID)
+	return err
 }
 
 func (s *TaskStore) UpdateTask(ctx context.Context, task Task) error {
@@ -588,8 +623,8 @@ func (s *TaskStore) decorateCurrentStage(ctx context.Context, task *Task) {
 func insertTask(ctx context.Context, tx *sql.Tx, task Task) error {
 	labels, _ := json.Marshal(task.Labels)
 	stages, _ := json.Marshal(task.Stages)
-	_, err := tx.ExecContext(ctx, `INSERT INTO tasks (id, task_number, root_id, task_template_id, task_template_name, template_snapshot_json, create_worktree, worktree_branch_mode, worktree_branch, current_stage_index, status, scheduler_admitted, main_session_key, worktree_root_id, worktree_path, aux_ask_user_waiting, aux_has_plan, aux_has_todos, aux_has_task, aux_session_error, labels_json, created_at, updated_at, completed_at, name, task_stages_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		task.ID, task.TaskNumber, task.RootID, task.TaskTemplateID, task.TaskTemplateName, "", boolInt(task.CreateWorktree), task.WorktreeBranchMode, task.WorktreeBranch, task.CurrentStageIndex, task.Status, boolInt(task.SchedulerAdmitted), task.MainSessionKey, task.WorktreeRootID, task.WorktreePath, boolInt(task.AuxFlags.AskUserWaiting), boolInt(task.AuxFlags.HasPlan), boolInt(task.AuxFlags.HasTodos), boolInt(task.AuxFlags.HasTask), strings.TrimSpace(task.AuxFlags.SessionError), string(labels), task.CreatedAt.UTC().Format(time.RFC3339Nano), task.UpdatedAt.UTC().Format(time.RFC3339Nano), task.CompletedAt, task.Name, string(stages))
+	_, err := tx.ExecContext(ctx, `INSERT INTO tasks (id, task_number, root_id, task_template_id, task_template_name, template_snapshot_json, create_worktree, worktree_branch_mode, worktree_branch, current_stage_index, status, scheduler_admitted, main_session_key, worktree_root_id, worktree_path, worktree_built, aux_ask_user_waiting, aux_has_plan, aux_has_todos, aux_has_task, aux_session_error, labels_json, created_at, updated_at, completed_at, name, task_stages_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		task.ID, task.TaskNumber, task.RootID, task.TaskTemplateID, task.TaskTemplateName, "", boolInt(task.CreateWorktree), task.WorktreeBranchMode, task.WorktreeBranch, task.CurrentStageIndex, task.Status, boolInt(task.SchedulerAdmitted), task.MainSessionKey, task.WorktreeRootID, task.WorktreePath, boolInt(task.WorktreeBuilt), boolInt(task.AuxFlags.AskUserWaiting), boolInt(task.AuxFlags.HasPlan), boolInt(task.AuxFlags.HasTodos), boolInt(task.AuxFlags.HasTask), strings.TrimSpace(task.AuxFlags.SessionError), string(labels), task.CreatedAt.UTC().Format(time.RFC3339Nano), task.UpdatedAt.UTC().Format(time.RFC3339Nano), task.CompletedAt, task.Name, string(stages))
 	return err
 }
 
@@ -608,10 +643,14 @@ func updateTaskCore(ctx context.Context, tx *sql.Tx, task Task) error {
 
 // setWorktreeRefs 写/清任务的 worktree 归属。建树与清归属共用一个出口，
 // 这样「这两个列归谁管」在 schema 旁边就能看全，不用去数整行 UPDATE 里的字段。
-func (s *TaskStore) setWorktreeRefs(ctx context.Context, taskID, rootID, path string) error {
+//
+// built=true 表示「这棵树确实建出来了」，与 path 是否为空无关：清归属只清路径，
+// 不清这个事实 —— 前端要靠它区分「还没建」（首段是 user 段）和「建过、记录丢了」
+// （目录可能还在被人用）。2026-10-01 加，后两者在界面上被混成同一个「已收尾」。
+func (s *TaskStore) setWorktreeRefs(ctx context.Context, taskID, rootID, path string, built bool) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE tasks SET worktree_root_id = ?, worktree_path = ?, updated_at = ? WHERE id = ?`,
-		rootID, path, s.now().UTC().Format(time.RFC3339Nano), taskID)
+		`UPDATE tasks SET worktree_root_id = ?, worktree_path = ?, worktree_built = ?, updated_at = ? WHERE id = ?`,
+		rootID, path, boolInt(built), s.now().UTC().Format(time.RFC3339Nano), taskID)
 	return err
 }
 
@@ -629,9 +668,10 @@ func (s *TaskStore) SetWorktreeRefsAndTask(ctx context.Context, task Task) error
 	if err := updateTaskCore(ctx, tx, task); err != nil {
 		return err
 	}
+	// 建树这一路：path 非空即视为已建出来。
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE tasks SET worktree_root_id = ?, worktree_path = ? WHERE id = ?`,
-		task.WorktreeRootID, task.WorktreePath, task.ID); err != nil {
+		`UPDATE tasks SET worktree_root_id = ?, worktree_path = ?, worktree_built = ? WHERE id = ?`,
+		task.WorktreeRootID, task.WorktreePath, boolInt(task.WorktreeBuilt || strings.TrimSpace(task.WorktreePath) != ""), task.ID); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -653,15 +693,19 @@ type scanner interface{ Scan(dest ...any) error }
 func scanTask(row scanner) (Task, error) {
 	var task Task
 	var createWorktree, admitted, askUserWaiting, hasPlan, hasTodos, hasTask int
+	var worktreeBuilt int
 	var sessionError string
 	var labels, stagesJSON string
 	var templateSnapshot string
 	var created, updated string
-	if err := row.Scan(&task.ID, &task.TaskNumber, &task.RootID, &task.TaskTemplateID, &task.TaskTemplateName, &templateSnapshot, &createWorktree, &task.WorktreeBranchMode, &task.WorktreeBranch, &task.CurrentStageIndex, &task.Status, &admitted, &task.MainSessionKey, &task.WorktreeRootID, &task.WorktreePath, &askUserWaiting, &hasPlan, &hasTodos, &hasTask, &sessionError, &labels, &created, &updated, &task.CompletedAt, &task.Name, &stagesJSON); err != nil {
+	if err := row.Scan(&task.ID, &task.TaskNumber, &task.RootID, &task.TaskTemplateID, &task.TaskTemplateName, &templateSnapshot, &createWorktree, &task.WorktreeBranchMode, &task.WorktreeBranch, &task.CurrentStageIndex, &task.Status, &admitted, &task.MainSessionKey, &task.WorktreeRootID, &task.WorktreePath, &worktreeBuilt, &askUserWaiting, &hasPlan, &hasTodos, &hasTask, &sessionError, &labels, &created, &updated, &task.CompletedAt, &task.Name, &stagesJSON); err != nil {
 		return Task{}, err
 	}
 	task.CreateWorktree = createWorktree != 0
 	task.SchedulerAdmitted = admitted != 0
+	// 存量回填之外还有一层兜底：老库里 worktree_built 可能还是 0，但路径非空说明
+	// 树确实在。按「有路径就算建过」算，界面才不会把一棵活着的树说成没建过。
+	task.WorktreeBuilt = worktreeBuilt != 0 || strings.TrimSpace(task.WorktreePath) != ""
 	task.AuxFlags = TaskAuxFlags{
 		AskUserWaiting: askUserWaiting != 0,
 		HasPlan:        hasPlan != 0,
