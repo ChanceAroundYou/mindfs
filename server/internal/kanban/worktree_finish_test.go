@@ -676,3 +676,109 @@ func markAuxFlags(t *testing.T, ctx context.Context, store *TaskStore, taskID st
 		t.Fatalf("mark aux flags: %v", err)
 	}
 }
+
+// 收尾不能被**自己产生的**未跟踪目录挡住：agent 在收尾段跑完，worktree 里会留下
+// .claude/ 和 .omc/，而服务端下一步就是拆这个目录。2026-10-02 端到端实测撞的就是
+// 这个 —— git 报「contains modified or untracked files」，收尾卡住，活其实早就
+// 并回主干了。
+func TestFinishTearsDownDespiteTheStateDirsTheAgentLeftBehind(t *testing.T) {
+	svc, root, mainDir, worktreePath := finishFixture(t, "work")
+	task := parkAtWaitingUser(t, svc, root.ID, finishTaskID(t, svc, root.ID))
+	_ = task
+	// 造出「收尾段跑完的现场」：工具状态目录，未跟踪。
+	for _, name := range []string{".claude", ".omc"} {
+		dir := filepath.Join(worktreePath, name)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "state.json"), []byte("{}"), 0o644); err != nil {
+			t.Fatalf("write %s state: %v", name, err)
+		}
+	}
+	if out := gitForTest(t, worktreePath, "status", "--porcelain"); !strings.Contains(out, "?? .claude") {
+		t.Fatalf("fixture must have untracked state dirs, got: %q", out)
+	}
+
+	if _, err := svc.FinishTaskWorktree(context.Background(), FinishWorktreeInput{
+		RootID: root.ID, TaskID: finishTaskID(t, svc, root.ID),
+		DeleteBranch: true, PruneOrphans: true,
+	}); err != nil {
+		t.Fatalf("finish must not be blocked by the tool's own leftovers: %v", err)
+	}
+	if _, err := os.Stat(worktreePath); !os.IsNotExist(err) {
+		t.Fatalf("the worktree directory should be gone, stat err = %v", err)
+	}
+	if out := gitForTest(t, mainDir, "branch", "--list", "task-1"); strings.Contains(out, "task-1") {
+		t.Fatalf("the branch should be deleted, got: %q", out)
+	}
+	_ = mainDir
+}
+
+// 反过来：用户的活绝不能被自动清掉。被跟踪文件的未提交改动必须让收尾停下来。
+func TestFinishRefusesWhenTheUserStillHasUncommittedWork(t *testing.T) {
+	svc, root, _, worktreePath := finishFixture(t, "work")
+	// 故意留下一个未提交的改动（agent 该提交而没提交的那种）。
+	if err := os.WriteFile(filepath.Join(worktreePath, "note.txt"), []byte("not committed yet"), 0o644); err != nil {
+		t.Fatalf("leave uncommitted work: %v", err)
+	}
+	before := gitForTest(t, worktreePath, "status", "--porcelain")
+	if !strings.Contains(before, "note.txt") {
+		t.Fatalf("fixture must have a modified tracked file, got: %q", before)
+	}
+
+	_, err := svc.FinishTaskWorktree(context.Background(), FinishWorktreeInput{
+		RootID: root.ID, TaskID: finishTaskID(t, svc, root.ID),
+		DeleteBranch: true, PruneOrphans: true,
+	})
+	if err == nil {
+		t.Fatal("finish must refuse while the user still has uncommitted work")
+	}
+	if !strings.Contains(err.Error(), "note.txt") {
+		t.Fatalf("the error must name the offending file, got: %v", err)
+	}
+	if _, statErr := os.Stat(worktreePath); statErr != nil {
+		t.Fatalf("the worktree must survive a refused finish, stat err = %v", statErr)
+	}
+	// 未提交的内容必须一字不少地还在。
+	if content := readFileString(t, filepath.Join(worktreePath, "note.txt")); content != "not committed yet" {
+		t.Fatalf("the user's uncommitted work must be untouched, got %q", content)
+	}
+}
+
+// 状态目录 + 用户自己的未跟踪文件混在一起时：只清状态目录，用户的那个要挡住收尾。
+func TestFinishCleansStateDirsButStillRefusesForTheUsersOwnFiles(t *testing.T) {
+	svc, root, _, worktreePath := finishFixture(t, "work")
+	if err := os.MkdirAll(filepath.Join(worktreePath, ".omc", "nested"), 0o755); err != nil {
+		t.Fatalf("mkdir .omc: %v", err)
+	}
+	mine := filepath.Join(worktreePath, "my-notes.md")
+	if err := os.WriteFile(mine, []byte("keep me"), 0o644); err != nil {
+		t.Fatalf("write user file: %v", err)
+	}
+
+	_, err := svc.FinishTaskWorktree(context.Background(), FinishWorktreeInput{
+		RootID: root.ID, TaskID: finishTaskID(t, svc, root.ID),
+		DeleteBranch: true, PruneOrphans: true,
+	})
+	if err == nil {
+		t.Fatal("an untracked file the user wrote must still block the teardown")
+	}
+	if !strings.Contains(err.Error(), "my-notes.md") {
+		t.Fatalf("the error must name the user's file, got: %v", err)
+	}
+	if _, statErr := os.Stat(mine); statErr != nil {
+		t.Fatalf("the user's own file must not be deleted: %v", statErr)
+	}
+	if content := readFileString(t, mine); content != "keep me" {
+		t.Fatalf("the user's file content must be untouched, got %q", content)
+	}
+}
+
+func readFileString(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(data)
+}

@@ -72,6 +72,9 @@ type FinishWorktreeResult struct {
 	BranchSkipReason string `json:"branch_skip_reason,omitempty"`
 	// Orphans 是 .worktree/ 下的残留目录（PruneOrphans 开着才有），只列不删。
 	Orphans []gitview.OrphanWorktreeDir `json:"orphans,omitempty"`
+	// CleanedLeftovers 是收尾为拆目录而清掉的工具状态目录（.claude/ .omc/ .mindfs/）。
+	// 报出来是为了让「它删了什么」可见 —— 静默删目录是最不该有的那种自动化。
+	CleanedLeftovers []string `json:"cleaned_leftovers,omitempty"`
 }
 
 // FinishTaskWorktree 收尾一个任务在 worktree 里的活：合回主 checkout → 拆 worktree
@@ -170,16 +173,34 @@ func (s *Service) FinishTaskWorktree(ctx context.Context, in FinishWorktreeInput
 	// 会话库），那种目录已经拆过了，再拆一次会拿到 "current root is not a git
 	// worktree"，把一次成功的收尾报成失败。目录压根不在则同样是已拆过（幂等）。
 	if isWT, wtErr := gitview.IsWorktree(worktreePath); wtErr == nil && isWT {
-		if err := gitview.RemoveWorktree(ctx, worktreePath); err != nil {
-			// 真正卡住 git 的是**被跟踪文件有未提交改动**（或未跟踪文件），不是
-			// .mindfs/ 那类被 gitignore 的目录 —— 那个实测能正常拆掉。报错要指向
-			// 真正的原因，否则用户会去删会话库、删完再点还是同一条错。
-			//
-			// 不 --force：--force 连带删掉的正是那些未提交的改动，替用户决定丢不丢
-			// 他的活不行。合并已经落地了，所以这里明确说清「哪一步成了、哪一步停了」。
+		// 先分清「挡住拆除的是工具产物还是用户的活」，再决定动不动手。
+		// 2026-10-02 端到端实测：不拆这一步，收尾会被**自己产生的** .claude/ 和
+		// .omc/ 挡住 —— agent 在收尾段里跑完留下的目录，下一步要拆的就是它。
+		// mindfs 自己的仓库靠 .gitignore 躲过了这一劫，但要管的是用户任意仓库，
+		// 那里不会有我们的忽略条目。
+		blockers, bErr := gitview.ClassifyWorktreeRemoveBlockers(ctx, worktreePath)
+		if bErr != nil {
 			return result, fmt.Errorf(
-				"合并已成功，但拆除 worktree 失败：%s 里有未提交的改动或未跟踪的文件，先处理掉再收尾（用 git status 查看）：%w",
-				worktreePath, err)
+				"合并已成功，但拆除 worktree 失败：读不了 %s 的 git 状态，不敢替你清理，先手工看一眼：%w",
+				worktreePath, bErr)
+		}
+		if len(blockers.UserChanges) > 0 {
+			// 用户的活一律不动。这是唯一必须停下来的情形。
+			return result, fmt.Errorf(
+				"合并已成功，但拆除 worktree 失败：%s 里还有没提交的东西（%s），先处理掉再收尾。工具自己留下的临时目录（.claude/ .omc/ .mindfs/）不用你管，那部分会自己清",
+				worktreePath, strings.Join(blockers.UserChanges, "、"))
+		}
+		if len(blockers.AgentLeftovers) > 0 {
+			// 只有工具产物：清掉再拆。删不掉也不拦（可能有会话正在写），
+			// 让 git 去报它自己的话。
+			result.CleanedLeftovers = gitview.CleanupAgentLeftovers(worktreePath, blockers.AgentLeftovers)
+		}
+		if err := gitview.RemoveWorktree(ctx, worktreePath); err != nil {
+			// 到这儿还失败，剩下的原因就不是「有未提交改动」了 —— 判据已经排除了。
+			// 原样透出 git 的话，不替用户猜。
+			// 不 --force：--force 删掉的正是那些未提交内容，替用户决定丢不丢他的活不行。
+			return result, fmt.Errorf(
+				"合并已成功，但拆除 worktree 失败：%w", err)
 		}
 		result.WorktreeRemoved = true
 	}

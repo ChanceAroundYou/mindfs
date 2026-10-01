@@ -605,3 +605,117 @@ func meaningfulDirtyPaths(ctx context.Context, dir string) ([]string, error) {
 	}
 	return paths, nil
 }
+
+// 收尾时挡住 `git worktree remove` 的东西要分成两类，处置方式完全相反。
+//
+// 2026-10-02 端到端实测撞到的：agent 在收尾段里跑完，worktree 里留下 `.claude/`
+// 和 `.omc/` 两个未跟踪目录。它们不是用户的活，是**收尾流程自己的产物** —— 服务端
+// 却在下一步要拆掉这个目录，被自己的产物挡住了。而 git 报的错是
+// 「contains modified or untracked files」，把这两类和「用户还有没提交的改动」
+// 混成一句话，用户看完只知道「有东西没清」，不知道该删哪个、该不该删。
+//
+// 另一类必须**绝不**自动清理：被跟踪文件的未提交改动、用户的未跟踪文件。
+// 那是别人的活，替用户决定丢不丢不行。
+//
+// 为什么不能靠 gitignore 一劳永逸：mindfs 自己的仓库确实忽略了 .claude/ 和 .omc/
+// （实测被忽略的目录不挡 remove），但 mindfs 要管理的是**用户的任意仓库** —— 里面
+// 不会有我们的 .gitignore 条目。所以这个判据必须长在收尾这一侧。
+type WorktreeRemoveBlockers struct {
+	// AgentLeftovers 是工具/编排自己留在 worktree 里的状态目录（.mindfs/、.omc/、
+	// .claude/）。收尾可以安全清掉：它们不属于这个任务该交付的东西，而且正是
+	// 它们挡住拆除。删不掉不报错（可能有正在跑的会话在写）。
+	AgentLeftovers []string `json:"agent_leftovers"`
+	// UserChanges 是**用户的活**：被跟踪文件的未提交改动，加上非状态目录的未跟踪
+	// 文件。空切片 = 拦路的只有工具产物，收尾可以放心拆。
+	UserChanges []string `json:"user_changes"`
+}
+
+// CleanupAgentLeftovers 删掉 names 列出的状态目录（若存在），返回删掉了哪些。
+//
+// 刻意只按白名单里的目录名删，不按「未跟踪」一刀切：未跟踪文件里可能有用户自己
+// 写的脚本、笔记、导出结果。名单是代码里的常量，不来自任何外部输入。
+func CleanupAgentLeftovers(worktreePath string, names []string) []string {
+	target := strings.TrimSpace(worktreePath)
+	if target == "" {
+		return nil
+	}
+	var removed []string
+	for _, name := range names {
+		clean := strings.TrimSpace(name)
+		if clean == "" || filepath.IsAbs(clean) || strings.Contains(clean, "..") {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(target, clean)); err != nil {
+			continue
+		}
+		removed = append(removed, clean)
+	}
+	return removed
+}
+
+// toolStateDirNames 是「工具自己会在项目里留下」的目录名（相对 worktree 根）。
+//
+// 与本文件里 PruneOrphanDirs 的注释保持一致：`.mindfs/` 是会话库、`.omc/` 是编排
+// 状态、`.claude/` 是 agent 的本地配置目录。三者都不是任务成品。
+var toolStateDirNames = []string{".mindfs", ".omc", ".claude"}
+
+// ClassifyWorktreeRemoveBlockers 列出挡住 `git worktree remove` 的东西，分成
+// 「工具产物」和「用户的活」两类。
+//
+// 判据用 `git status --porcelain -uall`：`-uall` 把未跟踪目录展开成一个个文件，
+// 否则只看到 `?? .omc/` 一个目录名，没法判断里面是不是有用户的东西。
+func ClassifyWorktreeRemoveBlockers(ctx context.Context, worktreePath string) (WorktreeRemoveBlockers, error) {
+	var out WorktreeRemoveBlockers
+	target := strings.TrimSpace(worktreePath)
+	if target == "" {
+		return out, nil
+	}
+	raw, err := runGit(ctx, target, "status", "--porcelain", "-uall")
+	if err != nil {
+		// 读不到状态就当「有东西挡着」：宁可让收尾停下来问一句，也不要在判据
+		// 失效时替用户删东西。
+		return out, err
+	}
+	stateDirs := make(map[string]bool, len(toolStateDirNames))
+	for _, name := range toolStateDirNames {
+		stateDirs[name] = true
+	}
+	for _, line := range strings.Split(raw, "\n") {
+		// porcelain v1 的行 = 「两个状态字符 + 一个空格 + 路径」。状态字符里**可能有
+		// 空格**（工作区已改是 " M"），所以必须按固定偏移取路径，**不能先 TrimSpace**
+		// —— 先 trim 掉那个前导空格再 [3:]，会把文件名第一个字符也吃掉
+		// （note.txt 变成 ote.txt，报错里给用户看的就是这个）。
+		if len(line) < 4 {
+			continue
+		}
+		code := line[:2]
+		entry := strings.TrimSpace(line[3:])
+		// 重命名写成 `old -> new`，取新路径。
+		if idx := strings.Index(entry, " -> "); idx >= 0 {
+			entry = strings.TrimSpace(entry[idx+4:])
+		}
+		entry = strings.Trim(strings.TrimSpace(entry), `"`)
+		if entry == "" {
+			continue
+		}
+		top := entry
+		if idx := strings.Index(top, "/"); idx > 0 {
+			top = top[:idx]
+		}
+		if code == "??" && stateDirs[top] {
+			out.AgentLeftovers = appendUnique(out.AgentLeftovers, top)
+			continue
+		}
+		out.UserChanges = appendUnique(out.UserChanges, entry)
+	}
+	return out, nil
+}
+
+func appendUnique(list []string, value string) []string {
+	for _, existing := range list {
+		if existing == value {
+			return list
+		}
+	}
+	return append(list, value)
+}
