@@ -37,6 +37,16 @@ type Runtime struct {
 	closed     bool
 }
 
+// initializeTimeout 给 ACP 握手封顶。
+//
+// 握手跑在 pool 生命周期的 processCtx 上，本身没有 deadline；而调用方持有
+// per-agent 运行时锁。一个不回应 initialize 的 agent 会让它永不返回，该 agent
+// 之后每个请求都堵在同一把锁上，永远停在 available=false / "probe pending"
+// （2026-10-02 dsh 卡死 58 分钟就是这个形态）。握手只是启动后一次 JSON-RPC
+// 往返，60s 已远超任何正常冷启动；池里的探测预算（probeSessionTimeout=45s）
+// 比它还短，所以先放弃的仍然是探测本身。
+var initializeTimeout = 60 * time.Second
+
 func NewRuntime(processCtx context.Context) *Runtime {
 	return &Runtime{
 		processCtx: processCtx,
@@ -54,30 +64,40 @@ func (r *Runtime) OpenSession(ctx context.Context, opts OpenOptions) (types.Sess
 		return nil, err
 	}
 
+	sess, err := openOnProcess(ctx, proc, opts)
+	if err != nil {
+		// 建立失败必须回收进程：进程按 agent 缓存在 Runtime 里，只有
+		// KillAgentProcess/CloseAll 摘得掉。失败的会话不会进 sessions，于是一个
+		// 「零会话」的 agent 进程会一直常驻（实测 100+MB），后续请求还会复用它
+		// 继续失败。先把本次的半成品记账清掉，再按剩余会话数决定进程去留。
+		proc.ForgetSession(opts.SessionKey)
+		r.releaseUnusedProcess(opts.AgentName)
+		return nil, err
+	}
+	return sess, nil
+}
+
+// openOnProcess 在已握手的进程上建立 ACP 会话并应用运行参数。
+func openOnProcess(ctx context.Context, proc *Process, opts OpenOptions) (types.Session, error) {
 	if strings.TrimSpace(opts.ResumeSessionID) != "" {
 		if err := proc.ResumeSession(ctx, opts.SessionKey, opts.ResumeSessionID, opts.Cwd); err != nil {
 			return nil, err
 		}
-	} else {
-		if err := proc.NewSession(ctx, opts.SessionKey, opts.RootPath); err != nil {
-			return nil, err
-		}
+	} else if err := proc.NewSession(ctx, opts.SessionKey, opts.RootPath); err != nil {
+		return nil, err
 	}
 	if strings.TrimSpace(opts.Model) != "" {
 		if err := proc.SetModel(ctx, opts.SessionKey, opts.Model); err != nil {
-			proc.ForgetSession(opts.SessionKey)
 			return nil, err
 		}
 	}
 	if strings.TrimSpace(opts.Mode) != "" {
 		if err := proc.SetMode(ctx, opts.SessionKey, opts.Mode); err != nil {
-			proc.ForgetSession(opts.SessionKey)
 			return nil, err
 		}
 	}
 	if strings.TrimSpace(opts.Effort) != "" {
 		if err := proc.SetThoughtLevel(ctx, opts.SessionKey, opts.Effort); err != nil {
-			proc.ForgetSession(opts.SessionKey)
 			return nil, err
 		}
 	}
@@ -86,6 +106,29 @@ func (r *Runtime) OpenSession(ctx context.Context, opts OpenOptions) (types.Sess
 		sessionKey:    opts.SessionKey,
 		agentDebugLog: logs.NewAgentLogger(opts.RootPath, opts.SessionKey, opts.AgentName),
 	}, nil
+}
+
+// releaseUnusedProcess 关掉并摘掉一个「一个会话都不剩」的进程。
+//
+// 还有别的会话挂在这个进程上时不能动它 —— 同 agent 的会话共用一个进程。
+// 并发前提：同一 agent 的 OpenSession 由调用方串行化（Pool.GetOrCreate 全程持有
+// per-agent 运行时锁），所以不存在「刚判定为零、同一刻又挂上新会话」的窗口。
+func (r *Runtime) releaseUnusedProcess(agentName string) {
+	if strings.TrimSpace(agentName) == "" {
+		return
+	}
+	r.mu.Lock()
+	proc, ok := r.processes[agentName]
+	if !ok || proc == nil || proc.LiveSessionCount() > 0 {
+		r.mu.Unlock()
+		return
+	}
+	delete(r.processes, agentName)
+	delete(r.closeHints, agentName)
+	r.mu.Unlock()
+	if err := proc.Close(); err != nil {
+		log.Printf("[agent/acp] process.release_unused.error agent=%s err=%v", agentName, err)
+	}
 }
 
 func mapCommandState(commands []acpsdk.AvailableCommand) types.CommandList {
@@ -282,9 +325,12 @@ func (r *Runtime) getOrCreateProcess(opts OpenOptions) (*Process, error) {
 		return nil, err
 	}
 
-	if err := proc.Initialize(r.processCtx); err != nil {
+	initCtx, cancelInit := context.WithTimeout(r.processCtx, initializeTimeout)
+	initErr := proc.Initialize(initCtx)
+	cancelInit()
+	if initErr != nil {
 		proc.Close()
-		return nil, err
+		return nil, initErr
 	}
 
 	r.mu.Lock()

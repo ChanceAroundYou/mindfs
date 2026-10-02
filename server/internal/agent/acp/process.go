@@ -291,6 +291,16 @@ func (p *Process) agentLabel() string {
 	return p.agentName
 }
 
+// LiveSessionCount 报告该进程当前仍记账在案的会话数。
+func (p *Process) LiveSessionCount() int {
+	if p == nil {
+		return 0
+	}
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return len(p.sessions)
+}
+
 func (p *Process) getSessionUpdateHandler(sessionID string) sessionUpdateHandler {
 	session := p.getSessionByID(sessionID)
 	if session == nil {
