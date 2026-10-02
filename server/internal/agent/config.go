@@ -161,6 +161,47 @@ func LoadConfig(path string) (Config, error) {
 	return mergeConfigs(baseCfg, userCfg), nil
 }
 
+// LoadUserConfig 只读用户层那一份（ResolveConfigPath），**不**叠加安装自带的定义。
+//
+// 写用户层的地方必须用它。那些写入点原本读 LoadConfig("")（= 安装自带 ⊕ 用户层），
+// 改一两个字段后把整份合并结果写回用户层，于是安装自带的定义被整份冻进用户层，
+// 上游之后改 agents.json 永远被这层旧快照盖住 —— dsh 的 installCommands 就这样
+// 一直停在坏的版本上。
+func LoadUserConfig() (Config, error) {
+	path, err := ResolveConfigPath()
+	if err != nil {
+		return Config{}, err
+	}
+	cfg, err := loadConfigFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return Config{}, nil
+		}
+		return Config{}, err
+	}
+	return cfg, nil
+}
+
+// SaveUserConfig 把用户层写回 ResolveConfigPath()。
+func SaveUserConfig(cfg Config) error {
+	path, err := ResolveConfigPath()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("mkdir %s: %w", filepath.Dir(path), err)
+	}
+	payload, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	payload = append(payload, '\n')
+	if err := os.WriteFile(path, payload, 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	return nil
+}
+
 func LoadConfigWithExtra(extraPath string) (Config, error) {
 	cfg, err := LoadConfig("")
 	if err != nil {
@@ -291,6 +332,19 @@ func mergeAgentDefinition(base Definition, override Definition) Definition {
 	merged := override
 	if merged.Brief == "" {
 		merged.Brief = base.Brief
+	}
+	// 空字段一律回退 base —— 后面这组以前漏了，于是一个只写了 name 的覆盖条目
+	// （用户层里为「只配了 env」而补的最小条目）会把上游的 command/args 清成空，
+	// agent 直接就起不来了。入库的配置经过 normalizeConfig 时 Protocol 会被填上，
+	// 只有内存里现造的条目才可能是空串。
+	if merged.Command == "" {
+		merged.Command = base.Command
+	}
+	if merged.Protocol == "" {
+		merged.Protocol = base.Protocol
+	}
+	if len(merged.Args) == 0 {
+		merged.Args = append([]string(nil), base.Args...)
 	}
 	if len(merged.InstallCommands) == 0 {
 		merged.InstallCommands = append(LifecycleCommands(nil), base.InstallCommands...)
@@ -502,6 +556,21 @@ func defaultConfig() Config {
 
 func windowsPowerShellCommandPrefix() string {
 	return "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); [Console]::InputEncoding = [Console]::OutputEncoding; $OutputEncoding = [Console]::OutputEncoding;"
+}
+
+// EnsureAgent 返回配置里该 agent 的条目指针；没有就补一个只有名字的最小条目。
+//
+// 最小条目靠 mergeAgentDefinition 的「空字段回退 base」把 command/args/协议等
+// 全部交给上游那份供给，所以写用户层时只需写用户自己配的东西（env、configBackup），
+// 不必也不该把合并结果整份搬进去。
+func (c *Config) EnsureAgent(name string) *Definition {
+	for i := range c.Agents {
+		if c.Agents[i].Name == name {
+			return &c.Agents[i]
+		}
+	}
+	c.Agents = append(c.Agents, Definition{Name: name})
+	return &c.Agents[len(c.Agents)-1]
 }
 
 // GetAgent returns an agent definition by name.

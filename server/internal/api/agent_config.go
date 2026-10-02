@@ -611,69 +611,44 @@ func expandUserPath(path string) (string, error) {
 	return filepath.Join(home, strings.TrimLeft(path[1:], `/\`)), nil
 }
 
-func updateAgentConfigDefaults(agentName string, fileSources []string, envKeys []string) error {
-	path, err := agent.ResolveConfigPath()
+// mutateUserAgent 读用户层、就地改指定 agent、写回用户层。
+//
+// 三个写入点（env / configBackup / provider switch）都走它。以前它们读的是
+// LoadConfig("")（安装自带 ⊕ 用户层），改完把**整份合并结果**写回用户层，
+// 于是上游定义被冻进用户层，之后改 agents.json 永远被那层旧快照盖住 ——
+// dsh 的 installCommands 就这样一直停在坏版本上。用户层只该留用户自己配的东西，
+// 上游那份由加载时的合并供给。
+func mutateUserAgent(agentName string, mutate func(*agent.Definition)) error {
+	cfg, err := agent.LoadUserConfig()
 	if err != nil {
 		return err
 	}
-	cfg, err := agent.LoadConfig("")
-	if err != nil {
-		return err
-	}
-	found := false
-	for i := range cfg.Agents {
-		if cfg.Agents[i].Name != agentName {
-			continue
+	if _, ok := cfg.GetAgent(agentName); !ok {
+		// 用户层里没有就先确认这名字在上游存在：否则会在用户层里造出一个
+		// command 为空的幽灵 agent（补最小条目靠的就是上游供给 command）。
+		effective, err := agent.LoadConfig("")
+		if err != nil {
+			return err
 		}
-		found = true
-		cfg.Agents[i].ConfigBackup.FileSources = append([]string(nil), fileSources...)
-		cfg.Agents[i].ConfigBackup.EnvKeys = append([]string(nil), envKeys...)
-		break
+		if _, ok := effective.GetAgent(agentName); !ok {
+			return fmt.Errorf("agent not configured: %s", agentName)
+		}
 	}
-	if !found {
-		return fmt.Errorf("agent not configured: %s", agentName)
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return apperr.Wrap("mkdir", filepath.Dir(path), err)
-	}
-	payload, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		return err
-	}
-	payload = append(payload, '\n')
-	return apperr.Wrap("write", path, os.WriteFile(path, payload, 0o644))
+	mutate(cfg.EnsureAgent(agentName))
+	return agent.SaveUserConfig(cfg)
+}
+
+func updateAgentConfigDefaults(agentName string, fileSources []string, envKeys []string) error {
+	return mutateUserAgent(agentName, func(def *agent.Definition) {
+		def.ConfigBackup.FileSources = append([]string(nil), fileSources...)
+		def.ConfigBackup.EnvKeys = append([]string(nil), envKeys...)
+	})
 }
 
 func updateAgentEnvConfig(agentName string, env map[string]string) error {
-	path, err := agent.ResolveConfigPath()
-	if err != nil {
-		return err
-	}
-	cfg, err := agent.LoadConfig("")
-	if err != nil {
-		return err
-	}
-	found := false
-	for i := range cfg.Agents {
-		if cfg.Agents[i].Name != agentName {
-			continue
-		}
-		found = true
-		cfg.Agents[i].Env = cloneStringMap(env)
-		break
-	}
-	if !found {
-		return fmt.Errorf("agent not configured: %s", agentName)
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return apperr.Wrap("mkdir", filepath.Dir(path), err)
-	}
-	payload, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		return err
-	}
-	payload = append(payload, '\n')
-	return apperr.Wrap("write", path, os.WriteFile(path, payload, 0o644))
+	return mutateUserAgent(agentName, func(def *agent.Definition) {
+		def.Env = cloneStringMap(env)
+	})
 }
 
 func cloneStringMap(input map[string]string) map[string]string {

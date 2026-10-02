@@ -1506,27 +1506,21 @@ func replaceAgentConfiguredEnv(agentName string, updates map[string]string) (map
 }
 
 func writeAgentEnvConfig(agentName string, updates map[string]string, clearConfigured bool) (map[string]string, error) {
-	path, err := agent.ResolveConfigPath()
+	// clearConfigured 要删的是「配置档记过账的 key」，那份记录在 ConfigBackup 里。
+	// 这里读生效配置（安装自带 ⊕ 用户层）只是**只读查表**，不会再被写回用户层。
+	clearKeys, err := configuredEnvKeys(agentName)
 	if err != nil {
 		return nil, err
 	}
-	cfg, err := agent.LoadConfig("")
-	if err != nil {
-		return nil, err
-	}
-	found := false
+
 	var merged map[string]string
-	for i := range cfg.Agents {
-		if cfg.Agents[i].Name != agentName {
-			continue
-		}
-		found = true
-		merged = cloneStringMap(cfg.Agents[i].Env)
+	err = mutateUserAgent(agentName, func(def *agent.Definition) {
+		merged = cloneStringMap(def.Env)
 		if merged == nil {
 			merged = map[string]string{}
 		}
 		if clearConfigured {
-			for _, key := range cfg.Agents[i].ConfigBackup.EnvKeys {
+			for _, key := range clearKeys {
 				delete(merged, key)
 			}
 		}
@@ -1537,24 +1531,34 @@ func writeAgentEnvConfig(agentName string, updates map[string]string, clearConfi
 			}
 			merged[key] = value
 		}
-		cfg.Agents[i].Env = cloneStringMap(merged)
-		break
-	}
-	if !found {
-		return nil, fmt.Errorf("agent not configured: %s", agentName)
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return nil, apperr.Wrap("mkdir", filepath.Dir(path), err)
-	}
-	payload, err := json.MarshalIndent(cfg, "", "  ")
+		def.Env = cloneStringMap(merged)
+	})
 	if err != nil {
 		return nil, err
 	}
-	payload = append(payload, '\n')
-	if err := os.WriteFile(path, payload, 0o644); err != nil {
-		return nil, apperr.Wrap("write", path, err)
+
+	// 调用方拿这个 env 去 SetAgentEnv，而它是**整份替换**：必须是生效 env，
+	// 用户层没写的键还得靠安装自带那份供给，只回传用户层会当场把它们抹掉。
+	effective, err := agent.LoadConfig("")
+	if err != nil {
+		return nil, err
+	}
+	if def, ok := effective.GetAgent(agentName); ok && len(def.Env) > 0 {
+		return cloneStringMap(def.Env), nil
 	}
 	return merged, nil
+}
+
+// configuredEnvKeys 取配置档记过账的 env key。用户层没记就回退到上游那份。
+func configuredEnvKeys(agentName string) ([]string, error) {
+	cfg, err := agent.LoadConfig("")
+	if err != nil {
+		return nil, err
+	}
+	if def, ok := cfg.GetAgent(agentName); ok {
+		return def.ConfigBackup.EnvKeys, nil
+	}
+	return nil, nil
 }
 
 func probeAgentAPIProvider(ctx context.Context, baseURL, apiKey string) (agentAPIProviderProbeResult, error) {

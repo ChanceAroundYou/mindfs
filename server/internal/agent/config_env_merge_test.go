@@ -45,6 +45,39 @@ func TestMergeAgentDefinitionKeepsBaseEnvWhenOverrideHasNone(t *testing.T) {
 	}
 }
 
+// 「只配了 env」的最小条目（写用户层时为记 env 补的 `{"name":"dsh"}`）不能把上游定义清空。
+//
+// 用户层的写入点只改 env/configBackup，其余字段全交给合并回退 —— 所以回退必须覆盖
+// command/args/协议。漏了 command 的后果是 agent 直接起不来（命令为空串）。
+func TestMergeAgentDefinitionKeepsBaseFieldsForMinimalEntry(t *testing.T) {
+	base := Definition{
+		Name:            "dsh",
+		Brief:           "DeepSeek Harness",
+		Command:         "dsh",
+		Protocol:        ProtocolACP,
+		Args:            []string{"--profile", "mindfs-acp"},
+		InstallCommands: LifecycleCommands{"npm i -g @deepseek-ai/dsh"},
+	}
+	merged := mergeConfigs(
+		Config{Agents: []Definition{base}},
+		Config{Agents: []Definition{{Name: "dsh"}}},
+	)
+
+	got := merged.Agents[0]
+	if got.Command != base.Command {
+		t.Fatalf("command 被最小条目清空了：%q", got.Command)
+	}
+	if got.Protocol != base.Protocol {
+		t.Fatalf("protocol = %q, want %q", got.Protocol, base.Protocol)
+	}
+	if !reflect.DeepEqual(got.Args, base.Args) {
+		t.Fatalf("args = %#v, want %#v", got.Args, base.Args)
+	}
+	if got.Brief != base.Brief || len(got.InstallCommands) != 1 {
+		t.Fatalf("其余字段没回退 base：%#v", got)
+	}
+}
+
 // override 自己带了 env 时，仍然以 override 为准（与 Brief/InstallCommands 等同口径），
 // 不能反过来被 base 覆盖。
 func TestMergeAgentDefinitionPrefersOverrideEnv(t *testing.T) {
