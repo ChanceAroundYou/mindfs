@@ -316,6 +316,7 @@ func (s *AppContext) EnsureAgentSession(ctx context.Context, exec kanban.AgentSt
 		return "", err
 	}
 	s.BroadcastSessionMetaUpdated(exec.RootID, created)
+	s.BroadcastSessionCreated(exec.RootID, created)
 	return created.Key, nil
 }
 
@@ -875,6 +876,31 @@ func (s *AppContext) BroadcastSessionMetaUpdated(rootID string, sess *session.Se
 				"worktree_missing":    sess.RelatedWorktree.WorktreeMissing(),
 				"updated_at":          sess.UpdatedAt,
 			},
+		},
+	})
+}
+
+// BroadcastSessionCreated 广播「新会话出现了」。
+//
+// 为什么必须单列一个事件、而不能靠 session.meta.updated 顶替：前者的前端 handler
+// 会把新会话**补进列表快照**（loadMultiProjectSessionGroups / scheduleSessionListReload），
+// 后者只更新 sessionCacheRef 里**已经存在**的条目。两者对「列表里还没有这个会话」的
+// 场合表现完全不同——发 meta.updated 只会让已缓存的条目更新元信息。
+//
+// 谁会建出会话：前端 WS 建会话（ws.go handleChatMessage 那条，那条紧接着会发
+// session.created 之外的事件）、看板/定时任务（AppContext.EnsureAgentSession、
+// scheduled/tasks.go）——它们过去只发 meta.updated，于是「用户不在这个项目页时
+// 看板建的会话」永远进不了对话列表（实测：任务 #5 的会话在库里、在 API 返回里、
+// 就是不在列表里）。所以凡是建会话的路径都统一走这个函数。
+func (s *AppContext) BroadcastSessionCreated(rootID string, sess *session.Session) {
+	if s == nil || sess == nil {
+		return
+	}
+	s.GetSessionStreamHub().BroadcastAll(WSResponse{
+		Type: "session.created",
+		Payload: map[string]any{
+			"root_id": rootID,
+			"session": sessionListResponse(sess, s.ResolveCommandShell()),
 		},
 	})
 }

@@ -305,6 +305,9 @@ export function App({ onGoHome }: AppProps) {
   // 跨节点时远端的「开始/结束」没有 WS 兜底（没订阅那些会话），只能低频问一次。
   // ponytail: 固定 5s。调小更跟手但请求翻倍；要零延迟得让远端节点跨机广播 pending 变更。
   const REMOTE_REPLY_POLL_MS = 5000;
+  // session.created 现在是所有建会话路径的统一信号（看板/定时/子会话/fork），
+  // 一次动作可能连发好几条；合并 300ms 窗口内的多次重拉，避免逐节点扇出打爆接口。
+  const MULTI_PROJECT_RELOAD_DEBOUNCE_MS = 300;
   const [multiProjectSessionGroups, setMultiProjectSessionGroups] = useState<MultiProjectSessionGroup[]>([]);
   // 多项目分组的 ref 镜像：删除会话时要跨分组收集整棵子树，只看 sessionsRef 会漏掉
   // 只存在于分组里的子会话（它们随后会被提升成顶层行，把面板撑爆）。
@@ -3312,7 +3315,10 @@ export function App({ onGoHome }: AppProps) {
         for (const g of prevList) {
           const nid = String((g as any)?._nodeId || "").trim();
           if (failedNids.has(nid)) {
-            merged.push(g);
+            // 节点不可达：**保留旧分组是对的**（不清屏），但必须打标 ——
+            // B3：断联时列表里那批会话只有骨架，正文现拉现挂。标出来让分组头显示
+            // 「节点连不上」，用户才知道是那边断了，而不是这批会话坏了。
+            merged.push({ ...g, _unreachable: true } as MultiProjectSessionGroup);
             continue;
           }
           const k = scopeOf(g);
@@ -3347,6 +3353,43 @@ export function App({ onGoHome }: AppProps) {
       }
     }
   }, [applyPendingToMultiProjectGroups, multiProjectSessionsEnabled]);
+
+  const multiProjectReloadTimerRef = useRef<number | null>(null);
+
+  /**
+   * 合并窗口内多次「多项目会话重拉」为最后一次。
+   *
+   * 什么时候会连发：session.created 现在是**所有**建会话路径的统一信号了
+   * （看板任务、定时任务、子会话、fork），而一次看板动作可能连带建多个会话；
+   * agent 密集起子代理时更是一串 created。原来这些路径压根不发 created，所以
+   * 裸调 loadMultiProjectSessionGroups 不觉得多；统一信号一加，
+   * 每次 created 都会扇出一次 `/api/sessions?multi_root=1`（逐节点各一次），
+   * 密集建会话时能把接口打爆。
+   *
+   * 窗口取 300ms，与 scheduleSessionListReload 同一档：单个节点的
+   * `/api/sessions?multi_root=1` 实测 100–400ms，300ms 足够合并一串事件，
+   * 又短到用户感知不到延迟。
+   */
+  const scheduleMultiProjectSessionReload = useCallback(() => {
+    if (multiProjectReloadTimerRef.current !== null) {
+      window.clearTimeout(multiProjectReloadTimerRef.current);
+    }
+    multiProjectReloadTimerRef.current = window.setTimeout(() => {
+      multiProjectReloadTimerRef.current = null;
+      void loadMultiProjectSessionGroups();
+    }, MULTI_PROJECT_RELOAD_DEBOUNCE_MS);
+  }, [loadMultiProjectSessionGroups]);
+
+  // 卸载时清掉挂着的定时器：否则切走页面后还会打一次扇出
+  useEffect(
+    () => () => {
+      if (multiProjectReloadTimerRef.current !== null) {
+        window.clearTimeout(multiProjectReloadTimerRef.current);
+        multiProjectReloadTimerRef.current = null;
+      }
+    },
+    [],
+  );
 
   const loadMoreMultiProjectSessions = useCallback(
     async (group: ProjectSessionGroup) => {
@@ -7117,6 +7160,7 @@ export function App({ onGoHome }: AppProps) {
       invalidatePluginsForRoot,
       loadManagedRootPayloads,
       loadMultiProjectSessionGroups,
+      scheduleMultiProjectSessionReload,
       loadSessionsForRoot,
       markSessionPending,
       markSessionStale,

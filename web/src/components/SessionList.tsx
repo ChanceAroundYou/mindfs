@@ -1223,6 +1223,9 @@ export function MultiProjectSessionList({
               const rows = buildRows(sessions, group.rootId, groupNodeId);
               const remaining = Math.max(0, group.totalCount - topLevelSessions.length);
               const projectLoading = !!loadingProjects[groupKey];
+              // 节点本轮没拉到：列表里这批是上次的旧快照（保留是对的），但要点破 ——
+              // 断联时点开只有会话名、没有正文，不说明的话看着就像会话坏了。
+              const groupUnreachable = (group as any)._unreachable === true;
               return (
                 <section key={`${(group as any)._nodeId || ""}::${group.rootId}`} style={{ minWidth: 0 }}>
                   <div style={{ position: "relative" }}>
@@ -1231,6 +1234,7 @@ export function MultiProjectSessionList({
                       label={group.rootName || group.rootId}
                       collapsed={!expanded}
                       onClick={() => void handleProjectHeaderToggle(group)}
+                      notice={groupUnreachable ? t("sessionList.nodeUnreachable") : undefined}
                     />
                     <button
                       type="button"

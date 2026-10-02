@@ -7,10 +7,11 @@
  * 自己打标。扇出的形状照搬 loadMultiProjectSessionGroups（App.tsx 内）：
  * 同一套节点清单、同一套去重键、同一套初始化竞态回退、同样「一节点失败不阻塞其余」。
  *
- * 聚合以 managedRootIds 为**基准**而不是以返回的 items 为基准：后端只 append 有任务的项目
- * （Overview 里逐 root 拉、拉到才 append），拿 items 建组会让「一个任务都没有的项目」
- * 和「本节点没有、但别的节点有同名项目」的情况混为一谈 —— 复合键只有对 managedRootIds
- * 逐个求值才认得出来。组建出来后再按筛选收窄，匹配不到任何任务的组不渲染。
+ * 聚合以 managedRootIds **∪ 任务里出现的 nodeId::root_id** 为基准：
+ * 纯 managedRootIds 的话非本机项目即使有任务也不成组（pc 断联恢复后「pc 的任务全没了」，
+ * 实测就是这里）；纯 items 的话「一个任务都没有的项目」和「本节点没有、但别的节点有同名项目」
+ * 混为一谈 —— 复合键只有对 managedRootIds 逐个求值才认得出来。两者取并集后，
+ * 组建出来再按筛选收窄，匹配不到任何任务的组不渲染。
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -41,6 +42,8 @@ export type WorkspaceBoard = {
   /** 全部项目的 blocked 汇总，顶部条带渲染用；按 updated_at 倒序 */
   blockedAll: WorkspaceTaskItem[];
   loading: boolean;
+  /** 本轮拉取失败的节点（B3）：面板上要显式说「这些节点没拉到」，别让人以为任务没了 */
+  unreachableNodes: Array<{ id: string; name: string }>;
   refresh: () => void;
 };
 
@@ -51,13 +54,35 @@ const EMPTY_ITEMS: WorkspaceTaskItem[] = [];
 const byUpdatedDesc = (a: WorkspaceTaskItem, b: WorkspaceTaskItem): number =>
   String(b.task.updated_at || "").localeCompare(String(a.task.updated_at || ""));
 
-/** 跨节点/跨机器重名项目都可能出现，同一 rootId 可能有多个节点副本 */
-function toRootEntries(rootIds: string[], getNodeId: (rootId: string) => string | undefined): Array<{ rootId: string; nodeId: string }> {
+/**
+ * 复合键只用 scopeKey(nodeId, rootId) 不够：本地项目的 rootId 与远端同名项目完全一样，
+ * scopeKey 也认不出来（后端 Overview 不带 nodeId，前端打标用的就是空串）。所以本地那一路
+ * 要用 managedRootIds 里记下的 nodeId 去对齐。
+ */
+function scopeKeyForItem(item: WorkspaceTaskItem, getNodeId: (rootId: string) => string | undefined): string {
+  const rootId = String(item?.root_id || "");
+  const nodeId = String(item?.nodeId || "").trim() || String(getNodeId(rootId) || "").trim();
+  return scopeKey(nodeId, rootId);
+}
+
+/**
+ * 逐个 managedRootIds 求值不出来的，交给这个函数兜底。
+ *
+ * 以前分组来源只有 managedRootIds（本机 registry 的项目 id）当**基准**，于是非本机项目
+ * 即便有任务也不成组——「pc 上跑的任务在 pc 断联恢复后消失」就是这么来的。现在改成
+ * 两者取并集：managedRootIds 负责本机项目（含一个任务都没有的，配合筛选后不渲染），
+ * 任务里出现的 nodeId::root_id 负责补齐本机清单里没有的（通常是别的节点上的项目）。
+ */
+function toGroupEntries(
+  rootIds: string[],
+  getNodeId: (rootId: string) => string | undefined,
+  byProject: Map<string, WorkspaceTaskItem[]>,
+): Array<{ rootId: string; nodeId: string }> {
   const seen = new Set<string>();
   const entries: Array<{ rootId: string; nodeId: string }> = [];
   const push = (rootId: string, nodeId: string) => {
     const key = scopeKey(nodeId, rootId);
-    if (seen.has(key)) return;
+    if (!rootId || seen.has(key)) return;
     seen.add(key);
     entries.push({ rootId, nodeId });
   };
@@ -66,6 +91,12 @@ function toRootEntries(rootIds: string[], getNodeId: (rootId: string) => string 
     // 当前选中的项目优先按其选中节点路由，避免同名项目被多节点表覆盖到错误节点
     const nodeId = String(getNodeId(rootId) || "").trim();
     if (nodeId) push(rootId, nodeId);
+  }
+  // 任务里出现、但本机项目清单里没有的组合（比如别的节点上的项目）
+  for (const [key, bucket] of byProject) {
+    if (seen.has(key) || bucket.length === 0) continue;
+    const first = bucket[0];
+    push(String(first?.root_id || ""), String(first?.nodeId || "").trim());
   }
   return entries;
 }
@@ -91,6 +122,9 @@ export function useWorkspaceBoard(params: {
   const [items, setItems] = useState<WorkspaceTaskItem[]>(EMPTY_ITEMS);
   const [loading, setLoading] = useState(false);
   const [localToken, setLocalToken] = useState(0);
+  // 本轮拉取失败的节点（B3）：远端断联时它们的任务会缺席，必须显式提示，
+  // 否则「任务凭空消失」和「那边真的没任务」长得一模一样。
+  const [unreachableNodes, setUnreachableNodes] = useState<Array<{ id: string; name: string }>>([]);
   // 这些每渲染都会新造一份，塞进依赖会把 effect 抖成死循环 —— 用 ref 读最新值
   const cfgRef = useRef(params);
   cfgRef.current = params;
@@ -126,13 +160,19 @@ export function useWorkspaceBoard(params: {
         }
         return;
       }
-      // 2) 扇出：一个节点失败返回空，不阻塞其余节点
+      // 2) 扇出：一个节点失败返回空，不阻塞其余节点。
+      //    失败的节点要**记下来**（B3）：远端挂起时 tasks 拉空，用户看到的是
+      //    「pc 上的任务凭空消失了」，而这其实是拉取失败。区分开才能给提示。
+      //    挂起由 protectedJSON 的 10s deadline 兜底（见 services/api.ts），
+      //    不然 Promise.all 会被一个节点拖住，本机数据也提交不上去。
+      const failedNodeIds: string[] = [];
       const results = await Promise.all(
         targets.map(async (nid) => {
           try {
             const list = await fetchTasksOverview(nid || undefined);
             return list.map((item) => ({ ...item, nodeId: nid })) as WorkspaceTaskItem[];
           } catch {
+            failedNodeIds.push(nid);
             return [] as WorkspaceTaskItem[];
           }
         }),
@@ -147,6 +187,12 @@ export function useWorkspaceBoard(params: {
         if (!prev || String(item.task.updated_at || "") > String(prev.task.updated_at || "")) byKey.set(key, item);
       }
       setItems(Array.from(byKey.values()));
+      setUnreachableNodes(
+        failedNodeIds
+          .map((nid) => getNodes().find((n: any) => String(n?.id || "") === nid))
+          .filter((n): n is any => !!n)
+          .map((n: any) => ({ id: String(n.id), name: String(n.name || n.id) })),
+      );
       setLoading(false);
     })();
     return () => { cancelled = true; };
@@ -157,12 +203,12 @@ export function useWorkspaceBoard(params: {
   const projects = useMemo<WorkspaceProjectGroup[]>(() => {
     const byProject = new Map<string, WorkspaceTaskItem[]>();
     for (const item of items) {
-      const key = scopeKey(item.nodeId, item.root_id);
+      const key = scopeKeyForItem(item, getNodeId);
       const bucket = byProject.get(key);
       if (bucket) bucket.push(item);
       else byProject.set(key, [item]);
     }
-    return toRootEntries(managedRootIds, getNodeId)
+    return toGroupEntries(managedRootIds, getNodeId, byProject)
       .map(({ rootId, nodeId }) => {
         const key = scopeKey(nodeId, rootId);
         const bucket = (byProject.get(key) || []).slice().sort(byUpdatedDesc);
@@ -186,7 +232,7 @@ export function useWorkspaceBoard(params: {
     [items],
   );
 
-  return { projects, blockedAll, loading, refresh };
+  return { projects, blockedAll, loading, unreachableNodes, refresh };
 }
 
 /** 待审核：等人回话。顶部条带与「待处理」筛选都按这批。 */

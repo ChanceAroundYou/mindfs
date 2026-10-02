@@ -1501,7 +1501,11 @@ func (h *HTTPHandler) sessionResponse(
 	return resp
 }
 
-func (h *HTTPHandler) sessionListResponse(s *session.Session) map[string]any {
+// sessionListResponse 是会话的「列表行」形状（/api/sessions 每条、以及 session.created
+// 广播的 payload）。抽成包级函数是为了让 AppContext 的广播路径能用上同一份构造 ——
+// 它只有 AppContext、没有 HTTPHandler。resolvedShell 是 command 类会话的 shell 解析结果
+// （HTTPHandler 那侧来自 commandShellForSession）；非 command 会话忽略它。
+func sessionListResponse(s *session.Session, resolvedShell string) map[string]any {
 	if s == nil {
 		return map[string]any{}
 	}
@@ -1518,7 +1522,7 @@ func (h *HTTPHandler) sessionListResponse(s *session.Session) map[string]any {
 		"effort":              session.InferEffortFromSession(s),
 		"fast_service":        session.InferFastServiceFromSession(s),
 		"plan_mode":           s.PlanMode,
-		"shell":               h.commandShellForSession(s),
+		"shell":               commandShellField(s, resolvedShell),
 		"name":                s.Name,
 		"related_worktree":    s.RelatedWorktree,
 		"worktree_missing":    s.RelatedWorktree.WorktreeMissing(),
@@ -1528,6 +1532,47 @@ func (h *HTTPHandler) sessionListResponse(s *session.Session) map[string]any {
 		"updated_at":          s.UpdatedAt,
 		"closed_at":           s.ClosedAt,
 	}
+}
+
+func commandShellField(s *session.Session, resolvedShell string) string {
+	if s == nil || s.Type != session.TypeCommand {
+		return ""
+	}
+	if shell := strings.TrimSpace(s.Shell); shell != "" {
+		return shell
+	}
+	return strings.TrimSpace(resolvedShell)
+}
+
+func (h *HTTPHandler) sessionListResponse(s *session.Session) map[string]any {
+	return sessionListResponse(s, h.resolveCommandShell())
+}
+
+// resolveCommandShell 算出配置里解析出的默认 shell（command 类会话没显式指定时用）。
+// AppContext 侧的广播要能填 shell 字段，但那边没有 HTTPHandler，所以这个解析独立成方法。
+func (s *AppContext) ResolveCommandShell() string {
+	if s == nil {
+		return ""
+	}
+	pool := s.GetAgentPool()
+	if pool == nil {
+		return ""
+	}
+	cfg := pool.Config()
+	shells := make([]commandexec.ShellSpec, 0, len(cfg.Shells))
+	for _, shell := range cfg.Shells {
+		shells = append(shells, commandexec.ShellSpec{
+			Command:       shell.Command,
+			Args:          append([]string(nil), shell.Args...),
+			LongShellArgs: append([]string(nil), shell.LongShellArgs...),
+			CommandPrefix: shell.CommandPrefix,
+		})
+	}
+	return commandexec.ResolveShell(shells)
+}
+
+func (h *HTTPHandler) resolveCommandShell() string {
+	return h.AppContext.ResolveCommandShell()
 }
 
 func (h *HTTPHandler) configuredShells() []commandexec.ShellSpec {

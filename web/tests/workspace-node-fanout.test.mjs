@@ -9,10 +9,22 @@ const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 const goService = readFileSync(new URL("../../server/internal/kanban/service.go", import.meta.url), "utf8");
 
 // 1) 扇出走 Promise.all，一个节点失败不阻塞其余（与 loadMultiProjectSessionGroups 同一形状）
+//    catch 分支还必须**记下失败的节点**：断联时 tasks 拉空，用户看到的是「任务凭空消失」，
+//    和「那边真的没任务」长得一模一样（B3）。
 assert.match(
   board,
-  /await Promise\.all\(\s*targets\.map\(async \(nid\) => \{[\s\S]*?try \{[\s\S]*?\} catch \{\s*return \[\] as WorkspaceTaskItem\[\];/,
+  /await Promise\.all\(\s*targets\.map\(async \(nid\) => \{[\s\S]*?try \{[\s\S]*?\} catch \{[\s\S]*?return \[\] as WorkspaceTaskItem\[\];/,
   "the fan-out must use Promise.all and swallow a single node's failure",
+);
+assert.match(
+  board,
+  /\} catch \{\s*failedNodeIds\.push\(nid\);/,
+  "a failing node must be recorded, otherwise its tasks silently vanish with no explanation",
+);
+assert.match(
+  board,
+  /setUnreachableNodes\(/,
+  "unreachable nodes must be surfaced to the view layer",
 );
 
 // 2) 节点清单必须来自 getNodes()，并与 managedRootIds 解析出的节点取并集
@@ -42,15 +54,27 @@ assert.match(
   "dedup key must be nodeId::rootId::taskId so homonymous projects on different nodes stay distinct",
 );
 
-// 4) 聚合以 managedRootIds 为基准，不是以返回的 items 为基准 ——
-//    后端只 append 有任务的项目，拿 items 建组会让「只存在于 managedRootIds、
-//    本节点没回包的」那个项目连键都对不上。建完再按匹配到的任务收窄，匹配不到就不渲染。
+// 4) 分组来源 = managedRootIds **∪ 任务里出现的 nodeId::root_id**。
+//    纯 managedRootIds（本机 registry）当唯一基准时，非本机项目即使有任务也不成组 ——
+//    「pc 上的任务全没了」就是这个：pc 恢复后它的项目不在本机清单里。
+//    纯 items 又会让「一个任务都没有的项目」和「本节点没有、别的节点有同名项目」混为一谈。
+//    两者取并集，建完再按匹配到的任务收窄，匹配不到就不渲染。
 assert.match(
   board,
-  /return toRootEntries\(managedRootIds, getNodeId\)/,
-  "groups must be seeded from managedRootIds, not from the fetched items",
+  /return toGroupEntries\(managedRootIds, getNodeId, byProject\)/,
+  "groups must be seeded from managedRootIds union the nodeId::root_id pairs actually seen in items",
 );
-assert.match(board, /export function toRootEntries|function toRootEntries/, "the seeding helper must exist");
+assert.match(board, /function toGroupEntries/, "the seeding helper must exist");
+assert.match(
+  board,
+  /for \(const \[key, bucket\] of byProject\) \{[\s\S]*?if \(seen\.has\(key\) \|\| bucket\.length === 0\) continue;[\s\S]*?push\(String\(first\?\.root_id \|\| ""\), String\(first\?\.nodeId \|\| ""\)\.trim\(\)\);/,
+  "the seeding helper must also emit nodeId::root_id pairs that only exist in the fetched items",
+);
+assert.match(
+  board,
+  /const key = scopeKeyForItem\(item, getNodeId\);/,
+  "the bucket key must fall back to the managed-root node id when the item carries none",
+);
 assert.match(
   board,
   /\.filter\(\(group\) => group\.tasks\.length > 0\);/,

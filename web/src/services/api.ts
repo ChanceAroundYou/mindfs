@@ -17,6 +17,137 @@ export class APIError extends Error {
 // 兼容旧名：保留导出，避免一次性改动过大遗漏处崩溃
 export const ProtectedAPIError = APIError;
 
+/**
+ * 跨节点请求的挂起兜底（毫秒）。
+ *
+ * 为什么必须有：远端节点挂掉时**不一定**快速失败。实测 pc 断联后
+ * `https://pc.xiaokubao.space/...` 25 秒仍无响应（`http_code=000`，连接建立/被黑洞丢弃后
+ * 服务端永不回话），而 DNS 解析失败只要 0.1 秒。浏览器 `fetch` 对「连上了但不回话」这种
+ * 情况**没有内置超时**（约 2 分钟后才由 TCP 层报错），于是：
+ *
+ *   - `Promise.all` 扇出的会话列表/工作台重拉被这一个节点拖住，
+ *     其余节点的数据回来了也提交不上去（`setLoading(false)` 永远不执行）；
+ *   - `withNodeRetry` 每次重试又各挂 2 分钟，越拖越久。
+ *
+ * 有了这个 deadline，挂起会在 10 秒内变成一次**确定的失败**，调用方按既有分支处理
+ * （会话列表保留该节点旧分组 + 弹「节点加载失败」；工作台跳过该节点），本机数据照常刷新。
+ *
+ * 取 10 秒：本机节点的 `/api/sessions?multi_root=1` 实测 100–400ms，10 秒留了
+ * 一个数量级的余量；再长只会让「真挂住」的感觉更久。
+ */
+export const NODE_REQUEST_TIMEOUT_MS = 10000;
+
+/** 超过这个毫秒数的请求视为「跨节点重拉」才加 deadline：本机请求不给人为上限 */
+const LOCAL_REQUEST_TIMEOUT_MS = 0;
+
+export class RequestTimeoutError extends Error {
+  timeoutMs: number;
+  constructor(timeoutMs: number) {
+    super(`request timed out after ${timeoutMs}ms`);
+    this.name = "RequestTimeoutError";
+    this.timeoutMs = timeoutMs;
+  }
+}
+
+/** 是不是打向别的机器（是的话才有「对方可能挂起」这回事） */
+function isCrossMachineRequest(input: RequestInfo | URL): boolean {
+  try {
+    const raw = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    if (!raw) return false;
+    return !isSameServerAsPage(raw);
+  } catch {
+    return false;
+  }
+}
+
+function requestTimeoutMs(input: RequestInfo | URL): number {
+  if (typeof AbortController === "undefined") return 0;
+  return isCrossMachineRequest(input) ? NODE_REQUEST_TIMEOUT_MS : LOCAL_REQUEST_TIMEOUT_MS;
+}
+
+/**
+ * 给 init 补上 deadline（跨机器才补，本机请求不动 —— 不给正常请求设人为上限）。
+ *
+ * 调用方已经带了 `signal` 时不再覆盖：那是它自己编排的取消语义，混进去会分不清
+ * 「超时了」还是「调用方取消了」。
+ *
+ * 返回 deadline 元信息供调用方清理定时器 —— AbortController 没有「取消超时」的口子，
+ * 定时器只能自己 clearTimeout，否则每次扇出都会漏一个 10 秒的挂单。
+ */
+function withRequestDeadline(
+  input: RequestInfo | URL,
+  init: RequestInit,
+): { init: RequestInit; timeoutMs: number; timer: ReturnType<typeof setTimeout> | null; expired: () => boolean } {
+  const timeoutMs =
+    typeof AbortController === "undefined" || init.signal
+      ? 0
+      : requestTimeoutMs(input);
+  if (timeoutMs <= 0) {
+    return { init, timeoutMs: 0, timer: null, expired: () => false };
+  }
+  const controller = new AbortController();
+  let expired = false;
+  const timer = setTimeout(() => {
+    expired = true;
+    controller.abort();
+  }, timeoutMs);
+  return { init: { ...init, signal: controller.signal }, timeoutMs, timer, expired: () => expired };
+}
+
+/**
+ * deadline 兜底生效时，把底层五花八门的网络错误统一换成可识别的 RequestTimeoutError。
+ *
+ * 关键是判「有没有 deadline 在管这次请求」，而不是判错误的**名字**。实测挂起时的形态
+ * 因运行时而异：浏览器大多给 `AbortError: The operation was aborted due to timeout`，
+ * Node/undici 给的是 `TypeError: fetch failed` 包着一个 `ConnectTimeoutError`（10 秒的
+ * 连接超时和我们的 deadline 撞车，谁先到不确定）—— 只认 AbortError 会漏掉后者。
+ *
+ * 范围也只限「抛出来的」错误：HTTP 层的 4xx/5xx 是走 Response 回来的、根本进不到这里，
+ * 所以进了这里就说明这次请求没能拿到响应，而在有 deadline 的前提下，那就是「没在时间内答话」。
+ *
+ * 调用方自带 signal（timeoutMs 为 0）时什么都不改 —— 那是它自己的取消语义。
+ */
+function normalizeAbortError(err: unknown, timeoutMs: number, expired: boolean): unknown {
+  if (timeoutMs <= 0) return err;
+  if (expired || (err as any)?.name === "AbortError" || !(err instanceof APIError)) {
+    return new RequestTimeoutError(timeoutMs);
+  }
+  return err;
+}
+
+/** fetch 的统一入口：所有 protected 系列最终都过这里，deadline 只需要挂一次 */
+async function fetchWithDeadline(input: RequestInfo | URL, init: RequestInit): Promise<Response> {
+  const deadline = withRequestDeadline(input, init);
+  try {
+    return await fetch(input, deadline.init);
+  } catch (err) {
+    throw normalizeAbortError(err, deadline.timeoutMs, deadline.expired());
+  } finally {
+    if (deadline.timer) clearTimeout(deadline.timer);
+  }
+}
+
+/**
+ * e2eeService.protectedFetch 外面套 deadline。
+ *
+ * 单独一层是因为 protectedFetch 内部会**重建** init（加 proof 头、加密 body、401 时重试），
+ * 我们在外层补的 signal 会被它原样带走（`{...init, method, headers}` 保留 signal），
+ * 但 e2ee 那条 401 重试路径也用同一个 signal，正好一起受 deadline 约束。
+ */
+async function e2eeProtectedFetchWithDeadline(
+  input: RequestInfo | URL,
+  init: RequestInit,
+): Promise<Response> {
+  const deadline = withRequestDeadline(input, init);
+  try {
+    return await e2eeService.protectedFetch(input, deadline.init);
+  } catch (err) {
+    throw normalizeAbortError(err, deadline.timeoutMs, deadline.expired());
+  } finally {
+    if (deadline.timer) clearTimeout(deadline.timer);
+  }
+}
+
 let accountResetInFlight = false;
 
 /**
@@ -63,7 +194,7 @@ function handleAccountGone(status: number, payload: any, input: RequestInfo | UR
 }
 
 export async function fetchJSON<T>(input: RequestInfo | URL, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(input, init);
+  const response = await fetchWithDeadline(input, init);
   const payload = await response.json().catch(() => ({} as any));
   if (!response.ok) {
     handleAccountGone(response.status, payload, input);
@@ -73,7 +204,7 @@ export async function fetchJSON<T>(input: RequestInfo | URL, init: RequestInit =
 }
 
 export async function fetchMaybeJSON<T>(input: RequestInfo | URL, init: RequestInit = {}): Promise<T | null> {
-  const response = await fetch(input, init);
+  const response = await fetchWithDeadline(input, init);
   if (response.status === 204 || response.status === 304) return null as T;
   const payload = await response.json().catch(() => ({} as any));
   if (!response.ok) {
@@ -91,14 +222,14 @@ export async function protectedFetch(input: RequestInfo | URL, init: RequestInit
   if (!protectedAPIReady()) {
     throw new Error("api_not_ready");
   }
-  return e2eeService.protectedFetch(input, init);
+  return e2eeProtectedFetchWithDeadline(input, init);
 }
 
 export async function protectedJSON<T>(input: RequestInfo | URL, init: RequestInit = {}): Promise<T> {
   if (!protectedAPIReady()) {
     throw new Error("api_not_ready");
   }
-  const response = await e2eeService.protectedFetch(input, init);
+  const response = await e2eeProtectedFetchWithDeadline(input, init);
   const payload = await e2eeService.parseProtectedJSONResponse<any>(response).catch(() => ({} as any));
   if (!response.ok) {
     // 和其它两个 helper 一致：本机账户被删时也要登出，否则整页卡在 404。
@@ -115,6 +246,10 @@ const NODE_RETRY_DELAYS_MS = [400, 1200];
 // 浏览器撞上去要等好几秒才回退）。单次失败会让该节点的项目/会话整块缺席，而重拉只在
 // WS 重连或用户操作时才发生——实测能长时间不恢复。这里对同一节点补几次重试，
 // 让浏览器重新建连、重新挑地址；服务端明确回 4xx 时不重试。
+//
+// 重试的总代价现在有上界了：每次尝试都被 fetchWithDeadline 的 10 秒 deadline 兜住
+// （见 NODE_REQUEST_TIMEOUT_MS），最坏 3 次 ≈ 32 秒。此前没有 deadline 时每次尝试
+// 都要挂约 2 分钟，重试反而把「快速失败」拖成了「永远不返回」。
 export async function withNodeRetry<T>(run: () => Promise<T>): Promise<T> {
   for (let attempt = 0; ; attempt++) {
     try {

@@ -9,11 +9,18 @@ export function NodeBadgeHeader({
   label,
   collapsed = false,
   onClick,
+  notice,
 }: {
   color: string;
   label: string;
   collapsed?: boolean;
   onClick?: () => void;
+  /**
+   * 分组头右侧的一句提示（如「节点连不上」）。放在徽标**外面**、分隔线之前，
+   * 不塞进徽标里：徽标是项目名本身，加东西会撑破它的省略号布局，
+   * 也会让「项目名」和「状态」两件事挤成一件。
+   */
+  notice?: string;
 }) {
   const c = String(color || "#6d5bcf").trim() || "#6d5bcf";
   return (
@@ -86,6 +93,23 @@ export function NodeBadgeHeader({
           <span style={{ color: c, fontWeight: 600 }}>{label}</span>
         </span>
       )}
+      {notice ? (
+        <span
+          title={notice}
+          style={{
+            flexShrink: 0,
+            maxWidth: "45%",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            fontSize: "10px",
+            lineHeight: 1,
+            color: "var(--text-secondary)",
+          }}
+        >
+          {notice}
+        </span>
+      ) : null}
       <span aria-hidden="true" style={{ height: "1px", flex: 1, minWidth: "12px", background: "var(--border-color)" }} />
     </div>
   );

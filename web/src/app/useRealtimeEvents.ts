@@ -104,6 +104,8 @@ export type RealtimeEventsContext = {
     invalidatePluginsForRoot: (rootId: string) => void;
     loadManagedRootPayloads: (opts?: { force?: boolean; }) => Promise<ManagedRootPayload[] | null>;
     loadMultiProjectSessionGroups: () => Promise<void>;
+    /** 同上，但带 300ms 合并窗口——「新会话出现」这类会连发的事件用它 */
+    scheduleMultiProjectSessionReload: () => void;
     loadSessionsForRoot: (rootID: string, options?: { beforeTime?: string; afterTime?: string; replace?: boolean; force?: boolean; }) => Promise<void>;
     markSessionPending: (rootID: string, sessionKey: string) => void;
     markSessionStale: (rootID: string | null | undefined, sessionKey: string | null | undefined) => void;
@@ -204,6 +206,7 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
       invalidatePluginsForRoot,
       loadManagedRootPayloads,
       loadMultiProjectSessionGroups,
+      scheduleMultiProjectSessionReload,
       loadSessionsForRoot,
       markSessionPending,
       markSessionStale,
@@ -1075,7 +1078,7 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
             handleImportedSessionConfirmed(agentSessionID, agentName);
           }
           if (multiProjectSessionsEnabled) {
-            void loadMultiProjectSessionGroups();
+            scheduleMultiProjectSessionReload();
           }
           return;
       },
@@ -1085,8 +1088,11 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
           if (rootID && rootID === currentRootIdRef.current) {
             void scheduleSessionListReload(rootID, { replace: true });
           }
+          // 走合并窗口而不是直接重拉：created 是所有建会话路径的统一信号
+          // （看板任务 / 定时任务 / 子会话 / fork），一次动作可能连发好几条，
+          // 每次都裸调会逐节点扇出一次 /api/sessions?multi_root=1。
           if (rootID && multiProjectSessionsEnabled) {
-            void loadMultiProjectSessionGroups();
+            scheduleMultiProjectSessionReload();
           }
           return;
       },
@@ -1863,6 +1869,7 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
     } as Record<string, (event: any, payload: any) => void>;
   }, [
     loadMultiProjectSessionGroups,
+    scheduleMultiProjectSessionReload,
     loadSessionsForRoot,
     scheduleSessionListReload,
     multiProjectSessionsEnabled,

@@ -84,6 +84,8 @@ export type MultiProjectSessionGroup = {
   _nodeId?: string;
   _nodeColor?: string;
   _nodeName?: string;
+  /** 该分组所属节点本轮拉取失败：内容是上次成功的旧快照，不是最新（见 App.tsx 合并逻辑） */
+  _unreachable?: boolean;
 };
 
 export type SlashCommandResult = {

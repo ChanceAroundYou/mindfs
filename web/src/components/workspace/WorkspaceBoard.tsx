@@ -113,6 +113,28 @@ export function WorkspaceBoard({
 
       <WorkspaceAttentionBar items={board.blockedAll} onOpenTask={onOpenTask} isMobile={isMobile} getNodeColor={getNodeColor} />
 
+      {board.unreachableNodes.length > 0 ? (
+        <div
+          role="status"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "6px",
+            padding: "6px 8px",
+            marginBottom: "6px",
+            borderRadius: "6px",
+            background: "var(--node-row-selected-bg, rgba(0,0,0,0.04))",
+            color: "var(--text-secondary)",
+            fontSize: "11px",
+            lineHeight: 1.5,
+          }}
+        >
+          {t("task.workspaceNodeUnreachable", {
+            names: board.unreachableNodes.map((n) => n.name).join("、"),
+          })}
+        </div>
+      ) : null}
+
       {board.loading && board.projects.length === 0 ? (
         <div style={workspaceEmptyTextStyle}>{t("task.loading")}</div>
       ) : board.projects.length === 0 ? (

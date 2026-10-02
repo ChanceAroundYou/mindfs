@@ -26,6 +26,9 @@ const tasksMetaFile = "scheduled-agent-tasks.json"
 
 type SessionActivityBroadcaster interface {
 	BroadcastSessionMetaUpdated(rootID string, sess *session.Session)
+	// BroadcastSessionCreated 让「定时任务新建的会话」也能立刻进对话列表。
+	// 和看板同一条要求：meta.updated 只更新已缓存条目，不新增列表行。
+	BroadcastSessionCreated(rootID string, sess *session.Session)
 	SetSessionPendingReply(rootID, sessionKey, sessionTitle string)
 	BroadcastSessionUserMessage(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService string, planMode bool, content string)
 	BroadcastSessionUserMessageAt(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService string, planMode bool, content string, timestamp time.Time, userExchangeSeq int, baseExchangeSeq ...int)
@@ -466,6 +469,7 @@ func (s *Service) runTask(ctx context.Context, task Task, force bool) error {
 			return err
 		}
 		broadcaster.BroadcastSessionMetaUpdated(current.RootID, created)
+		broadcaster.BroadcastSessionCreated(current.RootID, created)
 		sessionKey = created.Key
 		resetAt := time.Now().UTC()
 		current.SessionKey = sessionKey
@@ -504,6 +508,9 @@ func (s *Service) runTask(ctx context.Context, task Task, force bool) error {
 		},
 		OnSubSessionCreated: func(created *session.Session) {
 			broadcaster.BroadcastSessionMetaUpdated(current.RootID, created)
+			// 子会话同样是「新会话」：列表里要把它挂到父会话下面。发 created 才触发
+			// 前端重拉，meta.updated 不会（前端 handler 只写已缓存条目）。
+			broadcaster.BroadcastSessionCreated(current.RootID, created)
 			if created != nil {
 				broadcaster.SetSessionPendingReply(current.RootID, created.Key, created.Name)
 			}
