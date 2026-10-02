@@ -179,6 +179,12 @@ make dev-web          # 仅 Vite
       `repoint` 子命令调用（`run` 的最后一步，`--detach --delay N` 让它掐断调用方之前先留时间给 agent 收尾报告）。
     - 端到端验过 task-1/8/9/10：转录行数零丢失、uuid 零重叠、type 直方图不变、ctx_seq 保留、同步零新增、
       活会话续聊的 `cwd` 已是主 checkout。
+    - **先判断要不要 repoint —— 转录已在主 slug 时它解决不了任何事**（2026-10-02 实测）：
+      Claude Code 按 **spawn cwd** 决定 slug，会话只要有一次是在主 checkout 起的，转录就已经在主 slug 下。
+      此时 worktree 目录被手工删掉也**不会**让会话聊不了，唯一残留是 `sessions.related_worktree_json`
+      还钉着坏路径 —— **清掉那一项就够了，不需要 fork、不换 session id、不动游标、不杀 agent 进程**。
+      反过来，转录真在 `--worktree-*` 目录下时才必须走完整 repoint。判断法：看 `session_agent_bindings
+      .external_source_path` 落在哪个 slug 目录。实测清完直接点「继续聊」即可无感续上。
 
 
 
