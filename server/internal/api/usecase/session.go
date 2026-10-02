@@ -1384,6 +1384,21 @@ type AnswerQuestionInput struct {
 type CancelSessionTurnInput struct {
 	RootID string
 	Key    string
+
+	// TargetTurnID / TargetPinned 描述调用方「点下取消那一刻」在跑的是哪一轮。
+	//
+	// 取消的落地晚于它的决定：请求从用户点到执行可能隔几百毫秒（ws.go 怕阻塞读循环
+	// 用 goroutine 派发），这期间同一会话完全可能已经开了新一轮。实测 2026-10-02：
+	// 用户在空闲会话上点停止，几百毫秒后又发了一条消息，那一轮刚 send.begin 就被这个
+	// 迟到的取消掐掉 —— dsh 表现为「733ms 就完成了，什么都没吐」。
+	//
+	//	TargetPinned=false            服务端自己发起的取消（如「立即发送」挤掉当前轮），
+	//	                              不校验，作用于此刻活跃的那一轮。
+	//	TargetPinned=true, ID=非 0    只作用于 id 相同的那一轮；对不上就丢弃。
+	//	TargetPinned=true, ID=0       决定取消时根本没有在跑的一轮 → 直接丢弃，
+	//	                              不能落到之后起来的新轮上。
+	TargetTurnID uint64
+	TargetPinned bool
 }
 
 const (
@@ -1407,9 +1422,15 @@ var (
 	sessionSendLocks   = make(map[string]*sync.Mutex)
 	activeTurnsMu      sync.Mutex
 	activeTurns        = make(map[string]*activeTurnState)
+	activeTurnSeq      uint64
 )
 
 type activeTurnState struct {
+	// id 标识「具体是哪一轮」。取消是异步落地的（ws.go 异步派发，因为 Interrupt
+	// 可能阻塞），从用户点到执行可以隔上几百毫秒；这期间同一会话可能已经开了新的
+	// 一轮（用户点完停止紧接着发消息）。调用方在收到请求的那一刻就记下当时的 id，
+	// 落地时 id 对不上就说明它要停的那一轮已经结束了 —— 直接放弃，别误伤新轮。
+	id      uint64
 	cancel  context.CancelFunc
 	session agenttypes.Session
 }
@@ -1434,8 +1455,22 @@ func registerActiveTurn(rootID, sessionKey string, cancel context.CancelFunc) {
 		return
 	}
 	activeTurnsMu.Lock()
-	activeTurns[activeTurnKey(rootID, sessionKey)] = &activeTurnState{cancel: cancel}
+	activeTurnSeq++
+	activeTurns[activeTurnKey(rootID, sessionKey)] = &activeTurnState{id: activeTurnSeq, cancel: cancel}
 	activeTurnsMu.Unlock()
+}
+
+// ActiveTurnID 返回此刻在跑的那一轮的 id，没有在跑的一轮时返回 0。
+//
+// 调用方必须在**决定取消的那一刻**同步取证（ws.go 的读循环里），再拿着这个 id
+// 去做异步的取消：取消落地时 id 不一致就说明目标轮次已经结束，必须放弃。
+func ActiveTurnID(rootID, sessionKey string) uint64 {
+	activeTurnsMu.Lock()
+	defer activeTurnsMu.Unlock()
+	if state := activeTurns[activeTurnKey(rootID, sessionKey)]; state != nil {
+		return state.id
+	}
+	return 0
 }
 
 func setActiveTurnSession(rootID, sessionKey string, sess agenttypes.Session) {
@@ -4338,6 +4373,27 @@ func (s *Service) validateAgentModel(agentName, model string) error {
 	return fmt.Errorf("model %q is not supported by agent %q (supported models: %s)", model, agentName, strings.Join(supported, ", "))
 }
 
+// staleCancelTarget 判断一个取消请求是否已经过期：调用方点名要停的那一轮不是此刻
+// 在跑的这一轮（含「当时根本没在跑」）。
+func staleCancelTarget(in CancelSessionTurnInput, active *activeTurnState) bool {
+	if !in.TargetPinned {
+		return false
+	}
+	if active != nil && active.id == in.TargetTurnID && in.TargetTurnID != 0 {
+		return false
+	}
+	log.Printf("[session] turn.cancel.stale target_turn=%d active_turn=%v action=drop",
+		in.TargetTurnID, activeTurnIDOrNil(active))
+	return true
+}
+
+func activeTurnIDOrNil(active *activeTurnState) any {
+	if active == nil {
+		return "none"
+	}
+	return active.id
+}
+
 func (s *Service) CancelSessionTurn(ctx context.Context, in CancelSessionTurnInput) error {
 	if err := s.ensureRegistry(); err != nil {
 		return err
@@ -4352,7 +4408,7 @@ func (s *Service) CancelSessionTurn(ctx context.Context, in CancelSessionTurnInp
 	}
 	if strings.HasPrefix(key, "transient-") {
 		active := getActiveTurn(in.RootID, key)
-		if active == nil {
+		if active == nil || staleCancelTarget(in, active) {
 			return nil
 		}
 		active.cancel()
@@ -4368,7 +4424,7 @@ func (s *Service) CancelSessionTurn(ctx context.Context, in CancelSessionTurnInp
 		return err
 	}
 	active := getActiveTurn(in.RootID, current.Key)
-	if active == nil {
+	if active == nil || staleCancelTarget(in, active) {
 		return nil
 	}
 	if active.session != nil {

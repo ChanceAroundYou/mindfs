@@ -505,7 +505,16 @@ func (h *WSHandler) handleWSRequest(ctx context.Context, conn *websocket.Conn, c
 	case "session.cancel":
 		// 异步处理：中断可能阻塞等待 CLI 确认（无超时），同步派发会卡死整个
 		// 连接读循环，使后续 stop/消息都无法送达，表现为"停止按钮有时没反应"。
-		go h.handleSessionCancel(ctx, conn, clientID, req)
+		//
+		// 但「取消谁」必须在读循环里、此刻同步取证：异步落地可能晚几百毫秒，
+		// 那时用户可能已经发了下一条消息、新一轮已经起来，按「当前活跃轮」去掐
+		// 就会误伤（2026-10-02 dsh 空转 733ms 就是这么来的）。这里只取 id，
+		// 真正的 Interrupt 仍在 goroutine 里做。
+		targetTurnID := usecase.ActiveTurnID(
+			getString(req.Payload, "root_id"),
+			getString(req.Payload, "session_key"),
+		)
+		go h.handleSessionCancel(ctx, conn, clientID, req, targetTurnID)
 	case "session.queue.remove":
 		h.handleSessionQueueRemove(ctx, conn, clientID, req)
 	case "session.queue.update":
@@ -1065,14 +1074,14 @@ func (h *WSHandler) sessionMessageContext() (context.Context, context.CancelFunc
 	return context.WithCancel(parentCtx)
 }
 
-func (h *WSHandler) handleSessionCancel(ctx context.Context, conn *websocket.Conn, clientID string, req WSRequest) {
+func (h *WSHandler) handleSessionCancel(ctx context.Context, conn *websocket.Conn, clientID string, req WSRequest, targetTurnID uint64) {
 	rootID := getString(req.Payload, "root_id")
 	key := getString(req.Payload, "session_key")
 	if rootID == "" || key == "" {
 		h.sendWSError(conn, clientID, req.ID, "invalid_request", "root_id and session_key required")
 		return
 	}
-	log.Printf("[ws] session.cancel root=%s session=%s request=%s", rootID, key, req.ID)
+	log.Printf("[ws] session.cancel root=%s session=%s request=%s target_turn=%d", rootID, key, req.ID, targetTurnID)
 
 	streamHub := h.AppContext.GetSessionStreamHub()
 	if queue, ok := streamHub.FreezeQueuedSessionMessages(key); ok {
@@ -1082,8 +1091,10 @@ func (h *WSHandler) handleSessionCancel(ctx context.Context, conn *websocket.Con
 
 	uc := &usecase.Service{Registry: h.AppContext}
 	if err := uc.CancelSessionTurn(ctx, usecase.CancelSessionTurnInput{
-		RootID: rootID,
-		Key:    key,
+		RootID:       rootID,
+		Key:          key,
+		TargetTurnID: targetTurnID,
+		TargetPinned: true,
 	}); err != nil {
 		if queue, changed := streamHub.UnfreezeQueuedSessionMessages(key); changed {
 			streamHub.BroadcastSessionQueueUpdated(rootID, key, queue)

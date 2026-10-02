@@ -2489,6 +2489,83 @@ func TestCancelSessionTurnCancelsTransientActiveTurn(t *testing.T) {
 	}
 }
 
+// 取消只能作用于「请求发起时正在跑的那一轮」。
+//
+// 取消是异步落地的（ws.go 怕阻塞读循环用 goroutine 派发），从用户点到执行可以隔
+// 几百毫秒；这期间同一会话完全可能已经开了新一轮（用户点完停止紧接着发消息）。
+// 2026-10-02 实测：用户在空闲会话上点停止，随后发的消息刚 send.begin 就被这个迟到的
+// 取消掐掉，dsh 表现为「733ms 完成、什么都没吐」。
+func TestCancelSessionTurnDropsStaleTargetTurn(t *testing.T) {
+	rootDir := t.TempDir()
+	root := rootfs.NewRootInfo("mindfs", "mindfs", rootDir)
+	manager := session.NewManager(root)
+	service := Service{Registry: &commandTestRegistry{root: root, manager: manager}}
+	sessionKey := "transient-login-stale"
+	defer unregisterActiveTurn(root.ID, sessionKey)
+
+	// 第一轮：用户点停止时正在跑的就是它。
+	oldCtx, oldCancel := context.WithCancel(context.Background())
+	oldSession := &fakeUsecaseAgentSession{}
+	registerActiveTurn(root.ID, sessionKey, oldCancel)
+	setActiveTurnSession(root.ID, sessionKey, oldSession)
+	staleTarget := ActiveTurnID(root.ID, sessionKey)
+	if staleTarget == 0 {
+		t.Fatal("ActiveTurnID returned 0 for a registered turn")
+	}
+	// 它自己在取消落地前结束了，紧接着来了新一轮。
+	unregisterActiveTurn(root.ID, sessionKey)
+	oldCancel()
+	newCtx, newCancel := context.WithCancel(context.Background())
+	newSession := &fakeUsecaseAgentSession{}
+	registerActiveTurn(root.ID, sessionKey, newCancel)
+	setActiveTurnSession(root.ID, sessionKey, newSession)
+
+	if err := service.CancelSessionTurn(context.Background(), CancelSessionTurnInput{
+		RootID:       root.ID,
+		Key:          sessionKey,
+		TargetTurnID: staleTarget,
+		TargetPinned: true,
+	}); err != nil {
+		t.Fatalf("CancelSessionTurn returned error: %v", err)
+	}
+	if newCtx.Err() != nil {
+		t.Fatal("迟到的取消掐掉了新一轮的 context")
+	}
+	if newSession.cancelCalls != 0 {
+		t.Fatalf("新一轮被误伤：CancelCurrentTurn calls = %d, want 0", newSession.cancelCalls)
+	}
+
+	// 决定取消时根本没在跑（id=0）也必须丢弃：空闲时点的停止不能落到之后起来的新轮上。
+	if err := service.CancelSessionTurn(context.Background(), CancelSessionTurnInput{
+		RootID:       root.ID,
+		Key:          sessionKey,
+		TargetTurnID: 0,
+		TargetPinned: true,
+	}); err != nil {
+		t.Fatalf("CancelSessionTurn returned error: %v", err)
+	}
+	if newCtx.Err() != nil || newSession.cancelCalls != 0 {
+		t.Fatal("空闲时刻的取消落到了新轮上")
+	}
+
+	// id 对得上时照常取消：不能因为加了护栏就把取消本身废掉。
+	if err := service.CancelSessionTurn(context.Background(), CancelSessionTurnInput{
+		RootID:       root.ID,
+		Key:          sessionKey,
+		TargetTurnID: ActiveTurnID(root.ID, sessionKey),
+		TargetPinned: true,
+	}); err != nil {
+		t.Fatalf("CancelSessionTurn returned error: %v", err)
+	}
+	if newCtx.Err() == nil {
+		t.Fatal("id 匹配时应当取消")
+	}
+	if newSession.cancelCalls != 1 {
+		t.Fatalf("CancelCurrentTurn calls = %d, want 1", newSession.cancelCalls)
+	}
+	_ = oldCtx
+}
+
 type commandTestRegistry struct {
 	root    rootfs.RootInfo
 	manager *session.Manager
