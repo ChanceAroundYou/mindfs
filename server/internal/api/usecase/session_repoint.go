@@ -98,6 +98,14 @@ func (s *Service) RepointSession(ctx context.Context, in RepointSessionInput) (R
 		return out, errors.New("session is not bound to a worktree")
 	}
 
+	// 掐断活进程之前先确认转录还在：RepointTranscript 最主要的失败原因就是「找不到
+	// 转录」，而它排在 pool.Close 之后 —— 不先验就掐，用户拿到的是「会话没了、状态
+	// 却一点没改」，唯一那种不可逆又什么都没换来的失败。校验放在不可逆动作之前。
+	if !claude.HasTranscript(binding.AgentSessionID) {
+		return out, fmt.Errorf("找不到会话 %s 的转录（可能在 ~/.claude/projects 下被移动或删除），先确认再收尾",
+			binding.AgentSessionID)
+	}
+
 	// 1. 掐断活进程。此后 mindfs 不再往旧转录写。
 	if pool := s.Registry.GetAgentPool(); pool != nil {
 		pool.Close(agentPoolSessionKey(key, agentName))

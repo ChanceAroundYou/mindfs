@@ -200,3 +200,76 @@ func TestRepointTranscriptRejectsEmptyInput(t *testing.T) {
 		t.Fatalf("blank agent session id must be rejected")
 	}
 }
+
+// 源转录**已经在主 slug 目录**时（会话早先搬过一次，或 worktree 目录被手工清掉之后
+// 才来收尾），fork 必然落在 dstDir —— 没有「dstDir 之外的副本」可搬，原地就是终点。
+//
+// 这是 2026-10-02 实测踩到的那个坑：旧写法在这里硬报 "not found outside %s"，
+// 而 RepointSession 在调它之前已经 pool.Close 掐掉了 agent 进程，用户拿到的是
+// 「会话没了、状态却一点没改」——最坏的一种失败。
+func TestRepointTranscriptUsesInPlaceWhenSourceIsAlreadyInMainSlug(t *testing.T) {
+	projectsDir := withIsolatedClaudeHome(t)
+	rootPath := "/home/xiaokubao/projects/mindfs"
+	dstDir := filepath.Join(projectsDir, claudeProjectDirName(rootPath))
+	oldID := "12345678-1234-1234-1234-123456789abc"
+	srcFile := filepath.Join(dstDir, oldID+".jsonl")
+	for i := 0; i < 4; i++ {
+		writeTranscriptLine(t, srcFile, oldID, "u"+string(rune('a'+i)), "", "第"+string(rune('0'+i))+"轮")
+	}
+	// 附属目录和转录同处一目录（它跟着转录走）。
+	if err := os.MkdirAll(filepath.Join(dstDir, oldID), 0o755); err != nil {
+		t.Fatalf("mkdir sidecar: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dstDir, oldID, "tool-result.txt"), []byte("payload"), 0o600); err != nil {
+		t.Fatalf("write sidecar: %v", err)
+	}
+
+	out, err := RepointTranscript(rootPath, oldID)
+	if err != nil {
+		t.Fatalf("source already in the main slug must be handled in place, got: %v", err)
+	}
+	if out.AgentSessionID == oldID {
+		t.Fatalf("agent session id unchanged (%s)", out.AgentSessionID)
+	}
+	if filepath.Dir(out.TranscriptPath) != dstDir {
+		t.Fatalf("transcript landed in %s, want %s", filepath.Dir(out.TranscriptPath), dstDir)
+	}
+	data, err := os.ReadFile(out.TranscriptPath)
+	if err != nil {
+		t.Fatalf("read transcript: %v", err)
+	}
+	lines := 0
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		if strings.TrimSpace(line) != "" {
+			lines++
+		}
+	}
+	if lines != 4 {
+		t.Fatalf("in-place transcript has %d lines, want 4 (history must survive)", lines)
+	}
+	// 旧 id 的转录仍留着 —— 回滚保险。
+	if _, err := os.Stat(srcFile); err != nil {
+		t.Fatalf("previous transcript must be preserved for rollback: %v", err)
+	}
+	// 附属目录要落成新 id 的名字。
+	if _, err := os.Stat(filepath.Join(dstDir, out.AgentSessionID, "tool-result.txt")); err != nil {
+		t.Fatalf("sidecar not moved to the new id: %v", err)
+	}
+}
+
+// HasTranscript 是「掐进程之前」的前置校验：它报 true 而实际搬不动，代价是一次
+// 无谓的自杀；报 false 而实际搬得动，会把能收的尾挡在门外。两个方向都要准。
+func TestHasTranscriptReportsFindability(t *testing.T) {
+	projectsDir := withIsolatedClaudeHome(t)
+	id := "abcdefab-0000-1111-2222-333344445555"
+	if HasTranscript(id) {
+		t.Fatalf("HasTranscript(%s) = true before any transcript exists", id)
+	}
+	writeTranscriptLine(t, filepath.Join(projectsDir, claudeProjectDirName("/tmp/x"), id+".jsonl"), id, "u1", "", "hi")
+	if !HasTranscript(id) {
+		t.Fatalf("HasTranscript(%s) = false right after writing its transcript", id)
+	}
+	if HasTranscript("   ") {
+		t.Fatalf("a blank id must report false")
+	}
+}

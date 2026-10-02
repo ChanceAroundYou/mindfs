@@ -68,28 +68,44 @@ func RepointTranscript(rootPath, previousAgentSessionID string) (RepointTranscri
 	if err := os.MkdirAll(dstDir, 0o755); err != nil {
 		return RepointTranscriptResult{}, err
 	}
-	// fork 就地落在旧 slug 目录；这里不猜它在哪，而是按 id 找——同一 id 可能有多份副本。
+	// fork 就地落在**源转录所在目录**（SDK 的 target = dir(file.path)/<新id>.jsonl）。
+	// 这里不猜它在哪，而是按 id 找——同一 id 可能有多份副本。
+	//
+	// 关键的一格：源**已经在 dstDir** 时（会话早先搬过一次，或 worktree 目录被手工
+	// 清掉之后才来收尾），fork 直接落在 dstDir——没有「dstDir 之外的副本」可搬，
+	// 原地就是终点。旧写法在这种输入下硬报 "not found outside %s"，而 RepointSession
+	// 在调它之前已经 pool.Close 掐掉了 agent 进程，用户拿到的是「会话没了、状态却
+	// 一点没改」——最坏的那种失败。2026-10-02 实测踩到。
 	srcDir := ""
+	sawInPlace := false
 	for _, candidate := range transcriptDirsForSession(projectsDir, newID) {
-		if filepath.Clean(candidate) != filepath.Clean(dstDir) {
+		if filepath.Clean(candidate) == filepath.Clean(dstDir) {
+			sawInPlace = true
+			continue
+		}
+		if srcDir == "" {
 			srcDir = candidate
-			break
 		}
 	}
 	if srcDir == "" {
-		return RepointTranscriptResult{}, fmt.Errorf("forked transcript %s not found outside %s", newID, dstDir)
+		if !sawInPlace {
+			return RepointTranscriptResult{}, fmt.Errorf("forked transcript %s not found under %s", newID, projectsDir)
+		}
+		srcDir = dstDir
 	}
 
-	srcFile := filepath.Join(srcDir, newID+".jsonl")
 	dstFile := filepath.Join(dstDir, newID+".jsonl")
-	// 目标已存在就停手：覆盖会毁掉一份可能正被读写的转录。
-	if _, statErr := os.Stat(dstFile); statErr == nil {
-		return RepointTranscriptResult{}, fmt.Errorf("transcript target already exists: %s", dstFile)
-	} else if !os.IsNotExist(statErr) {
-		return RepointTranscriptResult{}, statErr
-	}
-	if err := moveClaudeTranscriptEntry(srcFile, dstFile); err != nil {
-		return RepointTranscriptResult{}, err
+	if filepath.Clean(srcDir) != filepath.Clean(dstDir) {
+		srcFile := filepath.Join(srcDir, newID+".jsonl")
+		// 目标已存在就停手：覆盖会毁掉一份可能正被读写的转录。
+		if _, statErr := os.Stat(dstFile); statErr == nil {
+			return RepointTranscriptResult{}, fmt.Errorf("transcript target already exists: %s", dstFile)
+		} else if !os.IsNotExist(statErr) {
+			return RepointTranscriptResult{}, statErr
+		}
+		if err := moveClaudeTranscriptEntry(srcFile, dstFile); err != nil {
+			return RepointTranscriptResult{}, err
+		}
 	}
 	// 附属目录（tool-results / subagents）按**旧 id** 命名，fork 不会复制它们（SDK 只重写
 	// 并写出 .jsonl），所以这里搬旧 id 那份、落成新 id 的名字。缺失是正常的，不是错误。
@@ -112,6 +128,23 @@ func RepointTranscript(rootPath, previousAgentSessionID string) (RepointTranscri
 		TranscriptBytes:           info.Size(),
 		TranscriptModTimeUnixNano: info.ModTime().UnixNano(),
 	}, nil
+}
+
+// HasTranscript 报告某个 agent session id 的转录是否还能找到。
+//
+// 给调用方在**不可逆动作之前**做前置校验用：RepointSession 第 1 步是掐断活着的 agent
+// 进程，而紧接着的 RepointTranscript 最常见、也最要命的失败就是「找不到转录」。
+// 不先验就掐，代价是一次「会话没了、状态却一点没改」——所以这个判据要能单独拿出来问。
+func HasTranscript(agentSessionID string) bool {
+	id := strings.TrimSpace(agentSessionID)
+	if id == "" {
+		return false
+	}
+	projectsDir, err := claudeProjectsDir()
+	if err != nil {
+		return false
+	}
+	return len(transcriptDirsForSession(projectsDir, id)) > 0
 }
 
 // claudeProjectsDir 与 SDK 的 sessionsProjectsDir 同口径：CLAUDE_CONFIG_DIR 优先，
