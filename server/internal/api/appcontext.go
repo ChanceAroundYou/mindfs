@@ -430,6 +430,20 @@ func (s *AppContext) GetFileWatcher(rootID string, manager *session.Manager) (*f
 	return watcher, nil
 }
 
+// resolveRelatedWorktree 从「某个文件路径」反推它属于哪个 worktree，供 watcher 在
+// 会话动了文件时回填 related_worktree。
+//
+// **只认 linked worktree，主 checkout 一律不认** —— 这条边界是这个函数存在的全部意义。
+//
+// 为什么不认主 checkout：related_worktree 这个字段的语义是「这个会话被绑在某个
+// worktree 上」，不是「这个会话当前在哪个仓库」。主 checkout 也往里写，就会出现
+// 2026-10-02 实测的那个来回：watcher 因为你动了文件把主 checkout 填回去 → repoint
+// 清空它 → 下次动文件又填回来。清空成了非持久操作，而 ClearRelatedWorktree 的整个
+// 存在意义就是清空它。sessionRuntimeRootPath 也只在「有 task_id 或 source=worktree」
+// 时才采信这个字段，主 checkout 记进去对它毫无用处，却让字段状态永远脏着。
+//
+// 判断用 ListWorktrees 自带的 Current（= 该路径就是这个 root 本身），不是自己比较
+// 路径字符串 —— Current 就是为此存在的，此前一直没有消费者。
 func resolveRelatedWorktree(ctx context.Context, root fs.RootInfo, filePath string) (fs.RelatedWorktreeMatch, bool) {
 	cleanPath := cleanToolFilePath(filePath)
 	if cleanPath == "" {
@@ -449,6 +463,11 @@ func resolveRelatedWorktree(ctx context.Context, root fs.RootInfo, filePath stri
 		if !pathInsideDir(cleanPath, item.Path) {
 			continue
 		}
+		// 主 checkout 落选，但**继续找**：worktree 可以嵌套在 root 下，
+		// 文件落在 `.worktree/x/...` 里时，外层那条 Current 的记录不该把它吃掉。
+		if item.Current {
+			continue
+		}
 		candidate := fs.RelatedWorktreeMatch{
 			Path:    item.Path,
 			Branch:  item.Branch,
@@ -465,10 +484,18 @@ func resolveRelatedWorktree(ctx context.Context, root fs.RootInfo, filePath stri
 		return best, true
 	}
 	if repo, err := gitview.ResolveRepositoryForPath(ctx, cleanPath); err == nil && strings.TrimSpace(repo.Path) != "" {
+		repoPath := filepath.Clean(repo.Path)
+		// 同一条边界，落在这个出口上：ResolveRepositoryForPath 会把普通仓库
+		// （包括 root 自己）也返回，那不是 worktree 归属，别记。
+		// 复用 pathInsideDir 而不是自己比字符串 —— 它解析过 symlink，
+		// root 配了软链时裸比会不相等。
+		if sameDirPath(repoPath, root.RootPath) {
+			return fs.RelatedWorktreeMatch{}, false
+		}
 		return fs.RelatedWorktreeMatch{
-			Path:    filepath.Clean(repo.Path),
+			Path:    repoPath,
 			Head:    strings.TrimSpace(repo.Head),
-			Current: pathInsideDir(cleanPath, root.RootPath),
+			Current: false,
 		}, true
 	}
 	return fs.RelatedWorktreeMatch{}, false
@@ -480,6 +507,11 @@ func cleanToolFilePath(path string) string {
 		return ""
 	}
 	return filepath.Clean(path)
+}
+
+// sameDirPath 判两个目录是不是同一个（解析 symlink 之后比）。
+func sameDirPath(a, b string) bool {
+	return pathInsideDir(a, b) && pathInsideDir(b, a)
 }
 
 func pathInsideDir(path, dir string) bool {

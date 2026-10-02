@@ -95,6 +95,96 @@ func TestResolveRelatedWorktreePrefersNestedTaskWorktree(t *testing.T) {
 	}
 }
 
+// 主 checkout 不是 worktree 归属，别记。
+//
+// 这是 2026-10-02 实测到的那个来回的根因：watcher 因为会话动了文件把主 checkout
+// 填进 related_worktree，repoint 清空它，下次动文件又填回来 —— 清空成了非持久操作。
+// 记主 checkout 对 sessionRuntimeRootPath 也毫无用处（它只在有 task_id 或
+// source=worktree 时才采信这个字段）。
+//
+// 三个出口都要挡住，所以这里三个都验：worktree 列表里的主 checkout、
+// ResolveRepositoryForPath 兜底返回的 root 自己、以及两者都不含时的普通文件。
+func TestResolveRelatedWorktreeIgnoresMainCheckout(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found")
+	}
+	root := t.TempDir()
+	runAPITestGit(t, root, "init")
+	runAPITestGit(t, root, "config", "user.email", "test@example.com")
+	runAPITestGit(t, root, "config", "user.name", "Test User")
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("base\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile README.md: %v", err)
+	}
+	runAPITestGit(t, root, "add", "README.md")
+	runAPITestGit(t, root, "commit", "-m", "initial")
+
+	rootInfo := rootfs.NewRootInfo("root", "root", root)
+
+	// 一、root 目录内的文件：ListWorktrees 会返回主 checkout 那条（Current=true）。
+	if _, ok := resolveRelatedWorktree(context.Background(), rootInfo, "README.md"); ok {
+		t.Fatal("a file in the main checkout must not resolve to a worktree match")
+	}
+
+	// 二、绝对路径指向 root 自己：走 ListWorktrees 的 Current 分支。
+	if _, ok := resolveRelatedWorktree(context.Background(), rootInfo, filepath.Join(root, "README.md")); ok {
+		t.Fatal("the main checkout path itself must not resolve to a worktree match")
+	}
+
+	// 三、仓库里的子目录：不在任何 worktree 下，但 ResolveRepositoryForPath
+	// 会把 root 自己返回 —— 这个出口同样不能记。
+	nested := filepath.Join(root, "pkg", "internal")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatalf("MkdirAll nested: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, "x.go"), []byte("package internal\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile x.go: %v", err)
+	}
+	match, ok := resolveRelatedWorktree(context.Background(), rootInfo, filepath.Join("pkg", "internal", "x.go"))
+	if ok && !match.Current {
+		t.Fatalf("a file under the main checkout resolved to %q as a worktree", match.Path)
+	}
+}
+
+// 反向守卫：真 worktree 里的文件仍然要认出来。上一个测试把 Current 全滤掉了，
+// 这个确保没有把该记的一起滤掉 —— 两个方向缺一个都算回归。
+func TestResolveRelatedWorktreeStillRecordsRealWorktree(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found")
+	}
+	root := t.TempDir()
+	runAPITestGit(t, root, "init")
+	runAPITestGit(t, root, "config", "user.email", "test@example.com")
+	runAPITestGit(t, root, "config", "user.name", "Test User")
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("base\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile README.md: %v", err)
+	}
+	runAPITestGit(t, root, "add", "README.md")
+	runAPITestGit(t, root, "commit", "-m", "initial")
+	runAPITestGit(t, root, "checkout", "-b", "task-7")
+	runAPITestGit(t, root, "checkout", "-")
+
+	worktreeRoot := filepath.Join(root, ".worktree", "task-7")
+	runAPITestGit(t, root, "worktree", "add", worktreeRoot, "task-7")
+	if err := os.WriteFile(filepath.Join(worktreeRoot, "a.txt"), []byte("x\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile a.txt: %v", err)
+	}
+
+	rootInfo := rootfs.NewRootInfo("root", "root", root)
+	match, ok := resolveRelatedWorktree(context.Background(), rootInfo, filepath.Join(".worktree", "task-7", "a.txt"))
+	if !ok {
+		t.Fatal("a file inside a real worktree must still resolve")
+	}
+	if match.Current {
+		t.Fatalf("match.Current = true for worktree %q; the field would be meaningless", match.Path)
+	}
+	if !sameAPITestPath(match.Path, worktreeRoot) {
+		t.Fatalf("match.Path = %q, want %q", match.Path, worktreeRoot)
+	}
+	if got := strings.TrimSpace(match.Branch); got != "task-7" {
+		t.Fatalf("match.Branch = %q, want task-7", got)
+	}
+}
+
 func runAPITestGit(t *testing.T, root string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", args...)
