@@ -310,7 +310,28 @@ func mergeAgentDefinition(base Definition, override Definition) Definition {
 	if len(merged.ProbeArgs) == 0 {
 		merged.ProbeArgs = append([]string(nil), base.ProbeArgs...)
 	}
+	// Env 也必须回退，否则「后加的层没写 env」会把前面层的 env 清成 nil：
+	// 生效的 agents.json 是三层合并出来的（安装自带的那份 + ~/.config 的用户层
+	// + -agent-config 指定的 extra），而 extra 通常就是安装自带的那份、不含 env。
+	// 用户层里那些按机器配的环境变量（凭据/端点）就会被这一层抹掉 ——
+	// 运行期靠 SetAgentEnv 撑着看不出来，重启后才暴露成「agent 认不到 provider」。
+	if len(merged.Env) == 0 {
+		merged.Env = cloneEnvMap(base.Env)
+	}
 	return merged
+}
+
+// cloneEnvMap 返回一份独立副本：合并结果会被各账户共享并长期持有，
+// 不能与解码时的那份共享底层 map。
+func cloneEnvMap(input map[string]string) map[string]string {
+	if len(input) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(input))
+	for key, value := range input {
+		out[key] = value
+	}
+	return out
 }
 
 func mergeShells(base []Shell, override []Shell) []Shell {
