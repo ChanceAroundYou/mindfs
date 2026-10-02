@@ -57,7 +57,9 @@ if [[ -n "$MESSAGE" ]]; then
     echo "    (无改动，跳过提交)"
   else
     # 只提交本仓库跟踪的源码，不碰 .mindfs/ 等运行期数据
-    git add -A -- web server Makefile task_template.json scripts .claude 2>/dev/null || git add -A
+    # agents.json 是仓库根的源码文件（agent 目录与安装命令都在这），漏了它会让
+    # 只改它的提交变成空提交，git commit 非零退出被 set -e 当场打死。
+    git add -A -- web server Makefile task_template.json scripts .claude agents.json 2>/dev/null || git add -A
     git commit -m "$MESSAGE"
     ok "已提交 $(git rev-parse --short HEAD)"
   fi
