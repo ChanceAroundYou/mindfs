@@ -1736,7 +1736,14 @@ func (s *Service) moveTo(ctx context.Context, store *TaskStore, task Task, targe
 	if err := store.MoveTask(ctx, task, run, event); err != nil {
 		return TaskDetail{}, err
 	}
-	return store.GetDetail(ctx, task.ID)
+	detail, err := store.GetDetail(ctx, task.ID)
+	// 换段指针一定要播：卡片上的「当前在第几段 / 什么状态」就挂在这上面。
+	// 以前只靠 HTTP handler 事后补，于是 KickPending、handleKanbanTaskBeginFinish
+	// 这类非 HTTP 入口推不出去 —— 界面上就停在旧状态。
+	if err == nil && s.Runner != nil {
+		s.Runner.TaskUpdated(task.RootID, detail)
+	}
+	return detail, err
 }
 
 // setTaskStatus 改任务状态（Pause/Resume/Cancel/Fail 共用）。
@@ -1747,6 +1754,8 @@ func (s *Service) setTaskStatus(ctx context.Context, rootID, taskID, status, eve
 		return TaskDetail{}, err
 	}
 	if current, getErr := store.GetTask(ctx, taskID); getErr == nil && isTerminalStatus(current.Status) {
+		// 状态没变（已经是终态了），刻意不播：推一条与现状相同的 task.updated
+		// 只会让每个客户端白做一次重渲染。
 		return store.GetDetail(ctx, current.ID)
 	}
 	if err := store.UpdateTaskStatus(ctx, taskID, status, nil, terminal); err != nil {
@@ -1759,7 +1768,13 @@ func (s *Service) setTaskStatus(ctx context.Context, rootID, taskID, status, eve
 		Payload:   eventPayload(map[string]any{"reason": strings.TrimSpace(reason)}),
 		CreatedAt: time.Now().UTC(),
 	})
-	return store.GetDetail(ctx, taskID)
+	detail, err := store.GetDetail(ctx, taskID)
+	// Pause/Resume/Cancel/Fail 的界面反馈全靠这条推送。以前不发、只由 HTTP handler
+	// 补，于是任何非 HTTP 调用方推不出去，别的客户端看到的还是暂停前的状态。
+	if err == nil && s.Runner != nil {
+		s.Runner.TaskUpdated(rootID, detail)
+	}
+	return detail, err
 }
 
 // ensureServiceTask 读取任务并回填旧任务快照（详见 loadForMove）；当前任务字段仅服务端推动（如追加段落）。

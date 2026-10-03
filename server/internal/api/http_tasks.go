@@ -598,13 +598,10 @@ func (h *HTTPHandler) broadcastTaskUpdated(rootID string, detail kanban.TaskDeta
 	if h == nil || h.AppContext == nil {
 		return
 	}
-	h.AppContext.GetSessionStreamHub().BroadcastAll(WSResponse{
-		Type: "task.updated",
-		Payload: map[string]any{
-			"root_id": rootID,
-			"task":    detail.Task,
-		},
-	})
+	// 转发给 AppContext.TaskUpdated 而不是就地拼 payload：同一个事件类型曾经有两种
+	// 形状（这里只有 task，AppContext 那边还带 detail），前端因此要在两处分别兜。
+	// 少带 detail 的那次推送会让详情面板拿不到 stage_runs/events。
+	h.AppContext.TaskUpdated(rootID, detail)
 }
 
 // handleKanbanTaskBeginFinish 发起收尾流程：追加一段 agent 工作，让 agent 自己把

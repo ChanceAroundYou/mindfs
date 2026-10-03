@@ -71,6 +71,23 @@ type fakeRunner struct {
 	// gate 非 nil 时 RunAgentStage 记完 exec 后阻塞到 gate 关闭，用来把执行体钉在阶段内部，
 	// 稳定复现并发执行（见 TestRunTaskExecutesStageOnceWhenKickedTwice）。
 	gate chan struct{}
+	// taskUpdates 记 TaskUpdated 的每次调用：广播是「状态变了界面才知道」的唯一通道，
+	// 而它以前只由部分路径发出（见 TestStatusChangeAlwaysBroadcasts）。与 execs 共用 mu。
+	taskUpdates []string
+}
+
+// recordTaskUpdate 记一次广播（任务 id），供测试断言「该播的播了、不该播的没播」。
+func (r *fakeRunner) recordTaskUpdate(taskID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.taskUpdates = append(r.taskUpdates, taskID)
+}
+
+// updateCount 返回目前收到过几次广播。
+func (r *fakeRunner) updateCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.taskUpdates)
 }
 
 // result 零值 = StageOutcomeDone：不显式设置的老用例照旧判完成，
@@ -140,7 +157,9 @@ func (r *fakeRunner) RunAgentStage(ctx context.Context, exec AgentStageExecution
 	return result, nil
 }
 
-func (r *fakeRunner) TaskUpdated(rootID string, detail TaskDetail) {}
+func (r *fakeRunner) TaskUpdated(rootID string, detail TaskDetail) {
+	r.recordTaskUpdate(detail.Task.ID)
+}
 
 // newTestService 是常见测试组合：干净的任务库 + fakeRunner。
 func newTestService(t *testing.T, runner *fakeRunner) (*Service, fs.RootInfo) {
@@ -1193,6 +1212,60 @@ func TestPauseResumeRoundTrip(t *testing.T) {
 	}
 	if resumed.Task.Status != StatusRunning {
 		t.Fatalf("status=%s, want running", resumed.Task.Status)
+	}
+}
+
+// 状态变更必须发 task.updated，否则别的客户端看不到：
+// setTaskStatus（Pause/Resume/Cancel/Fail）与 moveTo（换段）以前都只写库、
+// 由 HTTP handler 事后补一次，于是 KickPending 等非 HTTP 入口推不出去。
+func TestStatusChangeAlwaysBroadcasts(t *testing.T) {
+	ctx := context.Background()
+	runner := &fakeRunner{}
+	svc, root := newTestService(t, runner)
+	d, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID,
+		Stages: []StageTemplate{userStage("A"), agentStage("B", "do {previous_input}")}, Input: "x"})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	// Pause 走 setTaskStatus
+	if _, err := svc.Pause(ctx, MoveInput{RootID: root.ID, TaskID: d.Task.ID, Reason: "r"}); err != nil {
+		t.Fatalf("Pause: %v", err)
+	}
+	if got := runner.updateCount(); got != 1 {
+		t.Fatalf("broadcasts after Pause = %d, want 1 (setTaskStatus must broadcast)", got)
+	}
+	// Cancel 也走 setTaskStatus：任务变终态，卡片要从板上消失
+	if _, err := svc.Cancel(ctx, MoveInput{RootID: root.ID, TaskID: d.Task.ID}); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+	if got := runner.updateCount(); got != 2 {
+		t.Fatalf("broadcasts after Cancel = %d, want 2", got)
+	}
+	// 已是终态再 Cancel：状态没变，就不该再推一条一模一样的（否则每个客户端白重渲染一次）
+	if _, err := svc.Cancel(ctx, MoveInput{RootID: root.ID, TaskID: d.Task.ID}); err != nil {
+		t.Fatalf("Cancel on terminal task: %v", err)
+	}
+	if got := runner.updateCount(); got != 2 {
+		t.Fatalf("broadcasts after redundant Cancel = %d, want 2 (unchanged status must stay silent)", got)
+	}
+}
+
+// moveTo 换段指针后必须播：卡片上的「当前在第几段」就挂在这条上。
+func TestAdvanceBroadcastsNewStage(t *testing.T) {
+	ctx := context.Background()
+	runner := &fakeRunner{}
+	svc, root := newTestService(t, runner)
+	d, err := svc.CreateTask(ctx, CreateTaskInput{RootID: root.ID,
+		Stages: []StageTemplate{userStage("A"), agentStage("B", "do {previous_input}")}, Input: "x"})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	before := runner.updateCount()
+	if _, err := svc.Next(ctx, MoveInput{RootID: root.ID, TaskID: d.Task.ID}); err != nil {
+		t.Fatalf("Next: %v", err)
+	}
+	if got := runner.updateCount(); got <= before {
+		t.Fatalf("broadcasts after Next = %d, want > %d (moveTo must broadcast)", got, before)
 	}
 }
 
