@@ -11,32 +11,34 @@ const panel = readFileSync(new URL("../src/components/DefaultListView.tsx", impo
 const switcher = readFileSync(new URL("../src/components/MainViewSwitcher.tsx", import.meta.url), "utf8");
 
 // 设计契约见 docs/main-view-switching-design.md：主区内容由**唯一一个**全局状态决定。
-assert.match(
-  appStorage,
-  /const MAIN_VIEW_STORAGE_KEY = "mindfs-main-view";/,
-  "main view should persist under its own key",
-);
+// 2026-10-03 用户决策：冷启动恒落工作台，主面板模式不再跨刷新记忆 —— 原 R10
+// （恢复上次模式）作废。见下方 STARTUP 组断言。
 assert.match(
   app,
-  /const \[mainView, setMainView\] = useState<MainViewMode>\(/,
-  "main view should be a single app-level state",
+  /const \[mainView, setMainView\] = useState<MainViewMode>\(\(\) => "workspace"\);/,
+  "main view should be a single app-level state, landing on the workspace",
 );
 assert.match(
   appPath,
   /export type MainViewMode = "workspace" \| "board" \| "files" \| "chat";/,
   "the four modes are workspace / board / files / chat",
 );
-assert.match(
+// STARTUP 组：启动落点必须是常量「workspace」，不能是任何 localStorage/URL 读数。
+// 少了这条，「兜底值是 workspace」的旧读法会悄悄复活成「恢复上次模式」。
+assert.doesNotMatch(
   appStorage,
-  /return MAIN_VIEW_MODES\.includes\(saved as MainViewMode\) \? \(saved as MainViewMode\) : "workspace";/,
-  "first run should land on the workspace (工作台), not the board",
+  /MAIN_VIEW_STORAGE_KEY|mindfs-main-view|loadMainView|loadLegacyMainView/,
+  "the main view must not be persisted or restored from localStorage",
 );
-// 旧键迁移同理：只有 file-browser 有意义，其余落到工作台。
-// 存量用户存的 mindfs-main-view 仍然照读 —— 记住用户自己的选择。
+assert.doesNotMatch(
+  app,
+  /localStorage\.setItem\(MAIN_VIEW_STORAGE_KEY|loadMainView|loadLegacyMainView/,
+  "App must neither read nor write a persisted main view",
+);
 assert.match(
-  appStorage,
-  /const migrated: MainViewMode = legacy === "file-browser" \? "files" : "workspace";/,
-  "legacy migration should fall back to the workspace too",
+  app,
+  /if \(urlState\.view && \(urlState\.file \|\| urlState\.session\)\) \{\s*switchMainView\(urlState\.view\);/,
+  "a bare ?view= must not steer the cold start; only real deep links restore their view",
 );
 
 // 旧的「按项目记忆 + 全局兜底」必须彻底消失：那正是「点目录突然跳到看板」的根因

@@ -4,9 +4,6 @@
  * 拆自 appSupport.tsx（2026-09 App.tsx 拆分）。
  */
 
-import { type MainViewMode } from "./appPath";
-import { MAIN_VIEW_MODES } from "./appPath";
-
 import {  currentUser  } from "../services/authGate";
 import {  getRootNodeId  } from "../services/rootNode";
 import {  scopeKey, dirSelKey  } from "../services/scope";
@@ -210,7 +207,10 @@ export type TaskCreateWorktreePreference = {
   worktreeBranch: string;
 };
 
-export const MAIN_VIEW_STORAGE_KEY = "mindfs-main-view";
+// 主面板模式**不再跨冷启动记忆**（2026-10-03 用户决策，取代 docs 里的 R10）：
+// 冷启动恒落工作台，用户在会话内的切换照常生效，只是不跨刷新继承。
+// 原先的键常量与两个 loader（旧键 + 迁移）已无调用方，一并删掉 ——
+// 留着会让「兜底值是 workspace」的旧读法看起来仍然成立，掩盖真正的启动行为。
 
 // 跨项目工作台：筛选档 + 折叠的项目组（键是 scopeKey(nodeId, rootId) 列表）。
 // 项目数一多就该靠「收窄」而不是「加层级」来扫读，所以这两项都要跨会话记住。
@@ -254,30 +254,6 @@ export function saveWorkspaceCollapsed(keys: Set<string>): void {
   try {
     window.localStorage.setItem(WORKSPACE_COLLAPSED_STORAGE_KEY, JSON.stringify(Array.from(keys)));
   } catch {}
-}
-
-export function loadMainView(): MainViewMode {
-  if (typeof window === "undefined") return "workspace";
-  try {
-    const saved = window.localStorage.getItem(MAIN_VIEW_STORAGE_KEY);
-    return MAIN_VIEW_MODES.includes(saved as MainViewMode) ? (saved as MainViewMode) : "workspace";
-  } catch {
-    return "workspace";
-  }
-}
-
-export function loadLegacyMainView(): MainViewMode | null {
-  if (typeof window === "undefined") return null;
-  if (window.localStorage.getItem(MAIN_VIEW_STORAGE_KEY)) return null;
-  try {
-    const legacy = window.localStorage.getItem("mindfs-default-main-content-view");
-    // 旧键里只有 file-browser 有意义，其余（缺失/非法）一律落到默认落地页 = 工作台。
-    const migrated: MainViewMode = legacy === "file-browser" ? "files" : "workspace";
-    window.localStorage.setItem(MAIN_VIEW_STORAGE_KEY, migrated);
-    return migrated;
-  } catch {
-    return null;
-  }
 }
 
 export function loadMobileEnterKeySends(): boolean {

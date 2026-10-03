@@ -212,13 +212,13 @@ import { APP_DOCUMENT_TITLE, AppProps, CHILD_SESSION_PAGE_SIZE, MULTI_PROJECT_SE
 import { MainViewMode, URLState } from "./app/appPath";
 import { closeTopBackLayer, consumeViewHistoryEntry, hasBackLayer, installBackNavigation, pushViewHistoryEntry, useBackLayer } from "./app/useBackNavigation";
 import { AttachedFileContext, Exchange, GitFileStat, MultiProjectSessionGroup, PendingSend, RelatedFileClickTarget, SessionItem, SessionMode, SessionQueueItem, SlashCommandResult, ViewerSelection, WSStatus } from "./app/appSession";
-import { CANDIDATE_FETCH_DEBOUNCE_MS, DIRECTORY_SORT_OVERRIDES_STORAGE_KEY, GIT_DIFF_SIDE_BY_SIDE_STORAGE_KEY, GIT_HISTORY_EXPANDED_STORAGE_KEY, GIT_STATUS_EXPANDED_STORAGE_KEY, LAST_ROOT_NODE_STORAGE_KEY, LAST_ROOT_STORAGE_KEY, loadWorkspaceCollapsed, loadWorkspaceFilter, MAIN_VIEW_STORAGE_KEY, MOBILE_ENTER_KEY_SEND_STORAGE_KEY, PLUGIN_QUERY_STORAGE_PREFIX, saveWorkspaceCollapsed, saveWorkspaceFilter, SIDEBARS_SWAPPED_STORAGE_KEY, TASK_TEMPLATE_ALL_FILTER, TASK_TEMPLATE_SELECTION_STORAGE_KEY, TREE_SORT_STORAGE_KEY, type WorkspaceBoardFilter } from "./app/appStorage";
+import { CANDIDATE_FETCH_DEBOUNCE_MS, DIRECTORY_SORT_OVERRIDES_STORAGE_KEY, GIT_DIFF_SIDE_BY_SIDE_STORAGE_KEY, GIT_HISTORY_EXPANDED_STORAGE_KEY, GIT_STATUS_EXPANDED_STORAGE_KEY, LAST_ROOT_NODE_STORAGE_KEY, LAST_ROOT_STORAGE_KEY, loadWorkspaceCollapsed, loadWorkspaceFilter, MOBILE_ENTER_KEY_SEND_STORAGE_KEY, PLUGIN_QUERY_STORAGE_PREFIX, saveWorkspaceCollapsed, saveWorkspaceFilter, SIDEBARS_SWAPPED_STORAGE_KEY, TASK_TEMPLATE_ALL_FILTER, TASK_TEMPLATE_SELECTION_STORAGE_KEY, TREE_SORT_STORAGE_KEY, type WorkspaceBoardFilter } from "./app/appStorage";
 import { TaskInlineEditState } from "./app/appTask";
 import { buildMatchInputFromPath, buildMessageWithViewContext, hasExplicitFileContext, indexManagedRoots, inferReadModeFromPlugin, managedDirAddErrorMessage, mapManagedRootsToEntries, normalizeUpdateState, shouldShowUpdateButton, toPluginInput, updateButtonLabel, updateSummaryText, useResponsive, waitForNextPaint } from "./app/appMisc";
 import { basenameOfPath, buildDirectorySelectionKey, buildFileScrollKey, buildURLSearch, comparableManagedRootPath, dirnameOfPath, isDirectorySortMode, joinDisplayPath, normalizeCursor, normalizePath, parentDirsOfFile, parseFileLocation, parsePluginQuery, readURLState, relativeDisplayPathFromRoot, rootNodeKey } from "./app/appPath";
 import { useWorkspaceBoard } from "./app/useWorkspaceBoard";
 import { hasSessionExchanges, isSessionShownInMain, isTopLevelSessionItem, mergeReplyingStateByNode, normalizeMode, relatedFileSelectionKey, sessionInputHistory, shouldAutoSelectNewSession, toSessionItem } from "./app/appSession";
-import { accountScopedKey, loadGitDiffSideBySide, loadLastRootId, loadLastRootNodeId, loadLegacyMainView, loadMainView, loadMobileEnterKeySends, loadPersistedFileScrollPositions, loadPersistedPluginQuery, loadSidebarsSwapped, loadTaskCreateWorktreePreference, persistFileScrollPositions, persistPluginQuery, removeLocalStorageByPrefix, saveTaskCreateWorktreePreference } from "./app/appStorage";
+import { accountScopedKey, loadGitDiffSideBySide, loadLastRootId, loadLastRootNodeId, loadMobileEnterKeySends, loadPersistedFileScrollPositions, loadPersistedPluginQuery, loadSidebarsSwapped, loadTaskCreateWorktreePreference, persistFileScrollPositions, persistPluginQuery, removeLocalStorageByPrefix, saveTaskCreateWorktreePreference } from "./app/appStorage";
 import { applyStageOverride, currentTaskInputFromDetail, DEFAULT_TASK_AGENT, DEFAULT_TASK_MODEL, firstAgentStage, firstTaskInputFromDetail, firstUserInputTemplate, isTerminalKanbanTask, latestTaskStageRun, normalizeFastService, parseTaskSessionErrorDetails, parseTaskSessionErrorMessage, previousTaskInputsFromDetail, taskSessionKeysFromDetail, taskStatusLabel } from "./app/appTask";
 import { useCompletionSound } from "./app/useCompletionSound";
 import { useExternalSessionImport } from "./app/useExternalSessionImport";
@@ -1346,12 +1346,16 @@ export function App({ onGoHome }: AppProps) {
       return {};
     }
   });
-  const [mainView, setMainView] = useState<MainViewMode>(
-    () => loadLegacyMainView() || loadMainView(),
-  );
+  /* 冷启动恒定落在工作台（2026-10-03 用户决策，取代 R10 的「恢复上次模式」）。
+     localStorage 与 URL 两条路都会把「上次用的模式」带进冷启动：
+     mindfs-main-view 每次切换都写（下方持久化 effect），URL 的 view 也被
+     replaceURLState 每次导航重写。所以「兜底值是 workspace」从来不是启动行为，
+     只是缺省时的读数 —— 想要启动即工作台，必须在这两条路之前就不读它们。
+     用户在会话内切到文件/对话仍然完全正常，只是不再跨冷启动继承。 */
+  const [mainView, setMainView] = useState<MainViewMode>(() => "workspace");
   const mainViewRef = useRef<MainViewMode>(mainView);
-  // 从 chat 返回时回到上一个非 chat 模式（瞬态，不落盘）
-  const lastNonChatViewRef = useRef<MainViewMode>("board");
+  // 从 chat 返回时回到上一个非 chat 模式（瞬态，不落盘）。初值与冷启动落点一致。
+  const lastNonChatViewRef = useRef<MainViewMode>("workspace");
   const [status, setStatus] = useState<WSStatus>("disconnected");
   const [file, setFile] = useState<FilePayload | null>(null);
   const currentFileEditing = useSyncExternalStore(fileEditStore.subscribe, () => !!file?.root && fileEditStore.has(file.root, file.path));
@@ -1547,12 +1551,6 @@ export function App({ onGoHome }: AppProps) {
       JSON.stringify(directorySortOverrides),
     );
   }, [directorySortOverrides]);
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    window.localStorage.setItem(MAIN_VIEW_STORAGE_KEY, mainView);
-  }, [mainView]);
   useEffect(() => {
     const rootID = currentRootId;
     if (!rootID) return;
@@ -7308,8 +7306,13 @@ export function App({ onGoHome }: AppProps) {
           void loadMultiProjectSessionGroups();
         }
         setPluginQuery(urlState.pluginQuery);
-        // URL 里的 view 是主面板模式的唯一真相源；没有才回落 localStorage（useState 初值已读）。
-        if (urlState.view) {
+        /* URL 里的 view 只在「真深链」时才算数（即同时带了 file/session）。
+             冷启动恒落工作台，但 `?root=x&file=y`、`?session=k` 这类分享/回退链接
+             必须照旧还原它指定的视图 —— 下面两个分支正是靠这个切回 files/chat。
+             反过来，只带 `view=` 而没有 file/session 的地址，是 replaceURLState
+             把当前状态抄进地址栏的结果（每次导航都写），拿它当启动指令就等于
+             「上次停在哪就冷启动在哪」，与本次决策冲突。 */
+        if (urlState.view && (urlState.file || urlState.session)) {
           switchMainView(urlState.view);
         }
         if (urlState.session) {
