@@ -1346,12 +1346,12 @@ export function App({ onGoHome }: AppProps) {
       return {};
     }
   });
-  /* 冷启动恒定落在工作台（2026-10-03 用户决策，取代 R10 的「恢复上次模式」）。
-     localStorage 与 URL 两条路都会把「上次用的模式」带进冷启动：
-     mindfs-main-view 每次切换都写（下方持久化 effect），URL 的 view 也被
-     replaceURLState 每次导航重写。所以「兜底值是 workspace」从来不是启动行为，
-     只是缺省时的读数 —— 想要启动即工作台，必须在这两条路之前就不读它们。
-     用户在会话内切到文件/对话仍然完全正常，只是不再跨冷启动继承。 */
+  /* 冷启动落点（2026-10-03 用户决策，取代 R10 的「恢复上次模式」）：
+     **有会话 id 进那个对话，否则落工作台。** localStorage 与 URL 的 view 两条路都会
+     把「上次用的模式」带进冷启动：mindfs-main-view 每次切换都写，view 也被
+     replaceURLState 每次导航抄进地址栏。所以「兜底值是 workspace」从来不是启动行为，
+     只是缺省时的读数 —— 唯一的启动指令是 URL 的 session，不是 view。
+     用户在会话内切到文件/对话仍然完全正常，只是不跨冷启动继承。 */
   const [mainView, setMainView] = useState<MainViewMode>(() => "workspace");
   const mainViewRef = useRef<MainViewMode>(mainView);
   // 从 chat 返回时回到上一个非 chat 模式（瞬态，不落盘）。初值与冷启动落点一致。
@@ -7306,16 +7306,10 @@ export function App({ onGoHome }: AppProps) {
           void loadMultiProjectSessionGroups();
         }
         setPluginQuery(urlState.pluginQuery);
-        /* URL 里的 view 只在「真深链」时才算数（即同时带了 file/session）。
-             冷启动恒落工作台，但 `?root=x&file=y`、`?session=k` 这类分享/回退链接
-             必须照旧还原它指定的视图 —— 下面两个分支正是靠这个切回 files/chat。
-             反过来，只带 `view=` 而没有 file/session 的地址，是 replaceURLState
-             把当前状态抄进地址栏的结果（每次导航都写），拿它当启动指令就等于
-             「上次停在哪就冷启动在哪」，与本次决策冲突。 */
-        if (urlState.view && (urlState.file || urlState.session)) {
-          switchMainView(urlState.view);
-        }
         if (urlState.session) {
+          // 有明确的会话 id：直接进那个对话。抢在 handleSelectSession 之前切，
+          // 否则它要等缓存/网络回来才切，中间会闪一下工作台。
+          switchMainView("chat");
           if (cancelled) return;
           await handleSelectSessionRef.current?.(
             {
@@ -7323,11 +7317,9 @@ export function App({ onGoHome }: AppProps) {
               session_key: urlState.session,
               root_id: preferredRoot,
             },
-            // 深链恢复：URL 明确写了非 chat 的面板时，别被「有 session」拉回对话态
-            {
-              preserveMainView:
-                !!urlState.view && urlState.view !== "chat",
-            },
+            // 已经切到 chat 了，别让 handleSelectSession 再按 URL 的 view 改回去
+            // （深链 ?session=k&view=board 也一律进对话：会话 id 是明确的落点）。
+            { preserveMainView: true },
           );
         } else if (urlState.file) {
           await ensurePluginsLoaded(preferredRoot);

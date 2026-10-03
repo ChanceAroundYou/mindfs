@@ -11,8 +11,8 @@ const panel = readFileSync(new URL("../src/components/DefaultListView.tsx", impo
 const switcher = readFileSync(new URL("../src/components/MainViewSwitcher.tsx", import.meta.url), "utf8");
 
 // 设计契约见 docs/main-view-switching-design.md：主区内容由**唯一一个**全局状态决定。
-// 2026-10-03 用户决策：冷启动恒落工作台，主面板模式不再跨刷新记忆 —— 原 R10
-// （恢复上次模式）作废。见下方 STARTUP 组断言。
+// 2026-10-03 用户决策：冷启动「有会话 id 进那个对话，否则落工作台」，
+// 主面板模式不再跨刷新记忆 —— 原 R10（恢复上次模式）作废。见下方 STARTUP 组断言。
 assert.match(
   app,
   /const \[mainView, setMainView\] = useState<MainViewMode>\(\(\) => "workspace"\);/,
@@ -35,10 +35,24 @@ assert.doesNotMatch(
   /localStorage\.setItem\(MAIN_VIEW_STORAGE_KEY|loadMainView|loadLegacyMainView/,
   "App must neither read nor write a persisted main view",
 );
+// 唯一的启动指令是会话 id：有就进那个对话，没有才留工作台。
+// 判据必须是 session 而不是 view —— view 是 replaceURLState 每次导航抄进地址栏的
+// 副产物，拿它当启动指令就退化成「上次停在哪就冷启动在哪」。
 assert.match(
   app,
-  /if \(urlState\.view && \(urlState\.file \|\| urlState\.session\)\) \{\s*switchMainView\(urlState\.view\);/,
-  "a bare ?view= must not steer the cold start; only real deep links restore their view",
+  /if \(urlState\.session\) \{\s*(?:\/\/[^\n]*\n\s*)*switchMainView\("chat"\);/,
+  "an explicit session id must switch straight into that conversation",
+);
+assert.doesNotMatch(
+  app,
+  /switchMainView\(urlState\.view\)/,
+  "the URL's view must never steer the cold start on its own",
+);
+// 深链 ?session=k&view=board 也要进对话：已切好 chat，别再被 view 改回去。
+assert.match(
+  app,
+  /\{ preserveMainView: true \},\s*\n\s*\);\s*\n\s*\} else if \(urlState\.file\)/,
+  "session deep links must keep chat instead of being reverted by the URL view",
 );
 
 // 旧的「按项目记忆 + 全局兜底」必须彻底消失：那正是「点目录突然跳到看板」的根因
@@ -203,9 +217,9 @@ assert.match(
   "the root-dir top-up must stand down while a file or diff is open",
 );
 
-// 深链恢复：URL 里的 view 是主面板模式的唯一真相源。
-// 恢复文件时不能被 open 的无条件 switchMainView("files") 盖回去 ——
+// 深链恢复：恢复文件时不能被 open 的无条件 switchMainView("files") 盖回去 ——
 // 与会话恢复的 preserveMainView 是同一约定（App.tsx 两处都传同一个判据）。
+// 注意只有 file 分支还看 URL 的 view；session 分支一律进对话（见 STARTUP 组）。
 assert.match(
   app,
   /if \(!params\?\.preserveMainView\) \{\s*switchMainView\("files"\);/,
