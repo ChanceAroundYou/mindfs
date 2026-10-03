@@ -302,6 +302,48 @@ assert.match(
   "the single-task fetch must go through the existing task_number filter",
 );
 
+// 10b) 卡片的新鲜度必须来自 taskDetailsById（2026-10-03 实测：工作台上点卡片上的
+//      完成/立即执行，卡片状态纹丝不动）。扇出拉回的 items 是**发完就冻结**的快照，
+//      而所有卡片动作与 WS 的 task.updated 都只更新 taskDetailsById —— 两边不并轨，
+//      点了按钮看板就像坏了。只换卡片的数据源，扇出仍然决定「哪些项目有卡、卡属于哪个节点」。
+assert.match(
+  hook,
+  /getLiveTask: \(taskId: string\) => KanbanTask \| undefined;/,
+  "the hook must accept a live-task reader, or cards are stuck on a frozen fan-out snapshot",
+);
+assert.match(
+  hook,
+  /const live = getLiveTask\(String\(item\?\.task\?\.id \|\| ""\)\);/,
+  "each card must look up its live version by task id",
+);
+assert.match(
+  hook,
+  /String\(live\.updated_at \|\| ""\) > String\(item\.task\.updated_at \|\| ""\)/,
+  "the live version must win only when it is strictly newer, so a late fan-out response cannot revert a fresh card",
+);
+// 两个派生都要过这道：blockedAll 是顶部「需要你」条带，漏了它条带就会一直挂着已完成的卡。
+assert.match(
+  hook,
+  /const blockedAll = useMemo\(\s*\(\) => items\.map\(liveVersion\)\.filter/,
+  "the attention bar must read the same live version, or it keeps listing finished tasks",
+);
+// 卡片动作与收尾要能触发结构重拉（卡片还在不在、worktree 徽标），转发 ref 为空即跳过。
+assert.match(
+  app,
+  /if \(action === "cancel" \|\| action === "rebuild-worktree"\) \{\s*refreshWorkspaceBoard\(\);/,
+  "cancel moves a card out of the current filter and rebuild changes the worktree badge — both need a re-fetch",
+);
+assert.match(
+  app,
+  /workspaceBoardRefreshRef\.current = workspaceBoard\.refresh;/,
+  "the refresh body lives inside the hook, so it must be mounted onto the forward ref during render",
+);
+assert.match(
+  app,
+  /const refreshWorkspaceBoard = useCallback\(\(\) => \{\s*workspaceBoardRefreshRef\.current\?\.\(\);/,
+  "early call sites reach the refresh through a null-safe forwarder",
+);
+
 // 10) 筛选与折叠状态跨会话记住（读时校验、非法值回退默认）
 assert.match(storage, /const WORKSPACE_FILTER_STORAGE_KEY = "mindfs-workspace-filter";/, "the filter needs its own storage key");
 assert.match(storage, /const WORKSPACE_COLLAPSED_STORAGE_KEY = "mindfs-workspace-collapsed";/, "collapsed groups need their own storage key");
