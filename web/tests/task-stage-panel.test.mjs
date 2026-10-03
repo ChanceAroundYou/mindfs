@@ -399,3 +399,70 @@ test("advance gate mirrors the server: failed/cancelled current stage blocks the
 });
 
 console.log("task-stage-panel.test.mjs: OK");
+
+// ---- 卡片与详情面板的门控必须给同一个答案 ----
+// 2026-10-03 实测（mindfs 任务 26）：详情面板按 canAdvanceFromCurrentStage 不给按钮，
+// 看板卡片只查 hasLaterStage 就给了「立即执行」；点下去服务端 moveRelative 报错、
+// RunNow 又把错吞掉只回未变的详情 —— 按钮看着能点，什么也没发生，任务卡死。
+// 卡片侧补 canAdvanceCard 就是为了让两边同口径（判据都是 current_stage_status）。
+const { canAdvanceCard } = await import("../src/app/appTask.ts");
+
+const mkCard = (roles, cur, status, stageStatus) => ({
+  id: "t1",
+  root_id: "r",
+  status,
+  current_stage_index: cur,
+  current_stage_status: stageStatus,
+  stages: mkStages(roles),
+});
+
+test("card advance gate agrees with the detail panel on an unreported agent stage", () => {
+  // agent 段 waiting_user（没输出 [STAGE-DONE:N]）：两边都必须放行，
+  // 否则就回到「一边不给、一边给个死按钮」的分裂。
+  const detail = mkDetail(["user", "agent", "agent"], [[0, "approved"], [1, "waiting_user"]]);
+  assert.equal(canAdvanceFromCurrentStage(detail, 1), true, "detail panel: waiting_user is advanceable");
+  const card = mkCard(["user", "agent", "agent"], 1, "waiting_user", "waiting_user");
+  assert.equal(canAdvanceCard(card), true, "card must agree");
+});
+
+test("card advance gate still blocks failed/cancelled/rejected agent stages", () => {
+  for (const status of ["fail", "cancelled", "rejected"]) {
+    const card = mkCard(["user", "agent", "agent"], 1, "waiting_user", status);
+    assert.equal(canAdvanceCard(card), false, `agent stage ${status} must not advance on the card`);
+    const detail = mkDetail(["user", "agent", "agent"], [[0, "approved"], [1, status]]);
+    assert.equal(canAdvanceFromCurrentStage(detail, 1), false, `detail panel must also block ${status}`);
+  }
+});
+
+test("card advance gate keeps the user-stage rule identical to the panel", () => {
+  for (const [status, expected] of [
+    ["fail", false], ["cancelled", false],
+    ["success", true], ["approved", true], ["pending", true], ["running", true], ["waiting_user", true], ["rejected", true],
+  ]) {
+    const card = mkCard(["user", "agent", "agent"], 0, "waiting_user", status);
+    assert.equal(canAdvanceCard(card), expected, `user stage ${status}`);
+    const detail = mkDetail(["user", "agent", "agent"], [[0, status]]);
+    assert.equal(canAdvanceFromCurrentStage(detail, 0), expected, `detail panel, user stage ${status}`);
+  }
+});
+
+test("card advance gate falls back to pending when the server sent no stage status", () => {
+  // 老数据 / 派生字段缺失时读作 pending（与服务端零值一致），而不是 undefined 落到 false
+  // 把按钮全灭掉。
+  const card = mkCard(["user", "agent", "agent"], 0, "waiting_user", undefined);
+  assert.equal(canAdvanceCard(card), true);
+  // 指针越界 → 不给
+  assert.equal(canAdvanceCard(mkCard(["user", "agent"], 9, "waiting_user", "success")), false);
+});
+
+// 详情面板的「完成」只在没有下一段时给，与看板卡片 canComplete 同口径。
+assert.match(
+  panel,
+  /const canCompleteTask = !terminal && !finishActive && !hasLaterStage\(task\)/,
+  "the detail panel must offer 完成 only when no later stage exists",
+);
+assert.match(
+  panel,
+  /\{canCompleteTask \? \([\s\S]{0,400}?onClick=\{\(\) => void completeTask\(\)\}[\s\S]{0,300}?<TaskCompleteIcon \/>/,
+  "完成 must be rendered with the same icon the board card uses",
+);

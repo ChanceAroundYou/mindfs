@@ -191,10 +191,10 @@ export function nextRunnableStageIndex(detail: TaskDetail, currentStageIndex: nu
 }
 
 /**
- * 当前段能不能靠「立即执行」推进过去 —— `canAdvanceFromStage`（task_store.go:691）的前端镜像。
+ * 当前段能不能靠「立即执行」推进过去 —— `canLeaveStageOnRequest`（task_store.go）的前端镜像。
  *
  * 为什么要镜像而不是直接发按钮：那一段 fail/cancelled/rejected 时 moveRelative 直接报错，
- * 而 `RunNow` 的 waiting_user 分支把这个错吞掉、只回详情（service.go:786）——
+ * 而 `RunNow` 的 waiting_user 分支把这个错吞掉、只回详情（service.go:829）——
  * 结果就是按钮点了**什么都不发生**。宁可不给。
  * 服务端改这条规则时这里要跟着改，两边用同一份 statuses 清单。
  */
@@ -203,7 +203,33 @@ export function canAdvanceFromCurrentStage(detail: TaskDetail, currentStageIndex
   if (!stage) return false;
   const status = String(latestTaskStageRun(detail, currentStageIndex)?.status || "pending");
   if (stage.role === "agent") {
-    return status === "pending" || status === "running" || status === "success" || status === "approved";
+    // waiting_user 放行，与服务端 canLeaveStageOnRequest 一致：那是「agent 没输出
+    // [STAGE-DONE:N]」而不是「活没干完」，该由用户来判要不要推进过去。
+    // 2026-10-03 实测（mindfs 任务 26）：这一段不给按钮，看板却给了个点了没反应的
+    // 按钮，任务彻底卡死。引擎的自动推进不经过这条路径（走 moveTo），防线仍在。
+    return status === "pending" || status === "running" || status === "success" || status === "approved" || status === "waiting_user";
+  }
+  return ["pending", "running", "waiting_user", "approved", "success", "rejected"].includes(status);
+}
+
+/**
+ * 卡片版的推进门控 —— `canAdvanceFromCurrentStage` 在只有 `KanbanTask`（没有
+ * `stage_runs`）时的镜像，判据是服务端已经算好挂在任务上的 `current_stage_status`。
+ *
+ * 为什么卡片也需要这道门：详情面板用 canAdvanceFromCurrentStage，卡片原来只用
+ * hasLaterStage，压根不看当前段能不能走 —— 两边于是给出相反的答案。2026-10-03 实测
+ * （mindfs 任务 26）：详情面板不给按钮、卡片给一个「立即执行」，点下去服务端
+ * moveRelative 报错、RunNow 又把错吞掉只回未变的详情 —— 按钮看着能点，什么也没发生。
+ *
+ * 卡片拿不到 stage_runs，但 current_stage_status 是同一个 run 的状态（服务端
+ * decorateCurrentStage 填的，列表和详情两条路径都填），所以这道门与详情面板同口径。
+ */
+export function canAdvanceCard(task: KanbanTask): boolean {
+  const stage = (task.stages || [])[task.current_stage_index];
+  if (!stage) return false;
+  const status = String(task.current_stage_status || "pending");
+  if (stage.role === "agent") {
+    return status === "pending" || status === "running" || status === "success" || status === "approved" || status === "waiting_user";
   }
   return ["pending", "running", "waiting_user", "approved", "success", "rejected"].includes(status);
 }

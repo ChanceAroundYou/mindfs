@@ -852,7 +852,12 @@ func (s *Service) RunNow(ctx context.Context, in MoveInput) (TaskDetail, error) 
 		}
 		return detail, nerr
 	case StatusRunning, StatusPaused:
-		return store.GetDetail(ctx, task.ID)
+		// 正在跑 / 已暂停：点「立即执行」推进不了任何一段。原先这里静默回 200 +
+		// 未变的详情，前端 apply 完看着「什么都没发生」—— 用户无从判断是按钮坏了
+		// 还是任务本来就动不了（2026-10-03 任务 26 卡死时就是这个形态）。
+		// 明确报错：调用方已经有 reportError 弹窗的通路（App.handleMoveKanbanTask），
+		// 重复点击也拿得到同样的反馈。
+		return TaskDetail{}, errors.New("task is running or paused: 任务正在执行或已暂停，先暂停/恢复再推进")
 	}
 	// 准入检查在建事件之前：收尾期间进来的请求不该留下一条「点过立即执行」而
 	// 实际什么都没发生的流水（那会让用户以为按钮生效了）。
@@ -1662,7 +1667,10 @@ func (s *Service) moveRelative(ctx context.Context, in MoveInput, delta int, eve
 	if delta > 0 && latest.Status == StageStatusRunning {
 		return TaskDetail{}, errors.New("current stage is running")
 	}
-	if delta > 0 && !canAdvanceFromStage(task.Stages[task.CurrentStageIndex].Role, latest.Status) {
+	if delta > 0 && !canLeaveStageOnRequest(task.Stages[task.CurrentStageIndex].Role, latest.Status) {
+		// 走 canLeaveStageOnRequest 而不是 canAdvanceFromStage：到这里的一定是人点的
+		// （引擎自动推进走 moveTo），而 agent 段的 waiting_user（没输出 [STAGE-DONE:N]）
+		// 正该由人来判「就这样，推进」。canAdvanceFromStage 是留给引擎的那条更严的线。
 		return TaskDetail{}, fmt.Errorf(
 			"current stage is %s: 这一段没走完，重跑本段或改任务后再试",
 			latest.Status,

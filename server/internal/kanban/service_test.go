@@ -2674,3 +2674,162 @@ func TestBuildingAWorktreeThatIsAFileIsNotRecordedAsBuilt(t *testing.T) {
 		t.Fatal("a path that is not a directory must not be recorded as a built worktree")
 	}
 }
+
+// mustGetDetail 取一次任务详情并在出错时立刻失败，省掉每个用例重复的 err 检查。
+// 与 worktree_finish_stage_test.go 的 mustGetTask（返回 Task）分开：这里要 stage_runs。
+func mustGetDetail(t *testing.T, svc *Service, rootID, taskID string) TaskDetail {
+	t.Helper()
+	d, err := svc.GetTask(context.Background(), rootID, taskID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	return d
+}
+
+// agent 段停在 waiting_user（没输出 [STAGE-DONE:N]）时，用户手动点「立即执行」要能推进。
+//
+// 2026-10-03 实测（mindfs 任务 26）：定位段把活干完了但没回报完成，于是
+//   - 详情面板按 canAdvanceFromCurrentStage 不给按钮，
+//   - 看板卡片只查 hasLaterStage，给了个「立即执行」，
+//   - 点下去 moveRelative 报错、RunNow 又把错吞掉只回未变的详情。
+// 结果任务彻底卡死，用户唯一想做的事（就这样，推进到下一段）没有任何入口能达成。
+//
+// 自动推进那条防线不在此处：引擎走 moveTo（auto_advanced 事件），根本不经过
+// canLeaveStageOnRequest —— TestAgentStageWithoutDoneMarkerStopsAtCurrentStage 守着它。
+func TestRunNowAdvancesAgentStageThatStoppedWaitingForUser(t *testing.T) {
+	ctx := context.Background()
+	svc, root := newTestService(t, &fakeRunner{result: StageResult{Outcome: StageOutcomeSilent}})
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID: root.ID,
+		Stages: []StageTemplate{
+			userStage("Describe"),
+			agentStage("Locate", "Locate:\n{previous_input}"),
+			agentStage("Fix", "Fix it."),
+		},
+		Input: "find it",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if _, err := svc.Next(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err != nil {
+		t.Fatalf("Next to agent: %v", err)
+	}
+	waitForCondition(t, func() bool {
+		d, err := svc.GetTask(ctx, root.ID, detail.Task.ID)
+		return err == nil && d.Task.Status == StatusWaitingUser && d.Task.CurrentStageIndex == 1
+	})
+
+	// 复现形状：RunNow 在 waiting_user 下走 Next；以前 moveRelative 拒绝、错误被吞掉。
+	after := mustGetDetail(t, svc, root.ID, detail.Task.ID)
+	if after.Task.Status != StatusWaitingUser {
+		t.Fatalf("precondition: status = %s, want waiting_user", after.Task.Status)
+	}
+	if _, err := svc.RunNow(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err != nil {
+		t.Fatalf("RunNow on an unreported agent stage must advance, got %v", err)
+	}
+	moved := mustGetDetail(t, svc, root.ID, detail.Task.ID)
+	if moved.Task.CurrentStageIndex != 2 {
+		t.Fatalf("current stage = %d, want 2（用户点了就该推进到下一段）", moved.Task.CurrentStageIndex)
+	}
+	if len(moved.StageRuns) != 3 {
+		t.Fatalf("stage run count = %d, want 3（下一段被植进来了）", len(moved.StageRuns))
+	}
+}
+
+// 引擎的自动推进仍然不许跳过没回报完成的 agent 段：它走 moveTo，不走
+// canLeaveStageOnRequest。这条与上一条是一对 —— 放宽的只有人点的那条路。
+func TestAutoAdvanceStillStopsAtUnreportedAgentStage(t *testing.T) {
+	ctx := context.Background()
+	// auto_advance=true 但 agent 静默：引擎跑完这一段后必须停在原地。
+	svc, root := newTestService(t, &fakeRunner{result: StageResult{Outcome: StageOutcomeSilent}})
+	implement := agentStage("Implement", "Implement {previous_input}")
+	implement.AutoAdvance = true
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID: root.ID,
+		Stages: []StageTemplate{userStage("Describe"), implement, agentStage("Review", "Review.")},
+		Input: "change",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if _, err := svc.Next(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err != nil {
+		t.Fatalf("Next: %v", err)
+	}
+	waitForCondition(t, func() bool {
+		d, err := svc.GetTask(ctx, root.ID, detail.Task.ID)
+		return err == nil && d.Task.Status == StatusWaitingUser && d.Task.AuxFlags.SessionError != ""
+	})
+	d := mustGetDetail(t, svc, root.ID, detail.Task.ID)
+	if d.Task.CurrentStageIndex != 1 {
+		t.Fatalf("current stage = %d, want 1（引擎不许自己跳过没回报的段）", d.Task.CurrentStageIndex)
+	}
+	if len(d.StageRuns) != 2 {
+		t.Fatalf("stage run count = %d, want 2（下一段没被植进来）", len(d.StageRuns))
+	}
+}
+
+// fail / cancelled / rejected 仍然拦得住：放宽的只有 waiting_user 一种。
+func TestRunNowStillRejectsFailedAgentStage(t *testing.T) {
+	ctx := context.Background()
+	svc, root := newTestService(t, &fakeRunner{runErr: errors.New("agent unavailable")})
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID: root.ID,
+		Stages: []StageTemplate{
+			userStage("Describe"),
+			agentStage("Fix", "Fix:\n{previous_input}"),
+			agentStage("Review", "Review."),
+		},
+		Input: "broken",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if _, err := svc.Next(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err != nil {
+		t.Fatalf("Next to agent: %v", err)
+	}
+	waitForCondition(t, func() bool {
+		d, err := svc.GetTask(ctx, root.ID, detail.Task.ID)
+		return err == nil && d.Task.CurrentStageIndex == 1 && d.Task.AuxFlags.SessionError != ""
+	})
+	// RunNow 的 waiting_user 分支照旧把错误吞掉回详情（前端有那条人话可看），
+	// 所以断言的是**指针没动**，而不是 HTTP 层报错。
+	if _, err := svc.RunNow(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err != nil {
+		t.Fatalf("RunNow: %v", err)
+	}
+	d := mustGetDetail(t, svc, root.ID, detail.Task.ID)
+	if d.Task.CurrentStageIndex != 1 {
+		t.Fatalf("current stage = %d, want 1（失败段仍不许被推走）", d.Task.CurrentStageIndex)
+	}
+}
+
+// running / paused 下的「立即执行」不再静默回 200：调用方拿得到明确错误，
+// 而不是 apply 完一个没变的详情、看着像按钮坏了。
+func TestRunNowRejectsRunningTaskWithExplicitError(t *testing.T) {
+	ctx := context.Background()
+	runner := &fakeRunner{}
+	runner.gate = make(chan struct{})
+	svc, root := newTestService(t, runner)
+	detail, err := svc.CreateTask(ctx, CreateTaskInput{
+		RootID: root.ID,
+		Stages: []StageTemplate{
+			userStage("Describe"),
+			agentStage("Fix", "Fix:\n{previous_input}"),
+			agentStage("Review", "Review."),
+		},
+		Input: "change",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if _, err := svc.Next(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err != nil {
+		t.Fatalf("Next to agent: %v", err)
+	}
+	waitForCondition(t, func() bool {
+		d, err := svc.GetTask(ctx, root.ID, detail.Task.ID)
+		return err == nil && d.Task.Status == StatusRunning
+	})
+	if _, err := svc.RunNow(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err == nil {
+		t.Fatal("RunNow on a running task must return an explicit error, not a silent 200")
+	}
+	close(runner.gate)
+}

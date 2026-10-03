@@ -1,6 +1,6 @@
 import React from "react";
 import { useI18n } from "../i18n";
-import { isFinishStageActive, isTerminalKanbanTask, hasLaterStage, parseTaskSessionErrorDetails, parseTaskSessionErrorMessage, taskStatusColor, taskStatusLabel } from "../app/appTask";
+import { canAdvanceCard, isFinishStageActive, isTerminalKanbanTask, hasLaterStage, parseTaskSessionErrorDetails, parseTaskSessionErrorMessage, taskStatusColor, taskStatusLabel } from "../app/appTask";
 import { AgentIcon } from "./AgentIcon";
 import { ModeIcon } from "./ModeIcon";
 import { NoWorktreeIcon } from "./NoWorktreeIcon";
@@ -128,7 +128,9 @@ export function TaskCardRows({
   const canResume = task.status === "paused";
   // 立即执行是**推进**（服务端 RunNow → Next → moveRelative(+1)）。没有下一段可推进时
   // 它什么都不会发生，所以那种局面下不给这个键，该给的是「完成」。
-  const showAdvance = !terminal && !stageRunning && moreStages && !finishActive;
+  // 当前段能不能走也要看（canAdvanceCard，与详情面板同一套判据）：fail/cancelled/
+  // rejected 时 moveRelative 报错、RunNow 把错吞掉，给了就是个点了没反应的按钮。
+  const showAdvance = !terminal && !stageRunning && moreStages && !finishActive && canAdvanceCard(task);
   const statusText = taskStatusLabel(task.status || "", t);
   // 徽标说的是「**现在**有没有 worktree」，不是「当初要不要建树」。create_worktree
   // 是创建时的配置，永久为 true；收尾之后它一点没变，于是徽标照样显示绿色 worktree，

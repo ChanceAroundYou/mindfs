@@ -11,6 +11,7 @@ import { useI18n, type I18nContextValue } from "../i18n";
 import {
   addTaskStage,
   beginTaskFinishWorktree,
+  moveTask,
   rebuildTaskWorktree,
   removeTaskStage,
   renameTask,
@@ -22,9 +23,9 @@ import {
 import { confirmDialog } from "../services/dialog";
 import type { AgentStatus } from "../services/agents";
 import { reportError } from "../services/error";
-import { canAdvanceFromCurrentStage, isFinishStageActive, isTerminalKanbanTask, nextRunnableStageIndex, taskStatusColor } from "../app/appTask";
+import { canAdvanceFromCurrentStage, hasLaterStage, isFinishStageActive, isTerminalKanbanTask, nextRunnableStageIndex, taskStatusColor } from "../app/appTask";
 import { DEFAULT_TASK_AGENT, DEFAULT_TASK_MODEL, inheritAgentStage } from "../app/appTask";
-import { RunNowIcon, TaskFinishWorktreeIcon, TaskQueuedSpinnerIcon, TaskRebuildWorktreeIcon } from "../app/taskIcons";
+import { RunNowIcon, TaskCompleteIcon, TaskFinishWorktreeIcon, TaskQueuedSpinnerIcon, TaskRebuildWorktreeIcon } from "../app/taskIcons";
 
 export type TaskDetailPanelProps = {
   detail: TaskDetail | null;
@@ -332,6 +333,25 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
     } finally { setSaving(false); }
   };
 
+  // 「完成」只在**没有下一段**时给，与看板卡片同一套门控（TaskCardRows 的 canComplete）。
+  //
+  // 末段 waiting_user 时服务端 Next 是直接 finishTask 掉整个任务的（service.go 的 Next
+  // 末段分支），所以这一格该给的是「完成」而不是「执行」—— 执行键长在下一段那张卡上，
+  // 没有下一段就没有那张卡，末段于是两个键都没有、任务看着像是没法收尾。
+  // 有下一段时不给完成：收了尾就看不到下一段了，等于替用户提前结束。
+  const terminal = isTerminalKanbanTask(task);
+  const stageRunningNow = task.current_stage_status === "running" && task.status === "running";
+  const canCompleteTask = !terminal && !finishActive && !hasLaterStage(task) && !stageRunningNow;
+  const completeTask = async () => {
+    if (!task) return;
+    try {
+      setSaving(true);
+      apply(await moveTask(task.root_id, task.id, "complete", "", nodeId));
+    } catch (error) {
+      reportError("file.write_failed", String((error as Error)?.message || t("task.actionFailed")));
+    } finally { setSaving(false); }
+  };
+
   const numberLabel = task.task_number ? `#${task.task_number}` : "";
 
   return (
@@ -416,6 +436,22 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
               style={{ ...pencilStyle(false), color: "var(--status-ok)", opacity: saving ? 0.4 : 1 }}
             >
               <TaskFinishWorktreeIcon />
+            </button>
+          ) : null}
+          {/* 完成：只在没有下一段时给（canCompleteTask），与看板卡片同一套门控。
+              末段 waiting_user 的任务点它 = 服务端 Complete 直接收成 success
+              （末段那条 Next 分支的等价物），所以它就是那个局面下唯一能收尾的动作。
+              放在面板头部而不是阶段行：完成是任务级动作，阶段行是一段一个键。 */}
+          {canCompleteTask ? (
+            <button
+              type="button"
+              title={t("task.completeShort")}
+              aria-label={t("task.complete")}
+              disabled={saving}
+              onClick={() => void completeTask()}
+              style={{ ...pencilStyle(false), color: "var(--status-ok)", opacity: saving ? 0.4 : 1 }}
+            >
+              <TaskCompleteIcon />
             </button>
           ) : null}
           <button type="button" aria-label={t("task.renameTask")} title={t("task.renameTask")} onClick={() => setEditingName(true)} style={pencilStyle(false)}>

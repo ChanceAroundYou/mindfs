@@ -47,6 +47,9 @@ function loadPureFn(name, deps = {}) {
 const isFinishStageActive = loadPureFn("isFinishStageActive", { isFinishStage: loadPureFn("isFinishStage") });
 const hasLaterStage = loadPureFn("hasLaterStage");
 const isTerminalKanbanTask = loadPureFn("isTerminalKanbanTask");
+// 卡片侧的推进门控（2026-10-03 补：showAdvance 以前完全不看当前段能不能走，
+// 与详情面板给出相反答案，点下去是死按钮）。纯函数，直接从 appTask 取。
+const canAdvanceCard = loadPureFn("canAdvanceCard");
 
 // 卡片上那几行判据同样按原文跑一遍（用一个壳把前置变量喂进去）。
 // 切片止于 statusText：往后就开始渲染了，new Function 吃不下 JSX。
@@ -73,13 +76,14 @@ const cardGates = new Function(
   "isTerminalKanbanTask",
   "isFinishStageActive",
   "hasLaterStage",
+  "canAdvanceCard",
   `return ((task) => {
 ${gateSrc}
 ${finishGateSrc}
 return { canComplete, showAdvance, canFinishWorktree, canPause, canResume };
 });`,
 );
-const gatesWithDeps = cardGates((key) => key, isTerminalKanbanTask, isFinishStageActive, hasLaterStage);
+const gatesWithDeps = cardGates((key) => key, isTerminalKanbanTask, isFinishStageActive, hasLaterStage, canAdvanceCard);
 
 const gatesOf = (task) => gatesWithDeps(task);
 
