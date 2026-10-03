@@ -110,6 +110,10 @@ export type RealtimeEventsContext = {
     markSessionPending: (rootID: string, sessionKey: string) => void;
     markSessionStale: (rootID: string | null | undefined, sessionKey: string | null | undefined) => void;
     playCompletionSound: () => void;
+    /** 摘掉一个任务在本机的全部痕迹（task.deleted）。作用域由 rootId 划定。 */
+    pruneTaskDetails: (rootId: string, keepTaskIds: Iterable<string>) => void;
+    /** 重拉工作台结构。转发 ref，为 null 表示工作台没打开，调用方无需自己判。 */
+    refreshWorkspaceBoard: () => void;
     promotePendingSessionForRoot: (rootID: string, tempKey: string | undefined, sessionKey: string, fallback?: Session | null) => void;
     refreshCurrentFileContent: (rootID: string, changedPath: string) => Promise<void>;
     refreshGitStatus: (rootID: string) => Promise<GitStatusPayload | null>;
@@ -211,6 +215,7 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
       markSessionPending,
       markSessionStale,
       playCompletionSound,
+      pruneTaskDetails,
       promotePendingSessionForRoot,
       refreshCurrentFileContent,
       refreshGitStatus,
@@ -219,6 +224,7 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
       refreshTaskWorktree,
       refreshTasksForRelatedSession,
       refreshTreeDir,
+      refreshWorkspaceBoard,
       resolveRootForSessionKey,
       restoreActiveSession,
       scheduleSessionListReload,
@@ -1577,6 +1583,11 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
           if (typeof payload?.root_id !== "string" || typeof payload?.task_id !== "string") {
             return;
           }
+          // 清场会清空 worktree_path，任务因此可能不该再挂在工作台的任何筛选下 ——
+          // 那是结构变化，只能靠重拉扇出看得见（task.updated 只换卡上的内容）。
+          if (workspaceOpenRef.current) {
+            refreshWorkspaceBoard();
+          }
           const conflicts: string[] = Array.isArray(payload.conflict_files)
             ? payload.conflict_files.map(String).filter(Boolean)
             : [];
@@ -1612,6 +1623,26 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
             severity: "info",
             recoverable: false,
           });
+      },
+      "task.deleted": (event: any, payload: any) => {
+          // 后端一直在发（appcontext.go 的 TaskDeleted），前端却从来没接过：
+          // 删掉的任务会一直挂在看板和工作台上，直到用户手动重拉一次。
+          const taskId = String(payload?.task_id || "").trim();
+          const rootId = String(payload?.root_id || "").trim();
+          if (!taskId || !rootId) {
+            return;
+          }
+          // 摘内存：keep 集合 = 现有全部 id 减去这一个。pruneTaskDetails 内部按 rootId
+          // 划定作用域，别的项目不会被误伤。选中态不用管 —— 摘掉之后
+          // selectedKanbanTask 解析成 null、面板自己关掉，既有守卫再把 id 清干净。
+          pruneTaskDetails(
+            rootId,
+            Object.keys(taskDetailsByIdRef.current).filter((id) => id !== taskId),
+          );
+          // 卡片「还在不在」是结构问题，getLiveTask 那条就地更新路径看不见它。
+          if (workspaceOpenRef.current) {
+            refreshWorkspaceBoard();
+          }
       },
       "session.meta.updated": (event: any, payload: any) => {
           if (
@@ -1899,6 +1930,8 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
     updateSessionRelatedFilesForKey,
     refreshTasksForRelatedSession,
     updateSessionAgentForKey,
+    pruneTaskDetails,
+    refreshWorkspaceBoard,
     treeCacheKey,
     t,
   ]);

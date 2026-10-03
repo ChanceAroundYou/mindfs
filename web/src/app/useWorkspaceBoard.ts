@@ -114,10 +114,19 @@ export function useWorkspaceBoard(params: {
   /** getNodes() 未就绪时的回退节点，与会话侧 loadMultiProjectSessionGroups 同一口径 */
   fallbackNodeId: string;
   filter: WorkspaceBoardFilter;
+  /**
+   * 取本机已知的该任务最新版本（taskDetailsById 的读取函数）。
+   *
+   * 为什么工作台要回头读这张表：扇出拉回的那份 items 是**发完就冻结**的快照，
+   * 而卡片上所有动作（完成/立即执行/暂停/删除）与 WS 的 task.updated 都只更新
+   * taskDetailsById —— 不接这个读取器，点了按钮卡片就纹丝不动。
+   * 纯远端任务本机没有这张表，回退扇出原值，行为不变。
+   */
+  getLiveTask: (taskId: string) => KanbanTask | undefined;
 }): WorkspaceBoard {
   const {
     enabled, refreshToken, managedRootIds, getRootDisplayName,
-    getNodeColor, getNodeId, fallbackNodeId, filter,
+    getNodeColor, getNodeId, fallbackNodeId, filter, getLiveTask,
   } = params;
   const [items, setItems] = useState<WorkspaceTaskItem[]>(EMPTY_ITEMS);
   const [loading, setLoading] = useState(false);
@@ -200,9 +209,27 @@ export function useWorkspaceBoard(params: {
 
   const refresh = useCallback(() => setLocalToken((n) => n + 1), []);
 
+  /**
+   * 卡片挂哪个 task 版本：taskDetailsById 优先，但要按 updated_at 单单调，
+   * 否则一张迟到的扇出快照会把刚点完的状态又盖回去（与 applyTaskDetails
+   * 里的 shouldApplyTaskDetail 同一口径 —— 那个护栏管写，这里管读）。
+   * 没有更版本时原样返回扇出那份：纯远端任务永远走这条。
+   */
+  const liveVersion = useCallback(
+    (item: WorkspaceTaskItem): WorkspaceTaskItem => {
+      const live = getLiveTask(String(item?.task?.id || ""));
+      if (!live) return item;
+      return String(live.updated_at || "") > String(item.task.updated_at || "")
+        ? { ...item, task: live }
+        : item;
+    },
+    [getLiveTask],
+  );
+
   const projects = useMemo<WorkspaceProjectGroup[]>(() => {
     const byProject = new Map<string, WorkspaceTaskItem[]>();
-    for (const item of items) {
+    for (const raw of items) {
+      const item = liveVersion(raw);
       const key = scopeKeyForItem(item, getNodeId);
       const bucket = byProject.get(key);
       if (bucket) bucket.push(item);
@@ -225,11 +252,11 @@ export function useWorkspaceBoard(params: {
       // 没有任务的项目不占地方：筛选后只剩空壳的组、连「全部」下都没有任何任务的项目，
       // 都直接不渲染。空项目要建任务去项目里建，工作台只回答「现在各项目在干什么」。
       .filter((group) => group.tasks.length > 0);
-  }, [items, managedRootIds, getNodeId, getRootDisplayName, getNodeColor, filter]);
+  }, [items, managedRootIds, getNodeId, getRootDisplayName, getNodeColor, filter, liveVersion]);
 
   const blockedAll = useMemo(
-    () => items.filter((item) => isBlockedTask(item.task)).sort(byUpdatedDesc),
-    [items],
+    () => items.map(liveVersion).filter((item) => isBlockedTask(item.task)).sort(byUpdatedDesc),
+    [items, liveVersion],
   );
 
   return { projects, blockedAll, loading, unreachableNodes, refresh };

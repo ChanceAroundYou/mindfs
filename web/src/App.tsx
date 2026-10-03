@@ -341,6 +341,10 @@ export function App({ onGoHome }: AppProps) {
 	  const [taskSessionKeysById, setTaskSessionKeysById] = useState<Record<string, string[]>>({});
 	  const [taskRelatedFilesById, setTaskRelatedFilesById] = useState<Record<string, RelatedFile[]>>({});
 	  const taskDetailsByIdRef = useRef<Record<string, TaskDetail>>({});
+  // 「工作台结构变了，重拉一遍扇出」的动作本体在 useWorkspaceBoard 里（那里才有 refresh），
+  // 而要按它的调用点在它之前 —— 卡片动作、WS 处理器。所以这里只留一个转发 ref：
+  // 渲染时把真身挂上去，早期调用点读到 undefined 就跳过（那时工作台根本没打开）。
+  const workspaceBoardRefreshRef = useRef<(() => void) | null>(null);
 	  const taskSessionKeysByIdRef = useRef<Record<string, string[]>>({});
 	  const [selectedKanbanTaskId, setSelectedKanbanTaskId] = useState("");
 	  const [expandedTaskInputIds, setExpandedTaskInputIds] = useState<Set<string>>(() => new Set());
@@ -582,6 +586,20 @@ export function App({ onGoHome }: AppProps) {
   }, []);
 
   /**
+   * 重拉一遍工作台**结构**（有哪些项目、每组几张卡）。
+   *
+   * 卡片上挂的那个 task 本身已经由 getLiveTask 就地更新了（状态文字/颜色立刻变），
+   * 这里补的是 applyTaskDetails 看不见的那半边：任务被删掉、worktree 被清掉、
+   * 筛选下某张卡该不该还在。为此重拉的是整包扇出，代价不低，所以只在
+   * 「结构真的可能变了」的用户动作与后台收尾上调用 ——
+   * **不要**挂到 WS 的 task.updated 上，那会变成每条推送扇出一次。
+   * 转发 ref 为 null 表示工作台没打开（refresh 还没挂上来），直接跳过。
+   */
+  const refreshWorkspaceBoard = useCallback(() => {
+    workspaceBoardRefreshRef.current?.();
+  }, []);
+
+  /**
    * 把「服务端全量响应里已经没有」的任务从内存里摘掉。
    *
    * 缓存以前只写不删，内存这边同样只有合并（applyTaskDetails）没有移除，于是
@@ -759,6 +777,13 @@ export function App({ onGoHome }: AppProps) {
       if (detail.task.worktree_path) {
         void refreshTaskWorktree(rootId, detail.task.worktree_path);
       }
+      // 取消会把卡挪出当前筛选、重建 worktree 会改 worktree 徽标 —— 这些
+      // applyTaskDetails 管不到（它只换那张卡的内容，管不了卡片还在不在板上）。
+      // finish-worktree 不在此列：它在上面就 return 了，而清场真正落地是几秒后
+      // 服务端 goroutine 里的事，那时由 WS task.finish_teardown 负责重拉。
+      if (action === "cancel" || action === "rebuild-worktree") {
+        refreshWorkspaceBoard();
+      }
     } catch (err) {
       // 冲突要列出文件清单，不能只 toast 一句：仓库现在停在 MERGE_HEAD，
       // 用户得知道具体是哪些文件、然后自己去解。taskSessionErrorDialog 已经是
@@ -773,7 +798,7 @@ export function App({ onGoHome }: AppProps) {
       }
       reportError("file.write_failed", String((err as Error)?.message || t("task.actionFailed")));
     }
-  }, [applyTaskDetails, t]);
+  }, [applyTaskDetails, refreshWorkspaceBoard, t]);
 
   const loadTaskWorktreeBranches = useCallback(async (rootId: string) => {
     if (!rootId) return;
@@ -7165,6 +7190,7 @@ export function App({ onGoHome }: AppProps) {
       markSessionPending,
       markSessionStale,
       playCompletionSound,
+      pruneTaskDetails,
       promotePendingSessionForRoot,
       refreshCurrentFileContent,
       refreshGitStatus,
@@ -7173,6 +7199,7 @@ export function App({ onGoHome }: AppProps) {
       refreshTaskWorktree,
       refreshTasksForRelatedSession,
       refreshTreeDir,
+      refreshWorkspaceBoard,
       resolveRootForSessionKey,
       restoreActiveSession,
       scheduleSessionListReload,
@@ -7740,10 +7767,17 @@ export function App({ onGoHome }: AppProps) {
 	    return acc;
 	  }, {}), [sessions]);
 
-	  const selectedKanbanTask = useMemo(
-	    () => kanbanTasks.find((task) => task.id === selectedKanbanTaskId) || null,
-	    [kanbanTasks, selectedKanbanTaskId],
-	  );
+	  const selectedKanbanTask = useMemo(() => {
+	    if (!selectedKanbanTaskId) return null;
+	    // 看板命中优先：那一路本来带模板筛选与状态分组的语义。
+	    const fromBoard = kanbanTasks.find((task) => task.id === selectedKanbanTaskId);
+	    if (fromBoard) return fromBoard;
+	    // 回退 taskDetailsById：工作台是跨项目视图，它列的任务大多不属于当前项目，
+	    // 而 kanbanTasks 按 currentRootId 过滤，天然不含它们。openWorkspaceTaskDetail
+	    // 灌的就是这张表，而面板的渲染门槛读的是本 memo —— 两份数据不并轨，
+	    // 工作台上点卡片就永远是「选中了但面板不弹」（守卫层放行了选中也救不了）。
+	    return taskDetailsById[selectedKanbanTaskId]?.task || null;
+	  }, [kanbanTasks, selectedKanbanTaskId, taskDetailsById]);
 	  const selectedKanbanTaskSessionKey = useMemo(() => {
 	    if (!selectedKanbanTask) return "";
 	    const keys = taskSessionKeysById[selectedKanbanTask.id] || [];
@@ -8647,16 +8681,32 @@ export function App({ onGoHome }: AppProps) {
     setWorkspaceFilter(filter);
     saveWorkspaceFilter(filter);
   }, []);
+  // 卡片的新鲜度取自 taskDetailsById（applyTaskDetails 的唯一落点）。
+  // 这里刻意由 state 派生而**不是**每次现读 ref：工作台那两个 useMemo 靠依赖变化
+  // 才重算，走 ref 的话 React 看不见任何变化 —— 整条新鲜度路径会静默失效
+  // （卡片照样纹丝不动，且没有任何报错可查）。useMemo 保住引用稳定，
+  // 又让它在 taskDetailsById 真变时换新身份。
+  const liveTasksById = useMemo(() => {
+    const out: Record<string, KanbanTask> = {};
+    for (const detail of Object.values(taskDetailsById)) {
+      if (detail?.task?.id) out[detail.task.id] = detail.task;
+    }
+    return out;
+  }, [taskDetailsById]);
+  const getLiveTask = useCallback((taskId: string) => liveTasksById[taskId], [liveTasksById]);
   const workspaceBoard = useWorkspaceBoard({
     enabled: workspaceOpen,
     refreshToken: workspaceBoardToken,
     managedRootIds,
     getRootDisplayName,
     getNodeColor: getDisplayNodeColor,
+    getLiveTask,
     getNodeId: getNodeIdForRoot,
     fallbackNodeId: getNodeIdForRoot(String(currentRootIdRef.current || "")) || String(getActiveNode()?.id || ""),
     filter: workspaceFilter,
   });
+  // 渲染时挂上去，早期调用点（卡片动作、WS 处理器）转发到它。见 workspaceBoardRefreshRef。
+  workspaceBoardRefreshRef.current = workspaceBoard.refresh;
   // 左下角四态切换器：只切面板 + 关掉悬浮框。
   // 会话选中与面板是正交的两条线——切面板一律不解除选中（面板不显示而已）。
   const handleMainViewSwitcherChange = useCallback((mode: MainViewMode) => {
