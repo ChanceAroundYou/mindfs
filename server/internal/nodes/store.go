@@ -18,6 +18,12 @@ type NodeConnection struct {
 	Name  string `json:"name"`
 	URL   string `json:"url"`
 	Color string `json:"color"`
+	// Remote 标记这是**另一台机器**上的节点。跨节点请求不带 user=
+	// （账户表每台机器独立，id 带不过去），由服务端回落到对方主节点；
+	// 认用户名那条老路仍然有效，但调用方不必再猜对方有没有这个账户。
+	//
+	// 零值 false = 本机节点，行为与加此字段之前逐字节一致，老 nodes.json 免迁移。
+	Remote bool `json:"remote,omitempty"`
 }
 
 type Store struct {
