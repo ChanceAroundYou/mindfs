@@ -113,25 +113,33 @@ REMOTE
 ok "WSL 已拉取、编译、安装并重启"
 
 # ── 6. 对账：两端服务的 bundle 应当一致 ──
+# worker 节点按设计不提供前端（GET / 是 403，StaticDir 为空），所以它压根
+# 取不到 bundle —— 那不是部署坏了，跳过对账即可，别报「不一致，需人工确认」。
 step "对账两端服务"
 bundle_of() { curl -s -m 20 "$1/" | grep -oE 'assets/index-[A-Za-z0-9_-]+\.js' | head -1 || true; }
 size_of()  { curl -s -m 60 -o /dev/null -w '%{size_download}' "$1/$2" 2>/dev/null || echo 0; }
+role_of()  { curl -s -m 20 "$1/health" | grep -oE '"role"\s*:\s*"[a-z]+"' | head -1 | grep -oE '[a-z]+"$' | tr -d '"' || true; }
 
 LOCAL_BASE="http://127.0.0.1:7331/mindfs"
 PC_BASE="https://pc.xiaokubao.space/mindfs"
 
 L_BUNDLE="$(bundle_of "$LOCAL_BASE")"
-P_BUNDLE="$(bundle_of "$PC_BASE")"
 L_SIZE="$(size_of "$LOCAL_BASE" "$L_BUNDLE")"
-P_SIZE="$(size_of "$PC_BASE" "$P_BUNDLE")"
-
 echo "    本机  $L_BUNDLE  ${L_SIZE} bytes"
-echo "    PC    $P_BUNDLE  ${P_SIZE} bytes"
 
-if [[ -n "$L_SIZE" && "$L_SIZE" == "$P_SIZE" && "$L_SIZE" != "0" ]]; then
-  ok "两端 bundle 字节数一致（哈希不同是构建随机戳，内容相同）"
+P_ROLE="$(role_of "$PC_BASE")"
+if [[ "$P_ROLE" == "worker" ]]; then
+  echo "    PC    role=worker，不提供前端，跳过 bundle 对账"
 else
-  echo "    \033[33m! 两端 bundle 大小不一致，需人工确认\033[0m"
+  P_BUNDLE="$(bundle_of "$PC_BASE")"
+  P_SIZE="$(size_of "$PC_BASE" "$P_BUNDLE")"
+  echo "    PC    $P_BUNDLE  ${P_SIZE} bytes"
+
+  if [[ -n "$L_SIZE" && "$L_SIZE" == "$P_SIZE" && "$L_SIZE" != "0" ]]; then
+    ok "两端 bundle 字节数一致（哈希不同是构建随机戳，内容相同）"
+  else
+    echo "    \033[33m! 两端 bundle 大小不一致，需人工确认\033[0m"
+  fi
 fi
 
 # ── 7. 本机重启：只能由用户执行 ──

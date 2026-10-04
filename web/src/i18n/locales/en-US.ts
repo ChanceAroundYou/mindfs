@@ -272,6 +272,7 @@ export const enUS = {
   "nodeManager.rename": "Rename",
   "nodeManager.color": "Color",
   "nodeManager.online": "Online",
+  "nodeManager.workerNode": "Worker",
   "nodeManager.offline": "Offline",
   "nodeManager.checking": "Checking",
   "nodeManager.thisDevice": "(this device)",

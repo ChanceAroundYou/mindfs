@@ -89,6 +89,28 @@ async function probeNode(nodeId: string, timeoutMs = 4000): Promise<ProbeStatus>
   }
 }
 
+// 探角色走 /health 而不是 /api/node-info：后者自己在控制面前缀表里，
+// worker 上必然 403，于是每个运行节点都会被误判成「离线」。
+// /health 是公开端点且刻意不在控制面表内，worker 照常 200 并报出 role。
+type NodeRoleInfo = { ok?: boolean; role?: string };
+
+async function fetchNodeRole(nodeId: string, timeoutMs = 4000): Promise<NodeRoleInfo | null> {
+  let timer = 0;
+  try {
+    const payload = await Promise.race([
+      protectedJSON<NodeRoleInfo>(appPath("/health", nodeId)),
+      new Promise<NodeRoleInfo>((resolve) => {
+        timer = window.setTimeout(() => resolve({}), timeoutMs);
+      }),
+    ]);
+    return payload || null;
+  } catch {
+    return null;
+  } finally {
+    if (timer) window.clearTimeout(timer);
+  }
+}
+
 // 待加入节点的地址校验+归一：候选地址还不是节点，appPath 解析不了，只能自己拼。
 // 与 addNode 内部 normalizeExplicitNodeBase 的"去尾斜杠"保持一致。
 function normalizeInputUrl(raw: string): string {
@@ -115,6 +137,9 @@ export function NodeManagerPanel({ onClose, onRefreshAll }: NodeManagerPanelProp
   // 节点变化只负责强制一次重渲染。
   const [, bumpNodesVersion] = React.useReducer((n: number) => n + 1, 0);
   const [probeStatus, setProbeStatus] = React.useState<Record<string, ProbeStatus>>({});
+  // 角色探测结果：worker 节点不提供前端，「在新窗口打开」入口要藏起来 ——
+  // 让用户点了撞 403 比不显示这个按钮差。
+  const [workerNodeIds, setWorkerNodeIds] = React.useState<Record<string, boolean>>({});
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const [draftName, setDraftName] = React.useState("");
   const [draftUrl, setDraftUrl] = React.useState("");
@@ -133,8 +158,19 @@ export function NodeManagerPanel({ onClose, onRefreshAll }: NodeManagerPanelProp
     // 并发探测、逐个回填，不等全部完成
     await Promise.all(
       list.map(async (n) => {
-        const status = await probeNode(n.id);
+        const [status, info] = await Promise.all([probeNode(n.id), fetchNodeRole(n.id)]);
         setProbeStatus((prev) => ({ ...prev, [n.id]: status }));
+        // 探不到（离线/超时）就别下判断：宁可先给入口，撞了 403 再说。
+        if (info && String(info.role || "") === "worker") {
+          setWorkerNodeIds((prev) => ({ ...prev, [n.id]: true }));
+        } else {
+          setWorkerNodeIds((prev) => {
+            if (!prev[n.id]) return prev;
+            const next = { ...prev };
+            delete next[n.id];
+            return next;
+          });
+        }
       }),
     );
   }, []);
@@ -280,9 +316,15 @@ export function NodeManagerPanel({ onClose, onRefreshAll }: NodeManagerPanelProp
     }
   };
 
+  // 在线但 role=worker 的节点标成「运行节点」而不是「在线」：两者都活着，
+  // 区别在于这台机器按配置不提供前端（GET / 是 403）。这里原本没有「打开该节点
+  // 网页」的入口可藏，所以把角色显示出来就是全部收益。
   const statusLabel = (id: string): { text: string; color: string } => {
     const status = probeStatus[id] || "checking";
-    if (status === "online") return { text: t("nodeManager.online"), color: "#16a34a" };
+    if (status === "online") {
+      if (workerNodeIds[id]) return { text: t("nodeManager.workerNode"), color: "#16a34a" };
+      return { text: t("nodeManager.online"), color: "#16a34a" };
+    }
     if (status === "offline") return { text: t("nodeManager.offline"), color: "#dc2626" };
     return { text: t("nodeManager.checking"), color: "var(--text-secondary)" };
   };

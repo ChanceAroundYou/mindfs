@@ -270,6 +270,7 @@ export const zhCN = {
   "nodeManager.rename": "重命名",
   "nodeManager.color": "颜色",
   "nodeManager.online": "在线",
+  "nodeManager.workerNode": "运行节点",
   "nodeManager.offline": "离线",
   "nodeManager.checking": "检测中",
   "nodeManager.thisDevice": "（当前设备）",
