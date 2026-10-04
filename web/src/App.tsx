@@ -113,7 +113,7 @@ import {
   scheduleWebViewCacheClearOnNextLaunch,
 } from "./services/nativeCacheControl";
 import {
-  applyPinnedSnapshotToSessions,
+  applyPinnedSnapshotToSessions as applyPinSnapshotRaw,
   mergeSessionItems,
 } from "./services/sessionListMerge";
 import { collectSessionSubtreeKeys, type SessionTreeItem } from "./services/sessionTree";
@@ -128,6 +128,7 @@ import {
 } from "./components/FileTree";
 
 import { applyNodesFromServer, getActiveNode, getActiveNodeId, getNodeById, getNodes, migrateLegacySingleBase, setActiveNodeId, syncNodesFromServer } from "./services/nodeRegistry";
+import { fetchPins, sessionPinKey, setSessionPin } from "./services/pins";
 
 import { FileViewer } from "./components/FileViewer";
 import { resolveGroupColor } from "./services/sessionGroupDisplay";
@@ -317,6 +318,63 @@ export function App({ onGoHome }: AppProps) {
   const multiProjectLoadSeqRef = useRef(0);
   const [multiProjectPendingByKey, setMultiProjectPendingByKey] = useState<Record<string, boolean>>({});
   const multiProjectPendingRef = useRef<Record<string, boolean>>({});
+  // 主节点那份会话置顶（键 = rootID::sessionKey）。worker 的会话列表里没有置顶区
+  // —— 置顶是控制面，worker 上 /api/pins 是 403 —— 所以要从这里盖过去。
+  //
+  // 用 ref 而不是 state：它只在列表渲染时被读（applyPinSnapshot），不需要触发
+  // 任何重渲染；触发重渲染的是它引发的列表更新，那条路已经全走 applyPinSnapshot 了。
+  const primarySessionPinsRef = useRef<Map<string, Map<string, string>>>(new Map());
+
+  // 会话置顶快照的应用入口：worker 的列表用主节点那份盖上去，本机列表用服务端回的。
+  //
+  // 判定「是不是本机」看这个项目属于哪个节点：worker 上拿到的 pinnedKeys 恒为空
+  // （它的 /api/pins 是 403），所以只要 pinnedKeys 为空且快照里有这个项目，
+  // 就该由主节点那份说话。反过来本机列表自带的 pinnedKeys 是权威，原样用。
+  const applyPinSnapshot = useCallback(
+    <T extends { root_id?: string; pinned_at?: string | null }>(
+      items: T[],
+      rootId: string,
+      pinnedKeys: string[],
+    ): T[] => {
+      const overlay = primarySessionPinsRef.current.get(rootId);
+      if (!pinnedKeys.length && overlay) {
+        return applyPinSnapshotRaw(items, rootId, Array.from(overlay.keys()), overlay);
+      }
+      return applyPinSnapshotRaw(items, rootId, pinnedKeys);
+    },
+    [],
+  );
+
+  // 从主节点拉一次会话置顶，按**项目 id**（不含节点）分组存进 ref。
+  //
+  // 键为什么是纯 rootId：置顶是跨设备的一致性偏好，PC 上的会话在 home 置顶，
+  // 就要在 PC 的列表里显示为置顶 —— 键里带节点 id 就等于又按机器分了片。
+  // 同名项目跨节点时两个条目共用一份置顶，这在「置顶是跨设备偏好」这个语义下
+  // 是对的（用户看到的是「这个项目我顶了」），且不会串到别的项目上。
+  const refreshPrimarySessionPins = useCallback(async () => {
+    try {
+      const pins = await fetchPins();
+      const byRoot = new Map<string, Map<string, string>>();
+      for (const [scoped, at] of Object.entries(pins.sessions || {})) {
+        // 键形如 rootID::sessionKey：只取第一段当项目 id，其余整段当会话 key。
+        // 项目 id 本身不含 "::"（basename），所以按第一处分隔切是安全的。
+        const sep = scoped.indexOf("::");
+        if (sep <= 0) continue;
+        const rootId = scoped.slice(0, sep);
+        const sessionKey = scoped.slice(sep + 2);
+        if (!sessionKey) continue;
+        let bucket = byRoot.get(rootId);
+        if (!bucket) {
+          bucket = new Map<string, string>();
+          byRoot.set(rootId, bucket);
+        }
+        bucket.set(sessionKey, at);
+      }
+      primarySessionPinsRef.current = byRoot;
+    } catch {
+      // 拉不到就保持上一份：置顶是装饰性排序，不该把正在看的列表闪一下。
+    }
+  }, []);
   const [syncingSessionKeys, setSyncingSessionKeys] = useState<Set<string>>(
     () => new Set(),
   );
@@ -1533,6 +1591,15 @@ export function App({ onGoHome }: AppProps) {
   useEffect(() => {
     setPendingPlanMode(false);
   }, [currentRootId]);
+  // 切项目时顺带刷新主节点的会话置顶 —— 这就是约定的「跨设备同步」时机。
+  //
+  // 用户明确不要跨设备实时（那要一条主节点 → 各 worker 浏览器的新通道），
+  // 也不要每次都刷：「切换项目等操作的时候顺带请求一下置顶」正是这个意思。
+  // 不刷新的话，设备 A 置顶后设备 B 切项目也看不到 —— 那正是被报的那个症状。
+  useEffect(() => {
+    if (!currentRootId || !protectedAPIReady()) return;
+    void refreshPrimarySessionPins();
+  }, [currentRootId, refreshPrimarySessionPins]);
   useEffect(() => {
     currentSessionRef.current = currentSession;
   }, [currentSession]);
@@ -3070,7 +3137,7 @@ export function App({ onGoHome }: AppProps) {
               .filter((item): item is SessionItem => !!item);
             setHasMoreSessions(cached.totalCount > cached.items.length);
             setSessions(
-              applyPinnedSnapshotToSessions(
+              applyPinSnapshot(
                 mergeSessionItems([], cachedItems),
                 rootID,
                 cached.pinnedKeys,
@@ -3114,13 +3181,13 @@ export function App({ onGoHome }: AppProps) {
                 ? { ...item, context_window: inherited }
                 : item;
             });
-            return applyPinnedSnapshotToSessions(merged, rootID, payload.pinnedKeys);
+            return applyPinSnapshot(merged, rootID, payload.pinnedKeys);
           });
           void saveCachedSessionList(rootID, payload, _nid);
           return;
         }
         setSessions((prev) =>
-          applyPinnedSnapshotToSessions(mergeSessionItems(prev, next), rootID, payload.pinnedKeys),
+          applyPinSnapshot(mergeSessionItems(prev, next), rootID, payload.pinnedKeys),
         );
       } catch (err) {
         if ((err as any)?.name === "AbortError") return;
@@ -3231,7 +3298,7 @@ export function App({ onGoHome }: AppProps) {
               _nodeId: cacheNid || undefined,
               _nodeColor: resolveGroupColor(group as any, managedRootByKeyRef.current as any, getNodes() as any) || undefined,
               latestSessionTime: group.latestSessionTime,
-              sessions: applyPinnedSnapshotToSessions(
+              sessions: applyPinSnapshot(
                 mergeSessionItems(
                   [],
                   [...group.items, ...group.pinnedItems]
@@ -3313,7 +3380,7 @@ export function App({ onGoHome }: AppProps) {
         _nodeColor: (gMeta?._nodeColor as string | undefined),
         _nodeId: (gMeta?._nodeId as string | undefined) || gNid || undefined,
         latestSessionTime: group.latestSessionTime,
-        sessions: applyPinnedSnapshotToSessions(
+        sessions: applyPinSnapshot(
           mergeSessionItems(
             [],
             [...group.items, ...group.pinnedItems]
@@ -3443,7 +3510,7 @@ export function App({ onGoHome }: AppProps) {
             if (String((current as any)._nodeId || "").trim() !== groupNid || current.rootId !== group.rootId) {
               return current;
             }
-            const sessions = applyPinnedSnapshotToSessions(
+            const sessions = applyPinSnapshot(
               mergeSessionItems(current.sessions, nextItems),
               group.rootId,
               payload.pinnedKeys,
@@ -4158,33 +4225,51 @@ export function App({ onGoHome }: AppProps) {
         (session?.root_id as string | undefined) || currentRootIdRef.current;
       if (!rootID || !sessionKey) return false;
 
-      const updated = await sessionService.setSessionPinned(rootID, sessionKey, pinned, String((session as any)?._nodeId || "") || getNodeIdForRoot(rootID));
-      if (!updated) {
+      // 写**主节点**的置顶表（控制面），不是当前选中节点的那个会话库 ——
+      // 后者已退役 pinned_at，写进去就回到「按机器分」的老形状。
+      const at = await setSessionPin(rootID, sessionKey, pinned).then(
+        (pins) => (pinned ? pins.sessions[sessionPinKey(rootID, sessionKey)] : ""),
+        () => "",
+      );
+      if (pinned && !at) {
         reportError("session.pin_failed", t("session.pinFailed"));
         return false;
       }
 
-      const nextItem = toSessionItem(rootID, updated);
-      if (nextItem) {
-        setSessions((prev) => mergeSessionItems(prev, [nextItem]));
-        setMultiProjectSessionGroups((prev) =>
-          prev.map((group) =>
-            group.rootId === rootID && (!(session as any)?._nodeId || (group as any)._nodeId === (session as any)?._nodeId)
-              ? {
-                  ...group,
-                  sessions: mergeSessionItems(group.sessions, [nextItem]),
-                }
-              : group,
-          ),
-        );
-      }
+      // 立刻把本地状态跟上：置顶是装饰性排序，用户点了就该马上看到。
+      const applyPin = <T extends SessionItem>(item: T): T =>
+        pinned ? ({ ...item, pinned_at: at } as T) : ({ ...item, pinned_at: undefined } as T);
+
+      setSessions((prev) =>
+        prev.map((item) =>
+          (item.key || item.session_key) === sessionKey &&
+          (!item.root_id || item.root_id === rootID)
+            ? applyPin(item)
+            : item,
+        ),
+      );
+      setMultiProjectSessionGroups((prev) =>
+        prev.map((group) =>
+          group.rootId === rootID && (!(session as any)?._nodeId || (group as any)._nodeId === (session as any)?._nodeId)
+            ? {
+                ...group,
+                sessions: group.sessions.map((item) =>
+                  (item.key || item.session_key) === sessionKey ? applyPin(item) : item,
+                ),
+              }
+            : group,
+        ),
+      );
+
+      // 主节点那份快照也要跟着更新，否则下一次 applyPinSnapshot 会用旧值盖回去。
+      void refreshPrimarySessionPins();
 
       const cacheKey = rootSessionKey(rootID, sessionKey);
       const cached = sessionCacheRef.current[cacheKey];
       if (cached) {
         sessionCacheRef.current[cacheKey] = {
           ...cached,
-          pinned_at: updated.pinned_at || undefined,
+          pinned_at: pinned ? at : undefined,
         } as Session;
       }
 
@@ -4196,7 +4281,7 @@ export function App({ onGoHome }: AppProps) {
           prev
             ? ({
                 ...prev,
-                pinned_at: updated.pinned_at || undefined,
+                pinned_at: pinned ? at : undefined,
               } as SessionItem)
             : prev,
         );
@@ -4212,7 +4297,7 @@ export function App({ onGoHome }: AppProps) {
       bumpCacheVersion();
       return true;
     },
-    [bumpCacheVersion, rootSessionKey, setDrawerSessionForRoot, t],
+    [bumpCacheVersion, refreshPrimarySessionPins, rootSessionKey, setDrawerSessionForRoot, t],
   );
 
   // 归档/取消归档。后端按 parent_session_key 级联整棵子树，前端要摘掉的是同一批 key
@@ -4633,7 +4718,7 @@ export function App({ onGoHome }: AppProps) {
       .map((item) => toSessionItem(rootID, { ...(item as any), _nodeId: (item as any)._nodeId || listNodeId }))
       .filter((item): item is SessionItem => !!item);
     setHasMoreSessions(payload.totalCount > payload.items.length);
-    setSessions(applyPinnedSnapshotToSessions(mergeSessionItems([], next), rootID, payload.pinnedKeys));
+    setSessions(applyPinSnapshot(mergeSessionItems([], next), rootID, payload.pinnedKeys));
   }, [getNodeIdForRoot]);
 
   const {
@@ -7246,7 +7331,7 @@ export function App({ onGoHome }: AppProps) {
         .filter((item): item is SessionItem => !!item);
       setHasMoreSessions(payload.totalCount > payload.items.length);
       setSessions((prev) =>
-        applyPinnedSnapshotToSessions(mergeSessionItems(prev, next), rootID, payload.pinnedKeys),
+        applyPinSnapshot(mergeSessionItems(prev, next), rootID, payload.pinnedKeys),
       );
     } finally {
       setLoadingOlderSessions(false);

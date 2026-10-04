@@ -122,31 +122,3 @@ export async function updateCORSPreference(preference: CORSPreference): Promise<
     }),
   );
 }
-
-export type SessionProjectPins = Record<string, number>;
-
-function normalizeSessionProjectPins(value: unknown): SessionProjectPins {
-  const input = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
-  const pins: SessionProjectPins = {};
-  for (const [key, raw] of Object.entries(input.pins ?? input)) {
-    const ts = Number(raw);
-    if (key && Number.isFinite(ts) && ts > 0) {
-      pins[key] = ts;
-    }
-  }
-  return pins;
-}
-
-export async function fetchSessionProjectPins(): Promise<SessionProjectPins> {
-  return normalizeSessionProjectPins(await protectedJSON(controlPath("/api/preferences/session-project-pins")));
-}
-
-export async function updateSessionProjectPins(pins: SessionProjectPins): Promise<SessionProjectPins> {
-  return normalizeSessionProjectPins(
-    await protectedJSON(controlPath("/api/preferences/session-project-pins"), {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pins }),
-    }),
-  );
-}

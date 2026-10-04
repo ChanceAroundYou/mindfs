@@ -7,7 +7,7 @@ import { hexToRgbaApp } from "../app/taskIcons";
 import { resolveGroupColor } from "../services/sessionGroupDisplay";
 import { scopeKey } from "../services/scope";
 import { pruneChildState } from "../services/sessionTree";
-import { fetchSessionProjectPins, updateSessionProjectPins } from "../services/preferences";
+import { fetchPins, setProjectPin } from "../services/pins";
 import { useI18n, type Locale } from "../i18n";
 import { type DirectorySortMode, sortDirectoryEntries } from "../services/directorySort";
 
@@ -74,7 +74,6 @@ const COLLAPSED_CHILD_SESSION_LIMIT = 3;
 const MULTI_PROJECT_VISIBLE_LIMIT = 6;
 const MAIN_SESSION_ICON_OFFSET = "2px";
 const SUB_SESSION_ICON_OFFSET = "0px";
-const PINNED_PROJECTS_STORAGE_KEY = "mindfs-pinned-session-projects";
 
 type VisibleSessionRow =
   | { type: "session"; session: SessionItem }
@@ -813,27 +812,15 @@ export function SessionList({
 
 // 项目置顶的本地缓存：右栏每次打开都重挂载本组件，同步读 localStorage 起始态，
 // 避免「先按无置顶渲染、偏好到达后重排」的闪动；服务端偏好仍是事实源
-function readLocalProjectPins(): Record<string, number> {
-  if (typeof window === "undefined") return {};
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(PINNED_PROJECTS_STORAGE_KEY) || "{}");
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      const next: Record<string, number> = {};
-      for (const [key, value] of Object.entries(parsed)) {
-        const timestamp = Number(value);
-        if (key && Number.isFinite(timestamp) && timestamp > 0) next[key] = timestamp;
-      }
-      return next;
-    }
-  } catch {}
-  return {};
-}
-
-function writeLocalProjectPins(pins: Record<string, number>): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(PINNED_PROJECTS_STORAGE_KEY, JSON.stringify(pins));
-  } catch {}
+// 乐观更新用：置顶/取消一条，返回新表（不改动入参）。
+function pinWithToggle(pins: Record<string, number>, key: string): Record<string, number> {
+  const next = { ...pins };
+  if (next[key]) {
+    delete next[key];
+  } else {
+    next[key] = Date.now();
+  }
+  return next;
 }
 
 export function MultiProjectSessionList({
@@ -868,7 +855,9 @@ export function MultiProjectSessionList({
   // 折叠态的子会话基数（键与 expandedChildren 同形）：展开**之前**记下当时的已加载数，
   // 折叠态按它算，不受展开时陆续拉回来的批次影响。
   const [collapsedBaseCount, setCollapsedBaseCount] = useState<Record<string, number>>({});
-  const [pinnedProjects, setPinnedProjects] = useState<Record<string, number>>(readLocalProjectPins);
+  // 置顶以**服务端**为准（主节点那张表），不再有 localStorage 缓存层：
+  // 缓存只为了「先出帧」，而用户要的是「A 设备置顶、B 设备刷新后也置顶」。
+  const [pinnedProjects, setPinnedProjects] = useState<Record<string, number>>({});
   // 展开态回收：分组里的会话消失（删除/归档/切节点）后，其条目必须随之消失
   useEffect(() => {
     const live = new Set<string>();
@@ -881,22 +870,28 @@ export function MultiProjectSessionList({
     setLoadingChildren((prev) => pruneChildState(prev, live));
     setChildrenHasMore((prev) => pruneChildState(prev, live));
   }, [groups]);
-  // 项目置顶持久化到服务端偏好（跨设备/清缓存不丢）；本地缓存先出帧，服务端返回后校正并回写
+  // 项目置顶以**服务端**为准（主节点那张表）。拉取失败保持现状（空表 = 全不置顶），
+  // 不做任何本地回退 —— 曾经的 localStorage 缓存层正是「A 设备置顶、B 设备
+  // 看不到」这种分裂状态的来源。
+  //
+  // **依赖 selectedRootId / selectedNodeId**：切换项目或节点时顺带刷新一次，
+  // 另一台设备上的置顶改动就此可见。用户明确不要跨设备实时（那需要一条
+  // 主节点 → 各 worker 浏览器的新通道），「导航时刷新」就是约定的同步时机。
+  // 依赖写空数组的旧版本只在挂载时拉一次 —— 于是切项目、切节点、切账户
+  // 之后看到的都是首次那份，这就是用户报的「设备 B 没置顶」。
   useEffect(() => {
     let cancelled = false;
-    fetchSessionProjectPins()
+    fetchPins()
       .then((pins) => {
-        if (cancelled) return;
-        setPinnedProjects(pins);
-        writeLocalProjectPins(pins);
+        if (!cancelled) setPinnedProjects(pins.projects);
       })
       .catch(() => {
-        if (!cancelled) setPinnedProjects(readLocalProjectPins());
+        /* 拉不到就按当前显示的算，不闪成全不置顶 */
       });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [selectedRootId, selectedNodeId]);
   const groupScopeKey = (group: ProjectSessionGroup) =>
     scopeKey(String((group as any)?._nodeId || "").trim(), group.rootId);
   // 右侧多项目列表：与左侧 FileTree 保持一致的分层排序
@@ -939,16 +934,13 @@ export function MultiProjectSessionList({
   }, [groups, pinnedProjects, projectSortMode]);
   const togglePinnedProject = (group: ProjectSessionGroup) => {
     const key = groupScopeKey(group);
-    const next = { ...pinnedProjects };
-    if (next[key]) {
-      delete next[key];
-    } else {
-      next[key] = Date.now();
-    }
-    setPinnedProjects(next);
-    writeLocalProjectPins(next);
-    // 置顶状态写服务端偏好；失败只回退本地 UI，下次拉取会纠正
-    void updateSessionProjectPins(next).catch(() => {});
+    // 先乐观更新，点了立刻有反馈；失败回滚到服务端给的那份真相。
+    const snapshot = pinnedProjects;
+    setPinnedProjects(pinWithToggle(snapshot, key));
+    void setProjectPin(key, !snapshot[key]).then(
+      (next) => setPinnedProjects(next.projects),
+      () => setPinnedProjects(snapshot),
+    );
   };
   const sessionByKey = useMemo(() => {
     const byKey = new Map<string, SessionItem>();

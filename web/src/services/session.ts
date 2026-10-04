@@ -1552,36 +1552,6 @@ class SessionService {
     }
   }
 
-  async setSessionPinned(
-    rootId: string,
-    sessionKey: string,
-    pinned: boolean,
-    nodeId?: string,
-  ): Promise<Session | null> {
-    try {
-      nodeId = nodeId || getRootNodeId(rootId);
-      const params = new URLSearchParams({ root: rootId });
-      const data = await protectedJSON<Session>(
-        appURL(
-          `/api/sessions/${encodeURIComponent(sessionKey)}/pin`,
-          params,
-          nodeId,
-        ),
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ pinned }),
-        },
-      );
-      return data as Session;
-    } catch (err) {
-      console.error("[Session] Failed to update session pin:", err);
-      return null;
-    }
-  }
-
   async setSessionArchived(
     rootId: string,
     sessionKey: string,
