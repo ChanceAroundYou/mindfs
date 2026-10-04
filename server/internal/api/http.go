@@ -34,6 +34,7 @@ import (
 	"mindfs/server/internal/fs"
 	"mindfs/server/internal/githubimport"
 	"mindfs/server/internal/gitview"
+	"mindfs/server/internal/nodeinfo"
 	"mindfs/server/internal/preferences"
 	"mindfs/server/internal/relay"
 	"mindfs/server/internal/session"
@@ -47,6 +48,9 @@ type HTTPHandler struct {
 	StaticDir     string
 	Version       string
 	LocalCLIToken string
+	// NodeRole 决定这台机器提不提供控制面。零值 "" 视为 RoleControl
+	// —— 默认必须等于改造前的行为，否则升级不改配置就坏。
+	NodeRole nodeinfo.Role
 }
 
 type protectedResponseWriter struct {
@@ -350,11 +354,16 @@ func (h *HTTPHandler) corsMiddleware(next http.Handler) http.Handler {
 func (h *HTTPHandler) Routes() http.Handler {
 	r := chi.NewRouter()
 	r.Use(h.corsMiddleware)
+	r.Use(h.rejectControlPlaneOnWorker)
 	r.Options("/*", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) })
 	r.NotFound(h.handleNotFound)
 	r.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) { h.handleNotFound(w, r) })
 	r.Get("/", h.handleFrontend)
 	r.Get("/health", h.handleHealth)
+	// 角色自述：前端靠它知道对面提不提供 UI（static=false 就不给「打开网页」入口）。
+	// 它自己也在控制面前缀表里，所以 worker 上这个端点是 403 —— 前端据此
+	// 「探测失败 = 没有 UI」，与「节点挂了」区分开。
+	r.Get("/api/node-info", h.protectedEndpoint(h.handleNodeInfo))
 	// 主页面登录 + 账户管理：公开端点，不参与 protectedEndpoint / e2ee。
 	r.Get("/api/auth/status", h.handleAuthStatus)
 	r.Post("/api/auth/login", h.handleAuthLogin)
@@ -2001,6 +2010,13 @@ func (h *HTTPHandler) handleGitHubImportStart(w http.ResponseWriter, r *http.Req
 }
 
 func (h *HTTPHandler) handleFrontend(w http.ResponseWriter, r *http.Request) {
+	// 运行节点不提供前端：StaticDir 为空时下面会落到 renderFallbackFrontend，
+	// 输出一张「前端资源缺失」的提示页 —— 那会让用户以为是装坏了，而实际上是
+	// 这台机器按配置就不提供 UI。给一个明确的 403。
+	if h.NodeRole == nodeinfo.RoleWorker {
+		respondError(w, http.StatusForbidden, errInvalidRequest("node_is_worker"))
+		return
+	}
 	if h.serveStaticAsset(w, r) {
 		return
 	}
@@ -2012,9 +2028,15 @@ func (h *HTTPHandler) handleFrontend(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(renderFallbackFrontend(indexHTML, frontendAssetMissingNotice(r.URL.Path))))
 }
 
+// handleHealth 顺带报角色：前端要靠它区分「对面挂了」和「对面是运行节点，
+// 本来就不提供 UI」。原来返回纯文本 "ok"，改成 JSON —— 仓库内的消费者只有
+// NodeManagerPanel.probeNode（用 protectedJSON，能解析即成功），deploy-all.sh
+// 不碰这个端点。
 func (h *HTTPHandler) handleHealth(w http.ResponseWriter, _ *http.Request) {
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("ok"))
+	respondJSON(w, http.StatusOK, map[string]any{
+		"ok":   true,
+		"role": string(nodeinfo.Normalize(string(h.NodeRole))),
+	})
 }
 
 func (h *HTTPHandler) handleNotFound(w http.ResponseWriter, r *http.Request) {

@@ -6,10 +6,42 @@ import (
 	"net/http"
 	"strings"
 
+	"mindfs/server/internal/nodeinfo"
 	"mindfs/server/internal/nodes"
 
 	"github.com/go-chi/chi/v5"
 )
+
+// rejectControlPlaneOnWorker 让运行节点不提供控制面。
+//
+// 控制面状态只在主节点有一份真相。允许 worker 也提供，两份配置就会各写各的
+// —— 节点表分裂就是这么来的：同一台物理机器在两边的 nodes.json 里拿到不同 id。
+//
+// 本机 CLI 例外，不是可选项而是正确性要求：isLocalCLIPath 的白名单里有
+// /api/task-templates 和 /api/relay/status（都是控制面），本地 CLI 拿 token
+// 直连时必须还能用，否则「从命令行读模板」和「查 relay 状态」会在 worker 上失效。
+func (h *HTTPHandler) rejectControlPlaneOnWorker(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if h.NodeRole == nodeinfo.RoleWorker &&
+			nodeinfo.IsControlPlane(r.URL.Path) &&
+			!h.isLocalCLIRequest(r) {
+			respondError(w, http.StatusForbidden, errInvalidRequest("node_is_worker"))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// handleNodeInfo 只回答「这台机器是什么角色、提不提供前端」，供前端决定要不要
+// 给它 UI 入口。static=false 的节点点了「在新窗口打开」只会撞 403 ——
+// 不如入口干脆不显示。
+func (h *HTTPHandler) handleNodeInfo(w http.ResponseWriter, _ *http.Request) {
+	respondJSON(w, http.StatusOK, map[string]any{
+		"role":    string(nodeinfo.Normalize(string(h.NodeRole))),
+		"version": h.Version,
+		"static":  strings.TrimSpace(h.StaticDir) != "",
+	})
+}
 
 func (h *HTTPHandler) handleNodesList(w http.ResponseWriter, _ *http.Request) {
 	store := h.nodesStore()

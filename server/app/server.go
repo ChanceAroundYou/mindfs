@@ -23,6 +23,7 @@ import (
 	"mindfs/server/internal/gitview"
 	"mindfs/server/internal/kanban"
 	"mindfs/server/internal/nodes"
+	"mindfs/server/internal/nodeinfo"
 	"mindfs/server/internal/notifyscript"
 	"mindfs/server/internal/preferences"
 	"mindfs/server/internal/relay"
@@ -47,6 +48,8 @@ type StartOptions struct {
 	UseTLS          bool
 	CertFile        string
 	KeyFile         string
+	// Role 决定这台机器提不提供控制面与前端。空 = control（改造前的行为）。
+	Role nodeinfo.Role
 }
 
 type E2EEConfig struct {
@@ -170,7 +173,14 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 	if err != nil {
 		return err
 	}
-	workspaces.SetHandlerDefaults(resolveStaticDir(), func() string { return localCLIToken })
+	// 运行节点不注入静态目录：serveStaticAsset 首行 staticDir == "" 的守卫
+	// 就此关闭前端服务，不需要额外的开关。
+	staticDir := ""
+	if nodeinfo.Normalize(string(opts.Role)) != nodeinfo.RoleWorker {
+		staticDir = resolveStaticDir()
+	}
+	workspaces.SetRole(opts.Role)
+	workspaces.SetHandlerDefaults(staticDir, func() string { return localCLIToken })
 
 	httpRoutes := api.NewScopedRouter(workspaces, func(appCtx *api.AppContext) http.Handler {
 		return workspaces.NewHTTPHandler(appCtx, opts.Version).Routes()

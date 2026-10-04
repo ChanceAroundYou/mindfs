@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	"mindfs/server/app"
+	"mindfs/server/internal/nodeinfo"
 )
 
 var version = "dev"
@@ -22,6 +23,7 @@ func main() {
 	configFlag := flag.String("config", "", "mindfs startup config file; command-line flags override file values")
 	agentConfigFlag := flag.String("agent-config", "", "extra agents.json file")
 	notifyScriptFlag := flag.String("notify-script", "", "executable script for notification events; receives JSON payload on stdin")
+	roleFlag := flag.String("role", "", "node role: control (default, serves UI + control plane) or worker (data plane only)")
 	flag.Parse()
 	explicitFlags := visitedFlags(flag.CommandLine)
 	startupCfg, err := loadStartupConfig(*configFlag)
@@ -29,7 +31,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
 	}
-	applyStartupConfig(startupCfg, explicitFlags, addr, noRelayer, webPushFlag, agentConfigFlag, notifyScriptFlag)
+	applyStartupConfig(startupCfg, explicitFlags, addr, noRelayer, webPushFlag, agentConfigFlag, notifyScriptFlag, roleFlag)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -41,6 +43,7 @@ func main() {
 		AgentConfigPath: *agentConfigFlag,
 		WebPushEnabled:  *webPushFlag,
 		NotifyScript:    *notifyScriptFlag,
+		Role:            nodeinfo.Normalize(*roleFlag),
 	}); err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
@@ -55,6 +58,9 @@ type startupConfig struct {
 	WebPushFlag   *bool   `json:"web-push"`
 	AgentConfig   *string `json:"agent-config"`
 	NotifyScript  *string `json:"notify-script"`
+	// Role 决定这台机器提不提供控制面与前端；worker 只提供数据面。
+	// 不配置 = control = 改造前的行为。
+	Role *string `json:"role"`
 }
 
 func loadStartupConfig(path string) (startupConfig, error) {
@@ -81,7 +87,7 @@ func visitedFlags(flags *flag.FlagSet) map[string]bool {
 	return visited
 }
 
-func applyStartupConfig(cfg startupConfig, explicit map[string]bool, addr *string, noRelayer *bool, webPush *bool, agentConfig *string, notifyScript *string) {
+func applyStartupConfig(cfg startupConfig, explicit map[string]bool, addr *string, noRelayer *bool, webPush *bool, agentConfig *string, notifyScript *string, role *string) {
 	if cfg.Addr != nil && !explicit["addr"] {
 		*addr = strings.TrimSpace(*cfg.Addr)
 	}
@@ -96,6 +102,9 @@ func applyStartupConfig(cfg startupConfig, explicit map[string]bool, addr *strin
 	}
 	if cfg.NotifyScript != nil && !explicit["notify-script"] {
 		*notifyScript = strings.TrimSpace(*cfg.NotifyScript)
+	}
+	if cfg.Role != nil && !explicit["role"] {
+		*role = strings.TrimSpace(*cfg.Role)
 	}
 }
 

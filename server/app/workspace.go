@@ -19,6 +19,7 @@ import (
 	"mindfs/server/internal/githubimport"
 	"mindfs/server/internal/kanban"
 	"mindfs/server/internal/nodes"
+	"mindfs/server/internal/nodeinfo"
 	"mindfs/server/internal/notifyscript"
 	"mindfs/server/internal/preferences"
 	"mindfs/server/internal/relay"
@@ -76,6 +77,8 @@ type workspaceManager struct {
 	ctx       context.Context
 	baseDir   string // <cfg>/users
 	staticDir string
+	// role 决定这台机器提不提供控制面（见 internal/nodeinfo）。零值 "" 视为 control。
+	role nodeinfo.Role
 
 	shared sharedServices
 
@@ -108,10 +111,27 @@ func (m *workspaceManager) SetHandlerDefaults(staticDir string, cliToken func() 
 	m.cliToken = cliToken
 }
 
-func (m *workspaceManager) handlerDefaults() (string, func() string) {
+// SetRole 设定节点角色。必须在 StartHandlerDefaults 之前调。
+func (m *workspaceManager) SetRole(role nodeinfo.Role) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.staticDir, m.cliToken
+	m.role = role
+}
+
+// Role 返回节点角色；零值归一成 control，默认等于改造前的行为。
+func (m *workspaceManager) Role() nodeinfo.Role {
+	if m == nil {
+		return nodeinfo.RoleControl
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return nodeinfo.Normalize(string(m.role))
+}
+
+func (m *workspaceManager) handlerDefaults() (string, func() string, nodeinfo.Role) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.staticDir, m.cliToken, nodeinfo.Normalize(string(m.role))
 }
 
 // PrimaryUserID 是存量数据的归属账户。
@@ -242,7 +262,7 @@ func (m *workspaceManager) emptyWorkspace() (*api.AppContext, error) {
 
 // NewHTTPHandler 为账户构建 HTTP handler（供 api.ScopedRouter 使用）。
 func (m *workspaceManager) NewHTTPHandler(ctx *api.AppContext, version string) *api.HTTPHandler {
-	staticDir, cliToken := m.handlerDefaults()
+	staticDir, cliToken, role := m.handlerDefaults()
 	token := ""
 	if cliToken != nil {
 		token = cliToken()
@@ -252,6 +272,7 @@ func (m *workspaceManager) NewHTTPHandler(ctx *api.AppContext, version string) *
 		StaticDir:     staticDir,
 		Version:       version,
 		LocalCLIToken: token,
+		NodeRole:      role,
 	}
 }
 
