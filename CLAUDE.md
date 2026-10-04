@@ -185,6 +185,34 @@ make dev-web          # 仅 Vite
       还钉着坏路径 —— **清掉那一项就够了，不需要 fork、不换 session id、不动游标、不杀 agent 进程**。
       反过来，转录真在 `--worktree-*` 目录下时才必须走完整 repoint。判断法：看 `session_agent_bindings
       .external_source_path` 落在哪个 slug 目录。实测清完直接点「继续聊」即可无感续上。
+15. **控制面只在主节点，数据面按机器分**（2026-10-04，详见 `docs/multi-node-control-plane.md`）：
+    - **控制面**（账户表、偏好、提示词库、看板模板、节点表、WebPush 订阅、relay/e2ee 绑定、应用更新）
+      **只有一份真相，在主节点**；**数据面**（项目列表、会话库、任务库、文件、git、agent 进程池、定时任务）
+      每台机器各一份 —— 这本该如此。原先两类混在一起，控制面被复制并在各机漂移：
+      两个节点的 `nodes.json` 互相矛盾（同一台机器在两边拿到**不同 node id**，跨节点 bug 的根源），
+      模板本机 3 个 / PC 5 个，`stage_template.json` 只有 PC 有。
+    - **节点角色**：`nodeinfo.Role`，启动参数 `-role worker` 或配置 `{"role":"worker"}`。
+      `control` 是**默认值**（零值即它，不配置等于改造前行为）；`worker` 只提供数据面，
+      控制面端点与 `GET /` 一律 403、不注入静态目录。前缀表在 `nodeinfo.ControlPlanePrefixes()`，
+      `role_test.go` 钉住「数据面端点必须不在表内」。
+    - **前端铁律**：控制面请求用 `controlPath`（打页面服务器），数据面继续用 `appPath`/`appURL`
+      + `nodeId`（跟随选中节点，跨节点扇出是浏览器做的，没有后端代理层）。
+      `controlPath` **故意不接受 `nodeId`** —— 想传 nodeId 说明要的多半是数据面请求。
+      判断法：「这东西在另一台机器上有意义吗？」有 → 数据面；没有，只有一份该是权威的 → 控制面。
+      `agent-config` 刻意留在数据面（改的是本机运行时，worker 需要）。
+    - **单节点下改绑零行为变化**：`pageServerPath` 与 `appPath` 同源，只有多节点才有差异 —— 而那正是要修的 bug。
+    - **两个连带后果**（漏了会在线上才发现）：
+      ① **建任务必须内联流水** —— 模板库只在主节点，而任务可以建在运行节点上，
+      后端 `CreateTask` 在 `stages` 为空时回查**本机**模板库必然失败（`task template not found`）。
+      前端 `createTask` 每次带 `stages`（`appTask.ts` 的 `taskStagesForCreate`）并快照 `task_template_name`。
+      注意 `applyStageOverride` 无覆盖时返回 `undefined`（最常见的路径），`taskStagesForCreate` 专门兜它。
+      ② **模板按项目过滤，不按节点路由** —— `TaskTemplate.RootID` 空=全局，`?root=<id>` 返回「全局+本项目」并集。
+    - **探测角色打 `/health` 不是 `/api/node-info`**：后者自己在控制面表里，worker 上必然 403，
+      会让每个运行节点都被误判成「离线」。`/health` 是公开端点且刻意不在表内。
+    - 迁移：`scripts/migrate-control-plane-to-primary.sh`（默认预览，`--apply` 才写，幂等）。
+      WebPush 订阅**不能迁**（VAPID 私钥各自独立，密文绑定密钥），要在主节点重新订阅一次。
+    - 存量控制面数据冻结在运行节点上**不删**；`session_project_pins` 的碎键**不迁移** ——
+      键里含 node id，重写收益不抵风险，且改 role 后新写入即自愈。
 
 
 
