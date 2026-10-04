@@ -169,6 +169,17 @@ func (h *HTTPHandler) pinnedSessionsForRoot(ctx context.Context, rootID string, 
 		// 取不到就当没置顶：置顶是装饰性排序数据，不该让整个会话列表 500。
 		return nil, nil
 	}
+	// 把置顶时间**写回**每个条目：sessionListResponse 报的 pinned_at 取自
+	// Session.PinnedAt，而那列已退役、恒为空 —— 不补上的话前端拿不到置顶时间，
+	// 置顶区在 UI 上就排不出来（pinned_keys 有值、pinned_items.pinned_at 是 null）。
+	// ListByKeys 每次查询都新建对象（querySessionMetasUnsafe），改它们不会污染缓存。
+	store := h.AppContext.GetPins()
+	for _, item := range items {
+		if at, ok := store.SessionPinnedAt(rootID + pins.ScopeSep + item.Key); ok {
+			stamped := at.UTC()
+			item.PinnedAt = &stamped
+		}
+	}
 	return items, pinnedSessionKeys(items)
 }
 

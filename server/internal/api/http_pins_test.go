@@ -147,6 +147,12 @@ func TestPinnedSessionsForRootResolvesFromPinStore(t *testing.T) {
 	if len(keys) != 1 || keys[0] != local.Key {
 		t.Fatalf("pinned_keys = %v, want [%s]", keys, local.Key)
 	}
+	// 置顶时间必须落到条目上：sessionListResponse 报的 pinned_at 取自
+	// Session.PinnedAt，而会话库那列已退役恒为 nil —— 不补的话前端拿到
+	// pinned_keys 却拿不到时间，置顶区在 UI 上排不出来（实测 pinned_at: null）。
+	if items[0].PinnedAt == nil || items[0].PinnedAt.IsZero() {
+		t.Fatal("置顶条目必须带上置顶时间，否则前端排不出置顶顺序")
+	}
 
 	// 没置顶就不该出现在置顶区 —— 靠的是置顶表里有它，而不是会话库里的标记。
 	other, err := mgr.Create(context.Background(), session.CreateInput{Type: session.TypeChat, Name: "not pinned"})
@@ -158,6 +164,14 @@ func TestPinnedSessionsForRootResolvesFromPinStore(t *testing.T) {
 		if item.Key == other.Key {
 			t.Fatal("没置顶的会话出现在置顶区")
 		}
+	}
+	// 反向：置顶表里没有的条目绝不能带置顶时间（否则整个列表看起来都是置顶的）
+	plain, err := mgr.ListByKeys(context.Background(), []string{other.Key})
+	if err != nil {
+		t.Fatalf("ListByKeys: %v", err)
+	}
+	if plain[0].PinnedAt != nil {
+		t.Fatal("ListByKeys 不该自己带置顶时间 —— 那是 pinnedSessionsForRoot 的职责")
 	}
 
 	// 取消后立即消失
