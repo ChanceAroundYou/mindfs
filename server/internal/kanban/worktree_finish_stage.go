@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 )
 
 // 收尾段：让 agent 自己做 commit + merge，服务端接着做清场。
@@ -82,7 +83,12 @@ type BeginFinishInput struct {
 // 拒绝的情形都返回 error，不静默改状态：
 //   - 已经有收尾段 → 不追加第二段（否则反复点会堆出一串收尾段）
 //   - 任务正在执行中 → 收尾段会和正在跑的那一段抢同一个 worktree
-//   - 终态 / 没有 worktree / worktree 目录已失效 → 无从收尾
+//   - 没有 worktree / worktree 目录已失效 → 无从收尾
+//   - 没有 agent 段可继承 → 收尾段没有 agent/模型可用
+//
+// **终态不再拒绝**（2026-10-04）：跑完了但 worktree 还留着没收，正是收尾唯一
+// 有意义的场景。校验全过之后把任务复活成 waiting_user（reviveTerminalTask），
+// 让 AddStage 能真正推进收尾段。
 func (s *Service) BeginFinishWorktree(ctx context.Context, in BeginFinishInput) (TaskDetail, error) {
 	_, task, err := s.loadForMove(ctx, in.RootID, in.TaskID)
 	if err != nil {
@@ -96,9 +102,6 @@ func (s *Service) BeginFinishWorktree(ctx context.Context, in BeginFinishInput) 
 	if p := strings.TrimSpace(task.WorktreePath); p == "" || !worktreeDirUsable(p) {
 		return TaskDetail{}, errors.New("该任务的 worktree 已不存在，请先重建")
 	}
-	if isTerminalStatus(task.Status) {
-		return TaskDetail{}, errors.New("任务已结束")
-	}
 	for _, stage := range task.Stages {
 		if strings.TrimSpace(stage.Kind) == StageKindWorktreeFinish {
 			return TaskDetail{}, errors.New("该任务已在收尾流程中")
@@ -107,7 +110,7 @@ func (s *Service) BeginFinishWorktree(ctx context.Context, in BeginFinishInput) 
 	// AddStage 只在 waiting_user 态才真正推进并起 agent（service.go 的 AddStage），
 	// 其余状态会把段追加到尾巴上、不执行也不报错 —— 那是个静默空操作。
 	// 所以这里把状态要求显式写出来，而不是指望 AddStage 兜住。
-	if task.Status != StatusWaitingUser {
+	if !isTerminalStatus(task.Status) && task.Status != StatusWaitingUser {
 		return TaskDetail{}, errors.New("任务正在执行中，等它停下再收尾")
 	}
 
@@ -120,6 +123,22 @@ func (s *Service) BeginFinishWorktree(ctx context.Context, in BeginFinishInput) 
 	if strings.TrimSpace(previous.Agent) == "" {
 		return TaskDetail{}, errors.New("该任务还没有 agent 阶段，无法自动收尾：请先加一段 agent 工作再收尾")
 	}
+
+	// 终态任务到这里才复活：跑完了但 worktree 还留着没收，那正是收尾唯一有意义的
+	// 时刻（AddStage 只认 waiting_user，不复活的话收尾段会永远躺在流水尾）。
+	// 这条路径本身安全 —— 收尾段跑成功才清场（finishStageTeardownDue），
+	// 失败或受阻则什么都不动。
+	//
+	// 位置是**所有校验的最后**：复活会写库，早一步就会让后面任何一处拒绝
+	// （已在收尾流程中 / 没有 agent 段）先把终态改成 waiting_user 再返回错误 ——
+	// 板上于是多出一个「在动」却没人跑的任务，而用户连报错都没拿到。
+	if isTerminalStatus(task.Status) {
+		if err := s.reviveTerminalTask(ctx, in.RootID, in.TaskID, task); err != nil {
+			return TaskDetail{}, err
+		}
+		task.Status = StatusWaitingUser
+	}
+
 	stage := StageTemplate{
 		Name:               finishStageName,
 		Role:               RoleAgent,
@@ -133,6 +152,40 @@ func (s *Service) BeginFinishWorktree(ctx context.Context, in BeginFinishInput) 
 		AutoAdvance: false,
 	}
 	return s.AddStage(ctx, AddStageInput{RootID: in.RootID, TaskID: in.TaskID, Stage: stage})
+}
+
+// reviveTerminalTask 把终态任务拉回 waiting_user，好让追加的收尾段真能跑起来。
+//
+// 为什么需要它：AddStage 只在 waiting_user 态才推进并起 agent，其余状态把段
+// 追加到流水尾就不动了 —— 收尾段会永远躺在那儿，「点了没反应」。所以光放开
+// 终态判断不够，得先把状态改回 AddStage 认的那一态。
+//
+// completed_at 一并清掉：留着它看板仍按「已完成」渲染（列归位、卡片打勾），
+// 而任务实际正在跑收尾 —— 那种「显示已完成、实际在动」的状态最容易让人误判。
+//
+// 这里不碰当前段指针与已完成的段记录：收尾段是**追加**在末尾的，历史该是什么样
+// 还是什么样，复活的只是「这个任务还能继续动」这件事。
+func (s *Service) reviveTerminalTask(ctx context.Context, rootID, taskID string, task Task) error {
+	store, err := s.taskStore(rootID)
+	if err != nil {
+		return err
+	}
+	revived := task
+	revived.Status = StatusWaitingUser
+	revived.CompletedAt = ""
+	revived.UpdatedAt = time.Now().UTC()
+	if err := store.UpdateTask(ctx, revived); err != nil {
+		return err
+	}
+	// 状态变了就得播出去：否则看板还停在「已完成」列，而任务已经在跑收尾。
+	detail, err := store.GetDetail(ctx, strings.TrimSpace(taskID))
+	if err != nil {
+		return err
+	}
+	if s.Runner != nil {
+		s.Runner.TaskUpdated(rootID, detail)
+	}
+	return nil
 }
 
 // lastAgentStage 返回最后一个 agent 段的定义（没有则零值）。

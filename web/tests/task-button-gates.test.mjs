@@ -131,13 +131,24 @@ test("a running finish stage takes all three away", () => {
   assert.equal(gates.canFinishWorktree, false, "re-running a finish would stack a second finish stage");
 });
 
-test("a terminal task gets none of them either", () => {
+// 终态任务：完成/推进两个键照旧不给，但**收尾要给**（2026-10-04 用户要求）。
+// 「完成」不给是对的 —— 收了尾就看不到后续；「执行」不给也是对的 —— 没有段可推进。
+// 收尾反过来：任务跑完了 worktree 还留着没收，那正是它唯一有意义的时刻，
+// 服务端 reviveTerminalTask 会把状态拉回 waiting_user 再让收尾段跑起来。
+// 原断言是三条全不给，与新需求直接矛盾，所以钉的东西换了，不是删了换绿灯。
+test("a terminal task gets 完成/执行 withheld but keeps the finish key", () => {
   for (const status of ["success", "fail", "cancelled"]) {
     const gates = gatesOf(worktreeTask({ status, current_stage_index: 1 }));
-    assert.equal(gates.canComplete, false, status);
-    assert.equal(gates.showAdvance, false, status);
-    assert.equal(gates.canFinishWorktree, false, `${status}: nothing is still running in the worktree to finish`);
+    assert.equal(gates.canComplete, false, `${status}: completing would hide later stages`);
+    assert.equal(gates.showAdvance, false, `${status}: there is nothing to advance into`);
+    assert.equal(gates.canFinishWorktree, true, `${status}: the worktree is still holding unmerged work`);
   }
+  // 反过来把 terminal 这条守卫真的去掉，上面那些门就塌了 —— 钉住「不给」的那些门
+  // 在终态下依然生效，收尾键的豁免不是把三个键一起放开。
+  const missingWorktree = gatesOf(worktreeTask({ status: "success", worktree_missing: true }));
+  assert.equal(missingWorktree.canFinishWorktree, false, "a terminal task with a dead worktree still must not offer the finish key");
+  const noAgentStage = gatesOf(worktreeTask({ status: "success", stages: [{ role: "user" }] }));
+  assert.equal(noAgentStage.canFinishWorktree, false, "there is no agent stage to inherit agent/model from — the server would 409");
 });
 
 // 跑完之后指针还停在收尾段上，但清场已经把活干完了 —— 不该再显示「收尾中」。

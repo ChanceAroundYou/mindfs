@@ -203,15 +203,32 @@ assert.doesNotMatch(
 // ── 前端：按钮的给法 ──
 // 目录已经没了的只能重建，没有 worktree 可拆 —— 两个键不能同时出现，
 // 更不能让收尾键在失效路径上假装能点。
+//
+// **终态不再拦截**（2026-10-04 用户要求）：任务跑完但 worktree 还留着没收，
+// 那正是收尾唯一有意义的时刻 —— 服务端 reviveTerminalTask 会把它拉回
+// waiting_user 再推进（worktree_finish_stage.go）。原断言钉的是「终态不给」，
+// 与新需求直接矛盾，所以这里换掉钉的东西，不是删了换绿灯。
+// 换来的是必须补上「有 agent 段」这道门：收尾段继承上一段的 agent/模型，
+// 没有可继承的服务端会 409 —— 给一个必然失败的按钮比不给更糟。
 assert.match(
   panel,
-  /const canFinishWorktree = task\?\.create_worktree === true\s*&&\s*!!task\?\.worktree_path\s*&&\s*task\?\.worktree_missing !== true\s*&&\s*!isTerminalKanbanTask\(task\)\s*&&\s*!finishActive;/,
-  "the finish button requires a live worktree, and must be withheld for missing worktrees, finished tasks and a running finish alike",
+  /const canFinishWorktree = task\?\.create_worktree === true\s*&&\s*!!task\?\.worktree_path\s*&&\s*task\?\.worktree_missing !== true\s*&&\s*hasAgentStage\s*&&\s*!finishActive;/,
+  "the finish button requires a live worktree and an agent stage to inherit from; terminal tasks are NOT withheld",
+);
+assert.doesNotMatch(
+  panel,
+  /const canFinishWorktree[^;]*isTerminalKanbanTask/,
+  "the finish button must not be gated on terminal status — a finished task holding an unfinished worktree is exactly the case worth finishing",
+);
+assert.match(
+  panel,
+  /const hasAgentStage = \(task\?\.stages \|\| \[\]\)\.some\(\(stage\) => stage\.role === "agent"\);/,
+  "the agent-stage gate must exist, mirroring worktree_finish_stage.go's lastAgentStage precondition",
 );
 assert.match(
   card,
-  /const canFinishWorktree = worktreeEnabled && !worktreeMissing && hasWorktreePath && !terminal && !finishActive;/,
-  "the card button must be withheld for missing worktrees, finished tasks and a running finish alike",
+  /const canFinishWorktree = worktreeEnabled && !worktreeMissing && hasWorktreePath && hasAgentStage && !finishActive;/,
+  "the card button must match the panel exactly: same gates, same terminal exemption",
 );
 assert.match(card, /onMove\(task, "finish-worktree"\)/, "the card button must dispatch finish-worktree");
 assert.match(app, /action === "finish-worktree"/, "App must handle the finish-worktree card action");

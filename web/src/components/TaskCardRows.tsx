@@ -186,9 +186,13 @@ export function TaskCardRows({
           ? t("task.worktreeTitle")
           : t("task.noWorktreeTitle");
   // 收尾要有可拆的 worktree：目录不在了给的是「重建」，没有 worktree 可拆。
-  // 终态任务不给 —— 活已经结束了，没有正在 worktree 里的东西要收。
-  // 收尾流程进行中也不给：那正是「已经在收尾」，再点是往同一条流程上叠一段。
-  const canFinishWorktree = worktreeEnabled && !worktreeMissing && hasWorktreePath && !terminal && !finishActive;
+  // 收尾流程进行中不给：那正是「已经在收尾」，再点是往同一条流程上叠一段。
+  // **终态也给**（与 TaskDetailPanel 同步）：任务跑完但 worktree 还留着没收，
+  // 那正是收尾唯一有意义的场景；服务端会把它复活成 waiting_user 再推进。
+  // 「有 agent 段」这条必须与服务端对齐（worktree_finish_stage.go 的
+  // lastAgentStage 检查），否则会给一个必然 409 的按钮。
+  const hasAgentStage = (task.stages || []).some((stage) => stage.role === "agent");
+  const canFinishWorktree = worktreeEnabled && !worktreeMissing && hasWorktreePath && hasAgentStage && !finishActive;
   const numberLabel = task.task_number ? `#${task.task_number}` : "";
   const taskName = task.name || task.task_template_name || templateNameFallback || t("task.unnamedTemplate");
   const title = task.task_template_name || templateNameFallback || t("task.defaultTitle");

@@ -313,11 +313,20 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
   //
   // 只在「worktree 还真的在」时给：目录已经没了的（worktree_missing）该点的是重建，
   // 收尾无从下手。已经在收尾流程里的也不给（再点是往同一条流程上叠一段）。
+  //
+  // **终态也给**（2026-10-04 用户要求）：任务跑完了但 worktree 还留着没收，
+  // 那才是收尾按钮唯一有意义的时候。服务端 reviveTerminalTask 会把它拉回
+  // waiting_user 再推进，所以终态不是拦路虎。
+  //
+  // 「有 agent 段」这条门控必须与服务端对齐（worktree_finish_stage.go 的
+  // lastAgentStage 检查）：收尾段要继承上一段的 agent/模型，没有可继承的就
+  // 服务端会拒。与其给一个必然 409 的按钮，不如不给。
   const finishActive = isFinishStageActive(task);
+  const hasAgentStage = (task?.stages || []).some((stage) => stage.role === "agent");
   const canFinishWorktree = task?.create_worktree === true
     && !!task?.worktree_path
     && task?.worktree_missing !== true
-    && !isTerminalKanbanTask(task)
+    && hasAgentStage
     && !finishActive;
   const finishWorktree = async () => {
     if (!task) return;
