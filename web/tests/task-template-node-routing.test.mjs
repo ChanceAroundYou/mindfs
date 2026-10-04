@@ -15,46 +15,70 @@ const goTypes = fs.readFileSync(path.join(root, "../server/internal/kanban/types
 const goStore = fs.readFileSync(path.join(root, "../server/internal/kanban/template_store.go"), "utf8");
 const goTest = fs.readFileSync(path.join(root, "../server/internal/kanban/service_test.go"), "utf8");
 
-// 回归：模板请求必须带 nodeId。
-// 不带的话 appURL → basePath → getApiBaseURL(undefined) → getActiveNode()，
-// 请求会打到「当前选中的节点」而不是页面所在那台机器。实测：本机面板
-// （127.0.0.1）读模板时实际请求了 https://pc.xiaokubao.space/mindfs/api/task-templates，
-// 于是看到的是另一台机器的模板（本机 2 段 / pc 3 段），而两边模板 id 相同、
-// 名字也相同，表面上完全看不出串了。
+// 模板路由：只打主节点，按**项目**过滤，不再按 nodeId 路由。
+//
+// 这条断言 2026-10-04 反转过一次，背景值得留着：原来钉的是「模板请求必须带
+// nodeId」，因为本机面板读模板时实际请求了 https://pc.xiaokubao.space/…
+// （appURL → basePath → getApiBaseURL(undefined) → getActiveNode() 跟着选中节点走），
+// 两边模板 id 和名字都相同，表面完全看不出串了。
+//
+// 现在反过来：模板库**只有主节点一份**（docs/multi-node-control-plane.md），
+// 所以模板请求根本不该看节点是谁——它该问的是「这是哪个项目」，因为模板可以
+// 限定项目（TaskTemplate.root_id）。原来那次串号不可能再复发：请求压根不带
+// 节点概念，选中哪台机器都打到页面服务器。
 assert.match(
   runtime,
   /const active = getActiveNode\(\);\s*\n\s*if \(active\?\.url\) return normalizeExplicitNodeBase\(active\.url\);/,
-  "getApiBaseURL(undefined) follows the active node — this is why unscoped calls leak to another machine",
+  "getApiBaseURL(undefined) follows the active node — this is why control-plane calls must not go through it",
 );
 
-// 模板接口（读 / 存 / 删）都必须带 nodeId。
-// 写只有编辑弹窗那一条路（hook 里的并发保存入口已随 max_concurrency 一起删掉）。
-assert.match(hook, /fetchTaskTemplates\(templateNodeId\(\)\)/, "fetchTaskTemplates must carry the current project's nodeId");
-assert.match(hook, /deleteTaskTemplate\(id, templateNodeId\(\)\)/, "deleteTaskTemplate must carry nodeId");
-assert.match(
-  hook,
-  /const templateNodeId = useCallback\(\(\): string \| undefined => \(\s*\n\s*currentRootId \? getNodeIdForRoot\(currentRootId\) : undefined/,
-  "templateNodeId must come from the current root's node, like every other task call",
-);
-assert.match(
-  app,
-  /useTaskTemplates\(\{ currentRootId, scopedRootKey, getNodeIdForRoot \}\)/,
-  "App must pass getNodeIdForRoot into useTaskTemplates",
-);
+// 读 / 删都按项目走，不带 nodeId。
+assert.match(hook, /fetchTaskTemplates\(currentRootId \|\| undefined\)/, "fetchTaskTemplates must ask by project, not by node");
+assert.match(hook, /deleteTaskTemplate\(id\)/, "deleteTaskTemplate must not take a nodeId");
+assert.doesNotMatch(hook, /templateNodeId/, "the node-routing helper must be gone");
+assert.doesNotMatch(hook, /getNodeIdForRoot/, "the hook must not resolve node ids at all");
 
-// 编辑器保存那条路同样要带。
-assert.match(dialog, /nodeId\?: string;/, "TaskTemplateDialog must accept a nodeId");
-assert.match(dialog, /\}, nodeId\);/, "the dialog's saveTaskTemplate must carry nodeId");
+// 编辑器保存同样不带节点；它带的是「限定到当前项目」这个作用域。
+assert.match(dialog, /currentRootId\?: string \| null;/, "TaskTemplateDialog scopes templates by project");
+assert.doesNotMatch(dialog, /nodeId/, "the dialog must not accept a nodeId");
+assert.match(dialog, /root_id: scopeToCurrentProject \? \(currentRootId \|\| ""\) : "",/, "saving must persist the project scope");
 assert.match(
   app,
-  /onSaved=\{handleTaskTemplateSaved\}\s*\n\s*nodeId=\{currentRootId \? getNodeIdForRoot\(currentRootId\) : undefined\}/,
-  "App must pass nodeId to the template dialog",
+  /onSaved=\{handleTaskTemplateSaved\}\s*\n\s*currentRootId=\{currentRootId\}/,
+  "App must pass the current project into the template dialog",
 );
+assert.match(app, /useTaskTemplates\(\{ currentRootId, scopedRootKey \}\)/, "useTaskTemplates no longer needs node resolution");
 
-// 底层签名确实收 nodeId（防止改了调用方却没改实现）。
+// 底层签名不再收 nodeId（防止改了调用方却没改实现）。
 for (const fn of ["fetchTaskTemplates", "saveTaskTemplate", "deleteTaskTemplate"]) {
-  assert.match(services, new RegExp(`export async function ${fn}\\([\\s\\S]{0,120}?nodeId\\?: string`), `${fn} must accept nodeId`);
+  assert.doesNotMatch(services, new RegExp(`export async function ${fn}\\([^)]*nodeId`), `${fn} must no longer accept a nodeId`);
 }
+
+// 建任务必须把流水**随包带上**，不能只发 template_id 让后端回查。
+// 这是模板离开节点之后唯一能让运行节点建出任务的办法：任务可能建在没有模板库的
+// worker 上，那次回查必然报 "task template not found"（kanban/service.go CreateTask）。
+// applyStageOverride 没覆盖时返回 undefined，所以必须走 taskStagesForCreate。
+assert.match(services, /task_template_name: options\?\.templateName/, "createTask must snapshot the template name for worker nodes");
+assert.match(
+  services,
+  /\.\.\.\(options\?\.stages\?\.length \? \{ stages: options\.stages \} : \{\}\)/,
+  "createTask must send the inlined stages",
+);
+assert.match(app, /const createStages = taskStagesForCreate\(/, "the create-task panel must always resolve stages");
+assert.match(app, /templateName: selectedTemplate\.name/, "the create-task panel must send the template name it has in hand");
+assert.doesNotMatch(
+  app,
+  /const overrideStages = applyStageOverride\(/,
+  "the old 'no override → omit stages → let the server look up the template' path must be gone",
+);
+
+// 后端按项目过滤模板：根模板与该项目的模板都在，别的不在。
+assert.match(goTypes, /RootID\s+string\s+`json:"root_id,omitempty"`/, "TaskTemplate must carry a project scope");
+assert.match(
+  goStore,
+  /func \(s \*TemplateStore\) ListTaskTemplatesForRoot\(rootID string\)/,
+  "the store must filter templates by project",
+);
 
 // 模板数据：user 段统一叫「任务输入」。
 // 模板清单随产品调整增减，这里钉住实际存在的名字，而不是把数量写死 ——

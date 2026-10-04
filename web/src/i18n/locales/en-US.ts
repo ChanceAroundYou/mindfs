@@ -323,6 +323,7 @@ export const enUS = {
   "taskTemplate.editTitle": "Edit task template",
   "taskTemplate.defaultStageName": "Stage {index}",
   "taskTemplate.namePlaceholder": "Enter template name",
+  "taskTemplate.scopeToCurrentProject": "This project only",
   "taskTemplate.saveTemplate": "Save template",
   "taskTemplate.deleteStage": "Delete stage",
   "taskTemplate.firstStageCannotDelete": "The first stage cannot be deleted",

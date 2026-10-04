@@ -19,8 +19,8 @@ type TaskTemplateDialogProps = {
   template?: TaskTemplate | null;
   onClose: () => void;
   onSaved?: (template: TaskTemplate) => void;
-  /** 当前项目的 nodeId：不带的话模板请求会打到 active node（另一台机器）去 */
-  nodeId?: string;
+  /** 当前项目：勾上就把模板限定到这个项目（root_id），不勾就是全局模板。 */
+  currentRootId?: string | null;
 };
 
 const blankUserStage = (): StageTemplate => ({
@@ -104,7 +104,7 @@ function toFastService(value?: string): "" | "on" | "off" {
   return value === "on" || value === "off" ? value : "";
 }
 
-export function TaskTemplateDialog({ open, agents, template, onClose, onSaved, nodeId }: TaskTemplateDialogProps) {
+export function TaskTemplateDialog({ open, agents, template, onClose, onSaved, currentRootId }: TaskTemplateDialogProps) {
   const { t } = useI18n();
   const [draft, setDraft] = useState<TaskTemplate>(() => cloneTemplate(template, t));
   // 打开那一刻的草稿快照。dirty 拿它和当前 draft 比 —— 不能每次渲染现算基线，
@@ -113,14 +113,17 @@ export function TaskTemplateDialog({ open, agents, template, onClose, onSaved, n
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [openHelpKey, setOpenHelpKey] = useState("");
+  // 模板归属：默认跟随已有草稿（编辑项目专用模板时保持勾上），新建则默认全局。
+  const [scopeToCurrentProject, setScopeToCurrentProject] = useState(false);
 
   useEffect(() => {
     if (!open) return;
     const fresh = cloneTemplate(template, t);
     baselineRef.current = JSON.stringify(fresh);
     setDraft(fresh);
+    setScopeToCurrentProject(!!template?.root_id && !!currentRootId && template.root_id === currentRootId);
     setSaveError("");
-  }, [open, template, t]);
+  }, [open, template, currentRootId, t]);
 
   const dirty = JSON.stringify(draft) !== baselineRef.current;
 
@@ -194,8 +197,11 @@ export function TaskTemplateDialog({ open, agents, template, onClose, onSaved, n
     try {
       const saved = await saveTaskTemplate({
         ...draft,
+        // 勾了就是本项目专用，没勾就是全局。空串而不是 undefined：
+        // 后端 normalizeTaskTemplate 会 TrimSpace，留 undefined 也一样归空。
+        root_id: scopeToCurrentProject ? (currentRootId || "") : "",
         stages: normalizeStages(draft.stages),
-      }, nodeId);
+      });
       setDraft(cloneTemplate(saved, t));
       onSaved?.(saved);
       onClose();
@@ -242,6 +248,12 @@ export function TaskTemplateDialog({ open, agents, template, onClose, onSaved, n
             <label style={fieldStyle}>
               <input className="task-template-input" value={draft.name} placeholder={t("taskTemplate.namePlaceholder")} onChange={(event) => setDraft((prev) => ({ ...prev, name: event.target.value }))} style={{ ...composerInputStyle, height: "30px" }} />
             </label>
+            {currentRootId ? (
+              <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", color: "var(--muted-text)", whiteSpace: "nowrap", paddingBottom: "6px" }}>
+                <input type="checkbox" checked={scopeToCurrentProject} onChange={(event) => setScopeToCurrentProject(event.target.checked)} />
+                {t("taskTemplate.scopeToCurrentProject")}
+              </label>
+            ) : null}
           </div>
 
           {draft.stages.map((stage, index) => {

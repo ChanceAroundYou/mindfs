@@ -219,7 +219,7 @@ import { basenameOfPath, buildDirectorySelectionKey, buildFileScrollKey, buildUR
 import { useWorkspaceBoard } from "./app/useWorkspaceBoard";
 import { hasSessionExchanges, isSessionShownInMain, isTopLevelSessionItem, mergeReplyingStateByNode, normalizeMode, relatedFileSelectionKey, sessionInputHistory, shouldAutoSelectNewSession, toSessionItem } from "./app/appSession";
 import { accountScopedKey, loadGitDiffSideBySide, loadLastRootId, loadLastRootNodeId, loadMobileEnterKeySends, loadPersistedFileScrollPositions, loadPersistedPluginQuery, loadSidebarsSwapped, loadTaskCreateWorktreePreference, persistFileScrollPositions, persistPluginQuery, removeLocalStorageByPrefix, saveTaskCreateWorktreePreference } from "./app/appStorage";
-import { applyStageOverride, currentTaskInputFromDetail, DEFAULT_TASK_AGENT, DEFAULT_TASK_MODEL, firstAgentStage, firstTaskInputFromDetail, firstUserInputTemplate, isTerminalKanbanTask, latestTaskStageRun, normalizeFastService, parseTaskSessionErrorDetails, parseTaskSessionErrorMessage, previousTaskInputsFromDetail, taskSessionKeysFromDetail, taskStatusLabel } from "./app/appTask";
+import { applyStageOverride, currentTaskInputFromDetail, DEFAULT_TASK_AGENT, DEFAULT_TASK_MODEL, firstAgentStage, firstTaskInputFromDetail, firstUserInputTemplate, isTerminalKanbanTask, latestTaskStageRun, normalizeFastService, parseTaskSessionErrorDetails, parseTaskSessionErrorMessage, previousTaskInputsFromDetail, taskSessionKeysFromDetail, taskStagesForCreate, taskStatusLabel } from "./app/appTask";
 import { useCompletionSound } from "./app/useCompletionSound";
 import { useExternalSessionImport } from "./app/useExternalSessionImport";
 import { useGitActions } from "./app/useGitActions";
@@ -472,7 +472,7 @@ export function App({ onGoHome }: AppProps) {
     openTaskTemplateEditor,
     handleTaskTemplateSaved,
     handleDeleteTaskTemplate,
-  } = useTaskTemplates({ currentRootId, scopedRootKey, getNodeIdForRoot });
+  } = useTaskTemplates({ currentRootId, scopedRootKey });
 
   useEffect(() => {
     if (!taskInlineEdit) return;
@@ -1013,11 +1013,12 @@ export function App({ onGoHome }: AppProps) {
       const payload = [edit.text.trim(), attachmentTokens].filter(Boolean).join("\n");
       const taskCanCreateWorktree = managedRootByIdRef.current[rootId]?.is_git_repo === true;
       const createWorktree = taskCanCreateWorktree && edit.createWorktree;
-      // 有 agent/模型/立即执行覆盖才带 stages（applyStageOverride 内部处理：
-      // agent/model/effort 只改第一个 agent 段、startImmediately 只改首段，
-      // 没覆盖时返回 undefined 让后端照模板走）。
-      const overrideStages = applyStageOverride(
-        taskTemplates.find((tpl) => tpl.id === edit.templateId) || null,
+      // 选了模板就把流水随包带上（taskStagesForCreate：有 agent/模型/立即执行覆盖就用覆盖后的，
+      // 没有就用模板自带的）。不能像以前那样「没覆盖就不带」让后端回查 ——
+      // 任务可能建在没有模板库的 worker 节点上，那次回查必然失败（service.go CreateTask）。
+      const selectedTemplate = taskTemplates.find((tpl) => tpl.id === edit.templateId) || null;
+      const createStages = taskStagesForCreate(
+        selectedTemplate,
         { agent: edit.agentOverride, model: edit.modelOverride, effort: edit.effortOverride, startImmediately: edit.startImmediately },
       );
       const detail = await createTask(
@@ -1030,7 +1031,9 @@ export function App({ onGoHome }: AppProps) {
         getNodeIdForRoot(rootId),
         {
           ...(edit.name?.trim() ? { name: edit.name.trim() } : {}),
-          ...(overrideStages ? { stages: overrideStages } : {}),
+          ...(createStages ? { stages: createStages } : {}),
+          // 模板名一并带上：worker 节点查不到模板库，看板上的「模板来源」标签靠它。
+          ...(selectedTemplate?.name ? { templateName: selectedTemplate.name } : {}),
         },
       );
       applyTaskDetails(rootId, [detail]);
@@ -10313,7 +10316,7 @@ export function App({ onGoHome }: AppProps) {
         template={taskTemplateDialogTemplate}
         onClose={() => setTaskTemplateDialogOpen(false)}
         onSaved={handleTaskTemplateSaved}
-        nodeId={currentRootId ? getNodeIdForRoot(currentRootId) : undefined}
+        currentRootId={currentRootId}
       />
       {selectedKanbanTask ? (
         <TaskDetailPanel

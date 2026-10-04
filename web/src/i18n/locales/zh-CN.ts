@@ -321,6 +321,7 @@ export const zhCN = {
   "taskTemplate.editTitle": "编辑任务模板",
   "taskTemplate.defaultStageName": "阶段{index}",
   "taskTemplate.namePlaceholder": "请输入模板名称",
+  "taskTemplate.scopeToCurrentProject": "仅限当前项目",
   "taskTemplate.saveTemplate": "保存模板",
   "taskTemplate.deleteStage": "删除阶段",
   "taskTemplate.firstStageCannotDelete": "第一阶段不能删除",

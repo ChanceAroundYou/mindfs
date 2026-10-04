@@ -18,11 +18,9 @@ import { confirmDialog } from "../services/dialog";
 export function useTaskTemplates({
   currentRootId,
   scopedRootKey,
-  getNodeIdForRoot,
 }: {
   currentRootId: string | null;
   scopedRootKey: (rootId: string) => string;
-  getNodeIdForRoot: (rootId: string) => string | undefined;
 }) {
   const { t } = useI18n();
   const taskTemplateActionMenuRef = useRef<HTMLDivElement | null>(null);
@@ -35,23 +33,20 @@ export function useTaskTemplates({
   const [taskTemplateActionMenuOpen, setTaskTemplateActionMenuOpen] = useState(false);
   const [taskCreateTemplateMenuOpen, setTaskCreateTemplateMenuOpen] = useState(false);
 
-  // 模板请求必须带上当前项目的 nodeId。不带的话 getApiBaseURL(undefined) 会
-  // 回退到 active node —— 面板明明开着本机项目，请求却打到另一台机器上去了
-  // （实测：https://pc.xiaokubao.space/... 而页面在 127.0.0.1）。
-  const templateNodeId = useCallback((): string | undefined => (
-    currentRootId ? getNodeIdForRoot(currentRootId) : undefined
-  ), [currentRootId, getNodeIdForRoot]);
-
+  // 模板只问主节点要（controlPath），但要带上**项目**：模板库在主节点一份，
+  // 里面既有全局模板也有某个项目专用的（TaskTemplate.root_id）。
+  // 不带 root 只会拿到全局那部分，项目自己的模板会整批消失。
+  // 这里**不能**再按 nodeId 路由 —— 见 docs/multi-node-control-plane.md。
   const loadTaskTemplates = useCallback(async () => {
     if (!protectedAPIReady()) {
       return;
     }
     try {
-      setTaskTemplates(await fetchTaskTemplates(templateNodeId()));
+      setTaskTemplates(await fetchTaskTemplates(currentRootId || undefined));
     } catch (err) {
       reportError("file.write_failed", String((err as Error)?.message || t("taskTemplate.loadFailed")));
     }
-  }, [t, templateNodeId]);
+  }, [currentRootId, t]);
 
   const openTaskTemplateEditor = useCallback((template: TaskTemplate | null) => {
     setTaskTemplateDialogTemplate(template);
@@ -76,7 +71,7 @@ export function useTaskTemplates({
     if (!id) return;
     if (!await confirmDialog({ message: t("taskTemplate.deleteConfirm", { name: template.name || id }), danger: true })) return;
     try {
-      await deleteTaskTemplate(id, templateNodeId());
+      await deleteTaskTemplate(id);
       setTaskTemplates((prev) => prev.filter((item) => item.id !== id));
       setTaskTemplateDialogTemplate((prev) => prev?.id === id ? null : prev);
       setTaskTemplateFilter((prev) => prev === id ? "" : prev);

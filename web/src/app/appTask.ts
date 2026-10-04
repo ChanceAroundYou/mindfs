@@ -353,3 +353,29 @@ export function applyStageOverride(
   }
   return touched ? stages : undefined;
 }
+
+/**
+ * 建任务时要随包带的那份流水：**总是**产出，不看有没有覆盖。
+ *
+ * 为什么不能直接用 applyStageOverride：它没覆盖时返回 undefined，
+ * 调用方于是省略 stages，后端转而去**任务所在节点**回查模板（service.go 的
+ * CreateTask）。模板库只在主节点，项目在 worker 上时那次回查必然失败，
+ * 建任务整个报 "task template not found"。而「没覆盖」恰恰是最常见的路径。
+ *
+ * 带上流水也不改变语义：模板流水线本来就是创建时拷贝的快照
+ * （CLAUDE.md 事实 13），前端在选模板那一刻取到的快照与后端回查取到的
+ * 只差「用户在两步之间改了模板」，这种竞态本来就没有正确答案。
+ */
+export function taskStagesForCreate(
+  template: TaskTemplate | null,
+  override: { agent?: string; model?: string; effort?: string; startImmediately?: boolean },
+): StageTemplate[] | undefined {
+  const overridden = applyStageOverride(template, override);
+  if (overridden) return overridden;
+  if (!template) return undefined;
+  const stages = (template.stages || []).map((stage) => stage.snapshot);
+  if (override.startImmediately !== undefined && stages[0]) {
+    stages[0] = { ...stages[0], start_immediately: override.startImmediately };
+  }
+  return stages.length ? stages : undefined;
+}

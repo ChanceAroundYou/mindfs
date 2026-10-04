@@ -87,10 +87,18 @@ assert.match(stageOptions, /taskTemplate\.sessionReuseTaskMain/, "the dropdown m
 for (const key of ["agentOverride", "modelOverride", "effortOverride"]) {
   assert.match(appTask, new RegExp(`${key}\\?: string;`), `TaskInlineEditState must carry ${key}`);
 }
+// 建任务走 taskStagesForCreate（它在 applyStageOverride 之上多兜一层：
+// 模板库只在主节点，没覆盖时也必须把流水随包带上，否则后端在 worker 节点上
+// 回查不到模板会整个建不出任务）。共享的覆盖逻辑仍是同一个 applyStageOverride。
 assert.match(
   app,
-  /const overrideStages = applyStageOverride\(/,
-  "create-task must go through the shared applyStageOverride",
+  /const createStages = taskStagesForCreate\(/,
+  "create-task must go through the shared stage resolver",
+);
+assert.match(
+  appTask,
+  /const overridden = applyStageOverride\(template, override\);/,
+  "taskStagesForCreate must build on applyStageOverride, not re-implement the override",
 );
 assert.match(
   appTask,
