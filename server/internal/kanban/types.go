@@ -91,9 +91,14 @@ type TaskTemplate struct {
 	ID          string              `json:"id"`
 	Name        string              `json:"name"`
 	Description string              `json:"description,omitempty"`
-	Stages      []TaskTemplateStage `json:"stages"`
-	CreatedAt   time.Time           `json:"created_at"`
-	UpdatedAt   time.Time           `json:"updated_at"`
+	// RootID 把模板限定到某个项目；空 = 全局模板，任何项目都能套用。
+	//
+	// 模板库只有主节点一份（见 docs/multi-node-control-plane.md）：跨项目复用的写全局，
+	// 某个项目专用的写该项目的 root id。列表按 root 过滤（全局 + 当前项目）。
+	RootID   string              `json:"root_id,omitempty"`
+	Stages   []TaskTemplateStage `json:"stages"`
+	CreatedAt time.Time          `json:"created_at"`
+	UpdatedAt time.Time          `json:"updated_at"`
 }
 
 // Task 自带流水（Stages）：执行永远读任务自己的阶段，不再回查模板。

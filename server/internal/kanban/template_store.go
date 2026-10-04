@@ -151,6 +151,35 @@ func (s *TemplateStore) GetTaskTemplate(id string) (TaskTemplate, error) {
 	return TaskTemplate{}, errors.New("task template not found")
 }
 
+// ListTaskTemplatesForRoot 返回「全局 + 指定项目」的模板。
+//
+// rootID 为空时只返回全局模板：调用方（建任务弹窗）总是带着当前项目来的，
+// 而「某项目专用的模板」在别的项目里不该出现——那会让模板下拉框变成一张
+// 「这张模板根本不适用于本项目」的名单。
+func (s *TemplateStore) ListTaskTemplatesForRoot(rootID string) ([]TaskTemplate, error) {
+	items, err := s.ListTaskTemplates()
+	if err != nil {
+		return nil, err
+	}
+	rootID = strings.TrimSpace(rootID)
+	if rootID == "" {
+		out := items[:0]
+		for _, item := range items {
+			if item.RootID == "" {
+				out = append(out, item)
+			}
+		}
+		return out, nil
+	}
+	out := make([]TaskTemplate, 0, len(items))
+	for _, item := range items {
+		if item.RootID == "" || item.RootID == rootID {
+			out = append(out, item)
+		}
+	}
+	return out, nil
+}
+
 func (s *TemplateStore) SaveTaskTemplate(in TaskTemplate) (TaskTemplate, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -381,6 +410,7 @@ func normalizeTaskTemplate(in TaskTemplate) TaskTemplate {
 	in.ID = strings.TrimSpace(in.ID)
 	in.Name = strings.TrimSpace(in.Name)
 	in.Description = strings.TrimSpace(in.Description)
+	in.RootID = strings.TrimSpace(in.RootID)
 	return in
 }
 

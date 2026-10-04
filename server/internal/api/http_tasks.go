@@ -77,7 +77,9 @@ func (h *HTTPHandler) handleTaskTemplatesList(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	items, err := svc.ListTaskTemplates(r.Context())
+	// root 缺省 = 只看全局模板。模板库只有主节点一份（docs/multi-node-control-plane.md），
+	// 前端建任务时总带着当前项目，所以这里按项目过滤而不是全量返回。
+	items, err := svc.ListTaskTemplatesForRoot(r.Context(), r.URL.Query().Get("root"))
 	if err != nil {
 		respondError(w, http.StatusBadRequest, err)
 		return
@@ -171,6 +173,7 @@ func (h *HTTPHandler) handleKanbanTaskCreate(w http.ResponseWriter, r *http.Requ
 	var req struct {
 		RootID             string                  `json:"root_id"`
 		TaskTemplateID     string                  `json:"task_template_id"`
+		TaskTemplateName   string                  `json:"task_template_name"`
 		Input              string                  `json:"input"`
 		Name               string                  `json:"name"`
 		Stages             *[]kanban.StageTemplate `json:"stages"`
@@ -185,6 +188,7 @@ func (h *HTTPHandler) handleKanbanTaskCreate(w http.ResponseWriter, r *http.Requ
 	create := kanban.CreateTaskInput{
 		RootID:             req.RootID,
 		TaskTemplateID:     req.TaskTemplateID,
+		TaskTemplateName:   req.TaskTemplateName,
 		Input:              req.Input,
 		Name:               req.Name,
 		CreateWorktree:     req.CreateWorktree,

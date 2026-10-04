@@ -2906,3 +2906,135 @@ func TestRunNowRejectsRunningTaskWithExplicitError(t *testing.T) {
 	}
 	close(runner.gate)
 }
+
+// 模板库只有主节点一份，但模板可以限定到某个项目（TaskTemplate.RootID）。
+// 列表按项目过滤时要给出「全局 + 本项目」的并集：全局模板在哪儿都能用，
+// 而**别的**项目的专用模板不该出现在这个项目的下拉框里 —— 那会让菜单变成一张
+// 「这张模板根本不适用于本项目」的名单。
+func TestListTaskTemplatesForRootScopesByProject(t *testing.T) {
+	store := NewTemplateStoreAt(t.TempDir())
+	save := func(id, name, rootID string) {
+		t.Helper()
+		_, err := store.SaveTaskTemplate(TaskTemplate{
+			ID:   id,
+			Name: name,
+			// 第一段必须是 user 段，SaveTaskTemplate 会校验。
+			Stages: []TaskTemplateStage{{
+				ID:       id + "_s0",
+				Position: 0,
+				Snapshot: StageTemplate{ID: id + "_u", Name: "输入", Role: RoleUser, PromptTemplate: "do"},
+			}},
+			RootID: rootID,
+		})
+		if err != nil {
+			t.Fatalf("SaveTaskTemplate(%s): %v", id, err)
+		}
+	}
+	save("tmpl_global", "全局", "")
+	save("tmpl_mine", "本项目", "CMAI")
+	save("tmpl_theirs", "别人的", "mindfs")
+
+	ids := func(items []TaskTemplate) []string {
+		out := make([]string, 0, len(items))
+		for _, item := range items {
+			out = append(out, item.ID)
+		}
+		return out
+	}
+
+	items, err := store.ListTaskTemplatesForRoot("CMAI")
+	if err != nil {
+		t.Fatalf("ListTaskTemplatesForRoot(CMAI): %v", err)
+	}
+	got := ids(items)
+	if len(got) != 2 {
+		t.Fatalf("templates for CMAI = %v, want global + own", got)
+	}
+	// 排序按名字（中文按 unicode 码位），所以别依赖顺序，只看集合。
+	if !contains(got, "tmpl_global") || !contains(got, "tmpl_mine") {
+		t.Fatalf("templates for CMAI = %v, want [tmpl_global tmpl_mine]", got)
+	}
+	if contains(got, "tmpl_theirs") {
+		t.Fatalf("another project's template leaked into CMAI: %v", got)
+	}
+
+	// 没带项目 = 只给全局的。建任务面板总是带着项目来，但工作台这种没有项目上下文的
+	 // 地方不该看到一堆「只对某个项目成立」的模板。
+	globals, err := store.ListTaskTemplatesForRoot("")
+	if err != nil {
+		t.Fatalf("ListTaskTemplatesForRoot(\"\"): %v", err)
+	}
+	if ids := ids(globals); len(ids) != 1 || ids[0] != "tmpl_global" {
+		t.Fatalf("unscoped templates = %v, want [tmpl_global]", ids)
+	}
+}
+
+func contains(list []string, want string) bool {
+	for _, item := range list {
+		if item == want {
+			return true
+		}
+	}
+	return false
+}
+
+// 建任务时前端会把模板的流水随包带上（worker 节点上没有模板库，回查必然失败）。
+// 后端这条路径要能只靠 payload 建出任务，模板名也用前端传来的快照。
+func TestCreateTaskUsesInlinedStagesAndTemplateName(t *testing.T) {
+	registry := fs.NewRootInfo("root", "root", t.TempDir())
+	svc := NewService(NewTemplateStoreAt(t.TempDir()), testRoots{root: registry})
+
+	// 本机模板库里**没有**这个模板 —— 模拟 worker 节点。
+	detail, err := svc.CreateTask(context.Background(), CreateTaskInput{
+		RootID:           registry.ID,
+		Stages:           []StageTemplate{{Name: "输入", Role: RoleUser, PromptTemplate: "do {previous_input}"}, agentStage("Fix", "Fix:\n{previous_input}")},
+		TaskTemplateID:   "tmpl_only_on_primary",
+		TaskTemplateName: "论文评审",
+		Input:            "review",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask with inlined stages: %v", err)
+	}
+	if len(detail.Task.Stages) != 2 {
+		t.Fatalf("stages = %d, want 2 (the payload's, not a template lookup)", len(detail.Task.Stages))
+	}
+	if detail.Task.TaskTemplateName != "论文评审" {
+		t.Fatalf("template name = %q, want the frontend snapshot", detail.Task.TaskTemplateName)
+	}
+}
+
+// 本机模板库里**有**这个模板时，本机的名字优先：前端那份快照只是兜底
+// （用户在模板弹窗里改了名字，前端那份可能过期）。
+func TestCreateTaskPrefersLocalTemplateName(t *testing.T) {
+	registry := fs.NewRootInfo("root", "root", t.TempDir())
+	templates := NewTemplateStoreAt(t.TempDir())
+	svc := NewService(templates, testRoots{root: registry})
+
+	if _, err := templates.SaveTaskTemplate(TaskTemplate{
+		ID:   "tmpl_saved",
+		Name: "本机名字",
+		Stages: []TaskTemplateStage{{
+			ID:       "tmpl_saved_s0",
+			Position: 0,
+			Snapshot: StageTemplate{ID: "tmpl_saved_u", Name: "输入", Role: RoleUser, PromptTemplate: "do"},
+		}},
+	}); err != nil {
+		t.Fatalf("SaveTaskTemplate: %v", err)
+	}
+
+	detail, err := svc.CreateTask(context.Background(), CreateTaskInput{
+		RootID:           registry.ID,
+		TaskTemplateID:   "tmpl_saved",
+		TaskTemplateName: "过期的前端快照",
+		Input:            "go",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if detail.Task.TaskTemplateName != "本机名字" {
+		t.Fatalf("template name = %q, want the local store's", detail.Task.TaskTemplateName)
+	}
+	if detail.Task.Name != "本机名字" {
+		t.Fatalf("task name = %q, want the template's", detail.Task.Name)
+	}
+}

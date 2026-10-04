@@ -124,6 +124,7 @@ func (s *Service) SetRunner(runner Runner) {
 type CreateTaskInput struct {
 	RootID             string
 	TaskTemplateID     string          // 可选：预设来源，仅记录来自哪个预设；内容在创建时拷进任务
+	TaskTemplateName   string          // 可选：预设名快照。库在主节点而任务建在本节点时，本地查不到预设名（见 templateNameForTask），由调用方带上
 	Input              string          // 第一段的用户输入
 	Name               string          // 可选：任务名；缺省时前端用输入首行回退
 	Stages             []StageTemplate // 可选：直接给定流水；否则从预设拷贝
@@ -199,6 +200,14 @@ func (s *Service) ListTaskTemplates(ctx context.Context) ([]TaskTemplate, error)
 	return s.Templates.ListTaskTemplates()
 }
 
+// ListTaskTemplatesForRoot 返回「全局 + 指定项目」的模板（见 TemplateStore 同名方法）。
+func (s *Service) ListTaskTemplatesForRoot(ctx context.Context, rootID string) ([]TaskTemplate, error) {
+	if s == nil || s.Templates == nil {
+		return nil, errors.New("template store not configured")
+	}
+	return s.Templates.ListTaskTemplatesForRoot(rootID)
+}
+
 // 模板至此只是「预设」：可随时编辑/删除，任务创建时已拷贝快照，与在途任务完全解耦。
 func (s *Service) SaveTaskTemplate(ctx context.Context, in TaskTemplate) (TaskTemplate, error) {
 	if s == nil || s.Templates == nil {
@@ -258,7 +267,7 @@ func (s *Service) CreateTask(ctx context.Context, in CreateTaskInput) (TaskDetai
 		RootID:             rootID,
 		Name:               name,
 		TaskTemplateID:     strings.TrimSpace(in.TaskTemplateID),
-		TaskTemplateName:   templateNameForTask(s, in.TaskTemplateID, name),
+		TaskTemplateName:   templateNameForTask(s, in.TaskTemplateID, in.TaskTemplateName),
 		Stages:             stages,
 		CreateWorktree:     in.CreateWorktree,
 		WorktreeBranchMode: branchMode,
@@ -306,12 +315,16 @@ func (s *Service) CreateTask(ctx context.Context, in CreateTaskInput) (TaskDetai
 	return store.GetDetail(ctx, taskID)
 }
 
-func templateNameForTask(s *Service, templateID, fallback string) string {
-	tmpl, err := s.Templates.GetTaskTemplate(templateID)
-	if err != nil {
-		return ""
+// templateNameForTask 解析任务来源预设的名字。
+//
+// 预设库只有主节点一份（见 docs/multi-node-control-plane.md），而任务建在**项目所在的节点**。
+// 在 worker 上本机查不到预设 → 回落：调用方带来的名字快照（前端从主节点读到模板后传下来）。
+// 都没有就返回空串，模板来源标签留空，不影响建任务。
+func templateNameForTask(s *Service, templateID, provided string) string {
+	if tmpl, err := s.Templates.GetTaskTemplate(templateID); err == nil {
+		return tmpl.Name
 	}
-	return tmpl.Name
+	return strings.TrimSpace(provided)
 }
 
 func (s *Service) ListTasks(ctx context.Context, rootID string, opts ListTasksOptions) ([]Task, error) {
