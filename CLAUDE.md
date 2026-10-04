@@ -195,6 +195,11 @@ make dev-web          # 仅 Vite
       `control` 是**默认值**（零值即它，不配置等于改造前行为）；`worker` 只提供数据面，
       控制面端点与 `GET /` 一律 403、不注入静态目录。前缀表在 `nodeinfo.ControlPlanePrefixes()`，
       `role_test.go` 钉住「数据面端点必须不在表内」。
+      **配置文件是 `<config-dir>/config.json`，不传 `-config` 时读这个缺省路径** ——
+      曾经 role 写进 config.json 却不生效，因为 `loadStartupConfig` 在路径为空时直接返回，
+      压根没人读文件；合成实例验证时传的是 `-role` flag，把这个洞盖住了。
+      缺省文件不存在是常态（不报错）；显式 `-config` 指向缺失文件仍报错；flag 优先于文件。
+      测试 `server/cmd/mindfs-server/main_test.go`。
     - **前端铁律**：控制面请求用 `controlPath`（打页面服务器），数据面继续用 `appPath`/`appURL`
       + `nodeId`（跟随选中节点，跨节点扇出是浏览器做的，没有后端代理层）。
       `controlPath` **故意不接受 `nodeId`** —— 想传 nodeId 说明要的多半是数据面请求。

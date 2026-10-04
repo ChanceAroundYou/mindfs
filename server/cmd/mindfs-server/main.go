@@ -3,14 +3,17 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 
 	"mindfs/server/app"
+	"mindfs/server/internal/config"
 	"mindfs/server/internal/nodeinfo"
 )
 
@@ -20,7 +23,7 @@ func main() {
 	addr := flag.String("addr", "127.0.0.1:7331", "listen address")
 	noRelayer := flag.Bool("no-relayer", false, "disable relay integration")
 	webPushFlag := flag.Bool("web-push", true, "enable PWA Web Push notifications")
-	configFlag := flag.String("config", "", "mindfs startup config file; command-line flags override file values")
+	configFlag := flag.String("config", "", "mindfs startup config file; defaults to <config-dir>/config.json when present. Command-line flags override file values")
 	agentConfigFlag := flag.String("agent-config", "", "extra agents.json file")
 	notifyScriptFlag := flag.String("notify-script", "", "executable script for notification events; receives JSON payload on stdin")
 	roleFlag := flag.String("role", "", "node role: control (default, serves UI + control plane) or worker (data plane only)")
@@ -64,11 +67,26 @@ type startupConfig struct {
 }
 
 func loadStartupConfig(path string) (startupConfig, error) {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return startupConfig{}, nil
+	explicit := strings.TrimSpace(path) != ""
+	if !explicit {
+		// 不传 -config 时读 <config-dir>/config.json —— 缺省路径是这套配置
+		// 唯一的入口，否则「写个配置文件就能配」根本做不到（实测踩过：role 写进
+		// config.json 后不生效，因为压根没人去读它）。
+		resolved, ok := defaultStartupConfigPath()
+		if !ok {
+			return startupConfig{}, nil
+		}
+		path = resolved
 	}
 	payload, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		// 显式 -config 指到不存在的文件仍然报错：那是操作失误，值得看见。
+		// 缺省路径下的文件不存在是常态（大多数机器是单节点，没有 config.json）。
+		if !explicit {
+			return startupConfig{}, nil
+		}
+		return startupConfig{}, fmt.Errorf("read config %s: %w", path, err)
+	}
 	if err != nil {
 		return startupConfig{}, fmt.Errorf("read config %s: %w", path, err)
 	}
@@ -77,6 +95,16 @@ func loadStartupConfig(path string) (startupConfig, error) {
 		return startupConfig{}, fmt.Errorf("decode config %s: %w", path, err)
 	}
 	return cfg, nil
+}
+
+// defaultStartupConfigPath 返回 <config-dir>/config.json；拿不到配置目录时返回 ok=false
+// （读不到就让零值生效，role 回到 control —— 与不配置时行为一致）。
+func defaultStartupConfigPath() (string, bool) {
+	dir, err := config.MindFSConfigDir()
+	if err != nil {
+		return "", false
+	}
+	return filepath.Join(dir, "config.json"), true
 }
 
 func visitedFlags(flags *flag.FlagSet) map[string]bool {

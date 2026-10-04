@@ -32,6 +32,11 @@ $ ssh wsl cat ~/.config/mindfs/nodes.json     # PC
 - `control`（**默认**）—— 提供 UI + 控制面 + 数据面。零值就是它，所以不配置等于改造前的行为。
 - `worker` —— 只提供数据面。控制面端点与 `GET /` 一律 403，不注入静态目录（前端不提供）。
 
+配置文件是 `<config-dir>/config.json`（Linux 下 `~/.config/mindfs/config.json`）。
+**不传 `-config` 时读这个缺省路径**，所以写文件即可生效，不必改 systemd unit；
+显式传 `-config` 指向的文件不存在会**报错退出**（那是操作失误），但缺省路径下文件不存在是常态，不报错。
+命令行 flag 优先于文件（`-role worker` 覆盖文件里的值）。
+
 ## 铁律
 
 **控制面请求必须用 `controlPath`（打页面服务器），数据面请求继续用 `appPath`/`appURL`（跟随选中节点）。**

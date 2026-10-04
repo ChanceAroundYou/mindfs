@@ -1,0 +1,104 @@
+package main
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+// 缺省（不传 -config）必须读 <config-dir>/config.json。
+// 这条是踩过坑才写下来的：role 写进 config.json 却不生效，
+// 因为 loadStartupConfig 原来在 path 为空时直接返回，永远不读文件。
+func TestLoadStartupConfigReadsDefaultPath(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	path := filepath.Join(dir, "mindfs", "config.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"role":"worker"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := loadStartupConfig("")
+	if err != nil {
+		t.Fatalf("loadStartupConfig(\"\") 出错：%v", err)
+	}
+	if cfg.Role == nil || *cfg.Role != "worker" {
+		t.Fatalf("role 未从缺省 config.json 读到：%+v", cfg.Role)
+	}
+}
+
+// 缺省路径下文件不存在是常态（单节点机器没有 config.json），不能因此启动失败。
+func TestLoadStartupConfigMissingDefaultIsNotAnError(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	cfg, err := loadStartupConfig("")
+	if err != nil {
+		t.Fatalf("缺省 config.json 不存在却报错：%v", err)
+	}
+	if cfg.Role != nil {
+		t.Fatalf("应为零值配置，却拿到 role=%q", *cfg.Role)
+	}
+}
+
+// 显式 -config 指向不存在的文件仍然报错 —— 那是操作失误，值得看见。
+// 不能与上面那条合并：两者都是 ErrNotExist，但语义相反。
+func TestLoadStartupConfigExplicitMissingIsAnError(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	missing := filepath.Join(t.TempDir(), "nope.json")
+
+	if _, err := loadStartupConfig(missing); err == nil {
+		t.Fatal("显式 -config 指向缺失文件应当报错，实际静默通过")
+	}
+}
+
+// flag 优先于文件：显式传 -role 时文件里的值必须被忽略。
+// 这是 -config 帮助文本承诺的语义（"command-line flags override file values"）。
+func TestExplicitFlagOverridesConfigFile(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	path := filepath.Join(dir, "mindfs", "config.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"role":"worker"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := loadStartupConfig("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	role := "control"
+	applyStartupConfig(cfg, map[string]bool{"role": true}, nil, nil, nil, nil, nil, &role)
+	if role != "control" {
+		t.Fatalf("显式 flag 应胜出，拿到 role=%q", role)
+	}
+}
+
+// 未显式传 -role 时，文件里的值要落到 flag 变量上（默认仍是 control）。
+func TestConfigFileRoleReachesFlagVar(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	path := filepath.Join(dir, "mindfs", "config.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"role":"worker","addr":"127.0.0.1:9999"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := loadStartupConfig("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	role, addr := "", ""
+	applyStartupConfig(cfg, map[string]bool{}, &addr, nil, nil, nil, nil, &role)
+	if role != "worker" {
+		t.Fatalf("role 应来自文件，拿到 %q", role)
+	}
+	if addr != "127.0.0.1:9999" {
+		t.Fatalf("addr 应来自文件，拿到 %q", addr)
+	}
+}
