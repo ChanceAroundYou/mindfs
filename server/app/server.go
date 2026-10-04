@@ -49,7 +49,11 @@ type StartOptions struct {
 	CertFile        string
 	KeyFile         string
 	// Role 决定这台机器提不提供控制面与前端。空 = control（改造前的行为）。
-	Role nodeinfo.Role
+	//
+	// 用 string 而不是 nodeinfo.Role：真正的入口 cli/cmd 在根 module，
+	// import 不到 server/internal/nodeinfo（Go internal 规则），
+	// 而它是唯一需要设置这个字段的地方。值在使用点统一 Normalize。
+	Role string
 }
 
 type E2EEConfig struct {
@@ -176,10 +180,10 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 	// 运行节点不注入静态目录：serveStaticAsset 首行 staticDir == "" 的守卫
 	// 就此关闭前端服务，不需要额外的开关。
 	staticDir := ""
-	if nodeinfo.Normalize(string(opts.Role)) != nodeinfo.RoleWorker {
+	if nodeinfo.Normalize(opts.Role) != nodeinfo.RoleWorker {
 		staticDir = resolveStaticDir()
 	}
-	workspaces.SetRole(opts.Role)
+	workspaces.SetRole(nodeinfo.Normalize(opts.Role))
 	workspaces.SetHandlerDefaults(staticDir, func() string { return localCLIToken })
 
 	httpRoutes := api.NewScopedRouter(workspaces, func(appCtx *api.AppContext) http.Handler {

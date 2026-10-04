@@ -37,6 +37,12 @@ $ ssh wsl cat ~/.config/mindfs/nodes.json     # PC
 显式传 `-config` 指向的文件不存在会**报错退出**（那是操作失误），但缺省路径下文件不存在是常态，不报错。
 命令行 flag 优先于文件（`-role worker` 覆盖文件里的值）。
 
+> **改启动参数只能改 `cli/cmd`。** `make build` 装的是 `./cli/cmd`，而
+> `server/cmd/mindfs-server` 只有 `make dev-backend` 引用 —— 后者不在发布二进制里，
+> 在那儿加 flag 单元测试会绿、真机却毫无作用（role 写成这样踩过一次）。
+> 另注 `cli/cmd` 属于根 module，import 不到 `server/internal/*`（Go internal 规则），
+> 所以 `app.StartOptions.Role` 是 `string`，归一化在 `app.Start` 内部做。
+
 ## 铁律
 
 **控制面请求必须用 `controlPath`（打页面服务器），数据面请求继续用 `appPath`/`appURL`（跟随选中节点）。**

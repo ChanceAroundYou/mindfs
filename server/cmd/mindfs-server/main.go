@@ -14,7 +14,6 @@ import (
 
 	"mindfs/server/app"
 	"mindfs/server/internal/config"
-	"mindfs/server/internal/nodeinfo"
 )
 
 var version = "dev"
@@ -46,7 +45,7 @@ func main() {
 		AgentConfigPath: *agentConfigFlag,
 		WebPushEnabled:  *webPushFlag,
 		NotifyScript:    *notifyScriptFlag,
-		Role:            nodeinfo.Normalize(*roleFlag),
+		Role:            *roleFlag,
 	}); err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
