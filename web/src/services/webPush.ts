@@ -1,4 +1,4 @@
-import { appPath } from "./base";
+import { controlPath } from "./controlPlane";
 import { protectedJSON } from "./api";
 import { isNativeShellRuntime } from "./runtime";
 import { translateNow } from "../i18n";
@@ -137,7 +137,7 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: s
 
 async function saveSubscription(subscription: PushSubscription, platform: string): Promise<void> {
   const json = subscription.toJSON() as PushSubscriptionJSON;
-  await protectedJSON(appPath("/api/web-push/subscriptions"), {
+  await protectedJSON(controlPath("/api/web-push/subscriptions"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -149,7 +149,7 @@ async function saveSubscription(subscription: PushSubscription, platform: string
 }
 
 async function fetchServerStatus(): Promise<ServerStatus> {
-  return protectedJSON<ServerStatus>(appPath("/api/web-push/status"));
+  return protectedJSON<ServerStatus>(controlPath("/api/web-push/status"));
 }
 
 function serviceWorkerURL(): URL {
@@ -259,7 +259,7 @@ export async function unsubscribeWebPush(): Promise<WebPushStatus> {
     await subscription.unsubscribe().catch(() => false);
   }
   if (endpoint) {
-    await protectedJSON(appPath("/api/web-push/subscriptions"), {
+    await protectedJSON(controlPath("/api/web-push/subscriptions"), {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ endpoint }),
@@ -274,7 +274,7 @@ export async function sendWebPushTest(): Promise<void> {
   if (!endpoint) {
     throw new Error(translateNow("webPush.noSubscription"));
   }
-  await protectedJSON(appPath("/api/web-push/test"), {
+  await protectedJSON(controlPath("/api/web-push/test"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ endpoint }),

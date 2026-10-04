@@ -1,5 +1,5 @@
 import { protectedJSON } from "./api";
-import { appPath } from "./base";
+import { controlPath } from "./controlPlane";
 
 export type SessionNamingPreference = {
   agent: string;
@@ -22,7 +22,7 @@ function normalizeNewProjectMetaLocation(value: unknown): NewProjectMetaLocation
 
 export async function fetchNewProjectMetaLocationPreference(): Promise<NewProjectMetaLocation> {
   return normalizeNewProjectMetaLocation(
-    await protectedJSON(appPath("/api/preferences/new-project-meta-location")),
+    await protectedJSON(controlPath("/api/preferences/new-project-meta-location")),
   );
 }
 
@@ -30,7 +30,7 @@ export async function updateNewProjectMetaLocationPreference(
   location: NewProjectMetaLocation,
 ): Promise<NewProjectMetaLocation> {
   return normalizeNewProjectMetaLocation(
-    await protectedJSON(appPath("/api/preferences/new-project-meta-location"), {
+    await protectedJSON(controlPath("/api/preferences/new-project-meta-location"), {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ location }),
@@ -67,7 +67,7 @@ function normalizeSessionNamingPreference(value: unknown): SessionNamingPreferen
 
 export async function fetchSessionNamingPreference(): Promise<SessionNamingPreference> {
   return normalizeSessionNamingPreference(
-    await protectedJSON(appPath("/api/preferences/session-naming")),
+    await protectedJSON(controlPath("/api/preferences/session-naming")),
   );
 }
 
@@ -75,7 +75,7 @@ export async function updateSessionNamingPreference(
   preference: SessionNamingPreference,
 ): Promise<SessionNamingPreference> {
   return normalizeSessionNamingPreference(
-    await protectedJSON(appPath("/api/preferences/session-naming"), {
+    await protectedJSON(controlPath("/api/preferences/session-naming"), {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(preference),
@@ -85,7 +85,7 @@ export async function updateSessionNamingPreference(
 
 export async function fetchIdleSessionResourceReleasePreference(): Promise<IdleSessionResourceReleasePreference> {
   return normalizeIdleSessionResourceReleasePreference(
-    await protectedJSON(appPath("/api/preferences/idle-session-resource-release")),
+    await protectedJSON(controlPath("/api/preferences/idle-session-resource-release")),
   );
 }
 
@@ -93,7 +93,7 @@ export async function updateIdleSessionResourceReleasePreference(
   preference: IdleSessionResourceReleasePreference,
 ): Promise<IdleSessionResourceReleasePreference> {
   return normalizeIdleSessionResourceReleasePreference(
-    await protectedJSON(appPath("/api/preferences/idle-session-resource-release"), {
+    await protectedJSON(controlPath("/api/preferences/idle-session-resource-release"), {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(preference),
@@ -110,12 +110,12 @@ function normalizeCORSPreference(value: unknown): CORSPreference {
 }
 
 export async function fetchCORSPreference(): Promise<CORSPreference> {
-  return normalizeCORSPreference(await protectedJSON(appPath("/api/preferences/cors")));
+  return normalizeCORSPreference(await protectedJSON(controlPath("/api/preferences/cors")));
 }
 
 export async function updateCORSPreference(preference: CORSPreference): Promise<CORSPreference> {
   return normalizeCORSPreference(
-    await protectedJSON(appPath("/api/preferences/cors"), {
+    await protectedJSON(controlPath("/api/preferences/cors"), {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ mode: preference.mode, allow_origins: preference.allowOrigins }),
@@ -138,12 +138,12 @@ function normalizeSessionProjectPins(value: unknown): SessionProjectPins {
 }
 
 export async function fetchSessionProjectPins(): Promise<SessionProjectPins> {
-  return normalizeSessionProjectPins(await protectedJSON(appPath("/api/preferences/session-project-pins")));
+  return normalizeSessionProjectPins(await protectedJSON(controlPath("/api/preferences/session-project-pins")));
 }
 
 export async function updateSessionProjectPins(pins: SessionProjectPins): Promise<SessionProjectPins> {
   return normalizeSessionProjectPins(
-    await protectedJSON(appPath("/api/preferences/session-project-pins"), {
+    await protectedJSON(controlPath("/api/preferences/session-project-pins"), {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ pins }),

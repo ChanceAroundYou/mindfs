@@ -1,6 +1,7 @@
 import { getStoredString, setStoredString, removeStoredString } from "./storage";
 import { deriveLocalNodeBase, normalizeExplicitNodeBase, repairDuplicateDeployPrefix } from "./nodeBase";
 import { DEPLOY_PREFIX } from "./prefix";
+import { controlPath } from "./controlPlane";
 export const PALETTE = ["#3b82f6", "#f59e0b", "#7c6bd6", "#c66a7a", "#8a8f99", "#7aae8a"] as const;
 // 无节点上下文时（通用菜单/弹窗/面板内选中项）的唯一兜底强调色 = local 节点色。
 // --accent-color 的 CSS 取值必须与本常量一致，见 index.css 主题块。
@@ -15,6 +16,8 @@ export type NodeConnection = {
   name: string;
   url: string;
   color: string;
+  /** 这是**另一台机器**上的节点。只用于展示与探测，不参与寻址。 */
+  remote?: boolean;
 };
 
 const ACTIVE_ID_KEY = "mindfs_active_node_id";
@@ -85,7 +88,7 @@ function normalizeRecord(item: any): NodeConnection | null {
     }
   }
   if (!id || !name || !url) return null;
-  return { id, name, url, color };
+  return { id, name, url, color, remote: !!item.remote };
 }
 
 function normalizeAndDedup(list: any[]): NodeConnection[] {
@@ -121,7 +124,9 @@ function writeCache(next: NodeConnection[]) {
 }
 
 function nodesApiPath(): string {
-  return DEPLOY_PREFIX ? `${DEPLOY_PREFIX}/api/nodes` : "/api/nodes";
+  // 节点表是控制面：只有主节点一份真相，请求必须打页面服务器而不是当前选中节点。
+  // 见 docs/multi-node-control-plane.md。
+  return controlPath("/api/nodes");
 }
 
 async function pushToServer(next: NodeConnection[]): Promise<void> {
