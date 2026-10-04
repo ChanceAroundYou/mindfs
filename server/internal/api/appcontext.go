@@ -25,6 +25,7 @@ import (
 	"mindfs/server/internal/nodes"
 	"mindfs/server/internal/notify"
 	"mindfs/server/internal/notifyscript"
+	"mindfs/server/internal/pins"
 	"mindfs/server/internal/preferences"
 	"mindfs/server/internal/relay"
 	"mindfs/server/internal/scheduled"
@@ -56,8 +57,14 @@ type AppContext struct {
 	Notify     *notifyscript.Service
 	Prefs      *preferences.Store
 	Nodes      *nodes.Store
-	Scheduled  *scheduled.Service
-	Kanban     *kanban.Service
+	// Pins 是本账户的置顶表（项目置顶 + 会话置顶），**每账户一份**，与 Prefs 相反。
+	//
+	// 置顶必须按账户分开：你的置顶不该出现在别人的会话栏里。项目置顶原本住在
+	// 共享偏好里，那正是它跨账户泄漏的原因。
+	// 权威只在主节点 —— 运行节点上这份是空的，控制面端点一律 403。
+	Pins      *pins.Store
+	Scheduled *scheduled.Service
+	Kanban    *kanban.Service
 
 	mu                       sync.RWMutex
 	sessionWorktreeMu        sync.Mutex
@@ -569,6 +576,10 @@ func (s *AppContext) GetAgentPool() *agent.Pool {
 
 func (s *AppContext) GetPreferences() *preferences.Store {
 	return s.Prefs
+}
+
+func (s *AppContext) GetPins() *pins.Store {
+	return s.Pins
 }
 
 func (s *AppContext) GetExternalSessionImporter(agentName string) (agenttypes.ExternalSessionImporter, error) {

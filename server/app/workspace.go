@@ -18,9 +18,10 @@ import (
 	"mindfs/server/internal/fs"
 	"mindfs/server/internal/githubimport"
 	"mindfs/server/internal/kanban"
-	"mindfs/server/internal/nodes"
 	"mindfs/server/internal/nodeinfo"
+	"mindfs/server/internal/nodes"
 	"mindfs/server/internal/notifyscript"
+	"mindfs/server/internal/pins"
 	"mindfs/server/internal/preferences"
 	"mindfs/server/internal/relay"
 	"mindfs/server/internal/scheduled"
@@ -248,6 +249,17 @@ func (m *workspaceManager) emptyWorkspace() (*api.AppContext, error) {
 		Relay:     m.shared.relay,
 		RelayTips: m.shared.relayTips,
 	}
+	// 空工作区也要有置顶表：这个账户 id 解析不到（跨机器带过来的用户名对方没有），
+	// 语义是回落到对方主账户 —— 那主账户的置顶就该看得见，不能因为「没有数据目录」
+	// 就返回 nil 让前端把所有置顶显示成未置顶。
+	// 与 build() 用同一个配置目录口径（主账户 = <config-dir>）。
+	if dir, err := config.MindFSConfigDir(); err == nil {
+		if pinStore, pinErr := pins.NewStoreAt(dir); pinErr == nil {
+			services.Pins = pinStore
+		} else {
+			log.Printf("[pins] empty-workspace.init.error err=%v", pinErr)
+		}
+	}
 	services.Scheduled = scheduled.NewService(services, services)
 	services.Kanban = kanban.NewService(m.shared.templates, services)
 	services.Kanban.SetRunner(services)
@@ -315,9 +327,35 @@ func (m *workspaceManager) build(userID string) (*api.AppContext, error) {
 	autoAddExternalProjectRoots(registry, prefs)
 	startExternalProjectDiscoveryLoop(m.ctx, registry, prefs)
 
+	// 置顶表**每账户一份**（与偏好的共享相反）：置顶是「这个账户顶哪些会话/项目」，
+	// 跨账户共享会让你的置顶出现在别人的会话栏里。
+	//
+	// 落在 configDir —— 那是本账户的目录，主账户就是 <config-dir>/、其余账户是
+	// <config-dir>/users/<id>/。不用账户 id 当文件名：账户表每台机器各自生成
+	// id，同一个账户在两台机器上会落到不同路径，那正是这次要消灭的漂移。
+	pinStore, err := pins.NewStoreAt(configDir)
+	if err != nil {
+		// 读不了置顶表不该让整个账户打不开：降级成空表，用户重新点一次置顶就有了。
+		// （NewStoreAt 内部已把「文件坏掉」降级成空表，这里只兜住路径类错误。）
+		log.Printf("[pins] init.error account=%s err=%v", userID, err)
+		pinStore = nil
+	} else if pinStore.NeedsLegacySeed() {
+		// 一次性回填：项目置顶原本住在**共享**偏好里，那是它跨账户泄漏的地方。
+		// 只在本账户还没有置顶文件时搬一次，搬完就由该文件自己说话 ——
+		// 否则用户在这里取消掉的置顶，会被共享偏好里的旧值在下次启动时搬回来。
+		//
+		// 主账户回填的是它自己那一份历史值；其余账户搬的是同一份共享值，
+		// 也就是它们此前本来就能看到的那份 —— 不扩大可见范围，只是把它落成
+		// 各账户自己的文件，从此互不影响。
+		if err := pinStore.SeedProjects(prefs.SessionProjectPins()); err != nil {
+			log.Printf("[pins] seed.error account=%s err=%v", userID, err)
+		}
+	}
+
 	services := &api.AppContext{
 		Dirs:       registry,
 		Prefs:      prefs,
+		Pins:       pinStore,
 		Nodes:      m.shared.nodes,
 		Agents:     m.shared.pool,
 		Prober:     m.shared.prober,

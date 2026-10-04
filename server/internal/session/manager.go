@@ -492,10 +492,60 @@ func (m *Manager) List(_ context.Context, opts ListOptions) ([]*Session, error) 
 	return m.listSessionsUnsafe(opts)
 }
 
-func (m *Manager) ListPinned(_ context.Context, opts ListOptions) ([]*Session, error) {
+// ListByKeys 按 key 取会话元数据（不读转录正文），按传入顺序返回。
+//
+// 与 Get 的区别是刻意不碰转录：置顶表里可能装着**别的机器**上的会话键，
+// 而本机的会话库里根本没有那些行。Get 会去 loadSession 读 JSONL，
+// 对一个本机不存在的 key 那是白读一趟；对存在的 key 又太重（要按需拉正文）。
+// 这里只查 session meta 表，命中不了就是命中不了，交给调用方丢弃。
+func (m *Manager) ListByKeys(_ context.Context, keys []string) ([]*Session, error) {
+	if len(keys) == 0 {
+		return nil, nil
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.listPinnedSessionsUnsafe(opts)
+	if _, err := m.ensureSessionMetaDBUnsafe(); err != nil {
+		return nil, err
+	}
+	unique := make([]string, 0, len(keys))
+	seen := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		unique = append(unique, key)
+	}
+	if len(unique) == 0 {
+		return nil, nil
+	}
+	query := selectSessionSQL + `
+WHERE key IN (?` + strings.Repeat(`,?`, len(unique)-1) + `)`
+	args := make([]any, 0, len(unique))
+	for _, key := range unique {
+		args = append(args, key)
+	}
+	found, err := m.querySessionMetasUnsafe(query, args)
+	if err != nil {
+		return nil, err
+	}
+	byKey := make(map[string]*Session, len(found))
+	for _, s := range found {
+		if s != nil {
+			byKey[s.Key] = s
+		}
+	}
+	out := make([]*Session, 0, len(found))
+	for _, key := range unique {
+		if s, ok := byKey[key]; ok {
+			out = append(out, s)
+		}
+	}
+	return out, nil
 }
 
 func (m *Manager) Count(_ context.Context, opts ListOptions) (int, error) {
@@ -1227,31 +1277,6 @@ func (m *Manager) Rename(_ context.Context, key, name string) (*Session, error) 
 	return session, nil
 }
 
-func (m *Manager) SetPinned(_ context.Context, key string, pinned bool) (*Session, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	session, err := m.getSessionUnsafe(key, 0)
-	if err != nil {
-		return nil, err
-	}
-	if pinned {
-		if session.PinnedAt != nil {
-			return session, nil
-		}
-		now := m.now().UTC()
-		session.PinnedAt = &now
-	} else {
-		if session.PinnedAt == nil {
-			return session, nil
-		}
-		session.PinnedAt = nil
-	}
-	if err := m.upsertSessionMetaUnsafe(session); err != nil {
-		return nil, err
-	}
-	return session, nil
-}
-
 // SetArchived 归档/取消归档一个会话。归档只打标记：JSONL 正文一行不动，
 // 深链接仍能打开、搜索仍搜得到，只有 Delete 才真正清内容。
 // 与 SetPinned 同形状：已是目标态就早返回，不白写一次库（也就不会改动 updated_at）。
@@ -1745,22 +1770,6 @@ ORDER BY updated_at DESC`
 LIMIT ?`
 		args = append(args, opts.Limit)
 	}
-	return m.querySessionMetasUnsafe(query, args)
-}
-
-func (m *Manager) listPinnedSessionsUnsafe(opts ListOptions) ([]*Session, error) {
-	query := selectSessionSQL
-	where, args := sessionListWhere(ListOptions{
-		ParentSessionKey: opts.ParentSessionKey,
-		TopLevelOnly:     opts.TopLevelOnly,
-	})
-	where = append(where, "pinned_at IS NOT NULL AND pinned_at != ''")
-	if len(where) > 0 {
-		query += `
-WHERE ` + strings.Join(where, " AND ")
-	}
-	query += `
-ORDER BY pinned_at DESC, updated_at DESC`
 	return m.querySessionMetasUnsafe(query, args)
 }
 

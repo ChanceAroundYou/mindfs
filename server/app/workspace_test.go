@@ -128,6 +128,44 @@ func TestWorkspaceSharingContract(t *testing.T) {
 		}
 	}
 
+	// —— 按账户分：置顶 ——
+	// 与偏好相反：置顶必须各账户一份，否则你的置顶会出现在别人的会话栏里。
+	// 项目置顶原本住在**共享**偏好里，那正是它跨账户泄漏的地方。
+	if primary.Pins == nil || other.Pins == nil {
+		t.Fatal("置顶表不该为空")
+	}
+	if primary.Pins == other.Pins {
+		t.Error("两个账户共用了同一个置顶表：置顶必须各看各的")
+	}
+	// 真的分开：主账户置一个，bob 那边必须看不见
+	if _, _, err := primary.Pins.SetProjectPin("pc::CMAI", true); err != nil {
+		t.Fatalf("主账户置顶失败: %v", err)
+	}
+	if _, ok := other.Pins.ProjectPins()["pc::CMAI"]; ok {
+		t.Error("bob 看到了主账户的置顶：置顶跨账户泄漏了")
+	}
+	// 反向也一样，且两边可以顶不同的项目
+	if _, _, err := other.Pins.SetProjectPin("pc::docs", true); err != nil {
+		t.Fatalf("bob 置顶失败: %v", err)
+	}
+	if _, ok := primary.Pins.ProjectPins()["pc::docs"]; ok {
+		t.Error("主账户看到了 bob 的置顶：置顶跨账户泄漏了")
+	}
+	// 会话置顶同样按账户分
+	if _, _, err := primary.Pins.SetSessionPin("pc::CMAI::s1", true); err != nil {
+		t.Fatalf("主账户会话置顶失败: %v", err)
+	}
+	if _, ok := other.Pins.SessionPinnedAt("pc::CMAI::s1"); ok {
+		t.Error("bob 看到了主账户的会话置顶")
+	}
+	// 落盘位置：主账户在 <cfg>/，bob 在 users/<id>/（与 registry 同口径）
+	if _, err := os.Stat(filepath.Join(filepath.Dir(usersPath), "session_pins.json")); err != nil {
+		t.Errorf("主账户置顶表应在 <cfg>/session_pins.json: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(usersPath), "users", bobID, "session_pins.json")); err != nil {
+		t.Errorf("bob 的置顶表应在 users/<id>/session_pins.json: %v", err)
+	}
+
 	// —— 共享：设置与 agent 资源必须是同一份实例 ——
 	shared := []struct {
 		name string
@@ -167,5 +205,123 @@ func TestWorkspaceSharingContract(t *testing.T) {
 	// 每账户的 StreamHub 必须独立（否则广播跨账户泄漏），这部分在 api 侧另有测试
 	if primary.GetSessionStreamHub() == other.GetSessionStreamHub() {
 		t.Fatal("两个账户共用了 StreamHub：WS 广播会跨账户泄漏")
+	}
+}
+
+// pinSeedFixtureAt 建一个「主账户 + bob」的最小环境，回填测试用。
+//
+// cfgDir / usersPath 由调用方给：回填测试要**两次**建 manager（模拟重启），
+// 第二次必须落在同一个目录上，否则量的不是「重启后置顶有没有回来」而是新目录。
+// 与上面那个测试各自建 fixture：那个测试守的是「共享实例必须是同一份指针」，
+// 塞进共享 helper 会让它也依赖置顶的构造顺序，测出问题时不好定位。
+func pinSeedFixtureAt(t *testing.T, cfgDir, usersPath string) (*workspaceManager, string, string, *preferences.Store) {
+	t.Helper()
+	t.Setenv("XDG_CONFIG_HOME", cfgDir)
+
+	if err := os.MkdirAll(filepath.Dir(usersPath), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if _, err := os.Stat(usersPath); os.IsNotExist(err) {
+		if err := os.WriteFile(filepath.Join(filepath.Dir(usersPath), "login.json"),
+			[]byte(`{"password":"root-secret"}`), 0o600); err != nil {
+			t.Fatalf("write legacy: %v", err)
+		}
+		authStore, err := auth.EnsureStoreAt(usersPath)
+		if err != nil {
+			t.Fatalf("EnsureStoreAt: %v", err)
+		}
+		if _, err := authStore.Create("bob", "bob-secret", auth.RoleUser); err != nil {
+			t.Fatalf("create bob: %v", err)
+		}
+	}
+	authStore, err := auth.EnsureStoreAt(usersPath)
+	if err != nil {
+		t.Fatalf("EnsureStoreAt: %v", err)
+	}
+	primaryID := authStore.PrimaryUserID()
+	var bobID string
+	for _, u := range authStore.List() {
+		if u.Username == "bob" {
+			bobID = u.ID
+		}
+	}
+	if primaryID == "" || bobID == "" {
+		t.Fatalf("bad fixture: primary=%q bob=%q", primaryID, bobID)
+	}
+
+	prefs, err := preferences.NewStore()
+	if err != nil {
+		t.Fatalf("preferences: %v", err)
+	}
+	nodeStore, err := nodes.NewStore()
+	if err != nil {
+		t.Fatalf("nodes: %v", err)
+	}
+	templates, err := kanban.NewTemplateStore()
+	if err != nil {
+		t.Fatalf("kanban templates: %v", err)
+	}
+	mgr := newWorkspaceManager(context.Background(), sharedServices{
+		auth:      authStore,
+		prefs:     prefs,
+		nodes:     nodeStore,
+		webPush:   webpush.NewService(webpush.Config{}, webpush.NewStoreAt(filepath.Dir(usersPath))),
+		templates: templates,
+		pool:      agent.NewPool(agent.Config{}),
+	})
+	mgr.SetBaseDir(filepath.Join(filepath.Dir(usersPath), "users"))
+	return mgr, primaryID, bobID, prefs
+}
+
+// 回填：项目置顶原本住在**共享**偏好里，第一次建账户时搬进该账户自己的文件。
+//
+// 关键性质是搬完就由新文件说话 —— 共享偏好里还留着旧值，但绝不能因此每次启动
+// 都搬一次，否则用户在新存储里取消掉的置顶会在下次启动时自己复活。
+//
+// 「重启」必须是**真的**重启：workspaceManager 会缓存每个账户的 AppContext，
+// 同一个 manager 再调 Workspace() 拿回的是同一个内存 store（根本不读盘），
+// 那样这个测试在「每次都回填」的变异下也会通过 —— 钉不住任何东西。
+// 所以下面重新建一个 manager，让 build() 从盘上重新读。
+func TestPinSeedRunsOnceAndNeverResurrectsUnpinned(t *testing.T) {
+	cfgDir := t.TempDir()
+	usersPath := filepath.Join(cfgDir, "mindfs", "users.json")
+
+	mgr, primaryID, bobID, prefs := pinSeedFixtureAt(t, cfgDir, usersPath)
+
+	// 共享偏好里有一份历史置顶
+	if err := prefs.UpdateSessionProjectPins(map[string]int64{"pc::CMAI": 1000}); err != nil {
+		t.Fatalf("写共享偏好失败: %v", err)
+	}
+	primary, err := mgr.Workspace(primaryID)
+	if err != nil {
+		t.Fatalf("primary workspace: %v", err)
+	}
+	other, err := mgr.Workspace(bobID)
+	if err != nil {
+		t.Fatalf("bob workspace: %v", err)
+	}
+	// 两个账户都拿到了那份历史置顶（它们此前本来就能看到同一份共享值）
+	if got := primary.Pins.ProjectPins()["pc::CMAI"]; got != 1000 {
+		t.Errorf("主账户没回填到项目置顶: %v", primary.Pins.ProjectPins())
+	}
+	if got := other.Pins.ProjectPins()["pc::CMAI"]; got != 1000 {
+		t.Errorf("bob 没回填到项目置顶: %v", other.Pins.ProjectPins())
+	}
+
+	// 用户在新存储里取消掉
+	if _, _, err := primary.Pins.SetProjectPin("pc::CMAI", false); err != nil {
+		t.Fatalf("取消置顶: %v", err)
+	}
+	// 真的重启：新建一个 manager，让 build() 从盘上重新读。
+	// 复用同一个 cfgDir —— 量的就是「重启后置顶有没有回来」。
+	// 共享偏好里旧值还在（我们从没删过它），所以只要回填不看 NeedsLegacySeed
+	// 就会把它搬回来。
+	restartedMgr, _, _, _ := pinSeedFixtureAt(t, cfgDir, usersPath)
+	restarted, err := restartedMgr.Workspace(primaryID)
+	if err != nil {
+		t.Fatalf("重启后 primary workspace: %v", err)
+	}
+	if _, ok := restarted.Pins.ProjectPins()["pc::CMAI"]; ok {
+		t.Fatal("取消掉的置顶在重启后自己回来了：回填被重复执行了")
 	}
 }

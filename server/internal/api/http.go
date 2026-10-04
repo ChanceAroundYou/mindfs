@@ -409,8 +409,10 @@ func (h *HTTPHandler) Routes() http.Handler {
 	r.Put("/api/preferences/new-project-meta-location", h.protectedEndpoint(h.handleNewProjectMetaLocationPreferencePut))
 	r.Get("/api/preferences/cors", h.protectedEndpoint(h.handleCORSPreferenceGet))
 	r.Put("/api/preferences/cors", h.protectedEndpoint(h.handleCORSPreferencePut))
-	r.Get("/api/preferences/session-project-pins", h.protectedEndpoint(h.handleSessionProjectPinsGet))
-	r.Put("/api/preferences/session-project-pins", h.protectedEndpoint(h.handleSessionProjectPinsPut))
+	// 置顶是控制面：权威在主节点，worker 上 403（nodeinfo 前缀表含 /api/pins）。
+	r.Get("/api/pins", h.protectedEndpoint(h.handlePinsGet))
+	r.Put("/api/pins/project", h.protectedEndpoint(h.handlePinsProjectPut))
+	r.Put("/api/pins/session", h.protectedEndpoint(h.handlePinsSessionPut))
 	r.Get("/api/replying-sessions", h.protectedEndpoint(h.handleReplyingSessions))
 	r.Get("/api/sessions/search", h.protectedEndpoint(h.handleSessionSearch))
 	r.Get("/api/sessions/children", h.protectedEndpoint(h.handleSessionChildren))
@@ -560,14 +562,18 @@ func (h *HTTPHandler) handleSessions(w http.ResponseWriter, r *http.Request) {
 	for _, s := range out.Sessions {
 		payload = append(payload, h.sessionListResponse(s))
 	}
-	pinnedPayload := make([]map[string]any, 0, len(out.PinnedSessions))
-	for _, s := range out.PinnedSessions {
+	// 置顶的权威只有主节点的 pins 表：会话库里的 pinned_at 已退役（存量实测为 0 行，
+	// 不做回填）。刻意**不**把两者并起来 —— 两份真相并集等于两份真相迟早分叉，
+	// 而 nodes.json 当年就是这么漂的。
+	pinnedItems, pinnedKeys := h.pinnedSessionsForRoot(r.Context(), rootID, true)
+	pinnedPayload := make([]map[string]any, 0, len(pinnedItems))
+	for _, s := range pinnedItems {
 		pinnedPayload = append(pinnedPayload, h.sessionListResponse(s))
 	}
 	respondJSON(w, http.StatusOK, map[string]any{
 		"items":        payload,
 		"pinned_items": pinnedPayload,
-		"pinned_keys":  out.PinnedKeys,
+		"pinned_keys":  pinnedKeys,
 		"total_count":  out.TotalCount,
 	})
 }
@@ -596,8 +602,10 @@ func (h *HTTPHandler) handleMultiRootSessions(w http.ResponseWriter, r *http.Req
 			item["root_id"] = group.RootID
 			items = append(items, item)
 		}
-		pinnedItems := make([]map[string]any, 0, len(group.PinnedSessions))
-		for _, s := range group.PinnedSessions {
+		// 同 handleSessionList：置顶只认 pins 表，会话库的 pinned_at 不再参与。
+		pinnedSessions, pinnedKeys := h.pinnedSessionsForRoot(r.Context(), group.RootID, true)
+		pinnedItems := make([]map[string]any, 0, len(pinnedSessions))
+		for _, s := range pinnedSessions {
 			item := h.sessionListResponse(s)
 			item["root_id"] = group.RootID
 			pinnedItems = append(pinnedItems, item)
@@ -608,7 +616,7 @@ func (h *HTTPHandler) handleMultiRootSessions(w http.ResponseWriter, r *http.Req
 			"latest_session_time": group.LatestSessionTime,
 			"items":               items,
 			"pinned_items":        pinnedItems,
-			"pinned_keys":         group.PinnedKeys,
+			"pinned_keys":         pinnedKeys,
 			"total_count":         group.TotalCount,
 		})
 	}
@@ -1313,39 +1321,22 @@ func (h *HTTPHandler) handleSessionRename(w http.ResponseWriter, r *http.Request
 	respondJSON(w, http.StatusOK, h.sessionListResponse(renamed))
 }
 
+// handleSessionPin 是 POST /api/sessions/{key}/pin —— **旧路径的别名**，转调 /api/pins/session。
+//
+// 保留它是为了前端迁移期间不用同时改两端：同一个动作，两条 URL 写同一个置顶表。
+// 前端改用 /api/pins/session 后即可删掉本函数与那条路由。
+//
+// 这里**不再**写会话库的 pinned_at（已退役）：那次写会让置顶回到按机器分的
+// 存储里，而权威在主节点 —— 于是「在 A 机器置顶、B 机器看不到」的老问题又回来了。
 func (h *HTTPHandler) handleSessionPin(w http.ResponseWriter, r *http.Request) {
-	rootID := r.URL.Query().Get("root")
-	key := chi.URLParam(r, "key")
-	if strings.TrimSpace(key) == "" {
-		respondError(w, http.StatusBadRequest, errInvalidRequest("session key required"))
-		return
-	}
-	var req struct {
-		Pinned bool `json:"pinned"`
-	}
+	var req sessionPinRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, errInvalidRequest("invalid json body"))
 		return
 	}
-	updated, err := h.service().PinSession(r.Context(), usecase.PinSessionInput{
-		RootID: rootID,
-		Key:    key,
-		Pinned: req.Pinned,
-	})
-	if err != nil {
-		respondError(w, http.StatusBadRequest, err)
-		return
-	}
-	if h.AppContext != nil {
-		h.AppContext.GetSessionStreamHub().BroadcastAll(WSResponse{
-			Type: "session.meta.updated",
-			Payload: map[string]any{
-				"root_id": rootID,
-				"session": h.sessionListResponse(updated),
-			},
-		})
-	}
-	respondJSON(w, http.StatusOK, h.sessionListResponse(updated))
+	req.RootID = r.URL.Query().Get("root")
+	req.Key = chi.URLParam(r, "key")
+	h.pinsSessionPut(w, r, req)
 }
 
 func (h *HTTPHandler) handleSessionDelete(w http.ResponseWriter, r *http.Request) {
@@ -1908,39 +1899,6 @@ func (h *HTTPHandler) handleCORSPreferencePut(w http.ResponseWriter, r *http.Req
 	respondJSON(w, http.StatusOK, map[string]any{
 		"mode":          mode,
 		"allow_origins": prefs.CORSAllowOrigins(),
-	})
-}
-
-func (h *HTTPHandler) handleSessionProjectPinsGet(w http.ResponseWriter, _ *http.Request) {
-	if h.AppContext == nil || h.AppContext.GetPreferences() == nil {
-		respondError(w, http.StatusServiceUnavailable, errInvalidRequest("preferences not configured"))
-		return
-	}
-	respondJSON(w, http.StatusOK, map[string]any{
-		"pins": h.AppContext.GetPreferences().SessionProjectPins(),
-	})
-}
-
-type sessionProjectPinsRequest struct {
-	Pins map[string]int64 `json:"pins"`
-}
-
-func (h *HTTPHandler) handleSessionProjectPinsPut(w http.ResponseWriter, r *http.Request) {
-	if h.AppContext == nil || h.AppContext.GetPreferences() == nil {
-		respondError(w, http.StatusServiceUnavailable, errInvalidRequest("preferences not configured"))
-		return
-	}
-	var req sessionProjectPinsRequest
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
-		respondError(w, http.StatusBadRequest, errInvalidRequest(err.Error()))
-		return
-	}
-	if err := h.AppContext.GetPreferences().UpdateSessionProjectPins(req.Pins); err != nil {
-		respondError(w, http.StatusInternalServerError, errInvalidRequest(err.Error()))
-		return
-	}
-	respondJSON(w, http.StatusOK, map[string]any{
-		"pins": h.AppContext.GetPreferences().SessionProjectPins(),
 	})
 }
 

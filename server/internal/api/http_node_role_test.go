@@ -35,6 +35,7 @@ func TestWorkerRejectsControlPlaneAndKeepsDataPlane(t *testing.T) {
 		{"/api/node-info", true, "role self-description is control plane too"},
 		{"/api/relay/status", true, "relay binding"},
 		{"/api/web-push/status", true, "web push subscriptions"},
+		{"/api/pins", true, "置顶权威在主节点，worker 存一份就等于又分了一次片"},
 
 		// 数据面：worker 必须放行，否则它什么也干不了。
 		{"/health", false, "health check"},

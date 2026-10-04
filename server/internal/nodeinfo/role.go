@@ -51,6 +51,9 @@ var controlPlanePrefixes = []string{
 	"/api/auth",
 	"/api/users",
 	"/api/preferences",
+	// 置顶：权威只在主节点。worker 上读写自己的置顶表会让同一份数据按机器分片，
+	// 正是这次要消灭的形状（见 internal/pins 的包注释）。
+	"/api/pins",
 	"/api/prompts",
 	"/api/task-templates",
 	"/api/task-stage-templates",

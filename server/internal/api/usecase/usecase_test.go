@@ -355,23 +355,22 @@ func TestSearchSessionsMultiRootAppliesGlobalLimit(t *testing.T) {
 	}
 }
 
-func TestListSessionsReturnsPinnedSnapshotWithAfterTime(t *testing.T) {
+// after_time 只过滤普通列表；置顶**不受时间窗约束**（要过滤的话用户就没法把
+// 一个老会话钉在顶上）—— 这条规则从前挂在 ListSessionsOutput.PinnedSessions 上，
+// 置顶迁到主节点表后改由 api 层从置顶表单独取（http_pins.go），所以这里
+// 只守剩下的那半：普通列表确实被 after_time 正确过滤了。
+func TestListSessionsAppliesAfterTimeToOrdinaryList(t *testing.T) {
 	root := rootfs.NewRootInfo("mindfs", "mindfs", t.TempDir())
 	now := time.Date(2026, 7, 30, 10, 0, 0, 0, time.UTC)
 	manager := session.NewManager(root, session.WithClock(func() time.Time { return now }))
 	registry := &commandTestRegistry{root: root, manager: manager}
 	service := Service{Registry: registry}
 
-	oldPinned, err := manager.Create(context.Background(), session.CreateInput{Type: session.TypeChat, Name: "Pinned old"})
+	old, err := manager.Create(context.Background(), session.CreateInput{Type: session.TypeChat, Name: "Old"})
 	if err != nil {
-		t.Fatalf("create pinned session: %v", err)
+		t.Fatalf("create old session: %v", err)
 	}
-	now = now.Add(1 * time.Minute)
-	pinned, err := manager.SetPinned(context.Background(), oldPinned.Key, true)
-	if err != nil {
-		t.Fatalf("pin session: %v", err)
-	}
-	afterTime := pinned.UpdatedAt.Add(30 * time.Second)
+	afterTime := old.UpdatedAt.Add(30 * time.Second)
 
 	now = afterTime.Add(1 * time.Minute)
 	fresh, err := manager.Create(context.Background(), session.CreateInput{Type: session.TypeChat, Name: "Fresh"})
@@ -390,11 +389,8 @@ func TestListSessionsReturnsPinnedSnapshotWithAfterTime(t *testing.T) {
 	if len(out.Sessions) != 1 || out.Sessions[0].Key != fresh.Key {
 		t.Fatalf("Sessions = %v, want only fresh %s", usecaseSessionKeys(out.Sessions), fresh.Key)
 	}
-	if len(out.PinnedSessions) != 1 || out.PinnedSessions[0].Key != oldPinned.Key {
-		t.Fatalf("PinnedSessions = %v, want %s", usecaseSessionKeys(out.PinnedSessions), oldPinned.Key)
-	}
-	if len(out.PinnedKeys) != 1 || out.PinnedKeys[0] != oldPinned.Key {
-		t.Fatalf("PinnedKeys = %#v, want [%s]", out.PinnedKeys, oldPinned.Key)
+	if out.TotalCount != 1 {
+		t.Fatalf("TotalCount = %d, want 1", out.TotalCount)
 	}
 }
 

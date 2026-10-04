@@ -123,6 +123,7 @@ func TestControlPlanePrefixesSnapshot(t *testing.T) {
 		"/api/auth",
 		"/api/users",
 		"/api/preferences",
+		"/api/pins",
 		"/api/prompts",
 		"/api/task-templates",
 		"/api/task-stage-templates",

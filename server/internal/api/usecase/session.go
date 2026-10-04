@@ -49,10 +49,11 @@ type ListSessionsInput struct {
 }
 
 type ListSessionsOutput struct {
-	Sessions       []*session.Session
-	PinnedSessions []*session.Session
-	PinnedKeys     []string
-	TotalCount     int
+	Sessions []*session.Session
+	// 置顶（pinned_items / pinned_keys）**不在这里**：权威是主节点的置顶表，
+	// 由 api 层按项目取（http_pins.go 的 pinnedSessionsForRoot）。放这里就得让
+	// 本机会话库再算一遍，等于把退役的 pinned_at 复活。
+	TotalCount int
 }
 
 type ListMultiRootSessionsInput struct {
@@ -64,8 +65,6 @@ type SessionRootGroup struct {
 	RootName          string
 	LatestSessionTime time.Time
 	Sessions          []*session.Session
-	PinnedSessions    []*session.Session
-	PinnedKeys        []string
 	TotalCount        int
 }
 
@@ -152,16 +151,10 @@ func (s *Service) ListSessions(ctx context.Context, in ListSessionsInput) (ListS
 			return ListSessionsOutput{}, err
 		}
 	}
-	pinnedItems, err := manager.ListPinned(ctx, session.ListOptions{TopLevelOnly: in.TopLevelOnly})
-	if err != nil {
+	if err := fillCommandShells(ctx, manager, items); err != nil {
 		return ListSessionsOutput{}, err
 	}
-	pinnedKeys := pinnedSessionKeys(pinnedItems)
-	allForShells := append(append([]*session.Session{}, items...), pinnedItems...)
-	if err := fillCommandShells(ctx, manager, allForShells); err != nil {
-		return ListSessionsOutput{}, err
-	}
-	return ListSessionsOutput{Sessions: items, PinnedSessions: pinnedItems, PinnedKeys: pinnedKeys, TotalCount: totalCount}, nil
+	return ListSessionsOutput{Sessions: items, TotalCount: totalCount}, nil
 }
 
 func (s *Service) ListMultiRootSessions(ctx context.Context, in ListMultiRootSessionsInput) (ListMultiRootSessionsOutput, error) {
@@ -193,13 +186,7 @@ func (s *Service) ListMultiRootSessions(ctx context.Context, in ListMultiRootSes
 		if err != nil {
 			return ListMultiRootSessionsOutput{}, err
 		}
-		pinnedItems, err := manager.ListPinned(ctx, session.ListOptions{TopLevelOnly: true})
-		if err != nil {
-			return ListMultiRootSessionsOutput{}, err
-		}
-		pinnedKeys := pinnedSessionKeys(pinnedItems)
-		allForShells := append(append([]*session.Session{}, items...), pinnedItems...)
-		if err := fillCommandShells(ctx, manager, allForShells); err != nil {
+		if err := fillCommandShells(ctx, manager, items); err != nil {
 			return ListMultiRootSessionsOutput{}, err
 		}
 		latest := time.Time{}
@@ -211,8 +198,6 @@ func (s *Service) ListMultiRootSessions(ctx context.Context, in ListMultiRootSes
 			RootName:          root.EffectiveName(),
 			LatestSessionTime: latest,
 			Sessions:          items,
-			PinnedSessions:    pinnedItems,
-			PinnedKeys:        pinnedKeys,
 			TotalCount:        totalCount,
 		})
 	}
@@ -1173,23 +1158,6 @@ func (s *Service) RenameSession(ctx context.Context, in RenameSessionInput) (*se
 		return nil, err
 	}
 	return manager.Rename(ctx, in.Key, in.Name)
-}
-
-type PinSessionInput struct {
-	RootID string
-	Key    string
-	Pinned bool
-}
-
-func (s *Service) PinSession(ctx context.Context, in PinSessionInput) (*session.Session, error) {
-	if err := s.ensureRegistry(); err != nil {
-		return nil, err
-	}
-	manager, err := s.Registry.GetSessionManager(in.RootID)
-	if err != nil {
-		return nil, err
-	}
-	return manager.SetPinned(ctx, in.Key, in.Pinned)
 }
 
 type BuildPromptInput struct {

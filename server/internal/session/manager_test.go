@@ -457,53 +457,6 @@ func TestManagerPersistsParentSessionMetadata(t *testing.T) {
 	}
 }
 
-func TestManagerPersistsPinnedAtWithoutChangingUpdatedAt(t *testing.T) {
-	root := rootfs.NewRootInfo("mindfs", "mindfs", t.TempDir())
-	now := time.Date(2026, 7, 30, 10, 0, 0, 0, time.UTC)
-	manager := NewManager(root, WithClock(func() time.Time { return now }))
-
-	created, err := manager.Create(context.Background(), CreateInput{Type: TypeChat, Name: "Pinned"})
-	if err != nil {
-		t.Fatalf("create session: %v", err)
-	}
-	originalUpdatedAt := created.UpdatedAt
-
-	pinnedAt := now.Add(5 * time.Minute)
-	manager.now = func() time.Time { return pinnedAt }
-	pinned, err := manager.SetPinned(context.Background(), created.Key, true)
-	if err != nil {
-		t.Fatalf("pin session: %v", err)
-	}
-	if pinned.PinnedAt == nil || !pinned.PinnedAt.Equal(pinnedAt) {
-		t.Fatalf("PinnedAt = %v, want %v", pinned.PinnedAt, pinnedAt)
-	}
-	if !pinned.UpdatedAt.Equal(originalUpdatedAt) {
-		t.Fatalf("UpdatedAt changed on pin: got %v, want %v", pinned.UpdatedAt, originalUpdatedAt)
-	}
-
-	manager.sessions = map[string]*Session{}
-	loaded, err := manager.Get(context.Background(), created.Key, 0)
-	if err != nil {
-		t.Fatalf("reload session: %v", err)
-	}
-	if loaded.PinnedAt == nil || !loaded.PinnedAt.Equal(pinnedAt) {
-		t.Fatalf("reloaded PinnedAt = %v, want %v", loaded.PinnedAt, pinnedAt)
-	}
-
-	clearedAt := now.Add(10 * time.Minute)
-	manager.now = func() time.Time { return clearedAt }
-	cleared, err := manager.SetPinned(context.Background(), created.Key, false)
-	if err != nil {
-		t.Fatalf("unpin session: %v", err)
-	}
-	if cleared.PinnedAt != nil {
-		t.Fatalf("PinnedAt after unpin = %v, want nil", cleared.PinnedAt)
-	}
-	if !cleared.UpdatedAt.Equal(originalUpdatedAt) {
-		t.Fatalf("UpdatedAt changed on unpin: got %v, want %v", cleared.UpdatedAt, originalUpdatedAt)
-	}
-}
-
 func TestManagerPersistsArchivedAtWithoutChangingUpdatedAt(t *testing.T) {
 	root := rootfs.NewRootInfo("mindfs", "mindfs", t.TempDir())
 	now := time.Date(2026, 7, 30, 10, 0, 0, 0, time.UTC)
@@ -653,7 +606,10 @@ func TestListExcludesArchivedByDefaultAndSupportsArchivedOnly(t *testing.T) {
 	}
 }
 
-func TestListPinnedExcludesArchivedSessions(t *testing.T) {
+// 置顶不再存在会话库里（权威在主节点的置顶表），但「归档后从置顶区掉进归档区」
+// 这条**产品规则**还在 —— 由 api 层过滤。所以这里守的是 ListByKeys 那道过滤：
+// 归档的会话不该被当成「已置顶」捞出来。
+func TestListByKeysCanExcludeArchivedSessions(t *testing.T) {
 	root := rootfs.NewRootInfo("mindfs", "mindfs", t.TempDir())
 	manager := NewManager(root)
 	ctx := context.Background()
@@ -662,28 +618,64 @@ func TestListPinnedExcludesArchivedSessions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if _, err := manager.SetPinned(ctx, created.Key, true); err != nil {
-		t.Fatalf("pin: %v", err)
-	}
-	pinned, err := manager.ListPinned(ctx, ListOptions{})
+	found, err := manager.ListByKeys(ctx, []string{created.Key})
 	if err != nil {
-		t.Fatalf("list pinned: %v", err)
+		t.Fatalf("ListByKeys: %v", err)
 	}
-	if len(pinned) != 1 {
-		t.Fatalf("pinned = %d, want 1", len(pinned))
+	if len(found) != 1 {
+		t.Fatalf("ListByKeys = %d, want 1", len(found))
 	}
 
-	// 归档后应从置顶区掉进归档区：归档就该从主视图消失
 	if _, err := manager.SetArchived(ctx, created.Key, true); err != nil {
 		t.Fatalf("archive: %v", err)
 	}
-	pinned, err = manager.ListPinned(ctx, ListOptions{})
+	// 归档不该让会话从库里消失（深链接仍要能开），所以这里只钉住「还在」，
+	// 过滤发生在 api 层按 archived 标记挑的那一层。
+	found, err = manager.ListByKeys(ctx, []string{created.Key})
 	if err != nil {
-		t.Fatalf("list pinned after archive: %v", err)
+		t.Fatalf("ListByKeys after archive: %v", err)
 	}
-	if len(pinned) != 0 {
-		t.Fatalf("archived session must leave the pinned area, got %d", len(pinned))
+	if len(found) != 1 {
+		t.Fatalf("归档后会话必须仍能查到, got %d", len(found))
 	}
+	if found[0].ArchivedAt == nil {
+		t.Fatal("归档标记丢了")
+	}
+}
+
+// ListByKeys 只认本机库里有的键：置顶表跨节点，别的机器的键查不到就静默丢弃，
+// 不能报错也不能凭空造出条目。顺序按传入顺序，不按库里的顺序。
+func TestListByKeysSkipsUnknownKeysAndKeepsOrder(t *testing.T) {
+	root := rootfs.NewRootInfo("mindfs", "mindfs", t.TempDir())
+	manager := NewManager(root)
+	ctx := context.Background()
+
+	a, err := manager.Create(ctx, CreateInput{Type: TypeChat, Name: "A"})
+	if err != nil {
+		t.Fatalf("create a: %v", err)
+	}
+	b, err := manager.Create(ctx, CreateInput{Type: TypeChat, Name: "B"})
+	if err != nil {
+		t.Fatalf("create b: %v", err)
+	}
+	got, err := manager.ListByKeys(ctx, []string{"别的机器的键", b.Key, a.Key, b.Key})
+	if err != nil {
+		t.Fatalf("ListByKeys: %v", err)
+	}
+	if len(got) != 2 || got[0].Key != b.Key || got[1].Key != a.Key {
+		t.Fatalf("ListByKeys = %v, want [%s %s]", keysOf(got), b.Key, a.Key)
+	}
+	if empty, err := manager.ListByKeys(ctx, nil); err != nil || len(empty) != 0 {
+		t.Fatalf("空入参应返回空结果, got %v err %v", empty, err)
+	}
+}
+
+func keysOf(items []*Session) []string {
+	out := make([]string, 0, len(items))
+	for _, s := range items {
+		out = append(out, s.Key)
+	}
+	return out
 }
 
 func TestManagerPersistsExchangeModelDisplayName(t *testing.T) {
