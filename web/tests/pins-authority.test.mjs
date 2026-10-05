@@ -3,7 +3,7 @@
 // 这些测试守的每一条都对应一个具体的坏法：
 //   1. 前端自己拼会话置顶键 → 与服务端分叉，症状「置顶了刷新就没」
 //   2. 用 appPath/appURL 而非 controlPath → 置顶跟着选中节点走，PC 上置顶存进 PC
-//   3. localStorage 缓存层 → 「A 设备置顶，B 设备看不到」的分裂状态
+//   3. 持久化缓存层（localStorage）→ 制造「双份真相」，迟早分叉
 //   4. 快照只抹不盖 → worker 的列表永远没有置顶区
 //   5. 刷新依赖写空数组 → 切项目后看到的还是首次那份
 import assert from "node:assert/strict";
@@ -137,39 +137,22 @@ assert.equal(otherRoot[0].pinned_at, "2026-01-01T00:00:00Z", "快照只作用于
 // ── 刷新时机：切项目要重拉 ──
 const appSource = fs.readFileSync(path.resolve(SRC, "App.tsx"), "utf8");
 assert.ok(
-  appSource.includes("void refreshPrimarySessionPins();"),
+  appSource.includes("void refreshPinsFromServer()"),
   "切项目时要顺带刷新一次置顶（用户定的同步时机）",
 );
 // 定位那个「切项目时刷新」的 effect 本身（不是它的定义处 —— 两者隔了一万行）。
-const pinEffectAt = appSource.indexOf("void refreshPrimarySessionPins();");
+const pinEffectAt = appSource.indexOf("void refreshPinsFromServer()");
 assert.ok(pinEffectAt > 0, "切项目时要顺带刷新一次置顶");
 const pinEffect = appSource.slice(pinEffectAt, pinEffectAt + 300);
 assert.ok(
-  /\}, \[currentRootId, refreshPrimarySessionPins\]\)/.test(pinEffect),
+  /\}, \[currentRootId\]\)/.test(pinEffect),
   "刷新 effect 必须依赖 currentRootId —— 写空数组就是「切了项目还看到首次那份」的老 bug",
-);
-
-// ── 快照迟到时必须对当前列表重放 ──
-// 置顶只在 setSessions 的那一刻盖，而 fetchPins 是异步的。先读缓存渲染、或
-// WS 推来增量，都可能发生在快照回来之前，那一次拿到的还是空叠加层。写 ref
-// 不触发重渲染，于是没人再盖一次 —— 症状正是「切到项目看不到别人置顶的会话」。
-// 纯 ref 改动没有任何渲染副作用，只能在源码层钉住。
-const refreshAt = appSource.indexOf("primarySessionPinsRef.current = byRoot;");
-assert.ok(refreshAt > 0, "快照要写进 primarySessionPinsRef");
-const afterRefresh = appSource.slice(refreshAt, refreshAt + 900);
-assert.ok(
-  /setSessions\(\(prev\) => applyPinSnapshotRaw\(prev, rootId, ids, overlay\)\)/.test(afterRefresh),
-  "快照到达后必须对当前列表重放一次叠加 —— 只写 ref 的话，列表先渲染再等快照就永远盖不上",
-);
-assert.ok(
-  /currentRootIdRef\.current/.test(afterRefresh),
-  "重放要按当前项目取叠加层",
 );
 
 const listSource = fs.readFileSync(path.resolve(SRC, "components/SessionList.tsx"), "utf8");
 assert.ok(
   !/mindfs-pinned-session-projects/.test(listSource),
-  "项目置顶的 localStorage 缓存层必须删掉 —— 它只做到「先出帧」，没做到跨设备",
+  "项目置顶的旧 localStorage 缓存层必须删掉 —— 它只做到「先出帧」，没做到跨设备",
 );
 assert.ok(
   !/readLocalProjectPins|writeLocalProjectPins/.test(listSource),
@@ -178,6 +161,43 @@ assert.ok(
 assert.ok(
   /\}, \[selectedRootId, selectedNodeId\]\)/.test(listSource),
   "项目置顶的拉取必须依赖 selectedRootId/selectedNodeId（切项目、切节点、切账户都要重拉）",
+);
+
+// ── 不持久化：置顶只用内存 state（决策 2026-10-05）──
+// 曾经加过一层 localStorage「首帧缓存」，它是**双份真相**：服务端是权威，
+// 本地又留一份永不更新的一份 —— 项目置顶当初就因为住在共享偏好里而跨账户
+// 泄漏，两份真相并集等于迟早分叉。为一张几十字节的偏好表付这个代价不划算。
+// 只查**代码**（pinsCode 已剥掉注释）：注释里写「为什么删掉 localStorage」是正常的。
+assert.ok(
+  !/localStorage|getStoredString|setStoredString|currentUser/.test(pinsCode),
+  "置顶不落localStorage：偏好表几十字节，服务端有权威副本，持久化只会制造双份真相",
+);
+assert.ok(
+  !/seedPinsFromCache/.test(appSource) && !/seedPinsFromCache/.test(listSource),
+  "没有「首帧读缓存」这回事 —— 首帧空、服务端到达排一次，是**一次**跳变，不是狂跳",
+);
+// store 必须真的被用起来（否则上面那些「不持久化」断言会平凡成立）
+assert.ok(
+  /useSyncExternalStore\(subscribePins, readPins, readPins\)/.test(appSource),
+  "App 必须从 store 订阅置顶，而不是自己 useState（两份状态 = 各排一次 = 狂跳）",
+);
+assert.ok(
+  /useSyncExternalStore\(subscribePins, readPins, readPins\)/.test(listSource),
+  "SessionList 也必须订阅同一个 store —— 它曾自己 useState + useEffect 拉一次",
+);
+assert.ok(
+  !/const \[pinnedProjects, setPinnedProjects\]/.test(listSource),
+  "SessionList 不该再有自己那份pinnedProjects state",
+);
+
+// ── 排序决策权只归 store（决策 2026-10-05）──
+// 列表回包曾自带 pinnedKeys 参与排序，于是两个数据源都能重排列表、谁后到谁
+// 说了算 —— 右侧狂跳的来源之一。现在列表只管数据。
+const applyPinCalls = appSource.match(/applyPinSnapshot\(/g) || [];
+assert.ok(applyPinCalls.length > 0, "列表仍要用 applyPinSnapshot 盖置顶");
+assert.ok(
+  !/applyPinSnapshot\([^)]*pinnedKeys/.test(appSource),
+  "applyPinSnapshot 不得再收列表回包的 pinnedKeys —— 排序权只能有一个来源",
 );
 
 // 写置顶不再经过 sessionService（那条路打的是选中节点）

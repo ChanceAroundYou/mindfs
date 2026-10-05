@@ -2007,6 +2007,39 @@ function withSessionMeta(
   };
 }
 
+/**
+ * 按 seq 合并两份持久化 exchanges（**丢弃 seq=0 的瞬时行**，那些归 overlay 管）。
+ *
+ * 为什么必须去重而不是拼接：三条来源会重叠。
+ *   - 缓存（用户翻上去翻出来的历史 / live 路径落库的行）
+ *   - 服务端尾部窗口（latest=SESSION_WINDOW_SIZE）
+ *   - loadMore 取的 beforeSeq 段
+ * 纯拼接会把同一行渲染两遍（实测 2026-10-05：切会话后历史里每条消息出现两次）。
+ *
+ * 同 seq 冲突时让**后到的赢** —— 三个调用点上前者都是更新的那份。顺带按 seq
+ * 升序排，调用方不必自己维护顺序。
+ *
+ * 淘汰与清理只发生在**写入**时（见 toPersistentSession，只从头淘汰）；
+ * 加载过程中一律只增不减 —— 用户正在看的那段历史不该在读的时候被砍掉。
+ */
+export function mergeSessionExchanges(
+  base: readonly any[] | null | undefined,
+  incoming: readonly any[] | null | undefined,
+): any[] {
+  const merged = new Map<number, any>();
+  for (const ex of base || []) {
+    const seq = Number((ex as any)?.seq || 0);
+    if (seq > 0) merged.set(seq, ex);
+  }
+  for (const ex of incoming || []) {
+    const seq = Number((ex as any)?.seq || 0);
+    if (seq > 0) merged.set(seq, ex);
+  }
+  return [...merged.values()].sort(
+    (a, b) => Number((a as any)?.seq || 0) - Number((b as any)?.seq || 0),
+  );
+}
+
 function appendSessionDelta(
   base: Session | null | undefined,
   incoming: Session | null | undefined,
@@ -2032,7 +2065,7 @@ function appendSessionDelta(
   const incomingExchangeAux = toPersistentExchangeAux(incoming?.exchange_aux);
   return {
     ...baseWithMeta,
-    exchanges: [...baseExchanges, ...incomingExchanges],
+    exchanges: mergeSessionExchanges(baseExchanges, incomingExchanges),
     exchange_aux: appendExchangeAuxDelta(baseExchangeAux, incomingExchangeAux),
   };
 }
@@ -2189,9 +2222,16 @@ const SESSION_CACHE_MAX_EXCHANGES = 500;
 const SESSION_CACHE_MAX_TEXT = 200 * 1024;
 
 /**
- * 截断到 meta + 最近 N 条（含文本上限）——避免每次打开大 session 把整份
- * JSONL（可达 MB 级）全量写进 IndexedDB 卡主线程。截断时置 truncated 标记，
- * 读取方下次以全量拉取补段（见 syncSession）。
+ * 截断到 meta + 文本/条数上限——避免每次打开大 session 把整份 JSONL（可达 MB 级）
+ * 全量写进 IndexedDB 卡主线程。截断时置 truncated 标记，读取方下次以全量拉取补段
+ * （见 syncSession）。
+ *
+ * **只从头部淘汰，永远保尾部**（用户定的规则）。尾部是用户正在看的那一段；把最新的
+ * 消息丢掉不只是「少了几条」，而是首帧从中间开始、读起来像会话断在中间。
+ *
+ * 曾经的写法反了：它从**尾部**往前扫文本、把超预算的条数记下来，再
+ * `slice(0, len - n)` —— 砍掉的正是最新的那几条（超预算的通常是最长的助手回答）。
+ * 实测症状：会话越长、开得越久，尾部丢得越多。
  */
 function toPersistentSession(
   session: Session,
@@ -2214,24 +2254,37 @@ function toPersistentSession(
       return { ...persistent, exchanges, exchange_aux };
     }
   }
-  const truncatedCount = exchanges.length - SESSION_CACHE_MAX_EXCHANGES;
-  const tail = exchanges.slice(Math.max(0, truncatedCount));
+  // 从尾部往前累加，找到「能装下的最长后缀」；装不下的部分全在头部。
+  //
+  // 两个坑（都实测过）：
+  //   ① 扫描下界必须是**独立的** floorStart，不能复用会变的 start —— 一旦
+  //      start=len-1，条件 `i >= start` 立刻为假，循环只跑一轮、只留下最新那一条。
+  //   ② 最新一条自己就超预算时不能 break 了事（那会让 start 停在 len-1、白留
+  //      一整份超预算的尾巴）；此时直接不保留任何一条 —— 全量回源才是正解，
+  //      而 truncated 标记已经保证下次会全量拉。
+  const floorStart = Math.max(0, exchanges.length - SESSION_CACHE_MAX_EXCHANGES);
   let text = 0;
-  let extraSliced = 0;
-  for (let i = tail.length - 1; i >= 0; i -= 1) {
-    const itemText = String((tail as any)[i]?.content || "").length;
-    if (text + itemText > SESSION_CACHE_MAX_TEXT) {
-      extraSliced += 1;
-      continue;
-    }
+  let keptFrom = exchanges.length;
+  for (let i = exchanges.length - 1; i >= floorStart; i -= 1) {
+    const itemText = String((exchanges as any)[i]?.content || "").length;
+    // 单条就超预算时 keptFrom 停在 length（初值）→ 一条不留，下次靠 truncated 全量回源。
+    if (text + itemText > SESSION_CACHE_MAX_TEXT) break;
     text += itemText;
+    keptFrom = i;
   }
-  const kept = extraSliced > 0 ? tail.slice(0, tail.length - extraSliced) : tail;
+  const kept = exchanges.slice(keptFrom);
+  // aux 只保留下**还在 exchanges 里**的那些 seq：淘汰掉的头部行不该留下工具卡数据
+  // —— 否则重新加载时那批 aux 会孤立存在，构建时间线时凭空多出卡片。
+  const keptSeqs = new Set(kept.map((ex) => Number((ex as any)?.seq || 0)));
+  const keptAux: Record<string, ExchangeAux[]> = {};
+  for (const [seq, items] of Object.entries(exchange_aux)) {
+    if (keptSeqs.has(Number(seq))) keptAux[seq] = items;
+  }
   return {
     ...persistent,
     truncated: forceNoTruncate ? false : true,
     exchanges: kept,
-    exchange_aux,
+    exchange_aux: keptAux,
   };
 }
 

@@ -20,6 +20,7 @@ import {
   getCachedSession,
   getCachedSessionList,
   getSessionWindow,
+  mergeSessionExchanges,
   saveCachedMultiRootSessionList,
   saveCachedSessionList,
   sessionService,
@@ -128,7 +129,14 @@ import {
 } from "./components/FileTree";
 
 import { applyNodesFromServer, getActiveNode, getActiveNodeId, getNodeById, getNodes, migrateLegacySingleBase, setActiveNodeId, syncNodesFromServer } from "./services/nodeRegistry";
-import { fetchPins, sessionPinKey, setSessionPin } from "./services/pins";
+import {
+  optimisticSessionPin,
+  readPins,
+  refreshPinsFromServer,
+  setSessionPin,
+  subscribePins,
+  writePins,
+} from "./services/pins";
 
 import { FileViewer } from "./components/FileViewer";
 import { resolveGroupColor } from "./services/sessionGroupDisplay";
@@ -318,80 +326,51 @@ export function App({ onGoHome }: AppProps) {
   const multiProjectLoadSeqRef = useRef(0);
   const [multiProjectPendingByKey, setMultiProjectPendingByKey] = useState<Record<string, boolean>>({});
   const multiProjectPendingRef = useRef<Record<string, boolean>>({});
-  // 主节点那份会话置顶（键 = rootID::sessionKey）。worker 的会话列表里没有置顶区
-  // —— 置顶是控制面，worker 上 /api/pins 是 403 —— 所以要从这里盖过去。
+  // 置顶只用 store 一份（services/pins.ts），按**项目 id**（不含节点）分组盖到列表上。
   //
-  // 用 ref 而不是 state：它只在列表渲染时被读（applyPinSnapshot），不需要触发
-  // 任何重渲染；触发重渲染的是它引发的列表更新，那条路已经全走 applyPinSnapshot 了。
-  const primarySessionPinsRef = useRef<Map<string, Map<string, string>>>(new Map());
+  // 为什么 worker 的列表也要盖：置顶是控制面，worker 上 /api/pins 是 403，它自己的
+  // 列表里没有置顶区。用户看到的是主节点那张表，所以从这里盖过去。
+  //
+  // 键为什么是纯 rootId：置顶是跨设备的一致性偏好，PC 上的会话在 home 置顶，
+  // 就要在 PC 的列表里显示为置顶 —— 键里带节点 id 就等于又按机器分了片。
+  //
+  // **排序决策权只在这里**（决策 2026-10-05）：原先第三个参数（列表回包自带的
+  // pinnedKeys）也参与排序，于是两个数据源都能重排列表、谁后到谁说了算 ——
+  // 那是右侧狂跳的来源之一。现在列表回包只管数据，置顶一律从 store 取。
+  const pinsSnapshot = useSyncExternalStore(subscribePins, readPins, readPins);
+  const sessionPinsByRoot = useMemo(() => {
+    const byRoot = new Map<string, Map<string, string>>();
+    for (const [scoped, at] of Object.entries(pinsSnapshot.sessions || {})) {
+      // 键形如 rootID::sessionKey：只取第一段当项目 id，其余整段当会话 key。
+      // 项目 id 本身不含 "::"（basename），所以按第一处分隔切是安全的。
+      const sep = scoped.indexOf("::");
+      if (sep <= 0) continue;
+      const rootId = scoped.slice(0, sep);
+      const sessionKey = scoped.slice(sep + 2);
+      if (!sessionKey) continue;
+      let bucket = byRoot.get(rootId);
+      if (!bucket) {
+        bucket = new Map<string, string>();
+        byRoot.set(rootId, bucket);
+      }
+      bucket.set(sessionKey, at);
+    }
+    return byRoot;
+  }, [pinsSnapshot]);
 
-  // 会话置顶快照的应用入口：worker 的列表用主节点那份盖上去，本机列表用服务端回的。
-  //
-  // 判定「是不是本机」看这个项目属于哪个节点：worker 上拿到的 pinnedKeys 恒为空
-  // （它的 /api/pins 是 403），所以只要 pinnedKeys 为空且快照里有这个项目，
-  // 就该由主节点那份说话。反过来本机列表自带的 pinnedKeys 是权威，原样用。
   const applyPinSnapshot = useCallback(
     <T extends { root_id?: string; pinned_at?: string | null }>(
       items: T[],
       rootId: string,
-      pinnedKeys: string[],
     ): T[] => {
-      const overlay = primarySessionPinsRef.current.get(rootId);
-      if (!pinnedKeys.length && overlay) {
-        return applyPinSnapshotRaw(items, rootId, Array.from(overlay.keys()), overlay);
+      const overlay = sessionPinsByRoot.get(rootId);
+      if (!overlay || overlay.size === 0) {
+        return applyPinSnapshotRaw(items, rootId, []);
       }
-      return applyPinSnapshotRaw(items, rootId, pinnedKeys);
+      return applyPinSnapshotRaw(items, rootId, Array.from(overlay.keys()), overlay);
     },
-    [],
+    [sessionPinsByRoot],
   );
-
-  // 从主节点拉一次会话置顶，按**项目 id**（不含节点）分组存进 ref。
-  //
-  // 键为什么是纯 rootId：置顶是跨设备的一致性偏好，PC 上的会话在 home 置顶，
-  // 就要在 PC 的列表里显示为置顶 —— 键里带节点 id 就等于又按机器分了片。
-  // 同名项目跨节点时两个条目共用一份置顶，这在「置顶是跨设备偏好」这个语义下
-  // 是对的（用户看到的是「这个项目我顶了」），且不会串到别的项目上。
-  const refreshPrimarySessionPins = useCallback(async () => {
-    try {
-      const pins = await fetchPins();
-      const byRoot = new Map<string, Map<string, string>>();
-      for (const [scoped, at] of Object.entries(pins.sessions || {})) {
-        // 键形如 rootID::sessionKey：只取第一段当项目 id，其余整段当会话 key。
-        // 项目 id 本身不含 "::"（basename），所以按第一处分隔切是安全的。
-        const sep = scoped.indexOf("::");
-        if (sep <= 0) continue;
-        const rootId = scoped.slice(0, sep);
-        const sessionKey = scoped.slice(sep + 2);
-        if (!sessionKey) continue;
-        let bucket = byRoot.get(rootId);
-        if (!bucket) {
-          bucket = new Map<string, string>();
-          byRoot.set(rootId, bucket);
-        }
-        bucket.set(sessionKey, at);
-      }
-      primarySessionPinsRef.current = byRoot;
-      // 快照到了要对**当前列表**重放一次。
-      //
-      // 置顶只在 setSessions 的那一刻盖上去，而快照是异步的：先读缓存渲染、或
-      // WS 推来一条增量，都可能发生在 fetchPins 回来之前 —— 那一次拿到的是还
-      // 空着的叠加层，worker 项目的置顶就没盖上，症状是「切到项目看不到置顶」，
-      // 而且要等下一次无关的列表变动才会自愈。
-      //
-      // 这里直接用 applyPinSnapshotRaw 并显式传叠加层，不走 applyPinSnapshot 的
-      // 「pinnedKeys 为空才用叠加层」判定：本机列表的 pinnedKeys 是服务端权威，
-      // 但它和叠加层读的是**同一张表**，所以叠加层更新（别的设备刚改过）时
-      // 反而是它更准。
-      const rootId = String(currentRootIdRef.current || "");
-      const overlay = rootId ? byRoot.get(rootId) : undefined;
-      if (overlay) {
-        const ids = Array.from(overlay.keys());
-        setSessions((prev) => applyPinSnapshotRaw(prev, rootId, ids, overlay));
-      }
-    } catch {
-      // 拉不到就保持上一份：置顶是装饰性排序，不该把正在看的列表闪一下。
-    }
-  }, []);
   const [syncingSessionKeys, setSyncingSessionKeys] = useState<Set<string>>(
     () => new Set(),
   );
@@ -1615,8 +1594,11 @@ export function App({ onGoHome }: AppProps) {
   // 不刷新的话，设备 A 置顶后设备 B 切项目也看不到 —— 那正是被报的那个症状。
   useEffect(() => {
     if (!currentRootId || !protectedAPIReady()) return;
-    void refreshPrimarySessionPins();
-  }, [currentRootId, refreshPrimarySessionPins]);
+    // 拉不到就保持当前那份：置顶是装饰性排序，一个装饰性请求失败不该把
+    // 正在看的列表闪成「全不置顶」。writePins 内部按指纹判断要不要通知订
+    // 阅者，所以「服务端没变化」不会引起任何重排。
+    void refreshPinsFromServer().catch(() => {});
+  }, [currentRootId]);
   useEffect(() => {
     currentSessionRef.current = currentSession;
   }, [currentSession]);
@@ -2329,10 +2311,38 @@ export function App({ onGoHome }: AppProps) {
                 ? false
                 : resolvePendingForSession(resolvedRoot, resolvedKey, !!serverPending);
             const anchorAt = ++anchorSeqRef.current;
+            // 窗口**并入**缓存，不是**替换**缓存。替换就是「切会话闪一下」的
+            // 第二来源（2026-10-05）：窗口只有尾部 SESSION_WINDOW_SIZE 条，
+            // 而缓存里可能有几百条（用户翻上去了、或 live 路径落库过）。
+            // 整体覆盖会把头部历史当场扔掉，切回来时首帧种子只剩 20 条 ——
+            // 于是「完整对话 → 塌成最后一条用户消息 → 慢慢补回来」。
+            // 淘汰只在**写入**时发生、且只从头部淘汰（见 toPersistentSession）；
+            // 加载过程中一律只增不减。
+            const winExs = Array.isArray(sess.exchanges)
+              ? (sess.exchanges as Exchange[])
+              : [];
+            // mergeSessionExchanges 只保留 seq>0 的持久化行；seq=0 的瞬时行
+            // （刚发出、还没落库的消息与流式正文）要接在后面，否则「刚点发送的那条」
+            // 会在换窗后消失一拍。顺序与 syncSession 的 displaySession 一致。
+            const transientTail = winExs.filter(
+              (exchange) => Number((exchange as any)?.seq || 0) === 0,
+            );
             const toCache = {
               ...sess,
               key: resolvedKey,
               pending,
+              exchanges: [
+                ...mergeSessionExchanges(cachedBeforeSync as any, winExs),
+                ...transientTail,
+              ],
+              // aux 同理并入：exchanges 保住历史而 exchange_aux 只剩窗口那份，
+              // 那些行上的工具卡会凭空消失（历史里的 read/edit 变纯文本）。
+              // 按 seq 覆盖而非拼接 —— 同一个 seq 被窗口与缓存各带一份时，
+              // 拼接会把同一张卡渲染两遍（appendExchangeAuxDelta 是拼接语义，不能用）。
+              exchange_aux: {
+                ...((cachedBeforeSync as any)?.exchange_aux || {}),
+                ...(sess.exchange_aux || {}),
+              },
               _windowMeta: win.meta,
               _anchoredAt: anchorAt,
             } as Session;
@@ -3157,7 +3167,6 @@ export function App({ onGoHome }: AppProps) {
               applyPinSnapshot(
                 mergeSessionItems([], cachedItems),
                 rootID,
-                cached.pinnedKeys,
               ),
             );
           }
@@ -3198,13 +3207,13 @@ export function App({ onGoHome }: AppProps) {
                 ? { ...item, context_window: inherited }
                 : item;
             });
-            return applyPinSnapshot(merged, rootID, payload.pinnedKeys);
+            return applyPinSnapshot(merged, rootID);
           });
           void saveCachedSessionList(rootID, payload, _nid);
           return;
         }
         setSessions((prev) =>
-          applyPinSnapshot(mergeSessionItems(prev, next), rootID, payload.pinnedKeys),
+          applyPinSnapshot(mergeSessionItems(prev, next), rootID),
         );
       } catch (err) {
         if ((err as any)?.name === "AbortError") return;
@@ -3323,7 +3332,6 @@ export function App({ onGoHome }: AppProps) {
                     .filter((item): item is SessionItem => !!item),
                 ),
                 group.rootId,
-                group.pinnedKeys,
               ),
               totalCount: group.totalCount,
             };}),
@@ -3405,7 +3413,6 @@ export function App({ onGoHome }: AppProps) {
               .filter((item): item is SessionItem => !!item),
           ),
           group.rootId,
-          group.pinnedKeys,
         )
           .filter((item): item is SessionItem => !!item),
         totalCount: group.totalCount,
@@ -3530,7 +3537,6 @@ export function App({ onGoHome }: AppProps) {
             const sessions = applyPinSnapshot(
               mergeSessionItems(current.sessions, nextItems),
               group.rootId,
-              payload.pinnedKeys,
             );
             return {
               ...current,
@@ -4242,79 +4248,26 @@ export function App({ onGoHome }: AppProps) {
         (session?.root_id as string | undefined) || currentRootIdRef.current;
       if (!rootID || !sessionKey) return false;
 
+      // 乐观更新 store：用户点了就该马上看到，不必等往返。
+      // store 是排序的唯一来源，所以这一下就足以让列表重排 —— 下面那些
+      // setSessions/setMultiProjectSessionGroups 逐条打 pinned_at 的写法
+      // 曾经是第三份能重排列表的状态，与 store 各排一次就是狂跳的来源。
+      const rollback = optimisticSessionPin(rootID, sessionKey, pinned);
       // 写**主节点**的置顶表（控制面），不是当前选中节点的那个会话库 ——
       // 后者已退役 pinned_at，写进去就回到「按机器分」的老形状。
-      const at = await setSessionPin(rootID, sessionKey, pinned).then(
-        (pins) => (pinned ? pins.sessions[sessionPinKey(rootID, sessionKey)] : ""),
-        () => "",
-      );
-      if (pinned && !at) {
+      try {
+        const next = await setSessionPin(rootID, sessionKey, pinned);
+        // 用服务端落库后的整张表覆盖（权威），不再本地合并 ——
+        // 合并两份状态正是「刷新就变回去」的来源。
+        writePins(next);
+        return true;
+      } catch {
+        rollback();
         reportError("session.pin_failed", t("session.pinFailed"));
         return false;
       }
-
-      // 立刻把本地状态跟上：置顶是装饰性排序，用户点了就该马上看到。
-      const applyPin = <T extends SessionItem>(item: T): T =>
-        pinned ? ({ ...item, pinned_at: at } as T) : ({ ...item, pinned_at: undefined } as T);
-
-      setSessions((prev) =>
-        prev.map((item) =>
-          (item.key || item.session_key) === sessionKey &&
-          (!item.root_id || item.root_id === rootID)
-            ? applyPin(item)
-            : item,
-        ),
-      );
-      setMultiProjectSessionGroups((prev) =>
-        prev.map((group) =>
-          group.rootId === rootID && (!(session as any)?._nodeId || (group as any)._nodeId === (session as any)?._nodeId)
-            ? {
-                ...group,
-                sessions: group.sessions.map((item) =>
-                  (item.key || item.session_key) === sessionKey ? applyPin(item) : item,
-                ),
-              }
-            : group,
-        ),
-      );
-
-      // 主节点那份快照也要跟着更新，否则下一次 applyPinSnapshot 会用旧值盖回去。
-      void refreshPrimarySessionPins();
-
-      const cacheKey = rootSessionKey(rootID, sessionKey);
-      const cached = sessionCacheRef.current[cacheKey];
-      if (cached) {
-        sessionCacheRef.current[cacheKey] = {
-          ...cached,
-          pinned_at: pinned ? at : undefined,
-        } as Session;
-      }
-
-      if (
-        (selectedSessionRef.current?.key ||
-          selectedSessionRef.current?.session_key) === sessionKey
-      ) {
-        setSelectedSession((prev) =>
-          prev
-            ? ({
-                ...prev,
-                pinned_at: pinned ? at : undefined,
-              } as SessionItem)
-            : prev,
-        );
-      }
-
-      if (boundSessionByRootRef.current[scopedRootKey(rootID)] === sessionKey) {
-        const latest = sessionCacheRef.current[cacheKey];
-        if (latest) {
-          setDrawerSessionForRoot(rootID, latest);
-        }
-      }
-
-      bumpCacheVersion();
-      return true;
     },
-    [bumpCacheVersion, refreshPrimarySessionPins, rootSessionKey, setDrawerSessionForRoot, t],
+    [t],
   );
 
   // 归档/取消归档。后端按 parent_session_key 级联整棵子树，前端要摘掉的是同一批 key
@@ -4735,7 +4688,7 @@ export function App({ onGoHome }: AppProps) {
       .map((item) => toSessionItem(rootID, { ...(item as any), _nodeId: (item as any)._nodeId || listNodeId }))
       .filter((item): item is SessionItem => !!item);
     setHasMoreSessions(payload.totalCount > payload.items.length);
-    setSessions(applyPinSnapshot(mergeSessionItems([], next), rootID, payload.pinnedKeys));
+    setSessions(applyPinSnapshot(mergeSessionItems([], next), rootID));
   }, [getNodeIdForRoot]);
 
   const {
@@ -7348,7 +7301,7 @@ export function App({ onGoHome }: AppProps) {
         .filter((item): item is SessionItem => !!item);
       setHasMoreSessions(payload.totalCount > payload.items.length);
       setSessions((prev) =>
-        applyPinSnapshot(mergeSessionItems(prev, next), rootID, payload.pinnedKeys),
+        applyPinSnapshot(mergeSessionItems(prev, next), rootID),
       );
     } finally {
       setLoadingOlderSessions(false);

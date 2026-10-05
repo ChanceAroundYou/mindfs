@@ -82,6 +82,11 @@ const MAX_CACHE_ENTRIES = 200;
 const LS_RECORD_PREFIX = "mindfs-file-cache-record:";
 const LS_MAX_RECORD_BYTES = 256 * 1024;
 const LS_MAX_RECORDS = 50;
+// **总**字节预算。原来只有「条数」上限，50 × 256KB = 12.5MB，而 localStorage
+// 只有 5MB：写到第~20 条 256KB 文件就QuotaExceededError，被 save 的 catch 吞掉
+// —— 从那一刻起**所有**文件缓存静默失效，用户看不出原因。剪的方向本来是对的
+// （按touchedAt 丢最旧），只是没算总量。
+const LS_TOTAL_BYTES = 4 * 1024 * 1024;
 
 const memoryCache = new Map<string, FilePayload>();
 const gitDiffMemoryCache = new Map<string, CachedGitDiffPayload>();
@@ -223,15 +228,33 @@ function listLocalStorageRecords(): CachedFileRecord[] {
 
 function pruneLocalStorageRecords(): void {
   const records = listLocalStorageRecords();
-  if (records.length <= LS_MAX_RECORDS) {
+  if (!records.length) {
     return;
   }
-  records
-    .sort((a, b) => a.touchedAt - b.touchedAt)
-    .slice(0, records.length - LS_MAX_RECORDS)
-    .forEach((record) => {
-      removeCachedRecordFromLocalStorage(record.key);
-    });
+  // 两个上限同时生效：条数 LS_MAX_RECORDS、单条 LS_MAX_RECORD_BYTES、总字节
+  // LS_TOTAL_BYTES。任一超出就丢最旧的（按 touchedAt，与会话缓存同一原则：
+  // 丢用户最久没碰的，不丢正在看的）。
+  let remaining = records.length;
+  let total = records.reduce((sum, r) => sum + recordBytes(r), 0);
+  const oldestFirst = records.slice().sort((a, b) => a.touchedAt - b.touchedAt);
+  for (const record of oldestFirst) {
+    if (remaining <= LS_MAX_RECORDS && total <= LS_TOTAL_BYTES) {
+      break;
+    }
+    total -= recordBytes(record);
+    remaining -= 1;
+    removeCachedRecordFromLocalStorage(record.key);
+  }
+}
+
+/** 记录实际占用的字节数。JSON.stringify().length 是 UTF-16 码元数，对中文
+ *  会低估三倍 —— 用 Blob 量真实字节，否则预算算不准。 */
+function recordBytes(record: CachedFileRecord): number {
+  try {
+    return new Blob([JSON.stringify(record)]).size;
+  } catch {
+    return JSON.stringify(record).length * 2;
+  }
 }
 
 function openDB(): Promise<IDBDatabase> {

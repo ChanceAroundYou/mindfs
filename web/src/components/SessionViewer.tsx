@@ -12,6 +12,7 @@ import {
   SESSION_WINDOW_SIZE,
   clearWindowedView,
   getSessionWindow,
+  mergeSessionExchanges,
   type TokenUsage,
   setWindowedView,
   type ExchangeAux,
@@ -1384,22 +1385,25 @@ function SessionViewerInner({
         (winSession?.exchange_aux as Record<string, ExchangeAux[]>) || {};
       setVisibleExchanges((prev) => {
         if (!opts?.keepOlder) return winExchanges;
-        // 重锚定换窗时保住用户已翻上去的历史：窗口只覆盖 [minSeq, maxSeq]，
-        // 比 minSeq 更老的条目是 loadMore 一页页取回来的，整体替换会把它们扔掉
-        // —— 表现为「翻上去加载出来了、闪一下又回到 20 条」，而且顶部哨兵再次可见
-        // 又触发 loadMore，形成 40↔20 的无限抖动。
-        const winMinSeq = Number(res.meta?.minSeq || 0);
-        if (!winMinSeq) return winExchanges;
-        const older = prev.filter((ex) => {
-          const seq = Number((ex as any)?.seq || 0);
-          return seq > 0 && seq < winMinSeq;
-        });
-        return older.length ? [...older, ...winExchanges] : winExchanges;
+        // keepOlder：窗口只覆盖 [minSeq, maxSeq]，比 minSeq 更老的首帧种子 / loadMore
+        // 翻出来的历史必须保住 —— 整体替换会把它们扔掉，表现为「刚加载出来的历史闪一下
+        // 又没了」，顶部哨兵再次可见又触发 loadMore，形成 40↔20 的无限抖动。
+        return mergeSessionExchanges(prev, winExchanges) as ExchangeArray;
       });
       setVisibleAux((prev) =>
         opts?.keepOlder ? { ...prev, ...winAux } : winAux,
       );
-      setWindowMeta(res.meta);
+      // minSeq 必须报**实际可见的最小 seq**，不能直接用窗口那份：keepOlder 合并进来的
+      // 种子可能比窗口更老，用窗口的 minSeq 会让下一次 loadMore 去取已经有的行
+      // （渲染两遍），窗口越新、种子越全越容易触发。
+      setWindowMeta((prevMeta) => {
+        const winMinSeq = Number(res.meta?.minSeq || 0);
+        if (!opts?.keepOlder || !winMinSeq) return res.meta;
+        return {
+          ...res.meta,
+          minSeq: Math.min(winMinSeq, Number(prevMeta?.minSeq || 0) || winMinSeq),
+        };
+      });
       // applyWindow 只服务「最新窗口」（init / anchor）——loadMore 与 targetSeq 取窗直接
       // setWindowMeta，不经过这里，因此 latestSeq 不会被旧/中段窗口的 maxSeq 污染。
       noteLatestSeq(sessionKey, res.meta);
@@ -1420,16 +1424,16 @@ function SessionViewerInner({
     }
     // 进入窗口化视图，隔离 syncSession 的 truncated 全量回补（见 session.ts windowedView 标记）。
     setWindowedView(sessionKey, true);
-    // 方案 B 首帧按需：避免先用全量做首帧导致长对话从头刷到尾。
-    // 若外层传入的是全量（可能来自 App 旧缓存或网络全量兜底），此处仅取尾部
-    // SESSION_WINDOW_SIZE 条作首帧，随后 getSessionWindow({ latest: SESSION_WINDOW_SIZE })
-    // 会以服务端窗口覆盖，保持首帧 O(SESSION_WINDOW_SIZE)。
-    // 避免种子与 overlay 重复显示同一轮次。
+    // 方案 B 首帧按需：避免先用**全量**做首帧导致长对话从头刷到尾。
+    // 首帧种子是 App 缓存里已落盘的行（live 路径与 IndexedDB 都已按预算从**头部**
+    // 淘汰过，见 toPersistentSession），这里不再二次截断 ——
+    //
+    // 曾经的 `slice(-SESSION_WINDOW_SIZE)` 就是「切会话闪一下」的成因（2026-10-05）：
+    // 它在加载过程中把缓存的头部砍掉，只留尾部 20 条，随后服务端窗口再整体替换一次。
+    // 用户看到的是「完整对话 → 塌成最后一条用户消息 → 回答慢慢补回来」。
+    // 淘汰只能发生在**写入**时、只能从头淘汰，且不该在加载过程中再砍一遍。
     const incomingExs = Array.isArray(session?.exchanges) ? (session.exchanges as ExchangeArray) : ([] as ExchangeArray);
-    const persistedSeed = incomingExs.filter((e) => Number((e as any)?.seq || 0) > 0);
-    const seedExs = (persistedSeed.length > SESSION_WINDOW_SIZE
-      ? persistedSeed.slice(-SESSION_WINDOW_SIZE)
-      : persistedSeed) as ExchangeArray;
+    const seedExs = incomingExs.filter((e) => Number((e as any)?.seq || 0) > 0);
     const seedAux: Record<string, ExchangeAux[]> = {};
     const seedSeqs = new Set(seedExs.map((e) => Number((e as any)?.seq || 0)));
     for (const [k, v] of Object.entries((session?.exchange_aux || {}) as Record<string, ExchangeAux[]>)) {
@@ -1440,7 +1444,10 @@ function SessionViewerInner({
     getSessionWindow(rootId || "", sessionKey, { latest: SESSION_WINDOW_SIZE, nodeId: sessionNodeId })
       .then((res) => {
         if (cancelled) return;
-        applyWindow(res);
+        // keepOlder：窗口只覆盖 [minSeq, maxSeq]，比 minSeq 更老的条目是首帧种子
+        // （或 loadMore 翻出来的）——整体替换会把它们扔掉，表现为「刚加载出来的历史
+        // 闪一下又没了」。合并后可见集单调增长，切换会话不再回缩。
+        applyWindow(res, { keepOlder: true });
         if (res) {
           shouldStickToBottomRef.current = true;
           setShowJumpToLatest(false);
@@ -1480,7 +1487,7 @@ function SessionViewerInner({
           : [];
         const winAux =
           (winSession?.exchange_aux as Record<string, ExchangeAux[]>) || {};
-        setVisibleExchanges((prev) => [...winExchanges, ...prev]);
+        setVisibleExchanges((prev) => mergeSessionExchanges(winExchanges, prev) as ExchangeArray);
         setVisibleAux((prev) => ({ ...prev, ...winAux }));
         setWindowMeta(res.meta);
         setLoadingMore(false);

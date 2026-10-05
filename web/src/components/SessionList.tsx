@@ -1,4 +1,4 @@
-import React, { memo, useEffect, useMemo, useRef, useState } from "react";
+import React, { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { AgentIcon } from "./AgentIcon";
 import { ModeIcon } from "./ModeIcon";
 import { NodeBadgeHeader } from "./NodeBadgeHeader";
@@ -7,7 +7,13 @@ import { hexToRgbaApp } from "../app/taskIcons";
 import { resolveGroupColor } from "../services/sessionGroupDisplay";
 import { scopeKey } from "../services/scope";
 import { pruneChildState } from "../services/sessionTree";
-import { fetchPins, setProjectPin } from "../services/pins";
+import {
+  optimisticProjectPin,
+  readPins,
+  refreshPinsFromServer,
+  setProjectPin,
+  subscribePins,
+} from "../services/pins";
 import { useI18n, type Locale } from "../i18n";
 import { type DirectorySortMode, sortDirectoryEntries } from "../services/directorySort";
 
@@ -810,18 +816,6 @@ export function SessionList({
   );
 }
 
-// 项目置顶的本地缓存：右栏每次打开都重挂载本组件，同步读 localStorage 起始态，
-// 避免「先按无置顶渲染、偏好到达后重排」的闪动；服务端偏好仍是事实源
-// 乐观更新用：置顶/取消一条，返回新表（不改动入参）。
-function pinWithToggle(pins: Record<string, number>, key: string): Record<string, number> {
-  const next = { ...pins };
-  if (next[key]) {
-    delete next[key];
-  } else {
-    next[key] = Date.now();
-  }
-  return next;
-}
 
 export function MultiProjectSessionList({
   groups,
@@ -855,9 +849,22 @@ export function MultiProjectSessionList({
   // 折叠态的子会话基数（键与 expandedChildren 同形）：展开**之前**记下当时的已加载数，
   // 折叠态按它算，不受展开时陆续拉回来的批次影响。
   const [collapsedBaseCount, setCollapsedBaseCount] = useState<Record<string, number>>({});
-  // 置顶以**服务端**为准（主节点那张表），不再有 localStorage 缓存层：
-  // 缓存只为了「先出帧」，而用户要的是「A 设备置顶、B 设备刷新后也置顶」。
-  const [pinnedProjects, setPinnedProjects] = useState<Record<string, number>>({});
+  // 置顶以 **store** 为唯一来源（services/pins.ts）。首帧同步读 localStorage，
+  // 所以切项目时置顶区第一帧就完整 —— 不会先空表再重排。
+  //
+  // 不再自己 useState + useEffect 拉一次：那是「第二份能重排列表的状态」，
+  // 与 store 到达时的那次各排一次，就是右侧狂跳的两个来源。
+  //
+  // 依赖 selectedRootId / selectedNodeId：切项目或切节点时顺带刷新一次，另一台
+  // 设备上的置顶改动就此可见（用户不要跨设备实时，导航时刷新就是约定的时机）。
+  // 依赖写空数组的旧版本只在挂载时拉一次 —— 切项目后看到的还是首次那份。
+  useEffect(() => {
+    void refreshPinsFromServer().catch(() => {
+      /* 拉不到就按缓存显示，不闪成全不置顶 */
+    });
+  }, [selectedRootId, selectedNodeId]);
+  const pinsSnapshot = useSyncExternalStore(subscribePins, readPins, readPins);
+  const pinnedProjects = pinsSnapshot.projects;
   // 展开态回收：分组里的会话消失（删除/归档/切节点）后，其条目必须随之消失
   useEffect(() => {
     const live = new Set<string>();
@@ -870,28 +877,6 @@ export function MultiProjectSessionList({
     setLoadingChildren((prev) => pruneChildState(prev, live));
     setChildrenHasMore((prev) => pruneChildState(prev, live));
   }, [groups]);
-  // 项目置顶以**服务端**为准（主节点那张表）。拉取失败保持现状（空表 = 全不置顶），
-  // 不做任何本地回退 —— 曾经的 localStorage 缓存层正是「A 设备置顶、B 设备
-  // 看不到」这种分裂状态的来源。
-  //
-  // **依赖 selectedRootId / selectedNodeId**：切换项目或节点时顺带刷新一次，
-  // 另一台设备上的置顶改动就此可见。用户明确不要跨设备实时（那需要一条
-  // 主节点 → 各 worker 浏览器的新通道），「导航时刷新」就是约定的同步时机。
-  // 依赖写空数组的旧版本只在挂载时拉一次 —— 于是切项目、切节点、切账户
-  // 之后看到的都是首次那份，这就是用户报的「设备 B 没置顶」。
-  useEffect(() => {
-    let cancelled = false;
-    fetchPins()
-      .then((pins) => {
-        if (!cancelled) setPinnedProjects(pins.projects);
-      })
-      .catch(() => {
-        /* 拉不到就按当前显示的算，不闪成全不置顶 */
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedRootId, selectedNodeId]);
   const groupScopeKey = (group: ProjectSessionGroup) =>
     scopeKey(String((group as any)?._nodeId || "").trim(), group.rootId);
   // 右侧多项目列表：与左侧 FileTree 保持一致的分层排序
@@ -934,13 +919,11 @@ export function MultiProjectSessionList({
   }, [groups, pinnedProjects, projectSortMode]);
   const togglePinnedProject = (group: ProjectSessionGroup) => {
     const key = groupScopeKey(group);
-    // 先乐观更新，点了立刻有反馈；失败回滚到服务端给的那份真相。
-    const snapshot = pinnedProjects;
-    setPinnedProjects(pinWithToggle(snapshot, key));
-    void setProjectPin(key, !snapshot[key]).then(
-      (next) => setPinnedProjects(next.projects),
-      () => setPinnedProjects(snapshot),
-    );
+    // 乐观更新，点了立刻有反馈；失败回滚到写入前那份快照。
+    const rollback = optimisticProjectPin(key, !readPins().projects[key]);
+    void setProjectPin(key, !readPins().projects[key]).then(refreshPinsFromServer, () => {
+      rollback();
+    });
   };
   const sessionByKey = useMemo(() => {
     const byKey = new Map<string, SessionItem>();

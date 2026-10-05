@@ -183,49 +183,30 @@ function getHistoryCacheEntry(rootId: string, nodeId?: string): GitHistoryCacheE
   if (cached) {
     return cached;
   }
-  const persisted = readStorageJSON<GitHistoryCacheEntry>(historyListStorageKey(rootId, nid || undefined));
-  if (persisted && Array.isArray(persisted.items)) {
-    const normalized = {
-      items: persisted.items.filter((item) => !!item?.hash),
-      hasMore: persisted.hasMore === true,
-      remoteHead: typeof persisted.remoteHead === "string" ? persisted.remoteHead : undefined,
-    };
-    normalized.items = applyRemoteHead(normalized.items, normalized.remoteHead);
-    gitHistoryListCache.set(scoped, normalized);
-    return normalized;
-  }
-  // 兼容裸键迁移：旧数据以裸 rootId 存，命中后以新键重写并删除裸键避免第二节点继承
+  // 兼容裸键迁移：旧版本以裸 rootId 缓存，命中后归到新键。
+  // 只在**内存**里迁：持久层已删（见下），重启后没有旧数据可迁。
   if (nid) {
     const bareKey = String(rootId || "").trim();
     const bare = gitHistoryListCache.get(bareKey);
     if (bare) {
       gitHistoryListCache.set(scoped, bare);
-      writeStorageJSON(historyListStorageKey(rootId, nid), bare);
       gitHistoryListCache.delete(bareKey);
-      if (canUseStorage()) window.localStorage.removeItem(historyListStorageKey(rootId));
       return bare;
-    }
-    const barePersisted = readStorageJSON<GitHistoryCacheEntry>(historyListStorageKey(rootId));
-    if (barePersisted && Array.isArray(barePersisted.items)) {
-      const normalized = {
-        items: barePersisted.items.filter((item) => !!item?.hash),
-        hasMore: barePersisted.hasMore === true,
-        remoteHead: typeof barePersisted.remoteHead === "string" ? barePersisted.remoteHead : undefined,
-      };
-      normalized.items = applyRemoteHead(normalized.items, normalized.remoteHead);
-      gitHistoryListCache.set(scoped, normalized);
-      writeStorageJSON(historyListStorageKey(rootId, nid), normalized);
-      if (canUseStorage()) window.localStorage.removeItem(historyListStorageKey(rootId));
-      return normalized;
     }
   }
   return null;
 }
 
+// 提交列表**只**留内存缓存，不落localStorage（2026-10-05）。
+//
+// 它没有失效机制：别人 push、本机 commit 之后，持久层里的列表永远不会更新，
+// 而 remoteHead 会让 UI 以为「已是最新」—— 症状是明明有新提交却看不到。
+// 重新获取成本很低（服务端跑本地 git log），缓存收益远小于「列表停在过去」
+// 的风险。commit 的文件列表与 diff 仍留持久层：那是单次提交视图，
+// 不可变且可能很大。
 function setHistoryCacheEntry(rootId: string, entry: GitHistoryCacheEntry, nodeId?: string): void {
   const scoped = gitScopedRoot(rootId, nodeId);
   gitHistoryListCache.set(scoped, entry);
-  writeStorageJSON(historyListStorageKey(rootId, String(nodeId || "").trim() || undefined), entry);
 }
 
 function normalizeGitHistoryPayload(payload: any): GitHistoryPayload {
@@ -312,6 +293,8 @@ export function clearGitHistoryCache(rootId?: string, nodeId?: string): void {
     if (nid) {
       const scoped = gitScopedRoot(rid, nid);
       gitHistoryListCache.delete(scoped);
+      // 历史列表已不落盘（setHistoryCacheEntry 只写内存），这两行是清理**旧版本**
+      // 留下的死数据 —— 删了它们，老用户本地就不会再攒一份永不更新的陈旧列表。
       if (canUseStorage()) window.localStorage.removeItem(historyListStorageKey(rid, nid));
       removeStorageByPrefix(`${COMMIT_FILES_STORAGE_PREFIX}${encodeURIComponent(scoped)}:`);
       removeStorageByPrefix(`${COMMIT_DIFF_STORAGE_PREFIX}${encodeURIComponent(scoped)}:`);

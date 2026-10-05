@@ -11,6 +11,68 @@ const httpPath = path.resolve(import.meta.dirname, "../../server/internal/api/ht
 
 const sessionSrc = fs.readFileSync(sessionServicePath, "utf8");
 const viewerSrc = fs.readFileSync(sessionViewerPath, "utf8");
+// 剥掉注释后的代码视图：注释里提到某个坏写法是正常的（那通常正是在解释它为什么被删）。
+const stripComments = (src) => src.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
+const sessionCode = stripComments(sessionSrc);
+const viewerCode = stripComments(viewerSrc);
+
+// session.ts 在 vm 里跑起来（只为拿到两个纯函数：mergeSessionExchanges 与模块私有的
+// toPersistentSession —— 断言行为，不断言源码形状）。六个 import 全桩掉：模块顶层不碰它们。
+//
+// toPersistentSession 是写路径内部函数、刻意不导出（没有第二个调用方）。测试在
+// transpile 前给源码补一行 export 来拿到它 —— 比把生产代码的可见性扩成「给测试看」干净。
+const SESSION_PRIVATE_PROBE = "\nexport const __toPersistentSession = toPersistentSession;\n";
+
+function loadSessionModule() {
+  const compiled = ts.transpileModule(sessionSrc + SESSION_PRIVATE_PROBE, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
+  }).outputText;
+  const modExports = {};
+  const sandbox = {
+    exports: modExports,
+    module: { exports: modExports },
+    require: (name) => {
+      if (name.includes("/base")) return { appURL: () => "", wsURL: () => "" };
+      if (name.includes("authGate")) return { currentUser: null };
+      if (name.includes("rootNode")) return { getRootNodeId: () => "" };
+      if (name.includes("/scope")) return { scopeSessionKey: (a, b) => `${a}::${b}` };
+      if (name.includes("/api")) return { protectedFetch: async () => ({}), protectedJSON: async () => ({}), withNodeRetry: (f) => f() };
+      if (name.includes("e2ee")) {
+        // 桩到「调用不炸」为止：模块顶层会 setClientId / hasSecret / isRequired。
+        const noop = () => false;
+        return {
+          e2eeService: {
+            setClientId: () => {},
+            hasSecret: noop,
+            isRequired: noop,
+            wsProofParams: () => ({}),
+            ensureSession: async () => {},
+            handleServerError: () => {},
+            encodeWSMessage: (m) => m,
+            decodeWSMessage: (m) => m,
+          },
+        };
+      }
+      throw new Error(`unexpected require: ${name}`);
+    },
+    console,
+    URLSearchParams,
+    indexedDB: undefined,
+    window: undefined,
+    document: undefined,
+    fetch: async () => ({}),
+  };
+  vm.runInNewContext(compiled, sandbox, { filename: sessionServicePath });
+  // transpile 成 CommonJS 后是 `exports.foo = ...`，所以要 sandbox.exports
+  // —— 让它和 module.exports 指向同一对象，否则读 module.exports 什么都拿不到。
+  return modExports;
+}
+
+// 淘汰探针：喂 exchanges 进去，拿保留的 exchanges 出来。
+function buildEvictFrom(toPersistentSession) {
+  return (exchanges) =>
+    toPersistentSession({ key: "probe", exchanges, exchange_aux: {} }).exchanges;
+}
 const managerSrc = fs.readFileSync(managerPath, "utf8");
 const httpSrc = fs.readFileSync(httpPath, "utf8");
 
@@ -208,11 +270,35 @@ assert.match(
   /function normalizeOverlayText\(value: string\): string \{/,
   "whitespace-insensitive overlay comparison helper missing",
 );
-// init 种子只取持久化部分，避免与 overlay 重复
+// init 种子只取持久化部分，避免与 overlay 重复。
+// 注意：种子**不再**二次截断到 SESSION_WINDOW_SIZE —— 加载过程中砍头部正是
+// 「切会话闪一下」的成因（2026-10-05）。淘汰只在写入时发生（toPersistentSession）。
 assert.match(
   viewerSrc,
-  /const persistedSeed = incomingExs\.filter\(\(e\) => Number\(\(e as any\)\?\.seq \|\| 0\) > 0\);/,
+  /const seedExs = incomingExs\.filter\(\(e\) => Number\(\(e as any\)\?\.seq \|\| 0\) > 0\);/,
   "init seed must be persisted-only (overlay owns the seq=0 tail)",
+);
+assert.doesNotMatch(
+  viewerCode,
+  /slice\(-SESSION_WINDOW_SIZE\)/,
+  "the init seed must not be truncated again while loading — that truncation is the switch-away flicker",
+);
+// 窗口到达时必须**并入**种子（keepOlder），不能整体替换。
+assert.match(
+  viewerSrc,
+  /applyWindow\(res, \{ keepOlder: true \}\);/,
+  "the init window must merge into the seed (keepOlder) or restored history is dropped again",
+);
+// 三条可见集来源共用同一个按 seq 去重的合并，纯拼接会把同一行渲染两遍。
+assert.match(
+  viewerSrc,
+  /mergeSessionExchanges\(prev, winExchanges\)/,
+  "applyWindow must merge by seq, not concatenate (seed and window overlap)",
+);
+assert.match(
+  viewerSrc,
+  /mergeSessionExchanges\(winExchanges, prev\)/,
+  "loadMore must merge by seq, not concatenate (the page overlaps what is visible)",
 );
 // 重锚定：App 附锚点，viewer 一次性原子换窗
 assert.match(
@@ -245,6 +331,156 @@ assert.match(
   /_windowMeta: anchoredMeta as any,/,
   "App fallback path must attach locally-computed meta",
 );
+
+// ── 切会话闪一下（2026-10-05）────────────────────────────────────────────
+// restoreActiveSession 原来把 20 条的窗口**整体覆盖**进缓存。缓存里可能有几百条
+// （用户翻上去过、或 live 路径落库过），覆盖掉头部后切回来只剩尾 20 条作首帧种子 ——
+// 于是「完整对话 → 塌成最后一条用户消息 → 回答慢慢补回来」。
+// 窗口必须**并入**缓存，且 transientTail（seq=0）要接回，否则刚发的消息消失一拍。
+assert.match(
+  appSrc,
+  /\.\.\.mergeSessionExchanges\(cachedBeforeSync as any, winExs\),/,
+  "restoreActiveSession must merge the window into the cache, not overwrite it",
+);
+assert.match(
+  appSrc,
+  /const transientTail = winExs\.filter\(\s*\(exchange\) => Number\(\(exchange as any\)\?\.seq \|\| 0\) === 0,\s*\);/,
+  "the seq=0 transient tail must be carried past the merge (mergeSessionExchanges drops seq<=0)",
+);
+// aux 必须一并并入：exchanges 保住历史而 exchange_aux 只剩窗口那份时，历史行上的
+// 工具卡会凭空消失（按 seq 覆盖，不是拼接 —— 拼接会把同一张卡渲染两遍）。
+assert.match(
+  appSrc,
+  /exchange_aux: \{\s*\n\s*\.\.\.\(\(cachedBeforeSync as any\)\?\.exchange_aux \|\| \{\}\),\s*\n\s*\.\.\.\(sess\.exchange_aux \|\| \{\}\),\s*\n\s*\},/,
+  "exchange_aux must merge per-seq too, or restored history loses its tool cards",
+);
+assert.match(
+  sessionSrc,
+  /exchanges: mergeSessionExchanges\(baseExchanges, incomingExchanges\),/,
+  "appendSessionDelta must use the seq-deduping merge, not concatenation",
+);
+
+// 合并函数本体**直接跑**：三条可见集来源（缓存 / 服务端窗口 / loadMore 页）互相
+// 重叠，纯拼接会把同一行渲染两遍（实测 2026-10-05：切会话后历史里每条消息出现两次）。
+// 这条一旦坏了症状是「内容重复」，源码正则看不出来 —— 所以断言行为，不断言形状。
+const sessionMod = loadSessionModule();
+const mergeSessionExchanges = sessionMod.mergeSessionExchanges;
+assert.equal(typeof mergeSessionExchanges, "function", "mergeSessionExchanges must be exported");
+
+// 重叠：缓存 1..5，窗口 4..8 → 1..8 各一行，不重不漏
+const overlapped = mergeSessionExchanges(
+  [1, 2, 3, 4, 5].map((seq) => ({ seq, content: "old" })),
+  [4, 5, 6, 7, 8].map((seq) => ({ seq, content: "new" })),
+);
+// 注意用 JSON 比而不是 deepEqual：vm 里造出来的对象原型来自另一个 realm，
+// deepEqual 的原型检查会因此判它们「结构相同但不相等」。
+assert.equal(
+  JSON.stringify(overlapped.map((ex) => ex.seq)),
+  JSON.stringify([1, 2, 3, 4, 5, 6, 7, 8]),
+  "overlapping sources must merge into one row per seq",
+);
+assert.equal(
+  overlapped.filter((ex) => ex.seq === 4).length,
+  1,
+  "a seq present in both sources must render once, not twice",
+);
+// 同 seq 冲突：后到者赢（窗口那份更新）
+assert.equal(overlapped.find((ex) => ex.seq === 4).content, "new");
+
+// seq=0 的瞬时行必须被丢掉 —— 它们归 overlay 管，混进窗口会与 overlay 重复渲染
+assert.equal(
+  JSON.stringify(
+    mergeSessionExchanges([{ seq: 0, content: "live" }, { seq: 1, content: "a" }], []).map(
+      (ex) => ex.seq,
+    ),
+  ),
+  JSON.stringify([1]),
+  "seq=0 transient rows must be dropped (overlay owns them)",
+);
+
+// 空/垃圾输入不抛
+assert.equal(mergeSessionExchanges(null, null).length, 0);
+assert.equal(mergeSessionExchanges(undefined, [{ seq: 3 }]).length, 1);
+
+// 乱序输入必须按 seq 升序返回（调用方不自己维护顺序）
+assert.equal(
+  JSON.stringify(mergeSessionExchanges([], [{ seq: 9 }, { seq: 2 }, { seq: 5 }]).map((e) => e.seq)),
+  JSON.stringify([2, 5, 9]),
+  "the merge must sort by seq — callers rely on order",
+);
+
+// ── 缓存淘汰只从头部，永不动尾部（用户 2026-10-05 定的规则）──────────────
+// 淘汰**可以**发生（超预算），但必须满足：
+//   ① 淘汰只发生在**写入**时（toPersistentSession），不在加载过程中
+//   ② 淘汰方向是从**头部**（最旧）砍，尾部最新的一条必须永远活着
+// 曾经的写法反了：从尾部往前扫文本、记下超预算条数，再 slice(0, len - n) ——
+// 砍掉的正是最新的那几条（超预算的通常是最长的助手回答），症状是「会话越长，
+// 开得越久，尾部丢得越多」。这两条断言钉住方向。
+assert.match(
+  sessionCode,
+  /const kept = exchanges\.slice\(keptFrom\);/,
+  "the write-path cache must keep a *suffix* of exchanges (evict from the head)",
+);
+assert.doesNotMatch(
+  sessionCode,
+  /slice\(-extraSliced\)|tail\.length - extraSliced/,
+  "head-eviction slicing is the fix — dropping from the tail is what lost the newest messages",
+);
+// 扫描下界必须是**独立的** floorStart，不能复用会被改写的 keptFrom：一旦
+// keptFrom=len-1，条件 `i >= keptFrom` 立刻为假、循环只跑一轮，只剩最新那一条。
+assert.match(
+  sessionCode,
+  /const floorStart = Math\.max\(0, exchanges\.length - SESSION_CACHE_MAX_EXCHANGES\);/,
+  "the scan floor must be an independent bound, not the mutated keep-cursor",
+);
+assert.doesNotMatch(
+  sessionCode,
+  /i >= keptFrom/,
+  "looping against the mutated cursor silently keeps only the newest row",
+);
+// 被淘汰的头部行不该留下孤立 aux（重新加载时那批工具卡会凭空多出来）。
+assert.match(
+  sessionCode,
+  /if \(keptSeqs\.has\(Number\(seq\)\)\) keptAux\[seq\] = items;/,
+  "aux for evicted head rows must be dropped with them",
+);
+
+// 淘汰器**直接跑**一遍五个边界情形。这段逻辑出过错两次（一次只留最新一条、
+// 一次单条超预算时整份都留不下），形状断言看不出来，所以断言行为。
+const evictProbe = loadSessionModule();
+const evict = buildEvictFrom(evictProbe.__toPersistentSession);
+assert.equal(typeof evict, "function", "toPersistentSession must be reachable for the eviction probe");
+
+const mk = (n, bytes) => Array.from({ length: n }, (_, i) => ({ seq: i + 1, content: "x".repeat(bytes) }));
+const seqOf = (kept) => kept.map((e) => e.seq);
+
+// ① 超文本预算：保留**尾部** ~200 条，头部被淘汰
+{
+  const kept = evict(mk(500, 1024));
+  assert.equal(kept.length, 200, "must keep as many 1KB rows as the 200KB budget allows");
+  assert.equal(seqOf(kept)[0], 301, "eviction must come off the head");
+  assert.equal(seqOf(kept).at(-1), 500, "the newest row must always survive");
+}
+// ② 超条数预算：条数封顶，仍保尾部
+{
+  const kept = evict(mk(600, 10));
+  assert.equal(kept.length, 500, "the row-count cap still applies");
+  assert.equal(seqOf(kept)[0], 101, "eviction must come off the head");
+  assert.equal(seqOf(kept).at(-1), 600);
+}
+// ③ 单条就超预算：一条都不留（留了就是白留一份超预算的尾巴）
+{
+  const kept = evict(mk(5, 300 * 1024));
+  assert.equal(kept.length, 0, "a single oversized row must not be kept — full refetch is the answer");
+}
+// ④ 未超预算：一条都不丢
+{
+  const kept = evict(mk(10, 1024));
+  assert.equal(kept.length, 10, "under budget nothing may be evicted");
+  assert.equal(seqOf(kept)[0], 1);
+}
+// ⑤ 空输入不抛
+assert.equal(evict([]).length, 0);
 
 // ── R4: probe 放宽（8s + 连续 2 次失败才强断，收消息清零）────────────────
 assert.match(
@@ -306,10 +542,19 @@ assert.match(
 );
 assert.match(viewerSrc, /latest:\s*SESSION_WINDOW_SIZE/, "viewer init fetch must use the constant");
 assert.match(viewerSrc, /limit:\s*SESSION_WINDOW_SIZE/, "viewer page step must use the constant");
-assert.match(
-  viewerSrc,
-  /persistedSeed\.slice\(-SESSION_WINDOW_SIZE\)/,
-  "viewer first-frame seed must use the constant",
+// 首帧种子**不再**截断到 SESSION_WINDOW_SIZE —— 这条断言原本钉住的正是那个 bug。
+// 它把「加载过程中砍掉缓存头部」制度化了：切会话时先塌成尾部 20 条，再被服务端
+// 窗口整体替换一次，用户看到「完整对话 → 最后一条用户消息 → 回答慢慢补回来」。
+// 常量仍然管**服务端取窗**的尺寸（下面两条 latest/limit），但不再管本地种子。
+assert.doesNotMatch(
+  viewerCode,
+  /slice\(-SESSION_WINDOW_SIZE\)/,
+  "the first-frame seed must not be truncated — the constant governs the server fetch, not local eviction",
+);
+assert.doesNotMatch(
+  viewerCode,
+  /const seedExs = persistedSeed/,
+  "no second truncation step for the seed; eviction belongs to the write path only",
 );
 assert.match(
   appSrc,
