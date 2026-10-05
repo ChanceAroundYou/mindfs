@@ -2262,14 +2262,18 @@ export function App({ onGoHome }: AppProps) {
       )
         ? ((cachedBeforeSync as any).exchanges as Exchange[])
         : [];
-      // 事件光标（d36cc53 的重连重锚）：加载后重置，保持既有语义不变。
-      const resumeCursor = sessionService.getEventCursor(
-        resolvedRoot,
-        resolvedKey,
-      );
-      if (resumeCursor) {
-        sessionService.clearEventCursor(resolvedRoot, resolvedKey);
-      }
+      // **不要在这里清事件光标。**
+      // 光标是「我已经收到 X 为止的事件」的凭证，`session.ready` 会把它带上，
+      // 服务端据此只补发缺口。清掉它 = 主动声明「我什么都没有」，服务端只好把在途
+      // 内容**整个重推一遍** —— 用户看到的就是「每切一次会话都刷一大堆」，
+      // 而且重推的内容还会被客户端再拼一次（重复渲染）。
+      //
+      // 而且这个清理本来就是多余的：轮次边界（`session.user_message` / `session.done`）
+      // 已经会自动清（见 session.ts 的 handleEvent）。在加载时再清一遍，等于
+      // 把**增量追赶**硬生生降级成**全量重放**。
+      //
+      // 这行多半是那个恒为 false 的守卫的 `else` 分支留下的连带损伤 —— 与
+      // composeLoadedExchanges 那批 bug 同一个源头。
       const inflight = loadingSessionRef.current[cacheKey] as unknown as Promise<Session | null> | undefined;
       if (inflight) {
         const hit = await inflight;
@@ -2313,10 +2317,10 @@ export function App({ onGoHome }: AppProps) {
               ...sess,
               key: resolvedKey,
               pending,
-              // 加载时的唯一组装规则：服务端行并入缓存，再把缓存里的瞬时行接回。
-              // 这条规则曾在这里、fallback、handleSyncSession 各写一遍，三处都去
-              // 服务端回包找瞬时行（那里没有），于是每次加载都把在途内容丢掉一次。
-              exchanges: composeLoadedExchanges(winExs, cachedExchangesBefore),
+              // 加载时的唯一组装规则：服务端行并入缓存，在途时再把 seq=0 接回。
+              // 判据是 `pending` —— 不在跑就没有在途内容，缓存里的 seq=0 全是残留
+              // （跨多次 compact 堆起来的那种，渲染出来就是「同一段正文两遍」）。
+              exchanges: composeLoadedExchanges(winExs, cachedExchangesBefore, pending),
               // aux 同理并入：exchanges 保住历史而 exchange_aux 只剩窗口那份，
               // 那些行上的工具卡会凭空消失（历史里的 read/edit 变纯文本）。
               // 按 seq 覆盖而非拼接 —— 同一个 seq 被窗口与缓存各带一份时，
@@ -2346,16 +2350,6 @@ export function App({ onGoHome }: AppProps) {
         if (!fullSession) {
           return null;
         }
-        // 与窗口分支同一条组装规则。syncSession 的结果来自 IDB 缓存 + 服务端增量，
-        // 它不知道内存里正在流式输出的那部分 —— 必须由这里接回（实测 2026-10-06：
-        // 服务端只回 15 条已落盘行，内存缓存有 376 条，其中 361 条是在途内容）。
-        fullSession = {
-          ...fullSession,
-          exchanges: composeLoadedExchanges(
-            (fullSession as any).exchanges,
-            cachedExchangesBefore,
-          ),
-        } as Session;
         const serverPending =
           typeof (fullSession as any)?.pending === "boolean"
             ? !!(fullSession as any).pending
@@ -2367,6 +2361,18 @@ export function App({ onGoHome }: AppProps) {
           serverPending === false
             ? false
             : resolvePendingForSession(resolvedRoot, resolvedKey, !!serverPending);
+        // 与窗口分支同一条组装规则。syncSession 的结果来自 IDB 缓存 + 服务端增量，
+        // 它不知道内存里正在流式输出的那部分 —— 必须由这里接回（实测 2026-10-06：
+        // 服务端只回 15 条已落盘行，内存缓存有 376 条，其中 361 条是在途内容）。
+        // 判据是 `pending`：不在跑就没有在途内容，缓存里的 seq=0 全是残留。
+        fullSession = {
+          ...fullSession,
+          exchanges: composeLoadedExchanges(
+            (fullSession as any).exchanges,
+            cachedExchangesBefore,
+            pending,
+          ),
+        } as Session;
         const anchorAt = ++anchorSeqRef.current;
         const anchoredExs = Array.isArray((fullSession as any)?.exchanges)
           ? ((fullSession as any).exchanges as any[])

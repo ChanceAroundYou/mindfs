@@ -427,3 +427,30 @@ func TestWSProofPathExcludesProofQueryParams(t *testing.T) {
 		t.Fatalf("wsProofPath() = %q, want %q", got, want)
 	}
 }
+
+// 重放必须**整批一条消息**发。
+//
+// 逐条发 = 客户端「收一条 → 渲染一次」，几百条事件就是几百次渲染 —— 用户看到的
+// 是「打开/切回会话时逐渐刷一大堆」（2026-10-06 实测确认，这是那条观感的直接成因）。
+// 整批放进一条消息，客户端在同一事件处理器内循环应用，React 会批处理成一次渲染。
+func TestReplayBatchIsOneMessage(t *testing.T) {
+	events := []StreamEvent{
+		{Type: string(agenttypes.EventTypeMessageChunk), Data: agenttypes.MessageChunk{Content: "a"}, EventCursor: "8:1"},
+		{Type: string(agenttypes.EventTypeMessageChunk), Data: agenttypes.MessageChunk{Content: "b"}, EventCursor: "8:2"},
+		{Type: string(agenttypes.EventTypeMessageChunk), Data: agenttypes.MessageChunk{Content: "c"}, EventCursor: "8:3"},
+	}
+	resp := buildSessionStreamBatchResponse("root", "sess-1", events)
+	if resp.Type != "session.stream" {
+		t.Fatalf("type = %q; want session.stream（客户端 dispatch 按类型分发）", resp.Type)
+	}
+	got, ok := resp.Payload["events"].([]StreamEvent)
+	if !ok || len(got) != 3 {
+		t.Fatalf("payload.events = %#v; want all 3 events in ONE message", resp.Payload["events"])
+	}
+	if _, hasSingle := resp.Payload["event"]; hasSingle {
+		t.Fatalf("batch message must not also carry a single `event` key")
+	}
+	if resp.Payload["root_id"] != "root" || resp.Payload["session_key"] != "sess-1" {
+		t.Fatalf("payload must keep root_id/session_key: %#v", resp.Payload)
+	}
+}

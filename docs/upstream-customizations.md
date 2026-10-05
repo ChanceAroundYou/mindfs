@@ -128,6 +128,7 @@
 | G-Q | 会话别名/外部导入/Fork 扁平 | 数据模型 | `e459a13:SessionList` 切片、`f746124/4c59fcf/ab8cfed` | `fork→独立`/`agent+session_id→alias` |
 | G-R | 模型识别与流式透传 | 修复 | `af0a37f` 主体、`ab8cfed:probe` 1M 切片、`e92fecf:AgentSelector` 切片 | DeepSeek/Claude 1M 探测与 `stream_hub/ws` 透传 |
 | G-S | 作用域隔离与列表折叠 | 修复 | `3d3417a/ed44573/0591238` + `7a12971:App` 聚合切片 | `scope.ts`、`expanded/loadMore` 按 `nodeId:projectId` |
+| G-T | 流式重放与正文正确性 | 修复 | 见 §3「G-T」—— `session.ts`/`useSessionStreamCache.ts`/`useRealtimeEvents.ts`/`App.tsx`/`stream_hub.go`/`ws_test.go` | 重放幂等、seq=0 只在在途时存在、重放整批一条消息 |
 | — | 未提交工作区 | 进行中 | `App.tsx/BottomSheet.tsx/SessionList.tsx/SessionViewer.tsx/ToolCallCard.tsx/AppShell.tsx` 各按 hunk 归上 | 见 §4 拆解 |
 
 > 同一提交跨组示例见 §3 表中「跨组拆分」列；同一文件跨组示例：`App.tsx` 按 hunk 分属 G-F/G-G/G-J/G-L/G-N/G-S 等 6 组，`http.go` 按 hunk 分属 G-B/G-I/G-K 三组。
@@ -303,6 +304,36 @@
 | `3d3417a` | `web/src/services/scope.ts` + `web/tests/scope-keys.test.mjs` | `scopeKey/scopeSessionKey/treeKey/expandKey` 键基建，空 `nodeId` 兼容旧格式 |
 | `3d3417a/ed44573/0591238` | `web/src/components/SessionList.tsx:expandedProjects/groupIsCurrentNode/handleProjectHeaderToggle/topLevelSessionsForGroup/remaining` | 默认展开=本节点、收起全隐藏、`remaining` 按顶层计、`onLoadMoreProject` 节点门控 |
 | `3d3417a/0591238` | `web/src/App.tsx:loadMore _nodeId 门控`、`web/src/components/FileTree.tsx/NodeBadgeHeader.tsx:chevron`、`web/vite.config.ts:escLiteral` | 跨节点同名项目不串扰、组头 SVG chevron、构建正则转义 |
+
+---
+
+### G-T 流式重放与正文正确性（2026-10-06）
+
+**互斥边界**：`session.stream` 的重放下发与客户端应用、`seq=0` 瞬时行的生命周期。
+**合上游时若与上游冲突，以本组为准** —— 这里的每一条都对应一个已实测的可见缺陷。
+
+| 改动 | 文件 | 为什么必须保留 |
+|------|------|----------------|
+| `mergeStreamedText(existing, incoming)` 纯函数 | `web/src/services/session.ts` | 流式拼接必须**重放安全**（整段重放→覆盖；重复分片→忽略；否则追加）。原先 `appendAgentChunkForSession` 是**无条件拼接**，而服务端会重推在途内容，导致同一段正文在**行内**被拼成 `aabb` —— 用户看到「文本出现两遍、越切越多」。重复在行内而非两行之间，所以任何按行内容比对的去重都查不出来 |
+| 三处拼接改调 `mergeStreamedText` | `web/src/app/useSessionStreamCache.ts`（agent 1 处、thought 2 处） | thought 那份原本自带等价判据、agent 那份没有 —— 三处收敛成一个定义，避免再次分叉 |
+| **删掉**加载时 `clearEventCursor` | `web/src/App.tsx` | 光标是「我已收到 X 为止」的凭证，`session.ready` 会带上它；清掉 = 主动要求全量重放 → 「每切一次会话刷一大堆」。而且轮次边界（`session.user_message`/`session.done`）本来就会自动清，这里是多余的 |
+| 重放**整批一条消息**下发 | `server/internal/api/stream_hub.go:replayStepToClient` + 新增 `buildSessionStreamBatchResponse` | 原实现 `for i := range events { SendToClient(...&events[i]) }` —— 几百条事件 = 几百条 WS 消息 = 几百次渲染 = 「首次打开运行中会话时逐渐刷出来」。整批一条 → 客户端同一处理器内循环 → React 批处理成一次渲染 |
+| 客户端识别批量帧 | `web/src/app/useRealtimeEvents.ts`（`session.stream` 分发） | 认 `payload.events` 数组并循环应用；单条实时事件仍走 `payload.event` |
+| `composeLoadedExchanges(server, cached, inFlight)` | `web/src/services/session.ts` + `App.tsx` 两处调用 | 加载时的**唯一**组装规则。瞬时行（seq=0）只在**在途**时保留 —— 服务端从不经窗口回包下发它们，所以绝不能去服务端回包找（曾经三处那么写、三处恒空，导致切回运行中会话时在途内容整块丢失）。另：只保留**最后一次 compact 之后**的瞬时行（compact 是服务端历史的重置点） |
+| `dropTransientExchanges` 接进 `session.done` / `compact_notice` | `web/src/services/session.ts` + `web/src/app/useRealtimeEvents.ts` | 补齐**从来不存在**的清理出口。此前 seq=0 无任何清理机制，实测跨 7 次 compact 堆积到 1100+ 条 |
+
+**针对性测试（防覆盖，改动时同步维护）**
+
+| 测试 | 钉住什么 |
+|------|---------|
+| `web/tests/session-window.test.mjs` → `mergeStreamedText` 7 组 | 增量 / 整段重放 / 重复分片 / **幂等（重放 8 次不增长）** / 逐段重放收敛 / 空输入 |
+| 同上 → `composeLoadedExchanges` 8 组 | 冷缓存 / 在途保留全部瞬时行 / **不在途全丢** / compact 边界切分 / 无 compact 不砍 / 同对象去重 / 缓存更全 / 空输入 |
+| 同上 → `dropTransientExchanges` | 清空 seq=0；无瞬时行时返回**同一引用**（避免无意义重渲染） |
+| `web/tests/upstream-restore.test.mjs` | d36cc53 契约改指真正落点（`session.ready` 带 `event_cursor`），并**反向断言 App 不得出现 `clearEventCursor`** |
+| `server/internal/api/ws_test.go` → `TestReplayBatchIsOneMessage` | 重放必须是**一条**带 `events` 数组的消息，且不同时携带单条 `event` |
+
+**验证记录**：CDP 冷启动一个运行中的会话，WS 帧统计 —— 重放 `events[92]` 到达 **1 条**（修复前会是 92 条单事件帧）；观测窗口内另有 25 条单帧为**实时**事件（正常）。
+`go build` / `go test ./internal/api/` / `tsc --noEmit` / `node --test tests/*.test.mjs`（145/145）全绿；关键判据均做变异验证（改回旧写法即红）。
 
 ---
 

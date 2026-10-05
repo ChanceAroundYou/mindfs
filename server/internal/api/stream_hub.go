@@ -136,6 +136,23 @@ func buildSessionStreamResponse(rootID, sessionKey string, event *StreamEvent) W
 	}
 }
 
+// buildSessionStreamBatchResponse 与单条版同类型，只是把 `event` 换成 `events` 数组。
+//
+// 存在的理由：重放时逐条发 = 客户端「收一条 → 渲染一次」，几百条事件就是几百次渲染，
+// 用户看到的是「打开/切回会话时逐渐刷一大堆」。整批放进一条消息，客户端在同一个事件
+// 处理器内循环应用，React 会批处理成**一次**渲染 —— 观感是一步到位。
+// 实时事件仍走单条版（`event`）。
+func buildSessionStreamBatchResponse(rootID, sessionKey string, events []StreamEvent) WSResponse {
+	return WSResponse{
+		Type: "session.stream",
+		Payload: map[string]any{
+			"root_id":     rootID,
+			"session_key": sessionKey,
+			"events":      events,
+		},
+	}
+}
+
 func buildSessionDoneResponse(rootID, sessionKey, requestID string, replay bool) WSResponse {
 	payload := map[string]any{
 		"root_id":     rootID,
@@ -1049,9 +1066,15 @@ func (h *StreamHub) nextReplayStepLocked(clientID, sessionKey string) replayStep
 }
 
 func (h *StreamHub) replayStepToClient(rootID, clientID, sessionKey string, events []StreamEvent) {
-	for i := range events {
-		h.SendToClient(clientID, buildSessionStreamResponse(rootID, sessionKey, &events[i]))
+	if len(events) == 0 {
+		return
 	}
+	// **整批一条消息发出去。** 逐条发的话客户端每收一条就渲染一次，几百条事件就是
+	// 几百次渲染 —— 用户看到的是「打开/切回会话时逐渐刷一大堆」。一条消息里循环应用
+	// 会被 React 批处理成一次渲染，观感是一步到位。
+	batch := make([]StreamEvent, len(events))
+	copy(batch, events)
+	h.SendToClient(clientID, buildSessionStreamBatchResponse(rootID, sessionKey, batch))
 }
 
 func (h *StreamHub) replayQueueToClient(rootID, clientID, sessionKey string) {

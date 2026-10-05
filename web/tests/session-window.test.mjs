@@ -435,23 +435,26 @@ assert.equal(
   "composeLoadedExchanges must be exported — it is the single load-time rule",
 );
 
-// ① 只有服务端行（冷缓存）：原样返回
-assert.equal(
-  JSON.stringify(
-    composeLoadedExchanges([1, 2, 3].map((seq) => ({ seq })), []).map((e) => e.seq),
-  ),
-  JSON.stringify([1, 2, 3]),
-);
+// ① 只有服务端行（冷缓存）：原样返回（在途与否都一样）
+for (const inFlight of [true, false]) {
+  assert.equal(
+    JSON.stringify(
+      composeLoadedExchanges([1, 2, 3].map((seq) => ({ seq })), [], inFlight).map((e) => e.seq),
+    ),
+    JSON.stringify([1, 2, 3]),
+    `cold cache must return the server rows (inFlight=${inFlight})`,
+  );
+}
 
-// ② 运行中的会话：服务端只回已落盘行，缓存里的瞬时行必须**全部接回来**
-//    （本次 bug 的核心断言 —— 少接一条就是一次可见的塌陷）
+// ② 在途（会话正在跑）：服务端只回已落盘行，缓存里的 seq=0 必须**全部接回来**
+//    （这是「切回运行中会话塌陷」的根因断言 —— 少接一条就是一次可见的塌陷）
 {
   const server = [1, 2, 3].map((seq) => ({ seq }));
   const cached = [1, 2, 3].map((seq) => ({ seq })).concat([
     { seq: 0, role: "user", content: "刚发出还没落库" },
     { seq: 0, role: "agent", content: "正在流式输出的正文" },
   ]);
-  const out = composeLoadedExchanges(server, cached);
+  const out = composeLoadedExchanges(server, cached, true);
   assert.equal(out.length, 5, "the in-flight rows must survive the load (root cause)");
   assert.equal(out.filter((e) => e.seq === 0).length, 2, "both transient rows kept");
   assert.equal(
@@ -461,11 +464,33 @@ assert.equal(
   );
 }
 
-// ③ 缓存更全（用户翻过历史）：缓存里比窗口老的持久行不能丢
+// ③ **不在途（会话已结束 / 刚 compact 过）：seq=0 必须全部丢掉**
+//    这是另一半 —— 服务端已经把那一轮落盘、或 compact 把历史整个重置了，
+//    本地那份 seq=0 从此再也对不上。不清就会跨多次 compact 无声堆积
+//    （实测一个会话堆到 1100+ 条：tool=700、thought=360），
+//    一旦被渲染出来就是「同一段正文出现两遍、而且每切一次越多」。
+{
+  const server = [1, 2, 3].map((seq) => ({ seq }));
+  const cached = [1, 2, 3].map((seq) => ({ seq })).concat([
+    { seq: 0, role: "agent", content: "上一轮的残留" },
+    { seq: 0, role: "tool", content: "上一轮的残留工具卡" },
+  ]);
+  const out = composeLoadedExchanges(server, cached, false);
+  assert.equal(out.length, 3, "no in-flight turn ⇒ every seq=0 row is stale residue");
+  assert.equal(out.filter((e) => e.seq === 0).length, 0, "stale transients must be dropped");
+  assert.equal(
+    JSON.stringify(out.map((e) => e.seq)),
+    JSON.stringify([1, 2, 3]),
+    "only the persisted rows survive",
+  );
+}
+
+// ④ 缓存更全（用户翻过历史）：缓存里比窗口老的持久行不能丢
 {
   const out = composeLoadedExchanges(
     [{ seq: 8 }, { seq: 9 }],
     [1, 8, 9].map((seq) => ({ seq })).concat([{ seq: 0, content: "x" }]),
+    true,
   );
   assert.equal(
     JSON.stringify(out.filter((e) => e.seq > 0).map((e) => e.seq)),
@@ -475,21 +500,108 @@ assert.equal(
   assert.equal(out.filter((e) => e.seq === 0).length, 1);
 }
 
-// ④ 同一个瞬时对象两侧都有 → 只留一份（按对象同一性）
+// ⑤ 同一个瞬时对象两侧都有 → 只留一份（按对象同一性）
 {
   const shared = { seq: 0, content: "同一条" };
-  const out = composeLoadedExchanges([{ seq: 1 }, shared], [{ seq: 1 }, shared]);
+  const out = composeLoadedExchanges([{ seq: 1 }, shared], [{ seq: 1 }, shared], true);
   assert.equal(out.length, 2, "the same transient object must not be duplicated");
 }
 
-// ⑤ 空/垃圾输入不抛
-assert.equal(composeLoadedExchanges(null, null).length, 0);
-assert.equal(composeLoadedExchanges(undefined, undefined).length, 0);
+// ⑥ 在途 + 缓存里跨过 compact → 只保留**最后一次 compact 之后**的瞬时行
+//    实测一个会话跨 7 次 compact 堆了 1100+ 条（tool=700、thought=360）；
+//    它们和当前回合的真在途行在数据上没有区别，唯一现成的边界就是 compact 行本身。
+{
+  const cached = [
+    { seq: 1 },
+    { seq: 0, role: "agent", content: "compact 之前的旧内容" },   // 失效
+    { seq: 0, role: "tool", content: "compact 之前的旧工具卡" },  // 失效
+    { seq: 0, role: "compact", content: "" },                      // 边界（含）
+    { seq: 0, role: "agent", content: "compact 之后的新内容" },   // 保留
+  ];
+  const out = composeLoadedExchanges([{ seq: 1 }], cached, true);
+  const transients = out.filter((e) => e.seq === 0);
+  assert.equal(transients.length, 2, "只有最后一次 compact 之后的行该留下");
+  assert.equal(
+    JSON.stringify(transients.map((e) => String(e.content || ""))),
+    JSON.stringify(["", "compact 之后的新内容"]),
+    "边界之前的那两条必须被丢掉",
+  );
+}
+
+// ⑦ 没有 compact 行时不受影响（全部保留 —— 不能把正常情况也砍了）
+{
+  const cached = [
+    { seq: 0, role: "agent", content: "a" },
+    { seq: 0, role: "tool", content: "b" },
+  ];
+  const out = composeLoadedExchanges([{ seq: 1 }], cached, true);
+  assert.equal(out.filter((e) => e.seq === 0).length, 2, "没有 compact 边界就不该砍任何东西");
+}
+
+// ⑧ 空/垃圾输入不抛
+assert.equal(composeLoadedExchanges(null, null, true).length, 0);
+assert.equal(composeLoadedExchanges(undefined, undefined, false).length, 0);
+
+// ── mergeStreamedText：流式正文拼接必须**重放安全** ────────────────────────
+// 服务端会把在途回合的内容重推一遍（切回会话、刷新页面时都会 —— 用户看到的
+// 「刷新后先瞬间出现到最后一条用户消息，再逐段把在途 assistant 正文刷出来」
+// 就是那一路重放）。原先 agent 那条是**无条件拼接**，于是同一段正文在**行内**
+// 被拼成 `aabb`，表现为「文本出现两遍、每切一次越多」。
+//
+// 重复发生在行内而不是两行之间 —— 这是它长期没被抓到的原因：任何「按行内容比对」
+// 的去重都查不出来。所以必须在**拼接的那一刻**判。
+const mergeStreamedText = sessionMod.mergeStreamedText;
+assert.equal(typeof mergeStreamedText, "function", "mergeStreamedText must be exported");
+
+// ① 真·增量：正常追加
+assert.equal(mergeStreamedText("你好", "，世界"), "你好，世界");
+
+// ② 整段重放：新片段包含已有内容 → 覆盖，**不拼接**（这是本次修的 bug）
 assert.equal(
-  composeLoadedExchanges([{ seq: 2 }], undefined).length,
-  1,
-  "a cold cache must still return the server rows",
+  mergeStreamedText("你好，世界", "你好，世界！欢迎"),
+  "你好，世界！欢迎",
+  "a replay carries the whole accumulated text — take it, do not append",
 );
+
+// ③ 重复分片：已有内容已包含新片段 → 忽略
+assert.equal(mergeStreamedText("你好，世界", "世界"), "你好，世界");
+
+// ④ **幂等**：同一份完整内容重放 N 次，结果不变（核心断言）
+{
+  const full = "第一段。第二段。第三段。";
+  let acc = "";
+  for (let i = 0; i < 8; i += 1) acc = mergeStreamedText(acc, full);
+  assert.equal(acc, full, "重放 8 次不能让正文增长 —— 这正是「越切越多」的成因");
+}
+
+// ⑤ 逐段重放（每片都是到目前为止的累计）：结果仍是最后那一片
+{
+  let acc = "";
+  for (const piece of ["a", "ab", "abc", "abcd"]) acc = mergeStreamedText(acc, piece);
+  assert.equal(acc, "abcd", "cumulative replay must converge, not concatenate");
+}
+
+// ⑥ 空输入不抛
+assert.equal(mergeStreamedText("", "x"), "x");
+assert.equal(mergeStreamedText("x", ""), "x");
+assert.equal(mergeStreamedText("", ""), "");
+
+// ⑦ dropTransientExchanges：不在途时的清理出口（done / compact 调用它）
+{
+  const drop = sessionMod.dropTransientExchanges;
+  assert.equal(typeof drop, "function", "dropTransientExchanges must be exported");
+  const session = { key: "s", exchanges: [{ seq: 1 }, { seq: 0 }, { seq: 2 }, { seq: 0 }] };
+  const dropped = drop(session);
+  assert.equal(
+    JSON.stringify(dropped.exchanges.map((e) => e.seq)),
+    JSON.stringify([1, 2]),
+    "dropTransientExchanges must remove every seq=0 row",
+  );
+  // 没有瞬时行时原样返回（同一引用，避免无意义的重渲染）
+  const clean = { key: "s", exchanges: [{ seq: 1 }] };
+  assert.equal(drop(clean), clean, "no-op must return the same reference");
+  assert.equal(drop(null), null);
+}
 
 // ── 缓存淘汰只从头部，永不动尾部（用户 2026-10-05 定的规则）──────────────
 // 淘汰**可以**发生（超预算），但必须满足：

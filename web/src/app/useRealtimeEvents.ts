@@ -13,6 +13,7 @@ import type { MultiProjectSessionGroup, PendingSend, SessionItem, SlashCommandRe
 import type { SessionRuntimeMeta } from "./useSessionStreamCache";
 import { buildGitDiffCacheSignature, fetchGitDiff } from "../services/git";
 import { invalidateFileCache } from "../services/file";
+import { dropTransientExchanges } from "../services/session";
 import { reportError } from "../services/error";
 import { setRootNodeMap } from "../services/rootNode";
 import { applyNodesFromServer, syncNodesFromServer } from "../services/nodeRegistry";
@@ -381,10 +382,17 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
       }
       const cached = sessionCacheRef.current[cacheKey];
       if (cached && cached.key === sessionKey) {
-        sessionCacheRef.current[cacheKey] = clearPendingAck({
-          ...(cached as any),
-          pending: false,
-        } as Session);
+        // 轮次结束 = 不再在途：服务端已经把这一轮落盘了，缓存里的 seq=0 从此都是残留。
+        // 留着会跨多次 compact 无声堆积，直到某次加载把它们渲染出来 ——
+        // 症状是「同一段正文出现两遍、而且每切一次越多」。见 session.ts 的
+        // dropTransientExchanges。队列续跑的情况在上面就 return 了，这里可以放心清。
+        sessionCacheRef.current[cacheKey] = dropTransientExchanges(
+          clearPendingAck({
+            ...(cached as any),
+            pending: false,
+          } as Session),
+        ) as Session;
+        bumpCacheVersion();
       }
       setSelectedPendingByKey(sessionKey, false);
       setSelectedSession((prev) => {
@@ -610,13 +618,25 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
             event.data || {},
           );
           break;
-        case "compact_notice":
+        case "compact_notice": {
           appendCompactNoticeForSession(
             activeRoot,
             streamKey,
             event.data || {},
           );
+          // compact 发生在轮次边界：服务端历史整个重置了，缓存里那些 seq=0 从此再也
+          // 对不上（实测一个会话跨 7 次 compact 堆到 1100+ 条），必须一起丢掉。
+          // 此刻没有在途回合，不存在误伤。
+          const compactCk = rootSessionKey(activeRoot, streamKey);
+          const compacted = dropTransientExchanges(
+            sessionCacheRef.current[compactCk],
+          );
+          if (compacted && compacted !== sessionCacheRef.current[compactCk]) {
+            sessionCacheRef.current[compactCk] = compacted;
+            bumpCacheVersion();
+          }
           break;
+        }
         case "message_done":
           attachContextWindowToLatestAssistant(
             activeRoot,
@@ -1103,6 +1123,18 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
           return;
       },
       "session.stream": (event: any, payload: any) => {
+          // 重放走**批量**：服务端把整批缺失事件放进一条消息（payload.events），
+          // 这里循环应用 —— 同一个事件处理器内多次 setState 会被 React 批处理成
+          // 一次渲染，观感是「一步到位」。逐条消息发的话会变成几百次渲染，
+          // 就是用户说的「打开/切回会话时逐渐刷一大堆」。
+          // 实时事件仍是单条（payload.event）。
+          const batch = Array.isArray(payload?.events) ? payload.events : null;
+          if (batch) {
+            for (const one of batch) {
+              handleSessionStream({ ...payload, events: undefined, event: one });
+            }
+            return;
+          }
           handleSessionStream(payload);
       },
       "session.slash_command.stream": (event: any, payload: any) => {

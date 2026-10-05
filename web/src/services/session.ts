@@ -2043,26 +2043,36 @@ export function mergeSessionExchanges(
 /**
  * 会话加载的**唯一**组装规则。
  *
- * `serverExs`：服务端刚回来的行（窗口回包，或 syncSession 的结果）。
- * `cachedExs`：加载前内存缓存里的内容 —— **瞬时行（seq=0）的唯一来源**。
+ * `serverExs`：服务端刚回来的行（窗口回包，或 syncSession 的结果）—— 只保证含已落盘行。
+ * `cachedExs`：加载前内存缓存里的内容。
+ * `inFlight`：这条会话**此刻是否还有在途回合**（即 `pending`）。
  *
- * 在途内容（正在流式输出的正文、尚未落库的工具卡）只存在于内存里，服务端根本不知道
- * 它们。所以瞬时行必须从 `cachedExs` 接回，**绝不能去服务端回包找**：
- * 曾经有三个地方各写了一遍这个判断、三处都去服务端回包找瞬时行，于是每次加载都把
- * 在途内容丢一次。症状是切回运行中的会话时「先从缓存渲染出完整对话 → 塌到最后一条
- * 用户 prompt → 再一点点把 assistant 补回来」（assistant 越多越明显）；已结束的会话
- * 没有瞬时行，所以怎么切都不闪 —— 这正是它长期难以复现的原因。
+ * 瞬时行（seq=0）是「还没落库的内容」，只有会话在跑的时候才可能是真的在途内容。
+ * 会话不在跑时，缓存里的 seq=0 全是残留：一轮结束时服务端已经把它们落盘了，
+ * 而 compact 会让服务端历史整个重置，本地那份就永远对不上。这类残留会跨多次 compact
+ * 无声堆积（实测一个会话堆到 1100+ 条，其中 tool=700、thought=360），一旦被渲染出来
+ * 就是「同一段正文出现两遍、而且每切一次越多」。
  *
- * 一条规则一个定义，是为了让「去服务端回包找瞬时行」这个错误**写不出来**：
- * 这个函数里没有「哪一侧」的概念。
+ * 所以判据只有一条：**不在跑就不留**。不需要轮次标记之类的东西 ——
+ * 「此刻在不在跑」本来就已知，没必要为了清理再给每一行记一个身份。
+ *
+ * 另一半教训：瞬时行**绝不能去服务端回包找**（那里一个 seq=0 都没有）。曾经有三个
+ * 地方各写了一遍这个判断、三处都去服务端回包找，于是每次加载都把在途内容丢一次。
+ * 症状是切回**运行中**的会话时「完整对话 → 塌到最后一条用户 prompt → 再慢慢补回来」；
+ * 已结束的会话没有在途内容，怎么切都不闪 —— 这是它长期难以复现的原因。
  */
 export function composeLoadedExchanges(
   serverExs: readonly any[] | null | undefined,
   cachedExs: readonly any[] | null | undefined,
+  inFlight: boolean,
 ): any[] {
-  // 瞬时行取并集（缓存在前，它才是在途内容的权威来源），按对象同一性去重 ——
-  // 同一个 exchange 对象可能两侧都有（服务端把本地刚发的那条也回传了），
-  // 不按引用去重会渲染两遍。文本级的重复留给 overlay 的内容比对处理。
+  const persisted = mergeSessionExchanges(cachedExs, serverExs);
+  if (!inFlight) {
+    return persisted;
+  }
+  // 在途：把 seq=0 接回。取并集（缓存在前 —— 它才是在途内容的权威来源），按对象
+  // 同一性去重：同一个 exchange 可能两侧都有（服务端把本地刚发的那条也回传了），
+  // 不按引用去重会渲染两遍。
   const transient: any[] = [];
   const seen = new Set<unknown>();
   for (const ex of [...(cachedExs || []), ...(serverExs || [])]) {
@@ -2071,7 +2081,71 @@ export function composeLoadedExchanges(
     seen.add(ex);
     transient.push(ex);
   }
-  return [...mergeSessionExchanges(cachedExs, serverExs), ...transient];
+  // compact 是服务端历史的**重置点**：在它之前产生的瞬时行，属于服务端已经丢掉的那段
+  // 历史，按定义不再有效。实测一个会话跨 7 次 compact 堆了 1100+ 条（tool=700、
+  // thought=360），它们与「当前回合真正的在途行」在数据上没有任何区别 —— 区分二者的
+  // 唯一现成信号就是这个 compact 边界。所以只保留最后一次 compact（含）之后的行。
+  // 用不着新加轮次标记：边界本来就以 compact 行的形式躺在同一份数据里。
+  let lastCompact = -1;
+  for (let i = transient.length - 1; i >= 0; i -= 1) {
+    if (String((transient[i] as any)?.role || "").toLowerCase() === "compact") {
+      lastCompact = i;
+      break;
+    }
+  }
+  return [
+    ...persisted,
+    ...transient.slice(lastCompact < 0 ? 0 : lastCompact),
+  ];
+}
+
+/**
+ * 流式正文片段的合并：**重放安全**。
+ *
+ * 服务端会把在途回合的内容重复投递（切回会话、刷新页面时都会重推一遍 ——
+ * 用户看到的就是「刷新后先瞬间出现到最后一条用户消息，再逐段把在途的 assistant
+ * 正文刷出来」）。所以这里不能无条件拼接：那样同一段正文会在**同一行内**变成
+ * `aabb`，表现为「文本出现两遍、每切一次越多」。
+ *
+ * 关键：重复发生在行内（字符串被拼了两遍），不是两行内容相同 —— 按行内容比对的
+ * 去重永远查不出来，这是它长期没被抓住的原因。
+ *
+ * 判据：
+ *   · 新片段**包含**已有内容 → 整段重放，覆盖
+ *   · 已有内容已包含新片段   → 这一片早已收到，忽略
+ *   · 否则                    → 真·增量，追加
+ *
+ * 天花板：模型若真的连发两片完全相同的文本，第二片会被当成重复吞掉。
+ */
+export function mergeStreamedText(existing: string, incoming: string): string {
+  const a = String(existing || "");
+  const b = String(incoming || "");
+  if (!b) return a;
+  if (!a) return b;
+  if (b.includes(a)) return b;
+  if (a.includes(b)) return a;
+  return a + b;
+}
+
+/**
+ * 丢弃会话里的瞬时行（seq=0）。
+ *
+ * 会话**不再在途**时调用：一轮结束时（服务端已落盘）与 compact 时（服务端历史重置）
+ * 都算。这是防止 seq=0 无声堆积的唯一出口 —— 没有它会跨多次 compact 一直涨，
+ * 直到某次加载把它们渲染出来（「同一段正文两遍、越切越多」）。
+ *
+ * 队列续跑的情况**不要调**：那时新一轮的 seq=0 正在产生。
+ */
+export function dropTransientExchanges(
+  session: Session | null | undefined,
+): Session | null {
+  if (!session || !Array.isArray((session as any).exchanges)) {
+    return (session as Session) ?? null;
+  }
+  const before = (session as any).exchanges as any[];
+  const kept = before.filter((ex) => Number(ex?.seq || 0) !== 0);
+  if (kept.length === before.length) return session as Session;
+  return { ...(session as any), exchanges: kept } as Session;
 }
 
 function appendSessionDelta(

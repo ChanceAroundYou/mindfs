@@ -49,7 +49,14 @@ assert.doesNotMatch(claudeSession, /claudeModelSupportsEffortAt/, "5941a36 shoul
 
 // d36cc53 — frontend reconnect event_seq re-anchor + replaySnapshot branch
 assert.match(app, /cachedBeforeSync/, "d36cc53 App restore should capture cachedBeforeSync");
-assert.match(app, /getEventCursor/, "d36cc53 App restore should read resumeCursor via getEventCursor");
+// 2026-10-06：d36cc53 的真实契约是「重连后**从上次的事件序号续流**」，落点在
+// session.ts 的 connectSessionStream（发 session.ready 时带上 event_cursor）。
+// 原先这里断言 App 读 getEventCursor —— 那只是该提交的副产品，而 App 读它的唯一
+// 用途是「加载时清掉光标」，恰恰把增量续流降级成了全量重放：每次切会话都让服务端
+// 把在途内容整个重推一遍（用户可见症状「每切一次就刷一大堆」，且重推内容会被
+// 客户端再拼一次 → 重复渲染）。契约改指真正的落点。
+assert.match(sessionSvc, /event_cursor: eventCursor/, "d36cc53: session.ready 必须带上上次的事件序号以续流");
+assert.doesNotMatch(app, /clearEventCursor/, "加载时清光标会把增量续流降级成全量重放");
 // 2026-10-06：保留本地 seq==0 的规则收敛进 session.ts 的 composeLoadedExchanges
 // （原先在 App 里写了四遍、三遍是错的）。契约不变 —— App 侧必须调用它。
 assert.match(app, /composeLoadedExchanges\(/, "d36cc53 contract: App restore must keep local seq==0 exchanges (now via composeLoadedExchanges)");

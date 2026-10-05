@@ -1,5 +1,6 @@
 import { useCallback, useRef } from "react";
 import type { Session } from "../services/session";
+import { mergeStreamedText } from "../services/session";
 import type { Exchange } from "./appSession";
 import { normalizeFastService } from "./appTask";
 
@@ -169,6 +170,10 @@ export function useSessionStreamCache({
       const list = [...(prevList || [])];
       const last = list.length > 0 ? list[list.length - 1] : null;
       if (last && (last.role === "agent" || last.role === "assistant")) {
+        // **重放安全的拼接**。规则见 session.ts 的 mergeStreamedText：
+        // 服务端会把在途内容重推一遍，无条件累加会让同一段正文在**行内**拼两遍
+        // （`aabb`）—— 用户看到的是「文本出现两遍、越切越多」。
+        // 重复发生在行内而非两行之间，所以按行内容比对的去重查不出来。
         list[list.length - 1] = {
           ...last,
           agent: runtimeMeta.agent || last.agent,
@@ -178,7 +183,7 @@ export function useSessionStreamCache({
             mode: runtimeMeta.mode || last.mode,
             effort: runtimeMeta.effort || last.effort,
             fast_service: runtimeMeta.fast_service || last.fast_service,
-            content: `${last.content || ""}${content}`,
+            content: mergeStreamedText(String(last.content || ""), String(content)),
           timestamp: now,
         };
         return list;
@@ -210,16 +215,9 @@ export function useSessionStreamCache({
         );
         if (existingIndex >= 0) {
           const existing = list[existingIndex];
-          const existingContent = existing.content || "";
-          let nextContent = existingContent;
-          if (content.includes(existingContent)) {
-            nextContent = content;
-          } else if (!existingContent.includes(content)) {
-            nextContent = `${existingContent}${content}`;
-          }
           list[existingIndex] = {
             ...existing,
-            content: nextContent,
+            content: mergeStreamedText(String(existing.content || ""), String(content)),
             timestamp: now,
           };
           return list;
@@ -229,7 +227,7 @@ export function useSessionStreamCache({
       if (last && last.role === "thought" && (!thoughtID || !last.thought_id)) {
         list[list.length - 1] = {
           ...last,
-          content: `${last.content || ""}${content}`,
+          content: mergeStreamedText(String(last.content || ""), String(content)),
           thought_id: thoughtID || last.thought_id,
           timestamp: now,
         };
