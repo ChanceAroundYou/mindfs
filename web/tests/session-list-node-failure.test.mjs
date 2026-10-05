@@ -245,6 +245,26 @@ assert.match(
   "NodeBadgeHeader must render the notice next to the badge",
 );
 
+// 提示要收成叹号、点了才出文字（用户 2026-10-05）。
+// 原来那段文字常驻在项目名旁边，一屏几十个项目时噪声压过信息 —— 而「有没有
+// 问题」扫一眼叹号就够了，说明是点开才要的东西。
+assert.match(
+  nodeBadge,
+  /onClick=\{\(\) => setNoticeOpen\(\(v\) => !v\)\}/,
+  "the notice must be clickable — the explanation opens on demand",
+);
+assert.doesNotMatch(
+  nodeBadge,
+  /title=\{notice\}[\s\S]{0,400}?fontSize: "10px"[\s\S]{0,200}?\{notice\}[\s\S]{0,200}?<\/span>\s*\)\s*:\s*null\}[\s\S]{0,400}var\(--text-secondary\)/,
+  "the notice text must not sit permanently next to the project name (that is the noise being removed)",
+);
+// 叹号本身要是个真按钮（可聚焦、有点击语义），不是装饰性 span。
+assert.match(
+  nodeBadge,
+  /aria-label=\{notice\}[\s\S]{0,200}?aria-expanded=\{noticeOpen\}/,
+  "the marker needs button semantics so it is reachable by keyboard and announced",
+);
+
 // 工作台侧：失败节点要报出来。
 assert.match(
   read("src/app/useWorkspaceBoard.ts"),
