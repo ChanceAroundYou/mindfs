@@ -8277,6 +8277,13 @@ export function App({ onGoHome }: AppProps) {
   const sessionViewerComposerOverlayInset = 20;
   const sessionView = (
     <SessionViewer
+      // key=会话键：切会话必须重挂载。SessionViewer 的 visibleExchanges 是窗口化视图的
+      // 唯一持久化源，不重挂载时它跨会话复用 —— 切换那一帧先渲染**上一个会话**的窗口
+      // （实测 2026-10-05：comp=20 seq=26..45 挂在已切走的会话上），紧接着 init effect
+      // 用还没就绪的 session.exchanges 当种子（此时为空）setVisibleExchanges([])，
+      // 画面塌成空白，再等 getSessionWindow 回来才补上（实测 800ms）。
+      // 就是「完整对话 → 塌掉 → 慢慢补回来」。重挂载让可见集与会话同生共死。
+      key={selectedSessionSnapshot?.key || "no-session"}
       session={selectedSessionSnapshot}
       agents={availableAgents}
       slashCommandResult={slashCommandResultForSession(
@@ -9738,6 +9745,8 @@ export function App({ onGoHome }: AppProps) {
           >
             {drawerSessionSnapshot ? (
               <SessionViewer
+                // 同主区：切会话必须重挂载，否则窗口化可见集会跨会话复用（闪动成因）。
+                key={drawerSessionSnapshot.key || "no-drawer-session"}
                 session={drawerSessionSnapshot}
                 agents={availableAgents}
                 slashCommandResult={slashCommandResultForSession(
