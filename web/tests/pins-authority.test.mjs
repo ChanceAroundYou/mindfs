@@ -149,6 +149,23 @@ assert.ok(
   "刷新 effect 必须依赖 currentRootId —— 写空数组就是「切了项目还看到首次那份」的老 bug",
 );
 
+// ── 快照迟到时必须对当前列表重放 ──
+// 置顶只在 setSessions 的那一刻盖，而 fetchPins 是异步的。先读缓存渲染、或
+// WS 推来增量，都可能发生在快照回来之前，那一次拿到的还是空叠加层。写 ref
+// 不触发重渲染，于是没人再盖一次 —— 症状正是「切到项目看不到别人置顶的会话」。
+// 纯 ref 改动没有任何渲染副作用，只能在源码层钉住。
+const refreshAt = appSource.indexOf("primarySessionPinsRef.current = byRoot;");
+assert.ok(refreshAt > 0, "快照要写进 primarySessionPinsRef");
+const afterRefresh = appSource.slice(refreshAt, refreshAt + 900);
+assert.ok(
+  /setSessions\(\(prev\) => applyPinSnapshotRaw\(prev, rootId, ids, overlay\)\)/.test(afterRefresh),
+  "快照到达后必须对当前列表重放一次叠加 —— 只写 ref 的话，列表先渲染再等快照就永远盖不上",
+);
+assert.ok(
+  /currentRootIdRef\.current/.test(afterRefresh),
+  "重放要按当前项目取叠加层",
+);
+
 const listSource = fs.readFileSync(path.resolve(SRC, "components/SessionList.tsx"), "utf8");
 assert.ok(
   !/mindfs-pinned-session-projects/.test(listSource),

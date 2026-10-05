@@ -371,6 +371,23 @@ export function App({ onGoHome }: AppProps) {
         bucket.set(sessionKey, at);
       }
       primarySessionPinsRef.current = byRoot;
+      // 快照到了要对**当前列表**重放一次。
+      //
+      // 置顶只在 setSessions 的那一刻盖上去，而快照是异步的：先读缓存渲染、或
+      // WS 推来一条增量，都可能发生在 fetchPins 回来之前 —— 那一次拿到的是还
+      // 空着的叠加层，worker 项目的置顶就没盖上，症状是「切到项目看不到置顶」，
+      // 而且要等下一次无关的列表变动才会自愈。
+      //
+      // 这里直接用 applyPinSnapshotRaw 并显式传叠加层，不走 applyPinSnapshot 的
+      // 「pinnedKeys 为空才用叠加层」判定：本机列表的 pinnedKeys 是服务端权威，
+      // 但它和叠加层读的是**同一张表**，所以叠加层更新（别的设备刚改过）时
+      // 反而是它更准。
+      const rootId = String(currentRootIdRef.current || "");
+      const overlay = rootId ? byRoot.get(rootId) : undefined;
+      if (overlay) {
+        const ids = Array.from(overlay.keys());
+        setSessions((prev) => applyPinSnapshotRaw(prev, rootId, ids, overlay));
+      }
     } catch {
       // 拉不到就保持上一份：置顶是装饰性排序，不该把正在看的列表闪一下。
     }
