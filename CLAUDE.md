@@ -102,7 +102,7 @@ make dev-web          # 仅 Vite
 2. **agent session 的 `Interrupt` 可能永久阻塞**：SDK 内部用 `context.Background()`，CLI 迟迟不 ack 时不返回。调用方必须加超时包装。
 3. **前端 `App.tsx` 是巨文件**（~15k 行）：所有状态逻辑集中在此，修改前务必定位准确行号。
 4. **静态 web 资源不走 go:embed**：由 `make install` 拷贝到 `~/.local/share/mindfs/web/`，修改前端后需重新 `make build-web && make install`。
-5. **systemd 服务**：`~/.config/systemd/user/mindfs.service`，重启会杀掉所有托管的 claude 子进程。
+5. **systemd 服务**：重启会杀掉所有托管的 claude 子进程。单元路径两台不同（本机 system、wsl user），见上方「两台机器」表。
 6. **BottomSheet 拖拽**：默认 50% 高度，支持任意高度悬停，上沿 10% 吸顶；`pointercancel` 回弹 50%（避免异常悬停），触摸拖拽需防手势抢占。
 7. **SessionList 展示规则**：仅 `fork` 子会话扁平为顶级，其它子会话保持折叠；已移除计数徽标，统一为普通会话样式。
 8. **会话别名持久化**：存于 `server/internal/session/manager.go`（SQLite WAL），非前端 localStorage，保证跨端一致；浏览内容时会话锁由 `manager.go` 保持。
