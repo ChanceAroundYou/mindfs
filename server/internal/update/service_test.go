@@ -250,6 +250,86 @@ func TestExtractZipRejectsTraversal(t *testing.T) {
 	}
 }
 
+func TestInstallWebAssetsKeepsOldChunks(t *testing.T) {
+	dir := t.TempDir()
+	srcWeb := filepath.Join(dir, "pkg", "web")
+	dstWeb := filepath.Join(dir, "install", "web")
+	// 上一次更新留下的哈希 chunk 与旧首页
+	writeFile(t, filepath.Join(dstWeb, "index.html"), "old-index")
+	writeFile(t, filepath.Join(dstWeb, "assets", "index-OLD.js"), "old-chunk")
+	// 本次包内容
+	writeFile(t, filepath.Join(srcWeb, "index.html"), "new-index")
+	writeFile(t, filepath.Join(srcWeb, "assets", "index-NEW.js"), "new-chunk")
+
+	if err := installWebAssets(srcWeb, dstWeb); err != nil {
+		t.Fatalf("installWebAssets: %v", err)
+	}
+	// 旧 chunk 必须留着：更新期间已打开的页面会按旧哈希懒加载它（动态 import），
+	// 删掉就是「前端资源缺失或无法加载」。
+	for path, want := range map[string]string{
+		"index.html":          "new-index",
+		"assets/index-NEW.js": "new-chunk",
+		"assets/index-OLD.js": "old-chunk",
+	} {
+		got, err := os.ReadFile(filepath.Join(dstWeb, filepath.FromSlash(path)))
+		if err != nil {
+			t.Fatalf("读 %s: %v", path, err)
+		}
+		if string(got) != want {
+			t.Fatalf("%s = %q, want %q", path, got, want)
+		}
+	}
+}
+
+func TestInstallWebAssetsSkipsMissingSource(t *testing.T) {
+	dir := t.TempDir()
+	dstWeb := filepath.Join(dir, "web")
+	writeFile(t, filepath.Join(dstWeb, "index.html"), "kept")
+
+	if err := installWebAssets(filepath.Join(dir, "nope"), dstWeb); err != nil {
+		t.Fatalf("installWebAssets: %v", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(dstWeb, "index.html")); err != nil || string(got) != "kept" {
+		t.Fatalf("源目录缺失时不该动 dstWeb, got=%q err=%v", got, err)
+	}
+}
+
+func TestInstallWebAssetsPrunesExpiredChunks(t *testing.T) {
+	dir := t.TempDir()
+	srcWeb := filepath.Join(dir, "pkg", "web")
+	dstWeb := filepath.Join(dir, "install", "web")
+	writeFile(t, filepath.Join(srcWeb, "index.html"), "new-index")
+	writeFile(t, filepath.Join(srcWeb, "assets", "index-NEW.js"), "new-chunk")
+	stale := filepath.Join(dstWeb, "assets", "index-ANCIENT.js")
+	writeFile(t, stale, "ancient")
+	old := time.Now().Add(-webAssetTTL - 24*time.Hour)
+	if err := os.Chtimes(stale, old, old); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+	// assets/agents 这类子目录不参与清理
+	writeFile(t, filepath.Join(dstWeb, "assets", "agents", "icon.svg"), "icon")
+
+	if err := installWebAssets(srcWeb, dstWeb); err != nil {
+		t.Fatalf("installWebAssets: %v", err)
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Fatalf("过期 chunk 未被清理, err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dstWeb, "assets", "agents", "icon.svg")); err != nil {
+		t.Fatalf("子目录不该被清理: %v", err)
+	}
+}
+
+func writeFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", path, err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
 func restoreReleasePublicKey(t *testing.T, value string) {
 	t.Helper()
 	old := releaseManifestPublicKey

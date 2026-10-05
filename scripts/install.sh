@@ -223,9 +223,11 @@ fi
 # ── Install web assets (optional) ───────────────────────────────────────────
 if [[ -d "${PKG_DIR}/web" ]]; then
   WEB_DEST="${PREFIX}/share/mindfs/web"
-  mkdir -p "${PREFIX}/share/mindfs"
-  rm -rf "$WEB_DEST"
-  cp -r "${PKG_DIR}/web" "$WEB_DEST"
+  # 覆盖复制而不是 rm -rf：哈希资源对外是 immutable + 一年缓存，删掉旧 chunk 会让
+  # 安装期间开着的页面在懒加载（动态 import）时 404。磁盘由按龄清理兜住。
+  mkdir -p "${WEB_DEST}/assets"
+  cp -r "${PKG_DIR}/web/." "$WEB_DEST/"
+  find "${WEB_DEST}/assets" -type f -mtime +14 -delete
   echo "  Web     -> ${WEB_DEST}"
 fi
 

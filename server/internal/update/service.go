@@ -716,14 +716,8 @@ func (s *Service) installPackage(pkgDir string) error {
 	if err := replaceFile(srcBin, dstBin, 0o755); err != nil {
 		return err
 	}
-	srcWeb := filepath.Join(pkgDir, "web")
-	if info, err := os.Stat(srcWeb); err == nil && info.IsDir() {
-		if err := os.RemoveAll(dstWeb); err != nil {
-			return err
-		}
-		if err := copyDir(srcWeb, dstWeb); err != nil {
-			return err
-		}
+	if err := installWebAssets(filepath.Join(pkgDir, "web"), dstWeb); err != nil {
+		return err
 	}
 	srcAgents := filepath.Join(pkgDir, "agents.json")
 	if info, err := os.Stat(srcAgents); err == nil && !info.IsDir() {
@@ -1154,4 +1148,44 @@ func copyDir(src, dst string) error {
 		}
 		return replaceFile(path, target, info.Mode())
 	})
+}
+
+// webAssetTTL 是旧构建残留的保留期，与 Makefile 的 WEB_ASSET_TTL_DAYS 对齐。
+const webAssetTTL = 14 * 24 * time.Hour
+
+// installWebAssets 覆盖复制 web 资源，绝不清空 dstWeb。
+//
+// 哈希资源对外是 immutable + 一年缓存，所以浏览器会一直按旧哈希取；一旦更新时把整棵
+// 目录删掉，更新期间已打开的页面在懒加载（动态 import）旧 chunk 时就是 404。磁盘占用
+// 改用按龄清理兜住。包内没有 web/ 时不动 dstWeb。
+func installWebAssets(srcWeb, dstWeb string) error {
+	info, err := os.Stat(srcWeb)
+	if err != nil || !info.IsDir() {
+		return nil
+	}
+	if err := copyDir(srcWeb, dstWeb); err != nil {
+		return err
+	}
+	pruneStaleWebAssets(filepath.Join(dstWeb, "assets"), webAssetTTL)
+	return nil
+}
+
+// pruneStaleWebAssets 只按龄清理哈希资源目录。目录不存在或读取失败都直接跳过：
+// 清理是尽力而为，不该让更新失败。
+func pruneStaleWebAssets(dir string, ttl time.Duration) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	cutoff := time.Now().Add(-ttl)
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil || !info.ModTime().Before(cutoff) {
+			continue
+		}
+		_ = os.Remove(filepath.Join(dir, entry.Name()))
+	}
 }

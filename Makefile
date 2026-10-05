@@ -8,6 +8,9 @@ HARMONY_DIR ?= harmony
 ADDR ?= :7331
 ROOT ?= .
 PREFIX ?= $(HOME)/.local
+# 旧构建残留的保留期（天）。哈希资源对外是 immutable，删太快会让部署前就打开的
+# 标签页在懒加载时 404（前端 staleAssetRecovery 只能兜底一次重载）。
+WEB_ASSET_TTL_DAYS ?= 14
 
 help:
 	@printf "%s\n" \
@@ -56,14 +59,18 @@ build-web:
 build: build-web
 	$(GO) build -ldflags "-X main.version=$(VERSION) -X mindfs/internal/deploy.Prefix=$(MIND_FS_BASE)" -o mindfs ./cli/cmd
 
+# 覆盖复制，不先 rm -rf：哈希 chunk 对浏览器是 immutable，删掉等于让已打开的标签页
+# 在懒加载时 404。磁盘由 WEB_ASSET_TTL_DAYS 的按龄清理兜住。
+# 注意结尾的 `/.`：web/ 已存在时 `cp -R dist web` 会变成 web/dist。
 install: build
 	install -d "$(PREFIX)/bin"
 	install -d "$(PREFIX)/share/mindfs"
 	install -m 0755 mindfs "$(PREFIX)/bin/mindfs"
 	install -m 0644 agents.json "$(PREFIX)/share/mindfs/agents.json"
 	install -m 0644 task_template.json "$(PREFIX)/share/mindfs/task_template.json"
-	rm -rf "$(PREFIX)/share/mindfs/web"
-	cp -R "$(WEB_DIR)/dist" "$(PREFIX)/share/mindfs/web"
+	install -d "$(PREFIX)/share/mindfs/web"
+	cp -R "$(WEB_DIR)/dist/." "$(PREFIX)/share/mindfs/web/"
+	find "$(PREFIX)/share/mindfs/web/assets" -type f -mtime +$(WEB_ASSET_TTL_DAYS) -delete
 
 uninstall:
 	rm -f "$(PREFIX)/bin/mindfs"

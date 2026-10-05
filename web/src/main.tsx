@@ -10,6 +10,7 @@ import { AuthGate } from "./components/AuthGate";
 import { addNode, getNodes, setActiveNodeId } from "./services/nodeRegistry";
 import { I18nProvider, translateNow } from "./i18n";
 import { DEPLOY_PREFIX, RELAY_ASSETS_PREFIX } from "./services/prefix";
+import { shouldReloadForStaleAsset } from "./services/staleAssetRecovery";
 
 applyAppearanceMode();
 if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
@@ -133,6 +134,40 @@ function showFrontendAssetMissingNotice(rawPath: string): void {
 
   notice.append(message, reload);
   document.body.appendChild(notice);
+}
+
+/** 正在输入时不重载：重载会丢掉未发送的草稿，宁可只弹横幅让用户自己挑时机。 */
+function isEditingText(): boolean {
+  const active = document.activeElement;
+  if (!(active instanceof HTMLElement)) {
+    return false;
+  }
+  return (
+    active.isContentEditable ||
+    active instanceof HTMLTextAreaElement ||
+    active instanceof HTMLInputElement
+  );
+}
+
+/**
+ * 资源加载失败且像是哈希错配（旧页面加载已被换掉的 chunk）时，自动重载一次拿新壳子。
+ * 返回 true 表示已发起重载，调用方不必再弹横幅。
+ */
+function recoverFromStaleAsset(path: string): boolean {
+  if (typeof window === "undefined" || isEditingText()) {
+    return false;
+  }
+  let storage: Pick<Storage, "getItem" | "setItem"> | null = null;
+  try {
+    storage = window.sessionStorage;
+  } catch {
+    storage = null;
+  }
+  if (!storage || !shouldReloadForStaleAsset(path, storage)) {
+    return false;
+  }
+  window.location.reload();
+  return true;
 }
 
 function resourceURLFromEventTarget(target: EventTarget | null): string {
@@ -655,7 +690,7 @@ registerServiceWorker();
 if (typeof window !== "undefined") {
   window.addEventListener("error", (event) => {
     const resourceURL = resourceURLFromEventTarget(event.target);
-    if (resourceURL) {
+    if (resourceURL && !recoverFromStaleAsset(resourceURL)) {
       showFrontendAssetMissingNotice(resourceURL);
     }
     console.error("[global-error]", {
@@ -674,7 +709,7 @@ if (typeof window !== "undefined") {
   window.addEventListener("unhandledrejection", (event) => {
     const reason = event.reason;
     const resourceURL = dynamicImportFailureURL(reason);
-    if (resourceURL) {
+    if (resourceURL && !recoverFromStaleAsset(resourceURL)) {
       showFrontendAssetMissingNotice(resourceURL);
     }
     console.error("[unhandled-rejection]", reason instanceof Error ? {
