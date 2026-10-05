@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# 代码变更收尾：提交 → 推送 → 两侧编译安装 → WSL 拉取重建重启 → 对账。
+# 代码变更收尾：提交 → 推送 → 本机编译安装 → 推送产物到 WSL → 对账。
 #
 # 用法:
 #   bash scripts/deploy-all.sh                 # 提交已在 main，直接走推送+部署
 #   bash scripts/deploy-all.sh -m "fix: 说明"  # 先把工作区改动提交到 main 再走
-#   bash scripts/deploy-all.sh --no-restart    # 只编译安装，不重启 WSL
+#   bash scripts/deploy-all.sh --no-restart    # 只推产物+安装，不重启 WSL
 #
-# 分工（见 CLAUDE.md）：本机是 system 单元，sudo restart 只能由用户执行，
-# 脚本只负责装好二进制并把该提示打出来；WSL 是 user 单元，脚本直接重启。
+# 分工（见 CLAUDE.md）：本机 system 单元，sudo restart 只能由用户执行，脚本只装好并提示；
+# WSL 是 user 单元、**没有源码库**，只接收本机构建好的产物，脚本直接重启它。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.."; pwd)"
@@ -16,6 +16,7 @@ cd "$ROOT"
 MESSAGE=""
 DO_RESTART=1
 WSL_HOST="${MINDFS_WSL_HOST:-wsl}"
+STAGE=".mindfs-deploy"   # WSL 上的暂存目录（相对 $HOME），装完即删
 
 usage() {
   sed -n '2,10p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
@@ -59,7 +60,7 @@ if [[ -n "$MESSAGE" ]]; then
     # 只提交本仓库跟踪的源码，不碰 .mindfs/ 等运行期数据
     # agents.json 是仓库根的源码文件（agent 目录与安装命令都在这），漏了它会让
     # 只改它的提交变成空提交，git commit 非零退出被 set -e 当场打死。
-    git add -A -- web server Makefile task_template.json scripts .claude agents.json 2>/dev/null || git add -A
+    git add -A -- web server Makefile task_template.json scripts .claude agents.json docs 2>/dev/null || git add -A
     git commit -m "$MESSAGE"
     ok "已提交 $(git rev-parse --short HEAD)"
   fi
@@ -98,19 +99,52 @@ VERSION="$(sed -nE 's/.*-X main\.version=([^ "]+).*/\1/p' /tmp/mindfs-build.log 
 [[ -n "$VERSION" ]] || die "从构建日志里读不出版本号（/tmp/mindfs-build.log）"
 ok "本机已安装 $VERSION"
 
-# ── 5. WSL 端：拉取 → 重建 → 安装 → 重启 ──
-step "WSL 拉取并重建"
-ssh -o BatchMode=yes -o ConnectTimeout=10 "$WSL_HOST" bash -s <<'REMOTE' || die "WSL 部署失败"
-set -euo pipefail
-cd ~/projects/mindfs
-git pull --ff-only origin main
-make build
-make install
-systemctl --user restart mindfs
+# ── 5. WSL 端：只接收产物，不在那边编译 ──
+# WSL 上自 2026-10-06 起**没有源码库**（~/projects/mindfs 只剩 .mindfs/ 数据目录）：
+# 那边不再 git pull、不再 make build。只接收本机构建好的产物 —— 谁编译谁负责版本号，
+# 两边永远跑的同一份二进制，不会再出现「那边拉到一半的源码」或「go 版本对不上」。
+step "推送产物到 WSL"
+tar -C "$ROOT" -cf - mindfs agents.json task_template.json -C "$ROOT/web" dist \
+  | ssh -o BatchMode=yes -o ConnectTimeout=10 "$WSL_HOST" \
+      "set -euo pipefail; rm -rf ~/$STAGE; mkdir -p ~/$STAGE; tar -xf - -C ~/$STAGE" \
+  || die "产物传输失败（$WSL_HOST）"
+
+if [[ "$DO_RESTART" == "1" ]]; then
+  RESTART_LINE="systemctl --user restart mindfs
 sleep 3
-systemctl --user is-active --quiet mindfs && echo "WSL 服务已 active"
+systemctl --user is-active --quiet mindfs || { echo 'WSL 服务未 active'; exit 1; }"
+else
+  RESTART_LINE="echo '(按 --no-restart 跳过重启，产物已装好)'"
+fi
+
+REMOTE_SCRIPT="$(mktemp)"
+trap 'rm -f "$REMOTE_SCRIPT"' EXIT
+cat >"$REMOTE_SCRIPT" <<REMOTE
+set -euo pipefail
+install -m 0755 ~/$STAGE/mindfs             ~/.local/bin/mindfs
+install -d                                  ~/.local/share/mindfs/web
+install -m 0644 ~/$STAGE/agents.json        ~/.local/share/mindfs/agents.json
+install -m 0644 ~/$STAGE/task_template.json ~/.local/share/mindfs/task_template.json
+# 覆盖复制而不是 rm -rf：哈希资源对外是 immutable，删掉会让部署前就打开的页面懒加载 404。
+# worker 按设计不服务静态资源，这份 web/ 是留给「角色翻成 control」的 —— 与其那天才发现缺东西，
+# 不如每次多推几 MB。
+cp -R ~/$STAGE/dist/. ~/.local/share/mindfs/web/
+find ~/.local/share/mindfs/web/assets -type f -mtime +14 -delete
+rm -rf ~/$STAGE
+$RESTART_LINE
+~/.local/bin/mindfs --version
 REMOTE
-ok "WSL 已拉取、编译、安装并重启"
+
+step "WSL 安装并重启"
+REMOTE_OUT="$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$WSL_HOST" bash -s <"$REMOTE_SCRIPT" 2>&1)" \
+  || die "WSL 安装失败：$REMOTE_OUT"
+# 版本号对账：推的是本机刚构建好的**同一个二进制文件**，两边版本号必须逐字相同。
+# 不同就是产物没落到位，当场停 —— 比对 bundle 字节数更硬（worker 压根没有 bundle）。
+REMOTE_VERSION="$(printf '%s\n' "$REMOTE_OUT" | sed -nE 's/^mindfs version: (.*)$/\1/p' | tail -1)"
+[[ -n "$REMOTE_VERSION" ]] || die "读不出 WSL 的版本号：$REMOTE_OUT"
+[[ "$REMOTE_VERSION" == "$VERSION" ]] \
+  || die "版本不一致：WSL=$REMOTE_VERSION 本机=$VERSION（产物没落到位）"
+ok "WSL 已安装 $REMOTE_VERSION"
 
 # ── 6. 对账：两端服务的 bundle 应当一致 ──
 # worker 节点按设计不提供前端（GET / 是 403，StaticDir 为空），所以它压根
@@ -144,8 +178,6 @@ fi
 
 # ── 7. 本机重启：只能由用户执行 ──
 echo
-if [[ "$DO_RESTART" == "1" ]]; then
-  printf '    \033[1m本机还需你手动重启：\033[0m sudo systemctl restart mindfs\n'
-  echo    '    （纯前端改动刷新页面即生效；重启只为让二进制版本号一致）'
-fi
+printf '    \033[1m本机还需你手动重启：\033[0m sudo systemctl restart mindfs\n'
+echo    '    （纯前端改动刷新页面即生效；重启只为让二进制版本号一致）'
 echo "    部署完成 $VERSION"

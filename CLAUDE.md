@@ -16,6 +16,9 @@ WSL（`PC-HOME`）是 **user** 单元、听 `0.0.0.0:7331`。详见下方「两�
 - 本机没有 user bus：`systemctl --user ...` 直接报 `Failed to connect to user scope bus`，别据此误判服务不存在——查归属看 `/proc/$(pgrep -x mindfs)/cgroup`（`/system.slice/` vs `/user@...`）。
 - `/home/nnb/...` **不是**旧路径，是 WSL 端的家目录；本机是 `/home/xiaokubao`。
 - 两台的账户表、节点 UUID 各自独立（`home.xiaokubao.space` → 本机，`pc.xiaokubao.space` → WSL）；判「本地节点」只认各自 `/api/nodes` 里报 `local` 的那个。
+- **WSL 上没有源码库，永远别在那边编译**（2026-10-06 起）：`/home/nnb/projects/mindfs` 只剩 `.mindfs/` 数据目录（历史会话/看板/上传，41MB），**没有 `.git`、没有 `Makefile`、没有源码**。它只接收本机构建好的产物 —— 谁编译谁负责版本号，两边永远跑同一份二进制。
+  唯一的分发路径是 `bash scripts/deploy-all.sh`：tar 打包 `mindfs` 二进制 + `agents.json` + `task_template.json` + `web/dist`，走 ssh 落进 WSL 的 `~/.local/bin` 与 `~/.local/share/mindfs`。
+  去 WSL 上 `git pull` / `make build` = 走错路了；那边能查的是**数据**（`~/.config/mindfs/`、各项目的 `.mindfs/`），不是代码。
 
 ## 模块地图
 
@@ -94,7 +97,7 @@ make dev-web          # 仅 Vite
 
 **构建/重启分工（必守）**：`make build-web / make build / make install / make test` 等编译与安装验证由 Agent 自行执行并验证通过；本机 `sudo systemctl restart mindfs` 仅由用户显式执行（会杀掉所有托管的 claude 子进程），Agent 不得代为重启。`plan-only` / `只出方案` 时必须先落盘方案并经用户显式批准后才动手，禁止未审先做。
 
-**代码变更收尾（必守）**：走 `ship` skill —— `bash scripts/deploy-all.sh` 一条命令完成门禁测试 → 提交推送 → 两侧编译安装 → WSL 拉取重建重启 → 两端对账。细节见 `.claude/skills/ship/SKILL.md`，不要手搓 make/ssh 序列。
+**代码变更收尾（必守）**：走 `ship` skill —— `bash scripts/deploy-all.sh` 一条命令完成门禁测试 → 提交推送 → 本机编译安装 → 推送产物到 WSL 安装重启 → 两端对账。细节见 `.claude/skills/ship/SKILL.md`，不要手搓 make/ssh 序列。
 
 ## 关键架构事实（易踩坑）
 
@@ -255,9 +258,12 @@ make dev-web          # 仅 Vite
 
 ```bash
 make test                   # Go 测试
-make build && make install  # 完整构建 + 部署
-sudo systemctl restart mindfs   # 本机生效（用户执行）；WSL 用 ssh wsl 'systemctl --user restart mindfs'
+make build && make install  # 本机完整构建 + 安装
+bash scripts/deploy-all.sh  # 全流程收尾：门禁 → 提交推送 → 本机装 → 分发 WSL → 对账
+sudo systemctl restart mindfs   # 本机生效（用户执行）；WSL 由 deploy-all.sh 直接重启
 ```
+
+**WSL 只收产物**：那边没有源码库，别在它上面 `make` / `git`。分发只有 `deploy-all.sh` 一条路径，细节见上方「两台机器」。
 
 - 提交用 Conventional Commits（中文描述）。
 - 改 ws.go handler 时：检查是否在 goroutine 内派发，避免阻塞读循环。

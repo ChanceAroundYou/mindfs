@@ -108,3 +108,8 @@ export function controlPath(path: string, params?: URLSearchParams): string
 2. 跑一次迁移脚本。
 3. 给运行节点写 `{"role":"worker"}`，重启。
 4. 验证：数据面照常、UI 仍从主节点进、直接访问运行节点得到 403 `node_is_worker`。
+
+> **运行节点上不需要源码库。** 自 2026-10-06 起 WSL 端已无 git checkout，只接收
+> `scripts/deploy-all.sh` 推过去的编译产物。`role` 来自运行节点自己的
+> `~/.config/mindfs/config.json`，与源码无关 —— 改角色只需改那个文件再重启，
+> 不必（也无法）先把代码同步过去。
