@@ -13,6 +13,7 @@ import {
   refreshPinsFromServer,
   setProjectPin,
   subscribePins,
+  writePins,
 } from "../services/pins";
 import { useI18n, type Locale } from "../i18n";
 import { type DirectorySortMode, sortDirectoryEntries } from "../services/directorySort";
@@ -816,7 +817,6 @@ export function SessionList({
   );
 }
 
-
 export function MultiProjectSessionList({
   groups,
   selectedKey = "",
@@ -849,10 +849,13 @@ export function MultiProjectSessionList({
   // 折叠态的子会话基数（键与 expandedChildren 同形）：展开**之前**记下当时的已加载数，
   // 折叠态按它算，不受展开时陆续拉回来的批次影响。
   const [collapsedBaseCount, setCollapsedBaseCount] = useState<Record<string, number>>({});
-  // 置顶以 **store** 为唯一来源（services/pins.ts）。首帧同步读 localStorage，
-  // 所以切项目时置顶区第一帧就完整 —— 不会先空表再重排。
+  // 置顶以 **store** 为唯一来源（services/pins.ts），本组件只订阅、不持有。
   //
-  // 不再自己 useState + useEffect 拉一次：那是「第二份能重排列表的状态」，
+  // 首帧没有本地缓存可读（localStorage 层已删：偏好表几十字节、服务端有权威副本，
+  // 持久化只会制造双份真相），所以首帧置顶区为空、服务端到达时排一次 ——
+  // 那是**一次**跳变，不是狂跳。
+  //
+  // 不再自己 useState + useEffect 拉一份：那是「第二份能重排列表的状态」，
   // 与 store 到达时的那次各排一次，就是右侧狂跳的两个来源。
   //
   // 依赖 selectedRootId / selectedNodeId：切项目或切节点时顺带刷新一次，另一台
@@ -860,7 +863,7 @@ export function MultiProjectSessionList({
   // 依赖写空数组的旧版本只在挂载时拉一次 —— 切项目后看到的还是首次那份。
   useEffect(() => {
     void refreshPinsFromServer().catch(() => {
-      /* 拉不到就按缓存显示，不闪成全不置顶 */
+      /* 拉不到就保留 store 里那份，不闪成全不置顶 */
     });
   }, [selectedRootId, selectedNodeId]);
   const pinsSnapshot = useSyncExternalStore(subscribePins, readPins, readPins);
@@ -919,11 +922,20 @@ export function MultiProjectSessionList({
   }, [groups, pinnedProjects, projectSortMode]);
   const togglePinnedProject = (group: ProjectSessionGroup) => {
     const key = groupScopeKey(group);
-    // 乐观更新，点了立刻有反馈；失败回滚到写入前那份快照。
-    const rollback = optimisticProjectPin(key, !readPins().projects[key]);
-    void setProjectPin(key, !readPins().projects[key]).then(refreshPinsFromServer, () => {
-      rollback();
-    });
+    // 意图只算一次：readPins() 在 await 之后可能已经是另一份表（并发点击/刷新），
+    // 那时再读一次会得到与乐观更新相反的值，回滚就会把状态改成错的。
+    const pinned = !readPins().projects[key];
+    const rollback = optimisticProjectPin(key, pinned);
+    // setProjectPin 回的是服务端落库后的**整张表**，直接写进 store 即可；
+    // 不再额外 refreshPinsFromServer —— 那是一次纯浪费的往返（写路径刚拿过真相）。
+    void setProjectPin(key, pinned).then(
+      (next) => {
+        writePins(next);
+      },
+      () => {
+        rollback();
+      },
+    );
   };
   const sessionByKey = useMemo(() => {
     const byKey = new Map<string, SessionItem>();

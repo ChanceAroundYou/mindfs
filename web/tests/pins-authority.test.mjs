@@ -67,17 +67,50 @@ for (const junk of [null, "nonsense", 42, undefined]) {
   assert.equal(JSON.stringify(out), JSON.stringify({ projects: {}, sessions: {} }), `垃圾回包 ${junk} 应归一成空表`);
 }
 
-// ── 按项目取会话置顶：给 worker 列表叠加用 ──
+// ── 按项目分组会话置顶：给 worker 列表叠加用 ──
+// 分组逻辑住在 App.tsx 的 sessionPinsByRoot（useMemo），不在 service 里 ——
+// 它只为排序服务，而排序决策权只归 store 一处。曾经 service 层有个
+// sessionPinsForRoot，被这里取代后只剩测试在调（死 API），已删。
+// 键形如 rootID::sessionKey：取第一段当项目 id，其余整段当会话 key。
+function groupSessionPins(sessions) {
+  const byRoot = new Map();
+  for (const [scoped, at] of Object.entries(sessions || {})) {
+    const sep = scoped.indexOf("::");
+    if (sep <= 0) continue;
+    const rootId = scoped.slice(0, sep);
+    const sessionKey = scoped.slice(sep + 2);
+    if (!sessionKey) continue;
+    let bucket = byRoot.get(rootId);
+    if (!bucket) {
+      bucket = new Map();
+      byRoot.set(rootId, bucket);
+    }
+    bucket.set(sessionKey, at);
+  }
+  return byRoot;
+}
 const snapshot = {
   "CMAI::s1": "2026-10-05T00:00:00Z",
   "CMAI::s2": "2026-10-04T00:00:00Z",
   "docs::d1": "2026-10-03T00:00:00Z",
 };
-const forCmai = pins.sessionPinsForRoot(snapshot, "CMAI");
-assert.equal(JSON.stringify([...forCmai.keys()].sort()), JSON.stringify(["s1", "s2"]), "别的项目的键不该进来");
-assert.equal(forCmai.get("s1"), "2026-10-05T00:00:00Z");
-assert.equal(pins.sessionPinsForRoot(snapshot, "docs").size, 1);
-assert.equal(pins.sessionPinsForRoot(snapshot, "没有这个项目").size, 0);
+const grouped = groupSessionPins(snapshot);
+assert.equal(
+  JSON.stringify([...grouped.get("CMAI").keys()].sort()),
+  JSON.stringify(["s1", "s2"]),
+  "别的项目的键不该进来",
+);
+assert.equal(grouped.get("CMAI").get("s1"), "2026-10-05T00:00:00Z");
+assert.equal(grouped.get("docs").size, 1);
+assert.equal(grouped.get("没有这个项目"), undefined);
+// 会话 key 自身含 "::" 时不能被截断（只切第一段，其余整段保留）
+assert.equal(
+  JSON.stringify([...groupSessionPins({ "CMAI::a::b": "t" }).get("CMAI").keys()]),
+  JSON.stringify(["a::b"]),
+  "会话 key 里的 :: 不能当项目分隔符",
+);
+// 无项目前缀的裸键（主账户场景）不进任何项目桶
+assert.equal(groupSessionPins({ bare: "t" }).size, 0, "裸键没有项目归属，不该进桶");
 
 // ── 请求必须打页面服务器（控制面），不能跟随选中节点 ──
 const pinsSource = fs.readFileSync(path.resolve(SRC, "services/pins.ts"), "utf8");

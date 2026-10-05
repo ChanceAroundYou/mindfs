@@ -16,10 +16,11 @@ import { controlPath } from "./controlPlane";
 import { protectedJSON } from "./api";
 
 // 项目置顶：键 = scopeKey（nodeID::rootID），值 = 毫秒时间戳。
-export type ProjectPins = Record<string, number>;
+// 模块私有：外部只消费 PinsSnapshot，不必知道两个桶各自的形状。
+type ProjectPins = Record<string, number>;
 
 // 会话置顶：键 = rootID::sessionKey，值 = RFC3339。
-export type SessionPins = Record<string, string>;
+type SessionPins = Record<string, string>;
 
 export interface PinsSnapshot {
   projects: ProjectPins;
@@ -106,25 +107,6 @@ export function sessionPinKey(rootId: string, sessionKey: string): string {
   return root ? `${root}::${key}` : key;
 }
 
-/**
- * 取某个项目的会话置顶键集合，给 worker 列表做叠加用。
- *
- * 为什么要叠加：worker 上 `/api/pins` 是 403（它是控制面），它的会话列表
- * 里也就没有置顶区。用户看到的置顶来自**主节点**那张表，worker 不知道，
- * 所以前端把主节点那份盖在 worker 的列表上。
- */
-export function sessionPinsForRoot(pins: SessionPins, rootId: string): Map<string, string> {
-  const out = new Map<string, string>();
-  const root = String(rootId || "").trim();
-  const prefix = root ? `${root}::` : "";
-  for (const [scoped, at] of Object.entries(pins || {})) {
-    if (prefix && !scoped.startsWith(prefix)) continue;
-    const key = scoped.slice(prefix.length).trim();
-    if (key) out.set(key, at);
-  }
-  return out;
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // store：置顶的唯一前端状态源
 //
@@ -153,8 +135,10 @@ const listeners = new Set<() => void>();
  * 为什么不是「表变没变」：反复点「置顶」不刷新时间戳（那是有意的，否则
  * 置顶顺序会被无意义的重排打乱），而项目置顶的时间戳每次都变。只比较
  * 排序后的 (键, 时间) 序列，无意义的变动就不会触发重排。
+ *
+ * 模块私有：只有 writePins 用它，算指纹不是对外契约。
  */
-export function pinsFingerprint(value: PinsSnapshot): string {
+function pinsFingerprint(value: PinsSnapshot): string {
   const projects = Object.entries(value.projects || {})
     .map(([k, v]) => `${k}@${v}`)
     .sort()
@@ -205,13 +189,6 @@ export function writePins(next: PinsSnapshot): boolean {
     emit();
   }
   return changed;
-}
-
-/** 供测试与「换账户」时复位。 */
-export function resetPinsStoreForTest(): void {
-  current = EMPTY_SNAPSHOT;
-  lastFingerprint = "";
-  listeners.clear();
 }
 
 /**

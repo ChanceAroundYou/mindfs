@@ -231,19 +231,25 @@ function pruneLocalStorageRecords(): void {
   if (!records.length) {
     return;
   }
-  // 两个上限同时生效：条数 LS_MAX_RECORDS、单条 LS_MAX_RECORD_BYTES、总字节
+  // 三个上限同时生效：条数 LS_MAX_RECORDS、单条 LS_MAX_RECORD_BYTES、总字节
   // LS_TOTAL_BYTES。任一超出就丢最旧的（按 touchedAt，与会话缓存同一原则：
   // 丢用户最久没碰的，不丢正在看的）。
-  let remaining = records.length;
-  let total = records.reduce((sum, r) => sum + recordBytes(r), 0);
-  const oldestFirst = records.slice().sort((a, b) => a.touchedAt - b.touchedAt);
-  for (const record of oldestFirst) {
+  //
+  // 字节数**只算一次**并挂在记录上：recordBytes 要 JSON.stringify 整条记录
+  // （单条可达 256KB），reduce 里算一遍、循环里再算一遍就是双倍无谓开销。
+  const oldestFirst = records
+    .slice()
+    .sort((a, b) => a.touchedAt - b.touchedAt)
+    .map((record) => ({ record, bytes: recordBytes(record) }));
+  let remaining = oldestFirst.length;
+  let total = oldestFirst.reduce((sum, entry) => sum + entry.bytes, 0);
+  for (const entry of oldestFirst) {
     if (remaining <= LS_MAX_RECORDS && total <= LS_TOTAL_BYTES) {
       break;
     }
-    total -= recordBytes(record);
+    total -= entry.bytes;
     remaining -= 1;
-    removeCachedRecordFromLocalStorage(record.key);
+    removeCachedRecordFromLocalStorage(entry.record.key);
   }
 }
 
