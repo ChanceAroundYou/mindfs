@@ -1,18 +1,15 @@
-// 切换会话时消息列表闪动（2026-10-05 实测复现）。
+// <SessionViewer> 必须按会话键重挂载（2026-10-05 加，2026-10-06 更正说明）。
 //
-// 症状：点开另一个会话，屏幕先显示**上一个会话**的消息，随后整块塌成空白，
-// 约 0.8s 后新会话的消息才补回来。用户的描述是「完整对话 → 塌成最后一条用户消息 → 慢慢补回来」。
+// **这不是那个闪烁 bug 的根因。** 根因是加载时丢掉「在途内容（seq=0）」，
+// 见 docs/session-flicker-root-cause.md 第六节与 tests/session-window.test.mjs
+// 里 composeLoadedExchanges 那组断言。本文件守的是另一件事：
 //
-// 根因：SessionViewer 的窗口化视图把 visibleExchanges 放在组件 state 里，而两处
-// <SessionViewer> 都没给 key —— 切会话时组件不重挂载，visibleExchanges 跨会话复用：
-//   1. 切换那一帧先拿上一个会话的窗口渲染（屏幕上属于 A，内容是 B）；
-//   2. init effect（依赖 [sessionKey, rootId, applyWindow]）重跑，用**尚未就绪**的
-//      session.exchanges 当种子 —— 新会话此时还没进缓存，toSessionItem 又不复制
-//      exchanges 字段，种子为空 → setVisibleExchanges([]) 把画面清空；
-//   3. getSessionWindow 回来后 applyWindow 才重新填上（keepOlder 合并的是刚被清空的 prev）。
+// SessionViewer 的窗口化视图把 visibleExchanges 放在组件 state 里。两处调用点
+// 不给 key 的话，切会话时组件不重挂载、可见集跨会话复用 ——
+// 切换那一帧会拿**上一个会话**的窗口渲染（屏幕上属于 A，内容是 B）。
+// 这个症状独立于上面的根因，且删掉 key 之后很难在 review 里看出来，所以留护栏。
 //
-// 这些断言钉的是「两处调用点都必须给 key」——修复本身只有两行，但一旦有人删掉 key，
-// 症状会退化成很难在 review 里看出来的闪烁，所以要有回归护栏。
+// ⚠️ 别把它当成「切会话闪动」的完整防护。真正的防护在 session-window.test.mjs。
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
