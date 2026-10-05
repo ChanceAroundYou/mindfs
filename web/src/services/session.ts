@@ -2040,6 +2040,40 @@ export function mergeSessionExchanges(
   );
 }
 
+/**
+ * 会话加载的**唯一**组装规则。
+ *
+ * `serverExs`：服务端刚回来的行（窗口回包，或 syncSession 的结果）。
+ * `cachedExs`：加载前内存缓存里的内容 —— **瞬时行（seq=0）的唯一来源**。
+ *
+ * 在途内容（正在流式输出的正文、尚未落库的工具卡）只存在于内存里，服务端根本不知道
+ * 它们。所以瞬时行必须从 `cachedExs` 接回，**绝不能去服务端回包找**：
+ * 曾经有三个地方各写了一遍这个判断、三处都去服务端回包找瞬时行，于是每次加载都把
+ * 在途内容丢一次。症状是切回运行中的会话时「先从缓存渲染出完整对话 → 塌到最后一条
+ * 用户 prompt → 再一点点把 assistant 补回来」（assistant 越多越明显）；已结束的会话
+ * 没有瞬时行，所以怎么切都不闪 —— 这正是它长期难以复现的原因。
+ *
+ * 一条规则一个定义，是为了让「去服务端回包找瞬时行」这个错误**写不出来**：
+ * 这个函数里没有「哪一侧」的概念。
+ */
+export function composeLoadedExchanges(
+  serverExs: readonly any[] | null | undefined,
+  cachedExs: readonly any[] | null | undefined,
+): any[] {
+  // 瞬时行取并集（缓存在前，它才是在途内容的权威来源），按对象同一性去重 ——
+  // 同一个 exchange 对象可能两侧都有（服务端把本地刚发的那条也回传了），
+  // 不按引用去重会渲染两遍。文本级的重复留给 overlay 的内容比对处理。
+  const transient: any[] = [];
+  const seen = new Set<unknown>();
+  for (const ex of [...(cachedExs || []), ...(serverExs || [])]) {
+    if (Number((ex as any)?.seq || 0) !== 0) continue;
+    if (seen.has(ex)) continue;
+    seen.add(ex);
+    transient.push(ex);
+  }
+  return [...mergeSessionExchanges(cachedExs, serverExs), ...transient];
+}
+
 function appendSessionDelta(
   base: Session | null | undefined,
   incoming: Session | null | undefined,
@@ -2056,8 +2090,12 @@ function appendSessionDelta(
   // incoming 不过滤 seq=0：sync/GET 会以 seq=0 下发「尚未落库的 pending 条目」。
   // 注意：正在等待回答的 ask_user 卡**不在此列** —— 它是纯内存态（服务端
   // manager.pendingToolCalls + 前端 sessionCacheRef），服务端从不经 HTTP 下发
-  // （session.Exchange 结构体没有 ToolCall 字段）。它由调用方在 handleSyncSession /
-  // loadSession 里从内存缓存合并回来，见 App.tsx 的 localTransient 逻辑。
+  // （session.Exchange 结构体没有 ToolCall 字段）。
+  //
+  // **base 过滤 seq>0 是刻意的，不是漏了合并**：base 是 IDB 里的持久化记录，在途内容
+  // 不在其中；这里的增量合并只负责「已落盘部分」。内存里那份在途内容由调用方经
+  // composeLoadedExchanges 接回 —— 那条才是「加载时不丢在途内容」的唯一出口。
+  // 别在这里补 seq=0 的合并：base 是持久层，把瞬时行写进 IDB 是另一个错误。
   const incomingExchanges = Array.isArray(incoming?.exchanges)
     ? (incoming.exchanges as any[])
     : [];

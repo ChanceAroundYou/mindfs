@@ -50,7 +50,10 @@ assert.doesNotMatch(claudeSession, /claudeModelSupportsEffortAt/, "5941a36 shoul
 // d36cc53 — frontend reconnect event_seq re-anchor + replaySnapshot branch
 assert.match(app, /cachedBeforeSync/, "d36cc53 App restore should capture cachedBeforeSync");
 assert.match(app, /getEventCursor/, "d36cc53 App restore should read resumeCursor via getEventCursor");
-assert.match(app, /localTransient/, "d36cc53 App restore should keep local seq==0 exchanges");
+// 2026-10-06：保留本地 seq==0 的规则收敛进 session.ts 的 composeLoadedExchanges
+// （原先在 App 里写了四遍、三遍是错的）。契约不变 —— App 侧必须调用它。
+assert.match(app, /composeLoadedExchanges\(/, "d36cc53 contract: App restore must keep local seq==0 exchanges (now via composeLoadedExchanges)");
+assert.match(sessionSvc, /export function composeLoadedExchanges/, "the load-time composition rule lives in session.ts");
 // 2026-09 App.tsx 拆分：userShell 流合并搬到 app/useSessionStreamCache.ts，契约随文件走。
 assert.match(streamCache, /replaySnapshot === true/, "d36cc53 App should branch on replaySnapshot when coalescing userShell");
 assert.match(sessionSvc, /eventCursors/, "d36cc53 session.ts should track eventCursors");

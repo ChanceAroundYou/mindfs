@@ -16,11 +16,11 @@ import {
   clearWindowedView,
   deleteCachedSession,
   deleteCachedSessionLists,
+  composeLoadedExchanges,
   getCachedMultiRootSessionList,
   getCachedSession,
   getCachedSessionList,
   getSessionWindow,
-  mergeSessionExchanges,
   saveCachedMultiRootSessionList,
   saveCachedSessionList,
   sessionService,
@@ -2254,10 +2254,22 @@ export function App({ onGoHome }: AppProps) {
       }
       const cacheKey = rootSessionKey(resolvedRoot, resolvedKey);
       const cachedBeforeSync = sessionCacheRef.current[cacheKey];
+      // 加载前内存缓存里的行 —— 「在途内容（seq=0）」的唯一来源。
+      // 服务端不下发它们（窗口回包只有已落盘行），所以每次加载都必须从这份快照接回，
+      // 见 session.ts 的 composeLoadedExchanges。
+      const cachedExchangesBefore: Exchange[] = Array.isArray(
+        (cachedBeforeSync as any)?.exchanges,
+      )
+        ? ((cachedBeforeSync as any).exchanges as Exchange[])
+        : [];
+      // 事件光标（d36cc53 的重连重锚）：加载后重置，保持既有语义不变。
       const resumeCursor = sessionService.getEventCursor(
         resolvedRoot,
         resolvedKey,
       );
+      if (resumeCursor) {
+        sessionService.clearEventCursor(resolvedRoot, resolvedKey);
+      }
       const inflight = loadingSessionRef.current[cacheKey] as unknown as Promise<Session | null> | undefined;
       if (inflight) {
         const hit = await inflight;
@@ -2272,35 +2284,11 @@ export function App({ onGoHome }: AppProps) {
             nodeId: getNodeIdForRoot(resolvedRoot),
           });
           if (win && (win as any).session) {
-            let sess: any = (win as any).session;
-            sess = { ...sess, key: resolvedKey, session_key: resolvedKey };
-            // 复用原 resumeCursor 的 pending 转瞬态合并逻辑
-            if (resumeCursor) {
-              const incomingExchanges = Array.isArray(sess.exchanges)
-                ? (sess.exchanges as Exchange[])
-                : [];
-              const hasPendingTurn = incomingExchanges.some(
-                (exchange) => Number((exchange as any)?.seq || 0) === 0,
-              );
-              const localTransient = Array.isArray((cachedBeforeSync as any)?.exchanges)
-                ? (((cachedBeforeSync as any).exchanges as Exchange[]).filter(
-                    (exchange) => Number((exchange as any)?.seq || 0) === 0,
-                  ))
-                : [];
-              if (hasPendingTurn && localTransient.length > 0) {
-                sess = {
-                  ...sess,
-                  exchanges: [
-                    ...incomingExchanges.filter(
-                      (exchange) => Number((exchange as any)?.seq || 0) > 0,
-                    ),
-                    ...localTransient,
-                  ],
-                };
-              } else {
-                sessionService.clearEventCursor(resolvedRoot, resolvedKey);
-              }
-            }
+            const sess: any = {
+              ...(win as any).session,
+              key: resolvedKey,
+              session_key: resolvedKey,
+            };
             const serverPending =
               typeof sess?.pending === "boolean" ? !!sess.pending : undefined;
             if (serverPending === false) {
@@ -2321,20 +2309,14 @@ export function App({ onGoHome }: AppProps) {
             const winExs = Array.isArray(sess.exchanges)
               ? (sess.exchanges as Exchange[])
               : [];
-            // mergeSessionExchanges 只保留 seq>0 的持久化行；seq=0 的瞬时行
-            // （刚发出、还没落库的消息与流式正文）要接在后面，否则「刚点发送的那条」
-            // 会在换窗后消失一拍。顺序与 syncSession 的 displaySession 一致。
-            const transientTail = winExs.filter(
-              (exchange) => Number((exchange as any)?.seq || 0) === 0,
-            );
             const toCache = {
               ...sess,
               key: resolvedKey,
               pending,
-              exchanges: [
-                ...mergeSessionExchanges(cachedBeforeSync as any, winExs),
-                ...transientTail,
-              ],
+              // 加载时的唯一组装规则：服务端行并入缓存，再把缓存里的瞬时行接回。
+              // 这条规则曾在这里、fallback、handleSyncSession 各写一遍，三处都去
+              // 服务端回包找瞬时行（那里没有），于是每次加载都把在途内容丢掉一次。
+              exchanges: composeLoadedExchanges(winExs, cachedExchangesBefore),
               // aux 同理并入：exchanges 保住历史而 exchange_aux 只剩窗口那份，
               // 那些行上的工具卡会凭空消失（历史里的 read/edit 变纯文本）。
               // 按 seq 覆盖而非拼接 —— 同一个 seq 被窗口与缓存各带一份时，
@@ -2364,32 +2346,16 @@ export function App({ onGoHome }: AppProps) {
         if (!fullSession) {
           return null;
         }
-        if (resumeCursor) {
-          const incomingExchanges = Array.isArray((fullSession as any).exchanges)
-            ? ((fullSession as any).exchanges as Exchange[])
-            : [];
-          const hasPendingTurn = incomingExchanges.some(
-            (exchange) => Number((exchange as any)?.seq || 0) === 0,
-          );
-          const localTransient = Array.isArray((cachedBeforeSync as any)?.exchanges)
-            ? (((cachedBeforeSync as any).exchanges as Exchange[]).filter(
-                (exchange) => Number((exchange as any)?.seq || 0) === 0,
-              ))
-            : [];
-          if (hasPendingTurn && localTransient.length > 0) {
-            fullSession = {
-              ...(fullSession as any),
-              exchanges: [
-                ...incomingExchanges.filter(
-                  (exchange) => Number((exchange as any)?.seq || 0) > 0,
-                ),
-                ...localTransient,
-              ],
-            } as Session;
-          } else {
-            sessionService.clearEventCursor(resolvedRoot, resolvedKey);
-          }
-        }
+        // 与窗口分支同一条组装规则。syncSession 的结果来自 IDB 缓存 + 服务端增量，
+        // 它不知道内存里正在流式输出的那部分 —— 必须由这里接回（实测 2026-10-06：
+        // 服务端只回 15 条已落盘行，内存缓存有 376 条，其中 361 条是在途内容）。
+        fullSession = {
+          ...fullSession,
+          exchanges: composeLoadedExchanges(
+            (fullSession as any).exchanges,
+            cachedExchangesBefore,
+          ),
+        } as Session;
         const serverPending =
           typeof (fullSession as any)?.pending === "boolean"
             ? !!(fullSession as any).pending
@@ -4517,6 +4483,12 @@ export function App({ onGoHome }: AppProps) {
         //     overlay 对账 windowToolCallIds 会自然让位，不会重复渲染）
         //   · 其余条目按 role+内容（已持久化的轮次不会以 seq=0 形式被重复追加，这正是当初
         //     只留 tool 想防的事；用内容比对同样防得住）
+        //
+        // **为什么这里不用 composeLoadedExchanges**：那条规则是「服务端回包只含已落盘行，
+        // 所以本地瞬时行无脑全留」。手动同步不同 —— 它把整个会话灌回来，刚落盘的那一轮
+        // 已经以**真实 seq** 出现在回包里，此时本地那几份 seq=0 的拷贝就成了陈旧副本，
+        // 再留就是同一段正文显示两遍。所以这条路径必须比对后剔除，判据也更强（callId 或
+        // role+内容）。两条规则形状不同是**有意的**，不是漏统一。
         const localTransientTail = (() => {
           const cachedExchanges = Array.isArray(
             (sessionCacheRef.current[cacheKey] as any)?.exchanges,

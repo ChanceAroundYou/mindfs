@@ -332,20 +332,32 @@ assert.match(
   "App fallback path must attach locally-computed meta",
 );
 
-// ── 切会话闪一下（2026-10-05）────────────────────────────────────────────
-// restoreActiveSession 原来把 20 条的窗口**整体覆盖**进缓存。缓存里可能有几百条
-// （用户翻上去过、或 live 路径落库过），覆盖掉头部后切回来只剩尾 20 条作首帧种子 ——
-// 于是「完整对话 → 塌成最后一条用户消息 → 回答慢慢补回来」。
-// 窗口必须**并入**缓存，且 transientTail（seq=0）要接回，否则刚发的消息消失一拍。
-assert.match(
-  appSrc,
-  /\.\.\.mergeSessionExchanges\(cachedBeforeSync as any, winExs\),/,
-  "restoreActiveSession must merge the window into the cache, not overwrite it",
+// ── 切会话闪一下（2026-10-05 发现，2026-10-06 定根因）────────────────────
+// 症状：切回**运行中**的会话时，先从缓存渲染出完整对话 → 塌到最后一条用户 prompt
+// → 再一点点把 assistant 补回来（assistant 越多越明显）。已结束的会话怎么切都不闪。
+//
+// 根因：加载时要知道「本地在途内容（seq=0）不能丢」，而服务端**从不**下发它们。
+// 这条规则曾被写了四遍，其中三遍都去服务端回包找瞬时行 —— 恒取空数组，于是每次
+// 加载都把在途内容丢一次。现在收敛成 composeLoadedExchanges 一个定义。
+//
+// 行为断言在上面的 composeLoadedExchanges 那组；这里只钉「两个分支都走同一条规则」
+// 以及「旧写法已彻底消失」。
+assert.equal(
+  (appSrc.match(/composeLoadedExchanges\(/g) || []).length,
+  2,
+  "restoreActiveSession 的窗口分支与 fallback 分支都必须走同一个组装规则",
 );
-assert.match(
+// 反向断言：旧写法必须彻底消失。断言形状在这里是恰当的 —— 我们禁的是一个**写法**，
+// 而它造成的可见缺陷已由上面的行为断言守住。
+assert.doesNotMatch(
   appSrc,
-  /const transientTail = winExs\.filter\(\s*\(exchange\) => Number\(\(exchange as any\)\?\.seq \|\| 0\) === 0,\s*\);/,
-  "the seq=0 transient tail must be carried past the merge (mergeSessionExchanges drops seq<=0)",
+  /hasPendingTurn/,
+  "hasPendingTurn 恒为 false（服务端回包不带 seq=0）—— 这个守卫必须删掉，不能再有第二份实现",
+);
+assert.doesNotMatch(
+  appSrc,
+  /transientTail\s*=\s*winExs\.filter/,
+  "瞬时行不能取自服务端窗口回包 —— 那里一个 seq=0 都没有",
 );
 // aux 必须一并并入：exchanges 保住历史而 exchange_aux 只剩窗口那份时，历史行上的
 // 工具卡会凭空消失（按 seq 覆盖，不是拼接 —— 拼接会把同一张卡渲染两遍）。
@@ -407,6 +419,76 @@ assert.equal(
   JSON.stringify(mergeSessionExchanges([], [{ seq: 9 }, { seq: 2 }, { seq: 5 }]).map((e) => e.seq)),
   JSON.stringify([2, 5, 9]),
   "the merge must sort by seq — callers rely on order",
+);
+
+// ── composeLoadedExchanges：加载时的唯一组装规则 ───────────────────────────
+// 这条规则曾经被写了 4 遍（restoreActiveSession 的窗口/fallback 两处 + 各自的
+// resumeCursor 块 + handleSyncSession），其中 3 遍都去**服务端回包**找瞬时行 ——
+// 服务端窗口回包只含已落盘行，于是每次加载都把在途内容丢一次。
+// 实测 2026-10-06：切回运行中的会话，缓存 376 条（其中 361 条 seq=0），
+// 加载后缓存被写成 15 条，界面塌到最后一条用户 prompt，再等直播流补回来（4~6 秒）。
+// 断言行为，因为「丢了多少」源码正则看不出来。
+const composeLoadedExchanges = sessionMod.composeLoadedExchanges;
+assert.equal(
+  typeof composeLoadedExchanges,
+  "function",
+  "composeLoadedExchanges must be exported — it is the single load-time rule",
+);
+
+// ① 只有服务端行（冷缓存）：原样返回
+assert.equal(
+  JSON.stringify(
+    composeLoadedExchanges([1, 2, 3].map((seq) => ({ seq })), []).map((e) => e.seq),
+  ),
+  JSON.stringify([1, 2, 3]),
+);
+
+// ② 运行中的会话：服务端只回已落盘行，缓存里的瞬时行必须**全部接回来**
+//    （本次 bug 的核心断言 —— 少接一条就是一次可见的塌陷）
+{
+  const server = [1, 2, 3].map((seq) => ({ seq }));
+  const cached = [1, 2, 3].map((seq) => ({ seq })).concat([
+    { seq: 0, role: "user", content: "刚发出还没落库" },
+    { seq: 0, role: "agent", content: "正在流式输出的正文" },
+  ]);
+  const out = composeLoadedExchanges(server, cached);
+  assert.equal(out.length, 5, "the in-flight rows must survive the load (root cause)");
+  assert.equal(out.filter((e) => e.seq === 0).length, 2, "both transient rows kept");
+  assert.equal(
+    JSON.stringify(out.filter((e) => e.seq > 0).map((e) => e.seq)),
+    JSON.stringify([1, 2, 3]),
+    "persisted rows stay sorted and deduped",
+  );
+}
+
+// ③ 缓存更全（用户翻过历史）：缓存里比窗口老的持久行不能丢
+{
+  const out = composeLoadedExchanges(
+    [{ seq: 8 }, { seq: 9 }],
+    [1, 8, 9].map((seq) => ({ seq })).concat([{ seq: 0, content: "x" }]),
+  );
+  assert.equal(
+    JSON.stringify(out.filter((e) => e.seq > 0).map((e) => e.seq)),
+    JSON.stringify([1, 8, 9]),
+    "older persisted rows from the cache must be kept (load is monotonic)",
+  );
+  assert.equal(out.filter((e) => e.seq === 0).length, 1);
+}
+
+// ④ 同一个瞬时对象两侧都有 → 只留一份（按对象同一性）
+{
+  const shared = { seq: 0, content: "同一条" };
+  const out = composeLoadedExchanges([{ seq: 1 }, shared], [{ seq: 1 }, shared]);
+  assert.equal(out.length, 2, "the same transient object must not be duplicated");
+}
+
+// ⑤ 空/垃圾输入不抛
+assert.equal(composeLoadedExchanges(null, null).length, 0);
+assert.equal(composeLoadedExchanges(undefined, undefined).length, 0);
+assert.equal(
+  composeLoadedExchanges([{ seq: 2 }], undefined).length,
+  1,
+  "a cold cache must still return the server rows",
 );
 
 // ── 缓存淘汰只从头部，永不动尾部（用户 2026-10-05 定的规则）──────────────
