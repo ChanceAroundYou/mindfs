@@ -135,8 +135,18 @@ test("收起按钮在标题栏里，点它是退回会话列表、不关掉整�
   const at = panel.indexOf('data-archived-panel="collapse"');
   const button = panel.slice(at, panel.indexOf("</button>", at));
   assert.match(button, /onClick=\{onClose\}/);
-  // 只钉「有图标」；chevron 画成什么样、朝哪边是设计取值，不在这钉死。
-  assert.match(button, /<svg/, "收起按钮要有图标");
+  // 图标要在，且方向必须是**朝下**。按形状判（顶点 y 最大），不钉坐标字面量：
+  // 把 3.5 / 8 / 12.5 整体挪一两个单位、或者换个 viewBox，只要还是朝下就不该红。
+  // 这条值存在，是因为这里翻过车：7253855 的提交信息写「改为指向右（原先朝下）」，
+  // 而那次 diff 实际是把朝右改成了朝下，注释也跟着写成「朝右」—— 代码、消息、注释
+  // 三处互相矛盾了几个月，没人发现（旧测试虽然在钉坐标，但断言消息同样写「应指向右」，
+  // 等于用错的理由锁住了对的形状）。所以这里改成按方向判，理由写在断言里。
+  const poly = button.match(/<polyline points="([^"]+)"/);
+  assert.ok(poly, "收起按钮的 chevron 应为 polyline");
+  const pts = poly[1].trim().split(/\s+/).map(Number);
+  assert.equal(pts.length, 6, `polyline 应为三个点，实得 ${pts.length / 2} 个`);
+  const [, y0, , y1, , y2] = pts;
+  assert.ok(y1 > y0 && y1 > y2, `chevron 应朝下（中点 y 最大），实得 y=(${y0}, ${y1}, ${y2})`);
 });
 
 test("返回键/侧滑能退回会话列表", () => {
