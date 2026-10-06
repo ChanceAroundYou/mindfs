@@ -479,6 +479,13 @@
   （`scheduleMultiProjectSessionReload`）、`git status` 按 `(root,node)` 复用 in-flight。
   批量与逐文件必须**逐字段等价**，由 `gitview_test.go` 对拍钉住；「批量真的更省」由同一个
   文件里的 git 调用次数对拍钉住（PATH 垫片计数），不是靠注释声称。
+- **客户端 git 缓存加上限（2026-10-06）**：可见症状是长期开着标签页翻 git 历史时
+  内存一路涨（`gitCommitDiffCache` 存的是**完整 diff 正文**），或 localStorage 写满配额后
+  静默丢失 —— `writeStorageJSON` 的 `try/catch` 会把配额错误吞掉，表现成「缓存莫名没了」。
+  三个 Map 走 `setBounded`（上限 200，删最旧的一条近似 LRU），localStorage 的
+  commit diff / commit files 走 `capStorageByPrefix`（上限 32 条）。
+  **in-flight map 刻意不设上限** —— 它们在 `.finally` 里就删了，加上限没有意义，
+  反而会让并发去重失灵；`git-cache-bounds.test.mjs` 里专门有一条断言钉住这一点。
 
 ### G-AI PWA / 陈旧资源自愈 / 子路径 ServiceWorker
 

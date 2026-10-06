@@ -847,7 +847,9 @@ groups:
       word/pdf/图片预览打不开或整页崩；
       会话与看板里的 +N −M 徽标全空（关联文件统计端点被换掉）；
       或界面对后台的请求风暴回来——实测 80 个关联文件时 3706 次请求/小时、约 24 MB/小时，
-      浏览器标签页卡死甚至崩溃，手机端更明显。
+      浏览器标签页卡死甚至崩溃，手机端更明显；
+      长期开着标签页翻 git 历史时内存一路涨（gitCommitDiffCache 存的是完整 diff 正文，
+      三个 Map 原先都没有上限），或 localStorage 写满配额后静默丢失（「缓存莫名没了」）。
     why: |
       文件与 Git 请求必须带 nodeId；文档预览把 docx/pptx 转成可渲染结构；
       根视图拆成 Root{Git,Related,Worktree}ContentView 三个页签。
@@ -858,6 +860,9 @@ groups:
       git 调用次数对拍钉住（PATH 垫片计数，实测 8 文件 14 次 vs 64 次）。
       同一批还合并了热路径重复请求：多项目会话列表重拉统一走既有 300ms 去抖
       scheduleMultiProjectSessionReload；git status 按 (root,node) 复用 in-flight Promise。
+      客户端 git 缓存必须有上限：三个 Map 走 setBounded（上限 200，删最旧的一条近似 LRU），
+      localStorage 的 commit diff/commit files 走 capStorageByPrefix（上限 32 条）。
+      in-flight map **刻意不设上限** —— 它们在 .finally 里就删了，加上限没有意义。
     anchors:
       - 'web/src/components/CodeViewer.tsx:CUSTOM(G-AH)'
       - 'web/src/components/GitStatusPanel.tsx:confirmDialog'
@@ -889,11 +894,13 @@ groups:
       - server/internal/gitview/gitview_test.go
       - server/internal/api/http_git_related_files_stats_test.go
       - web/tests/related-file-stats-batch.test.mjs
+      - web/tests/git-cache-bounds.test.mjs
     tests:
       - web/tests/document-preview.test.mjs
       - web/tests/project-add-path-browse.test.mjs
       - web/tests/project-tree-refresh.test.mjs
       - web/tests/related-file-stats-batch.test.mjs
+      - web/tests/git-cache-bounds.test.mjs
       - web/tests/node-url-normalize.test.mjs
       - server/internal/gitview/gitview_test.go
       - server/internal/api/http_git_related_files_stats_test.go

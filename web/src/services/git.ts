@@ -128,6 +128,44 @@ const gitCommitFilesInflight = new Map<string, Promise<GitCommitFilesPayload>>()
 const gitCommitDiffCache = new Map<string, GitDiffPayload>();
 const gitCommitDiffInflight = new Map<string, Promise<GitDiffPayload>>();
 
+// 这三个 Map 一律**有上限**。没有上限的缓存在长会话里只增不减，而
+// gitCommitDiffCache 存的是**完整 diff 正文** —— 用户报的「标签页闪退」里，
+// 长期开着标签页翻 git 历史就是一条真实的内存上涨路径。
+//
+// 淘汰取「最旧的那条」：Map 保持插入序，所以删第一条即近似 LRU。
+// 上限对齐同仓库 file.ts 的 MAX_CACHE_ENTRIES（200），够翻历史用。
+const gitCacheMaxEntries = 200;
+
+function setBounded<K, V>(cache: Map<K, V>, key: K, value: V): void {
+  cache.set(key, value);
+  if (cache.size <= gitCacheMaxEntries) return;
+  const oldest = cache.keys().next();
+  if (!oldest.done && oldest.value !== undefined) {
+    cache.delete(oldest.value);
+  }
+}
+
+// localStorage 里 commit diff / commit files 的**条数**上限。
+// localStorage 是同步的且有配额，写超了 writeStorageJSON 会静默失败（try/catch 吞掉），
+// 症状是「缓存莫名丢了」。这里封顶到 32 —— 翻 git 历史够用。
+//
+// 各浏览器按插入序存放，所以取 keys 数组的前半段删掉即「保留最近的 maxEntries 条」。
+// 淘汰是近似的（没有可靠的插入序保证），但目的只是不让总量一直涨。
+const commitDiffStorageMaxEntries = 32;
+
+function capStorageByPrefix(prefix: string, maxEntries: number): void {
+  if (!canUseStorage()) return;
+  const keys: string[] = [];
+  for (let i = 0; i < window.localStorage.length; i += 1) {
+    const key = window.localStorage.key(i);
+    if (key && key.startsWith(prefix)) keys.push(key);
+  }
+  if (keys.length <= maxEntries) return;
+  for (const key of keys.slice(0, keys.length - maxEntries)) {
+    window.localStorage.removeItem(key);
+  }
+}
+
 function canUseStorage(): boolean {
   return typeof window !== "undefined" && !!window.localStorage;
 }
@@ -189,7 +227,7 @@ function getHistoryCacheEntry(rootId: string, nodeId?: string): GitHistoryCacheE
     const bareKey = String(rootId || "").trim();
     const bare = gitHistoryListCache.get(bareKey);
     if (bare) {
-      gitHistoryListCache.set(scoped, bare);
+      setBounded(gitHistoryListCache, scoped, bare);
       gitHistoryListCache.delete(bareKey);
       return bare;
     }
@@ -206,7 +244,7 @@ function getHistoryCacheEntry(rootId: string, nodeId?: string): GitHistoryCacheE
 // 不可变且可能很大。
 function setHistoryCacheEntry(rootId: string, entry: GitHistoryCacheEntry, nodeId?: string): void {
   const scoped = gitScopedRoot(rootId, nodeId);
-  gitHistoryListCache.set(scoped, entry);
+  setBounded(gitHistoryListCache, scoped, entry);
 }
 
 function normalizeGitHistoryPayload(payload: any): GitHistoryPayload {
@@ -435,7 +473,7 @@ export async function fetchGitCommitFiles(rootId: string, commit: string, nodeId
   }
   const persisted = readStorageJSON<GitCommitFilesPayload>(commitFilesStorageKey(rootId, commit, nid || undefined));
   if (persisted && Array.isArray(persisted.items)) {
-    gitCommitFilesCache.set(key, persisted);
+    setBounded(gitCommitFilesCache, key, persisted);
     return persisted;
   }
   const inflight = gitCommitFilesInflight.get(key);
@@ -449,8 +487,9 @@ export async function fetchGitCommitFiles(rootId: string, commit: string, nodeId
       commit: typeof payload?.commit === "string" ? payload.commit : commit,
       items: Array.isArray(payload?.items) ? payload.items as GitStatusItem[] : [],
     };
-    gitCommitFilesCache.set(key, normalized);
+    setBounded(gitCommitFilesCache, key, normalized);
     writeStorageJSON(commitFilesStorageKey(rootId, commit, nid || undefined), normalized);
+    capStorageByPrefix(COMMIT_FILES_STORAGE_PREFIX, commitDiffStorageMaxEntries);
     return normalized;
   }).finally(() => {
     gitCommitFilesInflight.delete(key);
@@ -658,7 +697,7 @@ export async function fetchGitCommitDiff(
   }
   const persisted = readStorageJSON<GitDiffPayload>(commitDiffStorageKey(rootId, commit, item.old_path || "", path, nid || undefined));
   if (persisted && typeof persisted.content === "string") {
-    gitCommitDiffCache.set(key, persisted);
+    setBounded(gitCommitDiffCache, key, persisted);
     return persisted;
   }
   const inflight = gitCommitDiffInflight.get(key);
@@ -680,8 +719,9 @@ export async function fetchGitCommitDiff(
       commit,
       source: "commit" as const,
     };
-    gitCommitDiffCache.set(key, diff);
+    setBounded(gitCommitDiffCache, key, diff);
     writeStorageJSON(commitDiffStorageKey(rootId, commit, item.old_path || "", path, nid || undefined), diff);
+    capStorageByPrefix(COMMIT_DIFF_STORAGE_PREFIX, commitDiffStorageMaxEntries);
     return diff;
   }).finally(() => {
     gitCommitDiffInflight.delete(key);
