@@ -294,6 +294,12 @@ func (m *Manager) Create(_ context.Context, input CreateInput) (*Session, error)
 		return nil, err
 	}
 	m.sessions[session.Key] = session
+	// 建会话时就记下 agent：列表行是 meta-only 的，只靠回合结束时写的绑定会让
+	// 首轮运行期间的徽标落回「AI」占位。写失败只记日志——sessions 行已经插进去了，
+	// 返回错误会让调用方拿到 session.create_failed 却留下一个孤儿会话。
+	if err := m.ensureAgentBindingUnsafe(session.Key, initialAgent); err != nil {
+		log.Printf("[session/store] ensure.binding session=%s agent=%s err=%v", session.Key, initialAgent, err)
+	}
 	// Persist custom name so delete+reimport can resume it via LookupAliasForAgent.
 	// Default "New Session" is omitted to avoid alias pollution.
 	if trimmed := strings.TrimSpace(name); trimmed != "" && trimmed != "New Session" {
@@ -1125,6 +1131,44 @@ func (m *Manager) FindAgentBinding(ctx context.Context, sessionKey, agent string
 		return nil, nil
 	}
 	return binding, err
+}
+
+// EnsureAgentBinding 记下「这个会话在用哪个 agent」，幂等。
+// 已有绑定行时（不论 agent_session_id 是否为空）原样返回，绝不覆盖真实转录 id。
+//
+// 约定：空 agent_session_id 表示「agent 已选定、尚无转录」——所有读者本来就把空 id
+// 当成无绑定处理（别名回填/外部名同步/repoint/fork 都有空 id 守卫），唯一的可见效果
+// 是列表路径拿到 AgentCtxSeq 单键 → InferAgentFromSession 能报出 agent，徽标不再落回「AI」。
+func (m *Manager) EnsureAgentBinding(_ context.Context, sessionKey, agent string) error {
+	if strings.TrimSpace(sessionKey) == "" {
+		return errors.New("session key required")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.ensureAgentBindingUnsafe(sessionKey, agent)
+}
+
+func (m *Manager) ensureAgentBindingUnsafe(sessionKey, agent string) error {
+	agent = strings.TrimSpace(agent)
+	if agent == "" {
+		return nil
+	}
+	sessionKey = strings.TrimSpace(sessionKey)
+	db, err := m.ensureSessionMetaDBUnsafe()
+	if err != nil {
+		return err
+	}
+	var existing AgentBinding
+	err = scanAgentBinding(db.QueryRow(selectAgentBindingSQL, sessionKey, agent), &existing)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	// agent_ctx_seq 必须留 0：非 0 会被 prependSwitchHint 当成「已同步到此行」而吞掉 agent 切换提示。
+	_, err = db.Exec(upsertAgentBindingSQL, sessionKey, agent, "", 0)
+	return err
 }
 
 func (m *Manager) FindAgentBindingByAgentSession(_ context.Context, agent, agentSessionID string) (*AgentBinding, error) {

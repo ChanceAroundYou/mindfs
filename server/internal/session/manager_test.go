@@ -1343,3 +1343,165 @@ func TestAuditSessionReportsGapsDamagedAndAuxOrphans(t *testing.T) {
 		t.Fatalf("aux orphans = %v, want [9]", audit.AuxOrphanSeqs)
 	}
 }
+
+// 徽标的 agent 来源是列表路径的 AgentCtxSeq 单键推导，而它靠 session_agent_bindings 灌入。
+// 绑定只在回合结束时写 → 首轮运行期间列表行 agent=="" → 前端 AgentIcon 落回「AI」占位。
+// 这一组钉住「建会话的那一刻起，列表就能报出 agent」。
+func TestManagerCreateBindsAgentForListInference(t *testing.T) {
+	root := rootfs.NewRootInfo("mindfs", "mindfs", t.TempDir())
+	manager := NewManager(root)
+	ctx := context.Background()
+
+	created, err := manager.Create(ctx, CreateInput{Type: TypeChat, Agent: "claude", Name: "Fresh"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 必须走列表路径：它从库里重读 meta 再用绑定回填 AgentCtxSeq，
+	// 用 Create 的返回值断言会拿到内存里那个已经带 AgentCtxSeq 的对象，等于没测。
+	items, err := manager.List(ctx, ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var listed *Session
+	for _, item := range items {
+		if item.Key == created.Key {
+			listed = item
+			break
+		}
+	}
+	if listed == nil {
+		t.Fatalf("created session %s missing from list", created.Key)
+	}
+	if got := InferAgentFromSession(listed); got != "claude" {
+		t.Fatalf("列表行推断 agent = %q, want %q（首轮未结束时徽标必须已是 Claude，而不是 AI 占位）", got, "claude")
+	}
+}
+
+func TestManagerCreateBindsAgentWithoutTranscriptID(t *testing.T) {
+	root := rootfs.NewRootInfo("mindfs", "mindfs", t.TempDir())
+	manager := NewManager(root)
+	ctx := context.Background()
+
+	created, err := manager.Create(ctx, CreateInput{Type: TypeChat, Agent: "claude", Name: "No transcript yet"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, err := manager.GetAgentBinding(ctx, created.Key, "claude")
+	if err != nil {
+		t.Fatalf("create 后必须已有绑定行: %v", err)
+	}
+	if binding.AgentSessionID != "" {
+		t.Fatalf("agent_session_id = %q, want 空（表示已选 agent、尚无转录）", binding.AgentSessionID)
+	}
+	if binding.AgentCtxSeq != 0 {
+		t.Fatalf("agent_ctx_seq = %d, want 0（非 0 会被 prependSwitchHint 当成已同步而吞掉切换提示）", binding.AgentCtxSeq)
+	}
+
+	// 回合结束时真实 id 必须**覆盖**这一行，而不是多出一行。
+	if err := manager.UpdateAgentState(ctx, created, "claude", 2, "real-id"); err != nil {
+		t.Fatal(err)
+	}
+	again, err := manager.GetAgentBinding(ctx, created.Key, "claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.AgentSessionID != "real-id" || again.AgentCtxSeq != 2 {
+		t.Fatalf("回合结束后 binding = %+v, want id=real-id ctx=2", again)
+	}
+	bindings, err := manager.listAgentBindingsUnsafe(created.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bindings) != 1 {
+		t.Fatalf("绑定行数 = %d, want 1（占位行必须被覆盖而不是并存）", len(bindings))
+	}
+	items, err := manager.List(ctx, ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range items {
+		if item.Key == created.Key && InferAgentFromSession(item) != "claude" {
+			t.Fatalf("回合结束后列表 agent = %q, want claude", InferAgentFromSession(item))
+		}
+	}
+}
+
+func TestManagerEnsureAgentBindingIsIdempotent(t *testing.T) {
+	root := rootfs.NewRootInfo("mindfs", "mindfs", t.TempDir())
+	manager := NewManager(root)
+	ctx := context.Background()
+
+	created, err := manager.Create(ctx, CreateInput{Type: TypeChat, Agent: "claude", Name: "Switch"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.UpdateAgentState(ctx, created, "claude", 7, "claude-id"); err != nil {
+		t.Fatal(err)
+	}
+	// 回合开始时的补写不能把真实转录 id 打回空。
+	if err := manager.EnsureAgentBinding(ctx, created.Key, "claude"); err != nil {
+		t.Fatal(err)
+	}
+	binding, err := manager.GetAgentBinding(ctx, created.Key, "claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if binding.AgentSessionID != "claude-id" || binding.AgentCtxSeq != 7 {
+		t.Fatalf("EnsureAgentBinding 覆盖了已有绑定: %+v", binding)
+	}
+
+	// 中途换 agent：新 agent 要立刻有占位行，老 agent 的行不动。
+	if err := manager.EnsureAgentBinding(ctx, created.Key, "codex"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.GetAgentBinding(ctx, created.Key, "codex"); err != nil {
+		t.Fatalf("换 agent 后新 agent 必须有占位绑定: %v", err)
+	}
+	stillClaude, err := manager.GetAgentBinding(ctx, created.Key, "claude")
+	if err != nil || stillClaude.AgentSessionID != "claude-id" {
+		t.Fatalf("老 agent 的绑定被改动了: %+v err=%v", stillClaude, err)
+	}
+
+	// 空 agent（command 会话）不写行、不报错。
+	if err := manager.EnsureAgentBinding(ctx, created.Key, "  "); err != nil {
+		t.Fatalf("空 agent 必须静默跳过: %v", err)
+	}
+}
+
+func TestManagerEnsureAgentBindingDoesNotLeakEmptyIDIntoAliases(t *testing.T) {
+	root := rootfs.NewRootInfo("mindfs", "mindfs", t.TempDir())
+	manager := NewManager(root)
+	ctx := context.Background()
+
+	a, err := manager.Create(ctx, CreateInput{Type: TypeChat, Agent: "claude", Name: "Alpha"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := manager.Create(ctx, CreateInput{Type: TypeChat, Agent: "claude", Name: "Beta"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := manager.LookupAliasForAgent("claude", ""); ok {
+		t.Fatal("空 agent_session_id 不得命中别名表——否则两个会话会串名")
+	}
+	// Rename 会拿 agentSessionIDsUnsafe 的每个 (agent,id) 去写 session_external_names；
+	// 空 id 必须被挡在门外，不能落进表里。
+	if _, err := manager.Rename(ctx, a.Key, "Alpha renamed"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Rename(ctx, b.Key, "Beta renamed"); err != nil {
+		t.Fatal(err)
+	}
+	db, err := manager.ensureSessionMetaDBUnsafe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var leaked int
+	if err := db.QueryRow(`SELECT count(*) FROM session_external_names WHERE agent_session_id = ''`).Scan(&leaked); err != nil {
+		t.Fatal(err)
+	}
+	if leaked != 0 {
+		t.Fatalf("session_external_names 里有 %d 行空 agent_session_id", leaked)
+	}
+}

@@ -132,7 +132,7 @@
 | G-N | 会话锁定 | 交互 | `9b531f9/e26c3ac/1436053` | `sessionLock` 与 `App.tsx` 锁定 hunk |
 | G-O | 可拖动浮层 | 交互 | `955241a/76d586c/727bf8f/28deb2a/1765353/e459a13:bottomSheetModel` 切片 + 未提交 `BottomSheet.tsx` 切片 | `BottomSheet` 拖拽/阈值 |
 | G-P | 项目别名（display_name） | 数据模型 | `481da95` 主体 + `4c59fcf:manager` 切片、`e459a13:manager` 切片 | `registry/display_name` 与广播 |
-| G-Q | 会话别名/外部导入/Fork 扁平 | 数据模型 | `e459a13:SessionList` 切片、`f746124/4c59fcf/ab8cfed` | `fork→独立`/`agent+session_id→alias` |
+| G-Q | 会话别名/外部导入/Fork 扁平 | 数据模型 | `e459a13:SessionList` 切片、`f746124/4c59fcf/ab8cfed` + 未提交 `manager` 徽标切片 | `fork→独立`/`agent+session_id→alias`/建会话即写 agent 绑定（空 `agent_session_id` = 尚无转录） |
 | G-R | 模型识别与流式透传 | 修复 | `af0a37f` 主体、`ab8cfed:probe` 1M 切片、`e92fecf:AgentSelector` 切片 | DeepSeek/Claude 1M 探测与 `stream_hub/ws` 透传 |
 | G-S | 作用域隔离与列表折叠 | 修复 | `3d3417a/ed44573/0591238` + `7a12971:App` 聚合切片 | `scope.ts`、`expanded/loadMore` 按 `nodeId:projectId` |
 | G-T | 流式重放与正文正确性 | 修复 | 见 §3「G-T」—— `session.ts`/`useSessionStreamCache.ts`/`useRealtimeEvents.ts`/`App.tsx`/`stream_hub.go`/`ws_test.go` | 重放幂等、seq=0 只在在途时存在、重放整批一条消息 |
@@ -309,6 +309,17 @@
 | `f746124` | `web/src/components/SessionList.tsx` | 计数徽标移除、统一会话样式；`fork` 扁平收敛 |
 | `4c59fcf` | `server/internal/api/usecase/external_sessions.go:LookupAliasForAgent` + `web/src/components/SessionList.tsx:重命名按钮` | 导入前 `alias` 回放、末条用户消息 20 字短标题、内联 `✓/×` |
 | `ab8cfed` | `server/internal/session/manager.go:不再写 parent_session_key` + `server/app/server.go:启动归一化` + `server/internal/api/usecase/session.go` + `server/internal/agent/claude/session.go:external_name` | fork 完全独立、历史原子归一化、关联文件回流、外部名称按 `agent+agent_session_id` 落盘 |
+| 建会话即写 agent 绑定（`EnsureAgentBinding`） | `server/internal/session/manager.go:Create/EnsureAgentBinding/ensureAgentBindingUnsafe` + `server/internal/api/usecase/session.go:SendMessage` | **可见症状**：状态圆圈右下角的 agent 徽标（会话列表、看板任务卡片）在首轮跑完前只显示占位「AI」。原因：列表行是 meta-only 的（G-E），agent 只能由 `InferAgentFromSession` 的「`AgentCtxSeq` 恰好单键」兜底推出，而它靠 `session_agent_bindings` 回填 —— 绑定原先**只在回合结束**时写。**为什么必须保留的这一条**：与 G-Q 的空 id 守卫是同一块改动面 —— 占位行 `agent_session_id=''`，靠 `upsertExternalSessionNameUnsafe`（空 id 直接 return）和 `lookupSessionAliasForAgentUnsafe`（空 id → not-found）挡住，否则两个都没跑过的同 agent 会话会按空 id 串成同一个别名。合上游时两者要么一起留、要么一起弃。占位行的 `agent_ctx_seq` 必须是 0：非 0 会被 `prependSwitchHint` 当成「已同步到此行」而吞掉 agent 切换提示 |
+
+**针对性测试（防覆盖，改动时同步维护）**
+
+| 测试 | 钉住什么 |
+|------|---------|
+| `session/manager_test.go` → `TestManagerCreateBindsAgentForListInference` | `Create(Agent:"claude")` 之后**走列表路径**（`List`，从库里重读）断言 `InferAgentFromSession == "claude"` —— 就是徽标那个 bug 本身。注释掉 `Create` 里的写入即变红（已做变异验证） |
+| 同上 → `TestManagerCreateBindsAgentWithoutTranscriptID` | 占位行 `AgentSessionID == ""` 且 `AgentCtxSeq == 0`；随后 `UpdateAgentState(...,"real-id")` **覆盖**同一行（行数仍为 1），列表仍报 claude |
+| 同上 → `TestManagerEnsureAgentBindingIsIdempotent` | 回合开始的补写不得把已有真实 id / ctx_seq 打回空；换 agent 时老绑定不动、新 agent 立刻有占位行；空 agent 静默跳过 |
+| 同上 → `TestManagerEnsureAgentBindingDoesNotLeakEmptyIDIntoAliases` | 空 `agent_session_id` 不得进 `session_external_names`（两个同 agent 的空 id 会话不能串名），`LookupAliasForAgent(agent, "")` 必须为 false |
+| `api/session_created_broadcast_test.go` → `TestEnsureAgentSessionBroadcastsSessionCreated` | 看板建会话那条路径（`EnsureAgentSession`）确实把 `Stage.Agent` 交给了 `Create`，且 `session.created` 的列表行带 `agent:"claude"`。**注意**：这条**不**是徽标 bug 的锚点（广播用的是内存对象，`AgentCtxSeq` 在 Create 里就已填好，删掉绑定写入它照样绿）；它钉的是「路径得先把 agent 传进来」——把 `Agent: exec.Stage.Agent` 改成空即变红（已做变异验证）。真正的 bug 锚点是上面第一个 `manager_test.go` 那条 |
 
 ### G-R 模型识别与流式透传
 

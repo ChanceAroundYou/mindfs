@@ -406,14 +406,26 @@ groups:
     symptom: |
       外部会话导入后标题是原始 slug 而不是最后一句话；同一个外部会话被重复导入；
       fork 出来的子会话缩在父会话下面找不到；会话别名换台机器就没了。
+      另有：会话列表/看板卡片的状态圆圈右下角 agent 徽标，首轮跑完之前只显示占位「AI」，
+      不显示真实 agent。
     why: |
       别名落服务端 SQLite（不是 localStorage），保证跨端一致；
       外部名称按 agent+agent_session_id 落盘，导入前回放 alias；
       fork 完全独立（不再写 parent_session_key），仅 fork 扁平为顶级。
       转录重复区块会导致重复交换，必须按条目 uuid 去重。
+      徽标一条：列表行是 meta-only 的（G-E），agent 只能由 InferAgentFromSession 的
+      「AgentCtxSeq 恰好单键」兜底推出，而它靠 session_agent_bindings 回填 —— 绑定若只在
+      回合结束时写，首轮期间列表行 agent 就是空，前端 AgentIcon 落回 'AI'。
+      所以建会话时就要写一行占位绑定，约定 agent_session_id='' 表示「agent 已选定、尚无转录」。
+      这条约定与 G-Q 的空 id 守卫是同一块：upsertExternalSessionNameUnsafe 空 id 直接 return、
+      lookupSessionAliasForAgentUnsafe 空 id 返回 not-found —— 少了它们，两个都没跑过的
+      同 agent 会话会串名。合上游时两者必须一起留。
+      占位行的 agent_ctx_seq 必须写 0：非 0 会被 prependSwitchHint 当成「已同步到此行」而
+      吞掉 agent 切换提示。
     anchors:
       - 'web/src/components/ExternalSessionList.tsx:CUSTOM(G-Q)'
       - 'server/internal/agent/codex/importer.go:func cwdMatchesRoot('
+      - 'server/internal/session/manager.go:空 agent_session_id 表示「agent 已选定、尚无转录」'
     files:
       - server/internal/agent/claude/importer.go
       - server/internal/agent/claude/importer_test.go
@@ -422,13 +434,17 @@ groups:
       - server/internal/api/usecase/external_sessions.go
       - server/internal/api/usecase/external_sessions_test.go
       - server/internal/api/usecase/session.go
+      - server/internal/api/session_created_broadcast_test.go
       - server/internal/session/manager.go
+      - server/internal/session/manager_test.go
       - web/src/components/ExternalSessionList.tsx
       - web/src/app/useExternalSessionImport.ts
     tests:
       - server/internal/agent/claude/importer_test.go
       - server/internal/agent/codex/importer_test.go
       - server/internal/api/usecase/external_sessions_test.go
+      - server/internal/api/session_created_broadcast_test.go
+      - server/internal/session/manager_test.go
 
   - id: G-AB
     title: 会话投影与审计

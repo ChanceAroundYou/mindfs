@@ -112,6 +112,12 @@ func TestEnsureAgentSessionBroadcastsSessionCreated(t *testing.T) {
 	if got, _ := item["task_id"].(string); got != "task_1" {
 		t.Fatalf("task_id = %q, want task_1 (kanban-created sessions must carry their task)", got)
 	}
+	// 首轮还没跑，这条广播就得带上 agent —— 看板任务卡片/会话列表的状态圆圈右下角
+	// 徽标直接读它，为空时前端 AgentIcon 落回占位「AI」。列表行是 meta-only 的，
+	// agent 只能从 AgentCtxSeq 单键推出，而它靠建会话时写的绑定回填。
+	if got, _ := item["agent"].(string); got != "claude" {
+		t.Fatalf("agent = %q, want claude（首轮未结束时徽标必须已正确，而不是 AI 占位）", got)
+	}
 }
 
 // BroadcastSessionCreated 直接调也要成立：scheduled 那条路径经接口转调它。

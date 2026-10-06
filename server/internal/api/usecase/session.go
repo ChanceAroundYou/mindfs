@@ -2477,6 +2477,11 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 		log.Printf("[session] persist.user.error root=%s session=%s agent=%s err=%v", in.RootID, in.Key, in.Agent, err)
 		return err
 	}
+	// 中途换 agent 时，新 agent 的绑定要等本轮跑完才由 UpdateAgentState 写——这中间徽标
+	// 会落回「AI」占位。这里补一条，已存在绑定则跳过，不碰已有转录 id。
+	if err := manager.EnsureAgentBinding(ctx, current.Key, in.Agent); err != nil {
+		log.Printf("[session] ensure.binding.error root=%s session=%s agent=%s err=%v", in.RootID, in.Key, in.Agent, err)
+	}
 	if in.OnStart != nil {
 		in.OnStart(MessageStart{
 			Model:            in.Model,
