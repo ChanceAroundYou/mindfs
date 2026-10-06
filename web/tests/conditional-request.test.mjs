@@ -43,7 +43,7 @@ assert.match(
 // 只写前者的话，日后有人把它改成 respondJSONList 也照样绿。
 for (const [needle, label] of [
   [/respondJSONConditional\(w, r, map\[string\]any\{\s*"agents": statuses,/, "agents 列表"],
-  [/respondJSONConditional\(w, r, map\[string\]any\{\s*"agents": \[\]map\[string\]any\{\},/, "agents 短路空响应"],
+  [/respondJSONConditional\(w, r, map\[string\]any\{\s*"agents": \[\]map\[string\]any\{\},\s*"shells": \[\]map\[string\]any\{\},/, "agents 短路空响应"],
   [/respondJSONConditional\(w, r, map\[string\]any\{"entries": \[\]any\{\}\}\)/, "tree 空目录"],
   [/respondJSONConditional\(w, r, map\[string\]any\{\s*"entries": out\.Entries,/, "tree 正常响应"],
   [/respondJSONConditional\(w, r, out\.Status\)/, "git status"],
