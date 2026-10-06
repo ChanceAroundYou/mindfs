@@ -13,7 +13,7 @@ import type { MultiProjectSessionGroup, PendingSend, SessionItem, SlashCommandRe
 import type { SessionRuntimeMeta } from "./useSessionStreamCache";
 import { buildGitDiffCacheSignature, fetchGitDiff } from "../services/git";
 import { invalidateFileCache } from "../services/file";
-import { dropTransientExchanges } from "../services/session";
+import { dropTransientExchanges, isSamePendingEcho, settlePendingAcks } from "../services/session";
 import { reportError } from "../services/error";
 import { setRootNodeMap } from "../services/rootNode";
 import { applyNodesFromServer, syncNodesFromServer } from "../services/nodeRegistry";
@@ -349,7 +349,12 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
       await setCachedSessionRelatedFiles(rootID, sessionKey, relatedFiles, getNodeIdForRoot(rootID));
       updateSessionRelatedFilesForKey(rootID, sessionKey, relatedFiles);
     };
-    const handleSessionStreamDone = (rootID: string, sessionKey: string) => {
+    // 回合收尾的**唯一出口**。返回值 = 这一轮是否真的结束了（false = 队列续跑，仍在流式）。
+    //
+    // 「瞬时尾巴怎么退役」在这里定，调用方不再各自判断一遍 —— 曾经这个判断有两个来源、
+    // 而且顺序相反：调用方先无条件清尾巴，再用 `isSessionStreaming` 猜「要不要重锚定」，
+    // 猜错的后果是居中的正文永远不见（见 docs/session-streaming-rework.md §6）。
+    const handleSessionStreamDone = (rootID: string, sessionKey: string): boolean => {
       const cacheKey = rootSessionKey(rootID, sessionKey);
       const wasCanceled = !!cancelRequestedBySessionRef.current[cacheKey];
       if (wasCanceled) {
@@ -361,14 +366,7 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
         if (!wasCanceled || !Array.isArray(exchanges)) {
           return session;
         }
-        return {
-          ...(session as any),
-          exchanges: exchanges.map((exchange: any) =>
-            exchange?.pending_ack === true
-              ? { ...exchange, pending_ack: false }
-              : exchange,
-          ),
-        } as T;
+        return settlePendingAcks(session);
       };
       const queued = queuedMessagesBySessionRef.current[cacheKey] || [];
       const queueFrozen = !!queueFrozenBySessionRef.current[cacheKey];
@@ -378,19 +376,25 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
         !!(hiddenQueued && hiddenQueued.size > 0);
       if (hasQueuedContinuation && !wasCanceled) {
         markSessionPending(rootID, sessionKey);
-        return;
+        return false;
       }
+      // 这个会话接下来会被重锚定（restoreActiveSession 用服务端窗口替换缓存）。
+      const willReanchor = getReplayTargetsForRoot(rootID).includes(sessionKey);
       const cached = sessionCacheRef.current[cacheKey];
       if (cached && cached.key === sessionKey) {
-        // 轮次结束 = 不再在途：服务端已经把这一轮落盘了，缓存里的 seq=0 从此都是残留。
-        // 留着会跨多次 compact 无声堆积，直到某次加载把它们渲染出来 ——
-        // 症状是「同一段正文出现两遍、而且每切一次越多」。见 session.ts 的
-        // dropTransientExchanges。队列续跑的情况在上面就 return 了，这里可以放心清。
-        sessionCacheRef.current[cacheKey] = dropTransientExchanges(
-          clearPendingAck({
-            ...(cached as any),
-            pending: false,
-          } as Session),
+        const base = clearPendingAck({
+          ...(cached as any),
+          pending: false,
+        } as Session);
+        // 轮次结束 = 不再在途：服务端已经把这一轮落盘了，缓存里的 seq=0 从此都是残留
+        // （见 session.ts 的 dropTransientExchanges）。
+        //
+        // **但会重锚定的会话不在这里清**：窗口快照一到，载入时的唯一组装规则
+        // （composeLoadedExchanges，`pending=false` ⇒ 不接回 seq=0）就把尾巴退役了 ——
+        // 那才是唯一的退役时机。先清、再由异步重锚定装持久行，是一个非原子的交接：
+        // 拉取失败或这一帧被别的判断拦下，这一轮就**永远不见**（用户报的正是这个形态）。
+        sessionCacheRef.current[cacheKey] = (
+          willReanchor ? base : dropTransientExchanges(base)
         ) as Session;
         bumpCacheVersion();
       }
@@ -438,6 +442,10 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
       }
       setMultiProjectSessionPending(rootID, sessionKey, false);
       bumpCacheVersion();
+      if (willReanchor) {
+        void reloadSessionForReplay(rootID, sessionKey);
+      }
+      return true;
     };
 
     const handleSessionStream = (payload: any) => {
@@ -624,17 +632,16 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
             streamKey,
             event.data || {},
           );
-          // compact 发生在轮次边界：服务端历史整个重置了，缓存里那些 seq=0 从此再也
-          // 对不上（实测一个会话跨 7 次 compact 堆到 1100+ 条），必须一起丢掉。
-          // 此刻没有在途回合，不存在误伤。
-          const compactCk = rootSessionKey(activeRoot, streamKey);
-          const compacted = dropTransientExchanges(
-            sessionCacheRef.current[compactCk],
-          );
-          if (compacted && compacted !== sessionCacheRef.current[compactCk]) {
-            sessionCacheRef.current[compactCk] = compacted;
-            bumpCacheVersion();
-          }
+          // **这里曾经清掉该会话所有瞬时行，已删除（2026-10-06）。** 原注释给的两条依据
+          // 都不成立：
+          //   · 「服务端历史整个重置了」—— 交换 JSONL 是 **append-only**（唯一 `os.Remove`
+          //     在两处 `DeleteSession`），compact 只写一条 `CompactNotice` aux；
+          //   · 「此刻没有在途回合，不存在误伤」—— `compact_notice` 是**轮内**流事件
+          //     （本 `handleSessionStream` 的一个 case），当时正有在途回合。
+          // 于是 compact 一到就把**本轮 compact 之前**还没落盘的内容一起丢掉（连刚追加的
+          // 这条通知自己也在 seq=0 里）。陈旧瞬时行由另外两处负责：一轮结束 / reset 的
+          // `dropTransientExchanges`，以及加载时 `composeLoadedExchanges(inFlight=false)`。
+          // 见 docs/message-mechanisms.md 冲突⑨ 与 tests 里的【红·⑨c】。
           break;
         }
         case "message_done":
@@ -1122,19 +1129,47 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
           }
           return;
       },
-      "session.stream": (event: any, payload: any) => {
-          // 重放走**批量**：服务端把整批缺失事件放进一条消息（payload.events），
-          // 这里循环应用 —— 同一个事件处理器内多次 setState 会被 React 批处理成
-          // 一次渲染，观感是「一步到位」。逐条消息发的话会变成几百次渲染，
-          // 就是用户说的「打开/切回会话时逐渐刷一大堆」。
-          // 实时事件仍是单条（payload.event）。
-          const batch = Array.isArray(payload?.events) ? payload.events : null;
-          if (batch) {
-            for (const one of batch) {
-              handleSessionStream({ ...payload, events: undefined, event: one });
-            }
-            return;
+      // 服务端搬完转录（worktree → 主 checkout，见 CLAUDE.md 事实 14）后广播这一条：
+      // 前端手里还是**旧视图**（worktree 标签、`agent_session_id`），必须失效并重拉。
+      // 这条帧此前**没有任何消费者** —— 服务端注释写的意图「广播一次强制刷新」因此从未生效
+      // （`tests/message-mechanism-merges.test.mjs` 的【红·⑫】就是钉这个：发出但没人接的帧）。
+      "session.repointed": (event: any, payload: any) => {
+          const rootID = typeof payload?.root_id === "string" ? payload.root_id : "";
+          const sessionKey =
+            typeof payload?.session_key === "string" ? payload.session_key : "";
+          if (!rootID || !sessionKey) return;
+          markSessionStale(rootID, sessionKey);
+          if (getReplayTargetsForRoot(rootID).includes(sessionKey)) {
+            void reloadSessionForReplay(rootID, sessionKey);
           }
+          return;
+      },
+      // 服务端在 `session.ready` 之后回的整批快照前，先发这一帧（见 session.ts 的
+      // emitDecrypted：批处理帧在那里被拆成「一帧 reset + N 帧单事件」，两条分发路径
+      // 从此只有一种形状）。
+      //
+      // **reset 的全部语义就是「清空瞬时尾巴」。** 清完之后紧接着应用的快照事件，
+      // 作用对象必然是一个已知为空的尾巴，所以结果 = 该轮事件列表的纯函数，
+      // 与客户端此前见过什么、有没有漏收无关。重复渲染那一整类 bug 由此在结构上消失。
+      "session.stream.reset": (event: any, payload: any) => {
+          const wsPayloadNid = String((payload as any)?._nodeId || (payload as any)?.nodeId || "").trim();
+          const wsCurNid = String(currentRootNodeIdRef.current || "").trim();
+          if (wsPayloadNid && wsCurNid && wsPayloadNid !== wsCurNid) { return; }
+          const rootID = typeof payload?.root_id === "string" ? payload.root_id : "";
+          const sessionKey =
+            typeof payload?.session_key === "string" ? payload.session_key : "";
+          if (!rootID || !sessionKey) return;
+          const cacheKey = rootSessionKey(rootID, sessionKey);
+          const cached = sessionCacheRef.current[cacheKey];
+          if (!cached || cached.key !== sessionKey) return;
+          const next = dropTransientExchanges(cached as Session) as Session;
+          if (next === cached) return;
+          sessionCacheRef.current[cacheKey] = next;
+          bumpCacheVersion();
+          return;
+      },
+      "session.stream": (event: any, payload: any) => {
+          // 单事件帧（批处理帧已在 session.ts 的 emitDecrypted 里展开，这里只见单条）。
           handleSessionStream(payload);
       },
       "session.slash_command.stream": (event: any, payload: any) => {
@@ -1233,9 +1268,7 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
             const acceptedSeq = Number((payload as any)?.seq || 0);
             const exchanges = Array.isArray((sess as any).exchanges)
               ? ((sess as any).exchanges as Exchange[]).map((exchange) =>
-                  exchange.pending_ack === true &&
-                  exchange.content === pending.message &&
-                  exchange.timestamp === pending.timestamp
+                  isSamePendingEcho(exchange, pending)
                     ? {
                         ...exchange,
                         timestamp: acceptedTimestamp,
@@ -1313,9 +1346,7 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
             const exchanges = Array.isArray((latestDrawer as any).exchanges)
               ? ((latestDrawer as any).exchanges as Exchange[]).map(
                   (exchange) =>
-                    exchange.pending_ack === true &&
-                    exchange.content === pending.message &&
-                    exchange.timestamp === pending.timestamp
+                    isSamePendingEcho(exchange, pending)
                       ? { ...exchange, pending_ack: false }
                       : exchange,
                 )
@@ -1341,29 +1372,13 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
                 currentRootIdRef.current ||
                 "";
           if (rootID && sessionKey) {
-            if (payload?.replay !== true) {
-              playCompletionSound();
-            }
+            playCompletionSound();
             setMultiProjectSessionPending(rootID, sessionKey, false);
+            // 重锚定已并入这次收尾（handleSessionStreamDone 内部按 replay 目标判断），
+            // 不再在这里单独猜一遍「此刻还在不在流」—— 那个时序代理在监听者里恒为
+            // true，于是正常回合的重锚定恒被跳过，而尾巴又已被清 ⇒ 正文当场消失。
+            // 见 docs/session-streaming-rework.md §6.2。
             handleSessionStreamDone(rootID, sessionKey);
-            // done 后重锚定（仅正在查看/绑定的会话）：restoreActiveSession 以服务端持久化窗口
-            // 替换缓存。持久化完成后服务端窗口不含 seq=0（JSONL 在生成结束时写入），restore
-            // 的 localTransient 合并不回填，缓存里的瞬时尾巴随之清除——否则窗口化合并（F1）
-            // 会把已持久化的轮次以 seq=0 形式重复追加在窗口后面。同时自愈断连间隙丢的 chunk。
-            // 队列续轮（仍在流式）跳过，等它自己的 done；非查看中的会话不重载（避免覆盖
-            // 其它标签页正在流式写入的同一缓存）。
-            // replay=true 的 done 不重载：它是服务端对 session.ready 的一次性回执（「你离线期间
-            // 这一轮结束了」），而 restoreActiveSession 自己又会发 session.ready，于是
-            // done → restore → ready → done 形成自持闭环（实测空转 18 次/秒、每轮一次 ?latest=20）。
-            // 断连恢复不依赖这条路径：ws.reconnected 的 replayTargetsForAllRoots 已经重载过窗口，
-            // 且服务端窗口自带 pending 状态。这里只保留「真·回合结束」的 done 触发重锚定。
-            if (
-              payload?.replay !== true &&
-              getReplayTargetsForRoot(rootID).includes(sessionKey) &&
-              !sessionService.isSessionStreaming(sessionKey)
-            ) {
-              void reloadSessionForReplay(rootID, sessionKey);
-            }
             // 会话刚结束，服务端 updated_at/context_window 已持久化。
             // afterTime 增量会被"updated_at 严格大于旧 newest"排除刚结束的会话（竞态），
             // 必须 replace 全量重拉才能带上最新 meta。频率低 + 300ms debounce，成本可接受。

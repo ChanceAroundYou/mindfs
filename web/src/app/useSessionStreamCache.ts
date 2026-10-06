@@ -1,6 +1,5 @@
 import { useCallback, useRef } from "react";
 import type { Session } from "../services/session";
-import { mergeStreamedText } from "../services/session";
 import type { Exchange } from "./appSession";
 import { normalizeFastService } from "./appTask";
 
@@ -170,10 +169,11 @@ export function useSessionStreamCache({
       const list = [...(prevList || [])];
       const last = list.length > 0 ? list[list.length - 1] : null;
       if (last && (last.role === "agent" || last.role === "assistant")) {
-        // **重放安全的拼接**。规则见 session.ts 的 mergeStreamedText：
-        // 服务端会把在途内容重推一遍，无条件累加会让同一段正文在**行内**拼两遍
-        // （`aabb`）—— 用户看到的是「文本出现两遍、越切越多」。
-        // 重复发生在行内而非两行之间，所以按行内容比对的去重查不出来。
+        // **普通拼接**。片段的唯一来源是「服务端事件流」，而事件只会投递一次：
+        // 挂载会话时走的是**快照重建**（服务端回 `reset:true` 的整批，客户端先清空
+        // 瞬时尾巴再照单应用，见 session.ts 的 dropTransientExchanges），
+        // 实时事件则是新事件。两边都不会把同一片再送一遍 ——
+        // 曾经为此存在的 mergeStreamedText（子串包含判据）已随之删除。
         list[list.length - 1] = {
           ...last,
           agent: runtimeMeta.agent || last.agent,
@@ -183,7 +183,7 @@ export function useSessionStreamCache({
             mode: runtimeMeta.mode || last.mode,
             effort: runtimeMeta.effort || last.effort,
             fast_service: runtimeMeta.fast_service || last.fast_service,
-            content: mergeStreamedText(String(last.content || ""), String(content)),
+            content: String(last.content || "") + String(content || ""),
           timestamp: now,
         };
         return list;
@@ -217,7 +217,7 @@ export function useSessionStreamCache({
           const existing = list[existingIndex];
           list[existingIndex] = {
             ...existing,
-            content: mergeStreamedText(String(existing.content || ""), String(content)),
+            content: String(existing.content || "") + String(content || ""),
             timestamp: now,
           };
           return list;
@@ -227,7 +227,7 @@ export function useSessionStreamCache({
       if (last && last.role === "thought" && (!thoughtID || !last.thought_id)) {
         list[list.length - 1] = {
           ...last,
-          content: mergeStreamedText(String(last.content || ""), String(content)),
+          content: String(last.content || "") + String(content || ""),
           thought_id: thoughtID || last.thought_id,
           timestamp: now,
         };

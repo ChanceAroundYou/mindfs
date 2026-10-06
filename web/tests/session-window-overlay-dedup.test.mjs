@@ -62,7 +62,8 @@ const anchorEnd = viewer.indexOf("applyWindow(", anchorStart);
 assert.ok(anchorStart >= 0 && anchorEnd > anchorStart, "anchor payload filter should be found");
 assert.match(
   viewer.slice(anchorStart, anchorEnd),
-  /\.filter\(\(ex\) => Number\(\(ex as any\)\?\.seq \|\| 0\) > 0\)/,
+  // 契约（重锚定载荷只装持久行）不变，判据改走共用谓词 isPersistedSeq（2026-10-06）。
+  /\.filter\(\(ex\) => isPersistedSeq\(\(ex as any\)\?\.seq\)\)/,
   "the re-anchor payload must drop seq=0 transient rows before installing a window",
 );
 

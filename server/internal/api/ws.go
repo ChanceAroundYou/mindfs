@@ -50,8 +50,11 @@ type WSHandler struct {
 }
 
 type StreamEvent struct {
-	Type        string `json:"type"`
-	Data        any    `json:"data,omitempty"`
+	Type string `json:"type"`
+	Data any    `json:"data,omitempty"`
+	// EventCursor 是**服务端内部**编号（"<baseExchangeSeq>:<eventSeq>"），只用来给
+	// ReplyingList 排序、以及在排空循环里判断「哪些事件还没发给这个客户端」。
+	// 客户端既不读也不回传 —— 挂载会话是快照重建，不是按序号续传（见 ReplayPending）。
 	EventCursor string `json:"event_cursor,omitempty"`
 }
 
@@ -561,11 +564,10 @@ func (h *WSHandler) handleSessionAnswerQuestion(ctx context.Context, conn *webso
 			}
 		}
 	}
-	_ = h.writeWSJSON(clientID, conn, WSResponse{
-		ID:      req.ID,
-		Type:    "session.answer_question.accepted",
-		Payload: map[string]any{"root_id": rootID, "session_key": key, "tool_use_id": toolUseID},
-	})
+	// 曾经在这里回一条 `session.answer_question.accepted`（带 req.ID 的回执）。已删除（2026-10-06）：
+	// 前端零消费 —— 它提交答案后靠在本地把卡片翻成「已回答」，不需要回执；而 `sendWSMessage`
+	// 也不做请求/响应配对（只对 `session.message` 这类做重发）。发一条只有空操作响应的消息
+	// 属于自产自销（与已删的 `done(replay:true)` 同一类问题）。
 }
 
 func (h *WSHandler) handleWSPing(conn *websocket.Conn, clientID string, req WSRequest) {
@@ -884,7 +886,7 @@ func (h *WSHandler) handleSessionPlanModeSet(ctx context.Context, conn *websocke
 	}
 	h.sendWSAccepted(conn, clientID, requestID, rootID, key)
 	h.broadcastSessionMetaUpdated(rootID, updated)
-	_ = h.writeWSJSON(clientID, conn, buildSessionDoneResponse(rootID, key, requestID, false))
+	_ = h.writeWSJSON(clientID, conn, buildSessionDoneResponse(rootID, key, requestID))
 }
 
 func wsAgentPoolSessionKey(sessionKey, agentName string) string {
@@ -1055,13 +1057,14 @@ func (h *WSHandler) handleSessionReady(clientID string, req WSRequest) {
 	}
 	rootID := getString(req.Payload, "root_id")
 	key := getString(req.Payload, "session_key")
-	eventCursor := getString(req.Payload, "event_cursor")
 	if rootID == "" || key == "" {
 		return
 	}
 	streamHub := h.AppContext.GetSessionStreamHub()
 	streamHub.BindSessionClient(key, clientID)
-	streamHub.ReplayPending(rootID, clientID, key, eventCursor)
+	// 不接受 event_cursor：挂载会话一律是「快照重建」，不是「按序号续传」。
+	// 客户端不需要、也不该告诉服务端它见过多少 —— 见 ReplayPending。
+	streamHub.ReplayPending(rootID, clientID, key)
 }
 
 func (h *WSHandler) sessionMessageContext() (context.Context, context.CancelFunc) {

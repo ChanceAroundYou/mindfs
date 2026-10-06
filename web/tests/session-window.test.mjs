@@ -3,6 +3,12 @@ import fs from "node:fs";
 import path from "node:path";
 import ts from "typescript";
 import vm from "node:vm";
+// overlay 判定已搬到 src/components/sessionOverlay.ts 的纯函数（2026-10-06）。
+// 这里**直接 import 真实现**，不再写同构副本 —— 副本会漂移，冲突②（渲染空洞）
+// 就是被副本挡住的：副本只复刻了作者关心的分支，所以一直是绿的。
+import { register } from "node:module";
+register("./ts-module-hook.mjs", import.meta.url);
+const { computeTailOverlay } = await import("../src/components/sessionOverlay.ts");
 
 const sessionServicePath = path.resolve(import.meta.dirname, "../src/services/session.ts");
 const sessionViewerPath = path.resolve(import.meta.dirname, "../src/components/SessionViewer.tsx");
@@ -88,7 +94,22 @@ assert.match(sessionSrc, /export function isWindowedView\(/, "isWindowedView mis
 assert.match(sessionSrc, /export function setWindowedView\(/, "setWindowedView missing");
 assert.match(sessionSrc, /export function clearWindowedView\(/, "clearWindowedView missing");
 assert.match(sessionSrc, /isWindowedView\(sessionKey\) \|\| !!options\?\.windowedView/, "syncSession windowed check missing");
-assert.match(sessionSrc, /forceNoTruncate/, "forceNoTruncate wiring missing");
+// 2026-10-06 反转：`forceNoTruncate`（写侧把标记置 false）已删除，代之以**标记必须诚实**。
+// 旧写法的危害路径：窗口态是**内存**标记，页面一刷新就没了，而那条被标成「完整」的 IDB
+// 记录还在盘上 ⇒ 下次全量路径只做增量同步 ⇒ 被砍掉的历史永远不补（静默丢历史）。
+// 读侧（`baseTruncated = windowed ? false : …`）本来就能表达「窗口态不回补」，所以写侧不必说谎。
+// 判据用 `sessionCode`（剥掉注释的视图）：解释「为什么删掉它」的注释里必然出现这个名字。
+assert.doesNotMatch(sessionCode, /forceNoTruncate/, "写侧不得再让 truncated 说谎");
+assert.match(
+  sessionSrc,
+  /truncated: true,\s*\n\s*exchanges: kept,/,
+  "发生过淘汰就必须标 truncated:true（标记语义 = 这条记录不完整，下次全量回源）",
+);
+assert.match(
+  sessionSrc,
+  /return \{ \.\.\.persistent, truncated: false, exchanges, exchange_aux \};/,
+  "没有淘汰时必须显式标 false（否则上一轮的 true 会留着白做一次全量）",
+);
 
 // getSessionWindow URL 组装：before_seq / latest / limit / nodeId
 assert.match(sessionSrc, /before_seq/, "before_seq param missing in getSessionWindow");
@@ -200,10 +221,20 @@ assert.ok(
 );
 assert.doesNotMatch(viewerSrc, /mergeWindowedTail/, "seq merge model must not return");
 // overlay 尾巴派生 + 组合输入
+// 判定已搬到纯模块：组件只负责接线，判定本身在 sessionOverlay.ts
+const overlaySrc = fs.readFileSync(
+  path.resolve(import.meta.dirname, "../src/components/sessionOverlay.ts"),
+  "utf8",
+);
 assert.match(
   viewerSrc,
-  /const tailOverlay = useMemo\(\(\) => \{[\s\S]*?const exs = Array\.isArray\(session\?\.exchanges\)/,
-  "tail overlay derivation from cache missing",
+  /const tailOverlay = useMemo\([\s\S]*?computeTailOverlay\(\{/,
+  "SessionViewer 必须通过 computeTailOverlay 取 overlay（判定不得再内联回组件）",
+);
+assert.match(
+  overlaySrc,
+  /export function computeTailOverlay\(/,
+  "overlay 判定必须是纯模块的导出函数（否则测试只能再写一份副本）",
 );
 assert.match(
   viewerSrc,
@@ -230,17 +261,17 @@ assert.match(
   "latestSeq must be monotonic and keyed by session",
 );
 assert.match(
-  viewerSrc,
-  /const visibleSeqSet = useMemo\(\(\) => \{/,
+  overlaySrc,
+  /const visibleSeqSet = new Set<number>\(\);/,
   "visible window seq set missing",
 );
 assert.match(
-  viewerSrc,
-  /const windowUserCounts = useMemo\(\(\) => \{/,
+  overlaySrc,
+  /const windowUserCounts = new Map<string, number>\(\);/,
   "window user content counts (for overlay de-dup) missing",
 );
 assert.match(
-  viewerSrc,
+  overlaySrc,
   /const covered = windowUserCounts\.get\(content\) \|\| 0;/,
   "seq=0 user entry must be offset by the window's same-content count",
 );
@@ -249,25 +280,36 @@ assert.doesNotMatch(
   /staleCount|windowMeta\.maxSeq - cacheMaxSeq/,
   "positional stale trim must not return (it ate live streaming items)",
 );
-// seq=0 的直播正文也要能对账：窗口最新持久化行已包含它 → 让位（去空白后判定）
+// 2026-10-06 简化：seq=0 的直播正文**不再靠内容比对**让位（那套是「归一化后包含 + ≥32 字地板 +
+// 只看窗口最新 3 行」，短回复落盘后会显示两遍，见 tests/session-overlay-unit.test.mjs 的【红·④】）。
+// 改为**轮次判据**：窗口里已经有本轮的持久行 ⇒ 本轮瞬时投影整批作废。判据用**缓存里最后一条
+// 已持久化的 user 行**归因（不能用窗口的最后一条 —— 窗口可能只到下界，会把新一轮的流式内容误清）。
 assert.match(
-  viewerSrc,
-  /const windowTailTexts = useMemo\(\(\) => \{/,
-  "window tail texts (for live-copy reconciliation) missing",
+  overlaySrc,
+  /const turnPersistedTexts: string\[\] = \[\];/,
+  "「窗口里本轮的持久正文」语料 missing —— 它是取代「最新 3 行 + 长度地板」的那一条",
 );
 assert.match(
-  viewerSrc,
-  /renderedPersistedTexts\.some\(\(text\) => text\.includes\(transientText\)\)/,
-  "seq=0 live text must yield once the rendered persisted text already contains it",
+  overlaySrc,
+  /if \(seqOf\(ex\) <= lastVisibleUserSeq\) continue;/,
+  "语料必须**限定在本轮**（最后一条 user 行之后）—— 跨轮比对会误伤合法重复",
 );
 assert.match(
-  viewerSrc,
-  /const renderedPersistedTexts = windowTailTexts\.slice\(\);/,
-  "the corpus must also include the persisted rows the overlay itself renders",
+  overlaySrc,
+  /turnPersistedTexts\.some\(\(text\) => text\.includes\(transientText\)\)/,
+  "瞬时正文必须在「归一化后包含」时让位（落盘那份常多出收尾段，故是包含不是相等）",
 );
+assert.doesNotMatch(
+  overlaySrc,
+  /windowTailTexts|renderedPersistedTexts|OVERLAY_DUP_MIN_CHARS|OVERLAY_TAIL_ROWS/,
+  "内容比对那套（含两个阈值常量）必须保持删除状态",
+);
+
+
+
 assert.match(
-  viewerSrc,
-  /function normalizeOverlayText\(value: string\): string \{/,
+  overlaySrc,
+  /export function normalizeOverlayText\(value: string\): string \{/,
   "whitespace-insensitive overlay comparison helper missing",
 );
 // init 种子只取持久化部分，避免与 overlay 重复。
@@ -275,7 +317,8 @@ assert.match(
 // 「切会话闪一下」的成因（2026-10-05）。淘汰只在写入时发生（toPersistentSession）。
 assert.match(
   viewerSrc,
-  /const seedExs = incomingExs\.filter\(\(e\) => Number\(\(e as any\)\?\.seq \|\| 0\) > 0\);/,
+  // 契约（init 种子只装持久行）不变，判据改走共用谓词 isPersistedSeq（2026-10-06）。
+  /const seedExs = incomingExs\.filter\(\(e\) => isPersistedSeq\(\(e as any\)\?\.seq\)\);/,
   "init seed must be persisted-only (overlay owns the seq=0 tail)",
 );
 assert.doesNotMatch(
@@ -507,24 +550,32 @@ for (const inFlight of [true, false]) {
   assert.equal(out.length, 2, "the same transient object must not be duplicated");
 }
 
-// ⑥ 在途 + 缓存里跨过 compact → 只保留**最后一次 compact 之后**的瞬时行
-//    实测一个会话跨 7 次 compact 堆了 1100+ 条（tool=700、thought=360）；
-//    它们和当前回合的真在途行在数据上没有区别，唯一现成的边界就是 compact 行本身。
+// ⑥【2026-10-06 反转】在途 + 缓存里跨过 compact → **一条都不许丢**
+//    旧行为是「只保留最后一次 compact 之后的瞬时行」，依据是「compact 是服务端历史的重置点」。
+//    核对服务端后该依据为假：交换 JSONL 是 append-only（唯一 `os.Remove` 在两处
+//    `DeleteSession`），compact 只写一条 `CompactNotice` aux。而 compact 是**轮内**事件，
+//    按它切会丢掉本轮 compact 之前那些还没落盘的内容（服务端没有替代品）。
+//    陈旧瞬时行由另外两处负责：一轮结束 / reset 的 `dropTransientExchanges`，
+//    以及加载时 `inFlight=false`。见 docs/message-mechanisms.md 冲突⑨、tests 的【红·⑨b/⑨c】。
 {
   const cached = [
     { seq: 1 },
-    { seq: 0, role: "agent", content: "compact 之前的旧内容" },   // 失效
-    { seq: 0, role: "tool", content: "compact 之前的旧工具卡" },  // 失效
-    { seq: 0, role: "compact", content: "" },                      // 边界（含）
-    { seq: 0, role: "agent", content: "compact 之后的新内容" },   // 保留
+    { seq: 0, role: "agent", content: "compact 之前的旧内容" },
+    { seq: 0, role: "tool", content: "compact 之前的旧工具卡" },
+    { seq: 0, role: "compact", content: "" },
+    { seq: 0, role: "agent", content: "compact 之后的新内容" },
   ];
   const out = composeLoadedExchanges([{ seq: 1 }], cached, true);
   const transients = out.filter((e) => e.seq === 0);
-  assert.equal(transients.length, 2, "只有最后一次 compact 之后的行该留下");
+  assert.equal(
+    transients.length,
+    4,
+    "compact 不是服务端历史的重置点 ⇒ 在途时不能按它切掉瞬时行",
+  );
   assert.equal(
     JSON.stringify(transients.map((e) => String(e.content || ""))),
-    JSON.stringify(["", "compact 之后的新内容"]),
-    "边界之前的那两条必须被丢掉",
+    JSON.stringify(["compact 之前的旧内容", "compact 之前的旧工具卡", "", "compact 之后的新内容"]),
+    "瞬时行必须保持缓存顺序（数组顺序即时间序）",
   );
 }
 
@@ -542,62 +593,63 @@ for (const inFlight of [true, false]) {
 assert.equal(composeLoadedExchanges(null, null, true).length, 0);
 assert.equal(composeLoadedExchanges(undefined, undefined, false).length, 0);
 
-// ── mergeStreamedText：流式正文拼接必须**重放安全** ────────────────────────
-// 服务端会把在途回合的内容重推一遍（切回会话、刷新页面时都会 —— 用户看到的
-// 「刷新后先瞬间出现到最后一条用户消息，再逐段把在途 assistant 正文刷出来」
-// 就是那一路重放）。原先 agent 那条是**无条件拼接**，于是同一段正文在**行内**
-// 被拼成 `aabb`，表现为「文本出现两遍、每切一次越多」。
+// ── 正文拼接不再需要重放适配层（mergeStreamedText 已删除）──────────────────
+// 曾被 mergeStreamedText 挡住的形态：服务端把在途回合的内容重推一遍，客户端
+// 无条件拼接 → 同一段正文在**行内**变成 `aabb`（「每切一次越多」）。
 //
-// 重复发生在行内而不是两行之间 —— 这是它长期没被抓到的原因：任何「按行内容比对」
-// 的去重都查不出来。所以必须在**拼接的那一刻**判。
-const mergeStreamedText = sessionMod.mergeStreamedText;
-assert.equal(typeof mergeStreamedText, "function", "mergeStreamedText must be exported");
+// 根因不在拼接，在**协议**：上游那版是「带 event_cursor 续流」，靠客户端缓存与
+// 服务端游标严格同步来保证「每片只投一次」。这条不变量维持不住（游标恒为空，
+// 实际每次切会话都是全量重发），于是才需要在拼接处用子串包含去猜「这片是不是重发」。
+//
+// 现在协议改成**快照重建**：会话挂载一律先清瞬时尾巴（dropTransientExchanges），
+// 再照单应用整批事件。重放不再是「增量」，因此拼接就是拼接 —— 无条件的
+// `String(last.content) + String(content)` 即正确。
+//
+// 这条钉子守的是「别把适配层加回来」：一旦有人重新引入按内容猜重发的逻辑，
+// 说明协议又退化成了增量续流，那时真正该修的是协议，不是拼接。
+assert.equal(sessionMod.mergeStreamedText, undefined, "mergeStreamedText 是重投递适配层，随游标协议一起删除，不得回潮");
 
-// ① 真·增量：正常追加
-assert.equal(mergeStreamedText("你好", "，世界"), "你好，世界");
-
-// ② 整段重放：新片段包含已有内容 → 覆盖，**不拼接**（这是本次修的 bug）
-assert.equal(
-  mergeStreamedText("你好，世界", "你好，世界！欢迎"),
-  "你好，世界！欢迎",
-  "a replay carries the whole accumulated text — take it, do not append",
-);
-
-// ③ 重复分片：已有内容已包含新片段 → 忽略
-assert.equal(mergeStreamedText("你好，世界", "世界"), "你好，世界");
-
-// ④ **幂等**：同一份完整内容重放 N 次，结果不变（核心断言）
-{
-  const full = "第一段。第二段。第三段。";
-  let acc = "";
-  for (let i = 0; i < 8; i += 1) acc = mergeStreamedText(acc, full);
-  assert.equal(acc, full, "重放 8 次不能让正文增长 —— 这正是「越切越多」的成因");
-}
-
-// ⑤ 逐段重放（每片都是到目前为止的累计）：结果仍是最后那一片
-{
-  let acc = "";
-  for (const piece of ["a", "ab", "abc", "abcd"]) acc = mergeStreamedText(acc, piece);
-  assert.equal(acc, "abcd", "cumulative replay must converge, not concatenate");
-}
-
-// ⑥ 空输入不抛
-assert.equal(mergeStreamedText("", "x"), "x");
-assert.equal(mergeStreamedText("x", ""), "x");
-assert.equal(mergeStreamedText("", ""), "");
-
-// ⑦ dropTransientExchanges：不在途时的清理出口（done / compact 调用它）
+// ── dropTransientExchanges：快照重建前的清理出口 ──────────────────────────
+// 判据是共用的 isTransientExchange：**seq 为空即瞬时**（2026-10-06 起用户行不再例外）。
+// 曾经 user 行例外（怕刚发出去的消息闪一下），但那条例外让「同一条行该不该留」有两把尺
+// （`mergeSessionExchanges` 只收 seq>0），去留取决于先跑哪条路径 —— 冲突①。
+// 现在两边都丢：丢的那一刻它已有替代品（用户行在回合开始就落盘；reset 在窗口装好之后），
+// 而保留它的代价是认领漏掉时与服务端持久行同时渲染。回归护栏：E2E 的
+// 「用户消息在时间线里恰好出现 1 次」。
 {
   const drop = sessionMod.dropTransientExchanges;
   assert.equal(typeof drop, "function", "dropTransientExchanges must be exported");
-  const session = { key: "s", exchanges: [{ seq: 1 }, { seq: 0 }, { seq: 2 }, { seq: 0 }] };
+  assert.equal(typeof sessionMod.isTransientExchange, "function", "isTransientExchange 是唯一判据，必须导出");
+  // ① seq=0 的 assistant/tool/thought 全清，seq>0 的持久行全留
+  const session = {
+    key: "s",
+    exchanges: [
+      { seq: 1, role: "user" },
+      { seq: 0, role: "agent" },
+      { seq: 2, role: "agent" },
+      { seq: 0, role: "tool" },
+    ],
+  };
   const dropped = drop(session);
   assert.equal(
     JSON.stringify(dropped.exchanges.map((e) => e.seq)),
     JSON.stringify([1, 2]),
-    "dropTransientExchanges must remove every seq=0 row",
+    "dropTransientExchanges must remove every seq=0 non-user row",
   );
-  // 没有瞬时行时原样返回（同一引用，避免无意义的重渲染）
+  // ② seq=0 的乐观 user 行**也一起清**（与 mergeSessionExchanges 同判；见上面那段）
+  {
+    const withEcho = drop({ key: "s", exchanges: [{ seq: 0, role: "user" }, { seq: 0, role: "agent" }] });
+    assert.equal(withEcho.exchanges.length, 0, "seq=0 的用户行不再是例外");
+    assert.equal(drop({ key: "s", exchanges: [{ seq: 0, role: "user" }] }).exchanges.length, 0);
+    // ③ 谓词本身：大小写无关；缺字段、非数字 seq 都归到「瞬时」
+    assert.equal(sessionMod.isTransientExchange({ seq: 0, role: "user" }), true);
+    assert.equal(sessionMod.isTransientExchange({ seq: 0, role: "User" }), true);
+  }
+  assert.equal(sessionMod.isTransientExchange({ seq: 3, role: "agent" }), false);
+  assert.equal(sessionMod.isTransientExchange({ role: "agent" }), true, "缺 seq 视为瞬时");
+  assert.equal(sessionMod.isTransientExchange({ seq: "x", role: "agent" }), true, "非数字 seq 视为瞬时");
+  assert.equal(sessionMod.isTransientExchange(null), true);
+  // ④ 没有瞬时行时原样返回（同一引用，避免无意义的重渲染）
   const clean = { key: "s", exchanges: [{ seq: 1 }] };
   assert.equal(drop(clean), clean, "no-op must return the same reference");
   assert.equal(drop(null), null);
@@ -702,10 +754,31 @@ assert.match(
 // 注意：不能只在 SessionViewer 视图内重拉窗口——applyWindow 替换可视数据后，App 缓存里
 // 残留的 seq=0 瞬时轮次会被合并 effect 重新追加 → 最后一轮显示两次。必须在 App 层经
 // restoreActiveSession 替换缓存（服务端窗口无 seq=0 时 localTransient 不回填，瞬时被清）。
+//
+// 2026-10-06 改写断言：这道重锚定原来还有第二个条件 `!isSessionStreaming(sessionKey)`，
+// 而它在监听者里**恒为假**（`emit` 先于状态机更新），于是正常回合的重锚定恒被跳过、
+// 尾巴却已被清 ⇒ 正在完成的正文当场消失（真机复现：时间线 137 项 → 2 项）。
+// 契约改为「重锚定的决策点唯一（handleSessionStreamDone 内），且会重锚定时**不预清**尾巴」，
+// 见 docs/session-streaming-rework.md §6.5。
 assert.match(
   realtimeSrc,
-  /getReplayTargetsForRoot\(rootID\)\.includes\(sessionKey\) &&\s*\n\s*!sessionService\.isSessionStreaming\(sessionKey\)\s*\n\s*\) \{\s*\n\s*void reloadSessionForReplay\(rootID, sessionKey\);/,
-  "F2 done-path re-anchor (viewing-sessions only, guarded) missing",
+  /getReplayTargetsForRoot\(rootID\)\.includes\(sessionKey\)/,
+  "F2 done-path re-anchor must stay gated on the replay-target set (查看中的会话才重锚定)",
+);
+assert.match(
+  realtimeSrc,
+  /void reloadSessionForReplay\(rootID, sessionKey\);/,
+  "F2 done-path re-anchor missing",
+);
+assert.match(
+  realtimeSrc,
+  /willReanchor\s*\?\s*base\s*:\s*dropTransientExchanges\(base\)/,
+  "F2 must not pre-clear the transient tail when a re-anchor is coming",
+);
+assert.doesNotMatch(
+  realtimeSrc,
+  /!sessionService\.isSessionStreaming\(/,
+  "F2 must not gate the re-anchor on isSessionStreaming (it reads the pre-dispatch state ⇒ always true)",
 );
 assert.doesNotMatch(viewerSrc, /streamingEdgeRef/, "F2 must not re-anchor inside SessionViewer (would duplicate the persisted turn)");
 
@@ -759,64 +832,12 @@ assert.match(
 // ── overlay 判定（与 SessionViewer.tailOverlay 同构）：窗口是权威持久化源 ───
 // ①窗口已含的 seq 不重复渲染 ②实时流式项永不丢 ③陈旧乐观用户拷贝被丢弃
 // ④真正的重复发言仍显示 ⑤刚发出(seq>latestSeq)的条目保留 ⑥未锚定时不灌历史
-function buildTailOverlay(cacheExchanges, visibleExchanges, latestSeq) {
-  const visibleSeqSet = new Set();
-  const windowUserCounts = new Map();
-  for (const ex of visibleExchanges) {
-    const seq = Number(ex?.seq || 0);
-    if (seq > 0) visibleSeqSet.add(seq);
-    if (String(ex?.role || "").toLowerCase() === "user") {
-      const content = String(ex?.content || "");
-      windowUserCounts.set(content, (windowUserCounts.get(content) || 0) + 1);
-    }
-  }
-  const consumed = new Map();
-  const windowTailTexts = [];
-  for (const ex of visibleExchanges
-    .filter((e) => Number(e?.seq || 0) > 0)
-    .slice(-3)) {
-    const text = String(ex?.content || "").replace(/\s+/g, "");
-    if (text) windowTailTexts.push(text);
-  }
-  // 已落盘但还没进窗口的条目由 overlay 自己渲染 —— 它们也算「已经显示过的一份」
-  const renderedPersistedTexts = windowTailTexts.slice();
-  for (const ex of cacheExchanges) {
-    const seq = Number(ex?.seq || 0);
-    if (seq <= 0) continue;
-    if (visibleSeqSet.has(seq)) continue;
-    if (latestSeq === 0 || seq <= latestSeq) continue;
-    const text = String(ex?.content || "").replace(/\s+/g, "");
-    if (text) renderedPersistedTexts.push(text);
-  }
-  const out = [];
-  for (const ex of cacheExchanges) {
-    const seq = Number(ex?.seq || 0);
-    if (seq > 0) {
-      if (visibleSeqSet.has(seq)) continue;
-      if (latestSeq === 0 || seq <= latestSeq) continue;
-      out.push(ex);
-      continue;
-    }
-    if (String(ex?.role || "").toLowerCase() === "user") {
-      const content = String(ex?.content || "");
-      const covered = windowUserCounts.get(content) || 0;
-      const used = consumed.get(content) || 0;
-      if (used < covered) {
-        consumed.set(content, used + 1);
-        continue;
-      }
-    }
-    const transientText = String(ex?.content || "").replace(/\s+/g, "");
-    if (
-      transientText.length >= 32 &&
-      renderedPersistedTexts.some((text) => text.includes(transientText))
-    ) {
-      continue;
-    }
-    out.push(ex);
-  }
-  return out;
-}
+// 真实现的薄适配器（原来是同构副本，见文件头说明）。
+// `latestSeq` 形参**已失效**：判定不再依赖那条水位线（它正是冲突②的成因），保留形参只为
+// 不改动下面 6 处调用点的形状。
+const buildTailOverlay = (cacheExchanges, visibleExchanges, _latestSeqUnused) =>
+  computeTailOverlay({ exchanges: cacheExchanges, visibleExchanges });
+
 const win = [
   { role: "user", content: "A", seq: 9 },
   { role: "assistant", content: "R9", seq: 10 },
@@ -853,10 +874,15 @@ assert.equal(
   1,
   "⑤ just-sent message beyond the window's latest seq must stay visible",
 );
+// ⑥【2026-10-06 反转】锚定前后：缓存里「窗口未含」的持久行**必须**由 overlay 渲染。
+//    旧断言要求它们不渲染（依据是那条被删掉的 A2 假设「seq 未达水位线的行窗口一定会含」）。
+//    该假设不成立 ⇒ 会漏行（冲突②）。渲染多余的一行是**性能**问题（且应用自己在挂载时
+//    就把缓存里的持久行整体播种进窗口态了，注释明说刻意不再缩到窗口大小），
+//    而漏行是**正确性**问题 —— 两者不能同等对待。
 assert.equal(
   buildTailOverlay([{ role: "user", content: "旧", seq: 3 }], win, 0).length,
-  0,
-  "⑥ before anchoring, cached persisted entries must not flood the overlay",
+  1,
+  "窗口未含的持久行必须由 overlay 补渲染（否则就是渲染空洞）",
 );
 
 // ⑦⑧⑨ 缺口回归（2026-09-17）：同一轮的直播拷贝与落盘正文只差空白，必须让位。

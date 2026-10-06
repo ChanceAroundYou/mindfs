@@ -156,3 +156,19 @@ function uploadAbortError(): Error {
   error.name = "AbortError";
   return error;
 }
+
+/**
+ * 消息正文里引用一个上传文件的 **token 组装点**。
+ *
+ * 这个形状此前在 4 个文件里各写了一遍（`App.tsx` 富文本发送、`TaskDetailPanel` 任务编辑、
+ * `ActionBar` 聊天发送、`tokenEditorUtils` 编辑器序列化）—— 改一处必漏三处（冲突⑮a）。
+ * 收敛到一处之后，扫描 `` `[file: ${ `` 只应命本函数。
+ */
+export function formatFileToken(path: string): string {
+  return `[file: ${path}]`;
+}
+
+/** 取一个上传文件用于 token 的路径：agent 侧路径优先（见 `UploadedFile.agent_path`）。 */
+export function fileTokenPath(file: { agent_path?: string; path?: string } | null | undefined): string {
+  return String(file?.agent_path || file?.path || "").trim();
+}

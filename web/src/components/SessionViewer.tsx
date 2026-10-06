@@ -8,18 +8,7 @@ import { InlineTokenText } from "./InlineTokenText";
 import { MarkdownViewer } from "./MarkdownViewer";
 import { fetchProofProtectedBlob } from "../services/file";
 import { getRootNodeId } from "../services/rootNode";
-import {
-  SESSION_WINDOW_SIZE,
-  clearWindowedView,
-  getSessionWindow,
-  mergeSessionExchanges,
-  type TokenUsage,
-  setWindowedView,
-  type ExchangeAux,
-  type RelatedFile,
-  type SessionWindowMeta,
-  type ToolCall,
-} from "../services/session";
+import { SESSION_WINDOW_SIZE, clearWindowedView, getSessionWindow, isPersistedSeq, mergeSessionExchanges, setWindowedView, type ExchangeAux, type RelatedFile, type SessionWindowMeta, type TokenUsage, type ToolCall } from "../services/session";
 import { savePrompt } from "../services/prompts";
 import { reportError } from "../services/error";
 import { rootBadgeButtonStyle } from "./rootBadgeStyle";
@@ -27,6 +16,10 @@ import { copyText } from "../services/clipboard";
 import type { AgentStatus } from "../services/agents";
 import { useI18n, type Locale } from "../i18n";
 import { formatSessionDuration } from "../services/sessionDuration";
+import {
+  computeTailOverlay,
+  type OverlayExchange,
+} from "./sessionOverlay";
 import {
   relatedFileStatKey,
   useRelatedFileStats,
@@ -493,20 +486,6 @@ function isAuxiliaryTimelineItem(item: TimelineItem | null): boolean {
     item?.type === "compact"
   );
 }
-
-// overlay 对账用的归一化：只去空白。服务端落盘时会在相邻文本块之间补 "\n\n"
-// （usecase.appendResponseChunk），而流式 message_chunk 不带，所以同一轮的
-// 「缓存瞬时拷贝」与「落盘正文」只差空白 —— 逐字比较认不出来，去空白才认得出。
-function normalizeOverlayText(value: string): string {
-  return value.replace(/\s+/g, "");
-}
-
-// 只在窗口最新这几条持久化行里找陈旧拷贝：它必然是「刚落盘那一轮」的副本。
-// 跟更早的历史比会误伤（同一句工程套话在不同轮次重复出现是正常的）。
-const OVERLAY_TAIL_ROWS = 3;
-// ponytail: 短文本不参与让位判定。长度地板挡掉「好的」「继续」这类合法重复；
-// 代价是落盘后残留的短片段（<32 字）仍会多显示一次，等窗口重锚定自愈。
-const OVERLAY_DUP_MIN_CHARS = 32;
 
 function PlanUpdateCard({ content, rootId }: { content: string; rootId?: string | null }) {
   return (
@@ -1182,118 +1161,17 @@ function SessionViewerInner({
     [],
   );
   const latestSeq = latestSeqState.key === sessionKey ? latestSeqState.max : 0;
-  const visibleSeqSet = useMemo(() => {
-    const set = new Set<number>();
-    for (const ex of visibleExchanges) {
-      const seq = Number((ex as any)?.seq || 0);
-      if (seq > 0) set.add(seq);
-    }
-    return set;
-  }, [visibleExchanges]);
-  const windowUserCounts = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const ex of visibleExchanges) {
-      if (String((ex as any)?.role || "").toLowerCase() !== "user") continue;
-      const content = String((ex as any)?.content || "");
-      counts.set(content, (counts.get(content) || 0) + 1);
-    }
-    return counts;
-  }, [visibleExchanges]);
-  // 窗口侧已渲染的 tool callId 集合：role=tool 的瞬时条目若其 callId 已存在于窗口的
-  // exchange_aux 里，说明同一张卡会由 buildAssistantTimeline 从 aux 渲染一次 —— overlay
-  // 必须让位，否则同一 callId 从两个数据源各渲染一份（实测 2026-09-12 症状 1：ask_user
-  // 卡与推理文本各出现两份，且库里并没有重复数据）。
-  const windowToolCallIds = useMemo(() => {
-    const set = new Set<string>();
-    for (const items of Object.values(visibleAux || {})) {
-      for (const aux of items || []) {
-        const callId = (aux as any)?.toolcall?.callId;
-        if (typeof callId === "string" && callId) set.add(callId);
-      }
-    }
-    return set;
-  }, [visibleAux]);
-  const windowTailTexts = useMemo(() => {
-    const texts: string[] = [];
-    const persisted = visibleExchanges.filter(
-      (ex) => Number((ex as any)?.seq || 0) > 0,
-    );
-    for (const ex of persisted.slice(-OVERLAY_TAIL_ROWS)) {
-      const text = normalizeOverlayText(String((ex as any)?.content || ""));
-      if (text) texts.push(text);
-    }
-    return texts;
-  }, [visibleExchanges]);
-  const tailOverlay = useMemo(() => {
-    const exs = Array.isArray(session?.exchanges)
-      ? (session.exchanges as ExchangeArray)
-      : ([] as ExchangeArray);
-    // 「已经会被渲染的持久化正文」全集 = 窗口最新几行（windowTailTexts）+ 本函数自己
-    // 要渲染的 seq>latestSeq 缓存条目。后者不能漏：重锚定还没把刚落盘的行拉进窗口时，
-    // 那一行由 overlay 侧渲染（下面 seq>0 分支），若只跟窗口比，seq=0 的直播拷贝就找不到
-    // 「已经显示过的那一份」，重复照旧（实测 2026-09-17 20:16，ask 上下各一整轮）。
-    const renderedPersistedTexts = windowTailTexts.slice();
-    for (const ex of exs) {
-      const seq = Number((ex as any)?.seq || 0);
-      if (seq <= 0) continue;
-      if (visibleSeqSet.has(seq)) continue;
-      if (latestSeq === 0 || seq <= latestSeq) continue;
-      const text = normalizeOverlayText(String((ex as any)?.content || ""));
-      if (text) renderedPersistedTexts.push(text);
-    }
-    const consumed = new Map<string, number>();
-    const out: ExchangeArray = [];
-    for (const ex of exs) {
-      const seq = Number((ex as any)?.seq || 0);
-      if (seq > 0) {
-        // 已持久化条目：窗口已含（visibleSeqSet）或已被最新窗口的 seq 范围覆盖 → 不重复渲染。
-        if (visibleSeqSet.has(seq)) continue;
-        if (latestSeq === 0 || seq <= latestSeq) {
-          // 已入库但落在窗口之外的持久化条目由窗口侧负责渲染，这里不再重复渲染。
-          continue;
-        }
-        out.push(ex);
-        continue;
-      }
-      // seq=0 的 tool 瞬时条目：窗口 aux 已含同 callId → 让位给窗口侧渲染。
-      const transientCallId = (ex as any)?.toolCall?.callId;
-      if (
-        String((ex as any)?.role || "").toLowerCase() === "tool" &&
-        typeof transientCallId === "string" &&
-        transientCallId &&
-        windowToolCallIds.has(transientCallId)
-      ) {
-        continue;
-      }
-      if (String((ex as any)?.role || "").toLowerCase() === "user") {
-        const content = String((ex as any)?.content || "");
-        const covered = windowUserCounts.get(content) || 0;
-        const used = consumed.get(content) || 0;
-        // ponytail: 同内容重复发言时按出现次序消抵，若窗口只回填了后发的那条（跨窗口滚动
-        // 只载尾巴），可能抵消错那一条（显示成"后发的在窗口、先发的在 overlay"——条数仍对，
-        // 归属可能错位）。升到"按 seq 区间匹配"可消除，但需要窗口的 minSeq/maxSeq 参与判断，
-        // 收益极小（需同内容 + 两条同时在途 + 跨窗滚动），暂留此天花板。
-        if (used < covered) {
-          consumed.set(content, used + 1);
-          continue;
-        }
-      }
-      // seq==0 的直播正文/思考：同一轮若已落盘（本次会被渲染的持久化正文里已有包含它的），
-      // 缓存里这份就是陈旧拷贝 → 让位。若不让位，「窗口/overlay 渲染一份 + 直播再渲染一份」
-      // 会把同一轮显示两次，ask 卡上下各一整轮（实测 2026-09-17，库里并无重复数据）。
-      const transientText = normalizeOverlayText(
-        String((ex as any)?.content || ""),
-      );
-      if (
-        transientText.length >= OVERLAY_DUP_MIN_CHARS &&
-        renderedPersistedTexts.some((text) => text.includes(transientText))
-      ) {
-        continue;
-      }
-      out.push(ex);
-    }
-    return out;
-  }, [session?.exchanges, sessionKey, latestSeq, visibleSeqSet, windowUserCounts, windowToolCallIds, windowTailTexts]);
+  // overlay 尾巴：**判定逻辑已搬到 `sessionOverlay.ts` 的纯函数**（本处只做接线）。
+  // 搬出去的原因见那个文件的头部注释：它住在组件里时测不了，测试只能写同构副本，
+  // 而副本挡住了冲突②（渲染空洞）—— `tests/session-window.test.mjs` 里那份副本可以随之删除。
+  const tailOverlay = useMemo(
+    () =>
+      computeTailOverlay({
+        exchanges: session?.exchanges as OverlayExchange[] | undefined,
+        visibleExchanges: visibleExchanges as OverlayExchange[],
+      }),
+    [session?.exchanges, sessionKey, visibleExchanges],
+  );
   // 窗口态与 overlay 是两条独立来源，同一个 exchange 对象可能两边都在（重锚定会把整份
   // 缓存装进窗口态时就发生过）。按对象同一性取差集，保证同一份 exchange 只渲染一次 ——
   // 与 dedupeToolCards 同一条约定，只是这里对所有类型生效（thought/正文没有 callId 可去重）。
@@ -1433,7 +1311,7 @@ function SessionViewerInner({
     // 用户看到的是「完整对话 → 塌成最后一条用户消息 → 回答慢慢补回来」。
     // 淘汰只能发生在**写入**时、只能从头淘汰，且不该在加载过程中再砍一遍。
     const incomingExs = Array.isArray(session?.exchanges) ? (session.exchanges as ExchangeArray) : ([] as ExchangeArray);
-    const seedExs = incomingExs.filter((e) => Number((e as any)?.seq || 0) > 0);
+    const seedExs = incomingExs.filter((e) => isPersistedSeq((e as any)?.seq));
     const seedAux: Record<string, ExchangeAux[]> = {};
     const seedSeqs = new Set(seedExs.map((e) => Number((e as any)?.seq || 0)));
     for (const [k, v] of Object.entries((session?.exchange_aux || {}) as Record<string, ExchangeAux[]>)) {
@@ -1548,7 +1426,7 @@ function SessionViewerInner({
     const anchorExchanges = (Array.isArray((session as any)?.exchanges)
       ? ((session as any).exchanges as ExchangeArray)
       : ([] as ExchangeArray)
-    ).filter((ex) => Number((ex as any)?.seq || 0) > 0);
+    ).filter((ex) => isPersistedSeq((ex as any)?.seq));
     applyWindow(
       {
         session: { ...(session as any), exchanges: anchorExchanges },
@@ -2248,7 +2126,7 @@ function SessionViewerInner({
     const assistantDurationLabel = !isUser
       ? formatSessionDuration(previousUserTimestamp(timeline, idx), item.timestamp)
       : "";
-    const canForkAgentMessage = !isUser && Number(item.seq || 0) > 0 && !!onForkAgentMessage;
+    const canForkAgentMessage = !isUser && isPersistedSeq(item.seq) && !!onForkAgentMessage;
     return (
       <div
         key={timelineItemKey}

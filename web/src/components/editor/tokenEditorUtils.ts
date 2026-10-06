@@ -13,6 +13,7 @@ import {
   type TokenNode,
   type TokenType,
 } from "./TokenNode";
+import { formatFileToken } from "../../services/upload";
 
 export type ActiveTokenType = "file" | "slash" | "prompt" | "command";
 
@@ -56,7 +57,7 @@ export function serializeEditor(): string {
     if ($isTokenNode(node)) {
       parts.push(
         node.getTokenType() === "file"
-          ? `[file: ${node.getTokenValue()}]`
+          ? formatFileToken(node.getTokenValue())
           : `[use skill: ${node.getTokenValue()}]`
       );
       return;

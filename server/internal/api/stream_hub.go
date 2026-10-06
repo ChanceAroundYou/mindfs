@@ -27,7 +27,6 @@ type StreamHub struct {
 	sessionClients  map[string]map[string]struct{}
 	pendingSessions map[string]*SessionPendingState
 	replayStates    map[string]*ClientReplayState
-	completed       map[string]*CompletedSessionState
 }
 
 type PendingUserMessage struct {
@@ -74,11 +73,6 @@ type ClientReplayState struct {
 	LastEventSeq uint64
 }
 
-type CompletedSessionState struct {
-	RequestID string
-	Completed time.Time
-}
-
 type ReplyingSessionState struct {
 	RootID       string    `json:"rootId"`
 	SessionKey   string    `json:"sessionKey"`
@@ -113,7 +107,6 @@ func NewStreamHub(e2eeManager *e2ee.Manager) *StreamHub {
 		sessionClients:  make(map[string]map[string]struct{}),
 		pendingSessions: make(map[string]*SessionPendingState),
 		replayStates:    make(map[string]*ClientReplayState),
-		completed:       make(map[string]*CompletedSessionState),
 	}
 }
 
@@ -138,33 +131,50 @@ func buildSessionStreamResponse(rootID, sessionKey string, event *StreamEvent) W
 
 // buildSessionStreamBatchResponse 与单条版同类型，只是把 `event` 换成 `events` 数组。
 //
-// 存在的理由：重放时逐条发 = 客户端「收一条 → 渲染一次」，几百条事件就是几百次渲染，
-// 用户看到的是「打开/切回会话时逐渐刷一大堆」。整批放进一条消息，客户端在同一个事件
-// 处理器内循环应用，React 会批处理成**一次**渲染 —— 观感是一步到位。
-// 实时事件仍走单条版（`event`）。
-func buildSessionStreamBatchResponse(rootID, sessionKey string, events []StreamEvent) WSResponse {
-	return WSResponse{
-		Type: "session.stream",
-		Payload: map[string]any{
-			"root_id":     rootID,
-			"session_key": sessionKey,
-			"events":      events,
-		},
+// 两件事各自独立，**别混**：
+//
+//  1. **整批一条消息**（形状）—— 逐条发 = 客户端「收一条 → 渲染一次」，几百条事件就是
+//     几百次渲染，用户看到的是「打开/切回会话时逐渐刷一大堆」。整批放进一条消息，客户端
+//     在一次同步循环里应用，React 批处理成**一次**渲染 —— 观感是一步到位。
+//  2. **reset:true**（语义）—— 这是「本轮状态快照」，不是「补发缺失的几条」。服务端不从
+//     客户端取任何进度，每次挂上都把当前回合的事件整份重发（见 ReplayPending）。客户端
+//     收到 reset 先把该会话的**瞬时尾巴清空**，再照单重建。于是「客户端尾巴 = 服务端
+//     buffer」无条件成立，重放 N 次结果逐字节相同 —— 客户端此前见过什么、有没有漏收，
+//     都不影响结果。空 `events` 也是合法的：空批只清尾巴，不产生内容。
+//
+// **`reset` 必须与「形状」分开传**（这就是它是参数而不是常量的原因）：
+//   - `reset=true` —— 挂载会话的首帧，本轮状态快照；
+//   - `reset=false` —— 快照之后的**续投**（`replayStepToClient`，排空循环期间新到的事件）。
+//
+// 曾把这个函数写成恒发 `reset:true`，后果是排空期间一到新事件就把客户端刚重建好的尾巴
+// 又清一遍 —— 续投的那几条反而把前面整批抹掉，越活跃的会话越容易命中。
+// 客户端侧同样分开判：按**形状**展开，按 `reset` 清尾（见 session.ts 的 emitDecrypted）。
+func buildSessionStreamBatchResponse(rootID, sessionKey string, events []StreamEvent, reset bool) WSResponse {
+	if events == nil {
+		events = []StreamEvent{}
 	}
-}
-
-func buildSessionDoneResponse(rootID, sessionKey, requestID string, replay bool) WSResponse {
 	payload := map[string]any{
 		"root_id":     rootID,
 		"session_key": sessionKey,
+		"events":      events,
 	}
-	if replay {
-		payload["replay"] = true
+	if reset {
+		payload["reset"] = true
 	}
 	return WSResponse{
-		ID:      requestID,
-		Type:    "session.done",
+		Type:    "session.stream",
 		Payload: payload,
+	}
+}
+
+func buildSessionDoneResponse(rootID, sessionKey, requestID string) WSResponse {
+	return WSResponse{
+		ID:   requestID,
+		Type: "session.done",
+		Payload: map[string]any{
+			"root_id":     rootID,
+			"session_key": sessionKey,
+		},
 	}
 }
 
@@ -410,7 +420,6 @@ func (h *StreamHub) SetPendingUserAt(rootID, sessionKey, sessionTitle, agent, mo
 		timestamp = timestamp.UTC()
 	}
 	state := h.ensurePendingSessionLocked(sessionKey)
-	delete(h.completed, sessionKey)
 	state.RootID = rootID
 	state.SessionTitle = strings.TrimSpace(sessionTitle)
 	state.Active = true
@@ -491,7 +500,6 @@ func (h *StreamHub) reserveOrQueueSessionMessage(rootID, key, title string, item
 	if state.Active {
 		return h.enqueueSessionMessageLocked(rootID, key, title, item), true
 	}
-	delete(h.completed, key)
 	state.RootID, state.SessionTitle, state.Active = rootID, title, true
 	state.UpdatedAt = time.Now().UTC()
 	return nil, false
@@ -505,7 +513,6 @@ func (h *StreamHub) enqueueSessionMessageLocked(rootID, sessionKey, sessionTitle
 		item.Timestamp = time.Now().UTC()
 	}
 	state := h.ensurePendingSessionLocked(sessionKey)
-	delete(h.completed, sessionKey)
 	state.RootID = rootID
 	if strings.TrimSpace(sessionTitle) != "" {
 		state.SessionTitle = strings.TrimSpace(sessionTitle)
@@ -655,7 +662,6 @@ func (h *StreamHub) SetPendingReply(rootID, sessionKey, sessionTitle string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	state := h.ensurePendingSessionLocked(sessionKey)
-	delete(h.completed, sessionKey)
 	state.RootID = rootID
 	state.SessionTitle = strings.TrimSpace(sessionTitle)
 	state.Active = true
@@ -808,27 +814,36 @@ func (h *StreamHub) ListReplyingSessions() []ReplyingSessionState {
 	return items
 }
 
-func (h *StreamHub) ReplayPending(rootID, clientID, sessionKey, eventCursor string) {
+// ReplayPending 把一个刚挂上会话的客户端从「重放」推进到「实时」。
+//
+// **不从客户端取任何进度**：每次挂上都把当前回合的事件整份重发（reset 帧，见
+// buildSessionStreamBatchResponse）。曾经这里接受客户端自报的 event_cursor 做增量续传，
+// 那条路被删掉了 —— 它要求客户端缓存与服务端游标严格同步，而这条不变量在这套系统里
+// 维持不住（游标恒为空 ⇒ 每次都是全量重发，客户端却按「增量」去 merge，于是同一段
+// 正文被拼进一行新的 agent 行，表现为「ask 卡下面多出一整份正文」）。
+//
+// 排空循环本身保留：`GetSessionClientIDs(liveOnly=true)` 会跳过 replay 状态的客户端，
+// 所以「取快照 → 排空期间新到的事件 → 切 live」之间不丢事件、不插序。
+func (h *StreamHub) ReplayPending(rootID, clientID, sessionKey string) {
 	h.mu.Lock()
-	lastEventSeq := uint64(0)
-	if state := h.pendingSessions[sessionKey]; state != nil {
-		if baseExchangeSeq, parsedEventSeq, ok := parseEventCursor(eventCursor); ok &&
-			baseExchangeSeq == state.BaseExchangeSeq && parsedEventSeq <= state.NextEventSeq {
-			lastEventSeq = parsedEventSeq
-		}
-	}
 	h.replayStates[pendingClientKey(clientID, sessionKey)] = &ClientReplayState{
-		Status:       ClientStreamStatusReplay,
-		LastEventSeq: lastEventSeq,
+		Status: ClientStreamStatusReplay,
 	}
 	h.mu.Unlock()
 
 	h.replayQueueToClient(rootID, clientID, sessionKey)
+	first := true
 	for {
 		step := h.collectReplayStep(clientID, sessionKey)
-		h.replayStepToClient(rootID, clientID, sessionKey, step.events)
+		if first {
+			// 首帧**恒发**（events 可空）且带 reset：让「ready 之后尾巴 = 服务端 buffer」
+			// 无条件成立，而不是「buffer 恰好非空时才成立」。
+			h.SendToClient(clientID, buildSessionStreamBatchResponse(rootID, sessionKey, step.events, true))
+			first = false
+		} else {
+			h.replayStepToClient(rootID, clientID, sessionKey, step.events)
+		}
 		if step.live {
-			h.replayCompletionToClient(rootID, clientID, sessionKey)
 			return
 		}
 	}
@@ -898,14 +913,18 @@ func (h *StreamHub) BroadcastSessionStream(rootID, sessionKey string, event *Str
 	}
 }
 
+// BroadcastSessionDone 广播一轮的结束。
+//
+// `liveOnly=false`：**重放中的客户端也要收到**。它挂在回合中途、drain 还没走完时
+// 这一轮结束了，这条就是它的终止信号 —— 因此不需要另开一条「补发你错过的 done」的
+// 回执路径（曾有 completed 表 + done(replay:true)，现已删除：客户端对 replay 回执的两处
+// 分支本来就都是空操作 —— 不放提示音、不触发重锚定，而重锚定正是它自己造成的自持闭环）。
+//
+// 「挂上来时这一轮早就结束了」的客户端不需要补偿：它的「在回复」状态取自 pending 列表，
+// 而那时该会话早已不在列表里。**注意 `notifySessionDone` 不是这条路径** —— 它是 Web Push
+// 推送，与 WS 的 pending 状态无关，别拿它当理由（写这段时错过一次）。
 func (h *StreamHub) BroadcastSessionDone(rootID, sessionKey, requestID string) {
-	h.mu.Lock()
-	h.completed[sessionKey] = &CompletedSessionState{
-		RequestID: requestID,
-		Completed: time.Now().UTC(),
-	}
-	h.mu.Unlock()
-	resp := buildSessionDoneResponse(rootID, sessionKey, requestID, false)
+	resp := buildSessionDoneResponse(rootID, sessionKey, requestID)
 	for _, clientID := range h.GetSessionClientIDs(sessionKey, false) {
 		h.SendToClient(clientID, resp)
 	}
@@ -1074,7 +1093,7 @@ func (h *StreamHub) replayStepToClient(rootID, clientID, sessionKey string, even
 	// 会被 React 批处理成一次渲染，观感是一步到位。
 	batch := make([]StreamEvent, len(events))
 	copy(batch, events)
-	h.SendToClient(clientID, buildSessionStreamBatchResponse(rootID, sessionKey, batch))
+	h.SendToClient(clientID, buildSessionStreamBatchResponse(rootID, sessionKey, batch, false))
 }
 
 func (h *StreamHub) replayQueueToClient(rootID, clientID, sessionKey string) {
@@ -1086,21 +1105,6 @@ func (h *StreamHub) replayQueueToClient(rootID, clientID, sessionKey string) {
 		return
 	}
 	h.SendToClient(clientID, buildSessionQueueUpdatedResponse(rootID, sessionKey, queue, frozen))
-}
-
-func (h *StreamHub) replayCompletionToClient(rootID, clientID, sessionKey string) {
-	if blank(rootID) || blank(clientID) || blank(sessionKey) {
-		return
-	}
-	h.mu.Lock()
-	completed := h.completed[sessionKey]
-	if completed == nil {
-		h.mu.Unlock()
-		return
-	}
-	requestID := completed.RequestID
-	h.mu.Unlock()
-	h.SendToClient(clientID, buildSessionDoneResponse(rootID, sessionKey, requestID, true))
 }
 
 func (h *StreamHub) isReplayClientLocked(clientID, sessionKey string) bool {

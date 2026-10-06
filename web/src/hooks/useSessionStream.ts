@@ -340,19 +340,37 @@ function buildAssistantTimeline(
   return out;
 }
 
+/**
+ * 这一行在持久化序列里的位置。**没有就返回 0，绝不编造。**
+ *
+ * 曾经这里按「第几条 user/agent 行」推一个位置，好让没有 seq 的
+ * 瞬时行也能在时间线上排个序。它造成了两个可观测的错误：
+ *
+ *  ① 瞬时行凭空获得一个**已经属于别人**的 seq。服务端的 exchange_aux 是**按 seq 索引**的
+ *     （工具卡、token 用量都挂在 aux[seq] 下），于是这一行会把某条真实持久行的 aux
+ *     一并认领过来 —— 用户看到的正是「正文下方多出一整套工具卡」。
+ *  ② `data-session-seq` 与 fork 按钮都以 `seq > 0` 为「这是持久消息」的判据，
+ *     编造出来的 seq 让**还没落盘的瞬时行**看起来可以 fork。
+ *
+ * 排序本来就不需要它：瞬时行永远排在持久行之后（`composeLoadedExchanges` 的契约），
+ * 数组顺序即时间顺序，`seq` 只是「服务端窗口里的身份」，本就不该由位置反推。
+ */
+function persistedSeq(ex: ExchangeLike): number {
+  const raw = Number(ex.seq || 0);
+  return Number.isFinite(raw) && raw > 0 ? raw : 0;
+}
+
 function buildBaseTimeline(
   exchanges: ExchangeLike[],
   exchangeAux: ExchangeAuxMapLike,
 ): TimelineItem[] {
   const out: TimelineItem[] = [];
-  let inferredSeq = 0;
   for (let index = 0; index < exchanges.length; index += 1) {
     const ex = exchanges[index];
     const role = normalizeRole(ex.role);
     const content = ex.content || "";
     if (role === "user") {
-      inferredSeq += 1;
-      const seq = Number(ex.seq || 0) > 0 ? Number(ex.seq || 0) : inferredSeq;
+      const seq = persistedSeq(ex);
       if (!content) continue;
       out.push({
         id: stableTimelineID("user", index, content, ex.timestamp, ex.agent),
@@ -361,13 +379,12 @@ function buildBaseTimeline(
         timestamp: ex.timestamp,
         agent: ex.agent,
         pendingAck: ex.pending_ack === true,
-        seq,
+        seq: seq || undefined,
       });
       continue;
     }
     if (role === "agent" || role === "assistant") {
-      inferredSeq += 1;
-      const seq = Number(ex.seq || 0) > 0 ? Number(ex.seq || 0) : inferredSeq;
+      const seq = persistedSeq(ex);
       const auxList = seq ? exchangeAux[String(seq)] || [] : [];
       out.push(...buildAssistantTimeline({ ...ex, seq }, index, auxList));
       continue;

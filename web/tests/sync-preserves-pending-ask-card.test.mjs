@@ -25,7 +25,8 @@ assert.match(
 // 现在两类都保留，各自的去重判据见 sync-preserves-live-transient-text.test.mjs。
 assert.match(
   syncHandler,
-  /Number\(\(ex as any\)\?\.seq \|\| 0\) !== 0\) return false;/,
+  // 契约（只搬运 seq=0 的瞬时条目）不变，判据改走共用谓词 isTransientExchange（2026-10-06）。
+  /if \(!isTransientExchange\(ex\)\) return false;/,
   "only seq=0 transient entries should be carried over (persisted rows come back from the server)",
 );
 assert.match(
