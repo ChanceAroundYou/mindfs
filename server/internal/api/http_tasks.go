@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"mindfs/server/internal/api/usecase"
 	"mindfs/server/internal/kanban"
@@ -399,6 +400,56 @@ func (h *HTTPHandler) handleKanbanTaskMove(w http.ResponseWriter, r *http.Reques
 	respondJSON(w, http.StatusOK, detail)
 }
 
+// overviewTaskProjection 是 `/api/tasks/overview` 的**卡片视图**投影。
+//
+// 这个端点是跨节点扇出的（工作台常驻、每节点一份），体积直接决定手机端流量。
+// 实测 45 条任务 = 163KB，其中 task.stages 一项就占 43%（70KB 是每个阶段的完整
+// prompt_template 正文）；而工作台组件对 stages / aux_flags / labels / worktree_*
+// 这些字段**一个读取都没有** —— 卡片只画状态、阶段名、任务号、模板名。
+//
+// 字段名与 kanban.Task 保持一致，只是不下发：
+//   - 前端 KanbanTask.stages 本就是可选的（`stages?: StageTemplate[]`），类型不受影响；
+//   - 要某个任务的完整流水走 GET /api/tasks/{root}/{id}（单任务详情，本就带）。
+//
+// 淘汰的字段都列在 G-AN 的清单里；丢它们的症状是工作台卡片少字段，而不是报错 ——
+// 所以测试要钉「投影后工作台读的字段必须全在」，见 http_tasks_overview_test.go。
+type overviewTaskProjection struct {
+	ID                string    `json:"id"`
+	TaskNumber        int       `json:"task_number,omitempty"`
+	RootID            string    `json:"root_id"`
+	Name              string    `json:"name,omitempty"`
+	TaskTemplateID    string    `json:"task_template_id,omitempty"`
+	TaskTemplateName  string    `json:"task_template_name,omitempty"`
+	CurrentStageIndex int       `json:"current_stage_index"`
+	CurrentStageName  string    `json:"current_stage_name,omitempty"`
+	Status            string    `json:"status"`
+	MainSessionKey    string    `json:"main_session_key,omitempty"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
+	CompletedAt       string    `json:"completed_at,omitempty"`
+}
+
+// projectOverviewTask 把 kanban.Task 压成工作台真正读的字段集。
+// 刻意不在这里复用 kanban.Task：那个结构体是**所有**任务端点共用的，
+// 给它加 omitempty 会连带改变单任务详情与项目看板的响应。
+func projectOverviewTask(task kanban.Task) overviewTaskProjection {
+	return overviewTaskProjection{
+		ID:                task.ID,
+		TaskNumber:        task.TaskNumber,
+		RootID:            task.RootID,
+		Name:              task.Name,
+		TaskTemplateID:    task.TaskTemplateID,
+		TaskTemplateName:  task.TaskTemplateName,
+		CurrentStageIndex: task.CurrentStageIndex,
+		CurrentStageName:  task.CurrentStageName,
+		Status:            task.Status,
+		MainSessionKey:    task.MainSessionKey,
+		CreatedAt:         task.CreatedAt,
+		UpdatedAt:         task.UpdatedAt,
+		CompletedAt:       task.CompletedAt,
+	}
+}
+
 func (h *HTTPHandler) handleKanbanTasksOverview(w http.ResponseWriter, r *http.Request) {
 	svc, ok := h.kanbanService(w)
 	if !ok {
@@ -409,7 +460,16 @@ func (h *HTTPHandler) handleKanbanTasksOverview(w http.ResponseWriter, r *http.R
 		respondError(w, http.StatusBadRequest, err)
 		return
 	}
-	respondJSON(w, http.StatusOK, map[string]any{"items": items})
+	// 投影在响应边界做：不改 kanban.Task 本身，也不改单任务详情与项目看板的形状。
+	projected := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		projected = append(projected, map[string]any{
+			"root_id":   item.RootID,
+			"root_name": item.RootName,
+			"task":      projectOverviewTask(item.Task),
+		})
+	}
+	respondJSONList(w, r, map[string]any{"items": projected})
 }
 
 func (h *HTTPHandler) handleKanbanTaskRename(w http.ResponseWriter, r *http.Request) {

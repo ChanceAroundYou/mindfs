@@ -42,10 +42,13 @@ groups:
       - CLAUDE.md
       - docs/superpowers/
       - docs/main-view-switching-design.md
+      - docs/message-change-history.md
+      - docs/message-mechanisms.md
       - docs/multi-node-control-plane.md
       - docs/multi-user-prd.md
       - docs/plans/worktree-finish-stage-plan.md
       - docs/session-flicker-root-cause.md
+      - docs/session-streaming-rework.md
       - docs/upstream-customizations.md
       - docs/upstream-customizations.yaml
       - docs/workspace-design.md
@@ -324,29 +327,38 @@ groups:
       - server/internal/api/ws.go:go h.handle
 
   - id: G-T
-    title: 流式重放与正文正确性
+    title: 流式重放与正文正确性（快照重建协议）
     kind: fix
     symptom: |
       同一段正文在行内被拼成 aabb（「文本出现两遍、越切越多」）；
       每切一次会话就刷一大堆重放；首次打开运行中会话时内容逐渐刷出来；
       切回运行中会话时在途内容整块丢失；
-      长回答**静默丢字**（2026-10-06 实测：300KB 的回答丢 50 字节、800KB 丢 13 片），
-      且流式期间整页卡顿 —— 拼接扫整段累积正文，300KB 要 2 秒主线程。
+      **正在完成的正文瞬间消失**（2026-10-06 真机复现：时间线 137 项/11970 字 → 2 项/1614 字，只剩已落盘的用户行）；
+      控制台每个重放批帧抛一次 `onStream(undefined)` TypeError；
+      没有用户操作也会每 8 秒自持一次 `done → session.ready → 重放 → done`（实测 18 次/秒）；
+      瞬时行认领别人的工具卡（正文下方多出一整套工具卡）；seq=0 行跨 7 次 compact 堆积到 1100+ 条。
     why: |
-      重放必须幂等（整段重放→覆盖、重复分片→忽略），三处拼接收敛到 mergeStreamedText 一个定义；
-      光标是「我已收到 X」的凭证，不能清；重放整批一条 WS 消息下发（几百条单帧=几百次渲染）；
-      加载时组装只能有一条规则 composeLoadedExchanges（瞬时行 seq=0 只在在途时保留）；
-      seq=0 必须有清理出口 dropTransientExchanges，否则跨 compact 堆积到上千条。
-      mergeStreamedText 的重复分片判断**只扫尾窗**：重复分片只可能是服务端重推的刚追加过的尾部，
-      对整段做 a.includes(b) 会把中段碰巧撞上的同样字符串当成重复而丢掉正文（正是上面「丢字」的症状），
-      同时每个分片都要压平整段 rope，是 O(n²)。尾窗同时修对错和性能。
+      **重放是快照重建，不是增量续流**：服务端每次挂载恒回一帧 `reset:true` 的整批事件
+      （`buildSessionStreamBatchResponse`），客户端清掉瞬时尾巴再照单重建，于是
+      「客户端尾巴 = 服务端 buffer 的纯函数」无条件成立（首帧的 `first` 标志保证空 buffer 也发）。
+      这一组在 2026-10-06 被**整体反转**过一次，合上游时切勿按旧版恢复：
+      `event_cursor` 序号续传、客户端 `mergeStreamedText` 重发判据、服务端 `completed` 表补发
+      `done(replay:true)` 三者**全部删除** —— 前两者在真实抓包里恒为空/恒为假（写游标的代码只认单条
+      `payload.event`，而重放走批处理帧 `payload.events`），第三者是自持环的燃料。
+      `reset` 必须是**参数**而不是常量：首帧（快照）与排空循环的续投帧（`replayStepToClient`）
+      形状相同、语义相反，写成常量会让排空期间新到的事件清掉刚重建好的尾巴。
+      瞬时行判据只能有**一处**实现（`isTransientExchange`），且 seq=0 的**用户行例外必须保留** ——
+      它是客户端发出消息时的乐观回声，服务端事件流里从来没有它，照判据清尾巴会让刚发出去的消息当场消失。
     files:
       - web/src/services/session.ts
       - web/src/app/useSessionStreamCache.ts
       - web/src/app/useRealtimeEvents.ts
+      - web/src/components/sessionOverlay.ts
       - server/internal/api/stream_hub.go
       - server/internal/api/ws.go
       - server/internal/api/ws_test.go
+      - web/tests/e2e/harness.mjs
+      - web/tests/ts-module-hook.mjs
     tests:
       - web/tests/session-window.test.mjs
       - web/tests/upstream-restore.test.mjs
@@ -355,10 +367,17 @@ groups:
       - web/tests/session-window-overlay-dedup.test.mjs
       - web/tests/sync-preserves-live-transient-text.test.mjs
       - web/tests/sync-preserves-pending-ask-card.test.mjs
+      - web/tests/session-timeline-seq.test.mjs
+      - web/tests/session-overlay-unit.test.mjs
+      - web/tests/message-mechanism-merges.test.mjs
+      - web/tests/session-core-unit.test.mjs
+      - web/tests/e2e-message-behavior.test.mjs
       - server/internal/api/ws_test.go
     anchors:
-      - web/src/services/session.ts:mergeStreamedText
+      - server/internal/api/stream_hub.go:func buildSessionStreamBatchResponse
       - web/src/services/session.ts:composeLoadedExchanges
+      - web/src/services/session.ts:isTransientExchange
+      - web/src/components/sessionOverlay.ts:computeTailOverlay
 
   - id: G-W
     title: worktree 会话 repoint（把会话从已删工作树搬回主 checkout）
@@ -1058,6 +1077,36 @@ groups:
       - web/src/services/error.ts
     tests:
       - web/tests/main-content-view-memory.test.mjs
+
+  # ── 性能：列表投影与条件请求 ────────────────────────────────────
+  - id: G-AN
+    title: 列表投影瘦身与条件请求（ETag / 304）
+    kind: perf
+    symptom: |
+      列表刷新整份重传：会话列表 149KB、跨项目看板 163KB，其中「恒为空」的键占四分之一强，
+      看板卡片里 43% 的 `stages` 前端从来不读；空闲时反复拉同一份列表也拿不到 304，
+      上行请求数与首字节时间白涨（实测 8 文件场景 `related-file/diff` 请求 160 次 → 0 次）。
+    why: |
+      列表接口是最高频的请求，改为服务端按请求现算投影 + ETag：
+      `respondJSONList` 统一做两件事 —— 省略**恒为空**的键（`toSessionItem` 对每个被省略的键
+      都有防御性兜底）、按内容算 ETag 并支持 `If-None-Match` 回 304
+      （实测单条记录 1052B → 372B，会话列表 149KB → 85KB）。
+      跨项目看板 `GET /api/tasks/overview` 丢掉卡片从不读取的 `stages` / `prompt_template`
+      （`task.stages.prompt_template` 一项就占 14.4%）。
+      客户端 `services/api.ts` **必须先判 304 再判 `response.ok`** —— 304 的 `ok` 是 false，
+      顺序写反会把命中缓存的响应当成失败。
+    files:
+      - server/internal/api/helpers.go
+      - server/internal/api/http_tasks.go
+      - web/src/services/api.ts
+    tests:
+      - server/internal/api/helpers_jsonlist_test.go
+      - server/internal/api/http_tasks_overview_test.go
+      - web/tests/conditional-request.test.mjs
+      - web/tests/session-list-node-failure.test.mjs
+    anchors:
+      - server/internal/api/helpers.go:func respondJSONList
+      - web/src/services/api.ts:304
 
   # ── 裁剪：删除上游功能 ──────────────────────────────────────────
   - id: G-H

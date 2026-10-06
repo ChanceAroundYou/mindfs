@@ -125,9 +125,15 @@ for (const fn of ["protectedFetch", "protectedJSON"]) {
   // protectedJSON 声明里带泛型 <T>，所以从函数名开始切，不带 "<"
   const start = api.indexOf(`export async function ${fn}`);
   assert.ok(start > 0, `${fn} must exist in services/api.ts`);
+  // 变量名可以是 init 或 requestInit —— protectedJSON 会把请求 init 展开一份
+  // 以补上 If-None-Match（条件请求），但**必须仍然经由 deadline 包装**，
+  // 否则跨节点扇出时一个挂死的节点会把整批请求拖住。
+  //
+  // 窗口放宽到 1500：protectedJSON 里加了「取 method / 补 If-None-Match /
+  // 处理 304」这几步之后，deadline 调用已经不在开头了 —— 但仍然必须存在。
   assert.match(
-    api.slice(start, start + 400),
-    /e2eeProtectedFetchWithDeadline\(input, init\)/,
+    api.slice(start, start + 1500),
+    /e2eeProtectedFetchWithDeadline\(input, (init|requestInit)\)/,
     `${fn} must fetch through the deadline wrapper`,
   );
 }

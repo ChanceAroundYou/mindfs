@@ -570,7 +570,7 @@ func (h *HTTPHandler) handleSessions(w http.ResponseWriter, r *http.Request) {
 	for _, s := range pinnedItems {
 		pinnedPayload = append(pinnedPayload, h.sessionListResponse(s))
 	}
-	respondJSON(w, http.StatusOK, map[string]any{
+	respondJSONList(w, r, map[string]any{
 		"items":        payload,
 		"pinned_items": pinnedPayload,
 		"pinned_keys":  pinnedKeys,
@@ -620,7 +620,7 @@ func (h *HTTPHandler) handleMultiRootSessions(w http.ResponseWriter, r *http.Req
 			"total_count":         group.TotalCount,
 		})
 	}
-	respondJSON(w, http.StatusOK, map[string]any{"groups": groups})
+	respondJSONList(w, r, map[string]any{"groups": groups})
 }
 
 func (h *HTTPHandler) handleSessionChildren(w http.ResponseWriter, r *http.Request) {

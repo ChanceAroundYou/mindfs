@@ -225,17 +225,82 @@ export async function protectedFetch(input: RequestInfo | URL, init: RequestInit
   return e2eeProtectedFetchWithDeadline(input, init);
 }
 
+// 条件请求（ETag / 304）的客户端半边。
+//
+// 服务端的 respondJSONList 会给列表类端点带 ETag，内容没变时回 304 ——
+// 手机端最省的传输是零字节。这里负责带上 If-None-Match 并在 304 时复用上次的解析结果。
+//
+// 两张表按**完整 URL** 缓存（含 `user=` 与 nodeId），所以不同账户、不同节点不会串。
+// 只有真发过 ETag 的端点才会写进来；其余端点没有 ETag，自然永远不进表。
+// 上限 16：实际有 ETag 的列表端点就那几个，超限说明有调用方把随机 URL 带进来了 ——
+// 那时该查调用点，而不是把表撑大（与 git.ts 的缓存同一原则）。
+//
+// 注意 304 的 `response.ok` 是 **false**：必须在错误检查之前返回，否则会被当成请求失败。
+const conditionalRequestMax = 16;
+const conditionalETagByURL = new Map<string, string>();
+const conditionalPayloadByURL = new Map<string, any>();
+
+function rememberConditionalResponse(url: string, etag: string, payload: any): void {
+  conditionalETagByURL.set(url, etag);
+  conditionalPayloadByURL.set(url, payload);
+  while (conditionalPayloadByURL.size > conditionalRequestMax) {
+    const oldest = conditionalPayloadByURL.keys().next();
+    if (oldest.done || oldest.value === undefined) break;
+    conditionalPayloadByURL.delete(oldest.value);
+    conditionalETagByURL.delete(oldest.value);
+  }
+}
+
+function forgetConditionalResponse(url: string): void {
+  conditionalETagByURL.delete(url);
+  conditionalPayloadByURL.delete(url);
+}
+
 export async function protectedJSON<T>(input: RequestInfo | URL, init: RequestInit = {}): Promise<T> {
   if (!protectedAPIReady()) {
     throw new Error("api_not_ready");
   }
-  const response = await e2eeProtectedFetchWithDeadline(input, init);
+  const url = String(input);
+  const method = String(init.method || "GET").toUpperCase();
+  const cacheable = method === "GET";
+
+  let requestInit = init;
+  if (cacheable) {
+    const known = conditionalETagByURL.get(url);
+    if (known) {
+      const headers = new Headers(init.headers as HeadersInit | undefined);
+      headers.set("If-None-Match", known);
+      requestInit = { ...init, headers };
+    }
+  }
+
+  const response = await e2eeProtectedFetchWithDeadline(input, requestInit);
+
+  if (cacheable && response.status === 304) {
+    const cached = conditionalPayloadByURL.get(url);
+    if (cached !== undefined) {
+      return cached as T;
+    }
+    // 缓存被淘汰掉了但服务端以为我们有 —— 让它当正常失败，调用方会重试。
+    throw new APIError(response.status, {}, "conditional cache miss");
+  }
+
   const payload = await e2eeService.parseProtectedJSONResponse<any>(response).catch(() => ({} as any));
   if (!response.ok) {
     // 和其它两个 helper 一致：本机账户被删时也要登出，否则整页卡在 404。
     // （这条以前漏了，而 /api/dirs 正是走它。）
     handleAccountGone(response.status, payload, input);
     throw new APIError(response.status, payload, `request failed: ${response.status}`);
+  }
+
+  if (cacheable) {
+    const etag = response.headers.get("ETag");
+    if (etag) {
+      rememberConditionalResponse(url, etag, payload);
+    } else {
+      // 端点没发 ETag：清掉可能残留的旧条目，别拿过期的 ETag 去打下次请求。
+      forgetConditionalResponse(url);
+    }
   }
   return payload as T;
 }
