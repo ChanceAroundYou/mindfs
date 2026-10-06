@@ -6,7 +6,7 @@ import { StageEditor } from "./StageEditor";
 import { PanelShell, panelButtonStyle, panelIconButtonStyle } from "./PanelShell";
 import type { SessionReusePolicy } from "./StageOptionsBar";
 import { PencilIcon, TrashIcon, composerInputStyle } from "./action/composerStyles";
-import { uploadFiles } from "../services/upload";
+import { fileTokenPath, formatFileToken, uploadFiles } from "../services/upload";
 import { useI18n, type I18nContextValue } from "../i18n";
 import {
   addTaskStage,
@@ -252,7 +252,7 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
     try {
       setSaving(true);
       const uploaded = await uploadFiles({ rootId: task.root_id, files, nodeId });
-      const tokens = uploaded.map((file) => `[file: ${file.agent_path || file.path}]`).join("\n");
+      const tokens = uploaded.map((file) => formatFileToken(fileTokenPath(file))).join("\n");
       if (tokens) setEditPrompt((prev) => [prev.trim(), tokens].filter(Boolean).join("\n"));
     } catch (err) { fail(err); } finally { setSaving(false); }
   };

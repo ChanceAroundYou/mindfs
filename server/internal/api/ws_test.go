@@ -439,7 +439,7 @@ func TestReplayBatchIsOneMessage(t *testing.T) {
 		{Type: string(agenttypes.EventTypeMessageChunk), Data: agenttypes.MessageChunk{Content: "b"}, EventCursor: "8:2"},
 		{Type: string(agenttypes.EventTypeMessageChunk), Data: agenttypes.MessageChunk{Content: "c"}, EventCursor: "8:3"},
 	}
-	resp := buildSessionStreamBatchResponse("root", "sess-1", events)
+	resp := buildSessionStreamBatchResponse("root", "sess-1", events, true)
 	if resp.Type != "session.stream" {
 		t.Fatalf("type = %q; want session.stream（客户端 dispatch 按类型分发）", resp.Type)
 	}
@@ -452,5 +452,77 @@ func TestReplayBatchIsOneMessage(t *testing.T) {
 	}
 	if resp.Payload["root_id"] != "root" || resp.Payload["session_key"] != "sess-1" {
 		t.Fatalf("payload must keep root_id/session_key: %#v", resp.Payload)
+	}
+	if resp.Payload["reset"] != true {
+		t.Fatalf("挂载首帧必须带 reset:true（客户端据此清瞬时尾巴）: %#v", resp.Payload)
+	}
+	if _, empty := resp.Payload["events"].([]StreamEvent); !empty {
+		t.Fatalf("events 必须恒为数组（不能是 nil），空批也要能只清尾巴")
+	}
+}
+
+// 排空期间的**续投**绝不能带 reset。
+//
+// 挂载首帧是快照（reset → 清尾巴再重建），但排空循环里新到的那些事件是**接在快照之后**
+// 的增量：若它们也带 reset，客户端会把刚重建好的整份尾巴清掉，只留下这几条 ——
+// 越活跃的会话越容易命中（休眠会话的排空循环一次就走完）。
+func TestReplayDrainStepIsNotAReset(t *testing.T) {
+	events := []StreamEvent{
+		{Type: string(agenttypes.EventTypeMessageChunk), Data: agenttypes.MessageChunk{Content: "late"}, EventCursor: "8:99"},
+	}
+	resp := buildSessionStreamBatchResponse("root", "sess-1", events, false)
+	if _, has := resp.Payload["reset"]; has {
+		t.Fatalf("续投帧不得携带 reset（会清掉快照刚重建的尾巴）: %#v", resp.Payload)
+	}
+	// 但**形状**必须与快照帧一致（都是 events 数组），否则又退回「两条分发路径各认一种形状」。
+	got, ok := resp.Payload["events"].([]StreamEvent)
+	if !ok || len(got) != 1 {
+		t.Fatalf("续投帧必须与快照帧同形状（events 数组）: %#v", resp.Payload["events"])
+	}
+	// 空 events 时也不能退化成 nil（客户端 Array.isArray 判据会漏掉）。
+	empty := buildSessionStreamBatchResponse("root", "sess-1", nil, true)
+	if arr, ok := empty.Payload["events"].([]StreamEvent); !ok || arr == nil {
+		t.Fatalf("events 归一成空数组，不能是 nil: %#v", empty.Payload["events"])
+	}
+}
+
+// 回合结束后**重新挂上来的**客户端不得再收到一条 done。
+//
+// 旧实现用一张 `completed` 表记住「这个会话上一轮什么时候结束的」，在客户端
+// session.ready 时补发一条带 replay:true 的 done。客户端据此跳过重锚定 —— 但重锚定
+// 本身会再发一次 session.ready，于是 done → ready → done 自持闭环（2026-09-13 实测
+// 18 次/秒；2026-10-06 真机重跑复现 80 条 done / 78 次 ?latest=20，≈8 次/秒）。
+//
+// 补发那条回执本来就是多余的：真实结束的 done 用 liveOnly=false 广播，重放中的客户端
+// 也在收件人里；而「挂上来时这一轮早就结束了」的客户端，其「在回复」状态来自 pending
+// 列表（该会话已不在其中），不需要一条 done 来纠正。
+func TestDoneCarriesNoReplayReceipt(t *testing.T) {
+	resp := buildSessionDoneResponse("root", "sess-1", "req-1")
+	if _, has := resp.Payload["replay"]; has {
+		t.Fatalf("done 载荷不得带 replay 标记（会重启 done→ready 自持环）: %#v", resp.Payload)
+	}
+	if len(resp.Payload) != 2 {
+		t.Fatalf("done 载荷只允许 root_id/session_key: %#v", resp.Payload)
+	}
+}
+
+// 回合清空之后重新挂上来的客户端拿到的是**空快照**（一条 events 为空的 reset 帧），
+// 不是上一轮的尾巴 —— 客户端据此清瞬时尾巴，且不会因此再触发一轮。
+func TestReplayAfterClearYieldsEmptySnapshot(t *testing.T) {
+	hub := NewStreamHub(nil)
+	hub.SetPendingUserAt("root", "sess-1", "title", "codex", "", "", "", "", "", false, "prompt", time.Now(), 8)
+	hub.AppendReplyEvent("sess-1", StreamEvent{
+		Type: string(agenttypes.EventTypeMessageChunk),
+		Data: agenttypes.MessageChunk{Content: "answer"},
+	})
+	// AppContext.BroadcastSessionDone 在广播 done 之前做的事。
+	hub.ClearSessionPending("sess-1")
+
+	step := hub.collectReplayStep("client", "sess-1")
+	if len(step.events) != 0 {
+		t.Fatalf("清空后重放应为空快照，得到 %#v", step.events)
+	}
+	if !step.live {
+		t.Fatal("清空后应直接进入 live（无重放内容可排空）")
 	}
 }

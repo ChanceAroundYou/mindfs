@@ -335,12 +335,20 @@ type PendingMessage = {
   message: Record<string, unknown>;
 };
 
+// 无人订阅时缓存 `session.stream` 事件的**容量上限**。
+//
+// 这些事件是给「还没挂上来的订阅者」留的（事件可能早于 React 订阅到达）。此前只 push、
+// 没有阈值 —— 长回合 + 用户始终不打开那个会话 = 内存无界增长（冲突⑬）。
+//
+// 保留**最近** N 条即可：挂载会话时会做**整轮快照重建**（`session.ready` → reset 帧，
+// 服务端把当前回合的事件整份重发），所以丢掉更早的那些不影响正确性。
+const PENDING_STREAM_LIMIT = 200;
+
 class SessionService {
   private ws: WebSocket | null = null;
   private handlers = new Map<string, Set<SessionEventHandler>>();
   private pendingStreams = new Map<string, StreamEvent[]>();
   private activeStreams = new Set<string>();
-  private eventCursors = new Map<string, string>();
   private pendingMessages = new Map<string, PendingMessage>();
   private listeners = new Set<(event: SessionServiceEvent) => void>();
   private reconnectTimer: number | null = null;
@@ -786,23 +794,47 @@ class SessionService {
     if (socketNid && !nextPayload["_nodeId"] && !nextPayload["nodeId"]) {
       (nextPayload as any)["_nodeId"] = socketNid;
     }
-    this.emit({ type, sessionKey, payload: nextPayload });
-
-    if (!sessionKey) return;
-    const rootId =
-      typeof nextPayload.root_id === "string" ? nextPayload.root_id : "";
-    const cursorKey = this.eventCursorKey(rootId, sessionKey);
-    if (type === "session.stream") {
-      const event = nextPayload.event as StreamEvent | undefined;
-      if (event?.event_cursor && cursorKey) {
-        this.eventCursors.set(cursorKey, event.event_cursor);
+    // **形状归一：批处理帧在这里拆开，不要让两条分发路径各认一种形状。**
+    // 服务端挂载会话时发的是一条整批 `{reset:true, events:[…]}`（见 stream_hub.go 的
+    // buildSessionStreamBatchResponse）。曾经只有全局 listeners 那条路认识 `events` 数组，
+    // 而 per-session 的 `onStream` 读 `payload.event` —— 于是每个批处理帧都让
+    // useSessionStream 抛一次 `Cannot read properties of undefined (reading 'type')`，
+    // 重放期间的状态机（isStreaming/streamVersion）整个瞎掉。
+    //
+    // 现在统一在这里展开：先广播一次 `session.stream.reset`（缓存侧据此**清空瞬时尾巴**，
+    // 这就是「快照重建」的落点），再把每个事件各自走完整的 emit + handlers 流程。
+    // 同步循环 → React 批处理成一次渲染，服务端做整批的初衷（不要几百次渲染）不变。
+    //
+    // 判据只看**形状**（`events` 是不是数组），不看 `reset` 标志 —— 两者是不同的东西：
+    // 形状决定「怎么展开」，`reset` 只决定「展开前要不要清尾巴」。绑在一起的话，
+    // 任何一个不带 `reset` 的批帧都会漏进下面那条 `payload.event` 路径上，重新变成
+    // `onStream(undefined)`。分开之后，旧服务端的批帧也能被正确展开。
+    if (type === "session.stream" && Array.isArray(nextPayload.events)) {
+      if (nextPayload.reset === true) {
+        this.emit({ type: "session.stream.reset", sessionKey, payload: nextPayload });
       }
-    } else if (type === "session.user_message" && cursorKey) {
-      this.eventCursors.delete(cursorKey);
-    } else if (type === "session.done" && cursorKey) {
-      this.eventCursors.delete(cursorKey);
+      for (const one of nextPayload.events as StreamEvent[]) {
+        const single: Record<string, unknown> = { ...nextPayload, event: one };
+        delete single.reset;
+        delete single.events;
+        this.emitDecrypted("session.stream", sessionKey, single, msg);
+      }
+      return;
     }
-    this.updateActiveStreamState(type, sessionKey, nextPayload);
+
+    // **状态机先更新，再派发给监听者**（2026-10-06 修正）。顺序反过来写过，后果是
+    // 监听者在 `session.done` 里读 `isSessionStreaming()` 拿到的是「删除之前」的值 ——
+    // 恒为 `true`，而它正是「这一轮结束该不该重锚定」的判据（useRealtimeEvents 的 done
+    // 处理器）。于是正常回合的重锚定恒被跳过，而同一处理器更早一步已经把瞬时尾巴清了
+    // ⇒ 正在完成的正文瞬间消失，只剩已落盘的用户行；切走再回来才由 viewer 的 init 补回。
+    //
+    // 契约：状态反映**正在派发的这一帧**，不是上一帧。谁在监听者里问「现在还在流吗」，
+    // 拿到的必须是这一帧之后的事实。
+    if (sessionKey) {
+      this.updateActiveStreamState(type, sessionKey, nextPayload);
+    }
+    this.emit({ type, sessionKey, payload: nextPayload });
+    if (!sessionKey) return;
 
     const handlers = this.handlers.get(sessionKey);
     if ((!handlers || handlers.size === 0) && type === "session.stream") {
@@ -810,6 +842,10 @@ class SessionService {
       if (event) {
         const queued = this.pendingStreams.get(sessionKey) || [];
         queued.push(event);
+        // 有上限（冲突⑬）：只留最近 N 条 —— 更早的由挂载时的整轮快照重建补回。
+        if (queued.length > PENDING_STREAM_LIMIT) {
+          queued.splice(0, queued.length - PENDING_STREAM_LIMIT);
+        }
         this.pendingStreams.set(sessionKey, queued);
       }
       return;
@@ -899,20 +935,6 @@ class SessionService {
     return this.activeStreams.has(sessionKey);
   }
 
-  private eventCursorKey(rootId: string, sessionKey: string): string {
-    if (!rootId || !sessionKey) return "";
-    const nid = String(this.nodeId || "").trim();
-    return nid ? `${nid}::${rootId}::${sessionKey}` : `${rootId}::${sessionKey}`;
-  }
-
-  getEventCursor(rootId: string, sessionKey: string): string {
-    return this.eventCursors.get(this.eventCursorKey(rootId, sessionKey)) || "";
-  }
-
-  clearEventCursor(rootId: string, sessionKey: string) {
-    this.eventCursors.delete(this.eventCursorKey(rootId, sessionKey));
-  }
-
   subscribe(sessionKey: string, handler: SessionEventHandler) {
     let set = this.handlers.get(sessionKey);
     if (!set) {
@@ -966,10 +988,6 @@ class SessionService {
         readyState: this.ws?.readyState ?? null,
       });
       return false;
-    }
-
-    if (sessionKey) {
-      this.eventCursors.delete(this.eventCursorKey(rootId, sessionKey));
     }
 
     const msg = {
@@ -1164,6 +1182,9 @@ class SessionService {
     return this.sendWSMessage(msg);
   }
 
+  // 挂载会话：服务端收到后一律回一帧 `session.stream{reset:true, events}`（整轮快照），
+  // 客户端先清空该会话的瞬时尾巴再照单重建。**没有 event_cursor** —— 不从客户端取进度，
+  // 也就没有「客户端缓存与服务端游标必须同步」这条维持不住的不变量。
   async markSessionReady(rootId: string, sessionKey: string): Promise<boolean> {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       return false;
@@ -1175,16 +1196,12 @@ class SessionService {
     if (e2eeService.isRequired()) {
       await e2eeService.ensureSession();
     }
-    const eventCursor = this.eventCursors.get(
-      this.eventCursorKey(rootId, sessionKey),
-    );
     return this.sendWSMessage({
       id: `ready-${now}`,
       type: "session.ready",
       payload: {
         root_id: rootId,
         session_key: sessionKey,
-        ...(eventCursor ? { event_cursor: eventCursor } : {}),
       },
     });
   }
@@ -1939,7 +1956,7 @@ function toPersistentExchangeAux(
   return out;
 }
 
-function appendExchangeAuxDelta(
+export function appendExchangeAuxDelta(
   base?: Record<string, ExchangeAux[]>,
   incoming?: Record<string, ExchangeAux[]>,
 ): Record<string, ExchangeAux[]> {
@@ -1948,7 +1965,30 @@ function appendExchangeAuxDelta(
     if (!Array.isArray(items) || items.length === 0) {
       continue;
     }
-    out[seq] = [...(out[seq] || []), ...items];
+    // **幂等**：同一个 seq 下已经有的项不再追加。
+    //
+    // 为什么必须有这一步：增量同步的重投递是常态（游标不一致、同步中断后重跑、
+    // 重锚定重复投递同一份回包），而拼接语义下第二次投递会把同一张工具卡再加一遍 ——
+    // 这正是「工具卡出现两张」的机制之一（`tests/session-core-unit.test.mjs` 的【红·⑦b】）。
+    //
+    // 为什么是「拼接 + 去重」而不是「按 seq 覆盖」（`restoreActiveSession` 用的是覆盖）：
+    // 两者是**不同的操作**，不能合并 ——
+    //   · 覆盖用在**权威快照**上（窗口回包是那些 seq 的完整内容）；
+    //   · 拼接用在**增量**上（同一个 seq 会陆续追加新的 thought/tool 项，覆盖会把先到的丢掉）。
+    // 一度以为该统一成覆盖，核对调用方后确认那是错的：覆盖会让增量路径丢卡片。
+    // ponytail: 去重键是整项的 JSON（同源产出，键序一致）。跨源比较若出现键序差异会漏判 ——
+    // 那时再上递归键排序；现在没有跨源比较的调用方。
+    const key = (item: ExchangeAux) => JSON.stringify(item);
+    const seen = new Set((out[seq] || []).map(key));
+    const fresh = items.filter((item) => {
+      const k = key(item);
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+    if (fresh.length > 0) {
+      out[seq] = [...(out[seq] || []), ...fresh];
+    }
   }
   return out;
 }
@@ -2026,14 +2066,14 @@ export function mergeSessionExchanges(
   base: readonly any[] | null | undefined,
   incoming: readonly any[] | null | undefined,
 ): any[] {
+  // 判据走**共用的** `isTransientExchange`，不再内联 `seq > 0`。
+  // 两把尺的教训（冲突①②）：`dropTransientExchanges` 用谓词、这里内联 `seq > 0`，
+  // 于是「用户行没有 seq」这件事两边判法不同、去留取决于先跑哪条路径。
+  // 只要这里再内联一次，那条 bug 就能悄悄回来 —— 所以判据只能有一处实现。
   const merged = new Map<number, any>();
-  for (const ex of base || []) {
-    const seq = Number((ex as any)?.seq || 0);
-    if (seq > 0) merged.set(seq, ex);
-  }
-  for (const ex of incoming || []) {
-    const seq = Number((ex as any)?.seq || 0);
-    if (seq > 0) merged.set(seq, ex);
+  for (const ex of [...(base || []), ...(incoming || [])]) {
+    if (isTransientExchange(ex)) continue;
+    merged.set(Number((ex as any)?.seq || 0), ex);
   }
   return [...merged.values()].sort(
     (a, b) => Number((a as any)?.seq || 0) - Number((b as any)?.seq || 0),
@@ -2076,81 +2116,110 @@ export function composeLoadedExchanges(
   const transient: any[] = [];
   const seen = new Set<unknown>();
   for (const ex of [...(cachedExs || []), ...(serverExs || [])]) {
-    if (Number((ex as any)?.seq || 0) !== 0) continue;
+    // 同样走谓词：`!== 0` 会漏掉「seq 字段缺失」的行，而那类行按定义也是瞬时行
+    // （`isTransientExchange` 把缺字段/非数字一律算瞬时）。
+    if (!isTransientExchange(ex)) continue;
     if (seen.has(ex)) continue;
     seen.add(ex);
     transient.push(ex);
   }
-  // compact 是服务端历史的**重置点**：在它之前产生的瞬时行，属于服务端已经丢掉的那段
-  // 历史，按定义不再有效。实测一个会话跨 7 次 compact 堆了 1100+ 条（tool=700、
-  // thought=360），它们与「当前回合真正的在途行」在数据上没有任何区别 —— 区分二者的
-  // 唯一现成信号就是这个 compact 边界。所以只保留最后一次 compact（含）之后的行。
-  // 用不着新加轮次标记：边界本来就以 compact 行的形式躺在同一份数据里。
-  let lastCompact = -1;
-  for (let i = transient.length - 1; i >= 0; i -= 1) {
-    if (String((transient[i] as any)?.role || "").toLowerCase() === "compact") {
-      lastCompact = i;
-      break;
-    }
-  }
-  return [
-    ...persisted,
-    ...transient.slice(lastCompact < 0 ? 0 : lastCompact),
-  ];
+  // **compact 边界规则已删除（2026-10-06）** —— 它的前提是假的。
+  //
+  // 原注释说「compact 是服务端历史的重置点，在它之前产生的瞬时行属于服务端已经丢掉的那段
+  // 历史」。核对服务端：交换 JSONL 是 **append-only**，全仓唯一的 `os.Remove` 落在两处
+  // `DeleteSession`（`manager.go:1439/:1447`），compact 只写一条 `CompactNotice` aux
+  // （`usecase/session.go:2652`）—— **一行历史都没丢**。它重置的是 agent 的上下文窗口，
+  // 不是磁盘上的交换日志。
+  //
+  // 而该规则会造成真实的内容丢失：**本轮跑到一半发生 compact 时**，本轮 compact 之前
+  // 产生的那些行被无条件丢弃，而它们在服务端**没有任何替代品**（本轮的助手行要到回合末
+  // 才落盘）⇒ 用户在切回/重锚定时看到「本轮前半段消失」。见
+  // `tests/session-core-unit.test.mjs` 的【红·⑨b】，以及 `docs/message-mechanisms.md` 冲突⑨。
+  //
+  // 它当初想解决的「跨多次 compact 堆到 1100+ 条」，正解是**主清理**：
+  // 一轮结束 / reset / compact 时由 `dropTransientExchanges` 清瞬时行（那三处调用点已在）。
+  // 「不在跑就没在途内容」这一条判据就够了，不需要再给每一行记轮次身份。
+  return [...persisted, ...transient];
 }
 
 /**
- * 流式正文片段的合并：**重放安全**。
+ * 这一行是不是「服务端也持有的内容」。
  *
- * 服务端会把在途回合的内容重复投递（切回会话、刷新页面时都会重推一遍 ——
- * 用户看到的就是「刷新后先瞬间出现到最后一条用户消息，再逐段把在途的 assistant
- * 正文刷出来」）。所以这里不能无条件拼接：那样同一段正文会在**同一行内**变成
- * `aabb`，表现为「文本出现两遍、每切一次越多」。
+ * **瞬时行 = `seq` 为空。**（2026-10-06 起用户行不再例外）
  *
- * 关键：重复发生在行内（字符串被拼了两遍），不是两行内容相同 —— 按行内容比对的
- * 去重永远查不出来，这是它长期没被抓住的原因。
- *
- * 判据：
- *   · 新片段**包含**已有内容 → 整段重放，覆盖
- *   · 已有内容已包含新片段   → 这一片早已收到，忽略
- *   · 否则                    → 真·增量，追加
- *
- * 天花板：模型若真的连发两片完全相同的文本，第二片会被当成重复吞掉。
+ * 用户行曾经被排除（怕刚发出去的消息闪一下），但那条例外造成了**两把尺**：
+ * `dropTransientExchanges` 保留 seq=0 用户行，`mergeSessionExchanges` 只收 seq>0 丢弃它。
+ * 同一条行的去留因此取决于「先跑哪条路径」。现在两边都丢：丢的那一刻它已有替代品
+ * （用户行在回合开始就落盘；reset 在窗口装好之后），而保留它的代价是认领漏掉时
+ * 与服务端持久行同时渲染。详见 `isTransientExchange` 的注释。
  */
 /**
- * 重复分片的扫描窗口。
+ * 把会话里所有**乐观回声**标记为已确认（`pending_ack: true → false`）。
  *
- * 「重复分片」只可能是服务端重推的**刚追加过的那一段**，所以只扫尾部就够。
- * 原先对整段累积正文做 `a.includes(b)`，中段碰巧撞上会被当成重复而**丢掉这段正文**：
- * 实测一段 300KB 的回答会丢 50 字节、800KB 丢 13 片。正文越长越容易撞上。
+ * 这个形状此前在 `App.tsx` 与 `useRealtimeEvents.ts` 各写了一份**完全一样**的局部
+ * `clearPendingAck`（冲突⑥）。收敛到一处：改判据时必须只改这里。
  */
-const MERGE_SCAN_TAIL_CHARS = 64;
+export function settlePendingAcks<T>(session: T): T {
+  const exchanges = (session as any)?.exchanges;
+  if (!Array.isArray(exchanges)) return session;
+  let changed = false;
+  const next = exchanges.map((exchange: any) => {
+    if (exchange?.pending_ack !== true) return exchange;
+    changed = true;
+    return { ...exchange, pending_ack: false };
+  });
+  return changed ? ({ ...(session as any), exchanges: next } as T) : session;
+}
 
-export function mergeStreamedText(existing: string, incoming: string): string {
-  const a = String(existing || "");
-  const b = String(incoming || "");
-  if (!b) return a;
-  if (!a) return b;
-  // 整段重放：新片段本身携带了已累积的全文 → 直接采用，不拼接。
-  // `includes` 在 b 比 a 短时是 O(1)（先比长度），所以这条分支本身不贵。
-  if (b.includes(a)) return b;
-  // 重复分片：只扫尾窗。**这是正确性的关键**，不只是为了快 ——
-  // 见 MERGE_SCAN_TAIL_CHARS：扫全量会把中段碰撞误判成重复，正文直接丢。
-  const scanChars = b.length + MERGE_SCAN_TAIL_CHARS;
-  if (a.length <= scanChars ? a.includes(b) : a.slice(-scanChars).includes(b)) {
-    return a;
-  }
-  return a + b;
+/** 这条待确认的发送与那条乐观回声是不是同一条（`content` + `timestamp` 都对得上）。 */
+export function isSamePendingEcho(
+  exchange: any,
+  pending: { message?: string; timestamp?: string } | null | undefined,
+): boolean {
+  if (!pending || exchange?.pending_ack !== true) return false;
+  return exchange.content === pending.message && exchange.timestamp === pending.timestamp;
+}
+
+export function isTransientExchange(exchange: unknown): boolean {
+  const ex = exchange as any;
+  if (Number(ex?.seq || 0) > 0) return false;
+  // **用户行不再例外**（2026-10-06）。曾经这里排除 user 行，理由是「乐观回声没有 seq，
+  // 照此清理会让刚发出去的消息当场消失」。但那条理由站不住，而且造成了**两把尺**：
+  //   · `dropTransientExchanges`（done / reset 两处调用）→ 保留 seq=0 用户行；
+  //   · `mergeSessionExchanges`（每次加载）→ 只收 seq>0 ⇒ **丢弃**它。
+  // 同一条行的去留因此取决于「先跑哪条路径」，正是 `docs/message-mechanisms.md` 冲突①。
+  //
+  // 取「都丢弃」这个方向是安全的，因为丢的那一刻它已经有替代品：
+  //   · 用户行在**回合开始**就落盘（`4673ee4`），done 时服务端窗口里一定有它；
+  //   · `reset` 发生在快照/窗口装好**之后**（`restoreActiveSession` 的顺序）。
+  // 而保留它的代价是真实的：认领漏掉时（WS 断连等）会与服务端的持久行**同时渲染**——
+  // 那是「同一句用户消息两遍」的直接来源。
+  // 乐观回声的可见期因此收敛为「发出 → 被认领（拿到真 seq）」，回归护栏见 E2E 的
+  // 「用户消息在时间线里恰好出现 1 次」。
+  return true;
 }
 
 /**
- * 丢弃会话里的瞬时行（seq=0）。
+ * 这个 seq 是否代表「已持久化」。**与 `isTransientExchange` 同源** ——
+ * 存在的意义就是别再让别处内联 `seq > 0`（那是第二把尺，见冲突①②）。
+ * 接受 `unknown` 是因为调用点常常只有一个 `seq` 值（TimelineItem / 裸数字）。
+ */
+export function isPersistedSeq(seq: unknown): boolean {
+  return !isTransientExchange({ seq });
+}
+
+/**
+ * 丢弃会话里的瞬时行。
  *
- * 会话**不再在途**时调用：一轮结束时（服务端已落盘）与 compact 时（服务端历史重置）
- * 都算。这是防止 seq=0 无声堆积的唯一出口 —— 没有它会跨多次 compact 一直涨，
- * 直到某次加载把它们渲染出来（「同一段正文两遍、越切越多」）。
+ * **挂载会话时的落点**：服务端在 `session.ready` 后回一帧带 `reset:true` 的整批快照，
+ * 客户端先调本函数清空瞬时尾巴，再把快照事件原样应用一遍。于是
+ * 「客户端瞬时尾巴 = 服务端 buffer 的纯函数」—— 与它此前见过什么、有没有漏收无关，
+ * 重放 N 次结果逐字节相同。重复渲染那一整类 bug 由此在结构上消失。
  *
- * 队列续跑的情况**不要调**：那时新一轮的 seq=0 正在产生。
+ * 另有两个调用点（一轮结束时、compact 时）：那时服务端已把内容落盘或整个重置，
+ * 缓存里剩下的 seq=0 是陈旧拷贝。
+ *
+ * 队列续跑的情况**不要调**：那时新一轮的瞬时行正在产生。
  */
 export function dropTransientExchanges(
   session: Session | null | undefined,
@@ -2159,7 +2228,7 @@ export function dropTransientExchanges(
     return (session as Session) ?? null;
   }
   const before = (session as any).exchanges as any[];
-  const kept = before.filter((ex) => Number(ex?.seq || 0) !== 0);
+  const kept = before.filter((ex) => !isTransientExchange(ex));
   if (kept.length === before.length) return session as Session;
   return { ...(session as any), exchanges: kept } as Session;
 }
@@ -2221,12 +2290,11 @@ async function saveCachedSession(
   rootId: string,
   session: Session | null | undefined,
   nodeId?: string,
-  opts?: { forceNoTruncate?: boolean },
 ): Promise<void> {
   if (!rootId || !session?.key) {
     return;
   }
-  const persistentSession = toPersistentSession(session, opts?.forceNoTruncate);
+  const persistentSession = toPersistentSession(session);
   const record: CachedSessionRecord = {
     cacheKey: buildSessionCacheKey(rootId, session.key, nodeId),
     rootId,
@@ -2361,10 +2429,7 @@ const SESSION_CACHE_MAX_TEXT = 200 * 1024;
  * `slice(0, len - n)` —— 砍掉的正是最新的那几条（超预算的通常是最长的助手回答）。
  * 实测症状：会话越长、开得越久，尾部丢得越多。
  */
-function toPersistentSession(
-  session: Session,
-  forceNoTruncate?: boolean,
-): Session {
+export function toPersistentSession(session: Session): Session {
   const persistent = stripAnchorBookkeeping(session);
   const exchanges = Array.isArray(persistent.exchanges)
     ? persistent.exchanges.filter((exchange) => {
@@ -2379,7 +2444,9 @@ function toPersistentSession(
       text += String((exchange as any)?.content || "").length;
     }
     if (text <= SESSION_CACHE_MAX_TEXT) {
-      return { ...persistent, exchanges, exchange_aux };
+      // 没有淘汰 ⇒ 这条记录此刻是完整的。显式写 false（而不是留 `...persistent` 里的旧值）：
+      // 旧值可能是上一轮淘汰留下的 true，留着会让下次白做一次全量拉取。
+      return { ...persistent, truncated: false, exchanges, exchange_aux };
     }
   }
   // 从尾部往前累加，找到「能装下的最长后缀」；装不下的部分全在头部。
@@ -2408,9 +2475,15 @@ function toPersistentSession(
   for (const [seq, items] of Object.entries(exchange_aux)) {
     if (keptSeqs.has(Number(seq))) keptAux[seq] = items;
   }
+  // **发生过淘汰就一定标 true** —— 这个标记的语义是「这条 IDB 记录不完整，下次必须全量回源」。
+  // 曾经它被调用方用 `forceNoTruncate` 置成 false（窗口态写入时），注释说是为了「跳过
+  // truncated 全量回补」。但那是**读侧**该管的事（`syncSession` 里已有的
+  // `baseTruncated = windowed ? false : base.truncated`），写在写侧等于让标记说谎：
+  // 窗口态标记是**内存**的，页面一刷新就没了，而这条被标成「完整」的记录还在盘上 ——
+  // 下一次全量路径读到它就只做增量同步，**被砍掉的那段历史永远不补**（静默丢历史）。
   return {
     ...persistent,
-    truncated: forceNoTruncate ? false : true,
+    truncated: true,
     exchanges: kept,
     exchange_aux: keptAux,
   };
@@ -2526,12 +2599,7 @@ export async function syncSession(
   if (!persistedSession) {
     return { session: null, hasDelta: false };
   }
-  await saveCachedSession(
-    rootId,
-    persistedSession,
-    options?.nodeId,
-    windowed ? { forceNoTruncate: true } : undefined,
-  );
+  await saveCachedSession(rootId, persistedSession, options?.nodeId);
   const displaySession = withSessionMeta(persistedSession, {
     ...incoming,
     key: sessionKey,

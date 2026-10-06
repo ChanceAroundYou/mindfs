@@ -11,31 +11,7 @@ import { FileEditStore, fileEditKey } from "./services/fileEditing";
 import { normalizePathForRoot, shouldRedirectToRelayNodes } from "./services/fileNavigation";
 import { getViewModeSystemPrompt } from "./renderer/viewCatalog";
 import { Renderer } from "./renderer/Renderer";
-import {
-  clearCachedSessionsForRoot,
-  clearWindowedView,
-  deleteCachedSession,
-  deleteCachedSessionLists,
-  composeLoadedExchanges,
-  getCachedMultiRootSessionList,
-  getCachedSession,
-  getCachedSessionList,
-  getSessionWindow,
-  saveCachedMultiRootSessionList,
-  saveCachedSessionList,
-  sessionService,
-  setCachedSessionRelatedFiles,
-  setWindowedView,
-  SESSION_WINDOW_SIZE,
-  syncSession,
-  type MultiRootSessionGroup,
-  type SyncSessionResult,
-  type RelatedFile,
-  type RelatedWorktree,
-  type Session,
-  type TokenUsage,
-  type QueuedUserMessage,
-} from "./services/session";
+import { SESSION_WINDOW_SIZE, clearCachedSessionsForRoot, clearWindowedView, composeLoadedExchanges, deleteCachedSession, deleteCachedSessionLists, getCachedMultiRootSessionList, getCachedSession, getCachedSessionList, getSessionWindow, isTransientExchange, saveCachedMultiRootSessionList, saveCachedSessionList, sessionService, setCachedSessionRelatedFiles, setWindowedView, settlePendingAcks, syncSession, type MultiRootSessionGroup, type QueuedUserMessage, type RelatedFile, type RelatedWorktree, type Session, type SyncSessionResult, type TokenUsage } from "./services/session";
 import { buildClientContext } from "./services/context";
 import { e2eeService, type E2EEState } from "./services/e2ee";
 import {
@@ -91,7 +67,8 @@ import {
   type DirectorySortMode,
   type FileEntry,
 } from "./services/directorySort";
-import { isUploadAbortError, uploadFiles, type UploadProgress } from "./services/upload";
+import { fileTokenPath, formatFileToken, isUploadAbortError, uploadFiles, type UploadProgress } from "./services/upload";
+import { isPlanCommand, withPlanPrefix } from "./components/action/inputTransforms";
 import {
   PluginManager,
   loadPluginsFromSources,
@@ -1063,7 +1040,7 @@ export function App({ onGoHome }: AppProps) {
           signal: uploadAbort.signal,
           nodeId: getNodeIdForRoot(rootId),
         });
-        attachmentTokens = uploaded.map((file) => `[file: ${file.agent_path || file.path}]`).join("\n");
+        attachmentTokens = uploaded.map((file) => formatFileToken(fileTokenPath(file))).join("\n");
       }
       const payload = [edit.text.trim(), attachmentTokens].filter(Boolean).join("\n");
       const taskCanCreateWorktree = managedRootByIdRef.current[rootId]?.is_git_repo === true;
@@ -2147,14 +2124,7 @@ export function App({ onGoHome }: AppProps) {
         if (!Array.isArray(exchanges)) {
           return session;
         }
-        return {
-          ...(session as any),
-          exchanges: exchanges.map((exchange: any) =>
-            exchange?.pending_ack === true
-              ? { ...exchange, pending_ack: false }
-              : exchange,
-          ),
-        } as T;
+        return settlePendingAcks(session);
       };
       const cacheKey = rootSessionKey(resolvedRoot, resolvedKey);
       delete pendingBySessionRef.current[cacheKey];
@@ -2263,18 +2233,15 @@ export function App({ onGoHome }: AppProps) {
       )
         ? ((cachedBeforeSync as any).exchanges as Exchange[])
         : [];
-      // **不要在这里清事件光标。**
-      // 光标是「我已经收到 X 为止的事件」的凭证，`session.ready` 会把它带上，
-      // 服务端据此只补发缺口。清掉它 = 主动声明「我什么都没有」，服务端只好把在途
-      // 内容**整个重推一遍** —— 用户看到的就是「每切一次会话都刷一大堆」，
-      // 而且重推的内容还会被客户端再拼一次（重复渲染）。
+      // 这里**不需要**任何「事件进度」的簿记了（2026-10-06）。
       //
-      // 而且这个清理本来就是多余的：轮次边界（`session.user_message` / `session.done`）
-      // 已经会自动清（见 session.ts 的 handleEvent）。在加载时再清一遍，等于
-      // 把**增量追赶**硬生生降级成**全量重放**。
+      // 曾经此处有一段 `clearEventCursor`，以及一段论证它「不能清」的注释 —— 那都是
+      // 「客户端自报进度、服务端只补发缺的那几条」那套续传协议的残余。协议本身已删：
+      // 挂载会话一律是**快照重建**（服务端回一整批带 `reset:true` 的事件，客户端先清
+      // 瞬时尾巴再照单应用），所以「我收到哪儿了」不再是任何一方的输入。
       //
-      // 这行多半是那个恒为 false 的守卫的 `else` 分支留下的连带损伤 —— 与
-      // composeLoadedExchanges 那批 bug 同一个源头。
+      // 顺序上这里也没问题：本函数在窗口/sync 结果**并入缓存之后**才调 markSessionReady
+      // （下面 :2337 / :2396），所以重置帧总是落在组装好的缓存之上，而不是被它覆盖。
       const inflight = loadingSessionRef.current[cacheKey] as unknown as Promise<Session | null> | undefined;
       if (inflight) {
         const hit = await inflight;
@@ -4536,7 +4503,7 @@ export function App({ onGoHome }: AppProps) {
             }
           }
           return cachedExchanges.filter((ex) => {
-            if (Number((ex as any)?.seq || 0) !== 0) return false;
+            if (!isTransientExchange(ex)) return false;
             const role = String((ex as any)?.role || "").toLowerCase();
             if (role === "tool") {
               const callId = `${(ex as any)?.toolCall?.callId || ""}`.trim();
@@ -4767,9 +4734,7 @@ export function App({ onGoHome }: AppProps) {
         effectiveEffort = effort || "",
         effectiveFastService = (fastService || "") as "" | "on" | "off",
         effectiveShell = shell || "";
-      const messageRequestsPlanMode =
-        message.trim().toLowerCase() === "/plan" ||
-        message.trim().toLowerCase().startsWith("/plan ");
+      const messageRequestsPlanMode = isPlanCommand(message);
       const normalizedMessage = message.trim().toLowerCase();
       const messageRequestsStatus = normalizedMessage === "/status";
       const messageRequestsLogin = normalizedMessage === "/login";
@@ -4893,8 +4858,9 @@ export function App({ onGoHome }: AppProps) {
           );
         }
 	        if (session) {
-	          setSelectedPendingByKey(targetSessionKey, false);
-	          setMultiProjectSessionPending(activeRoot, targetSessionKey, false);
+	          // 曾经这里只清两处（选中 + 小蓝灯），缓存与抽屉仍留着 `pending: true` ——
+	          // 那是「灯不灭」/「状态不收敛」的直接来源（冲突⑤）。交给清除编排者。
+	          clearLocalPendingForSession(activeRoot, targetSessionKey);
 	        }
 	        setSessions((prev) =>
 	          prev.map((item) => {
@@ -5200,7 +5166,7 @@ export function App({ onGoHome }: AppProps) {
         }
       }
       if (applyPendingPlanPrefix) {
-        outgoingMessage = `/plan ${outgoingMessage}`;
+        outgoingMessage = withPlanPrefix(outgoingMessage);
       }
       const sent = await sessionService.sendMessage(
         activeRoot,
@@ -5234,7 +5200,8 @@ export function App({ onGoHome }: AppProps) {
       }
       if (!sent && sendSessionKey) {
         const failedSessionKey = sendSessionKey;
-        setSelectedPendingByKey(failedSessionKey, false);
+        // 同理：发送失败必须把**全部五处**的 pending 收敛掉，否则缓存里那条会话永远显示「在回复」
+        clearLocalPendingForSession(activeRoot, failedSessionKey);
         setSessions((prev) =>
           prev.map((item) => {
             const itemKey = item.key || item.session_key;

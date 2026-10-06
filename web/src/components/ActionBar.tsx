@@ -5,7 +5,7 @@ import { fetchAgents, fetchShells, restartAgent, type AgentStatus } from "../ser
 import { getRootNodeId } from "../services/rootNode";
 import { type CandidateItem } from "../services/candidates";
 import { reportError } from "../services/error";
-import { isUploadAbortError, uploadFiles, type UploadProgress } from "../services/upload";
+import { fileTokenPath, formatFileToken, isUploadAbortError, uploadFiles, type UploadProgress } from "../services/upload";
 import TokenEditor, { type TokenEditorHandle } from "./editor/TokenEditor";
 import { CancelIcon, PlusIcon, SendIcon, SpinnerIcon } from "./action/composerStyles";
 import { useI18n, type MessageKey } from "../i18n";
@@ -446,7 +446,7 @@ export function ActionBar({
           signal: uploadAbort.signal,
         });
         attachmentTokens = uploaded
-          .map((file) => `[file: ${file.agent_path || file.path}]`)
+          .map((file) => formatFileToken(fileTokenPath(file)))
           .join("\n");
       }
       const payload = [messageText, attachmentTokens].filter(Boolean).join("\n");
