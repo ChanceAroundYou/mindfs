@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   clearGitHistoryCache,
   fetchGitHistory,
@@ -59,58 +59,80 @@ export function useGitData({
     window.localStorage.setItem(GIT_HISTORY_EXPANDED_STORAGE_KEY, JSON.stringify(gitHistoryExpandedByRoot));
   }, [gitHistoryExpandedByRoot]);
 
-  const refreshGitStatus = useCallback(async (rootID: string) => {
+  /**
+   * git status 的 in-flight 合并。
+   *
+   * git status 的调用方几乎全是「文件变了，重拉一次」，而文件变更在 agent 干活时
+   * 是一串一串来的（WS 的 file.changed.batch），实测能在 40 秒里打 8 次。这些请求
+   * 之间没有区别，结果也只会用最后一个 —— 同一 (root, node) 已有请求在飞时，
+   * 后来的直接复用那个 Promise，语义不变（调用方本来就在 await 同一个结果），
+   * 但重复的 git 子进程与往返没有了。
+   */
+  const gitStatusInflightRef = useRef<Map<string, Promise<GitStatusPayload | null>>>(new Map());
+
+  const refreshGitStatus = useCallback((rootID: string): Promise<GitStatusPayload | null> => {
     if (!rootID) {
       if (!currentRootIdRef.current) {
         setGitStatus(null);
         setGitStatusLoading(false);
       }
-      return null;
+      return Promise.resolve(null);
     }
-    const shouldApply = () => currentRootIdRef.current === rootID;
-    if (!isGitRepo(rootID)) {
-      const fallback = {
-        available: false,
-        dirty_count: 0,
-        items: [],
-      } as GitStatusPayload;
-      setGitStatusByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: fallback }));
-      setGitStatusLoadingByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: false }));
-      if (shouldApply()) {
-        setGitStatus(fallback);
-        setGitStatusLoading(false);
-      }
-      return fallback;
+    const inflightKey = `${getNodeIdForRoot(rootID) || ""}\u0000${rootID}`;
+    const inflight = gitStatusInflightRef.current.get(inflightKey);
+    if (inflight) {
+      return inflight;
     }
-    setGitStatusLoadingByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: true }));
-    if (shouldApply()) {
-      setGitStatusLoading(true);
-    }
-    try {
-      const next = await fetchGitStatus(rootID, getNodeIdForRoot(rootID));
-      setGitStatusByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: next }));
-      if (shouldApply()) {
-        setGitStatus(next);
+    const task = (async (): Promise<GitStatusPayload | null> => {
+      const shouldApply = () => currentRootIdRef.current === rootID;
+      if (!isGitRepo(rootID)) {
+        const fallback = {
+          available: false,
+          dirty_count: 0,
+          items: [],
+        } as GitStatusPayload;
+        setGitStatusByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: fallback }));
+        setGitStatusLoadingByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: false }));
+        if (shouldApply()) {
+          setGitStatus(fallback);
+          setGitStatusLoading(false);
+        }
+        return fallback;
       }
-      return next;
-    } catch (err) {
-      console.error("[git.status] failed", { rootID, err });
-      const fallback = {
-        available: false,
-        dirty_count: 0,
-        items: [],
-      } as GitStatusPayload;
-      setGitStatusByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: fallback }));
+      setGitStatusLoadingByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: true }));
       if (shouldApply()) {
-        setGitStatus(fallback);
+        setGitStatusLoading(true);
       }
-      return fallback;
-    } finally {
-      setGitStatusLoadingByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: false }));
-      if (shouldApply()) {
-        setGitStatusLoading(false);
+      try {
+        const next = await fetchGitStatus(rootID, getNodeIdForRoot(rootID));
+        setGitStatusByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: next }));
+        if (shouldApply()) {
+          setGitStatus(next);
+        }
+        return next;
+      } catch (err) {
+        console.error("[git.status] failed", { rootID, err });
+        const fallback = {
+          available: false,
+          dirty_count: 0,
+          items: [],
+        } as GitStatusPayload;
+        setGitStatusByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: fallback }));
+        if (shouldApply()) {
+          setGitStatus(fallback);
+        }
+        return fallback;
+      } finally {
+        setGitStatusLoadingByRoot((prev) => ({ ...prev, [scopedRootKey(rootID)]: false }));
+        if (shouldApply()) {
+          setGitStatusLoading(false);
+        }
       }
-    }
+    })().finally(() => {
+      gitStatusInflightRef.current.delete(inflightKey);
+    });
+    gitStatusInflightRef.current.set(inflightKey, task);
+    return task;
   }, [currentRootIdRef, getNodeIdForRoot, isGitRepo, scopedRootKey]);
 
   const refreshGitHistory = useCallback(async (
