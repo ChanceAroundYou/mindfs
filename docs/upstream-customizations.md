@@ -607,11 +607,26 @@
     `/api/sessions`（111KB）这类高频条目挤出去。**但仍是有界的**，理由见 G-AH。
 - `stripEmptyJSONValues` 改为**返回副本**：原先原地删键，于是「调用方必须传本请求现造的结构」
   成了一条只写在注释里的契约，谁传了共享缓存，那些键就在下次响应里永久消失。
+- **两处「静默无效」的坑**（都是 2026-10-07 在 WSL 上量真机字节数才发现的，只看状态码/ETag/304
+  全都正常）：
+  - 具名容器（`[]map[string]any`、`map[string]map[string]any`…）匹配不到类型开关，落进 `default`
+    原样返回 —— **整个 `items` 数组一个键都没省**（`handleSessions` 传的正是 `[]map[string]any`）。
+    改用反射统一处理同构容器。反射路径必须跳过 `IsNil()` 的切片/映射：`MakeSlice`/`MakeMapWithSize`
+    会把 `null` 变成 `[]`/`{}`，那是**改语义**而不只是省体积。
+  - 具名指针（`*time.Time`）同样是漏网：接口里的 typed nil **不等于** nil
+    （`any((*time.Time)(nil)) != nil`），`case nil` 抓不到，编成 JSON 的 `null`
+    —— `pinned_at` / `archived_at` / `closed_at` 全是这个形态，修完具名容器后**仅剩**这三个字段。
+    判空因此补了 `isNilTypedValue`，只认具名 nil，不认零值（`&time.Time{}` 编出来是
+    `"0001-01-01…"`，那是真值）。
+  - 验证方法就是量字节：会话列表 19 条实测 21 键/条 → **11 键/条**、9,975 → 7,614 字节。
 - **别踩**：客户端必须**先判 304 再判 `response.ok`** —— 304 的 `ok` 为 false，顺序写反会把命中
   缓存的响应当成失败。合上游时为「列表响应瘦身 + 条件请求」这一整块，要么全留要么全弃。
 - 针对性测试：`web/tests/conditional-request.test.mjs` 逐个钉住六个详情端点走的是
   `respondJSONConditional` **而不是** `respondJSONList`（只断言「接了协商」是不够的 ——
   日后被换成瘦身版照样绿，那正是丢数据的那次改动）。
+  `server/internal/api/helpers_jsonlist_test.go` 钉住服务端边界：`0` 不许被当空删、
+  数组元素不许被删（位置语义）、入参不许被原地改、**具名容器与具名 nil 必须被递归剥掉**
+  （`TestStripEmptyJSONValuesHandlesTypedContainers` / `TestStripEmptyJSONValuesDropsTypedNils`）。
 
 ### G-AO 自动重载观测
 

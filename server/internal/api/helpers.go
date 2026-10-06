@@ -126,6 +126,9 @@ func stripEmptyJSONValues(node any) any {
 		if value.Type().Elem().Kind() == reflect.Uint8 {
 			return node // []byte 是标量，不是容器
 		}
+		if value.IsNil() {
+			return node // nil 切片编出来是 null；MakeSlice 会把它变成 []，那是改语义
+		}
 		out := reflect.MakeSlice(value.Type(), value.Len(), value.Len())
 		for i := 0; i < value.Len(); i++ {
 			if stripped := reflect.ValueOf(stripEmptyJSONValues(value.Index(i).Interface())); stripped.IsValid() {
@@ -136,6 +139,9 @@ func stripEmptyJSONValues(node any) any {
 	case reflect.Map:
 		if value.Type().Key().Kind() != reflect.String {
 			return node
+		}
+		if value.IsNil() {
+			return node // 同上：nil map 是 null，不是 {}
 		}
 		out := reflect.MakeMapWithSize(value.Type(), value.Len())
 		iter := value.MapRange()
@@ -167,6 +173,22 @@ func isBlankJSONValue(v any) bool {
 		return len(typed) == 0
 	case map[string]any:
 		return len(typed) == 0
+	default:
+		// 具名容器与具名指针：接口里的 typed nil **不等于** nil
+		// （`any((*time.Time)(nil)) != nil`），于是它一路活到 JSON 里变成 `null`。
+		// 实测 pinned_at / archived_at / closed_at 正是这个形态（都是 `*time.Time`），
+		// 是会话列表里最后三个没被省掉的空字段 —— 上面几条 case 一个都没覆盖到。
+		return isNilTypedValue(typed)
+	}
+}
+
+// isNilTypedValue 只判「具名的 nil」，不判零值：
+// `&time.Time{}` 编出来是 `"0001-01-01T00:00:00Z"`，那是真值，不是空。
+func isNilTypedValue(v any) bool {
+	value := reflect.ValueOf(v)
+	switch value.Kind() {
+	case reflect.Pointer, reflect.Interface, reflect.Slice, reflect.Map:
+		return value.IsNil()
 	default:
 		return false
 	}

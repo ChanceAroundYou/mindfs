@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // respondJSONList 的守卫：去空值的语义 + ETag/304 协商。
@@ -224,6 +225,45 @@ func TestStripEmptyJSONValuesHandlesTypedContainers(t *testing.T) {
 	shared := payload["items"].([]map[string]any)[0]
 	if _, ok := shared["effort"]; !ok {
 		t.Fatalf("反射剥空把入参原地改了")
+	}
+}
+
+// 具名指针 / 具名 nil 容器的回归：接口里的 typed nil **不等于** nil。
+//
+// `any((*time.Time)(nil)) != nil`，所以类型开关的 `case nil` 抓不到它，
+// 它会一路编成 JSON 的 `null`。会话列表里 pinned_at / archived_at / closed_at
+// 正是 `*time.Time`，是 2026-10-07 修复具名容器之后**仅剩**的三个空字段。
+func TestStripEmptyJSONValuesDropsTypedNils(t *testing.T) {
+	payload := map[string]any{
+		"items": []map[string]any{{
+			"key":         "k1",
+			"archived_at": (*time.Time)(nil), // → null，必须去
+			"pinned_at":   (*time.Time)(nil),
+			"closed_at":   nil,           // 真 nil 照旧去
+			"tags":        []string(nil), // nil 切片 → 也是 null
+			"zero_ptr":    &time.Time{},  // 非 nil 指针是**真值**（"0001-01-01…"），必须留
+			"total_count": 0,
+		}},
+	}
+
+	rec := httptest.NewRecorder()
+	respondJSONList(rec, httptest.NewRequest(http.MethodGet, "/api/sessions", nil), payload)
+
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	first, _ := got["items"].([]any)[0].(map[string]any)
+	for _, key := range []string{"archived_at", "pinned_at", "closed_at", "tags"} {
+		if _, ok := first[key]; ok {
+			t.Fatalf("typed nil 字段 %q 没被剥掉（会话列表 21 键回归）：%s", key, rec.Body.String())
+		}
+	}
+	if _, ok := first["zero_ptr"]; !ok {
+		t.Fatalf("非 nil 指针被误删了：%s", rec.Body.String())
+	}
+	if first["total_count"] != float64(0) {
+		t.Fatalf("`0` 被误删：%v", first)
 	}
 }
 
