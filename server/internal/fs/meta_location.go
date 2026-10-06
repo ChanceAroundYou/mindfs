@@ -151,6 +151,7 @@ func renameHomeMeta(old RootInfo, nextID, nextRootPath string) (func(), error) {
 		return func() {}, nil
 	}
 	// 根还没有产生任何 meta（加了目录但没开过会话）时没什么可搬的。
+	// CUSTOM(G-U): 账户私有 meta 可能尚未建目录，改名流程不能因缺失而失败
 	// 账户私有 meta 恒为 home 语义，会走到这里，不能因此把改名卡住。
 	oldDir := old.MetaDir()
 	if _, err := os.Stat(oldDir); err != nil {

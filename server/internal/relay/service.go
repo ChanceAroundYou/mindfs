@@ -499,6 +499,7 @@ func (s *Service) proxyWebSocketToBase(req *http.Request, stream io.ReadWriter, 
 }
 
 func (s *Service) waitForLocalServer(ctx context.Context) error {
+	// CUSTOM(G-H): 子路径部署下健康探测要走前缀，上游直连 /health
 	healthURL := strings.TrimSuffix(s.localURL, "/") + deploy.PrefixedPath("/health")
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()

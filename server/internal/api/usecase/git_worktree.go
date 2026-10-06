@@ -262,6 +262,7 @@ func (s *Service) CreateGitWorktree(ctx context.Context, in CreateGitWorktreeInp
 	}
 	pending := fs.NewRootInfo(name, name, targetPath)
 	pending.MetaLocation = location
+	// CUSTOM(G-W): 非主账户的 meta 根必须显式带上，否则会在 worktree 里建出 .mindfs
 	// 非主账户：pending 也要带账户 meta 根，否则下面这行会在 worktree 里建出 .mindfs
 	pending.MetaRoot = accountMetaRoot(s.Registry)
 	if _, err := pending.EnsureMetaDir(); err != nil {

@@ -396,6 +396,7 @@ class E2EEService {
     const clientNonce = encodeBase64(clientNonceBytes);
     const proof = await buildOpenProof(secret, this.nodeId, clientEphPK, clientNonce);
 
+    // CUSTOM(G-I): 多节点下配对必须打指定节点 URL，否则配对密钥跨节点错绑
     // Minimal multi-node adaptation: pair against the specific node URL so the
     // pairing secret stays node-scoped (same as the backend e2ee.NodeID gate).
     const response = await fetch(appURL("/api/e2ee/open", undefined, this.nodeId), {

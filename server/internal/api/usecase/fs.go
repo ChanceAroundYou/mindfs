@@ -781,6 +781,7 @@ func (s *Service) AddManagedDir(_ context.Context, in AddManagedDirInput) (AddMa
 	pending := fs.NewRootInfo(name, name, abs)
 	pending.MetaLocation = location
 	// 非主账户：pending 也要带账户 meta 根，否则下面这行会在项目里建出 .mindfs
+	// CUSTOM(G-P): 非主账户的 meta 根必须显式带上，否则会在项目里建出 .mindfs
 	pending.MetaRoot = accountMetaRoot(s.Registry)
 	if _, err := pending.EnsureMetaDir(); err != nil {
 		return AddManagedDirOutput{}, err

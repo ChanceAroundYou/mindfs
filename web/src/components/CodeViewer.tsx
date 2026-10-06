@@ -132,6 +132,7 @@ export const CodeViewer = memo(function CodeViewer({
               right: 0,
               top: `${24 + (targetLine - 1) * 20}px`,
               height: "20px",
+              // CUSTOM(G-AH): 目标行高亮用主题选中色，上游写死 rgba(59,130,246,.08)
               background: "var(--selection-bg)",
               borderRadius: "4px",
               pointerEvents: "none",

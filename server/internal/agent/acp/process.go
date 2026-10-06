@@ -292,6 +292,7 @@ func (p *Process) agentLabel() string {
 }
 
 // LiveSessionCount 报告该进程当前仍记账在案的会话数。
+// CUSTOM(G-AC): agent 池据此判断进程能否空闲释放，上游没有这个读数
 func (p *Process) LiveSessionCount() int {
 	if p == nil {
 		return 0

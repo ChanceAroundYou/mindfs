@@ -185,6 +185,7 @@ export function WorktreeBranchSelector({
               padding: "7px 9px",
               border: "none",
               borderRadius: "8px",
+              // CUSTOM(G-W): 选中态用主题选中色，上游写死的蓝不随节点换色
               background: branchMode === "new" ? "var(--selection-bg)" : "transparent",
               color: branchMode === "new" ? "var(--accent-color)" : "var(--text-primary)",
               display: "flex",

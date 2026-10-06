@@ -2,6 +2,7 @@ import React from "react";
 import type { SessionItem } from "./SessionList";
 import { useI18n, type Locale } from "../i18n";
 
+// CUSTOM(G-Q): 类型需被会话树/归档面板复用，故对外导出
 export type ExternalSessionListProps = {
   sessions: SessionItem[];
   selectedKey?: string;

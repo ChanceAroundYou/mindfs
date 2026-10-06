@@ -133,6 +133,7 @@ func NewStore() (*Store, error) {
 }
 
 // NewStoreAt 把订阅表放在指定目录（多账户：每个账户一套订阅）。
+// CUSTOM(G-AJ): 多账户各一套订阅表；NewStore 只是它的默认目录特例
 func NewStoreAt(configDir string) *Store {
 	return &Store{path: filepath.Join(configDir, subscriptionsFileName)}
 }

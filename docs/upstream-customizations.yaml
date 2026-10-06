@@ -95,6 +95,8 @@ groups:
     why: |
       「API 层不做鉴权」是用户明确决策（多账户=多配置档，不是安全边界）。
       上游的 e2ee 解密/Proof 校验与 CORS 白名单一旦被合回来，所有前端请求立即失效。
+    anchors:
+      - 'web/src/services/e2ee.ts:CUSTOM(G-I)'
     files:
       - server/internal/api/http.go
       - server/internal/api/http_e2ee_cors_test.go
@@ -204,6 +206,8 @@ groups:
       刷新旋转用统一的 useRefreshSpin(450ms)，SyncIcon 支持 style。
       （G-D 原先单列，其改动面（FileTree/App/useRefreshSpin）与本组完全重合，
       且没有独立测试可守，故并入——保留 G-D 号仅作历史索引。）
+    anchors:
+      - 'web/src/components/MarkdownViewer.tsx:MarkdownCodeBlockMemo'
     files:
       - web/src/App.tsx
       - web/src/components/FileTree.tsx
@@ -258,6 +262,7 @@ groups:
     anchors:
       - server/app/workspace.go:ScopedRouter
       - server/internal/fs/meta_location.go:MetaLocationForNewRoot
+      - 'server/internal/fs/meta_location.go:CUSTOM(G-U)'
 
   # ── 后端：会话生命周期 ──────────────────────────────────────────
   - id: G-P
@@ -282,6 +287,7 @@ groups:
       - server/internal/api/usecase/usecase_test.go
     anchors:
       - server/internal/fs/registry.go:UpdateDisplayName
+      - 'server/internal/api/usecase/fs.go:CUSTOM(G-P)'
 
   - id: G-G
     title: 会话生命周期与 WS 正确性
@@ -357,6 +363,9 @@ groups:
       出现「ask 下面又渲染一轮出现过的文字」）；agent_ctx_seq 必须原样保留
       （它是 Full 同步的幂等护栏，写 0 会让早已渲染过的回合重导一遍）。
       另外：转录已在主 slug 时不需要 repoint，只需清 related_worktree。
+    anchors:
+      - 'web/src/components/WorktreeBranchSelector.tsx:CUSTOM(G-W)'
+      - 'server/internal/api/usecase/git_worktree.go:CUSTOM(G-W)'
     files:
       - server/internal/api/usecase/session_repoint.go
       - server/internal/api/usecase/session_repoint_test.go
@@ -397,6 +406,9 @@ groups:
       外部名称按 agent+agent_session_id 落盘，导入前回放 alias；
       fork 完全独立（不再写 parent_session_key），仅 fork 扁平为顶级。
       转录重复区块会导致重复交换，必须按条目 uuid 去重。
+    anchors:
+      - 'web/src/components/ExternalSessionList.tsx:CUSTOM(G-Q)'
+      - 'server/internal/agent/codex/importer.go:func cwdMatchesRoot('
     files:
       - server/internal/agent/claude/importer.go
       - server/internal/agent/claude/importer_test.go
@@ -463,6 +475,9 @@ groups:
     why: |
       ACP 进程需要显式回收（runtime_reap），否则僵尸进程累积；
       写用户层配置时必须只读用户层再合并，不能把合并后的全量写回用户层。
+    anchors:
+      - 'server/internal/agent/acp/process.go:CUSTOM(G-AC)'
+      - 'agents.json:DSH_MODEL'
     files:
       - server/internal/agent/acp/process.go
       - server/internal/agent/acp/session.go
@@ -584,6 +599,7 @@ groups:
       # 单靠断言 2 只能查到「文件又变得和上游一样了」，查不到「上游把它带回来且顺带改了」。
       - web/tests/upstream-removals.test.mjs
     anchors:
+      - 'web/src/components/ScheduledAgentTaskDialog.tsx:confirmDialog'
       # 替代编排体系的那套模型必须在位 —— 游标一旦退回去，说明重做被冲掉了
       - server/internal/kanban/types.go:Stages             []StageTemplate
       - server/internal/kanban/template_store.go:ListStageTemplates
@@ -706,6 +722,10 @@ groups:
     why: |
       本地用 DialogHost + services/dialog 的 promptDialog/alertDialog/confirmDialog
       替代所有系统弹窗，禁止在组件里直接用 window.*。
+    anchors:
+      - 'web/src/components/Toast.tsx:CUSTOM(G-AE)'
+      - 'web/src/components/ErrorBoundary.tsx:CUSTOM(G-AE)'
+      - 'web/src/components/FileOperations.tsx:promptDialog'
     files:
       - web/src/services/dialog.ts
       - web/src/components/DialogHost.tsx
@@ -776,6 +796,12 @@ groups:
     why: |
       文件与 Git 请求必须带 nodeId；文档预览把 docx/pptx 转成可渲染结构；
       根视图拆成 Root{Git,Related,Worktree}ContentView 三个页签。
+    anchors:
+      - 'web/src/components/CodeViewer.tsx:CUSTOM(G-AH)'
+      - 'web/src/components/GitStatusPanel.tsx:confirmDialog'
+      - 'web/src/components/GitHistoryPanel.tsx:color-mix(in srgb, var(--accent-color) 8%'
+      - 'web/src/components/GitDiffViewer.tsx:rootBadgeButtonStyle'
+      - 'web/src/services/upload.ts:getRootNodeId'
     files:
       - web/src/components/CodeViewer.tsx
       - web/src/components/DocumentViewer.tsx
@@ -835,6 +861,9 @@ groups:
       rootColor/accentHex 贯通到徽标/回复点/边框/发送按钮/看板 tab 等；
       FileTree 必须用 rootColor prop 响应式覆盖 getNodes() 回退，否则切节点不跟色；
       面包屑徽标统一为 button + rootBadgeButtonStyle 消除盒模型差异。
+    anchors:
+      - 'web/src/components/stream/ToolCallCard.tsx:const themed = String(color || "").trim() !== ""'
+      - 'web/src/components/FileViewer.tsx:rootBadgeButtonStyle'
     files:
       - web/src/index.css
       - web/src/components/ModeIcon.tsx
@@ -858,6 +887,11 @@ groups:
     why: |
       定时任务与看板一样必须每账户一个实例（执行时用本账户的 session manager）；
       偏好是共享的（全账户），提示词/模板不共享；更新走主节点的控制面。
+    anchors:
+      - 'server/internal/webpush/service.go:CUSTOM(G-AJ)'
+      - 'server/internal/scheduled/tasks.go:BroadcastSessionCreated'
+      - 'web/src/services/webPush.ts:controlPath("/api/web-push/'
+      - 'web/src/components/CodexRateLimitIndicator.tsx:fetchCodexRateLimits(agent, nodeId)'
     files:
       - server/internal/preferences/store.go
       - server/internal/preferences/store_test.go
@@ -932,6 +966,8 @@ groups:
       web/src/renderer/viewCatalog 决定可用视图与页签顺序，registry 负责注册，
       Renderer 按注册表派发；plugins/manager 负责插件装载。
       上游没有这层，退回会把「主视图记忆」（切走再回来还在原视图）一起丢掉。
+    anchors:
+      - 'web/src/plugins/manager.ts:scanPluginSources(rootId: string, rootPath = "", nodeId?: string)'
     files:
       - web/src/plugins/manager.ts
       - web/src/renderer/registry.tsx
@@ -951,6 +987,8 @@ groups:
     why: |
       这三件套本地已整体移除（删文件 + 删所有入口）。
       上游会给回来，每次合上游都要重新删一遍——删漏就会留下「点了报错」的残缺入口。
+    anchors:
+      - 'server/internal/relay/service.go:CUSTOM(G-H)'
     files:
       - server/internal/relay/service.go
       - web/src/components/RelayLocalServicesDialog.tsx

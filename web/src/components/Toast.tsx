@@ -98,6 +98,7 @@ type ToastProps = {
 
 function Toast({ error, onClose, onRetry }: ToastProps): React.ReactElement {
   const { t } = useI18n();
+  // CUSTOM(G-AE): 兜底色用主题变量，上游写死的蓝不随节点换色
   const bgColor =
     error.severity === "error"
       ? "rgba(239, 68, 68, 0.95)"

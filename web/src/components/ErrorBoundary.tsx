@@ -107,6 +107,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
               padding: "10px 20px",
               borderRadius: "8px",
               border: "none",
+              // CUSTOM(G-AE): 错误页按钮跟随主题色，上游写死 #3b82f6
               background: "var(--accent-color)",
               color: "#fff",
               fontSize: "13px",
