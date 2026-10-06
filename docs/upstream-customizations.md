@@ -412,6 +412,13 @@
 
 - 来源：`web/src/components/workspace/*`、`useWorkspaceBoard.ts`、`GET /api/tasks/overview`。
 - 边界：无项目时渲染跨项目工作台；卡片操作按卡片自带 `root_id` 派发；详情先切项目再选中任务。
+- **卡片「跳会话」的 root 归属（2026-10-06）**：可见症状是**第二次**点同一张卡片的会话图标，
+  会跳到「当前项目」下的同名空白会话（请求 `?root=<当前项目>` → 404），首点却是对的；
+  换个顺序点、或先切回项目再点，同样中招。
+  必须保留的理由：会话回包不带 `root_id`（root 只是请求参数），所以「这次跳转属于哪个项目」
+  只能由前端自己钉住 —— 写缓存时补请求根（`restoreActiveSession` 的窗口/全量两分支 +
+  `handleSelectSession` 的 `applySession`），读端用 `web/src/app/sessionJump.ts` 的
+  `buildSessionJumpTarget` 以卡片 root 覆盖。上游没有这一层，退回上游实现症状立刻复现。
 
 ### G-AA 前端 App.tsx 模块化重构
 

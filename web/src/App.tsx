@@ -227,6 +227,7 @@ import { buildMatchInputFromPath, buildMessageWithViewContext, hasExplicitFileCo
 import { basenameOfPath, buildDirectorySelectionKey, buildFileScrollKey, buildURLSearch, comparableManagedRootPath, dirnameOfPath, isDirectorySortMode, joinDisplayPath, normalizeCursor, normalizePath, parentDirsOfFile, parseFileLocation, parsePluginQuery, readURLState, relativeDisplayPathFromRoot, rootNodeKey } from "./app/appPath";
 import { useWorkspaceBoard } from "./app/useWorkspaceBoard";
 import { hasSessionExchanges, isSessionShownInMain, isTopLevelSessionItem, mergeReplyingStateByNode, normalizeMode, relatedFileSelectionKey, sessionInputHistory, shouldAutoSelectNewSession, toSessionItem } from "./app/appSession";
+import { buildSessionJumpTarget, resolveSessionJumpRoot } from "./app/sessionJump";
 import { accountScopedKey, loadGitDiffSideBySide, loadLastRootId, loadLastRootNodeId, loadMobileEnterKeySends, loadPersistedFileScrollPositions, loadPersistedPluginQuery, loadSidebarsSwapped, loadTaskCreateWorktreePreference, persistFileScrollPositions, persistPluginQuery, removeLocalStorageByPrefix, saveTaskCreateWorktreePreference } from "./app/appStorage";
 import { applyStageOverride, currentTaskInputFromDetail, DEFAULT_TASK_AGENT, DEFAULT_TASK_MODEL, firstAgentStage, firstTaskInputFromDetail, firstUserInputTemplate, isTerminalKanbanTask, latestTaskStageRun, normalizeFastService, parseTaskSessionErrorDetails, parseTaskSessionErrorMessage, previousTaskInputsFromDetail, taskSessionKeysFromDetail, taskStagesForCreate, taskStatusLabel } from "./app/appTask";
 import { useCompletionSound } from "./app/useCompletionSound";
@@ -2316,6 +2317,9 @@ export function App({ onGoHome }: AppProps) {
             const toCache = {
               ...sess,
               key: resolvedKey,
+              // CUSTOM(G-Z): 窗口/列表回包不带 root_id（root 只是请求参数），
+              // 这里不补，缓存里就是「无主」会话 —— 二次跳转时归属会退化成当前根。
+              root_id: resolvedRoot,
               pending,
               // 加载时的唯一组装规则：服务端行并入缓存，在途时再把 seq=0 接回。
               // 判据是 `pending` —— 不在跑就没有在途内容，缓存里的 seq=0 全是残留
@@ -2388,6 +2392,8 @@ export function App({ onGoHome }: AppProps) {
         sessionCacheRef.current[cacheKey] = {
           ...(fullSession as any),
           key: resolvedKey,
+          // CUSTOM(G-Z): 同窗口分支 —— 全量 sync 回包同样不带 root_id。
+          root_id: resolvedRoot,
           pending,
           _windowMeta: anchoredMeta as any,
           _anchoredAt: anchorAt,
@@ -2397,6 +2403,7 @@ export function App({ onGoHome }: AppProps) {
         return {
           ...(fullSession as any),
           key: resolvedKey,
+          root_id: resolvedRoot,
           pending,
           _windowMeta: anchoredMeta as any,
           _anchoredAt: anchorAt,
@@ -3851,6 +3858,9 @@ export function App({ onGoHome }: AppProps) {
         const normalized = {
           ...(fullSession as any),
           key,
+          // CUSTOM(G-Z): 所有走 handleSelectSession 的路径写缓存都带 root，
+          // 这是「无主缓存」的收口 —— 缺了它，二次跳转会把它当成当前根的会话。
+          root_id: targetRoot,
           pending,
         } as Session;
         if (shouldWriteCache) {
@@ -6922,21 +6932,19 @@ export function App({ onGoHome }: AppProps) {
   const handleSessionChipClick = useCallback(
     (sessionKey: string, rootOverride?: string | null) => {
       if (!sessionKey) return;
-      const root = rootOverride || file?.root || currentRootIdRef.current;
-      if (!root) return;
       const matched = sessions.find((item) => {
         const key = item.key || item.session_key;
         return key === sessionKey;
       });
-      if (matched) {
-        handleSelectSession(matched);
-        return;
-      }
-      handleSelectSession({
-        key: sessionKey,
-        session_key: sessionKey,
-        root_id: root,
+      // CUSTOM(G-Z): 归属按卡片/文件视图声明的 root 钉死，不随当前根漂移（见 sessionJump.ts）。
+      const target = buildSessionJumpTarget({
+        sessionKey,
+        rootOverride: rootOverride ?? file?.root,
+        matched,
+        currentRoot: currentRootIdRef.current,
       });
+      if (!target) return;
+      handleSelectSession(target);
     },
     [file, sessions, handleSelectSession],
   );
@@ -6944,19 +6952,25 @@ export function App({ onGoHome }: AppProps) {
 	  const handleTaskSessionDrawerOpen = useCallback(
     (sessionKey: string, rootOverride?: string | null, taskId?: string) => {
       const key = String(sessionKey || "").trim();
-      const root = rootOverride || currentRootIdRef.current;
-      if (!key || !root) return;
+      if (!key) return;
+      const matched = sessions.find((item) => (item.key || item.session_key) === key);
       // 任务会话就是普通会话：直接走主面板装配（selectedSession + main 模式 + URL + 同步），
       // 不再走 drawer 浮层——drawer 模式下在会话面板里切换工作台/看板没有全屏语境。
-      const matched = sessions.find((item) => (item.key || item.session_key) === key);
+      const root = resolveSessionJumpRoot(rootOverride, matched, currentRootIdRef.current);
+      if (!root) return;
       const cached = sessionCacheRef.current[rootSessionKey(root, key)];
-      const initial = cached || matched || {
-        key,
-        session_key: key,
-        root_id: root,
-        task_id: taskId || "",
-      };
-      void handleSelectSession(initial as any, { preserveTaskSelection: true });
+      // CUSTOM(G-Z): 缓存里可能是历史写入的无 root 对象，这里强制写回卡片 root，
+      // 否则 handleSelectSession 的 `root_id || 当前根` 兜底会把它认成当前项目。
+      const target = buildSessionJumpTarget({
+        sessionKey: key,
+        rootOverride,
+        taskId,
+        matched,
+        cached,
+        currentRoot: currentRootIdRef.current,
+      });
+      if (!target) return;
+      void handleSelectSession(target as any, { preserveTaskSelection: true });
     },
     [
       currentRootIdRef,

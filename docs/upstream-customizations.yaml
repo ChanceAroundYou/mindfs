@@ -629,14 +629,27 @@ groups:
     symptom: |
       没有选中项目时任务视图空白（应渲染跨项目工作台）；
       工作台卡片操作发到错误的节点；实时刷新不及时。
+      另有：点工作台卡片左下角的会话图标 → 跳到「当前项目」下的同名空白会话（请求打到错误
+      root → 404）；关掉重开或换个顺序再点一次同样跳错，只有首点是对的。
     why: |
       无项目时用 GET /api/tasks/overview 汇总各项目（单项目失败跳过），
       卡片操作按卡片自带 root_id 派发（完成/立即执行/跳会话/跳项目），
       详情要先切项目再选中任务。上游没有这层聚合。
+      跳会话一条：会话窗口/列表回包**不带 root_id**（root 只是请求参数），前端必须在写缓存时
+      把请求根补上（restoreActiveSession 的窗口分支与全量分支、handleSelectSession 的
+      applySession），并在读端用 sessionJump 的 buildSessionJumpTarget 强制以卡片 root 为准 ——
+      缺了任一半，二次跳转就会命中「无主」缓存对象，而 handleSelectSession 的
+      `session.root_id || 当前根` 兜底会把它认成当前项目。
+    anchors:
+      - 'web/src/app/sessionJump.ts:export function buildSessionJumpTarget'
+      - 'web/src/App.tsx:CUSTOM(G-Z)'
     files:
+      - web/src/App.tsx
+      - web/src/app/sessionJump.ts
       - web/src/components/workspace/
       - web/src/app/useWorkspaceBoard.ts
     tests:
+      - web/tests/task-session-jump-root.test.mjs
       - web/tests/workspace-board.test.mjs
       - web/tests/workspace-node-fanout.test.mjs
       - web/tests/workspace-realtime-freshness.test.mjs
