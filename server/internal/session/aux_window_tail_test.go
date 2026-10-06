@@ -88,3 +88,52 @@ func TestLoadExchangeAuxWindowMissingFile(t *testing.T) {
 		t.Fatalf("期望空集，得到 %#v", got)
 	}
 }
+
+// 窗口读路径必须走轻压缩：edit/read/execute 的 content 清空（展开时懒加载），
+// 非冗余 meta 保留。全量 sync / 重锚定仍走 CompactExchangeAux、保留 content，
+// 所以这里只钉窗口路径，不改变别处的语义。
+func TestLoadExchangeAuxWindowStripsLazyToolContent(t *testing.T) {
+	rootDir := t.TempDir()
+	root := rootfs.NewRootInfo("mindfs", "mindfs", rootDir)
+	manager := NewManager(root)
+	key := "s1"
+
+	dir := filepath.Join(root.MetaDir(), "sessions")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, key+".aux.jsonl")
+	line := `{"seq":1,"line":0,"toolcall":{"callId":"c1","kind":"edit","status":"complete",` +
+		`"content":[{"type":"diff","path":"a.go","newText":"x"}],"meta":{"filePath":"a.go"}}}` + "\n"
+	if err := os.WriteFile(path, []byte(line), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := manager.loadExchangeAuxWindow(key, map[int]bool{1: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	items := got[1]
+	if len(items) != 1 || items[0].ToolCall == nil {
+		t.Fatalf("期望 1 条 toolcall，得到 %#v", items)
+	}
+	if len(items[0].ToolCall.Content) != 0 {
+		t.Fatalf("edit content 必须被窗口轻压缩清空，得到 %#v", items[0].ToolCall.Content)
+	}
+	if items[0].ToolCall.Meta["filePath"] != "a.go" {
+		t.Fatalf("非冗余 meta 必须保留，得到 %#v", items[0].ToolCall.Meta)
+	}
+
+	// 对照：同一条目走全量压缩（重锚定路径）必须仍带 content。
+	full, err := manager.loadExchangeAuxEntries(key, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compacted, ok := CompactExchangeAux(full[0])
+	if !ok || compacted.ToolCall == nil {
+		t.Fatalf("全量压缩应保留 toolcall，得到 %#v", compacted)
+	}
+	if len(compacted.ToolCall.Content) == 0 {
+		t.Fatalf("CompactExchangeAux 必须保留 edit content（重锚定靠它），得到 %#v", compacted.ToolCall.Content)
+	}
+}

@@ -120,6 +120,35 @@ func CompactExchangeAux(aux ExchangeAux) (ExchangeAux, bool) {
 	return aux, true
 }
 
+// CompactExchangeAuxLight 是窗口专用的更激进压缩：在 CompactExchangeAux 基础上，
+// 把「详情只在展开时需要」的 kind（edit/read/execute）的 content 也清空。
+//
+// 为什么安全：这些 kind 的折叠卡片只需要 kind/title/status/locations；展开时
+// ToolCallCard 的 needsRemoteDetails（edit/read 走 !hasContent、execute 走
+// !hasExecuteOutput）会触发 GET /api/sessions/{key}/toolcalls/{callID} 懒加载，
+// 拿回完整详情。窗口因此只下发能渲染折叠卡片的最小字段 —— 实测一个会话 65 个
+// edit 的 content 占 101 KB，是 exchange_aux 里最大的一块。
+//
+// 为什么只对窗口用：全量 sync / 重锚定路径仍走 CompactExchangeAux，保留完整
+// content，避免「重锚定后卡片内容闪一下又变了」。
+func CompactExchangeAuxLight(aux ExchangeAux) (ExchangeAux, bool) {
+	compacted, ok := CompactExchangeAux(aux)
+	if !ok {
+		return ExchangeAux{}, false
+	}
+	if compacted.ToolCall != nil {
+		lightCompactToolCall(compacted.ToolCall)
+	}
+	return compacted, true
+}
+
+func lightCompactToolCall(toolCall *agenttypes.ToolCall) {
+	switch toolCall.Kind {
+	case agenttypes.ToolKindEdit, agenttypes.ToolKindRead, agenttypes.ToolKindExecute:
+		toolCall.Content = nil
+	}
+}
+
 func CompactToolCall(toolCall agenttypes.ToolCall) agenttypes.ToolCall {
 	preserveContent := PreserveToolCallContent(toolCall.Kind)
 	switch {
@@ -131,8 +160,35 @@ func CompactToolCall(toolCall agenttypes.ToolCall) agenttypes.ToolCall {
 	}
 	if !preserveContent {
 		toolCall.Meta = compactToolCallMeta(toolCall.Meta)
+	} else if toolCall.Kind == agenttypes.ToolKindEdit && len(toolCall.Content) > 0 {
+		// edit 的 content 是格式化后的 diff，meta.input/output 是同一份 old/new
+		// 文本的未格式化副本。前端只在 content 为空时才拿 meta.input 当 fallback
+		// （见 ToolCallCard 的 detailSections 回退），content 非空时这两个字段是
+		// 纯冗余 —— 实测一个会话 65 个 edit 的 meta.input 占 109 KB。
+		// 只对 edit 生效：ask_user 的 meta.input 是 questions 的 fallback、
+		// todo 的 meta.input 是待办列表本身，都不能丢。
+		toolCall.Meta = dropEditRedundantMeta(toolCall.Meta)
 	}
 	return toolCall
+}
+
+// dropEditRedundantMeta 丢掉 edit 工具调用里与 content 重复的 input/output。
+// 保留其余字段（如 filePath）—— 它们参与前端渲染与缓存键。
+func dropEditRedundantMeta(meta map[string]any) map[string]any {
+	if len(meta) == 0 {
+		return meta
+	}
+	out := make(map[string]any, len(meta))
+	for key, value := range meta {
+		if key == "input" || key == "output" {
+			continue
+		}
+		out[key] = value
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func compactToolCallMeta(meta map[string]any) map[string]any {

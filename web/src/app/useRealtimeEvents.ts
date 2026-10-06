@@ -248,6 +248,10 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
   // 2026-09 App.tsx 拆分：34 个 WS 事件处理器整体搬进 useMemo，订阅器只剩「派发」这一件事。
   // 事件回调全同步、无 await，且没有「值变了才动作」的守卫比较，故经 ref 读最新闭包不改变行为。
   const cancelledRef = useRef(false);
+  // related-files 刷新去抖：agent 每写一个文件就发一条 session.related_files.updated，
+  // 实测 20 分钟内同一会话被拉了 74 次（每秒 4–6 个突发），而回包内容高度重复。
+  // 按 rootID::sessionKey 合并 500ms 窗口内的多次触发，只拉一次。
+  const relatedFilesRefreshTimers = useRef(new Map<string, number>());
   const wsHandlers = useMemo(() => {
     const reloadSessionForReplay = async (
       rootID: string,
@@ -335,19 +339,30 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
         markSessionStale(rootID, sessionKey);
       }
     };
-    const refreshSessionRelatedFiles = async (
+    const refreshSessionRelatedFiles = (
       rootID: string,
       sessionKey: string,
     ) => {
       if (!rootID || !sessionKey) return;
-      const relatedFiles = await sessionService.getSessionRelatedFiles(
-        rootID,
-        sessionKey,
-        getNodeIdForRoot(rootID),
-      );
-      if (cancelledRef.current) return;
-      await setCachedSessionRelatedFiles(rootID, sessionKey, relatedFiles, getNodeIdForRoot(rootID));
-      updateSessionRelatedFilesForKey(rootID, sessionKey, relatedFiles);
+      const debounceKey = `${rootID}::${sessionKey}`;
+      const existing = relatedFilesRefreshTimers.current.get(debounceKey);
+      if (existing) {
+        window.clearTimeout(existing);
+      }
+      const timer = window.setTimeout(() => {
+        relatedFilesRefreshTimers.current.delete(debounceKey);
+        void (async () => {
+          const relatedFiles = await sessionService.getSessionRelatedFiles(
+            rootID,
+            sessionKey,
+            getNodeIdForRoot(rootID),
+          );
+          if (cancelledRef.current) return;
+          await setCachedSessionRelatedFiles(rootID, sessionKey, relatedFiles, getNodeIdForRoot(rootID));
+          updateSessionRelatedFilesForKey(rootID, sessionKey, relatedFiles);
+        })();
+      }, 500);
+      relatedFilesRefreshTimers.current.set(debounceKey, timer);
     };
     // 回合收尾的**唯一出口**。返回值 = 这一轮是否真的结束了（false = 队列续跑，仍在流式）。
     //

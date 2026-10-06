@@ -48,6 +48,12 @@ type Process struct {
 	commands      []acp.AvailableCommand
 	stderrHint    stderrHintState
 	activePrompt  activePromptState
+
+	// elicitationMu 只保护 pendingAskUserByCallID。单独一把锁而不是复用 p.mu：
+	// 提问路径要在持锁状态下往 waiter 投递，而 waiter 的对面是可能长时间阻塞的
+	// elicitation handler，复用 p.mu 会把会话读写一起拖住。
+	elicitationMu          sync.Mutex
+	pendingAskUserByCallID map[string]*pendingAskUser
 }
 
 // processTree owns platform resources for one ACP process and its descendants.
@@ -423,6 +429,44 @@ func (c *mindfsClient) RequestPermission(ctx context.Context, params acp.Request
 	}, nil
 }
 
+// UnstableCreateElicitation 处理 dsh 的 ask_user_question 提问请求。
+//
+// CUSTOM(G-AS): 上游 ACP 客户端没有这个 handler，dsh 的 ask_user_question 会直接
+// 报 "the ACP client does not support form elicitation"。
+//
+// ACP SDK 的 UnstableCreateElicitationForm 不带 sessionId/toolCallId（这个 fork 的
+// codegen 丢了），所以这里靠题目 id + 文本关联到已渲染的 ask_user 卡。
+func (c *mindfsClient) UnstableCreateElicitation(ctx context.Context, req acp.UnstableCreateElicitationRequest) (acp.UnstableCreateElicitationResponse, error) {
+	if req.Form == nil || req.Form.Mode != "form" {
+		return acp.UnstableCreateElicitationResponse{Decline: &acp.UnstableCreateElicitationDecline{}}, nil
+	}
+	questions := dshElicitationQuestions(req.Form.Meta)
+	if len(questions) == 0 {
+		c.proc.logElicitation("unsupported", "", "", "message", req.Form.Message)
+		return acp.UnstableCreateElicitationResponse{Decline: &acp.UnstableCreateElicitationDecline{}}, nil
+	}
+	entry := c.proc.bindElicitation(questions)
+	if entry == nil {
+		c.proc.logElicitation("unbound", "", "", "questions", len(questions))
+		return acp.UnstableCreateElicitationResponse{Decline: &acp.UnstableCreateElicitationDecline{}}, nil
+	}
+	c.proc.logElicitation("open", entry.sessionKey, entry.callID, "questions", len(entry.questions))
+	select {
+	case result := <-entry.waiter:
+		if len(result.content) == 0 {
+			c.proc.logElicitation("declined", entry.sessionKey, entry.callID)
+			return acp.UnstableCreateElicitationResponse{Decline: &acp.UnstableCreateElicitationDecline{}}, nil
+		}
+		c.proc.logElicitation("answered", entry.sessionKey, entry.callID, "fields", len(result.content))
+		return acp.UnstableCreateElicitationResponse{
+			Accept: &acp.UnstableCreateElicitationAccept{Content: result.content},
+		}, nil
+	case <-ctx.Done():
+		c.proc.logElicitation("cancelled", entry.sessionKey, entry.callID)
+		return acp.UnstableCreateElicitationResponse{Cancel: &acp.UnstableCreateElicitationCancel{}}, nil
+	}
+}
+
 func (c *mindfsClient) ReadTextFile(ctx context.Context, params acp.ReadTextFileRequest) (acp.ReadTextFileResponse, error) {
 	// Agent handles file operations itself
 	return acp.ReadTextFileResponse{Content: ""}, nil
@@ -537,12 +581,13 @@ func Start(ctx context.Context, agentName, command string, args []string, cwd st
 	}
 
 	proc := &Process{
-		agentName:    agentName,
-		cmd:          cmd,
-		sessions:     make(map[string]*sessionState),
-		sessionsByID: make(map[string]*sessionState),
-		waitCh:       make(chan error, 1),
-		tree:         tree,
+		agentName:              agentName,
+		cmd:                    cmd,
+		sessions:               make(map[string]*sessionState),
+		sessionsByID:           make(map[string]*sessionState),
+		waitCh:                 make(chan error, 1),
+		tree:                   tree,
+		pendingAskUserByCallID: make(map[string]*pendingAskUser),
 	}
 	proc.client = &mindfsClient{proc: proc}
 	go streamProcessStderr(proc, stderr)
@@ -563,14 +608,31 @@ func Start(ctx context.Context, agentName, command string, args []string, cwd st
 	return proc, nil
 }
 
+// acpClientCapabilities 决定向 agent 广告哪些客户端能力。
+//
+// CUSTOM(G-AS): 只有 dsh 广告 elicitation.form。openma 适配器据此决定
+// ask_user_question 走不走 elicitation（bridge.js 的 clientElicitationForm）；
+// 不广告，dsh 就直接抛 "the ACP client does not support form elicitation"。
+// 其它 ACP agent 不广告，行为与上游逐字节一致 —— 广告只会让它们开始发
+// elicitation，而 mindfs 无法按 session 精确路由，只能 decline。
+func acpClientCapabilities(agentName string) acp.ClientCapabilities {
+	caps := acp.ClientCapabilities{
+		Terminal: false,
+	}
+	if agentName == "dsh" {
+		caps.Elicitation = &acp.ElicitationCapabilities{
+			Form: &acp.ElicitationFormCapabilities{},
+		}
+	}
+	return caps
+}
+
 // Initialize performs ACP handshake.
 func (p *Process) Initialize(ctx context.Context) error {
 	// Send initialize request
 	resp, err := p.conn.Initialize(ctx, acp.InitializeRequest{
-		ProtocolVersion: acp.ProtocolVersionNumber,
-		ClientCapabilities: acp.ClientCapabilities{
-			Terminal: false,
-		},
+		ProtocolVersion:    acp.ProtocolVersionNumber,
+		ClientCapabilities: acpClientCapabilities(p.agentName),
 		ClientInfo: &acp.Implementation{
 			Name:    "mindfs",
 			Version: "1.0.0",
@@ -740,6 +802,7 @@ func (p *Process) SendMessage(ctx context.Context, sessionKey, content string) e
 }
 
 func (p *Process) CancelCurrentTurn(sessionKey string) error {
+	p.cancelPendingAskUser(sessionKey)
 	sess := p.getSessionByKey(sessionKey)
 	if sess == nil {
 		return nil
@@ -777,6 +840,7 @@ func (p *Process) CloseSession(ctx context.Context, sessionKey string) error {
 		return err
 	}
 	p.ForgetSession(sessionKey)
+	p.cancelPendingAskUser(sessionKey)
 	return nil
 }
 
@@ -793,6 +857,10 @@ func (p *Process) Close() error {
 	if cmd == nil || cmd.Process == nil {
 		return nil
 	}
+
+	// 先把挂起的提问全部按「用户取消」回掉，否则 elicitation handler 会一直阻塞到
+	// 连接关闭，白等一个永远不会来的答案。
+	p.dropAllPendingAskUser()
 
 	pid := cmd.Process.Pid
 	log.Printf("[agent/acp] process.close.begin agent=%s pid=%d", p.agentLabel(), pid)

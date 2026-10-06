@@ -3,6 +3,7 @@ import { useSessionStream, type TimelineItem } from "../hooks/useSessionStream";
 import type { TodoUpdate } from "../services/session";
 import { ThinkingBlock } from "./stream/ThinkingBlock";
 import { ToolCallCard, renderToolIcon } from "./stream/ToolCallCard";
+import { ToolCallGroupCard } from "./stream/ToolCallGroupCard";
 import { AgentIcon } from "./AgentIcon";
 import { InlineTokenText } from "./InlineTokenText";
 import { MarkdownViewer } from "./MarkdownViewer";
@@ -2062,6 +2063,20 @@ function SessionViewerInner({
               defaultExpanded={isUserShell}
             />
           )}
+        </div>
+      );
+    }
+    if (item.type === "tool_group") {
+      return (
+        <div key={timelineItemKey} style={{ marginTop: spacing }}>
+          <ToolCallGroupCard
+            kind={item.kind}
+            toolCalls={item.toolCalls}
+            rootPath={rootPath || undefined}
+            rootId={rootId}
+            sessionKey={sessionKey}
+            getFallbackResult={formatToolCallFallbackResult}
+          />
         </div>
       );
     }

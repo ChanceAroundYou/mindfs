@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 // 2026-09 App.tsx 拆分：项目看板搬到 components/TaskBoardView.tsx，契约随文件走。
 const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 const bar = readFileSync(new URL("../src/components/ActionBar.tsx", import.meta.url), "utf8");
+const shell = readFileSync(new URL("../src/layout/AppShell.tsx", import.meta.url), "utf8");
 const board = readFileSync(new URL("../src/components/TaskBoardView.tsx", import.meta.url), "utf8");
 const listView = readFileSync(new URL("../src/components/DefaultListView.tsx", import.meta.url), "utf8");
 const zh = readFileSync(new URL("../src/i18n/locales/zh-CN.ts", import.meta.url), "utf8");
@@ -113,8 +114,8 @@ assert.match(
   "completion groups should start expanded",
 );
 
-// 会话界面只在对话态（主区）与文件态（悬浮框）出现；看板/工作台不得有输入区，
-// 但移动端呼出左右侧栏的按钮必须留下（否则进了这两个界面就再也开不出侧栏）。
+// 会话界面只在对话态（主区）与文件态（悬浮框）出现；看板/工作台不得有输入区。
+// 移动端呼出左右侧栏的按钮已搬进 AppShell 的顶栏（hideComposer 时 ActionBar 不再渲染）。
 assert.match(
   app,
   /hideComposer=\{mainView === "board" \|\| mainView === "workspace"\}/,
@@ -122,13 +123,13 @@ assert.match(
 );
 assert.match(
   bar,
-  /if \(hideComposer\) \{\s*return isMobile \? \(/,
-  "hiding the composer must still render the mobile sidebar toggles",
+  /if \(hideComposer\) \{\s*return null;\s*\}/,
+  "the composer-less bar must not render the sidebar toggles — they live in the top bar",
 );
 assert.match(
-  bar,
-  /\{sidebarsSwapped \? mobileSessionSidebarButton : mobileFileSidebarButton\}[\s\S]*?\{sidebarsSwapped \? mobileFileSidebarButton : mobileSessionSidebarButton\}/,
-  "both sidebar toggles must survive the composer-less bar",
+  shell,
+  /isMobile \? \(\s*<div[\s\S]*?zIndex: 2100[\s\S]*?toggleRail\("left"\)[\s\S]*?toggleRail\("right"\)/,
+  "the mobile top bar must carry both sidebar toggles",
 );
 assert.match(
   app,
@@ -228,16 +229,33 @@ assert.match(
   "已收尾态要有自己的 tooltip，别复用「已开启 worktree」",
 );
 assert.match(cardRows, /style=\{taskWorktreeTagStyle\(worktreeTagState\)\}/, "标题条应保留 worktree badge");
-// 失效时给的是「重建」而不是「执行」：执行必然失败（cwd 就是那个不存在的目录）。
+// 已收尾**不给重建入口**（2026-10-06 用户要求）：重建键原本只在 worktree_missing
+// （= 目录已经不在）时出现，而目录不在就等于已收尾 —— 收完尾的任务没有树可执行、
+// 也没有树可拆，「点重建恢复后再执行」是一句兑现不了的承诺。
+// 那个局面该给的是「完成」（canComplete 的反面判据）。
+assert.doesNotMatch(
+  cardRows,
+  /TaskRebuildWorktreeIcon/,
+  "已收尾的卡片不该再出现重建 worktree 的黄色循环键",
+);
+// 判据必须是一条能整条求值的表达式 —— canComplete 要拿 showAdvance 当反面判据，
+// 所以不能写成 JSX 里的 `showAdvance && !worktreeMissing`。
 assert.match(
   cardRows,
-  /worktreeMissing \? \([\s\S]*?onMove\(task, "rebuild-worktree"\)/,
-  "失效卡片要提供重建入口",
+  /const showAdvance = [^;]*&& canAdvanceCard\(task\);/,
+  "showAdvance 必须是一条能整条求值的表达式",
+);
+// 完成 = 推进键给不出来时的出口（2026-10-06 用户实测：待审核的任务一个键都没有）。
+// 判据是 showAdvance 的反面，两条例外：正在跑、收尾流程在跑且收尾键可用。
+assert.match(
+  cardRows,
+  /const canComplete = !terminal && !stageRunning && !showAdvance && !\(finishActive && canFinishWorktree\);/,
+  "「完成」必须兜住 showAdvance 给不出来的一切局面，否则任务在界面上没有出路",
 );
 assert.match(
   cardRows,
-  /showAdvance && !worktreeMissing/,
-  "失效时不该同时给一个注定失败的「立即执行」",
+  /const worktreeMissing = worktreeEnabled && task\.worktree_missing === true;/,
+  "worktreeMissing 仍是 canFinishWorktree / 徽标档位的判据",
 );
 // 看板仍要渲染正文（可展开），工作台不传 children —— 那一段因此只存在于看板一侧
 assert.match(

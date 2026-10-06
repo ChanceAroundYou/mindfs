@@ -502,6 +502,41 @@ func (s *TaskStore) ClearWorktreeRefs(ctx context.Context, taskID string) error 
 	return s.setWorktreeRefsKeepBuilt(ctx, taskID, "", "")
 }
 
+// DeleteTask 彻底删掉一张任务卡：tasks 行 + 它名下的 stage_runs 和 task_events。
+//
+// 只删卡片本身 —— worktree 目录、分支、会话都不是这张卡的一部分，用户要的是
+// 「别再堆在板上」，不是「把活删掉」。
+//
+// 三张表必须在一个事务里一起消失：留孤儿 stage_runs / events 会让它们被
+// ListStageRuns 之类的查询按 task_id 捞出来，而 tasks 行已经没了 —— 界面上
+// 是一堆没有主人的执行记录。
+//
+// 先 GetTask 是为了沿用「任务不存在」那套错误语义（sql.ErrNoRows），
+// 不让一个不存在的 id 静默返回成功。
+func (s *TaskStore) DeleteTask(ctx context.Context, id string) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return errors.New("task id required")
+	}
+	if _, err := s.GetTask(ctx, id); err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, table := range []string{"stage_runs", "task_events"} {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM `+table+` WHERE task_id = ?`, id); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM tasks WHERE id = ?`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // setWorktreeRefsKeepBuilt 清归属但保留 worktree_built。
 //
 // 之所以不直接复用 setWorktreeRefs：那个方法的 built 参数是给**建树**用的，

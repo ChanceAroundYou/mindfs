@@ -198,6 +198,31 @@ export function TaskSessionErrorIcon() {
   );
 }
 
+/**
+ * 取消任务：圆圈加一道斜杠（作废符）。
+ *
+ * 与「删除」的垃圾桶刻意分开。取消只改状态 —— 卡片还在板上、还能翻回去看；
+ * 删除才把卡片拿走。两个动作语义完全不同，以前共用一个垃圾桶图标，
+ * 点之前根本分不清点下去会发生什么。
+ */
+export function TaskCancelIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.2"
+      strokeLinecap="round"
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="12" r="9" />
+      <path d="M5.6 5.6 18.4 18.4" />
+    </svg>
+  );
+}
+
 export function DeleteIcon() {
   return (
     <svg

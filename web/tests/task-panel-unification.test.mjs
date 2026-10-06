@@ -520,16 +520,25 @@ assert.match(
 //    任务，卡片上仍要能调整状态。曾经整排操作区都包在 !taskTerminal 里，
 //    于是「已结束但状态不对」的任务连删除都点不到，只能干看着。
 //    标题行/操作行已抽进 TaskCardRows（看板和工作台共用），契约跟着文件走。
+//
+//    2026-10-06 改了**出口的形状**，意图不变：终态任务现在给的是「删除」而不是
+//    「取消」—— 取消只改状态、卡片照旧留在板上，终态卡永远清不掉。所以那条
+//    「终态也得能收拾」的断言换成了钉删除键，而不是删掉换绿灯。
 const cardRows = read("src/components/TaskCardRows.tsx");
 assert.match(
   cardRows,
-  /\{!terminal \? \(\s*<>[\s\S]*?showAdvance[\s\S]*?canComplete[\s\S]*?<\/>\s*\) : null\}/,
-  "only run-now / complete are gated on taskTerminal",
+  /\{!terminal \? \(\s*<>[\s\S]*?showAdvance[\s\S]*?canComplete[\s\S]*?onMove\(task, "cancel"\)[\s\S]*?<\/>\s*\) : \(\s*<button[\s\S]{0,400}?onMove\(task, "delete-task"\)/,
+  "terminal tasks must still get a cleanup key — delete — while run/complete/advance/cancel stay withheld",
 );
 assert.match(
   cardRows,
-  /onMove\(task, "cancel"\)[\s\S]{0,220}?<\/div>/,
-  "the delete button must live OUTSIDE the !terminal block",
+  /onMove\(task, "delete-task"\)[\s\S]{0,220}?<\/button>\s*\)\}/,
+  "the delete key belongs to the terminal branch, not to the whole action row",
+);
+assert.doesNotMatch(
+  cardRows,
+  /onMove\(task, "cancel"\)[\s\S]{0,60}?<DeleteIcon \/>/,
+  "取消 must not wear the trash can — it deletes nothing",
 );
 assert.doesNotMatch(
   boardView,

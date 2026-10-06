@@ -2390,7 +2390,8 @@ func (m *Manager) loadExchangeAuxWindow(key string, seqSet map[int]bool) (map[in
 	}
 	items := make(map[int][]ExchangeAux)
 	for _, entry := range entries {
-		compacted, ok := CompactExchangeAux(entry)
+		// 窗口专用轻压缩：edit/read/execute 的 content 也清空，展开时懒加载。
+		compacted, ok := CompactExchangeAuxLight(entry)
 		if !ok {
 			continue
 		}

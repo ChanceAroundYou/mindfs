@@ -37,7 +37,7 @@ export type KanbanStageColumn = {
 /** 任务会话报错弹窗内容。App 持有该状态（别处也会打开它），类型放这里共用。 */
 export type TaskSessionErrorDialog = { title: string; message: string; details: string[] };
 
-type MoveKanbanAction = "next" | "run-now" | "pause" | "resume" | "complete" | "cancel" | "rebuild-worktree" | "finish-worktree";
+type MoveKanbanAction = "next" | "run-now" | "pause" | "resume" | "complete" | "cancel" | "delete-task" | "rebuild-worktree" | "finish-worktree";
 
 /**
  * 任务面板：无项目时是跨项目工作台（WorkspaceBoard），有项目时是项目内四块看板。

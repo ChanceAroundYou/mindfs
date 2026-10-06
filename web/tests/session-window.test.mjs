@@ -802,9 +802,11 @@ assert.ok(zhSrc.includes("error.session.listLoadFailed"), "zh locale key missing
 assert.ok(enSrc.includes("error.session.listLoadFailed"), "en locale key missing");
 
 // ── 聊天窗口尺寸：单一常量，杜绝散落 magic number ────────────────────────
+// 2026-10-07：20 → 8。首屏载荷的 87% 是 exchange_aux（工具卡），窗口缩小直接砍
+// 「打开会话」的载荷；代价是上翻同样历史要多几次 loadMore，而打开会话是高频路径。
 assert.match(
   sessionSrc,
-  /export const SESSION_WINDOW_SIZE = 20;/,
+  /export const SESSION_WINDOW_SIZE = 8;/,
   "shared chat window size constant missing",
 );
 assert.match(viewerSrc, /latest:\s*SESSION_WINDOW_SIZE/, "viewer init fetch must use the constant");

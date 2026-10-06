@@ -158,6 +158,7 @@ import { fetchCandidates, type CandidateItem } from "./services/candidates";
 import {
   beginTaskFinishWorktree,
   createTask,
+  deleteTask,
   deleteTaskTemplate,
   // FinishWorktreeConflict 是 class 不是 type：下面要用 instanceof 分流
   // （冲突要列文件清单，其它失败只报一句）。
@@ -771,7 +772,7 @@ export function App({ onGoHome }: AppProps) {
 
 	  // 跨项目工作台状态与逻辑见 kanbanTaskPanel 定义前（workspaceOpen 等）
 
-  const handleMoveKanbanTask = useCallback(async (task: KanbanTask, action: "next" | "run-now" | "pause" | "resume" | "complete" | "cancel" | "rebuild-worktree" | "finish-worktree") => {
+  const handleMoveKanbanTask = useCallback(async (task: KanbanTask, action: "next" | "run-now" | "pause" | "resume" | "complete" | "cancel" | "delete-task" | "rebuild-worktree" | "finish-worktree") => {
     const rootId = task.root_id || currentRootIdRef.current;
     if (!rootId) return;
     let reason = "";
@@ -784,6 +785,21 @@ export function App({ onGoHome }: AppProps) {
     }
     const nodeId = getNodeIdForRoot(rootId);
     try {
+      // 删除任务卡：只删卡片，worktree / 分支 / 会话都不动 —— 所以它跟「取消」
+      // 不是一回事（那个只改状态，卡片还在）。不可逆，先弹窗确认。
+      // 删完卡片就从板上消失了，applyTaskDetails 那套「换掉这张卡的内容」帮不上忙，
+      // 得让板子重拉一次（服务端还会广播 task.deleted，别的客户端也同步）。
+      if (action === "delete-task") {
+        const ok = await confirmDialog({
+          message: t("task.deleteTaskConfirm"),
+          confirmLabel: t("common.delete"),
+          danger: true,
+        });
+        if (!ok) return;
+        await deleteTask(rootId, task.id, nodeId);
+        refreshWorkspaceBoard();
+        return;
+      }
       if (action === "finish-worktree") {
         // 收尾是不可逆的：合回主干 + 拆目录 + 删分支 + 搬会话，没有撤销。
         // 而它就长在执行键旁边，位置一撞就点得到 —— 确认弹窗是唯一的闸门。
@@ -9681,9 +9697,6 @@ export function App({ onGoHome }: AppProps) {
               sendShortcut={sendShortcut}
               onRequestFileContext={handleRequestFileContext}
               onClearFileContext={handleClearFileContext}
-              onToggleLeftSidebar={() => setIsLeftOpen((v) => !v)}
-              onToggleRightSidebar={() => setIsRightOpen((v) => !v)}
-              sidebarsSwapped={sidebarsSwapped}
               onSessionClick={() => {
               const rootID = currentRootIdRef.current;
               // 直接用 canOpenSessionDrawer：它已经把「会话是否真的在主区」算全了。

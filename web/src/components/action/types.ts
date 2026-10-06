@@ -92,7 +92,4 @@ export type ActionBarProps = {
   onRequestFileContext?: () => void;
   onClearFileContext?: () => void;
   onSessionClick?: () => void;
-  onToggleLeftSidebar?: () => void;
-  onToggleRightSidebar?: () => void;
-  sidebarsSwapped?: boolean;
 };

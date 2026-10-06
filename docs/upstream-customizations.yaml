@@ -1174,3 +1174,173 @@ groups:
       - web/src/components/Login.tsx
     tests:
       - web/tests/no-system-dialogs.test.mjs
+
+  # ── 看板：任务卡的按钮语义 ──────────────────────────────────────
+  - id: G-AP
+    title: worktree 收尾按钮重做（四分支分流 + 幂等 + 真实状态）
+    kind: fix
+    symptom: |
+      收尾按钮一直转、点不动、也结束不了：agent 那半已经合完、只差机械清场时，
+      后端无条件调 BeginFinishWorktree 撞「该任务已在收尾流程中」409，前端把按钮换成转圈，
+      用户唯一的出路被藏起来。worktree 目录已被删（wt-finish cleanup / 手工 rm）的卡片
+      仍显示绿色「已开启 worktree」，界面谎称「有树」。
+    why: |
+      三条判据（用户 2026-10-05 拍板）：① 按钮给法只看 worktree 的真实状态
+      （create_worktree 且目录存在），与任务状态无关；② 点击行为四分支且全部幂等
+      （会话在回复→200 session_running / 分支已合进主干→当场机械清场 / 已有收尾段→重跑 /
+      其余→追加收尾段）；③ 徽标以「目录是否存在」为金标准。
+      会话运行状态是金标准（不是 task.Status）—— 任务可以长时间停在 running 却早就没 agent 了，
+      旧判据下那种任务永远收不了尾。探针由 api 层装配时挂上，没装配时回落旧状态判据。
+    files:
+      - server/internal/kanban/service.go
+      - server/internal/kanban/worktree_finish.go
+      - server/internal/gitview/worktree_finish.go
+      - server/internal/api/http_tasks.go
+      - server/internal/api/http_tasks_finish_teardown.go
+      - server/app/workspace.go
+      - web/src/App.tsx
+      - web/src/app/taskIcons.tsx
+      - web/src/components/TaskCardRows.tsx
+      - web/src/components/TaskDetailPanel.tsx
+      - web/src/services/tasks.ts
+      - web/src/i18n/locales/zh-CN.ts
+      - web/src/i18n/locales/en-US.ts
+    tests:
+      - server/internal/kanban/worktree_finish_dispatch_test.go
+      - server/internal/api/http_tasks_begin_finish_test.go
+      - web/tests/worktree-badge.test.mjs
+      - web/tests/worktree-finish.test.mjs
+      - web/tests/task-button-gates.test.mjs
+      - web/tests/task-board-view.test.mjs
+    anchors:
+      - server/internal/kanban/worktree_finish.go:func (s *Service) FinishTaskWorktree
+      - server/internal/api/http_tasks.go:func (h *HTTPHandler) handleKanbanTaskBeginFinish
+      - server/internal/api/http_tasks_finish_teardown.go:task.finish_teardown
+      - server/app/workspace.go:WireSessionRunningProbe
+      - 'web/src/i18n/locales/zh-CN.ts:"task.worktreeFinishedLabel": "已收尾"'
+
+  - id: G-AQ
+    title: 任务卡的三把键：完成兜底 / 取消 / 删除
+    kind: feature
+    symptom: |
+      ① 已收尾的卡片挂着一个点不动的黄色循环键（重建 worktree）—— 重建只在目录已不在时出现，
+      而目录不在就等于已收尾，收完尾的任务既没有树可执行也没有树可拆，「重建恢复后再执行」
+      是一句兑现不了的承诺。② 任务卡在待审核、界面上没有任何出路：指针停在收尾段、
+      那一段卡在待审核，而 worktree 已被拆 —— 收尾键给不出来（没有目录可拆）、
+      执行键给不出来（收尾中不推进），任务永久卡住。③ 终态卡片只增不减，看板翻历史
+      翻到满屏也清不掉一张。④ 取消键戴着垃圾桶，而它删不掉任何东西。
+    why: |
+      三把键的语义（用户 2026-10-06 拍板）：
+      ① 完成 = 推进键给不出来时的出口（canComplete = !terminal && !stageRunning && !showAdvance
+         && !(finishActive && canFinishWorktree)）。**不变式：非终态、非运行中的任务上，
+         推进键与完成键至少有一个**；卡片与详情面板同一套口径。
+      ② 取消只改状态，卡片留在终态列里还能翻回去看；图标是作废符（TaskCancelIcon），
+         刻意不用垃圾桶。
+      ③ 删除只给终态任务，且只删卡片本身（一个事务里删 tasks + stage_runs + task_events）；
+         worktree / 分支 / 会话都不动 —— 那是「收尾」的职责。正在跑的任务拒绝删除，
+         否则删了卡片就没人能停它。删完广播 task.deleted。
+      重建入口从 UI 移除，但服务端端点与前端 rebuildTaskWorktree 保留（脚本 / CLI 用）。
+    files:
+      - server/internal/kanban/service.go
+      - server/internal/kanban/task_store.go
+      - server/internal/api/http.go
+      - server/internal/api/http_tasks.go
+      - web/src/App.tsx
+      - web/src/app/taskIcons.tsx
+      - web/src/components/TaskBoardView.tsx
+      - web/src/components/TaskCardRows.tsx
+      - web/src/components/TaskDetailPanel.tsx
+      - web/src/services/tasks.ts
+      - web/src/i18n/locales/zh-CN.ts
+      - web/src/i18n/locales/en-US.ts
+    tests:
+      - server/internal/kanban/task_delete_test.go
+      - web/tests/task-button-gates.test.mjs
+      - web/tests/task-board-view.test.mjs
+      - web/tests/task-panel-unification.test.mjs
+      - web/tests/task-stage-panel.test.mjs
+    anchors:
+      - server/internal/kanban/service.go:func (s *Service) DeleteTask(ctx context.Context, in MoveInput)
+      - server/internal/kanban/task_store.go:func (s *TaskStore) DeleteTask(ctx context.Context, id string)
+      - server/internal/api/http.go:r.Delete("/api/tasks/{id}"
+      - web/src/services/tasks.ts:export async function deleteTask
+      - web/src/app/taskIcons.tsx:export function TaskCancelIcon
+      - web/src/components/TaskBoardView.tsx:"delete-task"
+      - 'web/src/i18n/locales/zh-CN.ts:"task.deleteTask": "删除任务卡片"'
+      - 'web/src/i18n/locales/zh-CN.ts:"task.cancelTask": "取消任务"'
+  - id: G-AS
+    title: ACP 提问：dsh 的 ask_user_question 走 elicitation
+    kind: fix
+    symptom: |
+      在 dsh 会话里让 agent 提问，工具直接返回
+      "Error: the ACP client does not support form elicitation"，提问卡根本不出现，
+      用户没有任何途径回答；模型只拿到一条失败的工具结果，继续瞎猜。
+    why: |
+      根因三条缺一不可：① Process.Initialize 只广告 Terminal: false，没有 elicitation.form
+      → openma 适配器的 clientElicitationForm = false → installAcpUserQuestionProvider
+      直接抛 CLIENT_UNSUPPORTED；② mindfsClient 没有 UnstableCreateElicitation，
+      就算广告了能力也是 -32601 Method not found；③ (*session).AnswerQuestion 是硬编码
+      "ask user question is not supported by acp sessions"，答案无处可去。
+      上游 ACP 客户端没有 elicitation 通路，这三条都是本 fork 补的，合上游会被整体覆盖。
+      设计要点：只对 agentName == "dsh" 广告 elicitation.form；SDK 的
+      UnstableCreateElicitationForm 不带 sessionId/toolCallId（fork codegen 丢了），
+      靠题目 id + 文本逐字相同关联，等 2s 窗口覆盖「elicitation 先到、tool_call 通知后到」
+      的 SDK 队列时序；刻意不做「只剩一张卡就绑它」的兜底（并发提问时会答错题）；
+      tool_call 与 tool_call_update 两个分支都要重标 kind=ask_user + meta.questions
+      （否则 mergeBufferedToolCall 会把 kind 覆盖回 other）；答案编码对齐 openma 的
+      answerFromElicitation（question_<i> = option_<j> / question_<i>_custom，
+      单选命中选项时不得再带 _custom）；取消与关闭按 sessionKey 回 Decline，
+      投递恰好一次由 elicitationMu 保证。另有一个静默坑：rawInput 是工具参数的蛇形
+      multi_select，_meta 是 seam 对象的驼峰 multiSelect，读错一个字母会让多选答案
+      静默编错（提问照常出现）。
+    files:
+      - server/internal/agent/acp/elicitation.go
+      - server/internal/agent/acp/process.go
+      - server/internal/agent/acp/session.go
+    tests:
+      - server/internal/agent/acp/elicitation_test.go
+      - server/internal/agent/acp/session_test.go
+    anchors:
+      - server/internal/agent/acp/elicitation.go:dshUserQuestionsMetaKey = "dsh.userQuestions"
+      - server/internal/agent/acp/elicitation.go:func (p *Process) registerPendingAskUser
+      - server/internal/agent/acp/elicitation.go:func (p *Process) bindElicitation
+      - server/internal/agent/acp/elicitation.go:func (p *Process) matchAndBindPendingAskUser
+      - server/internal/agent/acp/elicitation.go:func (p *Process) AnswerElicitation
+      - server/internal/agent/acp/elicitation.go:func elicitationContent
+      - server/internal/agent/acp/elicitation.go:func acpAskUserToolCall
+      - server/internal/agent/acp/process.go:func (c *mindfsClient) UnstableCreateElicitation
+      - 'server/internal/agent/acp/process.go:CUSTOM(G-AS)'
+      - 'server/internal/agent/acp/session.go:CUSTOM(G-AS)'
+      - server/internal/agent/acp/process.go:func acpClientCapabilities(agentName string) acp.ClientCapabilities
+      - server/internal/agent/acp/session.go:func (s *session) AnswerQuestion
+      - server/internal/agent/acp/session_test.go:func TestConvertEventRetagsACPAskUserToolCard
+      - server/internal/agent/acp/elicitation_test.go:func TestElicitationContentMapsLabelsToOptionIndexes
+      - server/internal/agent/acp/elicitation_test.go:func TestAskUserRawInputAndElicitationMetaAgree
+      - server/internal/agent/acp/elicitation_test.go:func TestElicitationWireShape
+      - server/internal/agent/acp/elicitation_test.go:func TestACPClientCapabilitiesOnlyAdvertisesElicitationForDsh
+
+  - id: G-AR
+    title: 移动端侧栏切换按钮移入顶栏
+    kind: fix
+    symptom: |
+      移动端进看板 / 工作台后开不出侧栏：两个切换按钮原本只在 ActionBar 的
+      hideComposer 分支里，而上游把那个分支改成 return null（那两个界面本就不该有输入区），
+      按钮随之消失，进了看板就再也呼不出左右侧栏。另一形态：侧栏滑入时盖住 44px 顶栏，
+      按钮点不到 —— 侧栏 top 原本只算 safe-area。
+    why: |
+      按钮从 ActionBar（footer）搬进 AppShell 新增的 44px 全局顶栏：按钮位置、
+      侧栏 top 偏移（必须同步加 --mindfs-mobile-header-height）、ActionBar 的
+      hideComposer 分支共享同一条「按钮在哪」的判断，合上游时要么全留要么全弃。
+      上游没有这条全局顶栏，两个移动按钮是 ActionBar 私有的。
+    files:
+      - web/src/layout/AppShell.tsx
+      - web/src/components/ActionBar.tsx
+      - web/src/components/action/types.ts
+      - web/src/App.tsx
+    tests:
+      - web/tests/task-board-view.test.mjs
+    anchors:
+      - 'web/src/layout/AppShell.tsx:"--mindfs-mobile-header-height"'
+      - web/src/layout/AppShell.tsx:toggleRail("left")
+      - web/src/components/ActionBar.tsx:if (hideComposer)
+      - 'web/tests/task-board-view.test.mjs:zIndex: 2100'

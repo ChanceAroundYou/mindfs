@@ -207,7 +207,7 @@ func TestConvertEventMapsACPPlanToTodoUpdate(t *testing.T) {
 				},
 			},
 		},
-	})
+	}, nil)
 	if event.Type != types.EventTypeTodoUpdate {
 		t.Fatalf("event.Type = %q, want %q", event.Type, types.EventTypeTodoUpdate)
 	}
@@ -241,7 +241,7 @@ func TestConvertEventPreservesACPHumanReadableToolTitle(t *testing.T) {
 				Status:     acpsdk.ToolCallStatusInProgress,
 			},
 		},
-	})
+	}, nil)
 	toolCall, ok := event.Data.(types.ToolCall)
 	if !ok {
 		t.Fatalf("event.Data = %T, want ToolCall", event.Data)
@@ -291,7 +291,7 @@ func TestConvertEventMapsACPPlanUpdateMarkdownAndFileToPlanUpdate(t *testing.T) 
 				Type:      UpdateTypePlan,
 				SessionID: "session-1",
 				Raw:       tc.raw,
-			})
+			}, nil)
 			if event.Type != types.EventTypePlanUpdate {
 				t.Fatalf("event.Type = %q, want %q", event.Type, types.EventTypePlanUpdate)
 			}
@@ -322,7 +322,7 @@ func TestConvertEventMapsACPPlanUpdateItemsToTodoUpdate(t *testing.T) {
 				},
 			},
 		},
-	})
+	}, nil)
 	if event.Type != types.EventTypeTodoUpdate {
 		t.Fatalf("event.Type = %q, want %q", event.Type, types.EventTypeTodoUpdate)
 	}
@@ -386,9 +386,157 @@ func TestConvertEventSuppressesACPTodoWriteToolCards(t *testing.T) {
 				Type:      tc.typ,
 				SessionID: "session-1",
 				Raw:       tc.raw,
-			})
+			}, nil)
 			if event.Type != "" {
 				t.Fatalf("event = %#v, want suppressed empty event", event)
+			}
+		})
+	}
+}
+
+// acpAskUserRawInput 构造 dsh ask_user_question 的工具参数，形状与 openma 适配器
+// classifyToolCall 产出的 rawInput 一致（snake_case 的 multi_select）。
+func acpAskUserRawInput(questions ...map[string]any) map[string]any {
+	// JSON 解码出来的数组是 []any，不是 []map[string]any —— 与线上形状保持一致。
+	list := make([]any, 0, len(questions))
+	for _, question := range questions {
+		list = append(list, question)
+	}
+	return map[string]any{"questions": list}
+}
+
+func TestConvertEventRetagsACPAskUserToolCard(t *testing.T) {
+	raw := acpAskUserRawInput(map[string]any{
+		"id":           "confirm",
+		"question":     "继续吗？",
+		"header":       "确认",
+		"multi_select": false,
+		"options": []any{
+			map[string]any{"label": "继续", "description": "按当前方案执行"},
+			map[string]any{"label": "停止"},
+		},
+	})
+
+	var gotCallID string
+	var gotQuestions []elicitationQuestion
+	event := convertEvent(SessionUpdate{
+		Type:      UpdateTypeToolCall,
+		SessionID: "session-1",
+		Raw: acpsdk.SessionUpdate{
+			ToolCall: &acpsdk.SessionUpdateToolCall{
+				ToolCallId: "call-ask-1",
+				Title:      "ask_user_question",
+				Kind:       acpsdk.ToolKindOther,
+				Status:     acpsdk.ToolCallStatusInProgress,
+				RawInput:   raw,
+			},
+		},
+	}, func(callID string, questions []elicitationQuestion) {
+		gotCallID = callID
+		gotQuestions = questions
+	})
+
+	toolCall, ok := event.Data.(types.ToolCall)
+	if !ok {
+		t.Fatalf("event.Data = %T, want ToolCall", event.Data)
+	}
+	if toolCall.Kind != types.ToolKindAskUser {
+		t.Fatalf("kind = %q, want %q", toolCall.Kind, types.ToolKindAskUser)
+	}
+	if toolCall.CallID != "call-ask-1" {
+		t.Fatalf("callID = %q, want %q", toolCall.CallID, "call-ask-1")
+	}
+	items, ok := toolCall.Meta["questions"].([]types.AskUserQuestionItem)
+	if !ok || len(items) != 1 {
+		t.Fatalf("meta.questions = %#v, want one item", toolCall.Meta["questions"])
+	}
+	if items[0].Question != "继续吗？" || items[0].Header != "确认" || !items[0].MultiSelect == false {
+		t.Fatalf("question = %#v", items[0])
+	}
+	if len(items[0].Options) != 2 || items[0].Options[0].Label != "继续" || items[0].Options[1].Label != "停止" {
+		t.Fatalf("options = %#v", items[0].Options)
+	}
+	if gotCallID != "call-ask-1" || len(gotQuestions) != 1 {
+		t.Fatalf("onAskUser = (%q, %#v), want (call-ask-1, one question)", gotCallID, gotQuestions)
+	}
+	if gotQuestions[0].ID != "confirm" || gotQuestions[0].MultiSelect {
+		t.Fatalf("registered question = %#v", gotQuestions[0])
+	}
+	if len(gotQuestions[0].Options) != 2 || gotQuestions[0].Options[0] != "继续" {
+		t.Fatalf("registered options = %#v", gotQuestions[0].Options)
+	}
+}
+
+func TestConvertEventKeepsACPAskUserKindOnToolUpdate(t *testing.T) {
+	raw := acpAskUserRawInput(map[string]any{
+		"id":       "mode",
+		"question": "选哪种模式？",
+		"options":  []any{map[string]any{"label": "快速"}, map[string]any{"label": "完整"}},
+	})
+
+	var askUserCalls int
+	event := convertEvent(SessionUpdate{
+		Type:      UpdateTypeToolUpdate,
+		SessionID: "session-1",
+		Raw: acpsdk.SessionUpdate{
+			ToolCallUpdate: &acpsdk.SessionToolCallUpdate{
+				ToolCallId: "call-ask-1",
+				Title:      acpsdk.Ptr("ask_user_question"),
+				Kind:       acpsdk.Ptr(acpsdk.ToolKindOther),
+				Status:     acpsdk.Ptr(acpsdk.ToolCallStatusCompleted),
+				RawInput:   raw,
+			},
+		},
+	}, func(string, []elicitationQuestion) { askUserCalls++ })
+
+	toolCall, ok := event.Data.(types.ToolCall)
+	if !ok {
+		t.Fatalf("event.Data = %T, want ToolCall", event.Data)
+	}
+	if toolCall.Kind != types.ToolKindAskUser {
+		t.Fatalf("kind = %q, want %q（update 不能把 ask_user 覆盖回 other）", toolCall.Kind, types.ToolKindAskUser)
+	}
+	if toolCall.Status != "complete" {
+		t.Fatalf("status = %q, want complete", toolCall.Status)
+	}
+	if askUserCalls != 1 {
+		t.Fatalf("onAskUser calls = %d, want 1", askUserCalls)
+	}
+}
+
+func TestConvertEventIgnoresNonAskUserToolCards(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		raw  map[string]any
+	}{
+		{name: "no questions", raw: map[string]any{"command": "ls"}},
+		{name: "empty questions", raw: map[string]any{"questions": []any{}}},
+		{name: "question without text", raw: map[string]any{"questions": []any{map[string]any{"id": "x"}}}},
+		{name: "questions not a list", raw: map[string]any{"questions": "nope"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			event := convertEvent(SessionUpdate{
+				Type:      UpdateTypeToolCall,
+				SessionID: "session-1",
+				Raw: acpsdk.SessionUpdate{
+					ToolCall: &acpsdk.SessionUpdateToolCall{
+						ToolCallId: "call-1",
+						Title:      "bash",
+						Kind:       acpsdk.ToolKindExecute,
+						Status:     acpsdk.ToolCallStatusInProgress,
+						RawInput:   tc.raw,
+					},
+				},
+			}, nil)
+			toolCall, ok := event.Data.(types.ToolCall)
+			if !ok {
+				t.Fatalf("event.Data = %T, want ToolCall", event.Data)
+			}
+			if toolCall.Kind == types.ToolKindAskUser {
+				t.Fatalf("kind = ask_user, want untouched for %#v", tc.raw)
+			}
+			if toolCall.Meta != nil {
+				t.Fatalf("meta = %#v, want nil", toolCall.Meta)
 			}
 		})
 	}

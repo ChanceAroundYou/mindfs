@@ -1043,6 +1043,34 @@ func (s *Service) Status(ctx context.Context, rootID, taskID string) (TaskDetail
 	return s.GetTask(ctx, rootID, taskID)
 }
 
+// DeleteTask 删掉一张任务卡 —— 只有卡片，worktree / 分支 / 会话一律不碰。
+//
+// 为什么要有它：看板上的卡只会累积。终态任务留着是为了看历史，看完得能清掉，
+// 而「取消」只把状态改成 cancelled，卡片照旧留在板上。
+//
+// **只在任务没在跑时允许**。执行体还活着的话，它随后对那张行的写入会落空
+// （UPDATE 打到不存在的行上，静默 no-op），或者把卡又插回来 —— 与「删掉」相反。
+// 判据复用收尾那条 assertNotRunning（会话在不在回复是金标准，见 worktree_finish.go），
+// 不另造一套。taskRun 那道锁也要查：已经排进执行队列、还没落 running 状态的窗口里，
+// assertNotRunning 看不出东西来。
+func (s *Service) DeleteTask(ctx context.Context, in MoveInput) error {
+	store, task, err := s.loadForMove(ctx, in.RootID, in.TaskID)
+	if err != nil {
+		return err
+	}
+	if err := s.assertNotRunning(ctx, store, task); err != nil {
+		return err
+	}
+	key := strings.TrimSpace(in.RootID) + "\x00" + strings.TrimSpace(in.TaskID)
+	s.mu.Lock()
+	executing := s.taskRun[key]
+	s.mu.Unlock()
+	if executing {
+		return errors.New("任务正在执行中，先停止再删除")
+	}
+	return store.DeleteTask(ctx, task.ID)
+}
+
 func (s *Service) RunTask(rootID, taskID string) error {
 	if s == nil || s.Runner == nil {
 		return nil

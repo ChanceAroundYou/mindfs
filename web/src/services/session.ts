@@ -259,8 +259,13 @@ export type SyncSessionResult = {
  * SessionViewer 的 init `latest:`、首帧种子截断、loadMore 步长、targetSeq 取窗步长，
  * 以及 App 的 restoreActiveSession 都引此常量，避免散落的 magic number。
  * 服务端 SessionWindowMeta 的默认值/上限（50/200）是安全网，客户端始终显式传值。
+ *
+ * 2026-10-07：20 → 8。首屏载荷的 87% 是 exchange_aux（工具卡），而工具卡按 seq
+ * 走、最重的几个 seq 决定载荷大小 —— 窗口从 20 缩到 8 能把「打开会话」的载荷砍掉
+ * 一截（实测 515 KB → ~300 KB）。代价是上翻同样历史需要更多次 loadMore，但
+ * 打开会话是高频路径、翻历史是低频路径，这个交换划算。
  */
-export const SESSION_WINDOW_SIZE = 20;
+export const SESSION_WINDOW_SIZE = 8;
 
 /** 服务端窗口化加载的元数据（方案 B：超长会话按需加载）。 */
 export type SessionWindowMeta = {
@@ -375,6 +380,10 @@ class SessionService {
   private readonly maxConsecutiveProbeFailures = 2;
   private readonly reconnectWatchdogMs = 3000;
   private contextCache = new Map<string, { selectionKey: string }>();
+  // 窗口拉取的 in-flight 去重：打开会话时 restoreActiveSession 与 SessionViewer init
+  // 会各发一次 ?latest=20，并发时谁也拿不到对方的 ETag，两次都拉全量（实测日志里
+  // 同一秒两个 200）。这里把同参数的并发调用合并成同一个 promise。
+  private windowInflight = new Map<string, Promise<SessionWindow | null>>();
 
   constructor() {
     e2eeService.setClientId(this.clientId);
@@ -1381,16 +1390,31 @@ class SessionService {
       if (limit > 0) {
         params.set("limit", String(limit));
       }
-      const raw = await protectedJSON<any>(
-        appURL(`/api/sessions/${encodeURIComponent(sessionKey)}`, params, nodeId),
-      );
-      const session = (raw?.session as Session | any) || (raw as Session | any);
-      const meta = (raw?.window_meta || session?.window_meta) as SessionWindowMeta;
-      if (!meta) {
-        console.error("[Session] getSessionWindow: missing window_meta", raw);
-        return null;
+      // in-flight 去重：同参数的并发窗口拉取合并成一次请求。
+      // 键含 nodeId —— 同名项目跨节点是两个不同的请求，不能互相顶掉。
+      const inflightKey = `${nodeId}::${rootId}::${sessionKey}::${opts?.beforeSeq || 0}::${opts?.latest || 0}::${limit}`;
+      const existing = this.windowInflight.get(inflightKey);
+      if (existing) {
+        return existing;
       }
-      return { session, meta, raw };
+      const promise = (async (): Promise<SessionWindow | null> => {
+        const raw = await protectedJSON<any>(
+          appURL(`/api/sessions/${encodeURIComponent(sessionKey)}`, params, nodeId),
+        );
+        const session = (raw?.session as Session | any) || (raw as Session | any);
+        const meta = (raw?.window_meta || session?.window_meta) as SessionWindowMeta;
+        if (!meta) {
+          console.error("[Session] getSessionWindow: missing window_meta", raw);
+          return null;
+        }
+        return { session, meta, raw };
+      })();
+      this.windowInflight.set(inflightKey, promise);
+      try {
+        return await promise;
+      } finally {
+        this.windowInflight.delete(inflightKey);
+      }
     } catch (err) {
       console.error("[Session] Failed to get session window:", err);
       return null;

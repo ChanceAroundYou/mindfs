@@ -158,6 +158,10 @@
 | G-AM | 插件注册表与视图目录 | 功能 | 见 §3.1 | 主视图记忆依赖它 |
 | G-AN | 列表投影瘦身与条件请求（ETag / 304） | 性能 | 见 §3.1 | 列表响应省略恒空键 + ETag/304；客户端先判 304 再判 `ok` |
 | G-AO | 自动重载观测 | 架构 | 见 §3.1 | 只记录不干预：`sessionStorage` 计数 + 堆峰值 + 本轮首错 |
+| G-AP | worktree 收尾按钮重做（四分支分流 + 幂等 + 真实状态） | 修复 | 见 §3.1 | 收尾键一直可点；目录消失 = 已收尾 |
+| G-AQ | 任务卡的三把键：完成兜底 / 取消 / 删除 | 功能 | 见 §3.1 | 待审核必有出路；取消只改状态；删除只删卡片 |
+| G-AR | 移动端侧栏切换按钮移入顶栏 | 修复 | 见 §3.1 | 44px 全局顶栏 + 侧栏 `top` 同步偏移 |
+| G-AS | ACP 提问（dsh `ask_user_question` 走 elicitation） | 修复 | 见 §3.1 | 只对 dsh 广告 elicitation.form；题目 id+文本关联；答案编码成 `question_<i>` |
 
 > **G-D 已并入 G-F，G-M 已并入 G-AI**（改动面完全重合、无独立测试可守，单列只会制造空组）。
 
@@ -473,6 +477,13 @@
 - 边界：**权威在主节点、但按账户一份**（两个维度各管一件事）。会话键是 `rootID::sessionKey`，**不带 node id**；
   会话库的 `sessions.pinned_at` 已退役（只留列，不再读写），刻意不与置顶表做并集。
   **不做跨设备实时**（用户 2026-10-04 定），只在切换项目等导航动作时刷新一次。
+- **刷新的 in-flight 去重（2026-10-07）**：可见症状是**每次切项目都打两个 `GET /api/pins`**
+  （20 分钟实测 30 次）。根因是两个 effect 同时触发 —— `App.tsx` 依赖 `currentRootId`、
+  `SessionList.tsx` 依赖 `selectedRootId/selectedNodeId`，切项目时两者在同一次提交里都变。
+  `refreshPinsFromServer` 用模块级 `refreshPinsInFlight` 把并发调用合并成一个 Promise
+  （`finally` 里清空，所以结算后再调用仍会重新发 —— 去重不是缓存）。
+  必须保留的理由：这不是「少发一个请求」的微优化，它直接决定「切项目时列表闪不闪」。
+  针对性测试：`web/tests/pins-refresh-dedup.test.mjs`（并发只发一次 / 结算后能再发 / 仍走 controlPath）。
 
 ### G-Y 看板模型重做（拒绝上游 task_groups 编排体系）
 
@@ -698,6 +709,186 @@
   - `web/tests/worktree-finish.test.mjs` — 按钮给法（终态 + 收尾中都不拦截）、无转圈、`hasAgentStage` 门。
   - `web/tests/task-button-gates.test.mjs` — 收尾中收尾键仍给。
   - `web/tests/task-board-view.test.mjs` — 已收尾态 tooltip。
+
+---
+
+### G-AQ 任务卡的三把键：完成兜底 / 取消 / 删除（2026-10-06 用户三条要求）
+
+- 来源：`web/src/components/{TaskCardRows,TaskDetailPanel}.tsx`、`web/src/app/taskIcons.tsx`、
+  `web/src/services/tasks.ts`、`web/src/App.tsx`、`web/src/components/TaskBoardView.tsx`、
+  `web/src/i18n/locales/{zh-CN,en-US}.ts`、`server/internal/kanban/{service,task_store}.go`、
+  `server/internal/api/{http,http_tasks}.go`。
+- 边界：**任务卡上「非终态三键 + 终态一键」的给法与语义** —— 三件事共享同一组判据
+  （`showAdvance` / `canComplete` / `terminal`），合上游时要么全留要么全弃。
+- 可见症状（没有它会怎样）：
+  1. **已收尾的卡片挂着一个点不动的黄色循环键**：重建 worktree 只在 `worktree_missing`
+     （目录已不在）时出现，而目录不在就等于已收尾 —— 收完尾的任务既没有树可执行也没有树可拆，
+     「重建恢复后再执行」是一句兑现不了的承诺。上游给的就是那个键。
+  2. **任务卡在待审核、界面上没有任何出路**（用户 2026-10-06 实测）：指针停在收尾段上、
+     那一段卡在待审核，而 worktree 已经被拆 —— 收尾键给不出来（没有目录可拆）、
+     执行键给不出来（收尾中不推进），任务就此永久卡住。
+  3. **终态卡片只增不减**：取消改的是状态、卡片还留在终态列里；看板翻历史翻到满屏也清不掉一张。
+  4. **取消键戴着垃圾桶**：垃圾桶在这里是句谎话 —— 它删不掉任何东西。
+- 为什么必须保留：三条全是上游行为（上游的完成门控是「没有下一段才给」、没有删除端点、
+  取消用的是 `TrashIcon`），合上游时会被静默覆盖。
+- 三把键的语义（用户 2026-10-06 拍板）：
+  1. **完成 = 推进键给不出来时的出口**。`canComplete = !terminal && !stageRunning && !showAdvance
+     && !(finishActive && canFinishWorktree)`。**不变式：非终态、非运行中的任务上，
+     推进键与完成键至少有一个**。卡片（`TaskCardRows`）与详情面板（`TaskDetailPanel` 的
+     `canCompleteTask`）同一套口径 —— 两处判据不同会让同一张任务在两个界面上给出相反答案。
+  2. **取消只改状态**（`onMove(task, "cancel")`），卡片留在终态列里还能翻回去看；
+     图标是「作废符」（`TaskCancelIcon`：圆 + 斜杠），**刻意不用垃圾桶**。
+  3. **删除只给终态任务**，且只删卡片本身：`DELETE /api/tasks/{id}?root_id=` →
+     `Service.DeleteTask` → `TaskStore.DeleteTask`（一个事务里删 `tasks` + `stage_runs` + `task_events`）。
+     **worktree / 分支 / 会话都不动** —— 那是「收尾」的职责，不是「删除」的。
+     正在跑的任务拒绝删除（`assertNotRunning` + `taskRun` 在途标记），否则删了卡片就没人能停它。
+     删完广播 `task.deleted`（`AppContext.TaskDeleted`，此前已定义但从未被调用，前端处理早就写好了）。
+- **重建 worktree 的入口从 UI 移除**，但服务端 `POST /api/tasks/{id}/rebuild-worktree`
+  与前端 `rebuildTaskWorktree` **保留**（脚本 / CLI 显式调用）。移除的只是两个界面上的按钮。
+- 针对性测试：
+  - `web/tests/task-button-gates.test.mjs` — **不变式**：推进键给不出来 ⟹ 完成必须补上（逐状态 × 逐指针位置）；
+    「指针停在收尾段 + worktree 已拆 + 待审核」这个具体卡死形态必须拿到完成键。
+  - `web/tests/task-stage-panel.test.mjs` — 面板不再有重建入口；完成/删除键住在 `headerRight`；
+    `worktree_missing` 仍是收尾的判据。
+  - `web/tests/task-board-view.test.mjs` — 卡片里不再出现 `TaskRebuildWorktreeIcon`；
+    `canComplete` 是 `showAdvance` 的反面。
+  - `web/tests/task-panel-unification.test.mjs` — 取消在 `!terminal` 分支内、删除在 terminal 分支；
+    **取消不得用垃圾桶图标**。
+  - `server/internal/kanban/task_delete_test.go` — 卡片 + 从属行一起走、邻居不受影响、
+    空/不存在的 id 报错、running 与在途队列拒绝删除、标记摘掉后能删。
+
+### G-AR 移动端侧栏切换按钮移入顶栏
+
+- 来源：`web/src/layout/AppShell.tsx`、`web/src/components/ActionBar.tsx`、
+  `web/src/components/action/types.ts`、`web/src/App.tsx`、`web/tests/task-board-view.test.mjs`。
+- 边界：移动端呼出左右侧栏的两个切换按钮从 ActionBar（footer）搬进 AppShell 新增的
+  44px 全局顶栏，合为一组 —— 按钮位置、侧栏 `top` 偏移、ActionBar 的 hideComposer 分支
+  共享同一条「按钮在哪」的判断，合上游时要么全留要么全弃。
+- 可见症状（没有它会怎样）：
+  - **移动端进看板/工作台后开不出侧栏**：按钮原本只在 ActionBar 的 hideComposer 分支里，
+    上游若把该分支改成 `return null`（或删掉移动按钮），这两个界面就再也呼不出侧栏。
+  - **侧栏滑入时盖住顶栏、按钮点不到**：侧栏 `top` 原本只算 safe-area，顶栏出现后
+    必须同步加 `--mindfs-mobile-header-height`，否则 44px 顶栏被侧栏压住。
+- 为什么必须保留：上游没有这条全局顶栏，两个移动按钮是 ActionBar 私有的；合上游时
+  AppShell 的顶栏与 ActionBar 的按钮会各自被覆盖回上游形态，中间态「两边都有」或
+  「两边都没有」都不可取。
+- 针对性测试：
+  - `web/tests/task-board-view.test.mjs` — 顶栏渲染两个 toggle（`toggleRail("left")` /
+    `toggleRail("right")` + `zIndex: 2100`）；ActionBar 的 `hideComposer` 分支 `return null`。
+
+---
+
+### G-AS ACP 提问：dsh 的 `ask_user_question` 走 elicitation（2026-10-07）
+
+- 来源：`server/internal/agent/acp/{elicitation.go,process.go,session.go}`、
+  `server/internal/agent/acp/{elicitation_test.go,session_test.go}`。
+- 边界：**ACP 客户端侧的 elicitation 通路** —— 能力广告（`Initialize`）→ handler
+  （`UnstableCreateElicitation`）→ 提问登记/关联（`pendingAskUserByCallID`）→ 工具卡重标
+  （`kind=ask_user` + `meta.questions`）→ 答案编码（`question_<i>`）→ 取消/关闭回 Decline。
+  这几件事互为前提（广告了没 handler 是 `-32601`，有 handler 没广告是死代码，
+  不重标工具卡则前端不渲染提问卡、`MarkPendingAskUserAnswered` 也会以
+  「pending tool call is not ask_user」拒收答案），合上游时要么全留要么全弃。
+- 可见症状（没有它会怎样）：在 dsh 会话里让 agent 提问，工具直接返回
+  `Error: the ACP client does not support form elicitation`，**提问卡根本不出现**，
+  用户没有任何途径回答；模型只能拿到一条失败的工具结果，继续瞎猜。
+- 根因（三条缺一不可，2026-10-07 读码定位）：
+  1. `Process.Initialize` 只广告 `Terminal: false`，没有 `elicitation.form`
+     → openma 适配器 `clientElicitationForm = false`
+     → `installAcpUserQuestionProvider` 直接抛 `UserQuestionError("the ACP client does not
+     support form elicitation", "CLIENT_UNSUPPORTED")`（`bridge.js`）。
+  2. `mindfsClient` 没有 `UnstableCreateElicitation` 方法 —— 就算广告了能力，
+     SDK 的类型断言失败，回 `-32601 Method not found`。
+  3. `(*session).AnswerQuestion` 是硬编码 `errors.New("ask user question is not supported
+     by acp sessions")`，前端提交的答案无处可去。
+- 为什么必须保留：上游 ACP 客户端没有 elicitation 通路（上游只有 claude 走
+  `AskUserQuestion` 工具卡、codex 走自己的协议），这三条都是本 fork 补的；
+  合上游时 `Initialize` 的 capability 结构、`mindfsClient` 的方法集、
+  `AnswerQuestion` 的函数体都会被整体覆盖回去。
+- 设计要点（合上游后要按这些恢复，不要按上游实现重写）：
+  1. **只对 `agentName == "dsh"` 广告 `elicitation.form`**。其它 ACP agent 不广告 ——
+     广告只会让它们开始发 elicitation，而 mindfs 无法按 session 精确路由（见 3），
+     只能 decline，等于把「本来就不支持」变成「支持但总是失败」。
+  2. **`UnstableCreateElicitationForm` 不带 `sessionId`/`toolCallId`**（这个 fork 的
+     codegen 把 `schema.unstable.json` 里定义的 `sessionId` 丢了），所以关联靠
+     **题目 id + 题目文本逐字相同**（`elicitationQuestionsMatch`）。两边同源于同一次模型
+     输出，实测稳定。
+  3. **关联要等 2s 窗口**（`elicitationBindWait`）：ACP SDK 对 request 立即开 goroutine
+     处理，`session/update` 通知却走队列由另一个 goroutine 顺序处理
+     （`connection.go` 的 `receive`/`processNotifications`），所以 elicitation/create
+     **可能比对应的 `tool_call` 通知先到**。窗口内按 20ms 轮询。
+  4. **刻意不做「只剩一张卡就绑它」的兜底**：并发提问时 A 的卡已登记、B 的 elicitation
+     先到，兜底会把 B 的答案投给 A —— **答错题比答不上更糟**。窗口内等不到就回 Decline
+     （fail-safe：agent 收到「用户取消提问」）。
+  5. **`tool_call` 与 `tool_call_update` 两个分支都要重标** `kind=ask_user` +
+     `meta.questions`：`mergeBufferedToolCall` 对 `Meta` 取并集、对 `Kind` 取后者，
+     只重标一个的话 update 的 `kind=other` 会把 `ask_user` 覆盖掉，提问卡渲染完又消失。
+  6. **答案编码对齐 openma 的 `answerFromElicitation`**：有选项的题
+     `question_<i> = "option_<j>"`（j 是该 label 在 `_meta.dsh.userQuestions.questions[i]
+     .options` 里的下标），多选是数组；自由文本走 `question_<i>_custom`；
+     无选项的题 `question_<i>` 直接是字符串。**单选命中选项时不得再带 `_custom`** ——
+     适配器在 `custom` 非空且非多选时会把 `selected` 清空。
+     前端提交的键是 `q_<i>`（多选用 `", "` 连接），由 `elicitationContent` 转码。
+  7. **两个来源的字段大小写不同，别照抄**：工具卡的 `rawInput` 是**工具参数**，
+     多选是蛇形 `multi_select`；`_meta` 里的题目是 **user-questions seam 的对象**
+     （`dsh-tool-ask-user` 把 `multi_select` 转成 `multiSelect` 后交给 seam），
+     多选是驼峰 `multiSelect`。读错一个字母 → `MultiSelect` 恒 false →
+     多选答案被编码成字符串（适配器只认第一个）+ 单选命中选项时被 `_custom` 清空，
+     **提问照常出现、答案静默错**。两边归一化后必须逐字相等，否则
+     `elicitationQuestionsMatch` 永远匹配不上、提问静默退化成「用户取消」。
+  8. **取消与关闭要回 Decline**：`CancelCurrentTurn`（用户点停止）与 `CloseSession`
+     按 sessionKey 清；`Process.Close()` 清全部。不回的话 handler 会一直阻塞到连接关闭。
+     投递「恰好一次」由 `elicitationMu` 下「先从表里删掉、再往容量 1 的 waiter 投」保证。
+  9. `registerPendingAskUser` 是 **first-wins**（同 callID 不覆盖），否则后续
+     `tool_call_update` 会换掉 waiter，已绑定的 elicitation 永远等不到答案。
+     `reapPendingAskUser` 只在工具卡进终态（`complete`/`failed`）且**未被绑定**时清理。
+ 10. **匹配与占位必须在同一把锁里**（`matchAndBindPendingAskUser`）：拆成「先匹配、
+     再置 `bound`」两步，会让两个并发的 elicitation（不同会话问了同一道题 —— id 与
+     文本都相同）同时匹配到同一条目、一起等同一个 waiter，一个拿到答案、另一个
+     只能干等到 ctx 取消。
+- 兼容性：`session.AnswerQuestion` 签名不变；`convertEvent` 多一个 `onAskUser` 回调参数
+  （测试传 `nil`），对非 ask_user 工具卡是逐字节 no-op；其它 ACP agent 不受影响；
+  无数据迁移；能力广告在 `Initialize` 时生效，**进程池里的 dsh 进程重建后才生效**。
+- 针对性测试：
+  - `server/internal/agent/acp/session_test.go:TestConvertEventRetagsACPAskUserToolCard`
+    — 工具卡被重标成 `ask_user`，`meta.questions` 形状正确，回调拿到归一化题目。
+  - `server/internal/agent/acp/session_test.go:TestConvertEventKeepsACPAskUserKindOnToolUpdate`
+    — `tool_call_update` 分支也必须保持 `ask_user`（防 `mergeBufferedToolCall` 覆盖）。
+  - `server/internal/agent/acp/session_test.go:TestConvertEventIgnoresNonAskUserToolCards`
+    — 非提问工具卡不被误重标（`kind`/`meta` 原样）。
+  - `server/internal/agent/acp/elicitation_test.go:TestElicitationContentMapsLabelsToOptionIndexes`
+    — 答案编码：单选命中/单选自定义/多选命中/多选混合/无选项/空答案六种形态。
+  - `server/internal/agent/acp/elicitation_test.go:TestBindElicitationMatchesByQuestionIDs`
+    — 按题目 id+文本关联；已绑定的条目不会被二次绑定。
+  - `server/internal/agent/acp/elicitation_test.go:TestBindElicitationWaitsForLateToolCall`
+    — elicitation 先到、`tool_call` 通知晚到也能关联上（SDK 队列时序）。
+  - `server/internal/agent/acp/elicitation_test.go:TestBindElicitationGivesUpWhenNothingMatches`
+    — 对不上就放弃（钉住「不做唯一卡兜底」这条决策）。
+  - `server/internal/agent/acp/elicitation_test.go:TestAnswerElicitationDeliversContent` /
+    `TestAnswerElicitationRejectsUnknownCall` — 答案投递与未知 callID 报错。
+  - `server/internal/agent/acp/elicitation_test.go:TestCancelAndCloseDrainPendingQuestions`
+    — 按 sessionKey 取消、`dropAll` 清空、其它会话不受影响。
+  - `server/internal/agent/acp/elicitation_test.go:TestDshElicitationQuestionsParsesMeta`
+    — `_meta["dsh.userQuestions"]` 解析（含缺失/空数组）。
+  - `server/internal/agent/acp/elicitation_test.go:TestUnstableCreateElicitationAnswersPendingQuestion`
+    — 端到端：handler 绑定 → 答案编码 → `Accept.Content["question_0"] == "option_1"`。
+  - `server/internal/agent/acp/elicitation_test.go:TestUnstableCreateElicitationDeclinesUnsupported`
+    — 非 form 模式 / 无题目 / 无对应卡三种情形都回 Decline（不报错、不挂住）。
+  - `server/internal/agent/acp/elicitation_test.go:TestUnstableCreateElicitationCancelOnContextDone`
+    — ctx 取消回 Cancel，handler 不泄漏。
+  - `server/internal/agent/acp/elicitation_test.go:TestPendingAskUserRegistryConcurrency`
+    — 登记/清理/取消并发下不 panic、不残留（`-race` 下也过）。
+  - `server/internal/agent/acp/elicitation_test.go:TestAskUserRawInputAndElicitationMetaAgree`
+    — **两个来源的大小写契约**：`rawInput`（蛇形 `multi_select`）与 `_meta`（驼峰
+    `multiSelect`）归一化后逐字相等；多选答案编码成数组。
+  - `server/internal/agent/acp/elicitation_test.go:TestElicitationWireShape`
+    — **协议字面量**：客户端能力 JSON 里 `elicitation.form` 必须在（适配器只认这个）；
+    适配器形状的 `elicitation/create` 参数能被解析且 `_meta` 不被 SDK 吞掉；
+    三种响应序列化成 `{"action":"accept","content":{...}}` / `{"action":"decline"}` /
+    `{"action":"cancel"}`。
+  - `server/internal/agent/acp/elicitation_test.go:TestACPClientCapabilitiesOnlyAdvertisesElicitationForDsh`
+    — **兼容性边界**：只有 `dsh` 拿到 `elicitation.form`，其它 ACP agent 与上游一致。
+  - `server/internal/agent/acp/elicitation_test.go:TestBindElicitationIsExclusiveUnderConcurrency`
+    — 并发 elicitation 下每个条目最多被绑一次（`-race` 下也过）。
 
 ---
 

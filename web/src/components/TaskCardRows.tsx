@@ -10,11 +10,11 @@ import type { KanbanTask } from "../services/tasks";
 import {
   DeleteIcon,
   RunNowIcon,
+  TaskCancelIcon,
   TaskCompleteIcon,
   TaskFinishWorktreeIcon,
   TaskPauseIcon,
   TaskPlanAuxIcon,
-  TaskRebuildWorktreeIcon,
   TaskResumeIcon,
   TaskSessionErrorIcon,
   taskAuxBadgeStyle,
@@ -24,12 +24,11 @@ import {
   type WorktreeTagState,
 } from "../app/taskIcons";
 
-/** 卡片能做的状态迁移。cancel 也在这儿：已结束的任务只剩这一个出口。 */
-// rebuild-worktree 不是状态迁移，是把已删的树建回来；服务端不自动做（分支还在不在
-// 得用户决定），所以必须是一个能点的动作。
+/** 卡片能做的状态迁移。cancel 也在这儿：未结束的任务只剩这一个出口。 */
+// delete-task 不是状态迁移，是把卡片从板上拿走（服务端只删卡片，不碰 worktree / 会话）。
 // finish-worktree 也不是状态迁移：它把分支合回主干并拆掉 worktree（wt-finish 的
 // 服务端那一半），跑完之后任务本身的状态不变。
-export type TaskCardAction = "run-now" | "pause" | "resume" | "complete" | "cancel" | "rebuild-worktree" | "finish-worktree";
+export type TaskCardAction = "run-now" | "pause" | "resume" | "complete" | "cancel" | "delete-task" | "finish-worktree";
 
 /**
  * 「· + 内容」合成一个 flex item。
@@ -117,16 +116,16 @@ export function TaskCardRows({
   // 指针后面还有没有段。见 appTask 的 hasLaterStage：卡片拿不到 stage_runs，
   // 「还有段」是这里唯一能判的推进信息。
   const moreStages = hasLaterStage(task);
-  // 完成是纯任务状态操作，但**还有下一段就不给**：收了尾就看不到下一段了，
-  // 等于替用户提前结束一个还没做完的任务。
-  const canComplete = !terminal && !moreStages && !finishActive;
-  const canPause = stageRunning;
-  const canResume = task.status === "paused";
   // 立即执行是**推进**（服务端 RunNow → Next → moveRelative(+1)）。没有下一段可推进时
-  // 它什么都不会发生，所以那种局面下不给这个键，该给的是「完成」。
+  // 它什么都不会发生，所以那种局面下不给这个键。
   // 当前段能不能走也要看（canAdvanceCard，与详情面板同一套判据）：fail/cancelled/
   // rejected 时 moveRelative 报错、RunNow 把错吞掉，给了就是个点了没反应的按钮。
+  // **worktree 目录已删不顶替这个键**（与详情面板一致，用户 2026-10-03 定）：
+  // 点了服务端会把「worktree 目录已不存在」记到任务上，比藏起按钮诚实。
   const showAdvance = !terminal && !stageRunning && moreStages && !finishActive && canAdvanceCard(task);
+  const canPause = stageRunning;
+  const canResume = task.status === "paused";
+  // 「完成」的判据在下面 —— 它要看 canFinishWorktree，那一组变量在 statusText 之后才算出来。
   const statusText = taskStatusLabel(task.status || "", t);
   // 徽标说的是「**现在**有没有 worktree」，不是「当初要不要建树」。create_worktree
   // 是创建时的配置，永久为 true；收尾之后它一点没变，于是徽标照样显示绿色 worktree，
@@ -177,6 +176,12 @@ export function TaskCardRows({
   // 等于把唯一的出路藏起来，任务就此永远转下去。
   const hasAgentStage = (task.stages || []).some((stage) => stage.role === "agent");
   const canFinishWorktree = worktreeEnabled && !worktreeMissing && hasWorktreePath && hasAgentStage;
+  // 完成 = 推进键给不出来时的出口。判据就是 showAdvance 的反面 ——
+  // **待审核的任务不能一个键都没有**（2026-10-06 用户实测：收尾段卡在待审核、
+  // worktree 又已被拆，重建/执行/完成三个键全不给，任务在界面上没有任何出路）。
+  // 两条例外：正在跑（活还在动，本来就不需要推进）；收尾流程在跑且收尾键可用
+  // （那时该点的是收尾键，完成会跳过收尾）。
+  const canComplete = !terminal && !stageRunning && !showAdvance && !(finishActive && canFinishWorktree);
   const numberLabel = task.task_number ? `#${task.task_number}` : "";
   const taskName = task.name || task.task_template_name || templateNameFallback || t("task.unnamedTemplate");
   const title = task.task_template_name || templateNameFallback || t("task.defaultTitle");
@@ -357,30 +362,16 @@ export function TaskCardRows({
             </div>
           ) : null}
         </div>
-        {/* 已结束（success/fail/cancelled）的任务也要留得住「删除」：
-            会话没了、worktree 被删导致卡住的任务，卡片上仍得能清理。
-            执行 / 完成只对未结束的任务有意义。 */}
+        {/* 未结束的任务：推进 / 暂停 / 恢复 / 完成，末尾一个「取消」。
+            终态任务只剩一个「删除」—— 活已经停了，卡片留着只为看历史，
+            看完了得能真的清掉（否则看板只增不减）。 */}
         {/* 换行后靠 marginLeft:auto 仍贴右（space-between 在单行时本来也等效） */}
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 0, marginLeft: "auto" }}>
           {!terminal ? (
             <>
-              {/* 失效 worktree：给的是「重建」而不是「执行」——
-                  执行必然失败（cwd 就是那个不存在的目录），重建才是有用的下一步。 */}
-              {worktreeMissing ? (
-                <button
-                  type="button"
-                  title={t("task.rebuildWorktree")}
-                  aria-label={t("task.rebuildWorktree")}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onMove(task, "rebuild-worktree");
-                  }}
-                  style={taskCardIconButtonStyle("warning")}
-                >
-                  <TaskRebuildWorktreeIcon />
-                </button>
-              ) : null}
-              {showAdvance && !worktreeMissing ? (
+              {/* 执行键的判据在 showAdvance 里，与详情面板同一套（worktree 目录已删
+                  不顶替它）。推进键给不出来时由「完成」兜底 —— 见 canComplete。 */}
+              {showAdvance ? (
                 <button
                   type="button"
                   title={t("task.runNow")}
@@ -397,7 +388,6 @@ export function TaskCardRows({
               {/* 收尾 worktree：把这一段交给 agent 去 commit + merge，成功之后服务端
                   才拆目录搬会话。放在执行键右边 —— 两者是任务生命周期的两端
                   （继续跑 / 跑完收掉），挨着才看得出这是一对。
-                  目录已经没了的不给，那种情况给的是上面的重建键。
                   **收尾中也照样给**（2026-10-05）：那正是「agent 那半已经做完、只差
                   机械清场」的时刻，后端会直接清场；换成转圈等于把唯一的出路藏起来。 */}
               {canFinishWorktree ? (
@@ -456,20 +446,36 @@ export function TaskCardRows({
                   <TaskCompleteIcon />
                 </button>
               ) : null}
+              {/* 取消：**只改状态**，卡片留在板上（终态列里还能翻回去看）。
+                  用「作废符」而不是垃圾桶 —— 垃圾桶在这里是句谎话，
+                  它删不掉任何东西。删除键只给终态任务。 */}
+              <button
+                type="button"
+                title={t("task.cancelTask")}
+                aria-label={t("task.cancelTask")}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onMove(task, "cancel");
+                }}
+                style={taskCardIconButtonStyle()}
+              >
+                <TaskCancelIcon />
+              </button>
             </>
-          ) : null}
-          <button
-            type="button"
-            title={t("common.delete")}
-            aria-label={t("task.delete")}
-            onClick={(event) => {
-              event.stopPropagation();
-              onMove(task, "cancel");
-            }}
-            style={taskCardIconButtonStyle("danger")}
-          >
-            <DeleteIcon />
-          </button>
+          ) : (
+            <button
+              type="button"
+              title={t("task.deleteTask")}
+              aria-label={t("task.deleteTask")}
+              onClick={(event) => {
+                event.stopPropagation();
+                onMove(task, "delete-task");
+              }}
+              style={taskCardIconButtonStyle("danger")}
+            >
+              <DeleteIcon />
+            </button>
+          )}
         </div>
       </div>
     </>

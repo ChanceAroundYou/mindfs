@@ -475,6 +475,21 @@ export async function moveTask(rootId: string, taskId: string, action: "next" | 
 }
 
 /**
+ * 删掉一张任务卡 —— 只有卡片，worktree / 分支 / 会话都不动。
+ *
+ * 与 cancel（POST .../cancel）是两回事：那个只改状态，卡片照旧留在板上；
+ * 这个把卡片拿走，专给终态任务清场用，否则看板只增不减。
+ *
+ * root_id 走 query：DELETE 带 body 不是所有中间层都转发。
+ */
+export async function deleteTask(rootId: string, taskId: string, nodeId?: string): Promise<void> {
+  const params = new URLSearchParams({ root_id: rootId });
+  await protectedJSON<unknown>(appURL(`/api/tasks/${encodeURIComponent(taskId)}`, params, nodeId), {
+    method: "DELETE",
+  });
+}
+
+/**
  * 重建已删除的任务 worktree。
  *
  * 显式动作，服务端不自动重建：目录没了之后那个分支可能还在（代码还在分支上）也可能已经

@@ -92,11 +92,8 @@ export function ActionBar({
   onRequestFileContext,
   onClearFileContext,
   onSessionClick,
-  onToggleLeftSidebar,
-  onToggleRightSidebar,
   mobileEnterKeySends = false,
   sendShortcut = null,
-  sidebarsSwapped = false,
 }: ActionBarProps) {
   const { t } = useI18n();
   const [mode, setMode] = useState<SessionMode>("chat");
@@ -670,55 +667,10 @@ export function ActionBar({
     mode === "command" ? (isMobile ? 92 : 116) : isMobile ? 124 : 148,
   );
   const editorMinHeight = 44;
-  const mobileFileSidebarButton = isMobile ? (
-    <button
-      type="button"
-      onClick={onToggleLeftSidebar}
-      style={{ width: "30px", height: "44px", borderRadius: "0", border: "none", background: "transparent", color: "var(--text-secondary)", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer", opacity: 0.86, outline: "none", boxShadow: "none", WebkitTapHighlightColor: "transparent" as any, overflow: "hidden" }}
-      aria-label={t("sidebar.openFile")}
-      title={t("sidebar.file")}
-    >
-      <svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 24 24" fill="none">
-        <path fill="currentColor" d="M3 3h6v4H3zm12 7h6v4h-6zm0 7h6v4h-6zm-2-4H7v5h6v2H5V9h2v2h6z" style={{ transform: "scale(1.28)", transformOrigin: "12px 12px" }} />
-      </svg>
-    </button>
-  ) : null;
-  const mobileSessionSidebarButton = isMobile ? (
-    <button
-      type="button"
-      onClick={onToggleRightSidebar}
-      style={{ width: "30px", height: "44px", borderRadius: "0", border: "none", background: "transparent", color: "var(--text-secondary)", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer", opacity: 0.86, outline: "none", boxShadow: "none", WebkitTapHighlightColor: "transparent" as any, overflow: "hidden" }}
-      aria-label={t("sidebar.openSession")}
-      title={t("sidebar.session")}
-    >
-      <svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.8" strokeLinecap="round">
-        <line x1="6" y1="4" x2="18" y2="4" />
-        <line x1="6" y1="12" x2="18" y2="12" />
-        <line x1="6" y1="20" x2="18" y2="20" />
-      </svg>
-    </button>
-  ) : null;
 
-  // 看板/工作台：不渲染输入区。移动端仍要保留呼出左右侧栏的按钮，否则进了这两个界面就再也开不出侧栏。
+  // 看板/工作台：不渲染输入区。移动端呼出左右侧栏的按钮已搬进 AppShell 的顶栏。
   if (hideComposer) {
-    return isMobile ? (
-      <div
-        data-onboarding="action-bar"
-        style={{
-          width: "100%",
-          minWidth: 0,
-          padding: "0 0 var(--mindfs-actionbar-bottom-padding, calc(env(safe-area-inset-bottom, 0px) + 2px))",
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          boxSizing: "border-box",
-          background: "var(--content-bg)",
-        }}
-      >
-        {sidebarsSwapped ? mobileSessionSidebarButton : mobileFileSidebarButton}
-        {sidebarsSwapped ? mobileFileSidebarButton : mobileSessionSidebarButton}
-      </div>
-    ) : null;
+    return null;
   }
 
 
@@ -736,9 +688,7 @@ export function ActionBar({
             onSendNow={(id) => onSendQueuedMessageNow?.(id)}
           />
         ) : null}
-        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "30px minmax(0, 1fr) 30px" : "1fr", alignItems: isMobile ? "end" : "center", gap: isMobile ? "1px" : 0, padding: isMobile ? "0 1px" : 0, minWidth: 0, maxWidth: "100%" }}>
-          {sidebarsSwapped ? mobileSessionSidebarButton : mobileFileSidebarButton}
-
+        <div style={{ display: "grid", gridTemplateColumns: "1fr", alignItems: "center", gap: 0, padding: 0, minWidth: 0, maxWidth: "100%" }}>
           <div
             style={{
               display: "flex",
@@ -1029,8 +979,6 @@ export function ActionBar({
               </div>
             </div>
           </div>
-
-          {sidebarsSwapped ? mobileFileSidebarButton : mobileSessionSidebarButton}
         </div>
         <AttachmentsArea
           attachedFileContext={attachedFileContext}

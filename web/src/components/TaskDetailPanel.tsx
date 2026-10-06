@@ -11,8 +11,8 @@ import { useI18n, type I18nContextValue } from "../i18n";
 import {
   addTaskStage,
   beginTaskFinishWorktree,
+  deleteTask,
   moveTask,
-  rebuildTaskWorktree,
   removeTaskStage,
   renameTask,
   updateTaskStage,
@@ -23,9 +23,9 @@ import {
 import { confirmDialog } from "../services/dialog";
 import type { AgentStatus } from "../services/agents";
 import { reportError } from "../services/error";
-import { canAdvanceFromCurrentStage, hasLaterStage, isFinishStageActive, isTerminalKanbanTask, nextRunnableStageIndex, taskStatusColor } from "../app/appTask";
+import { canAdvanceFromCurrentStage, isFinishStageActive, isTerminalKanbanTask, nextRunnableStageIndex, taskStatusColor } from "../app/appTask";
 import { DEFAULT_TASK_AGENT, DEFAULT_TASK_MODEL, inheritAgentStage } from "../app/appTask";
-import { RunNowIcon, TaskCompleteIcon, TaskFinishWorktreeIcon, TaskRebuildWorktreeIcon } from "../app/taskIcons";
+import { DeleteIcon, RunNowIcon, TaskCompleteIcon, TaskFinishWorktreeIcon } from "../app/taskIcons";
 
 export type TaskDetailPanelProps = {
   detail: TaskDetail | null;
@@ -289,19 +289,10 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
     } finally { setSaving(false); }
   };
 
-  // 重建 worktree：目录已被删时唯一有用的下一步。走和卡片同一个 API，
-  // 但不绕 App 的 handleMoveKanbanTask —— 那边只吃 run-now 这类状态迁移，
-  // 面板自己 apply 回来的 detail 才是这里的数据源。
-  const worktreeMissing = task?.create_worktree === true && task?.worktree_missing === true;
-  const rebuildWorktree = async () => {
-    if (!task) return;
-    try {
-      setSaving(true);
-      apply(await rebuildTaskWorktree(task.root_id, task.id, nodeId));
-    } catch (error) {
-      reportError("file.write_failed", String((error as Error)?.message || t("task.actionFailed")));
-    } finally { setSaving(false); }
-  };
+  // 重建 worktree 的入口**已移除**（2026-10-06 用户要求）：它只在「目录已经不在」
+  // 时出现，而目录不在就等于已收尾 —— 收完尾的任务没有树可执行也没有树可拆，
+  // 重建承诺的「恢复后再执行」无从兑现。那个局面该给的是「完成」（见 canCompleteTask）。
+  // 服务端 /api/tasks/{id}/rebuild-worktree 保留，供脚本/CLI 显式调用。
 
   // worktree 收尾：追加一段收尾阶段，让 agent 自己提交并合并回主干，成功之后
   // 服务端才拆目录、删分支、搬会话。这一步**不可逆**，所以先弹窗确认。
@@ -352,20 +343,39 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
     } finally { setSaving(false); }
   };
 
-  // 「完成」只在**没有下一段**时给，与看板卡片同一套门控（TaskCardRows 的 canComplete）。
+  // 「完成」是**推进键给不出来时的出口**，与看板卡片同一套门控（TaskCardRows 的
+  // canComplete）：待审核的任务不能一个动作都没有。
   //
-  // 末段 waiting_user 时服务端 Next 是直接 finishTask 掉整个任务的（service.go 的 Next
-  // 末段分支），所以这一格该给的是「完成」而不是「执行」—— 执行键长在下一段那张卡上，
-  // 没有下一段就没有那张卡，末段于是两个键都没有、任务看着像是没法收尾。
-  // 有下一段时不给完成：收了尾就看不到下一段了，等于替用户提前结束。
+  // 以前这里要求「没有下一段」才给完成。实测（2026-10-06）会漏掉一类任务：
+  // 指针停在收尾段上、那一段卡在待审核，而 worktree 已经被拆 —— 收尾键给不出来
+  // （没有目录可拆）、执行键也给不出来（收尾中不推进），任务在界面上彻底没有出路。
+  //
+  // 两条例外：正在跑（活还在动）；收尾流程在跑且收尾键可用（那时该点的是收尾键）。
   const terminal = isTerminalKanbanTask(task);
   const stageRunningNow = task.current_stage_status === "running" && task.status === "running";
-  const canCompleteTask = !terminal && !finishActive && !hasLaterStage(task) && !stageRunningNow;
+  const canRunStageNow = runnableStageIndex >= 0 && advanceable;
+  const canCompleteTask = !terminal && !stageRunningNow && !canRunStageNow && !(finishActive && canFinishWorktree);
   const completeTask = async () => {
     if (!task) return;
     try {
       setSaving(true);
       apply(await moveTask(task.root_id, task.id, "complete", "", nodeId));
+    } catch (error) {
+      reportError("file.write_failed", String((error as Error)?.message || t("task.actionFailed")));
+    } finally { setSaving(false); }
+  };
+
+  // 删除任务卡：**只有终态任务给**（与卡片一致），且只删卡片 —— worktree / 分支 /
+  // 会话都不动。不可逆，先弹窗确认。删完面板自己关掉：它渲染的就是那张卡。
+  const deleteTaskCard = async () => {
+    if (!task) return;
+    if (!await confirmDialog({ message: t("task.deleteTaskConfirm"), confirmLabel: t("common.delete"), danger: true })) {
+      return;
+    }
+    try {
+      setSaving(true);
+      await deleteTask(task.root_id, task.id, nodeId);
+      onClose();
     } catch (error) {
       reportError("file.write_failed", String((error as Error)?.message || t("task.actionFailed")));
     } finally { setSaving(false); }
@@ -418,23 +428,8 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
         </>
       ) : (
         <>
-          {/* 重建 worktree 放面板头部、不放阶段行：阶段行是一张卡一个按钮，
-              放里面会对**每一段**都渲染一个（task-22 有 6 段 → 6 个一模一样的重建键）。
-              执行键已经不给它让位了（用户定的），这里就是那个唯一的重建入口。 */}
-          {worktreeMissing ? (
-            <button
-              type="button"
-              title={t("task.rebuildWorktree")}
-              aria-label={t("task.rebuildWorktree")}
-              disabled={saving}
-              onClick={() => void rebuildWorktree()}
-              style={{ ...pencilStyle(false), color: "#d97706", opacity: saving ? 0.4 : 1 }}
-            >
-              <TaskRebuildWorktreeIcon />
-            </button>
-          ) : null}
           {/* 收尾 worktree：追加一段收尾阶段让 agent 提交并合并，成功后服务端
-              自己清场。目录已经没了的不给 —— 那种情况该点的是上面的重建键。
+              自己清场。目录已经没了的不给 —— 那种情况没有树可拆，该给的是完成。
               **收尾中也照样给**（2026-10-05）：那正是「agent 那半已经做完、只差
               机械清场」的时刻，再点一次后端会直接清场。换成转圈等于把唯一的出路
               藏起来，任务就此永远转下去。 */}
@@ -450,9 +445,10 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
               <TaskFinishWorktreeIcon />
             </button>
           ) : null}
-          {/* 完成：只在没有下一段时给（canCompleteTask），与看板卡片同一套门控。
+          {/* 完成：推进键给不出来时的出口（canCompleteTask），与看板卡片同一套门控。
               末段 waiting_user 的任务点它 = 服务端 Complete 直接收成 success
-              （末段那条 Next 分支的等价物），所以它就是那个局面下唯一能收尾的动作。
+              （末段那条 Next 分支的等价物）；收尾段卡住、worktree 已拆的任务也是
+              它 —— 那是那种局面下唯一能收尾的动作。
               放在面板头部而不是阶段行：完成是任务级动作，阶段行是一段一个键。 */}
           {canCompleteTask ? (
             <button
@@ -464,6 +460,20 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
               style={{ ...pencilStyle(false), color: "var(--status-ok)", opacity: saving ? 0.4 : 1 }}
             >
               <TaskCompleteIcon />
+            </button>
+          ) : null}
+          {/* 删除任务卡：只给终态任务（与卡片一致）。取消改的是状态、卡片还在，
+              删除才是真的把卡片拿走 —— 看板上的终态卡不这么清就只增不减。 */}
+          {terminal ? (
+            <button
+              type="button"
+              title={t("task.deleteTask")}
+              aria-label={t("task.deleteTask")}
+              disabled={saving}
+              onClick={() => void deleteTaskCard()}
+              style={{ ...pencilStyle(false), color: "#dc2626", opacity: saving ? 0.4 : 1 }}
+            >
+              <DeleteIcon />
             </button>
           ) : null}
           <button type="button" aria-label={t("task.renameTask")} title={t("task.renameTask")} onClick={() => setEditingName(true)} style={pencilStyle(false)}>
@@ -517,7 +527,7 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
                指针所在的段不给：run-now 的语义是「推进到下一段」，按钮在没跑过的卡上、
                动作却是「跳过这张卡」，两处对不上就成了假动作。
                worktree 目录被删**不**顶替这个按钮（用户定的）：点下去服务端会把
-               「worktree 目录已不存在」记到任务上，面板右上角就是那个重建入口。
+               「worktree 目录已不存在」记到任务上，比藏起按钮诚实。
                正在跑 / 已暂停 / 终态 / 收尾中都不给 —— 前三个服务端那边也都是 no-op；
                收尾中更不能给：清场马上就要拆掉 worktree，那时候推进阶段就是对着
                一个即将消失的目录干活。 */

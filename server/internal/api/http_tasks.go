@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
@@ -269,6 +270,39 @@ func (h *HTTPHandler) handleKanbanTaskCancel(w http.ResponseWriter, r *http.Requ
 
 func (h *HTTPHandler) handleKanbanTaskFail(w http.ResponseWriter, r *http.Request) {
 	h.handleKanbanTaskMove(w, r, "fail")
+}
+
+// handleKanbanTaskDelete 删掉一张任务卡（终态任务的「删除」按钮）。
+//
+// 与「取消」是两回事：取消只改状态，卡片还留在板上；删除把它从板上拿走。
+// 只删卡片 —— worktree / 分支 / 会话都不动。
+//
+// root_id 走 query 而不是 body：DELETE 带 body 不是所有中间层都转发，
+// 而这个接口只吃一个 id 参数，query 更省事也更直白。
+func (h *HTTPHandler) handleKanbanTaskDelete(w http.ResponseWriter, r *http.Request) {
+	svc, ok := h.kanbanService(w)
+	if !ok {
+		return
+	}
+	rootID := strings.TrimSpace(r.URL.Query().Get("root_id"))
+	taskID := strings.TrimSpace(chi.URLParam(r, "id"))
+	if rootID == "" || taskID == "" {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("root_id and id required"))
+		return
+	}
+	if err := svc.DeleteTask(r.Context(), kanban.MoveInput{RootID: rootID, TaskID: taskID}); err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, sql.ErrNoRows) {
+			status = http.StatusNotFound
+		}
+		respondError(w, status, err)
+		return
+	}
+	// 广播给所有客户端：卡片「还在不在」是结构问题，就地更新那条路径看不见它。
+	if h.AppContext != nil {
+		h.AppContext.TaskDeleted(rootID, taskID)
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 // handleKanbanTaskRebuildWorktree 重建已删除的任务 worktree（显式入口，不自动触发）。

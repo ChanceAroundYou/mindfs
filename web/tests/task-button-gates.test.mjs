@@ -3,11 +3,15 @@ import test from "node:test";
 import fs from "node:fs";
 import path from "node:path";
 
-// 看板/工作台任务卡上三个推进类按钮的**给法**（2026-09 用户定的）。
+// 看板/工作台任务卡上推进类按钮的**给法**（2026-09 用户定的）。
 //
 //   还有下一段没执行 → 不给「完成」（收了尾就看不到下一段，等于替用户提前结束）
 //   没有下一段       → 不给「执行」（推进不动，点了什么都不发生）
-//   收尾流程进行中   → 三个都不给（清场马上就要拆 worktree）
+//   收尾流程进行中   → 不给推进，收尾键照旧（见下）
+//
+// **不变式（2026-10-06 用户实测补）**：待审核的任务上，推进键与完成键至少有一个。
+// 判据就是「完成 = 推进键给不出来时的出口」（canComplete = !showAdvance 加两条例外），
+// 所以这两条门是一体两面，改一条必动另一条。
 //
 // 判据一律跑组件里**真实的**源码，不是抄一份：抄一份的话，组件改了测试照样绿，
 // 那样钉住的就只是「我自己写的那段逻辑对」，不是「界面上真的这么给」。
@@ -131,6 +135,40 @@ test("a running finish stage withholds 完成 and 执行 but keeps the finish ke
   // 收尾键**照旧给**（2026-10-05 用户要求）：那正是「agent 那半已经做完、只差机械
   // 清场」的时刻，再点一次后端会直接清场。换成转圈等于把唯一的出路藏起来。
   assert.equal(gates.canFinishWorktree, true, "the finish key must stay clickable — it is the only way out of a stuck finish");
+});
+
+// 不变式：**待审核的任务不能一个键都没有**（2026-10-06 用户实测的卡死形态）。
+// 场景：指针停在收尾段上、那一段卡在待审核，而 worktree 已经被拆 ——
+// 收尾键给不出来（没有目录可拆）、执行键给不出来（收尾中不推进），
+// 修之前这种任务在界面上没有任何出路。
+test("a waiting_user task stuck on a dead finish stage still gets 完成", () => {
+  const gates = gatesOf(
+    worktreeTask({
+      current_stage_index: 1,
+      stages: [{ role: "agent" }, finishStage, { role: "agent" }],
+      worktree_missing: true,
+    }),
+  );
+  assert.equal(gates.canFinishWorktree, false, "there is no directory left to tear down");
+  assert.equal(gates.showAdvance, false, "a finish stage in flight does not advance");
+  assert.equal(gates.canComplete, true, "完成 is the only way out — without it the task has no action at all");
+});
+
+// 同一件事的通用形态：**推进键给不出来 ⟹ 完成必须补上**。
+// 这就是 canComplete = !showAdvance 那条反面判据，逐组合跑一遍而不是只跑一个点。
+// 日后谁再加一条「这种情况两个都不给」的守卫，这里会红。
+test("whenever 执行 is withheld, 完成 takes its place", () => {
+  for (const current_stage_status of ["pending", "running", "success", "waiting_user", "fail", "cancelled", "rejected"]) {
+    for (const current_stage_index of [0, 1]) {
+      const gates = gatesOf(worktreeTask({ current_stage_index, current_stage_status }));
+      if (gates.showAdvance) continue;
+      assert.equal(
+        gates.canComplete,
+        true,
+        `index=${current_stage_index} stage=${current_stage_status}: 执行 is withheld, so 完成 must be offered`,
+      );
+    }
+  }
 });
 
 // 终态任务：完成/推进两个键照旧不给，但**收尾要给**（2026-10-04 用户要求）。

@@ -191,14 +191,26 @@ export function writePins(next: PinsSnapshot): boolean {
   return changed;
 }
 
-/**
- * 拉一次服务端快照并写入 store。
- *
- * 拉失败**不动** store：置顶是装饰性排序，一个装饰性请求失败不该把正在看的
- * 列表闪成「全不置顶」。
- */
+// 拉一次服务端快照并写入 store。
+//
+// 拉失败**不动** store：置顶是装饰性排序，一个装饰性请求失败不该把正在看的
+// 列表闪成「全不置顶」。
+let refreshPinsInFlight: Promise<boolean> | null = null;
 export async function refreshPinsFromServer(): Promise<boolean> {
-  return writePins(await fetchPins());
+  // in-flight 去重：切项目时 App.tsx（依赖 currentRootId）和 SessionList.tsx
+  // （依赖 selectedRootId/selectedNodeId）两个 effect 都会触发，实测每次切项目
+  // 都打两个 /api/pins。同参数的并发调用合并成一次。
+  if (refreshPinsInFlight) {
+    return refreshPinsInFlight;
+  }
+  refreshPinsInFlight = (async () => {
+    try {
+      return await writePins(await fetchPins());
+    } finally {
+      refreshPinsInFlight = null;
+    }
+  })();
+  return refreshPinsInFlight;
 }
 
 /**

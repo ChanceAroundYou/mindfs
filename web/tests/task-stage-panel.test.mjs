@@ -266,44 +266,41 @@ assert.match(
   "the left group must take the free space so the button group is pushed to the row end",
 );
 // worktree 目录已删**不**顶替运行键（用户定的）：运行键无条件给，点了服务端会记下
-// 「worktree 目录已不存在」；重建入口单独放面板头部。
+// 「worktree 目录已不存在」。
 assert.doesNotMatch(
   panel,
   /canRunStage && !worktreeMissing/,
   "a missing worktree must not suppress the run button",
 );
-assert.match(
+// 重建 worktree 的入口**已从面板移除**（2026-10-06 用户要求）：它只在「目录已经不在」
+// 时出现，而目录不在就等于已收尾 —— 收完尾的任务没有树可执行也没有树可拆，
+// 「重建恢复后再执行」是一句兑现不了的承诺。那个局面该给的是「完成」。
+// 服务端端点 /api/tasks/{id}/rebuild-worktree 仍在（脚本/CLI 用），前端不该再调。
+assert.doesNotMatch(
   panel,
-  /const worktreeMissing = task\?\.create_worktree === true && task\?\.worktree_missing === true;/,
-  "the panel must read the server-derived worktree_missing flag",
+  /rebuildTaskWorktree|TaskRebuildWorktreeIcon|task\.rebuildWorktree/,
+  "已收尾的面板不该再有重建 worktree 的入口",
 );
-assert.match(
-  panel,
-  /const rebuildWorktree = async \(\) => \{[\s\S]{0,400}?rebuildTaskWorktree\(task\.root_id, task\.id, nodeId\)/,
-  "a missing worktree must offer a rebuild action wired to the rebuild endpoint",
-);
-assert.match(
-  panel,
-  /title=\{t\("task\.rebuildWorktree"\)\}/,
-  "the rebuild button must reuse the existing 重建 worktree label",
-);
-// 重建键只能有一个：放阶段行里会对每一段都渲染一个（task-22 六段 → 六个一样的键）。
-// 钉死它在 headerRight 里、且全文只出现一次。
-assert.equal(
-  (panel.match(/<TaskRebuildWorktreeIcon \/>/g) || []).length,
-  1,
-  "the rebuild button must render exactly once, not once per stage",
-);
-// 重建键只能在 headerRight 那一段里（不在 bodyStages.map 里）。
-// 钉「与铅笔紧邻」是错的：收尾键也在这段里，钉死了加一个同级按钮就得改断言，
-// 而真正要防的是「回到阶段行里、对每一段都渲染一个」。改成量 headerRight 的范围。
+// 取而代之的是两把键：完成（推进键给不出来时的出口）+ 终态任务的删除。
+// 两把都必须在 headerRight 那一段里 —— 放阶段行里会对每一段渲染一个。
 const headerRightAt = panel.indexOf("headerRight={editingName");
 assert.ok(headerRightAt > 0, "TaskDetailPanel must pass a headerRight block");
-const headerRightSlice = panel.slice(headerRightAt, headerRightAt + 1800);
+const headerRightSlice = panel.slice(headerRightAt, headerRightAt + 2600);
 assert.match(
   headerRightSlice,
-  /\{worktreeMissing \? \([\s\S]{0,700}?onClick=\{\(\) => void rebuildWorktree\(\)\}[\s\S]{0,400}?<TaskRebuildWorktreeIcon \/>/,
-  "the rebuild button must live in the panel header, not in the per-stage map",
+  /\{canCompleteTask \? \([\s\S]{0,700}?onClick=\{\(\) => void completeTask\(\)\}[\s\S]{0,400}?<TaskCompleteIcon \/>/,
+  "完成键必须在面板头部，判据是 canCompleteTask",
+);
+assert.match(
+  headerRightSlice,
+  /\{terminal \? \([\s\S]{0,500}?onClick=\{\(\) => void deleteTaskCard\(\)\}[\s\S]{0,300}?<DeleteIcon \/>/,
+  "删除键只给终态任务，且必须住在面板头部",
+);
+// 完成 = 推进键给不出来时的出口，与看板卡片同一套门控。待审核的任务不能一个键都没有。
+assert.match(
+  panel,
+  /const canFinishWorktree = task\?\.create_worktree === true\s*\n\s*&& !!task\?\.worktree_path\s*\n\s*&& task\?\.worktree_missing !== true\s*\n\s*&& hasAgentStage;/,
+  "the panel must still read the server-derived worktree_missing flag for 收尾",
 );
 // 当前段 fail/cancelled/rejected 时不许给：服务端 moveRelative 会报错，而 RunNow 的
 // waiting_user 分支把错吞掉只回详情（service.go:786）—— 按钮点了什么都不发生。
@@ -455,11 +452,14 @@ test("card advance gate falls back to pending when the server sent no stage stat
   assert.equal(canAdvanceCard(mkCard(["user", "agent"], 9, "waiting_user", "success")), false);
 });
 
-// 详情面板的「完成」只在没有下一段时给，与看板卡片 canComplete 同口径。
+// 详情面板的「完成」判据 = 推进键给不出来时的出口，与看板卡片 canComplete 同口径。
+// 旧口径「没有下一段才给」漏掉了一类任务（2026-10-06 用户实测）：指针停在收尾段、
+// 卡在待审核、worktree 又已被拆 —— 收尾键给不出来、执行键也给不出来，
+// 任务在界面上彻底没有出路。现在只要推进键（canRunStageNow）给不出来就兜住。
 assert.match(
   panel,
-  /const canCompleteTask = !terminal && !finishActive && !hasLaterStage\(task\)/,
-  "the detail panel must offer 完成 only when no later stage exists",
+  /const canCompleteTask = !terminal && !stageRunningNow && !canRunStageNow && !\(finishActive && canFinishWorktree\);/,
+  "the detail panel's 完成 must兜住 canRunStageNow 给不出来的一切局面",
 );
 assert.match(
   panel,

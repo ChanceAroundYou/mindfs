@@ -56,6 +56,11 @@ export type TimelineItem =
     }
   | { id: string; type: "thought"; content: string }
   | { id: string; type: "tool"; toolCall: ToolCall }
+  // 连续同类工具卡的折叠组（2026-10-07）：agent 一个回合里连开 100+ 个 edit/read/
+  // execute 时，逐个渲染 ToolCallCard 是「打开会话卡」的主要渲染成本（实测单会话
+  // 389 张卡、单 seq 189 张）。折叠成一张「N 个编辑」的组卡后 DOM 从几百张降到几张，
+  // 展开组卡时才逐个渲染。ask_user 不参与分组（它要交互、要答题）。
+  | { id: string; type: "tool_group"; kind: string; toolCalls: ToolCall[] }
   | { id: string; type: "todo"; todoUpdate: TodoUpdate; timestamp?: string }
   | { id: string; type: "plan"; planUpdate: PlanUpdate; timestamp?: string }
   | { id: string; type: "compact"; compactNotice: CompactNotice; timestamp?: string };
@@ -453,6 +458,62 @@ function buildBaseTimeline(
         timestamp: ex.timestamp,
       });
     }
+  }
+  return groupConsecutiveToolCalls(out);
+}
+
+/**
+ * 连续同类工具卡的折叠（2026-10-07）。
+ *
+ * 为什么：一个回合里 agent 连开 100+ 个 edit/read/execute 是常态，逐个渲染
+ * ToolCallCard 是「打开会话卡」的主要渲染成本（实测单会话 389 张、单 seq 189 张）。
+ * 折叠成一张组卡后首屏 DOM 从几百张降到几张；展开组卡才逐个渲染。
+ *
+ * 只折「详情在展开时才需要」的 kind（edit/read/execute）：它们的折叠卡片本来就
+ * 只有标题+状态，折成一组不丢信息。ask_user 必须保持独立（要答题），
+ * todo/plan/compact 有各自卡片，都不参与。
+ *
+ * 阈值 5：2–4 张卡直接显示更直观，为它们套一层「展开/收起」反而多一次点击。
+ */
+const GROUPABLE_TOOL_KINDS = new Set(["edit", "read", "execute"]);
+const TOOL_GROUP_MIN = 5;
+
+export function groupConsecutiveToolCalls(items: TimelineItem[]): TimelineItem[] {
+  const out: TimelineItem[] = [];
+  let i = 0;
+  while (i < items.length) {
+    const item = items[i];
+    if (item.type !== "tool") {
+      out.push(item);
+      i += 1;
+      continue;
+    }
+    const kind = `${item.toolCall?.kind || ""}`.toLowerCase();
+    if (!GROUPABLE_TOOL_KINDS.has(kind)) {
+      out.push(item);
+      i += 1;
+      continue;
+    }
+    let j = i + 1;
+    while (j < items.length) {
+      const next = items[j];
+      if (next.type !== "tool") break;
+      if (`${next.toolCall?.kind || ""}`.toLowerCase() !== kind) break;
+      j += 1;
+    }
+    const run = items.slice(i, j) as Array<Extract<TimelineItem, { type: "tool" }>>;
+    if (run.length < TOOL_GROUP_MIN) {
+      out.push(...run);
+      i = j;
+      continue;
+    }
+    out.push({
+      id: `tool-group:${kind}:${run[0]?.id || i}`,
+      type: "tool_group",
+      kind,
+      toolCalls: run.map((entry) => entry.toolCall),
+    });
+    i = j;
   }
   return out;
 }

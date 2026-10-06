@@ -359,8 +359,12 @@ func (s *session) SendMessage(ctx context.Context, content string) error {
 	return s.proc.SendMessage(ctx, s.sessionKey, content)
 }
 
-func (s *session) AnswerQuestion(context.Context, types.AskUserAnswer) error {
-	return errors.New("ask user question is not supported by acp sessions")
+// AnswerQuestion 把前端提交的答案投递给挂起的提问。
+//
+// CUSTOM(G-AS): 上游这里是硬编码的 "ask user question is not supported by acp
+// sessions"。dsh 的提问走 elicitation，答案由 Process 编码后回给 agent。
+func (s *session) AnswerQuestion(ctx context.Context, answer types.AskUserAnswer) error {
+	return s.proc.AnswerElicitation(ctx, answer.ToolUseID, answer.Answers)
 }
 
 func (s *session) CurrentModel() string {
@@ -438,9 +442,15 @@ func (s *session) OnUpdate(onUpdate func(types.Event)) {
 				})
 				return
 			}
-			ev := convertEvent(update)
+			ev := convertEvent(update, func(callID string, questions []elicitationQuestion) {
+				s.proc.registerPendingAskUser(callID, s.sessionKey, questions)
+			})
 			if ev.Type == "" {
 				return
+			}
+			// CUSTOM(G-AS): 工具卡进终态时把没被 elicitation 绑定的条目清掉，免得泄漏。
+			if toolCall, ok := ev.Data.(types.ToolCall); ok && toolCall.Kind == types.ToolKindAskUser {
+				s.proc.reapPendingAskUser(toolCall.CallID, toolCall.Status)
 			}
 			onUpdate(ev)
 		}
@@ -493,7 +503,13 @@ func (s *session) logRawToolUpdate(update SessionUpdate) {
 	s.agentDebugLog.AppendRaw(raw)
 }
 
-func convertEvent(update SessionUpdate) types.Event {
+// convertEvent converts a wrapped ACP session update into a MindFS event.
+//
+// onAskUser, when non-nil, is invoked with the call id and normalized questions for
+// every ask_user tool card that survives suppression, so the caller can register it
+// as a pending question. It is split out because registration needs the Process
+// (which owns the pending table) while convertEvent itself stays a pure mapping.
+func convertEvent(update SessionUpdate, onAskUser func(callID string, questions []elicitationQuestion)) types.Event {
 	ev := types.Event{
 		Type:      types.EventType(update.Type),
 		SessionID: update.SessionID,
@@ -526,6 +542,13 @@ func convertEvent(update SessionUpdate) types.Event {
 				status = string(raw.ToolCall.Status)
 			}
 			kind := types.ToolKind(raw.ToolCall.Kind)
+			var meta map[string]any
+			var askUserQuestions []elicitationQuestion
+			// CUSTOM(G-AS): dsh 的 ask_user_question 在适配器那边只是 kind=other 的普通工具卡，
+			// 重标成 ask_user 并带上 questions，前端才会渲染成可回答的提问卡。
+			if askUserKind, askUserMeta, questions := acpAskUserToolCall(raw.ToolCall.RawInput); askUserKind != "" {
+				kind, meta, askUserQuestions = askUserKind, askUserMeta, questions
+			}
 			ev.Data = types.ToolCall{
 				CallID:    string(raw.ToolCall.ToolCallId),
 				Title:     raw.ToolCall.Title,
@@ -533,6 +556,10 @@ func convertEvent(update SessionUpdate) types.Event {
 				Kind:      kind,
 				Content:   convertToolCallContent(raw.ToolCall.Content),
 				Locations: locations,
+				Meta:      meta,
+			}
+			if onAskUser != nil && len(askUserQuestions) > 0 {
+				onAskUser(string(raw.ToolCall.ToolCallId), askUserQuestions)
 			}
 		} else {
 			logUnhandledConvertEvent(update, "tool_call")
@@ -558,6 +585,13 @@ func convertEvent(update SessionUpdate) types.Event {
 			if raw.ToolCallUpdate.Kind != nil {
 				kind = types.ToolKind(*raw.ToolCallUpdate.Kind)
 			}
+			var meta map[string]any
+			var askUserQuestions []elicitationQuestion
+			// 与 tool_call 分支同理：update 也会带 rawInput，不重标的话
+			// mergeBufferedToolCall 会用 kind=other 把 ask_user 覆盖掉。
+			if askUserKind, askUserMeta, questions := acpAskUserToolCall(raw.ToolCallUpdate.RawInput); askUserKind != "" {
+				kind, meta, askUserQuestions = askUserKind, askUserMeta, questions
+			}
 			locations := make([]types.ToolCallLocation, 0, len(raw.ToolCallUpdate.Locations))
 			for _, loc := range raw.ToolCallUpdate.Locations {
 				locations = append(locations, types.ToolCallLocation{Path: loc.Path, Line: loc.Line})
@@ -569,6 +603,10 @@ func convertEvent(update SessionUpdate) types.Event {
 				Kind:      kind,
 				Content:   convertToolCallContent(raw.ToolCallUpdate.Content),
 				Locations: locations,
+				Meta:      meta,
+			}
+			if onAskUser != nil && len(askUserQuestions) > 0 {
+				onAskUser(string(raw.ToolCallUpdate.ToolCallId), askUserQuestions)
 			}
 		} else {
 			logUnhandledConvertEvent(update, "tool_call_update")
