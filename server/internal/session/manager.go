@@ -35,8 +35,10 @@ const (
 	auxFileTpl       = "sessions/%s.aux.jsonl"
 	// maxExchangeLineBytes 单条 JSONL 上限（tool call 大 content），bufio.Scanner 兜底。
 	maxExchangeLineBytes = 64 << 20
+	// CUSTOM(G-X): 不再 SELECT/写入 pinned_at —— 置顶的唯一权威是主节点的 pins 表
+	// （server/internal/pins）。两处一起断：只断一半会留下「写进去但读不回」的假退役。
 	selectSessionSQL     = `
-	SELECT key, type, parent_session_key, parent_tool_call_id, source, task_id, model, shell, plan_mode, name, related_files_json, related_worktree_json, last_context_window_total_tokens, last_context_window_model_context_window, pinned_at, archived_at, created_at, updated_at, closed_at
+	SELECT key, type, parent_session_key, parent_tool_call_id, source, task_id, model, shell, plan_mode, name, related_files_json, related_worktree_json, last_context_window_total_tokens, last_context_window_model_context_window, archived_at, created_at, updated_at, closed_at
 	FROM sessions`
 	deleteSessionSQL = `
 DELETE FROM sessions
@@ -46,8 +48,8 @@ DELETE FROM session_agent_bindings
 WHERE session_key = ?`
 	upsertSessionMetaSQL = `
 INSERT INTO sessions (
-		key, type, parent_session_key, parent_tool_call_id, source, task_id, model, shell, plan_mode, name, related_files_json, related_worktree_json, last_context_window_total_tokens, last_context_window_model_context_window, pinned_at, archived_at, created_at, updated_at, closed_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		key, type, parent_session_key, parent_tool_call_id, source, task_id, model, shell, plan_mode, name, related_files_json, related_worktree_json, last_context_window_total_tokens, last_context_window_model_context_window, archived_at, created_at, updated_at, closed_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(key) DO UPDATE SET
 	type = excluded.type,
 	parent_session_key = excluded.parent_session_key,
@@ -62,7 +64,6 @@ ON CONFLICT(key) DO UPDATE SET
 	related_worktree_json = excluded.related_worktree_json,
 	last_context_window_total_tokens = excluded.last_context_window_total_tokens,
 	last_context_window_model_context_window = excluded.last_context_window_model_context_window,
-	pinned_at = excluded.pinned_at,
 	archived_at = excluded.archived_at,
 	created_at = excluded.created_at,
 	updated_at = excluded.updated_at,
@@ -2811,9 +2812,10 @@ func openSessionMetaDB(dbFile string) (db *sql.DB, err error) {
 	// 索引必须建在列补齐之后：CREATE INDEX 引用尚不存在的列会报 "no such column"，
 	// 让整个 openSessionMetaDB 失败，进而把完好的旧库误判成不可用并静默回退到空库。
 	// 列表/搜索按 updated_at DESC 排序，无索引时全表排序。
+	// 不再建 idx_sessions_pinned_at：该列已停用（见 selectSessionSQL 上的 CUSTOM(G-X)），
+	// 索引只会给一个恒为 NULL 的列白占写入成本。存量索引由旧版建过，留着也无害。
 	for _, stmt := range []string{
 		`CREATE INDEX IF NOT EXISTS idx_sessions_updated_at ON sessions(updated_at DESC)`,
-		`CREATE INDEX IF NOT EXISTS idx_sessions_pinned_at ON sessions(pinned_at, updated_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_sessions_archived_at ON sessions(archived_at, updated_at DESC)`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
@@ -2969,10 +2971,6 @@ func sessionMetaUpsertArgs(session *Session) ([]any, error) {
 	if session.ClosedAt != nil {
 		closedAt = session.ClosedAt.UTC().Format(time.RFC3339Nano)
 	}
-	var pinnedAt any
-	if session.PinnedAt != nil {
-		pinnedAt = session.PinnedAt.UTC().Format(time.RFC3339Nano)
-	}
 	var archivedAt any
 	if session.ArchivedAt != nil {
 		archivedAt = session.ArchivedAt.UTC().Format(time.RFC3339Nano)
@@ -2992,7 +2990,6 @@ func sessionMetaUpsertArgs(session *Session) ([]any, error) {
 		relatedWorktreeJSON,
 		session.LastContextWindow.TotalTokens,
 		session.LastContextWindow.ModelContextWindow,
-		pinnedAt,
 		archivedAt,
 		session.CreatedAt.UTC().Format(time.RFC3339Nano),
 		session.UpdatedAt.UTC().Format(time.RFC3339Nano),
@@ -3031,7 +3028,6 @@ func scanSessionMetaRow(scanner rowScanner) (*Session, error) {
 		relatedWorktreeJSON string
 		contextTotalTokens  int
 		contextModelWindow  int
-		pinnedAtRaw         sql.NullString
 		archivedAtRaw       sql.NullString
 		createdAtRaw        string
 		updatedAtRaw        string
@@ -3052,7 +3048,6 @@ func scanSessionMetaRow(scanner rowScanner) (*Session, error) {
 		&relatedWorktreeJSON,
 		&contextTotalTokens,
 		&contextModelWindow,
-		&pinnedAtRaw,
 		&archivedAtRaw,
 		&createdAtRaw,
 		&updatedAtRaw,
@@ -3099,12 +3094,6 @@ func scanSessionMetaRow(scanner rowScanner) (*Session, error) {
 	}
 	session.CreatedAt = createdAt
 	session.UpdatedAt = updatedAt
-	if pinnedAtRaw.Valid && strings.TrimSpace(pinnedAtRaw.String) != "" {
-		pinnedAt, err := time.Parse(time.RFC3339Nano, pinnedAtRaw.String)
-		if err == nil {
-			session.PinnedAt = &pinnedAt
-		}
-	}
 	if archivedAtRaw.Valid && strings.TrimSpace(archivedAtRaw.String) != "" {
 		archivedAt, err := time.Parse(time.RFC3339Nano, archivedAtRaw.String)
 		if err == nil {
