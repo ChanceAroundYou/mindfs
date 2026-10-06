@@ -996,7 +996,7 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
           }
           if (multiProjectSessionsEnabled) {
             void refreshMultiProjectReplyingSessions();
-            void loadMultiProjectSessionGroups();
+            scheduleMultiProjectSessionReload();
           }
           replayTargetsForAllRoots();
       },
@@ -1015,7 +1015,7 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
           }
           if (multiProjectSessionsEnabled) {
             void refreshMultiProjectReplyingSessions();
-            void loadMultiProjectSessionGroups();
+            scheduleMultiProjectSessionReload();
           }
           replayTargetsForAllRoots();
       },
@@ -1027,7 +1027,7 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
           void loadManagedRootPayloads().then(() => {
             if (multiProjectSessionsEnabled) {
               void refreshMultiProjectReplyingSessions();
-              void loadMultiProjectSessionGroups();
+              scheduleMultiProjectSessionReload();
             }
           }).catch(() => {});
       },
@@ -1369,7 +1369,7 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
             // 必须 replace 全量重拉才能带上最新 meta。频率低 + 300ms debounce，成本可接受。
             void scheduleSessionListReload(rootID, { replace: true });
             if (multiProjectSessionsEnabled) {
-              void loadMultiProjectSessionGroups();
+              scheduleMultiProjectSessionReload();
             }
           } else if (currentRootIdRef.current) {
             void scheduleSessionListReload(currentRootIdRef.current, {
@@ -1377,7 +1377,7 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
             });
             if (multiProjectSessionsEnabled) {
               void refreshMultiProjectReplyingSessions();
-              void loadMultiProjectSessionGroups();
+              scheduleMultiProjectSessionReload();
             }
           }
           return;
@@ -1574,7 +1574,7 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
               newest2 ? { afterTime: newest2 } : { replace: true },
             );
             if (multiProjectSessionsEnabled) {
-              void loadMultiProjectSessionGroups();
+              scheduleMultiProjectSessionReload();
             }
             }
       },
@@ -1848,7 +1848,7 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
               void loadSessionsForRoot(rootID, { replace: true });
             }
             if (multiProjectSessionsEnabled) {
-              void loadMultiProjectSessionGroups();
+              scheduleMultiProjectSessionReload();
             }
           }
       },
@@ -1931,7 +1931,6 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
       },
     } as Record<string, (event: any, payload: any) => void>;
   }, [
-    loadMultiProjectSessionGroups,
     scheduleMultiProjectSessionReload,
     loadSessionsForRoot,
     scheduleSessionListReload,
