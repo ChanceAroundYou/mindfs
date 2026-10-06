@@ -109,7 +109,7 @@
 
 ---
 
-## 1. 总览（20 组：G-A … G-T）
+## 1. 总览（36 组）
 
 | 组 | 主题 | 性质 | 关键提交/切片举例 | 互斥边界 |
 |----|------|------|-------------------|----------|
@@ -133,6 +133,26 @@
 | G-R | 模型识别与流式透传 | 修复 | `af0a37f` 主体、`ab8cfed:probe` 1M 切片、`e92fecf:AgentSelector` 切片 | DeepSeek/Claude 1M 探测与 `stream_hub/ws` 透传 |
 | G-S | 作用域隔离与列表折叠 | 修复 | `3d3417a/ed44573/0591238` + `7a12971:App` 聚合切片 | `scope.ts`、`expanded/loadMore` 按 `nodeId:projectId` |
 | G-T | 流式重放与正文正确性 | 修复 | 见 §3「G-T」—— `session.ts`/`useSessionStreamCache.ts`/`useRealtimeEvents.ts`/`App.tsx`/`stream_hub.go`/`ws_test.go` | 重放幂等、seq=0 只在在途时存在、重放整批一条消息 |
+| G-U | 多账户分区（多配置档） | 架构 | 见 §3.1 | `ScopedRouter` + 每账户 `AppContext` + 分账户 `MetaDir` |
+| G-V | 控制面 / 数据面分离 | 架构 | 见 §3.1 | 控制面只在主节点；`nodeinfo.Role` 决定 |
+| G-W | worktree 会话 repoint | 修复 | 见 §3.1 | 换 id/推进游标/清归属的固定顺序 |
+| G-X | 置顶（pins） | 功能 | 见 §3.1 | 权威在主节点、按账户一份、键不带 node id |
+| G-Y | 看板模型重做（拒绝上游 task_groups） | 裁剪 | 见 §3.1 | 无并发调度；任务自带流水快照 |
+| G-Z | 跨项目工作台 | 功能 | 见 §3.1 | `overview` 汇总 + 按卡片 `root_id` 派发 |
+| G-AA | 前端 App.tsx 模块化重构 | 架构 | 见 §3.1 | `web/src/app/*` 19 模块 + `renderer/*` |
+| G-AB | 会话投影与审计 | 修复 | 见 §3.1 | `session_projection` / `audit` |
+| G-AC | ACP 运行时 + agents.json 用户层 | 修复 | 见 §3.1 | 只读用户层再合并 |
+| G-AD | 会话列表 / 树 / 归档 / 搜索 | 功能 | 见 §3.1 | 合并·建树·分组均为纯函数 |
+| G-AE | UI 基础设施（自建对话框） | 修复 | 见 §3.1 | 禁 `window.prompt/alert/confirm` |
+| G-AG | 输入区与编辑器 | 功能 | 见 §3.1 | `action/*` + CodeMirror token 编辑器 |
+| G-AH | 文件树 / Git 视图 / 文档预览 | 功能 | 见 §3.1 | 请求带 `nodeId`；根视图三页签 |
+| G-AI | PWA / 陈旧资源自愈 / 子路径 SW | 修复 | 见 §3.1 | 原 G-M 并入 |
+| G-AJ | 偏好 / 定时任务 / 提示词 / 更新 / WebPush | 功能 | 见 §3.1 | 共享 vs 按账户的边界见事实 12 |
+| G-AK | 本地化（中英双语键） | 功能 | 见 §3.1 | 合上游最易被整文件覆盖 |
+| G-AL | 构建 / 部署 / 收尾流程脚本 | 部署 | 见 §3.1 | `ship` / `upstream-merge` skill |
+| G-AM | 插件注册表与视图目录 | 功能 | 见 §3.1 | 主视图记忆依赖它 |
+
+> **G-D 已并入 G-F，G-M 已并入 G-AI**（改动面完全重合、无独立测试可守，单列只会制造空组）。
 
 > 同一提交跨组示例见 §3 表中「跨组拆分」列；同一文件跨组示例：`App.tsx` 按 hunk 分属 G-F/G-G/G-J/G-L/G-N/G-S 等 6 组，`http.go` 按 hunk 分属 G-B/G-I/G-K 三组。
 
@@ -174,11 +194,8 @@
 | `ab8999f/2e85356` | `web/src/services/file.ts` | `raw 404` 60s 缓存、成功缓存与并发去重、`@json-render` 懒加载 |
 | `2e85356` | `web/src/components/MarkdownViewer.tsx` | 复用缓存后的渲染路径 |
 
-### G-D 刷新旋转动效
-
-| 提交 | 文件 | 说明 |
-|------|------|------|
-| `040fbd2` | `web/src/components/FileTree.tsx:SyncIcon` + `web/src/hooks/useRefreshSpin.ts` + `web/src/App.tsx` | `useRefreshSpin(450ms)` 统一 `FileTree` 与任务面板刷新旋转；`SyncIcon` 支持 `style` |
+> **G-D 已并入 G-F**（刷新旋转动效 `040fbd2`：`useRefreshSpin(450ms)` 统一 `FileTree` 与任务面板旋转、`SyncIcon` 支持 `style`）。
+> 改动面（`FileTree.tsx` / `App.tsx` / `useRefreshSpin.ts`）与 G-F 完全重合，且没有独立测试可守，单列只会制造空组。
 
 ### G-E 会话存储后端性能
 
@@ -254,11 +271,8 @@
 | `7a12971/481da95` | `web/src/components/ActionBar.tsx/ModeIcon.tsx/ModeSelector.tsx/FileTree.tsx:fileTreeHexToRgba/tabAccent` | 主题色经 `rootColor/groupColor` 注入边框/阴影/图标（与 G-P 的别名 hunk 分离） |
 | `25f0001` | `web/src/components/DefaultListView.tsx` | `project-home` 徽标与节点徽标样式统一 |
 
-### G-M 子路径 ServiceWorker
-
-| 提交 | 文件 | 说明 |
-|------|------|------|
-| `6eb9457` | `web/src/registerServiceWorker.ts`、`web/vite.config.ts:buildToken` | `scopeRelativePathname` 剥离 `/mindfs`、去 `?v=` 冗余、构建戳防 SW 死锁，移除 nginx patched SW |
+> **G-M 已并入 G-AI**（子路径 ServiceWorker `6eb9457`：`scopeRelativePathname` 剥离 `/mindfs`、去 `?v=` 冗余、构建戳防 SW 死锁，移除 nginx patched SW）。
+> 改动面（`registerServiceWorker.ts` / `vite.config.ts:buildToken`）与 G-AI 完全重合，单列只会制造空组。
 
 ### G-N 会话锁定
 
@@ -337,6 +351,128 @@
 
 **验证记录**：CDP 冷启动一个运行中的会话，WS 帧统计 —— 重放 `events[92]` 到达 **1 条**（修复前会是 92 条单事件帧）；观测窗口内另有 25 条单帧为**实时**事件（正常）。
 `go build` / `go test ./internal/api/` / `tsc --noEmit` / `node --test tests/*.test.mjs`（145/145）全绿；关键判据均做变异验证（改回旧写法即红）。
+
+---
+
+### 3.1 补全分组（2026-10-06 新增，18 组）
+
+> §3 的 G-A…G-S 是 v0.4.7 时代按 hunk 归的类，只覆盖了当时 68 个文件。
+> 2026-10-06 用 `git diff $(git merge-base HEAD upstream/main)..HEAD` 对账，定制面实为 **380 文件**，
+> 补出以下 18 组。**每组的文件、测试、锚点、可见症状、为什么必须保留都在
+> `docs/upstream-customizations.yaml`**；这里只留「来源与边界」的索引，不再重复列举。
+
+### G-U 多账户分区（多配置档）
+
+- 来源：`75abc28` 起的多账户改造 + 后续修（`e9536ac` 跨节点 deadline、`server/app/workspace_test.go` 契约）。
+- 边界：**API 层不做鉴权是用户决策**（多账户=多配置档，不是安全边界）；按账户分区由
+  `api.ScopedRouter` 按 `user=` 派发到每账户一份 `AppContext` 实现，**211 处 `h.AppContext` 一处都没改**。
+  `StreamHub` 必须每账户独立；`MetaDir()` 分账户、`SharedMetaDir()` 不分（上传与批注按注册表记的
+  `MetaLocation` 算、不看账户）。前端 `user=` 只在 `services/base.ts` 注入（三处唯一汇聚点）。
+
+### G-V 控制面 / 数据面分离（control / worker 角色）
+
+- 来源：`cli/cmd/startup_config_test.go`、`server/internal/nodeinfo/role.go`、`web/src/services/controlPlane.ts`。
+- 边界：控制面（账户表/偏好/提示词库/看板模板/节点表/WebPush/relay/update）只有主节点一份真相；
+  数据面（项目/会话库/任务库/文件/git/进程池/定时任务）每台一份。
+  **修复必须落在 `cli/cmd`** —— `make build` 装的是 `./cli/cmd`，`server/cmd/mindfs-server` 只有
+  `make dev-backend` 用，发布二进制里没有它的代码（第一版修复改错地方，单元测试绿但真机 role 仍是 control）。
+  开启方式：`-role worker` 或 `<config-dir>/config.json` 的 `{"role":"worker"}`；**不传 `-config` 时读这个缺省路径**。
+
+### G-W worktree 会话 repoint
+
+- 来源：`0f4de0d`（repoint 主体）、`cfdc6a7`（源转录已在主 slug 时就地处理）、`6f4dd92`（文档补判据）。
+- 边界：**先判断要不要 repoint** —— Claude Code 按 spawn cwd 决定 slug，会话只要有一次在主 checkout 起过，
+  转录就已经在主 slug 下，此时 worktree 目录被删也**不会**聊不了，只需清 `related_worktree_json` 里的坏路径。
+  转录真在 `--worktree-*` 目录下时才走完整 repoint，且**顺序不可换**：`pool.Close` → 搬文件 → 一个事务里换绑定 id
+  并推进游标 → 清归属。
+
+### G-X 置顶（pins）
+
+- 来源：`server/internal/pins/`、`http_pins.go`、`web/src/services/pins.ts`（2026-10-05 起）。
+- 边界：**权威在主节点、但按账户一份**（两个维度各管一件事）。会话键是 `rootID::sessionKey`，**不带 node id**；
+  会话库的 `sessions.pinned_at` 已退役（只留列，不再读写），刻意不与置顶表做并集。
+  **不做跨设备实时**（用户 2026-10-04 定），只在切换项目等导航动作时刷新一次。
+
+### G-Y 看板模型重做（拒绝上游 task_groups 编排体系）
+
+- 来源：CLAUDE.md 事实 13 + §0-B 的架构级取舍。**这是最容易被上游合并冲掉的一组。**
+- 边界：本地为「卡=任务、列=全局状态、无并发调度」。任务自带流水快照（`Task.Stages` 创建时从预设拷贝，
+  之后与预设无关；旧任务在 `loadForMove` 里惰性回填）。上游的 `kanban.Start` 调度器、
+  `TaskGroupPanel`/`TaskCardText`、`patchTask`/`fetchTaskGroups`/`groupOperation`、
+  `GET/PATCH/DELETE /api/tasks/{id}` 与 `/read/{resource}` 路由、`openTaskEditDialog` 全部丢弃。
+  `SchedulerAdmitted` 保留为 DB 列兼容位（无调度器时恒 true）。
+  **建任务必须内联流水**（模板库只在主节点，任务可建在运行节点上；`taskStagesForCreate` 每次带 `stages`）。
+
+### G-Z 跨项目工作台
+
+- 来源：`web/src/components/workspace/*`、`useWorkspaceBoard.ts`、`GET /api/tasks/overview`。
+- 边界：无项目时渲染跨项目工作台；卡片操作按卡片自带 `root_id` 派发；详情先切项目再选中任务。
+
+### G-AA 前端 App.tsx 模块化重构
+
+- 来源：`458495b`（WS 事件处理器整块搬出）、`e7a31d2`（流写缓存抽出）等一连串 refactor。
+- 边界：`App.tsx` 原为 ~15k 行巨文件，拆成 `web/src/app/`（19 模块）+ `web/src/renderer/`。
+  §0-B-H02/H13 的两大段（上游 module-level helper 与巨型 effect）取 local。
+
+### G-AB 会话投影与审计
+
+- 来源：`usecase/session_projection.go`、`session/audit.go`。
+- 边界：把「会话对外投影」与「交换审计」各收敛成一处；上游没有这两层。
+
+### G-AC ACP 运行时与 agents.json 用户层合并
+
+- 来源：`326c380`（写用户层只读用户层）、`server/internal/agent/acp/*`。
+- 边界：ACP 进程必须显式回收；写用户层 `agents.json` 时**只读用户层再合并**，
+  不能把合并后的全量写回用户层（否则上游新增 agent 再也不出现）。dsh/ACP 起不来的三个原因见记忆与 `docs`。
+
+### G-AD 会话列表 / 树 / 归档 / 搜索
+
+- 来源：`sessionListMerge` / `sessionTree` / `sessionGroupDisplay` / `ArchivedSessionsPanel`。
+- 边界：合并、建树、分组显示都是纯函数（便于契约测试）；上游没有这层。
+
+### G-AE UI 基础设施（自建对话框 / Toast / 面板外壳）
+
+- 来源：`web/src/services/dialog.ts` + `DialogHost`；`no-system-dialogs.test.mjs` 守着。
+- 边界：**禁止组件里直接用 `window.prompt/alert/confirm`**（上游带进来过，见 §0-B）。
+  弹窗外壳用 `PanelShell`（带未保存改动确认）。
+
+### G-AG 输入区与编辑器（ActionBar 拆分 / CodeMirror token 编辑器）
+
+- 来源：`web/src/components/action/*`、`web/src/components/editor/*`。
+- 边界：§0-B-H16 的 533 行上游输入区实现取 local；@文件/@会话 引用走 token 编辑器。
+
+### G-AH 文件树 / Git 视图 / 文档预览
+
+- 来源：`web/src/components/Root{Git,Related,Worktree}ContentView.tsx`、`services/{git,documentPreview}.ts`。
+- 边界：文件与 Git 请求必须带 `nodeId`；根视图拆三个页签。
+
+### G-AI PWA / 陈旧资源自愈 / 子路径 ServiceWorker
+
+- 来源：`73db73e`（不再整目录删除 web 哈希资源，让过期标签页自愈）、`6eb9457`（G-M 并入）。
+- 边界：换哈希后旧标签页必须能自愈；SW scope 要剥 `/mindfs`。
+
+### G-AJ 偏好 / 定时任务 / 提示词 / 更新 / WebPush
+
+- 来源：`server/internal/{preferences,scheduled,update,webpush}`、`usecase/prompts.go`。
+- 边界：共享范围表见 CLAUDE.md 事实 12 —— 偏好/节点表/WebPush 订阅/提示词/看板模板**共享**；
+  看板任务库与定时任务**按账户**（它们按本账户项目调度，且执行时用本账户的 session manager，共享实例说不清该跑谁的会话）。
+
+### G-AK 本地化（中英双语键）
+
+- 来源：`web/src/i18n/locales/{zh-CN,en-US}.ts`。
+- 边界：本地键必须与上游键并存；合上游时 i18n 两侧是最容易被整文件覆盖的文件。
+
+### G-AL 构建 / 部署 / 收尾流程脚本
+
+- 来源：`scripts/deploy-all.sh`、`scripts/{build-all,install,migrate-control-plane-to-primary}.sh`、
+  `Makefile`、`.claude/skills/{ship,upstream-merge}`。
+- 边界：`ship` 一条命令完成门禁→提交推送→两侧编译安装→WSL 重建重启→两端对账。
+  `73db73e` 修的是「不再整目录删除 web 哈希资源」。合上游后 `Makefile` 的本地 target 要保住。
+
+### G-AM 插件注册表与视图目录
+
+- 来源：`web/src/renderer/{viewCatalog,registry,Renderer}`、`plugins/manager.ts`。
+- 边界：视图目录决定可用视图与页签顺序，「主视图记忆」依赖它。
 
 ---
 

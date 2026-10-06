@@ -1,0 +1,923 @@
+# MindFS fork 定制注册表（机器真相）
+#
+# 这是 CLAUDE.md「fork 定制与上游合并（必守）」那条铁律的机器可核对面。
+# 叙述、合并记录、评估在 docs/upstream-customizations.md；分组 id 两边必须一致
+# （由 `go run ./scripts/check-upstream` 的断言 6 强制）。
+#
+# files 的匹配语义（只有两种，Go 的 path.Match 不支持 **）：
+#   - 结尾带 /  → 目录前缀匹配，如 server/internal/kanban/
+#   - 含 *      → path.Match 单段通配
+#   - 其它      → 精确路径
+#
+# 注意：本表是**文件级**的。md §1 的「按 hunk 归类、组间互斥」是 hunk 级口径，
+# 文件级做不到互斥——同一个文件（App.tsx / http.go / manager.go）的定制 hunk 分散在
+# 多个组里很正常，因此一个文件可以出现在多个组。断言 2 只保证「这个文件仍与上游有差异」，
+# 逐条覆盖由每组的 tests 承担。
+#
+# 维护：新增定制 → 先在 files 里登记（否则断言 1 报未覆盖），再补 tests 与 anchors，
+# 跑 `go run ./scripts/check-upstream` 到全绿，提交信息标 `Scope: G-xx`。
+
+version: 1
+
+baseline:
+  upstream_ref: upstream/main
+  merge_base: 9ab9572 # tag v0.5.5
+  upstream_tag: v0.5.5
+  recorded_at: 2026-10-06
+
+groups:
+  # ── 文档与工程约定 ────────────────────────────────────────────────
+  - id: G-A
+    title: 文档与工程约定
+    kind: docs
+    symptom: |
+      合上游后这些文件被覆盖或被删，后续再合上游时「哪条该留」就失去判据。
+      历史上 release-notes.md 的整段条目就是这样静默丢失过的。
+    why: |
+      上游完全没有这些文件（CLAUDE.md、上游定制清单、多账户/多节点 PRD、设计稿）。
+      CLAUDE.md 的「fork 定制与上游合并（必守）」一节是本清单的规则来源，
+      它一旦丢，整套定制保护机制就失去依据。
+    files:
+      - .gitignore
+      - CLAUDE.md
+      - docs/superpowers/
+      - docs/main-view-switching-design.md
+      - docs/multi-node-control-plane.md
+      - docs/multi-user-prd.md
+      - docs/plans/worktree-finish-stage-plan.md
+      - docs/session-flicker-root-cause.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+      - docs/workspace-design.md
+    tests: []
+
+  # ── 后端：HTTP / 安全 / 存储 ──────────────────────────────────────
+  - id: G-B
+    title: HTTP 语义修正（404 / 空树 / 静态资源）
+    kind: fix
+    symptom: |
+      打开不存在的目录报错而不是显示空列表；打开不存在的文件报 400 而不是 404；
+      子路径部署下静态资源 404。
+    why: |
+      前端按错误码分流：200 空树 = 空目录、404 = 文件不存在。
+      错误码一变，前端的「空目录」与「读失败」判定就串了。
+    files:
+      - server/internal/api/http.go
+      - server/internal/api/http_test.go
+      - server/internal/api/helpers_test.go
+    tests:
+      - server/internal/api/http_test.go
+    anchors:
+      - server/internal/api/http.go:handleTree
+
+  - id: G-C
+    title: Markdown / Mermaid 渲染与文件服务缓存
+    kind: fix
+    symptom: |
+      含裸管道符的 mermaid 图渲染失败；文件内容 404 时反复重试形成请求风暴；
+      大文件打开卡住。
+    why: |
+      mermaid 11.14.0 对节点标签里的裸 | 有怪癖，必须加引号；
+      文件 raw 404 做 60s 缓存避免重试风暴，成功缓存 + 并发去重，
+      @json-render 懒加载。上游没有这层，退回后大文件与失败重试都会拖垮前端。
+    files:
+      - web/src/components/MarkdownViewer.tsx
+      - web/src/services/file.ts
+    tests:
+      - web/tests/document-preview.test.mjs
+
+  - id: G-I
+    title: 安全模型重塑（鉴权 / e2ee / CORS 全开放）
+    kind: arch
+    symptom: |
+      API 层要求 token 或校验 e2ee proof 时，浏览器直连会全部 401/403；
+      跨节点请求被 CORS 挡下。
+    why: |
+      「API 层不做鉴权」是用户明确决策（多账户=多配置档，不是安全边界）。
+      上游的 e2ee 解密/Proof 校验与 CORS 白名单一旦被合回来，所有前端请求立即失效。
+    files:
+      - server/internal/api/http.go
+      - server/internal/api/http_e2ee_cors_test.go
+      - web/src/services/e2ee.ts
+      - web/src/services/api.ts
+      - web/src/services/connection.ts
+      - web/src/services/storage.ts
+    tests:
+      - server/internal/api/http_e2ee_cors_test.go
+
+  - id: G-K
+    title: 部署前缀与代理基础设施
+    kind: arch
+    symptom: |
+      子路径部署（/mindfs/）下页面能开但接口 404；节点间反代路径拼错；
+      vite 产物引用 /assets 而非 /mindfs/assets。
+    why: |
+      前后端各有一处前缀规范化的单一事实源，上游没有这层。少了它，
+      本机的 127.0.0.1:7331 与 WSL 的 0.0.0.0:7331 两套部署都无法工作。
+    files:
+      - internal/deploy/prefix.go
+      - internal/deploy/prefix_test.go
+      - server/internal/api/prefix.go
+      - server/internal/api/http_nodes.go
+      - server/internal/nodes/store.go
+      - server/internal/nodes/store_test.go
+      - web/src/services/prefix.ts
+      - web/src/services/nodeBase.ts
+      - web/vite.config.ts
+      - web/index.html
+      - web/.env
+      - web/package.json
+    tests:
+      - internal/deploy/prefix_test.go
+      - web/tests/deploy-prefix.test.mjs
+      - web/tests/node-url-normalize.test.mjs
+    anchors:
+      - web/src/services/prefix.ts:normalize
+
+  - id: G-V
+    title: 控制面 / 数据面分离（control / worker 角色）
+    kind: arch
+    symptom: |
+      worker 节点上能打开控制面页面、改了偏好却存在本地；两个节点的 nodes.json 互相矛盾；
+      运行节点被误判为「离线」。
+    why: |
+      账户表/偏好/提示词库/看板模板/节点表只有主节点一份真相，数据面每台各一份。
+      少了 role 判定，控制面会被复制到每台机器并各自漂移——同一台机器在两边拿到不同 node id，
+      这是跨节点 bug 的根源。探测角色必须打 /health（/api/node-info 自己在控制面表里，
+      worker 上必然 403）。
+    files:
+      - server/internal/nodeinfo/
+      - cli/cmd/mindfs.go
+      - cli/cmd/mindfs_test.go
+      - cli/cmd/local_http_test.go
+      - cli/cmd/startup_config_test.go
+      - server/cmd/mindfs-server/main.go
+      - server/internal/api/http_node_role_test.go
+      - web/src/services/controlPlane.ts
+    tests:
+      - server/internal/nodeinfo/role_test.go
+      - cli/cmd/startup_config_test.go
+      - web/tests/control-plane-routing.test.mjs
+    anchors:
+      - server/internal/nodeinfo/role.go:RoleWorker
+      - web/src/services/controlPlane.ts:controlPath
+
+  - id: G-E
+    title: 会话存储后端性能（游标增量 / WAL / 窗口读）
+    kind: perf
+    symptom: |
+      打开会话要等几秒（整份转录重读重解析）；多个请求并发时 readonly database (1032)；
+      轮询正在回复的会话把 CPU 打满。
+    why: |
+      exchanges/aux 走 JSONL 游标增量、列表 meta-only、WAL + busy_timeout、
+      GetMeta 不读 JSONL。退回全量解析后，长会话（上千条 exchange）每次打开都是秒级卡顿。
+    files:
+      - server/internal/session/manager.go
+      - server/internal/session/types.go
+      - server/internal/session/manager_test.go
+      - server/internal/session/manager_cursor_test.go
+      - server/internal/session/manager_cursor_migration_test.go
+      - server/internal/session/manager_window_test.go
+      - server/internal/session/aux_window_tail_test.go
+      - server/internal/session/session_db_migration_order_test.go
+      - server/internal/fs/fs.go
+      - server/internal/api/http_window_test.go
+      - server/internal/api/usecase/exchange_repeat_test.go
+    tests:
+      - server/internal/session/manager_cursor_test.go
+      - server/internal/session/manager_cursor_migration_test.go
+      - server/internal/session/manager_window_test.go
+      - server/internal/session/session_db_migration_order_test.go
+
+  # ── 前端：流式与渲染性能 ────────────────────────────────────────
+  - id: G-F
+    title: 前端流式与渲染性能（含刷新旋转动效）
+    kind: perf
+    symptom: |
+      流式输出时整页卡顿、输入框打字掉字、滚动不跟手；
+      （并入的 G-D）刷新按钮不转、或转完不复位。
+    why: |
+      WS 重拉 300ms 防抖 + cacheVersion/streamVersion 30ms 节流，
+      把流式 100/s 压到 ~33/s；SessionCard/FileTree/MarkdownCodeBlock memo 化；
+      markdown 解析走 useDeferredValue（低优先级）不阻塞输入；
+      IDB 只存 meta+最近 500 条/200KB，truncated→syncSession 全量补段。
+      刷新旋转用统一的 useRefreshSpin(450ms)，SyncIcon 支持 style。
+      （G-D 原先单列，其改动面（FileTree/App/useRefreshSpin）与本组完全重合，
+      且没有独立测试可守，故并入——保留 G-D 号仅作历史索引。）
+    files:
+      - web/src/App.tsx
+      - web/src/components/FileTree.tsx
+      - web/src/components/SessionList.tsx
+      - web/src/components/MarkdownViewer.tsx
+      - web/src/renderer/
+      - web/src/hooks/useSessionStream.ts
+      - web/src/services/session.ts
+    tests:
+      - web/tests/session-switch-flicker.test.mjs
+      - web/tests/session-list-node-failure.test.mjs
+      - web/tests/session-list-merge.test.mjs
+
+  # ── 后端：多账户 ────────────────────────────────────────────────
+  - id: G-U
+    title: 多账户分区（多配置档）
+    kind: feature
+    symptom: |
+      换个 URL 里的 user= 就读到另一个账户的项目与会话；实时流串账户
+      （StreamHub 未按账户隔离）；数据落错目录，甚至往别人的项目里写入 .mindfs。
+    why: |
+      API 层不做鉴权是用户明确决策（多账户=多配置档，不是安全边界），
+      但「按账户分区」必须成立：每账户一份 AppContext 由 ScopedRouter 按 user= 派发
+      （211 处 h.AppContext 一处都不用改）；StreamHub 必须每账户独立；
+      MetaDir() 分账户、SharedMetaDir() 不分；主账户数据根仍是 <cfg>/ 保持行为零变化。
+    files:
+      - server/app/workspace.go
+      - server/app/workspace_test.go
+      - server/app/server.go
+      - server/app/unknown_user_test.go
+      - server/app/ws_unknown_test.go
+      - server/app/task_worktree_root_test.go
+      - server/internal/api/workspace.go
+      - server/internal/api/workspace_test.go
+      - server/internal/api/appcontext.go
+      - server/internal/api/http_users.go
+      - server/internal/api/http.go
+      - server/internal/api/auth_routes_test.go
+      - server/internal/auth/
+      - server/internal/fs/meta_location.go
+      - server/internal/fs/registry_multiaccount_test.go
+      - web/src/components/AccountPanel.tsx
+      - web/src/components/Login.tsx
+      - web/src/components/AuthGate.tsx
+      - web/src/services/accounts.ts
+      - web/src/services/authGate.ts
+    tests:
+      - server/app/workspace_test.go
+      - server/internal/api/workspace_test.go
+      - web/tests/multi-account-partition.test.mjs
+      - web/tests/cross-machine-account.behavior.mjs
+    anchors:
+      - server/app/workspace.go:ScopedRouter
+      - server/internal/fs/meta_location.go:MetaLocationForNewRoot
+
+  # ── 后端：会话生命周期 ──────────────────────────────────────────
+  - id: G-P
+    title: 项目别名（display_name）
+    kind: feature
+    symptom: |
+      改了项目显示名后，另一台设备/另一个账户看到的还是旧名；
+      或者更糟：改名顺手把项目 ID 也换掉，已有会话全部「找不到项目」。
+    why: |
+      display_name 落 registry.json 的 dirs[].display_name，ID (=Name=basename) 与 RootPath 不变，
+      经 managedDirResponse 与 WS display_name_changed 广播。
+      POST /api/dirs/{id}/display-name 只改显示名；前端以
+      App.getRootDisplayName/currentRootDisplayName 贯通面包屑与会话分组；
+      同 id 合并原地 merged，不走 ID 漂移。上游没有这层。
+    files:
+      - server/internal/fs/registry.go
+      - server/internal/api/usecase/root.go
+      - server/internal/api/usecase/fs.go
+      - server/internal/api/usecase/local_dirs.go
+      - server/internal/api/usecase/usecase_test.go
+    tests:
+      - server/internal/api/usecase/usecase_test.go
+    anchors:
+      - server/internal/fs/registry.go:UpdateDisplayName
+
+  - id: G-G
+    title: 会话生命周期与 WS 正确性
+    kind: fix
+    symptom: |
+      点停止按钮没反应；「正在生成」标记卡住不消；多项目实时更新滞后或错乱。
+    why: |
+      ws.go 是单读 goroutine，所有 handler 必须异步派发——同步派发会让
+      一个阻塞的 handler 冻结整条连接（停止按钮失效就是这么来的）。
+      agent session 的 Interrupt 用了 context.Background()，CLI 不 ack 就永不返回，
+      调用方必须加超时包装。
+    files:
+      - server/internal/api/ws.go
+      - server/internal/api/stream_hub.go
+      - server/internal/api/http_session_message.go
+      - server/internal/api/session_created_broadcast_test.go
+      - server/internal/api/stream_hub_user_message_test.go
+      - server/internal/api/usecase/session_early_user_persist_test.go
+      - server/internal/agent/types/types.go
+      - web/src/hooks/useSessionStream.ts
+      - web/src/app/useRealtimeEvents.ts
+      - web/src/components/SessionViewer.tsx
+    tests:
+      - server/internal/api/session_created_broadcast_test.go
+      - server/internal/api/stream_hub_user_message_test.go
+      - server/internal/api/usecase/session_early_user_persist_test.go
+      - web/tests/user-message-persist-timing.test.mjs
+    anchors:
+      - server/internal/api/ws.go:go h.handle
+
+  - id: G-T
+    title: 流式重放与正文正确性
+    kind: fix
+    symptom: |
+      同一段正文在行内被拼成 aabb（「文本出现两遍、越切越多」）；
+      每切一次会话就刷一大堆重放；首次打开运行中会话时内容逐渐刷出来；
+      切回运行中会话时在途内容整块丢失。
+    why: |
+      重放必须幂等（整段重放→覆盖、重复分片→忽略），三处拼接收敛到 mergeStreamedText 一个定义；
+      光标是「我已收到 X」的凭证，不能清；重放整批一条 WS 消息下发（几百条单帧=几百次渲染）；
+      加载时组装只能有一条规则 composeLoadedExchanges（瞬时行 seq=0 只在在途时保留）；
+      seq=0 必须有清理出口 dropTransientExchanges，否则跨 compact 堆积到上千条。
+    files:
+      - web/src/services/session.ts
+      - web/src/app/useSessionStreamCache.ts
+      - web/src/app/useRealtimeEvents.ts
+      - server/internal/api/stream_hub.go
+      - server/internal/api/ws.go
+      - server/internal/api/ws_test.go
+    tests:
+      - web/tests/session-window.test.mjs
+      - web/tests/upstream-restore.test.mjs
+      - web/tests/session-done-replay-no-reanchor.test.mjs
+      - web/tests/session-cache-strips-anchor-bookkeeping.test.mjs
+      - web/tests/session-window-overlay-dedup.test.mjs
+      - web/tests/sync-preserves-live-transient-text.test.mjs
+      - web/tests/sync-preserves-pending-ask-card.test.mjs
+      - server/internal/api/ws_test.go
+    anchors:
+      - web/src/services/session.ts:mergeStreamedText
+      - web/src/services/session.ts:composeLoadedExchanges
+
+  - id: G-W
+    title: worktree 会话 repoint（把会话从已删工作树搬回主 checkout）
+    kind: fix
+    symptom: |
+      worktree 目录删掉后，那个会话读得到却「不能继续聊」：
+      mindfs 侧 related_worktree 钉着不存在的 cwd，与主 checkout 的转录互相打架。
+    why: |
+      repoint 四件事有固定顺序：换 agent_session_id（fork 转录搬进主 slug）
+      → 一个事务里换绑定 id 并推进游标 → ClearRelatedWorktree。
+      两个必须守住的坑：游标要推进到新转录 EOF（归零会让下次 Full 同步整份重读，
+      出现「ask 下面又渲染一轮出现过的文字」）；agent_ctx_seq 必须原样保留
+      （它是 Full 同步的幂等护栏，写 0 会让早已渲染过的回合重导一遍）。
+      另外：转录已在主 slug 时不需要 repoint，只需清 related_worktree。
+    files:
+      - server/internal/api/usecase/session_repoint.go
+      - server/internal/api/usecase/session_repoint_test.go
+      - server/internal/api/usecase/git_worktree.go
+      - server/internal/agent/claude/repoint.go
+      - server/internal/agent/claude/repoint_test.go
+      - server/internal/agent/workdir.go
+      - server/internal/session/manager_repoint_test.go
+      - server/internal/session/manager_repoint_binding_test.go
+      - server/internal/gitview/worktree_finish.go
+      - server/internal/gitview/worktree_finish_test.go
+      - server/internal/kanban/worktree_finish.go
+      - server/internal/kanban/worktree_finish_stage.go
+      - server/internal/kanban/worktree_finish_stage_test.go
+      - server/internal/kanban/worktree_finish_test.go
+      - server/internal/api/http_tasks_finish_teardown.go
+      - server/internal/api/http_tasks_finish_test.go
+      - web/src/components/WorktreeBranchSelector.tsx
+      - web/src/app/useProjectTreeWorktrees.ts
+    tests:
+      - server/internal/api/usecase/session_repoint_test.go
+      - server/internal/session/manager_repoint_test.go
+      - server/internal/session/manager_repoint_binding_test.go
+      - server/internal/agent/claude/repoint_test.go
+      - server/internal/gitview/worktree_finish_test.go
+      - server/internal/api/http_tasks_finish_test.go
+      - web/tests/worktree-finish.test.mjs
+      - web/tests/worktree-badge.test.mjs
+
+  - id: G-Q
+    title: 会话别名 / 外部导入 / Fork 扁平
+    kind: feature
+    symptom: |
+      外部会话导入后标题是原始 slug 而不是最后一句话；同一个外部会话被重复导入；
+      fork 出来的子会话缩在父会话下面找不到；会话别名换台机器就没了。
+    why: |
+      别名落服务端 SQLite（不是 localStorage），保证跨端一致；
+      外部名称按 agent+agent_session_id 落盘，导入前回放 alias；
+      fork 完全独立（不再写 parent_session_key），仅 fork 扁平为顶级。
+      转录重复区块会导致重复交换，必须按条目 uuid 去重。
+    files:
+      - server/internal/agent/claude/importer.go
+      - server/internal/agent/claude/importer_test.go
+      - server/internal/agent/codex/importer.go
+      - server/internal/agent/codex/importer_test.go
+      - server/internal/api/usecase/external_sessions.go
+      - server/internal/api/usecase/external_sessions_test.go
+      - server/internal/api/usecase/session.go
+      - server/internal/session/manager.go
+      - web/src/components/ExternalSessionList.tsx
+      - web/src/app/useExternalSessionImport.ts
+    tests:
+      - server/internal/agent/claude/importer_test.go
+      - server/internal/agent/codex/importer_test.go
+      - server/internal/api/usecase/external_sessions_test.go
+
+  - id: G-AB
+    title: 会话投影与审计
+    kind: fix
+    symptom: |
+      会话列表/详情的字段来自多次不一致的读，出现「列表有、详情无」；
+      外部会话的审计记录与实际交换对不上。
+    why: |
+      session_projection.go 把会话对外投影收敛成一处，audit.go 记录交换的权威视图；
+      上游没有这两层，退回散读会让同一份会话在不同入口呈现不同结果。
+    files:
+      - server/internal/api/usecase/session_projection.go
+      - server/internal/api/usecase/session_projection_test.go
+      - server/internal/session/audit.go
+    tests:
+      - server/internal/api/usecase/session_projection_test.go
+
+  # ── 后端：模型 / 探针 / agent 运行时 ────────────────────────────
+  - id: G-R
+    title: 模型识别与流式透传
+    kind: fix
+    symptom: |
+      CC Switch 下显示的是聚合模型的假名而不是真实模型；Claude 的 [1m] 变体被当成不同模型；
+      模型名在流式过程中反复跳动。
+    why: |
+      分层解析 os.Environ→agents.json→settings 才能拿到 CC Switch 下的真实模型；
+      [1m] 后缀要兼容（strip1MSuffix / isClaudeAliasModelName）；
+      model_display_name 要在流式里贯通并做乐观缓存。
+    files:
+      - server/internal/agent/probe.go
+      - server/internal/agent/probe_models_test.go
+      - server/internal/agent/claude/session.go
+      - server/internal/agent/claude/session_test.go
+      - server/internal/agent/claude/zz_replay_live_test.go
+      - web/src/components/AgentSelector.tsx
+      - web/src/components/AgentMenuList.tsx
+    tests:
+      - server/internal/agent/probe_models_test.go
+      - server/internal/agent/claude/session_test.go
+      - web/tests/claude-model-1m.test.mjs
+      - web/tests/long-context-inheritance.test.mjs
+
+  - id: G-AC
+    title: ACP 运行时与 agents.json 用户层合并
+    kind: fix
+    symptom: |
+      dsh/ACP agent 起不来；写用户层 agents.json 时把上游 agent 定义一起冻住，
+      上游新增的 agent 再也不出现。
+    why: |
+      ACP 进程需要显式回收（runtime_reap），否则僵尸进程累积；
+      写用户层配置时必须只读用户层再合并，不能把合并后的全量写回用户层。
+    files:
+      - server/internal/agent/acp/process.go
+      - server/internal/agent/acp/session.go
+      - server/internal/agent/acp/runtime_reap_test.go
+      - server/internal/agent/config.go
+      - server/internal/agent/config_env_merge_test.go
+      - server/internal/api/agent_config.go
+      - server/internal/api/agent_config_user_layer_test.go
+      - server/internal/api/agent_api_provider.go
+      - agents.json
+      - web/src/services/agents.ts
+      - web/src/services/candidates.ts
+      - web/src/components/action/CandidateDropdown.tsx
+      - web/src/components/action/useCandidates.ts
+    tests:
+      - server/internal/agent/acp/runtime_reap_test.go
+      - server/internal/agent/config_env_merge_test.go
+      - server/internal/api/agent_config_user_layer_test.go
+
+  # ── 后端：看板 / 任务 ───────────────────────────────────────────
+  - id: G-X
+    title: 置顶（pins）—— 控制面权威 + 每账户一份
+    kind: feature
+    symptom: |
+      在 PC 的项目里置顶没反应；置顶刷新后就没了（前端自己拼键，与服务端分叉）；
+      worker 节点列表永远没有置顶区。
+    why: |
+      置顶是「权威在主节点、但按账户一份」的双维度设计：控制面端点（/api/pins，worker 上 403），
+      存储每账户一份（pins/store.go）。正常路径的会话键是 `rootID::sessionKey`，**不带 node id**
+      —— 带 node id 就等于又按机器分片（SessionScopeKey 保留 nodeID 前缀仅用于回填旧键）。
+      列表端只从置顶表取（Manager.ListByKeys，只查 meta）；worker 列表的置顶由
+      applyPinnedSnapshotToSessions 把主节点那份**盖**上去（只抹不盖会得到「在 PC 的项目里置顶没反应」）。
+      会话库的 sessions.pinned_at 已退役，刻意不与置顶表做并集（两份真相迟早分叉）。
+      项目置顶从共享偏好**一次性**回填（NeedsLegacySeed）——回填做第二次会让用户取消掉的置顶每次重启复活。
+    files:
+      - server/internal/pins/store.go
+      - server/internal/pins/store_test.go
+      - server/internal/api/http_pins.go
+      - server/internal/api/http_pins_test.go
+      - web/src/services/pins.ts
+    tests:
+      - server/internal/pins/store_test.go
+      - server/internal/api/http_pins_test.go
+      - web/tests/pins-authority.test.mjs
+    anchors:
+      - server/internal/pins/store.go:NeedsLegacySeed
+      - web/src/services/pins.ts:controlPath
+
+  - id: G-Y
+    title: 看板模型重做（拒绝上游 task_groups 编排体系）
+    kind: trim
+    symptom: |
+      上游的 task_groups 分组 + 并发调度器合回来后：同一任务被并发跑两次、
+      卡上出现「准入位(scheduler_admitted)」状态、任务可编辑弹窗回来（本地已主动删）、
+      跨项目工作台按项目分组却显示成上游的 taskGroups 语义。
+    why: |
+      本地早已重做为「卡=任务、列=全局状态、无并发调度」（CLAUDE.md 事实 13）：
+      任务自带流水快照（Task.Stages 是创建时从预设拷贝的快照，之后与预设无关）、
+      queued 与调度槽位已删、新建任务恒为 waiting_user。
+      上游的 kanban.Start 调度器 / TaskGroupPanel / patchTask / fetchTaskGroups /
+      groupOperation / GET-PATCH-DELETE /api/tasks/{id} / openTaskEditDialog 全部丢弃。
+      SchedulerAdmitted 字段保留为 DB 列兼容位（无调度器时恒 true），不是调度逻辑。
+    files:
+      - server/internal/kanban/
+      - server/internal/api/http_tasks.go
+      - server/internal/api/task_session_naming_test.go
+      - cli/cmd/task_help.go
+      - cli/cmd/task_operations.go
+      - cli/cmd/task_operations_test.go
+      - server/internal/api/http_task_groups.go
+      - server/internal/api/http_task_orchestration.go
+      - server/internal/api/http_task_orchestration_test.go
+      - server/internal/api/task_group_runner.go
+      - task_template.json
+      - web/src/components/TaskBoardView.tsx
+      - web/src/components/TaskCardRows.tsx
+      - web/src/components/TaskDetailPanel.tsx
+      - web/src/components/StageEditor.tsx
+      - web/src/components/StageOptionsBar.tsx
+      - web/src/components/TaskGroupPanel.tsx
+      - web/src/components/TaskTemplateDialog.tsx
+      - web/src/components/ScheduledAgentTaskDialog.tsx
+      - web/src/app/appTask.ts
+      - web/src/app/taskIcons.tsx
+      - web/src/app/useTaskTemplates.ts
+      - web/src/services/tasks.ts
+    tests:
+      - server/internal/kanban/service_test.go
+      - server/internal/api/task_session_naming_test.go
+      - web/tests/task-board-view.test.mjs
+      - web/tests/task-panel-unification.test.mjs
+      - web/tests/task-stage-panel.test.mjs
+      - web/tests/task-detail-order.test.mjs
+      - web/tests/task-template-node-routing.test.mjs
+      - web/tests/task-button-gates.test.mjs
+      - web/tests/task-cache-eviction.test.mjs
+      - web/tests/task-card-wrap.test.mjs
+
+  - id: G-Z
+    title: 跨项目工作台
+    kind: feature
+    symptom: |
+      没有选中项目时任务视图空白（应渲染跨项目工作台）；
+      工作台卡片操作发到错误的节点；实时刷新不及时。
+    why: |
+      无项目时用 GET /api/tasks/overview 汇总各项目（单项目失败跳过），
+      卡片操作按卡片自带 root_id 派发（完成/立即执行/跳会话/跳项目），
+      详情要先切项目再选中任务。上游没有这层聚合。
+    files:
+      - web/src/components/workspace/
+      - web/src/app/useWorkspaceBoard.ts
+    tests:
+      - web/tests/workspace-board.test.mjs
+      - web/tests/workspace-node-fanout.test.mjs
+      - web/tests/workspace-realtime-freshness.test.mjs
+
+  # ── 前端：架构与基础设施 ────────────────────────────────────────
+  - id: G-J
+    title: 多节点聚合与按 nodeId 路由
+    kind: arch
+    symptom: |
+      切换节点后请求仍打旧节点（切了没反应）；跨节点同名项目串在一起；
+      节点列表里同一台机器有两个不同 id；远端节点的小蓝灯永远不亮。
+    why: |
+      所有跨节点请求必须显式带 nodeId —— appPath(path) 不传 nodeId 会静默打当前激活节点；
+      节点注册表 PALETTE 是主题色单源；合并旁路状态（如 multiProjectPendingByKey）
+      只能增量重算成功节点的键，整体替换会在切节点/节点失败时误清。
+    files:
+      - web/src/services/nodeRegistry.ts
+      - web/src/hooks/useNodeRegistry.ts
+      - web/src/components/NodeSwitcher.tsx
+      - web/src/components/NodeManagerPanel.tsx
+      - web/src/components/NodeBadgeHeader.tsx
+      - web/src/services/rootNode.ts
+      - web/src/services/runtime.ts
+      - web/src/services/base.ts
+      - web/src/main.tsx
+    tests:
+      - web/tests/node-manager-panel.test.mjs
+      - web/tests/multi-node-root-routing.test.mjs
+      - web/tests/node-url-normalize.test.mjs
+      - web/tests/cross-node-replying-state.test.mjs
+      - web/tests/session-list-node-failure.test.mjs
+
+  - id: G-S
+    title: 作用域隔离与列表折叠
+    kind: fix
+    symptom: |
+      两端同名项目（本机 vs PC）互相串：展开一个另一个也展开、loadMore 拉错节点。
+    why: |
+      scope.ts 的 scopeKey/scopeSessionKey/treeKey/expandKey 是 nodeId:projectId 键基建；
+      建键要用 scopeSessionKey(nid,…) 而不是 rootSessionKey()（后者走 getNodeIdForRoot，
+      同名项目跨节点会错记）；默认展开=本节点、收起全隐藏；空串要互等为「未就绪」。
+    files:
+      - web/src/services/scope.ts
+      - web/src/components/SessionList.tsx
+      - web/src/components/FileTree.tsx
+    tests:
+      - web/tests/scope-keys.test.mjs
+
+  - id: G-AA
+    title: 前端 App.tsx 模块化重构
+    kind: arch
+    symptom: |
+      上游把 helper 塞回 App.tsx 的巨型 effect 时，本地抽出的 19 个模块被覆盖，
+      会话锁/多项目聚合/实时事件分发同时失效（这是最容易在合并时被整段带偏的地方）。
+    why: |
+      App.tsx 原为 15k 行巨文件。本地把它拆成 web/src/app/*（19 模块）与
+      web/src/renderer/*，模块边界就是职责边界：useRealtimeEvents（WS 事件分发）、
+      useSessionStreamCache（流写缓存）、appSession/appPath/appTask/appStorage。
+      上游的 module-level helper 与巨型 effect（H02/H13）取本地版本。
+    files:
+      - web/src/App.tsx
+      - web/src/app/
+      - web/src/renderer/
+    tests:
+      - web/tests/main-content-view-memory.test.mjs
+      - web/tests/new-session-auto-select.test.mjs
+      - web/tests/session-switch-flicker.test.mjs
+      - web/tests/back-navigation.test.mjs
+      - web/tests/session-ring-gesture.test.mjs
+
+  - id: G-AD
+    title: 会话列表 / 树 / 归档 / 搜索
+    kind: feature
+    symptom: |
+      会话列表切换项目后闪一下再出现；归档会话找不到入口；搜索跳不到命中片段。
+    why: |
+      sessionListMerge/sessionTree/sessionGroupDisplay 把多节点多项目的会话合并、
+      建树、分组显示收敛成纯函数，便于测试；归档面板挂在列表侧栏。
+      上游没有这些，退回上游实现会让列表在切项目/切节点时塌掉。
+    files:
+      - web/src/components/ArchivedSessionsPanel.tsx
+      - web/src/services/sessionListMerge.ts
+      - web/src/services/sessionTree.ts
+      - web/src/services/sessionGroupDisplay.ts
+      - web/src/app/useSessionSearch.ts
+      - web/src/app/useSessionSidebarView.tsx
+    tests:
+      - web/tests/session-list-merge.test.mjs
+      - web/tests/session-tree.test.mjs
+      - web/tests/session-group-display.test.mjs
+      - web/tests/session-archive.test.mjs
+      - web/tests/archived-panel.test.mjs
+      - web/tests/session-duration.test.mjs
+
+  - id: G-AE
+    title: UI 基础设施（自建对话框 / Toast / 面板外壳）
+    kind: fix
+    symptom: |
+      原生 window.prompt/alert/confirm 弹出来：样式与主题不符、移动端不可用、
+      阻塞主线程、无法取消。
+    why: |
+      本地用 DialogHost + services/dialog 的 promptDialog/alertDialog/confirmDialog
+      替代所有系统弹窗，禁止在组件里直接用 window.*。
+    files:
+      - web/src/services/dialog.ts
+      - web/src/components/DialogHost.tsx
+      - web/src/components/Toast.tsx
+      - web/src/components/PanelShell.tsx
+      - web/src/components/Select.tsx
+      - web/src/components/ErrorBoundary.tsx
+      - web/src/components/FileOperations.tsx
+    tests:
+      - web/tests/dialog-lifecycle.test.mjs
+      - web/tests/no-system-dialogs.test.mjs
+
+  # ── 前端：交互 ──────────────────────────────────────────────────
+  - id: G-N
+    title: 会话锁定（浏览内容时不丢会话）
+    kind: feature
+    symptom: |
+      在文件树/看板里点两下，正在看的会话就被切走了。
+    why: |
+      normalizeSessionLockKey 是锁定键的契约；上游的输入会话归属版本没有会话锁，
+      换过去就破锁。
+    files:
+      - web/src/services/sessionLock.ts
+    tests:
+      - web/tests/session-lock.test.mjs
+
+  - id: G-O
+    title: 可拖动浮层（BottomSheet）
+    kind: feature
+    symptom: |
+      底部浮层只能停在固定高度、拖拽抖动、上滑超界不回落、双击不放大。
+    why: |
+      50% 默认高度、任意高度悬停、上沿 10% 吸顶、pointercancel 回弹 50%、
+      触摸拖拽防手势抢占、rAF 节流 + contain:layout paint + 双击全屏。
+    files:
+      - web/src/services/bottomSheetModel.ts
+      - web/src/components/BottomSheet.tsx
+    tests:
+      - web/tests/bottom-sheet-model.test.mjs
+
+  - id: G-AG
+    title: 输入区与编辑器（ActionBar 拆分 / CodeMirror token 编辑器）
+    kind: feature
+    symptom: |
+      输入框高度不自适应、@ 引用没有候选、附件粘贴丢失、队列消息看不见、
+      移动端上滑手势与浮层冲突。
+    why: |
+      ActionBar 拆成 web/src/components/action/* 的十几个 hook 与薄组件；
+      token 编辑器（TokenEditor/TokenNode/pasteSupport）承载 @文件/@会话 引用。
+      上游的 533 行巨型输入区实现取本地版本。
+    files:
+      - web/src/components/action/
+      - web/src/components/editor/
+      - web/src/components/action/SessionRing.tsx
+      - web/src/components/ActionBar.tsx
+      - web/src/hooks/useSessionStream.ts
+    tests:
+      - web/tests/no-system-dialogs.test.mjs
+      - web/tests/session-ring-gesture.test.mjs
+
+  # ── 前端：文件 / Git / 文档 ────────────────────────────────────
+  - id: G-AH
+    title: 文件树 / Git 视图 / 文档预览
+    kind: feature
+    symptom: |
+      切项目后文件树不刷新；Git 面板拉的是别的节点的仓库；
+      word/pdf/图片预览打不开或整页崩。
+    why: |
+      文件与 Git 请求必须带 nodeId；文档预览把 docx/pptx 转成可渲染结构；
+      根视图拆成 Root{Git,Related,Worktree}ContentView 三个页签。
+    files:
+      - web/src/components/CodeViewer.tsx
+      - web/src/components/DocumentViewer.tsx
+      - web/src/components/GitDiffViewer.tsx
+      - web/src/components/GitHistoryPanel.tsx
+      - web/src/components/GitStatusPanel.tsx
+      - web/src/components/ProjectAddPopover.tsx
+      - web/src/components/AssociationView.tsx
+      - web/src/components/RootGitContentView.tsx
+      - web/src/components/RootRelatedContentView.tsx
+      - web/src/components/RootWorktreeContentView.tsx
+      - web/src/app/useProjectLifecycle.tsx
+      - web/src/app/useGitData.ts
+      - web/src/app/useGitActions.ts
+      - web/src/services/documentPreview.ts
+      - web/src/services/git.ts
+      - web/src/services/download.ts
+      - web/src/services/upload.ts
+      - web/src/hooks/useRelatedFileStats.ts
+      - server/internal/gitview/gitview.go
+      - server/internal/gitview/gitview_test.go
+    tests:
+      - web/tests/document-preview.test.mjs
+      - web/tests/project-add-path-browse.test.mjs
+      - web/tests/project-tree-refresh.test.mjs
+      - server/internal/gitview/gitview_test.go
+
+  - id: G-AI
+    title: PWA / 陈旧资源自愈 / 子路径 ServiceWorker
+    kind: fix
+    symptom: |
+      部署新版本后旧标签页白屏或加载到已被删的哈希资源；
+      安装 PWA 时页面闪一下；子路径部署下 SW 作用域错。
+    why: |
+      静态资源换了哈希后旧标签页引用的文件已不存在，必须能自愈（staleAssetRecovery）；
+      SW 的 scopeRelativePathname 要剥掉 /mindfs 并用构建戳防 SW 死锁；
+      PWA 安装提示不能引起布局位移。
+      （G-M 原先单列，改动面（registerServiceWorker/vite buildToken）与本组完全重合，故并入；
+      保留 G-M 号仅作历史索引。）
+    files:
+      - web/src/registerServiceWorker.ts
+      - web/src/services/pwaInstall.ts
+      - web/src/services/staleAssetRecovery.ts
+    tests:
+      - web/tests/pwa-install-flicker.test.mjs
+      - web/tests/stale-asset-recovery.test.mjs
+
+  # ── 前端：视觉 / 主题 ───────────────────────────────────────────
+  - id: G-L
+    title: 视觉与主题体系（节点色透传）
+    kind: feature
+    symptom: |
+      切换节点后界面配色不变（仍是上一个节点的色）；徽标在 span/button 之间跳一下；
+      深色模式下某些面板底色不对。
+    why: |
+      PALETTE（nodeRegistry.ts）是主题色单源 → 后端 _nodeColor → 前端
+      rootColor/accentHex 贯通到徽标/回复点/边框/发送按钮/看板 tab 等；
+      FileTree 必须用 rootColor prop 响应式覆盖 getNodes() 回退，否则切节点不跟色；
+      面包屑徽标统一为 button + rootBadgeButtonStyle 消除盒模型差异。
+    files:
+      - web/src/index.css
+      - web/src/components/ModeIcon.tsx
+      - web/src/components/ModeSelector.tsx
+      - web/src/components/DefaultListView.tsx
+      - web/src/components/FileViewer.tsx
+      - web/src/components/rootBadgeStyle.ts
+      - web/src/components/stream/ToolCallCard.tsx
+      - web/src/components/MainViewSwitcher.tsx
+      - web/src/layout/AppShell.tsx
+    tests:
+      - web/tests/node-colors-and-workspace-preferences.test.mjs
+      - web/tests/css-variable-aliases.test.mjs
+
+  # ── 前端：其余服务与本地化 ──────────────────────────────────────
+  - id: G-AJ
+    title: 偏好 / 定时任务 / 提示词 / 更新 / WebPush
+    kind: feature
+    symptom: |
+      定时任务按错误的账户跑；提示词库跨账户串；更新按钮闪烁。
+    why: |
+      定时任务与看板一样必须每账户一个实例（执行时用本账户的 session manager）；
+      偏好是共享的（全账户），提示词/模板不共享；更新走主节点的控制面。
+    files:
+      - server/internal/preferences/store.go
+      - server/internal/preferences/store_test.go
+      - server/internal/scheduled/tasks.go
+      - server/internal/update/service.go
+      - server/internal/update/service_test.go
+      - server/internal/webpush/service.go
+      - server/internal/api/usecase/prompts.go
+      - web/src/services/preferences.ts
+      - web/src/services/prompts.ts
+      - web/src/services/scheduledTasks.ts
+      - web/src/services/webPush.ts
+      - web/src/services/codexRateLimits.ts
+      - web/src/components/PromptEditor.tsx
+      - web/src/components/CodexRateLimitIndicator.tsx
+    tests:
+      - server/internal/preferences/store_test.go
+      - server/internal/update/service_test.go
+      - web/tests/update-button-flicker.test.mjs
+
+  - id: G-AK
+    title: 本地化（中英双语键）
+    kind: feature
+    symptom: |
+      界面出现裸 key（如 tasks.stage.approve）而不是文案；中英文两侧键不对称。
+    why: |
+      本地新增的多账户/看板/工作台/节点等键必须与上游键并存，
+      合上游时两侧 i18n 文件是最容易被整文件覆盖的。
+    files:
+      - web/src/i18n/locales/en-US.ts
+      - web/src/i18n/locales/zh-CN.ts
+    tests:
+      - web/tests/task-panel-unification.test.mjs
+
+  # ── 工程：脚本与流程 ────────────────────────────────────────────
+  - id: G-AL
+    title: 构建 / 部署 / 收尾流程脚本
+    kind: deploy
+    symptom: |
+      部署脚本按上游的目录布局删掉整目录的 web 哈希资源，导致过期标签页白屏；
+      两侧（本机 system 单元 / WSL user 单元）编译安装与重启不一致。
+    why: |
+      scripts/deploy-all.sh 一条命令完成门禁→提交→两侧编译安装→WSL 重建重启→两端对账；
+      ship / upstream-merge skill 固化流程。上游没有这层，回退会让双机部署靠手搓。
+    files:
+      - Makefile
+      - scripts/
+      - .claude/skills/
+    tests:
+      - web/tests/deploy-prefix.test.mjs
+
+  # ── 前端：其余 ──────────────────────────────────────────────────
+  - id: G-AM
+    title: 插件注册表与视图目录
+    kind: feature
+    symptom: |
+      插件页签不出现，或同一个视图在不同入口渲染成不同的东西。
+    why: |
+      web/src/renderer/viewCatalog 决定可用视图与页签顺序，registry 负责注册，
+      Renderer 按注册表派发；plugins/manager 负责插件装载。
+      上游没有这层，退回会把「主视图记忆」（切走再回来还在原视图）一起丢掉。
+    files:
+      - web/src/plugins/manager.ts
+      - web/src/renderer/registry.tsx
+      - web/src/renderer/viewCatalog.ts
+      - web/src/renderer/Renderer.tsx
+      - web/src/services/error.ts
+    tests:
+      - web/tests/main-content-view-memory.test.mjs
+
+  # ── 裁剪：删除上游功能 ──────────────────────────────────────────
+  - id: G-H
+    title: 旧功能裁剪（公网访问 / Relay 服务 / Token 加油站）
+    kind: trim
+    symptom: |
+      合上游后 Login 页又出现公网访问入口与 Relay 对话框，Token 加油站页签复活；
+      但后端 relay 前缀与前端调用点已被删，点了就报错。
+    why: |
+      这三件套本地已整体移除（删文件 + 删所有入口）。
+      上游会给回来，每次合上游都要重新删一遍——删漏就会留下「点了报错」的残缺入口。
+    files:
+      - server/internal/relay/service.go
+      - web/src/components/RelayLocalServicesDialog.tsx
+      - web/src/components/SessionQuickActions.tsx
+      - web/src/services/relayServices.ts
+      - web/src/services/tokenStation.ts
+      - web/src/services/launcherNodeSync.ts
+      - web/src/services/nativeBridge.ts
+      - web/src/components/Login.tsx
+    tests:
+      - web/tests/no-system-dialogs.test.mjs
