@@ -75,7 +75,7 @@ func TestEnsureAgentSessionBroadcastsSessionCreated(t *testing.T) {
 			Name:       "看板任务",
 			TaskNumber: 5,
 		},
-		Stage: kanban.StageTemplate{Agent: "claude", Model: "test-model"},
+		Stage:  kanban.StageTemplate{Agent: "claude", Model: "test-model"},
 		Prompt: "hello",
 	})
 	if err != nil {

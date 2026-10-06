@@ -88,17 +88,17 @@ type TaskTemplateStage struct {
 
 // TaskTemplate 仅作为「预设」存在：新建任务时可选套用，之后与任务完全解耦，可随时修改/删除。
 type TaskTemplate struct {
-	ID          string              `json:"id"`
-	Name        string              `json:"name"`
-	Description string              `json:"description,omitempty"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
 	// RootID 把模板限定到某个项目；空 = 全局模板，任何项目都能套用。
 	//
 	// 模板库只有主节点一份（见 docs/multi-node-control-plane.md）：跨项目复用的写全局，
 	// 某个项目专用的写该项目的 root id。列表按 root 过滤（全局 + 当前项目）。
-	RootID   string              `json:"root_id,omitempty"`
-	Stages   []TaskTemplateStage `json:"stages"`
-	CreatedAt time.Time          `json:"created_at"`
-	UpdatedAt time.Time          `json:"updated_at"`
+	RootID    string              `json:"root_id,omitempty"`
+	Stages    []TaskTemplateStage `json:"stages"`
+	CreatedAt time.Time           `json:"created_at"`
+	UpdatedAt time.Time           `json:"updated_at"`
 }
 
 // Task 自带流水（Stages）：执行永远读任务自己的阶段，不再回查模板。
@@ -128,14 +128,14 @@ type Task struct {
 	//
 	// 清归属时**不**清这一列（见 TaskStore.ClearWorktreeRefs）：拆掉目录不等于
 	// 没建过。存量数据默认 false —— 判据宁保守，也不要把没证据的任务说成收过尾。
-	WorktreeBuilt bool `json:"worktree_built"`
-	Labels             []string        `json:"labels"`
-	CreatedAt          time.Time       `json:"created_at"`
-	UpdatedAt          time.Time       `json:"updated_at"`
-	CompletedAt        string          `json:"completed_at,omitempty"`
-	CurrentStageName   string          `json:"current_stage_name,omitempty"`
-	CurrentStageStatus string          `json:"current_stage_status,omitempty"`
-	AuxFlags           TaskAuxFlags    `json:"aux_flags"`
+	WorktreeBuilt      bool         `json:"worktree_built"`
+	Labels             []string     `json:"labels"`
+	CreatedAt          time.Time    `json:"created_at"`
+	UpdatedAt          time.Time    `json:"updated_at"`
+	CompletedAt        string       `json:"completed_at,omitempty"`
+	CurrentStageName   string       `json:"current_stage_name,omitempty"`
+	CurrentStageStatus string       `json:"current_stage_status,omitempty"`
+	AuxFlags           TaskAuxFlags `json:"aux_flags"`
 	// WorktreeMissing 是**派生**字段，不落库：序列化时按 WorktreePath 此刻是否还是
 	// 目录算出来。worktree 目录会事后被删（DELETE /api/git/worktrees、
 	// wt-finish.sh cleanup、手工 rm），而 WorktreePath 全仓只有 ensureTaskWorktree

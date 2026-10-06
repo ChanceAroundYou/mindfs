@@ -22,8 +22,8 @@ import (
 	"mindfs/server/internal/fs"
 	"mindfs/server/internal/gitview"
 	"mindfs/server/internal/kanban"
-	"mindfs/server/internal/nodes"
 	"mindfs/server/internal/nodeinfo"
+	"mindfs/server/internal/nodes"
 	"mindfs/server/internal/notifyscript"
 	"mindfs/server/internal/preferences"
 	"mindfs/server/internal/relay"
@@ -154,15 +154,15 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 			NodeID:        opts.E2EEConfig.NodeID,
 			PairingSecret: opts.E2EEConfig.PairingSecret,
 		}),
-		notify:     notifyscript.NewService(notifyscript.Config{Script: opts.NotifyScript}),
-		relay:      relayMgr,
-		relayTips:  relayTips,
-		prefs:      sharedPrefs,
-		nodes:      sharedNodes,
-		webPush:    sharedWebPush,
-		templates:  sharedTemplates,
-		pool:       sharedPool,
-		prober:     sharedProber,
+		notify:    notifyscript.NewService(notifyscript.Config{Script: opts.NotifyScript}),
+		relay:     relayMgr,
+		relayTips: relayTips,
+		prefs:     sharedPrefs,
+		nodes:     sharedNodes,
+		webPush:   sharedWebPush,
+		templates: sharedTemplates,
+		pool:      sharedPool,
+		prober:    sharedProber,
 	})
 	workspaces.SetBaseDir(filepath.Join(configDir, "users"))
 

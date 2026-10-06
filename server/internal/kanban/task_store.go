@@ -17,6 +17,7 @@ import (
 )
 
 const taskDBMetaPath = "tasks/task-kanban.db"
+
 // scheduler_admitted 已退役（本模型无调度器），不再读也不再写；
 // 列保留在表里不做破坏性迁移，恒为默认值。
 const taskSelectColumns = "id, task_number, root_id, task_template_id, task_template_name, template_snapshot_json, create_worktree, worktree_branch_mode, worktree_branch, current_stage_index, status, main_session_key, worktree_root_id, worktree_path, worktree_built, aux_ask_user_waiting, aux_has_plan, aux_has_todos, aux_has_task, aux_session_error, labels_json, created_at, updated_at, completed_at, name, task_stages_json"

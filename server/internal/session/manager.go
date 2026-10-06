@@ -37,7 +37,7 @@ const (
 	maxExchangeLineBytes = 64 << 20
 	// CUSTOM(G-X): 不再 SELECT/写入 pinned_at —— 置顶的唯一权威是主节点的 pins 表
 	// （server/internal/pins）。两处一起断：只断一半会留下「写进去但读不回」的假退役。
-	selectSessionSQL     = `
+	selectSessionSQL = `
 	SELECT key, type, parent_session_key, parent_tool_call_id, source, task_id, model, shell, plan_mode, name, related_files_json, related_worktree_json, last_context_window_total_tokens, last_context_window_model_context_window, archived_at, created_at, updated_at, closed_at
 	FROM sessions`
 	deleteSessionSQL = `

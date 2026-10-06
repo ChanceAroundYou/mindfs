@@ -1218,7 +1218,6 @@ func VerifySessionInteraction(ctx context.Context, sess agenttypes.Session) erro
 	return nil
 }
 
-
 // SanitizeDefaultModelID 修正过期默认模型：不在当前模型目录内（含 [1m]/家族等价）时
 // 回退到目录中第一个非 default 条目。cc-switch 切换 provider 后，旧默认模型（of/os 等）
 // 已不可通，继续使用只会让新建会话直接 400。

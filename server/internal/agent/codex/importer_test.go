@@ -531,10 +531,10 @@ func TestResolveForkPointByAgentTurnIndexAcceptsWorktreeCwd(t *testing.T) {
 func TestCodexCwdMatchesRoot(t *testing.T) {
 	root := "/data/proj"
 	cases := map[string]bool{
-		root:                                true,
-		root + "/.worktree/task-5":          true,
-		root + "/.worktree-evil/x":          false,
-		"/elsewhere/proj":                   false,
+		root:                       true,
+		root + "/.worktree/task-5": true,
+		root + "/.worktree-evil/x": false,
+		"/elsewhere/proj":          false,
 	}
 	for cwd, want := range cases {
 		if got := cwdMatchesRoot(cwd, root); got != want {

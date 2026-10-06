@@ -275,11 +275,11 @@ func TestReadRelatedFileStatsMatchesPerFileAcrossSources(t *testing.T) {
 	writeTestFile(t, root, "committed.txt", "one\ntwo\nthree\n")
 
 	targets := []RelatedFileStatTarget{
-		{Path: "committed.txt", BaseHead: base}, // commit_range：M
-		{Path: "gone.txt", BaseHead: base},      // commit_range：D
-		{Path: "clean.txt", BaseHead: base},     // 自基线无变化 → 留空
-		{Path: "dirty.txt"},                     // 无基线 → worktree，未跟踪
-		{Path: "gone.txt"},                      // 无基线 → worktree，已删除
+		{Path: "committed.txt", BaseHead: base},                    // commit_range：M
+		{Path: "gone.txt", BaseHead: base},                         // commit_range：D
+		{Path: "clean.txt", BaseHead: base},                        // 自基线无变化 → 留空
+		{Path: "dirty.txt"},                                        // 无基线 → worktree，未跟踪
+		{Path: "gone.txt"},                                         // 无基线 → worktree，已删除
 		{Path: "committed.txt", BaseHead: strings.Repeat("0", 40)}, // 基线非法 → 留空
 		{Path: "nothing-here.txt", BaseHead: base},                 // 区间里没有 → 回落 worktree → 留空
 	}

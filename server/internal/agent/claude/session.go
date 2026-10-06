@@ -71,14 +71,14 @@ func (r *Runtime) OpenSession(ctx context.Context, opts OpenOptions) (types.Sess
 	}
 
 	s := &session{
-		sessionKey:    opts.SessionKey,
-		model:         canonicalClaudeModel(opts.Model),
-		planMode:      opts.PlanMode,
-		agentDebugLog: logs.NewAgentLogger(opts.RootPath, opts.SessionKey, opts.AgentName),
-		questionWaits: make(map[string]chan askUserAnswerResult),
+		sessionKey:      opts.SessionKey,
+		model:           canonicalClaudeModel(opts.Model),
+		planMode:        opts.PlanMode,
+		agentDebugLog:   logs.NewAgentLogger(opts.RootPath, opts.SessionKey, opts.AgentName),
+		questionWaits:   make(map[string]chan askUserAnswerResult),
 		emittedAskUsers: make(map[string]struct{}),
-		rootPath:      opts.RootPath,
-		baseEnv:       cloneEnv(opts.Env),
+		rootPath:        opts.RootPath,
+		baseEnv:         cloneEnv(opts.Env),
 	}
 
 	optionList := []claudeagent.Option{

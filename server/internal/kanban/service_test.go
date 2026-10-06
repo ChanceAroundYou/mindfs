@@ -2765,6 +2765,7 @@ func mustGetDetail(t *testing.T, svc *Service, rootID, taskID string) TaskDetail
 //   - 详情面板按 canAdvanceFromCurrentStage 不给按钮，
 //   - 看板卡片只查 hasLaterStage，给了个「立即执行」，
 //   - 点下去 moveRelative 报错、RunNow 又把错吞掉只回未变的详情。
+//
 // 结果任务彻底卡死，用户唯一想做的事（就这样，推进到下一段）没有任何入口能达成。
 //
 // 自动推进那条防线不在此处：引擎走 moveTo（auto_advanced 事件），根本不经过
@@ -2820,7 +2821,7 @@ func TestAutoAdvanceStillStopsAtUnreportedAgentStage(t *testing.T) {
 	detail, err := svc.CreateTask(ctx, CreateTaskInput{
 		RootID: root.ID,
 		Stages: []StageTemplate{userStage("Describe"), implement, agentStage("Review", "Review.")},
-		Input: "change",
+		Input:  "change",
 	})
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
@@ -2959,7 +2960,7 @@ func TestListTaskTemplatesForRootScopesByProject(t *testing.T) {
 	}
 
 	// 没带项目 = 只给全局的。建任务面板总是带着项目来，但工作台这种没有项目上下文的
-	 // 地方不该看到一堆「只对某个项目成立」的模板。
+	// 地方不该看到一堆「只对某个项目成立」的模板。
 	globals, err := store.ListTaskTemplatesForRoot("")
 	if err != nil {
 		t.Fatalf("ListTaskTemplatesForRoot(\"\"): %v", err)

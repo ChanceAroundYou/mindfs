@@ -9,7 +9,7 @@ import (
 )
 
 type fakeWorkspaceProvider struct {
-	primary string
+	primary  string
 	contexts map[string]*AppContext
 }
 

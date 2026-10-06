@@ -635,7 +635,7 @@ func TestClaudeEffectiveEnv(t *testing.T) {
 		t.Fatalf("baseEnv should apply: got %q", got)
 	}
 	// rootDir 为空时不读项目 settings。
-	if got := claudeEffectiveEnv(baseEnv, "")[ "MINDTEST_PROJECT"]; got != "" {
+	if got := claudeEffectiveEnv(baseEnv, "")["MINDTEST_PROJECT"]; got != "" {
 		t.Fatalf("empty rootDir should skip project settings: got %q", got)
 	}
 }
