@@ -1,7 +1,9 @@
 # MindFS 上游定制清单与评估（改动级互斥）
 
 > **当前基准：`9ab9572`（tag `v0.5.5`）= `git merge-base HEAD upstream/main`。**
-> 核对口径：`git diff 9ab9572..HEAD --name-status` = **380 文件**（新增 213 / 修改 140 / 删除 27）。
+> 核对口径：`git diff 9ab9572..HEAD --name-status`。**当前文件数不写在这里** ——
+> 它每次提交都变，硬编码就会立刻过期（这行曾经写 380，实际 384）。
+> 要当前值就跑 `make check-upstream`，它最后一行会打印「386 个 delta 文件被 36 组完整覆盖」。
 > **机器真相在 `docs/upstream-customizations.yaml`** —— 分组 id、文件、针对性测试、锚点全部以它为准，本文不重复列举；
 > 覆盖率门禁 `make check-upstream` 强制「每个 delta 文件都被某组覆盖」。两文件的唯一强耦合点是**组 id 双向一致**。
 >
@@ -26,7 +28,8 @@
   `scheduler_admitted` 准入位；本地早已按 CLAUDE.md 事实 13 重做为「卡=任务、列=全局状态、无并发调度」。
   连带丢弃：`kanban.Start` 调度器、`TaskGroupPanel`/`TaskCardText` 组件、`patchTask`/`fetchTaskGroups`/`groupOperation`
   等 API、`GET/PATCH/DELETE /api/tasks/{id}` 与 `/read/{resource}` 路由、`openTaskEditDialog`（本地 `b3ced22` 已主动删）。
-  `SchedulerAdmitted` 字段保留为 DB 列兼容位（无调度器时恒 true），非调度逻辑。
+  `SchedulerAdmitted` 字段与 `scheduler_admitted` 列于 2026-10-06 一并退役（不再读写；schema 行留在原地不做破坏性迁移）。
+  原注释写它「无调度器时恒 true」是错的 —— 它从来没被赋成 true，只是没人读所以看不出来。
 - **App.tsx 逐段定解**（22 段机械可判 + 2 段用户决策）：
   - H02/H13（1308 + 1519 行）取 local：这两大段是上游的 module-level helper 与一个巨型 effect，本地早把它们抽进
     `web/src/app/`（19 个模块）。逐个核对 84 个 helper：上游对本区间真正改过的只有 3 个且**函数体与 base 逐字相同**、
@@ -201,7 +204,7 @@
 
 | 来源 | 文件 | 说明 |
 |------|------|------|
-| `2e85356` | `server/internal/session/manager.go` | `exchanges/aux` JSONL 游标增量、列表 `meta-only` + `agent bindings IN` 单查、`updated_at/pinned_at` 索引 |
+| `2e85356` | `server/internal/session/manager.go` | `exchanges/aux` JSONL 游标增量、列表 `meta-only` + `agent bindings IN` 单查、`updated_at` 索引（`pinned_at` 索引随该列退役，见 G-X） |
 | `2e85356` | `server/internal/fs/fs.go`、`server/internal/api/usecase/external_sessions.go` | `SyncExternalSessionDelta` 2s 节流、`handleSessionGet` 去重复扫盘 |
 | `7837c28` | `server/internal/session/manager.go:openSessionMetaDB` + `GetMeta` + `http.go:replying-sessions` | `WAL+busy_timeout+SetMaxOpenConns(4)`、`GetMeta` 不读 JSONL、活跃轮询走 meta |
 
@@ -400,7 +403,9 @@
   之后与预设无关；旧任务在 `loadForMove` 里惰性回填）。上游的 `kanban.Start` 调度器、
   `TaskGroupPanel`/`TaskCardText`、`patchTask`/`fetchTaskGroups`/`groupOperation`、
   `GET/PATCH/DELETE /api/tasks/{id}` 与 `/read/{resource}` 路由、`openTaskEditDialog` 全部丢弃。
-  `SchedulerAdmitted` 保留为 DB 列兼容位（无调度器时恒 true）。
+  `SchedulerAdmitted` 字段与 `scheduler_admitted` 列于 2026-10-06 一并退役（不再读写，schema 行保留）。
+  旧 `queued` 状态同理：`migrate()` 无条件折进 `pending`，前端已按「不可能出现」删掉该分支，
+  由 `task_store_queued_migration_test.go` 钉住这条迁移。
   **建任务必须内联流水**（模板库只在主节点，任务可建在运行节点上；`taskStagesForCreate` 每次带 `stages`）。
 
 ### G-Z 跨项目工作台
@@ -559,13 +564,49 @@
 - 维护（**当前生效的约定**）：
   - **文件/测试/锚点的唯一真相是 `docs/upstream-customizations.yaml`**，不在本文件里重复列举。
   - 新增定制 → 先在 yaml 里登记（组 id + 症状 + 理由 + 文件 + 针对性测试 + 锚点），再跑 `make check-upstream` 确认全绿。
+  - **`tests:` 只列运行器真会执行的用例**（门禁断言 3 校验它匹配 `web/package.json` 里 `node --test` 的 glob）。
+    对着真实服务跑的手工探针（如 `cross-machine-account.behavior.mjs`）是 fork 新增文件，登记进 **`files:`** 而非 `tests:` ——
+    列进 `tests:` 等于把永远不执行、也永远不会红的东西算作覆盖。这个坑踩过一次：门禁曾只验「文件存在」，放过了它。
   - 提交信息标 `Scope: G-X`，与 yaml 的组号对应。**注意实际历史里这条只被遵守过一次**
     （`Scope: fixup` / `merge` / `chore` 等自由值居多）。门禁**不检查提交信息**（那要读 git 历史，脆且慢），
     所以这条目前仍靠自觉 —— 它的价值在 `git log --grep` 反查，不在门禁。
   - **上游文件里的定制 hunk 加一行 `// CUSTOM(G-xx): 为什么必须保留`**（`.sh` 用 `#`，`.json` 加不了注释就只登记锚点）。
     只加在**已存在的上游文件**里的小块 hunk 上 —— 纯新增的 fork 文件整体就是定制，合上游时整份冲突，不需要标记。
     **加标记的位置就是上游同点改动会冲突的位置，这正是要的效果**：冲突好过静默丢失。
-    标记同时进 yaml 的 `anchors:`，由门禁机器核对（目前 12 处，见各组 `CUSTOM(G-xx)` 锚点）。
+    标记是**抽样**，不是覆盖率 —— 见 §7.1。
   - 合上游 tag 后：更新 yaml 的 `baseline`，重跑门禁 —— 红了就是那一组被覆盖了，按 yaml 里的「为什么必须保留」逐条恢复，
     **不要按上游实现重写**。
   - 新增分组的唯一前提：它有**独立的互斥边界**（一组 = 一块合上游时要么全留要么全弃的改动面）。
+
+### 7.1 锚点是抽样标记，不是覆盖率（别把它读成「已检查 9%」）
+
+2026-10-06 把 `CUSTOM(` 全量数了一遍，三件事必须分清 —— 混起来会得出「覆盖了 90%」这种错结论：
+
+| 层 | 是什么 | 现在有多少 | 由谁强制 |
+|---|---|---|---|
+| `files:`（yaml） | 「这段代码是我们的」 | 417 条，覆盖全部 **384** 个 delta 文件 | 门禁断言 1（每个 delta 文件必须被某组认领）+ 断言 2（登了却不在 delta 里 = 已被上游吸收） |
+| `anchors:`（yaml） | 「这个符号必须还在」 | **44** 条，分布 22 组 | 门禁断言 4（子串必须在源文件里命中） |
+| `CUSTOM(G-xx)`（源码内） | 「**上游同点**改这里会冲突」 | **14** 处，落在 **13/140** 个 M 文件 | 无（人读） |
+
+- 第三行才是「锚点」的字面意思：它**只加在上游已存在的文件里的定制 hunk 上**。纯新增的 fork 文件（217 个 A）永远不带标记 ——
+  合上游时它们整份冲突，标记不提供任何额外信息。所以 **`CUSTOM(` 的占比天然不可能高，也不该高**。
+- 它是**抽样标记**：14 处覆盖不了 140 个 M 文件里的每一处定制 hunk，**没标记 ≠ 没定制**。
+  按标记数量估计「定制覆盖面」是错的，那是 `files:` 的职责。
+- 它唯一的作用是在 diff 冲突现场**就地**说明「这里为什么必须留」；机器核对由 `anchors:` 与断言 1/2 承担。
+  `.css` / `.json` 等加不了注释的格式，只登记 `anchors:`，不指望 `CUSTOM(`。
+
+### 7.2 门禁全绿保证什么、不保证什么
+
+| 绿了 = 成立 | 绿了 ≠ 成立 |
+|---|---|
+| 每个 delta 文件都被某组认领（没有未登记的定制） | 认领得**对** —— 组 id 是人挑的，分错组照样绿 |
+| 每个 `files:` 条目仍出现在 delta 里（定制没被上游静默吸收） | 组内**每处 hunk** 都被检查过 —— 一条 `files:` 只证明文件被认领，不证明每行 |
+| 每个 `anchors:` 子串仍在源码里命中 | 符号的**行为**没变 —— 子串在，语义可能已被上游改成别的 |
+| 每个 `tests:` 文件存在，且匹配运行器 glob（真会执行） | 测试**测得住** —— 断言可以写成恒真，门禁看不出来 |
+| yaml 与本文的组 id 双向一致 | 症状/理由写得对 |
+
+所以门禁是**防漏登记**的网，不是「定制已正确」的证明。最后一条尤其要命：断言恒真时它照样是绿的。
+写完测试要**把修复改坏、确认它变红**（变异验证），这一步门禁替代不了 —— 2026-10-06 就是这么抓出
+`archived-panel.test.mjs` 里两条空断言的：一条把源码整段切片，内层 div 的 `overflow` 被当成了外层的
+（删掉外层的裁剪，测试照样绿）；一条拿全文只出现一次的 marker 去滚动容器窗口里搜，永远搜不到。
+

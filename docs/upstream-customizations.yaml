@@ -254,11 +254,16 @@ groups:
       - web/src/components/AuthGate.tsx
       - web/src/services/accounts.ts
       - web/src/services/authGate.ts
+      # 手工探针（对着 home/pc 两台真实服务跑），是 fork 新增文件故须登记；
+      # 但它是 files 不是 tests —— tests 栏只列门禁真会执行的用例（见下方注释）。
+      - web/tests/cross-machine-account.behavior.mjs
     tests:
       - server/app/workspace_test.go
       - server/internal/api/workspace_test.go
       - web/tests/multi-account-partition.test.mjs
-      - web/tests/cross-machine-account.behavior.mjs
+      # web/tests/cross-machine-account.behavior.mjs 不列在此：它是对着 home/pc 两台
+      # 真实服务跑的手工探针（要求两边都连得上），不是 make test-web 的用例 ——
+      # 列进来就等于把「跑不到的东西」算作覆盖（断言 3 已拒绝这种条目）。
     anchors:
       - server/app/workspace.go:ScopedRouter
       - server/internal/fs/meta_location.go:MetaLocationForNewRoot
@@ -518,13 +523,19 @@ groups:
       - server/internal/api/http_pins.go
       - server/internal/api/http_pins_test.go
       - web/src/services/pins.ts
+      # pinned_at 退役的 hunk 住在会话库里（G-E/G-Q 已认领该文件，这里补一层归属）
+      - server/internal/session/manager.go
     tests:
       - server/internal/pins/store_test.go
       - server/internal/api/http_pins_test.go
       - web/tests/pins-authority.test.mjs
+      # 钉「sessions.pinned_at 读写两条路径都已断开」：读路径不把列里的残值读回来、
+      # 写路径不把值写进列。少了它，退役被冲掉时前端会拿到一份与 pins 表分叉的置顶。
+      - server/internal/session/manager_pinned_at_retired_test.go
     anchors:
       - server/internal/pins/store.go:NeedsLegacySeed
       - web/src/services/pins.ts:controlPath
+      - server/internal/session/manager.go:CUSTOM(G-X)
 
   - id: G-Y
     title: 看板模型重做（拒绝上游 task_groups 编排体系）
@@ -539,7 +550,9 @@ groups:
       queued 与调度槽位已删、新建任务恒为 waiting_user。
       上游的 kanban.Start 调度器 / TaskGroupPanel / patchTask / fetchTaskGroups /
       groupOperation / GET-PATCH-DELETE /api/tasks/{id} / openTaskEditDialog 全部丢弃。
-      SchedulerAdmitted 字段保留为 DB 列兼容位（无调度器时恒 true），不是调度逻辑。
+      SchedulerAdmitted 字段与 scheduler_admitted 列一律不再读写（2026-10-06 退役：无调度器时
+      它无从取值，留着只会被人误当成「准入位」的实现）。schema 行保留在原地不做破坏性迁移，
+      恒为默认值。旧的 queued 状态同理：migrate() 无条件折进 pending，旧库不会把它送往前端。
     files:
       - server/internal/kanban/
       - server/internal/api/http_tasks.go
@@ -598,12 +611,17 @@ groups:
       # 直接看磁盘的复活检测：被删文件必须不存在、无悬空引用、替代实现在位。
       # 单靠断言 2 只能查到「文件又变得和上游一样了」，查不到「上游把它带回来且顺带改了」。
       - web/tests/upstream-removals.test.mjs
+      # 钉「存量 queued 一定被折进 pending」—— 这是前端能安全删掉 queued 分支的前提。
+      # 迁移一旦被删或加了条件，老库里的 queued 会原样送往前端，而那时前端已无该分支。
+      - server/internal/kanban/task_store_queued_migration_test.go
     anchors:
       - 'web/src/components/ScheduledAgentTaskDialog.tsx:confirmDialog'
       # 替代编排体系的那套模型必须在位 —— 游标一旦退回去，说明重做被冲掉了
       - server/internal/kanban/types.go:Stages             []StageTemplate
       - server/internal/kanban/template_store.go:ListStageTemplates
       - server/internal/kanban/worktree_finish.go:FinishTaskWorktree
+      # 存量 queued 必须被折进 pending：前端已按「不可能出现」删掉了该分支
+      - server/internal/kanban/task_store.go:UPDATE tasks SET status = 'pending' WHERE status = 'queued'
 
   - id: G-Z
     title: 跨项目工作台

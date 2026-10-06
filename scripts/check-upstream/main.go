@@ -8,7 +8,7 @@
 //
 //	1 覆盖  —— 每个 delta 文件必须被某组 files 命中（新增定制未登记）
 //	2 尚存  —— 每个 files 条目必须仍在 delta 里（定制已被上游覆盖 / 已被上游吸收）
-//	3 测试  —— 每个 tests 路径在磁盘上存在
+//	3 测试  —— 每个 tests 路径不仅存在，还得真能被测试运行器跑到
 //	4 锚点  —— 每个 anchors 的 path:子串在源码里命中
 //	5 非空  —— 每组至少有一个针对性测试
 //	6 对齐  —— yaml 的组 id 与 md 的 `### G-X` 标题双向一致
@@ -25,6 +25,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -53,6 +54,44 @@ func validKind(k string) bool {
 		}
 	}
 	return false
+}
+
+// runnableTestGlob 从 web/package.json 的 test 脚本里取出测试运行器实际使用的文件名 glob。
+//
+// 「文件在磁盘上」不等于「测试会跑」：web/tests/ 下曾有 .behavior.mjs 这类后缀，
+// 不匹配 `node --test tests/*.test.mjs`，于是它躺在清单里、永远不执行、也永远不会红
+// —— 一条退役后没人发现的死条目。glob 从 package.json 现读，改了运行器这里自动跟上。
+func runnableTestGlob(root string) string {
+	data, err := os.ReadFile(filepath.Join(root, "web", "package.json"))
+	if err != nil {
+		return ""
+	}
+	var pkg struct {
+		Scripts map[string]string `json:"scripts"`
+	}
+	if json.Unmarshal(data, &pkg) != nil {
+		return ""
+	}
+	for _, tok := range strings.Fields(pkg.Scripts["test"]) {
+		// 取 `--test` 之后那个带通配的文件名参数（形如 tests/*.test.mjs）
+		if strings.ContainsAny(tok, "*?[") && !strings.HasPrefix(tok, "-") {
+			return path.Base(tok)
+		}
+	}
+	return ""
+}
+
+// isRunnableTest：Go 测试靠 `go test ./...` 按 *_test.go 纳管，不需要 glob；
+// 其余按运行器 glob 匹配文件名（清单里的是相对路径，比对用 basename）。
+func isRunnableTest(p, glob string) bool {
+	if filepath.Ext(p) == ".go" {
+		return strings.HasSuffix(p, "_test.go")
+	}
+	if glob == "" {
+		return true // 读不到运行器配置就不误报，交给别的断言兜
+	}
+	ok, err := path.Match(glob, path.Base(p))
+	return err == nil && ok
 }
 
 type registry struct {
@@ -186,6 +225,7 @@ func run(root, baselineFlag string, explain bool) error {
 	// kind=docs 的组豁免「必须有测试」：它的保护由断言 2 承担 —— 文档一旦被上游吸收
 	// 就会掉出 delta 而被报出来。硬塞一个测试只会制造仪式感。
 	var selfBad []string
+	testGlob := runnableTestGlob(root)
 	for _, g := range reg.Groups {
 		if !validKind(g.Kind) {
 			selfBad = append(selfBad, fmt.Sprintf("%s 的 kind 非法: %q（应为 %s）", g.ID, g.Kind, strings.Join(kinds, "|")))
@@ -202,6 +242,13 @@ func run(root, baselineFlag string, explain bool) error {
 		for _, t := range g.Tests {
 			if _, err := os.Stat(filepath.Join(root, t)); err != nil {
 				selfBad = append(selfBad, fmt.Sprintf("%s 测试不存在: %s", g.ID, t))
+				continue
+			}
+			// 存在 ≠ 会跑：跑不到的测试是条死条目 —— 它永远不会红，也就永远发现不了被覆盖
+			if !isRunnableTest(t, testGlob) {
+				selfBad = append(selfBad, fmt.Sprintf(
+					"%s 测试跑不到（不匹配运行器 glob %q）: %s —— 加进清单前先确认它在 make test/test-web 里真的执行",
+					g.ID, testGlob, t))
 			}
 		}
 		for _, a := range g.Anchors {
