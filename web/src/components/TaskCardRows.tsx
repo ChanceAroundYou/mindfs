@@ -17,7 +17,6 @@ import {
   TaskQueuedSpinnerIcon,
   TaskRebuildWorktreeIcon,
   TaskResumeIcon,
-  TaskRunNowIcon,
   TaskSessionErrorIcon,
   taskAuxBadgeStyle,
   taskCardIconButtonStyle,
@@ -101,8 +100,6 @@ export function TaskCardRows({
   const { t } = useI18n();
   const nodeColor = getNodeColor(String(task.root_id || "")) || "";
   const sessionPending = sessionKeys.some((key) => !!sessionByKey[key]?.pending);
-  const queued = task.status === "queued";
-  const blockedByConcurrency = queued && !task.scheduler_admitted && !sessionKeys.length;
   const auxFlags = task.aux_flags || {};
   const sessionError = parseTaskSessionErrorMessage(auxFlags.session_error);
   const sessionErrorDetails = parseTaskSessionErrorDetails(auxFlags.session_error);
@@ -343,39 +340,6 @@ export function TaskCardRows({
                 </button>
               );
             })
-          ) : queued ? (
-            <>
-              <span
-                title={t("task.waitingSchedule")}
-                aria-label={t("task.waitingSchedule")}
-                style={{
-                  ...taskCardIconButtonStyle(),
-                  cursor: "default",
-                  color: "var(--accent-color)",
-                }}
-              >
-                <TaskQueuedSpinnerIcon />
-              </span>
-              {blockedByConcurrency ? (
-                <button
-                  type="button"
-                  title={t("task.runNow")}
-                  aria-label={t("task.runNow")}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onMove(task, "run-now");
-                  }}
-                  style={{
-                    ...taskCardIconButtonStyle(),
-                    width: "17px",
-                    marginLeft: "-3px",
-                    color: "var(--accent-color)",
-                  }}
-                >
-                  <TaskRunNowIcon />
-                </button>
-              ) : null}
-            </>
           ) : null}
           {sessionError && !hideSessionError ? (
             <button

@@ -822,7 +822,6 @@ export const enUS = {
   "action.removeAttachment": "Remove attachment {name}",
 
   "task.status.pending": "Pending",
-  "task.status.queued": "Queued",
   "task.status.running": "Running",
   "task.status.waitingUser": "Waiting for confirmation",
   "task.status.paused": "Paused",
@@ -900,7 +899,6 @@ export const enUS = {
   "task.removeStageMessage": "This stage has not run yet. Its content cannot be recovered after deletion.",
   "task.noInput": "No input",
   "task.openSession": "Open task session {index}",
-  "task.waitingSchedule": "Waiting to schedule",
   "task.runNow": "Run now",
   "task.collapseContent": "Collapse task content",
   "task.expandContent": "Expand task content",

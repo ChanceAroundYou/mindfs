@@ -46,7 +46,7 @@ export function WorkspaceTaskRow({
       ? [task.main_session_key]
       : [];
   // 看板按列决定要不要显示阶段名（只有「执行中」列给）；工作台没有列，就按状态给。
-  const stageName = task.status === "running" || task.status === "queued"
+  const stageName = task.status === "running"
     ? task.current_stage_name || (task.current_stage_index >= 0 ? t("task.stageLabel", { index: task.current_stage_index + 1 }) : "")
     : "";
   return (

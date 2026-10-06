@@ -112,7 +112,6 @@ export function parseTaskSessionErrorDetails(error?: string): string[] {
 export function taskStatusLabel(status: string, t: (key: MessageKey, params?: MessageParams) => string): string {
   const labels: Record<string, MessageKey> = {
     pending: "task.status.pending",
-    queued: "task.status.queued",
     running: "task.status.running",
     waiting_user: "task.status.waitingUser",
     paused: "task.status.paused",
@@ -136,7 +135,6 @@ export function taskStatusLabel(status: string, t: (key: MessageKey, params?: Me
 export function taskStatusColor(status: string): string {
   const colors: Record<string, string> = {
     pending: "var(--text-secondary)",
-    queued: "var(--accent-color)",
     running: "var(--accent-color)",
     waiting_user: "var(--status-warn)",
     paused: "var(--text-secondary)",

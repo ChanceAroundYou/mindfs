@@ -7,6 +7,7 @@ const read = (rel) => fs.readFileSync(path.join(root, rel), "utf8");
 
 const app = read("src/App.tsx");
 const appTask = read("src/app/appTask.ts");
+const tasksService = read("src/services/tasks.ts");
 const dialog = read("src/components/TaskTemplateDialog.tsx");
 const panel = read("src/components/TaskDetailPanel.tsx");
 const select = read("src/components/Select.tsx");
@@ -39,6 +40,7 @@ for (const [name, src] of [["TaskTemplateDialog", dialog], ["TaskDetailPanel", p
     `${name} must not hand-roll its own overlay; PanelShell owns it`,
   );
 }
+
 assert.doesNotMatch(dialog, /function buttonStyle/, "the duplicate buttonStyle in TaskTemplateDialog must be gone");
 assert.doesNotMatch(panel, /function buttonStyle/, "the duplicate buttonStyle in TaskDetailPanel must be gone");
 assert.match(panelShell, /export function panelButtonStyle/, "PanelShell owns the shared button style");
@@ -542,8 +544,8 @@ assert.match(
 );
 assert.match(
   serviceGo,
-  /store\.UpdateTaskStatus\(ctx, taskID, status, nil, terminal\)/,
-  "Cancel must clear the session error flag (nil aux) so a stuck task can be cleaned up",
+  /store\.UpdateTaskStatus\(ctx, taskID, status, terminal\)/,
+  "Cancel must clear the session error flag so a stuck task can be cleaned up",
 );
 
 // 10) Service Worker 缓存策略：index.html 是整条缓存链的根。
@@ -595,7 +597,6 @@ for (const [status, color] of [
   ["rejected", "var(--status-bad)"],
   ["waiting_user", "var(--status-warn)"],
   ["running", "var(--accent-color)"],
-  ["queued", "var(--accent-color)"],
   ["pending", "var(--text-secondary)"],
   ["paused", "var(--text-secondary)"],
   ["cancelled", "var(--text-secondary)"],
@@ -606,6 +607,13 @@ for (const [status, color] of [
     `${status} must map to ${color}`,
   );
 }
+
+// queued 已退役：migrate() 无条件把存量归入 pending（Go 侧由
+// TestMigrateFoldsQueuedIntoPending 钉住），所以前端不该再认得它。
+// 类型系统挡不住这一条 —— taskStatusColor 的 colors 是 Record<string, string>，
+// 加回一条 queued 不报错；所以用源码断言兜住，免得「排队 / 调度位」那套已删模型复活。
+assert.doesNotMatch(appTask, /\bqueued\s*:/, "taskStatusLabel/taskStatusColor 不得再出现 queued");
+assert.doesNotMatch(tasksService, /"queued"/, "TaskStatus 联合类型不得再出现 queued");
 assert.doesNotMatch(
   appTask,
   /#[0-9a-fA-F]{3,8}\b/,

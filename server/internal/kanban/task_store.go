@@ -17,7 +17,9 @@ import (
 )
 
 const taskDBMetaPath = "tasks/task-kanban.db"
-const taskSelectColumns = "id, task_number, root_id, task_template_id, task_template_name, template_snapshot_json, create_worktree, worktree_branch_mode, worktree_branch, current_stage_index, status, scheduler_admitted, main_session_key, worktree_root_id, worktree_path, worktree_built, aux_ask_user_waiting, aux_has_plan, aux_has_todos, aux_has_task, aux_session_error, labels_json, created_at, updated_at, completed_at, name, task_stages_json"
+// scheduler_admitted 已退役（本模型无调度器），不再读也不再写；
+// 列保留在表里不做破坏性迁移，恒为默认值。
+const taskSelectColumns = "id, task_number, root_id, task_template_id, task_template_name, template_snapshot_json, create_worktree, worktree_branch_mode, worktree_branch, current_stage_index, status, main_session_key, worktree_root_id, worktree_path, worktree_built, aux_ask_user_waiting, aux_has_plan, aux_has_todos, aux_has_task, aux_session_error, labels_json, created_at, updated_at, completed_at, name, task_stages_json"
 
 type TaskStore struct {
 	root fs.RootInfo
@@ -411,18 +413,10 @@ func (s *TaskStore) LatestStageRun(ctx context.Context, taskID string, stageInde
 	return scanStageRun(row)
 }
 
-func (s *TaskStore) UpdateTaskStatus(ctx context.Context, taskID, status string, admitted *bool, completed bool) error {
+func (s *TaskStore) UpdateTaskStatus(ctx context.Context, taskID, status string, completed bool) error {
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	set := []string{"status = ?", "updated_at = ?"}
 	args := []any{strings.TrimSpace(status), now}
-	if admitted != nil {
-		set = append(set, "scheduler_admitted = ?")
-		if *admitted {
-			args = append(args, 1)
-		} else {
-			args = append(args, 0)
-		}
-	}
 	if completed {
 		set = append(set, "completed_at = ?")
 		args = append(args, now)
@@ -623,8 +617,8 @@ func (s *TaskStore) decorateCurrentStage(ctx context.Context, task *Task) {
 func insertTask(ctx context.Context, tx *sql.Tx, task Task) error {
 	labels, _ := json.Marshal(task.Labels)
 	stages, _ := json.Marshal(task.Stages)
-	_, err := tx.ExecContext(ctx, `INSERT INTO tasks (id, task_number, root_id, task_template_id, task_template_name, template_snapshot_json, create_worktree, worktree_branch_mode, worktree_branch, current_stage_index, status, scheduler_admitted, main_session_key, worktree_root_id, worktree_path, worktree_built, aux_ask_user_waiting, aux_has_plan, aux_has_todos, aux_has_task, aux_session_error, labels_json, created_at, updated_at, completed_at, name, task_stages_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		task.ID, task.TaskNumber, task.RootID, task.TaskTemplateID, task.TaskTemplateName, "", boolInt(task.CreateWorktree), task.WorktreeBranchMode, task.WorktreeBranch, task.CurrentStageIndex, task.Status, boolInt(task.SchedulerAdmitted), task.MainSessionKey, task.WorktreeRootID, task.WorktreePath, boolInt(task.WorktreeBuilt), boolInt(task.AuxFlags.AskUserWaiting), boolInt(task.AuxFlags.HasPlan), boolInt(task.AuxFlags.HasTodos), boolInt(task.AuxFlags.HasTask), strings.TrimSpace(task.AuxFlags.SessionError), string(labels), task.CreatedAt.UTC().Format(time.RFC3339Nano), task.UpdatedAt.UTC().Format(time.RFC3339Nano), task.CompletedAt, task.Name, string(stages))
+	_, err := tx.ExecContext(ctx, `INSERT INTO tasks (id, task_number, root_id, task_template_id, task_template_name, template_snapshot_json, create_worktree, worktree_branch_mode, worktree_branch, current_stage_index, status, main_session_key, worktree_root_id, worktree_path, worktree_built, aux_ask_user_waiting, aux_has_plan, aux_has_todos, aux_has_task, aux_session_error, labels_json, created_at, updated_at, completed_at, name, task_stages_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		task.ID, task.TaskNumber, task.RootID, task.TaskTemplateID, task.TaskTemplateName, "", boolInt(task.CreateWorktree), task.WorktreeBranchMode, task.WorktreeBranch, task.CurrentStageIndex, task.Status, task.MainSessionKey, task.WorktreeRootID, task.WorktreePath, boolInt(task.WorktreeBuilt), boolInt(task.AuxFlags.AskUserWaiting), boolInt(task.AuxFlags.HasPlan), boolInt(task.AuxFlags.HasTodos), boolInt(task.AuxFlags.HasTask), strings.TrimSpace(task.AuxFlags.SessionError), string(labels), task.CreatedAt.UTC().Format(time.RFC3339Nano), task.UpdatedAt.UTC().Format(time.RFC3339Nano), task.CompletedAt, task.Name, string(stages))
 	return err
 }
 
@@ -636,8 +630,8 @@ func updateTaskCore(ctx context.Context, tx *sql.Tx, task Task) error {
 	// 任何拿着旧快照的后台写入（executeTask 是异步的，跑完一整段才写回）都会把
 	// 已清空的归属又写回去 —— 症状是「清完 worktree，路径又回来了」，且只在后台
 	// 流程还没结束时出现。归属是「谁建的树」这种一次性事实，不该跟着每次状态更新漂。
-	_, err := tx.ExecContext(ctx, `UPDATE tasks SET create_worktree = ?, worktree_branch_mode = ?, worktree_branch = ?, current_stage_index = ?, status = ?, scheduler_admitted = ?, main_session_key = ?, aux_ask_user_waiting = ?, aux_has_plan = ?, aux_has_todos = ?, aux_has_task = ?, aux_session_error = ?, labels_json = ?, updated_at = ?, completed_at = ?, name = ?, task_stages_json = ? WHERE id = ?`,
-		boolInt(task.CreateWorktree), task.WorktreeBranchMode, task.WorktreeBranch, task.CurrentStageIndex, task.Status, boolInt(task.SchedulerAdmitted), task.MainSessionKey, boolInt(task.AuxFlags.AskUserWaiting), boolInt(task.AuxFlags.HasPlan), boolInt(task.AuxFlags.HasTodos), boolInt(task.AuxFlags.HasTask), strings.TrimSpace(task.AuxFlags.SessionError), string(labels), task.UpdatedAt.UTC().Format(time.RFC3339Nano), task.CompletedAt, task.Name, string(stages), task.ID)
+	_, err := tx.ExecContext(ctx, `UPDATE tasks SET create_worktree = ?, worktree_branch_mode = ?, worktree_branch = ?, current_stage_index = ?, status = ?, main_session_key = ?, aux_ask_user_waiting = ?, aux_has_plan = ?, aux_has_todos = ?, aux_has_task = ?, aux_session_error = ?, labels_json = ?, updated_at = ?, completed_at = ?, name = ?, task_stages_json = ? WHERE id = ?`,
+		boolInt(task.CreateWorktree), task.WorktreeBranchMode, task.WorktreeBranch, task.CurrentStageIndex, task.Status, task.MainSessionKey, boolInt(task.AuxFlags.AskUserWaiting), boolInt(task.AuxFlags.HasPlan), boolInt(task.AuxFlags.HasTodos), boolInt(task.AuxFlags.HasTask), strings.TrimSpace(task.AuxFlags.SessionError), string(labels), task.UpdatedAt.UTC().Format(time.RFC3339Nano), task.CompletedAt, task.Name, string(stages), task.ID)
 	return err
 }
 
@@ -692,17 +686,16 @@ type scanner interface{ Scan(dest ...any) error }
 
 func scanTask(row scanner) (Task, error) {
 	var task Task
-	var createWorktree, admitted, askUserWaiting, hasPlan, hasTodos, hasTask int
+	var createWorktree, askUserWaiting, hasPlan, hasTodos, hasTask int
 	var worktreeBuilt int
 	var sessionError string
 	var labels, stagesJSON string
 	var templateSnapshot string
 	var created, updated string
-	if err := row.Scan(&task.ID, &task.TaskNumber, &task.RootID, &task.TaskTemplateID, &task.TaskTemplateName, &templateSnapshot, &createWorktree, &task.WorktreeBranchMode, &task.WorktreeBranch, &task.CurrentStageIndex, &task.Status, &admitted, &task.MainSessionKey, &task.WorktreeRootID, &task.WorktreePath, &worktreeBuilt, &askUserWaiting, &hasPlan, &hasTodos, &hasTask, &sessionError, &labels, &created, &updated, &task.CompletedAt, &task.Name, &stagesJSON); err != nil {
+	if err := row.Scan(&task.ID, &task.TaskNumber, &task.RootID, &task.TaskTemplateID, &task.TaskTemplateName, &templateSnapshot, &createWorktree, &task.WorktreeBranchMode, &task.WorktreeBranch, &task.CurrentStageIndex, &task.Status, &task.MainSessionKey, &task.WorktreeRootID, &task.WorktreePath, &worktreeBuilt, &askUserWaiting, &hasPlan, &hasTodos, &hasTask, &sessionError, &labels, &created, &updated, &task.CompletedAt, &task.Name, &stagesJSON); err != nil {
 		return Task{}, err
 	}
 	task.CreateWorktree = createWorktree != 0
-	task.SchedulerAdmitted = admitted != 0
 	// 存量回填之外还有一层兜底：老库里 worktree_built 可能还是 0，但路径非空说明
 	// 树确实在。按「有路径就算建过」算，界面才不会把一棵活着的树说成没建过。
 	task.WorktreeBuilt = worktreeBuilt != 0 || strings.TrimSpace(task.WorktreePath) != ""

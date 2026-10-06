@@ -1113,7 +1113,7 @@ func TestCompleteStuckRunningTaskAfterSessionLost(t *testing.T) {
 	if err != nil {
 		t.Fatalf("taskStore: %v", err)
 	}
-	if err := store.UpdateTaskStatus(ctx, detail.Task.ID, StatusRunning, nil, false); err != nil {
+	if err := store.UpdateTaskStatus(ctx, detail.Task.ID, StatusRunning, false); err != nil {
 		t.Fatalf("UpdateTaskStatus: %v", err)
 	}
 	stuck, err := store.GetTask(ctx, detail.Task.ID)

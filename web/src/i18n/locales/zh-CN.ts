@@ -820,7 +820,6 @@ export const zhCN = {
   "action.removeAttachment": "移除附件 {name}",
 
   "task.status.pending": "待开始",
-  "task.status.queued": "待调度",
   "task.status.running": "运行中",
   "task.status.waitingUser": "待审核",
   "task.status.paused": "已暂停",
@@ -898,7 +897,6 @@ export const zhCN = {
   "task.removeStageMessage": "该阶段尚未执行，删除后其内容不可恢复。",
   "task.noInput": "无输入",
   "task.openSession": "打开任务会话 {index}",
-  "task.waitingSchedule": "等待调度",
   "task.runNow": "立即执行",
   "task.collapseContent": "收起任务内容",
   "task.expandContent": "展开任务内容",

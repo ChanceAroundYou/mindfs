@@ -46,7 +46,6 @@ function statusText(status: string, t: (key: Parameters<I18nContextValue["t"]>[0
     case "running": return t("task.status.running");
     case "waiting_user": return t("task.status.waitingUser");
     case "paused": return t("task.status.paused");
-    case "queued": return t("task.status.running");
     case "success": return t("task.status.success");
     case "fail": return t("task.status.fail");
     case "cancelled": return t("task.status.cancelled");

@@ -122,7 +122,7 @@ assert.match(hook, /\.filter\(\(group\) => group\.tasks\.length > 0\);/, "task-l
 assert.doesNotMatch(projectRow, /task\.workspaceEmptyProject/, "the empty-project placeholder is gone with the empty-project rows");
 assert.doesNotMatch(board, /task\.workspaceEmptyProject/, "and the board must not render it either");
 
-// 6) 「进行中」= 执行中 + 待审核，仅此两态。非终态还含 queued / paused（没在跑也没人等），
+// 6) 「进行中」= 执行中 + 待审核，仅此两态。非终态还含 pending / paused（没在跑也没人等），
 //    混进来之后筛选名不副实；而一旦选了「进行中」，行里就只能有这两类 —— 渲染层
 //    不再补已完成的任务（那属于「全部」）。这正是「进行时里面全都是已完成」的病根。
 assert.match(

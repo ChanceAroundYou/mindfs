@@ -8670,7 +8670,7 @@ export function App({ onGoHome }: AppProps) {
       index: 1,
       name: t("task.column.running"),
       role: "agent" as const,
-      tasks: kanbanTasks.filter((task) => task.status === "running" || task.status === "queued" || task.status === "paused"),
+      tasks: kanbanTasks.filter((task) => task.status === "running" || task.status === "paused"),
     },
     {
       index: 2,

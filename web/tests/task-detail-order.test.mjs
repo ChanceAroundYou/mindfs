@@ -34,17 +34,17 @@ function detail(status, updatedAt, sessionKey = "") {
 }
 
 const running = detail("running", "2026-07-31T10:00:00.123456789Z", "session-1");
-const staleQueued = detail("queued", "2026-07-31T10:00:00.123000000Z");
+const stalePending = detail("pending", "2026-07-31T10:00:00.123000000Z");
 
 assert.equal(
-  shouldApplyTaskDetail(running, staleQueued),
+  shouldApplyTaskDetail(running, stalePending),
   false,
   "a stale create response must not replace a running task",
 );
 assert.equal(
-  shouldApplyTaskDetail(staleQueued, running),
+  shouldApplyTaskDetail(stalePending, running),
   true,
-  "a newer scheduler update must replace the queued task",
+  "a newer update must replace the older task",
 );
 assert.equal(
   shouldApplyTaskDetail(running, {

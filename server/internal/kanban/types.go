@@ -115,7 +115,6 @@ type Task struct {
 	WorktreeBranch     string          `json:"worktree_branch,omitempty"`
 	CurrentStageIndex  int             `json:"current_stage_index"`
 	Status             string          `json:"status"`
-	SchedulerAdmitted  bool            `json:"scheduler_admitted,omitempty"` // 兼容保留：位无调度器时恒为 true
 	MainSessionKey     string          `json:"main_session_key,omitempty"`
 	WorktreeRootID     string          `json:"worktree_root_id,omitempty"`
 	WorktreePath       string          `json:"worktree_path,omitempty"`

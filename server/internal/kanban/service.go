@@ -1603,7 +1603,6 @@ func (s *Service) waitForUser(ctx context.Context, store *TaskStore, task Task, 
 func (s *Service) finishTask(ctx context.Context, store *TaskStore, task Task, status, eventType, reason string) error {
 	now := time.Now().UTC()
 	task.Status = status
-	task.SchedulerAdmitted = false
 	task.UpdatedAt = now
 	task.CompletedAt = now.Format(time.RFC3339Nano)
 	if err := store.UpdateTask(ctx, task); err != nil {
@@ -1771,7 +1770,7 @@ func (s *Service) setTaskStatus(ctx context.Context, rootID, taskID, status, eve
 		// 只会让每个客户端白做一次重渲染。
 		return store.GetDetail(ctx, current.ID)
 	}
-	if err := store.UpdateTaskStatus(ctx, taskID, status, nil, terminal); err != nil {
+	if err := store.UpdateTaskStatus(ctx, taskID, status, terminal); err != nil {
 		return TaskDetail{}, err
 	}
 	_ = store.AddEvent(ctx, TaskEvent{

@@ -4,9 +4,10 @@ import { getRootNodeId } from "./rootNode";
 import { APIError, protectedJSON } from "./api";
 
 export type StageRole = "user" | "agent";
+// 状态词表里没有 queued：该状态已退役（task_store 的 migrate() 无条件把 queued 归入 pending，
+// 见 G-Y 看板重做）。留着它只会让「排队/调度位」这套已删模型在前端有复活路径。
 export type TaskStatus =
   | "pending"
-  | "queued"
   | "running"
   | "waiting_user"
   | "paused"
@@ -73,7 +74,6 @@ export type KanbanTask = {
   worktree_branch?: string;
   current_stage_index: number;
   status: TaskStatus;
-  scheduler_admitted?: boolean;
   main_session_key?: string;
   worktree_root_id?: string;
   worktree_path?: string;
