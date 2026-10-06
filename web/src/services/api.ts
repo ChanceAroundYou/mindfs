@@ -232,11 +232,16 @@ export async function protectedFetch(input: RequestInfo | URL, init: RequestInit
 //
 // 两张表按**完整 URL** 缓存（含 `user=` 与 nodeId），所以不同账户、不同节点不会串。
 // 只有真发过 ETag 的端点才会写进来；其余端点没有 ETag，自然永远不进表。
-// 上限 16：实际有 ETag 的列表端点就那几个，超限说明有调用方把随机 URL 带进来了 ——
-// 那时该查调用点，而不是把表撑大（与 git.ts 的缓存同一原则）。
+//
+// 上限 64：带 ETag 的端点从 3 个扩到 9 个（/api/sessions、?multi_root、tasks/overview、
+// agents、task-templates、git/status、tree、tasks、replying-sessions），其中几个的 URL
+// 带会变的查询参数（tree 的 dir=、tasks 的过滤器），URL 空间比原先大一个量级，
+// 16 条会把 /api/sessions(111KB) 这类高频条目挤出去，反而白白丢掉命中。
+// 但**仍然有界** —— git 缓存无上限正是当初崩溃的一个来源（见上游定制清单 G-AH），
+// 表撑大是治「条目不够」，不是治「随便缓存」：再加端点就该重新算这个数，而不是随手调大。
 //
 // 注意 304 的 `response.ok` 是 **false**：必须在错误检查之前返回，否则会被当成请求失败。
-const conditionalRequestMax = 16;
+const conditionalRequestMax = 64;
 const conditionalETagByURL = new Map<string, string>();
 const conditionalPayloadByURL = new Map<string, any>();
 

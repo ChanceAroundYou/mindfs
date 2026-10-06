@@ -11,6 +11,11 @@ import { addNode, getNodes, setActiveNodeId } from "./services/nodeRegistry";
 import { I18nProvider, translateNow } from "./i18n";
 import { DEPLOY_PREFIX, RELAY_ASSETS_PREFIX } from "./services/prefix";
 import { shouldReloadForStaleAsset } from "./services/staleAssetRecovery";
+import { installReloadObserver } from "./services/reloadObserver";
+
+// 最早的观测点：在任何渲染/样式生效之前计数，这样「打开就崩、崩了又被重载」
+// 也留得下痕迹。只记录不干预，读法见 services/reloadObserver.ts 顶部注释。
+installReloadObserver();
 
 applyAppearanceMode();
 if (typeof window !== "undefined" && typeof window.matchMedia === "function") {

@@ -664,7 +664,7 @@ func (h *HTTPHandler) handleSessionChildren(w http.ResponseWriter, r *http.Reque
 
 func (h *HTTPHandler) handleReplyingSessions(w http.ResponseWriter, r *http.Request) {
 	if h.AppContext == nil || h.AppContext.GetSessionStreamHub() == nil {
-		respondJSON(w, http.StatusOK, map[string]any{"sessions": []map[string]any{}})
+		respondJSONConditional(w, r, map[string]any{"sessions": []map[string]any{}})
 		return
 	}
 	items := h.AppContext.GetSessionStreamHub().ListReplyingSessions()
@@ -695,7 +695,7 @@ func (h *HTTPHandler) handleReplyingSessions(w http.ResponseWriter, r *http.Requ
 			"updatedAt":    item.UpdatedAt,
 		})
 	}
-	respondJSON(w, http.StatusOK, map[string]any{"sessions": payload})
+	respondJSONConditional(w, r, map[string]any{"sessions": payload})
 }
 
 func (h *HTTPHandler) handleSessionSearch(w http.ResponseWriter, r *http.Request) {
@@ -1691,7 +1691,7 @@ func stripExternalSessionPrefixForAPI(text string) string {
 func (h *HTTPHandler) handleAgentsList(w http.ResponseWriter, r *http.Request) {
 	if h.AppContext == nil || h.AppContext.GetProber() == nil {
 		log.Printf("[http] agents.list.short_circuit returning_empty_response")
-		respondJSON(w, http.StatusOK, map[string]any{
+		respondJSONConditional(w, r, map[string]any{
 			"agents": []map[string]any{},
 			"shells": []map[string]any{},
 		})
@@ -1709,7 +1709,7 @@ func (h *HTTPHandler) handleAgentsList(w http.ResponseWriter, r *http.Request) {
 	if pool := h.AppContext.GetAgentPool(); pool != nil {
 		shells = pool.AvailableShells()
 	}
-	respondJSON(w, http.StatusOK, map[string]any{
+	respondJSONConditional(w, r, map[string]any{
 		"agents": statuses,
 		"shells": shells,
 	})
@@ -2232,13 +2232,13 @@ func (h *HTTPHandler) handleTree(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// 目录不存在时返回空树，而非 400：前端会轮询 .mindfs/plugins 等可选目录
 		if errors.Is(err, os.ErrNotExist) {
-			respondJSON(w, http.StatusOK, map[string]any{"entries": []any{}})
+			respondJSONConditional(w, r, map[string]any{"entries": []any{}})
 			return
 		}
 		respondError(w, http.StatusBadRequest, err)
 		return
 	}
-	respondJSON(w, http.StatusOK, map[string]any{
+	respondJSONConditional(w, r, map[string]any{
 		"entries": out.Entries,
 	})
 }
@@ -2366,7 +2366,7 @@ func (h *HTTPHandler) handleGitStatus(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, err)
 		return
 	}
-	respondJSON(w, http.StatusOK, out.Status)
+	respondJSONConditional(w, r, out.Status)
 }
 
 func (h *HTTPHandler) handleGitDiff(w http.ResponseWriter, r *http.Request) {

@@ -48,8 +48,29 @@ func respondJSONList(w http.ResponseWriter, r *http.Request, v any) {
 		respondError(w, http.StatusInternalServerError, err)
 		return
 	}
-	sum := sha1.Sum(body)
-	etag := fmt.Sprintf("W/\"%x\"", sum)
+	writeJSONWithETag(w, r, body)
+}
+
+// respondJSONConditional 只做 ETag/304 协商，**不动载荷**。
+//
+// 给「载荷本身就是详情、少一个键就改语义」的端点用：git status 的 `dirty_count: 0`、
+// agents 的空数组、tasks 的 stages/events 都是承重信息，套 respondJSONList 会被删掉。
+// 这些端点内容变化不频繁、调用却很密（/api/agents 59KB × 98 次/h、
+// /api/task-templates 24.8KB × 161 次/h、/api/tree 7.7KB × 161 次/h、
+// /api/replying-sessions 2.9KB × 508 次/h），协商后内容没变时是**零字节**，
+// 手机端收益最大。请求次数不变，服务端算 ETag 的成本是一次 sha1。
+func respondJSONConditional(w http.ResponseWriter, r *http.Request, v any) {
+	body, err := json.Marshal(v)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSONWithETag(w, r, body)
+}
+
+// writeJSONWithETag 按响应体算弱 ETag（`W/"<sha1>"`）；If-None-Match 命中回 304 + 无正文。
+func writeJSONWithETag(w http.ResponseWriter, r *http.Request, body []byte) {
+	etag := fmt.Sprintf("W/\"%x\"", sha1.Sum(body))
 	w.Header().Set("ETag", etag)
 
 	if match := strings.TrimSpace(r.Header.Get("If-None-Match")); match != "" {
@@ -65,28 +86,31 @@ func respondJSONList(w http.ResponseWriter, r *http.Request, v any) {
 	w.Write(body)
 }
 
-// stripEmptyJSONValues 递归删掉空值字段。
+// stripEmptyJSONValues 返回删掉空值字段的**副本**。
 // map 键序由 encoding/json 统一按字典序输出，所以同样的内容永远编出同样的字节 ——
 // 这是 ETag 能稳定的前提。
 //
-// **原地修改**：调用方必须传「本请求现造」的结构，不能传共享缓存 —— 被删掉的键
-// 在下次响应里也不会回来。当前两个调用点（会话列表、任务总览）都是按请求新建的。
+// 不修改入参：早先的写法原地删键，于是「调用方必须传本请求现造的结构」成了一条
+// 只写在注释里的契约 —— 谁传了共享缓存，那些键就会在下次响应里永久消失。
+// 改成返回副本后这条契约不存在了（代价是每个请求多一次 map 分配，与紧随其后的
+// json.Marshal 同量级）。
 func stripEmptyJSONValues(node any) any {
 	switch typed := node.(type) {
 	case map[string]any:
+		out := make(map[string]any, len(typed))
 		for key, value := range typed {
 			if isBlankJSONValue(value) {
-				delete(typed, key)
 				continue
 			}
-			typed[key] = stripEmptyJSONValues(value)
+			out[key] = stripEmptyJSONValues(value)
 		}
-		return typed
+		return out
 	case []any:
-		for i, item := range typed {
-			typed[i] = stripEmptyJSONValues(item)
+		out := make([]any, 0, len(typed))
+		for _, item := range typed {
+			out = append(out, stripEmptyJSONValues(item))
 		}
-		return typed
+		return out
 	default:
 		return node
 	}

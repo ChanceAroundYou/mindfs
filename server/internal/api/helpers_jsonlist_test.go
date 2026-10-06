@@ -125,3 +125,82 @@ func TestRespondJSONListETagAnd304(t *testing.T) {
 		t.Fatalf("If-None-Match 不匹配时应回 200 全量，实际 status=%d len=%d", mismatch.Code, mismatch.Body.Len())
 	}
 }
+
+// respondJSONConditional 的守卫：**只协商、不瘦身**。
+//
+// 这些端点（git status / agents / tree / 看板 tasks / replying-sessions / task-templates）
+// 的载荷本身就是详情：`dirty_count: 0`、空数组、`stages`/`events` 流水都是承重信息。
+// 一旦有人「顺手统一」成 respondJSONList，丢的是真数据，而且前端防御式读取不会报错 ——
+// 所以这里正面钉住「空值必须原样留着」。
+func TestRespondJSONConditionalKeepsBlankFields(t *testing.T) {
+	payload := map[string]any{
+		"dirty_count": 0,
+		"clean":       false,
+		"entries":     []any{},
+		"empty_name":  "",
+		"stages":      []any{map[string]any{"prompt_template": "", "role": "agent"}},
+	}
+
+	rec := httptest.NewRecorder()
+	respondJSONConditional(rec, httptest.NewRequest(http.MethodGet, "/api/git/status", nil), payload)
+
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	for _, key := range []string{"dirty_count", "clean", "entries", "empty_name", "stages"} {
+		if _, ok := got[key]; !ok {
+			t.Fatalf("respondJSONConditional 绝不能删键，%q 消失了：%s", key, rec.Body.String())
+		}
+	}
+	stages, _ := got["stages"].([]any)
+	if len(stages) != 1 || stages[0].(map[string]any)["prompt_template"] != "" {
+		t.Fatalf("嵌套的空串也必须原样保留：%s", rec.Body.String())
+	}
+
+	// 协商照样生效：同一载荷第二次带 ETag 请求回 304。
+	etag := rec.Header().Get("ETag")
+	if etag == "" {
+		t.Fatalf("响应缺少 ETag")
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/git/status", nil)
+	req.Header.Set("If-None-Match", etag)
+	second := httptest.NewRecorder()
+	respondJSONConditional(second, req, payload)
+	if second.Code != http.StatusNotModified {
+		t.Fatalf("状态 = %d，应为 304", second.Code)
+	}
+	if second.Body.Len() != 0 {
+		t.Fatalf("304 不该带正文，实际 %d 字节", second.Body.Len())
+	}
+}
+
+// stripEmptyJSONValues 必须**返回副本**，不得原地删键。
+//
+// 原地删键时，「调用方必须传本请求现造的结构」只是注释里的契约：谁把共享缓存传进来，
+// 那些键就在下一次响应里永久消失 —— 而且只在第二次请求才显现，最难查的那类 bug。
+func TestStripEmptyJSONValuesDoesNotMutateInput(t *testing.T) {
+	shared := map[string]any{
+		"keep":  "值",
+		"empty": "",
+		"list":  []any{map[string]any{"gone": "", "kept": 1}},
+	}
+
+	stripped, _ := stripEmptyJSONValues(shared).(map[string]any)
+	if _, ok := stripped["empty"]; ok {
+		t.Fatalf("副本里不该有空键")
+	}
+
+	// 原结构必须一字未动 —— 再剥一次仍然得到同样的结果。
+	if _, ok := shared["empty"]; !ok {
+		t.Fatalf("入参被原地修改了：空的键已被删除，共享缓存会永久缺这个键")
+	}
+	list, _ := shared["list"].([]any)
+	if _, ok := list[0].(map[string]any)["gone"]; !ok {
+		t.Fatalf("嵌套结构也被原地修改了")
+	}
+	again, _ := stripEmptyJSONValues(shared).(map[string]any)
+	if len(again) != len(stripped) {
+		t.Fatalf("第二次剥离结果不同：%v vs %v", again, stripped)
+	}
+}

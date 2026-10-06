@@ -85,7 +85,7 @@ func (h *HTTPHandler) handleTaskTemplatesList(w http.ResponseWriter, r *http.Req
 		respondError(w, http.StatusBadRequest, err)
 		return
 	}
-	respondJSON(w, http.StatusOK, map[string]any{"items": items})
+	respondJSONConditional(w, r, map[string]any{"items": items})
 }
 
 func (h *HTTPHandler) handleTaskTemplateSave(w http.ResponseWriter, r *http.Request) {
@@ -163,7 +163,10 @@ func (h *HTTPHandler) handleKanbanTasksList(w http.ResponseWriter, r *http.Reque
 		respondError(w, http.StatusBadRequest, err)
 		return
 	}
-	respondJSON(w, http.StatusOK, map[string]any{"items": items})
+	// 看板列表：任务自带 stage_runs / events 流水，载荷随任务数线性增长（实测单任务带
+	// 三段流水就 53KB），**不能**套 respondJSONList 瘦身 —— 详情面板直接读这里的
+	// task.stages，少一个键就是少一段流水。只做协商。
+	respondJSONConditional(w, r, map[string]any{"items": items})
 }
 
 func (h *HTTPHandler) handleKanbanTaskCreate(w http.ResponseWriter, r *http.Request) {

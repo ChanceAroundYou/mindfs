@@ -1093,10 +1093,16 @@ groups:
       （实测单条记录 1052B → 372B，会话列表 149KB → 85KB）。
       跨项目看板 `GET /api/tasks/overview` 丢掉卡片从不读取的 `stages` / `prompt_template`
       （`task.stages.prompt_template` 一项就占 14.4%）。
+      详情类端点（agents / task-templates / git status / tree / 看板 tasks / replying-sessions）
+      走 `respondJSONConditional`：**只协商、不瘦身** —— 它们的 `dirty_count: 0`、空数组、
+      `stages`/`events` 流水都是承重信息，删键即静默丢数据（看板详情面板直接读列表项里的
+      `task.stages`）。两者共用 `writeJSONWithETag`，否则改一处漏一处。
+      `stripEmptyJSONValues` 返回副本而非原地删键 —— 原先「必须传本请求现造的结构」只是注释里的契约。
       客户端 `services/api.ts` **必须先判 304 再判 `response.ok`** —— 304 的 `ok` 是 false，
-      顺序写反会把命中缓存的响应当成失败。
+      顺序写反会把命中缓存的响应当成失败；缓存上限 16 → 64 是因为带 ETag 的端点从 3 个变成 9 个。
     files:
       - server/internal/api/helpers.go
+      - server/internal/api/http.go
       - server/internal/api/http_tasks.go
       - web/src/services/api.ts
     tests:
@@ -1106,7 +1112,34 @@ groups:
       - web/tests/session-list-node-failure.test.mjs
     anchors:
       - server/internal/api/helpers.go:func respondJSONList
+      - server/internal/api/helpers.go:func respondJSONConditional
+      - server/internal/api/http.go:respondJSONConditional
       - web/src/services/api.ts:304
+
+  # ── 可观测性：自动重载 ──────────────────────────────────────────
+  - id: G-AO
+    title: 自动重载观测（只记录不干预）
+    kind: arch
+    symptom: |
+      标签页反复崩溃 / 自动重载，但没有任何一条现场证据说明重载来自哪里 ——
+      已排除 staleAssetRecovery 成环（它按 sessionStorage 保证同一资源只重载一次），
+      剩下的候选（有代码在主动 reload / 标签页被 OOM 杀掉后用户重进）无法从日志区分，
+      于是只能按猜测逐项优化，改错了也没有反馈。
+    why: |
+      `web/src/main.tsx` 最早一行调用 `installReloadObserver()`，把现场证据写进 sessionStorage：
+      本次加载的 `navType`（reload / navigate）与累加的 `loads`、`performance.memory` 峰值
+      （每 30s 采样，仅 Chromium）、本轮第一条 error / unhandledrejection 的截断消息。
+      读法：控制台 `__mindfsReloadReport()`。**只记录不干预** —— 这是测量，不是修复。
+      观测器自己必须有界（采样上限 10 条、错误文本截断 200 字符、关标签页即清），
+      否则就成了 G-AH 修过的那类无界增长源；存储不可用（隐私模式）时静默降级、绝不抛。
+    files:
+      - web/src/services/reloadObserver.ts
+      - web/src/main.tsx
+    tests:
+      - web/tests/reload-observer.test.mjs
+    anchors:
+      - web/src/services/reloadObserver.ts:installReloadObserver
+      - web/src/main.tsx:installReloadObserver
 
   # ── 裁剪：删除上游功能 ──────────────────────────────────────────
   - id: G-H

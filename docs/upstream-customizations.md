@@ -3,7 +3,9 @@
 > **当前基准：`9ab9572`（tag `v0.5.5`）= `git merge-base HEAD upstream/main`。**
 > 核对口径：`git diff 9ab9572..HEAD --name-status`。**当前文件数不写在这里** ——
 > 它每次提交都变，硬编码就会立刻过期（这行曾经写 380，实际 384）。
-> 要当前值就跑 `make check-upstream`，它最后一行会打印「386 个 delta 文件被 36 组完整覆盖」。
+> 要当前值就跑 `make check-upstream`，它最后一行会打印「N 个 delta 文件被 M 组完整覆盖」——
+> 具体数字**故意不抄在这里**：它每次提交都会变，抄一次就必然过期一次（这行写过「386 个 / 36 组」，
+> 隔一天就成了假信息，而假计数会让人以为门禁在骗人）。
 > **机器真相在 `docs/upstream-customizations.yaml`** —— 分组 id、文件、针对性测试、锚点全部以它为准，本文不重复列举；
 > 覆盖率门禁 `make check-upstream` 强制「每个 delta 文件都被某组覆盖」。两文件的唯一强耦合点是**组 id 双向一致**。
 >
@@ -112,7 +114,7 @@
 
 ---
 
-## 1. 总览（37 组）
+## 1. 总览（38 组）
 
 | 组 | 主题 | 性质 | 关键提交/切片举例 | 互斥边界 |
 |----|------|------|-------------------|----------|
@@ -155,6 +157,7 @@
 | G-AL | 构建 / 部署 / 收尾流程脚本 | 部署 | 见 §3.1 | `ship` / `upstream-merge` skill |
 | G-AM | 插件注册表与视图目录 | 功能 | 见 §3.1 | 主视图记忆依赖它 |
 | G-AN | 列表投影瘦身与条件请求（ETag / 304） | 性能 | 见 §3.1 | 列表响应省略恒空键 + ETag/304；客户端先判 304 再判 `ok` |
+| G-AO | 自动重载观测 | 架构 | 见 §3.1 | 只记录不干预：`sessionStorage` 计数 + 堆峰值 + 本轮首错 |
 
 > **G-D 已并入 G-F，G-M 已并入 G-AI**（改动面完全重合、无独立测试可守，单列只会制造空组）。
 
@@ -397,7 +400,8 @@
 | `server/internal/api/ws_test.go` → `TestReplayBatchIsOneMessage` | 重放必须是**一条**带 `events` 数组的消息，且不同时携带单条 `event`；首帧必须带 `reset:true` |
 | `server/internal/api/ws_test.go` → `TestReplayDrainStepIsNotAReset` | **续投帧不得带 `reset`**（会清掉快照刚重建的尾巴），但形状必须与快照帧一致；空 `events` 归一成 `[]` 而非 `nil` |
 | `server/internal/api/ws_test.go` → `TestDoneCarriesNoReplayReceipt` | `session.done` 载荷只允许 `root_id`/`session_key` 两个键 —— 任何补发的回执标记（`replay`）都必须再加一个键，加不出来就说明环的燃料回来了 |
-| `server/internal/api/ws_test.go` → `TestReplayAfterClearYieldsEmptySnapshot` | 回合清空后重新挂载拿到的是**空快照**（`collectReplayStep` 无事件且 `live`），不是上一轮的尾巴 || `web/tests/session-overlay-unit.test.mjs` | overlay 的**行为**：`computeTailOverlay` 的 7 个分支。含 4 条【红】②③④⑭（A2 渲染空洞 / aux 与窗口脱节时卡片两边都不渲染 / 短回复落盘后显示两遍 / 只差空白的短用户消息显示两遍） |
+| `server/internal/api/ws_test.go` → `TestReplayAfterClearYieldsEmptySnapshot` | 回合清空后重新挂载拿到的是**空快照**（`collectReplayStep` 无事件且 `live`），不是上一轮的尾巴 |
+| `web/tests/session-overlay-unit.test.mjs` | overlay 的**行为**：`computeTailOverlay` 的 7 个分支。含 4 条【红】②③④⑭（A2 渲染空洞 / aux 与窗口脱节时卡片两边都不渲染 / 短回复落盘后显示两遍 / 只差空白的短用户消息显示两遍） |
 | `web/tests/e2e-message-behavior.test.mjs` + `tests/e2e/harness.mjs` + `scripts/mindfs-iso.sh` | **隔离实例 E2E**（`MINDFS_E2E=1` 才跑）：冷启动窗口 / **完成瞬间交接**（done 后必须发起窗口重锚定 + 项数不下降）/ 应用内切走切回 / 查库判据。不设环境变量时整文件跳过，普通 `npm test` 不受影响 |
 
 
@@ -431,7 +435,7 @@
 
 ---
 
-### 3.1 补全分组（2026-10-06 新增，19 组）
+### 3.1 补全分组（2026-10-06 新增，20 组）
 
 > §3 的 G-A…G-S 是 v0.4.7 时代按 hunk 归的类，只覆盖了当时 68 个文件。
 > 2026-10-06 用 `git diff $(git merge-base HEAD upstream/main)..HEAD` 对账，定制面实为 **380 文件**，
@@ -590,8 +594,41 @@
   键都有防御性兜底，`related_worktree` 是唯一的 `=== null` 用法且其消费者对 `null`/`undefined`
   一视同仁）、按内容算 ETag 支持 `If-None-Match` 回 304；跨项目看板不返回卡片从不读取的
   `stages` / `prompt_template`（`task.stages.prompt_template` 占 14.4%）。
+- 两个 responder，共用同一段协商逻辑（`writeJSONWithETag`）：
+  - `respondJSONList` = **瘦身 + 协商**，只给真正的列表端点（会话列表单项目/`multi_root`、任务总览）。
+  - `respondJSONConditional` = **只协商、不动载荷**，给「载荷本身就是详情」的端点：
+    `/api/agents`（59KB × 98 次/h）、`/api/task-templates`（24.8KB × 161 次/h）、
+    `/api/git/status`、`/api/tree`（7.7KB × 161 次/h）、`/api/tasks`（看板列表，单任务带 stage_runs/events
+    流水，实测三段的单任务就 53KB）、`/api/replying-sessions`（2.9KB × 508 次/h）。
+    这些端点里 `dirty_count: 0`、空数组、`stages`/`events` 都是承重信息，套上瘦身就是静默丢数据
+    （看板详情面板直接读列表项里的 `task.stages`，不是单独拉详情）。内容不变时回 304 零字节。
+  - 新增 `web/src/services/api.ts` 的 `conditionalRequestMax` 从 16 提到 **64** —— 带 ETag 的端点
+    从 3 个变成 9 个，其中 `tree?dir=` / `tasks?<filters>` 让 URL 空间大一个量级，16 条会把
+    `/api/sessions`（111KB）这类高频条目挤出去。**但仍是有界的**，理由见 G-AH。
+- `stripEmptyJSONValues` 改为**返回副本**：原先原地删键，于是「调用方必须传本请求现造的结构」
+  成了一条只写在注释里的契约，谁传了共享缓存，那些键就在下次响应里永久消失。
 - **别踩**：客户端必须**先判 304 再判 `response.ok`** —— 304 的 `ok` 为 false，顺序写反会把命中
   缓存的响应当成失败。合上游时为「列表响应瘦身 + 条件请求」这一整块，要么全留要么全弃。
+- 针对性测试：`web/tests/conditional-request.test.mjs` 逐个钉住六个详情端点走的是
+  `respondJSONConditional` **而不是** `respondJSONList`（只断言「接了协商」是不够的 ——
+  日后被换成瘦身版照样绿，那正是丢数据的那次改动）。
+
+### G-AO 自动重载观测
+
+- 来源：`web/src/services/reloadObserver.ts`（新增）、`web/src/main.tsx`（最早一行调用）。
+- 边界：**只记录，不干预**。「标签页崩溃 / 自动重载」是最初报告的主要故障形态，前几轮优化打的是
+  它的**假设**根因（请求风暴、无界缓存、超线性渲染），但始终没有一条现场证据说明重载本身来自哪里；
+  已排除的只有 `staleAssetRecovery` 成环。这段代码的产出就是那份证据：
+  - `navType`（`reload` / `navigate` / …）+ 累加的 `loads` → 区分「有代码主动 reload」与「用户重进」；
+  - `performance.memory` 峰值（每 30s 采样，仅 Chromium）→ 逼近几百 MB 说明是 OOM 杀页；
+  - 本轮第一条 `error` / `unhandledrejection` 的**截断消息** → 区分崩在渲染还是别处。
+- 可见症状（没有它时会怎样）：重载反复发生却查不出原因，只能继续按猜测逐项优化，
+  改错了也没有任何反馈。读法：控制台 `__mindfsReloadReport()`。
+- **别踩**：观测器自己不能成为新的无界增长源（G-AH 修过这个问题）—— 采样上限 10 条、
+  错误文本截断 200 字符、只存 sessionStorage（关标签页即清）。存储不可用（隐私模式）时必须
+  静默降级、绝不抛异常，否则观测代码会把页面本身弄崩。
+- 针对性测试：`web/tests/reload-observer.test.mjs`（累加与上限、峰值只增不减、
+  只记第一条错误且截断、隐私模式不抛、存储垃圾不炸）。
 
 ---
 
