@@ -11,6 +11,12 @@ import path from "node:path";
  * 关键是遮罩与面板都用 absolute 钉在**右栏自己那根列**里（AppShell 的
  * rightStyle 带 position: relative），作用域只到右栏。
  * 所以这里断言「不是 fixed / 不按视口铺开」，同时断言遮罩和上浮都在。
+ *
+ * **只钉行为，不钉取值。** 面板沉下 48px 还是 56px、缓动走 linear 还是 spring、
+ * 遮罩黑到 0.42 还是 0.5、收起按钮的 chevron 画多长 —— 改了都不该让这里变红，
+ * 那些是调参不是 bug。凡是「换个数/换个曲线就红」的断言都已经删掉了。
+ *
+ * 反过来，凡是「改坏了会重演某个旧 bug」的都留着，且每条都注明那个 bug。
  */
 
 const read = (rel) =>
@@ -19,50 +25,61 @@ const read = (rel) =>
 const panel = read("src/components/ArchivedSessionsPanel.tsx");
 const hook = read("src/app/useSessionSidebarView.tsx");
 
-test("归档视图不做全屏浮层：遮罩/面板都是 absolute，不是 fixed", () => {
+test("归档视图不做全屏浮层", () => {
   assert.doesNotMatch(panel, /position: "fixed"/, "全视口浮层会把主面板和左栏一起盖住");
   assert.doesNotMatch(panel, /100vh/, "不得按视口高度铺开");
-  // 遮罩和面板都靠 layer 定位，所以 zIndex 只需要相对彼此的两级
-  assert.doesNotMatch(panel, /zIndex: [3-9]\d\d/, "不应有全屏级 zIndex");
 });
 
-test("遮罩是半透明黑，罩住右栏内容、透出底下的列表", () => {
+test("遮罩罩住右栏、半透明、点它收起、跟着淡入淡出", () => {
   assert.match(panel, /data-archived-panel="scrim"/);
-  assert.match(panel, /position: "absolute",\s*inset: 0,[\s\S]*?background: "rgba\(0, 0, 0, [\d.]+\)"/);
-  // 点遮罩收起
-  assert.match(panel, /data-archived-panel="scrim"\s*\n\s*onClick=\{onClose\}/);
+  const at = panel.indexOf('data-archived-panel="scrim"');
+  const body = panel.slice(at, panel.indexOf("/>", at));
+  assert.match(body, /position: "absolute",\s*inset: 0/, "遮罩必须铺满右栏整列");
+  // 「半透明黑」是行为，黑到多少是小节。alpha 必须落在 (0,1)：
+  // 1 会把底下的会话列表盖死，0 等于没画。
+  const alpha = body.match(/background: "rgba\(\s*0,\s*0,\s*0,\s*([\d.]+)\s*\)"/);
+  assert.ok(alpha, "遮罩底色应为黑色 rgba");
+  assert.ok(
+    Number(alpha[1]) > 0 && Number(alpha[1]) < 1,
+    `遮罩应半透明（alpha 落在 0~1 之间），实得 ${alpha[1]}`,
+  );
+  assert.match(body, /onClick=\{onClose\}/, "点遮罩收起");
+  // 不透明度跟着 isOpen 走才谈得上「淡入淡出」；瞬时满不透明是闪烁的一半来源。
+  assert.match(body, /opacity: isOpen \? 1 : 0/, "遮罩要跟着开合淡入淡出");
 });
 
-test("面板上浮靠 transition 终态切换，不是只进不退的 animation", () => {
+test("面板靠 transition 在终态之间移动，不是只进不退的 animation", () => {
   // animation 只能播进场；关闭时整层卸载就是硬切 —— 闪烁的一半来源。
   assert.match(panel, /data-archived-panel="sheet"/);
   // 只做竖直位移。scale 是第二个方向的运动，叠上去读起来就是「在缩放」。
   assert.doesNotMatch(panel, /scale\(/, "不该再有缩放动画");
-  assert.match(panel, /transform: isOpen \? "translateY\(0\)" : "translateY\(48px\)"/);
-  assert.match(panel, /transition: `transform \$\{timing\}, opacity \$\{timing\}`/);
+  const at = panel.indexOf('data-archived-panel="sheet"');
+  const body = panel.slice(at, panel.indexOf(">", at));
+  // 开合两个终态都必须存在**且不同**：关闭态若与开启态同值，退场就没有起点，
+  // 又回到「进场瞬间、退场才有过渡」。具体沉多少 px 不管。
+  const transform = body.match(
+    /transform: isOpen \? "translateY\(([^)]*)\)" : "translateY\(([^)]*)\)"/,
+  );
+  assert.ok(transform, "sheet 的 transform 应由 isOpen 决定两个 translateY 终态");
+  assert.notEqual(transform[1], transform[2], "关闭态与开启态位移相同 = 退场没有起点");
+  // 旧的单向关键帧不该回来
   assert.doesNotMatch(panel, /animation: "mindfs-archived-rise/);
-  const css = read("src/index.css");
-  assert.doesNotMatch(css, /mindfs-archived-rise/, "旧关键帧应已删");
+  assert.doesNotMatch(read("src/index.css"), /mindfs-archived-rise/, "旧关键帧应已删");
 });
 
-test("进出共用一套时长和一条线性曲线", () => {
-  // 两侧是同一串 CSS 的镜像。曲线取 linear：形态在这里是过度设计，而 linear
-  // 天生自反（把时间轴对折，曲线与自己重合），不可能跑偏。
-  assert.match(panel, /const TRANSITION_MS = \d\d\d/);
-  assert.match(panel, /const TRANSITION_EASE = "linear"/);
-  assert.match(panel, /const timing = `\$\{TRANSITION_MS\}ms \$\{TRANSITION_EASE\}`/);
-  // 方向相关的分支不许回来（那会让两侧悄悄跑成两套）
+test("进出共用一套时长，没有方向分支", () => {
+  // 方向相关的分支不许回来：进、出各一套时长就会悄悄跑偏 —— 一侧改了另一侧忘了改。
   assert.doesNotMatch(panel, /OPEN_MS|CLOSE_MS|OPEN_EASE|CLOSE_EASE/);
-  // 只解析时长声明，别全文搜数字 —— 曲线常量也会命中
+  // 时长常量只能有一个。曲线取什么值不管（linear / ease / spring 都是调参）。
   const durations = panel.match(/_MS = \d+/g) || [];
-  assert.equal(durations.length, 1, "只应有一个时长常量");
-  assert.ok(
-    Number(durations[0].replace(/.*= /, "")) >= 200,
-    `时长应 >= 200ms（再慢就又显得磨叽），实得 ${durations[0]}`,
+  assert.equal(durations.length, 1, `只应有一个时长常量，实得 ${durations.join(", ")}`);
+  // 遮罩与面板各一条 transition，且都走同一个 timing 串 —— 这才叫「共用一套」。
+  // 只钉「引用了同一个变量」，不钉那串长什么样。
+  assert.equal(
+    (panel.match(/transition: `[^`]*\$\{timing\}`/g) || []).length,
+    2,
+    "遮罩与面板各一条 transition，且都引用同一个 timing",
   );
-  // 遮罩和面板两条 transition 都得是这一串
-  assert.match(panel, /transition: `opacity \$\{timing\}`/);
-  assert.match(panel, /transition: `transform \$\{timing\}, opacity \$\{timing\}`/);
 });
 
 test("面板常驻 DOM：isOpen 直接当终态样式，没有两态和延迟卸载", () => {
@@ -74,22 +91,16 @@ test("面板常驻 DOM：isOpen 直接当终态样式，没有两态和延迟卸
   // 注释里会正面提到这些被删掉的 API（「早先拆成 entered + mounted…」），
   // 所以先剥掉行注释再断言它们不在代码里。
   const code = panel.replace(/^\s*\/\/.*$/gm, "");
-  assert.doesNotMatch(code, /useState/, "不再需要任何本组件自有的状态");
-  assert.doesNotMatch(code, /setEntered|setMounted/, "两态开关已删");
   assert.doesNotMatch(code, /requestAnimationFrame/, "延迟进场就是那个 bug 的成因");
-  assert.doesNotMatch(code, /setTimeout\(\(\) => setMounted/, "不再有延迟卸载");
+  assert.doesNotMatch(code, /setTimeout/, "不再有延迟挂载/卸载");
+  assert.doesNotMatch(code, /setEntered|setMounted/, "两态开关已删");
   // 终态样式直接由 isOpen 决定
   assert.match(panel, /opacity: isOpen \? 1 : 0/);
-  assert.match(panel, /transform: isOpen \? "translateY\(0\)" : "translateY\(48px\)"/);
   // 收起后仍占整列但不透明、不吃点击，把交互还给底下的列表
   assert.match(panel, /pointerEvents: isOpen \? "auto" : "none"/);
   // 挂载交给组件自己，hook 不再条件渲染
   assert.match(hook, /<ArchivedSessionsPanel\s*\n\s*isOpen=\{archiveOpen\}/);
   assert.doesNotMatch(hook, /\{archiveOpen \? \(/);
-});
-
-test("遮罩跟着淡入淡出（不是瞬间满不透明）", () => {
-  assert.match(panel, /opacity: isOpen \? 1 : 0,\s*\n\s*transition: `opacity \$\{timing\}`/);
 });
 
 test("归档层 absolute 盖满右栏列，不是跟会话列表并排的 flex item", () => {
@@ -101,8 +112,14 @@ test("归档层 absolute 盖满右栏列，不是跟会话列表并排的 flex i
     /flex: 1/,
     "归档层不能再是 flex item",
   );
-  // 定位上下文由 hook 里那层 relative + 占满整列的 wrapper 提供
-  assert.match(hook, /position: "relative",\s*flex: 1,\s*minHeight: 0,[\s\S]*?overflow: "hidden"/);
+  // 定位上下文与裁剪由 hook 里那层 wrapper 提供：没有 relative，inset:0 会一路
+  // 找到视口（退化成全屏浮层）；没有 overflow:hidden，上浮的面板会溢出右栏。
+  // 只取外层那个开标签 —— 内层还包着一层同样带 overflow:hidden 的 div，
+  // 按整段切会把它的样式误当成外层的（那样「删掉外层的裁剪」测不出来）。
+  const view = hook.slice(hook.indexOf("const archiveView = ("));
+  const openTag = view.slice(0, view.indexOf(">", view.indexOf("style={{")));
+  assert.match(openTag, /position: "relative"/, "wrapper 必须是定位上下文");
+  assert.match(openTag, /overflow: "hidden"/, "wrapper 必须裁剪，否则面板溢出右栏");
   const shell = read("src/layout/AppShell.tsx");
   const rightStyle = shell.slice(
     shell.indexOf("const rightStyle"),
@@ -111,18 +128,15 @@ test("归档层 absolute 盖满右栏列，不是跟会话列表并排的 flex i
   assert.match(rightStyle, /position: "relative"/, "右栏列必须是定位上下文");
 });
 
-test("收起按钮在标题栏里、朝右，不关掉整个右栏", () => {
+test("收起按钮在标题栏里，点它是退回会话列表、不关掉整个右栏", () => {
   assert.match(panel, /data-archived-panel="header"/);
   assert.match(panel, /data-archived-panel="collapse"/);
   assert.match(panel, /aria-label=\{t\("sessionList\.archivedPanel\.collapse"\)\}/);
-  assert.match(panel, /onClick=\{onClose\}/);
-  // chevron 朝右（顶点 x 递增）：中点在右 = 3.5,8 → 8,12.5 → 12.5,8
-  const chevron = panel.slice(panel.indexOf('data-archived-panel="collapse"'));
-  assert.match(
-    chevron,
-    /<polyline points="3\.5 8 8 12\.5 12\.5 8" \/>/,
-    "收起按钮应指向右",
-  );
+  const at = panel.indexOf('data-archived-panel="collapse"');
+  const button = panel.slice(at, panel.indexOf("</button>", at));
+  assert.match(button, /onClick=\{onClose\}/);
+  // 只钉「有图标」；chevron 画成什么样、朝哪边是设计取值，不在这钉死。
+  assert.match(button, /<svg/, "收起按钮要有图标");
 });
 
 test("返回键/侧滑能退回会话列表", () => {
@@ -187,10 +201,15 @@ test("归档入口在顶栏：搜索图标右边，只留图标且与搜索同�
   const fn = list.slice(list.indexOf("function ArchiveHeaderButton({"));
   const body = fn.slice(0, fn.indexOf("\n}\n"));
   assert.match(body, /data-archive-entry="open"/, "入口仍需带这个标记供定位");
-  // 尺寸必须与搜索按钮一致，否则两个图标并排会一高一低
-  assert.match(body, /width: "34px"/);
-  assert.match(body, /height: "34px"/);
-  assert.match(body, /minWidth: "34px"/);
+  // 尺寸必须与搜索按钮一致，否则两个图标并排会一高一低。
+  // 比的是「两者相等」而不是「都是 34px」：具体尺寸是设计调参，一致性才是行为。
+  const dims = (src) =>
+    ["width", "height", "minWidth"].map(
+      (prop) => (src.match(new RegExp(`${prop}: "(\\d+)px"`)) || [])[1],
+    );
+  const searchAt = list.indexOf("onClick={onSearchToggle}");
+  const searchBtn = list.slice(searchAt, list.indexOf("</button>", searchAt));
+  assert.deepEqual(dims(body), dims(searchBtn), "归档入口必须与搜索按钮同尺寸");
   // 只留图标：文字只能走 aria-label / title，不能作为可见内容
   assert.match(body, /aria-label=\{t\("sessionList\.archive"\)\}/);
   assert.match(body, /title=\{t\("sessionList\.archive"\)\}/);
@@ -199,14 +218,20 @@ test("归档入口在顶栏：搜索图标右边，只留图标且与搜索同�
   // 列表末尾的入口行必须彻底消失：它挂在滚动容器里，会被内容顶走、
   // 也会随「有无会话」分支消失。
   assert.doesNotMatch(list, /ArchiveEntryRow/, "列表末尾的归档行应已移除");
-  const scrollers = [...list.matchAll(/overflow: "auto", padding: "8px"/g)];
-  assert.ok(scrollers.length >= 2, "两个列表各有一个滚动容器");
-  for (const scroller of scrollers) {
-    const after = list.slice(scroller.index, scroller.index + 4000);
-    assert.equal(
-      after.indexOf('data-archive-entry="open"'),
-      -1,
-      "滚动容器里不应再有归档入口行",
+  // 两处接线都必须落在各自列表的顶栏里（各自第一个滚动容器之前）。
+  // 不能按 data-archive-entry 找使用点 —— 那个标记只在组件定义里出现一次，
+  // 拿它去「滚动容器窗口里搜」永远搜不到，等于没测。
+  const split = list.indexOf("export function MultiProjectSessionList");
+  for (const [chunk, label] of [
+    [list.slice(0, split), "SessionList"],
+    [list.slice(split), "MultiProjectSessionList"],
+  ]) {
+    const at = chunk.indexOf("<ArchiveHeaderButton");
+    const scroller = chunk.indexOf('overflow: "auto"');
+    assert.ok(at >= 0, `${label} 应接入归档入口`);
+    assert.ok(
+      scroller === -1 || at < scroller,
+      `${label}: 归档入口必须在顶栏，不能在滚动内容里（否则得滚到列表末尾才看得到）`,
     );
   }
 });
@@ -383,4 +408,3 @@ test("buildRows 的读键与写键用同一个 childStateKey 调用形状（含 
   const twoArg = calls.filter((args) => args.split(",").length !== 3);
   assert.deepEqual(twoArg, [], "不得有非三参数的 childStateKey 调用（少传 nodeId 即本 bug）");
 });
-
