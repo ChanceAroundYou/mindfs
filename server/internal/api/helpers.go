@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"reflect"
 	"strings"
 
 	"mindfs/server/internal/apperr"
@@ -111,6 +112,43 @@ func stripEmptyJSONValues(node any) any {
 			out = append(out, stripEmptyJSONValues(item))
 		}
 		return out
+	}
+	// 具名容器（`[]map[string]any`、`map[string]map[string]any`…）匹配不到上面的类型开关，
+	// 早先会掉进 default 原样返回 —— 于是**整个 items 数组一个键都没省**，
+	// 而响应状态、ETag、304 全都正常，属于「静默无效」：改完看不出任何区别，
+	// 只有量一下字节数才发现没生效（2026-10-07 实测：会话列表 19 条仍是 21 键/条）。
+	//
+	// 这里按反射统一处理同构容器，避免再靠「恰好是哪种切片」来决定是否生效。
+	// 判空仍然只认 isBlankJSONValue 那几条规则，`0` 照旧保留。
+	value := reflect.ValueOf(node)
+	switch value.Kind() {
+	case reflect.Slice:
+		if value.Type().Elem().Kind() == reflect.Uint8 {
+			return node // []byte 是标量，不是容器
+		}
+		out := reflect.MakeSlice(value.Type(), value.Len(), value.Len())
+		for i := 0; i < value.Len(); i++ {
+			if stripped := reflect.ValueOf(stripEmptyJSONValues(value.Index(i).Interface())); stripped.IsValid() {
+				out.Index(i).Set(stripped)
+			}
+		}
+		return out.Interface()
+	case reflect.Map:
+		if value.Type().Key().Kind() != reflect.String {
+			return node
+		}
+		out := reflect.MakeMapWithSize(value.Type(), value.Len())
+		iter := value.MapRange()
+		for iter.Next() {
+			item := iter.Value().Interface()
+			if isBlankJSONValue(item) {
+				continue
+			}
+			if stripped := reflect.ValueOf(stripEmptyJSONValues(item)); stripped.IsValid() {
+				out.SetMapIndex(iter.Key(), stripped)
+			}
+		}
+		return out.Interface()
 	default:
 		return node
 	}

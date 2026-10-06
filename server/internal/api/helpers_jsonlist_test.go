@@ -175,6 +175,58 @@ func TestRespondJSONConditionalKeepsBlankFields(t *testing.T) {
 	}
 }
 
+// 具名容器必须被递归剥空 —— 这正是会话列表 `items` 的真实形状。
+//
+// 回归：早先的实现只认 `map[string]any` / `[]any`，而 handler 传的是
+// `[]map[string]any`（http.go 的 `payload := make([]map[string]any, …)`），
+// 具名切片落进 default 原样返回 —— **整个 items 数组一个键都没省**，
+// 但响应状态、ETag、304 全部正常，属于静默无效。2026-10-07 在真机上量字节数才发现。
+func TestStripEmptyJSONValuesHandlesTypedContainers(t *testing.T) {
+	payload := map[string]any{
+		"items": []map[string]any{{
+			"key":         "k1",
+			"name":        "项目",
+			"archived_at": nil,
+			"effort":      "",
+			"plan_mode":   false,
+			"total_count": 0,
+		}},
+		"nested": map[string]map[string]any{
+			"inner": {"gone": "", "kept": "x"},
+		},
+	}
+
+	rec := httptest.NewRecorder()
+	respondJSONList(rec, httptest.NewRequest(http.MethodGet, "/api/sessions", nil), payload)
+
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	items, _ := got["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("items 不该被删元素：%v", items)
+	}
+	first, _ := items[0].(map[string]any)
+	for _, key := range []string{"archived_at", "effort", "plan_mode"} {
+		if _, ok := first[key]; ok {
+			t.Fatalf("具名切片里的空字段 %q 没被剥掉（静默无效回归）", key)
+		}
+	}
+	if first["name"] != "项目" || first["key"] != "k1" {
+		t.Fatalf("非空字段被误删：%v", first)
+	}
+	if first["total_count"] != float64(0) {
+		t.Fatalf("`0` 在具名切片里被当成空删掉了：%v", first)
+	}
+
+	// 入参仍是共享结构 —— 反射路径同样不许原地改。
+	shared := payload["items"].([]map[string]any)[0]
+	if _, ok := shared["effort"]; !ok {
+		t.Fatalf("反射剥空把入参原地改了")
+	}
+}
+
 // stripEmptyJSONValues 必须**返回副本**，不得原地删键。
 //
 // 原地删键时，「调用方必须传本请求现造的结构」只是注释里的契约：谁把共享缓存传进来，
