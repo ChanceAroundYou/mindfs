@@ -220,10 +220,12 @@ assert.match(
   /const worktreeMissing = worktreeEnabled && task\.worktree_missing === true;/,
   "徽标必须看派生的 worktree_missing，不能只看 create_worktree",
 );
+// 目录不在的那一档读「已收尾」，tooltip 必须是那一档自己的 —— 复用「已开启 worktree」
+// 等于告诉用户「树还在」，而它已经没了。
 assert.match(
   cardRows,
-  /worktreeTagState === "missing"\s*\?\s*t\("task\.worktreeMissingTitle"\)/,
-  "失效态要有自己的 tooltip，别复用「已开启 worktree」",
+  /worktreeTagState === "finished"\s*\?\s*t\("task\.worktreeFinishedTitle"\)/,
+  "已收尾态要有自己的 tooltip，别复用「已开启 worktree」",
 );
 assert.match(cardRows, /style=\{taskWorktreeTagStyle\(worktreeTagState\)\}/, "标题条应保留 worktree badge");
 // 失效时给的是「重建」而不是「执行」：执行必然失败（cwd 就是那个不存在的目录）。

@@ -97,6 +97,16 @@ type Service struct {
 	// 见 worktree_finish_stage.go 的 notifyFinishStageOutcome —— 它必须挂在
 	// executeTask 之外，因为清场要抢 taskFinish 锁而那条锁见到 taskRun 就拒绝。
 	finishStageFinished FinishStageFinishedFunc
+	// sessionRunningProbe 报某个会话此刻是不是在回复中，由 api 层在装配时挂上
+	// （StreamHub.IsSessionReplying）。
+	//
+	// 为什么以会话为准而不是 task.Status：任务可以长时间停在 waiting_user（等审核），
+	// 那只是「等人」，不代表 agent 在动；反过来 agent 可能刚起、状态还没落库。会话是否
+	// 在回复是唯一直接反映「agent 此刻在不在动」的信号 —— 收尾要拆掉 agent 的 cwd，
+	// 判据错了就是把人家正在写的目录删了。
+	//
+	// nil 时（单测、老装配）回落到 task.Status / 段状态那套旧判据，行为与改造前一致。
+	sessionRunningProbe func(sessionKey string) bool
 }
 
 // finishToken 是一次收尾的锁凭证。见 acquireTaskFinish。
@@ -107,6 +117,14 @@ type admitToken struct{}
 
 var errStopTaskExecution = errors.New("stop task execution")
 var errTaskFinishing = errors.New("该任务正在收尾 worktree，稍后再执行")
+
+// ErrTaskSessionRunning 表示任务关联的会话此刻正在回复 —— 收尾必须等它停下。
+// 导出是因为 api 层要按它区分「agent 在动，什么都不做只回一句」和「其它拒绝（409）」。
+var ErrTaskSessionRunning = errors.New("任务关联的会话正在回复中，等它停下来再收尾")
+
+// ErrFinishStageExists 表示任务已经在收尾流程里（流水上已有收尾段）。
+// 导出供 api 层区分「已有收尾段 → 重跑那段继续收尾」和「其它拒绝」。
+var ErrFinishStageExists = errors.New("该任务已在收尾流程中")
 
 func NewService(templates *TemplateStore, roots RootProvider) *Service {
 	return &Service{Templates: templates, Roots: roots, stores: map[string]*TaskStore{}, taskRun: map[string]bool{}, taskPend: map[string]bool{}, taskFinish: map[string]*finishToken{}, taskAdmit: map[string]*admitToken{}}
@@ -119,6 +137,42 @@ func (s *Service) SetRunner(runner Runner) {
 	s.mu.Lock()
 	s.Runner = runner
 	s.mu.Unlock()
+}
+
+// SetSessionRunningProbe 挂上「会话是否在回复」的探测函数。装配期调一次。
+func (s *Service) SetSessionRunningProbe(fn func(sessionKey string) bool) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.sessionRunningProbe = fn
+	s.mu.Unlock()
+}
+
+// sessionRunning 报某个会话此刻是否在回复。探针没挂上（单测、老装配）时恒为 false，
+// 调用方据此回落到状态判据 —— 见 sessionProbeConfigured。
+func (s *Service) sessionRunning(sessionKey string) bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	fn := s.sessionRunningProbe
+	s.mu.Unlock()
+	if fn == nil || strings.TrimSpace(sessionKey) == "" {
+		return false
+	}
+	return fn(sessionKey)
+}
+
+// sessionProbeConfigured 报探针是否已装配。没装配时收尾回落看 task.Status / 段状态，
+// 否则「探针恒 false」会被读成「agent 一定没在跑」，把保护整个架空。
+func (s *Service) sessionProbeConfigured() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.sessionRunningProbe != nil
 }
 
 type CreateTaskInput struct {

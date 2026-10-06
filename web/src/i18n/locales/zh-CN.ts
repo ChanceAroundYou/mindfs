@@ -853,6 +853,8 @@ export const zhCN = {
   "task.finishWorktree": "收尾 worktree",
   "task.finishWorktreeConfirm": "收尾会让 agent 提交本 worktree 里的改动、合并回主干，成功后拆掉 worktree 和分支、并把会话搬回主 checkout。\n\n没有撤销。确认继续？",
   "task.finishWorktreeStarted": "收尾已发起：agent 正在提交并合并，完成后自动清场",
+  "task.finishWorktreeSessionRunning": "agent 正在回复中，等它停下再收尾",
+  "task.finishWorktreeNudged": "收尾段重新跑起来了：agent 继续提交并合并",
   "task.finishWorktreeDone": "worktree 已收尾：分支已合回主干",
   "task.finishWorktreeRemoved": "worktree 目录已拆掉",
   "task.finishWorktreeBranchDeleted": "分支已删除",

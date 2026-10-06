@@ -3,15 +3,15 @@ import test from "node:test";
 import fs from "node:fs";
 import path from "node:path";
 
-// worktree 徽标的五种状态 + 收尾流程的整条反馈链。
+// worktree 徽标的四种状态 + 收尾流程的整条反馈链。
 //
-// 前四种是**真跑出来的**：真机点了一次收尾，worktree 目录确实被拆了、分支确实
-// 没了，但徽标纹丝不动、界面一声不吭。原因分别是
-//   ① 徽标只看 create_worktree（创建时的配置，永久 true），不看路径还在不在；
-//   ② 成功分支只刷新数据就 return，只有「分支没删掉」才弹窗。
-// 两者都是「功能其实做对了、界面没说出来」，测试要是只查源码形状照样会绿。
-// 后两种（finishing、回执）是 2026-09 收尾改成流水线阶段之后补的：清场改跑在
-// 服务端自己的 goroutine 里，界面唯一知道结果的途径只剩 WS 推送。
+// 徽标说的是「**现在**有没有 worktree」，不是「当初要不要建树」：create_worktree
+// 是创建时的配置，永久 true，收尾之后一点没变 —— 光看它会让收完尾的任务照样显示
+// 「有 worktree」。判据是**目录在不在**（path 被清空，或 path 还在而目录已被删）。
+//
+// 曾经有第五档 missing（开过、目录被删了，红色警报）。2026-10-05 删掉：目录消失
+// 是「已收尾」的金标准 —— 没有目录就既没有树可执行、也没有树可拆，红色警报承诺的
+// 「点重建恢复后再执行」在收完尾的任务上根本无从兑现，实测 14 个历史任务全挂这个。
 
 const root = path.resolve(import.meta.dirname, "..");
 const card = fs.readFileSync(path.join(root, "src/components/TaskCardRows.tsx"), "utf8");
@@ -25,9 +25,9 @@ const en = fs.readFileSync(path.join(root, "src/i18n/locales/en-US.ts"), "utf8")
 // 测试钉住的就只是「我自己写的那段逻辑对」，不是「界面显示的对」。
 //
 // 取的是**整条派生链的源码**（worktreeEnabled 到 worktreeTagState），不是只取最后
-// 那个表达式：worktreeFinished 的判据本身就是要验的东西（它带着 worktree_built 守卫，
-// 少一行就等于没验）。中间那几行注释也一并带上 —— new Function 只吃语句不吃注释，
-// 抄注释不影响执行，但抄错了行号会立刻炸，正好当场发现。
+// 那个表达式：worktreeBuilt / worktreeGone 的判据本身就是要验的东西（它带着
+// worktree_built 守卫，少一行就等于没验）。中间那几行注释也一并带上 —— new Function
+// 只吃语句不吃注释，抄注释不影响执行，但抄错了行号会立刻炸，正好当场发现。
 const stateBlock = card.match(
   /const worktreeEnabled = [\s\S]*?const worktreeTagState: WorktreeTagState = ([\s\S]*?);\n/,
 );
@@ -72,11 +72,25 @@ test("a live worktree is the only thing that reads as enabled", () => {
   assert.equal(badgeState({ create_worktree: true, worktree_path: "/x/.worktree/t1" }), "enabled");
 });
 
-test("a deleted worktree and a finished one are not the same thing", () => {
-  // 并成一档就是这次的 bug：用户分不清自己的 worktree 是「出过事」还是「干完了」。
-  assert.equal(badgeState({ create_worktree: true, worktree_path: "/x/.worktree/t1", worktree_missing: true }), "missing");
-  assert.equal(badgeState({ create_worktree: true, worktree_path: "", worktree_missing: true }), "missing");
-  assert.equal(badgeState({ create_worktree: true, worktree_path: "", worktree_missing: false, worktree_built: true }), "finished");
+// **目录消失是金标准**（2026-10-05 用户裁定）：不管字段标着什么、不管任务在哪个
+// 状态，没有目录就既没有树可执行、也没有树可拆，读「已收尾」比读「红色失效」诚实。
+// 以前这里把「建过但目录被删」判成红色的 missing，实测 14 个早已收完尾的历史任务
+// 全是这个形状 —— 挂着一个没人能兑现的红色警报。
+test("a deleted worktree reads as finished, whatever the status says", () => {
+  for (const status of ["success", "fail", "cancelled", "waiting_user", "running", "pending"]) {
+    assert.equal(
+      badgeState({ create_worktree: true, worktree_path: "/x/.worktree/t1", worktree_missing: true, status }),
+      "finished",
+      `${status} + 目录不在 = 已收尾`,
+    );
+  }
+  // path 被清掉（收尾第 4 步 ClearWorktreeRefs 干的事）同理 —— 但必须带着
+  // worktree_built：服务端只在 path 非空时才派生 worktree_missing，所以
+  // 「path 空 + missing」这个组合根本不会出现，前端按「没建过」读是对的。
+  assert.equal(
+    badgeState({ create_worktree: true, worktree_path: "", worktree_built: true, worktree_missing: true }),
+    "finished",
+  );
 });
 
 // 「path 为空」不等于「收过尾」—— 它同时也是「还没建」的样子：任务刚建出来、或首段
@@ -93,11 +107,8 @@ test("a worktree that was never built is not a finished one", () => {
     "finished",
     "a task that has not built its worktree yet must not claim to be finished",
   );
-  // 建过、目录被删：那是「出事了」，不是「干完了」。
-  assert.notEqual(
-    badgeState({ create_worktree: true, worktree_path: "", worktree_built: true, worktree_missing: true }),
-    "finished",
-  );
+  // 连 worktree_built 都没有、path 也没有 → 橙色禁止符那一档，不是「已收尾」。
+  assert.equal(badgeState({ create_worktree: true, worktree_path: "" }), "none");
 });
 
 // 终态任务挂红色 missing 是 2026-10-01 实测的第二个 bug：14 个早已收完尾、目录已删的
@@ -117,9 +128,9 @@ test("a finished task never wears the red missing badge", () => {
   for (const status of ["fail", "cancelled"]) {
     assert.equal(badgeState({ ...finishedButTornDown, status }), "finished", `${status} tasks must not be reported as broken either`);
   }
-  // 未结束的任务照旧要报警：那才是真需要「重建」的时候。
-  assert.equal(badgeState({ ...finishedButTornDown, status: "waiting_user" }), "missing", "a live task with a deleted worktree must still warn");
-  assert.equal(badgeState({ ...finishedButTornDown, status: "running" }), "missing", "a running task with a deleted worktree must still warn");
+  // 未结束的任务同理：目录不在就是不在，与状态无关（见上一条）。
+  assert.equal(badgeState({ ...finishedButTornDown, status: "waiting_user" }), "finished");
+  assert.equal(badgeState({ ...finishedButTornDown, status: "running" }), "finished");
 });
 
 // 终态**不等于**目录被拆了。这条钉的是「已收尾」不能只看 status：徽标的文案逐字是
@@ -169,12 +180,11 @@ test("once the finish stage is over the badge goes back to talking about the dir
 });
 
 // 上面的函数是从组件源码跑出来的，跑对了不代表组件真的用了它 —— 把这点也钉上。
-// 判据顺序有讲究：终态先判（终态任务即便目录被删也该读「已收尾」，见下面的
-// worktreeFinishedTerminal），然后 missing / finished / enabled 五档分开，不许并档。
+// 判据顺序有讲究：目录不在先判（金标准，与状态无关），然后 enabled / finishing 两档。
 assert.match(
   card,
-  /const worktreeTagState: WorktreeTagState = worktreeFinishedTerminal\s*\n\s*\? "finished"\s*\n\s*: worktreeMissing\s*\n\s*\? "missing"[\s\S]{0,300}?finishActive \? "finishing" : "enabled"/,
-  "the card must derive a five-state badge, not a two-state one",
+  /const worktreeTagState: WorktreeTagState = worktreeGone\s*\n\s*\? "finished"\s*\n\s*: hasWorktreePath\s*\n\s*\? \(finishActive \? "finishing" : "enabled"\)\s*\n\s*: "none"/,
+  "the card must derive a four-state badge, not a two-state one",
 );
 assert.match(card, /style=\{taskWorktreeTagStyle\(worktreeTagState\)\}/, "the tag must be styled by that state");
 assert.doesNotMatch(
@@ -182,14 +192,23 @@ assert.doesNotMatch(
   /style=\{taskWorktreeTagStyle\(worktreeEnabled, worktreeMissing\)\}/,
   "styling must not still key on create_worktree — that is the bug being fixed",
 );
+// 「建过」必须真的判过：没有 worktree_built，「path 为空」同时命中「还没建」和
+// 「收完尾」，一个刚开始的任务会直接显示「已收尾」。
 assert.match(
   card,
-  /const worktreeFinished = worktreeEnabled && !hasWorktreePath && !worktreeMissing && task\.worktree_built === true/,
-  "recognising a finished worktree must require that one was actually built — without worktree_built, \"path cleared\" also matches \"never built\" and a live worktree gets reported as torn down",
+  /const worktreeBuilt = worktreeEnabled && \(task\.worktree_built === true \|\| hasWorktreePath\)/,
+  "recognising a built worktree must require that one was actually built — without worktree_built, \"path cleared\" also matches \"never built\" and a live worktree gets reported as torn down",
 );
-// 五档都要有各自的颜色，不能并档。
-assert.match(icons, /export type WorktreeTagState = "enabled" \| "finishing" \| "missing" \| "finished" \| "none"/);
-for (const tone of ["#b91c1c", "#475569", "#15803d", "#b45309"]) {
+// 目录消失是金标准：worktreeMissing 必须并进「已收尾」那一档，不许单列红色。
+assert.match(
+  card,
+  /const worktreeGone = worktreeBuilt && \(!hasWorktreePath \|\| worktreeMissing\)/,
+  "a deleted worktree must read as finished — the directory being gone is the gold standard",
+);
+assert.doesNotMatch(card, /worktreeTagState === "missing"/, "the red missing state must be gone");
+// 四档都要有各自的颜色，不能并档。
+assert.match(icons, /export type WorktreeTagState = "enabled" \| "finishing" \| "finished" \| "none"/);
+for (const tone of ["#475569", "#15803d", "#b45309"]) {
   assert.ok(icons.includes(tone), `missing tone ${tone}: finished/disabled must not share a colour`);
 }
 // 收尾中必须看得出「这玩意儿正在动」：动与不动是它和 enabled 唯一的区分信号。
@@ -198,11 +217,20 @@ assert.match(
   /animation: finishing \? "mindfs-task-ask-user-pulse/,
   "the finishing badge must pulse, otherwise it is pixel-identical to an idle worktree",
 );
-// 收尾进行中，那个按钮本身也该变成转圈而不是还能再点的键。
-assert.match(
+
+// 收尾进行中，按钮**照样可点**（2026-10-05）：那正是「agent 那半已经做完、只差机械
+// 清场」的时刻，再点一次后端会直接清场。换成转圈等于把唯一的出路藏起来，任务就此
+// 永远转下去 —— 用户实测的「收尾一直转、点不动、也结束不了」就是这个形状。
+assert.doesNotMatch(
   card,
   /worktreeTagState === "finishing" \? \(\s*<span[\s\S]{0,400}?<TaskQueuedSpinnerIcon \/>/,
-  "the finish button must turn into a spinner while the flow runs",
+  "the finish button must stay clickable while the flow runs",
+);
+assert.doesNotMatch(card, /TaskQueuedSpinnerIcon/, "the card must not keep a spinner import for a state that no longer renders one");
+assert.match(
+  card,
+  /const canFinishWorktree = worktreeEnabled && !worktreeMissing && hasWorktreePath && hasAgentStage;/,
+  "the finish gate must not exclude the finishing state",
 );
 
 // 收尾完成必须有回执。清场跑在服务端的 goroutine 里，没有任何 HTTP 响应会回来，
@@ -256,6 +284,8 @@ for (const key of [
   "task.worktreeFinishingLabel",
   "task.finishWorktreeConfirm",
   "task.finishWorktreeStarted",
+  "task.finishWorktreeSessionRunning",
+  "task.finishWorktreeNudged",
 ]) {
   assert.match(zh, new RegExp(`"${key.replace(/\./g, "\\.")}":`), `zh-CN must define ${key}`);
   assert.match(en, new RegExp(`"${key.replace(/\./g, "\\.")}":`), `en-US must define ${key}`);

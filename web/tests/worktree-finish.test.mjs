@@ -210,15 +210,30 @@ assert.doesNotMatch(
 // 与新需求直接矛盾，所以这里换掉钉的东西，不是删了换绿灯。
 // 换来的是必须补上「有 agent 段」这道门：收尾段继承上一段的 agent/模型，
 // 没有可继承的服务端会 409 —— 给一个必然失败的按钮比不给更糟。
+//
+// **收尾中也不拦截**（2026-10-05 用户要求）：按钮必须一直可点且幂等。agent 那半
+// 跑完却卡住时，再点一次让服务端直接做机械清场（后端按「分支是否已合进主干」分流，
+// 见 handleKanbanTaskBeginFinish）；换成转圈等于把唯一的出路藏起来，任务就此永远
+// 转下去 —— 用户实测的「收尾一直转、点不动、也结束不了」就是这个形状。
 assert.match(
   panel,
-  /const canFinishWorktree = task\?\.create_worktree === true\s*&&\s*!!task\?\.worktree_path\s*&&\s*task\?\.worktree_missing !== true\s*&&\s*hasAgentStage\s*&&\s*!finishActive;/,
-  "the finish button requires a live worktree and an agent stage to inherit from; terminal tasks are NOT withheld",
+  /const canFinishWorktree = task\?\.create_worktree === true\s*&&\s*!!task\?\.worktree_path\s*&&\s*task\?\.worktree_missing !== true\s*&&\s*hasAgentStage;/,
+  "the finish button requires a live worktree and an agent stage to inherit from; terminal and finishing tasks are NOT withheld",
 );
 assert.doesNotMatch(
   panel,
   /const canFinishWorktree[^;]*isTerminalKanbanTask/,
   "the finish button must not be gated on terminal status — a finished task holding an unfinished worktree is exactly the case worth finishing",
+);
+assert.doesNotMatch(
+  panel,
+  /const canFinishWorktree[^;]*!finishActive/,
+  "the finish button must stay clickable while the finish stage runs — that is the moment the mechanical cleanup is needed",
+);
+assert.doesNotMatch(
+  panel,
+  /finishActive \? \(\s*<span[\s\S]{0,400}?<TaskQueuedSpinnerIcon \/>/,
+  "the panel must not swap the finish button for a spinner — the button is the only way out of a stuck finish",
 );
 assert.match(
   panel,
@@ -227,8 +242,13 @@ assert.match(
 );
 assert.match(
   card,
-  /const canFinishWorktree = worktreeEnabled && !worktreeMissing && hasWorktreePath && hasAgentStage && !finishActive;/,
-  "the card button must match the panel exactly: same gates, same terminal exemption",
+  /const canFinishWorktree = worktreeEnabled && !worktreeMissing && hasWorktreePath && hasAgentStage;/,
+  "the card button must match the panel exactly: same gates, same terminal and finishing exemptions",
+);
+assert.doesNotMatch(
+  card,
+  /worktreeTagState === "finishing" \? \(\s*<span[\s\S]{0,400}?<TaskQueuedSpinnerIcon \/>/,
+  "the card must not swap the finish button for a spinner either",
 );
 assert.match(card, /onMove\(task, "finish-worktree"\)/, "the card button must dispatch finish-worktree");
 assert.match(app, /action === "finish-worktree"/, "App must handle the finish-worktree card action");

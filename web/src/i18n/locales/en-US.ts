@@ -855,6 +855,8 @@ export const enUS = {
   "task.finishWorktree": "Finish worktree",
   "task.finishWorktreeConfirm": "Finishing asks the agent to commit this worktree's changes and merge them into the mainline; once that succeeds the worktree and branch are removed and the session moves back to the main checkout.\n\nThis cannot be undone. Continue?",
   "task.finishWorktreeStarted": "Finish started: the agent is committing and merging; cleanup follows automatically",
+  "task.finishWorktreeSessionRunning": "The agent is replying — wait for it to stop before finishing",
+  "task.finishWorktreeNudged": "Finish stage re-run: the agent continues committing and merging",
   "task.finishWorktreeDone": "Worktree finished: branch merged into the mainline",
   "task.finishWorktreeRemoved": "Worktree directory removed",
   "task.finishWorktreeBranchDeleted": "Branch deleted",

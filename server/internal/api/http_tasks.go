@@ -671,11 +671,18 @@ func (h *HTTPHandler) broadcastTaskUpdated(rootID string, detail kanban.TaskDeta
 	h.AppContext.TaskUpdated(rootID, detail)
 }
 
-// handleKanbanTaskBeginFinish 发起收尾流程：追加一段 agent 工作，让 agent 自己把
-// worktree 里的活提交并合并回主干；这段成功之后服务端才接着清场。
+// handleKanbanTaskBeginFinish 收尾按钮的唯一入口：按**真实状态**决定这次点击该做什么。
 //
-// 与 handleKanbanTaskFinishWorktree 的分工：那个是**直接清场**（跳过 agent 阶段，
-// 用于 agent 已经把活提交好的情况），这个是**走完整流程**。
+// 四个分支，判据全是「此刻的客观事实」，与任务处于哪个列、什么 status 无关：
+//
+//	① 会话正在回复        → 什么都不做，回 session_running（收尾本来就要等它停，不是错误）
+//	② 分支已合进主干      → 直接机械清场（agent 那半已经做完，再跑一遍只会多一个空提交）
+//	③ 已有收尾段但还没成  → 重跑那段（nudge），不追加第二段
+//	④ 其余                → 追加收尾段并跑起来（第一次收尾）
+//
+// 为什么必须这么分：以前这里无条件调 BeginFinishWorktree，于是「agent 已经把活合完了、
+// 只差机械清场」的任务会撞上「该任务已在收尾流程中」被 409 顶回来，界面上表现为收尾
+// 一直转、点不动、也结束不了。②③ 都是幂等的 —— 连点几次不会多出提交或多出收尾段。
 //
 // 刻意放在文件末尾：worktree-finish.test.mjs 按
 // 「handleKanbanTaskFinishWorktree → handleKanbanTaskMove」切片断言那个 handler 的
@@ -696,7 +703,56 @@ func (h *HTTPHandler) handleKanbanTaskBeginFinish(w http.ResponseWriter, r *http
 		respondError(w, http.StatusBadRequest, errInvalidRequest("root_id and id required"))
 		return
 	}
-	detail, err := svc.BeginFinishWorktree(r.Context(), kanban.BeginFinishInput{
+	ctx := r.Context()
+
+	// ① agent 此刻在动。收尾要拆掉它的 cwd，必须等它停 —— 但这是正常等待，
+	// 不是失败，所以回 200 而不是 409：前端据此只提示一句，不渲染成红色报错。
+	if svc.TaskSessionRunning(ctx, rootID, taskID) {
+		respondJSON(w, http.StatusOK, map[string]any{"action": "session_running"})
+		return
+	}
+
+	// ② 分支已经在主干里 → 只剩机械清场。查不到分支（从没建过树）就往下走正常流程。
+	if merged, err := svc.TaskWorktreeBranchMerged(ctx, rootID, taskID, ""); err == nil && merged {
+		report := h.AppContext.FinishWorktreeAndRepoint(rootID, taskID)
+		h.AppContext.BroadcastTaskFinishTeardown(rootID, report)
+		payload := map[string]any{
+			"action": "teardown",
+			"report": report,
+		}
+		if report.Error != "" {
+			// 清场失败（典型：worktree 里还有没提交的活、或合并撞冲突）得让用户看见，
+			// 回 200 会让前端以为收尾完成了。冲突文件一并带上，前端能列出可点的清单。
+			payload["error"] = report.Error
+			payload["conflict_files"] = report.ConflictFiles
+			respondJSON(w, http.StatusConflict, payload)
+			return
+		}
+		respondJSON(w, http.StatusOK, payload)
+		return
+	}
+
+	// ③ 收尾段已经在流水里但还没跑成 → 重跑它。不追加第二段：那会堆出一串收尾段。
+	if index, exists, err := svc.TaskFinishStageIndex(ctx, rootID, taskID); err == nil && exists {
+		detail, rerunErr := svc.RerunStage(ctx, kanban.MoveInput{
+			RootID:     rootID,
+			TaskID:     taskID,
+			StageIndex: index,
+		})
+		if rerunErr != nil {
+			respondJSON(w, http.StatusConflict, map[string]any{"error": rerunErr.Error()})
+			return
+		}
+		respondJSON(w, http.StatusOK, map[string]any{
+			"action": "nudged",
+			"detail": detail,
+			"task":   detail.Task,
+		})
+		return
+	}
+
+	// ④ 头一次收尾：追加收尾段，让 agent 自己 commit + merge。
+	detail, err := svc.BeginFinishWorktree(ctx, kanban.BeginFinishInput{
 		RootID: rootID,
 		TaskID: taskID,
 	})
@@ -708,6 +764,7 @@ func (h *HTTPHandler) handleKanbanTaskBeginFinish(w http.ResponseWriter, r *http
 		return
 	}
 	respondJSON(w, http.StatusOK, map[string]any{
+		"action": "stage_added",
 		"detail": detail,
 		"task":   detail.Task,
 	})

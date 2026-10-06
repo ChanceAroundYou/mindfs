@@ -286,15 +286,26 @@ func (s *Service) assertWorktreeMatches(ctx context.Context, mainDir, worktreePa
 
 // assertNotRunning 拦下「agent 还在跑」的收尾。
 //
-// 为什么不看 task.Status 就够了：runAgentStage 起 agent 和把 status 置 running 之间
-// 有时间差（要建会话、要过 exchange 表），而 stage run 的 running 落得更早。
-// 那个窗口里 task.Status 还不是 running，但 agent 的 cwd 已经在 worktree 里了。
-// 两个都判，取「任一在跑就拦」。
+// **判据是会话在不在回复**（金标准）：任务可以长时间停在 waiting_user（等审核），
+// 那只是等人，不代表 agent 在动；而 task.Status 与「agent 此刻是否真的在动」之间还
+// 隔着建会话、过 exchange 表那段窗口。只有「这个会话正在回复」是直接读数。
+//
+// 探针没装配时（单测、老装配）回落到 task.Status / 段状态那套旧判据：runAgentStage
+// 起 agent 和把 status 置 running 之间有时间差，而 stage run 的 running 落得更早，
+// 两个都判、取「任一在跑就拦」。
 //
 // 拿不到段状态时（读失败、指针越界）不当作「在跑」：那是数据问题，不该把用户
 // 锁死在收不了尾的盒子里 —— 真正的保护在 git 层，拦不住的话 merge 撞上冲突会
 // 自己停下来。
 func (s *Service) assertNotRunning(ctx context.Context, store *TaskStore, task Task) error {
+	if s.sessionRunning(task.MainSessionKey) {
+		return ErrTaskSessionRunning
+	}
+	if s.sessionProbeConfigured() {
+		// 会话说了算：探针说没在回复就是没在跑，不再叠状态判据 ——
+		// 那正是「任务卡在 running 却早就没 agent」时收不了尾的根因。
+		return nil
+	}
 	if task.Status == StatusRunning {
 		return errors.New("任务正在执行中，先停止再收尾")
 	}
@@ -310,6 +321,74 @@ func (s *Service) assertNotRunning(ctx context.Context, store *TaskStore, task T
 		return errors.New("当前阶段正在执行中，先停止再收尾")
 	}
 	return nil
+}
+
+// TaskSessionRunning 报任务绑定的会话此刻是否在回复中。
+//
+// 给 api 层做收尾分发用：会话在回复时收尾**什么都不做**，只回一句「agent 正在收尾中」，
+// 而不是让请求撞进 assertNotRunning 变成 409 —— 那是正常等待，不是错误。
+func (s *Service) TaskSessionRunning(ctx context.Context, rootID, taskID string) bool {
+	if s == nil || !s.sessionProbeConfigured() {
+		return false
+	}
+	store, err := s.taskStore(rootID)
+	if err != nil {
+		return false
+	}
+	task, err := store.GetTask(ctx, strings.TrimSpace(taskID))
+	if err != nil {
+		return false
+	}
+	return s.sessionRunning(task.MainSessionKey)
+}
+
+// TaskWorktreeBranchMerged 报任务的 worktree 分支是否已经全部合进主 checkout 的目标分支。
+//
+// 「已合并」= 活已经在主干里了，收尾只剩清场，不必再让 agent 跑一遍（重跑那段会
+// 追加一次没意义的提交）。分支不存在（从没建过树）返回 false，让调用方走正常收尾流程。
+func (s *Service) TaskWorktreeBranchMerged(ctx context.Context, rootID, taskID, target string) (bool, error) {
+	_, task, err := s.loadForMove(ctx, rootID, taskID)
+	if err != nil {
+		return false, err
+	}
+	if !task.CreateWorktree {
+		return false, nil
+	}
+	worktreePath := strings.TrimSpace(task.WorktreePath)
+	if worktreePath == "" {
+		return false, nil
+	}
+	mainDir, err := s.taskWorktreeMainDir(ctx, rootID)
+	if err != nil {
+		return false, err
+	}
+	branch := strings.TrimSpace(task.WorktreeBranch)
+	if branch == "" {
+		branch = worktreeDirName(worktreePath)
+	}
+	if strings.TrimSpace(target) == "" {
+		target = "main"
+	}
+	return gitview.BranchMergedInto(ctx, mainDir, branch, target)
+}
+
+// TaskFinishStageIndex 报任务流水里收尾段的下标；没有则 ok=false。
+// api 层据此决定「重跑那段继续收尾」还是「追加一段新收尾段」。
+func (s *Service) TaskFinishStageIndex(ctx context.Context, rootID, taskID string) (int, bool, error) {
+	store, err := s.taskStore(rootID)
+	if err != nil {
+		return 0, false, err
+	}
+	task, err := store.GetTask(ctx, strings.TrimSpace(taskID))
+	if err != nil {
+		return 0, false, err
+	}
+	for i, stage := range task.Stages {
+		if IsFinishStage(stage) {
+			return i, true, nil
+		}
+	}
+	return 0, false, nil
 }
 
 // taskWorktreeMainDir 报任务 worktree 所在项目的主 checkout 路径。

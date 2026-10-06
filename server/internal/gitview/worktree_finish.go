@@ -546,6 +546,14 @@ func branchExists(ctx context.Context, dir, branch string) bool {
 	return err == nil
 }
 
+// BranchMergedInto 报 source 分支是否已经全部合进 target 分支（source 是 target 的祖先）。
+//
+// 给「收尾要不要再让 agent 跑一遍」用：已合就是活已经在主干里，只剩机械清场。
+// 分支不存在返回 error（区分「没合」和「压根没这个分支」—— 后者不该被当成要合）。
+func BranchMergedInto(ctx context.Context, dir, source, target string) (bool, error) {
+	return isAncestorOf(ctx, dir, source, target)
+}
+
 // isAncestorOf 报 source 是否已经是 target 的祖先（改动全在 target 里了）。
 func isAncestorOf(ctx context.Context, dir, source, target string) (bool, error) {
 	if _, err := runGit(ctx, dir, "merge-base", "--is-ancestor", source, target); err != nil {

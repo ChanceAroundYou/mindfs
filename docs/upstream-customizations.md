@@ -662,6 +662,43 @@
 - 针对性测试：`web/tests/reload-observer.test.mjs`（累加与上限、峰值只增不减、
   只记第一条错误且截断、隐私模式不抛、存储垃圾不炸）。
 
+### G-AP worktree 收尾按钮重做（四分支分流 + 幂等 + 真实状态）
+
+- 来源：`server/internal/kanban/{service,worktree_finish}.go`、`server/internal/gitview/worktree_finish.go`、
+  `server/internal/api/{http_tasks,http_tasks_finish_teardown}.go`、`server/app/workspace.go`、
+  `web/src/components/{TaskCardRows,TaskDetailPanel}.tsx`、`web/src/app/taskIcons.tsx`、
+  `web/src/services/tasks.ts`、`web/src/App.tsx`、`web/src/i18n/locales/{zh-CN,en-US}.ts`。
+- 边界：收尾按钮的**给法**（只要有没有合并的 worktree 就给）、**点击行为**（四分支分流 + 幂等）、
+  **徽标状态**（目录消失 = 已收尾）三件事合为一组 —— 它们共享同一个判据（worktree 的真实状态），
+  合上游时要么全留要么全弃。
+- 可见症状（没有它会怎样）：
+  - **收尾一直转、点不动、也结束不了**：agent 那半已合完、只差机械清场时，后端无条件调
+    `BeginFinishWorktree` 撞「该任务已在收尾流程中」409，前端把按钮换成转圈 —— 用户唯一的出路被藏起来。
+  - **worktree 目录已删但徽标仍显示绿色「已开启」**：上游徽标只看 `create_worktree` 字段，
+    不看目录是否存在，界面谎称「有 worktree」。
+  - **收尾中按钮被禁用**：上游在 `finishActive` 时禁用收尾按钮，而那一刻恰恰是机械清场唯一有意义的时刻。
+- 为什么必须保留：上游的收尾按钮是无条件调 `BeginFinishWorktree` 的，徽标只看字段、收尾中禁用按钮 ——
+  三点全是上游行为，合上游时会被静默覆盖。
+- 三条判据（用户 2026-10-05 拍板）：
+  1. **按钮给法**：`create_worktree=true` 且目录存在且目录未消失 → 给；与任务状态（进行中/完成/待审批）无关。
+  2. **点击行为**：① 会话在回复 → 200 `session_running`（不做事）；② 分支已合进主干 → 当场机械清场；
+     ③ 已有收尾段 → 重跑那段（nudge）；④ 其余 → 追加收尾段。四分支皆幂等。
+  3. **徽标状态**：目录消失 = 已收尾（金标准）；目录存在 + 收尾段在跑 = 收尾中；目录存在 + 无收尾段 = 已开启。
+- **会话运行状态是金标准**（不是 `task.Status`）：任务可以长时间停在 `running` 却早就没 agent 了
+  （agent 进程死了、状态没人清），旧判据下那种任务**永远收不了尾**。探针 `sessionRunningProbe`
+  由 api 层在装配时挂上（`WireSessionRunningProbe` → `StreamHub.IsSessionReplying`），
+  没装配时回落到旧状态判据（行为与改造前逐字一致）。
+- 针对性测试：
+  - `server/internal/kanban/worktree_finish_dispatch_test.go` — 探针优先于状态、分支合并判断（真 git）、
+    收尾段索引、目录消失读「已收尾」。
+  - `server/internal/api/http_tasks_begin_finish_test.go` — 四分支分流（teardown / nudged / stage_added）、
+    连点三次不堆收尾段。
+  - `web/tests/worktree-badge.test.mjs` — 徽标四态（enabled / finishing / finished / none）、
+    目录消失读「已收尾」、无转圈。
+  - `web/tests/worktree-finish.test.mjs` — 按钮给法（终态 + 收尾中都不拦截）、无转圈、`hasAgentStage` 门。
+  - `web/tests/task-button-gates.test.mjs` — 收尾中收尾键仍给。
+  - `web/tests/task-board-view.test.mjs` — 已收尾态 tooltip。
+
 ---
 
 ## 4. 未提交工作区（2026-10-06 清空）

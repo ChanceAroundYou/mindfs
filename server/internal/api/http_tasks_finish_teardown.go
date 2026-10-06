@@ -121,6 +121,27 @@ func (s *AppContext) BroadcastTaskFinishTeardown(rootID string, report FinishTea
 	})
 }
 
+// WireSessionRunningProbe 把「会话是否在回复」的探针挂到看板服务上。
+//
+// 收尾要拆掉 agent 的 cwd，判据必须是「agent 此刻是否真的在动」—— 而任务状态骗人：
+// 任务可以长时间停在 waiting_user（等审核），也可能卡在 running 却早就没 agent 了。
+// 会话在不在回复是唯一直接读数（StreamHub 按 pendingSessions 的 Active 位算）。
+//
+// 与 WireFinishStageTeardown 分开两个函数：那个管「段成功后清场」，这个管「收尾前的
+// 准入判据」，生命周期不同，装配点也不一样。
+func (s *AppContext) WireSessionRunningProbe(svc *kanban.Service) {
+	if svc == nil {
+		return
+	}
+	svc.SetSessionRunningProbe(func(sessionKey string) bool {
+		hub := s.GetSessionStreamHub()
+		if hub == nil {
+			return false
+		}
+		return hub.IsSessionReplying(sessionKey)
+	})
+}
+
 // WireFinishStageTeardown 把收尾段完成回调挂到看板服务上。
 //
 // 回调**不能**直接跑清场：merge / worktree remove / pool.Close 要好几秒，

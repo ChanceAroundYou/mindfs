@@ -25,7 +25,7 @@ import type { AgentStatus } from "../services/agents";
 import { reportError } from "../services/error";
 import { canAdvanceFromCurrentStage, hasLaterStage, isFinishStageActive, isTerminalKanbanTask, nextRunnableStageIndex, taskStatusColor } from "../app/appTask";
 import { DEFAULT_TASK_AGENT, DEFAULT_TASK_MODEL, inheritAgentStage } from "../app/appTask";
-import { RunNowIcon, TaskCompleteIcon, TaskFinishWorktreeIcon, TaskQueuedSpinnerIcon, TaskRebuildWorktreeIcon } from "../app/taskIcons";
+import { RunNowIcon, TaskCompleteIcon, TaskFinishWorktreeIcon, TaskRebuildWorktreeIcon } from "../app/taskIcons";
 
 export type TaskDetailPanelProps = {
   detail: TaskDetail | null;
@@ -311,11 +311,15 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
   // 那个「标题 + 详情列表」弹窗 —— 面板这边不重复渲染一份。
   //
   // 只在「worktree 还真的在」时给：目录已经没了的（worktree_missing）该点的是重建，
-  // 收尾无从下手。已经在收尾流程里的也不给（再点是往同一条流程上叠一段）。
+  // 收尾无从下手。
   //
   // **终态也给**（2026-10-04 用户要求）：任务跑完了但 worktree 还留着没收，
   // 那才是收尾按钮唯一有意义的时候。服务端 reviveTerminalTask 会把它拉回
   // waiting_user 再推进，所以终态不是拦路虎。
+  //
+  // **收尾中也给**（2026-10-05）：按钮必须一直可点且幂等。agent 那半跑完却卡住时，
+  // 再点一次让服务端直接做机械清场（后端按「分支是否已合进主干」分流）；换成转圈
+  // 等于把唯一的出路藏起来，任务就此永远转下去。
   //
   // 「有 agent 段」这条门控必须与服务端对齐（worktree_finish_stage.go 的
   // lastAgentStage 检查）：收尾段要继承上一段的 agent/模型，没有可继承的就
@@ -325,8 +329,7 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
   const canFinishWorktree = task?.create_worktree === true
     && !!task?.worktree_path
     && task?.worktree_missing !== true
-    && hasAgentStage
-    && !finishActive;
+    && hasAgentStage;
   const finishWorktree = async () => {
     if (!task) return;
     if (!await confirmDialog({ message: t("task.finishWorktreeConfirm"), confirmLabel: t("task.finishWorktree"), danger: true })) {
@@ -334,8 +337,16 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
     }
     try {
       setSaving(true);
-      apply(await beginTaskFinishWorktree(task.root_id, task.id, nodeId));
-      reportError("file.write_failed", t("task.finishWorktreeStarted"), { severity: "info", recoverable: false });
+      const res = await beginTaskFinishWorktree(task.root_id, task.id, nodeId);
+      if (res.detail) {
+        apply(res.detail);
+      }
+      const message = res.action === "session_running"
+        ? t("task.finishWorktreeSessionRunning")
+        : res.action === "nudged"
+          ? t("task.finishWorktreeNudged")
+          : t("task.finishWorktreeStarted");
+      reportError("file.write_failed", message, { severity: "info", recoverable: false });
     } catch (error) {
       reportError("file.write_failed", String((error as Error)?.message || t("task.actionFailed")));
     } finally { setSaving(false); }
@@ -424,17 +435,10 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
           ) : null}
           {/* 收尾 worktree：追加一段收尾阶段让 agent 提交并合并，成功后服务端
               自己清场。目录已经没了的不给 —— 那种情况该点的是上面的重建键。
-              已经在收尾里就把按钮换成转圈：它必须是个「正在动」的读数，
-              而不是第二个能把收尾再叠一段的按钮。 */}
-          {finishActive ? (
-            <span
-              title={t("task.worktreeFinishingTitle")}
-              aria-label={t("task.worktreeFinishingTitle")}
-              style={{ ...pencilStyle(false), color: "var(--status-ok)", cursor: "default", display: "inline-flex" }}
-            >
-              <TaskQueuedSpinnerIcon />
-            </span>
-          ) : canFinishWorktree ? (
+              **收尾中也照样给**（2026-10-05）：那正是「agent 那半已经做完、只差
+              机械清场」的时刻，再点一次后端会直接清场。换成转圈等于把唯一的出路
+              藏起来，任务就此永远转下去。 */}
+          {canFinishWorktree ? (
             <button
               type="button"
               title={t("task.finishWorktree")}

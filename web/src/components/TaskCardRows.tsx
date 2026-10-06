@@ -14,7 +14,6 @@ import {
   TaskFinishWorktreeIcon,
   TaskPauseIcon,
   TaskPlanAuxIcon,
-  TaskQueuedSpinnerIcon,
   TaskRebuildWorktreeIcon,
   TaskResumeIcon,
   TaskSessionErrorIcon,
@@ -140,56 +139,44 @@ export function TaskCardRows({
   // 服务端派生的失效标记：worktree_path 还指着那个目录，但目录已经被删了
   // （DELETE /api/git/worktrees、wt-finish.sh cleanup、手工 rm）。
   const worktreeMissing = worktreeEnabled && task.worktree_missing === true;
-  // 收尾过了：当初**确实建过**树，现在 path 被清空、目录也没了。
+  // 「建过」的判据：worktree_built 或 path 非空 —— path 非空本身就证明建过。
+  const worktreeBuilt = worktreeEnabled && (task.worktree_built === true || hasWorktreePath);
+  // 已收尾 = 建过、但目录此刻不在（path 被清空，或 path 还在而目录已经被删）。
   //
-  // worktree_built 是这里的关键守卫：没有它，「path 为空」会同时命中两种相反的
-  // 状态 —— 「还没建」（首段还是 user 段，本来就空）和「建过、记录被清掉了」。
-  // 后者目录可能还在被人用，却被显示成「已收尾」。2026-10-01 实测就是这样：
-  // 一次纯搬会话的 repoint 清掉了归属，一个仍在使用的 worktree 被标成收工了。
-  // 老数据没有这个字段（undefined），读作「没建过」—— 与修复前行为一致，不回归。
-  const worktreeFinished = worktreeEnabled && !hasWorktreePath && !worktreeMissing && task.worktree_built === true;
-  // 终态 + 目录确实已经不在了 → 读「已收尾」，不该飘红。
+  // **目录消失是金标准**：不管字段标着什么，没有目录就既没有树可执行、也没有树可拆，
+  // 读「已收尾」比读「红色失效」诚实。以前这里把「建过但目录被删」判成红色的 missing，
+  // 实测 14 个早已收完尾的历史任务全是这个形状 —— 挂着一个没人能兑现的红色警报。
   //
-  // 为什么：红色 missing 那档承诺的是「点『重建 worktree』恢复后再执行」，而重建按钮
-  // 只对未结束的任务显示（下面 !terminal 那道门），于是终态任务挂着一个没法兑现的
-  // 红色警报 —— 2026-10-01 实测：14 个早已收完尾、目录已删的历史任务全是这个形状。
-  // 「目录被删」在终态下不是事故，是收完尾之后的正常状态，归档事实由 status 表达。
-  //
-  // 必须连着「目录已经不在」一起判，不能只看 terminal：目录还在的时候说「已收尾」是
-  // 另一句谎话 ——「活已并回主干，目录已拆」逐字都对不上。failed / cancelled 尤其
-  // 不能这样读：终态只说明活停了，不代表收尾跑过、目录拆过。
-  const worktreeFinishedTerminal = worktreeEnabled && terminal
-    && task.worktree_built === true
-    && (!hasWorktreePath || worktreeMissing);
-  // 五种「不在」要分开：从来没建（amber）、收尾中（绿+脉冲）、建过但目录被删（red）、
-  // 收尾拆掉了（灰）。收尾中单列一档而不是并进 enabled：期间目录还在、徽标看着
-  // 和平时一模一样，用户会以为「还没开始」于是再点一次。
-  const worktreeTagState: WorktreeTagState = worktreeFinishedTerminal
+  // 反过来也不能只看 create_worktree：它永久为 true，收尾之后一点没变，
+  // 光看它会让收完尾的任务照样显示「有 worktree」。
+  const worktreeGone = worktreeBuilt && (!hasWorktreePath || worktreeMissing);
+  // 三档分开：从来没建（amber 禁止符）、收尾中（绿+脉冲）、收尾拆掉了（灰「已收尾」）。
+  // 收尾中单列一档而不是并进 enabled：期间目录还在、徽标看着和平时一模一样，
+  // 用户会以为「还没开始」于是再点一次。
+  const worktreeTagState: WorktreeTagState = worktreeGone
     ? "finished"
-    : worktreeMissing
-      ? "missing"
-      : worktreeFinished
-        ? "finished"
-        : hasWorktreePath
-          ? (finishActive ? "finishing" : "enabled")
-          : "none";
-  const worktreeTagTitle = worktreeTagState === "missing"
-    ? t("task.worktreeMissingTitle")
-    : worktreeTagState === "finished"
-      ? t("task.worktreeFinishedTitle")
-      : worktreeTagState === "finishing"
-        ? t("task.worktreeFinishingTitle")
-        : worktreeTagState === "enabled"
-          ? t("task.worktreeTitle")
-          : t("task.noWorktreeTitle");
+    : hasWorktreePath
+      ? (finishActive ? "finishing" : "enabled")
+      : "none";
+  const worktreeTagTitle = worktreeTagState === "finished"
+    ? t("task.worktreeFinishedTitle")
+    : worktreeTagState === "finishing"
+      ? t("task.worktreeFinishingTitle")
+      : worktreeTagState === "enabled"
+        ? t("task.worktreeTitle")
+        : t("task.noWorktreeTitle");
   // 收尾要有可拆的 worktree：目录不在了给的是「重建」，没有 worktree 可拆。
-  // 收尾流程进行中不给：那正是「已经在收尾」，再点是往同一条流程上叠一段。
   // **终态也给**（与 TaskDetailPanel 同步）：任务跑完但 worktree 还留着没收，
   // 那正是收尾唯一有意义的场景；服务端会把它复活成 waiting_user 再推进。
   // 「有 agent 段」这条必须与服务端对齐（worktree_finish_stage.go 的
   // lastAgentStage 检查），否则会给一个必然 409 的按钮。
+  //
+  // **刻意不排除 finishActive**（2026-10-05）：收尾中按钮照样可点，且必须幂等 ——
+  // agent 那半跑完了却卡住时，用户能再点一次让服务端直接做机械清场（后端按
+  // 「分支是否已合进主干」分流，见 handleKanbanTaskBeginFinish）。按钮换成转圈
+  // 等于把唯一的出路藏起来，任务就此永远转下去。
   const hasAgentStage = (task.stages || []).some((stage) => stage.role === "agent");
-  const canFinishWorktree = worktreeEnabled && !worktreeMissing && hasWorktreePath && hasAgentStage && !finishActive;
+  const canFinishWorktree = worktreeEnabled && !worktreeMissing && hasWorktreePath && hasAgentStage;
   const numberLabel = task.task_number ? `#${task.task_number}` : "";
   const taskName = task.name || task.task_template_name || templateNameFallback || t("task.unnamedTemplate");
   const title = task.task_template_name || templateNameFallback || t("task.defaultTitle");
@@ -278,7 +265,7 @@ export function TaskCardRows({
           aria-label={worktreeTagTitle}
           style={taskWorktreeTagStyle(worktreeTagState)}
         >
-          {worktreeTagState === "enabled" || worktreeTagState === "missing" ? null : <NoWorktreeIcon />}
+          {worktreeTagState === "enabled" ? null : <NoWorktreeIcon />}
           {worktreeTagState === "finished"
             ? t("task.worktreeFinishedLabel")
             : worktreeTagState === "finishing"
@@ -411,17 +398,9 @@ export function TaskCardRows({
                   才拆目录搬会话。放在执行键右边 —— 两者是任务生命周期的两端
                   （继续跑 / 跑完收掉），挨着才看得出这是一对。
                   目录已经没了的不给，那种情况给的是上面的重建键。
-                  收尾流程进行中（finishActive）把按钮换成转圈：清场要拆 worktree 了，
-                  这时候它必须是个「正在动」的读数，而不是一个还能再点的按钮。 */}
-              {worktreeTagState === "finishing" ? (
-                <span
-                  title={t("task.worktreeFinishingTitle")}
-                  aria-label={t("task.worktreeFinishingTitle")}
-                  style={{ ...taskCardIconButtonStyle("success"), cursor: "default" }}
-                >
-                  <TaskQueuedSpinnerIcon />
-                </span>
-              ) : canFinishWorktree ? (
+                  **收尾中也照样给**（2026-10-05）：那正是「agent 那半已经做完、只差
+                  机械清场」的时刻，后端会直接清场；换成转圈等于把唯一的出路藏起来。 */}
+              {canFinishWorktree ? (
                 <button
                   type="button"
                   title={t("task.finishWorktree")}

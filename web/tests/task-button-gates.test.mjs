@@ -120,7 +120,7 @@ test("a task on its last stage does not get 执行", () => {
   assert.equal(gates.canComplete, true, "完成 is the only action left, so it must be there");
 });
 
-test("a running finish stage takes all three away", () => {
+test("a running finish stage withholds 完成 and 执行 but keeps the finish key", () => {
   // 指针后面**还得有段**，否则 showAdvance 本来就是 false（no more stages），
   // 测不出 finishActive 那一条守卫 —— 变异测试确认过：那时候去掉守卫照样绿。
   const gates = gatesOf(
@@ -128,7 +128,9 @@ test("a running finish stage takes all three away", () => {
   );
   assert.equal(gates.canComplete, false);
   assert.equal(gates.showAdvance, false, "advancing a stage during a teardown is work against a directory about to vanish");
-  assert.equal(gates.canFinishWorktree, false, "re-running a finish would stack a second finish stage");
+  // 收尾键**照旧给**（2026-10-05 用户要求）：那正是「agent 那半已经做完、只差机械
+  // 清场」的时刻，再点一次后端会直接清场。换成转圈等于把唯一的出路藏起来。
+  assert.equal(gates.canFinishWorktree, true, "the finish key must stay clickable — it is the only way out of a stuck finish");
 });
 
 // 终态任务：完成/推进两个键照旧不给，但**收尾要给**（2026-10-04 用户要求）。

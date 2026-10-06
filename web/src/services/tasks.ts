@@ -562,18 +562,40 @@ export async function finishTaskWorktree(
 }
 
 /**
- * 发起收尾流程：追加一段收尾阶段并起 agent，由它自己去 commit + merge。
+ * 收尾按钮的四种结局。服务端按**真实状态**分流，前端只负责把结论说清楚：
  *
- * 与 finishTaskWorktree 的分工：那个是**直接清场**（跳过 agent 阶段，用于
- * agent 已经把活提交好的情况），这个是**走完整流程** —— 清场发生在收尾段成功
- * **之后**，由服务端自己接着做（拆目录 → 删分支 → 搬会话），前端不用等。
- *
- * 所以这里返回的 detail 是「刚刚追加了收尾段」那一刻的快照，worktree_path 还在。
- * 服务端 409（正在执行 / 已在收尾 / 目录已失效）由 APIError 带出，调用方按
- * 普通错误处理即可。
+ * - `session_running`：任务关联的会话正在回复 —— 收尾要拆掉 agent 的 cwd，得等它停。
+ *   这是正常等待，不是失败（HTTP 200）。
+ * - `teardown`：分支已经在主干里，agent 那半已经做完了 —— 服务端当场把机械清场
+ *   （合并 → 拆 worktree → 删分支 → 搬会话）做掉。**这一步是同步的**，回来就已成定局；
+ *   失败时服务端回 409 并带上 conflict_files / report，走 APIError。
+ * - `nudged`：流水上已有收尾段但还没跑成 —— 重跑那一段催 agent 继续，不追加第二段。
+ * - `stage_added`：头一次收尾 —— 追加收尾段并起 agent。
  */
-export async function beginTaskFinishWorktree(rootId: string, taskId: string, nodeId?: string): Promise<TaskDetail> {
-  return protectedJSON<TaskDetail>(appURL(`/api/tasks/${encodeURIComponent(taskId)}/begin-finish`, undefined, nodeId), {
+export type BeginFinishAction = "stage_added" | "nudged" | "session_running" | "teardown";
+
+export type BeginFinishResponse = {
+  action: BeginFinishAction;
+  /** stage_added / nudged 时是「刚改完」的任务快照。 */
+  detail?: TaskDetail;
+  task?: KanbanTask;
+  /** teardown 时的清场结论（成功路径）。 */
+  report?: TaskFinishTeardown;
+  error?: string;
+  conflict_files?: string[];
+};
+
+/**
+ * 发起收尾。服务端按真实状态分流（见 BeginFinishAction），**幂等** —— 连点几次不会
+ * 多出提交、也不会多出收尾段。
+ *
+ * 与 finishTaskWorktree 的分工：那个是**直接清场**（跳过 agent 阶段，用于 agent 已经
+ * 把活提交好的情况），这个先问「该不该让 agent 再动一次」再决定做什么。
+ *
+ * 非 2xx（清场失败、冲突、worktree 已失效）由 APIError 带出，调用方按普通错误处理。
+ */
+export async function beginTaskFinishWorktree(rootId: string, taskId: string, nodeId?: string): Promise<BeginFinishResponse> {
+  return protectedJSON<BeginFinishResponse>(appURL(`/api/tasks/${encodeURIComponent(taskId)}/begin-finish`, undefined, nodeId), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ root_id: rootId }),

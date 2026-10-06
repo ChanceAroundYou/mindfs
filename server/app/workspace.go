@@ -264,6 +264,7 @@ func (m *workspaceManager) emptyWorkspace() (*api.AppContext, error) {
 	services.Kanban = kanban.NewService(m.shared.templates, services)
 	services.Kanban.SetRunner(services)
 	services.WireFinishStageTeardown(services.Kanban)
+	services.WireSessionRunningProbe(services.Kanban)
 	githubImportSvc, err := githubimport.NewService(services)
 	if err != nil {
 		return nil, err
@@ -380,6 +381,7 @@ func (m *workspaceManager) build(userID string) (*api.AppContext, error) {
 	services.Kanban = kanban.NewService(m.shared.templates, services)
 	services.Kanban.SetRunner(services)
 	services.WireFinishStageTeardown(services.Kanban)
+	services.WireSessionRunningProbe(services.Kanban)
 	githubImportSvc, err := githubimport.NewService(services)
 	if err != nil {
 		return nil, err

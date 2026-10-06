@@ -794,12 +794,32 @@ export function App({ onGoHome }: AppProps) {
           danger: true,
         });
         if (!ok) return;
-        // 只追加一段收尾阶段并起 agent。清场（拆目录/删分支/搬会话）由服务端在
-        // 那一段成功之后自己做，结论走 WS task.finish_teardown 回来 —— 所以这里
-        // 只把 detail 应用上去让徽标转「收尾中」，不发成功提示：那会儿还什么都没成。
-        const detail = await beginTaskFinishWorktree(rootId, task.id, nodeId);
-        applyTaskDetails(rootId, [detail]);
-        reportError("file.write_failed", t("task.finishWorktreeStarted"), { severity: "info", recoverable: false });
+        // 服务端按真实状态分流，前端只把结论说清楚 —— 见 BeginFinishAction。
+        const res = await beginTaskFinishWorktree(rootId, task.id, nodeId);
+        if (res.detail) {
+          applyTaskDetails(rootId, [res.detail]);
+        }
+        switch (res.action) {
+          case "session_running":
+            // 正常等待，不是失败：agent 正在回复，收尾要拆它的 cwd，得等它停。
+            reportError("file.write_failed", t("task.finishWorktreeSessionRunning"), { severity: "info", recoverable: false });
+            break;
+          case "teardown":
+            // 分支早就在主干里了，这次点的是机械清场，**同步做完了**。
+            // 结论不在这里播报：服务端已经把 task.finish_teardown 推给所有客户端，
+            // 由那条统一弹窗，免得同一个结论出现两种说法。板子要重拉 —— 卡片的
+            // worktree 徽标从「有树」变成「已收尾」，applyTaskDetails 管不到这个。
+            refreshWorkspaceBoard();
+            break;
+          case "nudged":
+            reportError("file.write_failed", t("task.finishWorktreeNudged"), { severity: "info", recoverable: false });
+            break;
+          default:
+            // stage_added：只追加了收尾段并起 agent。清场由服务端在那一段成功之后
+            // 自己做，结论走 WS task.finish_teardown —— 这会儿还什么都没成，不说成功。
+            reportError("file.write_failed", t("task.finishWorktreeStarted"), { severity: "info", recoverable: false });
+            break;
+        }
         return;
       }
       const detail = action === "rebuild-worktree"
