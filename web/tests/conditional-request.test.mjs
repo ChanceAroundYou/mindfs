@@ -67,6 +67,30 @@ assert.ok(
   "replying-sessions 绝不能用 respondJSONList",
 );
 
+// 单会话详情是全站最重的端点：窗口化尾部拉取（?latest=20）实测单次 1.14 MB，
+// 客户端 ~1.7 秒一次，两台机器各量到 60 分钟 4,746 次 ≈ 1.1 GB/h（占全部请求 70%）。
+// 必须走**只协商**的那条 —— 载荷里的 exchanges / exchange_aux / window_meta
+// 少一个键就是少一段对话。
+assert.match(
+  http,
+  /func \(h \*HTTPHandler\) handleSessionGet[\s\S]{0,4000}?respondJSONConditional\(w, r, h\.sessionResponse\(/,
+  "单会话详情必须走 respondJSONConditional（1.14 MB × 1.7s 的轮询靠 304 压到零字节）",
+);
+assert.ok(
+  !/respondJSONList\(w, r, h\.sessionResponse\(/.test(http),
+  "单会话详情绝不能用 respondJSONList —— 删空键会破坏 seq 增量与窗口语义",
+);
+// handleSessionSync（POST，写语义）同样回 sessionResponse，但它**不该**被条件化 ——
+// 所以这里只在该函数自己的区间里断言，而不是全文扫。
+{
+  const fn = http.slice(http.indexOf("func (h *HTTPHandler) handleSessionGet"));
+  const body = fn.slice(0, fn.indexOf("\nfunc "));
+  assert.ok(
+    !/respondJSON\(w, http\.StatusOK/.test(body),
+    "单会话详情不能退回无条件 respondJSON（那正是 1.1 GB/h 的来源）",
+  );
+}
+
 // ── 服务端：去空值的边界 ────────────────────────────────────────────
 assert.match(helpers, /func isBlankJSONValue/, "isBlankJSONValue must exist");
 // `0` 不能被当成空 —— total_count: 0 / dirty_count: 0 可能正是要表达的信息。
@@ -117,7 +141,31 @@ assert.equal(
 assert.match(api, /const method = String\(init\.method \|\| "GET"\)\.toUpperCase\(\);/, "the method must be detected");
 assert.match(api, /const cacheable = method === "GET";/, "only GET requests may be conditional — writes must never be conditional");
 assert.match(api, /headers\.set\("If-None-Match", known\)/, "If-None-Match must be sent when we have a stored ETag");
-assert.match(api, /const conditionalRequestMax = 64;/, "the conditional cache needs an explicit bound (64: 9 endpoints, several with varying query params)");
+assert.match(api, /const conditionalRequestMax = 64;/, "the conditional cache needs an explicit bound (64: 10 endpoints, several with varying query params)");
+// 条目数是**不够**的：单会话详情一条就是 1.14 MB，64 条能把标签页撑爆
+// （而标签页崩溃正是这一轮要修的症状）。所以必须另有一条字节预算。
+assert.match(
+  api,
+  /const conditionalRequestBytesMax = /,
+  "the conditional cache needs a byte budget on top of the entry cap — one session window is 1.14 MB",
+);
+assert.match(
+  api,
+  /parseProtectedJSONResponseWithSize/,
+  "payload size must come from the parse (Content-Length is absent: the body is chunked)",
+);
+// ETag 与载荷必须同生共死：只删载荷会留下「304 但拿不出内容」的悬空条目。
+assert.match(
+  api,
+  /function forgetConditionalResponse\(url: string\): void \{[\s\S]{0,400}?conditionalETagByURL\.delete\(url\);[\s\S]{0,120}?conditionalPayloadByURL\.delete\(url\);/,
+  "eviction must drop the ETag and the payload together",
+);
+// 淘汰循环必须**同时**看条数和字节，只看一个等于没加预算。
+assert.match(
+  api,
+  /conditionalPayloadByURL\.size > conditionalRequestMax \|\|\s*\n\s*conditionalPayloadBytes > conditionalRequestBytesMax/,
+  "the eviction loop must honour both the entry cap and the byte budget",
+);
 assert.match(api, /forgetConditionalResponse\(url\)/, "a response without ETag must clear the stale entry");
 
 console.log("conditional-request.test.mjs: OK");

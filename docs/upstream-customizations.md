@@ -602,9 +602,23 @@
     流水，实测三段的单任务就 53KB）、`/api/replying-sessions`（2.9KB × 508 次/h）。
     这些端点里 `dirty_count: 0`、空数组、`stages`/`events` 都是承重信息，套上瘦身就是静默丢数据
     （看板详情面板直接读列表项里的 `task.stages`，不是单独拉详情）。内容不变时回 304 零字节。
+  - **`/api/sessions/{key}`（单会话详情）** 也接上了 —— 它是全站最重的端点，
+    但 2026-10-07 之前没人量过：窗口化尾部拉取（`?latest=20`）单次 **1.14 MB / 1.28 MB**，
+    客户端按 ~1.7 秒一次轮询，本机 60 分钟量到 4,746 次、**合计约 1.1 GB/h**
+    （占全部请求的 **70%**，而整个优化工程当初针对的基线才 84 MB/h）。
+    会话没在跑时这些回包**逐字节相同**（连续四次 sha1 一致），所以 304 直接压到零字节。
+    只协商不瘦身：载荷里的 `exchanges` / `exchange_aux` / `window_meta` 少一个键就是少一段对话，
+    且 `seq` 增量的 `appendSessionDelta` 判据会被删空键破坏。
   - 新增 `web/src/services/api.ts` 的 `conditionalRequestMax` 从 16 提到 **64** —— 带 ETag 的端点
-    从 3 个变成 9 个，其中 `tree?dir=` / `tasks?<filters>` 让 URL 空间大一个量级，16 条会把
-    `/api/sessions`（111KB）这类高频条目挤出去。**但仍是有界的**，理由见 G-AH。
+    从 3 个变成 10 个，其中 `tree?dir=` / `tasks?<filters>` / 会话详情的 `latest=`·`seq=`
+    让 URL 空间大一个量级，16 条会把 `/api/sessions`（111KB）这类高频条目挤出去。
+    **但仍是有界的**，理由见 G-AH。
+  - 条目数**管不住内存**，所以另加 `conditionalRequestBytesMax`（6 MB）字节预算：
+    一条会话详情就是 1.14 MB，64 条能把标签页撑爆 —— 而标签页崩溃正是这一轮要修的症状。
+    字节数从 `parseProtectedJSONResponseWithSize` 拿（`Content-Length` 拿不到：服务端一次性
+    Write 之后是 chunked，实测端点无此头；两条分支本来就把文本读进来了，量长度是免费的）。
+    淘汰**必须同时看条数和字节**，且必须把 ETag 与载荷**一起**删 —— 只删载荷会留下
+    「304 但拿不出内容」的悬空条目，正好落进 `conditional cache miss` 分支让调用方白重试一次。
 - `stripEmptyJSONValues` 改为**返回副本**：原先原地删键，于是「调用方必须传本请求现造的结构」
   成了一条只写在注释里的契约，谁传了共享缓存，那些键就在下次响应里永久消失。
 - **两处「静默无效」的坑**（都是 2026-10-07 在 WSL 上量真机字节数才发现的，只看状态码/ETag/304
@@ -627,6 +641,9 @@
   `server/internal/api/helpers_jsonlist_test.go` 钉住服务端边界：`0` 不许被当空删、
   数组元素不许被删（位置语义）、入参不许被原地改、**具名容器与具名 nil 必须被递归剥掉**
   （`TestStripEmptyJSONValuesHandlesTypedContainers` / `TestStripEmptyJSONValuesDropsTypedNils`）。
+  `conditional-request.test.mjs` 同时钉住单会话详情**必须**走 `respondJSONConditional`
+  （既不能退回无条件 `respondJSON`，也不能被换成 `respondJSONList`），以及客户端
+  条目数 + 字节预算两条线、ETag 与载荷同生共死。
 
 ### G-AO 自动重载观测
 

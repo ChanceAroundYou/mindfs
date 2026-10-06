@@ -1000,7 +1000,15 @@ func (h *HTTPHandler) handleSessionGet(w http.ResponseWriter, r *http.Request) {
 			Seq:    afterSeq,
 		})
 	}
-	respondJSON(w, http.StatusOK, h.sessionResponse(out, contextWindow, projectSessionExchangesForResponse(out, exchangeAux), windowMeta))
+	// 条件请求：这是全站**最重**的端点 —— 窗口化尾部拉取（`?latest=20`）
+	// 实测单次 1.14 MB，客户端按 ~1.7 秒一次轮询，两台机器各自量到 60 分钟里
+	// 4,746 次、合计约 1.1 GB/h（占全部请求的 70%）。会话没在跑时这些回包
+	// **逐字节相同**（连续四次 sha1 一致），所以 304 能把它们压到零字节。
+	//
+	// 只协商、不瘦身：载荷本身就是详情（exchanges / exchange_aux / window_meta
+	// 少一个键就是少一段对话），而且 `seq` 增量语义要求客户端**恰好**收到新行，
+	// 删空字段会破坏 `appendSessionDelta` 的判据。
+	respondJSONConditional(w, r, h.sessionResponse(out, contextWindow, projectSessionExchangesForResponse(out, exchangeAux), windowMeta))
 }
 
 // handleSessionAudit 只读体检：文件层（seq 空洞/重复、坏行、aux 悬空）+ 投影层的重复分类。

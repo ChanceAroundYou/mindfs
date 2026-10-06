@@ -233,30 +233,58 @@ export async function protectedFetch(input: RequestInfo | URL, init: RequestInit
 // 两张表按**完整 URL** 缓存（含 `user=` 与 nodeId），所以不同账户、不同节点不会串。
 // 只有真发过 ETag 的端点才会写进来；其余端点没有 ETag，自然永远不进表。
 //
-// 上限 64：带 ETag 的端点从 3 个扩到 9 个（/api/sessions、?multi_root、tasks/overview、
-// agents、task-templates、git/status、tree、tasks、replying-sessions），其中几个的 URL
-// 带会变的查询参数（tree 的 dir=、tasks 的过滤器），URL 空间比原先大一个量级，
+// 上限 64：带 ETag 的端点从 3 个扩到 10 个（/api/sessions、?multi_root、tasks/overview、
+// agents、task-templates、git/status、tree、tasks、replying-sessions、**单会话详情**），
+// 其中几个的 URL 带会变的查询参数（tree 的 dir=、tasks 的过滤器、会话详情的
+// latest= / seq=），URL 空间比原先大一个量级，
 // 16 条会把 /api/sessions(111KB) 这类高频条目挤出去，反而白白丢掉命中。
 // 但**仍然有界** —— git 缓存无上限正是当初崩溃的一个来源（见上游定制清单 G-AH），
 // 表撑大是治「条目不够」，不是治「随便缓存」：再加端点就该重新算这个数，而不是随手调大。
 //
 // 注意 304 的 `response.ok` 是 **false**：必须在错误检查之前返回，否则会被当成请求失败。
 const conditionalRequestMax = 64;
+// 条目数管不住内存，所以再加一条**字节预算**。
+//
+// 起因：`/api/sessions/{key}?latest=20` 的一次回包就是 **1.14 MB**（窗口化尾部拉取，
+// 实测 ~1.7 秒一次），64 条这种能把标签页直接撑爆 —— 而标签页崩溃正是这一轮要修的症状。
+// 记账用原始文本长度（见 e2ee.parseProtectedJSONResponseWithSize），LRU 淘汰到预算内：
+// 轮询同一个 URL 靠的就是**最近那条**留住，所以最坏情况也只是老会话出局，
+// 当前看的那个始终能拿 304。
+//
+// 注意淘汰必须把 ETag 和载荷一起删 —— 只删载荷会留下「304 但拿不出内容」的悬空条目，
+// 那正是下面 `conditional cache miss` 的分支，调用方会重试，等于白跑一次。
+const conditionalRequestBytesMax = 6 * 1024 * 1024;
 const conditionalETagByURL = new Map<string, string>();
 const conditionalPayloadByURL = new Map<string, any>();
+const conditionalBytesByURL = new Map<string, number>();
+let conditionalPayloadBytes = 0;
 
-function rememberConditionalResponse(url: string, etag: string, payload: any): void {
+function rememberConditionalResponse(url: string, etag: string, payload: any, bytes: number): void {
+  // 同一 URL 重复写入不能重复计账 —— 先撤掉旧的。
+  forgetConditionalResponse(url);
   conditionalETagByURL.set(url, etag);
   conditionalPayloadByURL.set(url, payload);
-  while (conditionalPayloadByURL.size > conditionalRequestMax) {
+  conditionalBytesByURL.set(url, bytes);
+  conditionalPayloadBytes += bytes;
+  while (
+    conditionalPayloadByURL.size > 0 &&
+    (conditionalPayloadByURL.size > conditionalRequestMax ||
+      conditionalPayloadBytes > conditionalRequestBytesMax)
+  ) {
     const oldest = conditionalPayloadByURL.keys().next();
     if (oldest.done || oldest.value === undefined) break;
-    conditionalPayloadByURL.delete(oldest.value);
-    conditionalETagByURL.delete(oldest.value);
+    // 单个条目自己就超预算时也会被淘汰：宁可那一个大端点拿不到 304，
+    // 也不让「预算」变成一句空话（少传一份全量，好过把标签页撑爆）。
+    forgetConditionalResponse(oldest.value);
   }
 }
 
 function forgetConditionalResponse(url: string): void {
+  const bytes = conditionalBytesByURL.get(url);
+  if (bytes !== undefined) {
+    conditionalPayloadBytes -= bytes;
+    conditionalBytesByURL.delete(url);
+  }
   conditionalETagByURL.delete(url);
   conditionalPayloadByURL.delete(url);
 }
@@ -290,7 +318,10 @@ export async function protectedJSON<T>(input: RequestInfo | URL, init: RequestIn
     throw new APIError(response.status, {}, "conditional cache miss");
   }
 
-  const payload = await e2eeService.parseProtectedJSONResponse<any>(response).catch(() => ({} as any));
+  const parsed = await e2eeService
+    .parseProtectedJSONResponseWithSize<any>(response)
+    .catch(() => ({ payload: {} as any, bytes: 0 }));
+  const payload = parsed.payload;
   if (!response.ok) {
     // 和其它两个 helper 一致：本机账户被删时也要登出，否则整页卡在 404。
     // （这条以前漏了，而 /api/dirs 正是走它。）
@@ -301,9 +332,9 @@ export async function protectedJSON<T>(input: RequestInfo | URL, init: RequestIn
   if (cacheable) {
     const etag = response.headers.get("ETag");
     if (etag) {
-      rememberConditionalResponse(url, etag, payload);
+      rememberConditionalResponse(url, etag, payload, parsed.bytes);
     } else {
-      // 端点没发 ETag：清掉可能残留的旧条目，别拿过期的 ETag 去打下次请求。
+      // 端点没发 ETag：清掉可能残留的旧条目（连同它的字节账），别拿过期的 ETag 打下次请求。
       forgetConditionalResponse(url);
     }
   }

@@ -1099,12 +1099,20 @@ groups:
       `task.stages`）。两者共用 `writeJSONWithETag`，否则改一处漏一处。
       `stripEmptyJSONValues` 返回副本而非原地删键 —— 原先「必须传本请求现造的结构」只是注释里的契约。
       客户端 `services/api.ts` **必须先判 304 再判 `response.ok`** —— 304 的 `ok` 是 false，
-      顺序写反会把命中缓存的响应当成失败；缓存上限 16 → 64 是因为带 ETag 的端点从 3 个变成 9 个。
+      顺序写反会把命中缓存的响应当成失败；缓存上限 16 → 64 是因为带 ETag 的端点从 3 个变成 10 个。
+      **单会话详情 `/api/sessions/{key}` 也接上了协商**：它是全站最重的端点，窗口化尾部拉取
+      （`?latest=20`）单次 1.14 MB，客户端 ~1.7 秒轮询一次，实测 60 分钟 4,746 次 ≈ 1.1 GB/h、
+      占全部请求的 70%（会话没在跑时回包逐字节相同）。只协商不瘦身：`exchanges` / `window_meta`
+      少一个键就是少一段对话，且 `seq` 增量的判据会被删空键破坏。
+      条目数管不住内存（一条就是 1.14 MB），故另加字节预算 `conditionalRequestBytesMax`
+      （6 MB），字节数由 `parseProtectedJSONResponseWithSize` 提供（`Content-Length` 因 chunked 拿不到）；
+      淘汰同时看条数与字节，且 ETag 与载荷必须同生共死，否则留下「304 但拿不出内容」的悬空条目。
     files:
       - server/internal/api/helpers.go
       - server/internal/api/http.go
       - server/internal/api/http_tasks.go
       - web/src/services/api.ts
+      - web/src/services/e2ee.ts
     tests:
       - server/internal/api/helpers_jsonlist_test.go
       - server/internal/api/http_tasks_overview_test.go
@@ -1115,6 +1123,8 @@ groups:
       - server/internal/api/helpers.go:func respondJSONConditional
       - server/internal/api/http.go:respondJSONConditional
       - web/src/services/api.ts:304
+      - web/src/services/api.ts:conditionalRequestBytesMax
+      - web/src/services/e2ee.ts:parseProtectedJSONResponseWithSize
 
   # ── 可观测性：自动重载 ──────────────────────────────────────────
   - id: G-AO

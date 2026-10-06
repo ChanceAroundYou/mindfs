@@ -261,6 +261,24 @@ class E2EEService {
     return this.decodeProtectedJSON<T>(await response.text());
   }
 
+  /**
+   * 与 parseProtectedJSONResponse 同义，但**顺带报出原始文本字节数**。
+   *
+   * 条件请求缓存要按字节算预算（见 api.ts）：`Content-Length` 在这里拿不到
+   * （服务端一次性 Write 之后是 chunked，实测两个端点都没有这个头），
+   * 而两条分支本来就已经把文本读进来了 —— 量一下长度是免费的。
+   * 走加密时这是**密文**长度，只当预算用的代理量，不追求精确。
+   */
+  async parseProtectedJSONResponseWithSize<T>(
+    response: Response,
+  ): Promise<{ payload: T; bytes: number }> {
+    const text = await response.text();
+    if (!this.isProtectedJSONResponse(response)) {
+      return { payload: JSON.parse(text) as T, bytes: text.length };
+    }
+    return { payload: await this.decodeProtectedJSON<T>(text), bytes: text.length };
+  }
+
   async protectedFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
     if (!this.required) {
       return fetch(input, init);
