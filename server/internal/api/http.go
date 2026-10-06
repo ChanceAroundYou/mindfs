@@ -380,6 +380,9 @@ func (h *HTTPHandler) Routes() http.Handler {
 	r.Get("/api/git/commit/files", h.protectedEndpoint(h.handleGitCommitFiles))
 	r.Get("/api/git/commit/diff", h.protectedEndpoint(h.handleGitCommitDiff))
 	r.Get("/api/git/related-file/diff", h.protectedEndpoint(h.handleGitRelatedFileDiff))
+	// 批量版：一次拿回 N 个关联文件的 status/additions/deletions，不取 diff 正文。
+	// 用 POST 是因为 80 个路径塞不进 URL；单文件那条 GET 仍然保留（点开看 diff 要正文）。
+	r.Post("/api/git/related-files/stats", h.protectedEndpoint(h.handleGitRelatedFileStats))
 	r.Get("/api/git/branches", h.protectedEndpoint(h.handleGitBranches))
 	r.Get("/api/git/worktrees", h.protectedEndpoint(h.handleGitWorktreeList))
 	r.Post("/api/git/checkout", h.protectedEndpoint(h.handleGitCheckout))
@@ -2499,6 +2502,60 @@ func (h *HTTPHandler) handleGitRelatedFileDiff(w http.ResponseWriter, r *http.Re
 		return
 	}
 	respondJSON(w, http.StatusOK, out.Diff)
+}
+
+// maxGitRelatedFileStatTargets 是一次批量统计请求的文件数上限。
+// 上限的意义是防止单个请求把后端的 git 子进程数放大到不可控 ——
+// 实测一个任务的关联文件在 100 以内，500 留了足够余量。
+const maxGitRelatedFileStatTargets = 500
+
+// handleGitRelatedFileStats 批量返回关联文件的增删统计，不返回 diff 正文。
+// 会话/任务视图的 +N −M 徽标只需要 stat，逐文件去取完整 diff 是纯浪费：
+// 实测 80 个文件的徽标会打出 80 次请求、每次 6473B 里 5073B 是没人读的正文。
+func (h *HTTPHandler) handleGitRelatedFileStats(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		RootID  string `json:"root"`
+		Targets []struct {
+			ID       string `json:"id"`
+			Path     string `json:"path"`
+			Head     string `json:"head"`
+			RepoPath string `json:"repo_path"`
+			RepoKind string `json:"repo_kind"`
+		} `json:"targets"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("invalid json body"))
+		return
+	}
+	req.RootID = strings.TrimSpace(req.RootID)
+	if req.RootID == "" {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("root required"))
+		return
+	}
+	if len(req.Targets) > maxGitRelatedFileStatTargets {
+		respondError(w, http.StatusBadRequest, errInvalidRequest("too many targets"))
+		return
+	}
+	targets := make([]usecase.GitRelatedFileStatTargetInput, 0, len(req.Targets))
+	for _, target := range req.Targets {
+		targets = append(targets, usecase.GitRelatedFileStatTargetInput{
+			ID:       target.ID,
+			Path:     target.Path,
+			Head:     target.Head,
+			RepoPath: target.RepoPath,
+			RepoKind: target.RepoKind,
+		})
+	}
+	uc := h.service()
+	out, err := uc.GetGitRelatedFileStats(r.Context(), usecase.GitRelatedFileStatsInput{
+		RootID:  req.RootID,
+		Targets: targets,
+	})
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, out)
 }
 
 func (h *HTTPHandler) handleGitBranches(w http.ResponseWriter, r *http.Request) {

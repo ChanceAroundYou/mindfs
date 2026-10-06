@@ -148,7 +148,7 @@
 | G-AD | 会话列表 / 树 / 归档 / 搜索 | 功能 | 见 §3.1 | 合并·建树·分组均为纯函数 |
 | G-AE | UI 基础设施（自建对话框） | 修复 | 见 §3.1 | 禁 `window.prompt/alert/confirm` |
 | G-AG | 输入区与编辑器 | 功能 | 见 §3.1 | `action/*` + CodeMirror token 编辑器 |
-| G-AH | 文件树 / Git 视图 / 文档预览 | 功能 | 见 §3.1 | 请求带 `nodeId`；根视图三页签 |
+| G-AH | 文件树 / Git 视图 / 文档预览（含关联文件统计批量接口） | 功能 | 见 §3.1 | 请求带 `nodeId`；根视图三页签；关联文件统计走批量端点 |
 | G-AI | PWA / 陈旧资源自愈 / 子路径 SW | 修复 | 见 §3.1 | 原 G-M 并入 |
 | G-AJ | 偏好 / 定时任务 / 提示词 / 更新 / WebPush | 功能 | 见 §3.1 | 共享 vs 按账户的边界见事实 12 |
 | G-AK | 本地化（中英双语键） | 功能 | 见 §3.1 | 合上游最易被整文件覆盖 |
@@ -450,6 +450,16 @@
 
 - 来源：`web/src/components/Root{Git,Related,Worktree}ContentView.tsx`、`services/{git,documentPreview}.ts`。
 - 边界：文件与 Git 请求必须带 `nodeId`；根视图拆三个页签。
+- **关联文件统计走批量接口（2026-10-06）**：`POST /api/git/related-files/stats`。
+  可见症状（丢了会怎样）：会话与看板里的 `+N −M` 徽标全空（前端只认这个端点），
+  或流量与卡顿回来 —— 实测 80 个关联文件时，逐文件取完整 diff 会打出 3706 次请求/小时、
+  约 24 MB/小时，且每个文件都要跑 name-status + numstat + 完整 `git diff`，
+  而响应 6473B 里 5073B 是调用方一个字节都不读的 `content`。
+  必须保留的理由：这是一个**端点级的成本修正**，上游没有对应实现；光改前端调用返不回去。
+  同一批改动里还合并了热路径上的重复请求：多项目会话列表重拉统一走既有的 300ms 去抖
+  （`scheduleMultiProjectSessionReload`）、`git status` 按 `(root,node)` 复用 in-flight。
+  批量与逐文件必须**逐字段等价**，由 `gitview_test.go` 对拍钉住；「批量真的更省」由同一个
+  文件里的 git 调用次数对拍钉住（PATH 垫片计数），不是靠注释声称。
 
 ### G-AI PWA / 陈旧资源自愈 / 子路径 ServiceWorker
 

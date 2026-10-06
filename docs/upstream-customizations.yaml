@@ -810,16 +810,28 @@ groups:
     kind: feature
     symptom: |
       切项目后文件树不刷新；Git 面板拉的是别的节点的仓库；
-      word/pdf/图片预览打不开或整页崩。
+      word/pdf/图片预览打不开或整页崩；
+      会话与看板里的 +N −M 徽标全空（关联文件统计端点被换掉）；
+      或界面对后台的请求风暴回来——实测 80 个关联文件时 3706 次请求/小时、约 24 MB/小时，
+      浏览器标签页卡死甚至崩溃，手机端更明显。
     why: |
       文件与 Git 请求必须带 nodeId；文档预览把 docx/pptx 转成可渲染结构；
       根视图拆成 Root{Git,Related,Worktree}ContentView 三个页签。
+      关联文件统计必须走批量端点 POST /api/git/related-files/stats：上游没有这个实现，
+      逐文件取完整 diff 时 6473B 响应里 5073B 是调用方一个字节都不读的 content，
+      且每个文件都要跑 name-status + numstat + 完整 git diff（80 文件实测 480 次子进程）。
+      批量与逐文件逐字段等价由 gitview_test.go 对拍钉住，「批量确实更省」由同文件的
+      git 调用次数对拍钉住（PATH 垫片计数，实测 8 文件 14 次 vs 64 次）。
+      同一批还合并了热路径重复请求：多项目会话列表重拉统一走既有 300ms 去抖
+      scheduleMultiProjectSessionReload；git status 按 (root,node) 复用 in-flight Promise。
     anchors:
       - 'web/src/components/CodeViewer.tsx:CUSTOM(G-AH)'
       - 'web/src/components/GitStatusPanel.tsx:confirmDialog'
       - 'web/src/components/GitHistoryPanel.tsx:color-mix(in srgb, var(--accent-color) 8%'
       - 'web/src/components/GitDiffViewer.tsx:rootBadgeButtonStyle'
       - 'web/src/services/upload.ts:getRootNodeId'
+      - 'server/internal/gitview/gitview.go:func ReadRelatedFileStats'
+      - 'server/internal/api/http.go:/api/git/related-files/stats'
     files:
       - web/src/components/CodeViewer.tsx
       - web/src/components/DocumentViewer.tsx
@@ -841,11 +853,16 @@ groups:
       - web/src/hooks/useRelatedFileStats.ts
       - server/internal/gitview/gitview.go
       - server/internal/gitview/gitview_test.go
+      - server/internal/api/http_git_related_files_stats_test.go
+      - web/tests/related-file-stats-batch.test.mjs
     tests:
       - web/tests/document-preview.test.mjs
       - web/tests/project-add-path-browse.test.mjs
       - web/tests/project-tree-refresh.test.mjs
+      - web/tests/related-file-stats-batch.test.mjs
+      - web/tests/node-url-normalize.test.mjs
       - server/internal/gitview/gitview_test.go
+      - server/internal/api/http_git_related_files_stats_test.go
 
   - id: G-AI
     title: PWA / 陈旧资源自愈 / 子路径 ServiceWorker

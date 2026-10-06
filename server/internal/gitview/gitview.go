@@ -77,6 +77,28 @@ type RelatedFileDiffResult struct {
 	Source     string `json:"source,omitempty"`
 }
 
+// RelatedFileStatTarget 是一次批量统计请求里的单个文件。BaseHead 为空表示
+// 「没有记录基线」，按工作区改动统计。
+type RelatedFileStatTarget struct {
+	Path     string `json:"path"`
+	BaseHead string `json:"head,omitempty"`
+}
+
+// RelatedFileStat 是批量统计里单个文件的结果。
+//
+// Status 为空表示「自记录的基线以来没有任何变更可显示」—— 与
+// emptyRelatedFileDiff 同一语义，前端据此不渲染 +N −M 徽标。
+//
+// 单个文件在这个接口里**不报错**：基线提交不在历史里、路径不在区间里，都只让它
+// 自己留空，不牵连整批。逐文件调 ReadRelatedFileDiff 时那两种情况会返回错误、
+// 前端 catch 成 null 不显示徽标 —— 观感一致。
+type RelatedFileStat struct {
+	Path      string `json:"path"`
+	Status    string `json:"status"`
+	Additions int    `json:"additions"`
+	Deletions int    `json:"deletions"`
+}
+
 type HistoryItem struct {
 	Hash       string `json:"hash"`
 	Message    string `json:"message"`
@@ -778,6 +800,133 @@ func ReadRelatedFileDiff(ctx context.Context, rootPath, baseHead, relPath string
 		TargetHead: nextHead,
 		Source:     "commit_range",
 	}, nil
+}
+
+// ReadRelatedFileStats 批量读取关联文件的增删统计，**不取 diff 正文**。
+//
+// 存在的理由：会话/任务视图要的只是每个关联文件的 +N −M 徽标，而逐文件调
+// ReadRelatedFileDiff 时，一个 80 文件的列表会触发 80 次完整的 git diff —— 正文
+// 占响应体积的绝大部分（实测 6473B 里 5073B 是 content），而调用方一个字节都不读。
+//
+// 逐字段语义与 ReadRelatedFileDiff 的 status/additions/deletions 一致，省在三处：
+//  1. loadRepoContext 只做一次（原本每文件一次，含 EvalSymlinks + 两次 rev-parse）；
+//  2. 同一 (base, nextHead) 区间的 name-status / numstat 只取一次 —— 一个任务的关联
+//     文件通常共享同一个基线，原本每个文件各取一遍，这部分是全量重复；
+//  3. 基线合法性（cat-file / merge-base）按基线记忆化，不再逐文件重问；
+//  4. 不跑 git diff 取正文。
+//
+// ponytail: nextCommitTouching 仍是逐文件一条 rev-list —— 它便宜（工作树内）且
+// 语义必须与 ReadRelatedFileDiff 完全一致，不拿 `git log --name-only` 一把算：
+// 合并提交下 log 默认不列文件、而 rev-list 的 pathspec 限制会把合并算作触及该路径，
+// 两者会分叉成静默错误的徽标。要再压这个天花板，先验证 80 个路径是否共享同一个
+// nextHead（共享时整批可退化成一次 diff --numstat）。
+func ReadRelatedFileStats(ctx context.Context, rootPath string, targets []RelatedFileStatTarget) ([]RelatedFileStat, error) {
+	stats := make([]RelatedFileStat, len(targets))
+	for i := range targets {
+		stats[i] = RelatedFileStat{Path: targets[i].Path}
+	}
+	if len(targets) == 0 {
+		return stats, nil
+	}
+	repo, err := loadRepoContext(ctx, rootPath)
+	if err != nil {
+		return nil, err
+	}
+
+	// 工作区源的统计整批共用一份：statusItems 内部本来就是一次批量 numstat。
+	var worktreeItems map[string]StatusItem
+	worktreeLoaded := false
+	loadWorktree := func() map[string]StatusItem {
+		if worktreeLoaded {
+			return worktreeItems
+		}
+		worktreeLoaded = true
+		items, err := repo.statusItems(ctx)
+		if err != nil {
+			return nil
+		}
+		worktreeItems = make(map[string]StatusItem, len(items))
+		for _, item := range items {
+			worktreeItems[item.Path] = item
+		}
+		return worktreeItems
+	}
+
+	// 同一基线的合法性只问一次（原本每个文件 cat-file + merge-base 各一次）。
+	baseValid := make(map[string]bool, 2)
+	validBase := func(base string) bool {
+		if value, ok := baseValid[base]; ok {
+			return value
+		}
+		value := repo.commitExists(ctx, base) && repo.commitInCurrentHistory(ctx, base)
+		baseValid[base] = value
+		return value
+	}
+
+	// 1) 逐个解析目标区间。分支顺序与 ReadRelatedFileDiff 一致：无基线 → 工作区；
+	//    基线非法 → 留空（逐文件时是错误，前端同样不显示徽标）；区间里没有它 → 工作区。
+	type commitRange struct{ base, target string }
+	byRange := make(map[commitRange][]int)
+	worktreeIndexes := make([]int, 0, len(targets))
+	for i := range targets {
+		base := strings.TrimSpace(targets[i].BaseHead)
+		if base == "" || !validBase(base) {
+			if base == "" {
+				worktreeIndexes = append(worktreeIndexes, i)
+			}
+			continue
+		}
+		next, err := repo.nextCommitTouching(ctx, base, repo.toRepoPath(targets[i].Path))
+		if err != nil || strings.TrimSpace(next) == "" {
+			worktreeIndexes = append(worktreeIndexes, i)
+			continue
+		}
+		key := commitRange{base: base, target: strings.TrimSpace(next)}
+		byRange[key] = append(byRange[key], i)
+	}
+
+	// 2) 每个区间各取一次 name-status + numstat，覆盖该区间内的全部文件。
+	//    匹配顺序与 diffBetweenCommits 相同：按 Path 或 OldPath 命中**第一个**。
+	for key, indexes := range byRange {
+		files, err := repo.nameStatusBetween(ctx, key.base, key.target)
+		if err != nil {
+			continue // 只让这个区间留空，不牵连其它区间
+		}
+		numstat, err := repo.numstatBetween(ctx, key.base, key.target)
+		if err != nil {
+			continue
+		}
+		for _, i := range indexes {
+			repoPath := repo.toRepoPath(targets[i].Path)
+			for fi := range files {
+				if files[fi].Path != repoPath && files[fi].OldPath != repoPath {
+					continue
+				}
+				stats[i].Status = files[fi].Status
+				if value, ok := numstat[files[fi].Path]; ok {
+					stats[i].Additions = value[0]
+					stats[i].Deletions = value[1]
+				}
+				break
+			}
+		}
+	}
+
+	// 3) 工作区源的批量落值。
+	if len(worktreeIndexes) > 0 {
+		if items := loadWorktree(); items != nil {
+			for _, i := range worktreeIndexes {
+				item, ok := items[targets[i].Path]
+				if !ok {
+					continue
+				}
+				stats[i].Status = item.Status
+				stats[i].Additions = item.Additions
+				stats[i].Deletions = item.Deletions
+			}
+		}
+	}
+	return stats, nil
 }
 
 func loadRepoContext(ctx context.Context, rootPath string) (repoContext, error) {

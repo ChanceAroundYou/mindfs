@@ -293,6 +293,106 @@ type GitRelatedFileDiffOutput struct {
 	Diff gitview.RelatedFileDiffResult
 }
 
+// GitRelatedFileStatTargetInput 是批量统计里的单个文件。
+// ID 是调用方生成的不透明键，原样回传 —— 有条目被跳过时前端才不会错位。
+type GitRelatedFileStatTargetInput struct {
+	ID       string
+	Path     string
+	RepoPath string
+	RepoKind string
+	Head     string
+}
+
+type GitRelatedFileStatsInput struct {
+	RootID  string
+	Targets []GitRelatedFileStatTargetInput
+}
+
+type GitRelatedFileStatOutput struct {
+	ID        string `json:"id"`
+	Path      string `json:"path"`
+	Status    string `json:"status"`
+	Additions int    `json:"additions"`
+	Deletions int    `json:"deletions"`
+}
+
+type GitRelatedFileStatsOutput struct {
+	Stats []GitRelatedFileStatOutput `json:"stats"`
+}
+
+// GetGitRelatedFileStats 批量取关联文件的增删统计，不取 diff 正文。
+//
+// 与逐文件调 GetGitRelatedFileDiff 的区别只在成本，不在语义：每个文件仍走同一个
+// resolveGitRelatedFileDiffTarget 解析（worktree 回落、基线补齐都在里面），
+// 只是按解析出的仓库分组，每组一次性交给 gitview.ReadRelatedFileStats。
+// 也不做 FileMeta 填充 —— 徽标用不到它，而那是每文件一次 root.GetFileMeta。
+func (s *Service) GetGitRelatedFileStats(ctx context.Context, in GitRelatedFileStatsInput) (GitRelatedFileStatsOutput, error) {
+	if err := s.ensureRegistry(); err != nil {
+		return GitRelatedFileStatsOutput{}, err
+	}
+	root, err := s.Registry.GetRoot(in.RootID)
+	if err != nil {
+		return GitRelatedFileStatsOutput{}, err
+	}
+
+	// 按解析出的仓库分组，保持输入顺序，结果才好按 ID 对齐。
+	type group struct {
+		rootPath string
+		targets  []gitview.RelatedFileStatTarget
+		slots    []int // 每个 target 对应 stats 里的下标
+	}
+	stats := make([]GitRelatedFileStatOutput, 0, len(in.Targets))
+	groups := make([]*group, 0, 2)
+	groupByRepo := make(map[string]*group, 2)
+
+	for _, target := range in.Targets {
+		stats = append(stats, GitRelatedFileStatOutput{ID: target.ID, Path: target.Path})
+		slot := len(stats) - 1
+
+		path := strings.TrimSpace(target.Path)
+		if path == "" || strings.TrimSpace(target.RepoKind) == "plain" {
+			continue
+		}
+		rootPath, _, resolvedPath, head, err := resolveGitRelatedFileDiffTarget(ctx, root, GitRelatedFileDiffInput{
+			RootID:   in.RootID,
+			RepoPath: target.RepoPath,
+			RepoKind: target.RepoKind,
+			Head:     target.Head,
+			Path:     path,
+		})
+		if err != nil {
+			// 单文件解析失败只让它自己留空，不牵连整批。
+			continue
+		}
+		current, ok := groupByRepo[rootPath]
+		if !ok {
+			current = &group{rootPath: rootPath}
+			groupByRepo[rootPath] = current
+			groups = append(groups, current)
+		}
+		current.targets = append(current.targets, gitview.RelatedFileStatTarget{Path: resolvedPath, BaseHead: head})
+		current.slots = append(current.slots, slot)
+	}
+
+	for _, current := range groups {
+		results, err := gitview.ReadRelatedFileStats(ctx, current.rootPath, current.targets)
+		if err != nil {
+			continue // 该仓库整体留空，其它仓库不受影响
+		}
+		for i, result := range results {
+			if i >= len(current.slots) {
+				break
+			}
+			slot := current.slots[i]
+			stats[slot].Status = result.Status
+			stats[slot].Additions = result.Additions
+			stats[slot].Deletions = result.Deletions
+		}
+	}
+
+	return GitRelatedFileStatsOutput{Stats: stats}, nil
+}
+
 func (s *Service) ReadFile(ctx context.Context, in ReadFileInput) (ReadFileOutput, error) {
 	if err := s.ensureRegistry(); err != nil {
 		return ReadFileOutput{}, err

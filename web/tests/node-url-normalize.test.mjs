@@ -59,7 +59,12 @@ assert.match(sessionViewer, /useRelatedFileStats\(\s*rootId,\s*relatedFiles,\s*g
 
 const relatedHook = fs.readFileSync(path.join(root, "src/hooks/useRelatedFileStats.ts"), "utf8");
 assert.match(relatedHook, /refreshKey = "",\s*nodeId\?: string,/, "related-file stats hook must accept a node override");
-assert.match(relatedHook, /fetchGitRelatedFileDiff\(rootId, file, nodeId \|\| undefined\)/, "related-file stats must pass the session node to the diff fetch");
+// 统计改走批量接口后，这条守卫钉的还是同一件事：hook 必须把会话归属节点透传下去。
+// 另外把 git.ts 那一侧的解析也一起看住 —— 光透传、服务层又退回 active node，等于没透传。
+assert.match(relatedHook, /fetchRelatedFileStatsBatch\(rootId, targets, nodeId \|\| undefined\)/, "related-file stats must pass the session node to the batch fetch");
+const gitService = fs.readFileSync(path.join(root, "src/services/git.ts"), "utf8");
+assert.match(gitService, /const scopedNodeId = nodeId \|\| getRootNodeId\(rootId\);/, "the batch stats fetch must resolve the session node before building the URL");
+assert.match(gitService, /appURL\("\/api\/git\/related-files\/stats", undefined, scopedNodeId\)/, "the batch stats request must carry the resolved node");
 
 const appSource = fs.readFileSync(path.join(root, "src/App.tsx"), "utf8");
 assert.match(appSource, /const relatedSessionNodeId =\s*String\(\(relatedSessionSnapshot as any\)\?\._nodeId \|\| ""\)\.trim\(\) \|\| undefined;/, "App must resolve the related session's node");
