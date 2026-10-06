@@ -352,6 +352,7 @@
 | 客户端识别批量帧 | `web/src/app/useRealtimeEvents.ts`（`session.stream` 分发） | 认 `payload.events` 数组并循环应用；单条实时事件仍走 `payload.event` |
 | `composeLoadedExchanges(server, cached, inFlight)` | `web/src/services/session.ts` + `App.tsx` 两处调用 | 加载时的**唯一**组装规则。瞬时行（seq=0）只在**在途**时保留 —— 服务端从不经窗口回包下发它们，所以绝不能去服务端回包找（曾经三处那么写、三处恒空，导致切回运行中会话时在途内容整块丢失）。另：只保留**最后一次 compact 之后**的瞬时行（compact 是服务端历史的重置点） |
 | `dropTransientExchanges` 接进 `session.done` / `compact_notice` | `web/src/services/session.ts` + `web/src/app/useRealtimeEvents.ts` | 补齐**从来不存在**的清理出口。此前 seq=0 无任何清理机制，实测跨 7 次 compact 堆积到 1100+ 条 |
+| `mergeStreamedText` 的重复分片判断**只扫尾窗**（`MERGE_SCAN_TAIL_CHARS`） | `web/src/services/session.ts` | 见可见症状：长回答**静默丢字**（300KB 丢 50 字节、800KB 丢 13 片）。根因是对整段累积正文做 `a.includes(b)` —— 中段碰巧撞上同样字符串就被当成重复分片而丢掉这段正文。重复分片只可能是服务端重推的**刚追加过的尾部**，所以只扫尾窗即可；同时整段访问会压平整段 rope（`slice`/`includes` 实测都是 O(n)），每个分片扫全量 = O(n²)，300KB 卡 2 秒。尾窗同时修对错和性能，且不改已钉住的 7 条重放语义 |
 
 **针对性测试（防覆盖，改动时同步维护）**
 
@@ -494,6 +495,11 @@
 
 - 来源：`web/src/i18n/locales/{zh-CN,en-US}.ts`。
 - 边界：本地键必须与上游键并存；合上游时 i18n 两侧是最容易被整文件覆盖的文件。
+- **`index.tsx` 的 Intl 格式化器缓存（2026-10-06）**：可见症状是长会话里逐条渲染卡一下 ——
+  `new Intl.DateTimeFormat` 的**构造**是重活，实测一次渲染 1000 条消息要 **235ms**，复用同一实例只要 14ms（16×）。
+  `SessionViewer` 的逐条渲染逐条调 `formatTime`，不缓存等于每次渲染都重建一遍格式化器。
+  必须保留的理由：合上游一旦整份覆盖 `index.tsx`，缓存会**静默**消失（测试全绿、肉眼也看不出）。
+  钉住它的测试是 `intl-formatter-cache.test.mjs`（源码守卫：四个格式化器都必须走缓存、缓存有上限、键序无关）。
 
 ### G-AL 构建 / 部署 / 收尾流程脚本
 

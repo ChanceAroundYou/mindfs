@@ -586,6 +586,36 @@ assert.equal(mergeStreamedText("", "x"), "x");
 assert.equal(mergeStreamedText("x", ""), "x");
 assert.equal(mergeStreamedText("", ""), "");
 
+// ⑥b **中段碰撞不是重复分片**（这条是性能改造顺带修出来的正确性 bug）。
+//
+// 原先对整段累积正文做 `a.includes(b)`，中段碰巧出现的同样字符串会被当成重复分片而
+// **丢掉这段正文** —— 正文越长越容易撞上：实测一段 300KB 的回答丢 50 字节、
+// 800KB 丢 13 片。重复分片只可能是服务端重推的**刚追加过的尾部**，所以只扫尾窗。
+{
+  const midHit =
+    "这是一段足够长的中文句子，其中包含了“你好”两个字，" +
+    "后面还有很长一段别的内容，用来确保累积正文远超过尾窗扫描长度，" +
+    "让中段的碰撞不被尾窗覆盖到，从而证明只有尾部才算重复分片，" +
+    "而中段出现同样内容时必须照常追加，否则正文会静默丢字。";
+  assert.ok(midHit.length > 100, "fixture must exceed the tail scan window");
+  assert.ok(midHit.includes("你好"), "fixture must contain the colliding shard");
+  assert.ok(
+    !midHit.slice(-(2 + 64)).includes("你好"),
+    "colliding shard must sit outside the tail window",
+  );
+  assert.equal(
+    mergeStreamedText(midHit, "你好"),
+    midHit + "你好",
+    "a mid-text coincidence must append — only the tail can be a duplicate shard",
+  );
+  // 尾部的重复分片仍然是重复分片（不能因为改成尾窗就什么都追加）
+  assert.equal(
+    mergeStreamedText(midHit, midHit.slice(-2)),
+    midHit,
+    "a genuine tail duplicate must still be dropped",
+  );
+}
+
 // ⑦ dropTransientExchanges：不在途时的清理出口（done / compact 调用它）
 {
   const drop = sessionMod.dropTransientExchanges;

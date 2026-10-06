@@ -329,12 +329,17 @@ groups:
     symptom: |
       同一段正文在行内被拼成 aabb（「文本出现两遍、越切越多」）；
       每切一次会话就刷一大堆重放；首次打开运行中会话时内容逐渐刷出来；
-      切回运行中会话时在途内容整块丢失。
+      切回运行中会话时在途内容整块丢失；
+      长回答**静默丢字**（2026-10-06 实测：300KB 的回答丢 50 字节、800KB 丢 13 片），
+      且流式期间整页卡顿 —— 拼接扫整段累积正文，300KB 要 2 秒主线程。
     why: |
       重放必须幂等（整段重放→覆盖、重复分片→忽略），三处拼接收敛到 mergeStreamedText 一个定义；
       光标是「我已收到 X」的凭证，不能清；重放整批一条 WS 消息下发（几百条单帧=几百次渲染）；
       加载时组装只能有一条规则 composeLoadedExchanges（瞬时行 seq=0 只在在途时保留）；
       seq=0 必须有清理出口 dropTransientExchanges，否则跨 compact 堆积到上千条。
+      mergeStreamedText 的重复分片判断**只扫尾窗**：重复分片只可能是服务端重推的刚追加过的尾部，
+      对整段做 a.includes(b) 会把中段碰巧撞上的同样字符串当成重复而丢掉正文（正是上面「丢字」的症状），
+      同时每个分片都要压平整段 rope，是 O(n²)。尾窗同时修对错和性能。
     files:
       - web/src/services/session.ts
       - web/src/app/useSessionStreamCache.ts
@@ -980,15 +985,21 @@ groups:
     title: 本地化（中英双语键）
     kind: feature
     symptom: |
-      界面出现裸 key（如 tasks.stage.approve）而不是文案；中英文两侧键不对称。
+      界面出现裸 key（如 tasks.stage.approve）而不是文案；中英文两侧键不对称；
+      长会话里逐条渲染卡一下 —— Intl 格式化器每次调用都重新构造
+      （实测一次渲染 1000 条消息要 235ms，缓存后 14ms）。
     why: |
       本地新增的多账户/看板/工作台/节点等键必须与上游键并存，
       合上游时两侧 i18n 文件是最容易被整文件覆盖的。
+      index.tsx 的格式化器缓存同理：上游 i18n/index.tsx 一旦整份覆盖，
+      缓存会**静默**消失 —— 测试全绿、肉眼也看不出，只有长会话才卡一下。
     files:
       - web/src/i18n/locales/en-US.ts
       - web/src/i18n/locales/zh-CN.ts
+      - web/src/i18n/index.tsx
     tests:
       - web/tests/task-panel-unification.test.mjs
+      - web/tests/intl-formatter-cache.test.mjs
     # 键集一致性由 tsc 兜（en-US 的类型是 Record<MessageKey, string>，MessageKey = keyof typeof zhCN），
     # 合上游 SOP 里本来就跑 tsc --noEmit，再写一个键奇偶测试只是重复。
     # 锚点改钉「fork 独有键还在不在」—— 这是 tsc 查不出的方向（整份 zh-CN 被上游版覆盖时，

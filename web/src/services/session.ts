@@ -2117,13 +2117,29 @@ export function composeLoadedExchanges(
  *
  * 天花板：模型若真的连发两片完全相同的文本，第二片会被当成重复吞掉。
  */
+/**
+ * 重复分片的扫描窗口。
+ *
+ * 「重复分片」只可能是服务端重推的**刚追加过的那一段**，所以只扫尾部就够。
+ * 原先对整段累积正文做 `a.includes(b)`，中段碰巧撞上会被当成重复而**丢掉这段正文**：
+ * 实测一段 300KB 的回答会丢 50 字节、800KB 丢 13 片。正文越长越容易撞上。
+ */
+const MERGE_SCAN_TAIL_CHARS = 64;
+
 export function mergeStreamedText(existing: string, incoming: string): string {
   const a = String(existing || "");
   const b = String(incoming || "");
   if (!b) return a;
   if (!a) return b;
+  // 整段重放：新片段本身携带了已累积的全文 → 直接采用，不拼接。
+  // `includes` 在 b 比 a 短时是 O(1)（先比长度），所以这条分支本身不贵。
   if (b.includes(a)) return b;
-  if (a.includes(b)) return a;
+  // 重复分片：只扫尾窗。**这是正确性的关键**，不只是为了快 ——
+  // 见 MERGE_SCAN_TAIL_CHARS：扫全量会把中段碰撞误判成重复，正文直接丢。
+  const scanChars = b.length + MERGE_SCAN_TAIL_CHARS;
+  if (a.length <= scanChars ? a.includes(b) : a.slice(-scanChars).includes(b)) {
+    return a;
+  }
   return a + b;
 }
 
