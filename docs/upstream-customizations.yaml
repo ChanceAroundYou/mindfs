@@ -528,6 +528,9 @@ groups:
     files:
       - server/internal/kanban/
       - server/internal/api/http_tasks.go
+      # http.go 里 isLocalCLIPath 的 `/api/task-groups` 允许项随路由一并删掉了：
+      # 只删路由不删允许项，是「裁剪做了一半」的典型形态。
+      - server/internal/api/http.go
       - server/internal/api/task_session_naming_test.go
       - cli/cmd/task_help.go
       - cli/cmd/task_operations.go
@@ -536,6 +539,23 @@ groups:
       - server/internal/api/http_task_orchestration.go
       - server/internal/api/http_task_orchestration_test.go
       - server/internal/api/task_group_runner.go
+      # 被**删除**的上游文件（status=D）。刻意用精确路径而不是只靠上面的目录前缀：
+      # 前缀在文件复活时仍会被同目录其它文件命中，报不出来；写死路径才能让断言 2 当场红。
+      - server/internal/kanban/groups.go
+      - server/internal/kanban/groups_test.go
+      - server/internal/kanban/group_messages_test.go
+      - server/internal/kanban/group_reopen_test.go
+      - server/internal/kanban/orchestration.go
+      - server/internal/kanban/orchestration_execution.go
+      - server/internal/kanban/orchestration_store.go
+      - server/internal/kanban/orchestration_test.go
+      - server/internal/kanban/plan.go
+      - server/internal/kanban/recovery.go
+      - server/internal/kanban/session_cleanup.go
+      - server/internal/kanban/session_cleanup_test.go
+      - server/internal/kanban/task_messages.go
+      - server/internal/kanban/task_messages_test.go
+      - server/internal/kanban/task_pagination_test.go
       - task_template.json
       - web/src/components/TaskBoardView.tsx
       - web/src/components/TaskCardRows.tsx
@@ -560,6 +580,14 @@ groups:
       - web/tests/task-button-gates.test.mjs
       - web/tests/task-cache-eviction.test.mjs
       - web/tests/task-card-wrap.test.mjs
+      # 直接看磁盘的复活检测：被删文件必须不存在、无悬空引用、替代实现在位。
+      # 单靠断言 2 只能查到「文件又变得和上游一样了」，查不到「上游把它带回来且顺带改了」。
+      - web/tests/upstream-removals.test.mjs
+    anchors:
+      # 替代编排体系的那套模型必须在位 —— 游标一旦退回去，说明重做被冲掉了
+      - server/internal/kanban/types.go:Stages             []StageTemplate
+      - server/internal/kanban/template_store.go:ListStageTemplates
+      - server/internal/kanban/worktree_finish.go:FinishTaskWorktree
 
   - id: G-Z
     title: 跨项目工作台
@@ -863,6 +891,13 @@ groups:
       - web/src/i18n/locales/zh-CN.ts
     tests:
       - web/tests/task-panel-unification.test.mjs
+    # 键集一致性由 tsc 兜（en-US 的类型是 Record<MessageKey, string>，MessageKey = keyof typeof zhCN），
+    # 合上游 SOP 里本来就跑 tsc --noEmit，再写一个键奇偶测试只是重复。
+    # 锚点改钉「fork 独有键还在不在」—— 这是 tsc 查不出的方向（整份 zh-CN 被上游版覆盖时，
+    # 少的是我们的键，不是上游的键）。
+    anchors:
+      - web/src/i18n/locales/zh-CN.ts:"account.primary"
+      - web/src/i18n/locales/en-US.ts:"account.primary"
 
   # ── 工程：脚本与流程 ────────────────────────────────────────────
   - id: G-AL
@@ -880,6 +915,12 @@ groups:
       - .claude/skills/
     tests:
       - web/tests/deploy-prefix.test.mjs
+      # 部署脚本本身的约定（shell 里，没有编译器看着）：
+      # 不得 rm -rf web 目录、TTL 三处一致、WSL 端只收产物不编译。
+      - web/tests/deploy-web-assets.test.mjs
+    anchors:
+      - Makefile:WEB_ASSET_TTL_DAYS
+      - scripts/deploy-all.sh:cp -R ~/$STAGE/dist/. ~/.local/share/mindfs/web/
 
   # ── 前端：其余 ──────────────────────────────────────────────────
   - id: G-AM

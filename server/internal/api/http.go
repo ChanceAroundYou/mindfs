@@ -250,9 +250,6 @@ func isLocalCLIPath(r *http.Request) bool {
 			return true
 		}
 	}
-	if r.URL.Path == "/api/task-groups" || strings.HasPrefix(r.URL.Path, "/api/task-groups/") {
-		return r.Method == http.MethodGet || r.Method == http.MethodPost
-	}
 	if r.Method == http.MethodGet && (r.URL.Path == "/api/agents" || r.URL.Path == "/api/task-templates" || r.URL.Path == "/api/tasks" || r.URL.Path == "/api/relay/status") {
 		return true
 	}
