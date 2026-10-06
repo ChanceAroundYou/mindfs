@@ -3,6 +3,7 @@ package usecase
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -21,6 +22,103 @@ import (
 	"mindfs/server/internal/preferences"
 	"mindfs/server/internal/session"
 )
+
+// 批量统计的 usecase 层对拍：逐个 Target 走同一个 resolveGitRelatedFileDiffTarget 解析，
+// 结果必须与逐文件 GetGitRelatedFileDiff 完全一致。
+//
+// 这条测试守的是两件事：
+//  1. 分组（按解析出的仓库）没有把不同仓库/不同基线的文件串在一起；
+//  2. 输出的 JSON 键名 —— 前端按 id 对齐、读 status/additions/deletions，
+//     任何一个 tag 写错都会静默变成「徽标全空」而不报错。
+//
+// 形状照抄生产实际：repo_path 指向 worktree 绝对路径，path 是项目内相对路径。
+func TestGetGitRelatedFileStatsMatchesPerFileDiff(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found")
+	}
+	rootDir := t.TempDir()
+	runUsecaseGit(t, rootDir, "init")
+	runUsecaseGit(t, rootDir, "config", "user.email", "test@example.com")
+	runUsecaseGit(t, rootDir, "config", "user.name", "Test User")
+	mustWriteFile(t, filepath.Join(rootDir, "note.txt"), "base\n")
+	runUsecaseGit(t, rootDir, "add", "note.txt")
+	runUsecaseGit(t, rootDir, "commit", "-m", "initial")
+	runUsecaseGit(t, rootDir, "checkout", "-b", "task-1")
+	base := strings.TrimSpace(runUsecaseGit(t, rootDir, "rev-parse", "HEAD"))
+	runUsecaseGit(t, rootDir, "checkout", "-")
+
+	worktreeRoot := filepath.Join(rootDir, ".worktree", "task-1")
+	runUsecaseGit(t, rootDir, "worktree", "add", worktreeRoot, "task-1")
+	mustWriteFile(t, filepath.Join(worktreeRoot, "note.txt"), "worktree-only\n")
+	mustWriteFile(t, filepath.Join(rootDir, "note.txt"), "main-only\n")
+
+	root := rootfs.NewRootInfo("mindfs", "mindfs", rootDir)
+	service := Service{Registry: uploadTestRegistry{root: root}}
+
+	targets := []GitRelatedFileStatTargetInput{
+		{ID: "worktree", Path: "note.txt", RepoPath: worktreeRoot, RepoKind: "git", Head: base},
+		{ID: "main", Path: "note.txt", RepoKind: "git"},
+		{ID: "no-path", Path: "", RepoKind: "git"},
+		{ID: "plain", Path: "note.txt", RepoKind: "plain"},
+	}
+	out, err := service.GetGitRelatedFileStats(context.Background(), GitRelatedFileStatsInput{
+		RootID:  root.ID,
+		Targets: targets,
+	})
+	if err != nil {
+		t.Fatalf("GetGitRelatedFileStats: %v", err)
+	}
+	if len(out.Stats) != len(targets) {
+		t.Fatalf("stats = %d, want %d", len(out.Stats), len(targets))
+	}
+
+	// 顺序与 ID 必须一一对上 —— 前端就是按 id 取值的。
+	for i, stat := range out.Stats {
+		if stat.ID != targets[i].ID {
+			t.Fatalf("stats[%d].ID = %q, want %q（顺序漂了前端会错位）", i, stat.ID, targets[i].ID)
+		}
+	}
+
+	// 前两个目标必须与逐文件结果逐字段一致。
+	for _, index := range []int{0, 1} {
+		target := targets[index]
+		diff, err := service.GetGitRelatedFileDiff(context.Background(), GitRelatedFileDiffInput{
+			RootID:   root.ID,
+			RepoPath: target.RepoPath,
+			RepoKind: target.RepoKind,
+			Head:     target.Head,
+			Path:     target.Path,
+		})
+		if err != nil {
+			t.Fatalf("GetGitRelatedFileDiff(%s): %v", target.ID, err)
+		}
+		got := out.Stats[index]
+		if got.Status != diff.Diff.Status || got.Additions != diff.Diff.Additions || got.Deletions != diff.Diff.Deletions {
+			t.Fatalf("%s: batch = {%q %d %d}, per-file = {%q %d %d}",
+				target.ID, got.Status, got.Additions, got.Deletions,
+				diff.Diff.Status, diff.Diff.Additions, diff.Diff.Deletions)
+		}
+	}
+	if out.Stats[0].Status == "" {
+		t.Fatal("worktree 目标应当有变更（+1 −1），留空说明 repo_path 没被用上")
+	}
+
+	// 空路径与 plain 都被跳过，留空而不是报错。
+	if out.Stats[2].Status != "" || out.Stats[3].Status != "" {
+		t.Fatalf("空路径/plain 应当留空，得到 %+v", out.Stats[2:])
+	}
+
+	// JSON 键名是前后端契约，写错不会报错、只会让徽标全空。
+	raw, err := json.Marshal(out)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	for _, key := range []string{`"stats"`, `"id"`, `"status"`, `"additions"`, `"deletions"`} {
+		if !bytes.Contains(raw, []byte(key)) {
+			t.Fatalf("响应缺少键 %s：%s", key, raw)
+		}
+	}
+}
 
 func TestSaveUploadedFilesDefaultsToAttachmentDirAndRenamesConflicts(t *testing.T) {
 	rootDir := t.TempDir()
