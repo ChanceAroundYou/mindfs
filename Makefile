@@ -1,4 +1,4 @@
-.PHONY: help dev dev-backend dev-web build-web build build-android build-harmony install uninstall build-all start start-server test test-web dist-clean publish-release-notes verify-release release tag
+.PHONY: help dev dev-backend dev-web build-web build build-android build-harmony install uninstall build-all start start-server test test-web check-upstream dist-clean publish-release-notes verify-release release tag
 
 GO ?= go
 NPM ?= npm
@@ -29,6 +29,8 @@ help:
 		"  make start        # run mindfs on $(ADDR) with built static assets" \
 		"  make start-server # backend entrypoint serving built static assets" \
 		"  make test         # run Go tests" \
+		"  make test-web     # run web source-guard tests" \
+		"  make check-upstream  # fork 定制覆盖率门禁（需 upstream ref）" \
 		"  make tag TAG=v1.2.3  # create and push a git tag" \
 		"  make publish-release-notes TAG=v1.2.3  # commit and push release-notes.md if changed" \
 		"  make verify-release TAG=v1.2.3  # verify signed release manifest and artifacts in $(DIST_DIR)" \
@@ -88,6 +90,12 @@ test:
 # web 契约测试：源码守卫（tests/*.test.mjs），不需要浏览器
 test-web:
 	cd $(WEB_DIR) && $(NPM) test
+
+# fork 定制覆盖率门禁：delta 文件 ⟷ docs/upstream-customizations.yaml 对账。
+# 刻意不并入 `make test`——它依赖 upstream ref（无网机器应当跳过而非失败），
+# 且合上游前后才是它真正要跑的时刻（见 .claude/skills/upstream-merge）。
+check-upstream:
+	$(GO) run ./scripts/check-upstream
 
 # ── Cross-platform distribution ──────────────────────────────────────────
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")

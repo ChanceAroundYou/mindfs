@@ -22,7 +22,12 @@ description: worktree 先真合出冲突→逐 hunk 定解的上游合并 SOP；
 
 ### 0. 准备（10 min，产出重叠表）
 
-- 冻结 `docs/upstream-customizations.md` 按 hunk 互斥分组（同 commit 跨组，App 占多组）。
+- **跑定制门禁，拿到「我们改了什么」的机器真相**：
+  ```bash
+  make check-upstream          # 绿=清单与 delta 一致（382 文件/36 组）；红=清单本身要修，先修
+  ```
+  清单在 `docs/upstream-customizations.yaml`（机器真相，每组带 `files`/`tests`/`anchors`/`symptom`/`why`）。
+  红的两类含义：**未覆盖** = 有新定制没登记；**已不在 delta** = 某条定制被上游顶掉了，正是本次合并要盯的。
 - `git fetch upstream --tags && git diff --name-only v0.4.7..v0.4.X | sort > /tmp/A && git diff --name-only v0.4.7..HEAD | sort > /tmp/B && comm -12 /tmp/A /tmp/B` 得交集（~45 文件），标红 `App/FileTree/SessionViewer/http/ws/fs`。
 - 列 `v0.4.7..v0.4.X N commits / 76 files` vs `v0.4.7..HEAD 118 files`。
 
@@ -76,10 +81,22 @@ export PATH="/home/xiaokubao/.local/share/go/bin:$PATH"
 go vet ./... && go test ./...  # 含 server/internal/session -run TestManager
 ./web/node_modules/.bin/tsc --noEmit -p web/tsconfig.json
 node --test web/tests/*.test.mjs  # 18+，含 upstream-restore.test.mjs
+make check-upstream         # ★ 定制对账：逐组 tests 绿 + 锚点命中 + 无「已不在 delta」
 git merge-base --is-ancestor v0.4.X HEAD && echo "base moved: $(git merge-base HEAD v0.4.X | xargs git rev-parse --short)"
 git diff upstream/main...HEAD --shortstat  # 仅本地定制
 make build  # 35s 级
 ```
+
+**`make check-upstream` 红了怎么办**（这是本 SOP 的核心验收，不是可选步骤）：
+
+| 报错 | 含义 | 处置 |
+|---|---|---|
+| `未覆盖的 delta 文件` | 合并期新写了没登记的定制 | 按 §1 分组规则归组，补进 yaml |
+| `已不在 delta 的条目` | **定制被上游顶掉了** | 对照该组 `why`，逐条恢复；确已废弃才从 yaml 删 |
+| `锚点失配` | 源码里的 `// CUSTOM(G-xx)` 被上游实现替换 | 恢复该 hunk 的定制逻辑 |
+| 某组 `tests` 红 | 该组行为被改 | 按该组 `symptom` 判：症状还在=定制丢了，要恢复 |
+
+接回前必须全绿。`docs/upstream-customizations.md` 是给人读的叙述，`yaml` 才是核对清单，两者组 id 由门禁断言 6 钉住。
 
 轻量对账（替代 38 agents）：`git diff HEAD..v0.4.X -- <file>` 反向查，空=完整（`release-notes.md` 位置移动除外）。
 
