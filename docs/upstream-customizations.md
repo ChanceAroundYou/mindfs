@@ -1,12 +1,16 @@
 # MindFS 上游定制清单与评估（改动级互斥）
 
-> **当前基准：`bb4244d`（v0.5.5，2026-09-30 合并，`976a5d0` 双 parent + `e3974c6` 接回 main）。** 本文档 §1-§3 分组为 v0.4.7→v0.4.9 时代沉淀，机制仍适用；v0.5.1 / 7757ca8 合并记录见 §0，v0.5.5 见 §0-B，接回 main 见 §0-B-2。
+> **当前基准：`9ab9572`（tag `v0.5.5`）= `git merge-base HEAD upstream/main`。**
+> 核对口径：`git diff 9ab9572..HEAD --name-status` = **380 文件**（新增 213 / 修改 140 / 删除 27）。
+> **机器真相在 `docs/upstream-customizations.yaml`** —— 分组 id、文件、针对性测试、锚点全部以它为准，本文不重复列举；
+> 覆盖率门禁 `make check-upstream` 强制「每个 delta 文件都被某组覆盖」。两文件的唯一强耦合点是**组 id 双向一致**。
 >
-> 基准: `upstream/main` 标签 `v0.4.7` — `18b10cab75e2f72af24666c6de7ae4a411f63daa`（2026-08-13 update readme）
-> 对比: `HEAD = 0591238`（2026-08-26）/ `origin/main = 3d3417a`
-> 口径: `git log --reverse 18b10ca..HEAD` 共 **44** 可达提交（含 1 merge `64f96e8`），`git diff 18b10ca...HEAD` 110 文件 `+8333/-4249`；未提交 6 文件 `+286/-45`
+> 本文档 §1-§3 分组为 v0.4.7→v0.4.9 时代沉淀，机制仍适用；v0.5.1 / 7757ca8 合并记录见 §0，v0.5.5 见 §0-B，接回 main 见 §0-B-2。
+>
+> 历史口径（2026-08-26 首次成文时的记录，**仅作沿革参考，不再是核对基准**）: 基准 `upstream/main` tag `v0.4.7` `18b10ca`，
+> 对比 `HEAD = 0591238`，`git log --reverse 18b10ca..HEAD` 44 提交，`git diff 18b10ca...HEAD` 110 文件 `+8333/-4249`。
 > 分组原则: **按 hunk 归类**——同一提交、同一文件不同行可归不同组；每行改动仅属一组，组间互斥、全体完备。
-> 判定: `git show --numstat/--stat` 逐提交核验 + `git diff HEAD` 逐 hunk 归类，`git cherry -v` 校验上游等价。
+> 判定: `git show --numstat/--stat` 逐提交核验 + 逐 hunk 归类，`git cherry -v` 校验上游等价。
 
 ---
 
@@ -105,7 +109,7 @@
 
 ---
 
-## 1. 总览（17 组 + 未提交）
+## 1. 总览（20 组：G-A … G-T）
 
 | 组 | 主题 | 性质 | 关键提交/切片举例 | 互斥边界 |
 |----|------|------|-------------------|----------|
@@ -129,7 +133,6 @@
 | G-R | 模型识别与流式透传 | 修复 | `af0a37f` 主体、`ab8cfed:probe` 1M 切片、`e92fecf:AgentSelector` 切片 | DeepSeek/Claude 1M 探测与 `stream_hub/ws` 透传 |
 | G-S | 作用域隔离与列表折叠 | 修复 | `3d3417a/ed44573/0591238` + `7a12971:App` 聚合切片 | `scope.ts`、`expanded/loadMore` 按 `nodeId:projectId` |
 | G-T | 流式重放与正文正确性 | 修复 | 见 §3「G-T」—— `session.ts`/`useSessionStreamCache.ts`/`useRealtimeEvents.ts`/`App.tsx`/`stream_hub.go`/`ws_test.go` | 重放幂等、seq=0 只在在途时存在、重放整批一条消息 |
-| — | 未提交工作区 | 进行中 | `App.tsx/BottomSheet.tsx/SessionList.tsx/SessionViewer.tsx/ToolCallCard.tsx/AppShell.tsx` 各按 hunk 归上 | 见 §4 拆解 |
 
 > 同一提交跨组示例见 §3 表中「跨组拆分」列；同一文件跨组示例：`App.tsx` 按 hunk 分属 G-F/G-G/G-J/G-L/G-N/G-S 等 6 组，`http.go` 按 hunk 分属 G-B/G-I/G-K 三组。
 
@@ -271,7 +274,7 @@
 | `955241a` | `web/src/services/bottomSheetModel.ts` + `web/tests/bottom-sheet-model.test.mjs` | `clampHeight/resolveBottomSheetRelease` 契约 |
 | `76d586c/727bf8f/28deb2a/1765353` | `web/src/components/BottomSheet.tsx` | 50% 默认、任意高度悬停、`pointercancel→50%`、触摸防抢占 |
 | `e459a13` | `web/src/services/bottomSheetModel.ts:BOTTOM_SHEET_TOP_EDGE_RATIO=0.1` | 上沿 10% 吸顶（与同提交的 `manager/SessionList` hunk 分离） |
-| 未提交 | `web/src/components/BottomSheet.tsx` | `rAF` 节流、`70%` 默认、`contain:layout paint`、`willChange`、双击全屏（见 §4） |
+| 未提交 | `web/src/components/BottomSheet.tsx` | `rAF` 节流、`70%` 默认、`contain:layout paint`、`willChange`、双击全屏（沿革见 §4） |
 
 ### G-P 项目别名（display_name）
 
@@ -337,23 +340,17 @@
 
 ---
 
-## 4. 未提交工作区（按 hunk 归类，互斥）
+## 4. 未提交工作区（2026-10-06 清空）
 
-| 文件 | hunk 要点 | 归属 |
-|------|-----------|------|
-| `web/src/App.tsx:nodeIdsFromNodes+fallbackNodeId` | `loadMultiProjectSessionGroups` 以 `getNodes()` 为主源、首屏 `_nodeId` 回退 | G-J |
-| `web/src/App.tsx:loadManagedRootPayloads(opts)` | `force` 语义 + `syncNodesFromServer` 等待 | G-J |
-| `web/src/App.tsx:applyManagedRoots changed→always reload` | 任何索引变化即重拉多项目会话，修 PC 冷启动不出现 | G-G + G-J 边界，计入 G-J |
-| `web/src/App.tsx:nodes.changed/root.changed` | 节点变更后重拉会话 | G-J |
-| `web/src/App.tsx:loadMultiProjectSessionGroups init race` | 初始化竞态兜底补拉 | G-S |
-| `web/src/components/SessionList.tsx:groupIsCurrentNode 空串互等修复` | 两端空视为未就绪，避免全展开 | G-S |
-| `web/src/components/SessionList.tsx:SubSessionIcon color-mix` | 子会话图标按节点色淡化 | G-L |
-| `web/src/components/BottomSheet.tsx:rAF+70%+contain/doubleClick` | 拖拽 `rAF` 节流、默认 70%、`contain` 与双击全屏 | G-O |
-| `web/src/components/SessionViewer.tsx:stream/toolcall 相关` | 流式视图与工具调用卡（待细读，属 Session 视图迭代） | G-G/G-F 边界，暂计 G-G |
-| `web/src/components/stream/ToolCallCard.tsx:renderToolIcon(color)` | `edit` 图标按 `color` 主题化 | G-L |
-| `web/src/layout/AppShell.tsx:sidebar resize rail` | 侧栏 `col-resize` 拖拽、栅格 `willChange/userSelect` | 新组计入 G-L（布局视觉） |
-
-> 未提交部分未落盘，按 hunk 就近归组以保持「互斥」；后续提交时建议按本表拆 commit。
+> 本节原先逐 hunk 记录 main 工作区里**未提交**的改动。那些改动已全部提交、工作区已干净，
+> 继续留档会谎报「还有东西没落盘」，故清空。
+>
+> 沿革结论（当时的归类，供 `Scope:` 反查）：`App.tsx` 的节点/会话聚合 hunk → G-J；
+> `SessionList.tsx` 的 `groupIsCurrentNode` 空串互等 → G-S，`SubSessionIcon color-mix` → G-L；
+> `BottomSheet.tsx` 的 `rAF`+/70%/+双击全屏 → G-O；`SessionViewer.tsx` 流式与工具卡 → G-G；
+> `stream/ToolCallCard.tsx` 图标主题化 → G-L；`layout/AppShell.tsx` 侧栏拖拽 → G-L。
+>
+> **当前的文件级真相在 `docs/upstream-customizations.yaml`**，本节不再是核对依据。
 
 ---
 
@@ -422,5 +419,12 @@
 
 ## 7. 附录
 
-- 生成：`git log --reverse 18b10ca..HEAD` + `git show --numstat` + `git diff HEAD` 逐 hunk 核验；`git cherry -v` 判等价。
-- 维护：后续提交信息标注 `Scope: G-X`，合上游 tag 即更新“基准”。
+- 生成：`git log --reverse 18b10ca..HEAD` + `git show --numstat` + 逐 hunk 核验；`git cherry -v` 判等价。
+- 维护（**当前生效的约定**）：
+  - **文件/测试/锚点的唯一真相是 `docs/upstream-customizations.yaml`**，不在本文件里重复列举。
+  - 新增定制 → 先在 yaml 里登记（组 id + 症状 + 理由 + 文件 + 针对性测试 + 锚点），再跑 `make check-upstream` 确认全绿。
+  - 提交信息标 `Scope: G-X`，与 yaml 的组号对应。**注意实际历史里这条只被遵守过一次**
+    （`Scope: fixup` / `merge` / `chore` 等自由值居多）；本约定自 2026-10-06 起由 `check-upstream` 强制。
+  - 合上游 tag 后：更新 yaml 的 `baseline`，重跑门禁 —— 红了就是那一组被覆盖了，按 yaml 里的「为什么必须保留」逐条恢复，
+    **不要按上游实现重写**。
+  - 新增分组的唯一前提：它有**独立的互斥边界**（一组 = 一块合上游时要么全留要么全弃的改动面）。
