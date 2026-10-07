@@ -1016,8 +1016,10 @@ func (s *AppContext) BroadcastSessionDone(rootID, sessionKey, requestID string) 
 	hub := s.GetSessionStreamHub()
 	pending := hub.PendingSessionSnapshot(sessionKey)
 	s.notifySessionDone(rootID, sessionKey, requestID, pending)
-	hub.ClearSessionPending(sessionKey)
+	// 广播必须在清之前：ClearSessionPending 有超时兜底，但广播是前端唯一的
+	// session.done 来源。如果先清再广播，清卡住时广播永远发不出去。
 	hub.BroadcastSessionDone(rootID, sessionKey, requestID)
+	hub.ClearSessionPending(sessionKey)
 }
 
 func (s *AppContext) BroadcastScheduledTaskDone(rootID, taskID, taskName, sessionKey, summary string) {

@@ -1904,5 +1904,36 @@ groups:
       - web/src/components/task/TaskBoardView.tsx
       - web/src/components/file/DefaultListView.tsx
       - web/tests/task-board-view.test.mjs
+
+  - id: G-AY
+    title: pending 信号三层兜底（ClearSessionPending 超时 / LastEventAt 超时 / 前端轮询降级）
+    kind: fix
+    symptom: |
+      对话完成后仍显示「正在生成」+ 停止键，用户以为还在跑，实际早已完成。
+      根因：BroadcastSessionDone 中 ClearSessionPending 自旋无超时，replay 客户端排不空时
+      卡住，session.done 广播永远发不出去，前端 pendingSessions[key].Active 永远 true。
+    why: |
+      三层兜底，每层独立生效：
+      ① 服务端 ClearSessionPending 加 2 秒超时 + 广播挪到清之前（必修）；
+      ② 服务端 SessionPendingState 添加 LastEventAt 字段 + PendingSessionSnapshot 30 秒超时检查（兜底）；
+      ③ 前端 lastStreamEventAtRef 跟踪 + 轮询连续 3 周期（15 秒）无事件则本地降级（兜底）。
+      三层共享同一组文件，合上游时要么全留要么全弃。
+    boundary: |
+      「会话完成后 pending 信号必须消失」这一行为的实现方式。合上游时若退回
+      「ClearSessionPending 无超时自旋」或「pending 状态纯派生自服务端」，就又会卡住。
+    tests:
+      - web/tests/e2e-pending-signal.test.mjs
+      - web/tests/pending-single-source.test.mjs
+    files:
+      - server/internal/api/stream_hub.go
+      - server/internal/api/appcontext.go
+      - web/src/App.tsx
+      - web/src/app/useRealtimeEvents.ts
+    anchors:
+      - server/internal/api/stream_hub.go:ClearSessionPending
+      - server/internal/api/stream_hub.go:SessionPendingState
+      - server/internal/api/appcontext.go:BroadcastSessionDone
+      - web/src/App.tsx:lastStreamEventAtRef
+      - web/src/App.tsx:refreshMultiProjectReplyingSessions
     tests:
       - web/tests/task-board-view.test.mjs

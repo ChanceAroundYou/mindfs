@@ -20,6 +20,7 @@ import { applyNodesFromServer, syncNodesFromServer } from "../services/net/nodeR
 import { sessionService, setCachedSessionRelatedFiles } from "../services/session";
 import { mapManagedRootsToEntries, normalizeUpdateState } from "./appMisc";
 import { rootNodeKey } from "./appPath";
+import { scopeSessionKey } from "../shared/scope";
 import { hasSessionExchanges, normalizeMode, toSessionItem } from "./appSession";
 import { normalizeFastService } from "./appTask";
 import type { Exchange, SessionQueueItem } from "./appSession";
@@ -44,6 +45,7 @@ export type RealtimeEventsContext = {
     drawerSessionByRootRef: RefObject<Record<string, SessionItem | null>>;
     fileRef: RefObject<FilePayload | null>;
     invalidTreeCacheKeysRef: RefObject<Set<string>>;
+    lastStreamEventAtRef: RefObject<Record<string, number>>;
     loadedSessionRef: RefObject<Record<string, boolean>>;
     managedRootByIdRef: RefObject<Record<string, ManagedRootPayload>>;
     managedRootByKeyRef: RefObject<Record<string, ManagedRootPayload>>;
@@ -154,6 +156,7 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
       drawerSessionByRootRef,
       fileRef,
       invalidTreeCacheKeysRef,
+      lastStreamEventAtRef,
       loadedSessionRef,
       managedRootByIdRef,
       managedRootByKeyRef,
@@ -668,6 +671,10 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
           handleSessionStreamDone(activeRoot, streamKey);
           break;
       }
+      // 第三层兜底：记录该会话最后一次收到 stream 事件的时间。
+      // 轮询连续 N 周期无事件则本地降级为不 pending。
+      const scopeKey = scopeSessionKey(wsNid, activeRoot, streamKey);
+      lastStreamEventAtRef.current[scopeKey] = Date.now();
     };
     const handleSlashCommandStream = (payload: any) => {
       const wsNid2 = String((payload as any)?._nodeId || (payload as any)?.nodeId || "").trim();

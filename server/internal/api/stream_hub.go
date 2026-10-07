@@ -59,6 +59,10 @@ type SessionPendingState struct {
 	NextEventSeq    uint64
 	Summary         string
 	UpdatedAt       time.Time
+	// LastEventAt 记录最后一次收到事件的时间，用于超时兜底：
+	// 如果 LastEventAt 超过 30s 没有更新，说明会话已结束但 ClearSessionPending 没跑，
+	// 此时 PendingSessionSnapshot 应该返回 Active=false，让前端轮询能救回来。
+	LastEventAt time.Time
 }
 
 type ClientStreamStatus string
@@ -87,6 +91,7 @@ type PendingSessionSnapshot struct {
 	SessionTitle string
 	Summary      string
 	UpdatedAt    time.Time
+	Active       bool
 }
 
 type replayStep struct {
@@ -677,11 +682,26 @@ func (h *StreamHub) PendingSessionSnapshot(sessionKey string) PendingSessionSnap
 	if state == nil {
 		return PendingSessionSnapshot{}
 	}
+	// 超时兜底：如果 LastEventAt 超过 30s 没有更新，说明会话已结束但
+	// ClearSessionPending 没跑（例如 BroadcastSessionDone 卡住），
+	// 此时返回 Active=false，让前端轮询能救回来。
+	// 30s 是经验值：正常回合的事件间隔是毫秒级，30s 足够长以覆盖慢网络。
+	const staleTimeout = 30 * time.Second
+	if state.Active && !state.LastEventAt.IsZero() && time.Since(state.LastEventAt) > staleTimeout {
+		return PendingSessionSnapshot{
+			RootID:       state.RootID,
+			SessionTitle: state.SessionTitle,
+			Summary:      state.Summary,
+			UpdatedAt:    state.UpdatedAt,
+			Active:       false,
+		}
+	}
 	return PendingSessionSnapshot{
 		RootID:       state.RootID,
 		SessionTitle: state.SessionTitle,
 		Summary:      state.Summary,
 		UpdatedAt:    state.UpdatedAt,
+		Active:       state.Active,
 	}
 }
 
@@ -691,12 +711,13 @@ func (h *StreamHub) AppendReplyEvent(sessionKey string, event StreamEvent) Strea
 	state := h.ensurePendingSessionLocked(sessionKey)
 	state.NextEventSeq++
 	event.EventCursor = formatEventCursor(state.BaseExchangeSeq, state.NextEventSeq)
+	now := time.Now().UTC()
+	state.UpdatedAt = now
+	state.LastEventAt = now
 	if coalesceUserShellStreamEvent(state, event) {
-		state.UpdatedAt = time.Now().UTC()
 		return event
 	}
 	state.ReplyingList = append(state.ReplyingList, cloneEvent(event))
-	state.UpdatedAt = time.Now().UTC()
 	if event.Type == "message_chunk" {
 		if chunk, ok := event.Data.(agenttypes.MessageChunk); ok {
 			state.Summary = lastRunes(state.Summary+chunk.Content, notify.BodyMaxRunes)
@@ -865,7 +886,16 @@ func (h *StreamHub) ClearSessionPending(sessionKey string) {
 	if blank(sessionKey) {
 		return
 	}
+	// 超时兜底：replay 客户端排不空时不能永久卡住 BroadcastSessionDone。
+	// 2s 是经验值：正常 replay 排空是毫秒级，2s 足够慢网络下完成；
+	// 超过 2s 说明客户端已失联（后台标签页、WS 写阻塞、连接已断但清理未跑），
+	// 此时必须强制清，否则 session.done 永远发不出去、pending 永远 true。
+	const timeout = 2 * time.Second
+	deadline := time.Now().Add(timeout)
 	for h.HasReplayClients("", sessionKey) {
+		if time.Now().After(deadline) {
+			break
+		}
 		time.Sleep(10 * time.Millisecond)
 	}
 	h.mu.Lock()

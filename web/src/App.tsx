@@ -333,6 +333,9 @@ export function App({ onGoHome }: AppProps) {
   const multiProjectLoadSeqRef = useRef(0);
   const [multiProjectPendingByKey, setMultiProjectPendingByKey] = useState<Record<string, boolean>>({});
   const multiProjectPendingRef = useRef<Record<string, boolean>>({});
+  // 第三层兜底：跟踪每个会话最后一次收到 session.stream 事件的时间。
+  // 轮询连续 N 周期无事件则本地降级为不 pending。
+  const lastStreamEventAtRef = useRef<Record<string, number>>({});
   // 置顶只用 store 一份（services/pins.ts），按**项目 id**（不含节点）分组盖到列表上。
   //
   // 为什么 worker 的列表也要盖：置顶是控制面，worker 上 /api/pins 是 403，它自己的
@@ -3653,6 +3656,17 @@ export function App({ onGoHome }: AppProps) {
     // 整体替换会让切节点时旧节点在跑的会话当场全灭（切节点 → nodes-changed →
     // 本函数 → 新响应里没有旧节点 → 灯全没）。
     const next = mergeReplyingStateByNode(multiProjectPendingRef.current, fresh, okNodeIds);
+    // 第三层兜底：连续 N 周期无 stream 事件则本地降级为不 pending。
+    // 服务端 ClearSessionPending 卡住时，前端轮询救不回来，只能本地降级。
+    const STALE_THRESHOLD_MS = REMOTE_REPLY_POLL_MS * 3; // 3 个周期 = 15 秒
+    const now = Date.now();
+    for (const key of Object.keys(next)) {
+      if (!next[key]) continue;
+      const lastEventAt = lastStreamEventAtRef.current[key];
+      if (lastEventAt && now - lastEventAt > STALE_THRESHOLD_MS) {
+        delete next[key];
+      }
+    }
     multiProjectPendingRef.current = next;
     setMultiProjectPendingByKey(next);
     setMultiProjectSessionGroups((groups) => applyPendingToMultiProjectGroups(groups, next));
@@ -7168,6 +7182,7 @@ export function App({ onGoHome }: AppProps) {
       fileRef,
       invalidTreeCacheKeysRef,
       loadedSessionRef,
+      lastStreamEventAtRef,
       managedRootByIdRef,
       managedRootByKeyRef,
       managedRootIdsRef,
