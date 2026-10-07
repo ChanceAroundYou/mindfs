@@ -47,6 +47,7 @@ groups:
       - docs/multi-node-control-plane.md
       - docs/multi-user-prd.md
       - docs/plans/worktree-finish-stage-plan.md
+      - docs/plans/frontend-split-refactor.md
       - docs/session-flicker-root-cause.md
       - docs/session-streaming-rework.md
       - docs/upstream-customizations.md
