@@ -443,7 +443,7 @@ groups:
       fork 完全独立（不再写 parent_session_key），仅 fork 扁平为顶级。
       转录重复区块会导致重复交换，必须按条目 uuid 去重。
       徽标一条：列表行是 meta-only 的（G-E），agent 只能由 InferAgentFromSession 的
-      「AgentCtxSeq 恰好单键」兜底推出，而它靠 session_agent_bindings 回填 —— 绑定若只在
+      「AgentCtxSeq 兜底」推出，而它靠 session_agent_bindings 回填 —— 绑定若只在
       回合结束时写，首轮期间列表行 agent 就是空，前端 AgentIcon 落回 'AI'。
       所以建会话时就要写一行占位绑定，约定 agent_session_id='' 表示「agent 已选定、尚无转录」。
       这条约定与 G-Q 的空 id 守卫是同一块：upsertExternalSessionNameUnsafe 空 id 直接 return、
@@ -451,10 +451,17 @@ groups:
       同 agent 会话会串名。合上游时两者必须一起留。
       占位行的 agent_ctx_seq 必须写 0：非 0 会被 prependSwitchHint 当成「已同步到此行」而
       吞掉 agent 切换提示。
+      **多绑定会话取 ctx_seq 最大的那个**（2026-10-07）：中途换过 agent 的会话有**两行**绑定，
+      旧实现只处理 `len(AgentCtxSeq) == 1`，对双绑定一律返回空串 —— 实测「工作台上大多数用
+      dsh 的任务没有 agent 徽标」正是它，因为 dsh 都是在已有 claude 会话里中途切过去的。
+      判据用 ctx_seq 而不是遍历顺序：它是会话的行数游标（UpdateAgentState 写 len(Exchanges)），
+      谁最大谁最后写过这一串 exchange。平局（两个都还是 0）按名字定序 —— 不定序的话 map
+      遍历顺序会让同一个会话的徽标在两次列表刷新之间来回跳。
     anchors:
       - 'web/src/components/ExternalSessionList.tsx:CUSTOM(G-Q)'
       - 'server/internal/agent/codex/importer.go:func cwdMatchesRoot('
       - 'server/internal/session/manager.go:空 agent_session_id 表示「agent 已选定、尚无转录」'
+      - 'server/internal/session/types.go:func InferAgentFromSession'
     files:
       - server/internal/agent/claude/importer.go
       - server/internal/agent/claude/importer_test.go
@@ -465,6 +472,7 @@ groups:
       - server/internal/api/usecase/session.go
       - server/internal/api/session_created_broadcast_test.go
       - server/internal/session/manager.go
+      - server/internal/session/types.go
       - server/internal/session/manager_test.go
       - web/src/components/ExternalSessionList.tsx
       - web/src/app/useExternalSessionImport.ts
@@ -685,8 +693,14 @@ groups:
       applySession），并在读端用 sessionJump 的 buildSessionJumpTarget 强制以卡片 root 为准 ——
       缺了任一半，二次跳转就会命中「无主」缓存对象，而 handleSelectSession 的
       `session.root_id || 当前根` 兜底会把它认成当前项目。
+      agent 徽标一条（2026-10-07）：卡片角上那个小徽标读 `sessionByKey[main_session_key].agent`，
+      而 `sessionByKey` 只装**当前 root** 的会话，工作台列的任务大多不属于当前项目 —— 传它进去
+      等于所有跨项目卡片都落回 AgentIcon 的「AI」占位。改为传 `boardSessionByKey`
+      （= `multiProjectSessionGroups` 的会话 ∪ `sessionByKey`，当前 root 覆盖），不新增第二条扇出。
+      另一半在服务端（InferAgentFromSession 对双绑定会话返回空串，见 G-Q）。
     anchors:
       - 'web/src/app/sessionJump.ts:export function buildSessionJumpTarget'
+      - 'web/src/App.tsx:const boardSessionByKey = useMemo'
       - 'web/src/App.tsx:CUSTOM(G-Z)'
     files:
       - web/src/App.tsx
@@ -1098,6 +1112,12 @@ groups:
       （实测单条记录 1052B → 372B，会话列表 149KB → 85KB）。
       跨项目看板 `GET /api/tasks/overview` 丢掉卡片从不读取的 `stages` / `prompt_template`
       （`task.stages.prompt_template` 一项就占 14.4%）。
+      **但这张投影表不是「只留 id」**：`create_worktree` / `worktree_path` / `worktree_built` /
+      `worktree_missing` 四个字段必须留 —— 卡片上的 worktree 徽标就靠它们推（`TaskCardRows`
+      的 `worktreeTagState`）。2026-10-07 实测「工作台所有任务都显示没有 worktree」就是投影
+      把它们丢了，而当时的代码注释还断言「工作台对 worktree_* 一个读取都没有」，是错的。
+      加字段时同步看 `http_tasks_overview_test.go` 的第 ③/④ 段：③ 列的是必须丢的，
+      ④ 列的是必须留的 —— 往③里塞 worktree 字段就是把这个 bug 写回去。
       详情类端点（agents / task-templates / git status / tree / 看板 tasks / replying-sessions）
       走 `respondJSONConditional`：**只协商、不瘦身** —— 它们的 `dirty_count: 0`、空数组、
       `stages`/`events` 流水都是承重信息，删键即静默丢数据（看板详情面板直接读列表项里的
@@ -1127,6 +1147,7 @@ groups:
       - server/internal/api/helpers.go:func respondJSONList
       - server/internal/api/helpers.go:func respondJSONConditional
       - server/internal/api/http.go:respondJSONConditional
+      - server/internal/api/http_tasks.go:func projectOverviewTask
       - web/src/services/api.ts:304
       - web/src/services/api.ts:conditionalRequestBytesMax
       - web/src/services/e2ee.ts:parseProtectedJSONResponseWithSize
@@ -1482,16 +1503,19 @@ groups:
       路径比较必须先解析符号链接（EvalSymlinks）；MainCheckoutPath 的返回值语义不变
       （对主 checkout 返回调用方给的路径），只在比较处统一。
     tests:
-      - server/internal/gitview/gitview_test.go:TestSamePathResolvesSymlinks
-      - server/internal/gitview/gitview_test.go:TestValidateTargetDoesNotSelfBlockViaSymlink
-      - server/internal/gitview/gitview_test.go:TestListWorktreesCurrentViaSymlink
+      # 测试清单只收**文件路径**（check-upstream 拿整条去 os.Stat）；具体测试名写在
+      # docs/upstream-customizations.md 的针对性测试表里 —— 早先这里写成
+      # `gitview_test.go:TestX`，锚点格式套到了 tests 上，门禁直接判「测试不存在」。
+      # 本文件里钉住的是 TestSamePathResolvesSymlinks /
+      # TestValidateTargetDoesNotSelfBlockViaSymlink / TestListWorktreesCurrentViaSymlink。
+      - server/internal/gitview/gitview_test.go
     files:
       - server/internal/gitview/gitview.go
       - server/internal/gitview/worktree_finish.go
       - server/internal/gitview/gitview_test.go
   - id: G-AW
     title: 工作台移除 attention bar + 统一 task card wrapper
-    kind: feat
+    kind: feature
     symptom: |
       工作台顶部有一堆小的灰色卡片（WorkspaceAttentionBar），只显示项目任务阶段，
       下面的任务卡片已经覆盖了它的信息。任务小卡片（WorkspaceTaskRow）和看板卡

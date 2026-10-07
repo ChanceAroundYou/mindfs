@@ -1378,6 +1378,71 @@ func TestManagerCreateBindsAgentForListInference(t *testing.T) {
 	}
 }
 
+// 中途换过 agent 的会话有两个绑定行，列表路径必须报出**最近在用**的那个。
+//
+// 2026-10-07 实测：工作台上「大多数用 dsh 的任务没有 agent 徽标」。dsh 恰恰都是在已有
+// claude 会话里中途切过去的，必然双绑定 —— 旧的 `len(AgentCtxSeq) == 1` 回退对它们一律
+// 返回空串，徽标落回 AgentIcon 的「AI」文字占位。
+func TestManagerListInferAgentForSwitchedSession(t *testing.T) {
+	root := rootfs.NewRootInfo("mindfs", "mindfs", t.TempDir())
+	manager := NewManager(root)
+	ctx := context.Background()
+
+	created, err := manager.Create(ctx, CreateInput{Type: TypeChat, Agent: "claude", Name: "Switched"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 先在 claude 上跑一段（ctx_seq 是会话行数游标，40 行）
+	if err := manager.UpdateAgentState(ctx, created, "claude", 40, "claude-id"); err != nil {
+		t.Fatal(err)
+	}
+	// 中途切到 dsh：切换路径真正用的是 EnsureAgentBinding（先建 0 的占位行），
+	// 本轮跑完再由 UpdateAgentState 把游标推到 44。
+	if err := manager.EnsureAgentBinding(ctx, created.Key, "dsh"); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.UpdateAgentState(ctx, created, "dsh", 44, "dsh-id"); err != nil {
+		t.Fatal(err)
+	}
+
+	// 必须走列表路径：只有它从库里重读 meta + bindings，exchanges 为空 —— 正是出 bug 的那条路。
+	items, err := manager.List(ctx, ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var listed *Session
+	for _, item := range items {
+		if item.Key == created.Key {
+			listed = item
+			break
+		}
+	}
+	if listed == nil {
+		t.Fatalf("created session %s missing from list", created.Key)
+	}
+	if len(listed.Exchanges) != 0 {
+		t.Fatalf("列表路径不该加载 exchanges，否则测不到 AgentCtxSeq 回退（got %d 条）", len(listed.Exchanges))
+	}
+	if got := InferAgentFromSession(listed); got != "dsh" {
+		t.Fatalf("双绑定会话列表 agent = %q, want %q（最近写入 exchange 的那个 agent）", got, "dsh")
+	}
+}
+
+// 平局（两个绑定都还是 0，即切换后第一轮还没跑完）不能靠 map 遍历顺序定 ——
+// 同一份数据两次调用必须报同一个 agent，否则徽标会在两次列表刷新之间来回跳。
+func TestInferAgentFromSessionIsDeterministicOnTie(t *testing.T) {
+	s := &Session{AgentCtxSeq: map[string]int{"claude": 0, "dsh": 0}}
+	first := InferAgentFromSession(s)
+	for i := 0; i < 50; i++ {
+		if got := InferAgentFromSession(s); got != first {
+			t.Fatalf("平局时推断不稳定：%q vs %q", got, first)
+		}
+	}
+	if first == "" {
+		t.Fatal("平局也必须报出一个 agent，不能落回空串（空串就是「AI」占位）")
+	}
+}
+
 func TestManagerCreateBindsAgentWithoutTranscriptID(t *testing.T) {
 	root := rootfs.NewRootInfo("mindfs", "mindfs", t.TempDir())
 	manager := NewManager(root)

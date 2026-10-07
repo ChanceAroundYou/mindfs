@@ -7862,6 +7862,22 @@ export function App({ onGoHome }: AppProps) {
 	    return acc;
 	  }, {}), [sessions]);
 
+	  // 看板/工作台的卡片读这张表拿会话的 agent（卡片角上的小徽标）。sessionByKey 只装
+	  // **当前 root** 的会话，而工作台是跨项目视图 —— 它列的任务大多不属于当前项目，
+	  // 取不到就落回 AgentIcon 的「AI」文字占位（2026-10-07 实测「大多数用 dsh 的任务
+	  // 没有 agent 徽标」）。多项目分组本来就把跨项目/跨节点的会话拉全了，并进来即可，
+	  // 不需要第二条扇出。当前 root 的会话放后面覆盖，同键以它为准。
+	  const boardSessionByKey = useMemo(() => {
+	    const merged: Record<string, SessionItem> = {};
+	    for (const group of multiProjectSessionGroups) {
+	      for (const session of group.sessions || []) {
+	        const key = session.key || session.session_key || "";
+	        if (key) merged[key] = session;
+	      }
+	    }
+	    return { ...merged, ...sessionByKey };
+	  }, [multiProjectSessionGroups, sessionByKey]);
+
 	  const selectedKanbanTask = useMemo(() => {
 	    if (!selectedKanbanTaskId) return null;
 	    // 看板命中优先：那一路本来带模板筛选与状态分组的语义。
@@ -8938,7 +8954,7 @@ export function App({ onGoHome }: AppProps) {
       setCollapsedKanbanColumns={setCollapsedKanbanColumns}
       taskFirstInputById={taskFirstInputById}
       taskSessionKeysById={taskSessionKeysById}
-      sessionByKey={sessionByKey}
+      sessionByKey={boardSessionByKey}
       getDisplayNodeColor={getDisplayNodeColor}
       handleSelectKanbanTask={handleSelectKanbanTask}
       handleMoveKanbanTask={handleMoveKanbanTask}

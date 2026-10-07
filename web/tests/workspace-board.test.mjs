@@ -379,4 +379,36 @@ for (const key of [
   assert.ok(!en.includes(`"${key}"`), `${key} should be gone from en-US`);
 }
 
+// 13) 卡片角上的 agent 徽标靠 sessionByKey 找会话。工作台是跨项目视图，它列的任务
+//     大多不属于当前项目，而 sessionByKey 只装当前 root 的会话 —— 取不到就落回
+//     AgentIcon 的「AI」文字占位（2026-10-07 实测「大多数用 dsh 的任务没有 agent 徽标」）。
+//     必须传并进多项目分组的那张表，且**不能**退化成当前 root 那张。
+assert.match(
+  app,
+  /const boardSessionByKey = useMemo\(\(\) => \{[\s\S]*?multiProjectSessionGroups[\s\S]*?\.\.\.sessionByKey[\s\S]*?\}, \[multiProjectSessionGroups, sessionByKey\]\);/,
+  "boardSessionByKey must merge multiProjectSessionGroups into sessionByKey (current root wins)",
+);
+assert.match(
+  app,
+  /sessionByKey=\{boardSessionByKey\}/,
+  "TaskBoardView must get the merged map — the raw sessionByKey only holds the current root",
+);
+assert.doesNotMatch(
+  app,
+  /sessionByKey=\{sessionByKey\}/,
+  "passing the current-root-only map is the bug: cross-project cards fall back to the 'AI' placeholder",
+);
+// 跨项目任务在本机没有 taskDetailsById 那一行，会话键只能从任务自带字段兜。
+assert.match(
+  taskRow,
+  /sessionKeysById\[task\.id\]\?\.length\s*\?\s*sessionKeysById\[task\.id\]\s*:\s*task\.main_session_key/,
+  "the workspace card must fall back to main_session_key (workspace never fetches task details)",
+);
+// 徽标读的就是 session.agent，这是上面两张表存在的唯一理由。
+assert.match(
+  cardRows,
+  /agentName=\{session\?\.agent \|\| ""\}/,
+  "the card badge resolves the agent from the session map",
+);
+
 console.log("workspace-board.test.mjs: OK");

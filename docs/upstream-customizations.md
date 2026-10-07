@@ -320,7 +320,8 @@
 | `f746124` | `web/src/components/SessionList.tsx` | 计数徽标移除、统一会话样式；`fork` 扁平收敛 |
 | `4c59fcf` | `server/internal/api/usecase/external_sessions.go:LookupAliasForAgent` + `web/src/components/SessionList.tsx:重命名按钮` | 导入前 `alias` 回放、末条用户消息 20 字短标题、内联 `✓/×` |
 | `ab8cfed` | `server/internal/session/manager.go:不再写 parent_session_key` + `server/app/server.go:启动归一化` + `server/internal/api/usecase/session.go` + `server/internal/agent/claude/session.go:external_name` | fork 完全独立、历史原子归一化、关联文件回流、外部名称按 `agent+agent_session_id` 落盘 |
-| 建会话即写 agent 绑定（`EnsureAgentBinding`） | `server/internal/session/manager.go:Create/EnsureAgentBinding/ensureAgentBindingUnsafe` + `server/internal/api/usecase/session.go:SendMessage` | **可见症状**：状态圆圈右下角的 agent 徽标（会话列表、看板任务卡片）在首轮跑完前只显示占位「AI」。原因：列表行是 meta-only 的（G-E），agent 只能由 `InferAgentFromSession` 的「`AgentCtxSeq` 恰好单键」兜底推出，而它靠 `session_agent_bindings` 回填 —— 绑定原先**只在回合结束**时写。**为什么必须保留的这一条**：与 G-Q 的空 id 守卫是同一块改动面 —— 占位行 `agent_session_id=''`，靠 `upsertExternalSessionNameUnsafe`（空 id 直接 return）和 `lookupSessionAliasForAgentUnsafe`（空 id → not-found）挡住，否则两个都没跑过的同 agent 会话会按空 id 串成同一个别名。合上游时两者要么一起留、要么一起弃。占位行的 `agent_ctx_seq` 必须是 0：非 0 会被 `prependSwitchHint` 当成「已同步到此行」而吞掉 agent 切换提示 |
+| 建会话即写 agent 绑定（`EnsureAgentBinding`） | `server/internal/session/manager.go:Create/EnsureAgentBinding/ensureAgentBindingUnsafe` + `server/internal/api/usecase/session.go:SendMessage` | **可见症状**：状态圆圈右下角的 agent 徽标（会话列表、看板任务卡片）在首轮跑完前只显示占位「AI」。原因：列表行是 meta-only 的（G-E），agent 只能由 `InferAgentFromSession` 的「`AgentCtxSeq` 兜底」推出，而它靠 `session_agent_bindings` 回填 —— 绑定原先**只在回合结束**时写。**为什么必须保留的这一条**：与 G-Q 的空 id 守卫是同一块改动面 —— 占位行 `agent_session_id=''`，靠 `upsertExternalSessionNameUnsafe`（空 id 直接 return）和 `lookupSessionAliasForAgentUnsafe`（空 id → not-found）挡住，否则两个都没跑过的同 agent 会话会按空 id 串成同一个别名。合上游时两者要么一起留、要么一起弃。占位行的 `agent_ctx_seq` 必须是 0：非 0 会被 `prependSwitchHint` 当成「已同步到此行」而吞掉 agent 切换提示 |
+| 多绑定会话取 ctx_seq 最大者（2026-10-07） | `server/internal/session/types.go:InferAgentFromSession` | **可见症状**：工作台上「大多数用 dsh 的任务没有 agent 徽标」。中途换过 agent 的会话有**两行**绑定，旧实现只处理 `len(AgentCtxSeq) == 1`，对双绑定一律返回空串 → `AgentIcon` 落回「AI」文字占位。而 dsh 恰恰都是在已有 claude 会话里中途切过去的，必然双绑定，所以「大多数 dsh」正好全是这种。判据用 `agent_ctx_seq`（会话的行数游标，`UpdateAgentState` 写的是 `len(Exchanges)`）：谁最大谁最后写过这一串 exchange。**平局（两个都还是 0，即切换后第一轮还没跑完）按名字定序** —— 不定序的话 map 遍历顺序会让同一个会话的徽标在两次列表刷新之间来回跳。只影响 meta-only 的列表路径：其它调用点都加载了 exchanges，走第一个分支（最后一轮 exchange 的 agent），行为不变 |
 
 **针对性测试（防覆盖，改动时同步维护）**
 
@@ -330,6 +331,8 @@
 | 同上 → `TestManagerCreateBindsAgentWithoutTranscriptID` | 占位行 `AgentSessionID == ""` 且 `AgentCtxSeq == 0`；随后 `UpdateAgentState(...,"real-id")` **覆盖**同一行（行数仍为 1），列表仍报 claude |
 | 同上 → `TestManagerEnsureAgentBindingIsIdempotent` | 回合开始的补写不得把已有真实 id / ctx_seq 打回空；换 agent 时老绑定不动、新 agent 立刻有占位行；空 agent 静默跳过 |
 | 同上 → `TestManagerEnsureAgentBindingDoesNotLeakEmptyIDIntoAliases` | 空 `agent_session_id` 不得进 `session_external_names`（两个同 agent 的空 id 会话不能串名），`LookupAliasForAgent(agent, "")` 必须为 false |
+| 同上 → `TestManagerListInferAgentForSwitchedSession` | 双绑定（claude 40 行 → 中途切 dsh 44 行）**走列表路径**断言 `InferAgentFromSession == "dsh"`。旧实现这条必红（返回空串）。同时断言列表行的 `Exchanges` 为空 —— 否则测不到 `AgentCtxSeq` 回退那条分支，等于没测 |
+| 同上 → `TestInferAgentFromSessionIsDeterministicOnTie` | 两个绑定都是 0 时同一份数据反复推断必须报同一个 agent（不能随 map 遍历顺序跳），且不得落回空串 |
 | `api/session_created_broadcast_test.go` → `TestEnsureAgentSessionBroadcastsSessionCreated` | 看板建会话那条路径（`EnsureAgentSession`）确实把 `Stage.Agent` 交给了 `Create`，且 `session.created` 的列表行带 `agent:"claude"`。**注意**：这条**不**是徽标 bug 的锚点（广播用的是内存对象，`AgentCtxSeq` 在 Create 里就已填好，删掉绑定写入它照样绿）；它钉的是「路径得先把 agent 传进来」——把 `Agent: exec.Stage.Agent` 改成空即变红（已做变异验证）。真正的 bug 锚点是上面第一个 `manager_test.go` 那条 |
 
 ### G-R 模型识别与流式透传
@@ -511,6 +514,16 @@
   只能由前端自己钉住 —— 写缓存时补请求根（`restoreActiveSession` 的窗口/全量两分支 +
   `handleSelectSession` 的 `applySession`），读端用 `web/src/app/sessionJump.ts` 的
   `buildSessionJumpTarget` 以卡片 root 覆盖。上游没有这一层，退回上游实现症状立刻复现。
+- **卡片角上的 agent 徽标（2026-10-07）**：可见症状是「工作台上大多数用 dsh 的任务没有 agent
+  徽标」。卡片读的是 `sessionByKey[main_session_key].agent`，而 `sessionByKey` 只装**当前
+  root** 的会话 —— 工作台列的任务大多不属于当前项目，传它进去等于所有跨项目卡片都落回
+  `AgentIcon` 的「AI」文字占位。改为传 `boardSessionByKey`（`App.tsx`）=
+  `multiProjectSessionGroups` 的会话 ∪ `sessionByKey`，**当前 root 覆盖**。
+  刻意不新增第二条扇出：多项目分组本来就把跨项目/跨节点的会话拉全了，并进来即可。
+  另一半在服务端 —— `InferAgentFromSession` 对双绑定会话返回空串（见 G-Q），
+  两处都得在，只修一处徽标仍是「AI」。
+  守卫：`web/tests/workspace-board.test.mjs` 第 13 段（断言传的是合并表、**不是** `sessionByKey`，
+  且 `WorkspaceTaskRow` 保留 `main_session_key` 兜底 —— 工作台从不拉任务详情）。
 
 ### G-AA 前端 App.tsx 模块化重构
 
@@ -608,6 +621,12 @@
   键都有防御性兜底，`related_worktree` 是唯一的 `=== null` 用法且其消费者对 `null`/`undefined`
   一视同仁）、按内容算 ETag 支持 `If-None-Match` 回 304；跨项目看板不返回卡片从不读取的
   `stages` / `prompt_template`（`task.stages.prompt_template` 占 14.4%）。
+- **但这张投影表不是「只留 id」**（2026-10-07 修正）：`create_worktree` / `worktree_path` /
+  `worktree_built` / `worktree_missing` 四个字段**必须留** —— 卡片上的 worktree 徽标就靠它们推
+  （`TaskCardRows` 的 `worktreeTagState`）。实测「工作台所有任务都显示没有 worktree」就是投影把
+  它们丢了，而当时这里的注释还断言「工作台对 worktree_* 一个读取都没有」，是错的。
+  加字段时同步看 `http_tasks_overview_test.go` 的第 ③/④ 段：③ 列的是**必须丢**的，
+  ④ 列的是**必须留**的 —— 往 ③ 里塞 worktree 字段就是把这个 bug 写回去。
 - 两个 responder，共用同一段协商逻辑（`writeJSONWithETag`）：
   - `respondJSONList` = **瘦身 + 协商**，只给真正的列表端点（会话列表单项目/`multi_root`、任务总览）。
   - `respondJSONConditional` = **只协商、不动载荷**，给「载荷本身就是详情」的端点：
@@ -658,6 +677,12 @@
   `conditional-request.test.mjs` 同时钉住单会话详情**必须**走 `respondJSONConditional`
   （既不能退回无条件 `respondJSON`，也不能被换成 `respondJSONList`），以及客户端
   条目数 + 字节预算两条线、ETag 与载荷同生共死。
+  `server/internal/api/http_tasks_overview_test.go` 钉住 `/api/tasks/overview` 投影的**两侧边界**：
+  ③ 段列「必须丢」（`stages` / `aux_flags` / `labels` …），④ 段列「必须留」——
+  `create_worktree` / `worktree_path` / `worktree_built` / `worktree_missing` 四个 worktree 字段
+  必须在响应里且带值（卡片徽标读它们），并断言投影后体积不到全量的一半。
+  **只断言「变小了」是不够的**：把投影改成原样下发 `items` 会绿，而把 worktree 字段丢回 ③ 段
+  也照样绿 —— 那正是 2026-10-07 那次「工作台所有任务都没有 worktree」。
 
 ### G-AO 自动重载观测
 
