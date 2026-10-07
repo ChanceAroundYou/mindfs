@@ -52,6 +52,7 @@ groups:
       - docs/upstream-customizations.md
       - docs/upstream-customizations.yaml
       - docs/workspace-design.md
+      - release-notes.md
     tests: []
 
   # ── 后端：HTTP / 安全 / 存储 ──────────────────────────────────────
@@ -84,7 +85,7 @@ groups:
       文件 raw 404 做 60s 缓存避免重试风暴，成功缓存 + 并发去重，
       @json-render 懒加载。上游没有这层，退回后大文件与失败重试都会拖垮前端。
     files:
-      - web/src/components/MarkdownViewer.tsx
+      - web/src/components/file/MarkdownViewer.tsx
       - web/src/services/file.ts
     tests:
       - web/tests/document-preview.test.mjs
@@ -99,12 +100,12 @@ groups:
       「API 层不做鉴权」是用户明确决策（多账户=多配置档，不是安全边界）。
       上游的 e2ee 解密/Proof 校验与 CORS 白名单一旦被合回来，所有前端请求立即失效。
     anchors:
-      - 'web/src/services/e2ee.ts:CUSTOM(G-I)'
+      - 'web/src/services/net/e2ee.ts:CUSTOM(G-I)'
     files:
       - server/internal/api/http.go
       - server/internal/api/http_e2ee_cors_test.go
-      - web/src/services/e2ee.ts
-      - web/src/services/api.ts
+      - web/src/services/net/e2ee.ts
+      - web/src/services/net/api.ts
       - web/src/services/connection.ts
       - web/src/services/storage.ts
     tests:
@@ -126,8 +127,8 @@ groups:
       - server/internal/api/http_nodes.go
       - server/internal/nodes/store.go
       - server/internal/nodes/store_test.go
-      - web/src/services/prefix.ts
-      - web/src/services/nodeBase.ts
+      - web/src/services/net/prefix.ts
+      - web/src/services/net/nodeBase.ts
       - web/vite.config.ts
       - web/index.html
       - web/.env
@@ -137,7 +138,7 @@ groups:
       - web/tests/deploy-prefix.test.mjs
       - web/tests/node-url-normalize.test.mjs
     anchors:
-      - web/src/services/prefix.ts:normalize
+      - web/src/services/net/prefix.ts:normalize
 
   - id: G-V
     title: 控制面 / 数据面分离（control / worker 角色）
@@ -158,14 +159,14 @@ groups:
       - cli/cmd/startup_config_test.go
       - server/cmd/mindfs-server/main.go
       - server/internal/api/http_node_role_test.go
-      - web/src/services/controlPlane.ts
+      - web/src/services/net/controlPlane.ts
     tests:
       - server/internal/nodeinfo/role_test.go
       - cli/cmd/startup_config_test.go
       - web/tests/control-plane-routing.test.mjs
     anchors:
       - server/internal/nodeinfo/role.go:RoleWorker
-      - web/src/services/controlPlane.ts:controlPath
+      - web/src/services/net/controlPlane.ts:controlPath
 
   - id: G-E
     title: 会话存储后端性能（游标增量 / WAL / 窗口读）
@@ -210,12 +211,12 @@ groups:
       （G-D 原先单列，其改动面（FileTree/App/useRefreshSpin）与本组完全重合，
       且没有独立测试可守，故并入——保留 G-D 号仅作历史索引。）
     anchors:
-      - 'web/src/components/MarkdownViewer.tsx:MarkdownCodeBlockMemo'
+      - 'web/src/components/file/MarkdownViewer.tsx:MarkdownCodeBlockMemo'
     files:
       - web/src/App.tsx
       - web/src/components/FileTree.tsx
       - web/src/components/SessionList.tsx
-      - web/src/components/MarkdownViewer.tsx
+      - web/src/components/file/MarkdownViewer.tsx
       - web/src/renderer/
       - web/src/hooks/useSessionStream.ts
       - web/src/services/session.ts
@@ -252,11 +253,11 @@ groups:
       - server/internal/auth/
       - server/internal/fs/meta_location.go
       - server/internal/fs/registry_multiaccount_test.go
-      - web/src/components/AccountPanel.tsx
+      - web/src/components/account/AccountPanel.tsx
       - web/src/components/Login.tsx
-      - web/src/components/AuthGate.tsx
+      - web/src/components/account/AuthGate.tsx
       - web/src/services/accounts.ts
-      - web/src/services/authGate.ts
+      - web/src/services/net/authGate.ts
       # 手工探针（对着 home/pc 两台真实服务跑），是 fork 新增文件故须登记；
       # 但它是 files 不是 tests —— tests 栏只列门禁真会执行的用例（见下方注释）。
       - web/tests/cross-machine-account.behavior.mjs
@@ -322,7 +323,7 @@ groups:
       - server/internal/agent/types/types.go
       - web/src/hooks/useSessionStream.ts
       - web/src/app/useRealtimeEvents.ts
-      - web/src/components/SessionViewer.tsx
+      - web/src/components/session/SessionViewer.tsx
     tests:
       - server/internal/api/session_created_broadcast_test.go
       - server/internal/api/stream_hub_user_message_test.go
@@ -358,7 +359,7 @@ groups:
       - web/src/services/session.ts
       - web/src/app/useSessionStreamCache.ts
       - web/src/app/useRealtimeEvents.ts
-      - web/src/components/sessionOverlay.ts
+      - web/src/shared/sessionOverlay.ts
       - server/internal/api/stream_hub.go
       - server/internal/api/ws.go
       - server/internal/api/ws_test.go
@@ -382,7 +383,7 @@ groups:
       - server/internal/api/stream_hub.go:func buildSessionStreamBatchResponse
       - web/src/services/session.ts:composeLoadedExchanges
       - web/src/services/session.ts:isTransientExchange
-      - web/src/components/sessionOverlay.ts:computeTailOverlay
+      - web/src/shared/sessionOverlay.ts:computeTailOverlay
 
   - id: G-W
     title: worktree 会话 repoint（把会话从已删工作树搬回主 checkout）
@@ -398,7 +399,7 @@ groups:
       （它是 Full 同步的幂等护栏，写 0 会让早已渲染过的回合重导一遍）。
       另外：转录已在主 slug 时不需要 repoint，只需清 related_worktree。
     anchors:
-      - 'web/src/components/WorktreeBranchSelector.tsx:CUSTOM(G-W)'
+      - 'web/src/components/task/WorktreeBranchSelector.tsx:CUSTOM(G-W)'
       - 'server/internal/api/usecase/git_worktree.go:CUSTOM(G-W)'
     files:
       - server/internal/api/usecase/session_repoint.go
@@ -417,7 +418,7 @@ groups:
       - server/internal/kanban/worktree_finish_test.go
       - server/internal/api/http_tasks_finish_teardown.go
       - server/internal/api/http_tasks_finish_test.go
-      - web/src/components/WorktreeBranchSelector.tsx
+      - web/src/components/task/WorktreeBranchSelector.tsx
       - web/src/app/useProjectTreeWorktrees.ts
     tests:
       - server/internal/api/usecase/session_repoint_test.go
@@ -452,7 +453,7 @@ groups:
       占位行的 agent_ctx_seq 必须写 0：非 0 会被 prependSwitchHint 当成「已同步到此行」而
       吞掉 agent 切换提示。
     anchors:
-      - 'web/src/components/ExternalSessionList.tsx:CUSTOM(G-Q)'
+      - 'web/src/components/session/ExternalSessionList.tsx:CUSTOM(G-Q)'
       - 'server/internal/agent/codex/importer.go:func cwdMatchesRoot('
       - 'server/internal/session/manager.go:空 agent_session_id 表示「agent 已选定、尚无转录」'
     files:
@@ -466,7 +467,7 @@ groups:
       - server/internal/api/session_created_broadcast_test.go
       - server/internal/session/manager.go
       - server/internal/session/manager_test.go
-      - web/src/components/ExternalSessionList.tsx
+      - web/src/components/session/ExternalSessionList.tsx
       - web/src/app/useExternalSessionImport.ts
     tests:
       - server/internal/agent/claude/importer_test.go
@@ -630,14 +631,14 @@ groups:
       - server/internal/kanban/task_messages_test.go
       - server/internal/kanban/task_pagination_test.go
       - task_template.json
-      - web/src/components/TaskBoardView.tsx
-      - web/src/components/TaskCardRows.tsx
-      - web/src/components/TaskDetailPanel.tsx
-      - web/src/components/StageEditor.tsx
-      - web/src/components/StageOptionsBar.tsx
+      - web/src/components/task/TaskBoardView.tsx
+      - web/src/components/task/TaskCardRows.tsx
+      - web/src/components/task/TaskDetailPanel.tsx
+      - web/src/components/task/StageEditor.tsx
+      - web/src/components/task/StageOptionsBar.tsx
       - web/src/components/TaskGroupPanel.tsx
       - web/src/components/TaskTemplateDialog.tsx
-      - web/src/components/ScheduledAgentTaskDialog.tsx
+      - web/src/components/task/ScheduledAgentTaskDialog.tsx
       - web/src/app/appTask.ts
       - web/src/app/taskIcons.tsx
       - web/src/app/useTaskTemplates.ts
@@ -660,7 +661,7 @@ groups:
       # 迁移一旦被删或加了条件，老库里的 queued 会原样送往前端，而那时前端已无该分支。
       - server/internal/kanban/task_store_queued_migration_test.go
     anchors:
-      - 'web/src/components/ScheduledAgentTaskDialog.tsx:confirmDialog'
+      - 'web/src/components/task/ScheduledAgentTaskDialog.tsx:confirmDialog'
       # 替代编排体系的那套模型必须在位 —— 游标一旦退回去，说明重做被冲掉了
       - server/internal/kanban/types.go:Stages             []StageTemplate
       - server/internal/kanban/template_store.go:ListStageTemplates
@@ -711,12 +712,12 @@ groups:
       节点注册表 PALETTE 是主题色单源；合并旁路状态（如 multiProjectPendingByKey）
       只能增量重算成功节点的键，整体替换会在切节点/节点失败时误清。
     files:
-      - web/src/services/nodeRegistry.ts
+      - web/src/services/net/nodeRegistry.ts
       - web/src/hooks/useNodeRegistry.ts
-      - web/src/components/NodeSwitcher.tsx
-      - web/src/components/NodeManagerPanel.tsx
-      - web/src/components/NodeBadgeHeader.tsx
-      - web/src/services/rootNode.ts
+      - web/src/components/account/NodeSwitcher.tsx
+      - web/src/components/account/NodeManagerPanel.tsx
+      - web/src/components/account/NodeBadgeHeader.tsx
+      - web/src/services/net/rootNode.ts
       - web/src/services/runtime.ts
       - web/src/services/base.ts
       - web/src/main.tsx
@@ -737,7 +738,7 @@ groups:
       建键要用 scopeSessionKey(nid,…) 而不是 rootSessionKey()（后者走 getNodeIdForRoot，
       同名项目跨节点会错记）；默认展开=本节点、收起全隐藏；空串要互等为「未就绪」。
     files:
-      - web/src/services/scope.ts
+      - web/src/shared/scope.ts
       - web/src/components/SessionList.tsx
       - web/src/components/FileTree.tsx
     tests:
@@ -775,7 +776,7 @@ groups:
       建树、分组显示收敛成纯函数，便于测试；归档面板挂在列表侧栏。
       上游没有这些，退回上游实现会让列表在切项目/切节点时塌掉。
     files:
-      - web/src/components/ArchivedSessionsPanel.tsx
+      - web/src/components/session/ArchivedSessionsPanel.tsx
       - web/src/services/sessionListMerge.ts
       - web/src/services/sessionTree.ts
       - web/src/services/sessionGroupDisplay.ts
@@ -799,17 +800,17 @@ groups:
       本地用 DialogHost + services/dialog 的 promptDialog/alertDialog/confirmDialog
       替代所有系统弹窗，禁止在组件里直接用 window.*。
     anchors:
-      - 'web/src/components/Toast.tsx:CUSTOM(G-AE)'
-      - 'web/src/components/ErrorBoundary.tsx:CUSTOM(G-AE)'
-      - 'web/src/components/FileOperations.tsx:promptDialog'
+      - 'web/src/components/shell/Toast.tsx:CUSTOM(G-AE)'
+      - 'web/src/components/shell/ErrorBoundary.tsx:CUSTOM(G-AE)'
+      - 'web/src/components/file/FileOperations.tsx:promptDialog'
     files:
       - web/src/services/dialog.ts
-      - web/src/components/DialogHost.tsx
-      - web/src/components/Toast.tsx
-      - web/src/components/PanelShell.tsx
-      - web/src/components/Select.tsx
-      - web/src/components/ErrorBoundary.tsx
-      - web/src/components/FileOperations.tsx
+      - web/src/components/shell/DialogHost.tsx
+      - web/src/components/shell/Toast.tsx
+      - web/src/components/shell/PanelShell.tsx
+      - web/src/components/common/Select.tsx
+      - web/src/components/shell/ErrorBoundary.tsx
+      - web/src/components/file/FileOperations.tsx
     tests:
       - web/tests/dialog-lifecycle.test.mjs
       - web/tests/no-system-dialogs.test.mjs
@@ -856,7 +857,7 @@ groups:
       - web/src/components/action/
       - web/src/components/editor/
       - web/src/components/action/SessionRing.tsx
-      - web/src/components/ActionBar.tsx
+      - web/src/components/action/ActionBar.tsx
       - web/src/hooks/useSessionStream.ts
     tests:
       - web/tests/no-system-dialogs.test.mjs
@@ -888,24 +889,24 @@ groups:
       localStorage 的 commit diff/commit files 走 capStorageByPrefix（上限 32 条）。
       in-flight map **刻意不设上限** —— 它们在 .finally 里就删了，加上限没有意义。
     anchors:
-      - 'web/src/components/CodeViewer.tsx:CUSTOM(G-AH)'
-      - 'web/src/components/GitStatusPanel.tsx:confirmDialog'
-      - 'web/src/components/GitHistoryPanel.tsx:color-mix(in srgb, var(--accent-color) 8%'
-      - 'web/src/components/GitDiffViewer.tsx:rootBadgeButtonStyle'
+      - 'web/src/components/file/CodeViewer.tsx:CUSTOM(G-AH)'
+      - 'web/src/components/git/GitStatusPanel.tsx:confirmDialog'
+      - 'web/src/components/git/GitHistoryPanel.tsx:color-mix(in srgb, var(--accent-color) 8%'
+      - 'web/src/components/git/GitDiffViewer.tsx:rootBadgeButtonStyle'
       - 'web/src/services/upload.ts:getRootNodeId'
       - 'server/internal/gitview/gitview.go:func ReadRelatedFileStats'
       - 'server/internal/api/http.go:/api/git/related-files/stats'
     files:
-      - web/src/components/CodeViewer.tsx
+      - web/src/components/file/CodeViewer.tsx
       - web/src/components/DocumentViewer.tsx
-      - web/src/components/GitDiffViewer.tsx
-      - web/src/components/GitHistoryPanel.tsx
-      - web/src/components/GitStatusPanel.tsx
+      - web/src/components/git/GitDiffViewer.tsx
+      - web/src/components/git/GitHistoryPanel.tsx
+      - web/src/components/git/GitStatusPanel.tsx
       - web/src/components/ProjectAddPopover.tsx
       - web/src/components/AssociationView.tsx
-      - web/src/components/RootGitContentView.tsx
-      - web/src/components/RootRelatedContentView.tsx
-      - web/src/components/RootWorktreeContentView.tsx
+      - web/src/components/root/RootGitContentView.tsx
+      - web/src/components/root/RootRelatedContentView.tsx
+      - web/src/components/root/RootWorktreeContentView.tsx
       - web/src/app/useProjectLifecycle.tsx
       - web/src/app/useGitData.ts
       - web/src/app/useGitActions.ts
@@ -943,8 +944,8 @@ groups:
       保留 G-M 号仅作历史索引。）
     files:
       - web/src/registerServiceWorker.ts
-      - web/src/services/pwaInstall.ts
-      - web/src/services/staleAssetRecovery.ts
+      - web/src/services/platform/pwaInstall.ts
+      - web/src/services/platform/staleAssetRecovery.ts
     tests:
       - web/tests/pwa-install-flicker.test.mjs
       - web/tests/stale-asset-recovery.test.mjs
@@ -963,16 +964,16 @@ groups:
       面包屑徽标统一为 button + rootBadgeButtonStyle 消除盒模型差异。
     anchors:
       - 'web/src/components/stream/ToolCallCard.tsx:const themed = String(color || "").trim() !== ""'
-      - 'web/src/components/FileViewer.tsx:rootBadgeButtonStyle'
+      - 'web/src/components/file/FileViewer.tsx:rootBadgeButtonStyle'
     files:
       - web/src/index.css
       - web/src/components/ModeIcon.tsx
       - web/src/components/ModeSelector.tsx
       - web/src/components/DefaultListView.tsx
-      - web/src/components/FileViewer.tsx
+      - web/src/components/file/FileViewer.tsx
       - web/src/components/rootBadgeStyle.ts
       - web/src/components/stream/ToolCallCard.tsx
-      - web/src/components/MainViewSwitcher.tsx
+      - web/src/components/shell/MainViewSwitcher.tsx
       - web/src/layout/AppShell.tsx
     tests:
       - web/tests/node-colors-and-workspace-preferences.test.mjs
@@ -991,7 +992,7 @@ groups:
       - 'server/internal/webpush/service.go:CUSTOM(G-AJ)'
       - 'server/internal/scheduled/tasks.go:BroadcastSessionCreated'
       - 'web/src/services/webPush.ts:controlPath("/api/web-push/'
-      - 'web/src/components/CodexRateLimitIndicator.tsx:fetchCodexRateLimits(agent, nodeId)'
+      - 'web/src/components/agent/CodexRateLimitIndicator.tsx:fetchCodexRateLimits(agent, nodeId)'
     files:
       - server/internal/preferences/store.go
       - server/internal/preferences/store_test.go
@@ -1005,8 +1006,8 @@ groups:
       - web/src/services/scheduledTasks.ts
       - web/src/services/webPush.ts
       - web/src/services/codexRateLimits.ts
-      - web/src/components/PromptEditor.tsx
-      - web/src/components/CodexRateLimitIndicator.tsx
+      - web/src/components/editor/PromptEditor.tsx
+      - web/src/components/agent/CodexRateLimitIndicator.tsx
     tests:
       - server/internal/preferences/store_test.go
       - server/internal/update/service_test.go
@@ -1116,8 +1117,8 @@ groups:
       - server/internal/api/helpers.go
       - server/internal/api/http.go
       - server/internal/api/http_tasks.go
-      - web/src/services/api.ts
-      - web/src/services/e2ee.ts
+      - web/src/services/net/api.ts
+      - web/src/services/net/e2ee.ts
     tests:
       - server/internal/api/helpers_jsonlist_test.go
       - server/internal/api/http_tasks_overview_test.go
@@ -1127,9 +1128,9 @@ groups:
       - server/internal/api/helpers.go:func respondJSONList
       - server/internal/api/helpers.go:func respondJSONConditional
       - server/internal/api/http.go:respondJSONConditional
-      - web/src/services/api.ts:304
-      - web/src/services/api.ts:conditionalRequestBytesMax
-      - web/src/services/e2ee.ts:parseProtectedJSONResponseWithSize
+      - web/src/services/net/api.ts:304
+      - web/src/services/net/api.ts:conditionalRequestBytesMax
+      - web/src/services/net/e2ee.ts:parseProtectedJSONResponseWithSize
 
   # ── 可观测性：自动重载 ──────────────────────────────────────────
   - id: G-AO
@@ -1148,12 +1149,12 @@ groups:
       观测器自己必须有界（采样上限 10 条、错误文本截断 200 字符、关标签页即清），
       否则就成了 G-AH 修过的那类无界增长源；存储不可用（隐私模式）时静默降级、绝不抛。
     files:
-      - web/src/services/reloadObserver.ts
+      - web/src/services/platform/reloadObserver.ts
       - web/src/main.tsx
     tests:
       - web/tests/reload-observer.test.mjs
     anchors:
-      - web/src/services/reloadObserver.ts:installReloadObserver
+      - web/src/services/platform/reloadObserver.ts:installReloadObserver
       - web/src/main.tsx:installReloadObserver
 
   # ── 裁剪：删除上游功能 ──────────────────────────────────────────
@@ -1205,8 +1206,8 @@ groups:
       - server/app/workspace.go
       - web/src/App.tsx
       - web/src/app/taskIcons.tsx
-      - web/src/components/TaskCardRows.tsx
-      - web/src/components/TaskDetailPanel.tsx
+      - web/src/components/task/TaskCardRows.tsx
+      - web/src/components/task/TaskDetailPanel.tsx
       - web/src/services/tasks.ts
       - web/src/i18n/locales/zh-CN.ts
       - web/src/i18n/locales/en-US.ts
@@ -1252,9 +1253,9 @@ groups:
       - server/internal/api/http_tasks.go
       - web/src/App.tsx
       - web/src/app/taskIcons.tsx
-      - web/src/components/TaskBoardView.tsx
-      - web/src/components/TaskCardRows.tsx
-      - web/src/components/TaskDetailPanel.tsx
+      - web/src/components/task/TaskBoardView.tsx
+      - web/src/components/task/TaskCardRows.tsx
+      - web/src/components/task/TaskDetailPanel.tsx
       - web/src/services/tasks.ts
       - web/src/i18n/locales/zh-CN.ts
       - web/src/i18n/locales/en-US.ts
@@ -1268,9 +1269,9 @@ groups:
       - server/internal/kanban/service.go:func (s *Service) DeleteTask(ctx context.Context, in MoveInput)
       - server/internal/kanban/task_store.go:func (s *TaskStore) DeleteTask(ctx context.Context, id string)
       - server/internal/api/http.go:r.Delete("/api/tasks/{id}"
-      - web/src/services/tasks.ts:export async function deleteTask
+      - web/src/services/task/crud.ts:export async function deleteTask
       - web/src/app/taskIcons.tsx:export function TaskCancelIcon
-      - web/src/components/TaskBoardView.tsx:"delete-task"
+      - web/src/components/task/TaskBoardView.tsx:"delete-task"
       - 'web/src/i18n/locales/zh-CN.ts:"task.deleteTask": "删除任务卡片"'
       - 'web/src/i18n/locales/zh-CN.ts:"task.cancelTask": "取消任务"'
   - id: G-AS
@@ -1312,7 +1313,7 @@ groups:
       - server/internal/agent/acp/elicitation.go:func (p *Process) registerPendingAskUser
       - server/internal/agent/acp/elicitation.go:func (p *Process) bindElicitation
       - server/internal/agent/acp/elicitation.go:func (p *Process) matchAndBindPendingAskUser
-      - server/internal/agent/acp/elicitation.go:func (p *Process) releasePendingAskUser
+      - server/internal/agent/acp/elicitation.go:func (p *Process) reapPendingAskUser
       - server/internal/agent/acp/elicitation.go:func (p *Process) AnswerElicitation
       - server/internal/agent/acp/elicitation.go:func elicitationContent
       - server/internal/agent/acp/elicitation.go:func acpAskUserToolCall
@@ -1342,7 +1343,7 @@ groups:
       上游没有这条全局顶栏，两个移动按钮是 ActionBar 私有的。
     files:
       - web/src/layout/AppShell.tsx
-      - web/src/components/ActionBar.tsx
+      - web/src/components/action/ActionBar.tsx
       - web/src/components/action/types.ts
       - web/src/App.tsx
     tests:
@@ -1350,7 +1351,7 @@ groups:
     anchors:
       - 'web/src/layout/AppShell.tsx:"--mindfs-mobile-header-height"'
       - web/src/layout/AppShell.tsx:toggleRail("left")
-      - web/src/components/ActionBar.tsx:if (hideComposer)
+      - web/src/components/action/ActionBar.tsx:if (hideComposer)
       - 'web/tests/task-board-view.test.mjs:zIndex: 2100'
 
   # ── 性能：会话打开热路径 ──────────────────────────────────────────
@@ -1402,7 +1403,7 @@ groups:
       - web/src/services/session.ts
       - web/src/app/useRealtimeEvents.ts
       - web/src/hooks/useSessionStream.ts
-      - web/src/components/SessionViewer.tsx
+      - web/src/components/session/SessionViewer.tsx
       - web/src/components/stream/ToolCallGroupCard.tsx
       - web/src/services/pins.ts
       - web/tests/session-window-dedup.test.mjs
@@ -1432,7 +1433,7 @@ groups:
       - 'server/internal/session/manager.go:CUSTOM(G-AT)'
       - 'web/src/services/session.ts:CUSTOM(G-AT)'
       - 'web/src/hooks/useSessionStream.ts:CUSTOM(G-AT)'
-      - 'web/src/components/SessionViewer.tsx:CUSTOM(G-AT)'
+      - 'web/src/components/session/SessionViewer.tsx:CUSTOM(G-AT)'
   - id: G-AU
     title: 会话拉取风暴与渲染主线程阻塞
     kind: fix
@@ -1464,7 +1465,7 @@ groups:
       - web/tests/session-load-storm.test.mjs
     files:
       - web/src/App.tsx
-      - web/src/components/SessionViewer.tsx
+      - web/src/components/session/SessionViewer.tsx
   - id: G-AV
     title: worktree 收尾路径符号链接匹配修复
     kind: fix
@@ -1482,16 +1483,16 @@ groups:
       路径比较必须先解析符号链接（EvalSymlinks）；MainCheckoutPath 的返回值语义不变
       （对主 checkout 返回调用方给的路径），只在比较处统一。
     tests:
-      - server/internal/gitview/gitview_test.go:TestSamePathResolvesSymlinks
-      - server/internal/gitview/gitview_test.go:TestValidateTargetDoesNotSelfBlockViaSymlink
-      - server/internal/gitview/gitview_test.go:TestListWorktreesCurrentViaSymlink
+      - server/internal/gitview/gitview_test.go
+      - server/internal/gitview/gitview_test.go
+      - server/internal/gitview/gitview_test.go
     files:
       - server/internal/gitview/gitview.go
       - server/internal/gitview/worktree_finish.go
       - server/internal/gitview/gitview_test.go
   - id: G-AW
     title: 工作台移除 attention bar + 统一 task card wrapper
-    kind: feat
+    kind: feature
     symptom: |
       工作台顶部有一堆小的灰色卡片（WorkspaceAttentionBar），只显示项目任务阶段，
       下面的任务卡片已经覆盖了它的信息。任务小卡片（WorkspaceTaskRow）和看板卡
@@ -1541,3 +1542,33 @@ groups:
       - web/tests/relay-bind-poll-sync.test.mjs
     files:
       - server/internal/relay/service_test.go
+
+  - id: G-AY
+    title: 前端目录按领域重组 + 服务/组件文件拆分
+    kind: arch
+    symptom: |
+      上游把文件放回扁平结构（components/*.tsx、services/*.ts 平铺）时，本地拆出的
+      分域目录与 barrel shim 被整份覆盖：43 条源码正则断言（读的是旧逻辑路径）与
+      barrel 重导出同时失效，会话/任务/文件/git 四域的模块边界消失，导入环与
+      「同一判定两处实现」这类重复悄悄回来（文件级 diff 看不出来）。
+    why: |
+      前端原为扁平巨文件结构：components/ 下 40+ 个 .tsx 平铺、services/ 下 20+ 个
+      .ts 平铺，单文件最大 10472 行（App.tsx）。本地按域重组：
+      components/{session,task,file,git,root,agent,account,shell,common}、
+      services/{net,platform,prefs,task,git,file}、shared/。
+      拆分策略是「机械搬移 + 旧路径 barrel 重导出，零行为变化」：原路径保留
+      `export * from "./x/index"`，对外导出面不变；43 条源码正则断言由
+      web/tests/source-map.mjs 统一读层兜住（逻辑路径 → 物理文件列表，readSource 拼接）。
+      session.ts 暂不拆分：其 VM 执行类测试（session-window 等）依赖单文件自包含，
+      拆分会破坏沙箱 require，已回滚。
+    files:
+      - web/src/components/
+      - web/src/services/
+      - web/src/shared/
+      - web/tests/source-map.mjs
+      - web/tests/source-map-hook.mjs
+      - web/tests/ts-module-preload.mjs
+      - web/src/index.tsx
+    tests:
+      - web/tests/frontend-split.test.mjs
+      - web/tests/source-map.test.mjs

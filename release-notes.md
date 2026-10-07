@@ -1,3 +1,8 @@
+# MindFS v0.5.5
+
+## 重构
+- 前端目录按领域重组：`components/` 分域（session/task/file/git/root/agent/account/shell/common）、`services/` 分桶（net/platform/prefs/task/git/file）、纯键工具入 `shared/`；`services/{task,git,file}.ts` 拆成目录模块、`FileTree` 图标子组件抽出。**零行为变化**，旧路径保留 barrel 重导出，43 条源码正则断言由 source-map 统一读层兜住。
+
 # MindFS v0.5.4
 
 ## 优化和修复

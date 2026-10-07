@@ -1082,6 +1082,31 @@
 
 ---
 
+### G-AY 前端目录按领域重组 + 服务/组件文件拆分（2026-10-07）
+
+- 来源：`a83950b`（source-map 统一读层）、`f5c4e0d`（components/services/shared 按域重组）、
+  `7b6d969`（services/{task,git,file} 拆成目录模块）、`def8b7e`（FileTree 图标子组件抽出）。
+- 边界：**前端目录结构与文件拆分**。`components/` 下 40+ 个 `.tsx` 平铺 →
+  `components/{session,task,file,git,root,agent,account,shell,common}`；
+  `services/` 下 20+ 个 `.ts` 平铺 → `services/{net,platform,prefs,task,git,file}`；
+  纯键工具 → `shared/`。`services/{task,git,file}.ts` 各拆成目录模块，
+  原路径保留 barrel shim（`export * from "./x/index"`）。
+  **拆分策略是「机械搬移 + 旧路径 barrel 重导出，零行为变化」**：对外导出面不变，
+  只搬文件。43 条源码正则断言（读旧逻辑路径）由 `web/tests/source-map.mjs`
+  统一读层兜住（逻辑路径 → 物理文件列表，`readSource` 拼接）。
+- 可见症状（没有它会怎样）：上游把文件放回扁平结构（`components/*.tsx`、`services/*.ts`
+  平铺）时，本地拆出的分域目录与 barrel shim 被整份覆盖 —— 43 条源码正则断言与
+  barrel 重导出同时失效，会话/任务/文件/git 四域的模块边界消失，导入环与
+  「同一判定两处实现」这类重复悄悄回来（文件级 diff 看不出来）。
+- 理由：前端原为扁平巨文件结构，单文件最大 10472 行（`App.tsx`）。按域重组后
+  模块边界 = 职责边界，是后续 App.tsx 拆分的地基。
+- 验证：`web/tests/frontend-split.test.mjs`（barrel 完整重导出 + 无导入环 +
+  source-map 映射）、`web/tests/source-map.test.mjs`（读层完整性）。
+- 已知边界：`session.ts` 暂不拆分 —— 其 VM 执行类测试（`session-window` 等）依赖
+  单文件自包含，拆分会破坏沙箱 `require`，已回滚。
+
+---
+
 ## 4. 未提交工作区（2026-10-06 清空）
 
 > 本节原先逐 hunk 记录 main 工作区里**未提交**的改动。那些改动已全部提交、工作区已干净，
