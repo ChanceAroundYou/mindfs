@@ -307,6 +307,11 @@ groups:
       一个阻塞的 handler 冻结整条连接（停止按钮失效就是这么来的）。
       agent session 的 Interrupt 用了 context.Background()，CLI 不 ack 就永不返回，
       调用方必须加超时包装。
+      `session_created_broadcast_test.go` 的 dialHub 另有一道**注册屏障**（2026-10-07）：
+      `websocket.Dial` 只等到 101 握手就返回，而 `RegisterClient` 还在服务端 handler 里
+      没跑完；少了这道屏障，紧跟的广播会打在空 hub 上被静默丢掉，测试挂在 3s 读超时上，
+      报出来却像「广播没带 payload」。单跑必过、并行跑 `go test ./...` 才红，所以很容易
+      被当成偶发删掉 —— 它是这条广播契约唯一的守卫。
     files:
       - server/internal/api/ws.go
       - server/internal/api/stream_hub.go
