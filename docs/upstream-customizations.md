@@ -166,7 +166,8 @@
 | G-AU | 会话拉取风暴与渲染主线程阻塞 | 修复 | 见 §3.1 | 加载 effect 只依赖身份不依赖快照对象；失败留痕且 404 是终点；`sessionCacheRef` 有上限；渲染无 O(n²)、滚动有节流 |
 | G-AX | relay 绑定轮询测试的两条同步竞态 | 修复 | 见 §3.1 | 状态落地晚于 channel 发送；`requests` 必须无缓冲 |
 | G-AY | 抽屉 pending 对账（done 丢失时停止符号/「正在思考」卡住） | 修复 | 见 §3.1 | 抽屉/选中/缓存的 pending 只由 WS `session.done` 清；断连/重绑丢了就永久卡住。列表蓝灯每 5s 从 `/api/replying-sessions` 对账，这三处没有 |
-| G-AZ | 任务卡视觉件（待审核徽标/列框去除/浮动滚动条/工作台角标移除） | 视觉 | 见 §3.1 | 待审核列补状态文字（与工作台同路径）；列框+padding 去除卡片加宽 6px；FloatingScroll 浮动滚动条不占宽；工作台「需要你 N」角标移除 |
+| G-AZ | 任务卡视觉件（待审核徽标/列框去除/浮动滚动条/工作台角标移除） | 视觉 | 见 §3.1 | 待审核列补状态文字（与工作台同路径）；列框去除+padding 归零卡片加宽 18px；FloatingScroll 浮动滚动条不占宽；工作台「需要你 N」角标移除 |
+| G-BB | 看板列头灰底 + 间距对齐工作台（列头背景/列表 padding/外层 padding） | 视觉 | 见 §3.1 | 列头灰底区分栏目标签与卡片；列表 padding 归零卡片加宽 12px；外层 padding 6px 8px 对齐工作台容器 |
 
 > **G-D 已并入 G-F，G-M 已并入 G-AI**（改动面完全重合、无独立测试可守，单列只会制造空组）。
 
@@ -1198,7 +1199,7 @@
 - 针对性测试：
   - `web/tests/task-board-view.test.mjs` — 钉住「待审核列 `showTaskStatus` 为真」、
     「列框四件（border+圆角+浅灰底+overflow）整组消失」、「列表容器是 `FloatingScroll`
-    且 padding/gap 6px」、「index.css 有 `.mindfs-floating-scroll` webkit 隐藏规则」。
+    且 padding 归零（G-BB 进一步从 6px 降到 0）」、「index.css 有 `.mindfs-floating-scroll` webkit 隐藏规则」。
   - `web/tests/task-card-wrap.test.mjs` — 钉住「看板与工作台都渲染 `TaskCardRows`」、
     「工作台卡不传 children（无正文）」、「卡面都来自 `taskCardSurfaceStyle`」、
     「`TaskCardText.tsx` 死代码已删除」。
@@ -1231,6 +1232,30 @@
   source-map 映射）、`web/tests/source-map.test.mjs`（读层完整性）。
 - 已知边界：`session.ts` 暂不拆分 —— 其 VM 执行类测试（`session-window` 等）依赖
   单文件自包含，拆分会破坏沙箱 `require`，已回滚。
+---
+
+### G-BB 看板列头灰底 + 间距对齐工作台（2026-10-07）
+
+- 来源：`web/src/components/task/TaskBoardView.tsx`、`web/src/components/file/DefaultListView.tsx`、
+  `web/tests/task-board-view.test.mjs`。
+- 边界：**看板列头视觉与间距** —— 列头灰底、列表 padding、外层 padding。
+  这三件共享看板的布局与视觉，合上游时要么全留要么全弃。
+- 可见症状（没有它会怎样）：
+  1. **列头与卡片内容视觉混淆**：列头没有灰底，与卡片内容混在一起，
+     用户难以区分「栏目标签」和「卡片内容」。
+  2. **卡片比工作台窄 12px**：列表 padding 6px 每侧，卡片被挤窄。
+     去掉后卡片与工作台等宽。
+  3. **看板边缘间距比工作台大**：外层 padding `8px 16px 24px` vs 工作台 `6px 8px`，
+     看板内容区比工作台窄，视觉上不对齐。
+- 为什么必须保留：
+  - 列头灰底 `rgba(148, 163, 184, 0.08)` 与模板筛选按钮的底色一致，
+    是看板视觉语言的一部分。
+  - 列表 padding 归零后，卡片宽度 = 列宽，与工作台卡片等宽。
+  - 外层 padding `6px 8px` 对齐工作台容器，视觉上两端一致。
+- 针对性测试：
+  - `web/tests/task-board-view.test.mjs` — 钉住「列头有灰底 `rgba(148,163,184,0.08)`」、
+    「列表 `FloatingScroll` padding 归零」、「外层 padding `6px 8px` 对齐工作台」。
+
 ---
 
 ## 4. 未提交工作区（2026-10-06 清空）

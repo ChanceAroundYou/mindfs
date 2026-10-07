@@ -86,12 +86,11 @@ assert.match(
   /showTaskKanban && topContent[\s\S]{0,900}?height: "100%",[\s\S]{0,120}?display: "flex"/,
   "the topContent wrapper must be a sized flex column, or nothing below it can flex",
 );
-// 内边距跟着设备走。移动端底部那条 24px 紧贴输入区，是一道永远用不上的空带；
-// 顶部 8px 比左右两侧的 16px 窄一截，看着像没对齐。桌面四边 16px 保持不变。
+// 内边距跟着设备走，对齐工作台容器（6px 8px）。移动端底部贴输入区不留空带。
 assert.match(
   listView,
-  /padding: isMobile \? "16px 16px 0" : "8px 16px 24px"/,
-  "mobile drops the dead bottom padding and widens the top to match the 16px sides; desktop keeps 8/16/24",
+  /padding: isMobile \? "6px 8px 0" : "6px 8px"/,
+  "padding aligns with workbench container (6px 8px); mobile drops bottom padding",
 );
 // 桌面列高曾经写死 calc(100dvh - 96px)，那套魔法数已随根容器的 flex:1 退休。
 // 只看样式值不看注释 —— 注释里得留着「为什么删掉」，否则下一个人会再加回来。
@@ -342,6 +341,13 @@ assert.doesNotMatch(
 
 // —— 2026-10-07 卡片视觉件回归守卫 ——
 
+// 0) 列头保留灰底：列头是看板的「栏目标签」，灰底让它与卡片内容区分开。
+assert.match(
+  board,
+  /minHeight: "34px",\s*background: "rgba\(148, 163, 184, 0\.08\)",\s*borderBottom: "1px solid var\(--border-color\)"/,
+  "列头必须保留灰底（rgba(148,163,184,0.08)）",
+);
+
 // 1) 「待审核」列必须显示状态文字（用户实测：该列卡片只有名字 + worktree 标签，
 //    没有任何状态指示）。走 TaskCardRows 现有 showStatus 路径，与工作台卡同一渲染。
 assert.match(
@@ -359,10 +365,11 @@ assert.doesNotMatch(
 );
 
 // 3) 列内列表必须用 FloatingScroll：原生滚动条占 6px 宽，浮动拇指不占。
+//    padding 归零 —— 卡片左右各让出 6px，与工作台卡片等宽。
 assert.match(
   board,
-  /<FloatingScroll style=\{\{ padding: "6px", display: "flex", flexDirection: "column", gap: "6px" \}\}>/,
-  "列内列表必须用 FloatingScroll（浮动滚动条），padding/gap 对齐工作台 6px 节奏",
+  /<FloatingScroll style=\{\{ padding: "0", display: "flex", flexDirection: "column", gap: "6px" \}\}>/,
+  "列内列表必须用 FloatingScroll（浮动滚动条），padding 归零让卡片对齐工作台宽度",
 );
 assert.match(
   readFileSync(new URL("../src/components/FloatingScroll.tsx", import.meta.url), "utf8"),

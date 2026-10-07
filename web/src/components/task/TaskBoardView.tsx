@@ -585,6 +585,7 @@ export function TaskBoardView({
               <div
                 style={{
                   minHeight: "34px",
+                  background: "rgba(148, 163, 184, 0.08)",
                   borderBottom: "1px solid var(--border-color)",
                   padding: "7px 9px",
                   display: "flex",
@@ -612,7 +613,7 @@ export function TaskBoardView({
                 <span style={{ fontSize: "11px", fontWeight: 800, color: "var(--text-secondary)" }}>{column.tasks.length}</span>
               </div>
                 {columnCollapsed ? null : (
-                <FloatingScroll style={{ padding: "6px", display: "flex", flexDirection: "column", gap: "6px" }}>
+                <FloatingScroll style={{ padding: "0", display: "flex", flexDirection: "column", gap: "6px" }}>
                   {column.tasks.length === 0 ? (
                     <div style={{ padding: "10px 4px", fontSize: "12px", color: "var(--text-secondary)", textAlign: "center" }}>{t("task.empty")}</div>
                       ) : taskSections.map((section) => {

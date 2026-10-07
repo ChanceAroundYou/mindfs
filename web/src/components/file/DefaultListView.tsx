@@ -1185,7 +1185,7 @@ export function DefaultListView({
              四块两行又撑出屏幕。父级是 display:block，所以还得自己声明 flex 列，
              否则子级的 flex:1 完全不生效（它不是 flex item）。
              box-sizing 是全局 border-box，padding 算在这 100% 里面，不会外溢。 */
-          <div style={{ padding: isMobile ? "16px 16px 0" : "8px 16px 24px", height: "100%", display: "flex", flexDirection: "column" }}>{topContent}</div>
+          <div style={{ padding: isMobile ? "6px 8px 0" : "6px 8px", height: "100%", display: "flex", flexDirection: "column" }}>{topContent}</div>
         ) : null}
         {showFileBrowser ? (
           <div style={{ padding: "24px 16px" }}>
