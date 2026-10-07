@@ -35,6 +35,7 @@
 | e2e | Playwright 运行时冒烟夹具（`e2e/`，10 用例）+ 门禁登记 | `1f5b1d4` |
 | App-1 | 会话缓存 → `app/useSessionCache.ts`（refs 语义不变） | `2386751` |
 | App-2 | 纯函数 → `app/appUtils.ts`（4 个，零闭包） | `0b20717` |
+| App-3 | 发送消息主流程 → `app/useSendMessage.ts`（~570 行，36 闭包） | `ccbfe13` |
 
 **当前分域目录**：
 
@@ -85,7 +86,7 @@ web/src/
 
 ## 4. 待办清单（按优先级）
 
-### 4.1 App.tsx —— 10490 行（最大，收益最高，风险也最高）
+### 4.1 App.tsx —— 9960 行（最大，收益最高，风险也最高）
 
 - **现状**：单组件 `App()`（225 行起），101 个 `useState`、81 个 `useEffect`、
   145 个 `useCallback`、26 个 `useMemo`、92 个 `useRef`。
