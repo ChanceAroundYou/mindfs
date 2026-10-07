@@ -483,25 +483,9 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
       )}
     >
       <div style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: "10px" }}>
-          {/* 收尾进行中：这一段跑着的整段时间里，面板上唯一该说的话就是「在动」。
-              收尾段成功/受阻之后清场由服务端自己接着跑，结论走 WS 的
-              task.finish_teardown 回到 App 那个弹窗 / toast —— 面板不存第二份。 */}
-          {finishActive ? (
-            <div
-              data-onboarding="task-finish-active"
-              style={{ border: "1px solid var(--status-ok)", borderRadius: "8px", padding: "10px", display: "flex", alignItems: "center", gap: "8px" }}
-            >
-              <span
-                aria-hidden="true"
-                style={{
-                  width: "12px", height: "12px", flex: "0 0 auto", borderRadius: "999px",
-                  border: "2px solid var(--status-ok)", borderTopColor: "transparent",
-                  animation: "mindfs-update-spin 0.9s linear infinite",
-                }}
-              />
-              <span style={{ fontSize: "11px", color: "var(--text-secondary)" }}>{t("task.worktreeFinishingTitle")}</span>
-            </div>
-          ) : null}
+          {/* 收尾进行中不再挂转圈横幅（2026-10-07 用户要求）：卡片上那个绿色 worktree
+              标签会变成「收尾中」，那才是唯一的进度信号。收尾段成功/受阻之后清场由服务端
+              自己接着跑，结论走 WS 的 task.finish_teardown 回到 App 那个弹窗 / toast。 */}
           {initialInput ? (
             <div style={{ border: "1px dashed var(--border-color)", borderRadius: "8px", padding: "10px", display: "flex", flexDirection: "column", gap: "6px", background: "var(--panel-bg)" }}>
               <span style={{ fontSize: "11px", fontWeight: 800, color: "var(--text-secondary)" }}>{t("task.initialInput")}</span>

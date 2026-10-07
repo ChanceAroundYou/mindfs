@@ -211,11 +211,18 @@ assert.match(icons, /export type WorktreeTagState = "enabled" \| "finishing" \| 
 for (const tone of ["#475569", "#15803d", "#b45309"]) {
   assert.ok(icons.includes(tone), `missing tone ${tone}: finished/disabled must not share a colour`);
 }
-// 收尾中必须看得出「这玩意儿正在动」：动与不动是它和 enabled 唯一的区分信号。
-assert.match(
+// 收尾中的区分信号是**文字**，不是动效（2026-10-07 用户要求去掉脉冲）。
+// enabled 与 finishing 的标签文字不同（「worktree」vs「收尾中」），那才是唯一的区分；
+// 加回脉冲动画就等于又把「看着在动」当成了信号，而用户明确不要这个动效。
+assert.doesNotMatch(
   icons.slice(icons.indexOf("export function taskWorktreeTagStyle")),
-  /animation: finishing \? "mindfs-task-ask-user-pulse/,
-  "the finishing badge must pulse, otherwise it is pixel-identical to an idle worktree",
+  /animation: finishing/,
+  "the finishing badge must not pulse — the label text is the signal now",
+);
+assert.match(
+  card,
+  /worktreeTagState === "finishing"[\s\S]{0,40}?t\("task\.worktreeFinishingLabel"\)/,
+  "the finishing tag must say 收尾中 — that text is what tells it apart from an idle worktree",
 );
 
 // 收尾进行中，按钮**照样可点**（2026-10-05）：那正是「agent 那半已经做完、只差机械

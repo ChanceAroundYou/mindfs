@@ -150,26 +150,6 @@ export function mergeReplyingStateByNode(
   return Object.assign(next, fresh);
 }
 
-/**
- * 服务端真值对账：把卡住的 pending 清掉。
- *
- * 会话的 pending 只由 WS `session.done`（handleSessionStreamDone）清除。断连/重绑竞态
- * 会让那条事件丢失，于是抽屉 / 选中 / 缓存三处的 pending 永久卡在 `true` —— 输入框一直
- * 显示停止符号、查看器一直「正在思考」、用量面板不出现。会话列表不会卡：它的蓝灯每 5s
- * 从 `/api/replying-sessions` 对账一次（refreshMultiProjectReplyingSessions）。这个函数
- * 就是给另外三处补上同一条对账：服务端说「不在跑」就清。
- *
- * 纯函数、返回同引用（无变化时）以便调用方用 `!==` 判断是否需要 setState。
- */
-export function clearStalePending<T extends { key?: string; pending?: boolean }>(
-  session: T | null | undefined,
-  isServerPending: (key: string) => boolean,
-): T | null | undefined {
-  if (!session || !session.key || !session.pending) return session;
-  if (isServerPending(session.key)) return session;
-  return { ...(session as any), pending: false } as T;
-}
-
 export function sessionInputHistory(session: { exchanges?: Array<{ role?: string; content?: string }> } | null | undefined): string[] {
   const exchanges = Array.isArray(session?.exchanges) ? session.exchanges : [];
   const items: string[] = [];

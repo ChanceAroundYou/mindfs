@@ -111,8 +111,10 @@ assert.match(
   /const handleTaskSessionDrawerOpen[\s\S]{0,1200}?buildSessionJumpTarget\(\{/,
   "handleTaskSessionDrawerOpen must route through buildSessionJumpTarget",
 );
-// 三条缓存写入路径（窗口 / 全量 sync / handleSelectSession）都带 root_id
-assert.match(app, /root_id: resolvedRoot,\n\s+pending,/g, "window and sync cache writes must stamp root_id");
-assert.match(app, /root_id: targetRoot,\n\s+pending,/, "handleSelectSession cache write must stamp root_id");
+// 三条缓存写入路径（窗口 / 全量 sync / handleSelectSession）都带 root_id。
+// （原先这两条以 `pending,` 作锚点，2026-10-07 pending 改成纯派生、不再写进会话对象，
+//   锚点换成紧随其后的字段 —— 钉的契约不变：写缓存必须带 root。）
+assert.match(app, /root_id: resolvedRoot,\n\s+_windowMeta: anchoredMeta as any,/g, "window and sync cache writes must stamp root_id");
+assert.match(app, /root_id: targetRoot,\n\s*\} as Session;/, "handleSelectSession cache write must stamp root_id");
 
 console.log("task-session-jump-root.test.mjs ok");

@@ -127,17 +127,20 @@ test("【红·④】内容比对的三个补丁必须消失（语料按本轮界
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ⑤ 「这个会话在不在回复」只能有一个真值源
-// 依据：冲突⑤ —— 9 个机制、五处存储（cache/drawer/selected/pendingBySessionRef/multiProjectPendingRef）。
-// 目标是「服务端 pendingSessions 为唯一源，前端只保留展示缓存」。
+// 依据：冲突⑤ —— 曾经是 9 个机制、五处存储（cache/drawer/selected/pendingBySessionRef/
+// multiProjectPendingRef）。2026-10-07 已彻底收敛：pending **纯派生**，唯一真相是
+// `multiProjectPendingByKey`（见 pending-single-source.test.mjs）。
 // ─────────────────────────────────────────────────────────────────────────────
-test("【红·⑤】清除 pending 必须覆盖全部五处存储（残缺清除 = 状态漂移）", () => {
-  // 2026-10-06 收窄：原本判成「9 个机制、5 处存储该合并成 1 处」。核对后确认**该合并的是
-  // 清除路径，不是存储** ——
-  //   · `pending` 是**派生展示状态**（真值在服务端 `pendingSessions`），五处（缓存 / 抽屉 /
-  //     选中 / pendingBySessionRef / multiProjectPendingByKey）都是它的投影；
-  //   · 投影多份本身可以接受，**不可接受的是清除时漏掉某几处**：漏了就是「灯不灭」「一直显示
-  //     在回复」。实测有两处正是这样（发送取消 / 发送失败各只清了 2 处），已改为走清除编排者。
-  // 该钉的就是这条：清除必须一次覆盖五处。
+test("【红·⑤】清除 pending 必须覆盖「唯一真相 + 各处乐观行」（残缺清除 = 状态漂移）", () => {
+  // 2026-10-06 收窄、2026-10-07 重写。原文说「五处存储都是投影，清除必须覆盖五处」——
+  // 那个前提已经反了：会话对象上**不再存 pending**（写它 = 又长出一份会卡死的状态），
+  // 现在只剩两样东西要清：
+  //   · **唯一真相** `multiProjectPendingByKey`（经 `setMultiProjectSessionPending`）；
+  //   · 各处的 `pending_ack` **乐观行**（半透明的「正在回复」占位），散在缓存 / 抽屉 /
+  //     选中 / 列表 / pendingBySessionRef 五处。
+  // 漏掉唯一真相 = 灯不灭、输入框一直显示停止符号；漏掉某一处乐观行 = 那条占位永久
+  // 停在半透明。所以清除仍必须是一次覆盖全部 —— 只是「全部」的含义从「五份 pending
+  // 副本」变成了「一份真相 + 五处乐观行投影」。
   const file = readFileSync(path.join(webRoot, "src/App.tsx"), "utf8");
   const start = file.indexOf("const clearLocalPendingForSession = useCallback(");
   assert.ok(start >= 0, "找不到清除编排者 clearLocalPendingForSession");
@@ -153,12 +156,20 @@ test("【红·⑤】清除 pending 必须覆盖全部五处存储（残缺清除
   ]) {
     assert.match(body, new RegExp(place), `清除编排者漏了「${place}」—— 那一处会永久停在 pending`);
   }
-  // 残缺清除的指纹：只把选中标记与小蓝灯一起清掉（缓存与抽屉仍停在 pending）
-  const partial = scanSrc(/setSelectedPendingByKey\([^)]*false\);\s*\n\s*setMultiProjectSessionPending\(/);
+  // 唯一真相必须真的被清（少了这一句，灯就永久亮着 —— 这正是纯派生要根治的症状）。
+  assert.match(
+    body,
+    /setMultiProjectSessionPending\(resolvedRoot, resolvedKey, false\)/,
+    "清除编排者必须清唯一真相 multiProjectPendingByKey",
+  );
+  // 残缺清除的指纹：往会话对象上手写 `pending: true|false`（= 又长出一份不会被清的
+  // 副本）。纯派生之后这种写法必须归零 —— 旧版这里查的是 `setSelectedPendingByKey`，
+  // 那个函数已随本轮重构删除，改查更直接的字面量。
+  const partial = scanSrc(/pending:\s*(true|false)\b/);
   assert.equal(
     partial.length,
     0,
-    `存在「只清两处」的残缺清除（灯不灭的直接来源）。今天 ${partial.length} 处：${where(partial)}`,
+    `存在往会话对象上手写 pending 的残缺清除（灯不灭的直接来源）。今天 ${partial.length} 处：${where(partial)}`,
   );
 });
 

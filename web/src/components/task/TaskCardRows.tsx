@@ -149,7 +149,7 @@ export function TaskCardRows({
   // 反过来也不能只看 create_worktree：它永久为 true，收尾之后一点没变，
   // 光看它会让收完尾的任务照样显示「有 worktree」。
   const worktreeGone = worktreeBuilt && (!hasWorktreePath || worktreeMissing);
-  // 三档分开：从来没建（amber 禁止符）、收尾中（绿+脉冲）、收尾拆掉了（灰「已收尾」）。
+  // 三档分开：从来没建（amber 禁止符）、收尾中（绿，文字「收尾中」）、收尾拆掉了（灰「已收尾」）。
   // 收尾中单列一档而不是并进 enabled：期间目录还在、徽标看着和平时一模一样，
   // 用户会以为「还没开始」于是再点一次。
   const worktreeTagState: WorktreeTagState = worktreeGone

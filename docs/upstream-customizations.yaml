@@ -1219,6 +1219,9 @@ groups:
       其余→追加收尾段）；③ 徽标以「目录是否存在」为金标准。
       会话运行状态是金标准（不是 task.Status）—— 任务可以长时间停在 running 却早就没 agent 了，
       旧判据下那种任务永远收不了尾。探针由 api 层装配时挂上，没装配时回落旧状态判据。
+      收尾中的视觉信号是文字不是动效（2026-10-07 用户要求）：绿色标签文字变「收尾中」
+      （task.worktreeFinishingLabel），不加脉冲动画；TaskDetailPanel 里那条转圈横幅一并删掉。
+      按钮全程可点，区分 enabled 与 finishing 的唯一信号就是标签文字。
     files:
       - server/internal/kanban/service.go
       - server/internal/kanban/worktree_finish.go
@@ -1571,33 +1574,38 @@ groups:
       - server/internal/relay/service_test.go
 
   - id: G-AY
-    title: 抽屉 pending 对账（done 丢失时停止符号 /「正在思考」卡住）
+    title: pending 纯派生（done 丢失时停止符号 /「正在思考」卡住）
     kind: fix
     symptom: |
       任务已结束，输入框仍显示停止符号；查看器仍「正在思考」；用量/上下文窗口面板不出现；
       但会话栏是正常的（列表收敛、抽屉不收敛，两边看起来不一样）。
     why: |
       pending 不落盘（sessions 表无此列，sessionListResponse 也不发），纯前端 optimistic。
-      抽屉（drawerSessionByRootRef → currentSession）的 pending 只有 handleSessionStreamDone
-      一个出口。BroadcastSessionDone 只发给 session.ready 绑定的客户端
-      （GetSessionClientIDs），而 WS 连接在本机反复 1006 unexpected EOF 断连 ——
-      重连后若没重新绑定（或绑定竞态），session.done 就打不到这个客户端。
-      实测（journalctl）：1791307447-6f646793904d 在 11:57:12 广播了 session.done，
-      但其后没有 GET /api/sessions?root=… 列表重拉 —— 而 session.done 处理器里
-      handleSessionStreamDone 之后无条件调 scheduleSessionListReload。没有重拉就证明
-      该处理器没跑，即这条 WS 事件没被前端处理。会话列表靠重连 + 5s 轮询才收敛，
-      所以「会话栏正常、抽屉卡住」。
+      原先前端有**五份投影**（缓存 / 抽屉 / 选中 / pendingBySessionRef / multiProjectPendingByKey）。
+      只有列表蓝灯那份每 5s 从 /api/replying-sessions 对账；其余四份只有 WS session.done 一个出口
+      —— BroadcastSessionDone 只发给 session.ready 绑定的客户端（GetSessionClientIDs），
+      而 WS 连接会反复 1006 unexpected EOF 断连，重连后绑定竞态一丢那条事件，那四处就永久停在 true。
+      实测（journalctl）：1791307447-6f646793904d 广播了 session.done，其后却没有
+      GET /api/sessions?root=… 重拉 —— 证明该 WS 事件没被前端处理。
+      2026-10-07 改成纯派生：唯一真相 multiProjectPendingByKey，会话对象上不再存 pending。
     boundary: |
-      抽屉/选中/缓存三处的 pending 只由 WS session.done 清除；这三处必须与列表蓝灯
-      一样从 /api/replying-sessions（multiProjectPendingByKey）对账。合上游时这块
-      effect 被冲掉，done 一丢失就永久卡住。
+      「这个会话在不在回复」这一份状态的存放方式。合上游时若退回「会话对象上存 pending」，
+      就又会裂成多份、又会在丢 session.done 时永久卡住。第一版修法是给四处补一条对账
+      （clearStalePending + 一个 effect）—— 那是打补丁：第二份状态还在，就还得再写一套
+      「怎么同步第二份状态」的代码。改成纯派生后没有第二份状态，也就没有「两份不同步」。
     tests:
-      - web/tests/drawer-pending-reconcile.test.mjs
+      - web/tests/pending-single-source.test.mjs
     files:
-      - web/src/app/appSession.ts
       - web/src/App.tsx
+      - web/src/app/useRealtimeEvents.ts
+      - web/src/app/appSession.ts
+      # 已重命名为 pending-single-source.test.mjs（第一版补丁的守卫）；
+      # 留在清单里是为了让 baseline..HEAD 的 delta 全覆盖（--no-renames 会把它算成一个删除）。
+      - web/tests/drawer-pending-reconcile.test.mjs
     anchors:
-      - web/src/App.tsx:clearStalePending
+      - web/src/App.tsx:setMultiProjectSessionPending
+      - web/src/App.tsx:getSessionSnapshot
+      - web/src/app/appSession.ts:mergeReplyingStateByNode
 
   - id: G-AZ
     title: 任务卡视觉件：待审核状态徽标 / 列框去除 / 浮动滚动条 / 工作台角标移除

@@ -205,7 +205,7 @@ import { TaskInlineEditState } from "./app/appTask";
 import { buildMatchInputFromPath, buildMessageWithViewContext, hasExplicitFileContext, indexManagedRoots, inferReadModeFromPlugin, managedDirAddErrorMessage, mapManagedRootsToEntries, normalizeUpdateState, shouldShowUpdateButton, toPluginInput, updateButtonLabel, updateSummaryText, useResponsive, waitForNextPaint } from "./app/appMisc";
 import { basenameOfPath, buildDirectorySelectionKey, buildFileScrollKey, buildURLSearch, comparableManagedRootPath, dirnameOfPath, isDirectorySortMode, joinDisplayPath, normalizeCursor, normalizePath, parentDirsOfFile, parseFileLocation, parsePluginQuery, readURLState, relativeDisplayPathFromRoot, rootNodeKey } from "./app/appPath";
 import { useWorkspaceBoard } from "./app/useWorkspaceBoard";
-import { clearStalePending, hasSessionExchanges, isSessionShownInMain, isTopLevelSessionItem, mergeReplyingStateByNode, normalizeMode, relatedFileSelectionKey, sessionInputHistory, shouldAutoSelectNewSession, toSessionItem } from "./app/appSession";
+import { hasSessionExchanges, isSessionShownInMain, isTopLevelSessionItem, mergeReplyingStateByNode, normalizeMode, relatedFileSelectionKey, sessionInputHistory, shouldAutoSelectNewSession, toSessionItem } from "./app/appSession";
 import { buildSessionJumpTarget, resolveSessionJumpRoot } from "./app/sessionJump";
 import { accountScopedKey, loadGitDiffSideBySide, loadLastRootId, loadLastRootNodeId, loadMobileEnterKeySends, loadPersistedFileScrollPositions, loadPersistedPluginQuery, loadSidebarsSwapped, loadTaskCreateWorktreePreference, persistFileScrollPositions, persistPluginQuery, removeLocalStorageByPrefix, saveTaskCreateWorktreePreference } from "./app/appStorage";
 import { applyStageOverride, currentTaskInputFromDetail, DEFAULT_TASK_AGENT, DEFAULT_TASK_MODEL, firstAgentStage, firstTaskInputFromDetail, firstUserInputTemplate, isTerminalKanbanTask, latestTaskStageRun, normalizeFastService, parseTaskSessionErrorDetails, parseTaskSessionErrorMessage, previousTaskInputsFromDetail, taskSessionKeysFromDetail, taskStagesForCreate, taskStatusLabel } from "./app/appTask";
@@ -2024,17 +2024,17 @@ export function App({ onGoHome }: AppProps) {
         return;
       }
       const key = rootSessionKey(resolvedRoot, resolvedKey);
-      setMultiProjectPendingByKey((prev) => {
-        const next = { ...prev };
-        if (pending) {
-          next[key] = true;
-        } else {
-          delete next[key];
-        }
-        multiProjectPendingRef.current = next;
-        setMultiProjectSessionGroups((groups) => applyPendingToMultiProjectGroups(groups, next));
-        return next;
-      });
+      // 先同步更新 ref 再 setState：流式期间 markSessionPending 每 chunk 调一次，
+      // 幂等判断读的是这个 ref（等 React 跑 updater 就来不及了）。
+      const next = { ...multiProjectPendingRef.current };
+      if (pending) {
+        next[key] = true;
+      } else {
+        delete next[key];
+      }
+      multiProjectPendingRef.current = next;
+      setMultiProjectPendingByKey(next);
+      setMultiProjectSessionGroups((groups) => applyPendingToMultiProjectGroups(groups, next));
     },
     [applyPendingToMultiProjectGroups, rootSessionKey],
   );
@@ -2088,14 +2088,10 @@ export function App({ onGoHome }: AppProps) {
       const exchanges = Array.isArray((cached as any)?.exchanges)
         ? ((cached as any).exchanges as Exchange[]) || []
         : fallbackExchanges;
-      const pending =
-        drawerSession?.key === key
-          ? !!(drawerSession as any)?.pending
-          : typeof (session as any)?.pending === "boolean"
-            ? !!(session as any).pending
-            : typeof (cached as any)?.pending === "boolean"
-              ? !!(cached as any).pending
-              : undefined;
+      // pending 纯派生：唯一的真相在 multiProjectPendingByKey（WS 乐观更新 +
+      // /api/replying-sessions 轮询覆盖）。会话对象（drawer/selected/cache）上不再存
+      // pending —— 那是会卡死的第二份状态，session.done 一丢就永久为 true。
+      const pending = !!multiProjectPendingByKey[rootSessionKey(rootId, key)];
       return {
         ...(session as any),
         ...(cached as any),
@@ -2109,18 +2105,7 @@ export function App({ onGoHome }: AppProps) {
         pending,
       } as any;
     },
-    [rootSessionKey, cacheVersion],
-  );
-
-  const setSelectedPendingByKey = useCallback(
-    (sessionKey: string, pending: boolean) => {
-      setSelectedSession((prev) => {
-        const prevKey = prev?.key || prev?.session_key;
-        if (!prev || prevKey !== sessionKey) return prev;
-        return { ...(prev as any), pending } as SessionItem;
-      });
-    },
-    [],
+    [rootSessionKey, cacheVersion, multiProjectPendingByKey],
   );
 
   const resolvePendingForSession = useCallback(
@@ -2134,40 +2119,13 @@ export function App({ onGoHome }: AppProps) {
       if (!resolvedRoot || !resolvedKey) {
         return !!fallback;
       }
-      const cacheKey = rootSessionKey(resolvedRoot, resolvedKey);
-      if (pendingBySessionRef.current[cacheKey]) {
-        return true;
-      }
-      const drawer = drawerSessionByRootRef.current[scopedRootKey(resolvedRoot)] as
-        | ({ pending?: boolean; key?: string; session_key?: string } & Record<string, unknown>)
-        | null
-        | undefined;
-      if (
-        drawer &&
-        (drawer.key || drawer.session_key) === resolvedKey &&
-        typeof drawer.pending === "boolean"
-      ) {
-        return drawer.pending;
-      }
-      const selected = selectedSessionRef.current as
-        | ({ pending?: boolean; key?: string; session_key?: string; root_id?: string } & Record<string, unknown>)
-        | null
-        | undefined;
-      if (
-        selected &&
-        ((selected.root_id as string | undefined) || currentRootIdRef.current) ===
-          resolvedRoot &&
-        (selected.key || selected.session_key) === resolvedKey &&
-        typeof selected.pending === "boolean"
-      ) {
-        return selected.pending;
-      }
-      const cached = sessionCacheRef.current[cacheKey] as
-        | ({ pending?: boolean } & Record<string, unknown>)
-        | null
-        | undefined;
-      if (cached && typeof cached.pending === "boolean") {
-        return cached.pending;
+      // 纯派生：pending 的唯一真相是 multiProjectPendingByKey。用 ref 读而不是 state，
+      // 是为了不把它拉进 restoreActiveSession 的依赖数组（那会造成身份抖动、反复重拉）。
+      // 表里没有这个键就落回调用方给的 fallback（通常是这次服务端回包里的 pending）。
+      const key = rootSessionKey(resolvedRoot, resolvedKey);
+      const known = multiProjectPendingRef.current[key];
+      if (typeof known === "boolean") {
+        return known;
       }
       return !!fallback;
     },
@@ -2192,10 +2150,7 @@ export function App({ onGoHome }: AppProps) {
       delete pendingBySessionRef.current[cacheKey];
       const cached = sessionCacheRef.current[cacheKey];
       if (cached && (cached.key || (cached as any).session_key) === resolvedKey) {
-        sessionCacheRef.current[cacheKey] = clearPendingAck({
-          ...(cached as any),
-          pending: false,
-        } as Session);
+        sessionCacheRef.current[cacheKey] = clearPendingAck(cached as Session) as Session;
       }
       setSelectedSession((prev) => {
         const prevKey = prev?.key || prev?.session_key;
@@ -2204,17 +2159,15 @@ export function App({ onGoHome }: AppProps) {
         if (!prev || prevKey !== resolvedKey || prevRoot !== resolvedRoot) {
           return prev;
         }
-        return clearPendingAck({
-          ...(prev as any),
-          pending: false,
-        } as SessionItem);
+        const next = clearPendingAck(prev as SessionItem);
+        return next === prev ? prev : next;
       });
       const drawer = drawerSessionByRootRef.current[scopedRootKey(resolvedRoot)];
       if (drawer && (drawer.key || (drawer as any).session_key) === resolvedKey) {
-        setDrawerSessionForRoot(resolvedRoot, clearPendingAck({
-          ...(drawer as any),
-          pending: false,
-        } as Session));
+        const next = clearPendingAck(drawer as Session);
+        if (next !== drawer) {
+          setDrawerSessionForRoot(resolvedRoot, next as Session);
+        }
       }
       if (currentRootIdRef.current === resolvedRoot) {
         setSessions((prev) =>
@@ -2223,10 +2176,7 @@ export function App({ onGoHome }: AppProps) {
             if (itemKey !== resolvedKey) {
               return item;
             }
-            return clearPendingAck({
-              ...(item as any),
-              pending: false,
-            } as SessionItem);
+            return clearPendingAck(item as SessionItem) as SessionItem;
           }),
         );
       }
@@ -2352,7 +2302,6 @@ export function App({ onGoHome }: AppProps) {
               // CUSTOM(G-Z): 窗口/列表回包不带 root_id（root 只是请求参数），
               // 这里不补，缓存里就是「无主」会话 —— 二次跳转时归属会退化成当前根。
               root_id: resolvedRoot,
-              pending,
               // 加载时的唯一组装规则：服务端行并入缓存，在途时再把 seq=0 接回。
               // 判据是 `pending` —— 不在跑就没有在途内容，缓存里的 seq=0 全是残留
               // （跨多次 compact 堆起来的那种，渲染出来就是「同一段正文两遍」）。
@@ -2429,7 +2378,6 @@ export function App({ onGoHome }: AppProps) {
           key: resolvedKey,
           // CUSTOM(G-Z): 同窗口分支 —— 全量 sync 回包同样不带 root_id。
           root_id: resolvedRoot,
-          pending,
           _windowMeta: anchoredMeta as any,
           _anchoredAt: anchorAt,
         } as Session;
@@ -2442,7 +2390,6 @@ export function App({ onGoHome }: AppProps) {
           ...(fullSession as any),
           key: resolvedKey,
           root_id: resolvedRoot,
-          pending,
           _windowMeta: anchoredMeta as any,
           _anchoredAt: anchorAt,
         } as Session;
@@ -2846,10 +2793,16 @@ export function App({ onGoHome }: AppProps) {
                 (latestReal as any).name
                   ? (latestReal as any).name
                   : "") || pendingName,
-              pending: true,
             } as SessionItem;
           }),
         );
+      }
+
+      // pending-* 临时键换成真键时，把「在跑」这条乐观标记一起搬过去 ——
+      // 唯一真相是 multiProjectPendingByKey，键不跟着搬就会在 promote 那一刻灭灯。
+      if (multiProjectPendingRef.current[pendingCacheKey]) {
+        setMultiProjectSessionPending(rootID, pendingKey, false);
+        setMultiProjectSessionPending(rootID, sessionKey, true);
       }
 
       // pending 会话 promote 为真实会话时，同步替换右侧多项目列表中的临时条目
@@ -2874,7 +2827,6 @@ export function App({ onGoHome }: AppProps) {
                 (latestReal as any).name
                   ? (latestReal as any).name
                   : "") || pendingName,
-              pending: true,
             } as SessionItem;
           });
           return { ...group, sessions: mergeSessionItems(sessions, []) };
@@ -2904,7 +2856,7 @@ export function App({ onGoHome }: AppProps) {
         bumpCacheVersion();
       }
     },
-    [rootSessionKey, setBoundSessionForRoot, setDrawerSessionForRoot, bumpCacheVersion],
+    [rootSessionKey, setBoundSessionForRoot, setDrawerSessionForRoot, bumpCacheVersion, setMultiProjectSessionPending],
   );
 
   const {
@@ -3659,44 +3611,6 @@ export function App({ onGoHome }: AppProps) {
     setMultiProjectSessionGroups((groups) => applyPendingToMultiProjectGroups(groups, next));
   }, [applyPendingToMultiProjectGroups]);
 
-  // 抽屉（currentSession）的 pending 只由 WS session.done 处理器清除。断连/重绑竞态
-  // 会让那条事件丢失，抽屉于是永久卡在 pending:true —— 输入框一直显示停止符号、查看器
-  // 一直「正在思考」、用量面板不出现。会话列表不会卡：它的蓝灯每 5s 从
-  // /api/replying-sessions 对账一次（refreshMultiProjectReplyingSessions）。这里让抽屉
-  // 跟着同一个服务端真值对账，done 丢了也能在下一个轮询周期收敛。
-  // 选中会话与缓存同样只由 handleSessionStreamDone 清，一并在这里对账 —— ActionBar 的
-  // showCancel 读的是 actionBarSession（可能是 selectedSession / 缓存），不是抽屉本身。
-  useEffect(() => {
-    const rootID = currentRootIdRef.current;
-    if (!rootID) return;
-    const isServerPending = (key: string) =>
-      !!multiProjectPendingByKey[rootSessionKey(rootID, key)];
-
-    const drawer = drawerSessionByRootRef.current[scopedRootKey(rootID)];
-    const nextDrawer = clearStalePending(drawer, isServerPending);
-    if (nextDrawer !== drawer && nextDrawer) {
-      setDrawerSessionForRoot(rootID, nextDrawer as Session);
-    }
-
-    const selected = selectedSessionRef.current;
-    if (selected?.root_id === rootID) {
-      const nextSelected = clearStalePending(selected, isServerPending);
-      if (nextSelected !== selected && nextSelected) {
-        setSelectedSession((prev) =>
-          prev && (prev.key || prev.session_key) === selected.key ? nextSelected : prev,
-        );
-      }
-    }
-
-    const cacheKey = drawer?.key ? rootSessionKey(rootID, drawer.key) : "";
-    const cached = cacheKey ? (sessionCacheRef.current[cacheKey] as any) : null;
-    const nextCached = clearStalePending(cached, isServerPending);
-    if (nextCached !== cached && nextCached) {
-      sessionCacheRef.current[cacheKey] = nextCached;
-      bumpCacheVersion();
-    }
-  }, [multiProjectPendingByKey, rootSessionKey, scopedRootKey, setDrawerSessionForRoot]);
-
   useEffect(() => {
     if (!multiProjectSessionsEnabled) {
       return;
@@ -3901,11 +3815,6 @@ export function App({ onGoHome }: AppProps) {
       if (!options?.preserveMainView) {
         switchMainView("chat");
       }
-      const currentDrawer = drawerSessionByRootRef.current[scopedRootKey(targetRoot)];
-      const preservePending =
-        currentDrawer?.key === key
-          ? !!(currentDrawer as any)?.pending
-          : !!(session as any)?.pending;
       const searchTargetId =
         typeof session?.search_seq === "number"
           ? `${key}:${session.search_seq}:${++sessionSearchTargetCounterRef.current}`
@@ -3923,7 +3832,6 @@ export function App({ onGoHome }: AppProps) {
       setSelectedSession(
         toSessionItem(targetRoot, {
           ...(session as any),
-          pending: preservePending,
           search_target_id: searchTargetId || session?.search_target_id,
         }),
       );
@@ -3936,21 +3844,12 @@ export function App({ onGoHome }: AppProps) {
         options?: { writeCache?: boolean },
       ) => {
         const shouldWriteCache = options?.writeCache !== false;
-        const serverPending =
-          typeof (fullSession as any)?.pending === "boolean"
-            ? !!(fullSession as any).pending
-            : undefined;
-        const pending =
-          serverPending !== undefined
-            ? serverPending
-            : resolvePendingForSession(targetRoot, key, preservePending);
         const normalized = {
           ...(fullSession as any),
           key,
           // CUSTOM(G-Z): 所有走 handleSelectSession 的路径写缓存都带 root，
           // 这是「无主缓存」的收口 —— 缺了它，二次跳转会把它当成当前根的会话。
           root_id: targetRoot,
-          pending,
         } as Session;
         if (shouldWriteCache) {
           sessionCacheRef.current[cacheKey] = normalized;
@@ -4868,9 +4767,15 @@ export function App({ onGoHome }: AppProps) {
       const isQueueSend =
         !!sendSessionKey &&
         !!session &&
-        (((session as any).pending === true) ||
-          (currentSessionRef.current?.key === sendSessionKey &&
-            currentSessionRef.current?.pending === true));
+        // pending 纯派生：先看 multiProjectPendingByKey，表里没有才落回会话对象上
+        // 那份（服务端列表回包带的快照）。
+        resolvePendingForSession(
+          ((session as any).root_id as string | undefined) || currentRootId,
+          sendSessionKey,
+          (session as any).pending === true ||
+            (currentSessionRef.current?.key === sendSessionKey &&
+              currentSessionRef.current?.pending === true),
+        );
       if (sendSessionKey && session) {
         const targetSessionKey = sendSessionKey;
         const previousAgent = session.agent || "";
@@ -4919,11 +4824,9 @@ export function App({ onGoHome }: AppProps) {
         } as Session;
         setBoundSessionForRoot(activeRoot, targetSessionKey);
         if (!isQueueSend) {
-          setSelectedPendingByKey(targetSessionKey, true);
-          setDrawerSessionForRoot(activeRoot, {
-            ...(session as any),
-            pending: true,
-          } as Session);
+          // pending 不再写在会话对象上（纯派生自 multiProjectPendingByKey，见下方
+          // setMultiProjectSessionPending）；这里只把抽屉指向这条会话。
+          setDrawerSessionForRoot(activeRoot, session as Session);
         }
       } else {
         if (transientSlashCommand) {
@@ -4943,7 +4846,6 @@ export function App({ onGoHome }: AppProps) {
             shell: effectiveShell,
             plan_mode: pendingPlanMode || messageRequestsPlanMode,
             name: t("session.new"),
-            pending: true,
           } as any;
           setBoundSessionForRoot(activeRoot, tempKey);
         }
@@ -4982,23 +4884,8 @@ export function App({ onGoHome }: AppProps) {
 	        if (session) {
 	          // 曾经这里只清两处（选中 + 小蓝灯），缓存与抽屉仍留着 `pending: true` ——
 	          // 那是「灯不灭」/「状态不收敛」的直接来源（冲突⑤）。交给清除编排者。
+	          // 现在它只改 multiProjectPendingByKey（唯一真相）+ 取消后的 pending_ack 收尾。
 	          clearLocalPendingForSession(activeRoot, targetSessionKey);
-	        }
-	        setSessions((prev) =>
-	          prev.map((item) => {
-	            const itemKey = item.key || item.session_key;
-	            if (itemKey !== targetSessionKey) {
-	              return item;
-	            }
-	            return { ...(item as any), pending: false } as SessionItem;
-	          }),
-	        );
-	        const drawerSession = drawerSessionByRootRef.current[scopedRootKey(activeRoot)];
-	        if (drawerSession && drawerSession.key === targetSessionKey) {
-	          setDrawerSessionForRoot(activeRoot, {
-	            ...(drawerSession as any),
-	            pending: false,
-	          } as Session);
 	        }
 	        setSlashCommandResults((prev) => {
           const next = { ...prev };
@@ -5111,7 +4998,6 @@ export function App({ onGoHome }: AppProps) {
             }
             return {
               ...(item as any),
-              pending: true,
               updated_at: now,
               agent: effectiveAgent,
               model: effectiveModel,
@@ -5178,7 +5064,6 @@ export function App({ onGoHome }: AppProps) {
           updated_at: now,
         } as Session;
         if (tempSessionKey) {
-          setMultiProjectSessionPending(activeRoot, tempSessionKey, true);
           sessionCacheRef.current[rootSessionKey(activeRoot, tempSessionKey)] =
             draftSession;
           const draftItem = toSessionItem(activeRoot, {
@@ -5188,7 +5073,6 @@ export function App({ onGoHome }: AppProps) {
             root_id: activeRoot,
             created_at: now,
             updated_at: now,
-            pending: true,
           });
           if (draftItem) {
             setSessions((prev) => mergeSessionItems(prev, [draftItem]));
@@ -5218,6 +5102,9 @@ export function App({ onGoHome }: AppProps) {
             });
           }
           bumpCacheVersion();
+          // 放在两个 merge 之后：setMultiProjectSessionPending 内部会用新表重刷
+          // multiProjectSessionGroups，这样刚并入的 draftItem 才拿得到「在跑」标记。
+          setMultiProjectSessionPending(activeRoot, tempSessionKey, true);
           // 判据见 appSession.shouldAutoSelectNewSession。
           if (
             shouldAutoSelectNewSession({
@@ -5249,10 +5136,8 @@ export function App({ onGoHome }: AppProps) {
         setDrawerOpenForRoot(activeRoot, true);
       }
       if (!isQueueSend) {
-        setDrawerSessionForRoot(activeRoot, {
-          ...(session as any),
-          pending: true,
-        } as Session);
+        // pending 不再写在会话对象上（唯一真相是 multiProjectPendingByKey）。
+        setDrawerSessionForRoot(activeRoot, session as Session);
       }
       const explicitFileContext = hasExplicitFileContext(message);
       const selection =
@@ -5322,24 +5207,9 @@ export function App({ onGoHome }: AppProps) {
       }
       if (!sent && sendSessionKey) {
         const failedSessionKey = sendSessionKey;
-        // 同理：发送失败必须把**全部五处**的 pending 收敛掉，否则缓存里那条会话永远显示「在回复」
+        // 发送失败必须把 pending 收敛掉，否则那条会话永远显示「在回复」。
+        // 现在收敛只有一处：clearLocalPendingForSession 清 multiProjectPendingByKey。
         clearLocalPendingForSession(activeRoot, failedSessionKey);
-        setSessions((prev) =>
-          prev.map((item) => {
-            const itemKey = item.key || item.session_key;
-            if (itemKey !== failedSessionKey) {
-              return item;
-            }
-            return { ...(item as any), pending: false } as SessionItem;
-          }),
-        );
-        const latest = drawerSessionByRootRef.current[scopedRootKey(activeRoot)];
-        if (latest && latest.key === failedSessionKey) {
-          setDrawerSessionForRoot(activeRoot, {
-            ...(latest as any),
-            pending: false,
-          } as Session);
-        }
       }
       if (!sent && !sendSessionKey && tempKey) {
         setMultiProjectSessionPending(activeRoot, tempKey, false);
@@ -5350,20 +5220,12 @@ export function App({ onGoHome }: AppProps) {
         if (boundSessionByRootRef.current[scopedRootKey(activeRoot)] === tempKey) {
           setBoundSessionForRoot(activeRoot, null);
         }
-        const latest = drawerSessionByRootRef.current[scopedRootKey(activeRoot)];
-        if (latest && latest.key === tempKey) {
-          setDrawerSessionForRoot(activeRoot, {
-            ...(latest as any),
-            pending: false,
-          } as Session);
-        }
       }
     },
     [
       attachedFileContext,
       rootSessionKey,
       mergeSessionItems,
-      setSelectedPendingByKey,
       bumpCacheVersion,
       clearSlashCommandResultForSession,
       slashCommandResults,
@@ -5445,17 +5307,12 @@ export function App({ onGoHome }: AppProps) {
       const cacheKey = rootSessionKey(rootID, sessionKey);
       const cached = sessionCacheRef.current[cacheKey];
       const drawer = drawerSessionByRootRef.current[scopedRootKey(rootID)];
-      const alreadyPending =
-        !!(cached as any)?.pending &&
-        !!(drawer as any)?.pending &&
-        (selectedSessionRef.current?.key || selectedSessionRef.current?.session_key) ===
-          sessionKey &&
-        !!(selectedSessionRef.current as any)?.pending;
+      // 判据是唯一真相表，不再是会话对象上的 pending（那份已经不存在了）。
+      const alreadyPending = multiProjectPendingRef.current[cacheKey] === true;
       const now = new Date().toISOString();
       if (cached) {
         sessionCacheRef.current[cacheKey] = {
           ...(cached as any),
-          pending: true,
           updated_at: now,
         } as Session;
       }
@@ -5465,11 +5322,9 @@ export function App({ onGoHome }: AppProps) {
       if (cached) {
         bumpCacheVersion();
       }
-      setSelectedPendingByKey(sessionKey, true);
       if (drawer && (drawer.key || (drawer as any).session_key) === sessionKey) {
         setDrawerSessionForRoot(rootID, {
           ...(drawer as any),
-          pending: true,
           updated_at: now,
         } as Session);
       }
@@ -5482,7 +5337,6 @@ export function App({ onGoHome }: AppProps) {
             }
             return {
               ...(item as any),
-              pending: true,
               updated_at: now,
             } as SessionItem;
           }),
@@ -5490,7 +5344,7 @@ export function App({ onGoHome }: AppProps) {
       }
       setMultiProjectSessionPending(rootID, sessionKey, true);
     },
-    [bumpCacheVersion, rootSessionKey, setDrawerSessionForRoot, setMultiProjectSessionPending, setSelectedPendingByKey],
+    [bumpCacheVersion, rootSessionKey, setDrawerSessionForRoot, setMultiProjectSessionPending],
   );
 
   const handleRemoveQueuedMessage = useCallback(
@@ -7298,7 +7152,6 @@ export function App({ onGoHome }: AppProps) {
       setProjectAddMode,
       setQueueVersion,
       setRootEntries,
-      setSelectedPendingByKey,
       setSelectedSession,
       setSessions,
       setSlashCommandResults,
@@ -7735,6 +7588,17 @@ export function App({ onGoHome }: AppProps) {
     (actionBarSession as any)?.key ||
     (actionBarSession as any)?.session_key ||
     "";
+  // pending 纯派生：ActionBar 的「停止」按钮只看 multiProjectPendingByKey（唯一真相）。
+  const actionBarSessionPending =
+    !!actionBarSessionKey &&
+    !!multiProjectPendingByKey[
+      rootSessionKey(
+        ((actionBarSession as any)?.root_id as string | undefined) ||
+          currentRootId ||
+          "",
+        actionBarSessionKey,
+      )
+    ];
   const actionBarInputHistory = sessionInputHistory(
     getSessionSnapshot(
       ((actionBarSession as any)?.root_id as string | undefined) || currentRootId,
@@ -7914,8 +7778,19 @@ export function App({ onGoHome }: AppProps) {
 	        if (key) merged[key] = session;
 	      }
 	    }
-	    return { ...merged, ...sessionByKey };
-	  }, [multiProjectSessionGroups, sessionByKey]);
+	    const all: Record<string, SessionItem> = { ...merged, ...sessionByKey };
+	    // pending 纯派生：唯一真相是 multiProjectPendingByKey。会话列表项上那份是「拉列表
+	    // 那一刻」的快照，跑完不重拉列表就会一直挂着（卡片上的「在回复」圆点就是这么卡住的）。
+	    for (const [key, item] of Object.entries(all)) {
+	      const root = String((item as any)?.root_id || "");
+	      if (!root) continue;
+	      const pending = !!multiProjectPendingByKey[rootSessionKey(root, key)];
+	      if (pending !== !!item.pending) {
+	        all[key] = { ...item, pending };
+	      }
+	    }
+	    return all;
+	  }, [multiProjectSessionGroups, sessionByKey, multiProjectPendingByKey, rootSessionKey]);
 
 	  const selectedKanbanTask = useMemo(() => {
 	    if (!selectedKanbanTaskId) return null;
@@ -8091,21 +7966,8 @@ export function App({ onGoHome }: AppProps) {
       if (!hasBound && !hasPendingSession) {
         continue;
       }
-      const drawer = drawerSessionByRootRef.current[scopedRid] as
-        | (Session & { pending?: boolean })
-        | null
-        | undefined;
-      const selected =
-        ((selectedSession?.root_id as string | undefined) || currentRootId) ===
-          root &&
-        (selectedSession?.key || selectedSession?.session_key) === boundKey
-          ? ((selectedSession as any) as { pending?: boolean })
-          : null;
-      const pending =
-        hasPendingSession ||
-        (drawer?.key === boundKey && !!drawer?.pending) ||
-        !!selected?.pending;
-      next[scopedRid] = { bound: hasBound || hasPendingSession, pending };
+      // pending 纯派生自 multiProjectPendingByKey（本项目下任意会话在跑即亮灯）。
+      next[scopedRid] = { bound: hasBound || hasPendingSession, pending: hasPendingSession };
     }
     return next;
   }, [
@@ -9818,7 +9680,7 @@ export function App({ onGoHome }: AppProps) {
               codexRateLimitsRefreshToken={codexRateLimitsRefreshToken}
               currentRootId={currentRootId}
               currentRootIsGitRepo={managedRootByIdRef.current[currentRootId || ""]?.is_git_repo === true}
-              currentSession={actionBarSession ? { ...actionBarSession, name: actionBarSession.name || "", type: normalizeMode(actionBarSession.type), agent: actionBarSession.agent || "" } : null}
+              currentSession={actionBarSession ? { ...actionBarSession, name: actionBarSession.name || "", type: normalizeMode(actionBarSession.type), agent: actionBarSession.agent || "", pending: actionBarSessionPending } : null}
               pendingPlanMode={pendingPlanMode}
               rootColor={getDisplayNodeColor(String(currentRootId || ""))}
               attachedFileContext={attachedFileContext}
