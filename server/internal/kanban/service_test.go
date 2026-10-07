@@ -381,9 +381,15 @@ func TestCreateTaskStartsImmediatelyWhenFirstStageSaysSo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
+	// 等**自动落到 agent 段**（index==1）这个稳定结果，别等 Status==running。
+	// running 是瞬态：推进阶段时同步置 running，随后异步 executeTask 跑完 agent 段
+	// 就转 waiting_user。高并行负载下（go test ./... 各包并行）它可能在首轮轮询
+	// （动作返回后 ~10ms）之前就翻过去 —— 实测 300 次高压下 12 次从头到尾只见
+	// waiting_user，条件永不成立 → 2s 超时。index==1 在 running 与 waiting_user
+	// 两态下都成立，且正是本用例要断言的结果。
 	waitForCondition(t, func() bool {
 		d, err := svc.GetTask(ctx, root.ID, detail.Task.ID)
-		return err == nil && d.Task.Status == StatusRunning
+		return err == nil && d.Task.CurrentStageIndex == 1
 	})
 	detail, err = svc.GetTask(ctx, root.ID, detail.Task.ID)
 	if err != nil {
@@ -495,9 +501,15 @@ func TestCreateTaskFollowsTemplateStartImmediatelyWhenNoStagesSent(t *testing.T)
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
+	// 等**自动落到 agent 段**（index==1）这个稳定结果，别等 Status==running。
+	// running 是瞬态：推进阶段时同步置 running，随后异步 executeTask 跑完 agent 段
+	// 就转 waiting_user。高并行负载下（go test ./... 各包并行）它可能在首轮轮询
+	// （动作返回后 ~10ms）之前就翻过去 —— 实测 300 次高压下 12 次从头到尾只见
+	// waiting_user，条件永不成立 → 2s 超时。index==1 在 running 与 waiting_user
+	// 两态下都成立，且正是本用例要断言的结果。
 	waitForCondition(t, func() bool {
 		d, err := svc.GetTask(ctx, root.ID, detail.Task.ID)
-		return err == nil && d.Task.Status == StatusRunning
+		return err == nil && d.Task.CurrentStageIndex == 1
 	})
 	detail, err = svc.GetTask(ctx, root.ID, detail.Task.ID)
 	if err != nil {
@@ -991,9 +1003,15 @@ func TestRunNowFromPendingStartsAgentStage(t *testing.T) {
 	if _, err := svc.RunNow(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err != nil {
 		t.Fatalf("RunNow: %v", err)
 	}
+	// 等**自动落到 agent 段**（index==1）这个稳定结果，别等 Status==running。
+	// running 是瞬态：推进阶段时同步置 running，随后异步 executeTask 跑完 agent 段
+	// 就转 waiting_user。高并行负载下（go test ./... 各包并行）它可能在首轮轮询
+	// （动作返回后 ~10ms）之前就翻过去 —— 实测 300 次高压下 12 次从头到尾只见
+	// waiting_user，条件永不成立 → 2s 超时。index==1 在 running 与 waiting_user
+	// 两态下都成立，且正是本用例要断言的结果。
 	waitForCondition(t, func() bool {
 		d, err := svc.GetTask(ctx, root.ID, detail.Task.ID)
-		return err == nil && d.Task.Status == StatusRunning
+		return err == nil && d.Task.CurrentStageIndex == 1
 	})
 	detail, err = svc.GetTask(ctx, root.ID, detail.Task.ID)
 	if err != nil {
