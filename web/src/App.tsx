@@ -229,6 +229,9 @@ import { CheckIconSmall, PlusSmallIcon, taskCardIconButtonStyle } from "./app/ta
 import { useMultiProjectSessions } from "./app/useMultiProjectSessions";
 import { useSessionArchive } from "./app/useSessionArchive";
 import { useManagedRoots } from "./app/useManagedRoots";
+import { usePluginHandlers } from "./app/usePluginHandlers";
+import { useFileRefresh } from "./app/useFileRefresh";
+import { useRelatedFileDiff } from "./app/useRelatedFileDiff";
 
 
 export function App({ onGoHome }: AppProps) {
@@ -2604,110 +2607,32 @@ export function App({ onGoHome }: AppProps) {
     [getNodeIdForRoot],
   );
 
-  const refreshTreeDir = useCallback(
-    async (rootID: string, dirPath: string, syncMain: boolean) => {
-      const cacheKey = treeCacheKey(rootID, dirPath);
-      // 并发守卫：同目录并发刷新（按钮 × WS 事件 × 导航）时只让最后发起的请求生效，
-      // 防止先发起的旧响应后返回覆盖新数据（“点了刷新仍显示旧内容”的来源之一）。
-      treeFetchSeqRef.current[cacheKey] = (treeFetchSeqRef.current[cacheKey] || 0) + 1;
-      const seq = treeFetchSeqRef.current[cacheKey];
-      // syncMain 时须仍在查看该目录才允许回写主视图，防止导航后旧响应覆盖新视图
-      const matchesView = () =>
-        rootID === currentRootIdRef.current &&
-        (selectedDirRef.current === rootID ? "." : selectedDirRef.current || ".") === dirPath;
-      try {
-        const payload = await apiProtectedJSON<any>(
-          appURL("/api/tree", new URLSearchParams({ root: rootID, dir: dirPath }), getNodeIdForRoot(rootID)),
-        );
-        if (treeFetchSeqRef.current[cacheKey] !== seq) {
-          return; // 旧响应已过时，丢弃
-        }
-        const parsed = normalizeTreeResponse(payload);
-        invalidTreeCacheKeysRef.current.delete(cacheKey);
-        setEntriesByPath((prev) => ({
-          ...prev,
-          [cacheKey]: parsed.entries,
-        }));
-        if (syncMain && matchesView()) {
-          setMainDirectoryError("");
-          setMainEntries(parsed.entries);
-        }
-      } catch (error) {
-        if (treeFetchSeqRef.current[cacheKey] !== seq) {
-          return; // 已被更新的请求取代，错误也一并丢弃
-        }
-        // 失败后不信任旧缓存：标记该目录缓存失效，下次查看/刷新强制重拉真实状态
-        invalidTreeCacheKeysRef.current.add(cacheKey);
-        if (syncMain && matchesView()) {
-          const message = String(
-            (error as any)?.payload?.error || (error as any)?.payload?.message || (error as Error)?.message || "",
-          );
-          const display = formatDirectoryLoadError(message);
-          setMainDirectoryError(display);
-          reportError("file.read_failed", display, { severity: "warning", recoverable: true });
-        }
-      }
-    },
-    [formatDirectoryLoadError, getNodeIdForRoot, treeCacheKey],
-  );
-
-  const refreshCurrentFileContent = useCallback(
-    async (rootID: string, changedPath: string) => {
-      if (fileEditStore.has(rootID, changedPath)) return;
-      const currentFile = fileRef.current;
-      if (!currentFile) return;
-      const currentRoot = currentFile.root || currentRootIdRef.current || "";
-      if (currentRoot !== rootID || currentFile.path !== changedPath) return;
-
-      let readMode: "incremental" | "full" = "incremental";
-      if (!pluginBypassRef.current) {
-        try {
-          const plugin = pluginManagerRef.current.match(
-            rootID,
-            buildMatchInputFromPath(changedPath, pluginQueryRef.current),
-          );
-          readMode = inferReadModeFromPlugin(plugin);
-        } catch {
-          readMode = "incremental";
-        }
-      }
-
-      try {
-        const next = await fetchFile({
-          rootId: rootID,
-          path: changedPath,
-          nodeId: getNodeIdForRoot(String(rootID)),
-          readMode,
-          cursor: fileCursorRef.current || 0,
-        });
-        const latestFile = fileRef.current;
-        const latestRoot = latestFile?.root || currentRootIdRef.current || "";
-        if (
-          !next ||
-          !latestFile ||
-          latestRoot !== rootID ||
-          latestFile.path !== changedPath ||
-          fileEditStore.has(rootID, changedPath)
-        ) {
-          return;
-        }
-        setFile({
-          ...next,
-          targetLine: latestFile.targetLine,
-          targetColumn: latestFile.targetColumn,
-        });
-      } catch (err) {
-        console.error("[file.refresh.changed] failed", {
-          rootID,
-          changedPath,
-          err,
-        });
-      }
-    },
-    [],
-  );
 
 
+
+  const {
+    refreshTreeDir,
+    refreshCurrentFileContent,
+  } = useFileRefresh({
+    currentRootIdRef,
+    file,
+    fileCursorRef,
+    fileEditStore,
+    fileRef,
+    formatDirectoryLoadError,
+    getNodeIdForRoot,
+    invalidTreeCacheKeysRef,
+    pluginBypassRef,
+    pluginManagerRef,
+    pluginQueryRef,
+    selectedDirRef,
+    setEntriesByPath,
+    setFile,
+    setMainDirectoryError,
+    setMainEntries,
+    treeCacheKey,
+    treeFetchSeqRef,
+  });
   const sessionListReloadTimerRef = useRef<number | null>(null);
 
   // WS 高频事件（session.done / ws.reconnected / session.imported / session.created）都会触发会话列表全量重拉，
@@ -3926,95 +3851,32 @@ export function App({ onGoHome }: AppProps) {
     [loadSessionsForRoot, refreshTreeDir, tryShowBoundSessionForRoot],
   );
 
-  const openRelatedFileDiff = useCallback(
-    async (rootID: string, file: RelatedFileClickTarget) => {
-      const path = String(file?.path || "").trim();
-      const head = String(file?.head || "").trim();
-      const repoKind = String(file?.repo_kind || "").trim();
-      if (!rootID || !path) {
-        return;
-      }
-      setRelatedSelectedFileKey(relatedFileSelectionKey(file));
-      if (repoKind === "plain") {
-        actionHandlers.open({ path, root: rootID, preserveRelatedSelection: true });
-        return;
-      }
-      if (!head && !file?.repo_path) {
-        const gitItem = (gitStatus?.items || []).find(
-          (item) => item.path === path,
-        );
-        if (gitItem) {
-          void openGitDiff(rootID, gitItem, { preserveRelatedSelection: true });
-          return;
-        }
-        actionHandlers.open({ path, root: rootID, preserveRelatedSelection: true });
-        return;
-      }
-      fileOpenRequestRef.current += 1;
-      switchMainView("files");
-      setSelectedSession(null);
-      setSelectedSessionLoading(false);
-      setFile(null);
-      setGitDiff(null);
-      replaceURLState({
-        root: rootID,
-        file: "",
-        session: "",
-        cursor: 0,
-        pluginQuery: {},
-      });
-      try {
-        const next = await fetchGitRelatedFileDiff(rootID, file, getNodeIdForRoot(rootID));
-        const rootPath = managedRootByIdRef.current[rootID]?.root_path;
-        const repoPath = String(file?.repo_path || "").trim();
-        const displayPath = repoPath
-          ? relativeDisplayPathFromRoot(rootPath, joinDisplayPath(repoPath, path))
-          : path;
-        if (displayPath) {
-          next.display_path = displayPath;
-        }
-        setGitDiff(next);
-        resetLocksForRootTransition(rootID);
-        if (currentRootIdRef.current !== rootID) {
-          setCurrentRootId(rootID);
-        }
-        if (isMobile) {
-          setIsLeftOpen(false);
-        }
-      } catch (err) {
-        const message =
-      err instanceof Error ? err.message : t("git.relatedFileDiffFailed");
-        console.error("[git.related-file.diff] failed", {
-          rootID,
-          path,
-          head,
-          err,
-        });
-        reportError("git.related_file_diff_failed", message, {
-          severity: "warning",
-          recoverable: true,
-          details: {
-            root: rootID,
-            path,
-            head,
-            payload: err instanceof ProtectedAPIError ? err.payload : undefined,
-          },
-        });
-      }
-    },
-    [
-      actionHandlers,
-      gitStatus,
-      isMobile,
-      openGitDiff,
-      replaceURLState,
-      switchMainView,
-      resetLocksForRootTransition,
-    ],
-  );
 
 
 
+  const {
+    openRelatedFileDiff,
+  } = useRelatedFileDiff({
+    actionHandlers,
+    currentRootIdRef,
+    file,
+    fileOpenRequestRef,
+    getNodeIdForRoot,
+    gitStatus,
+    managedRootByIdRef,
+    openGitDiff,
+    pluginQuery,
+    replaceURLState,
+    resetLocksForRootTransition,
+    setCurrentRootId,
+    setFile,
+    setGitDiff,
+    setIsLeftOpen,
+    setRelatedSelectedFileKey,
+    setSelectedSession,
+    setSelectedSessionLoading,
+    switchMainView,
+  });
   useEffect(() => {
     const h = () => { void refreshManagedRoots(); };
     window.addEventListener("mindfs:nodes-changed", h);
@@ -4143,46 +4005,31 @@ export function App({ onGoHome }: AppProps) {
     }
   }, [clearRootScopedClientState, refreshManagedRoots, t]);
 
-  const ensurePluginsLoaded = useCallback(async (rootId: string) => {
-    if (!rootId || pluginsLoadedByRootRef.current[scopedRootKey(rootId)]) {
-      return;
-    }
-    if (pluginsTrustPendingByRootRef.current[scopedRootKey(rootId)]) {
-      return;
-    }
-    const inflight = pluginsLoadingByRootRef.current[scopedRootKey(rootId)];
-    if (inflight) {
-      await inflight;
-      return;
-    }
-    setPluginLoading(true);
-    const request = scanPluginSources(rootId, managedRootByIdRef.current[rootId]?.root_path || rootId, getNodeIdForRoot(rootId))
-      .then(async (bundle) => {
-        const snapshot = snapshotFromPluginSources(bundle);
-        if (bundle.plugins.length > 0 && !isPluginSnapshotTrusted(snapshot, readTrustedPluginSet(rootId))) {
-          pluginManagerRef.current.clear(rootId);
-          pluginsTrustPendingByRootRef.current[scopedRootKey(rootId)] = true;
-          setPendingPluginTrust({ rootId, bundle });
-          setPluginVersion((v) => v + 1);
-          return;
-        }
-        const plugins = await loadPluginsFromSources(bundle.plugins);
-        pluginManagerRef.current.set(rootId, plugins);
-        pluginsLoadedByRootRef.current[scopedRootKey(rootId)] = true;
-        setPluginVersion((v) => v + 1);
-      })
-      .catch(() => {
-        pluginManagerRef.current.clear(rootId);
-        pluginsLoadedByRootRef.current[scopedRootKey(rootId)] = true;
-        setPluginVersion((v) => v + 1);
-      })
-      .finally(() => {
-        delete pluginsLoadingByRootRef.current[scopedRootKey(rootId)];
-        setPluginLoading(false);
-      });
-    pluginsLoadingByRootRef.current[scopedRootKey(rootId)] = request;
-    await request;
-  }, []);
+  const {
+    ensurePluginsLoaded,
+    pluginHandlers,
+  } = usePluginHandlers({
+    actionHandlers,
+    currentRootIdRef,
+    file,
+    fileCursorRef,
+    fileRef,
+    getNodeIdForRoot,
+    handleSelectSession,
+    managedRootByIdRef,
+    pluginManagerRef,
+    pluginQuery,
+    pluginsLoadedByRootRef,
+    pluginsLoadingByRootRef,
+    pluginsTrustPendingByRootRef,
+    replaceURLState,
+    scopedRootKey,
+    sessions,
+    setPendingPluginTrust,
+    setPluginLoading,
+    setPluginQuery,
+    setPluginVersion,
+  });
 
   const handleTrustPendingPlugins = useCallback(async () => {
     const pending = pendingPluginTrust;
@@ -4225,118 +4072,6 @@ export function App({ onGoHome }: AppProps) {
     }
   }, [ensurePluginsLoaded]);
 
-  const pluginHandlers = useMemo(
-    () => ({
-      open: async (params: Record<string, unknown>) => {
-        await actionHandlers.open(params);
-      },
-      open_dir: async (params: Record<string, unknown>) => {
-        await actionHandlers.open_dir(params);
-      },
-      select_session: async (params: Record<string, unknown>) => {
-        const key = typeof params?.key === "string" ? params.key : "";
-        if (!key) return;
-        const root = currentRootIdRef.current;
-        if (!root) return;
-        const matched = sessions.find(
-          (item) => (item.key || item.session_key) === key,
-        );
-        if (matched) {
-          await handleSelectSession(matched);
-          return;
-        }
-        await handleSelectSession({ key, session_key: key, root_id: root });
-      },
-      navigate: async (params: Record<string, unknown>) => {
-        const current = readURLState();
-        const nextRoot = current.root || currentRootIdRef.current || "";
-        const nextPath =
-          typeof params?.path === "string" ? params.path : current.file;
-        const explicitCursor = normalizeCursor(params?.cursor);
-        const rawQuery =
-          params?.query &&
-          typeof params.query === "object" &&
-          !Array.isArray(params.query)
-            ? (params.query as Record<string, unknown>)
-            : null;
-
-        const nextPluginQuery: Record<string, string> = {
-          ...current.pluginQuery,
-        };
-        if (rawQuery) {
-          Object.entries(rawQuery).forEach(([key, value]) => {
-            if (!key) return;
-            nextPluginQuery[key] = String(value);
-          });
-        }
-
-        let nextCursor = current.cursor;
-        if (explicitCursor !== null) {
-          nextCursor = explicitCursor;
-        } else if (
-          typeof params?.path === "string" &&
-          params.path !== current.file
-        ) {
-          nextCursor = 0;
-        }
-        if (!nextPath) {
-          nextCursor = 0;
-        }
-
-        const nextState: URLState = {
-          root: nextRoot || "",
-          file: nextPath || "",
-          session: "",
-          cursor: nextCursor,
-          pluginQuery: nextPluginQuery,
-        };
-        replaceURLState(nextState);
-        if (nextState.file) {
-          persistPluginQuery(
-            nextState.root,
-            nextState.file,
-            nextState.pluginQuery,
-            getNodeIdForRoot(nextState.root),
-          );
-        }
-
-        const rootChanged =
-          (nextState.root || "") !== (currentRootIdRef.current || "");
-        const fileChanged =
-          (nextState.file || "") !== (fileRef.current?.path || "");
-        const pluginChanged =
-          JSON.stringify(nextState.pluginQuery) !==
-          JSON.stringify(current.pluginQuery);
-
-        if (pluginChanged) {
-          setPluginQuery(nextState.pluginQuery);
-        }
-
-        if (!nextState.file) {
-          if (nextState.root) {
-            await actionHandlers.open_dir({
-              path: nextState.root,
-              root: nextState.root,
-              preservePluginQuery: true,
-              isRoot: true,
-            });
-          }
-          return;
-        }
-
-        const cursorChanged = nextState.cursor !== fileCursorRef.current;
-        if (rootChanged || fileChanged || cursorChanged) {
-          await actionHandlers.open({
-            path: nextState.file,
-            root: nextState.root,
-            cursor: nextState.cursor,
-            preservePluginQuery: true,
-          });
-        }
-      },
-    }),
-    [actionHandlers, sessions, handleSelectSession, replaceURLState],
-  );
 
   const handleSessionChipClick = useCallback(
     (sessionKey: string, rootOverride?: string | null) => {

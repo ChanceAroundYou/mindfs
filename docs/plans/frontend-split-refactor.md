@@ -37,6 +37,13 @@
 | App-2 | 纯函数 → `app/appUtils.ts`（4 个，零闭包） | `0b20717` |
 | App-3 | 发送消息主流程 → `app/useSendMessage.ts`（~570 行，36 闭包） | `ccbfe13` |
 | App-4 | 文件/目录动作 → `app/useActionHandlers.ts`（~430 行，45 闭包） | `928c71f` |
+| A1a | 会话生命周期（8 单元）→ `app/useSessionLifecycle.ts`（1016 行） | `931d7af` |
+| A1b | 会话归档/删除 → `app/useSessionArchive.ts`（338 行） | `f510c95` |
+| A2+A3 | 多项目会话分组 + 待处理提升 → `app/useMultiProjectSessions.ts`（481 行） | `f510c95` |
+| A4 | 托管根（重命名/刷新/载荷）→ `app/useManagedRoots.ts`（709 行） | `f510c95` |
+| A6a | 插件加载与处理 → `app/usePluginHandlers.ts`（240 行） | 本次 |
+| A6b | 目录树 / 当前文件内容刷新 → `app/useFileRefresh.ts`（180 行） | 本次 |
+| A6c | 关联文件 diff 打开 → `app/useRelatedFileDiff.ts`（168 行） | 本次 |
 
 **当前分域目录**：
 
@@ -87,15 +94,30 @@ web/src/
 
 ## 4. 待办清单（按优先级）
 
-### 4.1 App.tsx —— 9583 行（最大，收益最高，风险也最高）
+### 4.1 App.tsx —— 7593 行（最大，收益最高，风险也最高）
 
-- **现状**：单组件 `App()`（225 行起），101 个 `useState`、81 个 `useEffect`、
-  145 个 `useCallback`、26 个 `useMemo`、92 个 `useRef`。
-  既有 G-AA 已把能安全抽的部分抽走：`web/src/app/`（20 模块、7893 行）+
-  `web/src/renderer/`（4 模块）。剩下的是**状态与副作用深度互锁的核心**。
-- **目标（2026-10-07 决策）**：**分阶段，先到 ~4000–5000 行再评估**。
+- **现状（本次提交后）**：9585 → 7593 行（-1992，-21%）。已抽出 11 个 `app/` 模块
+  （`useSessionCache` / `appUtils` / `useSendMessage` / `useActionHandlers` /
+  `useSessionLifecycle` / `useSessionArchive` / `useMultiProjectSessions` /
+  `useManagedRoots` / `usePluginHandlers` / `useFileRefresh` / `useRelatedFileDiff`）。
+- **关键约束（TDZ 窗口）**：抽出的 hook 用「闭包当入参」的方式调用，参数在**渲染期立即求值**，
+  所以 hook 调用点必须晚于它收到的每个闭包的 `const` 声明行（TDZ）。判据：
+  `max(闭包声明结束行) < min(急切引用行)`，其中「急切」= 依赖数组 / JSX / 渲染期调用，
+  「惰性」= `useCallback`/`useMemo`/`useEffect` **函数体内**的引用（回调在渲染后执行，不受 TDZ 约束）。
+  工具：`/tmp/window.py` 验窗口，`/tmp/extract.py` 执行抽取（调用点自动落在语句边界上）。
+- **目标（2026-10-07 决策）**：**分阶段，先到 ≤4500 行再评估**。
   不直接冲 ≤900 —— 后期边界互锁紧密，风险累积。
 - **前置（已解除）**：运行时验证手段 —— `e2e/` Playwright 冒烟（10 用例）已就位。
+- **剩余簇（按窗口可拆性排序）**：
+
+  | 簇 | 单元 | 阻碍 |
+  |---|---|---|
+  | A5 看板/任务 | `handleMoveKanbanTask`(95)、`loadKanbanTasks`(65)、`saveTaskInlineEdit`(60)、`applyTaskDetails`(58) | 首个急切引用在依赖数组里（含 `applyTaskDetails`/`pruneTaskDetails`），需重新切分 |
+  | A7 会话元数据 | `attachContextWindowToLatestAssistant`(108)、`updateSessionAgentForKey`(68)、`updateSessionRelatedFilesForKey`(45)、`updateSessionRelatedWorktreeForKey`(45)、`handleSetPlanMode`(45)、`handleRemoveSessionRelatedFile`(43) | 窗口不成立（闭包声明晚于依赖数组引用） |
+  | A8 更新/其他 | `handleStartUpdate`、`selectRootNode`、`handleTreeUpload`、`handleForkAgentMessage`、`handleProjectTreeRefresh`、`showBoundSessionOrRootDir`、`selectedSessionRelatedFileGroups`、`rootSessionIndicators` | 同上 |
+  | A2b 待处理/队列 | `clearLocalPendingForSession`、`markSessionPending`、`resolvePendingForSession`、`getSessionSnapshot`、`refreshMultiProjectReplyingSessions`、`pruneSubtreeFromSessionState` | 同上 |
+  | B 渲染层 | 主 `return` JSX（~900 行）+ 71 个 `useEffect`（~950 行） | 无 TDZ 约束（JSX 在文件末尾），风险低、收益高 |
+  | C 其余大文件 | FileTree / SessionViewer / SessionList / useRealtimeEvents / AgentSelector / DefaultListView / ScheduledAgentTaskDialog / MarkdownViewer / ToolCallCard / ActionBar | 独立文件，逐个拆 |
 - **建议做法**：
   1. 按「一组内聚状态 + 其唯一出口 effect」为单元抽 hook，沿用
      `web/src/app/useXxx.ts` 的既有模式（入参是依赖项，出参是 state + 操作函数）。
@@ -103,16 +125,6 @@ web/src/
      （`"src/App.tsx": ["src/App.tsx", "src/app/useXxx.ts"]`）并跑全量门禁 + e2e。
   3. 第 2 轮起处理剩余互锁更紧的集群；**一旦发现需要改逻辑，说明拆错了边界，退回重划**。
 - **第 1 轮抽取单元**：
-
-  | 抽取单元 | 源码位置 | 目标文件 |
-  |---|---|---|
-  | Session cache & loading refs | L227–315 | `app/useSessionCache.ts` |
-  | Multi-project session groups + pins | L316–378 | `app/useMultiProjectSessions.ts` |
-  | Session archive | L379–391 | `app/useSessionArchive.ts` |
-  | Task inline edit | L410–447 | `app/useTaskInlineEdit.ts` |
-  | Layout prefs | L476–491 | `app/useLayoutPrefs.ts` |
-  | File tree state | L1323–1481 | `app/useFileTreeState.ts` |
-  | Workspace board | L8855–8857 | `app/useWorkspaceBoard.ts` |
 
 - **参考**：`app/useRealtimeEvents.ts`（2019 行）、`app/useProjectLifecycle.tsx`（885 行）
   就是这套模式的产物。

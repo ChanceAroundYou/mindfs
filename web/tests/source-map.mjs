@@ -47,6 +47,9 @@ export const MODULES = {
     "src/app/useMultiProjectSessions.ts",
     "src/app/useSessionArchive.ts",
     "src/app/useManagedRoots.ts",
+    "src/app/usePluginHandlers.ts",
+    "src/app/useFileRefresh.ts",
+    "src/app/useRelatedFileDiff.ts",
   ],
 
   // P6 拆分：FileTree.tsx → + icons.tsx（图标子组件）
