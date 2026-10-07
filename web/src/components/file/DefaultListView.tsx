@@ -1,5 +1,5 @@
 import React from "react";
-import { ViewHeader } from "../layout/ViewHeader";
+import { ViewHeader } from "../../layout/ViewHeader";
 import { FileOperationItems, MoreMenuButton, moreMenuPopoverStyle, menuOverlayStyle, MoveFilePopover } from "./FileOperations";
 import { rootBadgeButtonStyle } from "../../shared/rootBadgeStyle";
 import { SymlinkBadge } from "./SymlinkBadge";

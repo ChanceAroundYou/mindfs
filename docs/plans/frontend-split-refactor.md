@@ -21,7 +21,7 @@
 
 **为什么坚持零行为变化**：本仓库是上游 fork，每次改动都是会被上游合并冲掉的定制；
 拆分本身不产生功能，一旦掺入行为改动，合上游时无法区分「拆分没合好」还是
-「行为本来就这样」。边界见 `docs/upstream-customizations.md` 的 G-AZ 组。
+「行为本来就这样」。边界见 `docs/upstream-customizations.md` 的 G-BA 组。
 
 ## 2. 已完成（本分支）
 
@@ -31,7 +31,7 @@
 | P1 | `components/`、`services/`、`shared/` 按领域重组 | `f5c4e0d` |
 | P2 | `services/{tasks,git,file}.ts` → 目录模块 + 旧路径 shim | `7b6d969` |
 | P6 | `FileTree.tsx` 图标/小组件 → `components/file/icons.tsx` | `def8b7e` |
-| P7 | 门禁登记（G-AZ 组）+ 死文件清理 + release notes | `b370038` |
+| P7 | 门禁登记（G-BA 组）+ 死文件清理 + release notes | `b370038` |
 
 **当前分域目录**：
 
@@ -65,8 +65,8 @@ web/src/
 
 ## 3. 拆分规则（每拆一块都要做全）
 
-> 本分支的拆分定制组：合并 main 前为 **G-AY**，因 main 也新增了 G-AY（抽屉 pending 对账），
-> 合并后重编号为 **G-AZ**。下文一律按 G-AZ 写。
+> 本分支的拆分定制组：合并 main 前为 **G-AY**。合并时 main 已占用 G-AY（抽屉 pending
+> 对账）与 G-AZ（任务卡视觉件），故重编号为 **G-BA**。下文一律按 G-BA 写。
 
 1. **机械搬移 + barrel shim**：原路径 `export * from "./<dir>/index"`，
    导出面一个不少。用 `web/tests/frontend-split.test.mjs` 的写法加断言。
@@ -74,10 +74,10 @@ web/src/
    「逻辑路径 → 物理文件列表」补上。**测试与断言都不用动**。
    - 多文件（拆分模块）：`"src/services/x.ts": ["src/services/x/types.ts", …]`
    - 单文件（只搬移）：`"src/components/Old.tsx": ["src/components/<域>/Old.tsx"]`
-3. **门禁登记**：`docs/upstream-customizations.yaml` 的 **G-AZ** 组补 `files:`；
-   `docs/upstream-customizations.md` 补 `### G-AZ` 标题（组 id 必须两边一致）。
+3. **门禁登记**：`docs/upstream-customizations.yaml` 的 **G-BA** 组补 `files:`；
+   `docs/upstream-customizations.md` 补 `### G-BA` 标题（组 id 必须两边一致）。
    锚点写 `path:子串`，`files` 写路径（前缀 `/` 表示目录、`*` 走 `path.Match`）。
-4. **提交信息标 `Scope: G-AZ`**。
+4. **提交信息标 `Scope: G-BA`**。
 5. **验证**：见第 5 节。
 
 ## 4. 待办清单（按优先级）
@@ -201,5 +201,5 @@ go run ./scripts/check-upstream
 | 运行时行为回归 | 现有测试是源码正则 + 类型检查，**不覆盖运行时** | 4.1 的前置：先补运行时验证 |
 | VM 测试锁死 `session.ts` | 沙箱 `require` 只认裸模块名 | 先解锁（4.5）再拆 |
 | 与 main 的重命名冲突 | main 会继续改旧路径的文件 | 尽早合并 main；拆分提交保持「纯搬移」便于 git 跟随重命名 |
-| 组号撞车 | main 也会新增 G-* 组 | 合并 main 后重编号本分支的组（本次：G-AY → G-AZ） |
-| 门禁变红 | 新 delta 文件未登记 | 每拆一块就补 G-AZ 的 `files`/`tests`，并跑 `check-upstream` |
+| 组号撞车 | main 也会新增 G-* 组 | 合并 main 后重编号本分支的组（本次：G-AY → G-BA） |
+| 门禁变红 | 新 delta 文件未登记 | 每拆一块就补 G-BA 的 `files`/`tests`，并跑 `check-upstream` |
