@@ -12,8 +12,12 @@ import (
 //
 // 这条测试钉住的是**体积大头必须不在、工作台读的字段必须全在**：
 // 实测 45 条任务 = 163KB，其中 task.stages 一项占 43%（70KB 是每个阶段的完整
-// prompt_template 正文），而工作台组件对 stages / aux_flags / labels / worktree_*
+// prompt_template 正文），而工作台组件对 stages / aux_flags / labels 这些字段
 // 一个读取都没有 —— 卡片只画状态、阶段名、任务号、模板名。
+//
+// 但 worktree 字段（create_worktree / worktree_path / worktree_built / worktree_missing）
+// 是**例外**：前端 TaskCardRows 读取这些字段来显示 worktree 徽标。
+// 2026-10-07 修复：之前投影丢弃了这些字段，导致工作台所有任务都显示没有 worktree。
 //
 // 丢字段的症状是「卡片少字段」而不是报错，所以靠断言而不是靠运行时反馈来守：
 // 有人把投影改成 `items` 原样下发，这条会红。
@@ -40,6 +44,7 @@ func TestOverviewProjectionKeepsBoardFieldsAndDropsStages(t *testing.T) {
 		CreateWorktree:     true,
 		WorktreeBranchMode: "new",
 		WorktreeBuilt:      true,
+		WorktreePath:       "/tmp/worktree/task_9",
 		WorktreeMissing:    false,
 		CurrentStageStatus: "running",
 	}
@@ -82,13 +87,29 @@ func TestOverviewProjectionKeepsBoardFieldsAndDropsStages(t *testing.T) {
 	// ③ 体积大头与前端零读取的字段必须不在响应里。
 	//    stages 就是那 70KB / 43%。
 	for _, dropped := range []string{
-		"stages", "aux_flags", "labels", "create_worktree",
-		"worktree_branch_mode", "worktree_built", "worktree_missing",
-		"current_stage_status", "worktree_path", "worktree_root_id", "worktree_branch",
+		"stages", "aux_flags", "labels",
+		"worktree_branch_mode", "worktree_branch",
+		"current_stage_status", "worktree_root_id",
 	} {
 		if _, ok := got[dropped]; ok {
 			t.Fatalf("%q 不该出现在 overview 响应里 —— 它是体积大头且前端零读取", dropped)
 		}
+	}
+
+	// ④ worktree 字段必须**在**响应里 —— 前端 TaskCardRows 读取这些字段来显示 worktree 徽标。
+	//    2026-10-07 修复：之前投影丢弃了这些字段，导致工作台所有任务都显示没有 worktree。
+	for _, key := range []string{
+		"create_worktree", "worktree_path", "worktree_built", "worktree_missing",
+	} {
+		if _, ok := got[key]; !ok {
+			t.Fatalf("worktree 字段 %q 被投影丢掉了：%s", key, raw)
+		}
+	}
+	if got["create_worktree"] != true {
+		t.Fatalf("create_worktree 丢了值：%v", got["create_worktree"])
+	}
+	if got["worktree_built"] != true {
+		t.Fatalf("worktree_built 丢了值：%v", got["worktree_built"])
 	}
 
 	// ④ 投影必须真的更小，不是只是少几个键。

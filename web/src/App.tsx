@@ -204,7 +204,7 @@ import { TaskInlineEditState } from "./app/appTask";
 import { buildMatchInputFromPath, buildMessageWithViewContext, hasExplicitFileContext, indexManagedRoots, inferReadModeFromPlugin, managedDirAddErrorMessage, mapManagedRootsToEntries, normalizeUpdateState, shouldShowUpdateButton, toPluginInput, updateButtonLabel, updateSummaryText, useResponsive, waitForNextPaint } from "./app/appMisc";
 import { basenameOfPath, buildDirectorySelectionKey, buildFileScrollKey, buildURLSearch, comparableManagedRootPath, dirnameOfPath, isDirectorySortMode, joinDisplayPath, normalizeCursor, normalizePath, parentDirsOfFile, parseFileLocation, parsePluginQuery, readURLState, relativeDisplayPathFromRoot, rootNodeKey } from "./app/appPath";
 import { useWorkspaceBoard } from "./app/useWorkspaceBoard";
-import { hasSessionExchanges, isSessionShownInMain, isTopLevelSessionItem, mergeReplyingStateByNode, normalizeMode, relatedFileSelectionKey, sessionInputHistory, shouldAutoSelectNewSession, toSessionItem } from "./app/appSession";
+import { clearStalePending, hasSessionExchanges, isSessionShownInMain, isTopLevelSessionItem, mergeReplyingStateByNode, normalizeMode, relatedFileSelectionKey, sessionInputHistory, shouldAutoSelectNewSession, toSessionItem } from "./app/appSession";
 import { buildSessionJumpTarget, resolveSessionJumpRoot } from "./app/sessionJump";
 import { accountScopedKey, loadGitDiffSideBySide, loadLastRootId, loadLastRootNodeId, loadMobileEnterKeySends, loadPersistedFileScrollPositions, loadPersistedPluginQuery, loadSidebarsSwapped, loadTaskCreateWorktreePreference, persistFileScrollPositions, persistPluginQuery, removeLocalStorageByPrefix, saveTaskCreateWorktreePreference } from "./app/appStorage";
 import { applyStageOverride, currentTaskInputFromDetail, DEFAULT_TASK_AGENT, DEFAULT_TASK_MODEL, firstAgentStage, firstTaskInputFromDetail, firstUserInputTemplate, isTerminalKanbanTask, latestTaskStageRun, normalizeFastService, parseTaskSessionErrorDetails, parseTaskSessionErrorMessage, previousTaskInputsFromDetail, taskSessionKeysFromDetail, taskStagesForCreate, taskStatusLabel } from "./app/appTask";
@@ -3657,6 +3657,44 @@ export function App({ onGoHome }: AppProps) {
     setMultiProjectPendingByKey(next);
     setMultiProjectSessionGroups((groups) => applyPendingToMultiProjectGroups(groups, next));
   }, [applyPendingToMultiProjectGroups]);
+
+  // 抽屉（currentSession）的 pending 只由 WS session.done 处理器清除。断连/重绑竞态
+  // 会让那条事件丢失，抽屉于是永久卡在 pending:true —— 输入框一直显示停止符号、查看器
+  // 一直「正在思考」、用量面板不出现。会话列表不会卡：它的蓝灯每 5s 从
+  // /api/replying-sessions 对账一次（refreshMultiProjectReplyingSessions）。这里让抽屉
+  // 跟着同一个服务端真值对账，done 丢了也能在下一个轮询周期收敛。
+  // 选中会话与缓存同样只由 handleSessionStreamDone 清，一并在这里对账 —— ActionBar 的
+  // showCancel 读的是 actionBarSession（可能是 selectedSession / 缓存），不是抽屉本身。
+  useEffect(() => {
+    const rootID = currentRootIdRef.current;
+    if (!rootID) return;
+    const isServerPending = (key: string) =>
+      !!multiProjectPendingByKey[rootSessionKey(rootID, key)];
+
+    const drawer = drawerSessionByRootRef.current[scopedRootKey(rootID)];
+    const nextDrawer = clearStalePending(drawer, isServerPending);
+    if (nextDrawer !== drawer && nextDrawer) {
+      setDrawerSessionForRoot(rootID, nextDrawer as Session);
+    }
+
+    const selected = selectedSessionRef.current;
+    if (selected?.root_id === rootID) {
+      const nextSelected = clearStalePending(selected, isServerPending);
+      if (nextSelected !== selected && nextSelected) {
+        setSelectedSession((prev) =>
+          prev && (prev.key || prev.session_key) === selected.key ? nextSelected : prev,
+        );
+      }
+    }
+
+    const cacheKey = drawer?.key ? rootSessionKey(rootID, drawer.key) : "";
+    const cached = cacheKey ? (sessionCacheRef.current[cacheKey] as any) : null;
+    const nextCached = clearStalePending(cached, isServerPending);
+    if (nextCached !== cached && nextCached) {
+      sessionCacheRef.current[cacheKey] = nextCached;
+      bumpCacheVersion();
+    }
+  }, [multiProjectPendingByKey, rootSessionKey, scopedRootKey, setDrawerSessionForRoot]);
 
   useEffect(() => {
     if (!multiProjectSessionsEnabled) {
@@ -7862,6 +7900,22 @@ export function App({ onGoHome }: AppProps) {
 	    return acc;
 	  }, {}), [sessions]);
 
+	  // 看板/工作台的卡片读这张表拿会话的 agent（卡片角上的小徽标）。sessionByKey 只装
+	  // **当前 root** 的会话，而工作台是跨项目视图 —— 它列的任务大多不属于当前项目，
+	  // 取不到就落回 AgentIcon 的「AI」文字占位（2026-10-07 实测「大多数用 dsh 的任务
+	  // 没有 agent 徽标」）。多项目分组本来就把跨项目/跨节点的会话拉全了，并进来即可，
+	  // 不需要第二条扇出。当前 root 的会话放后面覆盖，同键以它为准。
+	  const boardSessionByKey = useMemo(() => {
+	    const merged: Record<string, SessionItem> = {};
+	    for (const group of multiProjectSessionGroups) {
+	      for (const session of group.sessions || []) {
+	        const key = session.key || session.session_key || "";
+	        if (key) merged[key] = session;
+	      }
+	    }
+	    return { ...merged, ...sessionByKey };
+	  }, [multiProjectSessionGroups, sessionByKey]);
+
 	  const selectedKanbanTask = useMemo(() => {
 	    if (!selectedKanbanTaskId) return null;
 	    // 看板命中优先：那一路本来带模板筛选与状态分组的语义。
@@ -8938,7 +8992,7 @@ export function App({ onGoHome }: AppProps) {
       setCollapsedKanbanColumns={setCollapsedKanbanColumns}
       taskFirstInputById={taskFirstInputById}
       taskSessionKeysById={taskSessionKeysById}
-      sessionByKey={sessionByKey}
+      sessionByKey={boardSessionByKey}
       getDisplayNodeColor={getDisplayNodeColor}
       handleSelectKanbanTask={handleSelectKanbanTask}
       handleMoveKanbanTask={handleMoveKanbanTask}

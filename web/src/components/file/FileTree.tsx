@@ -2,6 +2,7 @@ import React, { memo } from "react";
 import { ProviderModelSelect } from "../agent/ProviderModelSelect";
 import { rootBadgeStyle } from "../../shared/rootBadgeStyle";
 import { NodeBadgeHeader } from "../account/NodeBadgeHeader";
+import { ViewHeader } from "../../layout/ViewHeader";
 import { isNativeShellRuntime } from "../../services/platform/runtime";
 import { pwaInstallService } from "../../services/platform/pwaInstall";
 import { hexToRgbaApp } from "../../app/taskIcons";
@@ -2451,7 +2452,11 @@ function FileTreeInner({
 
   return (
     <div style={{ flex: 1, minHeight: 0, height: "100%", display: "flex", flexDirection: "column" }}>
-      <div style={{ position: "relative", height: "36px", padding: "0 3px", borderBottom: "1px solid var(--border-color)", display: "flex", justifyContent: "space-between", alignItems: "center", background: "var(--mindfs-topbar-bg, transparent)", boxSizing: "border-box", flexShrink: 0, gap: 0, overflow: "visible" }}>
+      <ViewHeader
+        padding="0 3px"
+        style={{ position: "relative", justifyContent: "space-between", gap: 0, overflow: "visible" }}
+        innerStyle={{ justifyContent: "space-between", gap: 0 }}
+      >
         <div style={{ display: "flex", alignItems: "center", minWidth: 0, flex: "1 1 auto", maxWidth: "calc(100% - 56px)", marginRight: "6px" }}>
           <div
             role="tablist"
@@ -3507,7 +3512,7 @@ function FileTreeInner({
             />
           </div>
         ) : null}
-      </div>
+      </ViewHeader>
       <div style={{ padding: "8px", flex: 1, minHeight: 0, overflow: "auto", display: "flex", flexDirection: "column" }}>
         {(() => {
           const groups = (() => {

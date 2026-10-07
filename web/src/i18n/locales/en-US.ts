@@ -915,7 +915,6 @@ export const enUS = {
   "task.workspaceQuickLaunch": "New task",
   "task.quickLaunchPlaceholder": "Enter task input…",
   "task.quickLaunchSend": "Launch",
-  "task.workspaceAttention": "Needs you",
   "task.workspaceFilterAll": "All",
   "task.workspaceFilterActive": "Active",
   "task.workspaceFilterBlocked": "Awaiting review",

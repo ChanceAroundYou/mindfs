@@ -1,6 +1,7 @@
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSessionStream, type TimelineItem } from "../../hooks/useSessionStream";
 import type { TodoUpdate } from "../../services/session";
+import { ViewHeader } from "../../layout/ViewHeader";
 import { ThinkingBlock } from "../stream/ThinkingBlock";
 import { ToolCallCard, renderToolIcon } from "../stream/ToolCallCard";
 import { ToolCallGroupCard } from "../stream/ToolCallGroupCard";
@@ -2886,19 +2887,7 @@ function SessionViewerInner({
       }}
     >
       {interactionMode === "drawer" ? null : (
-        <header
-          style={{
-            height: "36px",
-            padding: "0 16px",
-            borderBottom: "1px solid var(--border-color)",
-            display: "flex",
-            alignItems: "center",
-            background: "var(--mindfs-topbar-bg, transparent)",
-            boxSizing: "border-box",
-            zIndex: 10,
-            flexShrink: 0,
-          }}
-        >
+        <ViewHeader padding="0 16px" style={{ zIndex: 10 }}>
           <h1
             style={{
               display: "flex",
@@ -2936,7 +2925,7 @@ function SessionViewerInner({
               {displayName}
             </span>
           </h1>
-        </header>
+        </ViewHeader>
       )}
 
       {/* 滚动容器 */}

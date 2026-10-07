@@ -441,8 +441,14 @@ func (h *HTTPHandler) handleKanbanTaskMove(w http.ResponseWriter, r *http.Reques
 //
 // 这个端点是跨节点扇出的（工作台常驻、每节点一份），体积直接决定手机端流量。
 // 实测 45 条任务 = 163KB，其中 task.stages 一项就占 43%（70KB 是每个阶段的完整
-// prompt_template 正文）；而工作台组件对 stages / aux_flags / labels / worktree_*
+// prompt_template 正文）；而工作台组件对 stages / aux_flags / labels
 // 这些字段**一个读取都没有** —— 卡片只画状态、阶段名、任务号、模板名。
+//
+// **worktree_* 不在这张淘汰名单里**：卡片右下角的 worktree 徽标就是靠
+// create_worktree / worktree_path / worktree_built / worktree_missing 推出来的
+// （TaskCardRows 的 worktreeTagState）。早先这里的注释断言「对 worktree_* 一个读取
+// 都没有」是错的，投影照着它把四个字段全丢了 —— 症状是「工作台所有任务都显示没有
+// worktree」（2026-10-07 修）。加字段时先确认前端真的不读，别照抄这份注释。
 //
 // 字段名与 kanban.Task 保持一致，只是不下发：
 //   - 前端 KanbanTask.stages 本就是可选的（`stages?: StageTemplate[]`），类型不受影响；
@@ -464,6 +470,12 @@ type overviewTaskProjection struct {
 	CreatedAt         time.Time `json:"created_at"`
 	UpdatedAt         time.Time `json:"updated_at"`
 	CompletedAt       string    `json:"completed_at,omitempty"`
+	// worktree 字段：前端 TaskCardRows 读取这些字段来显示 worktree 徽标。
+	// 2026-10-07 修复：之前投影丢弃了这些字段，导致工作台所有任务都显示没有 worktree。
+	CreateWorktree  bool   `json:"create_worktree,omitempty"`
+	WorktreePath    string `json:"worktree_path,omitempty"`
+	WorktreeBuilt   bool   `json:"worktree_built,omitempty"`
+	WorktreeMissing bool   `json:"worktree_missing,omitempty"`
 }
 
 // projectOverviewTask 把 kanban.Task 压成工作台真正读的字段集。
@@ -484,6 +496,10 @@ func projectOverviewTask(task kanban.Task) overviewTaskProjection {
 		CreatedAt:         task.CreatedAt,
 		UpdatedAt:         task.UpdatedAt,
 		CompletedAt:       task.CompletedAt,
+		CreateWorktree:    task.CreateWorktree,
+		WorktreePath:      task.WorktreePath,
+		WorktreeBuilt:     task.WorktreeBuilt,
+		WorktreeMissing:   task.WorktreeMissingNow(),
 	}
 }
 

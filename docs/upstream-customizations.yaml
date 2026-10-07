@@ -445,7 +445,7 @@ groups:
       fork 完全独立（不再写 parent_session_key），仅 fork 扁平为顶级。
       转录重复区块会导致重复交换，必须按条目 uuid 去重。
       徽标一条：列表行是 meta-only 的（G-E），agent 只能由 InferAgentFromSession 的
-      「AgentCtxSeq 恰好单键」兜底推出，而它靠 session_agent_bindings 回填 —— 绑定若只在
+      「AgentCtxSeq 兜底」推出，而它靠 session_agent_bindings 回填 —— 绑定若只在
       回合结束时写，首轮期间列表行 agent 就是空，前端 AgentIcon 落回 'AI'。
       所以建会话时就要写一行占位绑定，约定 agent_session_id='' 表示「agent 已选定、尚无转录」。
       这条约定与 G-Q 的空 id 守卫是同一块：upsertExternalSessionNameUnsafe 空 id 直接 return、
@@ -453,10 +453,17 @@ groups:
       同 agent 会话会串名。合上游时两者必须一起留。
       占位行的 agent_ctx_seq 必须写 0：非 0 会被 prependSwitchHint 当成「已同步到此行」而
       吞掉 agent 切换提示。
+      **多绑定会话取 ctx_seq 最大的那个**（2026-10-07）：中途换过 agent 的会话有**两行**绑定，
+      旧实现只处理 `len(AgentCtxSeq) == 1`，对双绑定一律返回空串 —— 实测「工作台上大多数用
+      dsh 的任务没有 agent 徽标」正是它，因为 dsh 都是在已有 claude 会话里中途切过去的。
+      判据用 ctx_seq 而不是遍历顺序：它是会话的行数游标（UpdateAgentState 写 len(Exchanges)），
+      谁最大谁最后写过这一串 exchange。平局（两个都还是 0）按名字定序 —— 不定序的话 map
+      遍历顺序会让同一个会话的徽标在两次列表刷新之间来回跳。
     anchors:
       - 'web/src/components/session/ExternalSessionList.tsx:CUSTOM(G-Q)'
       - 'server/internal/agent/codex/importer.go:func cwdMatchesRoot('
       - 'server/internal/session/manager.go:空 agent_session_id 表示「agent 已选定、尚无转录」'
+      - 'server/internal/session/types.go:func InferAgentFromSession'
     files:
       - server/internal/agent/claude/importer.go
       - server/internal/agent/claude/importer_test.go
@@ -467,6 +474,7 @@ groups:
       - server/internal/api/usecase/session.go
       - server/internal/api/session_created_broadcast_test.go
       - server/internal/session/manager.go
+      - server/internal/session/types.go
       - server/internal/session/manager_test.go
       - web/src/components/session/ExternalSessionList.tsx
       - web/src/app/useExternalSessionImport.ts
@@ -687,8 +695,14 @@ groups:
       applySession），并在读端用 sessionJump 的 buildSessionJumpTarget 强制以卡片 root 为准 ——
       缺了任一半，二次跳转就会命中「无主」缓存对象，而 handleSelectSession 的
       `session.root_id || 当前根` 兜底会把它认成当前项目。
+      agent 徽标一条（2026-10-07）：卡片角上那个小徽标读 `sessionByKey[main_session_key].agent`，
+      而 `sessionByKey` 只装**当前 root** 的会话，工作台列的任务大多不属于当前项目 —— 传它进去
+      等于所有跨项目卡片都落回 AgentIcon 的「AI」占位。改为传 `boardSessionByKey`
+      （= `multiProjectSessionGroups` 的会话 ∪ `sessionByKey`，当前 root 覆盖），不新增第二条扇出。
+      另一半在服务端（InferAgentFromSession 对双绑定会话返回空串，见 G-Q）。
     anchors:
       - 'web/src/app/sessionJump.ts:export function buildSessionJumpTarget'
+      - 'web/src/App.tsx:const boardSessionByKey = useMemo'
       - 'web/src/App.tsx:CUSTOM(G-Z)'
     files:
       - web/src/App.tsx
@@ -1100,6 +1114,12 @@ groups:
       （实测单条记录 1052B → 372B，会话列表 149KB → 85KB）。
       跨项目看板 `GET /api/tasks/overview` 丢掉卡片从不读取的 `stages` / `prompt_template`
       （`task.stages.prompt_template` 一项就占 14.4%）。
+      **但这张投影表不是「只留 id」**：`create_worktree` / `worktree_path` / `worktree_built` /
+      `worktree_missing` 四个字段必须留 —— 卡片上的 worktree 徽标就靠它们推（`TaskCardRows`
+      的 `worktreeTagState`）。2026-10-07 实测「工作台所有任务都显示没有 worktree」就是投影
+      把它们丢了，而当时的代码注释还断言「工作台对 worktree_* 一个读取都没有」，是错的。
+      加字段时同步看 `http_tasks_overview_test.go` 的第 ③/④ 段：③ 列的是必须丢的，
+      ④ 列的是必须留的 —— 往③里塞 worktree 字段就是把这个 bug 写回去。
       详情类端点（agents / task-templates / git status / tree / 看板 tasks / replying-sessions）
       走 `respondJSONConditional`：**只协商、不瘦身** —— 它们的 `dirty_count: 0`、空数组、
       `stages`/`events` 流水都是承重信息，删键即静默丢数据（看板详情面板直接读列表项里的
@@ -1129,6 +1149,7 @@ groups:
       - server/internal/api/helpers.go:func respondJSONList
       - server/internal/api/helpers.go:func respondJSONConditional
       - server/internal/api/http.go:respondJSONConditional
+      - server/internal/api/http_tasks.go:func projectOverviewTask
       - web/src/services/net/api.ts:304
       - web/src/services/net/api.ts:conditionalRequestBytesMax
       - web/src/services/net/e2ee.ts:parseProtectedJSONResponseWithSize
@@ -1350,10 +1371,10 @@ groups:
     tests:
       - web/tests/task-board-view.test.mjs
     anchors:
-      - 'web/src/layout/AppShell.tsx:"--mindfs-mobile-header-height"'
-      - web/src/layout/AppShell.tsx:toggleRail("left")
+      - web/src/layout/AppShell.tsx:--mindfs-safe-area-top
+      - 'web/src/layout/AppShell.tsx:toggle: toggleRail'
       - web/src/components/action/ActionBar.tsx:if (hideComposer)
-      - 'web/tests/task-board-view.test.mjs:zIndex: 2100'
+      - 'web/tests/task-board-view.test.mjs:toggle: toggleRail'
 
   # ── 性能：会话打开热路径 ──────────────────────────────────────────
   - id: G-AT
@@ -1484,7 +1505,11 @@ groups:
       路径比较必须先解析符号链接（EvalSymlinks）；MainCheckoutPath 的返回值语义不变
       （对主 checkout 返回调用方给的路径），只在比较处统一。
     tests:
-      - server/internal/gitview/gitview_test.go
+      # 测试清单只收**文件路径**（check-upstream 拿整条去 os.Stat）；具体测试名写在
+      # docs/upstream-customizations.md 的针对性测试表里 —— 早先这里写成
+      # `gitview_test.go:TestX`，锚点格式套到了 tests 上，门禁直接判「测试不存在」。
+      # 本文件里钉住的是 TestSamePathResolvesSymlinks /
+      # TestValidateTargetDoesNotSelfBlockViaSymlink / TestListWorktreesCurrentViaSymlink。
       - server/internal/gitview/gitview_test.go
       - server/internal/gitview/gitview_test.go
     files:
@@ -1545,6 +1570,66 @@ groups:
       - server/internal/relay/service_test.go
 
   - id: G-AY
+    title: 抽屉 pending 对账（done 丢失时停止符号 /「正在思考」卡住）
+    kind: fix
+    symptom: |
+      任务已结束，输入框仍显示停止符号；查看器仍「正在思考」；用量/上下文窗口面板不出现；
+      但会话栏是正常的（列表收敛、抽屉不收敛，两边看起来不一样）。
+    why: |
+      pending 不落盘（sessions 表无此列，sessionListResponse 也不发），纯前端 optimistic。
+      抽屉（drawerSessionByRootRef → currentSession）的 pending 只有 handleSessionStreamDone
+      一个出口。BroadcastSessionDone 只发给 session.ready 绑定的客户端
+      （GetSessionClientIDs），而 WS 连接在本机反复 1006 unexpected EOF 断连 ——
+      重连后若没重新绑定（或绑定竞态），session.done 就打不到这个客户端。
+      实测（journalctl）：1791307447-6f646793904d 在 11:57:12 广播了 session.done，
+      但其后没有 GET /api/sessions?root=… 列表重拉 —— 而 session.done 处理器里
+      handleSessionStreamDone 之后无条件调 scheduleSessionListReload。没有重拉就证明
+      该处理器没跑，即这条 WS 事件没被前端处理。会话列表靠重连 + 5s 轮询才收敛，
+      所以「会话栏正常、抽屉卡住」。
+    boundary: |
+      抽屉/选中/缓存三处的 pending 只由 WS session.done 清除；这三处必须与列表蓝灯
+      一样从 /api/replying-sessions（multiProjectPendingByKey）对账。合上游时这块
+      effect 被冲掉，done 一丢失就永久卡住。
+    tests:
+      - web/tests/drawer-pending-reconcile.test.mjs
+    files:
+      - web/src/app/appSession.ts
+      - web/src/App.tsx
+    anchors:
+      - web/src/App.tsx:clearStalePending
+
+  - id: G-AZ
+    title: 任务卡视觉件：待审核状态徽标 / 列框去除 / 浮动滚动条 / 工作台角标移除
+    kind: feature
+    symptom: |
+      看板「待审核」列的卡片没有任何状态指示；列框把卡片挤窄；原生滚动条占 6px 宽；
+      工作台项目头显示「需要你3 3」（blockedCount 角标和总数角标重复）。
+    why: |
+      状态文字走 TaskCardRows 现有 showStatus 路径，与工作台卡同一渲染路径；
+      列框去除后列的边界靠列头 borderBottom 分隔线 + 网格 gap 表达；
+      FloatingScroll 自绘浮动拇指替代已废弃的 overflow: overlay；
+      「需要你」角标移除后待审核信息由卡标题行状态文字 + 筛选档位承载。
+    boundary: |
+      任务卡的视觉件 —— 待审核列的状态文字、列框与列表内边距、列内滚动条形态、
+      工作台项目头的「需要你」角标。这四件共享同一组渲染文件，合上游时要么全留要么全弃。
+    tests:
+      - web/tests/task-board-view.test.mjs
+      - web/tests/task-card-wrap.test.mjs
+      - web/tests/workspace-board.test.mjs
+    files:
+      - web/src/components/task/TaskBoardView.tsx
+      - web/src/components/common/FloatingScroll.tsx
+      - web/src/components/TaskCardText.tsx
+      - web/src/components/workspace/WorkspaceProjectRow.tsx
+      - web/src/app/useWorkspaceBoard.ts
+      - web/src/i18n/locales/zh-CN.ts
+      - web/src/i18n/locales/en-US.ts
+      - web/src/index.css
+      - web/tests/task-board-view.test.mjs
+      - web/tests/task-card-wrap.test.mjs
+      - web/tests/workspace-board.test.mjs
+      - docs/workspace-design.md
+  - id: G-BA
     title: 前端目录按领域重组 + 服务/组件文件拆分
     kind: arch
     symptom: |

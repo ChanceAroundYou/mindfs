@@ -389,6 +389,15 @@ type SearchHit struct {
 }
 
 // InferAgentFromSession derives the display agent from session data.
+//
+// 优先看最后一轮 exchange 的 agent（最准）。列表路径不加载 exchanges，于是回落到
+// 绑定表回填出来的 AgentCtxSeq —— **多绑定时取 ctx_seq 最大的那个**：ctx_seq 是会话
+// 的行数游标（UpdateAgentState 写的是 len(Exchanges)），谁最大谁最后写过这一串
+// exchange，也就是最近在用的 agent。
+//
+// 以前这里只处理 len==1，多绑定（中途换过 agent 的会话）直接返回空串，徽标落回
+// 「AI」文字占位 —— 2026-10-07 实测「大多数用 dsh 的任务没有 agent 徽标」就是它：
+// dsh 恰恰都是在已有 claude 会话里中途切过去的，必然是双绑定。
 func InferAgentFromSession(s *Session) string {
 	if s == nil {
 		return ""
@@ -398,12 +407,20 @@ func InferAgentFromSession(s *Session) string {
 			return agent
 		}
 	}
-	if len(s.AgentCtxSeq) == 1 {
-		for agent := range s.AgentCtxSeq {
-			return agent
+	best := ""
+	bestSeq := -1
+	for agent, seq := range s.AgentCtxSeq {
+		agent = strings.TrimSpace(agent)
+		if agent == "" {
+			continue
+		}
+		// 平局（含都还是 0 的新绑定）按名字定序，保证同一个会话每次报同一个 agent，
+		// 否则 map 遍历顺序会让徽标在两次列表之间来回跳。
+		if seq > bestSeq || (seq == bestSeq && agent < best) {
+			best, bestSeq = agent, seq
 		}
 	}
-	return ""
+	return best
 }
 
 // InferEffortFromSession derives the latest non-empty effort from session data.

@@ -69,7 +69,9 @@ export function WorkspaceProjectRow({
         >
           {group.rootName}
         </button>
-        {group.blockedCount > 0 ? <span style={workspaceCountBadgeStyle}>{t("task.workspaceAttention")} {group.blockedCount}</span> : null}
+        {/* 「需要你 N」角标已移除（2026-10-07）：它和紧随其后的总数角标在「组内任务全部
+            待审核」时显示同一个数字（用户实测「需要你3 3」）。待审核的信息没丢 ——
+            每张卡标题行本来就有状态文字（· 待审核），「待审核」筛选档位也在。 */}
         <span style={workspaceCountBadgeStyle}>{group.tasks.length}</span>
         <button
           type="button"

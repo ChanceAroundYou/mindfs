@@ -5,7 +5,12 @@ import { readFileSync } from "node:fs";
 // 2026-09 App.tsx 拆分：项目看板搬到 components/TaskBoardView.tsx，契约随文件走。
 const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 const bar = readFileSync(new URL("../src/components/ActionBar.tsx", import.meta.url), "utf8");
+const viewHeader = readFileSync(new URL("../src/layout/ViewHeader.tsx", import.meta.url), "utf8");
 const shell = readFileSync(new URL("../src/layout/AppShell.tsx", import.meta.url), "utf8");
+const fileTree = readFileSync(new URL("../src/components/FileTree.tsx", import.meta.url), "utf8");
+const sessionList = readFileSync(new URL("../src/components/SessionList.tsx", import.meta.url), "utf8");
+const sessionViewer = readFileSync(new URL("../src/components/SessionViewer.tsx", import.meta.url), "utf8");
+const gitDiff = readFileSync(new URL("../src/components/GitDiffViewer.tsx", import.meta.url), "utf8");
 const board = readFileSync(new URL("../src/components/TaskBoardView.tsx", import.meta.url), "utf8");
 const listView = readFileSync(new URL("../src/components/DefaultListView.tsx", import.meta.url), "utf8");
 const zh = readFileSync(new URL("../src/i18n/locales/zh-CN.ts", import.meta.url), "utf8");
@@ -115,7 +120,8 @@ assert.match(
 );
 
 // 会话界面只在对话态（主区）与文件态（悬浮框）出现；看板/工作台不得有输入区。
-// 移动端呼出左右侧栏的按钮已搬进 AppShell 的顶栏（hideComposer 时 ActionBar 不再渲染）。
+// 移动端呼出左右侧栏的按钮由各视图共用的 ViewHeader 渲染进 header 两侧（仅移动端），
+// 不再是 ActionBar 里的一条独立 footer 行。
 assert.match(
   app,
   /hideComposer=\{mainView === "board" \|\| mainView === "workspace"\}/,
@@ -124,13 +130,35 @@ assert.match(
 assert.match(
   bar,
   /if \(hideComposer\) \{\s*return null;\s*\}/,
-  "the composer-less bar must not render the sidebar toggles — they live in the top bar",
+  "the composer-less bar must not render the sidebar toggles — they live in the shared ViewHeader",
+);
+// 共用 header：移动端才插按钮，桌面端 children 直接渲染（零行为变化）。
+assert.match(
+  viewHeader,
+  /isMobile \? toggleButton\("left"\) : null[\s\S]*?isMobile \? toggleButton\("right"\) : null/,
+  "the shared ViewHeader must render both sidebar toggles on mobile",
+);
+assert.match(
+  viewHeader,
+  /onClick=\{\(\) => ctx\.toggle\(side\)\}/,
+  "the shared ViewHeader's toggles must call into the shell's rail toggle",
 );
 assert.match(
   shell,
-  /isMobile \? \(\s*<div[\s\S]*?zIndex: 2100[\s\S]*?toggleRail\("left"\)[\s\S]*?toggleRail\("right"\)/,
-  "the mobile top bar must carry both sidebar toggles",
+  /toggle: toggleRail/,
+  "AppShell must hand its rail toggle to the shared header via context",
 );
+// 每个主视图的 36px header 都必须走共用组件，否则移动端在该视图开不出侧栏。
+for (const [name, src] of [
+  ["FileTree", fileTree],
+  ["SessionList", sessionList],
+  ["SessionViewer", sessionViewer],
+  ["GitDiffViewer", gitDiff],
+  ["DefaultListView", listView],
+]) {
+  assert.match(src, /<ViewHeader/, `${name} must use the shared ViewHeader`);
+  assert.match(src, /<\/ViewHeader>/, `${name} must close its shared ViewHeader`);
+}
 assert.match(
   app,
   /onSessionClick=\{\(\) => \{[\s\S]*?if \(!canOpenSessionDrawer\) return;/,
@@ -280,6 +308,41 @@ assert.doesNotMatch(
   cardRows,
   /TaskExpandIcon|expandedTaskInputIds|setExpandedTaskInputIds/,
   "the shared card rows must not own the body expand toggle — it controls something the workbench does not render",
+);
+
+// —— 2026-10-07 卡片视觉件回归守卫 ——
+
+// 1) 「待审核」列必须显示状态文字（用户实测：该列卡片只有名字 + worktree 标签，
+//    没有任何状态指示）。走 TaskCardRows 现有 showStatus 路径，与工作台卡同一渲染。
+assert.match(
+  board,
+  /const showTaskStatus = column\.name === t\("task\.column\.ended"\)\s*\|\|\s*column\.name === t\("task\.column\.waitingUser"\);/,
+  "「待审核」列必须显示状态文字，与「已结束」列同一判据",
+);
+
+// 2) 列框已移除：border/圆角/浅灰底/overflow 四件必须成组消失。
+//    框占 2px 宽、列表 padding 又占 16px，卡片被挤窄；去掉后卡片宽约 6px。
+assert.doesNotMatch(
+  board,
+  /border: "1px solid var\(--border-color\)",\s*borderRadius: "8px",\s*background: "rgba\(148, 163, 184, 0\.06\)",\s*overflow: "hidden"/,
+  "列框（border+圆角+浅灰底+overflow）必须整组移除 —— 它把卡片挤窄 2px",
+);
+
+// 3) 列内列表必须用 FloatingScroll：原生滚动条占 6px 宽，浮动拇指不占。
+assert.match(
+  board,
+  /<FloatingScroll style=\{\{ padding: "6px", display: "flex", flexDirection: "column", gap: "6px" \}\}>/,
+  "列内列表必须用 FloatingScroll（浮动滚动条），padding/gap 对齐工作台 6px 节奏",
+);
+assert.match(
+  readFileSync(new URL("../src/components/FloatingScroll.tsx", import.meta.url), "utf8"),
+  /className="mindfs-floating-scroll"/,
+  "FloatingScroll 的滚动容器必须带 mindfs-floating-scroll 类（WebKit 隐藏原生滚动条）",
+);
+assert.match(
+  readFileSync(new URL("../src/index.css", import.meta.url), "utf8"),
+  /\.mindfs-floating-scroll::-webkit-scrollbar \{\s*display: none;\s*\}/,
+  "index.css 必须有 .mindfs-floating-scroll 的 webkit 滚动条隐藏规则",
 );
 
 console.log("task-board-view.test.mjs: OK");
