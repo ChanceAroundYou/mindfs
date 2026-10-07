@@ -518,10 +518,16 @@ type FinishPlan struct {
 //
 // 判定顺序（任一条不满足就退给 agent）：
 //  1. 没有 worktree / 目录已不在 → 机械（清场自己会处理「本来就没树」的幂等情形）
-//  2. 分支已在主干 → 机械（只剩清场）
-//  3. worktree 里还有没提交的活 → **不**机械，交给 agent 判断哪些是成品要提交
+//  2. worktree 里还有没提交的活 → **不**机械，交给 agent 判断哪些是成品要提交
+//  3. 分支已在主干 → 机械（只剩清场）
 //  4. 合并会冲突 → **不**机械，交给 agent 解释冲突并问用户
 //  5. 都过 → 机械
+//
+// ② 必须排在 ③ 之前：**分支合过不等于树里没活**。任务可以在合并之后继续改
+// （2026-10-08 实测 task-9：merge 在 21:41，而 12 个文件 161 增 115 删是 23:30–00:41
+// 做的），这时「只剩清场」是假象 —— 拆目录会把它们一起删掉。反过来排在后面的话，
+// 判定说「机械能做」而下层 FinishTaskWorktree 拦住，白试一次清场，还会把那份失败
+// 当成主报错抛给用户（真正该说的是「有活要交出去」）。
 //
 // 刻意**不**要求主 checkout 干净：那是「合并能不能做完」的一部分，真不干净时
 // MergeBranch 会自己拦下并列出文件（MainCheckoutDirtyError → dirty_files），
@@ -560,13 +566,11 @@ func (s *Service) PlanFinishWorktree(ctx context.Context, rootID, taskID string)
 	}
 	target := "main"
 
-	// 分支已在主干 → 只剩清场。
-	if merged, mergedErr := gitview.BranchMergedInto(ctx, mainDir, branch, target); mergedErr == nil && merged {
-		return FinishPlan{Mechanical: true, Reason: "分支已合进主干"}, nil
-	}
-
 	// worktree 里还有没提交的活 → 交给 agent：只有它能判断哪些是成品、该怎么提交。
 	// 读不到状态时也退给 agent（判据失效时宁可让人看一眼，别替用户删东西）。
+	//
+	// 这一步**必须在「分支已在主干」之前**，理由见上面判定顺序的注释：分支合过不代表
+	// 树里没活，而拆目录是不可逆的。
 	blockers, blockerErr := gitview.ClassifyWorktreeRemoveBlockers(ctx, worktreePath)
 	if blockerErr != nil {
 		return FinishPlan{
@@ -580,6 +584,11 @@ func (s *Service) PlanFinishWorktree(ctx context.Context, rootID, taskID string)
 			Reason:     "worktree 里还有没提交的改动",
 			Files:      blockers.UserChanges,
 		}, nil
+	}
+
+	// 树干净、分支也已在主干 → 真的只剩清场了。
+	if merged, mergedErr := gitview.BranchMergedInto(ctx, mainDir, branch, target); mergedErr == nil && merged {
+		return FinishPlan{Mechanical: true, Reason: "分支已合进主干"}, nil
 	}
 
 	// 合并会冲突 → 交给 agent：冲突要解释、要给取舍判断，机器替不了。

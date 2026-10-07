@@ -946,18 +946,23 @@ func (h *HTTPHandler) handleKanbanTaskBeginFinish(w http.ResponseWriter, r *http
 	// —— 正在跑、已在收尾、worktree 目录已失效。请求本身是合法的，是**状态**不答应，
 	// 和 finish-worktree 把冲突也归 409 是同一个口径。
 	if err != nil {
-		// agent 这条路也走不通 —— 这时才把**机械清场的原始失败**交出去，它才是
-		// 用户能动手处理的那个原因；BeginFinishWorktree 的报错多半只是它的后果。
+		// agent 这条路也走不通 —— 两条路都断了，只能让人来决策。
+		//
+		// **主 error 用 agent 那条**：它是最后失败的一步，也是「任务此刻为什么不答应」
+		// 的直接答案。反过来把机械清场的失败当主 error 会误导：那份报告带着
+		// user_changes / dirty_files / conflict_files，前端按「哪个清单非空」挑弹窗，
+		// 于是渲染成「合并已成功，但 worktree 里还有没提交的东西」+ 一长串清单，
+		// 而真正的拦路虎根本不是那个（2026-10-08 实测 task-9：真原因是当前 agent 段
+		// 停在 waiting_user，机械那份失败只是前因）。
+		//
+		// 所以机械那份只留在 report 里当上下文，**不把它的文件清单提到顶层** ——
+		// 提到顶层就等于让前端挑错弹窗。这条口径与「清单进弹窗、句子保持短」一致，
+		// 只是这里连弹窗都不该有：能动手处理的原因是一句话，不是一列文件。
 		if teardownTried {
 			respondJSON(w, http.StatusConflict, map[string]any{
-				"error":          teardownReport.Error,
-				"plan":           plan,
-				"report":         teardownReport,
-				"conflict_files": teardownReport.ConflictFiles,
-				"output":         teardownReport.Output,
-				"dirty_files":    teardownReport.DirtyFiles,
-				"user_changes":   teardownReport.UserChanges,
-				"agent_error":    err.Error(),
+				"error":  err.Error(),
+				"plan":   plan,
+				"report": teardownReport,
 			})
 			return
 		}

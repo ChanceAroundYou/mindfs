@@ -156,7 +156,16 @@ func (s *Service) BeginFinishWorktree(ctx context.Context, in BeginFinishInput) 
 		// 不能让 executeTask 把它当普通段自动推进到下一段去。
 		AutoAdvance: false,
 	}
-	return s.AddStage(ctx, AddStageInput{RootID: in.RootID, TaskID: in.TaskID, Stage: stage})
+	// ByRequest=true：收尾是人点的明确动作，不是「补一句评论」。任务停在「等待你」时
+	// 当前段正是 agent 段的 waiting_user，走评论那条规则（canAdvanceFromStage）必然被拒
+	// —— 用户会拿到「这一段没走完，追加评论不能替代完成本段」，而他刚刚点的就是收尾。
+	// 置位后走 canLeaveStageOnRequest，与「下一段」按钮同一条规则。
+	return s.AddStage(ctx, AddStageInput{
+		RootID:    in.RootID,
+		TaskID:    in.TaskID,
+		Stage:     stage,
+		ByRequest: true,
+	})
 }
 
 // reviveTerminalTask 把终态任务拉回 waiting_user，好让追加的收尾段真能跑起来。

@@ -1273,6 +1273,23 @@ groups:
        被挡下时结论是「让 agent 去做」而不是「收尾失败」。只有没有 agent 段可继承时才回
        409 + 结构化清单，并把 agent_error 一并带出。顺带修掉 porcelain 解析 bug：
        strings.Index(line, " ") 在状态带前导空格时（` M foo`）切出带状态前缀的假路径。
+
+      2026-10-08 第四轮（用户实测 task-9「日程管理 / 组件库」）：点收尾拿到巨长的 409
+       —— 标题「合并已成功，但 worktree 里还有没提交的东西」+ 12 个文件清单。用户原话
+       「不应该给我报错，而是应该去插入 comment prompt 给 ai 去执行」。三件事叠在一起：
+       ① 分支已合进主干（merge 在 21:41）；② worktree 里还有 12 个文件 161 增 115 删
+       （23:30–00:41 做的），根本没进主干；③ 当前段是 **agent 段的 waiting_user**。
+       三处修：① **PlanFinishWorktree 判定顺序反了** —— 「分支已在主干 → 机械」排在
+       「worktree 里还有没提交的活」前面。分支合过不等于树里没活，拆目录不可逆，脏检查
+       必须排前面。② **收尾段追加不进去** —— AddStage 走的是评论那条规则
+       （canAdvanceFromStage），agent 段的 waiting_user 在它那里明确拒绝；而仓库里早有
+       正确规则 canLeaveStageOnRequest（「要放行只有用户手动点」，「下一段」按钮用的就是
+       它）。新增 AddStageInput.ByRequest，收尾置位走那条；不置位时评论仍越不过。
+       ③ **两条路都断时报错了对象** —— 响应里塞的是机械清场的报告（user_changes = 12 个
+       文件），前端按「哪个清单非空」挑弹窗，渲染成一长串清单，而真正的拦路虎在 agent
+       那条。现在主 error 用 agent 那条，机械那份只留在 report 里当上下文，文件清单
+       **不提到顶层**。顺带删掉上一轮的 agent_error / note 管道（只有一个产出点，主 error
+       换成 agent 那条之后它永远等于 error，成了死代码）。
     files:
       - server/internal/kanban/service.go
       - server/internal/kanban/worktree_finish.go
@@ -1315,6 +1332,9 @@ groups:
       - server/internal/api/http_tasks.go:func (h *HTTPHandler) handleKanbanTaskBeginFinish
       - server/internal/api/http_tasks.go:func agentFallbackPlan
       - server/internal/api/http_tasks.go:func (h *HTTPHandler) respondFinishTeardownFailure
+      - server/internal/kanban/service.go:ByRequest bool
+      - server/internal/kanban/service.go:canLeave := canAdvanceFromStage
+      - server/internal/kanban/worktree_finish.go:func (s *Service) PlanFinishWorktree
       - server/internal/api/http_tasks_finish_teardown.go:task.finish_teardown
       - server/internal/api/http_tasks_finish_teardown.go:func (s *AppContext) FinishWorktreeAndRepoint
       - server/app/workspace.go:WireSessionRunningProbe
@@ -1903,6 +1923,7 @@ groups:
     files:
       - web/src/components/task/TaskBoardView.tsx
       - web/src/components/file/DefaultListView.tsx
+    tests:
       - web/tests/task-board-view.test.mjs
 
   - id: G-AY
@@ -1935,5 +1956,3 @@ groups:
       - server/internal/api/appcontext.go:BroadcastSessionDone
       - web/src/App.tsx:lastStreamEventAtRef
       - web/src/App.tsx:refreshMultiProjectReplyingSessions
-    tests:
-      - web/tests/task-board-view.test.mjs

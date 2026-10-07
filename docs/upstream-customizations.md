@@ -792,14 +792,41 @@
   顺带修掉一个 porcelain 解析 bug：`strings.Index(line, " ")` 在状态带前导空格时
   （` M foo`）切出带状态前缀的假路径，`dirty_files` 报的是「M note.txt」而不是
   「note.txt」。porcelain v1 每行固定是「XY<空格>路径」，XY 恰好两个字符。
+- **第四轮：收尾要能越过「停在 waiting_user 的 agent 段」**（2026-10-08 用户实测 task-9）：
+  用户点「日程管理 / 组件库」的收尾，拿到一个巨长的 409：标题「合并已成功，但 worktree
+  里还有没提交的东西」+ 12 个文件的清单。用户的原话是「不应该给我报错，而是应该去插入
+  comment prompt 给 ai 去执行啊，避免直接报错是我的要求」。三件事叠在一起：
+  1. 分支已合进主干（merge 在 21:41）；
+  2. 但 worktree 里还有 12 个文件、161 增 115 删（23:30–00:41 做的），**根本没进主干**；
+  3. 当前段是 **agent 段的 waiting_user**（agent 干完了但没输出完成标记）。
+  三处修：
+  1. **`PlanFinishWorktree` 的判定顺序反了** —— 「分支已在主干 → 机械」排在「worktree
+     里还有没提交的活」**前面**。分支合过不等于树里没活（上面第 2 点），于是判定说
+     「只剩清场」，而拆目录会把那些活一起删掉。下层 `FinishTaskWorktree` 会拦住，但上层
+     已经说了错话：白试一次清场，还把那份失败当成主报错抛给用户。**脏检查必须排在前面**
+     （拆目录不可逆）。
+  2. **收尾段追加不进去** —— `AddStage` 走的是**评论**那条规则（`canAdvanceFromStage`），
+     而 agent 段的 waiting_user 在它那里是明确拒绝的，于是用户点了收尾却拿到「这一段没
+     走完，追加评论不能替代完成本段」—— 而他点的本来就不是评论。仓库里早有正确的规则：
+     `canLeaveStageOnRequest`（注释写着「要放行只有用户手动点」），「下一段」按钮
+     （`moveRelative`）用的就是它。新增 `AddStageInput.ByRequest`，收尾置位后走那条规则。
+     **放宽的只有这一条路**：不置位时一句评论仍然越不过 waiting_user 的 agent 段。
+  3. **两条路都断时报错了对象** —— 响应里塞的是机械清场的报告（`user_changes` = 12 个
+     文件），前端按「哪个清单非空」挑弹窗，于是渲染成「合并已成功，但 worktree 里还有
+     没提交的东西」+ 一长串清单，而真正的拦路虎在 agent 那条。现在**主 error 用 agent
+     那条**（「任务此刻为什么不答应」的直接答案），机械那份只留在 `report` 里当上下文，
+     **不把文件清单提到顶层**。报错了对象比不报还糟：用户会照着错的原因去动手。
+  顺带删掉上一轮加的 `agent_error` / `note` 管道 —— 它只有一个产出点（就在上面第 3 点
+  那个分支），主 error 换成 agent 那条之后它永远等于 `error`，整条管道成了死代码。
 - 针对性测试：
   - `server/internal/kanban/worktree_finish_dispatch_test.go` — 探针优先于状态、分支合并判断（真 git）、
-    收尾段索引、目录消失读「已收尾」。
+    收尾段索引、目录消失读「已收尾」、**分支已合但树里还有未提交的活 → 仍然交给 agent**。
   - `server/internal/kanban/worktree_finish_test.go` — 目录整个删（活 worktree / 空壳两种形状）、
     附件迁移（搬过去 / 不覆盖已有 / 没有 upload 时是空操作）、只删工具状态空壳孤儿、
     顺序不变量（先清归属再拆目录）、**主 checkout 有已跟踪改动时停、未跟踪文件不挡路**。
   - `server/internal/kanban/worktree_finish_stage_test.go` — 收尾段跑完才清场、
-    清场自己会清路径（顺序反了会静默失败）。
+    清场自己会清路径（顺序反了会静默失败）、**收尾段能越过停在 waiting_user 的 agent 段、
+    而一句评论仍然越不过（放宽的只有 ByRequest 那条路）**。
   - `server/internal/gitview/worktree_finish_test.go` — `CanMergeCleanly` 四种结局
     （干净 / 冲突带文件 / 已合入 / 不碰仓库）、`RemoveWorktreeDir` 拒绝活 worktree、
     `MigrateWorktreeUploads` 不覆盖已有目标、**已合入分支跳过合并（主 checkout 脏也跳过）、
@@ -810,7 +837,9 @@
     机械优先（干净 worktree 直接 teardown 不追加收尾段）、冲突与未提交都退给 agent 且带
     `plan.files`、连点三次不堆收尾段、机械路径连点两次只合一次且第二次带 `note`、
     **机械清场被挡时落回 agent（200 + stage_added + plan.files）、没有 agent 可继承时才回
-    409 + dirty_files、分支已合入 + 主 checkout 有未跟踪文件时照样当场清场**。
+    409 + dirty_files、分支已合入 + 主 checkout 有未跟踪文件时照样当场清场、
+    停在 waiting_user 的 agent 段也照样交给 agent（200 + stage_added，不再报错）、
+    两条路都断时主 error 是 agent 那条且顶层不带任何文件清单**。
   - `web/tests/worktree-badge.test.mjs` — 徽标四态（enabled / finishing / finished / none）、
     目录消失读「已收尾」、无转圈、收尾中不脉冲（区分信号是标签文字「收尾中」）。
   - `web/tests/worktree-finish.test.mjs` — 按钮给法（终态 + 收尾中都不拦截）、无转圈、`hasAgentStage` 门。

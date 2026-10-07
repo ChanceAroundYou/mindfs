@@ -285,6 +285,39 @@ func TestPlanFinishWorktreeIsMechanicalWhenTheBranchIsMerged(t *testing.T) {
 	}
 }
 
+// **分支已经合进主干、但 worktree 里还有没提交的活** → 仍然**不**机械。
+//
+// 2026-10-08 实测 task-9（日程管理 / 组件库）就是这个形状：merge 提交早在 21:41 就落了，
+// 而 12 个文件 161 增 115 删是 23:30–00:41 才做的 —— 「分支已合」与「树里没活」是两件事。
+//
+// 旧顺序先看「分支已合」就直接返回机械，于是判定说「只剩清场」，而拆目录会把那些活
+// 一起删掉。下层 FinishTaskWorktree 会拦住，但上层已经说了错话：白试一次清场，还把
+// 那份失败当成主报错抛给用户（真正该说的是「有活要交出去」）。
+func TestPlanFinishWorktreeDefersToAgentWhenAMergedBranchStillHasUncommittedWork(t *testing.T) {
+	ctx := context.Background()
+	svc, root, mainDir, worktreePath := finishFixture(t, "from worktree\n")
+	taskID := mustTaskID(t, svc, root.ID)
+	// 顺序就是真实发生的那个顺序：先合，再在 worktree 里改。
+	gitForTest(t, mainDir, "merge", "--no-ff", "-qm", "merge", "task-1")
+	if err := os.WriteFile(filepath.Join(worktreePath, "wip.txt"), []byte("wip\n"), 0o644); err != nil {
+		t.Fatalf("seed wip: %v", err)
+	}
+
+	plan, err := svc.PlanFinishWorktree(ctx, root.ID, taskID)
+	if err != nil {
+		t.Fatalf("PlanFinishWorktree: %v", err)
+	}
+	if plan.Mechanical {
+		t.Fatal("Mechanical = true, want a merged branch with uncommitted work to go through the agent")
+	}
+	if len(plan.Files) != 1 || plan.Files[0] != "wip.txt" {
+		t.Fatalf("Files = %v, want [wip.txt]", plan.Files)
+	}
+	if strings.TrimSpace(plan.Reason) == "" {
+		t.Fatal("Reason must say why it deferred to the agent")
+	}
+}
+
 // worktree 里有没提交的活 → **不**机械。机械清场不能替用户决定哪些是成品、该怎么
 // 提交；硬拆会连用户的活一起删掉。
 func TestPlanFinishWorktreeDefersToAgentOnUncommittedWork(t *testing.T) {
