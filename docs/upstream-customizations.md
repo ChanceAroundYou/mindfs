@@ -114,7 +114,7 @@
 
 ---
 
-## 1. 总览（43 组）
+## 1. 总览（44 组）
 
 | 组 | 主题 | 性质 | 关键提交/切片举例 | 互斥边界 |
 |----|------|------|-------------------|----------|
@@ -163,6 +163,7 @@
 | G-AR | 移动端侧栏切换按钮移入顶栏 | 修复 | 见 §3.1 | 44px 全局顶栏 + 侧栏 `top` 同步偏移 |
 | G-AS | ACP 提问（dsh `ask_user_question` 走 elicitation） | 修复 | 见 §3.1 | 只对 dsh 广告 elicitation.form；题目 id+文本关联；答案编码成 `question_<i>` |
 | G-AT | 会话打开性能（窗口去重 / 载荷压缩 / 工具卡分组） | 性能 | 见 §3.1 | 会话打开热路径：取窗去重 + 窗口轻压缩 + 窗口 8 + 工具卡分组 + related-files 去抖 |
+| G-AU | 会话拉取风暴与渲染主线程阻塞 | 修复 | 见 §3.1 | 加载 effect 只依赖身份不依赖快照对象；失败留痕且 404 是终点；`sessionCacheRef` 有上限；渲染无 O(n²)、滚动有节流 |
 
 > **G-D 已并入 G-F，G-M 已并入 G-AI**（改动面完全重合、无独立测试可守，单列只会制造空组）。
 
@@ -949,6 +950,46 @@
     重复触发先清定时器、请求在 500ms 定时器里发、触发方不再是 `async`。
   - `web/tests/pins-refresh-dedup.test.mjs` — 并发只发一次、结算后能再发、仍走 `controlPath`。
   - `web/tests/session-window.test.mjs` — `SESSION_WINDOW_SIZE = 8` 且被 viewer/App 共用。
+
+### G-AU 会话拉取风暴与渲染主线程阻塞（2026-10-07）
+
+- 来源：`web/src/App.tsx`、`web/src/components/SessionViewer.tsx`、
+  `web/tests/session-load-storm.test.mjs`（新增）。
+- 边界：**「选中一个拉不到的会话」+「有 agent 在流式输出」同时成立时的那条自持循环**，
+  以及**每次渲染里的 O(n²) 与无节流滚动**。合上游时要么全留要么全弃 ——
+  这三条单独被冲掉都不会让门禁变红，只有长时间挂着标签页才炸。
+- 可见症状（没有它会怎样）：
+  1. **界面卡死、标签页崩溃**。实测（`journalctl`，2026-10-06 17:33 → 10-07 08:29，
+     持续 18 小时）：`GET /api/sessions/1791268544-ef85840083c5?...` 返回 **404**，
+     **22–25 次/秒**，单小时 **5232 次**，累计 **7800+ 次**，且在 `mindfs` 与
+     `日程管理` 两个 root 之间交替。浏览器每域只有 6 条连接，这个循环把它们全占满 →
+     会话列表 / 文件 / WS 重连全部排队 → 界面卡死 → 标签页被杀 → 自动重载
+     （对应访问日志里成对的页面加载 burst）。
+  2. **内存持续上涨**：`sessionCacheRef` 无上限（IDB 那份有 500 条 / 200KB 上限），
+     长时间浏览堆到几百 MB。
+- 机制（两段，缺一不可）：
+  1. 加载 effect 的依赖里有 `selectedSessionSnapshot` 这个**对象**，而它的身份随
+     `cacheVersion` 每次 bump 都变（`getSessionSnapshot` 的 dep 数组含 `cacheVersion`），
+     流式输出每 30ms bump 一次、每个 `tool_call`/`todo_update`/`plan_update` 还同步再
+     bump 一次 → effect 每轮都重跑。
+  2. `loadedSessionRef` 只在**成功**时置位，404 的会话永远兜不住 → **没有终点**。
+- 改了什么：
+  - 加载 effect 的依赖改成**身份**（`loadSessionKey` / `loadRootID` /
+    `loadSnapshotHasExchanges` 三个原始量），不再依赖快照对象。
+  - `restoreActiveSession` 的失败路径记下 `{ at, status }` 并返回 `null`
+    （原先异常原样抛出，调用点只写 `.then` 不写 `.catch` → 未捕获拒绝，
+    且失败与「还没加载」完全等价）。404 视为**终点**，其余错误退避 5s。
+  - 成功 / `markSessionStale` 解禁失败记录（否则「点重试」永远没反应）。
+  - `sessionCacheRef` 按条数封顶（64）+ 按最近写入时间 LRU 淘汰。
+  - `SessionViewer` 里两处 O(n²)（`timeline.slice(0, idx+1).filter(...)` 与
+    `previousUserTimestamp` 反向扫描）改成一次 O(n) 前向扫描 + 查表。
+  - 滚动处理用 rAF 合并到每帧一次（原先每个 scroll 事件都跑
+    `querySelectorAll` + 逐个 `getBoundingClientRect` + `setState`）。
+- 针对性测试：
+  - `web/tests/session-load-storm.test.mjs` — 加载 effect 依赖里**不能**出现
+    `selectedSessionSnapshot`；失败必须被记录且 404 是终点；成功与 `markSessionStale`
+    必须解禁；`sessionCacheRef` 必须有上限且每个新键写入点都要执行；
+    两处 O(n²) 必须消失；滚动必须走 rAF。
 
 ---
 

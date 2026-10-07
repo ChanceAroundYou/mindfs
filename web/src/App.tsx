@@ -246,6 +246,31 @@ export function App({ onGoHome }: AppProps) {
   const sessionCacheRef = useRef<Record<string, Session>>({});
   const loadedSessionRef = useRef<Record<string, boolean>>({});
   const loadingSessionRef = useRef<Partial<Record<string, Promise<SyncSessionResult>>>>({});
+  // CUSTOM(G-AU): 拉取失败必须留下痕迹，否则「加载失败」在状态里和「还没加载」长得
+  // 一模一样 —— 见 loadSession effect 的守卫：`loadedSessionRef` 只在**成功**时置位，
+  // 于是 404 的会话每一轮都重新走一遍全量拉取，没有任何终点。
+  // 404 = 永久（等选中项变化或显式标脏才解禁）；其余错误退避 5s。
+  const sessionLoadFailureRef = useRef<Record<string, { at: number; status: number }>>({});
+  // CUSTOM(G-AU): 内存会话缓存**没有上限**，而 IDB 那份有（500 条 / 200KB，
+  // toPersistentSession）。长时间浏览会堆到几百 MB → 标签页逐渐卡死然后崩。
+  // 按条数封顶 + 按最近写入时间 LRU 淘汰（流式写入会让活跃会话一直新鲜）。
+  const SESSION_CACHE_MAX_ENTRIES = 64;
+  const sessionCacheAccessRef = useRef<Record<string, number>>({});
+  const enforceSessionCacheBound = useCallback(() => {
+    const cache = sessionCacheRef.current;
+    const keys = Object.keys(cache);
+    if (keys.length <= SESSION_CACHE_MAX_ENTRIES) return;
+    const access = sessionCacheAccessRef.current;
+    const evictCount = keys.length - SESSION_CACHE_MAX_ENTRIES;
+    keys
+      .map((key) => ({ key, at: access[key] || 0 }))
+      .sort((a, b) => a.at - b.at)
+      .slice(0, evictCount)
+      .forEach(({ key }) => {
+        delete cache[key];
+        delete access[key];
+      });
+  }, []);
   const staleSessionKeysRef = useRef<Set<string>>(new Set());
   const invalidTreeCacheKeysRef = useRef<Set<string>>(new Set());
   // 上一轮跨节点抓取里失败的节点。refreshManagedRoots 消费它：提示用户 + 给出重试入口。
@@ -2218,6 +2243,9 @@ export function App({ onGoHome }: AppProps) {
         return;
       }
       staleSessionKeysRef.current.add(rootSessionKey(resolvedRoot, resolvedKey));
+      // CUSTOM(G-AU): 显式标脏就是「重新拉一次」的信号，必须同时解禁失败冷却 ——
+      // 否则 404 的会话被标脏后依然拉不动，用户点重试毫无反应。
+      delete sessionLoadFailureRef.current[rootSessionKey(resolvedRoot, resolvedKey)];
     },
     [rootSessionKey],
   );
@@ -2340,6 +2368,9 @@ export function App({ onGoHome }: AppProps) {
               _anchoredAt: anchorAt,
             } as Session;
             sessionCacheRef.current[cacheKey] = toCache;
+            // CUSTOM(G-AU): 新键入缓存时顺手封顶（见 enforceSessionCacheBound）。
+            sessionCacheAccessRef.current[cacheKey] = Date.now();
+            enforceSessionCacheBound();
             bumpCacheVersion();
             await sessionService.markSessionReady(resolvedRoot, resolvedKey);
             return toCache;
@@ -2401,6 +2432,9 @@ export function App({ onGoHome }: AppProps) {
           _windowMeta: anchoredMeta as any,
           _anchoredAt: anchorAt,
         } as Session;
+        // CUSTOM(G-AU): 新键入缓存时顺手封顶（见 enforceSessionCacheBound）。
+        sessionCacheAccessRef.current[cacheKey] = Date.now();
+        enforceSessionCacheBound();
         bumpCacheVersion();
         await sessionService.markSessionReady(resolvedRoot, resolvedKey);
         return {
@@ -2415,11 +2449,24 @@ export function App({ onGoHome }: AppProps) {
       loadingSessionRef.current[cacheKey] = promise as any;
       try {
         return await promise;
+      } catch (err) {
+        // CUSTOM(G-AU): 失败必须留下痕迹。原先异常原样抛出，而调用点只写 .then 不写
+        // .catch —— 失败既不改状态也不留记录，和「还没加载」完全等价，下一轮依赖一变
+        // 就再拉一次。404 记成永久（会话确实不存在，重试无意义），其余错误退避 5s。
+        const status = (err as { status?: number } | null)?.status || 0;
+        sessionLoadFailureRef.current[cacheKey] = { at: Date.now(), status };
+        return null;
       } finally {
         delete loadingSessionRef.current[cacheKey];
       }
     },
-    [bumpCacheVersion, clearLocalPendingForSession, resolvePendingForSession, rootSessionKey],
+    [
+      bumpCacheVersion,
+      clearLocalPendingForSession,
+      enforceSessionCacheBound,
+      resolvePendingForSession,
+      rootSessionKey,
+    ],
   );
 
   const updateSessionRelatedFilesForKey = useCallback(
@@ -7849,11 +7896,29 @@ export function App({ onGoHome }: AppProps) {
     }
   }, [selectedSessionSnapshot]);
 
+  // CUSTOM(G-AU): 加载 effect 的依赖只能是**身份**（键 / 根 / 布尔），绝不能是
+  // selectedSessionSnapshot 这个对象。它的身份随 cacheVersion 每次 bump 都变
+  // （getSessionSnapshot 的 dep 数组里有 cacheVersion），而流式输出每 30ms 就 bump 一次、
+  // 每个 tool_call/todo_update/plan_update 还会同步再 bump 一次 —— 于是「加载 →
+  // bump → 新快照 → 再加载」自持成环。会话存在时 loadedSessionRef 会兜住，
+  // **404 的会话永远兜不住**：实测一个已删会话被拉到 22–25 次/秒、持续 18 小时
+  // （单小时 5232 次、累计 7800+ 次 404），把浏览器每域 6 条连接全占满 →
+  // 其它请求全部排队 → 界面卡死 → 标签页被杀 → 自动重载。
+  const loadSessionKey = selectedSession?.key || selectedSession?.session_key || "";
+  const loadRootID =
+    (selectedSession?.root_id as string | undefined) || currentRootId || "";
+  const loadSnapshotHasExchanges = hasSessionExchanges(
+    selectedSessionSnapshot as Session | null,
+  );
+
+  // 选中项一变就解禁失败记录：换会话/换项目本来就该重新拉一次。
   useEffect(() => {
-    const sessionKey =
-      selectedSession?.key || selectedSession?.session_key || "";
-    const rootID =
-      (selectedSession?.root_id as string | undefined) || currentRootId || "";
+    sessionLoadFailureRef.current = {};
+  }, [loadSessionKey, loadRootID]);
+
+  useEffect(() => {
+    const sessionKey = loadSessionKey;
+    const rootID = loadRootID;
     if (!rootID || !sessionKey || sessionKey.startsWith("pending-")) {
       return;
     }
@@ -7869,11 +7934,21 @@ export function App({ onGoHome }: AppProps) {
     if (!isStale && hasSessionExchanges(cached)) {
       return;
     }
-    if (!isStale && hasSessionExchanges(selectedSessionSnapshot as Session | null)) {
+    if (!isStale && loadSnapshotHasExchanges) {
       return;
     }
     if (loadingSessionRef.current[cacheKey]) {
       return;
+    }
+    // CUSTOM(G-AU): 失败冷却。404 永久（会话不存在，重试无意义），其余错误 5s。
+    // 这是第二道保险：即便将来又出现「依赖每轮都变」的加载路径，风暴也被压到
+    // 每分钟最多一次，而不是每秒 22 次。
+    const failure = sessionLoadFailureRef.current[cacheKey];
+    if (failure) {
+      const cooldown = failure.status === 404 ? Number.POSITIVE_INFINITY : 5_000;
+      if (Date.now() - failure.at < cooldown) {
+        return;
+      }
     }
     void restoreActiveSession(rootID, sessionKey).then((restored) => {
       if (!restored) {
@@ -7881,6 +7956,7 @@ export function App({ onGoHome }: AppProps) {
       }
       loadedSessionRef.current[cacheKey] = true;
       clearSessionStale(rootID, sessionKey);
+      delete sessionLoadFailureRef.current[cacheKey];
       setSelectedSession((prev) => {
         const prevKey = prev?.key || prev?.session_key;
         const prevRoot =
@@ -7901,9 +7977,10 @@ export function App({ onGoHome }: AppProps) {
       }
     });
   }, [
-    selectedSession,
+    loadSessionKey,
+    loadRootID,
+    loadSnapshotHasExchanges,
     selectedSessionLoading,
-    selectedSessionSnapshot,
     currentRootId,
     rootSessionKey,
     bumpCacheVersion,

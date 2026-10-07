@@ -396,16 +396,6 @@ function ContextWindowBadge({
   );
 }
 
-function previousUserTimestamp(timeline: TimelineItem[], index: number): string {
-  for (let i = index - 1; i >= 0; i -= 1) {
-    const item = timeline[i];
-    if (item.type === "user_text") {
-      return item.timestamp || "";
-    }
-  }
-  return "";
-}
-
 const formatTime = (isoString: string | undefined, locale: Locale) => {
   if (!isoString) return "";
   try {
@@ -1188,6 +1178,30 @@ function SessionViewerInner({
     session?.context_window,
     isAwaiting,
   );
+  // CUSTOM(G-AU): 原先在 timeline.map 里对每个 user 项做「切前缀再 filter 数 user」、
+  // 对每个 assistant 项做 previousUserTimestamp 反向扫描 —— 两处都是 O(n²)，
+  // 且每轮渲染都重算（流式输出 33 次/秒）。改成一次 O(n) 前向扫描，渲染里只查表。
+  const timelineItemMeta = useMemo(() => {
+    const metas = new Array<{
+      userIndex: number;
+      prevUserTs: string | undefined;
+    }>(timeline.length);
+    let userCount = 0;
+    let lastUserTs: string | undefined;
+    for (let i = 0; i < timeline.length; i += 1) {
+      const entry = timeline[i] as { type?: string; timestamp?: number | string } | undefined;
+      const isUser = entry?.type === "user_text";
+      if (isUser) {
+        userCount += 1;
+        lastUserTs = entry?.timestamp ? String(entry.timestamp) : undefined;
+      }
+      metas[i] = {
+        userIndex: isUser ? userCount : 0,
+        prevUserTs: isUser ? undefined : lastUserTs,
+      };
+    }
+    return metas;
+  }, [timeline]);
   const shouldStickToBottomRef = useRef(true);
   const lastSessionKeyRef = useRef<string | null>(null);
   const targetSeqScrollKeyRef = useRef("");
@@ -1660,29 +1674,42 @@ function SessionViewerInner({
       return;
     }
     let lastScrollTop = el.scrollTop;
+    // CUSTOM(G-AU): 滚动事件原先**每个事件**都跑一遍 refreshCurrentUserMessageIndex
+    // （querySelectorAll 全部 user 节点 + 逐个 getBoundingClientRect + setState），
+    // 没有任何节流 —— 在「往上翻历史」这条路径上就是连续的主线程阻塞。
+    // 合并到一帧一次：滚动体感不变，但 DOM 查询从「每事件」降到「每帧」。
+    let stickinessFrame: number | null = null;
     const updateStickiness = () => {
-      const viewportGap = window.visualViewport
-        ? window.innerHeight - window.visualViewport.height - window.visualViewport.offsetTop
-        : 0;
-      const rawDistanceFromBottom = el.scrollHeight - el.clientHeight - el.scrollTop;
-      const distanceFromBottom = Math.max(0, rawDistanceFromBottom - viewportGap);
-      const isNearBottom = distanceFromBottom < 40;
-      const movedUp = el.scrollTop < lastScrollTop;
-      const movedDown = el.scrollTop > lastScrollTop;
-      if (isNearBottom) {
-        shouldStickToBottomRef.current = true;
-      } else if (movedUp) {
-        shouldStickToBottomRef.current = false;
-      } else if (movedDown && distanceFromBottom < 200) {
-        shouldStickToBottomRef.current = true;
-      }
-      setShowJumpToLatest(!shouldStickToBottomRef.current);
-      refreshCurrentUserMessageIndex();
-      lastScrollTop = el.scrollTop;
+      if (stickinessFrame !== null) return;
+      stickinessFrame = window.requestAnimationFrame(() => {
+        stickinessFrame = null;
+        const viewportGap = window.visualViewport
+          ? window.innerHeight - window.visualViewport.height - window.visualViewport.offsetTop
+          : 0;
+        const rawDistanceFromBottom = el.scrollHeight - el.clientHeight - el.scrollTop;
+        const distanceFromBottom = Math.max(0, rawDistanceFromBottom - viewportGap);
+        const isNearBottom = distanceFromBottom < 40;
+        const movedUp = el.scrollTop < lastScrollTop;
+        const movedDown = el.scrollTop > lastScrollTop;
+        if (isNearBottom) {
+          shouldStickToBottomRef.current = true;
+        } else if (movedUp) {
+          shouldStickToBottomRef.current = false;
+        } else if (movedDown && distanceFromBottom < 200) {
+          shouldStickToBottomRef.current = true;
+        }
+        setShowJumpToLatest(!shouldStickToBottomRef.current);
+        refreshCurrentUserMessageIndex();
+        lastScrollTop = el.scrollTop;
+      });
     };
     updateStickiness();
     el.addEventListener("scroll", updateStickiness, { passive: true });
     return () => {
+      if (stickinessFrame !== null) {
+        window.cancelAnimationFrame(stickinessFrame);
+        stickinessFrame = null;
+      }
       el.removeEventListener("scroll", updateStickiness);
     };
   }, [refreshCurrentUserMessageIndex, sessionKey]);
@@ -2107,9 +2134,9 @@ function SessionViewerInner({
       );
     }
     const isUser = item.type === "user_text";
-    const userMessageIndex = isUser
-      ? timeline.slice(0, idx + 1).filter((timelineItem) => timelineItem.type === "user_text").length
-      : undefined;
+    // CUSTOM(G-AU): 查表，不再 slice+filter / 反向扫描（见 timelineItemMeta）。
+    const itemMeta = timelineItemMeta[idx];
+    const userMessageIndex = isUser ? itemMeta.userIndex : undefined;
     const next = idx + 1 < timeline.length ? timeline[idx + 1] : null;
     const hasFollowingAssistantFlow =
       !isUser && !!next && next.type !== "user_text";
@@ -2141,7 +2168,7 @@ function SessionViewerInner({
       ? formatAssistantExchangeMeta(item, agents)
       : "";
     const assistantDurationLabel = !isUser
-      ? formatSessionDuration(previousUserTimestamp(timeline, idx), item.timestamp)
+      ? formatSessionDuration(itemMeta.prevUserTs, item.timestamp)
       : "";
     const canForkAgentMessage = !isUser && isPersistedSeq(item.seq) && !!onForkAgentMessage;
     return (
