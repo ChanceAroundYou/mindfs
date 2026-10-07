@@ -1,13 +1,18 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
-const syncHandler = app.slice(
-  app.indexOf("const handleSyncSession = useCallback("),
-  app.indexOf("const handleForkAgentMessage = useCallback("),
+// handleSyncSession 已从 App.tsx 拆到 app/useSessionLifecycle.ts（App.tsx 拆分
+// 计划 A1a）。跨模块 slice 没有意义，直接读该模块；handleSyncSession 是模块内
+// 最后一个单元，切到文件末尾即可。
+const lifecycle = readFileSync(
+  new URL("../src/app/useSessionLifecycle.ts", import.meta.url),
+  "utf8",
+);
+const syncHandler = lifecycle.slice(
+  lifecycle.indexOf("const handleSyncSession = useCallback("),
 );
 
-assert.ok(syncHandler.length > 0, "handleSyncSession should be found in App.tsx");
+assert.ok(syncHandler.length > 0, "handleSyncSession should be found in useSessionLifecycle.ts");
 
 // 正在等待回答的 ask_user 卡是纯内存态：只存在于前端 sessionCacheRef（WS tool_call
 // 追加的 seq=0 role=tool 条目）与服务端 manager.pendingToolCalls 里。服务端**从不**经
