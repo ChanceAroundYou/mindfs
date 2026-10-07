@@ -261,9 +261,10 @@ export type SyncSessionResult = {
  * 服务端 SessionWindowMeta 的默认值/上限（50/200）是安全网，客户端始终显式传值。
  *
  * 2026-10-07：20 → 8。首屏载荷的 87% 是 exchange_aux（工具卡），而工具卡按 seq
- * 走、最重的几个 seq 决定载荷大小 —— 窗口从 20 缩到 8 能把「打开会话」的载荷砍掉
- * 一截（实测 515 KB → ~300 KB）。代价是上翻同样历史需要更多次 loadMore，但
- * 打开会话是高频路径、翻历史是低频路径，这个交换划算。
+ * 走、最重的几个 seq 决定载荷大小 —— 窗口缩小直接砍「打开会话」的载荷。代价是
+ * 上翻同样历史需要更多次 loadMore，但打开会话是高频路径、翻历史是低频路径。
+ *
+ * CUSTOM(G-AT): 上游是 20。改回 20 等于把首屏载荷放大一倍以上。
  */
 export const SESSION_WINDOW_SIZE = 8;
 
@@ -1390,6 +1391,8 @@ class SessionService {
       if (limit > 0) {
         params.set("limit", String(limit));
       }
+      // CUSTOM(G-AT): 上游没有这层去重，同一次打开会话的两个并发调用会把几百 KB 的
+      // 窗口载荷各传一遍（实测每个 sessionKey 在 ?latest=N 日志里恰好出现两次）。
       // in-flight 去重：同参数的并发窗口拉取合并成一次请求。
       // 键含 nodeId —— 同名项目跨节点是两个不同的请求，不能互相顶掉。
       const inflightKey = `${nodeId}::${rootId}::${sessionKey}::${opts?.beforeSeq || 0}::${opts?.latest || 0}::${limit}`;

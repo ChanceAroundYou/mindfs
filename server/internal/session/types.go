@@ -120,6 +120,9 @@ func CompactExchangeAux(aux ExchangeAux) (ExchangeAux, bool) {
 	return aux, true
 }
 
+// CUSTOM(G-AT): 上游没有这个「窗口专用」的更轻压缩。窗口响应里 exchange_aux 占 87%，
+// 其中 edit 的 content 一块就是 101 KB；卡片展开时本就走懒加载，所以窗口只需要
+// 能渲染折叠卡片的最小字段。全量 sync / 重锚定仍走 CompactExchangeAux（保留 content）。
 // CompactExchangeAuxLight 是窗口专用的更激进压缩：在 CompactExchangeAux 基础上，
 // 把「详情只在展开时需要」的 kind（edit/read/execute）的 content 也清空。
 //
@@ -161,6 +164,8 @@ func CompactToolCall(toolCall agenttypes.ToolCall) agenttypes.ToolCall {
 	if !preserveContent {
 		toolCall.Meta = compactToolCallMeta(toolCall.Meta)
 	} else if toolCall.Kind == agenttypes.ToolKindEdit && len(toolCall.Content) > 0 {
+		// CUSTOM(G-AT): 上游保留 edit 的 meta.input/output，而它们与 content 是同一份
+		// diff 的两种形状（实测占 130 KB）。前端只在 content 为空时才回退到 meta.input。
 		// edit 的 content 是格式化后的 diff，meta.input/output 是同一份 old/new
 		// 文本的未格式化副本。前端只在 content 为空时才拿 meta.input 当 fallback
 		// （见 ToolCallCard 的 detailSections 回退），content 非空时这两个字段是

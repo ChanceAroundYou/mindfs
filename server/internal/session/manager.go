@@ -2390,6 +2390,8 @@ func (m *Manager) loadExchangeAuxWindow(key string, seqSet map[int]bool) (map[in
 	}
 	items := make(map[int][]ExchangeAux)
 	for _, entry := range entries {
+		// CUSTOM(G-AT): 窗口读路径走轻压缩（上游这里是 CompactExchangeAux）。
+		// 只改这一处：全量 sync / 重锚定在下面另一个调用点，必须保留完整 content。
 		// 窗口专用轻压缩：edit/read/execute 的 content 也清空，展开时懒加载。
 		compacted, ok := CompactExchangeAuxLight(entry)
 		if !ok {

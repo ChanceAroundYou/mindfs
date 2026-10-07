@@ -1344,3 +1344,84 @@ groups:
       - web/src/layout/AppShell.tsx:toggleRail("left")
       - web/src/components/ActionBar.tsx:if (hideComposer)
       - 'web/tests/task-board-view.test.mjs:zIndex: 2100'
+
+  # ── 性能：会话打开热路径 ──────────────────────────────────────────
+  - id: G-AT
+    title: 会话打开性能（窗口去重 / 载荷压缩 / 工具卡分组）
+    kind: perf
+    symptom: |
+      打开会话卡顿、加载慢。实测（会话 1791236887）：窗口响应 515 KB，其中
+      exchange_aux 449 KB（87.4%），而 exchange_aux 里 edit 的 content 101 KB、
+      edit 的 meta.input/output 130 KB；同一 sessionKey 在 `?latest=20` 的访问日志里
+      **恰好出现两次**，两个并发调用各传一遍全量载荷；20 分钟内 related-files 被拉 74 次
+      （每秒 4–6 个突发）、`/api/pins` 被拉 30 次（每次切项目成对）；单会话 389 张工具卡
+      （单 seq 最多 189 张）同步渲染。
+    why: |
+      七条各自独立的坏法，合起来才是「打开会话慢」：
+      ① **窗口去重**（`web/src/services/session.ts`）：`getSessionWindow` 用
+      `windowInflight` 把同 (nodeId, rootId, sessionKey, beforeSeq, latest, limit) 的
+      并发调用合并成一个 Promise。键必须含 nodeId —— 同名项目跨节点是两个不同请求。
+      在途表在 finally 里删，所以结算后再调用仍会重新发（去重不是缓存）。
+      ② **edit 丢冗余 meta**（`server/internal/session/types.go:CompactToolCall`）：
+      edit 有 content（diff）时 `meta.input`（109 KB）与 `meta.output`（21 KB）是同一份
+      diff 的原始形状，渲染从不读；保留其它 meta 键。edit **没有** content 时必须保留
+      （那才是唯一详情来源）。
+      ③ **窗口轻压缩**（`CompactExchangeAuxLight` + `manager.go:loadExchangeAuxWindow`）：
+      在 ② 之上把 edit/read/execute 的 content 也清空。折叠卡片只要 kind/title/status/
+      locations；展开时 `ToolCallCard` 的 `needsRemoteDetails`（edit/read 走 `!hasContent`、
+      execute 走 `!hasExecuteOutput`）会触发 `GET /api/sessions/{key}/toolcalls/{callID}` 懒加载。
+      **只用于窗口读路径**：全量 sync / 重锚定仍走 `CompactExchangeAux`、保留 content，
+      避免「重锚定后卡片内容闪一下又变了」。
+      ④ **窗口 20→8**（`SESSION_WINDOW_SIZE`）：首屏载荷 87% 是 aux，窗口缩小直接砍载荷；
+      代价是上翻同样历史要多几次 loadMore，而打开会话是高频路径、翻历史是低频路径。
+      ⑤ **related-files 去抖**（`web/src/app/useRealtimeEvents.ts`）：后端 `shared_watcher`
+      每写一个文件就发一条 `session.related_files.updated`，前端 handler 原本每次原样拉一次。
+      按 `rootID::sessionKey` 合并 500ms 窗口内的多次触发，只拉一次。
+      ⑥ **工具卡分组**（`useSessionStream.ts:groupConsecutiveToolCalls` +
+      `ToolCallGroupCard.tsx` + `SessionViewer.tsx`）：连续同类、数量 >= 5 的
+      edit/read/execute 折成一个 `tool_group` 项，折叠态显示「N 个编辑」+ 运行中/失败计数，
+      展开才逐个渲染 ToolCallCard。ask_user 不参与（要答题），todo/plan/compact 各有卡片。
+      阈值 5：2–4 张直接显示更直观，为它们套一层展开/收起反而多一次点击。
+      ⑦ **pins 去重**（`web/src/services/pins.ts`，见 G-X）：两个 effect 同一次提交触发时
+      只发一次 `/api/pins`。
+      上游没有这些：上游是「窗口全量 aux + 逐个渲染 + 每次事件原样拉」。
+      合上游时这七条要么全留要么全弃 —— 它们是同一条热路径（取窗 → 载荷 → 渲染）上的接力。
+    files:
+      - server/internal/session/types.go
+      - server/internal/session/manager.go
+      - server/internal/session/compact_toolcall_test.go
+      - server/internal/session/aux_window_tail_test.go
+      - web/src/services/session.ts
+      - web/src/app/useRealtimeEvents.ts
+      - web/src/hooks/useSessionStream.ts
+      - web/src/components/SessionViewer.tsx
+      - web/src/components/stream/ToolCallGroupCard.tsx
+      - web/src/services/pins.ts
+      - web/tests/session-window-dedup.test.mjs
+      - web/tests/tool-card-grouping.test.mjs
+      - web/tests/related-files-debounce.test.mjs
+      - web/tests/pins-refresh-dedup.test.mjs
+      - web/tests/session-window.test.mjs
+    tests:
+      - server/internal/session/compact_toolcall_test.go
+      - server/internal/session/aux_window_tail_test.go
+      - web/tests/session-window-dedup.test.mjs
+      - web/tests/tool-card-grouping.test.mjs
+      - web/tests/related-files-debounce.test.mjs
+      - web/tests/pins-refresh-dedup.test.mjs
+      - web/tests/session-window.test.mjs
+    anchors:
+      - server/internal/session/types.go:func CompactExchangeAuxLight
+      - server/internal/session/types.go:func lightCompactToolCall
+      - server/internal/session/types.go:func dropEditRedundantMeta
+      - server/internal/session/manager.go:CompactExchangeAuxLight(entry)
+      - web/src/services/session.ts:private windowInflight
+      - web/src/services/session.ts:export const SESSION_WINDOW_SIZE = 8;
+      - web/src/app/useRealtimeEvents.ts:const relatedFilesRefreshTimers = useRef(new Map<string, number>());
+      - web/src/hooks/useSessionStream.ts:export function groupConsecutiveToolCalls
+      - web/src/components/stream/ToolCallGroupCard.tsx:export const ToolCallGroupCard
+      - 'server/internal/session/types.go:CUSTOM(G-AT)'
+      - 'server/internal/session/manager.go:CUSTOM(G-AT)'
+      - 'web/src/services/session.ts:CUSTOM(G-AT)'
+      - 'web/src/hooks/useSessionStream.ts:CUSTOM(G-AT)'
+      - 'web/src/components/SessionViewer.tsx:CUSTOM(G-AT)'

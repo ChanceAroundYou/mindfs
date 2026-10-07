@@ -114,7 +114,7 @@
 
 ---
 
-## 1. 总览（38 组）
+## 1. 总览（43 组）
 
 | 组 | 主题 | 性质 | 关键提交/切片举例 | 互斥边界 |
 |----|------|------|-------------------|----------|
@@ -162,6 +162,7 @@
 | G-AQ | 任务卡的三把键：完成兜底 / 取消 / 删除 | 功能 | 见 §3.1 | 待审核必有出路；取消只改状态；删除只删卡片 |
 | G-AR | 移动端侧栏切换按钮移入顶栏 | 修复 | 见 §3.1 | 44px 全局顶栏 + 侧栏 `top` 同步偏移 |
 | G-AS | ACP 提问（dsh `ask_user_question` 走 elicitation） | 修复 | 见 §3.1 | 只对 dsh 广告 elicitation.form；题目 id+文本关联；答案编码成 `question_<i>` |
+| G-AT | 会话打开性能（窗口去重 / 载荷压缩 / 工具卡分组） | 性能 | 见 §3.1 | 会话打开热路径：取窗去重 + 窗口轻压缩 + 窗口 8 + 工具卡分组 + related-files 去抖 |
 
 > **G-D 已并入 G-F，G-M 已并入 G-AI**（改动面完全重合、无独立测试可守，单列只会制造空组）。
 
@@ -889,6 +890,65 @@
     — **兼容性边界**：只有 `dsh` 拿到 `elicitation.form`，其它 ACP agent 与上游一致。
   - `server/internal/agent/acp/elicitation_test.go:TestBindElicitationIsExclusiveUnderConcurrency`
     — 并发 elicitation 下每个条目最多被绑一次（`-race` 下也过）。
+
+### G-AT 会话打开性能（窗口去重 / 载荷压缩 / 工具卡分组）（2026-10-07）
+
+- 来源：`server/internal/session/{types.go,manager.go}`、`web/src/services/{session.ts,pins.ts}`、
+  `web/src/app/useRealtimeEvents.ts`、`web/src/hooks/useSessionStream.ts`、
+  `web/src/components/SessionViewer.tsx`、`web/src/components/stream/ToolCallGroupCard.tsx`（新增）。
+- 边界：**会话打开热路径（取窗 → 载荷 → 渲染）上的七条**，合上游时要么全留要么全弃。
+  与 G-AN 的分工：G-AN 管**缓存协商**（同一份载荷如何零字节重取），G-AT 管**载荷本身有多大**
+  以及**取几次**。两者叠加才把「打开会话慢」压下来，但任一条单独被冲掉都不会让门禁变红 ——
+  所以每一条都有各自的针对性测试。
+- 可见症状（没有它会怎样）：
+  1. 打开会话卡顿、加载慢：窗口响应 515 KB，`exchange_aux` 占 449 KB（**87.4%**）。
+  2. 每个 sessionKey 的 `?latest=N` 在访问日志里**恰好出现两次**（两个并发调用各传一遍全量载荷）。
+  3. 20 分钟内 related-files 被拉 **74 次**（每秒 4–6 个突发），`/api/pins` 被拉 **30 次**（每次切项目成对）。
+  4. 单会话 389 张工具卡（单 seq 最多 189 张）同步渲染。
+- 七条（合上游后要按这些恢复，**不要按上游实现重写**）：
+  1. **窗口 in-flight 去重**（`session.ts:getSessionWindow`）：`windowInflight` 把同
+     `(nodeId, rootId, sessionKey, beforeSeq, latest, limit)` 的并发调用合并成一个 Promise。
+     键**必须含 `nodeId`** —— 同名项目跨节点是两个不同请求，合并等于串数据。
+     在途表在 `finally` 里删，所以结算后再调用仍会重新发（**去重不是缓存**）。
+  2. **edit 丢冗余 meta**（`types.go:CompactToolCall` + `dropEditRedundantMeta`）：edit **有**
+     content（diff）时 `meta.input`（109 KB）/`meta.output`（21 KB）是同一份 diff 的原始形状，
+     渲染从不读；edit **没有** content 时必须保留（那才是唯一详情来源）。
+  3. **窗口轻压缩**（`types.go:CompactExchangeAuxLight` + `manager.go:loadExchangeAuxWindow`）：
+     在 2 之上把 edit/read/execute 的 `content` 也清空。折叠卡片只要 kind/title/status/locations；
+     展开时 `ToolCallCard` 的 `needsRemoteDetails`（edit/read 走 `!hasContent`、execute 走
+     `!hasExecuteOutput`）会触发 `GET /api/sessions/{key}/toolcalls/{callID}` 懒加载。
+     **只用于窗口读路径**：全量 sync / 重锚定仍走 `CompactExchangeAux`、保留 content，
+     避免「重锚定后卡片内容闪一下又变了」。这条不一致是**刻意**的：首屏要快，重锚定要稳。
+  4. **窗口 20→8**（`session.ts:SESSION_WINDOW_SIZE`）：首屏载荷 87% 是 aux，窗口缩小直接砍载荷；
+     代价是上翻同样历史要多几次 `loadMore`，而打开会话是高频路径、翻历史是低频路径。
+  5. **related-files 去抖**（`useRealtimeEvents.ts:refreshSessionRelatedFiles`）：后端
+     `shared_watcher` 每写一个文件就发一条 `session.related_files.updated`，前端 handler 原本
+     每次原样拉一次。按 `rootID::sessionKey` 合并 500ms 窗口内的多次触发，只拉一次。
+     触发方改成同步派发（不再是 `async`）：去抖后没有可 await 的即时结果。
+  6. **工具卡分组**（`useSessionStream.ts:groupConsecutiveToolCalls` +
+     `ToolCallGroupCard.tsx` + `SessionViewer.tsx` 的 `tool_group` 分支）：连续同类、数量 **>= 5**
+     的 edit/read/execute 折成一个 `tool_group` 项，折叠态显示「N 个编辑」+ 运行中/失败计数，
+     展开才逐个渲染 `ToolCallCard`。**ask_user 不参与**（要答题）；todo/plan/compact 各有卡片。
+     阈值 5：2–4 张直接显示更直观，为它们套一层展开/收起反而多一次点击。
+  7. **pins 去重**（`pins.ts:refreshPinsInFlight`，另见 G-X）：两个 effect（`App.tsx` 依赖
+     `currentRootId`、`SessionList.tsx` 依赖 `selectedRootId/selectedNodeId`）同一次提交触发时
+     只发一次 `/api/pins`。
+- 针对性测试：
+  - `server/internal/session/compact_toolcall_test.go:TestCompactToolCallEditDropsRedundantMeta`
+    — edit 有 content 丢 input/output、无 content 保留、ask_user 保留、execute 只丢 output。
+  - `server/internal/session/compact_toolcall_test.go:TestCompactExchangeAuxLightStripsContentForLazyKinds`
+    — 轻压缩只清 edit/read/execute 的 content，ask_user/todo 原样保留。
+  - `server/internal/session/aux_window_tail_test.go:TestLoadExchangeAuxWindowStripsLazyToolContent`
+    — **窗口读路径真的走了轻压缩**（edit content 清空、非冗余 meta 保留），
+      且同一条目走全量压缩仍带 content（重锚定靠它）。
+  - `web/tests/session-window-dedup.test.mjs` — 并发同参只发一次、结算后能再发、
+    `beforeSeq`/`rootId` 不同必须各自发。
+  - `web/tests/tool-card-grouping.test.mjs` — 6/5 张成组、4 张不成组、edit+read 分成两组、
+    ask_user 永不成组、thought 打断连续段、`"Edit"` 归一化成 `edit`。
+  - `web/tests/related-files-debounce.test.mjs` — 去抖表是 ref、键是 `rootID::sessionKey`、
+    重复触发先清定时器、请求在 500ms 定时器里发、触发方不再是 `async`。
+  - `web/tests/pins-refresh-dedup.test.mjs` — 并发只发一次、结算后能再发、仍走 `controlPath`。
+  - `web/tests/session-window.test.mjs` — `SESSION_WINDOW_SIZE = 8` 且被 viewer/App 共用。
 
 ---
 

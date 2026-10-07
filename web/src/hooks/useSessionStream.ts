@@ -463,6 +463,10 @@ function buildBaseTimeline(
 }
 
 /**
+ * CUSTOM(G-AT): 上游没有工具卡折叠 —— 它把每个 toolcall 逐个渲染成 ToolCallCard，
+ * 一个回合 100+ 张时首屏 DOM 与布局成本都压在打开会话上。合上游时这一整段
+ * （含 SessionViewer 的 tool_group 分支与 stream/ToolCallGroupCard.tsx）要么全留要么全弃。
+ *
  * 连续同类工具卡的折叠（2026-10-07）。
  *
  * 为什么：一个回合里 agent 连开 100+ 个 edit/read/execute 是常态，逐个渲染

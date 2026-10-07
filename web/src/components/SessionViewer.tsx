@@ -2066,6 +2066,8 @@ function SessionViewerInner({
         </div>
       );
     }
+    // CUSTOM(G-AT): 上游没有 tool_group 这个时间线项类型（逐张渲染 ToolCallCard）。
+    // 折叠由 useSessionStream 的 groupConsecutiveToolCalls 产生，展开后仍走 ToolCallCard。
     if (item.type === "tool_group") {
       return (
         <div key={timelineItemKey} style={{ marginTop: spacing }}>
