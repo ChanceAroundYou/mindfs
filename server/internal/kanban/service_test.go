@@ -2621,7 +2621,9 @@ func TestTaskJSONIncludesDerivedWorktreeMissing(t *testing.T) {
 	}
 }
 
-// ClearTaskWorktree：repoint 后任务侧要跟着解绑。
+// ClearTaskWorktree：清掉任务的 worktree 归属（路径 + root id），且幂等。
+// 生产已无调用方（收尾走 store.ClearWorktreeRefs；repoint 那条路 2026-10-01 拆掉了），
+// 本用例守住方法自身的语义。
 func TestClearTaskWorktreeDetachesTask(t *testing.T) {
 	ctx := context.Background()
 	runner := &fakeRunner{}
@@ -2638,10 +2640,16 @@ func TestClearTaskWorktreeDetachesTask(t *testing.T) {
 	if _, err := svc.Next(ctx, MoveInput{RootID: root.ID, TaskID: detail.Task.ID}); err != nil {
 		t.Fatalf("Next: %v", err)
 	}
-	// 等**落库后的**路径，不是 fake 的 worktreeCreateCalled：那个标志在
-	// CreateTaskWorktree 入口就置位了，早于 service.go:1028 的 UpdateTask。
-	// 按标志等会在两个方向上翻车 —— 抢在写库之前读会看到空路径，之后清完再看
-	// 又会被后台那次写入把路径写回来（两种失败都跟 ClearTaskWorktree 无关）。
+	// 等**执行体收工**（Status==waiting_user），不能只等路径落库。
+	//
+	// 路径是 moveRelative 在 Next 里**同步**写的，所以「等到路径非空」几乎立刻成立；
+	// 但 Next 之后还有一个**异步**的 executeTask 在跑。它开头的 loadForMove 若读在
+	// 清归属**之后**，快照里路径已空，于是又走一次建树分支把路径**写回**去 —— 断言
+	// 随即看到「清完路径又回来」。高并行负载（go test ./... 各包并行）拉宽这个窗口，
+	// 就是那个 flaky；单独跑 / -race 跑不出来。
+	//
+	// 等 waiting_user 表示 agent 段已跑完、executeTask 已返回，不会再写归属。这也是
+	// 本包「等 Next 的异步执行落地」的既有范式（见 parkOnWaitingAgentStage）。
 	var before TaskDetail
 	waitForCondition(t, func() bool {
 		got, err := svc.GetTask(ctx, root.ID, detail.Task.ID)
@@ -2649,7 +2657,7 @@ func TestClearTaskWorktreeDetachesTask(t *testing.T) {
 			return false
 		}
 		before = got
-		return strings.TrimSpace(got.Task.WorktreePath) != ""
+		return strings.TrimSpace(got.Task.WorktreePath) != "" && got.Task.Status == StatusWaitingUser
 	})
 	if strings.TrimSpace(before.Task.WorktreePath) == "" {
 		t.Fatalf("worktree path should be set before clearing")
