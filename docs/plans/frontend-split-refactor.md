@@ -82,21 +82,33 @@ web/src/
 
 ## 4. 待办清单（按优先级）
 
-### 4.1 App.tsx —— 10472 行（最大，收益最高，风险也最高）
+### 4.1 App.tsx —— 10537 行（最大，收益最高，风险也最高）
 
-- **现状**：单组件 `App()`（225 行起），约 101 个 `useState`、80 个 `useEffect`。
+- **现状**：单组件 `App()`（225 行起），101 个 `useState`、81 个 `useEffect`、
+  145 个 `useCallback`、26 个 `useMemo`、92 个 `useRef`。
   既有 G-AA 已把能安全抽的部分抽走：`web/src/app/`（20 模块、7893 行）+
   `web/src/renderer/`（4 模块）。剩下的是**状态与副作用深度互锁的核心**。
-- **目标**：≤ 900 行。
-- **阻塞点**：**没有运行时验证手段**。48 个测试引用 `App.tsx`，但绝大多数是
-  **源码正则断言**（靠 source-map 读层拼源码），它们只能证明「代码还在」，
-  **抓不到运行时行为回归**。盲目抽 hook 会静默改行为。
+- **目标（2026-10-07 决策）**：**分阶段，先到 ~4000–5000 行再评估**。
+  不直接冲 ≤900 —— 后期边界互锁紧密，风险累积。
+- **前置（已解除）**：运行时验证手段 —— `e2e/` Playwright 冒烟（10 用例）已就位。
 - **建议做法**：
-  1. 先补一层运行时/交互验证（Playwright 冒烟、或针对关键路径的手动核对清单）。
-  2. 再按「一组内聚状态 + 其唯一出口 effect」为单元抽 hook，沿用
+  1. 按「一组内聚状态 + 其唯一出口 effect」为单元抽 hook，沿用
      `web/src/app/useXxx.ts` 的既有模式（入参是依赖项，出参是 state + 操作函数）。
-  3. 每抽一块就注册 source-map（`"src/App.tsx": ["src/App.tsx", "src/app/useXxx.ts"]`）
-     并跑全量门禁。
+  2. 第 1 轮先抽边界最清晰的 7 个单元（见下），每抽一块就注册 source-map
+     （`"src/App.tsx": ["src/App.tsx", "src/app/useXxx.ts"]`）并跑全量门禁 + e2e。
+  3. 第 2 轮起处理剩余互锁更紧的集群；**一旦发现需要改逻辑，说明拆错了边界，退回重划**。
+- **第 1 轮抽取单元**：
+
+  | 抽取单元 | 源码位置 | 目标文件 |
+  |---|---|---|
+  | Session cache & loading refs | L227–315 | `app/useSessionCache.ts` |
+  | Multi-project session groups + pins | L316–378 | `app/useMultiProjectSessions.ts` |
+  | Session archive | L379–391 | `app/useSessionArchive.ts` |
+  | Task inline edit | L410–447 | `app/useTaskInlineEdit.ts` |
+  | Layout prefs | L476–491 | `app/useLayoutPrefs.ts` |
+  | File tree state | L1323–1481 | `app/useFileTreeState.ts` |
+  | Workspace board | L8855–8857 | `app/useWorkspaceBoard.ts` |
+
 - **参考**：`app/useRealtimeEvents.ts`（2019 行）、`app/useProjectLifecycle.tsx`（885 行）
   就是这套模式的产物。
 
@@ -131,7 +143,7 @@ web/src/
 - **待办**：拆出 `SessionListItem` / `SessionGroupHeader` / 归档区。
 - **注意**：合并 main 时此文件有上游改动（`+11/−26`）。
 
-### 4.5 session.ts —— 2659 行（**被测试锁住，暂不能拆**）
+### 4.5 session.ts —— 2659 行（**被测试锁住，需先解锁**）
 
 - **为什么不能拆**：4 个测试用 `ts.transpileModule` + `vm.runInContext` **执行**
   这个文件的源码，沙箱里的 `require` 只认裸模块名：
@@ -143,21 +155,30 @@ web/src/
   拆出的相对值导入（`./merge`、`./sessionCache`）在沙箱里解析不到，测试直接炸。
   **source-map 的源码拼接救不了这条路径**（它只影响读源码做正则的测试，
   影响不到真正执行代码的 VM 测试）。
-- **解锁条件**：先改造这 4 个测试的沙箱 `require`，让它支持相对路径解析
+- **决策（2026-10-07）**：**现在投入解锁，然后拆**。
+  解锁条件：先改造这 4 个测试的沙箱 `require`，让它支持相对路径解析
   （把 `MODULES` 映射也喂给沙箱）。解锁后按 4.1 的模式拆。
 - **历史**：本分支曾尝试拆分并已回滚（见提交历史），不要在没有解锁条件时重试。
 
 ### 4.6 其他 > 600 行的文件（收益递减，按需）
 
-| 行数 | 文件 | 备注 |
-|---|---|---|
-| 2019 | `app/useRealtimeEvents.ts` | 已是 hook，内部可再拆 WS 事件分支 |
-| 1477 | `components/agent/AgentSelector.tsx` | 选择器 + 列表 + 记忆指示器 |
-| 1307 | `components/file/DefaultListView.tsx` | 默认列表视图 |
-| 1098 | `components/task/ScheduledAgentTaskDialog.tsx` | 定时任务弹窗 |
-| 1082 | `components/file/MarkdownViewer.tsx` | Markdown 渲染 |
-| 1016 | `components/stream/ToolCallCard.tsx` | 工具卡 |
-| 1002 | `components/action/ActionBar.tsx` | 输入栏 |
+- **决策（2026-10-07）**：**只做头部 6 个组件**；i18n 语言文件排除。
+- **排除**：`i18n/locales/en-US.ts`（1016）、`zh-CN.ts`（1014）—— 纯数据
+  （翻译 map），拆分价值低、漏 key 会导致未翻译 UI，记为已知偏差。
+  同样排除 `main.tsx`（入口）、`services/net/e2ee.ts`（服务）。
+- **要做（头部 6 个组件）**：
+
+  | 行数 | 文件 | 备注 |
+  |---|---|---|
+  | 1477 | `components/agent/AgentSelector.tsx` | 选择器 + 列表 + 记忆指示器 |
+  | 1296 | `components/file/DefaultListView.tsx` | 默认列表视图 |
+  | 1098 | `components/task/ScheduledAgentTaskDialog.tsx` | 定时任务弹窗 |
+  | 1082 | `components/file/MarkdownViewer.tsx` | Markdown 渲染 |
+  | 1016 | `components/stream/ToolCallCard.tsx` | 工具卡 |
+  | 1002 | `components/action/ActionBar.tsx` | 输入栏 |
+
+- **已是 hook，内部可再拆（低优先）**：`app/useRealtimeEvents.ts`（2019）、
+  `app/useProjectLifecycle.tsx`（885）、`hooks/useSessionStream.ts`（664）。
 
 ## 5. 验证手段
 
@@ -203,3 +224,12 @@ go run ./scripts/check-upstream
 | 与 main 的重命名冲突 | main 会继续改旧路径的文件 | 尽早合并 main；拆分提交保持「纯搬移」便于 git 跟随重命名 |
 | 组号撞车 | main 也会新增 G-* 组 | 合并 main 后重编号本分支的组（本次：G-AY → G-BA） |
 | 门禁变红 | 新 delta 文件未登记 | 每拆一块就补 G-BA 的 `files`/`tests`，并跑 `check-upstream` |
+
+## 7. 决策记录
+
+| 日期 | 决策 | 理由 |
+|---|---|---|
+| 2026-10-07 | App.tsx **分阶段，先到 ~4000–5000 再评估**，不直接冲 ≤900 | 后期边界互锁紧密，风险累积；每步可验证更稳 |
+| 2026-10-07 | session.ts **现在投入解锁 VM 测试，然后拆** | 解锁后收益大；4 个测试的沙箱 `require` 改造是明确的前置 |
+| 2026-10-07 | i18n 语言文件（en-US.ts / zh-CN.ts）**排除，不拆** | 纯数据，拆分价值低、漏 key 导致未翻译 UI |
+| 2026-10-07 | 「其他 >600 行」**只做头部 6 个组件** | 收益递减；跳过 i18n / main.tsx / e2ee.ts 等特殊文件 |
