@@ -176,14 +176,98 @@ assert.match(
   "conflicts need a sentinel so callers can tell them apart from other merge failures",
 );
 
-// ── 孤儿目录：只列不删 ──
-// worktree 里常留着 git 完全不跟踪的 .mindfs/（会话库），删了不可恢复。
+// ── 孤儿目录：自己的整个删，别人的只列不删 ──
+// 2026-10-07 重做：收尾要删掉**自己的**整个目录（含 git 不跟踪的 .mindfs/ .omc/
+// .claude/），否则 .worktree/ 会越积越多；但**别人的**孤儿目录仍然只列不删 ——
+// 里面可能有别的任务正在用的东西，删了不可恢复。
+//
+// 判据只认白名单（.mindfs/ .omc/ .claude/），不来自任何外部输入：含用户文件的
+// 目录绝不能自动删。
+assert.match(
+  gitviewFinish,
+  /func RemoveWorktreeDir\(worktreePath string\) \(bool, error\)/,
+  "the task's own worktree directory must be deletable after git lets go of it",
+);
+assert.match(
+  gitviewFinish,
+  /func RemoveToolStateOnlyOrphanDirs\(ctx context.Context, mainDir string\) \(\[\]string, error\)/,
+  "orphan pruning must be limited to tool-state-only shells",
+);
+assert.match(
+  gitviewFinish,
+  /func isToolStateOnlyDir\(dir string\) bool/,
+  "the orphan auto-delete decision must be a whitelist check, not a blanket delete",
+);
+// 自动删只能走白名单那条路，不能对任意孤儿目录调 RemoveOrphanDir(…, true)。
 assert.doesNotMatch(
   kanbanFinish,
-  /os\.RemoveAll\(/,
-  "finishing a task must never bulk-delete leftover directories; the session DB lives in one of them",
+  /RemoveOrphanDir\([a-zA-Z]+, true\)/,
+  "no orphan directory may be force-deleted outside the tool-state-only path",
 );
 assert.match(kanbanFinish, /Orphans = orphans/, "orphans must be reported back to the caller");
+assert.match(kanbanFinish, /RemovedOrphans = removed/, "auto-removed shells must be reported so the user can see what disappeared");
+
+// ── 附件迁移：拆目录之前必须搬 ──
+// 用户在 worktree 会话里传的附件落在 <worktree>/.mindfs/upload/，不搬就跟着目录消失。
+assert.match(
+  gitviewFinish,
+  /func MigrateWorktreeUploads\(worktreePath, mainDir string\) \(\[\]string, error\)/,
+  "uploads must be migrated before the directory is deleted",
+);
+assert.match(
+  kanbanFinish,
+  /MigrateWorktreeUploads\(worktreePath, mainDir\)/,
+  "the migration must run before the teardown, not after",
+);
+const migrateAt = kanbanFinish.indexOf("MigrateWorktreeUploads(worktreePath, mainDir)");
+const removeDirAt = kanbanFinish.indexOf("RemoveWorktreeDir(worktreePath)");
+assert.ok(migrateAt > 0, "FinishTaskWorktree must call the upload migration");
+assert.ok(migrateAt > 0 && removeDirAt > migrateAt, "uploads must be moved before the directory is deleted");
+assert.match(kanbanFinish, /MigratedUploads = migrated/, "migrated uploads must be reported back");
+
+// ── 机械优先：能直接清场就不等 agent ──
+// 以前只要有 agent 段就一定先跑 agent，于是「agent 早把活合完了、只差机械清场」的
+// 任务要白等一轮、还多一个空提交。现在服务端先做一次只读判定。
+assert.match(
+  kanbanFinish,
+  /func \(s \*Service\) PlanFinishWorktree\(ctx context.Context, rootID, taskID string\) \(FinishPlan, error\)/,
+  "the finish decision must be a read-only plan, not a blind agent run",
+);
+assert.match(
+  kanbanFinish,
+  /CanMergeCleanly\(ctx, mainDir, branch, target\)/,
+  "the plan must ask git whether the merge would conflict, without touching the repo",
+);
+assert.match(
+  gitviewFinish,
+  /func CanMergeCleanly\(ctx context.Context, mainDir, branch, target string\) \(MergeFeasibility, error\)/,
+  "the conflict check must live in gitview so it can be unit-tested against a real repo",
+);
+assert.match(
+  gitviewFinish,
+  /"merge-tree", "--write-tree", target, branch/,
+  "the conflict check must use a read-only merge-tree dry run, never a real merge",
+);
+// 主 checkout 干不干净**不参与**判定：用户明确「只要机械合并能成就行」。
+//
+// 只在**函数体**里找：注释里那句「MergeBranch 会自己拦下（MainCheckoutDirtyError）」
+// 是解释为什么不提前拦，拿整段源码跑正则会把那句说明也算成命中。
+const planBody = kanbanFinish.slice(
+  kanbanFinish.indexOf("func (s *Service) PlanFinishWorktree("),
+  kanbanFinish.indexOf("func (s *Service) TaskFinishStageIndex("),
+);
+assert.ok(planBody.length > 0, "PlanFinishWorktree must exist to assert against");
+assert.doesNotMatch(
+  planBody,
+  /MainCheckoutDirty/,
+  "the plan must not gate on the main checkout being clean — only the merge succeeding matters",
+);
+// 判定顺序必须把「worktree 有没提交的活」放在「合并可行性」之前：前者是用户自己的
+// 活，后者只是 git 的机械结论 —— 顺序反了会把「有活没提交」误报成「合并会冲突」。
+const uncommittedAt = planBody.indexOf("worktree 里还有没提交的改动");
+const feasibilityAt = planBody.indexOf("CanMergeCleanly(");
+assert.ok(uncommittedAt > 0 && feasibilityAt > uncommittedAt,
+  "uncommitted work must be checked before merge feasibility — it is the user's own work, not a git verdict");
 
 // ── 前端：冲突要分流，不能只 toast 一句 ──
 // 收尾改成流水线阶段（2026-09）之后冲突的**唯一**来源是服务端在清场 goroutine
@@ -217,8 +301,8 @@ assert.doesNotMatch(
 // 转下去 —— 用户实测的「收尾一直转、点不动、也结束不了」就是这个形状。
 assert.match(
   panel,
-  /const canFinishWorktree = task\?\.create_worktree === true\s*&&\s*!!task\?\.worktree_path\s*&&\s*task\?\.worktree_missing !== true\s*&&\s*hasAgentStage;/,
-  "the finish button requires a live worktree and an agent stage to inherit from; terminal and finishing tasks are NOT withheld",
+  /const canFinishWorktree = task\?\.create_worktree === true\s*&&\s*!!task\?\.worktree_path\s*&&\s*task\?\.worktree_missing !== true;/,
+  "the finish button requires a live worktree; terminal and finishing tasks are NOT withheld",
 );
 assert.doesNotMatch(
   panel,
@@ -235,14 +319,23 @@ assert.doesNotMatch(
   /finishActive \? \(\s*<span[\s\S]{0,400}?<TaskQueuedSpinnerIcon \/>/,
   "the panel must not swap the finish button for a spinner — the button is the only way out of a stuck finish",
 );
-assert.match(
+// 「有 agent 段」这条判据 2026-10-07 从**两侧**去掉了：它会让「有 worktree 但没有
+// agent 段」的任务永远拿不到收尾键，而那种任务恰恰最需要它（没有 agent 去 commit，
+// 只能服务端直接机械清场）。服务端已同步：begin-finish 的 ③.5 分支无 agent 段时
+// 直接清场，不再 409。两侧必须一起改 —— 只改一侧就是「给一个必然 409 的按钮」。
+assert.doesNotMatch(
   panel,
-  /const hasAgentStage = \(task\?\.stages \|\| \[\]\)\.some\(\(stage\) => stage\.role === "agent"\);/,
-  "the agent-stage gate must exist, mirroring worktree_finish_stage.go's lastAgentStage precondition",
+  /const canFinishWorktree[^;]*hasAgentStage/,
+  "the panel's finish gate must not require an agent stage — the server tears down mechanically when there is none",
+);
+assert.doesNotMatch(
+  card,
+  /const canFinishWorktree[^;]*hasAgentStage/,
+  "the card's finish gate must not require an agent stage either — both sides must agree",
 );
 assert.match(
   card,
-  /const canFinishWorktree = worktreeEnabled && !worktreeMissing && hasWorktreePath && hasAgentStage;/,
+  /const canFinishWorktree = worktreeEnabled && !worktreeMissing && hasWorktreePath;/,
   "the card button must match the panel exactly: same gates, same terminal and finishing exemptions",
 );
 assert.doesNotMatch(
@@ -280,6 +373,14 @@ for (const key of [
   "task.finishWorktreeConflict",
   "task.finishWorktreeConflictHint",
   "task.finishWorktreeOrphan",
+  "task.finishWorktreeDirRemoved",
+  "task.finishWorktreeDirKept",
+  "task.finishWorktreeOrphanRemoved",
+  "task.finishWorktreeUploadsMoved",
+  "task.finishWorktreeAlreadyFinished",
+  "task.finishWorktreePlanUncommitted",
+  "task.finishWorktreePlanConflict",
+  "task.finishWorktreePlanFiles",
 ]) {
   assert.match(zh, new RegExp(`"${key.replace(/\./g, "\\.")}":`), `zh-CN must define ${key}`);
   assert.match(en, new RegExp(`"${key.replace(/\./g, "\\.")}":`), `en-US must define ${key}`);
@@ -287,6 +388,50 @@ for (const key of [
 
 // 残留目录文案必须插进路径，否则「列出来」等于没列。
 assert.match(zh, /"task\.finishWorktreeOrphan": "残留目录（未删除）：\{path\}"/, "the orphan line must interpolate the path");
+
+// ── 前端：新字段要真的接出来 ──
+// 类型声明了但没人读，等于没加 —— 用户看不到「目录删了 / 附件搬了 / 为什么交给 agent」。
+const worktreeService = read("src/services/task/worktree.ts");
+assert.match(
+  worktreeService,
+  /worktree_dir_removed\?: boolean/,
+  "the result type must carry whether the directory itself was deleted",
+);
+assert.match(
+  worktreeService,
+  /migrated_uploads\?: string\[\]/,
+  "the result type must carry the migrated uploads",
+);
+assert.match(
+  worktreeService,
+  /export type FinishPlan = \{/,
+  "the plan must be a typed response field, not an untyped any",
+);
+assert.match(
+  worktreeService,
+  /plan\?: FinishPlan/,
+  "begin-finish must return the plan so the UI can explain the decision",
+);
+assert.match(
+  read("src/app/useRealtimeEvents.ts"),
+  /result\?\.worktree_dir_removed[\s\S]{0,200}finishWorktreeDirRemoved/,
+  "the teardown receipt must announce that the directory itself is gone",
+);
+assert.match(
+  read("src/app/useRealtimeEvents.ts"),
+  /result\?\.migrated_uploads[\s\S]{0,200}finishWorktreeUploadsMoved/,
+  "the teardown receipt must announce the attachments that were moved back",
+);
+assert.match(
+  read("src/app/useRealtimeEvents.ts"),
+  /payload\.note[\s\S]{0,200}lines\.push\(note\)/,
+  "the teardown receipt must surface the idempotent-skip note",
+);
+assert.match(
+  read("src/App.tsx"),
+  /res\.plan\?\.reason[\s\S]{0,200}planLine/,
+  "the finish button must explain why it deferred to the agent",
+);
 
 test("both locales keep the same finish-worktree key set", () => {
   const keysOf = (src) => new Set([...src.matchAll(/"(task\.finishWorktree[A-Za-z]*)":/g)].map((m) => m[1]));

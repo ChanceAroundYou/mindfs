@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -39,6 +41,27 @@ var ErrMergeUncommitted = errors.New("merge resolved but not committed")
 // 而**重复收尾必然走到这里**：第一次已经 `branch -d` 掉了，第二次如果在这里报错，
 // 用户会看到一次成功的收尾第二次点却失败。
 var ErrSourceBranchGone = errors.New("源分支已不存在（视为已合入）")
+
+// ErrMergeDirty 表示主 checkout 有未提交改动，git 不敢替用户合并。
+var ErrMergeDirty = errors.New("main checkout dirty")
+
+// MainCheckoutDirtyError 表示主 checkout 有未提交改动，合并会覆盖它。
+//
+// 单独一个类型而不是塞进 error 字符串：那不是「收尾炸了」，是「你自己的活还没收」——
+// 下一步是提交或暂存，不是重试。前端要按文件清单渲染，从字符串里解析文件名迟早会散。
+type MainCheckoutDirtyError struct {
+	Files []string
+}
+
+func (e *MainCheckoutDirtyError) Error() string {
+	files := strings.Join(e.Files, ", ")
+	if files == "" {
+		files = "（见 git 输出）"
+	}
+	return "主 checkout 有未提交改动，先处理：" + files
+}
+
+func (e *MainCheckoutDirtyError) Unwrap() error { return ErrMergeDirty }
 
 // MergeConflict 描述一次撞上冲突的合并，ConflictFiles 是 UU/AA 那些文件。
 type MergeConflict struct {
@@ -159,7 +182,7 @@ func MergeBranch(ctx context.Context, opts MergeOptions) (MergeResult, error) {
 		return MergeResult{}, err
 	}
 	if len(dirty) > 0 {
-		return MergeResult{}, fmt.Errorf("主 checkout 有未提交改动，先处理：%s", strings.Join(dirty, ", "))
+		return MergeResult{}, &MainCheckoutDirtyError{Files: dirty}
 	}
 	if _, err := runGit(ctx, opts.MainDir, "checkout", "-q", target); err != nil {
 		return MergeResult{}, fmt.Errorf("切到 %s 失败：%w", target, err)
@@ -551,6 +574,89 @@ func BranchMergedInto(ctx context.Context, dir, source, target string) (bool, er
 	return isAncestorOf(ctx, dir, source, target)
 }
 
+// MergeFeasibility 是一次「只读合并判定」的结论。
+//
+// 为什么需要单独一个类型：收尾要决定「能不能不等 agent、直接机械清场」，而那个决定
+// 只需要两个答案 —— 能不能合、不能合是哪些文件。把它做成类型而不是散落的返回值，
+// 是为了让「判定」和「真合并」在代码里长得不一样：真合并会动仓库，判定一个字节都
+// 不该动（见 CanMergeCleanly 的注释）。
+type MergeFeasibility struct {
+	// Clean=true 表示机械合并能成功。
+	Clean bool
+	// Reason 是 Clean=false 的原因（短句，给用户看）。
+	Reason string
+	// Files 是相关文件清单（会冲突的文件），给 UI 列表渲染。
+	Files []string
+}
+
+// CanMergeCleanly 判定「把 branch 合进 target 会不会冲突」，**不碰仓库状态**。
+//
+// 用 `git merge-tree --write-tree <target> <branch>` 干跑：成功时只打印目标树 OID、
+// 退出 0；有冲突时额外打印每个冲突文件的 stage 行 + `CONFLICT (content): Merge
+// conflict in <path>`，退出 1。全程不写 index、不产生 MERGE_HEAD、不改工作区 ——
+// 所以可以在「用户还没决定要不要收尾」的时候安全调用。
+//
+// 为什么不用 `git merge --no-commit --no-ff` 再 abort：那会真的动 index 和工作区，
+// 中途失败（比如磁盘满）会留下一个半截合并；而 abort 又会把用户解到一半的冲突
+// 取舍连同 MERGE_MSG 一起丢掉。干跑没有这些副作用。
+//
+// 分支已在 target 里（source 是 target 的祖先）直接返回 Clean=true：那不是冲突，
+// 是「没什么要合的」，机械清场仍然可以做。
+func CanMergeCleanly(ctx context.Context, mainDir, branch, target string) (MergeFeasibility, error) {
+	mainDir = strings.TrimSpace(mainDir)
+	if mainDir == "" {
+		return MergeFeasibility{}, errors.New("主 checkout 路径为空")
+	}
+	target = strings.TrimSpace(target)
+	if target == "" {
+		target = "main"
+	}
+	branch = strings.TrimSpace(branch)
+	if branch == "" {
+		return MergeFeasibility{}, errors.New("没有可合并的分支")
+	}
+	// 已经是祖先 = 没什么要合的，机械清场照做。
+	if merged, err := isAncestorOf(ctx, mainDir, branch, target); err == nil && merged {
+		return MergeFeasibility{Clean: true}, nil
+	}
+	out, err := runGitBytes(ctx, mainDir, "merge-tree", "--write-tree", target, branch)
+	if err != nil {
+		// 退出码 1 有两种含义：真冲突，或者仓库本身有问题（比如分支不存在）。
+		// runGitBytes 在出错时把输出塞进 error（formatGitError），所以从错误里抽
+		// CONFLICT 行 —— 有就是冲突，没有就把 git 的原话交回去。
+		files := parseMergeTreeConflicts(err.Error())
+		if len(files) > 0 {
+			return MergeFeasibility{Reason: "合并会冲突", Files: files}, nil
+		}
+		return MergeFeasibility{}, fmt.Errorf("合并判定失败: %w", err)
+	}
+	_ = out
+	return MergeFeasibility{Clean: true}, nil
+}
+
+// parseMergeTreeConflicts 从 `git merge-tree --write-tree` 的输出里抽出冲突文件。
+//
+// 只认 `CONFLICT (content): Merge conflict in <path>` 这一行：stage 行
+// （`<mode> <oid> <stage>	<path>`）在**部分冲突**（比如一边删一边改）时也会出现，
+// 但那时同样有 CONFLICT 行，所以按 CONFLICT 行取就够，且不会把「只是 stage 不同」
+// 误报成冲突。
+func parseMergeTreeConflicts(output string) []string {
+	const marker = "CONFLICT (content): Merge conflict in "
+	files := []string{}
+	for _, line := range strings.Split(output, "\n") {
+		idx := strings.Index(line, marker)
+		if idx < 0 {
+			continue
+		}
+		path := strings.TrimSpace(line[idx+len(marker):])
+		if path == "" {
+			continue
+		}
+		files = appendUnique(files, path)
+	}
+	return files
+}
+
 // isAncestorOf 报 source 是否已经是 target 的祖先（改动全在 target 里了）。
 func isAncestorOf(ctx context.Context, dir, source, target string) (bool, error) {
 	if _, err := runGit(ctx, dir, "merge-base", "--is-ancestor", source, target); err != nil {
@@ -714,6 +820,180 @@ func ClassifyWorktreeRemoveBlockers(ctx context.Context, worktreePath string) (W
 		out.UserChanges = appendUnique(out.UserChanges, entry)
 	}
 	return out, nil
+}
+
+// MigrateWorktreeUploads 把 worktree 里上传的附件搬回主 checkout，返回搬过去的
+// 相对路径（相对 `.mindfs/upload/`，用 `/` 分隔）。
+//
+// 为什么必须搬：上传落在 `<root>/.mindfs/upload/<日期>/<文件>`，而 worktree 的
+// `.mindfs/` 是**另一份**。收尾要删掉整个 worktree 目录，不搬的话用户在 worktree
+// 会话里传的文件会跟着消失 —— 而它们在主 checkout 里根本不存在。
+//
+// 只搬 `upload/`：会话库 / 任务库 / 文件元数据的权威副本本来就在主 checkout，
+// 而且任务 worktree 不作为独立 root 注册（`CreateTaskWorktree` 传 `Register: false`），
+// 所以 worktree 的 `.mindfs/` 里通常只有 upload 这一类东西。
+//
+// 主 checkout 已有同名文件时**跳过不覆盖**：那份是权威的，覆盖等于用旧换新。
+func MigrateWorktreeUploads(worktreePath, mainDir string) ([]string, error) {
+	worktreePath = strings.TrimSpace(worktreePath)
+	mainDir = strings.TrimSpace(mainDir)
+	if worktreePath == "" || mainDir == "" {
+		return nil, nil
+	}
+	srcRoot := filepath.Join(worktreePath, ".mindfs", "upload")
+	info, err := os.Stat(srcRoot)
+	if err != nil {
+		// 没有 upload/ 是常态（绝大多数 worktree 都没有），不是错误。
+		return nil, nil
+	}
+	if !info.IsDir() {
+		return nil, nil
+	}
+	dstRoot := filepath.Join(mainDir, ".mindfs", "upload")
+	migrated := []string{}
+	err = filepath.WalkDir(srcRoot, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, relErr := filepath.Rel(srcRoot, path)
+		if relErr != nil {
+			return relErr
+		}
+		rel = filepath.ToSlash(rel)
+		target := filepath.Join(dstRoot, rel)
+		if _, statErr := os.Lstat(target); statErr == nil {
+			// 主 checkout 已经有这份 —— 它是权威的，不覆盖。
+			return nil
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return err
+		}
+		if err := copyFilePreservingMode(path, target, info.Mode()); err != nil {
+			return err
+		}
+		migrated = append(migrated, rel)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(migrated)
+	return migrated, nil
+}
+
+// copyFilePreservingMode 复制单个文件并尽量保留权限位。
+//
+// 不用 io.Copy 直接写：那会按 0666 & ~umask 建文件，上传的文件在 git 里看着就像
+// 权限变了。权限位复制失败不致命（文件内容到了就行），所以只记日志不报错。
+func copyFilePreservingMode(src, dst string, mode os.FileMode) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		return err
+	}
+	if err := out.Close(); err != nil {
+		return err
+	}
+	if mode != 0 {
+		_ = os.Chmod(dst, mode.Perm())
+	}
+	return nil
+}
+
+// RemoveWorktreeDir 删掉 worktree 的**目录本体**，返回是不是真的删了。
+//
+// `git worktree remove` 删的是 git 登记的那个 worktree，目录里 git 不跟踪的东西
+// （`.mindfs/` 会话库、`.omc/`、`.claude/`）会让它拒绝；目录已被手工 prune 掉时
+// 更是只剩一个没有 git 记录的孤儿。留着它只会让 `.worktree/` 越积越多 —— 收尾的
+// 语义是「这个目录不再需要」。
+//
+// 唯一必须拒绝的情形：目录里还有 `.git`（仍是活 worktree）。那说明 git 的拆除没
+// 成功，这时删目录等于绕过 git 的保护 —— 未提交的活会被无声丢掉。
+func RemoveWorktreeDir(worktreePath string) (bool, error) {
+	target := strings.TrimSpace(worktreePath)
+	if target == "" {
+		return false, nil
+	}
+	if _, err := os.Lstat(target); err != nil {
+		// 已经不在了 = 已经拆过（幂等），不是错误。
+		return false, nil
+	}
+	if _, err := os.Lstat(filepath.Join(target, ".git")); err == nil {
+		return false, fmt.Errorf("%s 仍是 git 登记的 worktree，先让它拆掉再删目录", target)
+	}
+	if err := os.RemoveAll(target); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// RemoveToolStateOnlyOrphanDirs 删掉 `.worktree/` 下「里面只剩工具状态目录」的
+// 空壳，返回删掉的目录路径。
+//
+// 与 PruneOrphanDirs 的分工：那个**只列**（给 UI 显示「还有什么残留」），这个**删**
+// 但只删白名单形状。判据是 `isToolStateOnlyDir` —— 目录里每一项都必须是
+// `.mindfs/ .omc/ .claude/` 之一，多一个别的文件就不删。
+//
+// 为什么不能无脑删所有孤儿：`.worktree/` 下可能有**别的任务正在用**的目录，
+// 或者用户手工放进去的东西。`wt-finish.sh` 的 `cleanup_orphan_dirs` 有同一个
+// guard（跳过含 `.git` 的、非空且没 `--force` 的）。
+func RemoveToolStateOnlyOrphanDirs(ctx context.Context, mainDir string) ([]string, error) {
+	orphans, err := PruneOrphanDirs(ctx, mainDir)
+	if err != nil {
+		return nil, err
+	}
+	removed := []string{}
+	for _, orphan := range orphans {
+		if !isToolStateOnlyDir(orphan.Path) {
+			continue
+		}
+		// 删不掉不报错：这只是「顺手清场」，为它把整个收尾判失败不值得。
+		if err := RemoveOrphanDir(orphan, true); err != nil {
+			continue
+		}
+		removed = append(removed, orphan.Path)
+	}
+	return removed, nil
+}
+
+// isToolStateOnlyDir 报目录里是不是**只有**工具状态目录（`.mindfs/ .omc/ .claude/`）。
+//
+// 空目录也算（里面什么都没有，当然「只有」工具状态目录）—— 那种空壳正是
+// `git worktree remove` 之后最常见的残留。
+func isToolStateOnlyDir(dir string) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	allowed := toolStateDirNameSet()
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			return false
+		}
+		if !allowed[entry.Name()] {
+			return false
+		}
+	}
+	return true
+}
+
+func toolStateDirNameSet() map[string]bool {
+	set := make(map[string]bool, len(toolStateDirNames))
+	for _, name := range toolStateDirNames {
+		set[name] = true
+	}
+	return set
 }
 
 func appendUnique(list []string, value string) []string {

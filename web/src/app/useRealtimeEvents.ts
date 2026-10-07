@@ -1637,15 +1637,36 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
           const conflicts: string[] = Array.isArray(payload.conflict_files)
             ? payload.conflict_files.map(String).filter(Boolean)
             : [];
+          const dirtyFiles: string[] = Array.isArray(payload.dirty_files)
+            ? payload.dirty_files.map(String).filter(Boolean)
+            : [];
+          const userChanges: string[] = Array.isArray(payload.user_changes)
+            ? payload.user_changes.map(String).filter(Boolean)
+            : [];
           const lines: string[] = [];
           const result = payload.result;
           if (result?.commit) lines.push(String(result.commit));
           if (result?.worktree_removed) lines.push(t("task.finishWorktreeRemoved"));
+          // 目录本体（含 git 不跟踪的 .mindfs/ .omc/ .claude/）也删掉了 —— 这是收尾
+          // 「这个目录不再需要」的落地证据，和「git 拆了 worktree」是两件事。
+          if (result?.worktree_dir_removed) lines.push(t("task.finishWorktreeDirRemoved"));
           if (result?.branch_deleted) lines.push(t("task.finishWorktreeBranchDeleted"));
           if (result?.branch_skip_reason) lines.push(String(result.branch_skip_reason));
+          if (result?.dir_remove_reason) lines.push(t("task.finishWorktreeDirKept", { reason: String(result.dir_remove_reason) }));
           for (const orphan of (result?.orphans || []) as Array<{ path: string; files?: string[] }>) {
             lines.push(t("task.finishWorktreeOrphan", { path: orphan.path }));
           }
+          // 顺手清掉的空壳（只剩工具状态目录）和搬回来的附件都要报出来 ——
+          // 「它删了什么 / 搬了什么」不报，用户只会觉得东西凭空消失了。
+          for (const removed of (result?.removed_orphans || []) as string[]) {
+            lines.push(t("task.finishWorktreeOrphanRemoved", { path: removed }));
+          }
+          const migrated = (result?.migrated_uploads || []) as string[];
+          if (migrated.length > 0) {
+            lines.push(t("task.finishWorktreeUploadsMoved", { files: migrated.join(", ") }));
+          }
+          const note = String(payload.note || "").trim();
+          if (note) lines.push(note);
           const sessionWarning = String(payload.session_warning || "").trim();
           if (sessionWarning) lines.push(sessionWarning);
 
@@ -1658,14 +1679,30 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
                 message: String(payload.error),
                 details: conflicts,
               });
+            } else if (dirtyFiles.length > 0) {
+              // 主 checkout 有未提交改动：那不是「收尾炸了」，是「你自己的活还没收」。
+              // 同样要列文件 —— 用户得知道是哪几个，才能去提交或暂存。
+              setTaskSessionErrorDialog({
+                title: t("task.finishWorktreeDirty"),
+                message: t("task.finishWorktreeDirtyHint"),
+                details: dirtyFiles,
+              });
+            } else if (userChanges.length > 0) {
+              // worktree 里还有没提交的东西：合并**已经成功了**，只是目录拆不掉。
+              // 这条最容易让人误判成「白干了一场」—— 所以文案必须点明「合并已成功」。
+              setTaskSessionErrorDialog({
+                title: t("task.finishWorktreeUserChanges"),
+                message: t("task.finishWorktreeUserChangesHint"),
+                details: userChanges,
+              });
             } else {
-              reportError("file.write_failed", String(payload.error), { severity: "error", recoverable: true });
+              reportError("task.action_failed", String(payload.error), { severity: "error", recoverable: true });
             }
             return;
           }
           // 成功：info 档（accent 色、自动消失）而不是红的错误色 —— 这是个好消息，
           // 红色会让用户以为收尾炸了，反而不敢去动那个已经拆掉的目录。
-          reportError("file.write_failed", lines.length > 0 ? lines.join(" / ") : t("task.finishWorktreeDone"), {
+          reportError("task.action_failed", lines.length > 0 ? lines.join(" / ") : t("task.finishWorktreeDone"), {
             severity: "info",
             recoverable: false,
           });

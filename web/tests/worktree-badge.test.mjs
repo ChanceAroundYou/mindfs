@@ -234,9 +234,11 @@ assert.doesNotMatch(
   "the finish button must stay clickable while the flow runs",
 );
 assert.doesNotMatch(card, /TaskQueuedSpinnerIcon/, "the card must not keep a spinner import for a state that no longer renders one");
+// 判据只剩 worktree 三态（2026-10-07）：「有 agent 段」那条去掉了 —— 它会让
+// 「有 worktree 但没有 agent 段」的任务永远拿不到收尾键，而那种任务恰恰最需要它。
 assert.match(
   card,
-  /const canFinishWorktree = worktreeEnabled && !worktreeMissing && hasWorktreePath && hasAgentStage;/,
+  /const canFinishWorktree = worktreeEnabled && !worktreeMissing && hasWorktreePath;/,
   "the finish gate must not exclude the finishing state",
 );
 

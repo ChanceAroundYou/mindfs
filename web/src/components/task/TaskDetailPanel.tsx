@@ -134,7 +134,7 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
   const advanceable = canAdvanceFromCurrentStage(detail, task.current_stage_index);
 
   const apply = (next: TaskDetail) => onMoved?.(next);
-  const fail = (err: unknown) => reportError("file.write_failed", String((err as Error)?.message || ""));
+  const fail = (err: unknown) => reportError("task.action_failed", String((err as Error)?.message || ""));
 
   const saveName = async () => {
     const rootId = task.root_id;
@@ -316,11 +316,12 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
   // lastAgentStage 检查）：收尾段要继承上一段的 agent/模型，没有可继承的就
   // 服务端会拒。与其给一个必然 409 的按钮，不如不给。
   const finishActive = isFinishStageActive(task);
-  const hasAgentStage = (task?.stages || []).some((stage) => stage.role === "agent");
+  // 「有 agent 段」这条判据 2026-10-07 去掉了（与 TaskCardRows 同一改动，两侧必须
+  // 一致）：它会让「有 worktree 但没有 agent 段」的任务永远拿不到收尾键，而那种任务
+  // 恰恰最需要它 —— 没有 agent 去 commit，只能服务端直接机械清场。服务端已同步。
   const canFinishWorktree = task?.create_worktree === true
     && !!task?.worktree_path
-    && task?.worktree_missing !== true
-    && hasAgentStage;
+    && task?.worktree_missing !== true;
   const finishWorktree = async () => {
     if (!task) return;
     if (!await confirmDialog({ message: t("task.finishWorktreeConfirm"), confirmLabel: t("task.finishWorktree"), danger: true })) {
@@ -337,9 +338,9 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
         : res.action === "nudged"
           ? t("task.finishWorktreeNudged")
           : t("task.finishWorktreeStarted");
-      reportError("file.write_failed", message, { severity: "info", recoverable: false });
+      reportError("task.action_failed", message, { severity: "info", recoverable: false });
     } catch (error) {
-      reportError("file.write_failed", String((error as Error)?.message || t("task.actionFailed")));
+      reportError("task.action_failed", String((error as Error)?.message || t("task.actionFailed")));
     } finally { setSaving(false); }
   };
 
@@ -354,14 +355,17 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
   const terminal = isTerminalKanbanTask(task);
   const stageRunningNow = task.current_stage_status === "running" && task.status === "running";
   const canRunStageNow = runnableStageIndex >= 0 && advanceable;
-  const canCompleteTask = !terminal && !stageRunningNow && !canRunStageNow && !(finishActive && canFinishWorktree);
+  // 与 TaskCardRows 的 canComplete 同一判据（2026-10-07）：收尾中不再豁免 ——
+  // 收尾段卡在待审核时推进键恒假，旧判据把完成键也一起收走了，于是那个局面只剩
+  // 一个最容易失败的收尾键。
+  const canCompleteTask = !terminal && !stageRunningNow && !canRunStageNow;
   const completeTask = async () => {
     if (!task) return;
     try {
       setSaving(true);
       apply(await moveTask(task.root_id, task.id, "complete", "", nodeId));
     } catch (error) {
-      reportError("file.write_failed", String((error as Error)?.message || t("task.actionFailed")));
+      reportError("task.action_failed", String((error as Error)?.message || t("task.actionFailed")));
     } finally { setSaving(false); }
   };
 
@@ -377,7 +381,7 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
       await deleteTask(task.root_id, task.id, nodeId);
       onClose();
     } catch (error) {
-      reportError("file.write_failed", String((error as Error)?.message || t("task.actionFailed")));
+      reportError("task.action_failed", String((error as Error)?.message || t("task.actionFailed")));
     } finally { setSaving(false); }
   };
 

@@ -528,15 +528,22 @@ assert.match(
 //    2026-10-06 改了**出口的形状**，意图不变：终态任务现在给的是「删除」而不是
 //    「取消」—— 取消只改状态、卡片照旧留在板上，终态卡永远清不掉。所以那条
 //    「终态也得能收拾」的断言换成了钉删除键，而不是删掉换绿灯。
+//
+//    2026-10-07 终态那一侧多了一把键：**收尾**。任务跑完了 worktree 还留着没收，
+//    那正是收尾唯一有意义的时刻（服务端 reviveTerminalTask 会把它拉回 waiting_user
+//    再让收尾段跑）。所以终态分支现在是「收尾 + 删除」，不是只有删除。
 const cardRows = read("src/components/TaskCardRows.tsx");
 assert.match(
   cardRows,
-  /\{!terminal \? \(\s*<>[\s\S]*?showAdvance[\s\S]*?canComplete[\s\S]*?onMove\(task, "cancel"\)[\s\S]*?<\/>\s*\) : \(\s*<button[\s\S]{0,400}?onMove\(task, "delete-task"\)/,
-  "terminal tasks must still get a cleanup key — delete — while run/complete/advance/cancel stay withheld",
+  /\{!terminal \? \(\s*<>[\s\S]*?showAdvance[\s\S]*?canComplete[\s\S]*?onMove\(task, "cancel"\)[\s\S]*?<\/>\s*\) : \(\s*<>[\s\S]*?canFinishWorktree[\s\S]*?<button[\s\S]{0,400}?onMove\(task, "delete-task"\)[\s\S]*?<\/>\s*\)/,
+  "terminal tasks must still get a cleanup key — 收尾 + 删除 — while run/complete/advance/cancel stay withheld",
 );
+// 删除键收尾于终态分支的 `)}` —— 它不在 !terminal 那一侧（那一侧以取消键收尾）。
+// 2026-10-07 起那一侧多了一个 Fragment 包裹（收尾 + 删除），所以锚点从 `)}`
+// 换成 Fragment 的 `</>`。
 assert.match(
   cardRows,
-  /onMove\(task, "delete-task"\)[\s\S]{0,220}?<\/button>\s*\)\}/,
+  /onMove\(task, "delete-task"\)[\s\S]{0,220}?<\/button>\s*<\/>\s*\)\}/,
   "the delete key belongs to the terminal branch, not to the whole action row",
 );
 assert.doesNotMatch(

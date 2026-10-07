@@ -49,6 +49,35 @@ const taskMetaPairStyle: React.CSSProperties = {
 
 export type TaskSessionErrorDialog = { title: string; message: string; details: string[] };
 
+/**
+ * 收尾键。看板卡与工作台卡**两处都要它**（未终态 + 终态），抽成一个组件免得
+ * 抄两遍 —— 抄两遍的话，改一处忘另一处就是「两边卡片不一致」的下一个来源。
+ *
+ * 放在执行键右边：两者是任务生命周期的两端（继续跑 / 跑完收掉），挨着才看得出
+ * 这是一对。**收尾中也照样给**（2026-10-05）：那正是「agent 那半已经做完、只差
+ * 机械清场」的时刻，后端会直接清场；换成转圈等于把唯一的出路藏起来。
+ *
+ * **终态也给**（2026-10-07）：任务跑完但 worktree 还留着没收，那正是收尾唯一
+ * 有意义的时刻；服务端 reviveTerminalTask 会把它拉回 waiting_user 再让收尾段跑。
+ */
+function FinishWorktreeButton({ task, onMove }: { task: KanbanTask; onMove: (task: KanbanTask, action: TaskCardAction) => void }) {
+  const { t } = useI18n();
+  return (
+    <button
+      type="button"
+      title={t("task.finishWorktree")}
+      aria-label={t("task.finishWorktree")}
+      onClick={(event) => {
+        event.stopPropagation();
+        onMove(task, "finish-worktree");
+      }}
+      style={taskCardIconButtonStyle("success")}
+    >
+      <TaskFinishWorktreeIcon />
+    </button>
+  );
+}
+
 export type TaskCardRowsProps = {
   task: KanbanTask;
   /** 编号/名字/阶段名回退用；工作台跨项目时没有「当前模板」概念，传空串即可 */
@@ -174,18 +203,21 @@ export function TaskCardRows({
   // agent 那半跑完了却卡住时，用户能再点一次让服务端直接做机械清场（后端按
   // 「分支是否已合进主干」分流，见 handleKanbanTaskBeginFinish）。按钮换成转圈
   // 等于把唯一的出路藏起来，任务就此永远转下去。
-  // 工作台走 /api/tasks/overview，那份投影**故意不带 stages**（70KB/43%），
-  // 只给一个派生布尔 has_agent_stage。没有它这条判据在工作台恒假，
-  // 收尾键就永远不出现 —— 同一个任务在项目看板有键、在工作台没有。
-  const hasAgentStage = task.has_agent_stage === true
-    || (task.stages || []).some((stage) => stage.role === "agent");
-  const canFinishWorktree = worktreeEnabled && !worktreeMissing && hasWorktreePath && hasAgentStage;
+  // 判据只剩「worktree 还在」：create_worktree 开着、path 在、目录没被删。
+  // 2026-10-07 去掉了「有 agent 段」这一条 —— 它会让「有 worktree 但没有 agent
+  // 段」的任务永远拿不到收尾键，而那种任务恰恰最需要它（没有 agent 去 commit，
+  // 只能服务端直接机械清场）。服务端已同步：无 agent 段时直接清场。
+  const canFinishWorktree = worktreeEnabled && !worktreeMissing && hasWorktreePath;
   // 完成 = 推进键给不出来时的出口。判据就是 showAdvance 的反面 ——
   // **待审核的任务不能一个键都没有**（2026-10-06 用户实测：收尾段卡在待审核、
   // worktree 又已被拆，重建/执行/完成三个键全不给，任务在界面上没有任何出路）。
-  // 两条例外：正在跑（活还在动，本来就不需要推进）；收尾流程在跑且收尾键可用
-  // （那时该点的是收尾键，完成会跳过收尾）。
-  const canComplete = !terminal && !stageRunning && !showAdvance && !(finishActive && canFinishWorktree);
+  //
+  // 只剩两条例外：正在跑（活还在动，本来就不需要推进）、终态（没有后续可推进）。
+  // **收尾中不再豁免**（2026-10-07 用户要求）：收尾段卡在待审核时 showAdvance
+  // 恒假（收尾段是流水最后一段），旧判据把完成键也一起收走了，于是那张卡只剩
+  // 一个收尾键 —— 而收尾键恰恰是最容易失败的一个（主 checkout 不干净就点不动）。
+  // 现在给完成键；终态任务只要 worktree 还在就继续给收尾键，两条路都通。
+  const canComplete = !terminal && !stageRunning && !showAdvance;
   const numberLabel = task.task_number ? `#${task.task_number}` : "";
   const taskName = task.name || task.task_template_name || templateNameFallback || t("task.unnamedTemplate");
   const title = task.task_template_name || templateNameFallback || t("task.defaultTitle");
@@ -389,25 +421,7 @@ export function TaskCardRows({
                   <RunNowIcon />
                 </button>
               ) : null}
-              {/* 收尾 worktree：把这一段交给 agent 去 commit + merge，成功之后服务端
-                  才拆目录搬会话。放在执行键右边 —— 两者是任务生命周期的两端
-                  （继续跑 / 跑完收掉），挨着才看得出这是一对。
-                  **收尾中也照样给**（2026-10-05）：那正是「agent 那半已经做完、只差
-                  机械清场」的时刻，后端会直接清场；换成转圈等于把唯一的出路藏起来。 */}
-              {canFinishWorktree ? (
-                <button
-                  type="button"
-                  title={t("task.finishWorktree")}
-                  aria-label={t("task.finishWorktree")}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onMove(task, "finish-worktree");
-                  }}
-                  style={taskCardIconButtonStyle("success")}
-                >
-                  <TaskFinishWorktreeIcon />
-                </button>
-              ) : null}
+              {canFinishWorktree ? <FinishWorktreeButton task={task} onMove={onMove} /> : null}
               {canPause ? (
                 <button
                   type="button"
@@ -467,18 +481,21 @@ export function TaskCardRows({
               </button>
             </>
           ) : (
-            <button
-              type="button"
-              title={t("task.deleteTask")}
-              aria-label={t("task.deleteTask")}
-              onClick={(event) => {
-                event.stopPropagation();
-                onMove(task, "delete-task");
-              }}
-              style={taskCardIconButtonStyle("danger")}
-            >
-              <DeleteIcon />
-            </button>
+            <>
+              {canFinishWorktree ? <FinishWorktreeButton task={task} onMove={onMove} /> : null}
+              <button
+                type="button"
+                title={t("task.deleteTask")}
+                aria-label={t("task.deleteTask")}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onMove(task, "delete-task");
+                }}
+                style={taskCardIconButtonStyle("danger")}
+              >
+                <DeleteIcon />
+              </button>
+            </>
           )}
         </div>
       </div>

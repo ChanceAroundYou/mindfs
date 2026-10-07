@@ -1213,13 +1213,20 @@ groups:
 
   # ── 看板：任务卡的按钮语义 ──────────────────────────────────────
   - id: G-AP
-    title: worktree 收尾按钮重做（四分支分流 + 幂等 + 真实状态）
+    title: worktree 收尾按钮重做（机械优先 + 四分支分流 + 幂等 + 真实状态）
     kind: fix
     symptom: |
       收尾按钮一直转、点不动、也结束不了：agent 那半已经合完、只差机械清场时，
       后端无条件调 BeginFinishWorktree 撞「该任务已在收尾流程中」409，前端把按钮换成转圈，
       用户唯一的出路被藏起来。worktree 目录已被删（wt-finish cleanup / 手工 rm）的卡片
       仍显示绿色「已开启 worktree」，界面谎称「有树」。
+
+      2026-10-07 重做后的新症状：① 收尾段跑完却留下一个空壳目录 —— `git worktree remove`
+      只删 git 登记的那个树，目录里 git 不跟踪的 .mindfs/ .omc/ .claude/ 让它拒绝，
+      .worktree/ 越积越多，用户得手工 rm。② 用户在 worktree 会话里传的附件跟着目录一起消失
+      （落在 <worktree>/.mindfs/upload/，拆目录前没人搬）。③ 明明 worktree 干净、合并无冲突，
+      却还要白等一轮 agent、多一个空提交。④ 重复点收尾第二次报红色失败
+      （「该任务还没有 worktree」），而第一次明明成功了。
     why: |
       三条判据（用户 2026-10-05 拍板）：① 按钮给法只看 worktree 的真实状态
       （create_worktree 且目录存在），与任务状态无关；② 点击行为四分支且全部幂等
@@ -1230,22 +1237,47 @@ groups:
       收尾中的视觉信号是文字不是动效（2026-10-07 用户要求）：绿色标签文字变「收尾中」
       （task.worktreeFinishingLabel），不加脉冲动画；TaskDetailPanel 里那条转圈横幅一并删掉。
       按钮全程可点，区分 enabled 与 finishing 的唯一信号就是标签文字。
+
+      2026-10-07 第二轮（用户拍板）：**机械优先** —— 先做一次只读判定
+      （PlanFinishWorktree + gitview.CanMergeCleanly 用 `git merge-tree --write-tree` 干跑），
+      能机械清场就直接做掉，不等 agent。判据只有两条：worktree 里没有未提交的改动、
+      合并不会冲突。**主 checkout 干不干净刻意不参与判定**（用户：「只要机械合并能成就行」）——
+      真不干净时 MergeBranch 自己拦下并列出文件，提前拦只会把「主 checkout 有改动」
+      误报成「要跑 agent」，白等一轮问题还在。
+      不能机械清场时（有未提交的活 / 合并会冲突）才走 agent，且把 reason + files 回给前端
+      说清楚为什么。
+      **拆目录前必须搬附件**（MigrateWorktreeUploads）：只搬 .mindfs/upload/，主 checkout
+      已有同名文件时不覆盖（那份是权威的）。
+      **目录本体整个删**（RemoveWorktreeDir，用户：「强删 rm -rf」）：git 拆完之后目录里
+      只剩工具状态目录，留着只会越积越多。但**别人的**孤儿目录仍然只列不删 ——
+      RemoveToolStateOnlyOrphanDirs 只删「里面只剩 .mindfs/ .omc/ .claude/」的空壳，
+      含用户文件的目录绝不自动删（wt-finish.sh 有同一个 guard）。
+      **幂等**：重复点击第二次必须 200 且带一句 note 说明「已经收过尾、本次没有可清场的活」，
+      不能报红色失败。幂等刻意放在 api 层编排（FinishWorktreeAndRepoint）而不是下层
+      FinishTaskWorktree —— 下层对空路径保持严格报错，那是为了守住「先清归属再拆目录」
+      的顺序不变量（路径空 + 目录还在 = 顺序反了，静默成功会把它藏起来）。
     files:
       - server/internal/kanban/service.go
       - server/internal/kanban/worktree_finish.go
+      - server/internal/kanban/worktree_finish_stage.go
       - server/internal/gitview/worktree_finish.go
       - server/internal/api/http_tasks.go
       - server/internal/api/http_tasks_finish_teardown.go
       - server/app/workspace.go
       - web/src/App.tsx
+      - web/src/app/useRealtimeEvents.ts
       - web/src/app/taskIcons.tsx
       - web/src/components/task/TaskCardRows.tsx
       - web/src/components/task/TaskDetailPanel.tsx
+      - web/src/services/task/worktree.ts
       - web/src/services/tasks.ts
       - web/src/i18n/locales/zh-CN.ts
       - web/src/i18n/locales/en-US.ts
     tests:
       - server/internal/kanban/worktree_finish_dispatch_test.go
+      - server/internal/kanban/worktree_finish_test.go
+      - server/internal/kanban/worktree_finish_stage_test.go
+      - server/internal/gitview/worktree_finish_test.go
       - server/internal/api/http_tasks_begin_finish_test.go
       - web/tests/worktree-badge.test.mjs
       - web/tests/worktree-finish.test.mjs
@@ -1253,8 +1285,17 @@ groups:
       - web/tests/task-board-view.test.mjs
     anchors:
       - server/internal/kanban/worktree_finish.go:func (s *Service) FinishTaskWorktree
+      - server/internal/kanban/worktree_finish.go:func (s *Service) PlanFinishWorktree
+      - server/internal/kanban/worktree_finish.go:func (s *Service) TaskBusy
+      - server/internal/kanban/worktree_finish.go:func (s *Service) TaskHasAgentStage
+      - server/internal/gitview/worktree_finish.go:func CanMergeCleanly
+      - server/internal/gitview/worktree_finish.go:type MainCheckoutDirtyError
+      - server/internal/gitview/worktree_finish.go:func MigrateWorktreeUploads
+      - server/internal/gitview/worktree_finish.go:func RemoveWorktreeDir
+      - server/internal/gitview/worktree_finish.go:func RemoveToolStateOnlyOrphanDirs
       - server/internal/api/http_tasks.go:func (h *HTTPHandler) handleKanbanTaskBeginFinish
       - server/internal/api/http_tasks_finish_teardown.go:task.finish_teardown
+      - server/internal/api/http_tasks_finish_teardown.go:func (s *AppContext) FinishWorktreeAndRepoint
       - server/app/workspace.go:WireSessionRunningProbe
       - 'web/src/i18n/locales/zh-CN.ts:"task.worktreeFinishedLabel": "已收尾"'
 
@@ -1307,6 +1348,159 @@ groups:
       - web/src/components/task/TaskBoardView.tsx:"delete-task"
       - 'web/src/i18n/locales/zh-CN.ts:"task.deleteTask": "删除任务卡片"'
       - 'web/src/i18n/locales/zh-CN.ts:"task.cancelTask": "取消任务"'
+  - id: G-BC
+    title: 看板 / 工作台卡片统一（投影补齐 + 收尾键门控 + 完成键出口 + 收尾失败单通道）
+    kind: fix
+    symptom: |
+      ① 日程管理#1 功能扩充「既没有运行也没有完成按钮」—— 收尾段卡在待审核时推进键恒假
+       （收尾段是流水最后一段），而 canComplete 里有一条 finishActive && canFinishWorktree
+       的豁免，把完成键也一起收走了；那张卡只剩一个收尾键，而收尾键恰恰最容易失败。
+      ② 点收尾提示「主 checkout 有未提交改动」—— 文案过于详细且复杂（把整份文件路径
+       清单拼进一句话），同一次失败还重复显示两条红色报错（HTTP 409 一条、WS
+       task.finish_teardown 又一条，而点击者自己也连着同一个 hub）。
+      第二轮（同一天）：另一条超长报错 ——「合并已成功，但拆除 worktree 失败：
+       <path> 里还有没提交的东西（<30 个文件拼成一句>）…工具自己留下的临时目录
+       （.claude/ .omc/ .mindfs/）不用你管，那部分会自己清」。那是 worktree 里还有
+       用户没提交的东西、git 拒绝拆目录，旧写法把 strings.Join(UserChanges, "、")
+       拼进一句话。用户原话：「收尾还有这种超长报错，系统性查一下简化处理一下」。
+      ③ 工作台有 worktree 的卡片没有收尾键 —— 判据里有一条 has_agent_stage，而「有
+       worktree 但没有 agent 段」的任务恰恰最需要收尾键（没有 agent 去 commit，只能服务端
+       直接机械清场），服务端此前也确实对这种任务回 409。
+      ④ 看板卡有专属小图标、工作台没有，用户不知道什么意思 —— overview 投影丢了
+       aux_flags / stages / current_stage_status，于是工作台卡一个徽标都画不出、推进键判据恒假。
+      ⑤ 这几个修改用户提到过多次都没完成 —— 见 why 的「根因」。
+    why: |
+      根因（为什么前面没做完）：overview 投影的字段清单是**手抄**的，而手抄清单的采集范围是
+      `grep useWorkspaceBoard.ts 与 components/workspace/*` —— 漏了真正的消费者
+      `components/task/TaskCardRows.tsx`（工作台与项目看板引用同一个组件，commit 0792221 起）。
+      每次修复都按症状补一个字段（先 worktree 四字段，再 has_agent_stage），没人回到消费者
+      重推清单。而丢字段**不会报错**：hasLaterStage / isFinishStageActive / canAdvanceCard
+      在 stages 缺席时一律返回 false，auxFlags 缺席时徽标数组为空 —— 没有断言、没有日志、
+      测试全绿，只有用户看得见。再加一条：useWorkspaceBoard.liveVersion 会按 updated_at
+      用完整任务覆盖投影，所以同一张卡在工作台可能是全字段、也可能是投影，进一步掩盖了缺口。
+
+      因此本组的核心不是「加字段」，是加一条**不受清单写法影响**的守卫：
+      http_tasks_overview_card_parity_test.go 从 TaskCardRows.tsx 与 appTask.ts 的源码里抽出
+      所有 task.<field> / stage.<field> 读取（减掉 t("task.x") 那些 i18n key、减掉
+      stage.snapshot 那个模板段字段），逐条断言投影带；反向再断言投影不多带前端零读取的键。
+      组件多读一个字段而投影没加 → 红。这条守卫做过变异验证（临时摘掉 CurrentStageStatus
+      立刻红）。前端那一半是 web/tests/task-card-parity.test.mjs：把同一份任务数据喂给两个
+      渲染入口，钉住按钮集合、徽标文案、hideSessionError 口径、收尾键判据两侧一致。
+
+      投影新增三个字段（overviewTaskProjection）：
+      ① Stages []overviewStageProjection —— StageTemplate 的卡片视图，只留 name/role/kind。
+         prompt_template 是体积大头（单任务 14.4%），卡片一个字节都不读它。
+      ② CurrentStageStatus string —— canAdvanceCard 的判据，与详情面板同一口径。
+      ③ AuxFlags *overviewAuxFlags —— 指针 + omitempty，全空时不出现，免得每条任务都挂一个 {}。
+      ④ has_agent_stage 从投影和前端读取里一起删掉：stages 补齐后它是纯冗余字段，留着只会
+         让下一个人猜「收尾键到底以 stages 还是以这个布尔为准」—— 那正是本次漂移的成因。
+
+      收尾键判据只剩 worktree 三态（create_worktree 开着、path 在、目录没被删），三处一起改：
+      TaskCardRows 的 canFinishWorktree、TaskDetailPanel 的同名判据、服务端
+      handleKanbanTaskBeginFinish 新增 ③.5 分支（无 agent 段 → teardownFinishWorktree
+      直接机械清场，不再 409）。三处必须一起改 —— 只改一处就是「给一个必然 409 的按钮」。
+
+      完成键放开：canComplete = !terminal && !stageRunning && !showAdvance，删掉
+      finishActive && canFinishWorktree 那条豁免。TaskDetailPanel 的 canCompleteTask 同样放开
+      （同一个 bug，留在面板里就是已知的不一致）。
+
+      终态任务只要 worktree 还在就给收尾键（用户原话：「只要还有 worktree 就必须有收尾键」）。
+      收尾键因此搬出 !terminal 分支，抽成 FinishWorktreeButton 在两个分支各渲染一次 ——
+      抄两遍的话，改一处忘另一处就是「两边卡片不一致」的下一个来源。服务端 Complete 不清
+      worktree_path，BeginFinishWorktree 的 reviveTerminalTask 已支持终态复活，链路是通的。
+
+      收尾失败单通道上报：规则是「有 HTTP 响应可带结论时，失败只走 HTTP；没有时（异步）才用 WS」。
+      成功**永远广播** —— 所有人都得知道 worktree 没了（前端对 teardown 的 200 不说话，
+      点击者也靠这条推送拿结论）。异步那条路（WireFinishStageTeardown）没有 HTTP 响应可带，
+      成败都只能广播，不受这条规则影响。
+
+      错误文案简化 + 清单结构化：四个类型化错误，Error() 只留一句人话，文件清单走
+      结构化字段给 UI 列表渲染 —— **清单不进句子**。这一条是用户两轮实测逼出来的：
+      把 strings.Join(files, "、") 拼进 fmt.Errorf 的话，三十个文件就是一句读不完的话，
+      而句子长了用户根本不会读完，等于没说。
+      ① gitview.MainCheckoutDirtyError{Files} + kanban.FinishWorktreeDirty{Files}
+         —— 「主 checkout 有未提交改动，先提交或暂存后再收尾」，清单走 dirty_files。
+      ② kanban.FinishWorktreeUserChanges{Files} —— 「合并已成功，但 worktree 里还有没提交的
+         东西，先处理掉再收尾」，清单走 user_changes。文案必须点明「合并已成功」，
+         否则用户看到「收尾失败」会以为白干了一场。
+      ③ kanban.FinishWorktreeConflict —— Error() 从「合并撞上冲突，需人工处理：<文件列表>」
+         改成「合并撞上冲突，需人工处理」。清单本来就在 conflict_files 里给 UI 列表渲染，
+         句子里再拼一遍是同一份东西出现两次。
+      ④ 409 载荷 { error, dirty_files, user_changes, conflict_files, output, result }；
+         FinishTeardownReport 同步加 DirtyFiles / UserChanges，WS task.finish_teardown
+         带上 —— 异步那条路没有 HTTP 响应可带，清单丢了就只能报一句没有清单的错。
+
+      Toast 不再显示错误码那一行（error.code 副文本）。它从来不是给用户看的信息 ——
+      用户看到「写入文件失败」只会去查磁盘。任务相关动作的错误码同时归位到新增的
+      task.action_failed（error.task.actionFailed = 「任务操作失败」）；
+      FileOperations.tsx / ActionBar.tsx 那 3 处是真的文件写入失败，**不动**。
+
+      别踩：
+      ① 投影加字段时**先跑** http_tasks_overview_card_parity_test.go，再跑
+         http_tasks_overview_test.go 的 ③/④ 段 —— 后者仍要钉「体积大头必须不在」
+         （prompt_template / labels / worktree_branch*），别把瘦身成果还回去。
+         测试 fixture 的 prompt_template 要足够长，「投影 < 全量一半」那条断言才撑得住。
+      ② liveVersion 会让同一张卡在工作台拿到全字段或投影两种数据。**别在测试里假设
+         工作台卡一定是投影** —— 要测投影行为就走 projectOverviewTask 那个纯函数。
+      ③ 收尾键判据改动必须**三处同改**（卡片 / 详情面板 / 服务端 ③.5）。只改前端不给服务端
+         加 ③.5，无 agent 段的任务点收尾会拿到 409。
+    files:
+      - server/internal/api/http_tasks.go
+      - server/internal/api/http_tasks_finish_teardown.go
+      - server/internal/api/http_tasks_overview_test.go
+      - server/internal/api/http_tasks_overview_card_parity_test.go
+      - server/internal/api/http_tasks_begin_finish_test.go
+      - server/internal/api/http_tasks_finish_test.go
+      - server/internal/kanban/worktree_finish.go
+      - server/internal/gitview/worktree_finish.go
+      - web/src/components/task/TaskCardRows.tsx
+      - web/src/components/task/TaskDetailPanel.tsx
+      - web/src/components/workspace/WorkspaceTaskRow.tsx
+      - web/src/components/shell/Toast.tsx
+      - web/src/services/task/worktree.ts
+      - web/src/services/task/types.ts
+      - web/src/services/net/error.ts
+      - web/src/app/useRealtimeEvents.ts
+      - web/src/App.tsx
+      - web/src/i18n/locales/zh-CN.ts
+      - web/src/i18n/locales/en-US.ts
+    tests:
+      - server/internal/api/http_tasks_overview_card_parity_test.go
+      - server/internal/api/http_tasks_overview_test.go
+      - server/internal/api/http_tasks_begin_finish_test.go
+      - server/internal/api/http_tasks_finish_test.go
+      - server/internal/api/http_tasks_begin_finish_test.go
+      - server/internal/gitview/worktree_finish_test.go
+      - web/tests/task-card-parity.test.mjs
+      - web/tests/task-button-gates.test.mjs
+      - web/tests/task-board-view.test.mjs
+      - web/tests/task-panel-unification.test.mjs
+      - web/tests/task-stage-panel.test.mjs
+      - web/tests/worktree-badge.test.mjs
+      - web/tests/worktree-finish.test.mjs
+    anchors:
+      - server/internal/api/http_tasks.go:func (h *HTTPHandler) handleKanbanTaskBeginFinish
+      - server/internal/api/http_tasks.go:func (h *HTTPHandler) teardownFinishWorktree
+      - server/internal/api/http_tasks.go:func projectOverviewTask
+      - server/internal/api/http_tasks.go:type overviewStageProjection
+      - server/internal/api/http_tasks.go:type overviewAuxFlags
+      - server/internal/api/http_tasks.go:func projectOverviewAuxFlags
+      - server/internal/api/http_tasks.go:func (h *HTTPHandler) handleKanbanTaskFinishWorktree
+      - server/internal/api/http_tasks_finish_teardown.go:type FinishTeardownReport
+      - server/internal/kanban/worktree_finish.go:type FinishWorktreeDirty
+      - server/internal/kanban/worktree_finish.go:type FinishWorktreeUserChanges
+      - server/internal/api/http_tasks_finish_teardown.go:UserChanges []string
+      - server/internal/gitview/worktree_finish.go:type MainCheckoutDirtyError
+      - web/src/components/task/TaskCardRows.tsx:function FinishWorktreeButton
+      - web/src/components/task/TaskCardRows.tsx:const canComplete = !terminal && !stageRunning && !showAdvance;
+      - web/src/components/task/TaskDetailPanel.tsx:const canCompleteTask = !terminal && !stageRunningNow && !canRunStageNow;
+      - web/src/components/workspace/WorkspaceTaskRow.tsx:hideSessionError={task.status === "fail"}
+      - web/src/services/task/worktree.ts:class FinishWorktreeDirty extends Error
+      - web/src/services/net/error.ts:"task.action_failed"
+      - 'web/src/i18n/locales/zh-CN.ts:"task.finishWorktreeDirty": "主 checkout 有未提交改动，先提交或暂存后再收尾"'
+      - 'web/src/i18n/locales/zh-CN.ts:"error.task.actionFailed": "任务操作失败"'
+      - 'web/src/i18n/locales/zh-CN.ts:"task.finishWorktreeUserChanges": "合并已成功，但 worktree 里还有没提交的东西"'
+      - 'web/src/i18n/locales/zh-CN.ts:"task.finishWorktreeUserChangesHint": "代码已经合进主干了，只是目录还没拆。先提交或暂存这些改动，再点一次收尾即可。工具自己留下的临时目录（.claude/ .omc/ .mindfs/）不用你管，那部分会自己清。"'
   - id: G-AS
     title: ACP 提问：dsh 的 ask_user_question 走 elicitation
     kind: fix

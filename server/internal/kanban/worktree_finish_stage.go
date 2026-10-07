@@ -30,12 +30,12 @@ const finishStagePromptTemplate = `这一段是 worktree 收尾：把本 worktre
 
 你现在位于一个 git linked worktree 内。按顺序做完下面几步：
 
-1. 先搞清楚自己在哪：跑「git worktree list」和「git status」，
-   确认当前 worktree 路径，以及主干仓库（列表里路径最短的那个通常是主 checkout，
-   但要自己核对它的分支名是不是 main，不要凭猜）。
+1. 先搞清楚自己在哪：跑「git worktree list」和「git status」，确认当前 worktree 路径，
+   以及主干仓库（列表里路径最短的那个通常是主 checkout，但要自己核对它的分支名
+   是不是 main，不要凭猜）。
 
-2. 看清楚要提交什么：「git status --porcelain」和「git diff」。
-   只提交**这个任务真正做出来的成品改动**。以下两类绝不提交：
+2. 看清楚要提交什么：「git status --porcelain」和「git diff」。只提交**这个任务真正
+   做出来的成品改动**。以下两类绝不提交：
    - 构建产物与依赖目录：node_modules/、dist/、build/、*.log、*.tmp、*.swp、.env 及其变体
    - mindfs 自己的状态目录（.mindfs/ 等）与本地临时文件
 
@@ -49,12 +49,9 @@ const finishStagePromptTemplate = `这一段是 worktree 收尾：把本 worktre
    「git -C <主checkout路径> merge --no-ff <本分支名>」。
    合并提交信息里用单引号包住分支名，避免和命令行的双引号打架。
 
-   如果 main 上已经有别的分支是本分支的祖先，说明改动已经在里面了，直接进入第 5 步。
-
-5. 收尾阶段到此为止：**不要**自己执行「git worktree remove」、
-   「git worktree prune」或「git branch -d / -D」。
-   拆目录、删分支、把这个会话搬回主 checkout 由 mindfs 服务端接着做 ——
-   你去做会和服务端抢同一个目录。
+5. 收尾阶段到此为止：**不要**自己执行「git worktree remove」、「git worktree prune」
+   或「git branch -d / -D」。拆目录、删分支、把这个会话搬回主 checkout 由 mindfs
+   服务端接着做 —— 你去做会和服务端抢同一个目录。
 
 遇到下列情况**停下来问用户**，不要自己拍板：
 - 合并撞上冲突（CONFLICT / MERGE_HEAD 仍存在）：说明哪些文件冲突、你倾向怎么合，

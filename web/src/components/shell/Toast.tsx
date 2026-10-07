@@ -156,9 +156,9 @@ function Toast({ error, onClose, onRetry }: ToastProps): React.ReactElement {
         >
           {message}
         </div>
-        {error.code && (
-          <div style={{ fontSize: "11px", opacity: 0.8 }}>{error.code}</div>
-        )}
+        {/* 错误码那一行（`file.write_failed` 之类）2026-10-07 删掉：它从来不是
+            给用户看的信息 —— 用户看到「写入文件失败」只会去查磁盘，而看板任务
+            动作失败时挂上这个码更是纯粹的误导。要排查看日志。 */}
       </div>
 
       {/* Actions */}
