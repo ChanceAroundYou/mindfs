@@ -206,6 +206,7 @@ import { buildMatchInputFromPath, buildMessageWithViewContext, hasExplicitFileCo
 import { basenameOfPath, buildDirectorySelectionKey, buildFileScrollKey, buildURLSearch, comparableManagedRootPath, dirnameOfPath, isDirectorySortMode, joinDisplayPath, normalizeCursor, normalizePath, parentDirsOfFile, parseFileLocation, parsePluginQuery, readURLState, relativeDisplayPathFromRoot, rootNodeKey } from "./app/appPath";
 import { useWorkspaceBoard } from "./app/useWorkspaceBoard";
 import { useSessionCache } from "./app/useSessionCache";
+import { getDirectorySortKey, normalizeComparableRootPath, normalizeTreeResponse, unscopedRootId } from "./app/appUtils";
 import { clearStalePending, hasSessionExchanges, isSessionShownInMain, isTopLevelSessionItem, mergeReplyingStateByNode, normalizeMode, relatedFileSelectionKey, sessionInputHistory, shouldAutoSelectNewSession, toSessionItem } from "./app/appSession";
 import { buildSessionJumpTarget, resolveSessionJumpRoot } from "./app/sessionJump";
 import { accountScopedKey, loadGitDiffSideBySide, loadLastRootId, loadLastRootNodeId, loadMobileEnterKeySends, loadPersistedFileScrollPositions, loadPersistedPluginQuery, loadSidebarsSwapped, loadTaskCreateWorktreePreference, persistFileScrollPositions, persistPluginQuery, removeLocalStorageByPrefix, saveTaskCreateWorktreePreference } from "./app/appStorage";
@@ -1222,12 +1223,6 @@ export function App({ onGoHome }: AppProps) {
   }, [currentRootId, getRootDisplayName, getDisplayNodeColor, taskInlineEdit?.targetRootId]);
 
   // 复合键还原为裸 rootId（scoped 键为 n::r 或 r；rootId 自身不含 "::"）
-  const unscopedRootId = useCallback((scoped: string): string => {
-    const k = String(scoped || "");
-    const idx = k.lastIndexOf("::");
-    return idx >= 0 ? k.slice(idx + 2) : k;
-  }, []);
-
   const selectRootNode = useCallback((rootId: string, nodeId?: string) => {
     const rid = String(rootId || "").trim();
     if (!rid) return;
@@ -1713,17 +1708,6 @@ export function App({ onGoHome }: AppProps) {
       }
     },
     [resetSessionLockForRoot],
-  );
-
-  const getDirectorySortKey = useCallback(
-    (rootID: string | null | undefined, dirPath: string | null | undefined) => {
-      if (!rootID) {
-        return "";
-      }
-      const normalizedDir = !dirPath || dirPath === rootID ? "." : dirPath;
-      return `${rootID}:${normalizedDir}`;
-    },
-    [],
   );
 
   const currentDirectorySortKey = getDirectorySortKey(
@@ -3014,12 +2998,6 @@ export function App({ onGoHome }: AppProps) {
     },
     [bumpCacheVersion, rootSessionKey, setSessions],
   );
-
-  const normalizeTreeResponse = useCallback((payload: any) => {
-    if (payload && payload.entries)
-      return { entries: payload.entries as FileEntry[] };
-    return { entries: [] };
-  }, []);
 
   const formatDirectoryLoadError = useCallback((message?: string | null) => {
     const text = String(message || "").trim();
@@ -6639,14 +6617,6 @@ export function App({ onGoHome }: AppProps) {
     },
     [],
   );
-
-  const normalizeComparableRootPath = useCallback((value: string): string => {
-    let normalized = String(value || "").trim().replace(/\\/g, "/").replace(/\/+$/, "");
-    if (/^[a-z]:/i.test(normalized)) {
-      normalized = normalized.toLowerCase();
-    }
-    return normalized;
-  }, []);
 
   const findManagedRootByPath = useCallback((path: string): ManagedRootPayload | null => {
     const target = normalizeComparableRootPath(path);
