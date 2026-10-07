@@ -39,8 +39,6 @@ export type WorkspaceProjectGroup = {
 
 export type WorkspaceBoard = {
   projects: WorkspaceProjectGroup[];
-  /** 全部项目的 blocked 汇总，顶部条带渲染用；按 updated_at 倒序 */
-  blockedAll: WorkspaceTaskItem[];
   loading: boolean;
   /** 本轮拉取失败的节点（B3）：面板上要显式说「这些节点没拉到」，别让人以为任务没了 */
   unreachableNodes: Array<{ id: string; name: string }>;
@@ -254,12 +252,7 @@ export function useWorkspaceBoard(params: {
       .filter((group) => group.tasks.length > 0);
   }, [items, managedRootIds, getNodeId, getRootDisplayName, getNodeColor, filter, liveVersion]);
 
-  const blockedAll = useMemo(
-    () => items.map(liveVersion).filter((item) => isBlockedTask(item.task)).sort(byUpdatedDesc),
-    [items, liveVersion],
-  );
-
-  return { projects, blockedAll, loading, unreachableNodes, refresh };
+  return { projects, loading, unreachableNodes, refresh };
 }
 
 /** 待审核：等人回话。顶部条带与「待处理」筛选都按这批。 */

@@ -842,8 +842,17 @@
      投递「恰好一次」由 `elicitationMu` 下「先从表里删掉、再往容量 1 的 waiter 投」保证。
   9. `registerPendingAskUser` 是 **first-wins**（同 callID 不覆盖），否则后续
      `tool_call_update` 会换掉 waiter，已绑定的 elicitation 永远等不到答案。
-     `reapPendingAskUser` 只在工具卡进终态（`complete`/`failed`）且**未被绑定**时清理。
- 10. **匹配与占位必须在同一把锁里**（`matchAndBindPendingAskUser`）：拆成「先匹配、
+ 10. **三条「提问没被回答就结束」的路都必须释放条目**，漏一条就留下一个 bound 条目 ——
+     它会被 `matchAndBindPendingAskUser` 优先匹配到（id+文本相同），后续同题的答案投进
+     没人读的 waiter，表现为「卡片出现、提交也成功、模型却说用户取消了」：
+     ① `AnswerElicitation`（正常回答）：先删后投，恰好一次；
+     ② `UnstableCreateElicitation` 的 `ctx.Done()` 分支：handler 自己
+     `releasePendingAskUser`（它已在读，不能再投递）；
+     ③ `reapPendingAskUser`（工具卡进终态）：**已绑定的条目也要删**，并往 waiter 投一个
+     空结果把阻塞的 handler 放出来 —— 进终态说明 agent 已经不等这个答案了。
+     正常路径下 ③ 看不到 bound 条目（②之前就被 ① 删了），能看到的都是被放弃的提问。
+     实测踩过：第一次实测那轮提问被打断，条目就这么挂着。
+ 11. **匹配与占位必须在同一把锁里**（`matchAndBindPendingAskUser`）：拆成「先匹配、
      再置 `bound`」两步，会让两个并发的 elicitation（不同会话问了同一道题 —— id 与
      文本都相同）同时匹配到同一条目、一起等同一个 waiter，一个拿到答案、另一个
      只能干等到 ctx 取消。
@@ -891,6 +900,14 @@
     — **兼容性边界**：只有 `dsh` 拿到 `elicitation.form`，其它 ACP agent 与上游一致。
   - `server/internal/agent/acp/elicitation_test.go:TestBindElicitationIsExclusiveUnderConcurrency`
     — 并发 elicitation 下每个条目最多被绑一次（`-race` 下也过）。
+  - `server/internal/agent/acp/elicitation_test.go:TestReapReleasesBoundElicitation`
+    — 工具卡进终态时已绑定条目也被删，且 waiter 被放出（防 handler 永久阻塞）。
+  - `server/internal/agent/acp/elicitation_test.go:TestReapKeepsEntryWhileRunning`
+    — reap 只认终态，`running`/`pending`/`in_progress` 时不能清条目。
+  - `server/internal/agent/acp/elicitation_test.go:TestReleasePendingAskUserUnblocksReregistration`
+    — ctx 取消释放后，同一道题再问一次能重新登记并匹配到新条目。
+  - `server/internal/agent/acp/elicitation_test.go:TestReleasePendingAskUserIgnoresStaleEntry`
+    — 拿旧条目去释放不会误删同 callID 的新条目（指针比较）。
 
 ### G-AT 会话打开性能（窗口去重 / 载荷压缩 / 工具卡分组）（2026-10-07）
 
@@ -990,6 +1007,41 @@
     `selectedSessionSnapshot`；失败必须被记录且 404 是终点；成功与 `markSessionStale`
     必须解禁；`sessionCacheRef` 必须有上限且每个新键写入点都要执行；
     两处 O(n²) 必须消失；滚动必须走 rAF。
+
+### G-AV worktree 收尾路径符号链接匹配修复（2026-10-07）
+
+- **症状**：任务卡在「收尾中」，点收尾按钮报「main 正被另一个 worktree 占用
+  （/mnt/fnos/...），先把它移开」。实测 `/home/xiaokubao/family` → `/mnt/fnos/family`：
+  git 报解析后的路径，`MainCheckoutPath` 对主 checkout 返回调用方给的路径（符号链接本身），
+  两者直接字符串比较误判成「两个不同的目录」—— 那个「另一个 worktree」就是主 checkout 自己。
+- **根因**：`git worktree list --porcelain` 与 `git rev-parse --path-format=absolute --git-common-dir`
+  都会解析符号链接，而 `MainCheckoutPath` 对主 checkout 返回 `filepath.Clean(path)`（不解析）。
+  `validateTarget` / `InspectWorktree` / `ListWorktrees` 三处都用 `filepath.Clean` 直接比较，
+  在「项目根是符号链接」时全部误判。
+- **修复**：新增 `samePath` 辅助函数（先 `EvalSymlinks` 再比较），三处统一使用。
+- **为什么必须保留**：`MainCheckoutPath` 的返回值语义不变（对主 checkout 返回调用方给的路径），
+  只在比较处统一。符号链接路径匹配是 git worktree 操作的基础，不修则收尾永远卡住。
+- **针对性测试**：
+  - `server/internal/gitview/gitview_test.go:TestSamePathResolvesSymlinks` — 符号链接路径必须匹配
+  - `server/internal/gitview/gitview_test.go:TestValidateTargetDoesNotSelfBlockViaSymlink` —
+    通过符号链接访问主 checkout 时 `validateTarget` 不得自我阻塞
+  - `server/internal/gitview/gitview_test.go:TestListWorktreesCurrentViaSymlink` —
+    根 worktree 的 `Current` 标记在符号链接路径下必须成立
+
+### G-AW 工作台移除 attention bar + 统一 task card wrapper（2026-10-07）
+
+- **症状**：工作台顶部有一堆小的灰色卡片（`WorkspaceAttentionBar`），只显示项目任务阶段，
+  下面的任务卡片已经覆盖了它的信息。任务小卡片（`WorkspaceTaskRow`）和看板卡
+  （`TaskBoardView` 的 `<article>`）看起来差不多但用了不同的 wrapper 组件。
+- **修复**：
+  1. 移除 `WorkspaceAttentionBar`（信息冗余：任务卡片已包含状态、阶段、操作按钮）
+  2. 将 `WorkspaceTaskRow` 的 wrapper 从 `<div role="button">` 统一为 `<article role="button">`，
+     与看板卡结构一致
+- **为什么必须保留**：attention bar 是冗余的，移除后工作台更简洁；wrapper 统一后
+  两个视图的卡片结构完全一致，维护成本降低。
+- **针对性测试**：
+  - `web/tests/workspace-board.test.mjs` — attention bar 必须不存在；taskRow wrapper 必须是 `<article>`
+  - `web/tests/task-card-wrap.test.mjs` — `workspaceTaskNameStyle` 断言已移除
 
 ---
 

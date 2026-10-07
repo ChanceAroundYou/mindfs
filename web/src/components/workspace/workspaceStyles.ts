@@ -8,14 +8,7 @@
  */
 
 import type React from "react";
-import { hexToRgbaApp } from "../../app/taskIcons";
 import { rootBadgeButtonStyle } from "../rootBadgeStyle";
-
-/** 节点色 → 半透明底/边框；取不到节点色时回退中性 token（不猜一个颜色） */
-export function nodeTint(color: string | null, alpha: number): string {
-  const hex = String(color || "").trim();
-  return /^#[0-9a-fA-F]{3,8}$/.test(hex) ? hexToRgbaApp(hex, alpha) : `var(--node-badge-bg)`;
-}
 
 export const workspaceRootStyle: React.CSSProperties = {
   // 铺满：以前写死 maxHeight: calc(100dvh - 148px)，那 148px 猜的是 ActionBar
@@ -30,12 +23,6 @@ export const workspaceRootStyle: React.CSSProperties = {
   gap: "10px",
   minHeight: 0,
 };
-
-// 「需要你」条带：桌面横向滚，窄屏改纵向堆叠 ——
-// 220px 的卡在 375px 主区里只放得下一张半，横向滚等于每张都要手动划一下。
-export const workspaceAttentionBarStyle = (isMobile = false): React.CSSProperties => (isMobile
-  ? { display: "flex", flexDirection: "column", gap: "6px" }
-  : { display: "flex", gap: "6px", overflowX: "auto", paddingBottom: "2px" });
 
 export const workspaceToolbarStyle: React.CSSProperties = {
   display: "flex",
@@ -69,38 +56,6 @@ export const workspaceEmptyTextStyle: React.CSSProperties = {
   fontSize: "12px",
   color: "var(--text-secondary)",
 };
-
-export const workspaceSectionStyle: React.CSSProperties = {
-  display: "flex",
-  flexDirection: "column",
-  gap: "6px",
-};
-
-export const workspaceSectionHeaderStyle: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  gap: "6px",
-};
-
-export const workspaceSectionTitleStyle: React.CSSProperties = {
-  fontSize: "12px",
-  fontWeight: 800,
-  color: "var(--text-secondary)",
-};
-
-export const workspaceAttentionCardStyle = (color: string | null, isMobile = false): React.CSSProperties => ({
-  flex: "0 0 auto",
-  width: isMobile ? "100%" : "220px",
-  textAlign: "left",
-  border: `1px solid ${nodeTint(color, 0.28)}`,
-  borderRadius: "8px",
-  background: "var(--menu-bg)",
-  padding: "8px 10px",
-  cursor: "pointer",
-  display: "flex",
-  flexDirection: "column",
-  gap: "4px",
-});
 
 /**
  * 项目组：项目名 + 任务卡网格。整组是折叠的，所以没有外框，组与组之间靠间距。
@@ -172,43 +127,6 @@ export const workspaceTaskGridStyle = (isMobile = false): React.CSSProperties =>
   gridTemplateColumns: isMobile ? "repeat(2, minmax(0, 1fr))" : "repeat(4, minmax(0, 1fr))",
   gap: "6px",
 });
-
-/**
- * 「需要你」条带专用的两行小字：编号·项目名 / 阶段名。
- * 条带是横向滚的紧凑卡（220px 定宽），不是项目卡，所以这两条不归 TaskCardRows 管。
- */
-export const workspaceTaskNumberStyle: React.CSSProperties = {
-  fontSize: "11px",
-  fontWeight: 800,
-  color: "var(--text-secondary)",
-  flexShrink: 0,
-};
-
-export const workspaceTaskMetaStyle: React.CSSProperties = {
-  fontSize: "10px",
-  color: "var(--text-secondary)",
-  whiteSpace: "nowrap",
-  flexShrink: 0,
-};
-
-/**
- * 任务名：顶部「需要你」条带里那行字（项目卡的名字样式在 TaskCardRows 内）。
- *
- * 2 行截断而非单行省略号：条带是 220px 定宽紧凑卡（isMobile 下才占满整宽），
- * 省略号只会留下「修登录…」。与 TaskCardRows 的名字用同一套写法。
- */
-export const workspaceTaskNameStyle: React.CSSProperties = {
-  fontSize: "12px",
-  fontWeight: 600,
-  color: "var(--text-color)",
-  minWidth: 0,
-  display: "-webkit-box",
-  WebkitLineClamp: 2,
-  WebkitBoxOrient: "vertical",
-  overflow: "hidden",
-  wordBreak: "break-word",
-  overflowWrap: "anywhere",
-};
 
 export const workspaceFilterButtonStyle = (active: boolean): React.CSSProperties => ({
   height: "22px",

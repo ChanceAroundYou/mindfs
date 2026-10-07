@@ -380,6 +380,33 @@ func resolveActionPath(ctx context.Context, rootPath, relPath string) (repoConte
 	return repo, repo.toRepoPath(cleanPath), nil
 }
 
+// samePath 判两个路径是否指向同一个目录，**先解析符号链接**再比。
+//
+// git 报的路径是解析后的（`git worktree list --porcelain` 与
+// `git rev-parse --path-format=absolute --git-common-dir` 都会解析符号链接），
+// 而 MainCheckoutPath 对主 checkout 返回的是**调用方给的那个路径**（可能是
+// 符号链接本身）。两边直接字符串比较会在「项目根是符号链接」时误判成
+// 「两个不同的目录」—— 实测 /home/xiaokubao/family → /mnt/fnos/family，
+// 收尾时 validateTarget 报「main 正被另一个 worktree 占用」，而那个
+// 「另一个 worktree」就是主 checkout 自己。
+//
+// EvalSymlinks 失败（路径不存在等）时返回 false —— 那种情况下两个路径至少
+// 还在同一套比较口径里，不会比解析成功时更糟。
+func samePath(a, b string) bool {
+	if filepath.Clean(a) == filepath.Clean(b) {
+		return true
+	}
+	resolvedA, errA := filepath.EvalSymlinks(a)
+	if errA != nil {
+		return false
+	}
+	resolvedB, errB := filepath.EvalSymlinks(b)
+	if errB != nil {
+		return false
+	}
+	return filepath.Clean(resolvedA) == filepath.Clean(resolvedB)
+}
+
 func ListWorktrees(ctx context.Context, rootPath string) (WorktreeListResult, error) {
 	if _, err := loadRepoContext(ctx, rootPath); err != nil {
 		if isNotRepoError(err) {
@@ -409,7 +436,7 @@ func ListWorktrees(ctx context.Context, rootPath string) (WorktreeListResult, er
 		}
 		cleanPath := filepath.Clean(item.Path)
 		item.Path = cleanPath
-		item.Current = cleanPath == currentRoot
+		item.Current = samePath(cleanPath, currentRoot)
 		items = append(items, item)
 		item = WorktreeItem{}
 	}

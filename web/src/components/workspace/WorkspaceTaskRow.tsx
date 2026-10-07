@@ -50,7 +50,7 @@ export function WorkspaceTaskRow({
     ? task.current_stage_name || (task.current_stage_index >= 0 ? t("task.stageLabel", { index: task.current_stage_index + 1 }) : "")
     : "";
   return (
-    <div
+    <article
       role="button"
       tabIndex={0}
       onClick={() => onOpen(item)}
@@ -69,6 +69,6 @@ export function WorkspaceTaskRow({
         stageName={stageName}
         showStatus
       />
-    </div>
+    </article>
   );
 }

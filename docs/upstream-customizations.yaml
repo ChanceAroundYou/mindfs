@@ -1295,7 +1295,9 @@ groups:
       （否则 mergeBufferedToolCall 会把 kind 覆盖回 other）；答案编码对齐 openma 的
       answerFromElicitation（question_<i> = option_<j> / question_<i>_custom，
       单选命中选项时不得再带 _custom）；取消与关闭按 sessionKey 回 Decline，
-      投递恰好一次由 elicitationMu 保证。另有一个静默坑：rawInput 是工具参数的蛇形
+      投递恰好一次由 elicitationMu 保证。三条「没被回答就结束」的路（正常回答 /
+      handler 的 ctx 取消 / 工具卡进终态）都必须释放条目并放出 waiter —— 漏一条就留下
+      bound 条目，后续同题会被优先匹配到它、答案投进没人读的 waiter。另有一个静默坑：rawInput 是工具参数的蛇形
       multi_select，_meta 是 seam 对象的驼峰 multiSelect，读错一个字母会让多选答案
       静默编错（提问照常出现）。
     files:
@@ -1310,6 +1312,7 @@ groups:
       - server/internal/agent/acp/elicitation.go:func (p *Process) registerPendingAskUser
       - server/internal/agent/acp/elicitation.go:func (p *Process) bindElicitation
       - server/internal/agent/acp/elicitation.go:func (p *Process) matchAndBindPendingAskUser
+      - server/internal/agent/acp/elicitation.go:func (p *Process) releasePendingAskUser
       - server/internal/agent/acp/elicitation.go:func (p *Process) AnswerElicitation
       - server/internal/agent/acp/elicitation.go:func elicitationContent
       - server/internal/agent/acp/elicitation.go:func acpAskUserToolCall
@@ -1462,3 +1465,52 @@ groups:
     files:
       - web/src/App.tsx
       - web/src/components/SessionViewer.tsx
+  - id: G-AV
+    title: worktree 收尾路径符号链接匹配修复
+    kind: fix
+    symptom: |
+      任务卡在「收尾中」，点收尾按钮报「main 正被另一个 worktree 占用（/mnt/fnos/...），
+      先把它移开」。实测 /home/xiaokubao/family → /mnt/fnos/family：git 报解析后的路径，
+      MainCheckoutPath 对主 checkout 返回调用方给的路径（符号链接本身），两者直接字符串比较
+      误判成「两个不同的目录」—— 那个「另一个 worktree」就是主 checkout 自己。
+    why: |
+      git worktree list --porcelain 与 git rev-parse --path-format=absolute --git-common-dir
+      都会解析符号链接，而 MainCheckoutPath 对主 checkout 返回 filepath.Clean(path)（不解析）。
+      validateTarget / InspectWorktree / ListWorktrees 三处都用 filepath.Clean 直接比较，
+      在「项目根是符号链接」时全部误判。
+    boundary: |
+      路径比较必须先解析符号链接（EvalSymlinks）；MainCheckoutPath 的返回值语义不变
+      （对主 checkout 返回调用方给的路径），只在比较处统一。
+    tests:
+      - server/internal/gitview/gitview_test.go:TestSamePathResolvesSymlinks
+      - server/internal/gitview/gitview_test.go:TestValidateTargetDoesNotSelfBlockViaSymlink
+      - server/internal/gitview/gitview_test.go:TestListWorktreesCurrentViaSymlink
+    files:
+      - server/internal/gitview/gitview.go
+      - server/internal/gitview/worktree_finish.go
+      - server/internal/gitview/gitview_test.go
+  - id: G-AW
+    title: 工作台移除 attention bar + 统一 task card wrapper
+    kind: feat
+    symptom: |
+      工作台顶部有一堆小的灰色卡片（WorkspaceAttentionBar），只显示项目任务阶段，
+      下面的任务卡片已经覆盖了它的信息。任务小卡片（WorkspaceTaskRow）和看板卡
+      （TaskBoardView 的 <article>）看起来差不多但用了不同的 wrapper 组件。
+    why: |
+      attention bar 是冗余的：它显示的「需要你」任务已经出现在下面的任务卡片里，
+      且任务卡片的 TaskCardRows 已经包含状态、阶段、操作按钮。
+      WorkspaceTaskRow 的 wrapper 是 <div role="button">，而看板卡是 <article>，
+      两者结构不一致。统一为 <article> 后两者完全一致。
+    boundary: |
+      attention bar 必须移除（信息冗余）；WorkspaceTaskRow 的 wrapper 必须与看板卡一致
+      （都是 <article> + taskCardSurfaceStyle + TaskCardRows）。
+    tests:
+      - web/tests/workspace-board.test.mjs
+      - web/tests/task-card-wrap.test.mjs
+    files:
+      - web/src/components/workspace/WorkspaceBoard.tsx
+      - web/src/components/workspace/WorkspaceTaskRow.tsx
+      - web/src/app/useWorkspaceBoard.ts
+      - web/src/components/workspace/workspaceStyles.ts
+      - web/tests/workspace-board.test.mjs
+      - web/tests/task-card-wrap.test.mjs

@@ -8,7 +8,6 @@ const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 const hook = readFileSync(new URL("../src/app/useWorkspaceBoard.ts", import.meta.url), "utf8");
 const view = readFileSync(new URL("../src/components/TaskBoardView.tsx", import.meta.url), "utf8");
 const board = readFileSync(new URL("../src/components/workspace/WorkspaceBoard.tsx", import.meta.url), "utf8");
-const attention = readFileSync(new URL("../src/components/workspace/WorkspaceAttentionBar.tsx", import.meta.url), "utf8");
 const projectRow = readFileSync(new URL("../src/components/workspace/WorkspaceProjectRow.tsx", import.meta.url), "utf8");
 const taskRow = readFileSync(new URL("../src/components/workspace/WorkspaceTaskRow.tsx", import.meta.url), "utf8");
 // 卡片两行（标题行 + 操作行）抽成了看板和工作台共用的组件，契约跟着文件走。
@@ -74,34 +73,19 @@ assert.doesNotMatch(
   /workspaceNodeDotStyle/,
   "the project row must not render a color dot before the name",
 );
-// 节点色带透明度由 hexToRgbaApp 从运行时色值算出，不在样式文件里写死
-assert.match(styles, /import \{[^}]*hexToRgbaApp[^}]*\} from "\.\.\/\.\.\/app\/taskIcons"/, "node tint must reuse the shared rgba helper");
-// 条带是跨项目的，每张卡得按**自己**的任务找节点色，不能拿一个全局值
-assert.match(
+// 条带已移除：顶部「需要你」条带是冗余的，下面的任务卡片已经覆盖了它的信息。
+assert.doesNotMatch(
   board,
-  /<WorkspaceAttentionBar[\s\S]*?getNodeColor=\{getNodeColor\}/,
-  "the attention bar needs the node-color resolver to tint each card",
-);
-assert.match(
-  attention,
-  /style=\{workspaceAttentionCardStyle\(getNodeColor\(item\.root_id\), isMobile\)\}/,
-  "an attention card must be tinted by the node of its own project, not a single global color",
+  /WorkspaceAttentionBar/,
+  "the attention bar is gone — the task cards below already cover its information",
 );
 assert.match(
   view,
   /getNodeColor=\{getDisplayNodeColor\}/,
   "the view must hand the board App's stable node-color resolver",
 );
-// 取不到节点色时回退中性 token，不猜一个颜色
-assert.match(
-  styles,
-  /return \/\^#\[0-9a-fA-F\]\{3,8\}\$\/\.test\(hex\) \? hexToRgbaApp\(hex, alpha\) : `var\(--node-badge-bg\)`/,
-  "an unknown node color must fall back to a neutral token",
-);
 
-// 4) 信息架构：顶部「需要你」条带 + 按项目分组 + 底部快速发起。
-//    唯一按状态分区的地方是顶部条带，它回答的是与项目无关的「现在该我做什么」。
-assert.match(board, /<WorkspaceAttentionBar items=\{board\.blockedAll\}/, "the attention bar is fed the cross-project blocked list");
+// 4) 信息架构：按项目分组 + 底部快速发起。
 assert.match(board, /board\.projects\.map\(\(group\) => \(\s*<WorkspaceProjectRow/, "projects render as groups, not as a flat task list");
 assert.match(board, /<WorkspaceQuickLaunch projects=\{board\.projects\} templates=\{templates\} onPick=\{onCreateTask\} \/>/, "quick launch is a trigger that hands off to the shared dialog");
 // 快速发起在工具栏里，且排在刷新键**之前**（紧贴其左边）
@@ -113,8 +97,6 @@ assert.doesNotMatch(
   /const waiting = useMemo|const running = useMemo|const archive = useMemo/,
   "the old status partition (waiting/running/archive) must be gone",
 );
-// 条带没人等时整条收起，不占空间
-assert.match(attention, /if \(items\.length === 0\) return null;/, "the attention bar collapses when nothing needs you");
 
 // 5) 没有任务的项目不出现 —— 筛选后是空壳的、连「全部」下都没有任务的，都不渲染。
 //    组仍以 managedRootIds 建（后端只返回有任务的项目），只是建完按匹配到的任务收窄。
@@ -166,28 +148,8 @@ assert.match(
   "a cross-project selection made on the workbench must survive the stale-selection guard",
 );
 
-// 9) 窄屏：旧面板零响应式处理（没有任何 isMobile 分支），这里钉住三处该变的地方
+// 9) 窄屏：旧面板零响应式处理（没有任何 isMobile 分支），这里钉住该变的地方
 assert.match(board, /const \{ isMobile \} = useResponsive\(\);/, "the board must read the viewport, not assume desktop");
-assert.match(
-  board,
-  /<WorkspaceAttentionBar items=\{board\.blockedAll\} onOpenTask=\{onOpenTask\} isMobile=\{isMobile\} getNodeColor=\{getNodeColor\} \/>/,
-  "the attention bar must be told about the viewport",
-);
-assert.match(
-  attention,
-  /<div style=\{workspaceAttentionBarStyle\(isMobile\)\}>/,
-  "the attention bar must switch layout on narrow screens",
-);
-assert.match(
-  styles,
-  /export const workspaceAttentionBarStyle = \(isMobile = false\)[\s\S]*?isMobile\s*\n\s*\? \{ display: "flex", flexDirection: "column"/,
-  "a 220px card does not fit a 375px pane: the bar stacks instead of scrolling sideways",
-);
-assert.match(
-  styles,
-  /width: isMobile \? "100%" : "220px"/,
-  "attention cards go full width on narrow screens",
-);
 
 // 9b) 层级：项目名用左侧项目列表那套徽章（中性灰底 + 主体色字），
 //     任务是小卡片。两行不再共用同一个灰底 —— 那正是「看起来很丑」的病根。
@@ -212,7 +174,7 @@ assert.doesNotMatch(taskRow, /taskFirstInput|InlineTokenText|firstInput/, "the w
 assert.doesNotMatch(cardRows, /taskFirstInput|InlineTokenText|expandedTaskInputIds/, "the shared card rows must not depend on the task body — the body arrives as children");
 assert.match(
   taskRow,
-  /<TaskCardRows[\s\S]*?\/>\s*<\/div>/,
+  /<TaskCardRows[\s\S]*?\/>\s*<\/article>/,
   "the workbench card renders the shared rows with no children, so the body row is absent",
 );
 assert.match(
@@ -320,12 +282,6 @@ assert.match(
   hook,
   /String\(live\.updated_at \|\| ""\) > String\(item\.task\.updated_at \|\| ""\)/,
   "the live version must win only when it is strictly newer, so a late fan-out response cannot revert a fresh card",
-);
-// 两个派生都要过这道：blockedAll 是顶部「需要你」条带，漏了它条带就会一直挂着已完成的卡。
-assert.match(
-  hook,
-  /const blockedAll = useMemo\(\s*\(\) => items\.map\(liveVersion\)\.filter/,
-  "the attention bar must read the same live version, or it keeps listing finished tasks",
 );
 // 卡片动作与收尾要能触发结构重拉（卡片还在不在、worktree 徽标），转发 ref 为空即跳过。
 assert.match(

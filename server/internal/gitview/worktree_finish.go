@@ -274,7 +274,7 @@ func validateTarget(ctx context.Context, mainDir, source, target string) error {
 		if absErr != nil {
 			continue
 		}
-		if filepath.Clean(itemAbs) != filepath.Clean(mainAbs) {
+		if !samePath(itemAbs, mainAbs) {
 			return fmt.Errorf("%s 正被另一个 worktree 占用（%s），先把它移开", target, item.Path)
 		}
 	}
@@ -430,11 +430,8 @@ func InspectWorktree(ctx context.Context, mainDir, path string) (WorktreeBinding
 		return WorktreeBinding{}, err
 	}
 	for _, item := range listed.Items {
-		clean := filepath.Clean(item.Path)
-		if clean != abs {
-			if itemAbs, absErr := filepath.Abs(clean); absErr != nil || filepath.Clean(itemAbs) != abs {
-				continue
-			}
+		if !samePath(item.Path, abs) {
+			continue
 		}
 		return WorktreeBinding{Registered: true, Branch: item.Branch, Head: item.Head}, nil
 	}

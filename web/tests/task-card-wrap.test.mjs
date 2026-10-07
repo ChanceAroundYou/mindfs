@@ -68,18 +68,6 @@ assert.match(
 // 6) 名字是卡片上信息量最高的字段，必须有 title 兜底（2 行仍装不下的超长名）
 assert.match(cardRows, /title=\{taskName\}/, "任务名应带 title 兜底");
 
-// 9) 工作台「需要你」条带是 220px 定宽紧凑卡，同一个毛病，同样改成 2 行截断。
-//    窗口锚到本对象结尾的 `};`，不能越界到后面的 export —— 否则下一个对象一旦出现
-//    whiteSpace 就会让这条断言指着错的对象红。
-const nameStyle = styles.match(/export const workspaceTaskNameStyle[^]*?\};/);
-assert.ok(nameStyle, "应能定位到 workspaceTaskNameStyle 对象");
-assert.match(nameStyle[0], /WebkitLineClamp: 2/, "条带任务名应是 2 行截断");
-assert.doesNotMatch(
-  nameStyle[0],
-  /whiteSpace: "nowrap"/,
-  "条带任务名不该再是单行 nowrap",
-);
-
 // 10) 字号必须留在行内 style —— 这条不是洁癖。
 //     index.css 的分区字号缩放靠 [style*="font-size: Npx"] 属性选择器匹配行内字面量，
 //     搬进 CSS 类会让整个 main 区域字号缩放静默失效（无报错、难归因）。

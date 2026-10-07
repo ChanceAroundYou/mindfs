@@ -7,7 +7,6 @@ import type { WorkspaceBoardFilter } from "../../app/appStorage";
 import type { WorkspaceBoard, WorkspaceTaskItem } from "../../app/useWorkspaceBoard";
 import type { TaskCardAction, TaskSessionErrorDialog } from "../TaskCardRows";
 import type { SessionItem } from "../../app/appSession";
-import { WorkspaceAttentionBar } from "./WorkspaceAttentionBar";
 import { WorkspaceProjectRow } from "./WorkspaceProjectRow";
 import { WorkspaceQuickLaunch } from "./WorkspaceQuickLaunch";
 import type { TaskTemplate } from "../../services/tasks";
@@ -110,8 +109,6 @@ export function WorkspaceBoard({
           </button>
         </div>
       </div>
-
-      <WorkspaceAttentionBar items={board.blockedAll} onOpenTask={onOpenTask} isMobile={isMobile} getNodeColor={getNodeColor} />
 
       {board.unreachableNodes.length > 0 ? (
         <div
