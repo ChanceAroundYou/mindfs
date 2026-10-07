@@ -59,10 +59,6 @@ type SessionPendingState struct {
 	NextEventSeq    uint64
 	Summary         string
 	UpdatedAt       time.Time
-	// LastEventAt 记录最后一次收到事件的时间，用于超时兜底：
-	// 如果 LastEventAt 超过 30s 没有更新，说明会话已结束但 ClearSessionPending 没跑，
-	// 此时 PendingSessionSnapshot 应该返回 Active=false，让前端轮询能救回来。
-	LastEventAt time.Time
 }
 
 type ClientStreamStatus string
@@ -91,7 +87,6 @@ type PendingSessionSnapshot struct {
 	SessionTitle string
 	Summary      string
 	UpdatedAt    time.Time
-	Active       bool
 }
 
 type replayStep struct {
@@ -675,6 +670,12 @@ func (h *StreamHub) SetPendingReply(rootID, sessionKey, sessionTitle string) {
 	}
 }
 
+// PendingSessionSnapshot 是 BroadcastSessionDone 给 Web Push 通知用的会话快照。
+//
+// 这里**没有**「LastEventAt 超过 N 秒就报不活跃」的判据：真在跑的会话会长时间没有
+// 事件（服务端不转发 SDK 的 keep_alive，唯一的周期事件只覆盖 tool 执行），按静默
+// 判「已结束」是错的。快照只反映 pending 表当下状态 —— 条目在回合结束时被
+// ClearSessionPending 删掉，快照自然就空了。
 func (h *StreamHub) PendingSessionSnapshot(sessionKey string) PendingSessionSnapshot {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
@@ -682,26 +683,11 @@ func (h *StreamHub) PendingSessionSnapshot(sessionKey string) PendingSessionSnap
 	if state == nil {
 		return PendingSessionSnapshot{}
 	}
-	// 超时兜底：如果 LastEventAt 超过 30s 没有更新，说明会话已结束但
-	// ClearSessionPending 没跑（例如 BroadcastSessionDone 卡住），
-	// 此时返回 Active=false，让前端轮询能救回来。
-	// 30s 是经验值：正常回合的事件间隔是毫秒级，30s 足够长以覆盖慢网络。
-	const staleTimeout = 30 * time.Second
-	if state.Active && !state.LastEventAt.IsZero() && time.Since(state.LastEventAt) > staleTimeout {
-		return PendingSessionSnapshot{
-			RootID:       state.RootID,
-			SessionTitle: state.SessionTitle,
-			Summary:      state.Summary,
-			UpdatedAt:    state.UpdatedAt,
-			Active:       false,
-		}
-	}
 	return PendingSessionSnapshot{
 		RootID:       state.RootID,
 		SessionTitle: state.SessionTitle,
 		Summary:      state.Summary,
 		UpdatedAt:    state.UpdatedAt,
-		Active:       state.Active,
 	}
 }
 
@@ -711,9 +697,7 @@ func (h *StreamHub) AppendReplyEvent(sessionKey string, event StreamEvent) Strea
 	state := h.ensurePendingSessionLocked(sessionKey)
 	state.NextEventSeq++
 	event.EventCursor = formatEventCursor(state.BaseExchangeSeq, state.NextEventSeq)
-	now := time.Now().UTC()
-	state.UpdatedAt = now
-	state.LastEventAt = now
+	state.UpdatedAt = time.Now().UTC()
 	if coalesceUserShellStreamEvent(state, event) {
 		return event
 	}

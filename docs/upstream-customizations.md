@@ -1497,26 +1497,31 @@
 
 ---
 
-### G-AY pending 信号三层兜底（2026-10-08）
+### G-AY pending 信号兜底（2026-10-08 建，同日修订：删掉第②③层）
 
 - 来源：`server/internal/api/stream_hub.go`、`server/internal/api/appcontext.go`、
-  `web/src/App.tsx`、`web/src/app/useRealtimeEvents.ts`、
-  `web/tests/e2e-pending-signal.test.mjs`。
+  `web/src/App.tsx`、`web/tests/e2e-pending-signal.test.mjs`。
 - 边界：**「会话完成后 pending 信号必须消失」这一行为的实现方式**。
-  三层兜底共享同一组文件，合上游时要么全留要么全弃。
 - 可见症状（没有它会怎样）：
   对话完成后仍显示「正在生成」+ 停止键，用户以为还在跑，实际早已完成。
   根因：`BroadcastSessionDone` 中 `ClearSessionPending` 自旋无超时，replay 客户端排不空时
-  卡住，`session.done` 广播永远发不出去，前端 `pendingSessions[key].Active` 永远 true。
+  卡住，`session.done` 广播永远发不出去，前端 pending 永远 true。
 - 为什么必须保留：
-  三层兜底，每层独立生效：
-  ① 服务端 `ClearSessionPending` 加 2 秒超时 + 广播挪到清之前（必修）；
-  ② 服务端 `SessionPendingState` 添加 `LastEventAt` 字段 + `PendingSessionSnapshot` 30 秒超时检查（兜底）；
-  ③ 前端 `lastStreamEventAtRef` 跟踪 + 轮询连续 3 周期（15 秒）无事件则本地降级（兜底）。
-  合上游时若退回「`ClearSessionPending` 无超时自旋」或「pending 状态纯派生自服务端」，就又会卡住。
+  只剩第①层（必修）：服务端 `ClearSessionPending` 加 2 秒超时 + 广播挪到清之前。
+  合上游时若退回「`ClearSessionPending` 无超时自旋」，就又会卡住。
+- **第②③层已于 2026-10-08 删除**（同日引入同日删）：
+  - 第②层（服务端 `LastEventAt` 字段 + `PendingSessionSnapshot` 30 秒超时判据）是
+    **死代码** —— `Active` 字段没有任何消费方（唯一消费者 `notifySessionDone` 不读它），
+    删前删后行为完全一致。
+  - 第③层（前端 `lastStreamEventAtRef` + 轮询连续 3 周期 15 秒无事件则本地降级）是
+    **真 bug**：真在跑的会话会长时间没有 stream 事件（服务端不转发 SDK 的 `keep_alive`
+    心跳，唯一的周期事件 `ToolProgressMessage` 只覆盖 tool 执行，思考 / tool 间隙 / 起始
+    间隙都没有事件），按静默判「已结束」会「明明在跑却灭灯」、亮灯时长随事件节奏漂移。
+  - 第③层想兜的「WS 断连」场景，**5s 轮询已经兜住**（服务端 `ClearSessionPending` 在
+    回合结束时删条目，下一轮轮询就灭灯），所以它纯属多余且有害。
 - 针对性测试：
   - `web/tests/e2e-pending-signal.test.mjs` — 钉住「agent 行落盘后 30s 内 pending 信号消失」、
-    「WS 断连 20s 后 pending 信号收敛」。
+    「WS 断连 20s 后 pending 信号收敛」（后者靠轮询，不靠静默降级）。
   - `web/tests/pending-single-source.test.mjs` — 钉住「pending 纯派生自 `multiProjectPendingByKey`」。
 
 ---
