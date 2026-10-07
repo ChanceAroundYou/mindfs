@@ -49,6 +49,10 @@ const finishStagePromptTemplate = `这一段是 worktree 收尾：把本 worktre
    「git -C <主checkout路径> merge --no-ff <本分支名>」。
    合并提交信息里用单引号包住分支名，避免和命令行的双引号打架。
 
+   先跑一次「git -C <主checkout路径> merge-base --is-ancestor <本分支名> main」：
+   返回 0 就说明改动全在主干里了（服务端多半已经替你合过），**跳过合并**直接进
+   第 5 步 —— 再合一次只会多出一个 "Already up to date" 的空提交。
+
 5. 收尾阶段到此为止：**不要**自己执行「git worktree remove」、「git worktree prune」
    或「git branch -d / -D」。拆目录、删分支、把这个会话搬回主 checkout 由 mindfs
    服务端接着做 —— 你去做会和服务端抢同一个目录。
@@ -56,7 +60,11 @@ const finishStagePromptTemplate = `这一段是 worktree 收尾：把本 worktre
 遇到下列情况**停下来问用户**，不要自己拍板：
 - 合并撞上冲突（CONFLICT / MERGE_HEAD 仍存在）：说明哪些文件冲突、你倾向怎么合，
   然后用受阻标记收尾。用户会在 mindfs 里看到并处理。
-- 主 checkout 有未提交改动：合并会覆盖它，先报给用户。
+- 主 checkout 有未提交改动，**而且和本分支要合的东西有重叠**：合并会覆盖它，
+  先报给用户。
+  不重叠时（典型：别人留下的未跟踪文件，分支根本不碰那些路径）**照常合** ——
+  git 自己会拦下真会覆盖的情况（"untracked working tree files would be
+  overwritten by merge"），那时再按上面那条冲突处理。
 - 不确定某个改动该不该进仓库、或者提交信息拿不准：问，不要猜。
 
 顺利做完（或者本来就没什么可提交、且已经在主干里了）之后，报告你实际做了什么

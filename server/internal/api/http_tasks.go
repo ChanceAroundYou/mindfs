@@ -856,6 +856,7 @@ func (h *HTTPHandler) handleKanbanTaskBeginFinish(w http.ResponseWriter, r *http
 	//
 	//	① 执行体在动            → session_running（正常等待，不是错）
 	//	② 机械清场能直接做完    → teardown（**机械优先**：不等 agent）
+	//	②.5 机械清场没做成       → 落回 ③/④，交给 agent（不报错）
 	//	③ 已有收尾段            → nudged（不追加第二段）
 	//	④ 有 agent 段可继承     → stage_added（agent 先 commit + merge）
 	//	④.5 没有 agent 段        → teardown（没有 agent 可继承）
@@ -863,6 +864,11 @@ func (h *HTTPHandler) handleKanbanTaskBeginFinish(w http.ResponseWriter, r *http
 	// ② 的判定是**只读**的（PlanFinishWorktree）：worktree 里没有未提交的改动、
 	// 合并不会冲突，就直接把机械清场做掉。以前只要有 agent 段就一定先跑 agent，
 	// 于是「agent 早把活合完了、只差机械清场」的任务要白等一轮、还多一个空提交。
+	//
+	// ②.5 是「两个阶段整合」的兜底：机械那条路是**加速**，不是**门槛**。判定说能做
+	// 但执行时被挡下（主 checkout 有改动、撞冲突、worktree 里还有没提交的活）时，
+	// 不能把失败直接抛给用户 —— 那等于把整合退化成「机械不成 = 失败」，而 agent
+	// 明明还能 commit、能解冲突、能判断哪些改动该留。所以这里落回 ③/④。
 
 	// ① 执行体在动。收尾要拆掉它的 cwd，必须等它停 —— 但这是正常等待，
 	// 不是失败，所以回 200 而不是 409：前端据此只提示一句，不渲染成红色报错。
@@ -880,9 +886,18 @@ func (h *HTTPHandler) handleKanbanTaskBeginFinish(w http.ResponseWriter, r *http
 	if planErr != nil {
 		plan = kanban.FinishPlan{Mechanical: false, Reason: "收尾判定失败：" + planErr.Error()}
 	}
+	// teardownTried 记住「机械清场已经试过一次」，免得 ④.5 再试第二遍。
+	teardownTried := false
+	var teardownReport FinishTeardownReport
 	if plan.Mechanical {
-		h.teardownFinishWorktree(w, rootID, taskID, plan)
-		return
+		teardownTried = true
+		done, report := h.teardownFinishWorktree(w, rootID, taskID, plan)
+		if done {
+			return
+		}
+		// ②.5 没做成 → 换一条路，不报错。
+		teardownReport = report
+		plan = agentFallbackPlan(report)
 	}
 
 	// ③ 收尾段已经在流水里但还没跑成 → 重跑它。不追加第二段：那会堆出一串收尾段。
@@ -906,14 +921,21 @@ func (h *HTTPHandler) handleKanbanTaskBeginFinish(w http.ResponseWriter, r *http
 	}
 
 	// ④ 有 agent 段可继承 → 追加收尾段，让 agent 自己 commit + merge。
-	// ④.5 没有 agent 段 → 没有 agent 可继承，直接机械清场（服务端判定说能做）。
+	// ④.5 没有 agent 段 → 没有 agent 可继承，只能靠机械清场。
 	hasAgent, hasAgentErr := svc.TaskHasAgentStage(ctx, rootID, taskID)
 	if hasAgentErr != nil {
 		respondError(w, http.StatusBadRequest, hasAgentErr)
 		return
 	}
 	if !hasAgent {
-		h.teardownFinishWorktree(w, rootID, taskID, plan)
+		// ② 已经试过一遍就不再试：重复跑清场会把同一段 git 操作做两次。
+		if teardownTried {
+			h.respondFinishTeardownFailure(w, plan, teardownReport)
+			return
+		}
+		if done, report := h.teardownFinishWorktree(w, rootID, taskID, plan); !done {
+			h.respondFinishTeardownFailure(w, plan, report)
+		}
 		return
 	}
 	detail, err := svc.BeginFinishWorktree(ctx, kanban.BeginFinishInput{
@@ -924,6 +946,21 @@ func (h *HTTPHandler) handleKanbanTaskBeginFinish(w http.ResponseWriter, r *http
 	// —— 正在跑、已在收尾、worktree 目录已失效。请求本身是合法的，是**状态**不答应，
 	// 和 finish-worktree 把冲突也归 409 是同一个口径。
 	if err != nil {
+		// agent 这条路也走不通 —— 这时才把**机械清场的原始失败**交出去，它才是
+		// 用户能动手处理的那个原因；BeginFinishWorktree 的报错多半只是它的后果。
+		if teardownTried {
+			respondJSON(w, http.StatusConflict, map[string]any{
+				"error":          teardownReport.Error,
+				"plan":           plan,
+				"report":         teardownReport,
+				"conflict_files": teardownReport.ConflictFiles,
+				"output":         teardownReport.Output,
+				"dirty_files":    teardownReport.DirtyFiles,
+				"user_changes":   teardownReport.UserChanges,
+				"agent_error":    err.Error(),
+			})
+			return
+		}
 		respondJSON(w, http.StatusConflict, map[string]any{"error": err.Error(), "plan": plan})
 		return
 	}
@@ -935,29 +972,72 @@ func (h *HTTPHandler) handleKanbanTaskBeginFinish(w http.ResponseWriter, r *http
 	})
 }
 
-// teardownFinishWorktree 当场做机械清场并把结论回给调用方。
+// teardownFinishWorktree 当场做机械清场。
 //
-// 成功回 200 + report；失败回 409 + error/conflict_files/dirty_files/user_changes。
-// 失败也要回 report：合并成功但后面某步失败时，已经落地的进度得一起回去，
-// 否则用户以为全白做了。
-func (h *HTTPHandler) teardownFinishWorktree(w http.ResponseWriter, rootID, taskID string, plan kanban.FinishPlan) {
+// 做成了：广播 task.finish_teardown + 回 200，返回 done=true。
+// 没做成：**什么都不写、什么都不播**，返回 done=false 和那份 report —— 调用方要
+// 把这次失败落回 agent 那条路（见 agentFallbackPlan）。机械清场是「两个阶段整合」
+// 里的加速段，不是门槛：它没成，结论不是「收尾失败」，而是「让 agent 去做」。
+// 在这里就把 409 抛出去的话，用户拿到的是一句他无从下手的报错，而机器其实还有
+// 一条路没走（2026-10-08 用户实测：「不应该报错，而是应该把 comment 提交给 agent，
+// 进入 agent 合并流程」）。
+func (h *HTTPHandler) teardownFinishWorktree(w http.ResponseWriter, rootID, taskID string, plan kanban.FinishPlan) (bool, FinishTeardownReport) {
 	report := h.AppContext.FinishWorktreeAndRepoint(rootID, taskID)
+	if report.Error != "" {
+		return false, report
+	}
 	h.AppContext.BroadcastTaskFinishTeardown(rootID, report)
-	payload := map[string]any{
+	respondJSON(w, http.StatusOK, map[string]any{
 		"action": "teardown",
 		"plan":   plan,
 		"report": report,
+	})
+	return true, report
+}
+
+// respondFinishTeardownFailure 在**没有 agent 可接手**时，把清场失败如实回给调用方。
+//
+// 走到这里说明两条路都断了：机械清场做不了，而且任务里没有 agent 段可供收尾段继承
+// （BeginFinishWorktree 会拒绝「没有 agent 阶段」）。这时只能让人来决策，所以回
+// 409 + 结构化清单 —— 清单**不进句子**，它是 UI 列表渲染的输入。
+// 失败**不广播**：这次调用有 HTTP 响应可带结论，WS 那条通道留给异步路径
+// （收尾段跑完后的钩子），否则点击者会连着同一个 hub 收到两遍。
+func (h *HTTPHandler) respondFinishTeardownFailure(w http.ResponseWriter, plan kanban.FinishPlan, report FinishTeardownReport) {
+	respondJSON(w, http.StatusConflict, map[string]any{
+		"action":         "teardown",
+		"plan":           plan,
+		"report":         report,
+		"error":          report.Error,
+		"conflict_files": report.ConflictFiles,
+		"output":         report.Output,
+		"dirty_files":    report.DirtyFiles,
+		"user_changes":   report.UserChanges,
+	})
+}
+
+// agentFallbackPlan 把一次失败的机械清场翻译成「交给 agent」的判定。
+//
+// 这是「agent + 机械合并两个阶段整合」的关键一步：机械那条路能省掉一轮 agent，
+// 省不掉的时候就得把活交出去 —— agent 能 commit、能解冲突、能判断哪些改动该留。
+// 只把原因收进一句人话 + 一份文件清单：前端会把它们拼成
+// 「收尾已发起：agent 正在提交并合并 — 涉及文件：… — <原因>」。
+func agentFallbackPlan(report FinishTeardownReport) kanban.FinishPlan {
+	// 三个清单在实现里互斥（一次清场只会因为一个原因停），所以取第一个非空的。
+	// 原因写在这里而不是直接搬 report.Error：那些句子是**对用户说的**
+	// （「先提交或暂存后再收尾」），拼进「已交给 agent」里会自相矛盾。
+	cause := strings.TrimSpace(report.Error)
+	var files []string
+	switch {
+	case len(report.ConflictFiles) > 0:
+		cause, files = "合并会冲突", report.ConflictFiles
+	case len(report.DirtyFiles) > 0:
+		cause, files = "主 checkout 有未提交改动", report.DirtyFiles
+	case len(report.UserChanges) > 0:
+		cause, files = "worktree 里还有没提交的改动", report.UserChanges
 	}
-	if report.Error != "" {
-		// 清场失败（典型：worktree 里还有没提交的活、或合并撞冲突）得让用户看见，
-		// 回 200 会让前端以为收尾完成了。冲突文件一并带上，前端能列出可点的清单。
-		payload["error"] = report.Error
-		payload["conflict_files"] = report.ConflictFiles
-		payload["output"] = report.Output
-		payload["dirty_files"] = report.DirtyFiles
-		payload["user_changes"] = report.UserChanges
-		respondJSON(w, http.StatusConflict, payload)
-		return
+	return kanban.FinishPlan{
+		Mechanical: false,
+		Reason:     "机械合并没能直接做完（" + cause + "）",
+		Files:      files,
 	}
-	respondJSON(w, http.StatusOK, payload)
 }

@@ -71,11 +71,18 @@ export type FinishPlan = {
 export class FinishWorktreeConflict extends Error {
   readonly conflictFiles: string[];
   readonly output: string;
-  constructor(message: string, conflictFiles: string[] = [], output = "") {
+  /**
+   * 补充说明（服务端 `agent_error`）：机械清场失败、想交给 agent 而 agent 那条路
+   * 也走不通时，服务端会带上原因。没有它用户只会看到一句报错，不知道「为什么
+   * 不让 agent 处理」。
+   */
+  readonly note?: string;
+  constructor(message: string, conflictFiles: string[] = [], output = "", note?: string) {
     super(message);
     this.name = "FinishWorktreeConflict";
     this.conflictFiles = conflictFiles;
     this.output = output;
+    this.note = note;
   }
 }
 
@@ -90,10 +97,13 @@ export class FinishWorktreeConflict extends Error {
  */
 export class FinishWorktreeDirty extends Error {
   readonly files: string[];
-  constructor(message: string, files: string[] = []) {
+  /** 补充说明（服务端 `agent_error`），见 FinishWorktreeConflict.note。 */
+  readonly note?: string;
+  constructor(message: string, files: string[] = [], note?: string) {
     super(message);
     this.name = "FinishWorktreeDirty";
     this.files = files;
+    this.note = note;
   }
 }
 
@@ -108,10 +118,13 @@ export class FinishWorktreeDirty extends Error {
  */
 export class FinishWorktreeUserChanges extends Error {
   readonly files: string[];
-  constructor(message: string, files: string[] = []) {
+  /** 补充说明（服务端 `agent_error`），见 FinishWorktreeConflict.note。 */
+  readonly note?: string;
+  constructor(message: string, files: string[] = [], note?: string) {
     super(message);
     this.name = "FinishWorktreeUserChanges";
     this.files = files;
+    this.note = note;
   }
 }
 
@@ -145,15 +158,15 @@ export async function finishTaskWorktree(
     if (error instanceof APIError && error.status === 409) {
       const conflictFiles = Array.isArray(error.payload?.conflict_files) ? error.payload.conflict_files.map(String) : [];
       if (conflictFiles.length > 0) {
-        throw new FinishWorktreeConflict(error.message, conflictFiles, String(error.payload?.output || ""));
+        throw new FinishWorktreeConflict(error.message, conflictFiles, String(error.payload?.output || ""), agentNote(error));
       }
       const dirtyFiles = Array.isArray(error.payload?.dirty_files) ? error.payload.dirty_files.map(String) : [];
       if (dirtyFiles.length > 0) {
-        throw new FinishWorktreeDirty(error.message, dirtyFiles);
+        throw new FinishWorktreeDirty(error.message, dirtyFiles, agentNote(error));
       }
       const userChanges = Array.isArray(error.payload?.user_changes) ? error.payload.user_changes.map(String) : [];
       if (userChanges.length > 0) {
-        throw new FinishWorktreeUserChanges(error.message, userChanges);
+        throw new FinishWorktreeUserChanges(error.message, userChanges, agentNote(error));
       }
     }
     throw error;
@@ -212,6 +225,17 @@ export type BeginFinishResponse = {
  * conflict_files / dirty_files / user_changes。不还原的话调用方只能拿到一句
  * APIError，文件清单整个丢掉 —— 而「清单进弹窗、句子保持短」正是这一轮的要求。
  */
+/**
+ * 取服务端 `agent_error`（机械清场失败、agent 那条路也走不通时的原因）。
+ *
+ * 只在「两条路都断」时才有值 —— 那时用户看到的是一句他无从下手的报错，而
+ * 「为什么不让 agent 处理」正是他最想知道的答案。
+ */
+function agentNote(error: APIError): string | undefined {
+  const note = error.payload?.agent_error;
+  return typeof note === "string" && note.trim() ? note : undefined;
+}
+
 export async function beginTaskFinishWorktree(rootId: string, taskId: string, nodeId?: string): Promise<BeginFinishResponse> {
   try {
     return await protectedJSON<BeginFinishResponse>(appURL(`/api/tasks/${encodeURIComponent(taskId)}/begin-finish`, undefined, nodeId), {
@@ -223,15 +247,15 @@ export async function beginTaskFinishWorktree(rootId: string, taskId: string, no
     if (error instanceof APIError && error.status === 409) {
       const conflictFiles = Array.isArray(error.payload?.conflict_files) ? error.payload.conflict_files.map(String) : [];
       if (conflictFiles.length > 0) {
-        throw new FinishWorktreeConflict(error.message, conflictFiles, String(error.payload?.output || ""));
+        throw new FinishWorktreeConflict(error.message, conflictFiles, String(error.payload?.output || ""), agentNote(error));
       }
       const dirtyFiles = Array.isArray(error.payload?.dirty_files) ? error.payload.dirty_files.map(String) : [];
       if (dirtyFiles.length > 0) {
-        throw new FinishWorktreeDirty(error.message, dirtyFiles);
+        throw new FinishWorktreeDirty(error.message, dirtyFiles, agentNote(error));
       }
       const userChanges = Array.isArray(error.payload?.user_changes) ? error.payload.user_changes.map(String) : [];
       if (userChanges.length > 0) {
-        throw new FinishWorktreeUserChanges(error.message, userChanges);
+        throw new FinishWorktreeUserChanges(error.message, userChanges, agentNote(error));
       }
     }
     throw error;

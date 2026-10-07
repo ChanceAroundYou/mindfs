@@ -492,10 +492,20 @@ func TestFinishTaskWorktreeStopsWhileMainCheckoutIsDirty(t *testing.T) {
 	svc, root, mainDir, _ := finishFixture(t, "from worktree\n")
 	taskID := mustTaskID(t, svc, root.ID)
 
-	// 合并在主 checkout 有未提交改动时失败 —— 收尾必须停在这里。
-	if err := os.WriteFile(filepath.Join(mainDir, "uncommitted.txt"), []byte("wip\n"), 0o644); err != nil {
+	// 主 checkout 里一个**已跟踪**文件有未提交改动时，合并会顶掉它 —— 收尾必须停。
+	// 用已跟踪文件而不是新写一个未跟踪文件：后者不再挡合并（见
+	// TestFinishTaskWorktreeIgnoresUntrackedFilesInTheMainCheckout），
+	// 拿它当「脏」的样本会让这条测试永远绿、却什么都没守住。
+	scratch := filepath.Join(mainDir, "uncommitted.txt")
+	if err := os.WriteFile(scratch, []byte("seed\n"), 0o644); err != nil {
 		t.Fatalf("seed dirty: %v", err)
 	}
+	gitForTest(t, mainDir, "add", "uncommitted.txt")
+	gitForTest(t, mainDir, "commit", "-qm", "seed tracked file")
+	if err := os.WriteFile(scratch, []byte("wip\n"), 0o644); err != nil {
+		t.Fatalf("modify dirty: %v", err)
+	}
+
 	_, err := svc.FinishTaskWorktree(ctx, FinishWorktreeInput{RootID: root.ID, TaskID: taskID, DeleteBranch: true})
 	if err == nil {
 		t.Fatal("finish must stop while the main checkout is dirty")
@@ -508,6 +518,49 @@ func TestFinishTaskWorktreeStopsWhileMainCheckoutIsDirty(t *testing.T) {
 	var conflict *FinishWorktreeConflict
 	if errors.As(err, &conflict) {
 		t.Fatalf("a dirty main checkout must not be reported as a conflict: %v", err)
+	}
+	// 报错必须点名那个文件，且清单**不进句子**（句子是给人读的，清单给 UI 列表渲染）。
+	var dirty *FinishWorktreeDirty
+	if !errors.As(err, &dirty) {
+		t.Fatalf("want *FinishWorktreeDirty, got %T: %v", err, err)
+	}
+	if len(dirty.Files) != 1 || dirty.Files[0] != "uncommitted.txt" {
+		t.Fatalf("dirty files = %v, want [uncommitted.txt]", dirty.Files)
+	}
+	if strings.Contains(dirty.Error(), "uncommitted.txt") {
+		t.Fatalf("the file list leaked into the sentence: %q", dirty.Error())
+	}
+}
+
+// 主 checkout 里的**未跟踪**文件不该挡住收尾 —— 2026-10-08 用户实测：task-37 的收尾
+// 被两个 e2e 探针脚本卡死在「主 checkout 有未提交改动」，而它们一个字节都不会丢。
+//
+// 真会覆盖同名未跟踪文件的情况由 git 自己拦（"untracked working tree files would
+// be overwritten by merge"），那条线由 gitview 的
+// TestMergeBranchLetsGitRefuseAnUntrackedCollision 钉住。
+func TestFinishTaskWorktreeIgnoresUntrackedFilesInTheMainCheckout(t *testing.T) {
+	ctx := context.Background()
+	svc, root, mainDir, _ := finishFixture(t, "from worktree\n")
+	taskID := mustTaskID(t, svc, root.ID)
+	probe := filepath.Join(mainDir, "e2e-pending-probe.mjs")
+	if err := os.WriteFile(probe, []byte("// probe\n"), 0o600); err != nil {
+		t.Fatalf("seed probe: %v", err)
+	}
+
+	result, err := svc.FinishTaskWorktree(ctx, FinishWorktreeInput{RootID: root.ID, TaskID: taskID, DeleteBranch: true})
+	if err != nil {
+		t.Fatalf("an untracked file must not block the finish: %v", err)
+	}
+	if !result.Merged {
+		t.Fatalf("Merged = false, want the branch merged")
+	}
+	// 别人的文件必须一字不少地还在。
+	data, err := os.ReadFile(probe)
+	if err != nil {
+		t.Fatalf("the probe must survive: %v", err)
+	}
+	if string(data) != "// probe\n" {
+		t.Fatalf("the probe was touched: %q", data)
 	}
 }
 
