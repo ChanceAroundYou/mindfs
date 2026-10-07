@@ -60,7 +60,13 @@ if [[ -n "$MESSAGE" ]]; then
     # 只提交本仓库跟踪的源码，不碰 .mindfs/ 等运行期数据
     # agents.json 是仓库根的源码文件（agent 目录与安装命令都在这），漏了它会让
     # 只改它的提交变成空提交，git commit 非零退出被 set -e 当场打死。
-    git add -A -- web server Makefile task_template.json scripts .claude agents.json docs 2>/dev/null || git add -A
+    #
+    # 根级的**文档**要逐个点名（`docs/` 只覆盖 docs/ 目录，够不到仓库根）：
+    # 漏了 CLAUDE.md 时它会被静默留在工作区，版本号因此挂上 `-dirty`（2026-10-07 实测）。
+    # release-notes.md 更要留神 —— 历史上整段条目被上游合并冲掉过。
+    # 刻意不含 config.json：那份会被本机改 role/端口，提交等于把本地运行配置推上去。
+    git add -A -- web server Makefile task_template.json scripts .claude agents.json docs \
+      CLAUDE.md README.md README.zh.md release-notes.md 2>/dev/null || git add -A
     git commit -m "$MESSAGE"
     ok "已提交 $(git rev-parse --short HEAD)"
   fi

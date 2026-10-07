@@ -1061,10 +1061,15 @@ groups:
     kind: deploy
     symptom: |
       部署脚本按上游的目录布局删掉整目录的 web 哈希资源，导致过期标签页白屏；
-      两侧（本机 system 单元 / WSL user 单元）编译安装与重启不一致。
+      两侧（本机 system 单元 / WSL user 单元）编译安装与重启不一致；
+      改了根级文档（CLAUDE.md 等）跑完 ship 却没被提交 —— add 白名单够不到仓库根，
+      改动静默留在工作区，版本号挂上 -dirty。
     why: |
-      scripts/deploy-all.sh 一条命令完成门禁→提交→两侧编译安装→WSL 重建重启→两端对账；
+      scripts/deploy-all.sh 一条命令完成门禁→提交→本机编译安装→推产物到 WSL→WSL 重启→两端对账；
       ship / upstream-merge skill 固化流程。上游没有这层，回退会让双机部署靠手搓。
+      提交路径是**白名单**（防 .mindfs/ 运行期数据被卷进提交），所以根级文档要逐个点名：
+      CLAUDE.md / README.md / README.zh.md / release-notes.md 在内，config.json 刻意不在
+      （会被本机改 role/端口，提交等于推本地运行配置）。`|| git add -A` 兜底恒不触发。
     files:
       - Makefile
       - scripts/

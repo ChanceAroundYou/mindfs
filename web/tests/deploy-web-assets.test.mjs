@@ -6,6 +6,7 @@
 //   2 按龄清理的 TTL 两处不一致 → 改了一处忘了另一处，要么删太快要么永远不删
 //   3 WSL 端重新编译/拉源码  → 两边版本号漂移（2026-10-06 起 WSL 只收产物）
 //   4 WSL 端收 web/dist      → 纯 worker 不服务前端，多推的几 MB 是纯负担（2026-10-07 起不再推）
+//   5 add 白名单漏根级文档   → 改了 CLAUDE.md 跑 ship 后没被提交，工作区留脏、版本号挂 -dirty
 import assert from "node:assert";
 import fs from "node:fs";
 import path from "node:path";
@@ -61,4 +62,14 @@ assert.ok(remoteBlock.includes("~/.local/bin/mindfs --version"), "远端脚本�
 // 版本号对账：推的必须是刚构建的同一个二进制，两边版本逐字相同
 assert.ok(/\[\[ "\$REMOTE_VERSION" == "\$VERSION" \]\]/.test(deploy), "deploy-all.sh 应逐字对账两端版本号");
 
-console.log("✓ 部署脚本不变量成立：无 rm -rf web、TTL 两处一致(" + ttl + "d)、WSL 只收产物且不收 dist");
+// 4) 提交白名单必须覆盖根级文档。`docs/` 只够得到 docs/ 目录，够不到仓库根 ——
+//    漏了 CLAUDE.md 时改动静默留在工作区，版本号挂上 `-dirty`（2026-10-07 实测）。
+//    config.json 刻意不在名单里：它会被本机改 role/端口，提交等于推本地运行配置。
+const addCmd = deploy.match(/git add -A --[\s\S]*?2>\/dev\/null/)?.[0] ?? "";
+assert.ok(addCmd, "找不到 deploy-all.sh 的 git add 白名单");
+for (const f of ["CLAUDE.md", "README.md", "README.zh.md", "release-notes.md"]) {
+  assert.ok(addCmd.includes(f), `git add 白名单必须含根级文档 ${f}（docs/ 够不到仓库根）`);
+}
+assert.ok(!addCmd.includes("config.json"), "config.json 不该进白名单（会被本机改 role，提交等于推本地配置）");
+
+console.log("✓ 部署脚本不变量成立：无 rm -rf web、TTL 两处一致(" + ttl + "d)、WSL 只收产物且不收 dist、add 白名单含根级文档");

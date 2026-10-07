@@ -608,8 +608,23 @@
 
 - 来源：`scripts/deploy-all.sh`、`scripts/{build-all,install,migrate-control-plane-to-primary}.sh`、
   `Makefile`、`.claude/skills/{ship,upstream-merge}`。
-- 边界：`ship` 一条命令完成门禁→提交推送→两侧编译安装→WSL 重建重启→两端对账。
+- 边界：`ship` 一条命令完成门禁→提交推送→本机编译安装→推送产物到 WSL→WSL 重启→对账。
   `73db73e` 修的是「不再整目录删除 web 哈希资源」。合上游后 `Makefile` 的本地 target 要保住。
+  **WSL 是纯 worker，只收二进制与两个 json，不收 `web/dist`**（2026-10-07）：worker 按设计不服务
+  静态资源（`GET /` 403），前端只装本机；曾推的那份是留给「角色翻成 control」的保险，已不成立。
+- 可见症状（没有它会怎样）：
+  - **改了根级文档跑完 ship 却没被提交**：`git add -A --` 的路径是**白名单**，
+    `docs/` 只够得到 `docs/` 目录、够不到仓库根。改了 `CLAUDE.md` 再 `deploy-all.sh -m "..."`，
+    它会被静默留在工作区，版本号因此挂上 `-dirty`（`git describe --dirty`，2026-10-07 实测）。
+    白名单里的 `|| git add -A` 兜底**实际永不触发**：`git add -A -- <存在的路径>` 恒成功。
+  - **部署脚本按上游布局整目录删 web 哈希资源**：会让部署前就打开的页面懒加载 404。
+- 为什么必须保留：白名单是**故意**的（防 `.mindfs/` 运行期数据被卷进提交），
+  所以修法是「把该收的根级文档逐个点名」，不是换成 `git add -A`。
+  根级文档中 `CLAUDE.md` / `README.md` / `README.zh.md` / `release-notes.md` 必须在内；
+  `config.json` **刻意不在**——它会被本机改 `role`/端口，提交等于把本地运行配置推上去。
+- 针对性测试：
+  - `web/tests/deploy-web-assets.test.mjs` — 无 `rm -rf web`、TTL 两处一致、WSL 只收产物不收 `dist`、
+    add 白名单含根级文档且不含 `config.json`。
 
 ### G-AM 插件注册表与视图目录
 
