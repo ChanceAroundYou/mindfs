@@ -50,6 +50,16 @@ export const MODULES = {
     "src/app/usePluginHandlers.ts",
     "src/app/useFileRefresh.ts",
     "src/app/useRelatedFileDiff.ts",
+    "src/components/app/TaskSessionErrorDialog.tsx",
+    "src/components/app/TaskDetailPanelGate.tsx",
+    "src/components/app/E2eePrompt.tsx",
+    "src/components/app/OnboardingGate.tsx",
+    "src/components/app/TaskInlineEditPanel.tsx",
+    "src/components/app/SessionSheet.tsx",
+    "src/components/app/AppActionBar.tsx",
+    "src/components/app/SessionPane.tsx",
+    "src/components/app/FileTreePanel.tsx",
+    "src/app/renderRootSlashCommandResult.tsx",
   ],
 
   // P6 拆分：FileTree.tsx → + icons.tsx（图标子组件）
