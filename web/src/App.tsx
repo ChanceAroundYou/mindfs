@@ -98,6 +98,7 @@ import { collectSessionSubtreeKeys, type SessionTreeItem } from "./services/sess
 import { currentUser } from "./services/authGate";
 // 直接导入标准组件
 import { AppShell } from "./layout/AppShell";
+import { ViewHeader } from "./layout/ViewHeader";
 import { ModeIcon } from "./components/ModeIcon";
 import {
   FileTree,
@@ -9023,36 +9024,45 @@ export function App({ onGoHome }: AppProps) {
   // 门控用 currentMainContentView 而不是 mainView：前者已经把 onboarding 覆盖
   // 算进去了（引导要看板时 mainView 可能仍是 files）。
   if (mainView === "chat" && !selectedSession) {
-    // chat 模式但没有选中会话：给一个明确空态，而不是把看板/文件列表塞回来（否则看起来像「自己跳走了」）
+    // chat 模式但没有选中会话：给一个明确空态，而不是把看板/文件列表塞回来（否则看起来像「自己跳走了」）。
+    // 空态也必须带 ViewHeader：移动端侧栏切换按钮只挂在各视图 header 上，没有 header
+    // 就一个按钮都没有，等于卡死。桌面端因此多一条 36px 空 header，与选中会话时一致。
     workspaceView = (
-      <div
-        style={{
-          flex: 1,
-          minHeight: 0,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          padding: 24,
-          color: "var(--text-secondary)",
-          fontSize: 13,
-        }}
-      >
-        {t("view.chatEmpty")}
+      <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+        <ViewHeader />
+        <div
+          style={{
+            flex: 1,
+            minHeight: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 24,
+            color: "var(--text-secondary)",
+            fontSize: 13,
+          }}
+        >
+          {t("view.chatEmpty")}
+        </div>
       </div>
     );
   } else if (activePendingPluginTrust) {
+    // 插件信任面板同样顶替整个主区，也必须带 ViewHeader（理由同上：移动端没有 header
+    // 就没有侧栏切换按钮）。桌面端多一条 36px 空 header。
     workspaceView = (
-      <div
-        style={{
-          flex: 1,
-          minHeight: 0,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          padding: 24,
-          background: "var(--mindfs-main-bg, transparent)",
-        }}
-      >
+      <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+        <ViewHeader />
+        <div
+          style={{
+            flex: 1,
+            minHeight: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 24,
+            background: "var(--mindfs-main-bg, transparent)",
+          }}
+        >
         <section
           style={{
             width: "min(720px, 100%)",
@@ -9139,6 +9149,7 @@ export function App({ onGoHome }: AppProps) {
             </button>
           </div>
         </section>
+        </div>
       </div>
     );
   } else if (gitDiff && currentMainContentView === "file-browser") {

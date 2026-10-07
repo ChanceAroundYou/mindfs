@@ -22,13 +22,13 @@ export type MobileSidebarToggleValue = {
 export const MobileSidebarToggleContext = createContext<MobileSidebarToggleValue | null>(null);
 
 const fileSidebarIcon = (
-  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
     <path fill="currentColor" d="M3 3h6v4H3zm12 7h6v4h-6zm0 7h6v4h-6zm-2-4H7v5h6v2H5V9h2v2h6z" style={{ transform: "scale(1.28)", transformOrigin: "12px 12px" }} />
   </svg>
 );
 
 const sessionSidebarIcon = (
-  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.8" strokeLinecap="round" aria-hidden="true">
+  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.8" strokeLinecap="round" aria-hidden="true">
     <line x1="6" y1="4" x2="18" y2="4" />
     <line x1="6" y1="12" x2="18" y2="12" />
     <line x1="6" y1="20" x2="18" y2="20" />
@@ -36,10 +36,10 @@ const sessionSidebarIcon = (
 );
 
 const toggleButtonStyle: React.CSSProperties = {
-  width: "28px",
-  height: "28px",
-  minWidth: "28px",
-  borderRadius: "6px",
+  width: "22px",
+  height: "22px",
+  minWidth: "22px",
+  borderRadius: "5px",
   border: "none",
   background: "transparent",
   color: "var(--text-secondary)",
@@ -56,13 +56,19 @@ const toggleButtonStyle: React.CSSProperties = {
 };
 
 type ViewHeaderProps = {
-  children: React.ReactNode;
+  /** 空 header（如 chat 空态）可以不传 children */
+  children?: React.ReactNode;
   /** 桌面端内边距；移动端固定收成按钮两侧的小留白 */
   padding?: string;
   /** 覆盖/追加 header 自身样式（如 display:none、zIndex） */
   style?: React.CSSProperties;
   /** 移动端把 children 包进中间弹性容器时套用的内层样式（复刻原 header 的排布） */
   innerStyle?: React.CSSProperties;
+  /**
+   * 是否在移动端渲染左右侧栏切换按钮。默认 true（中间主栏的几个面板）。
+   * 侧栏自身（FileTree / SessionList）传 false —— 侧栏已经可见，不需要切换按钮。
+   */
+  showToggles?: boolean;
   /** 透传到 header 元素（data-onboarding 等） */
   [key: `data-${string}`]: unknown;
 };
@@ -71,10 +77,11 @@ type ViewHeaderProps = {
  * 各主视图共用的 36px header 外壳。桌面端行为与改造前逐字一致（children 直接渲染）；
  * 移动端在两侧插入侧栏切换按钮，children 收进中间的弹性容器。
  */
-export function ViewHeader({ children, padding = "0 16px", style, innerStyle, ...rest }: ViewHeaderProps) {
+export function ViewHeader({ children, padding = "0 16px", style, innerStyle, showToggles = true, ...rest }: ViewHeaderProps) {
   const ctx = useContext(MobileSidebarToggleContext);
   const { t } = useI18n();
   const isMobile = ctx?.isMobile ?? false;
+  const showButtons = isMobile && showToggles;
 
   const base: React.CSSProperties = {
     height: "36px",
@@ -106,13 +113,13 @@ export function ViewHeader({ children, padding = "0 16px", style, innerStyle, ..
 
   return (
     <header {...(rest as Record<string, unknown>)} style={{ ...base, padding: isMobile ? "0 2px" : padding, ...style }}>
-      {isMobile ? toggleButton("left") : null}
-      {isMobile ? (
+      {showButtons ? toggleButton("left") : null}
+      {isMobile && showToggles ? (
         <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", ...innerStyle }}>{children}</div>
       ) : (
         children
       )}
-      {isMobile ? toggleButton("right") : null}
+      {showButtons ? toggleButton("right") : null}
     </header>
   );
 }

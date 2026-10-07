@@ -133,15 +133,21 @@ assert.match(
   "the composer-less bar must not render the sidebar toggles — they live in the shared ViewHeader",
 );
 // 共用 header：移动端才插按钮，桌面端 children 直接渲染（零行为变化）。
+// 侧栏（FileTree / SessionList）传 showToggles={false}，不显示切换按钮。
 assert.match(
   viewHeader,
-  /isMobile \? toggleButton\("left"\) : null[\s\S]*?isMobile \? toggleButton\("right"\) : null/,
+  /showButtons \? toggleButton\("left"\) : null[\s\S]*?showButtons \? toggleButton\("right"\) : null/,
   "the shared ViewHeader must render both sidebar toggles on mobile",
 );
 assert.match(
   viewHeader,
   /onClick=\{\(\) => ctx\.toggle\(side\)\}/,
   "the shared ViewHeader's toggles must call into the shell's rail toggle",
+);
+assert.match(
+  viewHeader,
+  /width: "22px",\s*height: "22px",\s*minWidth: "22px"/,
+  "toggle buttons must be 22×22",
 );
 assert.match(
   shell,
@@ -159,6 +165,17 @@ for (const [name, src] of [
   assert.match(src, /<ViewHeader/, `${name} must use the shared ViewHeader`);
   assert.match(src, /<\/ViewHeader>/, `${name} must close its shared ViewHeader`);
 }
+// 侧栏自身不显示切换按钮（侧栏已经可见，不需要切换）。
+assert.match(fileTree, /showToggles=\{false\}/, "FileTree (left sidebar) must not show toggle buttons");
+assert.match(sessionList, /showToggles=\{false\}/, "SessionList (right sidebar) must not show toggle buttons");
+// 中间主栏的三个面板显示切换按钮。
+for (const [name, src] of [
+  ["SessionViewer", sessionViewer],
+  ["GitDiffViewer", gitDiff],
+  ["DefaultListView", listView],
+]) {
+  assert.doesNotMatch(src, /showToggles=\{false\}/, `${name} (main view) must show toggle buttons`);
+}
 assert.match(
   app,
   /onSessionClick=\{\(\) => \{[\s\S]*?if \(!canOpenSessionDrawer\) return;/,
@@ -168,6 +185,19 @@ assert.match(
   app,
   /const isBoundSessionInMain =[\s\S]*?mainView === "chat";/,
   "「session is in the main pane」must require the chat mode, or the files-view drawer becomes unreachable",
+);
+// 未选中会话的空态也要带 ViewHeader。移动端侧栏切换按钮只挂在各视图 header 上，
+// 空态没有 header 就一个按钮都没有 —— 用户停在空态时开不出任何侧栏（实测卡死）。
+assert.match(
+  app,
+  /if \(mainView === "chat" && !selectedSession\) \{[\s\S]*?<ViewHeader \/>/,
+  "the empty chat state must render a ViewHeader, or mobile users get stuck with no sidebar toggles",
+);
+// 插件信任面板同样整块顶替主区（裸 div，里面没有带 header 的组件），同一个坑。
+assert.match(
+  app,
+  /else if \(activePendingPluginTrust\) \{[\s\S]*?<ViewHeader \/>/,
+  "the plugin-trust panel must render a ViewHeader too — it also replaces the whole main pane",
 );
 
 // 四块的文案是定死的：未开始 / 执行中 / 待审核 / 已结束，已结束内分 完成 / 取消

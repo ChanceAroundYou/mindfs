@@ -160,7 +160,7 @@
 | G-AO | 自动重载观测 | 架构 | 见 §3.1 | 只记录不干预：`sessionStorage` 计数 + 堆峰值 + 本轮首错 |
 | G-AP | worktree 收尾按钮重做（四分支分流 + 幂等 + 真实状态） | 修复 | 见 §3.1 | 收尾键一直可点；目录消失 = 已收尾 |
 | G-AQ | 任务卡的三把键：完成兜底 / 取消 / 删除 | 功能 | 见 §3.1 | 待审核必有出路；取消只改状态；删除只删卡片 |
-| G-AR | 移动端侧栏切换按钮移入各视图共用 header | 修复 | 见 §3.1 | 按钮插在原有 36px header 两侧（不额外占行），仅移动端 |
+| G-AR | 移动端侧栏切换按钮移入中间主栏共用 header | 修复 | 见 §3.1 | 按钮插在中间主栏 36px header 两侧（不额外占行），仅移动端；侧栏自身不显示 |
 | G-AS | ACP 提问（dsh `ask_user_question` 走 elicitation） | 修复 | 见 §3.1 | 只对 dsh 广告 elicitation.form；题目 id+文本关联；答案编码成 `question_<i>` |
 | G-AT | 会话打开性能（窗口去重 / 载荷压缩 / 工具卡分组） | 性能 | 见 §3.1 | 会话打开热路径：取窗去重 + 窗口轻压缩 + 窗口 8 + 工具卡分组 + related-files 去抖 |
 | G-AU | 会话拉取风暴与渲染主线程阻塞 | 修复 | 见 §3.1 | 加载 effect 只依赖身份不依赖快照对象；失败留痕且 404 是终点；`sessionCacheRef` 有上限；渲染无 O(n²)、滚动有节流 |
@@ -792,9 +792,10 @@
 - 来源：`web/src/layout/ViewHeader.tsx`（新增）、`web/src/layout/AppShell.tsx`、
   `web/src/components/{ActionBar,FileTree,SessionList,SessionViewer,GitDiffViewer,DefaultListView}.tsx`、
   `web/src/components/action/types.ts`、`web/src/App.tsx`、`web/tests/task-board-view.test.mjs`。
-- 边界：移动端呼出左右侧栏的两个切换按钮，从 ActionBar（footer）搬进各主视图**共用的**
-  `ViewHeader` 外壳的两侧，合为一组 —— 按钮位置、ViewHeader 的渲染分支、ActionBar 的
-  hideComposer 分支共享同一条「按钮在哪」的判断，合上游时要么全留要么全弃。
+- 边界：移动端呼出左右侧栏的两个切换按钮，从 ActionBar（footer）搬进**中间主栏**各面板
+  共用的 `ViewHeader` 外壳的两侧，合为一组 —— 按钮位置、ViewHeader 的渲染分支、ActionBar
+  的 hideComposer 分支共享同一条「按钮在哪」的判断，合上游时要么全留要么全弃。
+  侧栏自身（FileTree / SessionList）传 `showToggles={false}`，不显示切换按钮。
 - 可见症状（没有它会怎样）：
   - **移动端进看板/工作台后开不出侧栏**：按钮原本只在 ActionBar 的 hideComposer 分支里，
     上游若把该分支改成 `return null`（或删掉移动按钮），这两个界面就再也呼不出侧栏。
@@ -808,13 +809,21 @@
     复刻自己原有的排布（space-between 等），`padding` 沿用各视图原值。
   - 按钮接线走 `MobileSidebarToggleContext`（AppShell 提供 `toggleRail` + 物理左右栏状态与标签），
     ViewHeader 消费 —— 不逐层透传 prop，因为 header 在 6+ 个视图里、中间层与侧栏开合无关。
-  - 侧栏切换按钮 28×28（比原来的 30×44 小），图标 18px。
+  - 侧栏切换按钮 22×22（比原来的 30×44 小），图标 14px。
+  - `showToggles` prop 控制是否渲染按钮：中间主栏（SessionViewer / GitDiffViewer /
+    DefaultListView）默认 true；侧栏（FileTree / SessionList）传 false。
+  - **主栏的空态/覆盖态也要带 ViewHeader**：`App.tsx` 里顶替 `workspaceView` 的两支裸 div
+    ——「chat 模式未选中会话」空态、插件信任面板 —— 各包一层 `flex-direction:column`
+    容器 + `<ViewHeader />`。它们是整块主区、里面没有任何带 header 的组件，漏了就是
+    「移动端停在空态时一个切换按钮都没有」（2026-10-07 实测）。桌面端因此各多一条 36px 空 header，
+    与选中会话时（SessionViewer 恒有 header）一致。
   - ActionBar 的 `hideComposer` 分支 `return null`；输入区移动端补 `0 8px` 左右内边距
     （原先靠两侧 30px 按钮占位，按钮搬走后需显式留白）。
 - 针对性测试：
   - `web/tests/task-board-view.test.mjs` — ViewHeader 移动端渲染两个 toggle 且接 `ctx.toggle`、
     AppShell 经 context 交出 `toggleRail`、ActionBar `hideComposer` 返回 `null`、
-    5 个视图都使用并闭合 `<ViewHeader>`。
+    5 个视图都使用并闭合 `<ViewHeader>`、按钮 22×22、侧栏 `showToggles={false}`、
+    **chat 空态带 `<ViewHeader />`**。
   - `web/tests/project-tree-refresh.test.mjs` — FileTree header 换成 ViewHeader 后，
     tabs 容器的 6px marginRight 与 gap:0/overflow:visible 仍共存。
 
