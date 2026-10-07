@@ -33,8 +33,6 @@ export type WorkspaceProjectGroup = {
   color: string | null;
   /** 当前筛选下这条任务行要显示什么；空则整组不渲染 */
   tasks: WorkspaceTaskItem[];
-  /** 组内待审核数（waiting_user / pending），头部角标用 */
-  blockedCount: number;
 };
 
 export type WorkspaceBoard = {
@@ -244,7 +242,6 @@ export function useWorkspaceBoard(params: {
           nodeId,
           color: getNodeColor(rootId) || null,
           tasks: bucket.filter((item) => matchesFilter(item.task, filter)),
-          blockedCount: bucket.filter((item) => isBlockedTask(item.task)).length,
         };
       })
       // 没有任务的项目不占地方：筛选后只剩空壳的组、连「全部」下都没有任何任务的项目，

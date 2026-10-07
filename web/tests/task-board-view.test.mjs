@@ -310,4 +310,39 @@ assert.doesNotMatch(
   "the shared card rows must not own the body expand toggle — it controls something the workbench does not render",
 );
 
+// —— 2026-10-07 卡片视觉件回归守卫 ——
+
+// 1) 「待审核」列必须显示状态文字（用户实测：该列卡片只有名字 + worktree 标签，
+//    没有任何状态指示）。走 TaskCardRows 现有 showStatus 路径，与工作台卡同一渲染。
+assert.match(
+  board,
+  /const showTaskStatus = column\.name === t\("task\.column\.ended"\)\s*\|\|\s*column\.name === t\("task\.column\.waitingUser"\);/,
+  "「待审核」列必须显示状态文字，与「已结束」列同一判据",
+);
+
+// 2) 列框已移除：border/圆角/浅灰底/overflow 四件必须成组消失。
+//    框占 2px 宽、列表 padding 又占 16px，卡片被挤窄；去掉后卡片宽约 6px。
+assert.doesNotMatch(
+  board,
+  /border: "1px solid var\(--border-color\)",\s*borderRadius: "8px",\s*background: "rgba\(148, 163, 184, 0\.06\)",\s*overflow: "hidden"/,
+  "列框（border+圆角+浅灰底+overflow）必须整组移除 —— 它把卡片挤窄 2px",
+);
+
+// 3) 列内列表必须用 FloatingScroll：原生滚动条占 6px 宽，浮动拇指不占。
+assert.match(
+  board,
+  /<FloatingScroll style=\{\{ padding: "6px", display: "flex", flexDirection: "column", gap: "6px" \}\}>/,
+  "列内列表必须用 FloatingScroll（浮动滚动条），padding/gap 对齐工作台 6px 节奏",
+);
+assert.match(
+  readFileSync(new URL("../src/components/FloatingScroll.tsx", import.meta.url), "utf8"),
+  /className="mindfs-floating-scroll"/,
+  "FloatingScroll 的滚动容器必须带 mindfs-floating-scroll 类（WebKit 隐藏原生滚动条）",
+);
+assert.match(
+  readFileSync(new URL("../src/index.css", import.meta.url), "utf8"),
+  /\.mindfs-floating-scroll::-webkit-scrollbar \{\s*display: none;\s*\}/,
+  "index.css 必须有 .mindfs-floating-scroll 的 webkit 滚动条隐藏规则",
+);
+
 console.log("task-board-view.test.mjs: OK");

@@ -166,6 +166,7 @@
 | G-AU | 会话拉取风暴与渲染主线程阻塞 | 修复 | 见 §3.1 | 加载 effect 只依赖身份不依赖快照对象；失败留痕且 404 是终点；`sessionCacheRef` 有上限；渲染无 O(n²)、滚动有节流 |
 | G-AX | relay 绑定轮询测试的两条同步竞态 | 修复 | 见 §3.1 | 状态落地晚于 channel 发送；`requests` 必须无缓冲 |
 | G-AY | 抽屉 pending 对账（done 丢失时停止符号/「正在思考」卡住） | 修复 | 见 §3.1 | 抽屉/选中/缓存的 pending 只由 WS `session.done` 清；断连/重绑丢了就永久卡住。列表蓝灯每 5s 从 `/api/replying-sessions` 对账，这三处没有 |
+| G-AZ | 任务卡视觉件（待审核徽标/列框去除/浮动滚动条/工作台角标移除） | 视觉 | 见 §3.1 | 待审核列补状态文字（与工作台同路径）；列框+padding 去除卡片加宽 6px；FloatingScroll 浮动滚动条不占宽；工作台「需要你 N」角标移除 |
 
 > **G-D 已并入 G-F，G-M 已并入 G-AI**（改动面完全重合、无独立测试可守，单列只会制造空组）。
 
@@ -1158,6 +1159,42 @@
     无变化返回同引用、按 key 判定」，并源码守卫「App.tsx 必须有依赖
     `multiProjectPendingByKey` 的 effect 且对三处调 `clearStalePending`、真值必须读
     `multiProjectPendingByKey`」。**已验证：把 effect 删掉后该测试立刻变红。**
+
+---
+
+### G-AZ 任务卡视觉件：待审核状态徽标 / 列框去除 / 浮动滚动条 / 工作台角标移除（2026-10-07）
+
+- 来源：`web/src/components/TaskBoardView.tsx`、`web/src/components/FloatingScroll.tsx`（新增）、
+  `web/src/components/TaskCardText.tsx`（删除）、`web/src/components/workspace/WorkspaceProjectRow.tsx`、
+  `web/src/app/useWorkspaceBoard.ts`、`web/src/i18n/locales/{zh-CN,en-US}.ts`、`web/src/index.css`、
+  `web/tests/{task-board-view,task-card-wrap,workspace-board}.test.mjs`、`docs/workspace-design.md`。
+- 边界：**任务卡的视觉件** —— 待审核列的状态文字、列框与列表内边距、列内滚动条形态、
+  工作台项目头的「需要你」角标。这四件共享同一组渲染文件，合上游时要么全留要么全弃。
+- 可见症状（没有它会怎样）：
+  1. **看板「待审核」列的卡片没有任何状态指示**（用户 2026-10-07 实测）：标题行只有
+     编号 + 名字 + worktree 标签，看不出这张卡在等用户回话。工作台卡同一张卡显示 `· 待审核`
+     （棕黄 `var(--status-warn)`），两边信息量不一致。
+  2. **列框把卡片挤窄**：section 的 `border` 占 2px、列表 `padding: 8px` 又占 16px，
+     卡片比工作台窄 18px。去掉框 + padding 降 6px 后每张卡宽约 6px。
+  3. **原生滚动条占 6px 宽**：全局 `::-webkit-scrollbar { width: 6px }` 把每列卡片再挤窄 6px。
+  4. **工作台项目头显示「需要你3 3」**：`blockedCount` 角标和总数角标在「组内任务全部待审核」
+     时显示同一个数字，用户实测为重复内容。
+- 为什么必须保留：
+  - 状态文字走 `TaskCardRows` 现有 `showStatus` 路径（`showStatus` prop），与工作台卡
+    **同一渲染路径** —— 不是另开一套。上游若改 `showStatus` 的渲染位置，两边一起变，不会分叉。
+  - 列框去除后列的边界靠列头 `borderBottom` 分隔线 + 网格 `gap: 6px` 表达，不依赖底色。
+  - `FloatingScroll` 自绘浮动拇指（overlay 语义：悬停/滚动可见，停手 1.2s 淡出），
+    替代 `overflow: overlay`（已废弃、Firefox 不支持）。
+  - 「需要你」角标移除后，待审核信息由卡标题行的状态文字 + 「待审核」筛选档位承载，不丢。
+- 针对性测试：
+  - `web/tests/task-board-view.test.mjs` — 钉住「待审核列 `showTaskStatus` 为真」、
+    「列框四件（border+圆角+浅灰底+overflow）整组消失」、「列表容器是 `FloatingScroll`
+    且 padding/gap 6px」、「index.css 有 `.mindfs-floating-scroll` webkit 隐藏规则」。
+  - `web/tests/task-card-wrap.test.mjs` — 钉住「看板与工作台都渲染 `TaskCardRows`」、
+    「工作台卡不传 children（无正文）」、「卡面都来自 `taskCardSurfaceStyle`」、
+    「`TaskCardText.tsx` 死代码已删除」。
+  - `web/tests/workspace-board.test.mjs` — 钉住「`task.workspaceAttention` 不在 locale」、
+    「项目头不渲染该角标」、「hook 源码不再出现 `blockedCount`」。
 
 ---
 

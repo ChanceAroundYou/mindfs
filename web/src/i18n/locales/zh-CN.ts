@@ -913,7 +913,6 @@ export const zhCN = {
   "task.workspaceQuickLaunch": "新建任务",
   "task.quickLaunchPlaceholder": "输入任务内容…",
   "task.quickLaunchSend": "发起",
-  "task.workspaceAttention": "需要你",
   "task.workspaceFilterAll": "全部",
   "task.workspaceFilterActive": "进行中",
   "task.workspaceFilterBlocked": "待审核",

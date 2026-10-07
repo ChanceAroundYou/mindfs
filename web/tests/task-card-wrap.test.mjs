@@ -82,3 +82,27 @@ assert.doesNotMatch(
   /className=/,
   "工作台样式同样不得搬到 CSS 类里（它也带行内 fontSize，受同一条约束）",
 );
+
+// 11) 看板与工作台必须严格只使用一套任务卡（2026-10-07 用户要求）。
+//     以前两边各写各的，工作台那张卡只有一个名字和三个按钮，既看不见会话也看不见状态，
+//     配色也和看板不一致。现在两边都渲染共享的 TaskCardRows，卡面都来自 taskCardSurfaceStyle。
+const board = readFileSync(new URL("../src/components/TaskBoardView.tsx", import.meta.url), "utf8");
+const workbenchRow = readFileSync(new URL("../src/components/workspace/WorkspaceTaskRow.tsx", import.meta.url), "utf8");
+assert.match(board, /<TaskCardRows/, "看板必须渲染共享的 TaskCardRows");
+assert.match(workbenchRow, /<TaskCardRows/, "工作台必须渲染共享的 TaskCardRows —— 不是另一套实现");
+assert.match(board, /taskCardSurfaceStyle\(taskSelected\)/, "看板卡面必须来自 taskCardSurfaceStyle");
+assert.match(workbenchRow, /taskCardSurfaceStyle\(false\)/, "工作台卡面必须来自同一个 taskCardSurfaceStyle");
+// 工作台卡不显示详情文本：不传 children，正文段因此只存在于看板一侧。
+assert.doesNotMatch(
+  workbenchRow,
+  /<TaskCardRows[\s\S]*?>[\s\S]*?<div/,
+  "工作台卡不得传 children（正文是看板独有的设计，用参数控制）",
+);
+// 死代码 TaskCardText.tsx 必须已删除 —— 它是早期正文溢出测量方案的残留，全仓库无引用。
+let taskCardText = "";
+try {
+  taskCardText = readFileSync(new URL("../src/components/TaskCardText.tsx", import.meta.url), "utf8");
+} catch {
+  taskCardText = "";
+}
+assert.equal(taskCardText, "", "TaskCardText.tsx 死代码必须已删除");

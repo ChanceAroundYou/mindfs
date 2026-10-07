@@ -1239,6 +1239,11 @@ body[data-plugin-theme="1"] [data-slot="drawer-content"] {
   background-color: rgba(107, 114, 128, 0.5);
 }
 
+/* 浮动滚动条（FloatingScroll）：原生滚动条隐藏，由组件自绘的细拇指代替，不占宽度 */
+.mindfs-floating-scroll::-webkit-scrollbar {
+  display: none;
+}
+
 .document-preview-message {
   min-height: 240px;
   display: flex;

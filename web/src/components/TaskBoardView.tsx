@@ -9,6 +9,7 @@ import type { WorkspaceBoard as WorkspaceBoardData } from "../app/useWorkspaceBo
 import type { WorkspaceBoardFilter } from "../app/appStorage";
 import type { SessionItem } from "../app/appSession";
 import { InlineTokenText } from "./InlineTokenText";
+import { FloatingScroll } from "./FloatingScroll";
 import { TaskCardRows } from "./TaskCardRows";
 import { WorkspaceBoard } from "./workspace/WorkspaceBoard";
 import {
@@ -570,10 +571,9 @@ export function TaskBoardView({
               <section
                 key={column.index}
               style={{
-                    border: "1px solid var(--border-color)",
-                  borderRadius: "8px",
-                  background: "rgba(148, 163, 184, 0.06)",
-                  overflow: "hidden",
+                  // 列框（border/圆角/浅灰底）已移除（2026-10-07）：框占 2px 宽、
+                  // 列表 padding 又占 16px，卡片被挤窄。去掉后卡片宽约 6px，
+                  // 与工作台网格节奏一致。列的边界靠列头分隔线 + 网格 gap 表达。
                   display: "flex",
                   flexDirection: "column",
                   minHeight: 0,
@@ -612,7 +612,7 @@ export function TaskBoardView({
                 <span style={{ fontSize: "11px", fontWeight: 800, color: "var(--text-secondary)" }}>{column.tasks.length}</span>
               </div>
                 {columnCollapsed ? null : (
-                <div style={{ padding: "8px", display: "flex", flexDirection: "column", gap: "8px", overflowY: "auto", minHeight: 0 }}>
+                <FloatingScroll style={{ padding: "6px", display: "flex", flexDirection: "column", gap: "6px" }}>
                   {column.tasks.length === 0 ? (
                     <div style={{ padding: "10px 4px", fontSize: "12px", color: "var(--text-secondary)", textAlign: "center" }}>{t("task.empty")}</div>
                       ) : taskSections.map((section) => {
@@ -669,10 +669,13 @@ export function TaskBoardView({
                   // 正文超过 3 行（或 120 字）才需要展开开关 —— 它只对正文生效
                   const inputNeedsToggle = firstInput.length > 120 || firstInput.split(/\r?\n/).length > 3;
                     const taskStageName = task.current_stage_name || (task.current_stage_index >= 0 ? t("task.stageLabel", { index: task.current_stage_index + 1 }) : "");
-                    // 列语义对两种筛选态一视同仁：阶段名只在"执行中"列、状态只在"已结束"列出现。
-                    // 以前子看板走另一套（恒显示阶段），于是同一张卡在两边信息量不同。
+                    // 列语义对两种筛选态一视同仁：阶段名只在"执行中"列、状态在「已结束」
+                    // 与「待审核」列出现。以前子看板走另一套（恒显示阶段），于是同一张卡在两边
+                    // 信息量不同；「待审核」列补状态文字（2026-10-07 用户要求）后与工作台卡
+                    // 同一渲染路径 —— 都是 TaskCardRows 的 showStatus，位置在名字后、worktree 前。
                     const showStageName = column.name === t("task.column.running") && Boolean(taskStageName);
-                    const showTaskStatus = column.name === t("task.column.ended");
+                    const showTaskStatus = column.name === t("task.column.ended")
+                      || column.name === t("task.column.waitingUser");
                     const taskSelected = selectedKanbanTaskId === task.id;
                     return (
                       <article
@@ -754,7 +757,7 @@ export function TaskBoardView({
                     </React.Fragment>
                     );
                   })}
-                </div>
+                </FloatingScroll>
                 )}
               </section>
               );
