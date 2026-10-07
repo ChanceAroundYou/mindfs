@@ -462,6 +462,10 @@ func (c *mindfsClient) UnstableCreateElicitation(ctx context.Context, req acp.Un
 			Accept: &acp.UnstableCreateElicitationAccept{Content: result.content},
 		}, nil
 	case <-ctx.Done():
+		// 这一条路没有经过 AnswerElicitation，条目还留在表里 —— 不释放的话它会一直
+		// 挂着，且因为已 bound，reap 也绕开它；下一次问同一道题（id+文本相同）时
+		// 可能被匹配到这条废弃条目上，答案投进没人读的 waiter。
+		c.proc.releasePendingAskUser(entry)
 		c.proc.logElicitation("cancelled", entry.sessionKey, entry.callID)
 		return acp.UnstableCreateElicitationResponse{Cancel: &acp.UnstableCreateElicitationCancel{}}, nil
 	}

@@ -101,8 +101,12 @@ func (p *Process) registerPendingAskUser(callID, sessionKey string, questions []
 	}
 }
 
-// reapPendingAskUser 在工具卡进入终态时清理未被 elicitation 绑定的条目 ——
-// 「工具失败但没走 elicitation」的提问会一直留在表里。
+// reapPendingAskUser 在工具卡进入终态时清理条目。
+//
+// 已绑定的条目也要清：工具卡进终态说明 agent 已经不再等这个答案了（正常路径下
+// AnswerElicitation 早就把条目删掉了，能在这里还看到 bound 条目，就是「提问被放弃」
+// 或「handler 的 ctx 先被取消」）。同时要往 waiter 投一个空结果把它放出来 ——
+// 否则 handler 会一直阻塞到连接关闭。
 func (p *Process) reapPendingAskUser(callID, status string) {
 	switch status {
 	case "completed", "failed":
@@ -116,10 +120,29 @@ func (p *Process) reapPendingAskUser(callID, status string) {
 	p.elicitationMu.Lock()
 	defer p.elicitationMu.Unlock()
 	entry, ok := p.pendingAskUserByCallID[callID]
-	if !ok || entry.bound {
+	if !ok {
 		return
 	}
 	delete(p.pendingAskUserByCallID, callID)
+	if entry.bound {
+		// waiter 容量 1，且「先删后投」保证这里不会阻塞。
+		entry.waiter <- elicitationResult{}
+	}
+}
+
+// releasePendingAskUser 由 handler 自己释放条目（它已经在读了，不需要再投递）。
+//
+// 只在表里还是**同一个**条目时才删：first-wins 保证条目在表期间不会被换掉，
+// 但比较指针能把「已经删过又重新登记」这种未来改动也挡住。
+func (p *Process) releasePendingAskUser(entry *pendingAskUser) {
+	if entry == nil {
+		return
+	}
+	p.elicitationMu.Lock()
+	defer p.elicitationMu.Unlock()
+	if current, ok := p.pendingAskUserByCallID[entry.callID]; ok && current == entry {
+		delete(p.pendingAskUserByCallID, entry.callID)
+	}
 }
 
 // bindElicitation 把一次 elicitation/create 关联到一张在等的 ask_user 卡。
