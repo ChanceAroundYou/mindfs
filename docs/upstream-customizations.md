@@ -1213,6 +1213,7 @@
 
 - 来源：`a83950b`（source-map 统一读层）、`f5c4e0d`（components/services/shared 按域重组）、
   `7b6d969`（services/{task,git,file} 拆成目录模块）、`def8b7e`（FileTree 图标子组件抽出）、
+  `5524e8d` / `811e0fa`（App.tsx 区域渲染与 effect 拆分）、
   e2e 冒烟夹具（`e2e/conftest.py` + `e2e/test_app_smoke.py`，运行时安全网）。
 - 边界：**前端目录结构与文件拆分**。`components/` 下 40+ 个 `.tsx` 平铺 →
   `components/{session,task,file,git,root,agent,account,shell,common}`；
