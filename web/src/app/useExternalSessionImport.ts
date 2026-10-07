@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { sessionService } from "../services/session";
-import { reportError } from "../services/error";
+import { reportError } from "../services/net/error";
 import type { SessionItem } from "./appSession";
 import { mergeSessionItems } from "../services/sessionListMerge";
 import { useI18n } from "../i18n";

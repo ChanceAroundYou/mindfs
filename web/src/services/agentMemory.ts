@@ -1,5 +1,5 @@
-import { protectedJSON } from "./api";
-import { appPath } from "./base";
+import { protectedJSON } from "./net/api";
+import { appPath } from "./net/base";
 
 export type AgentMemoryItem = {
   name: string;

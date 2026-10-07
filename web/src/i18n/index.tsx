@@ -1,5 +1,5 @@
 import React from "react";
-import { getStoredString, setStoredString } from "../services/storage";
+import { getStoredString, setStoredString } from "../services/prefs/storage";
 import { enUS } from "./locales/en-US";
 import { zhCN } from "./locales/zh-CN";
 import type { I18nContextValue, Locale, MessageKey, MessageParams, Messages } from "./types";

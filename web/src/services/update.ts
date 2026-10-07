@@ -1,5 +1,5 @@
-import { appURL } from "./base";
-import { protectedJSON } from "./api";
+import { appURL } from "./net/base";
+import { protectedJSON } from "./net/api";
 
 export type UpdateState = {
   current_version?: string;

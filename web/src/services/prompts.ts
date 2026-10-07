@@ -1,5 +1,5 @@
-import { controlPath } from "./controlPlane";
-import { protectedJSON } from "./api";
+import { controlPath } from "./net/controlPlane";
+import { protectedJSON } from "./net/api";
 
 export async function savePrompt(text: string): Promise<string[]> {
   const data = await protectedJSON<any>(controlPath("/api/prompts"), {

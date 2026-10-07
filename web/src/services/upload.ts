@@ -1,6 +1,6 @@
-import { appURL } from "./base";
-import { getRootNodeId } from "./rootNode";
-import { e2eeService } from "./e2ee";
+import { appURL } from "./net/base";
+import { getRootNodeId } from "./net/rootNode";
+import { e2eeService } from "./net/e2ee";
 
 export type UploadedFile = {
   path: string;

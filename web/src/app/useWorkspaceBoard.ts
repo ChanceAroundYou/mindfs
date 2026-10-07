@@ -15,8 +15,8 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { getNodes } from "../services/nodeRegistry";
-import { scopeKey } from "../services/scope";
+import { getNodes } from "../services/net/nodeRegistry";
+import { scopeKey } from "../shared/scope";
 import { fetchTasksOverview, type KanbanTask, type TaskOverviewItem } from "../services/tasks";
 
 /** 跨项目任务条 = 后端 TaskOverviewItem + 前端扇出时打的节点标（后端不返这个字段） */

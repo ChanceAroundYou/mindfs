@@ -1,5 +1,5 @@
-import { getNativeBridge, parseNativeJSON } from "./nativeBridge";
-import { getNativePlatform, isAndroidRuntime, isHarmonyRuntime, isNativeShellRuntime, type NativePlatform } from "./runtime";
+import { getNativeBridge, parseNativeJSON } from "./platform/nativeBridge";
+import { getNativePlatform, isAndroidRuntime, isHarmonyRuntime, isNativeShellRuntime, type NativePlatform } from "./platform/runtime";
 
 const DEFAULT_ANDROID_VERSION_URL = "https://relay.a9gent.com/api/versions/android";
 const DEFAULT_HARMONY_VERSION_URL = "https://relay.a9gent.com/api/versions/harmony";

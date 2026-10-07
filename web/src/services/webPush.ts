@@ -1,6 +1,6 @@
-import { controlPath } from "./controlPlane";
-import { protectedJSON } from "./api";
-import { isNativeShellRuntime } from "./runtime";
+import { controlPath } from "./net/controlPlane";
+import { protectedJSON } from "./net/api";
+import { isNativeShellRuntime } from "./platform/runtime";
 import { translateNow } from "../i18n";
 
 export type WebPushStatus = {

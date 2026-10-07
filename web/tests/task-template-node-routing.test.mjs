@@ -155,8 +155,10 @@ assert.match(
   /currentRootNodeIdRef\.current = nid \|\| null;[\s\S]{0,400}?if \(nid\) \{\s*\n\s*const known = getNodeById\(nid\);\s*\n\s*if \(known && getActiveNodeId\(\) !== nid\) \{\s*\n\s*setActiveNodeId\(nid\);/,
   "selectRootNode must set the active node to the selected project's node",
 );
+// nodeRegistry 已归入 services/net/（见 tests/source-map.mjs），App 在 src/，
+// 所以新路径是 ./services/net/nodeRegistry。
 assert.match(
   app,
-  /import \{[^}]*getActiveNodeId[^}]*setActiveNodeId[^}]*\} from "\.\/services\/nodeRegistry"/,
+  /import \{[^}]*getActiveNodeId[^}]*setActiveNodeId[^}]*\} from "\.\/services\/net\/nodeRegistry"/,
   "App must import the active-node setters/getter",
 );

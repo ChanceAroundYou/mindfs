@@ -4,8 +4,8 @@
  * 服务端这些端点全部匿名可访问（见 docs/multi-user-prd.md §1.1）：账户只用于
  * 按账户分区，不是权限边界。所以「先验当前密码」只是防手滑的 UX 提示，不是安全校验。
  */
-import { pageServerPath } from "./base";
-import { fetchJSON, fetchMaybeJSON } from "./api";
+import { pageServerPath } from "./net/base";
+import { fetchJSON, fetchMaybeJSON } from "./net/api";
 
 export type Account = {
   id: string;

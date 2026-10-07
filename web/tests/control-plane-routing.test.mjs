@@ -31,7 +31,13 @@ assert.doesNotMatch(control, /appPath\(|appURL\(|getActiveNode\(|getApiBaseURL\(
 for (const [name, src] of [["preferences.ts", preferences], ["prompts.ts", prompts], ["webPush.ts", webPush]]) {
   assert.doesNotMatch(src, /\bappPath\(/, `${name} is entirely control plane — no appPath( may remain`);
   assert.doesNotMatch(src, /\bappURL\(/, `${name} is entirely control plane — no appURL( may remain`);
-  assert.match(src, /from "\.\/controlPlane"|from "\.\.\/services\/controlPlane"/, `${name} must import controlPath`);
+  // controlPlane 已归入 services/net/（见 tests/source-map.mjs）：preferences 在 services/prefs/
+  // 用 ../net/controlPlane，prompts/webPush 仍在 services/ 用 ./net/controlPlane。
+  assert.match(
+    src,
+    /from "\.\/controlPlane"|from "\.\.\/services\/controlPlane"|from "\.\.\/net\/controlPlane"|from "\.\/net\/controlPlane"/,
+    `${name} must import controlPath`,
+  );
 }
 
 // 节点表是控制面：本地那条也要打页面服务器，否则换节点会把节点表写到对面去。

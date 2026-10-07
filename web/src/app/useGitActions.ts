@@ -15,8 +15,8 @@ import {
   type GitStatusItem,
   type GitStatusPayload,
 } from "../services/git";
-import { reportError } from "../services/error";
-import { ProtectedAPIError } from "../services/api";
+import { reportError } from "../services/net/error";
+import { ProtectedAPIError } from "../services/net/api";
 import { useI18n } from "../i18n";
 import type { URLState } from "./appPath";
 import { alertDialog } from "../services/dialog";

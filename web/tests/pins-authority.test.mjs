@@ -118,7 +118,9 @@ assert.ok(
   !/\bappPath\(|\bappURL\(/.test(pinsSource),
   "置顶是控制面：请求必须走 controlPath。用 appPath/appURL 会让置顶存进当前选中的节点",
 );
-assert.ok(pinsSource.includes('from "./controlPlane"'), "必须从 controlPlane 引入路径");
+// controlPlane 已归入 services/net/（见 tests/source-map.mjs），pins.ts 仍在 services/，
+// 所以新路径是 ./net/controlPlane。
+assert.ok(pinsSource.includes('from "./net/controlPlane"'), "必须从 controlPlane 引入路径");
 // 只查**代码**：注释里提到 localStorage 是正常的（那是在解释它为什么被删）。
 const pinsCode = pinsSource.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
 assert.ok(!/localStorage/.test(pinsCode), "不再有 localStorage 缓存层");

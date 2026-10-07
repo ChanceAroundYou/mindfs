@@ -1,6 +1,6 @@
 import { fetchFile } from "../services/file";
-import { appURL } from "../services/base";
-import { protectedJSON } from "../services/api";
+import { appURL } from "../services/net/base";
+import { protectedJSON } from "../services/net/api";
 import type { PluginSourceRecord, PluginSourceSnapshot } from "./trust";
 
 export type MatchRule = {

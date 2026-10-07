@@ -6,19 +6,19 @@ import {
   type GitBranchesPayload,
   type GitWorktreeItem,
 } from "../services/git";
-import { appPath, appURL } from "../services/base";
-import { protectedJSON as apiProtectedJSON } from "../services/api";
-import { reportError } from "../services/error";
-import { getActiveNode, LOCAL_NODE_ID } from "../services/nodeRegistry";
+import { appPath, appURL } from "../services/net/base";
+import { protectedJSON as apiProtectedJSON } from "../services/net/api";
+import { reportError } from "../services/net/error";
+import { getActiveNode, LOCAL_NODE_ID } from "../services/net/nodeRegistry";
 import { managedDirAddErrorMessage, type LocalDirsPayload, type ManagedRootPayload } from "./appMisc";
 import {
   ProjectAddPopover,
   type GitHubImportState,
   type LocalDirBrowserState,
   type ProjectAddMode,
-} from "../components/ProjectAddPopover";
+} from "../components/file/ProjectAddPopover";
 import { useI18n } from "../i18n";
-import { Select } from "../components/Select";
+import { Select } from "../components/common/Select";
 
 type OpenDirPayload = { path: string; root: string; isRoot: boolean; forceDirectory?: boolean };
 

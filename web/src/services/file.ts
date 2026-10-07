@@ -1,6 +1,6 @@
-import { appURL } from "./base";
-import { e2eeService } from "./e2ee";
-import { getRootNodeId } from "./rootNode";
+import { appURL } from "./net/base";
+import { e2eeService } from "./net/e2ee";
+import { getRootNodeId } from "./net/rootNode";
 
 export type ReadMode = "full" | "incremental";
 

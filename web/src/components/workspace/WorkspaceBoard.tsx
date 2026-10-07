@@ -5,7 +5,7 @@ import { useResponsive } from "../../app/appMisc";
 import { SyncIcon } from "../../app/taskIcons";
 import type { WorkspaceBoardFilter } from "../../app/appStorage";
 import type { WorkspaceBoard, WorkspaceTaskItem } from "../../app/useWorkspaceBoard";
-import type { TaskCardAction, TaskSessionErrorDialog } from "../TaskCardRows";
+import type { TaskCardAction, TaskSessionErrorDialog } from "../task/TaskCardRows";
 import type { SessionItem } from "../../app/appSession";
 import { WorkspaceProjectRow } from "./WorkspaceProjectRow";
 import { WorkspaceQuickLaunch } from "./WorkspaceQuickLaunch";

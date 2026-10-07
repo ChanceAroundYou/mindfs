@@ -1,6 +1,6 @@
-import { appURL } from "./base";
-import { getRootNodeId } from "./rootNode";
-import { protectedJSON } from "./api";
+import { appURL } from "./net/base";
+import { getRootNodeId } from "./net/rootNode";
+import { protectedJSON } from "./net/api";
 
 export type CandidateType = "file" | "skill" | "prompt" | "command";
 export type CandidateItemType = CandidateType | "slash_command";

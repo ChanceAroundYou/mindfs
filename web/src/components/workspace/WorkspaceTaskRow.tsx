@@ -3,7 +3,7 @@ import { useI18n } from "../../i18n";
 import { taskCardSurfaceStyle } from "../../app/taskIcons";
 import type { SessionItem } from "../../app/appSession";
 import type { KanbanTask } from "../../services/tasks";
-import { TaskCardRows, type TaskCardAction, type TaskSessionErrorDialog } from "../TaskCardRows";
+import { TaskCardRows, type TaskCardAction, type TaskSessionErrorDialog } from "../task/TaskCardRows";
 import type { WorkspaceTaskItem } from "../../app/useWorkspaceBoard";
 
 /**

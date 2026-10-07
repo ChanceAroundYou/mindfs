@@ -1,7 +1,7 @@
 import React from "react";
 import { type MessageKey } from "../i18n";
 import { type MessageParams } from "../i18n";
-import { DEFAULT_NODE_COLOR } from "../services/nodeRegistry";
+import { DEFAULT_NODE_COLOR } from "../services/net/nodeRegistry";
 
 export function ImportIcon() {
   return (

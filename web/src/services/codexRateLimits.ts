@@ -1,5 +1,5 @@
-import { protectedJSON } from "./api";
-import { appPath, appendQuery } from "./base";
+import { protectedJSON } from "./net/api";
+import { appPath, appendQuery } from "./net/base";
 
 export type CodexRateLimitWindow = {
   used_percent: number;

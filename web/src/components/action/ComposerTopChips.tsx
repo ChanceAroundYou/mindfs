@@ -1,9 +1,9 @@
 import React from "react";
-import { WorktreeBranchSelector } from "../WorktreeBranchSelector";
-import { NoWorktreeIcon } from "../NoWorktreeIcon";
-import { CodexRateLimitIndicator } from "../CodexRateLimitIndicator";
-import { AgentMemoryIndicator } from "../AgentMemoryIndicator";
-import { getRootNodeId } from "../../services/rootNode";
+import { WorktreeBranchSelector } from "../task/WorktreeBranchSelector";
+import { NoWorktreeIcon } from "../common/NoWorktreeIcon";
+import { CodexRateLimitIndicator } from "../agent/CodexRateLimitIndicator";
+import { AgentMemoryIndicator } from "../agent/AgentMemoryIndicator";
+import { getRootNodeId } from "../../services/net/rootNode";
 import { useI18n } from "../../i18n";
 import { appAccentHexToRgba } from "./styleHelpers";
 import { type GitBranchesPayload } from "../../services/git";

@@ -1,5 +1,5 @@
-import { appPath } from "./base";
-import { protectedAPIReady, protectedJSON } from "./api";
+import { appPath } from "./net/base";
+import { protectedAPIReady, protectedJSON } from "./net/api";
 
 // Agent status service
 

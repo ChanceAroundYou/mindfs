@@ -12,8 +12,8 @@
 // **不做跨设备实时推送**（用户 2026-10-04 定）：置顶变更在切换项目等导航动作
 // 时顺带刷新一次，设备之间最多差一次刷新。真正的实时需要一条主节点 →
 // 各 worker 浏览器的新通道，而那些连接是浏览器直连 worker 的，主节点碰不到。
-import { controlPath } from "./controlPlane";
-import { protectedJSON } from "./api";
+import { controlPath } from "./net/controlPlane";
+import { protectedJSON } from "./net/api";
 
 // 项目置顶：键 = scopeKey（nodeID::rootID），值 = 毫秒时间戳。
 // 模块私有：外部只消费 PinsSnapshot，不必知道两个桶各自的形状。

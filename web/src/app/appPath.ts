@@ -4,8 +4,8 @@
  * 拆自 appSupport.tsx（2026-09 App.tsx 拆分）。
  */
 
-import {  DirectorySortMode  } from "../services/directorySort";
-import {  scopeKey, dirSelKey  } from "../services/scope";
+import {  DirectorySortMode  } from "../services/prefs/directorySort";
+import {  scopeKey, dirSelKey  } from "../shared/scope";
 
 export type URLState = {
   root: string;

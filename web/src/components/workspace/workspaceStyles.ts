@@ -8,7 +8,7 @@
  */
 
 import type React from "react";
-import { rootBadgeButtonStyle } from "../rootBadgeStyle";
+import { rootBadgeButtonStyle } from "../../shared/rootBadgeStyle";
 
 export const workspaceRootStyle: React.CSSProperties = {
   // 铺满：以前写死 maxHeight: calc(100dvh - 148px)，那 148px 猜的是 ActionBar

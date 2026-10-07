@@ -1,9 +1,9 @@
-import { appURL, wsURL } from "./base";
-import { currentUser } from "./authGate";
-import { getRootNodeId } from "./rootNode";
-import { scopeSessionKey } from "./scope";
-import { protectedFetch, protectedJSON, withNodeRetry } from "./api";
-import { e2eeService } from "./e2ee";
+import { appURL, wsURL } from "./net/base";
+import { currentUser } from "./net/authGate";
+import { getRootNodeId } from "./net/rootNode";
+import { scopeSessionKey } from "../shared/scope";
+import { protectedFetch, protectedJSON, withNodeRetry } from "./net/api";
+import { e2eeService } from "./net/e2ee";
 
 // Session service for managing agent sessions
 

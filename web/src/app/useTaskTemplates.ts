@@ -6,8 +6,8 @@ import {
   type TaskTemplate,
 } from "../services/tasks";
 import { useI18n } from "../i18n";
-import { protectedAPIReady } from "../services/api";
-import { reportError } from "../services/error";
+import { protectedAPIReady } from "../services/net/api";
+import { reportError } from "../services/net/error";
 import { TASK_TEMPLATE_ALL_FILTER, TASK_TEMPLATE_SELECTION_STORAGE_KEY } from "./appStorage";
 import { confirmDialog } from "../services/dialog";
 

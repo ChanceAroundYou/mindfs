@@ -1,5 +1,5 @@
 import React from "react";
-import { CompactUploadProgress } from "../CompactUploadProgress";
+import { CompactUploadProgress } from "../file/CompactUploadProgress";
 import { useI18n } from "../../i18n";
 import { appAccentHexToRgba, getSelectionPreview } from "./styleHelpers";
 import { type AttachedFileContext } from "./types";

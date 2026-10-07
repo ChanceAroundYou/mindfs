@@ -1,19 +1,19 @@
 import type React from "react";
 import { useI18n } from "../i18n";
 import type { AgentStatus } from "../services/agents";
-import { AgentIcon } from "../components/AgentIcon";
+import { AgentIcon } from "../components/agent/AgentIcon";
 import { ChevronDownSmallIcon, ImportIcon } from "./taskIcons";
-import { AgentMenuList } from "../components/AgentMenuList";
-import { ExternalSessionList } from "../components/ExternalSessionList";
-import { ArchivedSessionsPanel } from "../components/ArchivedSessionsPanel";
+import { AgentMenuList } from "../components/agent/AgentMenuList";
+import { ExternalSessionList } from "../components/session/ExternalSessionList";
+import { ArchivedSessionsPanel } from "../components/session/ArchivedSessionsPanel";
 import {
   MultiProjectSessionList,
   SessionList,
   type ProjectSessionGroup,
   type SessionItem,
   type SessionListProps,
-} from "../components/SessionList";
-import type { DirectorySortMode } from "../services/directorySort";
+} from "../components/session/SessionList";
+import type { DirectorySortMode } from "../services/prefs/directorySort";
 
 /**
  * 会话右栏：导入入口（agent 菜单 + 只看未导入开关）+ 三种列表形态的切换。

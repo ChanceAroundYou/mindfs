@@ -1,6 +1,6 @@
-import { type SessionMode } from "../ModeSelector";
+import { type SessionMode } from "../agent/ModeSelector";
 import { type MessageKey } from "../../i18n";
-import { type SendShortcut } from "../../services/sendShortcut";
+import { type SendShortcut } from "../../services/prefs/sendShortcut";
 import { type UploadProgress } from "../../services/upload";
 import { type Session } from "../../services/session";
 

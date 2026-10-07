@@ -1,6 +1,6 @@
 import React, { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { sessionService, type ToolCall, type ToolCallContentItem, type ToolCallLocation } from "../../services/session";
-import { MarkdownViewer } from "../MarkdownViewer";
+import { MarkdownViewer } from "../file/MarkdownViewer";
 import { useI18n } from "../../i18n";
 
 type ToolCallCardProps = {

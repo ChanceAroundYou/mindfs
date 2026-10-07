@@ -12,30 +12,30 @@ import { normalizePathForRoot, shouldRedirectToRelayNodes } from "./services/fil
 import { getViewModeSystemPrompt } from "./renderer/viewCatalog";
 import { Renderer } from "./renderer/Renderer";
 import { SESSION_WINDOW_SIZE, clearCachedSessionsForRoot, clearWindowedView, composeLoadedExchanges, deleteCachedSession, deleteCachedSessionLists, getCachedMultiRootSessionList, getCachedSession, getCachedSessionList, getSessionWindow, isTransientExchange, saveCachedMultiRootSessionList, saveCachedSessionList, sessionService, setCachedSessionRelatedFiles, setWindowedView, settlePendingAcks, syncSession, type MultiRootSessionGroup, type QueuedUserMessage, type RelatedFile, type RelatedWorktree, type Session, type SyncSessionResult, type TokenUsage } from "./services/session";
-import { buildClientContext } from "./services/context";
-import { e2eeService, type E2EEState } from "./services/e2ee";
+import { buildClientContext } from "./services/prefs/context";
+import { e2eeService, type E2EEState } from "./services/net/e2ee";
 import {
   bootstrapService,
   type BootstrapState,
-} from "./services/bootstrap";
-import { syncNativeReplyPollerE2EE } from "./services/replyPoller";
+} from "./services/net/bootstrap";
+import { syncNativeReplyPollerE2EE } from "./services/net/replyPoller";
 import {
   ProtectedAPIError,
   protectedAPIReady,
   protectedJSON as apiProtectedJSON,
   withNodeRetry,
-} from "./services/api";
-import { reportError } from "./services/error";
+} from "./services/net/api";
+import { reportError } from "./services/net/error";
 import {
   loadSendShortcut,
   persistSendShortcut,
   type SendShortcut,
-} from "./services/sendShortcut";
+} from "./services/prefs/sendShortcut";
 import {
   loadFontSizePreferences,
   persistFontSizePreferences,
   type FontSizePreferences,
-} from "./services/fontSize";
+} from "./services/prefs/fontSize";
 import {
   fetchFile,
   fetchEditableFile,
@@ -46,8 +46,8 @@ import {
   invalidateFileCache,
   type FilePayload,
 } from "./services/file";
-import { getRootNodeId, setRootNodeId, setRootNodeMap } from "./services/rootNode";
-import { scopeKey, scopeSessionKey, treeKey, expandKey, dirSelKey } from "./services/scope";
+import { getRootNodeId, setRootNodeId, setRootNodeMap } from "./services/net/rootNode";
+import { scopeKey, scopeSessionKey, treeKey, expandKey, dirSelKey } from "./shared/scope";
 import {
   buildGitDiffCacheSignature,
   clearGitHistoryCache,
@@ -66,7 +66,7 @@ import {
   DEFAULT_DIRECTORY_SORT_MODE,
   type DirectorySortMode,
   type FileEntry,
-} from "./services/directorySort";
+} from "./services/prefs/directorySort";
 import { fileTokenPath, formatFileToken, isUploadAbortError, uploadFiles, type UploadProgress } from "./services/upload";
 import { isPlanCommand, withPlanPrefix } from "./components/action/inputTransforms";
 import {
@@ -82,30 +82,30 @@ import {
   readTrustedPluginSet,
   saveTrustedPluginSet,
 } from "./plugins/trust";
-import { appPath, appURL } from "./services/base";
+import { appPath, appURL } from "./services/net/base";
 import { useRefreshSpin } from "./hooks";
-import { copyText } from "./services/clipboard";
+import { copyText } from "./services/platform/clipboard";
 import { triggerUpdate, type UpdateState } from "./services/update";
 import {
   cancelScheduledWebViewCacheClear,
   scheduleWebViewCacheClearOnNextLaunch,
-} from "./services/nativeCacheControl";
+} from "./services/platform/nativeCacheControl";
 import {
   applyPinnedSnapshotToSessions as applyPinSnapshotRaw,
   mergeSessionItems,
 } from "./services/sessionListMerge";
 import { collectSessionSubtreeKeys, type SessionTreeItem } from "./services/sessionTree";
-import { currentUser } from "./services/authGate";
+import { currentUser } from "./services/net/authGate";
 // 直接导入标准组件
 import { AppShell } from "./layout/AppShell";
-import { ModeIcon } from "./components/ModeIcon";
+import { ModeIcon } from "./components/agent/ModeIcon";
 import {
   FileTree,
   type AgentConfigSwitchRequest,
   type ProjectTreeTab,
-} from "./components/FileTree";
+} from "./components/file/FileTree";
 
-import { applyNodesFromServer, getActiveNode, getActiveNodeId, getNodeById, getNodes, migrateLegacySingleBase, setActiveNodeId, syncNodesFromServer } from "./services/nodeRegistry";
+import { applyNodesFromServer, getActiveNode, getActiveNodeId, getNodeById, getNodes, migrateLegacySingleBase, setActiveNodeId, syncNodesFromServer } from "./services/net/nodeRegistry";
 import {
   optimisticSessionPin,
   readPins,
@@ -115,44 +115,44 @@ import {
   writePins,
 } from "./services/pins";
 
-import { FileViewer } from "./components/FileViewer";
+import { FileViewer } from "./components/file/FileViewer";
 import { resolveGroupColor } from "./services/sessionGroupDisplay";
-import { GitDiffViewer } from "./components/GitDiffViewer";
-import { GitStatusPanel } from "./components/GitStatusPanel";
-import { RootGitContentView } from "./components/RootGitContentView";
-import { RootRelatedContentView } from "./components/RootRelatedContentView";
-import { RootWorktreeContentView } from "./components/RootWorktreeContentView";
-import { SessionViewer } from "./components/SessionViewer";
-import { TaskBoardView } from "./components/TaskBoardView";
-import { DefaultListView, type MainContentViewMode } from "./components/DefaultListView";
-import { type ProjectSessionGroup } from "./components/SessionList";
-import { InlineTokenText } from "./components/InlineTokenText";
-import { ActionBar } from "./components/ActionBar";
-import { CompactUploadProgress } from "./components/CompactUploadProgress";
-import { ToastContainer } from "./components/Toast";
-import { DialogHost } from "./components/DialogHost";
+import { GitDiffViewer } from "./components/git/GitDiffViewer";
+import { GitStatusPanel } from "./components/git/GitStatusPanel";
+import { RootGitContentView } from "./components/root/RootGitContentView";
+import { RootRelatedContentView } from "./components/root/RootRelatedContentView";
+import { RootWorktreeContentView } from "./components/root/RootWorktreeContentView";
+import { SessionViewer } from "./components/session/SessionViewer";
+import { TaskBoardView } from "./components/task/TaskBoardView";
+import { DefaultListView, type MainContentViewMode } from "./components/file/DefaultListView";
+import { type ProjectSessionGroup } from "./components/session/SessionList";
+import { InlineTokenText } from "./components/common/InlineTokenText";
+import { ActionBar } from "./components/action/ActionBar";
+import { CompactUploadProgress } from "./components/file/CompactUploadProgress";
+import { ToastContainer } from "./components/shell/Toast";
+import { DialogHost } from "./components/shell/DialogHost";
 import { alertDialog, confirmDialog, promptDialog } from "./services/dialog";
-import { BottomSheet } from "./components/BottomSheet";
-import { ScheduledAgentTaskDialog } from "./components/ScheduledAgentTaskDialog";
-import { TaskTemplateDialog, FieldLabelWithInfo } from "./components/TaskTemplateDialog";
-import { TaskDetailPanel } from "./components/TaskDetailPanel";
-import { MainViewSwitcher } from "./components/MainViewSwitcher";
-import { OnboardingTour } from "./components/OnboardingTour";
-import { WorktreeBranchSelector } from "./components/WorktreeBranchSelector";
-import { NoWorktreeIcon } from "./components/NoWorktreeIcon";
+import { BottomSheet } from "./components/shell/BottomSheet";
+import { ScheduledAgentTaskDialog } from "./components/task/ScheduledAgentTaskDialog";
+import { TaskTemplateDialog, FieldLabelWithInfo } from "./components/task/TaskTemplateDialog";
+import { TaskDetailPanel } from "./components/task/TaskDetailPanel";
+import { MainViewSwitcher } from "./components/shell/MainViewSwitcher";
+import { OnboardingTour } from "./components/shell/OnboardingTour";
+import { WorktreeBranchSelector } from "./components/task/WorktreeBranchSelector";
+import { NoWorktreeIcon } from "./components/common/NoWorktreeIcon";
 import { renderToolIcon } from "./components/stream/ToolCallCard";
 import TokenEditor, { type TokenEditorHandle } from "./components/editor/TokenEditor";
-import { PromptEditor } from "./components/PromptEditor";
-import { StageEditor } from "./components/StageEditor";
-import { Select } from "./components/Select";
-import { PanelShell } from "./components/PanelShell";
+import { PromptEditor } from "./components/editor/PromptEditor";
+import { StageEditor } from "./components/task/StageEditor";
+import { Select } from "./components/common/Select";
+import { PanelShell } from "./components/shell/PanelShell";
 import { composerInputStyle } from "./components/action/composerStyles";
 import {
   type GitHubImportState,
   type LocalDirBrowserState,
   ProjectAddPopover,
   type ProjectAddMode,
-} from "./components/ProjectAddPopover";
+} from "./components/file/ProjectAddPopover";
 import { fetchAgents, restartAgent, type AgentStatus } from "./services/agents";
 import { fetchCandidates, type CandidateItem } from "./services/candidates";
 import {
@@ -191,7 +191,7 @@ import {
   completeOnboarding,
   dismissOnboarding,
   shouldAutoStartOnboarding,
-} from "./services/onboarding";
+} from "./services/prefs/onboarding";
 
 // 类型定义
 

@@ -28,7 +28,9 @@ const templateStore = fs.readFileSync(path.join(root, "../server/internal/kanban
 // 1) 三处都渲染共享组件
 assert.match(dialog, /import \{ StageEditor \} from "\.\/StageEditor"/, "template dialog must use StageEditor");
 assert.match(panel, /import \{ StageEditor \} from "\.\/StageEditor"/, "task detail must use StageEditor");
-assert.match(app, /import \{ StageEditor \} from "\.\/components\/StageEditor"/, "create-task dialog must use StageEditor");
+// StageEditor 已归入 components/task/（见 tests/source-map.mjs），App 在 src/，
+// 所以新路径是 ./components/task/StageEditor。
+assert.match(app, /import \{ StageEditor \} from "\.\/components\/task\/StageEditor"/, "create-task dialog must use StageEditor");
 assert.match(dialog, /import \{ PanelShell,/, "template dialog must use PanelShell");
 assert.match(panel, /import \{ PanelShell,/, "task detail must use PanelShell");
 
@@ -240,9 +242,11 @@ assert.match(
   /label=\{\(\s*<FieldLabelWithInfo/,
   "the create-task editor must reuse the template dialog's field label + info",
 );
+// TaskTemplateDialog 已归入 components/task/（见 tests/source-map.mjs），App 在 src/，
+// 所以新路径是 ./components/task/TaskTemplateDialog。
 assert.match(
   app,
-  /import \{ TaskTemplateDialog, FieldLabelWithInfo \} from "\.\/components\/TaskTemplateDialog"/,
+  /import \{ TaskTemplateDialog, FieldLabelWithInfo \} from "\.\/components\/task\/TaskTemplateDialog"/,
   "the shared field label must be exported from the template dialog",
 );
 assert.doesNotMatch(

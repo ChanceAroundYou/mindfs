@@ -1,4 +1,4 @@
-import { shouldRegisterServiceWorker } from "./services/runtime";
+import { shouldRegisterServiceWorker } from "./services/platform/runtime";
 
 export function registerServiceWorker(): void {
   if (typeof window === "undefined") {

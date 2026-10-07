@@ -3,7 +3,7 @@ import {
   APPEARANCE_CHANGE_EVENT,
   getAppearanceMode,
   getEffectiveAppearanceMode,
-} from "../../services/appearance";
+} from "../../services/prefs/appearance";
 
 /** 跟随显式设置 + 系统亮暗偏好的 isDark 订阅。 */
 export function useAppearanceSync(): boolean {

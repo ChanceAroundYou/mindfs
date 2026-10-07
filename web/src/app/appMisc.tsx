@@ -8,7 +8,7 @@ import { FILE_TOKEN_PATTERN } from "./appStorage";
 
 import {  MessageKey ,  MessageParams  } from "../i18n";
 import {  PluginInput  } from "../plugins/manager";
-import {  FileEntry  } from "../services/directorySort";
+import {  FileEntry  } from "../services/prefs/directorySort";
 import {  FilePayload  } from "../services/file";
 import {  UpdateState  } from "../services/update";
 import React, { useEffect, useState } from "react";

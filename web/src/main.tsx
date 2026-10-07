@@ -3,15 +3,15 @@ import { createRoot } from "react-dom/client";
 import "./index.css";
 import { App } from "./App";
 import { registerServiceWorker } from "./registerServiceWorker";
-import { applyAppearanceMode, getAppearanceMode } from "./services/appearance";
-import { isHarmonyRuntime, isNativeShellRuntime } from "./services/runtime";
-import { Login } from "./components/Login";
-import { AuthGate } from "./components/AuthGate";
-import { addNode, getNodes, setActiveNodeId } from "./services/nodeRegistry";
+import { applyAppearanceMode, getAppearanceMode } from "./services/prefs/appearance";
+import { isHarmonyRuntime, isNativeShellRuntime } from "./services/platform/runtime";
+import { Login } from "./components/account/Login";
+import { AuthGate } from "./components/account/AuthGate";
+import { addNode, getNodes, setActiveNodeId } from "./services/net/nodeRegistry";
 import { I18nProvider, translateNow } from "./i18n";
-import { DEPLOY_PREFIX, RELAY_ASSETS_PREFIX } from "./services/prefix";
-import { shouldReloadForStaleAsset } from "./services/staleAssetRecovery";
-import { installReloadObserver } from "./services/reloadObserver";
+import { DEPLOY_PREFIX, RELAY_ASSETS_PREFIX } from "./services/net/prefix";
+import { shouldReloadForStaleAsset } from "./services/platform/staleAssetRecovery";
+import { installReloadObserver } from "./services/platform/reloadObserver";
 
 // 最早的观测点：在任何渲染/样式生效之前计数，这样「打开就崩、崩了又被重载」
 // 也留得下痕迹。只记录不干预，读法见 services/reloadObserver.ts 顶部注释。

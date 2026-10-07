@@ -1,6 +1,6 @@
-import { appPath, appendQuery } from "./base";
-import { getRootNodeId } from "./rootNode";
-import { protectedJSON } from "./api";
+import { appPath, appendQuery } from "./net/base";
+import { getRootNodeId } from "./net/rootNode";
+import { protectedJSON } from "./net/api";
 
 export type ScheduledAgentTask = {
   id: string;

@@ -42,7 +42,9 @@ assert.ok(
   !existsSync(new URL("../src/components/WorkspaceKanban.tsx", import.meta.url)),
   "WorkspaceKanban.tsx must be deleted",
 );
-assert.match(view, /from "\.\/workspace\/WorkspaceBoard"/, "the new board must be the one mounted");
+// TaskBoardView 已归入 components/task/（见 tests/source-map.mjs），WorkspaceBoard 在
+// components/workspace/，所以新路径是 ../workspace/WorkspaceBoard。
+assert.match(view, /from "\.\.\/workspace\/WorkspaceBoard"/, "the new board must be the one mounted");
 
 // 3) 节点色纪律（commit 14df0d7）：共享样式里不得出现任何字面 hex。
 //    强调色只能来自节点色，选中底色只能是中性灰 —— 这两条是那次重构的核心。
@@ -153,9 +155,11 @@ assert.match(board, /const \{ isMobile \} = useResponsive\(\);/, "the board must
 
 // 9b) 层级：项目名用左侧项目列表那套徽章（中性灰底 + 主体色字），
 //     任务是小卡片。两行不再共用同一个灰底 —— 那正是「看起来很丑」的病根。
+// rootBadgeStyle 已归入 shared/（见 tests/source-map.mjs），WorkspaceBoard 在
+// components/workspace/，所以新路径是 ../../shared/rootBadgeStyle。
 assert.match(
   styles,
-  /import \{ rootBadgeButtonStyle \} from "\.\.\/rootBadgeStyle"/,
+  /import \{ rootBadgeButtonStyle \} from "\.\.\/\.\.\/shared\/rootBadgeStyle"/,
   "the project name must reuse the sidebar's root-badge style, not invent its own chrome",
 );
 assert.match(

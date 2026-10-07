@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { fetchGitStatusByPath, fetchGitWorktrees, type GitStatusPayload, type GitWorktreeItem } from "../services/git";
-import { type ProjectTreeTab } from "../components/FileTree";
+import { type ProjectTreeTab } from "../components/file/FileTree";
 import { useI18n } from "../i18n";
 
 /**

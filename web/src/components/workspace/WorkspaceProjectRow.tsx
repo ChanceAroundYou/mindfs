@@ -4,7 +4,7 @@ import { useResponsive } from "../action/styleHelpers";
 import { TaskGroupChevronIcon } from "../../app/taskIcons";
 import type { SessionItem } from "../../app/appSession";
 import type { WorkspaceProjectGroup, WorkspaceTaskItem } from "../../app/useWorkspaceBoard";
-import type { TaskCardAction, TaskSessionErrorDialog } from "../TaskCardRows";
+import type { TaskCardAction, TaskSessionErrorDialog } from "../task/TaskCardRows";
 import { WorkspaceTaskRow } from "./WorkspaceTaskRow";
 import {
   workspaceCountBadgeStyle,

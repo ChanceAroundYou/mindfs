@@ -6,7 +6,7 @@
 
 import { normalizeFastService } from "./appTask";
 
-import { sessionKeyNodeId } from "../services/scope";
+import { sessionKeyNodeId } from "../shared/scope";
 import {  QueuedUserMessage ,  RelatedFile ,  RelatedWorktree ,  Session ,  TokenUsage  } from "../services/session";
 
 export type SessionMode = "chat" | "plugin" | "command";

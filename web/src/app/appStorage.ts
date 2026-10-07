@@ -4,9 +4,9 @@
  * 拆自 appSupport.tsx（2026-09 App.tsx 拆分）。
  */
 
-import {  currentUser  } from "../services/authGate";
-import {  getRootNodeId  } from "../services/rootNode";
-import {  scopeKey, dirSelKey  } from "../services/scope";
+import {  currentUser  } from "../services/net/authGate";
+import {  getRootNodeId  } from "../services/net/rootNode";
+import {  scopeKey, dirSelKey  } from "../shared/scope";
 
 export const PLUGIN_QUERY_STORAGE_PREFIX = "vp-progress:";
 
