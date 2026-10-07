@@ -114,7 +114,7 @@
 
 ---
 
-## 1. 总览（44 组）
+## 1. 总览（45 组）
 
 | 组 | 主题 | 性质 | 关键提交/切片举例 | 互斥边界 |
 |----|------|------|-------------------|----------|
@@ -164,6 +164,7 @@
 | G-AS | ACP 提问（dsh `ask_user_question` 走 elicitation） | 修复 | 见 §3.1 | 只对 dsh 广告 elicitation.form；题目 id+文本关联；答案编码成 `question_<i>` |
 | G-AT | 会话打开性能（窗口去重 / 载荷压缩 / 工具卡分组） | 性能 | 见 §3.1 | 会话打开热路径：取窗去重 + 窗口轻压缩 + 窗口 8 + 工具卡分组 + related-files 去抖 |
 | G-AU | 会话拉取风暴与渲染主线程阻塞 | 修复 | 见 §3.1 | 加载 effect 只依赖身份不依赖快照对象；失败留痕且 404 是终点；`sessionCacheRef` 有上限；渲染无 O(n²)、滚动有节流 |
+| G-AX | relay 绑定轮询测试的两条同步竞态 | 修复 | 见 §3.1 | 状态落地晚于 channel 发送；`requests` 必须无缓冲 |
 
 > **G-D 已并入 G-F，G-M 已并入 G-AI**（改动面完全重合、无独立测试可守，单列只会制造空组）。
 
@@ -1042,6 +1043,42 @@
 - **针对性测试**：
   - `web/tests/workspace-board.test.mjs` — attention bar 必须不存在；taskRow wrapper 必须是 `<article>`
   - `web/tests/task-card-wrap.test.mjs` — `workspaceTaskNameStyle` 断言已移除
+
+### G-AX relay 绑定轮询测试的两条同步竞态（2026-10-07）
+
+- 来源：`server/internal/relay/service_test.go`（**纯上游文件**，对 baseline 零差异）、
+  `web/tests/relay-bind-poll-sync.test.mjs`（新增）。
+- 边界：**`TestManagerPollTerminalBindStatusStopsPolling` 里的两条竞态**。
+  合上游时要么全留要么全弃 —— 这两条单独被冲掉都不会让门禁变红，
+  只有持续跑或负载高时才炸，而它炸的时候看起来像产品 bug。
+- 可见症状（没有它会怎样）：
+  1. 该测试偶发失败，报 `pending code did not clear after expired bind status`，
+     耗时正好 **5.00s**（撞上 `time.After(5 * time.Second)`）。
+  2. 另一条偶发 `expected initial pending code`（`-race -count=20` 实测复现）。
+  3. 单独跑 30/30 全绿 —— 所以极易被当成「偶发、不管它」。
+- 根因（两条，互相独立）：
+  1. **状态落地晚于 channel 发送。** 本文件的 mock transport 在**返回响应之前**
+     就把 URL 送进 `requests`（`requests <- req.URL.String()`），而 poller 要等
+     响应返回之后才走 `onFinished` 更新 `Status()`（`manager.go` 的 `pollLoop`：
+     `m.pendingCode = ""; m.lastError = status`）。原实现从 `requests` 读到请求
+     就**立刻**查 `Status()`，不是 `"expired"` 就 `continue` 去读下一个请求 ——
+     而 poller 收到 expired 之后已经 `return` 了，再没有下一个请求，于是卡到超时。
+  2. **channel 带缓冲（cap 4）导致 poller 抢跑。** 缓冲让发送不阻塞，poller 会
+     抢在测试观察之前跑完整个 poll（expired → onFinished → 清空 `PendingCode`），
+     于是 `StartBinding()` 返回后立刻查 `PendingCode` 可能是空的。
+- 改了什么：
+  - 收到请求后**等状态落地**（轮询 `Status()` 直到 `LastError == "expired"`），
+    而不是读一次就 `continue`。
+  - `requests` 改成**无缓冲**，让 poller 停在发送上，保证测试读到 `PendingCode`
+    时它还没被清空。
+  - 新增 `TestManagerPollTerminalBindStatusSettlesAfterChannelSend`：mock 在送进
+    channel 之后**再睡 150ms** 才返回响应，把第一条竞态从「负载高才偶发」
+    变成「必然发生」，并断言「读到请求时状态还没落地」这个前提。
+- 针对性测试：
+  - `web/tests/relay-bind-poll-sync.test.mjs` — 钉住「不得读一次就 continue」、
+    必须有等待循环、`requests` 必须无缓冲、顺序假设必须被确定性复现。
+    **已验证：把修复改回原样后该测试立刻变红。**
+- 验证：`-count=50` 通过；`-race -count=30` 连跑 3 轮（共 90 次）全绿。
 
 ---
 

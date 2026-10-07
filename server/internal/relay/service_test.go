@@ -361,7 +361,11 @@ func TestManagerPollTerminalBindStatusStopsPolling(t *testing.T) {
 		t.Fatalf("NewManager() error = %v", err)
 	}
 
-	requests := make(chan string, 4)
+	// CUSTOM(G-AX): 必须**无缓冲**。带缓冲时 poller 的 channel 发送不会阻塞，它会抢在
+	// 测试观察之前跑完整个 poll（expired → onFinished → 清空 PendingCode），于是下面
+	// `expected initial pending code` 会偶发失败（-race -count=20 实测复现过）。
+	// 无缓冲让 poller 停在发送上，保证测试读到 PendingCode 时它还没被清空。
+	requests := make(chan string)
 	manager.service.client = &http.Client{
 		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			if strings.HasPrefix(req.URL.String(), "https://relay.example.com/api/bind/poll?code=pc_") {
@@ -390,22 +394,108 @@ func TestManagerPollTerminalBindStatusStopsPolling(t *testing.T) {
 		t.Fatal("expected initial pending code")
 	}
 
+	// CUSTOM(G-AX): 状态落地比 channel 发送**晚**，两者之间没有同步关系。
+	// 本文件的 mock transport 是在**返回响应之前**就把 URL 送进 requests（见上方
+	// `requests <- req.URL.String()`），而 poller 要等响应返回之后才走 onFinished
+	// 去更新 Status()（manager.go 的 pollLoop：`m.pendingCode = ""; m.lastError = status`）。
+	// 所以「从 requests 读到请求」并不意味着「状态已经更新」。
+	//
+	// 原实现读一次就立刻查 Status()，不是 "expired" 就 continue 去读下一个请求；
+	// 而 poller 收到 expired 之后已经 return 了，再没有下一个请求 —— 于是卡到 5s
+	// 超时。负载越高越必然输（本机 12GB 内存 + swap 压力 + 并发 agent 时复现过）。
+	// 修法：收到请求后**等状态落地**，而不是要求它与 channel 发送同拍。
+	deadline := time.Now().Add(5 * time.Second)
 	timeout := time.After(5 * time.Second)
 	for {
 		select {
 		case <-requests:
-			status := manager.Status()
-			if status.LastError != "expired" {
-				continue
+			for time.Now().Before(deadline) {
+				status := manager.Status()
+				if status.LastError == "expired" {
+					if status.PendingCode == "" {
+						return
+					}
+					t.Fatalf("expected pending code to clear after expired status, got first=%q current=%q", firstPendingCode, status.PendingCode)
+				}
+				time.Sleep(2 * time.Millisecond)
 			}
-			if status.PendingCode == "" {
-				return
-			}
-			t.Fatalf("expected pending code to clear after expired status, got first=%q current=%q", firstPendingCode, status.PendingCode)
 		case <-timeout:
 			t.Fatal("pending code did not clear after expired bind status")
 		}
 	}
+}
+
+// CUSTOM(G-AX): 确定性复现 G-AV 修的那条竞态，把它从「负载高才偶发」变成「必然发生」。
+//
+// 做法：mock 在把 URL 送进 channel **之后**再睡 150ms 才返回响应。于是测试从
+// requests 读到请求的那一刻，poller 一定还卡在 sleep 里、还没走到 onFinished ——
+// 也就是原实现必然读到旧状态的那一刻。
+//
+// 这个测试钉的是**顺序假设**本身（状态落地晚于 channel 发送），以及
+// 「expired 之后 PendingCode 必须被清空」这条行为契约。
+func TestManagerPollTerminalBindStatusSettlesAfterChannelSend(t *testing.T) {
+	configRoot := t.TempDir()
+	testutil.IsolateUserDirs(t, configRoot)
+
+	manager, err := NewManager(":7331", false, "https://relay.example.com", false)
+	if err != nil {
+		t.Fatalf("NewManager() error = %v", err)
+	}
+
+	// 同上：无缓冲，保证下面那条 precondition 断言不会被 poller 抢跑。
+	requests := make(chan string)
+	manager.service.client = &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if strings.HasPrefix(req.URL.String(), "https://relay.example.com/api/bind/poll?code=pc_") {
+				requests <- req.URL.String()
+				// 关键：拉开「channel 发送」与「poller 更新状态」的距离。
+				time.Sleep(150 * time.Millisecond)
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Status:     "200 OK",
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body:       io.NopCloser(strings.NewReader(`{"status":"expired"}`)),
+				}, nil
+			}
+			return nil, context.Canceled
+		}),
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := manager.Start(ctx); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if _, err := manager.StartBinding(); err != nil {
+		t.Fatalf("StartBinding() error = %v", err)
+	}
+	if manager.Status().PendingCode == "" {
+		t.Fatal("expected initial pending code")
+	}
+
+	// 收到请求后**立刻**查状态：必须还没落地，否则说明竞态没被复现。
+	select {
+	case <-requests:
+		if got := manager.Status().LastError; got == "expired" {
+			t.Fatalf("precondition failed: status already settled (%q), race not reproduced", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no bind poll request observed")
+	}
+
+	// 等它落地，并确认 PendingCode 被清空。
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		status := manager.Status()
+		if status.LastError == "expired" {
+			if status.PendingCode != "" {
+				t.Fatalf("expected pending code to clear after expired status, got %q", status.PendingCode)
+			}
+			return
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	t.Fatal("pending code did not clear after expired bind status")
 }
 
 func TestManagerDefaultsRelayBaseToLocalhost(t *testing.T) {
