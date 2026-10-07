@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -49,14 +50,46 @@ type FinishWorktreeConflict struct {
 }
 
 func (e *FinishWorktreeConflict) Error() string {
-	files := strings.Join(e.ConflictFiles, ", ")
-	if files == "" {
-		files = "（见 git 输出）"
-	}
-	return "合并撞上冲突，需人工处理：" + files
+	// 清单**不进句子**：它本来就在 ConflictFiles 里给 UI 列表渲染，句子里再拼一遍
+	// 是同一份东西出现两次。三十个文件拼成一句读不完的话，等于没说。
+	return "合并撞上冲突，需人工处理"
 }
 
 func (e *FinishWorktreeConflict) Unwrap() error { return gitview.ErrMergeConflict }
+
+// FinishWorktreeDirty 是「主 checkout 有未提交改动」的对外形态。
+//
+// 与 FinishWorktreeConflict 并列而不是共用一个类型：冲突要列文件让用户去解，
+// 这个是让用户先处理自己的改动。混成一个类型的话 UI 只能靠猜来分流。
+type FinishWorktreeDirty struct {
+	Files []string
+}
+
+func (e *FinishWorktreeDirty) Error() string {
+	// 清单**不进句子**：它走 dirty_files 给 UI 列表渲染。三十个文件拼成一句读不完
+	// 的话，等于没说（2026-10-07 用户实测）。
+	return "主 checkout 有未提交改动，先提交或暂存后再收尾"
+}
+
+func (e *FinishWorktreeDirty) Unwrap() error { return gitview.ErrMergeDirty }
+
+// FinishWorktreeUserChanges 是「合并已成功、但 worktree 里还有用户没提交的东西」的
+// 对外形态。
+//
+// 与 FinishWorktreeDirty 并列：那个是主 checkout 不干净、合并还没做；这个是 worktree
+// 自己不干净、合并已经做完了。下一步一样（先提交/暂存），但「活合了没有」是两回事，
+// 所以分开报 —— 用户看到前者会以为白干了一场，看到后者知道代码已经在主干里。
+type FinishWorktreeUserChanges struct {
+	Files []string
+}
+
+func (e *FinishWorktreeUserChanges) Error() string {
+	// 清单走 user_changes。文案必须点明「合并已成功」，否则用户看到「收尾失败」
+	// 会以为白干了一场 —— 而实际上代码已经在主干里了。
+	return "合并已成功，但 worktree 里还有没提交的东西，先提交或暂存后再收尾"
+}
+
+func (e *FinishWorktreeUserChanges) Unwrap() error { return gitview.ErrMergeUncommitted }
 
 // FinishWorktreeResult 是一次收尾的结果。
 type FinishWorktreeResult struct {
@@ -70,15 +103,30 @@ type FinishWorktreeResult struct {
 	BranchDeleted bool `json:"branch_deleted"`
 	// BranchSkipReason 解释 BranchDeleted=false 的原因（给用户看的，不靠猜）。
 	BranchSkipReason string `json:"branch_skip_reason,omitempty"`
-	// Orphans 是 .worktree/ 下的残留目录（PruneOrphans 开着才有），只列不删。
+	// WorktreeDirRemoved 表示目录**本体**（含 git 不跟踪的 .mindfs/ .omc/ .claude/）
+	// 有没有被整个删掉。收尾的语义是「这个目录不再需要」，所以 git 拆完之后还会
+	// 把目录删干净，而不是留一个空壳。
+	WorktreeDirRemoved bool `json:"worktree_dir_removed"`
+	// DirRemoveReason 解释 WorktreeDirRemoved=false 的原因（给用户看的，不靠猜）。
+	DirRemoveReason string `json:"dir_remove_reason,omitempty"`
+	// RemovedOrphans 是顺手删掉的空壳孤儿目录（里面只剩 .mindfs/ .omc/ .claude/）。
+	// 报出来是为了让「它删了什么」可见。
+	RemovedOrphans []string `json:"removed_orphans,omitempty"`
+	// MigratedUploads 是从 worktree 的 .mindfs/upload/ 搬回主 checkout 的附件
+	// （相对 upload/ 的路径）。拆目录前必须搬，否则用户在 worktree 会话里传的文件
+	// 会跟着消失。
+	MigratedUploads []string `json:"migrated_uploads,omitempty"`
+	// Orphans 是 .worktree/ 下**还留着**的残留目录（PruneOrphans 开着才有）。
+	// 只剩工具状态目录的空壳会被自动删掉（见 RemovedOrphans），剩下的只列不删 ——
+	// 里面可能有别的任务正在用的东西。
 	Orphans []gitview.OrphanWorktreeDir `json:"orphans,omitempty"`
 	// CleanedLeftovers 是收尾为拆目录而清掉的工具状态目录（.claude/ .omc/ .mindfs/）。
 	// 报出来是为了让「它删了什么」可见 —— 静默删目录是最不该有的那种自动化。
 	CleanedLeftovers []string `json:"cleaned_leftovers,omitempty"`
 }
 
-// FinishTaskWorktree 收尾一个任务在 worktree 里的活：合回主 checkout → 拆 worktree
-// → 删分支 → 列残留。
+// FinishTaskWorktree 收尾一个任务在 worktree 里的活：搬走附件 → 合回主 checkout →
+// 拆 worktree → 删目录本体 → 删分支 → 清残留。
 //
 // 合不拢就**停在冲突态**并把冲突文件报上去（用户定的口径），不自动 abort：
 // 解到一半的取舍连同 MERGE_MSG 一起丢掉，用户得从头再来。worktree 和分支此时都
@@ -162,10 +210,27 @@ func (s *Service) FinishTaskWorktree(ctx context.Context, in FinishWorktreeInput
 			_ = s.recordTaskError(ctx, store, task, "", asConflict.Error())
 			return result, asConflict
 		}
+		var dirty *gitview.MainCheckoutDirtyError
+		if errors.As(err, &dirty) {
+			return result, &FinishWorktreeDirty{Files: dirty.Files}
+		}
 		return result, err
 	}
 	result.Merged = merged.Merged
 	result.Commit = merged.Commit
+
+	// ── 1b. 搬走附件 ──
+	// 必须在拆目录**之前**：上传落在 <worktree>/.mindfs/upload/，而那个目录马上要被
+	// 整个删掉。只搬 upload/ —— 会话库/任务库的权威副本本来就在主 checkout。
+	migrated, migrateErr := gitview.MigrateWorktreeUploads(worktreePath, mainDir)
+	if migrateErr != nil {
+		// 合并已经成功了，这时报错会让一次成功的收尾显示成失败。但也不能静默
+		// 继续拆目录 —— 那等于替用户决定「附件不要了」。所以停下来让人看一眼。
+		return result, fmt.Errorf(
+			"合并已成功，但搬移 worktree 里上传的附件失败，不敢继续拆目录（先手工看一眼 %s）：%w",
+			filepath.Join(worktreePath, ".mindfs", "upload"), migrateErr)
+	}
+	result.MigratedUploads = migrated
 
 	// ── 2. 拆 worktree ──
 	// 合完了才拆。判据是「git 还认不认这个 worktree」而不是「目录在不在」：
@@ -186,9 +251,7 @@ func (s *Service) FinishTaskWorktree(ctx context.Context, in FinishWorktreeInput
 		}
 		if len(blockers.UserChanges) > 0 {
 			// 用户的活一律不动。这是唯一必须停下来的情形。
-			return result, fmt.Errorf(
-				"合并已成功，但拆除 worktree 失败：%s 里还有没提交的东西（%s），先处理掉再收尾。工具自己留下的临时目录（.claude/ .omc/ .mindfs/）不用你管，那部分会自己清",
-				worktreePath, strings.Join(blockers.UserChanges, "、"))
+			return result, &FinishWorktreeUserChanges{Files: blockers.UserChanges}
 		}
 		if len(blockers.AgentLeftovers) > 0 {
 			// 只有工具产物：清掉再拆。删不掉也不拦（可能有会话正在写），
@@ -203,6 +266,18 @@ func (s *Service) FinishTaskWorktree(ctx context.Context, in FinishWorktreeInput
 				"合并已成功，但拆除 worktree 失败：%w", err)
 		}
 		result.WorktreeRemoved = true
+	}
+
+	// ── 2b. 删目录本体 ──
+	// git 拆完之后目录里可能还留着东西（git 不跟踪的 .mindfs/ .omc/ .claude/），
+	// 或者 git 早就忘了它、只剩一个空壳。留着只会让 .worktree/ 越积越多。
+	//
+	// 删不掉不判失败：合并、拆 worktree、删分支都已经成了，为「目录没删干净」把
+	// 整次收尾报成失败只会让用户以为白干了一场。原因照样报出来。
+	if removedDir, dirErr := gitview.RemoveWorktreeDir(worktreePath); dirErr != nil {
+		result.DirRemoveReason = dirErr.Error()
+	} else if removedDir {
+		result.WorktreeDirRemoved = true
 	}
 
 	// ── 3. 删分支 ──
@@ -246,6 +321,14 @@ func (s *Service) FinishTaskWorktree(ctx context.Context, in FinishWorktreeInput
 	// 目录里 git 完全不跟踪的东西（.mindfs/ 会话库、.claude/、.omc/）还在。
 	// 删不删由用户看完内容再决定。
 	if in.PruneOrphans {
+		// 先删「里面只剩工具状态目录」的空壳，再列剩下的。
+		// 顺序有讲究：先列再删的话，被删掉的那几个也会出现在 Orphans 里，
+		// 用户看到「残留目录」却找不到它，只会以为界面在骗人。
+		removed, err := gitview.RemoveToolStateOnlyOrphanDirs(ctx, mainDir)
+		if err != nil {
+			return result, err
+		}
+		result.RemovedOrphans = removed
 		orphans, err := gitview.PruneOrphanDirs(ctx, mainDir)
 		if err != nil {
 			return result, err
@@ -298,6 +381,13 @@ func (s *Service) assertWorktreeMatches(ctx context.Context, mainDir, worktreePa
 // 锁死在收不了尾的盒子里 —— 真正的保护在 git 层，拦不住的话 merge 撞上冲突会
 // 自己停下来。
 func (s *Service) assertNotRunning(ctx context.Context, store *TaskStore, task Task) error {
+	return s.taskBusyErr(ctx, store, task)
+}
+
+// taskBusyErr 是「这个任务现在有没有执行体在动」的判据，**与 ctx/store 解耦**地写成
+// 一个纯函数式的内部方法，好让 api 层的收尾分流（TaskBusy）复用同一套判据 ——
+// 两处各写一份的话，迟早有一处漏掉「段在跑」这个窗口。
+func (s *Service) taskBusyErr(ctx context.Context, store *TaskStore, task Task) error {
 	if s.sessionRunning(task.MainSessionKey) {
 		return ErrTaskSessionRunning
 	}
@@ -321,6 +411,27 @@ func (s *Service) assertNotRunning(ctx context.Context, store *TaskStore, task T
 		return errors.New("当前阶段正在执行中，先停止再收尾")
 	}
 	return nil
+}
+
+// TaskBusy 报任务现在有没有执行体在动（会话在回复，或当前段还在跑）。
+//
+// 给 api 层的收尾分流用：那是**正常等待**，不是错误 —— 以前只看会话探针，段在跑时
+// 会漏过去、让请求撞进收尾准入变成 409，界面上表现为「收尾一直转、点不动」。
+//
+// 读不到任务一律返回 false（不 busy）：数据问题不该把用户锁死在收不了尾的盒子里。
+func (s *Service) TaskBusy(ctx context.Context, rootID, taskID string) bool {
+	if s == nil {
+		return false
+	}
+	store, err := s.taskStore(rootID)
+	if err != nil {
+		return false
+	}
+	task, err := store.GetTask(ctx, strings.TrimSpace(taskID))
+	if err != nil {
+		return false
+	}
+	return s.taskBusyErr(ctx, store, task) != nil
 }
 
 // TaskSessionRunning 报任务绑定的会话此刻是否在回复中。
@@ -370,6 +481,123 @@ func (s *Service) TaskWorktreeBranchMerged(ctx context.Context, rootID, taskID, 
 		target = "main"
 	}
 	return gitview.BranchMergedInto(ctx, mainDir, branch, target)
+}
+
+// TaskHasAgentStage 报任务流水里有没有 agent 段。
+//
+// 给 api 层的收尾分流用：收尾段要继承上一段的 agent/模型，没有 agent 段时追加收尾段
+// 必然失败（BeginFinishWorktree 会 409）。与其给一个必然失败的按钮，不如直接机械清场。
+func (s *Service) TaskHasAgentStage(ctx context.Context, rootID, taskID string) (bool, error) {
+	_, task, err := s.loadForMove(ctx, rootID, taskID)
+	if err != nil {
+		return false, err
+	}
+	for _, stage := range task.Stages {
+		if stage.Role == RoleAgent {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// FinishPlan 是「这次收尾该走哪条路」的服务端只读判定。
+//
+// 收尾是 agent + 机械清场两个阶段的整合，但很多情况下 agent 那半已经没活可干了
+// （分支早合进主干、worktree 也干净），再跑一遍只会多一个空提交、让用户白等一轮。
+// 所以先判定，能机械清场就直接做掉。
+type FinishPlan struct {
+	// Mechanical=true 表示机械清场能直接做完，不必等 agent。
+	Mechanical bool `json:"mechanical"`
+	// Reason 是 Mechanical=false 的原因（短句，给用户看）。
+	Reason string `json:"reason,omitempty"`
+	// Files 是相关文件清单（未提交的文件 / 会冲突的文件），给 UI 列表渲染。
+	Files []string `json:"files,omitempty"`
+}
+
+// PlanFinishWorktree 判定这次收尾能不能直接走机械清场。**只读**，不碰仓库状态。
+//
+// 判定顺序（任一条不满足就退给 agent）：
+//  1. 没有 worktree / 目录已不在 → 机械（清场自己会处理「本来就没树」的幂等情形）
+//  2. 分支已在主干 → 机械（只剩清场）
+//  3. worktree 里还有没提交的活 → **不**机械，交给 agent 判断哪些是成品要提交
+//  4. 合并会冲突 → **不**机械，交给 agent 解释冲突并问用户
+//  5. 都过 → 机械
+//
+// 刻意**不**要求主 checkout 干净：那是「合并能不能做完」的一部分，真不干净时
+// MergeBranch 会自己拦下并列出文件（MainCheckoutDirtyError → dirty_files），
+// 让用户看见即可。在这里提前拦会把「主 checkout 有改动」误报成「要跑 agent」，
+// 而 agent 同样合不进去 —— 白等一轮，问题还在。
+func (s *Service) PlanFinishWorktree(ctx context.Context, rootID, taskID string) (FinishPlan, error) {
+	_, task, err := s.loadForMove(ctx, rootID, taskID)
+	if err != nil {
+		return FinishPlan{}, err
+	}
+	if !task.CreateWorktree {
+		return FinishPlan{Mechanical: true, Reason: "该任务没有 worktree"}, nil
+	}
+	worktreePath := strings.TrimSpace(task.WorktreePath)
+	if worktreePath == "" {
+		return FinishPlan{Mechanical: true, Reason: "该任务还没有 worktree"}, nil
+	}
+	// 目录已经不在了：没有活可提交，直接清场（清场会清掉任务侧归属，幂等）。
+	if isWT, wtErr := gitview.IsWorktree(worktreePath); wtErr != nil {
+		// 读不到 git 状态时不替用户决定 —— 交给 agent 看一眼。
+		return FinishPlan{Mechanical: false, Reason: "读不到 worktree 的 git 状态，交给 agent 确认"}, nil
+	} else if !isWT {
+		if _, statErr := os.Stat(worktreePath); os.IsNotExist(statErr) {
+			return FinishPlan{Mechanical: true, Reason: "worktree 目录已不在"}, nil
+		}
+		// 目录在、但没有 .git：已经是拆过一半的残留，交给清场删干净。
+		return FinishPlan{Mechanical: true, Reason: "worktree 已拆，只剩残留目录"}, nil
+	}
+	mainDir, err := s.taskWorktreeMainDir(ctx, rootID)
+	if err != nil {
+		return FinishPlan{}, err
+	}
+	branch := strings.TrimSpace(task.WorktreeBranch)
+	if branch == "" {
+		branch = worktreeDirName(worktreePath)
+	}
+	target := "main"
+
+	// 分支已在主干 → 只剩清场。
+	if merged, mergedErr := gitview.BranchMergedInto(ctx, mainDir, branch, target); mergedErr == nil && merged {
+		return FinishPlan{Mechanical: true, Reason: "分支已合进主干"}, nil
+	}
+
+	// worktree 里还有没提交的活 → 交给 agent：只有它能判断哪些是成品、该怎么提交。
+	// 读不到状态时也退给 agent（判据失效时宁可让人看一眼，别替用户删东西）。
+	blockers, blockerErr := gitview.ClassifyWorktreeRemoveBlockers(ctx, worktreePath)
+	if blockerErr != nil {
+		return FinishPlan{
+			Mechanical: false,
+			Reason:     "读不到 worktree 的 git 状态，交给 agent 确认",
+		}, nil
+	}
+	if len(blockers.UserChanges) > 0 {
+		return FinishPlan{
+			Mechanical: false,
+			Reason:     "worktree 里还有没提交的改动",
+			Files:      blockers.UserChanges,
+		}, nil
+	}
+
+	// 合并会冲突 → 交给 agent：冲突要解释、要给取舍判断，机器替不了。
+	feasibility, feasibleErr := gitview.CanMergeCleanly(ctx, mainDir, branch, target)
+	if feasibleErr != nil {
+		return FinishPlan{
+			Mechanical: false,
+			Reason:     "判定合并可行性失败，交给 agent 确认",
+		}, nil
+	}
+	if !feasibility.Clean {
+		reason := feasibility.Reason
+		if reason == "" {
+			reason = "合并不能直接完成"
+		}
+		return FinishPlan{Mechanical: false, Reason: reason, Files: feasibility.Files}, nil
+	}
+	return FinishPlan{Mechanical: true, Reason: "worktree 干净且合并无冲突"}, nil
 }
 
 // TaskFinishStageIndex 报任务流水里收尾段的下标；没有则 ok=false。

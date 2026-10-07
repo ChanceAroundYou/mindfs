@@ -299,9 +299,11 @@ assert.match(
   "删除键只给终态任务，且必须住在面板头部",
 );
 // 完成 = 推进键给不出来时的出口，与看板卡片同一套门控。待审核的任务不能一个键都没有。
+// 判据只剩 worktree 三态（2026-10-07）：「有 agent 段」那条与卡片一起去掉了 ——
+// 留着它，面板就会给「有 worktree 但没有 agent 段」的任务一个必然 409 的按钮。
 assert.match(
   panel,
-  /const canFinishWorktree = task\?\.create_worktree === true\s*\n\s*&& !!task\?\.worktree_path\s*\n\s*&& task\?\.worktree_missing !== true\s*\n\s*&& hasAgentStage;/,
+  /const canFinishWorktree = task\?\.create_worktree === true\s*\n\s*&& !!task\?\.worktree_path\s*\n\s*&& task\?\.worktree_missing !== true;/,
   "the panel must still read the server-derived worktree_missing flag for 收尾",
 );
 // 当前段 fail/cancelled/rejected 时不许给：服务端 moveRelative 会报错，而 RunNow 的
@@ -458,9 +460,12 @@ test("card advance gate falls back to pending when the server sent no stage stat
 // 旧口径「没有下一段才给」漏掉了一类任务（2026-10-06 用户实测）：指针停在收尾段、
 // 卡在待审核、worktree 又已被拆 —— 收尾键给不出来、执行键也给不出来，
 // 任务在界面上彻底没有出路。现在只要推进键（canRunStageNow）给不出来就兜住。
+//
+// **收尾中不再豁免**（2026-10-07，与卡片同一改动）：收尾段卡在待审核时推进键恒假，
+// 旧判据把完成键也一起收走了，于是那个局面只剩一个最容易失败的收尾键。
 assert.match(
   panel,
-  /const canCompleteTask = !terminal && !stageRunningNow && !canRunStageNow && !\(finishActive && canFinishWorktree\);/,
+  /const canCompleteTask = !terminal && !stageRunningNow && !canRunStageNow;/,
   "the detail panel's 完成 must兜住 canRunStageNow 给不出来的一切局面",
 );
 assert.match(

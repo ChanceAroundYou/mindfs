@@ -161,9 +161,11 @@ import {
   createTask,
   deleteTask,
   deleteTaskTemplate,
-  // FinishWorktreeConflict 是 class 不是 type：下面要用 instanceof 分流
-  // （冲突要列文件清单，其它失败只报一句）。
+  // FinishWorktreeConflict / FinishWorktreeDirty 是 class 不是 type：下面要用
+  // instanceof 分流（两者都要列文件清单，但下一步完全不同）。
   FinishWorktreeConflict,
+  FinishWorktreeDirty,
+  FinishWorktreeUserChanges,
   fetchTaskDetails,
   fetchTaskTemplates,
   getCachedTaskDetails,
@@ -750,7 +752,7 @@ export function App({ onGoHome }: AppProps) {
     } catch (err) {
       if ((err as any)?.name === "AbortError") return;
       if (kanbanAbortRef.current?.signal.aborted) return;
-      reportError("file.write_failed", String((err as Error)?.message || t("task.loadFailed")));
+      reportError("task.action_failed", String((err as Error)?.message || t("task.loadFailed")));
     } finally {
       if (seq === kanbanLoadSeqRef.current && !controller.signal.aborted) setKanbanTasksLoading(false);
     }
@@ -841,25 +843,45 @@ export function App({ onGoHome }: AppProps) {
         if (res.detail) {
           applyTaskDetails(rootId, [res.detail]);
         }
+        // plan 是服务端对「这次为什么走这条路」的只读判定。机械清场做不了时
+        // （worktree 有没提交的活 / 合并会冲突）把理由说清楚 —— 否则用户看到
+        // 「又跑起 agent 了」只会以为收尾卡住了。
+        const planReason = res.plan?.reason?.trim();
+        const planFiles = Array.isArray(res.plan?.files) ? res.plan!.files.filter(Boolean) as string[] : [];
+        const planLine = planReason
+          ? planFiles.length > 0
+            ? `${t("task.finishWorktreePlanFiles", { files: planFiles.join(", ") })} — ${planReason}`
+            : planReason
+          : "";
         switch (res.action) {
           case "session_running":
             // 正常等待，不是失败：agent 正在回复，收尾要拆它的 cwd，得等它停。
-            reportError("file.write_failed", t("task.finishWorktreeSessionRunning"), { severity: "info", recoverable: false });
+            reportError("task.action_failed", t("task.finishWorktreeSessionRunning"), { severity: "info", recoverable: false });
             break;
           case "teardown":
-            // 分支早就在主干里了，这次点的是机械清场，**同步做完了**。
-            // 结论不在这里播报：服务端已经把 task.finish_teardown 推给所有客户端，
-            // 由那条统一弹窗，免得同一个结论出现两种说法。板子要重拉 —— 卡片的
-            // worktree 徽标从「有树」变成「已收尾」，applyTaskDetails 管不到这个。
+            // 机械清场**同步做完了**（不等 agent）。结论不在这里播报：服务端已经把
+            // task.finish_teardown 推给所有客户端，由那条统一弹窗，免得同一个结论
+            // 出现两种说法。板子要重拉 —— 卡片的 worktree 徽标从「有树」变成
+            // 「已收尾」，applyTaskDetails 管不到这个。
             refreshWorkspaceBoard();
             break;
           case "nudged":
-            reportError("file.write_failed", t("task.finishWorktreeNudged"), { severity: "info", recoverable: false });
+            // 机械清场做不了、流水上已有收尾段 → 重跑那一段催 agent 继续。
+            reportError(
+              "task.action_failed",
+              planLine ? `${t("task.finishWorktreeNudged")} — ${planLine}` : t("task.finishWorktreeNudged"),
+              { severity: "info", recoverable: false },
+            );
             break;
           default:
-            // stage_added：只追加了收尾段并起 agent。清场由服务端在那一段成功之后
-            // 自己做，结论走 WS task.finish_teardown —— 这会儿还什么都没成，不说成功。
-            reportError("file.write_failed", t("task.finishWorktreeStarted"), { severity: "info", recoverable: false });
+            // stage_added：机械清场做不了、也没有收尾段 → 追加收尾段并起 agent。
+            // 清场由服务端在那一段成功之后自己做，结论走 WS task.finish_teardown
+            // —— 这会儿还什么都没成，不说成功。
+            reportError(
+              "task.action_failed",
+              planLine ? `${t("task.finishWorktreeStarted")} — ${planLine}` : t("task.finishWorktreeStarted"),
+              { severity: "info", recoverable: false },
+            );
             break;
         }
         return;
@@ -890,7 +912,27 @@ export function App({ onGoHome }: AppProps) {
         });
         return;
       }
-      reportError("file.write_failed", String((err as Error)?.message || t("task.actionFailed")));
+      // 主 checkout 不干净：和冲突一样要列出文件清单 —— 那是「你自己的活还没收」，
+      // 用户得知道具体是哪几个文件、然后自己去提交或暂存。
+      if (err instanceof FinishWorktreeDirty) {
+        setTaskSessionErrorDialog({
+          title: t("task.finishWorktreeDirty"),
+          message: t("task.finishWorktreeDirtyHint"),
+          details: err.files,
+        });
+        return;
+      }
+      // worktree 里还有没提交的东西：合并**已经成功了**，只是目录拆不掉。
+      // 同样要列文件 —— 而且要让用户知道「活已经合了」，否则他会以为白干一场。
+      if (err instanceof FinishWorktreeUserChanges) {
+        setTaskSessionErrorDialog({
+          title: t("task.finishWorktreeUserChanges"),
+          message: t("task.finishWorktreeUserChangesHint"),
+          details: err.files,
+        });
+        return;
+      }
+      reportError("task.action_failed", String((err as Error)?.message || t("task.actionFailed")));
     }
   }, [applyTaskDetails, refreshWorkspaceBoard, t]);
 
@@ -1137,7 +1179,7 @@ export function App({ onGoHome }: AppProps) {
       closeTaskEditDialog();
     } catch (err) {
       if (!isUploadAbortError(err)) {
-        reportError("file.write_failed", String((err as Error)?.message || t("task.saveFailed")));
+        reportError("task.action_failed", String((err as Error)?.message || t("task.saveFailed")));
       }
       setTaskInlineSaving(false);
       setTaskInlineUploadProgress(null);
@@ -3709,7 +3751,7 @@ export function App({ onGoHome }: AppProps) {
       const currentDir = (selectedDirRef.current === rootID ? "." : selectedDirRef.current) || ".";
       await refreshTreeDir(rootID, targetDir, rootID === currentRootIdRef.current && currentDir === targetDir);
     } catch (err) {
-      reportError("file.write_failed", err instanceof ProtectedAPIError && err.status === 409
+      reportError("task.action_failed", err instanceof ProtectedAPIError && err.status === 409
         ? t("directory.fileExists")
         : String((err as Error)?.message || t("directory.createFileFailed")));
     }

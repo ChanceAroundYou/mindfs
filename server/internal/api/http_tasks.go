@@ -371,6 +371,9 @@ func (h *HTTPHandler) handleKanbanTaskFinishWorktree(w http.ResponseWriter, r *h
 	// 合并已经成功、只是后面某步失败时（典型：worktree 里有未跟踪的 .mindfs/
 	// 会话库，git worktree remove 拒绝），result 带着已完成的进度一起回去，
 	// 前端能显示「合并已完成，卡在拆 worktree」而不是笼统一句失败。
+	// 三类「需要人处理」的失败走 409 并带上结构化清单，其余（root/task 找不到、
+	// worktree 身份对不上）走 400。清单**不进句子** —— 那是 UI 列表渲染的输入，
+	// 拼进 error 字符串的话三十个文件就是一句读不完的话。
 	var conflict *kanban.FinishWorktreeConflict
 	if errors.As(err, &conflict) {
 		respondJSON(w, http.StatusConflict, map[string]any{
@@ -378,6 +381,24 @@ func (h *HTTPHandler) handleKanbanTaskFinishWorktree(w http.ResponseWriter, r *h
 			"conflict_files": conflict.ConflictFiles,
 			"output":         conflict.Output,
 			"result":         result,
+		})
+		return
+	}
+	var dirty *kanban.FinishWorktreeDirty
+	if errors.As(err, &dirty) {
+		respondJSON(w, http.StatusConflict, map[string]any{
+			"error":       dirty.Error(),
+			"dirty_files": dirty.Files,
+			"result":      result,
+		})
+		return
+	}
+	var userChanges *kanban.FinishWorktreeUserChanges
+	if errors.As(err, &userChanges) {
+		respondJSON(w, http.StatusConflict, map[string]any{
+			"error":        userChanges.Error(),
+			"user_changes": userChanges.Files,
+			"result":       result,
 		})
 		return
 	}
@@ -441,8 +462,8 @@ func (h *HTTPHandler) handleKanbanTaskMove(w http.ResponseWriter, r *http.Reques
 //
 // 这个端点是跨节点扇出的（工作台常驻、每节点一份），体积直接决定手机端流量。
 // 实测 45 条任务 = 163KB，其中 task.stages 一项就占 43%（70KB 是每个阶段的完整
-// prompt_template 正文）；而工作台组件对 stages / aux_flags / labels
-// 这些字段**一个读取都没有** —— 卡片只画状态、阶段名、任务号、模板名。
+// prompt_template 正文）；工作台组件真正读的只有 stages 的 role/kind/name，
+// prompt_template 那部分**一个读取都没有** —— 所以 stages 保留、但只保留三个键。
 //
 // **worktree_* 不在这张淘汰名单里**：卡片右下角的 worktree 徽标就是靠
 // create_worktree / worktree_path / worktree_built / worktree_missing 推出来的
@@ -476,12 +497,47 @@ type overviewTaskProjection struct {
 	WorktreePath    string `json:"worktree_path,omitempty"`
 	WorktreeBuilt   bool   `json:"worktree_built,omitempty"`
 	WorktreeMissing bool   `json:"worktree_missing,omitempty"`
-	// HasAgentStage 是 stages 的**派生布尔**，不是 stages 本身。
-	// 前端 TaskCardRows 的收尾键判据要「至少有一个 agent 段」（与服务端
-	// lastAgentStage 的存在性等价），而投影刻意丢掉了 stages（70KB/43%）——
-	// 少了这个布尔，工作台任务的收尾键会**永远不出现**（stages 缺席 ⇒ 判据恒假），
-	// 而项目看板走的是完整任务，同一个任务两边一个有键一个没有。
-	HasAgentStage bool `json:"has_agent_stage,omitempty"`
+	// Stages 是**瘦身后的**流水快照：只带卡片真正读的 role / kind / name。
+	//
+	// 为什么不能整个丢（2026-10-07）：卡片的收尾键判据是「当前段是 worktree_finish 段」，
+	// 而那个判据只能从 stages 来。原先投影丢掉 stages、改用派生布尔 has_agent_stage，
+	// 结果判据退化了一层（「有 agent 段」≠「当前段是收尾段」），且同一个任务在项目看板
+	// （完整任务）与工作台（投影）两边一个有收尾键一个没有。
+	// 现在投影带上 stages，卡片直接按 `stages[current_stage_index].kind` 判，两边一致；
+	// has_agent_stage 随之删除 —— 两份真相留着只会让下一个人猜以哪个为准。
+	//
+	// 不带 prompt_template：那正是 43% 的体积来源，而卡片零读取。
+	Stages []overviewStageProjection `json:"stages,omitempty"`
+	// AuxFlags 是卡片的辅助徽标来源（has_plan / has_todos / session_error / ask_user_waiting）。
+	//
+	// 指针 + omitempty：全空时整个键不出现。用值类型的话 kanban.TaskAuxFlags 的四个
+	// 布尔都没有 omitempty，每条任务都会挂一个 {"ask_user_waiting":false,...} 的固定
+	// 开销 —— 跨节点扇出下这是纯浪费，而且前端本来就读 `?? false`。
+	AuxFlags *overviewAuxFlags `json:"aux_flags,omitempty"`
+	// CurrentStageStatus 是当前段的执行状态，卡片用它区分「在跑」和「等你」。
+	CurrentStageStatus string `json:"current_stage_status,omitempty"`
+}
+
+// overviewAuxFlags 是辅助徽标的卡片视图。
+//
+// 刻意不复用 kanban.TaskAuxFlags：那个结构体的布尔没有 omitempty（单任务详情与
+// 项目看板共用，加 omitempty 会连带改变那两处的响应形状）。
+type overviewAuxFlags struct {
+	AskUserWaiting bool   `json:"ask_user_waiting,omitempty"`
+	HasPlan        bool   `json:"has_plan,omitempty"`
+	HasTodos       bool   `json:"has_todos,omitempty"`
+	HasTask        bool   `json:"has_task,omitempty"`
+	SessionError   string `json:"session_error,omitempty"`
+}
+
+// overviewStageProjection 是 stages 的卡片视图：只留卡片读得到的三个键。
+//
+// 刻意不复用 kanban.StageTemplate：那个结构体的 prompt_template 正文才是体积大头
+// （实测 70KB / 45 条任务），给它加 omitempty 会连带改变单任务详情与项目看板的响应。
+type overviewStageProjection struct {
+	Name string `json:"name"`
+	Role string `json:"role"`
+	Kind string `json:"kind,omitempty"`
 }
 
 // projectOverviewTask 把 kanban.Task 压成工作台真正读的字段集。
@@ -489,36 +545,59 @@ type overviewTaskProjection struct {
 // 给它加 omitempty 会连带改变单任务详情与项目看板的响应。
 func projectOverviewTask(task kanban.Task) overviewTaskProjection {
 	return overviewTaskProjection{
-		ID:                task.ID,
-		TaskNumber:        task.TaskNumber,
-		RootID:            task.RootID,
-		Name:              task.Name,
-		TaskTemplateID:    task.TaskTemplateID,
-		TaskTemplateName:  task.TaskTemplateName,
-		CurrentStageIndex: task.CurrentStageIndex,
-		CurrentStageName:  task.CurrentStageName,
-		Status:            task.Status,
-		MainSessionKey:    task.MainSessionKey,
-		CreatedAt:         task.CreatedAt,
-		UpdatedAt:         task.UpdatedAt,
-		CompletedAt:       task.CompletedAt,
-		CreateWorktree:    task.CreateWorktree,
-		WorktreePath:      task.WorktreePath,
-		WorktreeBuilt:     task.WorktreeBuilt,
-		WorktreeMissing:   task.WorktreeMissingNow(),
-		HasAgentStage:     hasAgentStage(task.Stages),
+		ID:                 task.ID,
+		TaskNumber:         task.TaskNumber,
+		RootID:             task.RootID,
+		Name:               task.Name,
+		TaskTemplateID:     task.TaskTemplateID,
+		TaskTemplateName:   task.TaskTemplateName,
+		CurrentStageIndex:  task.CurrentStageIndex,
+		CurrentStageName:   task.CurrentStageName,
+		Status:             task.Status,
+		MainSessionKey:     task.MainSessionKey,
+		CreatedAt:          task.CreatedAt,
+		UpdatedAt:          task.UpdatedAt,
+		CompletedAt:        task.CompletedAt,
+		CreateWorktree:     task.CreateWorktree,
+		WorktreePath:       task.WorktreePath,
+		WorktreeBuilt:      task.WorktreeBuilt,
+		WorktreeMissing:    task.WorktreeMissingNow(),
+		Stages:             projectOverviewStages(task.Stages),
+		AuxFlags:           projectOverviewAuxFlags(task.AuxFlags),
+		CurrentStageStatus: task.CurrentStageStatus,
 	}
 }
 
-// hasAgentStage 与前端 TaskCardRows 的判据、服务端 lastAgentStage 的存在性等价：
-// 「至少有一个 role == agent 的段」。收尾键要求它，否则会给出一个必然 409 的按钮。
-func hasAgentStage(stages []kanban.StageTemplate) bool {
-	for _, stage := range stages {
-		if stage.Role == kanban.RoleAgent {
-			return true
-		}
+// projectOverviewAuxFlags 把辅助标记压成卡片视图；一个标记都没有时返回 nil
+// （omitempty 让键整个消失，而不是留一个空对象）。
+func projectOverviewAuxFlags(flags kanban.TaskAuxFlags) *overviewAuxFlags {
+	if !flags.AskUserWaiting && !flags.HasPlan && !flags.HasTodos && !flags.HasTask &&
+		strings.TrimSpace(flags.SessionError) == "" {
+		return nil
 	}
-	return false
+	return &overviewAuxFlags{
+		AskUserWaiting: flags.AskUserWaiting,
+		HasPlan:        flags.HasPlan,
+		HasTodos:       flags.HasTodos,
+		HasTask:        flags.HasTask,
+		SessionError:   flags.SessionError,
+	}
+}
+
+// projectOverviewStages 把流水快照瘦身成卡片真正读的三个键。
+func projectOverviewStages(stages []kanban.StageTemplate) []overviewStageProjection {
+	if len(stages) == 0 {
+		return nil
+	}
+	out := make([]overviewStageProjection, 0, len(stages))
+	for _, stage := range stages {
+		out = append(out, overviewStageProjection{
+			Name: stage.Name,
+			Role: stage.Role,
+			Kind: stage.Kind,
+		})
+	}
+	return out
 }
 
 func (h *HTTPHandler) handleKanbanTasksOverview(w http.ResponseWriter, r *http.Request) {
@@ -773,30 +852,36 @@ func (h *HTTPHandler) handleKanbanTaskBeginFinish(w http.ResponseWriter, r *http
 	}
 	ctx := r.Context()
 
-	// ① agent 此刻在动。收尾要拆掉它的 cwd，必须等它停 —— 但这是正常等待，
+	// 收尾是「agent + 机械清场」两个阶段的整合，分流把两者编成一条幂等的流水：
+	//
+	//	① 执行体在动            → session_running（正常等待，不是错）
+	//	② 机械清场能直接做完    → teardown（**机械优先**：不等 agent）
+	//	③ 已有收尾段            → nudged（不追加第二段）
+	//	④ 有 agent 段可继承     → stage_added（agent 先 commit + merge）
+	//	④.5 没有 agent 段        → teardown（没有 agent 可继承）
+	//
+	// ② 的判定是**只读**的（PlanFinishWorktree）：worktree 里没有未提交的改动、
+	// 合并不会冲突，就直接把机械清场做掉。以前只要有 agent 段就一定先跑 agent，
+	// 于是「agent 早把活合完了、只差机械清场」的任务要白等一轮、还多一个空提交。
+
+	// ① 执行体在动。收尾要拆掉它的 cwd，必须等它停 —— 但这是正常等待，
 	// 不是失败，所以回 200 而不是 409：前端据此只提示一句，不渲染成红色报错。
-	if svc.TaskSessionRunning(ctx, rootID, taskID) {
+	//
+	// 判据是 TaskBusy（会话在回复，或当前段还在跑），不是只看会话探针：
+	// 段在跑时只看探针会漏过去，让请求撞进收尾准入变成 409。
+	if svc.TaskBusy(ctx, rootID, taskID) {
 		respondJSON(w, http.StatusOK, map[string]any{"action": "session_running"})
 		return
 	}
 
-	// ② 分支已经在主干里 → 只剩机械清场。查不到分支（从没建过树）就往下走正常流程。
-	if merged, err := svc.TaskWorktreeBranchMerged(ctx, rootID, taskID, ""); err == nil && merged {
-		report := h.AppContext.FinishWorktreeAndRepoint(rootID, taskID)
-		h.AppContext.BroadcastTaskFinishTeardown(rootID, report)
-		payload := map[string]any{
-			"action": "teardown",
-			"report": report,
-		}
-		if report.Error != "" {
-			// 清场失败（典型：worktree 里还有没提交的活、或合并撞冲突）得让用户看见，
-			// 回 200 会让前端以为收尾完成了。冲突文件一并带上，前端能列出可点的清单。
-			payload["error"] = report.Error
-			payload["conflict_files"] = report.ConflictFiles
-			respondJSON(w, http.StatusConflict, payload)
-			return
-		}
-		respondJSON(w, http.StatusOK, payload)
+	// ② 机械清场能直接做完 → 当场做掉。判定失败（读不到 git 状态等）不当成错误：
+	// 退给 agent 那条路，让人去看一眼。
+	plan, planErr := svc.PlanFinishWorktree(ctx, rootID, taskID)
+	if planErr != nil {
+		plan = kanban.FinishPlan{Mechanical: false, Reason: "收尾判定失败：" + planErr.Error()}
+	}
+	if plan.Mechanical {
+		h.teardownFinishWorktree(w, rootID, taskID, plan)
 		return
 	}
 
@@ -813,13 +898,24 @@ func (h *HTTPHandler) handleKanbanTaskBeginFinish(w http.ResponseWriter, r *http
 		}
 		respondJSON(w, http.StatusOK, map[string]any{
 			"action": "nudged",
+			"plan":   plan,
 			"detail": detail,
 			"task":   detail.Task,
 		})
 		return
 	}
 
-	// ④ 头一次收尾：追加收尾段，让 agent 自己 commit + merge。
+	// ④ 有 agent 段可继承 → 追加收尾段，让 agent 自己 commit + merge。
+	// ④.5 没有 agent 段 → 没有 agent 可继承，直接机械清场（服务端判定说能做）。
+	hasAgent, hasAgentErr := svc.TaskHasAgentStage(ctx, rootID, taskID)
+	if hasAgentErr != nil {
+		respondError(w, http.StatusBadRequest, hasAgentErr)
+		return
+	}
+	if !hasAgent {
+		h.teardownFinishWorktree(w, rootID, taskID, plan)
+		return
+	}
 	detail, err := svc.BeginFinishWorktree(ctx, kanban.BeginFinishInput{
 		RootID: rootID,
 		TaskID: taskID,
@@ -828,12 +924,40 @@ func (h *HTTPHandler) handleKanbanTaskBeginFinish(w http.ResponseWriter, r *http
 	// —— 正在跑、已在收尾、worktree 目录已失效。请求本身是合法的，是**状态**不答应，
 	// 和 finish-worktree 把冲突也归 409 是同一个口径。
 	if err != nil {
-		respondJSON(w, http.StatusConflict, map[string]any{"error": err.Error()})
+		respondJSON(w, http.StatusConflict, map[string]any{"error": err.Error(), "plan": plan})
 		return
 	}
 	respondJSON(w, http.StatusOK, map[string]any{
 		"action": "stage_added",
+		"plan":   plan,
 		"detail": detail,
 		"task":   detail.Task,
 	})
+}
+
+// teardownFinishWorktree 当场做机械清场并把结论回给调用方。
+//
+// 成功回 200 + report；失败回 409 + error/conflict_files/dirty_files/user_changes。
+// 失败也要回 report：合并成功但后面某步失败时，已经落地的进度得一起回去，
+// 否则用户以为全白做了。
+func (h *HTTPHandler) teardownFinishWorktree(w http.ResponseWriter, rootID, taskID string, plan kanban.FinishPlan) {
+	report := h.AppContext.FinishWorktreeAndRepoint(rootID, taskID)
+	h.AppContext.BroadcastTaskFinishTeardown(rootID, report)
+	payload := map[string]any{
+		"action": "teardown",
+		"plan":   plan,
+		"report": report,
+	}
+	if report.Error != "" {
+		// 清场失败（典型：worktree 里还有没提交的活、或合并撞冲突）得让用户看见，
+		// 回 200 会让前端以为收尾完成了。冲突文件一并带上，前端能列出可点的清单。
+		payload["error"] = report.Error
+		payload["conflict_files"] = report.ConflictFiles
+		payload["output"] = report.Output
+		payload["dirty_files"] = report.DirtyFiles
+		payload["user_changes"] = report.UserChanges
+		respondJSON(w, http.StatusConflict, payload)
+		return
+	}
+	respondJSON(w, http.StatusOK, payload)
 }

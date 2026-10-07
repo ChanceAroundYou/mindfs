@@ -511,24 +511,178 @@ func TestFinishTaskWorktreeStopsWhileMainCheckoutIsDirty(t *testing.T) {
 	}
 }
 
-func TestFinishTaskWorktreeListsOrphansButKeepsTheirContents(t *testing.T) {
+// 收尾要**删掉整个 worktree 目录**，连 git 不跟踪的工具状态目录一起。
+//
+// 两个形态都要覆盖：
+//   - 还是活 worktree：`git worktree remove` 会因为未跟踪文件拒绝，收尾先清掉工具
+//     状态目录再拆，拆完目录也没了。
+//   - 已经不是活 worktree（git 登记没了 / 被手工 prune）但目录还在：只剩一个空壳，
+//     收尾必须把它删干净 —— 否则 .worktree/ 会越积越多。
+func TestFinishTaskWorktreeRemovesTheWholeDirectoryIncludingToolState(t *testing.T) {
+	t.Run("live worktree with tool state inside", func(t *testing.T) {
+		svc, root, _, worktreePath := finishFixture(t, "from worktree\n")
+		taskID := mustTaskID(t, svc, root.ID)
+		// 收尾段跑完留下的工具状态目录（真实现场里就是这三个）。
+		for _, name := range []string{".mindfs", ".omc", ".claude"} {
+			if err := os.MkdirAll(filepath.Join(worktreePath, name), 0o755); err != nil {
+				t.Fatalf("seed %s: %v", name, err)
+			}
+			if err := os.WriteFile(filepath.Join(worktreePath, name, "state.bin"), []byte("state"), 0o644); err != nil {
+				t.Fatalf("seed %s file: %v", name, err)
+			}
+		}
+
+		result, err := svc.FinishTaskWorktree(context.Background(), FinishWorktreeInput{
+			RootID:       root.ID,
+			TaskID:       taskID,
+			DeleteBranch: true,
+			PruneOrphans: true,
+		})
+		if err != nil {
+			t.Fatalf("FinishTaskWorktree: %v", err)
+		}
+		if !result.WorktreeRemoved {
+			t.Fatalf("WorktreeRemoved = false, want git to have removed it")
+		}
+		if _, statErr := os.Stat(worktreePath); !os.IsNotExist(statErr) {
+			t.Fatalf("the worktree dir must be gone entirely, stat err = %v", statErr)
+		}
+	})
+
+	t.Run("orphan shell left after git forgot it", func(t *testing.T) {
+		svc, root, mainDir, worktreePath := finishFixture(t, "from worktree\n")
+		taskID := mustTaskID(t, svc, root.ID)
+		// 造出「git 已经不认、磁盘上还在」的空壳：先让 git 拆掉，再把状态目录放回去。
+		gitForTest(t, mainDir, "worktree", "remove", "--force", worktreePath)
+		if err := os.MkdirAll(filepath.Join(worktreePath, ".mindfs"), 0o755); err != nil {
+			t.Fatalf("reseed shell: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(worktreePath, ".mindfs", "sessions.db"), []byte("state"), 0o644); err != nil {
+			t.Fatalf("reseed shell file: %v", err)
+		}
+
+		result, err := svc.FinishTaskWorktree(context.Background(), FinishWorktreeInput{
+			RootID: root.ID,
+			TaskID: taskID,
+		})
+		if err != nil {
+			t.Fatalf("FinishTaskWorktree: %v", err)
+		}
+		if !result.WorktreeDirRemoved {
+			t.Fatalf("WorktreeDirRemoved = false (reason=%q), want the shell gone", result.DirRemoveReason)
+		}
+		if _, statErr := os.Stat(worktreePath); !os.IsNotExist(statErr) {
+			t.Fatalf("the orphan shell must be gone, stat err = %v", statErr)
+		}
+	})
+}
+
+// 拆目录之前必须把 worktree 里用户上传的附件搬回主 checkout —— 否则它们会跟着
+// 目录一起消失。只搬 upload/：会话库/任务库的权威副本本来就在主 checkout。
+func TestFinishTaskWorktreeMigratesWorktreeUploads(t *testing.T) {
 	svc, root, mainDir, worktreePath := finishFixture(t, "from worktree\n")
 	taskID := mustTaskID(t, svc, root.ID)
-	// 真实形状是：worktree 被拆掉（git 的登记和源码都没了），但目录里 git 完全不跟踪的
-	// .mindfs/ 会话库还在。worktree 里有未跟踪内容时 `git worktree remove` 会拒绝，
-	// 所以这里直接造出拆完之后的样子，而不是指望收尾能拆掉一个带会话库的树。
-	if err := os.MkdirAll(filepath.Join(worktreePath, ".mindfs"), 0o755); err != nil {
-		t.Fatalf("seed orphan: %v", err)
+	// 用户在 worktree 会话里传过两个文件（按 upload/<日期>/<文件> 的形状）。
+	uploads := []string{
+		filepath.Join("2026-01-01", "a.png"),
+		filepath.Join("2026-01-02", "b.txt"),
 	}
-	if err := os.WriteFile(filepath.Join(worktreePath, ".mindfs", "sessions.db"), []byte("state"), 0o644); err != nil {
-		t.Fatalf("seed orphan file: %v", err)
+	for _, rel := range uploads {
+		full := filepath.Join(worktreePath, ".mindfs", "upload", rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatalf("mkdir uploads: %v", err)
+		}
+		if err := os.WriteFile(full, []byte("payload "+rel+"\n"), 0o644); err != nil {
+			t.Fatalf("write upload: %v", err)
+		}
 	}
-	gitForTest(t, mainDir, "worktree", "remove", "--force", worktreePath)
-	if err := os.MkdirAll(filepath.Join(worktreePath, ".mindfs"), 0o755); err != nil {
-		t.Fatalf("reseed orphan: %v", err)
+
+	result, err := svc.FinishTaskWorktree(context.Background(), FinishWorktreeInput{
+		RootID: root.ID,
+		TaskID: taskID,
+	})
+	if err != nil {
+		t.Fatalf("FinishTaskWorktree: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(worktreePath, ".mindfs", "sessions.db"), []byte("state"), 0o644); err != nil {
-		t.Fatalf("reseed orphan file: %v", err)
+	if len(result.MigratedUploads) != len(uploads) {
+		t.Fatalf("MigratedUploads = %v, want %v", result.MigratedUploads, uploads)
+	}
+	// 内容真的到了主 checkout。
+	for _, rel := range uploads {
+		got, readErr := os.ReadFile(filepath.Join(mainDir, ".mindfs", "upload", rel))
+		if readErr != nil {
+			t.Fatalf("upload %s did not survive the teardown: %v", rel, readErr)
+		}
+		if !strings.Contains(string(got), rel) {
+			t.Fatalf("upload %s content = %q, want the original payload", rel, got)
+		}
+	}
+}
+
+// 主 checkout 已有同名附件时**不覆盖**：那份是权威的，覆盖等于用旧换新。
+func TestFinishTaskWorktreeDoesNotOverwriteExistingUploads(t *testing.T) {
+	svc, root, mainDir, worktreePath := finishFixture(t, "from worktree\n")
+	taskID := mustTaskID(t, svc, root.ID)
+	rel := filepath.Join("2026-01-01", "a.png")
+	// 主 checkout 先有一份权威内容。
+	mainFile := filepath.Join(mainDir, ".mindfs", "upload", rel)
+	if err := os.MkdirAll(filepath.Dir(mainFile), 0o755); err != nil {
+		t.Fatalf("mkdir main uploads: %v", err)
+	}
+	if err := os.WriteFile(mainFile, []byte("authoritative\n"), 0o644); err != nil {
+		t.Fatalf("write main upload: %v", err)
+	}
+	// worktree 里有一份同名的旧副本。
+	wtFile := filepath.Join(worktreePath, ".mindfs", "upload", rel)
+	if err := os.MkdirAll(filepath.Dir(wtFile), 0o755); err != nil {
+		t.Fatalf("mkdir wt uploads: %v", err)
+	}
+	if err := os.WriteFile(wtFile, []byte("stale\n"), 0o644); err != nil {
+		t.Fatalf("write wt upload: %v", err)
+	}
+
+	result, err := svc.FinishTaskWorktree(context.Background(), FinishWorktreeInput{
+		RootID: root.ID,
+		TaskID: taskID,
+	})
+	if err != nil {
+		t.Fatalf("FinishTaskWorktree: %v", err)
+	}
+	if len(result.MigratedUploads) != 0 {
+		t.Fatalf("MigratedUploads = %v, want empty — an existing upload must win", result.MigratedUploads)
+	}
+	got, readErr := os.ReadFile(mainFile)
+	if readErr != nil {
+		t.Fatalf("read main upload: %v", readErr)
+	}
+	if strings.TrimSpace(string(got)) != "authoritative" {
+		t.Fatalf("main upload was overwritten: %q", got)
+	}
+}
+
+// 别的任务留下的孤儿目录：只剩工具状态目录的空壳自动删掉；还有别的内容的只列不删。
+//
+// 判据只认白名单（.mindfs/ .omc/ .claude/），不来自任何外部输入 —— 含用户文件的
+// 目录绝不能自动删。
+func TestFinishTaskWorktreePrunesOnlyToolStateOrphanDirs(t *testing.T) {
+	svc, root, mainDir, _ := finishFixture(t, "from worktree\n")
+	taskID := mustTaskID(t, svc, root.ID)
+
+	// 空壳：只有工具状态目录。
+	shellDir := filepath.Join(mainDir, ".worktree", "task-9")
+	if err := os.MkdirAll(filepath.Join(shellDir, ".claude"), 0o755); err != nil {
+		t.Fatalf("seed shell: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(shellDir, ".claude", "local.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatalf("seed shell file: %v", err)
+	}
+	// 有真内容：不能自动删。
+	keptDir := filepath.Join(mainDir, ".worktree", "task-8")
+	if err := os.MkdirAll(keptDir, 0o755); err != nil {
+		t.Fatalf("seed kept: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(keptDir, "notes.txt"), []byte("mine\n"), 0o644); err != nil {
+		t.Fatalf("seed kept file: %v", err)
 	}
 
 	result, err := svc.FinishTaskWorktree(context.Background(), FinishWorktreeInput{
@@ -539,17 +693,25 @@ func TestFinishTaskWorktreeListsOrphansButKeepsTheirContents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FinishTaskWorktree: %v", err)
 	}
-	if len(result.Orphans) != 1 || result.Orphans[0].Path != worktreePath {
-		t.Fatalf("Orphans = %+v, want the leftover %q", result.Orphans, worktreePath)
+	if len(result.RemovedOrphans) != 1 || result.RemovedOrphans[0] != shellDir {
+		t.Fatalf("RemovedOrphans = %v, want [%s]", result.RemovedOrphans, shellDir)
 	}
-	if !result.Orphans[0].NonEmpty {
-		t.Fatalf("orphan = %+v, want NonEmpty so the user knows there is something inside", result.Orphans[0])
+	if _, statErr := os.Stat(shellDir); !os.IsNotExist(statErr) {
+		t.Fatalf("the tool-state-only shell must be gone, stat err = %v", statErr)
 	}
-	// 只列不删：里面的会话库删了不可恢复。
-	if _, statErr := os.Stat(filepath.Join(worktreePath, ".mindfs", "sessions.db")); statErr != nil {
-		t.Fatalf("orphan contents must survive: %v", statErr)
+	// 有真内容的目录必须原样留着，并出现在 Orphans 里让用户看见。
+	if _, statErr := os.Stat(filepath.Join(keptDir, "notes.txt")); statErr != nil {
+		t.Fatalf("an orphan with real content must survive: %v", statErr)
 	}
-	_ = mainDir
+	found := false
+	for _, orphan := range result.Orphans {
+		if orphan.Path == keptDir {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("Orphans = %+v, want %s listed", result.Orphans, keptDir)
+	}
 }
 
 func TestFinishTaskWorktreeRefusesTaskWithoutWorktree(t *testing.T) {
@@ -733,8 +895,17 @@ func TestFinishRefusesWhenTheUserStillHasUncommittedWork(t *testing.T) {
 	if err == nil {
 		t.Fatal("finish must refuse while the user still has uncommitted work")
 	}
-	if !strings.Contains(err.Error(), "note.txt") {
-		t.Fatalf("the error must name the offending file, got: %v", err)
+	// 清单走**结构化字段**，不拼进句子：三十个文件拼成一句读不完的话，等于没说
+	// （2026-10-07 用户实测）。所以这里断言类型 + Files，而不是 error 字符串。
+	var userChanges *FinishWorktreeUserChanges
+	if !errors.As(err, &userChanges) {
+		t.Fatalf("err = %T (%v), want *FinishWorktreeUserChanges", err, err)
+	}
+	if len(userChanges.Files) != 1 || userChanges.Files[0] != "note.txt" {
+		t.Fatalf("Files = %v, want [note.txt]", userChanges.Files)
+	}
+	if strings.Contains(err.Error(), "note.txt") {
+		t.Fatalf("清单不该拼进句子（它走 Files 给 UI 列表渲染）：%v", err)
 	}
 	if _, statErr := os.Stat(worktreePath); statErr != nil {
 		t.Fatalf("the worktree must survive a refused finish, stat err = %v", statErr)
@@ -763,8 +934,12 @@ func TestFinishCleansStateDirsButStillRefusesForTheUsersOwnFiles(t *testing.T) {
 	if err == nil {
 		t.Fatal("an untracked file the user wrote must still block the teardown")
 	}
-	if !strings.Contains(err.Error(), "my-notes.md") {
-		t.Fatalf("the error must name the user's file, got: %v", err)
+	var userChanges *FinishWorktreeUserChanges
+	if !errors.As(err, &userChanges) {
+		t.Fatalf("err = %T (%v), want *FinishWorktreeUserChanges", err, err)
+	}
+	if len(userChanges.Files) != 1 || userChanges.Files[0] != "my-notes.md" {
+		t.Fatalf("Files = %v, want [my-notes.md]", userChanges.Files)
 	}
 	if _, statErr := os.Stat(mine); statErr != nil {
 		t.Fatalf("the user's own file must not be deleted: %v", statErr)

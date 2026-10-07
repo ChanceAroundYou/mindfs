@@ -304,10 +304,13 @@ assert.match(
   "showAdvance 必须是一条能整条求值的表达式",
 );
 // 完成 = 推进键给不出来时的出口（2026-10-06 用户实测：待审核的任务一个键都没有）。
-// 判据是 showAdvance 的反面，两条例外：正在跑、收尾流程在跑且收尾键可用。
+// 判据是 showAdvance 的反面，只剩两条例外：正在跑、终态。
+// **收尾中不再豁免**（2026-10-07 用户要求）：收尾段卡在待审核时 showAdvance 恒假
+// （收尾段是流水最后一段），旧判据把完成键也一起收走了，于是那张卡只剩一个收尾键
+// —— 而收尾键恰恰是最容易失败的一个（主 checkout 不干净就点不动）。
 assert.match(
   cardRows,
-  /const canComplete = !terminal && !stageRunning && !showAdvance && !\(finishActive && canFinishWorktree\);/,
+  /const canComplete = !terminal && !stageRunning && !showAdvance;/,
   "「完成」必须兜住 showAdvance 给不出来的一切局面，否则任务在界面上没有出路",
 );
 assert.match(
@@ -315,13 +318,18 @@ assert.match(
   /const worktreeMissing = worktreeEnabled && task\.worktree_missing === true;/,
   "worktreeMissing 仍是 canFinishWorktree / 徽标档位的判据",
 );
-// 收尾键的「有 agent 段」判据必须同时认投影来的派生布尔。工作台的 overview 投影
-// 丢掉了 stages（体积大头），只带 has_agent_stage；不认它，工作台任务的收尾键
-// 永远不出现 —— 同一个任务在项目看板有键、在工作台没有（用户实测就是这个形态）。
+// 收尾键的判据只剩「worktree 还在」（2026-10-07）：去掉了 has_agent_stage ——
+// 它会让「有 worktree 但没有 agent 段」的任务永远拿不到收尾键，而那种任务恰恰最
+// 需要它（没有 agent 去 commit，只能服务端直接机械清场）。服务端已同步。
 assert.match(
   cardRows,
-  /const hasAgentStage = task\.has_agent_stage === true\s*\|\|\s*\(task\.stages \|\| \[\]\)\.some\(\(stage\) => stage\.role === "agent"\);/,
-  "hasAgentStage 必须同时认 has_agent_stage，否则工作台收尾键恒不出现",
+  /const canFinishWorktree = worktreeEnabled && !worktreeMissing && hasWorktreePath;/,
+  "canFinishWorktree 只剩 worktree 三态，不再要求有 agent 段",
+);
+assert.doesNotMatch(
+  cardRows,
+  /has_agent_stage/,
+  "has_agent_stage 已删：stages 补齐投影后它是纯冗余字段，留着只会让下一个人猜以哪个为准",
 );
 // 看板仍要渲染正文（可展开），工作台不传 children —— 那一段因此只存在于看板一侧
 assert.match(

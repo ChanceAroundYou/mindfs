@@ -158,7 +158,7 @@
 | G-AM | 插件注册表与视图目录 | 功能 | 见 §3.1 | 主视图记忆依赖它 |
 | G-AN | 列表投影瘦身与条件请求（ETag / 304） | 性能 | 见 §3.1 | 列表响应省略恒空键 + ETag/304；客户端先判 304 再判 `ok` |
 | G-AO | 自动重载观测 | 架构 | 见 §3.1 | 只记录不干预：`sessionStorage` 计数 + 堆峰值 + 本轮首错 |
-| G-AP | worktree 收尾按钮重做（四分支分流 + 幂等 + 真实状态） | 修复 | 见 §3.1 | 收尾键一直可点；目录消失 = 已收尾 |
+| G-AP | worktree 收尾按钮重做（**机械优先** + 四分支分流 + 幂等 + 真实状态） | 修复 | 见 §3.1 | 收尾键一直可点；目录消失 = 已收尾；拆完目录整个删 + 附件先搬 |
 | G-AQ | 任务卡的三把键：完成兜底 / 取消 / 删除 | 功能 | 见 §3.1 | 待审核必有出路；取消只改状态；删除只删卡片 |
 | G-AR | 移动端侧栏切换按钮移入中间主栏共用 header | 修复 | 见 §3.1 | 按钮插在中间主栏 36px header 两侧（不额外占行），仅移动端；侧栏自身不显示 |
 | G-AS | ACP 提问（dsh `ask_user_question` 走 elicitation） | 修复 | 见 §3.1 | 只对 dsh 广告 elicitation.form；题目 id+文本关联；答案编码成 `question_<i>` |
@@ -681,11 +681,15 @@
   （既不能退回无条件 `respondJSON`，也不能被换成 `respondJSONList`），以及客户端
   条目数 + 字节预算两条线、ETag 与载荷同生共死。
   `server/internal/api/http_tasks_overview_test.go` 钉住 `/api/tasks/overview` 投影的**两侧边界**：
-  ③ 段列「必须丢」（`stages` / `aux_flags` / `labels` …），④ 段列「必须留」——
+  ③ 段列「必须丢」（`labels` / `worktree_branch*` / `worktree_root_id` …），④ 段列「必须留」——
   `create_worktree` / `worktree_path` / `worktree_built` / `worktree_missing` 四个 worktree 字段
   必须在响应里且带值（卡片徽标读它们），并断言投影后体积不到全量的一半。
   **只断言「变小了」是不够的**：把投影改成原样下发 `items` 会绿，而把 worktree 字段丢回 ③ 段
   也照样绿 —— 那正是 2026-10-07 那次「工作台所有任务都没有 worktree」。
+  **2026-10-07 第二次修正**：`stages` / `current_stage_status` / `aux_flags` 从「必须丢」
+  挪到了「必须留」（G-BC）。理由与守卫见 G-AN 末尾与 G-BC 开头 —— 那份「必须丢」清单
+  是手抄的，而手抄清单正是漂移的成因。现在另有一条**从消费者源码抽字段**的守卫
+  （`http_tasks_overview_card_parity_test.go`），它不受清单写法影响。
 
 ### G-AO 自动重载观测
 
@@ -704,12 +708,13 @@
 - 针对性测试：`web/tests/reload-observer.test.mjs`（累加与上限、峰值只增不减、
   只记第一条错误且截断、隐私模式不抛、存储垃圾不炸）。
 
-### G-AP worktree 收尾按钮重做（四分支分流 + 幂等 + 真实状态）
+### G-AP worktree 收尾按钮重做（机械优先 + 四分支分流 + 幂等 + 真实状态）
 
-- 来源：`server/internal/kanban/{service,worktree_finish}.go`、`server/internal/gitview/worktree_finish.go`、
+- 来源：`server/internal/kanban/{service,worktree_finish,worktree_finish_stage}.go`、
+  `server/internal/gitview/worktree_finish.go`、
   `server/internal/api/{http_tasks,http_tasks_finish_teardown}.go`、`server/app/workspace.go`、
-  `web/src/components/{TaskCardRows,TaskDetailPanel}.tsx`、`web/src/app/taskIcons.tsx`、
-  `web/src/services/tasks.ts`、`web/src/App.tsx`、`web/src/i18n/locales/{zh-CN,en-US}.ts`。
+  `web/src/components/{TaskCardRows,TaskDetailPanel}.tsx`、`web/src/app/{taskIcons,useRealtimeEvents}.ts(x)`、
+  `web/src/services/{tasks,task/worktree}.ts`、`web/src/App.tsx`、`web/src/i18n/locales/{zh-CN,en-US}.ts`。
 - 边界：收尾按钮的**给法**（只要有没有合并的 worktree 就给）、**点击行为**（四分支分流 + 幂等）、
   **徽标状态**（目录消失 = 已收尾）三件事合为一组 —— 它们共享同一个判据（worktree 的真实状态），
   合上游时要么全留要么全弃。
@@ -734,16 +739,164 @@
   （agent 进程死了、状态没人清），旧判据下那种任务**永远收不了尾**。探针 `sessionRunningProbe`
   由 api 层在装配时挂上（`WireSessionRunningProbe` → `StreamHub.IsSessionReplying`），
   没装配时回落到旧状态判据（行为与改造前逐字一致）。
+- **第二轮：机械优先 + 完整清场**（2026-10-07 用户拍板，见 `docs/upstream-customizations.yaml` 的 G-AP 条目）：
+  收尾是「agent + 机械清场」两个阶段的整合，但很多情况下 agent 那半已经没活可干了。
+  现在先做一次**只读**判定（`PlanFinishWorktree` + `gitview.CanMergeCleanly` 用
+  `git merge-tree --write-tree` 干跑），能机械清场就直接做掉。判据只有两条：
+  worktree 里没有未提交的改动、合并不会冲突。**主 checkout 干不干净刻意不参与判定**
+  （用户：「只要机械合并能成就行」）—— 真不干净时 `MergeBranch` 自己拦下并列出文件，
+  提前拦只会把「主 checkout 有改动」误报成「要跑 agent」，白等一轮问题还在。
+  不能机械清场时（有未提交的活 / 合并会冲突）才走 agent，且把 `reason` + `files` 回给前端。
+  **拆目录前必须搬附件**（`MigrateWorktreeUploads`，只搬 `.mindfs/upload/`，主 checkout
+  已有同名文件时不覆盖 —— 那份是权威的）。**目录本体整个删**（`RemoveWorktreeDir`，
+  用户：「强删 rm -rf」）；但**别人的**孤儿目录仍然只列不删 ——
+  `RemoveToolStateOnlyOrphanDirs` 只删「里面只剩 `.mindfs/ .omc/ .claude/`」的空壳，
+  含用户文件的目录绝不自动删（`wt-finish.sh` 有同一个 guard）。
+  **幂等**：重复点击第二次必须 200 且带一句 `note`。幂等刻意放在 api 层编排
+  （`FinishWorktreeAndRepoint`）而不是下层 `FinishTaskWorktree` —— 下层对空路径保持严格报错，
+  那是为了守住「先清归属再拆目录」的顺序不变量（路径空 + 目录还在 = 顺序反了，
+  静默成功会把它藏起来）。
 - 针对性测试：
   - `server/internal/kanban/worktree_finish_dispatch_test.go` — 探针优先于状态、分支合并判断（真 git）、
     收尾段索引、目录消失读「已收尾」。
-  - `server/internal/api/http_tasks_begin_finish_test.go` — 四分支分流（teardown / nudged / stage_added）、
-    连点三次不堆收尾段。
+  - `server/internal/kanban/worktree_finish_test.go` — 目录整个删（活 worktree / 空壳两种形状）、
+    附件迁移（搬过去 / 不覆盖已有 / 没有 upload 时是空操作）、只删工具状态空壳孤儿、
+    顺序不变量（先清归属再拆目录）。
+  - `server/internal/kanban/worktree_finish_stage_test.go` — 收尾段跑完才清场、
+    清场自己会清路径（顺序反了会静默失败）。
+  - `server/internal/gitview/worktree_finish_test.go` — `CanMergeCleanly` 四种结局
+    （干净 / 冲突带文件 / 已合入 / 不碰仓库）、`RemoveWorktreeDir` 拒绝活 worktree、
+    `MigrateWorktreeUploads` 不覆盖已有目标。
+  - `server/internal/api/http_tasks_begin_finish_test.go` — 五分支分流
+    （session_running / teardown / nudged / stage_added / 无 agent 段直接清场）、
+    机械优先（干净 worktree 直接 teardown 不追加收尾段）、冲突与未提交都退给 agent 且带
+    `plan.files`、连点三次不堆收尾段、机械路径连点两次只合一次且第二次带 `note`。
   - `web/tests/worktree-badge.test.mjs` — 徽标四态（enabled / finishing / finished / none）、
     目录消失读「已收尾」、无转圈、收尾中不脉冲（区分信号是标签文字「收尾中」）。
   - `web/tests/worktree-finish.test.mjs` — 按钮给法（终态 + 收尾中都不拦截）、无转圈、`hasAgentStage` 门。
   - `web/tests/task-button-gates.test.mjs` — 收尾中收尾键仍给。
   - `web/tests/task-board-view.test.mjs` — 已收尾态 tooltip。
+
+---
+
+### G-BC 看板 / 工作台卡片统一（投影补齐 + 收尾键门控 + 完成键出口 + 收尾失败单通道）
+
+- 来源：`server/internal/api/{http_tasks,http_tasks_finish_teardown,http_tasks_overview_test,http_tasks_overview_card_parity_test,http_tasks_begin_finish_test,http_tasks_finish_test}.go`、
+  `server/internal/kanban/worktree_finish.go`、`server/internal/gitview/worktree_finish.go`、
+  `web/src/components/task/TaskCardRows.tsx`、`web/src/components/task/TaskDetailPanel.tsx`、
+  `web/src/components/workspace/WorkspaceTaskRow.tsx`、`web/src/components/shell/Toast.tsx`、
+  `web/src/services/task/{worktree,types}.ts`、`web/src/services/net/error.ts`、
+  `web/src/app/useRealtimeEvents.ts`、`web/src/App.tsx`、`web/src/i18n/locales/{zh-CN,en-US}.ts`、
+  `web/tests/{task-card-parity,task-button-gates,task-board-view,task-panel-unification,task-stage-panel,worktree-badge,worktree-finish}.test.mjs`。
+- 边界：**看板卡与工作台卡是同一张卡**这件事的全部含义 —— 数据（overview 投影带哪些字段）、
+  门控（收尾键 / 完成键的判据）、以及收尾失败的上报通道。四块互斥于其他组：
+  G-AN 管投影的**体积**边界（哪些必须丢），本组管投影的**完整性**边界（卡片读的必须全在）；
+  G-AP 管收尾按钮的**点击分流**，本组管它的**给法**与失败上报。
+- **可见症状**（没有这一组时会怎样，逐条对应用户 2026-10-07 的五条反馈）：
+  1. 「日程管理#1 既没有运行也没有完成按钮」—— 收尾段卡在待审核时 `showAdvance` 恒假
+     （收尾段是流水最后一段），而 `canComplete` 里有一条 `finishActive && canFinishWorktree`
+     的豁免，把完成键也一起收走了。那张卡只剩一个收尾键，而收尾键最容易失败。
+  2. 「点击收尾提示主 checkout 有未提交改动，过于详细且复杂，还重复显示两条红色报错」——
+     同一次失败走了**两条通道**（HTTP 409 给点击者，WS `task.finish_teardown` 又给一次，
+     而点击者自己也连着同一个 hub）；错误文案把整份文件路径清单拼进一句话；
+     错误码挂成 `file.write_failed`（那些动作一个字节的文件都不写）。
+     **第二轮（同一天）**：另一条超长报错 —— 「合并已成功，但拆除 worktree 失败：
+     <path> 里还有没提交的东西（<30 个文件拼成一句>）…工具自己留下的临时目录
+     （.claude/ .omc/ .mindfs/）不用你管，那部分会自己清」。那是 worktree 里还有用户
+     没提交的东西、git 拒绝拆目录，而旧写法把 `strings.Join(UserChanges, "、")`
+     拼进一句话。用户原话：「收尾还有这种超长报错，系统性查一下简化处理一下」。
+  3. 「工作台有 worktree 的卡片但是没有收尾键」—— 判据里有一条 `has_agent_stage`，
+     而「有 worktree 但没有 agent 段」的任务恰恰最需要收尾键（没有 agent 去 commit，
+     只能服务端直接机械清场）。服务端此前也确实对这种任务回 409。
+  4. 「看板的卡片有专属小图标，工作台的没有，我都不知道什么意思」—— overview 投影
+     丢了 `aux_flags` / `stages` / `current_stage_status`，于是工作台卡一个徽标都画不出、
+     推进键判据恒假。
+  5. 「这几个修改我曾经提到过多次，为什么前面没完成」—— 见下面「根因」。
+- **根因（为什么前面没做完）**：overview 投影的字段清单是**手抄**的，而手抄清单的采集范围
+  是 `grep useWorkspaceBoard.ts 与 components/workspace/*` —— 漏了真正的消费者
+  `components/task/TaskCardRows.tsx`（工作台与项目看板**引用同一个组件**，commit `0792221` 起）。
+  每次修复都按症状补一个字段（先 worktree 四字段，再 `has_agent_stage`），没人回到消费者
+  重推清单。而丢字段**不会报错**：`hasLaterStage` / `isFinishStageActive` / `canAdvanceCard`
+  在 `stages` 缺席时一律返回 `false`，`auxFlags` 缺席时徽标数组为空 —— 没有断言、没有日志、
+  测试全绿，只有用户看得见。再加一条：`useWorkspaceBoard.liveVersion` 会按 `updated_at`
+  用完整任务覆盖投影，所以同一张卡在工作台可能是全字段、也可能是投影，进一步掩盖了缺口。
+- **因此本组的核心不是「加字段」，是加一条不受清单写法影响的守卫**：
+  `server/internal/api/http_tasks_overview_card_parity_test.go` 从 `TaskCardRows.tsx` 与
+  `appTask.ts` 的**源码里抽出所有 `task.<field>` / `stage.<field>` 读取**（减掉 `t("task.x")`
+  那些 i18n key、减掉 `stage.snapshot` 那个模板段字段），逐条断言投影带；反向再断言投影
+  **不多带**前端零读取的键。组件多读一个字段而投影没加 → 红。这条守卫做过变异验证
+  （临时摘掉 `CurrentStageStatus` → 立刻红）。
+  前端那一半是 `web/tests/task-card-parity.test.mjs`：把同一份任务数据喂给两个渲染入口，
+  钉住按钮集合、徽标文案、`hideSessionError` 口径、收尾键判据两侧一致。
+- **投影新增三个字段**（`overviewTaskProjection`）：
+  - `Stages []overviewStageProjection` —— `StageTemplate` 的**卡片视图**，只留
+    `name` / `role` / `kind`。`prompt_template` 是体积大头（单任务 14.4%），卡片一个字节都不读它。
+  - `CurrentStageStatus string` —— `canAdvanceCard` 的判据，与详情面板同一口径。
+  - `AuxFlags *overviewAuxFlags` —— 指针 + `omitempty`，全空时不出现，免得每条任务都挂一个 `{}`。
+  - **`has_agent_stage` 从投影和前端读取里一起删掉**：`stages` 补齐后它是纯冗余字段，
+    留着只会让下一个人猜「收尾键到底以 stages 还是以这个布尔为准」—— 那正是本次漂移的成因。
+- **收尾键判据只剩 worktree 三态**（`create_worktree` 开着、`path` 在、目录没被删），
+  三处一起改：`TaskCardRows` 的 `canFinishWorktree`、`TaskDetailPanel` 的同名判据、
+  服务端 `handleKanbanTaskBeginFinish` 新增 ③.5 分支（无 agent 段 → `teardownFinishWorktree`
+  直接机械清场，不再 409）。**三处必须一起改** —— 只改一处就是「给一个必然 409 的按钮」。
+- **完成键放开**：`canComplete = !terminal && !stageRunning && !showAdvance`，删掉
+  `finishActive && canFinishWorktree` 那条豁免。`TaskDetailPanel` 的 `canCompleteTask` 同样放开
+  （同一个 bug，留在面板里就是已知的不一致）。
+- **终态任务只要 worktree 还在就给收尾键**（用户原话：「只要还有 worktree 就必须有收尾键」）。
+  收尾键因此**搬出 `!terminal` 分支**，抽成 `FinishWorktreeButton` 在两个分支各渲染一次 ——
+  抄两遍的话，改一处忘另一处就是「两边卡片不一致」的下一个来源。服务端 `Complete` 不清
+  `worktree_path`，`BeginFinishWorktree` 的 `reviveTerminalTask` 已支持终态复活，链路是通的。
+- **收尾失败单通道上报**：规则是「有 HTTP 响应可带结论时，失败只走 HTTP；没有时（异步）才用 WS」。
+  成功**永远广播** —— 所有人都得知道 worktree 没了（前端对 `teardown` 的 200 不说话，
+  点击者也靠这条推送拿结论）。异步那条路（`WireFinishStageTeardown`）没有 HTTP 响应可带，
+  成败都只能广播，不受这条规则影响。
+- **错误文案简化 + 清单结构化**：四个类型化错误，`Error()` 只留一句人话，文件清单走
+  结构化字段给 UI 列表渲染 —— **清单不进句子**。这一条是用户两轮实测逼出来的：
+  把 `strings.Join(files, "、")` 拼进 `fmt.Errorf` 的话，三十个文件就是一句读不完的话，
+  而句子长了用户根本不会读完，等于没说。
+  - `gitview.MainCheckoutDirtyError{Files}` + `kanban.FinishWorktreeDirty{Files}`
+    —— 「主 checkout 有未提交改动，先提交或暂存后再收尾」，清单走 `dirty_files`。
+  - `kanban.FinishWorktreeUserChanges{Files}` —— 「合并已成功，但 worktree 里还有没提交的
+    东西，先处理掉再收尾」，清单走 `user_changes`。**文案必须点明「合并已成功」**，
+    否则用户看到「收尾失败」会以为白干了一场。
+  - `kanban.FinishWorktreeConflict` —— `Error()` 从「合并撞上冲突，需人工处理：<文件列表>」
+    改成「合并撞上冲突，需人工处理」。清单本来就在 `conflict_files` 里给 UI 列表渲染，
+    句子里再拼一遍是同一份东西出现两次。
+  - 409 载荷 `{ error, dirty_files, user_changes, conflict_files, output, result }`；
+    `FinishTeardownReport` 同步加 `DirtyFiles` / `UserChanges`，WS `task.finish_teardown`
+    带上 —— 异步那条路没有 HTTP 响应可带，清单丢了就只能报一句没有清单的错。
+- **Toast 不再显示错误码那一行**（`error.code` 副文本）。它从来不是给用户看的信息 ——
+  用户看到「写入文件失败」只会去查磁盘。任务相关动作的错误码同时归位到新增的
+  `task.action_failed`（`error.task.actionFailed` = 「任务操作失败」）；
+  `FileOperations.tsx` / `ActionBar.tsx` 那 3 处是真的文件写入失败，**不动**。
+- **别踩**：
+  - 投影加字段时**先跑** `http_tasks_overview_card_parity_test.go`，再跑
+    `http_tasks_overview_test.go` 的 ③/④ 段 —— 后者仍要钉「体积大头必须不在」
+    （`prompt_template` / `labels` / `worktree_branch*`），别把瘦身成果还回去。
+    测试 fixture 的 `prompt_template` 要足够长，「投影 < 全量一半」那条断言才撑得住。
+  - `liveVersion` 会让同一张卡在工作台拿到全字段或投影两种数据。**别在测试里假设
+    工作台卡一定是投影** —— 要测投影行为就走 `projectOverviewTask` 那个纯函数。
+  - 收尾键判据改动必须**三处同改**（卡片 / 详情面板 / 服务端 ③.5）。只改前端不给服务端
+    加 ③.5，无 agent 段的任务点收尾会拿到 409。
+- 针对性测试：
+  - `server/internal/api/http_tasks_overview_card_parity_test.go` — 投影覆盖共享卡片读取的
+    **每一个**字段（从源码抽，不是手抄清单），且不多带前端零读取的键。做过变异验证。
+  - `server/internal/api/http_tasks_overview_test.go` — 投影的两侧边界：体积大头必须不在、
+    `stages` 每段只许有 `name`/`role`/`kind` 三个键、`aux_flags` 五个字段带值、
+    全空时整个键不出现、`has_agent_stage` 必须已删。
+  - `server/internal/api/http_tasks_begin_finish_test.go` — ③.5 分支（无 agent 段 → 直接
+    机械清场，worktree 真的被拆、`worktree_path` 真的被清）；**去重**（失败时广播 0 次、
+    成功时广播 1 次，用 `broadcastFinishTeardown` 那个可替换入口计数）。
+  - `server/internal/api/http_tasks_finish_test.go` — 主 checkout 不干净 → 409 + `dirty_files`，
+    且消息里**不含**文件名（清单属于字段，不属于句子）。
+  - `server/internal/gitview/worktree_finish_test.go` — `*MainCheckoutDirtyError` 类型化、
+    `Files` 带文件、消息保持短句。
+  - `web/tests/task-card-parity.test.mjs` — 两侧引用同一个卡片组件、`hideSessionError`
+    口径一致、收尾键判据两侧一致、完成键判据、终态分支「收尾 + 删除」的顺序、
+    aux 五个标记的类型与文案、dirty 短文案与结构化清单、`task.action_failed` 错误码、
+    Toast 不渲染错误码、WS 处理器认得 `dirty_files`。
+  - `web/tests/{task-button-gates,task-board-view,task-panel-unification,task-stage-panel,worktree-badge,worktree-finish}.test.mjs`
+    — 门控判据翻转后的对应断言（收尾中给完成、无 agent 段仍给收尾键、终态分支多一把收尾键）。
 
 ---
 

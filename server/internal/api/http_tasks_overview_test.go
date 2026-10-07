@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,17 +12,20 @@ import (
 // /api/tasks/overview 的投影守卫。
 //
 // 这条测试钉住的是**体积大头必须不在、工作台读的字段必须全在**：
-// 实测 45 条任务 = 163KB，其中 task.stages 一项占 43%（70KB 是每个阶段的完整
-// prompt_template 正文），而工作台组件对 stages / aux_flags / labels 这些字段
-// 一个读取都没有 —— 卡片只画状态、阶段名、任务号、模板名。
+// 实测 45 条任务 = 163KB，其中每个阶段的 prompt_template 正文就占 43%（70KB）。
 //
-// 但 worktree 字段（create_worktree / worktree_path / worktree_built / worktree_missing）
-// 是**例外**：前端 TaskCardRows 读取这些字段来显示 worktree 徽标。
+// 但 stages 本身**不能丢**（2026-10-07 修）：卡片的收尾键判据是「当前段是
+// worktree_finish 段」，只能从 stages 来。原先投影丢掉 stages、改用派生布尔
+// has_agent_stage，判据退化了一层，且工作台与项目看板同一个任务一个有收尾键一个没有。
+// 现在 stages 保留、但只保留卡片读得到的 name / role / kind —— prompt_template 不进投影。
+//
+// worktree 字段（create_worktree / worktree_path / worktree_built / worktree_missing）
+// 同样是**例外**：前端 TaskCardRows 读取这些字段来显示 worktree 徽标。
 // 2026-10-07 修复：之前投影丢弃了这些字段，导致工作台所有任务都显示没有 worktree。
 //
 // 丢字段的症状是「卡片少字段」而不是报错，所以靠断言而不是靠运行时反馈来守：
 // 有人把投影改成 `items` 原样下发，这条会红。
-func TestOverviewProjectionKeepsBoardFieldsAndDropsStages(t *testing.T) {
+func TestOverviewProjectionKeepsBoardFieldsAndDropsPromptBodies(t *testing.T) {
 	task := kanban.Task{
 		ID:                "task_9",
 		TaskNumber:        9,
@@ -38,7 +42,9 @@ func TestOverviewProjectionKeepsBoardFieldsAndDropsStages(t *testing.T) {
 		CompletedAt:       "",
 		Stages: []kanban.StageTemplate{
 			{Name: "任务输入", Role: "user", PromptTemplate: "做：{previous_input}"},
-			{Name: "执行", Role: "agent", PromptTemplate: "执行一段很长的正文，用来撑大体积以便断言它不该出现在响应里"},
+			// 正文长度照着真实模板的量级来（实测每段几百字到几千字）——太短的话
+			// 「投影至少砍一半」这条会变成在测 JSON 的固定开销，而不是在测正文体积。
+			{Name: "执行", Role: "agent", Kind: kanban.StageKindWorktreeFinish, PromptTemplate: strings.Repeat("执行一段很长的正文，用来撑大体积以便断言它不该出现在响应里。", 30)},
 		},
 		Labels:             []string{"wip", "p1"},
 		CreateWorktree:     true,
@@ -47,6 +53,12 @@ func TestOverviewProjectionKeepsBoardFieldsAndDropsStages(t *testing.T) {
 		WorktreePath:       "/tmp/worktree/task_9",
 		WorktreeMissing:    false,
 		CurrentStageStatus: "running",
+		AuxFlags: kanban.TaskAuxFlags{
+			AskUserWaiting: true,
+			HasPlan:        true,
+			HasTodos:       true,
+			SessionError:   `{"message":"transport is closed"}`,
+		},
 	}
 
 	raw, err := json.Marshal(projectOverviewTask(task))
@@ -87,9 +99,8 @@ func TestOverviewProjectionKeepsBoardFieldsAndDropsStages(t *testing.T) {
 	// ③ 体积大头与前端零读取的字段必须不在响应里。
 	//    stages 就是那 70KB / 43%。
 	for _, dropped := range []string{
-		"stages", "aux_flags", "labels",
-		"worktree_branch_mode", "worktree_branch",
-		"current_stage_status", "worktree_root_id",
+		"labels",
+		"worktree_branch_mode", "worktree_branch", "worktree_root_id",
 	} {
 		if _, ok := got[dropped]; ok {
 			t.Fatalf("%q 不该出现在 overview 响应里 —— 它是体积大头且前端零读取", dropped)
@@ -112,21 +123,50 @@ func TestOverviewProjectionKeepsBoardFieldsAndDropsStages(t *testing.T) {
 		t.Fatalf("worktree_built 丢了值：%v", got["worktree_built"])
 	}
 
-	// ⑤ has_agent_stage 必须在且为 true —— 它是 stages 被丢掉之后前端收尾键唯一的判据。
-	//    少它 = 工作台任务的收尾键永远不出现（stages 缺席 ⇒ 判据恒假）。
-	if got["has_agent_stage"] != true {
-		t.Fatalf("has_agent_stage 必须是 true（任务里有 role=agent 的段）：%v", got["has_agent_stage"])
+	// ⑤ stages 必须在，且每段只带卡片读得到的三个键 —— 收尾键的判据
+	//    （`stages[current_stage_index].kind === "worktree_finish"`）只能从它来。
+	//    2026-10-07：原先投影丢掉 stages、改用派生布尔 has_agent_stage，判据因此
+	//    退化了一层，且工作台与项目看板同一个任务一个有收尾键一个没有。
+	stages, ok := got["stages"].([]any)
+	if !ok || len(stages) != 2 {
+		t.Fatalf("stages 必须在且带两段：%v", got["stages"])
+	}
+	second, ok := stages[1].(map[string]any)
+	if !ok {
+		t.Fatalf("stages[1] 不是对象：%v", stages[1])
+	}
+	if second["kind"] != kanban.StageKindWorktreeFinish {
+		t.Fatalf("stages[1].kind = %v, want %q —— 卡片靠它认收尾段",
+			second["kind"], kanban.StageKindWorktreeFinish)
+	}
+	// 每段只留 name / role / kind，prompt_template 那 43% 体积绝不能回来。
+	for i, rawStage := range stages {
+		stage := rawStage.(map[string]any)
+		for key := range stage {
+			switch key {
+			case "name", "role", "kind":
+			default:
+				t.Fatalf("stages[%d] 多带了 %q —— 卡片零读取，且 prompt_template 是体积大头：%v", i, key, stage)
+			}
+		}
 	}
 
-	// ⑥ 没有 agent 段的任务必须投影成 false，不能因为 omitempty 缺席而让前端误判。
-	//    （缺席时前端读 `=== true` 得 false，与这里的 false 等价；但显式钉住值本身。）
-	noAgent := projectOverviewTask(kanban.Task{
-		ID:     "task_10",
-		RootID: "mindfs",
-		Stages: []kanban.StageTemplate{{Name: "任务输入", Role: "user"}},
-	})
-	if noAgent.HasAgentStage {
-		t.Fatal("只有 user 段的任务不该判成有 agent 段")
+	// ⑥ aux_flags 与 current_stage_status 必须在：前者是徽标来源，后者区分「在跑 / 等你」。
+	auxFlags, ok := got["aux_flags"].(map[string]any)
+	if !ok {
+		t.Fatalf("aux_flags 必须在：%v", got["aux_flags"])
+	}
+	if auxFlags["has_plan"] != true || auxFlags["has_todos"] != true {
+		t.Fatalf("aux_flags 丢了值：%v", auxFlags)
+	}
+	if got["current_stage_status"] != "running" {
+		t.Fatalf("current_stage_status = %v, want running", got["current_stage_status"])
+	}
+
+	// ⑦ 没有段的任务投影成空 stages（omitempty 缺席），卡片读 `?.length` 得 0。
+	noStages := projectOverviewTask(kanban.Task{ID: "task_10", RootID: "mindfs"})
+	if len(noStages.Stages) != 0 {
+		t.Fatalf("没有段的任务不该投影出 stages：%+v", noStages.Stages)
 	}
 
 	// ④ 投影必须真的更小，不是只是少几个键。
