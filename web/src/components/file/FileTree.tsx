@@ -2454,6 +2454,7 @@ function FileTreeInner({
     <div style={{ flex: 1, minHeight: 0, height: "100%", display: "flex", flexDirection: "column" }}>
       <ViewHeader
         padding="0 3px"
+        showToggles={false}
         style={{ position: "relative", justifyContent: "space-between", gap: 0, overflow: "visible" }}
         innerStyle={{ justifyContent: "space-between", gap: 0 }}
       >

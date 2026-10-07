@@ -546,6 +546,7 @@ export function SessionList({
       <ViewHeader
         data-onboarding="session-actions"
         padding={searchResultsMode ? "0 10px 0 4px" : "0 10px 0 2px"}
+        showToggles={false}
         style={{ justifyContent: "space-between" }}
         innerStyle={{ justifyContent: "space-between" }}
       >
@@ -1140,6 +1141,7 @@ export function MultiProjectSessionList({
       <ViewHeader
         data-onboarding="session-actions"
         padding="0 10px 0 2px"
+        showToggles={false}
         style={{ display: hideHeader ? "none" : "flex", justifyContent: "space-between" }}
         innerStyle={{ justifyContent: "space-between" }}
       >
