@@ -87,8 +87,11 @@ start-server:
 test:
 	$(GO) test ./...
 
-# web 契约测试：源码守卫（tests/*.test.mjs），不需要浏览器
+# web 契约测试：源码守卫（tests/*.test.mjs），不需要浏览器。
+# 先 typecheck 再跑测试 —— vite build 用 esbuild 不做类型检查，import 改错的唯一
+# 自动防线就是 tsc，必须进这道门。
 test-web:
+	cd $(WEB_DIR) && $(NPM) run typecheck
 	cd $(WEB_DIR) && $(NPM) test
 
 # fork 定制覆盖率门禁：delta 文件 ⟷ docs/upstream-customizations.yaml 对账。

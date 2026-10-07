@@ -23,18 +23,44 @@
 //     会在运行时找不到导出而报 SyntaxError。遇到就改用 `import type`。
 import { existsSync } from "node:fs";
 import { pathToFileURL } from "node:url";
+import { redirectSingleFileModule } from "./source-map.mjs";
 
 /** 按优先级尝试的扩展名。 */
 const EXTENSIONS = [".ts", ".tsx", "/index.ts", "/index.tsx", ".js", ".mjs", ".json"];
 
+/** 解析移动后的物理文件：先试保留原扩展名，再试补扩展名。 */
+function redirectTarget(redirected, keepExtension) {
+  if (!redirected) return null;
+  const candidates = keepExtension
+    ? [redirected + keepExtension, ...EXTENSIONS.map((ext) => redirected + ext)]
+    : [redirected + ".ts", redirected + ".tsx", redirected + "/index.ts", redirected + "/index.tsx"];
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
 export async function resolve(specifier, context, nextResolve) {
   const isRelative = specifier.startsWith("./") || specifier.startsWith("../");
-  const hasExtension = /\.[a-z0-9]+$/i.test(specifier);
-  if (isRelative && !hasExtension) {
+  if (isRelative) {
     const base = new URL(specifier, context.parentURL).pathname;
-    for (const ext of EXTENSIONS) {
-      if (existsSync(base + ext)) {
-        return { url: pathToFileURL(base + ext).href, shortCircuit: true };
+    const hasExtension = /\.[a-z0-9]+$/i.test(specifier);
+    // 先看这个逻辑模块是否已被 source-map 移动到别处（单文件移动）。
+    // 带扩展名的导入（`../src/services/fileNavigation.ts`）也要走重定向 ——
+    // 文件移动后原路径不存在，不重定向会 ERR_MODULE_NOT_FOUND。
+    const keepExtension = hasExtension ? base.slice(base.lastIndexOf(".")) : "";
+    const redirected = redirectTarget(
+      redirectSingleFileModule(hasExtension ? base.slice(0, base.lastIndexOf(".")) : base),
+      keepExtension,
+    );
+    if (redirected) {
+      return { url: pathToFileURL(redirected).href, shortCircuit: true };
+    }
+    if (!hasExtension) {
+      for (const ext of EXTENSIONS) {
+        if (existsSync(base + ext)) {
+          return { url: pathToFileURL(base + ext).href, shortCircuit: true };
+        }
       }
     }
   }
