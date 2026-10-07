@@ -19,14 +19,25 @@ import (
 // dialHub 起一条真 WebSocket 连到 hub 上，返回客户端连接。
 // 走真连接而不是直接摸 hub.clients：BroadcastAll → SendToClient → WriteJSON
 // 这条链上任何一处没把 payload 带出去，这个测试都会红。
+//
+// 注册屏障不可省：`Dial` 只等到 HTTP 101 握手，而 `RegisterClient` 还在服务端
+// handler 里没跑完。少了这道屏障，紧跟着的 `BroadcastSessionCreated` 会打在一个
+// **还没有客户端**的 hub 上 —— 事件被静默丢掉，测试挂在 `readBroadcast` 的 3s
+// 读超时上，报出来却像「广播没带 payload」（实测：单跑 5/5 过，并行跑
+// `go test ./...` 时红，机器一忙就复现）。
 func dialHub(t *testing.T, hub *StreamHub) *websocket.Conn {
 	t.Helper()
+	registered := make(chan struct{}, 1)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			return
 		}
 		hub.RegisterClient("test-client", conn)
+		select {
+		case registered <- struct{}{}:
+		default:
+		}
 		// 别让 handler 立刻返回把连接关掉
 		<-r.Context().Done()
 	}))
@@ -34,6 +45,11 @@ func dialHub(t *testing.T, hub *StreamHub) *websocket.Conn {
 	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http"), nil)
 	if err != nil {
 		t.Fatalf("dial hub: %v", err)
+	}
+	select {
+	case <-registered:
+	case <-time.After(3 * time.Second):
+		t.Fatalf("hub client registration timed out")
 	}
 	t.Cleanup(func() { _ = conn.Close() })
 	return conn
