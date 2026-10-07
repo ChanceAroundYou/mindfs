@@ -76,7 +76,7 @@ ok "go test 通过"
   || { tail -30 /tmp/mindfs-tsc.log >&2; die "tsc 失败，见 /tmp/mindfs-tsc.log"; }
 ok "tsc 通过"
 
-( cd web && node --test tests/*.test.mjs ) >/tmp/mindfs-web-test.log 2>&1 \
+( cd web && node --test --import ./tests/source-map-hook.mjs --import ./tests/ts-module-preload.mjs tests/*.test.mjs ) >/tmp/mindfs-web-test.log 2>&1 \
   || { tail -40 /tmp/mindfs-web-test.log >&2; die "web 测试失败，见 /tmp/mindfs-web-test.log"; }
 ok "web 测试通过（$(grep -oE '^# pass [0-9]+' /tmp/mindfs-web-test.log | tail -1 | grep -oE '[0-9]+') 项）"
 
