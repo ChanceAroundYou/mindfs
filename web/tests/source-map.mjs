@@ -35,6 +35,34 @@ export const WEB_ROOT = path.resolve(import.meta.dirname, "..");
  * 维护规则：文件移动/拆分时改这里，测试不动。
  */
 export const MODULES = {
+
+  // P2 拆分：file.ts → services/file/（入口 shim 仍在原路径）
+  "src/services/file.ts": [
+    "src/services/file/types.ts",
+    "src/services/file/cache.ts",
+    "src/services/file/fetch.ts",
+    "src/services/file/blob.ts",
+    "src/services/file/index.ts",
+  ],
+  // P2 拆分：git.ts → services/git/（入口 shim 仍在原路径）
+  "src/services/git.ts": [
+    "src/services/git/types.ts",
+    "src/services/git/status.ts",
+    "src/services/git/history.ts",
+    "src/services/git/actions.ts",
+    "src/services/git/diff.ts",
+    "src/services/git/relatedStats.ts",
+    "src/services/git/index.ts",
+  ],
+  // P2 拆分：tasks.ts → services/task/（入口 shim 仍在原路径）
+  "src/services/tasks.ts": [
+    "src/services/task/types.ts",
+    "src/services/task/cache.ts",
+    "src/services/task/templates.ts",
+    "src/services/task/crud.ts",
+    "src/services/task/worktree.ts",
+    "src/services/task/index.ts",
+  ],
   "src/components/SessionList.tsx": ["src/components/session/SessionList.tsx"],
   "src/components/SessionViewer.tsx": ["src/components/session/SessionViewer.tsx"],
   "src/components/ArchivedSessionsPanel.tsx": ["src/components/session/ArchivedSessionsPanel.tsx"],
