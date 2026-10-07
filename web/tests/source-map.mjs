@@ -35,6 +35,12 @@ export const WEB_ROOT = path.resolve(import.meta.dirname, "..");
  * 维护规则：文件移动/拆分时改这里，测试不动。
  */
 export const MODULES = {
+  // App.tsx 拆分：会话缓存 → app/useSessionCache.ts（refs 语义不变，调用点零改动）
+  "src/App.tsx": [
+    "src/App.tsx",
+    "src/app/useSessionCache.ts",
+  ],
+
   // P6 拆分：FileTree.tsx → + icons.tsx（图标子组件）
   "src/components/file/FileTree.tsx": [
     "src/components/file/FileTree.tsx",

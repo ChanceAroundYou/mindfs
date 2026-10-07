@@ -11,7 +11,7 @@ import { FileEditStore, fileEditKey } from "./services/fileEditing";
 import { normalizePathForRoot, shouldRedirectToRelayNodes } from "./services/fileNavigation";
 import { getViewModeSystemPrompt } from "./renderer/viewCatalog";
 import { Renderer } from "./renderer/Renderer";
-import { SESSION_WINDOW_SIZE, clearCachedSessionsForRoot, clearWindowedView, composeLoadedExchanges, deleteCachedSession, deleteCachedSessionLists, getCachedMultiRootSessionList, getCachedSession, getCachedSessionList, getSessionWindow, isTransientExchange, saveCachedMultiRootSessionList, saveCachedSessionList, sessionService, setCachedSessionRelatedFiles, setWindowedView, settlePendingAcks, syncSession, type MultiRootSessionGroup, type QueuedUserMessage, type RelatedFile, type RelatedWorktree, type Session, type SyncSessionResult, type TokenUsage } from "./services/session";
+import { SESSION_WINDOW_SIZE, clearCachedSessionsForRoot, clearWindowedView, composeLoadedExchanges, deleteCachedSession, deleteCachedSessionLists, getCachedMultiRootSessionList, getCachedSession, getCachedSessionList, getSessionWindow, isTransientExchange, saveCachedMultiRootSessionList, saveCachedSessionList, sessionService, setCachedSessionRelatedFiles, setWindowedView, settlePendingAcks, syncSession, type MultiRootSessionGroup, type QueuedUserMessage, type RelatedFile, type RelatedWorktree, type Session, type TokenUsage } from "./services/session";
 import { buildClientContext } from "./services/prefs/context";
 import { e2eeService, type E2EEState } from "./services/net/e2ee";
 import {
@@ -205,6 +205,7 @@ import { TaskInlineEditState } from "./app/appTask";
 import { buildMatchInputFromPath, buildMessageWithViewContext, hasExplicitFileContext, indexManagedRoots, inferReadModeFromPlugin, managedDirAddErrorMessage, mapManagedRootsToEntries, normalizeUpdateState, shouldShowUpdateButton, toPluginInput, updateButtonLabel, updateSummaryText, useResponsive, waitForNextPaint } from "./app/appMisc";
 import { basenameOfPath, buildDirectorySelectionKey, buildFileScrollKey, buildURLSearch, comparableManagedRootPath, dirnameOfPath, isDirectorySortMode, joinDisplayPath, normalizeCursor, normalizePath, parentDirsOfFile, parseFileLocation, parsePluginQuery, readURLState, relativeDisplayPathFromRoot, rootNodeKey } from "./app/appPath";
 import { useWorkspaceBoard } from "./app/useWorkspaceBoard";
+import { useSessionCache } from "./app/useSessionCache";
 import { clearStalePending, hasSessionExchanges, isSessionShownInMain, isTopLevelSessionItem, mergeReplyingStateByNode, normalizeMode, relatedFileSelectionKey, sessionInputHistory, shouldAutoSelectNewSession, toSessionItem } from "./app/appSession";
 import { buildSessionJumpTarget, resolveSessionJumpRoot } from "./app/sessionJump";
 import { accountScopedKey, loadGitDiffSideBySide, loadLastRootId, loadLastRootNodeId, loadMobileEnterKeySends, loadPersistedFileScrollPositions, loadPersistedPluginQuery, loadSidebarsSwapped, loadTaskCreateWorktreePreference, persistFileScrollPositions, persistPluginQuery, removeLocalStorageByPrefix, saveTaskCreateWorktreePreference } from "./app/appStorage";
@@ -244,35 +245,17 @@ export function App({ onGoHome }: AppProps) {
   const queueFrozenBySessionRef = useRef<Record<string, boolean>>({});
   const optimisticDequeuedIdsRef = useRef<Record<string, Set<string>>>({});
   const cancelRequestedBySessionRef = useRef<Record<string, boolean>>({});
-  const sessionCacheRef = useRef<Record<string, Session>>({});
-  const loadedSessionRef = useRef<Record<string, boolean>>({});
-  const loadingSessionRef = useRef<Partial<Record<string, Promise<SyncSessionResult>>>>({});
-  // CUSTOM(G-AU): 拉取失败必须留下痕迹，否则「加载失败」在状态里和「还没加载」长得
-  // 一模一样 —— 见 loadSession effect 的守卫：`loadedSessionRef` 只在**成功**时置位，
-  // 于是 404 的会话每一轮都重新走一遍全量拉取，没有任何终点。
-  // 404 = 永久（等选中项变化或显式标脏才解禁）；其余错误退避 5s。
-  const sessionLoadFailureRef = useRef<Record<string, { at: number; status: number }>>({});
-  // CUSTOM(G-AU): 内存会话缓存**没有上限**，而 IDB 那份有（500 条 / 200KB，
-  // toPersistentSession）。长时间浏览会堆到几百 MB → 标签页逐渐卡死然后崩。
-  // 按条数封顶 + 按最近写入时间 LRU 淘汰（流式写入会让活跃会话一直新鲜）。
-  const SESSION_CACHE_MAX_ENTRIES = 64;
-  const sessionCacheAccessRef = useRef<Record<string, number>>({});
-  const enforceSessionCacheBound = useCallback(() => {
-    const cache = sessionCacheRef.current;
-    const keys = Object.keys(cache);
-    if (keys.length <= SESSION_CACHE_MAX_ENTRIES) return;
-    const access = sessionCacheAccessRef.current;
-    const evictCount = keys.length - SESSION_CACHE_MAX_ENTRIES;
-    keys
-      .map((key) => ({ key, at: access[key] || 0 }))
-      .sort((a, b) => a.at - b.at)
-      .slice(0, evictCount)
-      .forEach(({ key }) => {
-        delete cache[key];
-        delete access[key];
-      });
-  }, []);
-  const staleSessionKeysRef = useRef<Set<string>>(new Set());
+  // 会话缓存（快照表 + 加载状态/失败记录/LRU 淘汰）搬进 app/useSessionCache.ts：
+  // 策略集中在一处，App.tsx 只留读写点。refs 语义与变量名不变，调用点零改动。
+  const {
+    sessionCacheRef,
+    loadedSessionRef,
+    loadingSessionRef,
+    sessionLoadFailureRef,
+    sessionCacheAccessRef,
+    staleSessionKeysRef,
+    enforceSessionCacheBound,
+  } = useSessionCache();
   const invalidTreeCacheKeysRef = useRef<Set<string>>(new Set());
   // 上一轮跨节点抓取里失败的节点。refreshManagedRoots 消费它：提示用户 + 给出重试入口。
   // 跨节点失败原本被静默吞成 []，整个节点凭空缺席且无人重拉（实测可长时间不恢复）。
