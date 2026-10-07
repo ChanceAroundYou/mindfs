@@ -1259,14 +1259,19 @@
      去掉后卡片与工作台等宽。
   3. **看板边缘间距比工作台大**：外层 padding `8px 16px 24px` vs 工作台 `6px 8px`，
      看板内容区比工作台窄，视觉上不对齐。
+  4. **列头灰底直角贴卡片**：灰底直角与第一个任务卡直接相连，
+     视觉上过于拥挤；圆角 + 下方 6px 空隙让列头与卡片有呼吸感。
 - 为什么必须保留：
   - 列头灰底 `rgba(148, 163, 184, 0.08)` 与模板筛选按钮的底色一致，
     是看板视觉语言的一部分。
   - 列表 padding 归零后，卡片宽度 = 列宽，与工作台卡片等宽。
   - 外层 padding `6px 8px` 对齐工作台容器，视觉上两端一致。
+  - 列头圆角 `borderRadius: 6px` + 下方 `marginBottom: 6px` 让列头灰底
+    与任务卡之间有空隙，视觉上更通透。
 - 针对性测试：
   - `web/tests/task-board-view.test.mjs` — 钉住「列头有灰底 `rgba(148,163,184,0.08)`」、
-    「列表 `FloatingScroll` padding 归零」、「外层 padding `6px 8px` 对齐工作台」。
+    「列表 `FloatingScroll` padding 归零」、「外层 padding `6px 8px` 对齐工作台」、
+    「列头 `borderRadius: 6px` 圆角 + `marginBottom: 6px` 下方空隙」。
 
 ---
 

@@ -3,16 +3,17 @@ import { readFileSync } from "node:fs";
 
 // 项目内四块看板的契约。跨项目工作台的契约已拆到 workspace-board.test.mjs。
 // 2026-09 App.tsx 拆分：项目看板搬到 components/TaskBoardView.tsx，契约随文件走。
+// 2026-10-07 f5c4e0d：components/ 按领域分域（action/file/session/git/task/common），路径跟着走。
 const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
-const bar = readFileSync(new URL("../src/components/ActionBar.tsx", import.meta.url), "utf8");
+const bar = readFileSync(new URL("../src/components/action/ActionBar.tsx", import.meta.url), "utf8");
 const viewHeader = readFileSync(new URL("../src/layout/ViewHeader.tsx", import.meta.url), "utf8");
 const shell = readFileSync(new URL("../src/layout/AppShell.tsx", import.meta.url), "utf8");
-const fileTree = readFileSync(new URL("../src/components/FileTree.tsx", import.meta.url), "utf8");
-const sessionList = readFileSync(new URL("../src/components/SessionList.tsx", import.meta.url), "utf8");
-const sessionViewer = readFileSync(new URL("../src/components/SessionViewer.tsx", import.meta.url), "utf8");
-const gitDiff = readFileSync(new URL("../src/components/GitDiffViewer.tsx", import.meta.url), "utf8");
-const board = readFileSync(new URL("../src/components/TaskBoardView.tsx", import.meta.url), "utf8");
-const listView = readFileSync(new URL("../src/components/DefaultListView.tsx", import.meta.url), "utf8");
+const fileTree = readFileSync(new URL("../src/components/file/FileTree.tsx", import.meta.url), "utf8");
+const sessionList = readFileSync(new URL("../src/components/session/SessionList.tsx", import.meta.url), "utf8");
+const sessionViewer = readFileSync(new URL("../src/components/session/SessionViewer.tsx", import.meta.url), "utf8");
+const gitDiff = readFileSync(new URL("../src/components/git/GitDiffViewer.tsx", import.meta.url), "utf8");
+const board = readFileSync(new URL("../src/components/task/TaskBoardView.tsx", import.meta.url), "utf8");
+const listView = readFileSync(new URL("../src/components/file/DefaultListView.tsx", import.meta.url), "utf8");
 const zh = readFileSync(new URL("../src/i18n/locales/zh-CN.ts", import.meta.url), "utf8");
 const en = readFileSync(new URL("../src/i18n/locales/en-US.ts", import.meta.url), "utf8");
 
@@ -265,7 +266,7 @@ assert.doesNotMatch(
 
 // 3) worktree badge 曾经渲染两份（标题条一份、输入行右侧一份），只留标题条那份。
 //    标题行/操作行已抽进 TaskCardRows（看板和工作台共用），契约跟着文件走。
-const cardRows = readFileSync(new URL("../src/components/TaskCardRows.tsx", import.meta.url), "utf8");
+const cardRows = readFileSync(new URL("../src/components/task/TaskCardRows.tsx", import.meta.url), "utf8");
 assert.equal(
   (cardRows.match(/style=\{taskWorktreeTagStyle\(worktreeTagState\)\}/g) || []).length,
   1,
@@ -314,6 +315,14 @@ assert.match(
   /const worktreeMissing = worktreeEnabled && task\.worktree_missing === true;/,
   "worktreeMissing 仍是 canFinishWorktree / 徽标档位的判据",
 );
+// 收尾键的「有 agent 段」判据必须同时认投影来的派生布尔。工作台的 overview 投影
+// 丢掉了 stages（体积大头），只带 has_agent_stage；不认它，工作台任务的收尾键
+// 永远不出现 —— 同一个任务在项目看板有键、在工作台没有（用户实测就是这个形态）。
+assert.match(
+  cardRows,
+  /const hasAgentStage = task\.has_agent_stage === true\s*\|\|\s*\(task\.stages \|\| \[\]\)\.some\(\(stage\) => stage\.role === "agent"\);/,
+  "hasAgentStage 必须同时认 has_agent_stage，否则工作台收尾键恒不出现",
+);
 // 看板仍要渲染正文（可展开），工作台不传 children —— 那一段因此只存在于看板一侧
 assert.match(
   board,
@@ -342,10 +351,17 @@ assert.doesNotMatch(
 // —— 2026-10-07 卡片视觉件回归守卫 ——
 
 // 0) 列头保留灰底：列头是看板的「栏目标签」，灰底让它与卡片内容区分开。
+//    只钉「有灰底」本身；圆角/空隙由下一条断言覆盖，别在这里要求属性相邻。
 assert.match(
   board,
-  /minHeight: "34px",\s*background: "rgba\(148, 163, 184, 0\.08\)",\s*borderBottom: "1px solid var\(--border-color\)"/,
+  /minHeight: "34px",\s*background: "rgba\(148, 163, 184, 0\.08\)"/,
   "列头必须保留灰底（rgba(148,163,184,0.08)）",
+);
+// 列头灰底做圆角，下方与第一个任务卡留空隙（marginBottom）。
+assert.match(
+  board,
+  /borderRadius: "6px",\s*borderBottom: "1px solid var\(--border-color\)",\s*padding: "7px 9px",\s*marginBottom: "6px"/,
+  "列头灰底必须圆角，且与下方任务卡留 6px 空隙",
 );
 
 // 1) 「待审核」列必须显示状态文字（用户实测：该列卡片只有名字 + worktree 标签，
@@ -372,7 +388,7 @@ assert.match(
   "列内列表必须用 FloatingScroll（浮动滚动条），padding 归零让卡片对齐工作台宽度",
 );
 assert.match(
-  readFileSync(new URL("../src/components/FloatingScroll.tsx", import.meta.url), "utf8"),
+  readFileSync(new URL("../src/components/common/FloatingScroll.tsx", import.meta.url), "utf8"),
   /className="mindfs-floating-scroll"/,
   "FloatingScroll 的滚动容器必须带 mindfs-floating-scroll 类（WebKit 隐藏原生滚动条）",
 );

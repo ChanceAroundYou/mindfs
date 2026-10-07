@@ -55,7 +55,9 @@ export function QueuedMessagesList({
         display: "flex",
         flexDirection: "column",
         gap: "3px",
-        padding: isMobile ? "0 31px 4px" : "0 0 4px",
+        // 移动端曾内缩 31px 给 ActionBar 里的侧栏切换按钮让位。那些按钮已搬进
+        // 各视图的 ViewHeader，这里再内缩就只是让队列比输入框窄 31px —— 对齐输入框。
+        padding: "0 0 4px",
         maxHeight: isMobile ? "116px" : "144px",
         overflowY: "auto",
         scrollbarWidth: "thin",

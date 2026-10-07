@@ -83,6 +83,13 @@ export type KanbanTask = {
    * 就是这样：一个仍在使用的 worktree 被标成了活已经并回主干。
    */
   worktree_built?: boolean;
+  /**
+   * stages 的派生布尔：至少有一个 role === "agent" 的段。
+   *
+   * 只有工作台的 overview 投影带它 —— 那份响应刻意丢了 stages（体积），
+   * 而收尾键的判据要它。项目看板走完整任务，读 stages 即可。
+   */
+  has_agent_stage?: boolean;
   labels?: string[];
   created_at: string;
   updated_at: string;

@@ -34,11 +34,11 @@ bash scripts/deploy-all.sh --no-restart     # 只推产物+安装，不重启 WS
 | 3 | `git push origin main` | ✓ |
 | 4 | 本机 `make build && make install` | ✓ |
 | 5 | `tar` 打包产物 → `ssh wsl` 解包 → `install` → （默认）重启 → 回报版本号 | ✓ 版本号不一致直接停 |
-| 6 | 对比两端 `/` 引用的 bundle **字节数**（worker 跳过） | 只警告不中断 |
+| 6 | 核对本机 `/` 引用的 bundle 就是刚装进去的那版 | 只警告不中断 |
 
-**第 5 步推的是什么**：`mindfs` 二进制 + `agents.json` + `task_template.json` + `web/dist` —— 就是 `make install` 会装的那四样。打一条 tar 流走 ssh，落在 WSL 的 `~/.mindfs-deploy/` 暂存目录，装完即删。
+**第 5 步推的是什么**：`mindfs` 二进制 + `agents.json` + `task_template.json` —— `make install` 会装的四样里**去掉 `web/dist`**。打一条 tar 流走 ssh，落在 WSL 的 `~/.mindfs-deploy/` 暂存目录，装完即删。
 
-> worker 按设计不服务静态资源，那份 `web/` 是**故意多推的**：留给「角色翻成 control」那天，免得那时才发现缺东西。
+> **不推 `web/dist`**（2026-10-07 起）：WSL 是纯 worker 节点，按设计不服务静态资源（`GET /` 是 403），前端只装在本机。曾推过一份是留给「角色翻成 control」的保险，那个假设已不成立。
 
 ## 各机器别叫错
 

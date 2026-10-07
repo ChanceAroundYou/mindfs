@@ -586,8 +586,10 @@ export function TaskBoardView({
                 style={{
                   minHeight: "34px",
                   background: "rgba(148, 163, 184, 0.08)",
+                  borderRadius: "6px",
                   borderBottom: "1px solid var(--border-color)",
                   padding: "7px 9px",
+                  marginBottom: "6px",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "space-between",

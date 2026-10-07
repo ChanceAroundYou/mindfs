@@ -174,7 +174,11 @@ export function TaskCardRows({
   // agent 那半跑完了却卡住时，用户能再点一次让服务端直接做机械清场（后端按
   // 「分支是否已合进主干」分流，见 handleKanbanTaskBeginFinish）。按钮换成转圈
   // 等于把唯一的出路藏起来，任务就此永远转下去。
-  const hasAgentStage = (task.stages || []).some((stage) => stage.role === "agent");
+  // 工作台走 /api/tasks/overview，那份投影**故意不带 stages**（70KB/43%），
+  // 只给一个派生布尔 has_agent_stage。没有它这条判据在工作台恒假，
+  // 收尾键就永远不出现 —— 同一个任务在项目看板有键、在工作台没有。
+  const hasAgentStage = task.has_agent_stage === true
+    || (task.stages || []).some((stage) => stage.role === "agent");
   const canFinishWorktree = worktreeEnabled && !worktreeMissing && hasWorktreePath && hasAgentStage;
   // 完成 = 推进键给不出来时的出口。判据就是 showAdvance 的反面 ——
   // **待审核的任务不能一个键都没有**（2026-10-06 用户实测：收尾段卡在待审核、

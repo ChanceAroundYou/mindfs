@@ -103,8 +103,12 @@ ok "本机已安装 $VERSION"
 # WSL 上自 2026-10-06 起**没有源码库**（~/projects/mindfs 只剩 .mindfs/ 数据目录）：
 # 那边不再 git pull、不再 make build。只接收本机构建好的产物 —— 谁编译谁负责版本号，
 # 两边永远跑的同一份二进制，不会再出现「那边拉到一半的源码」或「go 版本对不上」。
+#
+# 自 2026-10-07 起 WSL 是**纯 worker 节点**（config.json 的 role=worker）：按设计不服务
+# 静态资源（GET / 是 403），因此不再推 web/dist —— 前端只装在本机。曾推过一份是留给
+# 「角色翻成 control」的保险，那个假设已经不成立，多推的几 MB 与残留的旧 bundle 都成了纯负担。
 step "推送产物到 WSL"
-tar -C "$ROOT" -cf - mindfs agents.json task_template.json -C "$ROOT/web" dist \
+tar -C "$ROOT" -cf - mindfs agents.json task_template.json \
   | ssh -o BatchMode=yes -o ConnectTimeout=10 "$WSL_HOST" \
       "set -euo pipefail; rm -rf ~/$STAGE; mkdir -p ~/$STAGE; tar -xf - -C ~/$STAGE" \
   || die "产物传输失败（$WSL_HOST）"
@@ -122,14 +126,8 @@ trap 'rm -f "$REMOTE_SCRIPT"' EXIT
 cat >"$REMOTE_SCRIPT" <<REMOTE
 set -euo pipefail
 install -m 0755 ~/$STAGE/mindfs             ~/.local/bin/mindfs
-install -d                                  ~/.local/share/mindfs/web
 install -m 0644 ~/$STAGE/agents.json        ~/.local/share/mindfs/agents.json
 install -m 0644 ~/$STAGE/task_template.json ~/.local/share/mindfs/task_template.json
-# 覆盖复制而不是 rm -rf：哈希资源对外是 immutable，删掉会让部署前就打开的页面懒加载 404。
-# worker 按设计不服务静态资源，这份 web/ 是留给「角色翻成 control」的 —— 与其那天才发现缺东西，
-# 不如每次多推几 MB。
-cp -R ~/$STAGE/dist/. ~/.local/share/mindfs/web/
-find ~/.local/share/mindfs/web/assets -type f -mtime +14 -delete
 rm -rf ~/$STAGE
 $RESTART_LINE
 ~/.local/bin/mindfs --version
@@ -146,34 +144,21 @@ REMOTE_VERSION="$(printf '%s\n' "$REMOTE_OUT" | sed -nE 's/^mindfs version: (.*)
   || die "版本不一致：WSL=$REMOTE_VERSION 本机=$VERSION（产物没落到位）"
 ok "WSL 已安装 $REMOTE_VERSION"
 
-# ── 6. 对账：两端服务的 bundle 应当一致 ──
-# worker 节点按设计不提供前端（GET / 是 403，StaticDir 为空），所以它压根
-# 取不到 bundle —— 那不是部署坏了，跳过对账即可，别报「不一致，需人工确认」。
-step "对账两端服务"
+# ── 6. 对账：本机服务的 bundle ──
+# WSL 是纯 worker 节点，按设计不提供前端（GET / 是 403，StaticDir 为空），没有 bundle
+# 可对 —— 前端只装在本机。这里只报本机那份，并核对它就是刚装进去的那一版。
+step "对账本机服务"
 bundle_of() { curl -s -m 20 "$1/" | grep -oE 'assets/index-[A-Za-z0-9_-]+\.js' | head -1 || true; }
-size_of()  { curl -s -m 60 -o /dev/null -w '%{size_download}' "$1/$2" 2>/dev/null || echo 0; }
-role_of()  { curl -s -m 20 "$1/health" | grep -oE '"role"\s*:\s*"[a-z]+"' | head -1 | grep -oE '[a-z]+"$' | tr -d '"' || true; }
 
 LOCAL_BASE="http://127.0.0.1:7331/mindfs"
-PC_BASE="https://pc.xiaokubao.space/mindfs"
-
 L_BUNDLE="$(bundle_of "$LOCAL_BASE")"
-L_SIZE="$(size_of "$LOCAL_BASE" "$L_BUNDLE")"
-echo "    本机  $L_BUNDLE  ${L_SIZE} bytes"
-
-P_ROLE="$(role_of "$PC_BASE")"
-if [[ "$P_ROLE" == "worker" ]]; then
-  echo "    PC    role=worker，不提供前端，跳过 bundle 对账"
+INSTALLED_BUNDLE="$(grep -oE 'assets/index-[A-Za-z0-9_-]+\.js' "$ROOT/web/dist/index.html" | head -1 || true)"
+echo "    本机服务  ${L_BUNDLE:-<取不到>}"
+echo "    刚装好的  ${INSTALLED_BUNDLE:-<取不到>}"
+if [[ -n "$L_BUNDLE" && "$L_BUNDLE" == "$INSTALLED_BUNDLE" ]]; then
+  ok "本机服务的就是刚装的那版 bundle"
 else
-  P_BUNDLE="$(bundle_of "$PC_BASE")"
-  P_SIZE="$(size_of "$PC_BASE" "$P_BUNDLE")"
-  echo "    PC    $P_BUNDLE  ${P_SIZE} bytes"
-
-  if [[ -n "$L_SIZE" && "$L_SIZE" == "$P_SIZE" && "$L_SIZE" != "0" ]]; then
-    ok "两端 bundle 字节数一致（哈希不同是构建随机戳，内容相同）"
-  else
-    echo "    \033[33m! 两端 bundle 大小不一致，需人工确认\033[0m"
-  fi
+  echo "    \033[33m! 本机服务的 bundle 与刚装的不一致，刷新页面/稍后重试再确认\033[0m"
 fi
 
 # ── 7. 本机重启：只能由用户执行 ──

@@ -112,6 +112,23 @@ func TestOverviewProjectionKeepsBoardFieldsAndDropsStages(t *testing.T) {
 		t.Fatalf("worktree_built 丢了值：%v", got["worktree_built"])
 	}
 
+	// ⑤ has_agent_stage 必须在且为 true —— 它是 stages 被丢掉之后前端收尾键唯一的判据。
+	//    少它 = 工作台任务的收尾键永远不出现（stages 缺席 ⇒ 判据恒假）。
+	if got["has_agent_stage"] != true {
+		t.Fatalf("has_agent_stage 必须是 true（任务里有 role=agent 的段）：%v", got["has_agent_stage"])
+	}
+
+	// ⑥ 没有 agent 段的任务必须投影成 false，不能因为 omitempty 缺席而让前端误判。
+	//    （缺席时前端读 `=== true` 得 false，与这里的 false 等价；但显式钉住值本身。）
+	noAgent := projectOverviewTask(kanban.Task{
+		ID:     "task_10",
+		RootID: "mindfs",
+		Stages: []kanban.StageTemplate{{Name: "任务输入", Role: "user"}},
+	})
+	if noAgent.HasAgentStage {
+		t.Fatal("只有 user 段的任务不该判成有 agent 段")
+	}
+
 	// ④ 投影必须真的更小，不是只是少几个键。
 	full, err := json.Marshal(kanban.TaskOverviewItem{
 		RootID:   "mindfs",

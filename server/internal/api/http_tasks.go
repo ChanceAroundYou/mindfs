@@ -476,6 +476,12 @@ type overviewTaskProjection struct {
 	WorktreePath    string `json:"worktree_path,omitempty"`
 	WorktreeBuilt   bool   `json:"worktree_built,omitempty"`
 	WorktreeMissing bool   `json:"worktree_missing,omitempty"`
+	// HasAgentStage 是 stages 的**派生布尔**，不是 stages 本身。
+	// 前端 TaskCardRows 的收尾键判据要「至少有一个 agent 段」（与服务端
+	// lastAgentStage 的存在性等价），而投影刻意丢掉了 stages（70KB/43%）——
+	// 少了这个布尔，工作台任务的收尾键会**永远不出现**（stages 缺席 ⇒ 判据恒假），
+	// 而项目看板走的是完整任务，同一个任务两边一个有键一个没有。
+	HasAgentStage bool `json:"has_agent_stage,omitempty"`
 }
 
 // projectOverviewTask 把 kanban.Task 压成工作台真正读的字段集。
@@ -500,7 +506,19 @@ func projectOverviewTask(task kanban.Task) overviewTaskProjection {
 		WorktreePath:      task.WorktreePath,
 		WorktreeBuilt:     task.WorktreeBuilt,
 		WorktreeMissing:   task.WorktreeMissingNow(),
+		HasAgentStage:     hasAgentStage(task.Stages),
 	}
+}
+
+// hasAgentStage 与前端 TaskCardRows 的判据、服务端 lastAgentStage 的存在性等价：
+// 「至少有一个 role == agent 的段」。收尾键要求它，否则会给出一个必然 409 的按钮。
+func hasAgentStage(stages []kanban.StageTemplate) bool {
+	for _, stage := range stages {
+		if stage.Role == kanban.RoleAgent {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *HTTPHandler) handleKanbanTasksOverview(w http.ResponseWriter, r *http.Request) {
