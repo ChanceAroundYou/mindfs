@@ -1656,6 +1656,7 @@ groups:
       - web/tests/source-map-hook.mjs
       - web/tests/ts-module-preload.mjs
       - web/src/index.tsx
+      - e2e/
     tests:
       - web/tests/frontend-split.test.mjs
       - web/tests/source-map.test.mjs
