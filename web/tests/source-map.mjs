@@ -60,6 +60,12 @@ export const MODULES = {
     "src/components/app/SessionPane.tsx",
     "src/components/app/FileTreePanel.tsx",
     "src/app/renderRootSlashCommandResult.tsx",
+    "src/app/usePopStateSync.ts",
+    "src/app/useArchiveSync.ts",
+    "src/app/useSessionRestore.ts",
+    "src/app/useTaskInlineCandidates.ts",
+    "src/app/usePluginThemeVars.ts",
+    "src/app/useAppInit.ts",
   ],
 
   // P6 拆分：FileTree.tsx → + icons.tsx（图标子组件）

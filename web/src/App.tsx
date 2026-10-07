@@ -242,6 +242,12 @@ import { AppActionBar } from "./components/app/AppActionBar";
 import { SessionPane } from "./components/app/SessionPane";
 import { FileTreePanel } from "./components/app/FileTreePanel";
 import { renderRootSlashCommandResult } from "./app/renderRootSlashCommandResult";
+import { usePopStateSync } from "./app/usePopStateSync";
+import { useArchiveSync } from "./app/useArchiveSync";
+import { useSessionRestore } from "./app/useSessionRestore";
+import { useTaskInlineCandidates } from "./app/useTaskInlineCandidates";
+import { usePluginThemeVars } from "./app/usePluginThemeVars";
+import { useAppInit } from "./app/useAppInit";
 
 
 export function App({ onGoHome }: AppProps) {
@@ -545,48 +551,7 @@ export function App({ onGoHome }: AppProps) {
     }, 0);
   }, [taskInlineEdit?.templateId]);
 
-  useEffect(() => {
-    // 候选跟着面板的目标项目走，不跟着「当前选中项目」走 —— 工作台发起时两者不是一个。
-    const tokenRootId = taskInlineEdit?.targetRootId || currentRootId;
-    if (!taskInlineActiveToken || !tokenRootId) {
-      setTaskInlineCandidates([]);
-      setTaskInlineCandidateIndex(0);
-      return;
-    }
-    const controller = new AbortController();
-    const timer = window.setTimeout(() => {
-      const selectedTemplate = taskTemplates.find((template) => template.id === taskTemplateFilter) || null;
-      const agent = firstAgentStage(selectedTemplate)?.agent || "";
-      fetchCandidates({
-        rootId: tokenRootId,
-        type: taskInlineActiveToken.type === "file"
-          ? "file"
-          : taskInlineActiveToken.type === "prompt"
-            ? "prompt"
-            : taskInlineActiveToken.type === "command"
-              ? "command"
-              : "skill",
-        query: taskInlineActiveToken.query,
-        agent: taskInlineActiveToken.type === "slash" ? agent : undefined,
-        signal: controller.signal,
-        nodeId: getNodeIdForRoot(tokenRootId),
-      })
-        .then((items) => {
-          setTaskInlineCandidates(items);
-          setTaskInlineCandidateIndex(0);
-        })
-        .catch((err) => {
-          if (controller.signal.aborted) return;
-          console.error("Failed to fetch task candidates:", err);
-          setTaskInlineCandidates([]);
-          setTaskInlineCandidateIndex(0);
-        });
-    }, CANDIDATE_FETCH_DEBOUNCE_MS);
-    return () => {
-      window.clearTimeout(timer);
-      controller.abort();
-    };
-  }, [currentRootId, taskInlineEdit?.targetRootId, taskInlineActiveToken, taskTemplateFilter, taskTemplates]);
+  useTaskInlineCandidates({AbortController, CANDIDATE_FETCH_DEBOUNCE_MS, currentRootId, fetchCandidates, firstAgentStage, getNodeIdForRoot, setTaskInlineCandidateIndex, setTaskInlineCandidates, taskInlineActiveToken, taskInlineEdit, taskTemplateFilter, taskTemplates, useEffect});
 
   const applyTaskDetails = useCallback((rootId: string, details: TaskDetail[], persist = true) => {
     const curNid = String(currentRootNodeIdRef.current || "").trim();
@@ -3117,74 +3082,7 @@ export function App({ onGoHome }: AppProps) {
   });
 
 
-  // 归档视图懒加载：只有打开过 / 归档状态变过才拉，未打开时零成本。
-  // topLevel 是硬要求：归档区按项目平铺，子会话挂在那儿只会变成孤儿行。
-  // 按**全部**已加载项目查，而不是按多项目分组里出现过的 rootId ——
-  // 某个项目的会话被**全部**归档后该分组就不再出现，按分组查会漏掉它的归档行
-  // （正是「该项目的对话全归档了就再也没法取消归档」的那个 bug）。
-  useEffect(() => {
-    if (!archiveOpen) return;
-    const rootIds = Array.from(managedRootIdsRef.current)
-      .map((id) => String(id || "").trim())
-      .filter(Boolean);
-    if (rootIds.length === 0) return;
-    let cancelled = false;
-    setArchiveLoading(true);
-    (async () => {
-      try {
-        const payloads = await Promise.all(
-          rootIds.map((rootId) =>
-            sessionService.fetchSessions(rootId, {
-              nodeId: getNodeIdForRoot(rootId),
-              limit: SESSION_PAGE_SIZE,
-              archivedOnly: true,
-              topLevel: true,
-            }),
-          ),
-        );
-        if (cancelled) return;
-        const groups = rootIds
-          .map((rootId, i) => {
-            const payload = payloads[i];
-            const sessions = payload.items
-              .map((item) =>
-                toSessionItem(rootId, {
-                  ...(item as any),
-                  root_id: rootId,
-                  _nodeId: getNodeIdForRoot(rootId),
-                }),
-              )
-              .filter((item): item is SessionItem => !!item)
-              .sort(
-                (a, b) =>
-                  String(b.updated_at || "").localeCompare(String(a.updated_at || "")) ||
-                  String(a.key).localeCompare(String(b.key)),
-              );
-            if (sessions.length === 0) return null;
-            const nodeId = getNodeIdForRoot(rootId);
-            const meta = (managedRootByKeyRef.current as Record<string, any>)[
-              rootNodeKey(nodeId, rootId)
-            ];
-            return {
-              rootId,
-              rootName: meta?.display_name || rootId,
-              latestSessionTime: String(sessions[0]?.updated_at || ""),
-              _nodeId: nodeId || undefined,
-              _nodeColor: meta?._nodeColor,
-              sessions,
-              totalCount: payload.totalCount || sessions.length,
-            } as MultiProjectSessionGroup;
-          })
-          .filter((g): g is MultiProjectSessionGroup => !!g);
-        setArchivedGroups(groups);
-      } finally {
-        if (!cancelled) setArchiveLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [archiveOpen, archiveReloadToken]);
+  useArchiveSync({SESSION_PAGE_SIZE, archiveOpen, archiveReloadToken, getNodeIdForRoot, managedRootByKeyRef, managedRootIdsRef, rootNodeKey, sessionService, setArchiveLoading, setArchivedGroups, toSessionItem, useEffect});
 
 
   const handleForkAgentMessage = useCallback(
@@ -4454,121 +4352,7 @@ export function App({ onGoHome }: AppProps) {
     }
   }, [getNodeIdForRoot, loadingOlderSessions]);
 
-  useEffect(() => {
-    if (didInitRef.current) {
-      return;
-    }
-    didInitRef.current = true;
-    let cancelled = false;
-    let settled = false;
-    void (async () => {
-      try {
-        const bootstrap = await bootstrapService.start();
-        if (bootstrap.phase !== "ready") {
-          didInitRef.current = false;
-          return;
-        }
-        const dirs = await loadManagedRootPayloads();
-        if (!dirs) {
-          return;
-        }
-        if (cancelled || !dirs.length) {
-          return;
-        }
-        const nextDirs = dirs as ManagedRootPayload[];
-        const ids = nextDirs.map((d) => d.id);
-        const indexed = indexManagedRoots(nextDirs);
-        managedRootByKeyRef.current = indexed.byKey;
-        managedRootByIdRef.current = indexed.byId;
-        setRootNodeMap(managedRootByIdRef.current as Record<string, any>);
-        managedRootIdsRef.current = new Set(ids);
-        setManagedRootIds(ids);
-        setRootEntries(mapManagedRootsToEntries(nextDirs));
-        const urlState = readURLState();
-        const lastRoot = loadLastRootId();
-        const lastNode = loadLastRootNodeId();
-        const urlNode = String(urlState.node || "");
-        const nodeHint = urlNode || lastNode || "";
-        const preferredRoot =
-          urlState.root && ids.includes(urlState.root)
-            ? urlState.root
-            : lastRoot && ids.includes(lastRoot)
-              ? lastRoot
-              : ids[0];
-        const preferredDir =
-          nextDirs.find(
-            (d) => d.id === preferredRoot && (!nodeHint || (d as any)._nodeId === nodeHint),
-          ) ||
-          nextDirs.find((d) => d.id === preferredRoot);
-        setCurrentRootId(preferredRoot);
-        selectRootNode(
-          preferredRoot,
-          urlNode || (preferredDir as any)?._nodeId || undefined,
-        );
-        // 初始化竞态兜底：refs 就绪后补一次多项目会话加载，覆盖首屏早期空/回退 _nodeId 批次
-        if (multiProjectSessionsEnabled) {
-          void loadMultiProjectSessionGroups();
-        }
-        setPluginQuery(urlState.pluginQuery);
-        if (urlState.session) {
-          // 有明确的会话 id：直接进那个对话。抢在 handleSelectSession 之前切，
-          // 否则它要等缓存/网络回来才切，中间会闪一下工作台。
-          switchMainView("chat");
-          if (cancelled) return;
-          await handleSelectSessionRef.current?.(
-            {
-              key: urlState.session,
-              session_key: urlState.session,
-              root_id: preferredRoot,
-            },
-            // 已经切到 chat 了，别让 handleSelectSession 再按 URL 的 view 改回去
-            // （深链 ?session=k&view=board 也一律进对话：会话 id 是明确的落点）。
-            { preserveMainView: true },
-          );
-        } else if (urlState.file) {
-          await ensurePluginsLoaded(preferredRoot);
-          if (cancelled) return;
-          actionHandlersRef.current.open({
-            path: urlState.file,
-            root: preferredRoot,
-            cursor: urlState.cursor,
-            preservePluginQuery: true,
-            preserveMainView: !!urlState.view && urlState.view !== "files",
-          });
-        } else {
-          if (cancelled) return;
-          await showBoundSessionOrRootDir(preferredRoot, {
-            pluginQuery: urlState.pluginQuery,
-            loadSessionsOnRestore: true,
-          });
-        }
-      } catch (err) {
-        if (cancelled) {
-          return;
-        }
-        reportError(
-          "app.init_failed",
-          String((err as Error)?.message || err || t("app.initFailed")),
-        );
-      } finally {
-        settled = true;
-      }
-    })();
-    return () => {
-      cancelled = true;
-      if (!settled) {
-        didInitRef.current = false;
-      }
-    };
-  }, [
-    ensurePluginsLoaded,
-    loadManagedRootPayloads,
-    loadMultiProjectSessionGroups,
-    loadSessionsForRoot,
-    refreshTreeDir,
-    showBoundSessionOrRootDir,
-    bootstrapState.phase,
-  ]);
+  useAppInit({actionHandlersRef, bootstrapService, bootstrapState, didInitRef, ensurePluginsLoaded, handleSelectSessionRef, indexManagedRoots, loadLastRootId, loadLastRootNodeId, loadManagedRootPayloads, loadMultiProjectSessionGroups, loadSessionsForRoot, managedRootByIdRef, managedRootByKeyRef, managedRootIdsRef, mapManagedRootsToEntries, multiProjectSessionsEnabled, readURLState, refreshTreeDir, reportError, selectRootNode, setCurrentRootId, setManagedRootIds, setPluginQuery, setRootEntries, setRootNodeMap, showBoundSessionOrRootDir, switchMainView, t, useEffect});
 
   useEffect(() => {
     return bootstrapService.subscribe((state) => {
@@ -4657,103 +4441,7 @@ export function App({ onGoHome }: AppProps) {
     }
   }, [describeE2EEPromptError, e2eeSecretInput, t]); // ponytail: e2ee removed, pairing dead code kept for type compat
 
-  useEffect(() => {
-    function handlePopState() {
-      const state = readURLState();
-      if (state.root) {
-        setCurrentRootId(state.root);
-        selectRootNode(state.root, state.node || undefined);
-      }
-      setPluginQuery(state.pluginQuery);
-      if (state.view) {
-        // 后退/前进时按钮高亮与面板都从 URL 的 view 恢复，保持同源
-        switchMainView(state.view);
-      }
-      if (!state.root) {
-        return;
-      }
-      if (state.session) {
-        const currentSessionKey =
-          selectedSessionRef.current?.key ||
-          selectedSessionRef.current?.session_key ||
-          "";
-        const currentSessionRoot =
-          (selectedSessionRef.current?.root_id as string | undefined) ||
-          currentRootIdRef.current ||
-          "";
-        if (
-          state.session !== currentSessionKey ||
-          state.root !== currentSessionRoot
-        ) {
-          void handleSelectSessionRef.current?.(
-            {
-              key: state.session,
-              session_key: state.session,
-              root_id: state.root,
-            },
-            { preserveMainView: !!state.view && state.view !== "chat" },
-          );
-        }
-        return;
-      }
-      if (state.file) {
-        const currentPath = fileRef.current?.path || "";
-        const currentRoot = currentRootIdRef.current || "";
-        const currentCursor = fileCursorRef.current;
-        if (
-          state.file !== currentPath ||
-          state.root !== currentRoot ||
-          state.cursor !== currentCursor
-        ) {
-          actionHandlers.open({
-            path: state.file,
-            root: state.root,
-            cursor: state.cursor,
-            preservePluginQuery: true,
-            preserveMainView: !!state.view && state.view !== "files",
-          });
-        }
-        return;
-      }
-      void (async () => {
-        await showBoundSessionOrRootDir(state.root, {
-          pluginQuery: state.pluginQuery,
-          loadSessionsOnRestore: true,
-        });
-      })();
-    }
-
-    const onPopState = (event: PopStateEvent) => {
-      // 覆盖层开着的时候，浏览器后退/iOS 侧滑应该只关那一层，而不是连视图一起换掉。
-      // 刚被弹掉的那一条立刻 push 回去，否则历史被吃掉一次，
-      // 下一次后退就直接退到站外（用户看到的是「按两次返回就出去了」）。
-      if (hasBackLayer()) {
-        window.history.pushState(event.state, "", window.location.href);
-        closeTopBackLayer();
-        return;
-      }
-      // 视图切换留下的那条记录：它带的是「切之前」那个视图，直接退回去。
-      // 不走 handlePopState —— 那套按 URL 恢复，而 pushViewHistoryEntry 存的
-      // 是切换瞬间的 URL，view 字段可能还没写进去，判据只能是 state 里的视图。
-      // 退到哪个视图后要 replaceState 把 URL 对齐（按钮高亮与实际视图同源），
-      // 只换 view、其余 root/file/session 原样带回，否则会把当前项目/文件抹掉。
-      const fromView = (event.state as { mindfsView?: MainViewMode } | null)?.mindfsView;
-      if (fromView) {
-        consumeViewHistoryEntry();
-        mainViewRef.current = fromView;
-        setMainView(fromView);
-        if (fromView !== "chat") {
-          lastNonChatViewRef.current = fromView;
-        }
-        const now = readURLState();
-        replaceURLState({ ...now, view: fromView });
-        return;
-      }
-      handlePopState();
-    };
-    window.addEventListener("popstate", onPopState);
-    return () => window.removeEventListener("popstate", onPopState);
-  }, [actionHandlers, loadSessionsForRoot, refreshTreeDir, showBoundSessionOrRootDir]);
+  usePopStateSync({actionHandlers, closeTopBackLayer, consumeViewHistoryEntry, currentRootIdRef, fileCursorRef, fileRef, handleSelectSessionRef, hasBackLayer, lastNonChatViewRef, loadSessionsForRoot, mainViewRef, readURLState, refreshTreeDir, replaceURLState, selectRootNode, selectedSessionRef, setCurrentRootId, setMainView, setPluginQuery, showBoundSessionOrRootDir, switchMainView, useEffect});
 
   const selectedRoot =
     (selectedSession?.root_id as string | undefined) || currentRootId || "";
@@ -5036,80 +4724,7 @@ export function App({ onGoHome }: AppProps) {
     sessionLoadFailureRef.current = {};
   }, [loadSessionKey, loadRootID]);
 
-  useEffect(() => {
-    const sessionKey = loadSessionKey;
-    const rootID = loadRootID;
-    if (!rootID || !sessionKey || sessionKey.startsWith("pending-")) {
-      return;
-    }
-    if (selectedSessionLoading) {
-      return;
-    }
-    const cacheKey = rootSessionKey(rootID, sessionKey);
-    const isStale = isSessionStale(rootID, sessionKey);
-    const cached = sessionCacheRef.current[cacheKey];
-    if (!isStale && loadedSessionRef.current[cacheKey]) {
-      return;
-    }
-    if (!isStale && hasSessionExchanges(cached)) {
-      return;
-    }
-    if (!isStale && loadSnapshotHasExchanges) {
-      return;
-    }
-    if (loadingSessionRef.current[cacheKey]) {
-      return;
-    }
-    // CUSTOM(G-AU): 失败冷却。404 永久（会话不存在，重试无意义），其余错误 5s。
-    // 这是第二道保险：即便将来又出现「依赖每轮都变」的加载路径，风暴也被压到
-    // 每分钟最多一次，而不是每秒 22 次。
-    const failure = sessionLoadFailureRef.current[cacheKey];
-    if (failure) {
-      const cooldown = failure.status === 404 ? Number.POSITIVE_INFINITY : 5_000;
-      if (Date.now() - failure.at < cooldown) {
-        return;
-      }
-    }
-    void restoreActiveSession(rootID, sessionKey).then((restored) => {
-      if (!restored) {
-        return;
-      }
-      loadedSessionRef.current[cacheKey] = true;
-      clearSessionStale(rootID, sessionKey);
-      delete sessionLoadFailureRef.current[cacheKey];
-      setSelectedSession((prev) => {
-        const prevKey = prev?.key || prev?.session_key;
-        const prevRoot =
-          (prev?.root_id as string | undefined) || currentRootIdRef.current;
-        if (!prev || prevKey !== sessionKey || prevRoot !== rootID) {
-          return prev;
-        }
-        return toSessionItem(rootID, {
-          ...(prev as any),
-          ...(restored as any),
-          key: sessionKey,
-          session_key: sessionKey,
-          root_id: rootID,
-        });
-      });
-      if (boundSessionByRootRef.current[scopedRootKey(rootID)] === sessionKey) {
-        setDrawerSessionForRoot(rootID, restored);
-      }
-    });
-  }, [
-    loadSessionKey,
-    loadRootID,
-    loadSnapshotHasExchanges,
-    selectedSessionLoading,
-    currentRootId,
-    rootSessionKey,
-    bumpCacheVersion,
-    clearSessionStale,
-    isSessionStale,
-    resolvePendingForSession,
-    restoreActiveSession,
-    setDrawerSessionForRoot,
-  ]);
+  useSessionRestore({boundSessionByRootRef, bumpCacheVersion, clearSessionStale, currentRootId, currentRootIdRef, hasSessionExchanges, isSessionStale, loadRootID, loadSessionKey, loadSnapshotHasExchanges, loadedSessionRef, loadingSessionRef, resolvePendingForSession, restoreActiveSession, rootSessionKey, scopedRootKey, selectedSessionLoading, sessionCacheRef, sessionLoadFailureRef, setDrawerSessionForRoot, setSelectedSession, toSessionItem, useEffect});
 
   const handleSelectedSessionFileClick = useCallback(
     (target: string | RelatedFileClickTarget) => {
@@ -5913,48 +5528,7 @@ export function App({ onGoHome }: AppProps) {
   );
 
 
-  useEffect(() => {
-    const body = document.body;
-    if (!pluginThemeVars || pluginBypass || !pluginRender?.output) {
-      body.removeAttribute("data-plugin-theme");
-      body.style.removeProperty("--vp-overlay-bg");
-      body.style.removeProperty("--vp-surface-bg");
-      body.style.removeProperty("--vp-surface-bg-elevated");
-      body.style.removeProperty("--vp-text");
-      body.style.removeProperty("--vp-text-muted");
-      body.style.removeProperty("--vp-border");
-      body.style.removeProperty("--vp-primary");
-      body.style.removeProperty("--vp-primary-text");
-      body.style.removeProperty("--vp-radius");
-      body.style.removeProperty("--vp-shadow");
-      body.style.removeProperty("--vp-focus-ring");
-      body.style.removeProperty("--vp-danger");
-      body.style.removeProperty("--vp-warning");
-      body.style.removeProperty("--vp-success");
-      return;
-    }
-    body.setAttribute("data-plugin-theme", "1");
-    Object.entries(pluginThemeVars).forEach(([key, value]) => {
-      body.style.setProperty(key, String(value));
-    });
-    return () => {
-      body.removeAttribute("data-plugin-theme");
-      body.style.removeProperty("--vp-overlay-bg");
-      body.style.removeProperty("--vp-surface-bg");
-      body.style.removeProperty("--vp-surface-bg-elevated");
-      body.style.removeProperty("--vp-text");
-      body.style.removeProperty("--vp-text-muted");
-      body.style.removeProperty("--vp-border");
-      body.style.removeProperty("--vp-primary");
-      body.style.removeProperty("--vp-primary-text");
-      body.style.removeProperty("--vp-radius");
-      body.style.removeProperty("--vp-shadow");
-      body.style.removeProperty("--vp-focus-ring");
-      body.style.removeProperty("--vp-danger");
-      body.style.removeProperty("--vp-warning");
-      body.style.removeProperty("--vp-success");
-    };
-  }, [pluginThemeVars, pluginBypass, pluginRender]);
+  usePluginThemeVars({document, pluginBypass, pluginRender, pluginThemeVars, useEffect});
 
   const switchToRawFileView = useCallback(async () => {
     if (!file) return;
