@@ -1,5 +1,6 @@
 import React, { useRef, useState, useEffect } from "react";
 import { useI18n } from "../i18n";
+import { MobileSidebarToggleContext, type MobileSidebarToggleValue } from "./ViewHeader";
 
 type AppShellProps = {
   sidebar: React.ReactNode;
@@ -23,7 +24,6 @@ const MOBILE_BREAKPOINT = 768;
 const TABLET_BREAKPOINT = 1024;
 const SIDEBAR_MIN_WIDTH = 180;
 const SIDEBAR_MAX_WIDTH = 480;
-const MOBILE_HEADER_HEIGHT = 44;
 
 type RailSide = "left" | "right";
 
@@ -98,25 +98,6 @@ const footerStyle: React.CSSProperties = {
   background: "var(--mindfs-topbar-bg, var(--mobile-overlay-bg, var(--content-bg)))",
   zIndex: 100,
   minWidth: 0,
-};
-
-const mobileHeaderButtonStyle: React.CSSProperties = {
-  width: "30px",
-  height: "30px",
-  borderRadius: "8px",
-  border: "none",
-  background: "transparent",
-  color: "var(--text-secondary)",
-  display: "inline-flex",
-  alignItems: "center",
-  justifyContent: "center",
-  cursor: "pointer",
-  opacity: 0.86,
-  outline: "none",
-  boxShadow: "none",
-  WebkitTapHighlightColor: "transparent",
-  overflow: "hidden",
-  padding: 0,
 };
 
 export function AppShell({
@@ -271,7 +252,6 @@ export function AppShell({
   const shellStyle: React.CSSProperties & {
     "--mindfs-actionbar-bottom-padding"?: string;
     "--mindfs-file-menu-width"?: string;
-    "--mindfs-mobile-header-height"?: string;
   } = {
     display: isMobile ? "flex" : "grid",
     flexDirection: isMobile ? "column" : undefined,
@@ -298,12 +278,11 @@ export function AppShell({
     userSelect: isResizing ? "none" : undefined,
     "--mindfs-actionbar-bottom-padding": "calc(var(--mindfs-safe-area-bottom) + 12px)",
     "--mindfs-file-menu-width": isMobile ? "min(240px, calc(100vw - 16px))" : "220px",
-    "--mindfs-mobile-header-height": `${MOBILE_HEADER_HEIGHT}px`,
   };
 
   const mobileSidebarStyle = (side: 'left' | 'right'): React.CSSProperties => ({
     position: "fixed",
-    top: "calc(var(--mindfs-safe-area-top, env(safe-area-inset-top, 0px)) + var(--mindfs-mobile-header-height))",
+    top: "var(--mindfs-safe-area-top, env(safe-area-inset-top, 0px))",
     bottom: 0,
     [side]: 0,
     width: "75vw",
@@ -341,7 +320,20 @@ export function AppShell({
     flexShrink: 0,
   };
 
+  // 各视图的 ViewHeader 从这里取两个侧栏切换按钮的接线，把它渲染进自己 header 的两侧。
+  const mobileSidebarToggle: MobileSidebarToggleValue = {
+    isMobile,
+    leftOpen: physicalLeftOpen,
+    rightOpen: physicalRightOpen,
+    leftLabel: physicalLeftLabel,
+    rightLabel: physicalRightLabel,
+    leftIsSession: sidebarsSwapped,
+    rightIsSession: !sidebarsSwapped,
+    toggle: toggleRail,
+  };
+
   return (
+    <MobileSidebarToggleContext.Provider value={mobileSidebarToggle}>
     <div style={shellStyle} data-onboarding="shell">
       {isMobile && <div style={overlayStyle} onClick={() => { onCloseLeft?.(); onCloseRight?.(); }} />}
 
@@ -362,49 +354,6 @@ export function AppShell({
         >
           {physicalLeftContent}
         </aside>
-      ) : null}
-
-      {isMobile ? (
-        <div
-          style={{
-            height: `${MOBILE_HEADER_HEIGHT}px`,
-            flexShrink: 0,
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            padding: "0 4px",
-            background: "var(--mindfs-topbar-bg, var(--sidebar-bg))",
-            borderBottom: "1px solid var(--border-color)",
-            position: "relative",
-            zIndex: 2100,
-            boxSizing: "border-box",
-          }}
-        >
-          <button
-            type="button"
-            onClick={() => toggleRail("left")}
-            aria-label={physicalLeftOpen ? t("sidebar.collapse", { label: physicalLeftLabel }) : t("sidebar.expand", { label: physicalLeftLabel })}
-            title={physicalLeftOpen ? t("sidebar.collapse", { label: physicalLeftLabel }) : t("sidebar.expand", { label: physicalLeftLabel })}
-            style={mobileHeaderButtonStyle}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none">
-              <path fill="currentColor" d="M3 3h6v4H3zm12 7h6v4h-6zm0 7h6v4h-6zm-2-4H7v5h6v2H5V9h2v2h6z" style={{ transform: "scale(1.28)", transformOrigin: "12px 12px" }} />
-            </svg>
-          </button>
-          <button
-            type="button"
-            onClick={() => toggleRail("right")}
-            aria-label={physicalRightOpen ? t("sidebar.collapse", { label: physicalRightLabel }) : t("sidebar.expand", { label: physicalRightLabel })}
-            title={physicalRightOpen ? t("sidebar.collapse", { label: physicalRightLabel }) : t("sidebar.expand", { label: physicalRightLabel })}
-            style={mobileHeaderButtonStyle}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.8" strokeLinecap="round">
-              <line x1="6" y1="4" x2="18" y2="4" />
-              <line x1="6" y1="12" x2="18" y2="12" />
-              <line x1="6" y1="20" x2="18" y2="20" />
-            </svg>
-          </button>
-        </div>
       ) : null}
 
       <main
@@ -495,5 +444,6 @@ export function AppShell({
         {footer}
       </footer>
     </div>
+    </MobileSidebarToggleContext.Provider>
   );
 }

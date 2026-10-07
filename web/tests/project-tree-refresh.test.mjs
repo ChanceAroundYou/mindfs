@@ -18,9 +18,11 @@ assert.match(
   /\(\) => onRefresh\?\.\(projectTreeTab\)/,
   "FileTree should refresh the tab that is active when the button is clicked",
 );
+// header 外壳已换成共用的 ViewHeader（移动端在两侧插侧栏按钮），gap/overflow 走 style prop，
+// 但仍要与 tabs 容器的 6px marginRight 共存 —— 契约不变，只是承载它的元素换了。
 assert.match(
   fileTree,
-  /flexShrink: 0, gap: 0, overflow: "visible"[\s\S]*?maxWidth: "calc\(100% - 56px\)", marginRight: "6px"/,
+  /gap: 0, overflow: "visible"[\s\S]*?maxWidth: "calc\(100% - 56px\)", marginRight: "6px"/,
   "refresh should keep a 6px tab gap while reclaiming refresh control width",
 );
 assert.match(

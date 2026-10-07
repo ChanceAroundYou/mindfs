@@ -2,6 +2,7 @@ import React, { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { AgentIcon } from "./AgentIcon";
 import { ModeIcon } from "./ModeIcon";
 import { NodeBadgeHeader } from "./NodeBadgeHeader";
+import { ViewHeader } from "../layout/ViewHeader";
 import { getNodes, PALETTE, DEFAULT_NODE_COLOR } from "../services/nodeRegistry";
 import { hexToRgbaApp } from "../app/taskIcons";
 import { resolveGroupColor } from "../services/sessionGroupDisplay";
@@ -542,19 +543,11 @@ export function SessionList({
       }}
     >
       {/* 统一的 Header 边栏 */}
-      <div
+      <ViewHeader
         data-onboarding="session-actions"
-        style={{
-          height: "36px",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          padding: searchResultsMode ? "0 10px 0 4px" : "0 10px 0 2px",
-          borderBottom: "1px solid var(--border-color)",
-          background: "var(--mindfs-topbar-bg, transparent)",
-          flexShrink: 0,
-          boxSizing: "border-box",
-        }}
+        padding={searchResultsMode ? "0 10px 0 4px" : "0 10px 0 2px"}
+        style={{ justifyContent: "space-between" }}
+        innerStyle={{ justifyContent: "space-between" }}
       >
         {searchResultsMode ? (
           <button
@@ -602,7 +595,7 @@ export function SessionList({
             {headerAction}
           </div>
         ) : null}
-      </div>
+      </ViewHeader>
 
       {searchOpen ? (
         <div
@@ -1144,19 +1137,11 @@ export function MultiProjectSessionList({
 
   return (
     <div style={{ flex: 1, width: "100%", minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column", background: "transparent" }}>
-      <div
+      <ViewHeader
         data-onboarding="session-actions"
-        style={{
-          height: "36px",
-          display: hideHeader ? "none" : "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          padding: "0 10px 0 2px",
-          borderBottom: "1px solid var(--border-color)",
-          background: "var(--mindfs-topbar-bg, transparent)",
-          flexShrink: 0,
-          boxSizing: "border-box",
-        }}
+        padding="0 10px 0 2px"
+        style={{ display: hideHeader ? "none" : "flex", justifyContent: "space-between" }}
+        innerStyle={{ justifyContent: "space-between" }}
       >
         <div style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>
           {onSearchToggle ? (
@@ -1189,7 +1174,7 @@ export function MultiProjectSessionList({
           <ArchiveHeaderButton onOpen={onOpenArchivePanel} />
         </div>
         {headerAction ? <div style={{ display: "inline-flex", alignItems: "center" }}>{headerAction}</div> : null}
-      </div>
+      </ViewHeader>
       <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "8px" }}>
         {loading && groups.length === 0 ? (
           <div style={{ fontSize: "12px", color: "var(--text-secondary)", padding: "18px", textAlign: "center" }}>{t("sessionList.loading")}</div>

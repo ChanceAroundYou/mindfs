@@ -5,7 +5,12 @@ import { readFileSync } from "node:fs";
 // 2026-09 App.tsx 拆分：项目看板搬到 components/TaskBoardView.tsx，契约随文件走。
 const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 const bar = readFileSync(new URL("../src/components/ActionBar.tsx", import.meta.url), "utf8");
+const viewHeader = readFileSync(new URL("../src/layout/ViewHeader.tsx", import.meta.url), "utf8");
 const shell = readFileSync(new URL("../src/layout/AppShell.tsx", import.meta.url), "utf8");
+const fileTree = readFileSync(new URL("../src/components/FileTree.tsx", import.meta.url), "utf8");
+const sessionList = readFileSync(new URL("../src/components/SessionList.tsx", import.meta.url), "utf8");
+const sessionViewer = readFileSync(new URL("../src/components/SessionViewer.tsx", import.meta.url), "utf8");
+const gitDiff = readFileSync(new URL("../src/components/GitDiffViewer.tsx", import.meta.url), "utf8");
 const board = readFileSync(new URL("../src/components/TaskBoardView.tsx", import.meta.url), "utf8");
 const listView = readFileSync(new URL("../src/components/DefaultListView.tsx", import.meta.url), "utf8");
 const zh = readFileSync(new URL("../src/i18n/locales/zh-CN.ts", import.meta.url), "utf8");
@@ -115,7 +120,8 @@ assert.match(
 );
 
 // 会话界面只在对话态（主区）与文件态（悬浮框）出现；看板/工作台不得有输入区。
-// 移动端呼出左右侧栏的按钮已搬进 AppShell 的顶栏（hideComposer 时 ActionBar 不再渲染）。
+// 移动端呼出左右侧栏的按钮由各视图共用的 ViewHeader 渲染进 header 两侧（仅移动端），
+// 不再是 ActionBar 里的一条独立 footer 行。
 assert.match(
   app,
   /hideComposer=\{mainView === "board" \|\| mainView === "workspace"\}/,
@@ -124,13 +130,35 @@ assert.match(
 assert.match(
   bar,
   /if \(hideComposer\) \{\s*return null;\s*\}/,
-  "the composer-less bar must not render the sidebar toggles — they live in the top bar",
+  "the composer-less bar must not render the sidebar toggles — they live in the shared ViewHeader",
+);
+// 共用 header：移动端才插按钮，桌面端 children 直接渲染（零行为变化）。
+assert.match(
+  viewHeader,
+  /isMobile \? toggleButton\("left"\) : null[\s\S]*?isMobile \? toggleButton\("right"\) : null/,
+  "the shared ViewHeader must render both sidebar toggles on mobile",
+);
+assert.match(
+  viewHeader,
+  /onClick=\{\(\) => ctx\.toggle\(side\)\}/,
+  "the shared ViewHeader's toggles must call into the shell's rail toggle",
 );
 assert.match(
   shell,
-  /isMobile \? \(\s*<div[\s\S]*?zIndex: 2100[\s\S]*?toggleRail\("left"\)[\s\S]*?toggleRail\("right"\)/,
-  "the mobile top bar must carry both sidebar toggles",
+  /toggle: toggleRail/,
+  "AppShell must hand its rail toggle to the shared header via context",
 );
+// 每个主视图的 36px header 都必须走共用组件，否则移动端在该视图开不出侧栏。
+for (const [name, src] of [
+  ["FileTree", fileTree],
+  ["SessionList", sessionList],
+  ["SessionViewer", sessionViewer],
+  ["GitDiffViewer", gitDiff],
+  ["DefaultListView", listView],
+]) {
+  assert.match(src, /<ViewHeader/, `${name} must use the shared ViewHeader`);
+  assert.match(src, /<\/ViewHeader>/, `${name} must close its shared ViewHeader`);
+}
 assert.match(
   app,
   /onSessionClick=\{\(\) => \{[\s\S]*?if \(!canOpenSessionDrawer\) return;/,

@@ -1,4 +1,5 @@
 import React from "react";
+import { ViewHeader } from "../layout/ViewHeader";
 import { FileOperationItems, MoreMenuButton, moreMenuPopoverStyle, menuOverlayStyle, MoveFilePopover } from "./FileOperations";
 import { rootBadgeButtonStyle } from "./rootBadgeStyle";
 import { SymlinkBadge } from "./SymlinkBadge";
@@ -607,19 +608,7 @@ export function DefaultListView({
         background: "transparent",
       }}
     >
-      <header
-        style={{
-          height: "36px",
-          padding: "0 3px 0 16px",
-          borderBottom: "1px solid var(--border-color)",
-          display: "flex",
-          alignItems: "center",
-          background: "var(--mindfs-topbar-bg, transparent)",
-          boxSizing: "border-box",
-          zIndex: 10,
-          flexShrink: 0,
-        }}
-      >
+      <ViewHeader padding="0 3px 0 16px" style={{ zIndex: 10 }}>
         <div
           style={{
             display: "flex",
@@ -1185,7 +1174,7 @@ export function DefaultListView({
             }}
           />
         </div>
-      </header>
+      </ViewHeader>
 
       <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
         {showTaskKanban && topContent ? (

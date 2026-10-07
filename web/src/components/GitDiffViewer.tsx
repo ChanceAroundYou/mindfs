@@ -1,5 +1,6 @@
 import React from "react";
 import type { GitDiffPayload } from "../services/git";
+import { ViewHeader } from "../layout/ViewHeader";
 import { rootBadgeButtonStyle } from "./rootBadgeStyle";
 import {
   buildDiffLines,
@@ -302,7 +303,7 @@ export function GitDiffViewer({ diff, root, rootDisplayName = null, rootColor = 
 
   return (
     <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
-      <header style={{ height: "36px", padding: "0 16px", borderBottom: "1px solid var(--border-color)", display: "flex", alignItems: "center", gap: "10px", background: "var(--mindfs-topbar-bg, transparent)", boxSizing: "border-box", flexShrink: 0 }}>
+      <ViewHeader padding="0 16px" style={{ gap: "10px" }} innerStyle={{ gap: "10px" }}>
         <div style={{ display: "flex", alignItems: "center", overflow: "hidden", flex: 1, minWidth: 0 }}>
           <Breadcrumbs root={root} rootDisplayName={rootDisplayName} path={displayPath} rootColor={rootColor} onPathClick={onPathClick} />
 
@@ -380,7 +381,7 @@ export function GitDiffViewer({ diff, root, rootDisplayName = null, rootColor = 
             {renderLineStat(diff.deletions, "-")}
           </div>
         </div>
-      </header>
+      </ViewHeader>
 
       <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
         <div
