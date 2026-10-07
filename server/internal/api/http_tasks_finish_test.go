@@ -227,16 +227,27 @@ func TestFinishWorktreeRouteReportsConflictAs409WithFiles(t *testing.T) {
 	}
 }
 
-// 主 checkout 有未提交改动 → 409 + dirty_files，且**报错文案里不许出现文件清单**。
+// 主 checkout 有**已跟踪文件**的未提交改动 → 409 + dirty_files，且**报错文案里不许
+// 出现文件清单**。
 //
 // 2026-10-07 用户实测：旧写法把 strings.Join(files, "、") 拼进 fmt.Errorf，三十个
 // 文件就是一句读不完的话 —— 而句子长了用户根本不会读完，等于没说。清单走结构化字段
 // 给 UI 列表渲染，句子只留一句人话。
+//
+// 用「已跟踪文件改了没提交」而不是「新写一个未跟踪文件」：后者不再挡合并
+// （见 gitview 的 TestMergeBranchIgnoresUntrackedFilesInTheMainCheckout），
+// 而且清单里必须是干净路径，不能带 `M ` 前缀（porcelain 解析的坑，2026-10-08 修）。
 func TestFinishWorktreeRouteReportsDirtyMainCheckoutAs409WithFiles(t *testing.T) {
 	handler, root, taskID := newFinishTaskHandler(t, "from worktree\n")
-	// 主 checkout 留一个没提交的文件 —— git 不敢替用户合并（会覆盖它）。
-	if err := os.WriteFile(filepath.Join(root.RootPath, "scratch.txt"), []byte("mine\n"), 0o644); err != nil {
+	// 主 checkout 里一个**已跟踪**文件有未提交改动 —— 合并会顶掉它，git 不敢替用户决定。
+	scratch := filepath.Join(root.RootPath, "scratch.txt")
+	if err := os.WriteFile(scratch, []byte("committed\n"), 0o644); err != nil {
 		t.Fatalf("seed scratch: %v", err)
+	}
+	gitForAPITest(t, root.RootPath, "add", "scratch.txt")
+	gitForAPITest(t, root.RootPath, "commit", "-qm", "seed scratch")
+	if err := os.WriteFile(scratch, []byte("mine, uncommitted\n"), 0o644); err != nil {
+		t.Fatalf("modify scratch: %v", err)
 	}
 
 	rec := postFinish(t, handler, root.ID, taskID)

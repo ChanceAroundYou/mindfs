@@ -174,10 +174,27 @@ func MergeBranch(ctx context.Context, opts MergeOptions) (MergeResult, error) {
 		return MergeResult{}, ErrMergeUncommitted
 	}
 
+	// 已经是祖先 = 改动全在目标分支里了，无需再合。
+	//
+	// **必须排在脏检查之前**（2026-10-08 实测）：没有东西要合的时候，主 checkout
+	// 脏不脏完全无关 —— 下面那个 checkout + merge 一步都不会发生。排在后面的话，
+	// 「分支早就合完了、只差拆目录」这种最常见的收尾会被主 checkout 里一个不相干的
+	// 改动挡死，用户看到「主 checkout 有未提交改动」，而其实这里什么都不用做。
+	if isAncestor, err := isAncestorOf(ctx, opts.MainDir, source, target); err != nil {
+		return MergeResult{}, err
+	} else if isAncestor {
+		return MergeResult{Merged: false, Message: source + " 已经在 " + target + " 里了，跳过合并"}, nil
+	}
+
 	// 先切到目标分支。合并必须在目标分支上发生，不然就是往源分支里并自己。
-	// clean 模式会静默丢掉本地改动，所以必须确认没有别人的东西被毁：
-	// 只在确实有改动且不是 .worktree 容器目录时报错。
-	dirty, err := meaningfulDirtyPaths(ctx, opts.MainDir)
+	//
+	// 判据只算**已跟踪文件**的改动（trackedDirtyPaths）。未跟踪文件挡在这里是过宽
+	// 的：合并只在「要写入同名路径」时才碰得到它，而那一刻 git 自己会拦下
+	// （"untracked working tree files would be overwritten by merge"），`git checkout`
+	// 也一样会拦 —— 下面两条命令都没带 -f，不存在静默覆盖。挡在这里的后果是主
+	// checkout 里任何一个别人留下的未跟踪文件都会让收尾永远走不动（实测：两个 e2e
+	// 探针脚本把 task-37 的收尾卡死），而它一个字节都不会丢。
+	dirty, err := trackedDirtyPaths(ctx, opts.MainDir)
 	if err != nil {
 		return MergeResult{}, err
 	}
@@ -186,13 +203,6 @@ func MergeBranch(ctx context.Context, opts MergeOptions) (MergeResult, error) {
 	}
 	if _, err := runGit(ctx, opts.MainDir, "checkout", "-q", target); err != nil {
 		return MergeResult{}, fmt.Errorf("切到 %s 失败：%w", target, err)
-	}
-
-	// 已经是祖先 = 改动全在目标分支里了，无需再合。
-	if isAncestor, err := isAncestorOf(ctx, opts.MainDir, source, target); err != nil {
-		return MergeResult{}, err
-	} else if isAncestor {
-		return MergeResult{Merged: false, Message: source + " 已经在 " + target + " 里了，跳过合并"}, nil
 	}
 
 	args := []string{"merge"}
@@ -692,6 +702,21 @@ func unmergedFiles(ctx context.Context, dir string) []string {
 // （未 gitignore 时是 `??`）。不排除的话每次都误报「主 checkout 不干净」，
 // 收尾永远走不下去。
 func meaningfulDirtyPaths(ctx context.Context, dir string) ([]string, error) {
+	return dirtyPaths(ctx, dir, false)
+}
+
+// trackedDirtyPaths 只列**已跟踪文件**的未提交改动。
+//
+// 合并的脏检查用这个，不用 meaningfulDirtyPaths：未跟踪文件不会被合并覆盖掉，
+// 除非合并恰好要写同名路径 —— 而那一步 git 自己会拦（见 MergeBranch 里的说明）。
+// 把它算进来的唯一效果是「主 checkout 里有任何别人留下的散落文件，收尾就永远
+// 走不动」，而它一个字节都不会丢。
+func trackedDirtyPaths(ctx context.Context, dir string) ([]string, error) {
+	return dirtyPaths(ctx, dir, true)
+}
+
+// dirtyPaths 是上面两个的公共实现。trackedOnly 时跳过 `??`（未跟踪）那些行。
+func dirtyPaths(ctx context.Context, dir string, trackedOnly bool) ([]string, error) {
 	out, err := runGit(ctx, dir, "status", "--porcelain")
 	if err != nil {
 		return nil, err
@@ -702,14 +727,23 @@ func meaningfulDirtyPaths(ctx context.Context, dir string) ([]string, error) {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		// porcelain 每行是「XY 路径」。取空格后的路径，X/Y 是暂存/工作区状态。
-		idx := strings.Index(line, " ")
-		if idx < 0 {
+		// porcelain v1 每行固定是「XY<空格>路径」，XY 恰好两个字符。
+		//
+		// **不能**用 strings.Index(line, " ") 找分隔符：状态带前导空格时
+		// （` M foo` = 已跟踪文件改了没暂存）第一个空格在 0 号位，切出来的
+		// 「路径」会是 `M foo` —— 带状态前缀的假路径，一路传到 UI 的文件清单里。
+		// 实测（2026-10-08）：`dirty_files` 报的是「M note.txt」而不是「note.txt」。
+		if len(line) < 4 {
 			continue
 		}
-		path := strings.TrimSpace(line[idx+1:])
+		status := line[:2]
+		path := strings.TrimSpace(line[3:])
 		// `?? .worktree/` 和 `?? .worktree` 都算容器目录（末尾斜杠取决于 git 版本）。
 		if path == ".worktree" || path == ".worktree/" {
+			continue
+		}
+		// `??` = 未跟踪。收窄模式下跳过：它挡不住任何东西。
+		if trackedOnly && status == "??" {
 			continue
 		}
 		paths = append(paths, path)

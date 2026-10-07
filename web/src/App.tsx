@@ -414,7 +414,9 @@ export function App({ onGoHome }: AppProps) {
   // 看板列折叠（移动端多列换行后空间宝贵，长列默认可收起只留表头）。
   const [collapsedKanbanColumns, setCollapsedKanbanColumns] = useState<Set<string>>(() => new Set());
   const [taskInlineEdit, setTaskInlineEdit] = useState<TaskInlineEditState | null>(null);
-  const [taskSessionErrorDialog, setTaskSessionErrorDialog] = useState<{ title: string; message: string; details: string[] } | null>(null);
+  // note 是「为什么会是这个错」的补充说明（服务端 agent_error）：机械清场失败、
+  // 想交给 agent 而 agent 那条路也走不通时才有。没有它用户只看到一句报错。
+  const [taskSessionErrorDialog, setTaskSessionErrorDialog] = useState<{ title: string; message: string; details: string[]; note?: string } | null>(null);
   const [taskInlineActiveToken, setTaskInlineActiveToken] = useState<{ type: "file" | "slash" | "prompt" | "command"; query: string } | null>(null);
   const [taskInlineCandidates, setTaskInlineCandidates] = useState<CandidateItem[]>([]);
   const [taskInlineCandidateIndex, setTaskInlineCandidateIndex] = useState(0);
@@ -909,6 +911,7 @@ export function App({ onGoHome }: AppProps) {
           title: t("task.finishWorktreeConflict"),
           message: err.message,
           details: err.conflictFiles,
+          note: err.note,
         });
         return;
       }
@@ -919,6 +922,7 @@ export function App({ onGoHome }: AppProps) {
           title: t("task.finishWorktreeDirty"),
           message: t("task.finishWorktreeDirtyHint"),
           details: err.files,
+          note: err.note,
         });
         return;
       }
@@ -929,6 +933,7 @@ export function App({ onGoHome }: AppProps) {
           title: t("task.finishWorktreeUserChanges"),
           message: t("task.finishWorktreeUserChangesHint"),
           details: err.files,
+          note: err.note,
         });
         return;
       }
@@ -10402,6 +10407,19 @@ export function App({ onGoHome }: AppProps) {
                   {detail}
                 </div>
               ))}
+              {taskSessionErrorDialog.note ? (
+                <div
+                  style={{
+                    color: "var(--text-secondary)",
+                    fontSize: "12px",
+                    lineHeight: 1.5,
+                    whiteSpace: "pre-wrap",
+                    overflowWrap: "anywhere",
+                  }}
+                >
+                  {taskSessionErrorDialog.note}
+                </div>
+              ) : null}
             </div>
           </section>
         </div>

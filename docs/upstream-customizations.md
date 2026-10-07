@@ -608,8 +608,23 @@
 
 - 来源：`scripts/deploy-all.sh`、`scripts/{build-all,install,migrate-control-plane-to-primary}.sh`、
   `Makefile`、`.claude/skills/{ship,upstream-merge}`。
-- 边界：`ship` 一条命令完成门禁→提交推送→两侧编译安装→WSL 重建重启→两端对账。
+- 边界：`ship` 一条命令完成门禁→提交推送→本机编译安装→推送产物到 WSL→WSL 重启→对账。
   `73db73e` 修的是「不再整目录删除 web 哈希资源」。合上游后 `Makefile` 的本地 target 要保住。
+  **WSL 是纯 worker，只收二进制与两个 json，不收 `web/dist`**（2026-10-07）：worker 按设计不服务
+  静态资源（`GET /` 403），前端只装本机；曾推的那份是留给「角色翻成 control」的保险，已不成立。
+- 可见症状（没有它会怎样）：
+  - **改了根级文档跑完 ship 却没被提交**：`git add -A --` 的路径是**白名单**，
+    `docs/` 只够得到 `docs/` 目录、够不到仓库根。改了 `CLAUDE.md` 再 `deploy-all.sh -m "..."`，
+    它会被静默留在工作区，版本号因此挂上 `-dirty`（`git describe --dirty`，2026-10-07 实测）。
+    白名单里的 `|| git add -A` 兜底**实际永不触发**：`git add -A -- <存在的路径>` 恒成功。
+  - **部署脚本按上游布局整目录删 web 哈希资源**：会让部署前就打开的页面懒加载 404。
+- 为什么必须保留：白名单是**故意**的（防 `.mindfs/` 运行期数据被卷进提交），
+  所以修法是「把该收的根级文档逐个点名」，不是换成 `git add -A`。
+  根级文档中 `CLAUDE.md` / `README.md` / `README.zh.md` / `release-notes.md` 必须在内；
+  `config.json` **刻意不在**——它会被本机改 `role`/端口，提交等于把本地运行配置推上去。
+- 针对性测试：
+  - `web/tests/deploy-web-assets.test.mjs` — 无 `rm -rf web`、TTL 两处一致、WSL 只收产物不收 `dist`、
+    add 白名单含根级文档且不含 `config.json`。
 
 ### G-AM 插件注册表与视图目录
 
@@ -756,21 +771,46 @@
   （`FinishWorktreeAndRepoint`）而不是下层 `FinishTaskWorktree` —— 下层对空路径保持严格报错，
   那是为了守住「先清归属再拆目录」的顺序不变量（路径空 + 目录还在 = 顺序反了，
   静默成功会把它藏起来）。
+- **第三轮：机械清场失败落回 agent + 脏判据收窄**（2026-10-08 用户实测）：
+  用户重启服务后点 task-37 的收尾，拿到 409「主 checkout 有未提交改动，先提交或暂存后再收尾」
+  +「合并会覆盖这些改动，git 不敢替你决定丢不丢。处理完再点一次收尾即可。」，
+  涉及 `web/tests/e2e-pending-probe.mjs`、`web/tests/e2e-pending-probe2.mjs` 两个未跟踪文件。
+  用户原话：「不应该报错，而是应该把 comment 提交给 agent，进入 agent 合并流程」。
+  两处根因 + 一处兜底：
+  1. `MergeBranch` 的「已是祖先就短路」排在脏检查**之后** —— 没有东西要合时主 checkout
+     脏不脏完全无关（一步 checkout/merge 都不会发生），排在后面就让「分支早就合完了、
+     只差拆目录」这种最常见的收尾被一个不相干的改动挡死。
+  2. 脏检查把**未跟踪文件**也算进来 —— 过宽。合并只在「要写入同名路径」时才碰得到它，
+     那一刻 git 自己会拦（`untracked working tree files would be overwritten by merge`），
+     `git checkout` 也一样会拦（两条命令都没带 `-f`，不存在静默覆盖）。收窄成
+     `trackedDirtyPaths`（只算已跟踪文件的改动）。
+  3. **机械清场失败不再报错，落回 agent**（`agentFallbackPlan`）：机械那条路是**加速段不是
+     门槛**，判定说能做、执行时被挡下时结论是「让 agent 去做」而不是「收尾失败」——
+     agent 能 commit、能解冲突、能判断哪些改动该留。只有「没有 agent 段可继承」时
+     （`BeginFinishWorktree` 也会拒绝）才回 409 + 结构化清单，并把 `agent_error` 一并带出，
+     前端在弹窗里说明「为什么不让 agent 处理」。
+  顺带修掉一个 porcelain 解析 bug：`strings.Index(line, " ")` 在状态带前导空格时
+  （` M foo`）切出带状态前缀的假路径，`dirty_files` 报的是「M note.txt」而不是
+  「note.txt」。porcelain v1 每行固定是「XY<空格>路径」，XY 恰好两个字符。
 - 针对性测试：
   - `server/internal/kanban/worktree_finish_dispatch_test.go` — 探针优先于状态、分支合并判断（真 git）、
     收尾段索引、目录消失读「已收尾」。
   - `server/internal/kanban/worktree_finish_test.go` — 目录整个删（活 worktree / 空壳两种形状）、
     附件迁移（搬过去 / 不覆盖已有 / 没有 upload 时是空操作）、只删工具状态空壳孤儿、
-    顺序不变量（先清归属再拆目录）。
+    顺序不变量（先清归属再拆目录）、**主 checkout 有已跟踪改动时停、未跟踪文件不挡路**。
   - `server/internal/kanban/worktree_finish_stage_test.go` — 收尾段跑完才清场、
     清场自己会清路径（顺序反了会静默失败）。
   - `server/internal/gitview/worktree_finish_test.go` — `CanMergeCleanly` 四种结局
     （干净 / 冲突带文件 / 已合入 / 不碰仓库）、`RemoveWorktreeDir` 拒绝活 worktree、
-    `MigrateWorktreeUploads` 不覆盖已有目标。
+    `MigrateWorktreeUploads` 不覆盖已有目标、**已合入分支跳过合并（主 checkout 脏也跳过）、
+    未跟踪文件不挡合并、真撞同名未跟踪文件时 git 自己拦且文件不丢、`trackedDirtyPaths`
+    只报已跟踪改动**。
   - `server/internal/api/http_tasks_begin_finish_test.go` — 五分支分流
     （session_running / teardown / nudged / stage_added / 无 agent 段直接清场）、
     机械优先（干净 worktree 直接 teardown 不追加收尾段）、冲突与未提交都退给 agent 且带
-    `plan.files`、连点三次不堆收尾段、机械路径连点两次只合一次且第二次带 `note`。
+    `plan.files`、连点三次不堆收尾段、机械路径连点两次只合一次且第二次带 `note`、
+    **机械清场被挡时落回 agent（200 + stage_added + plan.files）、没有 agent 可继承时才回
+    409 + dirty_files、分支已合入 + 主 checkout 有未跟踪文件时照样当场清场**。
   - `web/tests/worktree-badge.test.mjs` — 徽标四态（enabled / finishing / finished / none）、
     目录消失读「已收尾」、无转圈、收尾中不脉冲（区分信号是标签文字「收尾中」）。
   - `web/tests/worktree-finish.test.mjs` — 按钮给法（终态 + 收尾中都不拦截）、无转圈、`hasAgentStage` 门。

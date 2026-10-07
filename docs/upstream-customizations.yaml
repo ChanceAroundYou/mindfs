@@ -1061,10 +1061,15 @@ groups:
     kind: deploy
     symptom: |
       部署脚本按上游的目录布局删掉整目录的 web 哈希资源，导致过期标签页白屏；
-      两侧（本机 system 单元 / WSL user 单元）编译安装与重启不一致。
+      两侧（本机 system 单元 / WSL user 单元）编译安装与重启不一致；
+      改了根级文档（CLAUDE.md 等）跑完 ship 却没被提交 —— add 白名单够不到仓库根，
+      改动静默留在工作区，版本号挂上 -dirty。
     why: |
-      scripts/deploy-all.sh 一条命令完成门禁→提交→两侧编译安装→WSL 重建重启→两端对账；
+      scripts/deploy-all.sh 一条命令完成门禁→提交→本机编译安装→推产物到 WSL→WSL 重启→两端对账；
       ship / upstream-merge skill 固化流程。上游没有这层，回退会让双机部署靠手搓。
+      提交路径是**白名单**（防 .mindfs/ 运行期数据被卷进提交），所以根级文档要逐个点名：
+      CLAUDE.md / README.md / README.zh.md / release-notes.md 在内，config.json 刻意不在
+      （会被本机改 role/端口，提交等于推本地运行配置）。`|| git add -A` 兜底恒不触发。
     files:
       - Makefile
       - scripts/
@@ -1222,6 +1227,12 @@ groups:
       （落在 <worktree>/.mindfs/upload/，拆目录前没人搬）。③ 明明 worktree 干净、合并无冲突，
       却还要白等一轮 agent、多一个空提交。④ 重复点收尾第二次报红色失败
       （「该任务还没有 worktree」），而第一次明明成功了。
+
+      2026-10-08 第三轮的新症状：重启服务后点 task-37 的收尾，拿到 409
+      「主 checkout 有未提交改动，先提交或暂存后再收尾」+「合并会覆盖这些改动，
+      git 不敢替你决定丢不丢。处理完再点一次收尾即可。」，涉及两个未跟踪的
+      e2e 探针脚本。用户原话：「不应该报错，而是应该把 comment 提交给 agent，
+      进入 agent 合并流程」。
     why: |
       三条判据（用户 2026-10-05 拍板）：① 按钮给法只看 worktree 的真实状态
       （create_worktree 且目录存在），与任务状态无关；② 点击行为四分支且全部幂等
@@ -1251,6 +1262,17 @@ groups:
       不能报红色失败。幂等刻意放在 api 层编排（FinishWorktreeAndRepoint）而不是下层
       FinishTaskWorktree —— 下层对空路径保持严格报错，那是为了守住「先清归属再拆目录」
       的顺序不变量（路径空 + 目录还在 = 顺序反了，静默成功会把它藏起来）。
+
+      2026-10-08 第三轮（用户实测）：① MergeBranch 的「已是祖先就短路」排在脏检查
+       **之后** —— 没有东西要合时主 checkout 脏不脏完全无关，排在后面就让「分支早就
+       合完了、只差拆目录」这种最常见的收尾被一个不相干的改动挡死。② 脏检查把未跟踪
+       文件也算进来，过宽：合并只在要写同名路径时才碰得到它，那一刻 git 自己会拦
+       （untracked working tree files would be overwritten by merge），git checkout 也一样
+       会拦（两条命令都没带 -f）。收窄成 trackedDirtyPaths。③ **机械清场失败不再报错，
+       落回 agent**（agentFallbackPlan）：机械那条路是加速段不是门槛，判定说能做、执行时
+       被挡下时结论是「让 agent 去做」而不是「收尾失败」。只有没有 agent 段可继承时才回
+       409 + 结构化清单，并把 agent_error 一并带出。顺带修掉 porcelain 解析 bug：
+       strings.Index(line, " ") 在状态带前导空格时（` M foo`）切出带状态前缀的假路径。
     files:
       - server/internal/kanban/service.go
       - server/internal/kanban/worktree_finish.go
@@ -1288,7 +1310,11 @@ groups:
       - server/internal/gitview/worktree_finish.go:func MigrateWorktreeUploads
       - server/internal/gitview/worktree_finish.go:func RemoveWorktreeDir
       - server/internal/gitview/worktree_finish.go:func RemoveToolStateOnlyOrphanDirs
+      - server/internal/gitview/worktree_finish.go:func trackedDirtyPaths
+      - server/internal/gitview/worktree_finish.go:func MergeBranch
       - server/internal/api/http_tasks.go:func (h *HTTPHandler) handleKanbanTaskBeginFinish
+      - server/internal/api/http_tasks.go:func agentFallbackPlan
+      - server/internal/api/http_tasks.go:func (h *HTTPHandler) respondFinishTeardownFailure
       - server/internal/api/http_tasks_finish_teardown.go:task.finish_teardown
       - server/internal/api/http_tasks_finish_teardown.go:func (s *AppContext) FinishWorktreeAndRepoint
       - server/app/workspace.go:WireSessionRunningProbe
