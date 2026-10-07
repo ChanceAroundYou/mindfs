@@ -1599,9 +1599,6 @@ groups:
       - web/src/App.tsx
       - web/src/app/useRealtimeEvents.ts
       - web/src/app/appSession.ts
-      # 已重命名为 pending-single-source.test.mjs（第一版补丁的守卫）；
-      # 留在清单里是为了让 baseline..HEAD 的 delta 全覆盖（--no-renames 会把它算成一个删除）。
-      - web/tests/drawer-pending-reconcile.test.mjs
     anchors:
       - web/src/App.tsx:setMultiProjectSessionPending
       - web/src/App.tsx:getSessionSnapshot
@@ -1667,3 +1664,22 @@ groups:
     tests:
       - web/tests/frontend-split.test.mjs
       - web/tests/source-map.test.mjs
+
+  - id: G-BB
+    title: 看板列头灰底 + 间距对齐工作台（列头背景 / 列表 padding / 外层 padding）
+    kind: feature
+    symptom: |
+      列头没有灰底，与卡片内容混在一起，用户分不清「栏目标签」和「卡片内容」；
+      卡片比工作台窄 12px（列表 padding 6px/侧把卡挤窄）；看板边缘间距比工作台大
+      （外层 padding 8px 16px 24px vs 工作台 6px 8px），内容区比工作台窄、视觉不对齐。
+    why: |
+      列头灰底 rgba(148, 163, 184, 0.08) 与模板筛选按钮的底色一致，是看板视觉语言的一部分；
+      列表 padding 归零后卡片宽度 = 列宽，与工作台卡片等宽；
+      外层 padding 6px 8px 对齐工作台容器，两端视觉一致。
+      三件事共享看板的布局与视觉，合上游时要么全留要么全弃。
+    files:
+      - web/src/components/task/TaskBoardView.tsx
+      - web/src/components/file/DefaultListView.tsx
+      - web/tests/task-board-view.test.mjs
+    tests:
+      - web/tests/task-board-view.test.mjs
