@@ -165,6 +165,7 @@
 | G-AT | 会话打开性能（窗口去重 / 载荷压缩 / 工具卡分组） | 性能 | 见 §3.1 | 会话打开热路径：取窗去重 + 窗口轻压缩 + 窗口 8 + 工具卡分组 + related-files 去抖 |
 | G-AU | 会话拉取风暴与渲染主线程阻塞 | 修复 | 见 §3.1 | 加载 effect 只依赖身份不依赖快照对象；失败留痕且 404 是终点；`sessionCacheRef` 有上限；渲染无 O(n²)、滚动有节流 |
 | G-AX | relay 绑定轮询测试的两条同步竞态 | 修复 | 见 §3.1 | 状态落地晚于 channel 发送；`requests` 必须无缓冲 |
+| G-AY | 抽屉 pending 对账（done 丢失时停止符号/「正在思考」卡住） | 修复 | 见 §3.1 | 抽屉/选中/缓存的 pending 只由 WS `session.done` 清；断连/重绑丢了就永久卡住。列表蓝灯每 5s 从 `/api/replying-sessions` 对账，这三处没有 |
 
 > **G-D 已并入 G-F，G-M 已并入 G-AI**（改动面完全重合、无独立测试可守，单列只会制造空组）。
 
@@ -1119,6 +1120,46 @@
 
 ---
 
+
+### G-AY 抽屉 pending 对账：done 丢失时停止符号 /「正在思考」卡住（2026-10-07）
+
+- 来源：`web/src/app/appSession.ts`（新增 `clearStalePending`）、`web/src/App.tsx`
+  （新增依赖 `multiProjectPendingByKey` 的 effect）、`web/tests/drawer-pending-reconcile.test.mjs`（新增）。
+- 边界：**抽屉 / 选中 / 缓存三处的 pending 对账**。这三处的 pending 只由
+  WS `session.done`（`handleSessionStreamDone`）清除；合上游时这块 effect 被冲掉，
+  done 一丢失就永久卡住，而列表蓝灯因为另有对账不受影响 —— 正是本 bug 的可见症状。
+- 可见症状（没有它会怎样）：
+  1. 任务已结束，输入框仍显示停止符号（ActionBar `showCancel = !!currentSession?.pending`）。
+  2. 查看器仍显示「正在思考」（`isAwaiting = !!session.pending`、`isStreaming` 的初值由
+     `sessionPending` 决定，而它只在 `[sessionKey, sessionPending]` 变化时重算）。
+  3. 用量 / 上下文窗口面板不出现（画面停在流式态）。
+  4. **会话栏是正常的** —— 列表蓝灯每 5s 从 `/api/replying-sessions` 对账一次，
+     所以列表收敛、抽屉不收敛，两边看起来「不一样」。
+- 根因：
+  - `pending` **不落盘**（`sessions` 表无此列，`sessionListResponse` 也不发），纯前端 optimistic。
+  - 抽屉（`drawerSessionByRootRef` → `currentSession`）的 pending 只有 `handleSessionStreamDone`
+    一个出口。`BroadcastSessionDone` 只发给 `session.ready` 绑定的客户端
+    （`GetSessionClientIDs`），而 WS 连接在本机反复 `1006 unexpected EOF` 断连 ——
+    重连后若没重新绑定（或绑定竞态），`session.done` 就打不到这个客户端。
+  - 实测（journalctl）：`1791307447-6f646793904d` 在 11:57:12 广播了 `session.done`，
+    但**其后没有 `GET /api/sessions?root=…` 列表重拉** —— 而 `session.done` 处理器里
+    `handleSessionStreamDone` 之后**无条件**调 `scheduleSessionListReload`。没有重拉
+    就证明该处理器没跑，即这条 WS 事件没被前端处理。会话列表靠 11:59:21 重连 +
+    5s 轮询才收敛，所以「会话栏正常、抽屉卡住」。
+- 改了什么：
+  - `clearStalePending(session, isServerPending)`：服务端说「不在跑」就清 `pending`，
+    无变化时返回**同引用**（调用方靠 `!==` 判断是否需要 setState）。
+  - `App.tsx` 新增 effect（依赖 `multiProjectPendingByKey`）：对抽屉 / 选中 / 缓存
+    三处调 `clearStalePending`，真值取自 `multiProjectPendingByKey` —— 也就是
+    `/api/replying-sessions` 的落点，**与列表蓝灯同一个源**。这样 done 丢了也能在
+    下一个 5s 轮询周期收敛，且不会把「节点没拉到」误当成「没在跑」。
+- 针对性测试：
+  - `web/tests/drawer-pending-reconcile.test.mjs` — 钉住「服务端说不在跑就清、在跑就留、
+    无变化返回同引用、按 key 判定」，并源码守卫「App.tsx 必须有依赖
+    `multiProjectPendingByKey` 的 effect 且对三处调 `clearStalePending`、真值必须读
+    `multiProjectPendingByKey`」。**已验证：把 effect 删掉后该测试立刻变红。**
+
+---
 
 ## 4. 未提交工作区（2026-10-06 清空）
 
