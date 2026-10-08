@@ -92,6 +92,7 @@ export const MODULES = {
     "src/components/file/AgentConfigPopover.tsx",
     "src/app/usePwaInstall.ts",
     "src/components/file/fileTreeEntries.tsx",
+    "src/components/file/useAgentConfigActions.ts",
   ],
 
   // P2 拆分：file.ts → services/file/（入口 shim 仍在原路径）
