@@ -1131,7 +1131,7 @@ function SessionViewerInner({
       }}
     >
       {interactionMode === "drawer" ? null : (
-      <SessionViewerHeader interactionMode={interactionMode} rootId={rootId} rootColor={rootColor} rootDisplayName={rootDisplayName} displayName={displayName} onRootClick={onRootClick} />
+        <SessionViewerHeader interactionMode={interactionMode} rootId={rootId} rootColor={rootColor} rootDisplayName={rootDisplayName} displayName={displayName} onRootClick={onRootClick} />
       )}
 
       {/* 滚动容器 */}
