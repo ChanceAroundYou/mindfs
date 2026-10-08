@@ -49,18 +49,18 @@ assert.deepStrictEqual(
   `按龄清理的 TTL 不一致（Makefile=${ttl}）`,
 );
 
-// 3) WSL 只收产物，不在那边编译。
+// 3) worker 只收产物，不在那边编译。
 //    deploy-all.sh 里唯一允许的 make build 是本机那次（第 90 行附近，不经 ssh）；
 //    远端脚本段内不得出现 make / git pull / npm。
-const remoteBlock = deploy.slice(deploy.indexOf("REMOTE_SCRIPT="), deploy.indexOf("\nREMOTE\n"));
+const remoteBlock = deploy.slice(deploy.indexOf("<<REMOTE"), deploy.indexOf("\nREMOTE\n)"));
 assert.ok(remoteBlock.length > 0, "找不到 deploy-all.sh 的远端脚本段");
 for (const banned of [/\bmake\b/, /git\s+pull/, /\bnpm\b/]) {
-  assert.ok(!banned.test(remoteBlock), `远端脚本段不得编译/拉源码（WSL 侧无源码库）：${banned}`);
+  assert.ok(!banned.test(remoteBlock), `远端脚本段不得编译/拉源码（worker 侧无源码库）：${banned}`);
 }
 assert.ok(remoteBlock.includes("~/.local/bin/mindfs --version"), "远端脚本应回读版本号供对账");
 
 // 版本号对账：推的必须是刚构建的同一个二进制，两边版本逐字相同
-assert.ok(/\[\[ "\$REMOTE_VERSION" == "\$VERSION" \]\]/.test(deploy), "deploy-all.sh 应逐字对账两端版本号");
+assert.ok(/\[\[ "\$remote_version" == "\$VERSION" \]\]/.test(deploy), "deploy-all.sh 应逐字对账各端版本号");
 
 // 4) 提交白名单必须覆盖根级文档。`docs/` 只够得到 docs/ 目录，够不到仓库根 ——
 //    漏了 CLAUDE.md 时改动静默留在工作区，版本号挂上 `-dirty`（2026-10-07 实测）。
