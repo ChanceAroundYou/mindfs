@@ -1489,6 +1489,8 @@ groups:
       - web/tests/session-load-storm.test.mjs
     files:
       - web/src/App.tsx
+      - web/src/app/useSessionPending.ts
+      - web/src/app/useSessionCache.ts
       - web/src/components/session/SessionViewer.tsx
   - id: G-AV
     title: worktree 收尾路径符号链接匹配修复
