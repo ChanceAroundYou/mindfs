@@ -24,6 +24,17 @@ import {
   syncExternalSession,
 } from "./sessionApi";
 import { compactContext } from "./sessionContext";
+import {
+  buildAnswerQuestionMessage,
+  buildCancelMessage,
+  buildPlanModeMessage,
+  buildQueueRemoveMessage,
+  buildQueueSendNowMessage,
+  buildQueueUpdateMessage,
+  buildSessionMessage,
+  buildSessionReadyMessage,
+  buildSlashCommandMessage,
+} from "./sessionOutbound";
 import { appendSessionDelta, cloneExchangeAux, getSessionMaxSeq, toPersistentExchangeAux, withSessionMeta } from "./sessionExchangeMerge";
 export {
   getCachedSessionList,
@@ -737,6 +748,8 @@ class SessionService {
       branch?: string;
     },
   ): Promise<boolean> {
+    // 这条守卫**必须留在调用方**：守卫之后要动两处状态（contextCache 经
+    // compactContext、pendingMessages），socket 已关时不该产生这两笔副作用。
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       console.warn("[session/send] blocked", {
         requestId,
@@ -747,27 +760,24 @@ class SessionService {
       return false;
     }
 
-    const msg = {
-      id: requestId,
-      type: "session.message",
-      payload: {
-        root_id: rootId,
-        session_key: sessionKey || undefined,
-        content,
-        type,
-        agent,
-        model,
-        agent_mode: agentMode,
-        effort,
-        fast_service: fastService,
-        shell,
-        terminal_cols: type === "command" ? estimateCommandTerminalCols() : undefined,
-        create_worktree: !sessionKey && newSessionWorktree?.create === true,
-        worktree_branch_mode: newSessionWorktree?.branchMode,
-        worktree_branch: newSessionWorktree?.branch || "",
-        context: this.compactContext(sessionKey, context),
-      },
-    };
+    const msg = buildSessionMessage({
+      requestId,
+      rootId,
+      sessionKey: sessionKey || undefined,
+      content,
+      type,
+      agent,
+      model,
+      agentMode,
+      effort,
+      fastService,
+      shell,
+      context: this.compactContext(sessionKey, context),
+      // 只在命令类型下测宽：estimateCommandTerminalCols 会做 DOM 测量
+      // （querySelectorAll + getBoundingClientRect），普通聊天消息不该付这个代价。
+      terminalCols: type === "command" ? estimateCommandTerminalCols() : undefined,
+      newSessionWorktree,
+    });
 
     this.pendingMessages.set(requestId, { id: requestId, message: msg });
     return this.sendWSMessage(msg);
@@ -779,21 +789,8 @@ class SessionService {
     enabled: boolean,
     requestId = this.createRequestId("plan"),
   ): Promise<boolean> {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      return false;
-    }
-    if (!rootId || !sessionKey) {
-      return false;
-    }
-    return this.sendWSMessage({
-      id: requestId,
-      type: "session.plan_mode.set",
-      payload: {
-        root_id: rootId,
-        session_key: sessionKey,
-        enabled,
-      },
-    });
+    const msg = buildPlanModeMessage(rootId, sessionKey, enabled, requestId);
+    return msg ? this.sendWSMessage(msg) : false;
   }
 
   async runSlashCommand(
@@ -807,34 +804,29 @@ class SessionService {
     fastService?: string,
     requestId = this.createRequestId("slash"),
   ): Promise<boolean> {
+    // 同 sendMessage：守卫之后要写 pendingMessages，所以不能下推到 sendWSMessage。
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       return false;
     }
-    if (!rootId || !sessionKey || !command || !agent) {
-      return false;
-    }
-    const msg = {
-      id: requestId,
-      type: "session.slash_command.run",
-      payload: {
-        root_id: rootId,
-        session_key: sessionKey,
-        command,
-        agent,
-        model,
-        agent_mode: agentMode,
-        effort,
-        fast_service: fastService,
-      },
-    };
+    const msg = buildSlashCommandMessage({
+      requestId,
+      rootId,
+      sessionKey,
+      command,
+      agent,
+      model,
+      agentMode,
+      effort,
+      fastService,
+    });
+    if (!msg) return false;
     this.pendingMessages.set(requestId, { id: requestId, message: msg });
     return this.sendWSMessage(msg);
   }
 
   private resendPendingMessages() {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      return;
-    }
+    // 不判 socket：sendWSMessage 会为每一条返回 false（socket 关了就没有可发的），
+    // 而循环本身不改状态。
     for (const pending of this.pendingMessages.values()) {
       void this.sendWSMessage(pending.message).catch((err) => {
         console.error("[Session] Failed to resend message:", err);
@@ -847,66 +839,34 @@ class SessionService {
       console.error("[Session] WebSocket not connected");
       return false;
     }
-    if (!rootId || !sessionKey) {
-      return false;
-    }
-
-    const msg = {
-      id: `cancel-${Date.now()}`,
-      type: "session.cancel",
-      payload: {
-        root_id: rootId,
-        session_key: sessionKey,
-      },
-    };
-
-    return this.sendWSMessage(msg);
+    const msg = buildCancelMessage(rootId, sessionKey, `cancel-${Date.now()}`);
+    return msg ? this.sendWSMessage(msg) : false;
   }
 
   async removeQueuedMessage(rootId: string, sessionKey: string, queueId: string): Promise<boolean> {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !rootId || !sessionKey || !queueId) {
-      return false;
-    }
-    return this.sendWSMessage({
-      id: `queue-remove-${Date.now()}`,
-      type: "session.queue.remove",
-      payload: {
-        root_id: rootId,
-        session_key: sessionKey,
-        queue_id: queueId,
-      },
-    });
+    const msg = buildQueueRemoveMessage(rootId, sessionKey, queueId, `queue-remove-${Date.now()}`);
+    return msg ? this.sendWSMessage(msg) : false;
   }
 
   async updateQueuedMessage(rootId: string, sessionKey: string, queueId: string, content: string): Promise<boolean> {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !rootId || !sessionKey || !queueId || !content.trim()) {
-      return false;
-    }
-    return this.sendWSMessage({
-      id: `queue-update-${Date.now()}`,
-      type: "session.queue.update",
-      payload: {
-        root_id: rootId,
-        session_key: sessionKey,
-        queue_id: queueId,
-        content,
-      },
-    });
+    const msg = buildQueueUpdateMessage(
+      rootId,
+      sessionKey,
+      queueId,
+      content,
+      `queue-update-${Date.now()}`,
+    );
+    return msg ? this.sendWSMessage(msg) : false;
   }
 
   async sendQueuedMessageNow(rootId: string, sessionKey: string, queueId: string): Promise<boolean> {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !rootId || !sessionKey || !queueId) {
-      return false;
-    }
-    return this.sendWSMessage({
-      id: `queue-send-now-${Date.now()}`,
-      type: "session.queue.send_now",
-      payload: {
-        root_id: rootId,
-        session_key: sessionKey,
-        queue_id: queueId,
-      },
-    });
+    const msg = buildQueueSendNowMessage(
+      rootId,
+      sessionKey,
+      queueId,
+      `queue-send-now-${Date.now()}`,
+    );
+    return msg ? this.sendWSMessage(msg) : false;
   }
 
   async answerQuestion(
@@ -920,23 +880,15 @@ class SessionService {
       console.error("[Session] WebSocket not connected");
       return false;
     }
-    if (!rootId || !sessionKey || !toolUseId) {
-      return false;
-    }
-
-    const msg = {
-      id: this.createRequestId("answer"),
-      type: "session.answer_question",
-      payload: {
-        root_id: rootId,
-        session_key: sessionKey,
-        agent,
-        tool_use_id: toolUseId,
-        answers,
-      },
-    };
-
-    return this.sendWSMessage(msg);
+    const msg = buildAnswerQuestionMessage(
+      rootId,
+      sessionKey,
+      agent,
+      toolUseId,
+      answers,
+      this.createRequestId("answer"),
+    );
+    return msg ? this.sendWSMessage(msg) : false;
   }
 
   // 挂载会话：服务端收到后一律回一帧 `session.stream{reset:true, events}`（整轮快照），
@@ -946,21 +898,12 @@ class SessionService {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       return false;
     }
-    if (!rootId || !sessionKey) {
-      return false;
-    }
-    const now = Date.now();
+    const msg = buildSessionReadyMessage(rootId, sessionKey, `ready-${Date.now()}`);
+    if (!msg) return false;
     if (e2eeService.isRequired()) {
       await e2eeService.ensureSession();
     }
-    return this.sendWSMessage({
-      id: `ready-${now}`,
-      type: "session.ready",
-      payload: {
-        root_id: rootId,
-        session_key: sessionKey,
-      },
-    });
+    return this.sendWSMessage(msg);
   }
 
 
