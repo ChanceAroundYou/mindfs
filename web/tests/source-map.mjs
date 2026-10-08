@@ -81,6 +81,7 @@ export const MODULES = {
   "src/components/file/FileTree.tsx": [
     "src/components/file/FileTree.tsx",
     "src/components/file/icons.tsx",
+    "src/components/file/AgentConfigPopover.tsx",
   ],
 
   // P2 拆分：file.ts → services/file/（入口 shim 仍在原路径）
@@ -125,7 +126,11 @@ export const MODULES = {
   "src/components/StageOptionsBar.tsx": ["src/components/task/StageOptionsBar.tsx"],
   "src/components/ScheduledAgentTaskDialog.tsx": ["src/components/task/ScheduledAgentTaskDialog.tsx"],
   "src/components/WorktreeBranchSelector.tsx": ["src/components/task/WorktreeBranchSelector.tsx"],
-  "src/components/FileTree.tsx": ["src/components/file/FileTree.tsx"],
+  "src/components/FileTree.tsx": [
+    "src/components/file/FileTree.tsx",
+    "src/components/file/icons.tsx",
+    "src/components/file/AgentConfigPopover.tsx",
+  ],
   "src/components/FileViewer.tsx": ["src/components/file/FileViewer.tsx"],
   "src/components/FileEditor.tsx": ["src/components/file/FileEditor.tsx"],
   "src/components/FileEditor.css": ["src/components/file/FileEditor.css"],
