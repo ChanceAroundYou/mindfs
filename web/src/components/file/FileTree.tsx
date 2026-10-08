@@ -2,8 +2,6 @@ import React, { memo } from "react";
 import { rootBadgeStyle } from "../../shared/rootBadgeStyle";
 import { NodeBadgeHeader } from "../account/NodeBadgeHeader";
 import { ViewHeader } from "../../layout/ViewHeader";
-import { isNativeShellRuntime } from "../../services/platform/runtime";
-import { pwaInstallService } from "../../services/platform/pwaInstall";
 import { hexToRgbaApp } from "../../app/taskIcons";
 import { DEFAULT_NODE_COLOR } from "../../services/net/nodeRegistry";
 import {
@@ -21,6 +19,7 @@ import {
 } from "../../services/prefs/appearance";
 import { useI18n, type I18nContextValue, type Locale, type MessageKey } from "../../i18n/index";
 import { useRefreshSpin } from "../../hooks/index";
+import { usePwaInstall } from "../../app/usePwaInstall";
 import { getNodes } from "../../services/net/nodeRegistry";
 import { NodeManagerPanel } from "../account/NodeManagerPanel";
 import { AccountPanel } from "../account/AccountPanel";
@@ -41,7 +40,6 @@ import {
 } from "./AgentConfigPopover";
 import { fetchAgentCatalog, fetchAgents, type AgentStatus } from "../../services/agents";
 import { getRootNodeId } from "../../services/net/rootNode";
-import { alertDialog } from "../../services/dialog";
 import {
   createAgentAPIProvider,
   createAgentConfigBackup,
@@ -87,13 +85,6 @@ import {
   type FontSizePreferences,
   type FontSizeRegion,
 } from "../../services/prefs/fontSize";
-
-type BeforeInstallPromptEvent = Event & {
-  prompt: () => Promise<void>;
-  userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
-};
-
-const PWA_INSTALL_STATE_KEY = "mindfs-pwa-installed";
 
 const APPEARANCE_OPTIONS: Array<{ value: AppearanceMode; labelKey: MessageKey }> = [
   { value: "dark", labelKey: "appearance.dark" },
@@ -383,13 +374,6 @@ function FileTreeInner({
   const [newProjectMetaLocationBusy, setNewProjectMetaLocationBusy] = React.useState(false);
   const [appearanceMode, setAppearanceModeState] = React.useState<AppearanceMode>(() => getAppearanceMode());
   const [isUpdateNotesOpen, setIsUpdateNotesOpen] = React.useState(false);
-  const [deferredInstallPrompt, setDeferredInstallPrompt] = React.useState<BeforeInstallPromptEvent | null>(null);
-  const [isInstalled, setIsInstalled] = React.useState(false);
-  const [isInstallCapable, setIsInstallCapable] = React.useState(false);
-  // Android Chrome 上「能不能装」只有 beforeinstallprompt 能给结论，而它要等 SW 激活才派发（数秒）。
-  // 没有这个 flag 时「还没结论」和「不能装」共用同一个 false，按钮会先凭空出现再消失。
-  // 置位后，按钮的可见性不再被这个迟到的异步事件来回翻转。
-  const [installProbeDone, setInstallProbeDone] = React.useState(false);
   const [protectedAPIReady, setProtectedAPIReady] = React.useState(() =>
     bootstrapService.canUseProtectedAPI(),
   );
@@ -435,226 +419,16 @@ function FileTreeInner({
   const createInputRef = React.useRef<HTMLInputElement | null>(null);
   const previousCreatingRootNameRef = React.useRef<string | null>(null);
 
-  const isIOS = React.useMemo(() => {
-    if (typeof window === "undefined") {
-      return false;
-    }
-    const ua = window.navigator.userAgent;
-    return /iPad|iPhone|iPod/.test(ua) || (ua.includes("Mac") && "ontouchend" in document);
-  }, []);
+  const {
+    isNativeApp,
+    installLabel,
+    installHelp,
+    shouldShowInstallButton,
+    shouldShowInstallHelp,
+    handleInstall,
+  } = usePwaInstall(t);
 
-  const isMacSafari = React.useMemo(() => {
-    if (typeof window === "undefined") {
-      return false;
-    }
-    const ua = window.navigator.userAgent;
-    const isMac = ua.includes("Macintosh");
-    const isSafari = /Safari/.test(ua) && !/Chrome|Chromium|Edg|OPR|CriOS|FxiOS/.test(ua);
-    return isMac && isSafari;
-  }, []);
-
-  const isAndroidChrome = React.useMemo(() => {
-    if (typeof window === "undefined") {
-      return false;
-    }
-    const ua = window.navigator.userAgent;
-    const isAndroid = /Android/i.test(ua);
-    const isChrome = /Chrome|Chromium/i.test(ua);
-    const isExcluded = /EdgA|OPR|SamsungBrowser|Firefox|QQBrowser|MQQBrowser|UCBrowser|HuaweiBrowser|MiuiBrowser|VivoBrowser|HeyTapBrowser/i.test(ua);
-    return isAndroid && isChrome && !isExcluded;
-  }, []);
-
-  const [isNativeApp, setIsNativeApp] = React.useState(() => isNativeShellRuntime());
-
-  React.useEffect(() => {
-    if (!projectTreeTabRequest || !isProjectTreeTab(projectTreeTabRequest.tab)) {
-      return;
-    }
-    setProjectTreeTab(projectTreeTabRequest.tab);
-  }, [projectTreeTabRequest?.nonce, projectTreeTabRequest?.tab]);
-
-  React.useEffect(() => {
-    onProjectTreeTabChange?.(projectTreeTab);
-  }, [onProjectTreeTabChange, projectTreeTab]);
-
-  React.useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    try {
-      window.localStorage.setItem(PROJECT_TREE_TAB_STORAGE_KEY, projectTreeTab);
-    } catch {
-    }
-  }, [projectTreeTab]);
-
-  React.useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    const syncAppearanceMode = () => {
-      setAppearanceModeState(getAppearanceMode());
-    };
-    window.addEventListener(APPEARANCE_CHANGE_EVENT, syncAppearanceMode);
-    window.addEventListener("storage", syncAppearanceMode);
-    return () => {
-      window.removeEventListener(APPEARANCE_CHANGE_EVENT, syncAppearanceMode);
-      window.removeEventListener("storage", syncAppearanceMode);
-    };
-  }, []);
-
-  React.useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    const refreshNativeRuntime = () => {
-      setIsNativeApp(isNativeShellRuntime());
-    };
-    refreshNativeRuntime();
-    const timers = [250, 1000, 2000].map((delay) => window.setTimeout(refreshNativeRuntime, delay));
-    window.addEventListener("mindfs:native-bridge-ready", refreshNativeRuntime);
-    window.addEventListener("pageshow", refreshNativeRuntime);
-    window.addEventListener("focus", refreshNativeRuntime);
-    return () => {
-      timers.forEach((timer) => window.clearTimeout(timer));
-      window.removeEventListener("mindfs:native-bridge-ready", refreshNativeRuntime);
-      window.removeEventListener("pageshow", refreshNativeRuntime);
-      window.removeEventListener("focus", refreshNativeRuntime);
-    };
-  }, []);
-
-  const isDesktopChromium = React.useMemo(() => {
-    if (typeof window === "undefined") {
-      return false;
-    }
-    const ua = window.navigator.userAgent;
-    const isDesktop = !/Android|iPhone|iPad|iPod/i.test(ua);
-    const isChromium = /Chrome|Chromium|Edg/i.test(ua);
-    const isExcluded = /OPR/i.test(ua);
-    return isDesktop && isChromium && !isExcluded;
-  }, []);
-
-  const hasPersistedInstallState = React.useCallback(() => {
-    if (typeof window === "undefined") {
-      return false;
-    }
-    try {
-      return window.localStorage.getItem(PWA_INSTALL_STATE_KEY) === "true";
-    } catch {
-      return false;
-    }
-  }, []);
-
-  // 安装状态订阅模块级单例而非组件本地 state：beforeinstallprompt 每生命周期只派发一次，
-  // 而 FileTree 在移动端会被整块卸载（侧栏关闭即销毁 <aside>），本地 state 会跟着归零。
-  React.useEffect(() => {
-    return pwaInstallService.subscribe((snapshot) => {
-      setDeferredInstallPrompt(snapshot.deferredPrompt);
-      setIsInstalled(snapshot.installed);
-      setInstallProbeDone(snapshot.probed);
-      setIsInstallCapable(
-        snapshot.deferredPrompt !== null
-        || snapshot.installed
-        || isIOS
-        || (typeof navigator !== "undefined" && "serviceWorker" in navigator),
-      );
-    });
-  }, [isIOS]);
-
-  const isKnownInstalled = isInstalled || hasPersistedInstallState();
-
-  const installLabel = isKnownInstalled
-    ? t("pwa.installed")
-    : isIOS
-      ? t("pwa.addToHomeScreen")
-      : isMacSafari
-        ? t("pwa.addToDock")
-      : isDesktopChromium && isInstallCapable
-        ? t("pwa.installApp")
-      : isAndroidChrome && !deferredInstallPrompt
-        ? t("pwa.installFromMenu")
-      : deferredInstallPrompt
-        ? t("pwa.installApp")
-        : t("pwa.installInstructions");
-
-  const installHelp = isInstalled
-    ? ""
-    : isKnownInstalled
-      ? t("pwa.helpInstalled")
-      : isIOS
-      ? t("pwa.helpIOS")
-      : isMacSafari
-        ? t("pwa.helpMacSafari")
-      : isDesktopChromium && isInstallCapable
-        ? t("pwa.helpDesktopChromium")
-      : isAndroidChrome && !deferredInstallPrompt
-        ? t("pwa.helpAndroidChrome")
-      : deferredInstallPrompt
-        ? t("pwa.helpDeferred")
-        : t("pwa.helpUnavailable");
-
-  // 「能不能装」只有一个来源：beforeinstallprompt，而它要等 SW 激活才派发（实测
-  // 0.2s~5s+）。这道门此前只挂在 isAndroidChrome 上，于是 SamsungBrowser /
-  // MiuiBrowser / UCBrowser / HuaweiBrowser / 任何不含 "Chrome" 字样的安卓 UA 全部
-  // 绕过它：组件首帧 probed=false 被当成「不是待定」→ 按钮凭空画出，等事件到了再
-  // 翻掉 —— 正是手机上看到的那一帧闪。门必须挂在「这个平台会不会派发该事件」本身，
-  // 而不是挂在某一个具体 UA 上。
-  //
-  // Safari 系（iOS / macOS）不派发该事件，它们的安装入口是分享菜单，按钮靠平台判定
-  // 直接显示。等一个不会来的事件只会让按钮迟到 PROBE_TIMEOUT_MS 才出现 —— 把闪烁
-  // 换成延迟，一样是回归。判定交给 pwaInstallService（它才是持有事件的地方）。
-  const installProbePending = pwaInstallService.expectsPrompt()
-    && !installProbeDone
-    && !isKnownInstalled
-    && !isNativeApp;
-
-  const shouldShowInstallButton = !installProbePending && !isNativeApp && !isKnownInstalled && !(isAndroidChrome && !deferredInstallPrompt);
-  const shouldShowInstallHelp = !installProbePending && !isNativeApp && (!!installHelp) && (isKnownInstalled || isIOS || isMacSafari || isDesktopChromium || deferredInstallPrompt !== null || (isAndroidChrome && !deferredInstallPrompt));
-  const hasFooterContent =
-    !!updateActionLabel ||
-    !!updateActionHelp ||
-    !!footerTopContent ||
-    (isNativeApp && !!onGoHome) ||
-    shouldShowInstallButton ||
-    shouldShowInstallHelp;
-
-  const handleInstall = React.useCallback(async () => {
-    if (isKnownInstalled) {
-      return;
-    }
-    if (deferredInstallPrompt) {
-      await deferredInstallPrompt.prompt();
-      try {
-        const choice = await deferredInstallPrompt.userChoice;
-        if (choice.outcome === "accepted") {
-          pwaInstallService.markInstalled();
-        }
-      } finally {
-        // 一次性 event 用过即弃：清掉并落定，避免按钮又被翻回「判定中」而消失
-        pwaInstallService.consumeDeferredPrompt();
-      }
-      return;
-    }
-    if (typeof window === "undefined") {
-      return;
-    }
-    if (isIOS) {
-      alertDialog(t("pwa.alertIOS"));
-      return;
-    }
-    if (isMacSafari) {
-      alertDialog(t("pwa.alertMacSafari"));
-      return;
-    }
-    if (isDesktopChromium) {
-      alertDialog(t("pwa.alertDesktopChromium"));
-      return;
-    }
-    if (isAndroidChrome) {
-      alertDialog(t("pwa.alertAndroidChrome"));
-      return;
-    }
-    alertDialog(t("pwa.alertUnavailable"));
-  }, [deferredInstallPrompt, isAndroidChrome, isDesktopChromium, isIOS, isKnownInstalled, isMacSafari, t]);
+  const hasFooterContent = !!updateActionLabel || !!updateActionHelp || !!footerTopContent || (isNativeApp && !!onGoHome) || shouldShowInstallButton || shouldShowInstallHelp;
 
   React.useEffect(() => {
     if (!creatingRootName) {
