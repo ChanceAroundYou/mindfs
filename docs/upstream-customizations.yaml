@@ -50,6 +50,7 @@ groups:
       - docs/plans/frontend-split-refactor.md
       - docs/plans/app-tsx-split-lessons-and-next-plan.md
       - docs/plans/next-stage-decision.md
+      - docs/plans/deep-split-phase2.md
       - docs/session-flicker-root-cause.md
       - docs/session-streaming-rework.md
       - docs/upstream-customizations.md
