@@ -162,10 +162,24 @@ web/src/
     → 搬到新文件后从那里 `export` 回来，或留在 `FileTree.tsx` 当入参传入。
 - **收益**：FileTree.tsx 3764 → 2909 行（-855）。
 
-### 4.3 SessionViewer.tsx —— 3578 行
+### 4.3 SessionViewer.tsx —— 2569 行
 
-- **现状**：单文件承载消息列表、工具卡、输入区、滚动/窗口逻辑。
-- **待办**：按渲染单元拆子组件（消息行 / 工具卡组 / 输入区 / 用量面板）。
+- **现状**：只剩 `SessionViewerInner`（hooks + `renderTimelineItem` + `renderSlashCommandResult` + RETURN）。
+- **已抽（本次）**：顶部 L114-1053 的 31 个顶层声明（940 行）拆到 6 个新文件：
+
+  | 新文件 | 行数 | 内容 |
+  |---|---|---|
+  | `components/session/sessionViewerTypes.ts` | 105 | `SessionItem` / `ExchangeArray` / `SessionViewerProps` / `AskUserQuestionOption` / `AskUserQuestionItem` / `UploadAttachment` |
+  | `components/session/sessionViewerFormat.ts` | 256 | 纯函数：附件 token 提取/剥离、上下文窗口百分比、token 计数、模型名、时间、todo 输入、时间线间距 |
+  | `components/session/SessionViewerAttachments.tsx` | 56 | `AttachmentImage`（`fetchProofProtectedBlob` + `getRootNodeId`） |
+  | `components/session/SessionViewerTokenViews.tsx` | 81 | `TurnTokenUsage` / `ContextWindowBadge` |
+  | `components/session/SessionViewerCards.tsx` | 137 | `PlanUpdateCard` / `CompactNoticeCard` / `TodoUpdateCard` / `UserMessageListIcon` |
+  | `components/session/AskUserQuestionCard.tsx` | 412 | `getAskUserQuestions` / `getAskUserAnswers` / `askUserQuestionTitle` / `AskUserIcon` / `ForkIcon` / `AskUserQuestionCard` |
+
+- **依赖方向**：`types` ← `format` ← `tokenViews`/`cards`/`attachments` ← `AskUser` ← `SessionViewer`（单向，无环）。
+  原先这些类型都是文件内私有（外部只 import `SessionViewer` 组件本身），故可自由搬。
+- **收益**：SessionViewer.tsx 3567 → 2569 行（-998）。
+- **待办**：`renderTimelineItem`（639 行）/ `renderSlashCommandResult`（199 行）/ RETURN（674 行）仍在 `SessionViewerInner` 内。
 - **注意**：合并 main 时此文件有上游改动（`c04deeb` 的 pending 对账），拆之前先确认。
 
 ### 4.4 SessionList.tsx —— 476 行 ✅

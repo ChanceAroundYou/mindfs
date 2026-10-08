@@ -19,7 +19,7 @@
   | `components/agent/AgentSelector.tsx` | 1477 | 1191 | ✅ 抽 `AgentSelectorParts.tsx` |
   | `components/file/FileTree.tsx` | 3770 | 2909 | ⏳ 抽 `AgentConfigPopover.tsx`，`FileTreeInner` 还要再拆 |
   | `App.tsx` | 9585 | 4464 | ⏳ 阶段 A 达标，仍 >1200 |
-  | `components/session/SessionViewer.tsx` | 3567 | 3567 | ⏳ 待拆 |
+  | `components/session/SessionViewer.tsx` | 3567 | 2569 | ⏳ 顶部 940 行已拆出，剩 `SessionViewerInner` |
   | `services/session.ts` | 2659 | 2659 | ⛔ 被 4 个 VM 测试锁住 |
   | `app/useRealtimeEvents.ts` | 2019 | 2019 | ⏳ 待拆 |
 - 最近完整门禁：`npm run typecheck` 0 错误；`npm test` 210 tests、209 pass、1 skip、0 fail；`make build-web` 成功；`check-upstream` 通过。数字以现场命令为准。
