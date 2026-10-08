@@ -54,6 +54,7 @@ import type { ExchangeArray, SessionItem, SessionViewerProps } from "./sessionVi
 import { SessionViewerSlashCommandResult } from "./SessionViewerSlashCommand";
 import { renderToolTimelineItem } from "./SessionViewerToolItem";
 import { renderAuxiliaryTimelineItem } from "./SessionViewerAuxiliaryTimeline";
+import { SessionViewerThoughtItem } from "./SessionViewerThoughtItem";
 
 function SessionViewerInner({
   session,
@@ -1045,11 +1046,7 @@ function SessionViewerInner({
   ) => {
     const timelineItemKey = item.id || `${item.type}-${idx}`;
     if (item.type === "thought") {
-      return (
-        <div key={timelineItemKey} style={{ marginTop: spacing }}>
-          <ThinkingBlock content={item.content || ""} defaultExpanded={false} />
-        </div>
-      );
+      return <SessionViewerThoughtItem item={item} timelineItemKey={timelineItemKey} spacing={spacing} />;
     }
     if (item.type === "tool") {
       return renderToolTimelineItem({ item, timelineItemKey, spacing, rootId, rootPath, sessionKey, sessionAgent: session?.agent, activeAskUserCallId, onAskUserAnswer });
