@@ -56,6 +56,7 @@ export const MODULES = {
     "src/app/useTaskWorkspaceState.ts",
     "src/app/useTaskWorkspaceEffects.ts",
     "src/app/useRootContentView.ts",
+    "src/app/useProjectTreeActions.ts",
     "src/app/useSessionArchive.ts",
     "src/app/useManagedRoots.ts",
     "src/app/usePluginHandlers.ts",

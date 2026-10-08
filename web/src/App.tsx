@@ -221,6 +221,7 @@ import { useTaskTemplates } from "./app/useTaskTemplates";
 import { useTaskWorkspaceState } from "./app/useTaskWorkspaceState";
 import { useTaskWorkspaceEffects } from "./app/useTaskWorkspaceEffects";
 import { useRootContentView } from "./app/useRootContentView";
+import { useProjectTreeActions } from "./app/useProjectTreeActions";
 import { CheckIconSmall, PlusSmallIcon, taskCardIconButtonStyle } from "./app/taskIcons";
 import { useMultiProjectSessions } from "./app/useMultiProjectSessions";
 import { useSessionArchive } from "./app/useSessionArchive";
@@ -3450,119 +3451,33 @@ export function App({ onGoHome }: AppProps) {
     t,
   });
 
-  const refreshProjectTreeRelatedFiles = useCallback(async () => {
-    try {
-      if (selectedKanbanTask) {
-        const root = selectedKanbanTask.root_id || relatedSessionRootId || currentRootId || "";
-        const taskId = String(selectedKanbanTask.id || "");
-        const sessionKeys = Array.from(new Set(
-          [
-            ...(taskSessionKeysByIdRef.current[taskId] || []),
-            selectedKanbanTask.main_session_key,
-          ]
-            .map((key) => String(key || "").trim())
-            .filter(Boolean),
-        ));
-        if (root && taskId && sessionKeys.length > 0) {
-          await refreshTaskRelatedFiles(root, taskId, sessionKeys);
-        }
-        return;
-      }
-      const root = relatedSessionRootId || currentRootId || "";
-      const sessionKey = String(relatedSessionKey || "").trim();
-      if (!root || !sessionKey) {
-        return;
-      }
-      const relatedFiles = await sessionService.getSessionRelatedFiles(root, sessionKey);
-      await setCachedSessionRelatedFiles(root, sessionKey, relatedFiles);
-      updateSessionRelatedFilesForKey(root, sessionKey, relatedFiles);
-    } catch (error) {
-      console.error("[session.related_files] manual refresh failed", { error });
-    }
-  }, [
-    currentRootId,
-    refreshTaskRelatedFiles,
-    relatedSessionKey,
-    relatedSessionRootId,
-    selectedKanbanTask,
-    updateSessionRelatedFilesForKey,
-  ]);
-
-  // 「管理节点」面板的刷新：先拉节点注册表（拿别的设备改过的节点），
-  // 再让 refreshManagedRoots 逐节点重拉 dirs 并触发多项目会话/回复态重载。
-  // 不要再额外调 loadManagedRootPayloads({force:true})——refreshManagedRoots 内部已经会调它。
-  const handleNodeManagerRefresh = useCallback(async () => {
-    await syncNodesFromServer().catch(() => {});
-    await refreshManagedRoots();
-  }, [refreshManagedRoots]);
-
-  const handleProjectTreeRefresh = useCallback(async (tab: ProjectTreeTab) => {
-    const root = currentRootIdRef.current;
-    if (!root) {
-      return;
-    }
-    switch (tab) {
-      case "files": {
-        // 强制拉取真实状态：当前目录 + 侧边栏已加载（展开/访问过）的所有目录全部重拉，
-        // 而非仅刷新选中目录——展开的子目录若不重拉，刷新后仍显示旧条目。
-        const selDir = selectedDirRef.current === root ? "." : (selectedDirRef.current || ".");
-        const treeBase = scopeKey(getNodeIdForRoot(root) ?? "", root);
-        const targets = new Set<string>([selDir]);
-        for (const key of Object.keys(entriesByPathRef.current)) {
-          if (key === treeBase) {
-            targets.add(".");
-          } else if (key.startsWith(`${treeBase}:`)) {
-            targets.add(key.slice(treeBase.length + 1));
-          }
-        }
-        await Promise.all(
-          [...targets].map((dir) => refreshTreeDir(root, dir, dir === selDir)),
-        );
-        if (fileRef.current?.path) {
-          // 主视图正打开文件时，刷新同时强制重读该文件内容（WS 断开时唯一的重读入口）
-          void refreshCurrentFileContent(root, fileRef.current.path);
-        }
-        return;
-      }
-      case "git":
-        await Promise.all([
-          refreshGitStatus(root),
-          refreshGitHistory(root, { waitForIncremental: true }),
-        ]);
-        return;
-      case "worktrees":
-        await refreshProjectTreeWorktrees(root);
-        return;
-      case "related":
-        await Promise.all([
-          refreshProjectTreeRelatedFiles(),
-          refreshGitStatus(root),
-        ]);
-    }
-  }, [
-    getNodeIdForRoot,
-    refreshCurrentFileContent,
-    refreshGitHistory,
-    refreshGitStatus,
+  const {
     refreshProjectTreeRelatedFiles,
-    refreshProjectTreeWorktrees,
-    refreshTreeDir,
-  ]);
-
-  useEffect(() => {
-    const rootID = String(relatedWorktree?.root_id || "");
-    const worktreePath = String(relatedWorktree?.path || "");
-    if (projectTreeTab !== "worktrees" || !rootID || !worktreePath) {
-      return;
-    }
-    void expandProjectTreeWorktree(rootID, worktreePath);
-  }, [
-    expandProjectTreeWorktree,
+    handleNodeManagerRefresh,
+    handleProjectTreeRefresh,
+  } = useProjectTreeActions({
+    currentRootId,
+    currentRootIdRef,
+    relatedSessionRootId,
+    relatedSessionKey,
+    selectedKanbanTask,
+    taskSessionKeysByIdRef,
+    selectedDirRef,
+    entriesByPathRef,
+    fileRef,
+    relatedWorktree,
     projectTreeTab,
-    relatedWorktree?.path,
-    relatedWorktree?.root_id,
-  ]);
-
+    getNodeIdForRoot,
+    refreshTreeDir,
+    refreshCurrentFileContent,
+    refreshGitStatus,
+    refreshGitHistory,
+    refreshProjectTreeWorktrees,
+    expandProjectTreeWorktree,
+    refreshTaskRelatedFiles,
+    updateSessionRelatedFilesForKey,
+    refreshManagedRoots,
+  });
   const renderRootWorktreeContent = (root: string): React.ReactNode => (
     <RootWorktreeContentView
       root={root}
