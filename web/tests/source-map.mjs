@@ -117,6 +117,7 @@ export const MODULES = {
 
   // P2 拆分：file.ts → services/file/（入口 shim 仍在原路径）
   "src/services/session.ts": ["src/services/session.ts"],
+  "src/services/sessionCacheTypes.ts": ["src/services/sessionCacheTypes.ts"],
   "src/services/file.ts": [
     "src/services/file/types.ts",
     "src/services/file/cache.ts",

@@ -1,4 +1,5 @@
 import { estimateCommandTerminalCols } from "./sessionTerminalLayout";
+import type { CachedSessionListRecord, CachedSessionRecord } from "./sessionCacheTypes";
 import { appURL, wsURL } from "./net/base";
 import { currentUser } from "./net/authGate";
 import { getRootNodeId } from "./net/rootNode";
@@ -1707,20 +1708,6 @@ class SessionService {
 
 export const sessionService = new SessionService();
 
-type CachedSessionRecord = {
-  cacheKey: string;
-  rootId: string;
-  nodeId?: string;
-  sessionKey: string;
-  touchedAt: number;
-  session: Session;
-};
-
-type CachedSessionListRecord<T> = {
-  cacheKey: string;
-  touchedAt: number;
-  payload: T;
-};
 
 const SESSION_CACHE_DB = "mindfs-session-cache";
 const SESSION_CACHE_STORE = "sessions";
