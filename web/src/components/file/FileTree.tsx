@@ -22,6 +22,7 @@ import { useRefreshSpin } from "../../hooks/index";
 import { usePwaInstall } from "../../app/usePwaInstall";
 import { createRenderEntries } from "./fileTreeEntries";
 import { childEntryKey, filterVisibleEntries } from "./FileTreeEntryFilters";
+import { groupEntriesByNode } from "./FileTreeEntryFilters";
 import { useAgentConfigActions } from "./useAgentConfigActions";
 import { formatProviderTestResult, isAgentConfigBackupConflict } from "./fileTreeAgentConfigUtils";
 import { useFileTreePreferences } from "./useFileTreePreferences";
@@ -1377,24 +1378,7 @@ function FileTreeInner({
       </ViewHeader>
       <div style={{ padding: "8px", flex: 1, minHeight: 0, overflow: "auto", display: "flex", flexDirection: "column" }}>
         {(() => {
-          const groups = (() => {
-            const m = new Map<string, { color: string; name: string; nid: string; items: typeof entries }>();
-            for (const e of entries) {
-              const ex = e as any;
-              const key = String(ex._nodeName || ex._nodeId || "local");
-              const color = String(ex._nodeColor || "#6d5bcf");
-              const name = String(ex._nodeName || key);
-              const nid = String(ex._nodeId || "").trim();
-              if (!m.has(key)) m.set(key, { color, name, nid, items: [] });
-              m.get(key)!.items.push(e);
-            }
-            try {
-              const order = new Map(getNodes().map((n,i)=>[String(n.name), i] as const));
-              const arr = Array.from(m.entries());
-              arr.sort((a,b)=> (order.get(String(a[0])) ?? 99) - (order.get(String(b[0])) ?? 99));
-              return arr.map(([,v])=>v);
-            } catch { return Array.from(m.values()); }
-          })();
+          const groups = groupEntriesByNode(entries, getNodes);
           if (entries.length === 0 && creatingRootName === null) return (
           <div
             style={{
@@ -1416,7 +1400,7 @@ function FileTreeInner({
           );
           return (
             <>
-              {groups.map((g) => (
+              {groups.map((g: any) => (
                 <div key={g.name}>
                   <NodeBadgeHeader color={g.color} label={g.name} />
                   {renderEntries(g.items, 0, rootId || "", g.color, g.nid)}
