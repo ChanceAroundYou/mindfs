@@ -21,7 +21,7 @@
   | `App.tsx` | 9585 | 4464 | ⏳ 阶段 A 达标，仍 >1200 |
   | `components/session/SessionViewer.tsx` | 3567 | 2569 | ⏳ 顶部 940 行已拆出，剩 `SessionViewerInner` |
   | `services/session.ts` | 2659 | 2659 | ⛔ 被 4 个 VM 测试锁住 |
-  | `app/useRealtimeEvents.ts` | 2019 | 2019 | ⏳ 待拆 |
+  | `app/useRealtimeEvents.ts` | 2019 | 1074 | ✅ 34 个 WS 处理器 → `realtimeWsHandlers.ts` |
 - 最近完整门禁：`npm run typecheck` 0 错误；`npm test` 210 tests、209 pass、1 skip、0 fail；`make build-web` 成功；`check-upstream` 通过。数字以现场命令为准。
 
 ## 2. 本轮审核使用的工具与结论

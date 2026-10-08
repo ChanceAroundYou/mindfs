@@ -182,6 +182,21 @@ web/src/
 - **待办**：`renderTimelineItem`（639 行）/ `renderSlashCommandResult`（199 行）/ RETURN（674 行）仍在 `SessionViewerInner` 内。
 - **注意**：合并 main 时此文件有上游改动（`c04deeb` 的 pending 对账），拆之前先确认。
 
+### 4.3.1 useRealtimeEvents.ts —— 1074 行 ✅
+
+- **现状**：`useRealtimeEvents(ctx)` 只剩「订阅 + 派发」这一件事。
+- **已抽（本次）**：`app/realtimeWsHandlers.ts`（997 行）= `createRealtimeWsHandlers(ctx, local)`，
+  装着 34 个 WS 事件处理器（25 个 handler + 13 个内部 helper + `handleSessionStream` 内 9 个 case）。
+- **为什么用工厂而不是直接搬**：这些 handler 都关闭在 hook 的 state / ref / ctx 上，没法独立成模块。
+  做法是把 hook 里那段 `const { refs, setters, actions, values } = ctx` 解构**原样复制**到工厂开头，
+  再把 10 个局部函数（`handleSessionStream` / `handleSlashCommandStream` / `handleSlashCommandDone` /
+  `handleSessionStreamDone` / `handleFileChanged` / `handleFileChangedBatch` / `getReplayTargetsForRoot` /
+  `replayTargetsForAllRoots` / `reloadSessionForReplay` / `refreshSessionRelatedFiles`）当参数传进去 ——
+  搬过来的 957 行**一个标识符都不用改**。
+- **类型来源**：`RealtimeWsHandlersLocal` 的 10 个签名由 tsc 从 hook 里的声明反推
+  （`/tmp/mfsprobe/typeof.mjs`，`checker.typeToString`），不是手抄。
+- **收益**：useRealtimeEvents.ts 2019 → 1074 行（-945）。
+
 ### 4.4 SessionList.tsx —— 476 行 ✅
 
 - **现状**：只留单项目 `SessionList` 本体 + 公共 API 再导出。
@@ -233,7 +248,8 @@ web/src/
   | 1016 | `components/stream/ToolCallCard.tsx` | 工具卡 |
   | 1002 | `components/action/ActionBar.tsx` | 输入栏 |
 
-- **已是 hook，内部可再拆（低优先）**：`app/useRealtimeEvents.ts`（2019）、
+- **已是 hook，内部可再拆（低优先）**：~~`app/useRealtimeEvents.ts`（2019）~~ → **1074 行 ✅**
+  （34 个 WS 事件处理器 957 行已抽到 `app/realtimeWsHandlers.ts`，见 §4.3.1）、
   `app/useProjectLifecycle.tsx`（885）、`hooks/useSessionStream.ts`（664）。
 
 ## 5. 验证手段
