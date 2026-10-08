@@ -29,6 +29,7 @@ import { useAgentLifecycleActions } from "./useAgentLifecycleActions";
 import { useAgentConfigOutsideClick } from "./useAgentConfigOutsideClick";
 import { useFileTreeEffects } from "./useFileTreeEffects";
 import { useAgentConfigSwitchRequest } from "./useAgentConfigSwitchRequest";
+import { fontSizeAdjustButtonStyle } from "./fileTreeMenuStyles";
 import { FileTreeProjectTabs } from "./FileTreeProjectTabs";
 import { getNodes } from "../../services/net/nodeRegistry";
 import { NodeManagerPanel } from "../account/NodeManagerPanel";
@@ -213,21 +214,6 @@ type AgentConfigSwitchSelection = { type: "backup" | "api_provider"; id: string 
 type AgentLifecycleCommandAction = "install" | "update";
 
 /** 把单模型测试结果格式化成一行简短文案（成功/延迟/错误/简短响应）。 */
-
-const fontSizeAdjustButtonStyle: React.CSSProperties = {
-  width: "26px",
-  height: "26px",
-  padding: 0,
-  border: "none",
-  background: "transparent",
-  color: "var(--text-primary)",
-  display: "inline-flex",
-  alignItems: "center",
-  justifyContent: "center",
-  cursor: "pointer",
-  fontSize: "16px",
-  lineHeight: 1,
-};
 
 import {
   fileTreeMenuButtonStyle,
