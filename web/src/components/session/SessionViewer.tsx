@@ -53,6 +53,7 @@ import {
 import type { ExchangeArray, SessionItem, SessionViewerProps } from "./sessionViewerTypes";
 import { SessionViewerSlashCommandResult } from "./SessionViewerSlashCommand";
 import { renderToolTimelineItem } from "./SessionViewerToolItem";
+import { renderAuxiliaryTimelineItem } from "./SessionViewerAuxiliaryTimeline";
 
 function SessionViewerInner({
   session,
@@ -1053,45 +1054,8 @@ function SessionViewerInner({
     if (item.type === "tool") {
       return renderToolTimelineItem({ item, timelineItemKey, spacing, rootId, rootPath, sessionKey, sessionAgent: session?.agent, activeAskUserCallId, onAskUserAnswer });
     }
-    // CUSTOM(G-AT): 上游没有 tool_group 这个时间线项类型（逐张渲染 ToolCallCard）。
-    // 折叠由 useSessionStream 的 groupConsecutiveToolCalls 产生，展开后仍走 ToolCallCard。
-    if (item.type === "tool_group") {
-      return (
-        <div key={timelineItemKey} style={{ marginTop: spacing }}>
-          <ToolCallGroupCard
-            kind={item.kind}
-            toolCalls={item.toolCalls}
-            rootPath={rootPath || undefined}
-            rootId={rootId}
-            sessionKey={sessionKey}
-            getFallbackResult={formatToolCallFallbackResult}
-          />
-        </div>
-      );
-    }
-    if (item.type === "todo") {
-      return (
-        <div key={timelineItemKey} style={{ marginTop: spacing }}>
-          <TodoUpdateCard todoUpdate={item.todoUpdate} />
-        </div>
-      );
-    }
-    if (item.type === "plan") {
-      return (
-        <div key={timelineItemKey} style={{ marginTop: spacing }}>
-          <PlanUpdateCard content={item.planUpdate?.content || ""} rootId={rootId} />
-        </div>
-      );
-    }
-    if (item.type === "compact") {
-      return (
-        <div key={timelineItemKey} style={{ marginTop: spacing }}>
-          <CompactNoticeCard
-            status={item.compactNotice?.status}
-            summary={item.compactNotice?.summary}
-          />
-        </div>
-      );
+    if (item.type === "tool_group" || item.type === "todo" || item.type === "plan" || item.type === "compact") {
+      return renderAuxiliaryTimelineItem({ item, timelineItemKey, spacing, rootId, rootPath, sessionKey });
     }
     const isUser = item.type === "user_text";
     // CUSTOM(G-AU): 查表，不再 slice+filter / 反向扫描（见 timelineItemMeta）。
