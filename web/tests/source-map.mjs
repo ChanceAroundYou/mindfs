@@ -110,6 +110,7 @@ export const MODULES = {
     "src/components/file/FileTreeFooter.tsx",
     "src/components/file/FileTreeProjectContent.tsx",
     "src/components/file/FileTreeIdleReleasePopover.tsx",
+    "src/components/file/FileTreeSendShortcutPopover.tsx",
     "src/components/file/fileTreeAgentConfigUtils.ts",
   ],
 
