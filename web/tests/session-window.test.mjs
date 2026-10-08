@@ -72,6 +72,7 @@ function loadSessionModule() {
   const originalRequire = sandbox.require;
   sandbox.require = (name) => {
     if (name === "./sessionTerminalLayout") return loadSourceModule("services/sessionTerminalLayout.ts", sandbox);
+    if (name === "./sessionIndexedDb") return loadSourceModule("services/sessionIndexedDb.ts", sandbox);
     return originalRequire(name);
   };
   vm.runInNewContext(compiled, sandbox, { filename: sessionServicePath });

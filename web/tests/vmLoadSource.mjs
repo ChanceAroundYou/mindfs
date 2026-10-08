@@ -18,12 +18,12 @@ export function loadSourceModule(relativeSourcePath, parentSandbox, cache = new 
     exports,
     module,
     require: (name) => {
-      const base = name.split("/").pop();
+      try { return parentSandbox.require(name); } catch {}
       const candidate = path.resolve(path.dirname(file), name);
       for (const ext of [".ts", ".tsx", ".js"]) {
         if (fs.existsSync(candidate + ext)) return loadSourceModule(path.relative(path.resolve(import.meta.dirname, "../src"), candidate + ext), parentSandbox, cache);
       }
-      return parentSandbox.require(name);
+      throw new Error(`unexpected source module: ${name}`);
     },
   };
   vm.runInNewContext(compiled, sandbox, { filename: file });
