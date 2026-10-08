@@ -14,16 +14,17 @@
 | `components/file/FileTree.tsx` | 1153 | <1000 | -154 | `FileTreeInner` 927 + imports 180 |
 | `services/session.ts` | 1138 | <1000 | -139 | `SessionService` 类 997 |
 | `components/session/SessionViewer.tsx` | 1127 | <1000 | -128 | `SessionViewerInner` 1045 + imports 110 |
-| `components/task/ScheduledAgentTaskDialog.tsx` | 1098 | <1000 | -99 | 主组件 692 + `CronEditor` 144 |
+| `components/task/ScheduledAgentTaskDialog.tsx` | **798** ✅ | <1000 | 0 | 已拆出 `ScheduledCronEditor.tsx` 317 |
 | `app/realtimeWsHandlers.ts` | 1084 | <1000 | -85 | `createRealtimeWsHandlers` 1044 |
-| `components/file/MarkdownViewer.tsx` | 1082 | <1000 | -83 | `MarkdownViewerInner` 459 + `MarkdownCodeBlock` 185 + `MermaidBlock` 110 |
+| `components/file/MarkdownViewer.tsx` | **665** ✅ | <1000 | 0 | 已拆出 `MarkdownCodeBlocks.tsx` 435 |
 | `app/useRealtimeEvents.ts` | 1075 | <1000 | -76 | `useRealtimeEvents` 930 |
 | `components/file/DefaultListView.tsx` | 1031 | <1000 | -32 | 主组件 830 + 4 个图标组件 |
 | `components/stream/ToolCallCard.tsx` | 1016 | <1000 | -17 | 主组件 451 + `renderToolIcon` 89 |
 | `app/useSessionLifecycle.ts` | 1016 | <1000 | -17 | `useSessionLifecycle` 918 |
 | `components/action/ActionBar.tsx` | 1002 | <1000 | -3 | `ActionBar` 939（out_degree 55，cognitive 106） |
 
-**合计需迁移约 2200 行。**
+**合计需迁移约 2200 行。** 已完成 182 行（`MarkdownViewer` -83、`ScheduledAgentTaskDialog` -99），
+剩余约 2018 行（App.tsx 1183 + 其余 10 个文件 835）。
 
 ## 二、Part B：12 个「只超一点」的文件（先做，收益确定、风险低）
 
@@ -149,3 +150,27 @@ cd web/src && find . \( -name '*.ts' -o -name '*.tsx' \) -not -path './i18n/*' \
 2. **再做 Part A**（App.tsx，逐域抽取）—— 每域一次提交；
 3. 最后跑全量门禁（typecheck + npm test + build-web + e2e + check-upstream）并复核尺寸；
 4. 刷新本文件与 `docs/plans/frontend-split-refactor.md` 的真实行数。
+
+## 八、进度日志
+
+| 提交 | 动作 | 结果 |
+|---|---|---|
+| `c43ade2` | `MarkdownViewer` → `MarkdownCodeBlocks` | 1082 → **665**（+435 新文件） |
+| `a6e4415` | `ScheduledAgentTaskDialog` → `ScheduledCronEditor` | 1098 → **798**（+317 新文件） |
+
+**Part B 进度：12 个文件已完 2 个**（`MarkdownViewer`、`ScheduledAgentTaskDialog`），
+剩 10 个：`AgentSelector` 1191、`FileTree` 1153、`session.ts` 1138、`SessionViewer` 1127、
+`realtimeWsHandlers` 1084、`useRealtimeEvents` 1075、`DefaultListView` 1031、
+`ToolCallCard` 1016、`useSessionLifecycle` 1016、`ActionBar` 1002。
+
+**Part A 进度：0 刀**（App.tsx 仍 4182，目标 <3000）。
+
+### 本阶段教训（`ScheduledAgentTaskDialog` 这一刀）
+
+- 搬「cron 相关块」时把**同区的宿主函数** `emptyForm` / `formatTime` 一起搬走了
+  （它们与 `splitCron` 相邻、且都在「非导出顶层块」里），导致 `TS2304: Cannot find name 'emptyForm'`。
+  判据：搬之前对每个待搬块问一句「**它引用的符号定义在哪？**」——
+  `emptyForm` 引用 `FormState`（宿主类型）、`formatTime` 引用 `Locale`（宿主 import），
+  引用外移即说明该块不该走。
+- `fieldStyle` 是**宿主与 `CronEditor` 共享**的样式常量，必须 `export` 出去由宿主 import，
+  不能复制一份（会出现两份真相）。
