@@ -52,6 +52,7 @@ import {
 } from "./sessionViewerFormat";
 import type { ExchangeArray, SessionItem, SessionViewerProps } from "./sessionViewerTypes";
 import { SessionViewerSlashCommandResult } from "./SessionViewerSlashCommand";
+import { renderToolTimelineItem } from "./SessionViewerToolItem";
 
 function SessionViewerInner({
   session,
@@ -1050,50 +1051,7 @@ function SessionViewerInner({
       );
     }
     if (item.type === "tool") {
-      const tc = item.toolCall || {};
-      const isAskUser =
-        `${tc.kind || ""}`.toLowerCase() === "ask_user" &&
-        getAskUserQuestions(tc).length > 0;
-      const isUserShell =
-        `${tc.kind || ""}`.toLowerCase() === "execute" &&
-        tc.meta?.source === "userShell";
-      const toolUseId =
-        tc.callId ||
-        (typeof tc.meta?.toolUseId === "string" ? tc.meta.toolUseId : "");
-      return (
-        <div key={timelineItemKey} style={{ marginTop: spacing }}>
-          {isAskUser ? (
-            <AskUserQuestionCard
-              toolCall={tc}
-              rootId={rootId}
-              sessionKey={sessionKey}
-              agent={session?.agent}
-              active={!!toolUseId && toolUseId === activeAskUserCallId}
-              onAnswer={onAskUserAnswer}
-            />
-          ) : (
-            <ToolCallCard
-              kind={tc.kind}
-              title={
-                (tc as any).title ||
-                (tc.meta && typeof tc.meta.title === "string"
-                  ? (tc.meta.title as string)
-                  : "")
-              }
-              callId={tc.callId || ""}
-              status={tc.status || "running"}
-              content={tc.content}
-              result={formatToolCallFallbackResult(tc)}
-              locations={tc.locations}
-              meta={tc.meta}
-              rootPath={rootPath || undefined}
-              rootId={rootId}
-              sessionKey={sessionKey}
-              defaultExpanded={isUserShell}
-            />
-          )}
-        </div>
-      );
+      return renderToolTimelineItem({ item, timelineItemKey, spacing, rootId, rootPath, sessionKey, sessionAgent: session?.agent, activeAskUserCallId, onAskUserAnswer });
     }
     // CUSTOM(G-AT): 上游没有 tool_group 这个时间线项类型（逐张渲染 ToolCallCard）。
     // 折叠由 useSessionStream 的 groupConsecutiveToolCalls 产生，展开后仍走 ToolCallCard。
