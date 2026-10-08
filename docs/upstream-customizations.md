@@ -1533,6 +1533,26 @@
     「WS 断连 20s 后 pending 信号收敛」（后者靠轮询，不靠静默降级）。
   - `web/tests/pending-single-source.test.mjs` — 钉住「pending 纯派生自 `multiProjectPendingByKey`」。
 
+### G-BC 方案 B：worker 没有账户表，账户 id 从用户名派生
+
+- 来源：`server/internal/auth/auth.go`、`server/app/workspace.go`（2026-10-08）。
+- 边界：**worker 不加载账户表也能做数据分区** —— 账户 id 从用户名派生
+  （`auth.DeriveAccountID`），跨机器稳定；worker 上 `Resolve` 返回空时派生 id、
+  按需建目录，不回空工作区。
+- 可见症状（没有它会怎样）：
+  在 fn（worker）上加/删项目时报 `registry path required`（或 `这个账户在本机没有数据`），
+  因为 worker 没有账户表，`user=xiaokubao` 解析不出目录名，落到 `emptyWorkspace`
+  的空注册表上，写操作撞上 `path == ""` 的内部错误。
+- 为什么必须保留：
+  worker 有账户表 = 控制面漂移（每台机器一份 users.json），正是多节点改造要消灭的东西。
+  派生 id 让 worker 无表也能分区，且跨机器稳定（同一用户名永远算出同一目录名）。
+  启动时 `migrateIDsToDerived` 把存量随机 id 迁移成派生 id（重命名目录 + 更新 users.json）。
+- 针对性测试：
+  - `server/internal/auth/auth_test.go` — `TestDeriveAccountIDStable`（同用户名跨调用结果一致）、
+    `TestDeriveAccountIDDistinct`（不同用户名 id 不同）、`TestMigrateIDsToDerived`（旧 id 迁移 + 目录重命名）。
+  - `server/app/workspace_test.go` — `TestWorkspaceWorkerDerivesAccountID`（worker 角色下
+    `Resolve` 返回空时派生 id、走 build 不回空工作区）。
+
 ---
 
 ## 4. 未提交工作区（2026-10-06 清空）

@@ -114,49 +114,40 @@ export function controlPath(path: string, params?: URLSearchParams): string
 > `~/.config/mindfs/config.json`，与源码无关 —— 改角色只需改那个文件再重启，
 > 不必（也无法）先把代码同步过去。
 
-## 待办：把账户表收回主节点（方案 B）
+## 方案 B（已实现）：worker 没有账户表
 
-> 2026-10-08 定方向，**尚未实施**。
+> 2026-10-08 实施完成。
 
-### 现状
+### 核心机制：账户 id 从用户名派生
 
-worker 也加载一份完整的 `users.json`（含密码哈希、角色）。但 worker 上
-`/api/auth/*`、`/api/users/*` 本来就是 403（见上方控制面端点表），所以那份文件在
-worker 上只有 `id` / `username` / `primary_user_id` 三个字段有用 —— 纯粹为了
-**数据分区**：把 `user=xiaokubao` 解析成账户 id，决定数据落在 `users/<id>/`
-还是 `<config-dir>/`。
+`auth.DeriveAccountID(username)` 把用户名映射成确定性 id：
+`"u_" + sha256(username)[:16]`。跨机器天然稳定，worker 没有账户表
+也能算出同一个目录名。
 
-后果：
+用户创建（`migrateFromLegacy` + `CreateUser`）改用派生 id，
+启动时 `migrateIDsToDerived` 把存量随机 id 迁移成派生 id
+（重命名 `users/<旧id>/` → `users/<新id>/`，更新 `users.json`）。
 
-- 每台机器一份账户表 = 控制面漂移，正是本文档想消灭的那个问题。
-- 新节点首次启动会自动建一个 `admin` 空壳账户，然后一直躺着。
-- 陌生 `user=` 落到「空工作区」，读得到空列表，但**写**会撞上
-  `registry path required` 这种内部错误（已临时改成用户能看懂的话，根因会随本方案一起消失）。
+### worker 上的行为
 
-### 目标
+`Workspace()` 里 `Resolve` 返回空时，worker 角色走派生分支：
 
-worker **不要账户表**。数据分区需要的账户清单从数据本身推导：
-`users/<id>/` 存在 = 这个账户在本机有数据；首次写入时按需建目录。
+```go
+} else if m.Role().IsWorker() {
+    id = auth.DeriveAccountID(id)
+}
+```
 
-配套可以删掉：
+不再回空工作区 —— 按需建目录，新节点上加第一个项目不会再撞上
+`registry path required` 的内部错误。
 
-- `app.emptyWorkspace` 那套「陌生账户给只读空工作区」的逻辑（改成按需建目录）；
-- `registry.saveLocked` 里 `path == ""` 这条分支（不再有人走到）。
+### control 上的行为（不变）
 
-### 硬前提：账户 id 必须跨机器稳定
+control 上陌生 `user=` 仍回空工作区（`emptyWorkspace`），因为 control
+有账户表，账户删除后要能把用户送回登录页。
 
-现在 id 是随机生成的（本机 `u_pc_admin`、fn `u_yQgvkYcI7Na1tzIR`）。
-worker 没有账户表，就**无法把用户名解析成目录名** —— 这是本方案的硬前提，
-不解决则方案不成立。两个办法，二选一：
+### 验证
 
-1. **id 改由用户名派生**（如 `u_` + hash(username)）：跨机器天然稳定，
-   前端带用户名即可，worker 直接算出目录名。代价：存量账户要迁移目录名。
-2. **每个账户目录里放 `account.json` 记 username**：worker 扫
-   `users/*/account.json` 建映射。不改 id 生成规则，但多一个文件。
-
-### 实施顺序
-
-1. 先做「账户 id 跨机器稳定」—— 独立改动，主节点行为不变。
-2. worker 去掉 `users.json`，改从数据推导 + 按需建目录。
-3. 删掉 `emptyWorkspace` 与相关分支。
-4. 验证：新节点上第一次加项目能成功；主节点登录 / 账户管理不变。
+- 新节点上第一次加项目能成功（按需建目录）。
+- 主节点登录 / 账户管理不变。
+- worker 上反复解析同一个用户名结果一致（确定性 id）。

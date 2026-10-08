@@ -165,12 +165,13 @@ func (m *workspaceManager) Workspace(userID string) (*api.AppContext, error) {
 	//      前端靠 404 unknown_user 把用户送回登录页（api.ts handleAccountGone），
 	//      所以要继续回 404，否则账户删掉后整页只剩空白、还退不出去。
 	//   ② 本机既没登记、也没目录 —— 纯粹是**别的机器**的账户。
-	//      账户只是可见性设置，按账户的数据本来就物理隔离（项目 <cfg>/users/<id>/registry.json、
-	//      meta <cfg>/users/<id>/meta/<rootID>），所以「没这个账户」等价于「它的目录里没数据」：
-	//      给一份空工作区即可，读者自然得到空列表。
-	//      以前这里统一回 404，于是「换个节点看不到项目」变成一串报错，而用户要的只是「空的」。
+	//      control：账户只是可见性设置，给一份空工作区即可。
+	//      worker（方案 B）：没有账户表，从用户名派生确定性 id，按需建目录。
 	if resolved := m.shared.auth.Resolve(id); resolved != "" {
 		id = resolved
+	} else if m.Role().IsWorker() {
+		// 方案 B：worker 没有账户表，从用户名派生 id（跨机器稳定）。
+		id = auth.DeriveAccountID(id)
 	} else if m.knownAccountDirExists(id) {
 		return nil, fmt.Errorf("%w: %s", api.ErrUnknownUser, id)
 	} else {
@@ -233,18 +234,14 @@ func validAccountID(id string) bool {
 // 实测踩过：登录后看板直接报错。共享服务是同一份实例（无额外 goroutine），
 // Kanban/Scheduled/GitHub 的构造函数本身也不起后台循环——不起 Start/Schedule 就没有副作用，
 // 而空注册表下本来也没有 root 可调度。
-// TODO(账户只在主节点，方案 B)：worker 不该有账户表，也不该有「空工作区」。
+// 方案 B（已实现）：worker 没有账户表，从用户名派生确定性 id（auth.DeriveAccountID），
+// 首次写入时按需建目录。账户 id 跨机器稳定，worker 上反复解析同一个用户名结果一致。
 //
-// 数据分区需要的账户清单可以直接从数据推导 —— `users/<id>/` 存在即「这个账户在
-// 本机有数据」，首次写入时按需建目录。这样下面这个只读空工作区可以整个删掉，
-// 顺带消灭「registry path required」这类内部错误（见 registry.saveLocked）。
+// 这个空工作区只给 **control** 用：control 上陌生 user= 仍回空工作区（只读、不入缓存），
+// 因为 control 有账户表，账户删除后要能把用户送回登录页。worker 走 Workspace() 里的
+// 派生分支，不再经过这里。
 //
-// 硬前提：账户 id 必须跨机器稳定。现在 id 是随机生成的（本机 u_pc_admin、
-// fn u_yQgvkYcI7Na1tzIR），worker 没有账户表就把用户名解析不出目录名。
-// 两个办法：① id 改由用户名派生；② 每个账户目录里放 account.json 记 username，
-// worker 扫目录建映射。
-//
-// 详见 docs/multi-node-control-plane.md「待办：把账户表收回主节点」。
+// 详见 docs/multi-node-control-plane.md「方案 B：worker 没有账户表」。
 func (m *workspaceManager) emptyWorkspace() (*api.AppContext, error) {
 	registry := fs.NewRegistryAt("", "")
 	services := &api.AppContext{

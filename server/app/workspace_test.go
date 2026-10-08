@@ -10,6 +10,7 @@ import (
 	"mindfs/server/internal/agent"
 	"mindfs/server/internal/auth"
 	"mindfs/server/internal/kanban"
+	"mindfs/server/internal/nodeinfo"
 	"mindfs/server/internal/nodes"
 	"mindfs/server/internal/preferences"
 	"mindfs/server/internal/webpush"
@@ -323,5 +324,67 @@ func TestPinSeedRunsOnceAndNeverResurrectsUnpinned(t *testing.T) {
 	}
 	if _, ok := restarted.Pins.ProjectPins()["pc::CMAI"]; ok {
 		t.Fatal("取消掉的置顶在重启后自己回来了：回填被重复执行了")
+	}
+}
+
+// worker 角色下，账户表查不到的用户名应该派生 id，走 build 不回空工作区。
+// 这钉住方案 B 的核心行为：worker 没有账户表也能做数据分区。
+func TestWorkspaceWorkerDerivesAccountID(t *testing.T) {
+	cfgDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfgDir)
+
+	usersPath := filepath.Join(cfgDir, "mindfs", "users.json")
+	if err := os.MkdirAll(filepath.Dir(usersPath), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(filepath.Dir(usersPath), "login.json"),
+		[]byte(`{"password":"root-secret"}`), 0o600); err != nil {
+		t.Fatalf("write legacy: %v", err)
+	}
+	authStore, err := auth.EnsureStoreAt(usersPath)
+	if err != nil {
+		t.Fatalf("EnsureStoreAt: %v", err)
+	}
+
+	prefs, err := preferences.NewStore()
+	if err != nil {
+		t.Fatalf("preferences: %v", err)
+	}
+	nodeStore, err := nodes.NewStore()
+	if err != nil {
+		t.Fatalf("nodes: %v", err)
+	}
+	templates, err := kanban.NewTemplateStore()
+	if err != nil {
+		t.Fatalf("kanban templates: %v", err)
+	}
+	pool := agent.NewPool(agent.Config{})
+
+	mgr := newWorkspaceManager(context.Background(), sharedServices{
+		auth:      authStore,
+		prefs:     prefs,
+		nodes:     nodeStore,
+		webPush:   webpush.NewService(webpush.Config{}, webpush.NewStoreAt(filepath.Dir(usersPath))),
+		templates: templates,
+		pool:      pool,
+	})
+	mgr.SetBaseDir(filepath.Join(filepath.Dir(usersPath), "users"))
+	mgr.SetRole(nodeinfo.RoleWorker)
+
+	// xiaokubao 不在账户表里（只有 admin），worker 应该派生 id
+	username := "xiaokubao"
+	ws, err := mgr.Workspace(username)
+	if err != nil {
+		t.Fatalf("Workspace(%q): %v", username, err)
+	}
+
+	// 派生 id 应被使用：项目落在 users/<派生id>/registry.json
+	wantID := auth.DeriveAccountID(username)
+	registryPath := filepath.Join(filepath.Dir(usersPath), "users", wantID, "registry.json")
+	if _, err := ws.Dirs.Upsert(filepath.Join(cfgDir, "proj-worker")); err != nil {
+		t.Fatalf("upsert worker project: %v", err)
+	}
+	if _, err := os.Stat(registryPath); err != nil {
+		t.Errorf("worker 项目列表应在 %s: %v", registryPath, err)
 	}
 }
