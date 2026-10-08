@@ -2,8 +2,9 @@
 
 ## 一、当前基线
 
-- `App.tsx`：**4411 行**，Phase 1 已完成第一刀（任务工作区状态容器）。
+- `App.tsx`：**4404 行**，Phase 1 已完成两刀（任务状态容器 + 初始化副作用）。
 - 新增 `src/app/useTaskWorkspaceState.ts`：132 行，集中管理任务/看板 state、refs、上传与 worktree 状态。
+- 新增 `src/app/useTaskWorkspaceEffects.ts`：45 行，承接 bootstrap ready 后的任务模板、Kanban、跨项目会话刷新 effect。
 - 非 i18n 最大文件：`AgentSelector.tsx` 1191、`FileTree.tsx` 1153、`SessionViewer.tsx` 1127、`services/session.ts` 1138。
 - 当前工作区基于 `task-35`，主检出存在独立 WIP；本阶段只在当前 worktree 修改，不触碰主检出。
 - 已有门禁基线：Web 210 tests（209 pass / 1 skip）、Go tests 全绿、e2e 10 passed、build-web 成功。
@@ -43,8 +44,9 @@
 ### Phase 1 当前进度（2026-10-07）
 
 - ✅ `useTaskWorkspaceState.ts`：抽出任务/看板 state、refs、上传状态、worktree 状态与两个同步 ref effect。
-- `App.tsx`：4464 → **4411 行**，首刀减少 53 行；状态所有权已经从 App 组件体集中到任务领域 hook。
-- 下一刀：`useTaskWorkspaceEffects.ts`，只迁移任务模板 / Kanban / worktree 的 effect，严格保持依赖数组与 abort / sequence 防护。
+- ✅ `useTaskWorkspaceEffects.ts`：抽出 bootstrap ready 后的任务模板 / Kanban / multi-project session 初始化刷新；依赖数组与调用顺序保持原样。
+- `App.tsx`：4464 → 4411 → **4404 行**，本阶段两刀累计减少 60 行。
+- 下一刀：任务选择 / 派生状态，或继续以 AST 标注的任务详情 effect 为边界，不直接合并跨领域 effect。
 
 
 1. **任务状态容器 `useTaskWorkspaceState.ts`**
