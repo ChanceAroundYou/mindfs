@@ -2,10 +2,13 @@
 
 ## 一、当前基线
 
-- `App.tsx`：**4404 行**，Phase 1 已完成两刀（任务状态容器 + 初始化副作用）。
+- `App.tsx`：**4182 行**（本轮起点 4464），Phase 1 已完成五刀。
 - 新增 `src/app/useTaskWorkspaceState.ts`：132 行，集中管理任务/看板 state、refs、上传与 worktree 状态。
 - 新增 `src/app/useTaskWorkspaceEffects.ts`：45 行，承接 bootstrap ready 后的任务模板、Kanban、跨项目会话刷新 effect。
-- 非 i18n 最大文件：`AgentSelector.tsx` 1191、`FileTree.tsx` 1153、`SessionViewer.tsx` 1127、`services/session.ts` 1138。
+- 新增 `src/app/useRootContentView.ts`：192 行，根内容视图模型（工作树归属、关联文件、仓库/HEAD 分组、git 统计刷新键）。
+- 新增 `src/app/useProjectTreeActions.ts`：188 行，项目树四个 tab 的强制重拉 + 管理节点刷新 + worktree 自动展开。
+- 新增 `src/app/useUiPreferences.ts`：102 行，纯 UI 偏好状态与持久化 effect。
+- 非 i18n 最大文件：`AgentSelector.tsx` 1191、`FileTree.tsx` 1153、`services/session.ts` 1138、`SessionViewer.tsx` 1127。
 - 当前工作区基于 `task-35`，主检出存在独立 WIP；本阶段只在当前 worktree 修改，不触碰主检出。
 - 已有门禁基线：Web 210 tests（209 pass / 1 skip）、Go tests 全绿、e2e 10 passed、build-web 成功。
 
@@ -25,28 +28,43 @@
 
 ## 三、现状分析
 
-`App.tsx` 的结构已不是巨型 JSX：
+`App.tsx` 的结构已不是巨型 JSX，也不是「几块大石头」，而是**高度碎片化**：
+App() 函数体共 **398 条顶层语句**，除 JSX 外最大单块只有 105 行。
 
-```text
-1..254      imports / types
-255..4141   App() hook 体：约 3887 行，61 个 useEffect、72 个 useCallback
-4142..4464  JSX：约 323 行
-```
+用 TypeScript AST 实测（`/tmp/mfsprobe/glue.mjs`，不落在仓库里）拆分这 4362 行：
 
-因此下一阶段不再从 JSX 下手，而是按**状态所有权 + 副作用边界**抽 hook。
+| 组成 | 行数 | 性质 |
+|---|---:|---|
+| JSX return | 324 | 1 条语句，已大量委托给子组件 |
+| **hook-call glue** | **1215** | 68 个已抽出 hook 的 props 对象，**已委托，无肉可切** |
+| useEffect | 481 | 58 条，最大 35 行、多数 7–16 行 |
+| state / ref / useMemo / useCallback | 1811 | 领域状态与其派生值 |
+| 其它可搬逻辑 | 531 | 少量 handler 与工具函数 |
 
-最适合的区域是看板/任务编排，因为 App.tsx 已经把 `useTaskTemplates`、`useTaskBoard`、`useTaskComposer`、
-`useTaskInlineCandidates` 接好，存在天然的领域上下文；不建议先碰 session pending / restore / realtime，
-这些区域共享 ref 多、effect 顺序敏感、回归半径大。
+**结论：剩余的「肉」几乎全在 1811 行的 state/派生 与 481 行的 effect 里**，而且必须
+连同各自的 handler 一起整域搬走；单条语句切出去没有收益。
+
+**3000 行的可达性**：1215（glue）+ 324（JSX）= 1539 行基本固定。要从 4182 降到 3000，
+需要再搬走约 1180 行，即 1811+481+531 中的约 42% —— 约 **8–12 次领域抽取**。
+所以 3000 是可达的，但不是「几刀」的事，需要按领域持续搬。
+
+最容易切的领域（自包含、依赖少）：UI 偏好、任务/看板、根内容视图、项目树动作 —— 本轮已完成。
+剩余领域按风险从低到高：会话列表/归档、节点/项目加载、文件树、插件、e2ee/更新、session pending/realtime。
+
+不建议先碰 session pending / restore / realtime：这些区域共享 ref 多、effect 顺序敏感、回归半径大。
 
 ## 四、执行顺序
 
 ### Phase 1 当前进度（2026-10-07）
 
-- ✅ `useTaskWorkspaceState.ts`：抽出任务/看板 state、refs、上传状态、worktree 状态与两个同步 ref effect。
-- ✅ `useTaskWorkspaceEffects.ts`：抽出 bootstrap ready 后的任务模板 / Kanban / multi-project session 初始化刷新；依赖数组与调用顺序保持原样。
-- `App.tsx`：4464 → 4411 → **4404 行**，本阶段两刀累计减少 60 行。
-- 下一刀：任务选择 / 派生状态，或继续以 AST 标注的任务详情 effect 为边界，不直接合并跨领域 effect。
+- ✅ `useTaskWorkspaceState.ts`：任务/看板 state、refs、上传状态、worktree 状态 + 两个同步 ref effect。
+- ✅ `useTaskWorkspaceEffects.ts`：bootstrap ready 后的任务模板 / Kanban / multi-project session 初始化刷新。
+- ✅ `useRootContentView.ts`：工作树归属、会话关联文件、仓库/HEAD 分组、git 统计刷新键（纯派生）。
+- ✅ `useProjectTreeActions.ts`：项目树四 tab 强制重拉 + 管理节点刷新 + worktree 自动展开。
+- ✅ `useUiPreferences.ts`：5 个 UI 偏好 + 6 个持久化 effect + slash 复制定时器清理。
+- `App.tsx`：4464 → 4411 → 4404 → 4309 → 4224 → **4182 行**，本轮累计减少 **282 行**。
+- 下一刀：会话列表 / 归档领域（`useSessionArchive` 已在，可继续收口 archive panel 的 state 与 effect），
+  或节点/项目加载领域的 `selectRootNode` 周边（77 行，是剩余最大的单块）。
 
 
 1. **任务状态容器 `useTaskWorkspaceState.ts`**
