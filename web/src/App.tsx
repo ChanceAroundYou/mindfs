@@ -19,7 +19,6 @@ import {
 } from "./services/net/bootstrap";
 import { syncNativeReplyPollerE2EE } from "./services/net/replyPoller";
 import {
-  ProtectedAPIError,
   protectedAPIReady,
   protectedJSON as apiProtectedJSON,
 } from "./services/net/api";
@@ -41,11 +40,10 @@ import {
   clearFileCacheForRoot,
   clearFileMemoryCacheForView,
   getCachedFile,
-  invalidateFileCache,
   type FilePayload,
 } from "./services/file";
 import { getRootNodeId, setRootNodeId, setRootNodeMap } from "./services/net/rootNode";
-import { scopeKey, scopeSessionKey, treeKey, expandKey, dirSelKey } from "./shared/scope";
+import { scopeKey, scopeSessionKey, treeKey, dirSelKey } from "./shared/scope";
 import {
   buildGitDiffCacheSignature,
   clearGitHistoryCache,
@@ -65,7 +63,7 @@ import {
   type DirectorySortMode,
   type FileEntry,
 } from "./services/prefs/directorySort";
-import { fileTokenPath, formatFileToken, isUploadAbortError, uploadFiles, type UploadProgress } from "./services/upload";
+import { fileTokenPath, formatFileToken, type UploadProgress } from "./services/upload";
 import { isPlanCommand, withPlanPrefix } from "./components/action/inputTransforms";
 import {
   PluginManager,
@@ -92,7 +90,6 @@ import {
   applyPinnedSnapshotToSessions as applyPinSnapshotRaw,
   mergeSessionItems,
 } from "./services/sessionListMerge";
-import { collectSessionSubtreeKeys, type SessionTreeItem } from "./services/sessionTree";
 import { currentUser } from "./services/net/authGate";
 // 直接导入标准组件
 import { AppShell } from "./layout/AppShell";
@@ -106,10 +103,8 @@ import {
 
 import { applyNodesFromServer, getActiveNode, getActiveNodeId, getNodeById, getNodes, migrateLegacySingleBase, setActiveNodeId, syncNodesFromServer } from "./services/net/nodeRegistry";
 import {
-  optimisticSessionPin,
   readPins,
   refreshPinsFromServer,
-  setSessionPin,
   subscribePins,
   writePins,
 } from "./services/pins";
@@ -130,7 +125,7 @@ import { ActionBar } from "./components/action/ActionBar";
 import { CompactUploadProgress } from "./components/file/CompactUploadProgress";
 import { ToastContainer } from "./components/shell/Toast";
 import { DialogHost } from "./components/shell/DialogHost";
-import { alertDialog, confirmDialog, promptDialog } from "./services/dialog";
+import { confirmDialog } from "./services/dialog";
 import { BottomSheet } from "./components/shell/BottomSheet";
 import { ScheduledAgentTaskDialog } from "./components/task/ScheduledAgentTaskDialog";
 import { TaskTemplateDialog, FieldLabelWithInfo } from "./components/task/TaskTemplateDialog";
@@ -201,7 +196,7 @@ import { AttachedFileContext, Exchange, GitFileStat, MultiProjectSessionGroup, P
 import { CANDIDATE_FETCH_DEBOUNCE_MS, DIRECTORY_SORT_OVERRIDES_STORAGE_KEY, GIT_DIFF_SIDE_BY_SIDE_STORAGE_KEY, GIT_HISTORY_EXPANDED_STORAGE_KEY, GIT_STATUS_EXPANDED_STORAGE_KEY, LAST_ROOT_NODE_STORAGE_KEY, LAST_ROOT_STORAGE_KEY, loadWorkspaceCollapsed, loadWorkspaceFilter, MOBILE_ENTER_KEY_SEND_STORAGE_KEY, PLUGIN_QUERY_STORAGE_PREFIX, saveWorkspaceCollapsed, saveWorkspaceFilter, SIDEBARS_SWAPPED_STORAGE_KEY, TASK_TEMPLATE_ALL_FILTER, TASK_TEMPLATE_SELECTION_STORAGE_KEY, TREE_SORT_STORAGE_KEY, type WorkspaceBoardFilter } from "./app/appStorage";
 import { TaskInlineEditState } from "./app/appTask";
 import { buildMatchInputFromPath, buildMessageWithViewContext, hasExplicitFileContext, indexManagedRoots, inferReadModeFromPlugin, managedDirAddErrorMessage, mapManagedRootsToEntries, normalizeUpdateState, shouldShowUpdateButton, toPluginInput, updateButtonLabel, updateSummaryText, useResponsive, waitForNextPaint } from "./app/appMisc";
-import { basenameOfPath, buildDirectorySelectionKey, buildFileScrollKey, buildURLSearch, comparableManagedRootPath, dirnameOfPath, isDirectorySortMode, joinDisplayPath, normalizeCursor, normalizePath, parentDirsOfFile, parseFileLocation, parsePluginQuery, readURLState, relativeDisplayPathFromRoot, rootNodeKey } from "./app/appPath";
+import { basenameOfPath, buildDirectorySelectionKey, buildFileScrollKey, buildURLSearch, comparableManagedRootPath, isDirectorySortMode, joinDisplayPath, normalizeCursor, normalizePath, parentDirsOfFile, parseFileLocation, parsePluginQuery, readURLState, relativeDisplayPathFromRoot, rootNodeKey } from "./app/appPath";
 import { useWorkspaceBoard } from "./app/useWorkspaceBoard";
 import { useSessionCache } from "./app/useSessionCache";
 import { useSendMessage } from "./app/useSendMessage";
@@ -252,6 +247,7 @@ import { useAttachedFileContext } from "./app/useAttachedFileContext";
 import { useReplyingSessionPoll } from "./app/useReplyingSessionPoll";
 import { useSessionPending } from "./app/useSessionPending";
 import { useSessionMetadata } from "./app/useSessionMetadata";
+import { useSessionListActions } from "./app/useSessionListActions";
 
 
 export function App({ onGoHome }: AppProps) {
@@ -1892,177 +1888,31 @@ export function App({ onGoHome }: AppProps) {
   });
 
 
-  const handleCreateBlankFile = useCallback(async () => {
-    const rootID = currentRootIdRef.current;
-    if (!rootID) return;
-    const targetDir = (selectedDirRef.current === rootID ? "." : selectedDirRef.current) || ".";
-    const input = await promptDialog({ message: t("directory.fileNamePrompt") });
-    if (input === null) return;
-    const name = input.trim();
-    if (!name || name === "." || name === ".." || /[/\\\x00]/.test(name)) {
-      alertDialog(t("directory.invalidFileName"));
-      return;
-    }
-    try {
-      await apiProtectedJSON(appPath(`/api/file?${new URLSearchParams({ root: rootID })}`), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dir: targetDir, name }),
-      });
-      const currentDir = (selectedDirRef.current === rootID ? "." : selectedDirRef.current) || ".";
-      await refreshTreeDir(rootID, targetDir, rootID === currentRootIdRef.current && currentDir === targetDir);
-    } catch (err) {
-      reportError("file.write_failed", err instanceof ProtectedAPIError && err.status === 409
-        ? t("directory.fileExists")
-        : String((err as Error)?.message || t("directory.createFileFailed")));
-    }
-  }, [refreshTreeDir, t]);
+  const {
+    handleCreateBlankFile,
+    handleTreeUpload,
+    handleSelectSessionAndClose,
+    handlePinSession,
+    pruneSubtreeFromSessionState,
+  } = useSessionListActions({
+    currentRootIdRef,
+    directoryUploadAbortRef,
+    fileRef,
+    getNodeIdForRoot,
+    isMobile,
+    multiProjectSessionGroupsRef,
+    selectedDirRef,
+    sessionsRef,
+    setDirectoryUploadProgress,
+    setExpanded,
+    setIsRightOpen,
+    setMultiProjectSessionGroups,
+    setSessions,
+    handleSelectSession,
+    refreshTreeDir,
+    t,
+  });
 
-  const handleTreeUpload = useCallback(
-    async (files: File[]) => {
-      const rootID = currentRootIdRef.current;
-      if (!rootID || files.length === 0) return;
-
-      const selectedDirPath =
-        selectedDirRef.current === rootID ? "." : selectedDirRef.current;
-      const targetDir =
-        selectedDirPath ||
-        (fileRef.current?.path ? dirnameOfPath(fileRef.current.path) : ".");
-      setDirectoryUploadProgress(null);
-      try {
-        const uploadAbort = new AbortController();
-        directoryUploadAbortRef.current = uploadAbort;
-        const uploaded = await uploadFiles({
-          rootId: rootID,
-          dir: targetDir,
-          files,
-          onProgress: setDirectoryUploadProgress,
-          signal: uploadAbort.signal,
-          nodeId: getNodeIdForRoot(rootID),
-        });
-        uploaded.forEach((item) => {
-          if (typeof item?.path === "string" && item.path) {
-            invalidateFileCache(rootID, item.path);
-          }
-        });
-        const currentDir =
-          (selectedDirRef.current === rootID ? "." : selectedDirRef.current) ||
-          ".";
-        const syncMain =
-          rootID === currentRootIdRef.current && currentDir === targetDir;
-        await refreshTreeDir(rootID, targetDir, syncMain);
-        setExpanded((prev) =>
-          Array.from(
-            new Set([
-              ...prev,
-              scopeKey(getNodeIdForRoot(rootID) ?? "", rootID),
-              expandKey(
-                getNodeIdForRoot(rootID),
-                rootID,
-                targetDir === "." ? rootID : targetDir,
-                targetDir === ".",
-              ),
-            ]),
-          ),
-        );
-      } catch (err) {
-        if (!isUploadAbortError(err)) {
-          reportError(
-            "file.write_failed",
-            String((err as Error)?.message || t("file.uploadFailed")),
-          );
-        }
-      } finally {
-        directoryUploadAbortRef.current = null;
-        setDirectoryUploadProgress(null);
-      }
-    },
-    [refreshTreeDir, t],
-  );
-
-
-
-  // 稳定回调：SessionList/SessionCard 的 memo 依赖 props 引用稳定（onSelect 之前是 inline 箭头，每次父渲染都变）。
-  const handleSelectSessionAndClose = useCallback(
-    (session: SessionItem) => {
-      void handleSelectSession(session);
-      if (isMobile) setIsRightOpen(false);
-    },
-    [handleSelectSession, isMobile],
-  );
-
-
-
-  const handlePinSession = useCallback(
-    async (session: SessionItem, pinned: boolean) => {
-      const sessionKey = session?.key || session?.session_key;
-      const rootID =
-        (session?.root_id as string | undefined) || currentRootIdRef.current;
-      if (!rootID || !sessionKey) return false;
-
-      // 乐观更新 store：用户点了就该马上看到，不必等往返。
-      // store 是排序的唯一来源，所以这一下就足以让列表重排 —— 下面那些
-      // setSessions/setMultiProjectSessionGroups 逐条打 pinned_at 的写法
-      // 曾经是第三份能重排列表的状态，与 store 各排一次就是狂跳的来源。
-      const rollback = optimisticSessionPin(rootID, sessionKey, pinned);
-      // 写**主节点**的置顶表（控制面），不是当前选中节点的那个会话库 ——
-      // 后者已退役 pinned_at，写进去就回到「按机器分」的老形状。
-      try {
-        const next = await setSessionPin(rootID, sessionKey, pinned);
-        // 用服务端落库后的整张表覆盖（权威），不再本地合并 ——
-        // 合并两份状态正是「刷新就变回去」的来源。
-        writePins(next);
-        return true;
-      } catch {
-        rollback();
-        reportError("session.pin_failed", t("session.pinFailed"));
-        return false;
-      }
-    },
-    [t],
-  );
-
-  // 归档/取消归档。后端按 parent_session_key 级联整棵子树，前端要摘掉的是同一批 key
-  // ——和 handleDeleteSession 完全同一套收集+摘除逻辑，只是摘除后不销毁缓存（内容还在）。
-  const pruneSubtreeFromSessionState = useCallback(
-    (rootID: string, sessionKey: string, sessionNodeId: string) => {
-      const knownItems: SessionTreeItem[] = [
-        ...sessionsRef.current,
-        ...multiProjectSessionGroupsRef.current.flatMap((group) => group.sessions || []),
-      ];
-      const affected = new Set<string>(
-        collectSessionSubtreeKeys(knownItems, sessionKey),
-      );
-      if (affected.size <= 0) {
-        return affected;
-      }
-      setSessions((prev) =>
-        prev.filter((item) => !affected.has(item.key || item.session_key || "")),
-      );
-      setMultiProjectSessionGroups((prev) =>
-        prev
-          .map((group) => {
-            if (
-              group.rootId !== rootID ||
-              (sessionNodeId && (group as any)._nodeId !== sessionNodeId)
-            ) {
-              return group;
-            }
-            const sessions = group.sessions.filter(
-              (item) => !affected.has(item.key || item.session_key || ""),
-            );
-            return {
-              ...group,
-              sessions,
-              totalCount: Math.max(0, group.totalCount - (group.sessions.length - sessions.length)),
-            };
-          })
-          .filter((group) => group.totalCount > 0 || group.sessions.length > 0),
-      );
-      return affected;
-    },
-    [],
-  );
   const {
     handleDeleteSession,
     handleArchiveSession,
