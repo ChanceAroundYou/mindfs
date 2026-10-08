@@ -95,6 +95,7 @@ export const MODULES = {
     "src/components/file/useAgentConfigActions.ts",
     "src/components/file/useFileTreePreferences.ts",
     "src/components/file/useAgentConfigSelection.ts",
+    "src/components/file/useAgentLifecycleActions.ts",
   ],
 
   // P2 拆分：file.ts → services/file/（入口 shim 仍在原路径）

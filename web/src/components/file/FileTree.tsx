@@ -24,6 +24,7 @@ import { createRenderEntries } from "./fileTreeEntries";
 import { useAgentConfigActions } from "./useAgentConfigActions";
 import { useFileTreePreferences } from "./useFileTreePreferences";
 import { useAgentConfigSelection } from "./useAgentConfigSelection";
+import { useAgentLifecycleActions } from "./useAgentLifecycleActions";
 import { getNodes } from "../../services/net/nodeRegistry";
 import { NodeManagerPanel } from "../account/NodeManagerPanel";
 import { AccountPanel } from "../account/AccountPanel";
@@ -668,25 +669,10 @@ function FileTreeInner({
     return () => document.removeEventListener("mousedown", handlePointerDown);
   }, [agentLifecycleOpen, closeAgentLifecycleFlow]);
 
-  const runAgentLifecycleCommand = React.useCallback(async (agent: AgentStatus, action: AgentLifecycleCommandAction) => {
-    const commands = action === "install" ? agent.install_commands || [] : agent.update_commands || [];
-    if (commands.length === 0) {
-      setAgentLifecycleError(t("agentConfig.noCommand"));
-      return;
-    }
-    setAgentLifecycleBusy(true);
-    setAgentLifecycleRunningAgent(agent.name);
-    setAgentLifecycleError("");
-    try {
-      await onRunAgentLifecycleCommand?.(agent.name, action, commands);
-      closeAgentLifecycleFlow();
-    } catch (error) {
-      setAgentLifecycleError(error instanceof Error ? error.message : t("agentConfig.commandStartFailed"));
-    } finally {
-      setAgentLifecycleBusy(false);
-      setAgentLifecycleRunningAgent("");
-    }
-  }, [closeAgentLifecycleFlow, onRunAgentLifecycleCommand, t]);
+  const { runAgentLifecycleCommand } = useAgentLifecycleActions({
+    setAgentLifecycleError, setAgentLifecycleBusy, setAgentLifecycleRunningAgent, t,
+    onRunAgentLifecycleCommand, closeAgentLifecycleFlow,
+  });
 
   const { restartAgentFromConfigList, chooseAgentForConfig } = useAgentConfigSelection({
     agentConfigRestartingAgent, onRestartAgent, t, setAgentConfigRestartingAgent, setAgentConfigError,
