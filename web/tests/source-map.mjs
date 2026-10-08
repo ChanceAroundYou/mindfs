@@ -91,6 +91,7 @@ export const MODULES = {
     "src/components/file/icons.tsx",
     "src/components/file/AgentConfigPopover.tsx",
     "src/app/usePwaInstall.ts",
+    "src/components/file/fileTreeEntries.tsx",
   ],
 
   // P2 拆分：file.ts → services/file/（入口 shim 仍在原路径）
@@ -169,6 +170,7 @@ export const MODULES = {
     "src/components/file/icons.tsx",
     "src/components/file/AgentConfigPopover.tsx",
     "src/app/usePwaInstall.ts",
+    "src/components/file/fileTreeEntries.tsx",
   ],
   "src/components/FileViewer.tsx": ["src/components/file/FileViewer.tsx"],
   "src/components/FileEditor.tsx": ["src/components/file/FileEditor.tsx"],
