@@ -62,6 +62,7 @@ import { SessionViewerHeader } from "./SessionViewerHeader";
 import { SessionViewerLoadingState } from "./SessionViewerLoadingState";
 import { SessionViewerWaitingIndicator } from "./SessionViewerWaitingIndicator";
 import { SessionViewerFloatingControls } from "./SessionViewerFloatingControls";
+import { buildUserMetaButtonStyle } from "./sessionViewerStyles";
 
 function SessionViewerInner({
   session,
@@ -1021,25 +1022,7 @@ function SessionViewerInner({
   // 四横主按钮：浅且暗的 muted 变体（同色相、混灰降明度）；徽标保持纯主题色
   const themeMuted = `color-mix(in srgb, ${themeColor} 56%, #94a3b8)`;
   const themeMutedBorder = `color-mix(in srgb, ${themeColor} 20%, transparent)`;
-  const userMetaButtonStyle: React.CSSProperties = {
-    width: "18px",
-    height: "18px",
-    border: "none",
-    background: "transparent",
-    padding: 0,
-    margin: 0,
-    color: themeColor,
-    cursor: "pointer",
-    fontSize: "14px",
-    fontWeight: 800,
-    lineHeight: 1,
-    opacity: 1,
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: "6px",
-    flexShrink: 0,
-  };
+  const userMetaButtonStyle = buildUserMetaButtonStyle(themeColor);
 
   const makePromptKey = (
     item: Extract<TimelineItem, { type: "user_text" | "assistant_text" }>,

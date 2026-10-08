@@ -146,6 +146,7 @@ export const MODULES = {
     "src/components/session/SessionViewerLoadingState.tsx",
     "src/components/session/SessionViewerWaitingIndicator.tsx",
     "src/components/session/SessionViewerFloatingControls.tsx",
+    "src/components/session/sessionViewerStyles.ts",
   ],
   "src/components/ArchivedSessionsPanel.tsx": ["src/components/session/ArchivedSessionsPanel.tsx"],
   "src/components/ExternalSessionList.tsx": ["src/components/session/ExternalSessionList.tsx"],
