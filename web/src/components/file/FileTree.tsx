@@ -21,6 +21,7 @@ import { useI18n, type I18nContextValue, type Locale, type MessageKey } from "..
 import { useRefreshSpin } from "../../hooks/index";
 import { usePwaInstall } from "../../app/usePwaInstall";
 import { createRenderEntries } from "./fileTreeEntries";
+import { childEntryKey, filterVisibleEntries } from "./FileTreeEntryFilters";
 import { useAgentConfigActions } from "./useAgentConfigActions";
 import { formatProviderTestResult, isAgentConfigBackupConflict } from "./fileTreeAgentConfigUtils";
 import { useFileTreePreferences } from "./useFileTreePreferences";
@@ -516,20 +517,13 @@ function FileTreeInner({
       setProviderTestResults, setSelectedAgentAPIProviderID, setSelectedAgentConfigID, t,
     });
 
-  const childKeyFor = (entry: FileEntry, entryRoot: string, sectionNodeId: string) => {
-    if (entry.is_root) return treeKey(sectionNodeId, entry.path, ".");
-    return treeKey(sectionNodeId, entryRoot, entry.path);
-  };
+  const childKeyFor = (entry: FileEntry, entryRoot: string, sectionNodeId: string) =>
+    childEntryKey(entry, entryRoot, sectionNodeId, treeKey);
 
-  const visibleEntries = React.useCallback((items: FileEntry[], depth = 0) => {
-    const hiddenFiltered = showHiddenFiles
-      ? items
-      : items.filter((entry) => !entry.name.startsWith("."));
-    if (projectTreeTab !== "related" || depth !== 0) {
-      return hiddenFiltered;
-    }
-    return hiddenFiltered.filter((entry) => !!rootId && entry.path === rootId);
-  }, [projectTreeTab, rootId, showHiddenFiles]);
+  const visibleEntries = React.useCallback((items: FileEntry[], depth = 0) =>
+    filterVisibleEntries(items, depth, projectTreeTab, rootId, showHiddenFiles),
+    [projectTreeTab, rootId, showHiddenFiles],
+  );
 
   const fontSizeRows: Array<{ region: FontSizeRegion; labelKey: MessageKey }> = [
     { region: "fileSidebar", labelKey: "fileTree.fontSizeFileSidebar" },

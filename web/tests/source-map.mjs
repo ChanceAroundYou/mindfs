@@ -102,6 +102,7 @@ export const MODULES = {
     "src/components/file/FileTreeProjectTabs.tsx",
     "src/components/file/fileTreeMenuStyles.ts",
     "src/components/file/fileTreeMenuOptions.ts",
+    "src/components/file/FileTreeEntryFilters.ts",
     "src/components/file/FileTreeFontSizeMenu.tsx",
     "src/components/file/FileTreeLocaleOptions.tsx",
     "src/components/file/FileTreeAppearanceOptions.tsx",
