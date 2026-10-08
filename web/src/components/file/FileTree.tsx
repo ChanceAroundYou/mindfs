@@ -32,6 +32,8 @@ import { useAgentConfigSwitchRequest } from "./useAgentConfigSwitchRequest";
 import { fontSizeAdjustButtonStyle } from "./fileTreeMenuStyles";
 import { FileTreeFontSizeMenu } from "./FileTreeFontSizeMenu";
 import { FileTreeLocaleOptions } from "./FileTreeLocaleOptions";
+import { FileTreeAppearanceOptions } from "./FileTreeAppearanceOptions";
+import { FileTreeSortOptions } from "./FileTreeSortOptions";
 import { FileTreeProjectTabs } from "./FileTreeProjectTabs";
 import { getNodes } from "../../services/net/nodeRegistry";
 import { NodeManagerPanel } from "../account/NodeManagerPanel";
@@ -802,40 +804,7 @@ function FileTreeInner({
                   </span>
                   <ChevronRight isOpen={isAppearanceMenuOpen} />
                 </button>
-                {isAppearanceMenuOpen ? APPEARANCE_OPTIONS.map((option) => {
-                  const active = option.value === appearanceMode;
-                  return (
-                    <button
-                      key={option.value}
-                      type="button"
-                      onClick={() => {
-                        setAppearanceMode(option.value);
-                        setAppearanceModeState(option.value);
-                        setIsMenuOpen(false);
-                        setIsAppearanceMenuOpen(false);
-                        setIsLocaleMenuOpen(false);
-                        setIsSortMenuOpen(false);
-                      }}
-                      style={{
-                        width: "100%",
-                        border: "none",
-                        background: active ? "var(--selection-bg)" : "transparent",
-                        color: active ? "var(--accent-color)" : "var(--text-primary)",
-                        borderRadius: "8px",
-                        padding: "8px 10px",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        textAlign: "left",
-                        cursor: "pointer",
-                        fontSize: "12px",
-                      }}
-                    >
-                      <span>{t(option.labelKey)}</span>
-                      <span style={{ fontSize: "11px", opacity: active ? 1 : 0 }}>✓</span>
-                    </button>
-                  );
-                }) : null}
+<FileTreeAppearanceOptions open={isAppearanceMenuOpen} options={APPEARANCE_OPTIONS} value={appearanceMode} setValue={setAppearanceMode} setValueState={setAppearanceModeState} closeMenus={() => { setIsMenuOpen(false); setIsAppearanceMenuOpen(false); setIsLocaleMenuOpen(false); setIsSortMenuOpen(false); }} t={t} />
                 <button
                   type="button"
                   onClick={() => {
@@ -916,39 +885,7 @@ function FileTreeInner({
                   </span>
                   <ChevronRight isOpen={isSortMenuOpen} />
                 </button>
-                {isSortMenuOpen ? DIRECTORY_SORT_OPTIONS.map((option) => {
-                const active = option.value === sortMode;
-                return (
-                  <button
-                    key={option.value}
-                    type="button"
-                    onClick={() => {
-                      onSortModeChange?.(option.value as DirectorySortMode);
-                      setIsMenuOpen(false);
-                      setIsAppearanceMenuOpen(false);
-                      setIsLocaleMenuOpen(false);
-                      setIsSortMenuOpen(false);
-                    }}
-                    style={{
-                      width: "100%",
-                      border: "none",
-                      background: active ? "var(--selection-bg)" : "transparent",
-                      color: active ? "var(--accent-color)" : "var(--text-primary)",
-                      borderRadius: "8px",
-                      padding: "8px 10px",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      textAlign: "left",
-                      cursor: "pointer",
-                      fontSize: "12px",
-                    }}
-                  >
-                    <span>{sortLabel(option.value as DirectorySortMode)}</span>
-                    <span style={{ fontSize: "11px", opacity: active ? 1 : 0 }}>✓</span>
-                  </button>
-                );
-              }) : null}
+<FileTreeSortOptions open={isSortMenuOpen} options={DIRECTORY_SORT_OPTIONS} value={sortMode} onChange={onSortModeChange} closeMenus={() => { setIsMenuOpen(false); setIsAppearanceMenuOpen(false); setIsLocaleMenuOpen(false); setIsSortMenuOpen(false); }} sortLabel={sortLabel} />
               <div style={{ height: "1px", background: "var(--border-color)", margin: "6px 4px" }} />
               <button
                 type="button"

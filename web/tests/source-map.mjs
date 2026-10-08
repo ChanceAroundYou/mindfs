@@ -104,6 +104,8 @@ export const MODULES = {
     "src/components/file/fileTreeMenuOptions.ts",
     "src/components/file/FileTreeFontSizeMenu.tsx",
     "src/components/file/FileTreeLocaleOptions.tsx",
+    "src/components/file/FileTreeAppearanceOptions.tsx",
+    "src/components/file/FileTreeSortOptions.tsx",
     "src/components/file/fileTreeAgentConfigUtils.ts",
   ],
 
