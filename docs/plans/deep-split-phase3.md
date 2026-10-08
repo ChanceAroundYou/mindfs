@@ -18,13 +18,13 @@
 | `app/realtimeWsHandlers.ts` | 1084 | <1000 | -85 | `createRealtimeWsHandlers` 1044 |
 | `components/file/MarkdownViewer.tsx` | **665** ✅ | <1000 | 0 | 已拆出 `MarkdownCodeBlocks.tsx` 435 |
 | `app/useRealtimeEvents.ts` | 1075 | <1000 | -76 | `useRealtimeEvents` 930 |
-| `components/file/DefaultListView.tsx` | 1031 | <1000 | -32 | 主组件 830 + 4 个图标组件 |
-| `components/stream/ToolCallCard.tsx` | 1016 | <1000 | -17 | 主组件 451 + `renderToolIcon` 89 |
+| `components/file/DefaultListView.tsx` | **920** ✅ | <1000 | 0 | 已拆出 `listViewIcons.tsx` 119 |
+| `components/stream/ToolCallCard.tsx` | **797** ✅ | <1000 | 0 | 已拆出 `toolCallRender.tsx` 224 |
 | `app/useSessionLifecycle.ts` | 1016 | <1000 | -17 | `useSessionLifecycle` 918 |
 | `components/action/ActionBar.tsx` | 1002 | <1000 | -3 | `ActionBar` 939（out_degree 55，cognitive 106） |
 
-**合计需迁移约 2200 行。** 已完成 182 行（`MarkdownViewer` -83、`ScheduledAgentTaskDialog` -99），
-剩余约 2018 行（App.tsx 1183 + 其余 10 个文件 835）。
+**合计需迁移约 2200 行。** 已完成 515 行（`MarkdownViewer` -83、`ScheduledAgentTaskDialog` -99、
+`DefaultListView` -111、`ToolCallCard` -219），剩余约 1685 行（App.tsx 1183 + 其余 8 个文件 502）。
 
 ## 二、Part B：12 个「只超一点」的文件（先做，收益确定、风险低）
 
@@ -157,11 +157,12 @@ cd web/src && find . \( -name '*.ts' -o -name '*.tsx' \) -not -path './i18n/*' \
 |---|---|---|
 | `c43ade2` | `MarkdownViewer` → `MarkdownCodeBlocks` | 1082 → **665**（+435 新文件） |
 | `a6e4415` | `ScheduledAgentTaskDialog` → `ScheduledCronEditor` | 1098 → **798**（+317 新文件） |
+| `f2521c6` | `DefaultListView` → `listViewIcons` | 1031 → **920**（+119 新文件） |
+| `7fc57f9` | `ToolCallCard` → `toolCallRender` | 1016 → **797**（+224 新文件） |
 
-**Part B 进度：12 个文件已完 2 个**（`MarkdownViewer`、`ScheduledAgentTaskDialog`），
-剩 10 个：`AgentSelector` 1191、`FileTree` 1153、`session.ts` 1138、`SessionViewer` 1127、
-`realtimeWsHandlers` 1084、`useRealtimeEvents` 1075、`DefaultListView` 1031、
-`ToolCallCard` 1016、`useSessionLifecycle` 1016、`ActionBar` 1002。
+**Part B 进度：12 个文件已完 4 个**（`MarkdownViewer`、`ScheduledAgentTaskDialog`、`DefaultListView`、`ToolCallCard`），
+剩 8 个：`AgentSelector` 1191、`FileTree` 1153、`session.ts` 1138、`SessionViewer` 1127、
+`realtimeWsHandlers` 1084、`useRealtimeEvents` 1075、`useSessionLifecycle` 1016、`ActionBar` 1002。
 
 **Part A 进度：0 刀**（App.tsx 仍 4182，目标 <3000）。
 
@@ -174,3 +175,11 @@ cd web/src && find . \( -name '*.ts' -o -name '*.tsx' \) -not -path './i18n/*' \
   引用外移即说明该块不该走。
 - `fieldStyle` 是**宿主与 `CronEditor` 共享**的样式常量，必须 `export` 出去由宿主 import，
   不能复制一份（会出现两份真相）。
+- **`blocks.mjs` 报的行号比真实行号小约 2**（它把语句前的空行算进了上一块），
+  所以脚本里一律用**首行内容断言**（`L(n).startswith(...)`）而不是信它的数字。
+- **搬之前先查「谁在用」**：`renderToolIcon` 被 9 个外部模块 import，
+  搬走就得改 9 处或加转发 stub（红线）—— 这种符号**留在宿主**，只搬它的私有依赖。
+- **循环 import 的 TDZ 风险**：`terminalFontFamily`（`const`）同时被要搬走的 `AnsiOutput`
+  和要留下的 `ExecuteToolDetails` 使用。若让它留在宿主、由新模块 import，
+  而宿主又 import 新模块的 `AnsiOutput` → 循环 + `const` TDZ → `ReferenceError`。
+  解法：把它**随 `AnsiOutput` 一起搬走并 export**，依赖方向保持单向。
