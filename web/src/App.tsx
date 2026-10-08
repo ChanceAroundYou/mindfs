@@ -222,6 +222,7 @@ import { useTaskWorkspaceState } from "./app/useTaskWorkspaceState";
 import { useTaskWorkspaceEffects } from "./app/useTaskWorkspaceEffects";
 import { useRootContentView } from "./app/useRootContentView";
 import { useProjectTreeActions } from "./app/useProjectTreeActions";
+import { useUiPreferences } from "./app/useUiPreferences";
 import { CheckIconSmall, PlusSmallIcon, taskCardIconButtonStyle } from "./app/taskIcons";
 import { useMultiProjectSessions } from "./app/useMultiProjectSessions";
 import { useSessionArchive } from "./app/useSessionArchive";
@@ -425,7 +426,6 @@ export function App({ onGoHome }: AppProps) {
   const [copiedSlashCommandKeys, setCopiedSlashCommandKeys] = useState<
     Record<string, true>
   >({});
-  const slashCopyResetTimersRef = useRef<Record<string, number>>({});
   const [queueVersion, setQueueVersion] = useState(0);
   const [interactionMode, setInteractionMode] = useState<"main" | "drawer">(
     "main",
@@ -434,11 +434,6 @@ export function App({ onGoHome }: AppProps) {
   const [codexRateLimitsRefreshToken, setCodexRateLimitsRefreshToken] = useState(0);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const { isMobile, isTablet } = useResponsive();
-  const [mobileEnterKeySends, setMobileEnterKeySends] = useState(loadMobileEnterKeySends);
-  const [sendShortcut, setSendShortcut] = useState<SendShortcut | null>(loadSendShortcut);
-  const [sidebarsSwapped, setSidebarsSwapped] = useState(loadSidebarsSwapped);
-  const [fontSizePreferences, setFontSizePreferences] = useState<FontSizePreferences>(loadFontSizePreferences);
-  const [gitDiffSideBySide, setGitDiffSideBySide] = useState(loadGitDiffSideBySide);
   const [isLeftOpen, setIsLeftOpen] = useState(() => window.innerWidth >= 768);
   const [isRightOpen, setIsRightOpen] = useState(
     () => window.innerWidth >= 768,
@@ -586,56 +581,19 @@ export function App({ onGoHome }: AppProps) {
 
 
 
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(
-        MOBILE_ENTER_KEY_SEND_STORAGE_KEY,
-        mobileEnterKeySends ? "1" : "0",
-      );
-    } catch {
-      // Ignore storage failures; the setting can still apply for this session.
-    }
-  }, [mobileEnterKeySends]);
-
-  useEffect(() => {
-    persistSendShortcut(sendShortcut);
-  }, [sendShortcut]);
-
-  useEffect(() => {
-    persistFontSizePreferences(fontSizePreferences);
-  }, [fontSizePreferences]);
-
-  useEffect(() => {
-    return () => {
-      Object.values(slashCopyResetTimersRef.current).forEach((timer) =>
-        window.clearTimeout(timer),
-      );
-      slashCopyResetTimersRef.current = {};
-    };
-  }, []);
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(
-        SIDEBARS_SWAPPED_STORAGE_KEY,
-        sidebarsSwapped ? "1" : "0",
-      );
-    } catch {
-      // Ignore storage failures; the setting can still apply for this session.
-    }
-  }, [sidebarsSwapped]);
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(
-        GIT_DIFF_SIDE_BY_SIDE_STORAGE_KEY,
-        gitDiffSideBySide ? "1" : "0",
-      );
-    } catch {
-      // Ignore storage failures; the setting can still apply for this session.
-    }
-  }, [gitDiffSideBySide]);
-
+  const {
+    slashCopyResetTimersRef,
+    mobileEnterKeySends,
+    setMobileEnterKeySends,
+    sendShortcut,
+    setSendShortcut,
+    sidebarsSwapped,
+    setSidebarsSwapped,
+    fontSizePreferences,
+    setFontSizePreferences,
+    gitDiffSideBySide,
+    setGitDiffSideBySide,
+  } = useUiPreferences();
   const [managedRootIds, setManagedRootIds] = useState<string[]>([]);
   const getRootDisplayName = useCallback((rootId: string | null | undefined): string => {
     const id = String(rootId || "").trim();
