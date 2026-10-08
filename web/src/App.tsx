@@ -219,6 +219,7 @@ import { useSessionStreamCache } from "./app/useSessionStreamCache";
 import { useRealtimeEvents } from "./app/useRealtimeEvents";
 import { useTaskTemplates } from "./app/useTaskTemplates";
 import { useTaskWorkspaceState } from "./app/useTaskWorkspaceState";
+import { useTaskWorkspaceEffects } from "./app/useTaskWorkspaceEffects";
 import { CheckIconSmall, PlusSmallIcon, taskCardIconButtonStyle } from "./app/taskIcons";
 import { useMultiProjectSessions } from "./app/useMultiProjectSessions";
 import { useSessionArchive } from "./app/useSessionArchive";
@@ -2913,23 +2914,15 @@ export function App({ onGoHome }: AppProps) {
     }
   }, [e2eeState.required, e2eeState.secretPresent]);
 
-  useEffect(() => {
-    if (bootstrapState.phase !== "ready") {
-      return;
-    }
-    setAgentsVersion((v) => v + 1);
-    void loadTaskTemplates();
-    void loadKanbanTasks(currentRootIdRef.current);
-    if (multiProjectSessionsEnabled) {
-      void loadMultiProjectSessionGroups();
-    }
-  }, [
-    bootstrapState.phase,
+  useTaskWorkspaceEffects({
+    bootstrapPhase: bootstrapState.phase,
+    currentRootIdRef,
+    setAgentsVersion,
+    loadTaskTemplates,
     loadKanbanTasks,
     loadMultiProjectSessionGroups,
-    loadTaskTemplates,
     multiProjectSessionsEnabled,
-  ]);
+  });
 
   const describeE2EEPromptError = useCallback((err: unknown) => {
     const code = err instanceof Error ? String(err.message || "").trim() : "";
