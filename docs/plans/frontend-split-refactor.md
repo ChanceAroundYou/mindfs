@@ -175,7 +175,9 @@ web/src/
 - **收益**：SessionViewer.tsx 3567 → 2569 行（-998）。
 - **已抽**：`renderSlashCommandResult`（199 行）→ `SessionViewerSlashCommand.tsx`（232 行，8 个 props，`t` 走 `useI18n()`）。
 - **已抽**：`renderTimelineItem` 的 tool 分支（约 50 行）→ `SessionViewerToolItem.tsx`（54 行，8 个 props）。
-- **待办**：`renderTimelineItem` 剩余 user/assistant 与 thought/tool_group/todo/plan/compact 分支 / RETURN（674 行）仍在 `SessionViewerInner` 内。
+- **已抽**：`renderTimelineItem` 的 tool 分支（约 50 行）→ `SessionViewerToolItem.tsx`（54 行，8 个 props）；
+  `tool_group` / `todo` / `plan` / `compact` 四类辅助卡片 → `SessionViewerAuxiliaryTimeline.tsx`（48 行）。
+- **待办**：`renderTimelineItem` 剩余 user/assistant 与 thought 分支 / RETURN（674 行）仍在 `SessionViewerInner` 内。
 - **注意**：合并 main 时此文件有上游改动（`c04deeb` 的 pending 对账），拆之前先确认。
 
 ### 4.3.1 useRealtimeEvents.ts —— 1074 行 ✅
