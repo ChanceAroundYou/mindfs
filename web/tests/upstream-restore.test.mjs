@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 
 const uploadSrc = readFileSync(new URL("../src/services/upload.ts", import.meta.url), "utf8");
 const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
@@ -13,6 +13,14 @@ const rootWorktreeView = readFileSync(new URL("../src/components/RootWorktreeCon
 const rootGitView = readFileSync(new URL("../src/components/RootGitContentView.tsx", import.meta.url), "utf8");
 const fileService = readFileSync(new URL("../src/services/file.ts", import.meta.url), "utf8");
 const sessionSvc = readFileSync(new URL("../src/services/session.ts", import.meta.url), "utf8");
+// session.ts 的纯函数簇已按领域拆到 services/session*.ts（2026-10-07）。这些守卫要钉的是
+// 「契约还在」，不是「在哪个文件」—— 跟着实现走，拆文件不用回来改断言。
+const sessionDomainSvc = [
+  sessionSvc,
+  ...readdirSync(new URL("../src/services/", import.meta.url))
+    .filter((n) => n.startsWith("session") && n.endsWith(".ts") && n !== "session.ts")
+    .map((n) => readFileSync(new URL(`../src/services/${n}`, import.meta.url), "utf8")),
+].join("\n");
 const claudeSession = readFileSync(new URL("../../server/internal/agent/claude/session.go", import.meta.url), "utf8");
 const streamHub = readFileSync(new URL("../../server/internal/api/stream_hub.go", import.meta.url), "utf8");
 
@@ -83,8 +91,8 @@ assert.match(sessionSvc, /session\.stream\.reset/, "批处理帧必须在 emitDe
 // reset 才决定**展开前要不要清尾巴**。绑在一起的话，任何不带 reset 的批帧都会漏回
 /// payload.event 路径，重新变成 onStream(undefined)。
 assert.match(sessionSvc, /type === "session\.stream" && Array\.isArray\(nextPayload\.events\)/, "批帧判据必须只看形状，不看 reset 标志");
-assert.match(sessionSvc, /export function dropTransientExchanges/, "清瞬时尾巴的唯一出口住在 session.ts");
-assert.match(sessionSvc, /isTransientExchange/, "瞬时行的判据必须是一个共用谓词：seq 为空且不是用户行");
+assert.match(sessionDomainSvc, /export function dropTransientExchanges/, "清瞬时尾巴的唯一出口住在 session.ts");
+assert.match(sessionDomainSvc, /isTransientExchange/, "瞬时行的判据必须是一个共用谓词：seq 为空且不是用户行");
 assert.doesNotMatch(sessionSvc, /eventCursors|getEventCursor|clearEventCursor/, "游标协议已删除，不得回潮");
 assert.doesNotMatch(sessionSvc, /event_cursor: eventCursor/, "session.ready 不得再带 event_cursor");
 assert.doesNotMatch(sessionSvc, /mergeStreamedText/, "mergeStreamedText 是重投递的适配层，随协议一起删");
@@ -92,7 +100,7 @@ assert.doesNotMatch(streamHub, /ReplayPending\(rootID, clientID, sessionKey, eve
 // 2026-10-06：保留本地 seq==0 的规则收敛进 session.ts 的 composeLoadedExchanges
 // （原先在 App 里写了四遍、三遍是错的）。契约不变 —— App 侧必须调用它。
 assert.match(app, /composeLoadedExchanges\(/, "d36cc53 contract: App restore must keep local seq==0 exchanges (now via composeLoadedExchanges)");
-assert.match(sessionSvc, /export function composeLoadedExchanges/, "the load-time composition rule lives in session.ts");
+assert.match(sessionDomainSvc, /export function composeLoadedExchanges/, "the load-time composition rule lives in session.ts");
 // 2026-09 App.tsx 拆分：userShell 流合并搬到 app/useSessionStreamCache.ts，契约随文件走。
 assert.match(streamCache, /replaySnapshot === true/, "d36cc53 App should branch on replaySnapshot when coalescing userShell");
 

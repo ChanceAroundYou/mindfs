@@ -11,7 +11,7 @@ import fs from "node:fs";
 import path from "node:path";
 import ts from "typescript";
 import vm from "node:vm";
-import { loadSourceModule } from "./vmLoadSource.mjs";
+import { withSourceFallback } from "./vmLoadSource.mjs";
 
 const SRC = path.resolve(import.meta.dirname, "../src");
 
@@ -73,12 +73,7 @@ function loadSessionService() {
     setTimeout,
     clearTimeout,
   };
-  const originalRequire = sandbox.require;
-  sandbox.require = (name) => {
-    if (name === "./sessionTerminalLayout") return loadSourceModule("services/sessionTerminalLayout.ts", sandbox);
-      if (name === "./sessionIndexedDb") return loadSourceModule("services/sessionIndexedDb.ts", sandbox);
-    return originalRequire(name);
-  };
+  withSourceFallback(sandbox);
   vm.runInNewContext(compiled, sandbox, { filename: file });
   return {
     service: sandbox.exports.sessionService,

@@ -52,6 +52,13 @@ function scanSrc(re) {
   }
   return hits;
 }
+/**
+ * 交换行合并/持久化的实现所在（2026-10-07 从 services/session.ts 抽出）。
+ * 这几条守卫钉的是「这段逻辑长什么样」，所以跟着实现走，不认死文件路径 ——
+ * 只要它还在这一簇里就有效。
+ */
+const mergeSrc = () =>
+  readFileSync(path.join(srcRoot, "services/sessionExchangeMerge.ts"), "utf8");
 const countOf = (re) => scanSrc(re).length;
 const where = (hits, n = 4) =>
   hits.slice(0, n).map((h) => `${h.file}:${h.line}`).join(" · ");
@@ -68,7 +75,7 @@ const where = (hits, n = 4) =>
 // 两泳道仍记在 `docs/message-mechanisms.md` §3.2 ② 作为目标形态。
 // ─────────────────────────────────────────────────────────────────────────────
 test("【红·②】瞬时/持久的判定只能有一处实现，两条路径都必须走它", () => {
-  const file = readFileSync(path.join(srcRoot, "services/session.ts"), "utf8");
+  const file = mergeSrc();
   // ① 谓词存在且被两条路径调用
   const mergeStart = file.indexOf("export function mergeSessionExchanges(");
   const composeStart = file.indexOf("export function composeLoadedExchanges(");
@@ -80,13 +87,24 @@ test("【红·②】瞬时/持久的判定只能有一处实现，两条路径�
   assert.match(composeBody, /isTransientExchange\(/, "composeLoadedExchanges 必须走共用谓词");
 
   // ② 交换行域内不得再出现内联的「是否持久行」判定
-  const inline = scanSrc(/seq \|\| 0\) *[><]=? *0|seq \|\| 0\) !== 0/).filter(
-    (h) => !h.file.endsWith("services/session.ts"),
+  //
+  // 判据从「排除 services/session.ts 一个文件」改成「**全仓只允许一个文件实现这把尺**」
+  // （2026-10-07）。原写法隐含「尺必须住在 session.ts」，那是对文件布局的断言而不是对
+  // 架构的断言：这簇纯函数已经拆到 sessionExchangeMerge.ts，于是它既漏掉了真正的第二把
+  // 尺（新文件里内联），又逼着每次搬代码都得回来改白名单。换成「恰好一个文件」后强度
+  // 反而更高：谁在哪都行，出现第二个文件就红。
+  const RULER = /seq \|\| 0\) *[><]=? *0|seq \|\| 0\) !== 0/;
+  const inline = scanSrc(RULER);
+  const rulers = [...new Set(inline.map((h) => h.file))];
+  assert.equal(
+    rulers.length,
+    1,
+    `「是不是持久行」这把尺只能有一个实现文件。今天有 ${rulers.length} 个：${rulers.join(" · ")}（${where(inline)}）`,
   );
   assert.equal(
-    inline.length,
-    0,
-    `session.ts 之外仍在自行判定「是不是持久行」—— 那就是第二把尺。今天 ${inline.length} 处：${where(inline)}`,
+    rulers[0],
+    "src/services/sessionExchangeMerge.ts",
+    `这把尺的归属文件变了（现在是 ${rulers[0]}）。它必须与 isTransientExchange 同文件 —— 判据和实现分家就会各自漂移。`,
   );
 });
 
@@ -207,7 +225,7 @@ test("【红·⑥】乐观回声的两条判据各只能有一处实现", () => 
 // 工具卡再加一遍。所以这里钉的不是「删掉谁」，而是「各自守住自己的契约」。
 // ─────────────────────────────────────────────────────────────────────────────
 test("【红·⑦】aux 拼接必须幂等，且窗口路径不得用它（覆盖语义）", () => {
-  const file = readFileSync(path.join(srcRoot, "services/session.ts"), "utf8");
+  const file = mergeSrc();
   const start = file.indexOf("export function appendExchangeAuxDelta(");
   assert.ok(start >= 0, "找不到 appendExchangeAuxDelta");
   const body = file.slice(start, file.indexOf("\n}", start));
@@ -242,7 +260,7 @@ test("【红·⑧】写盘淘汰不得有绕过上限的例外（forceNoTruncate
 // CompactNotice aux。行为层已另有一条红测试证明它会丢掉「本轮中途 compact 时的在途行」。
 // ─────────────────────────────────────────────────────────────────────────────
 test("【红·⑨】composeLoadedExchanges 不得再按 compact 边界切瞬时行", () => {
-  const file = readFileSync(path.join(srcRoot, "services/session.ts"), "utf8");
+  const file = mergeSrc();
   const start = file.indexOf("export function composeLoadedExchanges(");
   assert.ok(start >= 0, "找不到 composeLoadedExchanges");
   const body = file.slice(start, file.indexOf("\n}", start));

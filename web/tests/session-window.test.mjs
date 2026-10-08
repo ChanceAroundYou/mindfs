@@ -7,7 +7,7 @@ import vm from "node:vm";
 // 这里**直接 import 真实现**，不再写同构副本 —— 副本会漂移，冲突②（渲染空洞）
 // 就是被副本挡住的：副本只复刻了作者关心的分支，所以一直是绿的。
 import { register } from "node:module";
-import { loadSourceModule } from "./vmLoadSource.mjs";
+import { withSourceFallback } from "./vmLoadSource.mjs";
 register("./ts-module-hook.mjs", import.meta.url);
 const { computeTailOverlay } = await import("../src/components/sessionOverlay.ts");
 
@@ -17,6 +17,14 @@ const managerPath = path.resolve(import.meta.dirname, "../../server/internal/ses
 const httpPath = path.resolve(import.meta.dirname, "../../server/internal/api/http.go");
 
 const sessionSrc = fs.readFileSync(sessionServicePath, "utf8");
+// session.ts 的纯函数簇已拆到同目录的兄弟模块（2026-10-07）。结构守卫关心的是
+// 「这些导出还在不在、走的是不是同一把尺」，不是它们落在哪个文件 —— 所以按
+// session 领域的模块集合一起匹配，避免每次再拆一个文件就要改一批断言。
+const sessionDomainSrc = [sessionSrc, ...fs
+  .readdirSync(path.resolve(import.meta.dirname, "../src/services"))
+  .filter((n) => n.startsWith("session") && n.endsWith(".ts") && n !== "session.ts")
+  .map((n) => fs.readFileSync(path.resolve(import.meta.dirname, "../src/services", n), "utf8"))
+].join("\n");
 const viewerSrc = fs.readFileSync(sessionViewerPath, "utf8");
 // 剥掉注释后的代码视图：注释里提到某个坏写法是正常的（那通常正是在解释它为什么被删）。
 const stripComments = (src) => src.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
@@ -69,12 +77,7 @@ function loadSessionModule() {
     document: undefined,
     fetch: async () => ({}),
   };
-  const originalRequire = sandbox.require;
-  sandbox.require = (name) => {
-    if (name === "./sessionTerminalLayout") return loadSourceModule("services/sessionTerminalLayout.ts", sandbox);
-    if (name === "./sessionIndexedDb") return loadSourceModule("services/sessionIndexedDb.ts", sandbox);
-    return originalRequire(name);
-  };
+  withSourceFallback(sandbox);
   vm.runInNewContext(compiled, sandbox, { filename: sessionServicePath });
   // transpile 成 CommonJS 后是 `exports.foo = ...`，所以要 sandbox.exports
   // —— 让它和 module.exports 指向同一对象，否则读 module.exports 什么都拿不到。
@@ -94,8 +97,8 @@ assert.match(sessionSrc, /export type SessionWindowMeta/, "SessionWindowMeta typ
 assert.match(sessionSrc, /export type SessionWindowOptions/, "SessionWindowOptions type missing");
 assert.match(sessionSrc, /async getSessionWindow\(/, "getSessionWindow method missing");
 assert.match(sessionSrc, /async getSessionIncrement\(/, "getSessionIncrement alias missing");
-assert.match(sessionSrc, /export function getSessionMinSeq/, "getSessionMinSeq missing");
-assert.match(sessionSrc, /export function getSessionMaxSeq/, "getSessionMaxSeq missing (should be exported)");
+assert.match(sessionDomainSrc, /export function getSessionMinSeq/, "getSessionMinSeq missing");
+assert.match(sessionDomainSrc, /export function getSessionMaxSeq/, "getSessionMaxSeq missing (should be exported)");
 assert.match(sessionSrc, /const windowedViewKeys = new Set<string>\(\);/, "windowedViewKeys Set missing");
 assert.match(sessionSrc, /export function isWindowedView\(/, "isWindowedView missing");
 assert.match(sessionSrc, /export function setWindowedView\(/, "setWindowedView missing");
@@ -417,7 +420,7 @@ assert.match(
   "exchange_aux must merge per-seq too, or restored history loses its tool cards",
 );
 assert.match(
-  sessionSrc,
+  sessionDomainSrc,
   /exchanges: mergeSessionExchanges\(baseExchanges, incomingExchanges\),/,
   "appendSessionDelta must use the seq-deduping merge, not concatenation",
 );
