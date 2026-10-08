@@ -31,6 +31,7 @@ import { useFileTreeEffects } from "./useFileTreeEffects";
 import { useAgentConfigSwitchRequest } from "./useAgentConfigSwitchRequest";
 import { fontSizeAdjustButtonStyle } from "./fileTreeMenuStyles";
 import { FileTreeFontSizeMenu } from "./FileTreeFontSizeMenu";
+import { FileTreeLocaleOptions } from "./FileTreeLocaleOptions";
 import { FileTreeProjectTabs } from "./FileTreeProjectTabs";
 import { getNodes } from "../../services/net/nodeRegistry";
 import { NodeManagerPanel } from "../account/NodeManagerPanel";
@@ -883,39 +884,7 @@ function FileTreeInner({
                   </span>
                   <ChevronRight isOpen={isLocaleMenuOpen} />
                 </button>
-                {isLocaleMenuOpen ? LOCALE_OPTIONS.map((option) => {
-                  const active = option.value === locale;
-                  return (
-                    <button
-                      key={option.value}
-                      type="button"
-                      onClick={() => {
-                        setLocale(option.value);
-                        setIsMenuOpen(false);
-                        setIsAppearanceMenuOpen(false);
-                        setIsLocaleMenuOpen(false);
-                        setIsSortMenuOpen(false);
-                      }}
-                      style={{
-                        width: "100%",
-                        border: "none",
-                        background: active ? "var(--selection-bg)" : "transparent",
-                        color: active ? "var(--accent-color)" : "var(--text-primary)",
-                        borderRadius: "8px",
-                        padding: "8px 10px",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        textAlign: "left",
-                        cursor: "pointer",
-                        fontSize: "12px",
-                      }}
-                    >
-                      <span>{t(option.labelKey)}</span>
-                      <span style={{ fontSize: "11px", opacity: active ? 1 : 0 }}>✓</span>
-                    </button>
-                  );
-                }) : null}
+                <FileTreeLocaleOptions open={isLocaleMenuOpen} options={LOCALE_OPTIONS} locale={locale} setLocale={setLocale} closeMenus={() => { setIsMenuOpen(false); setIsAppearanceMenuOpen(false); setIsLocaleMenuOpen(false); setIsSortMenuOpen(false); }} t={t} />
                 <div style={{ height: "1px", background: "var(--border-color)", margin: "6px 4px" }} />
                 <button
                   type="button"
