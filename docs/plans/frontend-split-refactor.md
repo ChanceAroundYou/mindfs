@@ -168,10 +168,21 @@ web/src/
 - **待办**：按渲染单元拆子组件（消息行 / 工具卡组 / 输入区 / 用量面板）。
 - **注意**：合并 main 时此文件有上游改动（`c04deeb` 的 pending 对账），拆之前先确认。
 
-### 4.4 SessionList.tsx —— 2204 行
+### 4.4 SessionList.tsx —— 476 行 ✅
 
-- **现状**：列表项、分组、归档、搜索混在一个文件。
-- **待办**：拆出 `SessionListItem` / `SessionGroupHeader` / 归档区。
+- **现状**：只留单项目 `SessionList` 本体 + 公共 API 再导出。
+- **已抽（本次）**：
+  | 新文件 | 行数 | 内容 |
+  |---|---|---|
+  | `components/session/sessionListTypes.ts` | 110 | `SessionType` / `SessionItem` / `SessionListProps` / `ProjectSessionGroup` / `ProjectSessionListProps` / `VisibleSessionRow` / `ForkSessionSource` |
+  | `components/session/sessionListShared.tsx` | 230 | 4 个常量 + `ToggleRowButton` / `PinIcon` / `ArchiveIcon` / `ArchiveHeaderButton` / `shellBadgeLabel` / `parseForkSessionSource` / `forkSessionDisplayName` / `isSessionSyncing` |
+  | `components/session/SessionCard.tsx` | 858 | `SessionCard` + `formatTime` / `renderHighlightedText` / `iconButtonStyle` / `ChevronLeftIcon` / `SubSessionIcon` / `SessionCardMemo` / 2 个样式 |
+  | `components/session/MultiProjectSessionList.tsx` | 559 | 多项目列表 |
+- **依赖方向**：`types` ← `shared` ← `SessionCard` ← `MultiProjectSessionList` ← `SessionList`（单向，无环）。
+  `SessionList.tsx` 用 `export type { … } from "./sessionListTypes"` + `export { MultiProjectSessionList } from …`
+  保住对外导出面（`App.tsx` / `useSessionSidebarView.tsx` / `ArchivedSessionsPanel.tsx` / `ExternalSessionList.tsx` 不用改）。
+- **测试配套**：`fork-session-name.test.mjs` 从拼接源码里抠出 `forkSessionDisplayName` 丢进 vm 执行，
+  该函数现在带 `export` → 测试改为剥掉 `export ` 前缀再编译（断言语义不变）。
 - **注意**：合并 main 时此文件有上游改动（`+11/−26`）。
 
 ### 4.5 session.ts —— 2659 行（**被测试锁住，需先解锁**）

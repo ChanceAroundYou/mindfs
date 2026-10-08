@@ -1,0 +1,858 @@
+import React, { memo, useEffect, useRef, useState } from "react";
+import { AgentIcon } from "../agent/AgentIcon";
+import { ModeIcon } from "../agent/ModeIcon";
+import { getNodes } from "../../services/net/nodeRegistry";
+import { hexToRgbaApp } from "../../app/taskIcons";
+import { resolveGroupColor } from "../../services/sessionGroupDisplay";
+import { useI18n, type Locale } from "../../i18n/index";
+import {
+  ArchiveIcon,
+  PinIcon,
+  forkSessionDisplayName,
+  parseForkSessionSource,
+  shellBadgeLabel,
+} from "./sessionListShared";
+import type { SessionItem } from "./sessionListTypes";
+
+function SessionCard({
+  session,
+  sessionByKey,
+  selected,
+  nodeColor,
+  parentHighlighted,
+  highlightQuery,
+  syncing = false,
+  onSelect,
+  onSync,
+  onPin,
+  onRename,
+  onDelete,
+  onArchive,
+}: {
+  session: SessionItem;
+  sessionByKey: Map<string, SessionItem>;
+  selected: boolean;
+  nodeColor?: string;
+  parentHighlighted?: boolean;
+  highlightQuery?: string;
+  syncing?: boolean;
+  onSelect?: (session: SessionItem) => void;
+  onSync?: (session: SessionItem) => Promise<void> | void;
+  onPin?: (session: SessionItem, pinned: boolean) => Promise<boolean> | boolean;
+  onRename?: (session: SessionItem, nextName: string) => Promise<boolean> | boolean;
+  onDelete?: (session: SessionItem) => void;
+  onArchive?: (session: SessionItem, archived: boolean) => Promise<boolean> | boolean;
+}) {
+  const { locale, t } = useI18n();
+  const isClosed = !!session.closed_at;
+  const isPinned = !!session.pinned_at;
+  const isArchived = !!session.archived_at;
+  const isSubagent = !!session.parent_session_key && !parseForkSessionSource(session.source);
+  const forkSource = parseForkSessionSource(session.source);
+  const isForkSession = !!forkSource;
+  const storedName = session.name || `Session ${session.key.slice(0, 8)}`;
+  const displayName = isForkSession
+    ? forkSessionDisplayName(session.name || "", forkSource, sessionByKey, session.root_id)
+    : storedName;
+  const snippet = (session.search_snippet || "").trim();
+  const isSearchResult = !!session.search_match_type;
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draftName, setDraftName] = useState(storedName);
+  const [saving, setSaving] = useState(false);
+  const effectiveNodeColor = String(
+    nodeColor ||
+    (session as any)?._nodeColor ||
+    resolveGroupColor(
+      { rootId: String((session as any)?.root_id || ""), _nodeId: String((session as any)?._nodeId || "") },
+      {},
+      getNodes() as any,
+    ) ||
+    "",
+  ).trim();
+  const rowBackground = selected
+    ? "var(--node-row-selected-bg)"
+    : parentHighlighted
+      ? "rgba(0,0,0,0.03)"
+      : "transparent";
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const composingRef = useRef(false);
+  const submittingRef = useRef(false);
+
+  useEffect(() => {
+    if (!editing) {
+      setDraftName(storedName);
+    }
+  }, [storedName, editing]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [menuOpen]);
+
+  useEffect(() => {
+    if (!editing) return;
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, [editing]);
+
+  useEffect(() => {
+    if (!editing) return;
+    const input = inputRef.current;
+    if (!input) return;
+    const atEnd = input.selectionStart === input.value.length;
+    if (atEnd) {
+      input.scrollLeft = input.scrollWidth;
+    }
+  }, [draftName, editing]);
+
+  const cancelEditing = () => {
+    setEditing(false);
+    setSaving(false);
+    setDraftName(storedName);
+  };
+
+  const submitRename = async () => {
+    if (submittingRef.current) return;
+    const trimmed = draftName.trim();
+    if (!trimmed) {
+      cancelEditing();
+      return;
+    }
+    if (trimmed === storedName.trim()) {
+      cancelEditing();
+      return;
+    }
+    if (!onRename) {
+      cancelEditing();
+      return;
+    }
+    submittingRef.current = true;
+    setSaving(true);
+    try {
+      const ok = await onRename(session, trimmed);
+      if (ok === false) {
+        inputRef.current?.focus();
+        inputRef.current?.select();
+        return;
+      }
+      setEditing(false);
+    } finally {
+      submittingRef.current = false;
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div
+      style={{
+        width: "100%",
+        display: "flex",
+        alignItems: "center",
+        gap: 0,
+        padding: "2px 0",
+        borderRadius: "8px",
+        position: "relative",
+        paddingLeft: isSubagent ? "10px" : 0,
+      }}
+    >
+      <div
+        style={{
+          textAlign: "left" as const,
+          padding: editing ? "7px 0 7px 2px" : "7px 4px 7px 2px",
+          borderRadius: "8px",
+          border: "1px solid transparent",
+          background: rowBackground,
+          flex: 1,
+          minWidth: 0,
+          display: "flex",
+          alignItems: "center",
+          gap: isSubagent ? "3px" : "6px",
+          transition: "all 0.15s ease",
+        }}
+      >
+        {!isSearchResult ? (
+          <span
+            style={{
+              position: "relative",
+              width: "18px",
+              height: "18px",
+              flexShrink: 0,
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            {isSubagent ? <SubSessionIcon color={effectiveNodeColor ? `color-mix(in srgb, ${effectiveNodeColor} 78%, var(--text-secondary))` : undefined} /> : <ModeIcon type={session.task_id ? "task" : session.type || "chat"} size={16} color={effectiveNodeColor || undefined} />}
+            {!isSubagent && session.type === "command" ? (
+              <span
+                title={session.shell || "shell"}
+                style={{
+                  position: "absolute",
+                  right: "-8px",
+                  bottom: "-4px",
+                  minWidth: 0,
+                  maxWidth: "26px",
+                  height: "auto",
+                  padding: "1px 3px",
+                  borderRadius: "5px",
+                  background: "#1d4ed8",
+                  border: "none",
+                  color: "#fff",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                  fontSize: "7px",
+                  fontWeight: 700,
+                  lineHeight: 1.1,
+                  letterSpacing: 0,
+                }}
+              >
+                {shellBadgeLabel(session.shell)}
+              </span>
+            ) : !isSubagent ? (
+              <span
+                style={{
+                  position: "absolute",
+                  right: "-2px",
+                  bottom: "-2px",
+                  width: "10px",
+                  height: "10px",
+                  borderRadius: "999px",
+                  background: "var(--content-bg, #fff)",
+                  border: "1px solid rgba(255,255,255,0.9)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  overflow: "hidden",
+                }}
+              >
+                <AgentIcon
+                  agentName={session.agent || ""}
+                  style={{ width: "10px", height: "10px", display: "block" }}
+                />
+              </span>
+            ) : null}
+          </span>
+        ) : null}
+
+        {editing ? (
+          <input
+            ref={inputRef}
+            value={draftName}
+            disabled={saving}
+            onChange={(e) => {
+              setDraftName(e.target.value);
+              e.currentTarget.scrollLeft = e.currentTarget.scrollWidth;
+            }}
+            onClick={(e) => e.stopPropagation()}
+            onCompositionStart={() => {
+              composingRef.current = true;
+            }}
+            onCompositionEnd={() => {
+              composingRef.current = false;
+            }}
+            onKeyDown={(e) => {
+              e.stopPropagation();
+              if (e.key === "Escape") {
+                e.preventDefault();
+                cancelEditing();
+                return;
+              }
+              if (e.key !== "Enter") {
+                return;
+              }
+              const nativeEvent = e.nativeEvent as KeyboardEvent;
+              const isComposing =
+                composingRef.current ||
+                nativeEvent.isComposing ||
+                nativeEvent.keyCode === 229;
+              if (isComposing) {
+                return;
+              }
+              e.preventDefault();
+              void submitRename();
+            }}
+            style={{
+              minWidth: 0,
+              flex: 1,
+              height: "28px",
+              borderRadius: "6px",
+              border: "1px solid var(--accent-color)",
+              background: "var(--content-bg, #fff)",
+              color: "var(--text-primary)",
+              fontSize: "13px",
+              fontWeight: 600,
+              padding: "0 10px 0 8px",
+              outline: "none",
+              boxSizing: "border-box",
+            }}
+          />
+        ) : (
+          <button
+            type="button"
+            onClick={() => onSelect?.(session)}
+            style={{
+              minWidth: 0,
+              flex: 1,
+              border: "none",
+              background: "transparent",
+              padding: 0,
+              cursor: "pointer",
+              textAlign: "left",
+              color: selected ? (effectiveNodeColor || "var(--accent-color)") : "var(--text-primary)",
+            }}
+            onMouseEnter={(e) => {
+              const container = e.currentTarget.parentElement;
+              if (container && !selected && !parentHighlighted) {
+                container.style.background = "rgba(0,0,0,0.03)";
+              }
+            }}
+            onMouseLeave={(e) => {
+              const container = e.currentTarget.parentElement;
+              if (container && !selected && !parentHighlighted) {
+                container.style.background = "transparent";
+              }
+            }}
+          >
+            <span
+              style={{
+                display: "block",
+                fontSize: "13px",
+                fontWeight: selected ? 600 : 500,
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+              }}
+            >
+              {renderHighlightedText(displayName, highlightQuery, {
+                color: selected ? (effectiveNodeColor || "var(--accent-color)") : "var(--text-primary)",
+              })}
+            </span>
+            {snippet ? (
+              <span
+                style={{
+                  marginTop: "2px",
+                  display: "block",
+                  fontSize: "11px",
+                  lineHeight: 1.45,
+                  color: "var(--text-secondary)",
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                }}
+              >
+                {renderHighlightedText(snippet, highlightQuery, {
+                  color: "var(--text-secondary)",
+                })}
+              </span>
+            ) : null}
+          </button>
+        )}
+
+        {editing ? (
+          <div
+            style={{
+              flexShrink: 0,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 0,
+            }}
+          >
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={(e) => {
+                e.stopPropagation();
+                void submitRename();
+              }}
+              disabled={saving}
+              aria-label={t("sessionList.confirmRename")}
+              style={{
+                ...inlineActionStyle,
+                width: "18px",
+                color: "var(--accent-color)",
+                opacity: saving ? 0.6 : 1,
+                cursor: saving ? "default" : "pointer",
+              }}
+            >
+              <svg
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={(e) => {
+                e.stopPropagation();
+                cancelEditing();
+              }}
+              disabled={saving}
+              aria-label={t("sessionList.cancelRename")}
+              style={{
+                ...inlineActionStyle,
+                width: "18px",
+                opacity: saving ? 0.6 : 1,
+                cursor: saving ? "default" : "pointer",
+              }}
+            >
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          </div>
+        ) : null}
+
+      </div>
+
+      {!editing ? (
+        <div
+          style={{
+            flexShrink: 0,
+            minWidth: "24px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "flex-end",
+            paddingLeft: "2px",
+          }}
+        >
+          {syncing ? (
+            <span
+              aria-label={t("sessionList.syncing")}
+              title={t("sessionList.syncing")}
+              style={{
+                width: "12px",
+                height: "12px",
+                borderRadius: "50%",
+                border: "1.5px solid rgba(100,116,139,0.35)",
+                borderTopColor: "var(--accent-color)",
+                display: "inline-block",
+                flexShrink: 0,
+                animation: "spin 0.8s linear infinite",
+              }}
+            />
+          ) : session.pending ? (
+            <span
+              aria-label={t("sessionList.replying")}
+              title={t("sessionList.replying")}
+              style={{
+                width: "8px",
+                height: "8px",
+                borderRadius: "999px",
+                flexShrink: 0,
+                boxSizing: "border-box",
+                border: `1.5px solid ${effectiveNodeColor || "var(--accent-color)"}`,
+                background: effectiveNodeColor || "var(--accent-color)",
+                animation: "mindfs-bound-pulse 2.2s ease-in-out infinite",
+                boxShadow: `0 0 0 1.5px ${hexToRgbaApp(effectiveNodeColor || "var(--accent-color)", 0.14)}`,
+              }}
+            />
+          ) : (
+            <span
+              style={{
+                fontSize: "10px",
+                color: "var(--text-secondary)",
+                opacity: 0.8,
+                whiteSpace: "nowrap",
+                textAlign: "right",
+              }}
+            >
+              {formatTime(
+                isClosed && session.closed_at
+                  ? session.closed_at
+                  : session.updated_at || "",
+                locale,
+                t("time.justNow"),
+              )}
+            </span>
+          )}
+        </div>
+      ) : null}
+
+      <div
+        ref={menuRef}
+        style={{ position: "relative", flexShrink: 0, marginLeft: "2px" }}
+      >
+        <button
+          type="button"
+          aria-label={t("sessionList.menu")}
+          onClick={(e) => {
+            e.stopPropagation();
+            setMenuOpen((open) => !open);
+          }}
+          style={{
+            width: "28px",
+            height: "28px",
+            borderRadius: "8px",
+            border: "none",
+            background: menuOpen ? "rgba(0, 0, 0, 0.06)" : "transparent",
+            color: "var(--text-secondary)",
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            cursor: "pointer",
+            outline: "none",
+            position: "relative",
+          }}
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="currentColor"
+            aria-hidden="true"
+          >
+            <circle cx="12" cy="5" r="1.8" />
+            <circle cx="12" cy="12" r="1.8" />
+            <circle cx="12" cy="19" r="1.8" />
+          </svg>
+          {isPinned ? (
+            <span
+              aria-hidden="true"
+              style={{
+                position: "absolute",
+                top: "1px",
+                right: "1px",
+                width: "12px",
+                height: "12px",
+                borderRadius: "999px",
+                background: "var(--menu-bg)",
+                color: selected ? "var(--accent-color)" : "var(--text-secondary)",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                pointerEvents: "none",
+                boxShadow: "0 0 0 1px var(--content-bg, #fff)",
+              }}
+            >
+              <span style={{ width: "9px", height: "9px", display: "inline-flex" }}>
+                <PinIcon pinned />
+              </span>
+            </span>
+          ) : null}
+        </button>
+        {menuOpen ? (
+          <div
+            style={{
+              position: "absolute",
+              top: "calc(100% + 6px)",
+              right: 0,
+              minWidth: "120px",
+              padding: "6px",
+              borderRadius: "10px",
+              border: "1px solid var(--border-color)",
+              background: "var(--menu-bg)",
+              boxShadow: "0 12px 30px rgba(15, 23, 42, 0.14)",
+              zIndex: 20,
+            }}
+          >
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setMenuOpen(false);
+                void onPin?.(session, !isPinned);
+              }}
+              style={{
+                ...menuItemStyle,
+                color: "var(--text-primary)",
+              }}
+            >
+              <span style={{ width: "13px", height: "13px", display: "inline-flex" }}>
+                <PinIcon pinned={isPinned} />
+              </span>
+              {isPinned ? t("sessionList.unpin") : t("sessionList.pin")}
+            </button>
+            <button
+              type="button"
+              disabled={syncing}
+              onClick={(e) => {
+                e.stopPropagation();
+                setMenuOpen(false);
+                void onSync?.(session);
+              }}
+              style={{
+                ...menuItemStyle,
+                color: "var(--text-primary)",
+                opacity: syncing ? 0.55 : 1,
+                cursor: syncing ? "default" : "pointer",
+              }}
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+              >
+                <path
+                  fill="currentColor"
+                  d="M19.91 15.51h-4.53a1 1 0 0 0 0 2h2.4A8 8 0 0 1 4 12a1 1 0 0 0-2 0a10 10 0 0 0 16.88 7.23V21a1 1 0 0 0 2 0v-4.5a1 1 0 0 0-.97-.99M12 2a10 10 0 0 0-6.88 2.77V3a1 1 0 0 0-2 0v4.5a1 1 0 0 0 1 1h4.5a1 1 0 0 0 0-2h-2.4A8 8 0 0 1 20 12a1 1 0 0 0 2 0A10 10 0 0 0 12 2"
+                />
+              </svg>
+              {t("sessionList.sync")}
+            </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setMenuOpen(false);
+                setDraftName(storedName);
+                setEditing(true);
+              }}
+              style={{
+                ...menuItemStyle,
+                color: "var(--text-primary)",
+              }}
+            >
+              <svg
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M12 20h9" />
+                <path d="M16.5 3.5a2.12 2.12 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
+              </svg>
+              {t("sessionList.rename")}
+            </button>
+            {onArchive ? (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setMenuOpen(false);
+                  void onArchive(session, !isArchived);
+                }}
+                style={{
+                  ...menuItemStyle,
+                  color: "var(--text-primary)",
+                }}
+              >
+                <span style={{ width: "13px", height: "13px", display: "inline-flex" }}>
+                  <ArchiveIcon />
+                </span>
+                {isArchived ? t("sessionList.unarchive") : t("sessionList.archive")}
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setMenuOpen(false);
+                onDelete?.(session);
+              }}
+              style={{
+                ...menuItemStyle,
+                color: "#dc2626",
+              }}
+            >
+              <svg
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <polyline points="3 6 5 6 21 6" />
+                <path d="M19 6l-1 14H6L5 6" />
+                <path d="M10 11v6" />
+                <path d="M14 11v6" />
+                <path d="M9 6V4h6v2" />
+              </svg>
+              {t("common.delete")}
+            </button>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+export function formatTime(isoString: string, locale: Locale, justNow: string): string {
+  const date = new Date(isoString);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+  const now = new Date();
+  const diff = now.getTime() - date.getTime();
+  if (diff < 60000) return justNow;
+  if (diff < 3600000) return `${Math.floor(diff / 60000)}m`;
+  if (diff < 86400000) return `${Math.floor(diff / 3600000)}h`;
+  if (now.getFullYear() === date.getFullYear()) {
+    return new Intl.DateTimeFormat(locale, { month: "numeric", day: "numeric" }).format(date);
+  }
+  return new Intl.DateTimeFormat(locale, { year: "2-digit", month: "numeric" }).format(date);
+}
+
+export function renderHighlightedText(
+  text: string,
+  query?: string,
+  palette?: { color?: string },
+): React.ReactNode {
+  const source = String(text || "");
+  const needle = String(query || "").trim();
+  if (!source || !needle) {
+    return source;
+  }
+  const lowerSource = source.toLowerCase();
+  const lowerNeedle = needle.toLowerCase();
+  const parts: React.ReactNode[] = [];
+  let cursor = 0;
+
+  for (;;) {
+    const index = lowerSource.indexOf(lowerNeedle, cursor);
+    if (index < 0) {
+      break;
+    }
+    if (index > cursor) {
+      parts.push(source.slice(cursor, index));
+    }
+    const match = source.slice(index, index + needle.length);
+    parts.push(
+      <mark
+        key={`${index}:${match}`}
+        style={{
+          background: "transparent",
+          color: "var(--accent-color)",
+          padding: 0,
+        }}
+      >
+        {match}
+      </mark>,
+    );
+    cursor = index + needle.length;
+  }
+
+  if (cursor < source.length) {
+    parts.push(source.slice(cursor));
+  }
+  return parts.length ? parts : source;
+}
+
+export function iconButtonStyle(withGap: boolean): React.CSSProperties {
+  return {
+    border: "none",
+    background: "transparent",
+    color: "var(--text-secondary)",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: withGap ? "2px" : 0,
+    height: "28px",
+    minWidth: "28px",
+    borderRadius: "8px",
+    cursor: "pointer",
+    padding: withGap ? "0 6px" : 0,
+  };
+}
+
+export function ChevronLeftIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="m15 18-6-6 6-6" />
+    </svg>
+  );
+}
+
+export function SubSessionIcon({ color }: { color?: string }) {
+  const c = String(color || "").trim() || "var(--accent-color)";
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="18"
+      height="18"
+      viewBox="0 0 32 32"
+      aria-hidden="true"
+      style={{ color: c, display: "block" }}
+    >
+      <path d="M0 0h32v32H0z" fill="none" />
+      <path
+        fill="currentColor"
+        d="M23 20c-2.41 0-4.43 1.72-4.9 4H14c-2.21 0-4-1.79-4-4v-8.1A5 5 0 1 0 4 7c0 2.41 1.72 4.43 4 4.9V20c0 3.31 2.69 6 6 6h4.1a5 5 0 1 0 4.9-6M6 7c0-1.65 1.35-3 3-3s3 1.35 3 3s-1.35 3-3 3s-3-1.35-3-3"
+      />
+    </svg>
+  );
+}
+
+// memo 化 SessionCard：父组件（SessionList / MultiProjectSessionList）重渲染时，
+// 若 props 引用未变则跳过整卡重渲染（含 useI18n / 多个 useEffect）。
+export const SessionCardMemo = memo(SessionCard);
+
+const menuItemStyle: React.CSSProperties = {
+  width: "100%",
+  border: "none",
+  background: "transparent",
+  borderRadius: "8px",
+  padding: "8px 10px",
+  display: "flex",
+  alignItems: "center",
+  gap: "8px",
+  textAlign: "left",
+  cursor: "pointer",
+  fontSize: "12px",
+  fontWeight: 500,
+};
+
+const inlineActionStyle: React.CSSProperties = {
+  width: "24px",
+  height: "24px",
+  border: "none",
+  borderRadius: "6px",
+  background: "transparent",
+  color: "var(--text-secondary)",
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  padding: 0,
+};

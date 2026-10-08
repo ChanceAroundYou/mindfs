@@ -9,7 +9,9 @@ const declaration = ast.statements.find(
   (node) => ts.isFunctionDeclaration(node) && node.name?.text === "forkSessionDisplayName",
 );
 assert.ok(declaration);
-const compiled = ts.transpileModule(declaration.getText(ast), {
+// 拆分后这个纯函数被搬到 sessionListShared.tsx 并加了 `export`（SessionCard 也要用）。
+// 这里只关心函数体，所以剥掉导出修饰符再丢进 vm —— 否则 vm 会因裸 `export` 报语法错。
+const compiled = ts.transpileModule(declaration.getText(ast).replace(/^export\s+/, ""), {
   compilerOptions: { target: ts.ScriptTarget.ES2020 },
 }).outputText;
 const sandbox = {};
