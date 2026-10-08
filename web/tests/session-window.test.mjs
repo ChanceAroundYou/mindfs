@@ -95,11 +95,11 @@ assert.match(sessionSrc, /async getSessionWindow\(/, "getSessionWindow method mi
 assert.match(sessionSrc, /async getSessionIncrement\(/, "getSessionIncrement alias missing");
 assert.match(sessionDomainSrc, /export function getSessionMinSeq/, "getSessionMinSeq missing");
 assert.match(sessionDomainSrc, /export function getSessionMaxSeq/, "getSessionMaxSeq missing (should be exported)");
-assert.match(sessionSrc, /const windowedViewKeys = new Set<string>\(\);/, "windowedViewKeys Set missing");
-assert.match(sessionSrc, /export function isWindowedView\(/, "isWindowedView missing");
-assert.match(sessionSrc, /export function setWindowedView\(/, "setWindowedView missing");
-assert.match(sessionSrc, /export function clearWindowedView\(/, "clearWindowedView missing");
-assert.match(sessionSrc, /isWindowedView\(sessionKey\) \|\| !!options\?\.windowedView/, "syncSession windowed check missing");
+assert.match(sessionDomainSrc, /const windowedViewKeys = new Set<string>\(\);/, "windowedViewKeys Set missing");
+assert.match(sessionDomainSrc, /export function isWindowedView\(/, "isWindowedView missing");
+assert.match(sessionDomainSrc, /export function setWindowedView\(/, "setWindowedView missing");
+assert.match(sessionDomainSrc, /export function clearWindowedView\(/, "clearWindowedView missing");
+assert.match(sessionDomainSrc, /isWindowedView\(sessionKey\) \|\| !!options\?\.windowedView/, "syncSession windowed check missing");
 // 2026-10-06 反转：`forceNoTruncate`（写侧把标记置 false）已删除，代之以**标记必须诚实**。
 // 旧写法的危害路径：窗口态是**内存**标记，页面一刷新就没了，而那条被标成「完整」的 IDB
 // 记录还在盘上 ⇒ 下次全量路径只做增量同步 ⇒ 被砍掉的历史永远不补（静默丢历史）。

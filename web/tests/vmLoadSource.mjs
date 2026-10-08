@@ -13,13 +13,13 @@ const SRC_ROOT = path.resolve(import.meta.dirname, "../src");
  * 列表（都是相对 src/ 的），命中即加载；嵌套目录（net/、prefs/…）由
  * loadSourceModule 按**导入方所在目录**继续往下找。
  */
-export function resolveRelativeSource(name, sandbox, searchDirs = [""]) {
+export function resolveRelativeSource(name, sandbox, searchDirs = [""], cache = new Map()) {
   const rel = name.replace(/^\.\//, "");
   for (const dir of searchDirs) {
     for (const ext of ["", ".ts", ".tsx", ".js"]) {
       const candidate = path.resolve(SRC_ROOT, dir, rel + ext);
       if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
-        return loadSourceModule(path.relative(SRC_ROOT, candidate), sandbox);
+        return loadSourceModule(path.relative(SRC_ROOT, candidate), sandbox, cache);
       }
     }
   }
@@ -33,12 +33,13 @@ export function resolveRelativeSource(name, sandbox, searchDirs = [""]) {
  */
 export function withSourceFallback(sandbox, searchDirs = [""]) {
   const stub = sandbox.require;
+  const cache = new Map();
   sandbox.require = (name) => {
     try {
       return stub(name);
     } catch (error) {
       if (!name.startsWith(".")) throw error;
-      return resolveRelativeSource(name, sandbox, searchDirs);
+      return resolveRelativeSource(name, sandbox, searchDirs, cache);
     }
   };
   return sandbox;
@@ -68,7 +69,7 @@ export function loadSourceModule(relativeSourcePath, parentSandbox, cache = new 
     module,
     require: (name) => {
       try { return parentSandbox.require(name); } catch {}
-      return resolveRelativeSource(name, parentSandbox, searchDirs);
+      return resolveRelativeSource(name, parentSandbox, searchDirs, cache);
     },
   };
   vm.runInNewContext(compiled, sandbox, { filename: file });

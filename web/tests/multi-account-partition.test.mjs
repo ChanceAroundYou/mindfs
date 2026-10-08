@@ -133,7 +133,8 @@ assert.ok(
 //     再补发账户作用域请求」，若缓存键不含账户，切到新账户时会先把上一账户的全量会话画出来，
 //     而后到的空结果只是 merge 进 prev、并不清空它（实测：项目列表已空、会话列表仍是全部）。
 //     同一个坑对单项目列表缓存同样成立。
-const sessionSrc = read("src/services/session.ts");
+// 缓存键的实现住在 sessionIndexedDb.ts（2026-10-07 从 session.ts 抽出）。
+const sessionSrc = read("src/services/sessionIndexedDb.ts");
 assert.ok(
   /function multiRootSessionListCacheKey\(\)[\s\S]{0,400}currentUser\(\)\?\.username/.test(sessionSrc),
   "多项目会话缓存键必须带账户——常量键会让新账户看到旧账户的全部会话",
