@@ -111,6 +111,7 @@ export const MODULES = {
     "src/components/file/FileTreeProjectContent.tsx",
     "src/components/file/FileTreeIdleReleasePopover.tsx",
     "src/components/file/FileTreeSendShortcutPopover.tsx",
+    "src/components/file/FileTreeSessionNamingPopover.tsx",
     "src/components/file/fileTreeAgentConfigUtils.ts",
   ],
 
