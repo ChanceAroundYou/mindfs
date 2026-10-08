@@ -192,7 +192,7 @@ import {
 import { APP_DOCUMENT_TITLE, AppProps, CHILD_SESSION_PAGE_SIZE, MULTI_PROJECT_SESSION_LIMIT, ManagedRootPayload, SESSION_PAGE_SIZE } from "./app/appMisc";
 import { MainViewMode, URLState } from "./app/appPath";
 import { closeTopBackLayer, consumeViewHistoryEntry, hasBackLayer, installBackNavigation, pushViewHistoryEntry, useBackLayer } from "./app/useBackNavigation";
-import { AttachedFileContext, Exchange, GitFileStat, MultiProjectSessionGroup, PendingSend, RelatedFileClickTarget, SessionItem, SessionMode, SessionQueueItem, SlashCommandResult, ViewerSelection, WSStatus } from "./app/appSession";
+import { AttachedFileContext, Exchange, GitFileStat, MultiProjectSessionGroup, PendingSend, SessionItem, SessionMode, SessionQueueItem, SlashCommandResult, ViewerSelection, WSStatus } from "./app/appSession";
 import { CANDIDATE_FETCH_DEBOUNCE_MS, DIRECTORY_SORT_OVERRIDES_STORAGE_KEY, GIT_DIFF_SIDE_BY_SIDE_STORAGE_KEY, GIT_HISTORY_EXPANDED_STORAGE_KEY, GIT_STATUS_EXPANDED_STORAGE_KEY, LAST_ROOT_NODE_STORAGE_KEY, LAST_ROOT_STORAGE_KEY, loadWorkspaceCollapsed, loadWorkspaceFilter, MOBILE_ENTER_KEY_SEND_STORAGE_KEY, PLUGIN_QUERY_STORAGE_PREFIX, saveWorkspaceCollapsed, saveWorkspaceFilter, SIDEBARS_SWAPPED_STORAGE_KEY, TASK_TEMPLATE_ALL_FILTER, TASK_TEMPLATE_SELECTION_STORAGE_KEY, TREE_SORT_STORAGE_KEY, type WorkspaceBoardFilter } from "./app/appStorage";
 import { TaskInlineEditState } from "./app/appTask";
 import { buildMatchInputFromPath, buildMessageWithViewContext, hasExplicitFileContext, indexManagedRoots, inferReadModeFromPlugin, managedDirAddErrorMessage, mapManagedRootsToEntries, normalizeUpdateState, shouldShowUpdateButton, toPluginInput, updateButtonLabel, updateSummaryText, useResponsive, waitForNextPaint } from "./app/appMisc";
@@ -248,6 +248,7 @@ import { useReplyingSessionPoll } from "./app/useReplyingSessionPoll";
 import { useSessionPending } from "./app/useSessionPending";
 import { useSessionMetadata } from "./app/useSessionMetadata";
 import { useSessionListActions } from "./app/useSessionListActions";
+import { useSessionRelatedFiles } from "./app/useSessionRelatedFiles";
 
 
 export function App({ onGoHome }: AppProps) {
@@ -3515,133 +3516,36 @@ export function App({ onGoHome }: AppProps) {
 
   useSessionRestore({boundSessionByRootRef, bumpCacheVersion, clearSessionStale, currentRootId, currentRootIdRef, hasSessionExchanges, isSessionStale, loadRootID, loadSessionKey, loadSnapshotHasExchanges, loadedSessionRef, loadingSessionRef, resolvePendingForSession, restoreActiveSession, rootSessionKey, scopedRootKey, selectedSessionLoading, sessionCacheRef, sessionLoadFailureRef, setDrawerSessionForRoot, setSelectedSession, toSessionItem, useEffect});
 
-  const handleSelectedSessionFileClick = useCallback(
-    (target: string | RelatedFileClickTarget) => {
-      setProjectTreeTabRequest((prev) => ({
-        tab: "related",
-        nonce: (prev?.nonce || 0) + 1,
-      }));
-      const root =
-        (selectedSessionRef.current?.root_id as string | undefined) ||
-        currentRootIdRef.current;
-      if (!root) return;
-      setExpanded((prev) =>
-        Array.from(new Set([...prev, scopeKey(getNodeIdForRoot(root) ?? "", root)])),
-      );
-      const file =
-        typeof target === "string" ? { path: target } : target;
-      void openRelatedFileDiff(root, file);
-    },
-    [openRelatedFileDiff],
-  );
-
-  const drawerSessionSnapshot = useMemo(
-    () =>
-      currentSession ? getSessionSnapshot(currentRootId, currentSession) : null,
-    [currentSession, currentRootId, getSessionSnapshot],
-  );
-
-  const rootSessionIndicators = useMemo(() => {
-    const next: Record<string, { bound?: boolean; pending?: boolean }> = {};
-    for (const [scopedRid, dir] of Object.entries(
-      managedRootByKeyRef.current as Record<string, any>,
-    )) {
-      const root = String(dir?.id || "");
-      if (!root) continue;
-      const nid = scopedRid.includes("::")
-        ? scopedRid.slice(0, scopedRid.lastIndexOf("::"))
-        : "";
-      const boundKey = String(boundSessionByRootRef.current[scopedRid] || "").trim();
-      const hasBound = !!boundKey && !boundKey.startsWith("pending-");
-      const pendingPrefix = scopeSessionKey(nid, root, "");
-      const hasPendingSession = Object.entries(multiProjectPendingByKey).some(
-        ([key, pending]) => pending && key.startsWith(pendingPrefix),
-      );
-      if (!hasBound && !hasPendingSession) {
-        continue;
-      }
-      const drawer = drawerSessionByRootRef.current[scopedRid] as
-        | (Session & { pending?: boolean })
-        | null
-        | undefined;
-      const selected =
-        ((selectedSession?.root_id as string | undefined) || currentRootId) ===
-          root &&
-        (selectedSession?.key || selectedSession?.session_key) === boundKey
-          ? ((selectedSession as any) as { pending?: boolean })
-          : null;
-      const pending =
-        hasPendingSession ||
-        (drawer?.key === boundKey && !!drawer?.pending) ||
-        !!selected?.pending;
-      next[scopedRid] = { bound: hasBound || hasPendingSession, pending };
-    }
-    return next;
-  }, [
-    managedRootIds,
-    selectedSession,
-    currentSession,
-    currentRootId,
+  const {
+    handleSelectedSessionFileClick,
+    drawerSessionSnapshot,
+    rootSessionIndicators,
+    handleDrawerSessionFileClick,
+    handleRemoveSessionRelatedFile,
+  } = useSessionRelatedFiles({
     activeBoundSessionKey,
+    boundSessionByRootRef,
     cacheVersion,
+    currentRootId,
+    currentRootIdRef,
+    currentSession,
+    drawerSessionByRootRef,
+    getNodeIdForRoot,
+    getSessionSnapshot,
+    managedRootByKeyRef,
+    managedRootIds,
     multiProjectPendingByKey,
+    openRelatedFileDiff,
     rootSessionKey,
-  ]);
+    selectedKanbanTaskId,
+    selectedSession,
+    selectedSessionRef,
+    setExpanded,
+    setProjectTreeTabRequest,
+    setTaskRelatedFilesById,
+    updateSessionRelatedFilesForKey,
+  });
 
-  const handleDrawerSessionFileClick = useCallback(
-    (target: string | RelatedFileClickTarget) => {
-      const root = currentRootIdRef.current;
-      if (!root) return;
-      const file =
-        typeof target === "string" ? { path: target } : target;
-      void openRelatedFileDiff(root, file);
-    },
-    [openRelatedFileDiff],
-  );
-
-  const handleRemoveSessionRelatedFile = useCallback(
-    async (
-      rootID: string | null | undefined,
-      sessionKey: string | undefined,
-      path: string,
-      head = "",
-      repoPath = "",
-      repoKind = "",
-    ) => {
-      const resolvedRoot = rootID || currentRootIdRef.current;
-      const resolvedKey = sessionKey || "";
-      if (!resolvedRoot || !resolvedKey || !path) return;
-      const removed = await sessionService.removeSessionRelatedFile(
-        resolvedRoot,
-        resolvedKey,
-        path,
-        head,
-        repoPath,
-        repoKind,
-      );
-      if (!removed) return;
-      const relatedFiles = await sessionService.getSessionRelatedFiles(
-        resolvedRoot,
-        resolvedKey,
-        getNodeIdForRoot(resolvedRoot),
-      );
-      await setCachedSessionRelatedFiles(resolvedRoot, resolvedKey, relatedFiles, getNodeIdForRoot(resolvedRoot));
-      updateSessionRelatedFilesForKey(resolvedRoot, resolvedKey, relatedFiles);
-      if (selectedKanbanTaskId) {
-        const removedKey = [repoKind || "", repoPath || "", head || "", path || ""].join("\0");
-        setTaskRelatedFilesById((prev) => {
-          const current = prev[selectedKanbanTaskId] || [];
-          return {
-            ...prev,
-            [selectedKanbanTaskId]: current.filter((file) =>
-              [file.repo_kind || "", file.repo_path || "", file.head || "", file.path || ""].join("\0") !== removedKey,
-            ),
-          };
-        });
-      }
-    },
-    [selectedKanbanTaskId, updateSessionRelatedFilesForKey],
-  );
 
   const handleAskUserAnswer = useCallback(
     async (input: {

@@ -50,7 +50,8 @@
 | R | 多项目回复状态轮询 → `app/useReplyingSessionPoll.ts`（208 行，1 useCallback + 4 useEffect） | `a8b0838` |
 | A2b | 会话 pending/stale → `app/useSessionPending.ts`（265 行，7 useCallback） | `ab317f9` |
 | A7 | 会话元数据写回 → `app/useSessionMetadata.ts`（288 行，5 useCallback + 1 useEffect） | `ec4e87a` |
-| A8a | 列表/树动作 → `app/useSessionListActions.ts`（248 行，5 useCallback） | 本次 |
+| A8a | 列表/树动作 → `app/useSessionListActions.ts`（248 行，5 useCallback） | `b6a27d4` |
+| A8b | 关联文件/指示点 → `app/useSessionRelatedFiles.ts`（204 行，3 useCallback + 2 useMemo） | 本次 |
 
 **当前分域目录**：
 
@@ -101,9 +102,9 @@ web/src/
 
 ## 4. 待办清单（按优先级）
 
-### 4.1 App.tsx —— 4768 行（最大，收益最高，风险也最高）
+### 4.1 App.tsx —— 4672 行（最大，收益最高，风险也最高）
 
-- **现状（本次提交后）**：9585 → 4768 行（-4817，-50%）。已抽出 18 个 `app/` 模块
+- **现状（本次提交后）**：9585 → 4672 行（-4913，-51%）。已抽出 19 个 `app/` 模块
   （`useSessionCache` / `appUtils` / `useSendMessage` / `useActionHandlers` /
   `useSessionLifecycle` / `useSessionArchive` / `useMultiProjectSessions` /
   `useManagedRoots` / `usePluginHandlers` / `useFileRefresh` / `useRelatedFileDiff`）。

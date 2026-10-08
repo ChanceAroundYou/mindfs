@@ -73,6 +73,7 @@ export const MODULES = {
     "src/app/useSessionPending.ts",
     "src/app/useSessionMetadata.ts",
     "src/app/useSessionListActions.ts",
+    "src/app/useSessionRelatedFiles.ts",
   ],
 
   // P6 拆分：FileTree.tsx → + icons.tsx（图标子组件）
