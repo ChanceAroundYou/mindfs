@@ -356,10 +356,11 @@ test("【红·⑮c】selection 的去重必须**按会话**且**按完整 select
   // 服务端 `buildUserPrompt` 只用**当前这条**消息的 selection，所以去重是刻意的设计，不是补丁。
   //
   // 该钉的是它的**边界**（这两条错了就会丢上下文或误判相等）：
-  const file = readFileSync(path.join(srcRoot, "services/session.ts"), "utf8");
+  // selection 去重已搬到 sessionContext.ts（2026-10-07）；守卫跟着实现走。
+  const file = readFileSync(path.join(srcRoot, "services/sessionContext.ts"), "utf8");
   assert.match(
     file,
-    /if \(sessionKey\) \{\s*\n\s*const prev = this\.contextCache\.get\(sessionKey\);/,
+    /if \(sessionKey\) \{\s*\n\s*const prev = contextCache\.get\(sessionKey\);/,
     "去重必须**按会话**：跨会话共用一条缓存会让新会话的第一条消息就丢掉 selection",
   );
   assert.match(

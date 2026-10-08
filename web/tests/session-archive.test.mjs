@@ -30,7 +30,8 @@ const { toSessionItem } = loadTS("src/app/appSession.ts", {
   "./appTask": { normalizeFastService: (v) => v },
 });
 
-const sessionServiceSrc = read("src/services/session.ts");
+// HTTP 层已搬到 sessionApi.ts（2026-10-07）；守卫跟着实现走。
+const sessionServiceSrc = read("src/services/sessionApi.ts");
 
 test("toSessionItem 透传 archived_at", () => {
   const item = toSessionItem("rootA", { key: "k1", archived_at: "2026-09-27T10:00:00Z" });

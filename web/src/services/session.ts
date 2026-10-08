@@ -5,6 +5,25 @@ import { getRootNodeId } from "./net/rootNode";
 import { scopeSessionKey } from "../shared/scope";
 import { protectedFetch, protectedJSON, withNodeRetry } from "./net/api";
 import { e2eeService } from "./net/e2ee";
+import {
+  deleteSession,
+  fetchChildSessions,
+  fetchExternalSessions,
+  fetchMultiRootSessions,
+  fetchSessions,
+  forkSession,
+  getSession,
+  getSessionRelatedFiles,
+  getToolCall,
+  importExternalSession,
+  importExternalSessionsBatch,
+  removeSessionRelatedFile,
+  renameSession,
+  searchSessions,
+  setSessionArchived,
+  syncExternalSession,
+} from "./sessionApi";
+import { compactContext } from "./sessionContext";
 import { appendSessionDelta, cloneExchangeAux, getSessionMaxSeq, toPersistentExchangeAux, withSessionMeta } from "./sessionExchangeMerge";
 export {
   getCachedSessionList,
@@ -297,7 +316,7 @@ type SessionServiceEvent = {
   payload?: Record<string, unknown>;
 };
 
-type FetchSessionsOptions = {
+export type FetchSessionsOptions = {
   beforeTime?: string;
   afterTime?: string;
   limit?: number;
@@ -697,37 +716,6 @@ class SessionService {
     }, this.probeTimeoutMs);
   }
 
-  private buildSelectionKey(selection: unknown): string {
-    if (!selection || typeof selection !== "object") return "";
-    const raw = selection as Record<string, unknown>;
-    const filePath = typeof raw.file_path === "string" ? raw.file_path : "";
-    const startLine = typeof raw.start_line === "number" ? raw.start_line : -1;
-    const endLine = typeof raw.end_line === "number" ? raw.end_line : -1;
-    const text = typeof raw.text === "string" ? raw.text : "";
-    return `${filePath}:${startLine}:${endLine}:${text}`;
-  }
-
-  private compactContext(
-    sessionKey: string | undefined,
-    context?: Record<string, unknown>,
-  ): Record<string, unknown> | undefined {
-    if (!context) return undefined;
-    const next = { ...context };
-    const selection =
-      next.selection && typeof next.selection === "object"
-        ? (next.selection as Record<string, unknown>)
-        : undefined;
-    const selectionKey = this.buildSelectionKey(selection);
-
-    if (sessionKey) {
-      const prev = this.contextCache.get(sessionKey);
-      if (prev && prev.selectionKey === selectionKey) {
-        delete next.selection;
-      }
-      this.contextCache.set(sessionKey, { selectionKey });
-    }
-    return next;
-  }
 
   private scheduleReconnect() {
     if (!this.rootId) return;
@@ -1210,157 +1198,6 @@ class SessionService {
     });
   }
 
-  async fetchSessions(
-    rootId: string,
-    options?: FetchSessionsOptions & { nodeId?: string },
-  ): Promise<SessionListPayload> {
-    try {
-      (options as any).nodeId = (options as any)?.nodeId || getRootNodeId(rootId);
-      const params = new URLSearchParams({ root: rootId });
-      if (options?.beforeTime) {
-        params.set("before_time", options.beforeTime);
-      }
-      if (options?.afterTime) {
-        params.set("after_time", options.afterTime);
-      }
-      if (typeof options?.limit === "number" && options.limit > 0) {
-        params.set("limit", String(options.limit));
-      }
-      if (options?.topLevel) {
-        params.set("top_level", "1");
-      }
-      if (options?.includeChildren) {
-        params.set("include_children", "1");
-      }
-      if (options?.archivedOnly) {
-        params.set("archived", "only");
-      }
-      const data = await protectedJSON<any>(appURL("/api/sessions", params, (options as any)?.nodeId));
-      if (Array.isArray(data)) {
-        return { items: data, pinnedItems: [], pinnedKeys: [], totalCount: data.length };
-      }
-      const items = Array.isArray(data?.items) ? data.items : [];
-      const pinnedItems = Array.isArray(data?.pinned_items) ? data.pinned_items : [];
-      const pinnedKeys = Array.isArray(data?.pinned_keys)
-        ? data.pinned_keys.map((key: unknown) => String(key || "")).filter(Boolean)
-        : pinnedItems.map((item: any) => String(item?.key || item?.session_key || "")).filter(Boolean);
-      const totalCount = Number(data?.total_count ?? data?.totalCount ?? items.length) || 0;
-      return { items, pinnedItems, pinnedKeys, totalCount };
-    } catch (err) {
-      console.error("[Session] Failed to fetch sessions:", err);
-      return { items: [], pinnedItems: [], pinnedKeys: [], totalCount: 0 };
-    }
-  }
-
-  async fetchMultiRootSessions(limitPerRoot = 6, nodeId?: string): Promise<MultiRootSessionGroup[]> {
-    try {
-      const params = new URLSearchParams({ multi_root: "1" });
-      if (limitPerRoot > 0) {
-        params.set("limit_per_root", String(limitPerRoot));
-      }
-      const data = await withNodeRetry(() => protectedJSON<any>(appURL("/api/sessions", params, (nodeId as any))));
-      const groups = Array.isArray(data?.groups) ? data.groups : [];
-      return groups.map((group: any) => ({
-        rootId: String(group?.root_id || group?.rootId || ""),
-        rootName: String(group?.root_name || group?.rootName || ""),
-        latestSessionTime: String(group?.latest_session_time || group?.latestSessionTime || ""),
-        items: Array.isArray(group?.items) ? group.items : [],
-        pinnedItems: Array.isArray(group?.pinned_items) ? group.pinned_items : [],
-        pinnedKeys: Array.isArray(group?.pinned_keys)
-          ? group.pinned_keys.map((key: unknown) => String(key || "")).filter(Boolean)
-          : Array.isArray(group?.pinned_items)
-            ? group.pinned_items.map((item: any) => String(item?.key || item?.session_key || "")).filter(Boolean)
-            : [],
-        totalCount: Number(group?.total_count ?? group?.totalCount ?? 0) || 0,
-      })).filter((group: MultiRootSessionGroup) => !!group.rootId);
-    } catch (err) {
-      if (err instanceof Error && err.message === "api_not_ready") {
-        return [];
-      }
-      console.error("[Session] Failed to fetch multi-root sessions:", err);
-      // 抛出而非吞成 []：调用方要能区分"这个节点没项目"和"这个节点没拉到"，
-      // 否则该节点会静默缺席，且没有任何东西会重试（实测可长时间不恢复）
-      throw err;
-    }
-  }
-
-  async fetchChildSessions(
-    rootId: string,
-    parentSessionKey: string,
-    options?: { beforeTime?: string; limit?: number; nodeId?: string },
-  ): Promise<Session[]> {
-    try {
-      (options as any).nodeId = (options as any)?.nodeId || getRootNodeId(rootId);
-      const params = new URLSearchParams({
-        root: rootId,
-        parent_session_key: parentSessionKey,
-      });
-      if (options?.beforeTime) {
-        params.set("before_time", options.beforeTime);
-      }
-      if (typeof options?.limit === "number" && options.limit > 0) {
-        params.set("limit", String(options.limit));
-      }
-      const data = await protectedJSON<any[]>(appURL("/api/sessions/children", params, (options as any)?.nodeId));
-      return Array.isArray(data) ? data : [];
-    } catch (err) {
-      console.error("[Session] Failed to fetch child sessions:", err);
-      return [];
-    }
-  }
-
-  async searchSessions(
-    rootId: string,
-    query: string,
-    limit?: number,
-    options?: { multiRoot?: boolean; nodeId?: string },
-  ): Promise<SessionSearchHit[]> {
-    try {
-      (options as any).nodeId = (options as any)?.nodeId || getRootNodeId(rootId);
-      const trimmed = query.trim();
-      if ((!rootId && !options?.multiRoot) || !trimmed) {
-        return [];
-      }
-      const params = new URLSearchParams({ q: trimmed });
-      if (options?.multiRoot) {
-        params.set("multi_root", "1");
-      } else {
-        params.set("root", rootId);
-      }
-      if (typeof limit === "number" && limit > 0) {
-        params.set("limit", String(limit));
-      }
-      const data = await protectedJSON<any>(appURL("/api/sessions/search", params, (options as any)?.nodeId));
-      return Array.isArray(data?.items)
-        ? (data.items as SessionSearchHit[])
-        : [];
-    } catch (err) {
-      console.error("[Session] Failed to search sessions:", err);
-      return [];
-    }
-  }
-
-  async getSession(
-    rootId: string,
-    sessionKey: string,
-    seq?: number,
-    nodeId?: string,
-  ): Promise<Session | null> {
-    try {
-      nodeId = nodeId || getRootNodeId(rootId);
-      const params = new URLSearchParams({ root: rootId });
-      if (typeof seq === "number" && seq > 0) {
-        params.set("seq", String(seq));
-      }
-      const data = await protectedJSON<Session>(
-        appURL(`/api/sessions/${encodeURIComponent(sessionKey)}`, params, nodeId),
-      );
-      return data as Session;
-    } catch (err) {
-      console.error("[Session] Failed to get session:", err);
-      return null;
-    }
-  }
 
   /**
    * 窗口化拉取单段会话数据（方案 B）。before_seq/limit 取历史窗口，
@@ -1428,27 +1265,55 @@ class SessionService {
     return this.getSession(rootId, sessionKey, seq, nodeId);
   }
 
+  // ── 以下方法只是转发：实现已搬进 sessionApi.ts / sessionContext.ts ──────
+  // （2026-10-07）。保留类方法是为了不改调用方 —— App.tsx / hooks 里全是
+  // `sessionService.fetchSessions(...)`，改成自由函数会牵动十几处。
+  // 签名逐字照搬搬迁前的版本，调用方感知不到这次重构。
+
+  async fetchSessions(
+    rootId: string,
+    options?: FetchSessionsOptions & { nodeId?: string },
+  ): Promise<SessionListPayload> {
+    return fetchSessions(rootId, options);
+  }
+
+  async fetchMultiRootSessions(limitPerRoot = 6, nodeId?: string): Promise<MultiRootSessionGroup[]> {
+    return fetchMultiRootSessions(limitPerRoot, nodeId);
+  }
+
+  async fetchChildSessions(
+    rootId: string,
+    parentSessionKey: string,
+    options?: { beforeTime?: string; limit?: number; nodeId?: string },
+  ): Promise<Session[]> {
+    return fetchChildSessions(rootId, parentSessionKey, options);
+  }
+
+  async searchSessions(
+    rootId: string,
+    query: string,
+    limit?: number,
+    options?: { multiRoot?: boolean; nodeId?: string },
+  ): Promise<SessionSearchHit[]> {
+    return searchSessions(rootId, query, limit, options);
+  }
+
+  async getSession(
+    rootId: string,
+    sessionKey: string,
+    seq?: number,
+    nodeId?: string,
+  ): Promise<Session | null> {
+    return getSession(rootId, sessionKey, seq, nodeId);
+  }
+
   async syncExternalSession(
     rootId: string,
     sessionKey: string,
     seq?: number,
     nodeId?: string,
   ): Promise<Session | null> {
-    try {
-      nodeId = nodeId || getRootNodeId(rootId);
-      const params = new URLSearchParams({ root: rootId });
-      if (typeof seq === "number" && seq > 0) {
-        params.set("seq", String(seq));
-      }
-      const data = await protectedJSON<Session>(
-        appURL(`/api/sessions/${encodeURIComponent(sessionKey)}/sync`, params, nodeId),
-        { method: "POST" },
-      );
-      return data as Session;
-    } catch (err) {
-      console.error("[Session] Failed to sync session:", err);
-      return null;
-    }
+    return syncExternalSession(rootId, sessionKey, seq, nodeId);
   }
 
   async getToolCall(
@@ -1457,26 +1322,7 @@ class SessionService {
     callId: string,
     nodeId?: string,
   ): Promise<ToolCall | null> {
-    try {
-      if (!rootId || !sessionKey || !callId) return null;
-      nodeId = nodeId || getRootNodeId(rootId);
-      const params = new URLSearchParams({ root: rootId });
-      const data = await protectedJSON<{ toolcall?: ToolCall; toolCall?: ToolCall } | ToolCall>(
-        appURL(
-          `/api/sessions/${encodeURIComponent(sessionKey)}/toolcalls/${encodeURIComponent(callId)}`,
-          params,
-          nodeId,
-        ),
-      );
-      const wrapped = data as { toolcall?: ToolCall; toolCall?: ToolCall };
-      if (wrapped?.toolcall) return wrapped.toolcall;
-      if (wrapped?.toolCall) return wrapped.toolCall;
-      const direct = data as ToolCall;
-      return direct?.callId ? direct : null;
-    } catch (err) {
-      console.error("[Session] Failed to get toolcall:", err);
-      return null;
-    }
+    return getToolCall(rootId, sessionKey, callId, nodeId);
   }
 
   async getSessionRelatedFiles(
@@ -1484,23 +1330,7 @@ class SessionService {
     sessionKey: string,
     nodeId?: string,
   ): Promise<RelatedFile[]> {
-    try {
-      nodeId = nodeId || getRootNodeId(rootId);
-      const params = new URLSearchParams({
-        root: rootId,
-      });
-      const data = await protectedJSON<any[]>(
-        appURL(
-          `/api/sessions/${encodeURIComponent(sessionKey)}/related-files`,
-          params,
-          nodeId,
-        ),
-      );
-      return Array.isArray(data) ? (data as RelatedFile[]) : [];
-    } catch (err) {
-      console.error("[Session] Failed to get session related files:", err);
-      return [];
-    }
+    return getSessionRelatedFiles(rootId, sessionKey, nodeId);
   }
 
   async removeSessionRelatedFile(
@@ -1512,52 +1342,11 @@ class SessionService {
     repoKind = "",
     nodeId?: string,
   ): Promise<boolean> {
-    try {
-      nodeId = nodeId || getRootNodeId(rootId);
-      const params = new URLSearchParams({ root: rootId, path });
-      if (head) {
-        params.set("head", head);
-      }
-      if (repoPath) {
-        params.set("repo_path", repoPath);
-      }
-      if (repoKind) {
-        params.set("repo_kind", repoKind);
-      }
-      const res = await protectedFetch(
-        appURL(
-          `/api/sessions/${encodeURIComponent(sessionKey)}/related-files`,
-          params,
-          nodeId,
-        ),
-        { method: "DELETE" },
-      );
-      if (!res.ok) {
-        throw new Error("Failed to remove session related file");
-      }
-      return true;
-    } catch (err) {
-      console.error("[Session] Failed to remove session related file:", err);
-      return false;
-    }
+    return removeSessionRelatedFile(rootId, sessionKey, path, head, repoPath, repoKind, nodeId);
   }
 
   async deleteSession(rootId: string, sessionKey: string, nodeId?: string): Promise<boolean> {
-    try {
-      nodeId = nodeId || getRootNodeId(rootId);
-      const params = new URLSearchParams({ root: rootId });
-      const res = await protectedFetch(
-        appURL(`/api/sessions/${encodeURIComponent(sessionKey)}`, params, nodeId),
-        { method: "DELETE" },
-      );
-      if (!res.ok) {
-        throw new Error("Failed to delete session");
-      }
-      return true;
-    } catch (err) {
-      console.error("[Session] Failed to delete session:", err);
-      return false;
-    }
+    return deleteSession(rootId, sessionKey, nodeId);
   }
 
   async renameSession(
@@ -1566,28 +1355,7 @@ class SessionService {
     name: string,
     nodeId?: string,
   ): Promise<Session | null> {
-    try {
-      nodeId = nodeId || getRootNodeId(rootId);
-      const params = new URLSearchParams({ root: rootId });
-      const data = await protectedJSON<Session>(
-        appURL(
-          `/api/sessions/${encodeURIComponent(sessionKey)}/rename`,
-          params,
-          nodeId,
-        ),
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ name }),
-        },
-      );
-      return data as Session;
-    } catch (err) {
-      console.error("[Session] Failed to rename session:", err);
-      return null;
-    }
+    return renameSession(rootId, sessionKey, name, nodeId);
   }
 
   async setSessionArchived(
@@ -1596,28 +1364,7 @@ class SessionService {
     archived: boolean,
     nodeId?: string,
   ): Promise<Session | null> {
-    try {
-      nodeId = nodeId || getRootNodeId(rootId);
-      const params = new URLSearchParams({ root: rootId });
-      const data = await protectedJSON<Session>(
-        appURL(
-          `/api/sessions/${encodeURIComponent(sessionKey)}/archive`,
-          params,
-          nodeId,
-        ),
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ archived }),
-        },
-      );
-      return data as Session;
-    } catch (err) {
-      console.error("[Session] Failed to update session archive state:", err);
-      return null;
-    }
+    return setSessionArchived(rootId, sessionKey, archived, nodeId);
   }
 
   async forkSession(
@@ -1626,29 +1373,7 @@ class SessionService {
     seq: number,
     nodeId?: string,
   ): Promise<{ session_key: string; session?: Session } | null> {
-    try {
-      if (!rootId || !sessionKey || !seq) {
-        return null;
-      }
-      nodeId = nodeId || getRootNodeId(rootId);
-      return await protectedJSON<{ session_key: string; session?: Session }>(
-        appURL("/api/sessions/fork", undefined, nodeId),
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            root_id: rootId,
-            session_key: sessionKey,
-            seq,
-          }),
-        },
-      );
-    } catch (err) {
-      console.error("[Session] Failed to fork session:", err);
-      throw err;
-    }
+    return forkSession(rootId, sessionKey, seq, nodeId);
   }
 
   async fetchExternalSessions(
@@ -1656,25 +1381,7 @@ class SessionService {
     agent: string,
     options?: FetchExternalSessionsOptions & { nodeId?: string },
   ): Promise<Session[]> {
-    if (!rootId || !agent) {
-      return [];
-    }
-    (options as any).nodeId = (options as any)?.nodeId || getRootNodeId(rootId);
-    const params = new URLSearchParams({ root: rootId, agent });
-    if (options?.beforeTime) {
-      params.set("before_time", options.beforeTime);
-    }
-    if (options?.afterTime) {
-      params.set("after_time", options.afterTime);
-    }
-    if (options?.filterBound) {
-      params.set("filter_bound", "true");
-    }
-    if (typeof options?.limit === "number" && options.limit > 0) {
-      params.set("limit", String(options.limit));
-    }
-    const data = await protectedJSON<any[]>(appURL("/api/sessions/external", params, (options as any)?.nodeId));
-    return Array.isArray(data) ? data : [];
+    return fetchExternalSessions(rootId, agent, options);
   }
 
   async importExternalSession(
@@ -1683,23 +1390,7 @@ class SessionService {
     agentSessionId: string,
     nodeId?: string,
   ): Promise<{ session_key: string } | null> {
-    try {
-      nodeId = nodeId || getRootNodeId(rootId);
-      return await protectedJSON<{ session_key: string }>(appURL("/api/sessions/import", undefined, nodeId), {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          root_id: rootId,
-          agent,
-          agent_session_id: agentSessionId,
-        }),
-      });
-    } catch (err) {
-      console.error("[Session] Failed to import external session:", err);
-      return null;
-    }
+    return importExternalSession(rootId, agent, agentSessionId, nodeId);
   }
 
   async importExternalSessionsBatch(
@@ -1720,24 +1411,20 @@ class SessionService {
       error_operation?: string;
     }>;
   } | null> {
-    try {
-      nodeId = nodeId || getRootNodeId(rootId);
-      return await protectedJSON(appURL("/api/sessions/import/batch", undefined, nodeId), {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          root_id: rootId,
-          agent,
-          agent_session_ids: agentSessionIds,
-        }),
-      });
-    } catch (err) {
-      console.error("[Session] Failed to import external sessions:", err);
-      return null;
-    }
+    return importExternalSessionsBatch(rootId, agent, agentSessionIds, nodeId);
   }
+
+  /**
+   * selection 去重：按 file+行号+文本判等，连续同选区的消息省掉 selection。
+   * 实现见 sessionContext.ts —— 这两个函数没有连接状态，留在类里只是为了不散调用方。
+   */
+  private compactContext(
+    sessionKey: string | undefined,
+    context?: Record<string, unknown>,
+  ): Record<string, unknown> | undefined {
+    return compactContext(this.contextCache, sessionKey, context);
+  }
+
 }
 
 export const sessionService = new SessionService();

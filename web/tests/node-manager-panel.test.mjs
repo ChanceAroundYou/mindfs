@@ -7,7 +7,8 @@ const read = (rel) => fs.readFileSync(path.join(root, rel), "utf8");
 
 const panel = read("src/components/NodeManagerPanel.tsx");
 const api = read("src/services/api.ts");
-const session = read("src/services/session.ts");
+// 会话 HTTP 调用已搬到 sessionApi.ts（2026-10-07）；守卫跟着实现走。
+const session = read("src/services/sessionApi.ts");
 const app = read("src/App.tsx");
 
 // ——— 跨节点抓取：失败必须抛出并给出重试，不能静默吞成 [] ———
