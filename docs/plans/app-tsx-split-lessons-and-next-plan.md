@@ -6,10 +6,22 @@
 ## 1. 当前基线
 
 - 分支：`task-35`
-- HEAD：`待提交`
+- HEAD：`待提交`（阶段 C 进行中）
 - `web/src/App.tsx`：**4464 行** ✅（阶段目标 ≤4500 达成）
 - 历史变化：约 `9585 → 7593 → 6405 → 5979 → 5713 → 5501 → 5416 → 5294 → 5118 → 4918 → 4768 → 4672 → 4571 → 4464`
 - 当前目标：按既定决策分阶段继续削减，先达到约 **4000–5000 行**，再重新评估；不直接追求极限小文件。
+- **阶段 C 进度（>1200 行的文件，i18n 排除）**：
+
+  | 文件 | 起点 | 现在 | 状态 |
+  |---|---|---|---|
+  | `components/file/DefaultListView.tsx` | 1296 | 1031 | ✅ 抽 `Breadcrumbs.tsx` |
+  | `components/session/SessionList.tsx` | 2191 | 476 | ✅ 拆成 5 个模块 |
+  | `components/agent/AgentSelector.tsx` | 1477 | 1191 | ✅ 抽 `AgentSelectorParts.tsx` |
+  | `components/file/FileTree.tsx` | 3770 | 2909 | ⏳ 抽 `AgentConfigPopover.tsx`，`FileTreeInner` 还要再拆 |
+  | `App.tsx` | 9585 | 4464 | ⏳ 阶段 A 达标，仍 >1200 |
+  | `components/session/SessionViewer.tsx` | 3567 | 3567 | ⏳ 待拆 |
+  | `services/session.ts` | 2659 | 2659 | ⛔ 被 4 个 VM 测试锁住 |
+  | `app/useRealtimeEvents.ts` | 2019 | 2019 | ⏳ 待拆 |
 - 最近完整门禁：`npm run typecheck` 0 错误；`npm test` 210 tests、209 pass、1 skip、0 fail；`make build-web` 成功；`check-upstream` 通过。数字以现场命令为准。
 
 ## 2. 本轮审核使用的工具与结论
