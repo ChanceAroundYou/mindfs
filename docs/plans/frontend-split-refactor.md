@@ -213,7 +213,7 @@ web/src/
   该函数现在带 `export` → 测试改为剥掉 `export ` 前缀再编译（断言语义不变）。
 - **注意**：合并 main 时此文件有上游改动（`+11/−26`）。
 
-### 4.5 session.ts —— 1136 行 ✅（VM loader 已解锁）
+### 4.5 session.ts —— 1138 行 ✅（VM loader 已解锁）
 
 - **解锁做法（2026-10-07）**：新增 `web/tests/vmLoadSource.mjs`，
   `withSourceFallback(sandbox, ["services"])` 给既有沙箱装上「stub 优先、真源码兜底」的 require，
@@ -244,7 +244,7 @@ web/src/
   `SESSION_WINDOW_SIZE` 与其 `CUSTOM(G-AT)` 注释留在 `session.ts`（G-AT 锚点要求那句话逐字在此）。
 - **已删**：为 `multi-account-partition` 守卫留的两个 cache-key shim —— 守卫改读真正拥有
   缓存键的 `sessionIndexedDb.ts`。
-- **当前收益**：session.ts 2659 → 1136 行（-1523），已低于 1200 行目标。
+- **当前收益**：session.ts 2659 → 1138 行（-1521），已低于 1200 行目标。
 - **待拆**：无（继续则需把 WS 传输整体外移成 `SessionSocket`，属独立目标，见
   `docs/plans/next-stage-decision.md` §4 表 D）。
 

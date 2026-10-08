@@ -21,7 +21,7 @@
   | `components/agent/AgentSelector.tsx` | 1477 | 1191 | ✅ 抽 `AgentSelectorParts.tsx` |
   | `components/file/FileTree.tsx` | 3770 | 1153 | ✅ 抽 20+ 模块（最后三刀：idle release / send shortcut / session naming 弹窗） |
   | `components/session/SessionViewer.tsx` | 3567 | 1127 | ✅ 拆成 20+ 模块 |
-  | `services/session.ts` | 2659 | 1136 | ✅ VM loader 解锁后拆成 10 个模块 |
+  | `services/session.ts` | 2659 | 1138 | ✅ VM loader 解锁后拆成 10 个模块 |
   | `App.tsx` | 9585 | 4464 | ✅ 阶段 A 达标（≤4500）；**不再下探**，见上「口径」 |
   | `app/useRealtimeEvents.ts` | 2019 | 1075 | ✅ 34 个 WS 处理器 → `realtimeWsHandlers.ts` |
 
@@ -94,7 +94,7 @@ source-map 只解决源码读取，不是生产模块解析器，也不改变 VM
 
 解锁后 session.ts 拆成 10 个模块：`sessionTypes` / `sessionExchangeMerge` / `sessionCacheTypes` /
 `sessionIndexedDb` / `sessionCacheStore` / `sessionListCache` / `sessionWindow` /
-`sessionApi` / `sessionContext` / `sessionOutbound` / `sessionTerminalLayout`，2659 → 1136 行。
+`sessionApi` / `sessionContext` / `sessionOutbound` / `sessionTerminalLayout`，2659 → 1138 行。
 
 **另一条经验**：源码结构守卫不该绑死文件路径。每次搬代码都回来改白名单，等于把架构断言降级成布局断言。
 本轮的改法是把守卫指向「拥有该实现的模块集合」（如 `sessionDomainSrc`），或把判据换成更强的不变量

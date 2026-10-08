@@ -183,7 +183,7 @@ $ grep -c 'if (!this\.ws || this\.ws\.readyState !== WebSocket\.OPEN)' \
 | 项 | 计划 | 实际 |
 |---|---|---|
 | 刀 1 类型块外移 | 1430 → ~1140 | ✅ `sessionTypes.ts` 286 行，session.ts **1195** |
-| 刀 2 出站域 + 守卫去重 | → ~900 | ✅ `sessionOutbound.ts` 238 行，5 处守卫删除，session.ts **1136** |
+| 刀 2 出站域 + 守卫去重 | → ~900 | ✅ `sessionOutbound.ts` 238 行，5 处守卫删除，session.ts **1138** |
 
 留下的三个新模块（均在 `web/src/services/`，G-BA 目录前缀覆盖）：
 
