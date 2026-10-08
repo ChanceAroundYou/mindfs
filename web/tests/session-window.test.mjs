@@ -29,17 +29,13 @@ const viewerSrc = fs.readFileSync(sessionViewerPath, "utf8");
 // 剥掉注释后的代码视图：注释里提到某个坏写法是正常的（那通常正是在解释它为什么被删）。
 const stripComments = (src) => src.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
 const sessionCode = stripComments(sessionSrc);
+const sessionDomainCode = stripComments(sessionDomainSrc);
 const viewerCode = stripComments(viewerSrc);
 
-// session.ts 在 vm 里跑起来（只为拿到两个纯函数：mergeSessionExchanges 与模块私有的
-// toPersistentSession —— 断言行为，不断言源码形状）。六个 import 全桩掉：模块顶层不碰它们。
-//
-// toPersistentSession 是写路径内部函数、刻意不导出（没有第二个调用方）。测试在
-// transpile 前给源码补一行 export 来拿到它 —— 比把生产代码的可见性扩成「给测试看」干净。
-const SESSION_PRIVATE_PROBE = "\nexport const __toPersistentSession = toPersistentSession;\n";
-
+// session.ts 在 vm 里跑起来（只为拿到 mergeSessionExchanges 等导出 —— 断言行为，
+// 不断言源码形状）。六个 import 全桩掉：模块顶层不碰它们。
 function loadSessionModule() {
-  const compiled = ts.transpileModule(sessionSrc + SESSION_PRIVATE_PROBE, {
+  const compiled = ts.transpileModule(sessionSrc, {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
   }).outputText;
   const modExports = {};
@@ -77,7 +73,7 @@ function loadSessionModule() {
     document: undefined,
     fetch: async () => ({}),
   };
-  withSourceFallback(sandbox);
+  withSourceFallback(sandbox, ["services"]);
   vm.runInNewContext(compiled, sandbox, { filename: sessionServicePath });
   // transpile 成 CommonJS 后是 `exports.foo = ...`，所以要 sandbox.exports
   // —— 让它和 module.exports 指向同一对象，否则读 module.exports 什么都拿不到。
@@ -109,14 +105,14 @@ assert.match(sessionSrc, /isWindowedView\(sessionKey\) \|\| !!options\?\.windowe
 // 记录还在盘上 ⇒ 下次全量路径只做增量同步 ⇒ 被砍掉的历史永远不补（静默丢历史）。
 // 读侧（`baseTruncated = windowed ? false : …`）本来就能表达「窗口态不回补」，所以写侧不必说谎。
 // 判据用 `sessionCode`（剥掉注释的视图）：解释「为什么删掉它」的注释里必然出现这个名字。
-assert.doesNotMatch(sessionCode, /forceNoTruncate/, "写侧不得再让 truncated 说谎");
+assert.doesNotMatch(sessionDomainCode, /forceNoTruncate/, "写侧不得再让 truncated 说谎");
 assert.match(
-  sessionSrc,
+  sessionDomainSrc,
   /truncated: true,\s*\n\s*exchanges: kept,/,
   "发生过淘汰就必须标 truncated:true（标记语义 = 这条记录不完整，下次全量回源）",
 );
 assert.match(
-  sessionSrc,
+  sessionDomainSrc,
   /return \{ \.\.\.persistent, truncated: false, exchanges, exchange_aux \};/,
   "没有淘汰时必须显式标 false（否则上一轮的 true 会留着白做一次全量）",
 );
@@ -673,37 +669,65 @@ assert.equal(sessionMod.mergeStreamedText, undefined, "mergeStreamedText 是重�
 // 砍掉的正是最新的那几条（超预算的通常是最长的助手回答），症状是「会话越长，
 // 开得越久，尾部丢得越多」。这两条断言钉住方向。
 assert.match(
-  sessionCode,
+  sessionDomainCode,
   /const kept = exchanges\.slice\(keptFrom\);/,
   "the write-path cache must keep a *suffix* of exchanges (evict from the head)",
 );
 assert.doesNotMatch(
-  sessionCode,
+  sessionDomainCode,
   /slice\(-extraSliced\)|tail\.length - extraSliced/,
   "head-eviction slicing is the fix — dropping from the tail is what lost the newest messages",
 );
 // 扫描下界必须是**独立的** floorStart，不能复用会被改写的 keptFrom：一旦
 // keptFrom=len-1，条件 `i >= keptFrom` 立刻为假、循环只跑一轮，只剩最新那一条。
 assert.match(
-  sessionCode,
+  sessionDomainCode,
   /const floorStart = Math\.max\(0, exchanges\.length - SESSION_CACHE_MAX_EXCHANGES\);/,
   "the scan floor must be an independent bound, not the mutated keep-cursor",
 );
 assert.doesNotMatch(
-  sessionCode,
+  sessionDomainCode,
   /i >= keptFrom/,
   "looping against the mutated cursor silently keeps only the newest row",
 );
 // 被淘汰的头部行不该留下孤立 aux（重新加载时那批工具卡会凭空多出来）。
 assert.match(
-  sessionCode,
+  sessionDomainCode,
   /if \(keptSeqs\.has\(Number\(seq\)\)\) keptAux\[seq\] = items;/,
   "aux for evicted head rows must be dropped with them",
 );
 
 // 淘汰器**直接跑**一遍五个边界情形。这段逻辑出过错两次（一次只留最新一条、
 // 一次单条超预算时整份都留不下），形状断言看不出来，所以断言行为。
-const evictProbe = loadSessionModule();
+// toPersistentSession 是写路径内部函数、刻意不导出（没有第二个调用方）。它现在住在
+// sessionCacheStore.ts（2026-10-07 拆出）：在那个模块的源码末尾补一行 export 拿到它，
+// 比把生产代码的可见性扩成「给测试看」干净。
+const CACHE_STORE_SRC = fs.readFileSync(
+  path.resolve(import.meta.dirname, "../src/services/sessionCacheStore.ts"),
+  "utf8",
+);
+function loadCacheStoreModule() {
+  const modExports = {};
+  const sandbox = {
+    exports: modExports,
+    module: { exports: modExports },
+    require: (name) => {
+      throw new Error(`unexpected require: ${name}`);
+    },
+    console,
+    indexedDB: undefined,
+    window: undefined,
+    document: undefined,
+  };
+  withSourceFallback(sandbox, ["services"]);
+  const compiled = ts.transpileModule(CACHE_STORE_SRC + "\nexport const __toPersistentSession = toPersistentSession;\n", {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
+  }).outputText;
+  vm.runInNewContext(compiled, sandbox, { filename: "sessionCacheStore.ts" });
+  return modExports;
+}
+
+const evictProbe = loadCacheStoreModule();
 const evict = buildEvictFrom(evictProbe.__toPersistentSession);
 assert.equal(typeof evict, "function", "toPersistentSession must be reachable for the eviction probe");
 

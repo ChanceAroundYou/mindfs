@@ -1,18 +1,19 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-const session = readFileSync(new URL("../src/services/session.ts", import.meta.url), "utf8");
+// 落盘裁剪这一簇住在 sessionCacheStore.ts（2026-10-07 从 session.ts 抽出）。
+const session = readFileSync(new URL("../src/services/sessionCacheStore.ts", import.meta.url), "utf8");
 const persistBody = session.slice(
   session.indexOf("function toPersistentSession("),
   session.indexOf("function stripAnchorBookkeeping("),
 );
 const stripBody = session.slice(
   session.indexOf("function stripAnchorBookkeeping("),
-  session.indexOf("export function isWindowedView("),
+  session.indexOf("export function setCachedSessionRelatedFiles("),
 );
 
-assert.ok(persistBody.length > 0, "toPersistentSession should be found in session.ts");
-assert.ok(stripBody.length > 0, "stripAnchorBookkeeping should be found in session.ts");
+assert.ok(persistBody.length > 0, "toPersistentSession should be found in sessionCacheStore.ts");
+assert.ok(stripBody.length > 0, "stripAnchorBookkeeping should be found in sessionCacheStore.ts");
 
 // _windowMeta/_anchoredAt 是 SessionViewer 的重锚定簿记，只对「当前会话实例」有意义。
 // 一旦随 IndexedDB 落盘，冷启动时 lastAppliedAnchorRef 从 {key:null, at:-1} 开始，

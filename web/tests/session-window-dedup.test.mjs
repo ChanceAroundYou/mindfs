@@ -73,7 +73,7 @@ function loadSessionService() {
     setTimeout,
     clearTimeout,
   };
-  withSourceFallback(sandbox);
+  withSourceFallback(sandbox, ["services"]);
   vm.runInNewContext(compiled, sandbox, { filename: file });
   return {
     service: sandbox.exports.sessionService,
