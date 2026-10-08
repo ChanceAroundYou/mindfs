@@ -139,7 +139,7 @@ web/src/
 - **参考**：`app/useRealtimeEvents.ts`（2019 行）、`app/useProjectLifecycle.tsx`（885 行）
   就是这套模式的产物。
 
-### 4.2 FileTree.tsx —— 2909 行
+### 4.2 FileTree.tsx —— 2681 行
 
 - **现状**：`FileTreeInner`（主组件）+ 4 个顶层小组件 + 一批样式常量。
   - `AgentConfigLineEditor`（263 行）
@@ -152,15 +152,9 @@ web/src/
   （878 行，本次）。其中 7 个样式只在弹窗内用（保持私有），
   `agentConfigActionRowStyle` / `agentConfigPrimaryButtonStyle` / `agentConfigSecondaryButtonStyle`
   与 `FileTreeInner` 共用 → 导出后回导；4 个类型同理。
-- **待抽**：`FileTreeInner` 本身（2638 行）仍需继续拆。
-- **样式归属（实测）**：
-  - 7 个**只被 popover 用**，可整体搬走：`agentConfigFieldStyle`、
-    `agentConfigLabelStyle`、`agentConfigInputStyle`、`agentConfigLineEditorStyle`、
-    `agentConfigLineTextAreaStyle`、`agentConfigHintStyle`、`agentConfigIconButtonStyle`。
-  - 3 个**与 `FileTreeInner` 共用**（各 3 处）：`agentConfigActionRowStyle`、
-    `agentConfigPrimaryButtonStyle`、`agentConfigSecondaryButtonStyle`。
-    → 搬到新文件后从那里 `export` 回来，或留在 `FileTree.tsx` 当入参传入。
-- **收益**：FileTree.tsx 3764 → 2909 行（-855）。
+  `usePwaInstall.ts`（130 行）承接 UA 平台判定、安装能力探测、原生运行时监听、安装文案和安装动作。
+- **待抽**：`FileTreeInner` 本身（约 2410 行）仍需继续拆；下一甜点是 agent 配置操作回调簇（约 550 行，需 prop-bag）。
+- **收益**：FileTree.tsx 2909 → 2681 行（-228，本次）。
 
 ### 4.3 SessionViewer.tsx —— 2569 行
 

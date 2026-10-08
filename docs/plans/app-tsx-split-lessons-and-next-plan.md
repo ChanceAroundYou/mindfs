@@ -17,7 +17,7 @@
   | `components/file/DefaultListView.tsx` | 1296 | 1031 | ✅ 抽 `Breadcrumbs.tsx` |
   | `components/session/SessionList.tsx` | 2191 | 476 | ✅ 拆成 5 个模块 |
   | `components/agent/AgentSelector.tsx` | 1477 | 1191 | ✅ 抽 `AgentSelectorParts.tsx` |
-  | `components/file/FileTree.tsx` | 3770 | 2909 | ⏳ 抽 `AgentConfigPopover.tsx`，`FileTreeInner` 还要再拆 |
+  | `components/file/FileTree.tsx` | 3770 | 2681 | ⏳ 已抽 `AgentConfigPopover.tsx` + `usePwaInstall.ts`，`FileTreeInner` 仍需拆 |
   | `App.tsx` | 9585 | 4464 | ⏳ 阶段 A 达标，仍 >1200 |
   | `components/session/SessionViewer.tsx` | 3567 | 2378 | ⏳ 顶部 940 行 + 斜杠命令卡片已拆出，剩 `SessionViewerInner` |
   | `services/session.ts` | 2659 | 2659 | ⛔ 被 4 个 VM 测试锁住 |
