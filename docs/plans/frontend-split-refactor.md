@@ -172,13 +172,14 @@ web/src/
 
 - **依赖方向**：`types` ← `format` ← `tokenViews`/`cards`/`attachments` ← `AskUser` ← `SessionViewer`（单向，无环）。
   原先这些类型都是文件内私有（外部只 import `SessionViewer` 组件本身），故可自由搬。
-- **收益**：SessionViewer.tsx 3567 → 1832 行（-1735）。
+- **收益**：SessionViewer.tsx 3567 → 1563 行（-2004）。
 - **已抽**：`renderSlashCommandResult`（199 行）→ `SessionViewerSlashCommand.tsx`（232 行，8 个 props，`t` 走 `useI18n()`）。
 - **已抽**：`renderTimelineItem` 的 tool 分支（约 50 行）→ `SessionViewerToolItem.tsx`（54 行，8 个 props）；
   `tool_group` / `todo` / `plan` / `compact` 四类辅助卡片 → `SessionViewerAuxiliaryTimeline.tsx`（48 行）；
   `thought` 分支 → `SessionViewerThoughtItem.tsx`（20 行）。
 - **已抽**：外层 `isUser` JSX（AST 精确边界 L1112–1594）拆成 `SessionViewerUserMessage.tsx`（292 行）和
   `SessionViewerAssistantMessage.tsx`（230 行），分别承接附件/编辑/保存/复制与 Markdown/fork/token/context 元数据。
+- **已抽**：关联文件折叠/分组/stats 面板 → `SessionViewerRelatedFiles.tsx`（286 行），主文件保留数据准备与 scroll 控制。
 - **待办**：`SessionViewerInner` 只剩时间线数据准备、滚动逻辑与主 RETURN；继续拆主 RETURN 前先处理剩余 hook/scroll 逻辑。
 - **注意**：合并 main 时此文件有上游改动（`c04deeb` 的 pending 对账），拆之前先确认。
 
