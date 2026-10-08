@@ -53,6 +53,7 @@ export const MODULES = {
     "src/app/useActionHandlers.ts",
     "src/app/useSessionLifecycle.ts",
     "src/app/useMultiProjectSessions.ts",
+    "src/app/useTaskWorkspaceState.ts",
     "src/app/useSessionArchive.ts",
     "src/app/useManagedRoots.ts",
     "src/app/usePluginHandlers.ts",
