@@ -202,7 +202,7 @@ web/src/
   | 行数 | 文件 | 备注 |
   |---|---|---|
   | 1477 | `components/agent/AgentSelector.tsx` | 选择器 + 列表 + 记忆指示器 |
-  | 1296 | `components/file/DefaultListView.tsx` | 默认列表视图 |
+  | 1031 | `components/file/DefaultListView.tsx` | 默认列表视图（`Breadcrumbs` 265 行已抽到 `components/file/Breadcrumbs.tsx`） |
   | 1098 | `components/task/ScheduledAgentTaskDialog.tsx` | 定时任务弹窗 |
   | 1082 | `components/file/MarkdownViewer.tsx` | Markdown 渲染 |
   | 1016 | `components/stream/ToolCallCard.tsx` | 工具卡 |

@@ -142,7 +142,10 @@ export const MODULES = {
   "src/components/MarkdownViewer.tsx": ["src/components/file/MarkdownViewer.tsx"],
   "src/components/DiagramPreview.tsx": ["src/components/file/DiagramPreview.tsx"],
   "src/components/DiagramPreview.css": ["src/components/file/DiagramPreview.css"],
-  "src/components/DefaultListView.tsx": ["src/components/file/DefaultListView.tsx"],
+  "src/components/DefaultListView.tsx": [
+    "src/components/file/DefaultListView.tsx",
+    "src/components/file/Breadcrumbs.tsx",
+  ],
   "src/components/ProjectAddPopover.tsx": ["src/components/file/ProjectAddPopover.tsx"],
   "src/components/CompactUploadProgress.tsx": ["src/components/file/CompactUploadProgress.tsx"],
   "src/components/SymlinkBadge.tsx": ["src/components/file/SymlinkBadge.tsx"],
