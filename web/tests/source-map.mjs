@@ -134,6 +134,7 @@ export const MODULES = {
     "src/components/session/SessionViewerTokenViews.tsx",
     "src/components/session/SessionViewerCards.tsx",
     "src/components/session/AskUserQuestionCard.tsx",
+    "src/components/session/SessionViewerSlashCommand.tsx",
   ],
   "src/components/ArchivedSessionsPanel.tsx": ["src/components/session/ArchivedSessionsPanel.tsx"],
   "src/components/ExternalSessionList.tsx": ["src/components/session/ExternalSessionList.tsx"],
