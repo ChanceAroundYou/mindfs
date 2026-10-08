@@ -7,8 +7,8 @@
 
 - 分支：`task-35`
 - HEAD：`待提交`
-- `web/src/App.tsx`：**5713 行**
-- 历史变化：约 `9585 → 7593 → 6405 → 5979 → 5713`
+- `web/src/App.tsx`：**5501 行**
+- 历史变化：约 `9585 → 7593 → 6405 → 5979 → 5713 → 5501`
 - 当前目标：按既定决策分阶段继续削减，先达到约 **4000–5000 行**，再重新评估；不直接追求极限小文件。
 - 最近完整门禁：`npm run typecheck` 0 错误；`npm test` 210 tests、209 pass、1 skip、0 fail；`make build-web` 成功；`check-upstream` 通过。数字以现场命令为准。
 
@@ -113,7 +113,7 @@ source-map 只解决源码读取，不是生产模块解析器，也不改变 VM
 
 定向测试：`task-cache-eviction`、`task-stage-panel`、`task-panel-unification`、`workspace-board`、`task-button-gates`、`task-template-node-routing`、`project-tree-refresh`、`upstream-restore`。
 
-### T2：任务创建/编辑编排（第二刀）
+### T2：任务创建/编辑编排（第二刀）✅ 已完成
 
 目标文件 `web/src/app/useTaskComposer.ts`，范围约为：
 
