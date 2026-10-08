@@ -30,6 +30,7 @@ import { useAgentConfigOutsideClick } from "./useAgentConfigOutsideClick";
 import { useFileTreeEffects } from "./useFileTreeEffects";
 import { useAgentConfigSwitchRequest } from "./useAgentConfigSwitchRequest";
 import { fontSizeAdjustButtonStyle } from "./fileTreeMenuStyles";
+import { FileTreeFontSizeMenu } from "./FileTreeFontSizeMenu";
 import { FileTreeProjectTabs } from "./FileTreeProjectTabs";
 import { getNodes } from "../../services/net/nodeRegistry";
 import { NodeManagerPanel } from "../account/NodeManagerPanel";
@@ -851,74 +852,7 @@ function FileTreeInner({
                   </span>
                   <ChevronRight isOpen={isFontSizeMenuOpen} />
                 </button>
-                {isFontSizeMenuOpen ? (
-                  <div style={{ padding: "2px 6px 6px", display: "flex", flexDirection: "column", gap: "3px" }}>
-                    {fontSizeRows.map(({ region, labelKey }) => {
-                      const label = t(labelKey);
-                      const scale = fontSizePreferences[region];
-                      return (
-                        <div
-                          key={region}
-                          style={{
-                            minHeight: "30px",
-                            padding: "0 4px",
-                            display: "flex",
-                            alignItems: "center",
-                            gap: "6px",
-                            color: "var(--text-primary)",
-                            fontSize: "12px",
-                          }}
-                        >
-                          <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }} title={label}>
-                            {label}
-                          </span>
-                          <div
-                            style={{
-                              flexShrink: 0,
-                              display: "inline-flex",
-                              alignItems: "center",
-                              border: "1px solid var(--border-color)",
-                              borderRadius: "7px",
-                              overflow: "hidden",
-                            }}
-                          >
-                            <button
-                              type="button"
-                              className="mindfs-font-size-adjust"
-                              disabled={scale <= FONT_SIZE_MIN}
-                              aria-label={t("fileTree.fontSizeDecrease", { region: label })}
-                              onClick={() => onFontSizePreferencesChange?.(changeFontSize(fontSizePreferences, region, -1))}
-                              style={fontSizeAdjustButtonStyle}
-                            >
-                              −
-                            </button>
-                            <span
-                              style={{
-                                width: "42px",
-                                textAlign: "center",
-                                color: "var(--text-secondary)",
-                                fontSize: "11px",
-                                fontVariantNumeric: "tabular-nums",
-                              }}
-                            >
-                              {Math.round(scale * 100)}%
-                            </span>
-                            <button
-                              type="button"
-                              className="mindfs-font-size-adjust"
-                              disabled={scale >= FONT_SIZE_MAX}
-                              aria-label={t("fileTree.fontSizeIncrease", { region: label })}
-                              onClick={() => onFontSizePreferencesChange?.(changeFontSize(fontSizePreferences, region, 1))}
-                              style={fontSizeAdjustButtonStyle}
-                            >
-                              +
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : null}
+                <FileTreeFontSizeMenu open={isFontSizeMenuOpen} rows={fontSizeRows} prefs={fontSizePreferences} min={FONT_SIZE_MIN} max={FONT_SIZE_MAX} onChange={onFontSizePreferencesChange} changeFontSize={changeFontSize} buttonStyle={fontSizeAdjustButtonStyle} t={t} />
                 <button
                   type="button"
                   onClick={() => {
