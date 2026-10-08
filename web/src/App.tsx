@@ -6,12 +6,11 @@ import React, {
   useState,
   useSyncExternalStore,
 } from "react";
-import { resolveInputSession } from "./services/inputSession";
 import { FileEditStore, fileEditKey } from "./services/fileEditing";
 import { normalizePathForRoot, shouldRedirectToRelayNodes } from "./services/fileNavigation";
 import { getViewModeSystemPrompt } from "./renderer/viewCatalog";
 import { Renderer } from "./renderer/Renderer";
-import { SESSION_WINDOW_SIZE, clearCachedSessionsForRoot, clearWindowedView, composeLoadedExchanges, deleteCachedSession, deleteCachedSessionLists, getCachedMultiRootSessionList, getCachedSession, getCachedSessionList, getSessionWindow, isTransientExchange, saveCachedMultiRootSessionList, saveCachedSessionList, sessionService, setCachedSessionRelatedFiles, setWindowedView, settlePendingAcks, syncSession, type MultiRootSessionGroup, type QueuedUserMessage, type RelatedFile, type RelatedWorktree, type Session, type TokenUsage } from "./services/session";
+import { SESSION_WINDOW_SIZE, clearCachedSessionsForRoot, clearWindowedView, composeLoadedExchanges, deleteCachedSession, deleteCachedSessionLists, getCachedMultiRootSessionList, getCachedSession, getCachedSessionList, getSessionWindow, isTransientExchange, saveCachedMultiRootSessionList, saveCachedSessionList, sessionService, setCachedSessionRelatedFiles, setWindowedView, settlePendingAcks, syncSession, type MultiRootSessionGroup, type QueuedUserMessage, type RelatedFile, type Session, type TokenUsage } from "./services/session";
 import { buildClientContext } from "./services/prefs/context";
 import { e2eeService, type E2EEState } from "./services/net/e2ee";
 import {
@@ -252,6 +251,7 @@ import { useTaskComposer } from "./app/useTaskComposer";
 import { useAttachedFileContext } from "./app/useAttachedFileContext";
 import { useReplyingSessionPoll } from "./app/useReplyingSessionPoll";
 import { useSessionPending } from "./app/useSessionPending";
+import { useSessionMetadata } from "./app/useSessionMetadata";
 
 
 export function App({ onGoHome }: AppProps) {
@@ -1516,230 +1516,30 @@ export function App({ onGoHome }: AppProps) {
     switchMainView,
   });
 
-  const updateSessionRelatedFilesForKey = useCallback(
-    (rootID: string, sessionKey: string, relatedFiles: RelatedFile[]) => {
-      if (!rootID || !sessionKey) return;
-      const cacheKey = rootSessionKey(rootID, sessionKey);
-      const cached = sessionCacheRef.current[cacheKey];
-      const nextRelatedFiles = Array.isArray(relatedFiles)
-        ? [...relatedFiles]
-        : [];
-      if (cached) {
-        sessionCacheRef.current[cacheKey] = {
-          ...(cached as any),
-          related_files: nextRelatedFiles,
-        } as Session;
-      }
-      const lastMain = lastMainSessionSnapshotRef.current;
-      const lastMainKey = lastMain?.key || lastMain?.session_key;
-      const lastMainRoot =
-        (lastMain?.root_id as string | undefined) || currentRootIdRef.current;
-      if (lastMain && lastMainKey === sessionKey && lastMainRoot === rootID) {
-        lastMainSessionSnapshotRef.current = {
-          ...(lastMain as any),
-          related_files: nextRelatedFiles,
-        } as Session;
-      }
-      setSelectedSession((prev) => {
-        const prevKey = prev?.key || prev?.session_key;
-        const prevRoot =
-          (prev?.root_id as string | undefined) || currentRootIdRef.current;
-        if (!prev || prevKey !== sessionKey || prevRoot !== rootID) return prev;
-        return {
-          ...(prev as any),
-          related_files: nextRelatedFiles,
-        } as SessionItem;
-      });
-      const current = drawerSessionByRootRef.current[scopedRootKey(rootID)];
-      if (current && current.key === sessionKey) {
-        setDrawerSessionForRoot(rootID, {
-          ...(current as any),
-          related_files: nextRelatedFiles,
-        } as Session);
-      }
-      bumpCacheVersion();
-    },
-    [rootSessionKey, setDrawerSessionForRoot, bumpCacheVersion],
-  );
+  const {
+    updateSessionRelatedFilesForKey,
+    updateSessionRelatedWorktreeForKey,
+    updateSessionAgentForKey,
+    getInputSession,
+    handleSetPlanMode,
+  } = useSessionMetadata({
+    bumpCacheVersion,
+    currentRootIdRef,
+    drawerOpenByRootRef,
+    drawerSessionByRootRef,
+    lastMainSessionSnapshotRef,
+    rootSessionKey,
+    scopedRootKey,
+    selectedSessionRef,
+    sessionCacheRef,
+    sessions,
+    setDrawerSessionForRoot,
+    setPendingPlanMode,
+    setSelectedSession,
+    syncSessionHeaderFromListItem,
+    t,
+  });
 
-  const updateSessionRelatedWorktreeForKey = useCallback(
-    (rootID: string, sessionKey: string, relatedWorktree: RelatedWorktree | null | undefined) => {
-      if (!rootID || !sessionKey || !relatedWorktree) return;
-      const cacheKey = rootSessionKey(rootID, sessionKey);
-      const cached = sessionCacheRef.current[cacheKey];
-      if (cached) {
-        sessionCacheRef.current[cacheKey] = {
-          ...(cached as any),
-          related_worktree: relatedWorktree,
-        } as Session;
-      }
-
-      const lastMain = lastMainSessionSnapshotRef.current;
-      const lastMainKey = lastMain?.key || lastMain?.session_key;
-      const lastMainRoot =
-        (lastMain?.root_id as string | undefined) || currentRootIdRef.current;
-      if (lastMain && lastMainKey === sessionKey && lastMainRoot === rootID) {
-        lastMainSessionSnapshotRef.current = {
-          ...(lastMain as any),
-          related_worktree: relatedWorktree,
-        } as Session;
-      }
-
-      setSelectedSession((prev) => {
-        const prevKey = prev?.key || prev?.session_key;
-        const prevRoot =
-          (prev?.root_id as string | undefined) || currentRootIdRef.current;
-        if (!prev || prevKey !== sessionKey || prevRoot !== rootID) return prev;
-        return {
-          ...(prev as any),
-          related_worktree: relatedWorktree,
-        } as SessionItem;
-      });
-
-      const current = drawerSessionByRootRef.current[scopedRootKey(rootID)];
-      if (current && current.key === sessionKey) {
-        setDrawerSessionForRoot(rootID, {
-          ...(current as any),
-          related_worktree: relatedWorktree,
-        } as Session);
-      }
-      bumpCacheVersion();
-    },
-    [rootSessionKey, setDrawerSessionForRoot, bumpCacheVersion],
-  );
-
-  const updateSessionAgentForKey = useCallback(
-    (
-      rootID: string,
-      sessionKey: string,
-      agent: string,
-      model?: string,
-      agentMode?: string,
-      effort?: string,
-      fastService?: "" | "on" | "off",
-      planMode?: boolean,
-      shell?: string,
-    ) => {
-      if (!rootID || !sessionKey || !agent) return;
-      const hasPlanMode = typeof planMode === "boolean";
-      const cacheKey = rootSessionKey(rootID, sessionKey);
-      const cached = sessionCacheRef.current[cacheKey];
-      if (cached) {
-        sessionCacheRef.current[cacheKey] = {
-          ...(cached as any),
-          agent,
-          model: model || "",
-          mode: agentMode || "",
-          effort: effort || "",
-          fast_service: fastService || "",
-          ...(hasPlanMode ? { plan_mode: planMode } : {}),
-          updated_at: new Date().toISOString(),
-        } as Session;
-      }
-      setSelectedSession((prev) => {
-        const prevKey = prev?.key || prev?.session_key;
-        const prevRoot =
-          (prev?.root_id as string | undefined) || currentRootIdRef.current;
-        if (!prev || prevKey !== sessionKey || prevRoot !== rootID) return prev;
-        return {
-          ...(prev as any),
-          agent,
-          model: model || "",
-          mode: agentMode || "",
-          effort: effort || "",
-          fast_service: fastService || "",
-          ...(hasPlanMode ? { plan_mode: planMode } : {}),
-        } as SessionItem;
-      });
-      const current = drawerSessionByRootRef.current[scopedRootKey(rootID)];
-      if (
-        current &&
-        current.key === sessionKey &&
-        (current.agent !== agent ||
-          (current as any).model !== (model || "") ||
-          (current as any).mode !== (agentMode || "") ||
-          (current as any).effort !== (effort || "") ||
-          ((current as any).fast_service || "") !== (fastService || "") ||
-          (hasPlanMode && !!(current as any).plan_mode !== planMode))
-      ) {
-        setDrawerSessionForRoot(rootID, {
-          ...(current as any),
-          agent,
-          model: model || "",
-          mode: agentMode || "",
-          effort: effort || "",
-          fast_service: fastService || "",
-          ...(hasPlanMode ? { plan_mode: planMode } : {}),
-        } as Session);
-      }
-      bumpCacheVersion();
-    },
-    [rootSessionKey, setDrawerSessionForRoot, bumpCacheVersion],
-  );
-
-  useEffect(() => {
-    const rootID = currentRootIdRef.current;
-    if (!rootID || sessions.length === 0) return;
-    for (const item of sessions) {
-      syncSessionHeaderFromListItem(rootID, item);
-    }
-  }, [sessions, syncSessionHeaderFromListItem]);
-
-  const getInputSession = useCallback(() => {
-    const root = currentRootIdRef.current;
-    return resolveInputSession(
-      root,
-      !!drawerOpenByRootRef.current[root || ""],
-      selectedSessionRef.current,
-      drawerSessionByRootRef.current[root || ""] || null,
-    );
-  }, []);
-
-  const handleSetPlanMode = useCallback(
-    async (enabled: boolean, targetSessionKey?: string, targetRootId?: string) => {
-      const activeRoot = targetRootId || currentRootIdRef.current;
-      const session = getInputSession();
-      const sessionKey = targetSessionKey || session?.key || (session as any)?.session_key;
-      if (!activeRoot) {
-        reportError("session.sync_failed", t("session.planModeSelectFirst"));
-        return;
-      }
-      if (!sessionKey || String(sessionKey).startsWith("pending-")) {
-        setPendingPlanMode(enabled);
-        return;
-      }
-      const now = new Date().toISOString();
-      const cacheKey = rootSessionKey(activeRoot, sessionKey);
-      const cached = sessionCacheRef.current[cacheKey];
-      if (cached) {
-        sessionCacheRef.current[cacheKey] = {
-          ...(cached as any),
-          plan_mode: enabled,
-          updated_at: now,
-        } as Session;
-      }
-      setSelectedSession((prev) => {
-        const prevKey = prev?.key || prev?.session_key;
-        const prevRoot = (prev?.root_id as string | undefined) || activeRoot;
-        if (!prev || prevKey !== sessionKey || prevRoot !== activeRoot) return prev;
-        return { ...(prev as any), plan_mode: enabled, updated_at: now } as SessionItem;
-      });
-      const drawer = drawerSessionByRootRef.current[scopedRootKey(activeRoot)];
-      if (drawer?.key === sessionKey) {
-        setDrawerSessionForRoot(activeRoot, {
-          ...(drawer as any),
-          plan_mode: enabled,
-          updated_at: now,
-        } as Session);
-      }
-      bumpCacheVersion();
-      const sent = await sessionService.setPlanMode(activeRoot, sessionKey, enabled);
-      if (!sent) {
-        reportError("network.disconnected", t("session.planModeSwitchFailedNotReady"));
-      }
-    },
-    [getInputSession, rootSessionKey, setDrawerSessionForRoot, bumpCacheVersion, t],
-  );
 
   const {
     promotePendingSessionForRoot,

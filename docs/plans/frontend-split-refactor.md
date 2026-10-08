@@ -48,7 +48,8 @@
 | T2 | 任务创建/编辑编排 → `app/useTaskComposer.ts`（340 行，7 useCallback + 2 useEffect） | `c61b197` |
 | F | 文件上下文选择 → `app/useAttachedFileContext.ts`（141 行，4 useCallback + 2 useEffect） | `18646e0` |
 | R | 多项目回复状态轮询 → `app/useReplyingSessionPoll.ts`（208 行，1 useCallback + 4 useEffect） | `a8b0838` |
-| A2b | 会话 pending/stale → `app/useSessionPending.ts`（265 行，7 useCallback） | 本次 |
+| A2b | 会话 pending/stale → `app/useSessionPending.ts`（265 行，7 useCallback） | `ab317f9` |
+| A7 | 会话元数据写回 → `app/useSessionMetadata.ts`（288 行，5 useCallback + 1 useEffect） | 本次 |
 
 **当前分域目录**：
 
@@ -99,9 +100,9 @@ web/src/
 
 ## 4. 待办清单（按优先级）
 
-### 4.1 App.tsx —— 5118 行（最大，收益最高，风险也最高）
+### 4.1 App.tsx —— 4918 行（最大，收益最高，风险也最高）
 
-- **现状（本次提交后）**：9585 → 5118 行（-4467，-47%）。已抽出 16 个 `app/` 模块
+- **现状（本次提交后）**：9585 → 4918 行（-4667，-49%）。已抽出 17 个 `app/` 模块
   （`useSessionCache` / `appUtils` / `useSendMessage` / `useActionHandlers` /
   `useSessionLifecycle` / `useSessionArchive` / `useMultiProjectSessions` /
   `useManagedRoots` / `usePluginHandlers` / `useFileRefresh` / `useRelatedFileDiff`）。
@@ -113,15 +114,15 @@ web/src/
 - **目标（2026-10-07 决策）**：**分阶段，先到 ≤4500 行再评估**。
   不直接冲 ≤900 —— 后期边界互锁紧密，风险累积。
 - **前置（已解除）**：运行时验证手段 —— `e2e/` Playwright 冒烟（10 用例）已就位。
-- **剩余簇（按窗口可拆性排序）**：
+- **剩余簇（按窗口可拆性排序，2026-10 复核）**：
 
-  | 簇 | 单元 | 阻碍 |
+  | 簇 | 单元 | 状态 |
   |---|---|---|
-  | A5 看板/任务 | `handleMoveKanbanTask`(95)、`loadKanbanTasks`(65)、`saveTaskInlineEdit`(60)、`applyTaskDetails`(58) | 首个急切引用在依赖数组里（含 `applyTaskDetails`/`pruneTaskDetails`），需重新切分 |
-  | A7 会话元数据 | `attachContextWindowToLatestAssistant`(108)、`updateSessionAgentForKey`(68)、`updateSessionRelatedFilesForKey`(45)、`updateSessionRelatedWorktreeForKey`(45)、`handleSetPlanMode`(45)、`handleRemoveSessionRelatedFile`(43) | 窗口不成立（闭包声明晚于依赖数组引用） |
-  | A8 更新/其他 | `handleStartUpdate`、`selectRootNode`、`handleTreeUpload`、`handleForkAgentMessage`、`handleProjectTreeRefresh`、`showBoundSessionOrRootDir`、`selectedSessionRelatedFileGroups`、`rootSessionIndicators` | 同上 |
-  | A2b 待处理/队列 | `clearLocalPendingForSession`、`markSessionPending`、`resolvePendingForSession`、`getSessionSnapshot`、`refreshMultiProjectReplyingSessions`、`pruneSubtreeFromSessionState` | 同上 |
-  | B 渲染层 | 主 `return` JSX（~900 行）+ 71 个 `useEffect`（~950 行） | 无 TDZ 约束（JSX 在文件末尾），风险低、收益高 |
+  | A5 看板/任务 | `handleMoveKanbanTask`(95)、`loadKanbanTasks`(65)、`saveTaskInlineEdit`(60)、`applyTaskDetails`(58) | ✅ T1+T2 已抽 |
+  | A7 会话元数据 | `updateSessionAgentForKey`(68)、`updateSessionRelatedFilesForKey`(45)、`updateSessionRelatedWorktreeForKey`(45)、`handleSetPlanMode`(45)、`handleRemoveSessionRelatedFile`(43) | ✅ 主体已抽（`useSessionMetadata`）；`attachContextWindowToLatestAssistant` 待抽 |
+  | A2b 待处理/队列 | `clearLocalPendingForSession`、`resolvePendingForSession`、`getSessionSnapshot`、`refreshMultiProjectReplyingSessions` | ✅ 已抽（`useSessionPending` / `useReplyingSessionPoll`）；`markSessionPending`、`pruneSubtreeFromSessionState` 待抽 |
+  | A8 更新/其他 | `handleStartUpdate`、`selectRootNode`、`handleTreeUpload`、`handleForkAgentMessage`、`handleProjectTreeRefresh`、`showBoundSessionOrRootDir`、`selectedSessionRelatedFileGroups`、`rootSessionIndicators` | 待抽（AST 复核：多为 0 前向引用，可直抽） |
+  | B 渲染层 | 主 `return` JSX（~322 行）+ 剩余 `useEffect` | 无 TDZ 约束（JSX 在文件末尾），风险低、收益高 |
   | C 其余大文件 | FileTree / SessionViewer / SessionList / useRealtimeEvents / AgentSelector / DefaultListView / ScheduledAgentTaskDialog / MarkdownViewer / ToolCallCard / ActionBar | 独立文件，逐个拆 |
 - **建议做法**：
   1. 按「一组内聚状态 + 其唯一出口 effect」为单元抽 hook，沿用

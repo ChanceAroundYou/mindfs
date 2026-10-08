@@ -71,6 +71,7 @@ export const MODULES = {
     "src/app/useAttachedFileContext.ts",
     "src/app/useReplyingSessionPoll.ts",
     "src/app/useSessionPending.ts",
+    "src/app/useSessionMetadata.ts",
   ],
 
   // P6 拆分：FileTree.tsx → + icons.tsx（图标子组件）
