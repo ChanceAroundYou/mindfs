@@ -139,7 +139,7 @@ web/src/
 - **参考**：`app/useRealtimeEvents.ts`（2019 行）、`app/useProjectLifecycle.tsx`（885 行）
   就是这套模式的产物。
 
-### 4.2 FileTree.tsx —— 2060 行
+### 4.2 FileTree.tsx —— 2046 行
 
 - **现状**：`FileTreeInner`（主组件）+ 4 个顶层小组件 + 一批样式常量。
   - `AgentConfigLineEditor`（263 行）
@@ -150,9 +150,9 @@ web/src/
   `AgentConfigLineEditor` + `AgentConfigPopover` + `AgentLifecyclePopover` + 10 个
   `agentConfig*Style` + 4 个配置流程类型 → `components/file/AgentConfigPopover.tsx`；
   `usePwaInstall.ts`（130 行）承接 UA 平台判定、安装能力探测、原生运行时监听、安装文案和安装动作；
-  `fileTreeEntries.tsx`（289 行）承接递归 `renderEntries`，显式传入多节点 scope、展开状态、root extra content 和 draft root callbacks；`useAgentConfigActions.ts`（246 行）承接配置备份/provider 的创建、切换、删除、同步、测试和选择动作；`useFileTreePreferences.ts`（107 行）承接 session naming、idle resource release、send shortcut 三组设置动作；`useAgentConfigSelection.ts` 承接 agent restart 与 config selection/loading。
+  `fileTreeEntries.tsx`（289 行）承接递归 `renderEntries`，显式传入多节点 scope、展开状态、root extra content 和 draft root callbacks；`useAgentConfigActions.ts`（246 行）承接配置备份/provider 的创建、切换、删除、同步、测试和选择动作；`useFileTreePreferences.ts`（107 行）承接 session naming、idle resource release、send shortcut 三组设置动作；`useAgentConfigSelection.ts` 承接 agent restart 与 config selection/loading；`useAgentLifecycleActions.ts` 承接 install/update 生命周期命令。
 - **待抽**：`FileTreeInner` 本身（约 2130 行）仍需继续拆；下一甜点是 agent 配置操作回调簇。
-- **收益**：FileTree.tsx 2683 → 2060 行（-623，本次）。
+- **收益**：FileTree.tsx 2683 → 2046 行（-637，本次）。
 
 ### 4.3 SessionViewer.tsx —— 2569 行
 
