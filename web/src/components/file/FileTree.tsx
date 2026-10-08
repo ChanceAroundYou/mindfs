@@ -23,6 +23,7 @@ import { usePwaInstall } from "../../app/usePwaInstall";
 import { createRenderEntries } from "./fileTreeEntries";
 import { useAgentConfigActions } from "./useAgentConfigActions";
 import { useFileTreePreferences } from "./useFileTreePreferences";
+import { useAgentConfigSelection } from "./useAgentConfigSelection";
 import { getNodes } from "../../services/net/nodeRegistry";
 import { NodeManagerPanel } from "../account/NodeManagerPanel";
 import { AccountPanel } from "../account/AccountPanel";
@@ -687,61 +688,14 @@ function FileTreeInner({
     }
   }, [closeAgentLifecycleFlow, onRunAgentLifecycleCommand, t]);
 
-  const restartAgentFromConfigList = React.useCallback(async (agentName: string) => {
-    if (!agentName || !onRestartAgent || agentConfigRestartingAgent) {
-      return;
-    }
-    setAgentConfigRestartingAgent(agentName);
-    setAgentConfigError("");
-    try {
-      await onRestartAgent(agentName);
-    } catch (error) {
-      setAgentConfigError(error instanceof Error ? error.message : t("agentConfig.restartFailed"));
-    } finally {
-      setAgentConfigRestartingAgent("");
-    }
-  }, [agentConfigRestartingAgent, onRestartAgent, t]);
-
-  const chooseAgentForConfig = React.useCallback(async (agentName: string) => {
-    setAgentConfigAgent(agentName);
-    setAgentConfigError("");
-    setAgentConfigBusy(true);
-    try {
-      const selectedAgent = agentConfigAgents.find((item) => item.name === agentName);
-      const supportsAPIProvider = Boolean(selectedAgent?.supports_api_provider_switch);
-      if (agentConfigFlow === "backup") {
-        const defaults = await fetchAgentConfigDefaults(agentName);
-        setAgentConfigName("");
-        setAgentConfigFileSourcesBody((defaults.file_sources || []).join("\n"));
-        setAgentConfigEnvBody((defaults.env_keys || []).map((key) => `${key}=`).join("\n"));
-        setAgentAPIProviderName("");
-        setAgentAPIProviderBaseURL("");
-        setAgentAPIProviderAPIKey("");
-        setAgentConfigAddTab("backup");
-        setAgentConfigStep("details");
-      } else {
-        const [backups, providers] = await Promise.all([
-          fetchAgentConfigBackups(agentName),
-          supportsAPIProvider ? fetchAgentAPIProviders(agentName) : Promise.resolve([]),
-        ]);
-        setAgentConfigBackups(backups);
-        setAgentAPIProviders(providers);
-        setSelectedAgentConfigID("");
-        const preferredProvider = providers.find((provider) => agentConfigPreferredProviderIDs.includes(provider.id));
-        setSelectedAgentAPIProviderID(preferredProvider?.id || "");
-        setAgentConfigSwitchSelection(preferredProvider ? { type: "api_provider", id: preferredProvider.id } : null);
-        setAgentConfigSwitchTab(supportsAPIProvider && selectedAgent?.last_config_selection?.type === "api_provider" ? "api_provider" : "backup");
-        if (supportsAPIProvider && agentConfigPreferredProviderIDs.length > 0) {
-          setAgentConfigSwitchTab("api_provider");
-        }
-        setAgentConfigStep("details");
-      }
-    } catch (error) {
-      setAgentConfigError(error instanceof Error ? error.message : t("agentConfig.loadConfigFailed"));
-    } finally {
-      setAgentConfigBusy(false);
-    }
-  }, [agentConfigAgents, agentConfigFlow, agentConfigPreferredProviderIDs, t]);
+  const { restartAgentFromConfigList, chooseAgentForConfig } = useAgentConfigSelection({
+    agentConfigRestartingAgent, onRestartAgent, t, setAgentConfigRestartingAgent, setAgentConfigError,
+    agentConfigAgent, setAgentConfigAgent, setAgentConfigBusy, agentConfigAgents, agentConfigFlow,
+    setAgentConfigName, setAgentConfigFileSourcesBody, setAgentConfigEnvBody, setAgentAPIProviderName,
+    setAgentAPIProviderBaseURL, setAgentAPIProviderAPIKey, setAgentConfigAddTab, setAgentConfigStep,
+    setAgentConfigBackups, setAgentAPIProviders, setSelectedAgentConfigID, agentConfigPreferredProviderIDs,
+    setSelectedAgentAPIProviderID, setAgentConfigSwitchSelection, setAgentConfigSwitchTab,
+  });
 
   const { saveAgentConfigBackup, saveAgentAPIProvider, runAgentConfigSwitch, deleteSelectedAgentConfigBackup,
     deleteSelectedAgentAPIProvider, syncAllAgentAPIProviderModels, testAgentAPIProviderModelNow,
