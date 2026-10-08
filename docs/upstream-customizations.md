@@ -1133,8 +1133,9 @@
 
 ### G-AY 抽屉 pending 对账：done 丢失时停止符号 /「正在思考」卡住（2026-10-07）
 
-- 来源：`web/src/app/appSession.ts`（新增 `clearStalePending`）、`web/src/App.tsx`
-  （新增依赖 `multiProjectPendingByKey` 的 effect）、`web/tests/drawer-pending-reconcile.test.mjs`（新增）。
+- 来源：`web/src/app/appSession.ts`（新增 `clearStalePending`）、`web/src/app/useReplyingSessionPoll.ts`
+  （新增依赖 `multiProjectPendingByKey` 的 effect；2026-10 拆分前在 `web/src/App.tsx`）、
+  `web/tests/drawer-pending-reconcile.test.mjs`（新增）。
 - 边界：**抽屉 / 选中 / 缓存三处的 pending 对账**。这三处的 pending 只由
   WS `session.done`（`handleSessionStreamDone`）清除；合上游时这块 effect 被冲掉，
   done 一丢失就永久卡住，而列表蓝灯因为另有对账不受影响 —— 正是本 bug 的可见症状。
@@ -1159,15 +1160,15 @@
 - 改了什么：
   - `clearStalePending(session, isServerPending)`：服务端说「不在跑」就清 `pending`，
     无变化时返回**同引用**（调用方靠 `!==` 判断是否需要 setState）。
-  - `App.tsx` 新增 effect（依赖 `multiProjectPendingByKey`）：对抽屉 / 选中 / 缓存
+  - `web/src/app/useReplyingSessionPoll.ts` 新增 effect（依赖 `multiProjectPendingByKey`）：对抽屉 / 选中 / 缓存
     三处调 `clearStalePending`，真值取自 `multiProjectPendingByKey` —— 也就是
     `/api/replying-sessions` 的落点，**与列表蓝灯同一个源**。这样 done 丢了也能在
     下一个 5s 轮询周期收敛，且不会把「节点没拉到」误当成「没在跑」。
 - 针对性测试：
   - `web/tests/drawer-pending-reconcile.test.mjs` — 钉住「服务端说不在跑就清、在跑就留、
-    无变化返回同引用、按 key 判定」，并源码守卫「App.tsx 必须有依赖
-    `multiProjectPendingByKey` 的 effect 且对三处调 `clearStalePending`、真值必须读
-    `multiProjectPendingByKey`」。**已验证：把 effect 删掉后该测试立刻变红。**
+    无变化返回同引用、按 key 判定」，并源码守卫「逻辑模块 `src/App.tsx`（source-map 拼接，
+    含 `useReplyingSessionPoll.ts`）必须有依赖 `multiProjectPendingByKey` 的 effect 且对三处调
+    `clearStalePending`、真值必须读 `multiProjectPendingByKey`」。**已验证：把 effect 删掉后该测试立刻变红。**
 
 ---
 

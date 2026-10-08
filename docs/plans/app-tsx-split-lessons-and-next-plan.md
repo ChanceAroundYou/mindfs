@@ -7,8 +7,8 @@
 
 - 分支：`task-35`
 - HEAD：`待提交`
-- `web/src/App.tsx`：**5416 行**
-- 历史变化：约 `9585 → 7593 → 6405 → 5979 → 5713 → 5501 → 5416`
+- `web/src/App.tsx`：**5294 行**
+- 历史变化：约 `9585 → 7593 → 6405 → 5979 → 5713 → 5501 → 5416 → 5294`
 - 当前目标：按既定决策分阶段继续削减，先达到约 **4000–5000 行**，再重新评估；不直接追求极限小文件。
 - 最近完整门禁：`npm run typecheck` 0 错误；`npm test` 210 tests、209 pass、1 skip、0 fail；`make build-web` 成功；`check-upstream` 通过。数字以现场命令为准。
 
@@ -134,9 +134,9 @@ source-map 只解决源码读取，不是生产模块解析器，也不改变 VM
 
 把约 117 行 `buildAttachedFileContext` 与相关 callbacks/effects 抽到 `web/src/app/useAttachedFileContext.ts`。依赖主要是 file/gitDiff/viewer refs 与 setters，预计减少 80–100 行。定向测试：`file-navigation`、`file-editing`、`git-diff-viewer`、`related-files`、`project-tree-refresh`。
 
-### R：多项目回复状态轮询（第四刀）
+### R：多项目回复状态轮询（第四刀）✅ 已完成
 
-约 205 行抽到 `useReplyingSessionPoll.ts`，必须验证：每节点显式传 `nodeId`；请求失败不清空其他节点旧状态；只增量重算成功节点；使用 `scopeSessionKey(nodeId, ...)`，不退回 `rootSessionKey()`；不混用 `controlPath` / `appPath`。
+约 140 行抽到 `web/src/app/useReplyingSessionPoll.ts`（208 行），保持：每节点显式传 `nodeId`；请求失败不清空其他节点旧状态；只增量重算成功节点；使用 `scopeSessionKey(nodeId, ...)`，不退回 `rootSessionKey()`；不混用 `controlPath` / `appPath`。G-AY 锚点同步迁到新文件。
 
 定向测试：`cross-node-replying-state`、`workspace-node-fanout`、`workspace-realtime-freshness`、`multi-account-partition`、`node-url-normalize`、`pins-authority`。
 

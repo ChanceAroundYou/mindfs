@@ -1596,9 +1596,10 @@ groups:
       - web/tests/drawer-pending-reconcile.test.mjs
     files:
       - web/src/app/appSession.ts
+      - web/src/app/useReplyingSessionPoll.ts
       - web/src/App.tsx
     anchors:
-      - web/src/App.tsx:clearStalePending
+      - web/src/app/useReplyingSessionPoll.ts:clearStalePending
 
   - id: G-AZ
     title: 任务卡视觉件：待审核状态徽标 / 列框去除 / 浮动滚动条 / 工作台角标移除
