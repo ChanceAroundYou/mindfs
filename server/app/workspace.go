@@ -233,6 +233,18 @@ func validAccountID(id string) bool {
 // 实测踩过：登录后看板直接报错。共享服务是同一份实例（无额外 goroutine），
 // Kanban/Scheduled/GitHub 的构造函数本身也不起后台循环——不起 Start/Schedule 就没有副作用，
 // 而空注册表下本来也没有 root 可调度。
+// TODO(账户只在主节点，方案 B)：worker 不该有账户表，也不该有「空工作区」。
+//
+// 数据分区需要的账户清单可以直接从数据推导 —— `users/<id>/` 存在即「这个账户在
+// 本机有数据」，首次写入时按需建目录。这样下面这个只读空工作区可以整个删掉，
+// 顺带消灭「registry path required」这类内部错误（见 registry.saveLocked）。
+//
+// 硬前提：账户 id 必须跨机器稳定。现在 id 是随机生成的（本机 u_pc_admin、
+// fn u_yQgvkYcI7Na1tzIR），worker 没有账户表就把用户名解析不出目录名。
+// 两个办法：① id 改由用户名派生；② 每个账户目录里放 account.json 记 username，
+// worker 扫目录建映射。
+//
+// 详见 docs/multi-node-control-plane.md「待办：把账户表收回主节点」。
 func (m *workspaceManager) emptyWorkspace() (*api.AppContext, error) {
 	registry := fs.NewRegistryAt("", "")
 	services := &api.AppContext{

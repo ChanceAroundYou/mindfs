@@ -41,6 +41,22 @@ func TestRegistryUpsertRejectsSameNameDifferentPath(t *testing.T) {
 	}
 }
 
+// 空工作区（app.emptyWorkspace）就是这么来的：一个 path 为空的注册表。
+// 它只读没问题，但任何写操作都必须失败 —— 而且错误要让人看懂，
+// 不能把内部实现细节「registry path required」直接抛给用户。
+func TestRegistrySaveWithoutPathReturnsActionableError(t *testing.T) {
+	err := NewRegistry("").Save()
+	if err == nil {
+		t.Fatal("Save on pathless registry returned nil, want error")
+	}
+	if strings.Contains(err.Error(), "registry path required") {
+		t.Fatalf("Save error still leaks internal detail: %q", err.Error())
+	}
+	if strings.TrimSpace(err.Error()) == "" {
+		t.Fatal("Save error is empty, want a user-actionable message")
+	}
+}
+
 func TestMetaLocationForNewRootPrefersExistingProjectMetadata(t *testing.T) {
 	rootDir := t.TempDir()
 	if err := os.Mkdir(filepath.Join(rootDir, ".mindfs"), 0o755); err != nil {

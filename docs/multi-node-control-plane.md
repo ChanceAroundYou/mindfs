@@ -113,3 +113,50 @@ export function controlPath(path: string, params?: URLSearchParams): string
 > `scripts/deploy-all.sh` 推过去的编译产物。`role` 来自运行节点自己的
 > `~/.config/mindfs/config.json`，与源码无关 —— 改角色只需改那个文件再重启，
 > 不必（也无法）先把代码同步过去。
+
+## 待办：把账户表收回主节点（方案 B）
+
+> 2026-10-08 定方向，**尚未实施**。
+
+### 现状
+
+worker 也加载一份完整的 `users.json`（含密码哈希、角色）。但 worker 上
+`/api/auth/*`、`/api/users/*` 本来就是 403（见上方控制面端点表），所以那份文件在
+worker 上只有 `id` / `username` / `primary_user_id` 三个字段有用 —— 纯粹为了
+**数据分区**：把 `user=xiaokubao` 解析成账户 id，决定数据落在 `users/<id>/`
+还是 `<config-dir>/`。
+
+后果：
+
+- 每台机器一份账户表 = 控制面漂移，正是本文档想消灭的那个问题。
+- 新节点首次启动会自动建一个 `admin` 空壳账户，然后一直躺着。
+- 陌生 `user=` 落到「空工作区」，读得到空列表，但**写**会撞上
+  `registry path required` 这种内部错误（已临时改成用户能看懂的话，根因会随本方案一起消失）。
+
+### 目标
+
+worker **不要账户表**。数据分区需要的账户清单从数据本身推导：
+`users/<id>/` 存在 = 这个账户在本机有数据；首次写入时按需建目录。
+
+配套可以删掉：
+
+- `app.emptyWorkspace` 那套「陌生账户给只读空工作区」的逻辑（改成按需建目录）；
+- `registry.saveLocked` 里 `path == ""` 这条分支（不再有人走到）。
+
+### 硬前提：账户 id 必须跨机器稳定
+
+现在 id 是随机生成的（本机 `u_pc_admin`、fn `u_yQgvkYcI7Na1tzIR`）。
+worker 没有账户表，就**无法把用户名解析成目录名** —— 这是本方案的硬前提，
+不解决则方案不成立。两个办法，二选一：
+
+1. **id 改由用户名派生**（如 `u_` + hash(username)）：跨机器天然稳定，
+   前端带用户名即可，worker 直接算出目录名。代价：存量账户要迁移目录名。
+2. **每个账户目录里放 `account.json` 记 username**：worker 扫
+   `users/*/account.json` 建映射。不改 id 生成规则，但多一个文件。
+
+### 实施顺序
+
+1. 先做「账户 id 跨机器稳定」—— 独立改动，主节点行为不变。
+2. worker 去掉 `users.json`，改从数据推导 + 按需建目录。
+3. 删掉 `emptyWorkspace` 与相关分支。
+4. 验证：新节点上第一次加项目能成功；主节点登录 / 账户管理不变。

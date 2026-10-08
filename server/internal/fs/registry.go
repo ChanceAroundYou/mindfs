@@ -113,7 +113,10 @@ func (r *Registry) Save() error {
 
 func (r *Registry) saveLocked() error {
 	if r.path == "" {
-		return errors.New("registry path required")
+		// 空工作区（app.emptyWorkspace）刻意不建注册表文件，所以任何写操作都不可能落盘。
+		// 这里必须给一句人话：以前抛的是内部实现细节「registry path required」，
+		// 用户在新节点上加第一个项目时只会看到这串字符，完全不知道发生了什么。
+		return errors.New("这个账户在本机没有数据，无法修改项目列表")
 	}
 	if err := os.MkdirAll(filepath.Dir(r.path), 0o755); err != nil {
 		return apperr.Wrap("mkdir", filepath.Dir(r.path), err)
