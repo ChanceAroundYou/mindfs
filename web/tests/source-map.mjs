@@ -52,6 +52,7 @@ export const MODULES = {
     "src/app/useSendMessage.ts",
     "src/app/useActionHandlers.ts",
     "src/app/useSessionLifecycle.ts",
+    "src/app/useSessionLifecycleTypes.ts",
     "src/app/useMultiProjectSessions.ts",
     "src/app/useTaskWorkspaceState.ts",
     "src/app/useTaskWorkspaceEffects.ts",
