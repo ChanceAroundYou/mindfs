@@ -64,6 +64,7 @@ import { SessionViewerWaitingIndicator } from "./SessionViewerWaitingIndicator";
 import { SessionViewerFloatingControls } from "./SessionViewerFloatingControls";
 import { buildUserMetaButtonStyle } from "./sessionViewerStyles";
 import { groupRelatedFiles } from "./sessionViewerGrouping";
+import { findActiveAskUserCallId } from "./sessionViewerAskUser";
 
 function SessionViewerInner({
   session,
@@ -893,37 +894,7 @@ function SessionViewerInner({
     }
     container.scrollTo({ top, behavior });
   };
-  const activeAskUserCallId = (() => {
-    if (!isAwaiting) {
-      return "";
-    }
-    for (let i = timeline.length - 1; i >= 0; i -= 1) {
-      const item = timeline[i];
-      if (item.type === "user_text" || item.type === "assistant_text") {
-        return "";
-      }
-      if (item.type !== "tool") continue;
-      const toolCall = item.toolCall || {};
-      const kind = `${toolCall.kind || ""}`.toLowerCase();
-      const status = `${toolCall.status || ""}`.toLowerCase();
-      if (kind !== "ask_user") continue;
-      if (
-        status !== "running" &&
-        status !== "pending" &&
-        status !== "in_progress"
-      ) {
-        continue;
-      }
-      if (getAskUserQuestions(toolCall).length === 0) continue;
-      return (
-        toolCall.callId ||
-        (typeof toolCall.meta?.toolUseId === "string"
-          ? toolCall.meta.toolUseId
-          : "")
-      );
-    }
-    return "";
-  })();
+  const activeAskUserCallId = findActiveAskUserCallId(timeline, isAwaiting);
   const defaultRelatedFilesCollapsed = shouldDefaultCollapseRelatedFiles(
     isMobile,
     relatedFiles.length,
