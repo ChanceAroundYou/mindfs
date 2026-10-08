@@ -89,7 +89,7 @@ export type RealtimeEventsContext = {
   };
   /** App 的回调与动作 */
   actions: {
-    appendAgentChunkForSession: (rootID: string, sessionKey: string, content: string, runtimeHint?: SessionRuntimeMeta) => void;
+    appendAgentChunkForSession: (rootID: string, sessionKey: string, content: string, runtimeHint?: SessionRuntimeMeta, eventTimestamp?: string) => void;
     appendCompactNoticeForSession: (rootID: string, sessionKey: string, compactNotice: any) => void;
     appendPlanUpdateForSession: (rootID: string, sessionKey: string, planUpdate: any) => void;
     appendThoughtChunkForSession: (rootID: string, sessionKey: string, content: string, thoughtID?: string) => void;
@@ -583,9 +583,10 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
                   model: pending.model,
                     mode: pending.agentMode,
                     effort: pending.effort,
-                    fast_service: pending.fastService || "",
-                  }
+                  fast_service: pending.fastService || "",
+                }
               : undefined,
+            event.timestamp,
           );
           break;
         case "thought_chunk":

@@ -227,7 +227,7 @@ export type CompactNotice = {
   summary?: string;
 };
 
-export type StreamEvent = { event_cursor?: string } & (
+export type StreamEvent = { event_cursor?: string; timestamp?: string } & (
   | { type: "message_chunk"; data: { content: string } }
   | { type: "thought_chunk"; data: { id?: string; content: string } }
   | { type: "tool_call"; data: ToolCall }

@@ -16,9 +16,16 @@
 > 分组原则: **按 hunk 归类**——同一提交、同一文件不同行可归不同组；每行改动仅属一组，组间互斥、全体完备。
 > 判定: `git show --numstat/--stat` 逐提交核验 + 逐 hunk 归类，`git cherry -v` 校验上游等价。
 
----
+### G-BD. 移动端恢复后的 pending 对账与服务端事件时间
 
-## 0-B. v0.5.5 合并记录（2026-09-30）
+- **可见症状**：手机切到后台导致 WebSocket 断开并丢失 `session.done` 后，回复灯可能一直亮到下次偶然刷新；页面恢复后回复时长会把恢复时刻当成服务端事件时刻，显示出虚假的长耗时。
+- **根因与边界**：页面恢复必须主动触发 `/api/replying-sessions` 对账；流事件的时间由服务端写入，客户端 replay 优先使用该时间，旧事件才回退到接收时刻。多节点分组以分组自身 `_nodeId` 构造 pending key，避免同名项目跨节点串灯。
+- **针对性测试**：
+  - `web/tests/pending-recovery-on-resume.test.mjs` → `visibilitychange`/`pageshow` 恢复时触发 pending reconciliation。
+  - `web/tests/cross-node-replying-state.test.mjs` → 同名项目使用实际节点作用域投影，失败节点保留旧状态。
+  - `web/tests/session-duration.test.mjs` → replay 使用服务端事件时间，不用恢复页面接收时间。
+
+
 
 - **Merge commit `976a5d0`**（双 parent：上游 `9ab9572` × 本地 `bb4244d`），merge-base `v0.5.2`(`7757ca8`) → **`bb4244d`**。
   上游 25 commits / 125 files，本地 311 commits / 304 files，重叠 39 files；合并相对本地 +5400 / −488（95 files）。

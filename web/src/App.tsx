@@ -207,7 +207,7 @@ import { TaskInlineEditState } from "./app/appTask";
 import { buildMatchInputFromPath, buildMessageWithViewContext, hasExplicitFileContext, indexManagedRoots, inferReadModeFromPlugin, managedDirAddErrorMessage, mapManagedRootsToEntries, normalizeUpdateState, shouldShowUpdateButton, toPluginInput, updateButtonLabel, updateSummaryText, useResponsive, waitForNextPaint } from "./app/appMisc";
 import { basenameOfPath, buildDirectorySelectionKey, buildFileScrollKey, buildURLSearch, comparableManagedRootPath, dirnameOfPath, isDirectorySortMode, joinDisplayPath, normalizeCursor, normalizePath, parentDirsOfFile, parseFileLocation, parsePluginQuery, readURLState, relativeDisplayPathFromRoot, rootNodeKey } from "./app/appPath";
 import { useWorkspaceBoard } from "./app/useWorkspaceBoard";
-import { hasSessionExchanges, isSessionShownInMain, isTopLevelSessionItem, mergeReplyingStateByNode, normalizeMode, relatedFileSelectionKey, sessionInputHistory, shouldAutoSelectNewSession, toSessionItem } from "./app/appSession";
+import { hasSessionExchanges, isSessionShownInMain, isTopLevelSessionItem, applyPendingToMultiProjectGroups as applyPendingToMultiProjectGroupsByNode, mergeReplyingStateByNode, normalizeMode, relatedFileSelectionKey, sessionInputHistory, shouldAutoSelectNewSession, toSessionItem } from "./app/appSession";
 import { buildSessionJumpTarget, resolveSessionJumpRoot } from "./app/sessionJump";
 import { accountScopedKey, loadGitDiffSideBySide, loadLastRootId, loadLastRootNodeId, loadMobileEnterKeySends, loadPersistedFileScrollPositions, loadPersistedPluginQuery, loadSidebarsSwapped, loadTaskCreateWorktreePreference, persistFileScrollPositions, persistPluginQuery, removeLocalStorageByPrefix, saveTaskCreateWorktreePreference } from "./app/appStorage";
 import { applyStageOverride, currentTaskInputFromDetail, DEFAULT_TASK_AGENT, DEFAULT_TASK_MODEL, firstAgentStage, firstTaskInputFromDetail, firstUserInputTemplate, isTerminalKanbanTask, latestTaskStageRun, normalizeFastService, parseTaskSessionErrorDetails, parseTaskSessionErrorMessage, previousTaskInputsFromDetail, taskSessionKeysFromDetail, taskStagesForCreate, taskStatusLabel } from "./app/appTask";
@@ -2051,14 +2051,8 @@ export function App({ onGoHome }: AppProps) {
   );
   const applyPendingToMultiProjectGroups = useCallback(
     (groups: MultiProjectSessionGroup[], pendingByKey: Record<string, boolean>) =>
-      groups.map((group) => ({
-        ...group,
-        sessions: group.sessions.map((session) => ({
-          ...(session as any),
-          pending: !!pendingByKey[rootSessionKey(group.rootId, session.key || session.session_key)],
-        }) as SessionItem),
-      })),
-    [rootSessionKey],
+      applyPendingToMultiProjectGroupsByNode(groups, pendingByKey),
+    [],
   );
   const setMultiProjectSessionPending = useCallback(
     (rootID: string | null | undefined, sessionKey: string | null | undefined, pending: boolean) => {
@@ -3684,6 +3678,24 @@ export function App({ onGoHome }: AppProps) {
       void refreshMultiProjectReplyingSessions();
     }, REMOTE_REPLY_POLL_MS);
     return () => window.clearInterval(timer);
+  }, [multiProjectSessionsEnabled, refreshMultiProjectReplyingSessions]);
+
+  useEffect(() => {
+    if (!multiProjectSessionsEnabled || typeof window === "undefined") {
+      return;
+    }
+    const refreshOnResume = () => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") {
+        return;
+      }
+      void refreshMultiProjectReplyingSessions();
+    };
+    document.addEventListener("visibilitychange", refreshOnResume);
+    window.addEventListener("pageshow", refreshOnResume);
+    return () => {
+      document.removeEventListener("visibilitychange", refreshOnResume);
+      window.removeEventListener("pageshow", refreshOnResume);
+    };
   }, [multiProjectSessionsEnabled, refreshMultiProjectReplyingSessions]);
 
   const {

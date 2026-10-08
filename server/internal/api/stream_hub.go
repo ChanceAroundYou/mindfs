@@ -697,7 +697,10 @@ func (h *StreamHub) AppendReplyEvent(sessionKey string, event StreamEvent) Strea
 	state := h.ensurePendingSessionLocked(sessionKey)
 	state.NextEventSeq++
 	event.EventCursor = formatEventCursor(state.BaseExchangeSeq, state.NextEventSeq)
-	state.UpdatedAt = time.Now().UTC()
+	if event.Timestamp.IsZero() {
+		event.Timestamp = time.Now().UTC()
+	}
+	state.UpdatedAt = event.Timestamp
 	if coalesceUserShellStreamEvent(state, event) {
 		return event
 	}

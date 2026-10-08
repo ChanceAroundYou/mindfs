@@ -2,6 +2,7 @@ import { useCallback, useRef } from "react";
 import type { Session } from "../services/session";
 import type { Exchange } from "./appSession";
 import { normalizeFastService } from "./appTask";
+import { streamEventTimestamp } from "../services/sessionDuration";
 
 /**
  * 会话流写缓存内核。
@@ -161,9 +162,15 @@ export function useSessionStreamCache({
   );
 
   const appendAgentChunkForSession = useCallback(
-    (rootID: string, sessionKey: string, content: string, runtimeHint?: SessionRuntimeMeta): void => {
+    (
+      rootID: string,
+      sessionKey: string,
+      content: string,
+      runtimeHint?: SessionRuntimeMeta,
+      eventTimestamp?: string,
+    ): void => {
     if (!content) return;
-    const now = new Date().toISOString();
+    const now = streamEventTimestamp({ timestamp: eventTimestamp }, new Date().toISOString());
     const runtimeMeta = resolveRuntimeMetaForSession(rootID, sessionKey, runtimeHint);
     upsertSessionCache(rootID, sessionKey, (prevList) => {
       const list = [...(prevList || [])];

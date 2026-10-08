@@ -50,8 +50,9 @@ type WSHandler struct {
 }
 
 type StreamEvent struct {
-	Type string `json:"type"`
-	Data any    `json:"data,omitempty"`
+	Type      string    `json:"type"`
+	Data      any       `json:"data,omitempty"`
+	Timestamp time.Time `json:"timestamp,omitempty"`
 	// EventCursor 是**服务端内部**编号（"<baseExchangeSeq>:<eventSeq>"），只用来给
 	// ReplyingList 排序、以及在排空循环里判断「哪些事件还没发给这个客户端」。
 	// 客户端既不读也不回传 —— 挂载会话是快照重建，不是按序号续传（见 ReplayPending）。

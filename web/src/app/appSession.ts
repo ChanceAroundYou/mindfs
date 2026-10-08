@@ -6,7 +6,7 @@
 
 import { normalizeFastService } from "./appTask";
 
-import { sessionKeyNodeId } from "../shared/scope";
+import { sessionKeyNodeId, scopeSessionKey } from "../shared/scope";
 import {  QueuedUserMessage ,  RelatedFile ,  RelatedWorktree ,  Session ,  TokenUsage  } from "../services/session";
 
 export type SessionMode = "chat" | "plugin" | "command";
@@ -150,6 +150,20 @@ export function mergeReplyingStateByNode(
   return Object.assign(next, fresh);
 }
 
+export function applyPendingToMultiProjectGroups(
+  groups: MultiProjectSessionGroup[],
+  pendingByKey: Record<string, boolean>,
+): MultiProjectSessionGroup[] {
+  return groups.map((group) => ({
+    ...group,
+    sessions: group.sessions.map((session) => ({
+      ...(session as any),
+      pending: !!pendingByKey[
+        scopeSessionKey(group._nodeId || "", group.rootId, session.key || session.session_key)
+      ],
+    }) as SessionItem),
+  }));
+}
 export function sessionInputHistory(session: { exchanges?: Array<{ role?: string; content?: string }> } | null | undefined): string[] {
   const exchanges = Array.isArray(session?.exchanges) ? session.exchanges : [];
   const items: string[] = [];

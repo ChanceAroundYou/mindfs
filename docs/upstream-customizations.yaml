@@ -1926,6 +1926,37 @@ groups:
     tests:
       - web/tests/task-board-view.test.mjs
 
+  - id: G-BD
+    title: 移动端恢复后的 pending 对账与服务端事件时间
+    kind: fix
+    symptom: |
+      手机切到后台导致 WebSocket 断开并丢失 session.done 后，回复灯可能一直亮到下次偶然刷新；
+      页面恢复后回复时长会把恢复时刻当成服务端事件时刻，显示出虚假的长耗时。
+    why: |
+      visibilitychange/pageshow 是移动浏览器恢复页面的可靠边界，必须主动触发服务端 pending 对账；
+      stream event 的时间必须由服务端写入并在客户端 replay 时保留，不能用接收事件的本地时间重锚。
+    boundary: |
+      移动端 WS 中断后的 pending 恢复，以及流事件时间在 live/replay 路径中的权威性。
+    tests:
+      - web/tests/pending-recovery-on-resume.test.mjs
+      - web/tests/cross-node-replying-state.test.mjs
+      - web/tests/session-duration.test.mjs
+    files:
+      - server/internal/api/ws.go
+      - server/internal/api/stream_hub.go
+      - web/src/App.tsx
+      - web/src/app/appSession.ts
+      - web/src/app/useRealtimeEvents.ts
+      - web/src/app/useSessionStreamCache.ts
+      - web/src/services/session.ts
+      - web/src/app/useSessionStreamCache.ts
+      - web/tests/cross-node-replying-state.test.mjs
+      - web/tests/session-duration.test.mjs
+    anchors:
+      - web/src/App.tsx:refreshMultiProjectReplyingSessions
+      - web/src/app/appSession.ts:applyPendingToMultiProjectGroups
+      - server/internal/api/stream_hub.go:AppendReplyEvent
+
   - id: G-AY
     title: pending 信号兜底（ClearSessionPending 2s 超时 + 广播先于清）
     kind: fix

@@ -1,3 +1,12 @@
+export function streamEventTimestamp(
+  event: { timestamp?: string } | null | undefined,
+  receivedAt: string,
+): string {
+  return typeof event?.timestamp === "string" && event.timestamp
+    ? event.timestamp
+    : receivedAt;
+}
+
 export function formatSessionDuration(startISO: string | undefined, endISO: string | undefined): string {
   const start = Date.parse(startISO || "");
   const end = Date.parse(endISO || "");
