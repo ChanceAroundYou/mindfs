@@ -59,10 +59,6 @@ export type {
   WSStatus,
 } from "./types";
 
-function wsStatusDisplayDelay(status: WSStatus): number {
-  return status === "reconnecting" ? 800 : 0;
-}
-
 export function ActionBar({
   status = "disconnected",
   agentsVersion = 0,
