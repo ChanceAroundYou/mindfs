@@ -60,6 +60,7 @@ import { SessionViewerAssistantMessage } from "./SessionViewerAssistantMessage";
 import { SessionViewerRelatedFiles } from "./SessionViewerRelatedFiles";
 import { SessionViewerHeader } from "./SessionViewerHeader";
 import { SessionViewerLoadingState } from "./SessionViewerLoadingState";
+import { SessionViewerWaitingIndicator } from "./SessionViewerWaitingIndicator";
 
 function SessionViewerInner({
   session,
@@ -1181,34 +1182,10 @@ function SessionViewerInner({
               rootId,
               themeColor,
             })}
-            {(isAwaiting || isStreaming) && (() => {
-              const awaitingColor = String(rootColor || "").trim() || "var(--accent-color)";
-              return (
-                <div
-                  style={{
-                    marginTop: "16px",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "6px",
-                    fontSize: "12px",
-                    color: "var(--text-secondary)",
-                  }}
-                >
-                  <span
-                    style={{
-                      width: "8px",
-                      height: "8px",
-                      borderRadius: "50%",
-                      background: awaitingColor,
-                      animation: "pulse 1s infinite",
-                    }}
-                  />
-                {isStreaming
-                  ? streamStatusText || t("session.generating")
-                  : t("session.sentWaiting")}
-              </div>
-              );
-            })()}
+            <SessionViewerWaitingIndicator
+              isAwaiting={isAwaiting} isStreaming={isStreaming}
+              streamStatusText={streamStatusText} rootColor={rootColor} t={t}
+            />
 
             <SessionViewerRelatedFiles
               relatedFiles={relatedFiles} relatedFileStatsByKey={relatedFileStatsByKey}
