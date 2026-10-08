@@ -101,6 +101,7 @@ export const MODULES = {
     "src/components/file/useAgentConfigSwitchRequest.ts",
     "src/components/file/FileTreeProjectTabs.tsx",
     "src/components/file/fileTreeMenuStyles.ts",
+    "src/components/file/fileTreeMenuOptions.ts",
     "src/components/file/fileTreeAgentConfigUtils.ts",
   ],
 

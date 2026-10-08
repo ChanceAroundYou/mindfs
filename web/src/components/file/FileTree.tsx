@@ -97,27 +97,11 @@ import {
   type FontSizeRegion,
 } from "../../services/prefs/fontSize";
 
-const APPEARANCE_OPTIONS: Array<{ value: AppearanceMode; labelKey: MessageKey }> = [
-  { value: "dark", labelKey: "appearance.dark" },
-  { value: "light", labelKey: "appearance.light" },
-  { value: "meadow", labelKey: "appearance.meadow" },
-  { value: "moss", labelKey: "appearance.moss" },
-  { value: "system", labelKey: "appearance.system" },
-];
-
-const LOCALE_OPTIONS: Array<{ value: Locale; labelKey: MessageKey }> = [
-  { value: "zh-CN", labelKey: "locale.zhCN" },
-  { value: "en-US", labelKey: "locale.enUS" },
-];
-
-const DIRECTORY_SORT_LABEL_KEYS: Partial<Record<DirectorySortMode, MessageKey>> = {
-  "name-asc": "sort.nameAsc",
-  "name-desc": "sort.nameDesc",
-  "mtime-desc": "sort.mtimeDesc",
-  "mtime-asc": "sort.mtimeAsc",
-  "size-desc": "sort.sizeDesc",
-  "size-asc": "sort.sizeAsc",
-};
+import {
+  APPEARANCE_OPTIONS,
+  DIRECTORY_SORT_LABEL_KEYS,
+  LOCALE_OPTIONS,
+} from "./fileTreeMenuOptions";
 
 type FileMeta = {
   source_session?: string;
