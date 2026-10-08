@@ -220,6 +220,7 @@ import { useRealtimeEvents } from "./app/useRealtimeEvents";
 import { useTaskTemplates } from "./app/useTaskTemplates";
 import { useTaskWorkspaceState } from "./app/useTaskWorkspaceState";
 import { useTaskWorkspaceEffects } from "./app/useTaskWorkspaceEffects";
+import { useRootContentView } from "./app/useRootContentView";
 import { CheckIconSmall, PlusSmallIcon, taskCardIconButtonStyle } from "./app/taskIcons";
 import { useMultiProjectSessions } from "./app/useMultiProjectSessions";
 import { useSessionArchive } from "./app/useSessionArchive";
@@ -3431,7 +3432,23 @@ export function App({ onGoHome }: AppProps) {
         path: selectedKanbanTask.worktree_path,
       }
     : null;
-  const relatedWorktree = taskWorktree || relatedSessionSnapshot?.related_worktree || null;
+  const {
+    relatedWorktree,
+    selectedSessionRelatedFiles,
+    selectedSessionRelatedFileGroups,
+    gitStatsRefreshKey,
+    selectedRelatedFileStatsByKey,
+  } = useRootContentView({
+    selectedKanbanTask,
+    taskRelatedFilesById,
+    relatedSessionSnapshot,
+    relatedSessionRootId,
+    relatedSessionNodeId,
+    currentRootId,
+    managedRootByIdRef,
+    gitFileStatsByPath,
+    t,
+  });
 
   const refreshProjectTreeRelatedFiles = useCallback(async () => {
     try {
@@ -3566,118 +3583,6 @@ export function App({ onGoHome }: AppProps) {
       openGitDiff={openGitDiff}
       actionHandlers={actionHandlers}
     />
-  );
-  const selectedSessionRelatedFiles = useMemo(() => {
-    const rawRelated = selectedKanbanTask
-      ? taskRelatedFilesById[selectedKanbanTask.id] || []
-      : relatedSessionSnapshot?.related_files || (relatedSessionSnapshot as any)?.outputs || [];
-    return (Array.isArray(rawRelated) ? rawRelated : [])
-      .map((file: RelatedFile | string | { path?: unknown; name?: unknown; head?: unknown; repo_path?: unknown; repo_name?: unknown; repo_kind?: unknown; root_id?: unknown }) => {
-        const path = typeof file === "string"
-          ? file
-          : typeof file?.path === "string"
-            ? file.path
-            : "";
-        const rawName =
-          typeof file !== "string" ? (file as { name?: unknown }).name : "";
-        const name = typeof rawName === "string"
-          ? rawName
-          : path.split("/").pop() || path;
-        const head = typeof file !== "string" && typeof file?.head === "string"
-          ? file.head
-          : "";
-        const repoPath = typeof file !== "string" && typeof file?.repo_path === "string"
-          ? file.repo_path
-          : "";
-        const repoName = typeof file !== "string" && typeof file?.repo_name === "string"
-          ? file.repo_name
-          : repoPath.split(/[\\/]/).filter(Boolean).pop() || "";
-        const repoKind = typeof file !== "string" && typeof file?.repo_kind === "string"
-          ? file.repo_kind
-          : "";
-        const rootID = typeof file !== "string" && typeof file?.root_id === "string"
-          ? file.root_id
-          : "";
-        return { path, name, head, repo_path: repoPath, repo_name: repoName, repo_kind: repoKind, root_id: rootID };
-      })
-      .filter((file) => file.path);
-  }, [relatedSessionSnapshot, selectedKanbanTask, taskRelatedFilesById]);
-  const selectedSessionRelatedFileGroups = useMemo(
-    () => {
-      const currentRootPath = normalizePath(
-        managedRootByIdRef.current[relatedSessionRootId || currentRootId || ""]?.root_path || "",
-      );
-      const repoGroups = selectedSessionRelatedFiles.reduce<
-        Array<{
-          key: string;
-          repoPath: string;
-          repoName: string;
-          repoKind: string;
-          headGroups: Array<{ key: string; head: string; files: typeof selectedSessionRelatedFiles }>;
-        }>
-      >((groups, file) => {
-        const head = file.head || "";
-        const rawRepoPath = file.repo_path || "";
-        const isCurrentRepoRecord =
-          !rawRepoPath ||
-          file.repo_name === t("session.currentProject") ||
-          (currentRootPath && normalizePath(rawRepoPath) === currentRootPath);
-        const repoPath = isCurrentRepoRecord ? "" : rawRepoPath;
-        const rawRepoKind = file.repo_kind || "";
-        const repoKind = isCurrentRepoRecord && rawRepoKind !== "plain" ? "" : rawRepoKind;
-        const repoKey = `${repoKind}\0${repoPath}`;
-        let repoGroup = groups.find((group) => group.key === repoKey);
-        if (!repoGroup) {
-          repoGroup = {
-            key: repoKey,
-            repoPath,
-            repoName: isCurrentRepoRecord
-              ? t("session.currentProject")
-              : file.repo_name || repoPath.split(/[\\/]/).filter(Boolean).pop() || t("session.currentProject"),
-            repoKind,
-            headGroups: [],
-          };
-          groups.push(repoGroup);
-        }
-        const headKey = `${repoKey}\0${head}`;
-        const existing = repoGroup.headGroups.find((group) => group.key === headKey);
-        if (existing) {
-          existing.files.push(file);
-        } else {
-          repoGroup.headGroups.push({
-            key: headKey,
-            head,
-            files: [file],
-          });
-        }
-        return groups;
-      }, []);
-      return repoGroups.flatMap((repoGroup) =>
-        repoGroup.headGroups.map((headGroup) => ({
-          key: headGroup.key,
-          head: headGroup.head,
-          repoPath: repoGroup.repoPath,
-          repoName: repoGroup.repoName,
-          repoKind: repoGroup.repoKind,
-          files: headGroup.files,
-        })),
-      );
-    },
-    [currentRootId, relatedSessionRootId, selectedSessionRelatedFiles],
-  );
-  const gitStatsRefreshKey = useMemo(
-    () =>
-      Object.entries(gitFileStatsByPath)
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([path, stats]) => `${path}:${stats.status}:${stats.additions}:${stats.deletions}`)
-        .join("|"),
-    [gitFileStatsByPath],
-  );
-  const selectedRelatedFileStatsByKey = useRelatedFileStats(
-    relatedSessionRootId || currentRootId,
-    selectedSessionRelatedFiles,
-    gitStatsRefreshKey,
-    relatedSessionNodeId,
   );
   const renderRootRelatedContent = (root: string): React.ReactNode => (
     <RootRelatedContentView
