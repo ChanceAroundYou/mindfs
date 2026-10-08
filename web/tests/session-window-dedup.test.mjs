@@ -11,6 +11,7 @@ import fs from "node:fs";
 import path from "node:path";
 import ts from "typescript";
 import vm from "node:vm";
+import { loadSourceModule } from "./vmLoadSource.mjs";
 
 const SRC = path.resolve(import.meta.dirname, "../src");
 
@@ -71,6 +72,11 @@ function loadSessionService() {
     AbortController,
     setTimeout,
     clearTimeout,
+  };
+  const originalRequire = sandbox.require;
+  sandbox.require = (name) => {
+    if (name === "./sessionTerminalLayout") return loadSourceModule("services/sessionTerminalLayout.ts", sandbox);
+    return originalRequire(name);
   };
   vm.runInNewContext(compiled, sandbox, { filename: file });
   return {

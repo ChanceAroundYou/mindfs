@@ -7,6 +7,7 @@ import vm from "node:vm";
 // 这里**直接 import 真实现**，不再写同构副本 —— 副本会漂移，冲突②（渲染空洞）
 // 就是被副本挡住的：副本只复刻了作者关心的分支，所以一直是绿的。
 import { register } from "node:module";
+import { loadSourceModule } from "./vmLoadSource.mjs";
 register("./ts-module-hook.mjs", import.meta.url);
 const { computeTailOverlay } = await import("../src/components/sessionOverlay.ts");
 
@@ -67,6 +68,11 @@ function loadSessionModule() {
     window: undefined,
     document: undefined,
     fetch: async () => ({}),
+  };
+  const originalRequire = sandbox.require;
+  sandbox.require = (name) => {
+    if (name === "./sessionTerminalLayout") return loadSourceModule("services/sessionTerminalLayout.ts", sandbox);
+    return originalRequire(name);
   };
   vm.runInNewContext(compiled, sandbox, { filename: sessionServicePath });
   // transpile 成 CommonJS 后是 `exports.foo = ...`，所以要 sandbox.exports
