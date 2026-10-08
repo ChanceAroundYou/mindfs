@@ -97,6 +97,7 @@ export const MODULES = {
     "src/components/file/useAgentConfigSelection.ts",
     "src/components/file/useAgentLifecycleActions.ts",
     "src/components/file/useAgentConfigOutsideClick.ts",
+    "src/components/file/useFileTreeEffects.ts",
   ],
 
   // P2 拆分：file.ts → services/file/（入口 shim 仍在原路径）
@@ -176,6 +177,7 @@ export const MODULES = {
     "src/components/file/AgentConfigPopover.tsx",
     "src/app/usePwaInstall.ts",
     "src/components/file/fileTreeEntries.tsx",
+    "src/components/file/useFileTreeEffects.ts",
   ],
   "src/components/FileViewer.tsx": ["src/components/file/FileViewer.tsx"],
   "src/components/FileEditor.tsx": ["src/components/file/FileEditor.tsx"],
