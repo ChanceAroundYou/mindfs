@@ -179,7 +179,8 @@ web/src/
 - **依赖方向**：`types` ← `format` ← `tokenViews`/`cards`/`attachments` ← `AskUser` ← `SessionViewer`（单向，无环）。
   原先这些类型都是文件内私有（外部只 import `SessionViewer` 组件本身），故可自由搬。
 - **收益**：SessionViewer.tsx 3567 → 2569 行（-998）。
-- **待办**：`renderTimelineItem`（639 行）/ `renderSlashCommandResult`（199 行）/ RETURN（674 行）仍在 `SessionViewerInner` 内。
+- **已抽**：`renderSlashCommandResult`（199 行）→ `SessionViewerSlashCommand.tsx`（232 行，8 个 props，`t` 走 `useI18n()`）。
+- **待办**：`renderTimelineItem`（639 行，~50 个自由变量，需 prop-bag）/ RETURN（674 行）仍在 `SessionViewerInner` 内。
 - **注意**：合并 main 时此文件有上游改动（`c04deeb` 的 pending 对账），拆之前先确认。
 
 ### 4.3.1 useRealtimeEvents.ts —— 1074 行 ✅
