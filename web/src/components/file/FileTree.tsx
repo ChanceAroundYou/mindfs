@@ -37,6 +37,7 @@ import { FileTreeLocaleOptions } from "./FileTreeLocaleOptions";
 import { FileTreeAppearanceOptions } from "./FileTreeAppearanceOptions";
 import { FileTreeSortOptions } from "./FileTreeSortOptions";
 import { FileTreeFooter } from "./FileTreeFooter";
+import { FileTreeProjectContent } from "./FileTreeProjectContent";
 import { FileTreeProjectTabs } from "./FileTreeProjectTabs";
 import { getNodes } from "../../services/net/nodeRegistry";
 import { NodeManagerPanel } from "../account/NodeManagerPanel";
@@ -1377,38 +1378,7 @@ function FileTreeInner({
         ) : null}
       </ViewHeader>
       <div style={{ padding: "8px", flex: 1, minHeight: 0, overflow: "auto", display: "flex", flexDirection: "column" }}>
-        {(() => {
-          const groups = groupEntriesByNode(entries, getNodes);
-          if (entries.length === 0 && creatingRootName === null) return (
-          <div
-            style={{
-              flex: 1,
-              minHeight: 0,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              padding: "20px",
-              textAlign: "center",
-              color: "var(--text-secondary)",
-              fontSize: "13px",
-              fontWeight: 800,
-              lineHeight: 1.5,
-            }}
-          >
-            {t("fileTree.emptyProjectHint")}
-          </div>
-          );
-          return (
-            <>
-              {groups.map((g: any) => (
-                <div key={g.name}>
-                  <NodeBadgeHeader color={g.color} label={g.name} />
-                  {renderEntries(g.items, 0, rootId || "", g.color, g.nid)}
-                </div>
-              ))}
-            </>
-          );
-        })()}
+        <FileTreeProjectContent entries={entries} creatingRootName={creatingRootName} getNodes={getNodes} t={t} renderEntries={renderEntries} rootId={rootId} />
       </div>
 <FileTreeFooter
         {...{ hasFooterContent, updateNotesRef, updateActionLabel, updateActionSummary, updateActionDisabled, updateActionBusy, updateActionHelp, isUpdateNotesOpen, setIsUpdateNotesOpen, onUpdateAction, footerTopContent, isNativeApp, onGoHome, shouldShowInstallButton, handleInstall, installLabel, shouldShowInstallHelp, installHelp, t }}
