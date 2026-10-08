@@ -20,10 +20,12 @@
 
 - **可见症状**：手机切到后台导致 WebSocket 断开并丢失 `session.done` 后，回复灯可能一直亮到下次偶然刷新；页面恢复后回复时长会把恢复时刻当成服务端事件时刻，显示出虚假的长耗时。
 - **根因与边界**：页面恢复必须主动触发 `/api/replying-sessions` 对账；流事件的时间由服务端写入，客户端 replay 优先使用该时间，旧事件才回退到接收时刻。多节点分组以分组自身 `_nodeId` 构造 pending key，避免同名项目跨节点串灯。
+  **重放路径必须经 `cloneEvent` 保留 `Timestamp`** —— 手机恢复走的是重放而不是 live，漏掉它客户端只能回退到「恢复页面的接收时刻」。服务端 `time.Time` 零值会序列化成 `0001-01-01T00:00:00Z`（struct 的 `omitempty` 不生效），客户端必须把这类哨兵当成「没有时间戳」，否则时长显示成天文数字。
 - **针对性测试**：
   - `web/tests/pending-recovery-on-resume.test.mjs` → `visibilitychange`/`pageshow` 恢复时触发 pending reconciliation。
   - `web/tests/cross-node-replying-state.test.mjs` → 同名项目使用实际节点作用域投影，失败节点保留旧状态。
-  - `web/tests/session-duration.test.mjs` → replay 使用服务端事件时间，不用恢复页面接收时间。
+  - `web/tests/session-duration.test.mjs` → replay 使用服务端事件时间、零值哨兵回退，不用恢复页面接收时间。
+  - `server/internal/api/ws_test.go` 的 `TestReplayPreservesEventTimestamp` → 重放事件保留服务端时间戳（`cloneEvent` 不得丢字段）。
 
 
 

@@ -1941,9 +1941,11 @@ groups:
       - web/tests/pending-recovery-on-resume.test.mjs
       - web/tests/cross-node-replying-state.test.mjs
       - web/tests/session-duration.test.mjs
+      - server/internal/api/ws_test.go
     files:
       - server/internal/api/ws.go
       - server/internal/api/stream_hub.go
+      - server/internal/api/ws_test.go
       - web/src/App.tsx
       - web/src/app/appSession.ts
       - web/src/app/useRealtimeEvents.ts

@@ -506,6 +506,37 @@ func TestDoneCarriesNoReplayReceipt(t *testing.T) {
 	}
 }
 
+// 重放必须保留服务端事件时间戳。
+//
+// 手机切后台再恢复时客户端走的是**重放**路径（不是 live），而 AppendReplyEvent 存进
+// ReplyingList 的是 cloneEvent(event)。cloneEvent 若只搬 Type/Data/EventCursor，
+// 时间戳就丢了：重放事件只能回退到「恢复页面的接收时刻」，回复时长把整段后台时间算进去。
+// live 路径不经 cloneEvent（BroadcastSessionStream 直接发 AppendReplyEvent 的返回值），
+// 所以只有重放会错 —— 这正是「时长只在手机恢复后不对」的形态。
+func TestReplayPreservesEventTimestamp(t *testing.T) {
+	hub := NewStreamHub(nil)
+	hub.SetPendingUserAt("root", "sess-1", "title", "codex", "", "", "", "", "", false, "prompt", time.Now(), 8)
+	stored := hub.AppendReplyEvent("sess-1", StreamEvent{
+		Type: string(agenttypes.EventTypeMessageChunk),
+		Data: agenttypes.MessageChunk{Content: "answer"},
+	})
+	if stored.Timestamp.IsZero() {
+		t.Fatal("AppendReplyEvent 必须给事件盖上服务端时间戳")
+	}
+
+	hub.mu.Lock()
+	hub.replayStates[pendingClientKey("client", "sess-1")] = &ClientReplayState{Status: ClientStreamStatusReplay}
+	hub.mu.Unlock()
+
+	step := hub.collectReplayStep("client", "sess-1")
+	if len(step.events) != 1 {
+		t.Fatalf("replay events = %d; want 1", len(step.events))
+	}
+	if got := step.events[0].Timestamp; !got.Equal(stored.Timestamp) {
+		t.Fatalf("重放事件时间戳 = %v; want %v（cloneEvent 丢了时间戳 → 客户端只能回退到恢复时刻）", got, stored.Timestamp)
+	}
+}
+
 // 回合清空之后重新挂上来的客户端拿到的是**空快照**（一条 events 为空的 reset 帧），
 // 不是上一轮的尾巴 —— 客户端据此清瞬时尾巴，且不会因此再触发一轮。
 func TestReplayAfterClearYieldsEmptySnapshot(t *testing.T) {

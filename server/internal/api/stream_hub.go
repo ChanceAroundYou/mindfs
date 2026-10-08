@@ -115,7 +115,9 @@ func pendingClientKey(clientID, sessionKey string) string {
 }
 
 func cloneEvent(ev StreamEvent) StreamEvent {
-	return StreamEvent{Type: ev.Type, Data: ev.Data, EventCursor: ev.EventCursor}
+	// Timestamp 必须一起搬。重放路径（ReplyingList → collectReplayStep）只走 cloneEvent，
+	// 漏掉它客户端就只能回退到「恢复页面的接收时刻」，回复时长把整段后台时间算进去。
+	return StreamEvent{Type: ev.Type, Data: ev.Data, EventCursor: ev.EventCursor, Timestamp: ev.Timestamp}
 }
 
 func buildSessionStreamResponse(rootID, sessionKey string, event *StreamEvent) WSResponse {
@@ -785,7 +787,7 @@ func coalesceUserShellStreamEvent(state *SessionPendingState, event StreamEvent)
 			merged.Meta["replayTruncation"] = "tail"
 		}
 		merged.Content = []agenttypes.ToolCallContentItem{{Type: "text", Text: text}}
-		state.ReplyingList[i] = StreamEvent{Type: event.Type, Data: merged, EventCursor: event.EventCursor}
+		state.ReplyingList[i] = StreamEvent{Type: event.Type, Data: merged, EventCursor: event.EventCursor, Timestamp: event.Timestamp}
 		return true
 	}
 	return false
