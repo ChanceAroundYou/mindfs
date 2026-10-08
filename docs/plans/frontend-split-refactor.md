@@ -44,6 +44,7 @@
 | A6a | 插件加载与处理 → `app/usePluginHandlers.ts`（240 行） | 本次 |
 | A6b | 目录树 / 当前文件内容刷新 → `app/useFileRefresh.ts`（180 行） | 本次 |
 | A6c | 关联文件 diff 打开 → `app/useRelatedFileDiff.ts`（168 行） | 本次 |
+| T1 | 看板/任务编排核心 → `app/useTaskBoard.ts`（414 行，5 useCallback + 3 useEffect） | 本次 |
 
 **当前分域目录**：
 
@@ -94,9 +95,9 @@ web/src/
 
 ## 4. 待办清单（按优先级）
 
-### 4.1 App.tsx —— 7593 行（最大，收益最高，风险也最高）
+### 4.1 App.tsx —— 5713 行（最大，收益最高，风险也最高）
 
-- **现状（本次提交后）**：9585 → 7593 行（-1992，-21%）。已抽出 11 个 `app/` 模块
+- **现状（本次提交后）**：9585 → 5713 行（-3872，-40%）。已抽出 12 个 `app/` 模块
   （`useSessionCache` / `appUtils` / `useSendMessage` / `useActionHandlers` /
   `useSessionLifecycle` / `useSessionArchive` / `useMultiProjectSessions` /
   `useManagedRoots` / `usePluginHandlers` / `useFileRefresh` / `useRelatedFileDiff`）。
