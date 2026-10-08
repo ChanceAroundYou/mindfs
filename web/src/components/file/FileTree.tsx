@@ -27,6 +27,7 @@ import { useAgentConfigSelection } from "./useAgentConfigSelection";
 import { useAgentLifecycleActions } from "./useAgentLifecycleActions";
 import { useAgentConfigOutsideClick } from "./useAgentConfigOutsideClick";
 import { useFileTreeEffects } from "./useFileTreeEffects";
+import { useAgentConfigSwitchRequest } from "./useAgentConfigSwitchRequest";
 import { getNodes } from "../../services/net/nodeRegistry";
 import { NodeManagerPanel } from "../account/NodeManagerPanel";
 import { AccountPanel } from "../account/AccountPanel";
@@ -491,47 +492,8 @@ function FileTreeInner({
     setIdleReleaseHours, idleReleaseBusy, idleReleaseHours, setSendShortcutDraft, setSendShortcutError, setSendShortcutOpen,
   });
 
-  React.useEffect(() => {
-    if (!agentConfigSwitchRequest) {
-      return;
-    }
-    const providerIDs = (agentConfigSwitchRequest.providerIDs || [])
-      .map((id) => String(id || "").trim())
-      .filter(Boolean);
-    setAgentLifecycleOpen(false);
-    agentConfigFlowVersion.current += 1;
-    setAgentConfigNotice("");
-    setAgentConfigFlow("switch");
-    setAgentConfigStep("agent");
-    setAgentConfigAgent("");
-    setAgentConfigAddTab("backup");
-    setAgentConfigSwitchTab("api_provider");
-    setAgentConfigName("");
-    setAgentConfigFileSourcesBody("");
-    setAgentConfigEnvBody("");
-    setAgentAPIProviderName("");
-    setAgentAPIProviderBaseURL("");
-    setAgentAPIProviderAPIKey("");
-    setAgentConfigBackups([]);
-    setAgentAPIProviders([]);
-    setSelectedAgentConfigID("");
-    setSelectedAgentAPIProviderID("");
-    setAgentConfigSwitchSelection(null);
-    setAgentConfigPreferredProviderIDs(providerIDs);
-    setAgentConfigConfirmMessage("");
-    setAgentConfigError("");
-    setAgentConfigRestartingAgent("");
-    setIsMenuOpen(false);
-    setAgentConfigBusy(true);
-    fetchAgents(true, getRootNodeId(rootId || "") as any)
-      .then((items) => {
-        setAgentConfigAgents(items.filter((item) => item.installed));
-      })
-      .catch((error) => {
-        setAgentConfigError(error instanceof Error ? error.message : t("agentConfig.loadAgentFailed"));
-      })
-      .finally(() => setAgentConfigBusy(false));
-  }, [agentConfigSwitchRequest?.nonce, rootId, t]);
+  useAgentConfigSwitchRequest({ agentConfigSwitchRequest, rootId, t, setAgentLifecycleOpen, agentConfigFlowVersion, setAgentConfigNotice, setAgentConfigFlow, setAgentConfigStep, setAgentConfigAgent, setAgentConfigAddTab, setAgentConfigSwitchTab, setAgentConfigName, setAgentConfigFileSourcesBody, setAgentConfigEnvBody, setAgentAPIProviderName, setAgentAPIProviderBaseURL, setAgentAPIProviderAPIKey, setAgentConfigBackups, setAgentAPIProviders, setSelectedAgentConfigID, setSelectedAgentAPIProviderID, setAgentConfigSwitchSelection, setAgentConfigPreferredProviderIDs, setAgentConfigConfirmMessage, setAgentConfigError, setAgentConfigRestartingAgent, setIsMenuOpen, setAgentConfigBusy, setAgentConfigAgents });
+
 
   const closeAgentConfigFlow = React.useCallback(() => {
     agentConfigFlowVersion.current += 1;
