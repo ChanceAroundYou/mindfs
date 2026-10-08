@@ -479,12 +479,14 @@ groups:
       - server/internal/session/manager_test.go
       - web/src/components/session/ExternalSessionList.tsx
       - web/src/app/useExternalSessionImport.ts
+      - web/tests/fork-session-name.test.mjs
     tests:
       - server/internal/agent/claude/importer_test.go
       - server/internal/agent/codex/importer_test.go
       - server/internal/api/usecase/external_sessions_test.go
       - server/internal/api/session_created_broadcast_test.go
       - server/internal/session/manager_test.go
+      - web/tests/fork-session-name.test.mjs
 
   - id: G-AB
     title: 会话投影与审计

@@ -337,6 +337,8 @@
 | 同上 → `TestInferAgentFromSessionIsDeterministicOnTie` | 两个绑定都是 0 时同一份数据反复推断必须报同一个 agent（不能随 map 遍历顺序跳），且不得落回空串 |
 | `api/session_created_broadcast_test.go` → `TestEnsureAgentSessionBroadcastsSessionCreated` | 看板建会话那条路径（`EnsureAgentSession`）确实把 `Stage.Agent` 交给了 `Create`，且 `session.created` 的列表行带 `agent:"claude"`。**注意**：这条**不**是徽标 bug 的锚点（广播用的是内存对象，`AgentCtxSeq` 在 Create 里就已填好，删掉绑定写入它照样绿）；它钉的是「路径得先把 agent 传进来」——把 `Agent: exec.Stage.Agent` 改成空即变红（已做变异验证）。真正的 bug 锚点是上面第一个 `manager_test.go` 那条 |
 
+| `web/tests/fork-session-name.test.mjs` | 从拼接源码里抠出 `forkSessionDisplayName` 丢进 vm **执行**，断言「自定义名 > 原父会话#seq > 父会话名#seq > Fork#seq」四级回退。拆分把它搬到 `components/session/sessionListShared.tsx` 并加 `export` 后，测试改为剥掉 `export ` 前缀再 transpile（断言语义不变） |
+
 ### G-R 模型识别与流式透传
 
 | 来源/hunk | 文件 | 说明 |
