@@ -10,7 +10,7 @@ import { FileEditStore, fileEditKey } from "./services/fileEditing";
 import { normalizePathForRoot, shouldRedirectToRelayNodes } from "./services/fileNavigation";
 import { getViewModeSystemPrompt } from "./renderer/viewCatalog";
 import { Renderer } from "./renderer/Renderer";
-import { SESSION_WINDOW_SIZE, clearCachedSessionsForRoot, clearWindowedView, composeLoadedExchanges, deleteCachedSession, deleteCachedSessionLists, getCachedMultiRootSessionList, getCachedSession, getCachedSessionList, getSessionWindow, isTransientExchange, saveCachedMultiRootSessionList, saveCachedSessionList, sessionService, setCachedSessionRelatedFiles, setWindowedView, settlePendingAcks, syncSession, type MultiRootSessionGroup, type QueuedUserMessage, type RelatedFile, type Session, type TokenUsage } from "./services/session";
+import { SESSION_WINDOW_SIZE, clearCachedSessionsForRoot, clearWindowedView, composeLoadedExchanges, deleteCachedSession, deleteCachedSessionLists, getCachedMultiRootSessionList, getCachedSession, getCachedSessionList, getSessionWindow, isTransientExchange, saveCachedMultiRootSessionList, saveCachedSessionList, sessionService, setCachedSessionRelatedFiles, setWindowedView, settlePendingAcks, syncSession, type MultiRootSessionGroup, type QueuedUserMessage, type RelatedFile, type Session } from "./services/session";
 import { buildClientContext } from "./services/prefs/context";
 import { e2eeService, type E2EEState } from "./services/net/e2ee";
 import {
@@ -1582,122 +1582,21 @@ export function App({ onGoHome }: AppProps) {
     appendTodoUpdateForSession,
     appendPlanUpdateForSession,
     appendCompactNoticeForSession,
+    attachContextWindowToLatestAssistant,
   } = useSessionStreamCache({
     sessionCacheRef,
     rootSessionKey,
     bumpCacheVersionDebounced,
     currentSessionRef,
     selectedSessionRef,
+    bumpCacheVersion,
+    currentRootIdRef,
+    drawerSessionByRootRef,
+    scopedRootKey,
+    setDrawerSessionForRoot,
+    setSelectedSession,
+    setSessions,
   });
-
-  const attachContextWindowToLatestAssistant = useCallback(
-    (
-      rootID: string,
-      sessionKey: string,
-      contextWindow?: { totalTokens?: number; modelContextWindow?: number },
-      tokenUsage?: TokenUsage,
-    ) => {
-      const totalTokens = Math.max(0, Number(contextWindow?.totalTokens || 0));
-      const modelContextWindow = Math.max(0, Number(contextWindow?.modelContextWindow || 0));
-      const hasContextWindow = totalTokens > 0 && modelContextWindow > 0;
-      const normalizedTokenUsage = tokenUsage
-        ? {
-            inputTokens: Math.max(0, Number(tokenUsage.inputTokens || 0)),
-            outputTokens: Math.max(0, Number(tokenUsage.outputTokens || 0)),
-            ...(Number.isFinite(tokenUsage.cacheReadTokens)
-              ? { cacheReadTokens: Math.max(0, Number(tokenUsage.cacheReadTokens)) }
-              : {}),
-            ...(Number.isFinite(tokenUsage.cacheWriteTokens)
-              ? { cacheWriteTokens: Math.max(0, Number(tokenUsage.cacheWriteTokens)) }
-              : {}),
-          }
-        : undefined;
-      if (!hasContextWindow && !normalizedTokenUsage) {
-        return;
-      }
-      const cacheKey = rootSessionKey(rootID, sessionKey);
-      const stampList = (prevList: Exchange[]) => {
-        const list = [...(prevList || [])];
-        for (let i = list.length - 1; i >= 0; i -= 1) {
-          const item = list[i];
-          if (
-            (item?.role === "agent" || item?.role === "assistant") &&
-            String(item?.content || "").trim()
-          ) {
-            list[i] = {
-              ...item,
-              ...(hasContextWindow
-                ? { context_window: { totalTokens, modelContextWindow } }
-                : {}),
-              ...(normalizedTokenUsage
-                ? { token_usage: normalizedTokenUsage }
-                : {}),
-            };
-            break;
-          }
-        }
-        return list;
-      };
-      const cached = sessionCacheRef.current[cacheKey];
-      if (cached) {
-        const exchanges = stampList((((cached as any).exchanges || []) as Exchange[]));
-        sessionCacheRef.current[cacheKey] = {
-          ...(cached as any),
-          exchanges,
-          ...(hasContextWindow
-            ? { context_window: { totalTokens, modelContextWindow } }
-            : {}),
-          updated_at: new Date().toISOString(),
-        } as Session;
-      }
-      setSelectedSession((prev) => {
-        const prevRoot =
-          (prev?.root_id as string | undefined) || currentRootIdRef.current;
-        if (!prev || prevRoot !== rootID || (prev.key || prev.session_key) !== sessionKey) {
-          return prev;
-        }
-        return {
-          ...(prev as any),
-          exchanges: stampList((((prev as any).exchanges || []) as Exchange[])),
-          ...(hasContextWindow
-            ? { context_window: { totalTokens, modelContextWindow } }
-            : {}),
-        } as SessionItem;
-      });
-      const drawer = drawerSessionByRootRef.current[scopedRootKey(rootID)];
-      if (drawer && drawer.key === sessionKey) {
-        setDrawerSessionForRoot(rootID, {
-          ...(drawer as any),
-          exchanges: stampList((((drawer as any).exchanges || []) as Exchange[])),
-          ...(hasContextWindow
-            ? { context_window: { totalTokens, modelContextWindow } }
-            : {}),
-        } as Session);
-      }
-      // 列表 state 同步：message_done 直推的 context_window 只进了 cache/drawer/selected，
-      // 会话列表项没有数据源（列表接口不含该字段），不补这里则徽标停在旧值，直到全量重拉。
-      setSessions((prev) =>
-        prev.map((item) => {
-          const itemKey = item.key || item.session_key;
-          if (
-            itemKey !== sessionKey ||
-            (item.root_id as string | undefined) !== rootID
-          ) {
-            return item;
-          }
-          return {
-            ...item,
-            context_window: {
-              totalTokens,
-              modelContextWindow,
-            },
-          };
-        }),
-      );
-      bumpCacheVersion();
-    },
-    [bumpCacheVersion, rootSessionKey, setSessions],
-  );
 
   const formatDirectoryLoadError = useCallback((message?: string | null) => {
     const text = String(message || "").trim();

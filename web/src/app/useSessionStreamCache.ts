@@ -1,6 +1,6 @@
 import { useCallback, useRef } from "react";
-import type { Session } from "../services/session";
-import type { Exchange } from "./appSession";
+import type { Session, TokenUsage } from "../services/session";
+import type { Exchange, SessionItem } from "./appSession";
 import { normalizeFastService } from "./appTask";
 
 /**
@@ -33,6 +33,14 @@ export type SessionStreamCacheParams = {
   bumpCacheVersionDebounced: () => void;
   currentSessionRef: React.MutableRefObject<any>;
   selectedSessionRef: React.MutableRefObject<any>;
+  /** 立即 bump（attachContextWindow 用；它没有 append 那样的高频调用，不需要防抖）。 */
+  bumpCacheVersion: () => void;
+  currentRootIdRef: React.MutableRefObject<string | null>;
+  drawerSessionByRootRef: React.MutableRefObject<Record<string, any>>;
+  scopedRootKey: (rootId: string) => string;
+  setDrawerSessionForRoot: (rootID: string | null | undefined, session: any) => void;
+  setSelectedSession: React.Dispatch<React.SetStateAction<SessionItem | null>>;
+  setSessions: React.Dispatch<React.SetStateAction<SessionItem[]>>;
 };
 
 export function useSessionStreamCache({
@@ -41,6 +49,13 @@ export function useSessionStreamCache({
   bumpCacheVersionDebounced,
   currentSessionRef,
   selectedSessionRef,
+  bumpCacheVersion,
+  currentRootIdRef,
+  drawerSessionByRootRef,
+  scopedRootKey,
+  setDrawerSessionForRoot,
+  setSelectedSession,
+  setSessions,
 }: SessionStreamCacheParams) {
   // bump 收进 ref：即使调用方换了新函数身份，下面这些 useCallback 的依赖也不变，
   // 6 个 append 不会每渲染重建（否则 WS effect 的依赖数组会跟着抖）。
@@ -409,8 +424,118 @@ export function useSessionStreamCache({
     });
   }, [upsertSessionCache]);
 
+  const attachContextWindowToLatestAssistant = useCallback(
+    (
+      rootID: string,
+      sessionKey: string,
+      contextWindow?: { totalTokens?: number; modelContextWindow?: number },
+      tokenUsage?: TokenUsage,
+    ) => {
+      const totalTokens = Math.max(0, Number(contextWindow?.totalTokens || 0));
+      const modelContextWindow = Math.max(0, Number(contextWindow?.modelContextWindow || 0));
+      const hasContextWindow = totalTokens > 0 && modelContextWindow > 0;
+      const normalizedTokenUsage = tokenUsage
+        ? {
+            inputTokens: Math.max(0, Number(tokenUsage.inputTokens || 0)),
+            outputTokens: Math.max(0, Number(tokenUsage.outputTokens || 0)),
+            ...(Number.isFinite(tokenUsage.cacheReadTokens)
+              ? { cacheReadTokens: Math.max(0, Number(tokenUsage.cacheReadTokens)) }
+              : {}),
+            ...(Number.isFinite(tokenUsage.cacheWriteTokens)
+              ? { cacheWriteTokens: Math.max(0, Number(tokenUsage.cacheWriteTokens)) }
+              : {}),
+          }
+        : undefined;
+      if (!hasContextWindow && !normalizedTokenUsage) {
+        return;
+      }
+      const cacheKey = rootSessionKey(rootID, sessionKey);
+      const stampList = (prevList: Exchange[]) => {
+        const list = [...(prevList || [])];
+        for (let i = list.length - 1; i >= 0; i -= 1) {
+          const item = list[i];
+          if (
+            (item?.role === "agent" || item?.role === "assistant") &&
+            String(item?.content || "").trim()
+          ) {
+            list[i] = {
+              ...item,
+              ...(hasContextWindow
+                ? { context_window: { totalTokens, modelContextWindow } }
+                : {}),
+              ...(normalizedTokenUsage
+                ? { token_usage: normalizedTokenUsage }
+                : {}),
+            };
+            break;
+          }
+        }
+        return list;
+      };
+      const cached = sessionCacheRef.current[cacheKey];
+      if (cached) {
+        const exchanges = stampList((((cached as any).exchanges || []) as Exchange[]));
+        sessionCacheRef.current[cacheKey] = {
+          ...(cached as any),
+          exchanges,
+          ...(hasContextWindow
+            ? { context_window: { totalTokens, modelContextWindow } }
+            : {}),
+          updated_at: new Date().toISOString(),
+        } as Session;
+      }
+      setSelectedSession((prev) => {
+        const prevRoot =
+          (prev?.root_id as string | undefined) || currentRootIdRef.current;
+        if (!prev || prevRoot !== rootID || (prev.key || prev.session_key) !== sessionKey) {
+          return prev;
+        }
+        return {
+          ...(prev as any),
+          exchanges: stampList((((prev as any).exchanges || []) as Exchange[])),
+          ...(hasContextWindow
+            ? { context_window: { totalTokens, modelContextWindow } }
+            : {}),
+        } as SessionItem;
+      });
+      const drawer = drawerSessionByRootRef.current[scopedRootKey(rootID)];
+      if (drawer && drawer.key === sessionKey) {
+        setDrawerSessionForRoot(rootID, {
+          ...(drawer as any),
+          exchanges: stampList((((drawer as any).exchanges || []) as Exchange[])),
+          ...(hasContextWindow
+            ? { context_window: { totalTokens, modelContextWindow } }
+            : {}),
+        } as Session);
+      }
+      // 列表 state 同步：message_done 直推的 context_window 只进了 cache/drawer/selected，
+      // 会话列表项没有数据源（列表接口不含该字段），不补这里则徽标停在旧值，直到全量重拉。
+      setSessions((prev) =>
+        prev.map((item) => {
+          const itemKey = item.key || item.session_key;
+          if (
+            itemKey !== sessionKey ||
+            (item.root_id as string | undefined) !== rootID
+          ) {
+            return item;
+          }
+          return {
+            ...item,
+            context_window: {
+              totalTokens,
+              modelContextWindow,
+            },
+          };
+        }),
+      );
+      bumpCacheVersion();
+    },
+    [bumpCacheVersion, rootSessionKey, setSessions],
+  );
+
   return {
     upsertSessionCache,
+    attachContextWindowToLatestAssistant,
     resolveRuntimeMetaForSession,
     appendAgentChunkForSession,
     appendThoughtChunkForSession,
