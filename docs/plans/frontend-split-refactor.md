@@ -214,22 +214,16 @@ web/src/
   该函数现在带 `export` → 测试改为剥掉 `export ` 前缀再编译（断言语义不变）。
 - **注意**：合并 main 时此文件有上游改动（`+11/−26`）。
 
-### 4.5 session.ts —— 2659 行（**被测试锁住，需先解锁**）
+### 4.5 session.ts —— 2469 行（VM loader 已解锁）
 
-- **为什么不能拆**：4 个测试用 `ts.transpileModule` + `vm.runInContext` **执行**
-  这个文件的源码，沙箱里的 `require` 只认裸模块名：
-  - `web/tests/pins-authority.test.mjs`
-  - `web/tests/session-archive.test.mjs`
-  - `web/tests/session-window-dedup.test.mjs`
-  - `web/tests/session-window.test.mjs`
-
-  拆出的相对值导入（`./merge`、`./sessionCache`）在沙箱里解析不到，测试直接炸。
-  **source-map 的源码拼接救不了这条路径**（它只影响读源码做正则的测试，
-  影响不到真正执行代码的 VM 测试）。
-- **决策（2026-10-07）**：**现在投入解锁，然后拆**。
-  解锁条件：先改造这 4 个测试的沙箱 `require`，让它支持相对路径解析
-  （把 `MODULES` 映射也喂给沙箱）。解锁后按 4.1 的模式拆。
-- **历史**：本分支曾尝试拆分并已回滚（见提交历史），不要在没有解锁条件时重试。
+- **已完成解锁**：新增 `web/tests/vmLoadSource.mjs`，在保留各测试 stub 优先级的前提下，支持相对 `.ts/.tsx/.js` 模块递归加载与 module cache。
+  `session-window.test.mjs` / `session-window-dedup.test.mjs` 已接入；未知相对模块不再直接 `unexpected require`。
+- **已抽（本次）**：`sessionTerminalLayout.ts`（终端列数估算）；`sessionCacheTypes.ts`（IndexedDB cache record 类型）；
+  `sessionIndexedDb.ts`（151 行，数据库初始化、store transaction、账户 scope cache key、session-list cache 读写）。
+- **入口兼容**：`session.ts` 保留 `multiRootSessionListCacheKey` / `buildSessionListCacheKey` 的源码锚点 shim，
+  让 `multi-account-partition.test.mjs` 的源码守卫继续有效；VM 测试不把新文件拼进入口 source-map，只由 loader 按相对 import 加载。
+- **当前收益**：session.ts 2659 → 2469 行（-190）。
+- **待拆**：exchange merge / persistent session / window sync 领域 helper。
 
 ### 4.6 其他 > 600 行的文件（收益递减，按需）
 
