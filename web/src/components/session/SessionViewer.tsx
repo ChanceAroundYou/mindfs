@@ -1054,6 +1054,7 @@ function SessionViewerInner({
     if (item.type === "tool") {
       return renderToolTimelineItem({ item, timelineItemKey, spacing, rootId, rootPath, sessionKey, sessionAgent: session?.agent, activeAskUserCallId, onAskUserAnswer });
     }
+    // CUSTOM(G-AT): tool_group 仍由本 fork 的辅助时间线渲染器统一处理。
     if (item.type === "tool_group" || item.type === "todo" || item.type === "plan" || item.type === "compact") {
       return renderAuxiliaryTimelineItem({ item, timelineItemKey, spacing, rootId, rootPath, sessionKey });
     }
