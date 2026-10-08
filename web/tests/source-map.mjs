@@ -218,6 +218,7 @@ export const MODULES = {
   "src/components/DefaultListView.tsx": [
     "src/components/file/DefaultListView.tsx",
     "src/components/file/Breadcrumbs.tsx",
+    "src/components/file/listViewIcons.tsx",
   ],
   "src/components/ProjectAddPopover.tsx": ["src/components/file/ProjectAddPopover.tsx"],
   "src/components/CompactUploadProgress.tsx": ["src/components/file/CompactUploadProgress.tsx"],
