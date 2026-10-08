@@ -161,7 +161,10 @@ export const MODULES = {
   "src/components/RootGitContentView.tsx": ["src/components/root/RootGitContentView.tsx"],
   "src/components/RootWorktreeContentView.tsx": ["src/components/root/RootWorktreeContentView.tsx"],
   "src/components/RootRelatedContentView.tsx": ["src/components/root/RootRelatedContentView.tsx"],
-  "src/components/AgentSelector.tsx": ["src/components/agent/AgentSelector.tsx"],
+  "src/components/AgentSelector.tsx": [
+    "src/components/agent/AgentSelector.tsx",
+    "src/components/agent/AgentSelectorParts.tsx",
+  ],
   "src/components/AgentIcon.tsx": ["src/components/agent/AgentIcon.tsx"],
   "src/components/AgentMenuList.tsx": ["src/components/agent/AgentMenuList.tsx"],
   "src/components/AgentMemoryIndicator.tsx": ["src/components/agent/AgentMemoryIndicator.tsx"],
