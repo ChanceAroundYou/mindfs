@@ -65,6 +65,7 @@ import { SessionViewerFloatingControls } from "./SessionViewerFloatingControls";
 import { buildUserMetaButtonStyle } from "./sessionViewerStyles";
 import { groupRelatedFiles } from "./sessionViewerGrouping";
 import { findActiveAskUserCallId } from "./sessionViewerAskUser";
+import { scrollToRelatedDivider } from "./sessionViewerScroll";
 
 function SessionViewerInner({
   session,
@@ -875,25 +876,7 @@ function SessionViewerInner({
     gitStatsRefreshKey,
     sessionNodeId,
   );
-  const scrollToRelatedFilesDivider = (behavior: ScrollBehavior = "auto") => {
-    const container = activeScrollRef?.current;
-    if (!container) {
-      return;
-    }
-    const maxTop = Math.max(0, container.scrollHeight - container.clientHeight);
-    let top = maxTop;
-    const divider =
-      interactionMode === "drawer" ? relatedFilesDividerRef.current : null;
-    if (divider && relatedFiles.length > 0 && !relatedFilesCollapsed) {
-      const dividerTop =
-        divider.getBoundingClientRect().top -
-        container.getBoundingClientRect().top +
-        container.scrollTop;
-      const target = dividerTop - container.clientHeight * 0.08;
-      top = Math.max(0, Math.min(maxTop, target));
-    }
-    container.scrollTo({ top, behavior });
-  };
+  const scrollToRelatedFilesDivider = (behavior: ScrollBehavior = "auto") => scrollToRelatedDivider({ behavior, activeScrollRef, interactionMode, relatedFilesDividerRef, relatedFiles, relatedFilesCollapsed });
   const activeAskUserCallId = findActiveAskUserCallId(timeline, isAwaiting);
   const defaultRelatedFilesCollapsed = shouldDefaultCollapseRelatedFiles(
     isMobile,
