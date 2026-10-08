@@ -52,7 +52,8 @@
 | A7 | 会话元数据写回 → `app/useSessionMetadata.ts`（288 行，5 useCallback + 1 useEffect） | `ec4e87a` |
 | A8a | 列表/树动作 → `app/useSessionListActions.ts`（248 行，5 useCallback） | `b6a27d4` |
 | A8b | 关联文件/指示点 → `app/useSessionRelatedFiles.ts`（204 行，3 useCallback + 2 useMemo） | `b6e76af` |
-| A9 | context_window 写回 → 并入既有 `app/useSessionStreamCache.ts`（547 行） | 本次 |
+| A9 | context_window 写回 → 并入既有 `app/useSessionStreamCache.ts`（547 行） | `3318a03` |
+| A2b′ | pending 标记 + 队列操作 → `app/useSessionQueueActions.ts`（196 行，4 useCallback） | 本次 |
 
 **当前分域目录**：
 
@@ -103,9 +104,9 @@ web/src/
 
 ## 4. 待办清单（按优先级）
 
-### 4.1 App.tsx —— 4571 行（最大，收益最高，风险也最高）
+### 4.1 App.tsx —— 4464 行（最大，收益最高，风险也最高）
 
-- **现状（本次提交后）**：9585 → 4571 行（-5014，-52%）。已抽出 19 个 `app/` 模块
+- **现状（本次提交后）**：9585 → 4464 行（-5121，-53%）。**已达成阶段目标 ≤4500 行**，共抽出 20 个 `app/` 模块
   （`useSessionCache` / `appUtils` / `useSendMessage` / `useActionHandlers` /
   `useSessionLifecycle` / `useSessionArchive` / `useMultiProjectSessions` /
   `useManagedRoots` / `usePluginHandlers` / `useFileRefresh` / `useRelatedFileDiff`）。
@@ -114,7 +115,7 @@ web/src/
   `max(闭包声明结束行) < min(急切引用行)`，其中「急切」= 依赖数组 / JSX / 渲染期调用，
   「惰性」= `useCallback`/`useMemo`/`useEffect` **函数体内**的引用（回调在渲染后执行，不受 TDZ 约束）。
   工具：`/tmp/window.py` 验窗口，`/tmp/extract.py` 执行抽取（调用点自动落在语句边界上）。
-- **目标（2026-10-07 决策）**：**分阶段，先到 ≤4500 行再评估**。
+- **目标（2026-10-07 决策）**：**分阶段，先到 ≤4500 行再评估** —— ✅ 2026-10 达成（4464 行）。
   不直接冲 ≤900 —— 后期边界互锁紧密，风险累积。
 - **前置（已解除）**：运行时验证手段 —— `e2e/` Playwright 冒烟（10 用例）已就位。
 - **剩余簇（按窗口可拆性排序，2026-10 复核）**：

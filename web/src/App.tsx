@@ -249,6 +249,7 @@ import { useSessionPending } from "./app/useSessionPending";
 import { useSessionMetadata } from "./app/useSessionMetadata";
 import { useSessionListActions } from "./app/useSessionListActions";
 import { useSessionRelatedFiles } from "./app/useSessionRelatedFiles";
+import { useSessionQueueActions } from "./app/useSessionQueueActions";
 
 
 export function App({ onGoHome }: AppProps) {
@@ -2074,138 +2075,30 @@ export function App({ onGoHome }: AppProps) {
     [clearLocalPendingForSession, rootSessionKey],
   );
 
-  const markSessionPending = useCallback(
-    (rootID: string, sessionKey: string) => {
-      if (!rootID || !sessionKey) return;
-      // 幂等：流式期间每 chunk 调用一次，已在 pending 则只更新缓存 ref，不再重复 setState。
-      const cacheKey = rootSessionKey(rootID, sessionKey);
-      const cached = sessionCacheRef.current[cacheKey];
-      const drawer = drawerSessionByRootRef.current[scopedRootKey(rootID)];
-      const alreadyPending =
-        !!(cached as any)?.pending &&
-        !!(drawer as any)?.pending &&
-        (selectedSessionRef.current?.key || selectedSessionRef.current?.session_key) ===
-          sessionKey &&
-        !!(selectedSessionRef.current as any)?.pending;
-      const now = new Date().toISOString();
-      if (cached) {
-        sessionCacheRef.current[cacheKey] = {
-          ...(cached as any),
-          pending: true,
-          updated_at: now,
-        } as Session;
-      }
-      if (alreadyPending) {
-        return;
-      }
-      if (cached) {
-        bumpCacheVersion();
-      }
-      setSelectedPendingByKey(sessionKey, true);
-      if (drawer && (drawer.key || (drawer as any).session_key) === sessionKey) {
-        setDrawerSessionForRoot(rootID, {
-          ...(drawer as any),
-          pending: true,
-          updated_at: now,
-        } as Session);
-      }
-      if (currentRootIdRef.current === rootID) {
-        setSessions((prev) =>
-          prev.map((item) => {
-            const itemKey = item.key || item.session_key;
-            if (itemKey !== sessionKey) {
-              return item;
-            }
-            return {
-              ...(item as any),
-              pending: true,
-              updated_at: now,
-            } as SessionItem;
-          }),
-        );
-      }
-      setMultiProjectSessionPending(rootID, sessionKey, true);
-    },
-    [bumpCacheVersion, rootSessionKey, setDrawerSessionForRoot, setMultiProjectSessionPending, setSelectedPendingByKey],
-  );
+  const {
+    markSessionPending,
+    handleRemoveQueuedMessage,
+    handleUpdateQueuedMessage,
+    handleSendQueuedMessageNow,
+  } = useSessionQueueActions({
+    boundSessionByRootRef,
+    bumpCacheVersion,
+    currentRootIdRef,
+    drawerSessionByRootRef,
+    interactionModeRef,
+    optimisticDequeuedIdsRef,
+    queuedMessagesBySessionRef,
+    rootSessionKey,
+    scopedRootKey,
+    selectedSessionRef,
+    sessionCacheRef,
+    setDrawerSessionForRoot,
+    setMultiProjectSessionPending,
+    setQueueVersion,
+    setSelectedPendingByKey,
+    setSessions,
+  });
 
-  const handleRemoveQueuedMessage = useCallback(
-    async (queueId: string) => {
-      const activeRoot = currentRootIdRef.current;
-      const selected = selectedSessionRef.current;
-      const selectedRoot =
-        (selected?.root_id as string | undefined) || activeRoot || "";
-      const selectedKey = selected?.key || selected?.session_key || "";
-      const resolvedSelected = resolveLockedSessionKey(selectedKey);
-      const boundKey = boundSessionByRootRef.current[scopedRootKey(activeRoot || "")] || null;
-      const sessionKey =
-        interactionModeRef.current !== "drawer" &&
-        selectedRoot === activeRoot &&
-        resolvedSelected
-          ? resolvedSelected
-          : (resolveLockedSessionKey(boundKey) ?? "");
-      if (!activeRoot || !sessionKey || !queueId) return;
-      await sessionService.removeQueuedMessage(activeRoot, sessionKey, queueId);
-    },
-    [],
-  );
-
-  const handleUpdateQueuedMessage = useCallback(
-    async (queueId: string, content: string) => {
-      const activeRoot = currentRootIdRef.current;
-      const selected = selectedSessionRef.current;
-      const selectedRoot =
-        (selected?.root_id as string | undefined) || activeRoot || "";
-      const selectedKey = selected?.key || selected?.session_key || "";
-      const resolvedSelected = resolveLockedSessionKey(selectedKey);
-      const boundKey = boundSessionByRootRef.current[scopedRootKey(activeRoot || "")] || null;
-      const sessionKey =
-        interactionModeRef.current !== "drawer" &&
-        selectedRoot === activeRoot &&
-        resolvedSelected
-          ? resolvedSelected
-          : (resolveLockedSessionKey(boundKey) ?? "");
-      if (!activeRoot || !sessionKey || !queueId || !content.trim()) return;
-      await sessionService.updateQueuedMessage(activeRoot, sessionKey, queueId, content);
-    },
-    [],
-  );
-
-  const handleSendQueuedMessageNow = useCallback(
-    async (queueId: string) => {
-      const activeRoot = currentRootIdRef.current;
-      const selected = selectedSessionRef.current;
-      const selectedRoot =
-        (selected?.root_id as string | undefined) || activeRoot || "";
-      const selectedKey = selected?.key || selected?.session_key || "";
-      const resolvedSelected = resolveLockedSessionKey(selectedKey);
-      const boundKey = boundSessionByRootRef.current[scopedRootKey(activeRoot || "")] || null;
-      const sessionKey =
-        interactionModeRef.current !== "drawer" &&
-        selectedRoot === activeRoot &&
-        resolvedSelected
-          ? resolvedSelected
-          : (resolveLockedSessionKey(boundKey) ?? "");
-      if (!activeRoot || !sessionKey || !queueId) return;
-      const cacheKey = rootSessionKey(activeRoot, sessionKey);
-      const previousQueue = queuedMessagesBySessionRef.current[cacheKey] || [];
-      const nextQueue = previousQueue.filter((item) => item.id !== queueId);
-      queuedMessagesBySessionRef.current[cacheKey] = nextQueue;
-      if (!optimisticDequeuedIdsRef.current[cacheKey]) {
-        optimisticDequeuedIdsRef.current[cacheKey] = new Set();
-      }
-      optimisticDequeuedIdsRef.current[cacheKey].add(queueId);
-      setQueueVersion((v) => v + 1);
-      markSessionPending(activeRoot, sessionKey);
-      const sent = await sessionService.sendQueuedMessageNow(activeRoot, sessionKey, queueId);
-      if (!sent) {
-        optimisticDequeuedIdsRef.current[cacheKey]?.delete(queueId);
-        queuedMessagesBySessionRef.current[cacheKey] = previousQueue;
-        setQueueVersion((v) => v + 1);
-      }
-    },
-    [markSessionPending, rootSessionKey],
-  );
 
   const handleNewSession = useCallback(() => {
     const rootID = currentRootIdRef.current;
