@@ -59,213 +59,50 @@ export {
   mergeSessionExchanges,
   settlePendingAcks,
 } from "./sessionExchangeMerge";
-
-// Session service for managing agent sessions
-
-export type SessionType = "chat" | "plugin" | "command";
-
-export type QueuedUserMessage = {
-  id: string;
-  agent?: string;
-  model?: string;
-  mode?: string;
-  effort?: string;
-  fast_service?: string;
-  content: string;
-  timestamp: string;
-};
-
-export type TokenUsage = {
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens?: number;
-  cacheWriteTokens?: number;
-};
-
-export type RelatedFile = {
-  root_id?: string;
-  repo_path?: string;
-  repo_name?: string;
-  repo_kind?: "git" | "plain" | string;
-  path: string;
-  head?: string;
-  relation?: string;
-  created_by_session?: boolean;
-};
-
-export type RelatedWorktree = {
-  root_id: string;
-  path: string;
-  branch?: string;
-  head?: string;
-  current?: boolean;
-  updated_at?: string;
-};
-
-export type ExchangeAux = {
-  seq: number;
-  line: number;
-  toolcall?: ToolCall | null;
-  thought?: string | null;
-  thought_id?: string;
-  todo?: TodoUpdate | null;
-  plan?: PlanUpdate | null;
-  compact?: CompactNotice | null;
-};
-
-export type Session = {
-  key: string;
-  session_key?: string;
-  root_id?: string;
-  type: SessionType;
-  parent_session_key?: string;
-  parent_tool_call_id?: string;
-  source?: string;
-  task_id?: string;
-  agent?: string;
-  model?: string;
-  shell?: string;
-  mode?: string;
-  effort?: string;
-  fast_service?: string;
-  plan_mode?: boolean;
-  name: string;
-  created_at: string;
-  updated_at: string;
-  closed_at?: string;
-  context_window?: {
-    totalTokens: number;
-    modelContextWindow: number;
-  };
-  related_files?: RelatedFile[];
-  related_worktree?: RelatedWorktree | null;
-  pinned_at?: string | null;
-  /** 持久化缓存截断标记：true 表示缓存只含最近 N 条 exchanges，读取方应全量拉取补段 */
-  truncated?: boolean;
-  exchange_aux?: Record<string, ExchangeAux[]>;
-  exchanges?: Array<{
-    seq?: number;
-    role?: string;
-    agent?: string;
-    model?: string;
-    model_display_name?: string;
-    mode?: string;
-    effort?: string;
-    fast_service?: string;
-    content?: string;
-    context_window?: {
-      totalTokens: number;
-      modelContextWindow: number;
-    };
-    token_usage?: TokenUsage;
-    timestamp?: string;
-    toolCall?: ToolCall;
-    todoUpdate?: TodoUpdate;
-    planUpdate?: PlanUpdate;
-    compactNotice?: CompactNotice;
-    pending_ack?: boolean;
-  }>;
-};
-
-export type SessionSearchHit = {
-  root_id?: string;
-  key: string;
-  type: SessionType;
-  parent_session_key?: string;
-  parent_tool_call_id?: string;
-  source?: string;
-  agent?: string;
-  model?: string;
-  shell?: string;
-  name: string;
-  created_at: string;
-  updated_at: string;
-  closed_at?: string;
-  match_type: "name" | "user" | "reply";
-  match_score: number;
-  seq: number;
-  snippet?: string;
-};
-
-export type ToolCallLocation = {
-  path: string;
-  line?: number;
-};
-
-export type ToolCallContentItem =
-  | {
-      type: "text";
-      text?: string;
-      path?: string;
-      changeKind?: string;
-    }
-  | {
-      type: "diff";
-      path?: string;
-      oldText?: string;
-      newText?: string;
-      changeKind?: string;
-    };
-
-export type ToolCall = {
-  callId: string;
-  title?: string;
-  status: string;
-  kind: string;
-  content?: ToolCallContentItem[];
-  locations?: ToolCallLocation[];
-  meta?: Record<string, unknown>;
-  rawType?: string;
-};
-
-export type TodoItem = {
-  content: string;
-  activeForm?: string;
-  status: string;
-};
-
-export type TodoUpdate = {
-  items: TodoItem[];
-};
-
-export type PlanUpdate = {
-  id?: string;
-  content: string;
-  delta?: boolean;
-};
-
-export type CompactNotice = {
-  id?: string;
-  status?: string;
-  summary?: string;
-};
-
-export type StreamEvent = { event_cursor?: string } & (
-  | { type: "message_chunk"; data: { content: string } }
-  | { type: "thought_chunk"; data: { id?: string; content: string } }
-  | { type: "tool_call"; data: ToolCall }
-  | { type: "tool_call_update"; data: ToolCall }
-  | { type: "todo_update"; data: TodoUpdate }
-  | { type: "plan_update"; data: PlanUpdate }
-  | { type: "compact_notice"; data: CompactNotice }
-  | { type: "recovery"; data: { message: string } }
-  | {
-      type: "message_done";
-      data?: {
-        contextWindow?: {
-          totalTokens: number;
-          modelContextWindow: number;
-        };
-        tokenUsage?: TokenUsage;
-      };
-    }
-  | { type: "error"; data: { message: string } }
-);
-
-export type SyncSessionResult = {
-  session: Session | null;
-  hasDelta: boolean;
-};
+import type {
+  FetchExternalSessionsOptions,
+  FetchSessionsOptions,
+  MultiRootSessionGroup,
+  PendingMessage,
+  RelatedFile,
+  Session,
+  SessionEventHandler,
+  SessionListPayload,
+  SessionSearchHit,
+  SessionServiceEvent,
+  SessionType,
+  SessionWindow,
+  SessionWindowMeta,
+  SessionWindowOptions,
+  StreamEvent,
+  ToolCall,
+} from "./sessionTypes";
+export type {
+  CompactNotice,
+  ExchangeAux,
+  FetchExternalSessionsOptions,
+  FetchSessionsOptions,
+  MultiRootSessionGroup,
+  PlanUpdate,
+  QueuedUserMessage,
+  RelatedFile,
+  RelatedWorktree,
+  Session,
+  SessionListPayload,
+  SessionSearchHit,
+  SessionType,
+  SessionWindow,
+  SessionWindowMeta,
+  SessionWindowOptions,
+  StreamEvent,
+  SyncSessionResult,
+  TodoItem,
+  TodoUpdate,
+  TokenUsage,
+  ToolCall,
+  ToolCallContentItem,
+  ToolCallLocation,
+} from "./sessionTypes";
 
 /**
  * 聊天消息窗口尺寸（首屏拉取条数 / 上翻步长）。会话窗口化的唯一尺寸来源：
@@ -281,78 +118,6 @@ export type SyncSessionResult = {
  */
 export const SESSION_WINDOW_SIZE = 8;
 
-/** 服务端窗口化加载的元数据（方案 B：超长会话按需加载）。 */
-export type SessionWindowMeta = {
-  total: number;
-  hasMore: boolean;
-  minSeq: number;
-  maxSeq: number;
-};
-
-/** 单窗口的会话数据 + 窗口元数据，供 SessionViewer 渐进式渲染。 */
-export type SessionWindow = {
-  session: Session | any;
-  meta: SessionWindowMeta;
-  raw?: any;
-};
-
-/** getSessionWindow 的可选参数。before_seq 与 latest 互斥，由后端校验。 */
-export type SessionWindowOptions = {
-  beforeSeq?: number;
-  limit?: number;
-  latest?: number;
-  nodeId?: string;
-};
-
-type SessionEventHandler = {
-  onStream?: (event: StreamEvent) => void;
-  onDone?: () => void;
-  onError?: (error: string) => void;
-};
-
-type SessionServiceEvent = {
-  type: string;
-  sessionKey?: string;
-  payload?: Record<string, unknown>;
-};
-
-export type FetchSessionsOptions = {
-  beforeTime?: string;
-  afterTime?: string;
-  limit?: number;
-  topLevel?: boolean;
-  includeChildren?: boolean;
-  archivedOnly?: boolean;
-};
-
-export type SessionListPayload = {
-  items: Session[];
-  pinnedItems: Session[];
-  pinnedKeys: string[];
-  totalCount: number;
-};
-
-export type MultiRootSessionGroup = {
-  rootId: string;
-  rootName: string;
-  latestSessionTime: string;
-  items: Session[];
-  pinnedItems: Session[];
-  pinnedKeys: string[];
-  totalCount: number;
-};
-
-export type FetchExternalSessionsOptions = {
-  beforeTime?: string;
-  afterTime?: string;
-  filterBound?: boolean;
-  limit?: number;
-};
-
-type PendingMessage = {
-  id: string;
-  message: Record<string, unknown>;
-};
 
 // 无人订阅时缓存 `session.stream` 事件的**容量上限**。
 //

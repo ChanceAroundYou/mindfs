@@ -89,8 +89,8 @@ const managerSrc = fs.readFileSync(managerPath, "utf8");
 const httpSrc = fs.readFileSync(httpPath, "utf8");
 
 // ── session.ts 导出与隔离 ──────────────────────────────────────────────
-assert.match(sessionSrc, /export type SessionWindowMeta/, "SessionWindowMeta type missing");
-assert.match(sessionSrc, /export type SessionWindowOptions/, "SessionWindowOptions type missing");
+assert.match(sessionDomainSrc, /export type SessionWindowMeta/, "SessionWindowMeta type missing");
+assert.match(sessionDomainSrc, /export type SessionWindowOptions/, "SessionWindowOptions type missing");
 assert.match(sessionSrc, /async getSessionWindow\(/, "getSessionWindow method missing");
 assert.match(sessionSrc, /async getSessionIncrement\(/, "getSessionIncrement alias missing");
 assert.match(sessionDomainSrc, /export function getSessionMinSeq/, "getSessionMinSeq missing");
