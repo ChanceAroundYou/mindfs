@@ -57,11 +57,24 @@ $ grep -c 'if (!this\.ws || this\.ws\.readyState !== WebSocket\.OPEN)' \
 8
 ```
 
-**同一句前置条件抄了 8 遍**，而 `sendWSMessage`（877 行）自己已经有一份同样的守卫。
-即这 8 处是纯冗余：删掉不改变行为，留着则是 8 个会各自漂移的点
-（`sendMessage` 那份已经漂移成带 `console.warn` + `readyState` 上报的变体）。
+同一句前置条件抄了 8 遍（另有 3 处把它与参数校验挤在同一行），而 `sendWSMessage`
+自己已经有一份同样的守卫 —— 看起来是纯冗余。
 
-这是 session.ts 里**唯一一个「既是行数、又是质量」的切入点**——其余都是纯搬移。
+**但实地逐条核对后，只有 5 处是纯冗余**（这一步是执行时才做的，初版计划判断过强）：
+
+| 方法 | 守卫是否承重 |
+|---|---|
+| `sendMessage` | **承重**：守卫后才 `compactContext`（改 `contextCache`）+ `pendingMessages.set` |
+| `runSlashCommand` | **承重**：守卫后才 `pendingMessages.set` |
+| `markSessionReady` | **承重**：守卫后才 `await e2eeService.ensureSession()` |
+| `cancelMessage` / `answerQuestion` | 效果冗余，但各自带 `console.error` |
+| `setPlanMode` / `resendPendingMessages` / `removeQueuedMessage` / `updateQueuedMessage` / `sendQueuedMessageNow` | 纯冗余（5 处，已删） |
+
+删掉承重的那 3 处会产生**新副作用**：socket 已关时仍把帧塞进 `pendingMessages`
+（下次重连会被 `resendPendingMessages` 误发），或白调一次 e2ee 握手。
+所以只删 5 处，其余 6 处（含 `sendWSMessage` 自己那份）保留。
+
+这是 session.ts 里**唯一一个「既减行数、又除重复」的切入点**——但收益比初版估计的小。
 
 ## 2. 卡住的地方：目标自相矛盾
 
@@ -165,7 +178,25 @@ $ grep -c 'if (!this\.ws || this\.ws\.readyState !== WebSocket\.OPEN)' \
 - App.tsx 是否继续下探**不在本目标内**，需要时另起目标。
 - 据此按 §3 执行：刀 1 + 刀 2 + 收尾。
 
-## 6. 停损条件（任一条命中即停当前刀并重划边界）
+## 7. 执行结果（2026-10-07 当日）
+
+| 项 | 计划 | 实际 |
+|---|---|---|
+| 刀 1 类型块外移 | 1430 → ~1140 | ✅ `sessionTypes.ts` 286 行，session.ts **1195** |
+| 刀 2 出站域 + 守卫去重 | → ~900 | ✅ `sessionOutbound.ts` 238 行，5 处守卫删除，session.ts **1136** |
+
+留下的三个新模块（均在 `web/src/services/`，G-BA 目录前缀覆盖）：
+
+- `sessionTypes.ts` — 24 个公开类型 + 3 个模块内类型；
+- `sessionOutbound.ts` — 9 个 WS 帧构造纯函数；
+- 上一阶段已有的 `sessionApi.ts` / `sessionContext.ts` / `sessionWindow.ts` /
+  `sessionListCache.ts` / `sessionCacheStore.ts` / `sessionExchangeMerge.ts` /
+  `sessionIndexedDb.ts` / `sessionCacheTypes.ts` / `sessionTerminalLayout.ts`。
+
+**「除 App.tsx 外无文件 >1200」已达成。** 后续若继续，下一刀是 §4 的表 D
+（`SessionSocket` 整体外移），但那是独立目标。
+
+## 8. 停损条件（任一条命中即停当前刀并重划边界）
 
 - 需要改业务逻辑 / 依赖数组 / 调用顺序 / 状态清理顺序；
 - 定向测试失败且不是纯路径映射；

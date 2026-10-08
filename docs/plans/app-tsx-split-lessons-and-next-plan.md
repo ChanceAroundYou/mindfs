@@ -6,23 +6,27 @@
 ## 1. 当前基线
 
 - 分支：`task-35`
-- HEAD：`待提交`（阶段 C 进行中）
+- HEAD：见 `git log -1`（本文件不写死 hash，避免又一处漂移）
 - `web/src/App.tsx`：**4464 行** ✅（阶段目标 ≤4500 达成）
 - 历史变化：约 `9585 → 7593 → 6405 → 5979 → 5713 → 5501 → 5416 → 5294 → 5118 → 4918 → 4768 → 4672 → 4571 → 4464`
 - 当前目标：按既定决策分阶段继续削减，先达到约 **4000–5000 行**，再重新评估；不直接追求极限小文件。
-- **阶段 C 进度（>1200 行的文件，i18n 排除）**：
+- **口径（2026-10-07 用户裁决）**：目标里的「无文件 >1200」只按**除 App.tsx 外**解释。
+  App.tsx 的口径是 ≤4500（已达成）。理由与取舍见 `docs/plans/next-stage-decision.md` §2/§5。
+- **阶段 C 进度（>1200 行的文件，i18n 排除）** —— 以下数字均为 2026-10-07 `wc -l` 现场核验：
 
   | 文件 | 起点 | 现在 | 状态 |
   |---|---|---|---|
   | `components/file/DefaultListView.tsx` | 1296 | 1031 | ✅ 抽 `Breadcrumbs.tsx` |
   | `components/session/SessionList.tsx` | 2191 | 476 | ✅ 拆成 5 个模块 |
   | `components/agent/AgentSelector.tsx` | 1477 | 1191 | ✅ 抽 `AgentSelectorParts.tsx` |
-  | `components/file/FileTree.tsx` | 3770 | 2681 | ⏳ 已抽 `AgentConfigPopover.tsx` + `usePwaInstall.ts`，`FileTreeInner` 仍需拆 |
-  | `App.tsx` | 9585 | 4464 | ⏳ 阶段 A 达标，仍 >1200 |
-  | `components/session/SessionViewer.tsx` | 3567 | 2378 | ⏳ 顶部 940 行 + 斜杠命令卡片已拆出，剩 `SessionViewerInner` |
-  | `services/session.ts` | 2659 | 2659 | ⛔ 被 4 个 VM 测试锁住 |
-  | `app/useRealtimeEvents.ts` | 2019 | 1074 | ✅ 34 个 WS 处理器 → `realtimeWsHandlers.ts` |
-- 最近完整门禁：`npm run typecheck` 0 错误；`npm test` 210 tests、209 pass、1 skip、0 fail；`make build-web` 成功；`check-upstream` 通过。数字以现场命令为准。
+  | `components/file/FileTree.tsx` | 3770 | 1153 | ✅ 抽 20+ 模块（最后三刀：idle release / send shortcut / session naming 弹窗） |
+  | `components/session/SessionViewer.tsx` | 3567 | 1127 | ✅ 拆成 20+ 模块 |
+  | `services/session.ts` | 2659 | 1136 | ✅ VM loader 解锁后拆成 10 个模块 |
+  | `App.tsx` | 9585 | 4464 | ✅ 阶段 A 达标（≤4500）；**不再下探**，见上「口径」 |
+  | `app/useRealtimeEvents.ts` | 2019 | 1075 | ✅ 34 个 WS 处理器 → `realtimeWsHandlers.ts` |
+
+  **结论：「除 App.tsx 外无文件 >1200」已达成**（次大为 AgentSelector 1191）。
+- 最近完整门禁：`npm run typecheck` 0 错误；`npm test` 210 tests、209 pass、1 skip、0 fail；`make build-web` 成功；`check-upstream` 通过（670 delta 文件 / 50 组）。数字以现场命令为准。
 
 ## 2. 本轮审核使用的工具与结论
 
@@ -76,7 +80,25 @@ max(所有闭包声明结束位置) < min(所有急切引用位置)
 
 ### 3.3 源码正则测试与运行时测试是两种约束
 
-source-map 只解决源码读取，不是生产模块解析器，也不改变 VM 中的 `require`，更不能证明运行时行为未变。`session.ts` 的 4 个 VM 测试使用 `ts.transpileModule + vm.runInContext`，sandbox `require` 不支持拆后的相对导入；必须先改造 sandbox require 并喂入 MODULES，未解锁前不要拆 `session.ts`。
+source-map 只解决源码读取，不是生产模块解析器，也不改变 VM 中的 `require`，更不能证明运行时行为未变。
+
+**`session.ts` 已于 2026-10-07 解锁**（这份文档先前记的「4 个 VM 测试锁住，不要拆」已作废）。做法：新增
+`web/tests/vmLoadSource.mjs`，给既有沙箱 require 装上「stub 优先、真源码兜底」的解析器
+（`withSourceFallback` / `loadSourceModule`），按**导入方所在目录**递归解析相对 `.ts/.tsx/.js`
+并共享 module cache。三个踩过的坑：
+
+1. **白名单式 require**（每拆一个模块就回来改一遍测试）——那正是当初「不能拆」的成因，改成通用解析器；
+2. **module cache 没串到兜底解析器** ——`platform/runtime ↔ prefs/storage ↔ net/nodeRegistry`
+   这个环会无限递归，表现是测试卡死（看着像新代码的 bug，其实在夹具里）；
+3. **`import.meta` 是解析期语法错误** ——vm 里跑的是 Script，等运行期再兜已经晚了，按文件路径替换成等价 `file://` 串。
+
+解锁后 session.ts 拆成 10 个模块：`sessionTypes` / `sessionExchangeMerge` / `sessionCacheTypes` /
+`sessionIndexedDb` / `sessionCacheStore` / `sessionListCache` / `sessionWindow` /
+`sessionApi` / `sessionContext` / `sessionOutbound` / `sessionTerminalLayout`，2659 → 1136 行。
+
+**另一条经验**：源码结构守卫不该绑死文件路径。每次搬代码都回来改白名单，等于把架构断言降级成布局断言。
+本轮的改法是把守卫指向「拥有该实现的模块集合」（如 `sessionDomainSrc`），或把判据换成更强的不变量
+（例：`message-mechanism-merges` 的「瞬时/持久一把尺」从**排除 session.ts** 改成**全仓恰好一个文件实现它**）。
 
 ### 3.4 运行时覆盖不足
 

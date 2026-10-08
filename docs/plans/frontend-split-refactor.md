@@ -139,22 +139,21 @@ web/src/
 - **参考**：`app/useRealtimeEvents.ts`（2019 行）、`app/useProjectLifecycle.tsx`（885 行）
   就是这套模式的产物。
 
-### 4.2 FileTree.tsx —— 1847 行
+### 4.2 FileTree.tsx —— 1153 行 ✅
 
-- **现状**：`FileTreeInner`（主组件）+ 4 个顶层小组件 + 一批样式常量。
-  - `AgentConfigLineEditor`（263 行）
-  - `AgentConfigPopover`（354–858）
-  - `AgentLifecyclePopover`（859–1020）
-  - 样式：`agentConfig*Style`（1021 行起，共 10 个）
+- **现状**：`FileTreeInner`（主组件）本身 + 少量样式常量；原来的 4 个顶层小组件与
+  `AgentConfigLineEditor` / `AgentConfigPopover` / `AgentLifecyclePopover` / 10 个
+  `agentConfig*Style` 已全部外移（见下）。
 - **已抽**：`icons.tsx`（13 个图标/小组件，`def8b7e`）；
   `AgentConfigLineEditor` + `AgentConfigPopover` + `AgentLifecyclePopover` + 10 个
   `agentConfig*Style` + 4 个配置流程类型 → `components/file/AgentConfigPopover.tsx`；
   `usePwaInstall.ts`（130 行）承接 UA 平台判定、安装能力探测、原生运行时监听、安装文案和安装动作；
   `fileTreeEntries.tsx`（289 行）承接递归 `renderEntries`，显式传入多节点 scope、展开状态、root extra content 和 draft root callbacks；`useAgentConfigActions.ts`（246 行）承接配置备份/provider 的创建、切换、删除、同步、测试和选择动作；`useFileTreePreferences.ts`（107 行）承接 session naming、idle resource release、send shortcut 三组设置动作；`useAgentConfigSelection.ts` 承接 agent restart 与 config selection/loading；`useAgentLifecycleActions.ts` 承接 install/update 生命周期命令；`useAgentConfigOutsideClick.ts` 承接 config/lifecycle popover outside-click effects；`useFileTreeEffects.ts` 承接创建 root 聚焦、bootstrap 订阅、更新说明、菜单与快捷键 popover 外部关闭、偏好加载等副作用；`useAgentConfigSwitchRequest.ts` 承接外部 config switch request 初始化 effect；`FileTreeProjectTabs.tsx` 承接 project tabs 与节点主题色；`FileTreeFontSizeMenu.tsx` / `FileTreeLocaleOptions.tsx` / `FileTreeAppearanceOptions.tsx` / `FileTreeSortOptions.tsx` 承接四类设置选项；`FileTreeFooter.tsx` 承接 update/native/PWA/footer 内容；`FileTreeIdleReleasePopover.tsx`、`FileTreeSendShortcutPopover.tsx`、`FileTreeSessionNamingPopover.tsx` 承接对应设置弹窗。
-- **待抽**：`FileTreeInner` 本身（约 2130 行）仍需继续拆；下一甜点是 agent 配置操作回调簇。
-- **收益**：FileTree.tsx 2683 → 1847 行（-836，本次）。
+- **待抽**：无。`FileTree.tsx` 3770 → 1153，已低于 1200 行目标；剩余的是主组件的状态编排本身，
+  继续拆的收益低于 `services/session.ts`。
+- **收益**：FileTree.tsx 3770 → 1153 行（-2617）。
 
-### 4.3 SessionViewer.tsx —— 2569 行
+### 4.3 SessionViewer.tsx —— 1127 行 ✅
 
 - **现状**：只剩 `SessionViewerInner`（hooks + `renderTimelineItem` + `renderSlashCommandResult` + RETURN）。
 - **已抽（本次）**：顶部 L114-1053 的 31 个顶层声明（940 行）拆到 6 个新文件：
@@ -170,7 +169,7 @@ web/src/
 
 - **依赖方向**：`types` ← `format` ← `tokenViews`/`cards`/`attachments` ← `AskUser` ← `SessionViewer`（单向，无环）。
   原先这些类型都是文件内私有（外部只 import `SessionViewer` 组件本身），故可自由搬。
-- **收益**：SessionViewer.tsx 3567 → 1144 行（-2423），已低于 1200 行目标。
+- **收益**：SessionViewer.tsx 3567 → 1127 行（-2440），已低于 1200 行目标。
 - **已抽**：`renderSlashCommandResult`（199 行）→ `SessionViewerSlashCommand.tsx`（232 行，8 个 props，`t` 走 `useI18n()`）。
 - **已抽**：`renderTimelineItem` 的 tool 分支（约 50 行）→ `SessionViewerToolItem.tsx`（54 行，8 个 props）；
   `tool_group` / `todo` / `plan` / `compact` 四类辅助卡片 → `SessionViewerAuxiliaryTimeline.tsx`（48 行）；
@@ -182,7 +181,7 @@ web/src/
 - **完成**：SessionViewer 已低于 1200 行目标。
 - **注意**：合并 main 时此文件有上游改动（`c04deeb` 的 pending 对账），拆之前先确认。
 
-### 4.3.1 useRealtimeEvents.ts —— 1074 行 ✅
+### 4.3.1 useRealtimeEvents.ts —— 1075 行 ✅
 
 - **现状**：`useRealtimeEvents(ctx)` 只剩「订阅 + 派发」这一件事。
 - **已抽（本次）**：`app/realtimeWsHandlers.ts`（997 行）= `createRealtimeWsHandlers(ctx, local)`，
@@ -214,16 +213,40 @@ web/src/
   该函数现在带 `export` → 测试改为剥掉 `export ` 前缀再编译（断言语义不变）。
 - **注意**：合并 main 时此文件有上游改动（`+11/−26`）。
 
-### 4.5 session.ts —— 2469 行（VM loader 已解锁）
+### 4.5 session.ts —— 1136 行 ✅（VM loader 已解锁）
 
-- **已完成解锁**：新增 `web/tests/vmLoadSource.mjs`，在保留各测试 stub 优先级的前提下，支持相对 `.ts/.tsx/.js` 模块递归加载与 module cache。
-  `session-window.test.mjs` / `session-window-dedup.test.mjs` 已接入；未知相对模块不再直接 `unexpected require`。
-- **已抽（本次）**：`sessionTerminalLayout.ts`（终端列数估算）；`sessionCacheTypes.ts`（IndexedDB cache record 类型）；
-  `sessionIndexedDb.ts`（151 行，数据库初始化、store transaction、账户 scope cache key、session-list cache 读写）。
-- **入口兼容**：`session.ts` 保留 `multiRootSessionListCacheKey` / `buildSessionListCacheKey` 的源码锚点 shim，
-  让 `multi-account-partition.test.mjs` 的源码守卫继续有效；VM 测试不把新文件拼进入口 source-map，只由 loader 按相对 import 加载。
-- **当前收益**：session.ts 2659 → 2469 行（-190）。
-- **待拆**：exchange merge / persistent session / window sync 领域 helper。
+- **解锁做法（2026-10-07）**：新增 `web/tests/vmLoadSource.mjs`，
+  `withSourceFallback(sandbox, ["services"])` 给既有沙箱装上「stub 优先、真源码兜底」的 require，
+  `loadSourceModule` 按**导入方所在目录**递归解析相对 `.ts/.tsx/.js` 并共享 module cache。
+  `session-window` / `session-window-dedup` 已接入；未知相对模块不再 `unexpected require`。
+- **夹具本身踩过的三个坑**（都不是生产代码的 bug）：
+  1. 白名单式 require → 每拆一个模块就要回来改测试，正是「不能拆」的成因；
+  2. module cache 没串到兜底解析器 → `platform/runtime ↔ prefs/storage ↔ net/nodeRegistry`
+     这个环无限递归，表现是测试卡死；
+  3. `import.meta` 在 vm 里是**解析期**语法错误，按文件路径替换成等价 `file://` 串。
+- **拆出的 10 个模块**（均在 `web/src/services/`，G-BA 目录前缀覆盖，无需逐个登记）：
+
+  | 模块 | 行数 | 承接 |
+  |---|---|---|
+  | `sessionTypes.ts` | 286 | 24 个公开类型 + 3 个模块内类型 |
+  | `sessionExchangeMerge.ts` | 367 | 瞬时/持久判据、exchange 合并、aux 幂等拼接、增量追加 |
+  | `sessionCacheTypes.ts` | 4 | IndexedDB cache record 类型 |
+  | `sessionIndexedDb.ts` | 151 | 数据库初始化、store transaction、账户 scope cache key、列表缓存读写 |
+  | `sessionCacheStore.ts` | 285 | 单会话缓存读写 + 落盘裁剪（`toPersistentSession` 等） |
+  | `sessionListCache.ts` | 34 | 会话列表缓存读写 |
+  | `sessionWindow.ts` | 108 | 窗口标记 + `syncSession` / `getSessionWindow` / `getSessionIncrement` |
+  | `sessionApi.ts` | 483 | 16 个 HTTP 方法（列表 / 单会话 / 外部导入 / 关联文件 / CRUD / fork） |
+  | `sessionContext.ts` | 37 | `buildSelectionKey` / `compactContext` |
+  | `sessionOutbound.ts` | 238 | 9 个 WS 出站帧构造纯函数 |
+  | `sessionTerminalLayout.ts` | 25 | 命令终端列数估算 |
+
+- **入口保留（有意）**：`SessionService` 保留同名方法逐一转发，App.tsx 与各 hook 一行未改；
+  `SESSION_WINDOW_SIZE` 与其 `CUSTOM(G-AT)` 注释留在 `session.ts`（G-AT 锚点要求那句话逐字在此）。
+- **已删**：为 `multi-account-partition` 守卫留的两个 cache-key shim —— 守卫改读真正拥有
+  缓存键的 `sessionIndexedDb.ts`。
+- **当前收益**：session.ts 2659 → 1136 行（-1523），已低于 1200 行目标。
+- **待拆**：无（继续则需把 WS 传输整体外移成 `SessionSocket`，属独立目标，见
+  `docs/plans/next-stage-decision.md` §4 表 D）。
 
 ### 4.6 其他 > 600 行的文件（收益递减，按需）
 
