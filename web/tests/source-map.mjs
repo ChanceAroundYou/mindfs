@@ -100,6 +100,7 @@ export const MODULES = {
     "src/components/file/useFileTreeEffects.ts",
     "src/components/file/useAgentConfigSwitchRequest.ts",
     "src/components/file/FileTreeProjectTabs.tsx",
+    "src/components/file/fileTreeAgentConfigUtils.ts",
   ],
 
   // P2 拆分：file.ts → services/file/（入口 shim 仍在原路径）

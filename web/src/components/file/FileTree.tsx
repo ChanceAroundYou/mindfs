@@ -22,6 +22,7 @@ import { useRefreshSpin } from "../../hooks/index";
 import { usePwaInstall } from "../../app/usePwaInstall";
 import { createRenderEntries } from "./fileTreeEntries";
 import { useAgentConfigActions } from "./useAgentConfigActions";
+import { formatProviderTestResult, isAgentConfigBackupConflict } from "./fileTreeAgentConfigUtils";
 import { useFileTreePreferences } from "./useFileTreePreferences";
 import { useAgentConfigSelection } from "./useAgentConfigSelection";
 import { useAgentLifecycleActions } from "./useAgentLifecycleActions";
@@ -212,28 +213,6 @@ type AgentConfigSwitchSelection = { type: "backup" | "api_provider"; id: string 
 type AgentLifecycleCommandAction = "install" | "update";
 
 /** 把单模型测试结果格式化成一行简短文案（成功/延迟/错误/简短响应）。 */
-function formatProviderTestResult(
-  result: AgentAPIProviderTestResult,
-  t: I18nContextValue["t"],
-): string {
-  const latency = t("agentConfig.testModelLatency", { ms: result.latency_ms });
-  if (result.success) {
-    const response = result.response ? ` ${result.response}` : "";
-    return `✓ ${latency}${response}`;
-  }
-  return `✗ ${latency} ${result.error || t("agentConfig.testModelFailed")}`;
-}
-
-function isAgentConfigBackupConflict(error: unknown): boolean {
-  const maybeError = error as { status?: unknown; message?: unknown; payload?: { error?: unknown; message?: unknown } } | null;
-  if (!maybeError) {
-    return false;
-  }
-  const status = typeof maybeError.status === "number" ? maybeError.status : 0;
-  const message = String(maybeError.payload?.error || maybeError.payload?.message || maybeError.message || "");
-  return status === 409 || message === "backup already exists";
-}
-
 
 const fontSizeAdjustButtonStyle: React.CSSProperties = {
   width: "26px",
