@@ -191,7 +191,10 @@ export const MODULES = {
   "src/components/TaskTemplateDialog.tsx": ["src/components/task/TaskTemplateDialog.tsx"],
   "src/components/StageEditor.tsx": ["src/components/task/StageEditor.tsx"],
   "src/components/StageOptionsBar.tsx": ["src/components/task/StageOptionsBar.tsx"],
-  "src/components/ScheduledAgentTaskDialog.tsx": ["src/components/task/ScheduledAgentTaskDialog.tsx"],
+  "src/components/ScheduledAgentTaskDialog.tsx": [
+    "src/components/task/ScheduledAgentTaskDialog.tsx",
+    "src/components/task/ScheduledCronEditor.tsx",
+  ],
   "src/components/WorktreeBranchSelector.tsx": ["src/components/task/WorktreeBranchSelector.tsx"],
   "src/components/FileTree.tsx": [
     "src/components/file/FileTree.tsx",
