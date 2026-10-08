@@ -58,6 +58,7 @@ import { SessionViewerThoughtItem } from "./SessionViewerThoughtItem";
 import { SessionViewerUserMessage } from "./SessionViewerUserMessage";
 import { SessionViewerAssistantMessage } from "./SessionViewerAssistantMessage";
 import { SessionViewerRelatedFiles } from "./SessionViewerRelatedFiles";
+import { SessionViewerHeader } from "./SessionViewerHeader";
 
 function SessionViewerInner({
   session,
@@ -1144,45 +1145,7 @@ function SessionViewerInner({
       }}
     >
       {interactionMode === "drawer" ? null : (
-        <ViewHeader padding="0 16px" style={{ zIndex: 10 }}>
-          <h1
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "8px",
-              fontSize: "14px",
-              fontWeight: 600,
-              margin: 0,
-              minWidth: 0,
-            }}
-          >
-            {rootId ? (
-              <button
-                type="button"
-                onClick={() => onRootClick?.(rootId)}
-                style={{
-                  ...rootBadgeButtonStyle,
-                  background: "var(--node-badge-bg)",
-                  color: String(rootColor || "").trim() || "var(--text-primary)",
-                  flexShrink: 0,
-                  cursor: onRootClick ? "pointer" : "default",
-                }}
-              >
-                {rootDisplayName || rootId}
-              </button>
-            ) : null}
-            <span
-              style={{
-                minWidth: 0,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {displayName}
-            </span>
-          </h1>
-        </ViewHeader>
+      <SessionViewerHeader interactionMode={interactionMode} rootId={rootId} rootColor={rootColor} rootDisplayName={rootDisplayName} displayName={displayName} onRootClick={onRootClick} />
       )}
 
       {/* 滚动容器 */}

@@ -142,6 +142,7 @@ export const MODULES = {
     "src/components/session/SessionViewerUserMessage.tsx",
     "src/components/session/SessionViewerAssistantMessage.tsx",
     "src/components/session/SessionViewerRelatedFiles.tsx",
+    "src/components/session/SessionViewerHeader.tsx",
   ],
   "src/components/ArchivedSessionsPanel.tsx": ["src/components/session/ArchivedSessionsPanel.tsx"],
   "src/components/ExternalSessionList.tsx": ["src/components/session/ExternalSessionList.tsx"],
