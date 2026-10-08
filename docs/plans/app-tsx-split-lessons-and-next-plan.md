@@ -7,8 +7,8 @@
 
 - 分支：`task-35`
 - HEAD：`待提交`
-- `web/src/App.tsx`：**5501 行**
-- 历史变化：约 `9585 → 7593 → 6405 → 5979 → 5713 → 5501`
+- `web/src/App.tsx`：**5416 行**
+- 历史变化：约 `9585 → 7593 → 6405 → 5979 → 5713 → 5501 → 5416`
 - 当前目标：按既定决策分阶段继续削减，先达到约 **4000–5000 行**，再重新评估；不直接追求极限小文件。
 - 最近完整门禁：`npm run typecheck` 0 错误；`npm test` 210 tests、209 pass、1 skip、0 fail；`make build-web` 成功；`check-upstream` 通过。数字以现场命令为准。
 
@@ -130,7 +130,7 @@ source-map 只解决源码读取，不是生产模块解析器，也不改变 VM
 
 定向测试：`task-stage-panel`、`task-panel-unification`、`task-related-files`、`task-session-jump-root`、`task-template-node-routing`、`workspace-board`、`agent-lifecycle-restart`。
 
-### F：文件上下文选择（第三刀）
+### F：文件上下文选择（第三刀）✅ 已完成
 
 把约 117 行 `buildAttachedFileContext` 与相关 callbacks/effects 抽到 `web/src/app/useAttachedFileContext.ts`。依赖主要是 file/gitDiff/viewer refs 与 setters，预计减少 80–100 行。定向测试：`file-navigation`、`file-editing`、`git-diff-viewer`、`related-files`、`project-tree-refresh`。
 

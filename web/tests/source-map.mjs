@@ -68,6 +68,7 @@ export const MODULES = {
     "src/app/useAppInit.ts",
     "src/app/useTaskBoard.ts",
     "src/app/useTaskComposer.ts",
+    "src/app/useAttachedFileContext.ts",
   ],
 
   // P6 拆分：FileTree.tsx → + icons.tsx（图标子组件）
