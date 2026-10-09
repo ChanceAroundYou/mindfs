@@ -52,6 +52,7 @@ groups:
       - docs/plans/next-stage-decision.md
       - docs/plans/deep-split-phase2.md
       - docs/plans/deep-split-phase3.md
+      - docs/plans/app-tsx-next-split.md
       - docs/session-flicker-root-cause.md
       - docs/session-streaming-rework.md
       - docs/upstream-customizations.md
@@ -710,12 +711,15 @@ groups:
     anchors:
       - 'web/src/app/sessionJump.ts:export function buildSessionJumpTarget'
       - 'web/src/App.tsx:const boardSessionByKey = useMemo'
-      - 'web/src/App.tsx:CUSTOM(G-Z)'
+      # 2026-10-08 App.tsx 深度拆分：这段代码搬到 app/useAppTaskDrawer.ts，
+      # 锚点必须跟着走，否则合上游时这一组会被判成「已被冲掉」。
+      - 'web/src/app/useAppTaskDrawer.ts:CUSTOM(G-Z)'
     files:
       - web/src/App.tsx
       - web/src/app/sessionJump.ts
       - web/src/components/workspace/
       - web/src/app/useWorkspaceBoard.ts
+      - web/src/app/useAppTaskDrawer.ts
     tests:
       - web/tests/task-session-jump-root.test.mjs
       - web/tests/workspace-board.test.mjs
