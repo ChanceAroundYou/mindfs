@@ -53,6 +53,7 @@ groups:
       - docs/plans/deep-split-phase2.md
       - docs/plans/deep-split-phase3.md
       - docs/plans/app-tsx-next-split.md
+      - docs/plans/app-tsx-under-1000.md
       - docs/session-flicker-root-cause.md
       - docs/session-streaming-rework.md
       - docs/upstream-customizations.md
