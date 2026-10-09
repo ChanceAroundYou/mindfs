@@ -182,6 +182,8 @@ import {
 // 类型定义
 
 import { APP_DOCUMENT_TITLE, AppProps, CHILD_SESSION_PAGE_SIZE, MULTI_PROJECT_SESSION_LIMIT, ManagedRootPayload, SESSION_PAGE_SIZE } from "./app/appMisc";
+import { useAppSessionKeyState } from "./app/useAppSessionKeyState";
+import { useAppSessionReload } from "./app/useAppSessionReload";
 import { useAppBootstrapActions } from "./app/useAppBootstrapActions";
 import { useAppSessionPins } from "./app/useAppSessionPins";
 import { useAppReplaceURLState } from "./app/useAppReplaceURLState";
@@ -1148,20 +1150,6 @@ export function App({ onGoHome }: AppProps) {
     },
     [],
   );
-  const clearSlashCommandResultForSession = useCallback(
-    (rootID: string, sessionKey: string) => {
-      const key = rootSessionKey(rootID, sessionKey);
-      setSlashCommandResults((prev) => {
-        if (!prev[key]) {
-          return prev;
-        }
-        const next = { ...prev };
-        delete next[key];
-        return next;
-      });
-    },
-    [rootSessionKey],
-  );
   const applyPendingToMultiProjectGroups = useCallback(
     (groups: MultiProjectSessionGroup[], pendingByKey: Record<string, boolean>) =>
       groups.map((group) => ({
@@ -1173,28 +1161,17 @@ export function App({ onGoHome }: AppProps) {
       })),
     [rootSessionKey],
   );
-  const setMultiProjectSessionPending = useCallback(
-    (rootID: string | null | undefined, sessionKey: string | null | undefined, pending: boolean) => {
-      const resolvedRoot = String(rootID || "");
-      const resolvedKey = String(sessionKey || "");
-      if (!resolvedRoot || !resolvedKey) {
-        return;
-      }
-      const key = rootSessionKey(resolvedRoot, resolvedKey);
-      setMultiProjectPendingByKey((prev) => {
-        const next = { ...prev };
-        if (pending) {
-          next[key] = true;
-        } else {
-          delete next[key];
-        }
-        multiProjectPendingRef.current = next;
-        setMultiProjectSessionGroups((groups) => applyPendingToMultiProjectGroups(groups, next));
-        return next;
-      });
-    },
-    [applyPendingToMultiProjectGroups, rootSessionKey],
-  );
+  const {
+    clearSlashCommandResultForSession,
+    setMultiProjectSessionPending,
+  } = useAppSessionKeyState({
+    rootSessionKey,
+    setSlashCommandResults,
+    setMultiProjectPendingByKey,
+    multiProjectPendingRef,
+    setMultiProjectSessionGroups,
+    applyPendingToMultiProjectGroups,
+  });
   const resolveRootForSessionKey = useCallback(
     (sessionKey: string): string | null => {
       if (!sessionKey) return null;
@@ -1451,26 +1428,21 @@ export function App({ onGoHome }: AppProps) {
 
   // WS 高频事件（session.done / ws.reconnected / session.imported / session.created）都会触发会话列表全量重拉，
   // 合并 300ms 窗口内的多次调用为最后一次，避免 agent 密集工具调用时连发 /api/sessions。
-  const scheduleSessionListReload = useCallback(
-    (
-      rootID: string,
-      options?: {
-        beforeTime?: string;
-        afterTime?: string;
-        replace?: boolean;
-        force?: boolean;
-      },
-    ) => {
-      if (sessionListReloadTimerRef.current) {
-        window.clearTimeout(sessionListReloadTimerRef.current);
-      }
-      sessionListReloadTimerRef.current = window.setTimeout(() => {
-        sessionListReloadTimerRef.current = null;
-        void loadSessionsForRoot(rootID, options);
-      }, 300);
-    },
-    [loadSessionsForRoot],
-  );
+  const {
+    scheduleSessionListReload,
+    handleLoadOlderSessions,
+  } = useAppSessionReload({
+    sessionListReloadTimerRef,
+    loadSessionsForRoot,
+    currentRootIdRef,
+    sessionsRef,
+    loadingOlderSessions,
+    setLoadingOlderSessions,
+    getNodeIdForRoot,
+    setHasMoreSessions,
+    setSessions,
+    applyPinSnapshot,
+  });
 
 
 
@@ -2472,32 +2444,6 @@ export function App({ onGoHome }: AppProps) {
     void ensurePluginsLoaded(currentRootId).catch(() => {});
   }, [currentRootId, ensurePluginsLoaded]);
 
-  const handleLoadOlderSessions = useCallback(async () => {
-    const rootID = currentRootIdRef.current;
-    const oldest =
-      sessionsRef.current[sessionsRef.current.length - 1]?.updated_at || "";
-    if (!rootID || !oldest || loadingOlderSessions) {
-      return;
-    }
-    setLoadingOlderSessions(true);
-    try {
-      const listNodeId = getNodeIdForRoot(rootID);
-      const payload = await sessionService.fetchSessions(rootID, {
-        beforeTime: oldest,
-        nodeId: listNodeId,
-      });
-      const next = [...payload.items, ...payload.pinnedItems]
-        // 同上：加载更多并进的是同一份 sessions，节点归属必须与首屏一致
-        .map((item) => toSessionItem(rootID, { ...(item as any), _nodeId: (item as any)._nodeId || listNodeId }))
-        .filter((item): item is SessionItem => !!item);
-      setHasMoreSessions(payload.totalCount > payload.items.length);
-      setSessions((prev) =>
-        applyPinSnapshot(mergeSessionItems(prev, next), rootID),
-      );
-    } finally {
-      setLoadingOlderSessions(false);
-    }
-  }, [getNodeIdForRoot, loadingOlderSessions]);
 
   useAppInit({actionHandlersRef, bootstrapService, bootstrapState, didInitRef, ensurePluginsLoaded, handleSelectSessionRef, indexManagedRoots, loadLastRootId, loadLastRootNodeId, loadManagedRootPayloads, loadMultiProjectSessionGroups, loadSessionsForRoot, managedRootByIdRef, managedRootByKeyRef, managedRootIdsRef, mapManagedRootsToEntries, multiProjectSessionsEnabled, readURLState, refreshTreeDir, reportError, selectRootNode, setCurrentRootId, setManagedRootIds, setPluginQuery, setRootEntries, setRootNodeMap, showBoundSessionOrRootDir, switchMainView, t, useEffect});
 

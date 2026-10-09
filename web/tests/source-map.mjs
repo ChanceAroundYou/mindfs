@@ -102,6 +102,9 @@ export const MODULES = {
     "src/app/useAppFormatDirectoryLoadError.ts",
     // 2026-10-08 第 2 步：启动期四件事（自更新 / 引导步进 / E2EE 口令）。
     "src/app/useAppBootstrapActions.ts",
+    // 2026-10-08 第 3 步：会话列表的两种「再拉一次」+ 按复合键存的派生状态。
+    "src/app/useAppSessionReload.ts",
+    "src/app/useAppSessionKeyState.ts",
   ],
 
   // P6 拆分：FileTree.tsx → + icons.tsx（图标子组件）
