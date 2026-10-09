@@ -1,33 +1,8 @@
 import React from "react";
 import { createPortal } from "react-dom";
-import { useI18n, type MessageKey } from "../../i18n/index";
-
-type TourStep = {
-  id: string;
-  target: string;
-  fallbackTarget?: string;
-  titleKey: MessageKey;
-  bodyKey: MessageKey;
-  interactive?: boolean;
-  padding?: number;
-  pinToTop?: boolean;
-};
-
-const TOUR_STEPS: TourStep[] = [
-  { id: "sidebar-menu", target: "[data-onboarding='sidebar-menu']", titleKey: "onboarding.sidebarMenu.title", bodyKey: "onboarding.sidebarMenu.body", pinToTop: true },
-  { id: "project-tabs", target: "[data-onboarding='project-tabs']", titleKey: "onboarding.projectTabs.title", bodyKey: "onboarding.projectTabs.body", pinToTop: true },
-  { id: "project-home", target: "[data-onboarding='project-home']", titleKey: "onboarding.projectHome.title", bodyKey: "onboarding.projectHome.body", pinToTop: true },
-  { id: "main-menu", target: "[data-onboarding='main-menu']", titleKey: "onboarding.mainMenu.title", bodyKey: "onboarding.mainMenu.body", pinToTop: true },
-  { id: "task-templates", target: "[data-onboarding='task-templates']", titleKey: "onboarding.taskTemplates.title", bodyKey: "onboarding.taskTemplates.body" },
-  { id: "task-template-menu", target: "[data-onboarding='task-template-menu']", titleKey: "onboarding.taskTemplateMenu.title", bodyKey: "onboarding.taskTemplateMenu.body" },
-  { id: "tasks", target: "[data-onboarding='task-create']", titleKey: "onboarding.tasks.title", bodyKey: "onboarding.tasks.body" },
-  { id: "session-actions", target: "[data-onboarding='session-actions']", titleKey: "onboarding.sessionActions.title", bodyKey: "onboarding.sessionActions.body", padding: 1, pinToTop: true },
-  { id: "shortcuts", target: "[data-onboarding='message-input']", titleKey: "onboarding.shortcuts.title", bodyKey: "onboarding.shortcuts.body" },
-  { id: "mode-selector", target: "[data-onboarding='mode-selector']", titleKey: "onboarding.modeSelector.title", bodyKey: "onboarding.modeSelector.body", interactive: true },
-  { id: "agent-selector", target: "[data-onboarding='agent-selector']", fallbackTarget: "[data-onboarding='input-controls']", titleKey: "onboarding.agentSelector.title", bodyKey: "onboarding.agentSelector.body", interactive: true },
-  { id: "attachment-action", target: "[data-onboarding='attachment-action']", titleKey: "onboarding.attachmentAction.title", bodyKey: "onboarding.attachmentAction.body" },
-  { id: "send-action", target: "[data-onboarding='send-action']", titleKey: "onboarding.sendAction.title", bodyKey: "onboarding.sendAction.body" },
-];
+import { useI18n } from "../../i18n/index";
+import { TOUR_STEPS } from "./onboardingSteps";
+import { useOnboardingTour } from "./useOnboardingTour";
 
 type OnboardingTourProps = {
   open: boolean;
@@ -37,8 +12,6 @@ type OnboardingTourProps = {
   onDismiss: () => void;
 };
 
-type TargetRect = Pick<DOMRect, "top" | "left" | "right" | "bottom" | "width" | "height">;
-
 export function OnboardingTour({
   open,
   isMobile,
@@ -47,76 +20,14 @@ export function OnboardingTour({
   onDismiss,
 }: OnboardingTourProps) {
   const { t } = useI18n();
-  const [stepIndex, setStepIndex] = React.useState(0);
-  const [targetRect, setTargetRect] = React.useState<TargetRect | null>(null);
-  const cardRef = React.useRef<HTMLDivElement | null>(null);
-
-  const step = TOUR_STEPS[stepIndex];
-
-  React.useEffect(() => {
-    if (!open) return;
-    setStepIndex(0);
-  }, [open]);
-
-  React.useEffect(() => {
-    if (!open || !step) return;
-    onStepChange?.(step.id);
-
-    let frame = 0;
-    let settleTimer = 0;
-    const updateRect = () => {
-      const element = document.querySelector<HTMLElement>(step.target)
-        ?? (step.fallbackTarget ? document.querySelector<HTMLElement>(step.fallbackTarget) : null);
-      const rect = element?.getBoundingClientRect();
-      if (rect && rect.width > 0 && rect.height > 0) {
-        const padding = step.padding ?? 5;
-        setTargetRect({
-          top: step.pinToTop ? 0 : Math.max(6, rect.top - padding),
-          left: Math.max(6, rect.left - padding),
-          right: Math.min(window.innerWidth - 6, rect.right + padding),
-          bottom: step.pinToTop
-            ? rect.height + padding * 2
-            : Math.min(window.innerHeight - 6, rect.bottom + padding),
-          width: Math.min(window.innerWidth - 12, rect.width + padding * 2),
-          height: Math.min(window.innerHeight - 12, rect.height + padding * 2),
-        });
-      } else {
-        setTargetRect(null);
-      }
-    };
-    const scheduleUpdate = () => {
-      window.cancelAnimationFrame(frame);
-      frame = window.requestAnimationFrame(updateRect);
-    };
-    scheduleUpdate();
-    settleTimer = window.setTimeout(scheduleUpdate, 320);
-    window.addEventListener("resize", scheduleUpdate);
-    window.addEventListener("scroll", scheduleUpdate, true);
-    return () => {
-      window.cancelAnimationFrame(frame);
-      window.clearTimeout(settleTimer);
-      window.removeEventListener("resize", scheduleUpdate);
-      window.removeEventListener("scroll", scheduleUpdate, true);
-    };
-  }, [onStepChange, open, step]);
-
-  React.useEffect(() => {
-    if (!open) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onDismiss();
-      if (event.key === "ArrowLeft" && stepIndex > 0) setStepIndex((value) => value - 1);
-      if (event.key === "ArrowRight") {
-        if (stepIndex === TOUR_STEPS.length - 1) onComplete();
-        else setStepIndex((value) => value + 1);
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onComplete, onDismiss, open, stepIndex]);
-
-  React.useEffect(() => {
-    if (open) cardRef.current?.focus();
-  }, [open, stepIndex]);
+  const {
+    stepIndex,
+    targetRect,
+    cardRef,
+    step,
+    goNext,
+    goPrev,
+  } = useOnboardingTour({ open, isMobile, onStepChange, onComplete, onDismiss });
 
   if (!open || !step || typeof document === "undefined") return null;
 
@@ -213,17 +124,14 @@ export function OnboardingTour({
           <button
             type="button"
             disabled={stepIndex === 0}
-            onClick={() => setStepIndex((value) => Math.max(0, value - 1))}
+            onClick={goPrev}
             style={{ ...secondaryButtonStyle, opacity: stepIndex === 0 ? 0.45 : 1 }}
           >
             {t("onboarding.previous")}
           </button>
           <button
             type="button"
-            onClick={() => {
-              if (stepIndex === TOUR_STEPS.length - 1) onComplete();
-              else setStepIndex((value) => value + 1);
-            }}
+            onClick={goNext}
             style={primaryButtonStyle}
           >
             {stepIndex === TOUR_STEPS.length - 1 ? t("onboarding.finish") : t("onboarding.next")}
