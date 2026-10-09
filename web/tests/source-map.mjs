@@ -348,6 +348,10 @@ export const MODULES = {
   "src/components/ErrorBoundary.tsx": ["src/components/shell/ErrorBoundary.tsx"],
   "src/components/OnboardingTour.tsx": ["src/components/shell/OnboardingTour.tsx"],
   "src/components/Select.tsx": ["src/components/common/Select.tsx"],
+  "src/components/common/Select.tsx": [
+    "src/components/common/Select.tsx",
+    "src/components/common/useSelect.ts",
+  ],
   "src/components/InlineTokenText.tsx": ["src/components/common/InlineTokenText.tsx"],
   "src/components/NoWorktreeIcon.tsx": ["src/components/common/NoWorktreeIcon.tsx"],
   "src/components/ExitIcon.tsx": ["src/components/common/ExitIcon.tsx"],
