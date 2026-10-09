@@ -12,7 +12,7 @@
 | `App.tsx` | 4182 | <3000 | **-1183** | 碎片化，见 §3 |
 | `components/agent/AgentSelector.tsx` | 1191 | <1000 | -192 | `AgentSelector` 1131 行单体组件 |
 | `components/file/FileTree.tsx` | 1153 | <1000 | -154 | `FileTreeInner` 927 + imports 180 |
-| `services/session.ts` | 1138 | <1000 | -139 | `SessionService` 类 997 |
+| `services/session.ts` | **973** ✅ | <1000 | 0 | 已拆出 `sessionDispatcher.ts` 193 |
 | `components/session/SessionViewer.tsx` | 1127 | <1000 | -128 | `SessionViewerInner` 1045 + imports 110 |
 | `components/task/ScheduledAgentTaskDialog.tsx` | **798** ✅ | <1000 | 0 | 已拆出 `ScheduledCronEditor.tsx` 317 |
 | `app/realtimeWsHandlers.ts` | 1084 | <1000 | -85 | `createRealtimeWsHandlers` 1044 |
@@ -23,8 +23,10 @@
 | `app/useSessionLifecycle.ts` | 1016 | <1000 | -17 | `useSessionLifecycle` 918 |
 | `components/action/ActionBar.tsx` | 1002 | <1000 | -3 | `ActionBar` 939（out_degree 55，cognitive 106） |
 
-**合计需迁移约 2200 行。** 已完成 515 行（`MarkdownViewer` -83、`ScheduledAgentTaskDialog` -99、
-`DefaultListView` -111、`ToolCallCard` -219），剩余约 1685 行（App.tsx 1183 + 其余 8 个文件 502）。
+**合计需迁移约 2200 行。** 已完成 680 行（`MarkdownViewer` -83、`ScheduledAgentTaskDialog` -99、
+`DefaultListView` -111、`ToolCallCard` -219、`ActionBar` -4、`useSessionLifecycle` -60、
+`useRealtimeEvents` -118、`realtimeWsHandlers` -201、`session.ts` -165），
+剩余约 1520 行（App.tsx 1183 + 其余 3 个文件 337：`AgentSelector` 191、`FileTree` 153、`SessionViewer` 127）。
 
 ## 二、Part B：12 个「只超一点」的文件（先做，收益确定、风险低）
 
@@ -159,12 +161,30 @@ cd web/src && find . \( -name '*.ts' -o -name '*.tsx' \) -not -path './i18n/*' \
 | `a6e4415` | `ScheduledAgentTaskDialog` → `ScheduledCronEditor` | 1098 → **798**（+317 新文件） |
 | `f2521c6` | `DefaultListView` → `listViewIcons` | 1031 → **920**（+119 新文件） |
 | `7fc57f9` | `ToolCallCard` → `toolCallRender` | 1016 → **797**（+224 新文件） |
+| （删死码） | `ActionBar` 删重复的 `wsStatusDisplayDelay` | 1002 → **998** |
+| | `useSessionLifecycle` → `useSessionLifecycleTypes` | 1016 → **956**（+71 新文件） |
+| | `useRealtimeEvents` → `useRealtimeEventsContext` | 1075 → **957**（+130 新文件） |
+| | `realtimeWsHandlers` → `realtimeWsSessionMeta` | 1084 → **883**（+235 新文件） |
+| `dddf438` | `session.ts` → `sessionDispatcher` | 1138 → **973**（+193 新文件） |
 
-**Part B 进度：12 个文件已完 4 个**（`MarkdownViewer`、`ScheduledAgentTaskDialog`、`DefaultListView`、`ToolCallCard`），
-剩 8 个：`AgentSelector` 1191、`FileTree` 1153、`session.ts` 1138、`SessionViewer` 1127、
-`realtimeWsHandlers` 1084、`useRealtimeEvents` 1075、`useSessionLifecycle` 1016、`ActionBar` 1002。
+**Part B 进度：12 个文件已完 9 个**，剩 3 个：`AgentSelector` 1191、`FileTree` 1153、`SessionViewer` 1127。
 
 **Part A 进度：0 刀**（App.tsx 仍 4182，目标 <3000）。
+
+### 本阶段教训（`session.ts` 这一刀）
+
+- **新类的构造器不能用 parameter property**（`constructor(private readonly x: T)`）：
+  `node --test` 直接加载 `.ts` 走的是 Node 的 strip-only TS 模式，它不支持这个语法，
+  运行期报 `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`。`tsc` 与 Vite 都过得去，**只有测试会炸** ——
+  写完必须真的跑一遍 `npm test`，不能只信 typecheck。
+- **拆之前先看「这个类到底管几件事」**。`SessionService` 里 WS 传输层（重连/probe/计时器）
+  和订阅派发层（谁订了谁、批帧怎么展开）是两件事，只是都碰 `session.*` 事件所以长在了一起。
+  按「不碰 socket、不碰 pendingMessages」这个判据切，比按行数硬切干净得多。
+- **源码结构守卫会跟着实现走，拆文件时必须一起改指向**。这次动了三条
+  （`pendingStreams` 容量上限 ⑬、批帧形状归一、`emit` 先于 `updateActiveStreamState`）。
+  判据**一字未动**，只把读的文件路径换成新模块 —— 换成 `sessionDomainSvc` 那种聚合簇
+  反而是**放宽**（红线）。已改的 3 个测试里 2 个是单文件直读，1 个是聚合簇（本来就该含新文件）。
+- 公开面跟着搬家时**只改真在用的调用点**（本刀 3 处），不要在宿主留转发 stub。
 
 ### 本阶段教训（`ScheduledAgentTaskDialog` 这一刀）
 
