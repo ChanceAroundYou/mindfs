@@ -99,12 +99,7 @@ import { FileTree } from "./components/file/FileTree";
 import type { AgentConfigSwitchRequest, ProjectTreeTab } from "./components/file/fileTreeTypes";
 
 import { applyNodesFromServer, getActiveNode, getActiveNodeId, getNodeById, getNodes, migrateLegacySingleBase, setActiveNodeId, syncNodesFromServer } from "./services/net/nodeRegistry";
-import {
-  readPins,
-  refreshPinsFromServer,
-  subscribePins,
-  writePins,
-} from "./services/pins";
+import { refreshPinsFromServer, writePins } from "./services/pins";
 
 import { FileViewer } from "./components/file/FileViewer";
 import { resolveGroupColor } from "./services/sessionGroupDisplay";
@@ -187,13 +182,16 @@ import {
 // 类型定义
 
 import { APP_DOCUMENT_TITLE, AppProps, CHILD_SESSION_PAGE_SIZE, MULTI_PROJECT_SESSION_LIMIT, ManagedRootPayload, SESSION_PAGE_SIZE } from "./app/appMisc";
-import { MainViewMode, URLState } from "./app/appPath";
+import { useAppSessionPins } from "./app/useAppSessionPins";
+import { useAppReplaceURLState } from "./app/useAppReplaceURLState";
+import { MainViewMode } from "./app/appPath";
+import { useAppFormatDirectoryLoadError } from "./app/useAppFormatDirectoryLoadError";
 import { closeTopBackLayer, consumeViewHistoryEntry, hasBackLayer, installBackNavigation, pushViewHistoryEntry, useBackLayer } from "./app/useBackNavigation";
 import { AttachedFileContext, Exchange, GitFileStat, MultiProjectSessionGroup, PendingSend, SessionItem, SessionMode, SessionQueueItem, SlashCommandResult, ViewerSelection, WSStatus } from "./app/appSession";
 import { CANDIDATE_FETCH_DEBOUNCE_MS, DIRECTORY_SORT_OVERRIDES_STORAGE_KEY, GIT_DIFF_SIDE_BY_SIDE_STORAGE_KEY, GIT_HISTORY_EXPANDED_STORAGE_KEY, GIT_STATUS_EXPANDED_STORAGE_KEY, LAST_ROOT_NODE_STORAGE_KEY, LAST_ROOT_STORAGE_KEY, loadWorkspaceCollapsed, loadWorkspaceFilter, MOBILE_ENTER_KEY_SEND_STORAGE_KEY, PLUGIN_QUERY_STORAGE_PREFIX, saveWorkspaceCollapsed, saveWorkspaceFilter, SIDEBARS_SWAPPED_STORAGE_KEY, TASK_TEMPLATE_ALL_FILTER, TASK_TEMPLATE_SELECTION_STORAGE_KEY, TREE_SORT_STORAGE_KEY, type WorkspaceBoardFilter } from "./app/appStorage";
 import { TaskInlineEditState } from "./app/appTask";
 import { buildMatchInputFromPath, buildMessageWithViewContext, hasExplicitFileContext, indexManagedRoots, inferReadModeFromPlugin, managedDirAddErrorMessage, mapManagedRootsToEntries, normalizeUpdateState, shouldShowUpdateButton, toPluginInput, updateButtonLabel, updateSummaryText, useResponsive, waitForNextPaint } from "./app/appMisc";
-import { basenameOfPath, buildDirectorySelectionKey, buildFileScrollKey, buildURLSearch, comparableManagedRootPath, isDirectorySortMode, joinDisplayPath, normalizeCursor, normalizePath, parentDirsOfFile, parseFileLocation, parsePluginQuery, readURLState, relativeDisplayPathFromRoot, rootNodeKey } from "./app/appPath";
+import { basenameOfPath, buildDirectorySelectionKey, buildFileScrollKey, comparableManagedRootPath, isDirectorySortMode, joinDisplayPath, normalizeCursor, normalizePath, parentDirsOfFile, parseFileLocation, parsePluginQuery, readURLState, relativeDisplayPathFromRoot, rootNodeKey } from "./app/appPath";
 import { useWorkspaceBoard } from "./app/useWorkspaceBoard";
 import { useSessionCache } from "./app/useSessionCache";
 import { useSendMessage } from "./app/useSendMessage";
@@ -344,51 +342,7 @@ export function App({ onGoHome }: AppProps) {
   const multiProjectLoadSeqRef = useRef(0);
   const [multiProjectPendingByKey, setMultiProjectPendingByKey] = useState<Record<string, boolean>>({});
   const multiProjectPendingRef = useRef<Record<string, boolean>>({});
-  // 置顶只用 store 一份（services/pins.ts），按**项目 id**（不含节点）分组盖到列表上。
-  //
-  // 为什么 worker 的列表也要盖：置顶是控制面，worker 上 /api/pins 是 403，它自己的
-  // 列表里没有置顶区。用户看到的是主节点那张表，所以从这里盖过去。
-  //
-  // 键为什么是纯 rootId：置顶是跨设备的一致性偏好，PC 上的会话在 home 置顶，
-  // 就要在 PC 的列表里显示为置顶 —— 键里带节点 id 就等于又按机器分了片。
-  //
-  // **排序决策权只在这里**（决策 2026-10-05）：原先第三个参数（列表回包自带的
-  // pinnedKeys）也参与排序，于是两个数据源都能重排列表、谁后到谁说了算 ——
-  // 那是右侧狂跳的来源之一。现在列表回包只管数据，置顶一律从 store 取。
-  const pinsSnapshot = useSyncExternalStore(subscribePins, readPins, readPins);
-  const sessionPinsByRoot = useMemo(() => {
-    const byRoot = new Map<string, Map<string, string>>();
-    for (const [scoped, at] of Object.entries(pinsSnapshot.sessions || {})) {
-      // 键形如 rootID::sessionKey：只取第一段当项目 id，其余整段当会话 key。
-      // 项目 id 本身不含 "::"（basename），所以按第一处分隔切是安全的。
-      const sep = scoped.indexOf("::");
-      if (sep <= 0) continue;
-      const rootId = scoped.slice(0, sep);
-      const sessionKey = scoped.slice(sep + 2);
-      if (!sessionKey) continue;
-      let bucket = byRoot.get(rootId);
-      if (!bucket) {
-        bucket = new Map<string, string>();
-        byRoot.set(rootId, bucket);
-      }
-      bucket.set(sessionKey, at);
-    }
-    return byRoot;
-  }, [pinsSnapshot]);
-
-  const applyPinSnapshot = useCallback(
-    <T extends { root_id?: string; pinned_at?: string | null }>(
-      items: T[],
-      rootId: string,
-    ): T[] => {
-      const overlay = sessionPinsByRoot.get(rootId);
-      if (!overlay || overlay.size === 0) {
-        return applyPinSnapshotRaw(items, rootId, []);
-      }
-      return applyPinSnapshotRaw(items, rootId, Array.from(overlay.keys()), overlay);
-    },
-    [sessionPinsByRoot],
-  );
+  const { applyPinSnapshot } = useAppSessionPins();
   const [syncingSessionKeys, setSyncingSessionKeys] = useState<Set<string>>(
     () => new Set(),
   );
@@ -1170,23 +1124,11 @@ export function App({ onGoHome }: AppProps) {
 
   const currentDirectorySortMode = currentDirectorySortOverride || treeSortMode;
 
-  const replaceURLState = useCallback((next: URLState) => {
-    // 主面板模式默认取当前状态：调用点一律紧跟在 switchMainView 之后（或本就不切面板），
-    // 因此这里补默认值即可让 URL 与按钮高亮保持同源，无需逐个调用点传参。
-    const merged: URLState = { view: mainViewRef.current, ...next };
-    // 多节点同名项目：URL 始终携带当前选中节点，防止刷新/回退还原到错误节点
-    if (
-      merged.root &&
-      merged.root === currentRootIdRef.current &&
-      currentRootNodeIdRef.current &&
-      !merged.node
-    ) {
-      merged.node = currentRootNodeIdRef.current;
-    }
-    const search = buildURLSearch(merged);
-    const target = `${window.location.pathname}${search}`;
-    window.history.replaceState(null, "", target);
-  }, []);
+  const { replaceURLState } = useAppReplaceURLState({
+    mainViewRef,
+    currentRootIdRef,
+    currentRootNodeIdRef,
+  });
 
   /* Android 硬件返回键。刻意不接回调：installBackNavigation 内部一律走
      history.back()，让返回键汇进 popstate 那条路，和浏览器后退 / iOS 侧滑
@@ -1507,23 +1449,7 @@ export function App({ onGoHome }: AppProps) {
     setSessions,
   });
 
-  const formatDirectoryLoadError = useCallback((message?: string | null) => {
-    const text = String(message || "").trim();
-    if (!text) {
-      return t("directory.readFailed");
-    }
-    const lower = text.toLowerCase();
-    if (
-      lower.includes("access is denied") ||
-      lower.includes("permission denied") ||
-      lower.includes("operation not permitted") ||
-      lower.includes("拒绝访问") ||
-      lower.includes("权限")
-    ) {
-      return t("directory.permissionDenied");
-    }
-    return text;
-  }, [t]);
+  const { formatDirectoryLoadError } = useAppFormatDirectoryLoadError({ t });
 
   const treeCacheKey = useCallback(
     (rootID: string, dirPath: string) =>

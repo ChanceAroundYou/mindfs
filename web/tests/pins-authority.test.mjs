@@ -171,6 +171,12 @@ assert.equal(otherRoot[0].pinned_at, "2026-01-01T00:00:00Z", "快照只作用于
 
 // ── 刷新时机：切项目要重拉 ──
 const appSource = fs.readFileSync(path.resolve(SRC, "App.tsx"), "utf8");
+// 置顶覆盖层（store 订阅 + 快照覆盖）已搬进 useAppSessionPins.ts（2026-10-08 App 拆分）。
+// 下面这几条断言仍然逐字保留，只是换到它真正所在的文件去查。
+const pinsHookSource = fs.readFileSync(
+  path.resolve(SRC, "app/useAppSessionPins.ts"),
+  "utf8",
+);
 assert.ok(
   appSource.includes("void refreshPinsFromServer()"),
   "切项目时要顺带刷新一次置顶（用户定的同步时机）",
@@ -213,7 +219,7 @@ assert.ok(
 );
 // store 必须真的被用起来（否则上面那些「不持久化」断言会平凡成立）
 assert.ok(
-  /useSyncExternalStore\(subscribePins, readPins, readPins\)/.test(appSource),
+  /useSyncExternalStore\(subscribePins, readPins, readPins\)/.test(pinsHookSource),
   "App 必须从 store 订阅置顶，而不是自己 useState（两份状态 = 各排一次 = 狂跳）",
 );
 assert.ok(
@@ -228,16 +234,17 @@ assert.ok(
 // ── 排序决策权只归 store（决策 2026-10-05）──
 // 列表回包曾自带 pinnedKeys 参与排序，于是两个数据源都能重排列表、谁后到谁
 // 说了算 —— 右侧狂跳的来源之一。现在列表只管数据。
+// 调用点仍在 App.tsx（列表渲染处），定义搬进了 useAppSessionPins.ts。
 const applyPinCalls = appSource.match(/applyPinSnapshot\(/g) || [];
 assert.ok(applyPinCalls.length > 0, "列表仍要用 applyPinSnapshot 盖置顶");
 assert.ok(
-  !/applyPinSnapshot\([^)]*pinnedKeys/.test(appSource),
+  !/applyPinSnapshot\([^)]*pinnedKeys/.test(pinsHookSource),
   "applyPinSnapshot 不得再收列表回包的 pinnedKeys —— 排序权只能有一个来源",
 );
 
 // 写置顶不再经过 sessionService（那条路打的是选中节点）
 assert.ok(
-  !appSource.includes("sessionService.setSessionPinned"),
+  !pinsHookSource.includes("sessionService.setSessionPinned"),
   "会话置顶必须走 controlPath 打主节点，不能打当前选中的节点",
 );
 const sessionSource = fs.readFileSync(path.resolve(SRC, "services/session.ts"), "utf8");

@@ -96,6 +96,10 @@ export const MODULES = {
     "src/app/useAppProjectRemoval.ts",
     "src/app/useAppTaskDrawer.ts",
     "src/app/useAppAgentActions.ts",
+    // 2026-10-08 第 1 步：置顶 / URL 状态 / 目录加载错误。
+    "src/app/useAppSessionPins.ts",
+    "src/app/useAppReplaceURLState.ts",
+    "src/app/useAppFormatDirectoryLoadError.ts",
   ],
 
   // P6 拆分：FileTree.tsx → + icons.tsx（图标子组件）
