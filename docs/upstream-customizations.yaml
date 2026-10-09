@@ -1664,8 +1664,10 @@ groups:
       拆分策略是「机械搬移 + 旧路径 barrel 重导出，零行为变化」：原路径保留
       `export * from "./x/index"`，对外导出面不变；43 条源码正则断言由
       web/tests/source-map.mjs 统一读层兜住（逻辑路径 → 物理文件列表，readSource 拼接）。
-      session.ts 暂不拆分：其 VM 执行类测试（session-window 等）依赖单文件自包含，
-      拆分会破坏沙箱 require，已回滚。
+      session.ts 曾暂不拆分（VM 执行类测试依赖单文件自包含），2026-10-10 完成拆分：
+      WS 连接生命周期 + 消息收发搬进 sessionConnectionManager.ts（633 行），
+      SessionService 只保留高层编排（479 行）。source-map.mjs 已登记新文件，
+      session-core-unit.test.mjs 等源码正则断言零改动继续生效。
     files:
       - web/src/components/
       - web/src/services/

@@ -1254,8 +1254,10 @@
   （`e2e_test`）+ 随机端口，不碰真实机器状态；给 App.tsx 拆分提供「跑起来没坏」的验证。
   已知上游问题：视图交互 + 页面重载累积 8~9 次后后端整体失响应（task-35 未改后端一行），
   故用例间改用应用内导航复位。详见 `e2e/README.md`。
-- 已知边界：`session.ts` 暂不拆分 —— 其 VM 执行类测试（`session-window` 等）依赖
-  单文件自包含，拆分会破坏沙箱 `require`，已回滚。
+- 已知边界：`session.ts` 曾于 2026-10-07 暂不拆分（VM 执行类测试依赖单文件自包含），
+  2026-10-10 完成拆分：WS 连接生命周期 + 消息收发搬进 `sessionConnectionManager.ts`
+  （633 行），`SessionService` 只保留高层编排（479 行）。`source-map.mjs` 已登记新文件，
+  `session-core-unit.test.mjs` 等源码正则断言零改动继续生效。
 ---
 
 ## 4. 未提交工作区（2026-10-06 清空）
