@@ -182,6 +182,7 @@ import {
 // 类型定义
 
 import { APP_DOCUMENT_TITLE, AppProps, CHILD_SESSION_PAGE_SIZE, MULTI_PROJECT_SESSION_LIMIT, ManagedRootPayload, SESSION_PAGE_SIZE } from "./app/appMisc";
+import { useAppRefSync } from "./app/useAppRefSync";
 import { useAppKanbanTaskPanel } from "./app/useAppKanbanTaskPanel";
 import { useAppRootContentRenderers } from "./app/useAppRootContentRenderers";
 import { useAppSessionView } from "./app/useAppSessionView";
@@ -847,126 +848,26 @@ export function App({ onGoHome }: AppProps) {
   const [updateSubmitting, setUpdateSubmitting] = useState(false);
 
 
-  useEffect(() => {
-    currentRootIdRef.current = currentRootId;
-  }, [currentRootId]);
-  useEffect(() => {
-    currentRootNodeIdRef.current = currentRootNodeId;
-  }, [currentRootNodeId]);
-  useEffect(() => {
-    let cancelled = false;
-    if (!e2eeState.configured || (e2eeState.required && !e2eeState.unlocked)) {
-      return;
-    }
-    fetchAgents(true, getNodeIdForRoot(currentRootId || "") as any)
-      .then((items) => {
-        if (cancelled) return;
-        setAvailableAgents(items);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [agentsVersion, currentRootId, e2eeState.configured, e2eeState.required, e2eeState.unlocked]);
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    if (currentRootId) {
-      window.localStorage.setItem(accountScopedKey(LAST_ROOT_STORAGE_KEY), currentRootId);
-      window.localStorage.setItem(accountScopedKey(LAST_ROOT_NODE_STORAGE_KEY), currentRootNodeId || "");
-    }
-  }, [currentRootId, currentRootNodeId]);
-  useEffect(() => {
-    expandedRef.current = expanded;
-  }, [expanded]);
-  useEffect(() => {
-    selectedDirRef.current = selectedDir;
-  }, [selectedDir]);
-  useEffect(() => {
-    entriesByPathRef.current = entriesByPath;
-  }, [entriesByPath]);
-  useEffect(() => {
-    fileRef.current = file;
-  }, [file]);
-  useEffect(() => {
-    viewerSelectionRef.current = viewerSelection;
-  }, [viewerSelection]);
-  useEffect(() => {
-    pluginQueryRef.current = pluginQuery;
-  }, [pluginQuery]);
-  useEffect(() => {
-    if (!file?.path || !currentRootId) return;
-    const nextKey = `${currentRootId}:${file.path}`;
-    if (lastPluginResetFileKeyRef.current !== nextKey) {
-      pluginBypassRef.current = false;
-      setPluginBypass(false);
-      lastPluginResetFileKeyRef.current = nextKey;
-    }
-  }, [file?.path, currentRootId]);
-  useEffect(() => {
-    pluginBypassRef.current = pluginBypass;
-  }, [pluginBypass]);
-  useEffect(() => {
-    selectedSessionRef.current = selectedSession;
-  }, [selectedSession]);
-  useEffect(() => {
-    if (selectedSession || activeBoundSessionKey || interactionMode !== "main") {
-      setPendingPlanMode(false);
-    }
-  }, [selectedSession, activeBoundSessionKey, interactionMode]);
-  useEffect(() => {
-    sessionsRef.current = sessions;
-  }, [sessions]);
-  useEffect(() => {
-    multiProjectSessionGroupsRef.current = multiProjectSessionGroups;
-  }, [multiProjectSessionGroups]);
-  useEffect(() => {
-    multiProjectPendingRef.current = multiProjectPendingByKey;
-  }, [multiProjectPendingByKey]);
-  useEffect(() => {
-    setPendingPlanMode(false);
-  }, [currentRootId]);
+  const { 
+  } = useAppRefSync({
+    currentRootIdRef, currentRootId, currentRootNodeIdRef, currentRootNodeId,
+    setAvailableAgents, agentsVersion, e2eeState, getNodeIdForRoot,
+    expandedRef, expanded, selectedDirRef, selectedDir,
+    entriesByPathRef, entriesByPath, fileRef, file,
+    viewerSelectionRef, viewerSelection, pluginQueryRef, pluginQuery,
+    lastPluginResetFileKeyRef, pluginBypassRef, setPluginBypass, pluginBypass,
+    selectedSessionRef, selectedSession, activeBoundSessionKey, setActiveBoundSessionKey,
+    interactionMode, setPendingPlanMode, sessionsRef, sessions,
+    multiProjectSessionGroupsRef, multiProjectSessionGroups, multiProjectPendingRef, multiProjectPendingByKey,
+    currentSessionRef, currentSession, interactionModeRef, treeSortMode,
+    directorySortOverrides, scopedRootKey, boundSessionByRootRef, setCurrentSession,
+    drawerSessionByRootRef, setIsDrawerOpen, drawerOpenByRootRef,
+  });
   // 切项目时顺带刷新主节点的会话置顶 —— 这就是约定的「跨设备同步」时机。
   //
   // 用户明确不要跨设备实时（那要一条主节点 → 各 worker 浏览器的新通道），
   // 也不要每次都刷：「切换项目等操作的时候顺带请求一下置顶」正是这个意思。
   // 不刷新的话，设备 A 置顶后设备 B 切项目也看不到 —— 那正是被报的那个症状。
-  useEffect(() => {
-    if (!currentRootId || !protectedAPIReady()) return;
-    // 拉不到就保持当前那份：置顶是装饰性排序，一个装饰性请求失败不该把
-    // 正在看的列表闪成「全不置顶」。writePins 内部按指纹判断要不要通知订
-    // 阅者，所以「服务端没变化」不会引起任何重排。
-    void refreshPinsFromServer().catch(() => {});
-  }, [currentRootId]);
-  useEffect(() => {
-    currentSessionRef.current = currentSession;
-  }, [currentSession]);
-  useEffect(() => {
-    interactionModeRef.current = interactionMode;
-  }, [interactionMode]);
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    window.localStorage.setItem(TREE_SORT_STORAGE_KEY, treeSortMode);
-  }, [treeSortMode]);
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    window.localStorage.setItem(
-      DIRECTORY_SORT_OVERRIDES_STORAGE_KEY,
-      JSON.stringify(directorySortOverrides),
-    );
-  }, [directorySortOverrides]);
-  useEffect(() => {
-    const rootID = currentRootId;
-    if (!rootID) return;
-    setActiveBoundSessionKey(boundSessionByRootRef.current[scopedRootKey(rootID)] || null);
-    setCurrentSession(drawerSessionByRootRef.current[scopedRootKey(rootID)] || null);
-    setIsDrawerOpen(!!drawerOpenByRootRef.current[scopedRootKey(rootID)]);
-  }, [currentRootId]);
 
   const {
     setBoundSessionForRoot,
