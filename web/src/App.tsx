@@ -182,6 +182,9 @@ import {
 // 类型定义
 
 import { APP_DOCUMENT_TITLE, AppProps, CHILD_SESSION_PAGE_SIZE, MULTI_PROJECT_SESSION_LIMIT, ManagedRootPayload, SESSION_PAGE_SIZE } from "./app/appMisc";
+import { useAppRootResolution } from "./app/useAppRootResolution";
+import { useAppWorkspaceActions } from "./app/useAppWorkspaceActions";
+import { useAppSessionSnapshots } from "./app/useAppSessionSnapshots";
 import { useAppFileNavigation } from "./app/useAppFileNavigation";
 import { useAppProjectDisplay } from "./app/useAppProjectDisplay";
 import { useAppPluginTrust } from "./app/useAppPluginTrust";
@@ -1117,39 +1120,13 @@ export function App({ onGoHome }: AppProps) {
     setMultiProjectSessionGroups,
     applyPendingToMultiProjectGroups,
   });
-  const resolveRootForSessionKey = useCallback(
-    (sessionKey: string): string | null => {
-      if (!sessionKey) return null;
-      const currentRoot = currentRootIdRef.current;
-      if (
-        currentRoot &&
-        sessionCacheRef.current[rootSessionKey(currentRoot, sessionKey)]
-      ) {
-        return currentRoot;
-      }
-      for (const [rootID, key] of Object.entries(
-        boundSessionByRootRef.current,
-      )) {
-        if (key === sessionKey) {
-          return unscopedRootId(rootID);
-        }
-      }
-      for (const [rootID, session] of Object.entries(
-        drawerSessionByRootRef.current,
-      )) {
-        if (session?.key === sessionKey) {
-          return unscopedRootId(rootID);
-        }
-      }
-      const suffix = `::${sessionKey}`;
-      const matched = Object.keys(sessionCacheRef.current).find((key) =>
-        key.endsWith(suffix),
-      );
-      if (!matched) return null;
-      return unscopedRootId(matched.slice(0, matched.length - suffix.length));
-    },
-    [rootSessionKey],
-  );
+  const { resolveRootForSessionKey } = useAppRootResolution({
+    currentRootIdRef,
+    sessionCacheRef,
+    rootSessionKey,
+    boundSessionByRootRef,
+    drawerSessionByRootRef,
+  });
   const {
     getSessionSnapshot,
     setSelectedPendingByKey,
@@ -2485,67 +2462,27 @@ export function App({ onGoHome }: AppProps) {
 
   const pluginRendererKey = `${currentRootId || ""}:${file?.path || ""}:${fileCursorRef.current}:${JSON.stringify(pluginQuery)}`;
 
-	  const selectedSessionSnapshot = useMemo(
-	    () => {
-	      if (!selectedSession) {
-	        return null;
-      }
-      return getSessionSnapshot(
-        selectedSession.root_id || currentRootId,
-        selectedSession,
-      );
-	    },
-	    [selectedSession, selectedSessionLoading, currentRootId, getSessionSnapshot],
-	  );
-	  const sessionByKey = useMemo(() => sessions.reduce<Record<string, SessionItem>>((acc, session) => {
-	    const key = session.key || session.session_key || "";
-	    if (key) acc[key] = session;
-	    return acc;
-	  }, {}), [sessions]);
+  const {
+    selectedSessionSnapshot,
+    sessionByKey,
+    boardSessionByKey,
+    selectedKanbanTask,
+    selectedKanbanTaskSessionKey,
+    selectedKanbanTaskSessionSnapshot,
+  } = useAppSessionSnapshots({
+    selectedSession,
+    selectedSessionLoading,
+    currentRootId,
+    sessions,
+    multiProjectSessionGroups,
+    selectedKanbanTaskId,
+    kanbanTasks,
+    taskDetailsById,
+    taskSessionKeysById,
+    getSessionSnapshot,
+  });
 
-	  // 看板/工作台的卡片读这张表拿会话的 agent（卡片角上的小徽标）。sessionByKey 只装
-	  // **当前 root** 的会话，而工作台是跨项目视图 —— 它列的任务大多不属于当前项目，
-	  // 取不到就落回 AgentIcon 的「AI」文字占位（2026-10-07 实测「大多数用 dsh 的任务
-	  // 没有 agent 徽标」）。多项目分组本来就把跨项目/跨节点的会话拉全了，并进来即可，
-	  // 不需要第二条扇出。当前 root 的会话放后面覆盖，同键以它为准。
-	  const boardSessionByKey = useMemo(() => {
-	    const merged: Record<string, SessionItem> = {};
-	    for (const group of multiProjectSessionGroups) {
-	      for (const session of group.sessions || []) {
-	        const key = session.key || session.session_key || "";
-	        if (key) merged[key] = session;
-	      }
-	    }
-	    return { ...merged, ...sessionByKey };
-	  }, [multiProjectSessionGroups, sessionByKey]);
 
-	  const selectedKanbanTask = useMemo(() => {
-	    if (!selectedKanbanTaskId) return null;
-	    // 看板命中优先：那一路本来带模板筛选与状态分组的语义。
-	    const fromBoard = kanbanTasks.find((task) => task.id === selectedKanbanTaskId);
-	    if (fromBoard) return fromBoard;
-	    // 回退 taskDetailsById：工作台是跨项目视图，它列的任务大多不属于当前项目，
-	    // 而 kanbanTasks 按 currentRootId 过滤，天然不含它们。openWorkspaceTaskDetail
-	    // 灌的就是这张表，而面板的渲染门槛读的是本 memo —— 两份数据不并轨，
-	    // 工作台上点卡片就永远是「选中了但面板不弹」（守卫层放行了选中也救不了）。
-	    return taskDetailsById[selectedKanbanTaskId]?.task || null;
-	  }, [kanbanTasks, selectedKanbanTaskId, taskDetailsById]);
-	  const selectedKanbanTaskSessionKey = useMemo(() => {
-	    if (!selectedKanbanTask) return "";
-	    const keys = taskSessionKeysById[selectedKanbanTask.id] || [];
-	    return keys[0] || selectedKanbanTask.main_session_key || "";
-	  }, [selectedKanbanTask, taskSessionKeysById]);
-	  const selectedKanbanTaskSessionSnapshot = useMemo(() => {
-	    if (!selectedKanbanTask || !selectedKanbanTaskSessionKey) return null;
-	    const root = selectedKanbanTask.root_id || currentRootId || "";
-	    const session = sessionByKey[selectedKanbanTaskSessionKey] || {
-	      key: selectedKanbanTaskSessionKey,
-	      session_key: selectedKanbanTaskSessionKey,
-	      root_id: root,
-	      task_id: selectedKanbanTask.id,
-	    };
-	    return getSessionSnapshot(root, session as any);
-	  }, [currentRootId, getSessionSnapshot, selectedKanbanTask, selectedKanbanTaskSessionKey, sessionByKey]);
 
 	  useEffect(() => {
     if (selectedSessionSnapshot) {
@@ -2606,24 +2543,12 @@ export function App({ onGoHome }: AppProps) {
   });
 
 
-  const handleAskUserAnswer = useCallback(
-    async (input: {
-      rootId: string;
-      sessionKey: string;
-      agent?: string;
-      toolUseId: string;
-      answers: Record<string, string>;
-    }) => {
-      await sessionService.answerQuestion(
-        input.rootId,
-        input.sessionKey,
-        input.agent,
-        input.toolUseId,
-        input.answers,
-      );
-    },
-    [],
-  );
+  const { handleAskUserAnswer, openWorkspaceProject } = useAppWorkspaceActions({
+    actionHandlersRef,
+    getNodeIdForRoot,
+    switchMainView,
+    setTaskTemplateFilter,
+  });
 
   const handleEditUserMessage = useCallback((content: string) => {
     setEditDraftRequest((prev) => ({
@@ -3011,19 +2936,6 @@ export function App({ onGoHome }: AppProps) {
     });
   }, [file, gitDiff, replaceURLState, setDrawerOpenForRoot, switchMainView]);
 
-  const openWorkspaceProject = useCallback(async (rootId: string) => {
-    if (!rootId) return;
-    // R6：工作台里点项目 = 切到该项目并落到「项目看板」，而不是回到文件列表
-    await actionHandlersRef.current.open_dir({
-      path: rootId,
-      root: rootId,
-      isRoot: true,
-      nodeId: getNodeIdForRoot(rootId) || undefined,
-      preservePluginQuery: true,
-    });
-    switchMainView("board");
-    setTaskTemplateFilter(TASK_TEMPLATE_ALL_FILTER);
-  }, [setTaskTemplateFilter, switchMainView]);
   // 工作台的快速发起不自己建任务：挑完项目 + 模板就打开看板那套新建任务面板，
   // 模板、worktree、agent、附件全都跟项目看板里一致，不在工作台上复制第二份实现。
   const handleWorkspaceCreateTask = useCallback((rootId: string, _nodeId: string, template: TaskTemplate) => {

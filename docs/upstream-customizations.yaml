@@ -710,7 +710,7 @@ groups:
       另一半在服务端（InferAgentFromSession 对双绑定会话返回空串，见 G-Q）。
     anchors:
       - 'web/src/app/sessionJump.ts:export function buildSessionJumpTarget'
-      - 'web/src/App.tsx:const boardSessionByKey = useMemo'
+      - 'web/src/app/useAppSessionSnapshots.ts:const boardSessionByKey = useMemo'
       # 2026-10-08 App.tsx 深度拆分：这段代码搬到 app/useAppTaskDrawer.ts，
       # 锚点必须跟着走，否则合上游时这一组会被判成「已被冲掉」。
       - 'web/src/app/useAppTaskDrawer.ts:CUSTOM(G-Z)'
@@ -720,6 +720,7 @@ groups:
       - web/src/components/workspace/
       - web/src/app/useWorkspaceBoard.ts
       - web/src/app/useAppTaskDrawer.ts
+      - web/src/app/useAppSessionSnapshots.ts
     tests:
       - web/tests/task-session-jump-root.test.mjs
       - web/tests/workspace-board.test.mjs

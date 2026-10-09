@@ -115,6 +115,10 @@ export const MODULES = {
     // 2026-10-08 第 7 步：项目显示名/节点色/下拉选项 + 路径点击与文件树派生视图。
     "src/app/useAppProjectDisplay.ts",
     "src/app/useAppFileNavigation.ts",
+    // 2026-10-08 第 8 步：会话快照与查找表（含 CUSTOM(G-Z) 的 boardSessionByKey）。
+    "src/app/useAppSessionSnapshots.ts",
+    "src/app/useAppWorkspaceActions.ts",
+    "src/app/useAppRootResolution.ts",
   ],
 
   // P6 拆分：FileTree.tsx → + icons.tsx（图标子组件）
