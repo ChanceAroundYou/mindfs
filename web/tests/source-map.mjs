@@ -333,7 +333,7 @@ export const MODULES = {
   "src/components/NoWorktreeIcon.tsx": ["src/components/common/NoWorktreeIcon.tsx"],
   "src/components/ExitIcon.tsx": ["src/components/common/ExitIcon.tsx"],
   "src/components/PromptEditor.tsx": ["src/components/editor/PromptEditor.tsx"],
-  "src/components/ActionBar.tsx": ["src/components/action/ActionBar.tsx"],
+  "src/components/ActionBar.tsx": ["src/components/action/ActionBar.tsx", "src/components/action/ActionBarControls.tsx"],
   "src/components/diagramZoom.ts": ["src/shared/diagramZoom.ts"],
   "src/components/gitDiffModel.ts": ["src/shared/gitDiffModel.ts"],
   "src/components/markdownOutline.ts": ["src/shared/markdownOutline.ts"],
