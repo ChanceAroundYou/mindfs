@@ -1679,3 +1679,7 @@ groups:
     tests:
       - web/tests/frontend-split.test.mjs
       - web/tests/source-map.test.mjs
+      # App.tsx 分层聚合（2026-10-08）把「重启 agent」的调用点搬进了
+      # useAppSessionLayer，这条原本与上游同版的测试因此变成 delta：它现在断言的是
+      # 「useAppSessionLayer 必须 import restartAgent」，而不是「App.tsx 必须 import」。
+      - web/tests/agent-lifecycle-restart.test.mjs

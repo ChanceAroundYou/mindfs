@@ -1217,6 +1217,8 @@
 - 来源：`a83950b`（source-map 统一读层）、`f5c4e0d`（components/services/shared 按域重组）、
   `7b6d969`（services/{task,git,file} 拆成目录模块）、`def8b7e`（FileTree 图标子组件抽出）、
   `5524e8d` / `811e0fa`（App.tsx 区域渲染与 effect 拆分）、
+  `b548f93` / `c4bb177` / `82d690e` / `d19ba81`（App.tsx 分层聚合 4 层）、
+  `e043a5e`（抽离 `AppRootView`，App.tsx 1267 → 16 行）、
   e2e 冒烟夹具（`e2e/conftest.py` + `e2e/test_app_smoke.py`，运行时安全网）。
 - 边界：**前端目录结构与文件拆分**。`components/` 下 40+ 个 `.tsx` 平铺 →
   `components/{session,task,file,git,root,agent,account,shell,common}`；
@@ -1234,7 +1236,15 @@
   模块边界 = 职责边界，是后续 App.tsx 拆分的地基。
 - 验证：`web/tests/frontend-split.test.mjs`（barrel 完整重导出 + 无导入环 +
   source-map 映射）、`web/tests/source-map.test.mjs`（读层完整性）、
+  `web/tests/agent-lifecycle-restart.test.mjs`（分层后 `restartAgent` 的 import 落点）、
   `e2e/test_app_smoke.py`（Playwright 运行时冒烟，10 用例，**刻意不进常规门禁**）。
+- 分层聚合（2026-10-08）登记说明：`App.tsx` 拆成四层聚合 hook + `AppRootView`。
+  `web/src/app/` 整目录前缀已在本组 `files` 里，所以 5 个新模块自动被覆盖；
+  四个层模块与 `AppRootView` 也都进了 `web/tests/source-map.mjs` 的
+  `"src/App.tsx"` 数组（逻辑路径 → 物理文件列表），43 条源码正则断言因此继续有效。
+  **唯一需要手工补的是 `web/tests/agent-lifecycle-restart.test.mjs`**：它原先与上游
+  同版（不是 delta），分层把 `restartAgent` 的调用点搬进 `useAppSessionLayer` 后它才变成
+  delta，于是断言改指那个模块，并登记进本组 `tests`。
 - e2e 安全网：`e2e/` 用隔离配置目录（`XDG_CONFIG_HOME` 指向临时目录）+ test 专属临时账号
   （`e2e_test`）+ 随机端口，不碰真实机器状态；给 App.tsx 拆分提供「跑起来没坏」的验证。
   已知上游问题：视图交互 + 页面重载累积 8~9 次后后端整体失响应（task-35 未改后端一行），
