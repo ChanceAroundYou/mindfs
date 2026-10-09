@@ -531,9 +531,14 @@
 
 ### G-AA 前端 App.tsx 模块化重构
 
-- 来源：`458495b`（WS 事件处理器整块搬出）、`e7a31d2`（流写缓存抽出）等一连串 refactor。
+- 来源：`458495b`（WS 事件处理器整块搬出）、`e7a31d2`（流写缓存抽出）等一连串 refactor、
+  `b0ea337`（领域派生、会话时间线、会话标识 helper 继续拆分）。
 - 边界：`App.tsx` 原为 ~15k 行巨文件，拆成 `web/src/app/`（19 模块）+ `web/src/renderer/`。
   §0-B-H02/H13 的两大段（上游 module-level helper 与巨型 effect）取 local。
+- 本轮继续拆分但不改公开 facade：`useAppDomainLayer.ts` 的派生/恢复阶段抽为
+  `useAppDomainDerived.ts`；SessionViewer 的时间线渲染抽为 `SessionViewerTimeline.tsx`；
+  `session.ts` 保留 `SessionService` 与所有导出，只把无状态的 client/request id 生成抽到
+  `sessionIdentifiers.ts`。Hook 总序列仍为 258，相关 source-map 已登记。
 
 ### G-AB 会话投影与审计
 
