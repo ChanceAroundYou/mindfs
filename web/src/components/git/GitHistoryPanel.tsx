@@ -1,23 +1,6 @@
-import React, { useEffect, useState } from "react";
-import {
-  fetchGitCommitFiles,
-  type GitHistoryItem,
-  type GitStatusItem,
-} from "../../services/git";
+import React from "react";
 import { useI18n } from "../../i18n/index";
-
-type GitHistoryPanelProps = {
-  rootId: string;
-  items: GitHistoryItem[];
-  loading?: boolean;
-  loadingMore?: boolean;
-  hasMore?: boolean;
-  compact?: boolean;
-  expandedCommits?: Record<string, boolean>;
-  onToggleCommit?: (hash: string) => void;
-  onLoadMore?: () => void;
-  onSelectFile?: (commit: GitHistoryItem, item: GitStatusItem) => void;
-};
+import { useGitHistoryPanel, type GitHistoryPanelProps } from "./useGitHistoryPanel";
 
 function renderStatusColor(status: string): string {
   switch (status) {
@@ -59,58 +42,14 @@ function formatCommitTime(value: string, justNow: string): string {
   return `${date.getFullYear() % 100}/${date.getMonth() + 1}`;
 }
 
-export function GitHistoryPanel({
-  rootId,
-  items,
-  loading = false,
-  loadingMore = false,
-  hasMore = false,
-  compact = false,
-  expandedCommits = {},
-  onToggleCommit,
-  onLoadMore,
-  onSelectFile,
-}: GitHistoryPanelProps) {
+export function GitHistoryPanel(props: GitHistoryPanelProps) {
+  const { items, loading = false, loadingMore = false, hasMore = false, compact = false, expandedCommits = {}, onLoadMore, onSelectFile } = props;
   const { t } = useI18n();
-  const [filesByCommit, setFilesByCommit] = useState<Record<string, GitStatusItem[]>>({});
-  const [loadingFiles, setLoadingFiles] = useState<Record<string, boolean>>({});
+  const { filesByCommit, loadingFiles, toggleCommit } = useGitHistoryPanel(props);
 
   if (!loading && items.length === 0) {
     return null;
   }
-
-  const loadCommitFiles = (commit: GitHistoryItem) => {
-    if (filesByCommit[commit.hash] || loadingFiles[commit.hash]) {
-      return;
-    }
-    setLoadingFiles((prev) => ({ ...prev, [commit.hash]: true }));
-    void fetchGitCommitFiles(rootId, commit.hash)
-      .then((payload) => {
-        setFilesByCommit((prev) => ({ ...prev, [commit.hash]: payload.items || [] }));
-      })
-      .catch((err) => {
-        console.error("[git.commit.files] failed", { rootId, commit: commit.hash, err });
-        setFilesByCommit((prev) => ({ ...prev, [commit.hash]: [] }));
-      })
-      .finally(() => {
-        setLoadingFiles((prev) => ({ ...prev, [commit.hash]: false }));
-      });
-  };
-
-  useEffect(() => {
-    items.forEach((commit) => {
-      if (expandedCommits[commit.hash]) {
-        loadCommitFiles(commit);
-      }
-    });
-  }, [expandedCommits, items]);
-
-  const toggleCommit = (commit: GitHistoryItem) => {
-    onToggleCommit?.(commit.hash);
-    if (!expandedCommits[commit.hash]) {
-      loadCommitFiles(commit);
-    }
-  };
 
   return (
     <section style={{ padding: 0, flexShrink: 0, minWidth: 0 }}>
