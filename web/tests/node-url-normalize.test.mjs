@@ -5,7 +5,7 @@ import ts from "typescript";
 import vm from "node:vm";
 
 const root = path.resolve(import.meta.dirname, "..");
-const sourcePath = path.join(root, "src/services/nodeBase.ts");
+const sourcePath = path.join(root, "src/services/net/nodeBase.ts");
 const source = fs.readFileSync(sourcePath, "utf8");
 const compiled = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
@@ -28,11 +28,11 @@ assert.equal(repairDuplicateDeployPrefix("https://pc.example/mindfs/mindfs/api",
 assert.equal(repairDuplicateDeployPrefix("https://pc.example/mindfs/api/mindfs", "/mindfs"), "https://pc.example/mindfs/api/mindfs");
 assert.equal(repairDuplicateDeployPrefix("https://pc.example/other", "/mindfs"), "https://pc.example/other");
 
-const registry = fs.readFileSync(path.join(root, "src/services/nodeRegistry.ts"), "utf8");
+const registry = fs.readFileSync(path.join(root, "src/services/net/nodeRegistry.ts"), "utf8");
 // 节点连通性探测已从 FileTree 的「添加节点」popover 搬到 NodeManagerPanel（添加 + 改地址共用
 // probeCandidateUrl）；守卫跟着代码搬家，意图不变：候选地址必须用显式远端 base 直接拼，
 // 不得继承本地部署前缀，否则探测打到的是本机、连通性检查形同虚设。
-const nodeManager = fs.readFileSync(path.join(root, "src/components/NodeManagerPanel.tsx"), "utf8");
+const nodeManager = fs.readFileSync(path.join(root, "src/components/account/NodeManagerPanel.tsx"), "utf8");
 assert.match(nodeManager, /fetch\(`\$\{normalizedUrl\}\/api\/agents`/, "node probe must use the explicit remote base");
 assert.doesNotMatch(nodeManager, /normalizeBaseURLWithPrefix\(/, "node probe must not inherit the local prefix");
 assert.match(registry, /const cacheAtStart = cache;/, "initial sync must detect a concurrent local write");
@@ -48,26 +48,29 @@ assert.match(registry, /function makeLocalNode\(\): NodeConnection \{\s*return \
 assert.match(registry, /\/\/ 读取时强制按当前设备推导[^\n]*\n[^\n]*if \(local\) local\.url = deviceLocalNodeURL\(\);/, "reading the node list must override the persisted local URL per device");
 
 // 显式 nodeId 解析失败不得静默回退 active node：会把请求发给错误节点。
-const runtimeSource = fs.readFileSync(path.join(root, "src/services/runtime.ts"), "utf8");
+const runtimeSource = fs.readFileSync(path.join(root, "src/services/platform/runtime.ts"), "utf8");
 assert.match(runtimeSource, /function resolveNodeBaseURL\(nodeId\?: string\): string \{\s*if \(nodeId\) \{\s*const node = getNodeById\(nodeId\);\s*if \(node\?\.url\) return normalizeExplicitNodeBase\(node\.url\);[\s\S]*?console\.warn\("\[node-routing\] explicit nodeId unresolvable[\s\S]*?return "";\s*\}\s*const active = getActiveNode\(\);/, "unresolvable explicit nodeId must not fall back to the active node silently");
 
 // 会话窗口拉取与关联文件 diff 按会话归属节点路由（同名根跨节点重名时裸 rootId 查表会串节点）。
-const sessionViewer = fs.readFileSync(path.join(root, "src/components/SessionViewer.tsx"), "utf8");
+const sessionViewer = fs.readFileSync(path.join(root, "src/components/session/SessionViewer.tsx"), "utf8");
 assert.match(sessionViewer, /const sessionNodeId =\s*String\(\(session as any\)\?\._nodeId \|\| ""\)\.trim\(\) \|\| undefined;/, "SessionViewer must resolve the session's owning node");
-assert.equal(sessionViewer.match(/getSessionWindow\(\s*rootId \|\| "",\s*sessionKey,\s*\{[^}]*nodeId: sessionNodeId/g)?.length, 3, "all three getSessionWindow calls (latest/beforeSeq×2) must carry the session node");
-assert.match(sessionViewer, /useRelatedFileStats\(\s*rootId,\s*relatedFiles,\s*gitStatsRefreshKey,\s*sessionNodeId,/, "related-file stats must route by the session node");
+const sessionWindowing = fs.readFileSync(path.join(root, "src/components/session/useSessionWindowing.ts"), "utf8");
+assert.equal(sessionWindowing.match(/getSessionWindow\(\s*rootId \|\| "",\s*sessionKey,\s*\{[^}]*nodeId: sessionNodeId/g)?.length, 2, "all getSessionWindow calls (latest/beforeSeq) must carry the session node");
+const relatedFilesHook = fs.readFileSync(path.join(root, "src/components/session/useRelatedFiles.ts"), "utf8");
+assert.match(relatedFilesHook, /useRelatedFileStats\(\s*rootId,\s*relatedFiles,\s*gitStatsRefreshKey,\s*sessionNodeId,/, "related-file stats must route by the session node");
 
 const relatedHook = fs.readFileSync(path.join(root, "src/hooks/useRelatedFileStats.ts"), "utf8");
 assert.match(relatedHook, /refreshKey = "",\s*nodeId\?: string,/, "related-file stats hook must accept a node override");
 // 统计改走批量接口后，这条守卫钉的还是同一件事：hook 必须把会话归属节点透传下去。
 // 另外把 git.ts 那一侧的解析也一起看住 —— 光透传、服务层又退回 active node，等于没透传。
 assert.match(relatedHook, /fetchRelatedFileStatsBatch\(rootId, targets, nodeId \|\| undefined\)/, "related-file stats must pass the session node to the batch fetch");
-const gitService = fs.readFileSync(path.join(root, "src/services/git.ts"), "utf8");
+const gitService = fs.readFileSync(path.join(root, "src/services/git/relatedStats.ts"), "utf8");
 assert.match(gitService, /const scopedNodeId = nodeId \|\| getRootNodeId\(rootId\);/, "the batch stats fetch must resolve the session node before building the URL");
 assert.match(gitService, /appURL\("\/api\/git\/related-files\/stats", undefined, scopedNodeId\)/, "the batch stats request must carry the resolved node");
 
-const appSource = fs.readFileSync(path.join(root, "src/App.tsx"), "utf8");
+const appSource = fs.readFileSync(path.join(root, "src/app/useAppViewComposition.ts"), "utf8");
 assert.match(appSource, /const relatedSessionNodeId =\s*String\(\(relatedSessionSnapshot as any\)\?\._nodeId \|\| ""\)\.trim\(\) \|\| undefined;/, "App must resolve the related session's node");
-assert.match(appSource, /useRelatedFileStats\(\s*relatedSessionRootId \|\| currentRootId,\s*selectedSessionRelatedFiles,\s*gitStatsRefreshKey,\s*relatedSessionNodeId,/, "App related-file stats must route by the related session's node");
+const rootContentView = fs.readFileSync(path.join(root, "src/app/useRootContentView.ts"), "utf8");
+assert.match(rootContentView, /useRelatedFileStats\(\s*relatedSessionRootId \|\| currentRootId,\s*selectedSessionRelatedFiles,\s*gitStatsRefreshKey,\s*relatedSessionNodeId,/, "App related-file stats must route by the related session's node");
 
 console.log("node-url-normalize.test.mjs: OK");

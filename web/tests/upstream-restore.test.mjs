@@ -4,13 +4,13 @@ import { readFileSync, readdirSync } from "node:fs";
 const uploadSrc = readFileSync(new URL("../src/services/upload.ts", import.meta.url), "utf8");
 const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 const streamCache = readFileSync(new URL("../src/app/useSessionStreamCache.ts", import.meta.url), "utf8");
-const fileTree = readFileSync(new URL("../src/components/FileTree.tsx", import.meta.url), "utf8");
-const viewer = readFileSync(new URL("../src/components/SessionViewer.tsx", import.meta.url), "utf8");
-// 2026-09 App.tsx 拆分：相关文件页签的渲染搬到 components/RootRelatedContentView.tsx，契约随文件走。
-const rootRelatedView = readFileSync(new URL("../src/components/RootRelatedContentView.tsx", import.meta.url), "utf8");
-// 2026-09 App.tsx 拆分：worktree 页签的渲染搬到 components/RootWorktreeContentView.tsx，契约随文件走。
-const rootWorktreeView = readFileSync(new URL("../src/components/RootWorktreeContentView.tsx", import.meta.url), "utf8");
-const rootGitView = readFileSync(new URL("../src/components/RootGitContentView.tsx", import.meta.url), "utf8");
+const fileTree = readFileSync(new URL("../src/components/file/FileTree.tsx", import.meta.url), "utf8");
+const viewer = readFileSync(new URL("../src/components/session/SessionViewer.tsx", import.meta.url), "utf8");
+// 2026-09 App.tsx 拆分：相关文件页签的渲染搬到 components/root/RootRelatedContentView.tsx，契约随文件走。
+const rootRelatedView = readFileSync(new URL("../src/components/root/RootRelatedContentView.tsx", import.meta.url), "utf8");
+// 2026-09 App.tsx 拆分：worktree 页签的渲染搬到 components/root/RootWorktreeContentView.tsx，契约随文件走。
+const rootWorktreeView = readFileSync(new URL("../src/components/root/RootWorktreeContentView.tsx", import.meta.url), "utf8");
+const rootGitView = readFileSync(new URL("../src/components/root/RootGitContentView.tsx", import.meta.url), "utf8");
 const fileService = readFileSync(new URL("../src/services/file.ts", import.meta.url), "utf8");
 const sessionSvc = readFileSync(new URL("../src/services/session.ts", import.meta.url), "utf8");
 // 批处理帧的形状归一 + 单事件派发住在 emitDecrypted 里，2026-10-08 随订阅登记一起
@@ -31,10 +31,13 @@ const claudeSession = readFileSync(new URL("../../server/internal/agent/claude/s
 const streamHub = readFileSync(new URL("../../server/internal/api/stream_hub.go", import.meta.url), "utf8");
 
 // 3951aa4 — task→non-task relatedFiles: preserveTaskSelection + showAllFiles removal
-assert.match(app, /handleSelectSession[\s\S]*?preserveTaskSelection/, "3951aa4 App should carry preserveTaskSelection");
-assert.match(app, /if \(!options\?\.preserveTaskSelection\)[\s\S]*?setSelectedKanbanTaskId\(""\);/, "3951aa4 App should clear kanban task unless preserve");
-assert.match(app, /onExpand[\s\S]*?handleSelectSession\(currentSession, \{\s*preserveTaskSelection:/, "3951aa4 App drawer onExpand should pass preserveTaskSelection");
-assert.match(viewer, /const displayFiles = relatedFiles;/, "3951aa4 SessionViewer should show all related files without slicing");
+const taskDrawer = readFileSync(new URL("../src/app/useAppTaskDrawer.ts", import.meta.url), "utf8");
+const sessionSelection = readFileSync(new URL("../src/app/useSessionSelection.ts", import.meta.url), "utf8");
+assert.match(taskDrawer, /handleSelectSession[\s\S]*?preserveTaskSelection/, "3951aa4 App should carry preserveTaskSelection");
+assert.match(sessionSelection, /if \(!options\?\.preserveTaskSelection\)[\s\S]*?setSelectedKanbanTaskId\(""\);/, "3951aa4 App should clear kanban task unless preserve");
+assert.match(taskDrawer, /handleSelectSession\(target as any, \{\s*preserveTaskSelection: true/, "3951aa4 App drawer should pass preserveTaskSelection");
+const relatedFilesHook = readFileSync(new URL("../src/components/session/useRelatedFiles.ts", import.meta.url), "utf8");
+assert.match(relatedFilesHook, /const displayFileGroups = groupRelatedFiles/, "3951aa4 useRelatedFiles should show all related files without slicing");
 assert.doesNotMatch(viewer, /showAllFiles/, "3951aa4 SessionViewer should not have showAllFiles toggle");
 assert.doesNotMatch(viewer, /hasMoreFiles/, "3951aa4 SessionViewer should not have hasMoreFiles");
 assert.doesNotMatch(viewer, /session\.more/, "3951aa4 SessionViewer should not reference session.more");
@@ -54,18 +57,22 @@ assert.match(
   /file\?\.agent_path \|\| file\?\.path/,
   "466b21e agent_path 回退必须在 fileTokenPath 里（附件的唯一取路径点）",
 );
+const taskComposer = readFileSync(new URL("../src/app/useTaskComposer.ts", import.meta.url), "utf8");
 assert.match(
-  app,
+  taskComposer,
   /formatFileToken\(fileTokenPath\(file\)\)/,
   "466b21e App 必须走唯一的 token 组装点（不得退回内联拼装）",
 );
 
 // c0a4398 — related-file git-diff line stats hook wiring
-assert.match(app, /useRelatedFileStats/, "c0a4398 App should wire useRelatedFileStats");
-assert.match(app, /gitStatsRefreshKey/, "c0a4398 App should compute gitStatsRefreshKey");
+const rootContentView = readFileSync(new URL("../src/app/useRootContentView.ts", import.meta.url), "utf8");
+assert.match(rootContentView, /useRelatedFileStats/, "c0a4398 App should wire useRelatedFileStats");
+assert.match(rootContentView, /gitStatsRefreshKey/, "c0a4398 App should compute gitStatsRefreshKey");
 assert.match(rootRelatedView, /selectedRelatedFileStatsByKey\[relatedFileStatKey\(file\)\]/, "c0a4398 related-files view should resolve stats by relatedFileStatKey");
-assert.match(viewer, /useRelatedFileStats/, "c0a4398 SessionViewer should wire useRelatedFileStats");
-assert.match(viewer, /relatedFileStatsByKey\[relatedFileStatKey\(file\)\]/, "c0a4398 SessionViewer should resolve stats by relatedFileStatKey");
+const relatedFilesHook2 = readFileSync(new URL("../src/components/session/useRelatedFiles.ts", import.meta.url), "utf8");
+assert.match(relatedFilesHook2, /useRelatedFileStats/, "c0a4398 SessionViewer should wire useRelatedFileStats");
+const sessionViewerRelatedFiles = readFileSync(new URL("../src/components/session/SessionViewerRelatedFiles.tsx", import.meta.url), "utf8");
+assert.match(sessionViewerRelatedFiles, /relatedFileStatsByKey\[relatedFileStatKey\(file\)\]/, "c0a4398 SessionViewer should resolve stats by relatedFileStatKey");
 const hook = readFileSync(new URL("../src/hooks/useRelatedFileStats.ts", import.meta.url), "utf8");
 assert.match(hook, /export function useRelatedFileStats/, "c0a4398 hook should exist");
 
@@ -88,7 +95,8 @@ assert.doesNotMatch(claudeSession, /claudeModelSupportsEffortAt/, "5941a36 shoul
 // 现在的契约是**快照重建**：挂载会话一律回一整批带 `reset:true` 的事件，客户端先清空
 // 瞬时尾巴再照单应用。它天然幂等，因此**不需要**任何客户端↔服务端的进度同步。
 // 下面这几条钉的就是这个新契约 —— 谁想把游标加回来，先读 docs/session-streaming-rework.md。
-assert.match(app, /cachedBeforeSync/, "d36cc53 App restore should capture cachedBeforeSync");
+const sessionLifecycle = readFileSync(new URL("../src/app/useSessionLifecycle.ts", import.meta.url), "utf8");
+assert.match(sessionLifecycle, /cachedBeforeSync/, "d36cc53 App restore should capture cachedBeforeSync");
 assert.match(streamHub, /payload\["reset"\] = true/, "挂载会话的快照帧必须带 reset:true，客户端据此清空瞬时尾巴");
 assert.match(streamHub, /buildSessionStreamBatchResponse\(rootID, sessionKey, step\.events, true\)/, "挂载首帧 = 快照（reset）");
 assert.match(streamHub, /buildSessionStreamBatchResponse\(rootID, sessionKey, batch, false\)/, "排空续投帧 = 增量（不 reset），否则清掉快照刚重建的尾巴");
@@ -105,23 +113,26 @@ assert.doesNotMatch(sessionSvc, /mergeStreamedText/, "mergeStreamedText 是重�
 assert.doesNotMatch(streamHub, /ReplayPending\(rootID, clientID, sessionKey, eventCursor\)/, "服务端不得再从客户端取进度");
 // 2026-10-06：保留本地 seq==0 的规则收敛进 session.ts 的 composeLoadedExchanges
 // （原先在 App 里写了四遍、三遍是错的）。契约不变 —— App 侧必须调用它。
-assert.match(app, /composeLoadedExchanges\(/, "d36cc53 contract: App restore must keep local seq==0 exchanges (now via composeLoadedExchanges)");
+assert.match(sessionLifecycle, /composeLoadedExchanges\(/, "d36cc53 contract: App restore must keep local seq==0 exchanges (now via composeLoadedExchanges)");
 assert.match(sessionDomainSvc, /export function composeLoadedExchanges/, "the load-time composition rule lives in session.ts");
 // 2026-09 App.tsx 拆分：userShell 流合并搬到 app/useSessionStreamCache.ts，契约随文件走。
 assert.match(streamCache, /replaySnapshot === true/, "d36cc53 App should branch on replaySnapshot when coalescing userShell");
 
 // 8e7d857 — kanban/session-list cache loading (keep local nodeId/scopedRootKey + context_window)
-assert.match(app, /getCachedSessionList/, "8e7d857 App should prefetch getCachedSessionList");
-assert.match(app, /saveCachedSessionList/, "8e7d857 App should persist saveCachedSessionList");
-assert.match(app, /getCachedMultiRootSessionList/, "8e7d857 App should prefetch multi-root cache");
-assert.match(app, /saveCachedMultiRootSessionList/, "8e7d857 App should persist multi-root cache");
-assert.match(app, /Promise\.all\(\[[\s\S]*?fetchTaskDetails\(targetRoot,[\s\S]*?(?:getNodeIdForRoot|resolveNodeId)\(targetRoot\)\)/, "8e7d857 loadKanbanTasks should fetch in parallel with nodeId");
-assert.match(app, /const shouldReplace = options\?\.replace \|\|/, "8e7d857 App should share shouldReplace gate");
-assert.match(app, /void saveCachedSessionList\(rootID, payload(?:,\s*[^)]+)?\);/, "8e7d857 App should save session-list after replace with context_window preserved");
+assert.match(sessionLifecycle, /getCachedSessionList/, "8e7d857 App should prefetch getCachedSessionList");
+assert.match(sessionLifecycle, /saveCachedSessionList/, "8e7d857 App should persist saveCachedSessionList");
+const multiProjectSessions = readFileSync(new URL("../src/app/useMultiProjectSessions.ts", import.meta.url), "utf8");
+assert.match(multiProjectSessions, /getCachedMultiRootSessionList/, "8e7d857 App should prefetch multi-root cache");
+assert.match(multiProjectSessions, /saveCachedMultiRootSessionList/, "8e7d857 App should persist multi-root cache");
+const taskBoard = readFileSync(new URL("../src/app/useTaskBoard.ts", import.meta.url), "utf8");
+assert.match(taskBoard, /Promise\.all\(\[[\s\S]*?fetchTaskDetails\(targetRoot,[\s\S]*?(?:getNodeIdForRoot|resolveNodeId)\(targetRoot\)\)/, "8e7d857 loadKanbanTasks should fetch in parallel with nodeId");
+assert.match(sessionLifecycle, /const shouldReplace = options\?\.replace \|\|/, "8e7d857 App should share shouldReplace gate");
+assert.match(sessionLifecycle, /void saveCachedSessionList\(rootID, payload(?:,\s*[^)]+)?\);/, "8e7d857 App should save session-list after replace with context_window preserved");
 
 // single assertion for fileService raw 404 + blob dedup sanity (from 33c190/466b21e overlap covers 633c190 zone too)
-assert.match(fileService, /rawFileFailures/, "file.ts raw 404 cache should exist");
-assert.match(fileService, /rawFileBlobCache/, "file.ts blob dedup cache should exist");
+const fileCache = readFileSync(new URL("../src/services/file/cache.ts", import.meta.url), "utf8");
+assert.match(fileCache, /rawFileFailures/, "file.ts raw 404 cache should exist");
+assert.match(fileCache, /rawFileBlobCache/, "file.ts blob dedup cache should exist");
 
 // 2026-09 App.tsx 拆分守卫：项目树三个页签的渲染必须留在各自的视图组件里。
 // 这三条 renderRoot* 在 App 侧只应是「取好数据 → 交给组件」的转发，
