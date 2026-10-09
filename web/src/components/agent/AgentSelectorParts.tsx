@@ -17,6 +17,14 @@ export function AgentMenuPortal({
 
 export const AGENT_MODEL_SEARCH_THRESHOLD = 8;
 
+export const AGENT_MENU_MAX_BODY_HEIGHT = 344;
+export const AGENT_MENU_HEADER_HEIGHT = 34;
+export const AGENT_MENU_ROW_HEIGHT = 40;
+export const AGENT_MENU_MIN_VISIBLE_ROWS = 3;
+export const AGENT_MENU_MIN_BODY_HEIGHT =
+  AGENT_MENU_HEADER_HEIGHT +
+  AGENT_MENU_ROW_HEIGHT * AGENT_MENU_MIN_VISIBLE_ROWS;
+
 export function strip1MSuffix(model: string): string {
   const trimmed = String(model || "").trim();
   return trimmed.toLowerCase().endsWith("[1m]") ? trimmed.slice(0, -4).trim() : trimmed;

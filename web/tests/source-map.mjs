@@ -242,6 +242,8 @@ export const MODULES = {
   "src/components/RootRelatedContentView.tsx": ["src/components/root/RootRelatedContentView.tsx"],
   "src/components/AgentSelector.tsx": [
     "src/components/agent/AgentSelector.tsx",
+    "src/components/agent/AgentSelectorErrorBanner.tsx",
+    "src/components/agent/AgentSelectorMenuHeader.tsx",
     "src/components/agent/AgentSelectorParts.tsx",
   ],
   "src/components/AgentIcon.tsx": ["src/components/agent/AgentIcon.tsx"],

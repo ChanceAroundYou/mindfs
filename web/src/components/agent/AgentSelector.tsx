@@ -8,10 +8,14 @@ import React, {
 } from "react";
 import { createPortal } from "react-dom";
 import { AgentIcon } from "./AgentIcon";
+import { AgentSelectorErrorBanner } from "./AgentSelectorErrorBanner";
+import { AgentSelectorMenuHeader } from "./AgentSelectorMenuHeader";
 import type { AgentStatus } from "../../services/agents";
 import { filterAgentModels } from "../../shared/modelFiltering";
 import { useI18n } from "../../i18n/index";
 import {
+  AGENT_MENU_MAX_BODY_HEIGHT,
+  AGENT_MENU_MIN_BODY_HEIGHT,
   AGENT_MODEL_SEARCH_THRESHOLD,
   AgentMenuPortal,
   ModelMenuItem,
@@ -51,13 +55,6 @@ type AgentSelectorProps = {
   onOpenChange?: (open: boolean) => void;
 };
 
-const AGENT_MENU_MAX_BODY_HEIGHT = 344;
-const AGENT_MENU_HEADER_HEIGHT = 34;
-const AGENT_MENU_ROW_HEIGHT = 40;
-const AGENT_MENU_MIN_VISIBLE_ROWS = 3;
-const AGENT_MENU_MIN_BODY_HEIGHT =
-  AGENT_MENU_HEADER_HEIGHT +
-  AGENT_MENU_ROW_HEIGHT * AGENT_MENU_MIN_VISIBLE_ROWS;
 
 
 export function AgentSelector({
@@ -574,177 +571,16 @@ export function AgentSelector({
                 : `translateX(${menuHorizontalOffset}px)`,
             }}
           >
-          <div
-            ref={agentColumnRef}
-            style={{
-              width: "fit-content",
-              minWidth: "0",
-              maxWidth:
-                submenuAgentStatus || errorAgentStatus
-                  ? "min(44vw, 180px)"
-                  : "min(72vw, 180px)",
-              height: menuBodyHeight ? `${menuBodyHeight}px` : "auto",
-              maxHeight: `${AGENT_MENU_MAX_BODY_HEIGHT}px`,
-              overflowY: "auto",
-            }}
-          >
-            <div
-              style={{
-                padding: "6px 12px",
-                fontSize: "11px",
-                fontWeight: 600,
-                color: "var(--text-secondary)",
-                textTransform: "uppercase",
-              }}
-            >
-              Agent
-            </div>
-            {agents.map((a) => {
-              const hasModelOptions = hasAgentOptions(a);
-              const hasError = !a.available && !!a.error;
-              const isSelected = a.name === agent;
-              const isExpanded = submenuAgent === a.name;
-              const isShowingError = errorAgent === a.name;
-              return (
-                <div
-                  key={a.name}
-                  style={{
-                    minWidth: "100%",
-                  }}
-                >
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: "20px minmax(0, 1fr) 18px 18px",
-                      alignItems: "center",
-                      columnGap: "4px",
-                      width: "100%",
-                      padding: "10px 12px",
-                      background:
-                        isExpanded || isSelected
-                          ? "var(--selection-bg)"
-                          : "transparent",
-                      opacity: 1,
-                    }}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => handleAgentRowClick(a)}
-                      style={{
-                        display: "contents",
-                        border: "none",
-                        background: "transparent",
-                        padding: 0,
-                        margin: 0,
-                        cursor: "pointer",
-                        textAlign: "left",
-                      }}
-                    >
-                      <AgentIcon
-                        agentName={a.name}
-                        style={{ width: "16px", height: "16px" }}
-                      />
-                      <span
-                        style={{
-                          minWidth: 0,
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          fontSize: "13px",
-                          color:
-                            isExpanded || isSelected
-                              ? "var(--accent-color)"
-                              : "var(--text-primary)",
-                          fontWeight: isExpanded || isSelected ? 500 : 400,
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {a.name}
-                      </span>
-                    </button>
-                    {hasError ? (
-                      <button
-                        type="button"
-                        aria-label={t("agent.viewErrorInfo", { name: a.name })}
-                        onClick={(event) => {
-                          event.preventDefault();
-                          event.stopPropagation();
-                          setSubmenuAgent(null);
-                          setModelSectionExpanded(true);
-                          setModeSectionExpanded(false);
-                          setEffortSectionExpanded(false);
-                          setServiceTierSectionExpanded(false);
-                          setErrorAgent((prev) =>
-                            prev === a.name ? null : a.name,
-                          );
-                        }}
-                        style={{
-                          display: "inline-flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          width: "18px",
-                          height: "18px",
-                          borderRadius: "999px",
-                          border: "1px solid var(--menu-border)",
-                          background: isShowingError
-                            ? "rgba(217, 119, 6, 0.12)"
-                            : "transparent",
-                          color: "#d97706",
-                          fontSize: "11px",
-                          fontWeight: 700,
-                          cursor: "pointer",
-                          justifySelf: "center",
-                        }}
-                      >
-                        ?
-                      </button>
-                    ) : (
-                      <span
-                        aria-hidden="true"
-                        style={{ width: "18px", height: "18px" }}
-                      />
-                    )}
-                    {hasModelOptions ? (
-                      <button
-                        type="button"
-                        aria-label={
-                          isExpanded
-                            ? t("agent.collapseModels", { name: a.name })
-                            : t("agent.expandModels", { name: a.name })
-                        }
-                        onClick={(event) => {
-                          event.preventDefault();
-                          event.stopPropagation();
-                          handleSubmenuToggle(a);
-                        }}
-                        style={{
-                          display: "inline-flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          width: "18px",
-                          height: "18px",
-                          borderRadius: "6px",
-                          border: "none",
-                          background: "transparent",
-                          color: isExpanded
-                            ? "var(--accent-color)"
-                            : "var(--text-secondary)",
-                          cursor: "pointer",
-                          justifySelf: "center",
-                        }}
-                      >
-                        <SelectorChevron expanded={isExpanded} />
-                      </button>
-                    ) : (
-                      <span
-                        aria-hidden="true"
-                        style={{ width: "18px", height: "18px" }}
-                      />
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+          <AgentSelectorMenuHeader
+            agents={agents} agent={agent} agentColumnRef={agentColumnRef} submenuAgent={submenuAgent}
+            submenuAgentStatus={submenuAgentStatus} errorAgent={errorAgent}
+            errorAgentStatus={errorAgentStatus} menuBodyHeight={menuBodyHeight}
+            handleSubmenuToggle={handleSubmenuToggle} handleAgentRowClick={handleAgentRowClick}
+            setSubmenuAgent={setSubmenuAgent} setErrorAgent={setErrorAgent}
+            setModelSectionExpanded={setModelSectionExpanded} setModeSectionExpanded={setModeSectionExpanded}
+            setEffortSectionExpanded={setEffortSectionExpanded}
+            setServiceTierSectionExpanded={setServiceTierSectionExpanded} t={t}
+          />
 
           <div
             style={{
@@ -769,126 +605,10 @@ export function AgentSelector({
           >
             {errorAgentStatus &&
             parseAgentErrorMessage(errorAgentStatus.error) ? (
-              <div
-                style={{
-                  width: "100%",
-                  minWidth: 0,
-                  padding: "12px",
-                  boxSizing: "border-box",
-                }}
-              >
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    gap: "8px",
-                    marginBottom: "8px",
-                  }}
-                >
-                  <div
-                    style={{
-                      fontSize: "11px",
-                      fontWeight: 600,
-                      color: "#d97706",
-                      textTransform: "uppercase",
-                    }}
-                  >
-                    {t("agent.errorInfo")}
-                  </div>
-                  {onAgentRestart ? (
-                    <button
-                      type="button"
-                      aria-label={t("agent.restart", { name: errorAgentStatus.name })}
-                      title={t("agent.restartAgent")}
-                      disabled={restartingAgent === errorAgentStatus.name}
-                      onClick={(event) => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        void handleAgentRestart(errorAgentStatus.name);
-                      }}
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        width: "22px",
-                        height: "22px",
-                        borderRadius: "7px",
-                        border: "none",
-                        background: "transparent",
-                        color: "#d97706",
-                        cursor:
-                          restartingAgent === errorAgentStatus.name
-                            ? "default"
-                            : "pointer",
-                        opacity:
-                          restartingAgent === errorAgentStatus.name ? 0.62 : 1,
-                        padding: 0,
-                        flex: "0 0 auto",
-                      }}
-                    >
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        width="1em"
-                        height="1em"
-                        viewBox="0 0 24 24"
-                        aria-hidden="true"
-                        style={{
-                          transformOrigin: "50% 50%",
-                          animation:
-                            restartingAgent === errorAgentStatus.name
-                              ? "agent-refresh-spin 0.9s linear infinite"
-                              : undefined,
-                        }}
-                      >
-                        <path d="M0 0h24v24H0z" fill="none" />
-                        <path
-                          fill="currentColor"
-                          d="M12 20q-3.35 0-5.675-2.325T4 12t2.325-5.675T12 4q1.725 0 3.3.712T18 6.75V5q0-.425.288-.712T19 4t.713.288T20 5v5q0 .425-.288.713T19 11h-5q-.425 0-.712-.288T13 10t.288-.712T14 9h3.2q-.8-1.4-2.187-2.2T12 6Q9.5 6 7.75 7.75T6 12t1.75 4.25T12 18q1.7 0 3.113-.862t2.187-2.313q.2-.35.563-.487t.737-.013q.4.125.575.525t-.025.75q-1.025 2-2.925 3.2T12 20"
-                        />
-                      </svg>
-                    </button>
-                  ) : null}
-                </div>
-                <div
-                  style={{
-                    padding: "10px 12px",
-                    borderRadius: "10px",
-                    background: "rgba(217, 119, 6, 0.08)",
-                    border: "1px solid rgba(217, 119, 6, 0.18)",
-                    color: "var(--text-primary)",
-                    fontSize: "12px",
-                    lineHeight: 1.5,
-                    whiteSpace: "normal",
-                    overflowWrap: "anywhere",
-                    wordBreak: "break-word",
-                  }}
-                >
-                  {parseAgentErrorMessage(errorAgentStatus.error)}
-                </div>
-                {parseAgentErrorDetails(errorAgentStatus.error).map(
-                  (detail) => (
-                    <div
-                      key={detail}
-                      style={{
-                        marginTop: "8px",
-                        padding: "10px 12px",
-                        borderRadius: "10px",
-                        background: "rgba(0, 0, 0, 0.03)",
-                        border: "1px solid var(--menu-divider)",
-                        color: "var(--text-secondary)",
-                        fontSize: "11px",
-                        lineHeight: 1.5,
-                        whiteSpace: "normal",
-                        overflowWrap: "anywhere",
-                        wordBreak: "break-word",
-                      }}
-                    >
-                      {detail}
-                    </div>
-                  ),
-                )}
-              </div>
+              <AgentSelectorErrorBanner
+                errorAgentStatus={errorAgentStatus} handleAgentRestart={handleAgentRestart}
+                onAgentRestart={onAgentRestart} restartingAgent={restartingAgent} t={t}
+              />
             ) : submenuAgentStatus ? (
               <>
                 <SectionHeader
