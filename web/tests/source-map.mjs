@@ -119,6 +119,12 @@ export const MODULES = {
     "src/app/useAppSessionSnapshots.ts",
     "src/app/useAppWorkspaceActions.ts",
     "src/app/useAppRootResolution.ts",
+    // 2026-10-08 第 9-10 步
+    "src/app/useAppBoundSessionDir.ts",
+    "src/app/useAppMainViewActions.ts",
+    // 2026-10-08 第 11 步
+    "src/app/useAppSlashCommandResult.ts",
+    "src/app/useAppKanbanStageColumns.ts",
   ],
 
   // P6 拆分：FileTree.tsx → + icons.tsx（图标子组件）

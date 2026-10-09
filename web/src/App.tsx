@@ -182,6 +182,10 @@ import {
 // 类型定义
 
 import { APP_DOCUMENT_TITLE, AppProps, CHILD_SESSION_PAGE_SIZE, MULTI_PROJECT_SESSION_LIMIT, ManagedRootPayload, SESSION_PAGE_SIZE } from "./app/appMisc";
+import { useAppKanbanStageColumns } from "./app/useAppKanbanStageColumns";
+import { useAppSlashCommandResult } from "./app/useAppSlashCommandResult";
+import { useAppMainViewActions } from "./app/useAppMainViewActions";
+import { useAppBoundSessionDir } from "./app/useAppBoundSessionDir";
 import { useAppRootResolution } from "./app/useAppRootResolution";
 import { useAppWorkspaceActions } from "./app/useAppWorkspaceActions";
 import { useAppSessionSnapshots } from "./app/useAppSessionSnapshots";
@@ -1865,52 +1869,15 @@ export function App({ onGoHome }: AppProps) {
 
   // 会话恢复入口（open_dir 开根 / 首屏 boot / popstate）共用：
   // 会话在场就直接返回，目录一次都不加载——带着 view=files 进来时主区就是空的。
-  const showBoundSessionOrRootDir = useCallback(
-    async (
-      rootID: string,
-      options?: {
-        pluginQuery?: Record<string, string>;
-        closeLeftSidebar?: boolean;
-        loadSessionsOnRestore?: boolean;
-        suppressTreeExpand?: boolean;
-      },
-    ) => {
-      const restored = await tryShowBoundSessionForRoot(rootID, {
-        pluginQuery: options?.pluginQuery,
-        closeLeftSidebar: options?.closeLeftSidebar,
-      });
-      if (!restored) {
-        await actionHandlersRef.current.open_dir({
-          path: rootID,
-          root: rootID,
-          isRoot: true,
-          forceDirectory: true,
-          suppressTreeExpand: options?.suppressTreeExpand,
-        });
-        return;
-      }
-      if (options?.loadSessionsOnRestore) {
-        void loadSessionsForRoot(rootID, { replace: true, force: true });
-      }
-      // 文件态没有内容可显示：把当前项目顶层目录补上，行为与手动切面板一致
-      if (
-        mainViewRef.current === "files" &&
-        !mainEntriesRef.current.length &&
-        !mainDirectoryErrorRef.current
-      ) {
-        await actionHandlersRef.current.open_dir({
-          path: rootID,
-          root: rootID,
-          isRoot: true,
-          forceDirectory: true,
-          suppressTreeExpand: true,
-        });
-        return;
-      }
-      await refreshTreeDir(rootID, ".", false);
-    },
-    [loadSessionsForRoot, refreshTreeDir, tryShowBoundSessionForRoot],
-  );
+  const { showBoundSessionOrRootDir } = useAppBoundSessionDir({
+    actionHandlersRef,
+    loadSessionsForRoot,
+    mainDirectoryErrorRef,
+    mainEntriesRef,
+    mainViewRef,
+    refreshTreeDir,
+    tryShowBoundSessionForRoot,
+  });
 
 
 
@@ -2561,29 +2528,10 @@ export function App({ onGoHome }: AppProps) {
     file?.root || currentRootId,
     file?.path,
   );
-  const slashCommandResultForSession = (
-    rootID: string | null | undefined,
-    session: { key?: string; session_key?: string } | null | undefined,
-  ) => {
-    const sessionKey = session?.key || session?.session_key || "";
-    const resolvedRoot = rootID || "";
-    if (!resolvedRoot) {
-      return null;
-    }
-    if (!sessionKey) {
-      let best: SlashCommandResult | null = null;
-      for (const value of Object.values(slashCommandResults)) {
-        if (value.rootId !== resolvedRoot || !value.sessionKey.startsWith("transient-")) {
-          continue;
-        }
-        if (!best || (value.createdAt || 0) > (best.createdAt || 0)) {
-          best = value;
-        }
-      }
-      return best;
-    }
-    return slashCommandResults[rootSessionKey(resolvedRoot, sessionKey)] || null;
-  };
+  const { slashCommandResultForSession
+  } = useAppSlashCommandResult({
+    slashCommandResults, rootSessionKey,
+  });
   const currentRootSlashCommandResult = slashCommandResultForSession(currentRootId, null);
   // The memory badge is always rendered above the composer, so floating
   // session controls must always clear that overlay row.
@@ -2806,53 +2754,10 @@ export function App({ onGoHome }: AppProps) {
     />
   );
   // 四块 = 未开始 / 执行中 / 待审核 / 已结束（已结束内分 完成、取消；失败并入取消）。
-  const kanbanStageColumns: Array<{
-    index: number;
-    name: string;
-    role: "user" | "agent";
-    tasks: KanbanTask[];
-    groups?: Array<{ key: string; name: string; tone: "success" | "danger" | "muted"; tasks: KanbanTask[] }>;
-  }> = [
-    {
-      index: 0,
-      name: t("task.column.pending"),
-      role: "user" as const,
-      tasks: kanbanTasks.filter((task) => task.status === "pending"),
-    },
-    {
-      index: 1,
-      name: t("task.column.running"),
-      role: "agent" as const,
-      tasks: kanbanTasks.filter((task) => task.status === "running" || task.status === "paused"),
-    },
-    {
-      index: 2,
-      name: t("task.column.waitingUser"),
-      role: "user" as const,
-      tasks: kanbanTasks.filter((task) => task.status === "waiting_user"),
-    },
-    {
-      index: 3,
-      // 已结束 = 完成 + 取消；失败合并进取消。
-      name: t("task.column.ended"),
-      role: "user" as const,
-      tasks: kanbanTasks.filter((task) => task.status === "success" || task.status === "fail" || task.status === "cancelled"),
-      groups: [{
-        key: "success",
-        name: t("task.group.completed"),
-        tone: "success" as const,
-        tasks: kanbanTasks.filter((task) => task.status === "success"),
-      }, {
-        key: "cancelled",
-        name: t("task.group.cancelled"),
-        tone: "muted" as const,
-        tasks: kanbanTasks.filter((task) => task.status === "fail" || task.status === "cancelled"),
-      }],
-      // 别在这里滤掉空分组：TaskBoardView 用「groups 非空」决定走不走分组渲染，
-      // 滤掉「已完成」后，只要「已取消」有任务就整组看不见——列头却仍按 tasks.length
-      // 显示两状态总和，于是出现「列头有数字、里面找不到对应组」。空组由渲染层显示成 0。
-    },
-  ];
+  const { kanbanStageColumns
+  } = useAppKanbanStageColumns({
+    kanbanTasks, t,
+  });
   // 跨项目工作台：按项目聚合的跨节点任务总览（扇出与建组都在 useWorkspaceBoard 内）。
   // refreshToken 由刷新按钮驱动；WS 的高频推送靠 C1 放行的 task.updated 增量更新就地生效，
   // 不驱动整包重拉（否则多节点扇出会被事件风暴打爆）。
@@ -2900,41 +2805,14 @@ export function App({ onGoHome }: AppProps) {
   workspaceBoardRefreshRef.current = workspaceBoard.refresh;
   // 左下角四态切换器：只切面板 + 关掉悬浮框。
   // 会话选中与面板是正交的两条线——切面板一律不解除选中（面板不显示而已）。
-  const handleMainViewSwitcherChange = useCallback((mode: MainViewMode) => {
-    const rootID = currentRootIdRef.current;
-    if (rootID) setDrawerOpenForRoot(rootID, false);
-    interactionModeRef.current = "main";
-    setInteractionMode("main");
-    // 先落一条历史（存切之前的视图），再切。没有这条浏览器历史就永远只有一项，
-    // 侧滑/后退无路可退 —— 这正是「侧滑直接退出」的直接原因。
-    pushViewHistoryEntry(mainViewRef.current);
-    switchMainView(mode);
-    // 切到文件面板但从没点过任何目录时，主区是空的：把当前项目顶层目录补上。
-    // 已经有内容（含报错态）就别动，用户点过的目录优先于这个默认值。
-    // 开着文件/diff 时也不能补：open_dir 会 setFile(null)，补目录等于把用户
-    // 刚看的文件抹掉 —— 那正是「切回文件丢内容」的第二个根因。
-    if (mode === "files" && rootID && !file && !gitDiff && !mainEntriesRef.current.length && !mainDirectoryErrorRef.current) {
-      const currentDir = selectedDirRef.current || "";
-      // 尚停留在上一个项目时（selectedDir 属于别的 root），直接落在新项目根目录
-      if (!currentDir || currentDir === "." || currentDir === rootID || currentDir.startsWith(`${rootID}/`)) {
-        void actionHandlersRef.current.open_dir({
-          path: rootID,
-          root: rootID,
-          isRoot: true,
-          forceDirectory: true,
-        });
-      }
-    }
-    // 只改 URL 的 view，保留 root/node/session/pluginQuery。
-    // 离开文件态时把 file 摘掉，否则会写出「view=board 且 file=…」的自相矛盾深链。
-    const current = readURLState();
-    replaceURLState({
-      ...current,
-      root: current.root || rootID || "",
-      file: mode === "files" ? current.file : "",
-      view: mode,
-    });
-  }, [file, gitDiff, replaceURLState, setDrawerOpenForRoot, switchMainView]);
+  const { handleMainViewSwitcherChange, switchToRawFileView, switchToPluginView
+  } = useAppMainViewActions({
+    currentRootIdRef, setDrawerOpenForRoot, interactionModeRef, setInteractionMode,
+    mainViewRef, switchMainView, file, gitDiff,
+    mainEntriesRef, mainDirectoryErrorRef, selectedDirRef, actionHandlersRef,
+    actionHandlers, replaceURLState, pluginBypassRef, setPluginBypass,
+    fileCursorRef,
+  });
 
   // 工作台的快速发起不自己建任务：挑完项目 + 模板就打开看板那套新建任务面板，
   // 模板、worktree、agent、附件全都跟项目看板里一致，不在工作台上复制第二份实现。
@@ -3012,34 +2890,7 @@ export function App({ onGoHome }: AppProps) {
 
   usePluginThemeVars({document, pluginBypass, pluginRender, pluginThemeVars, useEffect});
 
-  const switchToRawFileView = useCallback(async () => {
-    if (!file) return;
-    const root = file.root || currentRootIdRef.current;
-    if (!root) return;
-    pluginBypassRef.current = true;
-    setPluginBypass(true);
-    await actionHandlers.open({
-      path: file.path,
-      root,
-      cursor: fileCursorRef.current || 0,
-      readMode: "incremental",
-      preservePluginQuery: true,
-    });
-  }, [file, actionHandlers]);
 
-  const switchToPluginView = useCallback(async () => {
-    if (!file) return;
-    const root = file.root || currentRootIdRef.current;
-    if (!root) return;
-    pluginBypassRef.current = false;
-    setPluginBypass(false);
-    await actionHandlers.open({
-      path: file.path,
-      root,
-      cursor: fileCursorRef.current || 0,
-      preservePluginQuery: true,
-    });
-  }, [file, actionHandlers]);
 
   // 更新状态由 WS 的 app.update 推送（pushInitialAppUpdate 在连接时推一次），
   // 不是启动时同步就绪的。首帧 updateState 还是 normalizeUpdateState(null) 的全空
