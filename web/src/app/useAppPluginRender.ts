@@ -59,7 +59,7 @@ export function useAppPluginRender(params: UseAppPluginRenderParams) {
       "--vp-danger": theme.danger,
       "--vp-warning": theme.warning,
       "--vp-success": theme.success,
-    } as CSSProperties;
+    } as React.CSSProperties;
   }, [pluginRender]);
 
   return { pluginRender, pluginThemeVars };

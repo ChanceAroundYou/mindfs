@@ -112,6 +112,9 @@ export const MODULES = {
     // 2026-10-08 第 6 步：插件信任状态机 + 插件渲染与主题变量。
     "src/app/useAppPluginTrust.ts",
     "src/app/useAppPluginRender.ts",
+    // 2026-10-08 第 7 步：项目显示名/节点色/下拉选项 + 路径点击与文件树派生视图。
+    "src/app/useAppProjectDisplay.ts",
+    "src/app/useAppFileNavigation.ts",
   ],
 
   // P6 拆分：FileTree.tsx → + icons.tsx（图标子组件）

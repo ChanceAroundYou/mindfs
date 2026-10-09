@@ -85,15 +85,12 @@ export function useAppSessionReload(params: UseAppSessionReloadParams) {
       });
       const next = [...payload.items, ...payload.pinnedItems]
         // 同上：加载更多并进的是同一份 sessions，节点归属必须与首屏一致
-        .map((item) =>
-          toSessionItem(rootID, {
-            ...(item as any),
-            _nodeId: (item as any)._nodeId || listNodeId,
-          }),
-        )
+        .map((item) => toSessionItem(rootID, { ...(item as any), _nodeId: (item as any)._nodeId || listNodeId }))
         .filter((item): item is SessionItem => !!item);
       setHasMoreSessions(payload.totalCount > payload.items.length);
-      setSessions((prev) => applyPinSnapshot(mergeSessionItems(prev, next), rootID));
+      setSessions((prev) =>
+        applyPinSnapshot(mergeSessionItems(prev, next), rootID),
+      );
     } finally {
       setLoadingOlderSessions(false);
     }

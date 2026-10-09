@@ -79,12 +79,9 @@ export function useAppSessionSelection(params: UseAppSessionSelectionParams) {
 
   const handleNewSession = useCallback(() => {
     const rootID = currentRootIdRef.current;
-    const previousBoundKey = rootID
-      ? boundSessionByRootRef.current[scopedRootKey(rootID)]
-      : "";
+    const previousBoundKey = rootID ? boundSessionByRootRef.current[scopedRootKey(rootID)] : "";
     if (rootID && previousBoundKey && !previousBoundKey.startsWith("pending-")) {
-      suppressedAutoBindSessionByRootRef.current[scopedRootKey(rootID)] =
-        previousBoundKey;
+      suppressedAutoBindSessionByRootRef.current[scopedRootKey(rootID)] = previousBoundKey;
     }
     switchMainView("chat");
     selectedSessionRef.current = null;
@@ -95,7 +92,10 @@ export function useAppSessionSelection(params: UseAppSessionSelectionParams) {
       selectedSessionByRootRef.current[scopedRootKey(rootID)] = null;
     }
     resetSessionLockForRoot(rootID);
-  }, [resetSessionLockForRoot, switchMainView]);
+  }, [
+    resetSessionLockForRoot,
+    switchMainView,
+  ]);
 
   const currentSelectionSource = useMemo(() => {
     if (file?.path) {

@@ -182,6 +182,8 @@ import {
 // 类型定义
 
 import { APP_DOCUMENT_TITLE, AppProps, CHILD_SESSION_PAGE_SIZE, MULTI_PROJECT_SESSION_LIMIT, ManagedRootPayload, SESSION_PAGE_SIZE } from "./app/appMisc";
+import { useAppFileNavigation } from "./app/useAppFileNavigation";
+import { useAppProjectDisplay } from "./app/useAppProjectDisplay";
 import { useAppPluginTrust } from "./app/useAppPluginTrust";
 import { useAppPluginRender } from "./app/useAppPluginRender";
 import { useAppSessionSelection } from "./app/useAppSessionSelection";
@@ -556,45 +558,21 @@ export function App({ onGoHome }: AppProps) {
     setGitDiffSideBySide,
   } = useUiPreferences();
   const [managedRootIds, setManagedRootIds] = useState<string[]>([]);
-  const getRootDisplayName = useCallback((rootId: string | null | undefined): string => {
-    const id = String(rootId || "").trim();
-    if (!id) return "";
-    const entry: any = managedRootByIdRef.current[id];
-    const dn = String(entry?.display_name || "").trim();
-    if (dn) return dn;
-    return String(entry?.id || id);
-  }, []);
+  const {
+    getRootDisplayName,
+    getDisplayNodeColor,
+    taskCreateProjectOptions,
+  } = useAppProjectDisplay({
+    currentRootId,
+    currentRootNodeIdRef,
+    managedRootByIdRef,
+    managedRootByKeyRef,
+    managedRootIdsRef,
+    taskInlineEdit,
+  });
   const currentRootDisplayName = getRootDisplayName(currentRootId);
 
-  const getDisplayNodeColor = useCallback((rootId: string): string | null => {
-    const rid = String(rootId || "").trim();
-    if (!rid) return null;
-    const curNid = String(currentRootNodeIdRef.current || "").trim();
-    if (curNid) {
-      const scoped = scopeKey(curNid, rid);
-      const c = String((managedRootByKeyRef.current as any)[scoped]?._nodeColor || "").trim();
-      if (c) return c;
-    }
-    return String((managedRootByIdRef.current as any)[rid]?._nodeColor || "").trim() || null;
-  }, []);
 
-  // 新建任务面板上的「项目」下拉选项。只有工作台发起的面板会用到它（看板入口
-  // 项目已定），范围取跨项目会话那份清单，挂在 taskInlineEdit.targetRootId 上
-  // 是为了项目增删后重算一次，不额外订阅一份 state。
-  //
-  // 项目名各用各的节点色，和工作台项目行、DefaultListView 的项目徽章是同一套口径。
-  // 位置必须在 getDisplayNodeColor 之后 —— const 不提升，提前引用会吃到 TDZ。
-  const taskCreateProjectOptions = useMemo(() => {
-    const ids = Array.from(managedRootIdsRef.current);
-    if (ids.length === 0 && currentRootId) ids.push(currentRootId);
-    return ids
-      .filter((id) => String(id || "").trim())
-      .map((id) => ({
-        value: id,
-        label: getRootDisplayName(id) || id,
-        color: getDisplayNodeColor(id) || undefined,
-      }));
-  }, [currentRootId, getRootDisplayName, getDisplayNodeColor, taskInlineEdit?.targetRootId]);
 
   // 复合键还原为裸 rootId（scoped 键为 n::r 或 r；rootId 自身不含 "::"）
   const selectRootNode = useCallback((rootId: string, nodeId?: string) => {
@@ -1990,22 +1968,24 @@ export function App({ onGoHome }: AppProps) {
   }, [refreshManagedRoots]);
 
   // 同一节点在一次故障里只提示一次（刷新很频繁，每次都弹会淹掉界面）。
-  const notifyNodeLoadFailed = useCallback(
-    (node: { id: string; name: string }) => {
-      if (notifiedNodeFailuresRef.current.has(node.id)) return;
-      notifiedNodeFailuresRef.current.add(node.id);
-      reportError("node.load_failed", t("error.node.loadFailed", { name: node.name }), {
-        severity: "warning",
-        recoverable: true,
-        details: { nodeId: node.id },
-        retryAction: async () => {
-          notifiedNodeFailuresRef.current.delete(node.id);
-          await refreshManagedRoots();
-        },
-      });
-    },
-    [refreshManagedRoots, t],
-  );
+  const {
+    notifyNodeLoadFailed,
+    handleFileViewerPathClick,
+    handleFileViewerFileClick,
+    handleGitDiffPathClick,
+    handleDirectoryPathClick,
+    gitFileStatsByPath,
+  } = useAppFileNavigation({
+    file,
+    currentRootIdRef,
+    actionHandlers,
+    setGitDiff,
+    gitStatus,
+    getNodeIdForRoot,
+    notifiedNodeFailuresRef,
+    refreshManagedRoots,
+    t,
+  });
   useEffect(() => {
     notifyNodeLoadFailedRef.current = notifyNodeLoadFailed;
   }, [notifyNodeLoadFailed]);
@@ -2140,59 +2120,9 @@ export function App({ onGoHome }: AppProps) {
     };
   }, [handleSessionChipClick]);
 
-  const handleFileViewerPathClick = useCallback(
-    (path: string) => {
-      if (!file) return;
-      const root = file.root || currentRootIdRef.current;
-      if (!root) return;
-      actionHandlers.open_dir({
-        path: path === "." ? root : path,
-        root,
-        isRoot: path === ".",
-        suppressTreeExpand: path === ".",
-      });
-    },
-    [file, actionHandlers],
-  );
 
-  const handleFileViewerFileClick = useCallback(
-    (path: string) => {
-      if (!file) return;
-      const root = file.root || currentRootIdRef.current;
-      if (!root) return;
-      actionHandlers.open({ path, root });
-    },
-    [file, actionHandlers],
-  );
 
-  const handleGitDiffPathClick = useCallback(
-    (path: string) => {
-      const root = currentRootIdRef.current;
-      if (!root) return;
-      setGitDiff(null);
-      actionHandlers.open_dir({
-        path: path === "." ? root : path,
-        root,
-        isRoot: path === ".",
-        suppressTreeExpand: path === ".",
-      });
-    },
-    [actionHandlers],
-  );
 
-  const handleDirectoryPathClick = useCallback(
-    (path: string) => {
-      const root = currentRootIdRef.current;
-      if (!root) return;
-      actionHandlers.open_dir({
-        path: path === "." ? root : path,
-        root,
-        isRoot: path === ".",
-        suppressTreeExpand: path === ".",
-      });
-    },
-    [actionHandlers],
-  );
 
   const visibleMainEntries = useMemo(
     () =>
@@ -2202,19 +2132,6 @@ export function App({ onGoHome }: AppProps) {
     [mainEntries, showHiddenFiles],
   );
 
-  const gitFileStatsByPath = useMemo<Record<string, GitFileStat>>(() => {
-    const items = gitStatus?.items || [];
-    return Object.fromEntries(
-      items.map((item) => [
-        item.path,
-        {
-          status: item.status,
-          additions: item.additions,
-          deletions: item.deletions,
-        },
-      ]),
-    );
-  }, [gitStatus]);
 
   useEffect(() => {
     if (!currentRootId) return;

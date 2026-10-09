@@ -66,11 +66,7 @@ export function useAppSessionKeyState(params: UseAppSessionKeyStateParams) {
   );
 
   const setMultiProjectSessionPending = useCallback(
-    (
-      rootID: string | null | undefined,
-      sessionKey: string | null | undefined,
-      pending: boolean,
-    ) => {
+    (rootID: string | null | undefined, sessionKey: string | null | undefined, pending: boolean) => {
       const resolvedRoot = String(rootID || "");
       const resolvedKey = String(sessionKey || "");
       if (!resolvedRoot || !resolvedKey) {
@@ -85,9 +81,7 @@ export function useAppSessionKeyState(params: UseAppSessionKeyStateParams) {
           delete next[key];
         }
         multiProjectPendingRef.current = next;
-        setMultiProjectSessionGroups((groups) =>
-          applyPendingToMultiProjectGroups(groups, next),
-        );
+        setMultiProjectSessionGroups((groups) => applyPendingToMultiProjectGroups(groups, next));
         return next;
       });
     },

@@ -60,9 +60,7 @@ export function useAppPluginTrust(params: UseAppPluginTrustParams) {
       pluginManagerRef.current.set(pending.rootId, plugins);
       pluginsLoadedByRootRef.current[scopedRootKey(pending.rootId)] = true;
       delete pluginsTrustPendingByRootRef.current[scopedRootKey(pending.rootId)];
-      setPendingPluginTrust((current) =>
-        current?.rootId === pending.rootId ? null : current,
-      );
+      setPendingPluginTrust((current) => current?.rootId === pending.rootId ? null : current);
       setPluginVersion((v) => v + 1);
     } finally {
       setPluginLoading(false);
@@ -75,9 +73,7 @@ export function useAppPluginTrust(params: UseAppPluginTrustParams) {
     pluginManagerRef.current.clear(pending.rootId);
     pluginsLoadedByRootRef.current[scopedRootKey(pending.rootId)] = true;
     delete pluginsTrustPendingByRootRef.current[scopedRootKey(pending.rootId)];
-    setPendingPluginTrust((current) =>
-      current?.rootId === pending.rootId ? null : current,
-    );
+    setPendingPluginTrust((current) => current?.rootId === pending.rootId ? null : current);
     setPluginVersion((v) => v + 1);
   }, [pendingPluginTrust]);
 
@@ -87,9 +83,7 @@ export function useAppPluginTrust(params: UseAppPluginTrustParams) {
     delete pluginsLoadedByRootRef.current[scopedRootKey(rootId)];
     delete pluginsLoadingByRootRef.current[scopedRootKey(rootId)];
     delete pluginsTrustPendingByRootRef.current[scopedRootKey(rootId)];
-    setPendingPluginTrust((current) =>
-      current?.rootId === rootId ? null : current,
-    );
+    setPendingPluginTrust((current) => current?.rootId === rootId ? null : current);
     setPluginVersion((v) => v + 1);
     if (rootId === currentRootIdRef.current) {
       void ensurePluginsLoaded(rootId).catch(() => {});
