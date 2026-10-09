@@ -516,6 +516,15 @@
   `api.ScopedRouter` 按 `user=` 派发到每账户一份 `AppContext` 实现，**211 处 `h.AppContext` 一处都没改**。
   `StreamHub` 必须每账户独立；`MetaDir()` 分账户、`SharedMetaDir()` 不分（上传与批注按注册表记的
   `MetaLocation` 算、不看账户）。前端 `user=` 只在 `services/base.ts` 注入（三处唯一汇聚点）。
+- **空工作区的写操作必须无副作用（2026-10-09）**：可见症状是**加项目报「这个账户在本机没有数据」，
+  但项目却出现在列表里**（点进去什么都没有）。根因：`fs/registry.go` 的 `Upsert/Remove/UpdateDisplayName`
+  都是「先改内存、再 `saveLocked()`」，落盘失败不回滚 ⇒ 失败的写入留在列表里成为幽灵条目。
+  只读空工作区（`path==""`）是这条路径的高频场景：陌生 `user=`（如浏览器里过期的账户 id）
+  拿到只读空工作区，加项目必然 400，而每次 400 都在内存里留下一笔。`Rename` 一直有回滚，
+  现统一走 `snapshotLocked()`。必须保留的理由：这是「本机没有这个账户」这一语义**唯一**可信的地方 ——
+  错误提示说没数据、列表却显示有，用户无法判断哪个是真的。
+  针对性测试：`server/internal/fs/registry_rollback_test.go`（三个方法各一条：落盘失败后
+  upsert 不留幽灵条目 / remove 不误删 / display_name 回滚）。
 
 ### G-V 控制面 / 数据面分离（control / worker 角色）
 
