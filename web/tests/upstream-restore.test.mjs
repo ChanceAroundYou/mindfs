@@ -13,6 +13,12 @@ const rootWorktreeView = readFileSync(new URL("../src/components/RootWorktreeCon
 const rootGitView = readFileSync(new URL("../src/components/RootGitContentView.tsx", import.meta.url), "utf8");
 const fileService = readFileSync(new URL("../src/services/file.ts", import.meta.url), "utf8");
 const sessionSvc = readFileSync(new URL("../src/services/session.ts", import.meta.url), "utf8");
+// 批处理帧的形状归一 + 单事件派发住在 emitDecrypted 里，2026-10-08 随订阅登记一起
+// 搬进 services/sessionDispatcher.ts。下面两条判据改指它 —— **只换文件、不放宽判据**。
+const sessionDispatcherSvc = readFileSync(
+  new URL("../src/services/sessionDispatcher.ts", import.meta.url),
+  "utf8",
+);
 // session.ts 的纯函数簇已按领域拆到 services/session*.ts（2026-10-07）。这些守卫要钉的是
 // 「契约还在」，不是「在哪个文件」—— 跟着实现走，拆文件不用回来改断言。
 const sessionDomainSvc = [
@@ -86,11 +92,11 @@ assert.match(app, /cachedBeforeSync/, "d36cc53 App restore should capture cached
 assert.match(streamHub, /payload\["reset"\] = true/, "挂载会话的快照帧必须带 reset:true，客户端据此清空瞬时尾巴");
 assert.match(streamHub, /buildSessionStreamBatchResponse\(rootID, sessionKey, step\.events, true\)/, "挂载首帧 = 快照（reset）");
 assert.match(streamHub, /buildSessionStreamBatchResponse\(rootID, sessionKey, batch, false\)/, "排空续投帧 = 增量（不 reset），否则清掉快照刚重建的尾巴");
-assert.match(sessionSvc, /session\.stream\.reset/, "批处理帧必须在 emitDecrypted 里拆成 reset + 单事件，两条分发路径只留一种形状");
+assert.match(sessionDispatcherSvc, /session\.stream\.reset/, "批处理帧必须在 emitDecrypted 里拆成 reset + 单事件，两条分发路径只留一种形状");
 // 「形状」与「语义」必须分开判：形状（events 是不是数组）决定**怎么展开**，
 // reset 才决定**展开前要不要清尾巴**。绑在一起的话，任何不带 reset 的批帧都会漏回
 /// payload.event 路径，重新变成 onStream(undefined)。
-assert.match(sessionSvc, /type === "session\.stream" && Array\.isArray\(nextPayload\.events\)/, "批帧判据必须只看形状，不看 reset 标志");
+assert.match(sessionDispatcherSvc, /type === "session\.stream" && Array\.isArray\(nextPayload\.events\)/, "批帧判据必须只看形状，不看 reset 标志");
 assert.match(sessionDomainSvc, /export function dropTransientExchanges/, "清瞬时尾巴的唯一出口住在 session.ts");
 assert.match(sessionDomainSvc, /isTransientExchange/, "瞬时行的判据必须是一个共用谓词：seq 为空且不是用户行");
 assert.doesNotMatch(sessionSvc, /eventCursors|getEventCursor|clearEventCursor/, "游标协议已删除，不得回潮");

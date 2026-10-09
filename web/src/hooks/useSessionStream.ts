@@ -597,10 +597,10 @@ export function useSessionStream(
       return;
     }
     setIsStreaming(
-      sessionPending && sessionService.isSessionStreaming(sessionKey),
+      sessionPending && sessionService.dispatcher.isSessionStreaming(sessionKey),
     );
 
-    const unsubscribe = sessionService.subscribe(sessionKey, {
+    const unsubscribe = sessionService.dispatcher.subscribe(sessionKey, {
       onStream: (event) => {
         if (event.type === "message_chunk" || event.type === "thought_chunk") {
           bumpStreamVersion();

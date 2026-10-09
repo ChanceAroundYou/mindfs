@@ -362,6 +362,7 @@ groups:
       它是客户端发出消息时的乐观回声，服务端事件流里从来没有它，照判据清尾巴会让刚发出去的消息当场消失。
     files:
       - web/src/services/session.ts
+      - web/src/services/sessionDispatcher.ts
       - web/src/app/useSessionStreamCache.ts
       - web/src/app/useRealtimeEvents.ts
       - web/src/shared/sessionOverlay.ts

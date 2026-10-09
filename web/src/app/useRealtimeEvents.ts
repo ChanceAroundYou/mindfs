@@ -941,7 +941,7 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
   useEffect(() => {
     if (!currentRootId) return;
     cancelledRef.current = false;
-    const unsubscribeEvents = sessionService.subscribeEvents((event) => {
+    const unsubscribeEvents = sessionService.dispatcher.subscribeEvents((event) => {
       wsHandlersRef.current[event.type]?.(event, (event.payload || {}) as any);
     });
     void loadSessionsForRoot(currentRootId, { replace: true });

@@ -394,7 +394,8 @@ test("【红·⑮d】context_window 两处必须分工明确（按 exchange 优�
 // `ReplyingList`（仅 userShell 有 256KB 截断）都没有真正的容量上限。
 // ─────────────────────────────────────────────────────────────────────────────
 test("【红·⑬】pendingStreams 必须有上限，且 push 路径要**用上**它", () => {
-  const file = readFileSync(path.join(srcRoot, "services/session.ts"), "utf8");
+  // pendingStreams 与它的容量上限住在派发层，2026-10-08 随订阅登记搬进 sessionDispatcher.ts。
+  const file = readFileSync(path.join(srcRoot, "services/sessionDispatcher.ts"), "utf8");
   // 判据分两段：常量存在 **且** push 处真的按它裁剪 —— 只看常量会被「定义了没用」骗过。
   assert.match(
     file,

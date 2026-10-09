@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const app = readFileSync(new URL("../src/app/useRealtimeEvents.ts", import.meta.url), "utf8");
-const svc = readFileSync(new URL("../src/services/session.ts", import.meta.url), "utf8");
+// 契约三（状态机先于派发）住在 emitDecrypted 里 —— 2026-10-08 那轮拆分把它连同
+// 订阅登记一起搬进了 services/sessionDispatcher.ts，判据跟着实现走。
+const svc = readFileSync(new URL("../src/services/sessionDispatcher.ts", import.meta.url), "utf8");
 // 2026-09 App.tsx 拆分：WS 事件处理器整块搬到 app/useRealtimeEvents.ts，契约随文件走。
 // 更早的一轮拆分已把 `switch (event.type) { case "x": … }` 变成
 // `"x": (event, payload) => { … }` 的 handler map，切片锚点用后者。
