@@ -1,53 +1,20 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React from "react";
 import { renderToolIcon } from "../stream/toolCallIcons";
 import { useI18n } from "../../i18n";
-import { type QueuedMessageInfo } from "./types";
+import { useQueuedMessagesList, type QueuedMessagesListProps } from "./useQueuedMessagesList";
 
 /** 编辑态是本组件私有的：向父层只暴露保存/取消/删除/立即发送四个动作。 */
-export function QueuedMessagesList({
-  queuedMessages,
-  accentColorRaw,
-  isMobile,
-  onRemove,
-  onUpdate,
-  onSendNow,
-}: {
-  queuedMessages: QueuedMessageInfo[];
-  accentColorRaw: string;
-  isMobile: boolean;
-  onRemove: (id: string) => void | Promise<void>;
-  onUpdate: (id: string, content: string) => void | Promise<void>;
-  onSendNow: (id: string) => void | Promise<void>;
-}) {
+export function QueuedMessagesList(props: QueuedMessagesListProps) {
+  const { queuedMessages, accentColorRaw, isMobile, onRemove, onSendNow } = props;
   const { t } = useI18n();
-  const [editingQueueId, setEditingQueueId] = useState<string | null>(null);
-  const [editingQueueText, setEditingQueueText] = useState("");
-
-  const startEdit = useCallback((item: QueuedMessageInfo) => {
-    setEditingQueueId(item.id);
-    setEditingQueueText(item.content || "");
-  }, []);
-
-  const saveEdit = useCallback(async () => {
-    const queueId = editingQueueId;
-    const nextText = editingQueueText.trim();
-    if (!queueId || !nextText) return;
-    await onUpdate(queueId, nextText);
-    setEditingQueueId(null);
-    setEditingQueueText("");
-  }, [editingQueueId, editingQueueText, onUpdate]);
-
-  const cancelEdit = useCallback(() => {
-    setEditingQueueId(null);
-    setEditingQueueText("");
-  }, []);
-
-  useEffect(() => {
-    if (!editingQueueId) return;
-    if (!queuedMessages.some((item) => item.id === editingQueueId)) {
-      cancelEdit();
-    }
-  }, [cancelEdit, editingQueueId, queuedMessages]);
+  const {
+    editingQueueId,
+    editingQueueText,
+    setEditingQueueText,
+    startEdit,
+    saveEdit,
+    cancelEdit,
+  } = useQueuedMessagesList(props);
 
   return (
     <div
