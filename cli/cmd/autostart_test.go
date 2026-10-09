@@ -92,14 +92,14 @@ func TestReadShellEnvironmentIgnoresRCOutputBeforeMarker(t *testing.T) {
 }
 
 func TestAutoStartArgumentsContainOnlyPersistentServerOptions(t *testing.T) {
-	got := autoStartArguments("127.0.0.1:9000", true, true, false, true, "/cert.pem", "/key.pem", "/agents.json", "/notify")
+	got := autoStartArguments("127.0.0.1:9000", false, true, "/cert.pem", "/key.pem", "/agents.json", "/notify")
 	joined := strings.Join(got, " ")
-	for _, expected := range []string{"--internal-autostart", "--addr 127.0.0.1:9000", "--no-relayer", "--e2ee", "--web-push=false", "--tls", "--cert /cert.pem", "--key /key.pem", "--agent-config /agents.json", "--notify-script /notify"} {
+	for _, expected := range []string{"--internal-autostart", "--addr 127.0.0.1:9000", "--web-push=false", "--tls", "--cert /cert.pem", "--key /key.pem", "--agent-config /agents.json", "--notify-script /notify"} {
 		if !strings.Contains(joined, expected) {
 			t.Errorf("arguments %q do not contain %q", joined, expected)
 		}
 	}
-	for _, transient := range []string{"--restart", "--bind-relay", "--foreground"} {
+	for _, transient := range []string{"--restart", "--foreground"} {
 		if strings.Contains(joined, transient) {
 			t.Errorf("arguments %q unexpectedly contain %q", joined, transient)
 		}

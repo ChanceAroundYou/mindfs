@@ -173,7 +173,6 @@
 | G-AS | ACP 提问（dsh `ask_user_question` 走 elicitation） | 修复 | 见 §3.1 | 只对 dsh 广告 elicitation.form；题目 id+文本关联；答案编码成 `question_<i>` |
 | G-AT | 会话打开性能（窗口去重 / 载荷压缩 / 工具卡分组） | 性能 | 见 §3.1 | 会话打开热路径：取窗去重 + 窗口轻压缩 + 窗口 8 + 工具卡分组 + related-files 去抖 |
 | G-AU | 会话拉取风暴与渲染主线程阻塞 | 修复 | 见 §3.1 | 加载 effect 只依赖身份不依赖快照对象；失败留痕且 404 是终点；`sessionCacheRef` 有上限；渲染无 O(n²)、滚动有节流 |
-| G-AX | relay 绑定轮询测试的两条同步竞态 | 修复 | 见 §3.1 | 状态落地晚于 channel 发送；`requests` 必须无缓冲 |
 | G-AY | pending 纯派生（done 丢失时停止符号/「正在思考」卡住） | 修复 | 见 §3.1 | 原先「在不在回复」在前端有五份投影，只有列表蓝灯那份每 5s 对账；其余四份只有 WS `session.done` 一个出口，断连/重绑竞态丢了那条事件就**永久卡在 true**。2026-10-07 改成纯派生：唯一真相 `multiProjectPendingByKey`，会话对象上不再存 pending |
 | G-AZ | 任务卡视觉件（待审核徽标/列框去除/浮动滚动条/工作台角标移除） | 视觉 | 见 §3.1 | 待审核列补状态文字（与工作台同路径）；列框去除+padding 归零卡片加宽 18px；FloatingScroll 浮动滚动条不占宽；工作台「需要你 N」角标移除 |
 | G-BB | 看板列头灰底 + 间距对齐工作台（列头背景/列表 padding/外层 padding） | 视觉 | 见 §3.1 | 列头灰底区分栏目标签与卡片；列表 padding 归零卡片加宽 12px；外层 padding 6px 8px 对齐工作台容器 |
@@ -259,15 +258,31 @@
 |------|----------|------|
 | `df732af` | `web/src/components/RelayLocalServicesDialog.tsx`(删)、`web/src/services/relayServices.ts/tokenStation.ts/launcherNodeSync.ts/nativeBridge.ts`、`web/src/App.tsx/FileTree.tsx/Login.tsx/base.ts/bootstrap.ts/i18n` | 移除公网访问/Relay 对话框/Token 加油站三件套 |
 | `20f2b90` | `.gitignore` | `CLAUDE.md` 忽略（配置类，不影响运行时，单列但归本组） |
+| 2026-10-08 | **删包** `server/internal/relay/`（8 文件）、`server/internal/e2ee/`（4 文件）；**删路由** `server/internal/api/http_relay_services.go`、`http_token_station.go`、`http_local_cli_relay_test.go`；**删前端** `web/src/services/e2ee.ts`、`RelayLocalServicesDialog.tsx`、`SessionQuickActions.tsx`、`relayServices.ts`、`tokenStation.ts`；**清接线** `server/internal/api/http.go`(-549)、`ws.go`(-73)、`appcontext.go`、`agent/config.go`、`nodeinfo/role.go`（去掉 `/api/relay`、`/api/e2ee` 两条前缀）、`cli/cmd/mindfs.go`(-193)、`server/app/server.go`(-148)、`web/src/services/net/{bootstrap,api}.ts`、`session.ts` | **彻底删除 relay 隧道与 e2ee**（用户 2026-10-08 明确要求）：不是「关掉开关」而是「不存在」—— 删包、删路由、删所有前端入口与调用点、删 e2ee proof/解密与 `e2ee_*` 头 |
 
-### G-I 安全模型重塑
+- 保留判据：**用户明确要求完整删除，没有「保留一部分」的中间态**。
+  合上游时上游会把它们给回来，每次都要重新删一遍 —— 删漏就会留下「点了报错」的残缺入口，
+  或让 `nodeinfo` 的控制面前缀表多出 `/api/relay`、`/api/e2ee` 两条永远没有 handler 的死路径。
+- 本组同时**吸收**了原 `G-AX`（relay 绑定轮询测试的两条同步竞态，2026-10-07）：
+  那两条修复住在 `server/internal/relay/service_test.go` 里，包已删，条目随之退役。
+- 针对性测试：`web/tests/upstream-removals.test.mjs` —— 钉住「被删文件不复活」+
+  「没有悬空 import 指回已删模块」。
+
+### G-I 安全模型重塑（API 层不鉴权 / CORS 全开放）
 
 | 来源与 hunk | 文件 | 说明 |
 |-------------|------|------|
-| `c7c2c45:http.go#protectedEndpoint` | `server/internal/api/http.go:protectedEndpoint` | 直通（`ponytail: 鉴权/e2ee 已移除`），删 e2ee 解密/Proof 校验 |
-| `c7c2c45:http.go#corsMiddleware` | 同文件 `corsMiddleware+Routes.Use` | `*` + `OPTIONS 204` 全开放 |
-| `c7c2c45` | `web/src/services/e2ee.ts`、`storage.ts`、`connection.ts`、`api.ts`、`bootstrap.ts` | `e2ee.ts` 659→39 行 stub、去 token、`api.ts` 无鉴权 `fetchJSON`、`bootstrap` 直通 `ready` |
-| `2d814b2` | `web/src/services/bootstrap.ts/e2ee.ts` | stub 保留 `e2ee` 字段/方法兼容，防旧订阅 `undefined` 白屏 |
+| `c7c2c45:http.go#protectedEndpoint` | `server/internal/api/http.go` | 直通（`ponytail: 鉴权已移除`）—— 上游的 token / e2ee proof 中间件不再包裹 `/api/*` |
+| `c7c2c45:http.go#corsMiddleware` | 同文件 `corsMiddleware+Routes.Use` | 默认 `open`：原样回显 Origin + `OPTIONS 204` 全开放 |
+| `c7c2c45` | `web/src/services/connection.ts`、`storage.ts`、`net/api.ts`、`net/authGate.ts`、`net/bootstrap.ts` | 去 token、`api.ts` 无鉴权 `fetchJSON`、`bootstrap` 直通 `ready` |
+| 2026-10-08 | 删 `web/src/services/e2ee.ts`、`server/internal/e2ee/` | e2ee 那半边改由 **G-H** 整体删除承担；本组只剩「不鉴权 + CORS 开放」这条**策略** |
+
+- 保留判据：**「API 层不做鉴权」是用户明确决策**（多账户 = 多配置档，不是安全边界，CLAUDE.md 事实 12）。
+  上游把 token 校验或 CORS 白名单合回来 → 所有前端请求 401 / 被浏览器挡下，
+  症状是「页面能开、列表全空」。
+- 针对性测试：`server/internal/api/http_open_api_test.go` —— 无凭证 `GET /api/dirs` 必须 200；
+  `OPTIONS` 必须 204 且原样回显 Origin。**已做变异验证**：把 `handleDirs` 改成返回 401、
+  把 `corsMiddleware` 的 `shouldEmit` 关掉，两条断言分别变红。
 
 > 与 G-J 的 `runtime.ts/nodeRegistry.ts` 同提交但 hunk 互斥：鉴权相关归本组，路由/聚合归 G-J。
 
@@ -675,7 +690,7 @@
     **但仍是有界的**，理由见 G-AH。
   - 条目数**管不住内存**，所以另加 `conditionalRequestBytesMax`（6 MB）字节预算：
     一条会话详情就是 1.14 MB，64 条能把标签页撑爆 —— 而标签页崩溃正是这一轮要修的症状。
-    字节数从 `parseProtectedJSONResponseWithSize` 拿（`Content-Length` 拿不到：服务端一次性
+    字节数用**原始文本长度**记账（`Content-Length` 拿不到：服务端一次性
     Write 之后是 chunked，实测端点无此头；两条分支本来就把文本读进来了，量长度是免费的）。
     淘汰**必须同时看条数和字节**，且必须把 ETag 与载荷**一起**删 —— 只删载荷会留下
     「304 但拿不出内容」的悬空条目，正好落进 `conditional cache miss` 分支让调用方白重试一次。
@@ -1327,45 +1342,6 @@
 - **针对性测试**：
   - `web/tests/workspace-board.test.mjs` — attention bar 必须不存在；taskRow wrapper 必须是 `<article>`
   - `web/tests/task-card-wrap.test.mjs` — `workspaceTaskNameStyle` 断言已移除
-
-### G-AX relay 绑定轮询测试的两条同步竞态（2026-10-07）
-
-- 来源：`server/internal/relay/service_test.go`（**纯上游文件**，对 baseline 零差异）、
-  `web/tests/relay-bind-poll-sync.test.mjs`（新增）。
-- 边界：**`TestManagerPollTerminalBindStatusStopsPolling` 里的两条竞态**。
-  合上游时要么全留要么全弃 —— 这两条单独被冲掉都不会让门禁变红，
-  只有持续跑或负载高时才炸，而它炸的时候看起来像产品 bug。
-- 可见症状（没有它会怎样）：
-  1. 该测试偶发失败，报 `pending code did not clear after expired bind status`，
-     耗时正好 **5.00s**（撞上 `time.After(5 * time.Second)`）。
-  2. 另一条偶发 `expected initial pending code`（`-race -count=20` 实测复现）。
-  3. 单独跑 30/30 全绿 —— 所以极易被当成「偶发、不管它」。
-- 根因（两条，互相独立）：
-  1. **状态落地晚于 channel 发送。** 本文件的 mock transport 在**返回响应之前**
-     就把 URL 送进 `requests`（`requests <- req.URL.String()`），而 poller 要等
-     响应返回之后才走 `onFinished` 更新 `Status()`（`manager.go` 的 `pollLoop`：
-     `m.pendingCode = ""; m.lastError = status`）。原实现从 `requests` 读到请求
-     就**立刻**查 `Status()`，不是 `"expired"` 就 `continue` 去读下一个请求 ——
-     而 poller 收到 expired 之后已经 `return` 了，再没有下一个请求，于是卡到超时。
-  2. **channel 带缓冲（cap 4）导致 poller 抢跑。** 缓冲让发送不阻塞，poller 会
-     抢在测试观察之前跑完整个 poll（expired → onFinished → 清空 `PendingCode`），
-     于是 `StartBinding()` 返回后立刻查 `PendingCode` 可能是空的。
-- 改了什么：
-  - 收到请求后**等状态落地**（轮询 `Status()` 直到 `LastError == "expired"`），
-    而不是读一次就 `continue`。
-  - `requests` 改成**无缓冲**，让 poller 停在发送上，保证测试读到 `PendingCode`
-    时它还没被清空。
-  - 新增 `TestManagerPollTerminalBindStatusSettlesAfterChannelSend`：mock 在送进
-    channel 之后**再睡 150ms** 才返回响应，把第一条竞态从「负载高才偶发」
-    变成「必然发生」，并断言「读到请求时状态还没落地」这个前提。
-- 针对性测试：
-  - `web/tests/relay-bind-poll-sync.test.mjs` — 钉住「不得读一次就 continue」、
-    必须有等待循环、`requests` 必须无缓冲、顺序假设必须被确定性复现。
-    **已验证：把修复改回原样后该测试立刻变红。**
-- 验证：`-count=50` 通过；`-race -count=30` 连跑 3 轮（共 90 次）全绿。
-
----
-
 
 ### G-AY pending 纯派生：done 丢失时停止符号 /「正在思考」卡住（2026-10-07）
 

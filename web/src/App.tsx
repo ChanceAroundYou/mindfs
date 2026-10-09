@@ -13,12 +13,11 @@ import { getViewModeSystemPrompt } from "./renderer/viewCatalog";
 import { Renderer } from "./renderer/Renderer";
 import { SESSION_WINDOW_SIZE, clearCachedSessionsForRoot, clearWindowedView, composeLoadedExchanges, deleteCachedSession, deleteCachedSessionLists, getCachedMultiRootSessionList, getCachedSession, getCachedSessionList, getSessionWindow, isTransientExchange, saveCachedMultiRootSessionList, saveCachedSessionList, sessionService, setCachedSessionRelatedFiles, setWindowedView, settlePendingAcks, syncSession, type MultiRootSessionGroup, type QueuedUserMessage, type RelatedFile, type RelatedWorktree, type Session, type SyncSessionResult, type TokenUsage } from "./services/session";
 import { buildClientContext } from "./services/prefs/context";
-import { e2eeService, type E2EEState } from "./services/net/e2ee";
 import {
   bootstrapService,
   type BootstrapState,
 } from "./services/net/bootstrap";
-import { syncNativeReplyPollerE2EE } from "./services/net/replyPoller";
+import { syncNativeReplyPoller } from "./services/net/replyPoller";
 import {
   ProtectedAPIError,
   protectedAPIReady,
@@ -1375,16 +1374,12 @@ export function App({ onGoHome }: AppProps) {
   const [bootstrapState, setBootstrapState] = useState<BootstrapState>(() =>
     bootstrapService.snapshot(),
   );
-  const [e2eeState, setE2eeState] = useState<E2EEState>(() =>
-    e2eeService.snapshot(),
-  );
   useEffect(() => {
     if (
       isMobile ||
       onboardingAutoStartRef.current ||
       !currentRootId ||
-      bootstrapState.phase !== "ready" ||
-      (e2eeState.required && !e2eeState.unlocked)
+      bootstrapState.phase !== "ready"
     ) {
       return;
     }
@@ -1392,17 +1387,14 @@ export function App({ onGoHome }: AppProps) {
     if (!shouldAutoStartOnboarding()) return;
     const timer = window.setTimeout(() => setOnboardingOpen(true), 700);
     return () => window.clearTimeout(timer);
-  }, [bootstrapState.phase, currentRootId, e2eeState.required, e2eeState.unlocked, isMobile]);
+  }, [bootstrapState.phase, currentRootId, isMobile]);
   useEffect(() => {
     if (isMobile && onboardingOpen) {
       setOnboardingOpen(false);
       setOnboardingMainContentViewRoot(null);
     }
   }, [isMobile, onboardingOpen]);
-  const [e2eeSecretInput, setE2eeSecretInput] = useState("");
   useEffect(() => { syncNodesFromServer().catch(()=>{}); }, []);
-  const [e2eePromptError, setE2eePromptError] = useState("");
-  const [e2eePromptBusy, setE2eePromptBusy] = useState(false);
   const [editDraftRequest, setEditDraftRequest] = useState<{
     id: number;
     content: string;
@@ -1599,9 +1591,6 @@ export function App({ onGoHome }: AppProps) {
   }, [currentRootNodeId]);
   useEffect(() => {
     let cancelled = false;
-    if (!e2eeState.configured || (e2eeState.required && !e2eeState.unlocked)) {
-      return;
-    }
     fetchAgents(true, getNodeIdForRoot(currentRootId || "") as any)
       .then((items) => {
         if (cancelled) return;
@@ -1611,7 +1600,7 @@ export function App({ onGoHome }: AppProps) {
     return () => {
       cancelled = true;
     };
-  }, [agentsVersion, currentRootId, e2eeState.configured, e2eeState.required, e2eeState.unlocked]);
+  }, [agentsVersion, currentRootId]);
   useEffect(() => {
     if (typeof window === "undefined") {
       return;
@@ -7423,7 +7412,6 @@ export function App({ onGoHome }: AppProps) {
   useEffect(() => {
     return bootstrapService.subscribe((state) => {
       setBootstrapState(state);
-      setE2eeState(state.e2ee);
     });
   }, []);
 
@@ -7432,23 +7420,10 @@ export function App({ onGoHome }: AppProps) {
   }, []);
 
   useEffect(() => {
-    return e2eeService.subscribe((state) => {
-      setE2eeState(state);
+    void syncNativeReplyPoller().catch((err) => {
+      console.warn("[ReplyPoller] Failed to sync native poller config:", err);
     });
-  }, []);
-
-  useEffect(() => {
-    void syncNativeReplyPollerE2EE().catch((err) => {
-      console.warn("[ReplyPoller] Failed to sync E2EE state:", err);
-    });
-  }, [e2eeState.nodeId, e2eeState.required, e2eeState.unlocked]);
-
-  useEffect(() => {
-    if (!e2eeState.required) {
-      setE2eeSecretInput("");
-      setE2eePromptError("");
-    }
-  }, [e2eeState.required, e2eeState.secretPresent]);
+  }, [bootstrapState.phase, currentRootNodeId]);
 
   useEffect(() => {
     if (bootstrapState.phase !== "ready") {
@@ -7467,45 +7442,6 @@ export function App({ onGoHome }: AppProps) {
     loadTaskTemplates,
     multiProjectSessionsEnabled,
   ]);
-
-  const describeE2EEPromptError = useCallback((err: unknown) => {
-    const code = err instanceof Error ? String(err.message || "").trim() : "";
-    switch (code) {
-      case "e2ee_proof_invalid":
-        return t("e2ee.invalidProof");
-      case "e2ee_secure_context_required":
-      case "e2ee_webcrypto_unavailable":
-        return t("e2ee.secureContextRequired");
-      case "e2ee_secret_missing":
-        return t("e2ee.secretMissing");
-      case "e2ee_open_invalid_response":
-        return t("e2ee.invalidResponse");
-      default:
-        if (code.startsWith("e2ee_open_failed_")) {
-          return t("e2ee.openFailed");
-        }
-        return t("e2ee.failed");
-    }
-  }, [t]);
-
-  const submitE2EESecret = useCallback(async () => {
-    const trimmed = e2eeSecretInput.trim();
-    if (!trimmed) {
-      setE2eePromptError(t("e2ee.codeRequired"));
-      return;
-    }
-    setE2eePromptBusy(true);
-    setE2eePromptError("");
-    try {
-      await bootstrapService.submitPairingSecret(trimmed);
-      didInitRef.current = false;
-      setE2eeSecretInput("");
-    } catch (err) {
-      setE2eePromptError(describeE2EEPromptError(err));
-    } finally {
-      setE2eePromptBusy(false);
-    }
-  }, [describeE2EEPromptError, e2eeSecretInput, t]); // ponytail: e2ee removed, pairing dead code kept for type compat
 
   useEffect(() => {
     function handlePopState() {
@@ -9888,104 +9824,6 @@ export function App({ onGoHome }: AppProps) {
           }
         }}
       /> : null}
-      {bootstrapState.phase === "needs_pairing" &&
-        e2eeState.required &&
-        !e2eeState.unlocked ? (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(15, 23, 42, 0.46)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: "24px",
-            zIndex: 2000,
-          }}
-        >
-          <div
-            style={{
-              width: "min(460px, 100%)",
-              background: "#fff",
-              borderRadius: "20px",
-              padding: "24px",
-              boxShadow: "0 28px 80px rgba(15, 23, 42, 0.22)",
-              display: "flex",
-              flexDirection: "column",
-              gap: "14px",
-            }}
-	          >
-	            <div style={{ fontSize: "20px", fontWeight: 700, color: "#0f172a" }}>
-	              {t("e2ee.title")}
-	            </div>
-	            <input
-	              type="text"
-              value={e2eeSecretInput}
-              onChange={(event) => {
-                setE2eeSecretInput(event.target.value);
-                if (e2eePromptError) {
-                  setE2eePromptError("");
-                }
-              }}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !e2eePromptBusy) {
-                  void submitE2EESecret();
-                }
-              }}
-	              placeholder={t("e2ee.placeholder")}
-              autoFocus
-              spellCheck={false}
-              style={{
-                width: "100%",
-                borderRadius: "14px",
-                border: "1px solid rgba(148, 163, 184, 0.4)",
-                padding: "14px 16px",
-                fontSize: "14px",
-                outline: "none",
-              }}
-            />
-            {e2eePromptError ? (
-              <div style={{ color: "#dc2626", fontSize: "13px" }}>
-                {e2eePromptError}
-              </div>
-            ) : null}
-            <div style={{ display: "flex", justifyContent: "space-between", gap: "12px" }}>
-              <button
-                type="button"
-                onClick={() => {
-                  setE2eeSecretInput("");
-                  setE2eePromptError("");
-                }}
-                style={{
-                  border: "none",
-                  background: "transparent",
-                  color: "#64748b",
-                  padding: 0,
-                  cursor: "pointer",
-                }}
-              >
-                {t("e2ee.clear")}
-              </button>
-              <button
-                type="button"
-                onClick={() => void submitE2EESecret()}
-                disabled={e2eePromptBusy}
-                style={{
-                  border: "none",
-                  borderRadius: "999px",
-                  background: e2eePromptBusy ? "#94a3b8" : "#0f172a",
-                  color: "#fff",
-                  padding: "10px 18px",
-                  cursor: e2eePromptBusy ? "not-allowed" : "pointer",
-                  fontWeight: 600,
-                }}
-              >
-                {e2eePromptBusy ? t("e2ee.verifying") : t("e2ee.continue")}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
       {taskInlineEdit ? (
 	        (() => {
 	          // worktree 开关跟的是**面板的目标项目**：从工作台发起时那不是当前项目，

@@ -1,5 +1,4 @@
 import { bootstrapService } from "./bootstrap";
-import { e2eeService } from "./e2ee";
 import { logout } from "./authGate";
 import { isSameServerAsPage } from "./base";
 
@@ -127,27 +126,6 @@ async function fetchWithDeadline(input: RequestInfo | URL, init: RequestInit): P
   }
 }
 
-/**
- * e2eeService.protectedFetch 外面套 deadline。
- *
- * 单独一层是因为 protectedFetch 内部会**重建** init（加 proof 头、加密 body、401 时重试），
- * 我们在外层补的 signal 会被它原样带走（`{...init, method, headers}` 保留 signal），
- * 但 e2ee 那条 401 重试路径也用同一个 signal，正好一起受 deadline 约束。
- */
-async function e2eeProtectedFetchWithDeadline(
-  input: RequestInfo | URL,
-  init: RequestInit,
-): Promise<Response> {
-  const deadline = withRequestDeadline(input, init);
-  try {
-    return await e2eeService.protectedFetch(input, deadline.init);
-  } catch (err) {
-    throw normalizeAbortError(err, deadline.timeoutMs, deadline.expired());
-  } finally {
-    if (deadline.timer) clearTimeout(deadline.timer);
-  }
-}
-
 let accountResetInFlight = false;
 
 /**
@@ -222,7 +200,7 @@ export async function protectedFetch(input: RequestInfo | URL, init: RequestInit
   if (!protectedAPIReady()) {
     throw new Error("api_not_ready");
   }
-  return e2eeProtectedFetchWithDeadline(input, init);
+  return fetchWithDeadline(input, init);
 }
 
 // 条件请求（ETag / 304）的客户端半边。
@@ -247,7 +225,7 @@ const conditionalRequestMax = 64;
 //
 // 起因：`/api/sessions/{key}?latest=20` 的一次回包就是 **1.14 MB**（窗口化尾部拉取，
 // 实测 ~1.7 秒一次），64 条这种能把标签页直接撑爆 —— 而标签页崩溃正是这一轮要修的症状。
-// 记账用原始文本长度（见 e2ee.parseProtectedJSONResponseWithSize），LRU 淘汰到预算内：
+// 记账用原始文本长度，LRU 淘汰到预算内：
 // 轮询同一个 URL 靠的就是**最近那条**留住，所以最坏情况也只是老会话出局，
 // 当前看的那个始终能拿 304。
 //
@@ -307,7 +285,7 @@ export async function protectedJSON<T>(input: RequestInfo | URL, init: RequestIn
     }
   }
 
-  const response = await e2eeProtectedFetchWithDeadline(input, requestInit);
+  const response = await fetchWithDeadline(input, requestInit);
 
   if (cacheable && response.status === 304) {
     const cached = conditionalPayloadByURL.get(url);
@@ -318,10 +296,13 @@ export async function protectedJSON<T>(input: RequestInfo | URL, init: RequestIn
     throw new APIError(response.status, {}, "conditional cache miss");
   }
 
-  const parsed = await e2eeService
-    .parseProtectedJSONResponseWithSize<any>(response)
-    .catch(() => ({ payload: {} as any, bytes: 0 }));
-  const payload = parsed.payload;
+  const text = await response.text();
+  let payload: any;
+  try {
+    payload = JSON.parse(text);
+  } catch {
+    payload = {};
+  }
   if (!response.ok) {
     // 和其它两个 helper 一致：本机账户被删时也要登出，否则整页卡在 404。
     // （这条以前漏了，而 /api/dirs 正是走它。）
@@ -332,7 +313,7 @@ export async function protectedJSON<T>(input: RequestInfo | URL, init: RequestIn
   if (cacheable) {
     const etag = response.headers.get("ETag");
     if (etag) {
-      rememberConditionalResponse(url, etag, payload, parsed.bytes);
+      rememberConditionalResponse(url, etag, payload, text.length);
     } else {
       // 端点没发 ETag：清掉可能残留的旧条目（连同它的字节账），别拿过期的 ETag 打下次请求。
       forgetConditionalResponse(url);

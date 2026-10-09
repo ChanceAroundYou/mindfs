@@ -1,5 +1,4 @@
 import { appURL } from "../net/base";
-import { e2eeService } from "../net/e2ee";
 import { getRootNodeId } from "../net/rootNode";
 import type { FilePayload } from "./types";
 import { createFetchOptions, buildFileURL, fetchResponse, invalidateFileCache } from "./fetch";
@@ -53,19 +52,10 @@ async function doFetchProofProtectedBlob(
     const rawURL = withRawFlag(
       baseURL,
     );
-    const headers = e2eeService.isRequired()
-      ? await e2eeService.fileProofHeaders("GET", rawURL)
-      : undefined;
-    const response = await fetchResponse(rawURL, { ...request.init, headers });
+    const response = await fetchResponse(rawURL, request.init);
     if (!response.ok) {
       if (response.status === 404) {
         rawFileFailures.set(cacheKey, Date.now());
-      }
-      if (response.status === 401 && e2eeService.isRequired()) {
-        const payload = (await response.json().catch(() => ({}))) as { error?: string };
-        if (e2eeService.handleServerError(String(payload.error || ""))) {
-          return doFetchProofProtectedBlob(params, cacheKey);
-        }
       }
       throw new Error(`open raw file failed: status=${response.status}`);
     }
@@ -105,8 +95,8 @@ export async function saveTextFile(rootId: string, path: string, content: string
 }
 
 async function requestEditableFile(url: string, init: RequestInit): Promise<FilePayload & { revision: string }> {
-  const response = await e2eeService.protectedFetch(url, init);
-  const payload = await e2eeService.parseProtectedJSONResponse<{ file?: FilePayload & { revision: string }; error?: string }>(response);
+  const response = await fetch(url, init);
+  const payload = (await response.json()) as { file?: FilePayload & { revision: string }; error?: string };
   if (!response.ok) {
     if (response.status === 409) throw new Error("file_edit_conflict");
     if (response.status === 413) throw new Error("file_edit_too_large");

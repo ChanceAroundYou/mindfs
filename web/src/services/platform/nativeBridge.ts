@@ -15,10 +15,6 @@ export type NativeDownloadResult = {
 export type NativeReplyPollerConfig = {
   apiBaseUrl: string;
   token?: string;
-  e2eeRequired?: boolean;
-  e2eeNodeId?: string;
-  e2eeClientId?: string;
-  e2eeTransportKey?: string;
 };
 
 export type NativeBridge = {

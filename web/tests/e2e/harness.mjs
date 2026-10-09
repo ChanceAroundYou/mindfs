@@ -7,8 +7,7 @@
 //     `view=workspace`，于是 `[data-onboarding=message-input]` 数量为 0；
 //   · 建会话只能走 **WS 协议层**（`session.message` + `key=""`）—— 空项目页里根本没有
 //     输入框，DOM 层建不出第一个会话；
-//   · WS 握手必须带 `client_id`，缺了它服务端报的是 `e2ee_proof_required`（**误导**，
-//     e2ee 其实是关的）；
+//   · WS 握手必须带 `client_id`，缺了它服务端直接回 `client_id required`；
 //   · 读会话的回包是**扁平**的，`exchanges` 在顶层、不在 `session` 下。
 //
 // 成本纪律：一轮真实回合实测 $0.112（input 22421 / output 2 tokens）。

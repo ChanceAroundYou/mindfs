@@ -398,13 +398,6 @@ func TestProbeInstalledAgentWithPoolSkipsMissingCommand(t *testing.T) {
 	}
 }
 
-func TestLoadConfigReadsRelayBaseURL(t *testing.T) {
-	cfg := loadPoolTestConfig(t)
-	if cfg.RelayBaseURL != "https://relay.example.com" {
-		t.Fatalf("relay base url = %q", cfg.RelayBaseURL)
-	}
-}
-
 func TestLoadConfigReadsShells(t *testing.T) {
 	cfg := loadPoolTestConfig(t)
 	var want []Shell
@@ -480,8 +473,7 @@ func TestLoadConfigReadsCodeBuddyAgent(t *testing.T) {
 
 func TestMergeConfigsKeepsBundledAgentsAndAppliesUserOverrides(t *testing.T) {
 	base := Config{
-		RelayBaseURL: "https://relay.default.example.com",
-		Shells:       []Shell{{Command: "zsh", Args: []string{"-ic"}}, {Command: "bash", Args: []string{"-ic"}}},
+		Shells: []Shell{{Command: "zsh", Args: []string{"-ic"}}, {Command: "bash", Args: []string{"-ic"}}},
 		Agents: []Definition{
 			{
 				Name:            "codex",
@@ -496,8 +488,7 @@ func TestMergeConfigsKeepsBundledAgentsAndAppliesUserOverrides(t *testing.T) {
 		},
 	}
 	override := Config{
-		RelayBaseURL: "https://relay.user.example.com",
-		Shells:       []Shell{{Command: "fish", Args: []string{"-i", "-c"}}, {Command: "zsh", Args: []string{"-ic"}}},
+		Shells: []Shell{{Command: "fish", Args: []string{"-i", "-c"}}, {Command: "zsh", Args: []string{"-ic"}}},
 		Agents: []Definition{
 			{Name: "codex", Command: "custom-codex", Protocol: ProtocolCodexSDK, Args: []string{"--profile", "work"}},
 			{Name: "local-agent", Command: "local-agent", Protocol: ProtocolACP},
@@ -505,9 +496,6 @@ func TestMergeConfigsKeepsBundledAgentsAndAppliesUserOverrides(t *testing.T) {
 	}
 
 	cfg := mergeConfigs(base, override)
-	if cfg.RelayBaseURL != override.RelayBaseURL {
-		t.Fatalf("relay base url = %q", cfg.RelayBaseURL)
-	}
 	wantShells := []Shell{
 		{Command: "fish", Args: []string{"-i", "-c"}},
 		{Command: "zsh", Args: []string{"-ic"}},
@@ -642,7 +630,6 @@ func TestLoadConfigWithExtraMergesSingleExtraConfigAfterDefaultConfig(t *testing
 	userConfigPath := filepath.Join(tempDir, "user-agents.json")
 	extraConfigPath := filepath.Join(tempDir, "extra-agents.json")
 	if err := os.WriteFile(userConfigPath, []byte(`{
-  "relayBaseURL": "https://relay.user.example.com",
   "tokenStationURL": "https://token.user.example.com",
   "agents": [
     {"name":"user-agent","command":"user-agent","brief":"from user"},
@@ -652,7 +639,6 @@ func TestLoadConfigWithExtraMergesSingleExtraConfigAfterDefaultConfig(t *testing
 		t.Fatalf("write user config: %v", err)
 	}
 	if err := os.WriteFile(extraConfigPath, []byte(`{
-  "relayBaseURL": "https://relay.extra.example.com",
   "tokenStationURL": "https://token.extra.example.com",
   "agents": [
     {"name":"extra-agent","command":"extra-agent","brief":"from extra"},
@@ -679,9 +665,6 @@ func TestLoadConfigWithExtraMergesSingleExtraConfigAfterDefaultConfig(t *testing
 	}
 	if shared.Command != "extra-shared" || shared.Brief != "from extra" {
 		t.Fatalf("extra config should override same-name user config, got %+v", shared)
-	}
-	if cfg.RelayBaseURL != "https://relay.extra.example.com" {
-		t.Fatalf("relay base url = %q", cfg.RelayBaseURL)
 	}
 	if cfg.TokenStationURL != "https://token.extra.example.com" {
 		t.Fatalf("token station url = %q", cfg.TokenStationURL)

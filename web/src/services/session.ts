@@ -3,7 +3,6 @@ import { currentUser } from "./net/authGate";
 import { getRootNodeId } from "./net/rootNode";
 import { scopeSessionKey } from "../shared/scope";
 import { protectedFetch, protectedJSON, withNodeRetry } from "./net/api";
-import { e2eeService } from "./net/e2ee";
 
 // Session service for managing agent sessions
 
@@ -387,7 +386,6 @@ class SessionService {
   private windowInflight = new Map<string, Promise<SessionWindow | null>>();
 
   constructor() {
-    e2eeService.setClientId(this.clientId);
     if (typeof window !== "undefined") {
       window.addEventListener("online", () => this.scheduleLifecycleCheck());
       window.addEventListener("pageshow", () => this.scheduleLifecycleCheck());
@@ -414,16 +412,9 @@ class SessionService {
     return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
   }
 
-  private async buildWSUrl(nodeId?: string): Promise<string> {
+  private buildWSUrl(nodeId?: string): string {
     const params = new URLSearchParams({ client_id: this.clientId });
     if (nodeId) params.set("node_id", nodeId);
-    const proofTarget = wsURL("/ws", params, nodeId);
-    if (e2eeService.isRequired()) {
-      const proofParams = await e2eeService.wsProofParams("GET", proofTarget);
-      for (const [key, value] of proofParams) {
-        params.set(key, value);
-      }
-    }
     return wsURL("/ws", params, nodeId);
   }
 
@@ -477,11 +468,11 @@ class SessionService {
     this.openingSocket = true;
     let target = "";
     try {
-      target = await this.buildWSUrl(this.nodeId || undefined);
+      target = this.buildWSUrl(this.nodeId || undefined);
     } catch (err) {
       this.openingSocket = false;
-      console.error("[Session] Failed to prepare WebSocket proof:", err);
-      this.emit({ type: "ws.closed", payload: { code: 0, reason: "e2ee_proof_failed", was_clean: false } });
+      console.error("[Session] Failed to prepare WebSocket URL:", err);
+      this.emit({ type: "ws.closed", payload: { code: 0, reason: "ws_url_failed", was_clean: false } });
       this.scheduleReconnect();
       return;
     }
@@ -511,11 +502,6 @@ class SessionService {
         this.emit({ type: "ws.connected" });
       }
       this.hasConnected = true;
-      if (e2eeService.isRequired() && e2eeService.hasSecret()) {
-        void e2eeService.ensureSession().catch((err) => {
-          console.error("[Session] Failed to open E2EE session:", err);
-        });
-      }
       this.resendPendingMessages();
     };
 
@@ -768,12 +754,6 @@ class SessionService {
     if (type === "pong") {
       return;
     }
-    if (type === "e2ee.error") {
-      const code = typeof payload.code === "string" ? payload.code : "";
-      e2eeService.handleServerError(code);
-      this.emit({ type, payload });
-      return;
-    }
     const sessionKey = payload.session_key as string;
     if (type === "session.accepted") {
       const requestId =
@@ -881,15 +861,11 @@ class SessionService {
     }
   }
 
-  private async parseWSMessage(raw: unknown): Promise<any | null> {
+  private parseWSMessage(raw: unknown): any | null {
     if (typeof raw !== "string") {
       return null;
     }
-    const parsed = JSON.parse(raw);
-    if (!e2eeService.isRequired() || parsed?.type === "e2ee.error") {
-      return parsed;
-    }
-    return e2eeService.decodeWSMessage<any>(raw);
+    return JSON.parse(raw);
   }
 
   private async sendWSMessage(
@@ -898,12 +874,7 @@ class SessionService {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       return false;
     }
-    let serialized = JSON.stringify(message);
-    if (e2eeService.isRequired()) {
-      await e2eeService.ensureSession();
-      serialized = await e2eeService.encodeWSMessage(message);
-    }
-    this.ws.send(serialized);
+    this.ws.send(JSON.stringify(message));
     return true;
   }
 
@@ -1203,9 +1174,6 @@ class SessionService {
       return false;
     }
     const now = Date.now();
-    if (e2eeService.isRequired()) {
-      await e2eeService.ensureSession();
-    }
     return this.sendWSMessage({
       id: `ready-${now}`,
       type: "session.ready",

@@ -14,7 +14,6 @@ import (
 	"mindfs/server/internal/api"
 	"mindfs/server/internal/auth"
 	"mindfs/server/internal/config"
-	"mindfs/server/internal/e2ee"
 	"mindfs/server/internal/fs"
 	"mindfs/server/internal/githubimport"
 	"mindfs/server/internal/kanban"
@@ -23,7 +22,6 @@ import (
 	"mindfs/server/internal/notifyscript"
 	"mindfs/server/internal/pins"
 	"mindfs/server/internal/preferences"
-	"mindfs/server/internal/relay"
 	"mindfs/server/internal/scheduled"
 	"mindfs/server/internal/update"
 	"mindfs/server/internal/webpush"
@@ -37,14 +35,10 @@ import (
 // 按账户分的只有三样：项目列表（registry）、项目工作状态（meta：会话/任务/上传/文件批注）、
 // 以及按本账户项目调度的看板与定时任务服务实例。
 type sharedServices struct {
-	agentConfig  agent.Config
-	relayBaseURL string
-	update       *update.Service
-	auth         *auth.Store
-	e2ee         *e2ee.Manager
-	notify       *notifyscript.Service
-	relay        *relay.Manager
-	relayTips    *relay.TipsService
+	agentConfig agent.Config
+	update      *update.Service
+	auth        *auth.Store
+	notify      *notifyscript.Service
 
 	// 共享设置与资源
 	prefs     *preferences.Store
@@ -245,18 +239,15 @@ func validAccountID(id string) bool {
 func (m *workspaceManager) emptyWorkspace() (*api.AppContext, error) {
 	registry := fs.NewRegistryAt("", "")
 	services := &api.AppContext{
-		Dirs:      registry,
-		Prefs:     m.shared.prefs,
-		Nodes:     m.shared.nodes,
-		Agents:    m.shared.pool,
-		Prober:    m.shared.prober,
-		Update:    m.shared.update,
-		Auth:      m.shared.auth,
-		E2EE:      m.shared.e2ee,
-		Notify:    m.shared.notify,
-		WebPush:   m.shared.webPush,
-		Relay:     m.shared.relay,
-		RelayTips: m.shared.relayTips,
+		Dirs:    registry,
+		Prefs:   m.shared.prefs,
+		Nodes:   m.shared.nodes,
+		Agents:  m.shared.pool,
+		Prober:  m.shared.prober,
+		Update:  m.shared.update,
+		Auth:    m.shared.auth,
+		Notify:  m.shared.notify,
+		WebPush: m.shared.webPush,
 	}
 	// 空工作区也要有置顶表：这个账户 id 解析不到（跨机器带过来的用户名对方没有），
 	// 语义是回落到对方主账户 —— 那主账户的置顶就该看得见，不能因为「没有数据目录」
@@ -372,11 +363,8 @@ func (m *workspaceManager) build(userID string) (*api.AppContext, error) {
 		AccountDir: configDir,
 		Update:     m.shared.update,
 		Auth:       m.shared.auth,
-		E2EE:       m.shared.e2ee,
 		Notify:     m.shared.notify,
 		WebPush:    m.shared.webPush,
-		Relay:      m.shared.relay,
-		RelayTips:  m.shared.relayTips,
 	}
 	services.Scheduled = scheduled.NewService(services, services)
 	if err := normalizeRegisteredForkSessions(m.ctx, services); err != nil {

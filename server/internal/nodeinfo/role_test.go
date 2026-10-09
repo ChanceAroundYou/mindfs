@@ -45,8 +45,6 @@ func TestIsControlPlane(t *testing.T) {
 		"/api/web-push/status",
 		"/api/nodes",
 		"/api/node-info",
-		"/api/relay/status",
-		"/api/e2ee/open",
 		"/api/token-station/userinfo",
 		"/api/app/update",
 	}
@@ -130,8 +128,6 @@ func TestControlPlanePrefixesSnapshot(t *testing.T) {
 		"/api/web-push",
 		"/api/nodes",
 		"/api/node-info",
-		"/api/relay",
-		"/api/e2ee",
 		"/api/token-station",
 		"/api/app/update",
 	}

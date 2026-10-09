@@ -1,6 +1,5 @@
 import { appURL } from "./net/base";
 import { getRootNodeId } from "./net/rootNode";
-import { e2eeService } from "./net/e2ee";
 
 export type UploadedFile = {
   path: string;
@@ -40,18 +39,8 @@ export async function uploadFiles(params: {
 
   const query = new URLSearchParams({ root: params.rootId });
   const requestURL = appURL("/api/upload", query, params.nodeId);
-  const headers = e2eeService.isRequired()
-    ? await e2eeService.fileProofHeaders("POST", requestURL)
-    : undefined;
-  const response = await uploadFormData(requestURL, formData, headers, params.onProgress, params.signal);
+  const response = await uploadFormData(requestURL, formData, params.onProgress, params.signal);
   if (!response.ok) {
-    if (response.status === 401 && e2eeService.isRequired()) {
-      const payload = (await response.json().catch(() => ({}))) as { error?: string };
-      if (e2eeService.handleServerError(String(payload.error || ""))) {
-        return uploadFiles(params);
-      }
-      throw new Error(payload.error || `Upload failed: ${response.status}`);
-    }
     let message = `Upload failed: ${response.status}`;
     try {
       const payload = (await response.json()) as { error?: string };
@@ -62,7 +51,7 @@ export async function uploadFiles(params: {
     }
     throw new Error(message);
   }
-  const payload = await e2eeService.parseProtectedJSONResponse<UploadResponse>(response);
+  const payload = (await response.json()) as UploadResponse;
   return Array.isArray(payload.files) ? payload.files : [];
 }
 
@@ -73,7 +62,6 @@ export function isUploadAbortError(error: unknown): boolean {
 function uploadFormData(
   requestURL: string,
   formData: FormData,
-  headers?: Headers,
   onProgress?: (progress: UploadProgress) => void,
   signal?: AbortSignal,
 ): Promise<Response> {
@@ -88,9 +76,6 @@ function uploadFormData(
     let lastTime = startTime;
     let lastSpeedBps = 0;
     xhr.open("POST", requestURL, true);
-    headers?.forEach((value, key) => {
-      xhr.setRequestHeader(key, value);
-    });
     xhr.upload.onprogress = (event) => {
       if (!event.lengthComputable || event.total <= 0) {
         return;

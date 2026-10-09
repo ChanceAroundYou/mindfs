@@ -48,20 +48,6 @@ function loadSessionService() {
           withNodeRetry: (fn) => fn(),
         };
       }
-      if (base === "e2ee") {
-        return {
-          e2eeService: {
-            decodeWSMessage: (m) => m,
-            encodeWSMessage: (m) => m,
-            ensureSession: async () => {},
-            handleServerError: () => {},
-            hasSecret: () => false,
-            isRequired: () => false,
-            setClientId: () => {},
-            wsProofParams: () => ({}),
-          },
-        };
-      }
       throw new Error(`unexpected require: ${name}`);
     },
     console: { error: () => {}, warn: () => {}, log: () => {} },

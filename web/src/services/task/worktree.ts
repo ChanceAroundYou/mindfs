@@ -130,7 +130,7 @@ export async function finishTaskWorktree(
 ): Promise<FinishWorktreeResult> {
   const { target, deleteBranch = true, pruneOrphans = true, nodeId } = opts;
   try {
-    // 走 protectedJSON 而不是裸 fetch：E2EE 封装和「本机账户被删 → 登出」都在里面，
+    // 走 protectedJSON 而不是裸 fetch：「本机账户被删 → 登出」和跨节点 deadline 都在里面，
     // 绕过去就丢了这两条。409 撞上冲突时它抛 APIError（带 status 和 payload），
     // 正好够下面还原成 FinishWorktreeConflict。
     return await protectedJSON<FinishWorktreeResult>(

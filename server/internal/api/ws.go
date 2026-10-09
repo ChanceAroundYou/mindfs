@@ -14,7 +14,6 @@ import (
 	"mindfs/server/internal/agent"
 	agenttypes "mindfs/server/internal/agent/types"
 	"mindfs/server/internal/api/usecase"
-	"mindfs/server/internal/e2ee"
 	"mindfs/server/internal/fs"
 	"mindfs/server/internal/githubimport"
 	"mindfs/server/internal/kanban"
@@ -27,8 +26,6 @@ import (
 const (
 	wsPingInterval          = 30 * time.Second
 	wsPongWait              = 2 * time.Minute
-	wsProofQuery            = "e2ee_proof"
-	wsTSQuery               = "e2ee_ts"
 	wsCloseClientSuperseded = 4000
 
 	sessionDoneSettleWindow = 50 * time.Millisecond
@@ -173,10 +170,6 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	nodeID := strings.TrimSpace(r.URL.Query().Get("node_id"))
-	if err := h.requireWSProof(r, clientID); err != nil {
-		respondError(w, http.StatusUnauthorized, err)
-		return
-	}
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
@@ -244,23 +237,6 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
-		if e2eeManager := h.AppContext.GetE2EEManager(); e2eeManager != nil && e2eeManager.Enabled() {
-			sess, err := e2eeManager.SessionForClient(clientID)
-			if err != nil {
-				h.sendE2EEError(conn, "", err.Error())
-				continue
-			}
-			var envelope e2ee.CipherEnvelope
-			if err := json.Unmarshal(message, &envelope); err != nil {
-				h.sendE2EEError(conn, "", "e2ee_session_missing")
-				continue
-			}
-			message, err = e2ee.DecryptBytes(sess.Key, &envelope)
-			if err != nil {
-				h.sendE2EEError(conn, "", "e2ee_proof_invalid")
-				continue
-			}
-		}
 		var req WSRequest
 		if err := json.Unmarshal(message, &req); err != nil {
 			h.sendWSError(conn, clientID, "", "invalid_request", "invalid request")
@@ -268,55 +244,6 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		h.handleWSRequest(r.Context(), conn, clientID, req)
 	}
-}
-
-func (h *WSHandler) requireWSProof(r *http.Request, clientID string) error {
-	if h == nil || h.AppContext == nil {
-		return nil
-	}
-	manager := h.AppContext.GetE2EEManager()
-	if manager == nil || !manager.Enabled() {
-		return nil
-	}
-	ts := strings.TrimSpace(r.URL.Query().Get(wsTSQuery))
-	proof := strings.TrimSpace(r.URL.Query().Get(wsProofQuery))
-	if clientID == "" || ts == "" || proof == "" {
-		return errInvalidRequest("e2ee_proof_required")
-	}
-	sess, err := manager.SessionForClient(clientID)
-	if err != nil {
-		return errInvalidRequest(err.Error())
-	}
-	timestamp, err := time.Parse(time.RFC3339, ts)
-	if err != nil {
-		return errInvalidRequest("invalid_e2ee_ts")
-	}
-	now := time.Now().UTC()
-	if timestamp.Before(now.Add(-requestProofMaxSkew)) || timestamp.After(now.Add(requestProofMaxSkew)) {
-		return errInvalidRequest("e2ee_proof_expired")
-	}
-	expected := e2ee.BuildRequestProof(sess.Key, r.Method, wsProofPath(r), ts, clientID)
-	if !e2ee.VerifyProof(expected, proof) {
-		return errInvalidRequest("e2ee_proof_invalid")
-	}
-	return nil
-}
-
-func wsProofPath(r *http.Request) string {
-	if r == nil || r.URL == nil {
-		return ""
-	}
-	next := *r.URL
-	query := cloneQuery(next.Query())
-	query.Del(wsTSQuery)
-	query.Del(wsProofQuery)
-	next.RawQuery = query.Encode()
-	// 客户端按完整（含部署前缀）请求 URL 计算 proof，剥离前缀后需用原始路径对齐。
-	next.Path = OriginalPath(r)
-	if next.RawQuery == "" {
-		return next.Path
-	}
-	return next.Path + "?" + next.RawQuery
 }
 
 func cloneQuery(values url.Values) url.Values {
@@ -940,6 +867,34 @@ func (h *WSHandler) runSessionMessage(job sessionMessageJob) {
 		return tracker
 	}
 
+	// 回合身份与终结器。
+	// turnGen：本轮的 pending 代次（OnStart 置 pending 时拿到），结束时按它比对清理。
+	// subGens：本轮创建的子会话各自 pending 的代次，父轮收尾时一并终结。
+	// defer 保证成功 / 出错 / 提前 return / panic 都走到终结器 —— 这是「灯不灭」的根治点
+	// （原先只有函数尾一处显式广播，panic 或 SendMessage 挂死就永久残留）。
+	var turnGen uint64
+	subGens := map[string]uint64{}
+	var subGensMu sync.Mutex
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[ws] session.message.panic root=%s session=%s request=%s panic=%v", rootID, key, requestID, r)
+		}
+		if ok := updateTracker.WaitIdle(msgCtx, sessionDoneSettleWindow, sessionDoneMaxWait); !ok {
+			log.Printf("[ws] session.done.wait_timeout root=%s session=%s request=%s", rootID, key, requestID)
+		}
+		log.Printf("[ws] session.done root=%s session=%s request=%s", rootID, key, requestID)
+		h.AppContext.EndSessionTurn(rootID, key, requestID, turnGen)
+		subGensMu.Lock()
+		subs := make(map[string]uint64, len(subGens))
+		for k, v := range subGens {
+			subs[k] = v
+		}
+		subGensMu.Unlock()
+		for subKey, gen := range subs {
+			h.AppContext.EndSessionTurn(rootID, subKey, "", gen)
+		}
+	}()
+
 	err := uc.SendMessage(msgCtx, usecase.SendMessageInput{
 		RootID:          rootID,
 		RuntimeRootPath: job.RuntimeRootPath,
@@ -957,7 +912,7 @@ func (h *WSHandler) runSessionMessage(job sessionMessageJob) {
 		ClientCtx:       job.ClientCtx,
 		OnStart: func(start usecase.MessageStart) {
 			h.AppContext.ClearTaskAuxFlagsForSession(rootID, key)
-			streamHub.BroadcastSessionUserMessageAt(rootID, key, job.SessionType, job.SessionName, job.User.Agent, start.Model, start.ModelDisplayName, start.Mode, start.Effort, start.FastService, job.User.PlanMode, job.User.Content, job.User.Timestamp, start.UserExchangeSeq, job.ExcludeClientID, job.Queued, start.BaseExchangeSeq)
+			turnGen = streamHub.BroadcastSessionUserMessageAt(rootID, key, job.SessionType, job.SessionName, job.User.Agent, start.Model, start.ModelDisplayName, start.Mode, start.Effort, start.FastService, job.User.PlanMode, job.User.Content, job.User.Timestamp, start.UserExchangeSeq, job.ExcludeClientID, job.Queued, start.BaseExchangeSeq)
 		},
 		OnUpdate: func(update agenttypes.Event) {
 			updateTracker.Begin()
@@ -973,7 +928,10 @@ func (h *WSHandler) runSessionMessage(job sessionMessageJob) {
 		OnSubSessionCreated: func(created *session.Session) {
 			h.broadcastSessionMetaUpdated(rootID, created)
 			if created != nil {
-				streamHub.SetPendingReply(rootID, created.Key, created.Name)
+				gen := streamHub.SetPendingReply(rootID, created.Key, created.Name)
+				subGensMu.Lock()
+				subGens[created.Key] = gen
+				subGensMu.Unlock()
 			}
 		},
 		OnSubSessionUpdate: func(sessionKey string, update agenttypes.Event) {
@@ -989,7 +947,10 @@ func (h *WSHandler) runSessionMessage(job sessionMessageJob) {
 				if ok := tracker.WaitIdle(msgCtx, sessionDoneSettleWindow, sessionDoneMaxWait); !ok {
 					log.Printf("[ws] sub-session.done.wait_timeout root=%s session=%s", rootID, sessionKey)
 				}
-				h.AppContext.BroadcastSessionDone(rootID, sessionKey, "")
+				subGensMu.Lock()
+				gen := subGens[sessionKey]
+				subGensMu.Unlock()
+				h.AppContext.EndSessionTurn(rootID, sessionKey, "", gen)
 				return
 			}
 			tracker.End()
@@ -999,11 +960,6 @@ func (h *WSHandler) runSessionMessage(job sessionMessageJob) {
 		log.Printf("[ws] session.message.error root=%s session=%s request=%s err=%v", rootID, key, requestID, err)
 		h.AppContext.BroadcastSessionError(rootID, key, err.Error())
 	}
-	if ok := updateTracker.WaitIdle(msgCtx, sessionDoneSettleWindow, sessionDoneMaxWait); !ok {
-		log.Printf("[ws] session.done.wait_timeout root=%s session=%s request=%s", rootID, key, requestID)
-	}
-	log.Printf("[ws] session.done root=%s session=%s request=%s", rootID, key, requestID)
-	h.AppContext.BroadcastSessionDone(rootID, key, requestID)
 	h.startNextQueuedSessionMessage(rootID, key)
 }
 
@@ -1182,17 +1138,6 @@ func (h *WSHandler) sendWSError(conn *websocket.Conn, clientID, id, code, messag
 		Payload: map[string]any{},
 	}
 	_ = h.writeWSJSON(clientID, conn, resp)
-}
-
-func (h *WSHandler) sendE2EEError(conn *websocket.Conn, id, code string) {
-	resp := WSResponse{
-		ID:   id,
-		Type: "e2ee.error",
-		Payload: map[string]any{
-			"code": code,
-		},
-	}
-	_ = h.writeWSJSON("", conn, resp)
 }
 
 func (h *WSHandler) sendWSAccepted(conn *websocket.Conn, clientID, requestID, rootID, sessionKey string) {

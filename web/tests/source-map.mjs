@@ -147,7 +147,6 @@ export const MODULES = {
   "src/services/nodeRegistry.ts": ["src/services/net/nodeRegistry.ts"],
   "src/services/prefix.ts": ["src/services/net/prefix.ts"],
   "src/services/rootNode.ts": ["src/services/net/rootNode.ts"],
-  "src/services/e2ee.ts": ["src/services/net/e2ee.ts"],
   "src/services/authGate.ts": ["src/services/net/authGate.ts"],
   "src/services/error.ts": ["src/services/net/error.ts"],
   "src/services/bootstrap.ts": ["src/services/net/bootstrap.ts"],

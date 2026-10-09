@@ -1,11 +1,8 @@
 package api
 
 import (
-	"bytes"
 	"context"
-	"crypto/rand"
 	"crypto/subtle"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -30,13 +27,11 @@ import (
 	agenttypes "mindfs/server/internal/agent/types"
 	"mindfs/server/internal/api/usecase"
 	"mindfs/server/internal/commandexec"
-	"mindfs/server/internal/e2ee"
 	"mindfs/server/internal/fs"
 	"mindfs/server/internal/githubimport"
 	"mindfs/server/internal/gitview"
 	"mindfs/server/internal/nodeinfo"
 	"mindfs/server/internal/preferences"
-	"mindfs/server/internal/relay"
 	"mindfs/server/internal/session"
 
 	"github.com/go-chi/chi/v5"
@@ -53,12 +48,6 @@ type HTTPHandler struct {
 	NodeRole nodeinfo.Role
 }
 
-type protectedResponseWriter struct {
-	http.ResponseWriter
-	status int
-	body   bytes.Buffer
-}
-
 const (
 	maxUploadRequestBytes = 64 << 20
 	maxUploadFileCount    = 20
@@ -66,159 +55,14 @@ const (
 	multiRootSessionLimit = 6
 	childSessionPageSize  = 20
 	childSessionMaxLimit  = 50
-	e2eeHeaderName        = "X-MindFS-E2EE"
 	clientIDHeaderName    = "X-MindFS-Client-ID"
-	e2eeProofHeaderName   = "X-MindFS-Proof"
-	e2eeTSHeaderName      = "X-MindFS-TS"
 	localCLIHeaderName    = "X-MindFS-Local-CLI-Token"
-	requestProofMaxSkew   = 5 * time.Minute
 )
 
 var indexResourceRefPattern = regexp.MustCompile(`(?i)\b(?:src|href)\s*=\s*["']([^"']+)["']`)
 
 func (h *HTTPHandler) service() *usecase.Service {
 	return &usecase.Service{Registry: h.AppContext}
-}
-
-func (h *HTTPHandler) requireProtectedHTTPSession(r *http.Request) (*e2ee.Session, bool, error) {
-	manager := h.AppContext.GetE2EEManager()
-	if manager == nil || !manager.Enabled() {
-		return nil, false, nil
-	}
-	if strings.TrimSpace(r.Header.Get(e2eeHeaderName)) == "" {
-		return nil, true, errInvalidRequest("e2ee_required")
-	}
-	clientID := strings.TrimSpace(r.Header.Get(clientIDHeaderName))
-	if clientID == "" {
-		return nil, true, errInvalidRequest("client_id required")
-	}
-	sess, err := manager.SessionForClient(clientID)
-	if err != nil {
-		return nil, true, errInvalidRequest(err.Error())
-	}
-	return sess, true, nil
-}
-
-func (h *HTTPHandler) requireRequestProof(r *http.Request) (*e2ee.Session, error) {
-	manager := h.AppContext.GetE2EEManager()
-	if manager == nil || !manager.Enabled() {
-		return nil, nil
-	}
-	clientID := strings.TrimSpace(r.Header.Get(clientIDHeaderName))
-	ts := strings.TrimSpace(r.Header.Get(e2eeTSHeaderName))
-	proof := strings.TrimSpace(r.Header.Get(e2eeProofHeaderName))
-	if clientID == "" || ts == "" || proof == "" {
-		return nil, errInvalidRequest("e2ee_proof_required")
-	}
-	sess, err := manager.SessionForClient(clientID)
-	if err != nil {
-		return nil, errInvalidRequest(err.Error())
-	}
-	timestamp, err := time.Parse(time.RFC3339, ts)
-	if err != nil {
-		return nil, errInvalidRequest("invalid_e2ee_ts")
-	}
-	now := time.Now().UTC()
-	if timestamp.Before(now.Add(-requestProofMaxSkew)) || timestamp.After(now.Add(requestProofMaxSkew)) {
-		return nil, errInvalidRequest("e2ee_proof_expired")
-	}
-	expected := e2ee.BuildRequestProof(sess.Key, r.Method, requestProofPath(r), ts, clientID)
-	if !e2ee.VerifyProof(expected, proof) {
-		return nil, errInvalidRequest("e2ee_proof_invalid")
-	}
-	return sess, nil
-}
-
-func requestProofPath(r *http.Request) string {
-	if r == nil || r.URL == nil {
-		return ""
-	}
-	path := OriginalPath(r)
-	if r.URL.RawQuery == "" {
-		return path
-	}
-	return path + "?" + r.URL.RawQuery
-}
-
-func writeProtectedJSON(w http.ResponseWriter, status int, key []byte, value any) error {
-	envelope, err := e2ee.EncryptJSON(key, value)
-	if err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set(e2eeHeaderName, "1")
-	w.WriteHeader(status)
-	return json.NewEncoder(w).Encode(envelope)
-}
-
-func (w *protectedResponseWriter) Header() http.Header {
-	return w.ResponseWriter.Header()
-}
-
-func (w *protectedResponseWriter) WriteHeader(status int) {
-	w.status = status
-}
-
-func (w *protectedResponseWriter) Write(payload []byte) (int, error) {
-	if w.status == 0 {
-		w.status = http.StatusOK
-	}
-	return w.body.Write(payload)
-}
-
-func (h *HTTPHandler) protectedEndpoint(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if h.isLocalCLIRequest(r) {
-			next(w, r)
-			return
-		}
-		sess, protected, err := h.requireProtectedHTTPSession(r)
-		if !protected {
-			next(w, r)
-			return
-		}
-		if err != nil {
-			respondError(w, http.StatusUnauthorized, err)
-			return
-		}
-		sess, err = h.requireRequestProof(r)
-		if err != nil {
-			respondError(w, http.StatusUnauthorized, err)
-			return
-		}
-		if r.Body != nil && r.ContentLength != 0 && r.Method != http.MethodGet && r.Method != http.MethodHead {
-			var envelope e2ee.CipherEnvelope
-			if err := json.NewDecoder(io.LimitReader(r.Body, maxUploadRequestBytes)).Decode(&envelope); err != nil {
-				respondError(w, http.StatusBadRequest, errInvalidRequest("invalid protected payload"))
-				return
-			}
-			plaintext, err := e2ee.DecryptBytes(sess.Key, &envelope)
-			if err != nil {
-				respondError(w, http.StatusBadRequest, errInvalidRequest("e2ee_proof_invalid"))
-				return
-			}
-			r.Body = io.NopCloser(bytes.NewReader(plaintext))
-			r.ContentLength = int64(len(plaintext))
-		}
-		recorder := &protectedResponseWriter{ResponseWriter: w}
-		next(recorder, r)
-		if recorder.status == 0 {
-			recorder.status = http.StatusOK
-		}
-		if recorder.status == http.StatusNoContent || recorder.status == http.StatusNotModified || recorder.body.Len() == 0 {
-			w.WriteHeader(recorder.status)
-			return
-		}
-		var payload any
-		if err := json.Unmarshal(recorder.body.Bytes(), &payload); err != nil {
-			respondError(w, http.StatusServiceUnavailable, err)
-			return
-		}
-		if err := writeProtectedJSON(w, recorder.status, sess.Key, payload); err != nil {
-			respondError(w, http.StatusServiceUnavailable, err)
-			return
-		}
-	}
 }
 
 func (h *HTTPHandler) isLocalCLIRequest(r *http.Request) bool {
@@ -250,7 +94,7 @@ func isLocalCLIPath(r *http.Request) bool {
 			return true
 		}
 	}
-	if r.Method == http.MethodGet && (r.URL.Path == "/api/agents" || r.URL.Path == "/api/task-templates" || r.URL.Path == "/api/tasks" || r.URL.Path == "/api/relay/status") {
+	if r.Method == http.MethodGet && (r.URL.Path == "/api/agents" || r.URL.Path == "/api/task-templates" || r.URL.Path == "/api/tasks") {
 		return true
 	}
 	if r.Method == http.MethodPost && r.URL.Path == "/api/tasks" {
@@ -261,7 +105,7 @@ func isLocalCLIPath(r *http.Request) bool {
 	}
 	switch r.Method {
 	case http.MethodPost:
-		return r.URL.Path == "/api/dirs" || r.URL.Path == "/api/relay/bind/start" || isLocalCLITaskPath(r.URL.Path)
+		return r.URL.Path == "/api/dirs" || isLocalCLITaskPath(r.URL.Path)
 	case http.MethodDelete:
 		return r.URL.Path == "/api/dirs"
 	case http.MethodGet:
@@ -305,35 +149,31 @@ func (h *HTTPHandler) corsMiddleware(next http.Handler) http.Handler {
 		origin := strings.TrimSpace(r.Header.Get("Origin"))
 		shouldEmit := false
 		emitOrigin := origin
-		if manager := h.AppContext.GetE2EEManager(); manager != nil && manager.Enabled() {
+		prefs := h.AppContext.GetPreferences()
+		mode := ""
+		if prefs != nil {
+			mode = prefs.CORSMode()
+		}
+		if mode == "" {
+			mode = "open"
+		}
+		mode = strings.ToLower(strings.TrimSpace(mode))
+		switch mode {
+		case "open", "auto", "allow_all", "all", "*":
 			shouldEmit = origin != ""
-		} else {
-			prefs := h.AppContext.GetPreferences()
-			mode := ""
-			if prefs != nil {
-				mode = prefs.CORSMode()
-			}
-			if mode == "" {
-				mode = "open"
-			}
-			mode = strings.ToLower(strings.TrimSpace(mode))
-			switch mode {
-			case "open", "auto", "allow_all", "all", "*":
-				shouldEmit = origin != ""
-			case "allowlist", "whitelist":
-				shouldEmit = prefs != nil && prefs.IsCORSOriginAllowed(origin)
-			case "disabled", "off", "closed", "same_origin":
-				shouldEmit = false
-			default:
-				shouldEmit = origin != ""
-			}
+		case "allowlist", "whitelist":
+			shouldEmit = prefs != nil && prefs.IsCORSOriginAllowed(origin)
+		case "disabled", "off", "closed", "same_origin":
+			shouldEmit = false
+		default:
+			shouldEmit = origin != ""
 		}
 		if shouldEmit && emitOrigin != "" {
 			w.Header().Set("Access-Control-Allow-Origin", emitOrigin)
 			w.Header().Set("Vary", "Origin")
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-MindFS-E2EE, X-MindFS-Client-ID, X-MindFS-Proof, X-MindFS-TS, X-MindFS-Local-CLI-Token, Authorization, X-Requested-With")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-MindFS-Client-ID, X-MindFS-Local-CLI-Token, Authorization, X-Requested-With")
 			w.Header().Set("Access-Control-Max-Age", "86400")
 			w.Header().Set("Access-Control-Allow-Private-Network", "true")
 		}
@@ -360,8 +200,8 @@ func (h *HTTPHandler) Routes() http.Handler {
 	// 角色自述：前端靠它知道对面提不提供 UI（static=false 就不给「打开网页」入口）。
 	// 它自己也在控制面前缀表里，所以 worker 上这个端点是 403 —— 前端据此
 	// 「探测失败 = 没有 UI」，与「节点挂了」区分开。
-	r.Get("/api/node-info", h.protectedEndpoint(h.handleNodeInfo))
-	// 主页面登录 + 账户管理：公开端点，不参与 protectedEndpoint / e2ee。
+	r.Get("/api/node-info", h.handleNodeInfo)
+	// 主页面登录 + 账户管理：公开端点。
 	r.Get("/api/auth/status", h.handleAuthStatus)
 	r.Post("/api/auth/login", h.handleAuthLogin)
 	r.Get("/api/users", h.handleUsersList)
@@ -369,148 +209,139 @@ func (h *HTTPHandler) Routes() http.Handler {
 	r.Put("/api/users/{id}", h.handleUserUpdate)
 	r.Post("/api/users/{id}/primary", h.handleUserSetPrimary)
 	r.Delete("/api/users/{id}", h.handleUserDelete)
-	r.Get("/api/tree", h.protectedEndpoint(h.handleTree))
+	r.Get("/api/tree", h.handleTree)
 	r.Get("/api/file", h.handleFile)
-	r.Put("/api/file", h.protectedEndpoint(h.handleFileSave))
-	r.Post("/api/file", h.protectedEndpoint(h.handleFileCreate))
-	r.Post("/api/file/operation", h.protectedEndpoint(h.handleFileOperation))
-	r.Get("/api/git/status", h.protectedEndpoint(h.handleGitStatus))
-	r.Get("/api/git/diff", h.protectedEndpoint(h.handleGitDiff))
-	r.Get("/api/git/history", h.protectedEndpoint(h.handleGitHistory))
-	r.Get("/api/git/commit/files", h.protectedEndpoint(h.handleGitCommitFiles))
-	r.Get("/api/git/commit/diff", h.protectedEndpoint(h.handleGitCommitDiff))
-	r.Get("/api/git/related-file/diff", h.protectedEndpoint(h.handleGitRelatedFileDiff))
+	r.Put("/api/file", h.handleFileSave)
+	r.Post("/api/file", h.handleFileCreate)
+	r.Post("/api/file/operation", h.handleFileOperation)
+	r.Get("/api/git/status", h.handleGitStatus)
+	r.Get("/api/git/diff", h.handleGitDiff)
+	r.Get("/api/git/history", h.handleGitHistory)
+	r.Get("/api/git/commit/files", h.handleGitCommitFiles)
+	r.Get("/api/git/commit/diff", h.handleGitCommitDiff)
+	r.Get("/api/git/related-file/diff", h.handleGitRelatedFileDiff)
 	// 批量版：一次拿回 N 个关联文件的 status/additions/deletions，不取 diff 正文。
 	// 用 POST 是因为 80 个路径塞不进 URL；单文件那条 GET 仍然保留（点开看 diff 要正文）。
-	r.Post("/api/git/related-files/stats", h.protectedEndpoint(h.handleGitRelatedFileStats))
-	r.Get("/api/git/branches", h.protectedEndpoint(h.handleGitBranches))
-	r.Get("/api/git/worktrees", h.protectedEndpoint(h.handleGitWorktreeList))
-	r.Post("/api/git/checkout", h.protectedEndpoint(h.handleGitCheckout))
-	r.Post("/api/git/pull", h.protectedEndpoint(h.handleGitPull))
-	r.Post("/api/git/push", h.protectedEndpoint(h.handleGitPush))
-	r.Post("/api/git/commit", h.protectedEndpoint(h.handleGitCommit))
-	r.Post("/api/git/stage", h.protectedEndpoint(h.handleGitStage))
-	r.Post("/api/git/unstage", h.protectedEndpoint(h.handleGitUnstage))
-	r.Post("/api/git/discard", h.protectedEndpoint(h.handleGitDiscard))
-	r.Post("/api/git/worktrees", h.protectedEndpoint(h.handleGitWorktreeCreate))
-	r.Delete("/api/git/worktrees", h.protectedEndpoint(h.handleGitWorktreeRemove))
+	r.Post("/api/git/related-files/stats", h.handleGitRelatedFileStats)
+	r.Get("/api/git/branches", h.handleGitBranches)
+	r.Get("/api/git/worktrees", h.handleGitWorktreeList)
+	r.Post("/api/git/checkout", h.handleGitCheckout)
+	r.Post("/api/git/pull", h.handleGitPull)
+	r.Post("/api/git/push", h.handleGitPush)
+	r.Post("/api/git/commit", h.handleGitCommit)
+	r.Post("/api/git/stage", h.handleGitStage)
+	r.Post("/api/git/unstage", h.handleGitUnstage)
+	r.Post("/api/git/discard", h.handleGitDiscard)
+	r.Post("/api/git/worktrees", h.handleGitWorktreeCreate)
+	r.Delete("/api/git/worktrees", h.handleGitWorktreeRemove)
 	r.Post("/api/upload", h.handleUpload)
-	r.Get("/api/candidates", h.protectedEndpoint(h.handleCandidates))
-	r.Post("/api/prompts", h.protectedEndpoint(h.handlePromptSave))
-	r.Delete("/api/prompts", h.protectedEndpoint(h.handlePromptDelete))
-	r.Get("/api/sessions", h.protectedEndpoint(h.handleSessions))
-	r.Get("/api/preferences/session-naming", h.protectedEndpoint(h.handleSessionNamingPreferenceGet))
-	r.Put("/api/preferences/session-naming", h.protectedEndpoint(h.handleSessionNamingPreferencePut))
-	r.Get("/api/preferences/idle-session-resource-release", h.protectedEndpoint(h.handleIdleSessionResourceReleasePreferenceGet))
-	r.Put("/api/preferences/idle-session-resource-release", h.protectedEndpoint(h.handleIdleSessionResourceReleasePreferencePut))
-	r.Get("/api/agents/memory", h.protectedEndpoint(h.handleAgentMemoryGet))
-	r.Post("/api/agents/release-idle", h.protectedEndpoint(h.handleAgentIdleRelease))
-	r.Get("/api/preferences/new-project-meta-location", h.protectedEndpoint(h.handleNewProjectMetaLocationPreferenceGet))
-	r.Put("/api/preferences/new-project-meta-location", h.protectedEndpoint(h.handleNewProjectMetaLocationPreferencePut))
-	r.Get("/api/preferences/cors", h.protectedEndpoint(h.handleCORSPreferenceGet))
-	r.Put("/api/preferences/cors", h.protectedEndpoint(h.handleCORSPreferencePut))
+	r.Get("/api/candidates", h.handleCandidates)
+	r.Post("/api/prompts", h.handlePromptSave)
+	r.Delete("/api/prompts", h.handlePromptDelete)
+	r.Get("/api/sessions", h.handleSessions)
+	r.Get("/api/preferences/session-naming", h.handleSessionNamingPreferenceGet)
+	r.Put("/api/preferences/session-naming", h.handleSessionNamingPreferencePut)
+	r.Get("/api/preferences/idle-session-resource-release", h.handleIdleSessionResourceReleasePreferenceGet)
+	r.Put("/api/preferences/idle-session-resource-release", h.handleIdleSessionResourceReleasePreferencePut)
+	r.Get("/api/agents/memory", h.handleAgentMemoryGet)
+	r.Post("/api/agents/release-idle", h.handleAgentIdleRelease)
+	r.Get("/api/preferences/new-project-meta-location", h.handleNewProjectMetaLocationPreferenceGet)
+	r.Put("/api/preferences/new-project-meta-location", h.handleNewProjectMetaLocationPreferencePut)
+	r.Get("/api/preferences/cors", h.handleCORSPreferenceGet)
+	r.Put("/api/preferences/cors", h.handleCORSPreferencePut)
 	// 置顶是控制面：权威在主节点，worker 上 403（nodeinfo 前缀表含 /api/pins）。
-	r.Get("/api/pins", h.protectedEndpoint(h.handlePinsGet))
-	r.Put("/api/pins/project", h.protectedEndpoint(h.handlePinsProjectPut))
-	r.Put("/api/pins/session", h.protectedEndpoint(h.handlePinsSessionPut))
-	r.Get("/api/replying-sessions", h.protectedEndpoint(h.handleReplyingSessions))
-	r.Get("/api/sessions/search", h.protectedEndpoint(h.handleSessionSearch))
-	r.Get("/api/sessions/children", h.protectedEndpoint(h.handleSessionChildren))
-	r.Get("/api/sessions/external", h.protectedEndpoint(h.handleExternalSessionsList))
-	r.Post("/api/sessions/import", h.protectedEndpoint(h.handleExternalSessionImport))
-	r.Post("/api/sessions/import/batch", h.protectedEndpoint(h.handleExternalSessionImportBatch))
-	r.Post("/api/sessions/fork", h.protectedEndpoint(h.handleSessionFork))
-	r.Post("/api/sessions/{key}/repoint", h.protectedEndpoint(h.handleSessionRepoint))
+	r.Get("/api/pins", h.handlePinsGet)
+	r.Put("/api/pins/project", h.handlePinsProjectPut)
+	r.Put("/api/pins/session", h.handlePinsSessionPut)
+	r.Get("/api/replying-sessions", h.handleReplyingSessions)
+	r.Get("/api/sessions/search", h.handleSessionSearch)
+	r.Get("/api/sessions/children", h.handleSessionChildren)
+	r.Get("/api/sessions/external", h.handleExternalSessionsList)
+	r.Post("/api/sessions/import", h.handleExternalSessionImport)
+	r.Post("/api/sessions/import/batch", h.handleExternalSessionImportBatch)
+	r.Post("/api/sessions/fork", h.handleSessionFork)
+	r.Post("/api/sessions/{key}/repoint", h.handleSessionRepoint)
 	// 无 path 参数的同一操作：给 wt-finish 这类只有 CLAUDE_CODE_SESSION_ID 的脚本用，
 	// body 里带 agent_session_id，服务端反查 mindfs 会话。
-	r.Post("/api/sessions/repoint", h.protectedEndpoint(h.handleSessionRepoint))
-	r.Get("/api/sessions/{key}/toolcalls/{callID}", h.protectedEndpoint(h.handleSessionToolCallGet))
-	r.Post("/api/sessions/{key}/sync", h.protectedEndpoint(h.handleSessionSync))
-	r.Get("/api/sessions/{key}", h.protectedEndpoint(h.handleSessionGet))
-	r.Post("/api/sessions/{key}/messages", h.protectedEndpoint(h.handleSessionUserMessage))
-	r.Get("/api/sessions/{key}/audit", h.protectedEndpoint(h.handleSessionAudit))
-	r.Get("/api/sessions/{key}/related-files", h.protectedEndpoint(h.handleSessionRelatedFilesGet))
-	r.Post("/api/sessions/{key}/pin", h.protectedEndpoint(h.handleSessionPin))
-	r.Post("/api/sessions/{key}/archive", h.protectedEndpoint(h.handleSessionArchive))
-	r.Post("/api/sessions/{key}/rename", h.protectedEndpoint(h.handleSessionRename))
-	r.Delete("/api/sessions/{key}/related-files", h.protectedEndpoint(h.handleSessionRelatedFilesDelete))
-	r.Delete("/api/sessions/{key}", h.protectedEndpoint(h.handleSessionDelete))
-	r.Get("/api/scheduled-agent-tasks", h.protectedEndpoint(h.handleScheduledAgentTasksList))
-	r.Post("/api/scheduled-agent-tasks", h.protectedEndpoint(h.handleScheduledAgentTaskCreate))
-	r.Put("/api/scheduled-agent-tasks/{id}", h.protectedEndpoint(h.handleScheduledAgentTaskUpdate))
-	r.Delete("/api/scheduled-agent-tasks/{id}", h.protectedEndpoint(h.handleScheduledAgentTaskDelete))
-	r.Post("/api/scheduled-agent-tasks/{id}/run", h.protectedEndpoint(h.handleScheduledAgentTaskRun))
-	r.Get("/api/task-stage-templates", h.protectedEndpoint(h.handleTaskStageTemplatesList))
-	r.Post("/api/task-stage-templates", h.protectedEndpoint(h.handleTaskStageTemplateSave))
-	r.Delete("/api/task-stage-templates/{id}", h.protectedEndpoint(h.handleTaskStageTemplateDelete))
-	r.Get("/api/task-templates", h.protectedEndpoint(h.handleTaskTemplatesList))
-	r.Post("/api/task-templates", h.protectedEndpoint(h.handleTaskTemplateSave))
-	r.Put("/api/task-templates/{id}", h.protectedEndpoint(h.handleTaskTemplateSave))
-	r.Delete("/api/task-templates/{id}", h.protectedEndpoint(h.handleTaskTemplateDelete))
-	r.Get("/api/tasks", h.protectedEndpoint(h.handleKanbanTasksList))
-	r.Get("/api/tasks/overview", h.protectedEndpoint(h.handleKanbanTasksOverview))
-	r.Post("/api/tasks", h.protectedEndpoint(h.handleKanbanTaskCreate))
-	r.Post("/api/tasks/{id}/input", h.protectedEndpoint(h.handleKanbanTaskInputUpdate))
-	r.Post("/api/tasks/{id}/rename", h.protectedEndpoint(h.handleKanbanTaskRename))
-	r.Post("/api/tasks/{id}/add-stage", h.protectedEndpoint(h.handleKanbanTaskAddStage))
-	r.Post("/api/tasks/{id}/update-stage", h.protectedEndpoint(h.handleKanbanTaskUpdateStage))
-	r.Post("/api/tasks/{id}/remove-stage", h.protectedEndpoint(h.handleKanbanTaskRemoveStage))
-	r.Post("/api/tasks/{id}/rerun", h.protectedEndpoint(h.handleKanbanTaskRerun))
-	r.Post("/api/tasks/{id}/next", h.protectedEndpoint(h.handleKanbanTaskNext))
-	r.Post("/api/tasks/{id}/run-now", h.protectedEndpoint(h.handleKanbanTaskRunNow))
-	r.Post("/api/tasks/{id}/pause", h.protectedEndpoint(h.handleKanbanTaskPause))
-	r.Post("/api/tasks/{id}/resume", h.protectedEndpoint(h.handleKanbanTaskResume))
-	r.Post("/api/tasks/{id}/complete", h.protectedEndpoint(h.handleKanbanTaskComplete))
-	r.Post("/api/tasks/{id}/cancel", h.protectedEndpoint(h.handleKanbanTaskCancel))
-	r.Post("/api/tasks/{id}/fail", h.protectedEndpoint(h.handleKanbanTaskFail))
-	r.Delete("/api/tasks/{id}", h.protectedEndpoint(h.handleKanbanTaskDelete))
-	r.Post("/api/tasks/{id}/rebuild-worktree", h.protectedEndpoint(h.handleKanbanTaskRebuildWorktree))
-	r.Post("/api/tasks/{id}/finish-worktree", h.protectedEndpoint(h.handleKanbanTaskFinishWorktree))
-	r.Post("/api/tasks/{id}/begin-finish", h.protectedEndpoint(h.handleKanbanTaskBeginFinish))
-	r.Get("/api/dirs", h.protectedEndpoint(h.handleDirs))
-	r.Post("/api/dirs", h.protectedEndpoint(h.handleAddDir))
-	r.Post("/api/dirs/{id}/rename", h.protectedEndpoint(h.handleRenameDir))
-	r.Post("/api/dirs/{id}/display-name", h.protectedEndpoint(h.handleUpdateDirDisplayName))
-	r.Delete("/api/dirs", h.protectedEndpoint(h.handleRemoveDir))
-	r.Get("/api/nodes", h.protectedEndpoint(h.handleNodesList))
-	r.Put("/api/nodes", h.protectedEndpoint(h.handleNodesPut))
-	r.Post("/api/nodes", h.protectedEndpoint(h.handleNodesPost))
-	r.Delete("/api/nodes/{id}", h.protectedEndpoint(h.handleNodesDelete))
-	r.Get("/api/local_dirs", h.protectedEndpoint(h.handleLocalDirs))
-	r.Get("/api/relay/status", h.handleRelayStatus)
-	r.Post("/api/relay/bind/start", h.protectedEndpoint(h.handleRelayBindStart))
-	r.Get("/api/token-station/userinfo", h.protectedEndpoint(h.handleTokenStationUserInfo))
-	r.Post("/api/token-station/bind/start", h.protectedEndpoint(h.handleTokenStationBindStart))
-	r.Get("/api/relay/tips", h.protectedEndpoint(h.handleRelayTips))
-	r.Get("/api/relay/services", h.protectedEndpoint(h.handleRelayServicesList))
-	r.Post("/api/relay/services", h.protectedEndpoint(h.handleRelayServiceSave))
-	r.Delete("/api/relay/services/{slug}", h.protectedEndpoint(h.handleRelayServiceDelete))
-	r.Post("/api/e2ee/open", h.handleE2EEOpen)
-	r.Get("/api/app/update", h.protectedEndpoint(h.handleAppUpdateGet))
-	r.Post("/api/app/update", h.protectedEndpoint(h.handleAppUpdatePost))
-	r.Post("/api/imports/github", h.protectedEndpoint(h.handleGitHubImportStart))
-	r.Get("/api/web-push/status", h.protectedEndpoint(h.handleWebPushStatus))
-	r.Post("/api/web-push/subscriptions", h.protectedEndpoint(h.handleWebPushSubscriptionSave))
-	r.Delete("/api/web-push/subscriptions", h.protectedEndpoint(h.handleWebPushSubscriptionDelete))
-	r.Post("/api/web-push/test", h.protectedEndpoint(h.handleWebPushTest))
+	r.Post("/api/sessions/repoint", h.handleSessionRepoint)
+	r.Get("/api/sessions/{key}/toolcalls/{callID}", h.handleSessionToolCallGet)
+	r.Post("/api/sessions/{key}/sync", h.handleSessionSync)
+	r.Get("/api/sessions/{key}", h.handleSessionGet)
+	r.Post("/api/sessions/{key}/messages", h.handleSessionUserMessage)
+	r.Get("/api/sessions/{key}/audit", h.handleSessionAudit)
+	r.Get("/api/sessions/{key}/related-files", h.handleSessionRelatedFilesGet)
+	r.Post("/api/sessions/{key}/pin", h.handleSessionPin)
+	r.Post("/api/sessions/{key}/archive", h.handleSessionArchive)
+	r.Post("/api/sessions/{key}/rename", h.handleSessionRename)
+	r.Delete("/api/sessions/{key}/related-files", h.handleSessionRelatedFilesDelete)
+	r.Delete("/api/sessions/{key}", h.handleSessionDelete)
+	r.Get("/api/scheduled-agent-tasks", h.handleScheduledAgentTasksList)
+	r.Post("/api/scheduled-agent-tasks", h.handleScheduledAgentTaskCreate)
+	r.Put("/api/scheduled-agent-tasks/{id}", h.handleScheduledAgentTaskUpdate)
+	r.Delete("/api/scheduled-agent-tasks/{id}", h.handleScheduledAgentTaskDelete)
+	r.Post("/api/scheduled-agent-tasks/{id}/run", h.handleScheduledAgentTaskRun)
+	r.Get("/api/task-stage-templates", h.handleTaskStageTemplatesList)
+	r.Post("/api/task-stage-templates", h.handleTaskStageTemplateSave)
+	r.Delete("/api/task-stage-templates/{id}", h.handleTaskStageTemplateDelete)
+	r.Get("/api/task-templates", h.handleTaskTemplatesList)
+	r.Post("/api/task-templates", h.handleTaskTemplateSave)
+	r.Put("/api/task-templates/{id}", h.handleTaskTemplateSave)
+	r.Delete("/api/task-templates/{id}", h.handleTaskTemplateDelete)
+	r.Get("/api/tasks", h.handleKanbanTasksList)
+	r.Get("/api/tasks/overview", h.handleKanbanTasksOverview)
+	r.Post("/api/tasks", h.handleKanbanTaskCreate)
+	r.Post("/api/tasks/{id}/input", h.handleKanbanTaskInputUpdate)
+	r.Post("/api/tasks/{id}/rename", h.handleKanbanTaskRename)
+	r.Post("/api/tasks/{id}/add-stage", h.handleKanbanTaskAddStage)
+	r.Post("/api/tasks/{id}/update-stage", h.handleKanbanTaskUpdateStage)
+	r.Post("/api/tasks/{id}/remove-stage", h.handleKanbanTaskRemoveStage)
+	r.Post("/api/tasks/{id}/rerun", h.handleKanbanTaskRerun)
+	r.Post("/api/tasks/{id}/next", h.handleKanbanTaskNext)
+	r.Post("/api/tasks/{id}/run-now", h.handleKanbanTaskRunNow)
+	r.Post("/api/tasks/{id}/pause", h.handleKanbanTaskPause)
+	r.Post("/api/tasks/{id}/resume", h.handleKanbanTaskResume)
+	r.Post("/api/tasks/{id}/complete", h.handleKanbanTaskComplete)
+	r.Post("/api/tasks/{id}/cancel", h.handleKanbanTaskCancel)
+	r.Post("/api/tasks/{id}/fail", h.handleKanbanTaskFail)
+	r.Delete("/api/tasks/{id}", h.handleKanbanTaskDelete)
+	r.Post("/api/tasks/{id}/rebuild-worktree", h.handleKanbanTaskRebuildWorktree)
+	r.Post("/api/tasks/{id}/finish-worktree", h.handleKanbanTaskFinishWorktree)
+	r.Post("/api/tasks/{id}/begin-finish", h.handleKanbanTaskBeginFinish)
+	r.Get("/api/dirs", h.handleDirs)
+	r.Post("/api/dirs", h.handleAddDir)
+	r.Post("/api/dirs/{id}/rename", h.handleRenameDir)
+	r.Post("/api/dirs/{id}/display-name", h.handleUpdateDirDisplayName)
+	r.Delete("/api/dirs", h.handleRemoveDir)
+	r.Get("/api/nodes", h.handleNodesList)
+	r.Put("/api/nodes", h.handleNodesPut)
+	r.Post("/api/nodes", h.handleNodesPost)
+	r.Delete("/api/nodes/{id}", h.handleNodesDelete)
+	r.Get("/api/local_dirs", h.handleLocalDirs)
+	r.Get("/api/app/update", h.handleAppUpdateGet)
+	r.Post("/api/app/update", h.handleAppUpdatePost)
+	r.Post("/api/imports/github", h.handleGitHubImportStart)
+	r.Get("/api/web-push/status", h.handleWebPushStatus)
+	r.Post("/api/web-push/subscriptions", h.handleWebPushSubscriptionSave)
+	r.Delete("/api/web-push/subscriptions", h.handleWebPushSubscriptionDelete)
+	r.Post("/api/web-push/test", h.handleWebPushTest)
 
 	// Agent status API
-	r.Get("/api/agents", h.protectedEndpoint(h.handleAgentsList))
-	r.Post("/api/agents/restart", h.protectedEndpoint(h.handleAgentRestart))
-	r.Get("/api/agents/codex/rate-limits", h.protectedEndpoint(h.handleCodexRateLimitsGet))
-	r.Post("/api/agents/codex/rate-limit-reset", h.protectedEndpoint(h.handleCodexRateLimitReset))
-	r.Get("/api/agent-config/defaults", h.protectedEndpoint(h.handleAgentConfigDefaults))
-	r.Get("/api/agent-config/backups", h.protectedEndpoint(h.handleAgentConfigBackupsList))
-	r.Post("/api/agent-config/backups", h.protectedEndpoint(h.handleAgentConfigBackupCreate))
-	r.Delete("/api/agent-config/backups", h.protectedEndpoint(h.handleAgentConfigBackupDelete))
-	r.Post("/api/agent-config/switch", h.protectedEndpoint(h.handleAgentConfigSwitch))
-	r.Get("/api/agent-api-providers", h.protectedEndpoint(h.handleAgentAPIProvidersList))
-	r.Post("/api/agent-api-providers", h.protectedEndpoint(h.handleAgentAPIProviderCreate))
-	r.Post("/api/agent-api-providers/sync", h.protectedEndpoint(h.handleAgentAPIProvidersSync))
-	r.Post("/api/agent-api-providers/sync-all", h.protectedEndpoint(h.handleAgentAPIProvidersSyncAll))
-	r.Post("/api/agent-api-providers/test", h.protectedEndpoint(h.handleAgentAPIProviderTest))
-	r.Delete("/api/agent-api-providers", h.protectedEndpoint(h.handleAgentAPIProviderDelete))
-	r.Post("/api/agent-api-providers/switch", h.protectedEndpoint(h.handleAgentAPIProviderSwitch))
+	r.Get("/api/agents", h.handleAgentsList)
+	r.Post("/api/agents/restart", h.handleAgentRestart)
+	r.Get("/api/agents/codex/rate-limits", h.handleCodexRateLimitsGet)
+	r.Post("/api/agents/codex/rate-limit-reset", h.handleCodexRateLimitReset)
+	r.Get("/api/agent-config/defaults", h.handleAgentConfigDefaults)
+	r.Get("/api/agent-config/backups", h.handleAgentConfigBackupsList)
+	r.Post("/api/agent-config/backups", h.handleAgentConfigBackupCreate)
+	r.Delete("/api/agent-config/backups", h.handleAgentConfigBackupDelete)
+	r.Post("/api/agent-config/switch", h.handleAgentConfigSwitch)
+	r.Get("/api/agent-api-providers", h.handleAgentAPIProvidersList)
+	r.Post("/api/agent-api-providers", h.handleAgentAPIProviderCreate)
+	r.Post("/api/agent-api-providers/sync", h.handleAgentAPIProvidersSync)
+	r.Post("/api/agent-api-providers/sync-all", h.handleAgentAPIProvidersSyncAll)
+	r.Post("/api/agent-api-providers/test", h.handleAgentAPIProviderTest)
+	r.Delete("/api/agent-api-providers", h.handleAgentAPIProviderDelete)
+	r.Post("/api/agent-api-providers/switch", h.handleAgentAPIProviderSwitch)
 	r.NotFound(h.handleNotFound)
 
 	return r
@@ -1988,10 +1819,6 @@ func (h *HTTPHandler) handleFrontend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if h.shouldRewriteRelayedAssets(r) {
-		w.Write([]byte(rewriteRelayedFrontendContent(indexHTML)))
-		return
-	}
 	w.Write([]byte(renderFallbackFrontend(indexHTML, frontendAssetMissingNotice(r.URL.Path))))
 }
 
@@ -2033,10 +1860,6 @@ func (h *HTTPHandler) serveStaticAsset(w http.ResponseWriter, r *http.Request) b
 			h.serveFrontendIndex(w, r, staticDir, assetPath)
 			return true
 		}
-		if h.shouldRewriteRelayedAssets(r) && shouldRewriteRelayedStaticAsset(cleanPath) {
-			serveRewrittenStaticAsset(w, r, assetPath)
-			return true
-		}
 		http.ServeFile(w, r, assetPath)
 		return true
 	}
@@ -2066,11 +1889,6 @@ func (h *HTTPHandler) serveFrontendIndex(w http.ResponseWriter, r *http.Request,
 	if missing := missingFrontendIndexResource(staticDir, content); missing != "" {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Write([]byte(renderFallbackFrontend(indexHTML, frontendAssetMissingNotice(missing))))
-		return
-	}
-	if h.shouldRewriteRelayedAssets(r) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write([]byte(rewriteRelayedFrontendContent(string(content))))
 		return
 	}
 	http.ServeFile(w, r, indexPath)
@@ -2156,15 +1974,6 @@ func applyStaticCacheHeaders(w http.ResponseWriter, cleanPath string) {
 	}
 }
 
-func isRelayedRequest(r *http.Request) bool {
-	return strings.TrimSpace(r.Header.Get("X-MindFS-Relayed")) == "1"
-}
-
-func (h *HTTPHandler) shouldRewriteRelayedAssets(r *http.Request) bool {
-	// 仅由 relay 反代标记决定：被代理的前端需要绝对化资源引用。
-	// 不再与发布版本号耦合——本地直连本就不会带 X-MindFS-Relayed。
-	return isRelayedRequest(r)
-}
 
 func isStandardReleaseVersion(version string) bool {
 	version = strings.TrimSpace(version)
@@ -2187,36 +1996,6 @@ func isStandardReleaseVersion(version string) bool {
 		}
 	}
 	return true
-}
-
-func shouldRewriteRelayedStaticAsset(cleanPath string) bool {
-	switch cleanPath {
-	case "index.html", "service-worker.js":
-		return true
-	default:
-		return false
-	}
-}
-
-func rewriteRelayedFrontendContent(content string) string {
-	// relay 反代下，前端文档 URL 与后端不在同域/同路径，需把相对资源引用
-	// 改写为随部署前缀派生的绝对别名（见 deploy.RelayAssetsAlias）。
-	return strings.ReplaceAll(content, "./assets/", deploy.RelayAssetsAlias())
-}
-
-func serveRewrittenStaticAsset(w http.ResponseWriter, r *http.Request, assetPath string) {
-	content, err := os.ReadFile(assetPath)
-	if err != nil {
-		http.ServeFile(w, r, assetPath)
-		return
-	}
-	switch filepath.Base(assetPath) {
-	case "index.html":
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	case "service-worker.js":
-		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
-	}
-	w.Write([]byte(rewriteRelayedFrontendContent(string(content))))
 }
 
 func pathForStaticAsset(requestPath string) string {
@@ -2254,7 +2033,7 @@ func (h *HTTPHandler) handleTree(w http.ResponseWriter, r *http.Request) {
 
 func (h *HTTPHandler) handleFile(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("edit") == "1" {
-		h.protectedEndpoint(h.handleEditableFile)(w, r)
+		h.handleEditableFile(w, r)
 		return
 	}
 	rootID := r.URL.Query().Get("root")
@@ -2283,11 +2062,6 @@ func (h *HTTPHandler) handleFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	raw := r.URL.Query().Get("raw")
-	proofSession, err := h.requireRequestProof(r)
-	if err != nil {
-		respondError(w, http.StatusUnauthorized, err)
-		return
-	}
 	if raw == "1" {
 		rawOut, err := uc.OpenFileRaw(r.Context(), usecase.OpenFileRawInput{
 			RootID: rootID,
@@ -2352,12 +2126,6 @@ func (h *HTTPHandler) handleFile(w http.ResponseWriter, r *http.Request) {
 	}
 	payload := map[string]any{
 		"file": out.File,
-	}
-	if proofSession != nil {
-		if err := writeProtectedJSON(w, http.StatusOK, proofSession.Key, payload); err != nil {
-			respondError(w, http.StatusServiceUnavailable, err)
-		}
-		return
 	}
 	respondJSON(w, http.StatusOK, payload)
 }
@@ -2804,11 +2572,6 @@ func (h *HTTPHandler) handleUpload(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, errInvalidRequest("root required"))
 		return
 	}
-	proofSession, err := h.requireRequestProof(r)
-	if err != nil {
-		respondError(w, http.StatusUnauthorized, err)
-		return
-	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxUploadRequestBytes)
 	if err := r.ParseMultipartForm(maxUploadRequestBytes); err != nil {
 		respondError(w, http.StatusBadRequest, errInvalidRequest("invalid multipart form"))
@@ -2850,12 +2613,6 @@ func (h *HTTPHandler) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	payload := map[string]any{
 		"files": out.Files,
-	}
-	if proofSession != nil {
-		if err := writeProtectedJSON(w, http.StatusOK, proofSession.Key, payload); err != nil {
-			respondError(w, http.StatusServiceUnavailable, err)
-		}
-		return
 	}
 	respondJSON(w, http.StatusOK, payload)
 }
@@ -3074,165 +2831,6 @@ func readManagedDirPath(r *http.Request) string {
 		return ""
 	}
 	return strings.TrimSpace(req.Path)
-}
-
-func (h *HTTPHandler) handleRelayStatus(w http.ResponseWriter, r *http.Request) {
-	manager := h.AppContext.GetRelayManager()
-	if manager == nil {
-		respondError(w, http.StatusServiceUnavailable, errServiceUnavailable("relay manager not configured"))
-		return
-	}
-	status := h.relayStatusWithE2EE(manager.Status())
-	if !status.E2EERequired || h.isLocalCLIRequest(r) {
-		respondJSON(w, http.StatusOK, status)
-		return
-	}
-
-	sess, err := h.relayStatusSession(r)
-	if err != nil {
-		respondError(w, http.StatusUnauthorized, err)
-		return
-	}
-	if sess == nil {
-		respondJSON(w, http.StatusOK, publicRelayStatus(status))
-		return
-	}
-	if err := writeProtectedJSON(w, http.StatusOK, sess.Key, status); err != nil {
-		respondError(w, http.StatusServiceUnavailable, err)
-		return
-	}
-}
-
-func (h *HTTPHandler) relayStatusSession(r *http.Request) (*e2ee.Session, error) {
-	if strings.TrimSpace(r.Header.Get(e2eeHeaderName)) == "" {
-		return nil, nil
-	}
-	sess, protected, err := h.requireProtectedHTTPSession(r)
-	if !protected {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	sess, err = h.requireRequestProof(r)
-	if err != nil {
-		return nil, err
-	}
-	return sess, nil
-}
-
-func (h *HTTPHandler) handleRelayBindStart(w http.ResponseWriter, _ *http.Request) {
-	manager := h.AppContext.GetRelayManager()
-	if manager == nil {
-		respondError(w, http.StatusServiceUnavailable, errServiceUnavailable("relay manager not configured"))
-		return
-	}
-	status, err := manager.StartBinding()
-	if err != nil {
-		respondError(w, http.StatusServiceUnavailable, errServiceUnavailable(err.Error()))
-		return
-	}
-	respondJSON(w, http.StatusOK, h.relayStatusWithE2EE(status))
-}
-
-func (h *HTTPHandler) relayStatusWithE2EE(status relay.Status) relay.Status {
-	if h == nil || h.AppContext == nil {
-		return status
-	}
-	e2eeManager := h.AppContext.GetE2EEManager()
-	if e2eeManager == nil || !e2eeManager.Enabled() {
-		status.E2EERequired = false
-		status.E2EENodeID = ""
-		return status
-	}
-	status.E2EERequired = true
-	status.E2EENodeID = e2eeManager.NodeID()
-	return status
-}
-
-func publicRelayStatus(status relay.Status) relay.Status {
-	return relay.Status{
-		NoRelayer:         status.NoRelayer,
-		TokenStationBound: status.TokenStationBound,
-		E2EERequired:      status.E2EERequired,
-		E2EENodeID:        status.E2EENodeID,
-	}
-}
-
-func (h *HTTPHandler) handleRelayTips(w http.ResponseWriter, _ *http.Request) {
-	if h.AppContext == nil || h.AppContext.GetRelayTipsService() == nil {
-		respondJSON(w, http.StatusOK, nil)
-		return
-	}
-	respondJSON(w, http.StatusOK, h.AppContext.GetRelayTipsService().Get())
-}
-
-func (h *HTTPHandler) handleE2EEOpen(w http.ResponseWriter, r *http.Request) {
-	manager := h.AppContext.GetE2EEManager()
-	if manager == nil || !manager.Enabled() {
-		respondError(w, http.StatusForbidden, errServiceUnavailable("e2ee_required"))
-		return
-	}
-	var req struct {
-		ClientID    string `json:"client_id"`
-		NodeID      string `json:"node_id"`
-		ClientEphPK string `json:"client_eph_pk"`
-		ClientNonce string `json:"client_nonce"`
-		Proof       string `json:"proof"`
-	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
-		respondError(w, http.StatusBadRequest, errInvalidRequest("invalid e2ee open payload"))
-		return
-	}
-	req.ClientID = strings.TrimSpace(req.ClientID)
-	req.NodeID = strings.TrimSpace(req.NodeID)
-	req.ClientEphPK = strings.TrimSpace(req.ClientEphPK)
-	req.ClientNonce = strings.TrimSpace(req.ClientNonce)
-	req.Proof = strings.TrimSpace(req.Proof)
-	if req.ClientID == "" || req.NodeID == "" || req.ClientEphPK == "" || req.ClientNonce == "" || req.Proof == "" {
-		respondError(w, http.StatusBadRequest, errInvalidRequest("client_id, node_id, client_eph_pk, client_nonce and proof are required"))
-		return
-	}
-	if req.NodeID != manager.NodeID() {
-		respondError(w, http.StatusForbidden, errInvalidRequest("e2ee_proof_invalid"))
-		return
-	}
-	expectedProof := e2ee.BuildOpenProof(manager.PairingSecret(), req.NodeID, req.ClientEphPK, req.ClientNonce)
-	if !e2ee.VerifyProof(expectedProof, req.Proof) {
-		respondError(w, http.StatusForbidden, errInvalidRequest("e2ee_proof_invalid"))
-		return
-	}
-	nodePriv, nodeEphPK, err := e2ee.GenerateECDHKeypair()
-	if err != nil {
-		respondError(w, http.StatusServiceUnavailable, err)
-		return
-	}
-	clientPub, err := e2ee.DecodePublicKey(req.ClientEphPK)
-	if err != nil {
-		respondError(w, http.StatusBadRequest, errInvalidRequest("invalid client_eph_pk"))
-		return
-	}
-	serverNonceBytes := make([]byte, 16)
-	if _, err := rand.Read(serverNonceBytes); err != nil {
-		respondError(w, http.StatusServiceUnavailable, err)
-		return
-	}
-	serverNonce := base64.StdEncoding.EncodeToString(serverNonceBytes)
-	derived, err := e2ee.DeriveKey(manager.PairingSecret(), req.NodeID, req.ClientEphPK, nodeEphPK, req.ClientNonce, serverNonce, nodePriv, clientPub)
-	if err != nil {
-		respondError(w, http.StatusServiceUnavailable, err)
-		return
-	}
-	if _, err := manager.OpenSessionForClient(req.ClientID, derived); err != nil {
-		respondError(w, http.StatusServiceUnavailable, err)
-		return
-	}
-	respondJSON(w, http.StatusOK, map[string]any{
-		"ok":           true,
-		"node_eph_pk":  nodeEphPK,
-		"server_nonce": serverNonce,
-		"server_proof": e2ee.BuildAcceptProof(manager.PairingSecret(), req.NodeID, req.ClientEphPK, nodeEphPK, req.ClientNonce, serverNonce),
-	})
 }
 
 func managedDirResponse(dir fs.RootInfo) map[string]any {

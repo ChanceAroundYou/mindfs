@@ -23,9 +23,11 @@ const zh = read("src/i18n/locales/zh-CN.ts");
 const en = read("src/i18n/locales/en-US.ts");
 
 // ── 服务端：路由 + 冲突分流 ──
+// 直挂 handler：G-I 已把 protectedEndpoint 整层删掉（API 层不做鉴权），
+// 路由不该再被任何鉴权中间件包裹。
 assert.match(
   httpRoutes,
-  /r\.Post\("\/api\/tasks\/\{id\}\/finish-worktree", h\.protectedEndpoint\(h\.handleKanbanTaskFinishWorktree\)\)/,
+  /r\.Post\("\/api\/tasks\/\{id\}\/finish-worktree", h\.handleKanbanTaskFinishWorktree\)/,
   "the finish endpoint must be routed like every other task verb",
 );
 assert.match(
@@ -360,12 +362,12 @@ assert.match(
 assert.match(
   tasks,
   /if \(error instanceof APIError && error\.status === 409\)/,
-  "409 must be translated back into a conflict; going through protectedJSON keeps the E2EE/account-gone handling",
+  "409 must be translated back into a conflict; going through protectedJSON keeps the account-gone handling",
 );
 assert.doesNotMatch(
   tasks,
   /finish-worktree[\s\S]{0,200}await fetch\(/,
-  "the finish call must go through protectedJSON, not a bare fetch (that would skip E2EE and the account-gone path)",
+  "the finish call must go through protectedJSON, not a bare fetch (that would skip the account-gone path)",
 );
 for (const key of [
   "task.finishWorktree",

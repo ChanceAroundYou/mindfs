@@ -73,7 +73,7 @@ func TestHTTPSessionMessageValidationAndQueue(t *testing.T) {
 }
 
 func TestSessionMessageReservationSerializesConcurrentSubmissions(t *testing.T) {
-	hub := NewStreamHub(nil)
+	hub := NewStreamHub()
 	var starts atomic.Int32
 	var workers sync.WaitGroup
 	for i := 0; i < 20; i++ {

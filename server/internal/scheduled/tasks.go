@@ -484,6 +484,19 @@ func (s *Service) runTask(ctx context.Context, task Task, force bool) error {
 	}
 	sessionName := current.Name
 	userTimestamp := time.Now().UTC()
+	// 子会话 pending 的父轮收尾：本轮创建的子会话若没等到 MessageDone（出错/取消/
+	// 父轮先结束），pending 会永久残留。与 ws.go 同一条纪律：用 defer 把一个终结器
+	// 覆盖全部终态边（成功与失败两条 return 都走到）。
+	var subSessionKeys []string
+	var subMu sync.Mutex
+	defer func() {
+		subMu.Lock()
+		subs := append([]string(nil), subSessionKeys...)
+		subMu.Unlock()
+		for _, subKey := range subs {
+			broadcaster.BroadcastSessionDone(current.RootID, subKey, "")
+		}
+	}()
 	err = s.usecase.SendMessage(ctx, usecase.SendMessageInput{
 		RootID:        current.RootID,
 		Key:           sessionKey,
@@ -513,6 +526,9 @@ func (s *Service) runTask(ctx context.Context, task Task, force bool) error {
 			broadcaster.BroadcastSessionCreated(current.RootID, created)
 			if created != nil {
 				broadcaster.SetSessionPendingReply(current.RootID, created.Key, created.Name)
+				subMu.Lock()
+				subSessionKeys = append(subSessionKeys, created.Key)
+				subMu.Unlock()
 			}
 		},
 		OnSubSessionUpdate: func(sessionKey string, update agenttypes.Event) {

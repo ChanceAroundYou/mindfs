@@ -41,15 +41,36 @@ const REMOVED_ORCHESTRATION = [
   "web/src/components/TaskGroupPanel.tsx",
 ];
 
-// 2) 旧 relay / tokenStation 前端入口（G-H）：登录页不该再有它们的痕迹
-const REMOVED_RELAY_UI = [
+// 2) relay 隧道 + e2ee + tokenStation（G-H）：用户 2026-10-08 明确要求**彻底删除**，
+//    不是「关掉开关」—— 包、路由、前端入口、proof 头一起没了。
+//    这些路径在上游全都还在，合上游时最容易被整份带回来。
+const REMOVED_RELAY_E2EE = [
+  // 前端入口与服务
   "web/src/components/RelayLocalServicesDialog.tsx",
   "web/src/components/SessionQuickActions.tsx",
   "web/src/services/relayServices.ts",
   "web/src/services/tokenStation.ts",
+  "web/src/services/e2ee.ts",
+  // 后端包：relay 远程隧道
+  "server/internal/relay/credentials.go",
+  "server/internal/relay/device.go",
+  "server/internal/relay/manager.go",
+  "server/internal/relay/service.go",
+  "server/internal/relay/service_test.go",
+  "server/internal/relay/services.go",
+  "server/internal/relay/tips.go",
+  "server/internal/relay/wsconn.go",
+  // 后端包：端到端加密
+  "server/internal/e2ee/config.go",
+  "server/internal/e2ee/crypto.go",
+  "server/internal/e2ee/manager.go",
+  "server/internal/e2ee/manager_test.go",
+  // 后端路由
+  "server/internal/api/http_relay_services.go",
+  "server/internal/api/http_token_station.go",
 ];
 
-const REMOVED = [...REMOVED_ORCHESTRATION, ...REMOVED_RELAY_UI];
+const REMOVED = [...REMOVED_ORCHESTRATION, ...REMOVED_RELAY_E2EE];
 
 for (const rel of REMOVED) {
   assert.ok(!fs.existsSync(path.join(root, rel)), `被删除的上游文件复活了：${rel}`);
@@ -57,7 +78,7 @@ for (const rel of REMOVED) {
 
 // 悬空引用：只认 import/require 的模块路径，避免误伤无关同名字段
 // （如 agent/config.go 的 tokenStationURL 是 relay 的独立配置，不是被删模块）
-const DANGLING = /\b(?:from|require\()\s*["'][^"']*(relayServices|tokenStation|TaskGroupPanel|RelayLocalServicesDialog|SessionQuickActions)["']/;
+const DANGLING = /\b(?:from|require\()\s*["'][^"']*(relayServices|tokenStation|TaskGroupPanel|RelayLocalServicesDialog|SessionQuickActions|internal\/relay|internal\/e2ee|net\/e2ee|services\/e2ee)["']/;
 
 function walk(dir, out = []) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -91,6 +112,21 @@ assert.ok(worktreeFinish.includes("FinishTaskWorktree"), "worktree 收尾（替�
 const httpSrc = fs.readFileSync(path.join(root, "server/internal/api/http.go"), "utf8");
 for (const gone of ["/api/task-groups", "handleTaskGroups", "TaskOrchestration"]) {
   assert.ok(!httpSrc.includes(gone), `http.go 重新挂上了已删的编排端点：${gone}`);
+}
+
+// relay / e2ee 的路由与 proof 接线不得被重新注册（G-H，2026-10-08 彻底删除）。
+// `protectedEndpoint` 也在名单里：它是上游那层鉴权中间件，G-I 把它整层删了 ——
+// 它一旦回来，所有 `r.Get(..., h.protectedEndpoint(...))` 形式的接线会跟着回来。
+for (const gone of ["/api/relay", "/api/e2ee", "e2eeHeaderName", "requireWSProof", "protectedEndpoint"]) {
+  assert.ok(!httpSrc.includes(gone), `http.go 重新挂上了已删的 relay/e2ee 接线：${gone}`);
+}
+
+// 控制面前缀表里不得再出现 relay/e2ee：worker 上它们永远不会有 handler，
+// 留着只是两条死路径（写进表里就等于声称「worker 不提供这两个能力」，
+// 而真相是「谁都不提供」）。
+const roleSrc = fs.readFileSync(path.join(root, "server/internal/nodeinfo/role.go"), "utf8");
+for (const gone of ['"/api/relay"', '"/api/e2ee"']) {
+  assert.ok(!roleSrc.includes(gone), `nodeinfo 控制面前缀表重新收回了已删端点：${gone}`);
 }
 
 console.log(`✓ 上游裁剪面完整：${REMOVED.length} 个被删文件未复活、无悬空引用、替代实现在位`);

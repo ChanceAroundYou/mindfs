@@ -3,7 +3,7 @@
 // 一个 mindfs 实例同时有两类职责：
 //
 //   - 控制面（control）：账户表、偏好、提示词、看板模板、节点表、WebPush 订阅、
-//     relay/e2ee 绑定、应用更新。**全局只应有一份真相**，由主节点持有。
+//     应用更新。**全局只应有一份真相**，由主节点持有。
 //   - 数据面（worker 也要有）：项目列表、会话库、任务库、文件读写、git、agent
 //     进程池、定时任务。这些天然按机器分，每台机器各一份是对的。
 //
@@ -60,8 +60,6 @@ var controlPlanePrefixes = []string{
 	"/api/web-push",
 	"/api/nodes",
 	"/api/node-info",
-	"/api/relay",
-	"/api/e2ee",
 	"/api/token-station",
 	"/api/app/update",
 }

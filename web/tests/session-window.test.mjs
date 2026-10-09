@@ -43,22 +43,6 @@ function loadSessionModule() {
       if (name.includes("rootNode")) return { getRootNodeId: () => "" };
       if (name.includes("/scope")) return { scopeSessionKey: (a, b) => `${a}::${b}` };
       if (name.includes("/api")) return { protectedFetch: async () => ({}), protectedJSON: async () => ({}), withNodeRetry: (f) => f() };
-      if (name.includes("e2ee")) {
-        // 桩到「调用不炸」为止：模块顶层会 setClientId / hasSecret / isRequired。
-        const noop = () => false;
-        return {
-          e2eeService: {
-            setClientId: () => {},
-            hasSecret: noop,
-            isRequired: noop,
-            wsProofParams: () => ({}),
-            ensureSession: async () => {},
-            handleServerError: () => {},
-            encodeWSMessage: (m) => m,
-            decodeWSMessage: (m) => m,
-          },
-        };
-      }
       throw new Error(`unexpected require: ${name}`);
     },
     console,

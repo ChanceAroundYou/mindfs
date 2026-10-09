@@ -92,25 +92,25 @@ groups:
       - web/tests/document-preview.test.mjs
 
   - id: G-I
-    title: 安全模型重塑（鉴权 / e2ee / CORS 全开放）
+    title: 安全模型重塑（API 层不鉴权 / CORS 全开放）
     kind: arch
     symptom: |
-      API 层要求 token 或校验 e2ee proof 时，浏览器直连会全部 401/403；
-      跨节点请求被 CORS 挡下。
+      API 层要求 token 时，浏览器直连会全部 401/403；跨节点请求被 CORS 白名单挡下。
+      症状是「页面能开、但所有列表都是空的」—— 前端一个请求都过不去。
     why: |
-      「API 层不做鉴权」是用户明确决策（多账户=多配置档，不是安全边界）。
-      上游的 e2ee 解密/Proof 校验与 CORS 白名单一旦被合回来，所有前端请求立即失效。
-    anchors:
-      - 'web/src/services/net/e2ee.ts:CUSTOM(G-I)'
+      「API 层不做鉴权」是用户明确决策（多账户 = 多配置档，不是安全边界，见 CLAUDE.md 事实 12）。
+      上游给 `/api/*` 套上的 token 校验与 CORS 白名单一旦被合回来，所有前端请求立即失效。
+      e2ee 那半边（proof 校验、解密）已随 G-H 整体删除，本组只管**策略**：
+      不鉴权 + CORS 默认 `open`（`corsMiddleware` 无偏好时 mode 回落 `open`，原样回显 Origin）。
     files:
       - server/internal/api/http.go
-      - server/internal/api/http_e2ee_cors_test.go
-      - web/src/services/net/e2ee.ts
       - web/src/services/net/api.ts
+      - web/src/services/net/authGate.ts
+      - web/src/services/net/bootstrap.ts
       - web/src/services/connection.ts
       - web/src/services/storage.ts
     tests:
-      - server/internal/api/http_e2ee_cors_test.go
+      - server/internal/api/http_open_api_test.go
 
   - id: G-K
     title: 部署前缀与代理基础设施
@@ -1140,14 +1140,13 @@ groups:
       占全部请求的 70%（会话没在跑时回包逐字节相同）。只协商不瘦身：`exchanges` / `window_meta`
       少一个键就是少一段对话，且 `seq` 增量的判据会被删空键破坏。
       条目数管不住内存（一条就是 1.14 MB），故另加字节预算 `conditionalRequestBytesMax`
-      （6 MB），字节数由 `parseProtectedJSONResponseWithSize` 提供（`Content-Length` 因 chunked 拿不到）；
+      （6 MB），字节数用原始文本长度记账（`Content-Length` 因 chunked 拿不到）；
       淘汰同时看条数与字节，且 ETag 与载荷必须同生共死，否则留下「304 但拿不出内容」的悬空条目。
     files:
       - server/internal/api/helpers.go
       - server/internal/api/http.go
       - server/internal/api/http_tasks.go
       - web/src/services/net/api.ts
-      - web/src/services/net/e2ee.ts
     tests:
       - server/internal/api/helpers_jsonlist_test.go
       - server/internal/api/http_tasks_overview_test.go
@@ -1160,7 +1159,7 @@ groups:
       - server/internal/api/http_tasks.go:func projectOverviewTask
       - web/src/services/net/api.ts:304
       - web/src/services/net/api.ts:conditionalRequestBytesMax
-      - web/src/services/net/e2ee.ts:parseProtectedJSONResponseWithSize
+      - web/src/services/net/api.ts:rememberConditionalResponse
 
   # ── 可观测性：自动重载 ──────────────────────────────────────────
   - id: G-AO
@@ -1189,18 +1188,42 @@ groups:
 
   # ── 裁剪：删除上游功能 ──────────────────────────────────────────
   - id: G-H
-    title: 旧功能裁剪（公网访问 / Relay 服务 / Token 加油站）
+    title: 旧功能裁剪（公网访问 / Relay 隧道 / e2ee / Token 加油站）
     kind: trim
     symptom: |
       合上游后 Login 页又出现公网访问入口与 Relay 对话框，Token 加油站页签复活；
-      但后端 relay 前缀与前端调用点已被删，点了就报错。
+      端到端加密的解锁提示、`e2ee_*` 请求头与 proof 校验回归；
+      `server/internal/relay`、`server/internal/e2ee` 两个包重新出现在构建里，
+      `/api/relay/*`、`/api/e2ee/*` 重新挂上路由并回到 worker 的控制面前缀表；
+      点了这些入口就报错（后端实现已被删）。
     why: |
-      这三件套本地已整体移除（删文件 + 删所有入口）。
-      上游会给回来，每次合上游都要重新删一遍——删漏就会留下「点了报错」的残缺入口。
-    anchors:
-      - 'server/internal/relay/service.go:CUSTOM(G-H)'
+      这几件套本地已**整体删除**，不是「关掉开关」而是「不存在」：
+      删包（server/internal/relay、server/internal/e2ee）、删路由
+      （http_relay_services.go、http_token_station.go）、删前端调用点与入口
+      （e2ee.ts、relayServices.ts、tokenStation.ts、Login 页入口）。
+      2026-10-08 用户明确要求「完整删除 relay 与 e2ee」，所以这条不再有「保留一部分」
+      的中间态 —— 上游会给回来，每次合上游都要重新删一遍；删漏就会留下
+      「点了报错」的残缺入口，或让 nodeinfo 的控制面前缀表多出 `/api/relay`、`/api/e2ee`
+      两条永远不会有 handler 的死路径。
     files:
+      # 被**删除**的上游文件（status=D）。刻意用精确路径而不是目录前缀：
+      # 前缀在文件复活时仍会被同目录其它文件命中，报不出来；写死路径才能让断言 2 当场红。
+      - server/internal/relay/credentials.go
+      - server/internal/relay/device.go
+      - server/internal/relay/manager.go
       - server/internal/relay/service.go
+      - server/internal/relay/service_test.go
+      - server/internal/relay/services.go
+      - server/internal/relay/tips.go
+      - server/internal/relay/wsconn.go
+      - server/internal/e2ee/config.go
+      - server/internal/e2ee/crypto.go
+      - server/internal/e2ee/manager.go
+      - server/internal/e2ee/manager_test.go
+      - server/internal/api/http_relay_services.go
+      - server/internal/api/http_token_station.go
+      - server/internal/api/http_local_cli_relay_test.go
+      - web/src/services/e2ee.ts
       - web/src/components/RelayLocalServicesDialog.tsx
       - web/src/components/SessionQuickActions.tsx
       - web/src/services/relayServices.ts
@@ -1208,8 +1231,22 @@ groups:
       - web/src/services/launcherNodeSync.ts
       - web/src/services/nativeBridge.ts
       - web/src/components/Login.tsx
+      # 承载「被删掉的那部分代码」的上游文件（status=M）。
+      # 不登记它们的话，合上游时这些文件会被上游版本整份替换，
+      # relay/e2ee 的接线就从这些「看不出差异」的改动点悄悄回来。
+      - server/internal/api/http.go
+      - server/internal/api/ws.go
+      - server/internal/api/appcontext.go
+      - server/internal/agent/config.go
+      - server/internal/nodeinfo/role.go
+      - cli/cmd/mindfs.go
+      - server/app/server.go
+      - server/cmd/mindfs-server/main.go
+      - web/src/services/net/bootstrap.ts
+      - web/src/services/net/api.ts
+      - web/src/services/session.ts
     tests:
-      - web/tests/no-system-dialogs.test.mjs
+      - web/tests/upstream-removals.test.mjs
 
   # ── 看板：任务卡的按钮语义 ──────────────────────────────────────
   - id: G-AP
@@ -1788,34 +1825,6 @@ groups:
       - web/src/components/workspace/workspaceStyles.ts
       - web/tests/workspace-board.test.mjs
       - web/tests/task-card-wrap.test.mjs
-  - id: G-AX
-    title: relay 绑定轮询测试的两条同步竞态
-    kind: fix
-    symptom: |
-      TestManagerPollTerminalBindStatusStopsPolling 偶发失败：
-      ① "pending code did not clear after expired bind status"，耗时正好 5.00s
-      （撞上 time.After(5 * time.Second)）；
-      ② "expected initial pending code"（-race -count=20 实测复现）。
-      单独跑 30/30 全绿，所以极易被当成「偶发、不管它」。
-    why: |
-      两条互相独立的竞态，都是「静默退化」型 —— 测试全绿、短跑看不出问题：
-      ① 状态落地晚于 channel 发送。本文件的 mock transport 在返回响应**之前**
-      就把 URL 送进 requests，而 poller 要等响应返回之后才走 onFinished 更新
-      Status()（manager.go 的 pollLoop：m.pendingCode = ""; m.lastError = status）。
-      原实现从 requests 读到请求就**立刻**查 Status()，不是 "expired" 就 continue
-      去读下一个请求 —— 而 poller 收到 expired 之后已经 return 了，再没有下一个
-      请求，于是卡到 5s 超时。
-      ② channel 带缓冲（cap 4）导致 poller 抢跑。缓冲让发送不阻塞，poller 会抢在
-      测试观察之前跑完整个 poll（expired → onFinished → 清空 PendingCode），
-      于是 StartBinding() 返回后立刻查 PendingCode 可能是空的。
-    boundary: |
-      收到请求后必须等状态落地（轮询 Status()），不得读一次就 continue；
-      requests 必须无缓冲；顺序假设必须被确定性复现。
-    tests:
-      - web/tests/relay-bind-poll-sync.test.mjs
-    files:
-      - server/internal/relay/service_test.go
-
   - id: G-AY
     title: pending 纯派生（done 丢失时停止符号 /「正在思考」卡住）
     kind: fix

@@ -12,7 +12,7 @@ import (
 	"mindfs/server/internal/auth"
 )
 
-// 账户相关端点。刻意不参与 protectedEndpoint / e2ee：
+// 账户相关端点。刻意不做鉴权：
 // API 层不做鉴权（见 docs/multi-user-prd.md §1.1），账户只用于前端分区。
 
 func authErrorStatus(err error) int {

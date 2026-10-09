@@ -24,7 +24,7 @@ func writeConfig(t *testing.T, body string) {
 // （它们只在对应字段非 nil 时才被解引用，传 nil 安全）。
 func applyRole(cfg startupConfig, explicit map[string]bool) string {
 	role := ""
-	applyStartupConfig(cfg, explicit, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, &role)
+	applyStartupConfig(cfg, explicit, nil, nil, nil, nil, nil, nil, nil, nil, &role)
 	return role
 }
 

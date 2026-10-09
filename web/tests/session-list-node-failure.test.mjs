@@ -28,7 +28,6 @@ const realtime = read("src/app/useRealtimeEvents.ts");
 const app = read("src/App.tsx");
 const sessionList = read("src/components/SessionList.tsx");
 const nodeBadge = read("src/components/NodeBadgeHeader.tsx");
-const e2ee = read("src/services/e2ee.ts");
 
 // ---------------------------------------------------------------------------
 // B1：所有建会话路径都发 session.created
@@ -133,7 +132,7 @@ for (const fn of ["protectedFetch", "protectedJSON"]) {
   // 处理 304」这几步之后，deadline 调用已经不在开头了 —— 但仍然必须存在。
   assert.match(
     api.slice(start, start + 1500),
-    /e2eeProtectedFetchWithDeadline\(input, (init|requestInit)\)/,
+    /fetchWithDeadline\(input, (init|requestInit)\)/,
     `${fn} must fetch through the deadline wrapper`,
   );
 }
@@ -172,13 +171,6 @@ assert.match(
   api,
   /if \(timeoutMs <= 0\) return err;/,
   "a caller-supplied signal (timeoutMs 0) must be left alone — that is its own cancel semantics",
-);
-
-// e2ee 重建 init 时要保留 signal，否则 deadline 挂不上去。
-assert.match(
-  e2ee,
-  /const next: RequestInit = \{ \.\.\.init, method, headers \};/,
-  "e2ee must spread the incoming init so our AbortSignal survives its rebuild",
 );
 
 // 重试的总代价现在有上界（3 次 × 10s 而不是 3 × 2min）。
