@@ -182,6 +182,8 @@ import {
 // 类型定义
 
 import { APP_DOCUMENT_TITLE, AppProps, CHILD_SESSION_PAGE_SIZE, MULTI_PROJECT_SESSION_LIMIT, ManagedRootPayload, SESSION_PAGE_SIZE } from "./app/appMisc";
+import { useAppPluginRenderEffects } from "./app/useAppPluginRenderEffects";
+import { useAppBootstrapEffects } from "./app/useAppBootstrapEffects";
 import { useAppRefSync } from "./app/useAppRefSync";
 import { useAppKanbanTaskPanel } from "./app/useAppKanbanTaskPanel";
 import { useAppRootContentRenderers } from "./app/useAppRootContentRenderers";
@@ -848,8 +850,7 @@ export function App({ onGoHome }: AppProps) {
   const [updateSubmitting, setUpdateSubmitting] = useState(false);
 
 
-  const { 
-  } = useAppRefSync({
+  useAppRefSync({
     currentRootIdRef, currentRootId, currentRootNodeIdRef, currentRootNodeId,
     setAvailableAgents, agentsVersion, e2eeState, getNodeIdForRoot,
     expandedRef, expanded, selectedDirRef, selectedDir,
@@ -1981,10 +1982,13 @@ export function App({ onGoHome }: AppProps) {
   );
 
 
-  useEffect(() => {
-    if (!currentRootId) return;
-    sessionService.connect(currentRootId, getNodeIdForRoot(currentRootId));
-  }, [currentRootId, currentRootNodeId]);
+  useAppBootstrapEffects({
+    currentRootId, currentRootNodeId, refreshGitStatus, refreshGitHistory,
+    setGitStatus, setGitHistory, setGitDiff, scopedRootKey,
+    ensurePluginsLoaded, pluginsLoadedByRootRef, setBootstrapState, setSessionListMode,
+    setExternalSessions, setExternalSelectedKey, setE2eeState, setE2eePromptError,
+    setE2eeSecretInput, e2eeState, getNodeIdForRoot,
+  });
 
   useEffect(
     () => () => {
@@ -1994,20 +1998,6 @@ export function App({ onGoHome }: AppProps) {
     [],
   );
 
-  useEffect(() => {
-    if (!currentRootId) {
-      setGitStatus(null);
-      setGitHistory(null);
-      setGitDiff(null);
-      setSessionListMode("local");
-      setExternalSessions([]);
-      setExternalSelectedKey("");
-      return;
-    }
-    void refreshGitStatus(currentRootId);
-    void refreshGitHistory(currentRootId);
-    setGitDiff(null);
-  }, [currentRootId, currentRootNodeId, refreshGitHistory, refreshGitStatus]);
 
   // 2026-09 App.tsx 拆分：25 个 WS 事件处理器（含 9 个 handleSessionStream 内部 case）
   // 与其 13 个内部 helper 整体搬到 app/useRealtimeEvents.ts。参数按用途分四组、组内同名简写，
@@ -2113,44 +2103,14 @@ export function App({ onGoHome }: AppProps) {
     },
   });
 
-  useEffect(() => {
-    if (!currentRootId) return;
-    if (pluginsLoadedByRootRef.current[scopedRootKey(currentRootId)]) return;
-    void ensurePluginsLoaded(currentRootId).catch(() => {});
-  }, [currentRootId, ensurePluginsLoaded]);
 
 
   useAppInit({actionHandlersRef, bootstrapService, bootstrapState, didInitRef, ensurePluginsLoaded, handleSelectSessionRef, indexManagedRoots, loadLastRootId, loadLastRootNodeId, loadManagedRootPayloads, loadMultiProjectSessionGroups, loadSessionsForRoot, managedRootByIdRef, managedRootByKeyRef, managedRootIdsRef, mapManagedRootsToEntries, multiProjectSessionsEnabled, readURLState, refreshTreeDir, reportError, selectRootNode, setCurrentRootId, setManagedRootIds, setPluginQuery, setRootEntries, setRootNodeMap, showBoundSessionOrRootDir, switchMainView, t, useEffect});
 
-  useEffect(() => {
-    return bootstrapService.subscribe((state) => {
-      setBootstrapState(state);
-      setE2eeState(state.e2ee);
-    });
-  }, []);
 
-  useEffect(() => {
-    document.title = APP_DOCUMENT_TITLE;
-  }, []);
 
-  useEffect(() => {
-    return e2eeService.subscribe((state) => {
-      setE2eeState(state);
-    });
-  }, []);
 
-  useEffect(() => {
-    void syncNativeReplyPollerE2EE().catch((err) => {
-      console.warn("[ReplyPoller] Failed to sync E2EE state:", err);
-    });
-  }, [e2eeState.nodeId, e2eeState.required, e2eeState.unlocked]);
 
-  useEffect(() => {
-    if (!e2eeState.required) {
-      setE2eeSecretInput("");
-      setE2eePromptError("");
-    }
-  }, [e2eeState.required, e2eeState.secretPresent]);
 
   useTaskWorkspaceEffects({
     bootstrapPhase: bootstrapState.phase,
@@ -2243,31 +2203,6 @@ export function App({ onGoHome }: AppProps) {
     return pluginManagerRef.current.match(currentRootId, input);
   }, [currentRootId, file, pluginVersion, pluginQuery]);
 
-  useEffect(() => {
-    if (!file || currentFileEditing || pluginBypass || !matchedPlugin) return;
-    if (inferReadModeFromPlugin(matchedPlugin) !== "full") return;
-    if (!file.truncated) return;
-    const root = file.root || currentRootId;
-    if (!root) return;
-    const upgradeKey = `${root}:${file.path}:${matchedPlugin.name}:${JSON.stringify(pluginQuery)}`;
-    if (fullUpgradeAttemptRef.current === upgradeKey) return;
-    fullUpgradeAttemptRef.current = upgradeKey;
-    void actionHandlers.open({
-      path: file.path,
-      root,
-      cursor: fileCursorRef.current || 0,
-      readMode: "full",
-      preservePluginQuery: true,
-    });
-  }, [
-    file,
-    currentFileEditing,
-    pluginBypass,
-    matchedPlugin,
-    currentRootId,
-    pluginQuery,
-    actionHandlers,
-  ]);
 
 
   const { pluginRender, pluginThemeVars } = useAppPluginRender({
@@ -2278,58 +2213,13 @@ export function App({ onGoHome }: AppProps) {
     pluginManagerRef,
   });
 
-  useEffect(() => {
-    if (!file || pluginBypass || !pluginRender?.output) {
-      return;
-    }
-    const handleSelectionChange = () => {
-      const root = pluginContentRef.current;
-      const selection = window.getSelection();
-      if (!root || !selection || selection.rangeCount === 0 || selection.isCollapsed) {
-        handleViewerSelectionChange(null);
-        return;
-      }
-      const range = selection.getRangeAt(0);
-      const commonAncestor = range.commonAncestorContainer;
-      if (!root.contains(commonAncestor)) {
-        handleViewerSelectionChange(null);
-        return;
-      }
-      const text = selection.toString();
-      if (!text.trim()) {
-        handleViewerSelectionChange(null);
-        return;
-      }
-      handleViewerSelectionChange({
-        filePath: file.path,
-        text,
-      });
-    };
-    document.addEventListener("selectionchange", handleSelectionChange);
-    return () => {
-      document.removeEventListener("selectionchange", handleSelectionChange);
-      handleViewerSelectionChange(null);
-    };
-  }, [file, pluginBypass, pluginRender?.output, handleViewerSelectionChange]);
+  useAppPluginRenderEffects({
+    file, currentFileEditing, pluginBypass, matchedPlugin,
+    pluginRender, pluginQuery, currentRootId, actionHandlers,
+    fileCursorRef, handleViewerSelectionChange, pluginContentRef, lastPluginChapterRef,
+    fullUpgradeAttemptRef,
+  });
 
-  useEffect(() => {
-    if (!file || pluginBypass || !pluginRender?.output) {
-      lastPluginChapterRef.current = "";
-      return;
-    }
-    const chapterKey = `${file.path}:${pluginQuery.chapter || "1"}`;
-    if (!lastPluginChapterRef.current) {
-      lastPluginChapterRef.current = chapterKey;
-      return;
-    }
-    if (lastPluginChapterRef.current === chapterKey) {
-      return;
-    }
-    lastPluginChapterRef.current = chapterKey;
-    requestAnimationFrame(() => {
-      pluginContentRef.current?.scrollTo({ top: 0, behavior: "auto" });
-    });
-  }, [file, pluginBypass, pluginRender?.output, pluginQuery.chapter]);
 
   const pluginRendererKey = `${currentRootId || ""}:${file?.path || ""}:${fileCursorRef.current}:${JSON.stringify(pluginQuery)}`;
 

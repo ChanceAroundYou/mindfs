@@ -132,6 +132,9 @@ export const MODULES = {
     "src/app/useAppKanbanTaskPanel.tsx",
     // 2026-10-08 第 14 步：ref 镜像 + 同一段的 24 条 effect
     "src/app/useAppRefSync.ts",
+    // 2026-10-08 第 14 步（续）：bootstrap/E2EE 与插件渲染后的 effect
+    "src/app/useAppBootstrapEffects.ts",
+    "src/app/useAppPluginRenderEffects.ts",
   ],
 
   // P6 拆分：FileTree.tsx → + icons.tsx（图标子组件）

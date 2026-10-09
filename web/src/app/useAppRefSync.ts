@@ -217,6 +217,4 @@ export function useAppRefSync(params: UseAppRefSyncParams) {
     setIsDrawerOpen(!!drawerOpenByRootRef.current[scopedRootKey(rootID)]);
   }, [currentRootId]);
 
-  return {
-  };
 }
