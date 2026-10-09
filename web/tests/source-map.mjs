@@ -40,6 +40,7 @@ export const MODULES = {
   // 把 10 个局部函数当参数传进去；hook 侧只剩「派发」这一件事。
   "src/app/useRealtimeEvents.ts": [
     "src/app/useRealtimeEvents.ts",
+    "src/app/useRealtimeEventsContext.ts",
     "src/app/realtimeWsHandlers.ts",
   ],
 

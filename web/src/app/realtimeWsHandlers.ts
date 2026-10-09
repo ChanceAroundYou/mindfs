@@ -18,7 +18,7 @@ import { mapManagedRootsToEntries, normalizeUpdateState } from "./appMisc";
 import { rootNodeKey } from "./appPath";
 import { normalizeMode } from "./appSession";
 import { normalizeFastService } from "./appTask";
-import type { RealtimeEventsContext } from "./useRealtimeEvents";
+import type { RealtimeEventsContext } from "./useRealtimeEventsContext";
 
 /**
  * `useRealtimeEvents` 内部、wsHandlers 闭包要用的 9 个局部函数。
