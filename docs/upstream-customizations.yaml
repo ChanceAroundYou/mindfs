@@ -1434,6 +1434,8 @@ groups:
       - web/src/app/useRealtimeEvents.ts
       - web/src/hooks/useSessionStream.ts
       - web/src/components/session/SessionViewer.tsx
+      - web/src/components/session/useSessionWindowing.ts
+      - web/src/components/session/useTargetSeqScroll.ts
       - web/src/components/stream/ToolCallGroupCard.tsx
       - web/src/services/pins.ts
       - web/tests/session-window-dedup.test.mjs

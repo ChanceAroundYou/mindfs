@@ -161,6 +161,8 @@ export const MODULES = {
   ],
   "src/components/SessionViewer.tsx": [
     "src/components/session/SessionViewer.tsx",
+    "src/components/session/useSessionWindowing.ts",
+    "src/components/session/useTargetSeqScroll.ts",
     "src/components/session/sessionViewerTypes.ts",
     "src/components/session/sessionViewerFormat.ts",
     "src/components/session/SessionViewerAttachments.tsx",

@@ -26,6 +26,15 @@ const sessionDomainSrc = [sessionSrc, ...fs
   .map((n) => fs.readFileSync(path.resolve(import.meta.dirname, "../src/services", n), "utf8"))
 ].join("\n");
 const viewerSrc = fs.readFileSync(sessionViewerPath, "utf8");
+// 2026-10-08 拆分：窗口化与 targetSeq 定位搬进 SessionViewer 目录下的两个 hook。
+// 下面几条判据钉的是「这套窗口化逻辑长什么样」，所以对着**整簇**匹配，而不是死认
+// SessionViewer.tsx —— 判据本身（形状、数量、依赖）一字未动。
+const viewerWindowingSrc = fs
+  .readdirSync(path.resolve(import.meta.dirname, "../src/components/session"))
+  .filter((n) => /^(SessionViewer|useSessionWindowing|useTargetSeqScroll)\.(tsx|ts)$/.test(n))
+  .sort()
+  .map((n) => fs.readFileSync(path.resolve(import.meta.dirname, "../src/components/session", n), "utf8"))
+  .join("\n");
 // 剥掉注释后的代码视图：注释里提到某个坏写法是正常的（那通常正是在解释它为什么被删）。
 const stripComments = (src) => src.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
 const sessionCode = stripComments(sessionSrc);
@@ -125,22 +134,22 @@ assert.match(sessionSrc, /window_meta.*session.*window_meta/s, "window_meta dual
 
 // ── SessionViewer.tsx 窗口化状态与交互 ─────────────────────────────────
 assert.match(viewerSrc, /type SessionWindowMeta/, "SessionViewer should import SessionWindowMeta");
-assert.match(viewerSrc, /getSessionWindow/, "SessionViewer should import/call getSessionWindow");
-assert.match(viewerSrc, /setWindowedView\(sessionKey, true\)/, "SessionViewer should setWindowedView on init");
-assert.match(viewerSrc, /clearWindowedView\(sessionKey\)/, "SessionViewer should clearWindowedView on cleanup");
+assert.match(viewerWindowingSrc, /getSessionWindow/, "the session-viewer windowing cluster should import/call getSessionWindow");
+assert.match(viewerWindowingSrc, /setWindowedView\(sessionKey, true\)/, "the windowing cluster should setWindowedView on init");
+assert.match(viewerWindowingSrc, /clearWindowedView\(sessionKey\)/, "the windowing cluster should clearWindowedView on cleanup");
 assert.match(viewerSrc, /const \[visibleExchanges, setVisibleExchanges\]/, "visibleExchanges state missing");
 assert.match(viewerSrc, /const \[visibleAux, setVisibleAux\]/, "visibleAux state missing");
 assert.match(viewerSrc, /const \[windowMeta, setWindowMeta\]/, "windowMeta state missing");
 assert.match(viewerSrc, /const \[loadingMore, setLoadingMore\]/, "loadingMore state missing");
 assert.match(viewerSrc, /const topSentinelRef = useRef/, "topSentinelRef missing");
 assert.match(viewerSrc, /useSessionStream\(\s*\n?\s*sessionKey,\s*\n?\s*composedExchanges,\s*\n?\s*visibleAux/, "useSessionStream should consume composed window+overlay");
-assert.match(viewerSrc, /getSessionWindow/, "initial window fetch missing");
-assert.match(viewerSrc, /latest:\s*SESSION_WINDOW_SIZE/, "window fetch must use the shared SESSION_WINDOW_SIZE");
-assert.match(viewerSrc, /const loadMore = useCallback/, "loadMore callback missing");
-assert.match(viewerSrc, /scrollHeight - container\.scrollTop/, "scroll anchoring (scrollHeight - scrollTop) missing");
-assert.match(viewerSrc, /beforeSeq: windowMeta\.minSeq/, "loadMore beforeSeq: windowMeta.minSeq missing");
-assert.match(viewerSrc, /IntersectionObserver/, "IntersectionObserver sentinel missing");
-assert.match(viewerSrc, /rootMargin: "200px/, "IntersectionObserver rootMargin 200px missing");
+assert.match(viewerWindowingSrc, /getSessionWindow/, "initial window fetch missing");
+assert.match(viewerWindowingSrc, /latest:\s*SESSION_WINDOW_SIZE/, "window fetch must use the shared SESSION_WINDOW_SIZE");
+assert.match(viewerWindowingSrc, /const loadMore = useCallback/, "loadMore callback missing");
+assert.match(viewerWindowingSrc, /scrollHeight - container\.scrollTop/, "scroll anchoring (scrollHeight - scrollTop) missing");
+assert.match(viewerWindowingSrc, /beforeSeq: windowMeta\.minSeq/, "loadMore beforeSeq: windowMeta.minSeq missing");
+assert.match(viewerWindowingSrc, /IntersectionObserver/, "IntersectionObserver sentinel missing");
+assert.match(viewerWindowingSrc, /rootMargin: "200px/, "IntersectionObserver rootMargin 200px missing");
 assert.match(viewerSrc, /windowMeta\.hasMore/, "hasMore guard missing");
 assert.match(
   viewerSrc,
