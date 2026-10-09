@@ -497,7 +497,7 @@ func TestReplayAfterClearYieldsEmptySnapshot(t *testing.T) {
 		Type: string(agenttypes.EventTypeMessageChunk),
 		Data: agenttypes.MessageChunk{Content: "answer"},
 	})
-	// AppContext.BroadcastSessionDone 在广播 done 之前做的事。
+	// AppContext.EndSessionTurn 在广播 done 之前做的事。
 	hub.ClearSessionPending("sess-1", turnGen)
 
 	step := hub.collectReplayStep("client", "sess-1")

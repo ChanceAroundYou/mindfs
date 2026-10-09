@@ -31,7 +31,7 @@ assert.ok(doneStart >= 0 && doneBody.length > 0, 'the "session.done" handler sho
 // 根因不在客户端少一个守卫，在**服务端多一条回执**：`completed` 表 + `done(replay:true)`。
 // 它想表达的「你挂上来时这一轮早就结束了」本来就是多余的 ——
 //   · 真实结束的 done 用 `liveOnly=false` 广播，**重放中的客户端也在收件人里**；
-//   · `BroadcastSessionDone` 在广播 done 之前已经推过 pending 列表（该会话已不在其中），
+//   · `broadcastSessionDone` 在广播 done 之前已经推过 pending 列表（该会话已不在其中），
 //     客户端的「在回复」状态由此收敛；
 //   · 客户端对 replay 回执的两处分支本来就都是**空操作**：不放提示音、不重锚定。
 // 见 docs/session-streaming-rework.md §6。

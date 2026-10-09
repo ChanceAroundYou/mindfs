@@ -19,11 +19,13 @@ import (
 // 用户消息若在此刻起跑并置 pending（新 TurnGen），会被这条 turnGen=0 的 done 抹掉，
 // 即症状「正在运行但会话列表灯不亮」。
 //
-// 本测试钉三条不变量（纯源码扫描，不跑真实回合 —— runTask 需要真 session manager）：
+// 本测试钉四条不变量（纯源码扫描，不跑真实回合 —— runTask 需要真 session manager）：
 //  1. `SessionActivityBroadcaster` 接口里不得再出现 `BroadcastSessionDone`（身份缺失的入口必须不存在）；
 //  2. tasks.go 里不得出现 `BroadcastSessionDone(` 调用；
 //  3. tasks.go 里 `BroadcastSessionUserMessageAt(` / `SetSessionPendingReply(` 的返回值必须被接收
-//     （Go 允许丢弃返回值，所以编译器不会替我们挡），且 `EndSessionTurn(` 不得传字面 0。
+//     （Go 允许丢弃返回值，所以编译器不会替我们挡），且 `EndSessionTurn(` 不得传字面 0；
+//  4. 接口/调用里不得再出现不带 `At` 的 `BroadcastSessionUserMessage(` —— 它是同一类
+//     「置 pending 但拿不到代次」的入口（内部走 turnGen=0），留着等于给下一个调用点挖坑。
 func TestScheduledPathCarriesTurnIdentity(t *testing.T) {
 	b, err := os.ReadFile("tasks.go")
 	if err != nil {
@@ -37,6 +39,12 @@ func TestScheduledPathCarriesTurnIdentity(t *testing.T) {
 	if strings.Contains(code, "BroadcastSessionDone") {
 		t.Fatalf("tasks.go 仍引用身份缺失的 BroadcastSessionDone —— " +
 			"定时任务的收尾 done 必须走 EndSessionTurn 并带本轮 turnGen")
+	}
+	// 4：不带 At 的那个置 pending 入口同样拿不到代次，不许回到接口上。
+	// 正则要求 `Message` 后直接跟 `(`，因此不会误伤 `BroadcastSessionUserMessageAt(`。
+	if identityless := regexp.MustCompile(`BroadcastSessionUserMessage\s*\(`); identityless.MatchString(code) {
+		t.Fatalf("tasks.go 又出现了不带 At 的 BroadcastSessionUserMessage( —— " +
+			"它置 pending 时按 turnGen=0 走，收尾清 pending 会退化成无条件清")
 	}
 
 	// 3a：turnGen 必须被接收（丢弃返回值在 Go 里是合法的，编译器不挡）。

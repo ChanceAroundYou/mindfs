@@ -691,7 +691,7 @@ func (h *StreamHub) SetPendingReply(rootID, sessionKey, sessionTitle string) uin
 	return turnGen
 }
 
-// PendingSessionSnapshot 是 BroadcastSessionDone 给 Web Push 通知用的会话快照。
+// PendingSessionSnapshot 是 broadcastSessionDone 给 Web Push 通知用的会话快照。
 //
 // 这里**没有**「LastEventAt 超过 N 秒就报不活跃」的判据：真在跑的会话会长时间没有
 // 事件（服务端不转发 SDK 的 keep_alive，唯一的周期事件只覆盖 tool 执行），按静默
@@ -936,7 +936,7 @@ func (h *StreamHub) ClearSessionPending(sessionKey string, turnGen uint64) {
 	if blank(sessionKey) {
 		return
 	}
-	// 超时兜底：replay 客户端排不空时不能永久卡住 BroadcastSessionDone。
+	// 超时兜底：replay 客户端排不空时不能永久卡住 broadcastSessionDone。
 	// 2s 是经验值：正常 replay 排空是毫秒级，2s 足够慢网络下完成；
 	// 超过 2s 说明客户端已失联（后台标签页、WS 写阻塞、连接已断但清理未跑），
 	// 此时必须强制清，否则 session.done 永远发不出去、pending 永远 true。
@@ -1000,7 +1000,12 @@ func (h *StreamHub) BroadcastSessionStream(rootID, sessionKey string, event *Str
 	}
 }
 
-// BroadcastSessionDone 广播一轮的结束。
+// broadcastSessionDone 广播一轮的结束。
+//
+// **刻意未导出**：带回合身份的收尾只有 `AppContext.EndSessionTurn` 一条合法路径
+// —— 它先过 `PendingTurnGenMatches` 代次门再调这里。导出它等于又开一个「无身份也能
+// 广播 done」的入口：前端收到 done 就按 key 清 pending，绕过代次门就会把新轮的灯误清
+// （症状「正在运行但会话列表灯不亮」）。用编译器守住这条，比靠源码扫描某个调用点硬。
 //
 // `liveOnly=false`：**重放中的客户端也要收到**。它挂在回合中途、drain 还没走完时
 // 这一轮结束了，这条就是它的终止信号 —— 因此不需要另开一条「补发你错过的 done」的
@@ -1010,30 +1015,11 @@ func (h *StreamHub) BroadcastSessionStream(rootID, sessionKey string, event *Str
 // 「挂上来时这一轮早就结束了」的客户端不需要补偿：它的「在回复」状态取自 pending 列表，
 // 而那时该会话早已不在列表里。**注意 `notifySessionDone` 不是这条路径** —— 它是 Web Push
 // 推送，与 WS 的 pending 状态无关，别拿它当理由（写这段时错过一次）。
-func (h *StreamHub) BroadcastSessionDone(rootID, sessionKey, requestID string) {
+func (h *StreamHub) broadcastSessionDone(rootID, sessionKey, requestID string) {
 	resp := buildSessionDoneResponse(rootID, sessionKey, requestID)
 	for _, clientID := range h.GetSessionClientIDs(sessionKey, false) {
 		h.SendToClient(clientID, resp)
 	}
-}
-
-func (h *StreamHub) BroadcastSessionUserMessage(
-	rootID string,
-	sessionKey string,
-	sessionType string,
-	sessionName string,
-	agentName string,
-	model string,
-	modelDisplayName string,
-	mode string,
-	effort string,
-	fastService string,
-	planMode bool,
-	content string,
-	excludeClientID string,
-	queued bool,
-) uint64 {
-	return h.BroadcastSessionUserMessageAt(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService, planMode, content, time.Now().UTC(), 0, excludeClientID, queued)
 }
 
 func (h *StreamHub) BroadcastSessionUserMessageAt(

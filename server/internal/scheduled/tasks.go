@@ -32,12 +32,14 @@ type SessionActivityBroadcaster interface {
 	// SetSessionPendingReply / BroadcastSessionUserMessageAt 返回该条目的**回合代次**，
 	// 收尾时必须原样交给 EndSessionTurn —— 否则清理按 turnGen=0 走，代次比对失效。
 	SetSessionPendingReply(rootID, sessionKey, sessionTitle string) uint64
-	BroadcastSessionUserMessage(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService string, planMode bool, content string)
+	// 刻意**不暴露**无身份的 `BroadcastSessionUserMessage`（不带 At 的那个）：它内部按
+	// turnGen=0 置 pending，代次一旦拿不到，收尾就退化成无条件清（守卫见
+	// pending_identity_test.go）。置 pending 只允许走能拿到代次的这一个入口。
 	BroadcastSessionUserMessageAt(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService string, planMode bool, content string, timestamp time.Time, userExchangeSeq int, baseExchangeSeq ...int) uint64
 	BroadcastSessionUpdate(rootID, sessionKey string, update agenttypes.Event)
 	BroadcastSessionError(rootID, sessionKey, message string)
 	// EndSessionTurn 是**带回合身份的终结器**。定时任务路径必须走它，不得用无身份的
-	// BroadcastSessionDone（传 turnGen=0 会跳过代次比对，把新轮的灯误清）。
+	// 广播（传 turnGen=0 会跳过代次比对，把新轮的灯误清）。
 	EndSessionTurn(rootID, sessionKey, requestID string, turnGen uint64)
 	BroadcastAgentStatusChanged(agentName string)
 	BroadcastScheduledTaskDone(rootID, taskID, taskName, sessionKey, summary string)

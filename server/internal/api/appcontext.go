@@ -964,10 +964,6 @@ func (s *AppContext) SetSessionPendingReply(rootID, sessionKey, sessionTitle str
 	return s.GetSessionStreamHub().SetPendingReply(rootID, sessionKey, sessionTitle)
 }
 
-func (s *AppContext) BroadcastSessionUserMessage(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService string, planMode bool, content string) {
-	s.BroadcastSessionUserMessageAt(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService, planMode, content, time.Now().UTC(), 0)
-}
-
 // BroadcastSessionUserMessageAt 广播用户消息并置该会话 pending，返回回合代次。
 // 与 SetSessionPendingReply 同理：返回的代次是收尾时唯一能定位「这一轮」的凭据。
 func (s *AppContext) BroadcastSessionUserMessageAt(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService string, planMode bool, content string, timestamp time.Time, userExchangeSeq int, baseExchangeSeq ...int) uint64 {
@@ -1034,7 +1030,7 @@ func (s *AppContext) EndSessionTurn(rootID, sessionKey, requestID string, turnGe
 	s.notifySessionDone(rootID, sessionKey, requestID, pending)
 	// 广播必须在清之前：ClearSessionPending 有超时兜底，但广播是前端唯一的
 	// session.done 来源。如果先清再广播，清卡住时广播永远发不出去。
-	hub.BroadcastSessionDone(rootID, sessionKey, requestID)
+	hub.broadcastSessionDone(rootID, sessionKey, requestID)
 	hub.ClearSessionPending(sessionKey, turnGen)
 }
 

@@ -2076,7 +2076,7 @@ groups:
                 runSessionMessage 无 defer，SendMessage panic/挂死时终结器走不到。
     why: |
       1) SessionPendingState 增加 TurnGen，每次 SetPending* 刷新为单调自增代次；
-         SetPendingUserAt/SetPendingReply/BroadcastSessionUserMessage(At) 返回该代次。
+         SetPendingUserAt/SetPendingReply/BroadcastSessionUserMessageAt 返回该代次。
       2) ClearSessionPending(key, turnGen) 只在「两侧都有身份且一致」时才清；
          PendingTurnGenMatches 让 EndSessionTurn 对「别的回合的 done」整条丢弃（不广播帧）。
       3) 抽出唯一终结器 AppContext.EndSessionTurn(..., turnGen)，所有终态边都走它；

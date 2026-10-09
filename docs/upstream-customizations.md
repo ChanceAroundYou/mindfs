@@ -1568,18 +1568,23 @@
     `runSessionMessage` 无 `defer`，`SendMessage` panic/挂死时终结器走不到。
 - 为什么必须保留：
   1. `SessionPendingState` 增 `TurnGen`；`SetPendingUserAt`/`SetPendingReply` 每次刷新为单调自增代次，
-     并把该代次返回给调用方（`BroadcastSessionUserMessage(At)` 同样返回）。
+     并把该代次返回给调用方（`BroadcastSessionUserMessageAt` 同样返回）。
   2. `ClearSessionPending(key, turnGen)` 仅在「两侧都有身份且一致」时清；`PendingTurnGenMatches`
      让终结器对「别的回合的 done」整条丢弃（连帧都不广播），迟到 done 彻底无害化。
      `turnGen==0` 视为无主，保守清 —— 绝不因缺身份而漏清（漏清 = 灯不灭）。
   3. 抽出唯一终结器 `AppContext.EndSessionTurn(rootID, key, requestID, turnGen)`，
      所有清理点都改调它；`runSessionMessage` / `RunAgentStage` / 定时任务 用 `defer`
-     覆盖成功/出错/取消/panic。无身份的兼容壳 `BroadcastSessionDone` **已删除** ——
-     定时任务曾是它最后一个调用点，换成 `EndSessionTurn` 后它就是纯粹的误用入口
-     （`Scope: G-BE` 的源码守卫禁止它复活）。
+     覆盖成功/出错/取消/panic。**无身份的入口现在有两层护栏**：① `AppContext` 那层
+     兼容壳 `BroadcastSessionDone`（转调 `EndSessionTurn(..., 0)`）**已删除**，定时任务曾是
+     它最后一个调用点；② `StreamHub` 那个真正广播的方法**刻意降为未导出**
+     `broadcastSessionDone` —— 它只有 `EndSessionTurn` 一个调用点（代次门之后才调），
+     不导出就没有任何路径能绕过代次门广播 done。用编译器守，比只扫某个调用点硬。
   4. 子会话在父轮收尾时一并终结（本轮创建、没等到 `MessageDone` 的那些）。定时任务路径
      （`scheduled/tasks.go`）从 `OnStart`/`OnSubSessionCreated` 捕获每会话的 `turnGen`，
      收尾（含 `defer` 兜的子会话）原样交给 `EndSessionTurn`，不再用无身份的广播。
+     接口上的 `BroadcastSessionUserMessage`（不带 `At`、不返回代次的那个）**已摘除** ——
+     它置 pending 时按 `turnGen=0` 走，是同一类「拿不到代次」的入口，留着等于给下一个
+     调用点挖坑；`StreamHub`/`AppContext` 两侧的无用实现一并删除（全仓库无调用者）。
   5. `codex.handleStreamedEvents` 由「通道关闭即成功」改为返回是否见到 `TurnCompletedEvent`，
      通道中途关闭按错误处理 —— 否则会**提前/错误**触发 done（本根的相邻缺口，同批修）。
   - 这套「代次比对」机制项目里本就有（`ActiveTurnID` 用于取消定位），
@@ -1588,9 +1593,9 @@
 - 针对性测试：
   - `server/internal/api/stream_hub_pending_identity_test.go` → 迟到 done 不清新轮（`TurnGen` 比对）、
     重复 done 幂等、`gen=0` 仍保守清、子会话由父轮终结、`PendingTurnGenMatches` 缺失时放行。
-  - `server/internal/scheduled/pending_identity_test.go` → 定时任务路径的源码守卫：接口里不得再有
+  - `server/internal/scheduled/pending_identity_test.go` → 定时任务路径的源码守卫（四条）：接口里不得再有
     无身份的 `BroadcastSessionDone`、置 pending 的两个调用点必须接收 `turnGen`、
-    `EndSessionTurn` 不得收到字面 `0`。钉住「定时任务收尾也带回合身份」这条补齐（合上游时若退回
+    `EndSessionTurn` 不得收到字面 `0`、不得再出现不带 `At` 的 `BroadcastSessionUserMessage(`。钉住「定时任务收尾也带回合身份」这条补齐（合上游时若退回
     无身份广播，此测试必红）。
   - `server/internal/agent/codex/session_test.go` → 通道关闭无 `TurnCompleted` 报错、见到 `TurnCompleted` 返回成功、
     `ThreadError` 返回错误。

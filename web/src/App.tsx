@@ -3638,7 +3638,7 @@ export function App({ onGoHome }: AppProps) {
     // 只覆盖 tool 执行（思考、tool 间隙、起始间隙都没有事件）。按静默判「已结束」会
     // 出现「明明在跑却灭灯」、亮灯时长随事件节奏漂移。灯的权威来源就是本次轮询本身
     // —— 服务端 ClearSessionPending 在回合结束时删条目，5s 一轮足够兜住 WS 断连；
-    // 服务端真卡死由 BroadcastSessionDone 的 2s 超时兜底。两条路都不经过静默判据。
+    // 服务端真卡死由 broadcastSessionDone 的 2s 超时兜底。两条路都不经过静默判据。
     multiProjectPendingRef.current = next;
     setMultiProjectPendingByKey(next);
     setMultiProjectSessionGroups((groups) => applyPendingToMultiProjectGroups(groups, next));
