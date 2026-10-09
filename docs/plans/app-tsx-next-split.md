@@ -3,19 +3,82 @@
 > **本文所有数字都是 AST / `wc -l` 实测**，每一组抽取都过了 `verify.mjs` 的窗口校验。
 > 前一篇 §三 的计划是在**工具错误**的前提下算的（见 §2），已被本文取代。
 >
-> 现状：Part B 已收工；`App.tsx` = **3949 行**，还差 **950 行** 到验收线。
+> ✅ **本方案已执行完毕（2026-10-08）**：`App.tsx` 4182 → **2957**，越过 ≤2999 验收线。
+> 执行日志见 §1.2；落地时对 §5 的分组做了三处调整，见 §1.3。
 
 ---
 
 ## 1. 现状（已核对）
 
+### 1.1 收工时
+
 | 项 | 实测 |
 |---|---|
-| `web/src` 中 >1000 行的文件 | 只剩 `web/src/App.tsx` |
-| `App.tsx` | **3949**（本次会话 4179 → 3949，已提交 -230） |
+| `web/src` 中 >1000 行的文件 | **无**。`App.tsx` 2957 是唯一接近的；其余最大 `components/action/ActionBar.tsx` 998 |
+| `App.tsx` | **2957**（4182 → 2957，净 **-1225**） |
 | `npm run typecheck` / `npm test` | ✅ 绿 / **210 tests, 209 pass, 1 skip, 0 fail** |
-| `go run ./scripts/check-upstream` | ✅ 696 个 delta 文件被 50 组完整覆盖 |
-| 距验收线 | 3949 → **≤2999** = 还需 **950 行** |
+| `make build-web` + e2e | ✅ 构建通过 / **10 passed** |
+| `go run ./scripts/check-upstream` | ✅ 721 个 delta 文件被 50 组完整覆盖 |
+| 验收线 | ✅ 2957 **≤ 2999** |
+
+### 1.2 执行日志（14 步，25 个新模块，合计 2566 行）
+
+行数是**收工后**实测（第 14 步的两个模块在提交后又删掉了 cut.py 生成的空
+`return {};`，所以比提交时的数字少 2-3 行）。
+
+| 步 | commit | 主题 | 新模块（行数） |
+|---|---|---|---:|
+| 1 | `04575fe` | 置顶 / URL 状态 / 目录加载错误 | `useAppSessionPins` 61 / `useAppReplaceURLState` 36 / `useAppFormatDirectoryLoadError` 42 |
+| 2 | `d37a8b0` | 启动期四件事（自更新/引导/E2EE） | `useAppBootstrapActions` 186 |
+| 3 | `5ef82a7` | 会话重载与按复合键存的派生状态 | `useAppSessionReload` 99 / `useAppSessionKeyState` 91 |
+| 4 | `e77184d` | 每根绑定/抽屉写入器与切项目锁复位 | `useAppRootBindingSetters` 122 |
+| 5 | `bcc9597` | 会话选择的四个入口 | `useAppSessionSelection` 134 |
+| 6 | `e1cfb55` | 插件信任状态机与插件渲染 | `useAppPluginTrust` 97 / `useAppPluginRender` 65 |
+| 7 | `6538252` | 项目显示与路径点击 | `useAppProjectDisplay` 75 / `useAppFileNavigation` 137 |
+| 8 | `95cfb54` | 会话快照/查找表、工作台动作、根反查 | `useAppSessionSnapshots` 108 / `useAppWorkspaceActions` 65 / `useAppRootResolution` 65 |
+| 9-11 | `b82b40d` | 切项目落点、主视图动作、slash 查找、看板列 | `useAppBoundSessionDir` 80 / `useAppMainViewActions` 123 / `useAppSlashCommandResult` 50 / `useAppKanbanStageColumns` 74 |
+| 12 | `fcc3741` | 会话主视图与三个根内容渲染器 | `useAppSessionView` 110 / `useAppRootContentRenderers` 169 |
+| 13 | `cc1013a` | 看板面板 TaskBoardView | `useAppKanbanTaskPanel` 126 |
+| 14 | `d21b808` | ref 镜像 + 同段 24 条 effect | `useAppRefSync` 220 |
+| 14b | `e770a53` | bootstrap/E2EE 与插件渲染后的 effect | `useAppBootstrapEffects` 110 / `useAppPluginRenderEffects` 121 |
+
+前置三刀（`6db9048`，本系列之前）：`useAppProjectRemoval` 102 /
+`useAppTaskDrawer` 154 / `useAppAgentActions` 149。
+
+### 1.3 落地时对 §5 分组的三处调整（都是「拆」）
+
+1. **A11（第 8 步）拆成三组**。`verify.mjs` 报窗口 `[1763, 2249]`，但
+   `resolveRootForSessionKey`(1120) 远在窗口之前、`selectedSessionSnapshot`(2488)
+   远在窗口之后 —— 合成一组会把调用点塞到离依赖几百行外的地方。
+2. **A15（第 12 步）拆成两组**。`sessionView` 单独验窗是 17 params / 原地可放；
+   三个 `renderRoot*` 合起来 51 params、比拆三个（14+14+30=58）还省。
+   硬凑一组反而要把 `sessionView` 下移 51 行。
+3. **A17 从「组件」改成 hook**。方案写的是 `components/app/KanbanTaskPanel.tsx`，
+   但包一层组件会往 React 树里插新边界（新挂载身份、新 props 对象），
+   是可观察的行为变化；hook 返回同一个 `<TaskBoardView>` 元素，元素树逐字不变。
+
+**规律**：§5 是按「同一文件 / 同一主题」分组的，而真正该按**「共享窗口」**分组。
+A11 和 A15 都是同一类误判。
+
+### 1.4 内联 effect 只能整段连续搬（第 14 步的关键约束）
+
+React 按声明顺序跑 effect。把中间某几条挑走、或跨过别的 effect 搬，
+**执行次序就变了** —— 那是可观察的行为变化，属于 §六红线。
+
+所以第 14 步的 24 条 effect（原 850-969）是**一次连续声明，要么全搬要么不搬**，
+不能只挑「像 ref 镜像的」那些。夹在中间的真副作用（加载 agents、监听 window、
+记 last-root、排序持久化）留在同一组，不是因为同类，而是挪出去就会改次序。
+
+同理第 14b 步的 8 条与 3 条各自是连续段。
+
+**effect 的两个便利性质**（`verify.mjs` 的语义）：
+- 依赖数组是**急切求值**的 ⇒ 用到的值必然都在本行之前声明；
+- effect 不产生被引用的名字 ⇒ `hi` 恒为 `end`。
+
+但**窗口的 `lo` 可能不是块自己的行**：`useAppPluginRenderEffects` 的 `lo=2235`
+是 `useAppPluginRender` 解构出的 `pluginRender`，三条 effect 都依赖它，
+硬放原地会 TDZ —— 调用点必须插到解构之后。**本系列三次遇到这个形态。**
+
 
 已提交的三刀（`6db9048`）：
 
@@ -130,6 +193,9 @@ FWD  selectRootNode   L639-712 (74)  win 1561..1391
 > 组内块一律 `cut.py` 一次搬走，**不留转发 stub**。
 
 ### 5.1 18 个域 hook（合计 raw 1203 行）
+
+> ⚠️ **下表的分组已按「共享窗口」再调过三处**（A11 拆三组、A15 拆两组、
+> A17 从组件改成 hook），见 §1.3。执行时的实际分组以 §1.2 的日志为准。
 
 | # | 目标模块 | 块（行号） | raw | 窗口 | params |
 |---|---|---|---:|---|---:|
@@ -256,7 +322,7 @@ effect 的好处：**依赖数组是急切求值的**，所以它用到的值天
 
 ---
 
-## 9. 文档订正清单（`docs/plans/deep-split-phase3.md` 现在多处失真）
+## 9. 文档订正清单（`docs/plans/deep-split-phase3.md` 现在多处失真）—— ✅ 已全部落实
 
 - §三标题 `4182 → <3000（-1183）`：真实基线 4179、当前 3949、还需 **950**。
 - §3.1 的构成表与「从 2823 行可动池搬 1183 行（42%）」：按**错误工具**算的。
@@ -268,19 +334,56 @@ effect 的好处：**依赖数组是急切求值的**，所以它用到的值天
 - §八 日志补 `6db9048`、`29cc76c`；补 §2.1 / §2.2 两条教训。
 - 本文 §5 的表就是执行清单，`deep-split-phase3.md` 只需回指。
 
+**落实结果**：§三 已标「已作废／见本文」并把标题改成实际终点 `4182 → 2957（-1225）`；
+§3.1 / §3.2 已删去错误数字、改成「真实结论」并回指本文 §5 与 §1.3；
+§八 已补 `6db9048` / `29cc76c` 与四条教训（工具漏报 TDZ、glue 不可搬、
+effect 只能整段连续搬、逐字比对要防静默少比）。
+
 ---
 
 ## 10. 工具速查（`/tmp/mfsprobe/`，都依赖 `web/node_modules/typescript`）
+
+### 10.1 工具清单
 
 | 工具 | 用途 |
 |---|---|
 | `pool.mjs <file> <fn> <minSize>` | **总清单**：每条可搬语句的范围/大小/自由变量数，剔 glue，标 `FWD`（有后置依赖） |
 | `windows2.mjs <file> <fn> <minSize>` | 每块的 `lo..hi` 窗口，标 `TIGHT` / `IMPOSSIBLE` |
-| `verify.mjs <file> <fn> [name@]a-b …` | **开工前必跑**：一组块能否共用一个 hook、窗口落在哪、params 有哪些 |
+| `verify.mjs <file> <fn> [name@]a-b …` | **开工前必跑**：一组块能否共用一个 hook、窗口落在哪、params 有哪些。**`name` 可省** —— 内联 `useEffect` 没有名字，全传 `useEffect@a-b` 会解析到同一条，必须只传区间 |
 | `place.mjs <file> <fn> <callAt> name:a-b …` | 已定调用点时复核 `PARAM-TDZ` / `USE-TDZ` |
-| `gentypes.mjs <file> <fn> <names>` | 用 TS checker 直接吐 params 的真实类型 + 该组的模块级 import 清单 |
+| `gentypes.mjs <file> <fn> <names>` | 按**变量名**选块：用 TS checker 吐 params 的真实类型 + 模块级 import 清单 |
+| `gentypes2.mjs <file> <fn> a-b …` | 上者的**按行区间**版本，给没有名字的 effect 块用 |
 | `cut.py`（stdin JSON） | 搬块 + 生成新模块 + 插 import；`call_at` 支持后移插入 |
+| `verbatim.py <base> <模块:名字,…>` | 搬走的 `const X = …` 与基线逐字一致（去空白） |
+| `verbatimeff.py <base> <模块>` | 搬走的**内联 effect** 与基线逐字一致（effect 没有名字，`verbatim.py` 覆盖不到） |
+
+### 10.2 两个「静默少比」的坑（都真踩过，都已修）
+
+逐字比对脚本最危险的失效方式不是报错，是**报「全一致」但只比了一小部分**：
+
+1. `verbatim.py` 原本只认 `= useCallback|useMemo`，且从第一个 `(` 开始配平 ——
+   对 `useCallback((next: URLState) => {` 这种，配平在第一个 `)` 就归零，
+   **只比了首行**。改成从 `=` 起做全括号配平、并把名字与 `=` 之间的类型标注
+   （可跨行）纳进来之后，立刻抓到第 1 步的 `replaceURLState` 少了两行注释
+   （核对后是**上提成了模块 doc**，不是丢失；现在例外写成可自我证明的形式：
+   脚本要求被上提的原文真在模块里逐字出现）。
+2. `verbatimeff.py` 原本靠调用方传「最后一条的 deps 行」定结尾，可各条 effect
+   的依赖数组互不相同，`rindex` 会停在中间那条 —— 报「6/6 一致」，实际只比了
+   8 条里的前 6 条。改成扫到模块最后一个 effect 收尾行。
+
+> 教训：**凡是「查找 + 截取 + 比对」的检查，都要有一条断言证明「比了多少」**
+> （块数、行数、字符数），否则范围算错时会以「通过」的形态骗人。
+
+### 10.3 cut.py 的两处补丁
+
+- `hook_import_from` 从 `module` 推导（`web/src/app/x.ts` → `./app/x`）。
+  原先是必填键，漏一次就 `KeyError` 一次、白跑一轮。
+- `returned` 为空时生成普通调用语句 `useX({…});`，不再生成
+  `const { } = useX({…})` + 末尾 `return {};` —— destructure 一个 void 返回值
+  会让 tsc 报 TS2532。**注意 `make build-web`（vite）不做类型检查**，
+  所以这个错误构建是通过的、只有 `npm run typecheck` 会红。
 
 > 已修的坑：五个探针都把 `BindingElement` 记成第 0 行（§2.1）。
 > 若再看到 `Block-scoped variable used before its declaration` 而代码看着没错，
 > **先怀疑工具，别怀疑代码**。
+

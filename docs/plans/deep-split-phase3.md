@@ -56,9 +56,17 @@
 - 逻辑路径指向单文件（如 `src/services/session.ts`）→ **不要把新文件塞进该路径**，
   而是让守卫指向真正拥有该代码的模块（上一阶段踩过：会让 `assert.equal(len, 1)` 变 2）。
 
-## 三、Part A：App.tsx 4182 → <3000（-1183）
+## 三、Part A：App.tsx 4182 → **2957**（-1225）—— ✅ 已完成
 
-### 3.1 为什么难：AST 实测构成
+> ⚠️ **本节原文（含 3.1 的构成表与 3.2 的 A1–A9）是按错误的可行性工具算的，已作废。**
+> 工具把 `const { x } = useHook()` 的 `BindingElement` 当成函数形参记成第 0 行
+> （＝「外部作用域、永远可见」），于是 **TDZ 全部漏报、窗口普遍乐观**。
+> 修正后真实可搬池从 1188 行降到 **914 行**。
+>
+> **执行清单以 `docs/plans/app-tsx-next-split.md` 为准** —— 那是按修正后的实测重划的，
+> 并且已经跑完（14 步、25 个新模块、2566 行）。本节只保留教训。
+
+### 3.1 为什么难：AST 实测构成（**已作废，保留以记教训**）
 
 App() 函数体共 **398 条顶层语句**，除 JSX 外最大单块仅 105 行 —— 文件已**高度碎片化**，
 不存在「一刀切掉一大块」的机会。
@@ -66,29 +74,21 @@ App() 函数体共 **398 条顶层语句**，除 JSX 外最大单块仅 105 行 
 | 组成 | 行数 | 性质 |
 |---|---:|---|
 | JSX return | 324 | 1 条语句，已大量委托 |
-| **hook-call glue** | **1215** | 68 个已抽出 hook 的 props 对象，**已委托、无肉可切** |
+| **hook-call glue** | **~570**（原表 1215 是错误工具算的） | 已抽出 hook 的 props 对象，**已委托、无肉可切** |
 | useEffect | 481 | 58 条，多数 7–16 行 |
 | state / ref / useMemo / useCallback | 1811 | 领域状态与派生值 |
 | 其它可搬逻辑 | 531 | 少量 handler 与工具函数 |
 
-**固定开销** 1215 + 324 = 1539。要降到 3000，需从 1811+481+531 = 2823 中搬走 1183 行（约 42%）。
-即 **约 10–12 次整域抽取**，每次 80–200 行。
+**真实结论**（修正后重测）：≥12 行的实块 **49 条 / 1057 行**；4–11 行的碎块
+**72 条 / 509 行**（含 25 条内联 `useEffect` ≈ 258 行）；合计 **1566 行**，
+净收益约 **1305 行**（~88%，每组 hook 的 import/type/doc/解构/调用开销约 6–14 行）。
 
-### 3.2 抽取顺序（按 收益 × 安全性 排序）
+### 3.2 抽取顺序（**已作废**）
 
-| # | 领域 | 目标模块 | 预计搬走 |
-|---|---|---|---:|
-| A1 | 会话列表 / 归档面板状态与懒加载 | `useSessionListPanel.ts` | ~150 |
-| A2 | 节点 / 项目加载与切换（含 `selectRootNode` 77 行） | `useNodeProjectSwitch.ts` | ~250 |
-| A3 | 文件树 / 目录加载与刷新 | `useFileTreeDomain.ts` | ~200 |
-| A4 | 会话选择 / 抽屉 / 绑定 | `useSessionSelectionDomain.ts` | ~200 |
-| A5 | agent 生命周期与 fork（`handleForkAgentMessage` 60 + `handleRunAgentLifecycleCommand` 39） | `useAgentActions.ts` | ~150 |
-| A6 | 插件域 | `usePluginDomain.ts` | ~100 |
-| A7 | e2ee / 更新 / onboarding | `useAppBootstrapDomain.ts` | ~100 |
-| A8 | 主视图切换与 URL 同步 | `useMainViewActions.ts` | ~120 |
-| A9 | 兜底：剩余分散 handler | 按领域归并 | ~150 |
-
-累计目标 ~1420 行，足以越过 3000 线并留出余量。
+原表列的是 A1–A9「10–12 次整域抽取」，但真实形态是
+**18 个域 hook + 6 组 effect hook + ~10 组碎块折叠**，见
+`app-tsx-next-split.md` §5。实际落地时又发现 §5 的分组还要按
+**「共享窗口」而非「同一主题」**再调三处，见该文 §1.3。
 
 ### 3.3 每刀固定流程
 
@@ -169,7 +169,25 @@ cd web/src && find . \( -name '*.ts' -o -name '*.tsx' \) -not -path './i18n/*' \
 
 **Part B 进度：12 个文件已完 9 个**，剩 3 个：`AgentSelector` 1191、`FileTree` 1153、`SessionViewer` 1127。
 
-**Part A 进度：0 刀**（App.tsx 仍 4182，目标 <3000）。
+**Part A 进度：✅ 完成 14 步**，`App.tsx` 4182 → **2957**（验收线 ≤2999），
+共 25 个新模块 / 2566 行。执行清单与逐步日志见 `docs/plans/app-tsx-next-split.md` §1.2。
+
+前置三刀：`6db9048`（`useAppProjectRemoval` 102 / `useAppTaskDrawer` 154 /
+`useAppAgentActions` 149，4179 → 3949）；`29cc76c`（G-Z 锚点随代码搬进
+`useAppTaskDrawer.ts` + 登记 `app-tsx-next-split.md`）。
+
+### 本阶段教训（Part A 这一批，两条最贵的）
+
+1. **可行性工具错了会把 TDZ 全漏报**（详见 `app-tsx-next-split.md` §2.1）。
+   五个探针都把 `const { x } = useHook()` 的 `BindingElement` 当成函数形参记成第 0 行，
+   于是「外部作用域、永远可见」，窗口普遍乐观。**再看到
+   `Block-scoped variable used before its declaration` 而代码看着没错，先怀疑工具。**
+2. **「glue」不是可搬材料**（同文 §2.2）。`const { … } = useHook({…})` 这类 props
+   对象约 570 行、`return` 约 322 行，搬了不减行 —— 它们已经是委托的结果，不是待搬的肉。
+3. **内联 effect 只能整段连续搬**：React 按声明顺序跑 effect，挑走中间几条或跨过
+   别的 effect 搬，执行次序就变了（可观察的行为变化）。见同文 §1.4。
+4. **逐字比对脚本要防「静默少比」**：`verbatim.py` 与 `verbatimeff.py` 各踩过一次
+   —— 报「全一致」而实际只比了片段。见同文 §10.2。
 
 ### 本阶段教训（`session.ts` 这一刀）
 
