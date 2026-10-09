@@ -22,6 +22,7 @@ import type { RealtimeEventsContext } from "./useRealtimeEventsContext";
 import { createSessionMetaHandlers } from "./realtimeWsSessionMeta";
 import { handleSessionUserMessage } from "./realtimeWsUserMessage";
 import { handleSessionAccepted } from "./realtimeWsSessionAccepted";
+import { handleRootChanged } from "./realtimeWsRootChanged";
 
 /**
  * `useRealtimeEvents` 内部、wsHandlers 闭包要用的 9 个局部函数。
@@ -177,62 +178,7 @@ export function createRealtimeWsHandlers(
             }
           }).catch(() => {});
       },
-      "root.changed": (event: any, payload: any) => {
-          if (
-            payload?.action === "renamed" &&
-            typeof payload?.old_root_id === "string" &&
-            typeof payload?.root_id === "string"
-          ) {
-            const rootPayload =
-              payload?.root && typeof payload.root === "object"
-                ? ({ ...(payload.root as ManagedRootPayload), id: payload.root_id } as ManagedRootPayload)
-                : null;
-            if (!rootPayload) {
-              return;
-            }
-            applyManagedRootRename(payload.old_root_id, rootPayload);
-            if (currentRootIdRef.current === payload.old_root_id) {
-              void actionHandlersRef.current.open_dir({
-                path: payload.root_id,
-                root: payload.root_id,
-                isRoot: true,
-                forceDirectory: true,
-                preservePluginQuery: true,
-              });
-            }
-            return;
-          }
-          if (
-            payload?.action === "display_name_changed" &&
-            typeof payload?.root_id === "string"
-          ) {
-            const rootId = String(payload.root_id).trim();
-            const rootPayload =
-              payload?.root && typeof payload.root === "object"
-                ? ({ ...(payload.root as ManagedRootPayload), id: rootId } as ManagedRootPayload)
-                : null;
-            if (!rootPayload || !rootId) {
-              return;
-            }
-            const merged = { ...(managedRootByIdRef.current[rootId] || {} as ManagedRootPayload), ...rootPayload, id: rootId } as ManagedRootPayload;
-            const nextById = { ...managedRootByIdRef.current, [rootId]: merged };
-            managedRootByIdRef.current = nextById as Record<string, ManagedRootPayload>;
-            const evtNid = String((merged as any)._nodeId || "").trim();
-            if (evtNid) managedRootByKeyRef.current[rootNodeKey(evtNid, rootId)] = merged;
-            setRootNodeMap(nextById as Record<string, any>);
-            const ids = Array.from(managedRootIdsRef.current);
-            setRootEntries(mapManagedRootsToEntries(ids.map((id) => nextById[id]).filter(Boolean) as ManagedRootPayload[]));
-            setMultiProjectSessionGroups((prev) =>
-              prev.map((g) =>
-                g.rootId === rootId
-                  ? { ...g, rootName: String((merged as any)?.display_name || (merged as any)?.id || g.rootName || rootId) }
-                  : g,
-              ),
-            );
-            return;
-          }
-          void refreshManagedRoots();
-      },
+      "root.changed": (event: any, payload: any) => handleRootChanged(ctx, event, payload),
       "session.imported": (event: any, payload: any) => {
           const rootID =
             typeof payload?.root_id === "string" ? payload.root_id : "";

@@ -1687,5 +1687,5 @@ groups:
       - web/tests/agent-lifecycle-restart.test.mjs
       # session.ts 拆分（2026-10-10）：WS 连接管理搬进 sessionConnectionManager.ts。
       # realtimeWsHandlers.ts 拆分（2026-10-10）：session.user_message →
-      # realtimeWsUserMessage.ts；session.accepted → realtimeWsSessionAccepted.ts。
-      # source-map.mjs 已登记三个新文件。
+      # realtimeWsUserMessage.ts；session.accepted → realtimeWsSessionAccepted.ts；
+      # root.changed → realtimeWsRootChanged.ts。source-map.mjs 已登记四个新文件。
