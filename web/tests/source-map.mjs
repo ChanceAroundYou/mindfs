@@ -321,7 +321,16 @@ export const MODULES = {
   "src/components/Login.tsx": ["src/components/account/Login.tsx"],
   "src/components/AuthGate.tsx": ["src/components/account/AuthGate.tsx"],
   "src/components/AccountPanel.tsx": ["src/components/account/AccountPanel.tsx"],
-  "src/components/NodeManagerPanel.tsx": ["src/components/account/NodeManagerPanel.tsx"],
+  // NodeManagerPanel 拆分：探测/编辑/添加逻辑 → useNodeManagerPanel.ts。
+  // 旧路径与新路径都映射到「组件 + hook」拼接，两种读法都能拿到完整逻辑。
+  "src/components/NodeManagerPanel.tsx": [
+    "src/components/account/NodeManagerPanel.tsx",
+    "src/components/account/useNodeManagerPanel.ts",
+  ],
+  "src/components/account/NodeManagerPanel.tsx": [
+    "src/components/account/NodeManagerPanel.tsx",
+    "src/components/account/useNodeManagerPanel.ts",
+  ],
   "src/components/NodeSwitcher.tsx": ["src/components/account/NodeSwitcher.tsx"],
   "src/components/NodeBadgeHeader.tsx": ["src/components/account/NodeBadgeHeader.tsx"],
   "src/components/PanelShell.tsx": ["src/components/shell/PanelShell.tsx"],
