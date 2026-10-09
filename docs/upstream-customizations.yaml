@@ -44,6 +44,7 @@ groups:
       - docs/main-view-switching-design.md
       - docs/message-change-history.md
       - docs/message-mechanisms.md
+      - docs/message-mechanisms-plan.md
       - docs/multi-node-control-plane.md
       - docs/multi-user-prd.md
       - docs/plans/worktree-finish-stage-plan.md

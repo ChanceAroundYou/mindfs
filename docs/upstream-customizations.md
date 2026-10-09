@@ -200,6 +200,7 @@
 | `5600d4e` | `release-notes.md` | 发布说明 |
 | `c6fba4e` | `docs/superpowers/plans/2026-08-21-node-colors-project-header-workspace-preferences.md` + `specs/...design.md` | 节点主题色方案沉淀 |
 | `13365dc/4af6f89/0be192c` | `docs/superpowers/specs/2026-08-22-session-lock-and-draggable-chat-sheet-design.md` + `plans/...sheet.md` | 锁定与浮层设计/计划 |
+| `05726f4` | `docs/message-mechanisms.md`、`docs/message-mechanisms-plan.md` | 消息收发/渲染机制的清点与整合分析（112 个机制、14 条冲突、ADR、7 阶段计划）。plan 文档是 G-T 线在 `2328f0e` 上的冻结版，开头带「与 main 的对照」表说明**其代码未被采用**（canonical adapter / FIFO writer 留在 `canonical-turn-wip` 分支）—— 读它时那些「已完成」只指 G-T 分支内部 |
 
 ### G-B HTTP 语义修正
 
