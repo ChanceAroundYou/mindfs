@@ -260,6 +260,7 @@
 | `20f2b90` | `.gitignore` | `CLAUDE.md` 忽略（配置类，不影响运行时，单列但归本组） |
 | 2026-10-08 | **删包** `server/internal/relay/`（8 文件）、`server/internal/e2ee/`（4 文件）；**删路由** `server/internal/api/http_relay_services.go`、`http_token_station.go`、`http_local_cli_relay_test.go`；**删前端** `web/src/services/e2ee.ts`、`RelayLocalServicesDialog.tsx`、`SessionQuickActions.tsx`、`relayServices.ts`、`tokenStation.ts`；**清接线** `server/internal/api/http.go`(-549)、`ws.go`(-73)、`appcontext.go`、`agent/config.go`、`nodeinfo/role.go`（去掉 `/api/relay`、`/api/e2ee` 两条前缀）、`cli/cmd/mindfs.go`(-193)、`server/app/server.go`(-148)、`web/src/services/net/{bootstrap,api}.ts`、`session.ts` | **彻底删除 relay 隧道与 e2ee**（用户 2026-10-08 明确要求）：不是「关掉开关」而是「不存在」—— 删包、删路由、删所有前端入口与调用点、删 e2ee proof/解密与 `e2ee_*` 头 |
 | 2026-10-09 | `server/internal/update/service.go`(-23)、`server/internal/update/service_test.go`、`web/src/services/appUpdate.ts`、`web/src/i18n/locales/{zh-CN,en-US}.ts`、`web/tests/upstream-removals.test.mjs` | **断掉上游 relay 域名依赖 + 清死文案键**（用户 2026-10-09 拍板「一起砍掉」）：删 `relayDownloadBase`/`relayAssetURL` 与下载回退（`downloadReleaseAsset` 只认 GitHub 给的 asset 地址）；前端删 `DEFAULT_ANDROID/HARMONY_VERSION_URL`、`RelayVersionResponse` 改名 `AppVersionResponse`，版本检查地址缺省为空（只由 `VITE_*_VERSION_URL` 显式提供，未配置即按「无更新信息」返回、不拿空 URL 去 fetch）；删两个已无代码引用的死键 `fileTree.relayLocalServices` |
+| 2026-10-09（二） | `internal/deploy/prefix.go`、`internal/deploy/prefix_test.go`、`server/internal/api/prefix.go`、`server/internal/api/http_test.go`、`web/src/services/net/prefix.ts`、`web/src/main.tsx`、`web/vite.config.ts`、`web/tests/deploy-prefix.test.mjs` | **删掉 relay 时代的资源别名前缀**（用户拍板「现在砍掉」）：服务端 `deploy.RelayAssetsAlias()`、`StripDeployPrefix` 里的 `/<前缀>-assets/` → `/assets/` 映射分支；前端 `RELAY_ASSETS_PREFIX` 导出与 `main.tsx` 的资源判定分支；`vite.config.ts` 里注入 SW 的 `RELAY_ALIAS`、fetch 时对它的跳过分支、`mainAssetReSource` 里的别名备选，以及 SW 里把 relay 的 `/n/<token>/` 路径归一化掉的 `normalizedPathname`。**判据**：产生这些 URL 的两处（服务端 relayed 绝对化改写、relay 的 `/n/<token>/` 路径方案）已随 2026-10-08 那批删除，构建产物里恒为 `<部署前缀>/assets/index-*`；**留一半比全留更糟**——服务端删了、SW 还认，排查者会以为别名仍受支持 |
 
 - 保留判据：**用户明确要求完整删除，没有「保留一部分」的中间态**。
   合上游时上游会把它们给回来，每次都要重新删一遍 —— 删漏就会留下「点了报错」的残缺入口，
@@ -272,6 +273,11 @@
   `server/internal/update/service_test.go:TestDownloadReleaseAssetDoesNotFallBackToRelay`
   —— 下载失败只允许请求主地址一次、错误里不得出现 relay。
   **两条都已做变异验证**：把下载回退注入回去、把死键灌回 zh-CN，分别变红。
+  第二批（资源别名）同样进了 `upstream-removals.test.mjs`：`internal/deploy/prefix.go`、
+  `server/internal/api/prefix.go`、`web/src/services/net/prefix.ts`、`web/src/main.tsx`、
+  `web/vite.config.ts`、`web/index.html` 里不得再出现 `RelayAssetsAlias`／`RELAY_ASSETS_PREFIX`／
+  `RELAY_ALIAS`／`MINDFS_MAIN_ASSET_RE`／`isRelayNodePage`；
+  `deploy-prefix.test.mjs` 的断言从「别名必须存在」翻成「别名与主包兜底都不得存在」。
 - **仍在引用上游 relay 域名的位置（2026-10-09 盘点，尚未处理）**：`scripts/install.sh`、
   `scripts/install.ps1`（一键安装脚本从这里取二进制）、
   `harmony/entry/src/main/ets/pages/Index.ets`（Harmony 原生壳的版本检查与下载，6 处）、
@@ -313,6 +319,7 @@
 | `ecb2ad8` | `internal/deploy/prefix.go`、`server/internal/api/prefix.go`、`server/internal/nodes/store.go`、`server/internal/api/http_nodes.go`、`web/src/services/prefix.ts/nodeBase.ts` | 前缀规范化单一事实源（后/前各一）、`nodes/store` 聚合、`http_nodes` 反代、`nodeBase.normalize` |
 | `306f588` | `Makefile`、`cli/cmd/mindfs.go`、`scripts/build-all.sh`、`server/internal/api/appcontext.go/http.go/ws.go`、`server/internal/relay/service.go` | 构建与 CLI 前缀收敛、`ws` 透传、`relay` 前缀 |
 | `e92fecf` | `web/index.html`、`web/vite.config.ts:base/scope`、`web/src/services/base.ts/runtime.ts` | Vite `base=/mindfs/`、HTML 基路径、前后端基路径收敛、`web/tests/deploy-prefix/node-url-normalize` |
+| 2026-10-09 | `internal/deploy/prefix.go:RelayAssetsAlias`(删)、`server/internal/api/prefix.go`(别名分支删)、`web/src/services/net/prefix.ts:RELAY_ASSETS_PREFIX`(删)、`web/src/main.tsx`、`web/vite.config.ts:RELAY_ALIAS` + SW `/n/<token>/` 归一化(删) | 本组原先还带一条 **relay 专用**的旁支：为了让 relay 改写过的 `/<前缀>-assets/` bundle 仍能取到，前后端各留了一个别名。产生者已随 G-H 删除，这条旁支于同日整体砍掉（详见 G-H 的 2026-10-09（二）行）—— 本组现在只剩「部署前缀本身」这一件事，`web/tests/deploy-prefix.test.mjs` 的断言也翻成了「别名必须不存在」 |
 
 ### G-L 视觉与主题体系
 

@@ -151,4 +151,27 @@ for (const locale of ["zh-CN", "en-US"]) {
   );
 }
 
+// relay 时代的「资源别名前缀」也一并清掉（G-H，2026-10-09）：服务端的
+// RelayAssetsAlias()、前端的 RELAY_ASSETS_PREFIX、SW 里注入的 RELAY_ALIAS，
+// 都只为「relay 会把相对 bundle 改写成 /<前缀>-assets/」这一种形态存在。
+// 产生者（服务端 relayed 改写、relay 的 /n/<token>/ 路径）已删，产物里恒为
+// <部署前缀>/assets/。**留一半比全留更糟**：两边不一致时排查者会以为别名仍受支持。
+for (const [file, gone] of [
+  ["internal/deploy/prefix.go", "RelayAssetsAlias"],
+  ["server/internal/api/prefix.go", "RelayAssetsAlias"],
+  ["web/src/services/net/prefix.ts", "RELAY_ASSETS_PREFIX"],
+  ["web/src/main.tsx", "RELAY_ASSETS_PREFIX"],
+  ["web/vite.config.ts", "RELAY_ALIAS"],
+  // 同一个别名机制的第三块：index.html 里那段「主包加载失败就 alert 版本太老」的兜底。
+  // 它的 showNotice() 只在 relay 节点页（/n/<token>/）才放行，而产生这种 URL 的 relay
+  // 已经不存在 —— 兜底 100% 触发不了，配合构建期注入的主包正则一起删掉。
+  // （本地真出现旧缓存/资源缺失由 services/platform/staleAssetRecovery.ts 收口。）
+  ["web/index.html", "MINDFS_MAIN_ASSET_RE"],
+  ["web/index.html", "isRelayNodePage"],
+  ["web/vite.config.ts", "MINDFS_MAIN_ASSET_RE"],
+]) {
+  const src = fs.readFileSync(path.join(root, file), "utf8");
+  assert.ok(!src.includes(gone), `${file} 又出现了 relay 资源别名接线：${gone}`);
+}
+
 console.log(`✓ 上游裁剪面完整：${REMOVED.length} 个被删文件未复活、无悬空引用、替代实现在位`);

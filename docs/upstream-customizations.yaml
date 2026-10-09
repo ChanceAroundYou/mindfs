@@ -1271,6 +1271,23 @@ groups:
       - web/src/services/appUpdate.ts
       - web/src/i18n/locales/zh-CN.ts
       - web/src/i18n/locales/en-US.ts
+      # 资源别名前缀（2026-10-09，同日第二批）：relay 会把相对 bundle 改写成
+      # `/<部署前缀>-assets/`，为此服务端留了 RelayAssetsAlias()、前端留了
+      # RELAY_ASSETS_PREFIX、SW 里注入 RELAY_ALIAS 并在 fetch 时跳过它
+      # （另有一处把 relay 的 `/n/<token>/` 路径归一化掉）。改写方与 relay 一起删了，
+      # 这些别名就成了死机制，且**留一半比全留更糟**：两边不一致时排查者会以为它仍受支持。
+      # 同一批还删掉了 index.html 里那段「主包加载失败就 alert 版本太老」的兜底：
+      # 它的 showNotice() 只在 relay 节点页（/n/<token>/）放行，而那种 URL 已不存在
+      # —— 100% 触发不了的死代码（本地资源缺失由 staleAssetRecovery.ts 收口）。
+      - internal/deploy/prefix.go
+      - internal/deploy/prefix_test.go
+      - server/internal/api/prefix.go
+      - server/internal/api/http_test.go
+      - web/src/services/net/prefix.ts
+      - web/src/main.tsx
+      - web/vite.config.ts
+      - web/index.html
+      - web/tests/deploy-prefix.test.mjs
     tests:
       - web/tests/upstream-removals.test.mjs
 

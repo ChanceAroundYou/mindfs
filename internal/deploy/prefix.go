@@ -1,6 +1,6 @@
 // Package deploy provides the compile-time deployment URL prefix shared by all
-// local MindFS callers. It deliberately has no dependencies so API, CLI, and
-// relay code cannot form an import cycle.
+// local MindFS callers. It deliberately has no dependencies so API and CLI code
+// cannot form an import cycle.
 package deploy
 
 import "strings"
@@ -34,13 +34,4 @@ func PrefixedPath(p string) string {
 		return prefix + p
 	}
 	return prefix + "/" + p
-}
-
-// RelayAssetsAlias returns the absolute asset path used by relayed frontends.
-func RelayAssetsAlias() string {
-	prefix := strings.TrimLeft(NormalizedPrefix(), "/")
-	if prefix == "" {
-		return "/assets/"
-	}
-	return "/" + prefix + "-assets/"
 }

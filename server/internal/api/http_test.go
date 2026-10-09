@@ -44,7 +44,7 @@ func TestPathForStaticAssetCleansURLPaths(t *testing.T) {
 	}
 }
 
-func TestServeFrontendIndexKeepsLocalAssetRefsWhenNotRelayed(t *testing.T) {
+func TestServeFrontendIndexKeepsLocalAssetRefs(t *testing.T) {
 	staticDir := t.TempDir()
 	if err := os.Mkdir(filepath.Join(staticDir, "assets"), 0o755); err != nil {
 		t.Fatal(err)
@@ -71,10 +71,12 @@ func TestServeFrontendIndexKeepsLocalAssetRefsWhenNotRelayed(t *testing.T) {
 
 	body := resp.Body.String()
 	if !strings.Contains(body, "./assets/index-test.js") {
-		t.Fatalf("body should keep local asset path when not relayed: %s", body)
+		t.Fatalf("body should keep the local asset path: %s", body)
 	}
 	if strings.Contains(body, "/mindfs-assets/") {
-		t.Fatalf("body should not contain relayed asset path when not relayed: %s", body)
+		// relay 时代的绝对化改写已整体删除（G-H），产物里的资源路径恒为
+		// <部署前缀>/assets/，不该再出现别名形态。
+		t.Fatalf("body should not contain a relayed asset path: %s", body)
 	}
 }
 
@@ -179,32 +181,6 @@ func TestStripDeployPrefixStripsAndRejects(t *testing.T) {
 				t.Fatalf("stripped path = %q, want %q", got, tt.wantStripped)
 			}
 		})
-	}
-}
-
-func TestRelayAssetsAliasRoutesThroughStrictPrefix(t *testing.T) {
-	prev := deploy.Prefix
-	deploy.Prefix = "/mindfs"
-	defer func() { deploy.Prefix = prev }()
-
-	var got string
-	handler := StripDeployPrefix(deploy.NormalizedPrefix(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		got = r.URL.Path
-		w.WriteHeader(http.StatusOK)
-	}))
-
-	aliasReq := httptest.NewRequest(http.MethodGet, "/mindfs-assets/index.js", nil)
-	aliasRec := httptest.NewRecorder()
-	handler.ServeHTTP(aliasRec, aliasReq)
-	if aliasRec.Code != http.StatusOK || got != "/assets/index.js" {
-		t.Fatalf("relay alias status/path = %d/%q, want 200/%q", aliasRec.Code, got, "/assets/index.js")
-	}
-
-	bareReq := httptest.NewRequest(http.MethodGet, "/assets/index.js", nil)
-	bareRec := httptest.NewRecorder()
-	handler.ServeHTTP(bareRec, bareReq)
-	if bareRec.Code != http.StatusNotFound {
-		t.Fatalf("bare asset status = %d, want 404", bareRec.Code)
 	}
 }
 
