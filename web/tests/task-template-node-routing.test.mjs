@@ -155,10 +155,11 @@ assert.match(
   /currentRootNodeIdRef\.current = nid \|\| null;[\s\S]{0,400}?if \(nid\) \{\s*\n\s*const known = getNodeById\(nid\);\s*\n\s*if \(known && getActiveNodeId\(\) !== nid\) \{\s*\n\s*setActiveNodeId\(nid\);/,
   "selectRootNode must set the active node to the selected project's node",
 );
-// nodeRegistry 已归入 services/net/（见 tests/source-map.mjs），App 在 src/，
-// 所以新路径是 ./services/net/nodeRegistry。
+// nodeRegistry 的 active-node 读写随「状态/ref」分层搬进了 useAppStateLayer
+// （App.tsx 只剩四层聚合调用）。契约不变：这两个函数必须真的被 import。
+const stateLayer = read("src/app/useAppStateLayer.ts");
 assert.match(
-  app,
-  /import \{[^}]*getActiveNodeId[^}]*setActiveNodeId[^}]*\} from "\.\/services\/net\/nodeRegistry"/,
-  "App must import the active-node setters/getter",
+  stateLayer,
+  /import \{[^}]*getActiveNodeId[^}]*setActiveNodeId[^}]*\} from "\.\.\/services\/net\/nodeRegistry"/,
+  "the state layer must import the active-node setters/getter",
 );

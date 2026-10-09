@@ -5,7 +5,6 @@ import path from "node:path";
 const root = path.resolve(import.meta.dirname, "..");
 const read = (rel) => fs.readFileSync(path.join(root, rel), "utf8");
 
-const app = read("src/App.tsx");
 const appTask = read("src/app/appTask.ts");
 const tasksService = read("src/services/tasks.ts");
 const dialog = read("src/components/TaskTemplateDialog.tsx");
@@ -15,6 +14,10 @@ const stageEditor = read("src/components/StageEditor.tsx");
 const stageOptions = read("src/components/StageOptionsBar.tsx");
 const panelShell = read("src/components/PanelShell.tsx");
 const promptEditor = read("src/components/PromptEditor.tsx");
+// 新建任务面板（TaskInlineEditPanel）与 AppRootView 都不在虚拟 "src/App.tsx" 里，直接读真文件。
+const appRootView = read("src/app/AppRootView.tsx");
+const inlinePanel = read("src/components/app/TaskInlineEditPanel.tsx");
+const taskComposer = read("src/app/useTaskComposer.ts");
 const css = read("src/index.css");
 const boardView = read("src/components/TaskBoardView.tsx");
 const viteConfig = read("vite.config.ts");
@@ -28,14 +31,13 @@ const templateStore = fs.readFileSync(path.join(root, "../server/internal/kanban
 // 1) 三处都渲染共享组件
 assert.match(dialog, /import \{ StageEditor \} from "\.\/StageEditor"/, "template dialog must use StageEditor");
 assert.match(panel, /import \{ StageEditor \} from "\.\/StageEditor"/, "task detail must use StageEditor");
-// StageEditor 已归入 components/task/（见 tests/source-map.mjs），App 在 src/，
-// 所以新路径是 ./components/task/StageEditor。
-assert.match(app, /import \{ StageEditor \} from "\.\/components\/task\/StageEditor"/, "create-task dialog must use StageEditor");
+// 新建任务面板是 TaskInlineEditPanel，现在由 AppRootView 渲染（App.tsx 只剩四层聚合调用）。
+assert.match(inlinePanel, /import \{ StageEditor \} from "\.\.\/task\/StageEditor"/, "create-task panel must use StageEditor");
 assert.match(dialog, /import \{ PanelShell,/, "template dialog must use PanelShell");
 assert.match(panel, /import \{ PanelShell,/, "task detail must use PanelShell");
 
 // 2) 弹窗外壳不再各手搓遮罩 / 阴影 / buttonStyle
-for (const [name, src] of [["TaskTemplateDialog", dialog], ["TaskDetailPanel", panel], ["App create dialog", app]]) {
+for (const [name, src] of [["TaskTemplateDialog", dialog], ["TaskDetailPanel", panel], ["App create dialog", appRootView]]) {
   assert.doesNotMatch(
     src,
     /rgba\(15, 23, 42, 0\.36\)/,
@@ -55,13 +57,13 @@ assert.match(stageEditor, /header=\{\(/, "the options bar goes in PromptEditor's
 // 段名可选：新建任务面板那一段没有名字概念
 assert.match(stageEditor, /stageNamePlaceholder \? \(/, "the stage name input is opt-in via stageNamePlaceholder");
 assert.doesNotMatch(
-  app.slice(app.indexOf("<StageEditor")),
+  inlinePanel.slice(inlinePanel.indexOf("<StageEditor")),
   /stageNamePlaceholder=/,
   "the create-task dialog must not render a stage name (that stage is always 任务输入)",
 );
 // user 段也能显示 agent 选择器（新建任务面板要选下一段的 agent/模型）
 assert.match(promptEditor, /\{!isUser \|\| showAgentSelector \? \(/, "PromptEditor must allow forcing the selector on for user stages");
-assert.match(app, /showAgentSelector=\{taskInlineHasAgentStage\}/, "the create-task editor must show the agent selector");
+assert.match(inlinePanel, /showAgentSelector=\{taskInlineHasAgentStage\}/, "the create-task editor must show the agent selector");
 
 // 4) 角色切换：user 开关贴在段名旁；不给 onToggleRole 只是「这一段角色锁死」，
 //    不会连带把自动推进/计划/会话复用也一起禁掉 —— 曾经用 readOnly={!onToggleRole}
@@ -95,7 +97,7 @@ for (const key of ["agentOverride", "modelOverride", "effortOverride"]) {
 // 模板库只在主节点，没覆盖时也必须把流水随包带上，否则后端在 worker 节点上
 // 回查不到模板会整个建不出任务）。共享的覆盖逻辑仍是同一个 applyStageOverride。
 assert.match(
-  app,
+  taskComposer,
   /const createStages = taskStagesForCreate\(/,
   "create-task must go through the shared stage resolver",
 );
@@ -119,8 +121,8 @@ assert.match(appTask, /return touched \? stages : undefined/, "no agent stage me
 // 5b) 新建任务面板的「立即执行」要跟随模板，并且能写回去。
 //     曾经 createTaskInputStage 只带 agent/model/effort，首段压根没读模板，
 //     于是「建完要不要自己跑」在面板上恒为灭、也不跟模板走。
-const createPanel = app.slice(app.indexOf("const createTaskInputStage: StageTemplate"));
-const createEditor = app.slice(app.indexOf("<StageEditor", app.indexOf("createTaskInputStage")));
+const createPanel = inlinePanel.slice(inlinePanel.indexOf("const createTaskInputStage: StageTemplate"));
+const createEditor = inlinePanel.slice(inlinePanel.indexOf("<StageEditor", inlinePanel.indexOf("createTaskInputStage")));
 assert.match(
   createPanel,
   /start_immediately: taskInlineEdit\.startImmediately === true/,
@@ -140,27 +142,27 @@ assert.match(
   "the create-task panel must pass onAttach so PromptEditor renders the add-attachment button",
 );
 assert.match(
-  app,
+  inlinePanel,
   /ref=\{taskInlineAttachmentInputRef\}\s*type="file"/,
   "the hidden file input the + button clicks must exist in the create-task panel",
 );
 assert.match(
-  app,
+  inlinePanel,
   /const taskInlineTemplate = taskTemplates\.find\(\(tpl\) => tpl\.id === taskInlineEdit\.templateId\) \|\| null;/,
   "the create-task panel must look the picked template up once (agent + start-immediately both read it)",
 );
 assert.match(
-  app,
+  inlinePanel,
   /const taskInlineTemplateAgent = firstAgentStage\(taskInlineTemplate\);/,
   "the agent stage must be read off that same lookup, not a second one",
 );
 assert.match(
-  app,
+  taskComposer,
   /startImmediately: template\?\.stages\?\.\[0\]\?\.snapshot\?\.start_immediately === true/,
   "opening the create-task panel must seed start-immediately from the template's first stage",
 );
 assert.match(
-  app,
+  inlinePanel,
   /text: firstUserInputTemplate\(picked\), startImmediately: picked\.stages\?\.\[0\]\?\.snapshot\?\.start_immediately === true/,
   "switching templates must re-seed start-immediately, or the previous template's value sticks",
 );
@@ -170,7 +172,7 @@ assert.match(
   "toggling the chip in the create-task panel must reach the edit state",
 );
 assert.match(
-  app,
+  taskComposer,
   /effort: edit\.effortOverride, startImmediately: edit\.startImmediately/,
   "create-task must send startImmediately through applyStageOverride",
 );
@@ -242,11 +244,11 @@ assert.match(
   /label=\{\(\s*<FieldLabelWithInfo/,
   "the create-task editor must reuse the template dialog's field label + info",
 );
-// TaskTemplateDialog 已归入 components/task/（见 tests/source-map.mjs），App 在 src/，
-// 所以新路径是 ./components/task/TaskTemplateDialog。
+// TaskTemplateDialog 由 AppRootView 渲染（App.tsx 只剩四层聚合调用）；AppRootView 在 src/app/，
+// 所以它眼里的路径是 ../components/task/。
 assert.match(
-  app,
-  /import \{ TaskTemplateDialog, FieldLabelWithInfo \} from "\.\/components\/task\/TaskTemplateDialog"/,
+  appRootView,
+  /import \{ TaskTemplateDialog, FieldLabelWithInfo \} from "\.\.\/components\/task\/TaskTemplateDialog"/,
   "the shared field label must be exported from the template dialog",
 );
 assert.doesNotMatch(
@@ -272,7 +274,7 @@ assert.doesNotMatch(
   /<div style=\{\{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" ">\}\}>\s*\n\s*\{stageNamePlaceholder/,
   "leading must not be rendered in a row of its own",
 );
-assert.doesNotMatch(app, /flex: "1 1 auto", height: "30px"/, "the full-width task name input must be gone");
+assert.doesNotMatch(inlinePanel, /flex: "1 1 auto", height: "30px"/, "the full-width task name input must be gone");
 
 // 6) 下拉框全部自绘：应用内不再有任何原生 <select>
 //    只看真正的 JSX 标签，注释里提到 <select> 不算（Select.tsx 的说明就写了）。
@@ -289,7 +291,7 @@ assert.match(select, /position: "fixed"/, "the portaled menu must be positioned 
 assert.match(select, /--menu-bg/, "the menu surface must follow the app menu background");
 assert.match(select, /borderRadius: "12px"/, "the menu must match AgentSelector/ModeSelector's surface");
 assert.doesNotMatch(stageOptions, /<select/, "the session-reuse dropdown must use Select, not a native select");
-assert.match(app, /<Select/, "the create-task template dropdown must use Select");
+assert.match(inlinePanel, /<Select/, "the create-task template dropdown must use Select");
 
 // 7) 阶段选项四项常驻，不再藏三点菜单
 for (const key of ["taskTemplate.autoAdvance", "taskTemplate.planMode", "taskTemplate.sessionReuse"]) {
@@ -342,7 +344,7 @@ for (const [name, src] of [
   ["PanelShell", panelShell],
   ["TaskTemplateDialog", dialog],
   ["TaskDetailPanel", panel],
-  ["App create dialog", app],
+  ["App create dialog", appRootView],
 ]) {
   assert.doesNotMatch(
     src,
@@ -356,7 +358,7 @@ for (const [name, src] of [
   );
 }
 assert.doesNotMatch(
-  app.slice(app.indexOf("<PanelShell", app.indexOf("createTaskInputStage"))),
+  inlinePanel.slice(inlinePanel.indexOf("<PanelShell", inlinePanel.indexOf("createTaskInputStage"))),
   /t\("common\.cancel"\)/,
   "the create-task panel must not keep a cancel button",
 );
@@ -399,7 +401,7 @@ assert.match(
   "the read-only name must stay in the title slot, shown only when not editing",
 );
 assert.match(
-  app,
+  inlinePanel,
   /hasUnsavedChanges=\{\(\) => String\(taskInlineEdit\?\.text \|\| ""\)\.trim\(\) !== ""\}/,
   "the create-task panel must warn when a prompt was typed",
 );
@@ -408,7 +410,7 @@ assert.match(
 //     minHeight 一撤，卡片只剩 maxHeight，卡高就由内容决定；遮罩是
 //     alignItems:center，居中不受影响。
 assert.doesNotMatch(
-  app.slice(app.indexOf("<PanelShell", app.indexOf("createTaskInputStage"))),
+  inlinePanel.slice(inlinePanel.indexOf("<PanelShell", inlinePanel.indexOf("createTaskInputStage"))),
   /minHeight=/,
   "the create-task panel must not pin a minHeight — that was the empty band at the bottom",
 );

@@ -72,10 +72,13 @@ assert.doesNotMatch(
   "Agent config switch detail view should not render the restart button",
 );
 
+// restartAgent 的调用点随「会话域」分层搬进了 useAppSessionLayer（App.tsx 现在只剩四层聚合
+// 调用，本身不再 import 任何服务）。契约不变：这个服务必须真的被 import，不能另写一套。
+const sessionLayer = readFileSync(new URL("../src/app/useAppSessionLayer.ts", import.meta.url), "utf8");
 assert.match(
-  app,
-  /import \{ fetchAgents, restartAgent, type AgentStatus \} from "\.\/services\/agents";/,
-  "App should import the existing restartAgent service",
+  sessionLayer,
+  /import \{ fetchAgents, restartAgent \} from "\.\.\/services\/agents";/,
+  "the session layer must import the existing restartAgent service",
 );
 
 assert.match(

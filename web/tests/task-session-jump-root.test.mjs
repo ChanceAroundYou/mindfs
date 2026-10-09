@@ -96,10 +96,13 @@ const KEY = "1791268544-abc";
 // 6) 接线契约：App.tsx 必须真的用这套 helper、并在三条写缓存的路径上补 root_id。
 //    （只测纯函数挡不住「改回原实现」，症状的入口在 App.tsx 这层胶水里。）
 const app = readFileSync(path.join(root, "src/App.tsx"), "utf8");
+// 这三个 helper 的调用点随任务抽屉逻辑搬进了 useAppTaskDrawer（App.tsx 只剩四层聚合调用），
+// 所以 import 断言指向那个模块；下面几条「接线」断言仍跑在虚拟 App.tsx 上（含该模块）。
+const taskDrawer = readFileSync(path.join(root, "src/app/useAppTaskDrawer.ts"), "utf8");
 assert.match(
-  app,
-  /import \{ buildSessionJumpTarget, resolveSessionJumpRoot \} from "\.\/app\/sessionJump";/,
-  "App.tsx must import the session-jump helpers",
+  taskDrawer,
+  /import \{ buildSessionJumpTarget, resolveSessionJumpRoot \} from "\.\/sessionJump";/,
+  "the task drawer must import the session-jump helpers",
 );
 assert.match(
   app,
