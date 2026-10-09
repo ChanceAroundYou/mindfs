@@ -2,18 +2,10 @@ import React from "react";
 import { createPortal } from "react-dom";
 import { useI18n } from "../../i18n/index";
 import { Select } from "../common/Select";
-import { currentUser, logout, type AuthUser } from "../../services/net/authGate";
+import { logout } from "../../services/net/authGate";
 import { confirmDialog } from "../../services/dialog";
-import {
-  accountErrorKey,
-  changePassword,
-  createAccount,
-  deleteAccount,
-  isAdminAccount,
-  listAccounts,
-  setPrimaryAccount,
-  type Account,
-} from "../../services/accounts";
+import { deleteAccount, setPrimaryAccount } from "../../services/accounts";
+import { useAccountPanel } from "./useAccountPanel";
 
 type AccountPanelProps = {
   onClose: () => void;
@@ -130,158 +122,36 @@ function badgeStyle(active: boolean): React.CSSProperties {
 
 export function AccountPanel({ onClose, anchorRef }: AccountPanelProps): React.ReactElement | null {
   const { t } = useI18n();
-  const rootRef = React.useRef<HTMLDivElement | null>(null);
-  const [me, setMe] = React.useState<AuthUser | null>(() => currentUser());
-  const [accounts, setAccounts] = React.useState<Account[]>([]);
-  const [error, setError] = React.useState("");
-  const [busy, setBusy] = React.useState(false);
-
-  // 两个表单默认收起：默认视图只留「当前账户 + 账户列表」，不挤
-  const [passwordOpen, setPasswordOpen] = React.useState(false);
-  const [createOpen, setCreateOpen] = React.useState(false);
-
-  // 改自己密码
-  const [currentPassword, setCurrentPassword] = React.useState("");
-  const [newPassword, setNewPassword] = React.useState("");
-  const [confirmPassword, setConfirmPassword] = React.useState("");
-  const [passwordNotice, setPasswordNotice] = React.useState("");
-
-  // 新建账户
-  const [addName, setAddName] = React.useState("");
-  const [addPassword, setAddPassword] = React.useState("");
-  const [addRole, setAddRole] = React.useState("user");
-
-  const [box, setBox] = React.useState<{ top: number; left: number; width: number; maxHeight: number } | null>(
-    null,
-  );
-
-  const admin = isAdminAccount(me);
-
-  // 贴住顶栏、右缘对齐左侧栏右缘（不越出侧栏），并夹在视口里
-  React.useLayoutEffect(() => {
-    const place = () => {
-      const sidebar =
-        anchorRef?.current?.closest(SIDEBAR_SELECTOR) ?? document.querySelector(SIDEBAR_SELECTOR);
-      const rect = sidebar?.getBoundingClientRect();
-      const vw = window.innerWidth;
-      const vh = window.innerHeight;
-      const available = rect ? rect.width - GUTTER * 2 : vw - GUTTER * 2;
-      const width = Math.max(MIN_WIDTH, Math.min(available, vw - GUTTER * 2));
-      const left = Math.max(GUTTER, Math.min(rect ? rect.left + GUTTER : GUTTER, vw - width - GUTTER));
-      const top = Math.max(GUTTER, Math.min(MENU_BAR_TOP, vh - GUTTER));
-      setBox({ top, left, width, maxHeight: Math.max(160, Math.min(MAX_HEIGHT, vh - top - GUTTER)) });
-    };
-    place();
-    window.addEventListener("resize", place);
-    window.addEventListener("scroll", place, true);
-    return () => {
-      window.removeEventListener("resize", place);
-      window.removeEventListener("scroll", place, true);
-    };
-  }, [anchorRef]);
-
-  const refresh = React.useCallback(async () => {
-    try {
-      setAccounts(await listAccounts());
-      setError("");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
-  }, []);
-
-  React.useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
-  // 点外部 / Esc 关闭（沿用 NodeManagerPanel 的约定）
-  React.useEffect(() => {
-    const onPointerDown = (e: MouseEvent) => {
-      const target = e.target as Node;
-      if (rootRef.current?.contains(target)) return;
-      if (anchorRef?.current?.contains(target)) return; // 锚点自己走 onClick，别抢
-      onClose();
-    };
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("mousedown", onPointerDown);
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", onPointerDown);
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, [onClose, anchorRef]);
-
-  const describeError = (e: unknown): string => {
-    const code = e instanceof Error ? e.message : String(e);
-    const key = accountErrorKey(code);
-    return key ? t(key as never) : code;
-  };
-
-  const run = async (fn: () => Promise<void>, onDone?: () => void) => {
-    setBusy(true);
-    setError("");
-    try {
-      await fn();
-      onDone?.();
-      await refresh();
-    } catch (e) {
-      setError(describeError(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const submitPassword = () => {
-    if (!me) return;
-    if (!currentPassword || !newPassword) {
-      setError(t("account.errPasswordRequired"));
-      return;
-    }
-    if (newPassword.length < 6) {
-      setError(t("account.errPasswordTooShort"));
-      return;
-    }
-    if (newPassword !== confirmPassword) {
-      setError(t("account.errPasswordMismatch"));
-      return;
-    }
-    setPasswordNotice("");
-    void run(
-      async () => {
-        await changePassword(me, currentPassword, newPassword);
-      },
-      () => {
-        setCurrentPassword("");
-        setNewPassword("");
-        setConfirmPassword("");
-        setPasswordNotice(t("account.passwordChanged"));
-      },
-    );
-  };
-
-  const submitNewAccount = () => {
-    const name = addName.trim();
-    if (!name || !addPassword) {
-      setError(t("account.errCredentialsRequired"));
-      return;
-    }
-    if (addPassword.length < 6) {
-      setError(t("account.errPasswordTooShort"));
-      return;
-    }
-    void run(
-      async () => {
-        await createAccount(name, addPassword, addRole);
-      },
-      () => {
-        setAddName("");
-        setAddPassword("");
-        setAddRole("user");
-        setCreateOpen(false);
-      },
-    );
-  };
+  const {
+    rootRef,
+    me,
+    accounts,
+    error,
+    busy,
+    admin,
+    passwordOpen,
+    createOpen,
+    currentPassword,
+    newPassword,
+    confirmPassword,
+    passwordNotice,
+    addName,
+    addPassword,
+    addRole,
+    box,
+    setPasswordOpen,
+    setCurrentPassword,
+    setNewPassword,
+    setConfirmPassword,
+    setPasswordNotice,
+    setAddName,
+    setAddPassword,
+    setAddRole,
+    setCreateOpen,
+    run,
+    submitPassword,
+    submitNewAccount,
+  } = useAccountPanel({ onClose, anchorRef });
 
   if (!box) return null;
 
