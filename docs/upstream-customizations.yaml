@@ -2060,7 +2060,7 @@ groups:
     anchors:
       - server/internal/api/stream_hub.go:ClearSessionPending
       - server/internal/api/stream_hub.go:PendingSessionSnapshot
-      - server/internal/api/appcontext.go:BroadcastSessionDone
+      - server/internal/api/appcontext.go:EndSessionTurn
       - web/src/App.tsx:refreshMultiProjectReplyingSessions
 
   - id: G-BE
@@ -2089,7 +2089,9 @@ groups:
       子会话 pending 的终态收边。不做静态判死/超时（已于 G-AY 证伪）。
     tests:
       - server/internal/api/stream_hub_pending_identity_test.go
+      - server/internal/scheduled/pending_identity_test.go
       - server/internal/agent/codex/session_test.go
+      - web/tests/e2e-pending-indicators.test.mjs
     files:
       - server/internal/api/stream_hub.go
       - server/internal/api/appcontext.go

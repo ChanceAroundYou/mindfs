@@ -1573,8 +1573,12 @@
      `turnGen==0` 视为无主，保守清 —— 绝不因缺身份而漏清（漏清 = 灯不灭）。
   3. 抽出唯一终结器 `AppContext.EndSessionTurn(rootID, key, requestID, turnGen)`，
      所有清理点都改调它；`runSessionMessage` / `RunAgentStage` / 定时任务 用 `defer`
-     覆盖成功/出错/取消/panic，`BroadcastSessionDone` 只作兼容壳转调它。
-  4. 子会话在父轮收尾时一并终结（本轮创建、没等到 `MessageDone` 的那些）。
+     覆盖成功/出错/取消/panic。无身份的兼容壳 `BroadcastSessionDone` **已删除** ——
+     定时任务曾是它最后一个调用点，换成 `EndSessionTurn` 后它就是纯粹的误用入口
+     （`Scope: G-BE` 的源码守卫禁止它复活）。
+  4. 子会话在父轮收尾时一并终结（本轮创建、没等到 `MessageDone` 的那些）。定时任务路径
+     （`scheduled/tasks.go`）从 `OnStart`/`OnSubSessionCreated` 捕获每会话的 `turnGen`，
+     收尾（含 `defer` 兜的子会话）原样交给 `EndSessionTurn`，不再用无身份的广播。
   5. `codex.handleStreamedEvents` 由「通道关闭即成功」改为返回是否见到 `TurnCompletedEvent`，
      通道中途关闭按错误处理 —— 否则会**提前/错误**触发 done（本根的相邻缺口，同批修）。
   - 这套「代次比对」机制项目里本就有（`ActiveTurnID` 用于取消定位），
@@ -1583,8 +1587,16 @@
 - 针对性测试：
   - `server/internal/api/stream_hub_pending_identity_test.go` → 迟到 done 不清新轮（`TurnGen` 比对）、
     重复 done 幂等、`gen=0` 仍保守清、子会话由父轮终结、`PendingTurnGenMatches` 缺失时放行。
+  - `server/internal/scheduled/pending_identity_test.go` → 定时任务路径的源码守卫：接口里不得再有
+    无身份的 `BroadcastSessionDone`、置 pending 的两个调用点必须接收 `turnGen`、
+    `EndSessionTurn` 不得收到字面 `0`。钉住「定时任务收尾也带回合身份」这条补齐（合上游时若退回
+    无身份广播，此测试必红）。
   - `server/internal/agent/codex/session_test.go` → 通道关闭无 `TurnCompleted` 报错、见到 `TurnCompleted` 返回成功、
     `ThreadError` 返回错误。
+  - `web/tests/e2e-pending-indicators.test.mjs`（`MINDFS_E2E=1`，隔离实例）→ **浏览器 + 真后端**层：
+    ① done 后等待指示器消失 + 列表灯灭、运行中灯亮过；② **队列接力**（A 在跑时发 B 排队）
+    期间「服务端在跑但 UI 灯灭」连续不得超过 1 次采样 —— 这是「迟到 done 不误抹新轮」
+    唯一的过程级证据（单测与源码契约层都够不到真实时序）。
 
 ### G-BC 方案 B：worker 没有账户表，账户 id 从用户名派生
 

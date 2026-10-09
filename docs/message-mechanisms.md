@@ -151,6 +151,101 @@ agent 回了「收到」，盘上落成 `<隔离项目>/.mindfs/sessions/<key>.j
 
 ---
 
+> **移植注（2026-10-09）**：以下 §1.7 与文末 §7 来自 G-T（Canonical Turn/Event）线，
+> 其代码**未**进 main。§1.7.2 说的「下一个必须做的动作」（让 `SetPendingUserAt` 把 turn 身份
+> 回传给收尾点）在 main 上**已由 G-BE 以 `TurnGen uint64` 表示完成**，不是 `CanonicalTurnID`。
+> 阅读时把 `canonical_turn.go` / `CanonicalTurnID` / 前端 `activeTurnId` 视为 **G-T 分支内部**的物；
+> §1.7.1/§1.7.3 的**边界分析仍然成立**（`EventCursor` 是回合内游标而非 `event_id`；
+> 「同一轮真的收两次 done」在当前生产路径上未确认）。完整对照见 `docs/message-mechanisms-plan.md` 顶部的移植说明。
+
+### 1.7 第4阶段迁移记录：服务端 Canonical Turn/Event shadow projection
+
+服务端在 `StreamHub` 的既有 pending/event 入口建立迁移期内部 adapter：`SetPendingUserAt` 开启新 turn，`AppendReplyEvent` 投影事件，`BroadcastSessionDone` 投影 terminal。adapter 只做内存 shadow reducer，不改变 `StreamEvent` JSON、`EventCursor`、Exchange/ExchangeAux、ReplyingList 或 pending 行为；Canonical 身份不是 wire/durable ID。重复、乱序和旧 turn 事件被 reducer 忽略，terminal 每 turn 只接受一次。
+
+#### 1.7.1 本阶段查实的阻塞点：`session.done` 不携带 turn 身份
+
+原本打算让 reducer 反向驱动 pending 状态（用 terminal 决定 `ClearSessionPending` 是否清）。**这条路走不通，且加了会引入比现状更糟的 bug**，原因不是 reducer 写错，而是输入端缺信息：
+
+```text
+BroadcastSessionDone(rootID, sessionKey, requestID)
+                                  ↑ 没有「这条 done 属于哪一轮」
+```
+
+`terminal(sessionKey)` 只能认「当前那一轮」。于是**迟到的旧回合 done 会把新一轮标成 terminal**，`ClearSessionPending` 随即清掉新一轮的 pending —— 而那一轮实际还在跑。这就是「正在运行但灯不亮」的一个上游形态，且比现有的 replay 清理超时更难复现（它取决于跨回合的时序，不取决于单个回合内部）。
+
+更糟的一点：这条守卫写上去后，若某个会话的 pending 不是经 `SetPendingUserAt` 建的（例如 importer、recovery 路径），adapter 里没有该会话的 turn，`IsTerminal` 恒为 false ⇒ **pending 永远清不掉**，把「灯不亮」从偶发变成必然。所以该改动已回滚，只保留红测试：
+
+```text
+server/internal/api/canonical_turn_shadow_test.go → TestTerminalIsScopedToItsOwnTurn
+```
+
+**结论（决定后续阶段的顺序）**：turn 身份不是「以后再补的元数据」，它是 terminal 语义可判定的前置条件。任何要按回合区分的状态（清 pending、结束计时器、切 running 灯、丢弃 transient）都必须等它到位。在此之前，服务端状态只能继续由现有的 pending/queue 路径承担，reducer 保持纯投影。
+
+#### 1.7.2 turn 身份已加进 reducer，但**收尾帧的携带者仍未就位**
+
+按上面的结论做了两处改动：
+
+1. `terminal(sessionKey, turnID)` 显式接受 turn 身份，为空时回退当前 turn；
+2. `TurnReducer.Apply` 放行**属于旧回合的 terminal**（此前一律 `return false` 丢弃），
+   非 terminal 的旧回合事件仍然拒绝。`TestTerminalIsScopedToItsOwnTurn` 由此转绿。
+
+**但这不是修复，是能力**。要读清楚两件事：
+
+- reducer 现在**能**把 terminal 归到正确的回合，前提是调用方**告诉它**是哪一轮；
+- 生产路径 `StreamHub.BroadcastSessionDone` 目前传的是**空 turn 身份**（走「回退当前那一轮」
+  的分支），与改动前的行为完全一致。测试之所以绿，是因为测试**自己给出了**正确的
+  turn ID，生产路径并没有这个信息源。
+
+> 接线时**刻意**选了空身份而不是新增一个 `ActiveTurnID(sessionKey)` 读取器：后者会在
+> `begin` 并发发生时分两次读 `turns[sessionKey]`（一次在读取器里、一次在 `terminal` 里），
+> 得到 TOCTOU；而空身份在 `terminal` 的同一把锁内回退，语义相同、少一个方法、少一处竞态。
+
+追了一遍现有调用方，**今天这条回退在主路径上是正确的**，但正确性来自别处而非身份本身：
+
+| 路径 | turn 来源 | 空身份回退到「当前那一轮」是否可靠 |
+|---|---|---|
+| 主会话（`ws.go`） | `reserveOrQueueSessionMessage` 在 `state.Active` 时**入队**，`startNextQueuedSessionMessage` 在 `BroadcastSessionDone` **之后**才跑 | 可靠 —— N+1 不可能在 N 的 done 之前 begin |
+| 子会话（`ws.go` / `appcontext.go`） | pending 由 `SetPendingReply` 建，**不走** `SetPendingUserAt` | adapter 里无该 key 的 turn ⇒ 拿到空 ⇒ terminal 成 no-op |
+| 定时任务（`scheduled/tasks.go`） | 与主会话同一条 `BroadcastSessionUserMessageAt` 路径 | 同主会话 |
+
+所以今天没有可复现的「迟到 done」—— **是队列串行化挡住的，不是身份挡住的**。这一点必须记下来：
+一旦将来有任何路径允许两个回合在同一 session key 上重叠，`ActiveTurnID` 会立刻变成那个
+「迟到 done 把新一轮标成 terminal」的 bug，而现在的代码没有任何东西会拦住它。
+
+**下一个必须做的动作**：让 `SetPendingUserAt` 把新建的 turn ID 回传给调用方（现在只回 `*PendingUserMessage`），
+调用方在 `BroadcastSessionDone` 时原样带回。在此之前 reducer 不得驱动 pending 状态。
+（**main 注**：此动作在 main 上已由 G-BE 以 `TurnGen` 完成；但定时任务路径仍传 `0`，
+是遗留缺口，见 `.omc/plans/gt-wip-reconcile.md` §1.7 与阶段 3。）
+
+#### 1.7.3 其余已登记的边界（同一轮的排查结论）
+
+- **重复 done 不等价于重复 terminal 帧**：`terminal()` 每次调用都分配**新的** `EventID`
+  （`terminal-N` 用全局 seq），所以 `seen` 去重**不会**拦住第二次 done；真正拦住它的是
+  `Apply` 里的 `state.Terminal` 短路。这条性质挂在那个短路分支上，而它正是「放行旧回合
+  terminal」时最容易顺手改掉的分支。
+  **但「同一轮真的收两次 done」在当前生产路径上未确认** —— 已排除的疑似来源：kanban 的
+  `appcontext.go:389`（`OnSubSessionUpdate` 形参，子会话 key）与 `:399`（外层
+  `exec.Run.SessionKey`，主会话 key）是两个不同会话；定时任务 `tasks.go:521`/`:537` 同理；
+  `startNextQueuedSessionMessage`（`ws.go:1031`）起的是**新一轮**（`go h.runSessionMessage`），
+  其 done 属于新 turn。所以 `TestDuplicateDoneCommitsTerminalOnce` 是**防御性护栏**，
+  不是已复现的线上 bug —— 别把它当成后者引用。
+- **子会话的 pending 没有 turn**：`SetPendingReply` 不调 `begin`，因此子会话的 done 在
+  shadow 里是 no-op。要覆盖子会话，`begin` 需要下沉到「任何把 `state.Active` 置 true 的地方」。
+- **`EventCursor` 不能冒充 `event_id`**：它形如 `baseSeq:eventSeq`，两个分量都**每回合归零**
+  （`stream_hub.go:445/449`），所以它标识的是「**某一回合内的位置**」，不是全局事件身份。
+  **常见路径下相邻回合并不碰撞** —— `baseExchangeSeq` 在 `persistUserTurnExchange` **之前**
+  算出（`usecase/session.go:2472` vs `:2475`），本回合 user 行 seq 必大于它，故 N+1 的 base
+  严格大于 N 的 base。真正会退化成碰撞的是两条路径：① `baseExchangeSeq` 不传时恒为 0
+  （`formatEventCursor` 得 `0:1`/`0:2`…）—— 但 `SetPendingUser`/`BroadcastSessionUserMessage`
+  这两个不传的包装**无生产调用方**，三个真实调用点都传了 `start.BaseExchangeSeq`；
+  ② `persistUserTurnExchange` 命中判重短路（`:2339-2341` 返回旧 seq 且不新增行）时，
+  base 不前进而 `eventSeq` 照常归零。
+  **结论成立（它是回合内游标，不是 event_id），但不要用「每次重置所以必然碰撞」当理由** ——
+  那个推导链是错的，会误导后来人加固或放松一个实际不存在的约束。canonical adapter 用独立的
+  全局 `seq` 就是为了不踩这两个退化分支。
+
+---
+
 ## 2. 机制清点
 
 **读法**：每行一个机制。**验证标记**在最左列 ——
@@ -522,3 +617,83 @@ SessionViewer 只做接线。随之：
    `live-owned` / 读取侧投影），它产生的重复行会以「同一段正文两遍」的形式
    混进本节的渲染问题里。回补项：**M-I1…M-I6（导入判重链路）**，见第二步文档。
 
+
+---
+
+## 7. Canonical Turn/Event ADR（G-T 线，未进 main —— 提案）
+
+> **移植注**：以下 ADR 来自 G-T 分支，其代码未进 main。目标是**未来统一事件身份**的设计参考；
+> 阶段 5 的目标在 main 上已由 G-BE（`TurnGen`）达成，表示不同。§7.4/§7.6 提到的
+> `session-core-unit.test.mjs` canonical adapter 护栏、`canonicalTurn.ts` 等均**不在 main**。
+
+### 7.1 决策
+
+将 Canonical Turn/Event 定义为现有消息链路的**语义模型和迁移目标**，而不是在第一阶段直接改写 WS 协议、StreamHub 或持久化格式。
+
+- 一个 Turn 从一次被接受或排队的 `session.message` 开始，经 `session.user_message`、当前回合的 `session.stream` 事件，到该回合的 `session.done` 收尾。
+- Canonical Event 是这些消息在未来统一模型中的语义事件；当前阶段不新增 wire 字段，也不把 `EventCursor` 提升为公开身份。
+- `Exchange/ExchangeAux`、`ReplyingList`、WS 帧和 React timeline 暂时继续作为各自 projection，现有行为先由测试守护。
+
+### 7.2 目标模型（后续阶段）
+
+Canonical Event 目标上应携带：
+
+```text
+event_id + turn_id + event_seq + generation + version + timestamp + payload
+```
+
+其中 `event_id` 负责幂等，`turn_id` 绑定一轮用户提交及其输出，`event_seq` 保证回合内顺序，`generation/version` 防止旧回合或旧快照覆盖新状态。`durable_seq` 未来表示它是否已经进入历史投影，但不能替代 `event_seq`、`agent_ctx_seq` 或 Exchange.Seq。
+
+### 7.3 现有协议映射
+
+| 当前机制 | 第一阶段语义 | 当前边界 |
+|---|---|---|
+| `session.message` / `session.accepted` | Turn 请求进入系统 | 客户端提交与服务端接收，不是持久事件日志 |
+| `session.user_message` | Turn 的用户输入投影 | 用户 Exchange 已先落盘，广播携带真实 seq |
+| `session.stream` | Turn 的实时事件投影 | `ReplyingList` 是当前进程内存缓冲，不是 durable log |
+| `session.stream{reset:true,events:[...]}` | 当前 Turn 快照重建 | reset 是快照语义，续投帧不得复用 reset |
+| `session.done` | Turn terminal 投影 | 当前只带 root/session，不含独立 turn 身份 |
+| `Exchange/ExchangeAux` | 历史消息投影 | Exchange.Seq、aux seq 与内部 EventCursor 不是同一序列 |
+
+### 7.4 第一阶段必须守住的不变量
+
+1. 相同的 Turn 快照重复应用，结果必须相同。
+2. replay 快照必须先于该 Turn 的 terminal 语义；不能依赖 `WriteJSON` 互斥锁猜顺序。
+3. `reset` 只清理旧的实时投影，续投事件不能再次 reset。
+4. 旧的客户端 transient 不能凭内容、数组位置或时间窗口被错误认领到当前 Turn。
+5. `session.done` 只能由一个收尾编排路径决定；列表灯和计时器不得各自推断另一套运行状态。
+
+第 1、4 条已在 `web/tests/session-core-unit.test.mjs` 登记为护栏测试（**G-T 分支**）；**in main 上第 5 条由 G-BE 的单一终结器 `EndSessionTurn` 保证。**
+
+### 7.5 迁移边界
+
+**本阶段允许：**
+
+- 记录术语、现有协议映射和未来 projection 边界；
+- 增加针对当前缺口的红测试；
+- 将现有 replay、done、时间戳和窗口测试归入 Canonical Turn/Event 护栏。
+
+**本阶段禁止：**
+
+- 改 `server/internal/api/ws.go`、`stream_hub.go`、`agent/types` 的 **wire 或事件结构**
+  （即 `StreamEvent` 字段、WS 帧 JSON、`EventCursor` 格式）；
+- 新增或宣称已实现 wire 上的 `turn_id/event_id/version`；
+- 把所有流式 chunk 直接写成 Exchange；
+- 恢复客户端 event cursor 续传；
+- 删除 `Exchange/ExchangeAux`、窗口分页、IndexedDB、importer、repoint cursor；
+- 用新的 pending/轮询补丁代替状态模型。
+
+### 7.6 后续迁移阶段
+
+1. **Envelope**：在服务端事件产生处建立兼容的 canonical adapter，旧 WS/Exchange 继续作为 projection。
+   （**main 注**：等价目标已由 G-BE 的 `TurnGen` 达成，不引入 adapter。）
+2. **Turn reducer**：统一 live、import、recovery 的幂等写入口和 terminal 状态提交。
+3. **Ordered transport**：每个 WS 连接单一 FIFO writer，统一 replay、live、terminal 顺序。
+   （**main 注**：待办，见 `.omc/plans/gt-wip-reconcile.md` 阶段 4。）
+4. **Frontend reducer**：WS、HTTP snapshot、window、sync、reset、done 全部进入单一 session reducer，React 只消费 projection。
+   （**main 注**：其症状面 7a 已由 G-AY 达成。）
+5. **删除补丁**：影子对账通过后，再收缩 `tailOverlay`、内容猜重、`seq=0` 混合数组和旧 importer projection。
+
+### 7.7 ADR 后果与明确不做事项
+
+该决策短期不会修复任何线上状态错序；它的价值是先建立一个不会继续漂移的边界和验收标准。Canonical 模型不等于把每个 token 持久化：实时事件日志与 `Exchange/ExchangeAux` durable projection 可以并存。第一阶段也不部署、不重启、不提交生产协议变更；真实断线时序仍需在隔离实例用 observability probe 验证。

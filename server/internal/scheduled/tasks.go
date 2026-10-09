@@ -29,12 +29,16 @@ type SessionActivityBroadcaster interface {
 	// BroadcastSessionCreated 让「定时任务新建的会话」也能立刻进对话列表。
 	// 和看板同一条要求：meta.updated 只更新已缓存条目，不新增列表行。
 	BroadcastSessionCreated(rootID string, sess *session.Session)
-	SetSessionPendingReply(rootID, sessionKey, sessionTitle string)
+	// SetSessionPendingReply / BroadcastSessionUserMessageAt 返回该条目的**回合代次**，
+	// 收尾时必须原样交给 EndSessionTurn —— 否则清理按 turnGen=0 走，代次比对失效。
+	SetSessionPendingReply(rootID, sessionKey, sessionTitle string) uint64
 	BroadcastSessionUserMessage(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService string, planMode bool, content string)
-	BroadcastSessionUserMessageAt(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService string, planMode bool, content string, timestamp time.Time, userExchangeSeq int, baseExchangeSeq ...int)
+	BroadcastSessionUserMessageAt(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService string, planMode bool, content string, timestamp time.Time, userExchangeSeq int, baseExchangeSeq ...int) uint64
 	BroadcastSessionUpdate(rootID, sessionKey string, update agenttypes.Event)
 	BroadcastSessionError(rootID, sessionKey, message string)
-	BroadcastSessionDone(rootID, sessionKey, requestID string)
+	// EndSessionTurn 是**带回合身份的终结器**。定时任务路径必须走它，不得用无身份的
+	// BroadcastSessionDone（传 turnGen=0 会跳过代次比对，把新轮的灯误清）。
+	EndSessionTurn(rootID, sessionKey, requestID string, turnGen uint64)
 	BroadcastAgentStatusChanged(agentName string)
 	BroadcastScheduledTaskDone(rootID, taskID, taskName, sessionKey, summary string)
 	BroadcastScheduledTaskFailed(rootID, taskID, taskName, sessionKey, message string)
@@ -484,17 +488,24 @@ func (s *Service) runTask(ctx context.Context, task Task, force bool) error {
 	}
 	sessionName := current.Name
 	userTimestamp := time.Now().UTC()
+	// 回合身份：主会话与各子会话的 pending 代次都记下来，收尾时原样交给终结器。
+	// 没有它，done 会以 turnGen=0 走「无条件清」，把此后新起一轮的灯误抹（症状「灯不亮」）。
+	var turnMu sync.Mutex
+	turnGens := map[string]uint64{}
 	// 子会话 pending 的父轮收尾：本轮创建的子会话若没等到 MessageDone（出错/取消/
 	// 父轮先结束），pending 会永久残留。与 ws.go 同一条纪律：用 defer 把一个终结器
 	// 覆盖全部终态边（成功与失败两条 return 都走到）。
 	var subSessionKeys []string
-	var subMu sync.Mutex
 	defer func() {
-		subMu.Lock()
+		turnMu.Lock()
 		subs := append([]string(nil), subSessionKeys...)
-		subMu.Unlock()
+		gens := make(map[string]uint64, len(subs))
+		for _, k := range subs {
+			gens[k] = turnGens[k]
+		}
+		turnMu.Unlock()
 		for _, subKey := range subs {
-			broadcaster.BroadcastSessionDone(current.RootID, subKey, "")
+			broadcaster.EndSessionTurn(current.RootID, subKey, "", gens[subKey])
 		}
 	}()
 	err = s.usecase.SendMessage(ctx, usecase.SendMessageInput{
@@ -511,7 +522,10 @@ func (s *Service) runTask(ctx context.Context, task Task, force bool) error {
 			CurrentRoot: current.RootID,
 		},
 		OnStart: func(start usecase.MessageStart) {
-			broadcaster.BroadcastSessionUserMessageAt(current.RootID, sessionKey, session.TypeChat, sessionName, current.Agent, start.Model, start.ModelDisplayName, start.Mode, start.Effort, start.FastService, false, current.Prompt, userTimestamp, start.UserExchangeSeq, start.BaseExchangeSeq)
+			gen := broadcaster.BroadcastSessionUserMessageAt(current.RootID, sessionKey, session.TypeChat, sessionName, current.Agent, start.Model, start.ModelDisplayName, start.Mode, start.Effort, start.FastService, false, current.Prompt, userTimestamp, start.UserExchangeSeq, start.BaseExchangeSeq)
+			turnMu.Lock()
+			turnGens[sessionKey] = gen
+			turnMu.Unlock()
 		},
 		OnUpdate: func(update agenttypes.Event) {
 			broadcaster.BroadcastSessionUpdate(current.RootID, sessionKey, update)
@@ -525,23 +539,30 @@ func (s *Service) runTask(ctx context.Context, task Task, force bool) error {
 			// 前端重拉，meta.updated 不会（前端 handler 只写已缓存条目）。
 			broadcaster.BroadcastSessionCreated(current.RootID, created)
 			if created != nil {
-				broadcaster.SetSessionPendingReply(current.RootID, created.Key, created.Name)
-				subMu.Lock()
+				gen := broadcaster.SetSessionPendingReply(current.RootID, created.Key, created.Name)
+				turnMu.Lock()
+				turnGens[created.Key] = gen
 				subSessionKeys = append(subSessionKeys, created.Key)
-				subMu.Unlock()
+				turnMu.Unlock()
 			}
 		},
 		OnSubSessionUpdate: func(sessionKey string, update agenttypes.Event) {
 			broadcaster.BroadcastSessionUpdate(current.RootID, sessionKey, update)
 			if update.Type == agenttypes.EventTypeMessageDone {
-				broadcaster.BroadcastSessionDone(current.RootID, sessionKey, "")
+				turnMu.Lock()
+				gen := turnGens[sessionKey]
+				turnMu.Unlock()
+				broadcaster.EndSessionTurn(current.RootID, sessionKey, "", gen)
 			}
 		},
 	})
 	now := time.Now().UTC()
+	turnMu.Lock()
+	mainGen := turnGens[sessionKey]
+	turnMu.Unlock()
 	if err != nil {
 		broadcaster.BroadcastSessionError(current.RootID, sessionKey, err.Error())
-		broadcaster.BroadcastSessionDone(current.RootID, sessionKey, "scheduled:"+current.ID)
+		broadcaster.EndSessionTurn(current.RootID, sessionKey, "scheduled:"+current.ID, mainGen)
 		broadcaster.BroadcastScheduledTaskFailed(current.RootID, current.ID, current.Name, sessionKey, err.Error())
 		_ = s.updateTask(current.RootID, current.ID, func(t *Task) {
 			t.LastRunAt = &now
@@ -550,7 +571,7 @@ func (s *Service) runTask(ctx context.Context, task Task, force bool) error {
 		})
 		return err
 	}
-	broadcaster.BroadcastSessionDone(current.RootID, sessionKey, "scheduled:"+current.ID)
+	broadcaster.EndSessionTurn(current.RootID, sessionKey, "scheduled:"+current.ID, mainGen)
 	broadcaster.BroadcastScheduledTaskDone(current.RootID, current.ID, current.Name, sessionKey, "")
 	return s.updateTask(current.RootID, current.ID, func(t *Task) {
 		t.SessionKey = sessionKey

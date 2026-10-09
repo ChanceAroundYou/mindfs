@@ -958,17 +958,21 @@ func (s *AppContext) BroadcastAgentStatusChanged(agentName string) {
 	})
 }
 
-func (s *AppContext) SetSessionPendingReply(rootID, sessionKey, sessionTitle string) {
-	s.GetSessionStreamHub().SetPendingReply(rootID, sessionKey, sessionTitle)
+// SetSessionPendingReply 置子会话/看板会话的 pending，返回该条目的回合代次。
+// 收尾时必须把同一个代次交给 EndSessionTurn，否则清理退化成无条件清。
+func (s *AppContext) SetSessionPendingReply(rootID, sessionKey, sessionTitle string) uint64 {
+	return s.GetSessionStreamHub().SetPendingReply(rootID, sessionKey, sessionTitle)
 }
 
 func (s *AppContext) BroadcastSessionUserMessage(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService string, planMode bool, content string) {
 	s.BroadcastSessionUserMessageAt(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService, planMode, content, time.Now().UTC(), 0)
 }
 
-func (s *AppContext) BroadcastSessionUserMessageAt(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService string, planMode bool, content string, timestamp time.Time, userExchangeSeq int, baseExchangeSeq ...int) {
+// BroadcastSessionUserMessageAt 广播用户消息并置该会话 pending，返回回合代次。
+// 与 SetSessionPendingReply 同理：返回的代次是收尾时唯一能定位「这一轮」的凭据。
+func (s *AppContext) BroadcastSessionUserMessageAt(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService string, planMode bool, content string, timestamp time.Time, userExchangeSeq int, baseExchangeSeq ...int) uint64 {
 	s.ClearTaskAuxFlagsForSession(rootID, sessionKey)
-	s.GetSessionStreamHub().BroadcastSessionUserMessageAt(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService, planMode, content, timestamp, userExchangeSeq, "", false, baseExchangeSeq...)
+	return s.GetSessionStreamHub().BroadcastSessionUserMessageAt(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService, planMode, content, timestamp, userExchangeSeq, "", false, baseExchangeSeq...)
 }
 
 func (s *AppContext) BroadcastSessionUpdate(rootID, sessionKey string, update agenttypes.Event) {
@@ -1009,13 +1013,6 @@ func (s *AppContext) UpdateTaskSessionErrorForSession(rootID, sessionKey, messag
 	s.updateTaskAuxFlagsForSession(rootID, sessionKey, kanban.TaskAuxFlagsPatch{
 		SessionError: &trimmed,
 	}, "agent_session_error")
-}
-
-// BroadcastSessionDone 是**不带回合身份**的终结器（turnGen=0）：清理时不做代次比对，
-// 保持旧调用点（看板/定时任务等没有身份来源的路径）的行为。带身份的新路径应改调
-// EndSessionTurn，才能享受「迟到/重复 done 不会误抹新轮」的护栏。
-func (s *AppContext) BroadcastSessionDone(rootID, sessionKey, requestID string) {
-	s.EndSessionTurn(rootID, sessionKey, requestID, 0)
 }
 
 // EndSessionTurn 是**回合的唯一终结器**：通知 → 广播 session.done → 按回合代次清 pending。
