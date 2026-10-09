@@ -82,3 +82,27 @@ func TestSubSessionPendingEndedByParentTurn(t *testing.T) {
 		t.Fatalf("父轮收尾未能终结子会话 pending")
 	}
 }
+
+// 终结器的前置判据：迟到的 done（代次不匹配）必须被判为「不属于当前条目」，
+// 从而使 EndSessionTurn 整条丢弃（不广播 done 帧）。否则帧仍会清掉新轮的灯。
+func TestPendingTurnGenMatches(t *testing.T) {
+	hub := NewStreamHub()
+	genA := hub.SetPendingReply("root", "s1", "t")
+	genB := hub.SetPendingReply("root", "s1", "t")
+
+	if hub.PendingTurnGenMatches("s1", genA) {
+		t.Fatalf("迟到 done 的代次不应匹配当前条目")
+	}
+	if !hub.PendingTurnGenMatches("s1", genB) {
+		t.Fatalf("本轮 done 的代次应匹配")
+	}
+	// 没有身份的调用点保守放行。
+	if !hub.PendingTurnGenMatches("s1", 0) {
+		t.Fatalf("gen=0 应保守放行")
+	}
+	// 条目不存在时放行（前端仍需 done 帧清本地乐观灯）。
+	hub.ClearSessionPending("s1", genB)
+	if !hub.PendingTurnGenMatches("s1", genA) {
+		t.Fatalf("条目不存在时应放行")
+	}
+}

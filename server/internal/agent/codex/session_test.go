@@ -279,3 +279,48 @@ func TestHandleUnknownPlanAndContextCompactionItems(t *testing.T) {
 		t.Fatalf("compact notice = %#v", updates[1].Data)
 	}
 }
+
+// 通道关闭 ≠ 回合成功：没有 TurnCompletedEvent 时不得报告完成
+// （否则中途进程死亡会被当成功上报）。
+func TestHandleStreamedEventsCloseWithoutTurnCompleted(t *testing.T) {
+	s := &session{}
+	ch := make(chan codexsdk.ThreadEvent)
+	close(ch)
+	completed, err := s.handleStreamedEvents(ch)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if completed {
+		t.Fatalf("空通道关闭不应报告 turn 完成")
+	}
+}
+
+// 见到 TurnCompletedEvent 才报告完成。
+func TestHandleStreamedEventsReportsTurnCompleted(t *testing.T) {
+	s := &session{}
+	ch := make(chan codexsdk.ThreadEvent, 1)
+	ch <- &codexsdk.TurnCompletedEvent{Type: "turn.completed"}
+	close(ch)
+	completed, err := s.handleStreamedEvents(ch)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !completed {
+		t.Fatalf("TurnCompletedEvent 后应报告完成")
+	}
+}
+
+// 回合失败事件必须返回错误（不得当成功）。
+func TestHandleStreamedEventsTurnFailedReturnsError(t *testing.T) {
+	s := &session{}
+	ch := make(chan codexsdk.ThreadEvent, 1)
+	ch <- &codextypes.TurnFailedEvent{Error: codextypes.ThreadError{Message: "boom"}}
+	close(ch)
+	completed, err := s.handleStreamedEvents(ch)
+	if err == nil {
+		t.Fatalf("TurnFailedEvent 应返回错误")
+	}
+	if completed {
+		t.Fatalf("失败的回合不应报告完成")
+	}
+}

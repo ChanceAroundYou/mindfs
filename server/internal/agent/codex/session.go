@@ -236,8 +236,13 @@ func (s *session) SendMessage(ctx context.Context, content string) error {
 		return err
 	}
 
-	if err := s.handleStreamedEvents(streamed.Events); err != nil {
+	completed, err := s.handleStreamedEvents(streamed.Events)
+	if err != nil {
 		return err
+	}
+	if !completed {
+		// 通道关闭但没见到 TurnCompletedEvent：进程中途死亡，不能当成功。
+		return errors.New("codex response stream ended unexpectedly")
 	}
 	s.updateThreadIDFromThread()
 	return nil
@@ -301,11 +306,20 @@ func (s *session) SubscribeThreadEvents(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return s.handleStreamedEvents(streamed.Events)
+	// 长连接订阅：通道关闭是正常终止，不要求 TurnCompleted。
+	_, err = s.handleStreamedEvents(streamed.Events)
+	return err
 }
 
-func (s *session) handleStreamedEvents(events <-chan codexsdk.ThreadEvent) error {
+// handleStreamedEvents 消费一轮的事件流，返回 (是否看到了 TurnCompletedEvent, error)。
+//
+// 关键：**通道关闭 ≠ 回合成功**。进程中途死亡时通道同样会关闭，旧实现直接 `return nil`
+// 会把「中途死掉」当成功上报（与 Claude 侧 failPendingTurns 的处理不对称）。调用方
+// SendMessage 据此判定：通道关闭但没见过 TurnCompleted ⇒ 返回错误。
+// 长连接订阅（SubscribeThreadEvents）不要求 TurnCompleted，忽略第一个返回值即可。
+func (s *session) handleStreamedEvents(events <-chan codexsdk.ThreadEvent) (bool, error) {
 	textByID := map[string]string{}
+	sawTurnCompleted := false
 	for event := range events {
 		raw, _ := json.Marshal(event)
 		switch e := event.(type) {
@@ -372,6 +386,7 @@ func (s *session) handleStreamedEvents(events <-chan codexsdk.ThreadEvent) error
 			}
 			logUnhandledEvent(s.sessionKey, "item.completed", raw)
 		case *codexsdk.TurnCompletedEvent:
+			sawTurnCompleted = true
 			s.updateThreadIDFromThread()
 			log.Printf("[agent/codex] output.done session=%s", s.sessionKey)
 			contextWindow, _ := s.ContextWindow(context.Background())
@@ -383,10 +398,10 @@ func (s *session) handleStreamedEvents(events <-chan codexsdk.ThreadEvent) error
 			})
 		case *codexsdk.TurnFailedEvent:
 			log.Printf("[agent/codex] send.error session=%s err=%s", s.sessionKey, e.Error.Message)
-			return errors.New("codex turn failed: " + e.Error.Message)
+			return false, errors.New("codex turn failed: " + e.Error.Message)
 		case *codexsdk.ThreadErrorEvent:
 			log.Printf("[agent/codex] send.error session=%s err=%s", s.sessionKey, e.Message)
-			return errors.New("codex thread error: " + e.Message)
+			return false, errors.New("codex thread error: " + e.Message)
 		case *codexsdk.RawEvent:
 			if s.handleRawEvent(e) {
 				continue
@@ -396,7 +411,7 @@ func (s *session) handleStreamedEvents(events <-chan codexsdk.ThreadEvent) error
 			logUnhandledEvent(s.sessionKey, "event", raw)
 		}
 	}
-	return nil
+	return sawTurnCompleted, nil
 }
 
 func (s *session) handleNonToolItem(item codexsdk.ThreadItem, started bool) bool {

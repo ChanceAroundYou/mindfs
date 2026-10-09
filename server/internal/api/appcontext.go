@@ -1028,6 +1028,11 @@ func (s *AppContext) BroadcastSessionDone(rootID, sessionKey, requestID string) 
 //   - 调用方用 defer 保证 panic/提前 return 也必达 —— 这正是「灯不灭」的根治点。
 func (s *AppContext) EndSessionTurn(rootID, sessionKey, requestID string, turnGen uint64) {
 	hub := s.GetSessionStreamHub()
+	// 身份不匹配 ⇒ 这是别的回合的迟到/重复 done：整条丢弃。
+	// 如果在此时仍广播 session.done 帧，前端会按 key 清掉**新轮**的灯（灯不亮）。
+	if !hub.PendingTurnGenMatches(sessionKey, turnGen) {
+		return
+	}
 	pending := hub.PendingSessionSnapshot(sessionKey)
 	s.notifySessionDone(rootID, sessionKey, requestID, pending)
 	// 广播必须在清之前：ClearSessionPending 有超时兜底，但广播是前端唯一的

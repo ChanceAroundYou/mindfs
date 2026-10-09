@@ -254,6 +254,9 @@ groups:
       - server/internal/auth/
       - server/internal/fs/meta_location.go
       - server/internal/fs/registry_multiaccount_test.go
+      # 空工作区（worker/新节点上该账户无数据）的写操作必须返回人话错误，
+      # 而不是 registry.saveLocked 的内部细节「registry path required」。
+      - server/internal/fs/fs_test.go
       - web/src/components/account/AccountPanel.tsx
       - web/src/components/Login.tsx
       - web/src/components/account/AuthGate.tsx
@@ -1245,6 +1248,14 @@ groups:
       - web/src/services/net/bootstrap.ts
       - web/src/services/net/api.ts
       - web/src/services/session.ts
+      # 测试与 fixture：relay/e2ee 的接线在测试里也存在（e2ee 加解密路径、
+      # --no-relayer/--e2ee 启动参数、RelayBaseURL 配置断言），删漏会让它们回到构建的测试面。
+      - cli/cmd/autostart.go
+      - cli/cmd/autostart_test.go
+      - server/internal/agent/pool_test.go
+      - server/internal/agent/testdata/agents.json
+      - server/internal/api/http_session_message_test.go
+      - server/internal/api/http_text_edit_test.go
     tests:
       - web/tests/upstream-removals.test.mjs
 
@@ -1986,8 +1997,10 @@ groups:
       ③ 想兜的「WS 断连」场景，5s 轮询已经兜住（ClearSessionPending 在回合结束时删条目，
          下一轮轮询就灭灯），所以它纯属多余且有害。
     boundary: |
-      「会话完成后 pending 信号必须消失」这一行为的实现方式。合上游时若退回
-      「ClearSessionPending 无超时自旋」，就又会卡住。
+      「会话完成后 pending 信号必须消失」这一行为的实现方式（**超时兜底那一面**）。
+      合上游时若退回「ClearSessionPending 无超时自旋」，就又会卡住。
+      **注意：本题的「自旋无超时是根因」经 2026-10-09 复核为误判** —— 两个相反症状
+      （灯不灭 / 灯不亮）的真正结构性成因是 pending 条目没有回合身份，见 G-BE。
     tests:
       - web/tests/e2e-pending-signal.test.mjs
       - web/tests/pending-single-source.test.mjs
@@ -2000,3 +2013,45 @@ groups:
       - server/internal/api/stream_hub.go:PendingSessionSnapshot
       - server/internal/api/appcontext.go:BroadcastSessionDone
       - web/src/App.tsx:refreshMultiProjectReplyingSessions
+
+  - id: G-BE
+    title: pending 的回合身份与单一终结器（迟到 done 不误抹新轮 + 终态边必达）
+    kind: fix
+    symptom: |
+      「完成回答但还显示正在思考」（灯不灭）与「正在运行但会话列表灯不亮」（灯不亮）
+      两个**相反**症状并存。根因不是超时，而是 pending 条目**没有回合身份**：
+        灯不亮：第 A 轮迟到的 session.done 落地时，ClearSessionPending 无条件删条目，
+                把第 B 轮刚开始的灯抹掉（且该 done 帧本身也会让前端按 key 清灯）；
+        灯不灭：子会话只有 MessageDone 一条清理边，error/取消/父轮先结束都会让 pending 永久残留；
+                runSessionMessage 无 defer，SendMessage panic/挂死时终结器走不到。
+    why: |
+      1) SessionPendingState 增加 TurnGen，每次 SetPending* 刷新为单调自增代次；
+         SetPendingUserAt/SetPendingReply/BroadcastSessionUserMessage(At) 返回该代次。
+      2) ClearSessionPending(key, turnGen) 只在「两侧都有身份且一致」时才清；
+         PendingTurnGenMatches 让 EndSessionTurn 对「别的回合的 done」整条丢弃（不广播帧）。
+      3) 抽出唯一终结器 AppContext.EndSessionTurn(..., turnGen)，所有终态边都走它；
+         runSessionMessage / RunAgentStage / 定时任务 用 defer 覆盖成功/出错/取消/panic。
+      4) 子会话在父轮收尾时一并终结（本轮创建、没等到 MessageDone 的那些）。
+      这套「代次比对」机制项目里本就有（ActiveTurnID 用于取消定位，见 usecase/session.go），
+      pending 缺的不是新机制，是把同一份纪律用上去。前端早已单一源（multiProjectPendingByKey），
+      故本组不改前端。
+    boundary: |
+      服务端 pending 条目的身份与生命周期：谁有权清理、迟到/重复 done 的处置、
+      子会话 pending 的终态收边。不做静态判死/超时（已于 G-AY 证伪）。
+    tests:
+      - server/internal/api/stream_hub_pending_identity_test.go
+      - server/internal/agent/codex/session_test.go
+    files:
+      - server/internal/api/stream_hub.go
+      - server/internal/api/appcontext.go
+      - server/internal/api/ws.go
+      - server/internal/scheduled/tasks.go
+      - server/internal/agent/codex/session.go
+    anchors:
+      - server/internal/api/stream_hub.go:ClearSessionPending
+      - server/internal/api/stream_hub.go:PendingTurnGenMatches
+      - server/internal/api/stream_hub.go:SetPendingReply
+      - server/internal/api/appcontext.go:EndSessionTurn
+      - server/internal/api/ws.go:runSessionMessage
+      - server/internal/scheduled/tasks.go:SessionActivityBroadcaster
+      - server/internal/agent/codex/session.go:handleStreamedEvents

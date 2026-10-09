@@ -897,6 +897,30 @@ func (h *StreamHub) HasReplayClients(rootID, sessionKey string) bool {
 	return false
 }
 
+// PendingTurnGenMatches 报告「带 turnGen 的终结请求是否属于当前 pending 条目」。
+//
+// 仅当**条目存在、且双方都有身份、且身份不一致**时返回 false —— 即这是一条
+// 「别的回合」的迟到 done。其余情况（条目已不存在 / 没有身份）返回 true，
+// 保持改造前行为，保证前端总能收到「清灯」的 done 帧。
+//
+// 返回 false 时，EndSessionTurn 会整条丢弃（不广播 done 帧、不推送、不清理）：
+// 否则那条帧仍会让前端按 key 清掉新轮的灯（症状「灯不亮」的客户端一侧）。
+func (h *StreamHub) PendingTurnGenMatches(sessionKey string, turnGen uint64) bool {
+	if blank(sessionKey) {
+		return true
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	state := h.pendingSessions[sessionKey]
+	if state == nil {
+		return true
+	}
+	if turnGen == 0 || state.TurnGen == 0 {
+		return true
+	}
+	return state.TurnGen == turnGen
+}
+
 // ClearSessionPending 删除一条 pending —— 但**只清属于回合 turnGen 的那一条**。
 //
 // 这是「在回复」状态与回合生命周期绑定的关键：条目记录 TurnGen，终结器带上同一个

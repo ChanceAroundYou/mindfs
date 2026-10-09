@@ -1489,11 +1489,14 @@
 - 边界：**「会话完成后 pending 信号必须消失」这一行为的实现方式**。
 - 可见症状（没有它会怎样）：
   对话完成后仍显示「正在生成」+ 停止键，用户以为还在跑，实际早已完成。
-  根因：`BroadcastSessionDone` 中 `ClearSessionPending` 自旋无超时，replay 客户端排不空时
-  卡住，`session.done` 广播永远发不出去，前端 pending 永远 true。
+- **根因（2026-10-09 修订）**：本条原先记的「`ClearSessionPending` 自旋无超时」**是误判** ——
+  2 秒 replay-drain 超时早就存在，广播次序也早已在清之前。两个相反症状（灯不灭 / 灯不亮）
+  的真正结构性成因是 **pending 条目没有回合身份**，已另立 **G-BE** 承接。
+  本条保留的是「必须存在超时、不得退回无超时自旋」这一**行为约束**（局部防护），
+  它不再是任一处症状的根因说明。
 - 为什么必须保留：
-  只剩第①层（必修）：服务端 `ClearSessionPending` 加 2 秒超时 + 广播挪到清之前。
-  合上游时若退回「`ClearSessionPending` 无超时自旋」，就又会卡住。
+  只剩第①层（必修）：服务端 `ClearSessionPending` 的 replay-drain **必须有超时** + 广播先于清。
+  合上游时若退回「`ClearSessionPending` 无超时自旋」，replay 客户端排不空时仍会卡住。
 - **第②③层已于 2026-10-08 删除**（同日引入同日删）：
   - 第②层（服务端 `LastEventAt` 字段 + `PendingSessionSnapshot` 30 秒超时判据）是
     **死代码** —— `Active` 字段没有任何消费方（唯一消费者 `notifySessionDone` 不读它），
@@ -1508,6 +1511,41 @@
   - `web/tests/e2e-pending-signal.test.mjs` — 钉住「agent 行落盘后 30s 内 pending 信号消失」、
     「WS 断连 20s 后 pending 信号收敛」（后者靠轮询，不靠静默降级）。
   - `web/tests/pending-single-source.test.mjs` — 钉住「pending 纯派生自 `multiProjectPendingByKey`」。
+
+### G-BE pending 的回合身份与单一终结器（2026-10-09）
+
+- 来源：`server/internal/api/stream_hub.go`、`server/internal/api/appcontext.go`、
+  `server/internal/api/ws.go`、`server/internal/scheduled/tasks.go`、
+  `server/internal/agent/codex/session.go`（2026-10-09）。
+- 边界：**服务端 pending 条目的身份与生命周期** —— 谁有权清理、迟到/重复 done 的处置、
+  子会话 pending 的终态收边。不做静默判死 / 超时（超时路线已于 G-AY 证伪）。
+- 可见症状（没有它会怎样）：两个**方向相反**的症状并存 ——
+  ①「完成回答但还显示正在思考」（灯不灭）；②「正在运行但会话列表灯不亮」（灯不亮）。
+  **同一个缺失的两面**：`pendingSessions[key]` 没有回合身份、清理是不问归属的无条件删。
+  - 灯不亮：第 A 轮迟到的 `session.done` 落地时，`ClearSessionPending(key)` 无条件删条目，
+    把第 B 轮刚开始的灯抹掉（该 done 帧本身也会让前端按 key 清灯）。
+  - 灯不灭：子会话只有 `MessageDone` 一条清理边，error / 取消 / 父轮先结束都让 pending 永久残留；
+    `runSessionMessage` 无 `defer`，`SendMessage` panic/挂死时终结器走不到。
+- 为什么必须保留：
+  1. `SessionPendingState` 增 `TurnGen`；`SetPendingUserAt`/`SetPendingReply` 每次刷新为单调自增代次，
+     并把该代次返回给调用方（`BroadcastSessionUserMessage(At)` 同样返回）。
+  2. `ClearSessionPending(key, turnGen)` 仅在「两侧都有身份且一致」时清；`PendingTurnGenMatches`
+     让终结器对「别的回合的 done」整条丢弃（连帧都不广播），迟到 done 彻底无害化。
+     `turnGen==0` 视为无主，保守清 —— 绝不因缺身份而漏清（漏清 = 灯不灭）。
+  3. 抽出唯一终结器 `AppContext.EndSessionTurn(rootID, key, requestID, turnGen)`，
+     所有清理点都改调它；`runSessionMessage` / `RunAgentStage` / 定时任务 用 `defer`
+     覆盖成功/出错/取消/panic，`BroadcastSessionDone` 只作兼容壳转调它。
+  4. 子会话在父轮收尾时一并终结（本轮创建、没等到 `MessageDone` 的那些）。
+  5. `codex.handleStreamedEvents` 由「通道关闭即成功」改为返回是否见到 `TurnCompletedEvent`，
+     通道中途关闭按错误处理 —— 否则会**提前/错误**触发 done（本根的相邻缺口，同批修）。
+  - 这套「代次比对」机制项目里本就有（`ActiveTurnID` 用于取消定位），
+    pending 缺的不是新机制，是把同一份纪律用上去。前端早已单一源（`multiProjectPendingByKey`），
+    故本组不改前端。
+- 针对性测试：
+  - `server/internal/api/stream_hub_pending_identity_test.go` → 迟到 done 不清新轮（`TurnGen` 比对）、
+    重复 done 幂等、`gen=0` 仍保守清、子会话由父轮终结、`PendingTurnGenMatches` 缺失时放行。
+  - `server/internal/agent/codex/session_test.go` → 通道关闭无 `TurnCompleted` 报错、见到 `TurnCompleted` 返回成功、
+    `ThreadError` 返回错误。
 
 ### G-BC 方案 B：worker 没有账户表，账户 id 从用户名派生
 
