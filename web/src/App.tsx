@@ -182,6 +182,8 @@ import {
 // 类型定义
 
 import { APP_DOCUMENT_TITLE, AppProps, CHILD_SESSION_PAGE_SIZE, MULTI_PROJECT_SESSION_LIMIT, ManagedRootPayload, SESSION_PAGE_SIZE } from "./app/appMisc";
+import { useAppRootContentRenderers } from "./app/useAppRootContentRenderers";
+import { useAppSessionView } from "./app/useAppSessionView";
 import { useAppKanbanStageColumns } from "./app/useAppKanbanStageColumns";
 import { useAppSlashCommandResult } from "./app/useAppSlashCommandResult";
 import { useAppMainViewActions } from "./app/useAppMainViewActions";
@@ -2536,65 +2538,14 @@ export function App({ onGoHome }: AppProps) {
   // The memory badge is always rendered above the composer, so floating
   // session controls must always clear that overlay row.
   const sessionViewerComposerOverlayInset = 20;
-  const sessionView = (
-    <SessionViewer
-      // key=会话键：切会话必须重挂载。SessionViewer 的 visibleExchanges 是窗口化视图的
-      // 唯一持久化源，不重挂载时它跨会话复用 —— 切换那一帧先渲染**上一个会话**的窗口
-      // （实测 2026-10-05：comp=20 seq=26..45 挂在已切走的会话上），紧接着 init effect
-      // 用还没就绪的 session.exchanges 当种子（此时为空）setVisibleExchanges([])，
-      // 画面塌成空白，再等 getSessionWindow 回来才补上（实测 800ms）。
-      // 就是「完整对话 → 塌掉 → 慢慢补回来」。重挂载让可见集与会话同生共死。
-      key={selectedSessionSnapshot?.key || "no-session"}
-      session={selectedSessionSnapshot}
-      agents={availableAgents}
-      slashCommandResult={slashCommandResultForSession(
-        selectedSession?.root_id || currentRootId,
-        selectedSessionSnapshot,
-      )}
-      targetSeq={selectedSession?.search_seq}
-      targetSeqRequestKey={selectedSession?.search_target_id}
-      composerOverlayInset={sessionViewerComposerOverlayInset}
-      loading={selectedSessionLoading}
-      rootId={selectedSession?.root_id || currentRootId}
-      rootDisplayName={getRootDisplayName(selectedSession?.root_id || currentRootId)}
-      rootColor={getDisplayNodeColor(String(selectedSession?.root_id || currentRootId || ""))}
-      rootPath={
-        managedRootByIdRef.current[
-          selectedSession?.root_id || currentRootId || ""
-        ]?.root_path || null
-      }
-      gitFileStatsByPath={gitFileStatsByPath}
-      onFileClick={handleSelectedSessionFileClick}
-      onRootClick={(root) => {
-        void actionHandlers.open_dir({
-          path: root,
-          root,
-          isRoot: true,
-          forceDirectory: true,
-          suppressTreeExpand: true,
-        });
-      }}
-      onRemoveRelatedFile={(path, head, repoPath, repoKind) =>
-        void handleRemoveSessionRelatedFile(
-          selectedSession?.root_id || currentRootId,
-          selectedSessionSnapshot?.key || selectedSessionSnapshot?.session_key,
-          path,
-          head,
-          repoPath,
-          repoKind,
-        )
-      }
-      onAskUserAnswer={handleAskUserAnswer}
-      onEditUserMessage={handleEditUserMessage}
-      onForkAgentMessage={(seq) =>
-        void handleForkAgentMessage(
-          selectedSession?.root_id || currentRootId,
-          selectedSessionSnapshot?.key || selectedSessionSnapshot?.session_key,
-          seq,
-        )
-      }
-    />
-  );
+  const { sessionView
+  } = useAppSessionView({
+    selectedSessionSnapshot, availableAgents, slashCommandResultForSession, selectedSession,
+    currentRootId, sessionViewerComposerOverlayInset, selectedSessionLoading, getRootDisplayName,
+    getDisplayNodeColor, managedRootByIdRef, gitFileStatsByPath, handleSelectedSessionFileClick,
+    actionHandlers, handleRemoveSessionRelatedFile, handleAskUserAnswer, handleEditUserMessage,
+    handleForkAgentMessage,
+  });
 
 
   let workspaceView: React.ReactNode;
@@ -2676,83 +2627,22 @@ export function App({ onGoHome }: AppProps) {
     updateSessionRelatedFilesForKey,
     refreshManagedRoots,
   });
-  const renderRootWorktreeContent = (root: string): React.ReactNode => (
-    <RootWorktreeContentView
-      root={root}
-      currentRootId={currentRootId}
-      scopedRootKey={scopedRootKey}
-      managedRootByIdRef={managedRootByIdRef}
-      relatedWorktree={relatedWorktree}
-      worktrees={{
-        worktreeItemsByRoot,
-        worktreeLoadingByRoot,
-        worktreeErrorByRoot,
-        expandedWorktreeByRoot,
-        worktreeStatusByPath,
-        worktreeStatusLoadingByPath,
-        toggleProjectTreeWorktree,
-      }}
-      findManagedRootByPath={findManagedRootByPath}
-      openGitDiff={openGitDiff}
-      actionHandlers={actionHandlers}
-    />
-  );
-  const renderRootRelatedContent = (root: string): React.ReactNode => (
-    <RootRelatedContentView
-      root={root}
-      currentRootId={currentRootId}
-      relatedSessionRootId={relatedSessionRootId}
-      relatedSessionSnapshot={relatedSessionSnapshot}
-      relatedSessionKey={relatedSessionKey}
-      relatedSelectedPath={relatedSelectedPath}
-      relatedSelectedFileKey={relatedSelectedFileKey}
-      relatedFileSelectionKey={relatedFileSelectionKey}
-      managedRootByIdRef={managedRootByIdRef}
-      selectedKanbanTask={selectedKanbanTask}
-      selectedSessionRelatedFiles={selectedSessionRelatedFiles}
-      selectedSessionRelatedFileGroups={selectedSessionRelatedFileGroups}
-      selectedRelatedFileStatsByKey={selectedRelatedFileStatsByKey}
-      gitFileStatsByPath={gitFileStatsByPath}
-      normalizePath={normalizePath}
-      handleSelectedSessionFileClick={handleSelectedSessionFileClick}
-      handleRemoveSessionRelatedFile={handleRemoveSessionRelatedFile}
-    />
-  );
-  const renderRootGitContent = (root: string): React.ReactNode => (
-    <RootGitContentView
-      root={root}
-      currentRootId={currentRootId}
-      scopedRootKey={scopedRootKey}
-      managedRootByIdRef={managedRootByIdRef}
-      gitStatus={gitStatus}
-      gitStatusByRoot={gitStatusByRoot}
-      gitStatusLoading={gitStatusLoading}
-      gitStatusLoadingByRoot={gitStatusLoadingByRoot}
-      gitHistory={gitHistory}
-      gitHistoryByRoot={gitHistoryByRoot}
-      gitHistoryLoading={gitHistoryLoading}
-      gitHistoryLoadingMore={gitHistoryLoadingMore}
-      gitHistoryLoadingByRoot={gitHistoryLoadingByRoot}
-      gitStatusExpandedByRoot={gitStatusExpandedByRoot}
-      gitHistoryExpandedByRoot={gitHistoryExpandedByRoot}
-      setGitStatusExpandedByRoot={setGitStatusExpandedByRoot}
-      setGitHistoryExpandedByRoot={setGitHistoryExpandedByRoot}
-      refreshGitStatus={refreshGitStatus}
-      refreshGitHistory={refreshGitHistory}
-      loadMoreGitHistory={loadMoreGitHistory}
-      openGitDiff={openGitDiff}
-      openGitCommitDiff={openGitCommitDiff}
-      handleGitPull={handleGitPull}
-      handleGitPush={handleGitPush}
-      handleGitCommit={handleGitCommit}
-      handleGitStageItem={handleGitStageItem}
-      handleGitUnstageItem={handleGitUnstageItem}
-      handleGitDiscardItem={handleGitDiscardItem}
-      switchGitBranch={switchGitBranch}
-      actionHandlers={actionHandlers}
-      projectSortMode={treeSortMode}
-    />
-  );
+  const { renderRootWorktreeContent, renderRootRelatedContent, renderRootGitContent
+  } = useAppRootContentRenderers({
+    currentRootId, scopedRootKey, managedRootByIdRef, relatedWorktree,
+    worktreeItemsByRoot, worktreeLoadingByRoot, worktreeErrorByRoot, expandedWorktreeByRoot,
+    worktreeStatusByPath, worktreeStatusLoadingByPath, toggleProjectTreeWorktree, findManagedRootByPath,
+    openGitDiff, actionHandlers, relatedSessionRootId, relatedSessionSnapshot,
+    relatedSessionKey, relatedSelectedPath, relatedSelectedFileKey, selectedKanbanTask,
+    selectedSessionRelatedFiles, selectedSessionRelatedFileGroups, selectedRelatedFileStatsByKey, gitFileStatsByPath,
+    handleSelectedSessionFileClick, handleRemoveSessionRelatedFile, gitStatus, gitStatusByRoot,
+    gitStatusLoading, gitStatusLoadingByRoot, gitHistory, gitHistoryByRoot,
+    gitHistoryLoading, gitHistoryLoadingMore, gitHistoryLoadingByRoot, gitStatusExpandedByRoot,
+    gitHistoryExpandedByRoot, setGitStatusExpandedByRoot, setGitHistoryExpandedByRoot, refreshGitStatus,
+    refreshGitHistory, loadMoreGitHistory, openGitCommitDiff, handleGitPull,
+    handleGitPush, handleGitCommit, handleGitStageItem, handleGitUnstageItem,
+    handleGitDiscardItem, switchGitBranch, treeSortMode,
+  });
   // 四块 = 未开始 / 执行中 / 待审核 / 已结束（已结束内分 完成、取消；失败并入取消）。
   const { kanbanStageColumns
   } = useAppKanbanStageColumns({
