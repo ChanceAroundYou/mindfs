@@ -126,12 +126,8 @@ const pinsCode = pinsSource.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
 assert.ok(!/localStorage/.test(pinsCode), "不再有 localStorage 缓存层");
 
 // 旧的服务端路径不得再被引用（它已经不存在了）
-const prefsSource = fs.readFileSync(path.resolve(SRC, "services/preferences.ts"), "utf8");
-assert.ok(
-  !prefsSource.includes("session-project-pins"),
-  "项目置顶已搬出 preferences；那里还留着就是会打到 404 的死代码",
-);
-assert.ok(!prefsSource.includes("SessionProjectPins"), "preferences 里不该再有置顶的类型与函数");
+const prefsPath = path.resolve(SRC, "services/preferences.ts");
+assert.ok(!fs.existsSync(prefsPath), "项目置顶已搬出 preferences；文件整个删掉，留一份就会打到 404 的死代码");
 
 // ── 快照必须双向：盖上 + 抹掉 ──
 const mergeSource = fs.readFileSync(path.resolve(SRC, "services/sessionListMerge.ts"), "utf8");
@@ -170,27 +166,32 @@ const otherRoot = mergeModule.applyPinnedSnapshotToSessions(
 assert.equal(otherRoot[0].pinned_at, "2026-01-01T00:00:00Z", "快照只作用于它自己的项目");
 
 // ── 刷新时机：切项目要重拉 ──
-const appSource = fs.readFileSync(path.resolve(SRC, "App.tsx"), "utf8");
+// App 拆分后刷新 effect 搬进 useAppRefSync.ts（App.tsx 只剩 16 行壳）。
+const appRefSyncSource = fs.readFileSync(path.resolve(SRC, "app/useAppRefSync.ts"), "utf8");
 // 置顶覆盖层（store 订阅 + 快照覆盖）已搬进 useAppSessionPins.ts（2026-10-08 App 拆分）。
-// 下面这几条断言仍然逐字保留，只是换到它真正所在的文件去查。
 const pinsHookSource = fs.readFileSync(
   path.resolve(SRC, "app/useAppSessionPins.ts"),
   "utf8",
 );
 assert.ok(
-  appSource.includes("void refreshPinsFromServer()"),
+  appRefSyncSource.includes("void refreshPinsFromServer()"),
   "切项目时要顺带刷新一次置顶（用户定的同步时机）",
 );
-// 定位那个「切项目时刷新」的 effect 本身（不是它的定义处 —— 两者隔了一万行）。
-const pinEffectAt = appSource.indexOf("void refreshPinsFromServer()");
+// 定位那个「切项目时刷新」的 effect 本身（不是它的定义处）。
+const pinEffectAt = appRefSyncSource.indexOf("void refreshPinsFromServer()");
 assert.ok(pinEffectAt > 0, "切项目时要顺带刷新一次置顶");
-const pinEffect = appSource.slice(pinEffectAt, pinEffectAt + 300);
+const pinEffect = appRefSyncSource.slice(pinEffectAt, pinEffectAt + 300);
 assert.ok(
   /\}, \[currentRootId\]\)/.test(pinEffect),
   "刷新 effect 必须依赖 currentRootId —— 写空数组就是「切了项目还看到首次那份」的老 bug",
 );
 
-const listSource = fs.readFileSync(path.resolve(SRC, "components/SessionList.tsx"), "utf8");
+const listSource = fs.readFileSync(path.resolve(SRC, "components/session/SessionList.tsx"), "utf8");
+// 多项目列表的刷新 effect 与 store 订阅已搬进 useMultiProjectSessionList.ts（task-35 拆分）。
+const sessionListHookSource = fs.readFileSync(
+  path.resolve(SRC, "components/session/useMultiProjectSessionList.ts"),
+  "utf8",
+);
 assert.ok(
   !/mindfs-pinned-session-projects/.test(listSource),
   "项目置顶的旧 localStorage 缓存层必须删掉 —— 它只做到「先出帧」，没做到跨设备",
@@ -200,7 +201,7 @@ assert.ok(
   "localStorage 读写助手必须一并删掉",
 );
 assert.ok(
-  /\}, \[selectedRootId, selectedNodeId\]\)/.test(listSource),
+  /\}, \[selectedRootId, selectedNodeId\]\)/.test(sessionListHookSource),
   "项目置顶的拉取必须依赖 selectedRootId/selectedNodeId（切项目、切节点、切账户都要重拉）",
 );
 
@@ -214,7 +215,7 @@ assert.ok(
   "置顶不落localStorage：偏好表几十字节，服务端有权威副本，持久化只会制造双份真相",
 );
 assert.ok(
-  !/seedPinsFromCache/.test(appSource) && !/seedPinsFromCache/.test(listSource),
+  !/seedPinsFromCache/.test(appRefSyncSource) && !/seedPinsFromCache/.test(listSource),
   "没有「首帧读缓存」这回事 —— 首帧空、服务端到达排一次，是**一次**跳变，不是狂跳",
 );
 // store 必须真的被用起来（否则上面那些「不持久化」断言会平凡成立）
@@ -223,7 +224,7 @@ assert.ok(
   "App 必须从 store 订阅置顶，而不是自己 useState（两份状态 = 各排一次 = 狂跳）",
 );
 assert.ok(
-  /useSyncExternalStore\(subscribePins, readPins, readPins\)/.test(listSource),
+  /useSyncExternalStore\(subscribePins, readPins, readPins\)/.test(sessionListHookSource),
   "SessionList 也必须订阅同一个 store —— 它曾自己 useState + useEffect 拉一次",
 );
 assert.ok(
@@ -234,8 +235,12 @@ assert.ok(
 // ── 排序决策权只归 store（决策 2026-10-05）──
 // 列表回包曾自带 pinnedKeys 参与排序，于是两个数据源都能重排列表、谁后到谁
 // 说了算 —— 右侧狂跳的来源之一。现在列表只管数据。
-// 调用点仍在 App.tsx（列表渲染处），定义搬进了 useAppSessionPins.ts。
-const applyPinCalls = appSource.match(/applyPinSnapshot\(/g) || [];
+// 调用点已随 App 拆分搬进 useMultiProjectSessions.ts，定义搬进 useAppSessionPins.ts。
+const multiProjectSessionsSource = fs.readFileSync(
+  path.resolve(SRC, "app/useMultiProjectSessions.ts"),
+  "utf8",
+);
+const applyPinCalls = multiProjectSessionsSource.match(/applyPinSnapshot\(/g) || [];
 assert.ok(applyPinCalls.length > 0, "列表仍要用 applyPinSnapshot 盖置顶");
 assert.ok(
   !/applyPinSnapshot\([^)]*pinnedKeys/.test(pinsHookSource),
