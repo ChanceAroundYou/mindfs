@@ -100,6 +100,8 @@ export const MODULES = {
     "src/app/useAppSessionPins.ts",
     "src/app/useAppReplaceURLState.ts",
     "src/app/useAppFormatDirectoryLoadError.ts",
+    // 2026-10-08 第 2 步：启动期四件事（自更新 / 引导步进 / E2EE 口令）。
+    "src/app/useAppBootstrapActions.ts",
   ],
 
   // P6 拆分：FileTree.tsx → + icons.tsx（图标子组件）

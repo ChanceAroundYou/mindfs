@@ -182,6 +182,7 @@ import {
 // 类型定义
 
 import { APP_DOCUMENT_TITLE, AppProps, CHILD_SESSION_PAGE_SIZE, MULTI_PROJECT_SESSION_LIMIT, ManagedRootPayload, SESSION_PAGE_SIZE } from "./app/appMisc";
+import { useAppBootstrapActions } from "./app/useAppBootstrapActions";
 import { useAppSessionPins } from "./app/useAppSessionPins";
 import { useAppReplaceURLState } from "./app/useAppReplaceURLState";
 import { MainViewMode } from "./app/appPath";
@@ -851,47 +852,6 @@ export function App({ onGoHome }: AppProps) {
   );
   const [updateSubmitting, setUpdateSubmitting] = useState(false);
 
-  const handleStartUpdate = useCallback(async () => {
-    const next = normalizeUpdateState(updateState);
-    const status = (next.status || "idle").toLowerCase();
-    if (
-      status === "downloading" ||
-      status === "installing" ||
-      status === "restarting"
-    ) {
-      return;
-    }
-    if (next.has_update && status === "available") {
-      const target = next.latest_version
-        ? `v${next.latest_version}`
-        : "the latest version";
-      const confirmed = await confirmDialog({
-        message: t("update.confirmInstall", { target }),
-        confirmLabel: t("update.install"),
-      });
-      if (!confirmed) {
-        return;
-      }
-    }
-    setUpdateSubmitting(true);
-    try {
-      await scheduleWebViewCacheClearOnNextLaunch();
-      setUpdateState(normalizeUpdateState(await triggerUpdate()));
-    } catch (error) {
-      await cancelScheduledWebViewCacheClear();
-      const message =
-        error instanceof Error ? error.message : "Failed to start update";
-      setUpdateState((prev) =>
-        normalizeUpdateState({
-          ...prev,
-          status: "failed",
-          message,
-        }),
-      );
-    } finally {
-      setUpdateSubmitting(false);
-    }
-  }, [updateState]);
 
   useEffect(() => {
     currentRootIdRef.current = currentRootId;
@@ -1129,6 +1089,34 @@ export function App({ onGoHome }: AppProps) {
     currentRootIdRef,
     currentRootNodeIdRef,
   });
+  const {
+    handleStartUpdate,
+    handleOnboardingStepChange,
+    describeE2EEPromptError,
+    submitE2EESecret,
+  } = useAppBootstrapActions({
+    currentRootId,
+    didInitRef,
+    e2eeSecretInput,
+    isMobile,
+    replaceURLState,
+    selectedSessionRef,
+    setE2eePromptBusy,
+    setE2eePromptError,
+    setE2eeSecretInput,
+    setFile,
+    setGitDiff,
+    setIsLeftOpen,
+    setIsRightOpen,
+    setOnboardingMainContentViewRoot,
+    setSelectedDir,
+    setSelectedSession,
+    setSelectedSessionLoading,
+    setUpdateState,
+    setUpdateSubmitting,
+    t,
+    updateState,
+  });
 
   /* Android 硬件返回键。刻意不接回调：installBackNavigation 内部一律走
      history.back()，让返回键汇进 popstate 那条路，和浏览器后退 / iOS 侧滑
@@ -1136,30 +1124,6 @@ export function App({ onGoHome }: AppProps) {
      一次返回要按两下才对。 */
   useEffect(() => installBackNavigation(), []);
 
-  const handleOnboardingStepChange = useCallback((stepId: string) => {
-    const showingSidebar = stepId === "sidebar-menu" || stepId === "project-tabs";
-    const showingSessions = stepId === "session-actions";
-    const showingTasks = stepId === "project-home" || stepId === "main-menu" || stepId === "task-templates" || stepId === "task-template-menu" || stepId === "tasks";
-
-    if (showingTasks && currentRootId) {
-      selectedSessionRef.current = null;
-      setSelectedSession(null);
-      setSelectedSessionLoading(false);
-      setFile(null);
-      setGitDiff(null);
-      setSelectedDir(currentRootId);
-      setOnboardingMainContentViewRoot(currentRootId);
-      replaceURLState({ root: currentRootId, file: "", session: "", cursor: 0, pluginQuery: {} });
-    }
-
-    if (!isMobile) {
-      setIsLeftOpen(true);
-      setIsRightOpen(true);
-      return;
-    }
-    setIsLeftOpen(showingSidebar);
-    setIsRightOpen(showingSessions);
-  }, [currentRootId, isMobile, replaceURLState]);
 
   const rootSessionKey = useCallback(
     (rootId: string, sessionKey: string) =>
@@ -2577,44 +2541,7 @@ export function App({ onGoHome }: AppProps) {
     multiProjectSessionsEnabled,
   });
 
-  const describeE2EEPromptError = useCallback((err: unknown) => {
-    const code = err instanceof Error ? String(err.message || "").trim() : "";
-    switch (code) {
-      case "e2ee_proof_invalid":
-        return t("e2ee.invalidProof");
-      case "e2ee_secure_context_required":
-      case "e2ee_webcrypto_unavailable":
-        return t("e2ee.secureContextRequired");
-      case "e2ee_secret_missing":
-        return t("e2ee.secretMissing");
-      case "e2ee_open_invalid_response":
-        return t("e2ee.invalidResponse");
-      default:
-        if (code.startsWith("e2ee_open_failed_")) {
-          return t("e2ee.openFailed");
-        }
-        return t("e2ee.failed");
-    }
-  }, [t]);
 
-  const submitE2EESecret = useCallback(async () => {
-    const trimmed = e2eeSecretInput.trim();
-    if (!trimmed) {
-      setE2eePromptError(t("e2ee.codeRequired"));
-      return;
-    }
-    setE2eePromptBusy(true);
-    setE2eePromptError("");
-    try {
-      await bootstrapService.submitPairingSecret(trimmed);
-      didInitRef.current = false;
-      setE2eeSecretInput("");
-    } catch (err) {
-      setE2eePromptError(describeE2EEPromptError(err));
-    } finally {
-      setE2eePromptBusy(false);
-    }
-  }, [describeE2EEPromptError, e2eeSecretInput, t]); // ponytail: e2ee removed, pairing dead code kept for type compat
 
   usePopStateSync({actionHandlers, closeTopBackLayer, consumeViewHistoryEntry, currentRootIdRef, fileCursorRef, fileRef, handleSelectSessionRef, hasBackLayer, lastNonChatViewRef, loadSessionsForRoot, mainViewRef, readURLState, refreshTreeDir, replaceURLState, selectRootNode, selectedSessionRef, setCurrentRootId, setMainView, setPluginQuery, showBoundSessionOrRootDir, switchMainView, useEffect});
 
