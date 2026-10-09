@@ -237,6 +237,7 @@ import { useProjectLifecycle } from "./app/useProjectLifecycle";
 import { useSessionSidebarView } from "./app/useSessionSidebarView";
 import { useAppViewComposition } from "./app/useAppViewComposition";
 import { useAppDomainLayer } from "./app/useAppDomainLayer";
+import { useAppSessionLayer } from "./app/useAppSessionLayer";
 import { useSessionStreamCache } from "./app/useSessionStreamCache";
 import { useRealtimeEvents } from "./app/useRealtimeEvents";
 import { useTaskTemplates } from "./app/useTaskTemplates";
@@ -950,657 +951,140 @@ export function App({ onGoHome }: AppProps) {
     currentRootIdRef,
     currentRootNodeIdRef,
   });
-  const {
-    handleStartUpdate,
-    handleOnboardingStepChange,
-    describeE2EEPromptError,
-    submitE2EESecret,
-  } = useAppBootstrapActions({
-    currentRootId,
-    didInitRef,
-    e2eeSecretInput,
-    isMobile,
-    replaceURLState,
-    selectedSessionRef,
-    setE2eePromptBusy,
-    setE2eePromptError,
-    setE2eeSecretInput,
-    setFile,
-    setGitDiff,
-    setIsLeftOpen,
-    setIsRightOpen,
-    setOnboardingMainContentViewRoot,
-    setSelectedDir,
-    setSelectedSession,
-    setSelectedSessionLoading,
-    setUpdateState,
-    setUpdateSubmitting,
-    t,
-    updateState,
-  });
-
-  /* Android 硬件返回键。刻意不接回调：installBackNavigation 内部一律走
-     history.back()，让返回键汇进 popstate 那条路，和浏览器后退 / iOS 侧滑
-     保持同一套语义。以前这里是独立的一套「关层 / 退视图」逻辑，两套各走一遍，
-     一次返回要按两下才对。 */
-  useEffect(() => installBackNavigation(), []);
-
-
-  const rootSessionKey = useCallback(
-    (rootId: string, sessionKey: string) =>
-      scopeSessionKey(getNodeIdForRoot(rootId) ?? "", rootId, sessionKey),
-    [getNodeIdForRoot],
-  );
-  const bumpCacheVersion = useCallback(() => setCacheVersion((v) => v + 1), []);
-  // 流式高频 bump 合并：30ms 窗口内多次 bump 只触发一次 setState（渲染 1 次而非 N 次）。
-  const bumpCacheVersionDebouncedRef = useRef<number | null>(null);
-  const bumpCacheVersionDebounced = useCallback(() => {
-    if (bumpCacheVersionDebouncedRef.current !== null) return;
-    bumpCacheVersionDebouncedRef.current = window.setTimeout(() => {
-      bumpCacheVersionDebouncedRef.current = null;
-      bumpCacheVersion();
-    }, 30);
-  }, [bumpCacheVersion]);
-  useEffect(
-    () => () => {
-      if (bumpCacheVersionDebouncedRef.current !== null) {
-        window.clearTimeout(bumpCacheVersionDebouncedRef.current);
-      }
-    },
-    [],
-  );
-  const applyPendingToMultiProjectGroups = useCallback(
-    (groups: MultiProjectSessionGroup[], pendingByKey: Record<string, boolean>) =>
-      groups.map((group) => ({
-        ...group,
-        sessions: group.sessions.map((session) => ({
-          ...(session as any),
-          pending: !!pendingByKey[rootSessionKey(group.rootId, session.key || session.session_key)],
-        }) as SessionItem),
-      })),
-    [rootSessionKey],
-  );
-  const {
-    clearSlashCommandResultForSession,
-    setMultiProjectSessionPending,
-  } = useAppSessionKeyState({
-    rootSessionKey,
-    setSlashCommandResults,
-    setMultiProjectPendingByKey,
-    multiProjectPendingRef,
-    setMultiProjectSessionGroups,
-    applyPendingToMultiProjectGroups,
-  });
-  const { resolveRootForSessionKey } = useAppRootResolution({
-    currentRootIdRef,
-    sessionCacheRef,
-    rootSessionKey,
-    boundSessionByRootRef,
-    drawerSessionByRootRef,
-  });
-  const {
-    getSessionSnapshot,
-    setSelectedPendingByKey,
-    resolvePendingForSession,
-    clearLocalPendingForSession,
-    markSessionStale,
-    clearSessionStale,
-    isSessionStale,
-  } = useSessionPending({
-    bumpCacheVersion,
-    cacheVersion,
-    currentRootIdRef,
-    drawerSessionByRootRef,
-    pendingBySessionRef,
-    rootSessionKey,
-    scopedRootKey,
-    selectedSessionRef,
-    sessionCacheRef,
-    sessionLoadFailureRef,
-    setDrawerSessionForRoot,
-    setMultiProjectSessionPending,
-    setSelectedSession,
-    setSessions,
-    staleSessionKeysRef,
-  });
-
-
-  // 方案 C 重锚定序号：每次 restoreActiveSession 换窗时递增，viewer 按 _anchoredAt 一次性应用。
-  const anchorSeqRef = useRef(0);
-
-  const {
-    restoreActiveSession,
-    syncSessionHeaderFromListItem,
-    loadSessionsForRoot,
-    loadChildSessionsForParent,
-    handleSelectSession,
-    tryShowBoundSessionForRoot,
-    handleRenameSession,
-    handleSyncSession,
-  } = useSessionLifecycle({
-    anchorSeqRef,
-    applyPendingToMultiProjectGroups,
-    applyPinSnapshot,
-    boundSessionByRootRef,
-    bumpCacheVersion,
-    clearLocalPendingForSession,
-    clearSessionStale,
-    currentRootId,
-    currentRootIdRef,
-    currentRootNodeIdRef,
-    drawerSessionByRootRef,
-    enforceSessionCacheBound,
-    file,
-    fileCursorRef,
-    getNodeIdForRoot,
-    isSessionStale,
-    listLoadErrorAtRef,
-    loadedSessionRef,
-    loadingSessionRef,
-    mainViewRef,
-    multiProjectPendingRef,
-    pluginQuery,
-    replaceURLState,
-    resolvePendingForSession,
-    rootSessionKey,
-    scopedRootKey,
-    selectRootNode,
-    selectedSessionByRootRef,
-    selectedSessionRef,
-    sessionCacheAccessRef,
-    sessionCacheRef,
-    sessionListAbortRef,
-    sessionListLoadSeqRef,
-    sessionLoadFailureRef,
-    sessionSearchTargetCounterRef,
-    sessions,
-    setBoundSessionForRoot,
-    setCurrentRootId,
-    setDrawerOpenForRoot,
-    setDrawerSessionForRoot,
-    setFile,
-    setGitDiff,
-    setHasMoreSessions,
-    setInteractionMode,
-    setIsLeftOpen,
-    setIsRightOpen,
-    setMainEntries,
-    setMultiProjectSessionGroups,
-    setPluginQuery,
-    setSelectedDir,
-    setSelectedDirKey,
-    setSelectedKanbanTaskId,
-    setSelectedSession,
-    setSelectedSessionLoading,
-    setSessions,
-    setSyncingSessionKeys,
-    status,
-    switchMainView,
-  });
-
-  const {
-    updateSessionRelatedFilesForKey,
-    updateSessionRelatedWorktreeForKey,
-    updateSessionAgentForKey,
-    getInputSession,
-    handleSetPlanMode,
-  } = useSessionMetadata({
-    bumpCacheVersion,
-    currentRootIdRef,
-    drawerOpenByRootRef,
-    drawerSessionByRootRef,
-    lastMainSessionSnapshotRef,
-    rootSessionKey,
-    scopedRootKey,
-    selectedSessionRef,
-    sessionCacheRef,
-    sessions,
-    setDrawerSessionForRoot,
-    setPendingPlanMode,
-    setSelectedSession,
-    syncSessionHeaderFromListItem,
-    t,
-  });
-
-
-  const {
-    promotePendingSessionForRoot,
-    loadMultiProjectSessionGroups,
-    loadMoreMultiProjectSessions,
-  } = useMultiProjectSessions({
-    applyPendingToMultiProjectGroups,
-    applyPinSnapshot,
-    boundSessionByRootRef,
-    bumpCacheVersion,
-    currentRootIdRef,
-    currentRootNodeId,
-    drawerSessionByRootRef,
-    getNodeIdForRoot,
-    loadedSessionRef,
-    loadingSessionRef,
-    managedRootByIdRef,
-    managedRootByKeyRef,
-    multiProjectLoadSeqRef,
-    multiProjectPendingRef,
-    multiProjectSessionsEnabled,
-    notifyNodeLoadFailedRef,
-    rootSessionKey,
-    scopedRootKey,
-    selectRootNode,
-    selectedSessionByRootRef,
-    selectedSessionRef,
-    sessionCacheRef,
-    sessions,
-    setBoundSessionForRoot,
-    setDrawerSessionForRoot,
-    setMultiProjectSessionGroups,
-    setMultiProjectSessionsLoading,
-    setSelectedSession,
-    setSessions,
-  });
-
-  const {
-    resolveRuntimeMetaForSession,
-    appendAgentChunkForSession,
-    appendThoughtChunkForSession,
-    appendToolCallForSession,
-    appendTodoUpdateForSession,
-    appendPlanUpdateForSession,
+  const { appendAgentChunkForSession,
     appendCompactNoticeForSession,
+    appendPlanUpdateForSession,
+    appendThoughtChunkForSession,
+    appendTodoUpdateForSession,
+    appendToolCallForSession,
     attachContextWindowToLatestAssistant,
-  } = useSessionStreamCache({
-    sessionCacheRef,
-    rootSessionKey,
-    bumpCacheVersionDebounced,
-    currentSessionRef,
-    selectedSessionRef,
     bumpCacheVersion,
-    currentRootIdRef,
-    drawerSessionByRootRef,
-    scopedRootKey,
-    setDrawerSessionForRoot,
-    setSelectedSession,
-    setSessions,
-  });
-
-  const { formatDirectoryLoadError } = useAppFormatDirectoryLoadError({ t });
-
-  const treeCacheKey = useCallback(
-    (rootID: string, dirPath: string) =>
-      treeKey(getNodeIdForRoot(rootID) ?? "", rootID, dirPath || "."),
-    [getNodeIdForRoot],
-  );
-
-
-
-
-  const {
-    refreshTreeDir,
-    refreshCurrentFileContent,
-  } = useFileRefresh({
-    currentRootIdRef,
-    file,
-    fileCursorRef,
-    fileEditStore,
-    fileRef,
-    formatDirectoryLoadError,
-    getNodeIdForRoot,
-    invalidTreeCacheKeysRef,
-    pluginBypassRef,
-    pluginManagerRef,
-    pluginQueryRef,
-    selectedDirRef,
-    setEntriesByPath,
-    setFile,
-    setMainDirectoryError,
-    setMainEntries,
-    treeCacheKey,
-    treeFetchSeqRef,
-  });
-  const sessionListReloadTimerRef = useRef<number | null>(null);
-
-  // WS 高频事件（session.done / ws.reconnected / session.imported / session.created）都会触发会话列表全量重拉，
-  // 合并 300ms 窗口内的多次调用为最后一次，避免 agent 密集工具调用时连发 /api/sessions。
-  const {
-    scheduleSessionListReload,
-    handleLoadOlderSessions,
-  } = useAppSessionReload({
-    sessionListReloadTimerRef,
-    loadSessionsForRoot,
-    currentRootIdRef,
-    sessionsRef,
-    loadingOlderSessions,
-    setLoadingOlderSessions,
-    getNodeIdForRoot,
-    setHasMoreSessions,
-    setSessions,
-    applyPinSnapshot,
-  });
-
-
-
-  const multiProjectReloadTimerRef = useRef<number | null>(null);
-
-  /**
-   * 合并窗口内多次「多项目会话重拉」为最后一次。
-   *
-   * 什么时候会连发：session.created 现在是**所有**建会话路径的统一信号了
-   * （看板任务、定时任务、子会话、fork），而一次看板动作可能连带建多个会话；
-   * agent 密集起子代理时更是一串 created。原来这些路径压根不发 created，所以
-   * 裸调 loadMultiProjectSessionGroups 不觉得多；统一信号一加，
-   * 每次 created 都会扇出一次 `/api/sessions?multi_root=1`（逐节点各一次），
-   * 密集建会话时能把接口打爆。
-   *
-   * 窗口取 300ms，与 scheduleSessionListReload 同一档：单个节点的
-   * `/api/sessions?multi_root=1` 实测 100–400ms，300ms 足够合并一串事件，
-   * 又短到用户感知不到延迟。
-   */
-  const scheduleMultiProjectSessionReload = useCallback(() => {
-    if (multiProjectReloadTimerRef.current !== null) {
-      window.clearTimeout(multiProjectReloadTimerRef.current);
-    }
-    multiProjectReloadTimerRef.current = window.setTimeout(() => {
-      multiProjectReloadTimerRef.current = null;
-      void loadMultiProjectSessionGroups();
-    }, MULTI_PROJECT_RELOAD_DEBOUNCE_MS);
-  }, [loadMultiProjectSessionGroups]);
-
-  // 卸载时清掉挂着的定时器：否则切走页面后还会打一次扇出
-  useEffect(
-    () => () => {
-      if (multiProjectReloadTimerRef.current !== null) {
-        window.clearTimeout(multiProjectReloadTimerRef.current);
-        multiProjectReloadTimerRef.current = null;
-      }
-    },
-    [],
-  );
-
-
-  const { refreshMultiProjectReplyingSessions } = useReplyingSessionPoll({
-    applyPendingToMultiProjectGroups,
-    bumpCacheVersion,
-    currentRootIdRef,
-    currentRootNodeIdRef,
-    drawerSessionByRootRef,
-    loadMultiProjectSessionGroups,
-    managedRootByKeyRef,
-    multiProjectPendingByKey,
-    multiProjectPendingRef,
-    multiProjectSessionsEnabled,
-    rootSessionKey,
-    scopedRootKey,
-    selectedSessionRef,
-    sessionCacheRef,
-    setDrawerSessionForRoot,
-    setMultiProjectPendingByKey,
-    setMultiProjectSessionGroups,
-    setSelectedSession,
-  });
-
-
-  const {
-    sessionSearchOpen,
-    sessionSearchResultsMode,
-    sessionSearchQuery,
-    sessionSearchResults,
-    sessionSearchLoading,
-    executeSessionSearch,
-    openSessionSearch,
+    clearSessionStale,
     closeSessionSearch,
-    toggleSessionSearch,
-    handleSearchQueryChange,
-    setSessionSearchResults,
-  } = useSessionSearch({
-    currentRootId,
-    sessionListMode,
-    multiProjectSessionsEnabled,
-    getNodeIdForRoot,
-  });
-
-  const {
-    openGitDiff,
-    openGitCommitDiff,
-    switchGitBranch,
+    confirmingExternalImport,
+    currentSelectionSource,
+    enterImportMode,
+    executeSessionSearch,
+    exitImportMode,
+    externalFilterBound,
+    externalImportAgent,
+    externalSelectedKey,
+    externalSessions,
+    externalSessionsError,
+    formatDirectoryLoadError,
+    getSessionSnapshot,
+    handleArchiveSession,
+    handleCancelCurrentTurn,
+    handleConfirmExternalImport,
+    handleCreateBlankFile,
+    handleDeleteSession,
+    handleForkAgentMessage,
+    handleGitCommit,
+    handleGitDiscardItem,
     handleGitPull,
     handleGitPush,
-    handleGitCommit,
     handleGitStageItem,
     handleGitUnstageItem,
-    handleGitDiscardItem,
-  } = useGitActions({
-    currentRootIdRef,
-    getNodeIdForRoot,
-    scopedRootKey,
-    selectedDirRef,
-    fileOpenRequestRef,
-    refreshGitHistory,
-    refreshTreeDir,
-    resetLocksForRootTransition,
-    switchMainView,
-    replaceURLState,
-    isMobile,
-    setGitStatus,
-    setGitStatusByRoot,
-    setGitDiff,
-    setFile,
-    setCurrentRootId,
-    setIsLeftOpen,
-    setRelatedSelectedFileKey,
-    setSelectedSession,
-    setSelectedSessionLoading,
-  });
-
-
-  const {
-    handleCreateBlankFile,
-    handleTreeUpload,
-    handleSelectSessionAndClose,
-    handlePinSession,
-    pruneSubtreeFromSessionState,
-  } = useSessionListActions({
-    currentRootIdRef,
-    directoryUploadAbortRef,
-    fileRef,
-    getNodeIdForRoot,
-    isMobile,
-    multiProjectSessionGroupsRef,
-    selectedDirRef,
-    sessionsRef,
-    setDirectoryUploadProgress,
-    setExpanded,
-    setIsRightOpen,
-    setMultiProjectSessionGroups,
-    setSessions,
-    handleSelectSession,
-    refreshTreeDir,
-    t,
-  });
-
-  const {
-    handleDeleteSession,
-    handleArchiveSession,
-  } = useSessionArchive({
-    boundSessionByRootRef,
-    bumpCacheVersion,
-    cancelRequestedBySessionRef,
-    currentRootIdRef,
-    drawerSessionByRootRef,
-    file,
-    fileCursorRef,
-    fileRef,
-    getNodeIdForRoot,
-    loadedSessionRef,
-    loadingSessionRef,
-    managedRootByIdRef,
-    multiProjectSessionGroupsRef,
-    pendingBySessionRef,
-    pluginQuery,
-    pruneSubtreeFromSessionState,
-    replaceURLState,
-    resetSessionLockForRoot,
-    rootSessionKey,
-    scopedRootKey,
-    selectedSessionByRootRef,
-    selectedSessionRef,
-    sessionCacheRef,
-    sessions,
-    sessionsRef,
-    setArchiveReloadToken,
-    setArchivedGroups,
-    setBoundSessionForRoot,
-    setDrawerOpenForRoot,
-    setDrawerSessionForRoot,
-    setMultiProjectSessionGroups,
-    setMultiProjectSessionPending,
-    setSelectedSession,
-    setSelectedSessionLoading,
-    setSessionSearchResults,
-    setSessions,
-    staleSessionKeysRef,
-  });
-
-
-  useArchiveSync({SESSION_PAGE_SIZE, archiveOpen, archiveReloadToken, getNodeIdForRoot, managedRootByKeyRef, managedRootIdsRef, rootNodeKey, sessionService, setArchiveLoading, setArchivedGroups, toSessionItem, useEffect});
-
-
-
-  useEffect(() => {
-    handleSelectSessionRef.current = handleSelectSession;
-  }, [handleSelectSession]);
-
-  const refreshSessionsAfterExternalImport = useCallback(async (rootID: string) => {
-    const listNodeId = getNodeIdForRoot(rootID);
-    const payload = await sessionService.fetchSessions(rootID, { nodeId: listNodeId });
-    const next = [...payload.items, ...payload.pinnedItems]
-      // 节点归属必须打：主列表首屏加载打了 _nodeId，这里不打就会与既有条目
-      // 并存成重复的 React key（同一 mergeSessionItems 归并口径）。
-      .map((item) => toSessionItem(rootID, { ...(item as any), _nodeId: (item as any)._nodeId || listNodeId }))
-      .filter((item): item is SessionItem => !!item);
-    setHasMoreSessions(payload.totalCount > payload.items.length);
-    setSessions(applyPinSnapshot(mergeSessionItems([], next), rootID));
-  }, [getNodeIdForRoot]);
-
-  const {
-    externalSessions,
-    setExternalSessions,
-    externalSessionsRef,
-    hasMoreExternalSessions,
-    loadingOlderExternalSessions,
-    loadingExternalSessions,
-    externalSessionsError,
-    externalSelectedKey,
-    setExternalSelectedKey,
-    externalImportAgent,
-    setExternalImportAgent,
-    externalFilterBound,
-    setExternalFilterBound,
-    selectedExternalImportKeys,
-    importingExternalSessionKeys,
-    confirmingExternalImport,
-    importMenuOpen,
-    setImportMenuOpen,
-    importMenuRef,
-    loadExternalSessions,
-    enterImportMode,
-    exitImportMode,
-    handleLoadOlderExternalSessions,
-    toggleExternalImportSelection,
-    toggleAllExternalImportSelection,
-    handleConfirmExternalImport,
     handleImportedSessionConfirmed,
-  } = useExternalSessionImport({
-    currentRootIdRef,
-    getNodeIdForRoot,
-    sessionListMode,
-    setSessionListMode,
-    isMobile,
-    onSelectSession: handleSelectSession,
-    onImported: refreshSessionsAfterExternalImport,
-    closeRightSidebar: () => setIsRightOpen(false),
-  });
-
-  const { handleSendMessage } = useSendMessage({
-    boundSessionByRootRef,
-    currentRootIdRef,
-    currentSessionRef,
-    drawerSessionByRootRef,
-    fileRef,
-    interactionModeRef,
-    mainViewRef,
-    managedRootByIdRef,
-    pendingDraftRef,
-    pendingRequestRef,
-    pluginBypassRef,
-    pluginManagerRef,
-    pluginQueryRef,
-    selectedSessionByRootRef,
-    selectedSessionRef,
-    sessionCacheRef,
-    setSessions,
-    setSlashCommandResults,
-    setMultiProjectSessionGroups,
-    setInteractionMode,
-    setPendingPlanMode,
-    setSelectedSession,
-    setSelectedPendingByKey,
-    attachedFileContext,
-    pendingPlanMode,
-    slashCommandResults,
-    setBoundSessionForRoot,
-    setDrawerSessionForRoot,
-    setMultiProjectSessionPending,
-    setDrawerOpenForRoot,
-    bumpCacheVersion,
-    clearLocalPendingForSession,
-    clearSlashCommandResultForSession,
-    rootSessionKey,
-    scopedRootKey,
-    updateSessionAgentForKey,
-  });
-
-
-  const { handleForkAgentMessage, handleRunAgentLifecycleCommand
-  } = useAppAgentActions({
-    boundSessionByRootRef, bumpCacheVersion, currentRootIdRef, currentSessionRef,
-    getNodeIdForRoot, handleSelectSession, handleSendMessage, loadSessionsForRoot,
-    loadedSessionRef, rootSessionKey, scopedRootKey, selectedSessionByRootRef,
-    selectedSessionRef, sessionCacheRef, setBoundSessionForRoot, setDrawerOpenForRoot,
-    setDrawerSessionForRoot, setInteractionMode, setSelectedSession, setSessions,
-    suppressedAutoBindSessionByRootRef, t,
-  });
-  const handleRestartAgent = useCallback(async (agentName: string) => {
-    const nid = getNodeIdForRoot(currentRootIdRef.current || "") as any;
-    await restartAgent(agentName, nid);
-    const items = await fetchAgents(true, nid);
-    setAvailableAgents(items);
-    setAgentsVersion((v) => v + 1);
-  }, []);
-
-  const {
-    handleCancelCurrentTurn,
+    handleLoadOlderExternalSessions,
+    handleLoadOlderSessions,
     handleNewSession,
-    currentSelectionSource,
+    handleOnboardingStepChange,
+    handlePinSession,
+    handleRenameSession,
+    handleRestartAgent,
+    handleRunAgentLifecycleCommand,
+    handleSearchQueryChange,
+    handleSelectSession,
+    handleSelectSessionAndClose,
+    handleSendMessage,
+    handleSetPlanMode,
+    handleStartUpdate,
+    handleSyncSession,
+    handleTreeUpload,
+    hasMoreExternalSessions,
+    importMenuOpen,
+    importMenuRef,
+    importingExternalSessionKeys,
+    isSessionStale,
+    loadChildSessionsForParent,
+    loadMoreMultiProjectSessions,
+    loadMultiProjectSessionGroups,
+    loadSessionsForRoot,
+    loadingExternalSessions,
+    loadingOlderExternalSessions,
+    markSessionStale,
+    openGitCommitDiff,
+    openGitDiff,
+    openSessionSearch,
+    promotePendingSessionForRoot,
+    refreshCurrentFileContent,
+    refreshMultiProjectReplyingSessions,
+    refreshTreeDir,
     rememberCurrentFileScroll,
-  } = useAppSessionSelection({
-    currentRootIdRef,
-    boundSessionByRootRef,
-    scopedRootKey,
-    suppressedAutoBindSessionByRootRef,
-    switchMainView,
-    selectedSessionRef,
-    currentSessionRef,
-    interactionModeRef,
-    setSelectedSession,
-    selectedSessionByRootRef,
-    resetSessionLockForRoot,
+    resolvePendingForSession,
+    resolveRootForSessionKey,
+    restoreActiveSession,
     rootSessionKey,
-    cancelRequestedBySessionRef,
-    clearLocalPendingForSession,
-    file,
-    gitDiff,
-    fileRef,
-    fileScrollPositionsRef,
+    scheduleMultiProjectSessionReload,
+    scheduleSessionListReload,
+    selectedExternalImportKeys,
+    sessionListReloadTimerRef,
+    sessionSearchLoading,
+    sessionSearchOpen,
+    sessionSearchQuery,
+    sessionSearchResults,
+    sessionSearchResultsMode,
+    setExternalFilterBound,
+    setExternalImportAgent,
+    setExternalSelectedKey,
+    setExternalSessions,
+    setImportMenuOpen,
+    setMultiProjectSessionPending,
+    setSelectedPendingByKey,
+    submitE2EESecret,
+    switchGitBranch,
+    toggleAllExternalImportSelection,
+    toggleExternalImportSelection,
+    toggleSessionSearch,
+    treeCacheKey,
+    tryShowBoundSessionForRoot,
+    updateSessionAgentForKey,
+    updateSessionRelatedFilesForKey,
+    updateSessionRelatedWorktreeForKey,
+  } = useAppSessionLayer({
+    MULTI_PROJECT_RELOAD_DEBOUNCE_MS, applyPinSnapshot, archiveOpen, archiveReloadToken,
+    attachedFileContext, boundSessionByRootRef, cacheVersion, cancelRequestedBySessionRef,
+    currentRootId, currentRootIdRef, currentRootNodeId, currentRootNodeIdRef,
+    currentSessionRef, didInitRef, directoryUploadAbortRef, drawerOpenByRootRef,
+    drawerSessionByRootRef, e2eeSecretInput, enforceSessionCacheBound, file,
+    fileCursorRef, fileEditStore, fileOpenRequestRef, fileRef,
+    fileScrollPositionsRef, getNodeIdForRoot, gitDiff, handleSelectSessionRef,
+    interactionModeRef, invalidTreeCacheKeysRef, isMobile, lastMainSessionSnapshotRef,
+    listLoadErrorAtRef, loadedSessionRef, loadingOlderSessions, loadingSessionRef,
+    mainViewRef, managedRootByIdRef, managedRootByKeyRef, managedRootIdsRef,
+    multiProjectLoadSeqRef, multiProjectPendingByKey, multiProjectPendingRef, multiProjectSessionGroupsRef,
+    multiProjectSessionsEnabled, notifyNodeLoadFailedRef, pendingBySessionRef, pendingDraftRef,
+    pendingPlanMode, pendingRequestRef, pluginBypassRef, pluginManagerRef,
+    pluginQuery, pluginQueryRef, refreshGitHistory, replaceURLState,
+    resetLocksForRootTransition, resetSessionLockForRoot, scopedRootKey, selectRootNode,
+    selectedDirRef, selectedSessionByRootRef, selectedSessionRef, sessionCacheAccessRef,
+    sessionCacheRef, sessionListAbortRef, sessionListLoadSeqRef, sessionListMode,
+    sessionLoadFailureRef, sessionSearchTargetCounterRef, sessions, sessionsRef,
+    setAgentsVersion, setArchiveLoading, setArchiveReloadToken, setArchivedGroups,
+    setAvailableAgents, setBoundSessionForRoot, setCacheVersion, setCurrentRootId,
+    setDirectoryUploadProgress, setDrawerOpenForRoot, setDrawerSessionForRoot, setE2eePromptBusy,
+    setE2eePromptError, setE2eeSecretInput, setEntriesByPath, setExpanded,
+    setFile, setGitDiff, setGitStatus, setGitStatusByRoot,
+    setHasMoreSessions, setInteractionMode, setIsLeftOpen, setIsRightOpen,
+    setLoadingOlderSessions, setMainDirectoryError, setMainEntries, setMultiProjectPendingByKey,
+    setMultiProjectSessionGroups, setMultiProjectSessionsLoading, setOnboardingMainContentViewRoot, setPendingPlanMode,
+    setPluginQuery, setRelatedSelectedFileKey, setSelectedDir, setSelectedDirKey,
+    setSelectedKanbanTaskId, setSelectedSession, setSelectedSessionLoading, setSessionListMode,
+    setSessions, setSlashCommandResults, setSyncingSessionKeys, setUpdateState,
+    setUpdateSubmitting, slashCommandResults, staleSessionKeysRef, status,
+    suppressedAutoBindSessionByRootRef, switchMainView, t, treeFetchSeqRef,
+    updateState,
   });
 
   const { actionBarInputHistory,
