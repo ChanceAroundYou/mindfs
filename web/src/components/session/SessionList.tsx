@@ -2,7 +2,8 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ViewHeader } from "../../layout/ViewHeader";
 import { pruneChildState } from "../../services/sessionTree";
 import { useI18n } from "../../i18n/index";
-import { ChevronLeftIcon, SessionCardMemo, iconButtonStyle } from "./SessionCard";
+import { SessionCardMemo } from "./SessionCard";
+import { ChevronLeftIcon, iconButtonStyle } from "./sessionCardUtils";
 import {
   ArchiveHeaderButton,
   COLLAPSED_CHILD_SESSION_LIMIT,

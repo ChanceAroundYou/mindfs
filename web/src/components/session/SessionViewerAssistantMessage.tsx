@@ -1,7 +1,7 @@
 import React from "react";
 import { AttachmentImage } from "./SessionViewerAttachments";
 import { InlineTokenText } from "../common/InlineTokenText";
-import { renderToolIcon } from "../stream/ToolCallCard";
+import { renderToolIcon } from "../stream/toolCallIcons";
 import { TurnTokenUsage, ContextWindowBadge } from "./SessionViewerTokenViews";
 import { AgentIcon } from "../agent/AgentIcon";
 import { ForkIcon } from "./AskUserQuestionCard";

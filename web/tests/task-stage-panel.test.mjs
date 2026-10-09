@@ -4,13 +4,14 @@ import fs from "node:fs";
 import path from "node:path";
 
 const root = path.resolve(import.meta.dirname, "..");
-const promptEditor = fs.readFileSync(path.join(root, "src/components/PromptEditor.tsx"), "utf8");
-const panel = fs.readFileSync(path.join(root, "src/components/TaskDetailPanel.tsx"), "utf8");
-const stageEditor = fs.readFileSync(path.join(root, "src/components/StageEditor.tsx"), "utf8");
+const promptEditor = fs.readFileSync(path.join(root, "src/components/editor/PromptEditor.tsx"), "utf8");
+const panel = fs.readFileSync(path.join(root, "src/components/task/TaskDetailPanel.tsx"), "utf8");
+const stageEditor = fs.readFileSync(path.join(root, "src/components/task/StageEditor.tsx"), "utf8");
 const composer = fs.readFileSync(path.join(root, "src/components/action/composerStyles.tsx"), "utf8");
 const composerHeight = fs.readFileSync(path.join(root, "src/components/action/useComposerEditorHeight.ts"), "utf8");
-const tasks = fs.readFileSync(path.join(root, "src/services/tasks.ts"), "utf8");
-const app = fs.readFileSync(path.join(root, "src/App.tsx"), "utf8");
+const tasks = fs.readFileSync(path.join(root, "src/services/task/crud.ts"), "utf8");
+const app = fs.readFileSync(path.join(root, "src/app/useAppStateLayer.ts"), "utf8");
+const appView = fs.readFileSync(path.join(root, "src/components/app/TaskDetailPanelGate.tsx"), "utf8");
 const appTask = fs.readFileSync(path.join(root, "src/app/appTask.ts"), "utf8");
 const zh = fs.readFileSync(path.join(root, "src/i18n/locales/zh-CN.ts"), "utf8");
 const en = fs.readFileSync(path.join(root, "src/i18n/locales/en-US.ts"), "utf8");
@@ -39,7 +40,7 @@ assert.match(
   "the shared helper must reserve toolbar height at the bottom when multi-line",
 );
 // ActionBar 也必须走同一个 hook，否则"共用"只是嘴上说说
-const actionBar = fs.readFileSync(path.join(root, "src/components/ActionBar.tsx"), "utf8");
+const actionBar = fs.readFileSync(path.join(root, "src/components/action/ActionBar.tsx"), "utf8");
 assert.match(actionBar, /useComposerEditorHeight\(editorRef\)/, "ActionBar must share the wrap-detection hook too");
 assert.match(actionBar, /composerEditorInsets\(/, "ActionBar must take its insets from the shared helper too");
 
@@ -160,12 +161,12 @@ for (const [dict, name] of [[zh, "zh-CN"], [en, "en-US"]]) {
   }
 }
 assert.doesNotMatch(
-  app,
+  appView,
   /openTaskEditDialog/,
   "the task edit dialog opener must be gone, not just its button",
 );
 assert.doesNotMatch(
-  app,
+  appView,
   /taskInlineEdit\.taskId/,
   "the inline task dialog is create-only; the taskId branch must be gone",
 );
@@ -176,7 +177,7 @@ assert.doesNotMatch(zh, /"task\.initialInput": "任务初始输入"/, "zh-CN mus
 assert.match(en, /"task\.initialInput": "Task input"/, "en-US must label the first stage Task input");
 
 // 新增阶段：复制上一段的 agent/model，模板面板和任务详情都走同一个函数。
-const templateDialog = fs.readFileSync(path.join(root, "src/components/TaskTemplateDialog.tsx"), "utf8");
+const templateDialog = fs.readFileSync(path.join(root, "src/components/task/TaskTemplateDialog.tsx"), "utf8");
 assert.match(
   appTask,
   /export const DEFAULT_TASK_AGENT = "claude"/,
@@ -250,8 +251,9 @@ assert.match(
 );
 // 跟看板卡片对齐：同一个 RunNowIcon、同一个 accent 绿（runIconButtonStyle）。
 assert.match(panel, /<RunNowIcon \/>/, "the run button must use the shared RunNowIcon");
+const taskDetailStyles = fs.readFileSync(path.join(root, "src/components/task/taskDetailStyles.ts"), "utf8");
 assert.match(
-  panel,
+  taskDetailStyles,
   /color: "var\(--accent-color\)",/,
   "the run button must use the same accent green as the kanban card",
 );
@@ -317,7 +319,7 @@ assert.match(
   "the run button must also require the current stage to be advanceable",
 );
 assert.match(
-  app,
+  appView,
   /onRunTask=\{\(task\) => handleMoveKanbanTask\(task, "run-now"\)\}/,
   "the detail panel must reuse App's handleMoveKanbanTask, not call moveTask itself",
 );

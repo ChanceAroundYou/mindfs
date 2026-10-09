@@ -11,6 +11,8 @@ import type { SessionItem } from "../../app/appSession";
 import { InlineTokenText } from "../common/InlineTokenText";
 import { FloatingScroll } from "../common/FloatingScroll";
 import { TaskCardRows } from "./TaskCardRows";
+import { TaskTemplateActionMenu } from "./TaskTemplateActionMenu";
+import { TaskCreateTemplateMenu } from "./TaskCreateTemplateMenu";
 import { WorkspaceBoard } from "../workspace/WorkspaceBoard";
 import {
   DeleteIcon,
@@ -322,88 +324,25 @@ export function TaskBoardView({
             );
           })}
         </div>
-        <div ref={taskTemplateActionMenuRef} style={{ position: "relative", flexShrink: 0 }}>
-          <button
-            type="button"
-            data-onboarding="task-template-menu"
-            aria-label={t("task.templateMenu")}
-            title={t("task.templateMenu")}
-            onClick={() => setTaskTemplateActionMenuOpen((open) => !open)}
-            style={{
-              width: "28px",
-              height: "28px",
-              borderRadius: "8px",
-              border: "none",
-              background: taskTemplateActionMenuOpen ? "rgba(0, 0, 0, 0.06)" : "transparent",
-              color: "var(--text-secondary)",
-              opacity: 1,
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              cursor: "pointer",
-              padding: 0,
-            }}
-          >
-            <HorizontalDotsIcon />
-          </button>
-          {taskTemplateActionMenuOpen ? (
-            <div
-              style={{
-                position: "absolute",
-                top: "calc(100% + 6px)",
-                left: "50%",
-                transform: "translateX(-50%)",
-                minWidth: "160px",
-                padding: "6px",
-                borderRadius: "10px",
-                border: "1px solid var(--border-color)",
-                background: "var(--menu-bg)",
-                boxShadow: "0 12px 30px rgba(15, 23, 42, 0.14)",
-                zIndex: 40,
-              }}
-            >
-              <button
-                type="button"
-                onClick={() => {
-                  setTaskTemplateActionMenuOpen(false);
-                  openTaskTemplateEditor(null);
-                }}
-                style={taskTemplateMenuItemStyle()}
-              >
-                <PlusSmallIcon />
-                <span>{t("task.createTemplate")}</span>
-              </button>
-              <button
-                type="button"
-                disabled={!selectedTaskTemplateForFilter}
-                onClick={() => {
-                  if (!selectedTaskTemplateForFilter) return;
-                  setTaskTemplateActionMenuOpen(false);
-                  openTaskTemplateEditor(selectedTaskTemplateForFilter);
-                }}
-                style={taskTemplateMenuItemStyle(!selectedTaskTemplateForFilter)}
-              >
-                <EditPencilIcon />
-                <span>{t("task.editTemplate")}</span>
-              </button>
-              <button
-                type="button"
-                disabled={!selectedTaskTemplateForFilter}
-                title={!selectedTaskTemplateForFilter ? t("task.selectTemplate") : t("task.deleteTemplate")}
-                onClick={() => {
-                  if (!selectedTaskTemplateForFilter) return;
-                  setTaskTemplateActionMenuOpen(false);
-                  void handleDeleteTaskTemplate(selectedTaskTemplateForFilter);
-                }}
-                style={taskTemplateMenuItemStyle(!selectedTaskTemplateForFilter)}
-              >
-                <DeleteIcon />
-                <span>{t("task.deleteTemplate")}</span>
-              </button>
-              <div style={{ height: "1px", background: "var(--border-color)", margin: "6px 2px" }} />
-            </div>
-          ) : null}
-        </div>
+        <TaskTemplateActionMenu
+          open={taskTemplateActionMenuOpen}
+          onToggle={() => setTaskTemplateActionMenuOpen((open) => !open)}
+          selectedTaskTemplateForFilter={selectedTaskTemplateForFilter}
+          onCreateTemplate={() => {
+            setTaskTemplateActionMenuOpen(false);
+            openTaskTemplateEditor(null);
+          }}
+          onEditTemplate={() => {
+            if (!selectedTaskTemplateForFilter) return;
+            setTaskTemplateActionMenuOpen(false);
+            openTaskTemplateEditor(selectedTaskTemplateForFilter);
+          }}
+          onDeleteTemplate={() => {
+            if (!selectedTaskTemplateForFilter) return;
+            setTaskTemplateActionMenuOpen(false);
+            void handleDeleteTaskTemplate(selectedTaskTemplateForFilter);
+          }}
+        />
       </div>
       <button
         type="button"
@@ -446,90 +385,23 @@ export function TaskBoardView({
           />
         </span>
       </button>
-      <div ref={taskCreateTemplateMenuRef} style={{ position: "relative", flexShrink: 0 }}>
-        <button
-          type="button"
-          data-onboarding="task-create"
-          title={t("task.create")}
-          aria-label={t("task.create")}
-          disabled={!isAllTaskTemplateFilter && !selectedTaskTemplateForFilter}
-          onClick={() => {
-            if (isAllTaskTemplateFilter) {
-              setTaskTemplateActionMenuOpen(false);
-              setTaskCreateTemplateMenuOpen((open) => !open);
-              return;
-            }
-            openTaskCreateDialog(selectedTaskTemplateForFilter);
-          }}
-          style={{
-            width: "28px",
-            height: "28px",
-            borderRadius: "8px",
-            border: "none",
-            background: taskCreateTemplateMenuOpen ? "rgba(0, 0, 0, 0.06)" : "transparent",
-            color: isAllTaskTemplateFilter || selectedTaskTemplateForFilter ? "var(--text-color)" : "var(--muted-text)",
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
-            cursor: isAllTaskTemplateFilter || selectedTaskTemplateForFilter ? "pointer" : "not-allowed",
-                    flexShrink: 0,
-            padding: 0,
-            opacity: isAllTaskTemplateFilter || selectedTaskTemplateForFilter ? 1 : 0.55,
-          }}
-        >
-          <PlusSmallIcon />
-        </button>
-        {taskCreateTemplateMenuOpen ? (
-          <div
-            style={{
-              position: "absolute",
-              top: "calc(100% + 6px)",
-              right: 0,
-              minWidth: "136px",
-              maxWidth: "220px",
-              maxHeight: "260px",
-              overflowY: "auto",
-              padding: "5px",
-              borderRadius: "10px",
-              border: "1px solid var(--border-color)",
-              background: "var(--menu-bg)",
-              boxShadow: "0 12px 30px rgba(15, 23, 42, 0.14)",
-              zIndex: 40,
-            }}
-          >
-            {taskTemplates.length === 0 ? (
-              <div style={{ padding: "8px", fontSize: "12px", color: "var(--text-secondary)", whiteSpace: "nowrap" }}>{t("task.noTemplates")}</div>
-            ) : taskTemplates.map((template) => (
-              <button
-                key={template.id || template.name}
-                type="button"
-                onClick={() => {
-                  setTaskCreateTemplateMenuOpen(false);
-                  openTaskCreateDialog(template);
-                }}
-                style={{
-                  width: "100%",
-                  minHeight: "28px",
-                  border: "none",
-                  borderRadius: "7px",
-                  background: "transparent",
-                  color: "var(--text-primary)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "flex-start",
-                  padding: "5px 8px",
-                  fontSize: "12px",
-                  fontWeight: 700,
-                  cursor: "pointer",
-                  textAlign: "left",
-                }}
-              >
-                <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{template.name || t("task.unnamedTemplate")}</span>
-              </button>
-            ))}
-          </div>
-        ) : null}
-      </div>
+      <TaskCreateTemplateMenu
+        open={taskCreateTemplateMenuOpen}
+        onTriggerClick={() => {
+          if (isAllTaskTemplateFilter) {
+            setTaskTemplateActionMenuOpen(false);
+            setTaskCreateTemplateMenuOpen((open) => !open);
+            return;
+          }
+          openTaskCreateDialog(selectedTaskTemplateForFilter);
+        }}
+        canCreate={isAllTaskTemplateFilter || !!selectedTaskTemplateForFilter}
+        taskTemplates={taskTemplates}
+        onCreateTask={(template) => {
+          setTaskCreateTemplateMenuOpen(false);
+          openTaskCreateDialog(template);
+        }}
+      />
     </div>
     {kanbanTasksLoading ? (
       <div style={{ padding: "12px", fontSize: "12px", color: "var(--text-secondary)" }}>{t("task.loading")}</div>

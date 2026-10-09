@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { renderToolIcon } from "../stream/ToolCallCard";
+import { renderToolIcon } from "../stream/toolCallIcons";
 import { useI18n } from "../../i18n";
 import { type QueuedMessageInfo } from "./types";
 

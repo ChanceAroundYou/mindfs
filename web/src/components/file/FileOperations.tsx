@@ -4,7 +4,7 @@ import { protectedJSON, ProtectedAPIError } from "../../services/net/api";
 import { appURL } from "../../services/net/base";
 import { reportError } from "../../services/net/error";
 import { alertDialog, confirmDialog, promptDialog } from "../../services/dialog";
-import { renderToolIcon } from "../stream/ToolCallCard";
+import { renderToolIcon } from "../stream/toolCallIcons";
 import { LocalPanel, type LocalDirBrowserState } from "./ProjectAddPopover";
 
 export function FileMenuIcon({ action }: { action: "download" | "edit" | "delete" | "rename" | "move" }) {

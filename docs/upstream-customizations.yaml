@@ -991,7 +991,7 @@ groups:
       FileTree 必须用 rootColor prop 响应式覆盖 getNodes() 回退，否则切节点不跟色；
       面包屑徽标统一为 button + rootBadgeButtonStyle 消除盒模型差异。
     anchors:
-      - 'web/src/components/stream/ToolCallCard.tsx:const themed = String(color || "").trim() !== ""'
+      - 'web/src/components/stream/toolCallIcons.tsx:const themed = String(color || "").trim() !== ""'
       - 'web/src/components/file/FileViewer.tsx:rootBadgeButtonStyle'
     files:
       - web/src/index.css

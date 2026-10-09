@@ -1,5 +1,6 @@
 import React, { memo, useState } from "react";
-import { ToolCallCard, renderToolIcon } from "./ToolCallCard";
+import { ToolCallCard } from "./ToolCallCard";
+import { renderToolIcon } from "./toolCallIcons";
 import { useI18n } from "../../i18n";
 import type { MessageKey } from "../../i18n";
 import type { ToolCall } from "../../services/session";

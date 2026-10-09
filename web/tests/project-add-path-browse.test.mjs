@@ -6,7 +6,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(fileURLToPath(import.meta.url), "../..");
-const src = fs.readFileSync(path.join(root, "src/components/ProjectAddPopover.tsx"), "utf8");
+const src = fs.readFileSync(path.join(root, "src/components/file/ProjectAddPopover.tsx"), "utf8");
+const breadcrumbSrc = fs.readFileSync(path.join(root, "src/components/file/PathBreadcrumb.tsx"), "utf8");
 
 // 1) LocalPanel 有「上一级」按钮，走 onLocalNavigate(parent)
 const localPanel = src.slice(src.indexOf("function LocalPanel("), src.indexOf("function GitHubPanel("));
@@ -17,11 +18,10 @@ assert.ok(
 );
 
 // 2) 根路径（segments 为空）仍需渲染可点的 "/" 锚点，否则停在 / 无法回退
-const breadcrumb = src.slice(src.indexOf("function PathBreadcrumb("), src.indexOf("function ModeItem("));
-const rootBranch = breadcrumb.slice(
-  breadcrumb.indexOf("if (segments.length === 0)"),
-  breadcrumb.indexOf("const volumeItems"),
+const breadcrumb = breadcrumbSrc.slice(
+  breadcrumbSrc.indexOf("if (segments.length === 0)"),
+  breadcrumbSrc.indexOf("const volumeItems"),
 );
-assert.ok(rootBranch.includes('onNavigate("/")'), '根路径分支应渲染可点的 "/" 锚点');
+assert.ok(breadcrumb.includes('onNavigate("/")'), '根路径分支应渲染可点的 "/" 锚点');
 
 console.log("project-add-path-browse ok");

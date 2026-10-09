@@ -61,7 +61,6 @@ import { scopeKey, treeKey } from "../../shared/scope";
 import { AgentSelector } from "../agent/AgentSelector";
 import { SymlinkBadge } from "./SymlinkBadge";
 import {
-  AgentConfigLineEditor,
   AgentConfigPopover,
   AgentLifecyclePopover,
   agentConfigActionRowStyle,
@@ -72,6 +71,7 @@ import {
   type AgentConfigAddTab,
   type AgentConfigSwitchTab,
 } from "./AgentConfigPopover";
+import { AgentConfigLineEditor } from "./AgentConfigLineEditor";
 import { fetchAgentCatalog, fetchAgents, type AgentStatus } from "../../services/agents";
 import { getRootNodeId } from "../../services/net/rootNode";
 import {

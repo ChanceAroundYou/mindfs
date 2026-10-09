@@ -4,7 +4,7 @@ import { canAdvanceCard, isFinishStageActive, isTerminalKanbanTask, hasLaterStag
 import { AgentIcon } from "../agent/AgentIcon";
 import { ModeIcon } from "../agent/ModeIcon";
 import { NoWorktreeIcon } from "../common/NoWorktreeIcon";
-import { renderToolIcon } from "../stream/ToolCallCard";
+import { renderToolIcon } from "../stream/toolCallIcons";
 import type { SessionItem } from "../../app/appSession";
 import type { KanbanTask } from "../../services/tasks";
 import {

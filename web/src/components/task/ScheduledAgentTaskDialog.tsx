@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { AgentIcon } from "../agent/AgentIcon";
 import { AgentSelector } from "../agent/AgentSelector";
-import { renderToolIcon } from "../stream/ToolCallCard";
+import { renderToolIcon } from "../stream/toolCallIcons";
 import { has1MSuffix, resolveEffortOnSwitch, resolveLongContextOnSwitch, strip1MSuffix, with1MSuffix } from "../action/modelUtils";
 import type { AgentStatus } from "../../services/agents";
 import {
@@ -22,87 +22,22 @@ import {
   fieldStyle,
   taskIconButtonStyle,
 } from "./ScheduledCronEditor";
+import {
+  emptyForm,
+  formatTime,
+  taskToForm,
+  menuButtonStyle,
+  strategyButtonStyle,
+  type FormState,
+} from "./scheduledTaskUtils";
 
 type DialogView = "list" | "create" | "edit";
-
-type FormState = {
-  name: string;
-  enabled: boolean;
-  task_cron: string;
-  agent: string;
-  model: string;
-  mode: string;
-  effort: string;
-  fast_service: "" | "on" | "off";
-  prompt: string;
-  new_session_cron: string;
-};
 
 type Props = {
   open: boolean;
   rootId?: string | null;
   agents: AgentStatus[];
   onClose: () => void;
-};
-
-
-const emptyForm = (agent = ""): FormState => ({
-  name: "",
-  enabled: true,
-  task_cron: "0 9 * * 1-5",
-  agent,
-  model: "",
-  mode: "",
-  effort: "",
-  fast_service: "",
-  prompt: "",
-  new_session_cron: "",
-});
-
-function formatTime(value: string | undefined, locale: Locale, neverRun: string): string {
-  if (!value) return neverRun;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString(locale, {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-function taskToForm(task: ScheduledAgentTask): FormState {
-  return {
-    name: task.name || "",
-    enabled: !!task.enabled,
-    task_cron: task.task_cron || "",
-    agent: task.agent || "",
-    model: task.model || "",
-    mode: task.mode || "",
-    effort: task.effort || "",
-    fast_service: task.fast_service || "",
-    prompt: task.prompt || "",
-    new_session_cron: task.new_session_cron || "",
-  };
-}
-
-
-const menuButtonStyle: React.CSSProperties = {
-  border: "1px solid var(--border-color)",
-  borderRadius: 8,
-  background: "var(--content-bg, #fff)",
-  color: "var(--text-primary)",
-  cursor: "pointer",
-  fontSize: 12,
-  padding: "7px 10px",
-};
-
-const strategyButtonStyle: React.CSSProperties = {
-  ...menuButtonStyle,
-  borderColor: "var(--accent-color)",
-  color: "var(--accent-color)",
-  padding: "4px 8px",
-  lineHeight: 1.2,
 };
 
 

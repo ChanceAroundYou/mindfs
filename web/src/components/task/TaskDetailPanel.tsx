@@ -8,6 +8,9 @@ import type { SessionReusePolicy } from "./StageOptionsBar";
 import { PencilIcon, TrashIcon, composerInputStyle } from "../action/composerStyles";
 import { fileTokenPath, formatFileToken, uploadFiles } from "../../services/upload";
 import { useI18n, type I18nContextValue } from "../../i18n/index";
+import { statusText, latestStageRun } from "./taskDetailUtils";
+import { pencilStyle, sessionIconButtonStyle, runIconButtonStyle, tagStyle } from "./taskDetailStyles";
+import { TaskDetailConfirmDialog } from "./TaskDetailConfirmDialog";
 import {
   addTaskStage,
   beginTaskFinishWorktree,
@@ -39,27 +42,6 @@ export type TaskDetailPanelProps = {
   /** 节点主题色，用于发送/编辑按钮 */
   accentColor?: string;
 };
-
-function statusText(status: string, t: (key: Parameters<I18nContextValue["t"]>[0]) => string): string {
-  switch (status) {
-    case "pending": return t("task.status.pending");
-    case "running": return t("task.status.running");
-    case "waiting_user": return t("task.status.waitingUser");
-    case "paused": return t("task.status.paused");
-    case "success": return t("task.status.success");
-    case "fail": return t("task.status.fail");
-    case "cancelled": return t("task.status.cancelled");
-    case "approved": return t("task.status.approved");
-    case "rejected": return t("task.status.rejected");
-    default: return status;
-  }
-}
-
-function latestStageRun(detail: TaskDetail, index: number): TaskDetail["stage_runs"][number] | null {
-  return (detail.stage_runs || [])
-    .filter((run) => run.stage_index === index)
-    .sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1))[0] || null;
-}
 
 export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMoved, onRunTask, nodeId, accentColor }: TaskDetailPanelProps) {
   const { t } = useI18n();
@@ -687,101 +669,22 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
           <input ref={stageAttachRef} type="file" multiple style={{ display: "none" }} onChange={(event) => void handleStageAttach(event)} />
         </div>
     </PanelShell>
-      {pendingConfirm ? (
-        <div
-          style={{ position: "fixed", inset: 0, zIndex: 96, background: "rgba(15, 23, 42, 0.28)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px" }}
-          onMouseDown={(event) => { if (event.target === event.currentTarget) setPendingConfirm(null); }}
-        >
-          <section style={{ width: "min(420px, 100%)", borderRadius: "10px", border: "1px solid var(--border-color)", background: "var(--menu-bg)", boxShadow: "0 24px 60px rgba(15, 23, 42, 0.24)", overflow: "hidden" }}>
-            <div style={{ padding: "12px 14px", borderBottom: "1px solid var(--border-color)", display: "flex", alignItems: "center", gap: "10px" }}>
-              <div style={{ minWidth: 0, fontSize: "13px", fontWeight: 800, color: "var(--text-color)" }}>
-                {pendingConfirm.type === "discard" ? t("task.discardDraftTitle") : t("task.removeStageTitle")}
-              </div>
-            </div>
-            <div style={{ padding: "14px", display: "flex", flexDirection: "column", gap: "12px" }}>
-              <div style={{ fontSize: "12px", lineHeight: 1.5, color: "var(--text-secondary)" }}>
-                {pendingConfirm.type === "discard" ? t("task.discardDraftMessage") : t("task.removeStageMessage")}
-              </div>
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px" }}>
-                <button type="button" onClick={() => setPendingConfirm(null)} style={panelButtonStyle("secondary")}>
-                  {pendingConfirm.type === "discard" ? t("task.keepEditing") : t("common.cancel")}
-                </button>
-                <button
-                  type="button"
-                  disabled={saving}
-                  onClick={() => {
-                    const pending = pendingConfirm;
-                    setPendingConfirm(null);
-                    if (pending.type === "discard") startEditStage(pending.index);
-                    else {
-                      setEditingStage(-1);
-                      void removeStage(pending.index);
-                    }
-                  }}
-                  style={panelButtonStyle("danger")}
-                >
-                  {pendingConfirm.type === "discard" ? t("task.discardDraft") : t("common.delete")}
-                </button>
-              </div>
-            </div>
-          </section>
-        </div>
-      ) : null}
+      <TaskDetailConfirmDialog
+        pendingConfirm={pendingConfirm}
+        saving={saving}
+        onCancel={() => setPendingConfirm(null)}
+        onConfirm={() => {
+          const pending = pendingConfirm;
+          setPendingConfirm(null);
+          if (!pending) return;
+          if (pending.type === "discard") startEditStage(pending.index);
+          else {
+            setEditingStage(-1);
+            void removeStage(pending.index);
+          }
+        }}
+      />
     </>
   );
 }
-
-
-function pencilStyle(disabled: boolean): React.CSSProperties {
-  return {
-    border: "none",
-    background: "transparent",
-    color: disabled ? "var(--text-secondary)" : "var(--accent-color)",
-    borderRadius: 6,
-    width: 24,
-    height: 24,
-    padding: 0,
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    cursor: disabled ? "not-allowed" : "pointer",
-    flexShrink: 0,
-    opacity: disabled ? 0.4 : 1,
-  };
-}
-
-const sessionIconButtonStyle: React.CSSProperties = {
-  width: "22px",
-  height: "22px",
-  border: "none",
-  borderRadius: "6px",
-  background: "transparent",
-  color: "var(--text-secondary)",
-  display: "inline-flex",
-  alignItems: "center",
-  justifyContent: "center",
-  cursor: "pointer",
-  padding: 0,
-  marginLeft: "auto",
-};
-
-/* 阶段行右侧那组键里的「运行」键。贴右靠左边那组 flex:1，不靠 marginLeft:auto
-   —— 一行里两个 auto 会把剩余空间对半分，中间裂一道缝（见阶段行那段注释）。 */
-const runIconButtonStyle: React.CSSProperties = {
-  ...sessionIconButtonStyle,
-  marginLeft: 0,
-  color: "var(--accent-color)",
-};
-
-const tagStyle: React.CSSProperties = {
-  display: "inline-flex",
-  alignItems: "center",
-  gap: "4px",
-  fontSize: "11px",
-  fontWeight: 700,
-  color: "var(--text-secondary)",
-  background: "rgba(148, 163, 184, 0.12)",
-  borderRadius: "999px",
-  padding: "2px 8px",
-};
 

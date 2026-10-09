@@ -293,7 +293,7 @@ export const MODULES = {
     "src/components/file/Breadcrumbs.tsx",
     "src/components/file/listViewIcons.tsx",
   ],
-  "src/components/ProjectAddPopover.tsx": ["src/components/file/ProjectAddPopover.tsx"],
+  "src/components/ProjectAddPopover.tsx": ["src/components/file/ProjectAddPopover.tsx", "src/components/file/PathBreadcrumb.tsx"],
   "src/components/CompactUploadProgress.tsx": ["src/components/file/CompactUploadProgress.tsx"],
   "src/components/SymlinkBadge.tsx": ["src/components/file/SymlinkBadge.tsx"],
   "src/components/GitStatusPanel.tsx": ["src/components/git/GitStatusPanel.tsx"],
