@@ -1613,6 +1613,45 @@
     期间「服务端在跑但 UI 灯灭」连续不得超过 1 次采样 —— 这是「迟到 done 不误抹新轮」
     唯一的过程级证据（单测与源码契约层都够不到真实时序）。
 
+### G-BF Full 同步丢最新几轮：ctx_seq 切片 + 时间地板失效（2026-10-09）
+
+- 来源：`server/internal/agent/claude/importer.go:readClaudeImportedExchangeLocators`、
+  `server/internal/api/usecase/external_sessions.go:SyncExternalSessionDelta`（2026-10-09）。
+- 边界：**用户手点「同步」（Full）时，live-owned 会话「比库里最新一条更新」的尾段
+  导不进来**。只影响 Full 同步的增量圈定；非 Full 的常规增量同步、import-owned 会话、
+  子代理同步、repoint 游标推进都不动。
+- 可见症状（没有它会怎样）：手点「同步」后，会话**最新几轮回复永远补不回来** —— 不是
+  「导重复」，是「一条都导不到」。实测某会话库 119 行、导入器全量只有 83 条（实时路径
+  会写导入器不产出的 tool-only 空占位行），`agent_ctx_seq` 被刷成库长度 115，
+  `imported[115:]` 恒为空 → `ImportedCount` 恒为 0，用户反复点「同步」也白点。
+- 为什么必须保留：
+  1. `readClaudeImportedExchangeLocators` 只在 `committedOffset > 0` 或 `bootstrapAfter`
+     非零时应用时间地板；而 Full 同步恰恰是**两者都不传**的组合（`importInput.Cursor`
+     只在 `!in.Full` 里设、`AfterTimestamp` 同理），于是 `TimestampFloor` 被静默跳过。
+     这与 `types.go` 里 `TimestampFloor` 的契约（「非零时无论有没有字节游标都只接受
+     比它晚的条目」）直接矛盾。修复：只要地板非零就过滤。
+  2. `SyncExternalSessionDelta` 的 Full 分支原先**无条件**按 `binding.AgentCtxSeq` 切片。
+     `agent_ctx_seq` 的语义是「导入器条数游标」，但代码把它刷成了 `len(latest.Exchanges)`
+     （**库行数**）—— 对 live-owned 会话这两个数系统性不相等（库行数 > 导入器条数），
+     切片 `imported[ctx_seq:]` 于是恒空，把第 1 条的地板修复也一起废掉。修复：
+     live-owned 的 Full 同步改由地板圈定增量、**不再叠序号切片**；import-owned 的库与转录
+     按序号对齐，`ctx_seq` 切片仍是正确边界，保持不变。
+  3. 两个写入者（实时路径 / 转录导入）的幂等护栏 `exchangeAlreadyRecorded` 仍在：
+     地板只放行「比库里最新一条更新」的条目，这些条目必然不在库里，护栏不会误伤；
+     真出现内容相同但时间戳差 >5s 的重尾，读取投影（G-AB 的 A/A2）会折叠掉。
+- 针对性测试：
+  - `server/internal/agent/claude/importer_test.go` → `TestReadClaudeImportedExchangesAppliesFloorWithoutCursorOrBootstrap`：
+    `committedOffset==0` 且 `bootstrapAfter` 为零、只有地板非零时，地板必须生效
+    （把 15:00 的两条滤掉、只留 15:31/15:32 的两条）。旧代码在这里直接 `return items`，
+    此测试必红。
+  - `server/internal/api/usecase/external_sessions_test.go` → `TestSyncExternalSessionDeltaFullImportsTailWhenCtxSeqOvershoots`：
+    live-owned 会话库 4 行、`ctx_seq` 被刷成 10（超过导入器 6 条），Full 同步仍要导入
+    尾段 2 条（`ImportedCount==2`、库 6 行）。旧代码 `imported[10:]` 为空，此测试必红。
+  - 既有 `TestSyncExternalSessionDeltaFullDoesNotReplayHistoryInSession` /
+    `TestSyncExternalSessionDeltaSetsFloorForLiveOwnedOnly` /
+    `TestSyncExternalSessionDeltaFullImportsSubagentTurns` 保持绿 —— 钉住「历史尾段不重放、
+    live-owned 必带地板、子代理多回合仍导」这三条不被本次修复打破。
+
 ### G-BC 方案 B：worker 没有账户表，账户 id 从用户名派生
 
 - 来源：`server/internal/auth/auth.go`、`server/app/workspace.go`（2026-10-08）。

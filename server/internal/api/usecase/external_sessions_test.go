@@ -170,6 +170,68 @@ func TestSyncExternalSessionDeltaFullDoesNotReplayHistoryInSession(t *testing.T)
 	}
 }
 
+// 复现 2026-10-09「点同步几乎百分百丢最新几轮」：live-owned 会话的库长度系统性大于
+// 导入器条数（实时路径会写导入器不产出的 tool-only 空占位行），agent_ctx_seq 被刷成
+// 库长度后，Full 同步按 `imported[ctx_seq:]` 切片恒为空 —— 比库里最新一条更新的
+// 尾段永远导不进来。修复：live-owned 的 Full 同步改由导入器时间地板圈定增量，不再叠
+// 序号切片。
+func TestSyncExternalSessionDeltaFullImportsTailWhenCtxSeqOvershoots(t *testing.T) {
+	ctx := context.Background()
+	root := fs.NewRootInfo("root", "Root", t.TempDir())
+	manager := session.NewManager(root)
+	created, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, Agent: "codex", Name: "Live"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Date(2026, 10, 9, 15, 0, 0, 0, time.UTC)
+	live := []agenttypes.ImportedExchange{
+		{Role: "user", Content: "u1", Timestamp: base},
+		{Role: "agent", Content: "a1", Timestamp: base.Add(time.Minute)},
+		{Role: "user", Content: "u2", Timestamp: base.Add(2 * time.Minute)},
+		{Role: "agent", Content: "a2", Timestamp: base.Add(3 * time.Minute)},
+	}
+	for _, item := range live {
+		liveCtx := session.WithExchangeSource(ctx, session.ExchangeSourceLive)
+		if err := manager.AddExchangeForAgentAt(liveCtx, created, item.Role, item.Content, "codex", "", "", "", item.Timestamp); err != nil {
+			t.Fatal(err)
+		}
+	}
+	current, err := manager.Get(ctx, created.Key, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// ctx_seq 被刷成「库长度 + 导入器不产出的占位行数」，超过导入器条数（4 条）
+	if err := manager.UpdateAgentState(ctx, current, "codex", 10, "external-1"); err != nil {
+		t.Fatal(err)
+	}
+	importer := &syncDeltaTestImporter{
+		exchanges: append(append([]agenttypes.ImportedExchange(nil), live...),
+			agenttypes.ImportedExchange{Role: "user", Content: "u3", Timestamp: base.Add(4 * time.Minute)},
+			agenttypes.ImportedExchange{Role: "agent", Content: "a3", Timestamp: base.Add(5 * time.Minute)},
+		),
+	}
+	svc := &Service{Registry: &syncDeltaTestRegistry{root: root, manager: manager, importer: importer}}
+	externalSessionSyncTimes.Store(externalSyncLockKey(root.ID, created.Key), time.Now().Add(-time.Hour))
+	out, err := svc.SyncExternalSessionDelta(ctx, SyncExternalSessionDeltaInput{RootID: root.ID, Key: created.Key, Full: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.ImportedCount != 2 {
+		t.Fatalf("ImportedCount = %d, want 2（ctx_seq=10 超过导入器 6 条时仍要导入尾段）", out.ImportedCount)
+	}
+	latest, err := manager.Get(ctx, created.Key, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(latest.Exchanges) != 6 {
+		contents := make([]string, 0, len(latest.Exchanges))
+		for _, ex := range latest.Exchanges {
+			contents = append(contents, ex.Role+":"+ex.Content)
+		}
+		t.Fatalf("len(exchanges) = %d, want 6: %v", len(latest.Exchanges), contents)
+	}
+}
+
 // 正常增量同步即便 ImportedCount=0（全部被 after 过滤）也必须把 agent_ctx_seq
 // 刷新到当前库长度，防止下次 Full 同步按陈旧游标重放尾段。顺带保证用户过后真实
 // 重发同内容消息（时间戳远晚于库内已有）不会被幂等护栏误伤。

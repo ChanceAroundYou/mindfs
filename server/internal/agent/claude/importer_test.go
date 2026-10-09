@@ -655,6 +655,37 @@ func TestReadClaudeImportedExchangesHoldsOpenTail(t *testing.T) {
 	}
 }
 
+// 复现 2026-10-09「点同步几乎百分百丢最新几轮」的导入器一侧：Full 同步是
+// committedOffset==0 且 bootstrapAfter 为零的组合，旧代码在这里直接 return items，
+// 把 TimestampFloor 静默跳过 —— live-owned 会话的 Full 同步于是导不到「比库里最新
+// 一条更新」的尾段（usecase 再按 ctx_seq 切片，delta 恒为空）。修复：只要地板非零
+// 就必须过滤，与有没有游标/引导时间戳无关（见 types.go 的 TimestampFloor 契约）。
+func TestReadClaudeImportedExchangesAppliesFloorWithoutCursorOrBootstrap(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	body := `{"type":"user","uuid":"u1","timestamp":"2026-10-09T15:00:00Z","message":{"content":[{"type":"text","text":"已入库的一轮"}]}}
+{"type":"assistant","uuid":"a1","timestamp":"2026-10-09T15:00:05Z","message":{"content":[{"type":"text","text":"已入库的回复"}]}}
+{"type":"user","uuid":"u2","timestamp":"2026-10-09T15:31:42Z","message":{"content":[{"type":"text","text":"最新一轮"}]}}
+{"type":"assistant","uuid":"a2","timestamp":"2026-10-09T15:32:24Z","message":{"content":[{"type":"text","text":"最新回复"}]}}
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// 库里最新一条是 15:14:26；Full 同步只传地板，不传游标也不传引导时间戳
+	floor := time.Date(2026, 10, 9, 15, 14, 26, 0, time.UTC)
+	items, _, err := readClaudeImportedExchanges(path, 0, time.Time{}, floor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("地板应滤掉 15:00 的两条，只留 15:31/15:32 的两条，得到 %d 条: %+v", len(items), items)
+	}
+	for _, item := range items {
+		if !item.Timestamp.After(floor) {
+			t.Fatalf("地板以下的条目不该被导出: %+v", item)
+		}
+	}
+}
+
 // 时间地板（TimestampFloor）：live-owned 会话的游标冻结已久，重启后的兜底补齐若只按偏移读，
 // 会把早已落库的旧回合整段重导一遍——那些重导行因为「相邻同角色合并」内容并不逐字相同，
 // 写入侧判重和读取投影都折叠不掉。加了地板之后：游标决定从哪开始读，地板决定读到的东西

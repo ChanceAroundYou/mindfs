@@ -2117,3 +2117,39 @@ groups:
       - server/internal/api/ws.go:runSessionMessage
       - server/internal/scheduled/tasks.go:SessionActivityBroadcaster
       - server/internal/agent/codex/session.go:handleStreamedEvents
+
+  - id: G-BF
+    title: Full 同步丢最新几轮（ctx_seq 切片恒空 + 时间地板被静默跳过）
+    kind: fix
+    symptom: |
+      用户手点「同步」后，会话**最新几轮回复永远补不回来** —— 不是「导重复」，是
+      「一条都导不到」。实测某会话库 119 行、导入器全量只有 83 条（实时路径会写导入器
+      不产出的 tool-only 空占位行），agent_ctx_seq 被刷成库长度 115，imported[115:]
+      恒为空 → ImportedCount 恒为 0，反复点「同步」也白点。
+    why: |
+      1) readClaudeImportedExchangeLocators 只在 committedOffset>0 或 bootstrapAfter 非零时
+         应用时间地板；Full 同步恰恰两者都不传（Cursor/AfterTimestamp 只在 !in.Full 里设），
+         于是 TimestampFloor 被静默跳过 —— 与 types.go 里「非零时无论有没有字节游标都
+         只接受比它晚的条目」的契约直接矛盾。修复：只要地板非零就过滤。
+      2) SyncExternalSessionDelta 的 Full 分支原先无条件按 binding.AgentCtxSeq 切片。
+         agent_ctx_seq 语义是「导入器条数游标」，代码却把它刷成 len(latest.Exchanges)
+         （库行数）—— live-owned 会话这两个数系统性不相等（库行数 > 导入器条数），
+         切片恒空，把第 1 条的地板修复也一起废掉。修复：live-owned 的 Full 同步改由地板
+         圈定增量、不再叠序号切片；import-owned 的库与转录按序号对齐，ctx_seq 切片仍是
+         正确边界，保持不变。
+      3) 两个写入者的幂等护栏 exchangeAlreadyRecorded 仍在：地板只放行「比库里最新一条
+         更新」的条目，这些条目必然不在库里，护栏不会误伤；真出现内容相同但时间戳差 >5s
+         的重尾，读取投影（G-AB 的 A/A2）会折叠掉。
+    boundary: |
+      Full 同步的增量圈定：live-owned 会话「比库里最新一条更新」的尾段导不进来。
+      非 Full 的常规增量同步、import-owned 会话、子代理同步、repoint 游标推进都不动。
+    tests:
+      - server/internal/agent/claude/importer_test.go
+      - server/internal/api/usecase/external_sessions_test.go
+    files:
+      - server/internal/agent/claude/importer.go
+      - server/internal/api/usecase/external_sessions.go
+    anchors:
+      - server/internal/agent/claude/importer.go:readClaudeImportedExchangeLocators
+      - server/internal/api/usecase/external_sessions.go:SyncExternalSessionDelta
+      - server/internal/api/usecase/external_sessions.go:externalSessionDeltaAfterCtxSeq

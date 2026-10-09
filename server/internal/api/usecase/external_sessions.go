@@ -388,7 +388,13 @@ func (s *Service) SyncExternalSessionDelta(ctx context.Context, in SyncExternalS
 	}
 
 	delta := imported.Exchanges
-	if in.Full {
+	// import-owned 会话的库与转录按序号对齐，ctx_seq 切片是正确的「已导入」边界。
+	// live-owned 会话则不行：实时路径会写导入器不产出的行（tool-only 空占位等），库长度
+	// 系统性大于导入器条数（实测 119 vs 83），ctx_seq 被刷成库长度后切片 `imported[ctx_seq:]`
+	// 恒为空 —— Full 同步于是永远导不到「比库里最新一条更新」的尾段，用户点「同步」补不回
+	// 最新几轮。这种会话的增量由导入器的**时间地板**圈定（live-owned 必带 TimestampFloor），
+	// 不能再叠一层序号切片，否则地板白设。
+	if in.Full && !session.SessionIsLiveOwned(current.Exchanges) {
 		delta = externalSessionDeltaAfterCtxSeq(imported.Exchanges, binding.AgentCtxSeq)
 	}
 	importedCount := 0
