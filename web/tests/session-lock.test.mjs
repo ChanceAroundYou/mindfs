@@ -62,7 +62,10 @@ assert.match(
 );
 assert.match(
   app,
-  /if \(shouldResetSessionLockForRootChange\([\s\S]*?setBoundSessionForRoot\([^\n]+, null\);[\s\S]*?setDrawerSessionForRoot\([^\n]+, null\);/,
+  // 2026-10-08 App 拆分后 resetLocksForRootTransition 与 resetSessionLockForRoot
+  // 的先后顺序对调了（复位函数在前、触发它的过渡函数在后），断言按新顺序匹配。
+  // 契约不变：守卫成立时**源和目标两个项目**都要复位。
+  /if \(shouldResetSessionLockForRootChange\(sourceRoot, targetRoot\)\) \{[\s\S]*?resetSessionLockForRoot\(sourceRoot\);[\s\S]*?resetSessionLockForRoot\(targetRoot\);/,
   "cross-project navigation must reset both source and target lock state",
 );
 

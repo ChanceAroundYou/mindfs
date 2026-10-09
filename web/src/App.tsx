@@ -182,6 +182,7 @@ import {
 // 类型定义
 
 import { APP_DOCUMENT_TITLE, AppProps, CHILD_SESSION_PAGE_SIZE, MULTI_PROJECT_SESSION_LIMIT, ManagedRootPayload, SESSION_PAGE_SIZE } from "./app/appMisc";
+import { useAppRootBindingSetters } from "./app/useAppRootBindingSetters";
 import { useAppSessionKeyState } from "./app/useAppSessionKeyState";
 import { useAppSessionReload } from "./app/useAppSessionReload";
 import { useAppBootstrapActions } from "./app/useAppBootstrapActions";
@@ -976,69 +977,32 @@ export function App({ onGoHome }: AppProps) {
     setIsDrawerOpen(!!drawerOpenByRootRef.current[scopedRootKey(rootID)]);
   }, [currentRootId]);
 
-  const setBoundSessionForRoot = useCallback(
-    (rootID: string | null | undefined, key: string | null) => {
-      if (!rootID) return;
-      boundSessionByRootRef.current[scopedRootKey(rootID)] = key;
-      if (currentRootIdRef.current === rootID) {
-        setActiveBoundSessionKey(key);
-      }
-    },
-    [],
-  );
+  const {
+    setBoundSessionForRoot,
+    setDrawerSessionForRoot,
+    setDrawerOpenForRoot,
+    resetSessionLockForRoot,
+    resetLocksForRootTransition,
+  } = useAppRootBindingSetters({
+    boundSessionByRootRef,
+    scopedRootKey,
+    currentRootIdRef,
+    setActiveBoundSessionKey,
+    drawerSessionByRootRef,
+    setCurrentSession,
+    drawerOpenByRootRef,
+    setIsDrawerOpen,
+    selectedSessionByRootRef,
+    selectedSessionRef,
+    setSelectedSession,
+    setSelectedSessionLoading,
+    interactionModeRef,
+    setInteractionMode,
+  });
 
-  const setDrawerSessionForRoot = useCallback(
-    (rootID: string | null | undefined, session: Session | SessionItem | null) => {
-      if (!rootID) return;
-      const next = toSessionItem(rootID, session);
-      drawerSessionByRootRef.current[scopedRootKey(rootID)] = next;
-      if (currentRootIdRef.current === rootID) {
-        setCurrentSession(next);
-      }
-    },
-    [],
-  );
 
-  const setDrawerOpenForRoot = useCallback(
-    (rootID: string | null | undefined, open: boolean) => {
-      if (!rootID) return;
-      drawerOpenByRootRef.current[scopedRootKey(rootID)] = open;
-      if (currentRootIdRef.current === rootID) {
-        setIsDrawerOpen(open);
-      }
-    },
-    [],
-  );
 
-  const resetSessionLockForRoot = useCallback(
-    (rootID: string | null | undefined) => {
-      const root = String(rootID || "").trim();
-      if (!root) return;
-      setBoundSessionForRoot(root, null);
-      setDrawerSessionForRoot(root, null);
-      selectedSessionByRootRef.current[scopedRootKey(root)] = null;
-      setDrawerOpenForRoot(root, false);
-      if (currentRootIdRef.current === root) {
-        selectedSessionRef.current = null;
-        setSelectedSession(null);
-        setSelectedSessionLoading(false);
-        interactionModeRef.current = "main";
-        setInteractionMode("main");
-      }
-    },
-    [setBoundSessionForRoot, setDrawerOpenForRoot, setDrawerSessionForRoot],
-  );
 
-  const resetLocksForRootTransition = useCallback(
-    (targetRoot: string | null | undefined) => {
-      const sourceRoot = currentRootIdRef.current;
-      if (shouldResetSessionLockForRootChange(sourceRoot, targetRoot)) {
-        resetSessionLockForRoot(sourceRoot);
-        resetSessionLockForRoot(targetRoot);
-      }
-    },
-    [resetSessionLockForRoot],
-  );
 
   const currentDirectorySortKey = getDirectorySortKey(
     currentRootId,

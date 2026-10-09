@@ -105,6 +105,8 @@ export const MODULES = {
     // 2026-10-08 第 3 步：会话列表的两种「再拉一次」+ 按复合键存的派生状态。
     "src/app/useAppSessionReload.ts",
     "src/app/useAppSessionKeyState.ts",
+    // 2026-10-08 第 4 步：每根绑定/抽屉写入器 + 切项目时的锁复位。
+    "src/app/useAppRootBindingSetters.ts",
   ],
 
   // P6 拆分：FileTree.tsx → + icons.tsx（图标子组件）
