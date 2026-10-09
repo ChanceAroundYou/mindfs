@@ -288,7 +288,10 @@ export const MODULES = {
   "src/components/ImageViewer.tsx": ["src/components/file/ImageViewer.tsx"],
   "src/components/DocumentViewer.tsx": ["src/components/file/DocumentViewer.tsx"],
   "src/components/CodeViewer.tsx": ["src/components/file/CodeViewer.tsx"],
-  "src/components/MarkdownViewer.tsx": ["src/components/file/MarkdownViewer.tsx"],
+  "src/components/MarkdownViewer.tsx": [
+    "src/components/file/MarkdownViewer.tsx",
+    "src/components/file/useMarkdownViewer.tsx",
+  ],
   "src/components/DiagramPreview.tsx": ["src/components/file/DiagramPreview.tsx"],
   "src/components/DiagramPreview.css": ["src/components/file/DiagramPreview.css"],
   "src/components/DefaultListView.tsx": [
