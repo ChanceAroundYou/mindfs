@@ -152,4 +152,34 @@ const appSession = read("src/app/appSession.ts");
   );
 }
 
+// ── 7. 流内指示器也必须读唯一真相（G-AY 补完，2026-10-09） ───────────────────────
+// useSessionStream 的本地 `isStreaming` 是最后一份漏网的投影：它只由 WS 事件清
+// （done / message_done / error），**没有轮询对账**。丢一条 done ⇒ 列表蓝灯与
+// 停止键被轮询救回、流里「正在生成」永久不灭（连带最后一条的时间戳一直藏着）。
+// 治法与 G-AY 同：不让它独立存在 —— 用唯一真相 sessionPending 收闸门。
+{
+  const hook = read("src/hooks/useSessionStream.ts");
+  const retStart = hook.indexOf("return {\n    timeline: settledTimeline");
+  assert.ok(retStart >= 0, "找不到 useSessionStream 的返回块");
+  assert.match(
+    hook.slice(retStart, retStart + 900),
+    /isStreaming:\s*isStreaming\s*&&\s*!!sessionPending,/,
+    "useSessionStream 导出的 isStreaming 必须**恰好**是 isStreaming && !!sessionPending " +
+      "（收闸门）—— 裸导出本地标记 = 又一份只靠 WS 事件维护的 pending 投影",
+  );
+
+  // 查看器的「正在生成」只能由 pending 决定显不显示；一般化地钉住 isAwaiting 的来源。
+  const viewer = read("src/components/session/SessionViewer.tsx");
+  assert.match(
+    viewer,
+    /const isAwaiting = !!\(session as any\)\?\.pending;/,
+    "SessionViewer 的 isAwaiting 必须派生自 session.pending（唯一真相）",
+  );
+  assert.equal(
+    /\(isAwaiting \|\| isStreaming\)/.test(viewer),
+    false,
+    "流内指示器的显示条件不得再 OR 上本地 isStreaming —— 那是没有对账的那一份",
+  );
+}
+
 console.log("pending-single-source.test.mjs: OK");

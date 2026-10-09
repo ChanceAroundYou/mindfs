@@ -1345,6 +1345,16 @@
 
 ### G-AY pending 纯派生：done 丢失时停止符号 /「正在思考」卡住（2026-10-07）
 
+> **2026-10-09 补完（最后一处漏网的投影）**：本次纯派生漏了 `useSessionStream` 的本地
+> `isStreaming`（`web/src/hooks/useSessionStream.ts`）。它只由 WS 事件清
+> （`session.done`→`onDone`、`message_done`、`error`），**没有轮询对账** —— 于是出现
+> 「列表蓝灯与输入框停止键已被 5s 轮询救回，唯独流里『正在生成』永久不灭」的半死不活形态
+> （连带最后一条隐藏时间戳、A/B 轮措辞错）。治法不新设状态，只收闸门：导出的
+> `isStreaming` 一律是 `isStreaming && !!sessionPending`，显示与否只由唯一真相
+> `pending` 决定，本地标记退化为「措辞 / 盒子」子状态；`SessionViewer` 的显示条件
+> 相应去掉 `|| isStreaming`。`pending-single-source.test.mjs` 加第 7 节钉住这两条
+> （把闸门改回裸导出，测试即红）。
+
 - 来源：`web/src/App.tsx`（`multiProjectPendingByKey` 成为唯一真相；`setMultiProjectSessionPending`
   同步更新 ref 再 setState；三个读点 `getSessionSnapshot` / `resolvePendingForSession` /
   `rootSessionIndicators` 改为派生）、`web/src/app/useRealtimeEvents.ts`（`handleSessionStreamDone`

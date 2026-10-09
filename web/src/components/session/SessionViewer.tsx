@@ -3002,7 +3002,10 @@ function SessionViewerInner({
               ),
             )}
             {renderSlashCommandResult()}
-            {(isAwaiting || isStreaming) && (() => {
+            {/* 只要一个真相：`isAwaiting`（= session.pending，服务端派生 + 5s 对账）。
+                本地 isStreaming 只决定措辞（在跑 vs 已发送待响应），不再决定显不显示 ——
+                它是子状态，没有对账出口，放它进条件就会「蓝灯灭了、这里还留着」。 */}
+            {isAwaiting && (() => {
               const awaitingColor = String(rootColor || "").trim() || "var(--accent-color)";
               return (
                 <div

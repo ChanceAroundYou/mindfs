@@ -1856,16 +1856,26 @@ groups:
       就又会裂成多份、又会在丢 session.done 时永久卡住。第一版修法是给四处补一条对账
       （clearStalePending + 一个 effect）—— 那是打补丁：第二份状态还在，就还得再写一套
       「怎么同步第二份状态」的代码。改成纯派生后没有第二份状态，也就没有「两份不同步」。
+      2026-10-09 补完：当时漏了最后一处 —— `useSessionStream` 的本地 `isStreaming` 只由 WS
+      事件清（done / message_done / error），**没有轮询对账**，于是「列表蓝灯与停止键已被
+      5s 轮询救回、流里『正在生成』永久不灭」这个半死不活的形态正是它。治法与 G-AY 同、
+      不新设状态：导出的 `isStreaming` 一律收在 `sessionPending` 闸门下（一个收口点），
+      显不显示只由 pending 决定，本地标记退化为「措辞/盒子」的子状态。
+      同一个闸门也顺带治了它连带的两处：最后一条不显示时间戳、A/B 轮措辞错。
     tests:
       - web/tests/pending-single-source.test.mjs
     files:
       - web/src/App.tsx
       - web/src/app/useRealtimeEvents.ts
       - web/src/app/appSession.ts
+      - web/src/hooks/useSessionStream.ts
+      - web/src/components/session/SessionViewer.tsx
     anchors:
       - web/src/App.tsx:setMultiProjectSessionPending
       - web/src/App.tsx:getSessionSnapshot
       - web/src/app/appSession.ts:mergeReplyingStateByNode
+      - "web/src/hooks/useSessionStream.ts:isStreaming: isStreaming && !!sessionPending"
+      - "web/src/components/session/SessionViewer.tsx:{isAwaiting && (() => {"
 
   - id: G-AZ
     title: 任务卡视觉件：待审核状态徽标 / 列框去除 / 浮动滚动条 / 工作台角标移除
