@@ -43,6 +43,7 @@ export const MODULES = {
     "src/app/useRealtimeEventsContext.ts",
     "src/app/realtimeWsHandlers.ts",
     "src/app/realtimeWsSessionMeta.ts",
+    "src/app/realtimeWsUserMessage.ts",
   ],
 
   // App.tsx 拆分：会话缓存 → useSessionCache；发送消息 → useSendMessage；
