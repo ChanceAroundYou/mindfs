@@ -12,6 +12,7 @@ const root = path.resolve(import.meta.dirname, "..");
 const read = (rel) => fs.readFileSync(path.join(root, rel), "utf8");
 const card = read("src/components/TaskCardRows.tsx");
 const panel = read("src/components/TaskDetailPanel.tsx");
+const panelHook = read("src/components/task/useTaskDetailPanel.ts");
 const app = read("src/App.tsx");
 const tasks = read("src/services/tasks.ts");
 const gitviewFinish = read("../server/internal/gitview/worktree_finish.go");
@@ -216,7 +217,7 @@ assert.doesNotMatch(
 // 见 handleKanbanTaskBeginFinish）；换成转圈等于把唯一的出路藏起来，任务就此永远
 // 转下去 —— 用户实测的「收尾一直转、点不动、也结束不了」就是这个形状。
 assert.match(
-  panel,
+  panelHook,
   /const canFinishWorktree = task\?\.create_worktree === true\s*&&\s*!!task\?\.worktree_path\s*&&\s*task\?\.worktree_missing !== true\s*&&\s*hasAgentStage;/,
   "the finish button requires a live worktree and an agent stage to inherit from; terminal and finishing tasks are NOT withheld",
 );
@@ -236,7 +237,7 @@ assert.doesNotMatch(
   "the panel must not swap the finish button for a spinner — the button is the only way out of a stuck finish",
 );
 assert.match(
-  panel,
+  panelHook,
   /const hasAgentStage = \(task\?\.stages \|\| \[\]\)\.some\(\(stage\) => stage\.role === "agent"\);/,
   "the agent-stage gate must exist, mirroring worktree_finish_stage.go's lastAgentStage precondition",
 );

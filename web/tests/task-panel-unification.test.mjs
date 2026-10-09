@@ -7,8 +7,9 @@ const read = (rel) => fs.readFileSync(path.join(root, rel), "utf8");
 
 const appTask = read("src/app/appTask.ts");
 const tasksService = read("src/services/tasks.ts");
-const dialog = read("src/components/TaskTemplateDialog.tsx");
-const panel = read("src/components/TaskDetailPanel.tsx");
+const dialog = read("src/components/task/TaskTemplateDialog.tsx");
+const panel = read("src/components/task/TaskDetailPanel.tsx");
+const panelHook = read("src/components/task/useTaskDetailPanel.ts");
 const select = read("src/components/Select.tsx");
 const stageEditor = read("src/components/StageEditor.tsx");
 const stageOptions = read("src/components/StageOptionsBar.tsx");
@@ -302,7 +303,7 @@ assert.doesNotMatch(panel, /StageOptionsMenu/, "the 3-dot menu must be gone from
 
 // 保存时四个选项都要落库（UpdateStage 是全量替换，漏一个就丢一个）
 for (const field of ["auto_advance: editAutoAdvance", "plan_mode:", "session_reuse_policy: editSessionReuse", "role: editRole"]) {
-  assert.ok(panel.includes(field), `saveStage must persist ${field}`);
+  assert.ok(panelHook.includes(field), `saveStage must persist ${field}`);
 }
 
 
@@ -495,7 +496,7 @@ function walk(dir) {
 
 // 8) 已执行过的阶段只可看：不可改、不可保存。三道门控各挡一路入口。
 assert.match(
-  panel,
+  panelHook,
   /const existingRun = latestStageRun\(detail, index\);\s*\n\s*if \(existingRun && String\(existingRun\.status\) !== "pending"\) return;/,
   "startEditStage must refuse an executed stage: no path may put it into edit mode",
 );
@@ -510,7 +511,7 @@ assert.match(
   "an executed stage must not offer save",
 );
 assert.match(
-  panel,
+  panelHook,
   /const run = latestStageRun\(detail, index\);\s*\n\s*if \(run && String\(run\.status\) !== "pending"\) return;/,
   "saveStage must bail on an executed stage even if some future caller reaches it",
 );

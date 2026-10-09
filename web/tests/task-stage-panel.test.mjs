@@ -6,6 +6,7 @@ import path from "node:path";
 const root = path.resolve(import.meta.dirname, "..");
 const promptEditor = fs.readFileSync(path.join(root, "src/components/editor/PromptEditor.tsx"), "utf8");
 const panel = fs.readFileSync(path.join(root, "src/components/task/TaskDetailPanel.tsx"), "utf8");
+const panelHook = fs.readFileSync(path.join(root, "src/components/task/useTaskDetailPanel.ts"), "utf8");
 const stageEditor = fs.readFileSync(path.join(root, "src/components/task/StageEditor.tsx"), "utf8");
 const composer = fs.readFileSync(path.join(root, "src/components/action/composerStyles.tsx"), "utf8");
 const composerHeight = fs.readFileSync(path.join(root, "src/components/action/useComposerEditorHeight.ts"), "utf8");
@@ -88,7 +89,7 @@ assert.match(
 // components/action/，所以新路径是 ../action/composerStyles。
 assert.match(panel, /import \{[^}]*TrashIcon[^}]*\} from "\.\.\/action\/composerStyles"/, "delete icon must come from the shared composerStyles set");
 assert.match(panel, /\{!executed && !isCurrent \? \(/, "TaskDetailPanel must offer delete only on unexecuted, non-current stages");
-assert.match(panel, /removeTaskStage\(task\.root_id, task\.id, index, nodeId\)/, "TaskDetailPanel must call removeTaskStage");
+assert.match(panelHook, /removeTaskStage\(task\.root_id, task\.id, index, nodeId\)/, "TaskDetailPanel must call removeTaskStage");
 assert.match(panel, /requestRemoveStage\(index\)/, "delete button must go through the confirm flow");
 assert.match(tasks, /\/api\/tasks\/\$\{encodeURIComponent\(taskId\)\}\/remove-stage/, "tasks.ts must POST to the remove-stage endpoint");
 
@@ -199,13 +200,13 @@ assert.match(
   "template addStage must inherit the last stage's agent/model",
 );
 assert.match(
-  panel,
+  panelHook,
   /const stage = inheritAgentStage\(stages, stages\.length\);/,
   "task detail addStage must inherit the last stage's agent/model",
 );
 // 新增完直接落在编辑态，省得再点一次铅笔。
 assert.match(
-  panel,
+  panelHook,
   /setEditingStage\(\(next\.task\.stages\?\.length \|\| 1\) - 1\);/,
   "a freshly added stage must open in edit mode",
 );
@@ -302,7 +303,7 @@ assert.match(
 );
 // 完成 = 推进键给不出来时的出口，与看板卡片同一套门控。待审核的任务不能一个键都没有。
 assert.match(
-  panel,
+  panelHook,
   /const canFinishWorktree = task\?\.create_worktree === true\s*\n\s*&& !!task\?\.worktree_path\s*\n\s*&& task\?\.worktree_missing !== true\s*\n\s*&& hasAgentStage;/,
   "the panel must still read the server-derived worktree_missing flag for 收尾",
 );
@@ -461,7 +462,7 @@ test("card advance gate falls back to pending when the server sent no stage stat
 // 卡在待审核、worktree 又已被拆 —— 收尾键给不出来、执行键也给不出来，
 // 任务在界面上彻底没有出路。现在只要推进键（canRunStageNow）给不出来就兜住。
 assert.match(
-  panel,
+  panelHook,
   /const canCompleteTask = !terminal && !stageRunningNow && !canRunStageNow && !\(finishActive && canFinishWorktree\);/,
   "the detail panel's 完成 must兜住 canRunStageNow 给不出来的一切局面",
 );
