@@ -128,6 +128,8 @@ export const MODULES = {
     // 2026-10-08 第 12 步
     "src/app/useAppSessionView.tsx",
     "src/app/useAppRootContentRenderers.tsx",
+    // 2026-10-08 第 13 步
+    "src/app/useAppKanbanTaskPanel.tsx",
   ],
 
   // P6 拆分：FileTree.tsx → + icons.tsx（图标子组件）

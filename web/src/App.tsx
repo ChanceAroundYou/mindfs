@@ -182,6 +182,7 @@ import {
 // 类型定义
 
 import { APP_DOCUMENT_TITLE, AppProps, CHILD_SESSION_PAGE_SIZE, MULTI_PROJECT_SESSION_LIMIT, ManagedRootPayload, SESSION_PAGE_SIZE } from "./app/appMisc";
+import { useAppKanbanTaskPanel } from "./app/useAppKanbanTaskPanel";
 import { useAppRootContentRenderers } from "./app/useAppRootContentRenderers";
 import { useAppSessionView } from "./app/useAppSessionView";
 import { useAppKanbanStageColumns } from "./app/useAppKanbanStageColumns";
@@ -2724,58 +2725,21 @@ export function App({ onGoHome }: AppProps) {
     if (!detail) return;
     applyTaskDetails(rootId, [detail]);
   }, [applyTaskDetails]);
-  const kanbanTaskPanel = (
-    <TaskBoardView
-      workspaceOpen={workspaceOpen}
-      currentRootId={currentRootId}
-      currentRootIdRef={currentRootIdRef}
-      workspaceBoard={workspaceBoard}
-      workspaceFilter={workspaceFilter}
-      onWorkspaceFilterChange={changeWorkspaceFilter}
-      workspaceCollapsedKeys={workspaceCollapsedKeys}
-      onToggleWorkspaceProject={toggleWorkspaceProject}
-      onRefreshWorkspaceBoard={() => setWorkspaceBoardToken((token) => token + 1)}
-      managedRootIds={managedRootIds}
-      getRootDisplayName={getRootDisplayName}
-      openWorkspaceProject={openWorkspaceProject}
-      openWorkspaceTaskDetail={openWorkspaceTaskDetail}
-      handleWorkspaceCreateTask={handleWorkspaceCreateTask}
-      setSelectedKanbanTaskId={setSelectedKanbanTaskId}
-      kanbanTasksLoading={kanbanTasksLoading}
-      kanbanStageColumns={kanbanStageColumns}
-      selectedKanbanTaskId={selectedKanbanTaskId}
-      expandedTaskInputIds={expandedTaskInputIds}
-      setExpandedTaskInputIds={setExpandedTaskInputIds}
-      collapsedTaskCompletionGroups={collapsedTaskCompletionGroups}
-      setCollapsedTaskCompletionGroups={setCollapsedTaskCompletionGroups}
-      collapsedKanbanColumns={collapsedKanbanColumns}
-      setCollapsedKanbanColumns={setCollapsedKanbanColumns}
-      taskFirstInputById={taskFirstInputById}
-      taskSessionKeysById={taskSessionKeysById}
-      sessionByKey={boardSessionByKey}
-      getDisplayNodeColor={getDisplayNodeColor}
-      handleSelectKanbanTask={handleSelectKanbanTask}
-      handleMoveKanbanTask={handleMoveKanbanTask}
-      openTaskCreateDialog={openTaskCreateDialog}
-      handleTaskSessionDrawerOpen={handleTaskSessionDrawerOpen}
-      setTaskSessionErrorDialog={setTaskSessionErrorDialog}
-      loadKanbanTasks={loadKanbanTasks}
-      templateControls={{
-        taskTemplateActionMenuRef,
-        taskTemplateActionMenuOpen,
-        setTaskTemplateActionMenuOpen,
-        taskCreateTemplateMenuRef,
-        taskCreateTemplateMenuOpen,
-        setTaskCreateTemplateMenuOpen,
-        taskTemplates,
-        taskTemplateFilter,
-        setTaskTemplateFilter,
-        openTaskTemplateEditor,
-        handleDeleteTaskTemplate,
-      }}
-    />
-
-  );
+  const { kanbanTaskPanel
+  } = useAppKanbanTaskPanel({
+    workspaceOpen, currentRootId, currentRootIdRef, workspaceBoard,
+    workspaceFilter, changeWorkspaceFilter, workspaceCollapsedKeys, toggleWorkspaceProject,
+    setWorkspaceBoardToken, managedRootIds, getRootDisplayName, openWorkspaceProject,
+    openWorkspaceTaskDetail, handleWorkspaceCreateTask, setSelectedKanbanTaskId, kanbanTasksLoading,
+    kanbanStageColumns, selectedKanbanTaskId, expandedTaskInputIds, setExpandedTaskInputIds,
+    collapsedTaskCompletionGroups, setCollapsedTaskCompletionGroups, collapsedKanbanColumns, setCollapsedKanbanColumns,
+    taskFirstInputById, taskSessionKeysById, boardSessionByKey, getDisplayNodeColor,
+    handleSelectKanbanTask, handleMoveKanbanTask, openTaskCreateDialog, handleTaskSessionDrawerOpen,
+    setTaskSessionErrorDialog, loadKanbanTasks, taskTemplateActionMenuRef, taskTemplateActionMenuOpen,
+    setTaskTemplateActionMenuOpen, taskCreateTemplateMenuRef, taskCreateTemplateMenuOpen, setTaskCreateTemplateMenuOpen,
+    taskTemplates, taskTemplateFilter, setTaskTemplateFilter, openTaskTemplateEditor,
+    handleDeleteTaskTemplate,
+  });
 
 
   usePluginThemeVars({document, pluginBypass, pluginRender, pluginThemeVars, useEffect});
