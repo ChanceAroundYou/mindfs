@@ -20,10 +20,22 @@ import {
 import { useI18n, type I18nContextValue, type Locale, type MessageKey } from "../../i18n/index";
 import { useRefreshSpin } from "../../hooks/index";
 import { usePwaInstall } from "../../app/usePwaInstall";
+import { FileTreeRefreshButton } from "./FileTreeRefreshButton";
+import {
+  PROJECT_TREE_INDENT,
+  PROJECT_TREE_ROOT_PADDING_LEFT,
+  PROJECT_TREE_TAB_STORAGE_KEY,
+  isProjectTreeTab,
+  type AgentConfigSwitchSelection,
+  type AgentLifecycleCommandAction,
+  type FileTreeProps,
+  type ProjectTreeTab,
+} from "./fileTreeTypes";
 import { createRenderEntries } from "./fileTreeEntries";
 import { childEntryKey, filterVisibleEntries } from "./FileTreeEntryFilters";
 import { groupEntriesByNode } from "./FileTreeEntryFilters";
 import { useAgentConfigActions } from "./useAgentConfigActions";
+import { useAgentConfigFlowTransitions } from "./useAgentConfigFlowTransitions";
 import { formatProviderTestResult, isAgentConfigBackupConflict } from "./fileTreeAgentConfigUtils";
 import { useFileTreePreferences } from "./useFileTreePreferences";
 import { useAgentConfigSelection } from "./useAgentConfigSelection";
@@ -113,100 +125,6 @@ import {
   DIRECTORY_SORT_LABEL_KEYS,
   LOCALE_OPTIONS,
 } from "./fileTreeMenuOptions";
-
-type FileMeta = {
-  source_session?: string;
-  session_name?: string;
-};
-
-
-type RootSessionIndicator = {
-  bound?: boolean;
-  pending?: boolean;
-};
-
-export type ProjectTreeTab = "files" | "git" | "worktrees" | "related";
-export type AgentConfigSwitchRequest = {
-  nonce: number;
-  providerIDs?: string[];
-};
-
-const PROJECT_TREE_TAB_STORAGE_KEY = "mindfs-project-tree-tab";
-const PROJECT_TREE_ROOT_PADDING_LEFT = 0;
-const PROJECT_TREE_INDENT = 16;
-
-function isProjectTreeTab(value: unknown): value is ProjectTreeTab {
-  return value === "files" || value === "git" || value === "worktrees" || value === "related";
-}
-
-type FileTreeProps = {
-  entries: FileEntry[];
-  childrenByPath: Record<string, FileEntry[]>;
-  expanded: string[];
-  sortMode: DirectorySortMode;
-  showHiddenFiles?: boolean;
-  selectedDirKey?: string | null;
-  selectedPath?: string | null;
-  rootId?: string | null;
-  rootNodeId?: string | null;
-  rootColor?: string | null;
-  rootSessionIndicators?: Record<string, RootSessionIndicator>;
-  fileMetas?: Record<string, FileMeta>;
-  activeSessionKey?: string | null;
-  onSortModeChange?: (mode: DirectorySortMode) => void;
-  onShowHiddenFilesChange?: (show: boolean) => void;
-  onRefresh?: (tab: ProjectTreeTab) => void | Promise<void>;
-  onNodeManagerRefresh?: () => Promise<void>;
-  onSelectFile?: (entry: FileEntry, rootId: string) => void;
-  onSelectRoot?: (entry: FileEntry, rootId: string) => void;
-  /** 点文件夹「名字」= 打开该目录（由 App 决定是否切主面板）；与 onToggleDir 的纯展开收起区分。 */
-  onSelectDir?: (entry: FileEntry, rootId: string) => void;
-  onToggleDir?: (entry: FileEntry, rootId: string) => void;
-  renderRootExtraContent?: (rootId: string) => React.ReactNode;
-  renderRootWorktreeContent?: (rootId: string) => React.ReactNode;
-  renderRootRelatedContent?: (rootId: string) => React.ReactNode;
-  projectTreeTabRequest?: { tab: ProjectTreeTab; nonce: number } | null;
-  agentConfigSwitchRequest?: AgentConfigSwitchRequest | null;
-  onAgentConfigSwitched?: (agent: string) => void;
-  onProjectTreeTabChange?: (tab: ProjectTreeTab) => void;
-  creatingRootName?: string | null;
-  creatingRootBusy?: boolean;
-  creatingRootExtraContent?: React.ReactNode;
-  creatingRootSubmitOnBlur?: boolean;
-  onCreateRootStart?: () => void;
-  onOpenProjectAdd?: () => void;
-  onCreateRootNameChange?: (name: string) => void;
-  onCreateRootSubmit?: () => void;
-  onCreateRootCancel?: () => void;
-  projectAddOverlay?: React.ReactNode;
-  updateActionLabel?: string | null;
-  updateActionDisabled?: boolean;
-  updateActionHelp?: string | null;
-  updateActionBusy?: boolean;
-  updateActionSummary?: string | null;
-  onUpdateAction?: () => void;
-  showEnterKeySendOption?: boolean;
-  enterKeySends?: boolean;
-  onEnterKeySendsChange?: (enabled: boolean) => void;
-  showSendShortcutOption?: boolean;
-  sendShortcut?: SendShortcut | null;
-  onSendShortcutChange?: (shortcut: SendShortcut | null) => void;
-  sidebarsSwapped?: boolean;
-  onSidebarsSwappedChange?: (enabled: boolean) => void;
-  gitDiffSideBySide?: boolean;
-  onGitDiffSideBySideChange?: (enabled: boolean) => void;
-  multiProjectSessionsEnabled?: boolean;
-  onMultiProjectSessionsChange?: (enabled: boolean) => void;
-  fontSizePreferences?: FontSizePreferences;
-  onFontSizePreferencesChange?: (preferences: FontSizePreferences) => void;
-  onRunAgentLifecycleCommand?: (agentName: string, action: AgentLifecycleCommandAction, commands: string[]) => void | Promise<void>;
-  onRestartAgent?: (agentName: string) => void | Promise<void>;
-  onGoHome?: () => void;
-  footerTopContent?: React.ReactNode;
-};
-
-type AgentConfigSwitchSelection = { type: "backup" | "api_provider"; id: string };
-type AgentLifecycleCommandAction = "install" | "update";
 
 /** 把单模型测试结果格式化成一行简短文案（成功/延迟/错误/简短响应）。 */
 
@@ -407,42 +325,6 @@ function FileTreeInner({
   });
 
 
-  const openAgentConfigFlow = React.useCallback((flow: AgentConfigFlow) => {
-    setIdleReleaseOpen(false);
-    setAgentLifecycleOpen(false);
-    agentConfigFlowVersion.current += 1;
-    setAgentConfigNotice("");
-    setAgentConfigFlow(flow);
-    setAgentConfigStep("agent");
-    setAgentConfigAgent("");
-    setAgentConfigAddTab("backup");
-    setAgentConfigSwitchTab("backup");
-    setAgentConfigName("");
-    setAgentConfigFileSourcesBody("");
-    setAgentConfigEnvBody("");
-    setAgentAPIProviderName("");
-    setAgentAPIProviderBaseURL("");
-    setAgentAPIProviderAPIKey("");
-    setAgentConfigBackups([]);
-    setAgentAPIProviders([]);
-    setSelectedAgentConfigID("");
-    setSelectedAgentAPIProviderID("");
-    setAgentConfigSwitchSelection(null);
-    setAgentConfigPreferredProviderIDs([]);
-    setAgentConfigConfirmMessage("");
-    setAgentConfigError("");
-    setAgentConfigRestartingAgent("");
-    setIsMenuOpen(false);
-    setAgentConfigBusy(true);
-    fetchAgents(true, getRootNodeId(rootId || "") as any)
-      .then((items) => {
-        setAgentConfigAgents(items.filter((item) => item.installed));
-      })
-      .catch((error) => {
-        setAgentConfigError(error instanceof Error ? error.message : t("agentConfig.loadAgentFailed"));
-      })
-      .finally(() => setAgentConfigBusy(false));
-  }, [t, rootId]);
 
   const { openSessionNaming, saveSessionNaming, openIdleSessionResourceRelease, openSendShortcut, saveSendShortcut, saveIdleSessionResourceRelease } = useFileTreePreferences({
     t, rootId, sendShortcut, sendShortcutDraft, onSendShortcutChange, agentConfigFlowVersion,
@@ -456,41 +338,21 @@ function FileTreeInner({
   useAgentConfigSwitchRequest({ agentConfigSwitchRequest, rootId, t, setAgentLifecycleOpen, agentConfigFlowVersion, setAgentConfigNotice, setAgentConfigFlow, setAgentConfigStep, setAgentConfigAgent, setAgentConfigAddTab, setAgentConfigSwitchTab, setAgentConfigName, setAgentConfigFileSourcesBody, setAgentConfigEnvBody, setAgentAPIProviderName, setAgentAPIProviderBaseURL, setAgentAPIProviderAPIKey, setAgentConfigBackups, setAgentAPIProviders, setSelectedAgentConfigID, setSelectedAgentAPIProviderID, setAgentConfigSwitchSelection, setAgentConfigPreferredProviderIDs, setAgentConfigConfirmMessage, setAgentConfigError, setAgentConfigRestartingAgent, setIsMenuOpen, setAgentConfigBusy, setAgentConfigAgents });
 
 
-  const closeAgentConfigFlow = React.useCallback(() => {
-    agentConfigFlowVersion.current += 1;
-    setAgentConfigNotice("");
-    setAgentConfigFlow(null);
-    setAgentConfigStep("agent");
-    setAgentConfigError("");
-    setAgentConfigConfirmMessage("");
-    setAgentConfigSwitchSelection(null);
-    setAgentConfigSwitchTab("backup");
-    setAgentConfigRestartingAgent("");
-  }, []);
 
-  const openAgentLifecycleFlow = React.useCallback(() => {
-    agentConfigFlowVersion.current += 1;
-    setAgentConfigNotice("");
-    setAgentConfigFlow(null);
-    setAgentLifecycleOpen(true);
-    setIsMenuOpen(false);
-    setAgentLifecycleError("");
-    setAgentLifecycleBusy(true);
-    fetchAgentCatalog(true, getRootNodeId(rootId || "") as any)
-      .then((items) => {
-        setAgentLifecycleAgents(items);
-      })
-      .catch((error) => {
-        setAgentLifecycleError(error instanceof Error ? error.message : t("agentConfig.loadAgentFailed"));
-      })
-      .finally(() => setAgentLifecycleBusy(false));
-  }, [rootId, t]);
 
-  const closeAgentLifecycleFlow = React.useCallback(() => {
-    setAgentLifecycleOpen(false);
-    setAgentLifecycleError("");
-    setAgentLifecycleRunningAgent("");
-  }, []);
+  const { openAgentConfigFlow, closeAgentConfigFlow,
+    openAgentLifecycleFlow, closeAgentLifecycleFlow } = useAgentConfigFlowTransitions({
+    rootId, agentConfigFlowVersion, t, fetchAgents, fetchAgentCatalog,
+    setIdleReleaseOpen, setAgentLifecycleOpen, setAgentConfigNotice, setAgentConfigFlow,
+    setAgentConfigStep, setAgentConfigAgent, setAgentConfigAddTab, setAgentConfigSwitchTab,
+    setAgentConfigName, setAgentConfigFileSourcesBody, setAgentConfigEnvBody,
+    setAgentAPIProviderName, setAgentAPIProviderBaseURL, setAgentAPIProviderAPIKey,
+    setAgentConfigBackups, setAgentAPIProviders, setSelectedAgentConfigID,
+    setSelectedAgentAPIProviderID, setAgentConfigSwitchSelection, setAgentConfigPreferredProviderIDs,
+    setAgentConfigConfirmMessage, setAgentConfigError, setAgentConfigRestartingAgent,
+    setIsMenuOpen, setAgentConfigBusy, setAgentConfigAgents, setAgentLifecycleError,
+    setAgentLifecycleBusy, setAgentLifecycleAgents, setAgentLifecycleRunningAgent,
+  });
 
   useAgentConfigOutsideClick({ agentConfigFlow, agentConfigStep, agentLifecycleOpen, agentConfigPopoverRef, agentLifecyclePopoverRef, closeAgentConfigFlow, closeAgentLifecycleFlow });
 
@@ -556,58 +418,8 @@ function FileTreeInner({
         <div style={{ display: "flex", alignItems: "center", minWidth: 0, flex: "1 1 auto", maxWidth: "calc(100% - 56px)", marginRight: "6px" }}>
           <FileTreeProjectTabs projectTreeTab={projectTreeTab} setProjectTreeTab={setProjectTreeTab} t={t} rootColor={rootColor} entries={entries} rootId={rootId} getNodes={getNodes} DEFAULT_NODE_COLOR={DEFAULT_NODE_COLOR} hexToRgbaApp={hexToRgbaApp} />
         </div>
-        <button
-          type="button"
-          data-onboarding="sidebar-refresh"
-          onClick={() => void handleRefreshClick()}
-          onMouseDown={() => setTreePressed(true)}
-          onMouseUp={() => setTreePressed(false)}
-          onMouseLeave={() => setTreePressed(false)}
-          aria-label={t("common.refresh")}
-          title={t("common.refresh")}
-          style={{
-            width: "22px",
-            height: "28px",
-            borderRadius: "8px",
-            border: "none",
-            background: "transparent",
-            color: "var(--text-secondary)",
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "flex-end",
-            cursor: "pointer",
-            outline: "none",
-            flexShrink: 0,
-            padding: 0,
-          }}
-        >
-          <span
-            data-refresh-visual
-            style={{
-              width: "18px",
-              height: "28px",
-              borderRadius: "8px",
-              background: treePressed || treeRefreshing ? "rgba(0, 0, 0, 0.06)" : "transparent",
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="13"
-              height="13"
-              viewBox="0 0 24 24"
-              aria-hidden="true"
-              style={treeRefreshing ? { animation: "mindfs-update-spin 0.8s linear infinite" } : undefined}
-            >
-              <path
-                fill="currentColor"
-                d="M19.91 15.51h-4.53a1 1 0 0 0 0 2h2.4A8 8 0 0 1 4 12a1 1 0 0 0-2 0a10 10 0 0 0 16.88 7.23V21a1 1 0 0 0 2 0v-4.5a1 1 0 0 0-.97-.99M12 2a10 10 0 0 0-6.88 2.77V3a1 1 0 0 0-2 0v4.5a1 1 0 0 0 1 1h4.5a1 1 0 0 0 0-2h-2.4A8 8 0 0 1 20 12a1 1 0 0 0 2 0A10 10 0 0 0 12 2"
-              />
-            </svg>
-          </span>
-        </button>
+        <FileTreeRefreshButton handleRefreshClick={handleRefreshClick} setTreePressed={setTreePressed}
+          t={t} treePressed={treePressed} treeRefreshing={treeRefreshing} />
         <div ref={menuRef} style={{ position: "relative", flexShrink: 0 }}>
           <button
             type="button"

@@ -96,6 +96,9 @@ export const MODULES = {
   // P6 拆分：FileTree.tsx → + icons.tsx（图标子组件）
   "src/components/file/FileTree.tsx": [
     "src/components/file/FileTree.tsx",
+    "src/components/file/FileTreeRefreshButton.tsx",
+    "src/components/file/useAgentConfigFlowTransitions.ts",
+    "src/components/file/fileTreeTypes.ts",
     "src/components/file/icons.tsx",
     "src/components/file/AgentConfigPopover.tsx",
     "src/app/usePwaInstall.ts",
@@ -203,6 +206,9 @@ export const MODULES = {
   "src/components/WorktreeBranchSelector.tsx": ["src/components/task/WorktreeBranchSelector.tsx"],
   "src/components/FileTree.tsx": [
     "src/components/file/FileTree.tsx",
+    "src/components/file/FileTreeRefreshButton.tsx",
+    "src/components/file/useAgentConfigFlowTransitions.ts",
+    "src/components/file/fileTreeTypes.ts",
     "src/components/file/icons.tsx",
     "src/components/file/AgentConfigPopover.tsx",
     "src/app/usePwaInstall.ts",

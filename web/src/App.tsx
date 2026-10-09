@@ -95,11 +95,8 @@ import { currentUser } from "./services/net/authGate";
 import { AppShell } from "./layout/AppShell";
 import { ViewHeader } from "./layout/ViewHeader";
 import { ModeIcon } from "./components/agent/ModeIcon";
-import {
-  FileTree,
-  type AgentConfigSwitchRequest,
-  type ProjectTreeTab,
-} from "./components/file/FileTree";
+import { FileTree } from "./components/file/FileTree";
+import type { AgentConfigSwitchRequest, ProjectTreeTab } from "./components/file/fileTreeTypes";
 
 import { applyNodesFromServer, getActiveNode, getActiveNodeId, getNodeById, getNodes, migrateLegacySingleBase, setActiveNodeId, syncNodesFromServer } from "./services/net/nodeRegistry";
 import {

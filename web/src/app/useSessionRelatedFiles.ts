@@ -15,7 +15,7 @@ import { useSessionPending } from "./useSessionPending";
 import { useRelatedFileDiff } from "./useRelatedFileDiff";
 import { scopeKey, scopeSessionKey } from "../shared/scope";
 import { sessionService, setCachedSessionRelatedFiles, type RelatedFile, type Session } from "../services/session";
-import type { ProjectTreeTab } from "../components/file/FileTree";
+import type { ProjectTreeTab } from "../components/file/fileTreeTypes";
 
 export interface UseSessionRelatedFilesParams {
   activeBoundSessionKey: string | null;

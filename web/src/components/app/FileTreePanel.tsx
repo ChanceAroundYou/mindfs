@@ -1,9 +1,6 @@
 // 从 App.tsx 抽出的渲染区域（机械搬移，JSX 逐字未改）。
-import {
-  FileTree,
-  type AgentConfigSwitchRequest,
-  type ProjectTreeTab,
-} from "../file/FileTree";
+import { FileTree } from "../file/FileTree";
+import type { AgentConfigSwitchRequest, ProjectTreeTab } from "../file/fileTreeTypes";
 import { MainViewSwitcher } from "../shell/MainViewSwitcher";
 import type { Dispatch, SetStateAction, RefObject, ReactNode } from "react";
 import React, {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect } from "react";
-import type { ProjectTreeTab } from "../components/file/FileTree";
+import type { ProjectTreeTab } from "../components/file/fileTreeTypes";
 import type { FileEntry } from "../services/prefs/directorySort";
 import type { RelatedFile, RelatedWorktree } from "../services/session";
 import { sessionService, setCachedSessionRelatedFiles } from "../services/session";
