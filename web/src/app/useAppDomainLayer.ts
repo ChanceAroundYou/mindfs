@@ -10,6 +10,7 @@ import { useAppPluginRenderEffects } from "./useAppPluginRenderEffects";
 import { useAppBootstrapEffects } from "./useAppBootstrapEffects";
 import { useAppBoundSessionDir } from "./useAppBoundSessionDir";
 import { useAppSessionSnapshots } from "./useAppSessionSnapshots";
+import { useAppDomainDerived } from "./useAppDomainDerived";
 import { useAppFileNavigation } from "./useAppFileNavigation";
 import { useAppPluginTrust } from "./useAppPluginTrust";
 import { useAppPluginRender } from "./useAppPluginRender";
@@ -830,167 +831,39 @@ export function useAppDomainLayer(params: UseAppDomainLayerParams) {
 
   usePopStateSync({actionHandlers, closeTopBackLayer, consumeViewHistoryEntry, currentRootIdRef, fileCursorRef, fileRef, handleSelectSessionRef, hasBackLayer, lastNonChatViewRef, loadSessionsForRoot, mainViewRef, readURLState, refreshTreeDir, replaceURLState, selectRootNode, selectedSessionRef, setCurrentRootId, setMainView, setPluginQuery, showBoundSessionOrRootDir, switchMainView, useEffect});
 
-  const selectedRoot =
-    (selectedSession?.root_id as string | undefined) || currentRootId || "";
-  const selectedInCurrentRoot =
-    !!selectedSession && !!currentRootId && selectedRoot === currentRootId;
-  const selectedKey =
-    selectedSession?.key || selectedSession?.session_key || "";
-  const lockedSessionKey = resolveLockedSessionKey(activeBoundSessionKey);
-  const lockedSessionSnapshot = lockedSessionKey && currentRootId
-    ? getSessionSnapshot(
-        currentRootId,
-        drawerSessionByRootRef.current[scopedRootKey(currentRootId)] ||
-          sessionCacheRef.current[rootSessionKey(currentRootId, lockedSessionKey)] ||
-          null,
-      )
-    : null;
-  const boundFromSelected =
-    selectedInCurrentRoot && selectedKey === activeBoundSessionKey
-      ? (selectedSession as any)
-      : null;
-  const boundFromCache =
-    activeBoundSessionKey && currentRootId
-      ? (sessionCacheRef.current[
-          rootSessionKey(currentRootId, activeBoundSessionKey)
-        ] as any)
-      : null;
-  const isDetachedMainSessionTarget =
-    !!activeBoundSessionKey &&
-    selectedInCurrentRoot &&
-    !!selectedKey &&
-    selectedKey !== activeBoundSessionKey &&
-    interactionMode !== "drawer";
-  const actionBarSession = lockedSessionKey
-    ? isDetachedMainSessionTarget
-      ? (selectedSession as any)
-      : (lockedSessionSnapshot as any) ||
-        (currentSession as any) ||
-        boundFromCache ||
-        boundFromSelected
-    : selectedInCurrentRoot
-      ? (selectedSession as any)
-      : null;
-  const actionBarSessionKey =
-    (actionBarSession as any)?.key ||
-    (actionBarSession as any)?.session_key ||
-    "";
-  const actionBarInputHistory = sessionInputHistory(
-    getSessionSnapshot(
-      ((actionBarSession as any)?.root_id as string | undefined) || currentRootId,
-      actionBarSession as any,
-    ) || (actionBarSession as any),
-  );
-  // 「会话就在主区」必须同时满足：主面板确实是对话态。否则在文件态下会话被选中却看不见，
-  // 蓝环会被误判成「已在主区」而隐藏，文件态的悬浮框就再也打不开了。
-  const isBoundSessionInMain =
-    !!activeBoundSessionKey &&
-    selectedKey === activeBoundSessionKey &&
-    interactionMode !== "drawer" &&
-    mainView === "chat";
-  const canOpenSessionDrawer = !!activeBoundSessionKey && !isBoundSessionInMain;
-  const detachedBoundSession =
-    isDetachedMainSessionTarget && !isDrawerOpen;
-  const actionBarQueuedMessages = useMemo(() => {
-    void queueVersion;
-    if (!currentRootId || !actionBarSessionKey) return [];
-    return (
-      queuedMessagesBySessionRef.current[
-        rootSessionKey(currentRootId, actionBarSessionKey)
-      ] || []
-    );
-  }, [actionBarSessionKey, currentRootId, queueVersion, rootSessionKey]);
-
-  const matchedPlugin = useMemo(() => {
-    if (!currentRootId || !file) return null;
-    const input = toPluginInput(file, pluginQuery);
-    return pluginManagerRef.current.match(currentRootId, input);
-  }, [currentRootId, file, pluginVersion, pluginQuery]);
-
-
-
-  const { pluginRender, pluginThemeVars } = useAppPluginRender({
-    file,
-    pluginBypass,
-    matchedPlugin,
-    pluginQuery,
-    pluginManagerRef,
+  const derived = useAppDomainDerived({
+    activeBoundSessionKey, actionHandlers, boundSessionByRootRef, bumpCacheVersion,
+    clearSessionStale, currentFileEditing, currentRootId, currentRootIdRef, currentSession,
+    currentSessionRef, drawerSessionByRootRef, file, fileCursorRef, fullUpgradeAttemptRef,
+    getSessionSnapshot, handleViewerSelectionChange, interactionMode, isDrawerOpen,
+    kanbanTasks, lastMainSessionSnapshotRef, lastPluginChapterRef, mainView,
+    multiProjectSessionGroups, pluginBypass, pluginContentRef, pluginManagerRef, pluginQuery,
+    pluginVersion, queueVersion, queuedMessagesBySessionRef, rootSessionKey, scopedRootKey,
+    selectedKanbanTaskId, selectedSession, selectedSessionLoading, sessionCacheRef,
+    sessionLoadFailureRef, sessions, taskDetailsById, taskSessionKeysById,
+    loadedSessionRef, loadingSessionRef, isSessionStale, resolvePendingForSession,
+    restoreActiveSession, setDrawerSessionForRoot, setSelectedSession,
   });
-
-  useAppPluginRenderEffects({
-    file, currentFileEditing, pluginBypass, matchedPlugin,
-    pluginRender, pluginQuery, currentRootId, actionHandlers,
-    fileCursorRef, handleViewerSelectionChange, pluginContentRef, lastPluginChapterRef,
-    fullUpgradeAttemptRef,
-  });
-
-
-  const pluginRendererKey = `${currentRootId || ""}:${file?.path || ""}:${fileCursorRef.current}:${JSON.stringify(pluginQuery)}`;
-
-  const {
-    selectedSessionSnapshot,
-    sessionByKey,
-    boardSessionByKey,
-    selectedKanbanTask,
-    selectedKanbanTaskSessionKey,
-    selectedKanbanTaskSessionSnapshot,
-  } = useAppSessionSnapshots({
-    selectedSession,
-    selectedSessionLoading,
-    currentRootId,
-    sessions,
-    multiProjectSessionGroups,
-    selectedKanbanTaskId,
-    kanbanTasks,
-    taskDetailsById,
-    taskSessionKeysById,
-    getSessionSnapshot,
-  });
-
-
-
-	  useEffect(() => {
-    if (selectedSessionSnapshot) {
-      lastMainSessionSnapshotRef.current = selectedSessionSnapshot as Session;
-    }
-  }, [selectedSessionSnapshot]);
-
-  // CUSTOM(G-AU): 加载 effect 的依赖只能是**身份**（键 / 根 / 布尔），绝不能是
-  // selectedSessionSnapshot 这个对象。它的身份随 cacheVersion 每次 bump 都变
-  // （getSessionSnapshot 的 dep 数组里有 cacheVersion），而流式输出每 30ms 就 bump 一次、
-  // 每个 tool_call/todo_update/plan_update 还会同步再 bump 一次 —— 于是「加载 →
-  // bump → 新快照 → 再加载」自持成环。会话存在时 loadedSessionRef 会兜住，
-  // **404 的会话永远兜不住**：实测一个已删会话被拉到 22–25 次/秒、持续 18 小时
-  // （单小时 5232 次、累计 7800+ 次 404），把浏览器每域 6 条连接全占满 →
-  // 其它请求全部排队 → 界面卡死 → 标签页被杀 → 自动重载。
-  const loadSessionKey = selectedSession?.key || selectedSession?.session_key || "";
-  const loadRootID =
-    (selectedSession?.root_id as string | undefined) || currentRootId || "";
-  const loadSnapshotHasExchanges = hasSessionExchanges(
-    selectedSessionSnapshot as Session | null,
-  );
-
-  // 选中项一变就解禁失败记录：换会话/换项目本来就该重新拉一次。
-  useEffect(() => {
-    sessionLoadFailureRef.current = {};
-  }, [loadSessionKey, loadRootID]);
-
-  useSessionRestore({boundSessionByRootRef, bumpCacheVersion, clearSessionStale, currentRootId, currentRootIdRef, hasSessionExchanges, isSessionStale, loadRootID, loadSessionKey, loadSnapshotHasExchanges, loadedSessionRef, loadingSessionRef, resolvePendingForSession, restoreActiveSession, rootSessionKey, scopedRootKey, selectedSessionLoading, sessionCacheRef, sessionLoadFailureRef, setDrawerSessionForRoot, setSelectedSession, toSessionItem, useEffect});
 
   return {
-    actionBarInputHistory, actionBarQueuedMessages, actionBarSession, actionHandlers,
-    actionHandlersRef, boardSessionByKey, canOpenSessionDrawer, creatingRootBusy,
-    creatingRootKind, creatingRootName, detachedBoundSession, findManagedRootByPath,
+    ...derived,
+    actionHandlers, actionHandlersRef,
+    creatingRootBusy, creatingRootKind, creatingRootName, findManagedRootByPath,
     gitFileStatsByPath, handleClearFileContext, handleCreateRootCancel, handleCreateRootStart,
-    handleCreateRootSubmit, handleDirectoryPathClick, handleDisablePendingPlugins, handleFileViewerFileClick,
-    handleFileViewerPathClick, handleGitDiffPathClick, handleOpenProjectAdd, handleOpenWorktreeLocation,
-    handleRemoveCurrentRoot, handleRemoveCurrentWorktree, handleRemoveQueuedMessage, handleRenameCurrentRoot,
-    handleRequestFileContext, handleSelectKanbanTask, handleSendQueuedMessageNow, handleSessionChipClick,
-    handleSwitchWorktreeStart, handleTaskSessionDrawerOpen, handleTrustPendingPlugins, handleUpdateQueuedMessage,
-    handleViewerSelectionChange, matchedPlugin, openRelatedFileDiff, pluginHandlers,
-    pluginRender, pluginRendererKey, pluginThemeVars, projectAddMode,
-    projectAddOverlay, refreshManagedRoots, refreshTaskRelatedFiles, selectedKanbanTask,
-    selectedKanbanTaskSessionSnapshot, selectedSessionSnapshot, setCreatingRootName, visibleMainEntries,
-    worktreeCreateOverlay, worktreeSwitchOpen, worktreeSwitchOverlay
+    handleCreateRootSubmit, handleDirectoryPathClick, handleDisablePendingPlugins,
+    handleFileViewerFileClick, handleFileViewerPathClick, handleGitDiffPathClick,
+    handleOpenProjectAdd, handleOpenWorktreeLocation, handleRemoveCurrentRoot,
+    handleRemoveCurrentWorktree, handleRemoveQueuedMessage, handleRenameCurrentRoot,
+    handleRequestFileContext, handleSelectKanbanTask, handleSendQueuedMessageNow,
+    handleSessionChipClick, handleSwitchWorktreeStart, handleTaskSessionDrawerOpen,
+    handleTrustPendingPlugins, handleUpdateQueuedMessage, handleViewerSelectionChange,
+    matchedPlugin: derived.matchedPlugin, openRelatedFileDiff, pluginHandlers,
+    pluginRender: derived.pluginRender, pluginRendererKey: derived.pluginRendererKey,
+    pluginThemeVars: derived.pluginThemeVars, projectAddMode, projectAddOverlay,
+    refreshManagedRoots, refreshTaskRelatedFiles, selectedKanbanTask: derived.selectedKanbanTask,
+    selectedKanbanTaskSessionSnapshot: derived.selectedKanbanTaskSessionSnapshot,
+    selectedSessionSnapshot: derived.selectedSessionSnapshot, setCreatingRootName,
+    visibleMainEntries, worktreeCreateOverlay, worktreeSwitchOpen, worktreeSwitchOverlay,
   };
+
 }

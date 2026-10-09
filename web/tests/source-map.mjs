@@ -144,6 +144,7 @@ export const MODULES = {
     // 2026-10-08 分层聚合（App.tsx → 1000 以内）第 3 层：领域接线与实时通道。
     // 受管根、动作处理器、文件导航、项目生命周期、插件、实时事件与派生状态。
     "src/app/useAppDomainLayer.ts",
+    "src/app/useAppDomainDerived.ts",
     // 2026-10-08 分层聚合（App.tsx → 1000 以内）第 4 层：视图与渲染组合。
     // 这一层整体（L2276-2633，连续区间）搬走，hook 调用顺序与搬出前逐字一致。
     "src/app/useAppViewComposition.ts",
@@ -186,7 +187,7 @@ export const MODULES = {
   ],
 
   // P2 拆分：file.ts → services/file/（入口 shim 仍在原路径）
-  "src/services/session.ts": ["src/services/session.ts"],
+  "src/services/session.ts": ["src/services/session.ts", "src/services/sessionIdentifiers.ts"],
   "src/services/sessionCacheTypes.ts": ["src/services/sessionCacheTypes.ts"],
   "src/services/file.ts": [
     "src/services/file/types.ts",
@@ -242,6 +243,7 @@ export const MODULES = {
     "src/components/session/SessionViewerLoadingState.tsx",
     "src/components/session/SessionViewerWaitingIndicator.tsx",
     "src/components/session/SessionViewerFloatingControls.tsx",
+    "src/components/session/SessionViewerTimeline.tsx",
     "src/components/session/sessionViewerStyles.ts",
     "src/components/session/sessionViewerGrouping.ts",
     "src/components/session/sessionViewerAskUser.ts",

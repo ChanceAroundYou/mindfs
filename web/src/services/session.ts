@@ -36,6 +36,7 @@ import {
   buildSlashCommandMessage,
 } from "./sessionOutbound";
 import { appendSessionDelta, cloneExchangeAux, getSessionMaxSeq, toPersistentExchangeAux, withSessionMeta } from "./sessionExchangeMerge";
+import { createRequestId, generateClientId } from "./sessionIdentifiers";
 export {
   getCachedSessionList,
   getCachedMultiRootSessionList,
@@ -181,14 +182,11 @@ class SessionService {
   }
 
   private generateClientId(): string {
-    return `web-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    return generateClientId();
   }
 
   createRequestId(prefix = "msg"): string {
-    if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-      return `${prefix}-${crypto.randomUUID()}`;
-    }
-    return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    return createRequestId(prefix);
   }
 
   private async buildWSUrl(nodeId?: string): Promise<string> {

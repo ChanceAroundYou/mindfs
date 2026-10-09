@@ -3,14 +3,6 @@ import { useSessionStream, type TimelineItem } from "../../hooks/useSessionStrea
 import { useTargetSeqScroll } from "./useTargetSeqScroll";
 import type { TodoUpdate } from "../../services/session";
 import { ViewHeader } from "../../layout/ViewHeader";
-import { ThinkingBlock } from "../stream/ThinkingBlock";
-import { ToolCallCard, renderToolIcon } from "../stream/ToolCallCard";
-import { ToolCallGroupCard } from "../stream/ToolCallGroupCard";
-import { AgentIcon } from "../agent/AgentIcon";
-import { InlineTokenText } from "../common/InlineTokenText";
-import { MarkdownViewer } from "../file/MarkdownViewer";
-import { fetchProofProtectedBlob } from "../../services/file";
-import { getRootNodeId } from "../../services/net/rootNode";
 // 窗口取数（SESSION_WINDOW_SIZE / getSessionWindow / setWindowedView /
 // clearWindowedView / mergeSessionExchanges 的另一半）已随 2026-10-08 的拆分
 // 搬进 ./useSessionWindowing，这里只剩仍被重锚定与时间线用到的这几个。
@@ -20,7 +12,7 @@ import { reportError } from "../../services/net/error";
 import { rootBadgeButtonStyle } from "../../shared/rootBadgeStyle";
 import { copyText } from "../../services/platform/clipboard";
 import type { AgentStatus } from "../../services/agents";
-import { useI18n, type Locale } from "../../i18n/index";
+import { useI18n } from "../../i18n/index";
 import { formatSessionDuration } from "../../services/sessionDuration";
 import {
   computeTailOverlay,
@@ -31,18 +23,12 @@ import {
   useRelatedFileStats,
 } from "../../hooks/useRelatedFileStats";
 
-import { AttachmentImage } from "./SessionViewerAttachments";
 import {
   ContextWindowBadge,
   TurnTokenUsage,
 } from "./SessionViewerTokenViews";
 import {
-  CompactNoticeCard,
-  PlanUpdateCard,
-  TodoUpdateCard,
-  UserMessageListIcon,
 } from "./SessionViewerCards";
-import { AskUserQuestionCard, ForkIcon, getAskUserQuestions } from "./AskUserQuestionCard";
 import {
   extractUploadAttachments,
   formatAssistantExchangeMeta,
@@ -52,25 +38,22 @@ import {
   shouldDefaultCollapseRelatedFiles,
   stripImageAttachmentTokens,
   stripUploadAttachmentTokens,
-  timelineItemSpacing,
 } from "./sessionViewerFormat";
 import type { ExchangeArray, SessionItem, SessionViewerProps } from "./sessionViewerTypes";
 import { useSessionWindowing } from "./useSessionWindowing";
 import { SessionViewerSlashCommandResult } from "./SessionViewerSlashCommand";
-import { renderToolTimelineItem } from "./SessionViewerToolItem";
-import { renderAuxiliaryTimelineItem } from "./SessionViewerAuxiliaryTimeline";
-import { SessionViewerThoughtItem } from "./SessionViewerThoughtItem";
-import { SessionViewerUserMessage } from "./SessionViewerUserMessage";
-import { SessionViewerAssistantMessage } from "./SessionViewerAssistantMessage";
 import { SessionViewerRelatedFiles } from "./SessionViewerRelatedFiles";
 import { SessionViewerHeader } from "./SessionViewerHeader";
 import { SessionViewerLoadingState } from "./SessionViewerLoadingState";
 import { SessionViewerWaitingIndicator } from "./SessionViewerWaitingIndicator";
 import { SessionViewerFloatingControls } from "./SessionViewerFloatingControls";
 import { buildUserMetaButtonStyle } from "./sessionViewerStyles";
+import { SessionViewerTimeline } from "./SessionViewerTimeline";
 import { groupRelatedFiles } from "./sessionViewerGrouping";
 import { findActiveAskUserCallId } from "./sessionViewerAskUser";
 import { scrollToRelatedDivider } from "./sessionViewerScroll";
+
+// CUSTOM(G-AT): tool_group 由时间线渲染器统一处理，保持 fork 的分组显示语义。
 
 function SessionViewerInner({
   session,
@@ -720,101 +703,6 @@ function SessionViewerInner({
   const themeMutedBorder = `color-mix(in srgb, ${themeColor} 20%, transparent)`;
   const userMetaButtonStyle = buildUserMetaButtonStyle(themeColor);
 
-  const makePromptKey = (
-    item: Extract<TimelineItem, { type: "user_text" | "assistant_text" }>,
-  ): string =>
-    `${item.id}\n${item.timestamp || ""}\n${item.content || ""}`;
-
-  const renderTimelineItem = (
-    item: TimelineItem,
-    idx: number,
-    spacing: string = "0",
-  ) => {
-    const timelineItemKey = item.id || `${item.type}-${idx}`;
-    if (item.type === "thought") {
-      return <SessionViewerThoughtItem item={item} timelineItemKey={timelineItemKey} spacing={spacing} />;
-    }
-    if (item.type === "tool") {
-      return renderToolTimelineItem({ item, timelineItemKey, spacing, rootId, rootPath, sessionKey, sessionAgent: session?.agent, activeAskUserCallId, onAskUserAnswer });
-    }
-    // CUSTOM(G-AT): tool_group 仍由本 fork 的辅助时间线渲染器统一处理。
-    if (item.type === "tool_group" || item.type === "todo" || item.type === "plan" || item.type === "compact") {
-      return renderAuxiliaryTimelineItem({ item, timelineItemKey, spacing, rootId, rootPath, sessionKey });
-    }
-    const isUser = item.type === "user_text";
-    // CUSTOM(G-AU): 查表，不再 slice+filter / 反向扫描（见 timelineItemMeta）。
-    const itemMeta = timelineItemMeta[idx];
-    const userMessageIndex = isUser ? itemMeta.userIndex : undefined;
-    const next = idx + 1 < timeline.length ? timeline[idx + 1] : null;
-    const hasFollowingAssistantFlow =
-      !isUser && !!next && next.type !== "user_text";
-    const hideAssistantMeta =
-      !isUser &&
-      (hasFollowingAssistantFlow ||
-        (isStreaming && idx === timeline.length - 1));
-    const time = formatTime(item.timestamp, locale);
-    const uploadAttachments = isUser
-      ? extractUploadAttachments(item.content || "")
-      : [];
-    const imageAttachments = uploadAttachments.filter(
-      (attachment) => attachment.isImage,
-    );
-    const displayContent = isUser
-      ? stripImageAttachmentTokens(item.content || "")
-      : item.content || "";
-    const promptSaveContent = isUser
-      ? stripUploadAttachmentTokens(item.content || "")
-      : "";
-    const promptKey = makePromptKey(item);
-    const promptSaved = !!savedPromptKeys[promptKey];
-    const copySucceeded = !!copiedMessageKeys[promptKey];
-    const userMessageWidth =
-      imageAttachments.length > 0 ? "min(320px, 100%)" : "auto";
-    const hasRichUserAttachments = imageAttachments.length > 0;
-    const assistantMarkdownContent = !isUser ? (item.content || "").trim() : "";
-    const assistantExchangeMeta = !isUser
-      ? formatAssistantExchangeMeta(item, agents)
-      : "";
-    const assistantDurationLabel = !isUser
-      ? formatSessionDuration(itemMeta.prevUserTs, item.timestamp)
-      : "";
-    const canForkAgentMessage = !isUser && isPersistedSeq(item.seq) && !!onForkAgentMessage;
-    return (
-      <div
-        key={timelineItemKey}
-        data-session-seq={item.seq || undefined}
-        data-user-message-index={userMessageIndex}
-        style={{
-          marginTop: spacing,
-          alignSelf: isUser ? "flex-end" : "flex-start",
-          width: isUser ? userMessageWidth : "100%",
-          maxWidth: isUser ? "80%" : "100%",
-          minWidth: 0,
-          position: "relative",
-          display: "flex",
-          flexDirection: "column",
-        }}
-      >
-        {isUser ? (
-          <SessionViewerUserMessage
-            {...{ item, time, spacing, timelineItemKey, rootId, rootPath, displayContent, promptSaveContent,
-              promptKey, promptSaved, copySucceeded, imageAttachments, userMessageWidth, hasRichUserAttachments,
-              onFileClickRef, onEditUserMessage, savePrompt, copyText, reportError, setSavedPromptKeys,
-              setCopiedMessageKeys, copyResetTimersRef, pendingAck: item.pendingAck, t, themeColor, userMetaButtonStyle }}
-          />
-        ) : (
-          <SessionViewerAssistantMessage
-            {...{ item, time, spacing, timelineItemKey, rootId, rootPath, onFileClickRef, t, themeColor,
-              userMetaButtonStyle, hideAssistantMeta, assistantMarkdownContent, canForkAgentMessage,
-              onForkAgentMessage, assistantExchangeMeta, assistantDurationLabel, tokenUsage: item.tokenUsage,
-              contextWindow: item.contextWindow }}
-          />
-        )}
-      </div>
-    );
-  };
-
-
   return (
     <div
       style={{
@@ -845,13 +733,7 @@ function SessionViewerInner({
             {/* 方案 B：顶部哨兵，进入视口触发历史段加载（IntersectionObserver） */}
             <div ref={topSentinelRef} style={{ height: 1 }} aria-hidden="true" />
             <SessionViewerLoadingState loadingMore={loadingMore} loading={loading} hasVisibleTimeline={hasVisibleTimeline} />
-            {timeline.map((item, idx) =>
-              renderTimelineItem(
-                item,
-                idx,
-                timelineItemSpacing(idx > 0 ? timeline[idx - 1] : null, item),
-              ),
-            )}
+            <SessionViewerTimeline timeline={timeline} timelineItemMeta={timelineItemMeta} locale={locale} isStreaming={isStreaming} rootId={rootId} rootPath={rootPath} sessionKey={sessionKey} sessionAgent={session?.agent} activeAskUserCallId={activeAskUserCallId} onAskUserAnswer={onAskUserAnswer} agents={agents} onFileClickRef={onFileClickRef} onEditUserMessage={onEditUserMessage} onForkAgentMessage={onForkAgentMessage} savedPromptKeys={savedPromptKeys} copiedMessageKeys={copiedMessageKeys} copyResetTimersRef={copyResetTimersRef} setSavedPromptKeys={setSavedPromptKeys} setCopiedMessageKeys={setCopiedMessageKeys} t={t} themeColor={themeColor} userMetaButtonStyle={userMetaButtonStyle} />
             {SessionViewerSlashCommandResult({
               slashCommandResult,
               hasVisibleTimeline,
