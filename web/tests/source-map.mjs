@@ -109,6 +109,9 @@ export const MODULES = {
     "src/app/useAppRootBindingSetters.ts",
     // 2026-10-08 第 5 步：会话选择的四个入口。
     "src/app/useAppSessionSelection.ts",
+    // 2026-10-08 第 6 步：插件信任状态机 + 插件渲染与主题变量。
+    "src/app/useAppPluginTrust.ts",
+    "src/app/useAppPluginRender.ts",
   ],
 
   // P6 拆分：FileTree.tsx → + icons.tsx（图标子组件）

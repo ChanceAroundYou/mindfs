@@ -182,6 +182,8 @@ import {
 // 类型定义
 
 import { APP_DOCUMENT_TITLE, AppProps, CHILD_SESSION_PAGE_SIZE, MULTI_PROJECT_SESSION_LIMIT, ManagedRootPayload, SESSION_PAGE_SIZE } from "./app/appMisc";
+import { useAppPluginTrust } from "./app/useAppPluginTrust";
+import { useAppPluginRender } from "./app/useAppPluginRender";
 import { useAppSessionSelection } from "./app/useAppSessionSelection";
 import { useAppRootBindingSetters } from "./app/useAppRootBindingSetters";
 import { useAppSessionKeyState } from "./app/useAppSessionKeyState";
@@ -2079,46 +2081,25 @@ export function App({ onGoHome }: AppProps) {
     setPluginVersion,
   });
 
-  const handleTrustPendingPlugins = useCallback(async () => {
-    const pending = pendingPluginTrust;
-    if (!pending) return;
-    setPluginLoading(true);
-    try {
-      const snapshot = snapshotFromPluginSources(pending.bundle);
-      saveTrustedPluginSet(pending.rootId, snapshot);
-      const plugins = await loadPluginsFromSources(pending.bundle.plugins);
-      pluginManagerRef.current.set(pending.rootId, plugins);
-      pluginsLoadedByRootRef.current[scopedRootKey(pending.rootId)] = true;
-      delete pluginsTrustPendingByRootRef.current[scopedRootKey(pending.rootId)];
-      setPendingPluginTrust((current) => current?.rootId === pending.rootId ? null : current);
-      setPluginVersion((v) => v + 1);
-    } finally {
-      setPluginLoading(false);
-    }
-  }, [pendingPluginTrust]);
+  const {
+    handleTrustPendingPlugins,
+    handleDisablePendingPlugins,
+    invalidatePluginsForRoot,
+  } = useAppPluginTrust({
+    pendingPluginTrust,
+    setPluginLoading,
+    pluginManagerRef,
+    pluginsLoadedByRootRef,
+    scopedRootKey,
+    pluginsTrustPendingByRootRef,
+    setPendingPluginTrust,
+    setPluginVersion,
+    pluginsLoadingByRootRef,
+    currentRootIdRef,
+    ensurePluginsLoaded,
+  });
 
-  const handleDisablePendingPlugins = useCallback(() => {
-    const pending = pendingPluginTrust;
-    if (!pending) return;
-    pluginManagerRef.current.clear(pending.rootId);
-    pluginsLoadedByRootRef.current[scopedRootKey(pending.rootId)] = true;
-    delete pluginsTrustPendingByRootRef.current[scopedRootKey(pending.rootId)];
-    setPendingPluginTrust((current) => current?.rootId === pending.rootId ? null : current);
-    setPluginVersion((v) => v + 1);
-  }, [pendingPluginTrust]);
 
-  const invalidatePluginsForRoot = useCallback((rootId: string) => {
-    if (!rootId) return;
-    pluginManagerRef.current.clear(rootId);
-    delete pluginsLoadedByRootRef.current[scopedRootKey(rootId)];
-    delete pluginsLoadingByRootRef.current[scopedRootKey(rootId)];
-    delete pluginsTrustPendingByRootRef.current[scopedRootKey(rootId)];
-    setPendingPluginTrust((current) => current?.rootId === rootId ? null : current);
-    setPluginVersion((v) => v + 1);
-    if (rootId === currentRootIdRef.current) {
-      void ensurePluginsLoaded(rootId).catch(() => {});
-    }
-  }, [ensurePluginsLoaded]);
 
 
   const { handleSessionChipClick,
@@ -2523,20 +2504,14 @@ export function App({ onGoHome }: AppProps) {
     actionHandlers,
   ]);
 
-  const pluginRender = useMemo(() => {
-    if (!file || pluginBypass || !matchedPlugin) return null;
-    const input = toPluginInput(file, pluginQuery);
-    try {
-      const output = pluginManagerRef.current.run(matchedPlugin, input);
-      return { plugin: matchedPlugin, output, error: "" };
-    } catch (err: any) {
-      return {
-        plugin: matchedPlugin,
-        output: null,
-        error: String(err?.message || err || "plugin process failed"),
-      };
-    }
-  }, [file, pluginBypass, matchedPlugin, pluginQuery]);
+
+  const { pluginRender, pluginThemeVars } = useAppPluginRender({
+    file,
+    pluginBypass,
+    matchedPlugin,
+    pluginQuery,
+    pluginManagerRef,
+  });
 
   useEffect(() => {
     if (!file || pluginBypass || !pluginRender?.output) {
@@ -2592,26 +2567,6 @@ export function App({ onGoHome }: AppProps) {
   }, [file, pluginBypass, pluginRender?.output, pluginQuery.chapter]);
 
   const pluginRendererKey = `${currentRootId || ""}:${file?.path || ""}:${fileCursorRef.current}:${JSON.stringify(pluginQuery)}`;
-  const pluginThemeVars = useMemo(() => {
-    const theme = pluginRender?.plugin?.theme;
-    if (!theme) return null;
-    return {
-      "--vp-overlay-bg": theme.overlayBg,
-      "--vp-surface-bg": theme.surfaceBg,
-      "--vp-surface-bg-elevated": theme.surfaceBgElevated,
-      "--vp-text": theme.text,
-      "--vp-text-muted": theme.textMuted,
-      "--vp-border": theme.border,
-      "--vp-primary": theme.primary,
-      "--vp-primary-text": theme.primaryText,
-      "--vp-radius": theme.radius,
-      "--vp-shadow": theme.shadow,
-      "--vp-focus-ring": theme.focusRing,
-      "--vp-danger": theme.danger,
-      "--vp-warning": theme.warning,
-      "--vp-success": theme.success,
-    } as React.CSSProperties;
-  }, [pluginRender]);
 
 	  const selectedSessionSnapshot = useMemo(
 	    () => {
