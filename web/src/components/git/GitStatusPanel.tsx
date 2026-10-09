@@ -1,10 +1,5 @@
-import React, { useEffect, useRef, useState } from "react";
-import {
-  fetchGitBranches,
-  type GitBranchItem,
-  type GitStatusItem,
-  type GitStatusPayload,
-} from "../../services/git";
+import React from "react";
+import { type GitStatusItem, type GitStatusPayload } from "../../services/git";
 import { useI18n } from "../../i18n/index";
 import { confirmDialog } from "../../services/dialog";
 import {
@@ -24,6 +19,7 @@ import {
   UnstageIcon,
   GitIconButton,
 } from "./gitStatusIcons";
+import { useGitStatusPanel } from "./useGitStatusPanel";
 
 type GitStatusPanelProps = {
   rootId?: string;
@@ -69,83 +65,27 @@ export function GitStatusPanel({
   onExpandedChange,
 }: GitStatusPanelProps) {
   const { t } = useI18n();
-  const branchMenuRef = useRef<HTMLDivElement | null>(null);
-  const [branchMenuOpen, setBranchMenuOpen] = useState(false);
-  const [branches, setBranches] = useState<GitBranchItem[]>([]);
-  const [branchesLoading, setBranchesLoading] = useState(false);
-  const [switchingBranch, setSwitchingBranch] = useState("");
-  const [commitOpen, setCommitOpen] = useState(false);
-  const [commitMessage, setCommitMessage] = useState("");
-  const [actionBusy, setActionBusy] = useState("");
-  const [selectedActionPath, setSelectedActionPath] = useState("");
-  const [hoveredActionPath, setHoveredActionPath] = useState("");
-
-  useEffect(() => {
-    if (!branchMenuOpen) {
-      return;
-    }
-    const handlePointerDown = (event: MouseEvent) => {
-      if (!branchMenuRef.current?.contains(event.target as Node)) {
-        setBranchMenuOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handlePointerDown);
-    return () => document.removeEventListener("mousedown", handlePointerDown);
-  }, [branchMenuOpen]);
-
-  useEffect(() => {
-    if (!branchMenuOpen || !rootId) {
-      return;
-    }
-    let cancelled = false;
-    setBranchesLoading(true);
-    void fetchGitBranches(rootId)
-      .then((payload) => {
-        if (!cancelled) {
-          setBranches(payload.branches || []);
-        }
-      })
-      .catch((err) => {
-        console.error("[git.branches] failed", { rootId, err });
-        if (!cancelled) {
-          setBranches([]);
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setBranchesLoading(false);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [branchMenuOpen, rootId]);
-
-  const runPanelAction = async (key: string, action?: () => void | Promise<void>) => {
-    if (!action || actionBusy) {
-      return;
-    }
-    setActionBusy(key);
-    try {
-      await action();
-    } catch {
-      // The caller owns user-facing error reporting; keep local button state consistent.
-    } finally {
-      setActionBusy("");
-    }
-  };
-
-  const submitCommit = async () => {
-    const message = commitMessage.trim();
-    if (!message || !onCommit || actionBusy) {
-      return;
-    }
-    await runPanelAction("commit", async () => {
-      await onCommit(message);
-      setCommitMessage("");
-      setCommitOpen(false);
-    });
-  };
+  const {
+    branchMenuRef,
+    branchMenuOpen,
+    branches,
+    branchesLoading,
+    switchingBranch,
+    commitOpen,
+    commitMessage,
+    actionBusy,
+    selectedActionPath,
+    hoveredActionPath,
+    setBranchMenuOpen,
+    setSwitchingBranch,
+    setCommitOpen,
+    setCommitMessage,
+    setActionBusy,
+    setSelectedActionPath,
+    setHoveredActionPath,
+    runPanelAction,
+    submitCommit,
+  } = useGitStatusPanel({ rootId, onCommit });
 
   if (!loading && (!status || status.available !== true)) {
     return null;
