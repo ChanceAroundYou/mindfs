@@ -40,9 +40,9 @@ assert.match(
   "the shared helper must reserve toolbar height at the bottom when multi-line",
 );
 // ActionBar 也必须走同一个 hook，否则"共用"只是嘴上说说
-const actionBar = fs.readFileSync(path.join(root, "src/components/action/ActionBar.tsx"), "utf8");
-assert.match(actionBar, /useComposerEditorHeight\(editorRef\)/, "ActionBar must share the wrap-detection hook too");
-assert.match(actionBar, /composerEditorInsets\(/, "ActionBar must take its insets from the shared helper too");
+const useActionBar = fs.readFileSync(path.join(root, "src/components/action/useActionBar.ts"), "utf8");
+assert.match(useActionBar, /useComposerEditorHeight\(editorRef\)/, "ActionBar must share the wrap-detection hook too");
+assert.match(useActionBar, /composerEditorInsets\(/, "ActionBar must take its insets from the shared helper too");
 
 // + 号只在能新增文件时出现，不做不可用的常显按钮。
 assert.match(promptEditor, /\{onAttach \? \(/, "PromptEditor must render the + button only when a file picker is wired");

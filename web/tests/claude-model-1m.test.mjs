@@ -4,7 +4,9 @@ import path from "node:path";
 
 const root = path.resolve(import.meta.dirname, "..");
 // model 帮助函数已拆到 action/modelUtils（2026-09 ActionBar 拆分），契约随文件走，内容不变。
-const actionBar = fs.readFileSync(path.join(root, "src/components/ActionBar.tsx"), "utf8");
+const actionBar = fs.readFileSync(path.join(root, "src/components/action/ActionBar.tsx"), "utf8");
+const useActionBar = fs.readFileSync(path.join(root, "src/components/action/useActionBar.ts"), "utf8");
+const actionBarControls = fs.readFileSync(path.join(root, "src/components/action/ActionBarControls.tsx"), "utf8");
 const modelUtils = fs.readFileSync(path.join(root, "src/components/action/modelUtils.ts"), "utf8");
 const selector = fs.readFileSync(path.join(root, "src/components/agent/AgentSelector.tsx"), "utf8");
 const selectorParts = fs.readFileSync(path.join(root, "src/components/agent/AgentSelectorParts.tsx"), "utf8");
@@ -12,16 +14,16 @@ const useAgentSelector = fs.readFileSync(path.join(root, "src/components/agent/u
 const streamCache = fs.readFileSync(path.join(root, "src/app/useSessionStreamCache.ts"), "utf8");
 
 assert.match(modelUtils, /function modelBaseForAgent\(agentName: string \| undefined, model: string\)/, "modelBaseForAgent must compare Claude aliases on their canonical base");
-assert.match(actionBar, /modelBaseForAgent\(selectedAgent\.name, item\.id\) === modelBaseForAgent\(selectedAgent\.name, model\)/, "ActionBar must retain of[1m] when the advertised model is fable");
+assert.match(useActionBar, /modelBaseForAgent\(selectedAgent\.name, item\.id\) === modelBaseForAgent\(selectedAgent\.name, model\)/, "ActionBar must retain of[1m] when the advertised model is fable");
 assert.match(selectorParts, /function claudeModelBase\(model: string\)/, "AgentSelectorParts must compare Claude aliases on their canonical base");
 // 2026-09-24：这条断言原先要求「选中具体模型就丢掉 1M」，把 bug 当成了契约。
 // 根因是下拉回传的 models[].id 不带 [1m] 后缀，于是 has1MSuffix(explicitModel) 恒为 false，
 // 切一次模型就静默清掉 1M（勾选框还亮着、实际请求已退回普通上下文并触发压缩）。
 // 现在改为：1M/effort 由 resolveLongContextOnSwitch / resolveEffortOnSwitch 决定，
 // 行为级断言见 long-context-inheritance.test.mjs（那里真跑函数，不认写法）。
-assert.match(actionBar, /resolveLongContextOnSwitch\(\{/, "ActionBar must inherit the 1M toggle via resolveLongContextOnSwitch");
-assert.match(actionBar, /resolveEffortOnSwitch\(\{/, "ActionBar must inherit the thinking effort via resolveEffortOnSwitch");
-assert.doesNotMatch(actionBar, /setLongContext\(isClaudeAgentName\(nextAgent\) && has1MSuffix\(explicitModel\)\)/, "must not derive the 1M toggle from the bare model id (it has no [1m] suffix)");
+assert.match(actionBarControls, /resolveLongContextOnSwitch\(\{/, "ActionBar must inherit the 1M toggle via resolveLongContextOnSwitch");
+assert.match(actionBarControls, /resolveEffortOnSwitch\(\{/, "ActionBar must inherit the thinking effort via resolveEffortOnSwitch");
+assert.doesNotMatch(useActionBar, /setLongContext\(isClaudeAgentName\(nextAgent\) && has1MSuffix\(explicitModel\)\)/, "must not derive the 1M toggle from the bare model id (it has no [1m] suffix)");
 
 console.log("claude-model-1m.test.mjs: OK");
 

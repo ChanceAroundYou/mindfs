@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
-const actionBar = readFileSync(new URL("../src/components/ActionBar.tsx", import.meta.url), "utf8");
+const actionBar = readFileSync(new URL("../src/components/action/ActionBar.tsx", import.meta.url), "utf8");
+const useActionBar = readFileSync(new URL("../src/components/action/useActionBar.ts", import.meta.url), "utf8");
 const fileTree = readFileSync(new URL("../src/components/FileTree.tsx", import.meta.url), "utf8");
 const shortcutService = readFileSync(new URL("../src/services/sendShortcut.ts", import.meta.url), "utf8");
 const shortcutPopover = fileTree.slice(
@@ -36,12 +37,12 @@ assert.match(
   "send shortcuts should require a non-Shift modifier to avoid firing while typing",
 );
 assert.match(
-  actionBar,
+  useActionBar,
   /e\.key !== "Enter"[\s\S]*?matchesSendShortcut\(e\.nativeEvent, sendShortcut\)[\s\S]*?void handleSend\(\)/,
   "non-Enter shortcuts should send from the message editor",
 );
 assert.match(
-  actionBar,
+  useActionBar,
   /matchesSendShortcut\(event, sendShortcut\)[\s\S]*?void handleSend\(\)[\s\S]*?if \(event\?\.shiftKey\)/,
   "Enter-based shortcuts should be handled once and before the newline behavior",
 );
