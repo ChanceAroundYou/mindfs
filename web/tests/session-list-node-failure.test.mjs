@@ -209,7 +209,9 @@ assert.match(
 );
 assert.match(
   app,
-  /const MULTI_PROJECT_RELOAD_DEBOUNCE_MS = \d+;/,
+  // 字面量类型标注与取值必须一致：该常量由 useAppStateLayer 返回，没有标注就会被
+  // 拓宽成 number，下游 useAppSessionLayer 的签名（按原 App 推断为 300）会 TS2322。
+  /const MULTI_PROJECT_RELOAD_DEBOUNCE_MS: (\d+) = \1;/,
   "the debounce window must be a named constant",
 );
 

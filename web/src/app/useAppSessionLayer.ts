@@ -111,6 +111,8 @@ export type UseAppSessionLayerParams = {
   sessionListAbortRef: React.RefObject<AbortController | null>;
   sessionListLoadSeqRef: React.RefObject<number>;
   sessionListMode: "local" | "import";
+  // 由 useAppStateLayer（状态/ref 层）持有并传入：该层的跨节点切换回调需要清掉它，见那里的注释。
+  sessionListReloadTimerRef: React.RefObject<number | null>;
   sessionLoadFailureRef: React.RefObject<Record<string, { at: number; status: number; }>>;
   sessionSearchTargetCounterRef: React.RefObject<number>;
   sessions: SessionItem[];
@@ -191,7 +193,7 @@ export function useAppSessionLayer(params: UseAppSessionLayerParams) {
     resetLocksForRootTransition, resetSessionLockForRoot, scopedRootKey, selectRootNode,
     selectedDirRef, selectedSessionByRootRef, selectedSessionRef, sessionCacheAccessRef,
     sessionCacheRef, sessionListAbortRef, sessionListLoadSeqRef, sessionListMode,
-    sessionLoadFailureRef, sessionSearchTargetCounterRef, sessions, sessionsRef,
+    sessionListReloadTimerRef, sessionLoadFailureRef, sessionSearchTargetCounterRef, sessions, sessionsRef,
     setAgentsVersion, setArchiveLoading, setArchiveReloadToken, setArchivedGroups,
     setAvailableAgents, setBoundSessionForRoot, setCacheVersion, setCurrentRootId,
     setDirectoryUploadProgress, setDrawerOpenForRoot, setDrawerSessionForRoot, setE2eePromptBusy,
@@ -514,7 +516,6 @@ export function useAppSessionLayer(params: UseAppSessionLayerParams) {
     treeCacheKey,
     treeFetchSeqRef,
   });
-  const sessionListReloadTimerRef = useRef<number | null>(null);
 
   // WS 高频事件（session.done / ws.reconnected / session.imported / session.created）都会触发会话列表全量重拉，
   // 合并 300ms 窗口内的多次调用为最后一次，避免 agent 密集工具调用时连发 /api/sessions。
@@ -880,7 +881,7 @@ export function useAppSessionLayer(params: UseAppSessionLayerParams) {
     openGitDiff, openSessionSearch, promotePendingSessionForRoot, refreshCurrentFileContent,
     refreshMultiProjectReplyingSessions, refreshTreeDir, rememberCurrentFileScroll, resolvePendingForSession,
     resolveRootForSessionKey, restoreActiveSession, rootSessionKey, scheduleMultiProjectSessionReload,
-    scheduleSessionListReload, selectedExternalImportKeys, sessionListReloadTimerRef, sessionSearchLoading,
+    scheduleSessionListReload, selectedExternalImportKeys, sessionSearchLoading,
     sessionSearchOpen, sessionSearchQuery, sessionSearchResults, sessionSearchResultsMode,
     setExternalFilterBound, setExternalImportAgent, setExternalSelectedKey, setExternalSessions,
     setImportMenuOpen, setMultiProjectSessionPending, setSelectedPendingByKey, submitE2EESecret,

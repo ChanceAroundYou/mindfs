@@ -38,8 +38,11 @@ assert.doesNotMatch(fileTree, /fileTree\.onboarding/);
 assert.doesNotMatch(fileTree, /fileTree\.showHiddenFiles/);
 assert.doesNotMatch(fileTree, /fileTree\.multiProjectSessions/);
 assert.doesNotMatch(fileTree, /fileTree\.swapSidebars/);
-assert.match(app, /const showHiddenFiles = true;/);
-assert.match(app, /const multiProjectSessionsEnabled = true;/);
+// 这两个常量现在带显式字面量类型标注：它们由 useAppStateLayer 返回，对象属性位会把
+// true 拓宽成 boolean，而下游层与 JSX 组件的签名按原 App 的推断写成 true，拓宽即 TS2322。
+// 标注是承重的，所以这里连同标注一起断言（比原来更严，不是放宽）。
+assert.match(app, /const showHiddenFiles: true = true;/);
+assert.match(app, /const multiProjectSessionsEnabled: true = true;/);
 assert.doesNotMatch(app, /setShowHiddenFiles/);
 assert.doesNotMatch(app, /setMultiProjectSessionsEnabled/);
 assert.match(app, /<DefaultListView[\s\S]*rootColor=\{[^}]*(getDisplayNodeColor|\._nodeColor)[^}]*\}/);
