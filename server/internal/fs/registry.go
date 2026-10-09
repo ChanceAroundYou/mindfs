@@ -157,6 +157,23 @@ func (r *Registry) Upsert(root string) (RootInfo, error) {
 	return r.UpsertWithMetaLocation(root, MetaLocationProject)
 }
 
+// snapshotLocked 记下 dirs/order 的副本，返回恢复函数。
+//
+// 凡是「先改内存、再 saveLocked()」的方法，落盘失败时都必须调用它回滚 ——
+// 否则失败的写入会**留在列表里**：用户看到项目出现了、点进去却什么都没有。
+// 只读空工作区（path==""，即「这个账户在本机没有数据」）正是这条路径的高频场景。
+func (r *Registry) snapshotLocked() func() {
+	prevDirs := make(map[string]RootInfo, len(r.dirs))
+	for key, value := range r.dirs {
+		prevDirs[key] = value
+	}
+	prevOrder := append([]string(nil), r.order...)
+	return func() {
+		r.dirs = prevDirs
+		r.order = prevOrder
+	}
+}
+
 func (r *Registry) UpsertWithMetaLocation(root, metaLocation string) (RootInfo, error) {
 	if root == "" {
 		return RootInfo{}, errors.New("root required")
@@ -168,6 +185,7 @@ func (r *Registry) UpsertWithMetaLocation(root, metaLocation string) (RootInfo, 
 	if name == "" || name == "." || name == string(filepath.Separator) {
 		return RootInfo{}, errors.New("invalid directory name")
 	}
+	rollback := r.snapshotLocked()
 	dir, ok := r.dirs[name]
 	if !ok {
 		metaLocation, err := NormalizeMetaLocation(metaLocation)
@@ -186,7 +204,11 @@ func (r *Registry) UpsertWithMetaLocation(root, metaLocation string) (RootInfo, 
 	dir.UpdatedAt = now
 	dir = r.stamp(dir)
 	r.dirs[name] = dir
-	return dir, r.saveLocked()
+	if err := r.saveLocked(); err != nil {
+		rollback()
+		return RootInfo{}, err
+	}
+	return dir, nil
 }
 
 func sameRegistryPath(a, b string) bool {
@@ -225,6 +247,7 @@ func (r *Registry) Remove(root string) (RootInfo, error) {
 	if filepath.Clean(dir.RootPath) != cleaned {
 		return RootInfo{}, errors.New("root not found")
 	}
+	rollback := r.snapshotLocked()
 	delete(r.dirs, name)
 	nextOrder := make([]string, 0, len(r.order))
 	for _, id := range r.order {
@@ -234,6 +257,7 @@ func (r *Registry) Remove(root string) (RootInfo, error) {
 	}
 	r.order = nextOrder
 	if err := r.saveLocked(); err != nil {
+		rollback()
 		return RootInfo{}, err
 	}
 	return dir, nil
@@ -261,11 +285,7 @@ func (r *Registry) Rename(id, name, rootPath string) (RootInfo, error) {
 		return RootInfo{}, fmt.Errorf("%w: %q is already managed at %s", ErrRootNameConflict, name, existing.RootPath)
 	}
 
-	previousDirs := make(map[string]RootInfo, len(r.dirs))
-	for key, value := range r.dirs {
-		previousDirs[key] = value
-	}
-	previousOrder := append([]string(nil), r.order...)
+	rollback := r.snapshotLocked()
 	rollbackMeta, err := renameHomeMeta(dir, name, filepath.Clean(rootPath))
 	if err != nil {
 		return RootInfo{}, err
@@ -285,8 +305,7 @@ func (r *Registry) Rename(id, name, rootPath string) (RootInfo, error) {
 		}
 	}
 	if err := r.saveLocked(); err != nil {
-		r.dirs = previousDirs
-		r.order = previousOrder
+		rollback()
 		rollbackMeta()
 		return RootInfo{}, err
 	}
@@ -307,8 +326,10 @@ func (r *Registry) UpdateDisplayName(id, displayName string) (RootInfo, error) {
 	}
 	dir.DisplayName = displayName
 	dir.UpdatedAt = time.Now().UTC()
+	rollback := r.snapshotLocked()
 	r.dirs[id] = dir
 	if err := r.saveLocked(); err != nil {
+		rollback()
 		return RootInfo{}, err
 	}
 	return dir, nil

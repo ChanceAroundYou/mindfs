@@ -239,6 +239,11 @@ groups:
       但「按账户分区」必须成立：每账户一份 AppContext 由 ScopedRouter 按 user= 派发
       （211 处 h.AppContext 一处都不用改）；StreamHub 必须每账户独立；
       MetaDir() 分账户、SharedMetaDir() 不分；主账户数据根仍是 <cfg>/ 保持行为零变化。
+      空工作区（path==""，即「这个账户在本机没有数据」）的写操作不仅要回人话错误，
+      **还必须不留下副作用**：registry 的 Upsert/Remove/UpdateDisplayName 都是
+      「先改内存、再 saveLocked()」，落盘失败必须回滚 —— 否则失败的「加项目」
+      会在列表里留下幽灵条目（用户看到项目出现了、点进去却什么都没有，2026-10-09 实测）。
+      Rename 一直有回滚，这三个方法漏了；现统一走 snapshotLocked()。
     files:
       - server/app/workspace.go
       - server/app/workspace_test.go
@@ -258,6 +263,9 @@ groups:
       # 空工作区（worker/新节点上该账户无数据）的写操作必须返回人话错误，
       # 而不是 registry.saveLocked 的内部细节「registry path required」。
       - server/internal/fs/fs_test.go
+      # 同一条边界的内存侧：落盘失败必须回滚，别留幽灵条目。
+      - server/internal/fs/registry.go
+      - server/internal/fs/registry_rollback_test.go
       - web/src/components/account/AccountPanel.tsx
       - web/src/components/Login.tsx
       - web/src/components/account/AuthGate.tsx
@@ -269,12 +277,14 @@ groups:
     tests:
       - server/app/workspace_test.go
       - server/internal/api/workspace_test.go
+      - server/internal/fs/registry_rollback_test.go
       - web/tests/multi-account-partition.test.mjs
       # web/tests/cross-machine-account.behavior.mjs 不列在此：它是对着 home/pc 两台
       # 真实服务跑的手工探针（要求两边都连得上），不是 make test-web 的用例 ——
       # 列进来就等于把「跑不到的东西」算作覆盖（断言 3 已拒绝这种条目）。
     anchors:
       - server/app/workspace.go:ScopedRouter
+      - server/internal/fs/registry.go:snapshotLocked
       - server/internal/fs/meta_location.go:MetaLocationForNewRoot
       - 'server/internal/fs/meta_location.go:CUSTOM(G-U)'
 
