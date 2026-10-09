@@ -1259,8 +1259,9 @@
   （633 行），`SessionService` 只保留高层编排（479 行）。`source-map.mjs` 已登记新文件，
   `session-core-unit.test.mjs` 等源码正则断言零改动继续生效。
 - WS 事件处理器拆分（2026-10-10）：`realtimeWsHandlers.ts` 的 `session.user_message`
-  handler（195 行）搬进 `realtimeWsUserMessage.ts`（239 行），`realtimeWsHandlers.ts`
-  从 883 行降到 689 行。`source-map.mjs` 已登记新文件。
+  handler（195 行）搬进 `realtimeWsUserMessage.ts`（239 行）；`session.accepted`
+  handler（104 行）搬进 `realtimeWsSessionAccepted.ts`（146 行）。
+  `realtimeWsHandlers.ts` 从 883 行降到 587 行。`source-map.mjs` 已登记新文件。
 ---
 
 ## 4. 未提交工作区（2026-10-06 清空）

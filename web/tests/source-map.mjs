@@ -44,6 +44,7 @@ export const MODULES = {
     "src/app/realtimeWsHandlers.ts",
     "src/app/realtimeWsSessionMeta.ts",
     "src/app/realtimeWsUserMessage.ts",
+    "src/app/realtimeWsSessionAccepted.ts",
   ],
 
   // App.tsx 拆分：会话缓存 → useSessionCache；发送消息 → useSendMessage；

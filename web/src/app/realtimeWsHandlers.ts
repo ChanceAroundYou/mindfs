@@ -21,6 +21,7 @@ import { normalizeFastService } from "./appTask";
 import type { RealtimeEventsContext } from "./useRealtimeEventsContext";
 import { createSessionMetaHandlers } from "./realtimeWsSessionMeta";
 import { handleSessionUserMessage } from "./realtimeWsUserMessage";
+import { handleSessionAccepted } from "./realtimeWsSessionAccepted";
 
 /**
  * `useRealtimeEvents` 内部、wsHandlers 闭包要用的 9 个局部函数。
@@ -352,110 +353,7 @@ export function createRealtimeWsHandlers(
           setQueueVersion((v) => v + 1);
           return;
       },
-      "session.accepted": (event: any, payload: any) => {
-          {
-            const wsPayloadNid = String((payload as any)?._nodeId || (payload as any)?.nodeId || "").trim();
-            const wsCurNid = String(currentRootNodeIdRef.current || "").trim();
-            if (wsPayloadNid && wsCurNid && wsPayloadNid !== wsCurNid) { return; }
-          }
-          const requestId =
-            typeof payload?.request_id === "string" ? payload.request_id : "";
-          const pending = pendingRequestRef.current[requestId];
-          if (!requestId || !pending) {
-            console.warn("[session/ws] accepted_without_pending", { requestId, payloadSessionKey: typeof payload?.session_key === "string" ? payload.session_key : null });
-            return;
-          }
-          console.info("[session/ws] accepted", { requestId, rootId: pending.rootId, sessionKey: pending.sessionKey || null, tempKey: pending.tempKey || null });
-          delete pendingRequestRef.current[requestId];
-          const acceptedTimestamp =
-            typeof payload?.timestamp === "string" &&
-            !Number.isNaN(Date.parse(payload.timestamp))
-              ? payload.timestamp
-              : pending.timestamp;
-          const acceptedSessionKey =
-            typeof payload?.session_key === "string" ? payload.session_key : "";
-          if (!pending.sessionKey && pending.tempKey && acceptedSessionKey) {
-            const cacheKey = rootSessionKey(pending.rootId, acceptedSessionKey);
-            pendingBySessionRef.current[cacheKey] = {
-              ...pending,
-              timestamp: acceptedTimestamp,
-              sessionKey: acceptedSessionKey,
-              model_display_name:
-                typeof payload?.model_display_name === "string"
-                  ? payload.model_display_name
-                  : "",
-            };
-            setMultiProjectSessionPending(pending.rootId, pending.tempKey, false);
-            setMultiProjectSessionPending(pending.rootId, acceptedSessionKey, true);
-            if (pendingDraftRef.current?.requestId === pending.requestId) {
-              pendingDraftRef.current = null;
-            }
-            promotePendingSessionForRoot(
-              pending.rootId,
-              pending.tempKey,
-              acceptedSessionKey,
-              sessionCacheRef.current[cacheKey] || null,
-            );
-          }
-          const markAccepted = (
-            sess: Session | SessionItem | null | undefined,
-          ): Session | null => {
-            if (!sess) return null;
-            // 服务端若在 accepted 里带了 seq（当前版本不带，OnStart 之后才可知），
-            // 一并写入，使乐观条目立即成为「已持久化条目」。
-            const acceptedSeq = Number((payload as any)?.seq || 0);
-            const exchanges = Array.isArray((sess as any).exchanges)
-              ? ((sess as any).exchanges as Exchange[]).map((exchange) =>
-                  isSamePendingEcho(exchange, pending)
-                    ? {
-                        ...exchange,
-                        timestamp: acceptedTimestamp,
-                        pending_ack: false,
-                        ...(acceptedSeq > 0 ? { seq: acceptedSeq } : {}),
-                        model_display_name:
-                          exchange.model_display_name ||
-                          (typeof payload?.model_display_name === "string"
-                            ? payload.model_display_name
-                            : ""),
-                      }
-                    : exchange,
-                )
-              : [];
-            return {
-              ...(sess as any),
-              exchanges,
-              model_display_name:
-                (sess as any).model_display_name ||
-                (typeof payload?.model_display_name === "string"
-                  ? payload.model_display_name
-                  : ""),
-              updated_at: acceptedTimestamp,
-            } as Session;
-          };
-          const acceptedTargetKey = pending.sessionKey || acceptedSessionKey;
-          if (acceptedTargetKey) {
-            const cacheKey = rootSessionKey(pending.rootId, acceptedTargetKey);
-            const accepted = markAccepted(sessionCacheRef.current[cacheKey]);
-            if (accepted) {
-              sessionCacheRef.current[cacheKey] = accepted;
-              bumpCacheVersion();
-            }
-          }
-          const latestDrawer = drawerSessionByRootRef.current[scopedRootKey(pending.rootId)];
-          const drawerKey = latestDrawer?.key || "";
-          if (
-            drawerKey &&
-            (drawerKey === pending.sessionKey ||
-              drawerKey === pending.tempKey ||
-              drawerKey === acceptedSessionKey)
-          ) {
-            const accepted = markAccepted(latestDrawer);
-            if (accepted) {
-              setDrawerSessionForRoot(pending.rootId, accepted);
-            }
-          }
-          return;
-      },
+      "session.accepted": (event: any, payload: any) => handleSessionAccepted(ctx, event, payload),
       "session.error": (event: any, payload: any) => {
           {
             const wsPayloadNid = String((payload as any)?._nodeId || (payload as any)?.nodeId || "").trim();

@@ -1686,5 +1686,6 @@ groups:
       # 「useAppSessionLayer 必须 import restartAgent」，而不是「App.tsx 必须 import」。
       - web/tests/agent-lifecycle-restart.test.mjs
       # session.ts 拆分（2026-10-10）：WS 连接管理搬进 sessionConnectionManager.ts。
-      # realtimeWsHandlers.ts 拆分（2026-10-10）：session.user_message handler
-      # 搬进 realtimeWsUserMessage.ts。source-map.mjs 已登记两个新文件。
+      # realtimeWsHandlers.ts 拆分（2026-10-10）：session.user_message →
+      # realtimeWsUserMessage.ts；session.accepted → realtimeWsSessionAccepted.ts。
+      # source-map.mjs 已登记三个新文件。
