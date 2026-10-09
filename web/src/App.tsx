@@ -236,6 +236,7 @@ import { useAppProjectRemoval } from "./app/useAppProjectRemoval";
 import { useProjectLifecycle } from "./app/useProjectLifecycle";
 import { useSessionSidebarView } from "./app/useSessionSidebarView";
 import { useAppViewComposition } from "./app/useAppViewComposition";
+import { useAppDomainLayer } from "./app/useAppDomainLayer";
 import { useSessionStreamCache } from "./app/useSessionStreamCache";
 import { useRealtimeEvents } from "./app/useRealtimeEvents";
 import { useTaskTemplates } from "./app/useTaskTemplates";
@@ -1602,677 +1603,113 @@ export function App({ onGoHome }: AppProps) {
     fileScrollPositionsRef,
   });
 
-  const {
-    markSessionPending,
-    handleRemoveQueuedMessage,
-    handleUpdateQueuedMessage,
-    handleSendQueuedMessageNow,
-  } = useSessionQueueActions({
-    boundSessionByRootRef,
-    bumpCacheVersion,
-    currentRootIdRef,
-    drawerSessionByRootRef,
-    interactionModeRef,
-    optimisticDequeuedIdsRef,
-    queuedMessagesBySessionRef,
-    rootSessionKey,
-    scopedRootKey,
-    selectedSessionRef,
-    sessionCacheRef,
-    setDrawerSessionForRoot,
-    setMultiProjectSessionPending,
-    setQueueVersion,
-    setSelectedPendingByKey,
-    setSessions,
-  });
-
-
-
-
-  const {
-    buildAttachedFileContext,
-    handleRequestFileContext,
-    handleClearFileContext,
-    handleViewerSelectionChange,
-  } = useAttachedFileContext({
-    currentSelectionSource,
-    viewerSelection,
-    dismissedSelectionFileRef,
-    viewerSelectionRef,
-    lastViewerSelectionRef,
-    setAttachedFileContext,
-    setViewerSelection,
-  });
-
-
-
-  const actionHandlersRef = useRef<ActionHandlers>({
-    open: async () => {},
-    open_dir: async () => {},
-  });
-  const {
-    clearRootScopedClientState,
-    loadManagedRootPayloads,
-    refreshManagedRoots,
-    applyManagedRootRename,
-    handleRenameCurrentRoot,
-  } = useManagedRoots({
-    actionHandlersRef,
-    bootstrapState,
-    boundSessionByRootRef,
-    bumpCacheVersion,
-    cancelRequestedBySessionRef,
-    currentRootIdRef,
-    currentRootNodeIdRef,
-    drawerOpenByRootRef,
-    drawerSessionByRootRef,
-    entriesByPathRef,
-    file,
-    fileScrollPositionsRef,
-    getNodeIdForRoot,
-    invalidTreeCacheKeysRef,
-    loadMultiProjectSessionGroups,
-    loadedSessionRef,
-    loadingSessionRef,
-    managedRootByIdRef,
-    managedRootByKeyRef,
-    managedRootIdsRef,
-    managedRootsRequestRef,
-    multiProjectPendingRef,
-    multiProjectSessionsEnabled,
-    nodeLoadFailuresRef,
-    notifiedNodeFailuresRef,
-    notifyNodeLoadFailedRef,
-    optimisticDequeuedIdsRef,
-    pendingBySessionRef,
-    pendingRequestRef,
-    pluginQuery,
-    pluginsLoadedByRootRef,
-    pluginsLoadingByRootRef,
-    pluginsTrustPendingByRootRef,
-    queueFrozenBySessionRef,
-    queuedMessagesBySessionRef,
-    refreshMultiProjectReplyingSessions,
-    replaceURLState,
-    scopedRootKey,
-    selectedSessionByRootRef,
-    sessionCacheRef,
-    setActiveBoundSessionKey,
-    setCurrentRootId,
-    setCurrentSession,
-    setDirectorySortOverrides,
-    setEntriesByPath,
-    setFile,
-    setGitHistoryExpandedByRoot,
-    setGitStatusExpandedByRoot,
-    setInteractionMode,
-    setIsDrawerOpen,
-    setMainEntries,
-    setManagedRootIds,
-    setMultiProjectPendingByKey,
-    setMultiProjectSessionGroups,
-    setQueueVersion,
-    setRootEntries,
-    setSelectedDir,
-    setSelectedDirKey,
-    setSelectedSession,
-    setSelectedSessionLoading,
-    setSessions,
-    setSlashCommandResults,
-    staleSessionKeysRef,
-    suppressedAutoBindSessionByRootRef,
-  });
-  const { handlers: actionHandlers } = useActionHandlers({
-    actionHandlersRef,
-    fileEditStore,
-    currentRootIdRef,
-    currentRootNodeIdRef,
-    entriesByPathRef,
-    expandedRef,
-    fileCursorRef,
-    fileOpenRequestRef,
-    fileRef,
-    interactionModeRef,
-    invalidTreeCacheKeysRef,
-    mainDirectoryErrorRef,
-    mainEntriesRef,
-    mainViewRef,
-    managedRootByIdRef,
-    pluginBypassRef,
-    pluginManagerRef,
-    rootEntriesRef,
-    setCurrentRootId,
-    setEntriesByPath,
-    setExpanded,
-    setFile,
-    setGitDiff,
-    setInteractionMode,
-    setIsLeftOpen,
-    setMainDirectoryError,
-    setMainEntries,
-    setPluginBypass,
-    setPluginQuery,
-    setRelatedSelectedFileKey,
-    setSelectedDir,
-    setSelectedDirKey,
-    setDrawerOpenForRoot,
-    resetLocksForRootTransition,
-    switchMainView,
-    replaceURLState,
-    formatDirectoryLoadError,
-    treeCacheKey,
-    refreshTreeDir,
-    loadSessionsForRoot,
-    handleSelectSession,
-    tryShowBoundSessionForRoot,
-    rememberCurrentFileScroll,
-    getNodeIdForRoot,
-    selectRootNode,
-  });
-  useEffect(() => {
-    actionHandlersRef.current = actionHandlers;
-  }, [actionHandlers]);
-
-  // 会话恢复入口（open_dir 开根 / 首屏 boot / popstate）共用：
-  // 会话在场就直接返回，目录一次都不加载——带着 view=files 进来时主区就是空的。
-  const { showBoundSessionOrRootDir } = useAppBoundSessionDir({
-    actionHandlersRef,
-    loadSessionsForRoot,
-    mainDirectoryErrorRef,
-    mainEntriesRef,
-    mainViewRef,
-    refreshTreeDir,
-    tryShowBoundSessionForRoot,
-  });
-
-
-
-
-  const {
-    openRelatedFileDiff,
-  } = useRelatedFileDiff({
+  const { actionBarInputHistory,
+    actionBarQueuedMessages,
+    actionBarSession,
     actionHandlers,
-    currentRootIdRef,
-    file,
-    fileOpenRequestRef,
-    getNodeIdForRoot,
-    gitStatus,
-    managedRootByIdRef,
-    openGitDiff,
-    pluginQuery,
-    replaceURLState,
-    resetLocksForRootTransition,
-    setCurrentRootId,
-    setFile,
-    setGitDiff,
-    setIsLeftOpen,
-    setRelatedSelectedFileKey,
-    setSelectedSession,
-    setSelectedSessionLoading,
-    switchMainView,
-  });
-  useEffect(() => {
-    const h = () => { void refreshManagedRoots(); };
-    window.addEventListener("mindfs:nodes-changed", h);
-    return () => window.removeEventListener("mindfs:nodes-changed", h);
-  }, [refreshManagedRoots]);
-
-  // 同一节点在一次故障里只提示一次（刷新很频繁，每次都弹会淹掉界面）。
-  const {
-    notifyNodeLoadFailed,
-    handleFileViewerPathClick,
-    handleFileViewerFileClick,
-    handleGitDiffPathClick,
-    handleDirectoryPathClick,
-    gitFileStatsByPath,
-  } = useAppFileNavigation({
-    file,
-    currentRootIdRef,
-    actionHandlers,
-    setGitDiff,
-    gitStatus,
-    getNodeIdForRoot,
-    notifiedNodeFailuresRef,
-    refreshManagedRoots,
-    t,
-  });
-  useEffect(() => {
-    notifyNodeLoadFailedRef.current = notifyNodeLoadFailed;
-  }, [notifyNodeLoadFailed]);
-
-
-  const { findManagedRootByPath, handleRemoveCurrentRoot, handleRemoveCurrentWorktree
-  } = useAppProjectRemoval({
-    clearRootScopedClientState, currentRootIdRef, getNodeIdForRoot, managedRootByIdRef,
-    refreshManagedRoots, t,
-  });
-
-  const openManagedDir = useCallback(
-    (payload: { path: string; root: string; isRoot: boolean; forceDirectory?: boolean }) =>
-      actionHandlersRef.current.open_dir(payload),
-    [],
-  );
-
-  const {
-    projectAddOverlay,
-    worktreeCreateOverlay,
-    worktreeSwitchOverlay,
-    creatingRootName,
-    setCreatingRootName,
-    creatingRootKind,
+    actionHandlersRef,
+    boardSessionByKey,
+    canOpenSessionDrawer,
     creatingRootBusy,
-    worktreeSwitchOpen,
-    projectAddMode,
+    creatingRootKind,
+    creatingRootName,
+    detachedBoundSession,
+    findManagedRootByPath,
+    gitFileStatsByPath,
+    handleClearFileContext,
+    handleCreateRootCancel,
     handleCreateRootStart,
-    handleSwitchWorktreeStart,
+    handleCreateRootSubmit,
+    handleDirectoryPathClick,
+    handleDisablePendingPlugins,
+    handleFileViewerFileClick,
+    handleFileViewerPathClick,
+    handleGitDiffPathClick,
     handleOpenProjectAdd,
     handleOpenWorktreeLocation,
-    handleCreateRootCancel,
-    handleCreateRootSubmit,
-    setGitHubImportState,
-    setProjectAddMode,
-  } = useProjectLifecycle({
-    currentRootId,
-    currentRootIdRef,
-    getNodeIdForRoot,
-    refreshManagedRoots,
-    findManagedRootByPath,
-    managedRootIdsRef,
-    managedRootByIdRef,
-    openManagedDir,
-  });
-
-
-
-
-  const {
-    ensurePluginsLoaded,
-    pluginHandlers,
-  } = usePluginHandlers({
-    actionHandlers,
-    currentRootIdRef,
-    file,
-    fileCursorRef,
-    fileRef,
-    getNodeIdForRoot,
-    handleSelectSession,
-    managedRootByIdRef,
-    pluginManagerRef,
-    pluginQuery,
-    pluginsLoadedByRootRef,
-    pluginsLoadingByRootRef,
-    pluginsTrustPendingByRootRef,
-    replaceURLState,
-    scopedRootKey,
-    sessions,
-    setPendingPluginTrust,
-    setPluginLoading,
-    setPluginQuery,
-    setPluginVersion,
-  });
-
-  const {
-    handleTrustPendingPlugins,
-    handleDisablePendingPlugins,
-    invalidatePluginsForRoot,
-  } = useAppPluginTrust({
-    pendingPluginTrust,
-    setPluginLoading,
-    pluginManagerRef,
-    pluginsLoadedByRootRef,
-    scopedRootKey,
-    pluginsTrustPendingByRootRef,
-    setPendingPluginTrust,
-    setPluginVersion,
-    pluginsLoadingByRootRef,
-    currentRootIdRef,
-    ensurePluginsLoaded,
-  });
-
-
-
-
-  const { handleSessionChipClick,
-    handleTaskSessionDrawerOpen,
-    refreshTaskRelatedFiles,
-    refreshTasksForRelatedSession,
+    handleRemoveCurrentRoot,
+    handleRemoveCurrentWorktree,
+    handleRemoveQueuedMessage,
+    handleRenameCurrentRoot,
+    handleRequestFileContext,
     handleSelectKanbanTask,
-  } = useAppTaskDrawer({
-    currentRootIdRef, file, getNodeIdForRoot, handleSelectSession,
-    rootSessionKey, sessionCacheRef, sessions, setSelectedKanbanTaskId,
-    setTaskRelatedFilesById, taskDetailsByIdRef, taskSessionKeysById, taskSessionKeysByIdRef,
-    updateSessionRelatedFilesForKey,
-  });
-
-
-
-
-
-	  useEffect(() => {
-    function openReplySession(detail: any) {
-      const rootId = typeof detail?.rootId === "string" ? detail.rootId.trim() : "";
-      const sessionKey = typeof detail?.sessionKey === "string" ? detail.sessionKey.trim() : "";
-      if (!rootId || !sessionKey) {
-        return;
-      }
-      handleSessionChipClick(sessionKey, rootId);
-    }
-
-    function handleOpenReplySession(event: Event) {
-      openReplySession((event as CustomEvent).detail);
-    }
-
-    window.addEventListener("mindfs:open-reply-session", handleOpenReplySession);
-    openReplySession((window as any).__mindfsPendingReplySession);
-    delete (window as any).__mindfsPendingReplySession;
-    return () => {
-      window.removeEventListener("mindfs:open-reply-session", handleOpenReplySession);
-    };
-  }, [handleSessionChipClick]);
-
-
-
-
-
-  const visibleMainEntries = useMemo(
-    () =>
-      showHiddenFiles
-        ? mainEntries
-        : mainEntries.filter((entry) => !entry.name.startsWith(".")),
-    [mainEntries, showHiddenFiles],
-  );
-
-
-  useAppBootstrapEffects({
-    currentRootId, currentRootNodeId, refreshGitStatus, refreshGitHistory,
-    setGitStatus, setGitHistory, setGitDiff, scopedRootKey,
-    ensurePluginsLoaded, pluginsLoadedByRootRef, setBootstrapState, setSessionListMode,
-    setExternalSessions, setExternalSelectedKey, setE2eeState, setE2eePromptError,
-    setE2eeSecretInput, e2eeState, getNodeIdForRoot,
-  });
-
-  useEffect(
-    () => () => {
-      sessionService.disconnect();
-      setStatus("disconnected");
-    },
-    [],
-  );
-
-
-  // 2026-09 App.tsx 拆分：25 个 WS 事件处理器（含 9 个 handleSessionStream 内部 case）
-  // 与其 13 个内部 helper 整体搬到 app/useRealtimeEvents.ts。参数按用途分四组、组内同名简写，
-  // 所以搬过去的 1600 行代码一个标识符都没改。
-  useRealtimeEvents({
-    refs: { // App 的 ref 池
-      actionHandlersRef,
-      boundSessionByRootRef,
-      cancelRequestedBySessionRef,
-      currentRootIdRef,
-      currentRootNodeIdRef,
-      currentSessionRef,
-      drawerSessionByRootRef,
-      fileRef,
-      invalidTreeCacheKeysRef,
-      loadedSessionRef,
-      managedRootByIdRef,
-      managedRootByKeyRef,
-      managedRootIdsRef,
-      optimisticDequeuedIdsRef,
-      pendingBySessionRef,
-      pendingDraftRef,
-      pendingRequestRef,
-      queueFrozenBySessionRef,
-      queuedMessagesBySessionRef,
-      selectedDirRef,
-      selectedSessionByRootRef,
-      selectedSessionRef,
-      sessionCacheRef,
-      sessionListReloadTimerRef,
-      sessionsRef,
-      suppressedAutoBindSessionByRootRef,
-      taskDetailsByIdRef,
-      workspaceOpenRef,
-    },
-    setters: { // App 的 setState
-      setAgentsVersion,
-      setBoundSessionForRoot,
-      setCodexRateLimitsRefreshToken,
-      setDrawerSessionForRoot,
-      setGitDiff,
-      setGitHubImportState,
-      setMultiProjectSessionGroups,
-      setMultiProjectSessionPending,
-      setProjectAddMode,
-      setQueueVersion,
-      setRootEntries,
-      setSelectedPendingByKey,
-      setSelectedSession,
-      setSessions,
-      setSlashCommandResults,
-      setStatus,
-      setTaskSessionErrorDialog,
-      setUpdateState,
-    },
-    actions: { // App 的动作
-      appendAgentChunkForSession,
-      appendCompactNoticeForSession,
-      appendPlanUpdateForSession,
-      appendThoughtChunkForSession,
-      appendTodoUpdateForSession,
-      appendToolCallForSession,
-      applyManagedRootRename,
-      applyTaskDetails,
-      attachContextWindowToLatestAssistant,
-      bumpCacheVersion,
-      clearSessionStale,
-      getNodeIdForRoot,
-      invalidatePluginsForRoot,
-      loadManagedRootPayloads,
-      loadMultiProjectSessionGroups,
-      scheduleMultiProjectSessionReload,
-      loadSessionsForRoot,
-      markSessionPending,
-      markSessionStale,
-      playCompletionSound,
-      pruneTaskDetails,
-      promotePendingSessionForRoot,
-      refreshCurrentFileContent,
-      refreshGitStatus,
-      refreshManagedRoots,
-      refreshMultiProjectReplyingSessions,
-      refreshTaskWorktree,
-      refreshTasksForRelatedSession,
-      refreshTreeDir,
-      refreshWorkspaceBoard,
-      resolveRootForSessionKey,
-      restoreActiveSession,
-      scheduleSessionListReload,
-      updateSessionAgentForKey,
-      updateSessionRelatedFilesForKey,
-      updateSessionRelatedWorktreeForKey,
-    },
-    values: { // 稳定值
-      currentRootId,
-      gitDiff,
-      handleImportedSessionConfirmed,
-      multiProjectSessionsEnabled,
-      rootSessionKey,
-      scopedRootKey,
-      t,
-      treeCacheKey,
-    },
-  });
-
-
-
-  useAppInit({actionHandlersRef, bootstrapService, bootstrapState, didInitRef, ensurePluginsLoaded, handleSelectSessionRef, indexManagedRoots, loadLastRootId, loadLastRootNodeId, loadManagedRootPayloads, loadMultiProjectSessionGroups, loadSessionsForRoot, managedRootByIdRef, managedRootByKeyRef, managedRootIdsRef, mapManagedRootsToEntries, multiProjectSessionsEnabled, readURLState, refreshTreeDir, reportError, selectRootNode, setCurrentRootId, setManagedRootIds, setPluginQuery, setRootEntries, setRootNodeMap, showBoundSessionOrRootDir, switchMainView, t, useEffect});
-
-
-
-
-
-
-  useTaskWorkspaceEffects({
-    bootstrapPhase: bootstrapState.phase,
-    currentRootIdRef,
-    setAgentsVersion,
-    loadTaskTemplates,
-    loadKanbanTasks,
-    loadMultiProjectSessionGroups,
-    multiProjectSessionsEnabled,
-  });
-
-
-
-  usePopStateSync({actionHandlers, closeTopBackLayer, consumeViewHistoryEntry, currentRootIdRef, fileCursorRef, fileRef, handleSelectSessionRef, hasBackLayer, lastNonChatViewRef, loadSessionsForRoot, mainViewRef, readURLState, refreshTreeDir, replaceURLState, selectRootNode, selectedSessionRef, setCurrentRootId, setMainView, setPluginQuery, showBoundSessionOrRootDir, switchMainView, useEffect});
-
-  const selectedRoot =
-    (selectedSession?.root_id as string | undefined) || currentRootId || "";
-  const selectedInCurrentRoot =
-    !!selectedSession && !!currentRootId && selectedRoot === currentRootId;
-  const selectedKey =
-    selectedSession?.key || selectedSession?.session_key || "";
-  const lockedSessionKey = resolveLockedSessionKey(activeBoundSessionKey);
-  const lockedSessionSnapshot = lockedSessionKey && currentRootId
-    ? getSessionSnapshot(
-        currentRootId,
-        drawerSessionByRootRef.current[scopedRootKey(currentRootId)] ||
-          sessionCacheRef.current[rootSessionKey(currentRootId, lockedSessionKey)] ||
-          null,
-      )
-    : null;
-  const boundFromSelected =
-    selectedInCurrentRoot && selectedKey === activeBoundSessionKey
-      ? (selectedSession as any)
-      : null;
-  const boundFromCache =
-    activeBoundSessionKey && currentRootId
-      ? (sessionCacheRef.current[
-          rootSessionKey(currentRootId, activeBoundSessionKey)
-        ] as any)
-      : null;
-  const isDetachedMainSessionTarget =
-    !!activeBoundSessionKey &&
-    selectedInCurrentRoot &&
-    !!selectedKey &&
-    selectedKey !== activeBoundSessionKey &&
-    interactionMode !== "drawer";
-  const actionBarSession = lockedSessionKey
-    ? isDetachedMainSessionTarget
-      ? (selectedSession as any)
-      : (lockedSessionSnapshot as any) ||
-        (currentSession as any) ||
-        boundFromCache ||
-        boundFromSelected
-    : selectedInCurrentRoot
-      ? (selectedSession as any)
-      : null;
-  const actionBarSessionKey =
-    (actionBarSession as any)?.key ||
-    (actionBarSession as any)?.session_key ||
-    "";
-  const actionBarInputHistory = sessionInputHistory(
-    getSessionSnapshot(
-      ((actionBarSession as any)?.root_id as string | undefined) || currentRootId,
-      actionBarSession as any,
-    ) || (actionBarSession as any),
-  );
-  // 「会话就在主区」必须同时满足：主面板确实是对话态。否则在文件态下会话被选中却看不见，
-  // 蓝环会被误判成「已在主区」而隐藏，文件态的悬浮框就再也打不开了。
-  const isBoundSessionInMain =
-    !!activeBoundSessionKey &&
-    selectedKey === activeBoundSessionKey &&
-    interactionMode !== "drawer" &&
-    mainView === "chat";
-  const canOpenSessionDrawer = !!activeBoundSessionKey && !isBoundSessionInMain;
-  const detachedBoundSession =
-    isDetachedMainSessionTarget && !isDrawerOpen;
-  const actionBarQueuedMessages = useMemo(() => {
-    void queueVersion;
-    if (!currentRootId || !actionBarSessionKey) return [];
-    return (
-      queuedMessagesBySessionRef.current[
-        rootSessionKey(currentRootId, actionBarSessionKey)
-      ] || []
-    );
-  }, [actionBarSessionKey, currentRootId, queueVersion, rootSessionKey]);
-
-  const matchedPlugin = useMemo(() => {
-    if (!currentRootId || !file) return null;
-    const input = toPluginInput(file, pluginQuery);
-    return pluginManagerRef.current.match(currentRootId, input);
-  }, [currentRootId, file, pluginVersion, pluginQuery]);
-
-
-
-  const { pluginRender, pluginThemeVars } = useAppPluginRender({
-    file,
-    pluginBypass,
+    handleSendQueuedMessageNow,
+    handleSessionChipClick,
+    handleSwitchWorktreeStart,
+    handleTaskSessionDrawerOpen,
+    handleTrustPendingPlugins,
+    handleUpdateQueuedMessage,
+    handleViewerSelectionChange,
     matchedPlugin,
-    pluginQuery,
-    pluginManagerRef,
-  });
-
-  useAppPluginRenderEffects({
-    file, currentFileEditing, pluginBypass, matchedPlugin,
-    pluginRender, pluginQuery, currentRootId, actionHandlers,
-    fileCursorRef, handleViewerSelectionChange, pluginContentRef, lastPluginChapterRef,
-    fullUpgradeAttemptRef,
-  });
-
-
-  const pluginRendererKey = `${currentRootId || ""}:${file?.path || ""}:${fileCursorRef.current}:${JSON.stringify(pluginQuery)}`;
-
-  const {
-    selectedSessionSnapshot,
-    sessionByKey,
-    boardSessionByKey,
+    openRelatedFileDiff,
+    pluginHandlers,
+    pluginRender,
+    pluginRendererKey,
+    pluginThemeVars,
+    projectAddMode,
+    projectAddOverlay,
+    refreshManagedRoots,
+    refreshTaskRelatedFiles,
     selectedKanbanTask,
-    selectedKanbanTaskSessionKey,
     selectedKanbanTaskSessionSnapshot,
-  } = useAppSessionSnapshots({
-    selectedSession,
-    selectedSessionLoading,
-    currentRootId,
-    sessions,
-    multiProjectSessionGroups,
-    selectedKanbanTaskId,
-    kanbanTasks,
-    taskDetailsById,
-    taskSessionKeysById,
-    getSessionSnapshot,
+    selectedSessionSnapshot,
+    setCreatingRootName,
+    visibleMainEntries,
+    worktreeCreateOverlay,
+    worktreeSwitchOpen,
+    worktreeSwitchOverlay,
+  } = useAppDomainLayer({
+    activeBoundSessionKey, appendAgentChunkForSession, appendCompactNoticeForSession, appendPlanUpdateForSession,
+    appendThoughtChunkForSession, appendTodoUpdateForSession, appendToolCallForSession, applyTaskDetails,
+    attachContextWindowToLatestAssistant, bootstrapState, boundSessionByRootRef, bumpCacheVersion,
+    cancelRequestedBySessionRef, clearSessionStale, currentFileEditing, currentRootId,
+    currentRootIdRef, currentRootNodeId, currentRootNodeIdRef, currentSelectionSource,
+    currentSession, currentSessionRef, didInitRef, dismissedSelectionFileRef,
+    drawerOpenByRootRef, drawerSessionByRootRef, e2eeState, entriesByPathRef,
+    expandedRef, file, fileCursorRef, fileEditStore,
+    fileOpenRequestRef, fileRef, fileScrollPositionsRef, formatDirectoryLoadError,
+    fullUpgradeAttemptRef, getNodeIdForRoot, getSessionSnapshot, gitDiff,
+    gitStatus, handleImportedSessionConfirmed, handleSelectSession, handleSelectSessionRef,
+    interactionMode, interactionModeRef, invalidTreeCacheKeysRef, isDrawerOpen,
+    isSessionStale, kanbanTasks, lastMainSessionSnapshotRef, lastNonChatViewRef,
+    lastPluginChapterRef, lastViewerSelectionRef, loadKanbanTasks, loadMultiProjectSessionGroups,
+    loadSessionsForRoot, loadTaskTemplates, loadedSessionRef, loadingSessionRef,
+    mainDirectoryErrorRef, mainEntries, mainEntriesRef, mainView,
+    mainViewRef, managedRootByIdRef, managedRootByKeyRef, managedRootIdsRef,
+    managedRootsRequestRef, markSessionStale, multiProjectPendingRef, multiProjectSessionGroups,
+    multiProjectSessionsEnabled, nodeLoadFailuresRef, notifiedNodeFailuresRef, notifyNodeLoadFailedRef,
+    openGitDiff, optimisticDequeuedIdsRef, pendingBySessionRef, pendingDraftRef,
+    pendingPluginTrust, pendingRequestRef, playCompletionSound, pluginBypass,
+    pluginBypassRef, pluginContentRef, pluginManagerRef, pluginQuery,
+    pluginVersion, pluginsLoadedByRootRef, pluginsLoadingByRootRef, pluginsTrustPendingByRootRef,
+    promotePendingSessionForRoot, pruneTaskDetails, queueFrozenBySessionRef, queueVersion,
+    queuedMessagesBySessionRef, refreshCurrentFileContent, refreshGitHistory, refreshGitStatus,
+    refreshMultiProjectReplyingSessions, refreshTaskWorktree, refreshTreeDir, refreshWorkspaceBoard,
+    rememberCurrentFileScroll, replaceURLState, resetLocksForRootTransition, resolvePendingForSession,
+    resolveRootForSessionKey, restoreActiveSession, rootEntriesRef, rootSessionKey,
+    scheduleMultiProjectSessionReload, scheduleSessionListReload, scopedRootKey, selectRootNode,
+    selectedDirRef, selectedKanbanTaskId, selectedSession, selectedSessionByRootRef,
+    selectedSessionLoading, selectedSessionRef, sessionCacheRef, sessionListReloadTimerRef,
+    sessionLoadFailureRef, sessions, sessionsRef, setActiveBoundSessionKey,
+    setAgentsVersion, setAttachedFileContext, setBootstrapState, setBoundSessionForRoot,
+    setCodexRateLimitsRefreshToken, setCurrentRootId, setCurrentSession, setDirectorySortOverrides,
+    setDrawerOpenForRoot, setDrawerSessionForRoot, setE2eePromptError, setE2eeSecretInput,
+    setE2eeState, setEntriesByPath, setExpanded, setExternalSelectedKey,
+    setExternalSessions, setFile, setGitDiff, setGitHistory,
+    setGitHistoryExpandedByRoot, setGitStatus, setGitStatusExpandedByRoot, setInteractionMode,
+    setIsDrawerOpen, setIsLeftOpen, setMainDirectoryError, setMainEntries,
+    setMainView, setManagedRootIds, setMultiProjectPendingByKey, setMultiProjectSessionGroups,
+    setMultiProjectSessionPending, setPendingPluginTrust, setPluginBypass, setPluginLoading,
+    setPluginQuery, setPluginVersion, setQueueVersion, setRelatedSelectedFileKey,
+    setRootEntries, setSelectedDir, setSelectedDirKey, setSelectedKanbanTaskId,
+    setSelectedPendingByKey, setSelectedSession, setSelectedSessionLoading, setSessionListMode,
+    setSessions, setSlashCommandResults, setStatus, setTaskRelatedFilesById,
+    setTaskSessionErrorDialog, setUpdateState, setViewerSelection, showHiddenFiles,
+    staleSessionKeysRef, suppressedAutoBindSessionByRootRef, switchMainView, t,
+    taskDetailsById, taskDetailsByIdRef, taskSessionKeysById, taskSessionKeysByIdRef,
+    treeCacheKey, tryShowBoundSessionForRoot, updateSessionAgentForKey, updateSessionRelatedFilesForKey,
+    updateSessionRelatedWorktreeForKey, viewerSelection, viewerSelectionRef, workspaceOpenRef,
   });
-
-
-
-	  useEffect(() => {
-    if (selectedSessionSnapshot) {
-      lastMainSessionSnapshotRef.current = selectedSessionSnapshot as Session;
-    }
-  }, [selectedSessionSnapshot]);
-
-  // CUSTOM(G-AU): 加载 effect 的依赖只能是**身份**（键 / 根 / 布尔），绝不能是
-  // selectedSessionSnapshot 这个对象。它的身份随 cacheVersion 每次 bump 都变
-  // （getSessionSnapshot 的 dep 数组里有 cacheVersion），而流式输出每 30ms 就 bump 一次、
-  // 每个 tool_call/todo_update/plan_update 还会同步再 bump 一次 —— 于是「加载 →
-  // bump → 新快照 → 再加载」自持成环。会话存在时 loadedSessionRef 会兜住，
-  // **404 的会话永远兜不住**：实测一个已删会话被拉到 22–25 次/秒、持续 18 小时
-  // （单小时 5232 次、累计 7800+ 次 404），把浏览器每域 6 条连接全占满 →
-  // 其它请求全部排队 → 界面卡死 → 标签页被杀 → 自动重载。
-  const loadSessionKey = selectedSession?.key || selectedSession?.session_key || "";
-  const loadRootID =
-    (selectedSession?.root_id as string | undefined) || currentRootId || "";
-  const loadSnapshotHasExchanges = hasSessionExchanges(
-    selectedSessionSnapshot as Session | null,
-  );
-
-  // 选中项一变就解禁失败记录：换会话/换项目本来就该重新拉一次。
-  useEffect(() => {
-    sessionLoadFailureRef.current = {};
-  }, [loadSessionKey, loadRootID]);
-
-  useSessionRestore({boundSessionByRootRef, bumpCacheVersion, clearSessionStale, currentRootId, currentRootIdRef, hasSessionExchanges, isSessionStale, loadRootID, loadSessionKey, loadSnapshotHasExchanges, loadedSessionRef, loadingSessionRef, resolvePendingForSession, restoreActiveSession, rootSessionKey, scopedRootKey, selectedSessionLoading, sessionCacheRef, sessionLoadFailureRef, setDrawerSessionForRoot, setSelectedSession, toSessionItem, useEffect});
 
   const { activePendingPluginTrust,
     currentFileScrollKey,

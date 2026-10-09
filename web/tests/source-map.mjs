@@ -135,6 +135,9 @@ export const MODULES = {
     // 2026-10-08 第 14 步（续）：bootstrap/E2EE 与插件渲染后的 effect
     "src/app/useAppBootstrapEffects.ts",
     "src/app/useAppPluginRenderEffects.ts",
+    // 2026-10-08 分层聚合（App.tsx → 1000 以内）第 3 层：领域接线与实时通道。
+    // 受管根、动作处理器、文件导航、项目生命周期、插件、实时事件与派生状态。
+    "src/app/useAppDomainLayer.ts",
     // 2026-10-08 分层聚合（App.tsx → 1000 以内）第 4 层：视图与渲染组合。
     // 这一层整体（L2276-2633，连续区间）搬走，hook 调用顺序与搬出前逐字一致。
     "src/app/useAppViewComposition.ts",
