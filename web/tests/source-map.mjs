@@ -107,6 +107,8 @@ export const MODULES = {
     "src/app/useAppSessionKeyState.ts",
     // 2026-10-08 第 4 步：每根绑定/抽屉写入器 + 切项目时的锁复位。
     "src/app/useAppRootBindingSetters.ts",
+    // 2026-10-08 第 5 步：会话选择的四个入口。
+    "src/app/useAppSessionSelection.ts",
   ],
 
   // P6 拆分：FileTree.tsx → + icons.tsx（图标子组件）

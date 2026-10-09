@@ -182,6 +182,7 @@ import {
 // 类型定义
 
 import { APP_DOCUMENT_TITLE, AppProps, CHILD_SESSION_PAGE_SIZE, MULTI_PROJECT_SESSION_LIMIT, ManagedRootPayload, SESSION_PAGE_SIZE } from "./app/appMisc";
+import { useAppSessionSelection } from "./app/useAppSessionSelection";
 import { useAppRootBindingSetters } from "./app/useAppRootBindingSetters";
 import { useAppSessionKeyState } from "./app/useAppSessionKeyState";
 import { useAppSessionReload } from "./app/useAppSessionReload";
@@ -1708,21 +1709,31 @@ export function App({ onGoHome }: AppProps) {
     setAgentsVersion((v) => v + 1);
   }, []);
 
-  const handleCancelCurrentTurn = useCallback(
-    async (sessionKey: string) => {
-      const activeRoot = currentRootIdRef.current;
-      if (!activeRoot || !sessionKey) return;
-      const cacheKey = rootSessionKey(activeRoot, sessionKey);
-      cancelRequestedBySessionRef.current[cacheKey] = true;
-      const sent = await sessionService.cancelMessage(activeRoot, sessionKey);
-      if (!sent) {
-        delete cancelRequestedBySessionRef.current[cacheKey];
-        return;
-      }
-      clearLocalPendingForSession(activeRoot, sessionKey);
-    },
-    [clearLocalPendingForSession, rootSessionKey],
-  );
+  const {
+    handleCancelCurrentTurn,
+    handleNewSession,
+    currentSelectionSource,
+    rememberCurrentFileScroll,
+  } = useAppSessionSelection({
+    currentRootIdRef,
+    boundSessionByRootRef,
+    scopedRootKey,
+    suppressedAutoBindSessionByRootRef,
+    switchMainView,
+    selectedSessionRef,
+    currentSessionRef,
+    interactionModeRef,
+    setSelectedSession,
+    selectedSessionByRootRef,
+    resetSessionLockForRoot,
+    rootSessionKey,
+    cancelRequestedBySessionRef,
+    clearLocalPendingForSession,
+    file,
+    gitDiff,
+    fileRef,
+    fileScrollPositionsRef,
+  });
 
   const {
     markSessionPending,
@@ -1749,41 +1760,7 @@ export function App({ onGoHome }: AppProps) {
   });
 
 
-  const handleNewSession = useCallback(() => {
-    const rootID = currentRootIdRef.current;
-    const previousBoundKey = rootID ? boundSessionByRootRef.current[scopedRootKey(rootID)] : "";
-    if (rootID && previousBoundKey && !previousBoundKey.startsWith("pending-")) {
-      suppressedAutoBindSessionByRootRef.current[scopedRootKey(rootID)] = previousBoundKey;
-    }
-    switchMainView("chat");
-    selectedSessionRef.current = null;
-    currentSessionRef.current = null;
-    interactionModeRef.current = "main";
-    setSelectedSession(null);
-    if (rootID) {
-      selectedSessionByRootRef.current[scopedRootKey(rootID)] = null;
-    }
-    resetSessionLockForRoot(rootID);
-  }, [
-    resetSessionLockForRoot,
-    switchMainView,
-  ]);
 
-  const currentSelectionSource = useMemo(() => {
-    if (file?.path) {
-      return {
-        path: file.path,
-        name: file.name || basenameOfPath(file.path),
-      };
-    }
-    if (gitDiff?.path) {
-      return {
-        path: gitDiff.path,
-        name: basenameOfPath(gitDiff.path),
-      };
-    }
-    return null;
-  }, [file, gitDiff]);
 
   const {
     buildAttachedFileContext,
@@ -1801,18 +1778,6 @@ export function App({ onGoHome }: AppProps) {
   });
 
 
-  const rememberCurrentFileScroll = useCallback(() => {
-    const currentFile = fileRef.current;
-    const key = buildFileScrollKey(
-      currentFile?.root || currentRootIdRef.current,
-      currentFile?.path,
-    );
-    if (!key) return;
-    if (!(key in fileScrollPositionsRef.current)) {
-      fileScrollPositionsRef.current[key] = 0;
-      persistFileScrollPositions(fileScrollPositionsRef.current);
-    }
-  }, []);
 
   const actionHandlersRef = useRef<ActionHandlers>({
     open: async () => {},
