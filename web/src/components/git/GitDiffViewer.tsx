@@ -1,46 +1,19 @@
 import React from "react";
-import type { GitDiffPayload } from "../../services/git";
 import { ViewHeader } from "../../layout/ViewHeader";
 import { rootBadgeButtonStyle } from "../../shared/rootBadgeStyle";
 import {
-  buildDiffLines,
-  buildSideBySideRows,
-  buildUnifiedRows,
   getInlineDiffSegments,
   type DiffLine,
 } from "../../shared/gitDiffModel";
-
-type GitDiffViewerProps = {
-  diff: GitDiffPayload;
-  root?: string | null;
-  rootDisplayName?: string | null;
-  rootColor?: string | null;
-  sideBySide?: boolean;
-  onPathClick?: (path: string) => void;
-  onSessionClick?: (sessionKey: string) => void;
-  onSelectionChange?: (selection: {
-    filePath: string;
-    text?: string;
-    startLine?: number;
-    endLine?: number;
-  } | null) => void;
-};
-
-type RelatedSession = {
-  source_session: string;
-  session_name?: string;
-  agent?: string;
-  created_at?: string;
-  updated_at?: string;
-};
+import { useGitDiffViewer, type GitDiffViewerProps } from "./useGitDiffViewer";
 
 function Breadcrumbs({ root, rootDisplayName, path, rootColor, onPathClick }: { root?: string | null; rootDisplayName?: string | null; path: string; rootColor?: string | null; onPathClick?: (path: string) => void }) {
-  const parts = path.split("/").filter(Boolean);
-  const getPathAt = (index: number) => parts.slice(0, index + 1).join("/");
+  const parts = path.split('/').filter(Boolean);
+  const getPathAt = (index: number) => parts.slice(0, index + 1).join('/');
 
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: "4px", fontSize: "13px", color: "var(--text-secondary)", overflow: "hidden", whiteSpace: "nowrap", flexShrink: 1, justifyContent: "flex-start" }}>
-      {root ? (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '13px', color: 'var(--text-secondary)', overflow: 'hidden', whiteSpace: 'nowrap', flexShrink: 1, justifyContent: 'flex-start' }}>
+      {root && (
         <>
           <button
             type="button"
@@ -57,26 +30,20 @@ function Breadcrumbs({ root, rootDisplayName, path, rootColor, onPathClick }: { 
           >
             {rootDisplayName || root}
           </button>
-          {parts.length > 0 ? <span style={{ opacity: 0.4, fontSize: "10px", flexShrink: 0 }}>❯</span> : null}
+          {parts.length > 0 && <span style={{ opacity: 0.4, fontSize: '10px', flexShrink: 0 }}>❯</span>}
         </>
-      ) : null}
+      )}
       {parts.map((part, index) => (
-        <React.Fragment key={`${part}-${index}`}>
+        <React.Fragment key={index}>
           <span
             onClick={() => index < parts.length - 1 && onPathClick?.(getPathAt(index))}
-            style={{
-              fontWeight: index === parts.length - 1 ? 600 : 400,
-              color: index === parts.length - 1 ? "var(--text-primary)" : "inherit",
-              cursor: index < parts.length - 1 ? "pointer" : "default",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-            }}
-            onMouseEnter={(e) => { if (index < parts.length - 1) e.currentTarget.style.textDecoration = "underline"; }}
-            onMouseLeave={(e) => { e.currentTarget.style.textDecoration = "none"; }}
+            style={{ fontWeight: index === parts.length - 1 ? 600 : 400, color: index === parts.length - 1 ? 'var(--text-primary)' : 'inherit', cursor: index < parts.length - 1 ? 'pointer' : 'default', overflow: 'hidden', textOverflow: 'ellipsis' }}
+            onMouseEnter={(e) => { if (index < parts.length - 1) e.currentTarget.style.textDecoration = 'underline'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.textDecoration = 'none'; }}
           >
             {part}
           </span>
-          {index < parts.length - 1 ? <span style={{ opacity: 0.4, fontSize: "10px", flexShrink: 0 }}>❯</span> : null}
+          {index < parts.length - 1 && <span style={{ opacity: 0.4, fontSize: '10px', flexShrink: 0 }}>❯</span>}
         </React.Fragment>
       ))}
     </div>
@@ -84,72 +51,57 @@ function Breadcrumbs({ root, rootDisplayName, path, rootColor, onPathClick }: { 
 }
 
 function renderLineStat(value: number, prefix: "+" | "-"): React.ReactNode {
-  const color = prefix === "+" ? "#15803d" : "#b91c1c";
+  if (!value) return null;
   return (
-    <span style={{ color, fontVariantNumeric: "tabular-nums" }}>
+    <span style={{ color: prefix === "+" ? "#16a34a" : "#dc2626" }}>
       {prefix}{value}
     </span>
   );
 }
 
 function renderStatusLabel(status: string): string {
-  if (status === "??") {
-    return "U";
+  switch (status) {
+    case "added": return "新增";
+    case "modified": return "修改";
+    case "deleted": return "删除";
+    case "renamed": return "重命名";
+    default: return status;
   }
-  return status;
 }
 
 function lineBackground(kind: DiffLine["kind"]): string {
   switch (kind) {
-    case "add":
-      return "rgba(34, 197, 94, 0.14)";
-    case "del":
-      return "rgba(239, 68, 68, 0.14)";
-    case "hunk":
-      return "color-mix(in srgb, var(--accent-color) 10%, transparent)";
-    default:
-      return "transparent";
+    case "add": return "rgba(34,197,94,0.08)";
+    case "del": return "rgba(239,68,68,0.08)";
+    case "hunk": return "rgba(148,163,184,0.12)";
+    default: return "transparent";
   }
 }
 
 function lineColor(kind: DiffLine["kind"]): string {
   switch (kind) {
-    case "add":
-      return "#166534";
-    case "del":
-      return "#991b1b";
-    case "hunk":
-      return "#1d4ed8";
-    default:
-      return "var(--text-primary)";
+    case "add": return "#15803d";
+    case "del": return "#b91c1c";
+    case "hunk": return "#64748b";
+    default: return "var(--text-primary)";
   }
 }
 
 function displayLineNumber(line: DiffLine): string {
-  if (line.kind === "add" && typeof line.newLine === "number") {
-    return String(line.newLine);
-  }
-  if (line.kind === "ctx" && typeof line.newLine === "number") {
-    return String(line.newLine);
-  }
-  return "";
+  return String(line.newLine ?? "");
 }
 
 function displayOldLineNumber(line?: DiffLine): string {
-  return line && typeof line.oldLine === "number" ? String(line.oldLine) : "";
+  return line ? String(line.oldLine ?? "") : "";
 }
 
 function displayNewLineNumber(line?: DiffLine): string {
-  return line && typeof line.newLine === "number" ? String(line.newLine) : "";
+  return line ? String(line.newLine ?? "") : "";
 }
 
 function inlineSegmentBackground(kind: DiffLine["kind"], segmentKind: "ctx" | "add" | "del"): string {
-  if (kind === "add" && segmentKind === "add") {
-    return "rgba(22, 163, 74, 0.22)";
-  }
-  if (kind === "del" && segmentKind === "del") {
-    return "rgba(220, 38, 38, 0.22)";
-  }
+  if (segmentKind === "add") return kind === "add" ? "rgba(34,197,94,0.2)" : "transparent";
+  if (segmentKind === "del") return kind === "del" ? "rgba(239,68,68,0.2)" : "transparent";
   return "transparent";
 }
 
@@ -184,122 +136,18 @@ function renderDiffLineContent(line: DiffLine, counterpart?: DiffLine, includePr
   );
 }
 
-function normalizeRelatedSessions(raw: unknown): RelatedSession[] {
-  if (!raw) return [];
-  const list = Array.isArray(raw) ? raw : [raw];
-  const normalized = list.map((item): RelatedSession | null => {
-    if (!item || typeof item !== "object") return null;
-    const value = item as Record<string, unknown>;
-    const source = (typeof value.source_session === "string" && value.source_session)
-      || (typeof value.sourceSession === "string" && value.sourceSession)
-      || (typeof value.session_key === "string" && value.session_key)
-      || "";
-    if (!source) return null;
-    return {
-      source_session: source,
-      session_name: (typeof value.session_name === "string" && value.session_name) || undefined,
-      agent: typeof value.agent === "string" ? value.agent : undefined,
-      created_at: typeof value.created_at === "string" ? value.created_at : undefined,
-      updated_at: typeof value.updated_at === "string" ? value.updated_at : undefined,
-    };
-  }).filter((value): value is RelatedSession => Boolean(value));
-  const dedup = new Map<string, RelatedSession>();
-  normalized.forEach((item) => {
-    const existing = dedup.get(item.source_session);
-    if (!existing) {
-      dedup.set(item.source_session, item);
-      return;
-    }
-    const existingTime = Date.parse(existing.updated_at || existing.created_at || "") || 0;
-    const itemTime = Date.parse(item.updated_at || item.created_at || "") || 0;
-    if (itemTime >= existingTime) {
-      dedup.set(item.source_session, item);
-    }
-  });
-  return Array.from(dedup.values()).sort((left, right) => {
-    const leftTime = Date.parse(left.updated_at || left.created_at || "") || 0;
-    const rightTime = Date.parse(right.updated_at || right.created_at || "") || 0;
-    return rightTime - leftTime;
-  });
-}
+export function GitDiffViewer(props: GitDiffViewerProps) {
+  const {
+    sideBySideRows,
+    unifiedRows,
+    relatedSessions,
+    displayPath,
+    contentRootRef,
+    isMobile,
+    visibleRelatedSessions,
+  } = useGitDiffViewer(props);
 
-export function GitDiffViewer({ diff, root, rootDisplayName = null, rootColor = null, sideBySide = false, onPathClick, onSessionClick, onSelectionChange }: GitDiffViewerProps) {
-  const lines = React.useMemo(() => buildDiffLines(diff.content), [diff.content]);
-  const sideBySideRows = React.useMemo(() => buildSideBySideRows(lines), [lines]);
-  const unifiedRows = React.useMemo(() => buildUnifiedRows(lines), [lines]);
-  const relatedSessions = React.useMemo(() => normalizeRelatedSessions(diff.file_meta), [diff.file_meta]);
-  const displayPath = diff.display_path || diff.path;
-  const contentRootRef = React.useRef<HTMLDivElement | null>(null);
-  const [isMobile, setIsMobile] = React.useState(() => {
-    if (typeof window === "undefined") return false;
-    return window.innerWidth <= 768;
-  });
-
-  const visibleRelatedSessions = relatedSessions.slice(0, isMobile ? 2 : 3);
-
-  React.useEffect(() => {
-    if (typeof window === "undefined") return undefined;
-    const media = window.matchMedia("(max-width: 768px)");
-    const update = () => setIsMobile(media.matches);
-    update();
-    media.addEventListener("change", update);
-    return () => media.removeEventListener("change", update);
-  }, []);
-
-  React.useEffect(() => {
-    const updateSelection = () => {
-      const rootNode = contentRootRef.current;
-      if (!onSelectionChange || !rootNode) {
-        return;
-      }
-      const selection = window.getSelection();
-      if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
-        onSelectionChange(null);
-        return;
-      }
-      const range = selection.getRangeAt(0);
-      if (!rootNode.contains(range.commonAncestorContainer)
-        && !rootNode.contains(range.startContainer)
-        && !rootNode.contains(range.endContainer)) {
-        onSelectionChange(null);
-        return;
-      }
-      const text = selection.toString();
-      if (!text.trim()) {
-        onSelectionChange(null);
-        return;
-      }
-      const rows = Array.from(rootNode.querySelectorAll<HTMLElement>("[data-line-number]"));
-      const lineNumbers = rows
-        .filter((row) => {
-          try {
-            return range.intersectsNode(row);
-          } catch {
-            return false;
-          }
-        })
-        .map((row) => Number.parseInt(row.dataset.lineNumber || "", 10))
-        .filter((value) => Number.isFinite(value));
-      const startLine = lineNumbers.length > 0 ? Math.min(...lineNumbers) : undefined;
-      const endLine = lineNumbers.length > 0 ? Math.max(...lineNumbers) : undefined;
-      onSelectionChange({
-        filePath: diff.path,
-        text,
-        startLine,
-        endLine,
-      });
-    };
-
-    if (!onSelectionChange) {
-      return;
-    }
-    const handleSelectionChange = () => updateSelection();
-    document.addEventListener("selectionchange", handleSelectionChange);
-    return () => {
-      document.removeEventListener("selectionchange", handleSelectionChange);
-      onSelectionChange(null);
-    };
-  }, [diff.path, onSelectionChange]);
+  const { diff, root, rootDisplayName, rootColor, sideBySide = false, onPathClick, onSessionClick } = props;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>

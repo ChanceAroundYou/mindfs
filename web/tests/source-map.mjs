@@ -303,7 +303,10 @@ export const MODULES = {
   "src/components/CompactUploadProgress.tsx": ["src/components/file/CompactUploadProgress.tsx"],
   "src/components/SymlinkBadge.tsx": ["src/components/file/SymlinkBadge.tsx"],
   "src/components/GitStatusPanel.tsx": ["src/components/git/GitStatusPanel.tsx"],
-  "src/components/GitDiffViewer.tsx": ["src/components/git/GitDiffViewer.tsx"],
+  "src/components/GitDiffViewer.tsx": [
+    "src/components/git/GitDiffViewer.tsx",
+    "src/components/git/useGitDiffViewer.ts",
+  ],
   "src/components/GitHistoryPanel.tsx": ["src/components/git/GitHistoryPanel.tsx"],
   "src/components/RootGitContentView.tsx": ["src/components/root/RootGitContentView.tsx"],
   "src/components/RootWorktreeContentView.tsx": ["src/components/root/RootWorktreeContentView.tsx"],
