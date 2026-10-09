@@ -259,6 +259,7 @@
 | `df732af` | `web/src/components/RelayLocalServicesDialog.tsx`(删)、`web/src/services/relayServices.ts/tokenStation.ts/launcherNodeSync.ts/nativeBridge.ts`、`web/src/App.tsx/FileTree.tsx/Login.tsx/base.ts/bootstrap.ts/i18n` | 移除公网访问/Relay 对话框/Token 加油站三件套 |
 | `20f2b90` | `.gitignore` | `CLAUDE.md` 忽略（配置类，不影响运行时，单列但归本组） |
 | 2026-10-08 | **删包** `server/internal/relay/`（8 文件）、`server/internal/e2ee/`（4 文件）；**删路由** `server/internal/api/http_relay_services.go`、`http_token_station.go`、`http_local_cli_relay_test.go`；**删前端** `web/src/services/e2ee.ts`、`RelayLocalServicesDialog.tsx`、`SessionQuickActions.tsx`、`relayServices.ts`、`tokenStation.ts`；**清接线** `server/internal/api/http.go`(-549)、`ws.go`(-73)、`appcontext.go`、`agent/config.go`、`nodeinfo/role.go`（去掉 `/api/relay`、`/api/e2ee` 两条前缀）、`cli/cmd/mindfs.go`(-193)、`server/app/server.go`(-148)、`web/src/services/net/{bootstrap,api}.ts`、`session.ts` | **彻底删除 relay 隧道与 e2ee**（用户 2026-10-08 明确要求）：不是「关掉开关」而是「不存在」—— 删包、删路由、删所有前端入口与调用点、删 e2ee proof/解密与 `e2ee_*` 头 |
+| 2026-10-09 | `server/internal/update/service.go`(-23)、`server/internal/update/service_test.go`、`web/src/services/appUpdate.ts`、`web/src/i18n/locales/{zh-CN,en-US}.ts`、`web/tests/upstream-removals.test.mjs` | **断掉上游 relay 域名依赖 + 清死文案键**（用户 2026-10-09 拍板「一起砍掉」）：删 `relayDownloadBase`/`relayAssetURL` 与下载回退（`downloadReleaseAsset` 只认 GitHub 给的 asset 地址）；前端删 `DEFAULT_ANDROID/HARMONY_VERSION_URL`、`RelayVersionResponse` 改名 `AppVersionResponse`，版本检查地址缺省为空（只由 `VITE_*_VERSION_URL` 显式提供，未配置即按「无更新信息」返回、不拿空 URL 去 fetch）；删两个已无代码引用的死键 `fileTree.relayLocalServices` |
 
 - 保留判据：**用户明确要求完整删除，没有「保留一部分」的中间态**。
   合上游时上游会把它们给回来，每次都要重新删一遍 —— 删漏就会留下「点了报错」的残缺入口，
@@ -266,7 +267,17 @@
 - 本组同时**吸收**了原 `G-AX`（relay 绑定轮询测试的两条同步竞态，2026-10-07）：
   那两条修复住在 `server/internal/relay/service_test.go` 里，包已删，条目随之退役。
 - 针对性测试：`web/tests/upstream-removals.test.mjs` —— 钉住「被删文件不复活」+
-  「没有悬空 import 指回已删模块」。
+  「没有悬空 import 指回已删模块」+「`appUpdate.ts`／`update/service.go` 里不得再出现
+  上游 relay 域名」+「两个 i18n 里不得再有 `fileTree.relayLocalServices` 死键」；
+  `server/internal/update/service_test.go:TestDownloadReleaseAssetDoesNotFallBackToRelay`
+  —— 下载失败只允许请求主地址一次、错误里不得出现 relay。
+  **两条都已做变异验证**：把下载回退注入回去、把死键灌回 zh-CN，分别变红。
+- **仍在引用上游 relay 域名的位置（2026-10-09 盘点，尚未处理）**：`scripts/install.sh`、
+  `scripts/install.ps1`（一键安装脚本从这里取二进制）、
+  `harmony/entry/src/main/ets/pages/Index.ets`（Harmony 原生壳的版本检查与下载，6 处）、
+  `README.md`/`README.zh.md`（文档里的安装地址）。这几处的取舍各不相同
+  （安装脚本没有替代下载源就不能直接删；README 只是文案），等用户逐个定夺；
+  先在此留痕，免得下次盘点又从头找一遍。
 
 ### G-I 安全模型重塑（API 层不鉴权 / CORS 全开放）
 

@@ -1199,6 +1199,8 @@ groups:
       `server/internal/relay`、`server/internal/e2ee` 两个包重新出现在构建里，
       `/api/relay/*`、`/api/e2ee/*` 重新挂上路由并回到 worker 的控制面前缀表；
       点了这些入口就报错（后端实现已被删）。
+      更新检查与下载又指向 `relay.a9gent.com`（自动更新会定时外连上游服务器）；
+      i18n 里复活 `fileTree.relayLocalServices` 这类已删入口的死文案键。
     why: |
       这几件套本地已**整体删除**，不是「关掉开关」而是「不存在」：
       删包（server/internal/relay、server/internal/e2ee）、删路由
@@ -1208,6 +1210,10 @@ groups:
       的中间态 —— 上游会给回来，每次合上游都要重新删一遍；删漏就会留下
       「点了报错」的残缺入口，或让 nodeinfo 的控制面前缀表多出 `/api/relay`、`/api/e2ee`
       两条永远不会有 handler 的死路径。
+      2026-10-09 用户再拍板「一起砍掉」：**删包只删了能力本体**，还得断掉对上游服务器的
+      外连（`server/internal/update` 的 relay 下载回退、前端 `appUpdate.ts` 的版本检查地址）
+      与已删入口的死文案键；否则是「删了一半」—— 界面摆着一个点了没反应的入口名，
+      而本 fork 仍在定时外连上游域名。
     files:
       # 被**删除**的上游文件（status=D）。刻意用精确路径而不是目录前缀：
       # 前缀在文件复活时仍会被同目录其它文件命中，报不出来；写死路径才能让断言 2 当场红。
@@ -1256,6 +1262,15 @@ groups:
       - server/internal/agent/testdata/agents.json
       - server/internal/api/http_session_message_test.go
       - server/internal/api/http_text_edit_test.go
+      # 第二阶段（2026-10-09，用户拍板「一起砍掉」）：删包之后**残留的上游域名依赖**
+      # 与被删入口的**死文案键**。前面那批删掉的是能力本体，这批删掉的是「能力没了、
+      # 线还连着」的收尾 —— 不删就等于本 fork 仍定时外连上游服务器、界面里仍摆着
+      # 一个点了没反应的入口名。
+      - server/internal/update/service.go
+      - server/internal/update/service_test.go
+      - web/src/services/appUpdate.ts
+      - web/src/i18n/locales/zh-CN.ts
+      - web/src/i18n/locales/en-US.ts
     tests:
       - web/tests/upstream-removals.test.mjs
 

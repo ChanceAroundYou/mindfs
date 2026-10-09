@@ -129,4 +129,26 @@ for (const gone of ['"/api/relay"', '"/api/e2ee"']) {
   assert.ok(!roleSrc.includes(gone), `nodeinfo 控制面前缀表重新收回了已删端点：${gone}`);
 }
 
+// 上游 relay 域名依赖也必须断掉（G-H，2026-10-09 用户拍板「一起砍掉」）：
+// 更新检查与下载曾硬编码 relay.a9gent.com —— 隧道删了、这条对上游服务器的外连还在，
+// 等于删除只做了一半。缺省必须是「没有这个地址」，只能由构建期环境变量显式提供；
+// 两台机器上真正被用到的只有这个字面量，故按整份源码扫（注释里也不许出现）。
+for (const [file, why] of [
+  ["web/src/services/appUpdate.ts", "又内置了 relay 版本检查地址"],
+  ["server/internal/update/service.go", "又内置了 relay 下载回退"],
+]) {
+  const src = fs.readFileSync(path.join(root, file), "utf8");
+  assert.ok(!src.includes("relay.a9gent.com"), `${file} ${why}`);
+}
+
+// 死键：入口删了、文案还在。用户能在 i18n 文件里看到「公网访问本地服务」这种
+// 早已不存在的功能名，是「删了一半」最典型的残留。
+for (const locale of ["zh-CN", "en-US"]) {
+  const localeSrc = fs.readFileSync(path.join(root, `web/src/i18n/locales/${locale}.ts`), "utf8");
+  assert.ok(
+    !localeSrc.includes("fileTree.relayLocalServices"),
+    `${locale}.ts 还留着已删入口的死键 fileTree.relayLocalServices`,
+  );
+}
+
 console.log(`✓ 上游裁剪面完整：${REMOVED.length} 个被删文件未复活、无悬空引用、替代实现在位`);

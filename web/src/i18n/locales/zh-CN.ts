@@ -79,7 +79,6 @@ export const zhCN = {
   "fileTree.agentInstallUpdate": "Agent 安装和更新",
   "fileTree.sessionNamingAgent": "会话重命名配置",
   "fileTree.idleSessionResourceRelease": "空闲会话释放",
-  "fileTree.relayLocalServices": "公网访问本地服务",
   "fileTree.notificationStatusFailed": "通知状态读取失败",
   "fileTree.notificationSent": "测试通知已发送",
   "fileTree.notificationActionFailed": "通知操作失败",

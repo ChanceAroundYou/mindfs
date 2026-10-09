@@ -1,9 +1,6 @@
 import { getNativeBridge, parseNativeJSON } from "./platform/nativeBridge";
 import { getNativePlatform, isAndroidRuntime, isHarmonyRuntime, isNativeShellRuntime, type NativePlatform } from "./platform/runtime";
 
-const DEFAULT_ANDROID_VERSION_URL = "https://relay.a9gent.com/api/versions/android";
-const DEFAULT_HARMONY_VERSION_URL = "https://relay.a9gent.com/api/versions/harmony";
-
 export type AppUpdateState = {
   platform: NativePlatform;
   current_version: string;
@@ -17,7 +14,7 @@ export type AppUpdateState = {
   filename: string;
 };
 
-type RelayVersionResponse = {
+type AppVersionResponse = {
   version?: string;
   notes?: string;
   downloads?: Array<{
@@ -61,14 +58,18 @@ export async function fetchAppUpdateState(): Promise<AppUpdateState> {
   }
 
   const platform = getNativePlatform();
-  const appInfo = await getAppInfo();
   const endpoint = buildVersionEndpoint(platform);
+  if (!endpoint) {
+    // 未配置版本检查地址：按「没有更新信息」处理，不拿空 URL 去 fetch。
+    return normalizeAppUpdateState(null);
+  }
+  const appInfo = await getAppInfo();
   const response = await fetch(endpoint, { cache: "no-cache" });
   if (!response.ok) {
     throw new Error(`${platform}_version_check_failed_${response.status}`);
   }
 
-  const payload = (await response.json()) as RelayVersionResponse;
+  const payload = (await response.json()) as AppVersionResponse;
   const download = pickNativeDownload(payload, platform);
   const latestVersion = normalizeVersionLabel(payload.version || "");
   const currentVersion = normalizeVersionLabel(appInfo.version || "");
@@ -90,13 +91,13 @@ export async function fetchAppUpdateState(): Promise<AppUpdateState> {
   });
 }
 
+// 版本检查地址只由构建期环境变量提供，缺省为空 = 不做检查。
+// 刻意不再内置上游 relay 域名（本 fork 已整体删除 relay，见 G-H）。
 function buildVersionEndpoint(platform: NativePlatform): string {
   if (platform === "harmony") {
-    const configured = String(import.meta.env.VITE_HARMONY_VERSION_URL || "").trim();
-    return configured || DEFAULT_HARMONY_VERSION_URL;
+    return String(import.meta.env.VITE_HARMONY_VERSION_URL || "").trim();
   }
-  const configured = String(import.meta.env.VITE_ANDROID_VERSION_URL || "").trim();
-  return configured || DEFAULT_ANDROID_VERSION_URL;
+  return String(import.meta.env.VITE_ANDROID_VERSION_URL || "").trim();
 }
 
 async function getAppInfo(): Promise<{ version?: string; build?: string }> {
@@ -115,7 +116,7 @@ async function getAppInfo(): Promise<{ version?: string; build?: string }> {
   return {};
 }
 
-function pickNativeDownload(payload: RelayVersionResponse, platform: NativePlatform): {
+function pickNativeDownload(payload: AppVersionResponse, platform: NativePlatform): {
   filename?: string;
   url?: string;
 } {

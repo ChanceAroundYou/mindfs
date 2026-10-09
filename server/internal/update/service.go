@@ -27,7 +27,6 @@ import (
 const (
 	defaultCheckInterval = time.Hour
 	releaseNotesPath     = "release-notes.md"
-	relayDownloadBase    = "https://relay.a9gent.com/mindfs-downloads"
 )
 
 var releaseManifestPublicKey string
@@ -644,28 +643,9 @@ func (s *Service) downloadReleaseAsset(ctx context.Context, asset releaseAsset, 
 	if primaryURL == "" {
 		return errors.New("release asset download URL unavailable")
 	}
-	if err := s.downloadFile(ctx, primaryURL, dst); err == nil {
-		return nil
-	} else {
-		fallbackURL := relayAssetURL(asset.Name)
-		if fallbackURL == "" || fallbackURL == primaryURL {
-			return err
-		}
-		log.Printf("[update] download.github_failed asset=%s err=%v fallback=%s", strings.TrimSpace(asset.Name), err, fallbackURL)
-		_ = os.Remove(dst)
-		if fallbackErr := s.downloadFile(ctx, fallbackURL, dst); fallbackErr != nil {
-			return fmt.Errorf("download failed from GitHub (%v) and relay fallback (%v)", err, fallbackErr)
-		}
-		return nil
-	}
-}
-
-func relayAssetURL(name string) string {
-	name = strings.TrimSpace(name)
-	if name == "" || strings.ContainsAny(name, `/\`) {
-		return ""
-	}
-	return strings.TrimRight(relayDownloadBase, "/") + "/" + name
+	// 只认 GitHub 给的 asset 地址：本地 fork 已删掉 relay 镜像回退
+	// （上游 relay 域名不再是本 fork 的依赖，见 G-H）。
+	return s.downloadFile(ctx, primaryURL, dst)
 }
 
 func (s *Service) fetchURL(ctx context.Context, url string, limit int64) ([]byte, error) {

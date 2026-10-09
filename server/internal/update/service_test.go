@@ -146,17 +146,48 @@ func TestVerifyFileSHA256(t *testing.T) {
 	}
 }
 
-func TestRelayAssetURL(t *testing.T) {
-	name := "mindfs_v0.3.4_windows_amd64.zip"
-	want := "https://relay.a9gent.com/mindfs-downloads/mindfs_v0.3.4_windows_amd64.zip"
-	if got := relayAssetURL(name); got != want {
-		t.Fatalf("relayAssetURL() = %q, want %q", got, want)
+// 本地 fork 已删掉 relay 镜像回退（G-H）：下载失败必须当场返回，不能再回落到
+// relay.a9gent.com。旧实现会再发一次请求，并把失败包装成
+// 「download failed from GitHub (...) and relay fallback (...)」——两条断言分别钉住
+// 「只请求主地址一次」与「错误里不该出现 relay」。
+func TestDownloadReleaseAssetDoesNotFallBackToRelay(t *testing.T) {
+	t.Parallel()
+
+	const primaryURL = "https://github.test/mindfs/releases/download/v1/mindfs_v0.3.4_windows_amd64.zip"
+	var requested []string
+	service := NewService("a9gent/mindfs", "v1.2.2", filepath.Join(t.TempDir(), "mindfs"), nil, time.Hour)
+	service.client = &http.Client{Transport: recordingTransport{seen: &requested}}
+
+	dst := filepath.Join(t.TempDir(), "mindfs_v0.3.4_windows_amd64.zip")
+	err := service.downloadReleaseAsset(context.Background(), releaseAsset{
+		Name:               "mindfs_v0.3.4_windows_amd64.zip",
+		BrowserDownloadURL: primaryURL,
+	}, dst)
+	if err == nil {
+		t.Fatal("downloadReleaseAsset() error = nil, want failure")
 	}
-	for _, name := range []string{"", "../mindfs.zip", `dir\mindfs.zip`} {
-		if got := relayAssetURL(name); got != "" {
-			t.Fatalf("relayAssetURL(%q) = %q, want empty", name, got)
-		}
+	if strings.Contains(err.Error(), "relay") {
+		t.Fatalf("downloadReleaseAsset() error = %v, 不应再出现 relay 回退", err)
 	}
+	if got := strings.Join(requested, ","); got != primaryURL {
+		t.Fatalf("requested URLs = %q, want 只有主地址 %q", got, primaryURL)
+	}
+}
+
+// recordingTransport 记录每次请求的 URL，并统一回 502。
+type recordingTransport struct {
+	seen *[]string
+}
+
+func (t recordingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	*t.seen = append(*t.seen, req.URL.String())
+	return &http.Response{
+		StatusCode: http.StatusBadGateway,
+		Status:     "502 Bad Gateway",
+		Body:       io.NopCloser(strings.NewReader("boom")),
+		Header:     make(http.Header),
+		Request:    req,
+	}, nil
 }
 
 func TestInstallLayoutInstalled(t *testing.T) {

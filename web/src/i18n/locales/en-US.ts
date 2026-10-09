@@ -81,7 +81,6 @@ export const enUS = {
   "fileTree.agentInstallUpdate": "Install and update Agent",
   "fileTree.sessionNamingAgent": "Session rename settings",
   "fileTree.idleSessionResourceRelease": "Idle session release",
-  "fileTree.relayLocalServices": "Expose local services",
   "fileTree.notificationStatusFailed": "Failed to read notification status",
   "fileTree.notificationSent": "Test notification sent",
   "fileTree.notificationActionFailed": "Notification action failed",
