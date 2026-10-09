@@ -1288,6 +1288,13 @@ groups:
       - web/vite.config.ts
       - web/index.html
       - web/tests/deploy-prefix.test.mjs
+      # 第三批（2026-10-09）：Harmony 原生壳里 6 处「当前页面是不是上游 relay 页面」
+      # 的判定，连同它们驱动的 relay 节点同步（注入脚本 + MindFSLauncherNodeSync 桥）、
+      # 列表安全区补丁、启动器里藏「mindfs relayer」按钮一起删。这些判定**不发起任何
+      # 外连**，只在处于 relay 页面时才生效，属被动死分支；而服务它们的 web 半边
+      # （web/src/services/launcherNodeSync.ts）已随 2026-10-08 那批删除。
+      # 只能做文本级复活检测 —— 本仓库没有 ArkTS 构建环境，改它无法编译验证。
+      - harmony/entry/src/main/ets/pages/Index.ets
     tests:
       - web/tests/upstream-removals.test.mjs
 

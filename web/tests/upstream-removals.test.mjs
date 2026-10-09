@@ -169,6 +169,12 @@ for (const [file, gone] of [
   ["web/index.html", "MINDFS_MAIN_ASSET_RE"],
   ["web/index.html", "isRelayNodePage"],
   ["web/vite.config.ts", "MINDFS_MAIN_ASSET_RE"],
+  // Harmony 原生壳（G-H 第三批，2026-10-09）：6 处「当前页面是不是上游 relay 页面」的
+  // 判定，以及它们驱动的 relay 节点同步（注入脚本 + MindFSLauncherNodeSync 桥）、
+  // 列表安全区补丁、启动器里藏「mindfs relayer」按钮 —— 一并删掉。这里只能做
+  // **文本级**复活检测：本仓库没有 ArkTS 构建环境，改它无法编译验证。
+  ["harmony/entry/src/main/ets/pages/Index.ets", "relay.a9gent.com"],
+  ["harmony/entry/src/main/ets/pages/Index.ets", "MindFSLauncherNodeSync"],
 ]) {
   const src = fs.readFileSync(path.join(root, file), "utf8");
   assert.ok(!src.includes(gone), `${file} 又出现了 relay 资源别名接线：${gone}`);

@@ -261,6 +261,7 @@
 | 2026-10-08 | **删包** `server/internal/relay/`（8 文件）、`server/internal/e2ee/`（4 文件）；**删路由** `server/internal/api/http_relay_services.go`、`http_token_station.go`、`http_local_cli_relay_test.go`；**删前端** `web/src/services/e2ee.ts`、`RelayLocalServicesDialog.tsx`、`SessionQuickActions.tsx`、`relayServices.ts`、`tokenStation.ts`；**清接线** `server/internal/api/http.go`(-549)、`ws.go`(-73)、`appcontext.go`、`agent/config.go`、`nodeinfo/role.go`（去掉 `/api/relay`、`/api/e2ee` 两条前缀）、`cli/cmd/mindfs.go`(-193)、`server/app/server.go`(-148)、`web/src/services/net/{bootstrap,api}.ts`、`session.ts` | **彻底删除 relay 隧道与 e2ee**（用户 2026-10-08 明确要求）：不是「关掉开关」而是「不存在」—— 删包、删路由、删所有前端入口与调用点、删 e2ee proof/解密与 `e2ee_*` 头 |
 | 2026-10-09 | `server/internal/update/service.go`(-23)、`server/internal/update/service_test.go`、`web/src/services/appUpdate.ts`、`web/src/i18n/locales/{zh-CN,en-US}.ts`、`web/tests/upstream-removals.test.mjs` | **断掉上游 relay 域名依赖 + 清死文案键**（用户 2026-10-09 拍板「一起砍掉」）：删 `relayDownloadBase`/`relayAssetURL` 与下载回退（`downloadReleaseAsset` 只认 GitHub 给的 asset 地址）；前端删 `DEFAULT_ANDROID/HARMONY_VERSION_URL`、`RelayVersionResponse` 改名 `AppVersionResponse`，版本检查地址缺省为空（只由 `VITE_*_VERSION_URL` 显式提供，未配置即按「无更新信息」返回、不拿空 URL 去 fetch）；删两个已无代码引用的死键 `fileTree.relayLocalServices` |
 | 2026-10-09（二） | `internal/deploy/prefix.go`、`internal/deploy/prefix_test.go`、`server/internal/api/prefix.go`、`server/internal/api/http_test.go`、`web/src/services/net/prefix.ts`、`web/src/main.tsx`、`web/vite.config.ts`、`web/tests/deploy-prefix.test.mjs` | **删掉 relay 时代的资源别名前缀**（用户拍板「现在砍掉」）：服务端 `deploy.RelayAssetsAlias()`、`StripDeployPrefix` 里的 `/<前缀>-assets/` → `/assets/` 映射分支；前端 `RELAY_ASSETS_PREFIX` 导出与 `main.tsx` 的资源判定分支；`vite.config.ts` 里注入 SW 的 `RELAY_ALIAS`、fetch 时对它的跳过分支、`mainAssetReSource` 里的别名备选，以及 SW 里把 relay 的 `/n/<token>/` 路径归一化掉的 `normalizedPathname`。**判据**：产生这些 URL 的两处（服务端 relayed 绝对化改写、relay 的 `/n/<token>/` 路径方案）已随 2026-10-08 那批删除，构建产物里恒为 `<部署前缀>/assets/index-*`；**留一半比全留更糟**——服务端删了、SW 还认，排查者会以为别名仍受支持 |
+| 2026-10-09（三） | `harmony/entry/src/main/ets/pages/Index.ets`（纯删除 237 行） | **删掉 Harmony 原生壳里的 relay 分支**（用户拍板「纯删除」）：6 处「当前页面是不是上游 relay 页面」的判定（`shouldSyncRelayNodes`／`shouldPatchRelayNodeShell`（本就无人调用）／`shouldPatchRelayListSafeArea`／`replyPollerBaseUrlFromPageUrl` 的 `/n/<token>/` 分支）＋它们驱动的注入脚本（relay `/nodes` 抓节点列表的 `injectRelayNodeSync`、列表安全区补丁 `injectRelayListSafeArea`、启动器里藏「mindfs relayer」按钮的 `injectLauncherRelayEntryVisibility`）＋ `MindFSLauncherNodeSync` 这条 JS 桥（注册／反注册／页面构建三处）。**判据**：这些判定不发起任何外连，只在处于 relay 页面时才生效，属被动死分支；而服务它们的 web 半边 `web/src/services/launcherNodeSync.ts` 已随 2026-10-08 那批删除。**注意**：本仓库没有 ArkTS 构建环境，改动**无法编译验证**，只留了文本级复活检测 |
 
 - 保留判据：**用户明确要求完整删除，没有「保留一部分」的中间态**。
   合上游时上游会把它们给回来，每次都要重新删一遍 —— 删漏就会留下「点了报错」的残缺入口，
@@ -278,12 +279,22 @@
   `web/vite.config.ts`、`web/index.html` 里不得再出现 `RelayAssetsAlias`／`RELAY_ASSETS_PREFIX`／
   `RELAY_ALIAS`／`MINDFS_MAIN_ASSET_RE`／`isRelayNodePage`；
   `deploy-prefix.test.mjs` 的断言从「别名必须存在」翻成「别名与主包兜底都不得存在」。
+  第三批（Harmony 壳）只有**文本级**复活检测（`harmony/.../Index.ets` 里不得再出现
+  `relay.a9gent.com` 与 `MindFSLauncherNodeSync`）—— 本仓库没有 ArkTS 构建环境，
+  native 侧改动无法编译验证，这一点必须在下一次真跑 Harmony 构建时人工确认。
 - **仍在引用上游 relay 域名的位置（2026-10-09 盘点，尚未处理）**：`scripts/install.sh`、
   `scripts/install.ps1`（一键安装脚本从这里取二进制）、
-  `harmony/entry/src/main/ets/pages/Index.ets`（Harmony 原生壳的版本检查与下载，6 处）、
   `README.md`/`README.zh.md`（文档里的安装地址）。这几处的取舍各不相同
   （安装脚本没有替代下载源就不能直接删；README 只是文案），等用户逐个定夺；
   先在此留痕，免得下次盘点又从头找一遍。
+  （原表里的 `harmony/.../Index.ets` 已于 2026-10-09（三）处理，故从此表移除。）
+- **Harmony 侧尚未处理的相邻死代码（2026-10-09 盘点）**：`nativeBridgeMethodList()` 里的
+  `consumeRelayNodes`／`getLauncherNodes`／`setLauncherNodes`／`storeRelayNodes`，以及
+  `hydrateLauncherNodesFromNative`／`injectLauncherNodesFromNative` —— 它们是「启动器
+  从 native 取节点列表」那套东西的 native 半边，web 半边
+  `web/src/services/launcherNodeSync.ts` 已随 2026-10-08 删除。**没有一并删**是因为它属于
+  「删一整个功能」而不是「删 relay 判定」，且同样无法编译验证；等真跑一次 Harmony 构建
+  时一起处理，避免在无法验证的 native 代码上叠两次改动。
 
 ### G-I 安全模型重塑（API 层不鉴权 / CORS 全开放）
 
