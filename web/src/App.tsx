@@ -210,6 +210,9 @@ import { useGitActions } from "./app/useGitActions";
 import { useSessionSearch } from "./app/useSessionSearch";
 import { useGitData } from "./app/useGitData";
 import { useProjectTreeWorktrees } from "./app/useProjectTreeWorktrees";
+import { useAppAgentActions } from "./app/useAppAgentActions";
+import { useAppTaskDrawer } from "./app/useAppTaskDrawer";
+import { useAppProjectRemoval } from "./app/useAppProjectRemoval";
 import { useProjectLifecycle } from "./app/useProjectLifecycle";
 import { useSessionSidebarView } from "./app/useSessionSidebarView";
 import { useSessionStreamCache } from "./app/useSessionStreamCache";
@@ -1766,63 +1769,6 @@ export function App({ onGoHome }: AppProps) {
   useArchiveSync({SESSION_PAGE_SIZE, archiveOpen, archiveReloadToken, getNodeIdForRoot, managedRootByKeyRef, managedRootIdsRef, rootNodeKey, sessionService, setArchiveLoading, setArchivedGroups, toSessionItem, useEffect});
 
 
-  const handleForkAgentMessage = useCallback(
-    async (
-      rootID: string | null | undefined,
-      sessionKey: string | null | undefined,
-      seq: number,
-    ) => {
-      const resolvedRoot = String(rootID || currentRootIdRef.current || "").trim();
-      const resolvedKey = String(sessionKey || "").trim();
-      if (!resolvedRoot || !resolvedKey || seq <= 0) {
-        reportError("session.sync_failed", t("session.forkMissing"));
-        return;
-      }
-      let result: Awaited<ReturnType<typeof sessionService.forkSession>>;
-      try {
-        result = await sessionService.forkSession(resolvedRoot, resolvedKey, seq, getNodeIdForRoot(resolvedRoot));
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error);
-        reportError("session.sync_failed", `${t("session.forkFailed")}: ${detail}`);
-        return;
-      }
-      const forked = result?.session;
-      const forkedKey = String(result?.session_key || forked?.key || "").trim();
-      if (!forkedKey) {
-        reportError("session.sync_failed", t("session.forkFailed"));
-        return;
-      }
-      if (forked) {
-        const normalized = {
-          ...(forked as any),
-          key: forkedKey,
-          session_key: forkedKey,
-          root_id: resolvedRoot,
-        } as Session;
-        const cacheKey = rootSessionKey(resolvedRoot, forkedKey);
-        sessionCacheRef.current[cacheKey] = normalized;
-        loadedSessionRef.current[cacheKey] = true;
-        const item = toSessionItem(resolvedRoot, normalized);
-        if (item) {
-          setSessions((prev) => mergeSessionItems(prev, [item]));
-          await handleSelectSession(item);
-        } else {
-          await handleSelectSession({ key: forkedKey, session_key: forkedKey, root_id: resolvedRoot });
-        }
-      } else {
-        await handleSelectSession({ key: forkedKey, session_key: forkedKey, root_id: resolvedRoot });
-      }
-      void loadSessionsForRoot(resolvedRoot, { replace: true, force: true });
-      bumpCacheVersion();
-    },
-    [
-      bumpCacheVersion,
-      handleSelectSession,
-      loadSessionsForRoot,
-      mergeSessionItems,
-      rootSessionKey,
-    ],
-  );
 
   useEffect(() => {
     handleSelectSessionRef.current = handleSelectSession;
@@ -1918,44 +1864,16 @@ export function App({ onGoHome }: AppProps) {
     updateSessionAgentForKey,
   });
 
-  const handleRunAgentLifecycleCommand = useCallback(
-    async (agentName: string, action: "install" | "update", commands: string[]) => {
-      const activeRoot = currentRootIdRef.current;
-      if (!activeRoot) {
-        throw new Error(t("root.noProjectForCommand"));
-      }
-      const script = commands.map((command) => command.trim()).filter(Boolean).join("\n");
-      if (!script) {
-        throw new Error(t("agentConfig.noCommand"));
-      }
-      const previousBoundKey = boundSessionByRootRef.current[scopedRootKey(activeRoot)];
-      if (previousBoundKey && !previousBoundKey.startsWith("pending-")) {
-        suppressedAutoBindSessionByRootRef.current[scopedRootKey(activeRoot)] = previousBoundKey;
-      }
-      selectedSessionRef.current = null;
-      currentSessionRef.current = null;
-      setSelectedSession(null);
-      selectedSessionByRootRef.current[scopedRootKey(activeRoot)] = null;
-      setBoundSessionForRoot(activeRoot, null);
-      setDrawerSessionForRoot(activeRoot, null);
-      setInteractionMode("drawer");
-      setDrawerOpenForRoot(activeRoot, true);
-      await handleSendMessage(script, "command", "");
-      console.info("[agent/lifecycle] command dispatched", {
-        agent: agentName,
-        action,
-        commandCount: commands.length,
-      });
-    },
-    [
-      handleSendMessage,
-      setBoundSessionForRoot,
-      setDrawerOpenForRoot,
-      setDrawerSessionForRoot,
-      t,
-    ],
-  );
 
+  const { handleForkAgentMessage, handleRunAgentLifecycleCommand
+  } = useAppAgentActions({
+    boundSessionByRootRef, bumpCacheVersion, currentRootIdRef, currentSessionRef,
+    getNodeIdForRoot, handleSelectSession, handleSendMessage, loadSessionsForRoot,
+    loadedSessionRef, rootSessionKey, scopedRootKey, selectedSessionByRootRef,
+    selectedSessionRef, sessionCacheRef, setBoundSessionForRoot, setDrawerOpenForRoot,
+    setDrawerSessionForRoot, setInteractionMode, setSelectedSession, setSessions,
+    suppressedAutoBindSessionByRootRef, t,
+  });
   const handleRestartAgent = useCallback(async (agentName: string) => {
     const nid = getNodeIdForRoot(currentRootIdRef.current || "") as any;
     await restartAgent(agentName, nid);
@@ -2300,18 +2218,11 @@ export function App({ onGoHome }: AppProps) {
   }, [notifyNodeLoadFailed]);
 
 
-  const findManagedRootByPath = useCallback((path: string): ManagedRootPayload | null => {
-    const target = normalizeComparableRootPath(path);
-    if (!target) {
-      return null;
-    }
-    for (const root of Object.values(managedRootByIdRef.current)) {
-      if (normalizeComparableRootPath(root.root_path || "") === target) {
-        return root;
-      }
-    }
-    return null;
-  }, [normalizeComparableRootPath]);
+  const { findManagedRootByPath, handleRemoveCurrentRoot, handleRemoveCurrentWorktree
+  } = useAppProjectRemoval({
+    clearRootScopedClientState, currentRootIdRef, getNodeIdForRoot, managedRootByIdRef,
+    refreshManagedRoots, t,
+  });
 
   const openManagedDir = useCallback(
     (payload: { path: string; root: string; isRoot: boolean; forceDirectory?: boolean }) =>
@@ -2349,56 +2260,7 @@ export function App({ onGoHome }: AppProps) {
   });
 
 
-  const handleRemoveCurrentRoot = useCallback(async () => {
-    const rootID = currentRootIdRef.current;
-    if (!rootID) {
-      return;
-    }
-    const rootInfo = managedRootByIdRef.current[rootID];
-    const rootPath = rootInfo?.root_path || "";
-    if (!rootPath) {
-      reportError("root.delete_failed", t("root.missingPathRemove"));
-      return;
-    }
-    if (!await confirmDialog({ message: t("root.confirmRemove", { name: rootID }), danger: true })) {
-      return;
-    }
-    try {
-      await apiProtectedJSON<any>(
-        appURL("/api/dirs", new URLSearchParams({ path: rootPath }), getNodeIdForRoot(rootID)),
-        {
-          method: "DELETE",
-        },
-      );
-      clearRootScopedClientState(rootID, { removeLastRoot: true });
-      await refreshManagedRoots();
-    } catch (err) {
-      reportError(
-        "root.delete_failed",
-        String((err as Error)?.message || t("root.removeFailed")),
-      );
-    }
-  }, [clearRootScopedClientState, refreshManagedRoots, t]);
 
-  const handleRemoveCurrentWorktree = useCallback(async () => {
-    const rootID = currentRootIdRef.current;
-    if (!rootID) {
-      return;
-    }
-    if (!await confirmDialog({ message: t("worktree.confirmRemove", { name: rootID }), danger: true })) {
-      return;
-    }
-    try {
-      await removeGitWorktree(rootID);
-      clearRootScopedClientState(rootID, { removeLastRoot: true });
-      await refreshManagedRoots();
-    } catch (err) {
-      reportError(
-        "git.worktree_remove_failed",
-        String((err as Error)?.message || t("worktree.removeFailed")),
-      );
-    }
-  }, [clearRootScopedClientState, refreshManagedRoots, t]);
 
   const {
     ensurePluginsLoaded,
@@ -2468,113 +2330,21 @@ export function App({ onGoHome }: AppProps) {
   }, [ensurePluginsLoaded]);
 
 
-  const handleSessionChipClick = useCallback(
-    (sessionKey: string, rootOverride?: string | null) => {
-      if (!sessionKey) return;
-      const matched = sessions.find((item) => {
-        const key = item.key || item.session_key;
-        return key === sessionKey;
-      });
-      // CUSTOM(G-Z): 归属按卡片/文件视图声明的 root 钉死，不随当前根漂移（见 sessionJump.ts）。
-      const target = buildSessionJumpTarget({
-        sessionKey,
-        rootOverride: rootOverride ?? file?.root,
-        matched,
-        currentRoot: currentRootIdRef.current,
-      });
-      if (!target) return;
-      handleSelectSession(target);
-    },
-    [file, sessions, handleSelectSession],
-  );
+  const { handleSessionChipClick,
+    handleTaskSessionDrawerOpen,
+    refreshTaskRelatedFiles,
+    refreshTasksForRelatedSession,
+    handleSelectKanbanTask,
+  } = useAppTaskDrawer({
+    currentRootIdRef, file, getNodeIdForRoot, handleSelectSession,
+    rootSessionKey, sessionCacheRef, sessions, setSelectedKanbanTaskId,
+    setTaskRelatedFilesById, taskDetailsByIdRef, taskSessionKeysById, taskSessionKeysByIdRef,
+    updateSessionRelatedFilesForKey,
+  });
 
-	  const handleTaskSessionDrawerOpen = useCallback(
-    (sessionKey: string, rootOverride?: string | null, taskId?: string) => {
-      const key = String(sessionKey || "").trim();
-      if (!key) return;
-      const matched = sessions.find((item) => (item.key || item.session_key) === key);
-      // 任务会话就是普通会话：直接走主面板装配（selectedSession + main 模式 + URL + 同步），
-      // 不再走 drawer 浮层——drawer 模式下在会话面板里切换工作台/看板没有全屏语境。
-      const root = resolveSessionJumpRoot(rootOverride, matched, currentRootIdRef.current);
-      if (!root) return;
-      const cached = sessionCacheRef.current[rootSessionKey(root, key)];
-      // CUSTOM(G-Z): 缓存里可能是历史写入的无 root 对象，这里强制写回卡片 root，
-      // 否则 handleSelectSession 的 `root_id || 当前根` 兜底会把它认成当前项目。
-      const target = buildSessionJumpTarget({
-        sessionKey: key,
-        rootOverride,
-        taskId,
-        matched,
-        cached,
-        currentRoot: currentRootIdRef.current,
-      });
-      if (!target) return;
-      void handleSelectSession(target as any, { preserveTaskSelection: true });
-    },
-    [
-      currentRootIdRef,
-      handleSelectSession,
-      rootSessionKey,
-      sessionCacheRef,
-      sessions,
-    ],
-  );
 
-  const refreshTaskRelatedFiles = useCallback(async (
-	    root: string,
-	    taskId: string,
-	    sessionKeys: string[],
-	  ) => {
-	    const keys = Array.from(new Set(
-	      sessionKeys
-	        .map((key) => String(key || "").trim())
-	        .filter(Boolean),
-	    ));
-	    if (!root || !taskId || keys.length === 0) return;
-	    const relatedFileGroups = await Promise.all(
-	      keys.map(async (sessionKey) => {
-	        const relatedFiles = await sessionService.getSessionRelatedFiles(root, sessionKey, getNodeIdForRoot(root));
-	        await setCachedSessionRelatedFiles(root, sessionKey, relatedFiles, getNodeIdForRoot(root));
-	        updateSessionRelatedFilesForKey(root, sessionKey, relatedFiles);
-	        return relatedFiles;
-	      }),
-	    );
-	    setTaskRelatedFilesById((prev) => ({ ...prev, [taskId]: mergeRelatedFileGroups(relatedFileGroups) }));
-	  }, [updateSessionRelatedFilesForKey]);
 
-	  const refreshTasksForRelatedSession = useCallback((root: string, sessionKey: string) => {
-	    const taskIds = taskIdsForUpdatedSession(taskSessionKeysByIdRef.current, sessionKey);
-	    taskIds.forEach((taskId) => {
-	      const detail = taskDetailsByIdRef.current[taskId];
-	      const task = detail?.task;
-	      if (!task || task.root_id !== root) return;
-	      const sessionKeys = Array.from(new Set(
-	        [...(taskSessionKeysByIdRef.current[taskId] || []), task.main_session_key]
-	          .map((key) => String(key || "").trim())
-	          .filter(Boolean),
-	      ));
-	      void refreshTaskRelatedFiles(root, taskId, sessionKeys).catch((error) => {
-	        console.error("[task.related_files] refresh from session event failed", { root, taskId, sessionKey, error });
-	      });
-	    });
-	  }, [refreshTaskRelatedFiles]);
 
-	  const handleSelectKanbanTask = useCallback((task: KanbanTask) => {
-	    const taskId = String(task.id || "");
-	    if (!taskId) return;
-	    setSelectedKanbanTaskId((prev) => prev === taskId ? "" : taskId);
-	    const root = task.root_id || currentRootIdRef.current || "";
-	    const sessionKeys = Array.from(new Set(
-	      [...(taskSessionKeysById[taskId] || []), task.main_session_key]
-	        .map((key) => String(key || "").trim())
-	        .filter(Boolean),
-	    ));
-	    if (!root || sessionKeys.length === 0) return;
-	    void refreshTaskRelatedFiles(root, taskId, sessionKeys)
-	      .catch((error) => {
-	        console.error("[task.related_files] failed", { root, taskId, sessionKeys, error });
-	      });
-	  }, [refreshTaskRelatedFiles, taskSessionKeysById]);
 
 	  useEffect(() => {
     function openReplySession(detail: any) {

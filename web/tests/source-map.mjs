@@ -91,6 +91,11 @@ export const MODULES = {
     "src/app/useSessionListActions.ts",
     "src/app/useSessionRelatedFiles.ts",
     "src/app/useSessionQueueActions.ts",
+    // App.tsx 深度拆分（2026-10-08）新抽出的域 hook —— 必须登记在这里，
+    // 否则 50 个读 "src/App.tsx" 逻辑路径的结构测试会漏掉搬走的代码。
+    "src/app/useAppProjectRemoval.ts",
+    "src/app/useAppTaskDrawer.ts",
+    "src/app/useAppAgentActions.ts",
   ],
 
   // P6 拆分：FileTree.tsx → + icons.tsx（图标子组件）
