@@ -16,6 +16,14 @@ import { extractMarkdownOutline } from "../../shared/markdownOutline";
 const EMPTY_OUTLINE: ReturnType<typeof extractMarkdownOutline> = [];
 import { DiagramPreview } from "./DiagramPreview";
 import { MarkdownCodeBlockMemo, MermaidBlock, monoFontFamily } from "./MarkdownCodeBlocks";
+import {
+  normalizePosixPath,
+  dirnamePosix,
+  resolveMarkdownHref,
+  isExternalHref,
+  isDirectImageSrc,
+  normalizeMarkdownMathDelimiters,
+} from "./markdownUtils";
 import "prismjs/themes/prism.css";
 import "katex/dist/katex.min.css";
 // Reuse the language imports from global Prism context (since they are imported in CodeViewer, they might be available if loaded, 
@@ -30,49 +38,6 @@ import "prismjs/components/prism-json";
 import "prismjs/components/prism-diff";
 
 
-function normalizePosixPath(input: string): string {
-  const absolute = input.startsWith("/");
-  const parts = input.split("/").filter((part) => part && part !== ".");
-  const normalized: string[] = [];
-  for (const part of parts) {
-    if (part === "..") {
-      normalized.pop();
-      continue;
-    }
-    normalized.push(part);
-  }
-  return absolute ? `/${normalized.join("/")}` : normalized.join("/");
-}
-
-function dirnamePosix(input: string): string {
-  const normalized = normalizePosixPath(input.replace(/\\/g, "/"));
-  if (!normalized || !normalized.includes("/")) return ".";
-  const parts = normalized.split("/");
-  parts.pop();
-  return parts.join("/") || ".";
-}
-
-function resolveMarkdownHref(currentPath: string, href: string): string {
-  const trimmed = href.trim();
-  if (!trimmed) return "";
-  if (trimmed.startsWith("file://")) {
-    return decodeURIComponent(trimmed.slice("file://".length));
-  }
-  if (trimmed.startsWith("/")) {
-    return decodeURIComponent(trimmed);
-  }
-  const baseDir = currentPath ? dirnamePosix(currentPath) : ".";
-  return decodeURIComponent(normalizePosixPath(`${baseDir}/${trimmed}`));
-}
-
-function isExternalHref(href: string): boolean {
-  return /^(https?:|mailto:|tel:)/i.test(href);
-}
-
-function isDirectImageSrc(src: string): boolean {
-  return /^(https?:|data:|blob:)/i.test(src);
-}
-
 const markdownSanitizeSchema = {
   ...defaultSchema,
   attributes: {
@@ -81,38 +46,6 @@ const markdownSanitizeSchema = {
     img: [...(defaultSchema.attributes?.img || []), "alt", "title", "width"],
   },
 };
-
-function normalizeMarkdownMathDelimiters(content: string): string {
-  const lines = content.split("\n");
-  let fenced = false;
-  let fenceMarker = "";
-
-  return lines
-    .map((line) => {
-      const fenceMatch = /^(\s*)(`{3,}|~{3,})/.exec(line);
-      if (fenceMatch) {
-        const marker = fenceMatch[2][0];
-        if (!fenced) {
-          fenced = true;
-          fenceMarker = marker;
-        } else if (marker === fenceMarker) {
-          fenced = false;
-          fenceMarker = "";
-        }
-        return line;
-      }
-
-      if (fenced) return line;
-
-      const trimmed = line.trim();
-      if (trimmed === "\\[" || trimmed === "\\]") {
-        return `${line.slice(0, line.indexOf(trimmed))}$$`;
-      }
-
-      return line.replace(/\\\((.+?)\\\)/g, (_match, formula: string) => `$${formula}$`);
-    })
-    .join("\n");
-}
 
 function MarkdownImage({
   src = "",
