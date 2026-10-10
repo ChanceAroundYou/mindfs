@@ -198,11 +198,8 @@ func TestACPImportKeepsThoughtChunks(t *testing.T) {
 	if got[0].Content != "" {
 		t.Fatalf("纯 reasoning 轮次没有文本，Content 应为空: %q", got[0].Content)
 	}
-	if len(got[0].Aux) != 1 || got[0].Aux[0].ToolCall == nil || got[0].Aux[0].ToolCall.Kind != types.ToolKindThink {
-		t.Fatalf("reasoning 应落成一条 think 工具卡: %+v", got[0].Aux)
-	}
-	if text := got[0].Aux[0].ToolCall.Content[0].Text; text != "先想想" {
-		t.Fatalf("思考内容 = %q, want %q", text, "先想想")
+	if len(got[0].Aux) != 1 || got[0].Aux[0].Thought != "先想想" {
+		t.Fatalf("reasoning 应落成 aux.Thought（与实时路径同一形状）: %+v", got[0].Aux)
 	}
 }
 

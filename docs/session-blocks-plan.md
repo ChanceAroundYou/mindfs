@@ -251,7 +251,7 @@ agent 事件 → block → 缓冲 →(300ms / 64KB / boundary)→ ① append 块
 | **S2a** | 加 `turn_id` / `turn_seq` / `native_*` / `partial`（`step` 在块流上）；块流**写入**（双写：块流 + 旧 `Content`/aux 并存）；**C2 三处服务端 mint UUID**；**C1 repoint 清 native id** | 可回滚，旧路径不动 |
 | **S2b** | **读**改走块流；前端按 `type` 渲染；块级窗口（**复用 `CompactExchangeAuxLight` 策略**）；块内联（**省掉 O3 的 round trip**） | 新老并存可对账 |
 | **S2c** | ✅ **身份判重**启用；投影**身份化**（只折叠双边无身份的历史残留）+ 审计端点报身份化进度 | 新数据不再猜；旧残留可度量 |
-| **S2d** | **删 `Content`** + 旧 aux 路径（必须晚于 S2c，否则中间判重失效） | 单一真相源 |
+| **S2d** | 🔨 **S2d-1 已落地**（旧数据回填 + `CompactExchangeAux` 丢 reasoning 的修复）；余下：删 `Content` + 旧 aux 路径 | 单一真相源 |
 | **S2e** | **删 `TurnGen`**，统一为 `turn_id`（独立提交、可单独回滚） | 一套身份 |
 | **S3** | seq=0 机制退役、`tailOverlay` 5 条启发式、**§14.1 的约 470 行**（投影整块 / 判重套件 / `CountExchanges` / `appendResponseChunk`） | 净减猜测层 |
 | 待办 | 旧数据迁移脚本（dsh 可迁、claude 本地无 thought）；codex native id 实证 | — |
@@ -427,6 +427,37 @@ agent 事件 → block → 缓冲 →(300ms / 64KB / boundary)→ ① append 块
   都为零就跳过」的守卫。它会挡掉 import-owned 会话的**首次**导入（两个地板都为零），
   也就是「同步什么都导不进来」。已撤掉 —— 幂等性现在由身份判重负责，不需要第二道
   时间启发式。
+
+**S2d-1 落地记录（2026-10-11，提交 `G-BH` 续）**：旧数据回填 + 一条独立的 reasoning 丢失修复。
+
+- **动手前先量了存量，结果改变了做法。** 原计划 S2d 直接删 `Exchange.Content`，但实测：
+  **320 个会话 / 2166 行 / 0 个块流文件** —— S2a 写块流的功能从未部署过。直接删字段等于
+  把全部历史正文清空。所以 S2d 必须先有回填，顺序不能反。
+- **回填是读时惰性 + 幂等，不是迁移脚本。** 会话库按项目/账户分区散在各处（本机就有 4 个
+  `.mindfs/sessions`，WSL 端另有一份），没有任何一处能保证「迁移脚本被跑过」；而输入
+  （exchanges + aux）**在读的时候就在调用方手里**，不额外读盘。`GetSessionBlocksWindowInput`
+  因此多了 `Exchanges` / `Aux` 两个字段，它们只作回填输入 —— 关键约束是**零额外 IO**：
+  `GET /api/sessions/{key}` 是全站最重的端点（实测单次 1.14MB，客户端 1.7s 一次轮询，
+  占 70% 流量），在那里多读一次盘就是把回填变成新的性能问题。
+- **回填必须出现在同一个回包里。** `TestHandleSessionGetWithoutBlocksReturnsEmpty` 的断言
+  整个反转成 `TestHandleSessionGetBackfillsLegacyBlocks`：回填完再让前端自己拉一次，用户看到的
+  就是先空一屏、再突然冒出正文。
+- **实测结果**：133 个会话、39517 条块，**救回 29 轮「正文已丢、思考还在」的轮次**，
+  第二次跑 0 回填。块流 37MB 对主日志 5.4MB（约 7×，主要是工具卡全量入块）——
+  块流只做**窗口尾部读**，体积不进读路径。
+- **投影与回填的交互已实测排除风险**：本来担心「被投影隐藏的重复行，其工具卡会因保留行
+  有了块而不再走 aux 合并」。查了实测那 9 对 —— **隐藏行的 aux 全为空**，工具卡与 reasoning
+  都在保留的实时行上，所以按各自的 content+aux 编译不丢东西。
+- **顺带修掉一条独立的、更早的 reasoning 丢失**（`CompactExchangeAux`）：只有 `thought`
+  没有 `toolcall` 的 aux **整条返回 false**；`toolcall` 与 `thought` 并存时
+  `aux.Thought = ""`。流式期 `thought_chunk` 是实时推的，所以用户「看着有」，关掉重开就没了 ——
+  这正是本项目最初报的「回复的时候好好的，回复完瞬间消失」。**实测存量 10826 条 / 2657 万
+  字符 / 17 个会话**的 reasoning 一直在盘上但读不出来。压缩只该去掉「展开时才需要」的字段，
+  reasoning 不是那一类。
+- **一处自我纠错**：S2c 里我给 ACP 导入选的表示是 `kind=think` 的工具卡。查了前端才发现
+  `reasoning` 块渲染成灰显的思考文本、工具卡是另一种外观（带💭 图标的折叠卡）—— 同一轮
+  reasoning 会「实时一个样、同步后一个样」。已改用 `ImportedExchangeAux.Thought`，与实时路径
+  和存量数据（10826 条 `thought` 字段）同一个形状。
 
 ---
 

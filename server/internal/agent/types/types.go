@@ -275,7 +275,12 @@ type ImportedExchange struct {
 // persisted; importers only need to preserve its position within the assistant
 // text and the normalized payload.
 type ImportedExchangeAux struct {
-	Line     int
+	Line int
+	// Thought = reasoning 文本。**必须用这个字段，不要用 kind=think 的 ToolCall**：
+	// 前端把 `reasoning` 块渲染成灰显可折叠的思考文本，而把 think 工具卡渲染成
+	// 带💭 图标的工具卡片 —— 两者外观不同。实时路径的 thought_chunk 走的正是
+	// Thought，导入侧也必须走同一个字段，否则「实时看得到、导入后变样」。
+	Thought  string
 	ToolCall *ToolCall
 	Plan     *PlanUpdate
 }

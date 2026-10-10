@@ -839,6 +839,9 @@ func (h *HTTPHandler) handleSessionGet(w http.ResponseWriter, r *http.Request) {
 		RootID: rootID,
 		Key:    key,
 		Seqs:   windowSeqsForExchanges(out.Exchanges),
+		// 回填输入（S2d-1）：这两份数据响应里本来就要带着，回填不该为此再读一遍盘。
+		Exchanges: out.Exchanges,
+		Aux:       exchangeAux,
 	})
 	// 条件请求：这是全站**最重**的端点 —— 窗口化尾部拉取（`?latest=20`）
 	// 实测单次 1.14 MB，客户端按 ~1.7 秒一次轮询，两台机器各自量到 60 分钟里
@@ -972,6 +975,9 @@ func (h *HTTPHandler) handleSessionSync(w http.ResponseWriter, r *http.Request) 
 		RootID: rootID,
 		Key:    key,
 		Seqs:   windowSeqsForExchanges(out.Exchanges),
+		// 回填输入（S2d-1）：这两份数据响应里本来就要带着，回填不该为此再读一遍盘。
+		Exchanges: out.Exchanges,
+		Aux:       exchangeAux,
 	})
 	// 注：sync 先做全量外部增量拉取（Full:true），再按窗口切片，保证窗口数据最新。
 	respondJSON(w, http.StatusOK, h.sessionResponse(out, contextWindow, exchangeAux, blocks, windowMeta))

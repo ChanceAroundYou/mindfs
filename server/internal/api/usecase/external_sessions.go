@@ -594,6 +594,18 @@ func appendImportedExchange(
 	// aux 以 seq 为键：必须取刚落下那行的真实 seq（max+1 分配下 len ≠ seq）
 	seq := session.MaxExchangeSeq(target.Exchanges)
 	for _, importedAux := range exchange.Aux {
+		// reasoning 走 Thought 字段，与实时路径的 thought_chunk 同一形状 ——
+		// 前端把 `reasoning` 块渲染成灰显的思考文本，而 think 工具卡是另一种外观。
+		if strings.TrimSpace(importedAux.Thought) != "" {
+			if err := manager.AddExchangeAux(ctx, target.Key, session.ExchangeAux{
+				Seq:     seq,
+				Line:    importedAux.Line,
+				Thought: importedAux.Thought,
+			}); err != nil {
+				return false, err
+			}
+			continue
+		}
 		if importedAux.Plan != nil {
 			plan := *importedAux.Plan
 			if err := manager.AddExchangeAux(ctx, target.Key, session.ExchangeAux{

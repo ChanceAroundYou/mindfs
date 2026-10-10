@@ -1778,6 +1778,14 @@
      **9 对** live/import 重复行，另有 3 对 import+import（相隔 20s）。
   6. **ACP 导入丢 reasoning**：`importer` 只收 `UserMessageChunk` / `AgentMessageChunk`，
      `AgentThoughtChunk` 整个被丢掉，于是「只思考不出话」的轮次导入后正文为空。
+  7. **窗口读把 reasoning 整条丢掉**（`CompactExchangeAux`）：两条路都会扔 ——
+     只有 `thought` 没有 `toolcall` 的 aux **整条返回 false**；`toolcall` 与 `thought`
+     同时存在时 `aux.Thought = ""`。而流式期 `thought_chunk` 是实时推的，所以用户
+     「看着有」，关掉重开就没了 —— 正是①的症状。实测存量 **10826 条 / 2657 万字符 /
+     17 个会话**的 reasoning 一直在盘上但读不出来。
+  8. **S2a 之后写入的数据从未部署**：本机 320 个会话、2166 行，**0 个块流文件**
+     （块流要 `make install` 之后的二进制才写）。所以 S2d 直接删 `Exchange.Content`
+     等于把全部历史正文清空。
 - 为什么必须保留：
   1. 新增 `sessions/<key>.blocks.jsonl`（块流），一行一块：
      `{seq,pos,revision,type,text|toolcall|todo|plan|compact,step,turn_id,native_id,parent_tool_use_id,task_id,subagent_type}`。
@@ -1864,7 +1872,16 @@
       遗留的、双边都没有身份的历史行（直接删会让实测那 9 对重复立刻变成用户可见的
       重复正文，那是一次实打实的回退）。审计端点新增 `identity_bearing_rows` 报出
       「身份化进度」，也就是历史残留的规模 —— 那是删掉投影与处理历史行的时机判据。
-  18. `TimestampFloor` 只给 `HasTranscriptTimestamps` 的导入器（claude/codex）。ACP 的
+  18. **S2d-1 回填**（`session_blocks_backfill.go`）：窗口里「一个块都没有」的 seq，
+      用**调用方本来就传进来的** exchanges + aux 编译成块并落盘，幂等。读时惰性而不是
+      写迁移脚本：会话库按项目/账户分区散在各处（本机就有 4 个 `.mindfs/sessions`，
+      WSL 端另有一份），没有任何一处能保证跑全迁移脚本；而输入在读的时候就在内存里，
+      不额外读盘才是关键 —— `GET /api/sessions/{key}` 是全站最重的端点（单次 1.14MB，
+      客户端 1.7s 一次轮询，占 70% 流量）。实测：133 个会话 / 39517 条块，
+      **救回 29 轮「正文已丢、思考还在」的轮次**，第二次跑 0 回填。
+      投影与回填的交互已实测排除风险：被投影隐藏的重复行 **aux 全为空**（工具卡与
+      reasoning 都在保留的实时行上），所以按各自的 content+aux 编译不会丢东西。
+  19. `TimestampFloor` 只给 `HasTranscriptTimestamps` 的导入器（claude/codex）。ACP 的
       `SessionUpdate` 不带时间戳，它给每行盖的是「读到它的那一刻」，恒晚于地板 ——
       地板形同虚设，而代码看着像「有地板就安全」。删掉那道假防线后，ACP 侧的正确性
       由 native id 身份判重负责。
@@ -1910,6 +1927,20 @@
     并记住自己的 `native_turn`（否则下次同步认不出自己）。
   - `server/internal/api/usecase/session_projection_identity_test.go`（S2c）→ 有身份的对
     不折叠、一侧有身份也不折叠、双边无身份的历史重复仍然折叠、用户重发不折叠。
+  - `server/internal/session/types_aux_reasoning_test.go`（S2d-1）→ **压缩不许碰
+    reasoning**：只有 reasoning 的 aux 不被整条丢弃、与 toolcall 并存时不被清空、
+    Light 变体同样保留；同时反向钉住「压缩该做的事仍然要做」（清掉 edit/read 的
+    content），免得日后有人把修复顺手「修」成不压缩。
+  - `server/internal/api/usecase/session_blocks_backfill_test.go`（S2d-1）→ 回填后块的
+    正文与老主日志**逐字相同**、幂等（第二次跑块流文件一个字节都不变）、**正文为空但
+    aux 有 reasoning 的轮次被救回**、已有块的轮次一个字节都不动、什么都编译不出来的
+    会话不建空块流、`missingBlockSeqs` 与读路径同口径、seq=0 不参与。
+  - `server/internal/api/http_window_test.go`（S2b 改，契约变了）→
+    `TestHandleSessionGetWithoutBlocksReturnsEmpty` 的断言**整个反转**成
+    `TestHandleSessionGetBackfillsLegacyBlocks`（老正文必须在**同一个回包里**出现 ——
+    回填完再让前端自己拉一次，用户看到的就是先空一屏、再突然冒出正文）；
+    另加「块真的落盘了」（换 manager 直读盘，只断言响应不足以证明落盘 —— 那样只是
+    把猜测从读时搬到读时）与「真的什么都没有的会话仍返回空 map」。
   - `server/internal/agent/acp/importer_identity_test.go`（S2c）→ `messageId` 带成 `NativeID`、
     重放两次身份稳定、`messageId` 变化开新行、无 `messageId` 仍合并相邻块、非 UUID 被拒、
     时间戳打 `SynthesizedAt` 标记、合并不改写时间戳、`AgentThoughtChunk` 导入成 think 卡、

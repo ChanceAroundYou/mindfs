@@ -323,7 +323,7 @@ func (c *importCollector) append(role, content, nativeID, thought string) {
 			}
 		}
 		if thought != "" {
-			last.Aux = append(last.Aux, acpThoughtAux(last.NativeID, last.Content, len(last.Aux), thought))
+			last.Aux = append(last.Aux, acpThoughtAux(last.Content, thought))
 		}
 		return
 	}
@@ -338,7 +338,7 @@ func (c *importCollector) append(role, content, nativeID, thought string) {
 	// （时间地板 / 排序 / 展示）。
 	item.SynthesizedAt = item.Timestamp
 	if thought != "" {
-		item.Aux = append(item.Aux, acpThoughtAux(nativeID, item.Content, 0, thought))
+		item.Aux = append(item.Aux, acpThoughtAux(item.Content, thought))
 	}
 	c.exchanges = append(c.exchanges, item)
 }
@@ -380,23 +380,17 @@ func (c *importCollector) appendThought(thought, nativeID string) {
 	c.append("agent", "", nativeID, thought)
 }
 
-// acpThoughtAux 把一段 reasoning 包成一条 `think` 工具卡 aux。
+// acpThoughtAux 把一段 reasoning 归到 aux 的 Thought 字段。
 //
-// 为什么不走 `Thought` 字段：`Thought` 是旧格式的字符串字段，方案 S2d 会随 aux
-// 一并退役（§14.1「CompactExchangeAux 的 aux.Thought=""」）。而 `think` 工具卡是
-// **现在**就在用的表示（前端 tool_card 按 kind=think 渲染成折叠的思考块），
-// 导入侧直接用它就不必再做一次形状转换。
-func acpThoughtAux(nativeID, content string, index int, thought string) agenttypes.ImportedExchangeAux {
+// 必须是 Thought 而不是「kind=think 的工具卡」：实时路径的 thought_chunk 写的就是
+// Thought，前端把 `reasoning` 块渲染成灰显可折叠的思考文本，而工具卡是另一种外观
+// （带💭 图标的折叠卡）。用工具卡的话，同一轮的 reasoning 在「实时看」与「同步后看」
+// 两种外观 —— 这正是本方案要消灭的那类「两套真相」。
+func acpThoughtAux(content string, thought string) agenttypes.ImportedExchangeAux {
 	return agenttypes.ImportedExchangeAux{
 		// Line 是「在正文第几行」，与实时路径的 currentAssistantLine 同一口径。
-		Line: currentACPImportLine(content),
-		ToolCall: &agenttypes.ToolCall{
-			CallID:  "acp-thought-" + nativeID + "-" + itoa(index),
-			Title:   "思考",
-			Status:  "completed",
-			Kind:    agenttypes.ToolKindThink,
-			Content: []agenttypes.ToolCallContentItem{{Type: "text", Text: thought}},
-		},
+		Line:    currentACPImportLine(content),
+		Thought: thought,
 	}
 }
 

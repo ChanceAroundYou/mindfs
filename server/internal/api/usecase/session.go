@@ -827,6 +827,15 @@ func (s *Service) GetSessionBlocksWindow(ctx context.Context, in GetSessionBlock
 	if err != nil {
 		return nil, err
 	}
+	// S2d-1 回填：窗口里没有块的轮次，用**调用方本来就传进来的** exchanges/aux
+	// 编译一次（幂等）。必须在 GetBlocksWindow 之后、返回之前：回填完的那一批块
+	// 要出现在同一个回包里，否则用户看到的是「先空一屏、再自己冒出来」。
+	backfillTurnsIfNeeded(ctx, manager, in.Key, in.Exchanges, in.Aux, in.Seqs)
+	if len(missingBlockSeqs(blocks, in.Seqs)) > 0 {
+		if refilled, err := manager.GetBlocksWindow(ctx, in.Key, in.Seqs); err == nil {
+			blocks = refilled
+		}
+	}
 	return session.GroupBlocksBySeq(blocks), nil
 }
 
@@ -834,6 +843,11 @@ type GetSessionBlocksWindowInput struct {
 	RootID string
 	Key    string
 	Seqs   map[int]bool
+	// Exchanges / Aux 是窗口响应**本来就带着**的两份数据。它们只作为回填输入
+	// （S2d-1）：已回填的会话一次都不会用到，而再读一遍会把全站最重的端点
+	// （1.7s 一次轮询，占 70% 流量）拖慢 1.7s 一倍的 IO。
+	Exchanges []session.Exchange
+	Aux       map[int][]session.ExchangeAux
 }
 
 type GetSessionToolCallInput struct {

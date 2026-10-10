@@ -2355,6 +2355,8 @@ groups:
       - server/internal/api/usecase/session_identity_dedup_test.go
       - server/internal/api/usecase/session_projection_identity_test.go
       - server/internal/agent/acp/importer_identity_test.go
+      - server/internal/session/types_aux_reasoning_test.go
+      - server/internal/api/usecase/session_blocks_backfill_test.go
       - web/tests/session-blocks-render.test.mjs
       - web/tests/tool-card-grouping.test.mjs
       - web/tests/session-window.test.mjs
@@ -2387,6 +2389,8 @@ groups:
       - server/internal/agent/claude/importer.go
       - server/internal/agent/codex/importer.go
       - server/internal/agent/types/types.go
+      - server/internal/api/usecase/session_blocks_backfill.go
+      - server/internal/session/types_aux_reasoning_test.go
       - web/src/hooks/sessionBlocks.ts
       - web/src/hooks/useSessionStream.ts
       - web/src/components/session/SessionViewer.tsx
@@ -2416,6 +2420,10 @@ groups:
       - server/internal/agent/acp/importer.go:isUUIDShape
       - server/internal/agent/acp/process.go:SendMessage
       - server/internal/agent/types/types.go:WithPromptTurnID
+      - server/internal/session/types.go:CompactExchangeAux
+      - server/internal/api/usecase/session_blocks_backfill.go:backfillTurnsFromWindow
+      - server/internal/api/usecase/session_blocks_backfill.go:missingBlockSeqs
+      - server/internal/api/usecase/session.go:GetSessionBlocksWindow
       - server/internal/api/usecase/session.go:persistTurnBlocks
       - server/internal/api/usecase/session.go:copyForkBlocks
       - server/internal/api/usecase/session.go:GetSessionBlocksWindow

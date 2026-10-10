@@ -527,11 +527,70 @@ func TestHandleSessionGetWindowInlinesBlocks(t *testing.T) {
 }
 
 // 没有块流的历史会话必须拿到空 blocks（而不是报错）—— 前端靠这个判据回退旧格式。
-func TestHandleSessionGetWithoutBlocksReturnsEmpty(t *testing.T) {
+// 没有块流的历史会话：第一次读就把老正文**回填成块**并出现在同一个回包里（S2d-1）。
+//
+// 这条测试在 S2b 时的断言正好相反（want empty）—— 那时「没有块流 → 空 blocks」
+// 是前端回退旧格式的契约。S2d 加了回填，契约随之改变：老正文不该再走回退路径，
+// 因为回退路径就是「正文可能读不出来」的那条。
+//
+// 「同一个回包里」是刻意的：回填完再让前端自己拉一次，用户看到的就是先空一屏、
+// 再突然冒出正文。
+func TestHandleSessionGetBackfillsLegacyBlocks(t *testing.T) {
 	app, rootID, manager := newWindowTestApp(t)
 	ctx := context.Background()
 	s, _ := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, Name: "Legacy"})
 	_ = manager.AddExchangeForAgent(ctx, s, "agent", "老正文", "claude", "", "", "")
+	h := &HTTPHandler{AppContext: app}
+	rec := doSessionGet(t, h, rootID, s.Key, "&latest=5")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Blocks map[string][]session.Block `json:"blocks"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	blocks := body.Blocks["1"]
+	if len(blocks) != 1 || blocks[0].Text != "老正文" {
+		t.Fatalf("blocks[1] = %#v, want 老正文（回填必须在同一个回包里）", blocks)
+	}
+}
+
+// 回填之后块流真的落盘了（换个 manager 直读盘），且内容与老主日志一致。
+// 只断言响应不足以证明「落盘」—— 回填完全可以每次读都重算，那样只是把
+// 猜测从「读时」搬到「读时」，没有变成单一真相源。
+func TestBackfillPersistsBlocksToDisk(t *testing.T) {
+	app, rootID, manager := newWindowTestApp(t)
+	ctx := context.Background()
+	s, _ := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, Name: "Legacy"})
+	_ = manager.AddExchangeForAgent(ctx, s, "user", "问题", "claude", "", "", "")
+	_ = manager.AddExchangeForAgent(ctx, s, "agent", "老正文", "claude", "", "", "")
+	h := &HTTPHandler{AppContext: app}
+	rec := doSessionGet(t, h, rootID, s.Key, "&latest=5")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	blocks, err := manager.ReadBlocks(ctx, s.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bySeq := session.GroupBlocksBySeq(blocks)
+	if got := bySeq[1]; len(got) != 1 || got[0].Text != "问题" {
+		t.Fatalf("seq=1 blocks = %#v", got)
+	}
+	if got := bySeq[2]; len(got) != 1 || got[0].Text != "老正文" {
+		t.Fatalf("seq=2 blocks = %#v", got)
+	}
+}
+
+// 真的什么都没有的会话仍然返回空 map —— 前端的回退分支要留着（它还要服务
+// S2d 删 Content 之前的过渡期，以及「纯工具轮」这种本就无正文的轮次）。
+func TestHandleSessionGetWithoutAnythingToCompileReturnsEmptyBlocks(t *testing.T) {
+	app, rootID, manager := newWindowTestApp(t)
+	ctx := context.Background()
+	s, _ := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, Name: "Empty"})
+	_ = manager.AddExchangeForAgent(ctx, s, "agent", "", "claude", "", "", "")
 	h := &HTTPHandler{AppContext: app}
 	rec := doSessionGet(t, h, rootID, s.Key, "&latest=5")
 	if rec.Code != http.StatusOK {
