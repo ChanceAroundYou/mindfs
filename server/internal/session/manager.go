@@ -180,6 +180,13 @@ type Manager struct {
 	exchangeCursors  map[string]exchangeFileCursor
 	pendingToolCalls map[string]map[string]agenttypes.ToolCall
 	now              func() time.Time
+	// fullExchangeReads 统计 readExchangesFull（全量解析主日志）的调用次数。
+	// 窗口读必须 O(窗口)：冷缓存下不得走全量解析 —— 全量解析在实测最重会话上
+	// 13.8ms/1.2MB 且持 m.mu（会卡住整个 root）。测试直接断言它保持为 0，比计时稳定。
+	fullExchangeReads int64
+	// fullAuxReads 统计 readAuxFile（全量解析 aux）的调用次数。单会话 aux 实测最大 19MB，
+	// 窗口读 / 「只要最新状态」的场景必须走尾部读，测试断言它不被触发。
+	fullAuxReads int64
 }
 
 type CreateInput struct {
@@ -357,6 +364,115 @@ func (m *Manager) GetExchangeAuxWindow(_ context.Context, key string, seqSet map
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.loadExchangeAuxWindow(key, seqSet)
+}
+
+// GetCommandShell 推断命令会话的 shell 标签。
+//
+// 只要「最新状态」：判据是最后一条 source=userShell、phase=final 的 commandExecution，
+// 它总是写在 aux 尾部。全量读在实测会话上可达 11.8MB/281ms 且持 m.mu，而列表页对每个
+// 命令会话各读一次（fillCommandShells）—— 改成尾部有界读，命中即停。
+func (m *Manager) GetCommandShell(_ context.Context, key string) (string, error) {
+	if strings.TrimSpace(key) == "" {
+		return "", errors.New("session key required")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	path, err := m.auxPath(key)
+	if err != nil {
+		return "", err
+	}
+	info, err := m.root.StatMetaFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", nil
+		}
+		return "", err
+	}
+	size := info.Size()
+	if size == 0 {
+		return "", nil
+	}
+
+	span := int64(512 << 10)
+	for {
+		entries, ok := m.readAuxTailEntries(path, size, span)
+		if !ok {
+			// 尾部读不可用（不可 seek / 读取异常）→ 回退全量读，保证正确性。
+			all, err := m.loadExchangeAuxEntries(key, 0)
+			if err != nil {
+				return "", err
+			}
+			return InferCommandShellFromAux(groupAuxBySeq(all)), nil
+		}
+		if shell := InferCommandShellFromAux(groupAuxBySeq(entries)); shell != "" {
+			return shell, nil
+		}
+		if span >= size {
+			return "", nil
+		}
+		span *= 4
+	}
+}
+
+// groupAuxBySeq 把 aux 条目按 seq 分组（保持写入顺序）。
+func groupAuxBySeq(entries []ExchangeAux) map[int][]ExchangeAux {
+	items := make(map[int][]ExchangeAux, len(entries))
+	for _, entry := range entries {
+		items[entry.Seq] = append(items[entry.Seq], entry)
+	}
+	return items
+}
+
+// readAuxTailEntries 读取 aux 文件尾部至多 span 字节的条目（升序返回）。
+// 起点对齐到换行边界，因此不会在边界上截断记录。ok=false 表示读取异常。
+func (m *Manager) readAuxTailEntries(path string, size, span int64) ([]ExchangeAux, bool) {
+	start := size - span
+	if start < 0 {
+		start = 0
+	}
+	file, err := m.root.OpenMetaFile(path)
+	if err != nil {
+		return nil, false
+	}
+	defer file.Close()
+	buf := make([]byte, size-start)
+	if _, err := file.ReadAt(buf, start); err != nil && !errors.Is(err, io.EOF) {
+		return nil, false
+	}
+	if start > 0 {
+		idx := bytes.IndexByte(buf, '\n')
+		if idx < 0 {
+			buf = nil
+		} else {
+			buf = buf[idx+1:]
+		}
+	}
+	entries := make([]ExchangeAux, 0, 64)
+	for len(buf) > 0 {
+		idx := bytes.IndexByte(buf, '\n')
+		var line []byte
+		if idx < 0 {
+			line = buf
+			buf = nil
+		} else {
+			line = buf[:idx]
+			buf = buf[idx+1:]
+		}
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 {
+			continue
+		}
+		var entry ExchangeAux
+		if err := json.Unmarshal(line, &entry); err != nil {
+			continue
+		}
+		if entry.Seq <= 0 {
+			continue
+		}
+		entries = append(entries, entry)
+	}
+	return entries, true
 }
 
 // GetMeta 只加载 SQLite meta（不含 exchanges 文件），用于列表/名称查询等不需要完整会话的场景。
@@ -1611,7 +1727,10 @@ func (m *Manager) sessionCacheFreshUnsafe(key string) bool {
 // getSessionWindowUnsafe 返回按窗口切片后的 Session 与窗口元信息。
 // beforeSeq>0：取 seq<beforeSeq 的尾部 limit 条（二分定位 idx=首个 seq>=beforeSeq，窗口 all[max(0,idx-limit):idx]，hasMore=idx-limit>0）；
 // latest>0：取尾部 limit 条；两者皆 0：默认尾部 limit 条（等价于 latest=limit）。
-// 复用 readExchangesFull 全量读后在内存倒序切片；不写入 m.sessions 全量缓存，避免污染 afterSeq<=0 缓存分支。
+//
+// 缓存已建立时在内存切片；**冷缓存下走 readExchangeWindow 只解析窗口所需的尾部记录**，
+// 不再 readExchangesFull 全量解析（全量解析实测 13.8ms/1.2MB 且持 m.mu，会卡住整个 root）。
+// 仍不写入 m.sessions 全量缓存，避免污染 afterSeq<=0 缓存分支。
 func (m *Manager) getSessionWindowUnsafe(key string, beforeSeq, limit, latest int) (*Session, *SessionWindowMeta, error) {
 	if strings.TrimSpace(key) == "" {
 		return nil, nil, errors.New("session key required")
@@ -1632,43 +1751,21 @@ func (m *Manager) getSessionWindowUnsafe(key string, beforeSeq, limit, latest in
 		return nil, nil, err
 	}
 
-	all := []Exchange{}
-	if cached, ok := m.sessions[key]; ok && cached != nil && len(cached.Exchanges) > 0 {
-		all = cached.Exchanges
+	var window []Exchange
+	total := 0
+	hasMore := false
+	cached, hasCache := m.sessions[key]
+	if hasCache && cached != nil && len(cached.Exchanges) > 0 {
+		window, total, hasMore = sliceExchangeWindow(cached.Exchanges, beforeSeq, limit, latest)
+	} else if read, count, more, ok := m.readExchangeWindow(path, beforeSeq, limit, latest); ok {
+		window, total, hasMore = read, count, more
 	} else {
-		read, _, rErr := m.readExchangesFull(path)
+		// 尾部读不可用（不可 seek / 读取异常）→ 回退全量解析，保证正确性。
+		all, _, rErr := m.readExchangesFull(path)
 		if rErr != nil {
 			return nil, nil, rErr
 		}
-		all = read
-	}
-
-	total := len(all)
-	var window []Exchange
-	hasMore := false
-	switch {
-	case latest > 0:
-		start := total - latest
-		if start < 0 {
-			start = 0
-		}
-		window = all[start:]
-		hasMore = start > 0
-	case beforeSeq > 0:
-		idx := firstIndexWhereSeq(all, beforeSeq)
-		start := idx - limit
-		if start < 0 {
-			start = 0
-		}
-		window = all[start:idx]
-		hasMore = start > 0
-	default:
-		start := total - limit
-		if start < 0 {
-			start = 0
-		}
-		window = all[start:]
-		hasMore = start > 0
+		window, total, hasMore = sliceExchangeWindow(all, beforeSeq, limit, latest)
 	}
 
 	meta.Exchanges = window
@@ -1684,6 +1781,125 @@ func (m *Manager) getSessionWindowUnsafe(key string, beforeSeq, limit, latest in
 		MinSeq:  minSeq,
 		MaxSeq:  maxSeq,
 	}, nil
+}
+
+// sliceExchangeWindow 在已按 seq 升序排列的 exchanges 上取窗口，返回 (窗口, 总数, 是否还有更早)。
+// 语义与 readExchangeWindow 必须逐条一致：latest>0 时窗口就是尾部 latest 条（与 limit 解耦）。
+func sliceExchangeWindow(all []Exchange, beforeSeq, limit, latest int) ([]Exchange, int, bool) {
+	total := len(all)
+	switch {
+	case latest > 0:
+		start := total - latest
+		if start < 0 {
+			start = 0
+		}
+		return all[start:], total, start > 0
+	case beforeSeq > 0:
+		idx := firstIndexWhereSeq(all, beforeSeq)
+		start := idx - limit
+		if start < 0 {
+			start = 0
+		}
+		return all[start:idx], total, start > 0
+	default:
+		start := total - limit
+		if start < 0 {
+			start = 0
+		}
+		return all[start:], total, start > 0
+	}
+}
+
+// readExchangeWindow 冷缓存下的窗口读：只解析窗口所需的尾部记录，不构建全量切片。
+//
+// 返回 (窗口, 记录总数, 是否还有更早, ok)。ok=false 表示读盘失败，调用方回退全量解析。
+// 成本：一次读盘 + 一遍字节级行计数（不解析 JSON）+ 只解析尾部窗口条数。
+// 实测 1.19MB / 206 行（每行 ~5.7KB 正文）：全量解析 15.3ms → 1.4ms，
+// 其中读盘 0.9ms、行计数 0.14ms、解析 9 条 0.8ms。真实最重会话 391KB 时按比例更低。
+func (m *Manager) readExchangeWindow(path string, beforeSeq, limit, latest int) ([]Exchange, int, bool, bool) {
+	payload, err := m.root.ReadMetaFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return []Exchange{}, 0, false, true
+		}
+		return nil, 0, false, false
+	}
+	if len(payload) == 0 {
+		return []Exchange{}, 0, false, true
+	}
+
+	// latest>0 时窗口就是尾部 latest 条，与 beforeSeq 互斥（与 sliceExchangeWindow 一致）。
+	need := limit
+	if latest > 0 {
+		need = latest
+		beforeSeq = 0
+	}
+	if need <= 0 {
+		need = 50
+	}
+	window, hasMore := tailExchangeWindow(payload, beforeSeq, need)
+	return window, countExchangeRecords(payload), hasMore, true
+}
+
+// countExchangeRecords 字节级统计非空行数（不解析 JSON）。
+// 语义上等于「记录条数」：实测 310 份真实主日志无空行、无同 seq 多行，
+// 退化数据（同 seq 多行）由全量读的 mergeExchangeRecord 负责合并。
+// 用 bytes.IndexByte 而不是逐字节 switch：后者在 1.19MB 上要 3ms，前者 0.1ms 量级。
+func countExchangeRecords(payload []byte) int {
+	count := 0
+	for len(payload) > 0 {
+		idx := bytes.IndexByte(payload, '\n')
+		var line []byte
+		if idx < 0 {
+			line = payload
+			payload = nil
+		} else {
+			line = payload[:idx]
+			payload = payload[idx+1:]
+		}
+		if len(bytes.TrimSpace(line)) > 0 {
+			count++
+		}
+	}
+	return count
+}
+
+// tailExchangeWindow 从 payload 尾部向前取 need+1 条记录（升序返回），
+// hasMore 报告窗口之前还有更早的记录。只解析取到的那些行，其余行仅被跳过。
+//
+// bytes.LastIndexByte 从尾部向前扫，命中即停，所以每行定位成本是 O(行长) 而非 O(文件)。
+func tailExchangeWindow(payload []byte, beforeSeq, need int) ([]Exchange, bool) {
+	target := need + 1
+	records := make([]Exchange, 0, target)
+	end := len(payload)
+	for end > 0 && len(records) < target {
+		if payload[end-1] == '\n' {
+			end--
+			continue
+		}
+		start := bytes.LastIndexByte(payload[:end], '\n') + 1
+		raw := bytes.TrimSpace(payload[start:end])
+		end = start
+		if len(raw) == 0 {
+			continue
+		}
+		entry, ok, _ := parseExchangeLine(string(raw))
+		if !ok {
+			continue
+		}
+		if beforeSeq > 0 && entry.Seq >= beforeSeq {
+			continue
+		}
+		records = append(records, entry)
+	}
+	hasMore := len(records) > need
+	if len(records) > need {
+		records = records[:need]
+	}
+	for i, j := 0, len(records)-1; i < j; i, j = i+1, j-1 {
+		records[i], records[j] = records[j], records[i]
+	}
+	return records, hasMore
 }
 
 // firstIndexWhereSeq 在按 Seq 升序的 exchanges 中二分定位首个 Seq>=target 的下标（lower_bound）。
@@ -2121,9 +2337,9 @@ func (m *Manager) loadExchanges(key string, afterSeq int) ([]Exchange, int, erro
 					}
 					added, maxSeq, ok := m.readExchangeTail(path, cursor.Offset, baseSeq)
 					if ok {
-						if len(added) > 0 {
-							cached.Exchanges = append(cached.Exchanges, added...)
-						}
+						// 尾部条目按 seq 合并（同 seq 覆盖、尾部内部去重），
+						// 不能盲目 append —— 否则同 seq 的后续版本会变成重复行。
+						cached.Exchanges = mergeExchangeRecords(cached.Exchanges, added, path)
 						m.exchangeCursors[path] = exchangeFileCursor{Offset: size, Size: size, ModTimeNs: mtimeNs, MaxSeq: maxSeq}
 						return filterExchanges(cached.Exchanges, afterSeq), maxSeq, nil
 					}
@@ -2168,7 +2384,50 @@ func parseExchangeLine(line string) (Exchange, bool, bool) {
 	return Exchange{}, false, false
 }
 
+// mergeExchangeRecord 把一条解析出来的记录按 seq 合并进 exchanges（就地替换或追加）。
+//
+// 规则（全量读与尾部增量读共用，两条路径的判重语义必须一致）：
+//   - 新 seq：追加。顺序沿用文件顺序 —— 与 readExchangesFull 的既有假设一致。
+//   - 已有 seq：就地替换（保留原位置与 seq，aux 引用与游标才不失效）。
+//     已完成的正文优先于占位空正文；否则后者胜。
+//   - 只有「两行都有非空正文且不同」才算真冲突并告警。字段补全（同 seq 的后续版本
+//     带来更多信息）是增量更新，不是冲突 —— S2a 起由 revision 承担同一职责。
+func mergeExchangeRecord(exchanges []Exchange, indexBySeq map[int]int, entry Exchange, path string) []Exchange {
+	index, exists := indexBySeq[entry.Seq]
+	if !exists {
+		indexBySeq[entry.Seq] = len(exchanges)
+		return append(exchanges, entry)
+	}
+	previous := exchanges[index]
+	if strings.TrimSpace(previous.Content) != "" && strings.TrimSpace(entry.Content) == "" {
+		return exchanges
+	}
+	if strings.TrimSpace(previous.Content) != "" && previous.Content != entry.Content {
+		log.Printf("[session/load] conflicting duplicate seq session=%s seq=%d; using last non-empty record", path, entry.Seq)
+	}
+	exchanges[index] = entry
+	return exchanges
+}
+
+// mergeExchangeRecords 是 mergeExchangeRecord 的批量入口（尾部增量读用）。
+func mergeExchangeRecords(base, incoming []Exchange, path string) []Exchange {
+	if len(incoming) == 0 {
+		return base
+	}
+	indexBySeq := make(map[int]int, len(base)+len(incoming))
+	for i, entry := range base {
+		if _, exists := indexBySeq[entry.Seq]; !exists {
+			indexBySeq[entry.Seq] = i
+		}
+	}
+	for _, entry := range incoming {
+		base = mergeExchangeRecord(base, indexBySeq, entry, path)
+	}
+	return base
+}
+
 func (m *Manager) readExchangesFull(path string) ([]Exchange, int, error) {
+	m.fullExchangeReads++
 	payload, err := m.root.ReadMetaFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -2200,22 +2459,7 @@ func (m *Manager) readExchangesFull(path string) ([]Exchange, int, error) {
 		if entry.Seq > total {
 			total = entry.Seq
 		}
-		if index, exists := indexBySeq[entry.Seq]; exists {
-			previous := exchanges[index]
-			// Prefer a completed reply over an empty placeholder, regardless of
-			// append order. Otherwise the last record in the log wins. Keep the
-			// original position and seq so aux references and cursors stay valid.
-			if strings.TrimSpace(previous.Content) != "" && strings.TrimSpace(entry.Content) == "" {
-				continue
-			}
-			if strings.TrimSpace(previous.Content) != "" && previous.Content != entry.Content {
-				log.Printf("[session/load] conflicting duplicate seq session=%s seq=%d; using last non-empty record", path, entry.Seq)
-			}
-			exchanges[index] = entry
-			continue
-		}
-		indexBySeq[entry.Seq] = len(exchanges)
-		exchanges = append(exchanges, entry)
+		exchanges = mergeExchangeRecord(exchanges, indexBySeq, entry, path)
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, 0, err
@@ -2226,8 +2470,13 @@ func (m *Manager) readExchangesFull(path string) ([]Exchange, int, error) {
 	return exchanges, total, nil
 }
 
-// readExchangeTail 从 offset 续读追加的 JSONL 行。跳过 seq <= baseSeq 的条目（缓存已包含），
-// 返回真正新增的 exchanges 与新的 maxSeq。解析失败/读取错误返回 ok=false，由调用方回退全量读。
+// readExchangeTail 从 offset 续读追加的 JSONL 行，返回解析出的全部条目与新的 maxSeq。
+//
+// 刻意**不**跳过 seq <= baseSeq 的条目：主日志允许同一 seq 有后续版本（占位行补全、
+// 工具结果晚到、S2a 起的 revision 覆盖），按 seq 盲跳会让这些更新对增量快路径永久不可见
+// （O4：这条正是 loadExchanges 的最热读路径）。去重与合并由调用方的 mergeExchangeRecords
+// 统一处理，两条读路径（全量 / 增量）语义因此一致。
+// 解析失败/读取错误返回 ok=false，由调用方回退全量读。
 func (m *Manager) readExchangeTail(path string, offset int64, baseSeq int) ([]Exchange, int, bool) {
 	file, err := m.root.OpenMetaFile(path)
 	if err != nil {
@@ -2260,9 +2509,6 @@ func (m *Manager) readExchangeTail(path string, offset int64, baseSeq int) ([]Ex
 		}
 		if entry.Seq > total {
 			total = entry.Seq
-		}
-		if entry.Seq <= baseSeq {
-			continue
 		}
 		added = append(added, entry)
 	}
@@ -2541,6 +2787,7 @@ func (m *Manager) readAuxWindowTail(path string, minSeq int) ([]ExchangeAux, boo
 }
 
 func (m *Manager) readAuxFile(path string, afterSeq int) ([]ExchangeAux, error) {
+	m.fullAuxReads++
 	payload, err := m.root.ReadMetaFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -3303,7 +3550,9 @@ func (m *Manager) searchSessionContent(s *Session, qLower string) (SearchHit, bo
 	defer file.Close()
 
 	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	// 单行上限与主日志解析一致（maxExchangeLineBytes = 64MB）。曾经写死 1MB，
+	// 于是任何含超长行的会话都会因 bufio.ErrTooLong 整个搜不到（Search 直接返回错误）。
+	scanner.Buffer(make([]byte, 0, 64*1024), maxExchangeLineBytes)
 
 	best := SearchHit{}
 	bestFound := false

@@ -1674,6 +1674,81 @@
 
 ---
 
+### G-BG 会话窗口读不整表解析 + tail 增量三处缺陷（2026-10-10）
+
+- 来源：`server/internal/session/manager.go`、`server/internal/api/http.go`、
+  `server/internal/api/usecase/session.go`（2026-10-10）。对应主方案 S1（`docs/session-blocks-plan.md` §12）。
+- 边界：**打开/切换会话时的窗口读（`/api/sessions/{key}?latest=` / `?before_seq=`）与列表页
+  的 shell 标签推断**，必须 O(窗口) 或 O(尾部命中)，不得整表解析、不得全量读 aux。
+  实时写路径、Full 同步、import、repoint、子代理同步都不动。
+- 可见症状（没有它会怎样）：
+  1. **打开会话/切换会话时整个 root 停顿**：冷缓存开窗走 `readExchangesFull`，解析整份主日志
+     且持 `m.mu`。实测 1.19MB/206 行 15.3ms；会话越大越久。前端每 ~1.7s 轮询一次窗口端点，
+     等于每隔一秒多就有人把 root 锁住十几毫秒 —— 用户体感就是「同步后内容消失/界面卡住」。
+  2. **同 seq 的后续版本读不到**（`:2264` 的 `entry.Seq <= baseSeq { continue }`）：
+     tail 追加若含与已缓存 seq 相同的更新（更高 revision / 更完整），增量快路径会直接跳过它，
+     页面继续显示旧内容；只有冷启动才碰巧看到对的。
+  3. **tail 内同 seq 重复吐**（`:2267` 的盲 `append`）：同一 seq 追加多行时窗口里出现重复条。
+  4. **完整性升级被误报成冲突**（`:2211`）：同 seq 的空占位被后来的完整回复覆盖时打
+     `conflicting duplicate seq` 告警，污染日志 —— 空正文永不覆盖非空正文，只有「已有正文非空且与新正文不同」才算真冲突。
+  5. **含超长行的会话整个搜不到**：搜索的 `bufio.Scanner` 上限写死 1MB，而主日志解析上限是
+     `maxExchangeLineBytes`（64MB），任一单行 >1MB 都会让 `Search` 返回 `ErrTooLong`。
+  6. **列表页对每个命令会话全量读 aux**（`fillCommandShells` → `GetExchangeAux(key, 0)`）：
+     实测单会话 aux 最大 19MB / 11.8MB 那次 281ms，且持 `m.mu`。
+  7. **非窗口化的 sync 全量读 aux 再过滤**（`handleSessionSync` 无条件 `Seq: 0`）：
+     `handleSessionGet` 早就按窗口只取窗口内 seq 的 aux（G-AT），sync 这条漏了同一个优化。
+- 为什么必须保留：
+  1. `getSessionWindowUnsafe` 冷缓存改走 `readExchangeWindow`：读盘一次 → 字节级行计数
+     （`bytes.Count` 思路，不解析 JSON，实测 1.2MB/0.14ms）拿到 `Total` → 只解析尾部
+     `need+1` 条（多一条只为判 `hasMore`）。`Total` 在冷缓存下取**非空行数**而非 `len(全部记录)`：
+     实测 310 份真实主日志 / 2172 行，**0 空行、0 同 seq 多行**，只有 1 份 maxSeq 与行数差 86。
+     退化日志（同 seq 多行）会显示「重复条数」—— 可接受，S2d 之后主日志只剩元数据，此代价消失。
+  2. 尾部读**刻意不复用 `readAuxWindowTail` 的逐块反向读**：那个实现会丢掉每个分块的首条
+     半行，单行最大 308KB 的主日志会被静默丢记录。改成「只读一个后缀、起点对齐换行」的单次读，
+     span 按 4 倍增长。
+  3. 新增 `mergeExchangeRecord` / `mergeExchangeRecords`：新 seq 追加（与全量读同一
+     「按文件序」假定），同 seq **原位替换**且保留原位置；空内容永不覆盖非空内容；
+     仅「两条都非空且内容不同」才打冲突告警。`readExchangesFull` 的逐行合并改为调用它 ——
+     全量与增量从此共用一套合并语义。
+  4. `readExchangeTail` 去掉 `seq<=baseSeq` 跳过，改为**返回全部解析结果**，去重交给
+     `mergeExchangeRecords`。理由：这条路径在最热的读取路径上，同 seq 的更新必须看得见。
+  5. 新增 `Manager.GetCommandShell`：aux 尾部有界读（512KB 起步、4 倍增长），命中即停；
+     `fillCommandShells` 改用它。判据仍是 `InferCommandShellFromAux`（最后一条
+     `source=userShell`、`phase=final` 的 commandExecution）。
+  6. `handleSessionSync` 改为与 `handleSessionGet` 同构：有 `windowMeta` 就按窗口内 seq 取
+     aux（走 G-AT 的 `CompactExchangeAuxLight`），否则维持 `Seq: afterSeq`。
+- 针对性测试：
+  - `server/internal/session/manager_window_cold_test.go` → `TestGetWindowColdCacheAvoidsFullParse`
+    断言 `Manager.fullExchangeReads == 0`（计时会随机器抖动，计数器不会）；
+    `TestGetWindowColdCacheBeforeSeq` / `TestGetWindowColdCacheLatestIgnoresLimit` /
+    `TestGetWindowColdCacheCoversWholeFile` / `TestGetWindowColdCacheMissingLog` /
+    `TestGetWindowColdCacheHandlesLineLargerThanChunk` → 冷开窗的 seq/hasMore/total/边界。
+    计数器是新字段：合上游把它删掉这组测试必红。
+  - `server/internal/session/manager_incremental_merge_test.go` →
+    `TestLoadExchangesIncrementalAppliesSameSeqUpdate`（同 seq 更新必须可见）、
+    `TestLoadExchangesIncrementalDedupsSameSeqWithinTail`（tail 内同 seq 不重复吐）、
+    `TestLoadExchangesDoesNotWarnOnCompletenessUpgrade`（完整性升级不打冲突日志，真冲突必打）。
+  - `server/internal/session/manager_search_test.go` →
+    `TestSearchSessionContentMatchesLineLargerThanOneMegabyte`（单行 2.4MB 仍能搜到）。
+  - `server/internal/session/manager_aux_tail_test.go` →
+    `TestGetCommandShellReadsAuxTailOnly` / `TestGetExchangeAuxWindowReadsAuxTailOnly`
+    断言 `Manager.fullAuxReads` 保持 0。
+  - `server/internal/api/http_window_test.go` →
+    `TestHandleSessionSyncWindowUsesWindowAux`：窗口 sync 必须走轻压缩（edit content 清空、
+    展开时懒加载），非窗口 sync 必须保留 content —— 用 G-AT 的压缩契约当可观察判据。
+  - `server/internal/api/usecase/usecase_test.go` →
+    `TestListSessionsFillsCommandShellFromAuxTail`：列表页仍能正确推出 shell 标签（接线没断）。
+  - 既有 `TestGetWindowColdCache*` 同源用例、`TestHandleSessionSyncWindow`、
+    `TestGetExchangeAuxAuxWindow`（G-AT）、`TestLoadExchangesMergesDuplicateSeq` 保持绿。
+  - `web/tests/session-window.test.mjs`（后端源码契约）→ 开窗拆成「缓存切片 / 冷缓存尾部读」
+    两条后，`hasMore` 的断言从「单处赋值」改成**两条路各自都要算出 hasMore**
+    （`return all[start:], total, start > 0` 与 `hasMore := len(records) > need`）——
+    语义等价且更强，钉住「两条路的 hasMore 都不能丢」。
+- 验收记录（实测，合成最坏输入 1.19MB/206 行、每行 ~5.7KB）：冷开窗 **15.3ms → 1.4ms**
+  （读盘 0.9ms + 行计数 0.14ms + 解析 9 条 0.8ms）；真实最重会话 391KB/206 行按比例约 0.6ms。
+
+---
+
 ## 4. 未提交工作区（2026-10-06 清空）
 
 > 本节原先逐 hunk 记录 main 工作区里**未提交**的改动。那些改动已全部提交、工作区已干净，

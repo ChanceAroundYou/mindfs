@@ -302,6 +302,22 @@ agent 事件 → block → 缓冲 →(300ms / 64KB / boundary)→ ① append 块
 
 **每步门禁**：`go vet ./...` / `go test ./...` / `tsc --noEmit` / `npm test` / `make check-upstream`。
 
+**S1 落地记录（2026-10-10，提交 `G-BG`）**：6 条全部达成。
+
+- 验收 1 的实测：合成最坏输入 1.19MB / 206 行（每行 ~5.7KB 正文，共 206 条），
+  冷缓存开窗 **15.3ms → 1.4ms**（约 11 倍）；拆解为读盘 0.9ms、字节级行计数 0.14ms、
+  解析 9 条 0.8ms。真实最重会话 391KB/206 行 → 按比例约 0.6ms（原 6.2ms）。
+  测试不断言计时（计时会随机器抖动），改断言 `Manager.fullExchangeReads` 保持为 0。
+- `Total` 在冷缓存下取「非空行数」而不是 `len(全部记录)`。判定：实测 310 份真实主日志、
+  2172 行，**0 空行、0 同 seq 多行**，只有 1 份存在 maxSeq 与行数差 86。
+  字节级行计数（`bytes.Count` 思路）在 1.2MB 上 0.14ms，比解析便宜两个数量级。
+  代价：同 seq 重复行的退化日志会显示「重复条数」。S2d 之后主日志只剩元数据，此代价消失。
+- `readAuxWindowTail` 逐块反向读会丢掉跨块长行，**不适用于主日志窗口读**
+  （实测单行最大 308KB）。主日志侧改为「只读一个后缀、起点对齐换行」的单次读，
+  凑够 `need+1` 条即停，span 按 4 倍增长。
+- `readAuxFile` 加了 `Manager.fullAuxReads` 计数器（与 `fullExchangeReads` 同思路），
+  `GetCommandShell` / 窗口 aux 两条路都断言不触发全量读。
+
 ---
 
 ## 13. 待办 / 未实证

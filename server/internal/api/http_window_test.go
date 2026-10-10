@@ -403,3 +403,70 @@ func TestHandleSessionSyncExternalFailureStillReturnsWindow(t *testing.T) {
 		t.Fatalf("会话内容必须照常返回: %s", rec.Body.String())
 	}
 }
+
+// 窗口化的 sync 必须走「窗口内 seq 的 aux」这条读路径（尾部有界读 + 轻压缩），
+// 而不是无条件 Seq=0 全量读整个 aux 文件再按窗口过滤。
+//
+// 判据用 G-AT 的轻压缩契约：窗口路径对 edit/read/execute 清空 content（展开时懒加载），
+// 非窗口路径保留 content。两者在响应里可直接观察。
+func TestHandleSessionSyncWindowUsesWindowAux(t *testing.T) {
+	app, rootID, manager := newWindowTestApp(t)
+	ctx := context.Background()
+	s, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, Name: "SyncAuxWin"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	for i := 0; i < 3; i++ {
+		if err := manager.AddExchangeForAgent(ctx, s, "user", "hi", "claude", "", "", ""); err != nil {
+			t.Fatalf("add exchange: %v", err)
+		}
+	}
+	if err := manager.AddExchangeAux(ctx, s.Key, session.ExchangeAux{
+		Seq: 2,
+		ToolCall: &agenttypes.ToolCall{
+			CallID: "call-edit",
+			Kind:   agenttypes.ToolKindEdit,
+			Title:  "edit",
+			Content: []agenttypes.ToolCallContentItem{
+				{Type: "text", Text: "diff --git a/x b/x"},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("add aux: %v", err)
+	}
+	h := &HTTPHandler{AppContext: app}
+
+	auxContent := func(rec *httptest.ResponseRecorder) (bool, bool) {
+		t.Helper()
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+		}
+		var body struct {
+			Aux map[string][]session.ExchangeAux `json:"exchange_aux"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("unmarshal: %v body=%s", err, rec.Body.String())
+		}
+		entries := body.Aux["2"]
+		if len(entries) == 0 || entries[0].ToolCall == nil {
+			return false, false
+		}
+		return true, len(entries[0].ToolCall.Content) > 0
+	}
+
+	present, hasContent := auxContent(doSessionSync(t, h, rootID, s.Key, "&latest=2"))
+	if !present {
+		t.Fatalf("窗口响应缺少 seq=2 的 aux")
+	}
+	if hasContent {
+		t.Fatalf("窗口路径必须轻压缩（edit content 清空），实际保留了 content")
+	}
+
+	present, hasContent = auxContent(doSessionSync(t, h, rootID, s.Key, ""))
+	if !present {
+		t.Fatalf("非窗口响应缺少 seq=2 的 aux")
+	}
+	if !hasContent {
+		t.Fatalf("非窗口路径必须保留 edit content（重锚定不闪内容）")
+	}
+}

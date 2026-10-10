@@ -139,7 +139,18 @@ assert.match(managerSrc, /if limit <= 0 \{\s*\n\s*limit = 50/, "limit default 50
 assert.match(managerSrc, /if limit > 200/, "limit >200 clamp missing");
 assert.match(managerSrc, /case latest > 0:/, "latest branch missing");
 assert.match(managerSrc, /case beforeSeq > 0:/, "beforeSeq branch missing");
-assert.match(managerSrc, /hasMore = start > 0/, "hasMore computation missing");
+// hasMore 的语义是「是否还有更早的记录」。G-BG 把开窗拆成两条路（缓存切片 / 冷缓存尾部读），
+// 两条都必须各自算出 hasMore，且分别等于 start>0 与「解析到的条数>need」。
+assert.match(
+  managerSrc,
+  /return all\[start:\], total, start > 0/,
+  "hasMore computation (cached slice) missing",
+);
+assert.match(
+  managerSrc,
+  /hasMore := len\(records\) > need/,
+  "hasMore computation (cold tail read) missing",
+);
 
 // ── 后端 http.go 契约 ──────────────────────────────────────────────────
 assert.match(httpSrc, /parsePositiveIntQuery\(r, "before_seq"\)/, "http.go before_seq parsing missing");

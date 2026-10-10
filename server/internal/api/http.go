@@ -934,11 +934,29 @@ func (h *HTTPHandler) handleSessionSync(w http.ResponseWriter, r *http.Request) 
 		RootID: rootID,
 		Key:    key,
 	})
-	exchangeAux, _ := uc.GetSessionExchangeAux(r.Context(), usecase.GetSessionExchangeAuxInput{
-		RootID: rootID,
-		Key:    key,
-		Seq:    afterSeq,
-	})
+	// 窗口请求只需窗口内 seq 的 aux：原先无条件传 Seq=0，会让 manager 全量读整个 aux
+	// 文件（实测某会话 11.8MB/约 300ms 且持 m.mu），再按 windowSeqs 过滤掉绝大部分。
+	// 与 handleSessionGet 保持同一套选择逻辑。
+	var exchangeAux map[int][]session.ExchangeAux
+	if windowMeta != nil {
+		windowSeqs := make(map[int]bool, len(out.Exchanges))
+		for _, ex := range out.Exchanges {
+			if ex.Seq > 0 {
+				windowSeqs[ex.Seq] = true
+			}
+		}
+		exchangeAux, _ = uc.GetSessionExchangeAuxWindow(r.Context(), usecase.GetSessionExchangeAuxWindowInput{
+			RootID: rootID,
+			Key:    key,
+			Seqs:   windowSeqs,
+		})
+	} else {
+		exchangeAux, _ = uc.GetSessionExchangeAux(r.Context(), usecase.GetSessionExchangeAuxInput{
+			RootID: rootID,
+			Key:    key,
+			Seq:    afterSeq,
+		})
+	}
 	exchangeAux = projectSessionExchangesForResponse(out, exchangeAux)
 	// 注：sync 先做全量外部增量拉取（Full:true），再按窗口切片，保证窗口数据最新。
 	respondJSON(w, http.StatusOK, h.sessionResponse(out, contextWindow, exchangeAux, windowMeta))

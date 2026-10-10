@@ -2118,6 +2118,73 @@ groups:
       - server/internal/scheduled/tasks.go:SessionActivityBroadcaster
       - server/internal/agent/codex/session.go:handleStreamedEvents
 
+  - id: G-BG
+    title: 会话窗口读不整表解析（冷开窗按需读 + tail 增量三处缺陷 + 搜索 cap + O1 两条全量 aux 热路径）
+    kind: fix
+    symptom: |
+      ① 打开/切换会话时整个 root 停顿：冷缓存开窗走 readExchangesFull，解析整份主日志且
+         持 m.mu。实测 1.19MB/206 行 15.3ms，会话越大越久；前端每 ~1.7s 轮询窗口端点，
+         等于每隔一秒多就有人把 root 锁住十几毫秒 —— 用户体感是「同步后内容消失/界面卡住」。
+      ② 同 seq 的后续版本读不到：readExchangeTail 里 entry.Seq <= baseSeq 直接 continue，
+         于是 tail 追加里「与已缓存 seq 相同但更完整/更高 revision」的更新被跳过，
+         页面继续显示旧内容，只有冷启动才碰巧看到对的。
+      ③ tail 内同 seq 重复吐：loadExchanges 的增量分支盲 append，同一 seq 追加多行时
+         窗口里出现重复条。
+      ④ 完整性升级被误报成冲突：同 seq 的空占位被后来的完整回复覆盖时打
+         conflicting duplicate seq，污染日志；空正文永不覆盖非空正文，只有「已有正文非空且与新正文不同」才算真冲突。
+      ⑤ 含超长行的会话整个搜不到：搜索的 bufio.Scanner 上限写死 1MB，而主日志解析上限是
+         maxExchangeLineBytes(64MB)，单行 >1MB 就让 Search 返回 ErrTooLong。
+      ⑥ 列表页对每个命令会话全量读 aux：fillCommandShells → GetExchangeAux(key,0)。
+         实测单会话 aux 最大 19MB，11.8MB 那次 281ms，且持 m.mu。
+      ⑦ 非窗口化的 sync 全量读 aux 再过滤：handleSessionSync 无条件 Seq:0；
+         handleSessionGet 早就按窗口只取窗口内 seq 的 aux（G-AT），这条漏了同一个优化。
+    why: |
+      1) getSessionWindowUnsafe 冷缓存改走 readExchangeWindow：读盘一次 → 字节级行计数
+         （bytes.Count 思路，不解析 JSON，实测 1.2MB/0.14ms）拿 Total → 只解析尾部
+         need+1 条（多一条只为判 hasMore）。Total 在冷缓存下取非空行数而非
+         len(全部记录)：实测 310 份真实主日志/2172 行，0 空行、0 同 seq 多行，只有 1 份
+         maxSeq 与行数差 86；退化日志会显示重复条数，S2d 之后主日志只剩元数据，此代价消失。
+      2) 尾部读刻意不复用 readAuxWindowTail 的逐块反向读：那个实现会丢掉每个分块的首条
+         半行，单行最大 308KB 的主日志会被静默丢记录。改成「只读一个后缀、起点对齐换行」的
+         单次读，span 按 4 倍增长。
+      3) 新增 mergeExchangeRecord / mergeExchangeRecords：新 seq 追加（与全量读同一
+         「按文件序」假定），同 seq 原位替换且保留原位置；空内容永不覆盖非空内容；仅
+         「两条都非空且内容不同」才打冲突告警。readExchangesFull 的逐行合并改为调用它，
+         全量与增量从此共用一套合并语义。
+      4) readExchangeTail 去掉 seq<=baseSeq 跳过，改为返回全部解析结果，去重交给
+         mergeExchangeRecords —— 这条路径在最热的读取路径上，同 seq 的更新必须看得见。
+      5) 新增 Manager.GetCommandShell：aux 尾部有界读（512KB 起步、4 倍增长），命中即停；
+         fillCommandShells 改用它，判据仍是 InferCommandShellFromAux。
+      6) handleSessionSync 改为与 handleSessionGet 同构：有 windowMeta 就按窗口内 seq 取
+         aux（走 G-AT 的 CompactExchangeAuxLight），否则维持 Seq:afterSeq。
+    boundary: |
+      会话窗口读（GET /api/sessions/{key}?latest= / ?before_seq=、窗口化 sync）与列表页的
+      shell 标签推断，必须 O(窗口) 或 O(尾部命中)，不得整表解析、不得全量读 aux。
+      实时写路径、Full 同步、import、repoint、子代理同步都不动。
+    tests:
+      - server/internal/session/manager_window_cold_test.go
+      - server/internal/session/manager_incremental_merge_test.go
+      - server/internal/session/manager_search_test.go
+      - server/internal/session/manager_aux_tail_test.go
+      - server/internal/api/http_window_test.go
+      - server/internal/api/usecase/usecase_test.go
+      - web/tests/session-window.test.mjs
+    files:
+      - server/internal/session/manager.go
+      - server/internal/api/http.go
+      - server/internal/api/usecase/session.go
+      - web/tests/session-window.test.mjs
+    anchors:
+      - server/internal/session/manager.go:readExchangeWindow
+      - server/internal/session/manager.go:mergeExchangeRecord
+      - server/internal/session/manager.go:mergeExchangeRecords
+      - server/internal/session/manager.go:readExchangeTail
+      - server/internal/session/manager.go:countExchangeRecords
+      - server/internal/session/manager.go:GetCommandShell
+      - server/internal/session/manager.go:readAuxTailEntries
+      - server/internal/api/http.go:handleSessionSync
+      - server/internal/api/usecase/session.go:fillCommandShells
+
   - id: G-BF
     title: Full 同步丢最新几轮（ctx_seq 切片恒空 + 时间地板被静默跳过）
     kind: fix

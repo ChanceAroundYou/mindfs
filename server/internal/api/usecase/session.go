@@ -244,16 +244,19 @@ func (s *Service) ListChildSessions(ctx context.Context, in ListChildSessionsInp
 	return ListSessionsOutput{Sessions: items}, nil
 }
 
+// fillCommandShells 给命令会话补 shell 标签。
+// 走 manager.GetCommandShell（aux 尾部有界读）而不是 GetExchangeAux(key, 0)：
+// 后者是全量读，列表页对每个命令会话各读一次，实测单会话 aux 最大 19MB 且持 m.mu。
 func fillCommandShells(ctx context.Context, manager *session.Manager, items []*session.Session) error {
 	for _, item := range items {
 		if item == nil || item.Type != session.TypeCommand {
 			continue
 		}
-		aux, err := manager.GetExchangeAux(ctx, item.Key, 0)
+		shell, err := manager.GetCommandShell(ctx, item.Key)
 		if err != nil {
 			return err
 		}
-		item.Shell = session.InferCommandShellFromAux(aux)
+		item.Shell = shell
 	}
 	return nil
 }
