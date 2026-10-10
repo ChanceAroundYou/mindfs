@@ -745,6 +745,41 @@ func (m *Manager) Search(_ context.Context, opts SearchOptions) ([]SearchHit, er
 type exchangeModelDisplayNameContextKey struct{}
 type exchangeTokenUsageContextKey struct{}
 type exchangeSourceContextKey struct{}
+type exchangeIdentityContextKey struct{}
+
+// ExchangeIdentity 是落在 exchange 行上的**轮次**次元数据（方案 §3.1）。
+//
+// 为什么用 context 而不是给 addExchangeForAgentAt 加参数：identity 是轮次级 ——
+// 同一轮的用户行与助手行必须带**同一个** turn_id，而调用点已有 8 处。
+// 与 WithExchangeSource / WithExchangeModelDisplayName 同一套机制。
+type ExchangeIdentity struct {
+	// TurnID 是 MindFS 权威身份：落盘即定、永不改。客户端可生成（方案 D4），
+	// 无客户端时由服务端 mint UUIDv4（C2）。
+	TurnID string
+	// TurnSeq 是「打开该轮的 user 行 seq」，排序 / 人读用。
+	TurnSeq int
+	// NativeTurn / NativePrompt 是 agent 侧回查键（可空、可后补）。
+	NativeTurn   string
+	NativePrompt string
+	// Partial 标记「本轮未收尾」：崩溃 / 中断丢缓冲区时靠 import 补齐（方案 D13）。
+	Partial bool
+}
+
+// WithExchangeIdentity 标注这一行所属的轮次身份。零值 = 历史数据 / 无身份。
+func WithExchangeIdentity(ctx context.Context, identity ExchangeIdentity) context.Context {
+	if ctx == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, exchangeIdentityContextKey{}, identity)
+}
+
+func exchangeIdentityFromContext(ctx context.Context) ExchangeIdentity {
+	if ctx == nil {
+		return ExchangeIdentity{}
+	}
+	identity, _ := ctx.Value(exchangeIdentityContextKey{}).(ExchangeIdentity)
+	return identity
+}
 
 // WithExchangeSource 标注这一行由哪个写入者落盘（ExchangeSourceLive / ExchangeSourceImport）。
 // 不传则 Source 为空 = 历史数据，投影时只按「时间戳逐字节相同」这条铁证处理。
@@ -801,14 +836,14 @@ func exchangeTokenUsageFromContext(ctx context.Context) *agenttypes.TokenUsage {
 }
 
 func (m *Manager) AddExchangeForAgent(ctx context.Context, session *Session, role, content, agent, mode, effort, fastService string) error {
-	return m.addExchangeForAgentAt(session, role, content, agent, exchangeModelDisplayNameFromContext(ctx), exchangeTokenUsageFromContext(ctx), exchangeSourceFromContext(ctx), mode, effort, fastService, time.Time{})
+	return m.addExchangeForAgentAt(session, role, content, agent, exchangeModelDisplayNameFromContext(ctx), exchangeTokenUsageFromContext(ctx), exchangeSourceFromContext(ctx), exchangeIdentityFromContext(ctx), mode, effort, fastService, time.Time{})
 }
 
 func (m *Manager) AddExchangeForAgentAt(ctx context.Context, session *Session, role, content, agent, mode, effort, fastService string, timestamp time.Time) error {
-	return m.addExchangeForAgentAt(session, role, content, agent, exchangeModelDisplayNameFromContext(ctx), exchangeTokenUsageFromContext(ctx), exchangeSourceFromContext(ctx), mode, effort, fastService, timestamp)
+	return m.addExchangeForAgentAt(session, role, content, agent, exchangeModelDisplayNameFromContext(ctx), exchangeTokenUsageFromContext(ctx), exchangeSourceFromContext(ctx), exchangeIdentityFromContext(ctx), mode, effort, fastService, timestamp)
 }
 
-func (m *Manager) addExchangeForAgentAt(session *Session, role, content, agent, modelDisplayName string, tokenUsage *agenttypes.TokenUsage, source, mode, effort, fastService string, timestamp time.Time) error {
+func (m *Manager) addExchangeForAgentAt(session *Session, role, content, agent, modelDisplayName string, tokenUsage *agenttypes.TokenUsage, source string, identity ExchangeIdentity, mode, effort, fastService string, timestamp time.Time) error {
 	if session == nil || strings.TrimSpace(session.Key) == "" {
 		return errors.New("session required")
 	}
@@ -847,6 +882,13 @@ func (m *Manager) addExchangeForAgentAt(session *Session, role, content, agent, 
 		Content:          content,
 		TokenUsage:       tokenUsage,
 		Timestamp:        ts,
+		// 轮次元数据（方案 §3.1）。TurnID 是权威身份，TurnSeq 是人读排序键，
+		// native_* 是 agent 侧回查键（可空、可后补、fork 后可变更）。
+		TurnID:       identity.TurnID,
+		TurnSeq:      identity.TurnSeq,
+		NativeTurn:   identity.NativeTurn,
+		NativePrompt: identity.NativePrompt,
+		Partial:      identity.Partial,
 	}
 	if err := m.appendExchange(session.Key, record); err != nil {
 		log.Printf("[session/store] append.error session=%s seq=%d role=%s agent=%s err=%v", session.Key, record.Seq, role, resolvedAgent, err)
@@ -1606,6 +1648,16 @@ func (m *Manager) deleteSessionUnsafe(key string) error {
 	}
 	delete(m.exchangeCursors, auxPath)
 	if err := os.Remove(filepath.Join(metaDir, filepath.FromSlash(auxPath))); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	// 块流是正文载体（CUSTOM(G-BH)）：删会话必须连它一起删，否则正文留在盘上，
+	// 既是隐私残留，也会在会话 key 复用时被当成「这个会话本来就有正文」读出来。
+	blocksPath, err := m.blocksPath(key)
+	if err != nil {
+		return err
+	}
+	delete(m.exchangeCursors, blocksPath)
+	if err := os.Remove(filepath.Join(metaDir, filepath.FromSlash(blocksPath))); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	return nil

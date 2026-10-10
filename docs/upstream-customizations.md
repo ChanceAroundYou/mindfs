@@ -1747,6 +1747,81 @@
 - 验收记录（实测，合成最坏输入 1.19MB/206 行、每行 ~5.7KB）：冷开窗 **15.3ms → 1.4ms**
   （读盘 0.9ms + 行计数 0.14ms + 解析 9 条 0.8ms）；真实最重会话 391KB/206 行按比例约 0.6ms。
 
+### G-BH 会话正文块流（块存储层 + 轮次身份 + S2a 双写 + C1/C2）（2026-10-10）
+
+- 来源：`server/internal/session/blocks.go`（新增）、`server/internal/session/manager.go`、
+  `server/internal/session/types.go`、`server/internal/api/usecase/session.go`、
+  `server/internal/api/usecase/session_repoint.go`（2026-10-10）。对应主方案 S2a
+  （`docs/session-blocks-plan.md` §3/§4/§10）。
+- 边界：**会话正文的存储与身份** —— 块流格式、块写入点、轮次元数据字段、`turn_id` 的
+  生成与清理。读路径在 S2a **不动**（仍走 `Content`/aux），前端不动。
+  S2b 起读路径改走块流、S2d 删 `Content`、S2e 删 `TurnGen` —— 都是后续步骤，不在本组。
+- 可见症状（没有它会怎样）：
+  1. **回复结束后助手正文消失**：一轮正文只拼 `text` 块，而 `os` 模型约 15% 的轮次只产出
+     reasoning、没有任何 text，于是落库成 `content:""`。流式时 `thought_chunk` 实时推所以
+     看得见，收尾落库后正文瞬间消失；点同步也救不回（两个 importer 都不收 thought）。
+     实测空正文占比：claude::os 39%、dsh::os 13%（claude::of 5%、dsh::of 2%）。
+  2. **一轮正文没有权威身份**：主日志只有 `seq/role/content`，没有 `turn_id`，于是
+     「同一个回合有两个写入者」只能靠内容比对 + 时间戳窗口猜（投影 rule A/A2/B）。
+  3. **repoint / fork 之后 native id 与新转录错配**（`repoint.go:35` 明载 fork 后 claude
+     产出全新 uuid）：本方案开始持久化 native id 之后，旧 native id 会让判重失效、回查错行。
+  4. **服务端发起的轮次没有 `turn_id` 可采纳**：客户端根本没有传 `turn_id` 的入口
+     （`Stream.Send` 只收 string），而定时任务 / 看板任务阶段 / 子会话 / 命令会话都由服务端发起。
+- 为什么必须保留：
+  1. 新增 `sessions/<key>.blocks.jsonl`（块流），一行一块：
+     `{seq,pos,revision,type,text|toolcall|todo|plan|compact,step,turn_id,native_id,parent_tool_use_id,task_id,subagent_type}`。
+     `type ∈ {reasoning,text,tool_call,todo,plan,compact}`。`pos` 取代旧 aux 的 `line`
+     （`line` 是「在 content 里的第几行」，content 一删就失去意义）；同 `(seq,pos)` 多版本
+     按 `revision` 取最高。
+  2. `Manager.AppendBlocks` / `ReadBlocks` / `GetBlocksWindow` / `blocksPath`（`blocks.go`）：
+     append-only JSONL，坏行跳过不报错（一行写坏不能让整个会话的正文读不出来）。
+  3. `Exchange` 加轮次元数据：`turn_id`（MindFS 权威身份，落盘即定、永不改）、`turn_seq`
+     （= 打开该轮的 user 行 seq）、`native_turn` / `native_prompt`（agent 侧回查键，可空、
+     可后补、fork 后可变更）、`partial`（本轮未收尾）。用 `session.WithExchangeIdentity`
+     这个 context 值传递而不是给 `addExchangeForAgentAt` 加参数：identity 是轮次级
+     （同一轮的用户行与助手行必须带**同一个** `turn_id`），而调用点已有 8 处。
+  4. `BuildTurnBlocks` 把「一轮的正文 + aux」编译成块序列，顺序与前端
+     `buildAssistantTimeline` 的既有渲染顺序**逐条一致**（aux 按 `(line,到达序)` 稳定排序后
+     插进正文段之间、空正文段跳过）—— S2b 起块序就是渲染序，不一致就等于切换读路径时
+     正文顺序会变（用户可见的回归）。放在 usecase 而不是 `Manager.appendExchange` 里做：
+     `appendExchange` 只看到一段字符串、`appendExchangeAux` 只看到一条 aux，
+     两者都拼不出交错顺序。
+  5. S2a 是**双写**：块流与旧 `Content`/aux 并存，读路径仍走旧格式，可整体回滚。写入点：
+     `persistUserTurnExchange`（user 块）、`SendMessage` 轮末（助手块）、
+     `persistCommandTurn`（命令块）、`attachBackgroundSessionUpdates`（子会话块）。
+     块写失败不拖垮本轮（正文已由 `AddExchangeForAgent` 落过盘），只记日志。
+  6. **C2** 服务端 mint `turn_id`：`newTurnID()` 拼 RFC4122 UUIDv4（不引 `google/uuid`，
+     与 `randomHex` 同一条 `crypto/rand` 路径）。mint 点只有 `persistUserTurnExchange`
+     一处 —— 三条服务端发起的轮次路径（`scheduled/tasks.go` 定时任务、`appcontext.go`
+     看板任务阶段、子会话）都经 `SendMessage` 走到它。
+  7. **C1** repoint 清 native id：`Manager.ClearNativeIdentity` 行级 JSON 手术删掉
+     `native_turn`/`native_prompt`/`native_id`（**不是**结构体往返 —— 主日志里可能有别的
+     写入者 / 未来版本加的字段，反序列化再序列化会把它们丢掉）。文件里本来没有 native id 时
+     **一个字节都不写**（无谓重写会改 mtime、白白让缓存失效，而落地前的全部历史数据都没有
+     native id）。清完删掉内存缓存与读盘游标：新文件更短时旧 offset 越过 EOF，增量读拿不到
+     东西，带旧 native id 的那份缓存会一直留着。
+  8. fork 复制历史时块流一起复制、seq 按 `seqMap` 重映射、`native_id` 清空；`turn_id`
+     原样带过去（fork 复制的是同一批轮次）、`turn_seq` 重映射。fork 开的是全新 agent 会话
+     （`AgentSessionID:""` + `ForkPoint`），源 native id 一律无效。
+  9. 删会话时连块流一起删（否则正文留在盘上，会话 key 复用时被当成「本来就有正文」）。
+- 针对性测试：
+  - `server/internal/session/manager_blocks_test.go` → 块追加/读回顺序、缺文件为空、
+    按 seq 过滤、容忍无 `pos` 的旧行、块流与主日志同目录、删会话连块流一起删。
+  - `server/internal/session/blocks_build_test.go` → **只有 reasoning 的轮次仍产出块**
+    （本 bug 的核心回归）、空轮次不产块、按 `line` 交错且空正文段跳过、同 `line` 保持到达序、
+    各类 aux 的 type 判定。
+  - `server/internal/session/manager_identity_fields_test.go` → 身份字段 JSONL 往返、
+    无身份历史行读成零值、块与主日志共用同一个 `turn_id`。
+  - `server/internal/session/manager_native_identity_test.go` → 清 native id 同时清主日志与
+    块流、真的落盘（换 manager 直读）、干净文件一个字节不动、未知字段不丢、`native_id` 往返。
+  - `server/internal/api/usecase/session_blocks_write_test.go` → `newTurnID` 是 UUIDv4 且不重复、
+    user 行拿到 `turn_id`+`turn_seq` 与 user 块、判重命中不重复写块、**正文为空的轮次留下
+    reasoning 块**、块序与渲染器交错一致。
+  - `server/internal/api/usecase/session_fork_blocks_test.go` → fork 复制块流并重映射 seq、
+    不带源 native id、`turn_id` 跟着复制。
+  - `server/internal/api/usecase/session_early_user_persist_test.go`（既有）→
+    早落盘契约与判重对称性在签名加返回值后仍成立。
+
 ---
 
 ## 4. 未提交工作区（2026-10-06 清空）

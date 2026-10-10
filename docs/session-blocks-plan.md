@@ -318,6 +318,40 @@ agent 事件 → block → 缓冲 →(300ms / 64KB / boundary)→ ① append 块
 - `readAuxFile` 加了 `Manager.fullAuxReads` 计数器（与 `fullExchangeReads` 同思路），
   `GetCommandShell` / 窗口 aux 两条路都断言不触发全量读。
 
+**S2a 落地记录（2026-10-10，提交 `G-BH`）**：块存储层 + 轮次身份 + 双写 + C1/C2 全部落地。
+
+- 块流路径 `sessions/<key>.blocks.jsonl`，与主日志 / aux 同目录。API：
+  `AppendBlocks` / `ReadBlocks` / `GetBlocksWindow` / `blocksPath`。
+- `BuildTurnBlocks` 与前端 `buildAssistantTimeline` **逐条同序**（按 `(line,到达序)` 稳定排序、
+  空正文段跳过）。这条等价性是 S2b 的前置条件：不同序就等于切读路径时正文顺序会变。
+- **与 §4 的一处偏离（有意）**：S2a 的块在**轮末一次性**落盘，不做 §4 写的
+  300ms / 64KB 中间 flush。理由：读路径在 S2a 仍走 `Content`，中间 flush 只增加磁盘写、
+  没有任何消费者；流式期落块是 S2b 的工作（那时才有读者）。
+- **`step` 的占位**：S2a 写 `step = 1`（`turnBlockStep`）而不是 §3.3 的哨兵 `-1`。
+  理由：读取侧规则是「忽略 `step<0` 的版本」，写 `-1` 会把 S2a 期间落下的块**全部作废**，
+  S2b 切读路径的那一刻正文会凭空消失。S2a 的块在轮末落盘时投递边界已经过去、
+  没有被记录下来，整轮只能算一个投递单元 —— `1` 是当前唯一可写的真值。
+  按投递单元真切分（claude 的 `AssistantMessage` / dsh 的 `messageId`）是 S2c 的工作，
+  届时用 `(seq,pos)` + `revision+1` 覆盖成真值，**不需要迁移历史**。
+- **C2 的 mint 点收敛到一处**：三条服务端发起的轮次路径（`scheduled/tasks.go` 定时任务、
+  `appcontext.go` 看板任务阶段、子会话）全部经 `SendMessage` → `persistUserTurnExchange`，
+  所以 `newTurnID()` 只在那一个点调用。另外两条独立写入者（命令会话
+  `persistCommandTurn`、子会话 `attachBackgroundSessionUpdates`）各自 mint / 复用。
+- **写入点四处**：`persistUserTurnExchange`（user 块）、`SendMessage` 轮末（助手块）、
+  `persistCommandTurn`（命令块）、`attachBackgroundSessionUpdates`（子会话块）。
+  块写失败一律只记日志、不失败本轮 —— 正文已由 `AddExchangeForAgent` 落过盘。
+- **§14 C1 的两处调用点**：`RepointSession` 第 6 步（放在最后，前几步失败则 native id 原样
+  保留，仍与旧转录一致）与 `copyForkHistory`（fork 开全新 agent 会话，源 native id 一律无效）。
+- **§14 未列出的第三个漏洞（本次发现并修）**：`copyForkHistory` 只复制 exchange + aux，
+  **不复制块流** —— S2b 之后 fork 会话会渲染成空。已补 `copyForkBlocks`（seq 重映射、
+  `native_id` 清空、`turn_id` 保留）。
+- **§14 未列出的第四个漏洞（本次发现并修）**：`deleteSessionUnsafe` 只删主日志与 aux，
+  不删块流 —— 正文留在盘上，会话 key 复用时会被当成「本来就有正文」读出来。已补。
+- **§14 C3 顺带修**：`persistCommandTurn` 原先用调用方预测的 `plannedAssistantSeq` 写 aux，
+  而助手行的真实 seq 由 `AddExchangeForAgent` 分配。两者一旦漂移，aux 会挂到别人的 seq 上。
+  改为写完后从缓存取真实 seq（块流同理）。
+
+
 ---
 
 ## 13. 待办 / 未实证

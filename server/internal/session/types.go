@@ -93,6 +93,21 @@ type Exchange struct {
 	Content          string                 `json:"content"`
 	TokenUsage       *agenttypes.TokenUsage `json:"token_usage,omitempty"`
 	Timestamp        time.Time              `json:"timestamp"`
+
+	// ── 轮次元数据（CUSTOM(G-BH)，方案 §3.1）────────────────────────────
+	// 正文搬去块流之后，主日志一轮一行只留身份与展示字段。
+	//
+	// TurnID 是 **MindFS 权威身份**：落盘即定、永不改，客户端可生成（方案 D4）、
+	// 无客户端时服务端 mint UUIDv4（C2）。它与 agent 侧的 native id 是两回事 ——
+	// native id 在 fork/repoint/resume 后不稳定，只能当映射值（repoint.go:35）。
+	TurnID string `json:"turn_id,omitempty"`
+	// TurnSeq 是「打开该轮的 user 行 seq」，排序 / 人读用；与 TurnID 一一对应。
+	TurnSeq int `json:"turn_seq,omitempty"`
+	// NativeTurn / NativePrompt 是 agent 侧回查键（可空、可后补）。
+	NativeTurn   string `json:"native_turn,omitempty"`
+	NativePrompt string `json:"native_prompt,omitempty"`
+	// Partial 标记「本轮未收尾」：崩溃 / 中断丢缓冲区时靠 import 补齐（方案 D13）。
+	Partial bool `json:"partial,omitempty"`
 }
 
 type ExchangeAux struct {

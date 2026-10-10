@@ -2220,3 +2220,91 @@ groups:
       - server/internal/agent/claude/importer.go:readClaudeImportedExchangeLocators
       - server/internal/api/usecase/external_sessions.go:SyncExternalSessionDelta
       - server/internal/api/usecase/external_sessions.go:externalSessionDeltaAfterCtxSeq
+
+  - id: G-BH
+    title: 会话正文块流（Block 存储层 + 轮次身份 turn_id/turn_seq/native_* + S2a 双写 + C1/C2）
+    kind: fix
+    symptom: |
+      ① 回复结束后助手正文消失：一轮正文只拼 text 块（usecase/session.go 的
+         responseText = appendResponseChunk），而 os 模型约 15% 的轮次只产出 reasoning、
+         没有任何 text，于是落库成 content:""。流式时 thought_chunk 实时推所以看得见，
+         收尾落库后正文瞬间消失；点同步也救不回（两个 importer 都不收 thought）。
+         实测空正文占比：claude::os 39%、dsh::os 13%（claude::of 5%、dsh::of 2%）。
+      ② 一轮正文没有权威身份：主日志只有 seq/role/content，没有 turn_id，于是
+         「同一个回合有两个写入者」只能靠内容比对 + 时间戳窗口猜（投影 rule A/A2/B）。
+      ③ repoint / fork 之后 native id 与新转录错配（repoint.go:35 明载 fork 后 claude
+         产出全新 uuid）：本方案开始持久化 native id 之后，旧 native id 会让判重失效、
+         回查错行。
+      ④ 服务端发起的轮次（定时任务 / 看板任务阶段 / 子会话 / 命令会话）没有 turn_id 可
+         采纳 —— 客户端根本没有传 turn_id 的入口（Stream.Send 只收 string）。
+    why: |
+      1) 新增 sessions/<key>.blocks.jsonl（CUSTOM(G-BH) 的块流），一行一块：
+         {seq,pos,revision,type,text|toolcall|todo|plan|compact,step,turn_id,native_id,
+          parent_tool_use_id,task_id,subagent_type}。type ∈ {reasoning,text,tool_call,
+         todo,plan,compact}。pos 取代旧 aux 的 line（line 是「在 content 里的第几行」，
+         content 一删就失去意义）；同 (seq,pos) 多版本按 revision 取最高。
+      2) Manager.AppendBlocks / ReadBlocks / GetBlocksWindow / blocksPath（blocks.go）：
+         append-only JSONL，坏行跳过不报错（一行写坏不能让整个会话的正文读不出来）。
+      3) Exchange 加轮次元数据：turn_id（MindFS 权威身份，落盘即定、永不改）、
+         turn_seq（= 打开该轮的 user 行 seq）、native_turn / native_prompt（agent 侧
+         回查键，可空、可后补、fork 后可变更）、partial（本轮未收尾）。
+         用 session.WithExchangeIdentity 这个 context 值传递而不是给
+         addExchangeForAgentAt 加参数：identity 是轮次级（同一轮的用户行与助手行必须带
+         同一个 turn_id），而调用点已有 8 处。
+      4) BuildTurnBlocks（blocks.go）把「一轮的正文 + aux」编译成块序列，顺序与前端
+         buildAssistantTimeline 的既有渲染顺序**逐条一致**（aux 按 (line,到达序) 稳定排序
+         后插进正文段之间、空正文段跳过）—— S2b 起块序就是渲染序，不一致就等于切换读
+         路径时正文顺序会变（用户可见的回归）。放在 usecase 而不是 Manager.appendExchange
+         里做：appendExchange 只看到一段字符串、appendExchangeAux 只看到一条 aux，
+         两者都拼不出交错顺序。
+      5) S2a 是**双写**：块流与旧 Content/aux 并存，读路径仍走旧格式，可整体回滚。
+         写入点：persistUserTurnExchange（user 块）、SendMessage 轮末（助手块）、
+         persistCommandTurn（命令块）、attachBackgroundSessionUpdates（子会话块）。
+         块写失败不拖垮本轮（正文已由 AddExchangeForAgent 落过盘），只记日志。
+      6) C2 服务端 mint turn_id：newTurnID() 拼 RFC4122 UUIDv4（不引 google/uuid，
+         与 randomHex 同一条 crypto/rand 路径）。mint 点只有 persistUserTurnExchange
+         一处 —— 三条服务端发起的轮次路径（scheduled/tasks.go 定时任务、
+         appcontext.go 看板任务阶段、子会话）都经 SendMessage 走到它。
+      7) C1 repoint 清 native id：Manager.ClearNativeIdentity 行级 JSON 手术删掉
+         native_turn/native_prompt/native_id（**不是**结构体往返 —— 主日志里可能有别的
+         写入者/未来版本加的字段，反序列化再序列化会把它们丢掉）。文件里本来没有 native id
+         时**一个字节都不写**（无谓重写会改 mtime、白白让缓存失效，而落地前的全部历史数据
+         都没有 native id）。清完删掉内存缓存与读盘游标：新文件更短时旧 offset 越过 EOF，
+         增量读拿不到东西，带旧 native id 的那份缓存会一直留着。
+      8) fork 复制历史时块流一起复制、seq 按 seqMap 重映射、native_id 清空；
+         turn_id 原样带过去（fork 复制的是同一批轮次）、turn_seq 重映射。fork 开的是
+         全新 agent 会话（AgentSessionID:"" + ForkPoint），源 native id 一律无效。
+      9) 删会话时连块流一起删（否则正文留在盘上，会话 key 复用时被当成「本来就有正文」）。
+    boundary: |
+      会话正文的存储与身份：块流格式、块写入点、轮次元数据字段、turn_id 生成与清理。
+      读路径在 S2a **不动**（仍走 Content/aux），前端不动。
+      S2b 起读路径改走块流，S2d 删 Content，S2e 删 TurnGen —— 都是后续步骤，不在本组。
+      主日志格式兼容：没有身份字段的历史行读成零值，不报错。
+    tests:
+      - server/internal/session/manager_blocks_test.go
+      - server/internal/session/blocks_build_test.go
+      - server/internal/session/manager_identity_fields_test.go
+      - server/internal/session/manager_native_identity_test.go
+      - server/internal/api/usecase/session_blocks_write_test.go
+      - server/internal/api/usecase/session_fork_blocks_test.go
+      - server/internal/api/usecase/session_early_user_persist_test.go
+    files:
+      - server/internal/session/blocks.go
+      - server/internal/session/blocks_build_test.go
+      - server/internal/session/manager.go
+      - server/internal/session/types.go
+      - server/internal/session/manager_blocks_test.go
+      - server/internal/session/manager_identity_fields_test.go
+      - server/internal/session/manager_native_identity_test.go
+      - server/internal/api/usecase/session.go
+      - server/internal/api/usecase/session_repoint.go
+      - server/internal/api/usecase/session_blocks_write_test.go
+      - server/internal/api/usecase/session_fork_blocks_test.go
+      - server/internal/api/usecase/session_early_user_persist_test.go
+    anchors:
+      - server/internal/session/blocks.go:BuildTurnBlocks
+      - server/internal/session/blocks.go:ClearNativeIdentity
+      - server/internal/session/manager.go:WithExchangeIdentity
+      - server/internal/api/usecase/session.go:newTurnID
+      - server/internal/api/usecase/session.go:persistTurnBlocks
+      - server/internal/api/usecase/session.go:copyForkBlocks
