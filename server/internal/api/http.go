@@ -832,6 +832,14 @@ func (h *HTTPHandler) handleSessionGet(w http.ResponseWriter, r *http.Request) {
 			Seq:    afterSeq,
 		})
 	}
+	// 正文块：seq 集合与上面 aux 的窗口口径一致 —— 用**回包里的** exchange seq，
+	// 而不是请求参数推算的窗口边界，这样窗口/增量/全量三条路共用同一段逻辑，
+	// 也不会出现「块挂到了不在回包里的 seq 上」。
+	blocks, _ := uc.GetSessionBlocksWindow(r.Context(), usecase.GetSessionBlocksWindowInput{
+		RootID: rootID,
+		Key:    key,
+		Seqs:   windowSeqsForExchanges(out.Exchanges),
+	})
 	// 条件请求：这是全站**最重**的端点 —— 窗口化尾部拉取（`?latest=20`）
 	// 实测单次 1.14 MB，客户端按 ~1.7 秒一次轮询，两台机器各自量到 60 分钟里
 	// 4,746 次、合计约 1.1 GB/h（占全部请求的 70%）。会话没在跑时这些回包
@@ -840,7 +848,7 @@ func (h *HTTPHandler) handleSessionGet(w http.ResponseWriter, r *http.Request) {
 	// 只协商、不瘦身：载荷本身就是详情（exchanges / exchange_aux / window_meta
 	// 少一个键就是少一段对话），而且 `seq` 增量语义要求客户端**恰好**收到新行，
 	// 删空字段会破坏 `appendSessionDelta` 的判据。
-	respondJSONConditional(w, r, h.sessionResponse(out, contextWindow, projectSessionExchangesForResponse(out, exchangeAux), windowMeta))
+	respondJSONConditional(w, r, h.sessionResponse(out, contextWindow, projectSessionExchangesForResponse(out, exchangeAux), blocks, windowMeta))
 }
 
 // handleSessionAudit 只读体检：文件层（seq 空洞/重复、坏行、aux 悬空）+ 投影层的重复分类。
@@ -958,8 +966,15 @@ func (h *HTTPHandler) handleSessionSync(w http.ResponseWriter, r *http.Request) 
 		})
 	}
 	exchangeAux = projectSessionExchangesForResponse(out, exchangeAux)
+	// 正文块与 aux 同一口径（用**回包里的** exchange seq，投影之后算），
+	// 与 handleSessionGet 共用 windowSeqsForExchanges。
+	blocks, _ := uc.GetSessionBlocksWindow(r.Context(), usecase.GetSessionBlocksWindowInput{
+		RootID: rootID,
+		Key:    key,
+		Seqs:   windowSeqsForExchanges(out.Exchanges),
+	})
 	// 注：sync 先做全量外部增量拉取（Full:true），再按窗口切片，保证窗口数据最新。
-	respondJSON(w, http.StatusOK, h.sessionResponse(out, contextWindow, exchangeAux, windowMeta))
+	respondJSON(w, http.StatusOK, h.sessionResponse(out, contextWindow, exchangeAux, blocks, windowMeta))
 }
 
 func (h *HTTPHandler) handleSessionToolCallGet(w http.ResponseWriter, r *http.Request) {
@@ -1079,7 +1094,7 @@ func (h *HTTPHandler) handleSessionFork(w http.ResponseWriter, r *http.Request) 
 	}
 	respondJSON(w, http.StatusOK, map[string]any{
 		"session_key": out.Session.Key,
-		"session":     h.sessionResponse(out.Session, agenttypes.ContextWindow{}, nil, nil),
+		"session":     h.sessionResponse(out.Session, agenttypes.ContextWindow{}, nil, nil, nil),
 	})
 }
 
@@ -1290,10 +1305,24 @@ func projectSessionExchangesForResponse(s *session.Session, exchangeAux map[int]
 // projectedSessions 只为让投影日志每个会话最多打一次（读路径调用频繁，不能每请求一条）。
 var projectedSessions sync.Map
 
+// windowSeqsForExchanges 是「取块 / 取 aux 时用哪些 seq」的唯一定义：
+// **回包里真实存在的** exchange seq（seq>0）。不用请求参数推算窗口边界，
+// 于是窗口 / 增量 / 全量三条路共用一段逻辑，也不会出现「块挂到了不在回包里的 seq 上」。
+func windowSeqsForExchanges(exchanges []session.Exchange) map[int]bool {
+	seqs := make(map[int]bool, len(exchanges))
+	for _, ex := range exchanges {
+		if ex.Seq > 0 {
+			seqs[ex.Seq] = true
+		}
+	}
+	return seqs
+}
+
 func (h *HTTPHandler) sessionResponse(
 	s *session.Session,
 	contextWindow agenttypes.ContextWindow,
 	exchangeAux map[int][]session.ExchangeAux,
+	blocks map[int][]session.Block,
 	windowMeta *session.SessionWindowMeta,
 ) map[string]any {
 	if s == nil {
@@ -1326,6 +1355,25 @@ func (h *HTTPHandler) sessionResponse(
 			auxPayload[strconv.Itoa(seq)] = append([]session.ExchangeAux(nil), items...)
 		}
 	}
+	// 正文块（CUSTOM(G-BH)）：与 exchange_aux 同形，按 seq 分组。
+	// 只下发窗口内的 seq，且**只压工具卡详情、绝不压正文** —— 块流是正文的唯一载体。
+	// 历史会话没有块流时这里是空 map，前端回退旧格式。
+	blockPayload := make(map[string][]session.Block, len(blocks))
+	windowSeqs := make(map[int]struct{}, len(exchanges))
+	for _, ex := range exchanges {
+		if ex.Seq > 0 {
+			windowSeqs[ex.Seq] = struct{}{}
+		}
+	}
+	for seq, items := range blocks {
+		if seq <= 0 || len(items) == 0 {
+			continue
+		}
+		if _, ok := windowSeqs[seq]; !ok {
+			continue
+		}
+		blockPayload[strconv.Itoa(seq)] = session.CompactBlocksLight(items)
+	}
 	resp := map[string]any{
 		"key":                 s.Key,
 		"type":                s.Type,
@@ -1343,6 +1391,7 @@ func (h *HTTPHandler) sessionResponse(
 		"name":                s.Name,
 		"exchanges":           exchanges,
 		"exchange_aux":        auxPayload,
+		"blocks":              blockPayload,
 		"related_files":       s.RelatedFiles,
 		"related_worktree":    s.RelatedWorktree,
 		"worktree_missing":    s.RelatedWorktree.WorktreeMissing(),
@@ -1991,7 +2040,6 @@ func applyStaticCacheHeaders(w http.ResponseWriter, cleanPath string) {
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 	}
 }
-
 
 func isStandardReleaseVersion(version string) bool {
 	version = strings.TrimSpace(version)

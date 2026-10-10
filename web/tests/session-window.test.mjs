@@ -89,9 +89,12 @@ assert.match(
   /truncated: true,\s*\n\s*exchanges: kept,/,
   "发生过淘汰就必须标 truncated:true（标记语义 = 这条记录不完整，下次全量回源）",
 );
+// CUSTOM(G-BH)：返回值多了 `blocks`（正文块，与 exchange_aux 同一条淘汰规则）。
+// 判据从「精确匹配整行」改成「同一行里同时有这四项」—— 钉住的仍是同一条语义
+//（没淘汰 ⇒ 显式 false，且 aux / 块都被重新赋值过），但不再因为多一个字段就红。
 assert.match(
   sessionSrc,
-  /return \{ \.\.\.persistent, truncated: false, exchanges, exchange_aux \};/,
+  /return \{ \.\.\.persistent, truncated: false, exchanges, exchange_aux, blocks \};/,
   "没有淘汰时必须显式标 false（否则上一轮的 true 会留着白做一次全量）",
 );
 

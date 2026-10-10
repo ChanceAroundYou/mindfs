@@ -351,6 +351,41 @@ agent 事件 → block → 缓冲 →(300ms / 64KB / boundary)→ ① append 块
   而助手行的真实 seq 由 `AddExchangeForAgent` 分配。两者一旦漂移，aux 会挂到别人的 seq 上。
   改为写完后从缓存取真实 seq（块流同理）。
 
+**S2b 落地记录（2026-10-10，提交 `G-BH` 续）**：读路径改走块流 + 前端按 `type` 渲染。
+
+- 后端：`GetBlocksWindow(ctx, key, seqSet)`（`blocks.go`）反向分块读尾部，只读窗口内 seq。
+  **没有复用 `readAuxWindowTail`** —— 它丢掉每块的首个不完整行，跨越读块边界的记录会静默丢失；
+  块流一行实测可达 700KB（os 单块 119714 字符），必须两阶段：先反向探测停止偏移（只解析
+  块内部的完整行），再 `alignLineStart` 对齐行首后**一次正向读到 EOF**。代价 2× IO。
+  测试断言 `Manager.fullBlockReads == 0`（比断言计时稳）：300 个 seq × 4 块、~620B/行下
+  一次窗口读**一次全量读都没有**。
+- `resolveBlocks`：按 `(seq,pos)` 取最高 `revision`、跳过 `step<0` 的未收口块、按 `(seq,pos)` 排序。
+  `CompactBlockLight` 只压工具卡细节（复用 S1 的 `CompactToolCall` + `lightCompactToolCall`），
+  正文与 reasoning 一个字不动 —— 压缩规则与 S1 同源，不是新写一套。
+- `sessionResponse` 内联 `blocks`（只带 `windowSeqsForExchanges(exchanges)` 的 seq），
+  `handleSessionGet` 与 `handleSessionSync` 两条路都带上。内联而不是让前端再发一次请求：
+  窗口回包本来就是这一屏的唯一权威快照（§14 O3）。
+- 前端：新增 `web/src/hooks/sessionBlocks.ts`（纯函数、可被 `node --test` 直接 import）。
+  判定逻辑**必须**单独成 `.ts` —— `.tsx` 在 `node --test` 下导入不了（`ts-module-hook.mjs`
+  的边界说明），住在 hook 里就只能靠源码文本断言。`TimelineItem` 的定义随之搬过去、
+  从 `useSessionStream.ts` 转发，保持既有导入路径不变。
+- **块序即渲染序**：`buildAssistantTimelineFromBlocks` 只按 `pos` 遍历，
+  `lines`/`totalLines`/`emittedLines`/clamp 全部消失（那套是「把 aux 按 `line` 插进 content
+  字符串」的产物）。项 id 用 `block:<seq>:<pos>`，跨 revision 稳定。
+- `buildBaseTimeline` 的**每 seq 回退**：有块走块流、没块走旧格式。这条回退是刻意的 ——
+  同一会话里 S2a 之前的轮次没有块流，必须仍能渲染。判据是「块数组**非空**」而不是「键存在」，
+  因为后端对没有块流的会话下发空 map（`TestHandleSessionGetWithoutBlocksReturnsEmpty` 钉住）。
+- 块跟 aux 走完全部缓存路径：`toPersistentSession`（只留还在 exchanges 里的 seq）、
+  `withSessionMeta`、`cloneSession`、`appendSessionDelta`、窗口锚定（`App.tsx:2336`）。
+  **按 seq 覆盖**而不是拼接 —— 一个 seq 的块集合是完整快照，拼接会让旧 revision 与新 revision
+  并存；aux 恰好相反（同 seq 陆续追加），所以 aux 必须拼接。两者形状相同、语义相反，是刻意的。
+- **跨语言契约补了一条测试**：`TestBlocksPayloadWireFieldNames` 断言块回包的**精确键集合**。
+  TS 的 `SessionBlock` 是手写的，与 Go 的 json tag 没有编译期联系 —— 改一个 tag 就能让前端
+  静默读到 `undefined`、正文又变空，而两端各自的单测全绿。这是本次发现的第五个漏洞。
+- 两处既有测试随之更新（不是放宽，是钉住的东西变了）：`tool-card-grouping` 的手搓 CJS
+  加载器多认一个 `./sessionBlocks` 依赖（**递归加载真模块**而不是桩掉），
+  `session-window` 的 `toPersistentSession` 返回字面量多了 `blocks`。
+
 
 ---
 

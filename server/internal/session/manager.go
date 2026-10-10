@@ -187,6 +187,11 @@ type Manager struct {
 	// fullAuxReads 统计 readAuxFile（全量解析 aux）的调用次数。单会话 aux 实测最大 19MB，
 	// 窗口读 / 「只要最新状态」的场景必须走尾部读，测试断言它不被触发。
 	fullAuxReads int64
+	// fullBlockReads 统计 readBlocksAll（全量解析块流）的调用次数。CUSTOM(G-BH)：
+	// 块流是窗口回包的载荷来源，而窗口读持 m.mu（每 root 一把），全量读会卡住整个 root；
+	// 实测单会话一轮可达 83 步 / 974 条消息，块流是 MB 级。与上面两个同思路，
+	// 测试断言它保持为 0 而不是断言计时。
+	fullBlockReads int64
 }
 
 type CreateInput struct {

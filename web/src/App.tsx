@@ -2341,6 +2341,14 @@ export function App({ onGoHome }: AppProps) {
                 ...((cachedBeforeSync as any)?.exchange_aux || {}),
                 ...(sess.exchange_aux || {}),
               },
+              // 正文块（CUSTOM(G-BH)）与 aux 完全同一条规则，理由也一样：
+              // 窗口只带窗口内那部分块，整体替换会让历史轮次的正文当场退回旧格式
+              //（S2d 删掉 content 后就是「历史轮次全空」）。按 seq 覆盖而非拼接 ——
+              // 同一 seq 被窗口与缓存各带一份时，拼接会让旧 revision 与新 revision 并存。
+              blocks: {
+                ...((cachedBeforeSync as any)?.blocks || {}),
+                ...(sess.blocks || {}),
+              },
               _windowMeta: win.meta,
               _anchoredAt: anchorAt,
             } as Session;

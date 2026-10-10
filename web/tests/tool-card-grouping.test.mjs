@@ -44,6 +44,10 @@ function loadModule(relPath) {
       }
       if (name.includes("services/session")) return { sessionService: {} };
       if (name.includes("i18n")) return { translateNow: (key) => key };
+      // 块渲染逻辑住在 hooks/sessionBlocks.ts（CUSTOM(G-BH)）。它只 import type，
+      // 编译后没有 require，所以直接递归加载即可 —— 不桩它，免得桩错了让分组测试
+      // 变成「测了一个假模块」。
+      if (name === "./sessionBlocks") return loadModule("hooks/sessionBlocks.ts");
       throw new Error(`unexpected require: ${name}`);
     },
     console,

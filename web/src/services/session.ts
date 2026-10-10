@@ -99,6 +99,35 @@ export type ExchangeAux = {
   compact?: CompactNotice | null;
 };
 
+/**
+ * 正文块（后端 CUSTOM(G-BH)，方案 §3.2）。
+ *
+ * 块流是会话正文的**唯一**载体：reasoning / text / tool_call / todo / plan / compact
+ * 都是一等公民。旧格式「一轮正文 = content 字符串 + aux 按 line 插入」有个结构性缺陷 ——
+ * 只产出 reasoning、没有 text 的轮次会落库成空正文（实测 os 模型约 15% 的轮次），
+ * 流式时 thought_chunk 实时推所以看得见，收尾落库后正文瞬间消失。
+ *
+ * 身份三级：turn_id（MindFS 权威）+ step（agent 的投递单元）+ pos（步内段序）。
+ * `pos` 取代了 aux 的 `line` —— line 是「在 content 里的第几行」，content 一删就没意义。
+ */
+export type SessionBlock = {
+  seq: number;
+  pos: number;
+  revision?: number;
+  type: "reasoning" | "text" | "tool_call" | "todo" | "plan" | "compact" | string;
+  text?: string;
+  toolcall?: ToolCall | null;
+  todo?: TodoUpdate | null;
+  plan?: PlanUpdate | null;
+  compact?: CompactNotice | null;
+  step?: number;
+  turn_id?: string;
+  native_id?: string;
+  parent_tool_use_id?: string;
+  task_id?: string;
+  subagent_type?: string;
+};
+
 export type Session = {
   key: string;
   session_key?: string;
@@ -129,6 +158,11 @@ export type Session = {
   /** 持久化缓存截断标记：true 表示缓存只含最近 N 条 exchanges，读取方应全量拉取补段 */
   truncated?: boolean;
   exchange_aux?: Record<string, ExchangeAux[]>;
+  /**
+   * 窗口内 seq 的正文块，形状与 exchange_aux 一致。
+   * 缺失 / 为空 = 该会话还没有块流（本方案落地前的历史会话）→ 渲染回退旧格式。
+   */
+  blocks?: Record<string, SessionBlock[]>;
   exchanges?: Array<{
     seq?: number;
     role?: string;
@@ -1951,6 +1985,68 @@ function toPersistentExchangeAux(
   return out;
 }
 
+/**
+ * 块映射的持久化清洗（CUSTOM(G-BH)）：丢掉 seq<=0 的键与块、丢掉空数组。
+ *
+ * 与 toPersistentExchangeAux 同形同义 —— 两者形状一致、淘汰规则一致，
+ * 差别只在块的判据是 `block.seq`。
+ */
+function toPersistentBlocks(
+  blocks?: Record<string, SessionBlock[]>,
+): Record<string, SessionBlock[]> {
+  const out: Record<string, SessionBlock[]> = {};
+  for (const [seq, items] of Object.entries(blocks || {})) {
+    const seqNum = Number(seq || 0);
+    if (!Number.isFinite(seqNum) || seqNum <= 0) {
+      continue;
+    }
+    const nextItems = Array.isArray(items)
+      ? items.filter((item) => Number(item?.seq || 0) > 0)
+      : [];
+    if (nextItems.length > 0) {
+      out[String(seqNum)] = nextItems;
+    }
+  }
+  return out;
+}
+
+function cloneBlocks(
+  blocks?: Record<string, SessionBlock[]>,
+): Record<string, SessionBlock[]> | undefined {
+  if (!blocks) return blocks;
+  const out: Record<string, SessionBlock[]> = {};
+  for (const [seq, items] of Object.entries(blocks)) {
+    out[seq] = Array.isArray(items) ? [...items] : [];
+  }
+  return out;
+}
+
+/**
+ * 块映射的增量合并（CUSTOM(G-BH)）：**按 seq 覆盖**。
+ *
+ * 与 `appendExchangeAuxDelta`（按 seq 拼接 + 幂等去重）刻意不同，理由是两者的同一性不同：
+ *   · aux 在同一个 seq 下会**陆续追加**新项（同一个回合边跑边加 thought / toolcall），
+ *     所以增量语义必须是拼接 —— 覆盖会把先到的丢掉。
+ *   · 块的同一个 seq 是**完整快照**（后端窗口读已按 (seq,pos) 取最高 revision 归并），
+ *     所以增量语义必须是覆盖 —— 拼接会让同一 (seq,pos) 的旧 revision 与新 revision
+ *     同时留在列表里，渲染成两段重复正文。
+ *
+ * 一次都没有 incoming 的 seq 原样保留（incoming 只带窗口内那部分）。
+ */
+function appendBlocksDelta(
+  base?: Record<string, SessionBlock[]>,
+  incoming?: Record<string, SessionBlock[]>,
+): Record<string, SessionBlock[]> {
+  const out = cloneBlocks(base) || {};
+  for (const [seq, items] of Object.entries(incoming || {})) {
+    const seqNum = Number(seq || 0);
+    if (!Number.isFinite(seqNum) || seqNum <= 0) continue;
+    if (!Array.isArray(items) || items.length === 0) continue;
+    out[String(seqNum)] = [...items];
+  }
+  return out;
+}
+
 export function appendExchangeAuxDelta(
   base?: Record<string, ExchangeAux[]>,
   incoming?: Record<string, ExchangeAux[]>,
@@ -2039,6 +2135,8 @@ function withSessionMeta(
     name: preferIncomingText(incoming.name, base.name) || "",
     exchanges: Array.isArray(incoming.exchanges) ? [...incoming.exchanges] : [],
     exchange_aux: cloneExchangeAux(incoming.exchange_aux || base.exchange_aux),
+    // 正文块与 aux 同一取舍（CUSTOM(G-BH)）：incoming 是权威快照，缺了才用 base 的。
+    blocks: toPersistentBlocks(incoming.blocks || base.blocks),
   };
 }
 
@@ -2259,6 +2357,10 @@ function appendSessionDelta(
     ...baseWithMeta,
     exchanges: mergeSessionExchanges(baseExchanges, incomingExchanges),
     exchange_aux: appendExchangeAuxDelta(baseExchangeAux, incomingExchangeAux),
+    // 正文块：**按 seq 覆盖**而不是像 aux 那样拼接（CUSTOM(G-BH)）。
+    // 理由是块的同一性：一个 seq 下的块集合是**完整快照**（后端窗口读已按 revision
+    // 归并），拼接会让同一 (seq,pos) 的旧 revision 与新 revision 同时留在列表里。
+    blocks: appendBlocksDelta(base?.blocks, incoming?.blocks),
   };
 }
 
@@ -2406,6 +2508,7 @@ function cloneSession(session: Session): Session {
       : [],
     exchanges: Array.isArray(session.exchanges) ? [...session.exchanges] : [],
     exchange_aux: cloneExchangeAux(session.exchange_aux),
+    blocks: cloneBlocks(session.blocks),
   };
 }
 
@@ -2433,6 +2536,10 @@ export function toPersistentSession(session: Session): Session {
       })
     : [];
   const exchange_aux = toPersistentExchangeAux(persistent.exchange_aux);
+  // 正文块（CUSTOM(G-BH)）与 aux 同一条淘汰规则：只留还在 exchanges 里的 seq。
+  // 不保留的话，首帧种子会退回 `content` 渲染 —— 双写期看不出差别，
+  // S2d 删掉 content 之后种子就变成空正文（要等窗口回来才补上，用户看到闪一下）。
+  const blocks = toPersistentBlocks(persistent.blocks);
   if (exchanges.length <= SESSION_CACHE_MAX_EXCHANGES) {
     let text = 0;
     for (const exchange of exchanges) {
@@ -2441,7 +2548,7 @@ export function toPersistentSession(session: Session): Session {
     if (text <= SESSION_CACHE_MAX_TEXT) {
       // 没有淘汰 ⇒ 这条记录此刻是完整的。显式写 false（而不是留 `...persistent` 里的旧值）：
       // 旧值可能是上一轮淘汰留下的 true，留着会让下次白做一次全量拉取。
-      return { ...persistent, truncated: false, exchanges, exchange_aux };
+      return { ...persistent, truncated: false, exchanges, exchange_aux, blocks };
     }
   }
   // 从尾部往前累加，找到「能装下的最长后缀」；装不下的部分全在头部。
@@ -2470,6 +2577,10 @@ export function toPersistentSession(session: Session): Session {
   for (const [seq, items] of Object.entries(exchange_aux)) {
     if (keptSeqs.has(Number(seq))) keptAux[seq] = items;
   }
+  const keptBlocks: Record<string, SessionBlock[]> = {};
+  for (const [seq, items] of Object.entries(blocks)) {
+    if (keptSeqs.has(Number(seq))) keptBlocks[seq] = items;
+  }
   // **发生过淘汰就一定标 true** —— 这个标记的语义是「这条 IDB 记录不完整，下次必须全量回源」。
   // 曾经它被调用方用 `forceNoTruncate` 置成 false（窗口态写入时），注释说是为了「跳过
   // truncated 全量回补」。但那是**读侧**该管的事（`syncSession` 里已有的
@@ -2481,6 +2592,7 @@ export function toPersistentSession(session: Session): Session {
     truncated: true,
     exchanges: kept,
     exchange_aux: keptAux,
+    blocks: keptBlocks,
   };
 }
 
@@ -2590,6 +2702,7 @@ export async function syncSession(
     key: sessionKey,
     exchanges: persistedDelta,
     exchange_aux: toPersistentExchangeAux(incoming.exchange_aux),
+    blocks: toPersistentBlocks(incoming.blocks),
   });
   if (!persistedSession) {
     return { session: null, hasDelta: false };
@@ -2600,6 +2713,7 @@ export async function syncSession(
     key: sessionKey,
     exchanges: [...(persistedSession.exchanges || []), ...transientTail],
     exchange_aux: persistedSession.exchange_aux,
+    blocks: persistedSession.blocks,
   });
   return {
     session: displaySession ? cloneSession(displaySession) : null,

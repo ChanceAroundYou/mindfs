@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -132,7 +133,10 @@ func (m *Manager) AppendBlocks(ctx context.Context, key string, blocks []Block) 
 	return writer.Flush()
 }
 
-// ReadBlocks 全量读块流（按写入序）。块流只在窗口读时用，S2b 会加按需读。
+// ReadBlocks 全量读块流（按写入序，含全部 revision）。
+//
+// 用于复制（fork）与体检：那些场景要的是「盘上有什么」，所以不解析 revision。
+// 渲染用的窗口读走 GetBlocksWindow。
 func (m *Manager) ReadBlocks(ctx context.Context, key string) ([]Block, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -144,6 +148,7 @@ func (m *Manager) readBlocksAll(key string) ([]Block, error) {
 	if err != nil {
 		return nil, err
 	}
+	m.fullBlockReads++
 	payload, err := m.root.ReadMetaFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -154,22 +159,222 @@ func (m *Manager) readBlocksAll(key string) ([]Block, error) {
 	return parseBlocks(payload), nil
 }
 
-// GetBlocksWindow 按 seq 集合过滤块流（窗口读用）。
+// GetBlocksWindow 返回窗口内 seq 的块，已解析 revision 并按 (seq,pos) 升序。
+//
+// 这是渲染读路径，两条硬约束：
+//  1. **O(窗口)**。块流是窗口回包的载荷来源，而窗口读持 m.mu（每 root 一把），
+//     全量读会卡住整个 root。实测单会话一轮可达 83 步 / 974 条消息，块流是 MB 级。
+//     做法与 readAuxWindowTail 同构：从尾部反向分块读，直到看见一条 seq < minSeq
+//     的完整行（或读到文件头）。
+//  2. **解析 revision 与哨兵**。同 (seq,pos) 取最高 revision（D8）；step<0 的版本是
+//     「步序未定」的中间态，读取侧忽略（§3.3）。反向读天然先遇到最高 revision。
 func (m *Manager) GetBlocksWindow(ctx context.Context, key string, seqSet map[int]bool) ([]Block, error) {
 	if len(seqSet) == 0 {
 		return []Block{}, nil
 	}
-	all, err := m.ReadBlocks(ctx, key)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	minSeq := 0
+	for seq := range seqSet {
+		if seq <= 0 {
+			continue
+		}
+		if minSeq == 0 || seq < minSeq {
+			minSeq = seq
+		}
+	}
+	if minSeq == 0 {
+		return []Block{}, nil
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	path, err := m.blocksPath(key)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]Block, 0, len(all))
-	for _, block := range all {
-		if seqSet[block.Seq] {
-			out = append(out, block)
+	raw, ok := m.readBlocksWindowTail(path, minSeq)
+	if !ok {
+		// 反向读无法可靠完成（不可 seek / 读异常）时回退全量读。宁可慢也不能漏正文。
+		all, err := m.readBlocksAll(key)
+		if err != nil {
+			return nil, err
+		}
+		raw = all
+	}
+	return resolveBlocks(raw, seqSet), nil
+}
+
+// readBlocksWindowTail 读回 seq >= minSeq 的原始块行。ok=false 表示无法可靠完成，
+// 由调用方回退全量读。
+//
+// 两阶段，刻意不把「反向分块读」的结果直接当内容：
+//
+//	阶段一（定位）：从尾部反向分块，只解析每块**内部**的完整行（跳过跨块的首尾残片），
+//	  找到第一个出现 seq < minSeq 的块起点。
+//	阶段二（取内容）：把该起点**对齐到行边界**，然后一次正向读到文件尾。
+//
+// 为什么不直接收集反向读到的行：反向分块读的经典坑是「跨块的长行被静默丢掉」。
+// 每块的首行是半行（前半段在更低偏移处），丢掉它需要「下一块会把完整行读全」这个前提，
+// 而单行大于 chunk 时该前提不成立 —— 实测主日志单行最大 308KB，块流里超长 reasoning
+// 常见（os 实测 119714 / 103467 字符）。先对齐再正向读就不存在残片拼接问题：
+// 从行边界读到文件尾，每一行都是完整的。
+//
+// 代价是同一段字节被读两遍（定位一遍、取内容一遍），换来的是「不可能丢正文」。
+// 定位粒度是 chunk，所以最小读量是 512KB —— 与 readAuxWindowTail 同量级。
+func (m *Manager) readBlocksWindowTail(path string, minSeq int) ([]Block, bool) {
+	if minSeq <= 0 {
+		return nil, false
+	}
+	file, err := m.root.OpenMetaFile(path)
+	if err != nil {
+		// 文件缺失等价于「没有块」，不是失败 —— 落地前的历史会话都是这样。
+		if errors.Is(err, os.ErrNotExist) {
+			return []Block{}, true
+		}
+		return nil, false
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, false
+	}
+	size := info.Size()
+	if size == 0 {
+		return []Block{}, true
+	}
+
+	const chunk = int64(512 << 10)
+	stop := int64(-1)
+	end := size
+	for end > 0 {
+		start := end - chunk
+		if start < 0 {
+			start = 0
+		}
+		buf := make([]byte, int(end-start))
+		if _, err := file.ReadAt(buf, start); err != nil && !errors.Is(err, io.EOF) {
+			return nil, false
+		}
+		if chunkHasSeqBelow(buf, start > 0, end < size, minSeq) {
+			stop = start
+			break
+		}
+		if start == 0 {
+			stop = 0
+			break
+		}
+		end = start
+	}
+	if stop < 0 {
+		stop = 0
+	}
+
+	alignedStart, ok := alignLineStart(file, stop, size)
+	if !ok {
+		return nil, false
+	}
+	payload := make([]byte, int(size-alignedStart))
+	if _, err := file.ReadAt(payload, alignedStart); err != nil && !errors.Is(err, io.EOF) {
+		return nil, false
+	}
+	return parseBlocks(payload), true
+}
+
+// chunkHasSeqBelow 只看 buf 里**内部**的完整行（skipFirst/skipLast 表示首尾是跨块残片），
+// 判断是否存在 seq < minSeq 的行。坏行不算「低于」：它可能本来属于窗口内的 seq，
+// 过早停止会让窗口内的正文少一块。
+func chunkHasSeqBelow(buf []byte, skipFirst, skipLast bool, minSeq int) bool {
+	parts := bytes.Split(buf, []byte{'\n'})
+	if skipFirst && len(parts) > 0 {
+		parts = parts[1:]
+	}
+	if skipLast && len(parts) > 0 {
+		parts = parts[:len(parts)-1]
+	}
+	for _, rawLine := range parts {
+		rawLine = bytes.TrimSpace(rawLine)
+		if len(rawLine) == 0 {
+			continue
+		}
+		var probe struct {
+			Seq int `json:"seq"`
+		}
+		if json.Unmarshal(rawLine, &probe) == nil && probe.Seq > 0 && probe.Seq < minSeq {
+			return true
 		}
 	}
-	return out, nil
+	return false
+}
+
+// alignLineStart 返回 offset 处或其之前最近的行边界（即「某个 '\n' 之后」的偏移）。
+// offset <= 0 时返回 0。找不到 '\n'（整个前缀是一行）时返回 0 —— 那也是行首。
+// 用几何步长向前回溯，避免为超长行退化成逐字节扫描。
+func alignLineStart(file io.ReaderAt, offset, size int64) (int64, bool) {
+	if offset <= 0 {
+		return 0, true
+	}
+	if offset > size {
+		offset = size
+	}
+	const step = int64(64 << 10)
+	pos := offset
+	for pos > 0 {
+		start := pos - step
+		if start < 0 {
+			start = 0
+		}
+		buf := make([]byte, int(pos-start))
+		if _, err := file.ReadAt(buf, start); err != nil && !errors.Is(err, io.EOF) {
+			return 0, false
+		}
+		if idx := bytes.LastIndexByte(buf, '\n'); idx >= 0 {
+			return start + int64(idx) + 1, true
+		}
+		pos = start
+	}
+	return 0, true
+}
+
+// resolveBlocks 按 (seq,pos) 取最高 revision、丢掉未收口的版本，并按 (seq,pos) 升序返回。
+//
+// seqSet 为 nil 表示不过滤 seq。revision 相同时取**后写入**的那条（文件序靠后者）：
+// 块流是 append-only，后写的才是更新的。
+func resolveBlocks(blocks []Block, seqSet map[int]bool) []Block {
+	if len(blocks) == 0 {
+		return []Block{}
+	}
+	type key struct{ seq, pos int }
+	best := make(map[key]Block, len(blocks))
+	for _, block := range blocks {
+		if block.Seq <= 0 {
+			continue
+		}
+		if seqSet != nil && !seqSet[block.Seq] {
+			continue
+		}
+		// step<0 = 步序未定，读取侧忽略（§3.3）。
+		if block.Step < 0 {
+			continue
+		}
+		k := key{block.Seq, block.Pos}
+		if prev, exists := best[k]; exists && prev.Revision > block.Revision {
+			continue
+		}
+		best[k] = block
+	}
+	out := make([]Block, 0, len(best))
+	for _, block := range best {
+		out = append(out, block)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Seq != out[j].Seq {
+			return out[i].Seq < out[j].Seq
+		}
+		return out[i].Pos < out[j].Pos
+	})
+	return out
 }
 
 // parseBlocks 逐行解析。**坏行跳过不报错** —— 块流是 append-only 的，一行写坏了
@@ -430,4 +635,61 @@ func stripJSONFields(payload []byte, fields ...string) ([]byte, bool) {
 		return payload, false
 	}
 	return out, true
+}
+
+// CompactBlockLight 是窗口专用的块压缩（复用 G-AT 的 CompactExchangeAuxLight 策略）。
+//
+// 只压 tool_call 的详情：edit/read/execute 的 content 是窗口载荷里最大的一块
+// （实测一个会话 65 个 edit 的 content 占 101 KB），而卡片展开时本就走
+// GET /api/sessions/{key}/toolcalls/{callID} 懒加载，窗口只需能渲染折叠卡片的最小字段。
+//
+// **正文（text / reasoning）一律不动**。块流是正文的**唯一**载体（D1），窗口又是渲染读路径；
+// 在这里截断等于正文丢失 —— 而那正是本方案要修的 bug。超大块（os 实测 119714 字符）
+// 由前端默认折叠 + 标注处理，不靠服务端丢数据。
+//
+// 返回 ok=false 表示这块不值得下发（未知类型）。读侧跳过未知类型，保证 agent 加新类型时
+// 不炸旧服务。
+func CompactBlockLight(block Block) (Block, bool) {
+	if !block.Type.Valid() {
+		return Block{}, false
+	}
+	if block.ToolCall != nil {
+		toolCall := CompactToolCall(*block.ToolCall)
+		lightCompactToolCall(&toolCall)
+		block.ToolCall = &toolCall
+	}
+	// 正文与身份字段原样保留。
+	return block, true
+}
+
+// CompactBlocksLight 对一组块做轻压缩，跳过未知类型。
+func CompactBlocksLight(blocks []Block) []Block {
+	out := make([]Block, 0, len(blocks))
+	for _, block := range blocks {
+		compacted, ok := CompactBlockLight(block)
+		if !ok {
+			continue
+		}
+		out = append(out, compacted)
+	}
+	return out
+}
+
+// GroupBlocksBySeq 把块按 seq 分组，seq 内保持 (pos) 升序。
+//
+// 回包形状与 exchange_aux 一致（`{"<seq>": [...]}`），前端查表即可，
+// 也让「块与 aux 同 seq 对齐」这件事在结构上显而易见。
+func GroupBlocksBySeq(blocks []Block) map[int][]Block {
+	out := make(map[int][]Block, len(blocks))
+	for _, block := range blocks {
+		if block.Seq <= 0 {
+			continue
+		}
+		out[block.Seq] = append(out[block.Seq], block)
+	}
+	for seq, items := range out {
+		sort.SliceStable(items, func(i, j int) bool { return items[i].Pos < items[j].Pos })
+		out[seq] = items
+	}
+	return out
 }

@@ -9,6 +9,19 @@ import {
   type TokenUsage,
 } from "../services/session";
 import { translateNow } from "../i18n";
+import {
+  blocksForSeq,
+  blocksTextContent,
+  buildAssistantTimelineFromBlocks,
+  normalizeToolCall,
+  type BlockExchangeLike,
+  type SessionBlockMapLike,
+  type TimelineItem,
+} from "./sessionBlocks";
+
+// TimelineItem 的**定义**搬到了 sessionBlocks.ts（那才是产出它的地方），
+// 这里只是转发，保持既有导入路径不变（SessionViewer 等从本模块取类型）。
+export type { TimelineItem } from "./sessionBlocks";
 
 type ExchangeLike = {
   seq?: number;
@@ -34,36 +47,6 @@ type ExchangeLike = {
 };
 
 type ExchangeAuxMapLike = Record<string, ExchangeAux[]>;
-
-export type TimelineItem =
-  | {
-      id: string;
-      type: "user_text" | "assistant_text";
-      content: string;
-      timestamp?: string;
-      agent?: string;
-      model?: string;
-      modelDisplayName?: string;
-      effort?: string;
-      fastService?: string;
-      pendingAck?: boolean;
-      seq?: number;
-      contextWindow?: {
-        totalTokens: number;
-        modelContextWindow: number;
-      };
-      tokenUsage?: TokenUsage;
-    }
-  | { id: string; type: "thought"; content: string }
-  | { id: string; type: "tool"; toolCall: ToolCall }
-  // 连续同类工具卡的折叠组（2026-10-07）：agent 一个回合里连开 100+ 个 edit/read/
-  // execute 时，逐个渲染 ToolCallCard 是「打开会话卡」的主要渲染成本（实测单会话
-  // 389 张卡、单 seq 189 张）。折叠成一张「N 个编辑」的组卡后 DOM 从几百张降到几张，
-  // 展开组卡时才逐个渲染。ask_user 不参与分组（它要交互、要答题）。
-  | { id: string; type: "tool_group"; kind: string; toolCalls: ToolCall[] }
-  | { id: string; type: "todo"; todoUpdate: TodoUpdate; timestamp?: string }
-  | { id: string; type: "plan"; planUpdate: PlanUpdate; timestamp?: string }
-  | { id: string; type: "compact"; compactNotice: CompactNotice; timestamp?: string };
 
 type UseSessionStreamResult = {
   timeline: TimelineItem[];
@@ -98,26 +81,6 @@ function stableTimelineID(
 
 function normalizeRole(role?: string): string {
   return (role || "").toLowerCase();
-}
-
-function normalizeToolCallStatus(status?: string): string {
-  const value = (status || "").toLowerCase();
-  if (value === "completed") return "complete";
-  if (value === "pending") return "running";
-  return value || "running";
-}
-
-function normalizeToolCall(input: ToolCall): ToolCall {
-  const raw = input as ToolCall & {
-    toolCallId?: string;
-    tool_call_id?: string;
-  };
-  const callId = raw.callId || raw.toolCallId || raw.tool_call_id || "";
-  return {
-    ...input,
-    callId,
-    status: normalizeToolCallStatus(raw.status),
-  };
 }
 
 // 同一 callId 只允许渲染一张工具卡。窗口侧（exchange_aux[seq].toolcall）与 overlay 侧
@@ -368,14 +331,21 @@ function persistedSeq(ex: ExchangeLike): number {
 function buildBaseTimeline(
   exchanges: ExchangeLike[],
   exchangeAux: ExchangeAuxMapLike,
+  blocks: SessionBlockMapLike = {},
 ): TimelineItem[] {
   const out: TimelineItem[] = [];
   for (let index = 0; index < exchanges.length; index += 1) {
     const ex = exchanges[index];
     const role = normalizeRole(ex.role);
-    const content = ex.content || "";
+    const seq = persistedSeq(ex);
+    const blockList = blocksForSeq(blocks, seq);
+    // 正文优先取块流；没有块流才回退 `content`。块流是正文的唯一载体（D1），
+    // 一旦某轮有块，`content` 就不再是它的真相来源（双写期两者等价，S2d 删掉 content）。
+    const content =
+      blockList && (role === "user" || role === "agent" || role === "assistant")
+        ? blocksTextContent(blockList)
+        : ex.content || "";
     if (role === "user") {
-      const seq = persistedSeq(ex);
       if (!content) continue;
       out.push({
         id: stableTimelineID("user", index, content, ex.timestamp, ex.agent),
@@ -389,7 +359,15 @@ function buildBaseTimeline(
       continue;
     }
     if (role === "agent" || role === "assistant") {
-      const seq = persistedSeq(ex);
+      if (blockList) {
+        out.push(
+          ...buildAssistantTimelineFromBlocks(
+            { ...(ex as BlockExchangeLike), seq },
+            blockList,
+          ),
+        );
+        continue;
+      }
       const auxList = seq ? exchangeAux[String(seq)] || [] : [];
       out.push(...buildAssistantTimeline({ ...ex, seq }, index, auxList));
       continue;
@@ -564,6 +542,7 @@ export function useSessionStream(
   exchangeAux: ExchangeAuxMapLike = {},
   sessionContextWindow?: ContextWindowLike,
   sessionPending = false,
+  blocks: SessionBlockMapLike = {},
 ): UseSessionStreamResult {
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamVersion, setStreamVersion] = useState(0);
@@ -583,10 +562,10 @@ export function useSessionStream(
   const baseTimeline = useMemo(
     () =>
       applySessionContextWindow(
-        buildBaseTimeline(exchanges, exchangeAux),
+        buildBaseTimeline(exchanges, exchangeAux, blocks),
         sessionContextWindow,
       ),
-    [exchanges, exchangeAux, sessionContextWindow],
+    [exchanges, exchangeAux, blocks, sessionContextWindow],
   );
 
   useEffect(() => {

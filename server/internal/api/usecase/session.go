@@ -810,6 +810,32 @@ type GetSessionExchangeAuxWindowInput struct {
 	Seqs   map[int]bool
 }
 
+// GetSessionBlocksWindow 取窗口内 seq 的**正文块**（CUSTOM(G-BH)，方案 §5/§10 S2b）。
+//
+// 与 GetSessionExchangeAuxWindow 同形：按窗口 seqSet 走尾部读，绝不整份读。
+// 块流是正文的唯一载体（D1），所以这条路径是全站最热端点的载荷来源，必须 O(窗口)。
+// 历史会话没有块流 → 返回空 map，前端回退旧格式（content + aux），不是错误。
+func (s *Service) GetSessionBlocksWindow(ctx context.Context, in GetSessionBlocksWindowInput) (map[int][]session.Block, error) {
+	if err := s.ensureRegistry(); err != nil {
+		return nil, err
+	}
+	manager, err := s.Registry.GetSessionManager(in.RootID)
+	if err != nil {
+		return nil, err
+	}
+	blocks, err := manager.GetBlocksWindow(ctx, in.Key, in.Seqs)
+	if err != nil {
+		return nil, err
+	}
+	return session.GroupBlocksBySeq(blocks), nil
+}
+
+type GetSessionBlocksWindowInput struct {
+	RootID string
+	Key    string
+	Seqs   map[int]bool
+}
+
 type GetSessionToolCallInput struct {
 	RootID string
 	Key    string

@@ -1747,15 +1747,17 @@
 - 验收记录（实测，合成最坏输入 1.19MB/206 行、每行 ~5.7KB）：冷开窗 **15.3ms → 1.4ms**
   （读盘 0.9ms + 行计数 0.14ms + 解析 9 条 0.8ms）；真实最重会话 391KB/206 行按比例约 0.6ms。
 
-### G-BH 会话正文块流（块存储层 + 轮次身份 + S2a 双写 + C1/C2）（2026-10-10）
+### G-BH 会话正文块流（块存储层 + 轮次身份 + S2a 双写 + S2b 读改走块流 + C1/C2）（2026-10-10）
 
 - 来源：`server/internal/session/blocks.go`（新增）、`server/internal/session/manager.go`、
   `server/internal/session/types.go`、`server/internal/api/usecase/session.go`、
   `server/internal/api/usecase/session_repoint.go`（2026-10-10）。对应主方案 S2a
   （`docs/session-blocks-plan.md` §3/§4/§10）。
-- 边界：**会话正文的存储与身份** —— 块流格式、块写入点、轮次元数据字段、`turn_id` 的
-  生成与清理。读路径在 S2a **不动**（仍走 `Content`/aux），前端不动。
-  S2b 起读路径改走块流、S2d 删 `Content`、S2e 删 `TurnGen` —— 都是后续步骤，不在本组。
+- 边界：**会话正文的存储、身份与读取** —— 块流格式、块写入点、轮次元数据字段、`turn_id` 的
+  生成与清理、窗口读走块流、前端按 `type` 渲染块。
+  S2d 删 `Content`、S2e 删 `TurnGen`、S3 退役 `seq=0` 机制 —— 都是后续步骤，不在本组。
+  本组内部 S2a（双写，读路径不动）与 S2b（读路径切块流，`content` 退化为回退）是**两个
+  可独立回滚的提交**：S2b 之后前端仍能渲染没有块流的历史会话。
 - 可见症状（没有它会怎样）：
   1. **回复结束后助手正文消失**：一轮正文只拼 `text` 块，而 `os` 模型约 15% 的轮次只产出
      reasoning、没有任何 text，于是落库成 `content:""`。流式时 `thought_chunk` 实时推所以
@@ -1804,6 +1806,37 @@
      原样带过去（fork 复制的是同一批轮次）、`turn_seq` 重映射。fork 开的是全新 agent 会话
      （`AgentSessionID:""` + `ForkPoint`），源 native id 一律无效。
   9. 删会话时连块流一起删（否则正文留在盘上，会话 key 复用时被当成「本来就有正文」）。
+  10. **S2b 读路径改走块流**（`GetBlocksWindow`，`blocks.go`）：窗口读**反向分块**读尾部
+      —— 与 S1 的 `readAuxWindowTail` 同思路，但**不复用它**。那个实现丢掉每块的首个
+      不完整行，跨越 512KB 边界的记录会静默丢失；块流一行可达 700KB（实测 os 单块
+      119714 字符），必须两阶段：先反向探测出停止偏移（只解析块内部的完整行），
+      再 `alignLineStart` 对齐到行首后**一次正向读到 EOF**。代价是 2× IO，换来的是
+      「窗口里永远不丢正文」。窗口读必须是 O(窗口)：`m.mu` 每 root 一把，
+      「每轮都全量读一遍块流」会让长会话打开时把所有请求串起来。
+  11. `resolveBlocks` 按 `(seq,pos)` 取最高 `revision`、跳过 `step<0` 的未收口块、按
+      `(seq,pos)` 排序。`CompactBlockLight` **只压工具卡细节**（复用 `CompactToolCall` +
+      `lightCompactToolCall`），正文与 reasoning **一个字都不动** —— S1 的压缩是
+      「工具卡按 seq 惰性取」，正文要是被压掉，这个方案就白做了。
+  12. `sessionResponse` 回包内联 `blocks`（`http.go`），只带窗口内 seq（`windowSeqsForExchanges`）；
+      与 `exchange_aux` 同一形状 `{seq: [...]}`。内联而不是让前端再发一次请求：窗口回包
+      本来就是这一屏的**唯一**权威快照，多一次往返就多一个「正文还没到」的空窗。
+  13. **前端按 `type` 渲染块**（`web/src/hooks/sessionBlocks.ts`，新增；`useSessionStream.ts`
+      与 `SessionViewer.tsx` 接线）：`reasoning → thought`（灰显/可折叠，复用既有渲染）、
+      `text → assistant_text`、`tool_call → tool`、`todo/plan/compact` 各自成项，
+      未知类型**跳过而不是抛错**（agent 加新类型时旧前端必须能活）。
+      顺序**只按 `pos` 遍历** —— 旧渲染器的 `lines`/`totalLines`/`emittedLines`/clamp
+      全部消失（那套是「把 aux 按 `line` 插进 content 字符串」的产物，块流下无意义）。
+      项 id 用 `block:<seq>:<pos>`：`(seq,pos)` 在一个会话里唯一且**跨 revision 稳定**，
+      同一块被补正时 React 与虚拟列表的测量不重建（旧 id 含内容哈希，流式期每 chunk 换一次）。
+      判定逻辑单独成 `.ts` 模块是因为 `.tsx` 在 `node --test` 下导入不了
+      （见 `web/tests/ts-module-hook.mjs` 的边界说明），住在 hook 里就只能靠源码文本断言。
+  14. 块跟着 `exchange_aux` 走完**全部**缓存路径（`services/session.ts` + `App.tsx`）：
+      `toPersistentSession` 只留还在 exchanges 里的 seq、`withSessionMeta` 与窗口锚定
+      「按 seq 覆盖」、`cloneSession` 浅拷贝。漏掉任何一条都会让**首帧种子**退回旧格式
+      —— 双写期看不出差别，S2d 删掉 `content` 之后就是「切会话正文闪一下」。
+      覆盖而不是拼接：同一个 seq 的块集合是**完整快照**（后端已按 revision 归并），
+      拼接会让旧 revision 与新 revision 并存、渲染成两段重复正文；而 aux 在同一 seq 下
+      会陆续追加，所以 aux 必须拼接。两者形状相同、语义相反，是刻意的。
 - 针对性测试：
   - `server/internal/session/manager_blocks_test.go` → 块追加/读回顺序、缺文件为空、
     按 seq 过滤、容忍无 `pos` 的旧行、块流与主日志同目录、删会话连块流一起删。
@@ -1821,6 +1854,23 @@
     不带源 native id、`turn_id` 跟着复制。
   - `server/internal/api/usecase/session_early_user_persist_test.go`（既有）→
     早落盘契约与判重对称性在签名加返回值后仍成立。
+  - `server/internal/session/manager_blocks_window_test.go`（S2b）→ 窗口读**只读尾部**
+    （`fullBlockReads == 0`，300 个 seq × 4 块）、单行大于一个读块时不丢（700KB）、
+    按 revision 取最高且跳过 `step<0`、空输入、窗口外 seq 不泄漏、坏行跳过、
+    `CompactBlockLight` 保正文只丢工具细节、未知类型不被压。
+  - `server/internal/api/http_window_test.go`（S2b）→ 窗口回包内联 `blocks` 且只含窗口内 seq、
+    没有块流的历史会话拿到空 `blocks`（前端靠它回退）、**块的线上字段名精确契约**
+    （Go 的 json tag 与手写的 TS `SessionBlock` 没有编译期联系，改一个 tag 就能让前端
+    静默读到 `undefined`、正文又变空，而两端单测全绿）。
+  - `web/tests/session-blocks-render.test.mjs`（S2b）→ **只有 reasoning 的轮次必须渲染出内容**
+    （本 bug 的核心回归）、按 `pos` 交错保序、各 `type` 映射、空块不产空气泡、
+    未知类型跳过、`context_window` 贴最后一个 `assistant_text`、块 id 跨 revision 稳定、
+    `blocksForSeq` 把空数组当「没有块流」。
+  - `web/tests/tool-card-grouping.test.mjs`（既有，S2b 改）→ 它的手搓 CJS 加载器要多认一个
+    `./sessionBlocks` 依赖，且**递归加载真模块而不是桩掉**（桩错了会让分组测试变成
+    「测了一个假模块」）。
+  - `web/tests/session-window.test.mjs`（既有，S2b 改）→ `toPersistentSession` 的返回字面量
+    多了 `blocks`；判据仍是「没淘汰 ⇒ 显式 `truncated: false` 且 aux/块都被重新赋值过」。
 
 ---
 

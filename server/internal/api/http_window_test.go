@@ -34,7 +34,7 @@ func TestSessionResponseWindowFiltersAux(t *testing.T) {
 	}
 	// window mode: only seq 2,3 should remain
 	meta := &session.SessionWindowMeta{Total: 4, HasMore: true, MinSeq: 2, MaxSeq: 3}
-	resp := h.sessionResponse(s, agenttypes.ContextWindow{}, aux, meta)
+	resp := h.sessionResponse(s, agenttypes.ContextWindow{}, aux, nil, meta)
 	auxPayload, ok := resp["exchange_aux"].(map[string][]session.ExchangeAux)
 	if !ok {
 		t.Fatalf("exchange_aux type = %T", resp["exchange_aux"])
@@ -52,7 +52,7 @@ func TestSessionResponseWindowFiltersAux(t *testing.T) {
 		t.Fatalf("window_meta missing in window mode")
 	}
 	// non-window mode: all seqs pass through
-	resp2 := h.sessionResponse(s, agenttypes.ContextWindow{}, aux, nil)
+	resp2 := h.sessionResponse(s, agenttypes.ContextWindow{}, aux, nil, nil)
 	auxPayload2 := resp2["exchange_aux"].(map[string][]session.ExchangeAux)
 	if len(auxPayload2) != 4 {
 		t.Fatalf("non-window aux len = %d, want 4", len(auxPayload2))
@@ -468,5 +468,177 @@ func TestHandleSessionSyncWindowUsesWindowAux(t *testing.T) {
 	}
 	if !hasContent {
 		t.Fatalf("非窗口路径必须保留 edit content（重锚定不闪内容）")
+	}
+}
+
+// S2b 的接线契约：窗口回包必须带上窗口内 seq 的**正文块**，且块不压正文。
+// 少了它前端就只能继续吃 content + aux，S2b 等于没做。
+func TestHandleSessionGetWindowInlinesBlocks(t *testing.T) {
+	app, rootID, manager := newWindowTestApp(t)
+	ctx := context.Background()
+	s, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, Name: "Blocks"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	const turnID = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+	for i := 1; i <= 3; i++ {
+		if err := manager.AddExchangeForAgent(
+			session.WithExchangeIdentity(ctx, session.ExchangeIdentity{TurnID: turnID, TurnSeq: i}),
+			s, "agent", "", "claude", "", "", ""); err != nil {
+			t.Fatalf("add exchange %d: %v", i, err)
+		}
+		// 每轮都只有 reasoning（本 bug 的形态）：没有 text 块，正文只在块流里。
+		if err := manager.AppendBlocks(ctx, s.Key, []session.Block{{
+			Seq: i, Pos: 0, Type: session.BlockTypeReasoning, Step: 1, TurnID: turnID,
+			Text: "reasoning-for-" + string(rune('a'+i-1)),
+		}}); err != nil {
+			t.Fatalf("AppendBlocks %d: %v", i, err)
+		}
+	}
+	h := &HTTPHandler{AppContext: app}
+	rec := doSessionGet(t, h, rootID, s.Key, "&latest=2")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Blocks map[string][]session.Block `json:"blocks"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v body=%s", err, rec.Body.String())
+	}
+	if len(body.Blocks) != 2 {
+		t.Fatalf("blocks 键数 = %d, want 2（窗口内两个 seq）body=%s", len(body.Blocks), rec.Body.String())
+	}
+	for _, seq := range []string{"2", "3"} {
+		items := body.Blocks[seq]
+		if len(items) != 1 || items[0].Type != session.BlockTypeReasoning {
+			t.Fatalf("seq %s 的块 = %#v", seq, items)
+		}
+		if items[0].Text == "" {
+			t.Fatalf("seq %s 的正文被压空了（块流是正文唯一载体）", seq)
+		}
+		if items[0].TurnID != turnID {
+			t.Fatalf("seq %s 丢了 turn_id：%#v", seq, items[0])
+		}
+	}
+	if _, leaked := body.Blocks["1"]; leaked {
+		t.Fatalf("窗口外的 seq 1 泄漏进回包")
+	}
+}
+
+// 没有块流的历史会话必须拿到空 blocks（而不是报错）—— 前端靠这个判据回退旧格式。
+func TestHandleSessionGetWithoutBlocksReturnsEmpty(t *testing.T) {
+	app, rootID, manager := newWindowTestApp(t)
+	ctx := context.Background()
+	s, _ := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, Name: "Legacy"})
+	_ = manager.AddExchangeForAgent(ctx, s, "agent", "老正文", "claude", "", "", "")
+	h := &HTTPHandler{AppContext: app}
+	rec := doSessionGet(t, h, rootID, s.Key, "&latest=5")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Blocks map[string][]session.Block `json:"blocks"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(body.Blocks) != 0 {
+		t.Fatalf("blocks = %#v, want empty", body.Blocks)
+	}
+}
+
+// 块回包的**线上字段名**契约（CUSTOM(G-BH)）。
+//
+// 为什么需要它：前端 `web/src/services/session.ts` 的 `SessionBlock` 是**手写**的 TS 类型，
+// 与 Go 的 `session.Block` 没有编译期联系 —— 改一个 json tag 就能让前端静默读到 undefined，
+// 表现为「正文又变空了」，而两端各自的单元测试全绿。
+//
+// 判据是**精确的键集合**（不是「包含这些键」）：多出的键同样要在这里过一遍，
+// 免得顺手加字段时忘了同步 TS 类型。
+func TestBlocksPayloadWireFieldNames(t *testing.T) {
+	app, rootID, manager := newWindowTestApp(t)
+	ctx := context.Background()
+	s, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, Name: "Wire"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	identity := session.WithExchangeIdentity(ctx, session.ExchangeIdentity{
+		TurnID: "11111111-2222-4333-8444-555555555555", TurnSeq: 1,
+	})
+	if err := manager.AddExchangeForAgent(identity, s, "agent", "", "claude", "", "", ""); err != nil {
+		t.Fatalf("add exchange: %v", err)
+	}
+	if err := manager.AppendBlocks(ctx, s.Key, []session.Block{
+		{
+			Seq: 1, Pos: 0, Type: session.BlockTypeReasoning, Step: 1,
+			TurnID: "11111111-2222-4333-8444-555555555555", Text: "想",
+		},
+		{
+			Seq: 1, Pos: 1, Type: session.BlockTypeText, Step: 1,
+			TurnID:   "11111111-2222-4333-8444-555555555555",
+			NativeID: "native-1", Text: "正文",
+		},
+		{
+			Seq: 1, Pos: 2, Type: session.BlockTypeToolCall, Step: 1,
+			TurnID:          "11111111-2222-4333-8444-555555555555",
+			ToolCall:        &agenttypes.ToolCall{CallID: "c1", Title: "t"},
+			ParentToolUseID: "p1", TaskID: "task-1", SubagentType: "explore",
+		},
+	}); err != nil {
+		t.Fatalf("AppendBlocks: %v", err)
+	}
+	h := &HTTPHandler{AppContext: app}
+	rec := doSessionGet(t, h, rootID, s.Key, "&latest=5")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Blocks map[string][]map[string]any `json:"blocks"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v body=%s", err, rec.Body.String())
+	}
+	items := body.Blocks["1"]
+	if len(items) != 3 {
+		t.Fatalf("块数 = %d, want 3 body=%s", len(items), rec.Body.String())
+	}
+
+	// 键集合 = TS `SessionBlock` 里声明的那一组（omitempty 的字段在该块没值时缺席）。
+	want := []map[string]bool{
+		{"seq": true, "pos": true, "revision": true, "type": true, "text": true, "step": true, "turn_id": true},
+		{"seq": true, "pos": true, "revision": true, "type": true, "text": true, "step": true, "turn_id": true, "native_id": true},
+		{"seq": true, "pos": true, "revision": true, "type": true, "step": true, "turn_id": true, "toolcall": true,
+			"parent_tool_use_id": true, "task_id": true, "subagent_type": true},
+	}
+	// 前端读取用的名字 → 该名字在 Go 侧的出处，红了按这里对照。
+	known := map[string]string{
+		"seq": "Block.Seq", "pos": "Block.Pos", "revision": "Block.Revision",
+		"type": "Block.Type", "text": "Block.Text", "step": "Block.Step",
+		"turn_id": "Block.TurnID", "native_id": "Block.NativeID",
+		"toolcall": "Block.ToolCall", "todo": "Block.Todo", "plan": "Block.Plan",
+		"compact": "Block.Compact", "parent_tool_use_id": "Block.ParentToolUseID",
+		"task_id": "Block.TaskID", "subagent_type": "Block.SubagentType",
+	}
+	for i, item := range items {
+		for key := range item {
+			if !want[i][key] {
+				t.Errorf("块 %d 多出未登记的键 %q（Go 出处 %s）—— 请同步 web 的 SessionBlock 类型或删掉它",
+					i, key, known[key])
+			}
+		}
+		for key := range want[i] {
+			if _, ok := item[key]; !ok {
+				t.Errorf("块 %d 缺键 %q（Go 出处 %s）—— 前端会读到 undefined，正文会渲染成空",
+					i, key, known[key])
+			}
+		}
+	}
+	// 正文与工具载荷必须真的在线上，不能被压缩掉（S1 的 CompactBlocksLight 只压工具细节）。
+	if items[0]["text"] != "想" || items[1]["text"] != "正文" {
+		t.Errorf("正文被压掉了：%v", []any{items[0]["text"], items[1]["text"]})
+	}
+	if items[2]["toolcall"] == nil {
+		t.Errorf("工具载荷丢了：%v", items[2])
 	}
 }
