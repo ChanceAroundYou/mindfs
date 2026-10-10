@@ -1769,6 +1769,15 @@
      产出全新 uuid）：本方案开始持久化 native id 之后，旧 native id 会让判重失效、回查错行。
   4. **服务端发起的轮次没有 `turn_id` 可采纳**：客户端根本没有传 `turn_id` 的入口
      （`Stream.Send` 只收 string），而定时任务 / 看板任务阶段 / 子会话 / 命令会话都由服务端发起。
+  5. **同步把已存在的轮次又写一遍**（用户报告「同步后丢失的更厉害了」的另一半）：
+     ACP 只有 `LoadSession`、没有字节游标，Full 同步必然整段重放；而实时写入的行与
+     导入重放出来的行同时躲过两道防线 —— 导入器把相邻同角色条目**合并**，`Content`
+     逐字不同；ACP 的 `SessionUpdate` **不带时间戳**，导入行盖的是 `time.Now()`，
+     与实时行的真实时间能差几小时，于是「内容 + ±5s」和 `TimestampFloor` 一起失效。
+     实测 2026-10-07：live-owned 会话 `1791339665-fb5134041392` Full 同步后多出
+     **9 对** live/import 重复行，另有 3 对 import+import（相隔 20s）。
+  6. **ACP 导入丢 reasoning**：`importer` 只收 `UserMessageChunk` / `AgentMessageChunk`，
+     `AgentThoughtChunk` 整个被丢掉，于是「只思考不出话」的轮次导入后正文为空。
 - 为什么必须保留：
   1. 新增 `sessions/<key>.blocks.jsonl`（块流），一行一块：
      `{seq,pos,revision,type,text|toolcall|todo|plan|compact,step,turn_id,native_id,parent_tool_use_id,task_id,subagent_type}`。
@@ -1837,6 +1846,28 @@
       覆盖而不是拼接：同一个 seq 的块集合是**完整快照**（后端已按 revision 归并），
       拼接会让旧 revision 与新 revision 并存、渲染成两段重复正文；而 aux 在同一 seq 下
       会陆续追加，所以 aux 必须拼接。两者形状相同、语义相反，是刻意的。
+  15. **S2c 身份判重**（`exchangeAlreadyRecorded`）：写入侧按 native id 判重，顺序是
+      「先身份、后内容」。有身份且库里对不上 → **一律落库**（那可能是一轮真新增的内容，
+      丢掉才是 bug；方案 D10：永不猜）；有身份且匹配上 → 跳过；没有身份 → 退回
+      「内容归一化 + ±5s」，并按会话记一条「判重还在猜」的日志（可观测的退化指标）。
+      实时路径写 `native_turn`（本轮最后一个 agent 原生消息 id）与 `native_prompt`
+      （= `turn_id`，**仅限** `UsesPromptMessageID` 的 agent），导入路径把转录里的
+      `messageId` / `uuid` 写进同一个字段 —— 两端对得上，重复在写入时就被拦住。
+  16. **两端取身份必须同一口径**：ACP 的行边界 = **消息边界**（规范原文「`messageId` 变化
+      表示一条新消息开始」），实时路径取「最后一个带 `messageId` 的文本块」。合并规则
+      不一致就永远对不上。claude importer 同理在合并后取最后一个 `uuid`。
+      `messageId` 只认 UUID 形态（`isUUIDShape`）：ACP 规范要求两端都用 UUID，而
+      MindFS 递出去的就是自己 mint 的 `turn_id`；别的形态一律当「没有身份」，
+      宁可不判重也不能拿一个对不上的字符串当身份。
+  17. **投影身份化**（`session_projection.go`）：有 native 身份的行**整段不参与折叠** ——
+      读时按内容再猜一次只会把真实缺陷藏成看不见。它现在只剩一个作用：折叠 S2c 之前
+      遗留的、双边都没有身份的历史行（直接删会让实测那 9 对重复立刻变成用户可见的
+      重复正文，那是一次实打实的回退）。审计端点新增 `identity_bearing_rows` 报出
+      「身份化进度」，也就是历史残留的规模 —— 那是删掉投影与处理历史行的时机判据。
+  18. `TimestampFloor` 只给 `HasTranscriptTimestamps` 的导入器（claude/codex）。ACP 的
+      `SessionUpdate` 不带时间戳，它给每行盖的是「读到它的那一刻」，恒晚于地板 ——
+      地板形同虚设，而代码看着像「有地板就安全」。删掉那道假防线后，ACP 侧的正确性
+      由 native id 身份判重负责。
 - 针对性测试：
   - `server/internal/session/manager_blocks_test.go` → 块追加/读回顺序、缺文件为空、
     按 seq 过滤、容忍无 `pos` 的旧行、块流与主日志同目录、删会话连块流一起删。
@@ -1871,6 +1902,18 @@
     「测了一个假模块」）。
   - `web/tests/session-window.test.mjs`（既有，S2b 改）→ `toPersistentSession` 的返回字面量
     多了 `blocks`；判据仍是「没淘汰 ⇒ 显式 `truncated: false` 且 aux/块都被重新赋值过」。
+  - `server/internal/api/usecase/session_identity_dedup_test.go`（S2c）→ 身份优先判重的
+    8 条单测（内容相同但身份不同 / 身份不同就不折叠 / 有身份就不退回内容 / 空内容不参与
+    内容判重）+ **端到端三条**：live-owned 会话 Full 同步后库行数不变（**临时把身份判重
+    短路掉这条会红，且红出来的形态与实测一致：4 行而不是 2 行、时间戳差两小时、
+    `前半段` vs `前半段\n\n后半段`**）、连同步三次仍不变、身份没匹配上的行**必须落库**
+    并记住自己的 `native_turn`（否则下次同步认不出自己）。
+  - `server/internal/api/usecase/session_projection_identity_test.go`（S2c）→ 有身份的对
+    不折叠、一侧有身份也不折叠、双边无身份的历史重复仍然折叠、用户重发不折叠。
+  - `server/internal/agent/acp/importer_identity_test.go`（S2c）→ `messageId` 带成 `NativeID`、
+    重放两次身份稳定、`messageId` 变化开新行、无 `messageId` 仍合并相邻块、非 UUID 被拒、
+    时间戳打 `SynthesizedAt` 标记、合并不改写时间戳、`AgentThoughtChunk` 导入成 think 卡、
+    同一 `messageId` 的 thought 与文本合成一行。
 
 ---
 

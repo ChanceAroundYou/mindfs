@@ -250,7 +250,7 @@ agent 事件 → block → 缓冲 →(300ms / 64KB / boundary)→ ① append 块
 | **S1** | `getSessionWindowUnsafe` 冷缓存按需读 + 三处 tail 缺陷（`:2264/:2267/:2211`）+ 搜索 cap 对齐 + **O1 两个全量 aux 热路径**（`http.go:937` / `session.go:252`） | 消除 root 级停顿（与主方案正交） |
 | **S2a** | 加 `turn_id` / `turn_seq` / `native_*` / `partial`（`step` 在块流上）；块流**写入**（双写：块流 + 旧 `Content`/aux 并存）；**C2 三处服务端 mint UUID**；**C1 repoint 清 native id** | 可回滚，旧路径不动 |
 | **S2b** | **读**改走块流；前端按 `type` 渲染；块级窗口（**复用 `CompactExchangeAuxLight` 策略**）；块内联（**省掉 O3 的 round trip**） | 新老并存可对账 |
-| **S2c** | **身份判重**启用；退役投影 rule A/A2/B + `RemapExchangeAux` + 审计端点 | 删掉猜测层 |
+| **S2c** | ✅ **身份判重**启用；投影**身份化**（只折叠双边无身份的历史残留）+ 审计端点报身份化进度 | 新数据不再猜；旧残留可度量 |
 | **S2d** | **删 `Content`** + 旧 aux 路径（必须晚于 S2c，否则中间判重失效） | 单一真相源 |
 | **S2e** | **删 `TurnGen`**，统一为 `turn_id`（独立提交、可单独回滚） | 一套身份 |
 | **S3** | seq=0 机制退役、`tailOverlay` 5 条启发式、**§14.1 的约 470 行**（投影整块 / 判重套件 / `CountExchanges` / `appendResponseChunk`） | 净减猜测层 |
@@ -386,6 +386,47 @@ agent 事件 → block → 缓冲 →(300ms / 64KB / boundary)→ ① append 块
   加载器多认一个 `./sessionBlocks` 依赖（**递归加载真模块**而不是桩掉），
   `session-window` 的 `toPersistentSession` 返回字面量多了 `blocks`。
 
+**S2c 落地记录（2026-10-11，提交 `G-BH` 续）**：身份判重启用 + 投影身份化。
+
+- **共同键接上了。** S2a 落了 `native_turn` / `native_prompt` 两个字段，但一直没人往里写 ——
+  于是它们是「有字段、无身份」，判重只能退回内容。S2c 把两端接上：
+  - 实时侧：`SendMessage` 收 `MessageChunk.MessageID`（ACP `AgentMessageChunk.MessageId`），
+    取**最后一个**写进助手行的 `native_turn`；user 行的 `native_prompt` = 本轮 `turn_id`，
+    且**只对 `UsesPromptMessageID()` 为真的 agent 写**（问 importer，不问协议常量 ——
+    协议能在 `agents.json` 里覆盖，拿 `DefaultProtocol` 猜就是把配置丢掉）。
+  - 实时侧发出：`WithPromptTurnID` 把 `turn_id` 带进 ACP 上下文，`process.go` 用它填
+    `PromptRequest.MessageId`；回显在 `PromptResponse.userMessageId`，不一致**只记日志**
+    （ACP 标该字段 UNSTABLE，agent 可以不认；拿回显值改写 `native_prompt` 等于承认
+    「库里的行」是 agent 那条，对不上才是真的错）。
+  - 导入侧：`ImportedExchange.NativeID` 带出转录里的 `messageId`（ACP）/ `uuid`（claude，
+    合并后取最后一个）。`appendImportedExchange` 写进同一个字段。
+- **判重顺序是「先身份、后内容」**（D10：永不猜）。有身份且匹配 → 跳过；有身份且**没匹配上**
+  → **一律落库**（那是一轮真新增的内容，丢掉就是用户报的「丢内容」）；没身份 → 退回
+  「内容归一化 + ±5s」，并按会话记一条 `[session/identity] 判重退回内容猜测` 日志，
+  那是「还在猜」的计数量。内容兜底跳过两侧空内容的行（空正文行不是同一句话）。
+- **端到端回归把真实故障钉住了**：`TestFullSyncReplayAddsNoRowsToLiveOwnedSession`。
+  把 `exchangeAlreadyRecorded` 的身份短路掉，这条测试红出来的形态与实测一模一样 ——
+  4 行而不是 2 行、时间戳差两小时、`前半段` vs `前半段\n\n后半段`。真实会话
+  `1791339665-fb5134041392` 的 9 对重复正是这个形状。
+- **投影没有删掉，而是身份化了。** 有 native 身份的行整段不参与折叠（读时按内容再猜一次
+  只会把真实缺陷藏成看不见，真重复露出来才是对的）。它现在只剩一个作用：折叠 S2c 之前
+  遗留的、双边都没有身份的历史行 —— 直接删会让实测那 9 对重复立刻变成用户可见的重复
+  正文，那是一次实打实的回退。审计端点新增 `identity_bearing_rows` 报出身份化进度
+  （= 历史残留规模），那是删投影与处理历史行的时机判据。`RemapExchangeAux` 随之保留：
+  规则 A2/B 还要用它。
+- **删掉一道假防线**：`TimestampFloor` 只给 `HasTranscriptTimestamps()` 的导入器。ACP 的
+  `SessionUpdate` 不带时间戳（SDK 里 `SessionNotification` 只有 `sessionId` + `update`），
+  它给每行盖的是「读到它的那一刻」，恒晚于地板 —— 地板形同虚设，而代码看着像
+  「有地板就安全」。`ImportedExchange.SynthesizedAt` 把这件事标出来：非零 ⇒ `Timestamp`
+  是观测时刻而非真实时间。
+- **顺带补上 ACP 导入丢 reasoning**：`AgentThoughtChunk` 原来整个被丢，只思考不出话的
+  轮次导入后正文为空。同一 `messageId` 的 thought 与文本合成**一行**（分成两行会让一轮
+  在时间线上变成两轮），thought 落成 `kind=think` 的工具卡（现在前端就在用的表示，
+  不必再转一次形状）。
+- **一处自我纠错**：中途给 ACP importer 加过一个「`AfterTimestamp` 与 `TimestampFloor`
+  都为零就跳过」的守卫。它会挡掉 import-owned 会话的**首次**导入（两个地板都为零），
+  也就是「同步什么都导不进来」。已撤掉 —— 幂等性现在由身份判重负责，不需要第二道
+  时间启发式。
 
 ---
 

@@ -92,6 +92,18 @@ func (i *Importer) AgentName() string {
 	return i.agentName
 }
 
+// UsesPromptMessageID 恒为 false：claude 不暴露 prompt 的消息 id，它的转录身份是
+// 条目自己的 `uuid`（由 ImportedExchange.NativeID 携带）。把 MindFS 的 turn_id
+// 写进 native_prompt 只会得到一个永不匹配的假身份，所以必须能问出「没有」。
+func (i *Importer) UsesPromptMessageID() bool {
+	return false
+}
+
+// HasTranscriptTimestamps 恒为 true：claude 转录条目自带 `timestamp` 字段（parseTimeRFC3339 解析），所以 TimestampFloor 对它成立 —— 那是 2026-09-16「重导 09-14 内容」那次事故之后加的护栏。
+func (i *Importer) HasTranscriptTimestamps() bool {
+	return true
+}
+
 func (i *Importer) ListExternalSessions(ctx context.Context, in agenttypes.ListExternalSessionsInput) (agenttypes.ListExternalSessionsResult, error) {
 	rootPath := normalizeComparablePath(in.RootPath)
 	if rootPath == "" {
@@ -1287,6 +1299,10 @@ func appendMergedClaudeExchangeLocator(
 		}
 		if strings.TrimSpace(uuid) != "" {
 			last.ClaudeLastMessageUUID = strings.TrimSpace(uuid)
+			// NativeID 跟着合并后的行走，取**最后一个** uuid —— 与 ACP 侧
+			// 「取最后一条 agent 原生消息」同一个口径。合并后一行对应多条转录条目，
+			// 它的身份只能取其中一条；取谁必须两端一致，否则永远对不上。
+			last.NativeID = strings.TrimSpace(uuid)
 		}
 		auxStart := len(last.Aux)
 		for _, item := range aux {
@@ -1301,6 +1317,11 @@ func appendMergedClaudeExchangeLocator(
 			Content:   content,
 			Timestamp: ts,
 			Aux:       aux,
+			// NativeID = 这条转录条目的 `uuid`。它是 claude 侧唯一的消息身份：
+			// 实时路径**拿不到** assistant 的 uuid（Stream.Send 只收字符串），所以
+			// 实时写入的助手行没有 native_turn；导入写入的行有。两者对不上的场合
+			// 退回「内容 + ±5s」（可观测：那条日志就是「还在猜」的计数）。
+			NativeID: strings.TrimSpace(uuid),
 		},
 		ClaudeLastMessageUUID: strings.TrimSpace(uuid),
 	})

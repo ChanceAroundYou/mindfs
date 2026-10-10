@@ -2237,6 +2237,15 @@ groups:
          回查错行。
       ④ 服务端发起的轮次（定时任务 / 看板任务阶段 / 子会话 / 命令会话）没有 turn_id 可
          采纳 —— 客户端根本没有传 turn_id 的入口（Stream.Send 只收 string）。
+      ⑤ 同步把已存在的轮次又写一遍（用户报告「同步后丢失的更厉害了」的那一半）：
+         ACP 只有 LoadSession、没有字节游标，Full 同步必然整段重放；而实时写入的行
+         与导入重放出来的行同时躲过两道防线 —— 导入器把相邻同角色条目合并，Content
+         逐字不同；ACP 的 SessionUpdate **不带时间戳**，导入行盖的是 time.Now()，
+         与实时行的真实时间能差几小时，于是「内容 + ±5s」和 TimestampFloor 一起失效。
+         实测 2026-10-07：live-owned 会话 1791339665-fb5134041392 Full 同步后多出
+         9 对 live/import 重复行，另有 3 对 import+import（相隔 20s）。
+      ⑥ ACP 导入丢 reasoning：importer 只收 UserMessageChunk / AgentMessageChunk，
+         AgentThoughtChunk 整个被丢掉，于是「只思考不出话」的轮次导入后正文为空。
     why: |
       1) 新增 sessions/<key>.blocks.jsonl（CUSTOM(G-BH) 的块流），一行一块：
          {seq,pos,revision,type,text|toolcall|todo|plan|compact,step,turn_id,native_id,
@@ -2305,6 +2314,27 @@ groups:
           同一个 seq 的块集合是**完整快照**（后端已按 revision 归并），拼接会让旧 revision 与
           新 revision 并存、渲染成两段重复正文；而 aux 在同一 seq 下会陆续追加，所以 aux 必须
           拼接。两者形状相同、语义相反，是刻意的。
+      15) S2c 身份判重（exchangeAlreadyRecorded）：写入侧按 native id 判重，判重顺序是
+          「先身份、后内容」。有身份且库里对不上 → **一律落库**（那可能是一轮真新增的
+          内容，丢掉才是 bug；方案 D10：永不猜）；有身份且匹配上 → 跳过；没有身份 →
+          退回「内容归一化 + ±5s」，并按会话记一条「判重还在猜」的日志（可观测的退化指标）。
+          实时路径写 native_turn（本轮最后一个 agent 原生消息 id）与 native_prompt
+          （= turn_id，仅限 UsesPromptMessageID 的 agent），导入路径把转录里的
+          messageId / uuid 写进同一个字段 —— 两端对得上，重复在写入时就被拦住。
+      16) 两端取身份必须同一口径：ACP 的行边界 = **消息边界**（规范原文「messageId 变化
+          表示一条新消息开始」），实时路径取「最后一个带 messageId 的文本块」。合并规则
+          不一致就永远对不上。claude importer 同理在合并后取最后一个 uuid。
+      17) messageId 只认 UUID 形态（isUUIDShape）：ACP 规范要求两端都用 UUID 格式，而
+          MindFS 递出去的就是自己 mint 的 turn_id；别的形态一律当「没有身份」，宁可不判重
+          也不能拿一个对不上的字符串当身份。
+      18) 投影（session_projection.go）**身份化**：有 native 身份的行整段不参与折叠 ——
+          读时按内容猜一次只会把真实缺陷藏成看不见。它现在只剩一个作用：折叠 S2c 之前
+          遗留的、双边都没有身份的历史行。审计端点新增 identity_bearing_rows 报出
+          「身份化进度」，也就是历史残留的规模 —— 那是删掉投影与处理历史行的时机判据。
+      19) TimestampFloor 只给 HasTranscriptTimestamps 的导入器（claude/codex）。ACP 的
+          SessionUpdate 不带时间戳，它给每行盖的是「读到它的那一刻」，恒晚于地板 ——
+          地板形同虚设，而代码看着像「有地板就安全」。删掉那道假防线后，ACP 侧的正确性
+          由 native id 身份判重负责。
     boundary: |
       会话正文的存储、身份与读取：块流格式、块写入点、轮次元数据字段、turn_id 生成与清理、
       窗口读走块流、前端按 type 渲染块。
@@ -2322,6 +2352,9 @@ groups:
       - server/internal/api/usecase/session_early_user_persist_test.go
       - server/internal/session/manager_blocks_window_test.go
       - server/internal/api/http_window_test.go
+      - server/internal/api/usecase/session_identity_dedup_test.go
+      - server/internal/api/usecase/session_projection_identity_test.go
+      - server/internal/agent/acp/importer_identity_test.go
       - web/tests/session-blocks-render.test.mjs
       - web/tests/tool-card-grouping.test.mjs
       - web/tests/session-window.test.mjs
@@ -2341,6 +2374,19 @@ groups:
       - server/internal/session/manager_blocks_window_test.go
       - server/internal/api/http.go
       - server/internal/api/http_window_test.go
+      - server/internal/api/usecase/session_projection.go
+      - server/internal/api/usecase/external_sessions.go
+      - server/internal/api/usecase/session_identity_dedup_test.go
+      - server/internal/api/usecase/session_projection_identity_test.go
+      - server/internal/api/usecase/exchange_repeat_test.go
+      - server/internal/api/usecase/external_sessions_test.go
+      - server/internal/agent/acp/importer.go
+      - server/internal/agent/acp/process.go
+      - server/internal/agent/acp/session.go
+      - server/internal/agent/acp/importer_identity_test.go
+      - server/internal/agent/claude/importer.go
+      - server/internal/agent/codex/importer.go
+      - server/internal/agent/types/types.go
       - web/src/hooks/sessionBlocks.ts
       - web/src/hooks/useSessionStream.ts
       - web/src/components/session/SessionViewer.tsx
@@ -2358,6 +2404,18 @@ groups:
       - server/internal/session/blocks.go:GroupBlocksBySeq
       - server/internal/session/manager.go:WithExchangeIdentity
       - server/internal/api/usecase/session.go:newTurnID
+      - server/internal/api/usecase/session.go:exchangeAlreadyRecorded
+      - server/internal/api/usecase/session.go:exchangeIdentityRecorded
+      - server/internal/api/usecase/session.go:exchangeNativeKey
+      - server/internal/api/usecase/session.go:noteIdentitylessGuess
+      - server/internal/api/usecase/external_sessions.go:appendImportedExchange
+      - server/internal/api/usecase/external_sessions.go:agentHasPromptMessageID
+      - server/internal/api/usecase/session_projection.go:ProjectExchanges
+      - server/internal/api/usecase/session_projection.go:AuditSession
+      - server/internal/agent/acp/importer.go:messageIDOf
+      - server/internal/agent/acp/importer.go:isUUIDShape
+      - server/internal/agent/acp/process.go:SendMessage
+      - server/internal/agent/types/types.go:WithPromptTurnID
       - server/internal/api/usecase/session.go:persistTurnBlocks
       - server/internal/api/usecase/session.go:copyForkBlocks
       - server/internal/api/usecase/session.go:GetSessionBlocksWindow

@@ -39,7 +39,7 @@ func TestPersistUserTurnExchangeMintsTurnIdentityAndWritesUserBlock(t *testing.T
 	}
 
 	ts := time.Now().UTC()
-	seq, turnID, err := persistUserTurnExchange(ctx, manager, current, "本轮提问", "claude", "", "", "", ts)
+	seq, turnID, err := persistUserTurnExchange(ctx, manager, current, "本轮提问", "claude", "", "", "", false, ts)
 	if err != nil {
 		t.Fatalf("persistUserTurnExchange: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestPersistUserTurnExchangeDedupeWritesNoBlock(t *testing.T) {
 		t.Fatalf("re-Get: %v", err)
 	}
 
-	seq, turnID, err := persistUserTurnExchange(ctx, manager, current, "本轮提问", "claude", "", "", "", ts)
+	seq, turnID, err := persistUserTurnExchange(ctx, manager, current, "本轮提问", "claude", "", "", "", false, ts)
 	if err != nil {
 		t.Fatalf("persistUserTurnExchange: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestPersistTurnBlocksKeepsReasoningOnlyTurn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	userSeq, turnID, err := persistUserTurnExchange(ctx, manager, current, "问题", "dsh", "", "", "", ts)
+	userSeq, turnID, err := persistUserTurnExchange(ctx, manager, current, "问题", "dsh", "", "", "", false, ts)
 	if err != nil {
 		t.Fatalf("persistUserTurnExchange: %v", err)
 	}
