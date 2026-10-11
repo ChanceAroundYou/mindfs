@@ -2440,7 +2440,6 @@ groups:
       - server/internal/api/stream_hub.go
       - server/internal/api/appcontext.go
       - server/internal/api/ws.go
-      - server/internal/api/stream_hub_pending_identity_test.go
       - server/internal/api/stream_hub_turn_identity_test.go
       - server/internal/api/kanban_turn_identity_guard_test.go
       - server/internal/scheduled/tasks.go
