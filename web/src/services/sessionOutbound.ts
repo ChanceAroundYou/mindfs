@@ -5,7 +5,7 @@ import type { SessionType } from "./sessionTypes";
 // 这一簇是纯函数：给参数、返回帧，不碰连接状态、不发请求、不做簿记。
 // 「什么时候能发」由 session.ts 的 sendWSMessage 判，「发出去之后记什么」由调用方管。
 // 分开的理由：帧的形状（字段名、可选性、默认值）是协议契约，值得单独读、单独审；
-// 它此前混在 244 行方法体里，与 socket 守卫、pendingMessages、e2ee 调用交错。
+// 它此前混在 244 行方法体里，与 socket 守卫、pendingMessages 调用交错。
 //
 // 约定：校验失败返回 `null`（调用方直接 `return false`）。**不含** socket 状态判断 ——
 // 那件事只有一处判据（sendWSMessage），不过它在调用方仍有承重作用，见 session.ts。

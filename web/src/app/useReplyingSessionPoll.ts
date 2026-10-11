@@ -2,19 +2,17 @@
  * 多项目「正在回复」旁路状态轮询 —— R 簇（~140 行）。
  *
  * 覆盖：本轮要问的节点集合（ref 稳定）、逐节点拉 /api/replying-sessions、
- * 抽屉/选中/缓存的 pending 对账、初始加载与 5s visible-only 轮询。
+ * 唯一真相表的按节点增量合并、初始加载与 5s visible-only 轮询。
  *
  * 做法：hook，参数面 UseReplyingSessionPollParams 即完整契约；函数体逐字搬入
  * （保持源码正则断言可命中，配合 source-map 注册）。
  */
 import { useCallback, useEffect, useRef, type MutableRefObject, type Dispatch, type SetStateAction } from "react";
 import { ManagedRootPayload } from "./appMisc";
-import { clearStalePending, mergeReplyingStateByNode, MultiProjectSessionGroup, SessionItem } from "./appSession";
-import { useSessionCache } from "./useSessionCache";
+import { mergeReplyingStateByNode, MultiProjectSessionGroup } from "./appSession";
 import { protectedJSON as apiProtectedJSON, withNodeRetry } from "../services/net/api";
 import { appPath } from "../services/net/base";
 import { getActiveNodeId, getNodes } from "../services/net/nodeRegistry";
-import { type Session } from "../services/session";
 import { scopeSessionKey } from "../shared/scope";
 
 /** 跨节点回复状态轮询周期（固定 5s + visible-only）。 */
@@ -22,45 +20,25 @@ const REMOTE_REPLY_POLL_MS = 5000;
 
 export interface UseReplyingSessionPollParams {
   applyPendingToMultiProjectGroups: (groups: MultiProjectSessionGroup[], pendingByKey: Record<string, boolean>) => any;
-  bumpCacheVersion: () => any;
-  currentRootIdRef: MutableRefObject<string | null>;
   currentRootNodeIdRef: MutableRefObject<string | null>;
-  drawerSessionByRootRef: MutableRefObject<Record<string, SessionItem | null>>;
   loadMultiProjectSessionGroups: () => any;
   managedRootByKeyRef: MutableRefObject<Record<string, ManagedRootPayload>>;
-  multiProjectPendingByKey: Record<string, boolean>;
   multiProjectPendingRef: MutableRefObject<Record<string, boolean>>;
   multiProjectSessionsEnabled: any;
-  rootSessionKey: (rootId: string, sessionKey: string) => any;
-  scopedRootKey: (rootId: string) => string;
-  selectedSessionRef: MutableRefObject<SessionItem | null>;
-  sessionCacheRef: ReturnType<typeof useSessionCache>["sessionCacheRef"];
-  setDrawerSessionForRoot: (rootID: string | null | undefined, session: Session | SessionItem | null) => any;
   setMultiProjectPendingByKey: Dispatch<SetStateAction<Record<string, boolean>>>;
   setMultiProjectSessionGroups: Dispatch<SetStateAction<MultiProjectSessionGroup[]>>;
-  setSelectedSession: Dispatch<SetStateAction<SessionItem | null>>;
 }
 
 export function useReplyingSessionPoll(params: UseReplyingSessionPollParams) {
   const {
     applyPendingToMultiProjectGroups,
-    bumpCacheVersion,
-    currentRootIdRef,
     currentRootNodeIdRef,
-    drawerSessionByRootRef,
     loadMultiProjectSessionGroups,
     managedRootByKeyRef,
-    multiProjectPendingByKey,
     multiProjectPendingRef,
     multiProjectSessionsEnabled,
-    rootSessionKey,
-    scopedRootKey,
-    selectedSessionRef,
-    sessionCacheRef,
-    setDrawerSessionForRoot,
     setMultiProjectPendingByKey,
     setMultiProjectSessionGroups,
-    setSelectedSession,
   } = params;
 
   /**
@@ -136,48 +114,16 @@ export function useReplyingSessionPoll(params: UseReplyingSessionPollParams) {
     // 整体替换会让切节点时旧节点在跑的会话当场全灭（切节点 → nodes-changed →
     // 本函数 → 新响应里没有旧节点 → 灯全没）。
     const next = mergeReplyingStateByNode(multiProjectPendingRef.current, fresh, okNodeIds);
+    // 这里**刻意不做**「静默 N 秒就本地灭灯」的降级。真在跑的会话会长时间没有 stream
+    // 事件：mindfs 不转发 SDK 的 keep_alive 心跳，唯一的周期事件 ToolProgressMessage
+    // 只覆盖 tool 执行（思考、tool 间隙、起始间隙都没有事件）。按静默判「已结束」会
+    // 出现「明明在跑却灭灯」、亮灯时长随事件节奏漂移。灯的权威来源就是本次轮询本身
+    // —— 服务端 ClearSessionPending 在回合结束时删条目，5s 一轮足够兜住 WS 断连；
+    // 服务端真卡死由 broadcastSessionDone 的 2s 超时兜底。两条路都不经过静默判据。
     multiProjectPendingRef.current = next;
     setMultiProjectPendingByKey(next);
     setMultiProjectSessionGroups((groups) => applyPendingToMultiProjectGroups(groups, next));
   }, [applyPendingToMultiProjectGroups]);
-
-  // 抽屉（currentSession）的 pending 只由 WS session.done 处理器清除。断连/重绑竞态
-  // 会让那条事件丢失，抽屉于是永久卡在 pending:true —— 输入框一直显示停止符号、查看器
-  // 一直「正在思考」、用量面板不出现。会话列表不会卡：它的蓝灯每 5s 从
-  // /api/replying-sessions 对账一次（refreshMultiProjectReplyingSessions）。这里让抽屉
-  // 跟着同一个服务端真值对账，done 丢了也能在下一个轮询周期收敛。
-  // 选中会话与缓存同样只由 handleSessionStreamDone 清，一并在这里对账 —— ActionBar 的
-  // showCancel 读的是 actionBarSession（可能是 selectedSession / 缓存），不是抽屉本身。
-  useEffect(() => {
-    const rootID = currentRootIdRef.current;
-    if (!rootID) return;
-    const isServerPending = (key: string) =>
-      !!multiProjectPendingByKey[rootSessionKey(rootID, key)];
-
-    const drawer = drawerSessionByRootRef.current[scopedRootKey(rootID)];
-    const nextDrawer = clearStalePending(drawer, isServerPending);
-    if (nextDrawer !== drawer && nextDrawer) {
-      setDrawerSessionForRoot(rootID, nextDrawer as Session);
-    }
-
-    const selected = selectedSessionRef.current;
-    if (selected?.root_id === rootID) {
-      const nextSelected = clearStalePending(selected, isServerPending);
-      if (nextSelected !== selected && nextSelected) {
-        setSelectedSession((prev) =>
-          prev && (prev.key || prev.session_key) === selected.key ? nextSelected : prev,
-        );
-      }
-    }
-
-    const cacheKey = drawer?.key ? rootSessionKey(rootID, drawer.key) : "";
-    const cached = cacheKey ? (sessionCacheRef.current[cacheKey] as any) : null;
-    const nextCached = clearStalePending(cached, isServerPending);
-    if (nextCached !== cached && nextCached) {
-      sessionCacheRef.current[cacheKey] = nextCached;
-      bumpCacheVersion();
-    }
-  }, [multiProjectPendingByKey, rootSessionKey, scopedRootKey, setDrawerSessionForRoot]);
 
   useEffect(() => {
     if (!multiProjectSessionsEnabled) {
@@ -202,6 +148,27 @@ export function useReplyingSessionPoll(params: UseReplyingSessionPollParams) {
       void refreshMultiProjectReplyingSessions();
     }, REMOTE_REPLY_POLL_MS);
     return () => window.clearInterval(timer);
+  }, [multiProjectSessionsEnabled, refreshMultiProjectReplyingSessions]);
+
+  // 标签页从后台切回来 / bfcache 恢复时立刻对账一次：后台期间定时器被浏览器节流甚至
+  // 冻结，切回来时第一轮可能要等到下一个 5s 周期 —— 用户看到的是「刚才还在跑，
+  // 回来灯还亮着」。这两条事件是「恢复可见」的唯一可靠信号。
+  useEffect(() => {
+    if (!multiProjectSessionsEnabled || typeof window === "undefined") {
+      return;
+    }
+    const refreshOnResume = () => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") {
+        return;
+      }
+      void refreshMultiProjectReplyingSessions();
+    };
+    document.addEventListener("visibilitychange", refreshOnResume);
+    window.addEventListener("pageshow", refreshOnResume);
+    return () => {
+      document.removeEventListener("visibilitychange", refreshOnResume);
+      window.removeEventListener("pageshow", refreshOnResume);
+    };
   }, [multiProjectSessionsEnabled, refreshMultiProjectReplyingSessions]);
 
   return { refreshMultiProjectReplyingSessions };

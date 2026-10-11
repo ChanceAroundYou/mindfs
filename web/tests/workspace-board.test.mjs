@@ -5,6 +5,10 @@ import { existsSync, readFileSync } from "node:fs";
 // 项目内看板的契约在 task-board-view.test.mjs；扇出在 workspace-node-fanout.test.mjs；
 // 数据新鲜度在 workspace-realtime-freshness.test.mjs。
 const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
+// 2026-10-10 分层聚合：boardSessionByKey 搬进 useAppSessionSnapshots.ts，
+// 看板面板的接线搬进 useAppKanbanTaskPanel.tsx —— 断言跟着实现走。
+const snapshots = readFileSync(new URL("../src/app/useAppSessionSnapshots.ts", import.meta.url), "utf8");
+const kanbanPanel = readFileSync(new URL("../src/app/useAppKanbanTaskPanel.tsx", import.meta.url), "utf8");
 const hook = readFileSync(new URL("../src/app/useWorkspaceBoard.ts", import.meta.url), "utf8");
 const view = readFileSync(new URL("../src/components/TaskBoardView.tsx", import.meta.url), "utf8");
 const board = readFileSync(new URL("../src/components/workspace/WorkspaceBoard.tsx", import.meta.url), "utf8");
@@ -405,18 +409,21 @@ for (const key of [
 //     大多不属于当前项目，而 sessionByKey 只装当前 root 的会话 —— 取不到就落回
 //     AgentIcon 的「AI」文字占位（2026-10-07 实测「大多数用 dsh 的任务没有 agent 徽标」）。
 //     必须传并进多项目分组的那张表，且**不能**退化成当前 root 那张。
+// 2026-10-10 拆分：boardSessionByKey 搬进 useAppSessionSnapshots.ts，
+// 它的接线（sessionByKey={boardSessionByKey}）搬进 useAppKanbanTaskPanel.tsx。
+// snapshots/kanbanPanel 已在文件顶部声明，此处直接用。
 assert.match(
-  app,
+  snapshots,
   /const boardSessionByKey = useMemo\(\(\) => \{[\s\S]*?multiProjectSessionGroups[\s\S]*?\.\.\.sessionByKey[\s\S]*?\}, \[multiProjectSessionGroups, sessionByKey, multiProjectPendingByKey, rootSessionKey\]\);/,
   "boardSessionByKey must merge multiProjectSessionGroups into sessionByKey (current root wins)",
 );
 assert.match(
-  app,
+  kanbanPanel,
   /sessionByKey=\{boardSessionByKey\}/,
   "TaskBoardView must get the merged map — the raw sessionByKey only holds the current root",
 );
 assert.doesNotMatch(
-  app,
+  kanbanPanel,
   /sessionByKey=\{sessionByKey\}/,
   "passing the current-root-only map is the bug: cross-project cards fall back to the 'AI' placeholder",
 );

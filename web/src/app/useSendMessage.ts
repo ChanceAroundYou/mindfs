@@ -69,7 +69,6 @@ export type SendMessageParams = {
   setInteractionMode: React.Dispatch<React.SetStateAction<"main" | "drawer">>;
   setPendingPlanMode: React.Dispatch<React.SetStateAction<boolean>>;
   setSelectedSession: React.Dispatch<React.SetStateAction<SessionItem | null>>;
-  setSelectedPendingByKey: (sessionKey: string, pending: boolean) => void;
   attachedFileContext: AttachedFileContext | null;
   pendingPlanMode: boolean;
   slashCommandResults: Record<string, SlashCommandResult>;
@@ -79,6 +78,7 @@ export type SendMessageParams = {
   setDrawerOpenForRoot: (rootID: string | null | undefined, open: boolean) => void;
   bumpCacheVersion: () => void;
   clearLocalPendingForSession: (rootID: string | null | undefined, sessionKey: string | null | undefined) => void;
+  resolvePendingForSession: (rootID: string | null | undefined, sessionKey: string | null | undefined, fallback?: boolean) => boolean;
   clearSlashCommandResultForSession: (rootID: string, sessionKey: string) => void;
   rootSessionKey: (rootId: string, sessionKey: string) => string;
   scopedRootKey: (rootId: string) => string;
@@ -136,7 +136,6 @@ export function useSendMessage(params: SendMessageParams): {
     setInteractionMode,
     setPendingPlanMode,
     setSelectedSession,
-    setSelectedPendingByKey,
     attachedFileContext,
     pendingPlanMode,
     slashCommandResults,
@@ -146,6 +145,7 @@ export function useSendMessage(params: SendMessageParams): {
     setDrawerOpenForRoot,
     bumpCacheVersion,
     clearLocalPendingForSession,
+    resolvePendingForSession,
     clearSlashCommandResultForSession,
     rootSessionKey,
     scopedRootKey,
@@ -213,9 +213,15 @@ export function useSendMessage(params: SendMessageParams): {
       const isQueueSend =
         !!sendSessionKey &&
         !!session &&
-        (((session as any).pending === true) ||
-          (currentSessionRef.current?.key === sendSessionKey &&
-            currentSessionRef.current?.pending === true));
+        // pending 纯派生：先看 multiProjectPendingByKey，表里没有才落回会话对象上
+        // 那份（服务端列表回包带的快照）。
+        resolvePendingForSession(
+          ((session as any).root_id as string | undefined) || currentRootIdRef.current || "",
+          sendSessionKey,
+          (session as any).pending === true ||
+            (currentSessionRef.current?.key === sendSessionKey &&
+              currentSessionRef.current?.pending === true),
+        );
       if (sendSessionKey && session) {
         const targetSessionKey = sendSessionKey;
         const previousAgent = session.agent || "";
@@ -264,11 +270,9 @@ export function useSendMessage(params: SendMessageParams): {
         } as Session;
         setBoundSessionForRoot(activeRoot, targetSessionKey);
         if (!isQueueSend) {
-          setSelectedPendingByKey(targetSessionKey, true);
-          setDrawerSessionForRoot(activeRoot, {
-            ...(session as any),
-            pending: true,
-          } as Session);
+          // pending 不再写在会话对象上（纯派生自 multiProjectPendingByKey，见下方
+          // setMultiProjectSessionPending）；这里只把抽屉指向这条会话。
+          setDrawerSessionForRoot(activeRoot, session as Session);
         }
       } else {
         if (transientSlashCommand) {
@@ -288,7 +292,6 @@ export function useSendMessage(params: SendMessageParams): {
             shell: effectiveShell,
             plan_mode: pendingPlanMode || messageRequestsPlanMode,
             name: t("session.new"),
-            pending: true,
           } as any;
           setBoundSessionForRoot(activeRoot, tempKey);
         }
@@ -327,23 +330,8 @@ export function useSendMessage(params: SendMessageParams): {
 	        if (session) {
 	          // 曾经这里只清两处（选中 + 小蓝灯），缓存与抽屉仍留着 `pending: true` ——
 	          // 那是「灯不灭」/「状态不收敛」的直接来源（冲突⑤）。交给清除编排者。
+	          // 现在它只改 multiProjectPendingByKey（唯一真相）+ 取消后的 pending_ack 收尾。
 	          clearLocalPendingForSession(activeRoot, targetSessionKey);
-	        }
-	        setSessions((prev) =>
-	          prev.map((item) => {
-	            const itemKey = item.key || item.session_key;
-	            if (itemKey !== targetSessionKey) {
-	              return item;
-	            }
-	            return { ...(item as any), pending: false } as SessionItem;
-	          }),
-	        );
-	        const drawerSession = drawerSessionByRootRef.current[scopedRootKey(activeRoot)];
-	        if (drawerSession && drawerSession.key === targetSessionKey) {
-	          setDrawerSessionForRoot(activeRoot, {
-	            ...(drawerSession as any),
-	            pending: false,
-	          } as Session);
 	        }
 	        setSlashCommandResults((prev) => {
           const next = { ...prev };
@@ -456,7 +444,6 @@ export function useSendMessage(params: SendMessageParams): {
             }
             return {
               ...(item as any),
-              pending: true,
               updated_at: now,
               agent: effectiveAgent,
               model: effectiveModel,
@@ -533,7 +520,6 @@ export function useSendMessage(params: SendMessageParams): {
             root_id: activeRoot,
             created_at: now,
             updated_at: now,
-            pending: true,
           });
           if (draftItem) {
             setSessions((prev) => mergeSessionItems(prev, [draftItem]));
@@ -594,10 +580,8 @@ export function useSendMessage(params: SendMessageParams): {
         setDrawerOpenForRoot(activeRoot, true);
       }
       if (!isQueueSend) {
-        setDrawerSessionForRoot(activeRoot, {
-          ...(session as any),
-          pending: true,
-        } as Session);
+        // pending 不再写在会话对象上（唯一真相是 multiProjectPendingByKey）。
+        setDrawerSessionForRoot(activeRoot, session as Session);
       }
       const explicitFileContext = hasExplicitFileContext(message);
       const selection =
@@ -667,24 +651,9 @@ export function useSendMessage(params: SendMessageParams): {
       }
       if (!sent && sendSessionKey) {
         const failedSessionKey = sendSessionKey;
-        // 同理：发送失败必须把**全部五处**的 pending 收敛掉，否则缓存里那条会话永远显示「在回复」
+        // 发送失败必须把 pending 收敛掉，否则那条会话永远显示「在回复」。
+        // 现在收敛只有一处：clearLocalPendingForSession 清 multiProjectPendingByKey。
         clearLocalPendingForSession(activeRoot, failedSessionKey);
-        setSessions((prev) =>
-          prev.map((item) => {
-            const itemKey = item.key || item.session_key;
-            if (itemKey !== failedSessionKey) {
-              return item;
-            }
-            return { ...(item as any), pending: false } as SessionItem;
-          }),
-        );
-        const latest = drawerSessionByRootRef.current[scopedRootKey(activeRoot)];
-        if (latest && latest.key === failedSessionKey) {
-          setDrawerSessionForRoot(activeRoot, {
-            ...(latest as any),
-            pending: false,
-          } as Session);
-        }
       }
       if (!sent && !sendSessionKey && tempKey) {
         setMultiProjectSessionPending(activeRoot, tempKey, false);
@@ -695,19 +664,12 @@ export function useSendMessage(params: SendMessageParams): {
         if (boundSessionByRootRef.current[scopedRootKey(activeRoot)] === tempKey) {
           setBoundSessionForRoot(activeRoot, null);
         }
-        const latest = drawerSessionByRootRef.current[scopedRootKey(activeRoot)];
-        if (latest && latest.key === tempKey) {
-          setDrawerSessionForRoot(activeRoot, {
-            ...(latest as any),
-            pending: false,
-          } as Session);
-        }
-      }    },
+      }
+    },
     [
       attachedFileContext,
       rootSessionKey,
       mergeSessionItems,
-      setSelectedPendingByKey,
       bumpCacheVersion,
       clearSlashCommandResultForSession,
       slashCommandResults,

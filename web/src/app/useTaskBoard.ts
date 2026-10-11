@@ -26,6 +26,8 @@ import {
   rebuildTaskWorktree,
   upsertCachedTaskDetails,
   FinishWorktreeConflict,
+  FinishWorktreeDirty,
+  FinishWorktreeUserChanges,
   type KanbanTask,
   type TaskDetail,
 } from "../services/tasks";
@@ -399,7 +401,27 @@ export function useTaskBoard(params: UseTaskBoardParams) {
         });
         return;
       }
-      reportError("file.write_failed", String((err as Error)?.message || t("task.actionFailed")));
+      // 主 checkout 不干净：和冲突一样要列出文件清单 —— 那是「你自己的活还没收」，
+      // 用户得知道具体是哪几个文件、然后自己去提交或暂存。
+      if (err instanceof FinishWorktreeDirty) {
+        setTaskSessionErrorDialog({
+          title: t("task.finishWorktreeDirty"),
+          message: t("task.finishWorktreeDirtyHint"),
+          details: err.files,
+        });
+        return;
+      }
+      // worktree 里还有没提交的东西：合并**已经成功了**，只是目录拆不掉。
+      // 同样要列文件 —— 而且要让用户知道「活已经合了」，否则他会以为白干一场。
+      if (err instanceof FinishWorktreeUserChanges) {
+        setTaskSessionErrorDialog({
+          title: t("task.finishWorktreeUserChanges"),
+          message: t("task.finishWorktreeUserChangesHint"),
+          details: err.files,
+        });
+        return;
+      }
+      reportError("task.action_failed", String((err as Error)?.message || t("task.actionFailed")));
     }
   }, [applyTaskDetails, refreshWorkspaceBoard, t, getNodeIdForRoot, refreshTaskWorktreeRef]);
 

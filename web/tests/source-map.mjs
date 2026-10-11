@@ -72,7 +72,6 @@ export const MODULES = {
     "src/app/useRelatedFileDiff.ts",
     "src/components/app/TaskSessionErrorDialog.tsx",
     "src/components/app/TaskDetailPanelGate.tsx",
-    "src/components/app/E2eePrompt.tsx",
     "src/components/app/OnboardingGate.tsx",
     "src/components/app/TaskInlineEditPanel.tsx",
     "src/components/app/SessionSheet.tsx",
@@ -104,7 +103,7 @@ export const MODULES = {
     "src/app/useAppSessionPins.ts",
     "src/app/useAppReplaceURLState.ts",
     "src/app/useAppFormatDirectoryLoadError.ts",
-    // 2026-10-08 第 2 步：启动期四件事（自更新 / 引导步进 / E2EE 口令）。
+    // 2026-10-08 第 2 步：启动期三件事（自更新 / 引导步进 / 应用初始化）。
     "src/app/useAppBootstrapActions.ts",
     // 2026-10-08 第 3 步：会话列表的两种「再拉一次」+ 按复合键存的派生状态。
     "src/app/useAppSessionReload.ts",
@@ -136,7 +135,7 @@ export const MODULES = {
     "src/app/useAppKanbanTaskPanel.tsx",
     // 2026-10-08 第 14 步：ref 镜像 + 同一段的 24 条 effect
     "src/app/useAppRefSync.ts",
-    // 2026-10-08 第 14 步（续）：bootstrap/E2EE 与插件渲染后的 effect
+    // 2026-10-08 第 14 步（续）：bootstrap 与插件渲染后的 effect
     "src/app/useAppBootstrapEffects.ts",
     "src/app/useAppPluginRenderEffects.ts",
     // 2026-10-08 分层聚合（App.tsx → 1000 以内）第 1 层：状态与 ref。

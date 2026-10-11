@@ -196,13 +196,15 @@ assert.doesNotMatch(
 // 这条规则在服务端（http_tasks.go 的 teardownFinishWorktree），前端这一半钉的是
 // 「两条通道都在，但只有一条会响」—— WS 处理器必须能处理 dirty_files，否则异步
 // 那条路的失败会退化成一句没有清单的报错。
-const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
-const realtime = readFileSync(new URL("../src/app/useRealtimeEvents.ts", import.meta.url), "utf8");
+// 2026-10-10 拆分：handleMoveKanbanTask 搬进 useTaskBoard.ts，WS 的
+// task.finish_teardown 搬进 realtimeWsHandlers.ts —— 断言跟着实现走。
+const taskBoard = readFileSync(new URL("../src/app/useTaskBoard.ts", import.meta.url), "utf8");
+const realtime = readFileSync(new URL("../src/app/realtimeWsHandlers.ts", import.meta.url), "utf8");
 // 同步那条路（点收尾 → HTTP 409）必须弹同一个弹窗，而不是只 toast 一句。
 assert.match(
-  app,
+  taskBoard,
   /FinishWorktreeDirty[\s\S]{0,200}?task\.finishWorktreeDirty/,
-  "App.tsx must open the dirty-main dialog, not just toast",
+  "the sync finish path must open the dirty-main dialog, not just toast",
 );
 assert.match(
   realtime,

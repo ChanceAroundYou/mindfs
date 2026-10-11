@@ -2,18 +2,19 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 
-const appSource = fs.readFileSync(
-  path.resolve(import.meta.dirname, "../src/App.tsx"),
+// 2026-10-10 分层聚合：这两个 effect 已从 App.tsx 搬进 useReplyingSessionPoll.ts。
+const pollSource = fs.readFileSync(
+  path.resolve(import.meta.dirname, "../src/app/useReplyingSessionPoll.ts"),
   "utf8",
 );
 
 assert.match(
-  appSource,
+  pollSource,
   /addEventListener\(["']visibilitychange["'][\s\S]*?refreshMultiProjectReplyingSessions/,
   "pending reconciliation must run when the page becomes visible",
 );
 assert.match(
-  appSource,
+  pollSource,
   /addEventListener\(["']pageshow["'][\s\S]*?refreshMultiProjectReplyingSessions/,
   "pending reconciliation must run when a suspended page is restored",
 );

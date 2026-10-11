@@ -7,7 +7,6 @@
  * CUSTOM(G-BA)：上游没有这个拆分。合上游时若 session.ts 被整体覆盖，
  * 需要把本文件的内容合回去（或重新拆分），否则 WS 连接管理会丢失。
  */
-import { e2eeService } from "./net/e2ee";
 import { wsURL } from "./net/base";
 import { estimateCommandTerminalCols } from "./sessionTerminalLayout";
 import { createRequestId } from "./sessionIdentifiers";
@@ -83,16 +82,9 @@ export class SessionConnectionManager {
     }
   }
 
-  private async buildWSUrl(nodeId?: string): Promise<string> {
+  private buildWSUrl(nodeId?: string): string {
     const params = new URLSearchParams({ client_id: this.clientId });
     if (nodeId) params.set("node_id", nodeId);
-    const proofTarget = wsURL("/ws", params, nodeId);
-    if (e2eeService.isRequired()) {
-      const proofParams = await e2eeService.wsProofParams("GET", proofTarget);
-      for (const [key, value] of proofParams) {
-        params.set(key, value);
-      }
-    }
     return wsURL("/ws", params, nodeId);
   }
 
@@ -146,11 +138,11 @@ export class SessionConnectionManager {
     this.openingSocket = true;
     let target = "";
     try {
-      target = await this.buildWSUrl(this.nodeId || undefined);
+      target = this.buildWSUrl(this.nodeId || undefined);
     } catch (err) {
       this.openingSocket = false;
       console.error("[Session] Failed to prepare WebSocket proof:", err);
-      this.handlers.emit({ type: "ws.closed", payload: { code: 0, reason: "e2ee_proof_failed", was_clean: false } });
+      this.handlers.emit({ type: "ws.closed", payload: { code: 0, reason: "ws_connect_failed", was_clean: false } });
       this.scheduleReconnect();
       return;
     }
@@ -180,11 +172,6 @@ export class SessionConnectionManager {
         this.handlers.emit({ type: "ws.connected" });
       }
       this.hasConnected = true;
-      if (e2eeService.isRequired() && e2eeService.hasSecret()) {
-        void e2eeService.ensureSession().catch((err) => {
-          console.error("[Session] Failed to open E2EE session:", err);
-        });
-      }
       this.resendPendingMessages();
     };
 
@@ -404,12 +391,6 @@ export class SessionConnectionManager {
     if (type === "pong") {
       return;
     }
-    if (type === "e2ee.error") {
-      const code = typeof payload.code === "string" ? payload.code : "";
-      e2eeService.handleServerError(code);
-      this.handlers.emit({ type, payload });
-      return;
-    }
     const sessionKey = payload.session_key as string;
     if (type === "session.accepted") {
       const requestId =
@@ -428,15 +409,11 @@ export class SessionConnectionManager {
     this.handlers.emitDecrypted(type, sessionKey, payload, msg);
   }
 
-  private async parseWSMessage(raw: unknown): Promise<any | null> {
+  private parseWSMessage(raw: unknown): any | null {
     if (typeof raw !== "string") {
       return null;
     }
-    const parsed = JSON.parse(raw);
-    if (!e2eeService.isRequired() || parsed?.type === "e2ee.error") {
-      return parsed;
-    }
-    return e2eeService.decodeWSMessage<any>(raw);
+    return JSON.parse(raw);
   }
 
   private async sendWSMessage(
@@ -446,10 +423,6 @@ export class SessionConnectionManager {
       return false;
     }
     let serialized = JSON.stringify(message);
-    if (e2eeService.isRequired()) {
-      await e2eeService.ensureSession();
-      serialized = await e2eeService.encodeWSMessage(message);
-    }
     this.ws.send(serialized);
     return true;
   }
@@ -625,9 +598,6 @@ export class SessionConnectionManager {
     }
     const msg = buildSessionReadyMessage(rootId, sessionKey, `ready-${Date.now()}`);
     if (!msg) return false;
-    if (e2eeService.isRequired()) {
-      await e2eeService.ensureSession();
-    }
     return this.sendWSMessage(msg);
   }
 }

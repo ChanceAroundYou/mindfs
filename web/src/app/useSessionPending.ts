@@ -17,6 +17,8 @@ export interface UseSessionPendingParams {
   cacheVersion: number;
   currentRootIdRef: MutableRefObject<string | null>;
   drawerSessionByRootRef: MutableRefObject<Record<string, SessionItem | null>>;
+  multiProjectPendingByKey: Record<string, boolean>;
+  multiProjectPendingRef: MutableRefObject<Record<string, boolean>>;
   pendingBySessionRef: MutableRefObject<Record<string, PendingSend>>;
   rootSessionKey: (rootId: string, sessionKey: string) => any;
   scopedRootKey: (rootId: string) => string;
@@ -36,6 +38,8 @@ export function useSessionPending(params: UseSessionPendingParams) {
     cacheVersion,
     currentRootIdRef,
     drawerSessionByRootRef,
+    multiProjectPendingByKey,
+    multiProjectPendingRef,
     pendingBySessionRef,
     rootSessionKey,
     scopedRootKey,
@@ -66,14 +70,10 @@ export function useSessionPending(params: UseSessionPendingParams) {
       const exchanges = Array.isArray((cached as any)?.exchanges)
         ? ((cached as any).exchanges as Exchange[]) || []
         : fallbackExchanges;
-      const pending =
-        drawerSession?.key === key
-          ? !!(drawerSession as any)?.pending
-          : typeof (session as any)?.pending === "boolean"
-            ? !!(session as any).pending
-            : typeof (cached as any)?.pending === "boolean"
-              ? !!(cached as any).pending
-              : undefined;
+      // pending 纯派生：唯一的真相在 multiProjectPendingByKey（WS 乐观更新 +
+      // /api/replying-sessions 轮询覆盖）。会话对象（drawer/selected/cache）上不再存
+      // pending —— 那是会卡死的第二份状态，session.done 一丢就永久为 true。
+      const pending = !!multiProjectPendingByKey[rootSessionKey(rootId, key)];
       return {
         ...(session as any),
         ...(cached as any),
@@ -87,18 +87,7 @@ export function useSessionPending(params: UseSessionPendingParams) {
         pending,
       } as any;
     },
-    [rootSessionKey, cacheVersion],
-  );
-
-  const setSelectedPendingByKey = useCallback(
-    (sessionKey: string, pending: boolean) => {
-      setSelectedSession((prev) => {
-        const prevKey = prev?.key || prev?.session_key;
-        if (!prev || prevKey !== sessionKey) return prev;
-        return { ...(prev as any), pending } as SessionItem;
-      });
-    },
-    [],
+    [rootSessionKey, cacheVersion, multiProjectPendingByKey],
   );
 
   const resolvePendingForSession = useCallback(
@@ -112,40 +101,13 @@ export function useSessionPending(params: UseSessionPendingParams) {
       if (!resolvedRoot || !resolvedKey) {
         return !!fallback;
       }
-      const cacheKey = rootSessionKey(resolvedRoot, resolvedKey);
-      if (pendingBySessionRef.current[cacheKey]) {
-        return true;
-      }
-      const drawer = drawerSessionByRootRef.current[scopedRootKey(resolvedRoot)] as
-        | ({ pending?: boolean; key?: string; session_key?: string } & Record<string, unknown>)
-        | null
-        | undefined;
-      if (
-        drawer &&
-        (drawer.key || drawer.session_key) === resolvedKey &&
-        typeof drawer.pending === "boolean"
-      ) {
-        return drawer.pending;
-      }
-      const selected = selectedSessionRef.current as
-        | ({ pending?: boolean; key?: string; session_key?: string; root_id?: string } & Record<string, unknown>)
-        | null
-        | undefined;
-      if (
-        selected &&
-        ((selected.root_id as string | undefined) || currentRootIdRef.current) ===
-          resolvedRoot &&
-        (selected.key || selected.session_key) === resolvedKey &&
-        typeof selected.pending === "boolean"
-      ) {
-        return selected.pending;
-      }
-      const cached = sessionCacheRef.current[cacheKey] as
-        | ({ pending?: boolean } & Record<string, unknown>)
-        | null
-        | undefined;
-      if (cached && typeof cached.pending === "boolean") {
-        return cached.pending;
+      // 纯派生：pending 的唯一真相是 multiProjectPendingByKey。用 ref 读而不是 state，
+      // 是为了不把它拉进 restoreActiveSession 的依赖数组（那会造成身份抖动、反复重拉）。
+      // 表里没有这个键就落回调用方给的 fallback（通常是这次服务端回包里的 pending）。
+      const key = rootSessionKey(resolvedRoot, resolvedKey);
+      const known = multiProjectPendingRef.current[key];
+      if (typeof known === "boolean") {
+        return known;
       }
       return !!fallback;
     },
@@ -170,10 +132,7 @@ export function useSessionPending(params: UseSessionPendingParams) {
       delete pendingBySessionRef.current[cacheKey];
       const cached = sessionCacheRef.current[cacheKey];
       if (cached && (cached.key || (cached as any).session_key) === resolvedKey) {
-        sessionCacheRef.current[cacheKey] = clearPendingAck({
-          ...(cached as any),
-          pending: false,
-        } as Session);
+        sessionCacheRef.current[cacheKey] = clearPendingAck(cached as Session) as Session;
       }
       setSelectedSession((prev) => {
         const prevKey = prev?.key || prev?.session_key;
@@ -182,17 +141,15 @@ export function useSessionPending(params: UseSessionPendingParams) {
         if (!prev || prevKey !== resolvedKey || prevRoot !== resolvedRoot) {
           return prev;
         }
-        return clearPendingAck({
-          ...(prev as any),
-          pending: false,
-        } as SessionItem);
+        const next = clearPendingAck(prev as SessionItem);
+        return next === prev ? prev : next;
       });
       const drawer = drawerSessionByRootRef.current[scopedRootKey(resolvedRoot)];
       if (drawer && (drawer.key || (drawer as any).session_key) === resolvedKey) {
-        setDrawerSessionForRoot(resolvedRoot, clearPendingAck({
-          ...(drawer as any),
-          pending: false,
-        } as Session));
+        const next = clearPendingAck(drawer as Session);
+        if (next !== drawer) {
+          setDrawerSessionForRoot(resolvedRoot, next as Session);
+        }
       }
       if (currentRootIdRef.current === resolvedRoot) {
         setSessions((prev) =>
@@ -201,10 +158,7 @@ export function useSessionPending(params: UseSessionPendingParams) {
             if (itemKey !== resolvedKey) {
               return item;
             }
-            return clearPendingAck({
-              ...(item as any),
-              pending: false,
-            } as SessionItem);
+            return clearPendingAck(item as SessionItem) as SessionItem;
           }),
         );
       }
@@ -255,7 +209,6 @@ export function useSessionPending(params: UseSessionPendingParams) {
 
   return {
     getSessionSnapshot,
-    setSelectedPendingByKey,
     resolvePendingForSession,
     clearLocalPendingForSession,
     markSessionStale,

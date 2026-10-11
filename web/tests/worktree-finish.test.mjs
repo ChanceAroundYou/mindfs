@@ -306,13 +306,14 @@ assert.match(
   panelHook,
   /const canFinishWorktree = task\?\.create_worktree === true\s*&&\s*!!task\?\.worktree_path\s*&&\s*task\?\.worktree_missing !== true;/,
   "the finish button requires a live worktree; terminal and finishing tasks are NOT withheld",
+);
 assert.doesNotMatch(
-  panel,
+  panelHook,
   /const canFinishWorktree[^;]*isTerminalKanbanTask/,
   "the finish button must not be gated on terminal status — a finished task holding an unfinished worktree is exactly the case worth finishing",
 );
 assert.doesNotMatch(
-  panel,
+  panelHook,
   /const canFinishWorktree[^;]*!finishActive/,
   "the finish button must stay clickable while the finish stage runs — that is the moment the mechanical cleanup is needed",
 );
@@ -334,7 +335,6 @@ assert.doesNotMatch(
   card,
   /const canFinishWorktree[^;]*hasAgentStage/,
   "the card's finish gate must not require an agent stage either — both sides must agree",
-);
 );
 assert.match(
   card,
@@ -416,22 +416,22 @@ assert.match(
   "begin-finish must return the plan so the UI can explain the decision",
 );
 assert.match(
-  read("src/app/useRealtimeEvents.ts"),
+  read("src/app/realtimeWsHandlers.ts"),
   /result\?\.worktree_dir_removed[\s\S]{0,200}finishWorktreeDirRemoved/,
   "the teardown receipt must announce that the directory itself is gone",
 );
 assert.match(
-  read("src/app/useRealtimeEvents.ts"),
+  read("src/app/realtimeWsHandlers.ts"),
   /result\?\.migrated_uploads[\s\S]{0,200}finishWorktreeUploadsMoved/,
   "the teardown receipt must announce the attachments that were moved back",
 );
 assert.match(
-  read("src/app/useRealtimeEvents.ts"),
+  read("src/app/realtimeWsHandlers.ts"),
   /payload\.note[\s\S]{0,200}lines\.push\(note\)/,
   "the teardown receipt must surface the idempotent-skip note",
 );
 assert.match(
-  read("src/App.tsx"),
+  read("src/components/task/useTaskDetailPanel.ts"),
   /res\.plan\?\.reason[\s\S]{0,200}planLine/,
   "the finish button must explain why it deferred to the agent",
 );

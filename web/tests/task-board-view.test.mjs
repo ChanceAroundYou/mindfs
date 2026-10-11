@@ -11,6 +11,9 @@ const shell = readFileSync(new URL("../src/layout/AppShell.tsx", import.meta.url
 const fileTree = readFileSync(new URL("../src/components/file/FileTree.tsx", import.meta.url), "utf8");
 const sessionList = readFileSync(new URL("../src/components/session/SessionList.tsx", import.meta.url), "utf8");
 const sessionViewer = readFileSync(new URL("../src/components/session/SessionViewer.tsx", import.meta.url), "utf8");
+// 2026-10-10 组件拆分：SessionViewer 的 36px header 已搬进 SessionViewerHeader.tsx，
+// 「主视图必须走共用 ViewHeader」的断言跟着走。
+const sessionViewerHeader = readFileSync(new URL("../src/components/session/SessionViewerHeader.tsx", import.meta.url), "utf8");
 const gitDiff = readFileSync(new URL("../src/components/git/GitDiffViewer.tsx", import.meta.url), "utf8");
 const board = readFileSync(new URL("../src/components/task/TaskBoardView.tsx", import.meta.url), "utf8");
 const listView = readFileSync(new URL("../src/components/file/DefaultListView.tsx", import.meta.url), "utf8");
@@ -158,7 +161,7 @@ assert.match(
 for (const [name, src] of [
   ["FileTree", fileTree],
   ["SessionList", sessionList],
-  ["SessionViewer", sessionViewer],
+  ["SessionViewer", sessionViewerHeader],
   ["GitDiffViewer", gitDiff],
   ["DefaultListView", listView],
 ]) {
@@ -170,7 +173,7 @@ assert.match(fileTree, /showToggles=\{false\}/, "FileTree (left sidebar) must no
 assert.match(sessionList, /showToggles=\{false\}/, "SessionList (right sidebar) must not show toggle buttons");
 // 中间主栏的三个面板显示切换按钮。
 for (const [name, src] of [
-  ["SessionViewer", sessionViewer],
+  ["SessionViewer", sessionViewerHeader],
   ["GitDiffViewer", gitDiff],
   ["DefaultListView", listView],
 ]) {

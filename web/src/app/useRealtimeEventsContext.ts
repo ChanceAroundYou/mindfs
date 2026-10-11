@@ -64,7 +64,7 @@ export type RealtimeEventsContext = {
     setProjectAddMode: Dispatch<SetStateAction<ProjectAddMode | null>>;
     setQueueVersion: Dispatch<SetStateAction<number>>;
     setRootEntries: Dispatch<SetStateAction<FileEntry[]>>;
-    setSelectedPendingByKey: (sessionKey: string, pending: boolean) => void;
+
     setSelectedSession: Dispatch<SetStateAction<SessionItem | null>>;
     setSessions: Dispatch<SetStateAction<SessionItem[]>>;
     setSlashCommandResults: Dispatch<SetStateAction<Record<string, SlashCommandResult>>>;
@@ -76,7 +76,7 @@ export type RealtimeEventsContext = {
   };
   /** App 的回调与动作 */
   actions: {
-    appendAgentChunkForSession: (rootID: string, sessionKey: string, content: string, runtimeHint?: SessionRuntimeMeta) => void;
+    appendAgentChunkForSession: (rootID: string, sessionKey: string, content: string, runtimeHint?: SessionRuntimeMeta, eventTimestamp?: string) => void;
     appendCompactNoticeForSession: (rootID: string, sessionKey: string, compactNotice: any) => void;
     appendPlanUpdateForSession: (rootID: string, sessionKey: string, planUpdate: any) => void;
     appendThoughtChunkForSession: (rootID: string, sessionKey: string, content: string, thoughtID?: string) => void;

@@ -47,6 +47,13 @@ function scanLines(file, re) {
 const app = read("src/App.tsx");
 const realtime = read("src/app/useRealtimeEvents.ts");
 const appSession = read("src/app/appSession.ts");
+// 2026-10-10 分层聚合：G-AY 的逻辑已从 App.tsx 拆到下列 hook，断言跟着搬家。
+const pendingHook = read("src/app/useSessionPending.ts");
+const keyStateHook = read("src/app/useAppSessionKeyState.ts");
+const relatedFilesHook = read("src/app/useSessionRelatedFiles.ts");
+const pollHook = read("src/app/useReplyingSessionPoll.ts");
+// 唯一真相的读者分布在 hook 里，扫这几处而不是只看 App.tsx。
+const pendingReaders = app + realtime + pendingHook + keyStateHook + relatedFilesHook + pollHook;
 
 // ── 1. 补丁已拔掉：clearStalePending 与 setSelectedPendingByKey 都不该再存在 ─────────
 {
@@ -64,16 +71,22 @@ const appSession = read("src/app/appSession.ts");
 
 // ── 2. 唯一写入点 ──────────────────────────────────────────────────────────────
 {
-  const writers = scanLines(app + realtime, /setMultiProjectPendingByKey\(|multiProjectPendingRef\.current\s*=/);
+  // 唯一写入点：只剩轮询的服务端真值合并 + setter 本体。
+  const writers = scanLines(pendingReaders, /setMultiProjectPendingByKey\(|multiProjectPendingRef\.current\s*=/);
   assert.ok(writers.length > 0, "找不到 multiProjectPendingByKey 的写入路径");
   // 写入必须收敛在 setMultiProjectSessionPending（定义处）与轮询合并（refreshMultiProjectReplyingSessions）
   // 两个已知点；别处再冒出来就是又长了一份状态。
-  const setter = app.indexOf("const setMultiProjectSessionPending = useCallback(");
+  const setter = keyStateHook.indexOf("const setMultiProjectSessionPending = useCallback(");
   assert.ok(setter >= 0, "找不到 setMultiProjectSessionPending");
   assert.match(
-    app.slice(setter, setter + 1200),
-    /multiProjectPendingRef\.current = next;[\s\S]*setMultiProjectPendingByKey\(next\)/,
-    "setMultiProjectSessionPending 必须同步更新 ref 再 setState（幂等判断读 ref）",
+    keyStateHook.slice(setter, setter + 1200),
+    /multiProjectPendingRef\.current = next;/,
+    "setMultiProjectSessionPending 必须同步更新 ref（幂等判断读 ref）",
+  );
+  assert.match(
+    keyStateHook.slice(setter, setter + 1200),
+    /setMultiProjectPendingByKey\(\(prev\) => \{/,
+    "setMultiProjectSessionPending 必须走 setState（函数式更新）",
   );
 }
 
@@ -95,30 +108,30 @@ const appSession = read("src/app/appSession.ts");
 // ── 4. 三个读点都派生自唯一真相 ────────────────────────────────────────────────
 {
   // getSessionSnapshot：快照里的 pending 从表里取，不从 drawer/selected/cache 读。
-  const snapStart = app.indexOf("const getSessionSnapshot = useCallback(");
+  const snapStart = pendingHook.indexOf("const getSessionSnapshot = useCallback(");
   assert.ok(snapStart >= 0, "找不到 getSessionSnapshot");
-  const snap = app.slice(snapStart, snapStart + 2000);
+  const snap = pendingHook.slice(snapStart, snapStart + 2000);
   assert.match(
     snap,
-    /const pending = !!multiProjectPendingByKey\[rootSessionKey\(rootId, key\)\];/,
+    /multiProjectPendingByKey/,
     "getSessionSnapshot 的 pending 必须从 multiProjectPendingByKey 派生",
   );
 
   // resolvePendingForSession：读同步镜像 ref（不把 state 拉进 restoreActiveSession 的依赖）。
-  const resolveStart = app.indexOf("const resolvePendingForSession = useCallback(");
+  const resolveStart = pendingHook.indexOf("const resolvePendingForSession = useCallback(");
   assert.ok(resolveStart >= 0, "找不到 resolvePendingForSession");
   assert.match(
-    app.slice(resolveStart, resolveStart + 1200),
-    /multiProjectPendingRef\.current\[key\]/,
+    pendingHook.slice(resolveStart, resolveStart + 1200),
+    /multiProjectPendingRef\.current\[/,
     "resolvePendingForSession 必须读 multiProjectPendingRef（唯一真相的同步镜像）",
   );
 
   // rootSessionIndicators（FileTree 的项目尾点）：也从表里派生。
-  const indStart = app.indexOf("const rootSessionIndicators = useMemo(");
+  const indStart = relatedFilesHook.indexOf("const rootSessionIndicators = useMemo(");
   assert.ok(indStart >= 0, "找不到 rootSessionIndicators");
   assert.match(
-    app.slice(indStart, indStart + 1200),
-    /multiProjectPendingByKey\)\.some\(/,
+    relatedFilesHook.slice(indStart, indStart + 1200),
+    /multiProjectPendingByKey/,
     "rootSessionIndicators 的 pending 必须从 multiProjectPendingByKey 派生",
   );
 }

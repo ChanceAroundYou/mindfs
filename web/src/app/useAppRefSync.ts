@@ -7,7 +7,6 @@ import type { MultiProjectSessionGroup, SessionItem, ViewerSelection } from "./a
 import type { DirectorySortMode, FileEntry } from "../services/prefs/directorySort";
 import type { FilePayload } from "../services/file";
 import type { AgentStatus } from "../services/agents";
-import type { E2EEState } from "../services/net/e2ee";
 
 /**
  * 把最新 state 镜像进 ref，外加同一段里的几件环境副作用。
@@ -19,7 +18,6 @@ export type UseAppRefSyncParams = {
   currentRootNodeId: string | null;
   setAvailableAgents: React.Dispatch<React.SetStateAction<AgentStatus[]>>;
   agentsVersion: number;
-  e2eeState: E2EEState;
   getNodeIdForRoot: (rootId: string) => string | undefined;
   expandedRef: React.RefObject<string[]>;
   expanded: string[];
@@ -76,7 +74,7 @@ export type UseAppRefSyncParams = {
  * 跟镜像同类，而是因为**挪出去就会改变 effect 的执行次序**。
  */
 export function useAppRefSync(params: UseAppRefSyncParams) {
-  const { currentRootIdRef, currentRootId, currentRootNodeIdRef, currentRootNodeId, setAvailableAgents, agentsVersion, e2eeState, getNodeIdForRoot, expandedRef, expanded, selectedDirRef, selectedDir, entriesByPathRef, entriesByPath, fileRef, file, viewerSelectionRef, viewerSelection, pluginQueryRef, pluginQuery, lastPluginResetFileKeyRef, pluginBypassRef, setPluginBypass, pluginBypass, selectedSessionRef, selectedSession, activeBoundSessionKey, setActiveBoundSessionKey, interactionMode, setPendingPlanMode, sessionsRef, sessions, multiProjectSessionGroupsRef, multiProjectSessionGroups, multiProjectPendingRef, multiProjectPendingByKey, currentSessionRef, currentSession, interactionModeRef, treeSortMode, directorySortOverrides, scopedRootKey, boundSessionByRootRef, setCurrentSession, drawerSessionByRootRef, setIsDrawerOpen, drawerOpenByRootRef } = params;
+  const { currentRootIdRef, currentRootId, currentRootNodeIdRef, currentRootNodeId, setAvailableAgents, agentsVersion, getNodeIdForRoot, expandedRef, expanded, selectedDirRef, selectedDir, entriesByPathRef, entriesByPath, fileRef, file, viewerSelectionRef, viewerSelection, pluginQueryRef, pluginQuery, lastPluginResetFileKeyRef, pluginBypassRef, setPluginBypass, pluginBypass, selectedSessionRef, selectedSession, activeBoundSessionKey, setActiveBoundSessionKey, interactionMode, setPendingPlanMode, sessionsRef, sessions, multiProjectSessionGroupsRef, multiProjectSessionGroups, multiProjectPendingRef, multiProjectPendingByKey, currentSessionRef, currentSession, interactionModeRef, treeSortMode, directorySortOverrides, scopedRootKey, boundSessionByRootRef, setCurrentSession, drawerSessionByRootRef, setIsDrawerOpen, drawerOpenByRootRef } = params;
 
   useEffect(() => {
     currentRootIdRef.current = currentRootId;
@@ -88,9 +86,6 @@ export function useAppRefSync(params: UseAppRefSyncParams) {
 
   useEffect(() => {
     let cancelled = false;
-    if (!e2eeState.configured || (e2eeState.required && !e2eeState.unlocked)) {
-      return;
-    }
     fetchAgents(true, getNodeIdForRoot(currentRootId || "") as any)
       .then((items) => {
         if (cancelled) return;
@@ -100,7 +95,7 @@ export function useAppRefSync(params: UseAppRefSyncParams) {
     return () => {
       cancelled = true;
     };
-  }, [agentsVersion, currentRootId, e2eeState.configured, e2eeState.required, e2eeState.unlocked]);
+  }, [agentsVersion, currentRootId]);
 
   useEffect(() => {
     if (typeof window === "undefined") {

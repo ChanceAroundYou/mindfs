@@ -15,7 +15,7 @@ import {
 
 type ProbeStatus = "checking" | "online" | "offline";
 
-// 既存节点的探测：走 app 真实请求链路（含 E2EE），用 appPath 按 nodeId 解析地址
+// 既存节点的探测：走 app 真实请求链路，用 appPath 按 nodeId 解析地址
 // —— 这样原生壳下 local 的 url 为空时也能正确回落到当前连接的服务器。
 // 刻意不套 withNodeRetry：探测要的是快速反馈，不是重试。
 async function probeNode(nodeId: string, timeoutMs = 4000): Promise<ProbeStatus> {

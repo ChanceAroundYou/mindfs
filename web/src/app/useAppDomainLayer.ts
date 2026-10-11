@@ -36,7 +36,6 @@ import { useSessionQueueActions } from "./useSessionQueueActions";
 import type { Session } from "../services/session";
 import type { ActionHandlers } from "./useActionHandlers";
 import type { DirectorySortMode, FileEntry } from "../services/prefs/directorySort";
-import type { E2EEState } from "../services/net/e2ee";
 import { FileEditStore } from "../services/fileEditing";
 import type { FilePayload } from "../services/file";
 import type { GitDiffPayload } from "../services/git";
@@ -50,7 +49,7 @@ import type { UpdateState } from "../services/update";
  */
 export type UseAppDomainLayerParams = {
   activeBoundSessionKey: string | null;
-  appendAgentChunkForSession: (rootID: string, sessionKey: string, content: string, runtimeHint?: import("/home/xiaokubao/projects/mindfs/.worktree/task-35/web/src/app/useSessionStreamCache").SessionRuntimeMeta) => void;
+  appendAgentChunkForSession: (rootID: string, sessionKey: string, content: string, runtimeHint?: import("/home/xiaokubao/projects/mindfs/.worktree/task-35/web/src/app/useSessionStreamCache").SessionRuntimeMeta, eventTimestamp?: string) => void;
   appendCompactNoticeForSession: (rootID: string, sessionKey: string, compactNotice: any) => void;
   appendPlanUpdateForSession: (rootID: string, sessionKey: string, planUpdate: any) => void;
   appendThoughtChunkForSession: (rootID: string, sessionKey: string, content: string, thoughtID?: string) => void;
@@ -75,7 +74,6 @@ export type UseAppDomainLayerParams = {
   dismissedSelectionFileRef: React.RefObject<string | null>;
   drawerOpenByRootRef: React.RefObject<Record<string, boolean>>;
   drawerSessionByRootRef: React.RefObject<Record<string, SessionItem | null>>;
-  e2eeState: E2EEState;
   entriesByPathRef: React.RefObject<Record<string, FileEntry[]>>;
   expandedRef: React.RefObject<string[]>;
   file: FilePayload | null;
@@ -119,6 +117,7 @@ export type UseAppDomainLayerParams = {
   managedRootIdsRef: React.RefObject<Set<string>>;
   managedRootsRequestRef: React.RefObject<Promise<ManagedRootPayload[] | null> | null>;
   markSessionStale: (rootID: string | null | undefined, sessionKey: string | null | undefined) => void;
+  multiProjectPendingByKey: Record<string, boolean>;
   multiProjectPendingRef: React.RefObject<Record<string, boolean>>;
   multiProjectSessionGroups: MultiProjectSessionGroup[];
   multiProjectSessionsEnabled: true;
@@ -187,9 +186,6 @@ export type UseAppDomainLayerParams = {
   setDirectorySortOverrides: React.Dispatch<React.SetStateAction<Record<string, DirectorySortMode>>>;
   setDrawerOpenForRoot: (rootID: string | null | undefined, open: boolean) => void;
   setDrawerSessionForRoot: (rootID: string | null | undefined, session: Session | SessionItem | null) => void;
-  setE2eePromptError: React.Dispatch<React.SetStateAction<string>>;
-  setE2eeSecretInput: React.Dispatch<React.SetStateAction<string>>;
-  setE2eeState: React.Dispatch<React.SetStateAction<E2EEState>>;
   setEntriesByPath: React.Dispatch<React.SetStateAction<Record<string, FileEntry[]>>>;
   setExpanded: React.Dispatch<React.SetStateAction<string[]>>;
   setExternalSelectedKey: React.Dispatch<React.SetStateAction<string>>;
@@ -221,7 +217,7 @@ export type UseAppDomainLayerParams = {
   setSelectedDir: React.Dispatch<React.SetStateAction<string | null>>;
   setSelectedDirKey: React.Dispatch<React.SetStateAction<string | null>>;
   setSelectedKanbanTaskId: React.Dispatch<React.SetStateAction<string>>;
-  setSelectedPendingByKey: (sessionKey: string, pending: boolean) => void;
+
   setSelectedSession: React.Dispatch<React.SetStateAction<SessionItem | null>>;
   setSelectedSessionLoading: React.Dispatch<React.SetStateAction<boolean>>;
   setSessionListMode: React.Dispatch<React.SetStateAction<"local" | "import">>;
@@ -261,7 +257,7 @@ export function useAppDomainLayer(params: UseAppDomainLayerParams) {
     cancelRequestedBySessionRef, clearSessionStale, currentFileEditing, currentRootId,
     currentRootIdRef, currentRootNodeId, currentRootNodeIdRef, currentSelectionSource,
     currentSession, currentSessionRef, didInitRef, dismissedSelectionFileRef,
-    drawerOpenByRootRef, drawerSessionByRootRef, e2eeState, entriesByPathRef,
+    drawerOpenByRootRef, drawerSessionByRootRef, entriesByPathRef,
     expandedRef, file, fileCursorRef, fileEditStore,
     fileOpenRequestRef, fileRef, fileScrollPositionsRef, formatDirectoryLoadError,
     fullUpgradeAttemptRef, getNodeIdForRoot, getSessionSnapshot, gitDiff,
@@ -272,7 +268,7 @@ export function useAppDomainLayer(params: UseAppDomainLayerParams) {
     loadSessionsForRoot, loadTaskTemplates, loadedSessionRef, loadingSessionRef,
     mainDirectoryErrorRef, mainEntries, mainEntriesRef, mainView,
     mainViewRef, managedRootByIdRef, managedRootByKeyRef, managedRootIdsRef,
-    managedRootsRequestRef, markSessionStale, multiProjectPendingRef, multiProjectSessionGroups,
+    managedRootsRequestRef, markSessionStale, multiProjectPendingByKey, multiProjectPendingRef, multiProjectSessionGroups,
     multiProjectSessionsEnabled, nodeLoadFailuresRef, notifiedNodeFailuresRef, notifyNodeLoadFailedRef,
     openGitDiff, optimisticDequeuedIdsRef, pendingBySessionRef, pendingDraftRef,
     pendingPluginTrust, pendingRequestRef, playCompletionSound, pluginBypass,
@@ -289,8 +285,7 @@ export function useAppDomainLayer(params: UseAppDomainLayerParams) {
     sessionLoadFailureRef, sessions, sessionsRef, setActiveBoundSessionKey,
     setAgentsVersion, setAttachedFileContext, setBootstrapState, setBoundSessionForRoot,
     setCodexRateLimitsRefreshToken, setCurrentRootId, setCurrentSession, setDirectorySortOverrides,
-    setDrawerOpenForRoot, setDrawerSessionForRoot, setE2eePromptError, setE2eeSecretInput,
-    setE2eeState, setEntriesByPath, setExpanded, setExternalSelectedKey,
+    setDrawerOpenForRoot, setDrawerSessionForRoot, setEntriesByPath, setExpanded, setExternalSelectedKey,
     setExternalSessions, setFile, setGitDiff, setGitHistory,
     setGitHistoryExpandedByRoot, setGitStatus, setGitStatusExpandedByRoot, setInteractionMode,
     setIsDrawerOpen, setIsLeftOpen, setMainDirectoryError, setMainEntries,
@@ -298,8 +293,7 @@ export function useAppDomainLayer(params: UseAppDomainLayerParams) {
     setMultiProjectSessionPending, setPendingPluginTrust, setPluginBypass, setPluginLoading,
     setPluginQuery, setPluginVersion, setQueueVersion, setRelatedSelectedFileKey,
     setRootEntries, setSelectedDir, setSelectedDirKey, setSelectedKanbanTaskId,
-    setSelectedPendingByKey, setSelectedSession, setSelectedSessionLoading, setSessionListMode,
-    setSessions, setSlashCommandResults, setStatus, setTaskRelatedFilesById,
+    setSelectedSession, setSelectedSessionLoading, setSessionListMode, setSessions, setSlashCommandResults, setStatus, setTaskRelatedFilesById,
     setTaskSessionErrorDialog, setUpdateState, setViewerSelection, showHiddenFiles,
     staleSessionKeysRef, suppressedAutoBindSessionByRootRef, switchMainView, t,
     taskDetailsById, taskDetailsByIdRef, taskSessionKeysById, taskSessionKeysByIdRef,
@@ -317,6 +311,7 @@ export function useAppDomainLayer(params: UseAppDomainLayerParams) {
     currentRootIdRef,
     drawerSessionByRootRef,
     interactionModeRef,
+    multiProjectPendingRef,
     optimisticDequeuedIdsRef,
     queuedMessagesBySessionRef,
     rootSessionKey,
@@ -326,7 +321,6 @@ export function useAppDomainLayer(params: UseAppDomainLayerParams) {
     setDrawerSessionForRoot,
     setMultiProjectSessionPending,
     setQueueVersion,
-    setSelectedPendingByKey,
     setSessions,
   });
 
@@ -691,8 +685,7 @@ export function useAppDomainLayer(params: UseAppDomainLayerParams) {
     currentRootId, currentRootNodeId, refreshGitStatus, refreshGitHistory,
     setGitStatus, setGitHistory, setGitDiff, scopedRootKey,
     ensurePluginsLoaded, pluginsLoadedByRootRef, setBootstrapState, setSessionListMode,
-    setExternalSessions, setExternalSelectedKey, setE2eeState, setE2eePromptError,
-    setE2eeSecretInput, e2eeState, getNodeIdForRoot,
+    setExternalSessions, setExternalSelectedKey, getNodeIdForRoot,
   });
 
   useEffect(
@@ -750,7 +743,6 @@ export function useAppDomainLayer(params: UseAppDomainLayerParams) {
       setProjectAddMode,
       setQueueVersion,
       setRootEntries,
-      setSelectedPendingByKey,
       setSelectedSession,
       setSessions,
       setSlashCommandResults,
@@ -837,7 +829,7 @@ export function useAppDomainLayer(params: UseAppDomainLayerParams) {
     currentSessionRef, drawerSessionByRootRef, file, fileCursorRef, fullUpgradeAttemptRef,
     getSessionSnapshot, handleViewerSelectionChange, interactionMode, isDrawerOpen,
     kanbanTasks, lastMainSessionSnapshotRef, lastPluginChapterRef, mainView,
-    multiProjectSessionGroups, pluginBypass, pluginContentRef, pluginManagerRef, pluginQuery,
+    multiProjectPendingByKey, multiProjectSessionGroups, pluginBypass, pluginContentRef, pluginManagerRef, pluginQuery,
     pluginVersion, queueVersion, queuedMessagesBySessionRef, rootSessionKey, scopedRootKey,
     selectedKanbanTaskId, selectedSession, selectedSessionLoading, sessionCacheRef,
     sessionLoadFailureRef, sessions, taskDetailsById, taskSessionKeysById,

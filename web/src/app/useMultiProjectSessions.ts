@@ -59,6 +59,7 @@ export type UseMultiProjectSessionsParams = {
   setBoundSessionForRoot: (rootID: string | null | undefined, key: string | null) => any;
   setDrawerSessionForRoot: (rootID: string | null | undefined, session: Session | SessionItem | null) => any;
   setMultiProjectSessionGroups: Dispatch<SetStateAction<MultiProjectSessionGroup[]>>;
+  setMultiProjectSessionPending: (rootID: string | null | undefined, sessionKey: string | null | undefined, pending: boolean) => any;
   setMultiProjectSessionsLoading: Dispatch<SetStateAction<boolean>>;
   setSelectedSession: Dispatch<SetStateAction<SessionItem | null>>;
   setSessions: Dispatch<SetStateAction<SessionItem[]>>;
@@ -93,6 +94,7 @@ export function useMultiProjectSessions(params: UseMultiProjectSessionsParams) {
     setBoundSessionForRoot,
     setDrawerSessionForRoot,
     setMultiProjectSessionGroups,
+    setMultiProjectSessionPending,
     setMultiProjectSessionsLoading,
     setSelectedSession,
     setSessions,
@@ -202,10 +204,16 @@ export function useMultiProjectSessions(params: UseMultiProjectSessionsParams) {
                 (latestReal as any).name
                   ? (latestReal as any).name
                   : "") || pendingName,
-              pending: true,
             } as SessionItem;
           }),
         );
+      }
+
+      // pending-* 临时键换成真键时，把「在跑」这条乐观标记一起搬过去 ——
+      // 唯一真相是 multiProjectPendingByKey，键不跟着搬就会在 promote 那一刻灭灯。
+      if (multiProjectPendingRef.current[pendingCacheKey]) {
+        setMultiProjectSessionPending(rootID, pendingKey, false);
+        setMultiProjectSessionPending(rootID, sessionKey, true);
       }
 
       // pending 会话 promote 为真实会话时，同步替换右侧多项目列表中的临时条目
@@ -230,7 +238,6 @@ export function useMultiProjectSessions(params: UseMultiProjectSessionsParams) {
                 (latestReal as any).name
                   ? (latestReal as any).name
                   : "") || pendingName,
-              pending: true,
             } as SessionItem;
           });
           return { ...group, sessions: mergeSessionItems(sessions, []) };

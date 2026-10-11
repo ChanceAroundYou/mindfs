@@ -93,15 +93,13 @@ export function useTaskDetailPanel({
   const runnableStageIndex = nextRunnableStageIndex(detail, task.current_stage_index);
   const advanceable = canAdvanceFromCurrentStage(detail, task.current_stage_index);
   const finishActive = isFinishStageActive(task);
-  const hasAgentStage = (task?.stages || []).some((stage) => stage.role === "agent");
   const canFinishWorktree = task?.create_worktree === true
     && !!task?.worktree_path
-    && task?.worktree_missing !== true
-    && hasAgentStage;
+    && task?.worktree_missing !== true;
   const terminal = isTerminalKanbanTask(task);
   const stageRunningNow = task.current_stage_status === "running" && task.status === "running";
   const canRunStageNow = runnableStageIndex >= 0 && advanceable;
-  const canCompleteTask = !terminal && !stageRunningNow && !canRunStageNow && !(finishActive && canFinishWorktree);
+  const canCompleteTask = !terminal && !stageRunningNow && !canRunStageNow;
   const numberLabel = task.task_number ? `#${task.task_number}` : "";
 
   const apply = (next: TaskDetail) => onMoved?.(next);
@@ -262,11 +260,21 @@ export function useTaskDetailPanel({
       if (res.detail) {
         apply(res.detail);
       }
+      // plan 是服务端对「这次为什么走这条路」的只读判定。机械清场做不了时
+      // （worktree 有没提交的活 / 合并会冲突）把理由说清楚 —— 否则用户看到
+      // 「又跑起 agent 了」只会以为收尾卡住了。
+      const planReason = res.plan?.reason?.trim();
+      const planFiles = Array.isArray(res.plan?.files) ? (res.plan!.files.filter(Boolean) as string[]) : [];
+      const planLine = planReason
+        ? planFiles.length > 0
+          ? `${t("task.finishWorktreePlanFiles", { files: planFiles.join(", ") })} — ${planReason}`
+          : planReason
+        : "";
       const message = res.action === "session_running"
         ? t("task.finishWorktreeSessionRunning")
         : res.action === "nudged"
-          ? t("task.finishWorktreeNudged")
-          : t("task.finishWorktreeStarted");
+          ? (planLine ? `${t("task.finishWorktreeNudged")} — ${planLine}` : t("task.finishWorktreeNudged"))
+          : (planLine ? `${t("task.finishWorktreeStarted")} — ${planLine}` : t("task.finishWorktreeStarted"));
       reportError("file.write_failed", message, { severity: "info", recoverable: false });
     } catch (error) {
       reportError("file.write_failed", String((error as Error)?.message || t("task.actionFailed")));

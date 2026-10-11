@@ -18,6 +18,7 @@ export type UseAppDomainDerivedParams = Pick<UseAppDomainLayerParams,
   | "lastMainSessionSnapshotRef" | "mainView" | "pluginBypass" | "pluginContentRef"
   | "pluginManagerRef" | "pluginQuery" | "pluginVersion" | "queueVersion"
   | "queuedMessagesBySessionRef" | "rootSessionKey" | "selectedKanbanTaskId"
+  | "multiProjectPendingByKey"
   | "selectedSession" | "selectedSessionLoading" | "sessionCacheRef" | "sessionLoadFailureRef"
   | "sessions" | "taskDetailsById" | "taskSessionKeysById" | "multiProjectSessionGroups"
   | "kanbanTasks" | "currentRootIdRef" | "boundSessionByRootRef" | "bumpCacheVersion"
@@ -36,7 +37,7 @@ export function useAppDomainDerived({
   handleViewerSelectionChange, interactionMode, isDrawerOpen, kanbanTasks, lastMainSessionSnapshotRef,
   lastPluginChapterRef, mainView, multiProjectSessionGroups, pluginBypass, pluginContentRef,
   pluginManagerRef, pluginQuery, pluginVersion, queueVersion, queuedMessagesBySessionRef,
-  rootSessionKey, scopedRootKey, selectedKanbanTaskId, selectedSession, selectedSessionLoading,
+  rootSessionKey, scopedRootKey, multiProjectPendingByKey, selectedKanbanTaskId, selectedSession, selectedSessionLoading,
   sessionCacheRef, sessionLoadFailureRef, sessions, taskDetailsById, taskSessionKeysById,
   currentSessionRef, loadedSessionRef, loadingSessionRef, isSessionStale, resolvePendingForSession,
   restoreActiveSession, setDrawerSessionForRoot, setSelectedSession,
@@ -134,7 +135,8 @@ export function useAppDomainDerived({
     selectedKanbanTaskSessionKey, selectedKanbanTaskSessionSnapshot,
   } = useAppSessionSnapshots({
     selectedSession, selectedSessionLoading, currentRootId, sessions,
-    multiProjectSessionGroups, selectedKanbanTaskId, kanbanTasks,
+    multiProjectSessionGroups, multiProjectPendingByKey, rootSessionKey,
+    selectedKanbanTaskId, kanbanTasks,
     taskDetailsById, taskSessionKeysById, getSessionSnapshot,
   });
 

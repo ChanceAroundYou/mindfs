@@ -1,5 +1,5 @@
 /**
- * App 的根视图组合：外壳 + 全局浮层（Onboarding / E2EE / 任务内联编辑 / 任务会话错误 /
+ * App 的根视图组合：外壳 + 全局浮层（Onboarding / 任务内联编辑 / 任务会话错误 /
  * 定时任务 / 任务模板 / Toast / DialogHost）。
  *
  * 见 docs/plans/app-tsx-under-1000.md。原先这整段 JSX 直接写在 `App()` 的 return 里，
@@ -41,7 +41,6 @@ import { applyStageOverride, currentTaskInputFromDetail, DEFAULT_TASK_AGENT, DEF
 import { CheckIconSmall, PlusSmallIcon, taskCardIconButtonStyle } from "../app/taskIcons";
 import { TaskSessionErrorDialog } from "../components/app/TaskSessionErrorDialog";
 import { TaskDetailPanelGate } from "../components/app/TaskDetailPanelGate";
-import { E2eePrompt } from "../components/app/E2eePrompt";
 import { OnboardingGate } from "../components/app/OnboardingGate";
 import { TaskInlineEditPanel } from "../components/app/TaskInlineEditPanel";
 import { SessionSheet } from "../components/app/SessionSheet";
@@ -74,7 +73,6 @@ export function AppRootView(props: AppRootViewProps) {
     currentFileEditing, currentMainContentView, currentRootDisplayName, currentRootId,
     currentRootIdRef, currentRootNodeId, currentSession, directoryUploadAbortRef,
     directoryUploadProgress, drawerLoadingSessionByRoot, drawerOpenByRootRef, drawerScrollRef,
-    e2eePromptBusy, e2eePromptError, e2eeSecretInput, e2eeState,
     editDraftRequest, entriesByPath, expanded, file,
     fileEditStore, fileRef, fileScrollPositionsRef, fontSizePreferences,
     getDisplayNodeColor, getNodeIdForRoot, getRootDisplayName, gitDiff,
@@ -87,7 +85,7 @@ export function AppRootView(props: AppRootViewProps) {
     scheduledAgentDialogOpen, scopedRootKey, selectedDir, selectedDirKey,
     selectedDirRef, selectedKanbanTaskId, selectedSession, sendShortcut,
     setCodexRateLimitsRefreshToken, setCopiedSlashCommandKeys, setDirectorySortOverrides, setDrawerOpenForRoot,
-    setE2eePromptError, setE2eeSecretInput, setEntriesByPath, setFile,
+    setEntriesByPath, setFile,
     setFontSizePreferences, setGitDiffSideBySide, setInteractionMode, setIsLeftOpen,
     setIsRightOpen, setMobileEnterKeySends, setOnboardingMainContentViewRoot, setOnboardingOpen,
     setPluginBypass, setProjectTreeTab, setScheduledAgentDialogOpen, setSelectedKanbanTaskId,
@@ -107,7 +105,7 @@ export function AppRootView(props: AppRootViewProps) {
     handleCancelCurrentTurn, handleCreateBlankFile, handleForkAgentMessage, handleNewSession,
     handleOnboardingStepChange, handleRestartAgent, handleRunAgentLifecycleCommand, handleSelectSession,
     handleSendMessage, handleSetPlanMode, handleStartUpdate, handleTreeUpload,
-    refreshTreeDir, submitE2EESecret,
+    refreshTreeDir,
   } = props;
   // useAppDomainLayer 返回值中本组件用到的部分
   const {
@@ -370,17 +368,6 @@ drawer={<
       setIsRightOpen={setIsRightOpen}
       setOnboardingMainContentViewRoot={setOnboardingMainContentViewRoot}
       setOnboardingOpen={setOnboardingOpen}
-      />
-<E2eePrompt
-      bootstrapState={bootstrapState}
-      e2eePromptBusy={e2eePromptBusy}
-      e2eePromptError={e2eePromptError}
-      e2eeSecretInput={e2eeSecretInput}
-      e2eeState={e2eeState}
-      setE2eePromptError={setE2eePromptError}
-      setE2eeSecretInput={setE2eeSecretInput}
-      submitE2EESecret={submitE2EESecret}
-      t={t}
       />
 <TaskInlineEditPanel
       DEFAULT_TASK_AGENT={DEFAULT_TASK_AGENT}

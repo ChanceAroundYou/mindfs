@@ -60,7 +60,6 @@ export type UseAppSessionLayerParams = {
   directoryUploadAbortRef: React.RefObject<AbortController | null>;
   drawerOpenByRootRef: React.RefObject<Record<string, boolean>>;
   drawerSessionByRootRef: React.RefObject<Record<string, SessionItem | null>>;
-  e2eeSecretInput: string;
   enforceSessionCacheBound: () => void;
   file: FilePayload | null;
   fileCursorRef: React.RefObject<number>;
@@ -128,9 +127,6 @@ export type UseAppSessionLayerParams = {
   setDirectoryUploadProgress: React.Dispatch<React.SetStateAction<UploadProgress | null>>;
   setDrawerOpenForRoot: (rootID: string | null | undefined, open: boolean) => void;
   setDrawerSessionForRoot: (rootID: string | null | undefined, session: Session | SessionItem | null) => void;
-  setE2eePromptBusy: React.Dispatch<React.SetStateAction<boolean>>;
-  setE2eePromptError: React.Dispatch<React.SetStateAction<string>>;
-  setE2eeSecretInput: React.Dispatch<React.SetStateAction<string>>;
   setEntriesByPath: React.Dispatch<React.SetStateAction<Record<string, FileEntry[]>>>;
   setExpanded: React.Dispatch<React.SetStateAction<string[]>>;
   setFile: React.Dispatch<React.SetStateAction<FilePayload | null>>;
@@ -180,7 +176,7 @@ export function useAppSessionLayer(params: UseAppSessionLayerParams) {
     attachedFileContext, boundSessionByRootRef, cacheVersion, cancelRequestedBySessionRef,
     currentRootId, currentRootIdRef, currentRootNodeId, currentRootNodeIdRef,
     currentSessionRef, didInitRef, directoryUploadAbortRef, drawerOpenByRootRef,
-    drawerSessionByRootRef, e2eeSecretInput, enforceSessionCacheBound, file,
+    drawerSessionByRootRef, enforceSessionCacheBound, file,
     fileCursorRef, fileEditStore, fileOpenRequestRef, fileRef,
     fileScrollPositionsRef, getNodeIdForRoot, gitDiff, handleSelectSessionRef,
     interactionModeRef, invalidTreeCacheKeysRef, isMobile, lastMainSessionSnapshotRef,
@@ -196,8 +192,7 @@ export function useAppSessionLayer(params: UseAppSessionLayerParams) {
     sessionListReloadTimerRef, sessionLoadFailureRef, sessionSearchTargetCounterRef, sessions, sessionsRef,
     setAgentsVersion, setArchiveLoading, setArchiveReloadToken, setArchivedGroups,
     setAvailableAgents, setBoundSessionForRoot, setCacheVersion, setCurrentRootId,
-    setDirectoryUploadProgress, setDrawerOpenForRoot, setDrawerSessionForRoot, setE2eePromptBusy,
-    setE2eePromptError, setE2eeSecretInput, setEntriesByPath, setExpanded,
+    setDirectoryUploadProgress, setDrawerOpenForRoot, setDrawerSessionForRoot, setEntriesByPath, setExpanded,
     setFile, setGitDiff, setGitStatus, setGitStatusByRoot,
     setHasMoreSessions, setInteractionMode, setIsLeftOpen, setIsRightOpen,
     setLoadingOlderSessions, setMainDirectoryError, setMainEntries, setMultiProjectPendingByKey,
@@ -212,18 +207,12 @@ export function useAppSessionLayer(params: UseAppSessionLayerParams) {
   const {
     handleStartUpdate,
     handleOnboardingStepChange,
-    describeE2EEPromptError,
-    submitE2EESecret,
   } = useAppBootstrapActions({
     currentRootId,
     didInitRef,
-    e2eeSecretInput,
     isMobile,
     replaceURLState,
     selectedSessionRef,
-    setE2eePromptBusy,
-    setE2eePromptError,
-    setE2eeSecretInput,
     setFile,
     setGitDiff,
     setIsLeftOpen,
@@ -299,8 +288,8 @@ export function useAppSessionLayer(params: UseAppSessionLayerParams) {
   });
   const {
     getSessionSnapshot,
-    setSelectedPendingByKey,
     resolvePendingForSession,
+
     clearLocalPendingForSession,
     markSessionStale,
     clearSessionStale,
@@ -310,6 +299,8 @@ export function useAppSessionLayer(params: UseAppSessionLayerParams) {
     cacheVersion,
     currentRootIdRef,
     drawerSessionByRootRef,
+    multiProjectPendingByKey,
+    multiProjectPendingRef,
     pendingBySessionRef,
     rootSessionKey,
     scopedRootKey,
@@ -453,6 +444,7 @@ export function useAppSessionLayer(params: UseAppSessionLayerParams) {
     setBoundSessionForRoot,
     setDrawerSessionForRoot,
     setMultiProjectSessionGroups,
+    setMultiProjectSessionPending,
     setMultiProjectSessionsLoading,
     setSelectedSession,
     setSessions,
@@ -577,23 +569,13 @@ export function useAppSessionLayer(params: UseAppSessionLayerParams) {
 
   const { refreshMultiProjectReplyingSessions } = useReplyingSessionPoll({
     applyPendingToMultiProjectGroups,
-    bumpCacheVersion,
-    currentRootIdRef,
     currentRootNodeIdRef,
-    drawerSessionByRootRef,
     loadMultiProjectSessionGroups,
     managedRootByKeyRef,
-    multiProjectPendingByKey,
     multiProjectPendingRef,
     multiProjectSessionsEnabled,
-    rootSessionKey,
-    scopedRootKey,
-    selectedSessionRef,
-    sessionCacheRef,
-    setDrawerSessionForRoot,
     setMultiProjectPendingByKey,
     setMultiProjectSessionGroups,
-    setSelectedSession,
   });
 
 
@@ -801,8 +783,8 @@ export function useAppSessionLayer(params: UseAppSessionLayerParams) {
     setInteractionMode,
     setPendingPlanMode,
     setSelectedSession,
-    setSelectedPendingByKey,
     attachedFileContext,
+    resolvePendingForSession,
     pendingPlanMode,
     slashCommandResults,
     setBoundSessionForRoot,
@@ -884,7 +866,7 @@ export function useAppSessionLayer(params: UseAppSessionLayerParams) {
     scheduleSessionListReload, selectedExternalImportKeys, sessionSearchLoading,
     sessionSearchOpen, sessionSearchQuery, sessionSearchResults, sessionSearchResultsMode,
     setExternalFilterBound, setExternalImportAgent, setExternalSelectedKey, setExternalSessions,
-    setImportMenuOpen, setMultiProjectSessionPending, setSelectedPendingByKey, submitE2EESecret,
+    setImportMenuOpen, setMultiProjectSessionPending,
     switchGitBranch, toggleAllExternalImportSelection, toggleExternalImportSelection, toggleSessionSearch,
     treeCacheKey, tryShowBoundSessionForRoot, updateSessionAgentForKey, updateSessionRelatedFilesForKey,
     updateSessionRelatedWorktreeForKey

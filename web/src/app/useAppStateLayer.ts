@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { FileEditStore } from "../services/fileEditing";
-import { e2eeService } from "../services/net/e2ee";
 import { bootstrapService } from "../services/net/bootstrap";
 import { clearFileMemoryCacheForView, fetchEditableFile, saveTextFile } from "../services/file";
 import { setRootNodeId, setRootNodeMap } from "../services/net/rootNode";
@@ -35,7 +34,6 @@ import { useTaskInlineCandidates } from "./useTaskInlineCandidates";
 import { useTaskBoard } from "./useTaskBoard";
 import { useTaskComposer } from "./useTaskComposer";
 import type { Session } from "../services/session";
-import type { E2EEState } from "../services/net/e2ee";
 import type { BootstrapState } from "../services/net/bootstrap";
 import type { FilePayload } from "../services/file";
 import type { GitDiffPayload } from "../services/git";
@@ -455,16 +453,12 @@ export function useAppStateLayer(params: UseAppStateLayerParams) {
   const [bootstrapState, setBootstrapState] = useState<BootstrapState>(() =>
     bootstrapService.snapshot(),
   );
-  const [e2eeState, setE2eeState] = useState<E2EEState>(() =>
-    e2eeService.snapshot(),
-  );
   useEffect(() => {
     if (
       isMobile ||
       onboardingAutoStartRef.current ||
       !currentRootId ||
-      bootstrapState.phase !== "ready" ||
-      (e2eeState.required && !e2eeState.unlocked)
+      bootstrapState.phase !== "ready"
     ) {
       return;
     }
@@ -472,17 +466,14 @@ export function useAppStateLayer(params: UseAppStateLayerParams) {
     if (!shouldAutoStartOnboarding()) return;
     const timer = window.setTimeout(() => setOnboardingOpen(true), 700);
     return () => window.clearTimeout(timer);
-  }, [bootstrapState.phase, currentRootId, e2eeState.required, e2eeState.unlocked, isMobile]);
+  }, [bootstrapState.phase, currentRootId, isMobile]);
   useEffect(() => {
     if (isMobile && onboardingOpen) {
       setOnboardingOpen(false);
       setOnboardingMainContentViewRoot(null);
     }
   }, [isMobile, onboardingOpen]);
-  const [e2eeSecretInput, setE2eeSecretInput] = useState("");
   useEffect(() => { syncNodesFromServer().catch(()=>{}); }, []);
-  const [e2eePromptError, setE2eePromptError] = useState("");
-  const [e2eePromptBusy, setE2eePromptBusy] = useState(false);
   const [editDraftRequest, setEditDraftRequest] = useState<{
     id: number;
     content: string;
@@ -634,7 +625,7 @@ export function useAppStateLayer(params: UseAppStateLayerParams) {
 
   useAppRefSync({
     currentRootIdRef, currentRootId, currentRootNodeIdRef, currentRootNodeId,
-    setAvailableAgents, agentsVersion, e2eeState, getNodeIdForRoot,
+    setAvailableAgents, agentsVersion, getNodeIdForRoot,
     expandedRef, expanded, selectedDirRef, selectedDir,
     entriesByPathRef, entriesByPath, fileRef, file,
     viewerSelectionRef, viewerSelection, pluginQueryRef, pluginQuery,
@@ -747,8 +738,7 @@ export function useAppStateLayer(params: UseAppStateLayerParams) {
     currentRootIdRef, currentRootNodeId, currentRootNodeIdRef, currentSession,
     currentSessionRef, didInitRef, directoryUploadAbortRef, directoryUploadProgress,
     dismissedSelectionFileRef, drawerLoadingSessionByRoot, drawerOpenByRootRef, drawerScrollRef,
-    drawerSessionByRootRef, e2eePromptBusy, e2eePromptError, e2eeSecretInput,
-    e2eeState, editDraftRequest, enforceSessionCacheBound, entriesByPath,
+    drawerSessionByRootRef, editDraftRequest, enforceSessionCacheBound, entriesByPath,
     entriesByPathRef, expandProjectTreeWorktree, expanded, expandedRef,
     expandedTaskInputIds, expandedWorktreeByRoot, file, fileCursorRef,
     fileEditStore, fileOpenRequestRef, fileRef, fileScrollPositionsRef,
@@ -789,7 +779,6 @@ export function useAppStateLayer(params: UseAppStateLayerParams) {
     setBoundSessionForRoot, setCacheVersion, setCodexRateLimitsRefreshToken, setCollapsedKanbanColumns,
     setCollapsedTaskCompletionGroups, setCopiedSlashCommandKeys, setCurrentRootId, setCurrentSession,
     setDirectorySortOverrides, setDirectoryUploadProgress, setDrawerOpenForRoot, setDrawerSessionForRoot,
-    setE2eePromptBusy, setE2eePromptError, setE2eeSecretInput, setE2eeState,
     setEditDraftRequest, setEntriesByPath, setExpanded, setExpandedTaskInputIds,
     setFile, setFontSizePreferences, setGitDiff, setGitDiffSideBySide,
     setGitHistory, setGitHistoryExpandedByRoot, setGitStatus, setGitStatusByRoot,

@@ -1,5 +1,5 @@
 // 从 App.tsx 抽出的渲染区域（机械搬移，JSX 逐字未改）。
-import { clearStalePending, hasSessionExchanges, isSessionShownInMain, isTopLevelSessionItem, mergeReplyingStateByNode, normalizeMode, relatedFileSelectionKey, sessionInputHistory, shouldAutoSelectNewSession, toSessionItem } from "../../app/appSession";
+import { hasSessionExchanges, isSessionShownInMain, isTopLevelSessionItem, mergeReplyingStateByNode, normalizeMode, relatedFileSelectionKey, sessionInputHistory, shouldAutoSelectNewSession, toSessionItem } from "../../app/appSession";
 import { ActionBar } from "../action/ActionBar";
 import type { Dispatch, SetStateAction, RefObject } from "react";
 import React, {

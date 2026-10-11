@@ -2,8 +2,8 @@
  * 会话 pending 标记 + 队列消息操作 —— A2b/A5 尾部（~132 行）。
  *
  * 覆盖：markSessionPending（流式期间幂等地把会话标成「回复中」，同时写缓存 /
- * 选中项 / 抽屉 / 列表 / 多项目 pending 五处），以及队列消息的删除、改写、
- * 「立即发送」（带乐观出队 + 失败回滚）。
+ * 抽屉 / 列表的 updated_at 与多项目 pending 唯一真相表），以及队列消息的删除、
+ * 改写、「立即发送」（带乐观出队 + 失败回滚）。
  *
  * 做法：hook，参数面 UseSessionQueueActionsParams 即完整契约；函数体逐字搬入
  * （保持源码正则断言可命中，配合 source-map 注册）。
@@ -11,7 +11,6 @@
 import { useCallback, type MutableRefObject, type Dispatch, type SetStateAction } from "react";
 import { SessionItem, SessionQueueItem } from "./appSession";
 import { useSessionCache } from "./useSessionCache";
-import { useSessionPending } from "./useSessionPending";
 import { sessionService, type Session } from "../services/session";
 import { resolveLockedSessionKey } from "../services/sessionLock";
 
@@ -21,6 +20,7 @@ export interface UseSessionQueueActionsParams {
   currentRootIdRef: MutableRefObject<string | null>;
   drawerSessionByRootRef: MutableRefObject<Record<string, SessionItem | null>>;
   interactionModeRef: MutableRefObject<"main" | "drawer">;
+  multiProjectPendingRef: MutableRefObject<Record<string, boolean>>;
   optimisticDequeuedIdsRef: MutableRefObject<Record<string, Set<string>>>;
   queuedMessagesBySessionRef: MutableRefObject<Record<string, SessionQueueItem[]>>;
   rootSessionKey: (rootId: string, sessionKey: string) => any;
@@ -30,7 +30,6 @@ export interface UseSessionQueueActionsParams {
   setDrawerSessionForRoot: (rootID: string | null | undefined, session: Session | SessionItem | null) => any;
   setMultiProjectSessionPending: (rootID: string | null | undefined, sessionKey: string | null | undefined, pending: boolean) => any;
   setQueueVersion: Dispatch<SetStateAction<number>>;
-  setSelectedPendingByKey: ReturnType<typeof useSessionPending>["setSelectedPendingByKey"];
   setSessions: Dispatch<SetStateAction<SessionItem[]>>;
 }
 
@@ -41,6 +40,7 @@ export function useSessionQueueActions(params: UseSessionQueueActionsParams) {
     currentRootIdRef,
     drawerSessionByRootRef,
     interactionModeRef,
+    multiProjectPendingRef,
     optimisticDequeuedIdsRef,
     queuedMessagesBySessionRef,
     rootSessionKey,
@@ -50,7 +50,6 @@ export function useSessionQueueActions(params: UseSessionQueueActionsParams) {
     setDrawerSessionForRoot,
     setMultiProjectSessionPending,
     setQueueVersion,
-    setSelectedPendingByKey,
     setSessions,
   } = params;
 
@@ -61,17 +60,12 @@ export function useSessionQueueActions(params: UseSessionQueueActionsParams) {
       const cacheKey = rootSessionKey(rootID, sessionKey);
       const cached = sessionCacheRef.current[cacheKey];
       const drawer = drawerSessionByRootRef.current[scopedRootKey(rootID)];
-      const alreadyPending =
-        !!(cached as any)?.pending &&
-        !!(drawer as any)?.pending &&
-        (selectedSessionRef.current?.key || selectedSessionRef.current?.session_key) ===
-          sessionKey &&
-        !!(selectedSessionRef.current as any)?.pending;
+      // 判据是唯一真相表，不再是会话对象上的 pending（那份已经不存在了）。
+      const alreadyPending = multiProjectPendingRef.current[cacheKey] === true;
       const now = new Date().toISOString();
       if (cached) {
         sessionCacheRef.current[cacheKey] = {
           ...(cached as any),
-          pending: true,
           updated_at: now,
         } as Session;
       }
@@ -81,11 +75,9 @@ export function useSessionQueueActions(params: UseSessionQueueActionsParams) {
       if (cached) {
         bumpCacheVersion();
       }
-      setSelectedPendingByKey(sessionKey, true);
       if (drawer && (drawer.key || (drawer as any).session_key) === sessionKey) {
         setDrawerSessionForRoot(rootID, {
           ...(drawer as any),
-          pending: true,
           updated_at: now,
         } as Session);
       }
@@ -98,7 +90,6 @@ export function useSessionQueueActions(params: UseSessionQueueActionsParams) {
             }
             return {
               ...(item as any),
-              pending: true,
               updated_at: now,
             } as SessionItem;
           }),
@@ -106,7 +97,7 @@ export function useSessionQueueActions(params: UseSessionQueueActionsParams) {
       }
       setMultiProjectSessionPending(rootID, sessionKey, true);
     },
-    [bumpCacheVersion, rootSessionKey, setDrawerSessionForRoot, setMultiProjectSessionPending, setSelectedPendingByKey],
+    [bumpCacheVersion, rootSessionKey, setDrawerSessionForRoot, setMultiProjectSessionPending],
   );
 
   const handleRemoveQueuedMessage = useCallback(

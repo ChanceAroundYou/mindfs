@@ -18,6 +18,8 @@ export type UseAppSessionSnapshotsParams = {
   taskDetailsById: Record<string, TaskDetail>;
   taskSessionKeysById: Record<string, string[]>;
   getSessionSnapshot: ReturnType<typeof useSessionPending>["getSessionSnapshot"];
+  multiProjectPendingByKey: Record<string, boolean>;
+  rootSessionKey: (rootId: string, sessionKey: string) => string;
 };
 
 /**
@@ -30,7 +32,7 @@ export type UseAppSessionSnapshotsParams = {
  * 放后面覆盖，同键以它为准。
  */
 export function useAppSessionSnapshots(params: UseAppSessionSnapshotsParams) {
-  const { selectedSession, selectedSessionLoading, currentRootId, sessions, multiProjectSessionGroups, selectedKanbanTaskId, kanbanTasks, taskDetailsById, taskSessionKeysById, getSessionSnapshot } = params;
+  const { selectedSession, selectedSessionLoading, currentRootId, sessions, multiProjectSessionGroups, multiProjectPendingByKey, rootSessionKey, selectedKanbanTaskId, kanbanTasks, taskDetailsById, taskSessionKeysById, getSessionSnapshot } = params;
 
   const selectedSessionSnapshot = useMemo(
     () => {
@@ -64,8 +66,19 @@ export function useAppSessionSnapshots(params: UseAppSessionSnapshotsParams) {
         if (key) merged[key] = session;
       }
     }
-    return { ...merged, ...sessionByKey };
-  }, [multiProjectSessionGroups, sessionByKey]);
+    const all: Record<string, SessionItem> = { ...merged, ...sessionByKey };
+    // pending 纯派生：唯一真相是 multiProjectPendingByKey。会话列表项上那份是「拉列表
+    // 那一刻」的快照，跑完不重拉列表就会一直挂着（卡片上的「在回复」圆点就是这么卡住的）。
+    for (const [key, item] of Object.entries(all)) {
+      const root = String((item as any)?.root_id || "");
+      if (!root) continue;
+      const pending = !!multiProjectPendingByKey[rootSessionKey(root, key)];
+      if (pending !== !!item.pending) {
+        all[key] = { ...item, pending };
+      }
+    }
+    return all;
+  }, [multiProjectSessionGroups, sessionByKey, multiProjectPendingByKey, rootSessionKey]);
 
   const selectedKanbanTask = useMemo(() => {
     if (!selectedKanbanTaskId) return null;
