@@ -9,7 +9,13 @@
 > **机器真相在 `docs/upstream-customizations.yaml`** —— 分组 id、文件、针对性测试、锚点全部以它为准，本文不重复列举；
 > 覆盖率门禁 `make check-upstream` 强制「每个 delta 文件都被某组覆盖」。两文件的唯一强耦合点是**组 id 双向一致**。
 >
-> 本文档 §1-§3 分组为 v0.4.7→v0.4.9 时代沉淀，机制仍适用；v0.5.1 / 7757ca8 合并记录见 §0，v0.5.5 见 §0-B，接回 main 见 §0-B-2。
+> 本文档 §1-§3 分组为 v0.4.7→v0.4.9 时代沉淀，机制仍适用；v0.5.1 / 7757ca8 合并记录见 §0，v0.5.5 见 §0-B，接回 main 见 §0-B-2 / §0-C。
+>
+> **fork 与上游的关系是两条线，别混**：`upstream/main`（tag `v0.5.5` = `9ab9572`）是 **a9gent 上游**，
+> 它的定制清单就是本文件；`origin/main` 是本 fork 自己的主线，**近期全部在 task-35 上**（2026-10-11
+> 第三次分布合并把 main 的 `44f1497..37a0a1f` 全吸收进来，见 §0-C）。所以「接回 main」指的是 fork 的 main，
+> 与 `make check-upstream` 算的 delta（对上游 `9ab9572`）是两件事 —— 门禁算的是「fork 相对上游改了什么」，
+> 永远以 `9ab9572` 为基准，不会因为 fork 内合并而变。
 >
 > 历史口径（2026-08-26 首次成文时的记录，**仅作沿革参考，不再是核对基准**）: 基准 `upstream/main` tag `v0.4.7` `18b10ca`，
 > 对比 `HEAD = 0591238`，`git log --reverse 18b10ca..HEAD` 44 提交，`git diff 18b10ca...HEAD` 110 文件 `+8333/-4249`。
@@ -64,6 +70,41 @@
   `make build` 的 Go link 步在未提交的 merge worktree 里会因 VCS stamping 失败（`error obtaining VCS status`），
   提交后自愈；`go build -buildvcs=false` 已验证二进制可正常链接。
 - 部署：见 §部署记录；本机 `systemctl restart mindfs` 由用户执行。
+
+### 0-C. 接回 main：`44f1497` → `d027981` + `37a0a1f`（2026-10-11，第三次分布合并）
+
+- **两次 merge**（用户决策：分布合并，本分支直接合）：
+  - `67d8f25`（`fb3c1c7` × `d027981`）吸收 6 个提交 —— G-BG 会话窗口读按需读 / tail 增量三处缺陷 /
+    搜索 cap，G-BH S2a 双写 + S2b 读改走块流 + C1/C2 轮次身份，S2c 身份判重，S2d-1 旧数据块流回填。
+  - `8ff2e93`（`67d8f25` × `37a0a1f`）吸收 S2d-2「块流成为正文唯一载体，主日志 content 恒空」。
+    **合并期间 main 又前进一个提交**，第二次 merge 是赶上的；`merge-tree --write-tree` 干跑预判**零冲突**。
+- **冲突化解原则：main 的单体形态不回流，一律落到本分支拆分后的归属文件**（用户明确要求
+  「应该把所有的修改都挂入正确的位置 保持 app tsx 干净」）。四个冲突文件逐一：
+  - `services/session.ts`：保留 501 行 facade，**未**回退 main 的 2741 行单体。blocks 类型落在
+    `sessionTypes.ts`、清洗判据 `toPersistentBlocks` 落在 `sessionExchangeMerge.ts`（「seq>0」
+    这把尺仍只有一个实现文件，见 message-mechanisms 冲突①②）。
+  - `components/session/SessionViewer.tsx`：保留 651 行，块流窗口态落在 `useSessionWindowing.ts` /
+    `hooks/sessionBlocks.ts`。
+  - `hooks/useSessionStream.ts`：2 行差异即 `dispatcher` 拆分（`sessionService.dispatcher.isSessionStreaming`），
+    非定制，是拆分后的正确形态。
+  - `app/useSessionLifecycle.ts`：承接 main 在 App.tsx 里的 +8 行缓存窗口 blocks 合并 —— **按 seq 覆盖，
+    不拼接**（同一 seq 的块集合是完整快照，拼接会让旧新 revision 并存渲染成两段重复正文）。
+- Go 侧定制（`session/blocks.go`、`manager.go`、`types.go`、`usecase/session_blocks_backfill.go` 等）**无冲突**，
+  原样吸收；两端新增 20 个 Go 测试文件全部并入。
+- **测试侧为拆分改了 3 处读法**（不是产品代码的问题）：`message-mechanism-merges.test.mjs` 需按
+  **逻辑路径**读拼接视图（App.tsx 已拆）与按**物理文件**读（「全仓只允许一个文件实现这把尺」这类断言，
+  否则同一处命中两次）两种读法，为此在 `source-map.mjs` 导出未被 patch 的 `rawReadFileSync`；
+  `session-window.test.mjs` 的 vm require 桩要同时能裸调（`generateClientId`）与 `new`
+  （`SessionConnectionManager`），两个探针改为真实 import 拆分后的实现。
+- **本次一并修掉门禁的历史债**：`make check-upstream` 在合并前（`fb3c1c7`）就是红的 ——
+  2 个 delta 文件未登记 + 11 处锚点失配，全部源于前三轮拆分后锚点坐标过期（符号还在，搬了文件）。
+  逐条 `grep -rn` 定位真实位置后改锚点路径，无一条是定制丢失；`clearStalePending` 是唯一例外
+  （被 G-AY 纯派生改造自己废除，删锚点而非搬）。门禁与测试补登记办法已写进 §7 附录维护约定。
+- 门禁全绿：`go test -count=1 ./...`（25 包 ok）、`tsc --noEmit` 0 err、web **223 用例 / 0 fail**、
+  `make check-upstream` **837 delta 文件被 57 组完整覆盖**、App.tsx 16 行、全仓冲突标记扫描为空。
+  定制清单与 main **零组丢失**（yaml 57 id 双向无差异）。**本次清理**：`G-AY` 原先被两组共用（pending 纯派生 / pending 信号兜底），而门禁不校验 id 唯一性，`git log --grep 'Scope: G-AY'` 会同时命中两组无从区分 —— 后者改名 `G-AX`（取空闲号），md/yaml/正文引用一并改。
+- 部署：**未推送、未部署**（本机 `systemctl restart mindfs` 由用户执行），
+  待用户确认后走 `ship` skill。
 
 ### 0-B-2. 接回 main：`e3974c6`（2026-09-30）
 
@@ -123,7 +164,7 @@
 
 ---
 
-## 1. 总览（45 组）
+## 1. 总览（57 组，组 id 以 yaml 为准）
 
 | 组 | 主题 | 性质 | 关键提交/切片举例 | 互斥边界 |
 |----|------|------|-------------------|----------|
@@ -176,6 +217,17 @@
 | G-AY | pending 纯派生（done 丢失时停止符号/「正在思考」卡住） | 修复 | 见 §3.1 | 原先「在不在回复」在前端有五份投影，只有列表蓝灯那份每 5s 对账；其余四份只有 WS `session.done` 一个出口，断连/重绑竞态丢了那条事件就**永久卡在 true**。2026-10-07 改成纯派生：唯一真相 `multiProjectPendingByKey`，会话对象上不再存 pending |
 | G-AZ | 任务卡视觉件（待审核徽标/列框去除/浮动滚动条/工作台角标移除） | 视觉 | 见 §3.1 | 待审核列补状态文字（与工作台同路径）；列框去除+padding 归零卡片加宽 18px；FloatingScroll 浮动滚动条不占宽；工作台「需要你 N」角标移除 |
 | G-BB | 看板列头灰底 + 间距对齐工作台（列头背景/列表 padding/外层 padding） | 视觉 | 见 §3.1 | 列头灰底区分栏目标签与卡片；列表 padding 归零卡片加宽 12px；外层 padding 6px 8px 对齐工作台容器 |
+| G-AV | worktree 收尾路径符号链接匹配修复 | 修复 | 见 §3.1 | worktree 路径经符号链接时前缀匹配失效，收尾键被误判为「目录不存在」 |
+| G-AW | 工作台移除 attention bar + 统一 task card wrapper | 重构 | 见 §3.1 | 列表与工作台共用同一个卡片外壳 |
+| G-AY② | 抽屉 pending 对账：done 丢失时停止符号/「正在思考」卡住 | 修复 | 见 §3.1 | 纯派生的最后一处投影（抽屉会话）也要收敛到同一真相 |
+| G-AX | pending 信号兜底（`ClearSessionPending` 2s 超时 + 广播先于清） | 修复 | 见 §3.1 | 自旋无超时会卡住广播，`session.done` 永远发不出去。**注：本题根因经 2026-10-09 复核为误判，真正成因见 G-BE**。原与纯派生共用 `G-AY` id，2026-10-11 改名 |
+| G-BC | 看板/工作台卡片统一 + worker 账户 id 从用户名派生 | 修复 | 见 §3.1 | 投影补齐 + 收尾键门控；worker 没有账户表，账户 id 由用户名推导（方案 B） |
+| G-BA | 前端目录按领域重组 + 服务/组件文件拆分 | 重构 | 见 §3.1 | `services/session.ts` 2741 行 → 501 行 facade + 19 个兄弟模块；`account/action/file/git/session/task` 按域分目录 |
+| G-BD | 移动端恢复后的 pending 对账与服务端事件时间 | 修复 | 见 §3.1 | `visibilitychange`/`pageshow` 必须主动对账；replay 必须保留服务端 `Timestamp`（零值哨兵要当「没有时间戳」） |
+| G-BE | pending 的回合身份与单一终结器（迟到 done 不误抹新轮 + 终态边必达） | 修复 | 见 §3.1 | pending 条目没有回合身份，迟到 `done` 会误抹新开的轮次；终态边必须必达 |
+| G-BF | Full 同步丢最新几轮：ctx_seq 切片恒空 + 时间地板被跳过 | 修复 | 见 §3.1 | 切片上界写错导致恒取空；时间地板在不该跳过的分支被跳过 |
+| G-BG | 会话窗口读不整表解析 + tail 增量三处缺陷 + 搜索 cap | 修复 | 见 §3.1 | 窗口读改按需读；tail 增量三处边界；搜索加 cap；两条全量 aux 热路径改按需 |
+| G-BH | 会话正文块流（块存储层 + 轮次身份 + 双写 + 读改走块流 + S2d-2 主日志不再存正文） | 修复 | 见 §3.1 | **本分支与上游 main 的共同前线**（2026-10-11 合并吸收）：空正文轮次落库成 `content:""` 是根因；轮次靠 `turn_id` 有权威身份；S2d-2 起主日志 `content` 恒空、块流是唯一载体 |
 
 > **G-D 已并入 G-F，G-M 已并入 G-AI**（改动面完全重合、无独立测试可守，单列只会制造空组）。
 
@@ -1631,7 +1683,11 @@
 
 ---
 
-### G-AY pending 信号兜底（2026-10-08 建，同日修订：删掉第②③层）
+### G-AX pending 信号兜底（ClearSessionPending 2s 超时 + 广播先于清；2026-10-08 建，同日修订：删掉第②③层）
+
+> 2026-10-11 由 `G-AY` 改名而来：原先与「pending 纯派生」共用 `G-AY` 一个 id，
+> 而门禁不校验 id 唯一性，`git log --grep 'Scope: G-AY'` 会同时命中两组、无从区分。
+> 取空闲的 `G-AX`（沿用至今未占用的号），md/yaml 与正文引用一并改。
 
 - 来源：`server/internal/api/stream_hub.go`、`server/internal/api/appcontext.go`、
   `web/src/App.tsx`、`web/tests/e2e-pending-signal.test.mjs`。
@@ -1667,7 +1723,7 @@
   `server/internal/api/ws.go`、`server/internal/scheduled/tasks.go`、
   `server/internal/agent/codex/session.go`（2026-10-09）。
 - 边界：**服务端 pending 条目的身份与生命周期** —— 谁有权清理、迟到/重复 done 的处置、
-  子会话 pending 的终态收边。不做静默判死 / 超时（超时路线已于 G-AY 证伪）。
+  子会话 pending 的终态收边。不做静默判死 / 超时（超时路线已于 G-AX 证伪）。
 - 可见症状（没有它会怎样）：两个**方向相反**的症状并存 ——
   ①「完成回答但还显示正在思考」（灯不灭）；②「正在运行但会话列表灯不亮」（灯不亮）。
   **同一个缺失的两面**：`pendingSessions[key]` 没有回合身份、清理是不问归属的无条件删。
@@ -2076,6 +2132,8 @@
     空正文的 agent 行同样不被误吞。
   - `server/internal/session/search_blocks_test.go`（S2d-2）→ 搜索两遍都不能省：
     块流命中（新内容）、块流没有时退回主日志（还没回填的老会话）、两边都搜不到就是没命中。
+  - `server/internal/session/manager_duplicate_seq_test.go`（S2d-2 改字段名）→ 同 seq
+    重复行的合并不受「主日志不再有正文」影响（判据对新写入的行是恒等的 no-op）。
   - `server/internal/api/http_window_test.go`（S2b 改，契约变了）→
     `TestHandleSessionGetWithoutBlocksReturnsEmpty` 的断言**整个反转**成
     `TestHandleSessionGetBackfillsLegacyBlocks`（老正文必须在**同一个回包里**出现 ——
@@ -2185,6 +2243,16 @@
   - 合上游 tag 后：更新 yaml 的 `baseline`，重跑门禁 —— 红了就是那一组被覆盖了，按 yaml 里的「为什么必须保留」逐条恢复，
     **不要按上游实现重写**。
   - 新增分组的唯一前提：它有**独立的互斥边界**（一组 = 一块合上游时要么全留要么全弃的改动面）。
+  - **拆分/搬移代码时必须同步改 `anchors:`**（2026-10-11 补）。锚点是「文件路径 + 符号子串」，
+    而前端经历了三轮大拆分（`App.tsx` 15k 行 → 16 行分层外壳、`services/session.ts` 2741 行 →
+    501 行 facade、`ScheduledAgentTaskDialog` 的删除确认搬进 `useScheduledAgentTaskDialog`）。
+    符号还在，但它**搬到了另一个文件**，门禁就以「锚点失配」报警 —— 这不是假警报，
+    是「这个符号的保护坐标过期了」。核对方法：`make check-upstream` 报哪条失配，
+    就 `grep -rn` 该符号在 `web/src/` 里的真实位置，改锚点路径。
+    本次一次修了 11 条（G-F/G-Y/G-AJ/G-BC/G-AY×4/G-BD/G-BH），全部是这种搬迁，没有一条是定制丢失。
+    **判据**：若符号在全仓都找不到，才是定制真丢了，要按组内 `why` 恢复；找得到 = 改锚点。
+    `clearStalePending`（G-AY）是唯一例外 —— 该组 `boundary` 自己记着「第一版修法是打补丁，
+    已被纯派生改造废除」，所以锚点是跟着定制一起退休，删锚点而不是搬。
 
 ### 7.1 锚点是抽样标记，不是覆盖率（别把它读成「已检查 9%」）
 
@@ -2192,13 +2260,13 @@
 
 | 层 | 是什么 | 现在有多少 | 由谁强制 |
 |---|---|---|---|
-| `files:`（yaml） | 「这段代码是我们的」 | 417 条，覆盖全部 **384** 个 delta 文件 | 门禁断言 1（每个 delta 文件必须被某组认领）+ 断言 2（登了却不在 delta 里 = 已被上游吸收） |
-| `anchors:`（yaml） | 「这个符号必须还在」 | **44** 条，分布 22 组 | 门禁断言 4（子串必须在源文件里命中） |
-| `CUSTOM(G-xx)`（源码内） | 「**上游同点**改这里会冲突」 | **14** 处，落在 **13/140** 个 M 文件 | 无（人读） |
+| `files:`（yaml） | 「这段代码是我们的」 | 565 条登记，覆盖全部 **837** 个 delta 文件 | 门禁断言 1（每个 delta 文件必须被某组认领）+ 断言 2（登了却不在 delta 里 = 已被上游吸收） |
+| `anchors:`（yaml） | 「这个符号必须还在」 | **214** 条，分布 **35** 组 | 门禁断言 4（子串必须在源文件里命中） |
+| `CUSTOM(G-xx)`（源码内） | 「**上游同点**改这里会冲突」 | **61** 处，落在 **38** 个非测试文件 | 无（人读） |
 
-- 第三行才是「锚点」的字面意思：它**只加在上游已存在的文件里的定制 hunk 上**。纯新增的 fork 文件（217 个 A）永远不带标记 ——
+- 第三行才是「锚点」的字面意思：它**只加在上游已存在的文件里的定制 hunk 上**。纯新增的 fork 文件（504 个 A）永远不带标记 ——
   合上游时它们整份冲突，标记不提供任何额外信息。所以 **`CUSTOM(` 的占比天然不可能高，也不该高**。
-- 它是**抽样标记**：14 处覆盖不了 140 个 M 文件里的每一处定制 hunk，**没标记 ≠ 没定制**。
+- 它是**抽样标记**：61 处覆盖不了 111 个 M 文件里的每一处定制 hunk，**没标记 ≠ 没定制**。
   按标记数量估计「定制覆盖面」是错的，那是 `files:` 的职责。
 - 它唯一的作用是在 diff 冲突现场**就地**说明「这里为什么必须留」；机器核对由 `anchors:` 与断言 1/2 承担。
   `.css` / `.json` 等加不了注释的格式，只登记 `anchors:`，不指望 `CUSTOM(`。

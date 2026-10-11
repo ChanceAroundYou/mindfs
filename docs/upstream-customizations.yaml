@@ -219,7 +219,7 @@ groups:
       （G-D 原先单列，其改动面（FileTree/App/useRefreshSpin）与本组完全重合，
       且没有独立测试可守，故并入——保留 G-D 号仅作历史索引。）
     anchors:
-      - 'web/src/components/file/MarkdownViewer.tsx:MarkdownCodeBlockMemo'
+      - 'web/src/components/file/MarkdownCodeBlocks.tsx:MarkdownCodeBlockMemo'
     files:
       - web/src/App.tsx
       - web/src/components/FileTree.tsx
@@ -693,7 +693,7 @@ groups:
       # 迁移一旦被删或加了条件，老库里的 queued 会原样送往前端，而那时前端已无该分支。
       - server/internal/kanban/task_store_queued_migration_test.go
     anchors:
-      - 'web/src/components/task/ScheduledAgentTaskDialog.tsx:confirmDialog'
+      - 'web/src/components/task/useScheduledAgentTaskDialog.ts:confirmDialog'
       # 替代编排体系的那套模型必须在位 —— 游标一旦退回去，说明重做被冲掉了
       - server/internal/kanban/types.go:Stages             []StageTemplate
       - server/internal/kanban/template_store.go:ListStageTemplates
@@ -901,9 +901,11 @@ groups:
       - web/src/components/action/SessionRing.tsx
       - web/src/components/action/ActionBar.tsx
       - web/src/hooks/useSessionStream.ts
+      - web/tests/send-shortcut.test.mjs
     tests:
       - web/tests/no-system-dialogs.test.mjs
       - web/tests/session-ring-gesture.test.mjs
+      - web/tests/send-shortcut.test.mjs
 
   # ── 前端：文件 / Git / 文档 ────────────────────────────────────
   - id: G-AH
@@ -1034,7 +1036,7 @@ groups:
       - 'server/internal/webpush/service.go:CUSTOM(G-AJ)'
       - 'server/internal/scheduled/tasks.go:BroadcastSessionCreated'
       - 'web/src/services/webPush.ts:controlPath("/api/web-push/'
-      - 'web/src/components/agent/CodexRateLimitIndicator.tsx:fetchCodexRateLimits(agent, nodeId)'
+      - 'web/src/components/agent/useCodexRateLimit.ts:fetchCodexRateLimits(agent, nodeId)'
     files:
       - server/internal/preferences/store.go
       - server/internal/preferences/store_test.go
@@ -1645,7 +1647,7 @@ groups:
       - server/internal/gitview/worktree_finish.go:type MainCheckoutDirtyError
       - web/src/components/task/TaskCardRows.tsx:function FinishWorktreeButton
       - web/src/components/task/TaskCardRows.tsx:const canComplete = !terminal && !stageRunning && !showAdvance;
-      - web/src/components/task/TaskDetailPanel.tsx:const canCompleteTask = !terminal && !stageRunningNow && !canRunStageNow;
+      - web/src/components/task/useTaskDetailPanel.ts:const canCompleteTask = !terminal && !stageRunningNow && !canRunStageNow;
       - web/src/components/workspace/WorkspaceTaskRow.tsx:hideSessionError={task.status === "fail"}
       - web/src/services/task/worktree.ts:class FinishWorktreeDirty extends Error
       - web/src/services/net/error.ts:"task.action_failed"
@@ -1938,12 +1940,11 @@ groups:
       - web/src/hooks/useSessionStream.ts
       - web/src/components/session/SessionViewer.tsx
     anchors:
-      - web/src/App.tsx:setMultiProjectSessionPending
-      - web/src/App.tsx:getSessionSnapshot
+      - web/src/app/useAppSessionKeyState.ts:const setMultiProjectSessionPending = useCallback(
+      - web/src/app/useSessionPending.ts:const getSessionSnapshot = useCallback(
       - web/src/app/appSession.ts:mergeReplyingStateByNode
       - "web/src/hooks/useSessionStream.ts:isStreaming: isStreaming && !!sessionPending"
-      - "web/src/components/session/SessionViewer.tsx:{isAwaiting && (() => {"
-      - web/src/app/useReplyingSessionPoll.ts:clearStalePending
+      - "web/src/components/session/SessionViewer.tsx:const isAwaiting = !!(session as any)?.pending;"
 
   - id: G-AZ
     title: 任务卡视觉件：待审核状态徽标 / 列框去除 / 浮动滚动条 / 工作台角标移除
@@ -2065,11 +2066,11 @@ groups:
       - web/tests/cross-node-replying-state.test.mjs
       - web/tests/session-duration.test.mjs
     anchors:
-      - web/src/App.tsx:refreshMultiProjectReplyingSessions
+      - web/src/app/useReplyingSessionPoll.ts:const refreshMultiProjectReplyingSessions = useCallback(async () => {
       - web/src/app/appSession.ts:applyPendingToMultiProjectGroups
       - server/internal/api/stream_hub.go:AppendReplyEvent
 
-  - id: G-AY
+  - id: G-AX
     title: pending 信号兜底（ClearSessionPending 2s 超时 + 广播先于清）
     kind: fix
     symptom: |
@@ -2102,7 +2103,7 @@ groups:
       - server/internal/api/stream_hub.go:ClearSessionPending
       - server/internal/api/stream_hub.go:PendingSessionSnapshot
       - server/internal/api/appcontext.go:EndSessionTurn
-      - web/src/App.tsx:refreshMultiProjectReplyingSessions
+      - web/src/app/useReplyingSessionPoll.ts:const refreshMultiProjectReplyingSessions = useCallback(async () => {
 
   - id: G-BE
     title: pending 的回合身份与单一终结器（迟到 done 不误抹新轮 + 终态边必达）
@@ -2423,6 +2424,7 @@ groups:
       - server/internal/api/usecase/session_content_legacy_test.go
       - server/internal/session/user_turn_survives_test.go
       - server/internal/session/search_blocks_test.go
+      - server/internal/session/manager_duplicate_seq_test.go
       - web/tests/session-blocks-render.test.mjs
       - web/tests/tool-card-grouping.test.mjs
       - web/tests/session-window.test.mjs
@@ -2430,6 +2432,7 @@ groups:
       - server/internal/session/blocks.go
       - server/internal/session/blocks_build_test.go
       - server/internal/session/manager.go
+      - server/internal/session/manager_duplicate_seq_test.go
       - server/internal/session/types.go
       - server/internal/session/manager_blocks_test.go
       - server/internal/session/manager_identity_fields_test.go
@@ -2499,4 +2502,4 @@ groups:
       - server/internal/api/http.go:windowSeqsForExchanges
       - web/src/hooks/sessionBlocks.ts:buildAssistantTimelineFromBlocks
       - web/src/hooks/sessionBlocks.ts:blocksForSeq
-      - web/src/services/session.ts:toPersistentBlocks
+      - web/src/services/sessionExchangeMerge.ts:export function toPersistentBlocks(
