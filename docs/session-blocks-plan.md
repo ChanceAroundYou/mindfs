@@ -251,7 +251,7 @@ agent 事件 → block → 缓冲 →(300ms / 64KB / boundary)→ ① append 块
 | **S2a** | 加 `turn_id` / `turn_seq` / `native_*` / `partial`（`step` 在块流上）；块流**写入**（双写：块流 + 旧 `Content`/aux 并存）；**C2 三处服务端 mint UUID**；**C1 repoint 清 native id** | 可回滚，旧路径不动 |
 | **S2b** | **读**改走块流；前端按 `type` 渲染；块级窗口（**复用 `CompactExchangeAuxLight` 策略**）；块内联（**省掉 O3 的 round trip**） | 新老并存可对账 |
 | **S2c** | ✅ **身份判重**启用；投影**身份化**（只折叠双边无身份的历史残留）+ 审计端点报身份化进度 | 新数据不再猜；旧残留可度量 |
-| **S2d** | 🔨 **S2d-1 已落地**（旧数据回填 + `CompactExchangeAux` 丢 reasoning 的修复）；余下：删 `Content` + 旧 aux 路径 | 单一真相源 |
+| **S2d** | ✅ **已落地**（S2d-1 旧数据回填 + `CompactExchangeAux` 丢 reasoning 的修复；S2d-2 块流成为正文唯一载体、主日志 `content` 恒空） | 单一真相源 |
 | **S2e** | **删 `TurnGen`**，统一为 `turn_id`（独立提交、可单独回滚） | 一套身份 |
 | **S3** | seq=0 机制退役、`tailOverlay` 5 条启发式、**§14.1 的约 470 行**（投影整块 / 判重套件 / `CountExchanges` / `appendResponseChunk`） | 净减猜测层 |
 | 待办 | 旧数据迁移脚本（dsh 可迁、claude 本地无 thought）；codex native id 实证 | — |
@@ -458,6 +458,32 @@ agent 事件 → block → 缓冲 →(300ms / 64KB / boundary)→ ① append 块
   `reasoning` 块渲染成灰显的思考文本、工具卡是另一种外观（带💭 图标的折叠卡）—— 同一轮
   reasoning 会「实时一个样、同步后一个样」。已改用 `ImportedExchangeAux.Thought`，与实时路径
   和存量数据（10826 条 `thought` 字段）同一个形状。
+
+**S2d-2 落地记录（2026-10-11，提交 `37a0a1f`）**：块流成为正文唯一载体，主日志 `content` 恒空。
+
+- **删的是「写」，不是字段。** `Exchange.Content` 改名为 `LegacyContent`，json tag **仍叫
+  `content`** —— 老会话文件必须还能解析，而它现在的唯一读者是 S2d-1 的回填。三个写入点
+  （live user 行 / `SendMessage` 轮末助手行 / `appendImportedExchange` 导入行）全部改成只写块流。
+- **最险的一刀是 user 行，而它不是本方案原计划里的那条。** `addExchangeForAgentAt` 有个
+  「空正文 + 非 agent 角色就跳过」的守卫；user 行一旦不再带正文，这个守卫会把**每一行 user**
+  静默丢掉 —— 前端看不到自己说过的话、搜索的 user 命中失效，且没有任何报错。它是在
+  `TestSearchPrefersUserTurnHitFromBlocks` 红掉之后才被挖出来的，**不是**预先设计的。
+  改成「什么都没带」才算空行：空正文 + 空 agent + 无任何轮次身份。
+- **助手块写入失败从「记日志」升级成返回 err。** 双写期块失败无所谓（正文已在主日志），
+  现在主日志只剩元数据，块丢了就是正文丢了。导入路径仍只记日志 —— 那一行已经落盘，
+  块失败不该让整行消失。两条路径的不对称是刻意的。
+- **判重与搜索各换了一次数据源，两处都是静默失效的形状。** 判重的 user 行没有 native uuid
+  （`Stream.Send(ctx, string)` 不给这个入口），只能比正文，于是 `recordedExchangeBody` 改读
+  块流；搜索改成「先块流、再主日志」两遍，后一遍为了还没回填的老会话。这两处不换不会报错，
+  只会让同一个 prompt 被反复写成新行、老会话搜不到词。
+- **fork 的两个函数是分工，此前一度想删掉其一。** `copyForkBlocks` 复制源**已有的块**
+  （revision/step 是盘上真值、不重编号），`fillForkBlocksFromLegacy` 给老会话补编译。
+  只补编译会丢源块的 revision；只复制会让老会话 fork 出没有正文的会话。测试 fixture 恰好
+  只覆盖了其中一条（源有块 + aux 有 thought），所以删掉 `copyForkBlocks` 之后测试仍是绿的 ——
+   **测试绿不等于删对了**，这是本条最该记住的一条。
+- **门禁的两个新发现**：三个新测试文件在提交前不算 delta，`check-upstream` 会把它们报成
+  「已登记但不在 delta」；`manager_duplicate_seq_test.go` 是 fork 定制却从未登记，这次
+  改了字段名才进 delta。
 
 ---
 
