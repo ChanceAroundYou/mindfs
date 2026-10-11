@@ -19,14 +19,14 @@ func TestExchangeIdentityFieldsRoundTripThroughJSONL(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 	writeExchangeLog(t, m, created.Key, []Exchange{{
-		Seq:          2,
-		Role:         "agent",
-		Content:      "old body",
-		TurnID:       "11111111-2222-3333-4444-555555555555",
-		TurnSeq:      1,
-		NativeTurn:   "agent-turn-9",
-		NativePrompt: "agent-prompt-9",
-		Partial:      true,
+		Seq:           2,
+		Role:          "agent",
+		LegacyContent: "old body",
+		TurnID:        "11111111-2222-3333-4444-555555555555",
+		TurnSeq:       1,
+		NativeTurn:    "agent-turn-9",
+		NativePrompt:  "agent-prompt-9",
+		Partial:       true,
 	}})
 
 	path, err := m.exchangePath(created.Key)
@@ -50,7 +50,7 @@ func TestExchangeIdentityFieldsRoundTripThroughJSONL(t *testing.T) {
 		}
 	}
 
-	// 读侧必须能解析回来（主日志仍然是一轮一行，Content 仍在 —— S2d 才删）。
+	// 读侧必须能解析回来（主日志仍然是一轮一行，正文已搬去块流）。
 	got, err := m.Get(context.Background(), created.Key, 0)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
@@ -73,7 +73,7 @@ func TestExchangeIdentityFieldsDefaultToZero(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	writeExchangeLog(t, m, created.Key, []Exchange{{Seq: 1, Role: "user", Content: "hi"}})
+	writeExchangeLog(t, m, created.Key, []Exchange{{Seq: 1, Role: "user", LegacyContent: "hi"}})
 
 	got, err := m.Get(context.Background(), created.Key, 0)
 	if err != nil {
@@ -96,7 +96,7 @@ func TestBlockAndExchangeShareTurnID(t *testing.T) {
 	}
 	const turnID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 	writeExchangeLog(t, m, created.Key, []Exchange{{
-		Seq: 3, Role: "agent", Content: "body", TurnID: turnID, TurnSeq: 2, Partial: true,
+		Seq: 3, Role: "agent", LegacyContent: "body", TurnID: turnID, TurnSeq: 2, Partial: true,
 	}})
 	if err := m.AppendBlocks(context.Background(), created.Key, []Block{{
 		Seq: 3, Pos: 0, Type: BlockTypeReasoning, Text: "why", Step: 3, TurnID: turnID,

@@ -93,12 +93,31 @@ func TestSyncExternalSessionDeltaFastDoesNotApplyCtxSeqToFilteredImport(t *testi
 	if len(latest.Exchanges) != 3 {
 		t.Fatalf("len(exchanges) = %d, want 3", len(latest.Exchanges))
 	}
-	if got := latest.Exchanges[1].Content; got != "new user" {
-		t.Fatalf("exchange[1] = %q, want new user", got)
+	// S2d-2 起正文归块流，主日志一行的 content 恒空，所以这里按 turn_id 从块流读。
+	// 这是「成交量」断言：ctx_seq 切片放行了多少条、放行的是哪几条。
+	if got := importedBlockTexts(context.Background(), manager, created.Key, latest.Exchanges, 1); len(got) != 1 || got[0] != "new user" {
+		t.Fatalf("exchange[1] blocks = %#v, want [new user]", got)
 	}
-	if got := latest.Exchanges[2].Content; got != "new agent" {
-		t.Fatalf("exchange[2] = %q, want new agent", got)
+	if got := importedBlockTexts(context.Background(), manager, created.Key, latest.Exchanges, 2); len(got) != 1 || got[0] != "new agent" {
+		t.Fatalf("exchange[2] blocks = %#v, want [new agent]", got)
 	}
+}
+
+// importedBlockTexts 读 seq 那一轮的 text 块（判重回查用的同一个口径，
+// 见 recordedExchangeBody）。exchanges 用来把 buf 下标换成真实 seq。
+func importedBlockTexts(ctx context.Context, manager *session.Manager, key string, exchanges []session.Exchange, idx int) []string {
+	seq := exchanges[idx].Seq
+	blocks, err := manager.GetBlocksWindow(ctx, key, map[int]bool{seq: true})
+	if err != nil {
+		return nil
+	}
+	out := make([]string, 0, len(blocks))
+	for _, b := range blocks {
+		if b.Type == session.BlockTypeText {
+			out = append(out, b.Text)
+		}
+	}
+	return out
 }
 
 // 复现 2026-09-12 WSL 端「点同步后整段重放」：live 路径写入的轮次已被增量同步以
@@ -161,12 +180,13 @@ func TestSyncExternalSessionDeltaFullDoesNotReplayHistoryInSession(t *testing.T)
 	if len(latest.Exchanges) != 5 {
 		contents := make([]string, 0, len(latest.Exchanges))
 		for _, ex := range latest.Exchanges {
-			contents = append(contents, ex.Role+":"+ex.Content)
+			contents = append(contents, ex.Role+":"+ex.LegacyContent)
 		}
 		t.Fatalf("len(exchanges) = %d, want 5: %v", len(latest.Exchanges), contents)
 	}
-	if got := latest.Exchanges[4].Content; got != "u3" {
-		t.Fatalf("exchange[4] = %q, want u3", got)
+	// S2d-2 起正文归块流（主日志一行的 content 恒空）。
+	if got := importedBlockTexts(context.Background(), manager, created.Key, latest.Exchanges, 4); len(got) != 1 || got[0] != "u3" {
+		t.Fatalf("exchange[4] blocks = %#v, want [u3]", got)
 	}
 }
 
@@ -226,7 +246,7 @@ func TestSyncExternalSessionDeltaFullImportsTailWhenCtxSeqOvershoots(t *testing.
 	if len(latest.Exchanges) != 6 {
 		contents := make([]string, 0, len(latest.Exchanges))
 		for _, ex := range latest.Exchanges {
-			contents = append(contents, ex.Role+":"+ex.Content)
+			contents = append(contents, ex.Role+":"+ex.LegacyContent)
 		}
 		t.Fatalf("len(exchanges) = %d, want 6: %v", len(latest.Exchanges), contents)
 	}

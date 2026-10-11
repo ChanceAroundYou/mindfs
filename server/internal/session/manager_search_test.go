@@ -23,8 +23,8 @@ func TestSearchSessionContentMatchesLineLargerThanOneMegabyte(t *testing.T) {
 	// 单行 > 1MB（历史上限），正文里埋一个唯一关键词。
 	big := strings.Repeat("填", 400000) + " needle " + strings.Repeat("充", 400000)
 	writeExchangeLog(t, m, created.Key, []Exchange{
-		{Seq: 1, Role: "user", Content: "hello"},
-		{Seq: 2, Role: "agent", Content: big, Timestamp: time.Unix(2, 0).UTC()},
+		{Seq: 1, Role: "user", LegacyContent: "hello"},
+		{Seq: 2, Role: "agent", LegacyContent: big, Timestamp: time.Unix(2, 0).UTC()},
 	})
 
 	hits, err := m.Search(ctx, SearchOptions{Query: "needle", Limit: 10})

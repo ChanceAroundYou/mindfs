@@ -565,7 +565,7 @@ func appendImportedExchange(
 	// 合并，合并后的 Content 与实时路径写的行逐字不同，内容比对必然漏判（实测
 	// 2026-10-07 某会话 9 对 live/import 重复）。身份对不上才退回内容 + ±5s，
 	// 并且打一条日志：那是「还在猜」的可见信号。
-	if exchangeAlreadyRecorded(target, role, exchange.NativeID, exchange.Content, exchange.Timestamp) {
+	if exchangeAlreadyRecorded(ctx, manager, target, role, exchange.NativeID, exchange.Content, exchange.Timestamp) {
 		return false, nil
 	}
 	// 把 agent 侧身份写进这一行（方案 §3.1）。没有它，下一轮同步就没有可对齐的键，
@@ -582,7 +582,9 @@ func appendImportedExchange(
 		session.WithExchangeIdentity(session.WithExchangeSource(ctx, session.ExchangeSourceImport), identity),
 		target,
 		role,
-		exchange.Content,
+		// S2d-2：主日志不再存正文。**不能传 `exchange.Content`** —— 传了就是把正文
+		// 写回两份真相。块流在下面按 aux 一并编译。
+		"",
 		agentName,
 		"",
 		"",
@@ -593,28 +595,27 @@ func appendImportedExchange(
 	}
 	// aux 以 seq 为键：必须取刚落下那行的真实 seq（max+1 分配下 len ≠ seq）
 	seq := session.MaxExchangeSeq(target.Exchanges)
+	// S2d-2：正文走块流。aux 先攒起来一次性编译 —— persistTurnBlocks 要按 (line, 到达序)
+	// 把 aux 插进正文段之间，逐条追加做不到（那会是每条 aux 一块独立的块，顺序全丢）。
+	collected := make([]session.ExchangeAux, 0, len(exchange.Aux))
 	for _, importedAux := range exchange.Aux {
 		// reasoning 走 Thought 字段，与实时路径的 thought_chunk 同一形状 ——
 		// 前端把 `reasoning` 块渲染成灰显的思考文本，而 think 工具卡是另一种外观。
 		if strings.TrimSpace(importedAux.Thought) != "" {
-			if err := manager.AddExchangeAux(ctx, target.Key, session.ExchangeAux{
+			collected = append(collected, session.ExchangeAux{
 				Seq:     seq,
 				Line:    importedAux.Line,
 				Thought: importedAux.Thought,
-			}); err != nil {
-				return false, err
-			}
+			})
 			continue
 		}
 		if importedAux.Plan != nil {
 			plan := *importedAux.Plan
-			if err := manager.AddExchangeAux(ctx, target.Key, session.ExchangeAux{
+			collected = append(collected, session.ExchangeAux{
 				Seq:  seq,
 				Line: importedAux.Line,
 				Plan: &plan,
-			}); err != nil {
-				return false, err
-			}
+			})
 			continue
 		}
 		if importedAux.ToolCall == nil {
@@ -629,11 +630,23 @@ func appendImportedExchange(
 			toolCall.Kind != agenttypes.ToolKindOther {
 			continue
 		}
-		if err := manager.AddExchangeAux(ctx, target.Key, session.ExchangeAux{
+		collected = append(collected, session.ExchangeAux{
 			Seq:      seq,
 			Line:     importedAux.Line,
 			ToolCall: &toolCall,
-		}); err != nil {
+		})
+	}
+	// 块在行之后写：块要带 turn_id，而 turn_id 在 AddExchangeForAgentAt 里才定下来。
+	// 主日志已经落了盘，块流失败不该让这一行消失（否则用户少看到一整轮）。
+	if err := persistTurnBlocks(ctx, manager, target.Key, seq,
+		session.TurnIDForSeq(target.Exchanges, seq), exchange.Content, collected); err != nil {
+		log.Printf("[session] persist.import.blocks.error session=%s seq=%d err=%v", target.Key, seq, err)
+	}
+	// aux 仍要逐条落盘：它还是 `GET /api/sessions/{key}` 回包里 `exchange_aux` 的来源
+	// （前端按它渲染工具卡 / reasoning，见 http.go 的 projectSessionExchangesForResponse）。
+	// 删掉它会让所有存量读路径立刻看不到工具卡 —— 那不是 S2d-2 的范围。
+	for _, aux := range collected {
+		if err := manager.AddExchangeAux(ctx, target.Key, aux); err != nil {
 			return false, err
 		}
 	}

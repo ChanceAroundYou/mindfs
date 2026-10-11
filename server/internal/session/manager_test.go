@@ -942,7 +942,7 @@ func TestManagerIncrementalExchangeLoad(t *testing.T) {
 	if err != nil {
 		t.Fatalf("incremental get: %v", err)
 	}
-	if len(delta.Exchanges) != 1 || delta.Exchanges[0].Content != "a1" {
+	if len(delta.Exchanges) != 1 || delta.Exchanges[0].LegacyContent != "a1" {
 		t.Fatalf("incremental exchanges = %#v, want [a1]", delta.Exchanges)
 	}
 
@@ -1186,7 +1186,7 @@ func writeExchangeFile(t *testing.T, root rootfs.RootInfo, key string, lines []s
 
 func exchangeJSON(t *testing.T, seq int, content string) string {
 	t.Helper()
-	payload, err := json.Marshal(Exchange{Seq: seq, Role: "user", Content: content, Timestamp: time.Date(2026, 9, 14, 10, 0, seq, 0, time.UTC)})
+	payload, err := json.Marshal(Exchange{Seq: seq, Role: "user", LegacyContent: content, Timestamp: time.Date(2026, 9, 14, 10, 0, seq, 0, time.UTC)})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
@@ -1243,8 +1243,8 @@ func TestReadExchangesRepairsNulFilledLine(t *testing.T) {
 	if len(loaded.Exchanges) != 2 {
 		t.Fatalf("rows = %d, want 2（NUL 行应被还原）", len(loaded.Exchanges))
 	}
-	if loaded.Exchanges[1].Content != "b" {
-		t.Fatalf("repaired content = %q, want %q", loaded.Exchanges[1].Content, "b")
+	if loaded.Exchanges[1].LegacyContent != "b" {
+		t.Fatalf("repaired content = %q, want %q", loaded.Exchanges[1].LegacyContent, "b")
 	}
 }
 
@@ -1287,14 +1287,14 @@ func TestSessionIsLiveOwned(t *testing.T) {
 		want      bool
 	}{
 		{"空会话", nil, false},
-		{"只有导入行", []Exchange{{Source: ExchangeSourceImport, Content: "x"}, {Source: ExchangeSourceImport, Content: "y"}}, false},
-		{"有实时行", []Exchange{{Source: ExchangeSourceImport, Content: "x"}, {Source: ExchangeSourceLive, Content: "y"}}, true},
+		{"只有导入行", []Exchange{{Source: ExchangeSourceImport, LegacyContent: "x"}, {Source: ExchangeSourceImport, LegacyContent: "y"}}, false},
+		{"有实时行", []Exchange{{Source: ExchangeSourceImport, LegacyContent: "x"}, {Source: ExchangeSourceLive, LegacyContent: "y"}}, true},
 		// 老数据（无 Source 标注）用实时路径独有签名兜底
-		{"老数据带 model_display_name", []Exchange{{ModelDisplayName: "Sonnet 4.5", Content: "x"}}, true},
-		{"老数据带 token_usage", []Exchange{{TokenUsage: &agenttypes.TokenUsage{InputTokens: 1}, Content: "x"}}, true},
-		{"老数据无签名", []Exchange{{Content: "x"}, {Content: "y"}}, false},
+		{"老数据带 model_display_name", []Exchange{{ModelDisplayName: "Sonnet 4.5", LegacyContent: "x"}}, true},
+		{"老数据带 token_usage", []Exchange{{TokenUsage: &agenttypes.TokenUsage{InputTokens: 1}, LegacyContent: "x"}}, true},
+		{"老数据无签名", []Exchange{{LegacyContent: "x"}, {LegacyContent: "y"}}, false},
 		// 明确标了 import 的行不参与签名兜底（避免把导入行误判成实时行）
-		{"导入行带残留字段", []Exchange{{Source: ExchangeSourceImport, ModelDisplayName: "Sonnet 4.5", Content: "x"}}, false},
+		{"导入行带残留字段", []Exchange{{Source: ExchangeSourceImport, ModelDisplayName: "Sonnet 4.5", LegacyContent: "x"}}, false},
 	}
 	for _, tc := range cases {
 		if got := SessionIsLiveOwned(tc.exchanges); got != tc.want {

@@ -22,8 +22,8 @@ func TestSessionResponseWindowFiltersAux(t *testing.T) {
 	s := &session.Session{
 		Key: "k1",
 		Exchanges: []session.Exchange{
-			{Seq: 2, Content: "b"},
-			{Seq: 3, Content: "c"},
+			{Seq: 2, LegacyContent: "b"},
+			{Seq: 3, LegacyContent: "c"},
 		},
 	}
 	aux := map[int][]session.ExchangeAux{

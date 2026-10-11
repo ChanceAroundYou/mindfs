@@ -26,12 +26,12 @@ import (
 
 func identityExchange(seq int, role, content, nativeTurn, nativePrompt string, ts time.Time) session.Exchange {
 	return session.Exchange{
-		Seq:          seq,
-		Role:         role,
-		Content:      content,
-		NativeTurn:   nativeTurn,
-		NativePrompt: nativePrompt,
-		Timestamp:    ts,
+		Seq:           seq,
+		Role:          role,
+		LegacyContent: content,
+		NativeTurn:    nativeTurn,
+		NativePrompt:  nativePrompt,
+		Timestamp:     ts,
 	}
 }
 
@@ -49,7 +49,7 @@ func TestIdentityDedupMatchesByNativeIDEvenWhenContentDiffers(t *testing.T) {
 	target := identityTarget(
 		identityExchange(12, "agent", "前半段", "msg-uuid-1", "", ts),
 	)
-	if !exchangeAlreadyRecorded(target, "agent", "msg-uuid-1", "前半段\n\n后半段", ts.Add(3*time.Hour)) {
+	if !exchangeAlreadyRecorded(context.Background(), nil, target, "agent", "msg-uuid-1", "前半段\n\n后半段", ts.Add(3*time.Hour)) {
 		t.Fatal("native id 相等就是同一条消息，内容不同（导入器合并过）也必须判为已写过")
 	}
 }
@@ -60,13 +60,13 @@ func TestIdentityDedupKeepsRoleKeysSeparate(t *testing.T) {
 	target := identityTarget(
 		identityExchange(12, "agent", "回答", "shared-id", "", ts),
 	)
-	if exchangeAlreadyRecorded(target, "user", "shared-id", "提问", ts) {
+	if exchangeAlreadyRecorded(context.Background(), nil, target, "user", "shared-id", "提问", ts) {
 		t.Fatal("agent 行的 native_turn 不得当成 user 行的 native_prompt")
 	}
 	target2 := identityTarget(
 		identityExchange(12, "user", "提问", "", "shared-id", ts),
 	)
-	if exchangeAlreadyRecorded(target2, "agent", "shared-id", "回答", ts) {
+	if exchangeAlreadyRecorded(context.Background(), nil, target2, "agent", "shared-id", "回答", ts) {
 		t.Fatal("user 行的 native_prompt 不得当成 agent 行的 native_turn")
 	}
 }
@@ -77,7 +77,7 @@ func TestIdentityDedupPassesRowsWithUnmatchedNativeID(t *testing.T) {
 	target := identityTarget(
 		identityExchange(12, "agent", "同一段内容", "msg-uuid-1", "", ts),
 	)
-	if exchangeAlreadyRecorded(target, "agent", "msg-uuid-2", "同一段内容", ts) {
+	if exchangeAlreadyRecorded(context.Background(), nil, target, "agent", "msg-uuid-2", "同一段内容", ts) {
 		t.Fatal("native id 不同就是两条不同的消息，哪怕内容一模一样（用户真的重发过）")
 	}
 }
@@ -88,13 +88,13 @@ func TestIdentityDedupFallsBackToContentWithinTolerance(t *testing.T) {
 	target := identityTarget(
 		identityExchange(12, "user", "请继续", "", "", ts),
 	)
-	if !exchangeAlreadyRecorded(target, "user", "", "请继续", ts.Add(2*time.Second)) {
+	if !exchangeAlreadyRecorded(context.Background(), nil, target, "user", "", "请继续", ts.Add(2*time.Second)) {
 		t.Fatal("没有 native id 时必须退回内容判重，否则历史数据的双写永远折叠不掉")
 	}
-	if exchangeAlreadyRecorded(target, "user", "", "请继续", ts.Add(3*time.Hour)) {
+	if exchangeAlreadyRecorded(context.Background(), nil, target, "user", "", "请继续", ts.Add(3*time.Hour)) {
 		t.Fatal("相隔数小时的相同内容必须放行 —— 那是用户真的重发（实测「请继续」出现过 7 次）")
 	}
-	if exchangeAlreadyRecorded(target, "user", "", "别的话", ts) {
+	if exchangeAlreadyRecorded(context.Background(), nil, target, "user", "", "别的话", ts) {
 		t.Fatal("内容不同不是重复")
 	}
 }
@@ -106,7 +106,7 @@ func TestIdentityDedupDoesNotFallBackWhenNativeIDPresent(t *testing.T) {
 	target := identityTarget(
 		identityExchange(12, "agent", "同一段内容", "", "", ts),
 	)
-	if exchangeAlreadyRecorded(target, "agent", "msg-uuid-9", "同一段内容", ts) {
+	if exchangeAlreadyRecorded(context.Background(), nil, target, "agent", "msg-uuid-9", "同一段内容", ts) {
 		t.Fatal("带了 native id 就不许猜 —— D10：对不上就放行 + 记日志，永不按内容猜")
 	}
 }
@@ -119,10 +119,10 @@ func TestIdentityDedupIgnoresEmptyContentButHonorsIdentity(t *testing.T) {
 		identityExchange(12, "agent", "", "", "", ts),
 		identityExchange(13, "agent", "", "msg-uuid-5", "", ts),
 	)
-	if exchangeAlreadyRecorded(target, "agent", "", "", ts) {
+	if exchangeAlreadyRecorded(context.Background(), nil, target, "agent", "", "", ts) {
 		t.Fatal("空内容行不是同一句话，不能按内容折叠")
 	}
-	if !exchangeAlreadyRecorded(target, "agent", "msg-uuid-5", "", ts) {
+	if !exchangeAlreadyRecorded(context.Background(), nil, target, "agent", "msg-uuid-5", "", ts) {
 		t.Fatal("空内容行照样有 native id，身份相等就是重复")
 	}
 }
@@ -130,7 +130,7 @@ func TestIdentityDedupIgnoresEmptyContentButHonorsIdentity(t *testing.T) {
 // 零时间戳 + 无 native id：无法证明任何事，一律放行。
 func TestIdentityDedupPassesWhenNothingToProve(t *testing.T) {
 	target := identityTarget(identityExchange(12, "user", "内容", "", "", time.Time{}))
-	if exchangeAlreadyRecorded(target, "user", "", "内容", time.Time{}) {
+	if exchangeAlreadyRecorded(context.Background(), nil, target, "user", "", "内容", time.Time{}) {
 		t.Fatal("时间戳为零且没有 native id 时无法证明，必须放行")
 	}
 }

@@ -1747,7 +1747,7 @@
 - 验收记录（实测，合成最坏输入 1.19MB/206 行、每行 ~5.7KB）：冷开窗 **15.3ms → 1.4ms**
   （读盘 0.9ms + 行计数 0.14ms + 解析 9 条 0.8ms）；真实最重会话 391KB/206 行按比例约 0.6ms。
 
-### G-BH 会话正文块流（块存储层 + 轮次身份 + S2a 双写 + S2b 读改走块流 + C1/C2）（2026-10-10）
+### G-BH 会话正文块流（块存储层 + 轮次身份 + S2a 双写 + S2b 读改走块流 + C1/C2 + S2d-2 主日志不再存正文）（2026-10-10）
 
 - 来源：`server/internal/session/blocks.go`（新增）、`server/internal/session/manager.go`、
   `server/internal/session/types.go`、`server/internal/api/usecase/session.go`、
@@ -1755,9 +1755,10 @@
   （`docs/session-blocks-plan.md` §3/§4/§10）。
 - 边界：**会话正文的存储、身份与读取** —— 块流格式、块写入点、轮次元数据字段、`turn_id` 的
   生成与清理、窗口读走块流、前端按 `type` 渲染块。
-  S2d 删 `Content`、S2e 删 `TurnGen`、S3 退役 `seq=0` 机制 —— 都是后续步骤，不在本组。
-  本组内部 S2a（双写，读路径不动）与 S2b（读路径切块流，`content` 退化为回退）是**两个
-  可独立回滚的提交**：S2b 之后前端仍能渲染没有块流的历史会话。
+  S2e 删 `TurnGen`、S3 退役 `seq=0` 机制 —— 都是后续步骤，不在本组。
+  本组内部 S2a（双写，读路径不动）、S2b（读路径切块流，`content` 退化为回退）、
+  S2d-2（主日志 `content` 恒空，块流是唯一载体）是**三个可独立回滚的提交**：
+  S2b 之后前端仍能渲染没有块流的历史会话，S2d-2 之后老会话靠 S2d-1 的回填补齐。
 - 可见症状（没有它会怎样）：
   1. **回复结束后助手正文消失**：一轮正文只拼 `text` 块，而 `os` 模型约 15% 的轮次只产出
      reasoning、没有任何 text，于是落库成 `content:""`。流式时 `thought_chunk` 实时推所以
@@ -1786,6 +1787,12 @@
   8. **S2a 之后写入的数据从未部署**：本机 320 个会话、2166 行，**0 个块流文件**
      （块流要 `make install` 之后的二进制才写）。所以 S2d 直接删 `Exchange.Content`
      等于把全部历史正文清空。
+  9. **S2d-2 之前的双写是两份真相**：块流与主日志 `content` 同时写着同一段正文，
+     任何一处只被部分更新就会漂移（revision 版本、导入合并、fork 复制各有各的路径）。
+     合并本轮起主日志 `content` 恒空，块流是唯一载体。
+  10. **user 行被空内容守卫整行吞掉**：S2d-2 一旦让 user 行不再带正文，
+     `addExchangeForAgentAt` 里「空正文 + 非 agent 就跳过」的判据会把**每一行 user**
+     丢掉 —— 前端表现为「我说过的话不见了」，且没有任何报错。
 - 为什么必须保留：
   1. 新增 `sessions/<key>.blocks.jsonl`（块流），一行一块：
      `{seq,pos,revision,type,text|toolcall|todo|plan|compact,step,turn_id,native_id,parent_tool_use_id,task_id,subagent_type}`。
@@ -1885,6 +1892,31 @@
       `SessionUpdate` 不带时间戳，它给每行盖的是「读到它的那一刻」，恒晚于地板 ——
       地板形同虚设，而代码看着像「有地板就安全」。删掉那道假防线后，ACP 侧的正确性
       由 native id 身份判重负责。
+  20. **S2d-2 块流成为正文唯一载体（D1）**：主日志一行的 `content` 恒空，正文只写块流。
+      三个写入点全部收紧 —— `persistUserTurnExchange`（user 行）、`SendMessage` 轮末
+      （助手行）、`appendImportedExchange`（导入行）。字段保留为 `LegacyContent` 且
+      **json tag 仍叫 `content`**：老会话文件必须还能解析，而它现在的唯一读者是
+      S2d-1 的回填（`backfillTurnsFromWindow`）。助手块的写入从「失败只记日志」改成
+      **返回 err**：主日志那一行只剩元数据，块丢了就等于这一轮没有正文，而用户看得出来；
+      导入路径仍只记日志（那一行已经落盘，块失败不该让整行消失）。
+  21. `addExchangeForAgentAt` 的空行守卫跟着改：S2d-2 之前它按「空正文 + 非 agent 角色」
+      跳过，而 user 行现在**恒空**，照旧判据会把**每一行 user** 静默丢掉（轮次元数据
+      `turn_id`/`native_prompt` 跟着没，前端按 seq 合并时那句话不显示，搜索的 user 命中
+      优先也失效）。改成「什么都没带」才算空行：空正文 + 空 agent + 无任何轮次身份。
+  22. 判重的内容比对改读块流（`recordedExchangeBody`）：claude 的 user 行拿不到 native
+      uuid，判重只能靠正文，而正文现在住在块流里。不读就会把同一个 prompt 反复当新行
+      写下去 —— 那正是「ask 下面又渲染一轮出现过的文字」。
+  23. 搜索改两遍（`searchSessionContent`）：先搜块流（text + reasoning），再扫主日志。
+      块流那遍是新内容的主路径，主日志那遍为了**还没回填的老会话**（回填是读时惰性的，
+      会话没被读过就还没块）。省掉任一遍都是静默失效。
+  24. fork 分工明确：`copyForkBlocks` 复制**源已有的块**（revision/step 是盘上真值，
+      不重编号），`fillForkBlocksFromLegacy` 给老会话补编译。两者都要 —— 只补编译会丢
+      源块里的 revision 信息，只复制会让老会话 fork 出一份没有正文的会话。
+  25. `sessionSummary`（appcontext.go）与 `copyForkHistory` 的主日志正文读取全部改走
+      `GetBlocksWindow` —— 摘要标题、fork 复制都从块流取，否则新会话的标题是空的。
+  26. `Manager` 新增 `TurnIDForSeq`：块要带 `turn_id` 才能挂回轮次，而 `max+1` 分配下
+      「刚写下的那一行」的 seq 只有调用方算得出、`turn_id` 却存在行里（导入路径就是
+      拿到 seq 之后回过头来问这一行的身份）。
 - 针对性测试：
   - `server/internal/session/manager_blocks_test.go` → 块追加/读回顺序、缺文件为空、
     按 seq 过滤、容忍无 `pos` 的旧行、块流与主日志同目录、删会话连块流一起删。
@@ -1935,6 +1967,15 @@
     正文与老主日志**逐字相同**、幂等（第二次跑块流文件一个字节都不变）、**正文为空但
     aux 有 reasoning 的轮次被救回**、已有块的轮次一个字节都不动、什么都编译不出来的
     会话不建空块流、`missingBlockSeqs` 与读路径同口径、seq=0 不参与。
+  - `server/internal/api/usecase/session_content_legacy_test.go`（S2d-2）→ 四条降级契约：
+    live 轮写完后主日志一行的正文必须是空的（**且块流里找得到**，否则就是真丢了）、
+    导入行同样只写块、user 判重改读块流（同一句话相邻两次仍只落一行）、真人间隔十分钟
+    的重复提问照旧落三行、fork 老会话仍把正文带过去。
+  - `server/internal/session/user_turn_survives_test.go`（S2d-2）→ **空守卫那条改动的
+    回归**：空正文的 user 行必须落得下去（改之前整行被吞、前端看不到自己说过的话），
+    空正文的 agent 行同样不被误吞。
+  - `server/internal/session/search_blocks_test.go`（S2d-2）→ 搜索两遍都不能省：
+    块流命中（新内容）、块流没有时退回主日志（还没回填的老会话）、两边都搜不到就是没命中。
   - `server/internal/api/http_window_test.go`（S2b 改，契约变了）→
     `TestHandleSessionGetWithoutBlocksReturnsEmpty` 的断言**整个反转**成
     `TestHandleSessionGetBackfillsLegacyBlocks`（老正文必须在**同一个回包里**出现 ——

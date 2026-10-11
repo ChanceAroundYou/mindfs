@@ -16,14 +16,14 @@ func TestLoadExchangesMergesDuplicateSeq(t *testing.T) {
 	older := time.Date(2026, 9, 27, 1, 0, 0, 0, time.UTC)
 	newer := older.Add(time.Minute)
 	entries := []Exchange{
-		{Seq: 15, Role: "user", Content: "question", Timestamp: newer},
+		{Seq: 15, Role: "user", LegacyContent: "question", Timestamp: newer},
 		{Seq: 16, Role: "agent", Timestamp: older},
-		{Seq: 15, Role: "user", Content: "question", Timestamp: older},
-		{Seq: 16, Role: "agent", Content: "complete reply", Model: "model", Timestamp: newer},
-		{Seq: 21, Role: "user", Content: "next question"},
-		{Seq: 22, Role: "agent", Content: "original reply"},
-		{Seq: 22, Role: "agent", Content: "later reply"},
-		{Seq: 16, Role: "agent", Content: " \n\t"},
+		{Seq: 15, Role: "user", LegacyContent: "question", Timestamp: older},
+		{Seq: 16, Role: "agent", LegacyContent: "complete reply", Model: "model", Timestamp: newer},
+		{Seq: 21, Role: "user", LegacyContent: "next question"},
+		{Seq: 22, Role: "agent", LegacyContent: "original reply"},
+		{Seq: 22, Role: "agent", LegacyContent: "later reply"},
+		{Seq: 16, Role: "agent", LegacyContent: " \n\t"},
 		{Seq: 23, Role: "agent"},
 		{Seq: 23, Role: "agent", Model: "latest placeholder"},
 	}
@@ -92,7 +92,7 @@ func TestLoadExchangesDuplicateSeqKeepsLegacySequenceAssignment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []Exchange{{Seq: 5, Role: "agent", Content: "reply"}, {Seq: 6, Role: "user", Content: "legacy"}}
+	want := []Exchange{{Seq: 5, Role: "agent", LegacyContent: "reply"}, {Seq: 6, Role: "user", LegacyContent: "legacy"}}
 	if maxSeq != 6 || !reflect.DeepEqual(got, want) {
 		t.Fatalf("exchanges = %#v, maxSeq = %d; want %#v, 6", got, maxSeq, want)
 	}

@@ -8,7 +8,7 @@ import (
 )
 
 func projectionExchange(seq int, role, source, content string, ts time.Time) session.Exchange {
-	return session.Exchange{Seq: seq, Role: role, Source: source, Content: content, Timestamp: ts}
+	return session.Exchange{Seq: seq, Role: role, Source: source, LegacyContent: content, Timestamp: ts}
 }
 
 // 规则 A：导入器写的那条如果与实时路径写的是同一句（哪怕带 [Request interrupted by user]
@@ -123,8 +123,8 @@ func TestRemapExchangeAuxKeepsHiddenRowsAux(t *testing.T) {
 // 对应用户实测的两例——本会话 6.4s 那对、1789390688 的 15.6s 那对。
 func TestProjectExchangesFoldsLegacyRowsBySignature(t *testing.T) {
 	base := time.Date(2026, 9, 14, 15, 39, 24, 0, time.UTC)
-	live := session.Exchange{Seq: 145, Role: "user", Content: "重启好了。你继续检查吧", Timestamp: base, ModelDisplayName: "of", Effort: "max"}
-	imported := session.Exchange{Seq: 147, Role: "user", Content: "重启好了。你继续检查吧", Timestamp: base.Add(6400 * time.Millisecond)}
+	live := session.Exchange{Seq: 145, Role: "user", LegacyContent: "重启好了。你继续检查吧", Timestamp: base, ModelDisplayName: "of", Effort: "max"}
+	imported := session.Exchange{Seq: 147, Role: "user", LegacyContent: "重启好了。你继续检查吧", Timestamp: base.Add(6400 * time.Millisecond)}
 	kept, hidden, proven := ProjectExchanges([]session.Exchange{live, imported})
 	if len(kept) != 1 {
 		t.Fatalf("kept = %d, want 1: %+v", len(kept), kept)
@@ -144,8 +144,8 @@ func TestProjectExchangesFoldsLegacyRowsBySignature(t *testing.T) {
 func TestProjectExchangesKeepsUnmarkedTwins(t *testing.T) {
 	base := time.Date(2026, 9, 14, 10, 0, 0, 0, time.UTC)
 	rows := []session.Exchange{
-		{Seq: 1, Role: "user", Content: "继续", Timestamp: base},
-		{Seq: 2, Role: "user", Content: "继续", Timestamp: base.Add(time.Hour)},
+		{Seq: 1, Role: "user", LegacyContent: "继续", Timestamp: base},
+		{Seq: 2, Role: "user", LegacyContent: "继续", Timestamp: base.Add(time.Hour)},
 	}
 	kept, hidden, _ := ProjectExchanges(rows)
 	if len(kept) != 2 || len(hidden) != 0 {
@@ -160,8 +160,8 @@ func TestProjectExchangesFoldsPrefixSnapshot(t *testing.T) {
 	full := "我先找那个会话，然后核对转录与库里的行数是否一致，最后把结论写进报告里。这是一段足够长的正文。"
 	snapshot := "我先找那个会话，然后核对转录与库里的行数是否一致"
 	rows := []session.Exchange{
-		{Seq: 1, Role: "agent", Content: snapshot, Timestamp: base, ModelDisplayName: "of"},
-		{Seq: 2, Role: "agent", Content: full, Timestamp: base.Add(30 * time.Second)},
+		{Seq: 1, Role: "agent", LegacyContent: snapshot, Timestamp: base, ModelDisplayName: "of"},
+		{Seq: 2, Role: "agent", LegacyContent: full, Timestamp: base.Add(30 * time.Second)},
 	}
 	kept, hidden, _ := ProjectExchanges(rows)
 	if len(kept) != 1 || kept[0].Seq != 2 {
@@ -178,8 +178,8 @@ func TestProjectExchangesKeepsDistantPrefixRows(t *testing.T) {
 	short := "API Error: 502 Provider returned 400 Bad Request: 这是一段足够长的错误信息，用于触发前缀判定。"
 	long := short + " 后面还会多出一截内容，因此构成前缀关系。"
 	rows := []session.Exchange{
-		{Seq: 1, Role: "agent", Content: short, Timestamp: base},
-		{Seq: 2, Role: "agent", Content: long, Timestamp: base.Add(32 * time.Hour), ModelDisplayName: "of"},
+		{Seq: 1, Role: "agent", LegacyContent: short, Timestamp: base},
+		{Seq: 2, Role: "agent", LegacyContent: long, Timestamp: base.Add(32 * time.Hour), ModelDisplayName: "of"},
 	}
 	kept, hidden, _ := ProjectExchanges(rows)
 	if len(kept) != 2 || len(hidden) != 0 {
@@ -193,8 +193,8 @@ func TestProjectExchangesKeepsSameProvenancePrefixRows(t *testing.T) {
 	short := "这一轮的结论是：内存缓存与磁盘不一致时，必须重新读盘。"
 	long := short + " 补充：读盘后还要把游标推到新位置。"
 	rows := []session.Exchange{
-		{Seq: 1, Role: "agent", Content: short, Timestamp: base, ModelDisplayName: "of"},
-		{Seq: 2, Role: "agent", Content: long, Timestamp: base.Add(10 * time.Second), ModelDisplayName: "of"},
+		{Seq: 1, Role: "agent", LegacyContent: short, Timestamp: base, ModelDisplayName: "of"},
+		{Seq: 2, Role: "agent", LegacyContent: long, Timestamp: base.Add(10 * time.Second), ModelDisplayName: "of"},
 	}
 	kept, hidden, _ := ProjectExchanges(rows)
 	if len(kept) != 2 || len(hidden) != 0 {
@@ -210,11 +210,11 @@ func TestProjectExchangesResolvesHiddenChains(t *testing.T) {
 	longer := content + " 另外把涉及的测试一并补上，谢谢。"
 	rows := []session.Exchange{
 		// 30：带标记（被 A2 判定比 33 短）
-		{Seq: 30, Role: "user", Content: content, Timestamp: base, ModelDisplayName: "of"},
+		{Seq: 30, Role: "user", LegacyContent: content, Timestamp: base, ModelDisplayName: "of"},
 		// 32：不带标记，内容与 30 相同 → 被 A 吸收
-		{Seq: 32, Role: "user", Content: content, Timestamp: base.Add(time.Second)},
+		{Seq: 32, Role: "user", LegacyContent: content, Timestamp: base.Add(time.Second)},
 		// 33：更长（A2 的保留方）
-		{Seq: 33, Role: "user", Content: longer, Timestamp: base.Add(2 * time.Second)},
+		{Seq: 33, Role: "user", LegacyContent: longer, Timestamp: base.Add(2 * time.Second)},
 	}
 	kept, hidden, _ := ProjectExchanges(rows)
 	if len(kept) != 1 || kept[0].Seq != 33 {

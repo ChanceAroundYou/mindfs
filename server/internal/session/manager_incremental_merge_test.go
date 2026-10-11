@@ -58,7 +58,7 @@ func TestLoadExchangesIncrementalAppliesSameSeqUpdate(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 	writeExchangeLog(t, m, created.Key, []Exchange{
-		{Seq: 1, Role: "user", Content: "q"},
+		{Seq: 1, Role: "user", LegacyContent: "q"},
 		{Seq: 2, Role: "agent"},
 	})
 
@@ -67,12 +67,12 @@ func TestLoadExchangesIncrementalAppliesSameSeqUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first get: %v", err)
 	}
-	if len(first.Exchanges) != 2 || first.Exchanges[1].Content != "" {
+	if len(first.Exchanges) != 2 || first.Exchanges[1].LegacyContent != "" {
 		t.Fatalf("first exchanges = %#v, want placeholder empty agent row", first.Exchanges)
 	}
 
 	// 外部写入者补全同一条 seq=2。
-	appendExchangeLogLine(t, m, created.Key, Exchange{Seq: 2, Role: "agent", Content: "complete reply"})
+	appendExchangeLogLine(t, m, created.Key, Exchange{Seq: 2, Role: "agent", LegacyContent: "complete reply"})
 
 	got, err := m.Get(ctx, created.Key, 0)
 	if err != nil {
@@ -81,9 +81,9 @@ func TestLoadExchangesIncrementalAppliesSameSeqUpdate(t *testing.T) {
 	if len(got.Exchanges) != 2 {
 		t.Fatalf("incremental exchanges = %d rows, want 2 (no duplicate seq)", len(got.Exchanges))
 	}
-	if got.Exchanges[1].Content != "complete reply" {
+	if got.Exchanges[1].LegacyContent != "complete reply" {
 		t.Fatalf("seq=2 content = %q, want %q (incremental path must see same-seq update)",
-			got.Exchanges[1].Content, "complete reply")
+			got.Exchanges[1].LegacyContent, "complete reply")
 	}
 }
 
@@ -97,15 +97,15 @@ func TestLoadExchangesIncrementalDedupsSameSeqWithinTail(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 	writeExchangeLog(t, m, created.Key, []Exchange{
-		{Seq: 1, Role: "user", Content: "q"},
-		{Seq: 2, Role: "agent", Content: "first"},
+		{Seq: 1, Role: "user", LegacyContent: "q"},
+		{Seq: 2, Role: "agent", LegacyContent: "first"},
 	})
 	if _, err := m.Get(ctx, created.Key, 0); err != nil {
 		t.Fatalf("first get: %v", err)
 	}
 
-	appendExchangeLogLine(t, m, created.Key, Exchange{Seq: 3, Role: "agent", Content: "draft"})
-	appendExchangeLogLine(t, m, created.Key, Exchange{Seq: 3, Role: "agent", Content: "final"})
+	appendExchangeLogLine(t, m, created.Key, Exchange{Seq: 3, Role: "agent", LegacyContent: "draft"})
+	appendExchangeLogLine(t, m, created.Key, Exchange{Seq: 3, Role: "agent", LegacyContent: "final"})
 
 	got, err := m.Get(ctx, created.Key, 0)
 	if err != nil {
@@ -114,8 +114,8 @@ func TestLoadExchangesIncrementalDedupsSameSeqWithinTail(t *testing.T) {
 	if len(got.Exchanges) != 3 {
 		t.Fatalf("exchanges = %d rows, want 3 (same-seq tail rows must merge)", len(got.Exchanges))
 	}
-	if got.Exchanges[2].Content != "final" {
-		t.Fatalf("seq=3 content = %q, want %q (last non-empty wins)", got.Exchanges[2].Content, "final")
+	if got.Exchanges[2].LegacyContent != "final" {
+		t.Fatalf("seq=3 content = %q, want %q (last non-empty wins)", got.Exchanges[2].LegacyContent, "final")
 	}
 }
 
@@ -129,7 +129,7 @@ func TestLoadExchangesDoesNotWarnOnCompletenessUpgrade(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 	writeExchangeLog(t, m, created.Key, []Exchange{
-		{Seq: 1, Role: "user", Content: "q"},
+		{Seq: 1, Role: "user", LegacyContent: "q"},
 		{Seq: 2, Role: "agent"},
 	})
 
@@ -138,7 +138,7 @@ func TestLoadExchangesDoesNotWarnOnCompletenessUpgrade(t *testing.T) {
 	log.SetOutput(&captured)
 	defer log.SetOutput(previous)
 
-	appendExchangeLogLine(t, m, created.Key, Exchange{Seq: 2, Role: "agent", Content: "reply", Model: "gpt-5"})
+	appendExchangeLogLine(t, m, created.Key, Exchange{Seq: 2, Role: "agent", LegacyContent: "reply", Model: "gpt-5"})
 	if _, err := m.Get(ctx, created.Key, 0); err != nil {
 		t.Fatalf("incremental get: %v", err)
 	}
@@ -148,8 +148,8 @@ func TestLoadExchangesDoesNotWarnOnCompletenessUpgrade(t *testing.T) {
 
 	// 真冲突：两行都有非空且不同的正文 → 必须告警。
 	captured.Reset()
-	appendExchangeLogLine(t, m, created.Key, Exchange{Seq: 3, Role: "agent", Content: "aaa"})
-	appendExchangeLogLine(t, m, created.Key, Exchange{Seq: 3, Role: "agent", Content: "bbb"})
+	appendExchangeLogLine(t, m, created.Key, Exchange{Seq: 3, Role: "agent", LegacyContent: "aaa"})
+	appendExchangeLogLine(t, m, created.Key, Exchange{Seq: 3, Role: "agent", LegacyContent: "bbb"})
 	if _, err := m.Get(ctx, created.Key, 0); err != nil {
 		t.Fatalf("incremental get after conflict: %v", err)
 	}

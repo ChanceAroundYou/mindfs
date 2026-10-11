@@ -81,7 +81,7 @@ func backfillTurnsFromWindow(
 		if !ok {
 			continue
 		}
-		turnBlocks := session.BuildTurnBlocks(seq, turnBlockStep, ex.TurnID, ex.Content, aux[seq])
+		turnBlocks := session.BuildTurnBlocks(seq, turnBlockStep, ex.TurnID, ex.LegacyContent, aux[seq])
 		if len(turnBlocks) == 0 {
 			// 空正文 + 无 aux = 没有任何可编译的东西（纯工具轮、空占位行）。
 			// 不为它们建块：造出一堆空块只会让块流凭空变大，渲染结果一个字都不多。

@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	rootfs "mindfs/server/internal/fs"
 	agenttypes "mindfs/server/internal/agent/types"
+	rootfs "mindfs/server/internal/fs"
 )
 
 func userShellToolCall(shell string) *agenttypes.ToolCall {

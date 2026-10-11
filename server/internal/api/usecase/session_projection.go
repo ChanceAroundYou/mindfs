@@ -126,7 +126,7 @@ func ProjectExchanges(exchanges []session.Exchange) ([]session.Exchange, map[int
 		if hidden[index] || hasIdentity[index] || exchange.Timestamp.IsZero() {
 			continue
 		}
-		content := normalizeExchangeContent(exchange.Content)
+		content := normalizeExchangeContent(exchange.LegacyContent)
 		if len(content) < 40 {
 			continue
 		}
@@ -141,8 +141,8 @@ func ProjectExchanges(exchanges []session.Exchange) ([]session.Exchange, map[int
 		for i := 0; i < len(bucket); i++ {
 			for j := i + 1; j < len(bucket); j++ {
 				shorter, longer := bucket[i], bucket[j]
-				shortContent := normalizeExchangeContent(exchanges[shorter].Content)
-				longContent := normalizeExchangeContent(exchanges[longer].Content)
+				shortContent := normalizeExchangeContent(exchanges[shorter].LegacyContent)
+				longContent := normalizeExchangeContent(exchanges[longer].LegacyContent)
 				if len(shortContent) > len(longContent) {
 					shorter, longer = longer, shorter
 					shortContent, longContent = longContent, shortContent
@@ -180,7 +180,7 @@ func ProjectExchanges(exchanges []session.Exchange) ([]session.Exchange, map[int
 		if hidden[index] || hasIdentity[index] || exchange.Timestamp.IsZero() {
 			continue
 		}
-		content := normalizeExchangeContent(exchange.Content)
+		content := normalizeExchangeContent(exchange.LegacyContent)
 		if content == "" {
 			// 空内容行是占位（如「只调工具、没有正文」的助手轮），不能按内容折叠。
 			continue
@@ -230,7 +230,7 @@ type projectKey struct {
 
 // projectRowKey 归一化一行；空内容（只调工具、没有正文的占位轮）不参与折叠。
 func projectRowKey(exchange session.Exchange) (projectKey, bool) {
-	content := normalizeExchangeContent(exchange.Content)
+	content := normalizeExchangeContent(exchange.LegacyContent)
 	if content == "" {
 		return projectKey{}, false
 	}
@@ -342,7 +342,7 @@ func (s *Service) AuditSession(ctx context.Context, in AuditSessionInput) (Audit
 			HiddenSeq: hiddenSeq,
 			KeptSeq:   keptSeq,
 			Role:      entry.Role,
-			Preview:   auditPreview(entry.Content),
+			Preview:   auditPreview(entry.LegacyContent),
 		}
 		if _, ok := proven[hiddenSeq]; ok {
 			out.Proven = append(out.Proven, item)

@@ -25,13 +25,13 @@ import (
 
 func projectExchange(seq int, role, content, nativeTurn, nativePrompt, source string, ts time.Time) session.Exchange {
 	return session.Exchange{
-		Seq:          seq,
-		Role:         role,
-		Content:      content,
-		NativeTurn:   nativeTurn,
-		NativePrompt: nativePrompt,
-		Source:       source,
-		Timestamp:    ts,
+		Seq:           seq,
+		Role:          role,
+		LegacyContent: content,
+		NativeTurn:    nativeTurn,
+		NativePrompt:  nativePrompt,
+		Source:        source,
+		Timestamp:     ts,
 	}
 }
 

@@ -39,12 +39,12 @@ type RootContext struct {
 }
 
 type AppContext struct {
-	Dirs      *fs.Registry
-	Agents    *agent.Pool
-	Prober    *agent.Prober
-	Update    *update.Service
-	GitHub    *githubimport.Service
-	Auth      *auth.Store
+	Dirs   *fs.Registry
+	Agents *agent.Pool
+	Prober *agent.Prober
+	Update *update.Service
+	GitHub *githubimport.Service
+	Auth   *auth.Store
 	// AccountDir 是本账户私有的配置目录（registry/preferences/nodes/prompts/看板模板）。
 	// 主账户为空串时，各 store 会落回进程默认目录。
 	AccountDir string
@@ -1231,9 +1231,25 @@ func (s *AppContext) sessionSummary(rootID, sessionKey string) string {
 		return ""
 	}
 	for i := len(sess.Exchanges) - 1; i >= 0; i-- {
-		if strings.TrimSpace(sess.Exchanges[i].Role) == "assistant" {
-			return lastRunes(strings.TrimSpace(sess.Exchanges[i].Content), notify.BodyMaxRunes)
+		if strings.TrimSpace(sess.Exchanges[i].Role) != "assistant" {
+			continue
 		}
+		// 正文已搬去块流（S2d-2）：取该轮所有 text 块按 pos 顺序拼起来。
+		// 只读一个 seq 的窗口，不整会话全量读 —— 那是通知链路，不是渲染链路。
+		blocks, err := manager.GetBlocksWindow(context.Background(), sessionKey, map[int]bool{sess.Exchanges[i].Seq: true})
+		if err != nil {
+			return ""
+		}
+		var parts []string
+		for _, block := range blocks {
+			if block.Type != session.BlockTypeText {
+				continue
+			}
+			if text := strings.TrimSpace(block.Text); text != "" {
+				parts = append(parts, text)
+			}
+		}
+		return lastRunes(strings.Join(parts, "\n"), notify.BodyMaxRunes)
 	}
 	return ""
 }
