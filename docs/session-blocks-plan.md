@@ -203,10 +203,9 @@ agent 事件 → block → 缓冲 →(300ms / 64KB / boundary)→ ① append 块
   - 改为：按 `pos` 遍历块
   - `lines` / `totalLines` / `emittedLines` / clamp **全部消失** —— 净简化
 - **超大块**（`os` 的失控 reasoning 实测 **119714 / 103467 字符**）默认折叠 + 标注。
-- **seq=0 机制退役**（D4 的直接收益）：乐观行从第一刻就有权威 `turn_id`，**「认领」步骤消失**。
-  涉及 `isTransientExchange`（6 个调用者：`mergeSessionExchanges` / `isPersistedSeq` /
-  `composeLoadedExchanges` / `App.tsx:4578` / `dropTransientExchanges`）、`inferredSeq`、
-  `tailOverlay` 5 条启发式（`session-streaming-rework.md` §2.2）。
+- **旧目标（已取代）**：曾计划随 D4 退役 seq=0；实际 UI 仍需要无正 seq 的实时缓冲。S3 保留瞬时行模型，把缓存与持久窗口对账改为 MindFS 身份，不再按正文猜重复。
+  旧方案范围包括 isTransientExchange、inferredSeq 与 tailOverlay；这份清单不再是待办。
+  当前只移除正文猜重，瞬时/持久分类仍由现有缓存与窗口流程管理。
 
 ---
 
@@ -251,7 +250,7 @@ agent 事件 → block → 缓冲 →(300ms / 64KB / boundary)→ ① append 块
 | **S2c** | ✅ **身份判重**启用；投影**身份化**（只折叠双边无身份的历史残留）+ 审计端点报身份化进度 | 新数据不再猜；旧残留可度量 |
 | **S2d** | ✅ **已落地**（S2d-1 旧数据回填 + `CompactExchangeAux` 丢 reasoning 的修复；S2d-2 块流成为正文唯一载体、主日志 `content` 恒空） | 单一真相源 |
 | **S2e** | ✅ 删除 `TurnGen`；后由 G-BI 收敛为 `mindfs_id` + `agent_id` 两类 id | 身份模型已统一 |
-| **S3** | ✅ 退役读时投影与审计端点、删除 `CountExchanges`、清理可确认的历史副本；待做：seq=0 / `tailOverlay` 机制审计与退役 | 减少读时启发式 |
+| **S3** | ✅ 退役读时投影与审计端点、删除 CountExchanges、清理可确认的历史副本；✅ 前端瞬时缓存按角色类别 + mindfs_id 与持久窗口对账；保留无正 seq 的实时缓冲 | 读时不再按内容猜身份，实时输出仍可见 |
 | 待办 | 旧数据迁移脚本（dsh 可迁、claude 本地无 thought）；codex native id 实证 | — |
 
 登记：S1=`G-BG`、S2a–S2e=`G-BH`、身份模型=`G-BI`、S3 清理=`G-AB`；每步针对性测试 + 提交带 `Scope:` trailer。
@@ -259,7 +258,7 @@ agent 事件 → block → 缓冲 →(300ms / 64KB / boundary)→ ① append 块
 **身份契约更新（G-BI，2026-10-11）**：本节早期的 `turn_id` / `native_*` 是历史阶段名，当前落盘只使用两类身份：
 `mindfs_id` 由 MindFS 确定性铸造并作为权威行 id；`agent_id` 是 agent 提供的可选桥接 id。非空 `agent_id` 用作 mint seed，缺失时以 `sessionKey|role|seq` 兜底。live 与 import 共享该规则。pending 灯沿用同一 UUID 字符串形状，但按轮次开始时的身份时点单独生成。
 
-**S3 落地记录（2026-10-12）**：删除会话读时投影、aux 重映射和审计端点，并移除 `CountExchanges` 及其专用测试。审核本机历史数据后，原计划中的 10 条候选只有 8 条能按 import/live 来源与角色确认是重复副本，已删除副本、保留 live 行；另 2 条回复不同，未能证明是重复，保留。活动会话里发现一条投影误隐藏不同回合的记录，GET 改为原样返回持久行，aux 继续按原 seq 对应。`exchangeAlreadyRecorded` 保留为写入侧幂等护栏。`appendResponseChunk` 也保留：live 写路径仍用它汇总 text 块，供块持久化与行号计算；要删需先改写这两条真实调用路径。`seq=0` 与 `tailOverlay` 尚未在本轮退役，需单独审计其 UI 对账职责。
+S3 落地记录（2026-10-12）：删除会话读时投影、aux 重映射和审计端点，移除 CountExchanges 及专用测试。历史 10 条候选中，8 条按 import/live 来源与角色确认重复并清理；另 2 条回复不同、无法确认，予以保留。活动会话还发现投影误隐藏不同回合记录，因此 GET 原样返回持久行，aux 保留原 seq 对应。exchangeAlreadyRecorded 继续承担写入幂等；appendResponseChunk 继续供 live 块持久化和行号计算使用。后续 UI 审计确认无正 seq 的瞬时缓存仍承载乐观 user 回声和实时 agent/tool/thought/plan 等事件，不能删除；G-BI 已把 mindfs_id 从用户回声和流事件透传到缓存，overlay 对持久行按 seq 对齐，对瞬时副本按角色类别 + mindfs_id 对账，同正文不同 id 保留。
 
 ---
 
@@ -536,7 +535,7 @@ agent 事件 → block → 缓冲 →(300ms / 64KB / boundary)→ ① append 块
 | **`CountExchanges`** | ✅ 删除。生产零调用，连同仅依赖它的 manager 测试删除。 |
 | **`appendResponseChunk` / `lastResponseUpdateType`** | 保留。两条 live 写路径仍需拼接 text 块，供 `persistTurnBlocks` 与块行位置计算；必须先重构调用路径才能移除。 |
 | **`CompactExchangeAux` reasoning 保留** | ✅ S2d-1 已修复，不能退回清空 reasoning。 |
-| **seq=0 / `tailOverlay`** | 待独立审计。它们目前参与前端瞬时行与持久窗口对账，本次没有删除。 |
+| **seq-less 瞬时行 / tailOverlay** | ✅ 保留必要的瞬时缓冲；2026-10-12 改为按角色类别 + mindfs_id 对账。无 id 的项继续显示，避免在尚未拿到身份时丢实时内容。 |
 
 ### 14.2 新冲突（3 条，原方案未覆盖）
 
@@ -585,4 +584,4 @@ D4 定的是「客户端生成」，但实测有**三条服务端发起的轮次
 
 ### 14.5 初审结论与后续修正
 
-2026-10-10 初审列出的 C1/C2/C3 已在 S2/G-BH 中处理。后续实地审计修正了「整块猜测层都可删除」的判断：读时投影与 `CountExchanges` 已移除，但写入幂等和 `appendResponseChunk` 仍被真实路径使用，必须保留。剩余 seq=0 / `tailOverlay` 工作以实际 UI 数据流为准逐项审计，不能按旧的行数估算机械删除。
+2026-10-10 初审列出的 C1/C2/C3 已在 S2/G-BH 中处理。后续实地审计修正了「整块猜测层都可删除」的判断：读时投影与 CountExchanges 已移除，但写入幂等和 appendResponseChunk 仍被真实路径使用，必须保留。seq-less 前端瞬时缓冲也仍有实时职责；2026-10-12 起其落盘对账使用 mindfs_id，相同正文不再作为身份判据。

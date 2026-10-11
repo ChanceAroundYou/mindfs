@@ -400,7 +400,9 @@ func (s *AppContext) RunAgentStage(ctx context.Context, exec kanban.AgentStageEx
 		OnSubSessionCreated: func(created *session.Session) {
 			s.BroadcastSessionMetaUpdated(exec.RootID, created)
 			if created != nil {
-				id := s.SetSessionPendingReply(exec.RootID, created.Key, created.Name)
+				nextSeq := session.MaxExchangeSeq(created.Exchanges) + 1
+				mindfsID := session.NewMindFSID("", fmt.Sprintf("%s|agent|%d", created.Key, nextSeq))
+				id := s.SetSessionPendingReply(exec.RootID, created.Key, created.Name, mindfsID)
 				turnMu.Lock()
 				turnIDs[created.Key] = id
 				subMu.Lock()
@@ -979,8 +981,8 @@ func (s *AppContext) BroadcastAgentStatusChanged(agentName string) {
 
 // SetSessionPendingReply 置子会话/看板会话的 pending，返回该条目的回合 mindfs_id。
 // 收尾时必须把同一个 id 交给 EndSessionTurn，否则清理退化成无条件清。
-func (s *AppContext) SetSessionPendingReply(rootID, sessionKey, sessionTitle string) string {
-	return s.GetSessionStreamHub().SetPendingReply(rootID, sessionKey, sessionTitle)
+func (s *AppContext) SetSessionPendingReply(rootID, sessionKey, sessionTitle, mindfsID string) string {
+	return s.GetSessionStreamHub().SetPendingReply(rootID, sessionKey, sessionTitle, mindfsID)
 }
 
 // BroadcastSessionUserMessageAt 广播用户消息并置该会话 pending，返回回合 mindfs_id。

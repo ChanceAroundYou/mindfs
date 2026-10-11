@@ -52,6 +52,10 @@ func TestKanbanStagePathCarriesTurnIdentity(t *testing.T) {
 				strings.TrimSpace(line))
 		}
 	}
+	if !strings.Contains(code, "session.MaxExchangeSeq(created.Exchanges) + 1") ||
+		!strings.Contains(code, "session.NewMindFSID(\"\", fmt.Sprintf(\"%s|agent|%d\", created.Key, nextSeq))") {
+		t.Fatal("RunAgentStage 子会话 pending 必须使用与落盘一致的 assistant mindfs_id")
+	}
 
 	// 2：收尾不得传哨兵身份。新旧哨兵都拦。
 	zeroGen := regexp.MustCompile(`EndSessionTurn\([^)]*[^A-Za-z0-9_]0\s*\)`)

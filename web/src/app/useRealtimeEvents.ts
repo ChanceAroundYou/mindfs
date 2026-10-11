@@ -89,12 +89,12 @@ export type RealtimeEventsContext = {
   };
   /** App 的回调与动作 */
   actions: {
-    appendAgentChunkForSession: (rootID: string, sessionKey: string, content: string, runtimeHint?: SessionRuntimeMeta, eventTimestamp?: string) => void;
-    appendCompactNoticeForSession: (rootID: string, sessionKey: string, compactNotice: any) => void;
-    appendPlanUpdateForSession: (rootID: string, sessionKey: string, planUpdate: any) => void;
-    appendThoughtChunkForSession: (rootID: string, sessionKey: string, content: string, thoughtID?: string) => void;
-    appendTodoUpdateForSession: (rootID: string, sessionKey: string, todoUpdate: any) => void;
-    appendToolCallForSession: (rootID: string, sessionKey: string, toolCall: any, update: boolean) => void;
+    appendAgentChunkForSession: (rootID: string, sessionKey: string, content: string, runtimeHint?: SessionRuntimeMeta, eventTimestamp?: string, mindfsID?: string) => void;
+    appendCompactNoticeForSession: (rootID: string, sessionKey: string, compactNotice: any, mindfsID?: string) => void;
+    appendPlanUpdateForSession: (rootID: string, sessionKey: string, planUpdate: any, mindfsID?: string) => void;
+    appendThoughtChunkForSession: (rootID: string, sessionKey: string, content: string, thoughtID?: string, mindfsID?: string) => void;
+    appendTodoUpdateForSession: (rootID: string, sessionKey: string, todoUpdate: any, mindfsID?: string) => void;
+    appendToolCallForSession: (rootID: string, sessionKey: string, toolCall: any, update: boolean, mindfsID?: string) => void;
     applyManagedRootRename: (oldRootID: string, rootPayload: ManagedRootPayload | null | undefined) => boolean;
     applyTaskDetails: (rootId: string, details: TaskDetail[], persist?: boolean) => void;
     attachContextWindowToLatestAssistant: (rootID: string, sessionKey: string, contextWindow?: { totalTokens?: number; modelContextWindow?: number; }, tokenUsage?: TokenUsage) => void;
@@ -587,6 +587,7 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
                 }
               : undefined,
             event.timestamp,
+            event.mindfs_id,
           );
           break;
         case "thought_chunk":
@@ -595,6 +596,7 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
             streamKey,
             event.data?.content || "",
             event.data?.id || "",
+            event.mindfs_id,
           );
           break;
         case "tool_call":
@@ -603,6 +605,7 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
             streamKey,
             event.data || {},
             false,
+            event.mindfs_id,
           );
           break;
         case "tool_call_update":
@@ -611,6 +614,7 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
             streamKey,
             event.data || {},
             true,
+            event.mindfs_id,
           );
           break;
         case "todo_update":
@@ -618,6 +622,7 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
             activeRoot,
             streamKey,
             event.data || {},
+            event.mindfs_id,
           );
           break;
         case "plan_update":
@@ -625,6 +630,7 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
             activeRoot,
             streamKey,
             event.data || {},
+            event.mindfs_id,
           );
           break;
         case "compact_notice": {
@@ -632,6 +638,7 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
             activeRoot,
             streamKey,
             event.data || {},
+            event.mindfs_id,
           );
           // **这里曾经清掉该会话所有瞬时行，已删除（2026-10-06）。** 原注释给的两条依据
           // 都不成立：
@@ -1456,22 +1463,23 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
             const prevExchanges = Array.isArray((cached as any).exchanges)
               ? ((cached as any).exchanges as Exchange[])
               : [];
+            const incomingMindFSID = String((exchange as any)?.mindfs_id || "").trim();
             const incomingUserSeq = Number((exchange as any)?.seq || 0);
-            // 服务端下发的 seq 是「该用户消息已持久化」的权威标记（user 行在回合开始前
-            // 就落盘了，所以这是真值而非预测）。跨端时间戳永不相等（客户端 ISO 毫秒 vs
-            // 服务端 RFC3339Nano），故不能按时间戳判重：
-            //   1) 已有同 seq 条目 → 幂等就地更新（重连重放等）；
-            //   2) 已有同 role+content 且尚无 seq 的乐观条目 → 就地转正（写入 seq）。
-            //      必须是按内容找：本地乐观行（App.tsx 建 optimisticExchange）根本不带
-            //      seq 字段，服务端 seq 永远匹配不上它，只能靠 role+content 认领。
-            //   3) 都没有 → 追加（带 seq 即已持久化条目，无 seq 则仍作瞬时项由 overlay 渲染）。
+            // 持久行按 mindfs_id / seq 幂等定位。只有初次确认本地尚无身份的乐观 user
+            // 回声时，才用 role+content 把它升级成服务端权威行。
+            const identityIndex = incomingMindFSID
+              ? prevExchanges.findIndex(
+                  (item) =>
+                    item.role === "user" && item.mindfs_id === incomingMindFSID,
+                )
+              : -1;
             const seqIndex =
               incomingUserSeq > 0
                 ? prevExchanges.findIndex(
                     (item) => Number((item as any)?.seq || 0) === incomingUserSeq,
                   )
                 : -1;
-            let mergeIndex = seqIndex;
+            let mergeIndex = identityIndex >= 0 ? identityIndex : seqIndex;
             if (mergeIndex < 0) {
               for (let i = prevExchanges.length - 1; i >= 0; i -= 1) {
                 const item = prevExchanges[i];
@@ -1497,6 +1505,7 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
               timestamp:
                 exchange?.timestamp || new Date().toISOString(),
               pending_ack: false,
+              ...(incomingMindFSID ? { mindfs_id: incomingMindFSID } : {}),
               ...(incomingUserSeq > 0 ? { seq: incomingUserSeq } : {}),
             } as Exchange;
             const nextExchanges =
@@ -1505,6 +1514,7 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
                     ...prevExchanges.slice(0, mergeIndex),
                     {
                       ...prevExchanges[mergeIndex],
+                      ...(incomingMindFSID ? { mindfs_id: incomingMindFSID } : {}),
                       ...(incomingUserSeq > 0 ? { seq: incomingUserSeq } : {}),
                       timestamp:
                         exchange?.timestamp || prevExchanges[mergeIndex].timestamp,

@@ -59,7 +59,7 @@ type SessionPendingState struct {
 	UpdatedAt       time.Time
 	// MindFSID 是本条目所属回合的身份（每次 SetPending* 刷新为一个新 mindfs_id）。
 	// 清理时带上同一个 id 才生效 —— 见 ClearSessionPending。
-	// S2e 起它与主日志行的 mindfs_id 是**同一种表示**（UUIDv4），不再有第二套编号。
+	// G-BI 起它沿用主日志行的 mindfs_id 表示（确定性 UUIDv5），不再有第二套编号。
 	MindFSID string
 }
 
@@ -118,7 +118,7 @@ func pendingClientKey(clientID, sessionKey string) string {
 func cloneEvent(ev StreamEvent) StreamEvent {
 	// Timestamp 必须一起搬。重放路径（ReplyingList → collectReplayStep）只走 cloneEvent，
 	// 漏掉它客户端就只能回退到「恢复页面的接收时刻」，回复时长把整段后台时间算进去。
-	return StreamEvent{Type: ev.Type, Data: ev.Data, EventCursor: ev.EventCursor, Timestamp: ev.Timestamp}
+	return StreamEvent{Type: ev.Type, Data: ev.Data, EventCursor: ev.EventCursor, Timestamp: ev.Timestamp, MindFSID: ev.MindFSID}
 }
 
 func buildSessionStreamResponse(rootID, sessionKey string, event *StreamEvent) WSResponse {
@@ -208,7 +208,7 @@ func buildSlashCommandDoneResponse(rootID, sessionKey, command, requestID string
 	}
 }
 
-func buildSessionUserMessageResponse(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService string, planMode bool, content string, timestamp time.Time, queued bool, userExchangeSeq int) WSResponse {
+func buildSessionUserMessageResponse(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService string, planMode bool, content string, timestamp time.Time, queued bool, userExchangeSeq int, mindfsID string) WSResponse {
 	queueState := "active"
 	if queued {
 		queueState = "dequeued"
@@ -247,6 +247,9 @@ func buildSessionUserMessageResponse(rootID, sessionKey, sessionType, sessionNam
 	// 客户端保持原行为（作为瞬时项渲染）。
 	if userExchangeSeq > 0 {
 		exchangePayload["seq"] = userExchangeSeq
+	}
+	if strings.TrimSpace(mindfsID) != "" {
+		exchangePayload["mindfs_id"] = strings.TrimSpace(mindfsID)
 	}
 	return WSResponse{
 		Type: "session.user_message",
@@ -692,14 +695,20 @@ func (h *StreamHub) PromoteQueuedSessionMessage(sessionKey, queueID string) ([]Q
 
 // SetPendingReply 置入「子会话/续轮在回复」的 pending，返回该条目所属回合的 mindfs_id。
 // 语义同 SetPendingUserAt：这个 id 必须交给终结器。
-func (h *StreamHub) SetPendingReply(rootID, sessionKey, sessionTitle string) string {
+func (h *StreamHub) SetPendingReply(rootID, sessionKey, sessionTitle string, mindfsID ...string) string {
 	if blank(sessionKey) {
 		return ""
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	state := h.ensurePendingSessionLocked(sessionKey)
-	turnID := h.nextPendingTurnIDLocked()
+	turnID := ""
+	if len(mindfsID) > 0 {
+		turnID = strings.TrimSpace(mindfsID[0])
+	}
+	if turnID == "" {
+		turnID = h.nextPendingTurnIDLocked()
+	}
 	state.MindFSID = turnID
 	state.RootID = rootID
 	state.SessionTitle = strings.TrimSpace(sessionTitle)
@@ -735,6 +744,9 @@ func (h *StreamHub) AppendReplyEvent(sessionKey string, event StreamEvent) Strea
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	state := h.ensurePendingSessionLocked(sessionKey)
+	if strings.TrimSpace(event.MindFSID) == "" {
+		event.MindFSID = state.MindFSID
+	}
 	state.NextEventSeq++
 	event.EventCursor = formatEventCursor(state.BaseExchangeSeq, state.NextEventSeq)
 	if event.Timestamp.IsZero() {
@@ -832,7 +844,7 @@ func coalesceUserShellStreamEvent(state *SessionPendingState, event StreamEvent)
 			merged.Meta["replayTruncation"] = "tail"
 		}
 		merged.Content = []agenttypes.ToolCallContentItem{{Type: "text", Text: text}}
-		state.ReplyingList[i] = StreamEvent{Type: event.Type, Data: merged, EventCursor: event.EventCursor, Timestamp: event.Timestamp}
+		state.ReplyingList[i] = StreamEvent{Type: event.Type, Data: merged, EventCursor: event.EventCursor, Timestamp: event.Timestamp, MindFSID: event.MindFSID}
 		return true
 	}
 	return false
@@ -1062,7 +1074,7 @@ func (h *StreamHub) BroadcastSessionUserMessageAt(
 	baseExchangeSeq ...int,
 ) string {
 	pendingUser, turnID := h.SetPendingUserAt(rootID, sessionKey, sessionName, agentName, model, modelDisplayName, mode, effort, fastService, planMode, content, timestamp, userExchangeSeq)
-	resp := buildSessionUserMessageResponse(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService, planMode, content, pendingUser.Timestamp, queued, userExchangeSeq)
+	resp := buildSessionUserMessageResponse(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService, planMode, content, pendingUser.Timestamp, queued, userExchangeSeq, turnID)
 	for _, clientID := range h.GetSessionClientIDs(sessionKey, false) {
 		if excludeClientID != "" && clientID == excludeClientID {
 			continue

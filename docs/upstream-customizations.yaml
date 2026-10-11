@@ -506,13 +506,8 @@ groups:
       读时内容启发式曾把真实的新回合当成双写副本隐藏；审计端点也只服务于这套投影。
     why: |
       写入侧已有 agent_id / mindfs_id 身份判重。内容投影曾出现误折叠，因此移除读时猜测与审计端点；
-      GET 原样返回持久化行及按 seq 关联的 aux。保留本组文件路径可让门禁覆盖这次删除。
-    files:
-      - server/internal/api/usecase/session_projection.go
-      - server/internal/api/usecase/session_projection_test.go
-      - server/internal/api/usecase/session_projection_identity_test.go
-      - server/internal/api/usecase/session_projection_window_test.go
-      - server/internal/session/audit.go
+      GET 原样返回持久化行及按 seq 关联的 aux。删除文件留在 Git 历史与 G-AB 说明里，不作为当前文件登记。
+    files: []
     tests:
       - server/internal/api/http_window_test.go
       - server/internal/session/manager_test.go
@@ -2259,11 +2254,14 @@ groups:
          永远不灭。
       6) 字段改名后 IsMindFSIDShape 是唯一形状判据；前端 SessionBlock 同步为
          mindfs_id / agent_id。
+      7) 2026-10-12 前端延伸：session.user_message 和 session.stream 携带本轮
+         mindfs_id；实时缓存按 id 合并，overlay 只在角色类别和 mindfs_id 同时匹配时
+         抑制瞬时副本。同正文不同 id 保留，无 id 的流式项继续展示。
     boundary: |
       会话轮次元数据的字段名与铸造规则：Exchange.AgentID、Block.AgentID、
       NewMindFSID、exchangeAgentKey / exchangeIdentityRecorded、stream_hub 待亮灯身份。
-      块流正文与窗口读不在它们的改动范围内；写入侧身份判重由 G-BI 提供，读时内容投影已于
-      2026-10-12 由 G-AB 退役。
+      2026-10-12 延伸包含事件和缓存携带 mindfs_id，以及 overlay 按身份对账。块流正文
+      格式未变；写入侧身份判重由 G-BI 提供，读时内容投影已于 2026-10-12 由 G-AB 退役。
     tests:
       - server/internal/session/manager_rename_compat_test.go
       - server/internal/session/rename_compat_helpers_test.go
@@ -2275,7 +2273,14 @@ groups:
       - server/internal/api/usecase/session_blocks_write_test.go
       - server/internal/api/http_window_test.go
       - server/internal/api/stream_hub_turn_identity_test.go
+      - server/internal/api/stream_hub_user_message_test.go
       - server/internal/agent/acp/importer_identity_test.go
+      - server/internal/scheduled/pending_identity_test.go
+      - web/tests/session-overlay-unit.test.mjs
+      - web/tests/session-window.test.mjs
+      - web/tests/message-mechanism-merges.test.mjs
+      - web/tests/e2e-message-behavior.test.mjs
+      - web/tests/user-message-persist-timing.test.mjs
     files:
       - server/internal/session/types.go
       - server/internal/session/manager.go
@@ -2291,6 +2296,12 @@ groups:
       - server/internal/api/usecase/session_fork_blocks_test.go
       - server/internal/api/usecase/session_blocks_write_test.go
       - server/internal/api/stream_hub.go
+      - server/internal/api/ws.go
+      - server/internal/api/appcontext.go
+      - server/internal/api/stream_hub_turn_identity_test.go
+      - server/internal/api/stream_hub_user_message_test.go
+      - server/internal/scheduled/tasks.go
+      - server/internal/scheduled/pending_identity_test.go
       - server/internal/api/http_window_test.go
       - server/internal/api/stream_hub_turn_identity_test.go
       - server/internal/agent/claude/session.go
@@ -2299,6 +2310,16 @@ groups:
       - server/internal/agent/acp/importer_identity_test.go
       - server/internal/agent/types/types.go
       - web/src/services/session.ts
+      - web/src/app/appSession.ts
+      - web/src/app/useSessionStreamCache.ts
+      - web/src/app/useRealtimeEvents.ts
+      - web/src/shared/sessionOverlay.ts
+      - web/src/components/session/SessionViewer.tsx
+      - web/tests/session-overlay-unit.test.mjs
+      - web/tests/session-window.test.mjs
+      - web/tests/message-mechanism-merges.test.mjs
+      - web/tests/e2e-message-behavior.test.mjs
+      - web/tests/user-message-persist-timing.test.mjs
     anchors:
       - server/internal/session/manager.go:NewMindFSID
       - server/internal/session/manager.go:IsMindFSIDShape
@@ -2306,6 +2327,9 @@ groups:
       - server/internal/session/blocks.go:func (b *Block) UnmarshalJSON
       - server/internal/api/usecase/session.go:exchangeAgentKey
       - server/internal/api/usecase/session.go:exchangeIdentityRecorded
+      - server/internal/api/stream_hub.go:AppendReplyEvent
+      - web/src/shared/sessionOverlay.ts:computeTailOverlay
+      - web/src/app/useSessionStreamCache.ts:appendAgentChunkForSession
       - server/internal/api/stream_hub.go:SetPendingUserAt
       - web/src/services/session.ts:agent_id
   - id: G-BH

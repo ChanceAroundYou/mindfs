@@ -701,3 +701,7 @@ event_id + turn_id + event_seq + generation + version + timestamp + payload
 ### 7.7 ADR 后果与明确不做事项
 
 该决策短期不会修复任何线上状态错序；它的价值是先建立一个不会继续漂移的边界和验收标准。Canonical 模型不等于把每个 token 持久化：实时事件日志与 `Exchange/ExchangeAux` durable projection 可以并存。第一阶段也不部署、不重启、不提交生产协议变更；真实断线时序仍需在隔离实例用 observability probe 验证。
+
+### 7.8 main 后续记录（2026-10-12）
+
+当前 main 的 G-BI 延伸把 mindfs_id 放进 session.user_message 和 session.stream，供前端把 seq-less 实时缓存与持久窗口对账。overlay 对持久行按 seq 去重，对瞬时项只按角色类别 + mindfs_id 去重；相同正文不能让一项被丢弃。乐观 user 回声在服务端确认前仍可能没有 id，确认时保留一次 role+content 配对以补上权威 id。这个改动不代表 G-T 提案中的 event_id、generation、事件日志或统一 reducer 已实现。

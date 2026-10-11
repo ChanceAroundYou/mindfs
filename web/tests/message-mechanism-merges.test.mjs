@@ -101,31 +101,33 @@ test("【红·③】工具卡去重不得有两套判据（windowToolCallIds 应
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ④ 内容比对的**三个补丁**必须消失（2026-10-06 收窄：不是「内容比对全删」）
-// 依据：原本判成「内容比对整类该消失」，动手时被 fixture 证伪 —— 下面两种形状**完全一样**：
-//   · 窗口有本轮的持久行 + 缓存有一条瞬时行，该瞬时行是**新的流式内容** → 必须保留；
-//   · 同一形状，但该瞬时行是那条持久行的**拷贝** → 必须让位。
-// 二者只能靠内容区分（`session-window.test.mjs` 的 ② 与 ⑦ 就是这一对）。所以内容比对是必要的，
-// 该删的是它的三个补丁：
-//   · `windowTailTexts` —— 只扫窗口最新 3 行，更早的本轮行认不出；
-//   · `renderedPersistedTexts` —— 上面那份语料的扩展，语料该由「本轮」界定而不是由行数；
-//   · `OVERLAY_DUP_MIN_CHARS` / `OVERLAY_TAIL_ROWS` —— 长度地板与行数上限。
-// 保留并在 `session-window.test.mjs` 里正向钉住的：`normalizeOverlayText`（去空白，服务端补
-// `"\n\n"`）、`windowUserCounts`（瞬时 user 行的计数消抵，跨端丢事件的兜底）。
-// ─────────────────────────────────────────────────────────────────────────────
-test("【红·④】内容比对的三个补丁必须消失（语料按本轮界定，不按行数/长度）", () => {
-  for (const id of [
-    "windowTailTexts",
-    "renderedPersistedTexts",
-    "OVERLAY_DUP_MIN_CHARS",
-    "OVERLAY_TAIL_ROWS",
-  ]) {
-    const hits = scanSrc(new RegExp(`\\b${id}\\b`));
-    assert.equal(hits.length, 0, `${id} 仍在 → 内容比对的补丁还没拔掉。${where(hits)}`);
-  }
+// ④ 瞬时 overlay 的身份对账不得退回正文相似猜测。
+// 同一轮的实时项与落盘项用 MindFS 身份关联；相同正文可以合法地出现在不同轮次。
+test("【红·④】overlay 只按角色类别和 mindfs_id 对账", () => {
+  const overlayPath = path.join(srcRoot, "shared", "sessionOverlay.ts");
+  const overlay = stripComments(readFileSync(overlayPath, "utf8"));
+  const cache = stripComments(
+    readFileSync(path.join(srcRoot, "app", "useSessionStreamCache.ts"), "utf8"),
+  );
+  const realtime = stripComments(
+    readFileSync(path.join(srcRoot, "app", "useRealtimeEvents.ts"), "utf8"),
+  );
+  const sessionService = stripComments(
+    readFileSync(path.join(srcRoot, "services", "session.ts"), "utf8"),
+  );
+  assert.match(overlay, /mindfs_id/);
+  assert.match(overlay, /roleCategory/);
+  assert.match(overlay, /renderedIdentities/);
+  assert.match(cache, /mindfs_id/);
+  assert.match(realtime, /event\.mindfs_id/);
+  assert.match(sessionService, /mindfs_id\?: string;/);
+  assert.doesNotMatch(
+    overlay,
+    /normalizeOverlayText|windowUserCounts|turnPersistedTexts|contentOf|\.includes\(/,
+    "overlay must not guess identity from message text",
+  );
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
 // ⑤ 「这个会话在不在回复」只能有一个真值源
 // 依据：冲突⑤ —— 曾经是 9 个机制、五处存储（cache/drawer/selected/pendingBySessionRef/
 // multiProjectPendingRef）。2026-10-07 已彻底收敛：pending **纯派生**，唯一真相是

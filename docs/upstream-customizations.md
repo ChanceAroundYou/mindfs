@@ -176,7 +176,7 @@
 | G-AY | pending 纯派生（done 丢失时停止符号/「正在思考」卡住） | 修复 | 见 §3.1 | 原先「在不在回复」在前端有五份投影，只有列表蓝灯那份每 5s 对账；其余四份只有 WS `session.done` 一个出口，断连/重绑竞态丢了那条事件就**永久卡在 true**。2026-10-07 改成纯派生：唯一真相 `multiProjectPendingByKey`，会话对象上不再存 pending |
 | G-AZ | 任务卡视觉件（待审核徽标/列框去除/浮动滚动条/工作台角标移除） | 视觉 | 见 §3.1 | 待审核列补状态文字（与工作台同路径）；列框去除+padding 归零卡片加宽 18px；FloatingScroll 浮动滚动条不占宽；工作台「需要你 N」角标移除 |
 | G-BB | 看板列头灰底 + 间距对齐工作台（列头背景/列表 padding/外层 padding） | 视觉 | 见 §3.1 | 列头灰底区分栏目标签与卡片；列表 padding 归零卡片加宽 12px；外层 padding 6px 8px 对齐工作台容器 |
-| G-BI | 会话身份收敛为两套 id（`mindfs_id` + `agent_id`） | 重构 | 见 §3.2 | `NewMindFSID` / `Exchange.AgentID` / `Block.AgentID` / `exchangeAgentKey`；UUIDv5 按 seed 确定性铸，seed 优先取 `agent_id`，让 live 与 import 两侧铸出同一个 id |
+| G-BI | 会话身份收敛为两套 id（mindfs_id + agent_id）及 UI 身份对账 | 重构 | 见 §3.2 | UUIDv5 确定性 mint；用户回声和流事件携带 mindfs_id，瞬时缓存按角色类别 + mindfs_id 对账，正文相似不作为身份判据 |
 
 > **G-D 已并入 G-F，G-M 已并入 G-AI**（改动面完全重合、无独立测试可守，单列只会制造空组）。
 
@@ -2156,7 +2156,7 @@
 
 ## 3.2 补全分组（2026-10-11 新增）
 
-### G-BI 会话身份收敛为两套 id（mindfs_id + agent_id）（2026-10-11）
+### G-BI 会话身份收敛为两套 id（mindfs_id + agent_id）（2026-10-11，2026-10-12 延伸）
 
 - 来源：`server/internal/session/types.go`、`server/internal/session/manager.go`、
   `server/internal/session/blocks.go`、`server/internal/api/usecase/session.go`、
@@ -2164,6 +2164,8 @@
   `server/internal/agent/claude/session.go`（2026-10-11）。
   前身是 G-BH 的 S2c/S2e，本组把「turn_id + native_turn + native_prompt + native_id +
   TurnGen」五个名目合成两个。
+
+  - 2026-10-12 UI 延伸：来源还包括 server/internal/api/stream_hub.go、ws.go、appcontext.go，以及 web/src/services/session.ts、web/src/app/appSession.ts、web/src/app/useSessionStreamCache.ts、web/src/app/useRealtimeEvents.ts、web/src/shared/sessionOverlay.ts、web/src/components/session/SessionViewer.tsx。session.user_message 与 session.stream 都携带本轮 mindfs_id；瞬时缓存保留无正 seq 的实时项，但只在角色类别和 mindfs_id 同时匹配时让位给持久行。相同正文、不同身份继续显示；无 id 的瞬时项继续显示。
 
   - **边界**：会话轮次元数据的**字段名与铸造规则** —— `Exchange.AgentID`、
   `Block.AgentID`、`NewMindFSID`、`exchangeAgentKey` / `exchangeIdentityRecorded`、
@@ -2232,6 +2234,7 @@
   - `web/src/services/session.ts` 的 `SessionBlock` 同步改名为
     `mindfs_id` / `agent_id`（`tsc --noEmit` 兜住）。
 
+- UI 身份对账测试：web/tests/session-overlay-unit.test.mjs、web/tests/session-window.test.mjs、web/tests/message-mechanism-merges.test.mjs；服务端 wire/pending 测试：server/internal/api/stream_hub_turn_identity_test.go、stream_hub_user_message_test.go。
 - **注意事项（合上游时）**：`req.TurnID`（codex SDK 的 `AskUserRequest` 字段）
   与 `ImportedExchange.NativeID` **不是**我们改名的那两个 id，别跟着一起改 ——
   前者是外部 SDK 的字段，后者是导入器的另一种表示。这两处各已踩过一次。

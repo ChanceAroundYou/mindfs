@@ -26,6 +26,9 @@ export type SessionRuntimeMeta = {
   fast_service?: "" | "on" | "off";
 };
 
+const hasSameMindFSID = (item: any, mindfsID?: string): boolean =>
+  String(item?.mindfs_id || "").trim() === String(mindfsID || "").trim();
+
 export type SessionStreamCacheParams = {
   sessionCacheRef: React.MutableRefObject<Record<string, Session>>;
   /** App 提供：把 (rootId, sessionKey) 解析成带节点作用域的缓存键。 */
@@ -168,6 +171,7 @@ export function useSessionStreamCache({
       content: string,
       runtimeHint?: SessionRuntimeMeta,
       eventTimestamp?: string,
+      mindfsID?: string,
     ): void => {
     if (!content) return;
     const now = streamEventTimestamp({ timestamp: eventTimestamp }, new Date().toISOString());
@@ -175,7 +179,11 @@ export function useSessionStreamCache({
     upsertSessionCache(rootID, sessionKey, (prevList) => {
       const list = [...(prevList || [])];
       const last = list.length > 0 ? list[list.length - 1] : null;
-      if (last && (last.role === "agent" || last.role === "assistant")) {
+      if (
+        last &&
+        (last.role === "agent" || last.role === "assistant") &&
+        hasSameMindFSID(last, mindfsID)
+      ) {
         // **普通拼接**。片段的唯一来源是「服务端事件流」，而事件只会投递一次：
         // 挂载会话时走的是**快照重建**（服务端回 `reset:true` 的整批，客户端先清空
         // 瞬时尾巴再照单应用，见 session.ts 的 dropTransientExchanges），
@@ -183,6 +191,7 @@ export function useSessionStreamCache({
         // 曾经为此存在的 mergeStreamedText（子串包含判据）已随之删除。
         list[list.length - 1] = {
           ...last,
+          ...(mindfsID ? { mindfs_id: mindfsID } : {}),
           agent: runtimeMeta.agent || last.agent,
           model: runtimeMeta.model || last.model,
           model_display_name:
@@ -197,6 +206,7 @@ export function useSessionStreamCache({
       }
       list.push({
         role: "agent",
+        ...(mindfsID ? { mindfs_id: mindfsID } : {}),
         agent: runtimeMeta.agent,
         model: runtimeMeta.model,
         model_display_name: runtimeMeta.model_display_name,
@@ -211,19 +221,23 @@ export function useSessionStreamCache({
   }, [upsertSessionCache, resolveRuntimeMetaForSession]);
 
   const appendThoughtChunkForSession = useCallback(
-    (rootID: string, sessionKey: string, content: string, thoughtID?: string): void => {
+    (rootID: string, sessionKey: string, content: string, thoughtID?: string, mindfsID?: string): void => {
     if (!content) return;
     const now = new Date().toISOString();
     upsertSessionCache(rootID, sessionKey, (prevList) => {
       const list = [...(prevList || [])];
       if (thoughtID) {
         const existingIndex = list.findIndex(
-          (item) => item.role === "thought" && item.thought_id === thoughtID,
+          (item) =>
+            item.role === "thought" &&
+            item.thought_id === thoughtID &&
+            hasSameMindFSID(item, mindfsID),
         );
         if (existingIndex >= 0) {
           const existing = list[existingIndex];
           list[existingIndex] = {
             ...existing,
+            ...(mindfsID ? { mindfs_id: mindfsID } : {}),
             content: String(existing.content || "") + String(content || ""),
             timestamp: now,
           };
@@ -231,22 +245,34 @@ export function useSessionStreamCache({
         }
       }
       const last = list.length > 0 ? list[list.length - 1] : null;
-      if (last && last.role === "thought" && (!thoughtID || !last.thought_id)) {
+      if (
+        last &&
+        last.role === "thought" &&
+        (!thoughtID || !last.thought_id) &&
+        hasSameMindFSID(last, mindfsID)
+      ) {
         list[list.length - 1] = {
           ...last,
+          ...(mindfsID ? { mindfs_id: mindfsID } : {}),
           content: String(last.content || "") + String(content || ""),
           thought_id: thoughtID || last.thought_id,
           timestamp: now,
         };
         return list;
       }
-      list.push({ role: "thought", content, thought_id: thoughtID, timestamp: now });
+      list.push({
+        role: "thought",
+        ...(mindfsID ? { mindfs_id: mindfsID } : {}),
+        content,
+        thought_id: thoughtID,
+        timestamp: now,
+      });
       return list;
     });
   }, [upsertSessionCache]);
 
   const appendToolCallForSession = useCallback(
-    (rootID: string, sessionKey: string, toolCall: any, update: boolean): void => {
+    (rootID: string, sessionKey: string, toolCall: any, update: boolean, mindfsID?: string): void => {
     if (!toolCall) return;
     const now = new Date().toISOString();
     const mergeToolCall = (existing: any, incoming: any) => {
@@ -310,12 +336,14 @@ export function useSessionStreamCache({
         for (let i = list.length - 1; i >= 0; i--) {
           if (
             list[i]?.role === "tool" &&
+            hasSameMindFSID(list[i], mindfsID) &&
             (list[i]?.toolCall?.callId === callId ||
               list[i]?.toolCall?.toolCallId === callId ||
               list[i]?.toolCall?.tool_call_id === callId)
           ) {
             list[i] = {
               ...list[i],
+              ...(mindfsID ? { mindfs_id: mindfsID } : {}),
               timestamp: now,
               toolCall: mergeToolCall(list[i].toolCall, toolCall),
             };
@@ -323,33 +351,46 @@ export function useSessionStreamCache({
           }
         }
       }
-      list.push({ role: "tool", content: "", timestamp: now, toolCall });
+      list.push({
+        role: "tool",
+        ...(mindfsID ? { mindfs_id: mindfsID } : {}),
+        content: "",
+        timestamp: now,
+        toolCall,
+      });
       return list;
     });
   }, [upsertSessionCache]);
 
   const appendTodoUpdateForSession = useCallback(
-    (rootID: string, sessionKey: string, todoUpdate: any): void => {
+    (rootID: string, sessionKey: string, todoUpdate: any, mindfsID?: string): void => {
     if (!todoUpdate) return;
     const now = new Date().toISOString();
     upsertSessionCache(rootID, sessionKey, (prevList) => {
       const list = [...(prevList || [])];
       for (let i = list.length - 1; i >= 0; i -= 1) {
-        if (list[i]?.role !== "todo") continue;
+        if (list[i]?.role !== "todo" || !hasSameMindFSID(list[i], mindfsID)) continue;
         list[i] = {
           ...list[i],
+          ...(mindfsID ? { mindfs_id: mindfsID } : {}),
           timestamp: now,
           todoUpdate,
         };
         return list;
       }
-      list.push({ role: "todo", content: "", timestamp: now, todoUpdate });
+      list.push({
+        role: "todo",
+        ...(mindfsID ? { mindfs_id: mindfsID } : {}),
+        content: "",
+        timestamp: now,
+        todoUpdate,
+      });
       return list;
     });
   }, [upsertSessionCache]);
 
   const appendPlanUpdateForSession = useCallback(
-    (rootID: string, sessionKey: string, planUpdate: any): void => {
+    (rootID: string, sessionKey: string, planUpdate: any, mindfsID?: string): void => {
     if (!planUpdate) return;
     const content = `${planUpdate.content || ""}`;
     if (!content) return;
@@ -359,7 +400,7 @@ export function useSessionStreamCache({
       const planId = `${planUpdate.id || ""}`;
       if (planId) {
         for (let i = list.length - 1; i >= 0; i -= 1) {
-          if (list[i]?.role !== "plan") continue;
+          if (list[i]?.role !== "plan" || !hasSameMindFSID(list[i], mindfsID)) continue;
           if (`${list[i]?.planUpdate?.id || ""}` !== planId) continue;
           const existingContent = `${list[i].planUpdate?.content || ""}`;
           const nextContent = planUpdate.delta
@@ -367,6 +408,7 @@ export function useSessionStreamCache({
             : content;
           list[i] = {
             ...list[i],
+            ...(mindfsID ? { mindfs_id: mindfsID } : {}),
             timestamp: now,
             planUpdate: { ...list[i].planUpdate, ...planUpdate, content: nextContent },
           };
@@ -374,10 +416,11 @@ export function useSessionStreamCache({
         }
       }
       const last = list.length > 0 ? list[list.length - 1] : null;
-      if (last?.role === "plan" && !planId) {
+      if (last?.role === "plan" && !planId && hasSameMindFSID(last, mindfsID)) {
         const existingContent = `${last.planUpdate?.content || ""}`;
         list[list.length - 1] = {
           ...last,
+          ...(mindfsID ? { mindfs_id: mindfsID } : {}),
           timestamp: now,
           planUpdate: {
             ...last.planUpdate,
@@ -387,13 +430,19 @@ export function useSessionStreamCache({
         };
         return list;
       }
-      list.push({ role: "plan", content: "", timestamp: now, planUpdate });
+      list.push({
+        role: "plan",
+        ...(mindfsID ? { mindfs_id: mindfsID } : {}),
+        content: "",
+        timestamp: now,
+        planUpdate,
+      });
       return list;
     });
   }, [upsertSessionCache]);
 
   const appendCompactNoticeForSession = useCallback(
-    (rootID: string, sessionKey: string, compactNotice: any): void => {
+    (rootID: string, sessionKey: string, compactNotice: any, mindfsID?: string): void => {
     if (!compactNotice) return;
     const now = new Date().toISOString();
     upsertSessionCache(rootID, sessionKey, (prevList) => {
@@ -401,17 +450,24 @@ export function useSessionStreamCache({
       const compactId = `${compactNotice.id || ""}`;
       if (compactId) {
         for (let i = list.length - 1; i >= 0; i -= 1) {
-          if (list[i]?.role !== "compact") continue;
+          if (list[i]?.role !== "compact" || !hasSameMindFSID(list[i], mindfsID)) continue;
           if (`${list[i]?.compactNotice?.id || ""}` !== compactId) continue;
           list[i] = {
             ...list[i],
+            ...(mindfsID ? { mindfs_id: mindfsID } : {}),
             timestamp: now,
             compactNotice: { ...list[i].compactNotice, ...compactNotice },
           };
           return list;
         }
       }
-      list.push({ role: "compact", content: "", timestamp: now, compactNotice });
+      list.push({
+        role: "compact",
+        ...(mindfsID ? { mindfs_id: mindfsID } : {}),
+        content: "",
+        timestamp: now,
+        compactNotice,
+      });
       return list;
     });
   }, [upsertSessionCache]);

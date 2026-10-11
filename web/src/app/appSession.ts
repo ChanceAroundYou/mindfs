@@ -289,6 +289,7 @@ export function toSessionItem(
 
 export type Exchange = {
   role: string;
+  mindfs_id?: string;
   agent?: string;
   model?: string;
   model_display_name?: string;

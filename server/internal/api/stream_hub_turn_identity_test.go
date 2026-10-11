@@ -153,3 +153,17 @@ func TestPendingTurnIDMatches(t *testing.T) {
 		t.Fatal("条目不存在时应放行")
 	}
 }
+
+func TestStreamReplyEventsCarryPendingMindFSID(t *testing.T) {
+	hub := NewStreamHub()
+	_, mindfsID := hub.SetPendingUser("root", "s1", "t", "claude", "m", "md", "chat", "high", "", false, "hi")
+
+	event := hub.AppendReplyEvent("s1", StreamEvent{Type: "message_chunk", Data: map[string]string{"content": "reply"}})
+	if event.MindFSID != mindfsID {
+		t.Fatalf("live event mindfs_id = %q, want %q", event.MindFSID, mindfsID)
+	}
+	replayed := cloneEvent(event)
+	if replayed.MindFSID != mindfsID {
+		t.Fatalf("replayed event mindfs_id = %q, want %q", replayed.MindFSID, mindfsID)
+	}
+}

@@ -1129,40 +1129,8 @@ function SessionViewerInner({
   const topSentinelRef = useRef<HTMLDivElement>(null);
   const isPrependingRef = useRef(false);
   const isAwaiting = !!(session as any)?.pending;
-  // 方案 C：overlay 尾巴 = App 缓存里「窗口尚未覆盖」的条目，只读派生、永不合并回窗口。
-  // 窗口是唯一持久化源，只在 init 拉取 / 翻页前插 / 重锚定（_windowMeta）时整体替换。
-  //
-  // 判定刻意不依赖 windowMeta：loadMore 与 targetSeq 取窗都会用旧/中段窗口的 meta 覆盖
-  // windowMeta，拿它当「会话最新 seq」会塌回旧值（曾导致按位次裁剪错算并把实时流式内容
-  // 一起 slice 掉）。改为三个规则：
-  //   - seq>0：由 latestSeq 界定。latestSeq 只增不减、按会话键绑定，且仅在 init/anchor 这类
-  //     「最新窗口」经 applyWindow 更新（loadMore / targetSeq 不碰）。seq<=latestSeq → 窗口已含
-  //     或即将含，丢弃；seq>latestSeq → 刚发出、窗口还没追上，保留（自己发的消息立即出现）。
-  //   - seq==0 且 role=user：按 content 与窗口计数消抵——窗口里同内容出现 covered 次，就丢弃
-  //     缓存中同内容的前 covered 个，其余保留。这是跨端丢事件（手机后台 / WS 断连）时的兜底，
-  //     不依赖时间戳（客户端 ISO 毫秒 vs 服务端 RFC3339Nano 永不相等）。
-  //   - seq==0 且 role=tool：callId 已出现在窗口 aux → 让位（见 windowToolCallIds）。
-  //   - seq==0 的其它（流式文本 / 思考）：默认保留（流式内容要实时可见），但若窗口最新几条
-  //     持久化行里已经包含它（去空白后判定），说明这一轮已落盘、这份是陈旧拷贝 → 让位。
-  //     这是 2026-09-17 的缺口：以前这里「一律保留」，于是 ask 前后被渲染成两块一样的正文。
-  // 只读派生不写回缓存，避免覆盖其它标签页可能正在流式写入的持久化缓存。
-  const [latestSeqState, setLatestSeqState] = useState<{ key: string; max: number }>(
-    { key: "", max: 0 },
-  );
-  const noteLatestSeq = useCallback(
-    (key: string | null, meta: SessionWindowMeta | null | undefined) => {
-      const max = Number(meta?.maxSeq || 0);
-      if (!key || max <= 0) return;
-      setLatestSeqState((prev) =>
-        prev.key === key ? (max > prev.max ? { key, max } : prev) : { key, max },
-      );
-    },
-    [],
-  );
-  const latestSeq = latestSeqState.key === sessionKey ? latestSeqState.max : 0;
-  // overlay 尾巴：**判定逻辑已搬到 `sessionOverlay.ts` 的纯函数**（本处只做接线）。
-  // 搬出去的原因见那个文件的头部注释：它住在组件里时测不了，测试只能写同构副本，
-  // 而副本挡住了冲突②（渲染空洞）—— `tests/session-window.test.mjs` 里那份副本可以随之删除。
+  // 瞬时缓存与持久窗口只按 MindFS 身份对账；文本相似不能证明两行相同。
+  // overlay 只读派生，不写回缓存，避免覆盖其它标签页正在写入的流。
   const tailOverlay = useMemo(
     () =>
       computeTailOverlay({
@@ -1313,12 +1281,9 @@ function SessionViewerInner({
           minSeq: Math.min(winMinSeq, Number(prevMeta?.minSeq || 0) || winMinSeq),
         };
       });
-      // applyWindow 只服务「最新窗口」（init / anchor）——loadMore 与 targetSeq 取窗直接
-      // setWindowMeta，不经过这里，因此 latestSeq 不会被旧/中段窗口的 maxSeq 污染。
-      noteLatestSeq(sessionKey, res.meta);
       return true;
     },
-    [noteLatestSeq, sessionKey],
+    [],
   );
 
   // 初始化：会话切换时拉取尾部窗口，复位置底；拉取失败回退到 props 传入的全量/窗口。
@@ -1461,7 +1426,7 @@ function SessionViewerInner({
       return;
     }
     lastAppliedAnchorRef.current = { key: sessionKey, at: anchorAt };
-    // 锚点载荷是 App 的整份缓存：持久化行 + 直播瞬时行（seq=0，见 App.loadSession 的
+    // 锚点载荷是 App 的整份缓存：持久化行 + 尚未落盘的瞬时行（无正 seq，见 App.loadSession 的
     // [...incoming.filter(seq>0), ...localTransient]）。窗口态只能装持久化行 ——
     // 瞬时行归 overlay 管，混进窗口后 overlay 会再输出一遍，同一段正文渲染两次
     // （实测 2026-09-17：ask 触发后 ask 上下各一块同样的分析文本，重开会话必现）。

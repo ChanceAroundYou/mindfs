@@ -79,6 +79,11 @@ func TestScheduledPathCarriesTurnIdentity(t *testing.T) {
 	if !strings.Contains(code, "EndSessionTurn(") {
 		t.Fatalf("tasks.go 找不到 EndSessionTurn 调用 —— 收尾没走带身份的终结器")
 	}
+
+	if !strings.Contains(code, "session.MaxExchangeSeq(created.Exchanges) + 1") ||
+		!strings.Contains(code, "session.NewMindFSID(\"\", fmt.Sprintf(\"%s|agent|%d\", created.Key, nextSeq))") {
+		t.Fatal("tasks.go 子会话 pending 必须按下一条 assistant seq 铸与落盘一致的 mindfs_id")
+	}
 }
 
 // stripLineComments 去掉行注释，保留行号（注释行置空），供源码扫描忽略解释性文字。

@@ -12,7 +12,7 @@ func TestBuildSessionUserMessageResponseCarriesUserExchangeSeq(t *testing.T) {
 
 	withSeq := buildSessionUserMessageResponse(
 		"root", "sess", "chat", "", "claude", "m", "", "", "", "", false,
-		"hello", ts, false, 42,
+		"hello", ts, false, 42, "mindfs-turn-id",
 	)
 	if withSeq.Type != "session.user_message" {
 		t.Fatalf("type = %q", withSeq.Type)
@@ -27,11 +27,14 @@ func TestBuildSessionUserMessageResponseCarriesUserExchangeSeq(t *testing.T) {
 	if got := exchange["content"]; got != "hello" {
 		t.Fatalf("exchange.content = %v", got)
 	}
+	if got := exchange["mindfs_id"]; got != "mindfs-turn-id" {
+		t.Fatalf("exchange.mindfs_id = %v, want mindfs-turn-id", got)
+	}
 
 	// seq 未知（0）时不得下发假 seq——客户端需保持旧的瞬时项行为。
 	withoutSeq := buildSessionUserMessageResponse(
 		"root", "sess", "chat", "", "claude", "m", "", "", "", "", false,
-		"hello", ts, false, 0,
+		"hello", ts, false, 0, "",
 	)
 	exchangeNoSeq, ok := withoutSeq.Payload["exchange"].(map[string]any)
 	if !ok {

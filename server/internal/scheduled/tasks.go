@@ -31,7 +31,7 @@ type SessionActivityBroadcaster interface {
 	BroadcastSessionCreated(rootID string, sess *session.Session)
 	// SetSessionPendingReply / BroadcastSessionUserMessageAt 返回该条目的**回合 mindfs_id**，
 	// 收尾时必须原样交给 EndSessionTurn —— 否则清理按无身份走「保守清」，身份比对失效。
-	SetSessionPendingReply(rootID, sessionKey, sessionTitle string) string
+	SetSessionPendingReply(rootID, sessionKey, sessionTitle, mindfsID string) string
 	// 刻意**不暴露**无身份的 `BroadcastSessionUserMessage`（不带 At 的那个）：它内部
 	// 拿不到 mindfs_id，收尾就退化成无条件清（守卫见 pending_identity_test.go）。
 	// 置 pending 只允许走能拿到 mindfs_id 的这一个入口。
@@ -541,7 +541,9 @@ func (s *Service) runTask(ctx context.Context, task Task, force bool) error {
 			// 前端重拉，meta.updated 不会（前端 handler 只写已缓存条目）。
 			broadcaster.BroadcastSessionCreated(current.RootID, created)
 			if created != nil {
-				id := broadcaster.SetSessionPendingReply(current.RootID, created.Key, created.Name)
+				nextSeq := session.MaxExchangeSeq(created.Exchanges) + 1
+				mindfsID := session.NewMindFSID("", fmt.Sprintf("%s|agent|%d", created.Key, nextSeq))
+				id := broadcaster.SetSessionPendingReply(current.RootID, created.Key, created.Name, mindfsID)
 				turnMu.Lock()
 				turnIDs[created.Key] = id
 				subSessionKeys = append(subSessionKeys, created.Key)

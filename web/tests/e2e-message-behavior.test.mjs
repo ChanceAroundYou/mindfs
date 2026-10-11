@@ -200,19 +200,10 @@ test("E2E：消息渲染行为（隔离实例）", { skip: SKIP }, async (t) => 
   await t.test(
     "跳转到较早消息后，尾部不得出现渲染空洞（冲突②）",
     {
-      skip:
-        "驱动不到：会话搜索开关只在「会话列表」布局渲染，而可驱动的 URL 状态" +
-        "（?root=&session=&view=chat）下侧栏是文件树 —— 展开 .mindfs-sidebar-resize-rail 之后仍是文件树，" +
-        "DOM 里既没有该开关也没有搜索输入框（实测两次）。改为在抽出的纯函数上做单元断言，" +
-        "见 tests/session-overlay-unit.test.mjs 的「冲突②」用例：那里能确定性地构造出这个状态。",
+      skip: "实际浏览器入口仍不可驱动；session-overlay-unit.test.mjs 覆盖窗口/缓存身份对账。",
     },
     async () => {
-      // 保留本条的**判据原文**，等哪天有稳定入口就能直接接上：
-      //   跳转前记下末行（最大 seq）；触发 targetSeq 跳转后，那一行必须仍然渲染。
-      // 触发路径（读代码得到）：搜索命中 → useSessionSearch 设 session.search_seq →
-      // App.tsx:8268 传成 targetSeq → SessionViewer:1876 的 `targetSeq>0 && !inRange` 分支
-      // 用 setVisibleExchanges(winExchanges) 整体替换窗口、且不推进 latestSeq ⇒ A2 丢弃尾部。
-      // 只在 ≤80 行（未虚拟化）时 DOM 里能看到全部行；超过阈值要靠滚动验证。
+      // 此入口仍不可驱动；持久行缺口由 overlay 按 seq 补齐，不依赖窗口水位线。
     },
   );
 
