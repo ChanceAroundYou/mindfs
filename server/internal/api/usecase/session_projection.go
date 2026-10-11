@@ -82,22 +82,82 @@ func ProjectExchanges(exchanges []session.Exchange) ([]session.Exchange, map[int
 
 	hidden := make([]bool, len(exchanges))
 
-	// 规则 A：带「实时标记」的行吸收不带标记的孪生行，一对一。
+	// ── 规则 A（来源对决 + **本轮回复也相同**）──────────────────────────────
+	//
+	// 2026-10-11 实测补的第二判据：**同一句话 + 紧随的回复也相同**才算双写，
+	// 只比一句话会把「用户在不同轮次说的同一句话」误折掉。
+	//
+	// 实测本机 1791685987-a50945f94325.jsonl：用户在同一天里反复说「继续」
+	// （18:18/18:28/18:40/18:43 四次，import），第二天 05:28 又说过一次（live）。
+	// 老规则只按「同内容 + 来源不同」配对，于是第二天那句连同前四句中的一句
+	// 被判成双写而整行折叠 —— 用户在自己会话里看不见自己说过的话，
+	// 而文件里那行数据是好的。相隔 11 小时。
+	//
+	// 为什么第二条判据是「下一段回复」而不是时间窗（试过时间窗，更糟）：
+	// 真双写的两侧时间差本来就很大 —— 1791339665 里 live 06:30 与 import 09:15
+	// 相隔 2.7 小时，因为导入是把整段历史重读一遍、时间戳落在导入时刻。
+	// 任何容得下 2.7 小时的窗都容得下 11 小时的误折；挡得住 11 小时的窗
+	// 都会把真双写放出来变成用户可见的重复行。**时间在这条规则上没有分辨力。**
+	//
+	// 而「本轮回复」有：实测两组数据上这道判据完全分开 —— 6 对真双写的后续 agent
+	// 内容**全部相同**，2 对误折的后续内容不同或不存在。一个双写的单位是**一轮**
+	// （问 + 答），不是一行；只问相同而答不同，那就是两个不同的问题。
+	//
+	// 而「本轮回复」有，实测两组数据上完全分开：1791339665（真双写）的候选里
+	// 两侧都有答且答相同的才折叠；1791685987（误折）的两对答不同、或只有一侧有答。
+	// 一个双写的单位是**一轮**（问 + 答），不是一行；问相同而答不同，就是两个问题。
 	markedByKey := map[projectKey][]int{}
-	for index, exchange := range exchanges {
-		if hasIdentity[index] || !isLiveMarkedExchange(exchange) {
+	for index := range exchanges {
+		if hasIdentity[index] || !isLiveMarkedExchange(exchanges[index]) {
 			continue
 		}
-		if key, ok := projectRowKey(exchange); ok {
+		if key, ok := projectRowKey(exchanges[index]); ok {
 			markedByKey[key] = append(markedByKey[key], index)
 		}
 	}
+	// turnReply 取「这一行所属那一轮的 agent 回复」的归一化内容。
+	//   · 本行就是 agent 行 ⇒ 它自己就是那一轮的答（否则答永远匹配不上自己，
+	//     一整轮双写里只有问会被折掉、答变成孤行）；
+	//   · 本行是 user 行 ⇒ 往后第一条 agent 行，遇下一条 user 行即止。
+	// 空表示这一轮没有答（还在跑 / 导入器只导了问）。
+	turnReply := func(index int) string {
+		role := strings.ToLower(strings.TrimSpace(exchanges[index].Role))
+		if role == "agent" {
+			return normalizeExchangeContent(exchanges[index].LegacyContent)
+		}
+		for scan := index + 1; scan < len(exchanges); scan++ {
+			role := strings.ToLower(strings.TrimSpace(exchanges[scan].Role))
+			if role == "user" {
+				return ""
+			}
+			if role == "agent" {
+				return normalizeExchangeContent(exchanges[scan].LegacyContent)
+			}
+		}
+		return ""
+	}
+	// sameTurn 是「本轮回复也相同」的判据：**两侧都拿得到答、且答不同 ⇒ 不是双写**。
+	//
+	// 为什么否决式而不是肯定式（两侧答相同才折叠）：折叠的本意是消掉历史双写残留，
+	// 而绝大多数 fixture 与真实会话里那一轮的答**根本没落盘**（agent 行在另一处写，
+	// 或还在跑）。肯定式会把它们全放回来，那是把 S2c 之前的历史残留重新显示给用户。
+	// 否决式只在「有证据说它是两轮」时拦住，没证据就照旧折叠。
+	//
+	// 实测两侧完全分开：1791339665（真双写）的候选答全部相同 ⇒ 照旧折叠；
+	// 1791685987（误折）的 seq=22 只有问没有答、seq=16 的答与 seq=12 的不同 ⇒ 拦住。
+	sameTurn := func(a, b int) bool {
+		ra, rb := turnReply(a), turnReply(b)
+		if ra == "" || rb == "" {
+			return true // 有一侧没有答：证据不足，照旧折叠
+		}
+		return ra == rb
+	}
 	consumed := map[projectKey]int{}
-	for index, exchange := range exchanges {
-		if hasIdentity[index] || isLiveMarkedExchange(exchange) {
+	for index := range exchanges {
+		if hasIdentity[index] || isLiveMarkedExchange(exchanges[index]) {
 			continue
 		}
-		key, ok := projectRowKey(exchange)
+		key, ok := projectRowKey(exchanges[index])
 		if !ok {
 			continue
 		}
@@ -106,9 +166,23 @@ func ProjectExchanges(exchanges []session.Exchange) ([]session.Exchange, map[int
 		if offset >= len(candidates) {
 			continue
 		}
+		// 从 offset 起找第一个「本轮回复也相同」的候选；都不同则不折叠。
+		matched := -1
+		for scan := offset; scan < len(candidates); scan++ {
+			if sameTurn(index, candidates[scan]) {
+				matched = scan
+				break
+			}
+		}
+		if matched < 0 {
+			continue
+		}
+		// 用掉的候选与命中的候选交换，保持「每条实时行只被吸收一次」的一对一语义，
+		// 同时不影响 offset 之后尚未配对的那些行。
+		candidates[offset], candidates[matched] = candidates[matched], candidates[offset]
 		consumed[key] = offset + 1
 		hidden[index] = true
-		hiddenToKept[exchange.Seq] = exchanges[candidates[offset]].Seq
+		hiddenToKept[exchanges[index].Seq] = exchanges[candidates[offset]].Seq
 	}
 
 	// 规则 A2：一侧内容整体包含另一侧 —— 实时路径写的是流式快照（写短了），导入器拿到的是
@@ -226,6 +300,30 @@ func ProjectExchanges(exchanges []session.Exchange) ([]session.Exchange, map[int
 type projectKey struct {
 	role    string
 	content string
+}
+
+// turnScope 是规则 A 的配对口径：**同一句话 + 同一轮**。
+//
+// 为什么必须带轮次：只按「内容相同」配对会把「用户在不同轮次里说的同一句话」判成双写
+// （实测 1791685987 里相隔 11 小时的两次「继续」）。一个双写的单位是**一轮**，
+// 不是一行 —— 所以配对前先按 user 行切轮，只在轮内比内容。
+//
+// 轮次口径是「index 之前最后一条 user 行的 index」（没有则是 -1）。不用 seq：
+// 老数据里 import 与 live 两侧的 seq 没有可比关系（import 是整段重读，seq 连续重排），
+// 而 index 顺序就是文件里的真实顺序。
+type turnScope struct {
+	key  projectKey
+	turn int
+}
+
+// turnIndexOf 返回这一行属于哪一轮（见 turnScope）。
+func turnIndexOf(exchanges []session.Exchange, index int) int {
+	for i := index; i >= 0; i-- {
+		if strings.EqualFold(strings.TrimSpace(exchanges[i].Role), "user") {
+			return i
+		}
+	}
+	return -1
 }
 
 // projectRowKey 归一化一行；空内容（只调工具、没有正文的占位轮）不参与折叠。
