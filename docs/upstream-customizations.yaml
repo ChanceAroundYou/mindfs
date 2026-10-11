@@ -500,14 +500,13 @@ groups:
       - server/internal/session/manager_test.go
 
   - id: G-AB
-    title: 会话投影与审计
-    kind: fix
+    title: 会话投影与审计退役
+    kind: trim
     symptom: |
-      会话列表/详情的字段来自多次不一致的读，出现「列表有、详情无」；
-      外部会话的审计记录与实际交换对不上。
+      读时内容启发式曾把真实的新回合当成双写副本隐藏；审计端点也只服务于这套投影。
     why: |
-      session_projection.go 把会话对外投影收敛成一处，audit.go 记录交换的权威视图；
-      上游没有这两层，退回散读会让同一份会话在不同入口呈现不同结果。
+      写入侧已有 agent_id / mindfs_id 身份判重。内容投影曾出现误折叠，因此移除读时猜测与审计端点；
+      GET 原样返回持久化行及按 seq 关联的 aux。保留本组文件路径可让门禁覆盖这次删除。
     files:
       - server/internal/api/usecase/session_projection.go
       - server/internal/api/usecase/session_projection_test.go
@@ -515,9 +514,9 @@ groups:
       - server/internal/api/usecase/session_projection_window_test.go
       - server/internal/session/audit.go
     tests:
-      - server/internal/api/usecase/session_projection_test.go
-      - server/internal/api/usecase/session_projection_identity_test.go
-      - server/internal/api/usecase/session_projection_window_test.go
+      - server/internal/api/http_window_test.go
+      - server/internal/session/manager_test.go
+      - server/internal/session/manager_window_test.go
 
   # ── 后端：模型 / 探针 / agent 运行时 ────────────────────────────
   - id: G-R
@@ -2211,7 +2210,7 @@ groups:
          正确边界，保持不变。
       3) 两个写入者的幂等护栏 exchangeAlreadyRecorded 仍在：地板只放行「比库里最新一条
          更新」的条目，这些条目必然不在库里，护栏不会误伤；真出现内容相同但时间戳差 >5s
-         的重尾，读取投影（G-AB 的 A/A2）会折叠掉。
+         的重尾会保留为独立行；读路径不再按内容隐藏记录，防止误删真实回合。
     boundary: |
       Full 同步的增量圈定：live-owned 会话「比库里最新一条更新」的尾段导不进来。
       非 Full 的常规增量同步、import-owned 会话、子代理同步、repoint 游标推进都不动。
@@ -2263,7 +2262,8 @@ groups:
     boundary: |
       会话轮次元数据的字段名与铸造规则：Exchange.AgentID、Block.AgentID、
       NewMindFSID、exchangeAgentKey / exchangeIdentityRecorded、stream_hub 待亮灯身份。
-      块流正文、窗口读、投影、判重内容比对都不在它们的改动范围内。
+      块流正文与窗口读不在它们的改动范围内；写入侧身份判重由 G-BI 提供，读时内容投影已于
+      2026-10-12 由 G-AB 退役。
     tests:
       - server/internal/session/manager_rename_compat_test.go
       - server/internal/session/rename_compat_helpers_test.go
@@ -2420,10 +2420,9 @@ groups:
       17) messageId 只认 UUID 形态（isUUIDShape）：ACP 规范要求两端都用 UUID 格式，而
           MindFS 递出去的就是自己 mint 的 turn_id；别的形态一律当「没有身份」，宁可不判重
           也不能拿一个对不上的字符串当身份。
-      18) 投影（session_projection.go）**身份化**：有 native 身份的行整段不参与折叠 ——
-          读时按内容猜一次只会把真实缺陷藏成看不见。它现在只剩一个作用：折叠 S2c 之前
-          遗留的、双边都没有身份的历史行。审计端点新增 identity_bearing_rows 报出
-          「身份化进度」，也就是历史残留的规模 —— 那是删掉投影与处理历史行的时机判据。
+      18) （历史状态，2026-10-12 退役，见 G-AB）投影曾按身份保护新行、按内容折叠旧重复，
+          审计端点曾报告 identity_bearing_rows。实测仍有误折叠不同回合的可能；身份写入判重
+          已接管新数据，本地历史数据完成一次性清理后，投影与审计端点一并删除。
       19) TimestampFloor 只给 HasTranscriptTimestamps 的导入器（claude/codex）。ACP 的
           SessionUpdate 不带时间戳，它给每行盖的是「读到它的那一刻」，恒晚于地板 ——
           地板形同虚设，而代码看着像「有地板就安全」。删掉那道假防线后，ACP 侧的正确性
@@ -2475,7 +2474,6 @@ groups:
       - server/internal/session/manager_blocks_window_test.go
       - server/internal/api/http_window_test.go
       - server/internal/api/usecase/session_identity_dedup_test.go
-      - server/internal/api/usecase/session_projection_identity_test.go
       - server/internal/agent/acp/importer_identity_test.go
       - server/internal/session/types_aux_reasoning_test.go
       - server/internal/api/usecase/session_blocks_backfill_test.go
@@ -2504,10 +2502,8 @@ groups:
       - server/internal/session/manager_blocks_window_test.go
       - server/internal/api/http.go
       - server/internal/api/http_window_test.go
-      - server/internal/api/usecase/session_projection.go
       - server/internal/api/usecase/external_sessions.go
       - server/internal/api/usecase/session_identity_dedup_test.go
-      - server/internal/api/usecase/session_projection_identity_test.go
       - server/internal/api/usecase/exchange_repeat_test.go
       - server/internal/api/usecase/external_sessions_test.go
       - server/internal/agent/acp/importer.go
@@ -2551,8 +2547,6 @@ groups:
       - server/internal/api/usecase/session.go:noteIdentitylessGuess
       - server/internal/api/usecase/external_sessions.go:appendImportedExchange
       - server/internal/api/usecase/external_sessions.go:agentHasPromptMessageID
-      - server/internal/api/usecase/session_projection.go:ProjectExchanges
-      - server/internal/api/usecase/session_projection.go:AuditSession
       - server/internal/agent/acp/importer.go:messageIDOf
       - server/internal/agent/acp/importer.go:isUUIDShape
       - server/internal/api/stream_hub.go:SetPendingUserAt

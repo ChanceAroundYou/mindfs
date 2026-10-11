@@ -19,7 +19,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"mindfs/internal/deploy"
@@ -268,7 +267,6 @@ func (h *HTTPHandler) Routes() http.Handler {
 	r.Post("/api/sessions/{key}/sync", h.handleSessionSync)
 	r.Get("/api/sessions/{key}", h.handleSessionGet)
 	r.Post("/api/sessions/{key}/messages", h.handleSessionUserMessage)
-	r.Get("/api/sessions/{key}/audit", h.handleSessionAudit)
 	r.Get("/api/sessions/{key}/related-files", h.handleSessionRelatedFilesGet)
 	r.Post("/api/sessions/{key}/pin", h.handleSessionPin)
 	r.Post("/api/sessions/{key}/archive", h.handleSessionArchive)
@@ -851,24 +849,7 @@ func (h *HTTPHandler) handleSessionGet(w http.ResponseWriter, r *http.Request) {
 	// 只协商、不瘦身：载荷本身就是详情（exchanges / exchange_aux / window_meta
 	// 少一个键就是少一段对话），而且 `seq` 增量语义要求客户端**恰好**收到新行，
 	// 删空字段会破坏 `appendSessionDelta` 的判据。
-	respondJSONConditional(w, r, h.sessionResponse(out, contextWindow, projectSessionExchangesForResponse(out, exchangeAux), blocks, windowMeta))
-}
-
-// handleSessionAudit 只读体检：文件层（seq 空洞/重复、坏行、aux 悬空）+ 投影层的重复分类。
-// 只报告不修：清理必须先看这份报告再人工决定（红线：不可按内容批量去重）。
-func (h *HTTPHandler) handleSessionAudit(w http.ResponseWriter, r *http.Request) {
-	rootID := r.URL.Query().Get("root")
-	key := chi.URLParam(r, "key")
-	if strings.TrimSpace(key) == "" {
-		respondError(w, http.StatusBadRequest, errInvalidRequest("session key required"))
-		return
-	}
-	out, err := h.service().AuditSession(r.Context(), usecase.AuditSessionInput{RootID: rootID, Key: key})
-	if err != nil {
-		respondError(w, http.StatusNotFound, err)
-		return
-	}
-	respondJSON(w, http.StatusOK, out)
+	respondJSONConditional(w, r, h.sessionResponse(out, contextWindow, exchangeAux, blocks, windowMeta))
 }
 
 func (h *HTTPHandler) handleSessionSync(w http.ResponseWriter, r *http.Request) {
@@ -968,9 +949,8 @@ func (h *HTTPHandler) handleSessionSync(w http.ResponseWriter, r *http.Request) 
 			Seq:    afterSeq,
 		})
 	}
-	exchangeAux = projectSessionExchangesForResponse(out, exchangeAux)
-	// 正文块与 aux 同一口径（用**回包里的** exchange seq，投影之后算），
-	// 与 handleSessionGet 共用 windowSeqsForExchanges。
+	// 正文块与 aux 同一口径（用回包里的 exchange seq），与 handleSessionGet 共用
+	// windowSeqsForExchanges。
 	blocks, _ := uc.GetSessionBlocksWindow(r.Context(), usecase.GetSessionBlocksWindowInput{
 		RootID: rootID,
 		Key:    key,
@@ -1283,33 +1263,6 @@ func (h *HTTPHandler) handleSessionArchive(w http.ResponseWriter, r *http.Reques
 	}
 	respondJSON(w, http.StatusOK, h.sessionListResponse(out.Session))
 }
-
-// projectSessionExchangesForResponse 折叠「同一轮被多个写入者各写一份」的重复行，并把被
-// 隐藏行的 aux 重挂到保留行（aux 以 seq 为键；重挂后由前端已有的按 callId 去重收口）。
-//
-// ⚠ 只许在响应边界调用：SendMessage 的判重正是读同一份 Exchanges（session.go 的
-// exchangeAlreadyRecorded），若在 manager 层投影，被隐藏的行会被当成「没写过」而重复落盘。
-func projectSessionExchangesForResponse(s *session.Session, exchangeAux map[int][]session.ExchangeAux) map[int][]session.ExchangeAux {
-	if s == nil || len(s.Exchanges) < 2 || !usecase.SessionProjectionEnabled() {
-		return exchangeAux
-	}
-	kept, hidden, _ := usecase.ProjectExchanges(s.Exchanges)
-	if len(hidden) == 0 {
-		return exchangeAux
-	}
-	if _, seen := projectedSessions.LoadOrStore(s.Key, struct{}{}); !seen {
-		log.Printf("[session/projection] session=%s hidden=%d（同一轮被两个写入者各写一份，已折叠展示；文件里的数据一行未删）", s.Key, len(hidden))
-	}
-	keptSeqs := make(map[int]bool, len(kept))
-	for _, exchange := range kept {
-		keptSeqs[exchange.Seq] = true
-	}
-	s.Exchanges = kept
-	return usecase.RemapExchangeAux(exchangeAux, hidden, keptSeqs)
-}
-
-// projectedSessions 只为让投影日志每个会话最多打一次（读路径调用频繁，不能每请求一条）。
-var projectedSessions sync.Map
 
 // windowSeqsForExchanges 是「取块 / 取 aux 时用哪些 seq」的唯一定义：
 // **回包里真实存在的** exchange seq（seq>0）。不用请求参数推算窗口边界，

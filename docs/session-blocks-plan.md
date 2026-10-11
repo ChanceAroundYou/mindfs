@@ -38,11 +38,11 @@
 |---|---|
 | D1 | **块流是唯一正文载体**；`Exchange.Content` **删除** |
 | D2 | `native_id` 存**步级**（不存到块级，省每块 ~36 字节） |
-| D3 | 递给 ACP 的 `messageId` **复用** MindFS 的 `turn_id`（一个逻辑 id 一种表示） |
-| D4 | `turn_id` **由客户端生成**，服务端采纳（幂等键）；**无客户端时由服务端 mint UUIDv4**（见 §14 C2） |
-| D5 | 纯导入会话用 **UUIDv5** 确定性生成（重导不造新 id） |
-| D6 | **删除 `TurnGen`**，统一为 `turn_id`；独立成一步 S2e |
-| D7 | 三级 `(turn_id, step, pos)`；步内用 **agent 声明序**，无声明时才退回到达序 |
+| D3 | 递给 ACP 的 prompt `messageId` 使用本轮 `mindfs_id`；agent 回显值进入 `agent_id` |
+| D4 | `mindfs_id` 由 MindFS 用 UUIDv5 确定性铸造；seed 优先取 `agent_id`，否则用 `sessionKey|role|seq` |
+| D5 | live 与 import 共用 mint 规则；重导同一 agent 消息不造新 `mindfs_id` |
+| D6 | **删除 `TurnGen`**；pending 身份改为 UUID 字符串，语义仍按 pending 生命周期管理 |
+| D7 | 三级 `(mindfs_id, step, pos)`；步内用 **agent 声明序**，无声明时才退回到达序 |
 | D8 | 工具结果晚到：复用 `(seq,pos)` + **revision 覆盖** |
 | D9 | **块级窗口参数**（不只 exchange 级） |
 | D10 | native id 对不上：**跳过 + 日志，永不猜** |
@@ -66,10 +66,9 @@
 ```
 seq / role / source / agent / model / model_display_name / mode / effort /
 fast_service / token_usage / timestamp
-turn_id        string   // MindFS 权威 UUID，落盘即定，永不改
+mindfs_id      string   // MindFS 权威 UUIDv5，落盘即定，永不改
 turn_seq       int      // = 打开该轮的 user 行 seq（排序 / 人读用）
-native_turn    string   // agent 轮 id：dsh `turn` / ACP `userMessageId`（可空）
-native_prompt  string   // agent 的 prompt message id（可空）
+agent_id       string   // agent 侧桥接 id（可空、可后补）
 partial        bool     // 本轮未收尾
 ```
 
@@ -77,9 +76,8 @@ partial        bool     // 本轮未收尾
 
 | 原消费者 | 变更后 |
 |---|---|
-| 投影 rule A / A2 / B（`session_projection.go:107/122-131/161`） | 身份判重替代 → 消失 |
-| `auditPreview:308`（审计端点，**前端从未消费**） | 规则退役 → 消失 |
-| `RemapExchangeAux`（`http.go:1257`，投影唯一生产调用者） | 块内联后 → 消失 |
+| 读时重复行投影与审计端点 | S3 已退役；GET 原样返回持久化行 |
+| `RemapExchangeAux`（原投影的 aux 重映射） | S3 已随投影删除；aux 按各自 seq 返回 |
 | 搜索 `manager.go:3326` | 改扫块流 |
 | 同 seq 载入去重 `manager.go:2208/2211` | 改按 revision / 字段完备度 |
 | importer 累积正文 `claude:1277` / `codex:754` | 改落块 |
@@ -92,15 +90,15 @@ partial        bool     // 本轮未收尾
 ### 3.2 块流 `<key>.blocks.jsonl` —— 唯一正文载体
 
 ```json
-{"seq":58,"pos":0,"revision":0,"type":"reasoning","text":"...","step":3,"native_id":"..."}
-{"seq":58,"pos":1,"revision":0,"type":"tool_call","toolcall":{...},"step":3,"native_id":"..."}
-{"seq":58,"pos":2,"revision":1,"type":"tool_call","toolcall":{...},"step":3,"native_id":"..."}
-{"seq":58,"pos":3,"revision":0,"type":"text","text":"...","step":4,"native_id":"..."}
+{"seq":58,"pos":0,"revision":0,"type":"reasoning","text":"...","step":3,"agent_id":"...","mindfs_id":"..."}
+{"seq":58,"pos":1,"revision":0,"type":"tool_call","toolcall":{...},"step":3,"agent_id":"...","mindfs_id":"..."}
+{"seq":58,"pos":2,"revision":1,"type":"tool_call","toolcall":{...},"step":3,"agent_id":"...","mindfs_id":"..."}
+{"seq":58,"pos":3,"revision":0,"type":"text","text":"...","step":4,"agent_id":"...","mindfs_id":"..."}
 ```
 
 - `type ∈ {reasoning, text, tool_call, todo, plan, compact}`
 - **`pos` 取代 `line`**（`line` 是「在 content 里的第几行」，content 一删就失去意义）
-- `step` + `native_id` 为步级身份（D2/D7）
+- `step` + `agent_id` 为步级身份；`mindfs_id` 标识所属 MindFS 轮次（D2/D7）
 - 同 `(seq,pos)` 多版本按 `revision` 取最高（D8）
 - 子代理块带 `parentToolUseId` / `taskId` / `subagentType`（D16）
 - 旧格式兼容：无 `pos` 时退回 `line`；`Content` 非空且无块流时合成一个 `text` 块
@@ -108,12 +106,12 @@ partial        bool     // 本轮未收尾
 ### 3.3 三级身份
 
 ```
-turn_id   MindFS 权威（客户端生成，全 agent 通用）
+mindfs_id MindFS 权威（UUIDv5 确定性 mint，全 agent 通用）
 step      MindFS 分配，按 agent 的「消息投递单元」递增：
             claude = 一条 AssistantMessage（= 一次 API 调用）
             dsh/ACP = 一次 messageId 变更
 pos       步内段序 = agent 声明序；无声明时才退回到达序
-native_id 回查键，可空、可后补、fork 后可变更
+agent_id  agent 侧回查键，可空、可后补、fork 后可变更
 ```
 
 **`step` 的判定时机（必须先写死，否则增量落库无解）**：`step` 是**已收口**的概念 ——
@@ -145,9 +143,9 @@ agent 事件 → block → 缓冲 →(300ms / 64KB / boundary)→ ① append 块
 - **单一汇聚点**（codebase 图谱已证）：`appendExchange`（← `addExchangeForAgentAt:695`）
   + `appendExchangeAux`（← `AddExchangeAux:755`）。
 - **先落盘、后广播**：保证「前端看到的 ⊆ 已落盘的」，重连/切会话必然自洽。
-- **轮次开始即分配 `seq`**（客户端带来 `turn_id`，D4）。
+- **轮次开始即分配 `seq`**，MindFS 按 `agent_id` 或 `sessionKey|role|seq` 铸 `mindfs_id`（D4）。
 - **即时档 vs 批量档**：用户自己那条消息、工具卡开始走即时档，不等 flush 周期。
-- **落盘顺序**：先写元数据行（含 `turn_id`/`seq`），再写块 —— 否则块成孤儿。
+- **落盘顺序**：先写元数据行（含 `mindfs_id`/`seq`），再写块 —— 否则块成孤儿。
 - **fsync 策略**：中间 flush 只 `write`（实测 5.3µs），**轮次结束 `fsync` 一次**（实测 1.48ms）。
 - **崩溃契约**（D13）：崩溃丢缓冲区，靠 import 补齐；`partial:true` 的轮 UI 显示「进行中/已中断」。
 - **三处必修**：`manager.go:2264`（tail 跳过 `seq<=baseSeq`）、`:2267`（tail 内不按 seq 去重）、
@@ -252,11 +250,16 @@ agent 事件 → block → 缓冲 →(300ms / 64KB / boundary)→ ① append 块
 | **S2b** | **读**改走块流；前端按 `type` 渲染；块级窗口（**复用 `CompactExchangeAuxLight` 策略**）；块内联（**省掉 O3 的 round trip**） | 新老并存可对账 |
 | **S2c** | ✅ **身份判重**启用；投影**身份化**（只折叠双边无身份的历史残留）+ 审计端点报身份化进度 | 新数据不再猜；旧残留可度量 |
 | **S2d** | ✅ **已落地**（S2d-1 旧数据回填 + `CompactExchangeAux` 丢 reasoning 的修复；S2d-2 块流成为正文唯一载体、主日志 `content` 恒空） | 单一真相源 |
-| **S2e** | **删 `TurnGen`**，统一为 `turn_id`（独立提交、可单独回滚） | 一套身份 |
-| **S3** | seq=0 机制退役、`tailOverlay` 5 条启发式、**§14.1 的约 470 行**（投影整块 / 判重套件 / `CountExchanges` / `appendResponseChunk`） | 净减猜测层 |
+| **S2e** | ✅ 删除 `TurnGen`；后由 G-BI 收敛为 `mindfs_id` + `agent_id` 两类 id | 身份模型已统一 |
+| **S3** | ✅ 退役读时投影与审计端点、删除 `CountExchanges`、清理可确认的历史副本；待做：seq=0 / `tailOverlay` 机制审计与退役 | 减少读时启发式 |
 | 待办 | 旧数据迁移脚本（dsh 可迁、claude 本地无 thought）；codex native id 实证 | — |
 
-登记：S1=`G-BG`、S2a–S2e=`G-BH`、S3=`G-BI`；每步针对性测试 + 提交带 `Scope:` trailer。
+登记：S1=`G-BG`、S2a–S2e=`G-BH`、身份模型=`G-BI`、S3 清理=`G-AB`；每步针对性测试 + 提交带 `Scope:` trailer。
+
+**身份契约更新（G-BI，2026-10-11）**：本节早期的 `turn_id` / `native_*` 是历史阶段名，当前落盘只使用两类身份：
+`mindfs_id` 由 MindFS 确定性铸造并作为权威行 id；`agent_id` 是 agent 提供的可选桥接 id。非空 `agent_id` 用作 mint seed，缺失时以 `sessionKey|role|seq` 兜底。live 与 import 共享该规则。pending 灯沿用同一 UUID 字符串形状，但按轮次开始时的身份时点单独生成。
+
+**S3 落地记录（2026-10-12）**：删除会话读时投影、aux 重映射和审计端点，并移除 `CountExchanges` 及其专用测试。审核本机历史数据后，原计划中的 10 条候选只有 8 条能按 import/live 来源与角色确认是重复副本，已删除副本、保留 live 行；另 2 条回复不同，未能证明是重复，保留。活动会话里发现一条投影误隐藏不同回合的记录，GET 改为原样返回持久行，aux 继续按原 seq 对应。`exchangeAlreadyRecorded` 保留为写入侧幂等护栏。`appendResponseChunk` 也保留：live 写路径仍用它汇总 text 块，供块持久化与行号计算；要删需先改写这两条真实调用路径。`seq=0` 与 `tailOverlay` 尚未在本轮退役，需单独审计其 UI 对账职责。
 
 ---
 
@@ -522,17 +525,18 @@ agent 事件 → block → 缓冲 →(300ms / 64KB / boundary)→ ① append 块
 
 ## 14. 全局审核结论（2026-10-10，codebase 图谱辅助）
 
-### 14.1 可一并移除的机制（本次审核新发现，原方案未计）
+### 14.1 机制清理审核（2026-10-10 初审，2026-10-12 更新）
 
 | 目标 | 位置 | 规模 |
 |---|---|---|
-| **投影整块** | `session_projection.go`：`ProjectExchanges` / `projectRowKey` / `isLiveMarkedExchange` / `RemapExchangeAux` / `AuditSession` / `auditPreview` | **328 行** |
-| **判重套件** | `session.go:2309-2423`：`exchangeAlreadyRecorded` / `recordedUserExchangeSeq` / `sameRecordedExchangeContent` / `normalizeExchangeContent` | **~115 行** |
-| **`CountExchanges`** | `manager.go:330` | **~25 行**（生产零调用，只有 `manager_window_test.go:136` 调） |
-| **`appendResponseChunk` + `lastResponseUpdateType`** | `session.go:3996` | 把 text 块拼成 content 并按类型插空行，块化后消失 |
-| **`CompactExchangeAux` 的 `aux.Thought=""`** | `types.go:118` | thought 不再在 aux 里 |
-
-合计约 **470 行**。`SessionProjectionEnabled` 开关只剩 `http.go:1254` 一处消费者，随之删除。
+| 目标 | 当前结论 |
+|---|---|
+| **读时投影 / aux 重映射 / 审计端点** | ✅ 2026-10-12 删除（G-AB）。历史审核中 8 条 import 副本已清理；2 条不能确认的候选保留。 |
+| **`exchangeAlreadyRecorded` 与内容辅助判据** | ✅ 保留。它是写入侧幂等护栏，避免重复同步；不属于可删除的读时投影。 |
+| **`CountExchanges`** | ✅ 删除。生产零调用，连同仅依赖它的 manager 测试删除。 |
+| **`appendResponseChunk` / `lastResponseUpdateType`** | 保留。两条 live 写路径仍需拼接 text 块，供 `persistTurnBlocks` 与块行位置计算；必须先重构调用路径才能移除。 |
+| **`CompactExchangeAux` reasoning 保留** | ✅ S2d-1 已修复，不能退回清空 reasoning。 |
+| **seq=0 / `tailOverlay`** | 待独立审计。它们目前参与前端瞬时行与持久窗口对账，本次没有删除。 |
 
 ### 14.2 新冲突（3 条，原方案未覆盖）
 
@@ -579,7 +583,6 @@ D4 定的是「客户端生成」，但实测有**三条服务端发起的轮次
 2. 「`CountExchanges` 也是热点」**不成立** —— 它确实全量，但**生产零调用**（仅测试）。
 3. `mergeStreamedText` / `inferredSeq` **已删干净**（只剩注释与测试引用），**不需要**列进 S3。
 
-### 14.5 结论
+### 14.5 初审结论与后续修正
 
-**会不会引入新冲突？** 会 3 条（C1/C2/C3），均可控，且 C1 是本方案的必要配套。
-**未发现会推翻方案的冲突。** 反而净减约 470 行猜测量 + 2 个热路径优化。
+2026-10-10 初审列出的 C1/C2/C3 已在 S2/G-BH 中处理。后续实地审计修正了「整块猜测层都可删除」的判断：读时投影与 `CountExchanges` 已移除，但写入幂等和 `appendResponseChunk` 仍被真实路径使用，必须保留。剩余 seq=0 / `tailOverlay` 工作以实际 UI 数据流为准逐项审计，不能按旧的行数估算机械删除。

@@ -340,7 +340,7 @@ func (s *Service) SyncExternalSessionDelta(ctx context.Context, in SyncExternalS
 	// 这里曾经留过「进程启动后每会话一次兜底补齐」的例外，2026-09-16 被真实事故证伪并撤掉：
 	// live-owned 会话的字节游标是**冻结**的（导入器平时不跑），拿它当起点会把早已落库的旧
 	// 回合整段重导；而导入器会把相邻同角色条目**合并**，重导出来的行与实时路径写的行并不
-	// 逐字相同 —— 写入侧判重（±5s）和读取投影（内容相等 / 600s 前缀窗）都折叠不掉，于是
+	// 逐字相同 —— 写入侧判重（±5s）也折叠不掉，于是
 	// 用户看到「ask 下面又渲染了一轮出现过的文字」（AIS/docs 的 BP 会话，重导了 09-14 的内容）。
 	//
 	// 需要补历史时走用户手点的「同步」（Full）：那是显式意图，且带时间地板（见下），
@@ -360,8 +360,8 @@ func (s *Service) SyncExternalSessionDelta(ctx context.Context, in SyncExternalS
 	}
 	// live-owned 会话的游标是**冻结**的（导入器平时不跑），只按偏移读会把早已落库的旧回合
 	// 整段重导一遍——实测 2026-09-16：BP 会话被重导了 09-14 的内容，且因为导入器会把相邻
-	// 同角色条目合并，那些重导行的内容与实时路径写的行并不逐字相同，写入侧判重和读取投影
-	// 都折叠不掉，用户看到「ask 下面又渲染了一轮出现过的文字」。所以给这种会话一道
+	// 同角色条目合并，那些重导行的内容与实时路径写的行并不逐字相同，写入侧判重
+	// 也折叠不掉，用户看到「ask 下面又渲染了一轮出现过的文字」。所以给这种会话一道
 	// 时间地板：只接受比库里最新一条更新的条目，兜底补齐真正要的只是「进程重启时被中断的
 	// 那一轮」。
 	//
@@ -572,8 +572,8 @@ func appendImportedExchange(
 	// 把 agent 侧身份写进这一行（方案 §3.1）。没有它，下一轮同步就没有可对齐的键，
 	// 只能继续靠内容猜 —— 而内容恰恰是导入器会改写的东西。
 	//
-	// **这一步同时补上导入路径欠了 S2a 至今的 MindFS 铸造**：此前导入行只写 native id、
-	// 从不铸 MindFSID，实测全库 identity_bearing_rows = 0%。UUIDv5 让 MindFSID 由
+	// **这一步同时补上导入路径欠了 S2a 至今的 MindFS 铸造**：此前导入行只写 agent 侧 id、
+	// 从不铸 MindFSID。UUIDv5 让 MindFSID 由
 	// AgentID 派生 —— 同一行重导得到同一个 id，判重不再需要内容兜底。
 	agentID := strings.TrimSpace(exchange.NativeID)
 	fallbackSeed := fmt.Sprintf("%s|%s|%d", target.Key, role, session.MaxExchangeSeq(target.Exchanges)+1)
@@ -647,7 +647,7 @@ func appendImportedExchange(
 		log.Printf("[session] persist.import.blocks.error session=%s seq=%d err=%v", target.Key, seq, err)
 	}
 	// aux 仍要逐条落盘：它还是 `GET /api/sessions/{key}` 回包里 `exchange_aux` 的来源
-	// （前端按它渲染工具卡 / reasoning，见 http.go 的 projectSessionExchangesForResponse）。
+	// （前端按 seq 渲染工具卡 / reasoning，正文块则单独放在 blocks 字段）。
 	// 删掉它会让所有存量读路径立刻看不到工具卡 —— 那不是 S2d-2 的范围。
 	for _, aux := range collected {
 		if err := manager.AddExchangeAux(ctx, target.Key, aux); err != nil {

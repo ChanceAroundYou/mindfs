@@ -154,7 +154,7 @@
 | G-Y | 看板模型重做（拒绝上游 task_groups） | 裁剪 | 见 §3.1 | 无并发调度；任务自带流水快照 |
 | G-Z | 跨项目工作台 | 功能 | 见 §3.1 | `overview` 汇总 + 按卡片 `root_id` 派发 |
 | G-AA | 前端 App.tsx 模块化重构 | 架构 | 见 §3.1 | `web/src/app/*` 19 模块 + `renderer/*` |
-| G-AB | 会话投影与审计 | 修复 | 见 §3.1 | `session_projection` / `audit` |
+| G-AB | 会话投影与审计退役 | 裁剪 | 见 §3.1 | `session_projection` / `audit` |
 | G-AC | ACP 运行时 + agents.json 用户层 | 修复 | 见 §3.1 | 只读用户层再合并 |
 | G-AD | 会话列表 / 树 / 归档 / 搜索 | 功能 | 见 §3.1 | 合并·建树·分组均为纯函数 |
 | G-AE | UI 基础设施（自建对话框） | 修复 | 见 §3.1 | 禁 `window.prompt/alert/confirm` |
@@ -600,8 +600,9 @@
 
 ### G-AB 会话投影与审计
 
-- 来源：`usecase/session_projection.go`、`session/audit.go`。
-- 边界：把「会话对外投影」与「交换审计」各收敛成一处；上游没有这两层。
+- 状态：**2026-10-12 已退役**。投影按身份保护新行、按内容折叠历史行，但实测仍会误隐藏真实的新回合；身份判重已移到写入侧，GET 现原样返回持久化行和各自 seq 的 aux。
+- 来源（历史）：`usecase/session_projection.go`、`session/audit.go`。
+- 清理：删除投影、aux 重映射和审计端点；删除 `CountExchanges` 及其专用测试。对已审计的本地历史会话清掉 8 条可确认的 import 副本；另 2 条候选因回复不一致无法证明重复，保留。
 
 ### G-AC ACP 运行时与 agents.json 用户层合并
 
@@ -1640,7 +1641,7 @@
      按序号对齐，`ctx_seq` 切片仍是正确边界，保持不变。
   3. 两个写入者（实时路径 / 转录导入）的幂等护栏 `exchangeAlreadyRecorded` 仍在：
      地板只放行「比库里最新一条更新」的条目，这些条目必然不在库里，护栏不会误伤；
-     真出现内容相同但时间戳差 >5s 的重尾，读取投影（G-AB 的 A/A2）会折叠掉。
+     真出现内容相同但时间戳差 >5s 的重尾会保留为独立行；读路径不按内容隐藏记录。
 - 针对性测试：
   - `server/internal/agent/claude/importer_test.go` → `TestReadClaudeImportedExchangesAppliesFloorWithoutCursorOrBootstrap`：
     `committedOffset==0` 且 `bootstrapAfter` 为零、只有地板非零时，地板必须生效
@@ -1883,11 +1884,10 @@
       `messageId` 只认 UUID 形态（`isUUIDShape`）：ACP 规范要求两端都用 UUID，而
       MindFS 递出去的就是自己 mint 的 `turn_id`；别的形态一律当「没有身份」，
       宁可不判重也不能拿一个对不上的字符串当身份。
-  17. **投影身份化**（`session_projection.go`）：有 native 身份的行**整段不参与折叠** ——
-      读时按内容再猜一次只会把真实缺陷藏成看不见。它现在只剩一个作用：折叠 S2c 之前
-      遗留的、双边都没有身份的历史行（直接删会让实测那 9 对重复立刻变成用户可见的
-      重复正文，那是一次实打实的回退）。审计端点新增 `identity_bearing_rows` 报出
-      「身份化进度」，也就是历史残留的规模 —— 那是删掉投影与处理历史行的时机判据。
+  17. **投影身份化（历史状态，2026-10-12 已由 G-AB 退役）**：当时有 native 身份的行
+      整段不参与折叠，只对 S2c 前无身份的行做内容折叠；审计端点曾报告
+      `identity_bearing_rows`。后续实测到误隐藏真实回合的可能，身份写入判重已接管新数据；
+      一次性清理确认的本地历史副本后，投影与审计端点删除。
   18. **S2d-1 回填**（`session_blocks_backfill.go`）：窗口里「一个块都没有」的 seq，
       用**调用方本来就传进来的** exchanges + aux 编译成块并落盘，幂等。读时惰性而不是
       写迁移脚本：会话库按项目/账户分区散在各处（本机就有 4 个 `.mindfs/sessions`，
@@ -1895,7 +1895,7 @@
       不额外读盘才是关键 —— `GET /api/sessions/{key}` 是全站最重的端点（单次 1.14MB，
       客户端 1.7s 一次轮询，占 70% 流量）。实测：133 个会话 / 39517 条块，
       **救回 29 轮「正文已丢、思考还在」的轮次**，第二次跑 0 回填。
-      投影与回填的交互已实测排除风险：被投影隐藏的重复行 **aux 全为空**（工具卡与
+      投影与回填的交互当时已实测排除风险：被投影隐藏的重复行 **aux 全为空**（工具卡与
       reasoning 都在保留的实时行上），所以按各自的 content+aux 编译不会丢东西。
   19. `TimestampFloor` 只给 `HasTranscriptTimestamps` 的导入器（claude/codex）。ACP 的
       `SessionUpdate` 不带时间戳，它给每行盖的是「读到它的那一刻」，恒晚于地板 ——
@@ -1979,8 +1979,6 @@
     短路掉这条会红，且红出来的形态与实测一致：4 行而不是 2 行、时间戳差两小时、
     `前半段` vs `前半段\n\n后半段`**）、连同步三次仍不变、身份没匹配上的行**必须落库**
     并记住自己的 `native_turn`（否则下次同步认不出自己）。
-  - `server/internal/api/usecase/session_projection_identity_test.go`（S2c）→ 有身份的对
-    不折叠、一侧有身份也不折叠、双边无身份的历史重复仍然折叠、用户重发不折叠。
   - `server/internal/session/types_aux_reasoning_test.go`（S2d-1）→ **压缩不许碰
     reasoning**：只有 reasoning 的 aux 不被整条丢弃、与 toolcall 并存时不被清空、
     Light 变体同样保留；同时反向钉住「压缩该做的事仍然要做」（清掉 edit/read 的
@@ -2167,10 +2165,10 @@
   前身是 G-BH 的 S2c/S2e，本组把「turn_id + native_turn + native_prompt + native_id +
   TurnGen」五个名目合成两个。
 
-- **边界**：会话轮次元数据的**字段名与铸造规则** —— `Exchange.AgentID`、
+  - **边界**：会话轮次元数据的**字段名与铸造规则** —— `Exchange.AgentID`、
   `Block.AgentID`、`NewMindFSID`、`exchangeAgentKey` / `exchangeIdentityRecorded`、
-  `stream_hub` 待亮灯身份。块流正文、窗口读、投影、判重内容比对、搜索都不在它们
-  的改动范围内（那些分属 G-BH / G-AB）。
+  `stream_hub` 待亮灯身份。G-BI 提供写入侧身份判重；读时内容投影已在 2026-10-12 由
+  G-AB 退役，`exchangeAlreadyRecorded` 仍保留以保证重复导入幂等。
 
 - 可见症状（没有它会怎样）：
   1. **系统里有五套回合身份**：MindFS 铸的 `turn_id`、claude 写的 `native_turn`、

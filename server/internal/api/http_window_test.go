@@ -316,9 +316,8 @@ func TestHandleSessionSyncCarriesInFlightUserWithRealSeq(t *testing.T) {
 	}
 }
 
-// 双写重复行必须在 API 读取出口折叠：保留实时路径那条，导入那条隐藏；且导入行的 aux
-// 要重挂到保留行上（aux 以 seq 为键，丢了工具卡就没了）。
-func TestHandleSessionGetProjectsDuplicateExchanges(t *testing.T) {
+// GET 原样返回持久化行；判重在写入侧处理，读路径不能再用内容启发式隐藏真实行。
+func TestHandleSessionGetKeepsDuplicateExchangesAndAuxOnOriginalSeq(t *testing.T) {
 	app, rootID, manager := newWindowTestApp(t)
 	ctx := context.Background()
 	s, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, Name: "Dup"})
@@ -354,17 +353,20 @@ func TestHandleSessionGetProjectsDuplicateExchanges(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if len(payload.Exchanges) != 1 {
-		t.Fatalf("exchanges = %d, want 1: %+v", len(payload.Exchanges), payload.Exchanges)
+	if len(payload.Exchanges) != 2 {
+		t.Fatalf("exchanges = %d, want 2: %+v", len(payload.Exchanges), payload.Exchanges)
 	}
 	if payload.Exchanges[0].Source != session.ExchangeSourceLive {
-		t.Fatalf("保留的必须是实时路径写的行: %+v", payload.Exchanges[0])
+		t.Fatalf("seq=1 必须是实时路径行: %+v", payload.Exchanges[0])
 	}
-	if len(payload.Aux["1"]) == 0 {
-		t.Fatalf("导入行的 aux 必须重挂到保留行 seq=1: %+v", payload.Aux)
+	if payload.Exchanges[1].Seq != 2 || payload.Exchanges[1].Source != session.ExchangeSourceImport {
+		t.Fatalf("seq=2 必须保留导入行: %+v", payload.Exchanges[1])
 	}
-	if _, ok := payload.Aux["2"]; ok {
-		t.Fatalf("被隐藏行的 aux 键不应再出现: %+v", payload.Aux)
+	if len(payload.Aux["2"]) == 0 {
+		t.Fatalf("导入行的 aux 必须保留在原 seq=2: %+v", payload.Aux)
+	}
+	if _, ok := payload.Aux["1"]; ok {
+		t.Fatalf("aux 不应被重映射到 seq=1: %+v", payload.Aux)
 	}
 }
 

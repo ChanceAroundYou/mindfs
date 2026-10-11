@@ -2842,7 +2842,7 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 	// 与导入侧对齐，不需要靠「两边凑巧写同一个 messageId」来搭桥。
 	// 没有这层时导入侧拿到的 user 行与实时侧没有任何共同键，
 	// 同一轮只能靠「内容相等 + ±5s」猜 —— 实测 2026-10-07 某 live-owned 会话
-	// Full 同步把 9 对轮次又写了一遍，投影只能在展示时折叠。
+	// Full 同步曾把 9 对轮次又写了一遍；现在由确定性身份与写入侧判重阻止重导。
 	turnCtx = agenttypes.WithPromptTurnID(turnCtx, turnID)
 	// 中途换 agent 时，新 agent 的绑定要等本轮跑完才由 UpdateAgentState 写——这中间徽标
 	// 会落回「AI」占位。这里补一条，已存在绑定则跳过，不碰已有转录 id。

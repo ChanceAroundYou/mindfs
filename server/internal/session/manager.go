@@ -340,32 +340,6 @@ func (m *Manager) GetWindow(_ context.Context, key string, beforeSeq, limit, lat
 	return m.getSessionWindowUnsafe(key, beforeSeq, limit, latest)
 }
 
-func (m *Manager) CountExchanges(key string) (int, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if strings.TrimSpace(key) == "" {
-		return 0, errors.New("session key required")
-	}
-	path, err := m.exchangePath(key)
-	if err != nil {
-		return 0, err
-	}
-	if cached, ok := m.sessions[key]; ok && cached != nil && len(cached.Exchanges) > 0 {
-		if cursor, has := m.exchangeCursors[path]; has && cursor.MaxSeq > 0 {
-			if info, statErr := m.root.StatMetaFile(path); statErr == nil {
-				if info.Size() == cursor.Size && info.ModTime().UnixNano() == cursor.ModTimeNs {
-					return len(cached.Exchanges), nil
-				}
-			}
-		}
-	}
-	exchanges, _, err := m.readExchangesFull(path)
-	if err != nil {
-		return 0, err
-	}
-	return len(exchanges), nil
-}
-
 func (m *Manager) GetExchangeAuxWindow(_ context.Context, key string, seqSet map[int]bool) (map[int][]ExchangeAux, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -849,7 +823,7 @@ func exchangeIdentityFromContext(ctx context.Context) ExchangeIdentity {
 }
 
 // WithExchangeSource 标注这一行由哪个写入者落盘（ExchangeSourceLive / ExchangeSourceImport）。
-// 不传则 Source 为空 = 历史数据，投影时只按「时间戳逐字节相同」这条铁证处理。
+// 不传则 Source 为空 = 历史数据；来源字段供会话所有权与同步逻辑使用。
 func WithExchangeSource(ctx context.Context, source string) context.Context {
 	source = strings.TrimSpace(source)
 	if source == "" {

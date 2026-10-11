@@ -156,8 +156,8 @@ func (i *Importer) ImportExternalSession(ctx context.Context, in agenttypes.Impo
 	//   ① 打上 SynthesizedAt，让下游能区分「真时间」与「猜的时间」；
 	//   ② 不能拿它当过滤判据 —— 重放出来的行每次都会拿到一个更新的时间，
 	//      `AfterTimestamp` / `TimestampFloor` 永远挡不住（实测 2026-10-07：某
-	//      live-owned 会话 Full 同步把 9 对已经写过的轮次又写了一遍，投影只能靠
-	//      内容猜着折叠）。ACP 的防重放只能靠 native id 身份判重（S2c）。
+	//      live-owned 会话 Full 同步把 9 对已经写过的轮次又写了一遍）。ACP 的防重放
+	//      依赖 native id 身份判重（S2c）。
 
 	proc, cwd, err := i.openProcess(ctx, in.RootPath)
 	if err != nil {

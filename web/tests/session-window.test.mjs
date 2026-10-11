@@ -136,7 +136,6 @@ assert.match(viewerSrc, /windowMeta\.total/, "windowMeta.total usage missing");
 assert.match(managerSrc, /type SessionWindowMeta struct/, "manager.go SessionWindowMeta missing");
 assert.match(managerSrc, /func \(m \*Manager\) GetWindow/, "manager.go GetWindow missing");
 assert.match(managerSrc, /func \(m \*Manager\) GetExchangeAuxWindow/, "manager.go GetExchangeAuxWindow missing");
-assert.match(managerSrc, /func \(m \*Manager\) CountExchanges/, "manager.go CountExchanges missing");
 assert.match(managerSrc, /func firstIndexWhereSeq/, "firstIndexWhereSeq helper missing");
 assert.match(managerSrc, /if limit <= 0 \{\s*\n\s*limit = 50/, "limit default 50 clamp missing");
 assert.match(managerSrc, /if limit > 200/, "limit >200 clamp missing");

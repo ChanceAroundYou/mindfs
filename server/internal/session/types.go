@@ -17,7 +17,7 @@ const (
 
 // Exchange.Source 取值：谁写的这一行。
 // 实时路径（MindFS 自己在驱动会话）写 live，转录导入器写 import；老数据为空。
-// 用途见 usecase 的投影：同一轮被两个写入者各写一行时，投影保留 live、隐藏 import。
+// 写入来源用于会话所有权与同步逻辑；它不改变 GET 返回的持久化行。
 const (
 	ExchangeSourceLive   = "live"
 	ExchangeSourceImport = "import"
