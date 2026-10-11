@@ -927,8 +927,8 @@ func TestSubSessionSyntheticDonePersistsPartialResponse(t *testing.T) {
 	if len(loaded.Exchanges) != 1 {
 		t.Fatalf("exchanges = %d, want 1", len(loaded.Exchanges))
 	}
-	if loaded.Exchanges[0].Content != "partial response" {
-		t.Fatalf("content = %q", loaded.Exchanges[0].Content)
+	if loaded.Exchanges[0].LegacyContent != "partial response" {
+		t.Fatalf("content = %q", loaded.Exchanges[0].LegacyContent)
 	}
 	if !sawDone {
 		t.Fatalf("synthetic done was not emitted")
@@ -1011,7 +1011,7 @@ func TestClaudeSubagentRouterCreatesChildSessionAndRoutesChunks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get child: %v", err)
 	}
-	if len(loaded.Exchanges) != 1 || loaded.Exchanges[0].Content != "child response" {
+	if len(loaded.Exchanges) != 1 || loaded.Exchanges[0].LegacyContent != "child response" {
 		t.Fatalf("child exchanges = %#v", loaded.Exchanges)
 	}
 	if !sawDone {
@@ -1141,7 +1141,7 @@ func TestClaudeSubagentRouterRoutesTaskNotificationSummaryAndKeepsParentUpdate(t
 	if err != nil {
 		t.Fatalf("get child: %v", err)
 	}
-	if len(loaded.Exchanges) != 1 || loaded.Exchanges[0].Content != "workingdone: printed hi" {
+	if len(loaded.Exchanges) != 1 || loaded.Exchanges[0].LegacyContent != "workingdone: printed hi" {
 		t.Fatalf("child exchanges = %#v", loaded.Exchanges)
 	}
 	if !sawDone {
@@ -2885,7 +2885,7 @@ func TestPrependSwitchHintIsNotInjectedOnFirstTurn(t *testing.T) {
 		t.Fatalf("Create session: %v", err)
 	}
 	// 本轮 user 行在回合开始前已落盘，Exchanges 里已有它。
-	created.Exchanges = append(created.Exchanges, session.Exchange{Role: "user", Content: "hi"})
+	created.Exchanges = append(created.Exchanges, session.Exchange{Role: "user", LegacyContent: "hi"})
 
 	service := &Service{}
 	linesBefore := 0

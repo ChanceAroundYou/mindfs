@@ -81,18 +81,29 @@ type Session struct {
 }
 
 type Exchange struct {
-	Seq              int                    `json:"seq"`
-	Role             string                 `json:"role"`
-	Source           string                 `json:"source,omitempty"`
-	Agent            string                 `json:"agent,omitempty"`
-	Model            string                 `json:"model,omitempty"`
-	ModelDisplayName string                 `json:"model_display_name,omitempty"`
-	Mode             string                 `json:"mode,omitempty"`
-	Effort           string                 `json:"effort,omitempty"`
-	FastService      string                 `json:"fast_service,omitempty"`
-	Content          string                 `json:"content"`
-	TokenUsage       *agenttypes.TokenUsage `json:"token_usage,omitempty"`
-	Timestamp        time.Time              `json:"timestamp"`
+	Seq              int    `json:"seq"`
+	Role             string `json:"role"`
+	Source           string `json:"source,omitempty"`
+	Agent            string `json:"agent,omitempty"`
+	Model            string `json:"model,omitempty"`
+	ModelDisplayName string `json:"model_display_name,omitempty"`
+	Mode             string `json:"mode,omitempty"`
+	Effort           string `json:"effort,omitempty"`
+	FastService      string `json:"fast_service,omitempty"`
+	// LegacyContent 是 **S2d-1 之后主日志里的唯一残留正文**，只作回填输入。
+	//
+	// json tag 刻意**不改名**：老会话文件里的 `"content"` 必须还能解析，否则回填
+	// 之前的历史正文会被当成空白丢掉 —— 而它正是那份正文此刻唯一的副本。
+	// 新写入的行一律为空（见 `AddExchangeForAgentAt` 的各调用点）。
+	//
+	// 唯一允许读它的地方是 `backfillTurnsFromWindow`。任何其它读取都是「两份真相」：
+	// 方案 D1 定的是块流是唯一正文载体，而两份真相迟早分叉（实测已分叉过一次 ——
+	// 见 `docs/session-blocks-plan.md` §1）。
+	//
+	// 删除时机：全网回填验证完成后（每台机器的每个会话都被读过至少一次）。
+	LegacyContent string                 `json:"content"`
+	TokenUsage    *agenttypes.TokenUsage `json:"token_usage,omitempty"`
+	Timestamp     time.Time              `json:"timestamp"`
 
 	// ── 轮次元数据（CUSTOM(G-BH)，方案 §3.1）────────────────────────────
 	// 正文搬去块流之后，主日志一轮一行只留身份与展示字段。

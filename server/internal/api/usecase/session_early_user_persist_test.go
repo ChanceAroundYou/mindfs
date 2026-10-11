@@ -58,8 +58,19 @@ func TestPersistUserTurnExchangeLandsBeforeTurnAndAllocatesRealSeq(t *testing.T)
 	}
 	var found *session.Exchange
 	for i := range reloaded.Exchanges {
-		if reloaded.Exchanges[i].Role == "user" && reloaded.Exchanges[i].Content == "本轮提问" {
-			found = &reloaded.Exchanges[i]
+		if reloaded.Exchanges[i].Role != "user" {
+			continue
+		}
+		// S2d-2 起正文归块流：按 seq 读该轮的 text 块（判重回查用的是同一口径，
+		// 见 recordedExchangeBody）。
+		blocks, err := manager.GetBlocksWindow(ctx, key, map[int]bool{reloaded.Exchanges[i].Seq: true})
+		if err != nil {
+			t.Fatalf("blocks: %v", err)
+		}
+		for _, block := range blocks {
+			if block.Type == session.BlockTypeText && block.Text == "本轮提问" {
+				found = &reloaded.Exchanges[i]
+			}
 		}
 	}
 	if found == nil {
@@ -195,8 +206,19 @@ func TestUserRowVisibleDuringLiveTurn(t *testing.T) {
 			}
 			var userSeq int
 			for _, ex := range mid.Exchanges {
-				if ex.Role == "user" && ex.Content == "sleep 10" {
-					userSeq = ex.Seq
+				if ex.Role != "user" {
+					continue
+				}
+				// S2d-2 起正文在块流里（主日志那行恒空），按 seq 查该轮的 text 块。
+				blocks, err := manager.GetBlocksWindow(context.Background(), created.Key, map[int]bool{ex.Seq: true})
+				if err != nil {
+					t.Errorf("blocks: %v", err)
+					return
+				}
+				for _, block := range blocks {
+					if block.Type == session.BlockTypeText && block.Text == "sleep 10" {
+						userSeq = ex.Seq
+					}
 				}
 			}
 			if userSeq == 0 {
@@ -228,7 +250,9 @@ func TestUserRowVisibleDuringLiveTurn(t *testing.T) {
 	}
 	userRows := 0
 	for _, ex := range final.Exchanges {
-		if ex.Role == "user" && ex.Content == "sleep 10" {
+		// S2d-2 起正文在块流里，主日志那行恒空 —— 「本轮提问是哪一行」靠 turn_id
+		// 或 turn_seq 认，这里只数 user 行条数（测的是「不许多写」）。
+		if ex.Role == "user" {
 			userRows++
 		}
 	}

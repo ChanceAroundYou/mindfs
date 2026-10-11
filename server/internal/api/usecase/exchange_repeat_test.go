@@ -17,9 +17,9 @@ func TestExchangeAlreadyRecorded(t *testing.T) {
 	base := time.Date(2026, 9, 13, 7, 14, 55, 0, time.UTC)
 	target := &session.Session{
 		Exchanges: []session.Exchange{
-			{Role: "user", Content: "把那条决定性信息给我", Timestamp: base},
-			{Role: "agent", Content: "好", Timestamp: base.Add(time.Second)},
-			{Role: "user", Content: "没有时间戳的条目"},
+			{Role: "user", LegacyContent: "把那条决定性信息给我", Timestamp: base},
+			{Role: "agent", LegacyContent: "好", Timestamp: base.Add(time.Second)},
+			{Role: "user", LegacyContent: "没有时间戳的条目"},
 		},
 	}
 
@@ -43,7 +43,7 @@ func TestExchangeAlreadyRecorded(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := exchangeAlreadyRecorded(tc.target, tc.role, "", tc.content, tc.ts); got != tc.want {
+			if got := exchangeAlreadyRecorded(context.Background(), nil, tc.target, tc.role, "", tc.content, tc.ts); got != tc.want {
 				t.Fatalf("exchangeAlreadyRecorded(role=%q content=%q ts=%v) = %v, want %v",
 					tc.role, tc.content, tc.ts, got, tc.want)
 			}
@@ -61,10 +61,10 @@ func TestExchangeAlreadyRecordedToleratesAgentPrefixSnapshot(t *testing.T) {
 	full := live + "\n\nAPI Error: 502 Provider returned 429 Too Many Requests"
 
 	agent := func(content string) *session.Session {
-		return &session.Session{Exchanges: []session.Exchange{{Role: "agent", Content: content, Timestamp: base}}}
+		return &session.Session{Exchanges: []session.Exchange{{Role: "agent", LegacyContent: content, Timestamp: base}}}
 	}
 	user := func(content string) *session.Session {
-		return &session.Session{Exchanges: []session.Exchange{{Role: "user", Content: content, Timestamp: base}}}
+		return &session.Session{Exchanges: []session.Exchange{{Role: "user", LegacyContent: content, Timestamp: base}}}
 	}
 
 	cases := []struct {
@@ -101,7 +101,7 @@ func TestExchangeAlreadyRecordedToleratesAgentPrefixSnapshot(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := exchangeAlreadyRecorded(tc.target, tc.role, "", tc.content, tc.ts); got != tc.want {
+			if got := exchangeAlreadyRecorded(context.Background(), nil, tc.target, tc.role, "", tc.content, tc.ts); got != tc.want {
 				t.Fatalf("exchangeAlreadyRecorded(role=%q content=%q) = %v, want %v", tc.role, tc.content, got, tc.want)
 			}
 		})
@@ -162,11 +162,11 @@ func TestSendPathSkipsExchangeAlreadyImported(t *testing.T) {
 	}
 
 	// 第二个写入者（SendMessage 的回合结束写入）：21ms 后，必须被拦下
-	if !exchangeAlreadyRecorded(target, "user", "", content, imported.Add(21*time.Millisecond)) {
+	if !exchangeAlreadyRecorded(ctx, manager, target, "user", "", content, imported.Add(21*time.Millisecond)) {
 		t.Fatal("the send path must suppress a user exchange already written by the importer")
 	}
 	// 窗外（30s）是用户真实重发，必须放行 —— 红线：不得按内容批量去重
-	if exchangeAlreadyRecorded(target, "user", "", content, imported.Add(30*time.Second)) {
+	if exchangeAlreadyRecorded(ctx, manager, target, "user", "", content, imported.Add(30*time.Second)) {
 		t.Fatal("a genuine repeat outside the tolerance window must not be suppressed")
 	}
 }

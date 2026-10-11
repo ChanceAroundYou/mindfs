@@ -23,11 +23,11 @@ func TestClearNativeIdentityWipesExchangeAndBlockNativeIDs(t *testing.T) {
 	const turnID = "11111111-2222-3333-4444-555555555555"
 	writeExchangeLog(t, m, created.Key, []Exchange{
 		{
-			Seq: 1, Role: "user", Content: "hi", TurnID: turnID, TurnSeq: 1,
+			Seq: 1, Role: "user", LegacyContent: "hi", TurnID: turnID, TurnSeq: 1,
 			NativeTurn: "old-turn-1", NativePrompt: "old-prompt-1",
 		},
 		{
-			Seq: 2, Role: "agent", Content: "yo", TurnID: turnID, TurnSeq: 1,
+			Seq: 2, Role: "agent", LegacyContent: "yo", TurnID: turnID, TurnSeq: 1,
 			NativeTurn: "old-turn-2", NativePrompt: "old-prompt-2",
 		},
 	})
@@ -85,7 +85,7 @@ func TestClearNativeIdentityPersistsToDisk(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 	writeExchangeLog(t, m, created.Key, []Exchange{{
-		Seq: 1, Role: "user", Content: "hi", TurnID: "t", TurnSeq: 1,
+		Seq: 1, Role: "user", LegacyContent: "hi", TurnID: "t", TurnSeq: 1,
 		NativeTurn: "old-turn", NativePrompt: "old-prompt",
 	}})
 	if err := m.AppendBlocks(context.Background(), created.Key, []Block{
@@ -136,7 +136,7 @@ func TestClearNativeIdentityLeavesCleanFilesUntouched(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	writeExchangeLog(t, m, created.Key, []Exchange{{Seq: 1, Role: "user", Content: "hi", TurnID: "t", TurnSeq: 1}})
+	writeExchangeLog(t, m, created.Key, []Exchange{{Seq: 1, Role: "user", LegacyContent: "hi", TurnID: "t", TurnSeq: 1}})
 	if err := m.AppendBlocks(context.Background(), created.Key, []Block{
 		{Seq: 1, Pos: 0, Type: BlockTypeText, Text: "hi", TurnID: "t"},
 	}); err != nil {

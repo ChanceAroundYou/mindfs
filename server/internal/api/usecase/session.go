@@ -680,7 +680,7 @@ func copyForkHistory(ctx context.Context, manager *session.Manager, from, to *se
 			TurnID:  exchange.TurnID,
 			TurnSeq: seqMap[exchange.TurnSeq],
 		})
-		if err := manager.AddExchangeForAgentAt(exchangeCtx, to, exchange.Role, exchange.Content, agentName, exchange.Mode, exchange.Effort, exchange.FastService, exchange.Timestamp); err != nil {
+		if err := manager.AddExchangeForAgentAt(exchangeCtx, to, exchange.Role, exchange.LegacyContent, agentName, exchange.Mode, exchange.Effort, exchange.FastService, exchange.Timestamp); err != nil {
 			return copied, err
 		}
 		copied++
@@ -703,18 +703,76 @@ func copyForkHistory(ctx context.Context, manager *session.Manager, from, to *se
 			}
 		}
 	}
-	// 块流也要一起复制：块是**唯一正文载体**（D1），少了它 fork 会话在 S2b 之后是空的。
-	// 与 aux 同样的重映射规则，外加清掉 native_id。
+	// 源已有块流的会话：原样复制（revision/step 是盘上真值，不重编号）。
+	// 老会话（源无块流）：下面用 LegacyContent + aux 编译。
+	// 两者都做，缺一不可 —— 只补编译会丢源块里的 revision 信息，只复制会让老会话
+	// fork 出一份「没有正文」的会话。
 	if err := copyForkBlocks(ctx, manager, from.Key, to.Key, seqMap); err != nil {
+		return copied, err
+	}
+	// 老会话（源还没有块流）的正文只在主日志里 —— 上面只复制了「源已有的块」，
+	// 于是 fork 出来的会话会只剩工具卡、没有正文，而用户看不出为什么。这里把
+	// 「复制过去、但目标还没有块」的轮次用 LegacyContent + aux 补编译一次。
+	// 与 `backfillTurnsFromWindow` 同一口径：判据是「这个 seq 一个块都没有」。
+	if err := fillForkBlocksFromLegacy(ctx, manager, to.Key, from.Exchanges, seqMap, auxBySeq); err != nil {
 		return copied, err
 	}
 	return copied, nil
 }
 
-// copyForkBlocks 把源会话的块复制到 fork，seq 按 seqMap 重映射、native_id 清空。
+// fillForkBlocksFromLegacy 给 fork 目标里「还没有块」的轮次补编译块（正文取自
+// 主日志的 LegacyContent）。只在源会话没有块流时才会真正写东西。
+func fillForkBlocksFromLegacy(
+	ctx context.Context,
+	manager *session.Manager,
+	toKey string,
+	exchanges []session.Exchange,
+	seqMap map[int]int,
+	auxBySeq map[int][]session.ExchangeAux,
+) error {
+	if len(exchanges) == 0 || len(seqMap) == 0 {
+		return nil
+	}
+	seqSet := make(map[int]bool, len(exchanges))
+	for _, ex := range exchanges {
+		if ex.Seq > 0 {
+			seqSet[ex.Seq] = true
+		}
+	}
+	existing, err := manager.GetBlocksWindow(ctx, toKey, seqSet)
+	if err != nil {
+		return err
+	}
+	has := make(map[int]bool, len(existing))
+	for _, block := range existing {
+		has[block.Seq] = true
+	}
+	compiled := make([]session.Block, 0, len(exchanges))
+	for _, ex := range exchanges {
+		newSeq := seqMap[ex.Seq]
+		if newSeq <= 0 || has[newSeq] {
+			continue
+		}
+		blocks := session.BuildTurnBlocks(newSeq, turnBlockStep, ex.TurnID, ex.LegacyContent, auxBySeq[ex.Seq])
+		if len(blocks) == 0 {
+			continue
+		}
+		compiled = append(compiled, blocks...)
+	}
+	if len(compiled) == 0 {
+		return nil
+	}
+	return manager.AppendBlocks(ctx, toKey, compiled)
+}
+
+// copyForkBlocks 把源会话已有的块复制到 fork：seq 按 seqMap 重映射、native_id 清空。
 //
-// revision 原样保留：源会话里同一 (seq,pos) 的最高 revision 就是真值，复制时没必要
-// 重新编号 —— 重编号反而会让「复制过来的块」与「源会话的块」对不上。
+// 与 fillForkBlocksFromLegacy 是**分工**不是重复：
+//
+//	· 本函数 = 源有块流的正常路径，原样复制（含 revision / step，它们是盘上真值）；
+//	· fillForkBlocksFromLegacy = 源没有块流的老会话，用 LegacyContent + aux 编译。
+//
+// 两者都做，先复制再补缺，才不会「有块流的会话 fork 完丢正文」。
 func copyForkBlocks(ctx context.Context, manager *session.Manager, fromKey, toKey string, seqMap map[int]int) error {
 	if len(seqMap) == 0 {
 		return nil
@@ -722,9 +780,6 @@ func copyForkBlocks(ctx context.Context, manager *session.Manager, fromKey, toKe
 	blocks, err := manager.ReadBlocks(ctx, fromKey)
 	if err != nil {
 		return err
-	}
-	if len(blocks) == 0 {
-		return nil
 	}
 	copied := make([]session.Block, 0, len(blocks))
 	for _, block := range blocks {
@@ -740,10 +795,7 @@ func copyForkBlocks(ctx context.Context, manager *session.Manager, fromKey, toKe
 	if len(copied) == 0 {
 		return nil
 	}
-	if err := manager.AppendBlocks(ctx, toKey, copied); err != nil {
-		return err
-	}
-	return nil
+	return manager.AppendBlocks(ctx, toKey, copied)
 }
 
 type GetSessionInput struct {
@@ -2425,6 +2477,37 @@ func exchangeIdentityRecorded(target *session.Session, role, nativeID string) bo
 	return false
 }
 
+// recordedExchangeBody 取一行「用来比对的那段正文」。
+//
+// S2d-2 起正文住在块流里，主日志的 `LegacyContent` 对新写入的行恒空 —— 只比主日志的
+// 话，同一句话会被反复当成新行写下去（claude 的 user 行拿不到 native uuid，判重
+// 只能靠正文）。所以取的是**块流里该 seq 自己的 text 块**；块流还没有这一行时
+// （老会话、还没回填）退回主日志。
+//
+// 注意比对用的**不是**块流全文：同一轮可能有多个写入者各落一行（见 `mergeExchangeRecord`），
+// 拿全文去比会认不出「这一行自己的正文」。seq 是行的身份，块按 seq 归组才对应得上。
+func recordedExchangeBody(ctx context.Context, manager *session.Manager, key string, ex session.Exchange) string {
+	if manager == nil || key == "" || ex.Seq <= 0 {
+		return ex.LegacyContent
+	}
+	blocks, err := manager.GetBlocksWindow(ctx, key, map[int]bool{ex.Seq: true})
+	if err != nil || len(blocks) == 0 {
+		return ex.LegacyContent
+	}
+	var parts []string
+	for _, block := range blocks {
+		if block.Type == session.BlockTypeText && strings.TrimSpace(block.Text) != "" {
+			parts = append(parts, block.Text)
+		}
+	}
+	if len(parts) == 0 {
+		// 这一轮只有工具调用 / 只有 reasoning —— 它没有「正文」可比。
+		// 调用方已经把「空正文」排除在外了，这里给空串让它自己走完原来的逻辑。
+		return ""
+	}
+	return strings.Join(parts, "")
+}
+
 // exchangeAlreadyRecorded 判定 target 里是否已有这一行。导入侧与发送侧共用，
 // 保证两个写入者判据对称（「两把尺」的教训：判据只能有一处实现）。
 //
@@ -2443,7 +2526,7 @@ func exchangeIdentityRecorded(target *session.Session, role, nativeID string) bo
 // 「live 写一遍 + import 又写一遍」的 dsh 重复行。ACP 的更新时间戳是**合成**的
 // （协议里 `SessionNotification` 没有时间字段），所以「内容 + ±5s」和 `TimestampFloor`
 // 双双失效；同一个会话里还有 import + import 的重复（两次导入相隔 20s）同样漏掉。
-func exchangeAlreadyRecorded(target *session.Session, role, nativeID, content string, ts time.Time) bool {
+func exchangeAlreadyRecorded(ctx context.Context, manager *session.Manager, target *session.Session, role, nativeID, content string, ts time.Time) bool {
 	if target == nil {
 		return false
 	}
@@ -2469,10 +2552,10 @@ func exchangeAlreadyRecorded(target *session.Session, role, nativeID, content st
 		if ex.Role != role || ex.Timestamp.IsZero() {
 			continue
 		}
-		if strings.TrimSpace(ex.Content) == "" {
+		if strings.TrimSpace(recordedExchangeBody(ctx, manager, target.Key, ex)) == "" {
 			continue
 		}
-		if !sameRecordedExchangeContent(role, ex.Content, content) {
+		if !sameRecordedExchangeContent(role, recordedExchangeBody(ctx, manager, target.Key, ex), content) {
 			continue
 		}
 		if diff := ex.Timestamp.Sub(ts); diff > -userExchangeRepeatTolerance && diff < userExchangeRepeatTolerance {
@@ -2515,8 +2598,8 @@ func persistUserTurnExchange(ctx context.Context, manager *session.Manager, curr
 	// mint turn_id 在判重**之后**：判重命中时这一轮已经有了自己的 id（要从已有行
 	// 取回来），mint 一个新的只是浪费。判重不看身份而看内容，是因为实时侧此刻
 	// 还不知道 agent 侧的 id —— 行还没发出去。
-	if exchangeAlreadyRecorded(current, "user", "", content, ts) {
-		return recordedUserExchangeSeq(current, content, ts), recordedUserExchangeTurnID(current, content, ts), nil
+	if exchangeAlreadyRecorded(ctx, manager, current, "user", "", content, ts) {
+		return recordedUserExchangeSeq(ctx, manager, current, content, ts), recordedUserExchangeTurnID(ctx, manager, current, content, ts), nil
 	}
 	// 与 Manager.addExchangeForAgentAt 的 seq 分配同一公式（最大 seq + 1，不按缓存长度）。
 	// 这里先算出来是为了把 turn_seq 一起写进身份 —— 它是「打开该轮的 user 行 seq」。
@@ -2538,7 +2621,8 @@ func persistUserTurnExchange(ctx context.Context, manager *session.Manager, curr
 		TurnSeq:      userSeq,
 		NativePrompt: nativePrompt,
 	})
-	if err := manager.AddExchangeForAgentAt(exchangeCtx, current, "user", content, agent, mode, effort, fastService, ts); err != nil {
+	// S2d-2：主日志不要再带正文（块流是唯一载体，见下面 persistTurnBlocks）。
+	if err := manager.AddExchangeForAgentAt(exchangeCtx, current, "user", "", agent, mode, effort, fastService, ts); err != nil {
 		return 0, "", err
 	}
 	// 双写块流（方案 S2a）：用户消息也要有块 —— 块流是唯一正文载体（D1），
@@ -2551,12 +2635,12 @@ func persistUserTurnExchange(ctx context.Context, manager *session.Manager, curr
 	// current 与缓存是同一指针，所以新行已挂在 current.Exchanges 尾部。
 	// 按内容回查而不是直接取尾部：尾部那条未必就是本函数刚写的那条——一旦将来出现
 	// 不在 sendLock 下写同一会话的路径，广播出去就会变成别人的 seq，正是本次要修的那类 bug。
-	return recordedUserExchangeSeq(current, content, ts), recordedUserExchangeTurnID(current, content, ts), nil
+	return recordedUserExchangeSeq(ctx, manager, current, content, ts), recordedUserExchangeTurnID(ctx, manager, current, content, ts), nil
 }
 
 // recordedUserExchangeTurnID 返回判重命中的那条 user 行的 turn_id；没有则空串。
 // 空串是合法的：历史行本来就没有 turn_id，不能因此报错（方案 §3.1「可空、可后补」）。
-func recordedUserExchangeTurnID(target *session.Session, content string, ts time.Time) string {
+func recordedUserExchangeTurnID(ctx context.Context, manager *session.Manager, target *session.Session, content string, ts time.Time) string {
 	if target == nil {
 		return ""
 	}
@@ -2565,7 +2649,7 @@ func recordedUserExchangeTurnID(target *session.Session, content string, ts time
 		if ex.Role != "user" || ex.Timestamp.IsZero() {
 			continue
 		}
-		if !sameRecordedExchangeContent("user", ex.Content, content) {
+		if !sameRecordedExchangeContent("user", recordedExchangeBody(ctx, manager, target.Key, ex), content) {
 			continue
 		}
 		if diff := ex.Timestamp.Sub(ts); diff > -userExchangeRepeatTolerance && diff < userExchangeRepeatTolerance {
@@ -2619,7 +2703,7 @@ func persistTurnBlocks(ctx context.Context, manager *session.Manager, key string
 }
 
 // recordedUserExchangeSeq 返回判重命中的那条已有 user 行的 seq；找不到时返回 0。
-func recordedUserExchangeSeq(target *session.Session, content string, ts time.Time) int {
+func recordedUserExchangeSeq(ctx context.Context, manager *session.Manager, target *session.Session, content string, ts time.Time) int {
 	if target == nil {
 		return 0
 	}
@@ -2628,7 +2712,7 @@ func recordedUserExchangeSeq(target *session.Session, content string, ts time.Ti
 		if ex.Role != "user" || ex.Timestamp.IsZero() {
 			continue
 		}
-		if !sameRecordedExchangeContent("user", ex.Content, content) {
+		if !sameRecordedExchangeContent("user", recordedExchangeBody(ctx, manager, target.Key, ex), content) {
 			continue
 		}
 		if diff := ex.Timestamp.Sub(ts); diff > -userExchangeRepeatTolerance && diff < userExchangeRepeatTolerance {
@@ -3060,7 +3144,8 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 		return err
 	}
 	// 用户行已在回合开始前落盘（persistUserTurnExchange），这里只补助手行。
-	if err := manager.AddExchangeForAgent(agentExchangeCtx, current, "agent", responseText, in.Agent, resolvedMode, resolvedEffort, resolvedFastService); err != nil {
+	// S2d-2：主日志不要再带正文（块流是唯一载体，见下面 persistTurnBlocks）。
+	if err := manager.AddExchangeForAgent(agentExchangeCtx, current, "agent", "", in.Agent, resolvedMode, resolvedEffort, resolvedFastService); err != nil {
 		log.Printf("[session] persist.agent.error root=%s session=%s agent=%s err=%v", in.RootID, current.Key, in.Agent, err)
 		return err
 	}
@@ -3074,12 +3159,12 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 			return err
 		}
 	}
-	// 双写块流（方案 S2a）：块流与旧 Content/aux **并存**，读路径仍走旧格式。
-	// 顺序：先落盘（AddExchangeForAgent 已写主日志）再写块，读侧才不会看到「有轮次没正文」。
-	// 失败不拖垮本轮 —— 正文已经落过盘，块流可在 S2b 前重放补齐。
+	// 块流是正文的**唯一**载体（D1，S2d-2）。顺序仍是先主日志再块：块要 turn_id，
+	// 而它随 AddExchangeForAgent 才定下来。失败**必须**返回 err —— 主日志那一行现在
+	// 只剩元数据，块丢了就等于这一轮没有正文，而用户看得出来。
 	agentSeq := session.MaxExchangeSeq(current.Exchanges)
 	if err := persistTurnBlocks(ctx, manager, current.Key, agentSeq, turnID, responseText, persistedAux); err != nil {
-		log.Printf("[session] persist.blocks.error root=%s session=%s agent=%s seq=%d err=%v", in.RootID, current.Key, in.Agent, agentSeq, err)
+		return fmt.Errorf("persist turn blocks: %w", err)
 	}
 	// AgentCtxSeq 记的是「agent 已经看到多少行会话历史」，口径是**已落盘的总行数**
 	// （与 external_sessions.go:415 的 len(latest.Exchanges)、

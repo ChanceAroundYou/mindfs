@@ -41,10 +41,10 @@ func sequentialExchanges(total int) []Exchange {
 			role = "agent"
 		}
 		records = append(records, Exchange{
-			Seq:       i,
-			Role:      role,
-			Content:   fmt.Sprintf("line-%d", i),
-			Timestamp: time.Unix(int64(i), 0).UTC(),
+			Seq:           i,
+			Role:          role,
+			LegacyContent: fmt.Sprintf("line-%d", i),
+			Timestamp:     time.Unix(int64(i), 0).UTC(),
 		})
 	}
 	return records
@@ -177,9 +177,9 @@ func TestGetWindowColdCacheHandlesLineLargerThanChunk(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 	huge := make([]Exchange, 0, 3)
-	huge = append(huge, Exchange{Seq: 1, Role: "user", Content: "q"})
-	huge = append(huge, Exchange{Seq: 2, Role: "agent", Content: string(bytes.Repeat([]byte("正"), 200000))})
-	huge = append(huge, Exchange{Seq: 3, Role: "user", Content: "tail"})
+	huge = append(huge, Exchange{Seq: 1, Role: "user", LegacyContent: "q"})
+	huge = append(huge, Exchange{Seq: 2, Role: "agent", LegacyContent: string(bytes.Repeat([]byte("正"), 200000))})
+	huge = append(huge, Exchange{Seq: 3, Role: "user", LegacyContent: "tail"})
 	writeExchangeLog(t, creator, created.Key, huge)
 
 	m := newColdManager(t, root)
