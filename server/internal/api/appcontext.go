@@ -345,14 +345,24 @@ func (s *AppContext) RunAgentStage(ctx context.Context, exec kanban.AgentStageEx
 	// 否则它们置的 pending 会永久残留（症状「完成回答但还显示正在思考」）。
 	var subSessionKeys []string
 	var subMu sync.Mutex
+	// 回合身份：主会话与各子会话的 turn_id 都记下来，收尾时原样交给终结器。
+	// 与 ws.go / scheduled/tasks.go 同一条纪律（G-BE）—— 缺了它，done 以无身份走
+	// 「保守清」，把此后新起一轮的灯误抹（症状「灯不亮」）。
+	var turnMu sync.Mutex
+	turnIDs := map[string]string{}
 	// 终结器用 defer 交出必达性：成功 / 出错 / 提前 return / panic 都走到。
 	defer func() {
-		s.EndSessionTurn(exec.RootID, sessionKey, "", 0)
-		subMu.Lock()
+		turnMu.Lock()
+		mainID := turnIDs[sessionKey]
 		subs := append([]string(nil), subSessionKeys...)
-		subMu.Unlock()
+		subIDs := make(map[string]string, len(subs))
+		for _, k := range subs {
+			subIDs[k] = turnIDs[k]
+		}
+		turnMu.Unlock()
+		s.EndSessionTurn(exec.RootID, sessionKey, "", mainID)
 		for _, subKey := range subs {
-			s.EndSessionTurn(exec.RootID, subKey, "", 0)
+			s.EndSessionTurn(exec.RootID, subKey, "", subIDs[subKey])
 		}
 	}()
 	err := uc.SendMessage(ctx, usecase.SendMessageInput{
@@ -368,7 +378,10 @@ func (s *AppContext) RunAgentStage(ctx context.Context, exec kanban.AgentStageEx
 		Content:         exec.Prompt,
 		UserTimestamp:   userTimestamp,
 		OnStart: func(start usecase.MessageStart) {
-			s.BroadcastSessionUserMessageAt(exec.RootID, sessionKey, session.TypeChat, sessionName, exec.Stage.Agent, start.Model, start.ModelDisplayName, start.Mode, start.Effort, start.FastService, planMode, exec.Prompt, userTimestamp, start.UserExchangeSeq, start.BaseExchangeSeq)
+			id := s.BroadcastSessionUserMessageAt(exec.RootID, sessionKey, session.TypeChat, sessionName, exec.Stage.Agent, start.Model, start.ModelDisplayName, start.Mode, start.Effort, start.FastService, planMode, exec.Prompt, userTimestamp, start.UserExchangeSeq, start.BaseExchangeSeq)
+			turnMu.Lock()
+			turnIDs[sessionKey] = id
+			turnMu.Unlock()
 		},
 		OnUpdate: func(update agenttypes.Event) {
 			updateTracker.Begin()
@@ -387,10 +400,13 @@ func (s *AppContext) RunAgentStage(ctx context.Context, exec kanban.AgentStageEx
 		OnSubSessionCreated: func(created *session.Session) {
 			s.BroadcastSessionMetaUpdated(exec.RootID, created)
 			if created != nil {
-				s.SetSessionPendingReply(exec.RootID, created.Key, created.Name)
+				id := s.SetSessionPendingReply(exec.RootID, created.Key, created.Name)
+				turnMu.Lock()
+				turnIDs[created.Key] = id
 				subMu.Lock()
 				subSessionKeys = append(subSessionKeys, created.Key)
 				subMu.Unlock()
+				turnMu.Unlock()
 			}
 		},
 		OnSubSessionUpdate: func(sessionKey string, update agenttypes.Event) {
@@ -398,7 +414,10 @@ func (s *AppContext) RunAgentStage(ctx context.Context, exec kanban.AgentStageEx
 			defer updateTracker.End()
 			s.BroadcastSessionUpdate(exec.RootID, sessionKey, update)
 			if update.Type == agenttypes.EventTypeMessageDone {
-				s.EndSessionTurn(exec.RootID, sessionKey, "", 0)
+				turnMu.Lock()
+				id := turnIDs[sessionKey]
+				turnMu.Unlock()
+				s.EndSessionTurn(exec.RootID, sessionKey, "", id)
 			}
 		},
 	})
@@ -958,15 +977,15 @@ func (s *AppContext) BroadcastAgentStatusChanged(agentName string) {
 	})
 }
 
-// SetSessionPendingReply 置子会话/看板会话的 pending，返回该条目的回合代次。
-// 收尾时必须把同一个代次交给 EndSessionTurn，否则清理退化成无条件清。
-func (s *AppContext) SetSessionPendingReply(rootID, sessionKey, sessionTitle string) uint64 {
+// SetSessionPendingReply 置子会话/看板会话的 pending，返回该条目的回合 turn_id。
+// 收尾时必须把同一个 id 交给 EndSessionTurn，否则清理退化成无条件清。
+func (s *AppContext) SetSessionPendingReply(rootID, sessionKey, sessionTitle string) string {
 	return s.GetSessionStreamHub().SetPendingReply(rootID, sessionKey, sessionTitle)
 }
 
-// BroadcastSessionUserMessageAt 广播用户消息并置该会话 pending，返回回合代次。
-// 与 SetSessionPendingReply 同理：返回的代次是收尾时唯一能定位「这一轮」的凭据。
-func (s *AppContext) BroadcastSessionUserMessageAt(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService string, planMode bool, content string, timestamp time.Time, userExchangeSeq int, baseExchangeSeq ...int) uint64 {
+// BroadcastSessionUserMessageAt 广播用户消息并置该会话 pending，返回回合 turn_id。
+// 与 SetSessionPendingReply 同理：返回的 id 是收尾时唯一能定位「这一轮」的凭据。
+func (s *AppContext) BroadcastSessionUserMessageAt(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService string, planMode bool, content string, timestamp time.Time, userExchangeSeq int, baseExchangeSeq ...int) string {
 	s.ClearTaskAuxFlagsForSession(rootID, sessionKey)
 	return s.GetSessionStreamHub().BroadcastSessionUserMessageAt(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService, planMode, content, timestamp, userExchangeSeq, "", false, baseExchangeSeq...)
 }
@@ -1011,19 +1030,19 @@ func (s *AppContext) UpdateTaskSessionErrorForSession(rootID, sessionKey, messag
 	}, "agent_session_error")
 }
 
-// EndSessionTurn 是**回合的唯一终结器**：通知 → 广播 session.done → 按回合代次清 pending。
+// EndSessionTurn 是**回合的唯一终结器**：通知 → 广播 session.done → 按回合 turn_id 清 pending。
 //
 // 所有「这一轮结束了」的边（成功 / 出错 / 取消 / 父轮收尾 / panic）都必须走到这里，
-// 且必须带**置 pending 时拿到的同一个 turnGen**。清理按代次比对（见
+// 且必须带**置 pending 时拿到的同一个 turnID**。清理按身份比对（见
 // StreamHub.ClearSessionPending），因此：
 //   - 迟到或重复的 done 是 no-op（不会抹掉新轮的灯）；
 //   - 正常 done 幂等；
 //   - 调用方用 defer 保证 panic/提前 return 也必达 —— 这正是「灯不灭」的根治点。
-func (s *AppContext) EndSessionTurn(rootID, sessionKey, requestID string, turnGen uint64) {
+func (s *AppContext) EndSessionTurn(rootID, sessionKey, requestID string, turnID string) {
 	hub := s.GetSessionStreamHub()
 	// 身份不匹配 ⇒ 这是别的回合的迟到/重复 done：整条丢弃。
 	// 如果在此时仍广播 session.done 帧，前端会按 key 清掉**新轮**的灯（灯不亮）。
-	if !hub.PendingTurnGenMatches(sessionKey, turnGen) {
+	if !hub.PendingTurnIDMatches(sessionKey, turnID) {
 		return
 	}
 	pending := hub.PendingSessionSnapshot(sessionKey)
@@ -1031,7 +1050,7 @@ func (s *AppContext) EndSessionTurn(rootID, sessionKey, requestID string, turnGe
 	// 广播必须在清之前：ClearSessionPending 有超时兜底，但广播是前端唯一的
 	// session.done 来源。如果先清再广播，清卡住时广播永远发不出去。
 	hub.broadcastSessionDone(rootID, sessionKey, requestID)
-	hub.ClearSessionPending(sessionKey, turnGen)
+	hub.ClearSessionPending(sessionKey, turnID)
 }
 
 func (s *AppContext) BroadcastScheduledTaskDone(rootID, taskID, taskName, sessionKey, summary string) {

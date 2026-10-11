@@ -492,13 +492,13 @@ func TestReplayPreservesEventTimestamp(t *testing.T) {
 // 不是上一轮的尾巴 —— 客户端据此清瞬时尾巴，且不会因此再触发一轮。
 func TestReplayAfterClearYieldsEmptySnapshot(t *testing.T) {
 	hub := NewStreamHub()
-	_, turnGen := hub.SetPendingUserAt("root", "sess-1", "title", "codex", "", "", "", "", "", false, "prompt", time.Now(), 8)
+	_, turnID := hub.SetPendingUserAt("root", "sess-1", "title", "codex", "", "", "", "", "", false, "prompt", time.Now(), 8)
 	hub.AppendReplyEvent("sess-1", StreamEvent{
 		Type: string(agenttypes.EventTypeMessageChunk),
 		Data: agenttypes.MessageChunk{Content: "answer"},
 	})
 	// AppContext.EndSessionTurn 在广播 done 之前做的事。
-	hub.ClearSessionPending("sess-1", turnGen)
+	hub.ClearSessionPending("sess-1", turnID)
 
 	step := hub.collectReplayStep("client", "sess-1")
 	if len(step.events) != 0 {

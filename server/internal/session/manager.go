@@ -778,6 +778,49 @@ func WithExchangeIdentity(ctx context.Context, identity ExchangeIdentity) contex
 	return context.WithValue(ctx, exchangeIdentityContextKey{}, identity)
 }
 
+// NewTurnID mint 一个 UUIDv4 作为 turn_id（方案 D4/C2）。
+//
+// 自己拼而不引 google/uuid：只需要「格式正确的随机 UUID」，而 randomHex 已经在用
+// 同一条 crypto/rand 路径。放在 session 包是因为**两处都在 mint**：usecase 的三条
+// 服务端发起轮次路径，以及 api.StreamHub 的 pending 灯（S2e 起它的身份也是 turn_id）。
+// 两份 mint 就等于两份「谁生成 id」的真相，迟早分叉。
+func NewTurnID() string {
+	var buf [16]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		// crypto/rand 读失败时退回确定性形状而非空串：空串在身份语义里是
+		// 「无身份」（见 IsTurnIDShape 的调用方），一个没有身份的行会被判重
+		// 当历史数据放行，写进盘里就再也认不回来了。
+		return "00000000-0000-4000-8000-000000000000"
+	}
+	buf[6] = (buf[6] & 0x0f) | 0x40 // version 4
+	buf[8] = (buf[8] & 0x3f) | 0x80 // variant 10
+	return fmt.Sprintf("%x-%x-%x-%x-%x", buf[0:4], buf[4:6], buf[6:8], buf[8:10], buf[10:16])
+}
+
+// IsTurnIDShape 校验 turn_id 的形态（8-4-4-4-12，十六进制，大小写不敏感）。
+//
+// S2e 起 pending 的回合身份也用 turn_id，两处必须认同一种形状 —— 于是判据只有一份，
+// 放在 TurnID 字段旁边。ACP 的 messageId 规范（「客户端与 agent 必须使用 UUID 格式」）
+// 要求的正是这一种；不认识的形状一律当「无身份」，别拿它当键去对。
+func IsTurnIDShape(raw string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(raw))
+	if len(normalized) != 36 {
+		return false
+	}
+	for i, r := range normalized {
+		switch {
+		case i == 8 || i == 13 || i == 18 || i == 23:
+			if r != '-' {
+				return false
+			}
+		case r >= '0' && r <= '9', r >= 'a' && r <= 'f':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 func exchangeIdentityFromContext(ctx context.Context) ExchangeIdentity {
 	if ctx == nil {
 		return ExchangeIdentity{}

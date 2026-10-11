@@ -459,6 +459,28 @@ agent 事件 → block → 缓冲 →(300ms / 64KB / boundary)→ ① append 块
   reasoning 会「实时一个样、同步后一个样」。已改用 `ImportedExchangeAux.Thought`，与实时路径
   和存量数据（10826 条 `thought` 字段）同一个形状。
 
+**S2e 落地记录（2026-10-11）**：pending 灯的回合身份改用 `turn_id`，`TurnGen` 删除。
+
+- **这是类型替换，不是「统一两套身份」。** 全仓约 15 处生产 + 9 处测试，
+  `SessionPendingState.TurnGen uint64` → `TurnID string`，`0` → `""`，
+  **语义逐条不变**。D6 那句「统一为 `turn_id`」容易读成「把两套并成一套」—— 并不了：
+  pending 灯在 `OnStart` 就要身份（那时轮次还没落盘），而 `turn_id` 是在
+  `persistUserTurnExchange` 里才铸出来的。**两个时刻不同，值就必须不同**；
+  要做的是换表示（都用 UUID 字符串），不是换真值。
+- **只保留一条形状判据。** `session.IsTurnIDShape` 放在 `TurnID` 字段旁边，
+  ACP 的 `acp.isUUIDShape` 退化成薄转发。两份判据 = 两份「谁算合法身份」的真相。
+  mint 同理收进 `session.NewTurnID`，`usecase.newTurnID` 只剩包内转发 ——
+  api 的 pending 灯也要铸 id，两个铸口迟早分叉。
+- **抓到第三处同形状缺陷（`AppContext.RunAgentStage`，看板阶段执行）。** 它置 pending
+  的两个调用点都丢了返回的身份，收尾按字面 `0` 走 —— 与 G-BE 当年修的
+  `scheduled/tasks.go` **完全同一个形状**。而 `pending_identity_test.go` 只扫 `tasks.go`，
+  管不到这里：于是这条路径长期停在「灯不灭被兜住（保守清），但新轮的灯会被误抹」。
+  新守卫 `kanban_turn_identity_guard_test.go` 把它补上，与 ws.go / tasks.go 守同一条纪律。
+- **一处「守卫变成筛子」的自我纠错。** `pending_identity_test.go` 拦哨兵的正则只认字面 `0`；
+  换成 `""` 之后这条不变量就**再也拦不住任何东西**，而测试全绿。用探针程序证伪
+  （`old_matches=false` 对 `..., "")`），改成新旧哨兵都拦。
+  教训与 S2d-2 相同：**换表示时，守卫的正则也是要换的零件。**
+
 **S2d-2 落地记录（2026-10-11，提交 `37a0a1f`）**：块流成为正文唯一载体，主日志 `content` 恒空。
 
 - **删的是「写」，不是字段。** `Exchange.Content` 改名为 `LegacyContent`，json tag **仍叫

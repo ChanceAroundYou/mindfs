@@ -11,6 +11,8 @@ import (
 	acpsdk "github.com/coder/acp-go-sdk"
 
 	agenttypes "mindfs/server/internal/agent/types"
+	// 别名 sessionpkg：本包有一个同名类型 session（acp session），撞名。
+	sessionpkg "mindfs/server/internal/session"
 )
 
 type ImporterOptions struct {
@@ -276,23 +278,11 @@ func messageIDOf(raw *string) string {
 // ACP 规范对 `messageId` 的原文要求是「客户端与 agent **必须**使用 UUID 格式」。
 // 只认这一种形态，是为了保证「递出去的」「写进 native_prompt 的」「从转录读回来
 // 对上的」三者指的是同一个 id 的同一层含义；别的字符串一律当成「没有身份」。
+//
+// 判据本体在 session.IsTurnIDShape（S2e 起 pending 灯的回合身份也是 turn_id，
+// 形状判据只能有一份）；这里留一层薄转发，让本包的读者继续读本包的名字。
 func isUUIDShape(raw string) bool {
-	normalized := strings.ToLower(strings.TrimSpace(raw))
-	if len(normalized) != 36 {
-		return false
-	}
-	for i, r := range normalized {
-		switch {
-		case i == 8 || i == 13 || i == 18 || i == 23:
-			if r != '-' {
-				return false
-			}
-		case r >= '0' && r <= '9', r >= 'a' && r <= 'f':
-		default:
-			return false
-		}
-	}
-	return true
+	return sessionpkg.IsTurnIDShape(raw)
 }
 
 // append 把一段文本 / reasoning 归到当前消息上。

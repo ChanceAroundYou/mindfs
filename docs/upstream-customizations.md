@@ -1576,35 +1576,36 @@
   - 灯不灭：子会话只有 `MessageDone` 一条清理边，error / 取消 / 父轮先结束都让 pending 永久残留；
     `runSessionMessage` 无 `defer`，`SendMessage` panic/挂死时终结器走不到。
 - 为什么必须保留：
-  1. `SessionPendingState` 增 `TurnGen`；`SetPendingUserAt`/`SetPendingReply` 每次刷新为单调自增代次，
-     并把该代次返回给调用方（`BroadcastSessionUserMessageAt` 同样返回）。
-  2. `ClearSessionPending(key, turnGen)` 仅在「两侧都有身份且一致」时清；`PendingTurnGenMatches`
+  1. `SessionPendingState` 带回合身份（G-BH/S2e 起是 `TurnID string`）；`SetPendingUserAt`/`SetPendingReply`
+     每次刷新，并把该身份返回给调用方（`BroadcastSessionUserMessageAt` 同样返回）。
+  2. `ClearSessionPending(key, turnID)` 仅在「两侧都有身份且一致」时清；`PendingTurnIDMatches`
      让终结器对「别的回合的 done」整条丢弃（连帧都不广播），迟到 done 彻底无害化。
-     `turnGen==0` 视为无主，保守清 —— 绝不因缺身份而漏清（漏清 = 灯不灭）。
-  3. 抽出唯一终结器 `AppContext.EndSessionTurn(rootID, key, requestID, turnGen)`，
+     `turnID==""` 视为无主，保守清 —— 绝不因缺身份而漏清（漏清 = 灯不灭）。
+  3. 抽出唯一终结器 `AppContext.EndSessionTurn(rootID, key, requestID, turnID)`，
      所有清理点都改调它；`runSessionMessage` / `RunAgentStage` / 定时任务 用 `defer`
      覆盖成功/出错/取消/panic。**无身份的入口现在有两层护栏**：① `AppContext` 那层
-     兼容壳 `BroadcastSessionDone`（转调 `EndSessionTurn(..., 0)`）**已删除**，定时任务曾是
+     兼容壳 `BroadcastSessionDone`（转调 `EndSessionTurn(..., "")`）**已删除**，定时任务曾是
      它最后一个调用点；② `StreamHub` 那个真正广播的方法**刻意降为未导出**
-     `broadcastSessionDone` —— 它只有 `EndSessionTurn` 一个调用点（代次门之后才调），
-     不导出就没有任何路径能绕过代次门广播 done。用编译器守，比只扫某个调用点硬。
+     `broadcastSessionDone` —— 它只有 `EndSessionTurn` 一个调用点（身份门之后才调），
+     不导出就没有任何路径能绕过身份门广播 done。用编译器守，比只扫某个调用点硬。
   4. 子会话在父轮收尾时一并终结（本轮创建、没等到 `MessageDone` 的那些）。定时任务路径
-     （`scheduled/tasks.go`）从 `OnStart`/`OnSubSessionCreated` 捕获每会话的 `turnGen`，
+     （`scheduled/tasks.go`）从 `OnStart`/`OnSubSessionCreated` 捕获每会话的 `turnID`，
      收尾（含 `defer` 兜的子会话）原样交给 `EndSessionTurn`，不再用无身份的广播。
-     接口上的 `BroadcastSessionUserMessage`（不带 `At`、不返回代次的那个）**已摘除** ——
-     它置 pending 时按 `turnGen=0` 走，是同一类「拿不到代次」的入口，留着等于给下一个
+     接口上的 `BroadcastSessionUserMessage`（不带 `At`、不返回身份的那个）**已摘除** ——
+     它置 pending 时按 `turnID==""` 走，是同一类「拿不到身份」的入口，留着等于给下一个
      调用点挖坑；`StreamHub`/`AppContext` 两侧的无用实现一并删除（全仓库无调用者）。
   5. `codex.handleStreamedEvents` 由「通道关闭即成功」改为返回是否见到 `TurnCompletedEvent`，
      通道中途关闭按错误处理 —— 否则会**提前/错误**触发 done（本根的相邻缺口，同批修）。
-  - 这套「代次比对」机制项目里本就有（`ActiveTurnID` 用于取消定位），
+  - 这套「身份比对」机制项目里本就有（`ActiveTurnID` 用于取消定位），
     pending 缺的不是新机制，是把同一份纪律用上去。前端早已单一源（`multiProjectPendingByKey`），
     故本组不改前端。
 - 针对性测试：
-  - `server/internal/api/stream_hub_pending_identity_test.go` → 迟到 done 不清新轮（`TurnGen` 比对）、
-    重复 done 幂等、`gen=0` 仍保守清、子会话由父轮终结、`PendingTurnGenMatches` 缺失时放行。
+  - `server/internal/api/stream_hub_turn_identity_test.go` → 迟到 done 不清新轮（`TurnID` 比对）、
+    重复 done 幂等、`turnID==""` 仍保守清、子会话由父轮终结、`PendingTurnIDMatches` 缺失时放行。
   - `server/internal/scheduled/pending_identity_test.go` → 定时任务路径的源码守卫（四条）：接口里不得再有
-    无身份的 `BroadcastSessionDone`、置 pending 的两个调用点必须接收 `turnGen`、
-    `EndSessionTurn` 不得收到字面 `0`、不得再出现不带 `At` 的 `BroadcastSessionUserMessage(`。钉住「定时任务收尾也带回合身份」这条补齐（合上游时若退回
+    无身份的 `BroadcastSessionDone`、置 pending 的两个调用点必须接收 `turnID`、
+    `EndSessionTurn` 不得收到哨兵身份（新旧哨兵 `""`/`0` 都拦）、不得再出现不带 `At` 的
+    `BroadcastSessionUserMessage(`。钉住「定时任务收尾也带回合身份」这条补齐（合上游时若退回
     无身份广播，此测试必红）。
   - `server/internal/agent/codex/session_test.go` → 通道关闭无 `TurnCompleted` 报错、见到 `TurnCompleted` 返回成功、
     `ThreadError` 返回错误。
@@ -1747,7 +1748,7 @@
 - 验收记录（实测，合成最坏输入 1.19MB/206 行、每行 ~5.7KB）：冷开窗 **15.3ms → 1.4ms**
   （读盘 0.9ms + 行计数 0.14ms + 解析 9 条 0.8ms）；真实最重会话 391KB/206 行按比例约 0.6ms。
 
-### G-BH 会话正文块流（块存储层 + 轮次身份 + S2a 双写 + S2b 读改走块流 + C1/C2 + S2d-2 主日志不再存正文）（2026-10-10）
+### G-BH 会话正文块流（块存储层 + 轮次身份 + S2a 双写 + S2b 读改走块流 + C1/C2 + S2d-2 主日志不再存正文 + S2e pending 身份改用 turn_id）（2026-10-10）
 
 - 来源：`server/internal/session/blocks.go`（新增）、`server/internal/session/manager.go`、
   `server/internal/session/types.go`、`server/internal/api/usecase/session.go`、
@@ -1755,10 +1756,12 @@
   （`docs/session-blocks-plan.md` §3/§4/§10）。
 - 边界：**会话正文的存储、身份与读取** —— 块流格式、块写入点、轮次元数据字段、`turn_id` 的
   生成与清理、窗口读走块流、前端按 `type` 渲染块。
-  S2e 删 `TurnGen`、S3 退役 `seq=0` 机制 —— 都是后续步骤，不在本组。
+  S3 退役 `seq=0` 机制 —— 后续步骤，不在本组。
   本组内部 S2a（双写，读路径不动）、S2b（读路径切块流，`content` 退化为回退）、
-  S2d-2（主日志 `content` 恒空，块流是唯一载体）是**三个可独立回滚的提交**：
-  S2b 之后前端仍能渲染没有块流的历史会话，S2d-2 之后老会话靠 S2d-1 的回填补齐。
+  S2d-2（主日志 `content` 恒空，块流是唯一载体）、S2e（pending 灯的身份从单调代次
+  换成 `turn_id`）是**四个可独立回滚的提交**：
+  S2b 之后前端仍能渲染没有块流的历史会话，S2d-2 之后老会话靠 S2d-1 的回填补齐，
+  S2e 只换 pending 身份的表示（`uint64` → `string`），不碰任何落盘语义。
 - 可见症状（没有它会怎样）：
   1. **回复结束后助手正文消失**：一轮正文只拼 `text` 块，而 `os` 模型约 15% 的轮次只产出
      reasoning、没有任何 text，于是落库成 `content:""`。流式时 `thought_chunk` 实时推所以
@@ -1793,6 +1796,11 @@
   10. **user 行被空内容守卫整行吞掉**：S2d-2 一旦让 user 行不再带正文，
      `addExchangeForAgentAt` 里「空正文 + 非 agent 就跳过」的判据会把**每一行 user**
      丢掉 —— 前端表现为「我说过的话不见了」，且没有任何报错。
+  11. **S2e 之前 pending 灯用的是另一套编号**：`SessionPendingState.TurnGen` 是 StreamHub
+      内的单调计数器，与主日志行 / 块流的 `turn_id`（UUID）**不是同一个东西的两种表示**。
+      于是「本轮是哪个回合」这个问题在两处各有一个答案、各有一套生成规则 ——
+      方案 §11 引 `message-mechanisms-plan.md` §12 的警告「两套回合身份真值并存必然打架」。
+      换成 `turn_id` 后同一个逻辑 id 只有一种表示，`IsTurnIDShape` 也只有一份判据。
 - 为什么必须保留：
   1. 新增 `sessions/<key>.blocks.jsonl`（块流），一行一块：
      `{seq,pos,revision,type,text|toolcall|todo|plan|compact,step,turn_id,native_id,parent_tool_use_id,task_id,subagent_type}`。
@@ -1917,6 +1925,19 @@
   26. `Manager` 新增 `TurnIDForSeq`：块要带 `turn_id` 才能挂回轮次，而 `max+1` 分配下
       「刚写下的那一行」的 seq 只有调用方算得出、`turn_id` 却存在行里（导入路径就是
       拿到 seq 之后回过头来问这一行的身份）。
+  27. **S2e pending 身份改用 `turn_id`**：`SessionPendingState.TurnGen uint64` →
+      `TurnID string`，`SetPendingUser/At`、`SetPendingReply`、`ClearSessionPending`、
+      `PendingTurnGenMatches`→`PendingTurnIDMatches`、`AppContext.EndSessionTurn`、
+      `scheduled.SessionActivityBroadcaster` 三个方法同步换。语义不变：空串 `""` 对位
+      旧的 `0`，仍是「无身份 → 保守清」的哨兵。**不是**把两套身份合并成一个 ——
+      pending 灯在轮次**落盘之前**就要有身份（`OnStart` 那一刻主日志行还没写），
+      而 `turn_id` 是在 `persistUserTurnExchange` 里才 mint 的，两者时刻不同。
+      mint 点收敛到 `session.NewTurnID()`（原来在 usecase，pending 也要 mint，两份 mint
+      迟早分叉），`usecase.newTurnID` 留包内转发。形状判据同样收敛：
+      `session.IsTurnIDShape` 一份（ACP 的 `isUUIDShape` 改成转调它，不再有第二份拷贝）。
+      连带补齐 `AppContext.RunAgentStage` 的回合身份 —— 它与 tasks.go 同形状，G-BE
+      当年只扫了 tasks.go，于是这条路径一直是「置 pending 拿不到身份、收尾按无身份
+      保守清」（灯不灭被兜住，但新轮的灯会被误抹）。
 - 针对性测试：
   - `server/internal/session/manager_blocks_test.go` → 块追加/读回顺序、缺文件为空、
     按 seq 过滤、容忍无 `pos` 的旧行、块流与主日志同目录、删会话连块流一起删。
@@ -1984,6 +2005,17 @@
     回填完再让前端自己拉一次，用户看到的就是先空一屏、再突然冒出正文）；
     另加「块真的落盘了」（换 manager 直读盘，只断言响应不足以证明落盘 —— 那样只是
     把猜测从读时搬到读时）与「真的什么都没有的会话仍返回空 map」。
+  - `server/internal/api/stream_hub_turn_identity_test.go`（S2e，**取代**已删除的
+    `stream_hub_pending_identity_test.go`）→ 身份是 UUID 形状、同会话两轮身份不同、
+    迟到 done 不清新轮、重复 done 幂等、空串仍保守清、用户路径同样可用、子会话由父轮
+    终结、`PendingTurnIDMatches` 迟到不放行/空身份放行/条目不存在放行。这七条就是旧文件
+    那七条的逐条对译 —— 换表示时语义必须一条不变。
+  - `server/internal/api/kanban_turn_identity_guard_test.go`（S2e）→ **看板阶段路径的
+    源码守卫**（此前只有 tasks.go 有，这条路径裸奔）：置 pending 的返回值必须被接收、
+    收尾不得传哨兵身份（`0` 与 `""` 都拦）、不得再出现无身份的 `BroadcastSessionDone`。
+    已用「把修复改回原样」验证三条都真的会红。
+  - `server/internal/scheduled/pending_identity_test.go`（S2e 改）→ 守卫 3b 补拦**空串**
+    哨兵 —— 原来只拦字面 `0`，换表示后那道正则成了摆设（实测：`..., "")` 原样放过）。
   - `server/internal/agent/acp/importer_identity_test.go`（S2c）→ `messageId` 带成 `NativeID`、
     重放两次身份稳定、`messageId` 变化开新行、无 `messageId` 仍合并相邻块、非 UUID 被拒、
     时间戳打 `SynthesizedAt` 标记、合并不改写时间戳、`AgentThoughtChunk` 导入成 think 卡、

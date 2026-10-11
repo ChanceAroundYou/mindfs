@@ -2661,17 +2661,11 @@ func recordedUserExchangeTurnID(ctx context.Context, manager *session.Manager, t
 
 // newTurnID mint 一个 UUIDv4 作为 turn_id（方案 D4/C2）。
 //
-// 自己拼而不引 google/uuid：只需要「格式正确的随机 UUID」，而 randomHex 已经在用
-// 同一条 crypto/rand 路径。三处服务端发起的轮次（定时任务 / 看板阶段 / 子会话）
-// 都经 SendMessage 走到这里，所以 mint 点只有一处。
+// S2e 起 mint 点在 session.NewTurnID（api 的 pending 灯也要 turn_id，两份 mint
+// 迟早分叉），这里只留包内转发。三处服务端发起的轮次（定时任务 / 看板阶段 /
+// 子会话）都经 SendMessage 走到这里。
 func newTurnID() string {
-	var buf [16]byte
-	if _, err := rand.Read(buf[:]); err != nil {
-		return ""
-	}
-	buf[6] = (buf[6] & 0x0f) | 0x40 // version 4
-	buf[8] = (buf[8] & 0x3f) | 0x80 // variant 10
-	return fmt.Sprintf("%x-%x-%x-%x-%x", buf[0:4], buf[4:6], buf[6:8], buf[8:10], buf[10:16])
+	return session.NewTurnID()
 }
 
 // turnBlockStep 是 S2a 双写期写在块上的步序。

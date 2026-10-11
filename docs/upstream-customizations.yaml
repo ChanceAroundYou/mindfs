@@ -2085,21 +2085,21 @@ groups:
         灯不灭：子会话只有 MessageDone 一条清理边，error/取消/父轮先结束都会让 pending 永久残留；
                 runSessionMessage 无 defer，SendMessage panic/挂死时终结器走不到。
     why: |
-      1) SessionPendingState 增加 TurnGen，每次 SetPending* 刷新为单调自增代次；
-         SetPendingUserAt/SetPendingReply/BroadcastSessionUserMessageAt 返回该代次。
-      2) ClearSessionPending(key, turnGen) 只在「两侧都有身份且一致」时才清；
-         PendingTurnGenMatches 让 EndSessionTurn 对「别的回合的 done」整条丢弃（不广播帧）。
-      3) 抽出唯一终结器 AppContext.EndSessionTurn(..., turnGen)，所有终态边都走它；
+      1) SessionPendingState 带回合身份（G-BH/S2e 起是 turn_id），每次 SetPending* 刷新；
+         SetPendingUserAt/SetPendingReply/BroadcastSessionUserMessageAt 返回它。
+      2) ClearSessionPending(key, turnID) 只在「两侧都有身份且一致」时才清；
+         PendingTurnIDMatches 让 EndSessionTurn 对「别的回合的 done」整条丢弃（不广播帧）。
+      3) 抽出唯一终结器 AppContext.EndSessionTurn(..., turnID)，所有终态边都走它；
          runSessionMessage / RunAgentStage / 定时任务 用 defer 覆盖成功/出错/取消/panic。
       4) 子会话在父轮收尾时一并终结（本轮创建、没等到 MessageDone 的那些）。
-      这套「代次比对」机制项目里本就有（ActiveTurnID 用于取消定位，见 usecase/session.go），
+      这套「身份比对」机制项目里本就有（ActiveTurnID 用于取消定位，见 usecase/session.go），
       pending 缺的不是新机制，是把同一份纪律用上去。前端早已单一源（multiProjectPendingByKey），
       故本组不改前端。
     boundary: |
       服务端 pending 条目的身份与生命周期：谁有权清理、迟到/重复 done 的处置、
       子会话 pending 的终态收边。不做静态判死/超时（已于 G-AY 证伪）。
     tests:
-      - server/internal/api/stream_hub_pending_identity_test.go
+      - server/internal/api/stream_hub_turn_identity_test.go
       - server/internal/scheduled/pending_identity_test.go
       - server/internal/agent/codex/session_test.go
       - web/tests/e2e-pending-indicators.test.mjs
@@ -2111,9 +2111,10 @@ groups:
       - server/internal/agent/codex/session.go
     anchors:
       - server/internal/api/stream_hub.go:ClearSessionPending
-      - server/internal/api/stream_hub.go:PendingTurnGenMatches
+      - server/internal/api/stream_hub.go:PendingTurnIDMatches
       - server/internal/api/stream_hub.go:SetPendingReply
       - server/internal/api/appcontext.go:EndSessionTurn
+      - server/internal/api/appcontext.go:RunAgentStage
       - server/internal/api/ws.go:runSessionMessage
       - server/internal/scheduled/tasks.go:SessionActivityBroadcaster
       - server/internal/agent/codex/session.go:handleStreamedEvents
@@ -2222,7 +2223,7 @@ groups:
       - server/internal/api/usecase/external_sessions.go:externalSessionDeltaAfterCtxSeq
 
   - id: G-BH
-    title: 会话正文块流（Block 存储层 + 轮次身份 turn_id/turn_seq/native_* + S2a 双写 + S2b 读改走块流 + C1/C2 + S2d-2 主日志不再存正文）
+    title: 会话正文块流（Block 存储层 + 轮次身份 turn_id/turn_seq/native_* + S2a 双写 + S2b 读改走块流 + C1/C2 + S2d-2 主日志不再存正文 + S2e pending 身份改用 turn_id）
     kind: fix
     symptom: |
       ① 回复结束后助手正文消失：一轮正文只拼 text 块（usecase/session.go 的
@@ -2369,10 +2370,12 @@ groups:
     boundary: |
       会话正文的存储、身份与读取：块流格式、块写入点、轮次元数据字段、turn_id 生成与清理、
       窗口读走块流、前端按 type 渲染块。
-      S2e 删 TurnGen、S3 退役 seq=0 机制 —— 都是后续步骤，不在本组。
+      S3 退役 seq=0 机制 —— 后续步骤，不在本组。
       本组内部 S2a（双写，读路径不动）、S2b（读路径切块流，content 退化为回退）、
-      S2d-2（主日志 content 恒空，块流是唯一载体）是**三个可独立回滚的提交**：
-      S2b 之后前端仍能渲染没有块流的历史会话，S2d-2 之后老会话靠 S2d-1 的回填补齐。
+      S2d-2（主日志 content 恒空，块流是唯一载体）、S2e（pending 灯的身份从单调代次
+      换成 turn_id）是**四个可独立回滚的提交**：
+      S2b 之后前端仍能渲染没有块流的历史会话，S2d-2 之后老会话靠 S2d-1 的回填补齐，
+      S2e 只换 pending 身份的表示（uint64 → string），不碰任何落盘语义。
       主日志格式兼容：没有身份字段的历史行读成零值，不报错；content 字段保留为
       LegacyContent（json tag 不改名）以兼容存量文件与回填输入。
     tests:
@@ -2396,6 +2399,9 @@ groups:
       - web/tests/session-blocks-render.test.mjs
       - web/tests/tool-card-grouping.test.mjs
       - web/tests/session-window.test.mjs
+      - server/internal/api/stream_hub_turn_identity_test.go
+      - server/internal/api/kanban_turn_identity_guard_test.go
+      - server/internal/scheduled/pending_identity_test.go
     files:
       - server/internal/session/blocks.go
       - server/internal/session/blocks_build_test.go
@@ -2431,6 +2437,14 @@ groups:
       - server/internal/session/search_blocks_test.go
       - server/internal/session/types_aux_reasoning_test.go
       - server/internal/session/manager_duplicate_seq_test.go
+      - server/internal/api/stream_hub.go
+      - server/internal/api/appcontext.go
+      - server/internal/api/ws.go
+      - server/internal/api/stream_hub_pending_identity_test.go
+      - server/internal/api/stream_hub_turn_identity_test.go
+      - server/internal/api/kanban_turn_identity_guard_test.go
+      - server/internal/scheduled/tasks.go
+      - server/internal/scheduled/pending_identity_test.go
       - web/src/hooks/sessionBlocks.ts
       - web/src/hooks/useSessionStream.ts
       - web/src/components/session/SessionViewer.tsx
@@ -2458,6 +2472,14 @@ groups:
       - server/internal/api/usecase/session_projection.go:AuditSession
       - server/internal/agent/acp/importer.go:messageIDOf
       - server/internal/agent/acp/importer.go:isUUIDShape
+      - server/internal/session/manager.go:NewTurnID
+      - server/internal/session/manager.go:IsTurnIDShape
+      - server/internal/api/stream_hub.go:nextPendingTurnIDLocked
+      - server/internal/api/stream_hub.go:PendingTurnIDMatches
+      - server/internal/api/stream_hub.go:ClearSessionPending
+      - server/internal/api/appcontext.go:EndSessionTurn
+      - server/internal/api/appcontext.go:RunAgentStage
+      - server/internal/api/ws.go:runSessionMessage
       - server/internal/agent/acp/process.go:SendMessage
       - server/internal/agent/types/types.go:WithPromptTurnID
       - server/internal/session/types.go:CompactExchangeAux
