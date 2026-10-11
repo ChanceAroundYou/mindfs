@@ -1,4 +1,4 @@
-import type { ExchangeAux, Session } from "./session";
+import type { ExchangeAux, Session, SessionBlock } from "./session";
 
 // 「瞬时 vs 持久」的判据与 exchange 合并规则（从 services/session.ts 抽出，2026-10-07）。
 //
@@ -41,6 +41,32 @@ export function toPersistentExchangeAux(
 ): Record<string, ExchangeAux[]> {
   const out: Record<string, ExchangeAux[]> = {};
   for (const [seq, items] of Object.entries(exchangeAux || {})) {
+    const seqNum = Number(seq || 0);
+    if (!Number.isFinite(seqNum) || seqNum <= 0) {
+      continue;
+    }
+    const nextItems = Array.isArray(items)
+      ? items.filter((item) => Number(item?.seq || 0) > 0)
+      : [];
+    if (nextItems.length > 0) {
+      out[String(seqNum)] = nextItems;
+    }
+  }
+  return out;
+}
+
+/**
+ * 块映射的持久化清洗（CUSTOM(G-BH)）：丢掉 seq<=0 的键与块、丢掉空数组。
+ *
+ * 与 toPersistentExchangeAux 同形同义 —— 两者形状一致、淘汰规则一致，
+ * 差别只在块的判据是 `block.seq`。住在这里而不是 sessionCacheStore.ts，
+ * 是为了让「seq>0」这把尺仍然只有一个实现文件（见 message-mechanisms 冲突①②）。
+ */
+export function toPersistentBlocks(
+  blocks?: Record<string, SessionBlock[]>,
+): Record<string, SessionBlock[]> {
+  const out: Record<string, SessionBlock[]> = {};
+  for (const [seq, items] of Object.entries(blocks || {})) {
     const seqNum = Number(seq || 0);
     if (!Number.isFinite(seqNum) || seqNum <= 0) {
       continue;

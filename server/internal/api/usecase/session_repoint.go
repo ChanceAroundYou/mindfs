@@ -136,6 +136,20 @@ func (s *Service) RepointSession(ctx context.Context, in RepointSessionInput) (R
 		return out, err
 	}
 
+	// 6. 清掉全部 native id（方案 §14 C1）。
+	//
+	// repoint 的本质是「fork 出新 id 并换一份转录」，而 claude 在 fork 后产出**全新 uuid**
+	//（repoint.go:35 的既有注释就写着这条）。本方案开始持久化 native id 之后，旧 native id
+	// 与 fork 后的新转录对不上 —— 判重失效、回查错行。所以换 id 的同时必须一并清掉。
+	//
+	// 顺序放在最后：前几步任一失败都会 return，此时 native id 原样保留，仍与旧转录一致
+	//（旧转录刻意不删，就是回滚保险）。只有整条 repoint 真的走完了才作废它们。
+	// 清不掉不算 repoint 失败：id 与转录都已换好、会话可用；残留的 native id 只会让回查
+	// 退回「按 MindFS turn_id 找」，而那是权威路径。
+	if err := manager.ClearNativeIdentity(ctx, key); err != nil {
+		log.Printf("[session/repoint] clear.native.error root=%s session=%s agent=%s err=%v", strings.TrimSpace(in.RootID), key, agentName, err)
+	}
+
 	// 刻意**不**动任务侧的 worktree 归属。
 	//
 	// 曾经在这里调 ClearTaskWorktree，理由是「会话侧清了、任务侧没清的话，任务还钉着一个

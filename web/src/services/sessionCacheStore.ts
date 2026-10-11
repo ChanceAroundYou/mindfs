@@ -1,4 +1,4 @@
-import type { ExchangeAux, RelatedFile, Session } from "./session";
+import type { ExchangeAux, RelatedFile, Session, SessionBlock } from "./session";
 import type { CachedSessionListRecord, CachedSessionRecord } from "./sessionCacheTypes";
 import {
   buildSessionCacheKey,
@@ -8,7 +8,7 @@ import {
   withSessionListStore,
   withSessionStore,
 } from "./sessionIndexedDb";
-import { cloneExchangeAux, toPersistentExchangeAux } from "./sessionExchangeMerge";
+import { cloneExchangeAux, toPersistentBlocks, toPersistentExchangeAux } from "./sessionExchangeMerge";
 
 // 单会话的 IndexedDB 缓存读写 + 落盘裁剪（从 services/session.ts 抽出，2026-10-07）。
 //
@@ -186,6 +186,9 @@ export function toPersistentSession(session: Session): Session {
       })
     : [];
   const exchange_aux = toPersistentExchangeAux(persistent.exchange_aux);
+  // 正文块（CUSTOM(G-BH)）的持久化形：不进淘汰预算（它就是正文本身，与 exchanges 同生共死），
+  // 但「只在册 seq」这条规则与 aux 一致 —— 否则淘汰后孤立的块会在时间线上多出内容。
+  const blocks = toPersistentBlocks(persistent.blocks);
   if (exchanges.length <= SESSION_CACHE_MAX_EXCHANGES) {
     let text = 0;
     for (const exchange of exchanges) {
@@ -194,7 +197,7 @@ export function toPersistentSession(session: Session): Session {
     if (text <= SESSION_CACHE_MAX_TEXT) {
       // 没有淘汰 ⇒ 这条记录此刻是完整的。显式写 false（而不是留 `...persistent` 里的旧值）：
       // 旧值可能是上一轮淘汰留下的 true，留着会让下次白做一次全量拉取。
-      return { ...persistent, truncated: false, exchanges, exchange_aux };
+      return { ...persistent, truncated: false, exchanges, exchange_aux, blocks };
     }
   }
   // 从尾部往前累加，找到「能装下的最长后缀」；装不下的部分全在头部。
@@ -223,6 +226,11 @@ export function toPersistentSession(session: Session): Session {
   for (const [seq, items] of Object.entries(exchange_aux)) {
     if (keptSeqs.has(Number(seq))) keptAux[seq] = items;
   }
+  // 块随 aux 一起收窄到在册 seq（CUSTOM(G-BH)）。
+  const keptBlocks: Record<string, SessionBlock[]> = {};
+  for (const [seq, items] of Object.entries(blocks)) {
+    if (keptSeqs.has(Number(seq))) keptBlocks[seq] = items;
+  }
   // **发生过淘汰就一定标 true** —— 这个标记的语义是「这条 IDB 记录不完整，下次必须全量回源」。
   // 曾经它被调用方用 `forceNoTruncate` 置成 false（窗口态写入时），注释说是为了「跳过
   // truncated 全量回补」。但那是**读侧**该管的事（`syncSession` 里已有的
@@ -234,6 +242,7 @@ export function toPersistentSession(session: Session): Session {
     truncated: true,
     exchanges: kept,
     exchange_aux: keptAux,
+    blocks: keptBlocks,
   };
 }
 

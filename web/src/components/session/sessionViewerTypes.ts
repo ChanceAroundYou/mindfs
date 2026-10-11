@@ -1,6 +1,6 @@
 import type React from "react";
 import type { AgentStatus } from "../../services/agents";
-import type { ExchangeAux, RelatedFile, TokenUsage } from "../../services/session";
+import type { ExchangeAux, RelatedFile, SessionBlock, TokenUsage } from "../../services/session";
 
 export type SessionItem = {
   key?: string;
@@ -35,6 +35,8 @@ export type SessionItem = {
   source?: string;
   related_files?: RelatedFile[];
   exchange_aux?: Record<string, ExchangeAux[]>;
+  // 正文块（CUSTOM(G-BH)，方案 §7）：与 exchange_aux 同形、同生命周期。
+  blocks?: Record<string, SessionBlock[]>;
 };
 
 export type ExchangeArray = NonNullable<SessionItem["exchanges"]>;

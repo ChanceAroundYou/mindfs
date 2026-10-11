@@ -58,6 +58,24 @@ export type ExchangeAux = {
   compact?: CompactNotice | null;
 };
 
+export type SessionBlock = {
+  seq: number;
+  pos: number;
+  revision?: number;
+  type: "reasoning" | "text" | "tool_call" | "todo" | "plan" | "compact" | string;
+  text?: string;
+  toolcall?: ToolCall | null;
+  todo?: TodoUpdate | null;
+  plan?: PlanUpdate | null;
+  compact?: CompactNotice | null;
+  step?: number;
+  turn_id?: string;
+  native_id?: string;
+  parent_tool_use_id?: string;
+  task_id?: string;
+  subagent_type?: string;
+};
+
 export type Session = {
   key: string;
   session_key?: string;
@@ -88,6 +106,11 @@ export type Session = {
   /** 持久化缓存截断标记：true 表示缓存只含最近 N 条 exchanges，读取方应全量拉取补段 */
   truncated?: boolean;
   exchange_aux?: Record<string, ExchangeAux[]>;
+  /**
+   * 窗口内 seq 的正文块，形状与 exchange_aux 一致。
+   * 缺失 / 为空 = 该会话还没有块流（本方案落地前的历史会话）→ 渲染回退旧格式。
+   */
+  blocks?: Record<string, SessionBlock[]>;
   exchanges?: Array<{
     seq?: number;
     role?: string;

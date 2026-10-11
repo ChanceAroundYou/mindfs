@@ -360,10 +360,17 @@ func (s *Service) SyncExternalSessionDelta(ctx context.Context, in SyncExternalS
 	// live-owned 会话的游标是**冻结**的（导入器平时不跑），只按偏移读会把早已落库的旧回合
 	// 整段重导一遍——实测 2026-09-16：BP 会话被重导了 09-14 的内容，且因为导入器会把相邻
 	// 同角色条目合并，那些重导行的内容与实时路径写的行并不逐字相同，写入侧判重和读取投影
-	// 都折叠不掉，用户看到「ask 下面又渲染了一轮出现过的文字」。
-	// 所以给这种会话一道时间地板：只接受比库里最新一条更新的条目，兜底补齐真正要的
-	// 只是「进程重启时被中断的那一轮」。
-	if session.SessionIsLiveOwned(current.Exchanges) {
+	// 都折叠不掉，用户看到「ask 下面又渲染了一轮出现过的文字」。所以给这种会话一道
+	// 时间地板：只接受比库里最新一条更新的条目，兜底补齐真正要的只是「进程重启时被中断的
+	// 那一轮」。
+	//
+	// **只给有真时间戳的导入器设地板**（HasTranscriptTimestamps）。ACP 的 `SessionUpdate`
+	// 不带时间戳（SDK 里 SessionNotification 只有 sessionId + update），它给每行盖的
+	// 时间是**读到它的那一刻**，恒晚于地板 —— 地板形同虚设，而代码看着像「有地板就安全」。
+	// 实测 2026-10-07：live-owned 的 dsh 会话 Full 同步多出 9 对重复行，全部带伪造时间戳。
+	// 现在这一层的职责已经交给 native id 身份判重（appendImportedExchange →
+	// exchangeAlreadyRecorded），身份对不上的行一律落库 —— 宁可多留一条，也不丢内容。
+	if session.SessionIsLiveOwned(current.Exchanges) && importer.HasTranscriptTimestamps() {
 		importInput.TimestampFloor = lastTimestamp
 	}
 	// Child-agent JSONL files may keep growing without changing the root file.
@@ -553,11 +560,26 @@ func appendImportedExchange(
 	// model_display_name/effort）。
 	// 判据与发送侧共用（exchangeAlreadyRecorded）：同一轮的用户条目本来就由这个导入器
 	// 和回合结束的 SendMessage 两个人写，护栏必须对称，否则后写的那个照样落重复。
-	if exchangeAlreadyRecorded(target, role, exchange.Content, exchange.Timestamp) {
+	//
+	// 判据顺序（S2c）：**先身份、后内容**。身份是铁证 —— 导入器会把相邻同角色条目
+	// 合并，合并后的 Content 与实时路径写的行逐字不同，内容比对必然漏判（实测
+	// 2026-10-07 某会话 9 对 live/import 重复）。身份对不上才退回内容 + ±5s，
+	// 并且打一条日志：那是「还在猜」的可见信号。
+	if exchangeAlreadyRecorded(target, role, exchange.NativeID, exchange.Content, exchange.Timestamp) {
 		return false, nil
 	}
+	// 把 agent 侧身份写进这一行（方案 §3.1）。没有它，下一轮同步就没有可对齐的键，
+	// 只能继续靠内容猜 —— 而内容恰恰是导入器会改写的东西。
+	identity := session.ExchangeIdentity{}
+	if strings.TrimSpace(exchange.NativeID) != "" {
+		if role == "user" {
+			identity.NativePrompt = strings.TrimSpace(exchange.NativeID)
+		} else {
+			identity.NativeTurn = strings.TrimSpace(exchange.NativeID)
+		}
+	}
 	if err := manager.AddExchangeForAgentAt(
-		session.WithExchangeSource(ctx, session.ExchangeSourceImport),
+		session.WithExchangeIdentity(session.WithExchangeSource(ctx, session.ExchangeSourceImport), identity),
 		target,
 		role,
 		exchange.Content,
@@ -572,6 +594,18 @@ func appendImportedExchange(
 	// aux 以 seq 为键：必须取刚落下那行的真实 seq（max+1 分配下 len ≠ seq）
 	seq := session.MaxExchangeSeq(target.Exchanges)
 	for _, importedAux := range exchange.Aux {
+		// reasoning 走 Thought 字段，与实时路径的 thought_chunk 同一形状 ——
+		// 前端把 `reasoning` 块渲染成灰显的思考文本，而 think 工具卡是另一种外观。
+		if strings.TrimSpace(importedAux.Thought) != "" {
+			if err := manager.AddExchangeAux(ctx, target.Key, session.ExchangeAux{
+				Seq:     seq,
+				Line:    importedAux.Line,
+				Thought: importedAux.Thought,
+			}); err != nil {
+				return false, err
+			}
+			continue
+		}
 		if importedAux.Plan != nil {
 			plan := *importedAux.Plan
 			if err := manager.AddExchangeAux(ctx, target.Key, session.ExchangeAux{
@@ -612,6 +646,21 @@ func (s *Service) resolveExternalSessionImporter(agentName string) (agenttypes.E
 		return nil, err
 	}
 	return importer, nil
+}
+
+// agentHasPromptMessageID 报告该 agent 的 prompt 是否带 `messageId` 这层身份
+// （ACP 协议有，claude/codex 没有）。
+//
+// 问 importer 而不是问 agent 名或 `DefaultProtocol`：协议可以在 agents.json 里
+// 覆盖，拿默认协议猜就是把配置丢掉；而 importer 就是「这个 agent 到底怎么存
+// 历史」的真身。问不出来（没配/未注册）时一律 false —— 宁可没有身份，也不要一个
+// 对不上的假身份（方案 D10：永不猜）。
+func (s *Service) agentHasPromptMessageID(agentName string) bool {
+	importer, err := s.resolveExternalSessionImporter(agentName)
+	if err != nil || importer == nil {
+		return false
+	}
+	return importer.UsesPromptMessageID()
 }
 
 func externalSyncLockKey(rootID, key string) string {

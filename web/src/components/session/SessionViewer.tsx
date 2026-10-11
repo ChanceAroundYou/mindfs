@@ -6,7 +6,7 @@ import { ViewHeader } from "../../layout/ViewHeader";
 // 窗口取数（SESSION_WINDOW_SIZE / getSessionWindow / setWindowedView /
 // clearWindowedView / mergeSessionExchanges 的另一半）已随 2026-10-08 的拆分
 // 搬进 ./useSessionWindowing，这里只剩仍被重锚定与时间线用到的这几个。
-import { isPersistedSeq, mergeSessionExchanges, type ExchangeAux, type SessionWindowMeta } from "../../services/session";
+import { isPersistedSeq, mergeSessionExchanges, type ExchangeAux, type SessionBlock, type SessionWindowMeta } from "../../services/session";
 import { savePrompt } from "../../services/prompts";
 import { reportError } from "../../services/net/error";
 import { rootBadgeButtonStyle } from "../../shared/rootBadgeStyle";
@@ -109,6 +109,11 @@ function SessionViewerInner({
   const [visibleAux, setVisibleAux] = useState<Record<string, ExchangeAux[]>>(
     () => session?.exchange_aux || {},
   );
+  // 正文块（CUSTOM(G-BH)，方案 §7）。与 visibleAux 同生命周期、同合并语义：
+  // 它是正文的**唯一**载体，`content` 只是块流缺失时的回退。
+  const [visibleBlocks, setVisibleBlocks] = useState<Record<string, SessionBlock[]>>(
+    () => (session?.blocks as Record<string, SessionBlock[]>) || {},
+  );
   const [windowMeta, setWindowMeta] = useState<SessionWindowMeta>({
     total: 0,
     hasMore: false,
@@ -175,6 +180,7 @@ function SessionViewerInner({
     visibleAux,
     session?.context_window,
     isAwaiting,
+    visibleBlocks,
   );
   // CUSTOM(G-AU): 原先在 timeline.map 里对每个 user 项做「切前缀再 filter 数 user」、
   // 对每个 assistant 项做 previousUserTimestamp 反向扫描 —— 两处都是 O(n²)，
@@ -267,6 +273,8 @@ function SessionViewerInner({
         : [];
       const winAux =
         (winSession?.exchange_aux as Record<string, ExchangeAux[]>) || {};
+      const winBlocks =
+        (winSession?.blocks as Record<string, SessionBlock[]>) || {};
       setVisibleExchanges((prev) => {
         if (!opts?.keepOlder) return winExchanges;
         // keepOlder：窗口只覆盖 [minSeq, maxSeq]，比 minSeq 更老的首帧种子 / loadMore
@@ -276,6 +284,11 @@ function SessionViewerInner({
       });
       setVisibleAux((prev) =>
         opts?.keepOlder ? { ...prev, ...winAux } : winAux,
+      );
+      // 块与 aux 同一合并语义：keepOlder 时窗口只覆盖 [minSeq, maxSeq]，
+      // 整体替换会把种子/翻出来的历史那部分块扔掉（正文闪一下又没了）。
+      setVisibleBlocks((prev) =>
+        opts?.keepOlder ? { ...prev, ...winBlocks } : winBlocks,
       );
       // minSeq 必须报**实际可见的最小 seq**，不能直接用窗口那份：keepOlder 合并进来的
       // 种子可能比窗口更老，用窗口的 minSeq 会让下一次 loadMore 去取已经有的行
@@ -298,7 +311,7 @@ function SessionViewerInner({
 
   useSessionWindowing({
     session, sessionKey, sessionNodeId, rootId, windowMeta, loadingMore, applyWindow,
-    setVisibleExchanges, setVisibleAux, setWindowMeta, setLoadingMore, setShowJumpToLatest,
+    setVisibleExchanges, setVisibleAux, setVisibleBlocks, setWindowMeta, setLoadingMore, setShowJumpToLatest,
     shouldStickToBottomRef, isPrependingRef, activeScrollRef, scrollRef, topSentinelRef,
     stickSessionToBottom,
   });

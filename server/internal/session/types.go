@@ -93,6 +93,21 @@ type Exchange struct {
 	Content          string                 `json:"content"`
 	TokenUsage       *agenttypes.TokenUsage `json:"token_usage,omitempty"`
 	Timestamp        time.Time              `json:"timestamp"`
+
+	// ── 轮次元数据（CUSTOM(G-BH)，方案 §3.1）────────────────────────────
+	// 正文搬去块流之后，主日志一轮一行只留身份与展示字段。
+	//
+	// TurnID 是 **MindFS 权威身份**：落盘即定、永不改，客户端可生成（方案 D4）、
+	// 无客户端时服务端 mint UUIDv4（C2）。它与 agent 侧的 native id 是两回事 ——
+	// native id 在 fork/repoint/resume 后不稳定，只能当映射值（repoint.go:35）。
+	TurnID string `json:"turn_id,omitempty"`
+	// TurnSeq 是「打开该轮的 user 行 seq」，排序 / 人读用；与 TurnID 一一对应。
+	TurnSeq int `json:"turn_seq,omitempty"`
+	// NativeTurn / NativePrompt 是 agent 侧回查键（可空、可后补）。
+	NativeTurn   string `json:"native_turn,omitempty"`
+	NativePrompt string `json:"native_prompt,omitempty"`
+	// Partial 标记「本轮未收尾」：崩溃 / 中断丢缓冲区时靠 import 补齐（方案 D13）。
+	Partial bool `json:"partial,omitempty"`
 }
 
 type ExchangeAux struct {
@@ -106,17 +121,25 @@ type ExchangeAux struct {
 	Compact   *agenttypes.CompactNotice `json:"compact,omitempty"`
 }
 
+// CompactExchangeAux 去掉「展开时才需要、折叠卡片渲染用不到」的字段。
+//
+// **压缩对象只有 toolcall 一类。** `Thought` / `Todo` / `Plan` / `Compact` 全部原样保留：
+// 前端把 reasoning 块渲染成灰显的思考文本，窗口少给一块，用户看到的就是
+// 「回复的时候好好的，回复完（重新读）就消失了」。实测存量 aux 里有 10826 条
+// `thought` 条目，全在这条路径上。
+//
+// 原先这里是 `aux.Thought = ""` + 「非 toolcall 且非 todo/plan/compact 就整条丢弃」，
+// 两条路都会把 reasoning 扔掉。改成 `auxBlock` 之后 reasoning 升格成块类型，
+// 这里必须跟上 —— 判据统一用「这条 aux 有没有任何可渲染内容」。
 func CompactExchangeAux(aux ExchangeAux) (ExchangeAux, bool) {
-	if aux.ToolCall == nil {
-		if aux.Todo != nil || aux.Plan != nil || aux.Compact != nil {
-			return aux, true
-		}
+	if aux.ToolCall != nil {
+		toolCall := CompactToolCall(*aux.ToolCall)
+		aux.ToolCall = &toolCall
+	}
+	if aux.ToolCall == nil && aux.Todo == nil && aux.Plan == nil && aux.Compact == nil &&
+		strings.TrimSpace(aux.Thought) == "" {
 		return ExchangeAux{}, false
 	}
-
-	toolCall := CompactToolCall(*aux.ToolCall)
-	aux.ToolCall = &toolCall
-	aux.Thought = ""
 	return aux, true
 }
 

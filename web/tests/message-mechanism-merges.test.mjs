@@ -11,7 +11,13 @@
 // 演化变成谎话，而推导出来的不会。
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+// 两类读法分工明确（source-map.mjs 的 MODULES 会把逻辑路径读成「拼接视图」）：
+//   · readLogicalSource —— 按逻辑路径读拼接视图，给 App.tsx 这类已被拆散的模块用
+//     （`clearLocalPendingForSession` 现在住在 app/useSessionPending.ts，逻辑路径才找得到）；
+//   · readFileSync —— 未经 patch 的物理读，给「全仓只允许一个文件实现」这类断言用
+//     （拼接视图会把 src/services/session.ts 登记的兄弟模块内容再读一遍 → 同一处命中两次）。
+import { readdirSync, statSync } from "node:fs";
+import { readSource as readLogicalSource, rawReadFileSync as readFileSync } from "./source-map.mjs";
 import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -159,7 +165,7 @@ test("【红·⑤】清除 pending 必须覆盖「唯一真相 + 各处乐观行
   // 漏掉唯一真相 = 灯不灭、输入框一直显示停止符号；漏掉某一处乐观行 = 那条占位永久
   // 停在半透明。所以清除仍必须是一次覆盖全部 —— 只是「全部」的含义从「五份 pending
   // 副本」变成了「一份真相 + 五处乐观行投影」。
-  const file = readFileSync(path.join(webRoot, "src/App.tsx"), "utf8");
+  const file = readLogicalSource("src/App.tsx");
   const start = file.indexOf("const clearLocalPendingForSession = useCallback(");
   assert.ok(start >= 0, "找不到清除编排者 clearLocalPendingForSession");
   // 函数体到下一个顶层 useCallback 为止

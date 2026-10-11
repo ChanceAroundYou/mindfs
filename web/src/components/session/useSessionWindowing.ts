@@ -8,6 +8,7 @@ import {
   mergeSessionExchanges,
   setWindowedView,
   type ExchangeAux,
+  type SessionBlock,
   type SessionWindowMeta,
 } from "../../services/session";
 import type { ExchangeArray, SessionItem } from "./sessionViewerTypes";
@@ -25,6 +26,7 @@ export type SessionWindowingCtx = {
   ) => boolean | void;
   setVisibleExchanges: Dispatch<SetStateAction<ExchangeArray>>;
   setVisibleAux: Dispatch<SetStateAction<Record<string, ExchangeAux[]>>>;
+  setVisibleBlocks: Dispatch<SetStateAction<Record<string, SessionBlock[]>>>;
   setWindowMeta: Dispatch<SetStateAction<SessionWindowMeta>>;
   setLoadingMore: Dispatch<SetStateAction<boolean>>;
   setShowJumpToLatest: Dispatch<SetStateAction<boolean>>;
@@ -56,6 +58,7 @@ export function useSessionWindowing(ctx: SessionWindowingCtx) {
     applyWindow,
     setVisibleExchanges,
     setVisibleAux,
+    setVisibleBlocks,
     setWindowMeta,
     setLoadingMore,
     setShowJumpToLatest,
@@ -74,6 +77,7 @@ export function useSessionWindowing(ctx: SessionWindowingCtx) {
     if (!sessionKey) {
       setVisibleExchanges([]);
       setVisibleAux({});
+      setVisibleBlocks({});
       setWindowMeta({ total: 0, hasMore: false, minSeq: 0, maxSeq: 0 });
       return;
     }
@@ -94,8 +98,15 @@ export function useSessionWindowing(ctx: SessionWindowingCtx) {
     for (const [k, v] of Object.entries((session?.exchange_aux || {}) as Record<string, ExchangeAux[]>)) {
       if (seedSeqs.has(Number(k))) seedAux[k] = v;
     }
+    const seedBlocks: Record<string, SessionBlock[]> = {};
+    for (const [k, v] of Object.entries(
+      (session?.blocks || {}) as Record<string, SessionBlock[]>,
+    )) {
+      if (seedSeqs.has(Number(k))) seedBlocks[k] = v;
+    }
     setVisibleExchanges(seedExs);
     setVisibleAux(seedAux);
+    setVisibleBlocks(seedBlocks);
     getSessionWindow(rootId || "", sessionKey, { latest: SESSION_WINDOW_SIZE, nodeId: sessionNodeId })
       .then((res) => {
         if (cancelled) return;
@@ -142,8 +153,11 @@ export function useSessionWindowing(ctx: SessionWindowingCtx) {
           : [];
         const winAux =
           (winSession?.exchange_aux as Record<string, ExchangeAux[]>) || {};
+        const winBlocks =
+          (winSession?.blocks as Record<string, SessionBlock[]>) || {};
         setVisibleExchanges((prev) => mergeSessionExchanges(winExchanges, prev) as ExchangeArray);
         setVisibleAux((prev) => ({ ...prev, ...winAux }));
+        setVisibleBlocks((prev) => ({ ...prev, ...winBlocks }));
         setWindowMeta(res.meta);
         setLoadingMore(false);
         window.requestAnimationFrame(() => {

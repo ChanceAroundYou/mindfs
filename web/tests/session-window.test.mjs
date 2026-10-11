@@ -7,7 +7,6 @@ import vm from "node:vm";
 // 这里**直接 import 真实现**，不再写同构副本 —— 副本会漂移，冲突②（渲染空洞）
 // 就是被副本挡住的：副本只复刻了作者关心的分支，所以一直是绿的。
 import { register } from "node:module";
-import { withSourceFallback } from "./vmLoadSource.mjs";
 register("./ts-module-hook.mjs", import.meta.url);
 const { computeTailOverlay } = await import("../src/components/sessionOverlay.ts");
 
@@ -17,34 +16,21 @@ const managerPath = path.resolve(import.meta.dirname, "../../server/internal/ses
 const httpPath = path.resolve(import.meta.dirname, "../../server/internal/api/http.go");
 
 const sessionSrc = fs.readFileSync(sessionServicePath, "utf8");
-// session.ts 的纯函数簇已拆到同目录的兄弟模块（2026-10-07）。结构守卫关心的是
-// 「这些导出还在不在、走的是不是同一把尺」，不是它们落在哪个文件 —— 所以按
-// session 领域的模块集合一起匹配，避免每次再拆一个文件就要改一批断言。
-const sessionDomainSrc = [sessionSrc, ...fs
-  .readdirSync(path.resolve(import.meta.dirname, "../src/services"))
-  .filter((n) => n.startsWith("session") && n.endsWith(".ts") && n !== "session.ts")
-  .map((n) => fs.readFileSync(path.resolve(import.meta.dirname, "../src/services", n), "utf8"))
-].join("\n");
 const viewerSrc = fs.readFileSync(sessionViewerPath, "utf8");
-// 2026-10-08 拆分：窗口化与 targetSeq 定位搬进 SessionViewer 目录下的两个 hook。
-// 下面几条判据钉的是「这套窗口化逻辑长什么样」，所以对着**整簇**匹配，而不是死认
-// SessionViewer.tsx —— 判据本身（形状、数量、依赖）一字未动。
-const viewerWindowingSrc = fs
-  .readdirSync(path.resolve(import.meta.dirname, "../src/components/session"))
-  .filter((n) => /^(SessionViewer|useSessionWindowing|useTargetSeqScroll)\.(tsx|ts)$/.test(n))
-  .sort()
-  .map((n) => fs.readFileSync(path.resolve(import.meta.dirname, "../src/components/session", n), "utf8"))
-  .join("\n");
 // 剥掉注释后的代码视图：注释里提到某个坏写法是正常的（那通常正是在解释它为什么被删）。
 const stripComments = (src) => src.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
 const sessionCode = stripComments(sessionSrc);
-const sessionDomainCode = stripComments(sessionDomainSrc);
 const viewerCode = stripComments(viewerSrc);
 
-// session.ts 在 vm 里跑起来（只为拿到 mergeSessionExchanges 等导出 —— 断言行为，
-// 不断言源码形状）。六个 import 全桩掉：模块顶层不碰它们。
+// session.ts 在 vm 里跑起来（只为拿到两个纯函数：mergeSessionExchanges 与模块私有的
+// toPersistentSession —— 断言行为，不断言源码形状）。六个 import 全桩掉：模块顶层不碰它们。
+//
+// toPersistentSession 是写路径内部函数、刻意不导出（没有第二个调用方）。测试在
+// transpile 前给源码补一行 export 来拿到它 —— 比把生产代码的可见性扩成「给测试看」干净。
+const SESSION_PRIVATE_PROBE = "\nexport const __toPersistentSession = toPersistentSession;\n";
+
 function loadSessionModule() {
-  const compiled = ts.transpileModule(sessionSrc, {
+  const compiled = ts.transpileModule(sessionSrc + SESSION_PRIVATE_PROBE, {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
   }).outputText;
   const modExports = {};
@@ -57,6 +43,15 @@ function loadSessionModule() {
       if (name.includes("rootNode")) return { getRootNodeId: () => "" };
       if (name.includes("/scope")) return { scopeSessionKey: (a, b) => `${a}::${b}` };
       if (name.includes("/api")) return { protectedFetch: async () => ({}), protectedJSON: async () => ({}), withNodeRetry: (f) => f() };
+      // task-35 把 session.ts 拆成了 facade，测试仍按单体读源码文本，所以多出这几个兄弟
+      // 模块要桩掉。桩只为了让模块顶层求值通过：断言的两个纯函数
+      // （mergeSessionExchanges / 模块私有的 toPersistentSession）不走这些依赖。
+      // 兜底必须同时是「可裸调的函数」和「可 new 的构造器」（generateClientId /
+      // createRequestId 是裸调，SessionDispatcher / SessionConnectionManager 要 new）。
+      const stub = function () {};
+      if (/^\.\/session/.test(name)) {
+        return new Proxy({}, { get: (_t, prop) => (prop === "__esModule" ? true : stub) });
+      }
       throw new Error(`unexpected require: ${name}`);
     },
     console,
@@ -66,7 +61,6 @@ function loadSessionModule() {
     document: undefined,
     fetch: async () => ({}),
   };
-  withSourceFallback(sandbox, ["services"]);
   vm.runInNewContext(compiled, sandbox, { filename: sessionServicePath });
   // transpile 成 CommonJS 后是 `exports.foo = ...`，所以要 sandbox.exports
   // —— 让它和 module.exports 指向同一对象，否则读 module.exports 什么都拿不到。
@@ -82,31 +76,34 @@ const managerSrc = fs.readFileSync(managerPath, "utf8");
 const httpSrc = fs.readFileSync(httpPath, "utf8");
 
 // ── session.ts 导出与隔离 ──────────────────────────────────────────────
-assert.match(sessionDomainSrc, /export type SessionWindowMeta/, "SessionWindowMeta type missing");
-assert.match(sessionDomainSrc, /export type SessionWindowOptions/, "SessionWindowOptions type missing");
+assert.match(sessionSrc, /export type SessionWindowMeta/, "SessionWindowMeta type missing");
+assert.match(sessionSrc, /export type SessionWindowOptions/, "SessionWindowOptions type missing");
 assert.match(sessionSrc, /async getSessionWindow\(/, "getSessionWindow method missing");
 assert.match(sessionSrc, /async getSessionIncrement\(/, "getSessionIncrement alias missing");
-assert.match(sessionDomainSrc, /export function getSessionMinSeq/, "getSessionMinSeq missing");
-assert.match(sessionDomainSrc, /export function getSessionMaxSeq/, "getSessionMaxSeq missing (should be exported)");
-assert.match(sessionDomainSrc, /const windowedViewKeys = new Set<string>\(\);/, "windowedViewKeys Set missing");
-assert.match(sessionDomainSrc, /export function isWindowedView\(/, "isWindowedView missing");
-assert.match(sessionDomainSrc, /export function setWindowedView\(/, "setWindowedView missing");
-assert.match(sessionDomainSrc, /export function clearWindowedView\(/, "clearWindowedView missing");
-assert.match(sessionDomainSrc, /isWindowedView\(sessionKey\) \|\| !!options\?\.windowedView/, "syncSession windowed check missing");
+assert.match(sessionSrc, /export function getSessionMinSeq/, "getSessionMinSeq missing");
+assert.match(sessionSrc, /export function getSessionMaxSeq/, "getSessionMaxSeq missing (should be exported)");
+assert.match(sessionSrc, /const windowedViewKeys = new Set<string>\(\);/, "windowedViewKeys Set missing");
+assert.match(sessionSrc, /export function isWindowedView\(/, "isWindowedView missing");
+assert.match(sessionSrc, /export function setWindowedView\(/, "setWindowedView missing");
+assert.match(sessionSrc, /export function clearWindowedView\(/, "clearWindowedView missing");
+assert.match(sessionSrc, /isWindowedView\(sessionKey\) \|\| !!options\?\.windowedView/, "syncSession windowed check missing");
 // 2026-10-06 反转：`forceNoTruncate`（写侧把标记置 false）已删除，代之以**标记必须诚实**。
 // 旧写法的危害路径：窗口态是**内存**标记，页面一刷新就没了，而那条被标成「完整」的 IDB
 // 记录还在盘上 ⇒ 下次全量路径只做增量同步 ⇒ 被砍掉的历史永远不补（静默丢历史）。
 // 读侧（`baseTruncated = windowed ? false : …`）本来就能表达「窗口态不回补」，所以写侧不必说谎。
 // 判据用 `sessionCode`（剥掉注释的视图）：解释「为什么删掉它」的注释里必然出现这个名字。
-assert.doesNotMatch(sessionDomainCode, /forceNoTruncate/, "写侧不得再让 truncated 说谎");
+assert.doesNotMatch(sessionCode, /forceNoTruncate/, "写侧不得再让 truncated 说谎");
 assert.match(
-  sessionDomainSrc,
+  sessionSrc,
   /truncated: true,\s*\n\s*exchanges: kept,/,
   "发生过淘汰就必须标 truncated:true（标记语义 = 这条记录不完整，下次全量回源）",
 );
+// CUSTOM(G-BH)：返回值多了 `blocks`（正文块，与 exchange_aux 同一条淘汰规则）。
+// 判据从「精确匹配整行」改成「同一行里同时有这四项」—— 钉住的仍是同一条语义
+//（没淘汰 ⇒ 显式 false，且 aux / 块都被重新赋值过），但不再因为多一个字段就红。
 assert.match(
-  sessionDomainSrc,
-  /return \{ \.\.\.persistent, truncated: false, exchanges, exchange_aux \};/,
+  sessionSrc,
+  /return \{ \.\.\.persistent, truncated: false, exchanges, exchange_aux, blocks \};/,
   "没有淘汰时必须显式标 false（否则上一轮的 true 会留着白做一次全量）",
 );
 
@@ -118,22 +115,22 @@ assert.match(sessionSrc, /window_meta.*session.*window_meta/s, "window_meta dual
 
 // ── SessionViewer.tsx 窗口化状态与交互 ─────────────────────────────────
 assert.match(viewerSrc, /type SessionWindowMeta/, "SessionViewer should import SessionWindowMeta");
-assert.match(viewerWindowingSrc, /getSessionWindow/, "the session-viewer windowing cluster should import/call getSessionWindow");
-assert.match(viewerWindowingSrc, /setWindowedView\(sessionKey, true\)/, "the windowing cluster should setWindowedView on init");
-assert.match(viewerWindowingSrc, /clearWindowedView\(sessionKey\)/, "the windowing cluster should clearWindowedView on cleanup");
+assert.match(viewerSrc, /getSessionWindow/, "SessionViewer should import/call getSessionWindow");
+assert.match(viewerSrc, /setWindowedView\(sessionKey, true\)/, "SessionViewer should setWindowedView on init");
+assert.match(viewerSrc, /clearWindowedView\(sessionKey\)/, "SessionViewer should clearWindowedView on cleanup");
 assert.match(viewerSrc, /const \[visibleExchanges, setVisibleExchanges\]/, "visibleExchanges state missing");
 assert.match(viewerSrc, /const \[visibleAux, setVisibleAux\]/, "visibleAux state missing");
 assert.match(viewerSrc, /const \[windowMeta, setWindowMeta\]/, "windowMeta state missing");
 assert.match(viewerSrc, /const \[loadingMore, setLoadingMore\]/, "loadingMore state missing");
 assert.match(viewerSrc, /const topSentinelRef = useRef/, "topSentinelRef missing");
 assert.match(viewerSrc, /useSessionStream\(\s*\n?\s*sessionKey,\s*\n?\s*composedExchanges,\s*\n?\s*visibleAux/, "useSessionStream should consume composed window+overlay");
-assert.match(viewerWindowingSrc, /getSessionWindow/, "initial window fetch missing");
-assert.match(viewerWindowingSrc, /latest:\s*SESSION_WINDOW_SIZE/, "window fetch must use the shared SESSION_WINDOW_SIZE");
-assert.match(viewerWindowingSrc, /const loadMore = useCallback/, "loadMore callback missing");
-assert.match(viewerWindowingSrc, /scrollHeight - container\.scrollTop/, "scroll anchoring (scrollHeight - scrollTop) missing");
-assert.match(viewerWindowingSrc, /beforeSeq: windowMeta\.minSeq/, "loadMore beforeSeq: windowMeta.minSeq missing");
-assert.match(viewerWindowingSrc, /IntersectionObserver/, "IntersectionObserver sentinel missing");
-assert.match(viewerWindowingSrc, /rootMargin: "200px/, "IntersectionObserver rootMargin 200px missing");
+assert.match(viewerSrc, /getSessionWindow/, "initial window fetch missing");
+assert.match(viewerSrc, /latest:\s*SESSION_WINDOW_SIZE/, "window fetch must use the shared SESSION_WINDOW_SIZE");
+assert.match(viewerSrc, /const loadMore = useCallback/, "loadMore callback missing");
+assert.match(viewerSrc, /scrollHeight - container\.scrollTop/, "scroll anchoring (scrollHeight - scrollTop) missing");
+assert.match(viewerSrc, /beforeSeq: windowMeta\.minSeq/, "loadMore beforeSeq: windowMeta.minSeq missing");
+assert.match(viewerSrc, /IntersectionObserver/, "IntersectionObserver sentinel missing");
+assert.match(viewerSrc, /rootMargin: "200px/, "IntersectionObserver rootMargin 200px missing");
 assert.match(viewerSrc, /windowMeta\.hasMore/, "hasMore guard missing");
 assert.match(
   viewerSrc,
@@ -154,7 +151,18 @@ assert.match(managerSrc, /if limit <= 0 \{\s*\n\s*limit = 50/, "limit default 50
 assert.match(managerSrc, /if limit > 200/, "limit >200 clamp missing");
 assert.match(managerSrc, /case latest > 0:/, "latest branch missing");
 assert.match(managerSrc, /case beforeSeq > 0:/, "beforeSeq branch missing");
-assert.match(managerSrc, /hasMore = start > 0/, "hasMore computation missing");
+// hasMore 的语义是「是否还有更早的记录」。G-BG 把开窗拆成两条路（缓存切片 / 冷缓存尾部读），
+// 两条都必须各自算出 hasMore，且分别等于 start>0 与「解析到的条数>need」。
+assert.match(
+  managerSrc,
+  /return all\[start:\], total, start > 0/,
+  "hasMore computation (cached slice) missing",
+);
+assert.match(
+  managerSrc,
+  /hasMore := len\(records\) > need/,
+  "hasMore computation (cold tail read) missing",
+);
 
 // ── 后端 http.go 契约 ──────────────────────────────────────────────────
 assert.match(httpSrc, /parsePositiveIntQuery\(r, "before_seq"\)/, "http.go before_seq parsing missing");
@@ -409,7 +417,7 @@ assert.match(
   "exchange_aux must merge per-seq too, or restored history loses its tool cards",
 );
 assert.match(
-  sessionDomainSrc,
+  sessionSrc,
   /exchanges: mergeSessionExchanges\(baseExchanges, incomingExchanges\),/,
   "appendSessionDelta must use the seq-deduping merge, not concatenation",
 );
@@ -417,7 +425,11 @@ assert.match(
 // 合并函数本体**直接跑**：三条可见集来源（缓存 / 服务端窗口 / loadMore 页）互相
 // 重叠，纯拼接会把同一行渲染两遍（实测 2026-10-05：切会话后历史里每条消息出现两次）。
 // 这条一旦坏了症状是「内容重复」，源码正则看不出来 —— 所以断言行为，不断言形状。
-const sessionMod = loadSessionModule();
+//
+// task-35 拆分后 `mergeSessionExchanges` 住在 services/sessionExchangeMerge.ts
+// （session.ts 只是 re-export），所以走 ts-module-hook 的 import 而不是 vm 导出 ——
+// 与文件顶部 `computeTailOverlay` 同一个先例：真实实现，不同构副本。
+const sessionMod = await import("../src/services/sessionExchangeMerge.ts");
 const mergeSessionExchanges = sessionMod.mergeSessionExchanges;
 assert.equal(typeof mergeSessionExchanges, "function", "mergeSessionExchanges must be exported");
 
@@ -662,66 +674,41 @@ assert.equal(sessionMod.mergeStreamedText, undefined, "mergeStreamedText 是重�
 // 砍掉的正是最新的那几条（超预算的通常是最长的助手回答），症状是「会话越长，
 // 开得越久，尾部丢得越多」。这两条断言钉住方向。
 assert.match(
-  sessionDomainCode,
+  sessionCode,
   /const kept = exchanges\.slice\(keptFrom\);/,
   "the write-path cache must keep a *suffix* of exchanges (evict from the head)",
 );
 assert.doesNotMatch(
-  sessionDomainCode,
+  sessionCode,
   /slice\(-extraSliced\)|tail\.length - extraSliced/,
   "head-eviction slicing is the fix — dropping from the tail is what lost the newest messages",
 );
 // 扫描下界必须是**独立的** floorStart，不能复用会被改写的 keptFrom：一旦
 // keptFrom=len-1，条件 `i >= keptFrom` 立刻为假、循环只跑一轮，只剩最新那一条。
 assert.match(
-  sessionDomainCode,
+  sessionCode,
   /const floorStart = Math\.max\(0, exchanges\.length - SESSION_CACHE_MAX_EXCHANGES\);/,
   "the scan floor must be an independent bound, not the mutated keep-cursor",
 );
 assert.doesNotMatch(
-  sessionDomainCode,
+  sessionCode,
   /i >= keptFrom/,
   "looping against the mutated cursor silently keeps only the newest row",
 );
 // 被淘汰的头部行不该留下孤立 aux（重新加载时那批工具卡会凭空多出来）。
 assert.match(
-  sessionDomainCode,
+  sessionCode,
   /if \(keptSeqs\.has\(Number\(seq\)\)\) keptAux\[seq\] = items;/,
   "aux for evicted head rows must be dropped with them",
 );
 
 // 淘汰器**直接跑**一遍五个边界情形。这段逻辑出过错两次（一次只留最新一条、
 // 一次单条超预算时整份都留不下），形状断言看不出来，所以断言行为。
-// toPersistentSession 是写路径内部函数、刻意不导出（没有第二个调用方）。它现在住在
-// sessionCacheStore.ts（2026-10-07 拆出）：在那个模块的源码末尾补一行 export 拿到它，
-// 比把生产代码的可见性扩成「给测试看」干净。
-const CACHE_STORE_SRC = fs.readFileSync(
-  path.resolve(import.meta.dirname, "../src/services/sessionCacheStore.ts"),
-  "utf8",
-);
-function loadCacheStoreModule() {
-  const modExports = {};
-  const sandbox = {
-    exports: modExports,
-    module: { exports: modExports },
-    require: (name) => {
-      throw new Error(`unexpected require: ${name}`);
-    },
-    console,
-    indexedDB: undefined,
-    window: undefined,
-    document: undefined,
-  };
-  withSourceFallback(sandbox, ["services"]);
-  const compiled = ts.transpileModule(CACHE_STORE_SRC + "\nexport const __toPersistentSession = toPersistentSession;\n", {
-    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
-  }).outputText;
-  vm.runInNewContext(compiled, sandbox, { filename: "sessionCacheStore.ts" });
-  return modExports;
-}
-
-const evictProbe = loadCacheStoreModule();
-const evict = buildEvictFrom(evictProbe.__toPersistentSession);
+//
+// task-35 拆分后 `toPersistentSession` 从模块私有变成了 services/sessionCacheStore.ts
+// 的具名导出（不再需要 transpile 时补 export 的探针），直接 import 真实现。
+const evictProbe = await import("../src/services/sessionCacheStore.ts");
+const evict = buildEvictFrom(evictProbe.toPersistentSession);
 assert.equal(typeof evict, "function", "toPersistentSession must be reachable for the eviction probe");
 
 const mk = (n, bytes) => Array.from({ length: n }, (_, i) => ({ seq: i + 1, content: "x".repeat(bytes) }));

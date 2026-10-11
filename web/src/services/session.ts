@@ -101,6 +101,7 @@ export type {
   RelatedFile,
   RelatedWorktree,
   Session,
+  SessionBlock,
   SessionListPayload,
   SessionSearchHit,
   SessionType,

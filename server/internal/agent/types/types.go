@@ -246,6 +246,28 @@ type ImportedExchange struct {
 	Content   string
 	Timestamp time.Time
 	Aux       []ImportedExchangeAux
+	// NativeID 是这条行在 agent 侧的身份：claude 转录条目的 `uuid`、ACP 的
+	// `messageId`（user 行取 `UserMessageChunk.MessageId`，agent 行取
+	// `AgentMessageChunk.MessageId`）。
+	//
+	// 为什么必须带：导入器会把**相邻同角色**条目合并成一条（`appendMerged…`），
+	// 合并后的 Content 与实时路径写的行**逐字不同**，于是「内容相等 + ±5 秒」
+	// 判重必然漏判，同一轮被两个写入者各落一行（实测 2026-10-07：某会话 9 对
+	// live/import 重复，导入侧时间戳还是 `time.Now()` 伪造的）。有了 native id，
+	// 判重就是「同一条 agent 原生消息」的铁证，与内容无关（方案 §6 / D10）。
+	//
+	// 空串 = 这条行没有 agent 侧身份（codex 未实证、S2c 之前的历史数据）。
+	// 此时判重退回内容比对，并打一条日志 —— 那是「还在猜」的可见信号，
+	// 不是可以默默接受的常态。
+	NativeID string
+	// SynthesizedAt 非空表示 Timestamp **不是**那一轮真实发生的时间，而是导入时
+	// 的观测时刻。目前只有 ACP 会置它：ACP 的 `SessionUpdate` 协议里根本没有
+	// 时间字段（SDK `SessionUpdate` 无 timestamp），重放转录得不到真实时间。
+	//
+	// 为什么必须标：ACP 于是**无法**用时间地板挡住重放（`TimestampFloor` 对 ACP
+	// 恒不成立），它的护栏只能是 native id 判重。把「这个时间是假的」写进数据里，
+	// 下游就不会拿它当权威时间去做窗口裁剪。
+	SynthesizedAt time.Time
 }
 
 // ImportedExchangeAux is structured historical content attached to an imported
@@ -253,7 +275,12 @@ type ImportedExchange struct {
 // persisted; importers only need to preserve its position within the assistant
 // text and the normalized payload.
 type ImportedExchangeAux struct {
-	Line     int
+	Line int
+	// Thought = reasoning 文本。**必须用这个字段，不要用 kind=think 的 ToolCall**：
+	// 前端把 `reasoning` 块渲染成灰显可折叠的思考文本，而把 think 工具卡渲染成
+	// 带💭 图标的工具卡片 —— 两者外观不同。实时路径的 thought_chunk 走的正是
+	// Thought，导入侧也必须走同一个字段，否则「实时看得到、导入后变样」。
+	Thought  string
 	ToolCall *ToolCall
 	Plan     *PlanUpdate
 }
@@ -284,6 +311,22 @@ type ExternalSessionImporter interface {
 	AgentName() string
 	ListExternalSessions(ctx context.Context, in ListExternalSessionsInput) (ListExternalSessionsResult, error)
 	ImportExternalSession(ctx context.Context, in ImportExternalSessionInput) (ImportedExternalSession, error)
+	// UsesPromptMessageID 报告该 agent 的 prompt 是否带 `messageId` 这层身份
+	// （ACP 协议有，claude/codex 没有）。
+	//
+	// 为什么需要：D3 定「递给 ACP 的 messageId 复用 MindFS 的 turn_id」，于是
+	// 实时路径写的 user 行可以带上 `native_prompt = turn_id`，导入侧从转录里
+	// 读回同一个 id，两边才能对上。没有这层身份的 agent 写了也是永不匹配的假身份，
+	// 所以必须能问出来、只在真有的协议上写。
+	UsesPromptMessageID() bool
+	// HasTranscriptTimestamps 报告该 agent 的转录条目是否带**真实**时间戳。
+	//
+	// 为什么需要：`TimestampFloor` 的意义是「只补比库里最新一条更新的尾段」，它只有在
+	// 导入器能给出行真实发生时间时才成立。ACP 的 `SessionUpdate` 协议里**根本没有
+	// 时间戳字段**，它的时间只能是读到那一刻的 `time.Now()` —— 拿这种时间去比地板，
+	// 重放出来的旧回合永远「比库里新」，地板等于没有（实测 2026-10-07 某会话 9 对
+	// live/import 重复就是这么来的）。所以没有真时间的 agent 不设地板，改由身份判重兜。
+	HasTranscriptTimestamps() bool
 }
 
 type StreamingExternalSessionImporter interface {
@@ -355,6 +398,13 @@ type MessageChunk struct {
 	TaskID          string `json:"taskId,omitempty"`
 	SubagentType    string `json:"subagentType,omitempty"`
 	TaskDescription string `json:"taskDescription,omitempty"`
+	// MessageID 是 ACP `AgentMessageChunk.MessageId` —— 「这条文本属于哪一条 agent
+	// 原生消息」。同一轮的文本可能分属多条消息（dsh 一轮常有多条 `assistant/message`
+	// 记录，各自带独立 `messageId`），所以它是**步级**身份，由实时路径随回合结束
+	// 写进 `native_turn`，导入侧据此认出「这条已经写过了」（D2/D3/D7）。
+	//
+	// 只对 ACP 协议有意义；claude 不暴露 assistant message id，恒为空。
+	MessageID string `json:"messageId,omitempty"`
 }
 
 type ThoughtChunk struct {
@@ -524,4 +574,27 @@ func (t *TurnCanceler) End(turnID uint64) {
 		t.cancel = nil
 	}
 	t.mu.Unlock()
+}
+
+// promptTurnIDContextKey 是「本轮要递给 ACP 的 prompt messageId」的 context 键。
+// 用私有类型，避免与别的 context 值撞键。
+type promptTurnIDContextKey struct{}
+
+// WithPromptTurnID 把本轮的 MindFS turn_id 放进 context，供 ACP 适配器当作
+// `PromptRequest.MessageId` 递出去（D3：一个逻辑 id 一种表示）。
+//
+// 为什么走 context 而不是给 `Session.SendMessage` 加参数：`SendMessage` 是三个
+// agent 共用的接口，加参数要动三处实现 + 所有调用方；而 turn_id 本来就是
+// 「这一轮」的上下文，与 `WithExchangeSource` / `WithExchangeIdentity` 同一层。
+func WithPromptTurnID(ctx context.Context, turnID string) context.Context {
+	return context.WithValue(ctx, promptTurnIDContextKey{}, turnID)
+}
+
+// PromptTurnIDFromContext 取出 WithPromptTurnID 放的 turn_id；没有则空串。
+func PromptTurnIDFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	turnID, _ := ctx.Value(promptTurnIDContextKey{}).(string)
+	return strings.TrimSpace(turnID)
 }

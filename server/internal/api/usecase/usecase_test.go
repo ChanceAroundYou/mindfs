@@ -3151,3 +3151,56 @@ func TestFileOperations(t *testing.T) {
 		})
 	}
 }
+
+// 列表页给命令会话补 shell 标签必须仍然可用（fillCommandShells 改走 aux 尾部有界读
+// manager.GetCommandShell 之后的接线守卫）。全量读 aux 的版本在实测会话上是
+// 11.8MB/281ms 且持 m.mu，列表页对每个命令会话各读一次。
+func TestListSessionsFillsCommandShellFromAuxTail(t *testing.T) {
+	root := rootfs.NewRootInfo("mindfs", "mindfs", t.TempDir())
+	manager := session.NewManager(root)
+	registry := &commandTestRegistry{root: root, manager: manager}
+	service := Service{Registry: registry}
+	ctx := context.Background()
+
+	command, err := manager.Create(ctx, session.CreateInput{Type: session.TypeCommand, Name: "Cmd"})
+	if err != nil {
+		t.Fatalf("create command session: %v", err)
+	}
+	if err := manager.AddExchangeAux(ctx, command.Key, session.ExchangeAux{
+		Seq: 1,
+		ToolCall: &agenttypes.ToolCall{
+			CallID:  "call-1",
+			Kind:    agenttypes.ToolKindExecute,
+			RawType: "commandExecution",
+			Meta: map[string]any{
+				"source": "userShell",
+				"phase":  "final",
+				"shell":  "bash",
+			},
+		},
+	}); err != nil {
+		t.Fatalf("add aux: %v", err)
+	}
+	// 非命令会话不该被填充。
+	if _, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, Name: "Chat"}); err != nil {
+		t.Fatalf("create chat session: %v", err)
+	}
+
+	out, err := service.ListSessions(ctx, ListSessionsInput{RootID: root.ID, Limit: 50})
+	if err != nil {
+		t.Fatalf("list sessions: %v", err)
+	}
+	var found bool
+	for _, item := range out.Sessions {
+		if item == nil || item.Key != command.Key {
+			continue
+		}
+		found = true
+		if item.Shell != "bash" {
+			t.Fatalf("command session shell = %q, want bash", item.Shell)
+		}
+	}
+	if !found {
+		t.Fatalf("command session missing from list: %v", usecaseSessionKeys(out.Sessions))
+	}
+}

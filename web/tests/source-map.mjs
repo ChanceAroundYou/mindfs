@@ -189,8 +189,20 @@ export const MODULES = {
     "src/components/file/fileTreeAgentConfigUtils.ts",
   ],
 
+  // P2 拆分：session.ts → services/session*（入口 shim 仍在原路径）
+  // 断言按**逻辑模块**写（`export type SessionWindowMeta`、`windowedViewKeys`、
+  // `toPersistentSession` 等），拆分后它们分别住在 sessionTypes / sessionWindow /
+  // sessionCacheStore 里，所以这里要把这几个物理文件一并拼进逻辑视图。
+  "src/services/session.ts": [
+    "src/services/session.ts",
+    "src/services/sessionTypes.ts",
+    "src/services/sessionWindow.ts",
+    "src/services/sessionCacheStore.ts",
+    "src/services/sessionExchangeMerge.ts",
+    "src/services/sessionIdentifiers.ts",
+    "src/services/sessionConnectionManager.ts",
+  ],
   // P2 拆分：file.ts → services/file/（入口 shim 仍在原路径）
-  "src/services/session.ts": ["src/services/session.ts", "src/services/sessionIdentifiers.ts", "src/services/sessionConnectionManager.ts"],
   "src/services/sessionCacheTypes.ts": ["src/services/sessionCacheTypes.ts"],
   "src/services/file.ts": [
     "src/services/file/types.ts",
@@ -406,6 +418,18 @@ export function readSource(logical) {
     .map((file) => originalReadFileSync(path.join(WEB_ROOT, file), "utf8"))
     .join("\n");
 }
+
+/**
+ * **未被 patch 过**的 readFileSync。
+ *
+ * 给少数「必须按物理文件判」的守卫用：它们断言的是「全仓只允许一个文件实现某把尺」，
+ * 走 patch 后的读法会把 `src/services/session.ts` 的登记列表（已拼进
+ * sessionExchangeMerge.ts 等）与它自己单独读的那份算成两处命中。
+ *
+ * 注意只能从这里取 —— `createRequire("node:fs")` 拿到的是同一份被 patch 的 CJS 导出，
+ * 绕不过去（source-map 头部的 facade 注释说的就是这个陷阱）。
+ */
+export const rawReadFileSync = originalReadFileSync;
 
 /**
  * 把测试里的绝对路径 / file URL 归一成相对 web/ 的逻辑路径（POSIX 分隔符）。

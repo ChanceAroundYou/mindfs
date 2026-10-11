@@ -35,9 +35,24 @@ func SessionProjectionEnabled() bool {
 
 // 会话读取投影：把同一轮被多个写入者各写一份的行折叠回一份。
 //
-// 为什么不在写入侧解决完事：写入侧的判据只能靠「内容相似 + ±5 秒」猜（两个写入者的
-// 时间戳取自不同事件：用户按发送 vs CLI 写转录，差值实测 6.4s / 15.6s / 36.7s 都会漏）。
-// 读取侧可以做**非破坏**的折叠：数据一行不删，投影错了改回来即可，而写入侧猜错就永久落盘。
+// ── S2c 之后这一层还剩什么（重要，别当它还是主防线）──────────────────────────
+//
+// 原先它是**唯一**的防线，因为写入侧只能靠「内容相似 + ±5 秒」猜。S2c 给两个写入者
+// 之间接上了**共同键**（ACP 的 messageId / claude 转录条目的 uuid，见 §6 与
+// `exchangeAlreadyRecorded`），重复在写入时就被挡住了。所以：
+//
+//	· **有 native 身份的行一律不折叠。** 身份判重已经保证这类行不会重复；再折一次
+//	  就是拿内容去认领一条身份不同的行（D10：永不猜）。真出现重复时它会**露出来**
+//	  —— 这是故意的：读时折叠会把真实缺陷藏成看不见，代价是真 bug 要花更久才被发现。
+//	· **双方都没有身份的行继续折叠。** 那是 S2c 之前的历史残留：实测本机会话
+//	  `1791339665-fb5134041392` 有 9 对「live 写一遍 + import 又写一遍」（当时导入器
+//	  伪造时间戳 + 合并了内容，纯内容判重判不出来）。直接删投影会让它们变成用户
+//	  可见的重复正文，那是一次实打实的回退。
+//
+// 也就是说，投影现在是**历史残留的折叠层**，不是运行期防线。审计端点
+// （`/api/sessions/{key}/audit`）报出的计数就是这份残留的规模，也就是「历史行处理」
+// 这件事的工作量。删它必须与历史行处理同一步做 —— 而 S2d 删掉 `Exchange.Content`
+// 之后，内容比对无论如何都活不下去，所以那一步就是自然的时机。
 //
 // 只折叠「可证明」的重复，其余一律保留：
 //
@@ -58,12 +73,19 @@ func ProjectExchanges(exchanges []session.Exchange) ([]session.Exchange, map[int
 		return exchanges, hiddenToKept, provenToKept
 	}
 
+	// 有 native 身份 = 这一行知道自己是谁。带身份的行整段不参与任何规则：
+	// 判重在写入侧按身份做过了，读时再按内容猜一次只会掩盖真实缺陷（S2c）。
+	hasIdentity := make([]bool, len(exchanges))
+	for index, exchange := range exchanges {
+		hasIdentity[index] = exchangeNativeKey(exchange) != ""
+	}
+
 	hidden := make([]bool, len(exchanges))
 
 	// 规则 A：带「实时标记」的行吸收不带标记的孪生行，一对一。
 	markedByKey := map[projectKey][]int{}
 	for index, exchange := range exchanges {
-		if !isLiveMarkedExchange(exchange) {
+		if hasIdentity[index] || !isLiveMarkedExchange(exchange) {
 			continue
 		}
 		if key, ok := projectRowKey(exchange); ok {
@@ -72,7 +94,7 @@ func ProjectExchanges(exchanges []session.Exchange) ([]session.Exchange, map[int
 	}
 	consumed := map[projectKey]int{}
 	for index, exchange := range exchanges {
-		if isLiveMarkedExchange(exchange) {
+		if hasIdentity[index] || isLiveMarkedExchange(exchange) {
 			continue
 		}
 		key, ok := projectRowKey(exchange)
@@ -101,7 +123,7 @@ func ProjectExchanges(exchanges []session.Exchange) ([]session.Exchange, map[int
 	}
 	buckets := map[prefixKey][]int{}
 	for index, exchange := range exchanges {
-		if hidden[index] || exchange.Timestamp.IsZero() {
+		if hidden[index] || hasIdentity[index] || exchange.Timestamp.IsZero() {
 			continue
 		}
 		content := normalizeExchangeContent(exchange.Content)
@@ -155,7 +177,7 @@ func ProjectExchanges(exchanges []session.Exchange) ([]session.Exchange, map[int
 	}
 	firstByStamp := map[stampedKey]int{}
 	for index, exchange := range exchanges {
-		if hidden[index] || exchange.Timestamp.IsZero() {
+		if hidden[index] || hasIdentity[index] || exchange.Timestamp.IsZero() {
 			continue
 		}
 		content := normalizeExchangeContent(exchange.Content)
@@ -267,6 +289,12 @@ type AuditSessionOutput struct {
 	Audit *session.SessionAudit `json:"audit"`
 	// LiveOwned：这个会话是否由 MindFS 自己驱动（决定导入器该不该跟进）
 	LiveOwned bool `json:"live_owned"`
+	// IdentityBearing：库里**带** native 身份（native_turn / native_prompt）的行数。
+	//
+	// 这是 S2c 的进度指标：身份判重只在有身份的行之间生效，所以这个数字应当
+	// 随使用单调上升。它同时是「投影还能不能删」的判据 —— 投影现在只折叠
+	// **没有**身份的历史行，这个数字等于库长时，投影就只剩一小撮残留要处理。
+	IdentityBearing int `json:"identity_bearing_rows"`
 	// Proven：同角色 + 归一化内容相同 + 时间戳同一时刻 —— 同一行被写两次，是唯一能直接删的
 	Proven []AuditDuplicate `json:"proven_duplicates,omitempty"`
 	// Review：一侧实时、一侧导入，内容（剥掉 CLI 噪声前缀后）相同 —— 投影已隐藏，数据保留
@@ -275,6 +303,10 @@ type AuditSessionOutput struct {
 
 // AuditSession 只读体检：文件层（seq/坏行/aux 悬空）+ 投影层的重复分类。
 // 不修任何东西；要清理得先看过这份报告再人工决定。
+//
+// S2c 之后它的读法变了：**它报的不再是「正在发生的重复」，而是「S2c 之前留下的
+// 残留」**（投影只折叠没有身份的行，见 ProjectExchanges）。所以
+// `identity_bearing_rows` 越接近库长，`proven/review` 越接近 0，投影就可以删了。
 func (s *Service) AuditSession(ctx context.Context, in AuditSessionInput) (AuditSessionOutput, error) {
 	var out AuditSessionOutput
 	if err := s.ensureRegistry(); err != nil {
@@ -294,6 +326,11 @@ func (s *Service) AuditSession(ctx context.Context, in AuditSessionInput) (Audit
 		return out, err
 	}
 	out.LiveOwned = session.SessionIsLiveOwned(current.Exchanges)
+	for _, exchange := range current.Exchanges {
+		if exchangeNativeKey(exchange) != "" {
+			out.IdentityBearing++
+		}
+	}
 	_, hidden, proven := ProjectExchanges(current.Exchanges)
 	contentBySeq := make(map[int]session.Exchange, len(current.Exchanges))
 	for _, exchange := range current.Exchanges {

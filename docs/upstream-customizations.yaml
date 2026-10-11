@@ -44,7 +44,7 @@ groups:
       - docs/main-view-switching-design.md
       - docs/message-change-history.md
       - docs/message-mechanisms.md
-      - docs/message-mechanisms-plan.md
+      - docs/session-blocks-plan.md
       - docs/multi-node-control-plane.md
       - docs/multi-user-prd.md
       - docs/plans/worktree-finish-stage-plan.md
@@ -2148,6 +2148,73 @@ groups:
       - server/internal/scheduled/tasks.go:SessionActivityBroadcaster
       - server/internal/agent/codex/session.go:handleStreamedEvents
 
+  - id: G-BG
+    title: 会话窗口读不整表解析（冷开窗按需读 + tail 增量三处缺陷 + 搜索 cap + O1 两条全量 aux 热路径）
+    kind: fix
+    symptom: |
+      ① 打开/切换会话时整个 root 停顿：冷缓存开窗走 readExchangesFull，解析整份主日志且
+         持 m.mu。实测 1.19MB/206 行 15.3ms，会话越大越久；前端每 ~1.7s 轮询窗口端点，
+         等于每隔一秒多就有人把 root 锁住十几毫秒 —— 用户体感是「同步后内容消失/界面卡住」。
+      ② 同 seq 的后续版本读不到：readExchangeTail 里 entry.Seq <= baseSeq 直接 continue，
+         于是 tail 追加里「与已缓存 seq 相同但更完整/更高 revision」的更新被跳过，
+         页面继续显示旧内容，只有冷启动才碰巧看到对的。
+      ③ tail 内同 seq 重复吐：loadExchanges 的增量分支盲 append，同一 seq 追加多行时
+         窗口里出现重复条。
+      ④ 完整性升级被误报成冲突：同 seq 的空占位被后来的完整回复覆盖时打
+         conflicting duplicate seq，污染日志；空正文永不覆盖非空正文，只有「已有正文非空且与新正文不同」才算真冲突。
+      ⑤ 含超长行的会话整个搜不到：搜索的 bufio.Scanner 上限写死 1MB，而主日志解析上限是
+         maxExchangeLineBytes(64MB)，单行 >1MB 就让 Search 返回 ErrTooLong。
+      ⑥ 列表页对每个命令会话全量读 aux：fillCommandShells → GetExchangeAux(key,0)。
+         实测单会话 aux 最大 19MB，11.8MB 那次 281ms，且持 m.mu。
+      ⑦ 非窗口化的 sync 全量读 aux 再过滤：handleSessionSync 无条件 Seq:0；
+         handleSessionGet 早就按窗口只取窗口内 seq 的 aux（G-AT），这条漏了同一个优化。
+    why: |
+      1) getSessionWindowUnsafe 冷缓存改走 readExchangeWindow：读盘一次 → 字节级行计数
+         （bytes.Count 思路，不解析 JSON，实测 1.2MB/0.14ms）拿 Total → 只解析尾部
+         need+1 条（多一条只为判 hasMore）。Total 在冷缓存下取非空行数而非
+         len(全部记录)：实测 310 份真实主日志/2172 行，0 空行、0 同 seq 多行，只有 1 份
+         maxSeq 与行数差 86；退化日志会显示重复条数，S2d 之后主日志只剩元数据，此代价消失。
+      2) 尾部读刻意不复用 readAuxWindowTail 的逐块反向读：那个实现会丢掉每个分块的首条
+         半行，单行最大 308KB 的主日志会被静默丢记录。改成「只读一个后缀、起点对齐换行」的
+         单次读，span 按 4 倍增长。
+      3) 新增 mergeExchangeRecord / mergeExchangeRecords：新 seq 追加（与全量读同一
+         「按文件序」假定），同 seq 原位替换且保留原位置；空内容永不覆盖非空内容；仅
+         「两条都非空且内容不同」才打冲突告警。readExchangesFull 的逐行合并改为调用它，
+         全量与增量从此共用一套合并语义。
+      4) readExchangeTail 去掉 seq<=baseSeq 跳过，改为返回全部解析结果，去重交给
+         mergeExchangeRecords —— 这条路径在最热的读取路径上，同 seq 的更新必须看得见。
+      5) 新增 Manager.GetCommandShell：aux 尾部有界读（512KB 起步、4 倍增长），命中即停；
+         fillCommandShells 改用它，判据仍是 InferCommandShellFromAux。
+      6) handleSessionSync 改为与 handleSessionGet 同构：有 windowMeta 就按窗口内 seq 取
+         aux（走 G-AT 的 CompactExchangeAuxLight），否则维持 Seq:afterSeq。
+    boundary: |
+      会话窗口读（GET /api/sessions/{key}?latest= / ?before_seq=、窗口化 sync）与列表页的
+      shell 标签推断，必须 O(窗口) 或 O(尾部命中)，不得整表解析、不得全量读 aux。
+      实时写路径、Full 同步、import、repoint、子代理同步都不动。
+    tests:
+      - server/internal/session/manager_window_cold_test.go
+      - server/internal/session/manager_incremental_merge_test.go
+      - server/internal/session/manager_search_test.go
+      - server/internal/session/manager_aux_tail_test.go
+      - server/internal/api/http_window_test.go
+      - server/internal/api/usecase/usecase_test.go
+      - web/tests/session-window.test.mjs
+    files:
+      - server/internal/session/manager.go
+      - server/internal/api/http.go
+      - server/internal/api/usecase/session.go
+      - web/tests/session-window.test.mjs
+    anchors:
+      - server/internal/session/manager.go:readExchangeWindow
+      - server/internal/session/manager.go:mergeExchangeRecord
+      - server/internal/session/manager.go:mergeExchangeRecords
+      - server/internal/session/manager.go:readExchangeTail
+      - server/internal/session/manager.go:countExchangeRecords
+      - server/internal/session/manager.go:GetCommandShell
+      - server/internal/session/manager.go:readAuxTailEntries
+      - server/internal/api/http.go:handleSessionSync
+      - server/internal/api/usecase/session.go:fillCommandShells
+
   - id: G-BF
     title: Full 同步丢最新几轮（ctx_seq 切片恒空 + 时间地板被静默跳过）
     kind: fix
@@ -2183,3 +2250,214 @@ groups:
       - server/internal/agent/claude/importer.go:readClaudeImportedExchangeLocators
       - server/internal/api/usecase/external_sessions.go:SyncExternalSessionDelta
       - server/internal/api/usecase/external_sessions.go:externalSessionDeltaAfterCtxSeq
+
+  - id: G-BH
+    title: 会话正文块流（Block 存储层 + 轮次身份 turn_id/turn_seq/native_* + S2a 双写 + S2b 读改走块流 + C1/C2）
+    kind: fix
+    symptom: |
+      ① 回复结束后助手正文消失：一轮正文只拼 text 块（usecase/session.go 的
+         responseText = appendResponseChunk），而 os 模型约 15% 的轮次只产出 reasoning、
+         没有任何 text，于是落库成 content:""。流式时 thought_chunk 实时推所以看得见，
+         收尾落库后正文瞬间消失；点同步也救不回（两个 importer 都不收 thought）。
+         实测空正文占比：claude::os 39%、dsh::os 13%（claude::of 5%、dsh::of 2%）。
+      ② 一轮正文没有权威身份：主日志只有 seq/role/content，没有 turn_id，于是
+         「同一个回合有两个写入者」只能靠内容比对 + 时间戳窗口猜（投影 rule A/A2/B）。
+      ③ repoint / fork 之后 native id 与新转录错配（repoint.go:35 明载 fork 后 claude
+         产出全新 uuid）：本方案开始持久化 native id 之后，旧 native id 会让判重失效、
+         回查错行。
+      ④ 服务端发起的轮次（定时任务 / 看板任务阶段 / 子会话 / 命令会话）没有 turn_id 可
+         采纳 —— 客户端根本没有传 turn_id 的入口（Stream.Send 只收 string）。
+      ⑤ 同步把已存在的轮次又写一遍（用户报告「同步后丢失的更厉害了」的那一半）：
+         ACP 只有 LoadSession、没有字节游标，Full 同步必然整段重放；而实时写入的行
+         与导入重放出来的行同时躲过两道防线 —— 导入器把相邻同角色条目合并，Content
+         逐字不同；ACP 的 SessionUpdate **不带时间戳**，导入行盖的是 time.Now()，
+         与实时行的真实时间能差几小时，于是「内容 + ±5s」和 TimestampFloor 一起失效。
+         实测 2026-10-07：live-owned 会话 1791339665-fb5134041392 Full 同步后多出
+         9 对 live/import 重复行，另有 3 对 import+import（相隔 20s）。
+      ⑥ ACP 导入丢 reasoning：importer 只收 UserMessageChunk / AgentMessageChunk，
+         AgentThoughtChunk 整个被丢掉，于是「只思考不出话」的轮次导入后正文为空。
+    why: |
+      1) 新增 sessions/<key>.blocks.jsonl（CUSTOM(G-BH) 的块流），一行一块：
+         {seq,pos,revision,type,text|toolcall|todo|plan|compact,step,turn_id,native_id,
+          parent_tool_use_id,task_id,subagent_type}。type ∈ {reasoning,text,tool_call,
+         todo,plan,compact}。pos 取代旧 aux 的 line（line 是「在 content 里的第几行」，
+         content 一删就失去意义）；同 (seq,pos) 多版本按 revision 取最高。
+      2) Manager.AppendBlocks / ReadBlocks / GetBlocksWindow / blocksPath（blocks.go）：
+         append-only JSONL，坏行跳过不报错（一行写坏不能让整个会话的正文读不出来）。
+      3) Exchange 加轮次元数据：turn_id（MindFS 权威身份，落盘即定、永不改）、
+         turn_seq（= 打开该轮的 user 行 seq）、native_turn / native_prompt（agent 侧
+         回查键，可空、可后补、fork 后可变更）、partial（本轮未收尾）。
+         用 session.WithExchangeIdentity 这个 context 值传递而不是给
+         addExchangeForAgentAt 加参数：identity 是轮次级（同一轮的用户行与助手行必须带
+         同一个 turn_id），而调用点已有 8 处。
+      4) BuildTurnBlocks（blocks.go）把「一轮的正文 + aux」编译成块序列，顺序与前端
+         buildAssistantTimeline 的既有渲染顺序**逐条一致**（aux 按 (line,到达序) 稳定排序
+         后插进正文段之间、空正文段跳过）—— S2b 起块序就是渲染序，不一致就等于切换读
+         路径时正文顺序会变（用户可见的回归）。放在 usecase 而不是 Manager.appendExchange
+         里做：appendExchange 只看到一段字符串、appendExchangeAux 只看到一条 aux，
+         两者都拼不出交错顺序。
+      5) S2a 是**双写**：块流与旧 Content/aux 并存，读路径仍走旧格式，可整体回滚。
+         写入点：persistUserTurnExchange（user 块）、SendMessage 轮末（助手块）、
+         persistCommandTurn（命令块）、attachBackgroundSessionUpdates（子会话块）。
+         块写失败不拖垮本轮（正文已由 AddExchangeForAgent 落过盘），只记日志。
+      6) C2 服务端 mint turn_id：newTurnID() 拼 RFC4122 UUIDv4（不引 google/uuid，
+         与 randomHex 同一条 crypto/rand 路径）。mint 点只有 persistUserTurnExchange
+         一处 —— 三条服务端发起的轮次路径（scheduled/tasks.go 定时任务、
+         appcontext.go 看板任务阶段、子会话）都经 SendMessage 走到它。
+      7) C1 repoint 清 native id：Manager.ClearNativeIdentity 行级 JSON 手术删掉
+         native_turn/native_prompt/native_id（**不是**结构体往返 —— 主日志里可能有别的
+         写入者/未来版本加的字段，反序列化再序列化会把它们丢掉）。文件里本来没有 native id
+         时**一个字节都不写**（无谓重写会改 mtime、白白让缓存失效，而落地前的全部历史数据
+         都没有 native id）。清完删掉内存缓存与读盘游标：新文件更短时旧 offset 越过 EOF，
+         增量读拿不到东西，带旧 native id 的那份缓存会一直留着。
+      8) fork 复制历史时块流一起复制、seq 按 seqMap 重映射、native_id 清空；
+         turn_id 原样带过去（fork 复制的是同一批轮次）、turn_seq 重映射。fork 开的是
+         全新 agent 会话（AgentSessionID:"" + ForkPoint），源 native id 一律无效。
+      9) 删会话时连块流一起删（否则正文留在盘上，会话 key 复用时被当成「本来就有正文」）。
+      10) S2b 读路径改走块流（GetBlocksWindow，blocks.go）：窗口读**反向分块**读尾部 ——
+          与 S1 的 readAuxWindowTail 同思路，但**不复用它**。那个实现丢掉每块的首个不完整行，
+          跨越 512KB 边界的记录会静默丢失；块流一行可达 700KB（实测 os 单块 119714 字符），
+          必须两阶段：先反向探测出停止偏移（只解析块内部的完整行），再 alignLineStart 对齐到
+          行首后**一次正向读到 EOF**。代价是 2× IO，换来「窗口里永远不丢正文」。窗口读必须
+          是 O(窗口)：m.mu 每 root 一把，「每轮都全量读一遍块流」会让长会话打开时把所有请求串起来。
+      11) resolveBlocks 按 (seq,pos) 取最高 revision、跳过 step<0 的未收口块、按 (seq,pos) 排序。
+          CompactBlockLight **只压工具卡细节**（复用 CompactToolCall + lightCompactToolCall），
+          正文与 reasoning **一个字都不动** —— S1 的压缩是「工具卡按 seq 惰性取」，
+          正文要是被压掉，这个方案就白做了。
+      12) sessionResponse 回包内联 blocks（http.go），只带窗口内 seq（windowSeqsForExchanges）；
+          与 exchange_aux 同一形状 {seq: [...]}。内联而不是让前端再发一次请求：窗口回包本来
+          就是这一屏的**唯一**权威快照，多一次往返就多一个「正文还没到」的空窗。
+      13) 前端按 type 渲染块（web/src/hooks/sessionBlocks.ts 新增；useSessionStream.ts 与
+          SessionViewer.tsx 接线）：reasoning → thought（灰显/可折叠，复用既有渲染）、
+          text → assistant_text、tool_call → tool、todo/plan/compact 各自成项，未知类型
+          **跳过而不是抛错**（agent 加新类型时旧前端必须能活）。顺序**只按 pos 遍历** ——
+          旧渲染器的 lines/totalLines/emittedLines/clamp 全部消失（那套是「把 aux 按 line
+          插进 content 字符串」的产物，块流下无意义）。项 id 用 block:<seq>:<pos>：
+          (seq,pos) 在一个会话里唯一且**跨 revision 稳定**，同一块被补正时 React 与虚拟列表的
+          测量不重建（旧 id 含内容哈希，流式期每 chunk 换一次）。判定逻辑单独成 .ts 模块是因为
+          .tsx 在 node --test 下导入不了（见 web/tests/ts-module-hook.mjs 的边界说明），
+          住在 hook 里就只能靠源码文本断言。
+      14) 块跟着 exchange_aux 走完**全部**缓存路径（services/session.ts + App.tsx）：
+          toPersistentSession 只留还在 exchanges 里的 seq、withSessionMeta 与窗口锚定
+          「按 seq 覆盖」、cloneSession 浅拷贝。漏掉任何一条都会让**首帧种子**退回旧格式 ——
+          双写期看不出差别，S2d 删掉 content 之后就是「切会话正文闪一下」。覆盖而不是拼接：
+          同一个 seq 的块集合是**完整快照**（后端已按 revision 归并），拼接会让旧 revision 与
+          新 revision 并存、渲染成两段重复正文；而 aux 在同一 seq 下会陆续追加，所以 aux 必须
+          拼接。两者形状相同、语义相反，是刻意的。
+      15) S2c 身份判重（exchangeAlreadyRecorded）：写入侧按 native id 判重，判重顺序是
+          「先身份、后内容」。有身份且库里对不上 → **一律落库**（那可能是一轮真新增的
+          内容，丢掉才是 bug；方案 D10：永不猜）；有身份且匹配上 → 跳过；没有身份 →
+          退回「内容归一化 + ±5s」，并按会话记一条「判重还在猜」的日志（可观测的退化指标）。
+          实时路径写 native_turn（本轮最后一个 agent 原生消息 id）与 native_prompt
+          （= turn_id，仅限 UsesPromptMessageID 的 agent），导入路径把转录里的
+          messageId / uuid 写进同一个字段 —— 两端对得上，重复在写入时就被拦住。
+      16) 两端取身份必须同一口径：ACP 的行边界 = **消息边界**（规范原文「messageId 变化
+          表示一条新消息开始」），实时路径取「最后一个带 messageId 的文本块」。合并规则
+          不一致就永远对不上。claude importer 同理在合并后取最后一个 uuid。
+      17) messageId 只认 UUID 形态（isUUIDShape）：ACP 规范要求两端都用 UUID 格式，而
+          MindFS 递出去的就是自己 mint 的 turn_id；别的形态一律当「没有身份」，宁可不判重
+          也不能拿一个对不上的字符串当身份。
+      18) 投影（session_projection.go）**身份化**：有 native 身份的行整段不参与折叠 ——
+          读时按内容猜一次只会把真实缺陷藏成看不见。它现在只剩一个作用：折叠 S2c 之前
+          遗留的、双边都没有身份的历史行。审计端点新增 identity_bearing_rows 报出
+          「身份化进度」，也就是历史残留的规模 —— 那是删掉投影与处理历史行的时机判据。
+      19) TimestampFloor 只给 HasTranscriptTimestamps 的导入器（claude/codex）。ACP 的
+          SessionUpdate 不带时间戳，它给每行盖的是「读到它的那一刻」，恒晚于地板 ——
+          地板形同虚设，而代码看着像「有地板就安全」。删掉那道假防线后，ACP 侧的正确性
+          由 native id 身份判重负责。
+    boundary: |
+      会话正文的存储、身份与读取：块流格式、块写入点、轮次元数据字段、turn_id 生成与清理、
+      窗口读走块流、前端按 type 渲染块。
+      S2d 删 Content、S2e 删 TurnGen、S3 退役 seq=0 机制 —— 都是后续步骤，不在本组。
+      本组内部 S2a（双写，读路径不动）与 S2b（读路径切块流，content 退化为回退）是**两个
+      可独立回滚的提交**：S2b 之后前端仍能渲染没有块流的历史会话。
+      主日志格式兼容：没有身份字段的历史行读成零值，不报错。
+    tests:
+      - server/internal/session/manager_blocks_test.go
+      - server/internal/session/blocks_build_test.go
+      - server/internal/session/manager_identity_fields_test.go
+      - server/internal/session/manager_native_identity_test.go
+      - server/internal/api/usecase/session_blocks_write_test.go
+      - server/internal/api/usecase/session_fork_blocks_test.go
+      - server/internal/api/usecase/session_early_user_persist_test.go
+      - server/internal/session/manager_blocks_window_test.go
+      - server/internal/api/http_window_test.go
+      - server/internal/api/usecase/session_identity_dedup_test.go
+      - server/internal/api/usecase/session_projection_identity_test.go
+      - server/internal/agent/acp/importer_identity_test.go
+      - server/internal/session/types_aux_reasoning_test.go
+      - server/internal/api/usecase/session_blocks_backfill_test.go
+      - web/tests/session-blocks-render.test.mjs
+      - web/tests/tool-card-grouping.test.mjs
+      - web/tests/session-window.test.mjs
+    files:
+      - server/internal/session/blocks.go
+      - server/internal/session/blocks_build_test.go
+      - server/internal/session/manager.go
+      - server/internal/session/types.go
+      - server/internal/session/manager_blocks_test.go
+      - server/internal/session/manager_identity_fields_test.go
+      - server/internal/session/manager_native_identity_test.go
+      - server/internal/api/usecase/session.go
+      - server/internal/api/usecase/session_repoint.go
+      - server/internal/api/usecase/session_blocks_write_test.go
+      - server/internal/api/usecase/session_fork_blocks_test.go
+      - server/internal/api/usecase/session_early_user_persist_test.go
+      - server/internal/session/manager_blocks_window_test.go
+      - server/internal/api/http.go
+      - server/internal/api/http_window_test.go
+      - server/internal/api/usecase/session_projection.go
+      - server/internal/api/usecase/external_sessions.go
+      - server/internal/api/usecase/session_identity_dedup_test.go
+      - server/internal/api/usecase/session_projection_identity_test.go
+      - server/internal/api/usecase/exchange_repeat_test.go
+      - server/internal/api/usecase/external_sessions_test.go
+      - server/internal/agent/acp/importer.go
+      - server/internal/agent/acp/process.go
+      - server/internal/agent/acp/session.go
+      - server/internal/agent/acp/importer_identity_test.go
+      - server/internal/agent/claude/importer.go
+      - server/internal/agent/codex/importer.go
+      - server/internal/agent/types/types.go
+      - server/internal/api/usecase/session_blocks_backfill.go
+      - server/internal/session/types_aux_reasoning_test.go
+      - web/src/hooks/sessionBlocks.ts
+      - web/src/hooks/useSessionStream.ts
+      - web/src/components/session/SessionViewer.tsx
+      - web/src/services/session.ts
+      - web/src/App.tsx
+      - web/tests/session-blocks-render.test.mjs
+      - web/tests/tool-card-grouping.test.mjs
+      - web/tests/session-window.test.mjs
+    anchors:
+      - server/internal/session/blocks.go:BuildTurnBlocks
+      - server/internal/session/blocks.go:ClearNativeIdentity
+      - server/internal/session/blocks.go:GetBlocksWindow
+      - server/internal/session/blocks.go:readBlocksWindowTail
+      - server/internal/session/blocks.go:CompactBlocksLight
+      - server/internal/session/blocks.go:GroupBlocksBySeq
+      - server/internal/session/manager.go:WithExchangeIdentity
+      - server/internal/api/usecase/session.go:newTurnID
+      - server/internal/api/usecase/session.go:exchangeAlreadyRecorded
+      - server/internal/api/usecase/session.go:exchangeIdentityRecorded
+      - server/internal/api/usecase/session.go:exchangeNativeKey
+      - server/internal/api/usecase/session.go:noteIdentitylessGuess
+      - server/internal/api/usecase/external_sessions.go:appendImportedExchange
+      - server/internal/api/usecase/external_sessions.go:agentHasPromptMessageID
+      - server/internal/api/usecase/session_projection.go:ProjectExchanges
+      - server/internal/api/usecase/session_projection.go:AuditSession
+      - server/internal/agent/acp/importer.go:messageIDOf
+      - server/internal/agent/acp/importer.go:isUUIDShape
+      - server/internal/agent/acp/process.go:SendMessage
+      - server/internal/agent/types/types.go:WithPromptTurnID
+      - server/internal/session/types.go:CompactExchangeAux
+      - server/internal/api/usecase/session_blocks_backfill.go:backfillTurnsFromWindow
+      - server/internal/api/usecase/session_blocks_backfill.go:missingBlockSeqs
+      - server/internal/api/usecase/session.go:GetSessionBlocksWindow
+      - server/internal/api/usecase/session.go:persistTurnBlocks
+      - server/internal/api/usecase/session.go:copyForkBlocks
+      - server/internal/api/usecase/session.go:GetSessionBlocksWindow
+      - server/internal/api/http.go:windowSeqsForExchanges
+      - web/src/hooks/sessionBlocks.ts:buildAssistantTimelineFromBlocks
+      - web/src/hooks/sessionBlocks.ts:blocksForSeq
+      - web/src/services/session.ts:toPersistentBlocks
