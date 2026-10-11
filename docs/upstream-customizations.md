@@ -1976,6 +1976,8 @@
     空正文的 agent 行同样不被误吞。
   - `server/internal/session/search_blocks_test.go`（S2d-2）→ 搜索两遍都不能省：
     块流命中（新内容）、块流没有时退回主日志（还没回填的老会话）、两边都搜不到就是没命中。
+  - `server/internal/session/manager_duplicate_seq_test.go`（S2d-2 改字段名）→ 同 seq
+    重复行的合并不受「主日志不再有正文」影响（判据对新写入的行是恒等的 no-op）。
   - `server/internal/api/http_window_test.go`（S2b 改，契约变了）→
     `TestHandleSessionGetWithoutBlocksReturnsEmpty` 的断言**整个反转**成
     `TestHandleSessionGetBackfillsLegacyBlocks`（老正文必须在**同一个回包里**出现 ——

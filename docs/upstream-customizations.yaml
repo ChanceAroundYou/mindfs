@@ -2430,6 +2430,7 @@ groups:
       - server/internal/session/user_turn_survives_test.go
       - server/internal/session/search_blocks_test.go
       - server/internal/session/types_aux_reasoning_test.go
+      - server/internal/session/manager_duplicate_seq_test.go
       - web/src/hooks/sessionBlocks.ts
       - web/src/hooks/useSessionStream.ts
       - web/src/components/session/SessionViewer.tsx
