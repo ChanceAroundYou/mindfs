@@ -314,10 +314,11 @@ type ExternalSessionImporter interface {
 	// UsesPromptMessageID 报告该 agent 的 prompt 是否带 `messageId` 这层身份
 	// （ACP 协议有，claude/codex 没有）。
 	//
-	// 为什么需要：D3 定「递给 ACP 的 messageId 复用 MindFS 的 turn_id」，于是
-	// 实时路径写的 user 行可以带上 `native_prompt = turn_id`，导入侧从转录里
-	// 读回同一个 id，两边才能对上。没有这层身份的 agent 写了也是永不匹配的假身份，
-	// 所以必须能问出来、只在真有的协议上写。
+	// 为什么需要：没有这层身份的 agent，实时路径写的 user 行拿不到 agent 侧 id，
+	// 连 `native_prompt = mindfs_id` 这种自引用的假身份都不该写 —— 那是
+	// 「同一个值在两个字段里互相引用」的空转，两端各写一半、永远对不上。
+	// 有了 mindfs_id → agent_id 的确定性派生（UUIDv5），实时侧与导入侧
+	// 才能自然对上，不需要这种自引用桥。
 	UsesPromptMessageID() bool
 	// HasTranscriptTimestamps 报告该 agent 的转录条目是否带**真实**时间戳。
 	//
@@ -401,7 +402,7 @@ type MessageChunk struct {
 	// MessageID 是 ACP `AgentMessageChunk.MessageId` —— 「这条文本属于哪一条 agent
 	// 原生消息」。同一轮的文本可能分属多条消息（dsh 一轮常有多条 `assistant/message`
 	// 记录，各自带独立 `messageId`），所以它是**步级**身份，由实时路径随回合结束
-	// 写进 `native_turn`，导入侧据此认出「这条已经写过了」（D2/D3/D7）。
+	// 写进 `agent_id`，导入侧据此认出「这条已经写过了」（D2/D3/D7）。
 	//
 	// 只对 ACP 协议有意义；claude 不暴露 assistant message id，恒为空。
 	MessageID string `json:"messageId,omitempty"`
@@ -580,17 +581,17 @@ func (t *TurnCanceler) End(turnID uint64) {
 // 用私有类型，避免与别的 context 值撞键。
 type promptTurnIDContextKey struct{}
 
-// WithPromptTurnID 把本轮的 MindFS turn_id 放进 context，供 ACP 适配器当作
+// WithPromptTurnID 把本轮的 MindFS mindfs_id 放进 context，供 ACP 适配器当作
 // `PromptRequest.MessageId` 递出去（D3：一个逻辑 id 一种表示）。
 //
 // 为什么走 context 而不是给 `Session.SendMessage` 加参数：`SendMessage` 是三个
-// agent 共用的接口，加参数要动三处实现 + 所有调用方；而 turn_id 本来就是
+// agent 共用的接口，加参数要动三处实现 + 所有调用方；而 mindfs_id 本来就是
 // 「这一轮」的上下文，与 `WithExchangeSource` / `WithExchangeIdentity` 同一层。
 func WithPromptTurnID(ctx context.Context, turnID string) context.Context {
 	return context.WithValue(ctx, promptTurnIDContextKey{}, turnID)
 }
 
-// PromptTurnIDFromContext 取出 WithPromptTurnID 放的 turn_id；没有则空串。
+// PromptTurnIDFromContext 取出 WithPromptTurnID 放的 mindfs_id；没有则空串。
 func PromptTurnIDFromContext(ctx context.Context) string {
 	if ctx == nil {
 		return ""

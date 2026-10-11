@@ -33,6 +33,9 @@ type subagentMeta struct {
 	TaskID          string
 	SubagentType    string
 	TaskDescription string
+	// MessageID 是本条 AssistantMessage 在 claude 转录里的 `uuid`。
+	// 它随 chunk 一起上行，最终落进助手的 agent_id（桥梁键）。
+	MessageID string
 }
 
 type claudeTaskInfo struct {
@@ -1125,6 +1128,10 @@ func (s *session) emitThoughtChunkWithMeta(content string, meta subagentMeta) {
 
 func (s *session) handleAssistantMessage(msg claudeagent.AssistantMessage, sawDelta bool) {
 	meta := subagentMetaFromAssistant(msg)
+	// 补上 agent 侧桥梁键：AssistantMessage.UUID 是这条消息在转录里的 uuid，
+	// 导入器重放同一条时读回的就是它。SDK 一直带着这个字段，只是此前从未读取 ——
+	// 于是 live 写的助手行没有 agent_id、import 写的那行有，两个写入者永远对不上。
+	meta.MessageID = strings.TrimSpace(msg.UUID)
 	for _, block := range msg.Message.Content {
 		switch block.Type {
 		case "text":
@@ -2650,6 +2657,11 @@ func (s *session) emitMessageChunkWithMeta(content string, meta subagentMeta) {
 			TaskID:          meta.TaskID,
 			SubagentType:    meta.SubagentType,
 			TaskDescription: meta.TaskDescription,
+			// MessageID 是 claude 转录条目的 `uuid`（SDK 的 AssistantMessage.UUID）。
+			// 它是助手行在 agent 侧的桥梁键：导入器重放同一条消息时读回的就是它，
+			// 两个写入者（live / import）由此对上 —— 否则判重只能靠内容猜。
+			// 此前这层身份从不落盘，live 与 import 的 agent_id 永远对不上。
+			MessageID: meta.MessageID,
 		},
 	})
 }

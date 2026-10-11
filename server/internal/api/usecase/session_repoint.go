@@ -145,7 +145,7 @@ func (s *Service) RepointSession(ctx context.Context, in RepointSessionInput) (R
 	// 顺序放在最后：前几步任一失败都会 return，此时 native id 原样保留，仍与旧转录一致
 	//（旧转录刻意不删，就是回滚保险）。只有整条 repoint 真的走完了才作废它们。
 	// 清不掉不算 repoint 失败：id 与转录都已换好、会话可用；残留的 native id 只会让回查
-	// 退回「按 MindFS turn_id 找」，而那是权威路径。
+	// 退回「按 MindFS mindfs_id 找」，而那是权威路径。
 	if err := manager.ClearNativeIdentity(ctx, key); err != nil {
 		log.Printf("[session/repoint] clear.native.error root=%s session=%s agent=%s err=%v", strings.TrimSpace(in.RootID), key, agentName, err)
 	}

@@ -202,8 +202,8 @@ func TestProjectExchangesRuleAEmptyBodyStillIgnored(t *testing.T) {
 func TestProjectExchangesRuleATimeWindowDoesNotTouchIdentityRows(t *testing.T) {
 	base := time.Date(2026, 10, 10, 18, 18, 3, 0, time.UTC)
 	rows := []session.Exchange{
-		{Seq: 1, Role: "agent", LegacyContent: "同一个回答", Timestamp: base, Source: session.ExchangeSourceImport, NativeTurn: "uuid-1"},
-		{Seq: 2, Role: "agent", LegacyContent: "同一个回答", Timestamp: base.Add(3 * time.Second), Source: session.ExchangeSourceLive, NativeTurn: "uuid-2"},
+		{Seq: 1, Role: "agent", LegacyContent: "同一个回答", Timestamp: base, Source: session.ExchangeSourceImport, AgentID: "uuid-1"},
+		{Seq: 2, Role: "agent", LegacyContent: "同一个回答", Timestamp: base.Add(3 * time.Second), Source: session.ExchangeSourceLive, AgentID: "uuid-2"},
 	}
 	_, hidden, _ := ProjectExchanges(rows)
 	if len(hidden) != 0 {

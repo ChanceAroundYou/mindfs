@@ -107,8 +107,9 @@ export type ExchangeAux = {
  * 只产出 reasoning、没有 text 的轮次会落库成空正文（实测 os 模型约 15% 的轮次），
  * 流式时 thought_chunk 实时推所以看得见，收尾落库后正文瞬间消失。
  *
- * 身份三级：turn_id（MindFS 权威）+ step（agent 的投递单元）+ pos（步内段序）。
+ * 身份三级：mindfs_id（MindFS 权威，全系统唯一不变）+ step（agent 的投递单元）+ pos（步内段序）。
  * `pos` 取代了 aux 的 `line` —— line 是「在 content 里的第几行」，content 一删就没意义。
+ * `agent_id` 是 agent 侧桥梁键（claude 转录 uuid / ACP messageId），可空，不参与系统内唯一性。
  */
 export type SessionBlock = {
   seq: number;
@@ -121,8 +122,8 @@ export type SessionBlock = {
   plan?: PlanUpdate | null;
   compact?: CompactNotice | null;
   step?: number;
-  turn_id?: string;
-  native_id?: string;
+  mindfs_id?: string;
+  agent_id?: string;
   parent_tool_use_id?: string;
   task_id?: string;
   subagent_type?: string;

@@ -18,7 +18,7 @@ func TestBuildTurnBlocksTextOnly(t *testing.T) {
 	if blocks[0].Type != BlockTypeText || blocks[0].Text != "hello\nworld" || blocks[0].Pos != 0 {
 		t.Fatalf("block = %#v", blocks[0])
 	}
-	if blocks[0].Seq != 3 || blocks[0].Step != 3 || blocks[0].TurnID != "turn-1" {
+	if blocks[0].Seq != 3 || blocks[0].Step != 3 || blocks[0].MindFSID != "turn-1" {
 		t.Fatalf("block identity = %#v", blocks[0])
 	}
 }

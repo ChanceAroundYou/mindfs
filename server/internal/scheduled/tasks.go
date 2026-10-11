@@ -29,12 +29,12 @@ type SessionActivityBroadcaster interface {
 	// BroadcastSessionCreated 让「定时任务新建的会话」也能立刻进对话列表。
 	// 和看板同一条要求：meta.updated 只更新已缓存条目，不新增列表行。
 	BroadcastSessionCreated(rootID string, sess *session.Session)
-	// SetSessionPendingReply / BroadcastSessionUserMessageAt 返回该条目的**回合 turn_id**，
+	// SetSessionPendingReply / BroadcastSessionUserMessageAt 返回该条目的**回合 mindfs_id**，
 	// 收尾时必须原样交给 EndSessionTurn —— 否则清理按无身份走「保守清」，身份比对失效。
 	SetSessionPendingReply(rootID, sessionKey, sessionTitle string) string
 	// 刻意**不暴露**无身份的 `BroadcastSessionUserMessage`（不带 At 的那个）：它内部
-	// 拿不到 turn_id，收尾就退化成无条件清（守卫见 pending_identity_test.go）。
-	// 置 pending 只允许走能拿到 turn_id 的这一个入口。
+	// 拿不到 mindfs_id，收尾就退化成无条件清（守卫见 pending_identity_test.go）。
+	// 置 pending 只允许走能拿到 mindfs_id 的这一个入口。
 	BroadcastSessionUserMessageAt(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService string, planMode bool, content string, timestamp time.Time, userExchangeSeq int, baseExchangeSeq ...int) string
 	BroadcastSessionUpdate(rootID, sessionKey string, update agenttypes.Event)
 	BroadcastSessionError(rootID, sessionKey, message string)
@@ -490,7 +490,7 @@ func (s *Service) runTask(ctx context.Context, task Task, force bool) error {
 	}
 	sessionName := current.Name
 	userTimestamp := time.Now().UTC()
-	// 回合身份：主会话与各子会话的 pending turn_id 都记下来，收尾时原样交给终结器。
+	// 回合身份：主会话与各子会话的 pending mindfs_id 都记下来，收尾时原样交给终结器。
 	// 没有它，done 会以无身份走「保守清」，把此后新起一轮的灯误抹（症状「灯不亮」）。
 	var turnMu sync.Mutex
 	turnIDs := map[string]string{}

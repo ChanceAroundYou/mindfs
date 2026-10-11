@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha1"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
@@ -755,17 +756,16 @@ type exchangeIdentityContextKey struct{}
 // ExchangeIdentity 是落在 exchange 行上的**轮次**次元数据（方案 §3.1）。
 //
 // 为什么用 context 而不是给 addExchangeForAgentAt 加参数：identity 是轮次级 ——
-// 同一轮的用户行与助手行必须带**同一个** turn_id，而调用点已有 8 处。
+// 同一轮的用户行与助手行必须带**同一个** mindfs_id，而调用点已有 8 处。
 // 与 WithExchangeSource / WithExchangeModelDisplayName 同一套机制。
 type ExchangeIdentity struct {
-	// TurnID 是 MindFS 权威身份：落盘即定、永不改。客户端可生成（方案 D4），
-	// 无客户端时由服务端 mint UUIDv4（C2）。
-	TurnID string
+	// MindFSID 是 MindFS 权威身份：落盘即定、永不改。由写入点统一 mint
+	// (NewMindFSID, UUIDv5 确定性)，不再由客户端生成、也不再用随机 UUIDv4。
+	MindFSID string
 	// TurnSeq 是「打开该轮的 user 行 seq」，排序 / 人读用。
 	TurnSeq int
-	// NativeTurn / NativePrompt 是 agent 侧回查键（可空、可后补）。
-	NativeTurn   string
-	NativePrompt string
+	// AgentID 是 agent 侧的身份（可空、可后补）：claude 转录 uuid / ACP messageId。
+	AgentID string
 	// Partial 标记「本轮未收尾」：崩溃 / 中断丢缓冲区时靠 import 补齐（方案 D13）。
 	Partial bool
 }
@@ -778,31 +778,50 @@ func WithExchangeIdentity(ctx context.Context, identity ExchangeIdentity) contex
 	return context.WithValue(ctx, exchangeIdentityContextKey{}, identity)
 }
 
-// NewTurnID mint 一个 UUIDv4 作为 turn_id（方案 D4/C2）。
+// mindfsUUIDNamespace 是 MindFS 铸 id 使用的 UUIDv5 namespace。
 //
-// 自己拼而不引 google/uuid：只需要「格式正确的随机 UUID」，而 randomHex 已经在用
-// 同一条 crypto/rand 路径。放在 session 包是因为**两处都在 mint**：usecase 的三条
-// 服务端发起轮次路径，以及 api.StreamHub 的 pending 灯（S2e 起它的身份也是 turn_id）。
-// 两份 mint 就等于两份「谁生成 id」的真相，迟早分叉。
-func NewTurnID() string {
-	var buf [16]byte
-	if _, err := rand.Read(buf[:]); err != nil {
-		// crypto/rand 读失败时退回确定性形状而非空串：空串在身份语义里是
-		// 「无身份」（见 IsTurnIDShape 的调用方），一个没有身份的行会被判重
-		// 当历史数据放行，写进盘里就再也认不回来了。
-		return "00000000-0000-4000-8000-000000000000"
+// 固定常量而非随机生成：确定性 id 的全部意义在于「同一个 seed 在任何机器、
+// 任何一次进程重启都算出同一个 id」。namespace 变了，历史 id 就对不上了。
+// 换 namespace = 全库身份作废，只在「身份方案重做」时动它。
+var mindfsUUIDNamespace = "6f2b1c4e-5a3d-4f87-9e12-3c8a7b0d5f61"
+
+// NewMindFSID mint 一个**确定性** mindfs_id（UUIDv5，方案 D4/D5）。
+//
+// 为什么从 UUIDv4 换成 UUIDv5：v4 每次调用都给新 id，于是「同一条消息」在两个写入者
+// （实时 live / 转录导入 import）手里各有一个 id，判重只能退回内容比对 —— 那正是
+// 2026-10-07 实测 9 对 live/import 重复行的成因。UUIDv5 让 id 由内容派生：
+// 同一个 seed 永远得到同一个 id，重导天然幂等，两个写入者也自动对齐。
+//
+// seed 优先级：agentID（agent 侧身份）优先，为空时退到 fallbackSeed（sessionKey|role|seq）。
+// 两者都空返回空串 = 「这一行没有身份」，调用方自己决定怎么处理。
+func NewMindFSID(agentID, fallbackSeed string) string {
+	seed := strings.TrimSpace(agentID)
+	if seed == "" {
+		seed = strings.TrimSpace(fallbackSeed)
 	}
-	buf[6] = (buf[6] & 0x0f) | 0x40 // version 4
+	if seed == "" {
+		return ""
+	}
+	// UUIDv5 = SHA1(namespaceBytes + seed)，自己算而不引 google/uuid：
+	// 只需「格式正确的确定性 UUID」，crypto/sha1 在 stdlib 里。
+	h := sha1.New() //nolint:gosec // UUIDv5 规范指定 SHA-1，非安全用途
+	h.Write([]byte(mindfsUUIDNamespace))
+	h.Write([]byte{0}) // namespace 与 name 的分隔，避免拼接歧义
+	h.Write([]byte(seed))
+	sum := h.Sum(nil)
+	var buf [16]byte
+	copy(buf[:], sum[:16])
+	buf[6] = (buf[6] & 0x0f) | 0x50 // version 5
 	buf[8] = (buf[8] & 0x3f) | 0x80 // variant 10
 	return fmt.Sprintf("%x-%x-%x-%x-%x", buf[0:4], buf[4:6], buf[6:8], buf[8:10], buf[10:16])
 }
 
-// IsTurnIDShape 校验 turn_id 的形态（8-4-4-4-12，十六进制，大小写不敏感）。
+// IsTurnIDShape 校验 mindfs_id 的形态（8-4-4-4-12，十六进制，大小写不敏感）。
 //
-// S2e 起 pending 的回合身份也用 turn_id，两处必须认同一种形状 —— 于是判据只有一份，
-// 放在 TurnID 字段旁边。ACP 的 messageId 规范（「客户端与 agent 必须使用 UUID 格式」）
+// S2e 起 pending 的回合身份也用 mindfs_id，两处必须认同一种形状 —— 于是判据只有一份，
+// 放在 MindFSID 字段旁边。ACP 的 messageId 规范（「客户端与 agent 必须使用 UUID 格式」）
 // 要求的正是这一种；不认识的形状一律当「无身份」，别拿它当键去对。
-func IsTurnIDShape(raw string) bool {
+func IsMindFSIDShape(raw string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(raw))
 	if len(normalized) != 36 {
 		return false
@@ -896,11 +915,11 @@ func (m *Manager) addExchangeForAgentAt(session *Session, role, content, agent, 
 		return errors.New("session required")
 	}
 	// S2d-2 起正文归块流，主日志一行的 `content` 恒空 —— 这里再按「空正文」跳过就把
-	// **每一行 user**（用户消息不再带正文）静默丢掉：轮次元数据（turn_id / native_prompt）
+	// **每一行 user**（用户消息不再带正文）静默丢掉：轮次元数据（mindfs_id / agent_id）
 	// 跟着没，前端按 seq 合并时那句话不显示，搜索的 user 命中优先也失效。
 	// 该拦的是「什么都没带」的纯空行：空正文 + 空 agent + 无任何轮次身份。
 	if strings.TrimSpace(content) == "" && strings.TrimSpace(agent) == "" &&
-		identity.TurnID == "" && identity.NativeTurn == "" && identity.NativePrompt == "" {
+		identity.MindFSID == "" && identity.AgentID == "" {
 		return nil
 	}
 	m.mu.Lock()
@@ -934,13 +953,12 @@ func (m *Manager) addExchangeForAgentAt(session *Session, role, content, agent, 
 		LegacyContent:    content,
 		TokenUsage:       tokenUsage,
 		Timestamp:        ts,
-		// 轮次元数据（方案 §3.1）。TurnID 是权威身份，TurnSeq 是人读排序键，
-		// native_* 是 agent 侧回查键（可空、可后补、fork 后可变更）。
-		TurnID:       identity.TurnID,
-		TurnSeq:      identity.TurnSeq,
-		NativeTurn:   identity.NativeTurn,
-		NativePrompt: identity.NativePrompt,
-		Partial:      identity.Partial,
+		// 轮次元数据（方案 §3.1）。MindFSID 是权威身份，TurnSeq 是人读排序键，
+		// AgentID 是 agent 侧桥梁键（可空、可后补、fork 后可变更）。
+		MindFSID: identity.MindFSID,
+		TurnSeq:  identity.TurnSeq,
+		AgentID:  identity.AgentID,
+		Partial:  identity.Partial,
 	}
 	if err := m.appendExchange(session.Key, record); err != nil {
 		log.Printf("[session/store] append.error session=%s seq=%d role=%s agent=%s err=%v", session.Key, record.Seq, role, resolvedAgent, err)
@@ -2643,15 +2661,15 @@ func maxExchangeSeq(exchanges []Exchange) int {
 	return max
 }
 
-// TurnIDForSeq 返回某一行的 turn_id（找不到返回空串）。
+// TurnIDForSeq 返回某一行的 mindfs_id（找不到返回空串）。
 //
-// 与 MaxExchangeSeq 对称的读法：块流要带 turn_id 才能挂回轮次，而 `max+1` 分配下
-// 「刚写下的那一行」的 seq 只有调用方算得出、turn_id 却存在行里。导入路径就是这样
+// 与 MaxExchangeSeq 对称的读法：块流要带 mindfs_id 才能挂回轮次，而 `max+1` 分配下
+// 「刚写下的那一行」的 seq 只有调用方算得出、mindfs_id 却存在行里。导入路径就是这样
 // —— 它拿到 seq 之后还得回过头来问这一行的身份。
 func TurnIDForSeq(exchanges []Exchange, seq int) string {
 	for _, e := range exchanges {
 		if e.Seq == seq {
-			return e.TurnID
+			return e.MindFSID
 		}
 	}
 	return ""

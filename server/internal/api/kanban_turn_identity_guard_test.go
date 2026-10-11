@@ -14,7 +14,7 @@ import (
 // 扫的是 tasks.go，管不到这里。于是 RunAgentStage 一直是「置 pending 拿不到身份、
 // 收尾按无身份走保守清」的状态：灯不灭被兜住（保守清），但**新轮的灯会被误抹**。
 //
-// 2026-10-11 S2e 换身份表示（TurnGen uint64 → turn_id string）时把它一并补齐，
+// 2026-10-11 S2e 换身份表示（TurnGen uint64 → mindfs_id string）时把它一并补齐，
 // 让这条路径与 ws.go / tasks.go 遵守同一条纪律。三条不变量（纯源码扫描，
 // 不跑真实阶段 —— RunAgentStage 要 kanban 的真 store）：
 //  1. `BroadcastSessionUserMessageAt(` / `SetSessionPendingReply(` 的返回值必须被接收
@@ -32,7 +32,7 @@ func TestKanbanStagePathCarriesTurnIdentity(t *testing.T) {
 
 	if strings.Contains(code, "BroadcastSessionDone") {
 		t.Fatal("appcontext.go 仍引用身份缺失的 BroadcastSessionDone —— " +
-			"看板阶段的收尾 done 必须走 EndSessionTurn 并带本轮 turn_id")
+			"看板阶段的收尾 done 必须走 EndSessionTurn 并带本轮 mindfs_id")
 	}
 
 	// 1：置 pending 的返回值必须被接收。只看 RunAgentStage 函数体（全局扫会误伤
@@ -48,7 +48,7 @@ func TestKanbanStagePathCarriesTurnIdentity(t *testing.T) {
 			continue
 		}
 		if !assign.MatchString(line) {
-			t.Fatalf("appcontext.go 的 RunAgentStage 调用了置 pending 的方法却没接收返回的 turn_id: %q",
+			t.Fatalf("appcontext.go 的 RunAgentStage 调用了置 pending 的方法却没接收返回的 mindfs_id: %q",
 				strings.TrimSpace(line))
 		}
 	}

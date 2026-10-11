@@ -24,7 +24,7 @@ func TestCopyForkHistoryCopiesBlocksAndClearsNativeIDs(t *testing.T) {
 		t.Fatalf("persistUserTurnExchange: %v", err)
 	}
 	if err := manager.AddExchangeForAgent(
-		session.WithExchangeIdentity(ctx, session.ExchangeIdentity{TurnID: turnID, TurnSeq: userSeq, NativeTurn: "old-turn", NativePrompt: "old-prompt"}),
+		session.WithExchangeIdentity(ctx, session.ExchangeIdentity{MindFSID: turnID, TurnSeq: userSeq, AgentID: "old-turn"}),
 		from, "agent", "", "claude", "", "", ""); err != nil {
 		t.Fatalf("AddExchangeForAgent: %v", err)
 	}
@@ -39,7 +39,7 @@ func TestCopyForkHistoryCopiesBlocksAndClearsNativeIDs(t *testing.T) {
 	// 给源会话的块补上 native id，验证 fork 不会带过去。
 	if err := manager.AppendBlocks(ctx, fromKey, []session.Block{{
 		Seq: agentSeq, Pos: 0, Revision: 1, Type: session.BlockTypeReasoning, Text: "只想了一下",
-		Step: turnBlockStep, TurnID: turnID, NativeID: "old-native",
+		Step: turnBlockStep, MindFSID: turnID, AgentID: "old-native",
 	}}); err != nil {
 		t.Fatalf("AppendBlocks: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestCopyForkHistoryCopiesBlocksAndClearsNativeIDs(t *testing.T) {
 		t.Fatalf("fork Get: %v", err)
 	}
 	for _, ex := range forked.Exchanges {
-		if ex.NativeTurn != "" || ex.NativePrompt != "" {
+		if ex.AgentID != "" {
 			t.Fatalf("fork 行带了源会话的 native id（fork 是全新 agent 会话）：%#v", ex)
 		}
 	}
@@ -78,11 +78,11 @@ func TestCopyForkHistoryCopiesBlocksAndClearsNativeIDs(t *testing.T) {
 	}
 	var sawReasoning bool
 	for _, block := range blocks {
-		if block.NativeID != "" {
+		if block.AgentID != "" {
 			t.Fatalf("fork 块带了源会话的 native_id：%#v", block)
 		}
-		if block.TurnID != turnID {
-			t.Fatalf("fork 块 turn_id = %q, want %q（权威身份要跟着复制）", block.TurnID, turnID)
+		if block.MindFSID != turnID {
+			t.Fatalf("fork 块 mindfs_id = %q, want %q（权威身份要跟着复制）", block.MindFSID, turnID)
 		}
 		if block.Seq < 1 || block.Seq > agentSeq {
 			t.Fatalf("fork 块 seq = %d 越界（必须重映射到 fork 的 seq 空间）", block.Seq)

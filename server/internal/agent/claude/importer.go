@@ -93,7 +93,7 @@ func (i *Importer) AgentName() string {
 }
 
 // UsesPromptMessageID 恒为 false：claude 不暴露 prompt 的消息 id，它的转录身份是
-// 条目自己的 `uuid`（由 ImportedExchange.NativeID 携带）。把 MindFS 的 turn_id
+// 条目自己的 `uuid`（由 ImportedExchange.NativeID 携带）。把 MindFS 的 mindfs_id
 // 写进 native_prompt 只会得到一个永不匹配的假身份，所以必须能问出「没有」。
 func (i *Importer) UsesPromptMessageID() bool {
 	return false
@@ -1318,9 +1318,9 @@ func appendMergedClaudeExchangeLocator(
 			Timestamp: ts,
 			Aux:       aux,
 			// NativeID = 这条转录条目的 `uuid`。它是 claude 侧唯一的消息身份：
-			// 实时路径**拿不到** assistant 的 uuid（Stream.Send 只收字符串），所以
-			// 实时写入的助手行没有 native_turn；导入写入的行有。两者对不上的场合
-			// 退回「内容 + ±5s」（可观测：那条日志就是「还在猜」的计数）。
+			// 实时侧现在也能拿到（handleAssistantMessage 补读 AssistantMessage.UUID），
+			// 于是实时写入的助手行与导入写入的行都以它为 agent_id、由它派生出同一个
+			// mindfs_id —— 判重不必再退回「内容 + ±5s」。
 			NativeID: strings.TrimSpace(uuid),
 		},
 		ClaudeLastMessageUUID: strings.TrimSpace(uuid),

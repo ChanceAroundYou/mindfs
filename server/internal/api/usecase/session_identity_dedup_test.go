@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -24,13 +25,15 @@ import (
 // **用户真的重发过**（相隔数小时），不是重复。判重**不得**把它们吞掉。
 // 本文件用「相隔数小时的相同内容」把这条边界钉住。
 
-func identityExchange(seq int, role, content, nativeTurn, nativePrompt string, ts time.Time) session.Exchange {
+func identityExchange(seq int, role, content, agentID string, ts time.Time) session.Exchange {
+	// firstNonEmptyAgentID 取两个候选里第一个非空的 —— 老测试用两个参数分别表示
+	// native_turn / native_prompt，现在合成一个 agent_id。
+	_ = agentID
 	return session.Exchange{
 		Seq:           seq,
 		Role:          role,
 		LegacyContent: content,
-		NativeTurn:    nativeTurn,
-		NativePrompt:  nativePrompt,
+		AgentID:       agentID,
 		Timestamp:     ts,
 	}
 }
@@ -47,7 +50,7 @@ func identityTarget(exchanges ...session.Exchange) *session.Session {
 func TestIdentityDedupMatchesByNativeIDEvenWhenContentDiffers(t *testing.T) {
 	ts := time.Date(2026, 10, 7, 6, 30, 5, 0, time.UTC)
 	target := identityTarget(
-		identityExchange(12, "agent", "前半段", "msg-uuid-1", "", ts),
+		identityExchange(12, "agent", "前半段", firstNonEmptyAgentID("msg-uuid-1", ""), ts),
 	)
 	if !exchangeAlreadyRecorded(context.Background(), nil, target, "agent", "msg-uuid-1", "前半段\n\n后半段", ts.Add(3*time.Hour)) {
 		t.Fatal("native id 相等就是同一条消息，内容不同（导入器合并过）也必须判为已写过")
@@ -58,13 +61,13 @@ func TestIdentityDedupMatchesByNativeIDEvenWhenContentDiffers(t *testing.T) {
 func TestIdentityDedupKeepsRoleKeysSeparate(t *testing.T) {
 	ts := time.Date(2026, 10, 7, 6, 30, 5, 0, time.UTC)
 	target := identityTarget(
-		identityExchange(12, "agent", "回答", "shared-id", "", ts),
+		identityExchange(12, "agent", "回答", firstNonEmptyAgentID("shared-id", ""), ts),
 	)
 	if exchangeAlreadyRecorded(context.Background(), nil, target, "user", "shared-id", "提问", ts) {
 		t.Fatal("agent 行的 native_turn 不得当成 user 行的 native_prompt")
 	}
 	target2 := identityTarget(
-		identityExchange(12, "user", "提问", "", "shared-id", ts),
+		identityExchange(12, "user", "提问", firstNonEmptyAgentID("", "shared-id"), ts),
 	)
 	if exchangeAlreadyRecorded(context.Background(), nil, target2, "agent", "shared-id", "回答", ts) {
 		t.Fatal("user 行的 native_prompt 不得当成 agent 行的 native_turn")
@@ -75,7 +78,7 @@ func TestIdentityDedupKeepsRoleKeysSeparate(t *testing.T) {
 func TestIdentityDedupPassesRowsWithUnmatchedNativeID(t *testing.T) {
 	ts := time.Date(2026, 10, 7, 6, 30, 5, 0, time.UTC)
 	target := identityTarget(
-		identityExchange(12, "agent", "同一段内容", "msg-uuid-1", "", ts),
+		identityExchange(12, "agent", "同一段内容", firstNonEmptyAgentID("msg-uuid-1", ""), ts),
 	)
 	if exchangeAlreadyRecorded(context.Background(), nil, target, "agent", "msg-uuid-2", "同一段内容", ts) {
 		t.Fatal("native id 不同就是两条不同的消息，哪怕内容一模一样（用户真的重发过）")
@@ -86,7 +89,7 @@ func TestIdentityDedupPassesRowsWithUnmatchedNativeID(t *testing.T) {
 func TestIdentityDedupFallsBackToContentWithinTolerance(t *testing.T) {
 	ts := time.Date(2026, 10, 7, 6, 30, 5, 0, time.UTC)
 	target := identityTarget(
-		identityExchange(12, "user", "请继续", "", "", ts),
+		identityExchange(12, "user", "请继续", firstNonEmptyAgentID("", ""), ts),
 	)
 	if !exchangeAlreadyRecorded(context.Background(), nil, target, "user", "", "请继续", ts.Add(2*time.Second)) {
 		t.Fatal("没有 native id 时必须退回内容判重，否则历史数据的双写永远折叠不掉")
@@ -104,7 +107,7 @@ func TestIdentityDedupFallsBackToContentWithinTolerance(t *testing.T) {
 func TestIdentityDedupDoesNotFallBackWhenNativeIDPresent(t *testing.T) {
 	ts := time.Date(2026, 10, 7, 6, 30, 5, 0, time.UTC)
 	target := identityTarget(
-		identityExchange(12, "agent", "同一段内容", "", "", ts),
+		identityExchange(12, "agent", "同一段内容", firstNonEmptyAgentID("", ""), ts),
 	)
 	if exchangeAlreadyRecorded(context.Background(), nil, target, "agent", "msg-uuid-9", "同一段内容", ts) {
 		t.Fatal("带了 native id 就不许猜 —— D10：对不上就放行 + 记日志，永不按内容猜")
@@ -116,8 +119,8 @@ func TestIdentityDedupDoesNotFallBackWhenNativeIDPresent(t *testing.T) {
 func TestIdentityDedupIgnoresEmptyContentButHonorsIdentity(t *testing.T) {
 	ts := time.Date(2026, 10, 7, 6, 30, 5, 0, time.UTC)
 	target := identityTarget(
-		identityExchange(12, "agent", "", "", "", ts),
-		identityExchange(13, "agent", "", "msg-uuid-5", "", ts),
+		identityExchange(12, "agent", "", firstNonEmptyAgentID("", ""), ts),
+		identityExchange(13, "agent", "", firstNonEmptyAgentID("msg-uuid-5", ""), ts),
 	)
 	if exchangeAlreadyRecorded(context.Background(), nil, target, "agent", "", "", ts) {
 		t.Fatal("空内容行不是同一句话，不能按内容折叠")
@@ -129,7 +132,7 @@ func TestIdentityDedupIgnoresEmptyContentButHonorsIdentity(t *testing.T) {
 
 // 零时间戳 + 无 native id：无法证明任何事，一律放行。
 func TestIdentityDedupPassesWhenNothingToProve(t *testing.T) {
-	target := identityTarget(identityExchange(12, "user", "内容", "", "", time.Time{}))
+	target := identityTarget(identityExchange(12, "user", "内容", "", time.Time{}))
 	if exchangeAlreadyRecorded(context.Background(), nil, target, "user", "", "内容", time.Time{}) {
 		t.Fatal("时间戳为零且没有 native id 时无法证明，必须放行")
 	}
@@ -166,20 +169,29 @@ func newLiveOwnedSyncSession(t *testing.T, ctx context.Context) (rootID string, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	liveCtx := session.WithExchangeIdentity(
+	// 两行各自的 agent_id：user 行是 prompt messageId、agent 行是投递单元 id。
+	// 老代码靠 exchangeNativeKey 按 role 分字段（native_prompt / native_turn），
+	// 现在合成一个 agent_id —— 于是同一轮的两行必须各带自己的值。
+	liveUserCtx := session.WithExchangeIdentity(
 		session.WithExchangeSource(ctx, session.ExchangeSourceLive),
 		session.ExchangeIdentity{
-			TurnID:       replayPromptID,
-			TurnSeq:      1,
-			NativePrompt: replayPromptID,
-			NativeTurn:   replayTurnID,
+			MindFSID: replayPromptID,
+			TurnSeq:  1,
+			AgentID:  replayPromptID,
+		})
+	liveAgentCtx := session.WithExchangeIdentity(
+		session.WithExchangeSource(ctx, session.ExchangeSourceLive),
+		session.ExchangeIdentity{
+			MindFSID: replayPromptID,
+			TurnSeq:  1,
+			AgentID:  replayTurnID,
 		})
 	// 时间戳是**那一轮真实发生的时间**（两小时前），而导入器给的是 now ——
 	// 两者差两小时，内容+±5s 的判重必然判不出来。这就是实测里的那 9 对。
-	if err := mgr.AddExchangeForAgentAt(liveCtx, created, "user", "请继续", "dsh", "", "", "", time.Now().UTC().Add(-2*time.Hour)); err != nil {
+	if err := mgr.AddExchangeForAgentAt(liveUserCtx, created, "user", "请继续", "dsh", "", "", "", time.Now().UTC().Add(-2*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	if err := mgr.AddExchangeForAgentAt(liveCtx, created, "agent", "前半段", "dsh", "", "", "", time.Now().UTC().Add(-2*time.Hour)); err != nil {
+	if err := mgr.AddExchangeForAgentAt(liveAgentCtx, created, "agent", "前半段", "dsh", "", "", "", time.Now().UTC().Add(-2*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	live, err := mgr.Get(ctx, created.Key, 0)
@@ -278,7 +290,16 @@ func TestFullSyncPersistsImportedRowWithUnmatchedNativeID(t *testing.T) {
 		t.Fatalf("exchanges = %d, want 2（身份对不上不等于重复，必须写进去）", len(after.Exchanges))
 	}
 	got := after.Exchanges[1]
-	if got.NativeTurn != "7c9e6679-7425-40de-944b-e07fc1f90ae7" {
-		t.Fatalf("native_turn = %q，导入行必须记住自己的身份，否则下次同步认不出自己", got.NativeTurn)
+	if got.AgentID != "7c9e6679-7425-40de-944b-e07fc1f90ae7" {
+		t.Fatalf("native_turn = %q，导入行必须记住自己的身份，否则下次同步认不出自己", got.AgentID)
 	}
+}
+
+func firstNonEmptyAgentID(candidates ...string) string {
+	for _, c := range candidates {
+		if strings.TrimSpace(c) != "" {
+			return c
+		}
+	}
+	return ""
 }

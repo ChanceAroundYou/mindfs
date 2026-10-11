@@ -18,11 +18,11 @@ func pendingActive(hub *StreamHub, sessionKey string) bool {
 	return false
 }
 
-// S2e：pending 的回合身份从单调代次（TurnGen uint64）换成 turn_id（UUID string）。
+// S2e：pending 的回合身份从单调代次（TurnGen uint64）换成 mindfs_id（UUID string）。
 //
 // 先钉**规格**，再改实现（RED → GREEN）。规格是四条：
 //  1. 身份是一个 UUIDv4 形状的字符串，不是计数器 —— 于是同一个逻辑 id 在主日志
-//     （ExchangeIdentity.TurnID）与 pending 灯上只有一种表示（方案 D3/D6）。
+//     （ExchangeIdentity.MindFSID）与 pending 灯上只有一种表示（方案 D3/D6）。
 //  2. put（SetPending*）返回它，terminator（EndSessionTurn/EndSessionTurnWithIdentity）
 //     用同一个值收尾；迟到的拿旧 id 的 done 必须 no-op。
 //  3. 空串是「无身份」的哨兵（旧 `0` 的对位）：保守清 —— 绝不因缺身份而漏清。
@@ -37,7 +37,7 @@ func TestPendingTurnIDIsUUID(t *testing.T) {
 	if id == "" {
 		t.Fatal("SetPendingReply 没有返回回合身份")
 	}
-	if !session.IsTurnIDShape(id) {
+	if !session.IsMindFSIDShape(id) {
 		t.Fatalf("回合身份不是 UUIDv4 形状: %q", id)
 	}
 }
@@ -93,7 +93,7 @@ func TestSetPendingUserReturnsTurnIDAndClears(t *testing.T) {
 	if id == "" {
 		t.Fatal("SetPendingUser 未返回回合身份")
 	}
-	if !session.IsTurnIDShape(id) {
+	if !session.IsMindFSIDShape(id) {
 		t.Fatalf("用户路径的回合身份不是 UUIDv4: %q", id)
 	}
 	if !pendingActive(hub, "s2") {
@@ -106,7 +106,7 @@ func TestSetPendingUserReturnsTurnIDAndClears(t *testing.T) {
 }
 
 // pending 身份与主日志身份**同一种表示**：实时路径把 user 行写进主日志时用的
-// turn_id 就是 pending 灯该用的那个。这是 S2e 的真正目的 —— 不留第三套。
+// mindfs_id 就是 pending 灯该用的那个。这是 S2e 的真正目的 —— 不留第三套。
 func TestPendingTurnIDMatchesMainLogTurnIDShape(t *testing.T) {
 	hub := NewStreamHub()
 	id := hub.SetPendingReply("root", "s1", "t")
@@ -114,7 +114,7 @@ func TestPendingTurnIDMatchesMainLogTurnIDShape(t *testing.T) {
 		t.Fatalf("回合身份的段数不是 UUID 的 5 段（4 个连字符）: %q", id)
 	}
 	if len(id) != 36 {
-		t.Fatalf("回合身份长度 = %d, want 36（与主日志 turn_id 同一表示）", len(id))
+		t.Fatalf("回合身份长度 = %d, want 36（与主日志 mindfs_id 同一表示）", len(id))
 	}
 }
 

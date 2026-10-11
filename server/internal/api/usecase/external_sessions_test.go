@@ -93,7 +93,7 @@ func TestSyncExternalSessionDeltaFastDoesNotApplyCtxSeqToFilteredImport(t *testi
 	if len(latest.Exchanges) != 3 {
 		t.Fatalf("len(exchanges) = %d, want 3", len(latest.Exchanges))
 	}
-	// S2d-2 起正文归块流，主日志一行的 content 恒空，所以这里按 turn_id 从块流读。
+	// S2d-2 起正文归块流，主日志一行的 content 恒空，所以这里按 mindfs_id 从块流读。
 	// 这是「成交量」断言：ctx_seq 切片放行了多少条、放行的是哪几条。
 	if got := importedBlockTexts(context.Background(), manager, created.Key, latest.Exchanges, 1); len(got) != 1 || got[0] != "new user" {
 		t.Fatalf("exchange[1] blocks = %#v, want [new user]", got)

@@ -9,26 +9,40 @@ import (
 	"mindfs/server/internal/session"
 )
 
-var uuidV4Pattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+var uuidV5Pattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 
-// 方案 C2：客户端没有入口传 turn_id，所以服务端在回合开头 mint UUIDv4。
+// 方案 D4/D5：mindfs_id 由 MindFS 在写入点统一铸，**确定性** UUIDv5。
 // 三条服务端发起的轮次路径（定时任务 / 看板任务阶段 / 子会话）都经 SendMessage，
 // 所以 mint 点只有 persistUserTurnExchange 一处。
-func TestNewTurnIDIsUUIDv4(t *testing.T) {
-	seen := map[string]bool{}
+//
+// **UUIDv5 而非 v4**：同一条消息在两个写入者（live / import）手里必须算出同一个
+// mindfs_id，v4 的随机性做不到这件事。所以这里钉的不再是「64 次互不相同」，
+// 而是「同 seed 同 id、异 seed 异 id」。
+func TestNewMindFSIDIsDeterministicUUIDv5(t *testing.T) {
+	// 同 seed → 同 id（这是判重能只认身份的前提）。
 	for i := 0; i < 64; i++ {
-		id := newTurnID()
-		if !uuidV4Pattern.MatchString(id) {
-			t.Fatalf("newTurnID() = %q, want a UUIDv4", id)
+		id := newMindFSID("", "sess-a|user|7")
+		if !uuidV5Pattern.MatchString(id) {
+			t.Fatalf("newMindFSID() = %q, want a UUIDv5", id)
 		}
-		if seen[id] {
-			t.Fatalf("newTurnID() repeated %q", id)
-		}
-		seen[id] = true
+	}
+	first := newMindFSID("", "sess-a|user|7")
+	second := newMindFSID("", "sess-a|user|7")
+	if first != second {
+		t.Fatalf("同 seed 得到不同 id: %q vs %q —— 重导不再幂等，判重修不回内容猜", first, second)
+	}
+	// agent_id 优先于 fallbackSeed：同一 agent 消息在两个写入者手里 seed 相同，
+	// 这才是「live 与 import 对齐」的那一步。
+	if agentA, agentB := newMindFSID("uuid-1", "fb-a"), newMindFSID("uuid-1", "fb-b"); agentA != agentB {
+		t.Fatalf("agent_id 相同时 fallbackSeed 影响了结果: %q vs %q", agentA, agentB)
+	}
+	// 异 seed → 异 id，否则不同轮次会互相吞掉。
+	if newMindFSID("", "sess-a|user|7") == newMindFSID("", "sess-a|user|8") {
+		t.Fatal("不同 seed 得到同一个 id")
 	}
 }
 
-// user 行与它的块必须带同一个 turn_id，turn_seq 必须等于该 user 行自己的 seq。
+// user 行与它的块必须带同一个 mindfs_id，turn_seq 必须等于该 user 行自己的 seq。
 // 少了这一条，S2b 切读路径时用户自己的话会挂不回轮次。
 func TestPersistUserTurnExchangeMintsTurnIdentityAndWritesUserBlock(t *testing.T) {
 	manager, key := newEarlyUserPersistManager(t)
@@ -43,8 +57,8 @@ func TestPersistUserTurnExchangeMintsTurnIdentityAndWritesUserBlock(t *testing.T
 	if err != nil {
 		t.Fatalf("persistUserTurnExchange: %v", err)
 	}
-	if !uuidV4Pattern.MatchString(turnID) {
-		t.Fatalf("turn_id = %q, want a UUIDv4", turnID)
+	if !uuidV5Pattern.MatchString(turnID) {
+		t.Fatalf("mindfs_id = %q, want a UUIDv4", turnID)
 	}
 
 	var row *session.Exchange
@@ -56,8 +70,8 @@ func TestPersistUserTurnExchangeMintsTurnIdentityAndWritesUserBlock(t *testing.T
 	if row == nil {
 		t.Fatalf("seq %d not in exchanges: %#v", seq, current.Exchanges)
 	}
-	if row.TurnID != turnID {
-		t.Fatalf("row turn_id = %q, want %q", row.TurnID, turnID)
+	if row.MindFSID != turnID {
+		t.Fatalf("row mindfs_id = %q, want %q", row.MindFSID, turnID)
 	}
 	if row.TurnSeq != seq {
 		t.Fatalf("row turn_seq = %d, want %d（= 打开该轮的 user 行 seq）", row.TurnSeq, seq)
@@ -73,8 +87,8 @@ func TestPersistUserTurnExchangeMintsTurnIdentityAndWritesUserBlock(t *testing.T
 	if blocks[0].Type != session.BlockTypeText || blocks[0].Text != "本轮提问" {
 		t.Fatalf("block = %#v, want text 本轮提问", blocks[0])
 	}
-	if blocks[0].Seq != seq || blocks[0].TurnID != turnID {
-		t.Fatalf("block identity = %#v, want seq=%d turn_id=%s", blocks[0], seq, turnID)
+	if blocks[0].Seq != seq || blocks[0].MindFSID != turnID {
+		t.Fatalf("block identity = %#v, want seq=%d mindfs_id=%s", blocks[0], seq, turnID)
 	}
 	if blocks[0].Step < 0 {
 		t.Fatalf("block step = %d：S2a 双写期写哨兵会让读取侧作废这些块", blocks[0].Step)
@@ -106,9 +120,9 @@ func TestPersistUserTurnExchangeDedupeWritesNoBlock(t *testing.T) {
 	if seq == 0 {
 		t.Fatalf("命中判重时必须回传已有那条的 seq")
 	}
-	// 导入行没有身份，所以判重路径回传空 turn_id 是合法的（历史行「可空、可后补」）。
+	// 导入行没有身份，所以判重路径回传空 mindfs_id 是合法的（历史行「可空、可后补」）。
 	if turnID != "" {
-		t.Fatalf("turn_id = %q, want empty：导入行本来就没有 turn_id", turnID)
+		t.Fatalf("mindfs_id = %q, want empty：导入行本来就没有 mindfs_id", turnID)
 	}
 	blocks, err := manager.ReadBlocks(ctx, key)
 	if err != nil {
@@ -137,7 +151,7 @@ func TestPersistTurnBlocksKeepsReasoningOnlyTurn(t *testing.T) {
 	}
 	agentCtx := session.WithExchangeIdentity(
 		session.WithExchangeSource(ctx, session.ExchangeSourceLive),
-		session.ExchangeIdentity{TurnID: turnID, TurnSeq: userSeq},
+		session.ExchangeIdentity{MindFSID: turnID, TurnSeq: userSeq},
 	)
 	// 助手正文是空的 —— 这正是 os 模型 ~15% 轮次的形态。
 	if err := manager.AddExchangeForAgent(agentCtx, current, "agent", "", "dsh", "", "", ""); err != nil {
@@ -165,18 +179,18 @@ func TestPersistTurnBlocksKeepsReasoningOnlyTurn(t *testing.T) {
 	if len(reasoning) != 1 || reasoning[0].Text != "先想一下" {
 		t.Fatalf("reasoning blocks = %#v：正文为空的轮次必须留下 reasoning 块（本 bug 的根因）", reasoning)
 	}
-	if reasoning[0].TurnID != turnID {
-		t.Fatalf("block turn_id = %q, want %q", reasoning[0].TurnID, turnID)
+	if reasoning[0].MindFSID != turnID {
+		t.Fatalf("block mindfs_id = %q, want %q", reasoning[0].MindFSID, turnID)
 	}
 
-	// 助手行本身仍然带着同一个 turn_id（两行同身份）。
+	// 助手行本身仍然带着同一个 mindfs_id（两行同身份）。
 	reloaded, err := manager.Get(ctx, key, 0)
 	if err != nil {
 		t.Fatalf("reload: %v", err)
 	}
 	for _, ex := range reloaded.Exchanges {
-		if ex.Seq == agentSeq && ex.TurnID != turnID {
-			t.Fatalf("助手行 turn_id = %q, want %q", ex.TurnID, turnID)
+		if ex.Seq == agentSeq && ex.MindFSID != turnID {
+			t.Fatalf("助手行 mindfs_id = %q, want %q", ex.MindFSID, turnID)
 		}
 	}
 }

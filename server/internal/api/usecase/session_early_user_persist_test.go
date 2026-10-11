@@ -250,7 +250,7 @@ func TestUserRowVisibleDuringLiveTurn(t *testing.T) {
 	}
 	userRows := 0
 	for _, ex := range final.Exchanges {
-		// S2d-2 起正文在块流里，主日志那行恒空 —— 「本轮提问是哪一行」靠 turn_id
+		// S2d-2 起正文在块流里，主日志那行恒空 —— 「本轮提问是哪一行」靠 mindfs_id
 		// 或 turn_seq 认，这里只数 user 行条数（测的是「不许多写」）。
 		if ex.Role == "user" {
 			userRows++

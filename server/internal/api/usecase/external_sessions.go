@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"path/filepath"
 	"strings"
@@ -570,13 +571,16 @@ func appendImportedExchange(
 	}
 	// 把 agent 侧身份写进这一行（方案 §3.1）。没有它，下一轮同步就没有可对齐的键，
 	// 只能继续靠内容猜 —— 而内容恰恰是导入器会改写的东西。
-	identity := session.ExchangeIdentity{}
-	if strings.TrimSpace(exchange.NativeID) != "" {
-		if role == "user" {
-			identity.NativePrompt = strings.TrimSpace(exchange.NativeID)
-		} else {
-			identity.NativeTurn = strings.TrimSpace(exchange.NativeID)
-		}
+	//
+	// **这一步同时补上导入路径欠了 S2a 至今的 MindFS 铸造**：此前导入行只写 native id、
+	// 从不铸 MindFSID，实测全库 identity_bearing_rows = 0%。UUIDv5 让 MindFSID 由
+	// AgentID 派生 —— 同一行重导得到同一个 id，判重不再需要内容兜底。
+	agentID := strings.TrimSpace(exchange.NativeID)
+	fallbackSeed := fmt.Sprintf("%s|%s|%d", target.Key, role, session.MaxExchangeSeq(target.Exchanges)+1)
+	identity := session.ExchangeIdentity{
+		MindFSID: session.NewMindFSID(agentID, fallbackSeed),
+		TurnSeq:  session.MaxExchangeSeq(target.Exchanges) + 1,
+		AgentID:  agentID,
 	}
 	if err := manager.AddExchangeForAgentAt(
 		session.WithExchangeIdentity(session.WithExchangeSource(ctx, session.ExchangeSourceImport), identity),
@@ -636,7 +640,7 @@ func appendImportedExchange(
 			ToolCall: &toolCall,
 		})
 	}
-	// 块在行之后写：块要带 turn_id，而 turn_id 在 AddExchangeForAgentAt 里才定下来。
+	// 块在行之后写：块要带 mindfs_id，而 mindfs_id 在 AddExchangeForAgentAt 里才定下来。
 	// 主日志已经落了盘，块流失败不该让这一行消失（否则用户少看到一整轮）。
 	if err := persistTurnBlocks(ctx, manager, target.Key, seq,
 		session.TurnIDForSeq(target.Exchanges, seq), exchange.Content, collected); err != nil {

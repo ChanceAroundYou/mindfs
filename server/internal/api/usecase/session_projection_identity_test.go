@@ -23,13 +23,12 @@ import (
 // 实打实的回退。删投影必须与「历史行处理」同一步做，那是 S2d 的事（S2d 要删
 // `Exchange.Content`，投影的内容比对届时无论如何都活不下去）。
 
-func projectExchange(seq int, role, content, nativeTurn, nativePrompt, source string, ts time.Time) session.Exchange {
+func projectExchange(seq int, role, content, agentID, source string, ts time.Time) session.Exchange {
 	return session.Exchange{
 		Seq:           seq,
 		Role:          role,
 		LegacyContent: content,
-		NativeTurn:    nativeTurn,
-		NativePrompt:  nativePrompt,
+		AgentID:       agentID,
 		Source:        source,
 		Timestamp:     ts,
 	}
@@ -40,8 +39,8 @@ func projectExchange(seq int, role, content, nativeTurn, nativePrompt, source st
 func TestProjectionLeavesIdentityBearingPairsAlone(t *testing.T) {
 	ts := time.Date(2026, 10, 7, 6, 30, 5, 0, time.UTC)
 	rows := []session.Exchange{
-		projectExchange(12, "agent", "回答正文", "6ba7b810-9dad-11d1-80b4-00c04fd430c8", "", string(session.ExchangeSourceLive), ts),
-		projectExchange(25, "agent", "回答正文", "6ba7b810-9dad-11d1-80b4-00c04fd430c8", "", string(session.ExchangeSourceImport), ts),
+		projectExchange(12, "agent", "回答正文", "6ba7b810-9dad-11d1-80b4-00c04fd430c8", string(session.ExchangeSourceLive), ts),
+		projectExchange(25, "agent", "回答正文", "6ba7b810-9dad-11d1-80b4-00c04fd430c8", string(session.ExchangeSourceImport), ts),
 	}
 	kept, hidden, _ := ProjectExchanges(rows)
 	if len(kept) != 2 {
@@ -57,8 +56,8 @@ func TestProjectionLeavesIdentityBearingPairsAlone(t *testing.T) {
 func TestProjectionDoesNotFoldWhenOnlyOneSideHasIdentity(t *testing.T) {
 	ts := time.Date(2026, 10, 7, 6, 30, 5, 0, time.UTC)
 	rows := []session.Exchange{
-		projectExchange(12, "agent", "回答正文", "6ba7b810-9dad-11d1-80b4-00c04fd430c8", "", string(session.ExchangeSourceLive), ts),
-		projectExchange(13, "agent", "回答正文", "", "", string(session.ExchangeSourceImport), ts),
+		projectExchange(12, "agent", "回答正文", "6ba7b810-9dad-11d1-80b4-00c04fd430c8", string(session.ExchangeSourceLive), ts),
+		projectExchange(13, "agent", "回答正文", "", string(session.ExchangeSourceImport), ts),
 	}
 	kept, _, _ := ProjectExchanges(rows)
 	if len(kept) != 2 {
@@ -70,8 +69,8 @@ func TestProjectionDoesNotFoldWhenOnlyOneSideHasIdentity(t *testing.T) {
 func TestProjectionStillFoldsIdentitylessLegacyDuplicates(t *testing.T) {
 	ts := time.Date(2026, 10, 7, 6, 30, 5, 0, time.UTC)
 	rows := []session.Exchange{
-		projectExchange(12, "agent", "同一段历史正文，内容完全相同。", "", "", string(session.ExchangeSourceLive), ts),
-		projectExchange(25, "agent", "同一段历史正文，内容完全相同。", "", "", string(session.ExchangeSourceImport), ts),
+		projectExchange(12, "agent", "同一段历史正文，内容完全相同。", "", string(session.ExchangeSourceLive), ts),
+		projectExchange(25, "agent", "同一段历史正文，内容完全相同。", "", string(session.ExchangeSourceImport), ts),
 	}
 	kept, hidden, _ := ProjectExchanges(rows)
 	if len(kept) != 1 || kept[0].Seq != 12 {
@@ -87,8 +86,8 @@ func TestProjectionStillFoldsIdentitylessLegacyDuplicates(t *testing.T) {
 func TestProjectionKeepsGenuineUserRepeats(t *testing.T) {
 	base := time.Date(2026, 10, 7, 6, 30, 5, 0, time.UTC)
 	rows := []session.Exchange{
-		projectExchange(5, "user", "请继续", "", "", string(session.ExchangeSourceLive), base),
-		projectExchange(11, "user", "请继续", "", "", string(session.ExchangeSourceLive), base.Add(2*time.Hour)),
+		projectExchange(5, "user", "请继续", "", string(session.ExchangeSourceLive), base),
+		projectExchange(11, "user", "请继续", "", string(session.ExchangeSourceLive), base.Add(2*time.Hour)),
 	}
 	kept, _, _ := ProjectExchanges(rows)
 	if len(kept) != 2 {

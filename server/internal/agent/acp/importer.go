@@ -51,7 +51,7 @@ func (i *Importer) AgentName() string {
 }
 
 // UsesPromptMessageID 恒为 true：ACP 协议的 `PromptRequest.MessageId` 就是这层身份
-// （方案 D3）。MindFS 把自己的 turn_id 递进去、agent 原样回显成 `userMessageId`，
+// （方案 D3）。MindFS 把自己的 mindfs_id 递进去、agent 原样回显成 `userMessageId`，
 // 于是实时路径与导入路径能用同一个 id 认领同一轮，判重不再靠内容猜。
 func (i *Importer) UsesPromptMessageID() bool {
 	return true
@@ -259,7 +259,7 @@ func (c *importCollector) handle(update SessionUpdate) {
 // agent 应当回显 MindFS 递过去的 UUID；但实现不保证 —— 收不到 uuid 就返回空串，
 // 让判重退回内容比对，而不是拿一个谁也对不上的字符串当身份。
 //
-// 为什么严到只收 UUID：MindFS 递过去的就是自己 mint 的 turn_id（方案 D3），
+// 为什么严到只收 UUID：MindFS 递过去的就是自己 mint 的 mindfs_id（方案 D3），
 // 形如 `550e8400-e29b-41d4-a716-446655440000`。只认这一种形态，就保证了
 // 「写进 native_prompt 的」和「读回来对上的」是同一个 id 的同一层含义。
 func messageIDOf(raw *string) string {
@@ -279,10 +279,10 @@ func messageIDOf(raw *string) string {
 // 只认这一种形态，是为了保证「递出去的」「写进 native_prompt 的」「从转录读回来
 // 对上的」三者指的是同一个 id 的同一层含义；别的字符串一律当成「没有身份」。
 //
-// 判据本体在 session.IsTurnIDShape（S2e 起 pending 灯的回合身份也是 turn_id，
+// 判据本体在 session.IsTurnIDShape（S2e 起 pending 灯的回合身份也是 mindfs_id，
 // 形状判据只能有一份）；这里留一层薄转发，让本包的读者继续读本包的名字。
 func isUUIDShape(raw string) bool {
-	return sessionpkg.IsTurnIDShape(raw)
+	return sessionpkg.IsMindFSIDShape(raw)
 }
 
 // append 把一段文本 / reasoning 归到当前消息上。

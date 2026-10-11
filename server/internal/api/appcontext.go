@@ -345,7 +345,7 @@ func (s *AppContext) RunAgentStage(ctx context.Context, exec kanban.AgentStageEx
 	// 否则它们置的 pending 会永久残留（症状「完成回答但还显示正在思考」）。
 	var subSessionKeys []string
 	var subMu sync.Mutex
-	// 回合身份：主会话与各子会话的 turn_id 都记下来，收尾时原样交给终结器。
+	// 回合身份：主会话与各子会话的 mindfs_id 都记下来，收尾时原样交给终结器。
 	// 与 ws.go / scheduled/tasks.go 同一条纪律（G-BE）—— 缺了它，done 以无身份走
 	// 「保守清」，把此后新起一轮的灯误抹（症状「灯不亮」）。
 	var turnMu sync.Mutex
@@ -977,13 +977,13 @@ func (s *AppContext) BroadcastAgentStatusChanged(agentName string) {
 	})
 }
 
-// SetSessionPendingReply 置子会话/看板会话的 pending，返回该条目的回合 turn_id。
+// SetSessionPendingReply 置子会话/看板会话的 pending，返回该条目的回合 mindfs_id。
 // 收尾时必须把同一个 id 交给 EndSessionTurn，否则清理退化成无条件清。
 func (s *AppContext) SetSessionPendingReply(rootID, sessionKey, sessionTitle string) string {
 	return s.GetSessionStreamHub().SetPendingReply(rootID, sessionKey, sessionTitle)
 }
 
-// BroadcastSessionUserMessageAt 广播用户消息并置该会话 pending，返回回合 turn_id。
+// BroadcastSessionUserMessageAt 广播用户消息并置该会话 pending，返回回合 mindfs_id。
 // 与 SetSessionPendingReply 同理：返回的 id 是收尾时唯一能定位「这一轮」的凭据。
 func (s *AppContext) BroadcastSessionUserMessageAt(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService string, planMode bool, content string, timestamp time.Time, userExchangeSeq int, baseExchangeSeq ...int) string {
 	s.ClearTaskAuxFlagsForSession(rootID, sessionKey)
@@ -1030,7 +1030,7 @@ func (s *AppContext) UpdateTaskSessionErrorForSession(rootID, sessionKey, messag
 	}, "agent_session_error")
 }
 
-// EndSessionTurn 是**回合的唯一终结器**：通知 → 广播 session.done → 按回合 turn_id 清 pending。
+// EndSessionTurn 是**回合的唯一终结器**：通知 → 广播 session.done → 按回合 mindfs_id 清 pending。
 //
 // 所有「这一轮结束了」的边（成功 / 出错 / 取消 / 父轮收尾 / panic）都必须走到这里，
 // 且必须带**置 pending 时拿到的同一个 turnID**。清理按身份比对（见

@@ -522,7 +522,7 @@ func convertEvent(update SessionUpdate, onAskUser func(callID string, questions 
 				Content: raw.AgentMessageChunk.Content.Text.Text,
 				// messageId 带上这一块的「所属 agent 原生消息 id」。它是**步级**身份
 				// （方案 §3.3）：dsh 一轮里会发多条 assistant/message，各带一个
-				// messageId。实时路径取**最后一个**写进 `native_turn`，导入侧对同一
+				// messageId。实时路径取**最后一个**写进 `agent_id`，导入侧对同一
 				// 条消息也取最后一个 —— 两边于是对得上，判重不必猜内容。
 				MessageID: messageIDOf(raw.AgentMessageChunk.MessageId),
 			}

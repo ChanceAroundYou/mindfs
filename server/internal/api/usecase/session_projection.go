@@ -77,7 +77,7 @@ func ProjectExchanges(exchanges []session.Exchange) ([]session.Exchange, map[int
 	// 判重在写入侧按身份做过了，读时再按内容猜一次只会掩盖真实缺陷（S2c）。
 	hasIdentity := make([]bool, len(exchanges))
 	for index, exchange := range exchanges {
-		hasIdentity[index] = exchangeNativeKey(exchange) != ""
+		hasIdentity[index] = exchangeAgentKey(exchange) != ""
 	}
 
 	hidden := make([]bool, len(exchanges))
@@ -387,7 +387,7 @@ type AuditSessionOutput struct {
 	Audit *session.SessionAudit `json:"audit"`
 	// LiveOwned：这个会话是否由 MindFS 自己驱动（决定导入器该不该跟进）
 	LiveOwned bool `json:"live_owned"`
-	// IdentityBearing：库里**带** native 身份（native_turn / native_prompt）的行数。
+	// IdentityBearing：库里**带** agent 身份（agent_id）的行数。
 	//
 	// 这是 S2c 的进度指标：身份判重只在有身份的行之间生效，所以这个数字应当
 	// 随使用单调上升。它同时是「投影还能不能删」的判据 —— 投影现在只折叠
@@ -425,7 +425,7 @@ func (s *Service) AuditSession(ctx context.Context, in AuditSessionInput) (Audit
 	}
 	out.LiveOwned = session.SessionIsLiveOwned(current.Exchanges)
 	for _, exchange := range current.Exchanges {
-		if exchangeNativeKey(exchange) != "" {
+		if exchangeAgentKey(exchange) != "" {
 			out.IdentityBearing++
 		}
 	}

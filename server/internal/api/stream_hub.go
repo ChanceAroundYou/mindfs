@@ -57,10 +57,10 @@ type SessionPendingState struct {
 	NextEventSeq    uint64
 	Summary         string
 	UpdatedAt       time.Time
-	// TurnID 是本条目所属回合的身份（每次 SetPending* 刷新为一个新 turn_id）。
+	// MindFSID 是本条目所属回合的身份（每次 SetPending* 刷新为一个新 mindfs_id）。
 	// 清理时带上同一个 id 才生效 —— 见 ClearSessionPending。
-	// S2e 起它与主日志行的 turn_id 是**同一种表示**（UUIDv4），不再有第二套编号。
-	TurnID string
+	// S2e 起它与主日志行的 mindfs_id 是**同一种表示**（UUIDv4），不再有第二套编号。
+	MindFSID string
 }
 
 type ClientStreamStatus string
@@ -282,12 +282,20 @@ func (h *StreamHub) ensurePendingSessionLocked(sessionKey string) *SessionPendin
 
 // nextPendingTurnIDLocked 生成一个新的回合身份。调用方必须已持有 h.mu。
 //
-// 与旧实现的关键差异：不再自增计数器，而是 mint 一个 turn_id。Hub 是每账户一份的
-// （多账户分区，见 CLAUDE.md），计数器在本进程内唯一，而 turn_id 全局唯一 ——
+// 与旧实现的关键差异：不再自增计数器，而是 mint 一个 mindfs_id。Hub 是每账户一份的
+// （多账户分区，见 CLAUDE.md），计数器在本进程内唯一，而 mindfs_id 全局唯一 ——
 // 于是「哪个 id」这个问题从「哪个 hub」里解耦出来，S2e 结束时同一个逻辑 id
 // 在主日志与 pending 上只有一种表示（方案 D3/D6）。
+//
+// 注意：**pending 的 id 不再由这里铸**。SetPendingUserAt 直接用
+// session.NewMindFSID(sessionKey|user|seq) 算出与落盘行同一个 id —— 两处各铸一次
+// 就等于两套身份，小蓝灯永不熄灭。这里只留给 SetPendingReply（子会话/续轮，
+// 没有 user 行 seq 可用）这类确实没有 seed 的路径。
 func (h *StreamHub) nextPendingTurnIDLocked() string {
-	return session.NewTurnID()
+	// seed 只需在本进程内唯一：这条路径（SetPendingReply 子会话/续轮）没有
+	// user 行 seq 可对齐，灯的身份不代表任何落盘行。UnixNano 够用且不确定性问题
+	// 只影响灯的重复匹配（多进程不会共享 pending 表）。
+	return session.NewMindFSID("", fmt.Sprintf("pending|%d", time.Now().UnixNano()))
 }
 
 func (h *StreamHub) clearReplayStatesForSessionLocked(sessionKey string) {
@@ -424,7 +432,7 @@ func (h *StreamHub) SetPendingUser(rootID, sessionKey, sessionTitle, agent, mode
 	return h.SetPendingUserAt(rootID, sessionKey, sessionTitle, agent, model, modelDisplayName, mode, effort, fastService, planMode, content, time.Now().UTC())
 }
 
-// SetPendingUserAt 置入「用户已发送」的 pending，返回该条目所属**回合的 turn_id**。
+// SetPendingUserAt 置入「用户已发送」的 pending，返回该条目所属**回合的 mindfs_id**。
 // 调用方必须把这个 id 交给回合终结器（AppContext.EndSessionTurn），
 // 否则终结器无法判定「这条 done 是不是本轮的」。
 func (h *StreamHub) SetPendingUserAt(rootID, sessionKey, sessionTitle, agent, model, modelDisplayName, mode, effort, fastService string, planMode bool, content string, timestamp time.Time, baseExchangeSeq ...int) (*PendingUserMessage, string) {
@@ -436,8 +444,17 @@ func (h *StreamHub) SetPendingUserAt(rootID, sessionKey, sessionTitle, agent, mo
 		timestamp = timestamp.UTC()
 	}
 	state := h.ensurePendingSessionLocked(sessionKey)
-	turnID := h.nextPendingTurnIDLocked()
-	state.TurnID = turnID
+	// pending 灯的回合身份：user 行的 mindfs_id 已在 persistUserTurnExchange 铸好
+	// （seed = sessionKey|user|seq），这里必须算出**同一个** —— 否则灯的亮灭与
+	// 行的持久化各说一套身份，小蓝灯永不熄灭。
+	// seed 必须是**同一轮同一个 seq**：pending 侧与落盘侧都得用它，而落盘侧用的
+	// 是「本轮 user 行的真实 seq」（MaxExchangeSeq+1）。
+	seqLabel := "00000000"
+	if len(baseExchangeSeq) > 0 && baseExchangeSeq[0] > 0 {
+		seqLabel = fmt.Sprintf("%08d", baseExchangeSeq[0])
+	}
+	turnID := session.NewMindFSID("", fmt.Sprintf("%s|user|%s", sessionKey, seqLabel))
+	state.MindFSID = turnID
 	state.RootID = rootID
 	state.SessionTitle = strings.TrimSpace(sessionTitle)
 	state.Active = true
@@ -673,7 +690,7 @@ func (h *StreamHub) PromoteQueuedSessionMessage(sessionKey, queueID string) ([]Q
 	return cloneQueue(state.Queue), true
 }
 
-// SetPendingReply 置入「子会话/续轮在回复」的 pending，返回该条目所属回合的 turn_id。
+// SetPendingReply 置入「子会话/续轮在回复」的 pending，返回该条目所属回合的 mindfs_id。
 // 语义同 SetPendingUserAt：这个 id 必须交给终结器。
 func (h *StreamHub) SetPendingReply(rootID, sessionKey, sessionTitle string) string {
 	if blank(sessionKey) {
@@ -683,7 +700,7 @@ func (h *StreamHub) SetPendingReply(rootID, sessionKey, sessionTitle string) str
 	defer h.mu.Unlock()
 	state := h.ensurePendingSessionLocked(sessionKey)
 	turnID := h.nextPendingTurnIDLocked()
-	state.TurnID = turnID
+	state.MindFSID = turnID
 	state.RootID = rootID
 	state.SessionTitle = strings.TrimSpace(sessionTitle)
 	state.Active = true
@@ -918,17 +935,17 @@ func (h *StreamHub) PendingTurnIDMatches(sessionKey string, turnID string) bool 
 		return true
 	}
 	// 空串是「无身份」的哨兵，对位旧实现的 turnGen==0。
-	if turnID == "" || state.TurnID == "" {
+	if turnID == "" || state.MindFSID == "" {
 		return true
 	}
-	return state.TurnID == turnID
+	return state.MindFSID == turnID
 }
 
 // ClearSessionPending 删除一条 pending —— 但**只清属于回合 turnID 的那一条**。
 //
-// 这是「在回复」状态与回合生命周期绑定的关键：条目记录 TurnID，终结器带上同一个
+// 这是「在回复」状态与回合生命周期绑定的关键：条目记录 MindFSID，终结器带上同一个
 // id 才生效。于是：
-//   - 第 A 轮迟到的 done（id=A）落在第 B 轮已开始（条目 TurnID=B）之后 → id 不匹配
+//   - 第 A 轮迟到的 done（id=A）落在第 B 轮已开始（条目 MindFSID=B）之后 → id 不匹配
 //     → no-op，B 轮的灯不被误抹（症状「正在运行但灯不亮」的成因）。
 //   - 重复的 done 天然幂等（条目已删 / id 已换 → no-op）。
 //
@@ -958,7 +975,7 @@ func (h *StreamHub) ClearSessionPending(sessionKey string, turnID string) {
 		return
 	}
 	// 两侧都有身份且不一致 ⇒ 这是**别的回合**的 done，放弃（迟到/重复 done 的护栏）。
-	if turnID != "" && state.TurnID != "" && state.TurnID != turnID {
+	if turnID != "" && state.MindFSID != "" && state.MindFSID != turnID {
 		return
 	}
 	if len(state.Queue) > 0 {
@@ -1044,7 +1061,7 @@ func (h *StreamHub) BroadcastSessionUserMessageAt(
 	queued bool,
 	baseExchangeSeq ...int,
 ) string {
-	pendingUser, turnID := h.SetPendingUserAt(rootID, sessionKey, sessionName, agentName, model, modelDisplayName, mode, effort, fastService, planMode, content, timestamp, baseExchangeSeq...)
+	pendingUser, turnID := h.SetPendingUserAt(rootID, sessionKey, sessionName, agentName, model, modelDisplayName, mode, effort, fastService, planMode, content, timestamp, userExchangeSeq)
 	resp := buildSessionUserMessageResponse(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService, planMode, content, pendingUser.Timestamp, queued, userExchangeSeq)
 	for _, clientID := range h.GetSessionClientIDs(sessionKey, false) {
 		if excludeClientID != "" && clientID == excludeClientID {
