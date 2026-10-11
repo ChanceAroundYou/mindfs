@@ -511,9 +511,13 @@ groups:
     files:
       - server/internal/api/usecase/session_projection.go
       - server/internal/api/usecase/session_projection_test.go
+      - server/internal/api/usecase/session_projection_identity_test.go
+      - server/internal/api/usecase/session_projection_window_test.go
       - server/internal/session/audit.go
     tests:
       - server/internal/api/usecase/session_projection_test.go
+      - server/internal/api/usecase/session_projection_identity_test.go
+      - server/internal/api/usecase/session_projection_window_test.go
 
   # ── 后端：模型 / 探针 / agent 运行时 ────────────────────────────
   - id: G-R
@@ -2222,6 +2226,88 @@ groups:
       - server/internal/api/usecase/external_sessions.go:SyncExternalSessionDelta
       - server/internal/api/usecase/external_sessions.go:externalSessionDeltaAfterCtxSeq
 
+  - id: G-BI
+    title: 会话身份收敛为两套 id（mindfs_id + agent_id，NativeTurn/NativePrompt/NativeID 合并）
+    kind: arch
+    symptom: |
+      系统里出现第三套 id：turn_id（MindFS 铸的、落盘）、native_turn/native_prompt
+      （agent 回查键）、pending 灯另算一套 TurnGen，而 ACP 与 claude 各自带回的
+      messageId / uuid 又无处安放 —— 「同一个回合叫什么」这个问题在四处各有答案。
+      更实际的故障：**导入路径根本不铸 turn_id**，导入行与实时行只能靠「内容相似
+      + ±5 秒」猜，而这两个判据在 Full 同步重放场景下必然失效（实测 9 对重复行）。
+    why: |
+      1) 全系统只留两类 id：mindfs_id（MindFS 在写入点统一铸，系统内唯一、不变，
+         是实际使用的那个）与 agent_id（agent 返回的，claude 转录 uuid / ACP
+         messageId，格式随 agent 而异，只作桥梁）。判定顺序：先 agent_id 再
+         mindfs_id，两层都对不上才退到「内容 + ±5s」（写入侧幂等 exchangeAlreadyRecorded
+         必须保留 —— 它拦的是实时写入与 Full 同步导入撞车）。
+      2) mindfs_id 由 NewMindFSID(agentID, fallbackSeed) 统一铸：UUIDv5（namespace +
+         seed 的 SHA-1 前 16 字节，不引 google/uuid），于是**同一轮的 live 与 import
+         两侧铸出同一个 id** —— 导入侧不再需要伪造 turn_seq 去对齐。seed 优先取
+         agent_id，没有才退到 sessionKey|role|seq。老的自指假身份
+         （persistUserTurnExchange 里 nativePrompt = turn_id）一并删掉。
+      3) NativeTurn / NativePrompt / NativeID 三个字段合并成一个 AgentID：它们本来就是
+         「agent 侧回查键」这一个概念，拆三个只会让判重口径分叉（claude 写
+         native_turn、ACP 写 native_prompt，同一件事两套写法）。claude 侧
+         handleAssistantMessage 取 msg.UUID 当 MessageID 带出去，补齐实时这一半 ——
+         此前只有导入侧有 agent id，两侧永远对不上。
+      4) 兼容性走 UnmarshalJSON（turn_id / native_turn / native_prompt / native_id
+         四个旧键映射到新字段，同名字段优先），而不是加一堆 `json.RawMessage` 散布在
+         各结构体里 —— 键名一旦写进盘，改名就必须留读路径，否则 320 个历史会话
+         全部读成「没有身份」。
+      5) 待亮灯（stream_hub.go SetPendingUserAt）的身份 seed 与落盘那一行同源
+         （sessionKey|user|同 seq）：蓝灯的 id 必须等于库里的 mindfs_id，否则灯
+         永远不灭。
+      6) 字段改名后 IsMindFSIDShape 是唯一形状判据；前端 SessionBlock 同步为
+         mindfs_id / agent_id。
+    boundary: |
+      会话轮次元数据的字段名与铸造规则：Exchange.AgentID、Block.AgentID、
+      NewMindFSID、exchangeAgentKey / exchangeIdentityRecorded、stream_hub 待亮灯身份。
+      块流正文、窗口读、投影、判重内容比对都不在它们的改动范围内。
+    tests:
+      - server/internal/session/manager_rename_compat_test.go
+      - server/internal/session/rename_compat_helpers_test.go
+      - server/internal/session/manager_identity_fields_test.go
+      - server/internal/session/manager_native_identity_test.go
+      - server/internal/session/blocks_build_test.go
+      - server/internal/api/usecase/session_identity_dedup_test.go
+      - server/internal/api/usecase/session_fork_blocks_test.go
+      - server/internal/api/usecase/session_blocks_write_test.go
+      - server/internal/api/http_window_test.go
+      - server/internal/api/stream_hub_turn_identity_test.go
+      - server/internal/agent/acp/importer_identity_test.go
+    files:
+      - server/internal/session/types.go
+      - server/internal/session/manager.go
+      - server/internal/session/blocks.go
+      - server/internal/session/manager_identity_fields_test.go
+      - server/internal/session/manager_native_identity_test.go
+      - server/internal/session/blocks_build_test.go
+      - server/internal/session/manager_rename_compat_test.go
+      - server/internal/session/rename_compat_helpers_test.go
+      - server/internal/api/usecase/session.go
+      - server/internal/api/usecase/external_sessions.go
+      - server/internal/api/usecase/session_identity_dedup_test.go
+      - server/internal/api/usecase/session_fork_blocks_test.go
+      - server/internal/api/usecase/session_blocks_write_test.go
+      - server/internal/api/stream_hub.go
+      - server/internal/api/http_window_test.go
+      - server/internal/api/stream_hub_turn_identity_test.go
+      - server/internal/agent/claude/session.go
+      - server/internal/agent/claude/importer.go
+      - server/internal/agent/acp/importer.go
+      - server/internal/agent/acp/importer_identity_test.go
+      - server/internal/agent/types/types.go
+      - web/src/services/session.ts
+    anchors:
+      - server/internal/session/manager.go:NewMindFSID
+      - server/internal/session/manager.go:IsMindFSIDShape
+      - server/internal/session/types.go:func (e *Exchange) UnmarshalJSON
+      - server/internal/session/blocks.go:func (b *Block) UnmarshalJSON
+      - server/internal/api/usecase/session.go:exchangeAgentKey
+      - server/internal/api/usecase/session.go:exchangeIdentityRecorded
+      - server/internal/api/stream_hub.go:SetPendingUserAt
+      - web/src/services/session.ts:agent_id
   - id: G-BH
     title: 会话正文块流（Block 存储层 + 轮次身份 turn_id/turn_seq/native_* + S2a 双写 + S2b 读改走块流 + C1/C2 + S2d-2 主日志不再存正文 + S2e pending 身份改用 turn_id）
     kind: fix
@@ -2460,10 +2546,8 @@ groups:
       - server/internal/session/blocks.go:CompactBlocksLight
       - server/internal/session/blocks.go:GroupBlocksBySeq
       - server/internal/session/manager.go:WithExchangeIdentity
-      - server/internal/api/usecase/session.go:newTurnID
       - server/internal/api/usecase/session.go:exchangeAlreadyRecorded
       - server/internal/api/usecase/session.go:exchangeIdentityRecorded
-      - server/internal/api/usecase/session.go:exchangeNativeKey
       - server/internal/api/usecase/session.go:noteIdentitylessGuess
       - server/internal/api/usecase/external_sessions.go:appendImportedExchange
       - server/internal/api/usecase/external_sessions.go:agentHasPromptMessageID
@@ -2471,8 +2555,7 @@ groups:
       - server/internal/api/usecase/session_projection.go:AuditSession
       - server/internal/agent/acp/importer.go:messageIDOf
       - server/internal/agent/acp/importer.go:isUUIDShape
-      - server/internal/session/manager.go:NewTurnID
-      - server/internal/session/manager.go:IsTurnIDShape
+      - server/internal/api/stream_hub.go:SetPendingUserAt
       - server/internal/api/stream_hub.go:nextPendingTurnIDLocked
       - server/internal/api/stream_hub.go:PendingTurnIDMatches
       - server/internal/api/stream_hub.go:ClearSessionPending

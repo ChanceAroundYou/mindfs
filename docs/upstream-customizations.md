@@ -123,7 +123,7 @@
 
 ---
 
-## 1. 总览（45 组）
+## 1. 总览（46 组）
 
 | 组 | 主题 | 性质 | 关键提交/切片举例 | 互斥边界 |
 |----|------|------|-------------------|----------|
@@ -176,6 +176,7 @@
 | G-AY | pending 纯派生（done 丢失时停止符号/「正在思考」卡住） | 修复 | 见 §3.1 | 原先「在不在回复」在前端有五份投影，只有列表蓝灯那份每 5s 对账；其余四份只有 WS `session.done` 一个出口，断连/重绑竞态丢了那条事件就**永久卡在 true**。2026-10-07 改成纯派生：唯一真相 `multiProjectPendingByKey`，会话对象上不再存 pending |
 | G-AZ | 任务卡视觉件（待审核徽标/列框去除/浮动滚动条/工作台角标移除） | 视觉 | 见 §3.1 | 待审核列补状态文字（与工作台同路径）；列框去除+padding 归零卡片加宽 18px；FloatingScroll 浮动滚动条不占宽；工作台「需要你 N」角标移除 |
 | G-BB | 看板列头灰底 + 间距对齐工作台（列头背景/列表 padding/外层 padding） | 视觉 | 见 §3.1 | 列头灰底区分栏目标签与卡片；列表 padding 归零卡片加宽 12px；外层 padding 6px 8px 对齐工作台容器 |
+| G-BI | 会话身份收敛为两套 id（`mindfs_id` + `agent_id`） | 重构 | 见 §3.2 | `NewMindFSID` / `Exchange.AgentID` / `Block.AgentID` / `exchangeAgentKey`；UUIDv5 按 seed 确定性铸，seed 优先取 `agent_id`，让 live 与 import 两侧铸出同一个 id |
 
 > **G-D 已并入 G-F，G-M 已并入 G-AI**（改动面完全重合、无独立测试可守，单列只会制造空组）。
 
@@ -2152,3 +2153,87 @@
 `archived-panel.test.mjs` 里两条空断言的：一条把源码整段切片，内层 div 的 `overflow` 被当成了外层的
 （删掉外层的裁剪，测试照样绿）；一条拿全文只出现一次的 marker 去滚动容器窗口里搜，永远搜不到。
 
+
+---
+
+## 3.2 补全分组（2026-10-11 新增）
+
+### G-BI 会话身份收敛为两套 id（mindfs_id + agent_id）（2026-10-11）
+
+- 来源：`server/internal/session/types.go`、`server/internal/session/manager.go`、
+  `server/internal/session/blocks.go`、`server/internal/api/usecase/session.go`、
+  `server/internal/api/usecase/external_sessions.go`、`server/internal/api/stream_hub.go`、
+  `server/internal/agent/claude/session.go`（2026-10-11）。
+  前身是 G-BH 的 S2c/S2e，本组把「turn_id + native_turn + native_prompt + native_id +
+  TurnGen」五个名目合成两个。
+
+- **边界**：会话轮次元数据的**字段名与铸造规则** —— `Exchange.AgentID`、
+  `Block.AgentID`、`NewMindFSID`、`exchangeAgentKey` / `exchangeIdentityRecorded`、
+  `stream_hub` 待亮灯身份。块流正文、窗口读、投影、判重内容比对、搜索都不在它们
+  的改动范围内（那些分属 G-BH / G-AB）。
+
+- 可见症状（没有它会怎样）：
+  1. **系统里有五套回合身份**：MindFS 铸的 `turn_id`、claude 写的 `native_turn`、
+     ACP 写的 `native_prompt`、块流的 `native_id`、pending 灯另算一套 `TurnGen`。
+     「本轮是哪个回合」这个问题在五处各有一个答案、各有一套生成规则 ——
+     正是 `message-mechanisms-plan.md` §12 警告的「两套回合身份真值并存必然打架」的五倍版。
+  2. **导入路径根本不铸身份**：live 的四个写入点都铸了 `turn_id`，
+     只有 `appendImportedExchange` 没有。于是 Full 同步重放出来的行与实时行
+     **两层判重同时失效** —— 没有 id 可比，而「内容相似 + ±5 秒」在导入把整段历史
+     重读一遍的场景下必然失效（实测 9 对重复行，而会话库里一共才 53 个会话）。
+  3. **live 这一侧拿不到 agent id**：claude 的 `handleAssistantMessage` 读了 `msg.UUID`
+     但从没带出去，所以只有导入侧有 agent 侧身份 —— 两侧永远对不上，
+     判重永远只能退回内容比对。
+  4. **pending 灯的身份与落盘那一行不是一个 seed**：`SetPendingUserAt` 拿
+     `baseExchangeSeq` 算，落盘那一行拿 `userExchangeSeq` 算。蓝灯的 id 必须等于
+     库里的 `mindfs_id`，否则灯永远不灭。
+  5. **`nativePrompt = turnID` 的自指假身份**：`persistUserTurnExchange` 里把 MindFS
+     自己铸的 id 又写进 agent 侧字段，让「有身份」变成一个恒真的假信号。
+
+- 为什么必须保留：
+  1. **全系统只留两类 id**。`mindfs_id` = MindFS 在写入点统一铸、系统内唯一、不变、
+     实际使用的那个；`agent_id` = agent 返回的（claude 转录 uuid / ACP messageId），
+     格式随 agent 而异，只作为把两侧行对上的桥梁。
+  2. **`NewMindFSID(agentID, fallbackSeed)` 是唯一铸造点**：UUIDv5
+     （固定 namespace + `\0` + seed 的 SHA-1 前 16 字节，不引 `google/uuid`）。
+     确定性是关键 —— seed 优先取 `agent_id`，于是同一轮的 live 与 import 两侧
+     **铸出同一个 id**，导入侧不再需要伪造 `turn_seq` 去对齐。
+     `agent_id` 为空时退到 `sessionKey|role|seq`，两样都为空则返回空字符串
+     （调用方的 `MindFSID == "" && AgentID == ""` 守卫兜住）。
+  3. **`NativeTurn` / `NativePrompt` / `NativeID` 三个字段合并成一个 `AgentID`**：
+     它们本来就是「agent 侧回查键」这一个概念，拆三个只会让判重口径分叉 ——
+     claude 写左边那个、ACP 写右边那个，同一件事两套写法，改判重顺序时要同时记得
+     两处。合并后 `IsMindFSIDShape` 也是唯一形状判据。
+  4. **改名必须留读路径**：`Exchange.UnmarshalJSON` 与 `Block.UnmarshalJSON`
+     各有一个 alias 结构体，把 `turn_id` / `native_turn` / `native_prompt` /
+     `native_id` 四个旧键映射到新字段，同名字段优先。鍵名一旦写进盘（320 个会话、
+     3595 行），改名不留读路径就等于把它们全部读成「没有身份」。
+     用 alias 结构体而不是 `json.RawMessage` 散布各字段：一处读完、一处映射。
+  5. **claude 侧补上 `MessageID`**：`subagentMeta.MessageID = msg.UUID`，
+     `emitMessageChunkWithMeta` 把它带进 `types.MessageChunk`。这是「两侧能对上」
+     的另一半 —— 只有导入侧有 id，确定性铸造也无从对齐。
+  6. **待亮灯身份的 seed 与落盘那一行同源**：`SetPendingUserAt` 改成收 `userExchangeSeq`
+     并拼 `sessionKey|user|%08d`。这不是「顺手统一」，是蓝灯能不能灭的问题。
+  7. **`IsTurnIDShape` → `IsMindFSIDShape`**：名字跟着字段走，
+     避免「Shape 判的是 turn 还是 MindFS id」这种再次分叉。
+
+- 针对性测试：
+  - `server/internal/session/manager_rename_compat_test.go` +
+    `rename_compat_helpers_test.go` → **钉住兼容层**：旧键 `turn_id`/`native_turn`/
+    `native_prompt`/`native_id` 能读进新字段、**同名字段出现时新键赢**、
+    Block 走同一条规则。这是本组唯一新增的测试文件 —— 改名类改动的全部风险都在这里，
+    而它是纯读路径，不加测试就没人知道存量会话读出来是什么。
+  - `server/internal/session/manager_identity_fields_test.go` / `manager_native_identity_test.go`
+    → 身份字段的读写与清理（`ClearNativeIdentity` 现在清 `agent_id`）。
+  - `server/internal/api/usecase/session_identity_dedup_test.go` → 判重两层顺序
+    （先 `agent_id` 后 `mindfs_id`、都没有才退回内容），以及用户/agent 两侧
+    各自带自己的 id（`liveUserCtx` / `liveAgentCtx` 分开）。
+  - `server/internal/api/stream_hub_turn_identity_test.go` → 待亮灯身份 = 落盘那一行
+    的 `mindfs_id`（改了 seed 就会红）。
+  - `server/internal/agent/acp/importer_identity_test.go` → 导入行也带 `agent_id`。
+  - `web/src/services/session.ts` 的 `SessionBlock` 同步改名为
+    `mindfs_id` / `agent_id`（`tsc --noEmit` 兜住）。
+
+- **注意事项（合上游时）**：`req.TurnID`（codex SDK 的 `AskUserRequest` 字段）
+  与 `ImportedExchange.NativeID` **不是**我们改名的那两个 id，别跟着一起改 ——
+  前者是外部 SDK 的字段，后者是导入器的另一种表示。这两处各已踩过一次。
