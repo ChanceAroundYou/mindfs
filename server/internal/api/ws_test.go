@@ -2,16 +2,12 @@ package api
 
 import (
 	"context"
-	"net/http"
-	"net/http/httptest"
-	"net/url"
 	"strings"
 	"testing"
 	"time"
 
 	"mindfs/server/internal/agent"
 	agenttypes "mindfs/server/internal/agent/types"
-	"mindfs/server/internal/e2ee"
 	"mindfs/server/internal/session"
 
 	"github.com/gorilla/websocket"
@@ -45,7 +41,7 @@ func TestParseClientContext(t *testing.T) {
 }
 
 func TestRegisterClientSupersedesPreviousConnection(t *testing.T) {
-	hub := NewStreamHub(nil)
+	hub := NewStreamHub()
 	first := &websocket.Conn{}
 	second := &websocket.Conn{}
 
@@ -75,7 +71,7 @@ func TestRegisterClientSupersedesPreviousConnection(t *testing.T) {
 }
 
 func TestAppendReplyEventPrefixesTruncatedSummary(t *testing.T) {
-	hub := NewStreamHub(nil)
+	hub := NewStreamHub()
 
 	hub.AppendReplyEvent("sess-1", StreamEvent{
 		Type: "message_chunk",
@@ -92,7 +88,7 @@ func TestAppendReplyEventPrefixesTruncatedSummary(t *testing.T) {
 }
 
 func TestAppendReplyEventResetsSummaryAfterAuxiliaryEvent(t *testing.T) {
-	hub := NewStreamHub(nil)
+	hub := NewStreamHub()
 
 	hub.AppendReplyEvent("sess-1", StreamEvent{
 		Type: string(agenttypes.EventTypeMessageChunk),
@@ -114,7 +110,7 @@ func TestAppendReplyEventResetsSummaryAfterAuxiliaryEvent(t *testing.T) {
 }
 
 func TestAppendReplyEventBuildsCompositeCursor(t *testing.T) {
-	hub := NewStreamHub(nil)
+	hub := NewStreamHub()
 	hub.SetPendingUserAt("root", "sess-1", "title", "codex", "", "", "", "", "", false, "prompt", time.Now(), 8)
 
 	first := hub.AppendReplyEvent("sess-1", StreamEvent{
@@ -132,7 +128,7 @@ func TestAppendReplyEventBuildsCompositeCursor(t *testing.T) {
 }
 
 func TestReplayPendingStartsAfterCompositeCursor(t *testing.T) {
-	hub := NewStreamHub(nil)
+	hub := NewStreamHub()
 	hub.SetPendingUserAt("root", "sess-1", "title", "codex", "", "", "", "", "", false, "prompt", time.Now(), 8)
 	hub.AppendReplyEvent("sess-1", StreamEvent{Type: string(agenttypes.EventTypeMessageChunk), Data: agenttypes.MessageChunk{Content: "first"}})
 	hub.AppendReplyEvent("sess-1", StreamEvent{Type: string(agenttypes.EventTypeMessageChunk), Data: agenttypes.MessageChunk{Content: "second"}})
@@ -149,7 +145,7 @@ func TestReplayPendingStartsAfterCompositeCursor(t *testing.T) {
 }
 
 func TestCoalescedToolStreamAdvancesCursor(t *testing.T) {
-	hub := NewStreamHub(nil)
+	hub := NewStreamHub()
 	hub.SetPendingUserAt("root", "sess-1", "title", "", "", "", "", "", "", false, "command", time.Now(), 4)
 	toolUpdate := func(text string) StreamEvent {
 		return StreamEvent{
@@ -265,7 +261,7 @@ func TestTurnUpdateTrackerWaitIdleTimesOutWhenUpdateNeverEnds(t *testing.T) {
 }
 
 func TestStreamHubFrozenQueueBlocksAutomaticPopUntilUnfrozen(t *testing.T) {
-	hub := NewStreamHub(nil)
+	hub := NewStreamHub()
 	rootID := "root"
 	sessionKey := "session"
 
@@ -318,7 +314,7 @@ func TestStreamHubFrozenQueueBlocksAutomaticPopUntilUnfrozen(t *testing.T) {
 }
 
 func TestStreamHubUnfreezeQueueAllowsAutomaticPop(t *testing.T) {
-	hub := NewStreamHub(nil)
+	hub := NewStreamHub()
 	sessionKey := "session"
 	hub.EnqueueSessionMessage("root", sessionKey, "Session", QueuedUserMessage{
 		ID: "first",
@@ -352,10 +348,10 @@ func TestStreamHubUnfreezeQueueAllowsAutomaticPop(t *testing.T) {
 }
 
 func TestStreamHubSetPendingUserAtUsesProvidedTimestamp(t *testing.T) {
-	hub := NewStreamHub(nil)
+	hub := NewStreamHub()
 	want := time.Date(2026, 7, 29, 10, 0, 0, int(456*time.Millisecond), time.UTC)
 
-	pending := hub.SetPendingUserAt("root", "session", "Session", "codex", "gpt-test", "", "", "", "", false, "hello", want)
+	pending, _ := hub.SetPendingUserAt("root", "session", "Session", "codex", "gpt-test", "", "", "", "", false, "hello", want)
 
 	if pending == nil {
 		t.Fatal("SetPendingUserAt returned nil")
@@ -380,51 +376,6 @@ func TestReserveClientRequestKeepsOriginalTimestamp(t *testing.T) {
 	}
 	if !secondTimestamp.Equal(firstTimestamp) {
 		t.Fatalf("duplicate timestamp = %s, want %s", secondTimestamp.Format(time.RFC3339Nano), firstTimestamp.Format(time.RFC3339Nano))
-	}
-}
-
-func TestRequireWSProofAcceptsValidProof(t *testing.T) {
-	clientID := "web-test"
-	key := []byte("0123456789abcdef0123456789abcdef")
-	manager := e2ee.NewManager(e2ee.Config{
-		Enabled:       true,
-		NodeID:        "node",
-		PairingSecret: "secret",
-	})
-	if _, err := manager.OpenSessionForClient(clientID, e2ee.DerivedKey{Transport: key}); err != nil {
-		t.Fatalf("OpenSessionForClient: %v", err)
-	}
-	handler := &WSHandler{AppContext: &AppContext{E2EE: manager}}
-	ts := time.Now().UTC().Format(time.RFC3339)
-	proofPath := "/ws?client_id=" + url.QueryEscape(clientID)
-	proof := e2ee.BuildRequestProof(key, http.MethodGet, proofPath, ts, clientID)
-	req := httptest.NewRequest(http.MethodGet, proofPath+"&"+wsTSQuery+"="+url.QueryEscape(ts)+"&"+wsProofQuery+"="+url.QueryEscape(proof), nil)
-
-	if err := handler.requireWSProof(req, clientID); err != nil {
-		t.Fatalf("requireWSProof() error = %v", err)
-	}
-}
-
-func TestRequireWSProofRejectsMissingProofWhenE2EEEnabled(t *testing.T) {
-	clientID := "web-test"
-	manager := e2ee.NewManager(e2ee.Config{
-		Enabled:       true,
-		NodeID:        "node",
-		PairingSecret: "secret",
-	})
-	handler := &WSHandler{AppContext: &AppContext{E2EE: manager}}
-	req := httptest.NewRequest(http.MethodGet, "/ws?client_id="+url.QueryEscape(clientID), nil)
-
-	if err := handler.requireWSProof(req, clientID); err == nil {
-		t.Fatal("expected missing proof to be rejected")
-	}
-}
-
-func TestWSProofPathExcludesProofQueryParams(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/ws?client_id=web-test&e2ee_ts=now&e2ee_proof=proof", nil)
-
-	if got, want := wsProofPath(req), "/ws?client_id=web-test"; got != want {
-		t.Fatalf("wsProofPath() = %q, want %q", got, want)
 	}
 }
 
@@ -506,17 +457,48 @@ func TestDoneCarriesNoReplayReceipt(t *testing.T) {
 	}
 }
 
+// 重放必须保留服务端事件时间戳。
+//
+// 手机切后台再恢复时客户端走的是**重放**路径（不是 live），而 AppendReplyEvent 存进
+// ReplyingList 的是 cloneEvent(event)。cloneEvent 若只搬 Type/Data/EventCursor，
+// 时间戳就丢了：重放事件只能回退到「恢复页面的接收时刻」，回复时长把整段后台时间算进去。
+// live 路径不经 cloneEvent（BroadcastSessionStream 直接发 AppendReplyEvent 的返回值），
+// 所以只有重放会错 —— 这正是「时长只在手机恢复后不对」的形态。
+func TestReplayPreservesEventTimestamp(t *testing.T) {
+	hub := NewStreamHub()
+	hub.SetPendingUserAt("root", "sess-1", "title", "codex", "", "", "", "", "", false, "prompt", time.Now(), 8)
+	stored := hub.AppendReplyEvent("sess-1", StreamEvent{
+		Type: string(agenttypes.EventTypeMessageChunk),
+		Data: agenttypes.MessageChunk{Content: "answer"},
+	})
+	if stored.Timestamp.IsZero() {
+		t.Fatal("AppendReplyEvent 必须给事件盖上服务端时间戳")
+	}
+
+	hub.mu.Lock()
+	hub.replayStates[pendingClientKey("client", "sess-1")] = &ClientReplayState{Status: ClientStreamStatusReplay}
+	hub.mu.Unlock()
+
+	step := hub.collectReplayStep("client", "sess-1")
+	if len(step.events) != 1 {
+		t.Fatalf("replay events = %d; want 1", len(step.events))
+	}
+	if got := step.events[0].Timestamp; !got.Equal(stored.Timestamp) {
+		t.Fatalf("重放事件时间戳 = %v; want %v（cloneEvent 丢了时间戳 → 客户端只能回退到恢复时刻）", got, stored.Timestamp)
+	}
+}
+
 // 回合清空之后重新挂上来的客户端拿到的是**空快照**（一条 events 为空的 reset 帧），
 // 不是上一轮的尾巴 —— 客户端据此清瞬时尾巴，且不会因此再触发一轮。
 func TestReplayAfterClearYieldsEmptySnapshot(t *testing.T) {
-	hub := NewStreamHub(nil)
-	hub.SetPendingUserAt("root", "sess-1", "title", "codex", "", "", "", "", "", false, "prompt", time.Now(), 8)
+	hub := NewStreamHub()
+	_, turnGen := hub.SetPendingUserAt("root", "sess-1", "title", "codex", "", "", "", "", "", false, "prompt", time.Now(), 8)
 	hub.AppendReplyEvent("sess-1", StreamEvent{
 		Type: string(agenttypes.EventTypeMessageChunk),
 		Data: agenttypes.MessageChunk{Content: "answer"},
 	})
-	// AppContext.BroadcastSessionDone 在广播 done 之前做的事。
-	hub.ClearSessionPending("sess-1")
+	// AppContext.EndSessionTurn 在广播 done 之前做的事。
+	hub.ClearSessionPending("sess-1", turnGen)
 
 	step := hub.collectReplayStep("client", "sess-1")
 	if len(step.events) != 0 {

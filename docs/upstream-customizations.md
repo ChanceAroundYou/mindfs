@@ -16,9 +16,18 @@
 > 分组原则: **按 hunk 归类**——同一提交、同一文件不同行可归不同组；每行改动仅属一组，组间互斥、全体完备。
 > 判定: `git show --numstat/--stat` 逐提交核验 + 逐 hunk 归类，`git cherry -v` 校验上游等价。
 
----
+### G-BD. 移动端恢复后的 pending 对账与服务端事件时间
 
-## 0-B. v0.5.5 合并记录（2026-09-30）
+- **可见症状**：手机切到后台导致 WebSocket 断开并丢失 `session.done` 后，回复灯可能一直亮到下次偶然刷新；页面恢复后回复时长会把恢复时刻当成服务端事件时刻，显示出虚假的长耗时。
+- **根因与边界**：页面恢复必须主动触发 `/api/replying-sessions` 对账；流事件的时间由服务端写入，客户端 replay 优先使用该时间，旧事件才回退到接收时刻。多节点分组以分组自身 `_nodeId` 构造 pending key，避免同名项目跨节点串灯。
+  **重放路径必须经 `cloneEvent` 保留 `Timestamp`** —— 手机恢复走的是重放而不是 live，漏掉它客户端只能回退到「恢复页面的接收时刻」。服务端 `time.Time` 零值会序列化成 `0001-01-01T00:00:00Z`（struct 的 `omitempty` 不生效），客户端必须把这类哨兵当成「没有时间戳」，否则时长显示成天文数字。
+- **针对性测试**：
+  - `web/tests/pending-recovery-on-resume.test.mjs` → `visibilitychange`/`pageshow` 恢复时触发 pending reconciliation。
+  - `web/tests/cross-node-replying-state.test.mjs` → 同名项目使用实际节点作用域投影，失败节点保留旧状态。
+  - `web/tests/session-duration.test.mjs` → replay 使用服务端事件时间、零值哨兵回退，不用恢复页面接收时间。
+  - `server/internal/api/ws_test.go` 的 `TestReplayPreservesEventTimestamp` → 重放事件保留服务端时间戳（`cloneEvent` 不得丢字段）。
+
+
 
 - **Merge commit `976a5d0`**（双 parent：上游 `9ab9572` × 本地 `bb4244d`），merge-base `v0.5.2`(`7757ca8`) → **`bb4244d`**。
   上游 25 commits / 125 files，本地 311 commits / 304 files，重叠 39 files；合并相对本地 +5400 / −488（95 files）。
@@ -158,15 +167,15 @@
 | G-AM | 插件注册表与视图目录 | 功能 | 见 §3.1 | 主视图记忆依赖它 |
 | G-AN | 列表投影瘦身与条件请求（ETag / 304） | 性能 | 见 §3.1 | 列表响应省略恒空键 + ETag/304；客户端先判 304 再判 `ok` |
 | G-AO | 自动重载观测 | 架构 | 见 §3.1 | 只记录不干预：`sessionStorage` 计数 + 堆峰值 + 本轮首错 |
-| G-AP | worktree 收尾按钮重做（四分支分流 + 幂等 + 真实状态） | 修复 | 见 §3.1 | 收尾键一直可点；目录消失 = 已收尾 |
+| G-AP | worktree 收尾按钮重做（**机械优先** + 四分支分流 + 幂等 + 真实状态） | 修复 | 见 §3.1 | 收尾键一直可点；目录消失 = 已收尾；拆完目录整个删 + 附件先搬 |
 | G-AQ | 任务卡的三把键：完成兜底 / 取消 / 删除 | 功能 | 见 §3.1 | 待审核必有出路；取消只改状态；删除只删卡片 |
 | G-AR | 移动端侧栏切换按钮移入中间主栏共用 header | 修复 | 见 §3.1 | 按钮插在中间主栏 36px header 两侧（不额外占行），仅移动端；侧栏自身不显示 |
 | G-AS | ACP 提问（dsh `ask_user_question` 走 elicitation） | 修复 | 见 §3.1 | 只对 dsh 广告 elicitation.form；题目 id+文本关联；答案编码成 `question_<i>` |
 | G-AT | 会话打开性能（窗口去重 / 载荷压缩 / 工具卡分组） | 性能 | 见 §3.1 | 会话打开热路径：取窗去重 + 窗口轻压缩 + 窗口 8 + 工具卡分组 + related-files 去抖 |
 | G-AU | 会话拉取风暴与渲染主线程阻塞 | 修复 | 见 §3.1 | 加载 effect 只依赖身份不依赖快照对象；失败留痕且 404 是终点；`sessionCacheRef` 有上限；渲染无 O(n²)、滚动有节流 |
-| G-AX | relay 绑定轮询测试的两条同步竞态 | 修复 | 见 §3.1 | 状态落地晚于 channel 发送；`requests` 必须无缓冲 |
-| G-AY | 抽屉 pending 对账（done 丢失时停止符号/「正在思考」卡住） | 修复 | 见 §3.1 | 抽屉/选中/缓存的 pending 只由 WS `session.done` 清；断连/重绑丢了就永久卡住。列表蓝灯每 5s 从 `/api/replying-sessions` 对账，这三处没有 |
-| G-AZ | 任务卡视觉件（待审核徽标/列框去除/浮动滚动条/工作台角标移除） | 视觉 | 见 §3.1 | 待审核列补状态文字（与工作台同路径）；列框+padding 去除卡片加宽 6px；FloatingScroll 浮动滚动条不占宽；工作台「需要你 N」角标移除 |
+| G-AY | pending 纯派生（done 丢失时停止符号/「正在思考」卡住） | 修复 | 见 §3.1 | 原先「在不在回复」在前端有五份投影，只有列表蓝灯那份每 5s 对账；其余四份只有 WS `session.done` 一个出口，断连/重绑竞态丢了那条事件就**永久卡在 true**。2026-10-07 改成纯派生：唯一真相 `multiProjectPendingByKey`，会话对象上不再存 pending |
+| G-AZ | 任务卡视觉件（待审核徽标/列框去除/浮动滚动条/工作台角标移除） | 视觉 | 见 §3.1 | 待审核列补状态文字（与工作台同路径）；列框去除+padding 归零卡片加宽 18px；FloatingScroll 浮动滚动条不占宽；工作台「需要你 N」角标移除 |
+| G-BB | 看板列头灰底 + 间距对齐工作台（列头背景/列表 padding/外层 padding） | 视觉 | 见 §3.1 | 列头灰底区分栏目标签与卡片；列表 padding 归零卡片加宽 12px；外层 padding 6px 8px 对齐工作台容器 |
 
 > **G-D 已并入 G-F，G-M 已并入 G-AI**（改动面完全重合、无独立测试可守，单列只会制造空组）。
 
@@ -191,6 +200,7 @@
 | `5600d4e` | `release-notes.md` | 发布说明 |
 | `c6fba4e` | `docs/superpowers/plans/2026-08-21-node-colors-project-header-workspace-preferences.md` + `specs/...design.md` | 节点主题色方案沉淀 |
 | `13365dc/4af6f89/0be192c` | `docs/superpowers/specs/2026-08-22-session-lock-and-draggable-chat-sheet-design.md` + `plans/...sheet.md` | 锁定与浮层设计/计划 |
+| `05726f4` | `docs/message-mechanisms.md`、`docs/message-mechanisms-plan.md` | 消息收发/渲染机制的清点与整合分析（112 个机制、14 条冲突、ADR、7 阶段计划）。plan 文档是 G-T 线在 `2328f0e` 上的冻结版，开头带「与 main 的对照」表说明**其代码未被采用**（canonical adapter / FIFO writer 留在 `canonical-turn-wip` 分支）—— 读它时那些「已完成」只指 G-T 分支内部 |
 
 ### G-B HTTP 语义修正
 
@@ -249,15 +259,59 @@
 |------|----------|------|
 | `df732af` | `web/src/components/RelayLocalServicesDialog.tsx`(删)、`web/src/services/relayServices.ts/tokenStation.ts/launcherNodeSync.ts/nativeBridge.ts`、`web/src/App.tsx/FileTree.tsx/Login.tsx/base.ts/bootstrap.ts/i18n` | 移除公网访问/Relay 对话框/Token 加油站三件套 |
 | `20f2b90` | `.gitignore` | `CLAUDE.md` 忽略（配置类，不影响运行时，单列但归本组） |
+| 2026-10-08 | **删包** `server/internal/relay/`（8 文件）、`server/internal/e2ee/`（4 文件）；**删路由** `server/internal/api/http_relay_services.go`、`http_token_station.go`、`http_local_cli_relay_test.go`；**删前端** `web/src/services/e2ee.ts`、`RelayLocalServicesDialog.tsx`、`SessionQuickActions.tsx`、`relayServices.ts`、`tokenStation.ts`；**清接线** `server/internal/api/http.go`(-549)、`ws.go`(-73)、`appcontext.go`、`agent/config.go`、`nodeinfo/role.go`（去掉 `/api/relay`、`/api/e2ee` 两条前缀）、`cli/cmd/mindfs.go`(-193)、`server/app/server.go`(-148)、`web/src/services/net/{bootstrap,api}.ts`、`session.ts` | **彻底删除 relay 隧道与 e2ee**（用户 2026-10-08 明确要求）：不是「关掉开关」而是「不存在」—— 删包、删路由、删所有前端入口与调用点、删 e2ee proof/解密与 `e2ee_*` 头 |
+| 2026-10-09 | `server/internal/update/service.go`(-23)、`server/internal/update/service_test.go`、`web/src/services/appUpdate.ts`、`web/src/i18n/locales/{zh-CN,en-US}.ts`、`web/tests/upstream-removals.test.mjs` | **断掉上游 relay 域名依赖 + 清死文案键**（用户 2026-10-09 拍板「一起砍掉」）：删 `relayDownloadBase`/`relayAssetURL` 与下载回退（`downloadReleaseAsset` 只认 GitHub 给的 asset 地址）；前端删 `DEFAULT_ANDROID/HARMONY_VERSION_URL`、`RelayVersionResponse` 改名 `AppVersionResponse`，版本检查地址缺省为空（只由 `VITE_*_VERSION_URL` 显式提供，未配置即按「无更新信息」返回、不拿空 URL 去 fetch）；删两个已无代码引用的死键 `fileTree.relayLocalServices` |
+| 2026-10-09（二） | `internal/deploy/prefix.go`、`internal/deploy/prefix_test.go`、`server/internal/api/prefix.go`、`server/internal/api/http_test.go`、`web/src/services/net/prefix.ts`、`web/src/main.tsx`、`web/vite.config.ts`、`web/tests/deploy-prefix.test.mjs` | **删掉 relay 时代的资源别名前缀**（用户拍板「现在砍掉」）：服务端 `deploy.RelayAssetsAlias()`、`StripDeployPrefix` 里的 `/<前缀>-assets/` → `/assets/` 映射分支；前端 `RELAY_ASSETS_PREFIX` 导出与 `main.tsx` 的资源判定分支；`vite.config.ts` 里注入 SW 的 `RELAY_ALIAS`、fetch 时对它的跳过分支、`mainAssetReSource` 里的别名备选，以及 SW 里把 relay 的 `/n/<token>/` 路径归一化掉的 `normalizedPathname`。**判据**：产生这些 URL 的两处（服务端 relayed 绝对化改写、relay 的 `/n/<token>/` 路径方案）已随 2026-10-08 那批删除，构建产物里恒为 `<部署前缀>/assets/index-*`；**留一半比全留更糟**——服务端删了、SW 还认，排查者会以为别名仍受支持 |
+| 2026-10-09（三） | `harmony/entry/src/main/ets/pages/Index.ets`（纯删除 237 行） | **删掉 Harmony 原生壳里的 relay 分支**（用户拍板「纯删除」）：6 处「当前页面是不是上游 relay 页面」的判定（`shouldSyncRelayNodes`／`shouldPatchRelayNodeShell`（本就无人调用）／`shouldPatchRelayListSafeArea`／`replyPollerBaseUrlFromPageUrl` 的 `/n/<token>/` 分支）＋它们驱动的注入脚本（relay `/nodes` 抓节点列表的 `injectRelayNodeSync`、列表安全区补丁 `injectRelayListSafeArea`、启动器里藏「mindfs relayer」按钮的 `injectLauncherRelayEntryVisibility`）＋ `MindFSLauncherNodeSync` 这条 JS 桥（注册／反注册／页面构建三处）。**判据**：这些判定不发起任何外连，只在处于 relay 页面时才生效，属被动死分支；而服务它们的 web 半边 `web/src/services/launcherNodeSync.ts` 已随 2026-10-08 那批删除。**注意**：本仓库没有 ArkTS 构建环境，改动**无法编译验证**，只留了文本级复活检测 |
 
-### G-I 安全模型重塑
+- 保留判据：**用户明确要求完整删除，没有「保留一部分」的中间态**。
+  合上游时上游会把它们给回来，每次都要重新删一遍 —— 删漏就会留下「点了报错」的残缺入口，
+  或让 `nodeinfo` 的控制面前缀表多出 `/api/relay`、`/api/e2ee` 两条永远没有 handler 的死路径。
+- 本组同时**吸收**了原 `G-AX`（relay 绑定轮询测试的两条同步竞态，2026-10-07）：
+  那两条修复住在 `server/internal/relay/service_test.go` 里，包已删，条目随之退役。
+- 针对性测试：`web/tests/upstream-removals.test.mjs` —— 钉住「被删文件不复活」+
+  「没有悬空 import 指回已删模块」+「`appUpdate.ts`／`update/service.go` 里不得再出现
+  上游 relay 域名」+「两个 i18n 里不得再有 `fileTree.relayLocalServices` 死键」；
+  `server/internal/update/service_test.go:TestDownloadReleaseAssetDoesNotFallBackToRelay`
+  —— 下载失败只允许请求主地址一次、错误里不得出现 relay。
+  **两条都已做变异验证**：把下载回退注入回去、把死键灌回 zh-CN，分别变红。
+  第二批（资源别名）同样进了 `upstream-removals.test.mjs`：`internal/deploy/prefix.go`、
+  `server/internal/api/prefix.go`、`web/src/services/net/prefix.ts`、`web/src/main.tsx`、
+  `web/vite.config.ts`、`web/index.html` 里不得再出现 `RelayAssetsAlias`／`RELAY_ASSETS_PREFIX`／
+  `RELAY_ALIAS`／`MINDFS_MAIN_ASSET_RE`／`isRelayNodePage`；
+  `deploy-prefix.test.mjs` 的断言从「别名必须存在」翻成「别名与主包兜底都不得存在」。
+  第三批（Harmony 壳）只有**文本级**复活检测（`harmony/.../Index.ets` 里不得再出现
+  `relay.a9gent.com` 与 `MindFSLauncherNodeSync`）—— 本仓库没有 ArkTS 构建环境，
+  native 侧改动无法编译验证，这一点必须在下一次真跑 Harmony 构建时人工确认。
+- **仍在引用上游 relay 域名的位置（2026-10-09 盘点，尚未处理）**：`scripts/install.sh`、
+  `scripts/install.ps1`（一键安装脚本从这里取二进制）、
+  `README.md`/`README.zh.md`（文档里的安装地址）。这几处的取舍各不相同
+  （安装脚本没有替代下载源就不能直接删；README 只是文案），等用户逐个定夺；
+  先在此留痕，免得下次盘点又从头找一遍。
+  （原表里的 `harmony/.../Index.ets` 已于 2026-10-09（三）处理，故从此表移除。）
+- **Harmony 侧尚未处理的相邻死代码（2026-10-09 盘点）**：`nativeBridgeMethodList()` 里的
+  `consumeRelayNodes`／`getLauncherNodes`／`setLauncherNodes`／`storeRelayNodes`，以及
+  `hydrateLauncherNodesFromNative`／`injectLauncherNodesFromNative` —— 它们是「启动器
+  从 native 取节点列表」那套东西的 native 半边，web 半边
+  `web/src/services/launcherNodeSync.ts` 已随 2026-10-08 删除。**没有一并删**是因为它属于
+  「删一整个功能」而不是「删 relay 判定」，且同样无法编译验证；等真跑一次 Harmony 构建
+  时一起处理，避免在无法验证的 native 代码上叠两次改动。
+
+### G-I 安全模型重塑（API 层不鉴权 / CORS 全开放）
 
 | 来源与 hunk | 文件 | 说明 |
 |-------------|------|------|
-| `c7c2c45:http.go#protectedEndpoint` | `server/internal/api/http.go:protectedEndpoint` | 直通（`ponytail: 鉴权/e2ee 已移除`），删 e2ee 解密/Proof 校验 |
-| `c7c2c45:http.go#corsMiddleware` | 同文件 `corsMiddleware+Routes.Use` | `*` + `OPTIONS 204` 全开放 |
-| `c7c2c45` | `web/src/services/e2ee.ts`、`storage.ts`、`connection.ts`、`api.ts`、`bootstrap.ts` | `e2ee.ts` 659→39 行 stub、去 token、`api.ts` 无鉴权 `fetchJSON`、`bootstrap` 直通 `ready` |
-| `2d814b2` | `web/src/services/bootstrap.ts/e2ee.ts` | stub 保留 `e2ee` 字段/方法兼容，防旧订阅 `undefined` 白屏 |
+| `c7c2c45:http.go#protectedEndpoint` | `server/internal/api/http.go` | 直通（`ponytail: 鉴权已移除`）—— 上游的 token / e2ee proof 中间件不再包裹 `/api/*` |
+| `c7c2c45:http.go#corsMiddleware` | 同文件 `corsMiddleware+Routes.Use` | 默认 `open`：原样回显 Origin + `OPTIONS 204` 全开放 |
+| `c7c2c45` | `web/src/services/connection.ts`、`storage.ts`、`net/api.ts`、`net/authGate.ts`、`net/bootstrap.ts` | 去 token、`api.ts` 无鉴权 `fetchJSON`、`bootstrap` 直通 `ready` |
+| 2026-10-08 | 删 `web/src/services/e2ee.ts`、`server/internal/e2ee/` | e2ee 那半边改由 **G-H** 整体删除承担；本组只剩「不鉴权 + CORS 开放」这条**策略** |
+
+- 保留判据：**「API 层不做鉴权」是用户明确决策**（多账户 = 多配置档，不是安全边界，CLAUDE.md 事实 12）。
+  上游把 token 校验或 CORS 白名单合回来 → 所有前端请求 401 / 被浏览器挡下，
+  症状是「页面能开、列表全空」。
+- 针对性测试：`server/internal/api/http_open_api_test.go` —— 无凭证 `GET /api/dirs` 必须 200；
+  `OPTIONS` 必须 204 且原样回显 Origin。**已做变异验证**：把 `handleDirs` 改成返回 401、
+  把 `corsMiddleware` 的 `shouldEmit` 关掉，两条断言分别变红。
 
 > 与 G-J 的 `runtime.ts/nodeRegistry.ts` 同提交但 hunk 互斥：鉴权相关归本组，路由/聚合归 G-J。
 
@@ -277,6 +331,7 @@
 | `ecb2ad8` | `internal/deploy/prefix.go`、`server/internal/api/prefix.go`、`server/internal/nodes/store.go`、`server/internal/api/http_nodes.go`、`web/src/services/prefix.ts/nodeBase.ts` | 前缀规范化单一事实源（后/前各一）、`nodes/store` 聚合、`http_nodes` 反代、`nodeBase.normalize` |
 | `306f588` | `Makefile`、`cli/cmd/mindfs.go`、`scripts/build-all.sh`、`server/internal/api/appcontext.go/http.go/ws.go`、`server/internal/relay/service.go` | 构建与 CLI 前缀收敛、`ws` 透传、`relay` 前缀 |
 | `e92fecf` | `web/index.html`、`web/vite.config.ts:base/scope`、`web/src/services/base.ts/runtime.ts` | Vite `base=/mindfs/`、HTML 基路径、前后端基路径收敛、`web/tests/deploy-prefix/node-url-normalize` |
+| 2026-10-09 | `internal/deploy/prefix.go:RelayAssetsAlias`(删)、`server/internal/api/prefix.go`(别名分支删)、`web/src/services/net/prefix.ts:RELAY_ASSETS_PREFIX`(删)、`web/src/main.tsx`、`web/vite.config.ts:RELAY_ALIAS` + SW `/n/<token>/` 归一化(删) | 本组原先还带一条 **relay 专用**的旁支：为了让 relay 改写过的 `/<前缀>-assets/` bundle 仍能取到，前后端各留了一个别名。产生者已随 G-H 删除，这条旁支于同日整体砍掉（详见 G-H 的 2026-10-09（二）行）—— 本组现在只剩「部署前缀本身」这一件事，`web/tests/deploy-prefix.test.mjs` 的断言也翻成了「别名必须不存在」 |
 
 ### G-L 视觉与主题体系
 
@@ -463,6 +518,15 @@
   `api.ScopedRouter` 按 `user=` 派发到每账户一份 `AppContext` 实现，**211 处 `h.AppContext` 一处都没改**。
   `StreamHub` 必须每账户独立；`MetaDir()` 分账户、`SharedMetaDir()` 不分（上传与批注按注册表记的
   `MetaLocation` 算、不看账户）。前端 `user=` 只在 `services/base.ts` 注入（三处唯一汇聚点）。
+- **空工作区的写操作必须无副作用（2026-10-09）**：可见症状是**加项目报「这个账户在本机没有数据」，
+  但项目却出现在列表里**（点进去什么都没有）。根因：`fs/registry.go` 的 `Upsert/Remove/UpdateDisplayName`
+  都是「先改内存、再 `saveLocked()`」，落盘失败不回滚 ⇒ 失败的写入留在列表里成为幽灵条目。
+  只读空工作区（`path==""`）是这条路径的高频场景：陌生 `user=`（如浏览器里过期的账户 id）
+  拿到只读空工作区，加项目必然 400，而每次 400 都在内存里留下一笔。`Rename` 一直有回滚，
+  现统一走 `snapshotLocked()`。必须保留的理由：这是「本机没有这个账户」这一语义**唯一**可信的地方 ——
+  错误提示说没数据、列表却显示有，用户无法判断哪个是真的。
+  针对性测试：`server/internal/fs/registry_rollback_test.go`（三个方法各一条：落盘失败后
+  upsert 不留幽灵条目 / remove 不误删 / display_name 回滚）。
 
 ### G-V 控制面 / 数据面分离（control / worker 角色）
 
@@ -614,8 +678,23 @@
 
 - 来源：`scripts/deploy-all.sh`、`scripts/{build-all,install,migrate-control-plane-to-primary}.sh`、
   `Makefile`、`.claude/skills/{ship,upstream-merge}`。
-- 边界：`ship` 一条命令完成门禁→提交推送→两侧编译安装→WSL 重建重启→两端对账。
+- 边界：`ship` 一条命令完成门禁→提交推送→本机编译安装→推送产物到 WSL→WSL 重启→对账。
   `73db73e` 修的是「不再整目录删除 web 哈希资源」。合上游后 `Makefile` 的本地 target 要保住。
+  **WSL 是纯 worker，只收二进制与两个 json，不收 `web/dist`**（2026-10-07）：worker 按设计不服务
+  静态资源（`GET /` 403），前端只装本机；曾推的那份是留给「角色翻成 control」的保险，已不成立。
+- 可见症状（没有它会怎样）：
+  - **改了根级文档跑完 ship 却没被提交**：`git add -A --` 的路径是**白名单**，
+    `docs/` 只够得到 `docs/` 目录、够不到仓库根。改了 `CLAUDE.md` 再 `deploy-all.sh -m "..."`，
+    它会被静默留在工作区，版本号因此挂上 `-dirty`（`git describe --dirty`，2026-10-07 实测）。
+    白名单里的 `|| git add -A` 兜底**实际永不触发**：`git add -A -- <存在的路径>` 恒成功。
+  - **部署脚本按上游布局整目录删 web 哈希资源**：会让部署前就打开的页面懒加载 404。
+- 为什么必须保留：白名单是**故意**的（防 `.mindfs/` 运行期数据被卷进提交），
+  所以修法是「把该收的根级文档逐个点名」，不是换成 `git add -A`。
+  根级文档中 `CLAUDE.md` / `README.md` / `README.zh.md` / `release-notes.md` 必须在内；
+  `config.json` **刻意不在**——它会被本机改 `role`/端口，提交等于把本地运行配置推上去。
+- 针对性测试：
+  - `web/tests/deploy-web-assets.test.mjs` — 无 `rm -rf web`、TTL 两处一致、WSL 只收产物不收 `dist`、
+    add 白名单含根级文档且不含 `config.json`。
 
 ### G-AM 插件注册表与视图目录
 
@@ -657,7 +736,7 @@
     **但仍是有界的**，理由见 G-AH。
   - 条目数**管不住内存**，所以另加 `conditionalRequestBytesMax`（6 MB）字节预算：
     一条会话详情就是 1.14 MB，64 条能把标签页撑爆 —— 而标签页崩溃正是这一轮要修的症状。
-    字节数从 `parseProtectedJSONResponseWithSize` 拿（`Content-Length` 拿不到：服务端一次性
+    字节数用**原始文本长度**记账（`Content-Length` 拿不到：服务端一次性
     Write 之后是 chunked，实测端点无此头；两条分支本来就把文本读进来了，量长度是免费的）。
     淘汰**必须同时看条数和字节**，且必须把 ETag 与载荷**一起**删 —— 只删载荷会留下
     「304 但拿不出内容」的悬空条目，正好落进 `conditional cache miss` 分支让调用方白重试一次。
@@ -687,11 +766,15 @@
   （既不能退回无条件 `respondJSON`，也不能被换成 `respondJSONList`），以及客户端
   条目数 + 字节预算两条线、ETag 与载荷同生共死。
   `server/internal/api/http_tasks_overview_test.go` 钉住 `/api/tasks/overview` 投影的**两侧边界**：
-  ③ 段列「必须丢」（`stages` / `aux_flags` / `labels` …），④ 段列「必须留」——
+  ③ 段列「必须丢」（`labels` / `worktree_branch*` / `worktree_root_id` …），④ 段列「必须留」——
   `create_worktree` / `worktree_path` / `worktree_built` / `worktree_missing` 四个 worktree 字段
   必须在响应里且带值（卡片徽标读它们），并断言投影后体积不到全量的一半。
   **只断言「变小了」是不够的**：把投影改成原样下发 `items` 会绿，而把 worktree 字段丢回 ③ 段
   也照样绿 —— 那正是 2026-10-07 那次「工作台所有任务都没有 worktree」。
+  **2026-10-07 第二次修正**：`stages` / `current_stage_status` / `aux_flags` 从「必须丢」
+  挪到了「必须留」（G-BC）。理由与守卫见 G-AN 末尾与 G-BC 开头 —— 那份「必须丢」清单
+  是手抄的，而手抄清单正是漂移的成因。现在另有一条**从消费者源码抽字段**的守卫
+  （`http_tasks_overview_card_parity_test.go`），它不受清单写法影响。
 
 ### G-AO 自动重载观测
 
@@ -710,12 +793,13 @@
 - 针对性测试：`web/tests/reload-observer.test.mjs`（累加与上限、峰值只增不减、
   只记第一条错误且截断、隐私模式不抛、存储垃圾不炸）。
 
-### G-AP worktree 收尾按钮重做（四分支分流 + 幂等 + 真实状态）
+### G-AP worktree 收尾按钮重做（机械优先 + 四分支分流 + 幂等 + 真实状态）
 
-- 来源：`server/internal/kanban/{service,worktree_finish}.go`、`server/internal/gitview/worktree_finish.go`、
+- 来源：`server/internal/kanban/{service,worktree_finish,worktree_finish_stage}.go`、
+  `server/internal/gitview/worktree_finish.go`、
   `server/internal/api/{http_tasks,http_tasks_finish_teardown}.go`、`server/app/workspace.go`、
-  `web/src/components/{TaskCardRows,TaskDetailPanel}.tsx`、`web/src/app/taskIcons.tsx`、
-  `web/src/services/tasks.ts`、`web/src/App.tsx`、`web/src/i18n/locales/{zh-CN,en-US}.ts`。
+  `web/src/components/{TaskCardRows,TaskDetailPanel}.tsx`、`web/src/app/{taskIcons,useRealtimeEvents}.ts(x)`、
+  `web/src/services/{tasks,task/worktree}.ts`、`web/src/App.tsx`、`web/src/i18n/locales/{zh-CN,en-US}.ts`。
 - 边界：收尾按钮的**给法**（只要有没有合并的 worktree 就给）、**点击行为**（四分支分流 + 幂等）、
   **徽标状态**（目录消失 = 已收尾）三件事合为一组 —— 它们共享同一个判据（worktree 的真实状态），
   合上游时要么全留要么全弃。
@@ -732,20 +816,226 @@
   2. **点击行为**：① 会话在回复 → 200 `session_running`（不做事）；② 分支已合进主干 → 当场机械清场；
      ③ 已有收尾段 → 重跑那段（nudge）；④ 其余 → 追加收尾段。四分支皆幂等。
   3. **徽标状态**：目录消失 = 已收尾（金标准）；目录存在 + 收尾段在跑 = 收尾中；目录存在 + 无收尾段 = 已开启。
+- **收尾中的视觉信号是文字，不是动效**（2026-10-07 用户要求）：绿色 worktree 标签在收尾期间文字变
+  「收尾中」（`task.worktreeFinishingLabel`），**不加脉冲动画**；详情面板里原先那条转圈横幅
+  （`TaskDetailPanel` 的 `finishActive` spinner）一并删掉。转圈是「点不动」的旧症状的残留，
+  用户明确要求去掉 —— 按钮全程可点，区分 enabled 与 finishing 的唯一信号就是标签文字本身。
 - **会话运行状态是金标准**（不是 `task.Status`）：任务可以长时间停在 `running` 却早就没 agent 了
   （agent 进程死了、状态没人清），旧判据下那种任务**永远收不了尾**。探针 `sessionRunningProbe`
   由 api 层在装配时挂上（`WireSessionRunningProbe` → `StreamHub.IsSessionReplying`），
   没装配时回落到旧状态判据（行为与改造前逐字一致）。
+- **第二轮：机械优先 + 完整清场**（2026-10-07 用户拍板，见 `docs/upstream-customizations.yaml` 的 G-AP 条目）：
+  收尾是「agent + 机械清场」两个阶段的整合，但很多情况下 agent 那半已经没活可干了。
+  现在先做一次**只读**判定（`PlanFinishWorktree` + `gitview.CanMergeCleanly` 用
+  `git merge-tree --write-tree` 干跑），能机械清场就直接做掉。判据只有两条：
+  worktree 里没有未提交的改动、合并不会冲突。**主 checkout 干不干净刻意不参与判定**
+  （用户：「只要机械合并能成就行」）—— 真不干净时 `MergeBranch` 自己拦下并列出文件，
+  提前拦只会把「主 checkout 有改动」误报成「要跑 agent」，白等一轮问题还在。
+  不能机械清场时（有未提交的活 / 合并会冲突）才走 agent，且把 `reason` + `files` 回给前端。
+  **拆目录前必须搬附件**（`MigrateWorktreeUploads`，只搬 `.mindfs/upload/`，主 checkout
+  已有同名文件时不覆盖 —— 那份是权威的）。**目录本体整个删**（`RemoveWorktreeDir`，
+  用户：「强删 rm -rf」）；但**别人的**孤儿目录仍然只列不删 ——
+  `RemoveToolStateOnlyOrphanDirs` 只删「里面只剩 `.mindfs/ .omc/ .claude/`」的空壳，
+  含用户文件的目录绝不自动删（`wt-finish.sh` 有同一个 guard）。
+  **幂等**：重复点击第二次必须 200 且带一句 `note`。幂等刻意放在 api 层编排
+  （`FinishWorktreeAndRepoint`）而不是下层 `FinishTaskWorktree` —— 下层对空路径保持严格报错，
+  那是为了守住「先清归属再拆目录」的顺序不变量（路径空 + 目录还在 = 顺序反了，
+  静默成功会把它藏起来）。
+- **第三轮：机械清场失败落回 agent + 脏判据收窄**（2026-10-08 用户实测）：
+  用户重启服务后点 task-37 的收尾，拿到 409「主 checkout 有未提交改动，先提交或暂存后再收尾」
+  +「合并会覆盖这些改动，git 不敢替你决定丢不丢。处理完再点一次收尾即可。」，
+  涉及 `web/tests/e2e-pending-probe.mjs`、`web/tests/e2e-pending-probe2.mjs` 两个未跟踪文件。
+  用户原话：「不应该报错，而是应该把 comment 提交给 agent，进入 agent 合并流程」。
+  两处根因 + 一处兜底：
+  1. `MergeBranch` 的「已是祖先就短路」排在脏检查**之后** —— 没有东西要合时主 checkout
+     脏不脏完全无关（一步 checkout/merge 都不会发生），排在后面就让「分支早就合完了、
+     只差拆目录」这种最常见的收尾被一个不相干的改动挡死。
+  2. 脏检查把**未跟踪文件**也算进来 —— 过宽。合并只在「要写入同名路径」时才碰得到它，
+     那一刻 git 自己会拦（`untracked working tree files would be overwritten by merge`），
+     `git checkout` 也一样会拦（两条命令都没带 `-f`，不存在静默覆盖）。收窄成
+     `trackedDirtyPaths`（只算已跟踪文件的改动）。
+  3. **机械清场失败不再报错，落回 agent**（`agentFallbackPlan`）：机械那条路是**加速段不是
+     门槛**，判定说能做、执行时被挡下时结论是「让 agent 去做」而不是「收尾失败」——
+     agent 能 commit、能解冲突、能判断哪些改动该留。只有「没有 agent 段可继承」时
+     （`BeginFinishWorktree` 也会拒绝）才回 409 + 结构化清单，并把 `agent_error` 一并带出，
+     前端在弹窗里说明「为什么不让 agent 处理」。
+  顺带修掉一个 porcelain 解析 bug：`strings.Index(line, " ")` 在状态带前导空格时
+  （` M foo`）切出带状态前缀的假路径，`dirty_files` 报的是「M note.txt」而不是
+  「note.txt」。porcelain v1 每行固定是「XY<空格>路径」，XY 恰好两个字符。
+- **第四轮：收尾要能越过「停在 waiting_user 的 agent 段」**（2026-10-08 用户实测 task-9）：
+  用户点「日程管理 / 组件库」的收尾，拿到一个巨长的 409：标题「合并已成功，但 worktree
+  里还有没提交的东西」+ 12 个文件的清单。用户的原话是「不应该给我报错，而是应该去插入
+  comment prompt 给 ai 去执行啊，避免直接报错是我的要求」。三件事叠在一起：
+  1. 分支已合进主干（merge 在 21:41）；
+  2. 但 worktree 里还有 12 个文件、161 增 115 删（23:30–00:41 做的），**根本没进主干**；
+  3. 当前段是 **agent 段的 waiting_user**（agent 干完了但没输出完成标记）。
+  三处修：
+  1. **`PlanFinishWorktree` 的判定顺序反了** —— 「分支已在主干 → 机械」排在「worktree
+     里还有没提交的活」**前面**。分支合过不等于树里没活（上面第 2 点），于是判定说
+     「只剩清场」，而拆目录会把那些活一起删掉。下层 `FinishTaskWorktree` 会拦住，但上层
+     已经说了错话：白试一次清场，还把那份失败当成主报错抛给用户。**脏检查必须排在前面**
+     （拆目录不可逆）。
+  2. **收尾段追加不进去** —— `AddStage` 走的是**评论**那条规则（`canAdvanceFromStage`），
+     而 agent 段的 waiting_user 在它那里是明确拒绝的，于是用户点了收尾却拿到「这一段没
+     走完，追加评论不能替代完成本段」—— 而他点的本来就不是评论。仓库里早有正确的规则：
+     `canLeaveStageOnRequest`（注释写着「要放行只有用户手动点」），「下一段」按钮
+     （`moveRelative`）用的就是它。新增 `AddStageInput.ByRequest`，收尾置位后走那条规则。
+     **放宽的只有这一条路**：不置位时一句评论仍然越不过 waiting_user 的 agent 段。
+  3. **两条路都断时报错了对象** —— 响应里塞的是机械清场的报告（`user_changes` = 12 个
+     文件），前端按「哪个清单非空」挑弹窗，于是渲染成「合并已成功，但 worktree 里还有
+     没提交的东西」+ 一长串清单，而真正的拦路虎在 agent 那条。现在**主 error 用 agent
+     那条**（「任务此刻为什么不答应」的直接答案），机械那份只留在 `report` 里当上下文，
+     **不把文件清单提到顶层**。报错了对象比不报还糟：用户会照着错的原因去动手。
+  顺带删掉上一轮加的 `agent_error` / `note` 管道 —— 它只有一个产出点（就在上面第 3 点
+  那个分支），主 error 换成 agent 那条之后它永远等于 `error`，整条管道成了死代码。
 - 针对性测试：
   - `server/internal/kanban/worktree_finish_dispatch_test.go` — 探针优先于状态、分支合并判断（真 git）、
-    收尾段索引、目录消失读「已收尾」。
-  - `server/internal/api/http_tasks_begin_finish_test.go` — 四分支分流（teardown / nudged / stage_added）、
-    连点三次不堆收尾段。
+    收尾段索引、目录消失读「已收尾」、**分支已合但树里还有未提交的活 → 仍然交给 agent**。
+  - `server/internal/kanban/worktree_finish_test.go` — 目录整个删（活 worktree / 空壳两种形状）、
+    附件迁移（搬过去 / 不覆盖已有 / 没有 upload 时是空操作）、只删工具状态空壳孤儿、
+    顺序不变量（先清归属再拆目录）、**主 checkout 有已跟踪改动时停、未跟踪文件不挡路**。
+  - `server/internal/kanban/worktree_finish_stage_test.go` — 收尾段跑完才清场、
+    清场自己会清路径（顺序反了会静默失败）、**收尾段能越过停在 waiting_user 的 agent 段、
+    而一句评论仍然越不过（放宽的只有 ByRequest 那条路）**。
+  - `server/internal/gitview/worktree_finish_test.go` — `CanMergeCleanly` 四种结局
+    （干净 / 冲突带文件 / 已合入 / 不碰仓库）、`RemoveWorktreeDir` 拒绝活 worktree、
+    `MigrateWorktreeUploads` 不覆盖已有目标、**已合入分支跳过合并（主 checkout 脏也跳过）、
+    未跟踪文件不挡合并、真撞同名未跟踪文件时 git 自己拦且文件不丢、`trackedDirtyPaths`
+    只报已跟踪改动**。
+  - `server/internal/api/http_tasks_begin_finish_test.go` — 五分支分流
+    （session_running / teardown / nudged / stage_added / 无 agent 段直接清场）、
+    机械优先（干净 worktree 直接 teardown 不追加收尾段）、冲突与未提交都退给 agent 且带
+    `plan.files`、连点三次不堆收尾段、机械路径连点两次只合一次且第二次带 `note`、
+    **机械清场被挡时落回 agent（200 + stage_added + plan.files）、没有 agent 可继承时才回
+    409 + dirty_files、分支已合入 + 主 checkout 有未跟踪文件时照样当场清场、
+    停在 waiting_user 的 agent 段也照样交给 agent（200 + stage_added，不再报错）、
+    两条路都断时主 error 是 agent 那条且顶层不带任何文件清单**。
   - `web/tests/worktree-badge.test.mjs` — 徽标四态（enabled / finishing / finished / none）、
-    目录消失读「已收尾」、无转圈。
+    目录消失读「已收尾」、无转圈、收尾中不脉冲（区分信号是标签文字「收尾中」）。
   - `web/tests/worktree-finish.test.mjs` — 按钮给法（终态 + 收尾中都不拦截）、无转圈、`hasAgentStage` 门。
   - `web/tests/task-button-gates.test.mjs` — 收尾中收尾键仍给。
   - `web/tests/task-board-view.test.mjs` — 已收尾态 tooltip。
+
+---
+
+### G-BC 看板 / 工作台卡片统一（投影补齐 + 收尾键门控 + 完成键出口 + 收尾失败单通道）
+
+- 来源：`server/internal/api/{http_tasks,http_tasks_finish_teardown,http_tasks_overview_test,http_tasks_overview_card_parity_test,http_tasks_begin_finish_test,http_tasks_finish_test}.go`、
+  `server/internal/kanban/worktree_finish.go`、`server/internal/gitview/worktree_finish.go`、
+  `web/src/components/task/TaskCardRows.tsx`、`web/src/components/task/TaskDetailPanel.tsx`、
+  `web/src/components/workspace/WorkspaceTaskRow.tsx`、`web/src/components/shell/Toast.tsx`、
+  `web/src/services/task/{worktree,types}.ts`、`web/src/services/net/error.ts`、
+  `web/src/app/useRealtimeEvents.ts`、`web/src/App.tsx`、`web/src/i18n/locales/{zh-CN,en-US}.ts`、
+  `web/tests/{task-card-parity,task-button-gates,task-board-view,task-panel-unification,task-stage-panel,worktree-badge,worktree-finish}.test.mjs`。
+- 边界：**看板卡与工作台卡是同一张卡**这件事的全部含义 —— 数据（overview 投影带哪些字段）、
+  门控（收尾键 / 完成键的判据）、以及收尾失败的上报通道。四块互斥于其他组：
+  G-AN 管投影的**体积**边界（哪些必须丢），本组管投影的**完整性**边界（卡片读的必须全在）；
+  G-AP 管收尾按钮的**点击分流**，本组管它的**给法**与失败上报。
+- **可见症状**（没有这一组时会怎样，逐条对应用户 2026-10-07 的五条反馈）：
+  1. 「日程管理#1 既没有运行也没有完成按钮」—— 收尾段卡在待审核时 `showAdvance` 恒假
+     （收尾段是流水最后一段），而 `canComplete` 里有一条 `finishActive && canFinishWorktree`
+     的豁免，把完成键也一起收走了。那张卡只剩一个收尾键，而收尾键最容易失败。
+  2. 「点击收尾提示主 checkout 有未提交改动，过于详细且复杂，还重复显示两条红色报错」——
+     同一次失败走了**两条通道**（HTTP 409 给点击者，WS `task.finish_teardown` 又给一次，
+     而点击者自己也连着同一个 hub）；错误文案把整份文件路径清单拼进一句话；
+     错误码挂成 `file.write_failed`（那些动作一个字节的文件都不写）。
+     **第二轮（同一天）**：另一条超长报错 —— 「合并已成功，但拆除 worktree 失败：
+     <path> 里还有没提交的东西（<30 个文件拼成一句>）…工具自己留下的临时目录
+     （.claude/ .omc/ .mindfs/）不用你管，那部分会自己清」。那是 worktree 里还有用户
+     没提交的东西、git 拒绝拆目录，而旧写法把 `strings.Join(UserChanges, "、")`
+     拼进一句话。用户原话：「收尾还有这种超长报错，系统性查一下简化处理一下」。
+  3. 「工作台有 worktree 的卡片但是没有收尾键」—— 判据里有一条 `has_agent_stage`，
+     而「有 worktree 但没有 agent 段」的任务恰恰最需要收尾键（没有 agent 去 commit，
+     只能服务端直接机械清场）。服务端此前也确实对这种任务回 409。
+  4. 「看板的卡片有专属小图标，工作台的没有，我都不知道什么意思」—— overview 投影
+     丢了 `aux_flags` / `stages` / `current_stage_status`，于是工作台卡一个徽标都画不出、
+     推进键判据恒假。
+  5. 「这几个修改我曾经提到过多次，为什么前面没完成」—— 见下面「根因」。
+- **根因（为什么前面没做完）**：overview 投影的字段清单是**手抄**的，而手抄清单的采集范围
+  是 `grep useWorkspaceBoard.ts 与 components/workspace/*` —— 漏了真正的消费者
+  `components/task/TaskCardRows.tsx`（工作台与项目看板**引用同一个组件**，commit `0792221` 起）。
+  每次修复都按症状补一个字段（先 worktree 四字段，再 `has_agent_stage`），没人回到消费者
+  重推清单。而丢字段**不会报错**：`hasLaterStage` / `isFinishStageActive` / `canAdvanceCard`
+  在 `stages` 缺席时一律返回 `false`，`auxFlags` 缺席时徽标数组为空 —— 没有断言、没有日志、
+  测试全绿，只有用户看得见。再加一条：`useWorkspaceBoard.liveVersion` 会按 `updated_at`
+  用完整任务覆盖投影，所以同一张卡在工作台可能是全字段、也可能是投影，进一步掩盖了缺口。
+- **因此本组的核心不是「加字段」，是加一条不受清单写法影响的守卫**：
+  `server/internal/api/http_tasks_overview_card_parity_test.go` 从 `TaskCardRows.tsx` 与
+  `appTask.ts` 的**源码里抽出所有 `task.<field>` / `stage.<field>` 读取**（减掉 `t("task.x")`
+  那些 i18n key、减掉 `stage.snapshot` 那个模板段字段），逐条断言投影带；反向再断言投影
+  **不多带**前端零读取的键。组件多读一个字段而投影没加 → 红。这条守卫做过变异验证
+  （临时摘掉 `CurrentStageStatus` → 立刻红）。
+  前端那一半是 `web/tests/task-card-parity.test.mjs`：把同一份任务数据喂给两个渲染入口，
+  钉住按钮集合、徽标文案、`hideSessionError` 口径、收尾键判据两侧一致。
+- **投影新增三个字段**（`overviewTaskProjection`）：
+  - `Stages []overviewStageProjection` —— `StageTemplate` 的**卡片视图**，只留
+    `name` / `role` / `kind`。`prompt_template` 是体积大头（单任务 14.4%），卡片一个字节都不读它。
+  - `CurrentStageStatus string` —— `canAdvanceCard` 的判据，与详情面板同一口径。
+  - `AuxFlags *overviewAuxFlags` —— 指针 + `omitempty`，全空时不出现，免得每条任务都挂一个 `{}`。
+  - **`has_agent_stage` 从投影和前端读取里一起删掉**：`stages` 补齐后它是纯冗余字段，
+    留着只会让下一个人猜「收尾键到底以 stages 还是以这个布尔为准」—— 那正是本次漂移的成因。
+- **收尾键判据只剩 worktree 三态**（`create_worktree` 开着、`path` 在、目录没被删），
+  三处一起改：`TaskCardRows` 的 `canFinishWorktree`、`TaskDetailPanel` 的同名判据、
+  服务端 `handleKanbanTaskBeginFinish` 新增 ③.5 分支（无 agent 段 → `teardownFinishWorktree`
+  直接机械清场，不再 409）。**三处必须一起改** —— 只改一处就是「给一个必然 409 的按钮」。
+- **完成键放开**：`canComplete = !terminal && !stageRunning && !showAdvance`，删掉
+  `finishActive && canFinishWorktree` 那条豁免。`TaskDetailPanel` 的 `canCompleteTask` 同样放开
+  （同一个 bug，留在面板里就是已知的不一致）。
+- **终态任务只要 worktree 还在就给收尾键**（用户原话：「只要还有 worktree 就必须有收尾键」）。
+  收尾键因此**搬出 `!terminal` 分支**，抽成 `FinishWorktreeButton` 在两个分支各渲染一次 ——
+  抄两遍的话，改一处忘另一处就是「两边卡片不一致」的下一个来源。服务端 `Complete` 不清
+  `worktree_path`，`BeginFinishWorktree` 的 `reviveTerminalTask` 已支持终态复活，链路是通的。
+- **收尾失败单通道上报**：规则是「有 HTTP 响应可带结论时，失败只走 HTTP；没有时（异步）才用 WS」。
+  成功**永远广播** —— 所有人都得知道 worktree 没了（前端对 `teardown` 的 200 不说话，
+  点击者也靠这条推送拿结论）。异步那条路（`WireFinishStageTeardown`）没有 HTTP 响应可带，
+  成败都只能广播，不受这条规则影响。
+- **错误文案简化 + 清单结构化**：四个类型化错误，`Error()` 只留一句人话，文件清单走
+  结构化字段给 UI 列表渲染 —— **清单不进句子**。这一条是用户两轮实测逼出来的：
+  把 `strings.Join(files, "、")` 拼进 `fmt.Errorf` 的话，三十个文件就是一句读不完的话，
+  而句子长了用户根本不会读完，等于没说。
+  - `gitview.MainCheckoutDirtyError{Files}` + `kanban.FinishWorktreeDirty{Files}`
+    —— 「主 checkout 有未提交改动，先提交或暂存后再收尾」，清单走 `dirty_files`。
+  - `kanban.FinishWorktreeUserChanges{Files}` —— 「合并已成功，但 worktree 里还有没提交的
+    东西，先处理掉再收尾」，清单走 `user_changes`。**文案必须点明「合并已成功」**，
+    否则用户看到「收尾失败」会以为白干了一场。
+  - `kanban.FinishWorktreeConflict` —— `Error()` 从「合并撞上冲突，需人工处理：<文件列表>」
+    改成「合并撞上冲突，需人工处理」。清单本来就在 `conflict_files` 里给 UI 列表渲染，
+    句子里再拼一遍是同一份东西出现两次。
+  - 409 载荷 `{ error, dirty_files, user_changes, conflict_files, output, result }`；
+    `FinishTeardownReport` 同步加 `DirtyFiles` / `UserChanges`，WS `task.finish_teardown`
+    带上 —— 异步那条路没有 HTTP 响应可带，清单丢了就只能报一句没有清单的错。
+- **Toast 不再显示错误码那一行**（`error.code` 副文本）。它从来不是给用户看的信息 ——
+  用户看到「写入文件失败」只会去查磁盘。任务相关动作的错误码同时归位到新增的
+  `task.action_failed`（`error.task.actionFailed` = 「任务操作失败」）；
+  `FileOperations.tsx` / `ActionBar.tsx` 那 3 处是真的文件写入失败，**不动**。
+- **别踩**：
+  - 投影加字段时**先跑** `http_tasks_overview_card_parity_test.go`，再跑
+    `http_tasks_overview_test.go` 的 ③/④ 段 —— 后者仍要钉「体积大头必须不在」
+    （`prompt_template` / `labels` / `worktree_branch*`），别把瘦身成果还回去。
+    测试 fixture 的 `prompt_template` 要足够长，「投影 < 全量一半」那条断言才撑得住。
+  - `liveVersion` 会让同一张卡在工作台拿到全字段或投影两种数据。**别在测试里假设
+    工作台卡一定是投影** —— 要测投影行为就走 `projectOverviewTask` 那个纯函数。
+  - 收尾键判据改动必须**三处同改**（卡片 / 详情面板 / 服务端 ③.5）。只改前端不给服务端
+    加 ③.5，无 agent 段的任务点收尾会拿到 409。
+- 针对性测试：
+  - `server/internal/api/http_tasks_overview_card_parity_test.go` — 投影覆盖共享卡片读取的
+    **每一个**字段（从源码抽，不是手抄清单），且不多带前端零读取的键。做过变异验证。
+  - `server/internal/api/http_tasks_overview_test.go` — 投影的两侧边界：体积大头必须不在、
+    `stages` 每段只许有 `name`/`role`/`kind` 三个键、`aux_flags` 五个字段带值、
+    全空时整个键不出现、`has_agent_stage` 必须已删。
+  - `server/internal/api/http_tasks_begin_finish_test.go` — ③.5 分支（无 agent 段 → 直接
+    机械清场，worktree 真的被拆、`worktree_path` 真的被清）；**去重**（失败时广播 0 次、
+    成功时广播 1 次，用 `broadcastFinishTeardown` 那个可替换入口计数）。
+  - `server/internal/api/http_tasks_finish_test.go` — 主 checkout 不干净 → 409 + `dirty_files`，
+    且消息里**不含**文件名（清单属于字段，不属于句子）。
+  - `server/internal/gitview/worktree_finish_test.go` — `*MainCheckoutDirtyError` 类型化、
+    `Files` 带文件、消息保持短句。
+  - `web/tests/task-card-parity.test.mjs` — 两侧引用同一个卡片组件、`hideSessionError`
+    口径一致、收尾键判据两侧一致、完成键判据、终态分支「收尾 + 删除」的顺序、
+    aux 五个标记的类型与文案、dirty 短文案与结构化清单、`task.action_failed` 错误码、
+    Toast 不渲染错误码、WS 处理器认得 `dirty_files`。
+  - `web/tests/{task-button-gates,task-board-view,task-panel-unification,task-stage-panel,worktree-badge,worktree-finish}.test.mjs`
+    — 门控判据翻转后的对应断言（收尾中给完成、无 agent 段仍给收尾键、终态分支多一把收尾键）。
 
 ---
 
@@ -1099,13 +1389,26 @@
   - `web/tests/workspace-board.test.mjs` — attention bar 必须不存在；taskRow wrapper 必须是 `<article>`
   - `web/tests/task-card-wrap.test.mjs` — `workspaceTaskNameStyle` 断言已移除
 
-### G-AX relay 绑定轮询测试的两条同步竞态（2026-10-07）
+### G-AY pending 纯派生：done 丢失时停止符号 /「正在思考」卡住（2026-10-07）
 
-- 来源：`server/internal/relay/service_test.go`（**纯上游文件**，对 baseline 零差异）、
-  `web/tests/relay-bind-poll-sync.test.mjs`（新增）。
-- 边界：**`TestManagerPollTerminalBindStatusStopsPolling` 里的两条竞态**。
-  合上游时要么全留要么全弃 —— 这两条单独被冲掉都不会让门禁变红，
-  只有持续跑或负载高时才炸，而它炸的时候看起来像产品 bug。
+> **2026-10-09 补完（最后一处漏网的投影）**：本次纯派生漏了 `useSessionStream` 的本地
+> `isStreaming`（`web/src/hooks/useSessionStream.ts`）。它只由 WS 事件清
+> （`session.done`→`onDone`、`message_done`、`error`），**没有轮询对账** —— 于是出现
+> 「列表蓝灯与输入框停止键已被 5s 轮询救回，唯独流里『正在生成』永久不灭」的半死不活形态
+> （连带最后一条隐藏时间戳、A/B 轮措辞错）。治法不新设状态，只收闸门：导出的
+> `isStreaming` 一律是 `isStreaming && !!sessionPending`，显示与否只由唯一真相
+> `pending` 决定，本地标记退化为「措辞 / 盒子」子状态；`SessionViewer` 的显示条件
+> 相应去掉 `|| isStreaming`。`pending-single-source.test.mjs` 加第 7 节钉住这两条
+> （把闸门改回裸导出，测试即红）。
+
+- 来源：`web/src/App.tsx`（`multiProjectPendingByKey` 成为唯一真相；`setMultiProjectSessionPending`
+  同步更新 ref 再 setState；三个读点 `getSessionSnapshot` / `resolvePendingForSession` /
+  `rootSessionIndicators` 改为派生）、`web/src/app/useRealtimeEvents.ts`（`handleSessionStreamDone`
+  不再往会话对象写 pending）、`web/src/app/appSession.ts`（删掉补丁 `clearStalePending`；
+  `mergeReplyingStateByNode` 仍是服务端真值的增量合并点）、
+  `web/tests/pending-single-source.test.mjs`（新增）。
+- 边界：**「这个会话在不在回复」这一份状态的存放方式**。合上游时若退回「会话对象上存 `pending`」，
+  就又会裂成多份、又会在丢 `session.done` 时永久卡住 —— 正是本 bug 的可见症状。
 - 可见症状（没有它会怎样）：
   1. 该测试偶发失败，报 `pending code did not clear after expired bind status`，
      耗时正好 **5.00s**（撞上 `time.After(5 * time.Second)`）。
@@ -1176,6 +1479,40 @@
     无变化返回同引用、按 key 判定」，并源码守卫「逻辑模块 `src/App.tsx`（source-map 拼接，
     含 `useReplyingSessionPoll.ts`）必须有依赖 `multiProjectPendingByKey` 的 effect 且对三处调
     `clearStalePending`、真值必须读 `multiProjectPendingByKey`」。**已验证：把 effect 删掉后该测试立刻变红。**
+  1. 任务已结束，输入框仍显示停止符号。
+  2. 查看器仍显示「正在思考」，用量 / 上下文窗口面板不出现。
+  3. **会话栏是正常的** —— 列表蓝灯每 5s 从 `/api/replying-sessions` 对账一次，
+     所以列表收敛、抽屉不收敛，两边看起来「不一样」。
+- 根因：
+  - `pending` **不落盘**（`sessions` 表无此列，`sessionListResponse` 也不发），纯前端 optimistic。
+  - 原先前端有**五份投影**（缓存 / 抽屉 / 选中 / `pendingBySessionRef` / `multiProjectPendingByKey`）。
+    只有列表蓝灯那份每 5s 从 `/api/replying-sessions` 对账；其余四份只有 WS `session.done`
+    一个出口 —— `BroadcastSessionDone` 只发给 `session.ready` 绑定的客户端，而 WS 连接会反复
+    `1006 unexpected EOF` 断连，重连后绑定竞态一丢那条事件，那四处就**永久停在 `true`**。
+  - 实测（journalctl）：`1791307447-6f646793904d` 广播了 `session.done`，其后却没有
+    `GET /api/sessions?root=…` 重拉 —— 证明该 WS 事件没被前端处理。
+- 改了什么（**纯派生，不再存储**）：
+  - **砍掉**：`clearStalePending`（第一版的补丁）、对账 effect、`setSelectedPendingByKey`，
+    以及所有往会话对象（缓存 / 抽屉 / 选中 / sessions 列表）写 `pending` 字面量的地方。
+  - **唯一真相** `multiProjectPendingByKey`：`setMultiProjectSessionPending` 是唯一写入点，
+    且**先同步更新 `multiProjectPendingRef` 再 setState** —— 流式期间 `markSessionPending`
+    每 chunk 调一次，幂等判断读的是 ref，等 React 跑 updater 就来不及了。
+  - **三个读点全部派生**：`getSessionSnapshot` 读 `multiProjectPendingByKey`；
+    `resolvePendingForSession` 读同步镜像 ref（不把 state 拉进 `restoreActiveSession` 的依赖）；
+    `rootSessionIndicators`（项目尾点）也从表里派生。会话列表项上的 pending 由
+    `boardSessionByKey` 用同一张表盖上去（只抹不盖会得到「卡片圆点跑完不灭」）。
+  - **`pending-*` 临时键 → 真键**：promote 时把「在跑」这条乐观标记一起搬到真键，
+    否则 promote 那一刻就灭灯。
+  - 服务端真值仍只由 `refreshMultiProjectReplyingSessions`（5s/visible-only）经
+    `mergeReplyingStateByNode` 按节点增量合并写入；`handleSessionStreamDone` 仍负责收尾清键。
+  - **没有第二份状态，也就没有「两份不同步」这回事** —— 断连丢事件时，下一个轮询周期
+    从服务端真值覆盖即可收敛，不需要为每处存储各写一套对账。
+- 针对性测试：
+  - `web/tests/pending-single-source.test.mjs` — 源码守卫：唯一写入点收敛在
+    `setMultiProjectSessionPending`（ref 先于 setState）；App.tsx / useRealtimeEvents.ts 里
+    **零** `pending: true|false` 字面量；三个读点都从 `multiProjectPendingByKey` / ref 派生；
+    `handleSessionStreamDone` 必须清唯一真相；轮询 + `mergeReplyingStateByNode` 必须还在。
+    **已验证：插入一处 `pending: true` 后该测试立刻变红。**
 
 ---
 
@@ -1206,7 +1543,7 @@
 - 针对性测试：
   - `web/tests/task-board-view.test.mjs` — 钉住「待审核列 `showTaskStatus` 为真」、
     「列框四件（border+圆角+浅灰底+overflow）整组消失」、「列表容器是 `FloatingScroll`
-    且 padding/gap 6px」、「index.css 有 `.mindfs-floating-scroll` webkit 隐藏规则」。
+    且 padding 归零（G-BB 进一步从 6px 降到 0）」、「index.css 有 `.mindfs-floating-scroll` webkit 隐藏规则」。
   - `web/tests/task-card-wrap.test.mjs` — 钉住「看板与工作台都渲染 `TaskCardRows`」、
     「工作台卡不传 children（无正文）」、「卡面都来自 `taskCardSurfaceStyle`」、
     「`TaskCardText.tsx` 死代码已删除」。
@@ -1263,6 +1600,178 @@
   handler（104 行）搬进 `realtimeWsSessionAccepted.ts`（146 行）；`root.changed`
   handler（56 行）搬进 `realtimeWsRootChanged.ts`（93 行）。
   `realtimeWsHandlers.ts` 从 883 行降到 533 行。`source-map.mjs` 已登记新文件。
+---
+
+### G-BB 看板列头灰底 + 间距对齐工作台（2026-10-07）
+
+- 来源：`web/src/components/task/TaskBoardView.tsx`、`web/src/components/file/DefaultListView.tsx`、
+  `web/tests/task-board-view.test.mjs`。
+- 边界：**看板列头视觉与间距** —— 列头灰底、列表 padding、外层 padding。
+  这三件共享看板的布局与视觉，合上游时要么全留要么全弃。
+- 可见症状（没有它会怎样）：
+  1. **列头与卡片内容视觉混淆**：列头没有灰底，与卡片内容混在一起，
+     用户难以区分「栏目标签」和「卡片内容」。
+  2. **卡片比工作台窄 12px**：列表 padding 6px 每侧，卡片被挤窄。
+     去掉后卡片与工作台等宽。
+  3. **看板边缘间距比工作台大**：外层 padding `8px 16px 24px` vs 工作台 `6px 8px`，
+     看板内容区比工作台窄，视觉上不对齐。
+  4. **列头灰底直角贴卡片**：灰底直角与第一个任务卡直接相连，
+     视觉上过于拥挤；圆角 + 下方 6px 空隙让列头与卡片有呼吸感。
+- 为什么必须保留：
+  - 列头灰底 `rgba(148, 163, 184, 0.08)` 与模板筛选按钮的底色一致，
+    是看板视觉语言的一部分。
+  - 列表 padding 归零后，卡片宽度 = 列宽，与工作台卡片等宽。
+  - 外层 padding `6px 8px` 对齐工作台容器，视觉上两端一致。
+  - 列头圆角 `borderRadius: 6px` + 下方 `marginBottom: 6px` 让列头灰底
+    与任务卡之间有空隙，视觉上更通透。
+- 针对性测试：
+  - `web/tests/task-board-view.test.mjs` — 钉住「列头有灰底 `rgba(148,163,184,0.08)`」、
+    「列表 `FloatingScroll` padding 归零」、「外层 padding `6px 8px` 对齐工作台」、
+    「列头 `borderRadius: 6px` 圆角 + `marginBottom: 6px` 下方空隙」。
+
+---
+
+### G-AY pending 信号兜底（2026-10-08 建，同日修订：删掉第②③层）
+
+- 来源：`server/internal/api/stream_hub.go`、`server/internal/api/appcontext.go`、
+  `web/src/App.tsx`、`web/tests/e2e-pending-signal.test.mjs`。
+- 边界：**「会话完成后 pending 信号必须消失」这一行为的实现方式**。
+- 可见症状（没有它会怎样）：
+  对话完成后仍显示「正在生成」+ 停止键，用户以为还在跑，实际早已完成。
+- **根因（2026-10-09 修订）**：本条原先记的「`ClearSessionPending` 自旋无超时」**是误判** ——
+  2 秒 replay-drain 超时早就存在，广播次序也早已在清之前。两个相反症状（灯不灭 / 灯不亮）
+  的真正结构性成因是 **pending 条目没有回合身份**，已另立 **G-BE** 承接。
+  本条保留的是「必须存在超时、不得退回无超时自旋」这一**行为约束**（局部防护），
+  它不再是任一处症状的根因说明。
+- 为什么必须保留：
+  只剩第①层（必修）：服务端 `ClearSessionPending` 的 replay-drain **必须有超时** + 广播先于清。
+  合上游时若退回「`ClearSessionPending` 无超时自旋」，replay 客户端排不空时仍会卡住。
+- **第②③层已于 2026-10-08 删除**（同日引入同日删）：
+  - 第②层（服务端 `LastEventAt` 字段 + `PendingSessionSnapshot` 30 秒超时判据）是
+    **死代码** —— `Active` 字段没有任何消费方（唯一消费者 `notifySessionDone` 不读它），
+    删前删后行为完全一致。
+  - 第③层（前端 `lastStreamEventAtRef` + 轮询连续 3 周期 15 秒无事件则本地降级）是
+    **真 bug**：真在跑的会话会长时间没有 stream 事件（服务端不转发 SDK 的 `keep_alive`
+    心跳，唯一的周期事件 `ToolProgressMessage` 只覆盖 tool 执行，思考 / tool 间隙 / 起始
+    间隙都没有事件），按静默判「已结束」会「明明在跑却灭灯」、亮灯时长随事件节奏漂移。
+  - 第③层想兜的「WS 断连」场景，**5s 轮询已经兜住**（服务端 `ClearSessionPending` 在
+    回合结束时删条目，下一轮轮询就灭灯），所以它纯属多余且有害。
+- 针对性测试：
+  - `web/tests/e2e-pending-signal.test.mjs` — 钉住「agent 行落盘后 30s 内 pending 信号消失」、
+    「WS 断连 20s 后 pending 信号收敛」（后者靠轮询，不靠静默降级）。
+  - `web/tests/pending-single-source.test.mjs` — 钉住「pending 纯派生自 `multiProjectPendingByKey`」。
+
+### G-BE pending 的回合身份与单一终结器（2026-10-09）
+
+- 来源：`server/internal/api/stream_hub.go`、`server/internal/api/appcontext.go`、
+  `server/internal/api/ws.go`、`server/internal/scheduled/tasks.go`、
+  `server/internal/agent/codex/session.go`（2026-10-09）。
+- 边界：**服务端 pending 条目的身份与生命周期** —— 谁有权清理、迟到/重复 done 的处置、
+  子会话 pending 的终态收边。不做静默判死 / 超时（超时路线已于 G-AY 证伪）。
+- 可见症状（没有它会怎样）：两个**方向相反**的症状并存 ——
+  ①「完成回答但还显示正在思考」（灯不灭）；②「正在运行但会话列表灯不亮」（灯不亮）。
+  **同一个缺失的两面**：`pendingSessions[key]` 没有回合身份、清理是不问归属的无条件删。
+  - 灯不亮：第 A 轮迟到的 `session.done` 落地时，`ClearSessionPending(key)` 无条件删条目，
+    把第 B 轮刚开始的灯抹掉（该 done 帧本身也会让前端按 key 清灯）。
+  - 灯不灭：子会话只有 `MessageDone` 一条清理边，error / 取消 / 父轮先结束都让 pending 永久残留；
+    `runSessionMessage` 无 `defer`，`SendMessage` panic/挂死时终结器走不到。
+- 为什么必须保留：
+  1. `SessionPendingState` 增 `TurnGen`；`SetPendingUserAt`/`SetPendingReply` 每次刷新为单调自增代次，
+     并把该代次返回给调用方（`BroadcastSessionUserMessageAt` 同样返回）。
+  2. `ClearSessionPending(key, turnGen)` 仅在「两侧都有身份且一致」时清；`PendingTurnGenMatches`
+     让终结器对「别的回合的 done」整条丢弃（连帧都不广播），迟到 done 彻底无害化。
+     `turnGen==0` 视为无主，保守清 —— 绝不因缺身份而漏清（漏清 = 灯不灭）。
+  3. 抽出唯一终结器 `AppContext.EndSessionTurn(rootID, key, requestID, turnGen)`，
+     所有清理点都改调它；`runSessionMessage` / `RunAgentStage` / 定时任务 用 `defer`
+     覆盖成功/出错/取消/panic。**无身份的入口现在有两层护栏**：① `AppContext` 那层
+     兼容壳 `BroadcastSessionDone`（转调 `EndSessionTurn(..., 0)`）**已删除**，定时任务曾是
+     它最后一个调用点；② `StreamHub` 那个真正广播的方法**刻意降为未导出**
+     `broadcastSessionDone` —— 它只有 `EndSessionTurn` 一个调用点（代次门之后才调），
+     不导出就没有任何路径能绕过代次门广播 done。用编译器守，比只扫某个调用点硬。
+  4. 子会话在父轮收尾时一并终结（本轮创建、没等到 `MessageDone` 的那些）。定时任务路径
+     （`scheduled/tasks.go`）从 `OnStart`/`OnSubSessionCreated` 捕获每会话的 `turnGen`，
+     收尾（含 `defer` 兜的子会话）原样交给 `EndSessionTurn`，不再用无身份的广播。
+     接口上的 `BroadcastSessionUserMessage`（不带 `At`、不返回代次的那个）**已摘除** ——
+     它置 pending 时按 `turnGen=0` 走，是同一类「拿不到代次」的入口，留着等于给下一个
+     调用点挖坑；`StreamHub`/`AppContext` 两侧的无用实现一并删除（全仓库无调用者）。
+  5. `codex.handleStreamedEvents` 由「通道关闭即成功」改为返回是否见到 `TurnCompletedEvent`，
+     通道中途关闭按错误处理 —— 否则会**提前/错误**触发 done（本根的相邻缺口，同批修）。
+  - 这套「代次比对」机制项目里本就有（`ActiveTurnID` 用于取消定位），
+    pending 缺的不是新机制，是把同一份纪律用上去。前端早已单一源（`multiProjectPendingByKey`），
+    故本组不改前端。
+- 针对性测试：
+  - `server/internal/api/stream_hub_pending_identity_test.go` → 迟到 done 不清新轮（`TurnGen` 比对）、
+    重复 done 幂等、`gen=0` 仍保守清、子会话由父轮终结、`PendingTurnGenMatches` 缺失时放行。
+  - `server/internal/scheduled/pending_identity_test.go` → 定时任务路径的源码守卫（四条）：接口里不得再有
+    无身份的 `BroadcastSessionDone`、置 pending 的两个调用点必须接收 `turnGen`、
+    `EndSessionTurn` 不得收到字面 `0`、不得再出现不带 `At` 的 `BroadcastSessionUserMessage(`。钉住「定时任务收尾也带回合身份」这条补齐（合上游时若退回
+    无身份广播，此测试必红）。
+  - `server/internal/agent/codex/session_test.go` → 通道关闭无 `TurnCompleted` 报错、见到 `TurnCompleted` 返回成功、
+    `ThreadError` 返回错误。
+  - `web/tests/e2e-pending-indicators.test.mjs`（`MINDFS_E2E=1`，隔离实例）→ **浏览器 + 真后端**层：
+    ① done 后等待指示器消失 + 列表灯灭、运行中灯亮过；② **队列接力**（A 在跑时发 B 排队）
+    期间「服务端在跑但 UI 灯灭」连续不得超过 1 次采样 —— 这是「迟到 done 不误抹新轮」
+    唯一的过程级证据（单测与源码契约层都够不到真实时序）。
+
+### G-BF Full 同步丢最新几轮：ctx_seq 切片 + 时间地板失效（2026-10-09）
+
+- 来源：`server/internal/agent/claude/importer.go:readClaudeImportedExchangeLocators`、
+  `server/internal/api/usecase/external_sessions.go:SyncExternalSessionDelta`（2026-10-09）。
+- 边界：**用户手点「同步」（Full）时，live-owned 会话「比库里最新一条更新」的尾段
+  导不进来**。只影响 Full 同步的增量圈定；非 Full 的常规增量同步、import-owned 会话、
+  子代理同步、repoint 游标推进都不动。
+- 可见症状（没有它会怎样）：手点「同步」后，会话**最新几轮回复永远补不回来** —— 不是
+  「导重复」，是「一条都导不到」。实测某会话库 119 行、导入器全量只有 83 条（实时路径
+  会写导入器不产出的 tool-only 空占位行），`agent_ctx_seq` 被刷成库长度 115，
+  `imported[115:]` 恒为空 → `ImportedCount` 恒为 0，用户反复点「同步」也白点。
+- 为什么必须保留：
+  1. `readClaudeImportedExchangeLocators` 只在 `committedOffset > 0` 或 `bootstrapAfter`
+     非零时应用时间地板；而 Full 同步恰恰是**两者都不传**的组合（`importInput.Cursor`
+     只在 `!in.Full` 里设、`AfterTimestamp` 同理），于是 `TimestampFloor` 被静默跳过。
+     这与 `types.go` 里 `TimestampFloor` 的契约（「非零时无论有没有字节游标都只接受
+     比它晚的条目」）直接矛盾。修复：只要地板非零就过滤。
+  2. `SyncExternalSessionDelta` 的 Full 分支原先**无条件**按 `binding.AgentCtxSeq` 切片。
+     `agent_ctx_seq` 的语义是「导入器条数游标」，但代码把它刷成了 `len(latest.Exchanges)`
+     （**库行数**）—— 对 live-owned 会话这两个数系统性不相等（库行数 > 导入器条数），
+     切片 `imported[ctx_seq:]` 于是恒空，把第 1 条的地板修复也一起废掉。修复：
+     live-owned 的 Full 同步改由地板圈定增量、**不再叠序号切片**；import-owned 的库与转录
+     按序号对齐，`ctx_seq` 切片仍是正确边界，保持不变。
+  3. 两个写入者（实时路径 / 转录导入）的幂等护栏 `exchangeAlreadyRecorded` 仍在：
+     地板只放行「比库里最新一条更新」的条目，这些条目必然不在库里，护栏不会误伤；
+     真出现内容相同但时间戳差 >5s 的重尾，读取投影（G-AB 的 A/A2）会折叠掉。
+- 针对性测试：
+  - `server/internal/agent/claude/importer_test.go` → `TestReadClaudeImportedExchangesAppliesFloorWithoutCursorOrBootstrap`：
+    `committedOffset==0` 且 `bootstrapAfter` 为零、只有地板非零时，地板必须生效
+    （把 15:00 的两条滤掉、只留 15:31/15:32 的两条）。旧代码在这里直接 `return items`，
+    此测试必红。
+  - `server/internal/api/usecase/external_sessions_test.go` → `TestSyncExternalSessionDeltaFullImportsTailWhenCtxSeqOvershoots`：
+    live-owned 会话库 4 行、`ctx_seq` 被刷成 10（超过导入器 6 条），Full 同步仍要导入
+    尾段 2 条（`ImportedCount==2`、库 6 行）。旧代码 `imported[10:]` 为空，此测试必红。
+  - 既有 `TestSyncExternalSessionDeltaFullDoesNotReplayHistoryInSession` /
+    `TestSyncExternalSessionDeltaSetsFloorForLiveOwnedOnly` /
+    `TestSyncExternalSessionDeltaFullImportsSubagentTurns` 保持绿 —— 钉住「历史尾段不重放、
+    live-owned 必带地板、子代理多回合仍导」这三条不被本次修复打破。
+
+### G-BC 方案 B：worker 没有账户表，账户 id 从用户名派生
+
+- 来源：`server/internal/auth/auth.go`、`server/app/workspace.go`（2026-10-08）。
+- 边界：**worker 不加载账户表也能做数据分区** —— 账户 id 从用户名派生
+  （`auth.DeriveAccountID`），跨机器稳定；worker 上 `Resolve` 返回空时派生 id、
+  按需建目录，不回空工作区。
+- 可见症状（没有它会怎样）：
+  在 fn（worker）上加/删项目时报 `registry path required`（或 `这个账户在本机没有数据`），
+  因为 worker 没有账户表，`user=xiaokubao` 解析不出目录名，落到 `emptyWorkspace`
+  的空注册表上，写操作撞上 `path == ""` 的内部错误。
+- 为什么必须保留：
+  worker 有账户表 = 控制面漂移（每台机器一份 users.json），正是多节点改造要消灭的东西。
+  派生 id 让 worker 无表也能分区，且跨机器稳定（同一用户名永远算出同一目录名）。
+  启动时 `migrateIDsToDerived` 把存量随机 id 迁移成派生 id（重命名目录 + 更新 users.json）。
+- 针对性测试：
+  - `server/internal/auth/auth_test.go` — `TestDeriveAccountIDStable`（同用户名跨调用结果一致）、
+    `TestDeriveAccountIDDistinct`（不同用户名 id 不同）、`TestMigrateIDsToDerived`（旧 id 迁移 + 目录重命名）。
+  - `server/app/workspace_test.go` — `TestWorkspaceWorkerDerivesAccountID`（worker 角色下
+    `Resolve` 返回空时派生 id、走 build 不回空工作区）。
+
 ---
 
 ## 4. 未提交工作区（2026-10-06 清空）

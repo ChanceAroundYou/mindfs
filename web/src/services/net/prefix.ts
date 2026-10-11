@@ -22,10 +22,3 @@ export function withDeployPrefix(path: string): string {
 
 // 部署前缀下的静态资源目录，例如 /mindfs/assets。（空前缀退化为 /assets）
 export const ASSETS_PATH: string = withDeployPrefix("/assets");
-
-// relay 别名前缀：与 server rewriteRelayedFrontendContent（./assets/ -> /<prefix>-assets/）
-// 同一约定生成。空前缀（根部署）退化为 /assets/。
-// 单一真源：SW 拦截与前端资源缺失检测都引用它，不再硬编码 /mindfs-assets/。
-export const RELAY_ASSETS_PREFIX: string = DEPLOY_PREFIX
-  ? `${DEPLOY_PREFIX}-assets/`
-  : "/assets/";

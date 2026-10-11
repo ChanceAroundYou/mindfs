@@ -113,3 +113,41 @@ export function controlPath(path: string, params?: URLSearchParams): string
 > `scripts/deploy-all.sh` 推过去的编译产物。`role` 来自运行节点自己的
 > `~/.config/mindfs/config.json`，与源码无关 —— 改角色只需改那个文件再重启，
 > 不必（也无法）先把代码同步过去。
+
+## 方案 B（已实现）：worker 没有账户表
+
+> 2026-10-08 实施完成。
+
+### 核心机制：账户 id 从用户名派生
+
+`auth.DeriveAccountID(username)` 把用户名映射成确定性 id：
+`"u_" + sha256(username)[:16]`。跨机器天然稳定，worker 没有账户表
+也能算出同一个目录名。
+
+用户创建（`migrateFromLegacy` + `CreateUser`）改用派生 id，
+启动时 `migrateIDsToDerived` 把存量随机 id 迁移成派生 id
+（重命名 `users/<旧id>/` → `users/<新id>/`，更新 `users.json`）。
+
+### worker 上的行为
+
+`Workspace()` 里 `Resolve` 返回空时，worker 角色走派生分支：
+
+```go
+} else if m.Role().IsWorker() {
+    id = auth.DeriveAccountID(id)
+}
+```
+
+不再回空工作区 —— 按需建目录，新节点上加第一个项目不会再撞上
+`registry path required` 的内部错误。
+
+### control 上的行为（不变）
+
+control 上陌生 `user=` 仍回空工作区（`emptyWorkspace`），因为 control
+有账户表，账户删除后要能把用户送回登录页。
+
+### 验证
+
+- 新节点上第一次加项目能成功（按需建目录）。
+- 主节点登录 / 账户管理不变。
+- worker 上反复解析同一个用户名结果一致（确定性 id）。

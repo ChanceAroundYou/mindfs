@@ -124,17 +124,20 @@ test("a task on its last stage does not get 执行", () => {
   assert.equal(gates.canComplete, true, "完成 is the only action left, so it must be there");
 });
 
-test("a running finish stage withholds 完成 and 执行 but keeps the finish key", () => {
+test("a running finish stage withholds 执行 but keeps 完成 and the finish key", () => {
   // 指针后面**还得有段**，否则 showAdvance 本来就是 false（no more stages），
-  // 测不出 finishActive 那一条守卫 —— 变异测试确认过：那时候去掉守卫照样绿。
+  // 测不出「收尾中」这个局面本身。
   const gates = gatesOf(
     worktreeTask({ current_stage_index: 1, stages: [{ role: "agent" }, finishStage, { role: "agent" }] }),
   );
-  assert.equal(gates.canComplete, false);
   assert.equal(gates.showAdvance, false, "advancing a stage during a teardown is work against a directory about to vanish");
   // 收尾键**照旧给**（2026-10-05 用户要求）：那正是「agent 那半已经做完、只差机械
   // 清场」的时刻，再点一次后端会直接清场。换成转圈等于把唯一的出路藏起来。
   assert.equal(gates.canFinishWorktree, true, "the finish key must stay clickable — it is the only way out of a stuck finish");
+  // **完成也照旧给**（2026-10-07 用户要求）：收尾段卡在待审核时 showAdvance 恒假
+  // （收尾段是流水最后一段），旧判据把完成键也一起收走了，于是那张卡只剩一个收尾键
+  // —— 而收尾键恰恰是最容易失败的一个（主 checkout 不干净就点不动）。
+  assert.equal(gates.canComplete, true, "收尾中也是「推进键给不出来」的局面，完成必须补上");
 });
 
 // 不变式：**待审核的任务不能一个键都没有**（2026-10-06 用户实测的卡死形态）。
@@ -187,8 +190,11 @@ test("a terminal task gets 完成/执行 withheld but keeps the finish key", () 
   // 在终态下依然生效，收尾键的豁免不是把三个键一起放开。
   const missingWorktree = gatesOf(worktreeTask({ status: "success", worktree_missing: true }));
   assert.equal(missingWorktree.canFinishWorktree, false, "a terminal task with a dead worktree still must not offer the finish key");
+  // 「有 agent 段」这条判据 2026-10-07 去掉了：它会让「有 worktree 但没有 agent 段」
+  // 的任务永远拿不到收尾键，而那种任务恰恰最需要它（没有 agent 去 commit，只能服务端
+  // 直接机械清场）。服务端已同步：无 agent 段时直接清场，不再 409。
   const noAgentStage = gatesOf(worktreeTask({ status: "success", stages: [{ role: "user" }] }));
-  assert.equal(noAgentStage.canFinishWorktree, false, "there is no agent stage to inherit agent/model from — the server would 409");
+  assert.equal(noAgentStage.canFinishWorktree, true, "有 worktree 就该给收尾键 —— 没有 agent 段时服务端直接机械清场");
 });
 
 // 跑完之后指针还停在收尾段上，但清场已经把活干完了 —— 不该再显示「收尾中」。

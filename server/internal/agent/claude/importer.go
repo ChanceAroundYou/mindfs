@@ -964,7 +964,13 @@ func readClaudeImportedExchangeLocators(path string, committedOffset int64, boot
 		return filtered, committed, nil
 	}
 	// 引导：该会话还没有游标，用库内最新时间戳兜底（旧行为，只此一次）。
-	if bootstrapAfter.IsZero() {
+	// 但地板本身就已经是「只接受比库内最新一条更新」的判据，与有没有游标无关
+	// （见 types.go 的 TimestampFloor 契约）。Full 同步恰恰是 committedOffset==0 且
+	// bootstrapAfter 为零的组合，若这里直接 return items，地板就被静默跳过 ——
+	// live-owned 会话的 Full 同步于是永远导不到「比库里最新一条更新」的尾段：
+	// 实测某会话 ctx_seq=115 而导入器只有 83 条，usecase 再按 ctx_seq 切片，delta
+	// 恒为空，用户点「同步」永远补不回最新几轮。所以只要地板非零就必须过滤。
+	if bootstrapAfter.IsZero() && floor.IsZero() {
 		return items, committed, nil
 	}
 	for _, item := range items {

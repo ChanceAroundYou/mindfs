@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# 代码变更收尾：提交 → 推送 → 本机编译安装 → 推送产物到 WSL → 对账。
+# 代码变更收尾：提交 → 推送 → 本机编译安装 → 推送产物到各 worker → 对账。
 #
 # 用法:
 #   bash scripts/deploy-all.sh                 # 提交已在 main，直接走推送+部署
 #   bash scripts/deploy-all.sh -m "fix: 说明"  # 先把工作区改动提交到 main 再走
-#   bash scripts/deploy-all.sh --no-restart    # 只推产物+安装，不重启 WSL
+#   bash scripts/deploy-all.sh --no-restart    # 只推产物+安装，不重启 worker
 #
 # 分工（见 CLAUDE.md）：本机 system 单元，sudo restart 只能由用户执行，脚本只装好并提示；
-# WSL 是 user 单元、**没有源码库**，只接收本机构建好的产物，脚本直接重启它。
+# WSL 与 fn 都是 user 单元、**没有源码库**，只接收本机构建好的产物，脚本直接重启它们。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.."; pwd)"
@@ -16,7 +16,8 @@ cd "$ROOT"
 MESSAGE=""
 DO_RESTART=1
 WSL_HOST="${MINDFS_WSL_HOST:-wsl}"
-STAGE=".mindfs-deploy"   # WSL 上的暂存目录（相对 $HOME），装完即删
+FN_HOST="${MINDFS_FN_HOST:-fn}"
+STAGE=".mindfs-deploy"   # worker 上的暂存目录（相对 $HOME），装完即删
 
 usage() {
   sed -n '2,10p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
@@ -60,7 +61,13 @@ if [[ -n "$MESSAGE" ]]; then
     # 只提交本仓库跟踪的源码，不碰 .mindfs/ 等运行期数据
     # agents.json 是仓库根的源码文件（agent 目录与安装命令都在这），漏了它会让
     # 只改它的提交变成空提交，git commit 非零退出被 set -e 当场打死。
-    git add -A -- web server Makefile task_template.json scripts .claude agents.json docs 2>/dev/null || git add -A
+    #
+    # 根级的**文档**要逐个点名（`docs/` 只覆盖 docs/ 目录，够不到仓库根）：
+    # 漏了 CLAUDE.md 时它会被静默留在工作区，版本号因此挂上 `-dirty`（2026-10-07 实测）。
+    # release-notes.md 更要留神 —— 历史上整段条目被上游合并冲掉过。
+    # 刻意不含 config.json：那份会被本机改 role/端口，提交等于把本地运行配置推上去。
+    git add -A -- web server Makefile task_template.json scripts .claude agents.json docs \
+      CLAUDE.md README.md README.zh.md release-notes.md 2>/dev/null || git add -A
     git commit -m "$MESSAGE"
     ok "已提交 $(git rev-parse --short HEAD)"
   fi
@@ -76,7 +83,7 @@ ok "go test 通过"
   || { tail -30 /tmp/mindfs-tsc.log >&2; die "tsc 失败，见 /tmp/mindfs-tsc.log"; }
 ok "tsc 通过"
 
-( cd web && node --test tests/*.test.mjs ) >/tmp/mindfs-web-test.log 2>&1 \
+( cd web && node --test --import ./tests/source-map-hook.mjs --import ./tests/ts-module-preload.mjs tests/*.test.mjs ) >/tmp/mindfs-web-test.log 2>&1 \
   || { tail -40 /tmp/mindfs-web-test.log >&2; die "web 测试失败，见 /tmp/mindfs-web-test.log"; }
 ok "web 测试通过（$(grep -oE '^# pass [0-9]+' /tmp/mindfs-web-test.log | tail -1 | grep -oE '[0-9]+') 项）"
 
@@ -99,81 +106,75 @@ VERSION="$(sed -nE 's/.*-X main\.version=([^ "]+).*/\1/p' /tmp/mindfs-build.log 
 [[ -n "$VERSION" ]] || die "从构建日志里读不出版本号（/tmp/mindfs-build.log）"
 ok "本机已安装 $VERSION"
 
-# ── 5. WSL 端：只接收产物，不在那边编译 ──
+# ── 5. worker 端：只接收产物，不在那边编译 ──
 # WSL 上自 2026-10-06 起**没有源码库**（~/projects/mindfs 只剩 .mindfs/ 数据目录）：
 # 那边不再 git pull、不再 make build。只接收本机构建好的产物 —— 谁编译谁负责版本号，
 # 两边永远跑的同一份二进制，不会再出现「那边拉到一半的源码」或「go 版本对不上」。
-step "推送产物到 WSL"
-tar -C "$ROOT" -cf - mindfs agents.json task_template.json -C "$ROOT/web" dist \
-  | ssh -o BatchMode=yes -o ConnectTimeout=10 "$WSL_HOST" \
-      "set -euo pipefail; rm -rf ~/$STAGE; mkdir -p ~/$STAGE; tar -xf - -C ~/$STAGE" \
-  || die "产物传输失败（$WSL_HOST）"
+#
+# 自 2026-10-07 起 WSL 是**纯 worker 节点**（config.json 的 role=worker）：按设计不服务
+# 静态资源（GET / 是 403），因此不再推 web/dist —— 前端只装在本机。曾推过一份是留给
+# 「角色翻成 control」的保险，那个假设已经不成立，多推的几 MB 与残留的旧 bundle 都成了纯负担。
+#
+# fn（fnOS，192.168.1.4）同为 worker 节点，2026-10-08 加入，走同一条路径。
+# 两个 worker 共用一份部署逻辑、只是 host 不同 —— 抽成函数，避免改一处漏一处。
+deploy_worker() {
+  local host="$1" label="$2"
+  local remote_out remote_version restart_line
 
-if [[ "$DO_RESTART" == "1" ]]; then
-  RESTART_LINE="systemctl --user restart mindfs
+  step "推送产物到 $label"
+  tar -C "$ROOT" -cf - mindfs agents.json task_template.json \
+    | ssh -o BatchMode=yes -o ConnectTimeout=10 "$host" \
+        "set -euo pipefail; rm -rf ~/$STAGE; mkdir -p ~/$STAGE; tar -xf - -C ~/$STAGE" \
+    || die "产物传输失败（$host）"
+
+  if [[ "$DO_RESTART" == "1" ]]; then
+    restart_line="systemctl --user restart mindfs
 sleep 3
-systemctl --user is-active --quiet mindfs || { echo 'WSL 服务未 active'; exit 1; }"
-else
-  RESTART_LINE="echo '(按 --no-restart 跳过重启，产物已装好)'"
-fi
+systemctl --user is-active --quiet mindfs || { echo '$label 服务未 active'; exit 1; }"
+  else
+    restart_line="echo '(按 --no-restart 跳过重启，产物已装好)'"
+  fi
 
-REMOTE_SCRIPT="$(mktemp)"
-trap 'rm -f "$REMOTE_SCRIPT"' EXIT
-cat >"$REMOTE_SCRIPT" <<REMOTE
+  step "$label 安装并重启"
+  # 安装脚本直接用 heredoc 喂给远端 bash，不落临时文件 —— 两个 worker 各调一次，
+  # 用 mktemp 就得自己管清理。$STAGE / $restart_line 本地展开，~ 留给远端展开。
+  remote_out="$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$host" bash -s 2>&1 <<REMOTE
 set -euo pipefail
 install -m 0755 ~/$STAGE/mindfs             ~/.local/bin/mindfs
-install -d                                  ~/.local/share/mindfs/web
 install -m 0644 ~/$STAGE/agents.json        ~/.local/share/mindfs/agents.json
 install -m 0644 ~/$STAGE/task_template.json ~/.local/share/mindfs/task_template.json
-# 覆盖复制而不是 rm -rf：哈希资源对外是 immutable，删掉会让部署前就打开的页面懒加载 404。
-# worker 按设计不服务静态资源，这份 web/ 是留给「角色翻成 control」的 —— 与其那天才发现缺东西，
-# 不如每次多推几 MB。
-cp -R ~/$STAGE/dist/. ~/.local/share/mindfs/web/
-find ~/.local/share/mindfs/web/assets -type f -mtime +14 -delete
 rm -rf ~/$STAGE
-$RESTART_LINE
+$restart_line
 ~/.local/bin/mindfs --version
 REMOTE
+)" || die "$label 安装失败：$remote_out"
+  # 版本号对账：推的是本机刚构建好的**同一个二进制文件**，两边版本号必须逐字相同。
+  # 不同就是产物没落到位，当场停 —— 比对 bundle 字节数更硬（worker 压根没有 bundle）。
+  remote_version="$(printf '%s\n' "$remote_out" | sed -nE 's/^mindfs version: (.*)$/\1/p' | tail -1)"
+  [[ -n "$remote_version" ]] || die "读不出 $label 的版本号：$remote_out"
+  [[ "$remote_version" == "$VERSION" ]] \
+    || die "版本不一致：$label=$remote_version 本机=$VERSION（产物没落到位）"
+  ok "$label 已安装 $remote_version"
+}
 
-step "WSL 安装并重启"
-REMOTE_OUT="$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$WSL_HOST" bash -s <"$REMOTE_SCRIPT" 2>&1)" \
-  || die "WSL 安装失败：$REMOTE_OUT"
-# 版本号对账：推的是本机刚构建好的**同一个二进制文件**，两边版本号必须逐字相同。
-# 不同就是产物没落到位，当场停 —— 比对 bundle 字节数更硬（worker 压根没有 bundle）。
-REMOTE_VERSION="$(printf '%s\n' "$REMOTE_OUT" | sed -nE 's/^mindfs version: (.*)$/\1/p' | tail -1)"
-[[ -n "$REMOTE_VERSION" ]] || die "读不出 WSL 的版本号：$REMOTE_OUT"
-[[ "$REMOTE_VERSION" == "$VERSION" ]] \
-  || die "版本不一致：WSL=$REMOTE_VERSION 本机=$VERSION（产物没落到位）"
-ok "WSL 已安装 $REMOTE_VERSION"
+deploy_worker "$WSL_HOST" "WSL"
+deploy_worker "$FN_HOST" "fn"
 
-# ── 6. 对账：两端服务的 bundle 应当一致 ──
-# worker 节点按设计不提供前端（GET / 是 403，StaticDir 为空），所以它压根
-# 取不到 bundle —— 那不是部署坏了，跳过对账即可，别报「不一致，需人工确认」。
-step "对账两端服务"
+# ── 6. 对账：本机服务的 bundle ──
+# WSL 是纯 worker 节点，按设计不提供前端（GET / 是 403，StaticDir 为空），没有 bundle
+# 可对 —— 前端只装在本机。这里只报本机那份，并核对它就是刚装进去的那一版。
+step "对账本机服务"
 bundle_of() { curl -s -m 20 "$1/" | grep -oE 'assets/index-[A-Za-z0-9_-]+\.js' | head -1 || true; }
-size_of()  { curl -s -m 60 -o /dev/null -w '%{size_download}' "$1/$2" 2>/dev/null || echo 0; }
-role_of()  { curl -s -m 20 "$1/health" | grep -oE '"role"\s*:\s*"[a-z]+"' | head -1 | grep -oE '[a-z]+"$' | tr -d '"' || true; }
 
 LOCAL_BASE="http://127.0.0.1:7331/mindfs"
-PC_BASE="https://pc.xiaokubao.space/mindfs"
-
 L_BUNDLE="$(bundle_of "$LOCAL_BASE")"
-L_SIZE="$(size_of "$LOCAL_BASE" "$L_BUNDLE")"
-echo "    本机  $L_BUNDLE  ${L_SIZE} bytes"
-
-P_ROLE="$(role_of "$PC_BASE")"
-if [[ "$P_ROLE" == "worker" ]]; then
-  echo "    PC    role=worker，不提供前端，跳过 bundle 对账"
+INSTALLED_BUNDLE="$(grep -oE 'assets/index-[A-Za-z0-9_-]+\.js' "$ROOT/web/dist/index.html" | head -1 || true)"
+echo "    本机服务  ${L_BUNDLE:-<取不到>}"
+echo "    刚装好的  ${INSTALLED_BUNDLE:-<取不到>}"
+if [[ -n "$L_BUNDLE" && "$L_BUNDLE" == "$INSTALLED_BUNDLE" ]]; then
+  ok "本机服务的就是刚装的那版 bundle"
 else
-  P_BUNDLE="$(bundle_of "$PC_BASE")"
-  P_SIZE="$(size_of "$PC_BASE" "$P_BUNDLE")"
-  echo "    PC    $P_BUNDLE  ${P_SIZE} bytes"
-
-  if [[ -n "$L_SIZE" && "$L_SIZE" == "$P_SIZE" && "$L_SIZE" != "0" ]]; then
-    ok "两端 bundle 字节数一致（哈希不同是构建随机戳，内容相同）"
-  else
-    echo "    \033[33m! 两端 bundle 大小不一致，需人工确认\033[0m"
-  fi
+  echo "    \033[33m! 本机服务的 bundle 与刚装的不一致，刷新页面/稍后重试再确认\033[0m"
 fi
 
 # ── 7. 本机重启：只能由用户执行 ──

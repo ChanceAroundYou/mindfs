@@ -9,8 +9,6 @@ import (
 	"testing"
 
 	"mindfs/internal/deploy"
-	"mindfs/server/internal/e2ee"
-	"mindfs/server/internal/relay"
 )
 
 func TestPathForStaticAssetCleansURLPaths(t *testing.T) {
@@ -46,58 +44,7 @@ func TestPathForStaticAssetCleansURLPaths(t *testing.T) {
 	}
 }
 
-func TestRequestProofPathPreservesEscapedPathSegments(t *testing.T) {
-	req := httptest.NewRequest(
-		http.MethodGet,
-		"/api/sessions/session-1/toolcalls/claude-task-list%3A1?root=mindfs",
-		nil,
-	)
-
-	got := requestProofPath(req)
-	want := "/api/sessions/session-1/toolcalls/claude-task-list%3A1?root=mindfs"
-	if got != want {
-		t.Fatalf("requestProofPath() = %q, want %q", got, want)
-	}
-}
-
-func TestServeFrontendIndexRewritesRelayedAssetRefsForReleaseVersion(t *testing.T) {
-	staticDir := t.TempDir()
-	if err := os.Mkdir(filepath.Join(staticDir, "assets"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	indexPath := filepath.Join(staticDir, "index.html")
-	content := `<!doctype html><script type="module" src="./assets/index-test.js"></script><link rel="stylesheet" href="./assets/index-test.css">`
-	if err := os.WriteFile(indexPath, []byte(content), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(staticDir, "assets", "index-test.js"), []byte("console.log('ok')"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(staticDir, "assets", "index-test.css"), []byte("body{}"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	prev := deploy.Prefix
-	deploy.Prefix = "/mindfs"
-	defer func() { deploy.Prefix = prev }()
-
-	handler := &HTTPHandler{StaticDir: staticDir, Version: "v0.3.5"}
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.Header.Set("X-MindFS-Relayed", "1")
-	resp := httptest.NewRecorder()
-
-	handler.serveFrontendIndex(resp, req, staticDir, indexPath)
-
-	body := resp.Body.String()
-	if strings.Contains(body, "./assets/") {
-		t.Fatalf("body still contains local assets path: %s", body)
-	}
-	if !strings.Contains(body, "/mindfs-assets/index-test.js") || !strings.Contains(body, "/mindfs-assets/index-test.css") {
-		t.Fatalf("body missing relayed asset paths: %s", body)
-	}
-}
-
-func TestServeFrontendIndexKeepsLocalAssetRefsWhenNotRelayed(t *testing.T) {
+func TestServeFrontendIndexKeepsLocalAssetRefs(t *testing.T) {
 	staticDir := t.TempDir()
 	if err := os.Mkdir(filepath.Join(staticDir, "assets"), 0o755); err != nil {
 		t.Fatal(err)
@@ -124,10 +71,12 @@ func TestServeFrontendIndexKeepsLocalAssetRefsWhenNotRelayed(t *testing.T) {
 
 	body := resp.Body.String()
 	if !strings.Contains(body, "./assets/index-test.js") {
-		t.Fatalf("body should keep local asset path when not relayed: %s", body)
+		t.Fatalf("body should keep the local asset path: %s", body)
 	}
 	if strings.Contains(body, "/mindfs-assets/") {
-		t.Fatalf("body should not contain relayed asset path when not relayed: %s", body)
+		// relay 时代的绝对化改写已整体删除（G-H），产物里的资源路径恒为
+		// <部署前缀>/assets/，不该再出现别名形态。
+		t.Fatalf("body should not contain a relayed asset path: %s", body)
 	}
 }
 
@@ -162,17 +111,6 @@ func TestIsLocalCLIRequestRequiresTokenLoopbackAndWhitelistedRoute(t *testing.T)
 	}
 }
 
-func TestIsLocalCLIRequestAllowsRelayBindStart(t *testing.T) {
-	handler := &HTTPHandler{LocalCLIToken: "secret-token"}
-	req := httptest.NewRequest(http.MethodPost, "/api/relay/bind/start", nil)
-	req.RemoteAddr = "127.0.0.1:54321"
-	req.Header.Set(localCLIHeaderName, "secret-token")
-
-	if !handler.isLocalCLIRequest(req) {
-		t.Fatal("expected local CLI relay bind request to be accepted")
-	}
-}
-
 func TestIsLocalCLIRequestRejectsNonWhitelistedRoute(t *testing.T) {
 	handler := &HTTPHandler{LocalCLIToken: "secret-token"}
 	req := httptest.NewRequest(http.MethodGet, "/api/tree", nil)
@@ -203,77 +141,6 @@ func TestIsLocalCLIRequestRejectsInvalidToken(t *testing.T) {
 
 	if handler.isLocalCLIRequest(req) {
 		t.Fatal("expected invalid token to be rejected")
-	}
-}
-
-func TestRelayStatusWithE2EEDoesNotSetNodeIDWhenE2EEDisabled(t *testing.T) {
-	handler := &HTTPHandler{AppContext: &AppContext{
-		E2EE: e2ee.NewManager(e2ee.Config{Enabled: false, NodeID: "node-id", PairingSecret: "secret"}),
-	}}
-	status := handler.relayStatusWithE2EE(relay.Status{NodeID: "relay-node"})
-
-	if status.E2EERequired {
-		t.Fatal("expected E2EERequired to be false")
-	}
-	if status.E2EENodeID != "" {
-		t.Fatalf("E2EENodeID = %q, want empty", status.E2EENodeID)
-	}
-	if status.NodeID != "relay-node" {
-		t.Fatalf("NodeID = %q, want relay-node", status.NodeID)
-	}
-}
-
-func TestRelayStatusWithE2EEDoesNotFallbackNodeIDWhenEnabled(t *testing.T) {
-	handler := &HTTPHandler{AppContext: &AppContext{
-		E2EE: e2ee.NewManager(e2ee.Config{Enabled: true, NodeID: "e2ee-node", PairingSecret: "secret"}),
-	}}
-	status := handler.relayStatusWithE2EE(relay.Status{})
-
-	if !status.E2EERequired {
-		t.Fatal("expected E2EERequired to be true")
-	}
-	if status.E2EENodeID != "e2ee-node" {
-		t.Fatalf("E2EENodeID = %q, want e2ee-node", status.E2EENodeID)
-	}
-	if status.NodeID != "" {
-		t.Fatalf("NodeID = %q, want empty", status.NodeID)
-	}
-}
-
-func TestRelayStatusSessionAllowsPublicStatusWithoutE2EEHeader(t *testing.T) {
-	handler := &HTTPHandler{AppContext: &AppContext{
-		E2EE: e2ee.NewManager(e2ee.Config{Enabled: true, NodeID: "e2ee-node", PairingSecret: "secret"}),
-	}}
-	req := httptest.NewRequest(http.MethodGet, "/api/relay/status", nil)
-
-	sess, err := handler.relayStatusSession(req)
-	if err != nil {
-		t.Fatalf("relayStatusSession() error = %v", err)
-	}
-	if sess != nil {
-		t.Fatalf("relayStatusSession() = %+v, want nil public session", sess)
-	}
-}
-
-func TestPublicRelayStatusRedactsSensitiveRelayFields(t *testing.T) {
-	status := publicRelayStatus(relay.Status{
-		Bound:        true,
-		NoRelayer:    false,
-		PendingCode:  "pc_secret",
-		NodeName:     "node-name",
-		NodeID:       "node-id",
-		E2EENodeID:   "e2ee-node",
-		RelayBaseURL: "https://relay.example.com",
-		NodeURL:      "https://relay.example.com/n/node-id/",
-		LastError:    "err",
-		E2EERequired: true,
-	})
-
-	if !status.E2EERequired || status.E2EENodeID != "e2ee-node" {
-		t.Fatalf("public E2EE fields = required:%v node:%q", status.E2EERequired, status.E2EENodeID)
-	}
-	if status.PendingCode != "" || status.NodeID != "" || status.NodeURL != "" || status.RelayBaseURL != "" || status.NodeName != "" || status.LastError != "" {
-		t.Fatalf("public status leaked sensitive fields: %+v", status)
 	}
 }
 
@@ -314,32 +181,6 @@ func TestStripDeployPrefixStripsAndRejects(t *testing.T) {
 				t.Fatalf("stripped path = %q, want %q", got, tt.wantStripped)
 			}
 		})
-	}
-}
-
-func TestRelayAssetsAliasRoutesThroughStrictPrefix(t *testing.T) {
-	prev := deploy.Prefix
-	deploy.Prefix = "/mindfs"
-	defer func() { deploy.Prefix = prev }()
-
-	var got string
-	handler := StripDeployPrefix(deploy.NormalizedPrefix(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		got = r.URL.Path
-		w.WriteHeader(http.StatusOK)
-	}))
-
-	aliasReq := httptest.NewRequest(http.MethodGet, "/mindfs-assets/index.js", nil)
-	aliasRec := httptest.NewRecorder()
-	handler.ServeHTTP(aliasRec, aliasReq)
-	if aliasRec.Code != http.StatusOK || got != "/assets/index.js" {
-		t.Fatalf("relay alias status/path = %d/%q, want 200/%q", aliasRec.Code, got, "/assets/index.js")
-	}
-
-	bareReq := httptest.NewRequest(http.MethodGet, "/assets/index.js", nil)
-	bareRec := httptest.NewRecorder()
-	handler.ServeHTTP(bareRec, bareReq)
-	if bareRec.Code != http.StatusNotFound {
-		t.Fatalf("bare asset status = %d, want 404", bareRec.Code)
 	}
 }
 

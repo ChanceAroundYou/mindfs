@@ -17,7 +17,8 @@ WSL（`PC-HOME`）是 **user** 单元、听 `0.0.0.0:7331`。详见下方「两�
 - `/home/nnb/...` **不是**旧路径，是 WSL 端的家目录；本机是 `/home/xiaokubao`。
 - 两台的账户表、节点 UUID 各自独立（`home.xiaokubao.space` → 本机，`pc.xiaokubao.space` → WSL）；判「本地节点」只认各自 `/api/nodes` 里报 `local` 的那个。
 - **WSL 上没有源码库，永远别在那边编译**（2026-10-06 起）：`/home/nnb/projects/mindfs` 只剩 `.mindfs/` 数据目录（历史会话/看板/上传，41MB），**没有 `.git`、没有 `Makefile`、没有源码**。它只接收本机构建好的产物 —— 谁编译谁负责版本号，两边永远跑同一份二进制。
-  唯一的分发路径是 `bash scripts/deploy-all.sh`：tar 打包 `mindfs` 二进制 + `agents.json` + `task_template.json` + `web/dist`，走 ssh 落进 WSL 的 `~/.local/bin` 与 `~/.local/share/mindfs`。
+  唯一的分发路径是 `bash scripts/deploy-all.sh`：tar 打包 `mindfs` 二进制 + `agents.json` + `task_template.json`，走 ssh 落进 WSL 的 `~/.local/bin` 与 `~/.local/share/mindfs`。
+  **不推 `web/dist`**（2026-10-07 起）：WSL 是纯 worker 节点（`config.json` 的 `role=worker`），按设计不服务静态资源（`GET /` 是 403），前端只装在本机。
   去 WSL 上 `git pull` / `make build` = 走错路了；那边能查的是**数据**（`~/.config/mindfs/`、各项目的 `.mindfs/`），不是代码。
 
 ## 模块地图

@@ -47,24 +47,3 @@ func TestPrefixedPath(t *testing.T) {
 		})
 	}
 }
-
-func TestRelayAssetsAlias(t *testing.T) {
-	tests := []struct {
-		prefix string
-		want   string
-	}{
-		{prefix: "/mindfs", want: "/mindfs-assets/"},
-		{prefix: "/app", want: "/app-assets/"},
-		{prefix: "", want: "/assets/"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.prefix, func(t *testing.T) {
-			prev := Prefix
-			Prefix = tt.prefix
-			defer func() { Prefix = prev }()
-			if got := RelayAssetsAlias(); got != tt.want {
-				t.Fatalf("RelayAssetsAlias() = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}

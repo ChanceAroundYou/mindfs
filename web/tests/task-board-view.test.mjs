@@ -3,16 +3,17 @@ import { readFileSync } from "node:fs";
 
 // 项目内四块看板的契约。跨项目工作台的契约已拆到 workspace-board.test.mjs。
 // 2026-09 App.tsx 拆分：项目看板搬到 components/TaskBoardView.tsx，契约随文件走。
+// 2026-10-07 f5c4e0d：components/ 按领域分域（action/file/session/git/task/common），路径跟着走。
 const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
-const bar = readFileSync(new URL("../src/components/ActionBar.tsx", import.meta.url), "utf8");
+const bar = readFileSync(new URL("../src/components/action/ActionBar.tsx", import.meta.url), "utf8");
 const viewHeader = readFileSync(new URL("../src/layout/ViewHeader.tsx", import.meta.url), "utf8");
 const shell = readFileSync(new URL("../src/layout/AppShell.tsx", import.meta.url), "utf8");
-const fileTree = readFileSync(new URL("../src/components/FileTree.tsx", import.meta.url), "utf8");
-const sessionList = readFileSync(new URL("../src/components/SessionList.tsx", import.meta.url), "utf8");
-const sessionViewer = readFileSync(new URL("../src/components/SessionViewer.tsx", import.meta.url), "utf8");
-const gitDiff = readFileSync(new URL("../src/components/GitDiffViewer.tsx", import.meta.url), "utf8");
-const board = readFileSync(new URL("../src/components/TaskBoardView.tsx", import.meta.url), "utf8");
-const listView = readFileSync(new URL("../src/components/DefaultListView.tsx", import.meta.url), "utf8");
+const fileTree = readFileSync(new URL("../src/components/file/FileTree.tsx", import.meta.url), "utf8");
+const sessionList = readFileSync(new URL("../src/components/session/SessionList.tsx", import.meta.url), "utf8");
+const sessionViewer = readFileSync(new URL("../src/components/session/SessionViewer.tsx", import.meta.url), "utf8");
+const gitDiff = readFileSync(new URL("../src/components/git/GitDiffViewer.tsx", import.meta.url), "utf8");
+const board = readFileSync(new URL("../src/components/task/TaskBoardView.tsx", import.meta.url), "utf8");
+const listView = readFileSync(new URL("../src/components/file/DefaultListView.tsx", import.meta.url), "utf8");
 const zh = readFileSync(new URL("../src/i18n/locales/zh-CN.ts", import.meta.url), "utf8");
 const en = readFileSync(new URL("../src/i18n/locales/en-US.ts", import.meta.url), "utf8");
 
@@ -86,12 +87,11 @@ assert.match(
   /showTaskKanban && topContent[\s\S]{0,900}?height: "100%",[\s\S]{0,120}?display: "flex"/,
   "the topContent wrapper must be a sized flex column, or nothing below it can flex",
 );
-// 内边距跟着设备走。移动端底部那条 24px 紧贴输入区，是一道永远用不上的空带；
-// 顶部 8px 比左右两侧的 16px 窄一截，看着像没对齐。桌面四边 16px 保持不变。
+// 内边距跟着设备走，对齐工作台容器（6px 8px）。移动端底部贴输入区不留空带。
 assert.match(
   listView,
-  /padding: isMobile \? "16px 16px 0" : "8px 16px 24px"/,
-  "mobile drops the dead bottom padding and widens the top to match the 16px sides; desktop keeps 8/16/24",
+  /padding: isMobile \? "6px 8px 0" : "6px 8px"/,
+  "padding aligns with workbench container (6px 8px); mobile drops bottom padding",
 );
 // 桌面列高曾经写死 calc(100dvh - 96px)，那套魔法数已随根容器的 flex:1 退休。
 // 只看样式值不看注释 —— 注释里得留着「为什么删掉」，否则下一个人会再加回来。
@@ -266,7 +266,7 @@ assert.doesNotMatch(
 
 // 3) worktree badge 曾经渲染两份（标题条一份、输入行右侧一份），只留标题条那份。
 //    标题行/操作行已抽进 TaskCardRows（看板和工作台共用），契约跟着文件走。
-const cardRows = readFileSync(new URL("../src/components/TaskCardRows.tsx", import.meta.url), "utf8");
+const cardRows = readFileSync(new URL("../src/components/task/TaskCardRows.tsx", import.meta.url), "utf8");
 assert.equal(
   (cardRows.match(/style=\{taskWorktreeTagStyle\(worktreeTagState\)\}/g) || []).length,
   1,
@@ -304,16 +304,32 @@ assert.match(
   "showAdvance 必须是一条能整条求值的表达式",
 );
 // 完成 = 推进键给不出来时的出口（2026-10-06 用户实测：待审核的任务一个键都没有）。
-// 判据是 showAdvance 的反面，两条例外：正在跑、收尾流程在跑且收尾键可用。
+// 判据是 showAdvance 的反面，只剩两条例外：正在跑、终态。
+// **收尾中不再豁免**（2026-10-07 用户要求）：收尾段卡在待审核时 showAdvance 恒假
+// （收尾段是流水最后一段），旧判据把完成键也一起收走了，于是那张卡只剩一个收尾键
+// —— 而收尾键恰恰是最容易失败的一个（主 checkout 不干净就点不动）。
 assert.match(
   cardRows,
-  /const canComplete = !terminal && !stageRunning && !showAdvance && !\(finishActive && canFinishWorktree\);/,
+  /const canComplete = !terminal && !stageRunning && !showAdvance;/,
   "「完成」必须兜住 showAdvance 给不出来的一切局面，否则任务在界面上没有出路",
 );
 assert.match(
   cardRows,
   /const worktreeMissing = worktreeEnabled && task\.worktree_missing === true;/,
   "worktreeMissing 仍是 canFinishWorktree / 徽标档位的判据",
+);
+// 收尾键的判据只剩「worktree 还在」（2026-10-07）：去掉了 has_agent_stage ——
+// 它会让「有 worktree 但没有 agent 段」的任务永远拿不到收尾键，而那种任务恰恰最
+// 需要它（没有 agent 去 commit，只能服务端直接机械清场）。服务端已同步。
+assert.match(
+  cardRows,
+  /const canFinishWorktree = worktreeEnabled && !worktreeMissing && hasWorktreePath;/,
+  "canFinishWorktree 只剩 worktree 三态，不再要求有 agent 段",
+);
+assert.doesNotMatch(
+  cardRows,
+  /has_agent_stage/,
+  "has_agent_stage 已删：stages 补齐投影后它是纯冗余字段，留着只会让下一个人猜以哪个为准",
 );
 // 看板仍要渲染正文（可展开），工作台不传 children —— 那一段因此只存在于看板一侧
 assert.match(
@@ -342,6 +358,20 @@ assert.doesNotMatch(
 
 // —— 2026-10-07 卡片视觉件回归守卫 ——
 
+// 0) 列头保留灰底：列头是看板的「栏目标签」，灰底让它与卡片内容区分开。
+//    只钉「有灰底」本身；圆角/空隙由下一条断言覆盖，别在这里要求属性相邻。
+assert.match(
+  board,
+  /minHeight: "34px",\s*background: "rgba\(148, 163, 184, 0\.08\)"/,
+  "列头必须保留灰底（rgba(148,163,184,0.08)）",
+);
+// 列头灰底做圆角，下方与第一个任务卡留空隙（marginBottom）。
+assert.match(
+  board,
+  /borderRadius: "6px",\s*borderBottom: "1px solid var\(--border-color\)",\s*padding: "7px 9px",\s*marginBottom: "6px"/,
+  "列头灰底必须圆角，且与下方任务卡留 6px 空隙",
+);
+
 // 1) 「待审核」列必须显示状态文字（用户实测：该列卡片只有名字 + worktree 标签，
 //    没有任何状态指示）。走 TaskCardRows 现有 showStatus 路径，与工作台卡同一渲染。
 assert.match(
@@ -359,13 +389,14 @@ assert.doesNotMatch(
 );
 
 // 3) 列内列表必须用 FloatingScroll：原生滚动条占 6px 宽，浮动拇指不占。
+//    padding 归零 —— 卡片左右各让出 6px，与工作台卡片等宽。
 assert.match(
   board,
-  /<FloatingScroll style=\{\{ padding: "6px", display: "flex", flexDirection: "column", gap: "6px" \}\}>/,
-  "列内列表必须用 FloatingScroll（浮动滚动条），padding/gap 对齐工作台 6px 节奏",
+  /<FloatingScroll style=\{\{ padding: "0", display: "flex", flexDirection: "column", gap: "6px" \}\}>/,
+  "列内列表必须用 FloatingScroll（浮动滚动条），padding 归零让卡片对齐工作台宽度",
 );
 assert.match(
-  readFileSync(new URL("../src/components/FloatingScroll.tsx", import.meta.url), "utf8"),
+  readFileSync(new URL("../src/components/common/FloatingScroll.tsx", import.meta.url), "utf8"),
   /className="mindfs-floating-scroll"/,
   "FloatingScroll 的滚动容器必须带 mindfs-floating-scroll 类（WebKit 隐藏原生滚动条）",
 );

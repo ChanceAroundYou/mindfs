@@ -17,7 +17,6 @@ import (
 	"mindfs/server/internal/api/usecase"
 	"mindfs/server/internal/auth"
 	"mindfs/server/internal/commandexec"
-	"mindfs/server/internal/e2ee"
 	"mindfs/server/internal/fs"
 	"mindfs/server/internal/githubimport"
 	"mindfs/server/internal/gitview"
@@ -27,7 +26,6 @@ import (
 	"mindfs/server/internal/notifyscript"
 	"mindfs/server/internal/pins"
 	"mindfs/server/internal/preferences"
-	"mindfs/server/internal/relay"
 	"mindfs/server/internal/scheduled"
 	"mindfs/server/internal/session"
 	"mindfs/server/internal/update"
@@ -44,11 +42,8 @@ type AppContext struct {
 	Dirs      *fs.Registry
 	Agents    *agent.Pool
 	Prober    *agent.Prober
-	Relay     *relay.Manager
-	RelayTips *relay.TipsService
 	Update    *update.Service
 	GitHub    *githubimport.Service
-	E2EE      *e2ee.Manager
 	Auth      *auth.Store
 	// AccountDir 是本账户私有的配置目录（registry/preferences/nodes/prompts/看板模板）。
 	// 主账户为空串时，各 store 会落回进程默认目录。
@@ -346,6 +341,20 @@ func (s *AppContext) RunAgentStage(ctx context.Context, exec kanban.AgentStageEx
 	// 本轮 assistant 正文：只用主线的 message_chunk（子代理的带 ParentToolUseID/TaskID，
 	// 不能算进主线）。kanban 要靠它匹配阶段完成标记。
 	var assistantText strings.Builder
+	// 本轮创建的子会话 key：父轮收尾时要把「没等到 MessageDone」的子会话一并终结，
+	// 否则它们置的 pending 会永久残留（症状「完成回答但还显示正在思考」）。
+	var subSessionKeys []string
+	var subMu sync.Mutex
+	// 终结器用 defer 交出必达性：成功 / 出错 / 提前 return / panic 都走到。
+	defer func() {
+		s.EndSessionTurn(exec.RootID, sessionKey, "", 0)
+		subMu.Lock()
+		subs := append([]string(nil), subSessionKeys...)
+		subMu.Unlock()
+		for _, subKey := range subs {
+			s.EndSessionTurn(exec.RootID, subKey, "", 0)
+		}
+	}()
 	err := uc.SendMessage(ctx, usecase.SendMessageInput{
 		RootID:          exec.RootID,
 		RuntimeRootPath: exec.RuntimeRootPath,
@@ -379,6 +388,9 @@ func (s *AppContext) RunAgentStage(ctx context.Context, exec kanban.AgentStageEx
 			s.BroadcastSessionMetaUpdated(exec.RootID, created)
 			if created != nil {
 				s.SetSessionPendingReply(exec.RootID, created.Key, created.Name)
+				subMu.Lock()
+				subSessionKeys = append(subSessionKeys, created.Key)
+				subMu.Unlock()
 			}
 		},
 		OnSubSessionUpdate: func(sessionKey string, update agenttypes.Event) {
@@ -386,7 +398,7 @@ func (s *AppContext) RunAgentStage(ctx context.Context, exec kanban.AgentStageEx
 			defer updateTracker.End()
 			s.BroadcastSessionUpdate(exec.RootID, sessionKey, update)
 			if update.Type == agenttypes.EventTypeMessageDone {
-				s.BroadcastSessionDone(exec.RootID, sessionKey, "")
+				s.EndSessionTurn(exec.RootID, sessionKey, "", 0)
 			}
 		},
 	})
@@ -396,12 +408,11 @@ func (s *AppContext) RunAgentStage(ctx context.Context, exec kanban.AgentStageEx
 	if ok := updateTracker.WaitIdle(ctx, sessionDoneSettleWindow, sessionDoneMaxWait); !ok {
 		log.Printf("[kanban] session.done.wait_timeout root=%s session=%s task=%s", exec.RootID, sessionKey, exec.Task.ID)
 	}
-	s.BroadcastSessionDone(exec.RootID, sessionKey, "")
 	if err != nil {
 		return kanban.StageResult{}, err
 	}
 	// error == nil 只说明消息投递成功，不代表活干完了。判完成与否看 agent 有没有
-	// 显式回报（见 kanban.MatchStageOutcome）。
+	// 显式回报（见 kanban.MatchStageOutcome）。收尾广播由上面的 defer 终结器负责。
 	return kanban.MatchStageOutcome(assistantText.String(), exec.Task.CurrentStageIndex), nil
 }
 
@@ -618,14 +629,6 @@ func (s *AppContext) GetDirRegistry() *fs.Registry {
 	return s.Dirs
 }
 
-func (s *AppContext) GetRelayManager() *relay.Manager {
-	return s.Relay
-}
-
-func (s *AppContext) GetRelayTipsService() *relay.TipsService {
-	return s.RelayTips
-}
-
 func (s *AppContext) GetUpdateService() *update.Service {
 	return s.Update
 }
@@ -636,10 +639,6 @@ func (s *AppContext) GetWebPushService() *webpush.Service {
 
 func (s *AppContext) GetGitHubImportService() *githubimport.Service {
 	return s.GitHub
-}
-
-func (s *AppContext) GetE2EEManager() *e2ee.Manager {
-	return s.E2EE
 }
 
 func (s *AppContext) GetAuthStore() *auth.Store {
@@ -855,7 +854,7 @@ func (s *AppContext) GetSessionStreamHub() *StreamHub {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.streamHub == nil {
-		s.streamHub = NewStreamHub(s.E2EE)
+		s.streamHub = NewStreamHub()
 	}
 	return s.streamHub
 }
@@ -959,17 +958,17 @@ func (s *AppContext) BroadcastAgentStatusChanged(agentName string) {
 	})
 }
 
-func (s *AppContext) SetSessionPendingReply(rootID, sessionKey, sessionTitle string) {
-	s.GetSessionStreamHub().SetPendingReply(rootID, sessionKey, sessionTitle)
+// SetSessionPendingReply 置子会话/看板会话的 pending，返回该条目的回合代次。
+// 收尾时必须把同一个代次交给 EndSessionTurn，否则清理退化成无条件清。
+func (s *AppContext) SetSessionPendingReply(rootID, sessionKey, sessionTitle string) uint64 {
+	return s.GetSessionStreamHub().SetPendingReply(rootID, sessionKey, sessionTitle)
 }
 
-func (s *AppContext) BroadcastSessionUserMessage(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService string, planMode bool, content string) {
-	s.BroadcastSessionUserMessageAt(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService, planMode, content, time.Now().UTC(), 0)
-}
-
-func (s *AppContext) BroadcastSessionUserMessageAt(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService string, planMode bool, content string, timestamp time.Time, userExchangeSeq int, baseExchangeSeq ...int) {
+// BroadcastSessionUserMessageAt 广播用户消息并置该会话 pending，返回回合代次。
+// 与 SetSessionPendingReply 同理：返回的代次是收尾时唯一能定位「这一轮」的凭据。
+func (s *AppContext) BroadcastSessionUserMessageAt(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService string, planMode bool, content string, timestamp time.Time, userExchangeSeq int, baseExchangeSeq ...int) uint64 {
 	s.ClearTaskAuxFlagsForSession(rootID, sessionKey)
-	s.GetSessionStreamHub().BroadcastSessionUserMessageAt(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService, planMode, content, timestamp, userExchangeSeq, "", false, baseExchangeSeq...)
+	return s.GetSessionStreamHub().BroadcastSessionUserMessageAt(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService, planMode, content, timestamp, userExchangeSeq, "", false, baseExchangeSeq...)
 }
 
 func (s *AppContext) BroadcastSessionUpdate(rootID, sessionKey string, update agenttypes.Event) {
@@ -1012,12 +1011,27 @@ func (s *AppContext) UpdateTaskSessionErrorForSession(rootID, sessionKey, messag
 	}, "agent_session_error")
 }
 
-func (s *AppContext) BroadcastSessionDone(rootID, sessionKey, requestID string) {
+// EndSessionTurn 是**回合的唯一终结器**：通知 → 广播 session.done → 按回合代次清 pending。
+//
+// 所有「这一轮结束了」的边（成功 / 出错 / 取消 / 父轮收尾 / panic）都必须走到这里，
+// 且必须带**置 pending 时拿到的同一个 turnGen**。清理按代次比对（见
+// StreamHub.ClearSessionPending），因此：
+//   - 迟到或重复的 done 是 no-op（不会抹掉新轮的灯）；
+//   - 正常 done 幂等；
+//   - 调用方用 defer 保证 panic/提前 return 也必达 —— 这正是「灯不灭」的根治点。
+func (s *AppContext) EndSessionTurn(rootID, sessionKey, requestID string, turnGen uint64) {
 	hub := s.GetSessionStreamHub()
+	// 身份不匹配 ⇒ 这是别的回合的迟到/重复 done：整条丢弃。
+	// 如果在此时仍广播 session.done 帧，前端会按 key 清掉**新轮**的灯（灯不亮）。
+	if !hub.PendingTurnGenMatches(sessionKey, turnGen) {
+		return
+	}
 	pending := hub.PendingSessionSnapshot(sessionKey)
 	s.notifySessionDone(rootID, sessionKey, requestID, pending)
-	hub.ClearSessionPending(sessionKey)
-	hub.BroadcastSessionDone(rootID, sessionKey, requestID)
+	// 广播必须在清之前：ClearSessionPending 有超时兜底，但广播是前端唯一的
+	// session.done 来源。如果先清再广播，清卡住时广播永远发不出去。
+	hub.broadcastSessionDone(rootID, sessionKey, requestID)
+	hub.ClearSessionPending(sessionKey, turnGen)
 }
 
 func (s *AppContext) BroadcastScheduledTaskDone(rootID, taskID, taskName, sessionKey, summary string) {

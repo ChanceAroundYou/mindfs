@@ -68,6 +68,10 @@ export function WorkspaceTaskRow({
         onShowSessionError={onShowSessionError}
         stageName={stageName}
         showStatus
+        // 工作台恒显示状态文字（看板只有「已结束」列才显示），所以失败任务的
+        // 红色错误图标会被画两次 —— 一次在状态文字里，一次在 aux 徽章里。
+        // 与 TaskBoardView 同一口径：状态文字已经表达了「失败了」。
+        hideSessionError={task.status === "fail"}
       />
     </article>
   );

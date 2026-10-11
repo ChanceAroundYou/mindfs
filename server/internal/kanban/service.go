@@ -209,6 +209,16 @@ type AddStageInput struct {
 	RootID string
 	TaskID string
 	Stage  StageTemplate
+	// ByRequest 表示这次追加是**人/系统显式发起的动作**（收尾段），不是用户随手补的
+	// 一句评论。两条路的区别只在「能不能离开当前段」：
+	//   - 置位 → canLeaveStageOnRequest：agent 段停在 waiting_user（agent 自己没回报
+	//     完成）也能被这次显式动作推过去，与「下一段」按钮（moveRelative）同一条规则；
+	//   - 不置位 → canAdvanceFromStage：评论不能替代完成本段，agent 段没走完就拒绝。
+	//
+	// 收尾必须置位：用户点「收尾」是一个明确动作（「这活我收了，去 commit + merge」），
+	// 而任务停在「等待你」时当前段正是 agent 段的 waiting_user —— 走评论那条规则必然
+	// 被拒，用户拿到的是一个他无从下手的报错（2026-10-08 实测 task-9）。
+	ByRequest bool
 }
 
 // UpdateStageInput 修改任务流水里某一段的定义。
@@ -606,7 +616,15 @@ func (s *Service) AddStage(ctx context.Context, in AddStageInput) (TaskDetail, e
 		if latest, runErr := store.LatestStageRun(ctx, task.ID, task.CurrentStageIndex); runErr == nil {
 			// 同 moveRelative：agent 段没走完时，追加一句评论不能当成「这段已完成」。
 			// user 段的 waiting_user 是在等输入，补评论正是答案，照常批准。
-			if !canAdvanceFromStage(task.Stages[task.CurrentStageIndex].Role, latest.Status) {
+			//
+			// ByRequest 是另一条线：发起者不是「一句评论」而是人/系统的明确动作（收尾段），
+			// 规则换成 canLeaveStageOnRequest —— agent 段的 waiting_user 正该由人来判
+			// 「就这样，往下走」。见 AddStageInput.ByRequest。
+			canLeave := canAdvanceFromStage
+			if in.ByRequest {
+				canLeave = canLeaveStageOnRequest
+			}
+			if !canLeave(task.Stages[task.CurrentStageIndex].Role, latest.Status) {
 				return TaskDetail{}, fmt.Errorf(
 					"current stage is %s: 这一段没走完，追加评论不能替代完成本段，重跑本段或改任务后再试",
 					latest.Status,

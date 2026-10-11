@@ -657,7 +657,12 @@ export function useSessionStream(
 
   return {
     timeline: settledTimeline,
-    isStreaming,
+    // 本地流式标记只是「本回合已经有内容流进来了」的**子状态**，不能独立于回合本身存在。
+    // 它只由 WS 事件清（done/message_done/error），没有轮询对账 —— 丢一条 `session.done`
+    // 就永久为真，于是列表蓝灯（pending 派生、有 5s 对账）已灭而流里「正在生成」不灭，
+    // 最后一条的时间戳也一直藏着。把闸门收在这里（唯一真相 `sessionPending`），
+    // 三个指示器就不可能互相矛盾（G-AY 纯派生的补完）。
+    isStreaming: isStreaming && !!sessionPending,
     streamVersion,
     streamStatusText,
   };

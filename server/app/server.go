@@ -3,11 +3,9 @@ package app
 import (
 	"context"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,7 +16,6 @@ import (
 	"mindfs/server/internal/api"
 	"mindfs/server/internal/auth"
 	"mindfs/server/internal/config"
-	"mindfs/server/internal/e2ee"
 	"mindfs/server/internal/fs"
 	"mindfs/server/internal/gitview"
 	"mindfs/server/internal/kanban"
@@ -26,7 +23,6 @@ import (
 	"mindfs/server/internal/nodes"
 	"mindfs/server/internal/notifyscript"
 	"mindfs/server/internal/preferences"
-	"mindfs/server/internal/relay"
 	"mindfs/server/internal/tlsutil"
 	"mindfs/server/internal/update"
 	"mindfs/server/internal/webpush"
@@ -34,15 +30,11 @@ import (
 
 const staticDirEnvKey = "MINDFS_STATIC_DIR"
 const externalProjectDiscoveryInterval = time.Minute
-const hostedAgentsRefreshInterval = 10 * time.Minute
 
 type StartOptions struct {
-	NoRelayer       bool
-	RelayBaseURL    string
 	Version         string
 	Args            []string
 	AgentConfigPath string
-	E2EEConfig      E2EEConfig
 	WebPushEnabled  bool
 	NotifyScript    string
 	UseTLS          bool
@@ -56,41 +48,11 @@ type StartOptions struct {
 	Role string
 }
 
-type E2EEConfig struct {
-	Enabled       bool
-	NodeID        string
-	PairingSecret string
-}
-
-type E2EEEnsureResult struct {
-	Config    E2EEConfig
-	Generated bool
-}
-
-func EnsureE2EEConfig(enabled bool) (E2EEEnsureResult, error) {
-	result, err := e2ee.EnsureConfig(enabled)
-	if err != nil {
-		return E2EEEnsureResult{}, err
-	}
-	return E2EEEnsureResult{
-		Config: E2EEConfig{
-			Enabled:       result.Config.Enabled,
-			NodeID:        result.Config.NodeID,
-			PairingSecret: result.Config.PairingSecret,
-		},
-		Generated: result.Generated,
-	}, nil
-}
-
 // Start boots the HTTP/WS server.
 func Start(ctx context.Context, addr string, opts StartOptions) error {
 	agentConfig, err := agent.LoadConfigWithExtra(opts.AgentConfigPath)
 	if err != nil {
 		return err
-	}
-	relayBaseURL := opts.RelayBaseURL
-	if relayBaseURL == "" {
-		relayBaseURL = agentConfig.RelayBaseURL
 	}
 	executable, _ := os.Executable()
 	updateSvc := update.NewService("a9gent/mindfs", opts.Version, executable, opts.Args, 10*time.Minute)
@@ -111,13 +73,6 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 		log.Printf("[webpush] config.error err=%v", err)
 	}
 
-	// relay 是进程级的（一台机器一条隧道），先建好再交给各账户共享
-	relayMgr, err := relay.NewManager(addr, opts.NoRelayer, relayBaseURL, opts.UseTLS)
-	if err != nil {
-		return err
-	}
-	relayTips := relay.NewTipsService(relayMgr)
-
 	// 共享设置与资源：建一次，所有账户共用同一份实例
 	sharedPrefs, prefsErr := preferences.NewStore()
 	if prefsErr != nil {
@@ -135,7 +90,6 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 	sharedPool := agent.NewPool(agentConfig)
 	sharedProber := agent.NewProber(&agentConfig, sharedPool, 5*time.Minute)
 	sharedProber.Start(ctx)
-	startHostedAgentConfigLoop(ctx, relayBaseURL, agentConfig, sharedPool, sharedProber)
 	sharedPool.StartIdleReleaseLoop(ctx, func() time.Duration {
 		hours := preferences.DefaultIdleSessionResourceReleaseHours
 		if sharedPrefs != nil {
@@ -145,24 +99,16 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 	})
 
 	workspaces := newWorkspaceManager(ctx, sharedServices{
-		agentConfig:  agentConfig,
-		relayBaseURL: relayBaseURL,
-		update:       updateSvc,
-		auth:         authStore,
-		e2ee: e2ee.NewManager(e2ee.Config{
-			Enabled:       opts.E2EEConfig.Enabled,
-			NodeID:        opts.E2EEConfig.NodeID,
-			PairingSecret: opts.E2EEConfig.PairingSecret,
-		}),
-		notify:    notifyscript.NewService(notifyscript.Config{Script: opts.NotifyScript}),
-		relay:     relayMgr,
-		relayTips: relayTips,
-		prefs:     sharedPrefs,
-		nodes:     sharedNodes,
-		webPush:   sharedWebPush,
-		templates: sharedTemplates,
-		pool:      sharedPool,
-		prober:    sharedProber,
+		agentConfig: agentConfig,
+		update:      updateSvc,
+		auth:        authStore,
+		notify:      notifyscript.NewService(notifyscript.Config{Script: opts.NotifyScript}),
+		prefs:       sharedPrefs,
+		nodes:       sharedNodes,
+		webPush:     sharedWebPush,
+		templates:   sharedTemplates,
+		pool:        sharedPool,
+		prober:      sharedProber,
 	})
 	workspaces.SetBaseDir(filepath.Join(configDir, "users"))
 
@@ -212,11 +158,6 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 	}
 	defer listener.Close()
 
-	if err := relayMgr.Start(ctx); err != nil {
-		return err
-	}
-	relayTips.Start(ctx)
-
 	go func() {
 		<-ctx.Done()
 		if primary.Prober != nil {
@@ -227,10 +168,6 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 		}
 		server.Shutdown(context.Background())
 	}()
-
-	if workspaces.shared.e2ee != nil {
-		workspaces.shared.e2ee.StartCleanup(ctx.Done())
-	}
 
 	if opts.UseTLS {
 		return server.ServeTLS(listener, opts.CertFile, opts.KeyFile)
@@ -249,81 +186,6 @@ func normalizeRegisteredForkSessions(ctx context.Context, services *api.AppConte
 		}
 	}
 	return nil
-}
-
-func startHostedAgentConfigLoop(ctx context.Context, relayBaseURL string, localConfig agent.Config, pool *agent.Pool, prober *agent.Prober) {
-	endpoint, err := hostedAgentsURL(relayBaseURL)
-	if err != nil {
-		log.Printf("[agents/hosted] disabled invalid_relay_base_url=%q err=%v", relayBaseURL, err)
-		return
-	}
-	go func() {
-		refresh := func() {
-			merged, err := fetchHostedAgentConfig(ctx, endpoint, localConfig)
-			if err != nil {
-				log.Printf("[agents/hosted] refresh.error url=%s err=%v", endpoint, err)
-				return
-			}
-			effective := pool.UpdateConfig(merged)
-			prober.UpdateConfig(ctx, &effective)
-			log.Printf("[agents/hosted] refresh.ok url=%s agents=%d", endpoint, len(effective.Agents))
-		}
-		refresh()
-		ticker := time.NewTicker(hostedAgentsRefreshInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				refresh()
-			}
-		}
-	}()
-}
-
-func hostedAgentsURL(relayBaseURL string) (string, error) {
-	base := strings.TrimSpace(relayBaseURL)
-	if base == "" {
-		return "", fmt.Errorf("relay base url required")
-	}
-	u, err := url.Parse(base)
-	if err != nil {
-		return "", err
-	}
-	if u.Scheme == "" || u.Host == "" {
-		return "", fmt.Errorf("relay base url must be absolute")
-	}
-	u.Path = strings.TrimRight(u.Path, "/") + "/api/agents"
-	u.RawQuery = ""
-	u.Fragment = ""
-	return u.String(), nil
-}
-
-func fetchHostedAgentConfig(ctx context.Context, endpoint string, localConfig agent.Config) (agent.Config, error) {
-	reqCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return agent.Config{}, err
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return agent.Config{}, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return agent.Config{}, fmt.Errorf("unexpected status %d", resp.StatusCode)
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
-	if err != nil {
-		return agent.Config{}, err
-	}
-	hosted, err := agent.DecodeConfig(body)
-	if err != nil {
-		return agent.Config{}, err
-	}
-	return agent.MergeHostedConfig(hosted, localConfig), nil
 }
 
 func autoAddExternalProjectRoots(registry *fs.Registry, prefs *preferences.Store) {

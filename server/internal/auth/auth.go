@@ -7,7 +7,9 @@ package auth
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -150,6 +152,11 @@ func EnsureStoreAt(path string) (*Store, error) {
 			log.Printf("[auth] 主账户（存量数据归属）判定为 %q", store.users[store.indexLocked(id)].Username)
 		}
 	}
+	// 方案 B：账户 id 从随机改为按用户名派生，这样 worker 没有账户表也能解析。
+	// 迁移在返回前做，旧目录重命名 + id 更新一次落盘。
+	if err := store.migrateIDsToDerived(); err != nil {
+		return nil, err
+	}
 	log.Printf("[auth] 账户表已加载：%d 个账户（%s）", len(store.users), path)
 	return store, nil
 }
@@ -161,6 +168,52 @@ func (s *Store) firstAdminLocked() string {
 		}
 	}
 	return ""
+}
+
+// migrateIDsToDerived 把旧的随机 id 迁移成按用户名派生的确定性 id。
+//
+// 为什么需要迁移：改造前 id 是 randomSecret 生成的（本机 u_pc_admin、
+// fn u_yQgvkYcI7Na1tzIR），改造后 id 由用户名算出。不迁移的话，
+// worker 上按用户名算出的目录名和 primary 上实际的目录名对不上，
+// 两边各建一个目录、数据永远不通。
+//
+// 做法：遍历账户表，id 不等于 DeriveAccountID(username) 的，
+// 把 users/<旧id>/ 重命名成 users/<新id>/（存在才改），再更新表并落盘。
+// 主账户 id 也跟着改。新目录已存在（哈希碰撞，几乎不可能）时跳过重命名。
+func (s *Store) migrateIDsToDerived() error {
+	base := filepath.Dir(s.path)
+	usersDir := filepath.Join(base, "users")
+
+	changed := false
+	for i := range s.users {
+		want := DeriveAccountID(s.users[i].Username)
+		if s.users[i].ID == want {
+			continue
+		}
+		oldID := s.users[i].ID
+		oldDir := filepath.Join(usersDir, oldID)
+		newDir := filepath.Join(usersDir, want)
+		if info, err := os.Stat(oldDir); err == nil && info.IsDir() {
+			if _, err := os.Stat(newDir); err == nil {
+				// 新目录已存在（哈希碰撞），跳过重命名，只更新表
+				log.Printf("[auth] 账户 %q 的新目录 %s 已存在，跳过重命名", s.users[i].Username, newDir)
+			} else if err := os.Rename(oldDir, newDir); err != nil {
+				return fmt.Errorf("迁移账户目录 %s → %s 失败: %w", oldID, want, err)
+			}
+		}
+		s.users[i].ID = want
+		if s.primaryID == oldID {
+			s.primaryID = want
+		}
+		changed = true
+		log.Printf("[auth] 账户 %q 的 id 从 %s 迁移为 %s", s.users[i].Username, oldID, want)
+	}
+	if changed {
+		if err := writeUsers(s.path, s.users, s.primaryID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // PrimaryUserID 返回主账户 id（空串表示账户表为空）。
@@ -277,15 +330,11 @@ func migrateFromLegacy(usersPath string) ([]User, error) {
 	if err != nil {
 		return nil, err
 	}
-	id, err := randomSecret(12)
-	if err != nil {
-		return nil, err
-	}
 	if generated {
 		log.Printf("[auth] 已生成管理员初始密码: %s", password)
 	}
 	return []User{{
-		ID:           "u_" + id,
+		ID:           DeriveAccountID("admin"),
 		Username:     "admin",
 		PasswordHash: string(hash),
 		Role:         RoleAdmin,
@@ -362,6 +411,19 @@ func (s *Store) Get(id string) (PublicUser, error) {
 	return s.publicLocked(s.users[idx]), nil
 }
 
+// DeriveAccountID 从用户名派生一个确定性的账户 id。
+//
+// 为什么需要它：worker 没有账户表（方案 B），但数据分区仍然需要 id。
+// 账户 id 跨机器稳定后，同一台 worker 上反复解析同一个用户名，
+// 得到的目录名一致 —— 否则每次请求都可能落到不同目录，数据全丢。
+//
+// 用 SHA256 而不是直接用用户名：用户名可能含路径不友好的字符
+// （空格、中文、/），而 id 要拿去拼 users/<id>/。
+func DeriveAccountID(username string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(username)))
+	return "u_" + hex.EncodeToString(sum[:])[:16]
+}
+
 // Resolve 把客户端声明的身份解析成**本机**的账户 id。
 //
 // 为什么需要它：账户表每台机器独立，用户 id 是各自随机生成的（实测本机
@@ -432,11 +494,6 @@ func (s *Store) Create(username, password, role string) (PublicUser, error) {
 	if err != nil {
 		return PublicUser{}, err
 	}
-	id, err := randomSecret(12)
-	if err != nil {
-		return PublicUser{}, err
-	}
-
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, u := range s.users {
@@ -445,7 +502,7 @@ func (s *Store) Create(username, password, role string) (PublicUser, error) {
 		}
 	}
 	user := User{
-		ID:           "u_" + id,
+		ID:           DeriveAccountID(name),
 		Username:     name,
 		PasswordHash: string(hash),
 		Role:         role,

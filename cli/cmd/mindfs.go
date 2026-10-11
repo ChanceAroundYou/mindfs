@@ -70,8 +70,6 @@ func main() {
 	}
 
 	addr := flag.String("addr", "127.0.0.1:7331", "listen address")
-	noRelayer := flag.Bool("no-relayer", false, "disable relay integration")
-	e2eeFlag := flag.Bool("e2ee", false, "enable end-to-end encryption for sensitive data")
 	webPushFlag := flag.Bool("web-push", true, "enable PWA Web Push notifications")
 	foreground := flag.Bool("foreground", false, "run in the foreground instead of as a background service")
 	autoStart := flag.Bool("autostart", false, "register or refresh automatic startup for this user")
@@ -82,7 +80,6 @@ func main() {
 	versionFlag := flag.Bool("version", false, "show version")
 	updateFlag := flag.Bool("update", false, "check for and install the latest MindFS release")
 	uninstallFlag := flag.Bool("uninstall", false, "print the MindFS uninstall command")
-	bindRelay := flag.Bool("bind-relay", false, "start relay binding and print the relayer bind URL")
 	configFlag := flag.String("config", "", "mindfs startup config file; defaults to <config-dir>/config.json when present. Command-line flags override file values")
 	agentConfigFlag := flag.String("agent-config", "", "extra agents.json file for customizable agent(ACP-protocol) and shell")
 	notifyScriptFlag := flag.String("notify-script", "", "executable script for notification events; receives JSON payload on stdin")
@@ -99,7 +96,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
 	}
-	applyStartupConfig(startupCfg, explicitFlags, addr, noRelayer, e2eeFlag, webPushFlag, foreground, bindRelay, tlsFlag, certFlag, keyFlag, agentConfigFlag, notifyScriptFlag, roleFlag)
+	applyStartupConfig(startupCfg, explicitFlags, addr, webPushFlag, foreground, tlsFlag, certFlag, keyFlag, agentConfigFlag, notifyScriptFlag, roleFlag)
 	internalAutoStart := autoStartBoot || *internalAutoStartFlag
 	if internalAutoStart {
 		*foreground = true
@@ -195,22 +192,11 @@ func main() {
 		return
 	}
 
-	e2eeResult, err := app.EnsureE2EEConfig(*e2eeFlag)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		os.Exit(1)
-	}
-	if *e2eeFlag && !internalAutoStart && strings.TrimSpace(e2eeResult.Config.PairingSecret) != "" {
-		fmt.Fprintln(os.Stdout, "E2EE enabled")
-		fmt.Fprintln(os.Stdout, "pairing secret:", e2eeResult.Config.PairingSecret)
-	}
 	if !daemonMode && !internalRestart && !internalAutoStart {
 		autoStartExplicit := explicitFlags["autostart"]
 		if *autoStart || (!autoStartExplicit && autoStartConfigured()) {
 			autoArgs := autoStartArguments(
 				*addr,
-				*noRelayer,
-				*e2eeFlag,
 				*webPushFlag,
 				*tlsFlag,
 				*certFlag,
@@ -245,12 +231,7 @@ func main() {
 			rootID = rootInfo.ID
 			fmt.Fprintln(os.Stdout, "added managed directory:", rootInfo.RootPath)
 		}
-		if *bindRelay {
-			if err := printRelayBindTarget(os.Stdout, *addr, *tlsFlag, rootID); err != nil {
-				fmt.Fprintln(os.Stderr, err.Error())
-				os.Exit(1)
-			}
-		} else if !internalAutoStart {
+		if !internalAutoStart {
 			if err := openTarget(*addr, *tlsFlag, rootID); err != nil {
 				reportOpenTargetError(os.Stderr, err)
 			}
@@ -293,12 +274,7 @@ func main() {
 			rootID = rootInfo.ID
 			fmt.Fprintln(os.Stdout, "added managed directory:", rootInfo.RootPath)
 		}
-		if *bindRelay {
-			if err := printRelayBindTarget(os.Stdout, *addr, *tlsFlag, rootID); err != nil {
-				fmt.Fprintln(os.Stderr, err.Error())
-				os.Exit(1)
-			}
-		} else if err := openTarget(*addr, *tlsFlag, rootID); err != nil {
+		if err := openTarget(*addr, *tlsFlag, rootID); err != nil {
 			reportOpenTargetError(os.Stderr, err)
 		}
 		fmt.Fprintf(os.Stdout, "logs: %s\n", logPath)
@@ -317,11 +293,9 @@ func main() {
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- app.Start(ctx, *addr, app.StartOptions{
-			NoRelayer:       *noRelayer,
 			Version:         version,
 			Args:            os.Args[1:],
 			AgentConfigPath: *agentConfigFlag,
-			E2EEConfig:      e2eeResult.Config,
 			WebPushEnabled:  *webPushFlag,
 			NotifyScript:    *notifyScriptFlag,
 			UseTLS:          *tlsFlag,
@@ -354,13 +328,7 @@ func main() {
 	}
 
 	if !internalRestart && !internalAutoStart && (*foreground || !daemonMode) {
-		if *bindRelay {
-			if err := printRelayBindTarget(os.Stdout, *addr, *tlsFlag, rootID); err != nil {
-				cancel()
-				fmt.Fprintln(os.Stderr, err.Error())
-				os.Exit(1)
-			}
-		} else if err := openTarget(*addr, *tlsFlag, rootID); err != nil {
+		if err := openTarget(*addr, *tlsFlag, rootID); err != nil {
 			reportOpenTargetError(os.Stderr, err)
 		}
 	}
@@ -433,20 +401,15 @@ func sanitizeAddrForFile(addr string) string {
 }
 
 type startupConfig struct {
-	Addr          *string `json:"addr"`
-	NoRelayer     *bool   `json:"noRelayer"`
-	NoRelayerFlag *bool   `json:"no-relayer"`
-	E2EE          *bool   `json:"e2ee"`
-	WebPush       *bool   `json:"webPush"`
-	WebPushFlag   *bool   `json:"web-push"`
-	Foreground    *bool   `json:"foreground"`
-	BindRelay     *bool   `json:"bindRelay"`
-	BindRelayFlag *bool   `json:"bind-relay"`
-	TLS           *bool   `json:"tls"`
-	Cert          *string `json:"cert"`
-	Key           *string `json:"key"`
-	AgentConfig   *string `json:"agent-config"`
-	NotifyScript  *string `json:"notify-script"`
+	Addr         *string `json:"addr"`
+	WebPush      *bool   `json:"webPush"`
+	WebPushFlag  *bool   `json:"web-push"`
+	Foreground   *bool   `json:"foreground"`
+	TLS          *bool   `json:"tls"`
+	Cert         *string `json:"cert"`
+	Key          *string `json:"key"`
+	AgentConfig  *string `json:"agent-config"`
+	NotifyScript *string `json:"notify-script"`
 	// Role 决定这台机器提不提供控制面与前端；worker 只提供数据面。
 	// 不配置 = control = 改造前的行为。
 	Role *string `json:"role"`
@@ -506,11 +469,8 @@ func applyStartupConfig(
 	cfg startupConfig,
 	explicit map[string]bool,
 	addr *string,
-	noRelayer *bool,
-	e2ee *bool,
 	webPush *bool,
 	foreground *bool,
-	bindRelay *bool,
 	tlsFlag *bool,
 	cert *string,
 	key *string,
@@ -521,20 +481,11 @@ func applyStartupConfig(
 	if cfg.Addr != nil && !explicit["addr"] {
 		*addr = strings.TrimSpace(*cfg.Addr)
 	}
-	if value := firstBool(cfg.NoRelayer, cfg.NoRelayerFlag); value != nil && !explicit["no-relayer"] {
-		*noRelayer = *value
-	}
-	if cfg.E2EE != nil && !explicit["e2ee"] {
-		*e2ee = *cfg.E2EE
-	}
 	if value := firstBool(cfg.WebPush, cfg.WebPushFlag); value != nil && !explicit["web-push"] {
 		*webPush = *value
 	}
 	if cfg.Foreground != nil && !explicit["foreground"] {
 		*foreground = *cfg.Foreground
-	}
-	if value := firstBool(cfg.BindRelay, cfg.BindRelayFlag); value != nil && !explicit["bind-relay"] {
-		*bindRelay = *value
 	}
 	if cfg.TLS != nil && !explicit["tls"] {
 		*tlsFlag = *cfg.TLS
@@ -841,16 +792,6 @@ type managedDirResponse struct {
 	RootPath string `json:"root_path"`
 }
 
-type relayStatusResponse struct {
-	Bound        bool   `json:"relay_bound"`
-	NoRelayer    bool   `json:"no_relayer"`
-	PendingCode  string `json:"pending_code"`
-	NodeName     string `json:"node_name"`
-	NodeID       string `json:"node_id"`
-	RelayBaseURL string `json:"relay_base_url"`
-	NodeURL      string `json:"node_url"`
-}
-
 func addManagedDir(addr string, useTLS bool, path string) (managedDirResponse, error) {
 	token, err := app.ReadLocalCLIToken(addr)
 	if err != nil {
@@ -1028,127 +969,8 @@ func handleRemoveRoot(addr string, useTLS bool, path string) error {
 	return removeManagedDirFromRegistry(path)
 }
 
-func fetchRelayStatus(addr string, useTLS bool) (relayStatusResponse, error) {
-	url := addrToURL(addr, "/api/relay/status", useTLS)
-	client := newHTTPClient(useTLS, 3*time.Second)
-	resp, err := client.Get(url)
-	if err != nil {
-		return relayStatusResponse{}, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		payload, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		message := strings.TrimSpace(string(payload))
-		if message == "" {
-			message = resp.Status
-		}
-		return relayStatusResponse{}, fmt.Errorf("failed to fetch relay status: %s", message)
-	}
-	var out relayStatusResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return relayStatusResponse{}, err
-	}
-	return out, nil
-}
-
-func startRelayBinding(addr string, useTLS bool) (relayStatusResponse, error) {
-	token, err := app.ReadLocalCLIToken(addr)
-	if err != nil {
-		return relayStatusResponse{}, err
-	}
-	endpoint := addrToURL(addr, "/api/relay/bind/start", useTLS)
-	client := newHTTPClient(useTLS, 3*time.Second)
-	req, err := http.NewRequest(http.MethodPost, endpoint, nil)
-	if err != nil {
-		return relayStatusResponse{}, err
-	}
-	req.Header.Set("X-MindFS-Local-CLI-Token", token)
-	resp, err := client.Do(req)
-	if err != nil {
-		return relayStatusResponse{}, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		payload, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		message := strings.TrimSpace(string(payload))
-		if message == "" {
-			message = resp.Status
-		}
-		return relayStatusResponse{}, fmt.Errorf("failed to start relay binding: %s", message)
-	}
-	var out relayStatusResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return relayStatusResponse{}, err
-	}
-	return out, nil
-}
-
-func printRelayBindTarget(w io.Writer, addr string, useTLS bool, rootID string) error {
-	status, err := startRelayBinding(addr, useTLS)
-	if err != nil {
-		return err
-	}
-	if status.NoRelayer {
-		return errors.New("relay integration is disabled")
-	}
-	if status.Bound && strings.TrimSpace(status.NodeURL) != "" {
-		u, err := url.Parse(status.NodeURL)
-		if err != nil {
-			return err
-		}
-		if strings.TrimSpace(rootID) != "" {
-			q := u.Query()
-			q.Set("root", rootID)
-			u.RawQuery = q.Encode()
-		}
-		fmt.Fprintln(w, "Relay already bound:")
-		fmt.Fprintln(w, u.String())
-		return nil
-	}
-	pendingCode := strings.TrimSpace(status.PendingCode)
-	relayBaseURL := strings.TrimSpace(status.RelayBaseURL)
-	if pendingCode == "" || relayBaseURL == "" {
-		return errors.New("relay bind URL unavailable")
-	}
-	u, err := url.Parse(strings.TrimSuffix(relayBaseURL, "/") + "/bind")
-	if err != nil {
-		return err
-	}
-	q := u.Query()
-	q.Set("code", pendingCode)
-	if strings.TrimSpace(rootID) != "" {
-		q.Set("root", rootID)
-	}
-	if nodeName := strings.TrimSpace(status.NodeName); nodeName != "" {
-		q.Set("node_name", nodeName)
-	}
-	u.RawQuery = q.Encode()
-	fmt.Fprintln(w, "Open this URL in a browser to bind relay:")
-	fmt.Fprintln(w, u.String())
-	return nil
-}
-
 func openTarget(addr string, useTLS bool, rootID string) error {
-	status, err := fetchRelayStatus(addr, useTLS)
-	if err != nil {
-		return err
-	}
-	target := ""
-	if status.Bound && strings.TrimSpace(status.NodeURL) != "" {
-		u, err := url.Parse(status.NodeURL)
-		if err != nil {
-			return err
-		}
-		if strings.TrimSpace(rootID) != "" {
-			q := u.Query()
-			q.Set("root", rootID)
-			u.RawQuery = q.Encode()
-		}
-		target = u.String()
-	} else {
-		target = localOpenURL(addr, useTLS, rootID)
-	}
-	return openBrowser(target)
+	return openBrowser(localOpenURL(addr, useTLS, rootID))
 }
 
 func reportOpenTargetError(w io.Writer, err error) {
@@ -1181,7 +1003,7 @@ func openBrowser(target string) error {
 		return nil
 	}
 	if runtime.GOOS == "linux" && strings.TrimSpace(os.Getenv("DISPLAY")) == "" && strings.TrimSpace(os.Getenv("WAYLAND_DISPLAY")) == "" {
-		return fmt.Errorf("%w; open this URL manually: %s; you can run `mindfs -bind-relay` to get a relay binding URL and access MindFS from the public internet after binding", errBrowserUnavailable, target)
+		return fmt.Errorf("%w; open this URL manually: %s", errBrowserUnavailable, target)
 	}
 	var cmd *exec.Cmd
 	switch runtime.GOOS {

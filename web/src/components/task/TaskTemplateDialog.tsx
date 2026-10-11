@@ -185,11 +185,11 @@ export function TaskTemplateDialog({ open, agents, template, onClose, onSaved, c
 
   const saveTask = async () => {
     if (!draft.name.trim()) {
-      reportError("file.write_failed", t("taskTemplate.taskTemplateNameRequired"));
+      reportError("task.action_failed", t("taskTemplate.taskTemplateNameRequired"));
       return;
     }
     if (!draft.stages[0] || draft.stages[0].snapshot.role !== "user") {
-      reportError("file.write_failed", t("taskTemplate.firstStageMustBeUser"));
+      reportError("task.action_failed", t("taskTemplate.firstStageMustBeUser"));
       return;
     }
     setSaving(true);
@@ -208,7 +208,7 @@ export function TaskTemplateDialog({ open, agents, template, onClose, onSaved, c
     } catch (err) {
       const message = String((err as Error)?.message || t("taskTemplate.taskTemplateSaveFailed"));
       setSaveError(message);
-      reportError("file.write_failed", message);
+      reportError("task.action_failed", message);
     } finally {
       setSaving(false);
     }

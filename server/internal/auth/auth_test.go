@@ -305,3 +305,68 @@ func TestExistsAcceptsUsername(t *testing.T) {
 		t.Error("Exists(不存在的 id) = true, want false")
 	}
 }
+
+func TestDeriveAccountIDStable(t *testing.T) {
+	a := DeriveAccountID("xiaokubao")
+	b := DeriveAccountID("xiaokubao")
+	if a != b {
+		t.Errorf("DeriveAccountID 不稳定: %s != %s", a, b)
+	}
+	if a == "" {
+		t.Error("DeriveAccountID 返回空串")
+	}
+}
+
+func TestDeriveAccountIDDistinct(t *testing.T) {
+	a := DeriveAccountID("xiaokubao")
+	b := DeriveAccountID("xingxingbao")
+	if a == b {
+		t.Errorf("不同用户名派生出相同 id: %s", a)
+	}
+}
+
+func TestMigrateIDsToDerived(t *testing.T) {
+	dir := t.TempDir()
+	usersDir := filepath.Join(dir, "users")
+	oldID := "u_oldrandom123"
+	newID := DeriveAccountID("xiaokubao")
+
+	// 建旧目录
+	if err := os.MkdirAll(filepath.Join(usersDir, oldID), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	// 写旧 users.json
+	oldUsers := map[string]any{
+		"users": []map[string]any{
+			{"id": oldID, "username": "xiaokubao", "role": "admin"},
+		},
+		"primary_user_id": oldID,
+	}
+	payload, _ := json.Marshal(oldUsers)
+	if err := os.WriteFile(filepath.Join(dir, "users.json"), payload, 0o600); err != nil {
+		t.Fatalf("write users.json: %v", err)
+	}
+
+	// 加载（触发迁移）
+	store, err := EnsureStoreAt(filepath.Join(dir, "users.json"))
+	if err != nil {
+		t.Fatalf("EnsureStoreAt: %v", err)
+	}
+
+	// 验证目录被重命名
+	if _, err := os.Stat(filepath.Join(usersDir, newID)); err != nil {
+		t.Errorf("新目录 %s 不存在: %v", newID, err)
+	}
+	if _, err := os.Stat(filepath.Join(usersDir, oldID)); !os.IsNotExist(err) {
+		t.Errorf("旧目录 %s 仍存在", oldID)
+	}
+
+	// 验证表被更新
+	if got := store.Resolve("xiaokubao"); got != newID {
+		t.Errorf("Resolve(xiaokubao) = %s, want %s", got, newID)
+	}
+	if got := store.PrimaryUserID(); got != newID {
+		t.Errorf("PrimaryUserID() = %s, want %s", got, newID)
+	}
+}

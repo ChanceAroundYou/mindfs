@@ -42,6 +42,84 @@ func parkAtWaitingUser(t *testing.T, svc *Service, rootID, taskID string) Task {
 	return task
 }
 
+// parkOnWaitingAgentStage 把任务摆成「当前段是 agent 段、这一段停在 waiting_user」。
+//
+// 这是 2026-10-08 实测 task-9 的形状：agent 把活干完了但没输出 [STAGE-DONE:N]，任务停在
+// 「等待你」，当前段正是 **agent 段的 waiting_user**。
+//
+// 走真 runner（静默结局）而不是直接改库：这样「停在 waiting_user」是引擎自己走出来的，
+// 不是测试捏出来的。默认 fixture 的 fakeRunner 零值结果会被记成 success（StageOutcomeDone
+// 是零值），正好绕开这条路 —— 必须显式给 Silent。
+func parkOnWaitingAgentStage(t *testing.T, svc *Service, rootID, taskID string) {
+	t.Helper()
+	ctx := context.Background()
+	svc.SetRunner(&fakeRunner{result: StageResult{Outcome: StageOutcomeSilent}})
+	if _, err := svc.Next(ctx, MoveInput{RootID: rootID, TaskID: taskID}); err != nil {
+		t.Fatalf("Next to the agent stage: %v", err)
+	}
+	waitForCondition(t, func() bool {
+		d, err := svc.GetTask(ctx, rootID, taskID)
+		return err == nil && d.Task.Status == StatusWaitingUser && d.Task.CurrentStageIndex == 1
+	})
+	d, err := svc.GetTask(ctx, rootID, taskID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if d.Task.Stages[1].Role != RoleAgent {
+		t.Fatalf("fixture shape changed: stage 1 must be an agent stage, got %q", d.Task.Stages[1].Role)
+	}
+}
+
+// 收尾段必须能越过「停在 waiting_user 的 agent 段」—— 这是用户实测的那个拦路虎。
+//
+// 2026-10-08 task-9：任务停在「等待你」，当前段是 agent 段的 waiting_user。收尾段走的是
+// AddStage 的**评论**那条路（canAdvanceFromStage），那里 agent 段的 waiting_user 是明确
+// 拒绝的，于是用户点了收尾却拿到「current stage is waiting_user: 这一段没走完，追加评论
+// 不能替代完成本段」+ 一长串清单 —— 而他点的本来就不是评论。
+//
+// 收尾是人/系统的显式动作，走 canLeaveStageOnRequest（与「下一段」按钮同一条规则）。
+func TestBeginFinishWorktreeAppendsAFinishStageOverAnAgentStageParkedAtWaitingUser(t *testing.T) {
+	ctx := context.Background()
+	svc, root, _, _ := finishFixture(t, "work\n")
+	taskID := finishTaskID(t, svc, root.ID)
+	parkOnWaitingAgentStage(t, svc, root.ID, taskID)
+
+	detail, err := svc.BeginFinishWorktree(ctx, BeginFinishInput{RootID: root.ID, TaskID: taskID})
+	if err != nil {
+		t.Fatalf("BeginFinishWorktree over a waiting_user agent stage: %v", err)
+	}
+	last := detail.Task.Stages[len(detail.Task.Stages)-1]
+	if !IsFinishStage(last) {
+		t.Fatalf("last stage must be the finish stage, got kind=%q", last.Kind)
+	}
+	if detail.Task.CurrentStageIndex != len(detail.Task.Stages)-1 {
+		t.Fatalf("current stage = %d, want the finish stage %d", detail.Task.CurrentStageIndex, len(detail.Task.Stages)-1)
+	}
+}
+
+// 同一局面下，**一句评论**仍然不许越过停在 waiting_user 的 agent 段。
+//
+// 与上一条是一对：放宽的只有「人/系统显式发起」那条路（ByRequest），不是 AddStage 整个。
+// 少了这条，下次有人把 ByRequest 的分支删掉（或反过来把 canAdvanceFromStage 换掉）都不会红。
+func TestAddStageWithoutByRequestStillRefusesToLeaveAWaitingAgentStage(t *testing.T) {
+	ctx := context.Background()
+	svc, root, _, _ := finishFixture(t, "work\n")
+	taskID := finishTaskID(t, svc, root.ID)
+	parkOnWaitingAgentStage(t, svc, root.ID, taskID)
+
+	_, err := svc.AddStage(ctx, AddStageInput{
+		RootID: root.ID,
+		TaskID: taskID,
+		Stage:  agentStage("More", "Do more."),
+	})
+	if err == nil {
+		t.Fatal("a plain comment must not advance an agent stage parked at waiting_user")
+	}
+	if !strings.Contains(err.Error(), "追加评论不能替代完成本段") {
+		t.Fatalf("want the comment-path refusal, got %v", err)
+	}
+}
+
 func TestBeginFinishWorktreeAppendsAFinishStageAndRunsIt(t *testing.T) {
 	svc, root, _, _ := finishFixture(t, "")
 	task := parkAtWaitingUser(t, svc, root.ID, mustGetTask(t, svc, root.ID, finishTaskID(t, svc, root.ID)).ID)

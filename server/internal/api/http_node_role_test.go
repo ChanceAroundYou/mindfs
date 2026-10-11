@@ -33,7 +33,6 @@ func TestWorkerRejectsControlPlaneAndKeepsDataPlane(t *testing.T) {
 		{"/api/nodes", true, "node table"},
 		{"/api/task-templates", true, "task templates"},
 		{"/api/node-info", true, "role self-description is control plane too"},
-		{"/api/relay/status", true, "relay binding"},
 		{"/api/web-push/status", true, "web push subscriptions"},
 		{"/api/pins", true, "置顶权威在主节点，worker 存一份就等于又分了一次片"},
 
@@ -75,8 +74,8 @@ func TestControlRoleIsTheDefault(t *testing.T) {
 }
 
 // 本机 CLI 直连必须豁免：isLocalCLIPath 的白名单里有 /api/task-templates
-// 和 /api/relay/status（都是控制面）。CLI 拿 token 从 loopback 调它们时
-// 若被守卫拦掉，「命令行读模板」「查 relay 状态」在 worker 上就废了。
+// （控制面）。CLI 拿 token 从 loopback 调它时若被守卫拦掉，
+// 「命令行读模板」在 worker 上就废了。
 func TestLocalCLIExemptFromWorkerGuard(t *testing.T) {
 	const token = "cli-token-for-test"
 	h := &HTTPHandler{NodeRole: nodeinfo.RoleWorker, LocalCLIToken: token}

@@ -407,7 +407,7 @@ for (const key of [
 //     必须传并进多项目分组的那张表，且**不能**退化成当前 root 那张。
 assert.match(
   app,
-  /const boardSessionByKey = useMemo\(\(\) => \{[\s\S]*?multiProjectSessionGroups[\s\S]*?\.\.\.sessionByKey[\s\S]*?\}, \[multiProjectSessionGroups, sessionByKey\]\);/,
+  /const boardSessionByKey = useMemo\(\(\) => \{[\s\S]*?multiProjectSessionGroups[\s\S]*?\.\.\.sessionByKey[\s\S]*?\}, \[multiProjectSessionGroups, sessionByKey, multiProjectPendingByKey, rootSessionKey\]\);/,
   "boardSessionByKey must merge multiProjectSessionGroups into sessionByKey (current root wins)",
 );
 assert.match(

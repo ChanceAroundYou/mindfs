@@ -72,9 +72,8 @@ function listShellBundleAssets(bundle: Record<string, BundleItem>): string[] {
     .sort();
 }
 
-function buildServiceWorker(precacheUrls: string[], version: string, relayAliasPrefix: string): string {
+function buildServiceWorker(precacheUrls: string[], version: string): string {
   return `const SHELL_CACHE = "mindfs-shell-${version}";
-const RELAY_ALIAS = ${JSON.stringify(relayAliasPrefix)};
 const RUNTIME_CACHE = "mindfs-runtime-${version}";
 const OFFLINE_URL = new URL("./offline.html", self.location.href).toString();
 const INDEX_URL = new URL("./index.html", self.location.href).toString();
@@ -91,15 +90,6 @@ function scopeRelativePathname(pathname) {
     return "/";
   }
   return pathname;
-}
-
-function normalizedPathname(pathname) {
-  const relayPrefixMatch = pathname.match(/^\\/n\\/[^/]+(?=\\/|$)/);
-  if (!relayPrefixMatch) {
-    return pathname;
-  }
-  const normalized = pathname.slice(relayPrefixMatch[0].length);
-  return normalized || "/";
 }
 
 self.addEventListener("install", (event) => {
@@ -179,10 +169,7 @@ self.addEventListener("fetch", (event) => {
   if (url.origin !== self.location.origin) {
     return;
   }
-  const pathname = scopeRelativePathname(normalizedPathname(url.pathname));
-  if (pathname.startsWith(RELAY_ALIAS)) {
-    return;
-  }
+  const pathname = scopeRelativePathname(url.pathname);
   if (pathname.startsWith("/api/") || pathname === "/api" || pathname === "/ws" || pathname === "/health") {
     return;
   }
@@ -268,17 +255,8 @@ function revalidate(request, cache) {
 
 function appShellHTMLPlugin(opts: {
   deployPrefix: string;
-  assetRoot: string;
-  relayAliasPrefix: string;
 }) {
-  const { deployPrefix, assetRoot, relayAliasPrefix } = opts;
-  // 构建期按同一规范化部署前缀生成主包匹配正则：覆盖 /<prefix>/assets/index-* 与
-  // relay 别名 /<prefix>-assets/index-*，避免硬编码 /mindfs-assets。
-  // 注意：正则字面量内的 "/" 必须转义为 "\/"，否则注入后成为非法 flags（SyntaxError）。
-  const assetRootNoSlash = assetRoot.replace(/\/+$/, "");
-  const relayNoSlash = relayAliasPrefix.replace(/\/+$/, "");
-  const escLiteral = (value: string) => escapeRegex(value).replace(/\//g, "\\/");
-  const mainAssetReSource = `^\\/(?:${escLiteral(relayNoSlash)}|${escLiteral(assetRootNoSlash)}\\/assets)\\/index-[^/]+\\.(?:js|css)$`;
+  const { deployPrefix } = opts;
   return {
     name: "mindfs-app-shell-html",
     transformIndexHtml(html: string) {
@@ -295,7 +273,6 @@ function appShellHTMLPlugin(opts: {
       const appShell = process.env.VITE_APP_SHELL === "1";
       return html
         .replace("<!--MINDFS_FAVICON_HREF-->", `${deployPrefix}/favicon.svg`)
-        .replace("/<__MINDFS_MAIN_ASSET_RE__>/", `/${mainAssetReSource}/i`)
         .replace("<!--APP_SHELL_PWA_LINKS-->", appShell ? "" : pwaLinks)
         .replace("<!--APP_SHELL_PWA_META-->", appShell ? "" : pwaMeta);
     },
@@ -337,7 +314,7 @@ function appShellExcludeAssetsPlugin() {
   };
 }
 
-function autoPrecachePlugin(relayAliasPrefix: string) {
+function autoPrecachePlugin() {
   return {
     name: "mindfs-auto-precache",
     apply: "build" as const,
@@ -360,7 +337,7 @@ function autoPrecachePlugin(relayAliasPrefix: string) {
       this.emitFile({
         type: "asset",
         fileName: "service-worker.js",
-        source: buildServiceWorker(precacheUrls, version, relayAliasPrefix),
+        source: buildServiceWorker(precacheUrls, version),
       });
     },
   };
@@ -392,8 +369,6 @@ export default defineConfig(({ mode }) => {
   const rawBase = process.env.VITE_MIND_FS_BASE ?? env.VITE_MIND_FS_BASE ?? "/mindfs";
   const deployPrefix = normalizeBase(rawBase); // 无尾斜杠、以 / 开头或空字符串
   const viteBase = deployPrefix === "" ? "/" : `${deployPrefix}/`;
-  const assetRoot = deployPrefix === "" ? "/" : `${deployPrefix}/`;
-  const relayAliasPrefix = deployPrefix === "" ? "/assets/" : `${deployPrefix}-assets/`;
 
   // 代理键也来自同一部署前缀：/mindfs/api、/mindfs/ws，根部署退化为 /api、/ws。
   const proxy: Record<string, unknown> = {};
@@ -418,9 +393,9 @@ export default defineConfig(({ mode }) => {
     plugins: [
       tailwindcss(),
       react(),
-      appShellHTMLPlugin({ deployPrefix, assetRoot, relayAliasPrefix }),
+      appShellHTMLPlugin({ deployPrefix }),
       appShellExcludeAssetsPlugin(),
-      autoPrecachePlugin(relayAliasPrefix),
+      autoPrecachePlugin(),
       buildStampPlugin(),
     ],
     server: {

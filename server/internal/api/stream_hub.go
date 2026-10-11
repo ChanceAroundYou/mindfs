@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"fmt"
 	"sort"
 	"strconv"
@@ -12,7 +11,6 @@ import (
 
 	agenttypes "mindfs/server/internal/agent/types"
 	"mindfs/server/internal/api/usecase"
-	"mindfs/server/internal/e2ee"
 	"mindfs/server/internal/notify"
 
 	"github.com/gorilla/websocket"
@@ -20,13 +18,16 @@ import (
 
 type StreamHub struct {
 	mu              sync.RWMutex
-	e2eeManager     *e2ee.Manager
 	clients         map[string]*websocket.Conn
 	connLocks       map[*websocket.Conn]*sync.Mutex
 	clientNodes     map[string]string
 	sessionClients  map[string]map[string]struct{}
 	pendingSessions map[string]*SessionPendingState
 	replayStates    map[string]*ClientReplayState
+	// pendingTurnGen 单调自增，每次设置 pending 条目时刷新该条目的 TurnGen。
+	// 它是「这条 pending 属于哪一轮」的身份：清理必须带上同一个 gen 才生效，
+	// 于是迟到/重复的 done 无法抹掉新轮的灯（见 ClearSessionPending）。
+	pendingTurnGen uint64
 }
 
 type PendingUserMessage struct {
@@ -59,6 +60,9 @@ type SessionPendingState struct {
 	NextEventSeq    uint64
 	Summary         string
 	UpdatedAt       time.Time
+	// TurnGen 是本条目所属回合的代次（每次 SetPending* 刷新）。
+	// 清理时带上同一个代次才生效 —— 见 ClearSessionPending。
+	TurnGen uint64
 }
 
 type ClientStreamStatus string
@@ -98,9 +102,8 @@ func blank(value string) bool {
 	return strings.TrimSpace(value) == ""
 }
 
-func NewStreamHub(e2eeManager *e2ee.Manager) *StreamHub {
+func NewStreamHub() *StreamHub {
 	return &StreamHub{
-		e2eeManager:     e2eeManager,
 		clients:         make(map[string]*websocket.Conn),
 		connLocks:       make(map[*websocket.Conn]*sync.Mutex),
 		clientNodes:     make(map[string]string),
@@ -115,7 +118,9 @@ func pendingClientKey(clientID, sessionKey string) string {
 }
 
 func cloneEvent(ev StreamEvent) StreamEvent {
-	return StreamEvent{Type: ev.Type, Data: ev.Data, EventCursor: ev.EventCursor}
+	// Timestamp 必须一起搬。重放路径（ReplyingList → collectReplayStep）只走 cloneEvent，
+	// 漏掉它客户端就只能回退到「恢复页面的接收时刻」，回复时长把整段后台时间算进去。
+	return StreamEvent{Type: ev.Type, Data: ev.Data, EventCursor: ev.EventCursor, Timestamp: ev.Timestamp}
 }
 
 func buildSessionStreamResponse(rootID, sessionKey string, event *StreamEvent) WSResponse {
@@ -277,6 +282,12 @@ func (h *StreamHub) ensurePendingSessionLocked(sessionKey string) *SessionPendin
 	return state
 }
 
+// nextPendingTurnGenLocked 生成一个新的回合代次。调用方必须已持有 h.mu。
+func (h *StreamHub) nextPendingTurnGenLocked() uint64 {
+	h.pendingTurnGen++
+	return h.pendingTurnGen
+}
+
 func (h *StreamHub) clearReplayStatesForSessionLocked(sessionKey string) {
 	for _, replayKey := range h.getReplayKeyListLocked(sessionKey, "") {
 		delete(h.replayStates, replayKey)
@@ -407,11 +418,14 @@ func (h *StreamHub) getAllClientIDs() []string {
 	return clientIDs
 }
 
-func (h *StreamHub) SetPendingUser(rootID, sessionKey, sessionTitle, agent, model, modelDisplayName, mode, effort, fastService string, planMode bool, content string) *PendingUserMessage {
+func (h *StreamHub) SetPendingUser(rootID, sessionKey, sessionTitle, agent, model, modelDisplayName, mode, effort, fastService string, planMode bool, content string) (*PendingUserMessage, uint64) {
 	return h.SetPendingUserAt(rootID, sessionKey, sessionTitle, agent, model, modelDisplayName, mode, effort, fastService, planMode, content, time.Now().UTC())
 }
 
-func (h *StreamHub) SetPendingUserAt(rootID, sessionKey, sessionTitle, agent, model, modelDisplayName, mode, effort, fastService string, planMode bool, content string, timestamp time.Time, baseExchangeSeq ...int) *PendingUserMessage {
+// SetPendingUserAt 置入「用户已发送」的 pending，返回该条目所属**回合的代次**。
+// 调用方必须把这个代次交给回合终结器（AppContext.EndSessionTurn），
+// 否则终结器无法判定「这条 done 是不是本轮的」。
+func (h *StreamHub) SetPendingUserAt(rootID, sessionKey, sessionTitle, agent, model, modelDisplayName, mode, effort, fastService string, planMode bool, content string, timestamp time.Time, baseExchangeSeq ...int) (*PendingUserMessage, uint64) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if timestamp.IsZero() {
@@ -420,6 +434,8 @@ func (h *StreamHub) SetPendingUserAt(rootID, sessionKey, sessionTitle, agent, mo
 		timestamp = timestamp.UTC()
 	}
 	state := h.ensurePendingSessionLocked(sessionKey)
+	turnGen := h.nextPendingTurnGenLocked()
+	state.TurnGen = turnGen
 	state.RootID = rootID
 	state.SessionTitle = strings.TrimSpace(sessionTitle)
 	state.Active = true
@@ -453,7 +469,7 @@ func (h *StreamHub) SetPendingUserAt(rootID, sessionKey, sessionTitle, agent, mo
 		PlanMode:         state.User.PlanMode,
 		Content:          state.User.Content,
 		Timestamp:        state.User.Timestamp,
-	}
+	}, turnGen
 }
 
 func (h *StreamHub) IsSessionReplying(sessionKey string) bool {
@@ -655,21 +671,32 @@ func (h *StreamHub) PromoteQueuedSessionMessage(sessionKey, queueID string) ([]Q
 	return cloneQueue(state.Queue), true
 }
 
-func (h *StreamHub) SetPendingReply(rootID, sessionKey, sessionTitle string) {
+// SetPendingReply 置入「子会话/续轮在回复」的 pending，返回该条目所属回合的代次。
+// 语义同 SetPendingUserAt：代次必须交给终结器。
+func (h *StreamHub) SetPendingReply(rootID, sessionKey, sessionTitle string) uint64 {
 	if blank(sessionKey) {
-		return
+		return 0
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	state := h.ensurePendingSessionLocked(sessionKey)
+	turnGen := h.nextPendingTurnGenLocked()
+	state.TurnGen = turnGen
 	state.RootID = rootID
 	state.SessionTitle = strings.TrimSpace(sessionTitle)
 	state.Active = true
 	if state.UpdatedAt.IsZero() {
 		state.UpdatedAt = time.Now().UTC()
 	}
+	return turnGen
 }
 
+// PendingSessionSnapshot 是 broadcastSessionDone 给 Web Push 通知用的会话快照。
+//
+// 这里**没有**「LastEventAt 超过 N 秒就报不活跃」的判据：真在跑的会话会长时间没有
+// 事件（服务端不转发 SDK 的 keep_alive，唯一的周期事件只覆盖 tool 执行），按静默
+// 判「已结束」是错的。快照只反映 pending 表当下状态 —— 条目在回合结束时被
+// ClearSessionPending 删掉，快照自然就空了。
 func (h *StreamHub) PendingSessionSnapshot(sessionKey string) PendingSessionSnapshot {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
@@ -691,12 +718,14 @@ func (h *StreamHub) AppendReplyEvent(sessionKey string, event StreamEvent) Strea
 	state := h.ensurePendingSessionLocked(sessionKey)
 	state.NextEventSeq++
 	event.EventCursor = formatEventCursor(state.BaseExchangeSeq, state.NextEventSeq)
+	if event.Timestamp.IsZero() {
+		event.Timestamp = time.Now().UTC()
+	}
+	state.UpdatedAt = event.Timestamp
 	if coalesceUserShellStreamEvent(state, event) {
-		state.UpdatedAt = time.Now().UTC()
 		return event
 	}
 	state.ReplyingList = append(state.ReplyingList, cloneEvent(event))
-	state.UpdatedAt = time.Now().UTC()
 	if event.Type == "message_chunk" {
 		if chunk, ok := event.Data.(agenttypes.MessageChunk); ok {
 			state.Summary = lastRunes(state.Summary+chunk.Content, notify.BodyMaxRunes)
@@ -743,6 +772,13 @@ func isAuxiliarySummaryBoundary(eventType string) bool {
 
 const maxReplayUserShellStreamBytes = 256 * 1024
 
+// ReplyingList **原先没有上限** —— 后台会话（看板/定时任务起的、没在浏览器里打开的）
+// 没有绑定客户端，事件只进不出，整个回合全堆在内存里。长回合（几十分钟的 agent 工作）
+// 能堆出上千条事件。这里补一条条数上限：超出就丢最旧的，保留最近的（用户打开会话时
+// 最关心的也是最近这段）。被丢的事件由会话快照兜底 —— 挂载会话是「快照重建」，
+// 客户端拿到的 exchanges 不依赖这份 buffer。
+const maxReplayEvents = 2000
+
 func coalesceUserShellStreamEvent(state *SessionPendingState, event StreamEvent) bool {
 	if state == nil || event.Type != string(agenttypes.EventTypeToolUpdate) {
 		return false
@@ -777,7 +813,7 @@ func coalesceUserShellStreamEvent(state *SessionPendingState, event StreamEvent)
 			merged.Meta["replayTruncation"] = "tail"
 		}
 		merged.Content = []agenttypes.ToolCallContentItem{{Type: "text", Text: text}}
-		state.ReplyingList[i] = StreamEvent{Type: event.Type, Data: merged, EventCursor: event.EventCursor}
+		state.ReplyingList[i] = StreamEvent{Type: event.Type, Data: merged, EventCursor: event.EventCursor, Timestamp: event.Timestamp}
 		return true
 	}
 	return false
@@ -861,17 +897,68 @@ func (h *StreamHub) HasReplayClients(rootID, sessionKey string) bool {
 	return false
 }
 
-func (h *StreamHub) ClearSessionPending(sessionKey string) {
+// PendingTurnGenMatches 报告「带 turnGen 的终结请求是否属于当前 pending 条目」。
+//
+// 仅当**条目存在、且双方都有身份、且身份不一致**时返回 false —— 即这是一条
+// 「别的回合」的迟到 done。其余情况（条目已不存在 / 没有身份）返回 true，
+// 保持改造前行为，保证前端总能收到「清灯」的 done 帧。
+//
+// 返回 false 时，EndSessionTurn 会整条丢弃（不广播 done 帧、不推送、不清理）：
+// 否则那条帧仍会让前端按 key 清掉新轮的灯（症状「灯不亮」的客户端一侧）。
+func (h *StreamHub) PendingTurnGenMatches(sessionKey string, turnGen uint64) bool {
+	if blank(sessionKey) {
+		return true
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	state := h.pendingSessions[sessionKey]
+	if state == nil {
+		return true
+	}
+	if turnGen == 0 || state.TurnGen == 0 {
+		return true
+	}
+	return state.TurnGen == turnGen
+}
+
+// ClearSessionPending 删除一条 pending —— 但**只清属于回合 turnGen 的那一条**。
+//
+// 这是「在回复」状态与回合生命周期绑定的关键：条目记录 TurnGen，终结器带上同一个
+// 代次才生效。于是：
+//   - 第 A 轮迟到的 done（gen=A）落在第 B 轮已开始（条目 TurnGen=B）之后 → gen 不匹配
+//     → no-op，B 轮的灯不被误抹（症状「正在运行但灯不亮」的成因）。
+//   - 重复的 done 天然幂等（条目已删 / gen 已换 → no-op）。
+//
+// turnGen==0 表示调用方没有身份（旧调用点、或该轮从未置过 pending）：此时按
+// 「两侧都有身份才比对」的规则保守清掉，保持改造前的行为，绝不因缺身份而漏清
+// （漏清 = 灯不灭）。
+func (h *StreamHub) ClearSessionPending(sessionKey string, turnGen uint64) {
 	if blank(sessionKey) {
 		return
 	}
+	// 超时兜底：replay 客户端排不空时不能永久卡住 broadcastSessionDone。
+	// 2s 是经验值：正常 replay 排空是毫秒级，2s 足够慢网络下完成；
+	// 超过 2s 说明客户端已失联（后台标签页、WS 写阻塞、连接已断但清理未跑），
+	// 此时必须强制清，否则 session.done 永远发不出去、pending 永远 true。
+	const timeout = 2 * time.Second
+	deadline := time.Now().Add(timeout)
 	for h.HasReplayClients("", sessionKey) {
+		if time.Now().After(deadline) {
+			break
+		}
 		time.Sleep(10 * time.Millisecond)
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	state := h.pendingSessions[sessionKey]
-	if state != nil && len(state.Queue) > 0 {
+	if state == nil {
+		return
+	}
+	// 两侧都有身份且不一致 ⇒ 这是**别的回合**的 done，放弃（迟到/重复 done 的护栏）。
+	if turnGen != 0 && state.TurnGen != 0 && state.TurnGen != turnGen {
+		return
+	}
+	if len(state.Queue) > 0 {
 		state.Active = false
 		state.User = nil
 		state.ReplyingList = nil
@@ -913,7 +1000,12 @@ func (h *StreamHub) BroadcastSessionStream(rootID, sessionKey string, event *Str
 	}
 }
 
-// BroadcastSessionDone 广播一轮的结束。
+// broadcastSessionDone 广播一轮的结束。
+//
+// **刻意未导出**：带回合身份的收尾只有 `AppContext.EndSessionTurn` 一条合法路径
+// —— 它先过 `PendingTurnGenMatches` 代次门再调这里。导出它等于又开一个「无身份也能
+// 广播 done」的入口：前端收到 done 就按 key 清 pending，绕过代次门就会把新轮的灯误清
+// （症状「正在运行但会话列表灯不亮」）。用编译器守住这条，比靠源码扫描某个调用点硬。
 //
 // `liveOnly=false`：**重放中的客户端也要收到**。它挂在回合中途、drain 还没走完时
 // 这一轮结束了，这条就是它的终止信号 —— 因此不需要另开一条「补发你错过的 done」的
@@ -923,30 +1015,11 @@ func (h *StreamHub) BroadcastSessionStream(rootID, sessionKey string, event *Str
 // 「挂上来时这一轮早就结束了」的客户端不需要补偿：它的「在回复」状态取自 pending 列表，
 // 而那时该会话早已不在列表里。**注意 `notifySessionDone` 不是这条路径** —— 它是 Web Push
 // 推送，与 WS 的 pending 状态无关，别拿它当理由（写这段时错过一次）。
-func (h *StreamHub) BroadcastSessionDone(rootID, sessionKey, requestID string) {
+func (h *StreamHub) broadcastSessionDone(rootID, sessionKey, requestID string) {
 	resp := buildSessionDoneResponse(rootID, sessionKey, requestID)
 	for _, clientID := range h.GetSessionClientIDs(sessionKey, false) {
 		h.SendToClient(clientID, resp)
 	}
-}
-
-func (h *StreamHub) BroadcastSessionUserMessage(
-	rootID string,
-	sessionKey string,
-	sessionType string,
-	sessionName string,
-	agentName string,
-	model string,
-	modelDisplayName string,
-	mode string,
-	effort string,
-	fastService string,
-	planMode bool,
-	content string,
-	excludeClientID string,
-	queued bool,
-) {
-	h.BroadcastSessionUserMessageAt(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService, planMode, content, time.Now().UTC(), 0, excludeClientID, queued)
 }
 
 func (h *StreamHub) BroadcastSessionUserMessageAt(
@@ -967,8 +1040,8 @@ func (h *StreamHub) BroadcastSessionUserMessageAt(
 	excludeClientID string,
 	queued bool,
 	baseExchangeSeq ...int,
-) {
-	pendingUser := h.SetPendingUserAt(rootID, sessionKey, sessionName, agentName, model, modelDisplayName, mode, effort, fastService, planMode, content, timestamp, baseExchangeSeq...)
+) uint64 {
+	pendingUser, turnGen := h.SetPendingUserAt(rootID, sessionKey, sessionName, agentName, model, modelDisplayName, mode, effort, fastService, planMode, content, timestamp, baseExchangeSeq...)
 	resp := buildSessionUserMessageResponse(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService, planMode, content, pendingUser.Timestamp, queued, userExchangeSeq)
 	for _, clientID := range h.GetSessionClientIDs(sessionKey, false) {
 		if excludeClientID != "" && clientID == excludeClientID {
@@ -976,6 +1049,7 @@ func (h *StreamHub) BroadcastSessionUserMessageAt(
 		}
 		h.SendToClient(clientID, resp)
 	}
+	return turnGen
 }
 
 func (h *StreamHub) BroadcastSessionQueueUpdated(rootID, sessionKey string, queue []QueuedUserMessage) {
@@ -1004,24 +1078,6 @@ func (h *StreamHub) WriteJSON(clientID string, conn *websocket.Conn, value any) 
 	lock := h.getConnLock(conn)
 	lock.Lock()
 	defer lock.Unlock()
-	if h.e2eeManager != nil && h.e2eeManager.Enabled() {
-		if resp, ok := value.(WSResponse); ok && resp.Type == "e2ee.error" {
-			return conn.WriteJSON(resp)
-		}
-		sess, err := h.e2eeManager.SessionForClient(clientID)
-		if err != nil {
-			return nil
-		}
-		payload, err := json.Marshal(value)
-		if err != nil {
-			return err
-		}
-		envelope, err := e2ee.EncryptBytes(sess.Key, payload)
-		if err != nil {
-			return err
-		}
-		return conn.WriteJSON(envelope)
-	}
 	return conn.WriteJSON(value)
 }
 

@@ -310,14 +310,8 @@ func removeAutoStart() error {
 	return nil
 }
 
-func autoStartArguments(addr string, noRelayer, e2ee, webPush, tlsEnabled bool, cert, key, agentConfig, notifyScript string) []string {
+func autoStartArguments(addr string, webPush, tlsEnabled bool, cert, key, agentConfig, notifyScript string) []string {
 	args := []string{"--internal-autostart", "--addr", addr}
-	if noRelayer {
-		args = append(args, "--no-relayer")
-	}
-	if e2ee {
-		args = append(args, "--e2ee")
-	}
 	if !webPush {
 		args = append(args, "--web-push=false")
 	}

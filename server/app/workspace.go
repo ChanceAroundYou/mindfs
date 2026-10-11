@@ -14,7 +14,6 @@ import (
 	"mindfs/server/internal/api"
 	"mindfs/server/internal/auth"
 	"mindfs/server/internal/config"
-	"mindfs/server/internal/e2ee"
 	"mindfs/server/internal/fs"
 	"mindfs/server/internal/githubimport"
 	"mindfs/server/internal/kanban"
@@ -23,7 +22,6 @@ import (
 	"mindfs/server/internal/notifyscript"
 	"mindfs/server/internal/pins"
 	"mindfs/server/internal/preferences"
-	"mindfs/server/internal/relay"
 	"mindfs/server/internal/scheduled"
 	"mindfs/server/internal/update"
 	"mindfs/server/internal/webpush"
@@ -37,14 +35,10 @@ import (
 // 按账户分的只有三样：项目列表（registry）、项目工作状态（meta：会话/任务/上传/文件批注）、
 // 以及按本账户项目调度的看板与定时任务服务实例。
 type sharedServices struct {
-	agentConfig  agent.Config
-	relayBaseURL string
-	update       *update.Service
-	auth         *auth.Store
-	e2ee         *e2ee.Manager
-	notify       *notifyscript.Service
-	relay        *relay.Manager
-	relayTips    *relay.TipsService
+	agentConfig agent.Config
+	update      *update.Service
+	auth        *auth.Store
+	notify      *notifyscript.Service
 
 	// 共享设置与资源
 	prefs     *preferences.Store
@@ -165,12 +159,13 @@ func (m *workspaceManager) Workspace(userID string) (*api.AppContext, error) {
 	//      前端靠 404 unknown_user 把用户送回登录页（api.ts handleAccountGone），
 	//      所以要继续回 404，否则账户删掉后整页只剩空白、还退不出去。
 	//   ② 本机既没登记、也没目录 —— 纯粹是**别的机器**的账户。
-	//      账户只是可见性设置，按账户的数据本来就物理隔离（项目 <cfg>/users/<id>/registry.json、
-	//      meta <cfg>/users/<id>/meta/<rootID>），所以「没这个账户」等价于「它的目录里没数据」：
-	//      给一份空工作区即可，读者自然得到空列表。
-	//      以前这里统一回 404，于是「换个节点看不到项目」变成一串报错，而用户要的只是「空的」。
+	//      control：账户只是可见性设置，给一份空工作区即可。
+	//      worker（方案 B）：没有账户表，从用户名派生确定性 id，按需建目录。
 	if resolved := m.shared.auth.Resolve(id); resolved != "" {
 		id = resolved
+	} else if m.Role().IsWorker() {
+		// 方案 B：worker 没有账户表，从用户名派生 id（跨机器稳定）。
+		id = auth.DeriveAccountID(id)
 	} else if m.knownAccountDirExists(id) {
 		return nil, fmt.Errorf("%w: %s", api.ErrUnknownUser, id)
 	} else {
@@ -233,21 +228,26 @@ func validAccountID(id string) bool {
 // 实测踩过：登录后看板直接报错。共享服务是同一份实例（无额外 goroutine），
 // Kanban/Scheduled/GitHub 的构造函数本身也不起后台循环——不起 Start/Schedule 就没有副作用，
 // 而空注册表下本来也没有 root 可调度。
+// 方案 B（已实现）：worker 没有账户表，从用户名派生确定性 id（auth.DeriveAccountID），
+// 首次写入时按需建目录。账户 id 跨机器稳定，worker 上反复解析同一个用户名结果一致。
+//
+// 这个空工作区只给 **control** 用：control 上陌生 user= 仍回空工作区（只读、不入缓存），
+// 因为 control 有账户表，账户删除后要能把用户送回登录页。worker 走 Workspace() 里的
+// 派生分支，不再经过这里。
+//
+// 详见 docs/multi-node-control-plane.md「方案 B：worker 没有账户表」。
 func (m *workspaceManager) emptyWorkspace() (*api.AppContext, error) {
 	registry := fs.NewRegistryAt("", "")
 	services := &api.AppContext{
-		Dirs:      registry,
-		Prefs:     m.shared.prefs,
-		Nodes:     m.shared.nodes,
-		Agents:    m.shared.pool,
-		Prober:    m.shared.prober,
-		Update:    m.shared.update,
-		Auth:      m.shared.auth,
-		E2EE:      m.shared.e2ee,
-		Notify:    m.shared.notify,
-		WebPush:   m.shared.webPush,
-		Relay:     m.shared.relay,
-		RelayTips: m.shared.relayTips,
+		Dirs:    registry,
+		Prefs:   m.shared.prefs,
+		Nodes:   m.shared.nodes,
+		Agents:  m.shared.pool,
+		Prober:  m.shared.prober,
+		Update:  m.shared.update,
+		Auth:    m.shared.auth,
+		Notify:  m.shared.notify,
+		WebPush: m.shared.webPush,
 	}
 	// 空工作区也要有置顶表：这个账户 id 解析不到（跨机器带过来的用户名对方没有），
 	// 语义是回落到对方主账户 —— 那主账户的置顶就该看得见，不能因为「没有数据目录」
@@ -363,11 +363,8 @@ func (m *workspaceManager) build(userID string) (*api.AppContext, error) {
 		AccountDir: configDir,
 		Update:     m.shared.update,
 		Auth:       m.shared.auth,
-		E2EE:       m.shared.e2ee,
 		Notify:     m.shared.notify,
 		WebPush:    m.shared.webPush,
-		Relay:      m.shared.relay,
-		RelayTips:  m.shared.relayTips,
 	}
 	services.Scheduled = scheduled.NewService(services, services)
 	if err := normalizeRegisteredForkSessions(m.ctx, services); err != nil {

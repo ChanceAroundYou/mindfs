@@ -18,8 +18,8 @@ import (
 // —— 节点表分裂就是这么来的：同一台物理机器在两边的 nodes.json 里拿到不同 id。
 //
 // 本机 CLI 例外，不是可选项而是正确性要求：isLocalCLIPath 的白名单里有
-// /api/task-templates 和 /api/relay/status（都是控制面），本地 CLI 拿 token
-// 直连时必须还能用，否则「从命令行读模板」和「查 relay 状态」会在 worker 上失效。
+// /api/task-templates（控制面），本地 CLI 拿 token 直连时必须还能用，
+// 否则「从命令行读模板」会在 worker 上失效。
 func (h *HTTPHandler) rejectControlPlaneOnWorker(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if h.NodeRole == nodeinfo.RoleWorker &&

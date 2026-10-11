@@ -151,8 +151,8 @@ assert.match(
 );
 assert.match(
   api,
-  /parseProtectedJSONResponseWithSize/,
-  "payload size must come from the parse (Content-Length is absent: the body is chunked)",
+  /rememberConditionalResponse\(url, etag, payload, text\.length\)/,
+  "payload size must come from the parsed body (Content-Length is absent: the body is chunked)",
 );
 // ETag 与载荷必须同生共死：只删载荷会留下「304 但拿不出内容」的悬空条目。
 assert.match(

@@ -40,27 +40,47 @@ func (s *AppContext) FinishWorktreeAndRepoint(rootID, taskID string) FinishTeard
 	// 归属。key 读不出来也不要紧 —— 那意味着没有会话可搬，清场照做，最后报一句。
 	detail, err := svc.GetTask(context.Background(), rootID, taskID)
 	var sessionKey string
+	alreadyFinished := false
 	if err == nil {
 		sessionKey = strings.TrimSpace(detail.Task.MainSessionKey)
+		// 「建过树、路径已清」= 清场第 4 步 ClearWorktreeRefs 已经跑过 —— 这次是重复
+		// 收尾。跳过清场（下层对空路径是严格报错的，那是为了守住「先清归属再拆目录」
+		// 的顺序不变量），但**仍然往下走搬会话**：会话可能还钉着那个已经不存在的目录。
+		alreadyFinished = detail.Task.CreateWorktree &&
+			detail.Task.WorktreeBuilt &&
+			strings.TrimSpace(detail.Task.WorktreePath) == ""
 	}
 
 	// ── 清场 ──
-	result, finishErr := svc.FinishTaskWorktree(context.Background(), kanban.FinishWorktreeInput{
-		RootID:       rootID,
-		TaskID:       taskID,
-		DeleteBranch: true,
-		PruneOrphans: true,
-	})
-	report.Result = &result
-	if finishErr != nil {
-		var conflict *kanban.FinishWorktreeConflict
-		if errors.As(finishErr, &conflict) {
-			report.ConflictFiles = conflict.ConflictFiles
+	if alreadyFinished {
+		report.Note = "该任务已经收过尾，本次没有可清场的活"
+	} else {
+		result, finishErr := svc.FinishTaskWorktree(context.Background(), kanban.FinishWorktreeInput{
+			RootID:       rootID,
+			TaskID:       taskID,
+			DeleteBranch: true,
+			PruneOrphans: true,
+		})
+		report.Result = &result
+		if finishErr != nil {
+			var conflict *kanban.FinishWorktreeConflict
+			if errors.As(finishErr, &conflict) {
+				report.ConflictFiles = conflict.ConflictFiles
+				report.Output = conflict.Output
+			}
+			var dirty *kanban.FinishWorktreeDirty
+			if errors.As(finishErr, &dirty) {
+				report.DirtyFiles = dirty.Files
+			}
+			var blocked *kanban.FinishWorktreeUserChanges
+			if errors.As(finishErr, &blocked) {
+				report.UserChanges = blocked.Files
+			}
+			report.Error = finishErr.Error()
+			// 清场失败（典型是 worktree 里有未提交改动、git 拒绝拆）时**不搬会话**：
+			// 目录还在、会话就该留在那儿，硬搬过去会让用户在一个还在变化的工作树上继续聊。
+			return report
 		}
-		report.Error = finishErr.Error()
-		// 清场失败（典型是 worktree 里有未提交改动、git 拒绝拆）时**不搬会话**：
-		// 目录还在、会话就该留在那儿，硬搬过去会让用户在一个还在变化的工作树上继续聊。
-		return report
 	}
 
 	// ── 搬会话 ──
@@ -90,8 +110,17 @@ type FinishTeardownReport struct {
 	Result *kanban.FinishWorktreeResult `json:"result,omitempty"`
 	// ConflictFiles 非空 = 合并撞上冲突，仓库停在 MERGE_HEAD 等人处理。
 	ConflictFiles []string `json:"conflict_files,omitempty"`
+	// Output 是 git 自己的原话（冲突时给「怎么解」提供上下文）。
+	Output string `json:"output,omitempty"`
+	// DirtyFiles 非空 = 主 checkout 有未提交改动，git 不敢替用户合并。
+	DirtyFiles []string `json:"dirty_files,omitempty"`
+	// UserChanges 非空 = 合并已成功、但 worktree 里还有用户没提交的东西，git 拒绝拆目录。
+	UserChanges []string `json:"user_changes,omitempty"`
 	// Error 是清场本身的失败（与冲突分开：冲突要列文件，其它错只给一句）。
 	Error string `json:"error,omitempty"`
+	// Note 是「这次没做什么、为什么」的说明（幂等跳过等）。与 Error 分开：
+	// Note 非空但 Error 为空 = 一切正常，只是本来就没活可干。
+	Note string `json:"note,omitempty"`
 	// SessionNote / SessionWarning 是搬会话的结果说明。Warning 不阻断清场。
 	SessionNote    string `json:"session_note,omitempty"`
 	SessionWarning string `json:"session_warning,omitempty"`
@@ -110,11 +139,17 @@ func (s *AppContext) BroadcastTaskFinishTeardown(rootID string, report FinishTea
 	s.GetSessionStreamHub().BroadcastAll(WSResponse{
 		Type: "task.finish_teardown",
 		Payload: map[string]any{
-			"root_id":         report.RootID,
-			"task_id":         report.TaskID,
-			"result":          report.Result,
-			"conflict_files":  report.ConflictFiles,
+			"root_id":        report.RootID,
+			"task_id":        report.TaskID,
+			"result":         report.Result,
+			"conflict_files": report.ConflictFiles,
+			"output":         report.Output,
+			// 清单必须跟到 WS：异步那条路（收尾段跑完的钩子）没有 HTTP 响应可带，
+			// 清单丢了就只能报一句没有清单的错，而用户恰恰需要那份清单去处理。
+			"dirty_files":     report.DirtyFiles,
+			"user_changes":    report.UserChanges,
 			"error":           report.Error,
+			"note":            report.Note,
 			"session_note":    report.SessionNote,
 			"session_warning": report.SessionWarning,
 		},

@@ -346,9 +346,8 @@ export function taskWorktreeTagStyle(state: WorktreeTagState): React.CSSProperti
     fontWeight: 800,
     lineHeight: "12px",
     padding: enabled ? "0 4px" : "0 3px 0 2px",
-    // 收尾中要一眼看得出「这玩意儿正在动」：绿是「有一个 worktree」，
-    // 不动的话和 enabled 一模一样，脉冲动画是唯一区分两者的信号。
-    animation: finishing ? "mindfs-task-ask-user-pulse 2.2s ease-in-out infinite" : "none",
+    // 收尾中不加脉冲动画（2026-10-07 用户要求）：区分 enabled 与 finishing 的信号
+    // 就是标签文字本身（worktree / 收尾中）。
   };
 }
 

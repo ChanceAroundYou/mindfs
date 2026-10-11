@@ -1,5 +1,4 @@
 import { appURL } from "../net/base";
-import { e2eeService } from "../net/e2ee";
 import { getRootNodeId } from "../net/rootNode";
 import type { ReadMode, FilePayload, FetchFileParams, CachedGitDiffPayload, FileResponse } from "./types";
 import {
@@ -208,12 +207,9 @@ export async function fetchFile(params: FetchFileParams): Promise<FilePayload | 
 
   try {
     const requestURL = buildFileURL(params.rootId, params.path, readMode, cursor, validationMTime || undefined, params.nodeId);
-    const headers = e2eeService.isRequired()
-      ? await e2eeService.fileProofHeaders("GET", requestURL)
-      : undefined;
     const response = await fetchResponse(
       requestURL,
-      { ...request.init, headers },
+      request.init,
     );
 
     if (response.status === 304) {
@@ -228,17 +224,12 @@ export async function fetchFile(params: FetchFileParams): Promise<FilePayload | 
       const retryURL = buildFileURL(params.rootId, params.path, readMode, cursor, undefined, params.nodeId);
       const retry = await fetchResponse(
         retryURL,
-        {
-          ...request.init,
-          headers: e2eeService.isRequired()
-            ? await e2eeService.fileProofHeaders("GET", retryURL)
-            : headers,
-        },
+        request.init,
       );
       if (!retry.ok) {
         throw new Error(`open file failed after 304 retry: status=${retry.status}`);
       }
-      const retryPayload = await e2eeService.parseProtectedJSONResponse<FileResponse>(retry);
+      const retryPayload = (await retry.json()) as FileResponse;
       const retryFile = await unwrapFileResponse(retryPayload);
       if (!retryFile) {
         return null;
@@ -248,16 +239,10 @@ export async function fetchFile(params: FetchFileParams): Promise<FilePayload | 
     }
 
     if (!response.ok) {
-      if (response.status === 401 && e2eeService.isRequired()) {
-        const payload = (await response.json().catch(() => ({}))) as { error?: string };
-        if (e2eeService.handleServerError(String(payload.error || ""))) {
-          return fetchFile(params);
-        }
-      }
       throw new Error(`open file failed: status=${response.status}`);
     }
 
-    const payload = await e2eeService.parseProtectedJSONResponse<FileResponse>(response);
+    const payload = (await response.json()) as FileResponse;
     const file = await unwrapFileResponse(payload);
     if (!file) {
       return null;

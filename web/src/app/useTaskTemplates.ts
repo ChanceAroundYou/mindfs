@@ -44,7 +44,7 @@ export function useTaskTemplates({
     try {
       setTaskTemplates(await fetchTaskTemplates(currentRootId || undefined));
     } catch (err) {
-      reportError("file.write_failed", String((err as Error)?.message || t("taskTemplate.loadFailed")));
+      reportError("task.action_failed", String((err as Error)?.message || t("taskTemplate.loadFailed")));
     }
   }, [currentRootId, t]);
 
@@ -76,7 +76,7 @@ export function useTaskTemplates({
       setTaskTemplateDialogTemplate((prev) => prev?.id === id ? null : prev);
       setTaskTemplateFilter((prev) => prev === id ? "" : prev);
     } catch (err) {
-      reportError("file.write_failed", String((err as Error)?.message || t("taskTemplate.deleteFailed")));
+      reportError("task.action_failed", String((err as Error)?.message || t("taskTemplate.deleteFailed")));
     }
   }, [t]);
 

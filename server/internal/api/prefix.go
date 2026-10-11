@@ -4,8 +4,6 @@ import (
 	"context"
 	"net/http"
 	"strings"
-
-	"mindfs/internal/deploy"
 )
 
 type deployPrefixContextKey string
@@ -42,20 +40,6 @@ func StripDeployPrefix(prefix string, next http.Handler) http.Handler {
 			return
 		}
 		path := r.URL.Path
-		if alias := deploy.RelayAssetsAlias(); strings.HasPrefix(path, alias) {
-			// Relay rewrites relative bundles to a prefix-derived absolute alias
-			// (for example /mindfs-assets/). Map only that exact alias back to
-			// the internal static assets route; all other bare paths stay rejected.
-			r2 := withOriginalPath(r)
-			u2 := *r.URL
-			r2.URL = &u2
-			r2.URL.Path = "/assets/" + strings.TrimPrefix(path, alias)
-			if r2.URL.RawPath != "" {
-				r2.URL.RawPath = r2.URL.Path
-			}
-			next.ServeHTTP(w, r2)
-			return
-		}
 		if path != prefix && !strings.HasPrefix(path, prefix+"/") {
 			http.NotFound(w, r)
 			return

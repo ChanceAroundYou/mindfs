@@ -36,6 +36,8 @@ export type ErrorCode =
   | "file.not_found"
   | "file.read_failed"
   | "file.write_failed"
+  // Task errors
+  | "task.action_failed"
   // Clipboard errors
   | "clipboard.write_failed"
   // Skill errors
@@ -266,6 +268,14 @@ class ErrorService {
       },
       "file.write_failed": {
         messageKey: "error.file.writeFailed",
+        severity: "error",
+        recoverable: true,
+      },
+      // 看板/工作台任务动作失败（完成、立即执行、暂停、收尾…）。
+      // 2026-10-07 新增：此前这些动作一律报 file.write_failed —— 而它们一个字节
+      // 的文件都不写，用户看到「写入文件失败」只会去查磁盘。
+      "task.action_failed": {
+        messageKey: "error.task.actionFailed",
         severity: "error",
         recoverable: true,
       },

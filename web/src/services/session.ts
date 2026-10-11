@@ -4,7 +4,6 @@ import { appURL, wsURL } from "./net/base";
 import { getRootNodeId } from "./net/rootNode";
 import { scopeSessionKey } from "../shared/scope";
 import { protectedFetch, protectedJSON, withNodeRetry } from "./net/api";
-import { e2eeService } from "./net/e2ee";
 import {
   deleteSession,
   fetchChildSessions,
@@ -118,6 +117,30 @@ export type {
   ToolCallLocation,
 } from "./sessionTypes";
 
+// Session service for managing agent sessions
+
+const commandTerminalFontSize = 12;
+const commandTerminalFontFamily =
+  '"Cascadia Mono", "Cascadia Code", Consolas, "Microsoft YaHei Mono", "Microsoft YaHei", "Noto Sans Mono CJK SC", monospace';
+
+function measureCommandTerminalCellWidth(): number {
+  if (typeof document === "undefined") return 7.25;
+  const probe = document.createElement("span");
+  probe.textContent = "mmmmmmmmmm";
+  probe.style.position = "fixed";
+  probe.style.left = "-9999px";
+  probe.style.top = "0";
+  probe.style.visibility = "hidden";
+  probe.style.pointerEvents = "none";
+  probe.style.whiteSpace = "pre";
+  probe.style.fontFamily = commandTerminalFontFamily;
+  probe.style.fontSize = `${commandTerminalFontSize}px`;
+  document.body.appendChild(probe);
+  const width = probe.getBoundingClientRect().width / 10;
+  probe.remove();
+  return width > 0 ? width : 7.25;
+}
+
 /**
  * 聊天消息窗口尺寸（首屏拉取条数 / 上翻步长）。会话窗口化的唯一尺寸来源：
  * SessionViewer 的 init `latest:`、首帧种子截断、loadMore 步长、targetSeq 取窗步长，
@@ -143,7 +166,6 @@ class SessionService {
   private readonly clientId = this.generateClientId();
 
   constructor() {
-    e2eeService.setClientId(this.clientId);
     this.connection = new SessionConnectionManager(this.clientId, this.contextCache, {
       emit: (event) => this.dispatcher.emit(event),
       emitDecrypted: (type, sessionKey, payload, msg) => this.dispatcher.emitDecrypted(type, sessionKey, payload, msg),

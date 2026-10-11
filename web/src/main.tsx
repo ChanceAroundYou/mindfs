@@ -9,7 +9,7 @@ import { Login } from "./components/account/Login";
 import { AuthGate } from "./components/account/AuthGate";
 import { addNode, getNodes, setActiveNodeId } from "./services/net/nodeRegistry";
 import { I18nProvider, translateNow } from "./i18n";
-import { DEPLOY_PREFIX, RELAY_ASSETS_PREFIX } from "./services/net/prefix";
+import { DEPLOY_PREFIX } from "./services/net/prefix";
 import { shouldReloadForStaleAsset } from "./services/platform/staleAssetRecovery";
 import { installReloadObserver } from "./services/platform/reloadObserver";
 
@@ -56,10 +56,6 @@ function mindFSAssetPath(raw: string): string {
       return "";
     }
     const pathname = url.pathname;
-    // relay 别名前缀（RELAY_ASSETS_PREFIX）下的资源一律视为前端资源
-    if (pathname.startsWith(RELAY_ASSETS_PREFIX)) {
-      return `${pathname}${url.search}`;
-    }
     // 部署前缀下所有静态资源挂在 DEPLOY_PREFIX/ 之下（空前缀即根 /）
     const assetRoot = DEPLOY_PREFIX === "" ? "/" : `${DEPLOY_PREFIX}/`;
     if (!pathname.startsWith(assetRoot)) {

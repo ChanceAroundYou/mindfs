@@ -119,8 +119,15 @@ func TestMergeBranchRefusesDirtyMainCheckout(t *testing.T) {
 	runTestGit(t, wt, "add", "note.txt")
 	runTestGit(t, wt, "commit", "-m", "work")
 
-	// 主 checkout 有别人的未提交改动时，checkout -q target 会静默丢弃 → 必须在动手前拦下。
+	// 主 checkout 有**已跟踪文件**的未提交改动时，合并会把它顶掉 → 必须在动手前拦下。
+	// 跟踪起来再改是关键：未跟踪文件不该挡路（见
+	// TestMergeBranchIgnoresUntrackedFilesInTheMainCheckout），所以这条测试必须用
+	// 已跟踪文件的改动来表达「有人的活会被毁」。
 	writeTestFile(t, main, "uncommitted.txt", "someone is working here\n")
+	runTestGit(t, main, "add", "uncommitted.txt")
+	runTestGit(t, main, "commit", "-m", "seed tracked file")
+	writeTestFile(t, main, "uncommitted.txt", "someone is still working here\n")
+
 	_, err := MergeBranch(ctx, MergeOptions{Source: "task-1", Target: "main", MainDir: main})
 	if err == nil {
 		t.Fatal("merge must refuse while the main checkout is dirty")
@@ -128,6 +135,138 @@ func TestMergeBranchRefusesDirtyMainCheckout(t *testing.T) {
 	if !strings.Contains(err.Error(), "uncommitted.txt") {
 		t.Fatalf("error must name the dirty file, got %v", err)
 	}
+}
+
+// 未跟踪文件**不该**挡住合并 —— 2026-10-08 用户实测：主 checkout 里两个别人留下的
+// e2e 探针脚本把 task-37 的收尾卡死在「主 checkout 有未提交改动」，而它们一个字节
+// 都不会丢（合并碰不到那两个路径）。
+//
+// 真会覆盖同名未跟踪文件的情况由 git 自己拦，见
+// TestMergeBranchLetsGitRefuseAnUntrackedCollision。
+func TestMergeBranchIgnoresUntrackedFilesInTheMainCheckout(t *testing.T) {
+	ctx := context.Background()
+	main := newMainRepo(t)
+	wt := filepath.Join(main, ".worktree", "task-1")
+	runTestGit(t, main, "worktree", "add", "-b", "task-1", wt)
+	writeTestFile(t, wt, "note.txt", "from worktree\n")
+	runTestGit(t, wt, "add", "note.txt")
+	runTestGit(t, wt, "commit", "-m", "work")
+
+	// 别人留下的散落文件：没 add 过，也不在分支的改动范围里。
+	writeTestFile(t, main, "someone-elses-probe.mjs", "// 别人的探针\n")
+
+	result, err := MergeBranch(ctx, MergeOptions{Source: "task-1", Target: "main", MainDir: main})
+	if err != nil {
+		t.Fatalf("an untracked file must not block the merge: %v", err)
+	}
+	if !result.Merged {
+		t.Fatalf("Merged = false (message=%q), want the branch merged", result.Message)
+	}
+	// 合完了，别人的文件必须一字不少地还在。
+	if got := readTestFile(t, filepath.Join(main, "someone-elses-probe.mjs")); got != "// 别人的探针\n" {
+		t.Fatalf("the untracked file was touched: %q", got)
+	}
+}
+
+// 未跟踪文件真会和合并撞上时，**git 自己**会拦（"untracked working tree files would
+// be overwritten by merge"）。这条测试钉的是「别静默丢东西」，不是「必须提前拦」。
+func TestMergeBranchLetsGitRefuseAnUntrackedCollision(t *testing.T) {
+	ctx := context.Background()
+	main := newMainRepo(t)
+	wt := filepath.Join(main, ".worktree", "task-1")
+	runTestGit(t, main, "worktree", "add", "-b", "task-1", wt)
+	// 分支新建一个 main 上还没有的文件，而 main 里恰好有个同名的未跟踪文件。
+	writeTestFile(t, wt, "fresh.txt", "from worktree\n")
+	runTestGit(t, wt, "add", "fresh.txt")
+	runTestGit(t, wt, "commit", "-m", "add fresh.txt")
+	writeTestFile(t, main, "fresh.txt", "mine, untracked\n")
+
+	if _, err := MergeBranch(ctx, MergeOptions{Source: "task-1", Target: "main", MainDir: main}); err == nil {
+		t.Fatal("git must refuse to overwrite an untracked file")
+	}
+	// 拦下之后那个文件必须原样还在 —— 这是「宁可失败也别丢东西」的那条线。
+	if got := readTestFile(t, filepath.Join(main, "fresh.txt")); got != "mine, untracked\n" {
+		t.Fatalf("the untracked file was overwritten: %q", got)
+	}
+}
+
+// 分支已经合进主干时，主 checkout 脏不脏**完全无关** —— 一步 checkout/merge 都不会
+// 发生。2026-10-08 用户实测：task-37 的活早就合完了，收尾却因为主 checkout 里两个
+// 未跟踪文件报「主 checkout 有未提交改动」。这条测试连**已跟踪**改动一起钉住，因为
+// 顺序错位（脏检查排在祖先判断之前）时它同样会误报。
+func TestMergeBranchSkipsAnAlreadyMergedBranchEvenWhenTheMainCheckoutIsDirty(t *testing.T) {
+	ctx := context.Background()
+	main := newMainRepo(t)
+	wt := filepath.Join(main, ".worktree", "task-1")
+	runTestGit(t, main, "worktree", "add", "-b", "task-1", wt)
+	writeTestFile(t, wt, "note.txt", "from worktree\n")
+	runTestGit(t, wt, "add", "note.txt")
+	runTestGit(t, wt, "commit", "-m", "work")
+	// 先真合一次，让分支成为 main 的祖先。
+	runTestGit(t, main, "merge", "-q", "--no-ff", "task-1")
+
+	// 再制造两类脏：已跟踪文件的改动 + 未跟踪文件。
+	writeTestFile(t, main, "uncommitted.txt", "seed\n")
+	runTestGit(t, main, "add", "uncommitted.txt")
+	runTestGit(t, main, "commit", "-m", "seed tracked file")
+	writeTestFile(t, main, "uncommitted.txt", "still working\n")
+	writeTestFile(t, main, "probe.mjs", "// 别人的探针\n")
+
+	result, err := MergeBranch(ctx, MergeOptions{Source: "task-1", Target: "main", MainDir: main})
+	if err != nil {
+		t.Fatalf("nothing to merge means the dirty checkout is irrelevant: %v", err)
+	}
+	if result.Merged {
+		t.Fatalf("Merged = true, want the already-merged branch skipped (message=%q)", result.Message)
+	}
+	// 跳过合并不该动任何东西。
+	if got := readTestFile(t, filepath.Join(main, "uncommitted.txt")); got != "still working\n" {
+		t.Fatalf("the tracked change was touched: %q", got)
+	}
+	if got := readTestFile(t, filepath.Join(main, "probe.mjs")); got != "// 别人的探针\n" {
+		t.Fatalf("the untracked file was touched: %q", got)
+	}
+}
+
+// trackedDirtyPaths 是合并用的收窄判据：未跟踪的跳过，已跟踪的照报，
+// .worktree/ 容器目录照旧排除。
+func TestTrackedDirtyPathsSkipsUntrackedButKeepsTracked(t *testing.T) {
+	ctx := context.Background()
+	main := newMainRepo(t)
+	writeTestFile(t, main, "tracked.txt", "seed\n")
+	runTestGit(t, main, "add", "tracked.txt")
+	runTestGit(t, main, "commit", "-m", "seed tracked file")
+	writeTestFile(t, main, "tracked.txt", "modified\n")
+	writeTestFile(t, main, "untracked.mjs", "// 探针\n")
+	wt := filepath.Join(main, ".worktree", "task-live")
+	runTestGit(t, main, "worktree", "add", "-b", "task-live", wt)
+
+	tracked, err := trackedDirtyPaths(ctx, main)
+	if err != nil {
+		t.Fatalf("trackedDirtyPaths: %v", err)
+	}
+	if len(tracked) != 1 || tracked[0] != "tracked.txt" {
+		t.Fatalf("trackedDirtyPaths = %v, want [tracked.txt]", tracked)
+	}
+
+	// 宽的那个照旧把未跟踪的也列出来（别的调用方要「全部改动」这个语义）。
+	all, err := meaningfulDirtyPaths(ctx, main)
+	if err != nil {
+		t.Fatalf("meaningfulDirtyPaths: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("meaningfulDirtyPaths = %v, want the tracked + untracked files", all)
+	}
+}
+
+// readTestFile 读一个测试文件的内容；缺失即失败。
+func readTestFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(data)
 }
 
 func TestMergeBranchRefusesLinkedWorktreeAsMainDir(t *testing.T) {
@@ -446,5 +585,195 @@ func TestMeaningfulDirtyPathsIgnoresWorktreeContainer(t *testing.T) {
 	}
 	if len(dirty) != 0 {
 		t.Fatalf("dirty = %v, want empty", dirty)
+	}
+}
+
+// ── CanMergeCleanly：只读合并判定 ──────────────────────────────────
+
+// 判定必须能认出「合得进去」：main 没动过时，分支上的改动不该有冲突。
+func TestCanMergeCleanlyReportsCleanWhenMergeSucceeds(t *testing.T) {
+	main := newMainRepo(t)
+	wt := filepath.Join(main, ".worktree", "task-1")
+	runTestGit(t, main, "worktree", "add", "-b", "task-1", wt)
+	writeTestFile(t, wt, "note.txt", "from worktree\n")
+	runTestGit(t, wt, "add", "note.txt")
+	runTestGit(t, wt, "commit", "-qm", "work")
+
+	feasibility, err := CanMergeCleanly(context.Background(), main, "task-1", "main")
+	if err != nil {
+		t.Fatalf("CanMergeCleanly: %v", err)
+	}
+	if !feasibility.Clean {
+		t.Fatalf("Clean = false (reason=%q), want the merge to be feasible", feasibility.Reason)
+	}
+}
+
+// 两边改同一行 → 必须报冲突并列出文件。
+func TestCanMergeCleanlyReportsConflictWithFiles(t *testing.T) {
+	main := newMainRepo(t)
+	wt := filepath.Join(main, ".worktree", "task-1")
+	runTestGit(t, main, "worktree", "add", "-b", "task-1", wt)
+	writeTestFile(t, wt, "note.txt", "from worktree\n")
+	runTestGit(t, wt, "add", "note.txt")
+	runTestGit(t, wt, "commit", "-qm", "work")
+	// 主 checkout 也改同一行。
+	writeTestFile(t, main, "note.txt", "from main\n")
+	runTestGit(t, main, "add", "note.txt")
+	runTestGit(t, main, "commit", "-qm", "main edit")
+
+	feasibility, err := CanMergeCleanly(context.Background(), main, "task-1", "main")
+	if err != nil {
+		t.Fatalf("CanMergeCleanly: %v", err)
+	}
+	if feasibility.Clean {
+		t.Fatal("Clean = true, want the conflict to be reported")
+	}
+	if len(feasibility.Files) != 1 || feasibility.Files[0] != "note.txt" {
+		t.Fatalf("Files = %v, want [note.txt]", feasibility.Files)
+	}
+	if strings.TrimSpace(feasibility.Reason) == "" {
+		t.Fatal("Reason must say why the merge is not feasible")
+	}
+}
+
+// 分支已在主干里 = 没什么要合的，机械清场照做（不是冲突）。
+func TestCanMergeCleanlyReportsCleanWhenAlreadyMerged(t *testing.T) {
+	main := newMainRepo(t)
+	wt := filepath.Join(main, ".worktree", "task-1")
+	runTestGit(t, main, "worktree", "add", "-b", "task-1", wt)
+	writeTestFile(t, wt, "note.txt", "from worktree\n")
+	runTestGit(t, wt, "add", "note.txt")
+	runTestGit(t, wt, "commit", "-qm", "work")
+	runTestGit(t, main, "merge", "--no-ff", "-qm", "merge", "task-1")
+
+	feasibility, err := CanMergeCleanly(context.Background(), main, "task-1", "main")
+	if err != nil {
+		t.Fatalf("CanMergeCleanly: %v", err)
+	}
+	if !feasibility.Clean {
+		t.Fatalf("Clean = false (reason=%q), want an already-merged branch to be feasible", feasibility.Reason)
+	}
+}
+
+// 判定**不许碰仓库**：这是它能在「用户还没决定要不要收尾」时安全调用的前提。
+func TestCanMergeCleanlyDoesNotTouchRepo(t *testing.T) {
+	main := newMainRepo(t)
+	wt := filepath.Join(main, ".worktree", "task-1")
+	runTestGit(t, main, "worktree", "add", "-b", "task-1", wt)
+	writeTestFile(t, wt, "note.txt", "from worktree\n")
+	runTestGit(t, wt, "add", "note.txt")
+	runTestGit(t, wt, "commit", "-qm", "work")
+	writeTestFile(t, main, "note.txt", "from main\n")
+	runTestGit(t, main, "add", "note.txt")
+	runTestGit(t, main, "commit", "-qm", "main edit")
+
+	before := runTestGit(t, main, "status", "--porcelain")
+	_, err := CanMergeCleanly(context.Background(), main, "task-1", "main")
+	if err != nil {
+		t.Fatalf("CanMergeCleanly: %v", err)
+	}
+	if after := runTestGit(t, main, "status", "--porcelain"); after != before {
+		t.Fatalf("the repo changed during a read-only decision:\nbefore=%q\nafter =%q", before, after)
+	}
+	// 真合并会留下 MERGE_HEAD；干跑一个字节都不该留。
+	if mergeInProgress(context.Background(), main) {
+		t.Fatal("a read-only decision must not leave MERGE_HEAD behind")
+	}
+}
+
+// ── RemoveWorktreeDir ───────────────────────────────────────────────
+
+// 唯一必须拒绝的情形：目录里还有 .git（仍是活 worktree）。那说明 git 的拆除没成功，
+// 这时删目录等于绕过 git 的保护 —— 未提交的活会被无声丢掉。
+func TestRemoveWorktreeDirRefusesALiveWorktree(t *testing.T) {
+	main := newMainRepo(t)
+	wt := filepath.Join(main, ".worktree", "task-1")
+	runTestGit(t, main, "worktree", "add", "-b", "task-1", wt)
+	writeTestFile(t, wt, "uncommitted.txt", "still mine\n")
+
+	if _, err := RemoveWorktreeDir(wt); err == nil {
+		t.Fatal("a live worktree must not be deletable through RemoveWorktreeDir")
+	}
+	if _, statErr := os.Stat(filepath.Join(wt, "uncommitted.txt")); statErr != nil {
+		t.Fatalf("the uncommitted file must survive: %v", statErr)
+	}
+}
+
+// 目录已经不在了 = 已经拆过（幂等），不是错误。
+func TestRemoveWorktreeDirIsIdempotent(t *testing.T) {
+	removed, err := RemoveWorktreeDir(filepath.Join(t.TempDir(), "never-existed"))
+	if err != nil {
+		t.Fatalf("RemoveWorktreeDir: %v", err)
+	}
+	if removed {
+		t.Fatal("removed = true for a path that never existed")
+	}
+}
+
+// git 已经不认、磁盘上还在的空壳（含 git 不跟踪的状态目录）必须被整个删掉。
+func TestRemoveWorktreeDirDeletesAnOrphanShell(t *testing.T) {
+	main := newMainRepo(t)
+	wt := filepath.Join(main, ".worktree", "task-1")
+	runTestGit(t, main, "worktree", "add", "-b", "task-1", wt)
+	runTestGit(t, main, "worktree", "remove", "--force", wt)
+	if err := os.MkdirAll(filepath.Join(wt, ".mindfs"), 0o755); err != nil {
+		t.Fatalf("reseed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(wt, ".mindfs", "sessions.db"), []byte("state"), 0o644); err != nil {
+		t.Fatalf("reseed file: %v", err)
+	}
+
+	removed, err := RemoveWorktreeDir(wt)
+	if err != nil {
+		t.Fatalf("RemoveWorktreeDir: %v", err)
+	}
+	if !removed {
+		t.Fatal("removed = false, want the orphan shell gone")
+	}
+	if _, statErr := os.Stat(wt); !os.IsNotExist(statErr) {
+		t.Fatalf("the shell must be gone, stat err = %v", statErr)
+	}
+}
+
+// ── MigrateWorktreeUploads ──────────────────────────────────────────
+
+// 没有 upload/ 时是安静的空操作 —— 绝大多数 worktree 都没有（任务 worktree 不作为
+// 独立 root 注册，上传落在主 checkout）。
+func TestMigrateWorktreeUploadsIsANoOpWithoutUploads(t *testing.T) {
+	main := newMainRepo(t)
+	wt := filepath.Join(main, ".worktree", "task-1")
+	runTestGit(t, main, "worktree", "add", "-b", "task-1", wt)
+
+	migrated, err := MigrateWorktreeUploads(wt, main)
+	if err != nil {
+		t.Fatalf("MigrateWorktreeUploads: %v", err)
+	}
+	if len(migrated) != 0 {
+		t.Fatalf("migrated = %v, want empty", migrated)
+	}
+}
+
+// 目标已有同名文件时跳过不覆盖：主 checkout 那份是权威的。
+func TestMigrateWorktreeUploadsKeepsExistingTargets(t *testing.T) {
+	main := newMainRepo(t)
+	wt := filepath.Join(main, ".worktree", "task-1")
+	runTestGit(t, main, "worktree", "add", "-b", "task-1", wt)
+	rel := filepath.Join("2026-01-01", "a.png")
+	writeTestFile(t, filepath.Join(wt, ".mindfs", "upload"), rel, "stale\n")
+	writeTestFile(t, filepath.Join(main, ".mindfs", "upload"), rel, "authoritative\n")
+
+	migrated, err := MigrateWorktreeUploads(wt, main)
+	if err != nil {
+		t.Fatalf("MigrateWorktreeUploads: %v", err)
+	}
+	if len(migrated) != 0 {
+		t.Fatalf("migrated = %v, want empty — the existing target must win", migrated)
+	}
+	got, readErr := os.ReadFile(filepath.Join(main, ".mindfs", "upload", rel))
+	if readErr != nil {
+		t.Fatalf("read target: %v", readErr)
+	}
+	if strings.TrimSpace(string(got)) != "authoritative" {
+		t.Fatalf("target was overwritten: %q", got)
 	}
 }

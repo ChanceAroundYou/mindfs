@@ -71,7 +71,6 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
       setProjectAddMode,
       setQueueVersion,
       setRootEntries,
-      setSelectedPendingByKey,
       setSelectedSession,
       setSessions,
       setSlashCommandResults,
@@ -281,10 +280,9 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
       const willReanchor = getReplayTargetsForRoot(rootID).includes(sessionKey);
       const cached = sessionCacheRef.current[cacheKey];
       if (cached && cached.key === sessionKey) {
-        const base = clearPendingAck({
-          ...(cached as any),
-          pending: false,
-        } as Session);
+        // pending 不在会话对象上（纯派生自 multiProjectPendingByKey，见下方
+        // setMultiProjectSessionPending），这里只剩「取消后把 pending_ack 收尾」。
+        const base = clearPendingAck(cached as Session);
         // 轮次结束 = 不再在途：服务端已经把这一轮落盘了，缓存里的 seq=0 从此都是残留
         // （见 session.ts 的 dropTransientExchanges）。
         //
@@ -297,33 +295,25 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
         ) as Session;
         bumpCacheVersion();
       }
-      setSelectedPendingByKey(sessionKey, false);
       setSelectedSession((prev) => {
         const prevKey = prev?.key || prev?.session_key;
         const prevRoot =
           (prev?.root_id as string | undefined) || currentRootIdRef.current;
-        if (
-          !prev ||
-          prevKey !== sessionKey ||
-          prevRoot !== rootID ||
-          !(prev as any).pending
-        ) {
+        if (!prev || prevKey !== sessionKey || prevRoot !== rootID) {
           return prev;
         }
-        return clearPendingAck({
-          ...(prev as any),
-          pending: false,
-        } as SessionItem);
+        // 同上：没有 pending 可清，只有取消后的 pending_ack 收尾（未取消时原样返回）。
+        return clearPendingAck(prev as SessionItem);
       });
       const drawer = drawerSessionByRootRef.current[scopedRootKey(rootID)];
       if (drawer && drawer.key === sessionKey) {
         const latest = wasCanceled
           ? sessionCacheRef.current[cacheKey] || drawer
           : drawer;
-        setDrawerSessionForRoot(rootID, clearPendingAck({
-          ...(latest as any),
-          pending: false,
-        } as Session));
+        const next = clearPendingAck(latest as Session);
+        if (next !== latest) {
+          setDrawerSessionForRoot(rootID, next);
+        }
       }
       if (currentRootIdRef.current === rootID) {
         setSessions((prev) =>
@@ -332,10 +322,7 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
             if (itemKey !== sessionKey) {
               return item;
             }
-            return clearPendingAck({
-              ...(item as any),
-              pending: false,
-            } as SessionItem);
+            return clearPendingAck(item as SessionItem);
           }),
         );
       }
@@ -440,10 +427,9 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
         }
         const seeded = sessionCacheRef.current[ck];
         if (seeded) {
-          setDrawerSessionForRoot(activeRoot, {
-            ...(seeded as any),
-            pending: true,
-          } as Session);
+          // pending 不写在会话对象上（唯一真相是 multiProjectPendingByKey，由上面的
+          // markSessionPending 负责写入）。
+          setDrawerSessionForRoot(activeRoot, seeded);
         }
       }
       if (pending?.tempKey) {
@@ -482,9 +468,10 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
                   model: pending.model,
                     mode: pending.agentMode,
                     effort: pending.effort,
-                    fast_service: pending.fastService || "",
-                  }
+                  fast_service: pending.fastService || "",
+                }
               : undefined,
+            event.timestamp,
           );
           break;
         case "thought_chunk":
@@ -916,7 +903,6 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
     clearSessionStale,
     markSessionPending,
     markSessionStale,
-    setSelectedPendingByKey,
     setBoundSessionForRoot,
     setDrawerSessionForRoot,
     setMultiProjectSessionPending,

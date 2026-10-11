@@ -44,6 +44,11 @@ export function serializeEditedText(source: string, text: string): string {
 }
 
 // Owned by App, never persisted. Viewer unmounts and navigation do not close sessions.
+// **原先没有任何上限** —— 每个会话留着 text / savedText / source 三份全文 + 一个
+// FilePayload，单条可达数 MB；打开过的文件只增不减，长会话能吃掉几十 MB。
+// 这里补一条条数上限 + LRU 逐出：被逐出的会话下次打开会重新 load，代价是一次请求。
+const MAX_FILE_EDIT_SESSIONS = 8;
+
 export class FileEditStore {
   private sessions = new Map<string, FileEditSession>();
   private listeners = new Set<() => void>();
@@ -61,6 +66,13 @@ export class FileEditStore {
   has(rootId: string, path: string): boolean { return this.sessions.has(fileEditKey(rootId, path)); }
   private set(key: string, session: FileEditSession): void {
     this.sessions.set(key, session);
+    // Map 的插入序就是 LRU 序；逐出最旧的一条，把内存占用钉在 MAX × 单条大小。
+    if (this.sessions.size > MAX_FILE_EDIT_SESSIONS) {
+      const oldestKey = this.sessions.keys().next().value;
+      if (oldestKey !== undefined) {
+        this.sessions.delete(oldestKey);
+      }
+    }
     this.listeners.forEach((listener) => listener());
   }
   patch(key: string, patch: Partial<FileEditSession>): void {

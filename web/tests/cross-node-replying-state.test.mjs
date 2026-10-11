@@ -26,7 +26,7 @@ function loadModule(relPath, exportNames) {
   return sandbox.exports;
 }
 
-const { scopeSessionKey, sessionKeyNodeId } = loadModule("src/services/scope.ts", [
+const { scopeSessionKey, sessionKeyNodeId } = loadModule("src/shared/scope.ts", [
   "scopeSessionKey",
   "sessionKeyNodeId",
 ]);
@@ -43,16 +43,41 @@ const { scopeSessionKey, sessionKeyNodeId } = loadModule("src/services/scope.ts"
     exports: {},
     module: { exports: {} },
     require: (id) => {
-      if (id.includes("scope")) return { sessionKeyNodeId };
+      if (id.includes("scope")) return { sessionKeyNodeId, scopeSessionKey };
       if (id.includes("appTask")) return { normalizeFastService: (v) => v };
       return {};
     },
   };
   vm.runInNewContext(compiled, sandbox, { filename: sourcePath });
   globalThis.__mergeReplyingStateByNode = sandbox.exports.mergeReplyingStateByNode;
+  globalThis.__applyPendingToMultiProjectGroups = sandbox.exports.applyPendingToMultiProjectGroups;
 }
 const mergeReplyingStateByNode = globalThis.__mergeReplyingStateByNode;
+const applyPendingToMultiProjectGroups = globalThis.__applyPendingToMultiProjectGroups;
 assert.equal(typeof mergeReplyingStateByNode, "function", "appSession must export mergeReplyingStateByNode");
+assert.equal(
+  typeof applyPendingToMultiProjectGroups,
+  "function",
+  "appSession must export applyPendingToMultiProjectGroups",
+);
+
+// 列表分组属于实际响应节点，必须使用 group._nodeId；不能再通过 rootId 反查
+// 一个「同名项目只保留一份」的 by-id 映射。
+const groups = [
+  {
+    rootId: "go",
+    _nodeId: "home",
+    sessions: [{ key: "s1" }],
+  },
+  {
+    rootId: "go",
+    _nodeId: "pc",
+    sessions: [{ key: "s1" }],
+  },
+];
+const projected = applyPendingToMultiProjectGroups(groups, { "pc::go::s1": true });
+assert.equal(projected[0].sessions[0].pending, false, "home group must not inherit PC pending state");
+assert.equal(projected[1].sessions[0].pending, true, "PC group must read its node-scoped pending key");
 
 // ── 1. 节点作用域：同名项目在两个节点上的会话键必须互不相同 ───────────────
 const pcKey = scopeSessionKey("pc", "go", "s1");
