@@ -7,6 +7,9 @@ import { DocumentViewer } from "./DocumentViewer";
 import { rootBadgeButtonStyle } from "../../shared/rootBadgeStyle";
 import { useI18n } from "../../i18n/index";
 import { ViewHeader } from "../../layout/ViewHeader";
+
+import type { FilePayload } from "../../services/file";
+import { FileEditStore, fileEditKey, MAX_EDITABLE_FILE_BYTES } from "../../services/fileEditing";
 import { FileEditor } from "./FileEditor";
 import { FileOperationItems, FileMenuIcon, fileMenuItemStyle, MoreMenuButton, moreMenuPopoverStyle, menuOverlayStyle, MoveFilePopover } from "./FileOperations";
 import { useFileViewer, type FileViewerProps } from "./useFileViewer";

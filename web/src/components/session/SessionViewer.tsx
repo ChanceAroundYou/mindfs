@@ -317,7 +317,7 @@ function SessionViewerInner({
       return;
     }
     lastAppliedAnchorRef.current = { key: sessionKey, at: anchorAt };
-    // 锚点载荷是 App 的整份缓存：持久化行 + 直播瞬时行（seq=0，见 App.loadSession 的
+    // 锚点载荷是 App 的整份缓存：持久化行 + 尚未落盘的瞬时行（无正 seq，见 App.loadSession 的
     // [...incoming.filter(seq>0), ...localTransient]）。窗口态只能装持久化行 ——
     // 瞬时行归 overlay 管，混进窗口后 overlay 会再输出一遍，同一段正文渲染两次
     // （实测 2026-09-17：ask 触发后 ask 上下各一块同样的分析文本，重开会话必现）。

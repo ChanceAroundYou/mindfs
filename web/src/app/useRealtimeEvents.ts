@@ -950,6 +950,7 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
     scheduleSessionListReload,
     multiProjectSessionsEnabled,
     refreshMultiProjectReplyingSessions,
+    getNodeIdForRoot,
     rootSessionKey,
     resolveRootForSessionKey,
     promotePendingSessionForRoot,

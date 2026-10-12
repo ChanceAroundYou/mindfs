@@ -38,11 +38,11 @@
 |---|---|
 | D1 | **块流是唯一正文载体**；`Exchange.Content` **删除** |
 | D2 | `native_id` 存**步级**（不存到块级，省每块 ~36 字节） |
-| D3 | 递给 ACP 的 `messageId` **复用** MindFS 的 `turn_id`（一个逻辑 id 一种表示） |
-| D4 | `turn_id` **由客户端生成**，服务端采纳（幂等键）；**无客户端时由服务端 mint UUIDv4**（见 §14 C2） |
-| D5 | 纯导入会话用 **UUIDv5** 确定性生成（重导不造新 id） |
-| D6 | **删除 `TurnGen`**，统一为 `turn_id`；独立成一步 S2e |
-| D7 | 三级 `(turn_id, step, pos)`；步内用 **agent 声明序**，无声明时才退回到达序 |
+| D3 | 递给 ACP 的 prompt `messageId` 使用本轮 `mindfs_id`；agent 回显值进入 `agent_id` |
+| D4 | `mindfs_id` 由 MindFS 用 UUIDv5 确定性铸造；seed 优先取 `agent_id`，否则用 `sessionKey|role|seq` |
+| D5 | live 与 import 共用 mint 规则；重导同一 agent 消息不造新 `mindfs_id` |
+| D6 | **删除 `TurnGen`**；pending 身份改为 UUID 字符串，语义仍按 pending 生命周期管理 |
+| D7 | 三级 `(mindfs_id, step, pos)`；步内用 **agent 声明序**，无声明时才退回到达序 |
 | D8 | 工具结果晚到：复用 `(seq,pos)` + **revision 覆盖** |
 | D9 | **块级窗口参数**（不只 exchange 级） |
 | D10 | native id 对不上：**跳过 + 日志，永不猜** |
@@ -66,10 +66,9 @@
 ```
 seq / role / source / agent / model / model_display_name / mode / effort /
 fast_service / token_usage / timestamp
-turn_id        string   // MindFS 权威 UUID，落盘即定，永不改
+mindfs_id      string   // MindFS 权威 UUIDv5，落盘即定，永不改
 turn_seq       int      // = 打开该轮的 user 行 seq（排序 / 人读用）
-native_turn    string   // agent 轮 id：dsh `turn` / ACP `userMessageId`（可空）
-native_prompt  string   // agent 的 prompt message id（可空）
+agent_id       string   // agent 侧桥接 id（可空、可后补）
 partial        bool     // 本轮未收尾
 ```
 
@@ -77,9 +76,8 @@ partial        bool     // 本轮未收尾
 
 | 原消费者 | 变更后 |
 |---|---|
-| 投影 rule A / A2 / B（`session_projection.go:107/122-131/161`） | 身份判重替代 → 消失 |
-| `auditPreview:308`（审计端点，**前端从未消费**） | 规则退役 → 消失 |
-| `RemapExchangeAux`（`http.go:1257`，投影唯一生产调用者） | 块内联后 → 消失 |
+| 读时重复行投影与审计端点 | S3 已退役；GET 原样返回持久化行 |
+| `RemapExchangeAux`（原投影的 aux 重映射） | S3 已随投影删除；aux 按各自 seq 返回 |
 | 搜索 `manager.go:3326` | 改扫块流 |
 | 同 seq 载入去重 `manager.go:2208/2211` | 改按 revision / 字段完备度 |
 | importer 累积正文 `claude:1277` / `codex:754` | 改落块 |
@@ -92,15 +90,15 @@ partial        bool     // 本轮未收尾
 ### 3.2 块流 `<key>.blocks.jsonl` —— 唯一正文载体
 
 ```json
-{"seq":58,"pos":0,"revision":0,"type":"reasoning","text":"...","step":3,"native_id":"..."}
-{"seq":58,"pos":1,"revision":0,"type":"tool_call","toolcall":{...},"step":3,"native_id":"..."}
-{"seq":58,"pos":2,"revision":1,"type":"tool_call","toolcall":{...},"step":3,"native_id":"..."}
-{"seq":58,"pos":3,"revision":0,"type":"text","text":"...","step":4,"native_id":"..."}
+{"seq":58,"pos":0,"revision":0,"type":"reasoning","text":"...","step":3,"agent_id":"...","mindfs_id":"..."}
+{"seq":58,"pos":1,"revision":0,"type":"tool_call","toolcall":{...},"step":3,"agent_id":"...","mindfs_id":"..."}
+{"seq":58,"pos":2,"revision":1,"type":"tool_call","toolcall":{...},"step":3,"agent_id":"...","mindfs_id":"..."}
+{"seq":58,"pos":3,"revision":0,"type":"text","text":"...","step":4,"agent_id":"...","mindfs_id":"..."}
 ```
 
 - `type ∈ {reasoning, text, tool_call, todo, plan, compact}`
 - **`pos` 取代 `line`**（`line` 是「在 content 里的第几行」，content 一删就失去意义）
-- `step` + `native_id` 为步级身份（D2/D7）
+- `step` + `agent_id` 为步级身份；`mindfs_id` 标识所属 MindFS 轮次（D2/D7）
 - 同 `(seq,pos)` 多版本按 `revision` 取最高（D8）
 - 子代理块带 `parentToolUseId` / `taskId` / `subagentType`（D16）
 - 旧格式兼容：无 `pos` 时退回 `line`；`Content` 非空且无块流时合成一个 `text` 块
@@ -108,12 +106,12 @@ partial        bool     // 本轮未收尾
 ### 3.3 三级身份
 
 ```
-turn_id   MindFS 权威（客户端生成，全 agent 通用）
+mindfs_id MindFS 权威（UUIDv5 确定性 mint，全 agent 通用）
 step      MindFS 分配，按 agent 的「消息投递单元」递增：
             claude = 一条 AssistantMessage（= 一次 API 调用）
             dsh/ACP = 一次 messageId 变更
 pos       步内段序 = agent 声明序；无声明时才退回到达序
-native_id 回查键，可空、可后补、fork 后可变更
+agent_id  agent 侧回查键，可空、可后补、fork 后可变更
 ```
 
 **`step` 的判定时机（必须先写死，否则增量落库无解）**：`step` 是**已收口**的概念 ——
@@ -145,9 +143,9 @@ agent 事件 → block → 缓冲 →(300ms / 64KB / boundary)→ ① append 块
 - **单一汇聚点**（codebase 图谱已证）：`appendExchange`（← `addExchangeForAgentAt:695`）
   + `appendExchangeAux`（← `AddExchangeAux:755`）。
 - **先落盘、后广播**：保证「前端看到的 ⊆ 已落盘的」，重连/切会话必然自洽。
-- **轮次开始即分配 `seq`**（客户端带来 `turn_id`，D4）。
+- **轮次开始即分配 `seq`**，MindFS 按 `agent_id` 或 `sessionKey|role|seq` 铸 `mindfs_id`（D4）。
 - **即时档 vs 批量档**：用户自己那条消息、工具卡开始走即时档，不等 flush 周期。
-- **落盘顺序**：先写元数据行（含 `turn_id`/`seq`），再写块 —— 否则块成孤儿。
+- **落盘顺序**：先写元数据行（含 `mindfs_id`/`seq`），再写块 —— 否则块成孤儿。
 - **fsync 策略**：中间 flush 只 `write`（实测 5.3µs），**轮次结束 `fsync` 一次**（实测 1.48ms）。
 - **崩溃契约**（D13）：崩溃丢缓冲区，靠 import 补齐；`partial:true` 的轮 UI 显示「进行中/已中断」。
 - **三处必修**：`manager.go:2264`（tail 跳过 `seq<=baseSeq`）、`:2267`（tail 内不按 seq 去重）、
@@ -205,10 +203,9 @@ agent 事件 → block → 缓冲 →(300ms / 64KB / boundary)→ ① append 块
   - 改为：按 `pos` 遍历块
   - `lines` / `totalLines` / `emittedLines` / clamp **全部消失** —— 净简化
 - **超大块**（`os` 的失控 reasoning 实测 **119714 / 103467 字符**）默认折叠 + 标注。
-- **seq=0 机制退役**（D4 的直接收益）：乐观行从第一刻就有权威 `turn_id`，**「认领」步骤消失**。
-  涉及 `isTransientExchange`（6 个调用者：`mergeSessionExchanges` / `isPersistedSeq` /
-  `composeLoadedExchanges` / `App.tsx:4578` / `dropTransientExchanges`）、`inferredSeq`、
-  `tailOverlay` 5 条启发式（`session-streaming-rework.md` §2.2）。
+- **旧目标（已取代）**：曾计划随 D4 退役 seq=0；实际 UI 仍需要无正 seq 的实时缓冲。S3 保留瞬时行模型，把缓存与持久窗口对账改为 MindFS 身份，不再按正文猜重复。
+  旧方案范围包括 isTransientExchange、inferredSeq 与 tailOverlay；这份清单不再是待办。
+  当前只移除正文猜重，瞬时/持久分类仍由现有缓存与窗口流程管理。
 
 ---
 
@@ -251,12 +248,17 @@ agent 事件 → block → 缓冲 →(300ms / 64KB / boundary)→ ① append 块
 | **S2a** | 加 `turn_id` / `turn_seq` / `native_*` / `partial`（`step` 在块流上）；块流**写入**（双写：块流 + 旧 `Content`/aux 并存）；**C2 三处服务端 mint UUID**；**C1 repoint 清 native id** | 可回滚，旧路径不动 |
 | **S2b** | **读**改走块流；前端按 `type` 渲染；块级窗口（**复用 `CompactExchangeAuxLight` 策略**）；块内联（**省掉 O3 的 round trip**） | 新老并存可对账 |
 | **S2c** | ✅ **身份判重**启用；投影**身份化**（只折叠双边无身份的历史残留）+ 审计端点报身份化进度 | 新数据不再猜；旧残留可度量 |
-| **S2d** | 🔨 **S2d-1 已落地**（旧数据回填 + `CompactExchangeAux` 丢 reasoning 的修复）；余下：删 `Content` + 旧 aux 路径 | 单一真相源 |
-| **S2e** | **删 `TurnGen`**，统一为 `turn_id`（独立提交、可单独回滚） | 一套身份 |
-| **S3** | seq=0 机制退役、`tailOverlay` 5 条启发式、**§14.1 的约 470 行**（投影整块 / 判重套件 / `CountExchanges` / `appendResponseChunk`） | 净减猜测层 |
+| **S2d** | ✅ **已落地**（S2d-1 旧数据回填 + `CompactExchangeAux` 丢 reasoning 的修复；S2d-2 块流成为正文唯一载体、主日志 `content` 恒空） | 单一真相源 |
+| **S2e** | ✅ 删除 `TurnGen`；后由 G-BI 收敛为 `mindfs_id` + `agent_id` 两类 id | 身份模型已统一 |
+| **S3** | ✅ 退役读时投影与审计端点、删除 CountExchanges、清理可确认的历史副本；✅ 前端瞬时缓存按角色类别 + mindfs_id 与持久窗口对账；保留无正 seq 的实时缓冲 | 读时不再按内容猜身份，实时输出仍可见 |
 | 待办 | 旧数据迁移脚本（dsh 可迁、claude 本地无 thought）；codex native id 实证 | — |
 
-登记：S1=`G-BG`、S2a–S2e=`G-BH`、S3=`G-BI`；每步针对性测试 + 提交带 `Scope:` trailer。
+登记：S1=`G-BG`、S2a–S2e=`G-BH`、身份模型=`G-BI`、S3 清理=`G-AB`；每步针对性测试 + 提交带 `Scope:` trailer。
+
+**身份契约更新（G-BI，2026-10-11）**：本节早期的 `turn_id` / `native_*` 是历史阶段名，当前落盘只使用两类身份：
+`mindfs_id` 由 MindFS 确定性铸造并作为权威行 id；`agent_id` 是 agent 提供的可选桥接 id。非空 `agent_id` 用作 mint seed，缺失时以 `sessionKey|role|seq` 兜底。live 与 import 共享该规则。pending 灯沿用同一 UUID 字符串形状，但按轮次开始时的身份时点单独生成。
+
+S3 落地记录（2026-10-12）：删除会话读时投影、aux 重映射和审计端点，移除 CountExchanges 及专用测试。历史 10 条候选中，8 条按 import/live 来源与角色确认重复并清理；另 2 条回复不同、无法确认，予以保留。活动会话还发现投影误隐藏不同回合记录，因此 GET 原样返回持久行，aux 保留原 seq 对应。exchangeAlreadyRecorded 继续承担写入幂等；appendResponseChunk 继续供 live 块持久化和行号计算使用。后续 UI 审计确认无正 seq 的瞬时缓存仍承载乐观 user 回声和实时 agent/tool/thought/plan 等事件，不能删除；G-BI 已把 mindfs_id 从用户回声和流事件透传到缓存，overlay 对持久行按 seq 对齐，对瞬时副本按角色类别 + mindfs_id 对账，同正文不同 id 保留。
 
 ---
 
@@ -459,6 +461,54 @@ agent 事件 → block → 缓冲 →(300ms / 64KB / boundary)→ ① append 块
   reasoning 会「实时一个样、同步后一个样」。已改用 `ImportedExchangeAux.Thought`，与实时路径
   和存量数据（10826 条 `thought` 字段）同一个形状。
 
+**S2e 落地记录（2026-10-11）**：pending 灯的回合身份改用 `turn_id`，`TurnGen` 删除。
+
+- **这是类型替换，不是「统一两套身份」。** 全仓约 15 处生产 + 9 处测试，
+  `SessionPendingState.TurnGen uint64` → `TurnID string`，`0` → `""`，
+  **语义逐条不变**。D6 那句「统一为 `turn_id`」容易读成「把两套并成一套」—— 并不了：
+  pending 灯在 `OnStart` 就要身份（那时轮次还没落盘），而 `turn_id` 是在
+  `persistUserTurnExchange` 里才铸出来的。**两个时刻不同，值就必须不同**；
+  要做的是换表示（都用 UUID 字符串），不是换真值。
+- **只保留一条形状判据。** `session.IsTurnIDShape` 放在 `TurnID` 字段旁边，
+  ACP 的 `acp.isUUIDShape` 退化成薄转发。两份判据 = 两份「谁算合法身份」的真相。
+  mint 同理收进 `session.NewTurnID`，`usecase.newTurnID` 只剩包内转发 ——
+  api 的 pending 灯也要铸 id，两个铸口迟早分叉。
+- **抓到第三处同形状缺陷（`AppContext.RunAgentStage`，看板阶段执行）。** 它置 pending
+  的两个调用点都丢了返回的身份，收尾按字面 `0` 走 —— 与 G-BE 当年修的
+  `scheduled/tasks.go` **完全同一个形状**。而 `pending_identity_test.go` 只扫 `tasks.go`，
+  管不到这里：于是这条路径长期停在「灯不灭被兜住（保守清），但新轮的灯会被误抹」。
+  新守卫 `kanban_turn_identity_guard_test.go` 把它补上，与 ws.go / tasks.go 守同一条纪律。
+- **一处「守卫变成筛子」的自我纠错。** `pending_identity_test.go` 拦哨兵的正则只认字面 `0`；
+  换成 `""` 之后这条不变量就**再也拦不住任何东西**，而测试全绿。用探针程序证伪
+  （`old_matches=false` 对 `..., "")`），改成新旧哨兵都拦。
+  教训与 S2d-2 相同：**换表示时，守卫的正则也是要换的零件。**
+
+**S2d-2 落地记录（2026-10-11，提交 `37a0a1f`）**：块流成为正文唯一载体，主日志 `content` 恒空。
+
+- **删的是「写」，不是字段。** `Exchange.Content` 改名为 `LegacyContent`，json tag **仍叫
+  `content`** —— 老会话文件必须还能解析，而它现在的唯一读者是 S2d-1 的回填。三个写入点
+  （live user 行 / `SendMessage` 轮末助手行 / `appendImportedExchange` 导入行）全部改成只写块流。
+- **最险的一刀是 user 行，而它不是本方案原计划里的那条。** `addExchangeForAgentAt` 有个
+  「空正文 + 非 agent 角色就跳过」的守卫；user 行一旦不再带正文，这个守卫会把**每一行 user**
+  静默丢掉 —— 前端看不到自己说过的话、搜索的 user 命中失效，且没有任何报错。它是在
+  `TestSearchPrefersUserTurnHitFromBlocks` 红掉之后才被挖出来的，**不是**预先设计的。
+  改成「什么都没带」才算空行：空正文 + 空 agent + 无任何轮次身份。
+- **助手块写入失败从「记日志」升级成返回 err。** 双写期块失败无所谓（正文已在主日志），
+  现在主日志只剩元数据，块丢了就是正文丢了。导入路径仍只记日志 —— 那一行已经落盘，
+  块失败不该让整行消失。两条路径的不对称是刻意的。
+- **判重与搜索各换了一次数据源，两处都是静默失效的形状。** 判重的 user 行没有 native uuid
+  （`Stream.Send(ctx, string)` 不给这个入口），只能比正文，于是 `recordedExchangeBody` 改读
+  块流；搜索改成「先块流、再主日志」两遍，后一遍为了还没回填的老会话。这两处不换不会报错，
+  只会让同一个 prompt 被反复写成新行、老会话搜不到词。
+- **fork 的两个函数是分工，此前一度想删掉其一。** `copyForkBlocks` 复制源**已有的块**
+  （revision/step 是盘上真值、不重编号），`fillForkBlocksFromLegacy` 给老会话补编译。
+  只补编译会丢源块的 revision；只复制会让老会话 fork 出没有正文的会话。测试 fixture 恰好
+  只覆盖了其中一条（源有块 + aux 有 thought），所以删掉 `copyForkBlocks` 之后测试仍是绿的 ——
+   **测试绿不等于删对了**，这是本条最该记住的一条。
+- **门禁的两个新发现**：三个新测试文件在提交前不算 delta，`check-upstream` 会把它们报成
+  「已登记但不在 delta」；`manager_duplicate_seq_test.go` 是 fork 定制却从未登记，这次
+  改了字段名才进 delta。
+
 ---
 
 ## 13. 待办 / 未实证
@@ -474,17 +524,18 @@ agent 事件 → block → 缓冲 →(300ms / 64KB / boundary)→ ① append 块
 
 ## 14. 全局审核结论（2026-10-10，codebase 图谱辅助）
 
-### 14.1 可一并移除的机制（本次审核新发现，原方案未计）
+### 14.1 机制清理审核（2026-10-10 初审，2026-10-12 更新）
 
 | 目标 | 位置 | 规模 |
 |---|---|---|
-| **投影整块** | `session_projection.go`：`ProjectExchanges` / `projectRowKey` / `isLiveMarkedExchange` / `RemapExchangeAux` / `AuditSession` / `auditPreview` | **328 行** |
-| **判重套件** | `session.go:2309-2423`：`exchangeAlreadyRecorded` / `recordedUserExchangeSeq` / `sameRecordedExchangeContent` / `normalizeExchangeContent` | **~115 行** |
-| **`CountExchanges`** | `manager.go:330` | **~25 行**（生产零调用，只有 `manager_window_test.go:136` 调） |
-| **`appendResponseChunk` + `lastResponseUpdateType`** | `session.go:3996` | 把 text 块拼成 content 并按类型插空行，块化后消失 |
-| **`CompactExchangeAux` 的 `aux.Thought=""`** | `types.go:118` | thought 不再在 aux 里 |
-
-合计约 **470 行**。`SessionProjectionEnabled` 开关只剩 `http.go:1254` 一处消费者，随之删除。
+| 目标 | 当前结论 |
+|---|---|
+| **读时投影 / aux 重映射 / 审计端点** | ✅ 2026-10-12 删除（G-AB）。历史审核中 8 条 import 副本已清理；2 条不能确认的候选保留。 |
+| **`exchangeAlreadyRecorded` 与内容辅助判据** | ✅ 保留。它是写入侧幂等护栏，避免重复同步；不属于可删除的读时投影。 |
+| **`CountExchanges`** | ✅ 删除。生产零调用，连同仅依赖它的 manager 测试删除。 |
+| **`appendResponseChunk` / `lastResponseUpdateType`** | 保留。两条 live 写路径仍需拼接 text 块，供 `persistTurnBlocks` 与块行位置计算；必须先重构调用路径才能移除。 |
+| **`CompactExchangeAux` reasoning 保留** | ✅ S2d-1 已修复，不能退回清空 reasoning。 |
+| **seq-less 瞬时行 / tailOverlay** | ✅ 保留必要的瞬时缓冲；2026-10-12 改为按角色类别 + mindfs_id 对账。无 id 的项继续显示，避免在尚未拿到身份时丢实时内容。 |
 
 ### 14.2 新冲突（3 条，原方案未覆盖）
 
@@ -531,7 +582,6 @@ D4 定的是「客户端生成」，但实测有**三条服务端发起的轮次
 2. 「`CountExchanges` 也是热点」**不成立** —— 它确实全量，但**生产零调用**（仅测试）。
 3. `mergeStreamedText` / `inferredSeq` **已删干净**（只剩注释与测试引用），**不需要**列进 S3。
 
-### 14.5 结论
+### 14.5 初审结论与后续修正
 
-**会不会引入新冲突？** 会 3 条（C1/C2/C3），均可控，且 C1 是本方案的必要配套。
-**未发现会推翻方案的冲突。** 反而净减约 470 行猜测量 + 2 个热路径优化。
+2026-10-10 初审列出的 C1/C2/C3 已在 S2/G-BH 中处理。后续实地审计修正了「整块猜测层都可删除」的判断：读时投影与 CountExchanges 已移除，但写入幂等和 appendResponseChunk 仍被真实路径使用，必须保留。seq-less 前端瞬时缓冲也仍有实时职责；2026-10-12 起其落盘对账使用 mindfs_id，相同正文不再作为身份判据。

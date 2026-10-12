@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs";
 // AddExchangeForAgentAt 却在 runtime.SendMessage 返回之后。整轮执行期间服务器上
 // 唯一的那份用户消息只是 StreamHub 的内存 pending 态，GetWindow 的 maxSeq 只数
 // 已落盘行，永远看不到它。客户端却已按 seq 认定它持久化 → SessionViewer overlay
-// 的「seq<=latestSeq 即让位给窗口」规则在任意一次重锚定时把它丢掉；而同步的
+// 的旧「seq<=latestSeq 即让位给窗口」规则在任意一次重锚定时把它丢掉；而同步的
 // localTransientTail 只捞 seq===0 的瞬时行，捞不到它。
 //
 // 修复：user 行在回合开始前就落盘，广播的 seq 从预测变成事实。

@@ -445,7 +445,7 @@ export function useSessionStreamCache({
       const planId = `${planUpdate.id || ""}`;
       if (planId) {
         for (let i = list.length - 1; i >= 0; i -= 1) {
-          if (list[i]?.role !== "plan") continue;
+          if (list[i]?.role !== "plan" || !hasSameMindFSID(list[i], mindfsID)) continue;
           if (`${list[i]?.planUpdate?.id || ""}` !== planId) continue;
           const existingContent = `${list[i].planUpdate?.content || ""}`;
           const nextContent = planUpdate.delta
@@ -500,7 +500,7 @@ export function useSessionStreamCache({
       const compactId = `${compactNotice.id || ""}`;
       if (compactId) {
         for (let i = list.length - 1; i >= 0; i -= 1) {
-          if (list[i]?.role !== "compact") continue;
+          if (list[i]?.role !== "compact" || !hasSameMindFSID(list[i], mindfsID)) continue;
           if (`${list[i]?.compactNotice?.id || ""}` !== compactId) continue;
           list[i] = {
             ...list[i],
