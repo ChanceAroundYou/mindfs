@@ -12,6 +12,7 @@ const fileTree = readFileSync(new URL("../src/components/file/FileTree.tsx", imp
 const sessionList = readFileSync(new URL("../src/components/session/SessionList.tsx", import.meta.url), "utf8");
 const sessionViewer = readFileSync(new URL("../src/components/session/SessionViewer.tsx", import.meta.url), "utf8");
 const gitDiff = readFileSync(new URL("../src/components/git/GitDiffViewer.tsx", import.meta.url), "utf8");
+const fileViewer = readFileSync(new URL("../src/components/file/FileViewer.tsx", import.meta.url), "utf8");
 const board = readFileSync(new URL("../src/components/task/TaskBoardView.tsx", import.meta.url), "utf8");
 const listView = readFileSync(new URL("../src/components/file/DefaultListView.tsx", import.meta.url), "utf8");
 const zh = readFileSync(new URL("../src/i18n/locales/zh-CN.ts", import.meta.url), "utf8");
@@ -160,6 +161,7 @@ for (const [name, src] of [
   ["SessionList", sessionList],
   ["SessionViewer", sessionViewer],
   ["GitDiffViewer", gitDiff],
+  ["FileViewer", fileViewer],
   ["DefaultListView", listView],
 ]) {
   assert.match(src, /<ViewHeader/, `${name} must use the shared ViewHeader`);
@@ -168,7 +170,7 @@ for (const [name, src] of [
 // 侧栏自身不显示切换按钮（侧栏已经可见，不需要切换）。
 assert.match(fileTree, /showToggles=\{false\}/, "FileTree (left sidebar) must not show toggle buttons");
 assert.match(sessionList, /showToggles=\{false\}/, "SessionList (right sidebar) must not show toggle buttons");
-// 中间主栏的三个面板显示切换按钮。
+// 中间主栏的面板显示切换按钮。
 for (const [name, src] of [
   ["SessionViewer", sessionViewer],
   ["GitDiffViewer", gitDiff],
@@ -198,6 +200,11 @@ assert.match(
   app,
   /else if \(activePendingPluginTrust\) \{[\s\S]*?<ViewHeader \/>/,
   "the plugin-trust panel must render a ViewHeader too — it also replaces the whole main pane",
+);
+assert.match(
+  app,
+  /if \(pluginRender && pluginRender\.output\) \{[\s\S]*?<ViewHeader[\s\S]*?\{t\("plugin\.rawFile"\)\}/,
+  "the plugin-rendered file preview must use the shared header so mobile users can open either sidebar",
 );
 
 // 四块的文案是定死的：未开始 / 执行中 / 待审核 / 已结束，已结束内分 完成 / 取消

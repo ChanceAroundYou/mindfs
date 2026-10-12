@@ -1693,24 +1693,27 @@ groups:
       - server/internal/agent/acp/elicitation_test.go:func TestACPClientCapabilitiesOnlyAdvertisesElicitationForDsh
 
   - id: G-AR
-    title: 移动端侧栏切换按钮移入顶栏
+    title: 移动端侧栏切换按钮移入主视图 header
     kind: fix
     symptom: |
       移动端进看板 / 工作台后开不出侧栏：两个切换按钮原本只在 ActionBar 的
       hideComposer 分支里，而上游把那个分支改成 return null（那两个界面本就不该有输入区），
-      按钮随之消失，进了看板就再也呼不出左右侧栏。另一形态：侧栏滑入时盖住 44px 顶栏，
+      按钮随之消失，进了看板就再也呼不出左右侧栏。打开具体文件或插件预览时，自定义 header
+      绕过按钮上下文，也会让左右切换按钮消失。另一形态：侧栏滑入时盖住 44px 顶栏，
       按钮点不到 —— 侧栏 top 原本只算 safe-area。
     why: |
-      按钮从 ActionBar（footer）搬进 AppShell 新增的 44px 全局顶栏：按钮位置、
-      侧栏 top 偏移（必须同步加 --mindfs-mobile-header-height）、ActionBar 的
-      hideComposer 分支共享同一条「按钮在哪」的判断，合上游时要么全留要么全弃。
-      上游没有这条全局顶栏，两个移动按钮是 ActionBar 私有的。
+      AppShell 持有物理左右栏的开合状态和 toggleRail；主视图的 ViewHeader 通过 context
+      消费它，在已有 36px header 两侧渲染按钮。任何独立手写 header（具体文件或插件预览）
+      都绕过 context，因此必须复用 ViewHeader。ActionBar 在 hideComposer 状态不再渲染，
+      避免空输入区占位；侧栏自身关闭按钮避免重复。
     files:
       - web/src/layout/AppShell.tsx
       - web/src/components/action/ActionBar.tsx
       - web/src/components/action/types.ts
       - web/src/App.tsx
       - web/src/layout/ViewHeader.tsx
+      - web/src/components/file/FileViewer.tsx
+      - web/tests/task-board-view.test.mjs
     tests:
       - web/tests/task-board-view.test.mjs
     anchors:

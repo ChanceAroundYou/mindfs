@@ -1086,7 +1086,7 @@
 ### G-AR 移动端侧栏切换按钮移入各视图共用 header
 
 - 来源：`web/src/layout/ViewHeader.tsx`（新增）、`web/src/layout/AppShell.tsx`、
-  `web/src/components/{ActionBar,FileTree,SessionList,SessionViewer,GitDiffViewer,DefaultListView}.tsx`、
+  `web/src/components/{ActionBar,FileTree,SessionList,SessionViewer,GitDiffViewer,DefaultListView,FileViewer}.tsx`、
   `web/src/components/action/types.ts`、`web/src/App.tsx`、`web/tests/task-board-view.test.mjs`。
 - 边界：移动端呼出左右侧栏的两个切换按钮，从 ActionBar（footer）搬进**中间主栏**各面板
   共用的 `ViewHeader` 外壳的两侧，合为一组 —— 按钮位置、ViewHeader 的渲染分支、ActionBar
@@ -1095,6 +1095,8 @@
 - 可见症状（没有它会怎样）：
   - **移动端进看板/工作台后开不出侧栏**：按钮原本只在 ActionBar 的 hideComposer 分支里，
     上游若把该分支改成 `return null`（或删掉移动按钮），这两个界面就再也呼不出侧栏。
+  - **打开具体文件或插件预览后按钮消失**：这些文件态分支各自手写 header，绕过
+    `MobileSidebarToggleContext`，移动端无法从文件内容页切换左右侧栏。
   - **按钮多占一行**：早期实现新增了一条 44px 全局顶栏（多一行），用户明确否决 ——
     按钮必须插在各视图**原有 36px header 内部的两侧**，不额外占行。
 - 为什么必须保留：上游没有共用 header 组件（6 个视图各写各的内联 36px header），
@@ -1107,7 +1109,8 @@
     ViewHeader 消费 —— 不逐层透传 prop，因为 header 在 6+ 个视图里、中间层与侧栏开合无关。
   - 侧栏切换按钮 22×22（比原来的 30×44 小），图标 14px。
   - `showToggles` prop 控制是否渲染按钮：中间主栏（SessionViewer / GitDiffViewer /
-    DefaultListView）默认 true；侧栏（FileTree / SessionList）传 false。
+    DefaultListView / FileViewer）默认 true；侧栏（FileTree / SessionList）传 false。
+    App 内直接渲染的插件文件预览也必须使用 `ViewHeader`，不能另写一套裸 header。
   - **主栏的空态/覆盖态也要带 ViewHeader**：`App.tsx` 里顶替 `workspaceView` 的两支裸 div
     ——「chat 模式未选中会话」空态、插件信任面板 —— 各包一层 `flex-direction:column`
     容器 + `<ViewHeader />`。它们是整块主区、里面没有任何带 header 的组件，漏了就是
@@ -1118,7 +1121,7 @@
 - 针对性测试：
   - `web/tests/task-board-view.test.mjs` — ViewHeader 移动端渲染两个 toggle 且接 `ctx.toggle`、
     AppShell 经 context 交出 `toggleRail`、ActionBar `hideComposer` 返回 `null`、
-    5 个视图都使用并闭合 `<ViewHeader>`、按钮 22×22、侧栏 `showToggles={false}`、
+    6 个视图都使用并闭合 `<ViewHeader>`、插件文件预览也使用共享 header、按钮 22×22、侧栏 `showToggles={false}`、
     **chat 空态带 `<ViewHeader />`**。
   - `web/tests/project-tree-refresh.test.mjs` — FileTree header 换成 ViewHeader 后，
     tabs 容器的 6px marginRight 与 gap:0/overflow:visible 仍共存。

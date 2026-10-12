@@ -9072,44 +9072,34 @@ export function App({ onGoHome }: AppProps) {
             minHeight: 0,
           }}
         >
-          <div
-            style={{
-              height: "36px",
-              borderBottom: "1px solid var(--border-color)",
-              padding: "0 12px",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              background: "var(--mindfs-topbar-bg, transparent)",
-              fontSize: 12,
-              color: "var(--text-secondary)",
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <ModeIcon type="plugin" size={16} />
-              <span>{pluginRender.plugin.name}</span>
-              {pluginLoading ? (
-                <span style={{ opacity: 0.7 }}>{t("plugin.loading")}</span>
-              ) : null}
+          <ViewHeader padding="0 12px">
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", minWidth: 0, fontSize: 12, color: "var(--text-secondary)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <ModeIcon type="plugin" size={16} />
+                <span>{pluginRender.plugin.name}</span>
+                {pluginLoading ? (
+                  <span style={{ opacity: 0.7 }}>{t("plugin.loading")}</span>
+                ) : null}
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  void switchToRawFileView();
+                }}
+                style={{
+                  border: "1px solid var(--border-color)",
+                  background: "transparent",
+                  borderRadius: 6,
+                  padding: "3px 8px",
+                  cursor: "pointer",
+                  fontSize: 12,
+                  color: "var(--text-secondary)",
+                }}
+              >
+                {t("plugin.rawFile")}
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={() => {
-                void switchToRawFileView();
-              }}
-              style={{
-                border: "1px solid var(--border-color)",
-                background: "transparent",
-                borderRadius: 6,
-                padding: "3px 8px",
-                cursor: "pointer",
-                fontSize: 12,
-                color: "var(--text-secondary)",
-              }}
-            >
-              {t("plugin.rawFile")}
-            </button>
-          </div>
+          </ViewHeader>
           <div
             ref={pluginContentRef}
             className="plugin-shadcn-sandbox"
