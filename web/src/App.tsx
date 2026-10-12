@@ -3442,6 +3442,35 @@ export function App({ onGoHome }: AppProps) {
         const prevList = Array.isArray(prev) ? prev : [];
         const scopeOf = (g: any) => `${String(g?._nodeId || "").trim()}::${String(g?.rootId || "")}`;
         const nextMap = new Map(nextGroups.map((g) => [scopeOf(g), g]));
+        const carryForwardActivity = (
+          fresh: MultiProjectSessionGroup,
+          previous: MultiProjectSessionGroup,
+        ): MultiProjectSessionGroup => {
+          const persistedGroupTime = fresh.sessions.reduce(
+            (latest, item) =>
+              Math.max(latest, Date.parse(String(item.updated_at || "")) || 0),
+            Date.parse(String(fresh.latestSessionTime || "")) || 0,
+          );
+          const oldActivityTime = Date.parse(String(previous.activity_at || "")) || 0;
+          const oldSessions = new Map(
+            previous.sessions.map((item) => [item.key || item.session_key, item]),
+          );
+          const sessions = fresh.sessions.map((item) => {
+            const old = oldSessions.get(item.key || item.session_key);
+            const oldTime = Date.parse(String(old?.activity_at || "")) || 0;
+            const persistedTime = Date.parse(String(item.updated_at || "")) || 0;
+            return old && oldTime > persistedTime
+              ? { ...item, activity_at: old.activity_at }
+              : item;
+          });
+          return {
+            ...fresh,
+            ...(oldActivityTime > persistedGroupTime
+              ? { activity_at: previous.activity_at }
+              : { activity_at: undefined }),
+            sessions,
+          };
+        };
         const ridSet = new Set(nextGroups.map((g) => String(g.rootId || "")).filter(Boolean));
         const queriedNids = new Set(nodeIds); // 本轮实际请求过的节点
         const merged: MultiProjectSessionGroup[] = [];
@@ -3457,7 +3486,7 @@ export function App({ onGoHome }: AppProps) {
           }
           const k = scopeOf(g);
           if (nextMap.has(k)) {
-            merged.push(nextMap.get(k)!);
+            merged.push(carryForwardActivity(nextMap.get(k)!, g));
             seen.add(k);
             continue;
           }

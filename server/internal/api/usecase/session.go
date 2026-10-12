@@ -189,9 +189,9 @@ func (s *Service) ListMultiRootSessions(ctx context.Context, in ListMultiRootSes
 		if err := fillCommandShells(ctx, manager, items); err != nil {
 			return ListMultiRootSessionsOutput{}, err
 		}
-		latest := time.Time{}
-		if len(items) > 0 && items[0] != nil {
-			latest = items[0].UpdatedAt
+		latest, err := manager.LatestSessionUpdatedAt(ctx)
+		if err != nil {
+			return ListMultiRootSessionsOutput{}, err
 		}
 		groups = append(groups, SessionRootGroup{
 			RootID:            root.ID,
@@ -1401,7 +1401,9 @@ type MessageStart struct {
 	Mode             string
 	Effort           string
 	FastService      string
-	BaseExchangeSeq  int
+	// MindFSID is the canonical identity returned by the persisted user row.
+	// Stream pending state must carry this value, not independently mint one.
+	MindFSID string
 	// UserExchangeSeq 是本轮用户消息**已落盘**的 seq（user 行在回合开始前就写入了，
 	// 见 persistUserTurnExchange），不是「即将获得」的预测值。仅用于下发给客户端做本地
 	// 乐观条目的收敛；0 表示未知（写入失败或会话里没有可落地的行），此时不要下发。
@@ -2458,16 +2460,16 @@ func exchangeAgentKey(ex session.Exchange) string {
 	return strings.TrimSpace(ex.AgentID)
 }
 
-// exchangeIdentityRecorded 判定 target 里是否已有**同一条 agent 原生消息**。
+// exchangeIdentityRecorded 判定 target 里是否已有**同一条转录消息**。
 //
-// 判据两级，**agent_id 优先、mindfs_id 兜底**（方案 S2c / D10）：
+// 判据以可证明的身份为先（方案 S2c / D10）：
 //
 //	① agent_id 相等 → 铁证，命中。内容可以不同：导入器会把**相邻同角色**条目合并
 //	   （claude importer:1275 / acp importer:238），所以同一条 agent 消息在库里可能是
 //	   分两行、在转录里是一行。纯内容判重对这种形态永远漏。
-//	② mindfs_id 相等 → 命中。UUIDv5 由 agent_id 派生，所以「同一条消息」在两个写入者
-//	   （live / import）手里算出**同一个** mindfs_id —— 这是 S2a 之前做不到的事
-//	   （那时 live 铸随机 v4、import 从不铸，两边永远对不上）。
+//	② ACP user 原生 id 等于已存行的 mindfs_id → 命中。ACP 的 prompt 携带了这个 turn id，
+//	   若转录原样回显，它就是同一用户行的桥接键；不需要把它伪装成 agent_id。
+//	③ mindfs_id 相等 → 命中。导入侧由真实 agent_id 确定性派生 mindfs_id，重导能对齐。
 //
 // 两者都为空时返回 false（没有可证明的东西）。
 func exchangeIdentityRecorded(target *session.Session, role, agentID, mindfsID string) bool {
@@ -2481,6 +2483,12 @@ func exchangeIdentityRecorded(target *session.Session, role, agentID, mindfsID s
 			continue
 		}
 		if agentID != "" && exchangeAgentKey(ex) == agentID {
+			return true
+		}
+		// ACP user prompts carry MindFS's turn id as PromptRequest.MessageId.
+		// When the transcript echoes that exact value, it bridges the native user
+		// message to the already persisted user row without copying it into agent_id.
+		if strings.EqualFold(strings.TrimSpace(role), "user") && agentID != "" && ex.MindFSID == agentID {
 			return true
 		}
 		if mindfsID != "" && ex.MindFSID != "" && ex.MindFSID == mindfsID {
@@ -2524,12 +2532,14 @@ func recordedExchangeBody(ctx context.Context, manager *session.Manager, key str
 // exchangeAlreadyRecorded 判定 target 里是否已有这一行。导入侧与发送侧共用，
 // 保证两个写入者判据对称（「两把尺」的教训：判据只能有一处实现）。
 //
-// 判据分两级，**身份优先**（方案 S2c / D10）：
+// 判据先找可证明的身份（方案 S2c / D10）：
 //
 //	① nativeID 相等 → 铁证，命中。内容可以不同：导入器会把**相邻同角色**条目合并
 //	   （claude importer:1275 / acp importer:238），所以同一条 agent 消息在库里可能是
 //	   分两行、在转录里是一行。纯内容判重对这种形态永远漏。
-//	② nativeID 为空（历史数据 / 尚未实证的 agent）→ 退回「内容 + ±5s」，并且
+//	② ACP user 的 nativeID 若等于 live user 行 MindFSID，也命中：该值正是随 prompt
+//	   传入并由 ACP 回显的 turn id。
+//	③ nativeID 为空（历史数据 / 尚未实证的 agent）→ 退回「内容 + ±5s」，并且
 //	   **每次会话记一次日志**，让「这里还在猜」这件事可观测（S2d 之后应当归零）。
 //
 // nativeID 非空但没匹配上 → **不是重复**，放行。这就是 D10 的「对不上跳过 + 日志，
@@ -2604,36 +2614,51 @@ func noteIdentitylessGuess(sessionKey string) {
 // 命中判重（导入器已抢先写）时返回已存在那条的 seq。
 //
 // 返回的 mindfs_id 是本轮的 MindFS 权威身份（方案 §3.1）：**没有客户端入口可带**
-// （Stream.Send 只收 string），所以这里服务端 mint UUIDv4（C2）。助手行与块流
+// （Stream.Send 只收 string），所以这里服务端按真实 seq mint UUIDv5（C2）。助手行与块流
 // 必须复用同一个 mindfs_id，否则读侧挂不回轮次。
-func persistUserTurnExchange(ctx context.Context, manager *session.Manager, current *session.Session, content, agent, mode, effort, fastService string, promptMessageID bool, ts time.Time) (int, string, error) {
+func persistUserTurnExchange(ctx context.Context, manager *session.Manager, current *session.Session, content, agent, mode, effort, fastService string, ts time.Time) (int, string, error) {
 	exchangeCtx := session.WithExchangeSource(ctx, session.ExchangeSourceLive)
+	if current == nil {
+		return 0, "", errors.New("session required")
+	}
+	// Duplicate detection must inspect the manager's canonical view too. The
+	// caller may still hold a pointer from before an external append/reload.
+	latest, err := manager.Get(ctx, current.Key, 0)
+	if err != nil {
+		return 0, "", err
+	}
+	if latest == nil {
+		return 0, "", errors.New("session not found")
+	}
+	*current = *latest
 	// mint mindfs_id 在判重**之后**：判重命中时这一轮已经有了自己的 id（要从已有行
 	// 取回来），mint 一个新的只是浪费。判重不看身份而看内容，是因为实时侧此刻
 	// 还不知道 agent 侧的 id —— 行还没发出去。
 	if exchangeAlreadyRecorded(ctx, manager, current, "user", "", content, ts) {
 		return recordedUserExchangeSeq(ctx, manager, current, content, ts), recordedUserExchangeTurnID(ctx, manager, current, content, ts), nil
 	}
-	// 与 Manager.addExchangeForAgentAt 的 seq 分配同一公式（最大 seq + 1，不按缓存长度）。
-	// 这里先算出来是为了把 turn_seq 一起写进身份 —— 它是「打开该轮的 user 行 seq」。
-	userSeq := session.MaxExchangeSeq(current.Exchanges) + 1
 	// mindfs_id 恒为确定性 UUIDv5。user 行在发送那一刻拿不到 agent 侧 id
 	// （claude SDK 的 UserMessage 不带 uuid、codex 尚无实证），所以 seed 用
 	// sessionKey|user|seq —— 它在同一会话内唯一且稳定，重导同一行算出同一个 id。
+	// seq 必须由 manager 在锁内分配后再参与铸 id，不能从 current.Exchanges 预测。
 	//
-	// 这里**不再**把 mindfs_id 反过来写进 agent_id 当「prompt messageId」：
-	// 那是自引用的假身份，ACP 回显的是它自己的 messageId，两边值不同源，
-	// 判重时永远对不上（原代码的 nativePrompt = turnID 即此形态，已删）。
-	// agent_id 只在真正拿到 agent 侧 id 时（ persistCommandTurn 读回 messageId/uuid）
-	// 才落盘，可空、可后补。
-	mindfsID := session.NewMindFSID("", fmt.Sprintf("%s|user|%d", current.Key, userSeq))
-	exchangeCtx = session.WithExchangeIdentity(exchangeCtx, session.ExchangeIdentity{
-		MindFSID: mindfsID,
-		TurnSeq:  userSeq,
-	})
+	// 不把 mindfs_id 复制进 agent_id：它是 MindFS 的 turn 身份，不是独立的 agent 原生 id。
+	// ACP 若原样回显作为 PromptRequest.MessageId 传入的 turn id，导入判重会直接对比
+	// user 行 mindfs_id；其他 agent 的 user 原生 id 仍只在真实拿到时记录，可为空。
 	// S2d-2：主日志不要再带正文（块流是唯一载体，见下面 persistTurnBlocks）。
-	if err := manager.AddExchangeForAgentAt(exchangeCtx, current, "user", "", agent, mode, effort, fastService, ts); err != nil {
+	var mindfsID string
+	userSeq, err := manager.AddExchangeForAgentAtWithIdentityFactory(
+		exchangeCtx, current, "user", "", agent, mode, effort, fastService, ts,
+		func(seq int) session.ExchangeIdentity {
+			mindfsID = session.NewUserTurnMindFSID(current.Key, seq)
+			return session.ExchangeIdentity{MindFSID: mindfsID, TurnSeq: seq}
+		},
+	)
+	if err != nil {
 		return 0, "", err
+	}
+	if userSeq <= 0 || mindfsID == "" {
+		return 0, "", errors.New("user exchange was not appended")
 	}
 	// 双写块流（方案 S2a）：用户消息也要有块 —— 块流是唯一正文载体（D1），
 	// 少写这一条，S2d 删掉 Content 之后用户自己的话就没了。
@@ -2641,11 +2666,7 @@ func persistUserTurnExchange(ctx context.Context, manager *session.Manager, curr
 	if err := persistTurnBlocks(ctx, manager, current.Key, userSeq, mindfsID, content, nil); err != nil {
 		log.Printf("[session] persist.user.blocks.error session=%s seq=%d err=%v", current.Key, userSeq, err)
 	}
-	// AddExchangeForAgentAt 内部重新取会话并回写缓存（manager.addExchangeForAgentAt），
-	// current 与缓存是同一指针，所以新行已挂在 current.Exchanges 尾部。
-	// 按内容回查而不是直接取尾部：尾部那条未必就是本函数刚写的那条——一旦将来出现
-	// 不在 sendLock 下写同一会话的路径，广播出去就会变成别人的 seq，正是本次要修的那类 bug。
-	return recordedUserExchangeSeq(ctx, manager, current, content, ts), recordedUserExchangeTurnID(ctx, manager, current, content, ts), nil
+	return userSeq, mindfsID, nil
 }
 
 // recordedUserExchangeTurnID 返回判重命中的那条 user 行的 mindfs_id；没有则空串。
@@ -2825,24 +2846,30 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 	// 晚落盘会留下一个窗口期——客户端已按 seq 认定该行持久化，而窗口 maxSeq 与读接口还
 	// 看不到它，前端 overlay 会在任意一次重锚定/翻页时把这行丢掉（2026-09-28 实测：
 	// agent 执行中自己的消息从列表消失，点同步也刷不回来，回合结束才自愈）。
-	isInitial := len(current.Exchanges) == 0
-	linesBeforeThisTurn := len(current.Exchanges)
-	baseExchangeSeq := session.MaxExchangeSeq(current.Exchanges)
 	// 从这一刻起这个会话的持久化归实时路径（"谁驱动，谁落盘"），导入器不再常规增量
 	// 同步——判据是推导的，见 session.SessionIsLiveOwned。
-	userExchangeSeq, turnID, err := persistUserTurnExchange(ctx, manager, current, in.Content, in.Agent, resolvedMode, resolveRuntimeEffort(in.Agent, current, in.Effort), resolvedFastService, s.agentHasPromptMessageID(in.Agent), userTimestamp)
+	userExchangeSeq, turnID, err := persistUserTurnExchange(ctx, manager, current, in.Content, in.Agent, resolvedMode, resolveRuntimeEffort(in.Agent, current, in.Effort), resolvedFastService, userTimestamp)
 	if err != nil {
 		log.Printf("[session] persist.user.error root=%s session=%s agent=%s err=%v", in.RootID, in.Key, in.Agent, err)
 		return err
 	}
-	// 把本轮的 MindFS mindfs_id 递给 agent（方案 D3）：ACP 的 `PromptRequest.MessageId`
-	// 就是它，agent 原样回显成 `userMessageId`。**只有协议需要时才递** —— 递了就得
-	// 与导入侧的 agent_id 同源同值，否则是个谁也对不上的假身份。
-	// 注意这条路径**不再**是判重的共同键：UUIDv5 派生的 mindfs_id 已经能让实时侧
-	// 与导入侧对齐，不需要靠「两边凑巧写同一个 messageId」来搭桥。
-	// 没有这层时导入侧拿到的 user 行与实时侧没有任何共同键，
-	// 同一轮只能靠「内容相等 + ±5s」猜 —— 实测 2026-10-07 某 live-owned 会话
-	// Full 同步曾把 9 对轮次又写了一遍；现在由确定性身份与写入侧判重阻止重导。
+	// persistUserTurnExchange refreshes the caller snapshot and either finds or
+	// appends this turn's user row. Count by its actual seq so an importer duplicate
+	// found before later rows still gets the correct prompt history boundary.
+	linesBeforeThisTurn := 0
+	if userExchangeSeq > 0 {
+		for _, exchange := range current.Exchanges {
+			if exchange.Seq > 0 && exchange.Seq < userExchangeSeq {
+				linesBeforeThisTurn++
+			}
+		}
+	} else {
+		linesBeforeThisTurn = len(current.Exchanges)
+	}
+	isInitial := linesBeforeThisTurn == 0
+	// 将 canonical turn id 放进上下文。ACP 会把它作为 PromptRequest.MessageId 发送；
+	// 如果转录原样回显，导入判重会把它与 user 行 MindFSID 对齐。它仍是 MindFS 的
+	// turn 身份，不写入 agent_id；协议不回显时，继续使用各自真实可用的原生身份判重。
 	turnCtx = agenttypes.WithPromptTurnID(turnCtx, turnID)
 	// 中途换 agent 时，新 agent 的绑定要等本轮跑完才由 UpdateAgentState 写——这中间徽标
 	// 会落回「AI」占位。这里补一条，已存在绑定则跳过，不碰已有转录 id。
@@ -2856,7 +2883,7 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 			Mode:             resolvedMode,
 			Effort:           in.Effort,
 			FastService:      resolvedFastService,
-			BaseExchangeSeq:  baseExchangeSeq,
+			MindFSID:         turnID,
 			UserExchangeSeq:  userExchangeSeq,
 		})
 	}
@@ -2906,9 +2933,6 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 	// 同一轮时只能靠内容认领 —— 而导入器会把相邻同角色条目合并，内容必然不同
 	// （实测 2026-10-07 某 live-owned 会话 Full 同步写出 9 对重复轮次）。
 	var turnAgentMessageID string
-	// 用户行已在上方落盘并占位，所以助手行是 max(seq)+1（不是 +2）。
-	// 文件与缓存漂移时长度 ≠ 最大 seq，按长度预测会把 aux 挂到别的 exchange 上。
-	plannedAssistantSeq := session.MaxExchangeSeq(current.Exchanges) + 1
 	auxBuffer := make([]session.ExchangeAux, 0, 8)
 	defer manager.ClearPendingExchangeAux(context.Background(), current.Key)
 	var thoughtBuffer strings.Builder
@@ -2924,7 +2948,6 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 		thoughtBuffer.Reset()
 		currentThoughtID = ""
 		auxBuffer = append(auxBuffer, session.ExchangeAux{
-			Seq:       plannedAssistantSeq,
 			Line:      currentAssistantLine(responseText),
 			Thought:   thought,
 			ThoughtID: thoughtID,
@@ -2998,7 +3021,6 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 					if shouldPersistToolCallAux(toolCall) {
 						toolCallCopy := toolCall
 						auxBuffer = append(auxBuffer, session.ExchangeAux{
-							Seq:      plannedAssistantSeq,
 							Line:     currentAssistantLine(responseText),
 							ToolCall: &toolCallCopy,
 						})
@@ -3010,7 +3032,6 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 				if plan, ok := update.Data.(agenttypes.PlanUpdate); ok && strings.TrimSpace(plan.Content) != "" {
 					planCopy := plan
 					auxBuffer = append(auxBuffer, session.ExchangeAux{
-						Seq:  plannedAssistantSeq,
 						Line: currentAssistantLine(responseText),
 						Plan: &planCopy,
 					})
@@ -3020,7 +3041,6 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 				if todo, ok := update.Data.(agenttypes.TodoUpdate); ok && len(todo.Items) > 0 {
 					todoCopy := todo
 					auxBuffer = append(auxBuffer, session.ExchangeAux{
-						Seq:  plannedAssistantSeq,
 						Line: currentAssistantLine(responseText),
 						Todo: &todoCopy,
 					})
@@ -3030,7 +3050,6 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 				if compact, ok := update.Data.(agenttypes.CompactNotice); ok {
 					compactCopy := compact
 					auxBuffer = append(auxBuffer, session.ExchangeAux{
-						Seq:     plannedAssistantSeq,
 						Line:    currentAssistantLine(responseText),
 						Compact: &compactCopy,
 					})
@@ -3153,15 +3172,20 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 	}
 	// 用户行已在回合开始前落盘（persistUserTurnExchange），这里只补助手行。
 	// S2d-2：主日志不要再带正文（块流是唯一载体，见下面 persistTurnBlocks）。
-	if err := manager.AddExchangeForAgent(agentExchangeCtx, current, "agent", "", in.Agent, resolvedMode, resolvedEffort, resolvedFastService); err != nil {
+	agentSeq, err := manager.AddExchangeForAgentAndGetSeq(agentExchangeCtx, current, "agent", "", in.Agent, resolvedMode, resolvedEffort, resolvedFastService)
+	if err != nil {
 		log.Printf("[session] persist.agent.error root=%s session=%s agent=%s err=%v", in.RootID, current.Key, in.Agent, err)
 		return err
+	}
+	if agentSeq <= 0 {
+		return errors.New("agent exchange was not appended")
 	}
 	if err := manager.UpdateLastContextWindow(ctx, current, lastContextWindow); err != nil {
 		return err
 	}
 	persistedAux := dedupeExchangeAuxBuffer(auxBuffer)
 	for i := range persistedAux {
+		persistedAux[i].Seq = agentSeq
 		persistedAux[i] = hydratePendingToolCallAux(ctx, manager, current.Key, persistedAux[i])
 		if err := manager.AddExchangeAux(ctx, current.Key, persistedAux[i]); err != nil {
 			return err
@@ -3170,7 +3194,6 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 	// 块流是正文的**唯一**载体（D1，S2d-2）。顺序仍是先主日志再块：块要 mindfs_id，
 	// 而它随 AddExchangeForAgent 才定下来。失败**必须**返回 err —— 主日志那一行现在
 	// 只剩元数据，块丢了就等于这一轮没有正文，而用户看得出来。
-	agentSeq := session.MaxExchangeSeq(current.Exchanges)
 	if err := persistTurnBlocks(ctx, manager, current.Key, agentSeq, turnID, responseText, persistedAux); err != nil {
 		return fmt.Errorf("persist turn blocks: %w", err)
 	}
@@ -3742,13 +3765,9 @@ func (s *Service) startSubagentSubscription(in subagentSessionInput, child *sess
 
 func attachBackgroundSessionUpdates(ctx context.Context, in subagentSessionInput, child *session.Session, runtime agenttypes.Session) func() {
 	var responseText string
-	plannedAssistantSeq := session.MaxExchangeSeq(child.Exchanges) + 1
 	// 子会话是三条服务端发起的轮次路径之一（方案 C2）：它没有 user 行
 	// （子会话的转录就是子代理自己的），所以 TurnSeq 留 0，只 mint mindfs_id。
-	// 一个订阅 = 一条助手行 = 一轮，故 mindfs_id 在这里 mint。
-	// seed 用 sessionKey|agent|seq：子会话没有 agent 侧 id 可用时它仍然确定，
-	// 重放同一个子会话不会造出第二个 id。
-	subTurnID := newMindFSID("", fmt.Sprintf("%s|agent|%d", child.Key, plannedAssistantSeq))
+	// 一个订阅 = 一条助手行 = 一轮；mindfs_id 在分配真实 seq 时 mint。
 	auxBuffer := make([]session.ExchangeAux, 0, 8)
 	var thoughtBuffer strings.Builder
 	lastResponseUpdateType := ""
@@ -3766,7 +3785,6 @@ func attachBackgroundSessionUpdates(ctx context.Context, in subagentSessionInput
 		thoughtBuffer.Reset()
 		currentThoughtID = ""
 		auxBuffer = append(auxBuffer, session.ExchangeAux{
-			Seq:       plannedAssistantSeq,
 			Line:      currentAssistantLine(responseText),
 			Thought:   thought,
 			ThoughtID: thoughtID,
@@ -3781,15 +3799,23 @@ func attachBackgroundSessionUpdates(ctx context.Context, in subagentSessionInput
 		doneSent = true
 		doneMu.Unlock()
 		ctx = session.WithExchangeSource(ctx, session.ExchangeSourceLive)
-		ctx = session.WithExchangeIdentity(ctx, session.ExchangeIdentity{MindFSID: subTurnID})
 		defer in.Manager.ClearPendingExchangeAux(context.Background(), child.Key)
 		flushThought()
-		if err := in.Manager.AddExchangeForAgent(ctx, child, "agent", responseText, in.Agent, in.Mode, in.Effort, in.FastService); err != nil {
+		var subTurnID string
+		subAgentSeq, err := in.Manager.AddExchangeForAgentAtWithIdentityFactory(
+			ctx, child, "agent", responseText, in.Agent, in.Mode, in.Effort, in.FastService, time.Time{},
+			func(seq int) session.ExchangeIdentity {
+				subTurnID = newMindFSID("", fmt.Sprintf("%s|agent|%d", child.Key, seq))
+				return session.ExchangeIdentity{MindFSID: subTurnID}
+			},
+		)
+		if err != nil {
 			log.Printf("[subagent] persist.agent.error root=%s session=%s err=%v", in.RootID, child.Key, err)
 			return
 		}
 		subAux := dedupeExchangeAuxBuffer(auxBuffer)
 		for i := range subAux {
+			subAux[i].Seq = subAgentSeq
 			subAux[i] = hydratePendingToolCallAux(ctx, in.Manager, child.Key, subAux[i])
 			if err := in.Manager.AddExchangeAux(ctx, child.Key, subAux[i]); err != nil {
 				log.Printf("[subagent] persist.aux.error root=%s session=%s err=%v", in.RootID, child.Key, err)
@@ -3798,7 +3824,6 @@ func attachBackgroundSessionUpdates(ctx context.Context, in subagentSessionInput
 		}
 		// 双写块流（方案 S2a）。子代理块带 parentToolUseId / taskId / subagentType（D16）由
 		// aux 的既有归属字段承载，S2c 接线；这里先保证正文不丢。
-		subAgentSeq := session.MaxExchangeSeq(child.Exchanges)
 		if err := persistTurnBlocks(ctx, in.Manager, child.Key, subAgentSeq, subTurnID, responseText, subAux); err != nil {
 			log.Printf("[subagent] persist.blocks.error root=%s session=%s seq=%d err=%v", in.RootID, child.Key, subAgentSeq, err)
 		}
@@ -3829,7 +3854,6 @@ func attachBackgroundSessionUpdates(ctx context.Context, in subagentSessionInput
 				if shouldPersistToolCallAux(toolCall) {
 					toolCallCopy := toolCall
 					auxBuffer = append(auxBuffer, session.ExchangeAux{
-						Seq:      plannedAssistantSeq,
 						Line:     currentAssistantLine(responseText),
 						ToolCall: &toolCallCopy,
 					})
@@ -3841,7 +3865,6 @@ func attachBackgroundSessionUpdates(ctx context.Context, in subagentSessionInput
 			if plan, ok := update.Data.(agenttypes.PlanUpdate); ok && strings.TrimSpace(plan.Content) != "" {
 				planCopy := plan
 				auxBuffer = append(auxBuffer, session.ExchangeAux{
-					Seq:  plannedAssistantSeq,
 					Line: currentAssistantLine(responseText),
 					Plan: &planCopy,
 				})
@@ -3851,7 +3874,6 @@ func attachBackgroundSessionUpdates(ctx context.Context, in subagentSessionInput
 			if todo, ok := update.Data.(agenttypes.TodoUpdate); ok && len(todo.Items) > 0 {
 				todoCopy := todo
 				auxBuffer = append(auxBuffer, session.ExchangeAux{
-					Seq:  plannedAssistantSeq,
 					Line: currentAssistantLine(responseText),
 					Todo: &todoCopy,
 				})
@@ -3861,7 +3883,6 @@ func attachBackgroundSessionUpdates(ctx context.Context, in subagentSessionInput
 			if compact, ok := update.Data.(agenttypes.CompactNotice); ok {
 				compactCopy := compact
 				auxBuffer = append(auxBuffer, session.ExchangeAux{
-					Seq:     plannedAssistantSeq,
 					Line:    currentAssistantLine(responseText),
 					Compact: &compactCopy,
 				})
@@ -4128,12 +4149,13 @@ func configuredShells(registry Registry) []commandexec.ShellSpec {
 func persistCommandTurn(ctx context.Context, manager *session.Manager, current *session.Session, final agenttypes.ToolCall, turnID string, userExchangeSeq int) error {
 	ctx = session.WithExchangeSource(ctx, session.ExchangeSourceLive)
 	ctx = session.WithExchangeIdentity(ctx, session.ExchangeIdentity{MindFSID: turnID, TurnSeq: userExchangeSeq})
-	if err := manager.AddExchangeForAgent(ctx, current, "agent", "", "", "", "", ""); err != nil {
+	agentSeq, err := manager.AddExchangeForAgentAndGetSeq(ctx, current, "agent", "", "", "", "", "")
+	if err != nil {
 		return err
 	}
-	// 助手行真实 seq 从缓存取，而不是调用方预测的 plannedAssistantSeq：
-	// 预测值一旦与分配值漂移，aux 会挂到别人的 seq 上，块流同理。
-	agentSeq := session.MaxExchangeSeq(current.Exchanges)
+	if agentSeq <= 0 {
+		return errors.New("command agent exchange was not appended")
+	}
 	aux := session.ExchangeAux{
 		Seq:      agentSeq,
 		Line:     0,

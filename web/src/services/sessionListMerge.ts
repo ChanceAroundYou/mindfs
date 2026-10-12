@@ -3,6 +3,8 @@ export type PinAwareSessionItem = {
   session_key?: string;
   root_id?: string;
   updated_at?: string;
+  /** Client-only stream activity until a refreshed server timestamp catches up. */
+  activity_at?: string;
   pinned_at?: string | null;
 };
 
@@ -12,6 +14,31 @@ function sessionKey(item: PinAwareSessionItem): string {
 
 function timeValue(value: string | null | undefined): number {
   return Date.parse(String(value || "")) || 0;
+}
+
+export function sessionActivityTime(
+  item: Pick<PinAwareSessionItem, "updated_at" | "activity_at">,
+): number {
+  return Math.max(timeValue(item.updated_at), timeValue(item.activity_at));
+}
+
+export function sessionActivityAt(
+  item: Pick<PinAwareSessionItem, "updated_at" | "activity_at">,
+): string {
+  return timeValue(item.activity_at) > timeValue(item.updated_at)
+    ? String(item.activity_at || "")
+    : String(item.updated_at || "");
+}
+
+export function projectActivityTime(group: {
+  latestSessionTime?: string;
+  activity_at?: string;
+  sessions: readonly Pick<PinAwareSessionItem, "updated_at" | "activity_at">[];
+}): number {
+  return group.sessions.reduce(
+    (latest, item) => Math.max(latest, sessionActivityTime(item)),
+    Math.max(timeValue(group.latestSessionTime), timeValue(group.activity_at)),
+  );
 }
 
 export function mergeSessionItems<T extends PinAwareSessionItem>(
@@ -31,7 +58,24 @@ export function mergeSessionItems<T extends PinAwareSessionItem>(
       continue;
     }
     const scopedKey = `${String((item as any)?._nodeId || "").trim()}::${key}`;
-    byKey.set(scopedKey, { ...(byKey.get(scopedKey) || ({} as T)), ...item });
+    const previous = byKey.get(scopedKey);
+    const merged = { ...(previous || ({} as T)), ...item };
+    // Keep a local streaming timestamp only while the persisted session row
+    // still lags it. This makes list reloads monotonic without storing every
+    // token/chunk in the database.
+    const latestActivity = Math.max(
+      timeValue(previous?.activity_at),
+      timeValue(item.activity_at),
+    );
+    if (latestActivity > timeValue(merged.updated_at)) {
+      merged.activity_at =
+        timeValue(item.activity_at) >= timeValue(previous?.activity_at)
+          ? item.activity_at
+          : previous?.activity_at;
+    } else {
+      delete merged.activity_at;
+    }
+    byKey.set(scopedKey, merged);
   }
   return Array.from(byKey.values()).sort(compareSessionItems);
 }
@@ -81,15 +125,13 @@ export function applyPinnedSnapshotToSessions<T extends PinAwareSessionItem>(
 }
 
 function compareSessionItems(left: PinAwareSessionItem, right: PinAwareSessionItem): number {
-  const leftPinned = timeValue(left.pinned_at);
-  const rightPinned = timeValue(right.pinned_at);
-  if (leftPinned || rightPinned) {
-    if (leftPinned !== rightPinned) {
-      return rightPinned - leftPinned;
-    }
+  const leftPinned = !!left.pinned_at;
+  const rightPinned = !!right.pinned_at;
+  if (leftPinned !== rightPinned) {
+    return leftPinned ? -1 : 1;
   }
-  const leftUpdated = timeValue(left.updated_at);
-  const rightUpdated = timeValue(right.updated_at);
+  const leftUpdated = sessionActivityTime(left);
+  const rightUpdated = sessionActivityTime(right);
   if (leftUpdated !== rightUpdated) {
     return rightUpdated - leftUpdated;
   }

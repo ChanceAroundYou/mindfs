@@ -2229,6 +2229,8 @@ groups:
       messageId / uuid 又无处安放 —— 「同一个回合叫什么」这个问题在四处各有答案。
       更实际的故障：**导入路径根本不铸 turn_id**，导入行与实时行只能靠「内容相似
       + ±5 秒」猜，而这两个判据在 Full 同步重放场景下必然失效（实测 9 对重复行）。
+      ACP 还把 MindFS 传入的 turn id 当成 agent 原生身份，pending 又按预测 seq 独立铸 id；
+      identity 即使字段齐全，只要来源和角色语义混用，仍会把回显认错或让 pending 对不上。
     why: |
       1) 全系统只留两类 id：mindfs_id（MindFS 在写入点统一铸，系统内唯一、不变，
          是实际使用的那个）与 agent_id（agent 返回的，claude 转录 uuid / ACP
@@ -2249,19 +2251,24 @@ groups:
          四个旧键映射到新字段，同名字段优先），而不是加一堆 `json.RawMessage` 散布在
          各结构体里 —— 键名一旦写进盘，改名就必须留读路径，否则 320 个历史会话
          全部读成「没有身份」。
-      5) 待亮灯（stream_hub.go SetPendingUserAt）的身份 seed 与落盘那一行同源
-         （sessionKey|user|同 seq）：蓝灯的 id 必须等于库里的 mindfs_id，否则灯
-         永远不灭。
+      5) pending 不再独立 mint user turn id：它只接收 persistUserTurnExchange 返回的
+         canonical mindfs_id；pending、用户回声与落盘行共用同一个值，不受 caller 对 seq
+         的预测影响。
       6) 字段改名后 IsMindFSIDShape 是唯一形状判据；前端 SessionBlock 同步为
          mindfs_id / agent_id。
       7) 2026-10-12 前端延伸：session.user_message 和 session.stream 携带本轮
          mindfs_id；实时缓存按 id 合并，overlay 只在角色类别和 mindfs_id 同时匹配时
          抑制瞬时副本。同正文不同 id 保留，无 id 的流式项继续展示。
+      8) 用户行的 id 在 Manager 锁内按真实分配的 seq 铸造，MessageStart 将落盘行返回的
+         mindfs_id 原样交给 pending 与用户回声。ACP 收到的是 MindFS turn id；回显时仅以
+         user 行的 mindfs_id 做精确桥接比较，不写入 agent_id。移除 UsesPromptMessageID
+         能力分支，避免把「收到 MindFS turn id」误当成「agent 提供原生消息 id」。
     boundary: |
       会话轮次元数据的字段名与铸造规则：Exchange.AgentID、Block.AgentID、
       NewMindFSID、exchangeAgentKey / exchangeIdentityRecorded、stream_hub 待亮灯身份。
-      2026-10-12 延伸包含事件和缓存携带 mindfs_id，以及 overlay 按身份对账。块流正文
-      格式未变；写入侧身份判重由 G-BI 提供，读时内容投影已于 2026-10-12 由 G-AB 退役。
+      2026-10-12 延伸包含事件和缓存携带 mindfs_id，以及 overlay 按身份对账；用户行身份
+      按 Manager 实际分配的 seq 铸造并复用到 pending。块流正文格式未变；写入侧身份判重
+      由 G-BI 提供，读时内容投影已于 2026-10-12 由 G-AB 退役。
     tests:
       - server/internal/session/manager_rename_compat_test.go
       - server/internal/session/rename_compat_helpers_test.go
@@ -2271,6 +2278,9 @@ groups:
       - server/internal/api/usecase/session_identity_dedup_test.go
       - server/internal/api/usecase/session_fork_blocks_test.go
       - server/internal/api/usecase/session_blocks_write_test.go
+      - server/internal/api/usecase/session_early_user_persist_test.go
+      - server/internal/api/usecase/session_content_legacy_test.go
+      - server/internal/api/usecase/external_sessions_test.go
       - server/internal/api/http_window_test.go
       - server/internal/api/stream_hub_turn_identity_test.go
       - server/internal/api/stream_hub_user_message_test.go
@@ -2306,6 +2316,7 @@ groups:
       - server/internal/api/stream_hub_turn_identity_test.go
       - server/internal/agent/claude/session.go
       - server/internal/agent/claude/importer.go
+      - server/internal/agent/codex/importer.go
       - server/internal/agent/acp/importer.go
       - server/internal/agent/acp/importer_identity_test.go
       - server/internal/agent/types/types.go
@@ -2331,7 +2342,48 @@ groups:
       - web/src/shared/sessionOverlay.ts:computeTailOverlay
       - web/src/app/useSessionStreamCache.ts:appendAgentChunkForSession
       - server/internal/api/stream_hub.go:SetPendingUserAt
+      - server/internal/api/usecase/session.go:persistUserTurnExchange
+      - server/internal/api/usecase/session.go:exchangeIdentityRecorded
+      - server/internal/session/manager.go:AddExchangeForAgentAtWithIdentityFactory
       - web/src/services/session.ts:agent_id
+  - id: G-BJ
+    title: 会话列表按实时活动时间排序
+    kind: fix
+    symptom: |
+      会话回复期间，项目组与会话行仍显示上次完整回复时的时间，排序也等到整轮结束才更新；
+      置顶区和普通区各自的顺序还会被 pin 时间、项目名称或当前分页碰巧返回的首行误导。
+    why: |
+      1) stream block 到达时，前端用 100ms 粒度推进临时 activity_at；会话排序、项目分组
+         排序与相对时间标签统一读 max(updated_at, activity_at)，所以无需每个 token 写一次
+         session metadata，也无需等完整回复。
+      2) 普通列表刷新可能先返回旧 updated_at；mergeSessionItems 保留较新的 activity_at，
+         直到持久 updated_at 追上才清除临时值，避免刷新把活跃条目倒退。
+      3) 项目组的持久最新时间必须从 indexed session metadata 全表取 MAX；用列表第一个
+         session 推断会受分页、排序和空列表影响。pin 只决定所在分区，各分区内部统一按
+         最新活动倒序，时间相同时才使用节点/项目稳定顺序。
+    boundary: |
+      仅会话列表/项目分组的活动时间投影、排序和 metadata 聚合查询。activity_at 是前端
+      临时字段，不落盘；实时正文事件的身份、内容与块写入不变。
+    tests:
+      - server/internal/session/manager_latest_updated_at_test.go
+      - web/tests/session-list-merge.test.mjs
+    files:
+      - server/internal/session/manager.go
+      - server/internal/session/manager_latest_updated_at_test.go
+      - server/internal/api/usecase/session.go
+      - web/src/App.tsx
+      - web/src/app/appSession.ts
+      - web/src/app/useRealtimeEvents.ts
+      - web/src/components/session/SessionList.tsx
+      - web/src/services/sessionListMerge.ts
+      - web/tests/session-list-merge.test.mjs
+    anchors:
+      - server/internal/session/manager.go:LatestSessionUpdatedAt
+      - server/internal/api/usecase/session.go:LatestSessionUpdatedAt
+      - web/src/App.tsx:carryForwardActivity
+      - web/src/app/useRealtimeEvents.ts:handleSessionStream
+      - web/src/components/session/SessionList.tsx:projectActivityTime
+      - web/src/services/sessionListMerge.ts:projectActivityTime
   - id: G-BH
     title: 会话正文块流（Block 存储层 + 轮次身份 turn_id/turn_seq/native_* + S2a 双写 + S2b 读改走块流 + C1/C2 + S2d-2 主日志不再存正文 + S2e pending 身份改用 turn_id）
     kind: fix
@@ -2363,6 +2415,9 @@ groups:
       ⑧ **user 行被空内容守卫整行吞掉**：S2d-2 一旦让 user 行不再带正文，
          addExchangeForAgentAt 里「空正文 + 非 agent 就跳过」的判据会把**每一行 user**
          丢掉 —— 前端表现为「我说过的话不见了」，且没有任何报错。
+      ⑨ **assistant 分析块错挂到 user 行**：用 caller 的陈旧 Session 快照预测 assistant
+         seq，而 Manager 锁内按最新状态分配了不同 seq；aux/blocks 写到前一条 user 行，
+         重开后分析文本被当成用户消息展示。
     why: |
       1) 新增 sessions/<key>.blocks.jsonl（CUSTOM(G-BH) 的块流），一行一块：
          {seq,pos,revision,type,text|toolcall|todo|plan|compact,step,turn_id,native_id,
@@ -2435,9 +2490,8 @@ groups:
           「先身份、后内容」。有身份且库里对不上 → **一律落库**（那可能是一轮真新增的
           内容，丢掉才是 bug；方案 D10：永不猜）；有身份且匹配上 → 跳过；没有身份 →
           退回「内容归一化 + ±5s」，并按会话记一条「判重还在猜」的日志（可观测的退化指标）。
-          实时路径写 native_turn（本轮最后一个 agent 原生消息 id）与 native_prompt
-          （= turn_id，仅限 UsesPromptMessageID 的 agent），导入路径把转录里的
-          messageId / uuid 写进同一个字段 —— 两端对得上，重复在写入时就被拦住。
+          实时路径只把 agent 真正返回的原生消息 id 写入 agent_id；MindFS turn id 不冒充
+          agent 身份。ACP 回显 prompt turn id 时，仅按 user 行 mindfs_id 精确桥接，规则见 G-BI。
       16) 两端取身份必须同一口径：ACP 的行边界 = **消息边界**（规范原文「messageId 变化
           表示一条新消息开始」），实时路径取「最后一个带 messageId 的文本块」。合并规则
           不一致就永远对不上。claude importer 同理在合并后取最后一个 uuid。
@@ -2476,6 +2530,9 @@ groups:
       26) Manager 新增 TurnIDForSeq：块要带 turn_id 才能挂回轮次，而 max+1 分配下
           「刚写下的那一行」的 seq 只有调用方算得出、turn_id 却存在行里（导入路径就是
           拿到 seq 之后回过头来问这一行的身份）。
+      27) 追加 exchange 的真实 seq 只能由 Manager 在锁内分配。新接口返回这个 seq 并刷新
+          caller snapshot；SendMessage、子会话与命令会话用返回值写 aux 和块流，不再从可能
+          陈旧的 slice 计算 max+1。这样 reasoning/tool/plan 等块始终落在实际 assistant 行。
     boundary: |
       会话正文的存储、身份与读取：块流格式、块写入点、轮次元数据字段、turn_id 生成与清理、
       窗口读走块流、前端按 type 渲染块。
@@ -2570,7 +2627,6 @@ groups:
       - server/internal/api/usecase/session.go:exchangeIdentityRecorded
       - server/internal/api/usecase/session.go:noteIdentitylessGuess
       - server/internal/api/usecase/external_sessions.go:appendImportedExchange
-      - server/internal/api/usecase/external_sessions.go:agentHasPromptMessageID
       - server/internal/agent/acp/importer.go:messageIDOf
       - server/internal/agent/acp/importer.go:isUUIDShape
       - server/internal/api/stream_hub.go:SetPendingUserAt
@@ -2587,6 +2643,9 @@ groups:
       - server/internal/api/usecase/session_blocks_backfill.go:missingBlockSeqs
       - server/internal/api/usecase/session.go:GetSessionBlocksWindow
       - server/internal/api/usecase/session.go:persistTurnBlocks
+      - server/internal/session/manager.go:AddExchangeForAgentAndGetSeq
+      - server/internal/session/manager.go:AddExchangeForAgentAtWithIdentityFactory
+      - server/internal/api/usecase/session_blocks_write_test.go:TestAssistantReasoningBlocksUseAllocatedSeqFromFreshSession
       - server/internal/api/usecase/session.go:copyForkBlocks
       - server/internal/api/usecase/session.go:GetSessionBlocksWindow
       - server/internal/api/http.go:windowSeqsForExchanges

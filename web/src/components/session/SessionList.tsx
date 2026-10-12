@@ -8,6 +8,7 @@ import { hexToRgbaApp } from "../../app/taskIcons";
 import { resolveGroupColor } from "../../services/sessionGroupDisplay";
 import { scopeKey } from "../../shared/scope";
 import { pruneChildState } from "../../services/sessionTree";
+import { projectActivityTime, sessionActivityAt } from "../../services/sessionListMerge";
 import {
   optimisticProjectPin,
   readPins,
@@ -36,6 +37,7 @@ export type SessionItem = {
   name?: string;
   created_at?: string;
   updated_at?: string;
+  activity_at?: string;
   pinned_at?: string | null;
   archived_at?: string | null;
   closed_at?: string;
@@ -97,6 +99,7 @@ export type ProjectSessionGroup = {
   rootId: string;
   rootName: string;
   latestSessionTime?: string;
+  activity_at?: string;
   sessions: SessionItem[];
   totalCount: number;
 };
@@ -876,9 +879,8 @@ export function MultiProjectSessionList({
   }, [groups]);
   const groupScopeKey = (group: ProjectSessionGroup) =>
     scopeKey(String((group as any)?._nodeId || "").trim(), group.rootId);
-  // 右侧多项目列表：与左侧 FileTree 保持一致的分层排序
-  // 层级：节点时序(按 getNodes() 添加顺序) > 同节点内项目置顶 > 同节点内项目设置排序(默认 name-asc)
-  // 项目置顶不跨节点越位，修复 hbsn 跑到其他节点上方的问题；项目内会话由 sessionListMerge 负责置顶在前+时间降序
+  // 项目和会话使用同一 recency 规则：置顶分区在前，各分区按最近活动降序。
+  // 节点顺序、项目名称只负责活动时间相同的稳定排序。
   const orderedGroups = useMemo(() => {
     const nodes = getNodes();
     const orderById = new Map(nodes.map((n, i) => [String(n.id), i] as const));
@@ -900,17 +902,16 @@ export function MultiProjectSessionList({
       return 0;
     };
     return groups.slice().sort((left, right) => {
-      const li = nodeIndex(left);
-      const ri = nodeIndex(right);
-      if (li !== ri) return li - ri;
       const leftPinnedAt = pinnedProjects[groupScopeKey(left)] || 0;
       const rightPinnedAt = pinnedProjects[groupScopeKey(right)] || 0;
       const leftPinned = leftPinnedAt > 0;
       const rightPinned = rightPinnedAt > 0;
       if (leftPinned !== rightPinned) return rightPinned ? 1 : -1;
-      if (leftPinned && rightPinned && leftPinnedAt !== rightPinnedAt) {
-        return rightPinnedAt - leftPinnedAt;
-      }
+      const recency = projectActivityTime(right) - projectActivityTime(left);
+      if (recency !== 0) return recency;
+      const li = nodeIndex(left);
+      const ri = nodeIndex(right);
+      if (li !== ri) return li - ri;
       return compareByProjectSort(left, right);
     });
   }, [groups, pinnedProjects, projectSortMode]);
@@ -1824,7 +1825,7 @@ function SessionCard({
               {formatTime(
                 isClosed && session.closed_at
                   ? session.closed_at
-                  : session.updated_at || "",
+                  : sessionActivityAt(session),
                 locale,
                 t("time.justNow"),
               )}

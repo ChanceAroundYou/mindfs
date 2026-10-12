@@ -40,7 +40,7 @@ func TestPersistUserTurnExchangeLandsBeforeTurnAndAllocatesRealSeq(t *testing.T)
 
 	// 这一步就是 SendMessage 起手做的事（此刻 agent 还没开始跑、助手行还不存在）。
 	ts := time.Now().UTC()
-	gotSeq, _, err := persistUserTurnExchange(ctx, manager, current, "本轮提问", "claude", "", "", "", false, ts)
+	gotSeq, _, err := persistUserTurnExchange(ctx, manager, current, "本轮提问", "claude", "", "", "", ts)
 	if err != nil {
 		t.Fatalf("persistUserTurnExchange: %v", err)
 	}
@@ -113,7 +113,7 @@ func TestPersistUserTurnExchangeSkipsWhenImporterAlreadyWrote(t *testing.T) {
 	}
 	before := len(current.Exchanges)
 
-	gotSeq, _, err := persistUserTurnExchange(ctx, manager, current, "本轮提问", "claude", "", "", "", false, ts)
+	gotSeq, _, err := persistUserTurnExchange(ctx, manager, current, "本轮提问", "claude", "", "", "", ts)
 	if err != nil {
 		t.Fatalf("persistUserTurnExchange: %v", err)
 	}
@@ -144,7 +144,7 @@ func TestPersistUserTurnExchangeKeepsGenuineResendOutsideWindow(t *testing.T) {
 	firstSeq := session.MaxExchangeSeq(current.Exchanges)
 
 	// 30s 后的真实重发必须落成新行。
-	gotSeq, _, err := persistUserTurnExchange(ctx, manager, current, "继续", "claude", "", "", "", false, base.Add(30*time.Second))
+	gotSeq, _, err := persistUserTurnExchange(ctx, manager, current, "继续", "claude", "", "", "", base.Add(30*time.Second))
 	if err != nil {
 		t.Fatalf("persistUserTurnExchange: %v", err)
 	}

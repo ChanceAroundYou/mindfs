@@ -19,7 +19,7 @@ func TestCopyForkHistoryCopiesBlocksAndClearsNativeIDs(t *testing.T) {
 		t.Fatalf("Get: %v", err)
 	}
 	// 一轮 user + 一轮「只有 reasoning」的 agent —— 正是本 bug 的形态。
-	userSeq, turnID, err := persistUserTurnExchange(ctx, manager, from, "问题", "claude", "", "", "", false, time.Now().UTC())
+	userSeq, turnID, err := persistUserTurnExchange(ctx, manager, from, "问题", "claude", "", "", "", time.Now().UTC())
 	if err != nil {
 		t.Fatalf("persistUserTurnExchange: %v", err)
 	}

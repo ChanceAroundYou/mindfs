@@ -290,10 +290,9 @@ func (h *StreamHub) ensurePendingSessionLocked(sessionKey string) *SessionPendin
 // 于是「哪个 id」这个问题从「哪个 hub」里解耦出来，S2e 结束时同一个逻辑 id
 // 在主日志与 pending 上只有一种表示（方案 D3/D6）。
 //
-// 注意：**pending 的 id 不再由这里铸**。SetPendingUserAt 直接用
-// session.NewMindFSID(sessionKey|user|seq) 算出与落盘行同一个 id —— 两处各铸一次
-// 就等于两套身份，小蓝灯永不熄灭。这里只留给 SetPendingReply（子会话/续轮，
-// 没有 user 行 seq 可用）这类确实没有 seed 的路径。
+// 注意：**pending 的 id 不再由这里铸**。用户回合直接使用落盘后传入的
+// authoritative mindfs_id；只有兼容调用没带 id 时才从 seq 派生。这里只留给
+// SetPendingReply（子会话/续轮，没有 user 行 seq 可用）这类确实没有 seed 的路径。
 func (h *StreamHub) nextPendingTurnIDLocked() string {
 	// seed 只需在本进程内唯一：这条路径（SetPendingReply 子会话/续轮）没有
 	// user 行 seq 可对齐，灯的身份不代表任何落盘行。UnixNano 够用且不确定性问题
@@ -437,8 +436,16 @@ func (h *StreamHub) SetPendingUser(rootID, sessionKey, sessionTitle, agent, mode
 
 // SetPendingUserAt 置入「用户已发送」的 pending，返回该条目所属**回合的 mindfs_id**。
 // 调用方必须把这个 id 交给回合终结器（AppContext.EndSessionTurn），
-// 否则终结器无法判定「这条 done 是不是本轮的」。
-func (h *StreamHub) SetPendingUserAt(rootID, sessionKey, sessionTitle, agent, model, modelDisplayName, mode, effort, fastService string, planMode bool, content string, timestamp time.Time, baseExchangeSeq ...int) (*PendingUserMessage, string) {
+// 否则终结器无法判定「这条 done 是不是本轮的」。用户发送路径应传入持久化时已定的 id。
+func (h *StreamHub) SetPendingUserAt(rootID, sessionKey, sessionTitle, agent, model, modelDisplayName, mode, effort, fastService string, planMode bool, content string, timestamp time.Time, userExchangeSeq ...int) (*PendingUserMessage, string) {
+	seq := 0
+	if len(userExchangeSeq) > 0 {
+		seq = userExchangeSeq[0]
+	}
+	return h.setPendingUserAt(rootID, sessionKey, sessionTitle, agent, model, modelDisplayName, mode, effort, fastService, planMode, content, timestamp, seq, "")
+}
+
+func (h *StreamHub) setPendingUserAt(rootID, sessionKey, sessionTitle, agent, model, modelDisplayName, mode, effort, fastService string, planMode bool, content string, timestamp time.Time, userExchangeSeq int, userTurnID string) (*PendingUserMessage, string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if timestamp.IsZero() {
@@ -447,16 +454,12 @@ func (h *StreamHub) SetPendingUserAt(rootID, sessionKey, sessionTitle, agent, mo
 		timestamp = timestamp.UTC()
 	}
 	state := h.ensurePendingSessionLocked(sessionKey)
-	// pending 灯的回合身份：user 行的 mindfs_id 已在 persistUserTurnExchange 铸好
-	// （seed = sessionKey|user|seq），这里必须算出**同一个** —— 否则灯的亮灭与
-	// 行的持久化各说一套身份，小蓝灯永不熄灭。
-	// seed 必须是**同一轮同一个 seq**：pending 侧与落盘侧都得用它，而落盘侧用的
-	// 是「本轮 user 行的真实 seq」（MaxExchangeSeq+1）。
-	seqLabel := "00000000"
-	if len(baseExchangeSeq) > 0 && baseExchangeSeq[0] > 0 {
-		seqLabel = fmt.Sprintf("%08d", baseExchangeSeq[0])
+	// Live send passes the identity selected by persistence. The seq-derived
+	// fallback is only for compatibility callers that do not provide that value.
+	turnID := strings.TrimSpace(userTurnID)
+	if turnID == "" {
+		turnID = session.NewUserTurnMindFSID(sessionKey, userExchangeSeq)
 	}
-	turnID := session.NewMindFSID("", fmt.Sprintf("%s|user|%s", sessionKey, seqLabel))
 	state.MindFSID = turnID
 	state.RootID = rootID
 	state.SessionTitle = strings.TrimSpace(sessionTitle)
@@ -474,8 +477,8 @@ func (h *StreamHub) SetPendingUserAt(rootID, sessionKey, sessionTitle, agent, mo
 	}
 	state.ReplyingList = nil
 	state.BaseExchangeSeq = 0
-	if len(baseExchangeSeq) > 0 && baseExchangeSeq[0] > 0 {
-		state.BaseExchangeSeq = baseExchangeSeq[0]
+	if userExchangeSeq > 0 {
+		state.BaseExchangeSeq = userExchangeSeq
 	}
 	state.NextEventSeq = 0
 	state.Summary = ""
@@ -1069,11 +1072,11 @@ func (h *StreamHub) BroadcastSessionUserMessageAt(
 	content string,
 	timestamp time.Time,
 	userExchangeSeq int,
+	userTurnID string,
 	excludeClientID string,
 	queued bool,
-	baseExchangeSeq ...int,
 ) string {
-	pendingUser, turnID := h.SetPendingUserAt(rootID, sessionKey, sessionName, agentName, model, modelDisplayName, mode, effort, fastService, planMode, content, timestamp, userExchangeSeq)
+	pendingUser, turnID := h.setPendingUserAt(rootID, sessionKey, sessionName, agentName, model, modelDisplayName, mode, effort, fastService, planMode, content, timestamp, userExchangeSeq, userTurnID)
 	resp := buildSessionUserMessageResponse(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService, planMode, content, pendingUser.Timestamp, queued, userExchangeSeq, turnID)
 	for _, clientID := range h.GetSessionClientIDs(sessionKey, false) {
 		if excludeClientID != "" && clientID == excludeClientID {

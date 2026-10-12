@@ -19,7 +19,12 @@ const sandbox = {
 };
 vm.runInNewContext(compiled, sandbox, { filename: sourcePath });
 
-const { applyPinnedSnapshotToSessions, mergeSessionItems } = sandbox.exports;
+const {
+  applyPinnedSnapshotToSessions,
+  mergeSessionItems,
+  projectActivityTime,
+  sessionActivityAt,
+} = sandbox.exports;
 
 const merged = mergeSessionItems(
   [
@@ -60,6 +65,85 @@ const unpinned = applyPinnedSnapshotToSessions(merged, "root", ["pin-a"]);
 
 assert.equal(unpinned.find((item) => item.key === "pin-b")?.pinned_at, undefined);
 assert.equal(JSON.stringify(unpinned.map((item) => item.key)), JSON.stringify(["pin-a", "new", "pin-b", "old"]));
+
+// A live activity overlay must beat persisted timestamps inside both pin groups,
+// while pins only divide the groups and do not freeze their internal order.
+const activeOrder = mergeSessionItems(
+  [
+    { key: "pinned-old", updated_at: "2026-07-30T10:00:00.000Z", pinned_at: "2026-07-30T13:00:00.000Z" },
+    { key: "pinned-live", updated_at: "2026-07-30T09:00:00.000Z", activity_at: "2026-07-30T14:00:00.000Z", pinned_at: "2026-07-30T12:00:00.000Z" },
+    { key: "plain-old", updated_at: "2026-07-30T11:00:00.000Z" },
+    { key: "plain-live", updated_at: "2026-07-30T08:00:00.000Z", activity_at: "2026-07-30T15:00:00.000Z" },
+  ],
+  [],
+);
+assert.equal(
+  JSON.stringify(activeOrder.map((item) => item.key)),
+  JSON.stringify(["pinned-live", "pinned-old", "plain-live", "plain-old"]),
+);
+assert.equal(sessionActivityAt(activeOrder[0]), "2026-07-30T14:00:00.000Z");
+
+// A stale list refresh cannot move a live session backwards. Once persisted
+// updated_at catches up, the temporary activity field is discarded.
+const refreshedLive = mergeSessionItems(activeOrder, [
+  { key: "plain-live", updated_at: "2026-07-30T08:00:00.000Z" },
+]).find((item) => item.key === "plain-live");
+assert.ok(refreshedLive);
+assert.equal(refreshedLive.activity_at, "2026-07-30T15:00:00.000Z");
+const persistedLive = mergeSessionItems([refreshedLive], [
+  { key: "plain-live", updated_at: "2026-07-30T15:00:00.000Z" },
+])[0];
+assert.equal(persistedLive.activity_at, undefined);
+
+assert.equal(
+  projectActivityTime({
+    latestSessionTime: "2026-07-30T10:00:00.000Z",
+    activity_at: "2026-07-30T12:00:00.000Z",
+    sessions: [
+      { updated_at: "2026-07-30T13:00:00.000Z" },
+      { updated_at: "2026-07-30T11:00:00.000Z", activity_at: "2026-07-30T14:00:00.000Z" },
+    ],
+  }),
+  Date.parse("2026-07-30T14:00:00.000Z"),
+  "project activity must include the freshest live child-session activity",
+);
+
+const sessionListSource = fs.readFileSync(
+  path.resolve(import.meta.dirname, "../src/components/session/SessionList.tsx"),
+  "utf8",
+);
+const projectSort = sessionListSource.slice(
+  sessionListSource.indexOf("const orderedGroups = useMemo"),
+  sessionListSource.indexOf("const togglePinnedProject"),
+);
+assert.match(
+  projectSort,
+  /if \(leftPinned !== rightPinned\)[\s\S]*?const recency = projectActivityTime\(right\) - projectActivityTime\(left\)/,
+  "project pins must form separate sections, each ordered by latest live session activity",
+);
+
+const realtimeSource = fs.readFileSync(
+  path.resolve(import.meta.dirname, "../src/app/useRealtimeEvents.ts"),
+  "utf8",
+);
+const streamHandler = realtimeSource.slice(
+  realtimeSource.indexOf("const handleSessionStream = (payload: any) =>"),
+  realtimeSource.indexOf("const markStreamPending =", realtimeSource.indexOf("const handleSessionStream = (payload: any) =>")),
+);
+assert.match(
+  streamHandler,
+  /event\?\.type && event\.type !== "message_done"[\s\S]*?activity_at: activityAt/,
+  "stream events must advance sidebar activity before a completed reply persists updated_at",
+);
+assert.match(
+  streamHandler,
+  /const activityTime = Math\.floor\(eventTime \/ 100\) \* 100/,
+  "activity updates must be throttled to 100 ms while remaining responsive per stream block",
+);
+assert.ok(
+  streamHandler.indexOf("activity_at: activityAt") < streamHandler.indexOf("if (wsNid && curNid && wsNid !== curNid)"),
+  "a streamed project must receive its activity update before filtering content to the active node",
+);
 
 // 跨节点同 key 会话不得互相覆盖（C3：归并键需按 _nodeId 作用域）
 const crossNode = mergeSessionItems(

@@ -53,7 +53,7 @@ func TestPersistUserTurnExchangeMintsTurnIdentityAndWritesUserBlock(t *testing.T
 	}
 
 	ts := time.Now().UTC()
-	seq, turnID, err := persistUserTurnExchange(ctx, manager, current, "本轮提问", "claude", "", "", "", false, ts)
+	seq, turnID, err := persistUserTurnExchange(ctx, manager, current, "本轮提问", "claude", "", "", "", ts)
 	if err != nil {
 		t.Fatalf("persistUserTurnExchange: %v", err)
 	}
@@ -113,7 +113,7 @@ func TestPersistUserTurnExchangeDedupeWritesNoBlock(t *testing.T) {
 		t.Fatalf("re-Get: %v", err)
 	}
 
-	seq, turnID, err := persistUserTurnExchange(ctx, manager, current, "本轮提问", "claude", "", "", "", false, ts)
+	seq, turnID, err := persistUserTurnExchange(ctx, manager, current, "本轮提问", "claude", "", "", "", ts)
 	if err != nil {
 		t.Fatalf("persistUserTurnExchange: %v", err)
 	}
@@ -145,7 +145,7 @@ func TestPersistTurnBlocksKeepsReasoningOnlyTurn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	userSeq, turnID, err := persistUserTurnExchange(ctx, manager, current, "问题", "dsh", "", "", "", false, ts)
+	userSeq, turnID, err := persistUserTurnExchange(ctx, manager, current, "问题", "dsh", "", "", "", ts)
 	if err != nil {
 		t.Fatalf("persistUserTurnExchange: %v", err)
 	}
@@ -231,5 +231,51 @@ func TestPersistTurnBlocksMatchesRendererInterleave(t *testing.T) {
 	}
 	if blocks[0].Text != "first" || blocks[2].Text != "third" {
 		t.Fatalf("aux order wrong: %q / %q", blocks[0].Text, blocks[2].Text)
+	}
+}
+
+func TestAssistantReasoningBlocksUseAllocatedSeqFromFreshSession(t *testing.T) {
+	manager, key := newEarlyUserPersistManager(t)
+	ctx := context.Background()
+	current, err := manager.Get(ctx, key, 0)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if err := manager.AddExchangeForAgent(ctx, current, "user", "上一条消息", "dsh", "", "", ""); err != nil {
+		t.Fatalf("append prior user row: %v", err)
+	}
+
+	// Reproduce a caller retaining a session snapshot that has no exchanges while
+	// the manager already owns seq 1. Guessing max(snapshot)+1 would attach this
+	// assistant analysis to the previous user row.
+	stale := &session.Session{Key: key}
+	agentSeq, err := manager.AddExchangeForAgentAndGetSeq(
+		ctx, stale, "agent", "", "dsh", "", "", "",
+	)
+	if err != nil {
+		t.Fatalf("append assistant row: %v", err)
+	}
+	if agentSeq != 2 {
+		t.Fatalf("assistant seq = %d, want manager allocated seq 2", agentSeq)
+	}
+	if len(stale.Exchanges) != 2 || stale.Exchanges[1].Seq != agentSeq || stale.Exchanges[1].Role != "agent" {
+		t.Fatalf("stale caller snapshot was not refreshed: %#v", stale.Exchanges)
+	}
+
+	aux := session.ExchangeAux{Seq: agentSeq, Line: 0, Thought: "穿插在回复里的分析"}
+	if err := manager.AddExchangeAux(ctx, key, aux); err != nil {
+		t.Fatalf("AddExchangeAux: %v", err)
+	}
+	turnID := newMindFSID("", "session|agent|2")
+	if err := persistTurnBlocks(ctx, manager, key, agentSeq, turnID, "", []session.ExchangeAux{aux}); err != nil {
+		t.Fatalf("persistTurnBlocks: %v", err)
+	}
+
+	blocks, err := manager.ReadBlocks(ctx, key)
+	if err != nil {
+		t.Fatalf("ReadBlocks: %v", err)
+	}
+	if len(blocks) != 1 || blocks[0].Seq != agentSeq || blocks[0].Type != session.BlockTypeReasoning || blocks[0].Text != aux.Thought {
+		t.Fatalf("assistant analysis blocks = %#v, want reasoning on assistant seq %d", blocks, agentSeq)
 	}
 }

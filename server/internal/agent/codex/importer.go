@@ -82,13 +82,6 @@ func (i *Importer) AgentName() string {
 	return i.agentName
 }
 
-// UsesPromptMessageID 暂为 false：codex 的转录有没有稳定的 message id 尚未实证
-// （本机没有 `~/.codex/sessions`）。等验过再开 —— 在没证据之前开，等于给
-// 所有 codex 导入行发一个谁也对不上的假身份。
-func (i *Importer) UsesPromptMessageID() bool {
-	return false
-}
-
 // HasTranscriptTimestamps 恒为 true：codex 转录行带 `timestamp`（parseTimeStringPtr 解析），所以时间地板对它成立。
 func (i *Importer) HasTranscriptTimestamps() bool {
 	return true

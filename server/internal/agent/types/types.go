@@ -311,15 +311,6 @@ type ExternalSessionImporter interface {
 	AgentName() string
 	ListExternalSessions(ctx context.Context, in ListExternalSessionsInput) (ListExternalSessionsResult, error)
 	ImportExternalSession(ctx context.Context, in ImportExternalSessionInput) (ImportedExternalSession, error)
-	// UsesPromptMessageID 报告该 agent 的 prompt 是否带 `messageId` 这层身份
-	// （ACP 协议有，claude/codex 没有）。
-	//
-	// 为什么需要：没有这层身份的 agent，实时路径写的 user 行拿不到 agent 侧 id，
-	// 连 `native_prompt = mindfs_id` 这种自引用的假身份都不该写 —— 那是
-	// 「同一个值在两个字段里互相引用」的空转，两端各写一半、永远对不上。
-	// 有了 mindfs_id → agent_id 的确定性派生（UUIDv5），实时侧与导入侧
-	// 才能自然对上，不需要这种自引用桥。
-	UsesPromptMessageID() bool
 	// HasTranscriptTimestamps 报告该 agent 的转录条目是否带**真实**时间戳。
 	//
 	// 为什么需要：`TimestampFloor` 的意义是「只补比库里最新一条更新的尾段」，它只有在

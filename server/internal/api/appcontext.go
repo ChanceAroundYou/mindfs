@@ -378,7 +378,7 @@ func (s *AppContext) RunAgentStage(ctx context.Context, exec kanban.AgentStageEx
 		Content:         exec.Prompt,
 		UserTimestamp:   userTimestamp,
 		OnStart: func(start usecase.MessageStart) {
-			id := s.BroadcastSessionUserMessageAt(exec.RootID, sessionKey, session.TypeChat, sessionName, exec.Stage.Agent, start.Model, start.ModelDisplayName, start.Mode, start.Effort, start.FastService, planMode, exec.Prompt, userTimestamp, start.UserExchangeSeq, start.BaseExchangeSeq)
+			id := s.BroadcastSessionUserMessageAt(exec.RootID, sessionKey, session.TypeChat, sessionName, exec.Stage.Agent, start.Model, start.ModelDisplayName, start.Mode, start.Effort, start.FastService, planMode, exec.Prompt, userTimestamp, start.UserExchangeSeq, start.MindFSID)
 			turnMu.Lock()
 			turnIDs[sessionKey] = id
 			turnMu.Unlock()
@@ -987,9 +987,9 @@ func (s *AppContext) SetSessionPendingReply(rootID, sessionKey, sessionTitle, mi
 
 // BroadcastSessionUserMessageAt 广播用户消息并置该会话 pending，返回回合 mindfs_id。
 // 与 SetSessionPendingReply 同理：返回的 id 是收尾时唯一能定位「这一轮」的凭据。
-func (s *AppContext) BroadcastSessionUserMessageAt(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService string, planMode bool, content string, timestamp time.Time, userExchangeSeq int, baseExchangeSeq ...int) string {
+func (s *AppContext) BroadcastSessionUserMessageAt(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService string, planMode bool, content string, timestamp time.Time, userExchangeSeq int, userTurnID string) string {
 	s.ClearTaskAuxFlagsForSession(rootID, sessionKey)
-	return s.GetSessionStreamHub().BroadcastSessionUserMessageAt(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService, planMode, content, timestamp, userExchangeSeq, "", false, baseExchangeSeq...)
+	return s.GetSessionStreamHub().BroadcastSessionUserMessageAt(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService, planMode, content, timestamp, userExchangeSeq, userTurnID, "", false)
 }
 
 func (s *AppContext) BroadcastSessionUpdate(rootID, sessionKey string, update agenttypes.Event) {

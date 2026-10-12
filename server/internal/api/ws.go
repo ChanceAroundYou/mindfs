@@ -914,7 +914,7 @@ func (h *WSHandler) runSessionMessage(job sessionMessageJob) {
 		ClientCtx:       job.ClientCtx,
 		OnStart: func(start usecase.MessageStart) {
 			h.AppContext.ClearTaskAuxFlagsForSession(rootID, key)
-			turnID = streamHub.BroadcastSessionUserMessageAt(rootID, key, job.SessionType, job.SessionName, job.User.Agent, start.Model, start.ModelDisplayName, start.Mode, start.Effort, start.FastService, job.User.PlanMode, job.User.Content, job.User.Timestamp, start.UserExchangeSeq, job.ExcludeClientID, job.Queued, start.BaseExchangeSeq)
+			turnID = streamHub.BroadcastSessionUserMessageAt(rootID, key, job.SessionType, job.SessionName, job.User.Agent, start.Model, start.ModelDisplayName, start.Mode, start.Effort, start.FastService, job.User.PlanMode, job.User.Content, job.User.Timestamp, start.UserExchangeSeq, start.MindFSID, job.ExcludeClientID, job.Queued)
 		},
 		OnUpdate: func(update agenttypes.Event) {
 			updateTracker.Begin()

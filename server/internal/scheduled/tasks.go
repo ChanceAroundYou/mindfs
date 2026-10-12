@@ -35,7 +35,7 @@ type SessionActivityBroadcaster interface {
 	// 刻意**不暴露**无身份的 `BroadcastSessionUserMessage`（不带 At 的那个）：它内部
 	// 拿不到 mindfs_id，收尾就退化成无条件清（守卫见 pending_identity_test.go）。
 	// 置 pending 只允许走能拿到 mindfs_id 的这一个入口。
-	BroadcastSessionUserMessageAt(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService string, planMode bool, content string, timestamp time.Time, userExchangeSeq int, baseExchangeSeq ...int) string
+	BroadcastSessionUserMessageAt(rootID, sessionKey, sessionType, sessionName, agentName, model, modelDisplayName, mode, effort, fastService string, planMode bool, content string, timestamp time.Time, userExchangeSeq int, userTurnID string) string
 	BroadcastSessionUpdate(rootID, sessionKey string, update agenttypes.Event)
 	BroadcastSessionError(rootID, sessionKey, message string)
 	// EndSessionTurn 是**带回合身份的终结器**。定时任务路径必须走它，不得用无身份的
@@ -524,7 +524,7 @@ func (s *Service) runTask(ctx context.Context, task Task, force bool) error {
 			CurrentRoot: current.RootID,
 		},
 		OnStart: func(start usecase.MessageStart) {
-			id := broadcaster.BroadcastSessionUserMessageAt(current.RootID, sessionKey, session.TypeChat, sessionName, current.Agent, start.Model, start.ModelDisplayName, start.Mode, start.Effort, start.FastService, false, current.Prompt, userTimestamp, start.UserExchangeSeq, start.BaseExchangeSeq)
+			id := broadcaster.BroadcastSessionUserMessageAt(current.RootID, sessionKey, session.TypeChat, sessionName, current.Agent, start.Model, start.ModelDisplayName, start.Mode, start.Effort, start.FastService, false, current.Prompt, userTimestamp, start.UserExchangeSeq, start.MindFSID)
 			turnMu.Lock()
 			turnIDs[sessionKey] = id
 			turnMu.Unlock()

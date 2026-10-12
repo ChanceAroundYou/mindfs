@@ -665,21 +665,6 @@ func (s *Service) resolveExternalSessionImporter(agentName string) (agenttypes.E
 	return importer, nil
 }
 
-// agentHasPromptMessageID 报告该 agent 的 prompt 是否带 `messageId` 这层身份
-// （ACP 协议有，claude/codex 没有）。
-//
-// 问 importer 而不是问 agent 名或 `DefaultProtocol`：协议可以在 agents.json 里
-// 覆盖，拿默认协议猜就是把配置丢掉；而 importer 就是「这个 agent 到底怎么存
-// 历史」的真身。问不出来（没配/未注册）时一律 false —— 宁可没有身份，也不要一个
-// 对不上的假身份（方案 D10：永不猜）。
-func (s *Service) agentHasPromptMessageID(agentName string) bool {
-	importer, err := s.resolveExternalSessionImporter(agentName)
-	if err != nil || importer == nil {
-		return false
-	}
-	return importer.UsesPromptMessageID()
-}
-
 func externalSyncLockKey(rootID, key string) string {
 	return strings.TrimSpace(rootID) + ":" + strings.TrimSpace(key)
 }

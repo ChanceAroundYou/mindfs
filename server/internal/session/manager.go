@@ -657,6 +657,36 @@ func (m *Manager) Count(_ context.Context, opts ListOptions) (int, error) {
 	return m.countSessionsUnsafe(opts)
 }
 
+// LatestSessionUpdatedAt returns the newest visible session timestamp in this
+// root, including child sessions. It reads the indexed metadata table, so the
+// multi-root sidebar does not have to load every transcript just to rank roots.
+func (m *Manager) LatestSessionUpdatedAt(_ context.Context) (time.Time, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	db, err := m.ensureSessionMetaDBUnsafe()
+	if err != nil {
+		return time.Time{}, err
+	}
+	var latest sql.NullString
+	if err := db.QueryRow(`
+		SELECT updated_at
+		FROM sessions
+		WHERE archived_at IS NULL
+		ORDER BY julianday(updated_at) DESC
+		LIMIT 1
+	`).Scan(&latest); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return time.Time{}, err
+	}
+	if !latest.Valid || strings.TrimSpace(latest.String) == "" {
+		return time.Time{}, nil
+	}
+	updatedAt, err := time.Parse(time.RFC3339Nano, latest.String)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("parse latest session timestamp %q: %w", latest.String, err)
+	}
+	return updatedAt, nil
+}
+
 func (m *Manager) ListMetas(_ context.Context) ([]*Session, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -790,6 +820,17 @@ func NewMindFSID(agentID, fallbackSeed string) string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", buf[0:4], buf[4:6], buf[6:8], buf[8:10], buf[10:16])
 }
 
+// NewUserTurnMindFSID derives a user's turn identity from the allocated user
+// seq. The live path passes the persisted value downstream; this helper also
+// supports callers that only have the seq available.
+func NewUserTurnMindFSID(sessionKey string, userSeq int) string {
+	sessionKey = strings.TrimSpace(sessionKey)
+	if sessionKey == "" {
+		return ""
+	}
+	return NewMindFSID("", fmt.Sprintf("%s|user|%d", sessionKey, userSeq))
+}
+
 // IsTurnIDShape 校验 mindfs_id 的形态（8-4-4-4-12，十六进制，大小写不敏感）。
 //
 // S2e 起 pending 的回合身份也用 mindfs_id，两处必须认同一种形状 —— 于是判据只有一份，
@@ -877,30 +918,52 @@ func exchangeTokenUsageFromContext(ctx context.Context) *agenttypes.TokenUsage {
 }
 
 func (m *Manager) AddExchangeForAgent(ctx context.Context, session *Session, role, content, agent, mode, effort, fastService string) error {
-	return m.addExchangeForAgentAt(session, role, content, agent, exchangeModelDisplayNameFromContext(ctx), exchangeTokenUsageFromContext(ctx), exchangeSourceFromContext(ctx), exchangeIdentityFromContext(ctx), mode, effort, fastService, time.Time{})
+	_, err := m.AddExchangeForAgentAndGetSeq(ctx, session, role, content, agent, mode, effort, fastService)
+	return err
 }
 
 func (m *Manager) AddExchangeForAgentAt(ctx context.Context, session *Session, role, content, agent, mode, effort, fastService string, timestamp time.Time) error {
-	return m.addExchangeForAgentAt(session, role, content, agent, exchangeModelDisplayNameFromContext(ctx), exchangeTokenUsageFromContext(ctx), exchangeSourceFromContext(ctx), exchangeIdentityFromContext(ctx), mode, effort, fastService, timestamp)
+	_, err := m.addExchangeForAgentAtWithIdentityFactory(session, role, content, agent, exchangeModelDisplayNameFromContext(ctx), exchangeTokenUsageFromContext(ctx), exchangeSourceFromContext(ctx), exchangeIdentityFromContext(ctx), nil, mode, effort, fastService, timestamp)
+	return err
 }
 
-func (m *Manager) addExchangeForAgentAt(session *Session, role, content, agent, modelDisplayName string, tokenUsage *agenttypes.TokenUsage, source string, identity ExchangeIdentity, mode, effort, fastService string, timestamp time.Time) error {
-	if session == nil || strings.TrimSpace(session.Key) == "" {
-		return errors.New("session required")
+// AddExchangeForAgentAndGetSeq appends an exchange and returns the seq allocated
+// from the manager's current, locked view of the session. Callers that attach
+// blocks or auxiliary data must use this value instead of inspecting a possibly
+// stale caller-owned Session pointer.
+func (m *Manager) AddExchangeForAgentAndGetSeq(ctx context.Context, session *Session, role, content, agent, mode, effort, fastService string) (int, error) {
+	return m.addExchangeForAgentAtWithIdentityFactory(session, role, content, agent, exchangeModelDisplayNameFromContext(ctx), exchangeTokenUsageFromContext(ctx), exchangeSourceFromContext(ctx), exchangeIdentityFromContext(ctx), nil, mode, effort, fastService, time.Time{})
+}
+
+// AddExchangeForAgentAtWithIdentityFactory allocates the row seq under the
+// manager lock, then builds identity from that exact seq before persisting it.
+// This keeps deterministic user-turn IDs and turn_seq aligned with the row even
+// if the caller's session snapshot was stale.
+func (m *Manager) AddExchangeForAgentAtWithIdentityFactory(ctx context.Context, session *Session, role, content, agent, mode, effort, fastService string, timestamp time.Time, identityForSeq func(int) ExchangeIdentity) (int, error) {
+	if identityForSeq == nil {
+		return 0, errors.New("exchange identity factory required")
 	}
+	return m.addExchangeForAgentAtWithIdentityFactory(session, role, content, agent, exchangeModelDisplayNameFromContext(ctx), exchangeTokenUsageFromContext(ctx), exchangeSourceFromContext(ctx), exchangeIdentityFromContext(ctx), identityForSeq, mode, effort, fastService, timestamp)
+}
+
+func (m *Manager) addExchangeForAgentAtWithIdentityFactory(session *Session, role, content, agent, modelDisplayName string, tokenUsage *agenttypes.TokenUsage, source string, identity ExchangeIdentity, identityForSeq func(int) ExchangeIdentity, mode, effort, fastService string, timestamp time.Time) (int, error) {
+	if session == nil || strings.TrimSpace(session.Key) == "" {
+		return 0, errors.New("session required")
+	}
+	callerSession := session
 	// S2d-2 起正文归块流，主日志一行的 `content` 恒空 —— 这里再按「空正文」跳过就把
 	// **每一行 user**（用户消息不再带正文）静默丢掉：轮次元数据（mindfs_id / agent_id）
 	// 跟着没，前端按 seq 合并时那句话不显示，搜索的 user 命中优先也失效。
 	// 该拦的是「什么都没带」的纯空行：空正文 + 空 agent + 无任何轮次身份。
 	if strings.TrimSpace(content) == "" && strings.TrimSpace(agent) == "" &&
-		identity.MindFSID == "" && identity.AgentID == "" {
-		return nil
+		identity.MindFSID == "" && identity.AgentID == "" && identityForSeq == nil {
+		return 0, nil
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	current, err := m.getSessionUnsafe(session.Key, 0)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	session = current
 	if session.ClosedAt != nil {
@@ -910,6 +973,9 @@ func (m *Manager) addExchangeForAgentAt(session *Session, role, content, agent, 
 	// seq 按「最大 seq + 1」分配，不按缓存长度：文件与缓存一旦漂移（外部写入、手工修文件、
 	// 缓存陈旧），长度+1 会撞上已有 seq（前端按 seq 合并 → 消息直接不显示）。
 	nextSeq := maxExchangeSeq(session.Exchanges) + 1
+	if identityForSeq != nil {
+		identity = identityForSeq(nextSeq)
+	}
 	ts := timestamp.UTC()
 	if ts.IsZero() {
 		ts = m.now().UTC()
@@ -936,7 +1002,7 @@ func (m *Manager) addExchangeForAgentAt(session *Session, role, content, agent, 
 	}
 	if err := m.appendExchange(session.Key, record); err != nil {
 		log.Printf("[session/store] append.error session=%s seq=%d role=%s agent=%s err=%v", session.Key, record.Seq, role, resolvedAgent, err)
-		return err
+		return 0, err
 	}
 	session.Exchanges = append(session.Exchanges, record)
 	session.UpdatedAt = record.Timestamp
@@ -949,9 +1015,18 @@ func (m *Manager) addExchangeForAgentAt(session *Session, role, content, agent, 
 		}
 	}
 	if err := m.upsertSessionMetaUnsafe(session); err != nil {
-		return err
+		if callerSession != session {
+			*callerSession = *session
+		}
+		return record.Seq, err
 	}
-	return nil
+	// getSessionUnsafe may have replaced a stale cache entry with a freshly loaded
+	// pointer. Keep the caller's snapshot usable after a successful append while
+	// retaining the manager's canonical cached pointer.
+	if callerSession != session {
+		*callerSession = *session
+	}
+	return record.Seq, nil
 }
 
 func (m *Manager) AddExchangeAux(_ context.Context, sessionKey string, aux ExchangeAux) error {

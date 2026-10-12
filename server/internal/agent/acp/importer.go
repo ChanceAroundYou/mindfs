@@ -50,13 +50,6 @@ func (i *Importer) AgentName() string {
 	return i.agentName
 }
 
-// UsesPromptMessageID 恒为 true：ACP 协议的 `PromptRequest.MessageId` 就是这层身份
-// （方案 D3）。MindFS 把自己的 mindfs_id 递进去、agent 原样回显成 `userMessageId`，
-// 于是实时路径与导入路径能用同一个 id 认领同一轮，判重不再靠内容猜。
-func (i *Importer) UsesPromptMessageID() bool {
-	return true
-}
-
 // HasTranscriptTimestamps 恒为 false：ACP 协议的消息更新不带任何时间戳
 // （`SessionNotification` 只有 sessionId + update）。所以 ACP 导入行的 Timestamp 恒为
 // 合成值（见 ImportedExchange.SynthesizedAt），`TimestampFloor` 对它无效。

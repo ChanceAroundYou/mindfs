@@ -583,8 +583,6 @@ type listExternalSessionsTestImporter struct {
 
 func (i *listExternalSessionsTestImporter) AgentName() string { return "claude" }
 
-func (i *listExternalSessionsTestImporter) UsesPromptMessageID() bool { return false }
-
 // HasTranscriptTimestamps 假件按 claude 语义：转录条目自带 timestamp。
 func (i *listExternalSessionsTestImporter) HasTranscriptTimestamps() bool { return true }
 
@@ -604,8 +602,6 @@ type syncDeltaTestImporter struct {
 }
 
 func (i *syncDeltaTestImporter) AgentName() string { return "codex" }
-
-func (i *syncDeltaTestImporter) UsesPromptMessageID() bool { return false }
 
 // HasTranscriptTimestamps 假件按 codex 语义：转录行带 timestamp，时间地板对它成立。
 func (i *syncDeltaTestImporter) HasTranscriptTimestamps() bool { return true }

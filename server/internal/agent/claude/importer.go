@@ -92,13 +92,6 @@ func (i *Importer) AgentName() string {
 	return i.agentName
 }
 
-// UsesPromptMessageID 恒为 false：claude 不暴露 prompt 的消息 id，它的转录身份是
-// 条目自己的 `uuid`（由 ImportedExchange.NativeID 携带）。把 MindFS 的 mindfs_id
-// 写进 native_prompt 只会得到一个永不匹配的假身份，所以必须能问出「没有」。
-func (i *Importer) UsesPromptMessageID() bool {
-	return false
-}
-
 // HasTranscriptTimestamps 恒为 true：claude 转录条目自带 `timestamp` 字段（parseTimeRFC3339 解析），所以 TimestampFloor 对它成立 —— 那是 2026-09-16「重导 09-14 内容」那次事故之后加的护栏。
 func (i *Importer) HasTranscriptTimestamps() bool {
 	return true
