@@ -2390,6 +2390,32 @@ groups:
       - web/src/app/useRealtimeEvents.ts:handleSessionStream
       - web/src/components/session/SessionList.tsx:orderProjectGroupsByNode
       - web/src/services/sessionListMerge.ts:projectActivityTime
+  - id: G-BK
+    title: 会话模型选择与运行态一致性
+    kind: fix
+    symptom: |
+      上一轮使用模型 A，用户在选择器切到模型 B 并发送后，回复期间选择器仍显示 A，
+      直到整轮完成才更新；已有运行实例也可能被旧 session 快照误判为当前模型。
+    why: |
+      被选择的模型属于会话状态，SendMessage 必须在持久化用户消息和触发 OnStart 前保存它，
+      让流式期间的刷新读到新选择。已有 agent 运行实例的 CurrentModel 是活进程状态；
+      只有 runtime 没有可用模型时才依次回退到最新 exchange 与 session 快照。
+      轮次完成后再将 runtime 解析出的最终模型写回，保留 agent 规范化模型名的结果。
+      这与 G-R 的 provider 模型识别、别名探测和模型名流式透传是独立的定制边界。
+    boundary: |
+      会话选择模型的持久化时序，以及活跃 runtime、exchange、session 快照之间的权威优先级。
+      不扩展 provider 探测、别名识别或 stream model_display_name 透传。
+    tests:
+      - server/internal/api/usecase/session_model_switch_test.go
+    files:
+      - server/internal/api/usecase/session.go
+      - server/internal/api/usecase/usecase_test.go
+      - server/internal/api/usecase/session_model_switch_test.go
+    anchors:
+      - server/internal/api/usecase/session.go:currentModelForRuntime
+      - server/internal/api/usecase/session.go:requestedModel := strings.TrimSpace(in.Model)
+      - server/internal/api/usecase/session.go:manager.UpdateModel(ctx, current, resolvedModel)
+      - server/internal/api/usecase/session.go:currentModel := currentModelForRuntime(current, existing)
   - id: G-BH
     title: 会话正文块流（Block 存储层 + 轮次身份 turn_id/turn_seq/native_* + S2a 双写 + S2b 读改走块流 + C1/C2 + S2d-2 主日志不再存正文 + S2e pending 身份改用 turn_id）
     kind: fix

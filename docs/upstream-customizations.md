@@ -123,7 +123,7 @@
 
 ---
 
-## 1. 总览（46 组）
+## 1. 总览（52 组）
 
 | 组 | 主题 | 性质 | 关键提交/切片举例 | 互斥边界 |
 |----|------|------|-------------------|----------|
@@ -178,6 +178,7 @@
 | G-BB | 看板列头灰底 + 间距对齐工作台（列头背景/列表 padding/外层 padding） | 视觉 | 见 §3.1 | 列头灰底区分栏目标签与卡片；列表 padding 归零卡片加宽 12px；外层 padding 6px 8px 对齐工作台容器 |
 | G-BI | 会话身份收敛为两套 id（mindfs_id + agent_id）及 UI 身份对账 | 重构 | 见 §3.2 | UUIDv5 确定性 mint；pending 复用落盘行身份；ACP 回显不冒充 agent_id；缓存按角色类别 + mindfs_id 对账 |
 | G-BJ | 会话列表按实时活动时间排序 | 修复 | 见 §3.2 | 置顶/普通各自按最新活动倒序；流块推进临时 activity_at，服务端时间追上后收敛 |
+| G-BK | 会话模型选择与运行态一致性 | 修复 | `f7cc9af` | 发送前持久化选择模型；活跃会话模型以 runtime 为准 |
 
 > **G-D 已并入 G-F，G-M 已并入 G-AI**（改动面完全重合、无独立测试可守，单列只会制造空组）。
 
@@ -2263,3 +2264,16 @@
   - `web/tests/session-list-merge.test.mjs` → 活动时间覆盖旧持久时间、刷新期间不倒退、持久时间追上后清除 overlay；会话置顶/普通区内部按活动时间排序；项目先按节点分桶、再在桶内置顶优先并按活动时间排序，后续节点即使更活跃也不能越位；stream block 推进活动值且跨节点内容过滤之前执行。
   - `web/tests/upstream-restore.test.mjs`、`web/tests/multi-account-partition.test.mjs` → 多项目列表不预显示 IndexedDB 旧快照，单项目列表账户缓存仍保留。
   - `server/internal/session/manager_latest_updated_at_test.go` → 项目组最新活动从全部可见会话（含子会话）取最大值。
+
+### G-BK 会话模型选择与运行态一致性（2026-10-12）
+
+- **来源**：`f7cc9af`，修复发送时模型选择与会话元数据的更新时序。
+- **可见症状**：上一轮使用模型 A，用户在选择器切到模型 B 并发送后，回复期间选择器仍显示 A；整轮结束后才显示 B。已有运行中的 agent 也可能被旧的 session 快照误判为仍使用另一模型。
+- **根因与边界**：
+  1. 选择的模型属于会话状态，不应等回复完成才落盘。`SendMessage` 在持久化用户消息和触发 `OnStart` 前先保存请求模型，流式期间的列表/会话刷新因此读到 B。
+  2. 对已有运行实例判定当前模型时，`runtime.CurrentModel()` 是活进程状态；持久化 exchange 与 session 字段依次作为运行时没有可用值时的回退。轮次完成后再用 runtime 解析出的最终模型收敛会话记录。
+  3. 本组覆盖会话选择模型、活跃运行实例与持久快照之间的优先级；G-R 继续覆盖 provider 模型识别、别名探测与模型名流式透传。
+- **针对性测试**：`server/internal/api/usecase/session_model_switch_test.go`：
+  - `TestSendMessagePersistsSelectedModelBeforeTurnStarts` → 在 `OnStart` 时检查回调、session 与最新用户 exchange 均已是刚选择的模型 B。
+  - `TestCurrentModelForRuntimeUsesLiveModelBeforePersistedSnapshot` → runtime 为 A、持久快照为 B 时，当前模型判定返回活跃 runtime 的 A。
+- **涉及文件**：`server/internal/api/usecase/session.go` 的 `SendMessage` 与 `currentModelForRuntime`；`server/internal/api/usecase/usecase_test.go` 的 agent-session 测试替身；新增的模型切换回归测试。
