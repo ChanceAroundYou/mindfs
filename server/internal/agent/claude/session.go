@@ -146,7 +146,11 @@ func (r *Runtime) OpenSession(ctx context.Context, opts OpenOptions) (types.Sess
 			selectedModel = canonicalClaudeModel(candidate)
 		}
 	}
-	if selectedModel != "" {
+	// WithModel already selects an explicitly requested model at CLI startup.
+	// A control-plane SetModel here would repeat the same switch immediately and
+	// force an unnecessary provider confirmation. Keep SetModel only for the
+	// first-available fallback, where no model was passed to the CLI.
+	if selectedModel != "" && strings.TrimSpace(opts.Model) == "" {
 		if err := stream.SetModel(ctx, s.resolveClaudeModelArg(selectedModel)); err != nil {
 			client.Close()
 			return nil, err
@@ -664,6 +668,24 @@ func displayToTier(display string) string {
 	}
 }
 
+// claudeModelAliasForCLI converts MindFS's internal family IDs to Claude Code's
+// accepted family aliases. Those short IDs can appear in model-pin env vars when
+// MindFS IDs were copied into Claude settings (for example of[1M]); they are not
+// model IDs that Claude Code can validate with the provider.
+func claudeModelAliasForCLI(model string) string {
+	model = strings.TrimSpace(model)
+	has := has1MSuffix(model)
+	base := strip1MSuffix(model)
+	if !isClaudeAliasModel(base) || strings.EqualFold(base, "default") {
+		return model
+	}
+	alias := displayToTier(base)
+	if has {
+		return alias + "[1m]"
+	}
+	return alias
+}
+
 // applyToggle 按 has 标志返回模型名：开则保留/追加 [1m]，关则剥后缀。
 func applyToggle(value string, has bool) string {
 	value = strings.TrimSpace(value)
@@ -725,7 +747,7 @@ func resolveClaudeModelArg(base string, env map[string]string, has bool) string 
 		envKey := "ANTHROPIC_DEFAULT_" + strings.ToUpper(tier) + "_MODEL"
 		envVal := strings.TrimSpace(envLookup(env, envKey))
 		if envVal != "" {
-			return applyToggle(envVal, has)
+			return applyToggle(claudeModelAliasForCLI(envVal), has)
 		}
 		return applyToggle(tier, has)
 	}
