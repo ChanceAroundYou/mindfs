@@ -472,6 +472,7 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
                 }
               : undefined,
             event.timestamp,
+            event.mindfs_id,
           );
           break;
         case "thought_chunk":
@@ -480,6 +481,7 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
             streamKey,
             event.data?.content || "",
             event.data?.id || "",
+            event.mindfs_id,
           );
           break;
         case "tool_call":
@@ -488,6 +490,7 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
             streamKey,
             event.data || {},
             false,
+            event.mindfs_id,
           );
           break;
         case "tool_call_update":
@@ -496,6 +499,7 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
             streamKey,
             event.data || {},
             true,
+            event.mindfs_id,
           );
           break;
         case "todo_update":
@@ -503,6 +507,7 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
             activeRoot,
             streamKey,
             event.data || {},
+            event.mindfs_id,
           );
           break;
         case "plan_update":
@@ -510,6 +515,7 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
             activeRoot,
             streamKey,
             event.data || {},
+            event.mindfs_id,
           );
           break;
         case "compact_notice": {
@@ -517,6 +523,7 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
             activeRoot,
             streamKey,
             event.data || {},
+            event.mindfs_id,
           );
           // **这里曾经清掉该会话所有瞬时行，已删除（2026-10-06）。** 原注释给的两条依据
           // 都不成立：

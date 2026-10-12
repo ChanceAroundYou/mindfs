@@ -141,30 +141,15 @@ function SessionViewerInner({
   //     持久化行里已经包含它（去空白后判定），说明这一轮已落盘、这份是陈旧拷贝 → 让位。
   //     这是 2026-09-17 的缺口：以前这里「一律保留」，于是 ask 前后被渲染成两块一样的正文。
   // 只读派生不写回缓存，避免覆盖其它标签页可能正在流式写入的持久化缓存。
-  const [latestSeqState, setLatestSeqState] = useState<{ key: string; max: number }>(
-    { key: "", max: 0 },
-  );
-  const noteLatestSeq = useCallback(
-    (key: string | null, meta: SessionWindowMeta | null | undefined) => {
-      const max = Number(meta?.maxSeq || 0);
-      if (!key || max <= 0) return;
-      setLatestSeqState((prev) =>
-        prev.key === key ? (max > prev.max ? { key, max } : prev) : { key, max },
-      );
-    },
-    [],
-  );
-  const latestSeq = latestSeqState.key === sessionKey ? latestSeqState.max : 0;
-  // overlay 尾巴：**判定逻辑已搬到 `sessionOverlay.ts` 的纯函数**（本处只做接线）。
-  // 搬出去的原因见那个文件的头部注释：它住在组件里时测不了，测试只能写同构副本，
-  // 而副本挡住了冲突②（渲染空洞）—— `tests/session-window.test.mjs` 里那份副本可以随之删除。
+  // 瞬时缓存与窗口只按 MindFS 身份对账；文本相似不能证明两行相同。
+  // 持久行按 seq；无身份的瞬时行继续保留，确保实时正文与思考不会被丢。
   const tailOverlay = useMemo(
     () =>
       computeTailOverlay({
         exchanges: session?.exchanges as OverlayExchange[] | undefined,
         visibleExchanges: visibleExchanges as OverlayExchange[],
       }),
-    [session?.exchanges, sessionKey, visibleExchanges],
+    [session?.exchanges, visibleExchanges],
   );
   // 窗口态与 overlay 是两条独立来源，同一个 exchange 对象可能两边都在（重锚定会把整份
   // 缓存装进窗口态时就发生过）。按对象同一性取差集，保证同一份 exchange 只渲染一次 ——
@@ -301,12 +286,9 @@ function SessionViewerInner({
           minSeq: Math.min(winMinSeq, Number(prevMeta?.minSeq || 0) || winMinSeq),
         };
       });
-      // applyWindow 只服务「最新窗口」（init / anchor）——loadMore 与 targetSeq 取窗直接
-      // setWindowMeta，不经过这里，因此 latestSeq 不会被旧/中段窗口的 maxSeq 污染。
-      noteLatestSeq(sessionKey, res.meta);
       return true;
     },
-    [noteLatestSeq, sessionKey],
+    [],
   );
 
   useSessionWindowing({

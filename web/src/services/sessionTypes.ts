@@ -69,8 +69,10 @@ export type SessionBlock = {
   plan?: PlanUpdate | null;
   compact?: CompactNotice | null;
   step?: number;
-  turn_id?: string;
-  native_id?: string;
+  /** MindFS 权威身份：写入点统一铸、全系统唯一不变（G-BI 从 turn_id 改名而来） */
+  mindfs_id?: string;
+  /** agent 侧桥梁键（claude 转录 uuid / ACP messageId），可空，不参与系统内唯一性 */
+  agent_id?: string;
   parent_tool_use_id?: string;
   task_id?: string;
   subagent_type?: string;
@@ -208,7 +210,15 @@ export type CompactNotice = {
   summary?: string;
 };
 
-export type StreamEvent = { event_cursor?: string; timestamp?: string } & (
+/**
+ * 实时流事件。`mindfs_id` 由后端 G-BI 2cf2858 补上：user_message 与 session.stream
+ * 帧携带本轮身份，前端实时缓存据此对账（见 appSession.ts 的 Exchange.mindfs_id）。
+ */
+export type StreamEvent = {
+  event_cursor?: string;
+  timestamp?: string;
+  mindfs_id?: string;
+} & (
   | { type: "message_chunk"; data: { content: string } }
   | { type: "thought_chunk"; data: { id?: string; content: string } }
   | { type: "tool_call"; data: ToolCall }

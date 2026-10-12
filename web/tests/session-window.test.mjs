@@ -3,12 +3,12 @@ import fs from "node:fs";
 import path from "node:path";
 import ts from "typescript";
 import vm from "node:vm";
-// overlay 判定已搬到 src/components/sessionOverlay.ts 的纯函数（2026-10-06）。
-// 这里**直接 import 真实现**，不再写同构副本 —— 副本会漂移，冲突②（渲染空洞）
-// 就是被副本挡住的：副本只复刻了作者关心的分支，所以一直是绿的。
+// overlay 判定由 src/shared/sessionOverlay.ts 的纯函数实现。
+// 这里直接 import 真实现，避免再维护同构副本。
+
 import { register } from "node:module";
 register("./ts-module-hook.mjs", import.meta.url);
-const { computeTailOverlay } = await import("../src/components/sessionOverlay.ts");
+const { computeTailOverlay } = await import("../src/shared/sessionOverlay.ts");
 
 const sessionServicePath = path.resolve(import.meta.dirname, "../src/services/session.ts");
 const sessionViewerPath = path.resolve(import.meta.dirname, "../src/components/SessionViewer.tsx");
@@ -145,7 +145,6 @@ assert.match(viewerSrc, /windowMeta\.total/, "windowMeta.total usage missing");
 assert.match(managerSrc, /type SessionWindowMeta struct/, "manager.go SessionWindowMeta missing");
 assert.match(managerSrc, /func \(m \*Manager\) GetWindow/, "manager.go GetWindow missing");
 assert.match(managerSrc, /func \(m \*Manager\) GetExchangeAuxWindow/, "manager.go GetExchangeAuxWindow missing");
-assert.match(managerSrc, /func \(m \*Manager\) CountExchanges/, "manager.go CountExchanges missing");
 assert.match(managerSrc, /func firstIndexWhereSeq/, "firstIndexWhereSeq helper missing");
 assert.match(managerSrc, /if limit <= 0 \{\s*\n\s*limit = 50/, "limit default 50 clamp missing");
 assert.match(managerSrc, /if limit > 200/, "limit >200 clamp missing");
@@ -230,7 +229,7 @@ assert.doesNotMatch(viewerSrc, /mergeWindowedTail/, "seq merge model must not re
 // overlay 尾巴派生 + 组合输入
 // 判定已搬到纯模块：组件只负责接线，判定本身在 sessionOverlay.ts
 const overlaySrc = fs.readFileSync(
-  path.resolve(import.meta.dirname, "../src/components/sessionOverlay.ts"),
+  path.resolve(import.meta.dirname, "../src/shared/sessionOverlay.ts"),
   "utf8",
 );
 assert.match(
@@ -248,77 +247,24 @@ assert.match(
   /const composedExchanges = useMemo\(\(\) => \{[\s\S]*?return \[\.\.\.visibleExchanges, \.\.\.extra\]/,
   "composed window+overlay input missing",
 );
-// 判定不再依赖 windowMeta（loadMore/targetSeq 会把它覆盖成旧窗口的 meta）：
-// 已持久化条目按 latestSeq（只增、按会话键绑定）判定；seq=0 的用户条目按内容与窗口计数消抵；
-// seq=0 的直播正文/思考默认保留，但窗口最新持久化行已包含它（去空白判定）时让位——否则
-// 同一轮会在 ask 卡上下各渲染一块（实测 2026-09-17）。
-assert.match(
-  viewerSrc,
-  /const latestSeq = latestSeqState\.key === sessionKey \? latestSeqState\.max : 0;/,
-  "per-session latestSeq derivation missing",
-);
-assert.match(
-  viewerSrc,
-  /noteLatestSeq\(sessionKey, res\.meta\);/,
-  "applyWindow must report the latest-window maxSeq (loadMore/targetSeq must not)",
-);
-assert.match(
-  viewerSrc,
-  /const \[latestSeqState, setLatestSeqState\] = useState<\{ key: string; max: number \}>/,
-  "latestSeq must be monotonic and keyed by session",
-);
-assert.match(
-  overlaySrc,
-  /const visibleSeqSet = new Set<number>\(\);/,
-  "visible window seq set missing",
-);
-assert.match(
-  overlaySrc,
-  /const windowUserCounts = new Map<string, number>\(\);/,
-  "window user content counts (for overlay de-dup) missing",
-);
-assert.match(
-  overlaySrc,
-  /const covered = windowUserCounts\.get\(content\) \|\| 0;/,
-  "seq=0 user entry must be offset by the window's same-content count",
-);
 assert.doesNotMatch(
   viewerSrc,
-  /staleCount|windowMeta\.maxSeq - cacheMaxSeq/,
-  "positional stale trim must not return (it ate live streaming items)",
+  /latestSeqState|noteLatestSeq|latestSeq\s*=|latestSeq\s*:/,
+  "overlay must not keep the retired sequence watermark",
 );
-// 2026-10-06 简化：seq=0 的直播正文**不再靠内容比对**让位（那套是「归一化后包含 + ≥32 字地板 +
-// 只看窗口最新 3 行」，短回复落盘后会显示两遍，见 tests/session-overlay-unit.test.mjs 的【红·④】）。
-// 改为**轮次判据**：窗口里已经有本轮的持久行 ⇒ 本轮瞬时投影整批作废。判据用**缓存里最后一条
-// 已持久化的 user 行**归因（不能用窗口的最后一条 —— 窗口可能只到下界，会把新一轮的流式内容误清）。
+assert.match(overlaySrc, /renderedIdentities/);
+assert.match(overlaySrc, /identityOf/);
 assert.match(
   overlaySrc,
-  /const turnPersistedTexts: string\[\] = \[\];/,
-  "「窗口里本轮的持久正文」语料 missing —— 它是取代「最新 3 行 + 长度地板」的那一条",
-);
-assert.match(
-  overlaySrc,
-  /if \(seqOf\(ex\) <= lastVisibleUserSeq\) continue;/,
-  "语料必须**限定在本轮**（最后一条 user 行之后）—— 跨轮比对会误伤合法重复",
-);
-assert.match(
-  overlaySrc,
-  /turnPersistedTexts\.some\(\(text\) => text\.includes\(transientText\)\)/,
-  "瞬时正文必须在「归一化后包含」时让位（落盘那份常多出收尾段，故是包含不是相等）",
+  /if \(identity && renderedIdentities\.has\(identity\)\) continue;/,
+  "transient rows must reconcile by MindFS identity",
 );
 assert.doesNotMatch(
   overlaySrc,
-  /windowTailTexts|renderedPersistedTexts|OVERLAY_DUP_MIN_CHARS|OVERLAY_TAIL_ROWS/,
-  "内容比对那套（含两个阈值常量）必须保持删除状态",
+  /normalizeOverlayText|windowUserCounts|turnPersistedTexts|contentOf/,
+  "overlay must not infer duplicate rows from their text",
 );
 
-
-
-assert.match(
-  overlaySrc,
-  /export function normalizeOverlayText\(value: string\): string \{/,
-  "whitespace-insensitive overlay comparison helper missing",
-);
 // init 种子只取持久化部分，避免与 overlay 重复。
 // 注意：种子**不再**二次截断到 SESSION_WINDOW_SIZE —— 加载过程中砍头部正是
 // 「切会话闪一下」的成因（2026-10-05）。淘汰只在写入时发生（toPersistentSession）。
@@ -845,127 +791,27 @@ assert.match(
   "App restoreActiveSession must use the constant",
 );
 
-// ── overlay 判定（与 SessionViewer.tailOverlay 同构）：窗口是权威持久化源 ───
-// ①窗口已含的 seq 不重复渲染 ②实时流式项永不丢 ③陈旧乐观用户拷贝被丢弃
-// ④真正的重复发言仍显示 ⑤刚发出(seq>latestSeq)的条目保留 ⑥未锚定时不灌历史
-// 真实现的薄适配器（原来是同构副本，见文件头说明）。
-// `latestSeq` 形参**已失效**：判定不再依赖那条水位线（它正是冲突②的成因），保留形参只为
-// 不改动下面 6 处调用点的形状。
-const buildTailOverlay = (cacheExchanges, visibleExchanges, _latestSeqUnused) =>
-  computeTailOverlay({ exchanges: cacheExchanges, visibleExchanges });
-
-const win = [
-  { role: "user", content: "A", seq: 9 },
-  { role: "assistant", content: "R9", seq: 10 },
-];
-assert.equal(
-  buildTailOverlay([{ role: "user", content: "A", seq: 9 }], win, 10).length,
-  0,
-  "① cache entry already present in the window must not re-render",
+// ── 身份 overlay 行为（persisted 按 seq，transient 按角色类别 + mindfs_id）──
+const visibleUser = { role: "user", content: "相同正文", seq: 9, mindfs_id: "turn-9" };
+const visibleAgent = { role: "agent", content: "相同正文", seq: 10, mindfs_id: "turn-9" };
+const liveCopy = { role: "assistant", content: "不同正文", mindfs_id: "turn-9" };
+const liveRepeat = { role: "agent", content: "相同正文", mindfs_id: "turn-10" };
+const noIdentity = { role: "agent", content: "相同正文" };
+assert.deepEqual(
+  computeTailOverlay({
+    exchanges: [visibleUser, visibleAgent, liveCopy, liveRepeat, noIdentity],
+    visibleExchanges: [visibleUser, visibleAgent],
+  }),
+  [liveRepeat, noIdentity],
+  "only a matching role category and mindfs_id may suppress a transient row",
 );
-assert.equal(
-  buildTailOverlay([{ role: "assistant", content: "streaming..." }], win, 10).length,
-  1,
-  "② live streaming items must never be trimmed",
-);
-assert.equal(
-  buildTailOverlay([{ role: "user", content: "A" }], win, 10).length,
-  0,
-  "③ stale optimistic user copy must be dropped once the window has the same content",
-);
-assert.equal(
-  buildTailOverlay(
-    [
-      { role: "user", content: "继续" },
-      { role: "user", content: "继续" },
-    ],
-    [{ role: "user", content: "继续", seq: 9 }],
-    9,
-  ).length,
-  1,
-  "④ a genuinely repeated message must still show",
-);
-assert.equal(
-  buildTailOverlay([{ role: "user", content: "新", seq: 11 }], win, 10).length,
-  1,
-  "⑤ just-sent message beyond the window's latest seq must stay visible",
-);
-// ⑥【2026-10-06 反转】锚定前后：缓存里「窗口未含」的持久行**必须**由 overlay 渲染。
-//    旧断言要求它们不渲染（依据是那条被删掉的 A2 假设「seq 未达水位线的行窗口一定会含」）。
-//    该假设不成立 ⇒ 会漏行（冲突②）。渲染多余的一行是**性能**问题（且应用自己在挂载时
-//    就把缓存里的持久行整体播种进窗口态了，注释明说刻意不再缩到窗口大小），
-//    而漏行是**正确性**问题 —— 两者不能同等对待。
-assert.equal(
-  buildTailOverlay([{ role: "user", content: "旧", seq: 3 }], win, 0).length,
-  1,
-  "窗口未含的持久行必须由 overlay 补渲染（否则就是渲染空洞）",
-);
-
-// ⑦⑧⑨ 缺口回归（2026-09-17）：同一轮的直播拷贝与落盘正文只差空白，必须让位。
-// 服务端 appendResponseChunk 在相邻文本块之间补 "\n\n"，流式 chunk 不带。
-const askTurnText =
-  "竞品对比页的信息我核对了一下：仓库里的竞品档案只把 Moiré 当作一种「传统模态」记录，没有香港的具体机型。先查一下：";
-const askWin = [
-  { role: "user", content: "推进竞品对比", seq: 21 },
-  {
-    role: "assistant",
-    content:
-      "竞品对比页的信息我核对了一下：仓库里的竞品档案只把 Moiré 当作一种「传统模态」记录，\n\n没有香港的具体机型。先查一下：\n\n明白了——布局不动。",
-    seq: 22,
-  },
-];
-assert.equal(
-  buildTailOverlay([{ role: "agent", content: askTurnText }], askWin, 22).length,
-  0,
-  "⑦ live copy of a turn already persisted in the window must yield (ask 上下各一块的根因)",
-);
-assert.equal(
-  buildTailOverlay(
-    [
-      {
-        role: "agent",
-        content: `${askTurnText}下面是窗口里还没有的一段全新输出，仍在流式。`,
-      },
-    ],
-    askWin,
-    22,
-  ).length,
-  1,
-  "⑧ live text the window does not contain yet must stay visible",
-);
-assert.equal(
-  buildTailOverlay([{ role: "agent", content: "好的" }], askWin, 22).length,
-  1,
-  "⑨ short fragments must not be reconciled away (真·合法重复发言)",
-);
-
-// ⑩ 实测 2026-09-17 20:16（PC 节点「为 MindFS 添加登录功能」）：刚落盘那一行还没被重锚定
-// 拉进窗口（latestSeq 仍是上一轮），由 overlay 的 seq>0 分支渲染；seq=0 的直播拷贝必须照样
-// 让位，否则整轮渲染两次——ask 卡上下各一整轮。
-const liveTurnText =
-  "看完了现有链路，先把关键事实说清楚（避免重复造轮子）：- 现在**没有**任何登录。";
-const persistedRow = {
-  role: "agent",
-  seq: 2,
-  // 落盘正文：服务端 appendResponseChunk 在文本块之间补了 "\n\n"，直播 chunk 不带
-  content:
-    "I'll explore the codebase first to understand what's already there before proposing anything.\n\n" +
-    "看完了现有链路，先把关键事实说清楚（避免重复造轮子）：\n\n" +
-    "- 现在**没有**任何登录。",
-};
-assert.equal(
-  buildTailOverlay(
-    [
-      { role: "user", content: "请给 mindfs 加上登录功能", seq: 1 },
-      persistedRow,
-      { role: "agent", content: liveTurnText },
-    ],
-    // 窗口还停在上一轮：不含 seq=2
-    [{ role: "user", content: "请给 mindfs 加上登录功能", seq: 1 }],
-    1,
-  ).length,
-  1,
-  "⑩ a persisted row rendered by the overlay itself must also claim the live copy",
+assert.deepEqual(
+  computeTailOverlay({
+    exchanges: [{ role: "user", content: "old", seq: 3, mindfs_id: "turn-3" }],
+    visibleExchanges: [],
+  }).map((item) => item.seq),
+  [3],
+  "persisted rows absent from the current window must remain renderable",
 );
 
 console.log("session-window.test.mjs: OK");

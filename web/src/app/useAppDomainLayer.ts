@@ -49,12 +49,12 @@ import type { UpdateState } from "../services/update";
  */
 export type UseAppDomainLayerParams = {
   activeBoundSessionKey: string | null;
-  appendAgentChunkForSession: (rootID: string, sessionKey: string, content: string, runtimeHint?: import("/home/xiaokubao/projects/mindfs/.worktree/task-35/web/src/app/useSessionStreamCache").SessionRuntimeMeta, eventTimestamp?: string) => void;
-  appendCompactNoticeForSession: (rootID: string, sessionKey: string, compactNotice: any) => void;
-  appendPlanUpdateForSession: (rootID: string, sessionKey: string, planUpdate: any) => void;
-  appendThoughtChunkForSession: (rootID: string, sessionKey: string, content: string, thoughtID?: string) => void;
-  appendTodoUpdateForSession: (rootID: string, sessionKey: string, todoUpdate: any) => void;
-  appendToolCallForSession: (rootID: string, sessionKey: string, toolCall: any, update: boolean) => void;
+  appendAgentChunkForSession: (rootID: string, sessionKey: string, content: string, runtimeHint?: import("/home/xiaokubao/projects/mindfs/.worktree/task-35/web/src/app/useSessionStreamCache").SessionRuntimeMeta, eventTimestamp?: string, mindfsID?: string) => void;
+  appendCompactNoticeForSession: (rootID: string, sessionKey: string, compactNotice: any, mindfsID?: string) => void;
+  appendPlanUpdateForSession: (rootID: string, sessionKey: string, planUpdate: any, mindfsID?: string) => void;
+  appendThoughtChunkForSession: (rootID: string, sessionKey: string, content: string, thoughtID?: string, mindfsID?: string) => void;
+  appendTodoUpdateForSession: (rootID: string, sessionKey: string, todoUpdate: any, mindfsID?: string) => void;
+  appendToolCallForSession: (rootID: string, sessionKey: string, toolCall: any, update: boolean, mindfsID?: string) => void;
   applyTaskDetails: (rootId: string, details: TaskDetail[], persist?: boolean) => void;
   attachContextWindowToLatestAssistant: (rootID: string, sessionKey: string, contextWindow?: { totalTokens?: number; modelContextWindow?: number; }, tokenUsage?: import("/home/xiaokubao/projects/mindfs/.worktree/task-35/web/src/services/sessionTypes").TokenUsage) => void;
   bootstrapState: BootstrapState;

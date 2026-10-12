@@ -100,22 +100,22 @@ export function handleSessionUserMessage(
     const prevExchanges = Array.isArray((cached as any).exchanges)
       ? ((cached as any).exchanges as Exchange[])
       : [];
+    const incomingMindFSID = String((exchange as any)?.mindfs_id || "").trim();
     const incomingUserSeq = Number((exchange as any)?.seq || 0);
-    // 服务端下发的 seq 是「该用户消息已持久化」的权威标记（user 行在回合开始前
-    // 就落盘了，所以这是真值而非预测）。跨端时间戳永不相等（客户端 ISO 毫秒 vs
-    // 服务端 RFC3339Nano），故不能按时间戳判重：
-    //   1) 已有同 seq 条目 → 幂等就地更新（重连重放等）；
-    //   2) 已有同 role+content 且尚无 seq 的乐观条目 → 就地转正（写入 seq）。
-    //      必须是按内容找：本地乐观行（App.tsx 建 optimisticExchange）根本不带
-    //      seq 字段，服务端 seq 永远匹配不上它，只能靠 role+content 认领。
-    //   3) 都没有 → 追加（带 seq 即已持久化条目，无 seq 则仍作瞬时项由 overlay 渲染）。
+    // 持久用户行先按 MindFS 身份、再按真实 seq 幂等定位；只有无身份乐观回声
+    // 才回退到 role+content 认领。相同正文不代表同一轮，避免重试消息合并错行。
+    const identityIndex = incomingMindFSID
+      ? prevExchanges.findIndex(
+          (item) => item.role === "user" && item.mindfs_id === incomingMindFSID,
+        )
+      : -1;
     const seqIndex =
       incomingUserSeq > 0
         ? prevExchanges.findIndex(
             (item) => Number((item as any)?.seq || 0) === incomingUserSeq,
           )
         : -1;
-    let mergeIndex = seqIndex;
+    let mergeIndex = identityIndex >= 0 ? identityIndex : seqIndex;
     if (mergeIndex < 0) {
       for (let i = prevExchanges.length - 1; i >= 0; i -= 1) {
         const item = prevExchanges[i];
@@ -141,6 +141,7 @@ export function handleSessionUserMessage(
       timestamp:
         exchange?.timestamp || new Date().toISOString(),
       pending_ack: false,
+      ...(incomingMindFSID ? { mindfs_id: incomingMindFSID } : {}),
       ...(incomingUserSeq > 0 ? { seq: incomingUserSeq } : {}),
     } as Exchange;
     const nextExchanges =
@@ -149,6 +150,7 @@ export function handleSessionUserMessage(
             ...prevExchanges.slice(0, mergeIndex),
             {
               ...prevExchanges[mergeIndex],
+              ...(incomingMindFSID ? { mindfs_id: incomingMindFSID } : {}),
               ...(incomingUserSeq > 0 ? { seq: incomingUserSeq } : {}),
               timestamp:
                 exchange?.timestamp || prevExchanges[mergeIndex].timestamp,
