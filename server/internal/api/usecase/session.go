@@ -2144,22 +2144,18 @@ func (s *Service) ensureAgentSession(
 			return nil, nil, err
 		}
 	}
-	currentModel := ""
 	currentMode := ""
 	currentEffort := ""
 	currentFastService := ""
 	currentPlanMode := false
 	if current != nil {
-		currentModel = resolveSessionExchangeModel(current)
-		if currentModel == "" {
-			currentModel = strings.TrimSpace(current.Model)
-		}
 		currentMode = resolveSessionExchangeMode(current)
 		currentEffort = session.InferEffortFromSession(current)
 		currentFastService = inferFastServiceFromSession(current)
 		currentPlanMode = current.PlanMode
 	}
 	if existing, ok := pool.Get(poolSessionKey); ok {
+		currentModel := currentModelForRuntime(current, existing)
 		if !shouldReopenSessionForSetting(pool, agentName, currentEffort, nextEffort) &&
 			currentFastService == nextFastService {
 			if current != nil && currentModel != nextModel {
@@ -2292,6 +2288,21 @@ func resolveRuntimeModel(current *session.Session, runtime agenttypes.Session, r
 	if model := strings.TrimSpace(requested); model != "" {
 		return model
 	}
+	if runtime != nil {
+		if model := strings.TrimSpace(runtime.CurrentModel()); model != "" {
+			return model
+		}
+	}
+	if model := resolveSessionExchangeModel(current); model != "" {
+		return model
+	}
+	if current == nil {
+		return ""
+	}
+	return strings.TrimSpace(current.Model)
+}
+
+func currentModelForRuntime(current *session.Session, runtime agenttypes.Session) string {
 	if runtime != nil {
 		if model := strings.TrimSpace(runtime.CurrentModel()); model != "" {
 			return model
@@ -2841,6 +2852,15 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 			log.Printf("[session/model] validate.error root=%s session=%s agent=%s model=%q err=%v", in.RootID, in.Key, strings.TrimSpace(in.Agent), strings.TrimSpace(in.Model), err)
 			return err
 		}
+		// The selected model is session metadata, not a completion result. Persist it
+		// before the user exchange and OnStart so list/window refreshes during the
+		// streaming turn cannot restore the previous model. The final runtime model
+		// is reconciled below in case the agent canonicalizes the requested value.
+		if requestedModel := strings.TrimSpace(in.Model); requestedModel != "" {
+			if err := manager.UpdateModel(ctx, current, requestedModel); err != nil {
+				return err
+			}
+		}
 	}
 	// 本轮用户消息**在回合开始前**落盘：广播出去的 seq 因此是「已落库的真值」而不是预测。
 	// 晚落盘会留下一个窗口期——客户端已按 seq 认定该行持久化，而窗口 maxSeq 与读接口还
@@ -3167,8 +3187,10 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 		AgentID: turnAgentMessageID,
 	})
 	agentExchangeCtx := session.WithExchangeTokenUsage(exchangeCtx, turnTokenUsage)
-	if err := manager.UpdateModel(ctx, current, resolvedModel); err != nil {
-		return err
+	if strings.TrimSpace(current.Model) != resolvedModel {
+		if err := manager.UpdateModel(ctx, current, resolvedModel); err != nil {
+			return err
+		}
 	}
 	// 用户行已在回合开始前落盘（persistUserTurnExchange），这里只补助手行。
 	// S2d-2：主日志不要再带正文（块流是唯一载体，见下面 persistTurnBlocks）。
