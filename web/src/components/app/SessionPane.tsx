@@ -379,19 +379,8 @@ export function SessionPane(props: SessionPaneProps) {
               minHeight: 0,
             }}
           >
-            <div
-              style={{
-                height: "36px",
-                borderBottom: "1px solid var(--border-color)",
-                padding: "0 12px",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                background: "var(--mindfs-topbar-bg, transparent)",
-                fontSize: 12,
-                color: "var(--text-secondary)",
-              }}
-            >
+            <ViewHeader padding="0 12px">
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", minWidth: 0, fontSize: 12, color: "var(--text-secondary)" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <ModeIcon type="plugin" size={16} />
                 <span>{pluginRender.plugin.name}</span>
@@ -417,6 +406,7 @@ export function SessionPane(props: SessionPaneProps) {
                 {t("plugin.rawFile")}
               </button>
             </div>
+            </ViewHeader>
             <div
               ref={pluginContentRef}
               className="plugin-shadcn-sandbox"
