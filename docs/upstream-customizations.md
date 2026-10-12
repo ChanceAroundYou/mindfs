@@ -656,11 +656,6 @@
   `session.ts` 保留 `SessionService` 与所有导出，只把无状态的 client/request id 生成抽到
   `sessionIdentifiers.ts`。Hook 总序列仍为 258，相关 source-map 已登记。
 
-### G-AB 会话投影与审计
-
-- 来源：`usecase/session_projection.go`、`session/audit.go`。
-- 边界：把「会话对外投影」与「交换审计」各收敛成一处；上游没有这两层。
-
 ### G-AC ACP 运行时与 agents.json 用户层合并
 
 - 来源：`326c380`（写用户层只读用户层）、`server/internal/agent/acp/*`。
@@ -1732,12 +1727,13 @@
   - 灯不灭：子会话只有 `MessageDone` 一条清理边，error / 取消 / 父轮先结束都让 pending 永久残留；
     `runSessionMessage` 无 `defer`，`SendMessage` panic/挂死时终结器走不到。
 - 为什么必须保留：
-  1. `SessionPendingState` 增 `TurnGen`；`SetPendingUserAt`/`SetPendingReply` 每次刷新为单调自增代次，
-     并把该代次返回给调用方（`BroadcastSessionUserMessageAt` 同样返回）。
-  2. `ClearSessionPending(key, turnGen)` 仅在「两侧都有身份且一致」时清；`PendingTurnGenMatches`
-     让终结器对「别的回合的 done」整条丢弃（连帧都不广播），迟到 done 彻底无害化。
-     `turnGen==0` 视为无主，保守清 —— 绝不因缺身份而漏清（漏清 = 灯不灭）。
-  3. 抽出唯一终结器 `AppContext.EndSessionTurn(rootID, key, requestID, turnGen)`，
+  1. `SessionPendingState` 带回合身份。最初是单调自增代次 `TurnGen uint64`，2026-10-12（G-BI）
+     换成 `mindfs_id`（UUID string）：同一个逻辑 id 在主日志（`ExchangeIdentity.MindFSID`）
+     与 pending 灯上只有一种表示。`SetPendingUserAt`/`SetPendingReply` 返回该 id。
+  2. `ClearSessionPending(key, turnID)` 仅在「两侧都有身份且一致」时清；终结器对「别的回合的
+     done」整条丢弃（连帧都不广播），迟到 done 彻底无害化。空身份视为无主，保守清 ——
+     绝不因缺身份而漏清（漏清 = 灯不灭）。
+  3. 抽出唯一终结器 `AppContext.EndSessionTurn(rootID, key, requestID, turnID)`，
      所有清理点都改调它；`runSessionMessage` / `RunAgentStage` / 定时任务 用 `defer`
      覆盖成功/出错/取消/panic。**无身份的入口现在有两层护栏**：① `AppContext` 那层
      兼容壳 `BroadcastSessionDone`（转调 `EndSessionTurn(..., 0)`）**已删除**，定时任务曾是
@@ -1757,7 +1753,7 @@
     故本组不改前端。
 - 针对性测试：
   - `server/internal/api/stream_hub_pending_identity_test.go` → 迟到 done 不清新轮（`TurnGen` 比对）、
-    重复 done 幂等、`gen=0` 仍保守清、子会话由父轮终结、`PendingTurnGenMatches` 缺失时放行。
+    重复 done 幂等、空身份仍保守清、子会话由父轮终结、身份缺失时放行。
   - `server/internal/scheduled/pending_identity_test.go` → 定时任务路径的源码守卫（四条）：接口里不得再有
     无身份的 `BroadcastSessionDone`、置 pending 的两个调用点必须接收 `turnGen`、
     `EndSessionTurn` 不得收到字面 `0`、不得再出现不带 `At` 的 `BroadcastSessionUserMessage(`。钉住「定时任务收尾也带回合身份」这条补齐（合上游时若退回
@@ -1794,7 +1790,7 @@
      按序号对齐，`ctx_seq` 切片仍是正确边界，保持不变。
   3. 两个写入者（实时路径 / 转录导入）的幂等护栏 `exchangeAlreadyRecorded` 仍在：
      地板只放行「比库里最新一条更新」的条目，这些条目必然不在库里，护栏不会误伤；
-     真出现内容相同但时间戳差 >5s 的重尾，读取投影（G-AB 的 A/A2）会折叠掉。
+     真出现内容相同但时间戳差 >5s 的重尾，没有投影（G-AB 已退役）可折叠，由 native id 身份判重拦住。
 - 针对性测试：
   - `server/internal/agent/claude/importer_test.go` → `TestReadClaudeImportedExchangesAppliesFloorWithoutCursorOrBootstrap`：
     `committedOffset==0` 且 `bootstrapAfter` 为零、只有地板非零时，地板必须生效
@@ -1972,7 +1968,7 @@
      `persistUserTurnExchange`（user 块）、`SendMessage` 轮末（助手块）、
      `persistCommandTurn`（命令块）、`attachBackgroundSessionUpdates`（子会话块）。
      块写失败不拖垮本轮（正文已由 `AddExchangeForAgent` 落过盘），只记日志。
-  6. **C2** 服务端 mint `turn_id`：`newTurnID()` 拼 RFC4122 UUIDv4（不引 `google/uuid`，
+  6. **C2** 服务端 mint 回合身份：`newMindFSID(agentID, seed)` 拼 UUID（不引 `google/uuid`，
      与 `randomHex` 同一条 `crypto/rand` 路径）。mint 点只有 `persistUserTurnExchange`
      一处 —— 三条服务端发起的轮次路径（`scheduled/tasks.go` 定时任务、`appcontext.go`
      看板任务阶段、子会话）都经 `SendMessage` 走到它。
@@ -2030,7 +2026,8 @@
       `messageId` 只认 UUID 形态（`isUUIDShape`）：ACP 规范要求两端都用 UUID，而
       MindFS 递出去的就是自己 mint 的 `turn_id`；别的形态一律当「没有身份」，
       宁可不判重也不能拿一个对不上的字符串当身份。
-  17. **投影身份化**（`session_projection.go`）：有 native 身份的行**整段不参与折叠** ——
+  17. ~~**投影身份化**（`session_projection.go`）~~ —— 投影与 `audit.go` 已于 2026-10-12
+      （G-AB 退役）整体删除：身份收敛（G-BI）之后历史残留归零，它唯一的作用消失。
       读时按内容再猜一次只会把真实缺陷藏成看不见。它现在只剩一个作用：折叠 S2c 之前
       遗留的、双边都没有身份的历史行（直接删会让实测那 9 对重复立刻变成用户可见的
       重复正文，那是一次实打实的回退）。审计端点新增 `identity_bearing_rows` 报出
@@ -2083,7 +2080,7 @@
     无身份历史行读成零值、块与主日志共用同一个 `turn_id`。
   - `server/internal/session/manager_native_identity_test.go` → 清 native id 同时清主日志与
     块流、真的落盘（换 manager 直读）、干净文件一个字节不动、未知字段不丢、`native_id` 往返。
-  - `server/internal/api/usecase/session_blocks_write_test.go` → `newTurnID` 是 UUIDv4 且不重复、
+  - `server/internal/api/usecase/session_blocks_write_test.go` → `newMindFSID` 是 UUID 且不重复、
     user 行拿到 `turn_id`+`turn_seq` 与 user 块、判重命中不重复写块、**正文为空的轮次留下
     reasoning 块**、块序与渲染器交错一致。
   - `server/internal/api/usecase/session_fork_blocks_test.go` → fork 复制块流并重映射 seq、
@@ -2144,6 +2141,70 @@
     重放两次身份稳定、`messageId` 变化开新行、无 `messageId` 仍合并相邻块、非 UUID 被拒、
     时间戳打 `SynthesizedAt` 标记、合并不改写时间戳、`AgentThoughtChunk` 导入成 think 卡、
     同一 `messageId` 的 thought 与文本合成一行。
+
+### G-BI 回合身份收敛为两个 id（turn_id/native_* → mindfs_id/agent_id）
+
+- 来源：2026-10-12 main 的回合身份收敛。
+- 可见症状：同一轮在同一条读路径上有三种身份表示（主日志 `turn_id`、pending 灯 `TurnGen`、
+  块流 `native_id`），四种 legacy 键名在不同入口各写一两种，于是「同一回合的两次写入」
+  只能用内容相似度 + 时间窗猜。用户回声与助手回复的去重漏判/误判，实时流与读取结果对不上账。
+- 边界：全系统只剩两类 id —— **`mindfs_id`**（MindFS 铸、落盘即定、永不改、系统内唯一）与
+  **`agent_id`**（agent 侧桥梁键，可空可后补，不参与唯一性）。无 agent id 时由
+  `NewMindFSID(agentID, seed)` 确定性派生 UUIDv5，判重因此可复现。
+- 为什么必须保留：`Exchange` / `Block` 各加 `UnmarshalJSON` 兼容层，把老 JSONL 里的
+  `turn_id` / `native_turn` / `native_prompt` / `native_id` 逐条映射到新字段。没有这层，
+  133 个存量会话读出来身份全空、已回填的 39517 个块与轮次脱钩，用户历史正文当场消失。
+  前端 overlay 改为按（角色类别、`mindfs_id`）对账，**显式不按正文相似度** ——
+  相似度对「同一个 user prompt 出现两次」无能为力，而那正是它想拦的重复；
+  无身份的帧保留而不是猜归属。`latestSeq` 水位线随之删除。
+- 针对性测试：
+  - `server/internal/session/manager_rename_compat_test.go` → 老键名的 exchange / block 行
+    必须还能读出身份、`mindfs_id` 与 `agent_id` 各归其位；
+    `rename_compat_helpers_test.go` 供它写原始 JSONL 行。
+  - `web/tests/session-overlay-unit.test.mjs` → 同 `mindfs_id` 的用户回声与助手回复必须合并、
+    不同 id 不得按相似度合并、无身份帧保留。
+  - `web/tests/session-window.test.mjs` → `SessionViewer` 不得再引用 `latestSeqState` /
+    `noteLatestSeq` / `latestSeq*`（水位线退役）。
+
+### G-BJ 会话列表按实时活动时间排序 + 退役多项目列表预渲染缓存
+
+- 来源：2026-10-12 main 的活动时间排序与缓存退役。
+- 可见症状：列表排序键是 `updated_at`，服务端只在回合收尾推进它，于是**回复还在流的时候**
+  会话停在原地、回答完了才跳一下，切走再回来顺序又回去。多项目列表另有一层 IndexedDB
+  预渲染按账户存整份快照：账户切换或首次打开会先画**上一次的结果**再被节点响应重排 ——
+  用户看到列表「闪一下又变」。
+- 边界：新增**客户端专属**覆盖层 `activity_at`（不落盘）：流事件到达就盖到会话与项目分组上，
+  100ms 粒度；合并只认更新的覆盖层，一旦持久化 `updated_at` 追上就自动删除。项目分组改按
+  **节点表顺序分区**（未配置节点排最后且顺序稳定）。多项目预渲染与
+  `multiRootSessionListCacheKey` 退役；单项目列表缓存仍按账户隔离。
+  C1 补色、C2 逐组合并、`_unreachable` 三条定制全部保留。
+- 为什么必须保留：覆盖层必须插在「节点归属过滤」**之前** —— 那条过滤会把发往别的节点的帧
+  丢掉，而活动时间要在任何重排之前先推进。`activity_at` 只在新值 ≥ 旧值时才写入，
+  绝不把活动时间往回拨。
+- 针对性测试：
+  - `web/tests/session-list-merge.test.mjs` → 活动时间优先于 `updated_at`、置顶区与普通区
+    各自独立、陈旧刷新不得把活动时间拨回、`updated_at` 追上后覆盖层清除、
+    `orderProjectGroupsByNode` 的节点分区与未知节点稳定性、流处理器里 `activity_at`
+    必须在节点归属过滤之前。
+  - `web/tests/multi-account-partition.test.mjs` / `web/tests/upstream-restore.test.mjs` →
+    多项目预渲染的缓存 API 与键必须**不存在**（退役被改回来时立刻红）。
+
+### G-BK 发送前落盘所选模型（回合内模型切换 + 内部别名拒收）
+
+- 来源：2026-10-12 main。
+- 可见症状：模型是 set 会话元数据而不是回合的**结果**。原先它只在 `OnStart` 之后才被
+  reconciled 回写：流式期间任意一次列表/窗口刷新都会拿回旧模型，用户正在打的这轮用的是
+  新模型、页面显示旧模型，回合一结束又跳成新模型。另一侧：agent 的内部别名（如 `sonnet` /
+  `opus` 这类聚合假名）会被当成合法 model 写进去，运行时才发现不支持，而此时 user 行
+  **已经落盘** —— 留下一条用户没等到任何回复的孤立消息。
+- 边界：选中的模型在 user 行落盘与 `OnStart` **之前** `UpdateModel` 落库；运行时实际模型
+  仍可能被 agent 规范化，那在本轮收尾时按 LiveModel 收敛，不是这里的职责。
+- 为什么必须保留：不支持模型的校验必须**抢在 user 行落盘之前** —— 本轮压根不会开始，
+  user 行也就没有存在过。顺序反了就是孤立消息。内部别名只在后端拒收（前端仍可展示成组
+  模型名，见 G-R）；拒绝边界放 `validateAgentModel`，与 G-R 的 `[1m]` 兼容判定同一条路径。
+- 针对性测试：
+  - `server/internal/api/usecase/session_model_switch_test.go` → 选中的模型必须在本轮开始前
+    落库（流式期刷新拿得到）、运行时活模型优先于持久化快照。
 
 ---
 

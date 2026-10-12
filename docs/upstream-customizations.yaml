@@ -508,21 +508,10 @@ groups:
       - server/internal/session/manager_test.go
       - web/tests/fork-session-name.test.mjs
 
-  - id: G-AB
-    title: 会话投影与审计
-    kind: fix
-    symptom: |
-      会话列表/详情的字段来自多次不一致的读，出现「列表有、详情无」；
-      外部会话的审计记录与实际交换对不上。
-    why: |
-      session_projection.go 把会话对外投影收敛成一处，audit.go 记录交换的权威视图；
-      上游没有这两层，退回散读会让同一份会话在不同入口呈现不同结果。
-    files:
-      - server/internal/api/usecase/session_projection.go
-      - server/internal/api/usecase/session_projection_test.go
-      - server/internal/session/audit.go
-    tests:
-      - server/internal/api/usecase/session_projection_test.go
+  # G-AB（会话投影 session_projection.go + 审计 audit.go）已于 2026-10-12 随 main
+  # 整体 **退役**：投影唯一的作用收敛成「折叠 S2c 之前没有 native 身份的历史行」，
+  # 而身份收敛（G-BI）之后历史残留已经归零，两处写入者对一个 S2d-2 正文恒空的读路径
+  # 没有贡献。删除行为 main 采纳，不再作为定制组登记。
 
   # ── 后端：模型 / 探针 / agent 运行时 ────────────────────────────
   - id: G-R
@@ -2116,21 +2105,27 @@ groups:
         灯不灭：子会话只有 MessageDone 一条清理边，error/取消/父轮先结束都会让 pending 永久残留；
                 runSessionMessage 无 defer，SendMessage panic/挂死时终结器走不到。
     why: |
-      1) SessionPendingState 增加 TurnGen，每次 SetPending* 刷新为单调自增代次；
-         SetPendingUserAt/SetPendingReply/BroadcastSessionUserMessageAt 返回该代次。
-      2) ClearSessionPending(key, turnGen) 只在「两侧都有身份且一致」时才清；
-         PendingTurnGenMatches 让 EndSessionTurn 对「别的回合的 done」整条丢弃（不广播帧）。
-      3) 抽出唯一终结器 AppContext.EndSessionTurn(..., turnGen)，所有终态边都走它；
+      1) SessionPendingState 带回合身份。最初是单调自增代次 TurnGen uint64，
+         2026-10-12（G-BI）换成 mindfs_id（UUID string）：同一个逻辑 id 在主日志
+         （ExchangeIdentity.MindFSID）与 pending 灯上只有一种表示。
+         SetPendingUserAt/SetPendingReply 返回该 id。
+      2) ClearSessionPending(key, turnID) 只在「两侧都有身份且一致」时才清；
+         EndSessionTurn 对「别的回合的 done」整条丢弃（不广播帧）。
+      3) 抽出唯一终结器 AppContext.EndSessionTurn(..., turnID)，所有终态边都走它；
          runSessionMessage / RunAgentStage / 定时任务 用 defer 覆盖成功/出错/取消/panic。
+         RunAgentStage 这条路径 2026-10-12 补上（kanban_turn_identity_guard_test.go）：
+         它与定时任务同为服务端发起的第三处轮次，此前收尾按无身份走保守清，
+         新轮的灯会被误抹。
       4) 子会话在父轮收尾时一并终结（本轮创建、没等到 MessageDone 的那些）。
-      这套「代次比对」机制项目里本就有（ActiveTurnID 用于取消定位，见 usecase/session.go），
+      这套「身份比对」机制项目里本就有（ActiveTurnID 用于取消定位，见 usecase/session.go），
       pending 缺的不是新机制，是把同一份纪律用上去。前端早已单一源（multiProjectPendingByKey），
       故本组不改前端。
     boundary: |
       服务端 pending 条目的身份与生命周期：谁有权清理、迟到/重复 done 的处置、
       子会话 pending 的终态收边。不做静态判死/超时（已于 G-AY 证伪）。
     tests:
-      - server/internal/api/stream_hub_pending_identity_test.go
+      - server/internal/api/stream_hub_turn_identity_test.go
+      - server/internal/api/kanban_turn_identity_guard_test.go
       - server/internal/scheduled/pending_identity_test.go
       - server/internal/agent/codex/session_test.go
       - web/tests/e2e-pending-indicators.test.mjs
@@ -2142,7 +2137,6 @@ groups:
       - server/internal/agent/codex/session.go
     anchors:
       - server/internal/api/stream_hub.go:ClearSessionPending
-      - server/internal/api/stream_hub.go:PendingTurnGenMatches
       - server/internal/api/stream_hub.go:SetPendingReply
       - server/internal/api/appcontext.go:EndSessionTurn
       - server/internal/api/ws.go:runSessionMessage
@@ -2237,7 +2231,7 @@ groups:
          正确边界，保持不变。
       3) 两个写入者的幂等护栏 exchangeAlreadyRecorded 仍在：地板只放行「比库里最新一条
          更新」的条目，这些条目必然不在库里，护栏不会误伤；真出现内容相同但时间戳差 >5s
-         的重尾，读取投影（G-AB 的 A/A2）会折叠掉。
+         的重尾，没有投影（G-AB 已退役）可折叠，由 native id 身份判重拦住。
     boundary: |
       Full 同步的增量圈定：live-owned 会话「比库里最新一条更新」的尾段导不进来。
       非 Full 的常规增量同步、import-owned 会话、子代理同步、repoint 游标推进都不动。
@@ -2307,10 +2301,13 @@ groups:
          写入点：persistUserTurnExchange（user 块）、SendMessage 轮末（助手块）、
          persistCommandTurn（命令块）、attachBackgroundSessionUpdates（子会话块）。
          块写失败不拖垮本轮（正文已由 AddExchangeForAgent 落过盘），只记日志。
-      6) C2 服务端 mint turn_id：newTurnID() 拼 RFC4122 UUIDv4（不引 google/uuid，
+      6) C2 服务端 mint 回合身份：newMindFSID(agentID, seed) 拼 UUID（不引 google/uuid，
          与 randomHex 同一条 crypto/rand 路径）。mint 点只有 persistUserTurnExchange
          一处 —— 三条服务端发起的轮次路径（scheduled/tasks.go 定时任务、
          appcontext.go 看板任务阶段、子会话）都经 SendMessage 走到它。
+         2026-10-12（G-BI）turn_id/native_* 改名 mindfs_id/agent_id，
+         newTurnID 随之改名 newMindFSID；老 JSONL 的旧键名由
+         Exchange/Block 的 UnmarshalJSON 兼容层兜住（rename_compat_helpers_test.go）。
       7) C1 repoint 清 native id：Manager.ClearNativeIdentity 行级 JSON 手术删掉
          native_turn/native_prompt/native_id（**不是**结构体往返 —— 主日志里可能有别的
          写入者/未来版本加的字段，反序列化再序列化会把它们丢掉）。文件里本来没有 native id
@@ -2364,10 +2361,10 @@ groups:
       17) messageId 只认 UUID 形态（isUUIDShape）：ACP 规范要求两端都用 UUID 格式，而
           MindFS 递出去的就是自己 mint 的 turn_id；别的形态一律当「没有身份」，宁可不判重
           也不能拿一个对不上的字符串当身份。
-      18) 投影（session_projection.go）**身份化**：有 native 身份的行整段不参与折叠 ——
-          读时按内容猜一次只会把真实缺陷藏成看不见。它现在只剩一个作用：折叠 S2c 之前
-          遗留的、双边都没有身份的历史行。审计端点新增 identity_bearing_rows 报出
-          「身份化进度」，也就是历史残留的规模 —— 那是删掉投影与处理历史行的时机判据。
+      18) ~~投影（session_projection.go）**身份化**~~ —— 投影与 audit.go 已于 2026-10-12
+          （G-AB 退役）整体删除。删的时机判据就是这一条：有身份的行整段不参与折叠之后，
+          它只剩「折叠 S2c 之前双边都没有身份的历史行」一件事，而身份收敛（G-BI）之后
+          历史残留归零，唯一作用消失。审计端点的 identity_bearing_rows 是当时的进度指标。
       19) TimestampFloor 只给 HasTranscriptTimestamps 的导入器（claude/codex）。ACP 的
           SessionUpdate 不带时间戳，它给每行盖的是「读到它的那一刻」，恒晚于地板 ——
           地板形同虚设，而代码看着像「有地板就安全」。删掉那道假防线后，ACP 侧的正确性
@@ -2417,7 +2414,6 @@ groups:
       - server/internal/session/manager_blocks_window_test.go
       - server/internal/api/http_window_test.go
       - server/internal/api/usecase/session_identity_dedup_test.go
-      - server/internal/api/usecase/session_projection_identity_test.go
       - server/internal/agent/acp/importer_identity_test.go
       - server/internal/session/types_aux_reasoning_test.go
       - server/internal/api/usecase/session_blocks_backfill_test.go
@@ -2445,10 +2441,8 @@ groups:
       - server/internal/session/manager_blocks_window_test.go
       - server/internal/api/http.go
       - server/internal/api/http_window_test.go
-      - server/internal/api/usecase/session_projection.go
       - server/internal/api/usecase/external_sessions.go
       - server/internal/api/usecase/session_identity_dedup_test.go
-      - server/internal/api/usecase/session_projection_identity_test.go
       - server/internal/api/usecase/exchange_repeat_test.go
       - server/internal/api/usecase/external_sessions_test.go
       - server/internal/agent/acp/importer.go
@@ -2479,15 +2473,13 @@ groups:
       - server/internal/session/blocks.go:CompactBlocksLight
       - server/internal/session/blocks.go:GroupBlocksBySeq
       - server/internal/session/manager.go:WithExchangeIdentity
-      - server/internal/api/usecase/session.go:newTurnID
+      - server/internal/api/usecase/session.go:newMindFSID
       - server/internal/api/usecase/session.go:exchangeAlreadyRecorded
       - server/internal/api/usecase/session.go:exchangeIdentityRecorded
-      - server/internal/api/usecase/session.go:exchangeNativeKey
+      - server/internal/api/usecase/session.go:recordedUserExchangeTurnID
       - server/internal/api/usecase/session.go:noteIdentitylessGuess
       - server/internal/api/usecase/external_sessions.go:appendImportedExchange
-      - server/internal/api/usecase/external_sessions.go:agentHasPromptMessageID
-      - server/internal/api/usecase/session_projection.go:ProjectExchanges
-      - server/internal/api/usecase/session_projection.go:AuditSession
+      - server/internal/api/usecase/external_sessions.go:appendImportedExchange
       - server/internal/agent/acp/importer.go:messageIDOf
       - server/internal/agent/acp/importer.go:isUUIDShape
       - server/internal/agent/acp/process.go:SendMessage
@@ -2503,3 +2495,119 @@ groups:
       - web/src/hooks/sessionBlocks.ts:buildAssistantTimelineFromBlocks
       - web/src/hooks/sessionBlocks.ts:blocksForSeq
       - web/src/services/sessionExchangeMerge.ts:export function toPersistentBlocks(
+
+  - id: G-BI
+    title: 回合身份收敛为两个 id（turn_id/native_* → mindfs_id/agent_id）
+    kind: arch
+    symptom: |
+      同一轮在同一条读路径上有三种身份表示：主日志写 turn_id，pending 灯记 TurnGen，
+      块流带 native_id。四种 legacy 键名（turn_id/native_turn/native_prompt/native_id）
+      在不同入口各写一两种，于是「同一回合的两次写入」无法用同一把尺子判定，只能靠
+      内容相似度 + 时间窗猜。用户侧症状：用户回声与助手回复去重漏判/误判，实时流与
+      读取结果对不上账。
+    why: |
+      1) 全系统只剩两类 id：**MindFSID**（`mindfs_id`，MindFS 铸、落盘即定、永不改、
+         系统内唯一）与 **AgentID**（`agent_id`，agent 侧桥梁键，可空可后补，不参与唯一性）。
+         无 agent id 时由 NewMindFSID(agentID, seed) 确定性派生 UUIDv5 —— 判重因此可复现。
+      2) Exchange / Block 各加 UnmarshalJSON 兼容层：老 JSONL 里的 turn_id / native_turn /
+         native_prompt / native_id 逐条映射到新字段。没有这层，133 个存量会话读出来身份全空，
+         已回填的 39517 个块与轮次脱钩，用户历史正文当场消失（rename_compat 钉住）。
+      3) 前端 overlay 改为按（角色类别、mindfs_id）对账，显式**不**按正文相似度：
+         相似度对「同一个 user prompt 出现两次」无能为力，而那正是它想拦的重复。
+         无身份的帧**保留**而不是猜它的归属。
+      4) 删除 latestSeq 水位线：identity 收敛之后「哪一行是新的」由 mindfs_id 决定，
+         水位线只会让晚到的帧被静默丢弃。
+      5) pending 灯的 TurnGen uint64 同步换成 mindfs_id（见 G-BE）——同一逻辑 id 在
+         主日志与实时灯上只有一种表示。
+    boundary: |
+      身份字段的命名、派生与读取兼容；前端 overlay 的对账口径。不改块流存储格式、
+      不改判重的优先级顺序（AgentID > MindFSID > 内容兜底）。
+    tests:
+      - server/internal/session/manager_rename_compat_test.go
+      - server/internal/session/rename_compat_helpers_test.go
+      - web/tests/session-overlay-unit.test.mjs
+      - web/tests/session-window.test.mjs
+    files:
+      - server/internal/session/types.go
+      - server/internal/session/manager.go
+      - server/internal/session/blocks.go
+      - server/internal/api/usecase/session.go
+      - web/src/shared/sessionOverlay.ts
+      - web/src/app/useSessionStreamCache.ts
+      - web/src/app/realtimeWsUserMessage.ts
+      - web/src/components/session/SessionViewer.tsx
+    anchors:
+      - server/internal/session/types.go:UnmarshalJSON
+      - server/internal/session/manager.go:NewMindFSID
+      - server/internal/api/usecase/session.go:recordedUserExchangeTurnID
+      - web/src/shared/sessionOverlay.ts:computeTailOverlay
+      - web/src/app/useSessionStreamCache.ts:hasSameMindFSID
+
+  - id: G-BJ
+    title: 会话列表按实时活动时间排序 + 退役多项目列表预渲染缓存
+    kind: fix
+    symptom: |
+      列表排序键是 `updated_at`：服务端只在回合收尾推进它，于是**回复还在流的时候**
+      会话停在原地、回答完了才跳一下；切走再回来时顺序又回去了。多项目列表另有一层
+      IndexedDB 预渲染按账户存整份快照：账户切换或首次打开会先画**上一次的结果**，
+      再被节点响应重排 —— 用户看到列表「闪一下又变」，实时活动覆盖层让这种快照必然过期。
+    why: |
+      1) 新增**客户端专属**覆盖层 `activity_at`（不落盘）：流事件到达就把它盖到会话与
+         项目分组上，100ms 粒度（`Math.floor(t/100)*100`，避免纯前端漂移让排序抖动）。
+         覆盖必须插在「节点归属过滤」**之前** —— 那条过滤会把发往别的节点的帧丢掉，
+         而活动时间要在任何重排之前先推进。
+      2) 合并只认**更新的**覆盖层：`activity_at` 只在新值 ≥ 旧值时才写入，绝不把活动
+         时间往回拨；一旦持久化 `updated_at` 追上，覆盖层自动删除（`mergeSessionItems`）。
+      3) 项目分组改按**节点表顺序分区**（`orderProjectGroupsByNode`）：外圈是配置的节点顺序，
+         未配置的节点排最后且顺序稳定 —— 否则每台机器上线顺序一变，列表整排重洗。
+      4) 退役多项目预渲染与其缓存键（`multiRootSessionListCacheKey`）：见上。
+         单项目列表缓存仍按账户隔离，不动。
+    boundary: |
+      排序键与流事件如何推进它；多项目预渲染的退役。C1 补色、C2 逐组合并、
+      `_unreachable` 三条定制全部保留。
+    tests:
+      - server/internal/session/manager_latest_updated_at_test.go
+      - web/tests/session-list-merge.test.mjs
+      - web/tests/multi-account-partition.test.mjs
+    files:
+      - web/src/services/sessionListMerge.ts
+      - web/src/app/useRealtimeEvents.ts
+      - web/src/app/useMultiProjectSessions.ts
+      - web/src/components/session/useMultiProjectSessionList.ts
+      - web/src/components/session/SessionCard.tsx
+      - web/src/services/sessionListCache.ts
+      - web/src/services/sessionIndexedDb.ts
+      - web/src/services/sessionCacheStore.ts
+    anchors:
+      - web/src/services/sessionListMerge.ts:orderProjectGroupsByNode
+      - web/src/services/sessionListMerge.ts:sessionActivityAt
+      - web/src/services/sessionListMerge.ts:projectActivityTime
+      - web/src/app/useRealtimeEvents.ts:handleSessionStream
+      - server/internal/session/manager.go:LatestSessionUpdatedAt
+
+  - id: G-BK
+    title: 发送前落盘所选模型（回合内模型切换 + 内部别名拒收）
+    kind: fix
+    symptom: |
+      模型是 set 会话元数据，不是回合的**结果**。原先它只在 OnStart 之后才被 reconciled
+      回写：流式期间任意一次列表/窗口刷新都会拿回旧模型，用户正在打的这轮用的是新模型、
+      页面显示旧模型，回合一结束又跳成新模型。另一侧：agent 的内部别名（如
+      `sonnet`/`opus` 这类聚合假名）会被当成合法 model 写进去，运行时才发现不支持，
+      而此时 user 行**已经落盘** —— 留下一条用户没等到任何回复的孤立消息。
+    why: |
+      1) 选中的模型在 user 行落盘与 OnStart **之前** UpdateModel 落库：流式期间的刷新
+         读到的就是本轮真正在跑的模型。运行时实际模型仍可能被 agent 规范化（canonicalize），
+         那在本轮收尾时按 LiveModel 收敛，不是这里的职责。
+      2) 不支持模型的校验必须**抢在 user 行落盘之前**：本轮压根不会开始，user 行也就
+         没有存在过。顺序反了就是孤立消息。
+      3) 内部别名只在后端拒收（前端仍可展示成组模型名，见 G-R）；拒绝边界放
+         validateAgentModel，与 G-R 的 [1m] 兼容判定同一条路径。
+    boundary: |
+      何时落盘模型、校验的先后顺序。不改模型识别与显示假名那半（G-R）。
+    tests:
+      - server/internal/api/usecase/session_model_switch_test.go
+    files:
+      - server/internal/api/usecase/session.go
+    anchors:
+      - server/internal/api/usecase/session.go:validateAgentModel
+      - server/internal/api/usecase/session.go:UpdateModel
