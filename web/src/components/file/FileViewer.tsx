@@ -6,6 +6,7 @@ import { BinaryViewer } from "./BinaryViewer";
 import { DocumentViewer } from "./DocumentViewer";
 import { rootBadgeButtonStyle } from "../../shared/rootBadgeStyle";
 import { useI18n } from "../../i18n/index";
+import { ViewHeader } from "../../layout/ViewHeader";
 import { FileEditor } from "./FileEditor";
 import { FileOperationItems, FileMenuIcon, fileMenuItemStyle, MoreMenuButton, moreMenuPopoverStyle, menuOverlayStyle, MoveFilePopover } from "./FileOperations";
 import { useFileViewer, type FileViewerProps } from "./useFileViewer";
@@ -135,7 +136,7 @@ export function FileViewer(props: FileViewerProps) {
           {downloadToast.msg}
         </div>
       )}
-      <header style={{ height: "36px", padding: "0 3px 0 16px", borderBottom: "1px solid var(--border-color)", display: "flex", alignItems: "center", gap: "10px", background: "var(--mindfs-topbar-bg, transparent)", boxSizing: "border-box", zIndex: 10, flexShrink: 0 }}>
+      <ViewHeader padding="0 3px 0 16px" style={{ gap: "10px", zIndex: 10 }} innerStyle={{ gap: "10px" }}>
         <div style={{ display: "flex", alignItems: "center", overflow: "hidden", flex: 1, minWidth: 0 }}>
           <Breadcrumbs root={file.root} rootDisplayName={rootDisplayName} path={file.path} rootColor={rootColor} onPathClick={onPathClick} />
 
@@ -213,7 +214,7 @@ export function FileViewer(props: FileViewerProps) {
           <span className="file-editor-actions" ref={setEditorActions} />
           {!editSession && <FileViewerMenu key={editKey} root={file.root || ""} rootPath={rootPath} path={file.path} downloading={isDownloading} onDownload={() => { void handleDownload(); }} onEdit={canEdit ? () => { void editStore.open(file.root!, file.path); } : undefined} onComplete={onFileOperationComplete} />}
         </div>
-      </header>
+      </ViewHeader>
 
       {editSession ? <FileEditor key={editKey} actionsTarget={editorActions} store={editStore} editKey={editKey} session={editSession} isVisible={isVisible} onFileUpdated={onFileUpdated} onFileSaved={onFileSaved} onExitError={(error) => showToast(error, false)} /> : <div ref={scrollRef} style={{ flex: 1, minHeight: 0, overflow: documentPreviewKind === "powerpoint" ? "hidden" : "auto", position: "relative", WebkitOverflowScrolling: "touch" }}>
         <div style={{ minWidth: "100%", height: documentPreviewKind === "powerpoint" ? "100%" : undefined, display: "block", background: "transparent" }}>
