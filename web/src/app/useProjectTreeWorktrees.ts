@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { fetchGitStatusByPath, fetchGitWorktrees, type GitStatusPayload, type GitWorktreeItem } from "../services/git";
 import type { ProjectTreeTab } from "../components/file/fileTreeTypes";
+import { scopeKey } from "../shared/scope";
 import { useI18n } from "../i18n";
 
 /**
@@ -124,7 +125,7 @@ export function useProjectTreeWorktrees({
    * 任务卡片上的 worktree：展开它并（必要时）重拉列表和状态。
    * force=false 时同一路径只处理一次——WS 广播会把同一条重复推很多遍。
    */
-  const refreshTaskWorktree = useCallback(async (rootId: string, worktreePath: string, force = true) => {
+  const refreshTaskWorktree = useCallback(async (rootId: string, worktreePath: string, force = true, targetNodeId?: string) => {
     const normalizedRootId = String(rootId || "").trim();
     const normalizedWorktreePath = String(worktreePath || "").trim();
     if (!normalizedRootId || !normalizedWorktreePath) {
@@ -133,13 +134,15 @@ export function useProjectTreeWorktrees({
     if (!force && knownTaskWorktreePathsRef.current.has(normalizedWorktreePath)) {
       return;
     }
+    const nodeId = targetNodeId || getNodeIdForRoot(normalizedRootId);
+    const projectKey = targetNodeId ? scopeKey(targetNodeId, normalizedRootId) : scopedRootKey(normalizedRootId);
     knownTaskWorktreePathsRef.current.add(normalizedWorktreePath);
     // 同一时间只展开一个工作树：整对象写入会清掉其它已展开项
-    setExpandedWorktreeByRoot({ [scopedRootKey(normalizedRootId)]: normalizedWorktreePath });
-    setWorktreeLoadingByRoot((prev) => ({ ...prev, [scopedRootKey(normalizedRootId)]: true }));
-    setWorktreeErrorByRoot((prev) => ({ ...prev, [scopedRootKey(normalizedRootId)]: "" }));
+    setExpandedWorktreeByRoot({ [projectKey]: normalizedWorktreePath });
+    setWorktreeLoadingByRoot((prev) => ({ ...prev, [projectKey]: true }));
+    setWorktreeErrorByRoot((prev) => ({ ...prev, [projectKey]: "" }));
     try {
-      const payload = await fetchGitWorktrees(normalizedRootId, getNodeIdForRoot(normalizedRootId));
+      const payload = await fetchGitWorktrees(normalizedRootId, nodeId);
       (payload.items || []).forEach((item) => {
         if (item.path) {
           knownTaskWorktreePathsRef.current.add(item.path);
@@ -147,20 +150,20 @@ export function useProjectTreeWorktrees({
       });
       setWorktreeItemsByRoot((prev) => ({
         ...prev,
-        [scopedRootKey(normalizedRootId)]: (payload.items || []).filter((item) => !!item.branch),
+        [projectKey]: (payload.items || []).filter((item) => !!item.branch),
       }));
     } catch (error) {
       knownTaskWorktreePathsRef.current.delete(normalizedWorktreePath);
       setWorktreeErrorByRoot((prev) => ({
         ...prev,
-        [scopedRootKey(normalizedRootId)]: error instanceof Error ? error.message : t("worktree.loadFailed"),
+        [projectKey]: error instanceof Error ? error.message : t("worktree.loadFailed"),
       }));
     } finally {
-      setWorktreeLoadingByRoot((prev) => ({ ...prev, [scopedRootKey(normalizedRootId)]: false }));
+      setWorktreeLoadingByRoot((prev) => ({ ...prev, [projectKey]: false }));
     }
     setWorktreeStatusLoadingByPath((prev) => ({ ...prev, [normalizedWorktreePath]: true }));
     try {
-      const status = await fetchGitStatusByPath(normalizedWorktreePath, getNodeIdForRoot(normalizedRootId));
+      const status = await fetchGitStatusByPath(normalizedWorktreePath, nodeId);
       setWorktreeStatusByPath((prev) => ({ ...prev, [normalizedWorktreePath]: status }));
     } catch {
       setWorktreeStatusByPath((prev) => ({ ...prev, [normalizedWorktreePath]: null }));

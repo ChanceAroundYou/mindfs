@@ -15,7 +15,7 @@ import { fetchGitBranches, type GitBranchesPayload } from "../services/git";
 import { createTask } from "../services/tasks";
 import { uploadFiles, formatFileToken, fileTokenPath, isUploadAbortError } from "../services/upload";
 import { reportError } from "../services/net/error";
-import { firstUserInputTemplate, taskStagesForCreate, type TaskInlineEditState } from "./appTask";
+import { firstUserInputTemplate, taskStagesForCreate, findTaskProjectRoot, parseTaskProjectScopeKey, taskProjectScopeKey, type TaskInlineEditState } from "./appTask";
 import { loadTaskCreateWorktreePreference, saveTaskCreateWorktreePreference } from "./appStorage";
 import type { CandidateItem } from "../services/candidates";
 import type { TaskTemplate } from "../services/tasks";
@@ -23,7 +23,9 @@ import type { TaskTemplate } from "../services/tasks";
 export interface UseTaskComposerParams {
   currentRootId: string | null;
   currentRootIdRef: MutableRefObject<string | null>;
+  currentRootNodeIdRef: MutableRefObject<string | null>;
   managedRootByIdRef: MutableRefObject<Record<string, import("./appMisc").ManagedRootPayload>>;
+  managedRootByKeyRef: MutableRefObject<Record<string, import("./appMisc").ManagedRootPayload>>;
   taskInlineEdit: TaskInlineEditState | null;
   taskTemplates: TaskTemplate[];
   taskInlineCandidates: CandidateItem[];
@@ -31,7 +33,8 @@ export interface UseTaskComposerParams {
   taskInlineUploadAbortRef: MutableRefObject<AbortController | null>;
   taskInlineEditorRef: MutableRefObject<import("../components/editor/TokenEditor").TokenEditorHandle | null>;
   taskInlineCandidateItemRefs: MutableRefObject<Array<HTMLElement | null>>;
-  refreshTaskWorktreeRef: MutableRefObject<((rootId: string, worktreePath: string) => Promise<void>) | null>;
+  refreshTaskWorktreeRef: MutableRefObject<((rootId: string, worktreePath: string, force?: boolean, targetNodeId?: string) => Promise<void>) | null>;
+  taskWorktreeBranchRequestRef: MutableRefObject<number>;
   setTaskInlineEdit: Dispatch<SetStateAction<TaskInlineEditState | null>>;
   setTaskInlineActiveToken: Dispatch<SetStateAction<{ type: "file" | "slash" | "prompt" | "command"; query: string } | null>>;
   setTaskInlineCandidates: Dispatch<SetStateAction<CandidateItem[]>>;
@@ -51,7 +54,9 @@ export function useTaskComposer(params: UseTaskComposerParams) {
   const {
     currentRootId,
     currentRootIdRef,
+    currentRootNodeIdRef,
     managedRootByIdRef,
+    managedRootByKeyRef,
     taskInlineEdit,
     taskTemplates,
     taskInlineCandidates,
@@ -60,6 +65,7 @@ export function useTaskComposer(params: UseTaskComposerParams) {
     taskInlineEditorRef,
     taskInlineCandidateItemRefs,
     refreshTaskWorktreeRef,
+    taskWorktreeBranchRequestRef,
     setTaskInlineEdit,
     setTaskInlineActiveToken,
     setTaskInlineCandidates,
@@ -75,74 +81,115 @@ export function useTaskComposer(params: UseTaskComposerParams) {
     applyTaskDetails,
   } = params;
 
-  const loadTaskWorktreeBranches = useCallback(async (rootId: string) => {
+  const loadTaskWorktreeBranches = useCallback(async (rootId: string, nodeId?: string) => {
     if (!rootId) return;
+    const requestId = ++taskWorktreeBranchRequestRef.current;
     setTaskWorktreeBranchesLoading(true);
+    setTaskWorktreeBranches({ branches: [] });
     setTaskWorktreeBranchError("");
     try {
-      setTaskWorktreeBranches(await fetchGitBranches(rootId, getNodeIdForRoot(rootId)));
+      const branches = await fetchGitBranches(rootId, nodeId || getNodeIdForRoot(rootId));
+      if (requestId === taskWorktreeBranchRequestRef.current) setTaskWorktreeBranches(branches);
     } catch (error) {
-      setTaskWorktreeBranches({ branches: [] });
-      setTaskWorktreeBranchError(error instanceof Error ? error.message : t("worktree.loadBranchFailed"));
+      if (requestId === taskWorktreeBranchRequestRef.current) {
+        setTaskWorktreeBranches({ branches: [] });
+        setTaskWorktreeBranchError(error instanceof Error ? error.message : t("worktree.loadBranchFailed"));
+      }
     } finally {
-      setTaskWorktreeBranchesLoading(false);
+      if (requestId === taskWorktreeBranchRequestRef.current) setTaskWorktreeBranchesLoading(false);
     }
-  }, [t]);
+  }, [getNodeIdForRoot, t]);
 
-	  // 分支列表跟的是**面板的目标项目**：从工作台发起时那不是 currentRootId，
-	  // 照 currentRootId 拉会把别的项目的分支带进分支选择器。
+	  // 分支列表跟着面板的目标项目和节点走；跨节点同名项目不能共用 Git 元数据。
 	  useEffect(() => {
 	    const edit = taskInlineEdit;
 	    if (!edit) return;
 	    const rootId = edit.targetRootId || currentRootId || "";
-	    if (!edit.createWorktree || !edit.canToggleWorktree || !rootId || managedRootByIdRef.current[rootId]?.is_git_repo !== true) {
+	    const nodeId = edit.targetNodeId || getNodeIdForRoot(rootId);
+	    const root = findTaskProjectRoot(rootId, nodeId, managedRootByKeyRef.current, managedRootByIdRef.current);
+	    if (!edit.createWorktree || !edit.canToggleWorktree || !rootId || root?.is_git_repo !== true) {
+	      taskWorktreeBranchRequestRef.current += 1;
+	      setTaskWorktreeBranchesLoading(false);
+	      setTaskWorktreeBranches({ branches: [] });
 	      setTaskWorktreeBranchError("");
 	      return;
 	    }
-	    void loadTaskWorktreeBranches(rootId);
-	  }, [currentRootId, loadTaskWorktreeBranches, taskInlineEdit?.canToggleWorktree, taskInlineEdit?.createWorktree, taskInlineEdit?.targetRootId]);
+	    void loadTaskWorktreeBranches(rootId, nodeId);
+	  }, [currentRootId, getNodeIdForRoot, loadTaskWorktreeBranches, taskInlineEdit?.canToggleWorktree, taskInlineEdit?.createWorktree, taskInlineEdit?.targetNodeId, taskInlineEdit?.targetRootId]);
 
 	  useEffect(() => {
 	    const edit = taskInlineEdit;
 	    if (!edit || !edit.canToggleWorktree) return;
-	    // 同样按目标项目存：从工作台发起时把 A 项目的偏好写到 B 项目上是错的。
 	    const rootId = edit.targetRootId || currentRootIdRef.current || "";
 	    if (!rootId) return;
+	    const nodeId = edit.targetNodeId || getNodeIdForRoot(rootId);
 	    saveTaskCreateWorktreePreference(rootId, {
 	      createWorktree: edit.createWorktree,
 	      worktreeBranchMode: edit.worktreeBranchMode,
-      worktreeBranch: edit.worktreeBranch,
-	    });
+	      worktreeBranch: edit.worktreeBranch,
+	    }, nodeId);
 	  }, [
+	    getNodeIdForRoot,
 	    taskInlineEdit?.canToggleWorktree,
 	    taskInlineEdit?.createWorktree,
 	    taskInlineEdit?.worktreeBranch,
 	    taskInlineEdit?.worktreeBranchMode,
+	    taskInlineEdit?.targetNodeId,
 	    taskInlineEdit?.targetRootId,
 	  ]);
 
-	  const openTaskCreateDialog = useCallback((template: TaskTemplate | null, targetRootId?: string) => {
+	  const openTaskCreateDialog = useCallback((template: TaskTemplate | null, targetRootId?: string, targetNodeId?: string) => {
+
 	    const templateId = template?.id || "";
+
 	    if (!templateId) return;
+
 	    const initialText = firstUserInputTemplate(template);
-	    // 工作台发起时可以指定项目；看板入口不传，落在当前项目上。
+
 	    const rootId = targetRootId || currentRootIdRef.current || "";
-	    const taskCanCreateWorktree = managedRootByIdRef.current[rootId]?.is_git_repo === true;
-	    const worktreePref = loadTaskCreateWorktreePreference(rootId);
+
+	    if (!rootId) return;
+
+	    const nodeId = targetNodeId || (rootId === currentRootIdRef.current ? currentRootNodeIdRef.current : "") || getNodeIdForRoot(rootId) || "";
+
+	    const projectKey = taskProjectScopeKey(rootId, nodeId);
+
+	    const root = findTaskProjectRoot(rootId, nodeId, managedRootByKeyRef.current, managedRootByIdRef.current);
+
+	    const taskCanCreateWorktree = root?.is_git_repo === true;
+
+	    const worktreePref = loadTaskCreateWorktreePreference(rootId, nodeId);
+
 	    setTaskInlineEdit({
+
 	      templateId,
+
 	      templateName: template?.name || t("task.defaultTitle"),
+
 	      text: initialText,
+
 	      targetRootId: targetRootId || undefined,
+
+	      targetNodeId: nodeId || undefined,
+
 	      // 只有工作台来的才带项目下拉：那里没有「当前项目」这个默认落点。
+
 	      allowProjectSwitch: Boolean(targetRootId),
+
 	      createWorktreePerRoot: {
-	        [rootId]: {
+
+	        [projectKey]: {
+
 	          createWorktree: taskCanCreateWorktree && worktreePref.createWorktree,
+
 	          worktreeBranchMode: worktreePref.worktreeBranchMode,
+
 	          worktreeBranch: worktreePref.worktreeBranch,
+
 	        },
+
 	      },
+
 	      name: "",
 	      // 首段的「立即执行」：面板开出来就照模板的面板值。
 	      startImmediately: template?.stages?.[0]?.snapshot?.start_immediately === true,
@@ -160,36 +207,72 @@ export function useTaskComposer(params: UseTaskComposerParams) {
 
   // 面板上换项目：worktree 三个开关是**按项目存**的，换回去要还原回这个项目那份，
   // 第一次切到某项目则从 localStorage 的偏好起头。切项目不碰正文/模板/附件。
-  const switchTaskInlineEditProject = useCallback((nextRootId: string) => {
+  const switchTaskInlineEditProject = useCallback((nextProjectKey: string) => {
+
     setTaskInlineEdit((prev) => {
-      if (!prev || !nextRootId || nextRootId === (prev.targetRootId || currentRootIdRef.current || "")) return prev;
+
+      if (!prev || !nextProjectKey) return prev;
+
+      const { rootId: nextRootId, nodeId: nextNodeId } = parseTaskProjectScopeKey(nextProjectKey);
+
+      if (!nextRootId) return prev;
+
       const prevRootId = prev.targetRootId || currentRootIdRef.current || "";
-      const stash = (state: TaskInlineEditState, rootId: string) => ({
+
+      const prevNodeId = prev.targetNodeId || getNodeIdForRoot(prevRootId) || "";
+
+      const prevProjectKey = taskProjectScopeKey(prevRootId, prevNodeId);
+
+      const nextScopedProjectKey = taskProjectScopeKey(nextRootId, nextNodeId);
+
+      if (nextScopedProjectKey === prevProjectKey) return prev;
+
+      const stash = (state: TaskInlineEditState) => ({
+
         createWorktree: state.createWorktree,
+
         worktreeBranchMode: state.worktreeBranchMode,
+
         worktreeBranch: state.worktreeBranch,
+
       });
-      const perRoot = {
-        ...(prev.createWorktreePerRoot || {}),
-        [prevRootId]: stash(prev, prevRootId),
-      };
-      const restored = perRoot[nextRootId];
-      const canCreate = managedRootByIdRef.current[nextRootId]?.is_git_repo === true;
-      const pref = restored || (() => {
-        const stored = loadTaskCreateWorktreePreference(nextRootId);
-        return { createWorktree: canCreate && stored.createWorktree, worktreeBranchMode: stored.worktreeBranchMode, worktreeBranch: stored.worktreeBranch };
-      })();
+
+      const perRoot = { ...(prev.createWorktreePerRoot || {}), [prevProjectKey]: stash(prev) };
+
+      const restored = perRoot[nextScopedProjectKey];
+
+      const root = findTaskProjectRoot(nextRootId, nextNodeId, managedRootByKeyRef.current, managedRootByIdRef.current);
+
+      const canCreate = root?.is_git_repo === true;
+
+      const stored = restored || loadTaskCreateWorktreePreference(nextRootId, nextNodeId);
+
+      const nextPref = { ...stored, createWorktree: canCreate && stored.createWorktree };
+
       return {
+
         ...prev,
+
         targetRootId: nextRootId,
-        createWorktreePerRoot: { ...perRoot, [nextRootId]: pref },
-        createWorktree: pref.createWorktree,
-        worktreeBranchMode: pref.worktreeBranchMode,
-        worktreeBranch: pref.worktreeBranch,
+
+        targetNodeId: nextNodeId || undefined,
+
+        createWorktreePerRoot: { ...perRoot, [nextScopedProjectKey]: nextPref },
+
+        createWorktree: nextPref.createWorktree,
+
+        worktreeBranchMode: nextPref.worktreeBranchMode,
+
+        worktreeBranch: nextPref.worktreeBranch,
+
         canToggleWorktree: true,
+
       };
+
     });
-  }, []);
+
+  }, [getNodeIdForRoot]);
+
 
   const closeTaskEditDialog = useCallback(() => {
     setTaskInlineEdit((prev) => {
@@ -266,65 +349,129 @@ export function useTaskComposer(params: UseTaskComposerParams) {
   }, []);
 
   const saveTaskInlineEdit = useCallback(async () => {
+
     const edit = taskInlineEdit;
+
     const rootId = edit?.targetRootId || currentRootIdRef.current;
+
     if (!edit || !rootId) return;
+
     setTaskInlineSaving(true);
+
     setTaskInlineUploadProgress(null);
+
     try {
+
+      const nodeId = edit.targetNodeId || getNodeIdForRoot(rootId);
+
       let attachmentTokens = "";
+
       if (edit.attachments.length > 0) {
+
         const uploadAbort = new AbortController();
+
         taskInlineUploadAbortRef.current = uploadAbort;
+
         const uploaded = await uploadFiles({
+
           rootId,
+
           files: edit.attachments.map((attachment) => attachment.file),
+
           onProgress: setTaskInlineUploadProgress,
+
           signal: uploadAbort.signal,
-          nodeId: getNodeIdForRoot(rootId),
+
+          nodeId,
+
         });
+
         attachmentTokens = uploaded.map((file) => formatFileToken(fileTokenPath(file))).join("\n");
+
       }
+
       const payload = [edit.text.trim(), attachmentTokens].filter(Boolean).join("\n");
-      const taskCanCreateWorktree = managedRootByIdRef.current[rootId]?.is_git_repo === true;
+
+      const root = findTaskProjectRoot(rootId, nodeId, managedRootByKeyRef.current, managedRootByIdRef.current);
+
+      const taskCanCreateWorktree = root?.is_git_repo === true;
+
       const createWorktree = taskCanCreateWorktree && edit.createWorktree;
+
       // 选了模板就把流水随包带上（taskStagesForCreate：有 agent/模型/立即执行覆盖就用覆盖后的，
+
       // 没有就用模板自带的）。不能像以前那样「没覆盖就不带」让后端回查 ——
+
       // 任务可能建在没有模板库的 worker 节点上，那次回查必然失败（service.go CreateTask）。
+
       const selectedTemplate = taskTemplates.find((tpl) => tpl.id === edit.templateId) || null;
+
       const createStages = taskStagesForCreate(
+
         selectedTemplate,
+
         { agent: edit.agentOverride, model: edit.modelOverride, effort: edit.effortOverride, startImmediately: edit.startImmediately },
+
       );
+
       const detail = await createTask(
+
         rootId,
+
         edit.templateId,
+
         payload,
+
         createWorktree,
+
         edit.worktreeBranchMode,
+
         edit.worktreeBranch,
-        getNodeIdForRoot(rootId),
+
+        nodeId,
+
         {
+
           ...(edit.name?.trim() ? { name: edit.name.trim() } : {}),
+
           ...(createStages ? { stages: createStages } : {}),
+
           // 模板名一并带上：worker 节点查不到模板库，看板上的「模板来源」标签靠它。
+
           ...(selectedTemplate?.name ? { templateName: selectedTemplate.name } : {}),
+
         },
+
       );
+
       applyTaskDetails(rootId, [detail]);
+
       if (detail.task.worktree_path) {
-        void refreshTaskWorktreeRef.current?.(rootId, detail.task.worktree_path);
+
+        void refreshTaskWorktreeRef.current?.(rootId, detail.task.worktree_path, true, nodeId);
+
       }
+
       closeTaskEditDialog();
+
     } catch (err) {
+
       if (!isUploadAbortError(err)) {
+
         reportError("file.write_failed", String((err as Error)?.message || t("task.saveFailed")));
+
       }
+
       setTaskInlineSaving(false);
+
       setTaskInlineUploadProgress(null);
+
       taskInlineUploadAbortRef.current = null;
+
     }
-  }, [applyTaskDetails, closeTaskEditDialog, taskInlineEdit, taskTemplates, t, getNodeIdForRoot, refreshTaskWorktreeRef]);
+
+  }, [applyTaskDetails, closeTaskEditDialog, getNodeIdForRoot, taskInlineEdit, taskTemplates, t, refreshTaskWorktreeRef]);
+
 
   return {
     loadTaskWorktreeBranches,

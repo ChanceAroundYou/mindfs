@@ -7,10 +7,35 @@
 // （tests/task-stage-panel.test.mjs），普通 import 会让 Node 去解析 ../i18n 这个目录而炸掉。
 import type { MessageKey, MessageParams } from "../i18n";
 import type { KanbanTask, StageRun, StageTemplate, TaskDetail, TaskTemplate } from "../services/tasks";
+import { scopeKey } from "../shared/scope";
 
 /** 新建 agent 段时的默认 agent/模型：claude + sonnet，别再默认 codex。 */
 export const DEFAULT_TASK_AGENT = "claude";
 export const DEFAULT_TASK_MODEL = "sonnet";
+
+export function taskProjectScopeKey(rootId: string, nodeId?: string | null): string {
+  return scopeKey(nodeId || "", rootId);
+}
+
+export function parseTaskProjectScopeKey(value: string): { rootId: string; nodeId: string } {
+  const key = String(value || "").trim();
+  const separator = key.lastIndexOf("::");
+  if (separator < 0) return { rootId: key, nodeId: "" };
+  return { rootId: key.slice(separator + 2), nodeId: key.slice(0, separator) };
+}
+
+/** Explicit node scope never falls back to a same-named project's metadata on another node. */
+export function findTaskProjectRoot(
+  rootId: string,
+  nodeId: string | null | undefined,
+  byKey: Record<string, any>,
+  byId: Record<string, any>,
+): any | undefined {
+  const id = String(rootId || "").trim();
+  if (!id) return undefined;
+  const node = String(nodeId || "").trim();
+  return node ? byKey[taskProjectScopeKey(id, node)] : byId[id];
+}
 
 export function firstUserInputTemplate(template: TaskTemplate | null): string {
   const first = template?.stages?.[0]?.snapshot;
@@ -285,10 +310,12 @@ export type TaskInlineEditState = {
    * 缺省表示当前项目（看板入口永远落在当前项目上）。
    */
   targetRootId?: string;
+  /** 项目 ID 在多个节点可能重名；面板的查询、存储与创建都必须保留目标节点。 */
+  targetNodeId?: string;
   /**
    * 面板上是否显示「项目」下拉。只有工作台入口会置 true（它不知道当前在哪个项目）；
    * 看板入口为 false —— 那里项目已经定了，多一个选不了的项目下拉只是噪声。
-   * 换项目时要重算 worktree 偏好和 canToggleWorktree，存的是「每个项目各一份」的值。
+   * 换项目时要重算 worktree 偏好和 canToggleWorktree，按 nodeId::rootId 分项目保存。
    */
   allowProjectSwitch?: boolean;
   createWorktreePerRoot?: Record<string, { createWorktree: boolean; worktreeBranchMode: "new" | "existing"; worktreeBranch: string }>;

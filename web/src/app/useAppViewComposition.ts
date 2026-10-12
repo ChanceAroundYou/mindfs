@@ -140,7 +140,7 @@ export type UseAppViewCompositionParams = {
   openGitDiff: (rootID: string, item: import("/home/xiaokubao/projects/mindfs/.worktree/task-35/web/src/services/git").GitStatusItem, options?: { preserveRelatedSelection?: boolean; repoPath?: string; }) => Promise<void>;
   openRelatedFileDiff: (rootID: string, file: import("/home/xiaokubao/projects/mindfs/.worktree/task-35/web/src/app/appSession").RelatedFileClickTarget) => Promise<void>;
   openSessionSearch: () => void;
-  openTaskCreateDialog: (template: TaskTemplate | null, targetRootId?: string) => void;
+  openTaskCreateDialog: (template: TaskTemplate | null, targetRootId?: string, targetNodeId?: string) => void;
   openTaskTemplateEditor: (template: TaskTemplate | null) => void;
   pendingPluginTrust: { rootId: string; bundle: PluginSourceBundle; } | null;
   pluginBypass: boolean;
@@ -515,8 +515,8 @@ export function useAppViewComposition(params: UseAppViewCompositionParams) {
 
   // 工作台的快速发起不自己建任务：挑完项目 + 模板就打开看板那套新建任务面板，
   // 模板、worktree、agent、附件全都跟项目看板里一致，不在工作台上复制第二份实现。
-  const handleWorkspaceCreateTask = useCallback((rootId: string, _nodeId: string, template: TaskTemplate) => {
-    openTaskCreateDialog(template, rootId);
+  const handleWorkspaceCreateTask = useCallback((rootId: string, nodeId: string, template: TaskTemplate) => {
+    openTaskCreateDialog(template, rootId, nodeId);
   }, [openTaskCreateDialog]);
   // 工作台里点任务卡：留在工作台，就地弹任务详情面板。
   // 不走 openWorkspaceProject —— 那会切项目、切看板、改 URL，等于把人甩出工作台。

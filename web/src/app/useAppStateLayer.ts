@@ -161,7 +161,7 @@ export function useAppStateLayer(params: UseAppStateLayerParams) {
   );
   const [availableAgents, setAvailableAgents] = useState<AgentStatus[]>([]);
   const [scheduledAgentDialogOpen, setScheduledAgentDialogOpen] = useState(false);
-  const { kanbanTasks, setKanbanTasks, kanbanTaskCountItems, setKanbanTaskCountItems, taskDetailsById, setTaskDetailsById, taskFirstInputById, setTaskFirstInputById, taskSessionKeysById, setTaskSessionKeysById, taskRelatedFilesById, setTaskRelatedFilesById, taskDetailsByIdRef, workspaceBoardRefreshRef, taskSessionKeysByIdRef, selectedKanbanTaskId, setSelectedKanbanTaskId, expandedTaskInputIds, setExpandedTaskInputIds, overflowingTaskInputs, setOverflowingTaskInputs, collapsedTaskCompletionGroups, setCollapsedTaskCompletionGroups, collapsedKanbanColumns, setCollapsedKanbanColumns, taskInlineEdit, setTaskInlineEdit, taskSessionErrorDialog, setTaskSessionErrorDialog, taskInlineActiveToken, setTaskInlineActiveToken, taskInlineCandidates, setTaskInlineCandidates, taskInlineCandidateIndex, setTaskInlineCandidateIndex, taskInlineSaving, setTaskInlineSaving, taskInlineHelpKey, setTaskInlineHelpKey, taskInlineUploadProgress, setTaskInlineUploadProgress, directoryUploadProgress, setDirectoryUploadProgress, taskWorktreeBranches, setTaskWorktreeBranches, taskWorktreeBranchesLoading, setTaskWorktreeBranchesLoading, taskWorktreeBranchError, setTaskWorktreeBranchError, kanbanTasksLoading, setKanbanTasksLoading, kanbanLoadSeqRef, kanbanAbortRef, refreshTaskWorktreeRef, sessionListLoadSeqRef, sessionListAbortRef, listLoadErrorAtRef, taskInlineEditorRef, taskInlineCandidateItemRefs, taskInlineAttachmentInputRef, taskInlineUploadAbortRef, directoryUploadAbortRef, knownTaskWorktreePathsRef } = useTaskWorkspaceState();
+  const { kanbanTasks, setKanbanTasks, kanbanTaskCountItems, setKanbanTaskCountItems, taskDetailsById, setTaskDetailsById, taskFirstInputById, setTaskFirstInputById, taskSessionKeysById, setTaskSessionKeysById, taskRelatedFilesById, setTaskRelatedFilesById, taskDetailsByIdRef, workspaceBoardRefreshRef, taskSessionKeysByIdRef, selectedKanbanTaskId, setSelectedKanbanTaskId, expandedTaskInputIds, setExpandedTaskInputIds, overflowingTaskInputs, setOverflowingTaskInputs, collapsedTaskCompletionGroups, setCollapsedTaskCompletionGroups, collapsedKanbanColumns, setCollapsedKanbanColumns, taskInlineEdit, setTaskInlineEdit, taskSessionErrorDialog, setTaskSessionErrorDialog, taskInlineActiveToken, setTaskInlineActiveToken, taskInlineCandidates, setTaskInlineCandidates, taskInlineCandidateIndex, setTaskInlineCandidateIndex, taskInlineSaving, setTaskInlineSaving, taskInlineHelpKey, setTaskInlineHelpKey, taskInlineUploadProgress, setTaskInlineUploadProgress, directoryUploadProgress, setDirectoryUploadProgress, taskWorktreeBranches, setTaskWorktreeBranches, taskWorktreeBranchesLoading, setTaskWorktreeBranchesLoading, taskWorktreeBranchError, setTaskWorktreeBranchError, kanbanTasksLoading, setKanbanTasksLoading, kanbanLoadSeqRef, kanbanAbortRef, refreshTaskWorktreeRef, taskWorktreeBranchRequestRef, sessionListLoadSeqRef, sessionListAbortRef, listLoadErrorAtRef, taskInlineEditorRef, taskInlineCandidateItemRefs, taskInlineAttachmentInputRef, taskInlineUploadAbortRef, directoryUploadAbortRef, knownTaskWorktreePathsRef } = useTaskWorkspaceState();
   const [selectedSession, setSelectedSession] = useState<SessionItem | null>(
     null,
   );
@@ -309,7 +309,9 @@ export function useAppStateLayer(params: UseAppStateLayerParams) {
   } = useTaskComposer({
     currentRootId,
     currentRootIdRef,
+    currentRootNodeIdRef,
     managedRootByIdRef,
+    managedRootByKeyRef,
     taskInlineEdit,
     taskTemplates,
     taskInlineCandidates,
@@ -318,6 +320,7 @@ export function useAppStateLayer(params: UseAppStateLayerParams) {
     taskInlineEditorRef,
     taskInlineCandidateItemRefs,
     refreshTaskWorktreeRef,
+    taskWorktreeBranchRequestRef,
     setTaskInlineEdit,
     setTaskInlineActiveToken,
     setTaskInlineCandidates,
@@ -350,23 +353,6 @@ export function useAppStateLayer(params: UseAppStateLayerParams) {
     setGitDiffSideBySide,
   } = useUiPreferences();
   const [managedRootIds, setManagedRootIds] = useState<string[]>([]);
-  const {
-    getRootDisplayName,
-    getDisplayNodeColor,
-    taskCreateProjectOptions,
-  } = useAppProjectDisplay({
-    currentRootId,
-    currentRootNodeIdRef,
-    managedRootByIdRef,
-    managedRootByKeyRef,
-    managedRootIdsRef,
-    taskInlineEdit,
-  });
-  const currentRootDisplayName = getRootDisplayName(currentRootId);
-
-
-
-  // 复合键还原为裸 rootId（scoped 键为 n::r 或 r；rootId 自身不含 "::"）
   const selectRootNode = useCallback((rootId: string, nodeId?: string) => {
     const rid = String(rootId || "").trim();
     if (!rid) return;
@@ -448,6 +434,22 @@ export function useAppStateLayer(params: UseAppStateLayerParams) {
   useEffect(() => {
     rootEntriesRef.current = rootEntries;
   }, [rootEntries]);
+  const {
+    getRootDisplayName,
+    getDisplayNodeColor,
+    taskCreateProjectOptions,
+  } = useAppProjectDisplay({
+    currentRootId,
+    currentRootNodeId,
+    currentRootNodeIdRef,
+    managedRootByIdRef,
+    managedRootByKeyRef,
+    managedRootIdsRef,
+    rootEntries,
+    getNodeIdForRoot,
+    taskInlineEdit,
+  });
+  const currentRootDisplayName = getRootDisplayName(currentRootId);
   const [agentConfigSwitchRequest, setAgentConfigSwitchRequest] =
     useState<AgentConfigSwitchRequest | null>(null);
   const [bootstrapState, setBootstrapState] = useState<BootstrapState>(() =>

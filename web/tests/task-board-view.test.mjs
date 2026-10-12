@@ -33,14 +33,14 @@ assert.match(
 // 后端 stages[0].role === "user" 的要求改由 openTaskCreateDialog 选的模板保证。
 assert.match(
   app,
-  /const handleWorkspaceCreateTask = useCallback\(\(rootId: string, _nodeId: string, template: TaskTemplate\) => \{\s*\n\s*openTaskCreateDialog\(template, rootId\);/,
+  /const handleWorkspaceCreateTask = useCallback\(\(rootId: string, nodeId: string, template: TaskTemplate\) => \{\s*\n\s*openTaskCreateDialog\(template, rootId, nodeId\);/,
   "workspace quick launch must hand off to the shared create-task dialog, not build a second one",
 );
 // 面板得知道自己往哪个项目建：targetRootId 缺省才是当前项目（看板入口走这条）
 assert.match(
   app,
-  /const openTaskCreateDialog = useCallback\(\(template: TaskTemplate \| null, targetRootId\?: string\)/,
-  "openTaskCreateDialog must accept the target project",
+  /const openTaskCreateDialog = useCallback\(\(template: TaskTemplate \| null, targetRootId\?: string, targetNodeId\?: string\)/,
+  "openTaskCreateDialog must accept the target project and node",
 );
 assert.match(
   app,

@@ -44,7 +44,9 @@ const [taskInlineUploadProgress, setTaskInlineUploadProgress] = useState<UploadP
   const kanbanAbortRef = useRef<AbortController | null>(null);
   // refreshTaskWorktree 来自 useProjectTreeWorktrees（后置初始化），
   // 通过 ref 传给 useTaskBoard 避免 TDZ。
-  const refreshTaskWorktreeRef = useRef<((rootId: string, worktreePath: string) => Promise<void>) | null>(null);
+  const refreshTaskWorktreeRef = useRef<((rootId: string, worktreePath: string, force?: boolean, targetNodeId?: string) => Promise<void>) | null>(null);
+  // 分支列表请求竞态保护：每次发起新请求时递增，只允许最新请求写回状态。
+  const taskWorktreeBranchRequestRef = useRef(0);
   const sessionListLoadSeqRef = useRef(0);
   const sessionListAbortRef = useRef<AbortController | null>(null);
 // 列表拉取失败告警冷却：断网/抖动时重拉被多个事件反复触发，避免告警刷屏。
@@ -119,6 +121,7 @@ const knownTaskWorktreePathsRef = useRef<Set<string>>(new Set());
     kanbanLoadSeqRef,
     kanbanAbortRef,
     refreshTaskWorktreeRef,
+    taskWorktreeBranchRequestRef,
     sessionListLoadSeqRef,
     sessionListAbortRef,
     listLoadErrorAtRef,

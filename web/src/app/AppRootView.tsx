@@ -79,7 +79,7 @@ export function AppRootView(props: AppRootViewProps) {
     gitDiffSideBySide, handleMoveKanbanTask, handleTaskInlineAttachmentChange, handleTaskTemplateSaved,
     interactionModeRef, isDrawerOpen, isLeftOpen, isMobile,
     isRightOpen, mainDirectoryError, mainView, mainViewRef,
-    managedRootByIdRef, mobileEnterKeySends, onboardingOpen, pendingPlanMode,
+    managedRootByIdRef, managedRootByKeyRef, mobileEnterKeySends, onboardingOpen, pendingPlanMode,
     pluginBypass, pluginContentRef, pluginLoading, projectTreeTabRequest,
     refreshGitStatus, removeTaskInlineAttachment, rootEntries, saveTaskInlineEdit,
     scheduledAgentDialogOpen, scopedRootKey, selectedDir, selectedDirKey,
@@ -380,8 +380,10 @@ drawer={<
       currentRootId={currentRootId}
       firstAgentStage={firstAgentStage}
       firstUserInputTemplate={firstUserInputTemplate}
+      getNodeIdForRoot={getNodeIdForRoot}
       handleTaskInlineAttachmentChange={handleTaskInlineAttachmentChange}
       isMobile={isMobile}
+      managedRootByKeyRef={managedRootByKeyRef}
       managedRootByIdRef={managedRootByIdRef}
       removeTaskInlineAttachment={removeTaskInlineAttachment}
       saveTaskInlineEdit={saveTaskInlineEdit}

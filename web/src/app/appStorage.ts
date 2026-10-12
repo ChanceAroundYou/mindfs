@@ -289,13 +289,14 @@ export function loadGitDiffSideBySide(): boolean {
   }
 }
 
-export function loadTaskCreateWorktreePreference(rootId: string): TaskCreateWorktreePreference {
+export function loadTaskCreateWorktreePreference(rootId: string, nodeId?: string): TaskCreateWorktreePreference {
   if (typeof window === "undefined" || !rootId) {
     return { createWorktree: false, worktreeBranchMode: "new", worktreeBranch: "" };
   }
   try {
     const parsed = JSON.parse(window.localStorage.getItem(TASK_CREATE_WORKTREE_PREF_STORAGE_KEY) || "{}") as Record<string, unknown>;
-    const value = parsed[scopeKey(getRootNodeId(rootId) ?? "", rootId)] as Record<string, unknown> | undefined;
+    const scopeNodeId = String(nodeId || getRootNodeId(rootId) || "").trim();
+    const value = parsed[scopeKey(scopeNodeId, rootId)] as Record<string, unknown> | undefined;
     return {
       createWorktree: value?.createWorktree === true,
       worktreeBranchMode: value?.worktreeBranchMode === "existing" ? "existing" : "new",
@@ -306,13 +307,13 @@ export function loadTaskCreateWorktreePreference(rootId: string): TaskCreateWork
   }
 }
 
-export function saveTaskCreateWorktreePreference(rootId: string, pref: TaskCreateWorktreePreference): void {
+export function saveTaskCreateWorktreePreference(rootId: string, pref: TaskCreateWorktreePreference, nodeId?: string): void {
   if (typeof window === "undefined" || !rootId) return;
   try {
     const parsed = JSON.parse(window.localStorage.getItem(TASK_CREATE_WORKTREE_PREF_STORAGE_KEY) || "{}") as Record<string, unknown>;
     window.localStorage.setItem(TASK_CREATE_WORKTREE_PREF_STORAGE_KEY, JSON.stringify({
       ...parsed,
-      [scopeKey(getRootNodeId(rootId) ?? "", rootId)]: pref,
+      [scopeKey(String(nodeId || getRootNodeId(rootId) || "").trim(), rootId)]: pref,
     }));
   } catch {
     // Ignore storage failures; the current dialog state can still be used.

@@ -1,7 +1,7 @@
 // 从 App.tsx 抽出的渲染区域（机械搬移，JSX 逐字未改）。
 import { PanelShell } from "../shell/PanelShell";
 import { composerInputStyle } from "../action/composerStyles";
-import { applyStageOverride, currentTaskInputFromDetail, DEFAULT_TASK_AGENT, DEFAULT_TASK_MODEL, firstAgentStage, firstTaskInputFromDetail, firstUserInputTemplate, isTerminalKanbanTask, latestTaskStageRun, normalizeFastService, parseTaskSessionErrorDetails, parseTaskSessionErrorMessage, previousTaskInputsFromDetail, taskSessionKeysFromDetail, taskStagesForCreate, taskStatusLabel } from "../../app/appTask";
+import { applyStageOverride, currentTaskInputFromDetail, DEFAULT_TASK_AGENT, DEFAULT_TASK_MODEL, findTaskProjectRoot, firstAgentStage, firstTaskInputFromDetail, firstUserInputTemplate, isTerminalKanbanTask, latestTaskStageRun, normalizeFastService, parseTaskSessionErrorDetails, parseTaskSessionErrorMessage, previousTaskInputsFromDetail, taskProjectScopeKey, taskSessionKeysFromDetail, taskStagesForCreate, taskStatusLabel } from "../../app/appTask";
 import { InlineTokenText } from "../common/InlineTokenText";
 import { CompactUploadProgress } from "../file/CompactUploadProgress";
 import { TaskTemplateDialog, FieldLabelWithInfo } from "../task/TaskTemplateDialog";
@@ -73,7 +73,9 @@ export interface TaskInlineEditPanelProps {
   firstUserInputTemplate: any;
   handleTaskInlineAttachmentChange: (event: ChangeEvent<HTMLInputElement, React.JSX.Element>) => void;
   isMobile: boolean;
+  managedRootByKeyRef: RefObject<Record<string, ManagedRootPayload>>;
   managedRootByIdRef: RefObject<Record<string, ManagedRootPayload>>;
+  getNodeIdForRoot: (rootId: string) => string | undefined;
   removeTaskInlineAttachment: (id: string) => void;
   saveTaskInlineEdit: () => Promise<void>;
   setTaskInlineActiveToken: Dispatch<SetStateAction<{ type: "file" | "slash" | "prompt" | "command"; query: string; } | null>>;
@@ -112,7 +114,9 @@ export function TaskInlineEditPanel(props: TaskInlineEditPanelProps) {
   const firstUserInputTemplate = props.firstUserInputTemplate;
   const handleTaskInlineAttachmentChange = props.handleTaskInlineAttachmentChange;
   const isMobile = props.isMobile;
+  const managedRootByKeyRef = props.managedRootByKeyRef;
   const managedRootByIdRef = props.managedRootByIdRef;
+  const getNodeIdForRoot = props.getNodeIdForRoot;
   const removeTaskInlineAttachment = props.removeTaskInlineAttachment;
   const saveTaskInlineEdit = props.saveTaskInlineEdit;
   const setTaskInlineActiveToken = props.setTaskInlineActiveToken;
@@ -144,7 +148,9 @@ export function TaskInlineEditPanel(props: TaskInlineEditPanelProps) {
     	          // worktree 开关跟的是**面板的目标项目**：从工作台发起时那不是当前项目，
     	          // 写死 currentRootId 会让「非 git 项目也显示 worktree 开关」。
     	          const taskInlineTargetRootId = taskInlineEdit.targetRootId || currentRootId || "";
-    	          const taskInlineCanCreateWorktree = managedRootByIdRef.current[taskInlineTargetRootId]?.is_git_repo === true;
+    	          const taskInlineTargetNodeId = taskInlineEdit.targetNodeId || getNodeIdForRoot(taskInlineTargetRootId) || "";
+    	          const taskInlineRoot = findTaskProjectRoot(taskInlineTargetRootId, taskInlineTargetNodeId, managedRootByKeyRef.current, managedRootByIdRef.current);
+    	          const taskInlineCanCreateWorktree = taskInlineRoot?.is_git_repo === true;
     	          const showTaskWorktreeControls = taskInlineCanCreateWorktree && taskInlineEdit.canToggleWorktree;
     	          const taskWorktreeControlsEditable = taskInlineEdit.canToggleWorktree;
     	          // 编辑区里的 agent 选择器：默认值就是「下一个 agent 阶段」在模板里
@@ -180,7 +186,7 @@ export function TaskInlineEditPanel(props: TaskInlineEditPanelProps) {
                   {taskInlineEdit.allowProjectSwitch && taskCreateProjectOptions.length > 1 ? (
                     <div style={{ minWidth: "120px", maxWidth: "160px" }}>
                       <Select
-                        value={taskInlineTargetRootId}
+                        value={taskProjectScopeKey(taskInlineTargetRootId, taskInlineTargetNodeId)}
                         ariaLabel={t("task.workspaceSelectProject")}
                         onChange={(value) => switchTaskInlineEditProject(value)}
                         options={taskCreateProjectOptions}

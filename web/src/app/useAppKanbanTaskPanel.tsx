@@ -20,7 +20,7 @@ export type UseAppKanbanTaskPanelParams = {
   getRootDisplayName: (rootId: string | null | undefined) => string;
   openWorkspaceProject: (rootId: string) => Promise<void>;
   openWorkspaceTaskDetail: (item: { root_id: string; nodeId: string; task: KanbanTask; }) => Promise<void>;
-  handleWorkspaceCreateTask: (rootId: string, _nodeId: string, template: TaskTemplate) => void;
+  handleWorkspaceCreateTask: (rootId: string, nodeId: string, template: TaskTemplate) => void;
   setSelectedKanbanTaskId: React.Dispatch<React.SetStateAction<string>>;
   kanbanTasksLoading: boolean;
   kanbanStageColumns: { index: number; name: string; role: "user" | "agent"; tasks: KanbanTask[]; groups?: Array<{ key: string; name: string; tone: "success" | "danger" | "muted"; tasks: KanbanTask[]; }>; }[];
@@ -37,7 +37,7 @@ export type UseAppKanbanTaskPanelParams = {
   getDisplayNodeColor: (rootId: string) => string | null;
   handleSelectKanbanTask: (task: KanbanTask) => void;
   handleMoveKanbanTask: (task: KanbanTask, action: "next" | "run-now" | "pause" | "resume" | "complete" | "cancel" | "delete-task" | "rebuild-worktree" | "finish-worktree") => Promise<void>;
-  openTaskCreateDialog: (template: TaskTemplate | null, targetRootId?: string) => void;
+  openTaskCreateDialog: (template: TaskTemplate | null, targetRootId?: string, targetNodeId?: string) => void;
   handleTaskSessionDrawerOpen: (sessionKey: string, rootOverride?: string | null, taskId?: string) => void;
   setTaskSessionErrorDialog: React.Dispatch<React.SetStateAction<{ title: string; message: string; details: string[]; } | null>>;
   loadKanbanTasks: (rootId?: string | null, force?: boolean) => Promise<void>;

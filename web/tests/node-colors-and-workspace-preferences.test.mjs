@@ -99,8 +99,8 @@ assert.match(
 );
 assert.match(
   appProjectDisplay,
-  /color: getDisplayNodeColor\(id\) \|\| undefined/,
-  "the project dropdown must color each project by its node color",
+  /color: String\(\(entry as any\)\._nodeColor \|\| ""\)\.trim\(\) \|\| undefined/,
+  "the project dropdown must color each node-scoped project by that entry's node color",
 );
 // taskCreateProjectOptions 引用 getDisplayNodeColor，而 const 不提升 —— 声明顺序不能反。
 assert.ok(
