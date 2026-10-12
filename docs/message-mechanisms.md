@@ -131,7 +131,7 @@ agent 回了「收到」，盘上落成 `<隔离项目>/.mindfs/sessions/<key>.j
 
 1. **`/health` 要带部署前缀**：裸 `/health` 404、`/mindfs/health` 200。前缀来自构建期
    `-X mindfs/internal/deploy.Prefix`（默认 `/mindfs`）。
-2. **项目列表按账户分（CLAUDE.md 事实 12）**：注册项目必须带 `user=<登录账户 id>`。
+2. **项目列表按账户分（AGENTS.md 事实 12）**：注册项目必须带 `user=<登录账户 id>`。
    不带就落进**主账户**，而「后建的账户」看不到它 —— 页面显示 `No projects yet` 且
    **连输入框都不渲染**，而 `/api/dirs` 明明 200。查证时同理必须带 `user=`。
 3. **WS 握手必须带 `client_id`**，否则返回 `e2ee_proof_required` —— **这条报错是误导的**：
@@ -430,7 +430,7 @@ server/internal/api/canonical_turn_shadow_test.go → TestTerminalIsScopedToItsO
 
 | # | 现状 | 合并成 | 依据 | 合并后能删掉 |
 |---|---|---|---|---|
-| ① | 「是否在回复」**9 个机制** | 1 个（服务端 `pendingSessions.Active` 为唯一源，前端只做展示缓存） | 三套真值判据与清理点全不同，且 CLAUDE.md §12 已记录过「蓝灯不亮」事故 | `activeStreams`+`isSessionStreaming`、缓存 `pending` 的判定职责、`multiProjectPendingRef` 的旁路推断、`setSelectedPendingByKey` / `markSessionPending` / `setMultiProjectSessionPending` 三件套 |
+| ① | 「是否在回复」**9 个机制** | 1 个（服务端 `pendingSessions.Active` 为唯一源，前端只做展示缓存） | 三套真值判据与清理点全不同，且 AGENTS.md §12 已记录过「蓝灯不亮」事故 | `activeStreams`+`isSessionStreaming`、缓存 `pending` 的判定职责、`multiProjectPendingRef` 的旁路推断、`setSelectedPendingByKey` / `markSessionPending` / `setMultiProjectSessionPending` 三件套 |
 | ② | 「瞬时 vs 持久」**41 处判定** | 1 处（类别由**数据结构**表达，不再由谓词表达） | 见 §3.4 冲突①；红测试已钉住两把尺 | `isTransientExchange`（连同 user 例外）、`dropTransientExchanges` 的调用点、`mergeSessionExchanges`/`appendSessionDelta` 的 `seq>0` 过滤、`anchorExchanges.filter`、init seed 的 `filter`、`persistedSeq` 的兜底 |
 | ③ | 工具卡去重**两处**：`windowToolCallIds`（渲染前让位）+ `dedupeToolCards`（时间线内保留首个） | 1 处 | 同一 concern、判据不同（callId 集合 vs 首个保留） | `windowToolCallIds` 一整块 |
 | ④ | **内容比对让位 5 处**（`windowUserCounts`/`windowTailTexts`/`renderedPersistedTexts`/C 分支计数消抵/D 分支子串包含） | **0 处** | 它们是「不知道看哪一份」的替代品；②做完后不再需要猜 | 这 5 处 + `normalizeOverlayText` + 两个阈值常量（`OVERLAY_TAIL_ROWS` / `OVERLAY_DUP_MIN_CHARS`） |
@@ -465,7 +465,7 @@ server/internal/api/canonical_turn_shadow_test.go → TestTerminalIsScopedToItsO
 | ② | `tailOverlay` **A2 分支**假定「`seq<=latestSeq` ⇒ 窗口会渲染」 | `SessionViewer.tsx:1251`；而 `noteLatestSeq` **全文件只有 `:1409` 一个调用点**，`targetSeq`（`:1893`）用 `setVisibleExchanges(winExchanges)` **整体替换**窗口且不推进 `latestSeq` | 跳到较早的消息后，窗口与 `latestSeq` 之间那段行**两边都不渲染**（渲染空洞）；切会话或再次重锚定才恢复 | ✅ 已核 · **已有红测试**（单元：`session-overlay-unit.test.mjs` 的 A2 用例；E2E 因搜索开关不在可驱动 URL 下渲染而带原因跳过） |
 | ③ | 工具卡去重两处实现 | `windowToolCallIds`（`:1206`）vs `dedupeToolCards`（`useSessionStream.ts:124`） | 判据不同 ⇒ 边界情况下两侧各留一份或各丢一份（**aux 与窗口行脱节时卡片两边都不渲染**） | ✅ 已核 · **已有红测试**（单元 + 删除契约） |
 | ④ | thought/plan/todo/compact 去重**只有弱判据** | 它们没有 callId，只能走 D 分支的「归一化文本包含 + ≥32 字 + 仅窗口最新 3 行」 | 短片段（<32 字）或更早的陈旧拷贝**认不出**，重复显示 —— **短回复（「收到」）落盘后显示两遍** | ✅ 已核 · **已有红测试**（单元） |
-| ⑤ | 「是否在回复」**9 个机制、五处存储** | `activeStreams`、缓存 `pending`、`drawer.pending`、`selected.pending`、`pendingBySessionRef`、`multiProjectPendingRef`；`clearLocalPendingForSession`（`App.tsx:2137`）需逐个清 | 漏一处 ⇒ 小蓝灯不灭/不亮（CLAUDE.md §12 已记录过） | 已有红测试（结构） |
+| ⑤ | 「是否在回复」**9 个机制、五处存储** | `activeStreams`、缓存 `pending`、`drawer.pending`、`selected.pending`、`pendingBySessionRef`、`multiProjectPendingRef`；`clearLocalPendingForSession`（`App.tsx:2137`）需逐个清 | 漏一处 ⇒ 小蓝灯不灭/不亮（AGENTS.md §12 已记录过） | 已有红测试（结构） |
 | ⑥ | 乐观行 `pending_ack` **三种匹配键** | `session.accepted` 按 `content+timestamp`；`session.user_message` 按 `role+content`；`clearLocalPendingForSession` 全量清 | 三种判据各自漏网 ⇒ 气泡一直「待确认」或提前转正 | 已有红测试（结构·自动推导：清 `pending_ack` 今天 7 处） |
 | ⑦ | aux 合并覆盖 vs 拼接 | `App.tsx:2325-2328`（覆盖）vs `session.ts:2180`（拼接） | 工具卡重复渲染 | ✅ **已修（2026-10-06）**：拼接补上去重 ⇒ 幂等；两者语义各自保留。行为断言 `session-core-unit`【⑦b】、契约 `merges`【⑦】 |
 | ⑧ | `mergeSessionExchanges` **只增不减** vs `toPersistentSession` **从头部淘汰** | `session.ts:2029` vs `:2347`（500 条/200KB） | 同一会话两种落盘体积；IDB 与内存长期不一致 | **已改写（见下）** |

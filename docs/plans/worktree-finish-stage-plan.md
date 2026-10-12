@@ -199,7 +199,7 @@ func (h *HTTPHandler) FinishWorktreeAndRepoint(rootID, taskID string) FinishWork
   但没真合。服务端清场那步的 `MergeBranch` 仍会兜底（已是祖先就幂等短路），
   没合成就正常合 —— **服务端能力不依赖 agent 老实**，这是有意的双保险。
 - **收尾段会留在流水里**：段一旦加上去就删不掉（用户可以删，但默认留着）。这是流水快照的
-  既有语义（`CLAUDE.md` 第 13 条），不是新问题。
+  既有语义（`AGENTS.md` 第 13 条），不是新问题。
 - **`StageSucceeded` 回调在 kanban 里是裸函数字段**：没装配就是 nil，nil 检查必须有，
   否则测试里的 fake 会 panic。
 
@@ -237,4 +237,4 @@ func (h *HTTPHandler) FinishWorktreeAndRepoint(rootID, taskID string) FinishWork
   `ClearTaskWorktree` 的语义是「这个任务的活收工了」。焊死两者会让一次纯搬会话的 repoint
   把还在用的任务目录记录清空，卡片随后命中「路径为空 + missing=false」渲染成「已收尾」——
   一个从未收过尾的任务声称收工了。
-- 转录**已经在主 slug** 时不需要 repoint（2026-10-02 实测，见 CLAUDE.md 第 14 条）。
+- 转录**已经在主 slug** 时不需要 repoint（2026-10-02 实测，见 AGENTS.md 第 14 条）。

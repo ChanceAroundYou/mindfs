@@ -5,7 +5,7 @@ description: 代码变更后的收尾闭环：门禁测试 → 提交推送 → 
 
 # Ship — 代码变更收尾闭环
 
-> 把 CLAUDE.md「部署与提交闭环」那段散文固化成一条命令。**默认直接跑 `bash scripts/deploy-all.sh`**，别再手搓一串 make/ssh。
+> 把 AGENTS.md「部署与提交闭环」那段散文固化成一条命令。**默认直接跑 `bash scripts/deploy-all.sh`**，别再手搓一串 make/ssh。
 
 ## 一句话
 

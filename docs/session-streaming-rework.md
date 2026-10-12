@@ -438,7 +438,7 @@ JSONL 增量同步、`session_projection.go` 的读取投影折叠）。
 | 重复文本对数 | 16 → 32 | 16 → 32（未变） | 同上 |
 
 所以「协议」这一半**必须重启服务端才能验证** —— 部分证据只能证明前端那一半。
-探针随后必须在跑新二进制的实例上重跑（`sudo systemctl restart mindfs` 由用户执行，见 CLAUDE.md）。
+探针随后必须在跑新二进制的实例上重跑（`sudo systemctl restart mindfs` 由用户执行，见 AGENTS.md）。
 
 ---
 

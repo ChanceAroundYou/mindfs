@@ -1,6 +1,6 @@
 .codex/
 # .claude/ 曾经整个忽略，结果 worktree 里的 agent 拿不到工程约定（最要紧的
-# CLAUDE.md「构建与部署」和 skills/ship 的收尾闭环都丢了，只能靠猜）。
+# AGENTS.md「构建与部署」和 skills/ship 的收尾闭环都丢了，只能靠猜）。
 # 改成：运行时自动产生的状态忽略，人工维护的约定入库。
 # 注意要带前导 / 的模式（见末尾的 **/.claude/ 补漏）—— .claude/* 只管根目录，
 # 而 hook 在 web/、web/src/、web/tests/ 下也各建了一份状态目录。
