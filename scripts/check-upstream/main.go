@@ -1,6 +1,6 @@
 // check-upstream 是 fork 定制清单的覆盖率门禁。
 //
-// 背景（CLAUDE.md「fork 定制与上游合并（必守）」）：这是上游 a9gent/mindfs 的 fork，
+// 背景（AGENTS.md「fork 定制与上游合并（必守）」）：这是上游 a9gent/mindfs 的 fork，
 // 每次改动都是一份会被上游合并冲掉的定制。清单 docs/upstream-customizations.yaml 是
 // 「哪条该留」的唯一真相，本工具把它与 git 的实际分歧面对账。
 //

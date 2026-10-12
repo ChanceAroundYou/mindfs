@@ -1,25 +1,26 @@
 # MindFS — AI Agent Remote Access Gateway · Result Visualization
 
 Go 后端 + React/TS 前端，Web 静态资源由后端 HTTP 服务。
-两端都跑在 systemd 下，二进制 `~/.local/bin/mindfs`：本机（`ubuntu`）是 **system** 单元、只听 `127.0.0.1:7331`；
-WSL（`PC-HOME`）是 **user** 单元、听 `0.0.0.0:7331`。详见下方「两台机器」。
+本机、WSL 与 fn 三个节点都由 systemd 管理：本机是 **system** 单元、监听 `127.0.0.1:7331`；
+WSL 是 **user** 单元、监听 `127.0.0.1:7331`；fn 是 **user** 单元、监听 `0.0.0.0:7331`。详见下方节点表。
 
-## 两台机器（别叫错）
+## 三个节点（别叫错）
 
 | 代号 | 实际是 | 主机名 / 用户 | 节点显示名 | mindfs 单元 | 监听 | 重启 |
 |---|---|---|---|---|---|---|
 | **本机** | Proxmox VM，Ubuntu 26.04，`home.xiaokubao.space`(192.168.1.6) | `ubuntu` / `xiaokubao` | `home` | **system**：`/etc/systemd/system/mindfs.service` | `127.0.0.1:7331` | `sudo systemctl restart mindfs`，**只由用户执行** |
-| **wsl** | 用户 PC 上的 WSL，Ubuntu 24.04，`pc.xiaokubao.space` | `PC-HOME` / `nnb` | `pc` | **user**：`~/.config/systemd/user/mindfs.service` | `0.0.0.0:7331` | `ssh wsl 'systemctl --user restart mindfs'`，**Agent 可直接执行** |
+| **wsl** | 用户 PC 上的 WSL，Ubuntu 24.04，`pc.xiaokubao.space` | `PC-HOME` / `nnb` | `pc` | **user**：`~/.config/systemd/user/mindfs.service` | `127.0.0.1:7331` | `ssh wsl 'systemctl --user restart mindfs'`，**Agent 可直接执行** |
+| **fn** | fnOS，`fn.xiaokubao.space` | `xiaokubao-fn` / `xiaokubao` | `fn` | **user**：`~/.config/systemd/user/mindfs.service`（另有 fnOS drop-in） | `0.0.0.0:7331` | `ssh fn 'systemctl --user restart mindfs'`，**Agent 可直接执行** |
 
-- **本机不叫 PC**。说「PC」时指的是 WSL 所在的那台 Windows 物理机（`ssh pc` → Windows 宿主；`ssh wsl` → 里面的 WSL）。本机一律叫「本机」或 `ubuntu`，WSL 一律叫 `wsl` 或 `pc`。
+- **本机不叫 PC**。说「PC」时指的是 WSL 所在的那台 Windows 物理机（`ssh pc` → Windows 宿主；`ssh wsl` → 里面的 WSL）。本机一律叫「本机」或 `ubuntu`，WSL 一律叫 `wsl` 或 `pc`，fn 一律叫 `fn`。
 - 判据（2026-09-21 复核）：本机 `curl 127.0.0.1:7331/mindfs/api/nodes` 与 `https://home.xiaokubao.space/mindfs/api/nodes` 返回完全相同（自己 `local`→home，对端 `pc`）；`https://pc.xiaokubao.space/...` 自己 `local`→pc，对端 `home`。
 - 本机没有 user bus：`systemctl --user ...` 直接报 `Failed to connect to user scope bus`，别据此误判服务不存在——查归属看 `/proc/$(pgrep -x mindfs)/cgroup`（`/system.slice/` vs `/user@...`）。
 - `/home/nnb/...` **不是**旧路径，是 WSL 端的家目录；本机是 `/home/xiaokubao`。
-- 两台的账户表、节点 UUID 各自独立（`home.xiaokubao.space` → 本机，`pc.xiaokubao.space` → WSL）；判「本地节点」只认各自 `/api/nodes` 里报 `local` 的那个。
-- **WSL 上没有源码库，永远别在那边编译**（2026-10-06 起）：`/home/nnb/projects/mindfs` 只剩 `.mindfs/` 数据目录（历史会话/看板/上传，41MB），**没有 `.git`、没有 `Makefile`、没有源码**。它只接收本机构建好的产物 —— 谁编译谁负责版本号，两边永远跑同一份二进制。
-  唯一的分发路径是 `bash scripts/deploy-all.sh`：tar 打包 `mindfs` 二进制 + `agents.json` + `task_template.json`，走 ssh 落进 WSL 的 `~/.local/bin` 与 `~/.local/share/mindfs`。
-  **不推 `web/dist`**（2026-10-07 起）：WSL 是纯 worker 节点（`config.json` 的 `role=worker`），按设计不服务静态资源（`GET /` 是 403），前端只装在本机。
-  去 WSL 上 `git pull` / `make build` = 走错路了；那边能查的是**数据**（`~/.config/mindfs/`、各项目的 `.mindfs/`），不是代码。
+- 三台设备的账户表、节点 UUID 各自独立；判「本地节点」只认各自 `/api/nodes` 里报 `local` 的那个。
+- **WSL 与 fn 都没有源码库，永远别在 worker 上编译**：它们只接收本机构建好的产物，不能 `git pull` 或 `make build`。
+  唯一的分发路径是 `bash scripts/deploy-all.sh`：tar 打包 `mindfs` 二进制 + `agents.json` + `task_template.json`，通过 ssh 安装到 WSL 与 fn。
+  **不推 `web/dist`**：WSL 与 fn 都是纯 worker 节点（`config.json` 的 `role=worker`），按设计不服务静态资源（`GET /` 是 403），前端只装在本机。
+  WSL 上的 `/home/nnb/projects/mindfs` 只剩 `.mindfs/` 数据目录（历史会话/看板/上传）；worker 上能查的是运行数据，不是源码。
 
 ## 模块地图
 
@@ -96,9 +97,9 @@ make dev-web          # 仅 Vite
 > 只有 Claude Code 的 Bash 工具受此影响；ssh / cron / systemd / 交互与非交互 zsh 都正常
 > （`zsh -c 'command -v cargo'` 可直接验证）。
 
-**构建/重启分工（必守）**：`make build-web / make build / make install / make test` 等编译与安装验证由 Agent 自行执行并验证通过；本机 `sudo systemctl restart mindfs` 仅由用户显式执行（会杀掉所有托管的 claude 子进程），Agent 不得代为重启。`plan-only` / `只出方案` 时必须先落盘方案并经用户显式批准后才动手，禁止未审先做。
+**构建/重启分工（必守）**：`make build-web / make build / make install / make test` 等编译与安装验证由 Agent 自行执行并验证通过；本机 `sudo systemctl restart mindfs` 仅由用户显式执行（会杀掉所有托管的 claude 子进程），Agent 不得代为重启。WSL 与 fn 的 user 单元可由 Agent 直接重启。`plan-only` / `只出方案` 时必须先落盘方案并经用户显式批准后才动手，禁止未审先做。
 
-**代码变更收尾（必守）**：走 `ship` skill —— `bash scripts/deploy-all.sh` 一条命令完成门禁测试 → 提交推送 → 本机编译安装 → 推送产物到 WSL 安装重启 → 两端对账。细节见 `.claude/skills/ship/SKILL.md`，不要手搓 make/ssh 序列。
+**代码变更收尾（必守）**：走 `ship` skill —— `bash scripts/deploy-all.sh` 一条命令完成门禁测试 → 提交推送 → 本机编译安装 → 推送产物到 WSL 与 fn 安装重启 → 三端对账。细节见 `.claude/skills/ship/SKILL.md`，不要手搓 make/ssh 序列。
 
 ## 关键架构事实（易踩坑）
 
@@ -106,7 +107,7 @@ make dev-web          # 仅 Vite
 2. **agent session 的 `Interrupt` 可能永久阻塞**：SDK 内部用 `context.Background()`，CLI 迟迟不 ack 时不返回。调用方必须加超时包装。
 3. **前端 `App.tsx` 是巨文件**（~15k 行）：所有状态逻辑集中在此，修改前务必定位准确行号。
 4. **静态 web 资源不走 go:embed**：由 `make install` 拷贝到 `~/.local/share/mindfs/web/`，修改前端后需重新 `make build-web && make install`。
-5. **systemd 服务**：重启会杀掉所有托管的 claude 子进程。单元路径两台不同（本机 system、wsl user），见上方「两台机器」表。
+5. **systemd 服务**：重启本机会杀掉所有托管的 claude 子进程。单元路径本机是 system、WSL 与 fn 是 user，重启权限见上方节点表。
 6. **BottomSheet 拖拽**：默认 50% 高度，支持任意高度悬停，上沿 10% 吸顶；`pointercancel` 回弹 50%（避免异常悬停），触摸拖拽需防手势抢占。
 7. **SessionList 展示规则**：仅 `fork` 子会话扁平为顶级，其它子会话保持折叠；已移除计数徽标，统一为普通会话样式。
 8. **会话别名持久化**：存于 `server/internal/session/manager.go`（SQLite WAL），非前端 localStorage，保证跨端一致；浏览内容时会话锁由 `manager.go` 保持。
@@ -260,11 +261,11 @@ make dev-web          # 仅 Vite
 ```bash
 make test                   # Go 测试
 make build && make install  # 本机完整构建 + 安装
-bash scripts/deploy-all.sh  # 全流程收尾：门禁 → 提交推送 → 本机装 → 分发 WSL → 对账
-sudo systemctl restart mindfs   # 本机生效（用户执行）；WSL 由 deploy-all.sh 直接重启
+bash scripts/deploy-all.sh  # 全流程收尾：门禁 → 提交推送 → 本机装 → 分发 WSL/fn → 对账
+sudo systemctl restart mindfs   # 本机生效（用户执行）；worker 重启由 deploy-all.sh 直接执行
 ```
 
-**WSL 只收产物**：那边没有源码库，别在它上面 `make` / `git`。分发只有 `deploy-all.sh` 一条路径，细节见上方「两台机器」。
+**WSL 与 fn 只收产物**：没有源码库，别在 worker 上 `make` / `git`。分发只有 `deploy-all.sh` 一条路径，细节见上方节点表。
 
 - 提交用 Conventional Commits（中文描述）。
 - 改 ws.go handler 时：检查是否在 goroutine 内派发，避免阻塞读循环。

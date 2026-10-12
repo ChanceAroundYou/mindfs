@@ -286,7 +286,7 @@ func (h *StreamHub) ensurePendingSessionLocked(sessionKey string) *SessionPendin
 // nextPendingTurnIDLocked 生成一个新的回合身份。调用方必须已持有 h.mu。
 //
 // 与旧实现的关键差异：不再自增计数器，而是 mint 一个 mindfs_id。Hub 是每账户一份的
-// （多账户分区，见 CLAUDE.md），计数器在本进程内唯一，而 mindfs_id 全局唯一 ——
+// （多账户分区，见 AGENTS.md），计数器在本进程内唯一，而 mindfs_id 全局唯一 ——
 // 于是「哪个 id」这个问题从「哪个 hub」里解耦出来，S2e 结束时同一个逻辑 id
 // 在主日志与 pending 上只有一种表示（方案 D3/D6）。
 //

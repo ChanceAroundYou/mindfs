@@ -36,7 +36,7 @@
   `useSessionStream.ts` / `TaskTemplateDialog.tsx` / `FileViewer.tsx` / `DefaultListView.tsx` /
   `CodexRateLimitIndicator.tsx` / `i18n en-US` / `i18n zh-CN` 各 1。
 - **架构级取舍：拒绝上游 task_groups 编排体系**（用户决策）。上游给看板加了 `task_groups` 分组 + 并发调度器 +
-  `scheduler_admitted` 准入位；本地早已按 CLAUDE.md 事实 13 重做为「卡=任务、列=全局状态、无并发调度」。
+  `scheduler_admitted` 准入位；本地早已按 AGENTS.md 事实 13 重做为「卡=任务、列=全局状态、无并发调度」。
   连带丢弃：`kanban.Start` 调度器、`TaskGroupPanel`/`TaskCardText` 组件、`patchTask`/`fetchTaskGroups`/`groupOperation`
   等 API、`GET/PATCH/DELETE /api/tasks/{id}` 与 `/read/{resource}` 路由、`openTaskEditDialog`（本地 `b3ced22` 已主动删）。
   `SchedulerAdmitted` 字段与 `scheduler_admitted` 列于 2026-10-06 一并退役（不再读写；schema 行留在原地不做破坏性迁移）。
@@ -260,7 +260,7 @@
 | 提交 | 涉及文件 | 说明 |
 |------|----------|------|
 | `df732af` | `web/src/components/RelayLocalServicesDialog.tsx`(删)、`web/src/services/relayServices.ts/tokenStation.ts/launcherNodeSync.ts/nativeBridge.ts`、`web/src/App.tsx/FileTree.tsx/Login.tsx/base.ts/bootstrap.ts/i18n` | 移除公网访问/Relay 对话框/Token 加油站三件套 |
-| `20f2b90` | `.gitignore` | `CLAUDE.md` 忽略（配置类，不影响运行时，单列但归本组） |
+| `20f2b90` | `.gitignore` | 当时忽略旧名 `CLAUDE.md`（后迁移为 `AGENTS.md`；配置类，不影响运行时，单列但归本组） |
 | 2026-10-08 | **删包** `server/internal/relay/`（8 文件）、`server/internal/e2ee/`（4 文件）；**删路由** `server/internal/api/http_relay_services.go`、`http_token_station.go`、`http_local_cli_relay_test.go`；**删前端** `web/src/services/e2ee.ts`、`RelayLocalServicesDialog.tsx`、`SessionQuickActions.tsx`、`relayServices.ts`、`tokenStation.ts`；**清接线** `server/internal/api/http.go`(-549)、`ws.go`(-73)、`appcontext.go`、`agent/config.go`、`nodeinfo/role.go`（去掉 `/api/relay`、`/api/e2ee` 两条前缀）、`cli/cmd/mindfs.go`(-193)、`server/app/server.go`(-148)、`web/src/services/net/{bootstrap,api}.ts`、`session.ts` | **彻底删除 relay 隧道与 e2ee**（用户 2026-10-08 明确要求）：不是「关掉开关」而是「不存在」—— 删包、删路由、删所有前端入口与调用点、删 e2ee proof/解密与 `e2ee_*` 头 |
 | 2026-10-09 | `server/internal/update/service.go`(-23)、`server/internal/update/service_test.go`、`web/src/services/appUpdate.ts`、`web/src/i18n/locales/{zh-CN,en-US}.ts`、`web/tests/upstream-removals.test.mjs` | **断掉上游 relay 域名依赖 + 清死文案键**（用户 2026-10-09 拍板「一起砍掉」）：删 `relayDownloadBase`/`relayAssetURL` 与下载回退（`downloadReleaseAsset` 只认 GitHub 给的 asset 地址）；前端删 `DEFAULT_ANDROID/HARMONY_VERSION_URL`、`RelayVersionResponse` 改名 `AppVersionResponse`，版本检查地址缺省为空（只由 `VITE_*_VERSION_URL` 显式提供，未配置即按「无更新信息」返回、不拿空 URL 去 fetch）；删两个已无代码引用的死键 `fileTree.relayLocalServices` |
 | 2026-10-09（二） | `internal/deploy/prefix.go`、`internal/deploy/prefix_test.go`、`server/internal/api/prefix.go`、`server/internal/api/http_test.go`、`web/src/services/net/prefix.ts`、`web/src/main.tsx`、`web/vite.config.ts`、`web/tests/deploy-prefix.test.mjs` | **删掉 relay 时代的资源别名前缀**（用户拍板「现在砍掉」）：服务端 `deploy.RelayAssetsAlias()`、`StripDeployPrefix` 里的 `/<前缀>-assets/` → `/assets/` 映射分支；前端 `RELAY_ASSETS_PREFIX` 导出与 `main.tsx` 的资源判定分支；`vite.config.ts` 里注入 SW 的 `RELAY_ALIAS`、fetch 时对它的跳过分支、`mainAssetReSource` 里的别名备选，以及 SW 里把 relay 的 `/n/<token>/` 路径归一化掉的 `normalizedPathname`。**判据**：产生这些 URL 的两处（服务端 relayed 绝对化改写、relay 的 `/n/<token>/` 路径方案）已随 2026-10-08 那批删除，构建产物里恒为 `<部署前缀>/assets/index-*`；**留一半比全留更糟**——服务端删了、SW 还认，排查者会以为别名仍受支持 |
@@ -308,7 +308,7 @@
 | `c7c2c45` | `web/src/services/connection.ts`、`storage.ts`、`net/api.ts`、`net/authGate.ts`、`net/bootstrap.ts` | 去 token、`api.ts` 无鉴权 `fetchJSON`、`bootstrap` 直通 `ready` |
 | 2026-10-08 | 删 `web/src/services/e2ee.ts`、`server/internal/e2ee/` | e2ee 那半边改由 **G-H** 整体删除承担；本组只剩「不鉴权 + CORS 开放」这条**策略** |
 
-- 保留判据：**「API 层不做鉴权」是用户明确决策**（多账户 = 多配置档，不是安全边界，CLAUDE.md 事实 12）。
+- 保留判据：**「API 层不做鉴权」是用户明确决策**（多账户 = 多配置档，不是安全边界，AGENTS.md 事实 12）。
   上游把 token 校验或 CORS 白名单合回来 → 所有前端请求 401 / 被浏览器挡下，
   症状是「页面能开、列表全空」。
 - 针对性测试：`server/internal/api/http_open_api_test.go` —— 无凭证 `GET /api/dirs` 必须 200；
@@ -561,7 +561,7 @@
 
 ### G-Y 看板模型重做（拒绝上游 task_groups 编排体系）
 
-- 来源：CLAUDE.md 事实 13 + §0-B 的架构级取舍。**这是最容易被上游合并冲掉的一组。**
+- 来源：AGENTS.md 事实 13 + §0-B 的架构级取舍。**这是最容易被上游合并冲掉的一组。**
 - 边界：本地为「卡=任务、列=全局状态、无并发调度」。任务自带流水快照（`Task.Stages` 创建时从预设拷贝，
   之后与预设无关；旧任务在 `loadForMove` 里惰性回填）。上游的 `kanban.Start` 调度器、
   `TaskGroupPanel`/`TaskCardText`、`patchTask`/`fetchTaskGroups`/`groupOperation`、
@@ -657,7 +657,7 @@
 ### G-AJ 偏好 / 定时任务 / 提示词 / 更新 / WebPush
 
 - 来源：`server/internal/{preferences,scheduled,update,webpush}`、`usecase/prompts.go`。
-- 边界：共享范围表见 CLAUDE.md 事实 12 —— 偏好/节点表/WebPush 订阅/提示词/看板模板**共享**；
+- 边界：共享范围表见 AGENTS.md 事实 12 —— 偏好/节点表/WebPush 订阅/提示词/看板模板**共享**；
   看板任务库与定时任务**按账户**（它们按本账户项目调度，且执行时用本账户的 session manager，共享实例说不清该跑谁的会话）。
 
 ### G-AK 本地化（中英双语键）
@@ -674,19 +674,19 @@
 
 - 来源：`scripts/deploy-all.sh`、`scripts/{build-all,install,migrate-control-plane-to-primary}.sh`、
   `Makefile`、`.claude/skills/{ship,upstream-merge}`。
-- 边界：`ship` 一条命令完成门禁→提交推送→本机编译安装→推送产物到 WSL→WSL 重启→对账。
+- 边界：`ship` 一条命令完成门禁→提交推送→本机编译安装→推送产物到 WSL 与 fn→两个 worker 重启→三端对账。
   `73db73e` 修的是「不再整目录删除 web 哈希资源」。合上游后 `Makefile` 的本地 target 要保住。
-  **WSL 是纯 worker，只收二进制与两个 json，不收 `web/dist`**（2026-10-07）：worker 按设计不服务
+  **WSL 与 fn 是纯 worker，只收二进制与两个 json，不收 `web/dist`**：worker 按设计不服务
   静态资源（`GET /` 403），前端只装本机；曾推的那份是留给「角色翻成 control」的保险，已不成立。
 - 可见症状（没有它会怎样）：
   - **改了根级文档跑完 ship 却没被提交**：`git add -A --` 的路径是**白名单**，
-    `docs/` 只够得到 `docs/` 目录、够不到仓库根。改了 `CLAUDE.md` 再 `deploy-all.sh -m "..."`，
+    `docs/` 只够得到 `docs/` 目录、够不到仓库根。改了 `AGENTS.md` 再 `deploy-all.sh -m "..."`，
     它会被静默留在工作区，版本号因此挂上 `-dirty`（`git describe --dirty`，2026-10-07 实测）。
     白名单里的 `|| git add -A` 兜底**实际永不触发**：`git add -A -- <存在的路径>` 恒成功。
   - **部署脚本按上游布局整目录删 web 哈希资源**：会让部署前就打开的页面懒加载 404。
 - 为什么必须保留：白名单是**故意**的（防 `.mindfs/` 运行期数据被卷进提交），
   所以修法是「把该收的根级文档逐个点名」，不是换成 `git add -A`。
-  根级文档中 `CLAUDE.md` / `README.md` / `README.zh.md` / `release-notes.md` 必须在内；
+  根级文档中 `AGENTS.md` / `README.md` / `README.zh.md` / `release-notes.md` 必须在内；
   `config.json` **刻意不在**——它会被本机改 `role`/端口，提交等于把本地运行配置推上去。
 - 针对性测试：
   - `web/tests/deploy-web-assets.test.mjs` — 无 `rm -rf web`、TTL 两处一致、WSL 只收产物不收 `dist`、

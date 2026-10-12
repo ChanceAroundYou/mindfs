@@ -1,6 +1,6 @@
 # MindFS fork 定制注册表（机器真相）
 #
-# 这是 CLAUDE.md「fork 定制与上游合并（必守）」那条铁律的机器可核对面。
+# 这是 AGENTS.md「fork 定制与上游合并（必守）」那条铁律的机器可核对面。
 # 叙述、合并记录、评估在 docs/upstream-customizations.md；分组 id 两边必须一致
 # （由 `go run ./scripts/check-upstream` 的断言 6 强制）。
 #
@@ -34,12 +34,12 @@ groups:
       合上游后这些文件被覆盖或被删，后续再合上游时「哪条该留」就失去判据。
       历史上 release-notes.md 的整段条目就是这样静默丢失过的。
     why: |
-      上游完全没有这些文件（CLAUDE.md、上游定制清单、多账户/多节点 PRD、设计稿）。
-      CLAUDE.md 的「fork 定制与上游合并（必守）」一节是本清单的规则来源，
+      上游完全没有这些文件（AGENTS.md、上游定制清单、多账户/多节点 PRD、设计稿）。
+      AGENTS.md 的「fork 定制与上游合并（必守）」一节是本清单的规则来源，
       它一旦丢，整套定制保护机制就失去依据。
     files:
       - .gitignore
-      - CLAUDE.md
+      - AGENTS.md
       - docs/superpowers/
       - docs/main-view-switching-design.md
       - docs/message-change-history.md
@@ -99,7 +99,7 @@ groups:
       API 层要求 token 时，浏览器直连会全部 401/403；跨节点请求被 CORS 白名单挡下。
       症状是「页面能开、但所有列表都是空的」—— 前端一个请求都过不去。
     why: |
-      「API 层不做鉴权」是用户明确决策（多账户 = 多配置档，不是安全边界，见 CLAUDE.md 事实 12）。
+      「API 层不做鉴权」是用户明确决策（多账户 = 多配置档，不是安全边界，见 AGENTS.md 事实 12）。
       上游给 `/api/*` 套上的 token 校验与 CORS 白名单一旦被合回来，所有前端请求立即失效。
       e2ee 那半边（proof 校验、解密）已随 G-H 整体删除，本组只管**策略**：
       不鉴权 + CORS 默认 `open`（`corsMiddleware` 无偏好时 mode 回落 `open`，原样回显 Origin）。
@@ -612,7 +612,7 @@ groups:
       卡上出现「准入位(scheduler_admitted)」状态、任务可编辑弹窗回来（本地已主动删）、
       跨项目工作台按项目分组却显示成上游的 taskGroups 语义。
     why: |
-      本地早已重做为「卡=任务、列=全局状态、无并发调度」（CLAUDE.md 事实 13）：
+      本地早已重做为「卡=任务、列=全局状态、无并发调度」（AGENTS.md 事实 13）：
       任务自带流水快照（Task.Stages 是创建时从预设拷贝的快照，之后与预设无关）、
       queued 与调度槽位已删、新建任务恒为 waiting_user。
       上游的 kanban.Start 调度器 / TaskGroupPanel / patchTask / fetchTaskGroups /
@@ -1073,14 +1073,14 @@ groups:
     kind: deploy
     symptom: |
       部署脚本按上游的目录布局删掉整目录的 web 哈希资源，导致过期标签页白屏；
-      两侧（本机 system 单元 / WSL user 单元）编译安装与重启不一致；
-      改了根级文档（CLAUDE.md 等）跑完 ship 却没被提交 —— add 白名单够不到仓库根，
+      三端（本机 system 单元 / WSL 与 fn user 单元）安装与重启不一致；
+      改了根级文档（AGENTS.md 等）跑完 ship 却没被提交 —— add 白名单够不到仓库根，
       改动静默留在工作区，版本号挂上 -dirty。
     why: |
-      scripts/deploy-all.sh 一条命令完成门禁→提交→本机编译安装→推产物到 WSL→WSL 重启→两端对账；
-      ship / upstream-merge skill 固化流程。上游没有这层，回退会让双机部署靠手搓。
+      scripts/deploy-all.sh 一条命令完成门禁→提交→本机编译安装→推产物到 WSL 与 fn→worker 重启→三端对账；
+      ship / upstream-merge skill 固化流程。上游没有这层，回退会让多节点部署靠手搓。
       提交路径是**白名单**（防 .mindfs/ 运行期数据被卷进提交），所以根级文档要逐个点名：
-      CLAUDE.md / README.md / README.zh.md / release-notes.md 在内，config.json 刻意不在
+      AGENTS.md / README.md / README.zh.md / release-notes.md 在内，config.json 刻意不在
       （会被本机改 role/端口，提交等于推本地运行配置）。`|| git add -A` 兜底恒不触发。
     files:
       - Makefile

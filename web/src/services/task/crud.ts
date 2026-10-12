@@ -55,7 +55,7 @@ export async function createTask(
       // stages 必须在**每次**建任务时随包带上，不能只靠 task_template_id：
       // 任务可能建在 worker 节点上，那台机器没有模板库，服务端会回
       // "task template not found" 而整个建任务失败（service.go:237）。
-      // 模板流水线本来就是创建时拷贝的快照（CLAUDE.md 事实 13），带过来不改变语义。
+      // 模板流水线本来就是创建时拷贝的快照（AGENTS.md 事实 13），带过来不改变语义。
       ...(options?.stages?.length ? { stages: options.stages } : {}),
     }),
   });
