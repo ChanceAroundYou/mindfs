@@ -242,6 +242,7 @@
 | `df445bd` | `web/src/hooks/useSessionStream.ts:streamVersion 30ms` | 补 `App` 之外的独立 setState 风暴路径 |
 | `df445bd` | `web/src/components/MarkdownViewer.tsx:useDeferredValue` | markdown 解析走 React 低优先级，流式不阻塞输入/滚动 |
 | `df445bd` | `web/src/services/session.ts:IDB 截断` | 仅存 `meta+最近 500条/200KB`，`truncated→syncSession` 全量补段；`userShell` O(n²)→单累积 text |
+| `8e7d857` / `adf610a` | `web/src/App.tsx`、`web/src/services/session.ts` | 保留单项目列表缓存；退役多项目列表的 IndexedDB 预显示，避免打开时先显示旧快照、收到节点数据后再换序 |
 
 > `df445bd` 末尾的 `context_window` 徽标继承与 `session.done→replace` 实为 G-G 语义，但实现落在同提交的 `App.tsx` 同一 hunk，按「主因」归 G-F，评估中单列说明。
 
@@ -2255,8 +2256,10 @@
 ### G-BJ 会话列表按实时活动时间排序（2026-10-12）
 
 - **可见症状**：回复进行中，项目组和会话行仍停在上次完成回复的时间；只有整轮结束并写回会话元数据后才跳到最前。置顶与普通会话也可能被置顶时间或项目名称排序盖过活动时间。
-- **根因与边界**：列表原来只看持久化 `updated_at`，而它在轮次收尾才更新。每个 stream block 到达时，前端短暂推进 `activity_at`；会话/项目的排序与时间文案都读 `max(updated_at, activity_at)`。刷新拿到旧快照时保留临时活动值，直到服务端 `updated_at` 追上再丢弃。项目组最新时间由 indexed session metadata 查询，避免用当前分页结果推断。置顶和普通分别成区，各区内部都按最新活动降序。
+- **根因与边界**：列表原来只看持久化 `updated_at`，而它在轮次收尾才更新。每个 stream block 到达时，前端短暂推进 `activity_at`；会话/项目的排序与时间文案都读 `max(updated_at, activity_at)`。刷新拿到旧快照时保留临时活动值，直到服务端 `updated_at` 追上再丢弃。项目组最新时间由 indexed session metadata 查询，避免用当前分页结果推断。会话置顶区和普通区各自按最新活动降序；项目排序先固定节点顺序，再在每个节点内分置顶/普通区并按活动降序，绝不跨节点比较置顶或时间。
+- **打开列表不闪序**：多项目列表不再先显示 IndexedDB 旧快照再用节点请求结果修正；刷新沿用当前内存列表，首次加载由本轮节点请求填充。单项目缓存和会话内容缓存保留。
 - **边界**：会话和项目列表的活动时间投影、排序及服务端项目组最新时间查询。实时正文事件归属与内容合并不变；`activity_at` 仅为前端临时字段，不写入持久化会话数据。
 - **针对性测试**：
-  - `web/tests/session-list-merge.test.mjs` → 活动时间覆盖旧持久时间、刷新期间不倒退、持久时间追上后清除 overlay；会话置顶/普通区内部按活动时间排序；项目排序先分 pin 区再按项目活动时间；stream block 推进活动值且跨节点内容过滤之前执行。
+  - `web/tests/session-list-merge.test.mjs` → 活动时间覆盖旧持久时间、刷新期间不倒退、持久时间追上后清除 overlay；会话置顶/普通区内部按活动时间排序；项目先按节点分桶、再在桶内置顶优先并按活动时间排序，后续节点即使更活跃也不能越位；stream block 推进活动值且跨节点内容过滤之前执行。
+  - `web/tests/upstream-restore.test.mjs`、`web/tests/multi-account-partition.test.mjs` → 多项目列表不预显示 IndexedDB 旧快照，单项目列表账户缓存仍保留。
   - `server/internal/session/manager_latest_updated_at_test.go` → 项目组最新活动从全部可见会话（含子会话）取最大值。

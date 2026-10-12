@@ -41,6 +41,49 @@ export function projectActivityTime(group: {
   );
 }
 
+type ProjectGroupActivity = {
+  latestSessionTime?: string;
+  activity_at?: string;
+  sessions: readonly Pick<PinAwareSessionItem, "updated_at" | "activity_at">[];
+};
+
+/** Keep configured node order outside project pin and activity sorting. */
+export function orderProjectGroupsByNode<T extends ProjectGroupActivity>(
+  groups: readonly T[],
+  nodeOrder: readonly string[],
+  getNodeKey: (group: T) => string,
+  isPinned: (group: T) => boolean,
+  compareStable: (left: T, right: T) => number,
+): T[] {
+  const configured = new Set(nodeOrder.map((key) => String(key || "").trim()).filter(Boolean));
+  const buckets = new Map<string, T[]>();
+  const unknownOrder: string[] = [];
+  groups.forEach((group, index) => {
+    // Missing identity gets its own stable bucket; never compare it by recency
+    // against another node whose identity is also unavailable.
+    const nodeKey = String(getNodeKey(group) || "").trim() || `\u0000missing:${index}`;
+    let bucket = buckets.get(nodeKey);
+    if (!bucket) {
+      bucket = [];
+      buckets.set(nodeKey, bucket);
+      if (!configured.has(nodeKey)) unknownOrder.push(nodeKey);
+    }
+    bucket.push(group);
+  });
+
+  const compareWithinNode = (left: T, right: T): number => {
+    const pinOrder = Number(isPinned(right)) - Number(isPinned(left));
+    if (pinOrder !== 0) return pinOrder;
+    const recency = projectActivityTime(right) - projectActivityTime(left);
+    return recency !== 0 ? recency : compareStable(left, right);
+  };
+  const orderedKeys = [
+    ...new Set(nodeOrder.map((key) => String(key || "").trim()).filter(Boolean)),
+    ...unknownOrder,
+  ];
+  return orderedKeys.flatMap((key) => (buckets.get(key) || []).slice().sort(compareWithinNode));
+}
+
 export function mergeSessionItems<T extends PinAwareSessionItem>(
   current: T[],
   incoming: T[],

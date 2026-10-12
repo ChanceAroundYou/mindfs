@@ -8,7 +8,7 @@ import { hexToRgbaApp } from "../../app/taskIcons";
 import { resolveGroupColor } from "../../services/sessionGroupDisplay";
 import { scopeKey } from "../../shared/scope";
 import { pruneChildState } from "../../services/sessionTree";
-import { projectActivityTime, sessionActivityAt } from "../../services/sessionListMerge";
+import { orderProjectGroupsByNode, sessionActivityAt } from "../../services/sessionListMerge";
 import {
   optimisticProjectPin,
   readPins,
@@ -879,18 +879,19 @@ export function MultiProjectSessionList({
   }, [groups]);
   const groupScopeKey = (group: ProjectSessionGroup) =>
     scopeKey(String((group as any)?._nodeId || "").trim(), group.rootId);
-  // 项目和会话使用同一 recency 规则：置顶分区在前，各分区按最近活动降序。
-  // 节点顺序、项目名称只负责活动时间相同的稳定排序。
+  // 节点是外层固定分区；置顶与最近活动只在各自节点内排序。
   const orderedGroups = useMemo(() => {
     const nodes = getNodes();
-    const orderById = new Map(nodes.map((n, i) => [String(n.id), i] as const));
+    const orderById = new Set(nodes.map((n) => String(n.id).trim()).filter(Boolean));
     const orderByName = new Map(nodes.map((n, i) => [String(n.name), i] as const));
-    const nodeIndex = (group: ProjectSessionGroup): number => {
+    const nodeKey = (group: ProjectSessionGroup): string => {
       const nid = String((group as any)?._nodeId || "").trim();
-      if (nid && orderById.has(nid)) return orderById.get(nid)!;
+      if (nid && orderById.has(nid)) return nid;
       const nname = String((group as any)?._nodeName || "").trim();
-      if (nname && orderByName.has(nname)) return orderByName.get(nname)!;
-      return 99;
+      if (nname && orderByName.has(nname)) {
+        return String(nodes[orderByName.get(nname)!]?.id || "").trim() || `unknown-name:${nname}`;
+      }
+      return nid ? `unknown-id:${nid}` : nname ? `unknown-name:${nname}` : "";
     };
     // 同节点内的项目按 DirectorySort 规则排；复用左侧同款比较，避免两处分叉
     const compareByProjectSort = (a: ProjectSessionGroup, b: ProjectSessionGroup): number => {
@@ -901,19 +902,13 @@ export function MultiProjectSessionList({
       if (sorted[0] === eb && sorted[1] === ea) return 1;
       return 0;
     };
-    return groups.slice().sort((left, right) => {
-      const leftPinnedAt = pinnedProjects[groupScopeKey(left)] || 0;
-      const rightPinnedAt = pinnedProjects[groupScopeKey(right)] || 0;
-      const leftPinned = leftPinnedAt > 0;
-      const rightPinned = rightPinnedAt > 0;
-      if (leftPinned !== rightPinned) return rightPinned ? 1 : -1;
-      const recency = projectActivityTime(right) - projectActivityTime(left);
-      if (recency !== 0) return recency;
-      const li = nodeIndex(left);
-      const ri = nodeIndex(right);
-      if (li !== ri) return li - ri;
-      return compareByProjectSort(left, right);
-    });
+    return orderProjectGroupsByNode(
+      groups,
+      nodes.map((node) => String(node.id || "").trim()).filter(Boolean),
+      nodeKey,
+      (group) => (pinnedProjects[groupScopeKey(group)] || 0) > 0,
+      compareByProjectSort,
+    );
   }, [groups, pinnedProjects, projectSortMode]);
   const togglePinnedProject = (group: ProjectSessionGroup) => {
     const key = groupScopeKey(group);

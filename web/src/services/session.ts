@@ -1775,16 +1775,6 @@ const SESSION_CACHE_STORE = "sessions";
 const SESSION_LIST_CACHE_STORE = "session-lists";
 const SESSION_CACHE_VERSION = 3;
 
-// 多项目会话列表的缓存键必须带账户：这是「跨账户串号」的入口。
-// 换账户后这里若仍是常量，上一账户的全量会话会在发请求前先被渲染出来
-// （App.tsx loadMultiProjectSessionGroups 先 setMultiProjectSessionGroups(缓存)），
-// 而账户作用域请求回来的空 groups 只是合并进 prev、并不清空它 → 新账户看到旧账户的全部会话。
-// 用 username 而非 id：同源与跨机器两种情形下它都是稳定且可读的那个标识。
-function multiRootSessionListCacheKey(): string {
-  const name = String(currentUser()?.username || "").trim();
-  return name ? `multi-root::${name}` : "multi-root";
-}
-
 let sessionDBPromise: Promise<IDBDatabase> | null = null;
 
 function buildSessionCacheKey(
@@ -1879,7 +1869,7 @@ function withSessionListStore<T>(
   });
 }
 
-// 单项目列表缓存同理必须带账户（见 multiRootSessionListCacheKey 的说明）：
+// 单项目列表缓存键必须带账户，避免切账户时预显示旧账户会话：
 // 不带的话「A 账户看过 P 项目 → 切到 B 账户 → 点开 P」会先渲染出 A 的会话列表。
 function sessionListCacheScope(): string {
   const name = String(currentUser()?.username || "").trim();
@@ -1930,14 +1920,6 @@ export function getCachedSessionList(rootId: string, nodeId?: string): Promise<S
 export function saveCachedSessionList(rootId: string, payload: SessionListPayload, nodeId?: string): Promise<void> {
   if (!rootId) return Promise.resolve();
   return writeCachedSessionList(buildSessionListCacheKey(rootId, nodeId), payload);
-}
-
-export function getCachedMultiRootSessionList(): Promise<MultiRootSessionGroup[] | null> {
-  return readCachedSessionList<MultiRootSessionGroup[]>(multiRootSessionListCacheKey());
-}
-
-export function saveCachedMultiRootSessionList(groups: MultiRootSessionGroup[]): Promise<void> {
-  return writeCachedSessionList(multiRootSessionListCacheKey(), groups);
 }
 
 export function getSessionMaxSeq(session: Session | null | undefined): number {
@@ -2427,9 +2409,8 @@ export async function deleteCachedSession(
 }
 
 /**
- * 只删**列表快照**，不动单会话记录。
- * 删除会话后必须调用：列表快照是下次进面板时**先渲染、后请求**的来源，
- * 不同步失效的话已删的行会从 IndexedDB 里重新出现（单个会话记录删了也没用）。
+ * 只删单项目列表快照，不动单会话记录。
+ * 删除会话后必须调用：不失效的话已删的行会从 IndexedDB 里重新出现。
  */
 export async function deleteCachedSessionLists(
   rootId: string,
@@ -2454,9 +2435,6 @@ export async function deleteCachedSessionLists(
           }
         }
       }
-      // 多项目面板（当前默认形态）渲染的是这份按账户存的快照，同样要失效，
-      // 否则已删的会话会在下次进面板时从 multi-root 快照里复活。
-      try { await sessionRequestToPromise(store.delete(multiRootSessionListCacheKey())); } catch {}
     });
   } catch {}
 }

@@ -96,11 +96,12 @@ assert.match(sessionSvc, /export function composeLoadedExchanges/, "the load-tim
 // 2026-09 App.tsx 拆分：userShell 流合并搬到 app/useSessionStreamCache.ts，契约随文件走。
 assert.match(streamCache, /replaySnapshot === true/, "d36cc53 App should branch on replaySnapshot when coalescing userShell");
 
-// 8e7d857 — kanban/session-list cache loading (keep local nodeId/scopedRootKey + context_window)
+// 8e7d857 — retain the scoped single-project cache/context_window path; the
+// multi-project stale snapshot was retired because it caused a visible second ordering pass.
 assert.match(app, /getCachedSessionList/, "8e7d857 App should prefetch getCachedSessionList");
 assert.match(app, /saveCachedSessionList/, "8e7d857 App should persist saveCachedSessionList");
-assert.match(app, /getCachedMultiRootSessionList/, "8e7d857 App should prefetch multi-root cache");
-assert.match(app, /saveCachedMultiRootSessionList/, "8e7d857 App should persist multi-root cache");
+assert.doesNotMatch(app, /getCachedMultiRootSessionList|saveCachedMultiRootSessionList/, "multi-project lists must not render a stale IndexedDB snapshot before node results");
+assert.doesNotMatch(sessionSvc, /multiRootSessionListCacheKey|getCachedMultiRootSessionList|saveCachedMultiRootSessionList/, "retire the unused multi-project list cache API and key");
 assert.match(app, /Promise\.all\(\[[\s\S]*?fetchTaskDetails\(targetRoot,[\s\S]*?(?:getNodeIdForRoot|resolveNodeId)\(targetRoot\)\)/, "8e7d857 loadKanbanTasks should fetch in parallel with nodeId");
 assert.match(app, /const shouldReplace = options\?\.replace \|\|/, "8e7d857 App should share shouldReplace gate");
 assert.match(app, /void saveCachedSessionList\(rootID, payload(?:,\s*[^)]+)?\);/, "8e7d857 App should save session-list after replace with context_window preserved");

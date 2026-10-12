@@ -22,6 +22,7 @@ vm.runInNewContext(compiled, sandbox, { filename: sourcePath });
 const {
   applyPinnedSnapshotToSessions,
   mergeSessionItems,
+  orderProjectGroupsByNode,
   projectActivityTime,
   sessionActivityAt,
 } = sandbox.exports;
@@ -112,14 +113,50 @@ const sessionListSource = fs.readFileSync(
   path.resolve(import.meta.dirname, "../src/components/session/SessionList.tsx"),
   "utf8",
 );
-const projectSort = sessionListSource.slice(
-  sessionListSource.indexOf("const orderedGroups = useMemo"),
-  sessionListSource.indexOf("const togglePinnedProject"),
-);
 assert.match(
-  projectSort,
-  /if \(leftPinned !== rightPinned\)[\s\S]*?const recency = projectActivityTime\(right\) - projectActivityTime\(left\)/,
-  "project pins must form separate sections, each ordered by latest live session activity",
+  sessionListSource,
+  /orderProjectGroupsByNode\(/,
+  "SessionList must use the tested node-first project ordering",
+);
+
+const projectGroups = [
+  { rootId: "home-plain-old", _nodeId: "home", latestSessionTime: "2026-07-30T05:00:00.000Z", sessions: [] },
+  { rootId: "pc-newest", _nodeId: "pc", _pinned: true, latestSessionTime: "2026-07-30T22:00:00.000Z", sessions: [] },
+  { rootId: "home-pin-old", _nodeId: "home", _pinned: true, latestSessionTime: "2026-07-30T10:00:00.000Z", sessions: [] },
+  { rootId: "fn-newest", _nodeId: "fn", latestSessionTime: "2026-07-30T23:00:00.000Z", sessions: [] },
+  { rootId: "home-plain-new", _nodeId: "home", latestSessionTime: "2026-07-30T15:00:00.000Z", sessions: [] },
+  { rootId: "pc-plain", _nodeId: "pc", latestSessionTime: "2026-07-30T21:00:00.000Z", sessions: [] },
+  { rootId: "home-pin-live", _nodeId: "home", _pinned: true, latestSessionTime: "2026-07-30T09:00:00.000Z", activity_at: "2026-07-30T12:00:00.000Z", sessions: [] },
+];
+const orderedProjects = orderProjectGroupsByNode(
+  projectGroups,
+  ["home", "pc", "fn"],
+  (group) => group._nodeId,
+  (group) => !!group._pinned,
+  (left, right) => left.rootId.localeCompare(right.rootId),
+);
+assert.equal(
+  JSON.stringify(orderedProjects.map((group) => group.rootId)),
+  JSON.stringify(["home-pin-live", "home-pin-old", "home-plain-new", "home-plain-old", "pc-newest", "pc-plain", "fn-newest"]),
+  "node order is the outer partition; pin and latest activity only sort projects inside each node",
+);
+
+// A missing node id must not let an unknown group sort across known node buckets.
+const withUnknownNode = orderProjectGroupsByNode(
+  [
+    { rootId: "pc", _nodeId: "pc", latestSessionTime: "2026-07-30T10:00:00.000Z", sessions: [] },
+    { rootId: "unknown", _nodeId: "new-node", latestSessionTime: "2026-07-30T23:00:00.000Z", sessions: [] },
+    { rootId: "home", _nodeId: "home", latestSessionTime: "2026-07-30T01:00:00.000Z", sessions: [] },
+  ],
+  ["home", "pc"],
+  (group) => group._nodeId,
+  () => false,
+  (left, right) => left.rootId.localeCompare(right.rootId),
+);
+assert.equal(
+  JSON.stringify(withUnknownNode.map((group) => group.rootId)),
+  JSON.stringify(["home", "pc", "unknown"]),
+  "unknown nodes append stably after configured nodes instead of competing by recency",
 );
 
 const realtimeSource = fs.readFileSync(

@@ -11,7 +11,7 @@ import { FileEditStore, fileEditKey } from "./services/fileEditing";
 import { normalizePathForRoot, shouldRedirectToRelayNodes } from "./services/fileNavigation";
 import { getViewModeSystemPrompt } from "./renderer/viewCatalog";
 import { Renderer } from "./renderer/Renderer";
-import { SESSION_WINDOW_SIZE, clearCachedSessionsForRoot, clearWindowedView, composeLoadedExchanges, deleteCachedSession, deleteCachedSessionLists, getCachedMultiRootSessionList, getCachedSession, getCachedSessionList, getSessionWindow, isTransientExchange, saveCachedMultiRootSessionList, saveCachedSessionList, sessionService, setCachedSessionRelatedFiles, setWindowedView, settlePendingAcks, syncSession, type MultiRootSessionGroup, type QueuedUserMessage, type RelatedFile, type RelatedWorktree, type Session, type SyncSessionResult, type TokenUsage } from "./services/session";
+import { SESSION_WINDOW_SIZE, clearCachedSessionsForRoot, clearWindowedView, composeLoadedExchanges, deleteCachedSession, deleteCachedSessionLists, getCachedSession, getCachedSessionList, getSessionWindow, isTransientExchange, saveCachedSessionList, sessionService, setCachedSessionRelatedFiles, setWindowedView, settlePendingAcks, syncSession, type MultiRootSessionGroup, type QueuedUserMessage, type RelatedFile, type RelatedWorktree, type Session, type SyncSessionResult, type TokenUsage } from "./services/session";
 import { buildClientContext } from "./services/prefs/context";
 import {
   bootstrapService,
@@ -3326,36 +3326,6 @@ export function App({ onGoHome }: AppProps) {
     const seq = ++multiProjectLoadSeqRef.current;
     setMultiProjectSessionsLoading(true);
     try {
-      const cachedGroups = await getCachedMultiRootSessionList();
-      if (cachedGroups?.length) {
-        // 缓存先渲染（避免闪空），但**必须整体替换**而不是merge：这份缓存是按账户存的，
-        // 换账户后它就是空的，若还往里合并就会把上一账户的会话留在屏上。
-        setMultiProjectSessionGroups(
-          applyPendingToMultiProjectGroups(
-            cachedGroups.map((group): MultiProjectSessionGroup => {
-              const cacheNid = String((group as any)?._nodeId || "").trim();
-              return {
-              rootId: group.rootId,
-              rootName: group.rootName || managedRootByIdRef.current[group.rootId]?.display_name || group.rootId,
-              // C1: 缓存重建必须补节点与颜色，否则整帧回退 PALETTE[0] 蓝 + nodeIndex=99 乱序
-              _nodeId: cacheNid || undefined,
-              _nodeColor: resolveGroupColor(group as any, managedRootByKeyRef.current as any, getNodes() as any) || undefined,
-              latestSessionTime: group.latestSessionTime,
-              sessions: applyPinSnapshot(
-                mergeSessionItems(
-                  [],
-                  [...group.items, ...group.pinnedItems]
-                    .map((item) => toSessionItem(group.rootId, { ...(item as any), root_id: group.rootId, _nodeId: cacheNid || undefined }))
-                    .filter((item): item is SessionItem => !!item),
-                ),
-                group.rootId,
-              ),
-              totalCount: group.totalCount,
-            };}),
-            multiProjectPendingRef.current,
-          ),
-        );
-      }
       const nodeIdsFromNodes = getNodes()
         .map((n) => String((n as any)?.id || "").trim())
         .filter(Boolean);
@@ -3503,13 +3473,6 @@ export function App({ onGoHome }: AppProps) {
         }
         return applyPendingToMultiProjectGroups(merged, multiProjectPendingRef.current);
       });
-      // 保存时补 _nodeColor，令缓存重建帧直接有色（C1 双保险）
-      void saveCachedMultiRootSessionList(
-        groups.map((g) => ({
-          ...g,
-          _nodeColor: resolveGroupColor(g as any, managedRootByKeyRef.current as any, getNodes() as any) || undefined,
-        })) as any,
-      );
     } finally {
       if (seq === multiProjectLoadSeqRef.current) {
         setMultiProjectSessionsLoading(false);

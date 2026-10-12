@@ -2359,8 +2359,11 @@ groups:
       2) 普通列表刷新可能先返回旧 updated_at；mergeSessionItems 保留较新的 activity_at，
          直到持久 updated_at 追上才清除临时值，避免刷新把活跃条目倒退。
       3) 项目组的持久最新时间必须从 indexed session metadata 全表取 MAX；用列表第一个
-         session 推断会受分页、排序和空列表影响。pin 只决定所在分区，各分区内部统一按
-         最新活动倒序，时间相同时才使用节点/项目稳定顺序。
+         session 推断会受分页、排序和空列表影响。会话置顶只决定项目内的分区，各区按
+         最新活动倒序。项目列表则以配置节点顺序为外层分区，只在同一节点内先排置顶项目，
+         再让置顶/普通两组各自按最新活动倒序；禁止跨节点比较 pin 或活动时间。
+      4) 多项目列表若先画 IndexedDB 旧快照、再用节点请求结果校正，会在打开时出现第二次
+         排序跳动。因此只退役多项目列表的持久快照预显示；单项目列表缓存与会话内容缓存保留。
     boundary: |
       仅会话列表/项目分组的活动时间投影、排序和 metadata 聚合查询。activity_at 是前端
       临时字段，不落盘；实时正文事件的身份、内容与块写入不变。
@@ -2376,13 +2379,16 @@ groups:
       - web/src/app/useRealtimeEvents.ts
       - web/src/components/session/SessionList.tsx
       - web/src/services/sessionListMerge.ts
+      - web/src/services/session.ts
       - web/tests/session-list-merge.test.mjs
+      - web/tests/upstream-restore.test.mjs
+      - web/tests/multi-account-partition.test.mjs
     anchors:
       - server/internal/session/manager.go:LatestSessionUpdatedAt
       - server/internal/api/usecase/session.go:LatestSessionUpdatedAt
       - web/src/App.tsx:carryForwardActivity
       - web/src/app/useRealtimeEvents.ts:handleSessionStream
-      - web/src/components/session/SessionList.tsx:projectActivityTime
+      - web/src/components/session/SessionList.tsx:orderProjectGroupsByNode
       - web/src/services/sessionListMerge.ts:projectActivityTime
   - id: G-BH
     title: 会话正文块流（Block 存储层 + 轮次身份 turn_id/turn_seq/native_* + S2a 双写 + S2b 读改走块流 + C1/C2 + S2d-2 主日志不再存正文 + S2e pending 身份改用 turn_id）
