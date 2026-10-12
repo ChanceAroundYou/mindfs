@@ -133,32 +133,6 @@ func TestGetWindowLimitClamp(t *testing.T) {
 	}
 }
 
-func TestCountExchanges(t *testing.T) {
-	root := rootfs.NewRootInfo("mindfs", "mindfs", t.TempDir())
-	m := NewManager(root)
-	ctx := context.Background()
-	s, err := m.Create(ctx, CreateInput{Type: TypeChat, Name: "Count"})
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
-	if n, err := m.CountExchanges(s.Key); err != nil || n != 0 {
-		t.Fatalf("Count empty = %d err=%v, want 0 nil", n, err)
-	}
-	for i := 0; i < 3; i++ {
-		if err := m.AddExchangeForAgent(ctx, s, "user", "hi", "claude", "", "", ""); err != nil {
-			t.Fatalf("add: %v", err)
-		}
-	}
-	// after adding, count via cache fast path and via file
-	if n, err := m.CountExchanges(s.Key); err != nil || n != 3 {
-		t.Fatalf("Count after 3 = %d err=%v, want 3", n, err)
-	}
-	// invalid key
-	if _, err := m.CountExchanges(""); err == nil {
-		t.Fatalf("Count empty key should error")
-	}
-}
-
 func TestGetExchangeAuxWindow(t *testing.T) {
 	root := rootfs.NewRootInfo("mindfs", "mindfs", t.TempDir())
 	m := NewManager(root)

@@ -11,6 +11,8 @@ import (
 	acpsdk "github.com/coder/acp-go-sdk"
 
 	agenttypes "mindfs/server/internal/agent/types"
+	// 别名 sessionpkg：本包有一个同名类型 session（acp session），撞名。
+	sessionpkg "mindfs/server/internal/session"
 )
 
 type ImporterOptions struct {
@@ -46,13 +48,6 @@ func NewImporter(opts ImporterOptions) *Importer {
 
 func (i *Importer) AgentName() string {
 	return i.agentName
-}
-
-// UsesPromptMessageID 恒为 true：ACP 协议的 `PromptRequest.MessageId` 就是这层身份
-// （方案 D3）。MindFS 把自己的 turn_id 递进去、agent 原样回显成 `userMessageId`，
-// 于是实时路径与导入路径能用同一个 id 认领同一轮，判重不再靠内容猜。
-func (i *Importer) UsesPromptMessageID() bool {
-	return true
 }
 
 // HasTranscriptTimestamps 恒为 false：ACP 协议的消息更新不带任何时间戳
@@ -154,8 +149,8 @@ func (i *Importer) ImportExternalSession(ctx context.Context, in agenttypes.Impo
 	//   ① 打上 SynthesizedAt，让下游能区分「真时间」与「猜的时间」；
 	//   ② 不能拿它当过滤判据 —— 重放出来的行每次都会拿到一个更新的时间，
 	//      `AfterTimestamp` / `TimestampFloor` 永远挡不住（实测 2026-10-07：某
-	//      live-owned 会话 Full 同步把 9 对已经写过的轮次又写了一遍，投影只能靠
-	//      内容猜着折叠）。ACP 的防重放只能靠 native id 身份判重（S2c）。
+	//      live-owned 会话 Full 同步把 9 对已经写过的轮次又写了一遍）。ACP 的防重放
+	//      依赖 native id 身份判重（S2c）。
 
 	proc, cwd, err := i.openProcess(ctx, in.RootPath)
 	if err != nil {
@@ -257,7 +252,7 @@ func (c *importCollector) handle(update SessionUpdate) {
 // agent 应当回显 MindFS 递过去的 UUID；但实现不保证 —— 收不到 uuid 就返回空串，
 // 让判重退回内容比对，而不是拿一个谁也对不上的字符串当身份。
 //
-// 为什么严到只收 UUID：MindFS 递过去的就是自己 mint 的 turn_id（方案 D3），
+// 为什么严到只收 UUID：MindFS 递过去的就是自己 mint 的 mindfs_id（方案 D3），
 // 形如 `550e8400-e29b-41d4-a716-446655440000`。只认这一种形态，就保证了
 // 「写进 native_prompt 的」和「读回来对上的」是同一个 id 的同一层含义。
 func messageIDOf(raw *string) string {
@@ -276,23 +271,11 @@ func messageIDOf(raw *string) string {
 // ACP 规范对 `messageId` 的原文要求是「客户端与 agent **必须**使用 UUID 格式」。
 // 只认这一种形态，是为了保证「递出去的」「写进 native_prompt 的」「从转录读回来
 // 对上的」三者指的是同一个 id 的同一层含义；别的字符串一律当成「没有身份」。
+//
+// 判据本体在 session.IsTurnIDShape（S2e 起 pending 灯的回合身份也是 mindfs_id，
+// 形状判据只能有一份）；这里留一层薄转发，让本包的读者继续读本包的名字。
 func isUUIDShape(raw string) bool {
-	normalized := strings.ToLower(strings.TrimSpace(raw))
-	if len(normalized) != 36 {
-		return false
-	}
-	for i, r := range normalized {
-		switch {
-		case i == 8 || i == 13 || i == 18 || i == 23:
-			if r != '-' {
-				return false
-			}
-		case r >= '0' && r <= '9', r >= 'a' && r <= 'f':
-		default:
-			return false
-		}
-	}
-	return true
+	return sessionpkg.IsMindFSIDShape(raw)
 }
 
 // append 把一段文本 / reasoning 归到当前消息上。

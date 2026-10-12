@@ -33,6 +33,9 @@ type subagentMeta struct {
 	TaskID          string
 	SubagentType    string
 	TaskDescription string
+	// MessageID 是本条 AssistantMessage 在 claude 转录里的 `uuid`。
+	// 它随 chunk 一起上行，最终落进助手的 agent_id（桥梁键）。
+	MessageID string
 }
 
 type claudeTaskInfo struct {
@@ -143,7 +146,11 @@ func (r *Runtime) OpenSession(ctx context.Context, opts OpenOptions) (types.Sess
 			selectedModel = canonicalClaudeModel(candidate)
 		}
 	}
-	if selectedModel != "" {
+	// WithModel already selects an explicitly requested model at CLI startup.
+	// A control-plane SetModel here would repeat the same switch immediately and
+	// force an unnecessary provider confirmation. Keep SetModel only for the
+	// first-available fallback, where no model was passed to the CLI.
+	if selectedModel != "" && strings.TrimSpace(opts.Model) == "" {
 		if err := stream.SetModel(ctx, s.resolveClaudeModelArg(selectedModel)); err != nil {
 			client.Close()
 			return nil, err
@@ -661,6 +668,24 @@ func displayToTier(display string) string {
 	}
 }
 
+// claudeModelAliasForCLI converts MindFS's internal family IDs to Claude Code's
+// accepted family aliases. Those short IDs can appear in model-pin env vars when
+// MindFS IDs were copied into Claude settings (for example of[1M]); they are not
+// model IDs that Claude Code can validate with the provider.
+func claudeModelAliasForCLI(model string) string {
+	model = strings.TrimSpace(model)
+	has := has1MSuffix(model)
+	base := strip1MSuffix(model)
+	if !isClaudeAliasModel(base) || strings.EqualFold(base, "default") {
+		return model
+	}
+	alias := displayToTier(base)
+	if has {
+		return alias + "[1m]"
+	}
+	return alias
+}
+
 // applyToggle 按 has 标志返回模型名：开则保留/追加 [1m]，关则剥后缀。
 func applyToggle(value string, has bool) string {
 	value = strings.TrimSpace(value)
@@ -722,7 +747,7 @@ func resolveClaudeModelArg(base string, env map[string]string, has bool) string 
 		envKey := "ANTHROPIC_DEFAULT_" + strings.ToUpper(tier) + "_MODEL"
 		envVal := strings.TrimSpace(envLookup(env, envKey))
 		if envVal != "" {
-			return applyToggle(envVal, has)
+			return applyToggle(claudeModelAliasForCLI(envVal), has)
 		}
 		return applyToggle(tier, has)
 	}
@@ -1125,6 +1150,10 @@ func (s *session) emitThoughtChunkWithMeta(content string, meta subagentMeta) {
 
 func (s *session) handleAssistantMessage(msg claudeagent.AssistantMessage, sawDelta bool) {
 	meta := subagentMetaFromAssistant(msg)
+	// 补上 agent 侧桥梁键：AssistantMessage.UUID 是这条消息在转录里的 uuid，
+	// 导入器重放同一条时读回的就是它。SDK 一直带着这个字段，只是此前从未读取 ——
+	// 于是 live 写的助手行没有 agent_id、import 写的那行有，两个写入者永远对不上。
+	meta.MessageID = strings.TrimSpace(msg.UUID)
 	for _, block := range msg.Message.Content {
 		switch block.Type {
 		case "text":
@@ -2650,6 +2679,11 @@ func (s *session) emitMessageChunkWithMeta(content string, meta subagentMeta) {
 			TaskID:          meta.TaskID,
 			SubagentType:    meta.SubagentType,
 			TaskDescription: meta.TaskDescription,
+			// MessageID 是 claude 转录条目的 `uuid`（SDK 的 AssistantMessage.UUID）。
+			// 它是助手行在 agent 侧的桥梁键：导入器重放同一条消息时读回的就是它，
+			// 两个写入者（live / import）由此对上 —— 否则判重只能靠内容猜。
+			// 此前这层身份从不落盘，live 与 import 的 agent_id 永远对不上。
+			MessageID: meta.MessageID,
 		},
 	})
 }

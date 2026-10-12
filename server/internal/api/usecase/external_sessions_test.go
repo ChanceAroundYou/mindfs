@@ -93,7 +93,7 @@ func TestSyncExternalSessionDeltaFastDoesNotApplyCtxSeqToFilteredImport(t *testi
 	if len(latest.Exchanges) != 3 {
 		t.Fatalf("len(exchanges) = %d, want 3", len(latest.Exchanges))
 	}
-	// S2d-2 起正文归块流，主日志一行的 content 恒空，所以这里按 turn_id 从块流读。
+	// S2d-2 起正文归块流，主日志一行的 content 恒空，所以这里按 mindfs_id 从块流读。
 	// 这是「成交量」断言：ctx_seq 切片放行了多少条、放行的是哪几条。
 	if got := importedBlockTexts(context.Background(), manager, created.Key, latest.Exchanges, 1); len(got) != 1 || got[0] != "new user" {
 		t.Fatalf("exchange[1] blocks = %#v, want [new user]", got)
@@ -583,8 +583,6 @@ type listExternalSessionsTestImporter struct {
 
 func (i *listExternalSessionsTestImporter) AgentName() string { return "claude" }
 
-func (i *listExternalSessionsTestImporter) UsesPromptMessageID() bool { return false }
-
 // HasTranscriptTimestamps 假件按 claude 语义：转录条目自带 timestamp。
 func (i *listExternalSessionsTestImporter) HasTranscriptTimestamps() bool { return true }
 
@@ -604,8 +602,6 @@ type syncDeltaTestImporter struct {
 }
 
 func (i *syncDeltaTestImporter) AgentName() string { return "codex" }
-
-func (i *syncDeltaTestImporter) UsesPromptMessageID() bool { return false }
 
 // HasTranscriptTimestamps 假件按 codex 语义：转录行带 timestamp，时间地板对它成立。
 func (i *syncDeltaTestImporter) HasTranscriptTimestamps() bool { return true }

@@ -150,7 +150,7 @@ func TestDeleteSessionRemovesBlockStream(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 	if err := m.AppendBlocks(context.Background(), created.Key, []Block{
-		{Seq: 1, Pos: 0, Type: BlockTypeText, Text: "body", Step: 1, TurnID: "t"},
+		{Seq: 1, Pos: 0, Type: BlockTypeText, Text: "body", Step: 1, MindFSID: "t"},
 	}); err != nil {
 		t.Fatalf("AppendBlocks: %v", err)
 	}

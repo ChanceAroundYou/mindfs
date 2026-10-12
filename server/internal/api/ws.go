@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"net/url"
@@ -50,6 +51,7 @@ type StreamEvent struct {
 	Type      string    `json:"type"`
 	Data      any       `json:"data,omitempty"`
 	Timestamp time.Time `json:"timestamp,omitempty"`
+	MindFSID  string    `json:"mindfs_id,omitempty"`
 	// EventCursor 是**服务端内部**编号（"<baseExchangeSeq>:<eventSeq>"），只用来给
 	// ReplyingList 排序、以及在排空循环里判断「哪些事件还没发给这个客户端」。
 	// 客户端既不读也不回传 —— 挂载会话是快照重建，不是按序号续传（见 ReplayPending）。
@@ -868,13 +870,13 @@ func (h *WSHandler) runSessionMessage(job sessionMessageJob) {
 	}
 
 	// 回合身份与终结器。
-	// turnGen：本轮的 pending 代次（OnStart 置 pending 时拿到），结束时按它比对清理。
-	// subGens：本轮创建的子会话各自 pending 的代次，父轮收尾时一并终结。
+	// turnID：本轮的 pending 回合身份（OnStart 置 pending 时拿到），结束时按它比对清理。
+	// subIDs：本轮创建的子会话各自的回合身份，父轮收尾时一并终结。
 	// defer 保证成功 / 出错 / 提前 return / panic 都走到终结器 —— 这是「灯不灭」的根治点
 	// （原先只有函数尾一处显式广播，panic 或 SendMessage 挂死就永久残留）。
-	var turnGen uint64
-	subGens := map[string]uint64{}
-	var subGensMu sync.Mutex
+	var turnID string
+	subIDs := map[string]string{}
+	var subIDsMu sync.Mutex
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("[ws] session.message.panic root=%s session=%s request=%s panic=%v", rootID, key, requestID, r)
@@ -883,15 +885,15 @@ func (h *WSHandler) runSessionMessage(job sessionMessageJob) {
 			log.Printf("[ws] session.done.wait_timeout root=%s session=%s request=%s", rootID, key, requestID)
 		}
 		log.Printf("[ws] session.done root=%s session=%s request=%s", rootID, key, requestID)
-		h.AppContext.EndSessionTurn(rootID, key, requestID, turnGen)
-		subGensMu.Lock()
-		subs := make(map[string]uint64, len(subGens))
-		for k, v := range subGens {
+		h.AppContext.EndSessionTurn(rootID, key, requestID, turnID)
+		subIDsMu.Lock()
+		subs := make(map[string]string, len(subIDs))
+		for k, v := range subIDs {
 			subs[k] = v
 		}
-		subGensMu.Unlock()
-		for subKey, gen := range subs {
-			h.AppContext.EndSessionTurn(rootID, subKey, "", gen)
+		subIDsMu.Unlock()
+		for subKey, id := range subs {
+			h.AppContext.EndSessionTurn(rootID, subKey, "", id)
 		}
 	}()
 
@@ -912,7 +914,7 @@ func (h *WSHandler) runSessionMessage(job sessionMessageJob) {
 		ClientCtx:       job.ClientCtx,
 		OnStart: func(start usecase.MessageStart) {
 			h.AppContext.ClearTaskAuxFlagsForSession(rootID, key)
-			turnGen = streamHub.BroadcastSessionUserMessageAt(rootID, key, job.SessionType, job.SessionName, job.User.Agent, start.Model, start.ModelDisplayName, start.Mode, start.Effort, start.FastService, job.User.PlanMode, job.User.Content, job.User.Timestamp, start.UserExchangeSeq, job.ExcludeClientID, job.Queued, start.BaseExchangeSeq)
+			turnID = streamHub.BroadcastSessionUserMessageAt(rootID, key, job.SessionType, job.SessionName, job.User.Agent, start.Model, start.ModelDisplayName, start.Mode, start.Effort, start.FastService, job.User.PlanMode, job.User.Content, job.User.Timestamp, start.UserExchangeSeq, start.MindFSID, job.ExcludeClientID, job.Queued)
 		},
 		OnUpdate: func(update agenttypes.Event) {
 			updateTracker.Begin()
@@ -928,10 +930,12 @@ func (h *WSHandler) runSessionMessage(job sessionMessageJob) {
 		OnSubSessionCreated: func(created *session.Session) {
 			h.broadcastSessionMetaUpdated(rootID, created)
 			if created != nil {
-				gen := streamHub.SetPendingReply(rootID, created.Key, created.Name)
-				subGensMu.Lock()
-				subGens[created.Key] = gen
-				subGensMu.Unlock()
+				nextSeq := session.MaxExchangeSeq(created.Exchanges) + 1
+				mindfsID := session.NewMindFSID("", fmt.Sprintf("%s|agent|%d", created.Key, nextSeq))
+				id := streamHub.SetPendingReply(rootID, created.Key, created.Name, mindfsID)
+				subIDsMu.Lock()
+				subIDs[created.Key] = id
+				subIDsMu.Unlock()
 			}
 		},
 		OnSubSessionUpdate: func(sessionKey string, update agenttypes.Event) {
@@ -947,10 +951,10 @@ func (h *WSHandler) runSessionMessage(job sessionMessageJob) {
 				if ok := tracker.WaitIdle(msgCtx, sessionDoneSettleWindow, sessionDoneMaxWait); !ok {
 					log.Printf("[ws] sub-session.done.wait_timeout root=%s session=%s", rootID, sessionKey)
 				}
-				subGensMu.Lock()
-				gen := subGens[sessionKey]
-				subGensMu.Unlock()
-				h.AppContext.EndSessionTurn(rootID, sessionKey, "", gen)
+				subIDsMu.Lock()
+				id := subIDs[sessionKey]
+				subIDsMu.Unlock()
+				h.AppContext.EndSessionTurn(rootID, sessionKey, "", id)
 				return
 			}
 			tracker.End()

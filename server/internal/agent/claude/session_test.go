@@ -558,7 +558,7 @@ func TestResolveClaudeModelArg(t *testing.T) {
 		"ANTHROPIC_MODEL":                "sonnet",
 		"ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-flash[1M]",
 		"ANTHROPIC_DEFAULT_OPUS_MODEL":   "deepseek-v4-pro[1M]",
-		"ANTHROPIC_DEFAULT_FABLE_MODEL":  "of",
+		"ANTHROPIC_DEFAULT_FABLE_MODEL":  "of[1M]",
 	}
 
 	cases := []struct {
@@ -571,8 +571,12 @@ func TestResolveClaudeModelArg(t *testing.T) {
 		{"alias no toggle -> env stripped", "os", fullEnv, "deepseek-v4-flash"},
 		{"alias toggle lower -> env as-is", "os[1m]", fullEnv, "deepseek-v4-flash[1M]"},
 		{"alias toggle upper variant -> env as-is", "os[1M]", fullEnv, "deepseek-v4-flash[1M]"},
-		{"fable alias -> fable env", "fable", fullEnv, "of"},
-		{"fable display of -> fable env", "of", fullEnv, "of"},
+		{"fable alias -> fable env", "fable", fullEnv, "fable"},
+		{"fable display of -> fable env", "of", fullEnv, "fable"},
+		{"fable display of with 1m -> fable alias with 1m", "of[1m]", fullEnv, "fable[1m]"},
+		{"opus short env pin -> API alias", "op", map[string]string{"ANTHROPIC_DEFAULT_OPUS_MODEL": "op[1M]"}, "opus"},
+		{"sonnet short env pin -> API alias", "os", map[string]string{"ANTHROPIC_DEFAULT_SONNET_MODEL": "os"}, "sonnet"},
+		{"haiku short env pin -> API alias", "ok", map[string]string{"ANTHROPIC_DEFAULT_HAIKU_MODEL": "ok"}, "haiku"},
 		{"opus alias -> opus env stripped", "op", fullEnv, "deepseek-v4-pro"},
 		{"default no ANTHROPIC_MODEL -> default", "default", map[string]string{}, "default"},
 		{"default[1m] no env -> default toggle", "default[1m]", map[string]string{}, "default[1m]"},

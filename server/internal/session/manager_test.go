@@ -1139,7 +1139,7 @@ func TestExchangeSourceComesFromContext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 无 ctx 标注 = 历史数据，Source 必须为空（投影只按「时间戳逐字节相同」处理）
+	// 无 ctx 标注 = 历史数据，Source 必须为空。
 	if err := manager.AddExchangeForAgent(context.Background(), created, "user", "legacy", "", "", "", ""); err != nil {
 		t.Fatal(err)
 	}
@@ -1300,47 +1300,6 @@ func TestSessionIsLiveOwned(t *testing.T) {
 		if got := SessionIsLiveOwned(tc.exchanges); got != tc.want {
 			t.Fatalf("%s: SessionIsLiveOwned = %v, want %v", tc.name, got, tc.want)
 		}
-	}
-}
-
-func TestAuditSessionReportsGapsDamagedAndAuxOrphans(t *testing.T) {
-	root := rootfs.NewRootInfo("mindfs", "mindfs", t.TempDir())
-	manager := NewManager(root)
-	created, err := manager.Create(context.Background(), CreateInput{Type: TypeChat, Name: "Audit"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	writeExchangeFile(t, root, created.Key, []string{
-		exchangeJSON(t, 1, "a"),
-		exchangeJSON(t, 3, "c"), // seq 2 缺失 → 空洞
-		strings.Repeat("\x00", 32) + exchangeJSON(t, 4, "d"),
-		"{ 这不是 JSON", // 坏行
-	})
-	auxPath := filepath.Join(root.MetaDir(), "sessions", created.Key+".aux.jsonl")
-	if err := os.WriteFile(auxPath, []byte(strings.Join([]string{
-		`{"seq":1,"line":0}`, // 有对应 exchange
-		`{"seq":9,"line":0}`, // 悬空
-	}, "\n")+"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	audit, err := manager.AuditSession(created.Key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if audit.Rows != 3 {
-		t.Fatalf("rows = %d, want 3", audit.Rows)
-	}
-	if len(audit.SeqGaps) != 1 || audit.SeqGaps[0] != 2 {
-		t.Fatalf("seq gaps = %v, want [2]", audit.SeqGaps)
-	}
-	if audit.DamagedLines != 1 {
-		t.Fatalf("damaged = %d, want 1", audit.DamagedLines)
-	}
-	if audit.NulRepairedLines != 1 {
-		t.Fatalf("nul repaired = %d, want 1", audit.NulRepairedLines)
-	}
-	if len(audit.AuxOrphanSeqs) != 1 || audit.AuxOrphanSeqs[0] != 9 {
-		t.Fatalf("aux orphans = %v, want [9]", audit.AuxOrphanSeqs)
 	}
 }
 

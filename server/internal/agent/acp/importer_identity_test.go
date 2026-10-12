@@ -166,12 +166,8 @@ func TestACPImportDoesNotRewriteTimestampWhileMerging(t *testing.T) {
 	}
 }
 
-// UsesPromptMessageID 恒真 —— MindFS 递出去的 messageId 只有这一层能接住。
-func TestACPImporterReportsPromptMessageIDSupport(t *testing.T) {
+func TestACPImporterReportsNoTranscriptTimestamps(t *testing.T) {
 	i := NewImporter(ImporterOptions{AgentName: "dsh", Command: "dsh"})
-	if !i.UsesPromptMessageID() {
-		t.Fatal("ACP 必须自称支持 prompt messageId")
-	}
 	// 没有真时间戳，所以时间地板对它无效 —— 调用方据此不设地板。
 	if i.HasTranscriptTimestamps() {
 		t.Fatal("ACP 的 SessionUpdate 不带时间戳，不能自称有")

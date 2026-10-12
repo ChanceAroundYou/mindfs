@@ -23,17 +23,17 @@ func TestClearNativeIdentityWipesExchangeAndBlockNativeIDs(t *testing.T) {
 	const turnID = "11111111-2222-3333-4444-555555555555"
 	writeExchangeLog(t, m, created.Key, []Exchange{
 		{
-			Seq: 1, Role: "user", LegacyContent: "hi", TurnID: turnID, TurnSeq: 1,
-			NativeTurn: "old-turn-1", NativePrompt: "old-prompt-1",
+			Seq: 1, Role: "user", LegacyContent: "hi", MindFSID: turnID, TurnSeq: 1,
+			AgentID: "old-turn-1",
 		},
 		{
-			Seq: 2, Role: "agent", LegacyContent: "yo", TurnID: turnID, TurnSeq: 1,
-			NativeTurn: "old-turn-2", NativePrompt: "old-prompt-2",
+			Seq: 2, Role: "agent", LegacyContent: "yo", MindFSID: turnID, TurnSeq: 1,
+			AgentID: "old-turn-2",
 		},
 	})
 	if err := m.AppendBlocks(context.Background(), created.Key, []Block{
-		{Seq: 1, Pos: 0, Type: BlockTypeText, Text: "hi", Step: 1, TurnID: turnID, NativeID: "old-native-1"},
-		{Seq: 2, Pos: 0, Type: BlockTypeReasoning, Text: "why", Step: 1, TurnID: turnID, NativeID: "old-native-2"},
+		{Seq: 1, Pos: 0, Type: BlockTypeText, Text: "hi", Step: 1, MindFSID: turnID, AgentID: "old-native-1"},
+		{Seq: 2, Pos: 0, Type: BlockTypeReasoning, Text: "why", Step: 1, MindFSID: turnID, AgentID: "old-native-2"},
 	}); err != nil {
 		t.Fatalf("AppendBlocks: %v", err)
 	}
@@ -51,12 +51,12 @@ func TestClearNativeIdentityWipesExchangeAndBlockNativeIDs(t *testing.T) {
 		t.Fatalf("Get: %v", err)
 	}
 	for _, ex := range got.Exchanges {
-		if ex.NativeTurn != "" || ex.NativePrompt != "" {
+		if ex.AgentID != "" {
 			t.Fatalf("exchange seq=%d 仍带 native id：%#v", ex.Seq, ex)
 		}
 		// 权威身份与正文不受影响 —— 清理只碰 native id。
-		if ex.TurnID != turnID {
-			t.Fatalf("exchange seq=%d turn_id 被误清：%q", ex.Seq, ex.TurnID)
+		if ex.MindFSID != turnID {
+			t.Fatalf("exchange seq=%d mindfs_id 被误清：%q", ex.Seq, ex.MindFSID)
 		}
 	}
 	blocks, err := m.ReadBlocks(context.Background(), created.Key)
@@ -67,11 +67,11 @@ func TestClearNativeIdentityWipesExchangeAndBlockNativeIDs(t *testing.T) {
 		t.Fatalf("blocks = %#v, want 2（清理不得丢块）", blocks)
 	}
 	for _, block := range blocks {
-		if block.NativeID != "" {
+		if block.AgentID != "" {
 			t.Fatalf("block seq=%d pos=%d 仍带 native_id：%#v", block.Seq, block.Pos, block)
 		}
-		if block.TurnID != turnID {
-			t.Fatalf("block turn_id 被误清：%q", block.TurnID)
+		if block.MindFSID != turnID {
+			t.Fatalf("block mindfs_id 被误清：%q", block.MindFSID)
 		}
 	}
 }
@@ -85,11 +85,11 @@ func TestClearNativeIdentityPersistsToDisk(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 	writeExchangeLog(t, m, created.Key, []Exchange{{
-		Seq: 1, Role: "user", LegacyContent: "hi", TurnID: "t", TurnSeq: 1,
-		NativeTurn: "old-turn", NativePrompt: "old-prompt",
+		Seq: 1, Role: "user", LegacyContent: "hi", MindFSID: "t", TurnSeq: 1,
+		AgentID: "old-turn",
 	}})
 	if err := m.AppendBlocks(context.Background(), created.Key, []Block{
-		{Seq: 1, Pos: 0, Type: BlockTypeText, Text: "hi", NativeID: "old-native"},
+		{Seq: 1, Pos: 0, Type: BlockTypeText, Text: "hi", AgentID: "old-native"},
 	}); err != nil {
 		t.Fatalf("AppendBlocks: %v", err)
 	}
@@ -136,9 +136,9 @@ func TestClearNativeIdentityLeavesCleanFilesUntouched(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	writeExchangeLog(t, m, created.Key, []Exchange{{Seq: 1, Role: "user", LegacyContent: "hi", TurnID: "t", TurnSeq: 1}})
+	writeExchangeLog(t, m, created.Key, []Exchange{{Seq: 1, Role: "user", LegacyContent: "hi", MindFSID: "t", TurnSeq: 1}})
 	if err := m.AppendBlocks(context.Background(), created.Key, []Block{
-		{Seq: 1, Pos: 0, Type: BlockTypeText, Text: "hi", TurnID: "t"},
+		{Seq: 1, Pos: 0, Type: BlockTypeText, Text: "hi", MindFSID: "t"},
 	}); err != nil {
 		t.Fatalf("AppendBlocks: %v", err)
 	}
@@ -210,8 +210,8 @@ func TestBlockNativeIDRoundTripsThroughJSONL(t *testing.T) {
 		t.Fatalf("blocksPath: %v", err)
 	}
 	if err := m.AppendBlocks(context.Background(), created.Key, []Block{{
-		Seq: 1, Pos: 0, Type: BlockTypeToolCall, Step: 2, TurnID: "t",
-		NativeID: "agent-msg-7", ParentToolUseID: "toolu-1", TaskID: "task-2", SubagentType: "explore",
+		Seq: 1, Pos: 0, Type: BlockTypeToolCall, Step: 2, MindFSID: "t",
+		AgentID: "agent-msg-7", ParentToolUseID: "toolu-1", TaskID: "task-2", SubagentType: "explore",
 		ToolCall: &agenttypes.ToolCall{CallID: "c1", Title: "t"},
 	}}); err != nil {
 		t.Fatalf("AppendBlocks: %v", err)
@@ -221,7 +221,7 @@ func TestBlockNativeIDRoundTripsThroughJSONL(t *testing.T) {
 		t.Fatalf("ReadMetaFile: %v", err)
 	}
 	body := string(payload)
-	for _, want := range []string{`"native_id":"agent-msg-7"`, `"parent_tool_use_id":"toolu-1"`, `"task_id":"task-2"`, `"subagent_type":"explore"`, `"step":2`} {
+	for _, want := range []string{`"agent_id":"agent-msg-7"`, `"parent_tool_use_id":"toolu-1"`, `"task_id":"task-2"`, `"subagent_type":"explore"`, `"step":2`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("块流缺 %s：%s", want, body)
 		}
@@ -230,7 +230,7 @@ func TestBlockNativeIDRoundTripsThroughJSONL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadBlocks: %v", err)
 	}
-	if len(blocks) != 1 || blocks[0].NativeID != "agent-msg-7" || blocks[0].TaskID != "task-2" {
+	if len(blocks) != 1 || blocks[0].AgentID != "agent-msg-7" || blocks[0].TaskID != "task-2" {
 		t.Fatalf("blocks = %#v", blocks)
 	}
 }

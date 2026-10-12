@@ -316,9 +316,8 @@ func TestHandleSessionSyncCarriesInFlightUserWithRealSeq(t *testing.T) {
 	}
 }
 
-// 双写重复行必须在 API 读取出口折叠：保留实时路径那条，导入那条隐藏；且导入行的 aux
-// 要重挂到保留行上（aux 以 seq 为键，丢了工具卡就没了）。
-func TestHandleSessionGetProjectsDuplicateExchanges(t *testing.T) {
+// GET 原样返回持久化行；判重在写入侧处理，读路径不能再用内容启发式隐藏真实行。
+func TestHandleSessionGetKeepsDuplicateExchangesAndAuxOnOriginalSeq(t *testing.T) {
 	app, rootID, manager := newWindowTestApp(t)
 	ctx := context.Background()
 	s, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, Name: "Dup"})
@@ -354,17 +353,20 @@ func TestHandleSessionGetProjectsDuplicateExchanges(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if len(payload.Exchanges) != 1 {
-		t.Fatalf("exchanges = %d, want 1: %+v", len(payload.Exchanges), payload.Exchanges)
+	if len(payload.Exchanges) != 2 {
+		t.Fatalf("exchanges = %d, want 2: %+v", len(payload.Exchanges), payload.Exchanges)
 	}
 	if payload.Exchanges[0].Source != session.ExchangeSourceLive {
-		t.Fatalf("保留的必须是实时路径写的行: %+v", payload.Exchanges[0])
+		t.Fatalf("seq=1 必须是实时路径行: %+v", payload.Exchanges[0])
 	}
-	if len(payload.Aux["1"]) == 0 {
-		t.Fatalf("导入行的 aux 必须重挂到保留行 seq=1: %+v", payload.Aux)
+	if payload.Exchanges[1].Seq != 2 || payload.Exchanges[1].Source != session.ExchangeSourceImport {
+		t.Fatalf("seq=2 必须保留导入行: %+v", payload.Exchanges[1])
 	}
-	if _, ok := payload.Aux["2"]; ok {
-		t.Fatalf("被隐藏行的 aux 键不应再出现: %+v", payload.Aux)
+	if len(payload.Aux["2"]) == 0 {
+		t.Fatalf("导入行的 aux 必须保留在原 seq=2: %+v", payload.Aux)
+	}
+	if _, ok := payload.Aux["1"]; ok {
+		t.Fatalf("aux 不应被重映射到 seq=1: %+v", payload.Aux)
 	}
 }
 
@@ -483,13 +485,13 @@ func TestHandleSessionGetWindowInlinesBlocks(t *testing.T) {
 	const turnID = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
 	for i := 1; i <= 3; i++ {
 		if err := manager.AddExchangeForAgent(
-			session.WithExchangeIdentity(ctx, session.ExchangeIdentity{TurnID: turnID, TurnSeq: i}),
+			session.WithExchangeIdentity(ctx, session.ExchangeIdentity{MindFSID: turnID, TurnSeq: i}),
 			s, "agent", "", "claude", "", "", ""); err != nil {
 			t.Fatalf("add exchange %d: %v", i, err)
 		}
 		// 每轮都只有 reasoning（本 bug 的形态）：没有 text 块，正文只在块流里。
 		if err := manager.AppendBlocks(ctx, s.Key, []session.Block{{
-			Seq: i, Pos: 0, Type: session.BlockTypeReasoning, Step: 1, TurnID: turnID,
+			Seq: i, Pos: 0, Type: session.BlockTypeReasoning, Step: 1, MindFSID: turnID,
 			Text: "reasoning-for-" + string(rune('a'+i-1)),
 		}}); err != nil {
 			t.Fatalf("AppendBlocks %d: %v", i, err)
@@ -517,8 +519,8 @@ func TestHandleSessionGetWindowInlinesBlocks(t *testing.T) {
 		if items[0].Text == "" {
 			t.Fatalf("seq %s 的正文被压空了（块流是正文唯一载体）", seq)
 		}
-		if items[0].TurnID != turnID {
-			t.Fatalf("seq %s 丢了 turn_id：%#v", seq, items[0])
+		if items[0].MindFSID != turnID {
+			t.Fatalf("seq %s 丢了 mindfs_id：%#v", seq, items[0])
 		}
 	}
 	if _, leaked := body.Blocks["1"]; leaked {
@@ -623,7 +625,7 @@ func TestBlocksPayloadWireFieldNames(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 	identity := session.WithExchangeIdentity(ctx, session.ExchangeIdentity{
-		TurnID: "11111111-2222-4333-8444-555555555555", TurnSeq: 1,
+		MindFSID: "11111111-2222-4333-8444-555555555555", TurnSeq: 1,
 	})
 	if err := manager.AddExchangeForAgent(identity, s, "agent", "", "claude", "", "", ""); err != nil {
 		t.Fatalf("add exchange: %v", err)
@@ -631,16 +633,16 @@ func TestBlocksPayloadWireFieldNames(t *testing.T) {
 	if err := manager.AppendBlocks(ctx, s.Key, []session.Block{
 		{
 			Seq: 1, Pos: 0, Type: session.BlockTypeReasoning, Step: 1,
-			TurnID: "11111111-2222-4333-8444-555555555555", Text: "想",
+			MindFSID: "11111111-2222-4333-8444-555555555555", Text: "想",
 		},
 		{
 			Seq: 1, Pos: 1, Type: session.BlockTypeText, Step: 1,
-			TurnID:   "11111111-2222-4333-8444-555555555555",
-			NativeID: "native-1", Text: "正文",
+			MindFSID: "11111111-2222-4333-8444-555555555555",
+			AgentID:  "native-1", Text: "正文",
 		},
 		{
 			Seq: 1, Pos: 2, Type: session.BlockTypeToolCall, Step: 1,
-			TurnID:          "11111111-2222-4333-8444-555555555555",
+			MindFSID:        "11111111-2222-4333-8444-555555555555",
 			ToolCall:        &agenttypes.ToolCall{CallID: "c1", Title: "t"},
 			ParentToolUseID: "p1", TaskID: "task-1", SubagentType: "explore",
 		},
@@ -665,16 +667,16 @@ func TestBlocksPayloadWireFieldNames(t *testing.T) {
 
 	// 键集合 = TS `SessionBlock` 里声明的那一组（omitempty 的字段在该块没值时缺席）。
 	want := []map[string]bool{
-		{"seq": true, "pos": true, "revision": true, "type": true, "text": true, "step": true, "turn_id": true},
-		{"seq": true, "pos": true, "revision": true, "type": true, "text": true, "step": true, "turn_id": true, "native_id": true},
-		{"seq": true, "pos": true, "revision": true, "type": true, "step": true, "turn_id": true, "toolcall": true,
+		{"seq": true, "pos": true, "revision": true, "type": true, "text": true, "step": true, "mindfs_id": true},
+		{"seq": true, "pos": true, "revision": true, "type": true, "text": true, "step": true, "mindfs_id": true, "agent_id": true},
+		{"seq": true, "pos": true, "revision": true, "type": true, "step": true, "mindfs_id": true, "toolcall": true,
 			"parent_tool_use_id": true, "task_id": true, "subagent_type": true},
 	}
 	// 前端读取用的名字 → 该名字在 Go 侧的出处，红了按这里对照。
 	known := map[string]string{
 		"seq": "Block.Seq", "pos": "Block.Pos", "revision": "Block.Revision",
 		"type": "Block.Type", "text": "Block.Text", "step": "Block.Step",
-		"turn_id": "Block.TurnID", "native_id": "Block.NativeID",
+		"mindfs_id": "Block.MindFSID", "agent_id": "Block.AgentID",
 		"toolcall": "Block.ToolCall", "todo": "Block.Todo", "plan": "Block.Plan",
 		"compact": "Block.Compact", "parent_tool_use_id": "Block.ParentToolUseID",
 		"task_id": "Block.TaskID", "subagent_type": "Block.SubagentType",

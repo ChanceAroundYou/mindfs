@@ -776,15 +776,14 @@ func (p *Process) SendMessage(ctx context.Context, sessionKey, content string) e
 			acp.TextBlock(content),
 		},
 	}
-	// 把 MindFS 本轮的 turn_id 作为 prompt 的 messageId 递出去（方案 D3）。
+	// 把 MindFS 本轮的 mindfs_id 作为 prompt 的 messageId 递出去（方案 D3）。
 	//
-	// 为什么要这么接：实时路径写的 user 行把同一个 id 存进了 `native_prompt`，
-	// agent 侧应当原样回显成 `UserMessageChunk.MessageId`，导入侧从转录里读回
-	// 同一个值 —— 于是「实时写入」和「转录导入」两个写入者之间第一次有了
-	// **共同键**，判重不必再靠「内容相等 + ±5 秒」猜。
+	// 为什么要这么接：实时路径写的 user 行与导入侧写的 user 行都从 agent 的
+	// messageId 派生出同一个 mindfs_id，回显这一层让「递出去的」与「写进 agent_id
+	// 的」始终是同一条 id —— 未来靠 agent_id 判重时它才可用。
 	//
 	// ACP 标了这个字段为 **UNSTABLE**，agent 未必回显。所以：
-	//   · 没有 turn_id（不该发生，但协议允许）→ 照旧不传；
+	//   · 没有 mindfs_id（不该发生，但协议允许）→ 照旧不传；
 	//   · 必须是 UUID 形态 —— 导入侧只认 UUID，递个别的等于递了个对不上的身份；
 	//   · 绝不能为了让 agent 回显而自己编一个 —— 编出来的 id 与库里那一行不同，
 	//     反而制造「有身份却对不上」的假行。
@@ -798,10 +797,10 @@ func (p *Process) SendMessage(ctx context.Context, sessionKey, content string) e
 	}
 	// 回显核对（方案 D10：对不上就**记日志，绝不猜**）。
 	//
-	// 我们递了 turn_id，agent 应当在 `PromptResponse.userMessageId` 里原样回显。
+	// 我们递了 mindfs_id，agent 应当在 `PromptResponse.userMessageId` 里原样回显。
 	// 回显不一致意味着「我以为这条转录对应库里那一行」的依据不成立 —— 但这**不是**
 	// 错误：ACP 把 `messageId` 标为 UNSTABLE，agent 可以不认。库里那一行照写，
-	// 只是它将来只能靠内容兜底判重。绝不能在这里拿回显值去改写 native_prompt：
+	// 只是它将来只能靠内容兜底判重。绝不能在这里拿回显值去改写 agent_id：
 	// 换成 agent 的值就等于承认「库里的行」是 agent 那条，两边对不上才是真的错。
 	if requested := messageIDOf(req.MessageId); requested != "" {
 		if echoed := messageIDOf(resp.UserMessageId); echoed == "" {
@@ -809,7 +808,7 @@ func (p *Process) SendMessage(ctx context.Context, sessionKey, content string) e
 				"（该 agent 未回显 messageId，本轮回退内容判重）", p.agentLabel(), sessionKey)
 		} else if echoed != requested {
 			log.Printf("[agent/acp] prompt.message_id.mismatch agent=%s session_key=%s requested=%s echoed=%s"+
-				"（不采信回显值：native_prompt 保持 MindFS turn_id，判重本轮退回内容比对）",
+				"（不采信回显值：agent_id 保持 MindFS mindfs_id，判重本轮退回内容比对）",
 				p.agentLabel(), sessionKey, requested, echoed)
 		}
 	}

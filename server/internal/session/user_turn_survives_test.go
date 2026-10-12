@@ -12,7 +12,7 @@ import (
 //
 // 旧的跳过 guard（`content == "" && role 不是 agent/assistant` 就返回）在删 Content 之前
 // 是无害的：user 行总带着用户输入的 content。之后它会把**每一行 user 都静默丢掉** ——
-// 轮次元数据（turn_id / native_prompt）一起没了，前端按 seq 合并时用户那句话直接不显示，
+// 轮次元数据（mindfs_id / native_prompt）一起没了，前端按 seq 合并时用户那句话直接不显示，
 // 搜索的 user 命中优先也因找不到对应行而失效（role 退回默认 "agent"）。
 //
 // 一行的存在意义在**轮次身份**，不在正文：正文现在归块流。

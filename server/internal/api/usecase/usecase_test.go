@@ -2500,6 +2500,7 @@ func (uploadTestRegistry) ReleaseFileWatcher(string, string) {}
 
 type fakeUsecaseAgentSession struct {
 	id          string
+	model       string
 	cancelCalls int
 	closeCalls  int
 	onUpdate    func(agenttypes.Event)
@@ -2511,7 +2512,7 @@ func (s *fakeUsecaseAgentSession) AnswerQuestion(context.Context, agenttypes.Ask
 	return nil
 }
 
-func (s *fakeUsecaseAgentSession) CurrentModel() string { return "" }
+func (s *fakeUsecaseAgentSession) CurrentModel() string { return s.model }
 
 func (s *fakeUsecaseAgentSession) SetModel(context.Context, string) error { return nil }
 

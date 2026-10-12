@@ -688,7 +688,7 @@ func TestReadClaudeImportedExchangesAppliesFloorWithoutCursorOrBootstrap(t *test
 
 // 时间地板（TimestampFloor）：live-owned 会话的游标冻结已久，重启后的兜底补齐若只按偏移读，
 // 会把早已落库的旧回合整段重导一遍——那些重导行因为「相邻同角色合并」内容并不逐字相同，
-// 写入侧判重和读取投影都折叠不掉。加了地板之后：游标决定从哪开始读，地板决定读到的东西
+// 写入侧判重都折叠不掉。加了地板之后：游标决定从哪开始读，地板决定读到的东西
 // 算不算数，兜底补齐只拿「比库里最新一条更新」的尾轮。
 func TestReadClaudeImportedExchangesHonorsTimestampFloor(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "session.jsonl")

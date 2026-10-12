@@ -50,8 +50,8 @@ func (t BlockType) Valid() bool {
 
 // Block 是块流 `<key>.blocks.jsonl` 里的一行。
 //
-// 身份三级（方案 §3.3）：turn_id（MindFS 权威，全 agent 通用）+ step（agent 的
-// 消息投递单元）+ pos（步内段序）。native_id 是回查键，可空、可后补、fork 后可变更 ——
+// 身份三级（方案 §3.3）：mindfs_id（MindFS 权威，全 agent 通用）+ step（agent 的
+// 消息投递单元）+ pos（步内段序）。agent_id 是桥梁键，可空、可后补、fork 后可变更 ——
 // 它**不是**权威身份（repoint.go:35 明载 fork 后 claude 产出全新 uuid）。
 type Block struct {
 	Seq      int       `json:"seq"`
@@ -69,14 +69,38 @@ type Block struct {
 	// Step 是步序。块在步收口前落盘时写哨兵 -1，收口时用 (seq,pos)+revision+1 补正。
 	Step int `json:"step"`
 
-	// TurnID 是 MindFS 权威身份；NativeID 是 agent 侧回查键（可空）。
-	TurnID   string `json:"turn_id,omitempty"`
-	NativeID string `json:"native_id,omitempty"`
+	// MindFSID 是 MindFS 权威身份；AgentID 是 agent 侧桥梁键（可空）。
+	MindFSID string `json:"mindfs_id,omitempty"`
+	AgentID  string `json:"agent_id,omitempty"`
 
 	// 子代理归属（方案 D16）。
 	ParentToolUseID string `json:"parent_tool_use_id,omitempty"`
 	TaskID          string `json:"task_id,omitempty"`
 	SubagentType    string `json:"subagent_type,omitempty"`
+}
+
+// UnmarshalJSON 兼容块流里的旧键名：turn_id → MindFSID、native_id → AgentID。
+//
+// 没有这层，重命名之后读存量 39517 个块会全丢身份 —— 块与轮次挂不上，
+// 「按轮次折叠 / 重放」之类全失效。写入侧只写新键名，旧键名只读不写。
+func (b *Block) UnmarshalJSON(data []byte) error {
+	type alias Block
+	var raw struct {
+		alias
+		LegacyMindFSID string `json:"turn_id"`
+		LegacyAgentID  string `json:"native_id"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*b = Block(raw.alias)
+	if b.MindFSID == "" {
+		b.MindFSID = raw.LegacyMindFSID
+	}
+	if b.AgentID == "" {
+		b.AgentID = raw.LegacyAgentID
+	}
+	return nil
 }
 
 // blocksFileTpl 与主日志 / aux 同目录，便于一起备份与一起迁移。
@@ -485,12 +509,12 @@ func BuildTurnBlocks(seq, step int, turnID, content string, aux []ExchangeAux) [
 }
 
 func newBlock(seq, pos int, blockType BlockType, step int, turnID, text string) Block {
-	return Block{Seq: seq, Pos: pos, Type: blockType, Text: text, Step: step, TurnID: turnID}
+	return Block{Seq: seq, Pos: pos, Type: blockType, Text: text, Step: step, MindFSID: turnID}
 }
 
 // auxBlock 把一条 aux 编译成块。判据顺序与渲染器一致：thought → plan → todo → compact → toolcall。
 func auxBlock(seq, step int, turnID string, aux ExchangeAux) (Block, bool) {
-	block := Block{Seq: seq, Step: step, TurnID: turnID}
+	block := Block{Seq: seq, Step: step, MindFSID: turnID}
 	switch {
 	case aux.Thought != "":
 		block.Type = BlockTypeReasoning
@@ -517,13 +541,13 @@ func auxBlock(seq, step int, turnID string, aux ExchangeAux) (Block, bool) {
 //
 // **为什么必须有**：`repoint.go:35` 明载「fork 之后 claude 产出全新 uuid」。本方案
 // 开始持久化 native id 之后，旧 native id 会与 fork 后的新转录对不上 —— 判重失效、
-// 回查错行。所以在 repoint 换 id 的同时必须把 native id 一并清掉。
-// 这是本方案**直接引入**的新步骤：不持久化 native id 时它不存在。
+// 回查错行。所以在 repoint 换 id 的同时必须把 agent id 一并清掉。
+// 这是本方案**直接引入**的新步骤：不持久化 agent id 时它不存在。
 //
-// 只清 native id：turn_id（MindFS 权威身份）与正文都不动 —— turn_id 落盘即定、永不改。
+// 只清 agent id：mindfs_id（MindFS 权威身份）与正文都不动 —— mindfs_id 落盘即定、永不改。
 //
-// 零副作用约定：**文件里本来没有 native id 时一个字节都不写**。无谓重写会改 mtime、
-// 白白让内存缓存失效；而落地前的全部历史数据都没有 native id，这条是常态而非边角。
+// 零副作用约定：**文件里本来没有 agent id 时一个字节都不写**。无谓重写会改 mtime、
+// 白白让内存缓存失效；而落地前的全部历史数据都没有 agent id，这条是常态而非边角。
 func (m *Manager) ClearNativeIdentity(ctx context.Context, key string) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -531,10 +555,11 @@ func (m *Manager) ClearNativeIdentity(ctx context.Context, key string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if err := m.clearNativeFieldsUnsafe(key, exchangePathForKey, "native_turn", "native_prompt"); err != nil {
+	// 老文件写的是 native_turn/native_prompt，新文件写 agent_id —— 三套键名都要清。
+	if err := m.clearNativeFieldsUnsafe(key, exchangePathForKey, "agent_id", "native_turn", "native_prompt"); err != nil {
 		return err
 	}
-	return m.clearNativeFieldsUnsafe(key, blocksPathForKey, "native_id")
+	return m.clearNativeFieldsUnsafe(key, blocksPathForKey, "agent_id", "native_id")
 }
 
 // clearNativeFieldsUnsafe 按路径模板清掉若干 JSON 字段。changed 为空表示没动过文件。

@@ -1,6 +1,7 @@
 package session
 
 import (
+	"encoding/json"
 	"os"
 	"strings"
 	"time"
@@ -16,7 +17,7 @@ const (
 
 // Exchange.Source 取值：谁写的这一行。
 // 实时路径（MindFS 自己在驱动会话）写 live，转录导入器写 import；老数据为空。
-// 用途见 usecase 的投影：同一轮被两个写入者各写一行时，投影保留 live、隐藏 import。
+// 写入来源用于会话所有权与同步逻辑；它不改变 GET 返回的持久化行。
 const (
 	ExchangeSourceLive   = "live"
 	ExchangeSourceImport = "import"
@@ -108,17 +109,63 @@ type Exchange struct {
 	// ── 轮次元数据（CUSTOM(G-BH)，方案 §3.1）────────────────────────────
 	// 正文搬去块流之后，主日志一轮一行只留身份与展示字段。
 	//
-	// TurnID 是 **MindFS 权威身份**：落盘即定、永不改，客户端可生成（方案 D4）、
-	// 无客户端时服务端 mint UUIDv4（C2）。它与 agent 侧的 native id 是两回事 ——
-	// native id 在 fork/repoint/resume 后不稳定，只能当映射值（repoint.go:35）。
-	TurnID string `json:"turn_id,omitempty"`
-	// TurnSeq 是「打开该轮的 user 行 seq」，排序 / 人读用；与 TurnID 一一对应。
+	// MindFSID 是 **MindFS 权威身份**（MindFS mint 的唯一 id，系统内实际使用）：
+	// 落盘即定、永不改。它是 deterministically derived from AgentID when available
+	// (UUIDv5), otherwise from sessionKey+role+seq (UUIDv5 fallback).
+	// 全系统只有两类 id：MindFSID（MindFS 铸，权威）与 AgentID（agent 返回，桥梁）。
+	MindFSID string `json:"mindfs_id,omitempty"`
+	// TurnSeq 是「打开该轮的 user 行 seq」，排序 / 人读用；与 MindFSID 一一对应。
 	TurnSeq int `json:"turn_seq,omitempty"`
-	// NativeTurn / NativePrompt 是 agent 侧回查键（可空、可后补）。
-	NativeTurn   string `json:"native_turn,omitempty"`
-	NativePrompt string `json:"native_prompt,omitempty"`
+	// AgentID 是 agent 侧的身份（可空、可后补）。各 agent 模式不同：
+	// claude = 转录条目 `uuid`，ACP = `messageId`，codex = 尚未实证。
+	//
+	// 它**不是** MindFS 的身份 —— 只是一个桥梁键：恢复 / repoint / 跨写入者对齐时
+	// 靠它认出「agent 侧的同一条消息」。判重优先级：AgentID > MindFSID > 内容兜底。
+	AgentID string `json:"agent_id,omitempty"`
 	// Partial 标记「本轮未收尾」：崩溃 / 中断丢缓冲区时靠 import 补齐（方案 D13）。
 	Partial bool `json:"partial,omitempty"`
+}
+
+// exchangeLegacyAlias 处理老文件里的旧字段名，重命名不丢数据。
+//
+// json tag 改名后，老 JSONL 里写的是旧键名 —— 没有这层，133 个存量会话读出来
+// MindFSID / AgentID 全空，等于把回填过的 39517 块的身份丢了。读取侧兼容即可，
+// 写入侧只写新键名。
+type exchangeLegacyAlias struct {
+	LegacyTurnID   string `json:"turn_id"`     // → MindFSID
+	LegacyNativeID string `json:"native_id"`   // → AgentID (Block)
+	LegacyNatTurn  string `json:"native_turn"` // → AgentID
+	LegacyNatPrmpt string `json:"native_prompt"`
+}
+
+// UnmarshalJSON 兼容老键名：旧字段读进来，新键名优先。
+func (e *Exchange) UnmarshalJSON(data []byte) error {
+	type alias Exchange // 避免递归
+	var raw struct {
+		alias
+		exchangeLegacyAlias
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*e = Exchange(raw.alias)
+	if e.MindFSID == "" {
+		e.MindFSID = raw.LegacyTurnID
+	}
+	if e.AgentID == "" {
+		// 老数据 user 行在 native_prompt、agent 行在 native_turn —— 合并成一个键。
+		e.AgentID = strings.TrimSpace(firstNonEmptyRaw(raw.LegacyNatTurn, raw.LegacyNatPrmpt))
+	}
+	return nil
+}
+
+func firstNonEmptyRaw(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 type ExchangeAux struct {

@@ -117,7 +117,7 @@ func Start(ctx context.Context, addr string, opts StartOptions) error {
 	if err != nil {
 		return err
 	}
-	// 上游的 kanban.Start(ctx) 走并发调度器，本地已删（CLAUDE.md 事实 13：无并发调度），
+	// 上游的 kanban.Start(ctx) 走并发调度器，本地已删（AGENTS.md 事实 13：无并发调度），
 	// 看板实例由每账户 AppContext 惰性构建（app/workspace.go）。
 	localCLIToken, err := EnsureLocalCLIToken(addr, opts.UseTLS)
 	if err != nil {

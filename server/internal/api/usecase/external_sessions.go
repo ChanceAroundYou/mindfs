@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"path/filepath"
 	"strings"
@@ -339,7 +340,7 @@ func (s *Service) SyncExternalSessionDelta(ctx context.Context, in SyncExternalS
 	// 这里曾经留过「进程启动后每会话一次兜底补齐」的例外，2026-09-16 被真实事故证伪并撤掉：
 	// live-owned 会话的字节游标是**冻结**的（导入器平时不跑），拿它当起点会把早已落库的旧
 	// 回合整段重导；而导入器会把相邻同角色条目**合并**，重导出来的行与实时路径写的行并不
-	// 逐字相同 —— 写入侧判重（±5s）和读取投影（内容相等 / 600s 前缀窗）都折叠不掉，于是
+	// 逐字相同 —— 写入侧判重（±5s）也折叠不掉，于是
 	// 用户看到「ask 下面又渲染了一轮出现过的文字」（AIS/docs 的 BP 会话，重导了 09-14 的内容）。
 	//
 	// 需要补历史时走用户手点的「同步」（Full）：那是显式意图，且带时间地板（见下），
@@ -359,8 +360,8 @@ func (s *Service) SyncExternalSessionDelta(ctx context.Context, in SyncExternalS
 	}
 	// live-owned 会话的游标是**冻结**的（导入器平时不跑），只按偏移读会把早已落库的旧回合
 	// 整段重导一遍——实测 2026-09-16：BP 会话被重导了 09-14 的内容，且因为导入器会把相邻
-	// 同角色条目合并，那些重导行的内容与实时路径写的行并不逐字相同，写入侧判重和读取投影
-	// 都折叠不掉，用户看到「ask 下面又渲染了一轮出现过的文字」。所以给这种会话一道
+	// 同角色条目合并，那些重导行的内容与实时路径写的行并不逐字相同，写入侧判重
+	// 也折叠不掉，用户看到「ask 下面又渲染了一轮出现过的文字」。所以给这种会话一道
 	// 时间地板：只接受比库里最新一条更新的条目，兜底补齐真正要的只是「进程重启时被中断的
 	// 那一轮」。
 	//
@@ -570,13 +571,16 @@ func appendImportedExchange(
 	}
 	// 把 agent 侧身份写进这一行（方案 §3.1）。没有它，下一轮同步就没有可对齐的键，
 	// 只能继续靠内容猜 —— 而内容恰恰是导入器会改写的东西。
-	identity := session.ExchangeIdentity{}
-	if strings.TrimSpace(exchange.NativeID) != "" {
-		if role == "user" {
-			identity.NativePrompt = strings.TrimSpace(exchange.NativeID)
-		} else {
-			identity.NativeTurn = strings.TrimSpace(exchange.NativeID)
-		}
+	//
+	// **这一步同时补上导入路径欠了 S2a 至今的 MindFS 铸造**：此前导入行只写 agent 侧 id、
+	// 从不铸 MindFSID。UUIDv5 让 MindFSID 由
+	// AgentID 派生 —— 同一行重导得到同一个 id，判重不再需要内容兜底。
+	agentID := strings.TrimSpace(exchange.NativeID)
+	fallbackSeed := fmt.Sprintf("%s|%s|%d", target.Key, role, session.MaxExchangeSeq(target.Exchanges)+1)
+	identity := session.ExchangeIdentity{
+		MindFSID: session.NewMindFSID(agentID, fallbackSeed),
+		TurnSeq:  session.MaxExchangeSeq(target.Exchanges) + 1,
+		AgentID:  agentID,
 	}
 	if err := manager.AddExchangeForAgentAt(
 		session.WithExchangeIdentity(session.WithExchangeSource(ctx, session.ExchangeSourceImport), identity),
@@ -636,14 +640,14 @@ func appendImportedExchange(
 			ToolCall: &toolCall,
 		})
 	}
-	// 块在行之后写：块要带 turn_id，而 turn_id 在 AddExchangeForAgentAt 里才定下来。
+	// 块在行之后写：块要带 mindfs_id，而 mindfs_id 在 AddExchangeForAgentAt 里才定下来。
 	// 主日志已经落了盘，块流失败不该让这一行消失（否则用户少看到一整轮）。
 	if err := persistTurnBlocks(ctx, manager, target.Key, seq,
 		session.TurnIDForSeq(target.Exchanges, seq), exchange.Content, collected); err != nil {
 		log.Printf("[session] persist.import.blocks.error session=%s seq=%d err=%v", target.Key, seq, err)
 	}
 	// aux 仍要逐条落盘：它还是 `GET /api/sessions/{key}` 回包里 `exchange_aux` 的来源
-	// （前端按它渲染工具卡 / reasoning，见 http.go 的 projectSessionExchangesForResponse）。
+	// （前端按 seq 渲染工具卡 / reasoning，正文块则单独放在 blocks 字段）。
 	// 删掉它会让所有存量读路径立刻看不到工具卡 —— 那不是 S2d-2 的范围。
 	for _, aux := range collected {
 		if err := manager.AddExchangeAux(ctx, target.Key, aux); err != nil {
@@ -659,21 +663,6 @@ func (s *Service) resolveExternalSessionImporter(agentName string) (agenttypes.E
 		return nil, err
 	}
 	return importer, nil
-}
-
-// agentHasPromptMessageID 报告该 agent 的 prompt 是否带 `messageId` 这层身份
-// （ACP 协议有，claude/codex 没有）。
-//
-// 问 importer 而不是问 agent 名或 `DefaultProtocol`：协议可以在 agents.json 里
-// 覆盖，拿默认协议猜就是把配置丢掉；而 importer 就是「这个 agent 到底怎么存
-// 历史」的真身。问不出来（没配/未注册）时一律 false —— 宁可没有身份，也不要一个
-// 对不上的假身份（方案 D10：永不猜）。
-func (s *Service) agentHasPromptMessageID(agentName string) bool {
-	importer, err := s.resolveExternalSessionImporter(agentName)
-	if err != nil || importer == nil {
-		return false
-	}
-	return importer.UsesPromptMessageID()
 }
 
 func externalSyncLockKey(rootID, key string) string {

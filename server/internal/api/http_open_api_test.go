@@ -11,7 +11,7 @@ import (
 
 // G-I：API 层不做鉴权（多账户 = 多配置档，不是安全边界）。
 //
-// 这是用户明确决策（CLAUDE.md 事实 12）。上游给 `/api/*` 套上 token 或 e2ee proof
+// 这是用户明确决策（AGENTS.md 事实 12）。上游给 `/api/*` 套上 token 或 e2ee proof
 // 校验之后，浏览器直连会全部 401/403 —— 这条测试钉住「不带任何凭证也能读数据面端点」。
 // 它测的是**鉴权层本身**：不带 Authorization、不带 X-MindFS-Local-CLI-Token、
 // 不带任何 e2ee_* 头，请求仍必须穿过中间件到达 handler。

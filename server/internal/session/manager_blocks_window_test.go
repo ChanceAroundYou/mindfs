@@ -27,7 +27,7 @@ func TestGetBlocksWindowReadsTailOnly(t *testing.T) {
 	for seq := 1; seq <= seqs; seq++ {
 		for pos := 0; pos < perSeq; pos++ {
 			blocks = append(blocks, Block{
-				Seq: seq, Pos: pos, Type: BlockTypeText, Step: 1, TurnID: fmt.Sprintf("turn-%d", seq),
+				Seq: seq, Pos: pos, Type: BlockTypeText, Step: 1, MindFSID: fmt.Sprintf("turn-%d", seq),
 				Text: fmt.Sprintf("seq-%d-pos-%d-%s", seq, pos, filler(600)),
 			})
 		}

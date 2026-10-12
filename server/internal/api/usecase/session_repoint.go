@@ -40,7 +40,7 @@ type RepointSessionOutput struct {
 // 游标那一步是全流程唯一容易踩坑的地方：必须推进到**末尾**而不是清零。live-owned
 // 会话的 exchange 表由实时路径独占持久化、已经是完整的；一旦游标是 0，下次同步会从
 // 0 整份重读转录，重导出来的行与实时写的行并不逐字相同（导入器会合并相邻同角色条目），
-// 写入侧判重和读取投影都折叠不掉 —— 正是 2026-09-16「ask 下面又渲染了一轮出现过的文字」。
+// 写入侧判重折叠不掉 —— 正是 2026-09-16「ask 下面又渲染了一轮出现过的文字」。
 // 见 usecase/external_sessions.go 与 api/http.go 里 worktreeCandidateRoots 那段注释。
 //
 // 旧 id 的转录文件**不删**：那是回滚保险。repoint 出问题时，把 binding 改回去即可。
@@ -145,7 +145,7 @@ func (s *Service) RepointSession(ctx context.Context, in RepointSessionInput) (R
 	// 顺序放在最后：前几步任一失败都会 return，此时 native id 原样保留，仍与旧转录一致
 	//（旧转录刻意不删，就是回滚保险）。只有整条 repoint 真的走完了才作废它们。
 	// 清不掉不算 repoint 失败：id 与转录都已换好、会话可用；残留的 native id 只会让回查
-	// 退回「按 MindFS turn_id 找」，而那是权威路径。
+	// 退回「按 MindFS mindfs_id 找」，而那是权威路径。
 	if err := manager.ClearNativeIdentity(ctx, key); err != nil {
 		log.Printf("[session/repoint] clear.native.error root=%s session=%s agent=%s err=%v", strings.TrimSpace(in.RootID), key, agentName, err)
 	}

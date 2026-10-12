@@ -73,7 +73,7 @@ cmd_start() {
   mkdir -p "$ISO_CFG" "$ISO_PROJ" "$(dirname "$ISO_BIN")"
 
   # 每次 start 从干净状态起（除非 MINDFS_ISO_KEEP=1）——
-  # 这不是洁癖，是被一个真实的坑逼出来的：项目列表**按账户分**（CLAUDE.md 事实 12），
+  # 这不是洁癖，是被一个真实的坑逼出来的：项目列表**按账户分**（AGENTS.md 事实 12），
   # 而「不带 user= 注册项目」落进**主账户**。若沿用上次的 config 目录，就会出现
   # 「项目注册在主账户（最早那个账户）里，浏览器登录的却是后来新建的账户 → 页面显示
   # 『No projects yet』、连输入框都不渲染」，而 /api/dirs 明明 200。清空后只建一个账户，
@@ -176,7 +176,7 @@ cmd_verify() {
   esac
 
   # 项目列表必须只含隔离项目。
-  # **必须带 user=**：项目列表按账户分（CLAUDE.md 事实 12），不带就等于查主账户，
+  # **必须带 user=**：项目列表按账户分（AGENTS.md 事实 12），不带就等于查主账户，
   # 会得到空列表并误报「隔离项目不在」—— 实测踩过。
   local iso_uid dirs
   iso_uid=$(sed -n 3p "$ISO_ROOT/account" 2>/dev/null || echo '')

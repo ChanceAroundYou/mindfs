@@ -25,7 +25,7 @@ func TestLiveTurnLeavesMainLogBodyEmpty(t *testing.T) {
 		t.Fatal(err)
 	}
 	ts := time.Now().UTC()
-	userSeq, turnID, err := persistUserTurnExchange(ctx, manager, current, "本轮提问", "claude", "", "", "", false, ts)
+	userSeq, turnID, err := persistUserTurnExchange(ctx, manager, current, "本轮提问", "claude", "", "", "", ts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +134,7 @@ func TestUserRowDedupComparesBlockTextNotMainLogBody(t *testing.T) {
 	const prompt = "只该出现一次的提问"
 	for i := 0; i < 2; i++ {
 		// 相邻两次：真人不会在同一瞬间发两次同样的话，判重必须判成重复。
-		if _, _, err := persistUserTurnExchange(ctx, manager, current, prompt, "claude", "", "", "", false,
+		if _, _, err := persistUserTurnExchange(ctx, manager, current, prompt, "claude", "", "", "",
 			time.Now().UTC().Add(time.Duration(i)*time.Second)); err != nil {
 			t.Fatal(err)
 		}
@@ -160,7 +160,7 @@ func TestUserRowDedupStillKeepsGenuineRepeatedPrompts(t *testing.T) {
 	const prompt = "继续"
 	for i := 0; i < 3; i++ {
 		// 间隔 10 分钟：真人连打三次「继续」不会是同一瞬间。
-		if _, _, err := persistUserTurnExchange(ctx, manager, current, prompt, "claude", "", "", "", false,
+		if _, _, err := persistUserTurnExchange(ctx, manager, current, prompt, "claude", "", "", "",
 			time.Now().UTC().Add(time.Duration(i)*10*time.Minute)); err != nil {
 			t.Fatal(err)
 		}
