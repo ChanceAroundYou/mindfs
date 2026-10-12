@@ -157,8 +157,9 @@ assert.match(app, /taskInlineEdit\.allowProjectSwitch && taskCreateProjectOption
 // 换项目时 worktree 三个开关按项目分别记：还原回那个项目那份，第一次去则取它的偏好
 assert.match(app, /createWorktreePerRoot/, "worktree prefs must be stashed per project across switches");
 // 分支列表 / 偏好存取都跟目标项目而不是 currentRootId，否则工作台发起时会串到当前项目
-assert.match(app, /const rootId = edit\.targetRootId \|\| currentRootId \|\| "";[\s\S]*?loadTaskWorktreeBranches\(rootId\)/, "worktree branches must load for the panel's target project, not the current one");
-assert.match(app, /const rootId = edit\.targetRootId \|\| currentRootIdRef\.current \|\| "";[\s\S]*?saveTaskCreateWorktreePreference\(rootId/, "worktree prefs must persist against the panel's target project");
+assert.match(app, /const rootId = edit\.targetRootId \|\| currentRootId \|\| "";[\s\S]*?const nodeId = edit\.targetNodeId \|\| getNodeIdForRoot\(rootId\);[\s\S]*?loadTaskWorktreeBranches\(rootId, nodeId\)/, "worktree branches must load for the panel's target project and node");
+assert.match(app, /const rootId = edit\.targetRootId \|\| currentRootIdRef\.current \|\| "";[\s\S]*?const nodeId = edit\.targetNodeId \|\| getNodeIdForRoot\(rootId\);[\s\S]*?saveTaskCreateWorktreePreference\(rootId,[\s\S]*?nodeId\)/, "worktree prefs must persist against the panel's target project and node");
+assert.match(app, /value=\{taskProjectScopeKey\(taskInlineTargetRootId, taskInlineTargetNodeId\)\}/, "the project picker must distinguish same-ID projects on different nodes");
 
 // 8b) 选中态守卫不能在工作台上把刚打开的详情关掉：工作台选中的任务往往属于别的项目，
 //     而 kanbanTasks 按 currentRootId 过滤，天然不含它们。

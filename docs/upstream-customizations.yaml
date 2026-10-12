@@ -2416,6 +2416,41 @@ groups:
       - server/internal/api/usecase/session.go:requestedModel := strings.TrimSpace(in.Model)
       - server/internal/api/usecase/session.go:manager.UpdateModel(ctx, current, resolvedModel)
       - server/internal/api/usecase/session.go:currentModel := currentModelForRuntime(current, existing)
+  - id: G-BL
+    title: 看板新建任务的 worktree 节点路由
+    kind: fix
+    symptom: |
+      从工作台为远端 Git 项目新建任务时，worktree 开关和分支选择器消失；同名项目可能按
+      另一节点的 Git 状态判断，并把分支请求或任务创建发到错误节点。项目看板初始加载也
+      可能用同名项目的回退记录判断 Git 状态。
+    why: |
+      多节点的 rootId 不是唯一身份。工作台回调虽收到 nodeId，旧路径却只传 rootId；面板
+      再从 byId 的首个同名项目读取 is_git_repo。以 nodeId::rootId 贯穿项目选择、Git 元数据
+      判断、分支查询、偏好存储、附件上传、任务创建与 worktree 刷新；显式节点找不到元数据
+      时不得退回另一节点的同名记录。
+    boundary: |
+      仅看板新建任务的项目身份路由与 worktree 选择/创建链路。已有任务执行、收尾和 worktree
+      生命周期策略不变。
+    tests:
+      - web/tests/task-worktree-node-scope.test.mjs
+      - web/tests/task-board-view.test.mjs
+      - web/tests/workspace-board.test.mjs
+      - web/tests/node-colors-and-workspace-preferences.test.mjs
+    files:
+      - web/src/App.tsx
+      - web/src/app/appTask.ts
+      - web/src/app/appStorage.ts
+      - web/src/app/useProjectTreeWorktrees.ts
+      - web/tests/task-worktree-node-scope.test.mjs
+      - web/tests/task-board-view.test.mjs
+      - web/tests/workspace-board.test.mjs
+      - web/tests/node-colors-and-workspace-preferences.test.mjs
+    anchors:
+      - web/src/app/appTask.ts:findTaskProjectRoot
+      - web/src/App.tsx:openTaskCreateDialog(template, rootId, nodeId)
+      - web/src/App.tsx:findTaskProjectRoot(taskInlineTargetRootId, taskInlineTargetNodeId
+      - web/src/app/appStorage.ts:scopeKey(scopeNodeId, rootId)
+      - web/src/app/useProjectTreeWorktrees.ts:targetNodeId
   - id: G-BH
     title: 会话正文块流（Block 存储层 + 轮次身份 turn_id/turn_seq/native_* + S2a 双写 + S2b 读改走块流 + C1/C2 + S2d-2 主日志不再存正文 + S2e pending 身份改用 turn_id）
     kind: fix

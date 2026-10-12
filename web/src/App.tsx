@@ -209,7 +209,7 @@ import { useWorkspaceBoard } from "./app/useWorkspaceBoard";
 import { hasSessionExchanges, isSessionShownInMain, isTopLevelSessionItem, applyPendingToMultiProjectGroups as applyPendingToMultiProjectGroupsByNode, mergeReplyingStateByNode, normalizeMode, relatedFileSelectionKey, sessionInputHistory, shouldAutoSelectNewSession, toSessionItem } from "./app/appSession";
 import { buildSessionJumpTarget, resolveSessionJumpRoot } from "./app/sessionJump";
 import { accountScopedKey, loadGitDiffSideBySide, loadLastRootId, loadLastRootNodeId, loadMobileEnterKeySends, loadPersistedFileScrollPositions, loadPersistedPluginQuery, loadSidebarsSwapped, loadTaskCreateWorktreePreference, persistFileScrollPositions, persistPluginQuery, removeLocalStorageByPrefix, saveTaskCreateWorktreePreference } from "./app/appStorage";
-import { applyStageOverride, currentTaskInputFromDetail, DEFAULT_TASK_AGENT, DEFAULT_TASK_MODEL, firstAgentStage, firstTaskInputFromDetail, firstUserInputTemplate, isTerminalKanbanTask, latestTaskStageRun, normalizeFastService, parseTaskSessionErrorDetails, parseTaskSessionErrorMessage, previousTaskInputsFromDetail, taskSessionKeysFromDetail, taskStagesForCreate, taskStatusLabel } from "./app/appTask";
+import { applyStageOverride, currentTaskInputFromDetail, DEFAULT_TASK_AGENT, DEFAULT_TASK_MODEL, findTaskProjectRoot, firstAgentStage, firstTaskInputFromDetail, firstUserInputTemplate, isTerminalKanbanTask, latestTaskStageRun, normalizeFastService, parseTaskProjectScopeKey, parseTaskSessionErrorDetails, parseTaskSessionErrorMessage, previousTaskInputsFromDetail, taskProjectScopeKey, taskSessionKeysFromDetail, taskStagesForCreate, taskStatusLabel } from "./app/appTask";
 import { useCompletionSound } from "./app/useCompletionSound";
 import { useExternalSessionImport } from "./app/useExternalSessionImport";
 import { useGitActions } from "./app/useGitActions";
@@ -427,6 +427,7 @@ export function App({ onGoHome }: AppProps) {
 	  const [taskWorktreeBranches, setTaskWorktreeBranches] = useState<GitBranchesPayload>({ branches: [] });
 	  const [taskWorktreeBranchesLoading, setTaskWorktreeBranchesLoading] = useState(false);
 	  const [taskWorktreeBranchError, setTaskWorktreeBranchError] = useState("");
+	  const taskWorktreeBranchRequestRef = useRef(0);
 	  const [kanbanTasksLoading, setKanbanTasksLoading] = useState(false);
 	  const kanbanLoadSeqRef = useRef(0);
 	  const kanbanAbortRef = useRef<AbortController | null>(null);
@@ -548,6 +549,7 @@ export function App({ onGoHome }: AppProps) {
   useEffect(() => {
     // 候选跟着面板的目标项目走，不跟着「当前选中项目」走 —— 工作台发起时两者不是一个。
     const tokenRootId = taskInlineEdit?.targetRootId || currentRootId;
+    const tokenNodeId = taskInlineEdit?.targetNodeId || getNodeIdForRoot(tokenRootId || "");
     if (!taskInlineActiveToken || !tokenRootId) {
       setTaskInlineCandidates([]);
       setTaskInlineCandidateIndex(0);
@@ -569,7 +571,7 @@ export function App({ onGoHome }: AppProps) {
         query: taskInlineActiveToken.query,
         agent: taskInlineActiveToken.type === "slash" ? agent : undefined,
         signal: controller.signal,
-        nodeId: getNodeIdForRoot(tokenRootId),
+        nodeId: tokenNodeId,
       })
         .then((items) => {
           setTaskInlineCandidates(items);
@@ -586,7 +588,7 @@ export function App({ onGoHome }: AppProps) {
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [currentRootId, taskInlineEdit?.targetRootId, taskInlineActiveToken, taskTemplateFilter, taskTemplates]);
+  }, [currentRootId, getNodeIdForRoot, taskInlineEdit?.targetNodeId, taskInlineEdit?.targetRootId, taskInlineActiveToken, taskTemplateFilter, taskTemplates]);
 
   const applyTaskDetails = useCallback((rootId: string, details: TaskDetail[], persist = true) => {
     const curNid = String(currentRootNodeIdRef.current || "").trim();
@@ -937,69 +939,84 @@ export function App({ onGoHome }: AppProps) {
     }
   }, [applyTaskDetails, refreshWorkspaceBoard, t]);
 
-  const loadTaskWorktreeBranches = useCallback(async (rootId: string) => {
+  const loadTaskWorktreeBranches = useCallback(async (rootId: string, nodeId?: string) => {
     if (!rootId) return;
+    const requestId = ++taskWorktreeBranchRequestRef.current;
     setTaskWorktreeBranchesLoading(true);
+    setTaskWorktreeBranches({ branches: [] });
     setTaskWorktreeBranchError("");
     try {
-      setTaskWorktreeBranches(await fetchGitBranches(rootId, getNodeIdForRoot(rootId)));
+      const branches = await fetchGitBranches(rootId, nodeId || getNodeIdForRoot(rootId));
+      if (requestId === taskWorktreeBranchRequestRef.current) setTaskWorktreeBranches(branches);
     } catch (error) {
-      setTaskWorktreeBranches({ branches: [] });
-      setTaskWorktreeBranchError(error instanceof Error ? error.message : t("worktree.loadBranchFailed"));
+      if (requestId === taskWorktreeBranchRequestRef.current) {
+        setTaskWorktreeBranches({ branches: [] });
+        setTaskWorktreeBranchError(error instanceof Error ? error.message : t("worktree.loadBranchFailed"));
+      }
     } finally {
-      setTaskWorktreeBranchesLoading(false);
+      if (requestId === taskWorktreeBranchRequestRef.current) setTaskWorktreeBranchesLoading(false);
     }
-  }, [t]);
+  }, [getNodeIdForRoot, t]);
 
-	  // 分支列表跟的是**面板的目标项目**：从工作台发起时那不是 currentRootId，
-	  // 照 currentRootId 拉会把别的项目的分支带进分支选择器。
-	  useEffect(() => {
-	    const edit = taskInlineEdit;
-	    if (!edit) return;
-	    const rootId = edit.targetRootId || currentRootId || "";
-	    if (!edit.createWorktree || !edit.canToggleWorktree || !rootId || managedRootByIdRef.current[rootId]?.is_git_repo !== true) {
+  // 分支列表跟着面板的目标项目和节点走；跨节点同名项目不能共用 Git 元数据。
+  useEffect(() => {
+    const edit = taskInlineEdit;
+    if (!edit) return;
+    const rootId = edit.targetRootId || currentRootId || "";
+    const nodeId = edit.targetNodeId || getNodeIdForRoot(rootId);
+    const root = findTaskProjectRoot(rootId, nodeId, managedRootByKeyRef.current, managedRootByIdRef.current);
+	    if (!edit.createWorktree || !edit.canToggleWorktree || !rootId || root?.is_git_repo !== true) {
+	      taskWorktreeBranchRequestRef.current += 1;
+	      setTaskWorktreeBranchesLoading(false);
+	      setTaskWorktreeBranches({ branches: [] });
 	      setTaskWorktreeBranchError("");
 	      return;
 	    }
-	    void loadTaskWorktreeBranches(rootId);
-	  }, [currentRootId, loadTaskWorktreeBranches, taskInlineEdit?.canToggleWorktree, taskInlineEdit?.createWorktree, taskInlineEdit?.targetRootId]);
+	    void loadTaskWorktreeBranches(rootId, nodeId);
+	  }, [currentRootId, getNodeIdForRoot, loadTaskWorktreeBranches, taskInlineEdit?.canToggleWorktree, taskInlineEdit?.createWorktree, taskInlineEdit?.targetNodeId, taskInlineEdit?.targetRootId]);
 
 	  useEffect(() => {
 	    const edit = taskInlineEdit;
 	    if (!edit || !edit.canToggleWorktree) return;
-	    // 同样按目标项目存：从工作台发起时把 A 项目的偏好写到 B 项目上是错的。
 	    const rootId = edit.targetRootId || currentRootIdRef.current || "";
 	    if (!rootId) return;
+	    const nodeId = edit.targetNodeId || getNodeIdForRoot(rootId);
 	    saveTaskCreateWorktreePreference(rootId, {
 	      createWorktree: edit.createWorktree,
 	      worktreeBranchMode: edit.worktreeBranchMode,
 	      worktreeBranch: edit.worktreeBranch,
-	    });
+	    }, nodeId);
 	  }, [
+	    getNodeIdForRoot,
 	    taskInlineEdit?.canToggleWorktree,
 	    taskInlineEdit?.createWorktree,
 	    taskInlineEdit?.worktreeBranch,
 	    taskInlineEdit?.worktreeBranchMode,
+	    taskInlineEdit?.targetNodeId,
 	    taskInlineEdit?.targetRootId,
 	  ]);
 
-	  const openTaskCreateDialog = useCallback((template: TaskTemplate | null, targetRootId?: string) => {
+	  const openTaskCreateDialog = useCallback((template: TaskTemplate | null, targetRootId?: string, targetNodeId?: string) => {
 	    const templateId = template?.id || "";
 	    if (!templateId) return;
 	    const initialText = firstUserInputTemplate(template);
-	    // 工作台发起时可以指定项目；看板入口不传，落在当前项目上。
 	    const rootId = targetRootId || currentRootIdRef.current || "";
-	    const taskCanCreateWorktree = managedRootByIdRef.current[rootId]?.is_git_repo === true;
-	    const worktreePref = loadTaskCreateWorktreePreference(rootId);
+	    if (!rootId) return;
+	    const nodeId = targetNodeId || (rootId === currentRootIdRef.current ? currentRootNodeIdRef.current : "") || getNodeIdForRoot(rootId) || "";
+	    const projectKey = taskProjectScopeKey(rootId, nodeId);
+	    const root = findTaskProjectRoot(rootId, nodeId, managedRootByKeyRef.current, managedRootByIdRef.current);
+	    const taskCanCreateWorktree = root?.is_git_repo === true;
+	    const worktreePref = loadTaskCreateWorktreePreference(rootId, nodeId);
 	    setTaskInlineEdit({
 	      templateId,
 	      templateName: template?.name || t("task.defaultTitle"),
 	      text: initialText,
 	      targetRootId: targetRootId || undefined,
+	      targetNodeId: nodeId || undefined,
 	      // 只有工作台来的才带项目下拉：那里没有「当前项目」这个默认落点。
 	      allowProjectSwitch: Boolean(targetRootId),
 	      createWorktreePerRoot: {
-	        [rootId]: {
+	        [projectKey]: {
 	          createWorktree: taskCanCreateWorktree && worktreePref.createWorktree,
 	          worktreeBranchMode: worktreePref.worktreeBranchMode,
 	          worktreeBranch: worktreePref.worktreeBranch,
@@ -1018,40 +1035,43 @@ export function App({ onGoHome }: AppProps) {
     setTaskInlineActiveToken(null);
     setTaskInlineCandidates([]);
     setTaskInlineCandidateIndex(0);
-  }, [t]);
+	  }, [getNodeIdForRoot, t]);
 
   // 面板上换项目：worktree 三个开关是**按项目存**的，换回去要还原回这个项目那份，
   // 第一次切到某项目则从 localStorage 的偏好起头。切项目不碰正文/模板/附件。
-  const switchTaskInlineEditProject = useCallback((nextRootId: string) => {
-    setTaskInlineEdit((prev) => {
-      if (!prev || !nextRootId || nextRootId === (prev.targetRootId || currentRootIdRef.current || "")) return prev;
-      const prevRootId = prev.targetRootId || currentRootIdRef.current || "";
-      const stash = (state: TaskInlineEditState, rootId: string) => ({
-        createWorktree: state.createWorktree,
-        worktreeBranchMode: state.worktreeBranchMode,
-        worktreeBranch: state.worktreeBranch,
-      });
-      const perRoot = {
-        ...(prev.createWorktreePerRoot || {}),
-        [prevRootId]: stash(prev, prevRootId),
-      };
-      const restored = perRoot[nextRootId];
-      const canCreate = managedRootByIdRef.current[nextRootId]?.is_git_repo === true;
-      const pref = restored || (() => {
-        const stored = loadTaskCreateWorktreePreference(nextRootId);
-        return { createWorktree: canCreate && stored.createWorktree, worktreeBranchMode: stored.worktreeBranchMode, worktreeBranch: stored.worktreeBranch };
-      })();
-      return {
-        ...prev,
-        targetRootId: nextRootId,
-        createWorktreePerRoot: { ...perRoot, [nextRootId]: pref },
-        createWorktree: pref.createWorktree,
-        worktreeBranchMode: pref.worktreeBranchMode,
-        worktreeBranch: pref.worktreeBranch,
-        canToggleWorktree: true,
-      };
-    });
-  }, []);
+	  const switchTaskInlineEditProject = useCallback((nextProjectKey: string) => {
+	    setTaskInlineEdit((prev) => {
+	      if (!prev || !nextProjectKey) return prev;
+	      const { rootId: nextRootId, nodeId: nextNodeId } = parseTaskProjectScopeKey(nextProjectKey);
+	      if (!nextRootId) return prev;
+	      const prevRootId = prev.targetRootId || currentRootIdRef.current || "";
+	      const prevNodeId = prev.targetNodeId || getNodeIdForRoot(prevRootId) || "";
+	      const prevProjectKey = taskProjectScopeKey(prevRootId, prevNodeId);
+	      const nextScopedProjectKey = taskProjectScopeKey(nextRootId, nextNodeId);
+	      if (nextScopedProjectKey === prevProjectKey) return prev;
+	      const stash = (state: TaskInlineEditState) => ({
+	        createWorktree: state.createWorktree,
+	        worktreeBranchMode: state.worktreeBranchMode,
+	        worktreeBranch: state.worktreeBranch,
+	      });
+	      const perRoot = { ...(prev.createWorktreePerRoot || {}), [prevProjectKey]: stash(prev) };
+	      const restored = perRoot[nextScopedProjectKey];
+	      const root = findTaskProjectRoot(nextRootId, nextNodeId, managedRootByKeyRef.current, managedRootByIdRef.current);
+	      const canCreate = root?.is_git_repo === true;
+	      const stored = restored || loadTaskCreateWorktreePreference(nextRootId, nextNodeId);
+	      const nextPref = { ...stored, createWorktree: canCreate && stored.createWorktree };
+	      return {
+	        ...prev,
+	        targetRootId: nextRootId,
+	        targetNodeId: nextNodeId || undefined,
+	        createWorktreePerRoot: { ...perRoot, [nextScopedProjectKey]: nextPref },
+	        createWorktree: nextPref.createWorktree,
+	        worktreeBranchMode: nextPref.worktreeBranchMode,
+	        worktreeBranch: nextPref.worktreeBranch,
+	        canToggleWorktree: true,
+	      };
+	    });
+	  }, [getNodeIdForRoot]);
 
   const closeTaskEditDialog = useCallback(() => {
     setTaskInlineEdit((prev) => {
@@ -1134,6 +1154,7 @@ export function App({ onGoHome }: AppProps) {
     setTaskInlineSaving(true);
     setTaskInlineUploadProgress(null);
     try {
+      const nodeId = edit.targetNodeId || getNodeIdForRoot(rootId);
       let attachmentTokens = "";
       if (edit.attachments.length > 0) {
         const uploadAbort = new AbortController();
@@ -1143,12 +1164,13 @@ export function App({ onGoHome }: AppProps) {
           files: edit.attachments.map((attachment) => attachment.file),
           onProgress: setTaskInlineUploadProgress,
           signal: uploadAbort.signal,
-          nodeId: getNodeIdForRoot(rootId),
+          nodeId,
         });
         attachmentTokens = uploaded.map((file) => formatFileToken(fileTokenPath(file))).join("\n");
       }
       const payload = [edit.text.trim(), attachmentTokens].filter(Boolean).join("\n");
-      const taskCanCreateWorktree = managedRootByIdRef.current[rootId]?.is_git_repo === true;
+      const root = findTaskProjectRoot(rootId, nodeId, managedRootByKeyRef.current, managedRootByIdRef.current);
+      const taskCanCreateWorktree = root?.is_git_repo === true;
       const createWorktree = taskCanCreateWorktree && edit.createWorktree;
       // 选了模板就把流水随包带上（taskStagesForCreate：有 agent/模型/立即执行覆盖就用覆盖后的，
       // 没有就用模板自带的）。不能像以前那样「没覆盖就不带」让后端回查 ——
@@ -1165,7 +1187,7 @@ export function App({ onGoHome }: AppProps) {
         createWorktree,
         edit.worktreeBranchMode,
         edit.worktreeBranch,
-        getNodeIdForRoot(rootId),
+        nodeId,
         {
           ...(edit.name?.trim() ? { name: edit.name.trim() } : {}),
           ...(createStages ? { stages: createStages } : {}),
@@ -1175,7 +1197,7 @@ export function App({ onGoHome }: AppProps) {
       );
       applyTaskDetails(rootId, [detail]);
       if (detail.task.worktree_path) {
-        void refreshTaskWorktree(rootId, detail.task.worktree_path);
+        void refreshTaskWorktree(rootId, detail.task.worktree_path, true, nodeId);
       }
       closeTaskEditDialog();
     } catch (err) {
@@ -1186,7 +1208,7 @@ export function App({ onGoHome }: AppProps) {
       setTaskInlineUploadProgress(null);
       taskInlineUploadAbortRef.current = null;
     }
-  }, [applyTaskDetails, closeTaskEditDialog, taskInlineEdit, taskTemplates, t]);
+  }, [applyTaskDetails, closeTaskEditDialog, getNodeIdForRoot, taskInlineEdit, taskTemplates, t]);
 
 
 
@@ -1241,6 +1263,7 @@ export function App({ onGoHome }: AppProps) {
   }, [gitDiffSideBySide]);
 
   const [managedRootIds, setManagedRootIds] = useState<string[]>([]);
+  const [rootEntries, setRootEntries] = useState<FileEntry[]>([]);
   const getRootDisplayName = useCallback((rootId: string | null | undefined): string => {
     const id = String(rootId || "").trim();
     if (!id) return "";
@@ -1270,16 +1293,28 @@ export function App({ onGoHome }: AppProps) {
   // 项目名各用各的节点色，和工作台项目行、DefaultListView 的项目徽章是同一套口径。
   // 位置必须在 getDisplayNodeColor 之后 —— const 不提升，提前引用会吃到 TDZ。
   const taskCreateProjectOptions = useMemo(() => {
-    const ids = Array.from(managedRootIdsRef.current);
-    if (ids.length === 0 && currentRootId) ids.push(currentRootId);
-    return ids
-      .filter((id) => String(id || "").trim())
-      .map((id) => ({
-        value: id,
-        label: getRootDisplayName(id) || id,
-        color: getDisplayNodeColor(id) || undefined,
-      }));
-  }, [currentRootId, getRootDisplayName, getDisplayNodeColor, taskInlineEdit?.targetRootId]);
+    const entries = rootEntries.filter((entry) => String(entry.path || "").trim());
+    if (entries.length === 0 && currentRootId) {
+      const nodeId = currentRootNodeId || getNodeIdForRoot(currentRootId) || "";
+      return [{ value: taskProjectScopeKey(currentRootId, nodeId), label: getRootDisplayName(currentRootId) || currentRootId, color: getDisplayNodeColor(currentRootId) || undefined }];
+    }
+    const rootCounts = new Map<string, number>();
+    for (const entry of entries) {
+      const rootId = String(entry.path || "").trim();
+      rootCounts.set(rootId, (rootCounts.get(rootId) || 0) + 1);
+    }
+    return entries.map((entry) => {
+      const rootId = String(entry.path || "").trim();
+      const nodeId = String((entry as any)._nodeId || "").trim();
+      const nodeName = String((entry as any)._nodeName || nodeId).trim();
+      const label = String(entry.name || getRootDisplayName(rootId) || rootId);
+      return {
+        value: taskProjectScopeKey(rootId, nodeId),
+        label: (rootCounts.get(rootId) || 0) > 1 && nodeName ? `${label} · ${nodeName}` : label,
+        color: String((entry as any)._nodeColor || "").trim() || undefined,
+      };
+    });
+  }, [currentRootId, currentRootNodeId, getNodeIdForRoot, getRootDisplayName, getDisplayNodeColor, rootEntries, taskInlineEdit?.targetRootId]);
 
   // 复合键还原为裸 rootId（scoped 键为 n::r 或 r；rootId 自身不含 "::"）
   const unscopedRootId = useCallback((scoped: string): string => {
@@ -1363,7 +1398,6 @@ export function App({ onGoHome }: AppProps) {
     }
   }, []);
 
-  const [rootEntries, setRootEntries] = useState<FileEntry[]>([]);
   // open_dir 回调需要根列表做根展开互斥，经 ref 引用避免依赖抖动
   const rootEntriesRef = useRef<FileEntry[]>([]);
   useEffect(() => {
@@ -8807,8 +8841,8 @@ export function App({ onGoHome }: AppProps) {
   }, [setTaskTemplateFilter, switchMainView]);
   // 工作台的快速发起不自己建任务：挑完项目 + 模板就打开看板那套新建任务面板，
   // 模板、worktree、agent、附件全都跟项目看板里一致，不在工作台上复制第二份实现。
-  const handleWorkspaceCreateTask = useCallback((rootId: string, _nodeId: string, template: TaskTemplate) => {
-    openTaskCreateDialog(template, rootId);
+  const handleWorkspaceCreateTask = useCallback((rootId: string, nodeId: string, template: TaskTemplate) => {
+    openTaskCreateDialog(template, rootId, nodeId);
   }, [openTaskCreateDialog]);
   // 工作台里点任务卡：留在工作台，就地弹任务详情面板。
   // 不走 openWorkspaceProject —— 那会切项目、切看板、改 URL，等于把人甩出工作台。
@@ -9829,7 +9863,9 @@ export function App({ onGoHome }: AppProps) {
 	          // worktree 开关跟的是**面板的目标项目**：从工作台发起时那不是当前项目，
 	          // 写死 currentRootId 会让「非 git 项目也显示 worktree 开关」。
 	          const taskInlineTargetRootId = taskInlineEdit.targetRootId || currentRootId || "";
-	          const taskInlineCanCreateWorktree = managedRootByIdRef.current[taskInlineTargetRootId]?.is_git_repo === true;
+	          const taskInlineTargetNodeId = taskInlineEdit.targetNodeId || getNodeIdForRoot(taskInlineTargetRootId) || "";
+	          const taskInlineRoot = findTaskProjectRoot(taskInlineTargetRootId, taskInlineTargetNodeId, managedRootByKeyRef.current, managedRootByIdRef.current);
+	          const taskInlineCanCreateWorktree = taskInlineRoot?.is_git_repo === true;
 	          const showTaskWorktreeControls = taskInlineCanCreateWorktree && taskInlineEdit.canToggleWorktree;
 	          const taskWorktreeControlsEditable = taskInlineEdit.canToggleWorktree;
 	          // 编辑区里的 agent 选择器：默认值就是「下一个 agent 阶段」在模板里
@@ -9865,7 +9901,7 @@ export function App({ onGoHome }: AppProps) {
               {taskInlineEdit.allowProjectSwitch && taskCreateProjectOptions.length > 1 ? (
                 <div style={{ minWidth: "120px", maxWidth: "160px" }}>
                   <Select
-                    value={taskInlineTargetRootId}
+                    value={taskProjectScopeKey(taskInlineTargetRootId, taskInlineTargetNodeId)}
                     ariaLabel={t("task.workspaceSelectProject")}
                     onChange={(value) => switchTaskInlineEditProject(value)}
                     options={taskCreateProjectOptions}
@@ -9947,7 +9983,7 @@ export function App({ onGoHome }: AppProps) {
             </div>
           )}
         >
-            {taskInlineEdit.createWorktree && taskInlineEdit.worktreeBranchMode === "new" && taskInlineEdit.canToggleWorktree && <input aria-label={t("task.newBranchName")} placeholder={t("task.newBranchName")} value={taskInlineEdit.worktreeBranch} onChange={e=>setTaskInlineEdit(prev=>prev?{...prev,worktreeBranch:e.target.value}:prev)} style={{margin:"8px 12px",padding:8}}/>}
+	            {taskInlineCanCreateWorktree && taskInlineEdit.createWorktree && taskInlineEdit.worktreeBranchMode === "new" && taskInlineEdit.canToggleWorktree && <input aria-label={t("task.newBranchName")} placeholder={t("task.newBranchName")} value={taskInlineEdit.worktreeBranch} onChange={e=>setTaskInlineEdit(prev=>prev?{...prev,worktreeBranch:e.target.value}:prev)} style={{margin:"8px 12px",padding:8}}/>}
             <div style={{ padding: "12px", overflow: "visible", position: "relative", minHeight: 0, display: "flex", flexDirection: "column" }}>
               {taskInlineActiveToken && taskInlineCandidates.length > 0 ? (
                 <div
