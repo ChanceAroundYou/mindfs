@@ -18,6 +18,8 @@ import { reportError } from "../services/net/error";
 import { setRootNodeMap } from "../services/net/rootNode";
 import { applyNodesFromServer, syncNodesFromServer } from "../services/net/nodeRegistry";
 import { sessionService, setCachedSessionRelatedFiles } from "../services/session";
+import { mergeSessionItems } from "../services/sessionListMerge";
+import { streamEventTimestamp } from "../services/sessionDuration";
 import { mapManagedRootsToEntries, normalizeUpdateState } from "./appMisc";
 import { rootNodeKey } from "./appPath";
 import { hasSessionExchanges, normalizeMode, toSessionItem } from "./appSession";
@@ -337,7 +339,6 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
     const handleSessionStream = (payload: any) => {
       const wsNid = String((payload as any)?._nodeId || (payload as any)?.nodeId || "").trim();
       const curNid = String(currentRootNodeIdRef.current || "").trim();
-      if (wsNid && curNid && wsNid !== curNid) { return; }
       const streamKey =
         typeof payload?.session_key === "string" ? payload.session_key : "";
       const activeRoot =
@@ -345,6 +346,58 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
           ? payload.root_id
           : resolveRootForSessionKey(streamKey) || currentRootIdRef.current;
       if (!streamKey || !activeRoot) return;
+      const event = payload.event;
+      // Apply client-only activity before filtering stream content to the active node.
+      if (event?.type && event.type !== "message_done") {
+        const eventTime = Date.parse(streamEventTimestamp(event, new Date().toISOString())) || Date.now();
+        const activityAt = new Date(Math.floor(eventTime / 100) * 100).toISOString();
+        const activityNode = wsNid || getNodeIdForRoot(activeRoot) || "";
+        const advanceItem = (item: SessionItem): SessionItem => {
+          const currentTime = Math.max(
+            Date.parse(String(item.updated_at || "")) || 0,
+            Date.parse(String(item.activity_at || "")) || 0,
+          );
+          return Date.parse(activityAt) > currentTime ? { ...item, activity_at: activityAt } : item;
+        };
+        setMultiProjectSessionGroups((prev) => {
+          let changed = false;
+          const next = prev.map((group) => {
+            const groupNode = String(group._nodeId || "").trim();
+            if (
+              group.rootId !== activeRoot ||
+              (activityNode && groupNode && activityNode !== groupNode)
+            ) return group;
+            const groupTime = Math.max(
+              Date.parse(String(group.latestSessionTime || "")) || 0,
+              Date.parse(String(group.activity_at || "")) || 0,
+            );
+            const sessions = group.sessions.map((item) => {
+              if ((item.key || item.session_key) !== streamKey) return item;
+              const itemNode = String(item._nodeId || groupNode).trim();
+              if (activityNode && itemNode && activityNode !== itemNode) return item;
+              const advanced = advanceItem(item);
+              if (advanced !== item) changed = true;
+              return advanced;
+            });
+            const activity_at = Date.parse(activityAt) > groupTime ? activityAt : group.activity_at;
+            if (activity_at !== group.activity_at || sessions.some((item, i) => item !== group.sessions[i])) {
+              changed = true;
+              return { ...group, activity_at, sessions: mergeSessionItems(sessions, []) };
+            }
+            return group;
+          });
+          return changed ? next : prev;
+        });
+        if (activeRoot === currentRootIdRef.current && (!wsNid || !curNid || wsNid === curNid)) {
+          setSessions((prev) => mergeSessionItems(prev.map((item) => {
+            if ((item.key || item.session_key) !== streamKey || (item.root_id && item.root_id !== activeRoot)) return item;
+            const itemNode = String(item._nodeId || "").trim();
+            if (wsNid && itemNode && itemNode !== wsNid) return item;
+            return advanceItem(item);
+          }), []));
+        }
+      }
+      if (wsNid && curNid && wsNid !== curNid) return;
       const ck = rootSessionKey(activeRoot, streamKey);
       let pending = pendingBySessionRef.current[ck];
       if (!pending) {
@@ -441,7 +494,6 @@ export function useRealtimeEvents(ctx: RealtimeEventsContext) {
           sessionCacheRef.current[ck] || null,
         );
       }
-      const event = payload.event;
       if (!event?.type) return;
       // message_chunk/thought_chunk 是最高频事件：首次进 pending 用幂等
       // markSessionPending（内部已在 pending 时只更新 ref 不 setState），

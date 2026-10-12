@@ -1,7 +1,6 @@
-import type { MultiRootSessionGroup, Session, SessionListPayload } from "./session";
+import type { Session, SessionListPayload } from "./session";
 import {
   buildSessionListCacheKey,
-  multiRootSessionListCacheKey,
   readCachedSessionList,
   sessionListCacheScope,
   writeCachedSessionList,
@@ -23,12 +22,4 @@ export function getCachedSessionList(rootId: string, nodeId?: string): Promise<S
 export function saveCachedSessionList(rootId: string, payload: SessionListPayload, nodeId?: string): Promise<void> {
   if (!rootId) return Promise.resolve();
   return writeCachedSessionList(buildSessionListCacheKey(rootId, nodeId), payload);
-}
-
-export function getCachedMultiRootSessionList(): Promise<MultiRootSessionGroup[] | null> {
-  return readCachedSessionList<MultiRootSessionGroup[]>(multiRootSessionListCacheKey());
-}
-
-export function saveCachedMultiRootSessionList(groups: MultiRootSessionGroup[]): Promise<void> {
-  return writeCachedSessionList(multiRootSessionListCacheKey(), groups);
 }

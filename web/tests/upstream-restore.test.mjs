@@ -122,8 +122,8 @@ assert.match(streamCache, /replaySnapshot === true/, "d36cc53 App should branch 
 assert.match(sessionLifecycle, /getCachedSessionList/, "8e7d857 App should prefetch getCachedSessionList");
 assert.match(sessionLifecycle, /saveCachedSessionList/, "8e7d857 App should persist saveCachedSessionList");
 const multiProjectSessions = readFileSync(new URL("../src/app/useMultiProjectSessions.ts", import.meta.url), "utf8");
-assert.match(multiProjectSessions, /getCachedMultiRootSessionList/, "8e7d857 App should prefetch multi-root cache");
-assert.match(multiProjectSessions, /saveCachedMultiRootSessionList/, "8e7d857 App should persist multi-root cache");
+assert.doesNotMatch(multiProjectSessions, /getCachedMultiRootSessionList|saveCachedMultiRootSessionList/, "multi-project lists must not render or persist a stale IndexedDB snapshot");
+assert.doesNotMatch(sessionSvc, /multiRootSessionListCacheKey|getCachedMultiRootSessionList|saveCachedMultiRootSessionList/, "retire the unused multi-project list cache API and key");
 const taskBoard = readFileSync(new URL("../src/app/useTaskBoard.ts", import.meta.url), "utf8");
 assert.match(taskBoard, /Promise\.all\(\[[\s\S]*?fetchTaskDetails\(targetRoot,[\s\S]*?(?:getNodeIdForRoot|resolveNodeId)\(targetRoot\)\)/, "8e7d857 loadKanbanTasks should fetch in parallel with nodeId");
 assert.match(sessionLifecycle, /const shouldReplace = options\?\.replace \|\|/, "8e7d857 App should share shouldReplace gate");

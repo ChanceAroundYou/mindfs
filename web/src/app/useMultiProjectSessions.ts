@@ -28,7 +28,7 @@ import { type ProjectSessionGroup } from "../components/session/SessionList";
 import { useI18n } from "../i18n";
 import { protectedAPIReady } from "../services/net/api";
 import { getActiveNode, getNodeById, getNodes } from "../services/net/nodeRegistry";
-import { type MultiRootSessionGroup, type Session, getCachedMultiRootSessionList, saveCachedMultiRootSessionList, sessionService } from "../services/session";
+import { type MultiRootSessionGroup, type Session, sessionService } from "../services/session";
 import { resolveGroupColor } from "../services/sessionGroupDisplay";
 import { mergeSessionItems } from "../services/sessionListMerge";
 
@@ -276,36 +276,6 @@ export function useMultiProjectSessions(params: UseMultiProjectSessionsParams) {
     const seq = ++multiProjectLoadSeqRef.current;
     setMultiProjectSessionsLoading(true);
     try {
-      const cachedGroups = await getCachedMultiRootSessionList();
-      if (cachedGroups?.length) {
-        // 缓存先渲染（避免闪空），但**必须整体替换**而不是merge：这份缓存是按账户存的，
-        // 换账户后它就是空的，若还往里合并就会把上一账户的会话留在屏上。
-        setMultiProjectSessionGroups(
-          applyPendingToMultiProjectGroups(
-            cachedGroups.map((group): MultiProjectSessionGroup => {
-              const cacheNid = String((group as any)?._nodeId || "").trim();
-              return {
-              rootId: group.rootId,
-              rootName: group.rootName || managedRootByIdRef.current[group.rootId]?.display_name || group.rootId,
-              // C1: 缓存重建必须补节点与颜色，否则整帧回退 PALETTE[0] 蓝 + nodeIndex=99 乱序
-              _nodeId: cacheNid || undefined,
-              _nodeColor: resolveGroupColor(group as any, managedRootByKeyRef.current as any, getNodes() as any) || undefined,
-              latestSessionTime: group.latestSessionTime,
-              sessions: applyPinSnapshot(
-                mergeSessionItems(
-                  [],
-                  [...group.items, ...group.pinnedItems]
-                    .map((item) => toSessionItem(group.rootId, { ...(item as any), root_id: group.rootId, _nodeId: cacheNid || undefined }))
-                    .filter((item): item is SessionItem => !!item),
-                ),
-                group.rootId,
-              ),
-              totalCount: group.totalCount,
-            };}),
-            multiProjectPendingRef.current,
-          ),
-        );
-      }
       const nodeIdsFromNodes = getNodes()
         .map((n) => String((n as any)?.id || "").trim())
         .filter(Boolean);
@@ -372,6 +342,7 @@ export function useMultiProjectSessions(params: UseMultiProjectSessionsParams) {
         _nodeColor: (gMeta?._nodeColor as string | undefined),
         _nodeId: (gMeta?._nodeId as string | undefined) || gNid || undefined,
         latestSessionTime: group.latestSessionTime,
+        activity_at: group.activity_at,
         sessions: applyPinSnapshot(
           mergeSessionItems(
             [],
@@ -424,13 +395,6 @@ export function useMultiProjectSessions(params: UseMultiProjectSessionsParams) {
         }
         return applyPendingToMultiProjectGroups(merged, multiProjectPendingRef.current);
       });
-      // 保存时补 _nodeColor，令缓存重建帧直接有色（C1 双保险）
-      void saveCachedMultiRootSessionList(
-        groups.map((g) => ({
-          ...g,
-          _nodeColor: resolveGroupColor(g as any, managedRootByKeyRef.current as any, getNodes() as any) || undefined,
-        })) as any,
-      );
     } finally {
       if (seq === multiProjectLoadSeqRef.current) {
         setMultiProjectSessionsLoading(false);

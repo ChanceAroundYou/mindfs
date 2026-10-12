@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import ts from "typescript";
 import vm from "node:vm";
+import { readSource } from "./source-map.mjs";
 
 const sourcePath = path.resolve(import.meta.dirname, "../src/services/sessionListMerge.ts");
 const source = fs.readFileSync(sourcePath, "utf8");
@@ -19,7 +20,13 @@ const sandbox = {
 };
 vm.runInNewContext(compiled, sandbox, { filename: sourcePath });
 
-const { applyPinnedSnapshotToSessions, mergeSessionItems } = sandbox.exports;
+const {
+  applyPinnedSnapshotToSessions,
+  mergeSessionItems,
+  orderProjectGroupsByNode,
+  projectActivityTime,
+  sessionActivityAt,
+} = sandbox.exports;
 
 const merged = mergeSessionItems(
   [
@@ -60,6 +67,86 @@ const unpinned = applyPinnedSnapshotToSessions(merged, "root", ["pin-a"]);
 
 assert.equal(unpinned.find((item) => item.key === "pin-b")?.pinned_at, undefined);
 assert.equal(JSON.stringify(unpinned.map((item) => item.key)), JSON.stringify(["pin-a", "new", "pin-b", "old"]));
+
+// Live activity takes precedence over persisted updated_at in both pin partitions.
+const activeOrder = mergeSessionItems(
+  [
+    { key: "pinned-old", updated_at: "2026-07-30T10:00:00.000Z", pinned_at: "2026-07-30T13:00:00.000Z" },
+    { key: "pinned-live", updated_at: "2026-07-30T09:00:00.000Z", activity_at: "2026-07-30T14:00:00.000Z", pinned_at: "2026-07-30T12:00:00.000Z" },
+    { key: "plain-old", updated_at: "2026-07-30T11:00:00.000Z" },
+    { key: "plain-live", updated_at: "2026-07-30T08:00:00.000Z", activity_at: "2026-07-30T15:00:00.000Z" },
+  ],
+  [],
+);
+assert.equal(JSON.stringify(activeOrder.map((item) => item.key)), JSON.stringify(["pinned-live", "pinned-old", "plain-live", "plain-old"]));
+assert.equal(sessionActivityAt(activeOrder[0]), "2026-07-30T14:00:00.000Z");
+
+// A stale refresh cannot move activity backward; persisted updated_at catches up and clears the overlay.
+const refreshedLive = mergeSessionItems(activeOrder, [
+  { key: "plain-live", updated_at: "2026-07-30T08:00:00.000Z" },
+]).find((item) => item.key === "plain-live");
+assert.equal(refreshedLive.activity_at, "2026-07-30T15:00:00.000Z");
+const persistedLive = mergeSessionItems([refreshedLive], [
+  { key: "plain-live", updated_at: "2026-07-30T15:00:00.000Z" },
+])[0];
+assert.equal(persistedLive.activity_at, undefined);
+assert.equal(
+  projectActivityTime({
+    latestSessionTime: "2026-07-30T10:00:00.000Z",
+    activity_at: "2026-07-30T12:00:00.000Z",
+    sessions: [
+      { updated_at: "2026-07-30T13:00:00.000Z" },
+      { updated_at: "2026-07-30T11:00:00.000Z", activity_at: "2026-07-30T14:00:00.000Z" },
+    ],
+  }),
+  Date.parse("2026-07-30T14:00:00.000Z"),
+);
+
+// 拆分后多项目列表的排序落在 useMultiProjectSessionList.ts（SessionList.tsx 只是壳）。
+const multiProjectHookSource = readSource("src/components/session/useMultiProjectSessionList.ts");
+assert.match(multiProjectHookSource, /orderProjectGroupsByNode\(/);
+
+const projectGroups = [
+  { rootId: "home-plain-old", _nodeId: "home", latestSessionTime: "2026-07-30T05:00:00.000Z", sessions: [] },
+  { rootId: "pc-newest", _nodeId: "pc", _pinned: true, latestSessionTime: "2026-07-30T22:00:00.000Z", sessions: [] },
+  { rootId: "home-pin-old", _nodeId: "home", _pinned: true, latestSessionTime: "2026-07-30T10:00:00.000Z", sessions: [] },
+  { rootId: "fn-newest", _nodeId: "fn", latestSessionTime: "2026-07-30T23:00:00.000Z", sessions: [] },
+  { rootId: "home-plain-new", _nodeId: "home", latestSessionTime: "2026-07-30T15:00:00.000Z", sessions: [] },
+  { rootId: "pc-plain", _nodeId: "pc", latestSessionTime: "2026-07-30T21:00:00.000Z", sessions: [] },
+  { rootId: "home-pin-live", _nodeId: "home", _pinned: true, latestSessionTime: "2026-07-30T09:00:00.000Z", activity_at: "2026-07-30T12:00:00.000Z", sessions: [] },
+];
+const orderedProjects = orderProjectGroupsByNode(
+  projectGroups,
+  ["home", "pc", "fn"],
+  (group) => group._nodeId,
+  (group) => !!group._pinned,
+  (left, right) => left.rootId.localeCompare(right.rootId),
+);
+assert.equal(JSON.stringify(orderedProjects.map((group) => group.rootId)), JSON.stringify([
+  "home-pin-live", "home-pin-old", "home-plain-new", "home-plain-old",
+  "pc-newest", "pc-plain", "fn-newest",
+]));
+
+const withUnknownNode = orderProjectGroupsByNode(
+  [
+    { rootId: "unknown", _nodeId: "unknown", latestSessionTime: "2026-07-30T23:00:00.000Z", sessions: [] },
+    { rootId: "home", _nodeId: "home", latestSessionTime: "2026-07-30T01:00:00.000Z", sessions: [] },
+    { rootId: "pc", _nodeId: "pc", latestSessionTime: "2026-07-30T02:00:00.000Z", sessions: [] },
+  ],
+  ["home", "pc"],
+  (group) => group._nodeId,
+  () => false,
+  (left, right) => left.rootId.localeCompare(right.rootId),
+);
+assert.equal(JSON.stringify(withUnknownNode.map((group) => group._nodeId)), JSON.stringify(["home", "pc", "unknown"]));
+
+const realtimeSource = readSource("src/app/useRealtimeEvents.ts");
+const streamStart = realtimeSource.indexOf("const handleSessionStream = (payload: any) =>");
+const streamEnd = realtimeSource.indexOf("const ck = rootSessionKey(activeRoot, streamKey);", streamStart);
+const streamHandler = realtimeSource.slice(streamStart, streamEnd);
+assert.match(streamHandler, /event\?\.type && event\.type !== "message_done"[\s\S]*?activity_at: activityAt/);
+assert.match(streamHandler, /Math\.floor\(eventTime \/ 100\) \* 100/);
+assert.ok(streamHandler.indexOf("activity_at: activityAt") < streamHandler.indexOf("if (wsNid && curNid && wsNid !== curNid)"));
 
 // 跨节点同 key 会话不得互相覆盖（C3：归并键需按 _nodeId 作用域）
 const crossNode = mergeSessionItems(

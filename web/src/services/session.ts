@@ -38,8 +38,6 @@ import { appendSessionDelta, cloneExchangeAux, getSessionMaxSeq, toPersistentExc
 import { createRequestId, generateClientId } from "./sessionIdentifiers";
 export {
   getCachedSessionList,
-  getCachedMultiRootSessionList,
-  saveCachedMultiRootSessionList,
   saveCachedSessionList,
 } from "./sessionListCache";
 export {

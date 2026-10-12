@@ -3,7 +3,6 @@ import type { CachedSessionListRecord, CachedSessionRecord } from "./sessionCach
 import {
   buildSessionCacheKey,
   buildSessionListCacheKey,
-  multiRootSessionListCacheKey,
   sessionRequestToPromise,
   withSessionListStore,
   withSessionStore,
@@ -100,9 +99,7 @@ export async function deleteCachedSessionLists(
           }
         }
       }
-      // 多项目面板（当前默认形态）渲染的是这份按账户存的快照，同样要失效，
-      // 否则已删的会话会在下次进面板时从 multi-root 快照里复活。
-      try { await sessionRequestToPromise(store.delete(multiRootSessionListCacheKey())); } catch {}
+      // 多项目面板按账户缓存的是这份快照，但按 G-BJ 已整体退役，无需再失效。
     });
   } catch {}
 }

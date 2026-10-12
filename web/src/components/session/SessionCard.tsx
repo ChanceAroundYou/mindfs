@@ -17,6 +17,7 @@ import {
   inlineActionStyle,
 } from "./sessionCardUtils";
 import type { SessionItem } from "./sessionListTypes";
+import { sessionActivityAt } from "../../services/sessionListMerge";
 import { useSessionCard } from "./useSessionCard";
 
 function SessionCard({
@@ -418,7 +419,7 @@ function SessionCard({
               {formatTime(
                 isClosed && session.closed_at
                   ? session.closed_at
-                  : session.updated_at || "",
+                  : sessionActivityAt(session),
                 locale,
                 t("time.justNow"),
               )}

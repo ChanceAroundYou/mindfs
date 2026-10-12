@@ -300,6 +300,8 @@ export type MultiRootSessionGroup = {
   rootId: string;
   rootName: string;
   latestSessionTime: string;
+  /** 分组级活动时间覆盖层（G-BJ，不落盘） */
+  activity_at?: string;
   items: Session[];
   pinnedItems: Session[];
   pinnedKeys: string[];

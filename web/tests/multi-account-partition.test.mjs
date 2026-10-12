@@ -128,23 +128,17 @@ assert.ok(
   "跨机器要真的把用户名写进 user=",
 );
 
-// 3b) **缓存必须按账户分区**。
-//     服务端分区正确不代表看不到别人的东西：多项目会话列表是「先渲染 IndexedDB 缓存、
-//     再补发账户作用域请求」，若缓存键不含账户，切到新账户时会先把上一账户的全量会话画出来，
-//     而后到的空结果只是 merge 进 prev、并不清空它（实测：项目列表已空、会话列表仍是全部）。
-//     同一个坑对单项目列表缓存同样成立。
-// 缓存键的实现住在 sessionIndexedDb.ts（2026-10-07 从 session.ts 抽出）。
-const sessionSrc = read("src/services/sessionIndexedDb.ts");
+// 3b) 单项目列表缓存仍必须按账户分区。多项目列表不再预渲染持久快照，
+//     避免账户切换与首次打开时先画旧结果、再被节点响应重新排序。
+const sessionSrc = read("src/services/session.ts");
 assert.ok(
-  /function multiRootSessionListCacheKey\(\)[\s\S]{0,400}currentUser\(\)\?\.username/.test(sessionSrc),
-  "多项目会话缓存键必须带账户——常量键会让新账户看到旧账户的全部会话",
+  !/multiRootSessionListCacheKey|getCachedMultiRootSessionList|saveCachedMultiRootSessionList/.test(sessionSrc),
+  "多项目列表不应保留 stale-while-revalidate 的 IndexedDB 快照路径",
 );
+// 拆分后缓存键住在 services/sessionIndexedDb.ts（sessionListCache.ts 只转发）。
+const sessionIndexedDbSrc = read("src/services/sessionIndexedDb.ts");
 assert.ok(
-  !/MULTI_ROOT_SESSION_LIST_CACHE_KEY/.test(sessionSrc),
-  "不应再有账户无关的 MULTI_ROOT_SESSION_LIST_CACHE_KEY 常量",
-);
-assert.ok(
-  /function buildSessionListCacheKey[\s\S]{0,400}sessionListCacheScope\(\)/.test(sessionSrc),
+  /function buildSessionListCacheKey[\s\S]{0,400}sessionListCacheScope\(\)/.test(sessionIndexedDbSrc),
   "单项目列表缓存键也必须带账户",
 );
 

@@ -361,7 +361,7 @@ export function applyStageOverride(
  * 建任务整个报 "task template not found"。而「没覆盖」恰恰是最常见的路径。
  *
  * 带上流水也不改变语义：模板流水线本来就是创建时拷贝的快照
- * （CLAUDE.md 事实 13），前端在选模板那一刻取到的快照与后端回查取到的
+ * （AGENTS.md 事实 13），前端在选模板那一刻取到的快照与后端回查取到的
  * 只差「用户在两步之间改了模板」，这种竞态本来就没有正确答案。
  */
 export function taskStagesForCreate(

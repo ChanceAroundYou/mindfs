@@ -214,7 +214,7 @@ export function createRealtimeWsHandlers(
           }
           return;
       },
-      // 服务端搬完转录（worktree → 主 checkout，见 CLAUDE.md 事实 14）后广播这一条：
+      // 服务端搬完转录（worktree → 主 checkout，见 AGENTS.md 事实 14）后广播这一条：
       // 前端手里还是**旧视图**（worktree 标签、`agent_session_id`），必须失效并重拉。
       // 这条帧此前**没有任何消费者** —— 服务端注释写的意图「广播一次强制刷新」因此从未生效
       // （`tests/message-mechanism-merges.test.mjs` 的【红·⑫】就是钉这个：发出但没人接的帧）。

@@ -3,6 +3,7 @@ import { pruneChildState } from "../../services/sessionTree";
 import { type DirectorySortMode, sortDirectoryEntries } from "../../services/prefs/directorySort";
 import { getNodes, PALETTE } from "../../services/net/nodeRegistry";
 import { resolveGroupColor } from "../../services/sessionGroupDisplay";
+import { mergeSessionItems, orderProjectGroupsByNode, sessionActivityAt } from "../../services/sessionListMerge";
 import { scopeKey } from "../../shared/scope";
 import {
   optimisticProjectPin,
@@ -77,14 +78,15 @@ export function useMultiProjectSessionList({
 
   const orderedGroups = useMemo(() => {
     const nodes = getNodes();
-    const orderById = new Map(nodes.map((n, i) => [String(n.id), i] as const));
     const orderByName = new Map(nodes.map((n, i) => [String(n.name), i] as const));
-    const nodeIndex = (group: ProjectSessionGroup): number => {
+    const nodeKey = (group: ProjectSessionGroup): string => {
       const nid = String((group as any)?._nodeId || "").trim();
-      if (nid && orderById.has(nid)) return orderById.get(nid)!;
+      if (nid && nodes.some((node) => String(node.id || "").trim() === nid)) return nid;
       const nname = String((group as any)?._nodeName || "").trim();
-      if (nname && orderByName.has(nname)) return orderByName.get(nname)!;
-      return 99;
+      if (nname && orderByName.has(nname)) {
+        return String(nodes[orderByName.get(nname)!]?.id || "").trim() || `unknown-name:${nname}`;
+      }
+      return nid ? `unknown-id:${nid}` : nname ? `unknown-name:${nname}` : "";
     };
     const compareByProjectSort = (a: ProjectSessionGroup, b: ProjectSessionGroup): number => {
       const ea = { name: a.rootName || a.rootId, path: a.rootId, is_dir: true } as Parameters<typeof sortDirectoryEntries>[0][number];
@@ -94,20 +96,13 @@ export function useMultiProjectSessionList({
       if (sorted[0] === eb && sorted[1] === ea) return 1;
       return 0;
     };
-    return groups.slice().sort((left, right) => {
-      const li = nodeIndex(left);
-      const ri = nodeIndex(right);
-      if (li !== ri) return li - ri;
-      const leftPinnedAt = pinnedProjects[groupScopeKey(left)] || 0;
-      const rightPinnedAt = pinnedProjects[groupScopeKey(right)] || 0;
-      const leftPinned = leftPinnedAt > 0;
-      const rightPinned = rightPinnedAt > 0;
-      if (leftPinned !== rightPinned) return rightPinned ? 1 : -1;
-      if (leftPinned && rightPinned && leftPinnedAt !== rightPinnedAt) {
-        return rightPinnedAt - leftPinnedAt;
-      }
-      return compareByProjectSort(left, right);
-    });
+    return orderProjectGroupsByNode(
+      groups,
+      nodes.map((node) => String(node.id || "").trim()).filter(Boolean),
+      nodeKey,
+      (group) => (pinnedProjects[groupScopeKey(group)] || 0) > 0,
+      compareByProjectSort,
+    );
   }, [groups, pinnedProjects, projectSortMode]);
 
   const togglePinnedProject = (group: ProjectSessionGroup) => {
