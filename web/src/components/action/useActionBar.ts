@@ -30,7 +30,8 @@ import {
   with1MSuffix,
 } from "./modelUtils";
 import { type ActionBarProps } from "./actionTypes";
-import { parsePlanCommand, replaceActiveTokenText, stripPlanCommandPrefix } from "./inputTransforms";
+import { replaceActiveTokenText } from "./inputTransforms";
+import { parsePlanCommand, stripPlanCommandPrefix } from "../../shared/planCommand";
 import { matchesSendShortcut } from "../../services/prefs/sendShortcut";
 import type { ShellStatus } from "../../services/agents";
 import type { CandidateItem } from "../../services/candidates";

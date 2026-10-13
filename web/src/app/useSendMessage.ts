@@ -29,7 +29,7 @@ import { useI18n } from "../i18n";
 import { buildClientContext } from "../services/prefs/context";
 import { sessionService } from "../services/session";
 import { reportError } from "../services/net/error";
-import { isPlanCommand, withPlanPrefix } from "../components/action/inputTransforms";
+import { isPlanCommand, withPlanPrefix } from "../shared/planCommand";
 import {
   buildMessageWithViewContext,
   hasExplicitFileContext,

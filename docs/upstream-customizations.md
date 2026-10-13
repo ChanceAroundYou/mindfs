@@ -2632,3 +2632,11 @@
 - **根因与边界**：按实际行数将该项从硬线列表移除，将 app 子项从 12 修正为 11、总项从 31 修正为 30，并同步 Active 计划索引。
 - **针对性测试**：`web/tests/agent-docs.test.mjs` → 唯一计划索引对所有计划分类、规则文档和计划链接可解析。
 - **边界**：只修正待办和计划索引的计数/状态，不改变代码或规则。
+
+
+### G-BZ 将 plan 前缀逻辑移出 action view
+
+- **可见症状**：`useSendMessage.ts` 的业务逻辑依赖 `components/action` 的 UI 域文件；plan 命令协议与 action token 编辑实现混在一个模块里，调整 UI helper 可能影响新会话发送。
+- **根因与边界**：将 plan 前缀检测、解析、剥离与拼装迁入零 UI 的 `shared/planCommand.ts`，由 app 与 action hook 共用；删除 `useSessionLifecycle.ts` 未使用的 `SessionViewer` import。保持原始大小写/空白规则和返回值，不改消息协议。
+- **针对性测试**：`web/tests/plan-command.test.mjs` → 覆盖 `/plan` 的归一化、命令前缀边界、兼容 `null` 返回、正文剥离/拼装，并守住两个 app hook 与 shared helper 不依赖 view 模块。
+- **边界**：仅迁移纯逻辑和清理无用 import；不改 UI、发送时序或服务端协议。

@@ -3282,3 +3282,32 @@ groups:
       - docs/agent/rules/frontend/TODO.md:硬线 30 个
       - docs/plans/README.md:拆分 frontend TODO 的 30 个硬线文件
       - web/tests/agent-docs.test.mjs:every plan is classified in the sole plans index
+  - id: G-BZ
+    title: 将 plan 前缀逻辑移出 action view
+    kind: arch
+    symptom: |
+      发送消息 app hook 依赖 components/action 的 view 域模块；plan 前缀规则与 action token 编辑逻辑混在同一文件，
+      变更输入 UI 文件时容易意外改变会话消息协议。
+    why: |
+      plan 前缀检测、剥离与拼装是共享的纯业务逻辑，移入 shared 后由 app hook 与 action hook 共用；
+      同时移除 useSessionLifecycle 中未使用的 SessionViewer import，消除这两个 hook 的 view 依赖。
+    boundary: |
+      只移动既有纯函数并删去无用 import；保持 /plan 大小写/空白处理、返回值兼容与消息构造语义不变。
+    tests:
+      - web/tests/plan-command.test.mjs
+    files:
+      - web/src/shared/planCommand.ts
+      - web/src/components/action/inputTransforms.ts
+      - web/src/components/action/useActionBar.ts
+      - web/src/app/useSendMessage.ts
+      - web/src/app/useSessionLifecycle.ts
+      - web/tests/plan-command.test.mjs
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/shared/planCommand.ts:PLAN_COMMAND
+      - web/tests/plan-command.test.mjs:app logic and shared plan helpers do not depend on view modules
+      - web/src/app/useSendMessage.ts:isPlanCommand

@@ -29,7 +29,6 @@ import { useSessionSidebarView } from "./useSessionSidebarView";
 import { useSessionSelection } from "./useSessionSelection";
 import { useSessionStreamCache } from "./useSessionStreamCache";
 import { useTaskTemplates } from "./useTaskTemplates";
-import { SessionViewer } from "../components/session/SessionViewer";
 import { useI18n } from "../i18n";
 import { type FilePayload } from "../services/file";
 import type { UseSessionLifecycleParams } from "./useSessionLifecycleTypes";

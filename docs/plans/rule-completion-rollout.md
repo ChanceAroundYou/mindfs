@@ -41,4 +41,5 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 - 已完成：将 `useRealtimeEvents.ts` 的文件变更批处理与单文件事件（缓存失效、插件/Git/目录刷新）抽为 `realtimeWsFileChangedHandlers.ts`，更新旧逻辑路径映射并加专项守卫。原 31 项硬线清单中，useRealtimeEvents 现为 392 行并从清单销项，剩余 30 项；components 子项实际 17 个，最初“33”与“14”均为计数错误。
 - 已完成：将 `useRealtimeEvents.ts` 的文件变更事件处理抽为 `realtimeWsFileChangedHandlers.ts`（G-BV），并将 slash-command chunk/login/error/done 处理抽为 `realtimeWsSlashCommandHandlers.ts`（G-BW）；更新旧逻辑路径映射及两组专项守卫。hook 从 1003 行逐步降至 392 行，低于 500 行硬线。
 - 已完成：将主要 session stream 分支（节点/会话归属、活动时间、pending attach、消息块分发、compact 与结束/error 处理）抽为 `realtimeWsSessionStream.ts`；回合收尾与 replay 编排仍留在 hook，避免跨边界改变重锚定顺序。源码映射与针对性守卫同步更新，hook 从 1003 行逐步降至 392 行，低于 500 行硬线。
-- 当前下一项：核对 31 项硬线清单中剩余文件，按职责选择下一批；随后推进 6 项 logic→view 依赖方向清理。
+- 已完成：`useSendMessage.ts` 的 plan 前缀逻辑迁入 `shared/planCommand.ts`，app hook 不再导入 action view helper；专项测试覆盖前缀检测、兼容返回值、剥离与拼装。`useSessionLifecycle.ts` 的未使用 `SessionViewer` import 已删除；TODO 将这两项依赖方向问题销项。
+- 当前下一项：继续拆分剩余硬线文件，并审计 FileTree 对 services 的直接依赖；logic/view 依赖方向仍有 4 项待处理。
