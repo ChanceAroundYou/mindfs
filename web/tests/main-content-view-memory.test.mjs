@@ -136,7 +136,7 @@ assert.match(
 );
 assert.match(
   app,
-  /display: showSessionPane \? "flex" : "none",[\s\S]*?\{sessionView\}[\s\S]*?display: showSessionPane \? "none" : "flex",[\s\S]*?\{workspaceView\}/,
+  /display: showSessionPane \? "flex" : "none",[\s\S]*?\{sessionView\}[\s\S]*?display: showSessionPane \? "none" : "flex",[\s\S]*?<SessionMainContent \{\.\.\.props\} \/>/,
   "both main-area panes must share one predicate so exactly one is visible",
 );
 assert.doesNotMatch(

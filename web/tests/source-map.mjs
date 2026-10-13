@@ -35,6 +35,12 @@ export const WEB_ROOT = path.resolve(import.meta.dirname, "..");
  * 维护规则：文件移动/拆分时改这里，测试不动。
  */
 export const MODULES = {
+  "src/components/app/SessionPane.tsx": [
+    "src/components/app/SessionPane.tsx",
+    "src/components/app/SessionMainContent.tsx",
+    "src/components/app/PendingPluginTrustView.tsx",
+    "src/components/app/sessionPaneTypes.ts",
+  ],
   "src/app/useSessionStreamCache.ts": [
     "src/app/useSessionStreamCache.ts",
     "src/app/useSessionStreamRuntimeMeta.ts",
@@ -116,6 +122,9 @@ export const MODULES = {
     "src/components/app/SessionSheet.tsx",
     "src/components/app/AppActionBar.tsx",
     "src/components/app/SessionPane.tsx",
+    "src/components/app/SessionMainContent.tsx",
+    "src/components/app/PendingPluginTrustView.tsx",
+    "src/components/app/sessionPaneTypes.ts",
     "src/components/app/FileTreePanel.tsx",
     "src/app/renderRootSlashCommandResult.tsx",
     "src/app/usePopStateSync.ts",

@@ -3282,7 +3282,7 @@ groups:
       - docs/upstream-customizations.yaml
       - web/tests/agent-docs.test.mjs
     anchors:
-      - docs/agent/rules/frontend/TODO.md:硬线 5 个
+      - docs/agent/rules/frontend/TODO.md:硬线 4 个
       - docs/plans/README.md:Rule completion rollout
       - web/tests/agent-docs.test.mjs:every plan is classified in the sole plans index
   - id: G-BZ
@@ -4710,3 +4710,40 @@ groups:
     anchors:
       - web/src/app/realtimeWsTaskHandlers.ts:export function createRealtimeWsTaskHandlers
       - web/tests/realtime-ws-task-handlers-split.test.mjs:websocket handler factory stays below the frontend hard line
+
+  - id: G-DR
+    title: Session pane split by main-content composition
+    kind: arch
+    symptom: |
+      SessionPane combines the persistent two-pane shell with chat/plugin trust empty states,
+      plugin rendering, file preview, git diff, and directory/task board composition. The component
+      exceeds the frontend hard line and mixes shell visibility with view selection.
+    why: |
+      Keep the session/file pane visibility shell small and give main-content state routing and the
+      plugin trust surface focused components with a reusable prop contract.
+    boundary: |
+      SessionMainContent owns the original main content view selection and keeps its branch priority;
+      PendingPluginTrustView owns only the existing trust panel JSX. sessionPaneTypes owns the props,
+      re-exported from SessionPane.tsx. The shell keeps the original display predicates and renders
+      SessionMainContent in the same content slot; App.tsx remains unchanged.
+    tests:
+      - web/tests/session-pane-split.test.mjs
+      - web/tests/main-content-view-memory.test.mjs
+      - web/tests/node-colors-and-workspace-preferences.test.mjs
+      - web/tests/source-map.test.mjs
+    files:
+      - web/src/components/app/SessionPane.tsx
+      - web/src/components/app/SessionMainContent.tsx
+      - web/src/components/app/PendingPluginTrustView.tsx
+      - web/src/components/app/sessionPaneTypes.ts
+      - web/tests/session-pane-split.test.mjs
+      - web/tests/main-content-view-memory.test.mjs
+      - web/tests/source-map.mjs
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/components/app/SessionMainContent.tsx:export function SessionMainContent
+      - web/tests/session-pane-split.test.mjs:content coordinator also stays below the hard line

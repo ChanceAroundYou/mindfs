@@ -2956,3 +2956,10 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **根因与边界**：`task.updated`、`task.finish_teardown`、`task.deleted` 原处理体归 `createRealtimeWsTaskHandlers(ctx)`，在原事件表位置（`session.user_message` 后、`file.changed.batch` 前）展开；父工厂只移除任务专属 context 解构字段。
 - **针对性测试**：`realtime-ws-task-handlers-split.test.mjs` → 守住父工厂物理行数、事件注册位置、节点隔离、工作台刷新和详情清理；`task-card-parity.test.mjs`、`worktree-finish.test.mjs`、`workspace-realtime-freshness.test.mjs` → 守住任务/收尾/实时行为；`source-map.test.mjs` → 守住逻辑源码映射。
 - **边界**：父 hook 实测 570→426 行，frontend 硬线 TODO 剩余 5 项；不改 `App.tsx`、WS 派发线程或业务行为。
+
+### G-DR SessionPane 按主内容组合职责拆分
+
+- **可见症状**：`SessionPane` 同时持有固定双面板壳、聊天/插件信任空态、插件渲染、文件预览、Git diff 与目录/看板组合，超过前端硬线并混合壳层显隐与视图分流。
+- **根因与边界**：`SessionMainContent` 接管原主内容分支和优先级；插件信任 JSX 归 `PendingPluginTrustView`；props contract 归 `sessionPaneTypes` 并由旧路径再导出。外层保留原双 pane display predicate，并在同一内容槽渲染组合组件。
+- **针对性测试**：`session-pane-split.test.mjs` → 守住两个组合文件低于硬线、类型兼容出口、显隐和信任按钮接线；`main-content-view-memory.test.mjs`、`node-colors-and-workspace-preferences.test.mjs` → 守住视图状态与节点色契约；`source-map.test.mjs` → 守住逻辑源码映射。
+- **边界**：原 `SessionPane` 682→58 行，内容组合 458 行，frontend 硬线 TODO 剩余 4 项；不改 `App.tsx`、pane 显隐条件或视图优先级。
