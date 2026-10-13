@@ -2318,6 +2318,13 @@
 - **针对性测试**：`web/tests/async-state-message.test.mjs` → loading 使用 status、error 使用 alert、空态不伪装成错误，组件被三类列表复用。
 - **边界**：只整理状态消息，不改变数据获取、列表呈现或页面排版。
 
+### G-BR 前端 JSX helper 文件后缀与命名门禁
+
+- **可见症状**：`sessionCardUtils.tsx` 使用 `Utils` 名称却包含 JSX，命名测试未扫描 `.tsx` 版本，文件名无法说明其实际职责。
+- **根因与边界**：改名为 `sessionCardHelpers.tsx` 并更新三个消费者；命名门禁检查 `*Utils.tsx` 中是否仍有 JSX。导出和渲染行为不变。
+- **针对性测试**：`web/tests/naming-convention.test.mjs` → 含 JSX 的 `*Utils.tsx` 必须改用 `*Helpers.tsx`。
+- **边界**：只统一该存量文件的后缀语义，不重构其导出内容。
+
 
 ### 总体
 

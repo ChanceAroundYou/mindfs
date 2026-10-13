@@ -20,7 +20,7 @@
 
 ## 命名归一（存量）
 
-- [ ] `Utils`/`Helpers` 大小写归一 12 个文件。
+- [x] 审核 12 个 `Utils`/`Helpers` 文件名；将含 JSX 的 `sessionCardUtils.tsx` 改为 `sessionCardHelpers.tsx`，其余名称与 JSX 语义匹配。
 - [ ] 类型文件后缀归一（`types.ts` / `xxxTypes.ts` / `sessionCacheTypes.ts`）。
 - [ ] 样式文件归一（`composerStyles.tsx`、`fileTreeMenuStyles.ts` → `xxxStyles.ts`）。
 - [ ] 2 个 `.css` 内联化（`FileEditor.css`、`DiagramPreview.css`）。

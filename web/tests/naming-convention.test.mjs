@@ -62,6 +62,16 @@ test("naming: *Utils.ts exports no JSX-returning function", () => {
   assert.deepEqual(violations, [], `Utils-with-JSX violations:\n${violations.join("\n")}`);
 });
 
+test("naming: JSX render helpers use *Helpers.tsx instead of *Utils.tsx", () => {
+  const violations = [];
+  for (const f of walk(SRC)) {
+    if (!/Utils\.tsx$/.test(basename(f))) continue;
+    const text = readFileSync(f, "utf8");
+    if (tsHasJsx(text)) violations.push(`${f}: JSX helpers must use *Helpers.tsx`);
+  }
+  assert.deepEqual(violations, [], `Utils-with-JSX filename violations:\n${violations.join("\n")}`);
+});
+
 test("naming: main export matches file name (components/hooks)", () => {
   // 存量多 export 文件白名单（见 .claude/rules/frontend/TODO.md 存量命名违规项）：
   // 这些文件导出多个同级组件/函数，无单一主 export，细拆是 file-size 规则的事。

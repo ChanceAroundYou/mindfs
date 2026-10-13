@@ -34,4 +34,5 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 - 已完成：frontend TODO `taskIcons.tsx` 导出职责清单，提交 `dce4b54`，专项测试与 upstream 门禁通过。
 - 已完成：update 与 agent service 实现归入 `services/update/`、`services/agent/`，7 个根入口保留 facade；source-map 映射与 facade 专项测试同步更新。`npm run typecheck`、全量 `npm test`（232 通过、4 跳过）通过。
 - 已完成：新增 `AsyncStateMessage` 通用状态消息组件，迁移项目目录浏览、worktree 列表和定时任务列表的三态显示；保留每处原有布局和状态优先级。专项测试与 TypeScript 检查通过。
-- 当前下一项：重新核对 Utils/Helpers 文件命名与 import 图，再按命名规则归一存量文件。
+- 已完成：核对 12 个 Utils/Helpers 文件的实际 JSX 与命名，将唯一违规的 `sessionCardUtils.tsx` 改为 `sessionCardHelpers.tsx`，同步三个消费者、复用文档和命名门禁。
+- 当前下一项：按实际消费者与域归属核对 `types.ts`、`xxxTypes.ts`、`sessionCacheTypes.ts` 等类型文件后缀。

@@ -2626,6 +2626,32 @@ groups:
       - web/src/components/common/AsyncStateMessage.tsx:Shared inline message
       - web/tests/async-state-message.test.mjs:common async state component is reused
 
+  - id: G-BR
+    title: 前端 JSX helper 文件后缀与命名门禁
+    kind: arch
+    symptom: |
+      sessionCardUtils.tsx 含 JSX，却使用 Utils 后缀；命名测试只检查 *Utils.ts，漏掉了 *Utils.tsx 这类违反语义的文件名。
+    why: |
+      将该文件改名为 sessionCardHelpers.tsx，更新三个消费者与复用规则文档，并让命名测试直接拦截仍含 JSX 的 *Utils.tsx。
+    boundary: |
+      只修正 JSX 工具文件名语义并加强其命名门禁，不改导出与运行行为。
+    tests:
+      - web/tests/naming-convention.test.mjs
+    files:
+      - docs/agent/rules/frontend/TODO.md
+      - docs/agent/rules/frontend/naming.md
+      - docs/agent/rules/frontend/reuse.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - web/src/components/session/sessionCardHelpers.tsx
+      - web/src/components/session/SessionCard.tsx
+      - web/src/components/session/SessionList.tsx
+      - web/src/components/session/ExternalSessionList.tsx
+      - web/tests/naming-convention.test.mjs
+    anchors:
+      - "web/tests/naming-convention.test.mjs:naming: JSX render helpers use *Helpers.tsx instead of *Utils.tsx"
+      - web/src/components/session/sessionCardHelpers.tsx:renderHighlightedText
+
   - id: G-BH
     title: 会话正文块流（Block 存储层 + 轮次身份 turn_id/turn_seq/native_* + S2a 双写 + S2b 读改走块流 + C1/C2 + S2d-2 主日志不再存正文 + S2e pending 身份改用 turn_id）
     kind: fix

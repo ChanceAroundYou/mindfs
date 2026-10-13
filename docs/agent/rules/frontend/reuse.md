@@ -10,4 +10,4 @@
 `shared/datetime.ts`（`formatCompactTime`/`formatCompactSize`）、`shared/styles.ts`
 （`iconButtonStyle`/`emptyStyle`/`errorStyle`…）、`sessionListShared.tsx`
 （ToggleRowButton/PinIcon/ArchiveHeaderButton）、`layout/ViewHeader.tsx`、
-`sessionCardUtils.tsx`（`formatTime` 相对时间版、`renderHighlightedText`）。
+`sessionCardHelpers.tsx`（`formatTime` 相对时间版、`renderHighlightedText`）。

@@ -1,7 +1,7 @@
 import React from "react";
 import type { SessionItem } from "./SessionList";
 import { useI18n, type Locale } from "../../i18n/index";
-import { ChevronLeftIcon, iconButtonStyle } from "./sessionCardUtils";
+import { ChevronLeftIcon, iconButtonStyle } from "./sessionCardHelpers";
 import { emptyStyle, errorStyle } from "../../shared/styles";
 
 // CUSTOM(G-Q): 类型需被会话树/归档面板复用，故对外导出
@@ -353,7 +353,7 @@ function ExternalSessionCard({
   );
 }
 
-// 绝对时间 MM-DD HH:mm —— 与 sessionCardUtils.formatTime 的相对时间语义不同，故保持本地私有。
+// 绝对时间 MM-DD HH:mm —— 与 sessionCardHelpers.formatTime 的相对时间语义不同，故保持本地私有。
 function formatSessionTime(value: string | undefined, locale: Locale) {
   if (!value) return "";
   const date = new Date(value);
