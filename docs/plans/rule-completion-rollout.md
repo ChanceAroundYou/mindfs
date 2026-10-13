@@ -89,3 +89,5 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 - 下一项：从 AgentConfigPopover 提取 agent 选择步骤，完成到 500 行以下后再销项；同时守住 FileTree 的旧 facade。
 - 已完成：将 agent 选择步骤从 `AgentConfigPopover` 拆为 `AgentConfigAgentStep`，保留 agent 选择、最近配置提示、restart 按钮和 loading/empty 状态；`AgentStatus`、provider 与 backup 类型改从 shared 导入，view 不再直接 import service 类型。`AgentConfigPopover` 降到 450 行，前端硬线剩余 16 项；typecheck、命名、FileTree overlay 与 agent step 专项通过。
 - 下一项：从当前前端硬线列表选择下一批易于界定且能减少父职责的目标；之后完成 reviewer-checklist 自动门禁并开始 backend 单文件拆分。
+- 当前进度（2026-10-14）：将 `useProjectLifecycle.tsx` 中 worktree 创建/切换 overlay JSX 提取到 `WorktreeLifecycleOverlays`；hook 保持状态、加载与动作，并保留创建/切换两个既有 render 出口。逻辑映射与专项结构守卫同步更新，父 hook 从 885 行降至 731 行，仍在硬线清单内。TypeScript 与专项映射/命名/overlay 测试通过。
+- 下一项：审计项目目录浏览与创建逻辑的消费者和状态边界，继续拆 `useProjectLifecycle.tsx`；不改 App 组合根。

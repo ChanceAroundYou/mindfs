@@ -8,7 +8,7 @@ to resume their old TODOs or baselines.
 
 | Plan | Status | Next action |
 |---|---|---|
-| [Rule completion rollout](rule-completion-rollout.md) | Active | AgentConfigPopover 450 行；agent 选择步骤独立，表单类型由 shared 提供；前端硬线剩余 16 项。下一批从当前文件实测与依赖审计中选择职责清晰的目标。 |
+| [Rule completion rollout](rule-completion-rollout.md) | Active | `useProjectLifecycle.tsx` 731 行；创建/切换 worktree overlay JSX 已独立，hook 继续持有状态和动作；硬线仍为 16 项。下一步审阅目录选择与项目创建流程的逻辑边界。 |
 
 ## Completed or superseded history
 

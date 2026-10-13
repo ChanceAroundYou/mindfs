@@ -2837,3 +2837,10 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **根因与边界**：agent 选择 UI 独立为 `AgentConfigAgentStep`，agent/provider/backup 类型直接依赖 shared；父组件继续管理当前步骤、选中值、busy 与确认流。
 - **针对性测试**：`agent-config-agent-step.test.mjs` → 守住 restart/choose 回调与列表状态；`file-tree-header-overlays.test.mjs` → 守住 FileTree facade 接线。
 - **边界**：保留最近配置文本、switch flow 的 restart 行为、loading/empty 状态；父组件现为 450 行。
+
+### G-CZ 项目生命周期 worktree overlay 呈现拆分
+
+- **可见症状**：`useProjectLifecycle.tsx` 同时持有项目/ worktree 生命周期状态与创建、切换浮层的大段 JSX，职责难以分别复核。
+- **根因与边界**：创建和切换 worktree overlay JSX 移到 `WorktreeLifecycleOverlays`，生命周期 hook 仍持有状态、数据加载和所有动作；保留 App 层原有的两个独立 render 出口。
+- **针对性测试**：`web/tests/worktree-lifecycle-overlays.test.mjs` → 确认 hook 接线、键盘提交/取消、加载/空态/错误顺序及当前/已管理/待加入 worktree 的标签语义。
+- **边界**：不改变点击关闭、创建/切换流程、节点路由、动作时序和 overlay 放置位置；`useProjectLifecycle.tsx` 从 885 降到 731 行，尚未从 TODO 销项。

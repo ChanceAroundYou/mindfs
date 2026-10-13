@@ -4127,3 +4127,33 @@ groups:
     anchors:
       - web/src/components/file/AgentConfigAgentStep.tsx:AgentConfigAgentStep
       - web/tests/agent-config-agent-step.test.mjs:delegates agent selection
+
+  - id: G-CZ
+    title: Project lifecycle worktree overlay presentation split
+    kind: arch
+    symptom: |
+      useProjectLifecycle mixed worktree creation/switch overlay JSX with lifecycle state,
+      data loading, and actions in a large app hook.
+    why: |
+      Isolate the two worktree overlay presentations while retaining lifecycle ownership in the hook
+      and preserving the app composition layer's separate render slots.
+    boundary: |
+      The hook remains the owner of worktree state, loading, node routing, and mutations. The new
+      component receives values and callbacks and returns each overlay through an explicit mode.
+    tests:
+      - web/tests/worktree-lifecycle-overlays.test.mjs
+      - web/tests/source-map.test.mjs
+      - web/tests/naming-convention.test.mjs
+    files:
+      - web/src/app/useProjectLifecycle.tsx
+      - web/src/components/file/WorktreeLifecycleOverlays.tsx
+      - web/tests/worktree-lifecycle-overlays.test.mjs
+      - web/tests/source-map.mjs
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/components/file/WorktreeLifecycleOverlays.tsx:WorktreeLifecycleOverlays
+      - web/tests/worktree-lifecycle-overlays.test.mjs:retaining state and actions in the hook

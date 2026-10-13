@@ -35,6 +35,10 @@ export const WEB_ROOT = path.resolve(import.meta.dirname, "..");
  * 维护规则：文件移动/拆分时改这里，测试不动。
  */
 export const MODULES = {
+  "src/app/useProjectLifecycle.tsx": [
+    "src/app/useProjectLifecycle.tsx",
+    "src/components/file/WorktreeLifecycleOverlays.tsx",
+  ],
   // useRealtimeEvents 拆分：34 个 WS 事件处理器（957 行）→ realtimeWsHandlers.ts。
   // 它们都关闭在 hook 的 state/ref/ctx 上，靠 createRealtimeWsHandlers(ctx, local)
   // 把 10 个局部函数当参数传进去；hook 侧只剩「派发」这一件事。
