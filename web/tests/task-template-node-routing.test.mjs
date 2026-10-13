@@ -155,11 +155,10 @@ assert.match(
   /currentRootNodeIdRef\.current = nid \|\| null;[\s\S]{0,400}?if \(nid\) \{\s*\n\s*const known = getNodeById\(nid\);\s*\n\s*if \(known && getActiveNodeId\(\) !== nid\) \{\s*\n\s*setActiveNodeId\(nid\);/,
   "selectRootNode must set the active node to the selected project's node",
 );
-// nodeRegistry 的 active-node 读写随「状态/ref」分层搬进了 useAppStateLayer
-// （App.tsx 只剩四层聚合调用）。契约不变：这两个函数必须真的被 import。
-const stateLayer = read("src/app/useAppStateLayer.ts");
+// 项目选择回调从状态/ref 聚合层移入 useAppRootSelection；active-node 读写仍由该逻辑模块负责。
+const rootSelection = read("src/app/useAppRootSelection.ts");
 assert.match(
-  stateLayer,
+  rootSelection,
   /import \{[^}]*getActiveNodeId[^}]*setActiveNodeId[^}]*\} from "\.\.\/services\/net\/nodeRegistry"/,
-  "the state layer must import the active-node setters/getter",
+  "root selection must import the active-node setters/getter",
 );

@@ -153,6 +153,7 @@ export const MODULES = {
     // （sessionListReloadTimerRef）从第 2 层上移至此层，总数 258 不变。
     "src/app/useAppStateLayer.ts",
     "src/app/useAppStateRefs.ts",
+    "src/app/useAppRootSelection.ts",
     // 2026-10-08 分层聚合（App.tsx → 1000 以内）第 2 层：会话域。
     "src/app/useAppSessionLayer.ts",
     "src/app/useAppSessionLayerTypes.ts",

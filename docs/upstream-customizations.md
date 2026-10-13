@@ -2879,3 +2879,10 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **根因与边界**：命令式 ref 与已有 session cache hook 初始化移至 `useAppStateRefs`；父层只在原位置接收 ref 集合，不改变 refs 名称、对象或后续写入点。
 - **针对性测试**：`web/tests/app-state-refs-split.test.mjs` → 守住父层接线、缓存与 refs 初始化顺序及文件滚动位置恢复。
 - **边界**：这是 `useAppStateLayer` 的分阶段拆分；父层当前仍 762 行，仍列在硬线 TODO，后续继续按状态域拆分。
+
+### G-DF 项目 root 选择与跨节点清理职责拆分
+
+- **可见症状**：状态聚合 hook 内嵌项目节点选择动作，同时处理请求取消、会话/看板清理、活动节点路由和 managed-root 映射，父层仍高于硬线。
+- **根因与边界**：选择回调迁入 `useAppRootSelection`；父层在相同 hook 序列位置接收 callback。原先后置声明的 session timer 与 Git setter 通过 getter 延迟读取，避免移动声明或改变 hook 顺序。
+- **针对性测试**：`web/tests/app-root-selection-split.test.mjs` → 守住回调归属、请求取消、跨节点缓存清理和 managed-root 映射；`task-template-node-routing.test.mjs` → 守住 active-node 与所选项目一致。
+- **边界**：不改 `App.tsx`、请求作用域、清理条件或数据写入；父层现为 714 行，继续留在硬线 TODO。

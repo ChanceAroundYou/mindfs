@@ -28,7 +28,7 @@
 ## 必拆文件（硬线 13 个，按"每次 2–3 个 + 一次构建"推进）
 
 ```
-app/ (8): useAppStateLayer 762 · useSessionLifecycle 741 · useManagedRoots 709
+app/ (8): useAppStateLayer 714 · useSessionLifecycle 741 · useManagedRoots 709
            useSendMessage 686 · useAppViewComposition 661
            useSessionStreamCache 645 · useActionHandlers 611 · realtimeWsHandlers 570
 components/ (3): SessionPane 682 · SessionViewer 646

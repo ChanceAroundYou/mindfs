@@ -97,4 +97,5 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 - 已完成：`UseAppDomainLayerParams` 移到 `useAppDomainLayerTypes.ts`，原模块保留类型 facade；连续的 root 管理、action handler、bound-session 导航、文件导航、项目删除与项目/worktree 生命周期装配归 `useAppProjectManagement`，调用顺序维持不变。父层降到 437 行，硬线从 14 减至 13；typecheck、source-map、命名和专项边界测试通过。
 - 下一项：重新实测并审阅 `useAppStateLayer` 的消费者、状态所有权和职责边界，再选定单一子职责继续拆分。
 - 当前进度：`useAppStateLayer` 中命令式 refs 与 session cache 初始化移到 `useAppStateRefs`，并在原 hook 序列位置调用，保留 refs 声明及 cache hook 的顺序。父层实测 816→762 行，仍超过硬线；专项结构守卫、命名门禁和 typecheck 通过。TODO 行数已同步，未提前销项。
+- 当前进度：跨节点 root 选择回调与清理逻辑移到 `useAppRootSelection`，父层仍在原位置创建回调；timer 与 Git 状态通过惰性 getter 保持原声明时序，既有节点路由断言改为检查实际逻辑模块。父层实测进一步从 762 降至 714 行；typecheck、全量 web 测试（279 通过、4 跳过）与专项结构测试通过。
 - 下一项：继续按状态所有权拆分 `useAppStateLayer` 的 session、task 与 project/file state groups，保持父层低于 500 行之前不从硬线清单删除。

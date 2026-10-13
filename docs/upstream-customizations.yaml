@@ -4322,3 +4322,36 @@ groups:
     anchors:
       - web/src/app/useAppStateRefs.ts:useAppStateRefs
       - web/tests/app-state-refs-split.test.mjs:delegates its ordered ref and session-cache ownership
+
+  - id: G-DF
+    title: Project root selection and cross-node cleanup extracted
+    kind: arch
+    symptom: |
+      The state aggregation hook performs project selection, request cancellation, session and board
+      cleanup, active-node routing, and managed-root remapping in one inline callback.
+    why: |
+      Give project/root selection one logic owner and keep its cross-node transition behavior
+      independently reviewable while reducing the state layer toward the 500-line hard line.
+    boundary: |
+      useAppRootSelection creates the callback at the original hook sequence location. Late-declared
+      timer and Git setters use lazy getters so their initialization and access timing remain valid.
+      No routing, cache-clearing condition, or App.tsx composition changes.
+    tests:
+      - web/tests/app-root-selection-split.test.mjs
+      - web/tests/task-template-node-routing.test.mjs
+      - web/tests/source-map.test.mjs
+      - web/tests/naming-convention.test.mjs
+    files:
+      - web/src/app/useAppStateLayer.ts
+      - web/src/app/useAppRootSelection.ts
+      - web/tests/app-root-selection-split.test.mjs
+      - web/tests/task-template-node-routing.test.mjs
+      - web/tests/source-map.mjs
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/app/useAppRootSelection.ts:useAppRootSelection
+      - web/tests/app-root-selection-split.test.mjs:keeps cross-node cleanup in its state hook

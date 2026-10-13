@@ -1,12 +1,10 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { FileEditStore } from "../services/fileEditing";
 import { bootstrapService } from "../services/net/bootstrap";
-import { clearFileMemoryCacheForView, fetchEditableFile, saveTextFile } from "../services/file";
-import { setRootNodeId, setRootNodeMap } from "../services/net/rootNode";
-import { scopeKey, scopeSessionKey } from "../shared/scope";
-import { clearGitHistoryCache } from "../services/git";
+import { fetchEditableFile, saveTextFile } from "../services/file";
+import { scopeKey } from "../shared/scope";
 import { DEFAULT_DIRECTORY_SORT_MODE } from "../services/prefs/directorySort";
-import { getActiveNodeId, getNodeById, setActiveNodeId, syncNodesFromServer } from "../services/net/nodeRegistry";
+import { syncNodesFromServer } from "../services/net/nodeRegistry";
 import { fetchCandidates } from "../services/candidates";
 import { useI18n } from "../i18n";
 import { shouldAutoStartOnboarding } from "../services/prefs/onboarding";
@@ -16,13 +14,14 @@ import { useAppProjectDisplay } from "./useAppProjectDisplay";
 import { useAppRootBindingSetters } from "./useAppRootBindingSetters";
 import { useAppSessionPins } from "./useAppSessionPins";
 import { useAppReplaceURLState } from "./useAppReplaceURLState";
-import { MainViewMode, isDirectorySortMode, readURLState, rootNodeKey } from "./appPath";
+import { MainViewMode, isDirectorySortMode, readURLState } from "./appPath";
 import { useBackLayer } from "../hooks/useBackNavigation";
 import { AttachedFileContext, MultiProjectSessionGroup, SessionItem, SlashCommandResult, ViewerSelection, WSStatus } from "./appSession";
 import { CANDIDATE_FETCH_DEBOUNCE_MS, DIRECTORY_SORT_OVERRIDES_STORAGE_KEY, TREE_SORT_STORAGE_KEY } from "./appStorage";
 import { getDirectorySortKey } from "./appUtils";
 import { firstAgentStage } from "./appTask";
 import { useAppStateRefs } from "./useAppStateRefs";
+import { useAppRootSelection } from "./useAppRootSelection";
 import { useCompletionSound } from "./useCompletionSound";
 import { useGitData } from "./useGitData";
 import { useProjectTreeWorktrees } from "./useProjectTreeWorktrees";
@@ -299,80 +298,33 @@ export function useAppStateLayer(params: UseAppStateLayerParams) {
     setGitDiffSideBySide,
   } = useUiPreferences();
   const [managedRootIds, setManagedRootIds] = useState<string[]>([]);
-  const selectRootNode = useCallback((rootId: string, nodeId?: string) => {
-    const rid = String(rootId || "").trim();
-    if (!rid) return;
-    const nid = String(nodeId || "").trim();
-    const prevNid = String(currentRootNodeIdRef.current || "").trim();
-    const isSameRootSwitch = rid === String(currentRootIdRef.current || "");
-    if (prevNid && nid && prevNid !== nid && isSameRootSwitch) {
-      // 同名项目跨节点切换：取消上一节点的防抖重拉与请求守卫，避免旧定时器覆盖新节点
-      if (sessionListReloadTimerRef.current) {
-        window.clearTimeout(sessionListReloadTimerRef.current);
-        sessionListReloadTimerRef.current = null;
-      }
-      sessionListAbortRef.current?.abort();
-      kanbanAbortRef.current?.abort();
-      // 递增序号使旧 in-flight 请求的 seq 校验直接失效
-      kanbanLoadSeqRef.current += 1;
-      sessionListLoadSeqRef.current += 1;
-    }
-    currentRootNodeIdRef.current = nid || null;
-    setCurrentRootNodeId(nid || null);
-    // 无条件更新模块级 root→node 映射，保证路由/作用域解析在任何时机都正确
-    setRootNodeId(rid, nid || undefined);
-    // active node 跟着选中的项目走：选中哪个项目，请求就该发到那台机器。
-    // 之前 active node 只由节点切换器改，于是「本机项目 + 上次点过 pc」的组合下，
-    // 所有不带 nodeId 的请求（模板、会话…）都发去了 pc，页面看着在本机、数据却是
-    // 另一台机器的。项目本身知道自己在哪个节点，选中它时把 active 一起切过去。
-    if (nid) {
-      const known = getNodeById(nid);
-      if (known && getActiveNodeId() !== nid) {
-        setActiveNodeId(nid);
-        window.dispatchEvent(new CustomEvent("mindfs:nodes-changed"));
-      }
-    }
-    if (prevNid && nid && prevNid !== nid) {
-      // 同名项目跨节点切换：清掉该 root 的会话选择状态，避免把另一节点的会话恢复到错误节点
-      const scopedRid = scopeKey(nid, rid);
-      selectedSessionByRootRef.current[scopedRid] = "";
-      boundSessionByRootRef.current[scopedRid] = "";
-      delete drawerSessionByRootRef.current[scopedRid];
-      setSelectedSession(null);
-      const prefix = scopeSessionKey(nid, rid, "");
-      for (const k of Object.keys(sessionCacheRef.current)) {
-        if (k.startsWith(prefix)) delete sessionCacheRef.current[k];
-      }
-      if (isSameRootSwitch) {
-        // 同名项目跨节点：清空 Kanban/文件/git 历史/会话视图残留，避免旧节点 incrementally merged 的 taskDetailsById/旧历史/旧会话串台
-        taskDetailsByIdRef.current = {};
-        setTaskDetailsById({});
-        setTaskFirstInputById({});
-        setTaskSessionKeysById({});
-        setTaskRelatedFilesById({});
-        setKanbanTasks([]);
-        setKanbanTaskCountItems([]);
-        setKanbanTasksLoading(true);
-        setSessions([]);
-        clearFileMemoryCacheForView();
-        clearGitHistoryCache(rid, prevNid);
-        setGitStatus(null);
-        setGitHistory(null);
-        setGitDiff(null);
-        setGitStatusLoading(true);
-        setGitHistoryLoading(true);
-      }
-    }
-    // 让按裸 rootId 的 payload 读取命中当前选中节点的数据
-    const entry = managedRootByKeyRef.current[rootNodeKey(nid, rid)];
-    if (entry && managedRootByIdRef.current[rid] !== entry) {
-      managedRootByIdRef.current = {
-        ...managedRootByIdRef.current,
-        [rid]: entry,
-      };
-      setRootNodeMap(managedRootByIdRef.current as Record<string, any>);
-    }
-  }, []);
+  const selectRootNode = useAppRootSelection({
+    currentRootNodeIdRef,
+    currentRootIdRef,
+    getSessionListReloadTimerRef: () => sessionListReloadTimerRef,
+    sessionListAbortRef,
+    kanbanAbortRef,
+    kanbanLoadSeqRef,
+    sessionListLoadSeqRef,
+    setCurrentRootNodeId,
+    selectedSessionByRootRef,
+    boundSessionByRootRef,
+    drawerSessionByRootRef,
+    setSelectedSession,
+    sessionCacheRef,
+    taskDetailsByIdRef,
+    setTaskDetailsById,
+    setTaskFirstInputById,
+    setTaskSessionKeysById,
+    setTaskRelatedFilesById,
+    setKanbanTasks,
+    setKanbanTaskCountItems,
+    setKanbanTasksLoading,
+    setSessions,
+    getGitState: () => ({ setGitStatus, setGitHistory, setGitDiff, setGitStatusLoading, setGitHistoryLoading }),
+    managedRootByKeyRef,
+    managedRootByIdRef,
+  });
 
   const [rootEntries, setRootEntries] = useState<FileEntry[]>([]);
   // open_dir 回调需要根列表做根展开互斥，经 ref 引用避免依赖抖动
