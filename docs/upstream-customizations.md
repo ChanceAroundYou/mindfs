@@ -2656,3 +2656,11 @@
 - **根因与边界**：将该动作移入 `useFileTreePreferences`，view 只触发 callback；保留先更新本地值、请求失败回滚、完成后清 busy 的顺序。
 - **针对性测试**：`web/tests/file-tree-meta-location-action.test.mjs` → 守住 JSX 不再调用 service，logic hook 负责请求、失败恢复与 busy 收尾。
 - **边界**：只移动新项目 meta 位置切换动作；其它 FileTree 逻辑与 service 引用待后续拆分。
+
+
+### G-CC 将 FileTree 外观偏好交给 logic hook
+
+- **可见症状**：外观菜单 view 直接调用 appearance service，组件选项同时负责持久化和本地状态更新。
+- **根因与边界**：外观状态及写入迁入 `useFileTreeAppearance`；`AppearanceMode` 迁入 shared 并由 service 再导出，菜单选项只触发 `onChange`。
+- **针对性测试**：`web/tests/file-tree-appearance-action.test.mjs` → 守住 view 不导入 appearance service、hook 执行持久化、类型共享与原 facade。
+- **边界**：保持原有 storage key、DOM 主题应用和广播事件语义，只调整依赖方向。

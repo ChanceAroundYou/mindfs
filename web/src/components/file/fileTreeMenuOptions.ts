@@ -1,4 +1,4 @@
-import type { AppearanceMode } from "../../services/prefs/appearance";
+import type { AppearanceMode } from "../../shared/appearanceTypes";
 import type { Locale, MessageKey } from "../../i18n/index";
 import type { DirectorySortMode } from "../../services/prefs/directorySort";
 

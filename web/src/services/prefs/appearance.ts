@@ -1,4 +1,5 @@
-export type AppearanceMode = "dark" | "light" | "system" | "meadow" | "moss";
+import type { AppearanceMode } from "../../shared/appearanceTypes";
+export type { AppearanceMode } from "../../shared/appearanceTypes";
 
 export const APPEARANCE_STORAGE_KEY = "mindfs-appearance-mode";
 export const APPEARANCE_CHANGE_EVENT = "mindfs:appearance-changed";

@@ -44,4 +44,5 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 - 已完成：`useSendMessage.ts` 的 plan 前缀逻辑迁入 `shared/planCommand.ts`，app hook 不再导入 action view helper；专项测试覆盖前缀检测、兼容返回值、剥离与拼装。`useSessionLifecycle.ts` 的未使用 `SessionViewer` import 已删除；TODO 将这两项依赖方向问题销项。
 - 已完成：`ProjectAddMode` 与 `GitHubImportState` 移入 `shared/projectAddTypes.ts`，`useRealtimeEvents`、其上下文与 WS handler 改为依赖共享类型；组件保留 type re-export 兼容现有 UI 消费者。专项测试守住依赖方向与 facade。
 - 已完成：把「新项目 meta 位置」偏好更新从 `FileTree` JSX 移入 `useFileTreePreferences`，保留乐观更新、失败回滚和 busy 状态；增加针对性守卫，FileTree 仍有其它 services/import 与职责需继续拆分。
-- 当前下一项：继续 FileTree 拆分，先清理菜单/偏好职责和剩余 view 对 services 的调用，再按实测行数销减硬线清单。
+- 已完成：FileTree 外观模式从 colocate `useFileTreeAppearance` 读取并持久化；view 只把选项交给 `onChange`。`AppearanceMode` 类型移到 `shared/appearanceTypes.ts` 并由 service facade 再导出，外观选项配置不再依赖 service 类型路径。
+- 当前下一项：继续 FileTree 拆分，清理其余 view 对 services 的调用和菜单组合职责，再按实测行数销减硬线清单。

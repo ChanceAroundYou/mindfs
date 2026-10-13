@@ -3363,3 +3363,31 @@ groups:
     anchors:
       - web/src/components/file/useFileTreePreferences.ts:toggleNewProjectMetaLocation
       - web/tests/file-tree-meta-location-action.test.mjs:FileTree delegates new-project meta preference updates to its logic hook
+  - id: G-CC
+    title: 将 FileTree 外观偏好交给 logic hook
+    kind: arch
+    symptom: |
+      FileTree 的外观菜单 view 直接从 appearance service 读取/写入外观模式，选项 view 同时更新 service 与本地状态。
+    why: |
+      将当前外观状态与持久化写入放入 colocate hook，让 view 只发送用户选择；AppearanceMode 作为纯类型移入 shared，
+      避免 view 的选项配置依赖 service 模块。
+    boundary: |
+      保持现有外观模式集合、localStorage/DOM 更新和 change event 行为；只调整类型归属与调用边界。
+    tests:
+      - web/tests/file-tree-appearance-action.test.mjs
+    files:
+      - web/src/shared/appearanceTypes.ts
+      - web/src/services/prefs/appearance.ts
+      - web/src/components/file/FileTree.tsx
+      - web/src/components/file/FileTreeAppearanceOptions.tsx
+      - web/src/components/file/fileTreeMenuOptions.ts
+      - web/src/components/file/useFileTreeAppearance.ts
+      - web/tests/file-tree-appearance-action.test.mjs
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/components/file/useFileTreeAppearance.ts:changeAppearanceMode
+      - web/src/shared/appearanceTypes.ts:AppearanceMode
+      - web/tests/file-tree-appearance-action.test.mjs:FileTree appearance view delegates persistence

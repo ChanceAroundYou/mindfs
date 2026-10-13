@@ -11,12 +11,6 @@ import {
   sortDirectoryEntries,
 } from "../../services/prefs/directorySort";
 import { bootstrapService } from "../../services/net/bootstrap";
-import {
-  APPEARANCE_CHANGE_EVENT,
-  getAppearanceMode,
-  setAppearanceMode,
-  type AppearanceMode,
-} from "../../services/prefs/appearance";
 import { useI18n, type I18nContextValue, type Locale, type MessageKey } from "../../i18n/index";
 import { useRefreshSpin } from "../../hooks/index";
 import { usePwaInstall } from "../../hooks/usePwaInstall";
@@ -38,6 +32,7 @@ import { useAgentConfigActions } from "./useAgentConfigActions";
 import { useAgentConfigFlowTransitions } from "./useAgentConfigFlowTransitions";
 import { formatProviderTestResult, isAgentConfigBackupConflict } from "./fileTreeAgentConfigUtils";
 import { useFileTreePreferences } from "./useFileTreePreferences";
+import { useFileTreeAppearance } from "./useFileTreeAppearance";
 import { useAgentConfigSelection } from "./useAgentConfigSelection";
 import { useAgentLifecycleActions } from "./useAgentLifecycleActions";
 import { useAgentConfigOutsideClick } from "./useAgentConfigOutsideClick";
@@ -258,7 +253,7 @@ function FileTreeInner({
   const [idleReleaseError, setIdleReleaseError] = React.useState("");
   const [newProjectMetaLocation, setNewProjectMetaLocation] = React.useState<NewProjectMetaLocation>("project");
   const [newProjectMetaLocationBusy, setNewProjectMetaLocationBusy] = React.useState(false);
-  const [appearanceMode, setAppearanceModeState] = React.useState<AppearanceMode>(() => getAppearanceMode());
+  const { appearanceMode, changeAppearanceMode } = useFileTreeAppearance();
   const [isUpdateNotesOpen, setIsUpdateNotesOpen] = React.useState(false);
   const [protectedAPIReady, setProtectedAPIReady] = React.useState(() =>
     bootstrapService.canUseProtectedAPI(),
@@ -616,7 +611,7 @@ function FileTreeInner({
                   </span>
                   <ChevronRight isOpen={isAppearanceMenuOpen} />
                 </button>
-<FileTreeAppearanceOptions open={isAppearanceMenuOpen} options={APPEARANCE_OPTIONS} value={appearanceMode} setValue={setAppearanceMode} setValueState={setAppearanceModeState} closeMenus={() => { setIsMenuOpen(false); setIsAppearanceMenuOpen(false); setIsLocaleMenuOpen(false); setIsSortMenuOpen(false); }} t={t} />
+<FileTreeAppearanceOptions open={isAppearanceMenuOpen} options={APPEARANCE_OPTIONS} value={appearanceMode} onChange={changeAppearanceMode} closeMenus={() => { setIsMenuOpen(false); setIsAppearanceMenuOpen(false); setIsLocaleMenuOpen(false); setIsSortMenuOpen(false); }} t={t} />
                 <button
                   type="button"
                   onClick={() => {
