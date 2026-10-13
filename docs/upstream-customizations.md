@@ -2640,3 +2640,11 @@
 - **根因与边界**：将 plan 前缀检测、解析、剥离与拼装迁入零 UI 的 `shared/planCommand.ts`，由 app 与 action hook 共用；删除 `useSessionLifecycle.ts` 未使用的 `SessionViewer` import。保持原始大小写/空白规则和返回值，不改消息协议。
 - **针对性测试**：`web/tests/plan-command.test.mjs` → 覆盖 `/plan` 的归一化、命令前缀边界、兼容 `null` 返回、正文剥离/拼装，并守住两个 app hook 与 shared helper 不依赖 view 模块。
 - **边界**：仅迁移纯逻辑和清理无用 import；不改 UI、发送时序或服务端协议。
+
+
+### G-CA 项目添加状态类型移入 shared
+
+- **可见症状**：实时事件与 WS handler 为更新项目添加状态而从 `ProjectAddPopover.tsx` 导入类型，业务逻辑被 UI 文件路径牵连。
+- **根因与边界**：把 `ProjectAddMode` 和 `GitHubImportState` 放入 `shared/projectAddTypes.ts`；实时事件逻辑直接使用共享类型，Popover 保留类型再导出供原 UI 消费者使用。
+- **针对性测试**：`web/tests/project-add-types.test.mjs` → 确认 shared 类型不依赖 view/service，三个 realtime logic 模块均从 shared 导入，Popover 仍提供类型再导出。
+- **边界**：只移动类型定义，不改变字段、事件 payload 或项目创建行为。

@@ -45,7 +45,8 @@ hooks/ (1): useSessionStream 648
 
 ## 职责混淆 6 项
 
-- [ ] `FileTree.tsx`、`useRealtimeEvents.ts`、`useActionBar.ts`、`TaskBoardView.tsx`（logic/view 依赖方向仍需审计）。
+- [ ] `FileTree.tsx`、`useActionBar.ts`、`TaskBoardView.tsx`（logic/view 依赖方向仍需审计）。
+- [x] `useRealtimeEvents.ts`：项目添加流程类型移入 `shared/projectAddTypes.ts`，实时 logic、事件上下文不再依赖 `ProjectAddPopover`。
 - [x] `useSendMessage.ts`：plan 前缀纯逻辑移至 `shared/planCommand.ts`，消除 app hook 对 action view 模块的依赖。
 - [x] `useSessionLifecycle.ts`：删除未使用的 `SessionViewer` import；当前 hook 不再依赖 view 模块。
 

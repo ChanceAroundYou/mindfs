@@ -3311,3 +3311,32 @@ groups:
       - web/src/shared/planCommand.ts:PLAN_COMMAND
       - web/tests/plan-command.test.mjs:app logic and shared plan helpers do not depend on view modules
       - web/src/app/useSendMessage.ts:isPlanCommand
+  - id: G-CA
+    title: 项目添加状态类型移入 shared
+    kind: arch
+    symptom: |
+      实时事件逻辑与 WS handler 只为读取和更新项目添加状态，就从 components/file/ProjectAddPopover 导入类型，
+      让业务层的类型契约绑定到 UI 文件路径。
+    why: |
+      项目添加模式和 GitHub 导入状态由 app logic 与 view 共用，属于纯数据契约；集中放入 shared，
+      避免逻辑层依赖 view，同时由原组件 re-export 保持现有 UI 导入稳定。
+    boundary: |
+      只移动两个 type alias 并调整引用；状态字段、WS payload 与项目添加行为不变。
+    tests:
+      - web/tests/project-add-types.test.mjs
+    files:
+      - web/src/shared/projectAddTypes.ts
+      - web/src/components/file/ProjectAddPopover.tsx
+      - web/src/app/useRealtimeEvents.ts
+      - web/src/app/useRealtimeEventsContext.ts
+      - web/src/app/realtimeWsHandlers.ts
+      - web/tests/project-add-types.test.mjs
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/shared/projectAddTypes.ts:ProjectAddMode
+      - web/src/app/useRealtimeEventsContext.ts:shared/projectAddTypes
+      - web/tests/project-add-types.test.mjs:app logic importing the view

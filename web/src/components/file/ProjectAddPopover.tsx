@@ -3,14 +3,8 @@ import { getNodes, LOCAL_NODE_ID } from "../../services/net/nodeRegistry";
 import { useI18n } from "../../i18n/index";
 import { PathBreadcrumb } from "./PathBreadcrumb";
 import { AsyncStateMessage } from "../common/AsyncStateMessage";
-
-export type ProjectAddMode =
-  | "mode"
-  | "local"
-  | "blank_location"
-  | "github_location"
-  | "github"
-  | "worktree_location";
+import type { GitHubImportState, ProjectAddMode } from "../../shared/projectAddTypes";
+export type { GitHubImportState, ProjectAddMode } from "../../shared/projectAddTypes";
 
 export type LocalDirItem = {
   name: string;
@@ -28,18 +22,6 @@ export type LocalDirBrowserState = {
   loading: boolean;
   selectedPath: string;
   adding: boolean;
-  error: string;
-};
-
-export type GitHubImportState = {
-  url: string;
-  parentPath: string;
-  taskId: string;
-  status: string;
-  message: string;
-  running: boolean;
-  submitting: boolean;
-  done: boolean;
   error: string;
 };
 

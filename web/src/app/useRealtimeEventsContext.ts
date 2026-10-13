@@ -1,6 +1,6 @@
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import type { I18nContextValue } from "../i18n";
-import type { GitHubImportState, ProjectAddMode } from "../components/file/ProjectAddPopover";
+import type { GitHubImportState, ProjectAddMode } from "../shared/projectAddTypes";
 import type { FileEntry } from "../services/prefs/directorySort";
 import type { FilePayload } from "../services/file";
 import type { GitDiffPayload, GitStatusPayload } from "../services/git";
