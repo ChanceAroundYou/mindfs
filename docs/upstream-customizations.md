@@ -257,6 +257,10 @@
 | `c6fba4e` | `docs/superpowers/plans/2026-08-21-node-colors-project-header-workspace-preferences.md` + `specs/...design.md` | 节点主题色方案沉淀 |
 | `13365dc/4af6f89/0be192c` | `docs/superpowers/specs/2026-08-22-session-lock-and-draggable-chat-sheet-design.md` + `plans/...sheet.md` | 锁定与浮层设计/计划 |
 | `05726f4` | `docs/message-mechanisms.md` | 消息收发/渲染机制的清点与整合分析（112 个机制、14 条冲突、ADR）。**2026-10-10 更新**：原 `docs/message-mechanisms-plan.md`（G-T 线在 `2328f0e` 上的冻结计划，其代码未采用进 main —— canonical adapter / FIFO writer 留在 `canonical-turn-wip` 分支）**已删除**，计划部分由 `docs/session-blocks-plan.md` 接手；本文件只保留机制清点与冲突清单 |
+| 2026-10-13 | `.claude/rules/`（25 文件）+ `web/tests/naming-convention.test.mjs` | 前后端开发规范（长期规则 + TODO 分家、reviewer 清单），及命名守卫测试 |
+
+> `.claude/rules/` 是 fork 的工程约定（上游没有）。合上游后若整目录被删，规范与「哪条该留」的判据一并消失；`naming-convention.test.mjs` 是命名规则的可执行守卫（`.ts` 无 JSX、文件名=主 export 名、`Utils` 纯函数）。
+
 
 ### G-B HTTP 语义修正
 

@@ -40,6 +40,7 @@ groups:
     files:
       - .gitignore
       - AGENTS.md
+      - .claude/rules/
       - docs/superpowers/
       - docs/main-view-switching-design.md
       - docs/message-change-history.md
@@ -61,7 +62,9 @@ groups:
       - docs/upstream-customizations.yaml
       - docs/workspace-design.md
       - release-notes.md
-    tests: []
+      - web/tests/naming-convention.test.mjs
+    tests:
+      - web/tests/naming-convention.test.mjs
 
   # ── 后端：HTTP / 安全 / 存储 ──────────────────────────────────────
   - id: G-B
