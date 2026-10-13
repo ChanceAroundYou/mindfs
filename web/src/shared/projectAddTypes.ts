@@ -18,3 +18,22 @@ export type GitHubImportState = {
   done: boolean;
   error: string;
 };
+
+export type LocalDirItem = {
+  name: string;
+  path: string;
+  is_dir: boolean;
+  is_added_root?: boolean;
+  root_id?: string;
+};
+
+export type LocalDirBrowserState = {
+  path: string;
+  parent?: string;
+  volumes?: LocalDirItem[];
+  items: LocalDirItem[];
+  loading: boolean;
+  selectedPath: string;
+  adding: boolean;
+  error: string;
+};

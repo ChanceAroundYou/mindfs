@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(fileURLToPath(import.meta.url), "../..");
 const src = fs.readFileSync(path.join(root, "src/components/file/ProjectAddPopover.tsx"), "utf8");
 const breadcrumbSrc = fs.readFileSync(path.join(root, "src/components/file/PathBreadcrumb.tsx"), "utf8");
+const browserHook = fs.readFileSync(path.join(root, "src/app/useProjectDirectoryBrowser.ts"), "utf8");
 
 // 1) LocalPanel 有「上一级」按钮，走 onLocalNavigate(parent)
 const localPanel = src.slice(src.indexOf("function LocalPanel("), src.indexOf("function GitHubPanel("));
@@ -23,5 +24,10 @@ const breadcrumb = breadcrumbSrc.slice(
   breadcrumbSrc.indexOf("const volumeItems"),
 );
 assert.ok(breadcrumb.includes('onNavigate("/")'), '根路径分支应渲染可点的 "/" 锚点');
+
+assert.match(browserHook, /appURL\("\/api\/local_dirs", params, targetNodeId\)/);
+assert.match(browserHook, /appPath\("\/api\/dirs", targetAddNodeId\)/);
+assert.match(browserHook, /projectAddMode === "local" && target\.is_added_root/);
+assert.match(browserHook, /await refreshManagedRoots\(\)[\s\S]*?openManagedDir\([\s\S]*?loadLocalDirs\(localPath\)/);
 
 console.log("project-add-path-browse ok");

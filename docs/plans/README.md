@@ -8,7 +8,7 @@ to resume their old TODOs or baselines.
 
 | Plan | Status | Next action |
 |---|---|---|
-| [Rule completion rollout](rule-completion-rollout.md) | Active | `useProjectLifecycle.tsx` 731 行；创建/切换 worktree overlay JSX 已独立，hook 继续持有状态和动作；硬线仍为 16 项。下一步审阅目录选择与项目创建流程的逻辑边界。 |
+| [Rule completion rollout](rule-completion-rollout.md) | Active | `useProjectLifecycle.tsx` 571 行；目录浏览逻辑和状态已归 `useProjectDirectoryBrowser`，worktree overlay JSX 独立；硬线仍为 16 项。下一步提取项目添加 popover 的呈现组合，达到 500 行以下后再销项。 |
 
 ## Completed or superseded history
 

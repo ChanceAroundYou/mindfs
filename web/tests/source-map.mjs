@@ -37,6 +37,7 @@ export const WEB_ROOT = path.resolve(import.meta.dirname, "..");
 export const MODULES = {
   "src/app/useProjectLifecycle.tsx": [
     "src/app/useProjectLifecycle.tsx",
+    "src/app/useProjectDirectoryBrowser.ts",
     "src/components/file/WorktreeLifecycleOverlays.tsx",
   ],
   // useRealtimeEvents 拆分：34 个 WS 事件处理器（957 行）→ realtimeWsHandlers.ts。
@@ -392,7 +393,7 @@ export const MODULES = {
     "src/components/file/DefaultListViewMenu.tsx",
     "src/components/file/DirectorySortMenu.tsx",
   ],
-  "src/components/ProjectAddPopover.tsx": ["src/components/file/ProjectAddPopover.tsx", "src/components/file/ProjectAddModePanel.tsx", "src/components/file/projectAddStyles.ts", "src/components/file/PathBreadcrumb.tsx"],
+  "src/components/ProjectAddPopover.tsx": ["src/components/file/ProjectAddPopover.tsx", "src/components/file/ProjectAddModePanel.tsx", "src/components/file/projectAddStyles.ts", "src/components/file/PathBreadcrumb.tsx", "src/shared/projectAddTypes.ts"],
   "src/components/AgentConfigPopover.tsx": ["src/components/file/AgentConfigPopover.tsx", "src/components/file/AgentConfigAgentStep.tsx", "src/components/file/AgentLifecyclePopover.tsx", "src/components/file/agentConfigStyles.ts"],
   "src/components/CompactUploadProgress.tsx": ["src/components/file/CompactUploadProgress.tsx"],
   "src/components/SymlinkBadge.tsx": ["src/components/file/SymlinkBadge.tsx"],

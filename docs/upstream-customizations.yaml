@@ -4157,3 +4157,39 @@ groups:
     anchors:
       - web/src/components/file/WorktreeLifecycleOverlays.tsx:WorktreeLifecycleOverlays
       - web/tests/worktree-lifecycle-overlays.test.mjs:retaining state and actions in the hook
+
+  - id: G-DA
+    title: Project directory browser state and actions moved to a dedicated hook
+    kind: arch
+    symptom: |
+      useProjectLifecycle combined local directory browser state, node-routed directory API calls,
+      path derivation, selection, and project-add actions with worktree lifecycle logic. Directory
+      browser contracts were declared by the view module.
+    why: |
+      Give directory browsing a cohesive app-layer owner and move its state types to shared, while
+      preserving the ProjectAddPopover compatibility exports.
+    boundary: |
+      Project mode and worktree flow orchestration remain in useProjectLifecycle. The new hook owns
+      directory state, browsing, selection, and add-directory transitions; API routes and ordering
+      remain unchanged.
+    tests:
+      - web/tests/project-add-path-browse.test.mjs
+      - web/tests/project-add-types.test.mjs
+      - web/tests/source-map.test.mjs
+      - web/tests/naming-convention.test.mjs
+    files:
+      - web/src/app/useProjectLifecycle.tsx
+      - web/src/app/useProjectDirectoryBrowser.ts
+      - web/src/shared/projectAddTypes.ts
+      - web/src/components/file/ProjectAddPopover.tsx
+      - web/tests/project-add-path-browse.test.mjs
+      - web/tests/project-add-types.test.mjs
+      - web/tests/source-map.mjs
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/app/useProjectDirectoryBrowser.ts:useProjectDirectoryBrowser
+      - web/tests/project-add-path-browse.test.mjs:project-add-path-browse ok

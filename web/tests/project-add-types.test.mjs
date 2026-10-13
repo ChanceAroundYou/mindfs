@@ -9,6 +9,8 @@ test("project-add state types are shared without app logic importing the view", 
   const types = read(sharedTypes);
   assert.match(types, /export type ProjectAddMode\s*=/);
   assert.match(types, /export type GitHubImportState\s*=/);
+  assert.match(types, /export type LocalDirBrowserState\s*=/);
+  assert.match(types, /export type LocalDirItem\s*=/);
   assert.doesNotMatch(types, /from\s+["'][^"']*(?:components|services|react)\//);
 
   for (const file of [
@@ -22,7 +24,10 @@ test("project-add state types are shared without app logic importing the view", 
   }
 
   const view = read(new URL("../src/components/file/ProjectAddPopover.tsx", import.meta.url));
-  assert.match(view, /export type \{ GitHubImportState, ProjectAddMode \} from "\.\.\/\.\.\/shared\/projectAddTypes"/);
+  assert.match(view, /export type \{ GitHubImportState, LocalDirBrowserState, LocalDirItem, ProjectAddMode \} from "\.\.\/\.\.\/shared\/projectAddTypes"/);
+  const lifecycle = read(new URL("../src/app/useProjectLifecycle.tsx", import.meta.url));
+  assert.match(lifecycle, /import type \{ GitHubImportState, ProjectAddMode \} from "\.\.\/shared\/projectAddTypes"/);
+  assert.doesNotMatch(lifecycle, /type (?:GitHubImportState|LocalDirBrowserState|ProjectAddMode) from "\.\.\/components\/file\/ProjectAddPopover"/);
 });
 
 test("project-add mode panel keeps all three mode callbacks in its view boundary", () => {

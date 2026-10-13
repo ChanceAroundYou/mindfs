@@ -5,27 +5,8 @@ import { PathBreadcrumb } from "./PathBreadcrumb";
 import { AsyncStateMessage } from "../common/AsyncStateMessage";
 import { ProjectAddModePanel } from "./ProjectAddModePanel";
 import { projectAddPopoverStyle } from "./projectAddStyles";
-import type { GitHubImportState, ProjectAddMode } from "../../shared/projectAddTypes";
-export type { GitHubImportState, ProjectAddMode } from "../../shared/projectAddTypes";
-
-export type LocalDirItem = {
-  name: string;
-  path: string;
-  is_dir: boolean;
-  is_added_root?: boolean;
-  root_id?: string;
-};
-
-export type LocalDirBrowserState = {
-  path: string;
-  parent?: string;
-  volumes?: LocalDirItem[];
-  items: LocalDirItem[];
-  loading: boolean;
-  selectedPath: string;
-  adding: boolean;
-  error: string;
-};
+import type { GitHubImportState, LocalDirBrowserState, ProjectAddMode } from "../../shared/projectAddTypes";
+export type { GitHubImportState, LocalDirBrowserState, LocalDirItem, ProjectAddMode } from "../../shared/projectAddTypes";
 
 type ProjectAddPopoverProps = {
   mode: ProjectAddMode;

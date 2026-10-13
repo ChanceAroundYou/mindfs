@@ -6,19 +6,16 @@ import {
   type GitBranchesPayload,
   type GitWorktreeItem,
 } from "../services/git";
-import { appPath, appURL } from "../services/net/base";
+import { appPath } from "../services/net/base";
 import { protectedJSON as apiProtectedJSON } from "../services/net/api";
 import { reportError } from "../services/net/error";
 import { getActiveNode, LOCAL_NODE_ID } from "../services/net/nodeRegistry";
-import { managedDirAddErrorMessage, type LocalDirsPayload, type ManagedRootPayload } from "./appMisc";
-import {
-  ProjectAddPopover,
-  type GitHubImportState,
-  type LocalDirBrowserState,
-  type ProjectAddMode,
-} from "../components/file/ProjectAddPopover";
+import { managedDirAddErrorMessage, type ManagedRootPayload } from "./appMisc";
+import { ProjectAddPopover } from "../components/file/ProjectAddPopover";
+import type { GitHubImportState, ProjectAddMode } from "../shared/projectAddTypes";
 import { useI18n } from "../i18n";
 import { WorktreeLifecycleOverlays } from "../components/file/WorktreeLifecycleOverlays";
+import { useProjectDirectoryBrowser } from "./useProjectDirectoryBrowser";
 
 type OpenDirPayload = { path: string; root: string; isRoot: boolean; forceDirectory?: boolean };
 
@@ -71,16 +68,6 @@ export function useProjectLifecycle({
   const [projectAddMode, setProjectAddMode] = useState<ProjectAddMode | null>(null);
   const [projectAddNodeId, setProjectAddNodeId] = useState<string>(() => {
     try { const n = getActiveNode(); return n?.id || LOCAL_NODE_ID; } catch { return LOCAL_NODE_ID; }
-  });
-  const [localDirState, setLocalDirState] = useState<LocalDirBrowserState>({
-    path: "",
-    parent: "",
-    volumes: [],
-    items: [],
-    loading: false,
-    selectedPath: "",
-    adding: false,
-    error: "",
   });
   const [githubImportState, setGitHubImportState] = useState<GitHubImportState>({
     url: "",
@@ -179,6 +166,25 @@ export function useProjectLifecycle({
     void loadWorktreeBranches(rootID);
   }, [creatingRootBusy, currentRootIdRef, loadWorktreeBranches, managedRootIdsRef]);
 
+  const {
+    localDirState,
+    loadLocalDirs,
+    openDirectoryPicker,
+    handleLocalDirSelect,
+    handleLocalDirAdd,
+  } = useProjectDirectoryBrowser({
+    currentRootIdRef,
+    managedRootByIdRef,
+    projectAddMode,
+    setProjectAddMode,
+    projectAddNodeId,
+    setGitHubImportState,
+    refreshManagedRoots,
+    openManagedDir,
+    handleCreateRootStart,
+    handleCreateWorktreeStart,
+  });
+
   const handleSwitchWorktreeStart = useCallback(() => {
     const rootID = currentRootIdRef.current;
     if (!rootID) {
@@ -236,98 +242,6 @@ export function useProjectLifecycle({
     }
     setProjectAddMode("mode");
   }, [creatingRootBusy]);
-
-  const inferParentPath = useCallback((absolutePath: string): string => {
-    const trimmed = absolutePath.trim().replace(/[\\/]+$/, "");
-    const parts = trimmed.split(/[\\/]/).filter(Boolean);
-    if (parts.length <= 1) {
-      return "";
-    }
-    if (/^[A-Za-z]:/.test(trimmed)) {
-      const drive = parts[0];
-      const rest = parts.slice(1, -1);
-      return rest.length > 0 ? `${drive}\\${rest.join("\\")}` : `${drive}\\`;
-    }
-    if (trimmed.startsWith("/")) {
-      return `/${parts.slice(0, -1).join("/")}`;
-    }
-    return parts.slice(0, -1).join("/");
-  }, []);
-
-  const loadLocalDirs = useCallback(async (path: string, nodeId?: string) => {
-    const trimmed = String(path || "").trim();
-    setLocalDirState((prev) => ({
-      ...prev,
-      loading: true,
-      error: "",
-      path: trimmed,
-      selectedPath: "",
-    }));
-    try {
-      const params = trimmed ? new URLSearchParams({ path: trimmed }) : undefined;
-      const targetNodeId = (nodeId || projectAddNodeId || getActiveNode()?.id || LOCAL_NODE_ID);
-      const payload = await apiProtectedJSON<LocalDirsPayload>(appURL("/api/local_dirs", params, targetNodeId));
-      setLocalDirState({
-        path: String(payload.path || trimmed),
-        parent: String(payload.parent || ""),
-        volumes: Array.isArray(payload.volumes)
-          ? payload.volumes.map((item) => ({
-              name: String(item.name || ""),
-              path: String(item.path || ""),
-              is_dir: item.is_dir !== false,
-              is_added_root: item.is_added_root === true,
-              root_id: String(item.root_id || ""),
-            }))
-          : [],
-        items: Array.isArray(payload.items)
-          ? payload.items.map((item) => ({
-              name: String(item.name || ""),
-              path: String(item.path || ""),
-              is_dir: item.is_dir !== false,
-              is_added_root: item.is_added_root === true,
-              root_id: String(item.root_id || ""),
-            }))
-          : [],
-        loading: false,
-        selectedPath: "",
-        adding: false,
-        error: "",
-      });
-    } catch (error) {
-      setLocalDirState((prev) => ({
-        ...prev,
-        loading: false,
-        error: error instanceof Error ? error.message : t("directory.loadFailed"),
-      }));
-    }
-  }, [projectAddNodeId, t]);
-
-  const openDirectoryPicker = useCallback((nextMode: ProjectAddMode) => {
-    const rootID = currentRootIdRef.current;
-    const rootPath = rootID
-      ? String(managedRootByIdRef.current[rootID]?.root_path || "")
-      : "";
-    const initialPath = rootPath ? inferParentPath(rootPath) : "";
-    setProjectAddMode(nextMode);
-    if (!initialPath || initialPath === ".") {
-      if (!rootPath) {
-        void loadLocalDirs("");
-        return;
-      }
-      setLocalDirState((prev) => ({
-        ...prev,
-        path: rootPath,
-        parent: "",
-        items: [],
-        loading: false,
-        selectedPath: "",
-        adding: false,
-        error: t("directory.noBrowsableParent"),
-      }));
-      return;
-    }
-    void loadLocalDirs(initialPath);
-  }, [currentRootIdRef, inferParentPath, loadLocalDirs, managedRootByIdRef, t]);
 
   const handleOpenLocalProjectAdd = useCallback(() => {
     // reset to active/local when opening
@@ -479,81 +393,6 @@ export function useProjectLifecycle({
     worktreeBranch,
     worktreeBranchMode,
   ]);
-
-  const handleLocalDirSelect = useCallback((path: string) => {
-    setLocalDirState((prev) => {
-      const target = prev.items.find((item) => item.path === path);
-      if (!target) {
-        return prev;
-      }
-      if (projectAddMode === "local" && target.is_added_root) {
-        return prev;
-      }
-      return { ...prev, selectedPath: path };
-    });
-  }, [projectAddMode]);
-
-  const handleLocalDirAdd = useCallback(async () => {
-    const path = String(localDirState.selectedPath || "").trim();
-    if (localDirState.adding) {
-      return;
-    }
-    if (projectAddMode === "blank_location") {
-      setProjectAddMode(null);
-      handleCreateRootStart(localDirState.path);
-      return;
-    }
-    if (projectAddMode === "github_location") {
-      setProjectAddMode("github");
-      setGitHubImportState((prev) => ({
-        ...prev,
-        parentPath: localDirState.path,
-        taskId: "",
-        status: "",
-        message: "",
-        running: false,
-        submitting: false,
-        done: false,
-        error: "",
-      }));
-      return;
-    }
-    if (projectAddMode === "worktree_location") {
-      setProjectAddMode(null);
-      handleCreateWorktreeStart(localDirState.path);
-      return;
-    }
-    if (!path) {
-      return;
-    }
-    setLocalDirState((prev) => ({ ...prev, adding: true, error: "" }));
-    try {
-      const targetAddNodeId = projectAddNodeId || getActiveNode()?.id || LOCAL_NODE_ID;
-      const payload = await apiProtectedJSON<any>(appPath("/api/dirs", targetAddNodeId), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path, create: false }),
-      });
-      setLocalDirState((prev) => ({
-        ...prev,
-        adding: false,
-        selectedPath: "",
-      }));
-      setProjectAddMode(null);
-      await refreshManagedRoots();
-      const created = payload as ManagedRootPayload;
-      if (created?.id) {
-        await openManagedDir({ path: created.id, root: created.id, isRoot: true });
-      }
-      void loadLocalDirs(localDirState.path);
-    } catch (error) {
-      setLocalDirState((prev) => ({
-        ...prev,
-        adding: false,
-        error: managedDirAddErrorMessage(error, t("root.addDirectoryFailed"), t),
-      }));
-    }
-  }, [handleCreateRootStart, handleCreateWorktreeStart, loadLocalDirs, localDirState.adding, localDirState.path, localDirState.selectedPath, openManagedDir, projectAddMode, projectAddNodeId, refreshManagedRoots, t]);
 
   const handleGitHubImportStart = useCallback(async () => {
     const url = String(githubImportState.url || "").trim();
