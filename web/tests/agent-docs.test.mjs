@@ -38,6 +38,8 @@ test("agent entrypoints import the shared instructions and indexes", () => {
     const text = read(file);
     for (const imported of ["@AGENTS.md", "@docs/agent/rules/README.md", "@docs/plans/README.md"]) {
       assert.ok(text.includes(imported), `${file} must import ${imported}`);
+      const path = imported.slice(1);
+      assert.ok(statSync(join(ROOT, path), { throwIfNoEntry: false }), `${file} imports missing ${path}`);
     }
   }
   const instructions = read("AGENTS.md");
@@ -59,6 +61,9 @@ test("every plan is classified in the sole plans index", () => {
   const plans = readdirSync(join(ROOT, "docs/plans")).filter(
     (name) => name.endsWith(".md") && name !== "README.md",
   );
-  const missing = plans.filter((name) => !index.includes(`(${name})`));
-  assert.deepEqual(missing, [], "Unclassified plans must be added to docs/plans/README.md");
+  const unclassified = plans.filter((name) => {
+    const row = index.split("\n").find((line) => line.includes(`(${name})`));
+    return !row || !row.startsWith("|") || !row.split("|")[2]?.trim();
+  });
+  assert.deepEqual(unclassified, [], "Every plan must have a status row in docs/plans/README.md");
 });

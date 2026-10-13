@@ -6,10 +6,9 @@ to resume their old TODOs or baselines.
 
 ## Active
 
-None. There is currently no approved, unfinished execution plan in this directory.
-Before starting multi-step repository work, add one plan here with scope, dependencies,
-acceptance criteria, validation commands, stop conditions, and a status. Mark it complete
-or superseded here when its work ends.
+| Plan | Status | Next action |
+|---|---|---|
+| [Agent governance and task-38 repoint](agent-governance-and-repoint.md) | Active | Wait for user to restart the local systemd service, then repoint and verify. |
 
 ## Completed or superseded history
 

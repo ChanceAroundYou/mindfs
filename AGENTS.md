@@ -12,7 +12,7 @@ WSL 是 **user** 单元、监听 `127.0.0.1:7331`；fn 是 **user** 单元、监
 - 代码规范索引：[docs/agent/rules/README.md](docs/agent/rules/README.md)。按任务读取对应规则；前端/后端 TODO 是各自存量事项的唯一清单。
 - 执行计划索引：[docs/plans/README.md](docs/plans/README.md)。只有标为 Active 的计划可作为当前执行清单；其余是历史记录。
 - Claude 专属 skills、hooks、settings 与会话状态继续放在 `.claude/`；`.claude/rules/README.md` 仅为旧路径指引。
-- 若规则冲突：安全、权限、节点/部署边界以本文件为准；语言/模块代码约束以 `docs/agent/rules/` 为准；任务范围和验收以 Active 计划为准。具体任务提示可收紧范围，不能放宽仓库硬约束。
+- 若规则冲突：平台/工具指令与用户明确要求优先；在其范围内，安全、权限、节点/部署边界以本文件为准，语言/模块代码约束以 `docs/agent/rules/` 为准，任务范围和验收以 Active 计划为准。具体任务提示可收紧范围，不能默默放宽仓库约定。
 - 做长任务时先确认相关规则和 Active 计划已加载；没有 Active 计划时，先建立任务清单并更新计划索引，再开始多阶段实现。
 
 ## 三个节点（别叫错）

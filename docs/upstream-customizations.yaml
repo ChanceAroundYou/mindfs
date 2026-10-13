@@ -2518,6 +2518,7 @@ groups:
       - .claude/rules/
       - docs/agent/rules/
       - docs/plans/README.md
+      - docs/plans/agent-governance-and-repoint.md
       - web/tests/agent-docs.test.mjs
     anchors:
       - AGENTS.md:Agent 指令入口与规范
