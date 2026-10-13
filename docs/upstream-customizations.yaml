@@ -3282,7 +3282,7 @@ groups:
       - docs/upstream-customizations.yaml
       - web/tests/agent-docs.test.mjs
     anchors:
-      - docs/agent/rules/frontend/TODO.md:硬线 11 个
+      - docs/agent/rules/frontend/TODO.md:硬线 10 个
       - docs/plans/README.md:Rule completion rollout
       - web/tests/agent-docs.test.mjs:every plan is classified in the sole plans index
   - id: G-BZ
@@ -4490,3 +4490,38 @@ groups:
       - web/src/app/useSessionListLoading.ts:useSessionListLoading
       - web/src/app/useSessionSyncAction.ts:useSessionSyncAction
       - web/tests/session-lifecycle-split.test.mjs:delegates sync and list loading below the physical hard line
+
+  - id: G-DL
+    title: Managed root id remapping extracted from lifecycle coordinator
+    kind: arch
+    symptom: |
+      useManagedRoots combines root payload refresh, root-scoped cleanup, ID remapping across session/tree
+      caches, and display-name rename, exceeding the frontend hard line. A partial cache-key remap can
+      leave sessions or directory entries attached to a stale project ID after rename.
+    why: |
+      Isolate the state migration performed when a managed root ID changes, and move the hook parameter
+      contract into its own type module so the coordinator remains below the hard line.
+    boundary: |
+      useManagedRootRename owns only the physical root-ID remapping callback; handleRenameCurrentRoot
+      remains in useManagedRoots and calls it only when the server returns a different ID. Same-ID
+      display-name updates keep their existing in-place path. The callback is created at its prior hook
+      position and App.tsx remains unchanged.
+    tests:
+      - web/tests/managed-roots-split.test.mjs
+      - web/tests/app-domain-layer-split.test.mjs
+      - web/tests/source-map.test.mjs
+    files:
+      - web/src/app/useManagedRoots.ts
+      - web/src/app/useManagedRootRename.ts
+      - web/src/app/useManagedRootsTypes.ts
+      - web/tests/managed-roots-split.test.mjs
+      - web/tests/plan-command.test.mjs
+      - web/tests/source-map.mjs
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/app/useManagedRootRename.ts:export function useManagedRootRename
+      - web/tests/managed-roots-split.test.mjs:dedicated hook below the physical hard line

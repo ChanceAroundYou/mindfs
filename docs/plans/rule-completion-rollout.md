@@ -8,7 +8,7 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 先检查 git 状态、分支、HEAD/upstream 基线、根 AGENTS.md、docs/agent/rules 全部 README/规则/TODO/reviewer-checklist、docs/plans/README.md 与唯一当前计划、相关源文件/消费者/测试脚本。保护开始时已有的用户改动；尤其不要纳入或覆盖未跟踪的 package-lock.json。所有行数、路径、消费者和验收基线以这次仓库实测为准，TODO 中旧行数只作线索。
 
 范围：
-1. Frontend TODO：services 的 update/agent 簇归位；loading/empty/error 复用组件；Utils/Helpers 大小写、类型和样式文件命名归一；指定 CSS 内联；30 个硬线大文件按职责拆分；6 项 logic→view 倒挂；测试栈迁移 Vitest；存量复用件补测。逐项对照当前 TODO，已完成项不得重复施工。
+1. Frontend TODO：services 的 update/agent 簇归位；loading/empty/error 复用组件；Utils/Helpers 大小写、类型和样式文件命名归一；指定 CSS 内联；所有当前仍超硬线的大文件按职责拆分，行数与清单以本次 `wc -l` 实测为准；6 项 logic→view 倒挂；测试栈迁移 Vitest；存量复用件补测。逐项对照当前 TODO，已完成项不得重复施工。
 2. Backend TODO：对超过 1500 行的非测试 Go 文件逐个按职责拆分，先从当前最大且风险可控者开始；落实 session.go、api/http.go 的拆分约束；审计 cli/cmd 与 server/cmd/mindfs-server 双入口，只在正确的发布入口修启动逻辑。
 3. 全量审阅 reviewer checklist 和长期规范：把能机械验证的长期规则加入现有门禁/针对性测试；逐条验证架构规则，不为打勾而改动正确实现。架构事实以 AGENTS.md 为准。
 
@@ -102,4 +102,5 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 - 发布复核发现：source-map alias 测试适配的最后两处物理文件读取未包含在 G-DG 提交，导致 ship 二进制版本标记为 dirty。相关改动仅是测试读取路径，现单独补充登记并提交，然后重新走干净构建和无重启发布确认。
 - 当前进度：将会话列表/pending/归档状态、会话选择与 drawer 状态、响应式侧栏/onboarding 状态、root scope 索引与 task template/candidate 初始化分别迁至 `useAppSessionListState`、`useAppSessionSelectionState`、`useAppResponsiveState`、`useAppRootScopeState`、`useAppTaskTemplateState`。各 hook 在原调用位置执行；常量字面量、pin hook、session template 加载和 candidate effect 顺序保持。`useAppStateLayer` 实测 588→498 行，已从硬线清单销项；typecheck、针对性测试与全量 web 测试通过（281 通过、4 跳过）。
 - 已完成（2026-10-14）：审阅 `useSessionLifecycle` 的唯一消费者 `useAppSessionCore` 与各 handler 契约；把手动同步（含瞬时尾部保留/去重）抽到 `useSessionSyncAction`，把会话列表头同步、列表分页缓存回填和子会话分页抽到 `useSessionListLoading`。两个 hook 在原组合顺序处运行，App.tsx 未改；生命周期父 hook 实测 740→413 行，硬线销项。TypeScript 与相关专项通过；全量测试首轮发现旧 source-map 测试仍把外部导入刷新与子会话加载当成同一来源，修正读源后专项测试通过，全量复跑待完成。
-- 下一项：复核并拆 `useManagedRoots`；frontend 硬线剩余 11 项，完成后继续规则门禁审计与 backend TODO。
+- 已完成（2026-10-14）：审阅 `useManagedRoots` 的 4 个直接消费者及 `useAppProjectManagement` 主组合入口；把近 170 行 root id/session/cache/tree key remap 抽到 `useManagedRootRename`，参数契约移至 `useManagedRootsTypes`。`applyManagedRootRename` 在原回调顺序处创建，ID/显示名分支与缓存键映射保持；父 hook 实测 709→479 行，硬线销项。App.tsx 不变；TypeScript 与专项测试通过；全量 web 测试通过（Vitest 5 + Node 兼容链路 283 通过、4 跳过）。
+- 下一项：复核并拆 `useSendMessage`；frontend 硬线剩余 10 项，随后继续规则门禁审计与 backend TODO。

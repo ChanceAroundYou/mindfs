@@ -89,6 +89,8 @@ export const MODULES = {
     "src/app/useUiPreferences.ts",
     "src/app/useSessionArchive.ts",
     "src/app/useManagedRoots.ts",
+    "src/app/useManagedRootRename.ts",
+    "src/app/useManagedRootsTypes.ts",
     "src/app/usePluginHandlers.ts",
     "src/app/useFileRefresh.ts",
     "src/app/useRelatedFileDiff.ts",

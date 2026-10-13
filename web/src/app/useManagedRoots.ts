@@ -1,13 +1,8 @@
 /**
- * 项目（托管根）管理 —— A4 簇（5 个单元，~560 行）。
- *
- * 覆盖：根作用域客户端状态清理、项目显示名重命名、托管根刷新与载荷加载、
- * 当前根重命名。
- *
- * 做法：hook，参数面 UseManagedRootsParams 即完整契约；函数体逐字搬入
- * （保持源码正则断言可命中，配合 source-map 注册）。
+ * 托管根读取/刷新协调器；根作用域清理与载荷并发请求仍在此，根 ID 重映射由 useManagedRootRename 负责。
+ * `UseManagedRootsParams` 保持 App project-management 层的共享参数契约。
  */
-import { useCallback, useMemo, type MutableRefObject, type Dispatch, type SetStateAction } from "react";
+import { useCallback } from "react";
 import { ManagedRootPayload, indexManagedRoots, managedDirAddErrorMessage, mapManagedRootsToEntries, useResponsive } from "./appMisc";
 import { URLState, comparableManagedRootPath, rootNodeKey } from "./appPath";
 import { MultiProjectSessionGroup, PendingSend, SessionItem, SessionQueueItem, SlashCommandResult } from "./appSession";
@@ -29,7 +24,7 @@ import { useSessionSidebarView } from "./useSessionSidebarView";
 import { useSessionStreamCache } from "./useSessionStreamCache";
 import { useTaskTemplates } from "./useTaskTemplates";
 import { useI18n } from "../i18n";
-import { type FilePayload, clearFileCacheForRoot } from "../services/file";
+import { clearFileCacheForRoot } from "../services/file";
 import { clearGitHistoryCache } from "../services/git";
 import { protectedJSON as apiProtectedJSON, withNodeRetry } from "../services/net/api";
 import { appPath } from "../services/net/base";
@@ -37,76 +32,12 @@ import { type BootstrapState, bootstrapService } from "../services/net/bootstrap
 import { reportError } from "../services/net/error";
 import { getNodes, migrateLegacySingleBase, syncNodesFromServer } from "../services/net/nodeRegistry";
 import { setRootNodeMap } from "../services/net/rootNode";
-import { type DirectorySortMode, type FileEntry } from "../services/prefs/directorySort";
+import { type FileEntry } from "../services/prefs/directorySort";
 import { clearCachedSessionsForRoot } from "../services/session";
 import { scopeKey } from "../shared/scope";
-
-export type UseManagedRootsParams = {
-  actionHandlersRef: MutableRefObject<ActionHandlers>;
-  bootstrapState: BootstrapState;
-  boundSessionByRootRef: MutableRefObject<Record<string, string | null>>;
-  bumpCacheVersion: () => any;
-  cancelRequestedBySessionRef: MutableRefObject<Record<string, boolean>>;
-  currentRootIdRef: MutableRefObject<string | null>;
-  currentRootNodeIdRef: MutableRefObject<string | null>;
-  drawerOpenByRootRef: MutableRefObject<Record<string, boolean>>;
-  drawerSessionByRootRef: MutableRefObject<Record<string, SessionItem | null>>;
-  entriesByPathRef: MutableRefObject<Record<string, FileEntry[]>>;
-  file: FilePayload | null;
-  fileScrollPositionsRef: MutableRefObject<Record<string, number>>;
-  getNodeIdForRoot: (rootId: string) => string | undefined;
-  invalidTreeCacheKeysRef: MutableRefObject<Set<string>>;
-  loadMultiProjectSessionGroups: ReturnType<typeof useMultiProjectSessions>["loadMultiProjectSessionGroups"];
-  loadedSessionRef: ReturnType<typeof useSessionCache>["loadedSessionRef"];
-  loadingSessionRef: ReturnType<typeof useSessionCache>["loadingSessionRef"];
-  managedRootByIdRef: MutableRefObject<Record<string, ManagedRootPayload>>;
-  managedRootByKeyRef: MutableRefObject<Record<string, ManagedRootPayload>>;
-  managedRootIdsRef: MutableRefObject<Set<string>>;
-  managedRootsRequestRef: MutableRefObject<Promise<ManagedRootPayload[] | null> | null>;
-  multiProjectPendingRef: MutableRefObject<Record<string, boolean>>;
-  multiProjectSessionsEnabled: any;
-  nodeLoadFailuresRef: MutableRefObject<Array<{ id: string; name: string }>>;
-  notifiedNodeFailuresRef: MutableRefObject<Set<string>>;
-  notifyNodeLoadFailedRef: MutableRefObject<(node: { id: string; name: string }) => void>;
-  optimisticDequeuedIdsRef: MutableRefObject<Record<string, Set<string>>>;
-  pendingBySessionRef: MutableRefObject<Record<string, PendingSend>>;
-  pendingRequestRef: MutableRefObject<Record<string, PendingSend>>;
-  pluginQuery: Record<string, string>;
-  pluginsLoadedByRootRef: MutableRefObject<Record<string, boolean>>;
-  pluginsLoadingByRootRef: MutableRefObject<Record<string, Promise<void>>>;
-  pluginsTrustPendingByRootRef: MutableRefObject<Record<string, boolean>>;
-  queueFrozenBySessionRef: MutableRefObject<Record<string, boolean>>;
-  queuedMessagesBySessionRef: MutableRefObject<Record<string, SessionQueueItem[]>>;
-  refreshMultiProjectReplyingSessions: () => Promise<any>;
-  replaceURLState: (next: URLState) => any;
-  scopedRootKey: (rootId: string) => string;
-  selectedSessionByRootRef: MutableRefObject<Record<string, string | null>>;
-  sessionCacheRef: ReturnType<typeof useSessionCache>["sessionCacheRef"];
-  setActiveBoundSessionKey: Dispatch<SetStateAction<string | null>>;
-  setCurrentRootId: Dispatch<SetStateAction<string | null>>;
-  setCurrentSession: Dispatch<SetStateAction<SessionItem | null>>;
-  setDirectorySortOverrides: Dispatch<SetStateAction<Record<string, DirectorySortMode>>>;
-  setEntriesByPath: Dispatch<SetStateAction<Record<string, FileEntry[]>>>;
-  setFile: Dispatch<SetStateAction<FilePayload | null>>;
-  setGitHistoryExpandedByRoot: ReturnType<typeof useGitData>["setGitHistoryExpandedByRoot"];
-  setGitStatusExpandedByRoot: ReturnType<typeof useGitData>["setGitStatusExpandedByRoot"];
-  setInteractionMode: Dispatch<SetStateAction<"main" | "drawer">>;
-  setIsDrawerOpen: Dispatch<SetStateAction<boolean>>;
-  setMainEntries: Dispatch<SetStateAction<FileEntry[]>>;
-  setManagedRootIds: Dispatch<SetStateAction<string[]>>;
-  setMultiProjectPendingByKey: Dispatch<SetStateAction<Record<string, boolean>>>;
-  setMultiProjectSessionGroups: Dispatch<SetStateAction<MultiProjectSessionGroup[]>>;
-  setQueueVersion: Dispatch<SetStateAction<number>>;
-  setRootEntries: Dispatch<SetStateAction<FileEntry[]>>;
-  setSelectedDir: Dispatch<SetStateAction<string | null>>;
-  setSelectedDirKey: Dispatch<SetStateAction<string | null>>;
-  setSelectedSession: Dispatch<SetStateAction<SessionItem | null>>;
-  setSelectedSessionLoading: Dispatch<SetStateAction<boolean>>;
-  setSessions: Dispatch<SetStateAction<SessionItem[]>>;
-  setSlashCommandResults: Dispatch<SetStateAction<Record<string, SlashCommandResult>>>;
-  staleSessionKeysRef: ReturnType<typeof useSessionCache>["staleSessionKeysRef"];
-  suppressedAutoBindSessionByRootRef: MutableRefObject<Record<string, string | null>>;
-};
+import { useManagedRootRename } from "./useManagedRootRename";
+import type { UseManagedRootsParams } from "./useManagedRootsTypes";
+export type { UseManagedRootsParams } from "./useManagedRootsTypes";
 
 export function useManagedRoots(params: UseManagedRootsParams) {
   const { t } = useI18n();
@@ -479,167 +410,7 @@ export function useManagedRoots(params: UseManagedRootsParams) {
     refreshMultiProjectReplyingSessions,
     replaceURLState,
   ]);
-  const applyManagedRootRename = useCallback(
-    (oldRootID: string, rootPayload: ManagedRootPayload | null | undefined) => {
-      const oldID = String(oldRootID || "").trim();
-      const nextID = String(rootPayload?.id || "").trim();
-      if (!oldID || !nextID) {
-        return false;
-      }
-
-      const previousRoot =
-        managedRootByIdRef.current[oldID] ||
-        managedRootByIdRef.current[nextID] ||
-        ({} as ManagedRootPayload);
-      const nextRoot = {
-        ...previousRoot,
-        ...rootPayload,
-        id: nextID,
-      } as ManagedRootPayload;
-
-      const nextRootById = { ...managedRootByIdRef.current };
-      delete nextRootById[oldID];
-      nextRootById[nextID] = nextRoot;
-      managedRootByIdRef.current = nextRootById;
-      setRootNodeMap(nextRootById as Record<string, any>);
-
-      const moveRecordKey = <T,>(record: Record<string, T>) => {
-        if (oldID === nextID) {
-          return;
-        }
-        for (const k of Object.keys(record)) {
-          const idx = k.lastIndexOf("::");
-          const rid = idx >= 0 ? k.slice(idx + 2) : k;
-          if (rid !== oldID) {
-            continue;
-          }
-          const nextKey = idx >= 0 ? `${k.slice(0, idx + 2)}${nextID}` : nextID;
-          record[nextKey] = record[k];
-          delete record[k];
-        }
-      };
-      moveRecordKey(boundSessionByRootRef.current);
-      moveRecordKey(suppressedAutoBindSessionByRootRef.current);
-      moveRecordKey(drawerSessionByRootRef.current);
-      moveRecordKey(selectedSessionByRootRef.current);
-      moveRecordKey(drawerOpenByRootRef.current);
-      moveRecordKey(pluginsLoadedByRootRef.current);
-      moveRecordKey(pluginsLoadingByRootRef.current);
-
-      const moveStateRecord = <T,>(record: Record<string, T>) => {
-        if (oldID === nextID) {
-          return record;
-        }
-        const next: Record<string, T> = {};
-        for (const [k, v] of Object.entries(record)) {
-          const idx = k.lastIndexOf("::");
-          const rid = idx >= 0 ? k.slice(idx + 2) : k;
-          const nextKey = idx >= 0 ? `${k.slice(0, idx + 2)}${nextID}` : nextID;
-          next[rid === oldID ? nextKey : k] = v;
-        }
-        return next;
-      };
-      setGitStatusExpandedByRoot((prev) => moveStateRecord(prev));
-      setGitHistoryExpandedByRoot((prev) => moveStateRecord(prev));
-
-      const remapSessionCacheKey = (key: string): string | null => {
-        const parts = key.split("::");
-        if (parts.length === 3) {
-          if (parts[1] !== oldID) return null;
-          return `${parts[0]}::${nextID}::${parts.slice(2).join("::")}`;
-        }
-        if (parts.length === 2) {
-          if (parts[0] !== oldID) return null;
-          return `${nextID}::${parts[1]}`;
-        }
-        return null;
-      };
-      const moveCacheRecord = <T,>(record: Record<string, T>) => {
-        if (oldID === nextID) {
-          return;
-        }
-        for (const key of Object.keys(record)) {
-          const nextKey = remapSessionCacheKey(key);
-          if (nextKey === null) continue;
-          record[nextKey] = record[key];
-          delete record[key];
-        }
-      };
-      moveCacheRecord(sessionCacheRef.current);
-      moveCacheRecord(loadedSessionRef.current);
-      if (oldID !== nextID) {
-        staleSessionKeysRef.current = new Set(
-          Array.from(staleSessionKeysRef.current)
-            .map((key) => remapSessionCacheKey(key) ?? key),
-        );
-      }
-
-      const moveTreeRecord = <T,>(record: Record<string, T>) => {
-        if (oldID === nextID) {
-          return record;
-        }
-        const next = { ...record };
-        for (const key of Object.keys(record)) {
-          const afterScope = key.includes("::")
-            ? key.slice(key.lastIndexOf("::") + 2)
-            : key;
-          const idx = afterScope.indexOf(":");
-          const rid = idx >= 0 ? afterScope.slice(0, idx) : afterScope;
-          if (rid !== oldID) {
-            continue;
-          }
-          const head = key.slice(0, key.length - afterScope.length);
-          const nextAfter = `${nextID}${idx >= 0 ? afterScope.slice(idx) : ""}`;
-          next[`${head}${nextAfter}`] = record[key];
-          delete next[key];
-        }
-        return next;
-      };
-      entriesByPathRef.current = moveTreeRecord(entriesByPathRef.current);
-      setEntriesByPath((prev) => moveTreeRecord(prev));
-      if (oldID !== nextID) {
-        invalidTreeCacheKeysRef.current = new Set(
-          Array.from(invalidTreeCacheKeysRef.current).map((key) => {
-            const afterScope = key.includes("::")
-              ? key.slice(key.lastIndexOf("::") + 2)
-              : key;
-            const idx = afterScope.indexOf(":");
-            const rid = idx >= 0 ? afterScope.slice(0, idx) : afterScope;
-            if (rid !== oldID) return key;
-            const head = key.slice(0, key.length - afterScope.length);
-            return `${head}${nextID}${idx >= 0 ? afterScope.slice(idx) : ""}`;
-          }),
-        );
-      }
-
-      setManagedRootIds((prev) => {
-        const source = prev.length ? prev : Array.from(managedRootIdsRef.current);
-        let replaced = false;
-        const nextIds = source.map((id) => {
-          if (id !== oldID) {
-            return id;
-          }
-          replaced = true;
-          return nextID;
-        });
-        if (!replaced && !nextIds.includes(nextID)) {
-          nextIds.push(nextID);
-        }
-        const deduped = Array.from(new Set(nextIds.filter(Boolean)));
-        managedRootIdsRef.current = new Set(deduped);
-        setRootEntries(
-          mapManagedRootsToEntries(
-            deduped
-              .map((id) => managedRootByIdRef.current[id])
-              .filter((dir): dir is ManagedRootPayload => !!dir),
-          ),
-        );
-        return deduped;
-      });
-      return true;
-    },
-    [],
-  );
+  const { applyManagedRootRename } = useManagedRootRename(params);
   const handleRenameCurrentRoot = useCallback(
     async (nextName: string) => {
       const rootID = currentRootIdRef.current;

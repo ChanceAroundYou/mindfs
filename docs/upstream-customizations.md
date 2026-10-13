@@ -2914,3 +2914,10 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **根因与边界**：列表头同步、根会话列表与子会话分页归 `useSessionListLoading`；全量手动同步及瞬时尾部去重归 `useSessionSyncAction`。两个 hook 在旧 callback 组合位置调用，`useSessionLifecycle` 只保留恢复、选择和重命名编排。
 - **针对性测试**：`web/tests/session-lifecycle-split.test.mjs` → 守住父 hook 物理行数、组合顺序、子会话 node 标记与瞬时尾部归属；`session-list-merge.test.mjs`、`session-load-storm.test.mjs`、`sync-preserves-pending-ask-card.test.mjs`、`sync-preserves-live-transient-text.test.mjs` → 守住节点归并、并发列表读取、ask 卡与流式正文续接。
 - **边界**：不改 `App.tsx`、请求路由、列表合并、窗口恢复或同步时的去重规则；父 hook 实测 740→413 行。
+
+### G-DL 托管根 ID 重映射职责拆分
+
+- **可见症状**：托管根 ID 改名后，若项目级缓存键只迁移一部分，会话、目录树或展开状态会留在旧 ID 下；`useManagedRoots` 同时装载根、清理状态、重映射缓存和处理显示名，超过 500 行硬线。
+- **根因与边界**：物理根 ID 变化时跨 session/tree/cache 的 key remap 归 `useManagedRootRename`；`handleRenameCurrentRoot` 仍负责请求与同 ID 显示名更新，并仅在服务端返回新 ID 时调用 remap。参数契约移到 `useManagedRootsTypes`。
+- **针对性测试**：`web/tests/managed-roots-split.test.mjs` → 守住父 hook 行数、回调接线与 session/tree cache remap；`app-domain-layer-split.test.mjs` 与 source-map 门禁确认 App project-management 组合入口保持可解析。
+- **边界**：不改变服务端改名请求、同 ID 的 display-name 原地更新、缓存 key 格式或 `App.tsx`；父 hook 实测 709→484 行。
