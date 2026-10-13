@@ -16,8 +16,6 @@ export type AgentConfigFlowTransitionsCtx = {
   rootId: string | null | undefined;
   agentConfigFlowVersion: MutableRefObject<number>;
   t: I18nContextValue["t"];
-  fetchAgents: typeof fetchAgents;
-  fetchAgentCatalog: typeof fetchAgentCatalog;
   setIdleReleaseOpen: Dispatch<SetStateAction<boolean>>;
   setAgentLifecycleOpen: Dispatch<SetStateAction<boolean>>;
   setAgentConfigNotice: Dispatch<SetStateAction<string>>;
@@ -58,7 +56,7 @@ export type AgentConfigFlowTransitionsCtx = {
  * 先重置表单再拉列表），拆散了才看得见顺序。依赖数组逐字保留。
  */
 export function useAgentConfigFlowTransitions(ctx: AgentConfigFlowTransitionsCtx) {
-  const { rootId, agentConfigFlowVersion, t, fetchAgents, fetchAgentCatalog, setIdleReleaseOpen, setAgentLifecycleOpen, setAgentConfigNotice, setAgentConfigFlow, setAgentConfigStep, setAgentConfigAgent, setAgentConfigAddTab, setAgentConfigSwitchTab, setAgentConfigName, setAgentConfigFileSourcesBody, setAgentConfigEnvBody, setAgentAPIProviderName, setAgentAPIProviderBaseURL, setAgentAPIProviderAPIKey, setAgentConfigBackups, setAgentAPIProviders, setSelectedAgentConfigID, setSelectedAgentAPIProviderID, setAgentConfigSwitchSelection, setAgentConfigPreferredProviderIDs, setAgentConfigConfirmMessage, setAgentConfigError, setAgentConfigRestartingAgent, setIsMenuOpen, setAgentConfigBusy, setAgentConfigAgents, setAgentLifecycleError, setAgentLifecycleBusy, setAgentLifecycleAgents, setAgentLifecycleRunningAgent } = ctx;
+  const { rootId, agentConfigFlowVersion, t, setIdleReleaseOpen, setAgentLifecycleOpen, setAgentConfigNotice, setAgentConfigFlow, setAgentConfigStep, setAgentConfigAgent, setAgentConfigAddTab, setAgentConfigSwitchTab, setAgentConfigName, setAgentConfigFileSourcesBody, setAgentConfigEnvBody, setAgentAPIProviderName, setAgentAPIProviderBaseURL, setAgentAPIProviderAPIKey, setAgentConfigBackups, setAgentAPIProviders, setSelectedAgentConfigID, setSelectedAgentAPIProviderID, setAgentConfigSwitchSelection, setAgentConfigPreferredProviderIDs, setAgentConfigConfirmMessage, setAgentConfigError, setAgentConfigRestartingAgent, setIsMenuOpen, setAgentConfigBusy, setAgentConfigAgents, setAgentLifecycleError, setAgentLifecycleBusy, setAgentLifecycleAgents, setAgentLifecycleRunningAgent } = ctx;
 
   const openAgentConfigFlow = useCallback((flow: AgentConfigFlow) => {
     setIdleReleaseOpen(false);

@@ -3391,3 +3391,27 @@ groups:
       - web/src/components/file/useFileTreeAppearance.ts:changeAppearanceMode
       - web/src/shared/appearanceTypes.ts:AppearanceMode
       - web/tests/file-tree-appearance-action.test.mjs:FileTree appearance view delegates persistence
+  - id: G-CD
+    title: Agent config transition hook owns agent queries
+    kind: arch
+    symptom: |
+      FileTree view imports agent query functions solely to pass them into its already agent-specific logic hook;
+      the transition hook also carries these service functions in a broad ctx object.
+    why: |
+      Move service ownership into useAgentConfigFlowTransitions, which is the logic layer that invokes the queries;
+      remove stale service value imports from FileTree so future menu changes do not obscure actual dependencies.
+    boundary: |
+      Keep request timing, force flags, root node routing and state transitions unchanged; remove unused imports only.
+    tests:
+      - web/tests/file-tree-agent-config-flow.test.mjs
+    files:
+      - web/src/components/file/FileTree.tsx
+      - web/src/components/file/useAgentConfigFlowTransitions.ts
+      - web/tests/file-tree-agent-config-flow.test.mjs
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/components/file/useAgentConfigFlowTransitions.ts:fetchAgentCatalog
+      - web/tests/file-tree-agent-config-flow.test.mjs:delegates agent-catalog requests

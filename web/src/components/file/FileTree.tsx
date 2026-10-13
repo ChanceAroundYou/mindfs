@@ -21,7 +21,6 @@ import {
   PROJECT_TREE_TAB_STORAGE_KEY,
   isProjectTreeTab,
   type AgentConfigSwitchSelection,
-  type AgentLifecycleCommandAction,
   type FileTreeProps,
   type ProjectTreeTab,
 } from "./fileTreeTypes";
@@ -67,52 +66,16 @@ import {
   type AgentConfigSwitchTab,
 } from "./AgentConfigPopover";
 import { AgentConfigLineEditor } from "./AgentConfigLineEditor";
-import { fetchAgentCatalog, fetchAgents, type AgentStatus } from "../../services/agents";
-import { getRootNodeId } from "../../services/net/rootNode";
-import {
-  createAgentAPIProvider,
-  createAgentConfigBackup,
-  deleteAgentAPIProvider,
-  deleteAgentConfigBackup,
-  fetchAgentAPIProviders,
-  fetchAgentConfigBackups,
-  fetchAgentConfigDefaults,
-  switchAgentAPIProvider,
-  switchAgentConfig,
-  syncAllAgentAPIProviders,
-  testAgentAPIProviderModel,
-  type AgentAPIProvider,
-  type AgentAPIProviderTestResult,
-  type AgentConfigBackup,
-} from "../../services/agentConfig";
-import {
-  getWebPushStatus,
-  sendWebPushTest,
-  subscribeWebPush,
-  unsubscribeWebPush,
-  webPushReasonLabel,
-  type WebPushStatus,
-} from "../../services/webPush";
-import {
-  fetchIdleSessionResourceReleasePreference,
-  fetchNewProjectMetaLocationPreference,
-  fetchSessionNamingPreference,
-  updateIdleSessionResourceReleasePreference,
-  updateSessionNamingPreference,
-  type NewProjectMetaLocation,
-} from "../../services/prefs/preferences";
+import type { AgentStatus } from "../../services/agents";
+import type { AgentAPIProvider, AgentConfigBackup } from "../../services/agentConfig";
+import type { NewProjectMetaLocation } from "../../services/prefs/preferences";
 import {
   formatSendShortcut,
   shortcutFromKeyboardEvent,
   type SendShortcut,
 } from "../../services/prefs/sendShortcut";
-import {
-  changeFontSize,
-  FONT_SIZE_MAX,
-  FONT_SIZE_MIN,
-  type FontSizePreferences,
-  type FontSizeRegion,
-} from "../../services/prefs/fontSize";
+import { changeFontSize } from "../../services/prefs/fontSize";
+import { FONT_SIZE_MAX, FONT_SIZE_MIN, type FontSizeRegion } from "../../services/prefs/fontSize";
 
 import {
   APPEARANCE_OPTIONS,
@@ -337,7 +300,7 @@ function FileTreeInner({
 
   const { openAgentConfigFlow, closeAgentConfigFlow,
     openAgentLifecycleFlow, closeAgentLifecycleFlow } = useAgentConfigFlowTransitions({
-    rootId, agentConfigFlowVersion, t, fetchAgents, fetchAgentCatalog,
+    rootId, agentConfigFlowVersion, t,
     setIdleReleaseOpen, setAgentLifecycleOpen, setAgentConfigNotice, setAgentConfigFlow,
     setAgentConfigStep, setAgentConfigAgent, setAgentConfigAddTab, setAgentConfigSwitchTab,
     setAgentConfigName, setAgentConfigFileSourcesBody, setAgentConfigEnvBody,

@@ -2664,3 +2664,11 @@
 - **根因与边界**：外观状态及写入迁入 `useFileTreeAppearance`；`AppearanceMode` 迁入 shared 并由 service 再导出，菜单选项只触发 `onChange`。
 - **针对性测试**：`web/tests/file-tree-appearance-action.test.mjs` → 守住 view 不导入 appearance service、hook 执行持久化、类型共享与原 facade。
 - **边界**：保持原有 storage key、DOM 主题应用和广播事件语义，只调整依赖方向。
+
+
+### G-CD Agent config transition hook owns agent queries
+
+- **可见症状**：`FileTree.tsx` 为 agent config 操作导入查询服务，再将服务函数透传给 agent config hook；UI 模块表面依赖多于实际职责。
+- **根因与边界**：查询由 `useAgentConfigFlowTransitions` 自行导入和调用，FileTree 只提供状态与 setter；同时清除该组件里未使用的 agent config、WebPush 和 preferences service imports。
+- **针对性测试**：`web/tests/file-tree-agent-config-flow.test.mjs` → 确认 FileTree 不再持有 agent 查询，transition hook 自己查询且不从 ctx 接收服务函数。
+- **边界**：不改查询时机、force 参数、节点路由和状态转换。
