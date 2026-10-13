@@ -7,16 +7,16 @@
 - [ ] `services/` 建 `session/` 子目录，收拢根下 ~20 个 `session*.ts`，根留门面。
 - [ ] 更新簇（`update.ts`/`appUpdate.ts`/`androidUpdate.ts`）、agent 簇
       （`agentConfig.ts`/`agentMemory.ts`/`agents.ts`/`codexRateLimits.ts`）各收一处。
-- [ ] 消除 `components/*` 直调 `app/*` hook 共 4 类（`useBackNavigation`×2、
-      `usePwaInstall`×1、`useActionHandlers`×4）倒挂。
+- [x] 消除 `components/*` 直调 `app/*` hook 倒挂（`useBackNavigation`/`usePwaInstall`
+      → `hooks/`，`useActionHandlers` 死 import 清除）。
 - [ ] `taskIcons.tsx`：清单型头注释，或图标下移。
 
 ## 复用搬迁
 
-- [ ] `menuButtonStyle` / `strategyButtonStyle`（task 域）→ 并入 `shared/styles.ts`。
+- [x] `menuButtonStyle` / `strategyButtonStyle`（task 域）→ 并入 `shared/styles.ts`。
 - [ ] 三态 JSX（loading/empty/error 结构）→ 抽 `components/common/` 通用三态组件。
-- [ ] `MarkdownViewer` 从 `components/file/` 搬到 `components/common/`；
-      session（5 处）、stream（2 处）、task 的 import 改道。
+- [x] `MarkdownViewer` 搬家到 `components/common/`（连同 useMarkdownViewer → `hooks/`、
+      MarkdownCodeBlocks/markdownUtils/DiagramPreview → `common/`），8 处 import 改道。
 
 ## 命名归一（存量）
 
