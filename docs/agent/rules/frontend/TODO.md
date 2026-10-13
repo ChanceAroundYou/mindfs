@@ -21,7 +21,7 @@
 ## 命名归一（存量）
 
 - [x] 审核 12 个 `Utils`/`Helpers` 文件名；将含 JSX 的 `sessionCardUtils.tsx` 改为 `sessionCardHelpers.tsx`，其余名称与 JSX 语义匹配。
-- [ ] 类型文件后缀归一（`types.ts` / `xxxTypes.ts` / `sessionCacheTypes.ts`）。
+- [x] 类型文件后缀归一：9 个目标文件原已符合规则；将组件域唯一裸名 `components/action/types.ts` 改为 `actionTypes.ts`，增加命名门禁。`services/<domain>/types.ts` 与 `i18n/types.ts` 保留为域内/跨域入口。
 - [ ] 样式文件归一（`composerStyles.tsx`、`fileTreeMenuStyles.ts` → `xxxStyles.ts`）。
 - [ ] 2 个 `.css` 内联化（`FileEditor.css`、`DiagramPreview.css`）。
 

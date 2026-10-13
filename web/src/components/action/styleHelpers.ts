@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { type MessageKey } from "../../i18n";
-import { type WSStatus } from "./types";
+import { type WSStatus } from "./actionTypes";
 
 export const MOBILE_BREAKPOINT = 768;
 export const IME_ENTER_GUARD_MS = 120;

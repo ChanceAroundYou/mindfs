@@ -8,7 +8,7 @@ to resume their old TODOs or baselines.
 
 | Plan | Status | Next action |
 |---|---|---|
-| [Rule completion rollout](rule-completion-rollout.md) | Active | Normalize type file suffixes after checking each type's consumers and domain scope. |
+| [Rule completion rollout](rule-completion-rollout.md) | Active | Normalize stylesheet file names while preserving import APIs and CSS behavior. |
 
 ## Completed or superseded history
 

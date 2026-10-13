@@ -9,7 +9,7 @@ import { SessionRing } from "./SessionRing";
 import { ShellSelector } from "./ShellSelector";
 import { CancelIcon, PlusIcon, SendIcon, SpinnerIcon } from "./composerStyles";
 import type { PendingAttachment } from "./AttachmentsArea";
-import type { SessionInfo } from "./types";
+import type { SessionInfo } from "./actionTypes";
 import type { MessageKey } from "../../i18n/index";
 
 export type ActionBarControlsProps = {

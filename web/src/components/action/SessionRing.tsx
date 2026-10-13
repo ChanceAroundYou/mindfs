@@ -4,7 +4,7 @@ import { useI18n } from "../../i18n";
 import { sessionService, type Session } from "../../services/session";
 import { recentQuickSwitchGroups, ringGesture } from "../../services/quickSwitch";
 import { appAccentHexToRgba } from "./styleHelpers";
-import type { SessionInfo } from "./types";
+import type { SessionInfo } from "./actionTypes";
 
 type QuickSwitchGroup = ReturnType<typeof recentQuickSwitchGroups>[number];
 

@@ -1146,7 +1146,7 @@
 
 - 来源：`web/src/layout/ViewHeader.tsx`（新增）、`web/src/layout/AppShell.tsx`、
   `web/src/components/{ActionBar,FileTree,SessionList,SessionViewer,GitDiffViewer,DefaultListView,FileViewer}.tsx`、
-  `web/src/components/action/types.ts`、`web/src/App.tsx`、`web/tests/task-board-view.test.mjs`。
+  `web/src/components/action/actionTypes.ts`、`web/src/App.tsx`、`web/tests/task-board-view.test.mjs`。
 - 边界：移动端呼出左右侧栏的两个切换按钮，从 ActionBar（footer）搬进**中间主栏**各面板
   共用的 `ViewHeader` 外壳的两侧，合为一组 —— 按钮位置、ViewHeader 的渲染分支、ActionBar
   的 hideComposer 分支共享同一条「按钮在哪」的判断，合上游时要么全留要么全弃。
@@ -2324,6 +2324,13 @@
 - **根因与边界**：改名为 `sessionCardHelpers.tsx` 并更新三个消费者；命名门禁检查 `*Utils.tsx` 中是否仍有 JSX。导出和渲染行为不变。
 - **针对性测试**：`web/tests/naming-convention.test.mjs` → 含 JSX 的 `*Utils.tsx` 必须改用 `*Helpers.tsx`。
 - **边界**：只统一该存量文件的后缀语义，不重构其导出内容。
+
+### G-BS 前端组件域类型文件名归一
+
+- **可见症状**：Action 组件域类型文件叫通用的 `types.ts`，不能从路径分辨其类型归属，命名门禁也没有检查组件域裸 `types.ts`。
+- **根因与边界**：改为 `actionTypes.ts` 并更新 9 个同域消费者；命名测试阻止 `components/<domain>/types.ts` 回归。服务域内 `types.ts` 与 i18n 的公共类型入口仍按既定目录规则保留。
+- **针对性测试**：`web/tests/naming-convention.test.mjs` → 组件域类型文件必须使用域名后缀。
+- **边界**：只改文件名和类型导入，不改类型结构与行为。
 
 
 ### 总体

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { type QueuedMessageInfo } from "./types";
+import { type QueuedMessageInfo } from "./actionTypes";
 
 export type QueuedMessagesListProps = {
   queuedMessages: QueuedMessageInfo[];

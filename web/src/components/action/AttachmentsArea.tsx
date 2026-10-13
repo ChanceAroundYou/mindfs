@@ -2,7 +2,7 @@ import React from "react";
 import { CompactUploadProgress } from "../file/CompactUploadProgress";
 import { useI18n } from "../../i18n";
 import { appAccentHexToRgba, getSelectionPreview } from "./styleHelpers";
-import { type AttachedFileContext } from "./types";
+import { type AttachedFileContext } from "./actionTypes";
 import { type UploadProgress } from "../../services/upload";
 
 export type PendingAttachment = {

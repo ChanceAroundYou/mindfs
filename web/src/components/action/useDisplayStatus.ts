@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { type WSStatus } from "./types";
+import { type WSStatus } from "./actionTypes";
 
 function wsStatusDisplayDelay(status: WSStatus): number {
   return status === "reconnecting" ? 800 : 0;

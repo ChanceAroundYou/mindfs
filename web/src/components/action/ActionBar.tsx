@@ -23,7 +23,7 @@ import {
   IME_ENTER_GUARD_MS,
 } from "./styleHelpers";
 import { DEFAULT_NODE_COLOR } from "../../services/net/nodeRegistry";
-import { type ActionBarProps, type AttachedFileContext, type QueuedMessageInfo, type SessionInfo, type WSStatus } from "./types";
+import { type ActionBarProps, type AttachedFileContext, type QueuedMessageInfo, type SessionInfo, type WSStatus } from "./actionTypes";
 import { useActionBar } from "./useActionBar";
 
 export type {
@@ -32,7 +32,7 @@ export type {
   QueuedMessageInfo,
   SessionInfo,
   WSStatus,
-} from "./types";
+} from "./actionTypes";
 
 export function ActionBar(props: ActionBarProps) {
   const { t } = useI18n();

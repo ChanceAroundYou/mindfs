@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { fetchGitBranches, type GitBranchesPayload } from "../../services/git";
 import { useI18n } from "../../i18n";
-import { type SessionInfo } from "./types";
+import { type SessionInfo } from "./actionTypes";
 
 /** 新会话 worktree 选项：开关 + 分支模式/分支，分支列表按需拉取。 */
 export function useWorktreeState({

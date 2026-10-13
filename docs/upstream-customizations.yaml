@@ -1728,7 +1728,7 @@ groups:
     files:
       - web/src/layout/AppShell.tsx
       - web/src/components/action/ActionBar.tsx
-      - web/src/components/action/types.ts
+      - web/src/components/action/actionTypes.ts
       - web/src/App.tsx
       - web/src/layout/ViewHeader.tsx
       - web/src/components/file/FileViewer.tsx
@@ -2651,6 +2651,38 @@ groups:
     anchors:
       - "web/tests/naming-convention.test.mjs:naming: JSX render helpers use *Helpers.tsx instead of *Utils.tsx"
       - web/src/components/session/sessionCardHelpers.tsx:renderHighlightedText
+
+  - id: G-BS
+    title: 前端组件域类型文件名归一
+    kind: arch
+    symptom: |
+      Action 组件域把专属 props 与状态类型放在通用名 types.ts，无法从文件名判断类型归属；现有命名测试未检查组件域裸 types.ts。
+    why: |
+      将其改名为 actionTypes.ts，逐个更新 9 个同域消费者，并增加门禁拒绝 components/<domain>/types.ts；service 域及 i18n 的明确共享入口按规则保留。
+    boundary: |
+      只调整组件域类型模块命名与导入，不改变任何类型定义和运行行为。
+    tests:
+      - web/tests/naming-convention.test.mjs
+    files:
+      - docs/agent/rules/frontend/TODO.md
+      - docs/agent/rules/frontend/reviewer-checklist.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - web/src/components/action/actionTypes.ts
+      - web/src/components/action/ActionBar.tsx
+      - web/src/components/action/ActionBarControls.tsx
+      - web/src/components/action/AttachmentsArea.tsx
+      - web/src/components/action/SessionRing.tsx
+      - web/src/components/action/styleHelpers.ts
+      - web/src/components/action/useActionBar.ts
+      - web/src/components/action/useDisplayStatus.ts
+      - web/src/components/action/useQueuedMessagesList.ts
+      - web/src/components/action/useWorktreeState.ts
+      - web/tests/naming-convention.test.mjs
+    anchors:
+      - "web/tests/naming-convention.test.mjs:naming: component domain types use a domain-specific"
+      - web/src/components/action/actionTypes.ts:export type ActionBarProps
 
   - id: G-BH
     title: 会话正文块流（Block 存储层 + 轮次身份 turn_id/turn_seq/native_* + S2a 双写 + S2b 读改走块流 + C1/C2 + S2d-2 主日志不再存正文 + S2e pending 身份改用 turn_id）

@@ -72,6 +72,13 @@ test("naming: JSX render helpers use *Helpers.tsx instead of *Utils.tsx", () => 
   assert.deepEqual(violations, [], `Utils-with-JSX filename violations:\n${violations.join("\n")}`);
 });
 
+test("naming: component domain types use a domain-specific *Types.ts name", () => {
+  const violations = walk(SRC)
+    .filter((f) => /components\/[^/]+\/types\.ts$/.test(f.slice(SRC.length + 1)))
+    .map((f) => `${f}: use a domain-specific *Types.ts name or move cross-domain types to shared/`);
+  assert.deepEqual(violations, [], `component type filename violations:\n${violations.join("\n")}`);
+});
+
 test("naming: main export matches file name (components/hooks)", () => {
   // 存量多 export 文件白名单（见 .claude/rules/frontend/TODO.md 存量命名违规项）：
   // 这些文件导出多个同级组件/函数，无单一主 export，细拆是 file-size 规则的事。

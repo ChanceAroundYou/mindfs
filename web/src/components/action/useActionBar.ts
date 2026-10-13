@@ -29,7 +29,7 @@ import {
   strip1MSuffix,
   with1MSuffix,
 } from "./modelUtils";
-import { type ActionBarProps } from "./types";
+import { type ActionBarProps } from "./actionTypes";
 import { parsePlanCommand, replaceActiveTokenText, stripPlanCommandPrefix } from "./inputTransforms";
 import { matchesSendShortcut } from "../../services/prefs/sendShortcut";
 import type { ShellStatus } from "../../services/agents";
