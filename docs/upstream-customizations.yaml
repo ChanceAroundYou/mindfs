@@ -3142,3 +3142,31 @@ groups:
       - web/src/components/app/TaskInlineEditPanel.tsx:findTaskProjectRoot(taskInlineTargetRootId, taskInlineTargetNodeId
       - web/src/app/appStorage.ts:scopeKey(scopeNodeId, rootId)
       - web/src/app/useProjectTreeWorktrees.ts:targetNodeId
+
+  - id: G-BU
+    title: FileEditor 与 DiagramPreview 样式内联
+    kind: arch
+    symptom: |
+      两个组件单独导入 `.css` 文件，不符合组件样式需内联或归入 `*Styles.ts` 的规则；
+      组件迁移时容易漏掉各自的伪元素、媒体查询或 CodeMirror 子选择器。
+    why: |
+      把原 CSS 规则文本放进对应组件的 `<style>`，原样保留主题变量、级联选择器、媒体查询、
+      CodeMirror 内部样式与安全区处理；清除独立 CSS 文件/import，并更新旧逻辑路径映射。
+    boundary: |
+      只改样式承载位置和源码守卫映射，不改 CSS 声明、DOM 交互和组件状态。
+    tests:
+      - web/tests/inline-component-styles.test.mjs
+    files:
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+      - web/src/components/file/FileEditor.tsx
+      - web/src/components/common/DiagramPreview.tsx
+      - web/tests/source-map.mjs
+      - web/tests/inline-component-styles.test.mjs
+    anchors:
+      - web/src/components/file/FileEditor.tsx:FILE_EDITOR_STYLES
+      - web/src/components/common/DiagramPreview.tsx:DIAGRAM_PREVIEW_STYLES
+      - web/tests/inline-component-styles.test.mjs:inline-component-styles.test.mjs

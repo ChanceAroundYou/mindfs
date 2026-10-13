@@ -337,7 +337,7 @@ export const MODULES = {
   ],
   "src/components/FileViewer.tsx": ["src/components/file/FileViewer.tsx"],
   "src/components/FileEditor.tsx": ["src/components/file/FileEditor.tsx"],
-  "src/components/FileEditor.css": ["src/components/file/FileEditor.css"],
+  "src/components/FileEditor.css": ["src/components/file/FileEditor.tsx"],
   "src/components/FileOperations.tsx": ["src/components/file/FileOperations.tsx"],
   "src/components/BinaryViewer.tsx": ["src/components/file/BinaryViewer.tsx"],
   "src/components/ImageViewer.tsx": ["src/components/file/ImageViewer.tsx"],
@@ -350,7 +350,7 @@ export const MODULES = {
     "src/hooks/useMarkdownViewer.tsx",
   ],
   "src/components/DiagramPreview.tsx": ["src/components/common/DiagramPreview.tsx"],
-  "src/components/DiagramPreview.css": ["src/components/common/DiagramPreview.css"],
+  "src/components/DiagramPreview.css": ["src/components/common/DiagramPreview.tsx"],
   "src/components/DefaultListView.tsx": [
     "src/components/file/DefaultListView.tsx",
     "src/components/file/Breadcrumbs.tsx",

@@ -2592,3 +2592,11 @@
   - `web/tests/task-worktree-node-scope.test.mjs` → 两节点同名项目必须命中所选节点；缺失所选节点记录时不得退回另一个节点；项目作用域键可往返解析；工作台入口、worktree 判断/偏好与任务提交保留目标节点。
   - `web/tests/task-board-view.test.mjs`、`web/tests/workspace-board.test.mjs`、`web/tests/node-colors-and-workspace-preferences.test.mjs` → 共享任务面板接收并使用节点 ID，项目下拉/颜色和 worktree 分支请求都按节点区分。
 - **边界**：仅看板新建任务的项目身份路由与 worktree 选择/创建链路。已有任务的执行、收尾和 worktree 生命周期策略不变。
+
+
+### G-BU FileEditor 与 DiagramPreview 样式内联
+
+- **可见症状**：两个组件依赖独立 `.css` 文件，与前端规则要求组件样式内联或使用 `*Styles.ts` 不一致；移动组件时样式依赖也容易遗漏。
+- **根因与边界**：将原 CSS 文本放入组件级 `<style>`，保留原有选择器、主题变量、媒体查询、伪元素、CodeMirror 内部选择器与安全区适配。移除 CSS 文件和 import，并将测试逻辑路径映射到组件源文件。样式仍是 CSS 规则文本，避免转成 React style 对象造成选择器能力或级联行为变化。
+- **针对性测试**：`web/tests/inline-component-styles.test.mjs` → 两组件样式常量与关键交互/主题选择器存在，独立 CSS 已删除，旧逻辑路径仍映射到组件。
+- **边界**：仅样式载体和源码映射改变，不改 DOM 交互、组件状态或 CSS 声明。
