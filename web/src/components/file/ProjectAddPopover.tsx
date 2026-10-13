@@ -2,6 +2,7 @@ import React from "react";
 import { getNodes, LOCAL_NODE_ID } from "../../services/net/nodeRegistry";
 import { useI18n } from "../../i18n/index";
 import { PathBreadcrumb } from "./PathBreadcrumb";
+import { AsyncStateMessage } from "../common/AsyncStateMessage";
 
 export type ProjectAddMode =
   | "mode"
@@ -280,21 +281,21 @@ export function LocalPanel({
         }}
       >
         {localState.loading ? (
-          <div style={{ padding: "8px 10px", fontSize: "12px", color: "var(--text-secondary)" }}>
+          <AsyncStateMessage kind="loading" style={{ padding: "8px 10px" }}>
             {t("projectAdd.loading")}
-          </div>
+          </AsyncStateMessage>
         ) : null}
         {!localState.loading && localState.error ? (
-          <div style={{ padding: "8px 10px", fontSize: "12px", color: "#b45309" }}>
+          <AsyncStateMessage kind="error" style={{ padding: "8px 10px" }}>
             {localState.error}
-          </div>
+          </AsyncStateMessage>
         ) : null}
         {!localState.loading &&
         !localState.error &&
         localState.items.length === 0 ? (
-          <div style={{ padding: "8px 10px", fontSize: "12px", color: "var(--text-secondary)" }}>
+          <AsyncStateMessage kind="empty" style={{ padding: "8px 10px" }}>
             {t("projectAdd.emptyDirectory")}
-          </div>
+          </AsyncStateMessage>
         ) : null}
         {!localState.loading &&
           !localState.error &&

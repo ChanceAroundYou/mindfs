@@ -2311,6 +2311,13 @@
 - **针对性测试**：`web/tests/service-domain-facades.test.mjs` → 7 个根入口都只 re-export 到存在的域实现。
 - **边界**：仅调整文件归属及实现内相对路径，不改变服务 API 或行为。
 
+### G-BQ 前端异步三态消息复用
+
+- **可见症状**：项目目录浏览、worktree 和定时任务列表的异步状态文案由各自 JSX 手写，加载和错误状态的可访问语义不一致，样式调整也需要逐处维护。
+- **根因与边界**：`components/common/AsyncStateMessage` 负责统一状态消息语义，调用方仍通过样式覆盖保留原有尺寸/布局，并继续自己决定 loading、error、empty 的优先级。测试锁住语义和三个调用点。
+- **针对性测试**：`web/tests/async-state-message.test.mjs` → loading 使用 status、error 使用 alert、空态不伪装成错误，组件被三类列表复用。
+- **边界**：只整理状态消息，不改变数据获取、列表呈现或页面排版。
+
 
 ### 总体
 

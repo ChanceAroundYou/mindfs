@@ -2603,6 +2603,29 @@ groups:
       - web/src/services/agents.ts:export * from "./agent/agents"
       - web/tests/service-domain-facades.test.mjs:service domain root modules remain re-export facades
 
+  - id: G-BQ
+    title: 前端异步三态消息复用
+    kind: arch
+    symptom: |
+      项目目录、worktree 和定时任务视图各自渲染 loading/empty/error 文本，状态语义与样式容易漂移，也没有统一的辅助技术状态标记。
+    why: |
+      新增无业务语义的 AsyncStateMessage，统一 loading/status、error/alert 与空状态消息渲染；通过 style 覆盖保留每个容器已有的视觉布局和状态优先级。
+    boundary: |
+      只抽取异步状态消息并迁移三个列表视图，不改变请求、状态机、列表内容或页面布局。
+    tests:
+      - web/tests/async-state-message.test.mjs
+    files:
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - web/src/components/common/AsyncStateMessage.tsx
+      - web/src/components/root/RootWorktreeContentView.tsx
+      - web/src/components/file/ProjectAddPopover.tsx
+      - web/src/components/task/ScheduledAgentTaskDialog.tsx
+    anchors:
+      - web/src/components/common/AsyncStateMessage.tsx:Shared inline message
+      - web/tests/async-state-message.test.mjs:common async state component is reused
+
   - id: G-BH
     title: 会话正文块流（Block 存储层 + 轮次身份 turn_id/turn_seq/native_* + S2a 双写 + S2b 读改走块流 + C1/C2 + S2d-2 主日志不再存正文 + S2e pending 身份改用 turn_id）
     kind: fix

@@ -14,7 +14,7 @@
 ## 复用搬迁
 
 - [x] `menuButtonStyle` / `strategyButtonStyle`（task 域）→ 并入 `shared/styles.ts`。
-- [ ] 三态 JSX（loading/empty/error 结构）→ 抽 `components/common/` 通用三态组件。
+- [x] 三态 JSX（loading/empty/error 结构）→ 抽 `components/common/` 通用三态组件，并用于项目目录、worktree 与定时任务列表。
 - [x] `MarkdownViewer` 搬家到 `components/common/`（连同 useMarkdownViewer → `hooks/`、
       MarkdownCodeBlocks/markdownUtils/DiagramPreview → `common/`），8 处 import 改道。
 

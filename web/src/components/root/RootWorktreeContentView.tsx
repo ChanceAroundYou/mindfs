@@ -1,5 +1,6 @@
 import React from "react";
 import { GitStatusPanel } from "../git/GitStatusPanel";
+import { AsyncStateMessage } from "../common/AsyncStateMessage";
 import { useI18n } from "../../i18n/index";
 import type { GitStatusItem, GitStatusPayload, GitWorktreeItem } from "../../services/git";
 import type { RelatedWorktree } from "../../services/session";
@@ -85,23 +86,23 @@ export function RootWorktreeContentView({
     const expandedPath = expandedWorktreeByRoot[scopedRootKey(root)] || "";
     if (loading) {
       return (
-        <div style={{ padding: "8px 4px", fontSize: "12px", color: "var(--text-secondary)" }}>
+        <AsyncStateMessage kind="loading" style={{ padding: "8px 4px" }}>
           {t("worktree.loading")}
-        </div>
+        </AsyncStateMessage>
       );
     }
     if (error) {
       return (
-        <div style={{ padding: "8px 4px", fontSize: "12px", color: "#b45309" }}>
+        <AsyncStateMessage kind="error" style={{ padding: "8px 4px" }}>
           {error}
-        </div>
+        </AsyncStateMessage>
       );
     }
     if (items.length === 0) {
       return (
-        <div style={{ padding: "8px 4px", fontSize: "12px", color: "var(--text-secondary)" }}>
+        <AsyncStateMessage kind="empty" style={{ padding: "8px 4px" }}>
           {t("worktree.empty")}
-        </div>
+        </AsyncStateMessage>
       );
     }
     return (

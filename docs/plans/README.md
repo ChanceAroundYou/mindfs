@@ -8,7 +8,7 @@ to resume their old TODOs or baselines.
 
 | Plan | Status | Next action |
 |---|---|---|
-| [Rule completion rollout](rule-completion-rollout.md) | Active | Extract common loading/empty/error UI after auditing current variants and consumers. |
+| [Rule completion rollout](rule-completion-rollout.md) | Active | Normalize the current Utils/Helpers naming set, first verifying the live filenames and import graph. |
 
 ## Completed or superseded history
 

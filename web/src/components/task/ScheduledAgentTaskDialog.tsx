@@ -1,5 +1,6 @@
 import React from "react";
 import { AgentIcon } from "../agent/AgentIcon";
+import { AsyncStateMessage } from "../common/AsyncStateMessage";
 import { AgentSelector } from "../agent/AgentSelector";
 import { renderToolIcon } from "../stream/toolCallIcons";
 import { has1MSuffix, resolveEffortOnSwitch, resolveLongContextOnSwitch, strip1MSuffix, with1MSuffix } from "../action/modelUtils";
@@ -55,7 +56,8 @@ export function ScheduledAgentTaskDialog({
   const renderList = () => (
     <>
       {loading ? (
-        <div
+        <AsyncStateMessage
+          kind="loading"
           style={{
             border: "1px solid var(--border-color)",
             borderRadius: 8,
@@ -66,9 +68,10 @@ export function ScheduledAgentTaskDialog({
           }}
         >
           {t("common.loading")}
-        </div>
+        </AsyncStateMessage>
       ) : tasks.length === 0 ? (
-        <div
+        <AsyncStateMessage
+          kind="empty"
           style={{
             border: "1px dashed var(--border-color)",
             borderRadius: 8,
@@ -79,7 +82,7 @@ export function ScheduledAgentTaskDialog({
           }}
         >
           {t("scheduled.empty")}
-        </div>
+        </AsyncStateMessage>
       ) : (
         <div
           style={{
