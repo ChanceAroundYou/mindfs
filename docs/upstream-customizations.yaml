@@ -1500,7 +1500,7 @@ groups:
       - server/internal/kanban/task_store.go:func (s *TaskStore) DeleteTask(ctx context.Context, id string)
       - server/internal/api/http.go:r.Delete("/api/tasks/{id}"
       - web/src/services/task/crud.ts:export async function deleteTask
-      - web/src/app/taskIcons.tsx:export function TaskCancelIcon
+      - web/src/components/task/taskIcons.tsx:export function TaskCancelIcon
       - web/src/components/task/TaskCardRows.tsx:"delete-task"
       - 'web/src/i18n/locales/zh-CN.ts:"task.deleteTask": "删除任务卡片"'
       - 'web/src/i18n/locales/zh-CN.ts:"task.cancelTask": "取消任务"'
@@ -2558,16 +2558,18 @@ groups:
     symptom: |
       taskIcons.tsx 混合图标、任务样式与颜色工具，维护者难以判断模块边界，新增导出也容易让文件职责继续隐形扩张。
     why: |
-      在模块顶部列出当前导出及其职责，并用针对性测试确保清单与实际导出一致；保留现有导入路径，避免无边界搬迁造成跨域调用 churn。
+      在模块顶部列出当前导出及其职责，并用针对性测试确保清单与实际导出一致；审计确认后将实现归入 task UI 域，并保留 app 入口作兼容 facade。
     boundary: |
-      只增加 taskIcons 模块职责说明、同步测试和待办状态，不改变导出实现或运行行为。
+      维护 taskIcons 模块职责说明与导出清单；规范实现位于 components/task，app 路径保留兼容 facade。
     tests:
       - web/tests/task-icons-inventory.test.mjs
     files:
       - web/src/app/taskIcons.tsx
+      - web/src/components/task/taskIcons.tsx
+      - web/tests/task-icons-inventory.test.mjs
       - docs/agent/rules/frontend/TODO.md
     anchors:
-      - web/src/app/taskIcons.tsx:Export inventory
+      - web/src/components/task/taskIcons.tsx:Export inventory
       - web/tests/task-icons-inventory.test.mjs:taskIcons export inventory
 
   - id: G-BP
@@ -3614,6 +3616,7 @@ groups:
     files:
       - web/src/shared/hexToRgba.ts
       - web/src/app/taskIcons.tsx
+      - web/src/components/task/taskIcons.tsx
       - web/src/components/file/FileTree.tsx
       - web/tests/shared-hex-to-rgba.test.mjs
       - web/tests/file-tree-service-boundaries.test.mjs
@@ -3681,18 +3684,22 @@ groups:
       TaskBoardView was 645 lines and imported task/workspace/session types from service and app implementation
       files, coupling a pure view to controller and persistence modules.
     why: |
-      Move presentation contracts to shared and task-domain type modules, keep appStorage/service paths as
-      compatibility facades, and extract the template toolbar as a presenter with prop-driven callbacks.
+      Move presentation contracts to shared and task-domain type modules, keep appStorage/service and legacy app
+      icon paths as compatibility facades, extract the template toolbar, and place task UI assets in components/task.
     boundary: |
       Keep task/status data, template filter sentinel, responsive breakpoints, event order, refresh timing, and
-      rendered markup semantics unchanged. The remaining taskIcons imports are legacy SVG/CSS-in-JS presentation
-      assets; their canonical location remains under review.
+      rendered markup semantics unchanged. Task visuals live in components/task/taskIcons.tsx; the app path is a
+      compatibility facade, and non-task consumers use the shared color helper directly.
     tests:
       - web/tests/task-board-view-layering.test.mjs
       - web/tests/task-board-view.test.mjs
       - web/tests/task-card-parity.test.mjs
       - web/tests/task-panel-unification.test.mjs
       - web/tests/workspace-board.test.mjs
+      - web/tests/task-icons-inventory.test.mjs
+      - web/tests/worktree-badge.test.mjs
+      - web/tests/worktree-finish.test.mjs
+      - web/tests/shared-hex-to-rgba.test.mjs
     files:
       - web/src/shared/taskTemplateConstants.ts
       - web/src/shared/taskTypes.ts
@@ -3704,12 +3711,26 @@ groups:
       - web/src/components/task/taskBoardTypes.ts
       - web/src/components/task/TaskBoardView.tsx
       - web/src/components/task/TaskBoardToolbar.tsx
+      - web/src/components/task/taskIcons.tsx
+      - web/src/app/taskIcons.tsx
+      - web/src/app/AppRootView.tsx
+      - web/src/app/useSessionSidebarView.tsx
+      - web/src/components/app/TaskSessionErrorDialog.tsx
+      - web/src/components/session/useSessionCard.ts
       - web/src/components/task/TaskCardRows.tsx
+      - web/src/components/task/TaskCreateTemplateMenu.tsx
+      - web/src/components/task/TaskDetailPanel.tsx
+      - web/src/components/task/TaskTemplateActionMenu.tsx
+      - web/src/components/workspace/WorkspaceQuickLaunch.tsx
       - web/src/components/workspace/WorkspaceBoard.tsx
       - web/src/components/workspace/WorkspaceProjectRow.tsx
       - web/src/components/workspace/WorkspaceTaskRow.tsx
       - web/tests/source-map.mjs
       - web/tests/task-card-parity.test.mjs
+      - web/tests/task-icons-inventory.test.mjs
+      - web/tests/worktree-badge.test.mjs
+      - web/tests/worktree-finish.test.mjs
+      - web/tests/shared-hex-to-rgba.test.mjs
       - web/tests/task-board-view-layering.test.mjs
       - web/tests/project-tree-refresh.test.mjs
       - web/tests/session-list-node-failure.test.mjs

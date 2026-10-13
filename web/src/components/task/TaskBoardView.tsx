@@ -18,7 +18,7 @@ import {
   taskCardIconButtonStyle,
   taskCardSurfaceStyle,
   taskTemplateMenuItemStyle,
-} from "../../app/taskIcons";
+} from "./taskIcons";
 
 /**
  * 任务面板：无项目时是跨项目工作台（WorkspaceBoard），有项目时是项目内四块看板。

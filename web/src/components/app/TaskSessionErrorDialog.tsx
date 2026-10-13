@@ -1,5 +1,5 @@
 // 从 App.tsx 抽出的渲染区域（机械搬移，JSX 逐字未改）。
-import { CheckIconSmall, PlusSmallIcon, taskCardIconButtonStyle } from "../../app/taskIcons";
+import { CheckIconSmall, PlusSmallIcon, taskCardIconButtonStyle } from "../task/taskIcons";
 import { useI18n } from "../../i18n";
 import type { Dispatch, SetStateAction } from "react";
 

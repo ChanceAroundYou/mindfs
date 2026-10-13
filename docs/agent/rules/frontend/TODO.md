@@ -47,7 +47,7 @@ hooks/ (1): useSessionStream 648
 
 - [x] `FileTree.tsx`：降到 489 行；view 与 props 类型不再依赖 services/app，服务查询由 colocated logic hooks 提供。
 - [x] `useActionBar.ts`：类型契约迁入 shared；纯展示 helper 归 shared，响应式 hook 归 hooks；logic 不再导入 view 文件。
-- [ ] `TaskBoardView.tsx`：task/workspace/session 类型契约已归入 shared，模板控件有独立 view contract，toolbar 已提取，主视图 400 行且无 services/app 状态或逻辑依赖；仍需评估 `app/taskIcons` 纯呈现资源的归属并完成专项边界确认。
+- [x] `TaskBoardView.tsx`：task/workspace/session 类型契约归 shared，模板控件有独立 view contract，toolbar 已提取，主视图 400 行；任务呈现簇迁至 `components/task/taskIcons.tsx`，app 旧路径仅保留 facade，shared 颜色工具独立导入。专项测试确认 view 不依赖 services/app。
 - [x] `useRealtimeEvents.ts`：项目添加流程类型移入 `shared/projectAddTypes.ts`，实时 logic、事件上下文不再依赖 `ProjectAddPopover`。
 - [x] `useSendMessage.ts`：plan 前缀纯逻辑移至 `shared/planCommand.ts`，消除 app hook 对 action view 模块的依赖。
 - [x] `useSessionLifecycle.ts`：删除未使用的 `SessionViewer` import；当前 hook 不再依赖 view 模块。

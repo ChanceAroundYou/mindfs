@@ -3,7 +3,7 @@ import { useI18n } from "../../i18n/index";
 import { useRefreshSpin } from "../../hooks/useRefreshSpin";
 import { TASK_TEMPLATE_ALL_FILTER } from "../../shared/taskTemplateConstants";
 import { hexToRgba } from "../../shared/hexToRgba";
-import { SyncIcon } from "../../app/taskIcons";
+import { SyncIcon } from "./taskIcons";
 import type { TaskTemplate } from "../../shared/taskTypes";
 import type { TaskTemplateControls } from "./taskBoardTypes";
 import { TaskTemplateActionMenu } from "./TaskTemplateActionMenu";

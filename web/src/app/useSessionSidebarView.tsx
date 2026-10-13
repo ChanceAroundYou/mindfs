@@ -2,7 +2,7 @@ import type React from "react";
 import { useI18n } from "../i18n";
 import type { AgentStatus } from "../services/agents";
 import { AgentIcon } from "../components/agent/AgentIcon";
-import { ChevronDownSmallIcon, ImportIcon } from "./taskIcons";
+import { ChevronDownSmallIcon, ImportIcon } from "../components/task/taskIcons";
 import { AgentMenuList } from "../components/agent/AgentMenuList";
 import { ExternalSessionList } from "../components/session/ExternalSessionList";
 import { ArchivedSessionsPanel } from "../components/session/ArchivedSessionsPanel";

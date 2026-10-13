@@ -10,14 +10,14 @@ test("shared hex color conversion preserves shorthand, fallback, and rgba pass-t
   assert.equal(hexToRgba("#abc", 0.5), "rgba(170, 187, 204, 0.5)");
   assert.equal(hexToRgba("not-a-color", 0.2), "rgba(59, 130, 246, 0.2)");
   assert.equal(hexToRgba("rgba(1, 2, 3, 0.4)", 0.9), "rgba(1, 2, 3, 0.4)");
-  const taskIcons = read("../src/app/taskIcons.tsx");
-  assert.match(taskIcons, /export function hexToRgbaApp\(hex: string, alpha: number\): string \{\s*return hexToRgba\(hex, alpha\)/);
+  const facade = read("../src/app/taskIcons.tsx");
+  assert.match(facade, /export \{ hexToRgba as hexToRgbaApp \} from "\.\.\/shared\/hexToRgba"/);
 });
 
 test("FileTree uses the shared color helper and the app path remains a facade", () => {
   const fileTree = read("../src/components/file/FileTree.tsx");
-  const taskIcons = read("../src/app/taskIcons.tsx");
+  const facade = read("../src/app/taskIcons.tsx");
   assert.match(fileTree, /from "\.\.\/\.\.\/shared\/hexToRgba"/);
   assert.doesNotMatch(fileTree, /from "\.\.\/\.\.\/app\/taskIcons"/);
-  assert.match(taskIcons, /return hexToRgba\(hex, alpha\)/);
+  assert.match(facade, /hexToRgba as hexToRgbaApp/);
 });

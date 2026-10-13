@@ -1,6 +1,6 @@
 import React from "react";
 import { useI18n } from "../../i18n";
-import { taskCardSurfaceStyle } from "../../app/taskIcons";
+import { taskCardSurfaceStyle } from "../task/taskIcons";
 import type { SessionPresentationSummary } from "../../shared/sessionPresentationTypes";
 import type { KanbanTask } from "../../services/tasks";
 import { TaskCardRows, type TaskCardAction, type TaskSessionErrorDialog } from "../task/TaskCardRows";

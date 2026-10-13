@@ -24,7 +24,7 @@ import {
   taskReplyPulseStyle,
   taskWorktreeTagStyle,
   type WorktreeTagState,
-} from "../../app/taskIcons";
+} from "./taskIcons";
 
 /** 卡片能做的状态迁移。cancel 也在这儿：未结束的任务只剩这一个出口。 */
 // delete-task 不是状态迁移，是把卡片从板上拿走（服务端只删卡片，不碰 worktree / 会话）。

@@ -38,7 +38,7 @@ import { getDirectorySortKey, normalizeComparableRootPath, normalizeTreeResponse
 import { hasSessionExchanges, isSessionShownInMain, isTopLevelSessionItem, normalizeMode, relatedFileSelectionKey, sessionInputHistory, shouldAutoSelectNewSession, toSessionItem } from "../app/appSession";
 import { accountScopedKey, loadGitDiffSideBySide, loadLastRootId, loadLastRootNodeId, loadMobileEnterKeySends, loadPersistedFileScrollPositions, loadPersistedPluginQuery, loadSidebarsSwapped, loadTaskCreateWorktreePreference, persistFileScrollPositions, persistPluginQuery, removeLocalStorageByPrefix, saveTaskCreateWorktreePreference } from "../app/appStorage";
 import { applyStageOverride, currentTaskInputFromDetail, DEFAULT_TASK_AGENT, DEFAULT_TASK_MODEL, firstAgentStage, firstTaskInputFromDetail, firstUserInputTemplate, isTerminalKanbanTask, latestTaskStageRun, normalizeFastService, parseTaskSessionErrorDetails, parseTaskSessionErrorMessage, previousTaskInputsFromDetail, taskSessionKeysFromDetail, taskStagesForCreate, taskStatusLabel } from "../app/appTask";
-import { CheckIconSmall, PlusSmallIcon, taskCardIconButtonStyle } from "../app/taskIcons";
+import { CheckIconSmall, PlusSmallIcon, taskCardIconButtonStyle } from "../components/task/taskIcons";
 import { TaskSessionErrorDialog } from "../components/app/TaskSessionErrorDialog";
 import { TaskDetailPanelGate } from "../components/app/TaskDetailPanelGate";
 import { OnboardingGate } from "../components/app/OnboardingGate";

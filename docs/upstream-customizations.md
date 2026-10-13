@@ -1099,7 +1099,7 @@
 
 ### G-AQ 任务卡的三把键：完成兜底 / 取消 / 删除（2026-10-06 用户三条要求）
 
-- 来源：`web/src/components/{TaskCardRows,TaskDetailPanel}.tsx`、`web/src/app/taskIcons.tsx`、
+- 来源：`web/src/components/{TaskCardRows,TaskDetailPanel}.tsx`、`web/src/components/task/taskIcons.tsx`、
   `web/src/services/tasks.ts`、`web/src/App.tsx`、`web/src/components/TaskBoardView.tsx`、
   `web/src/i18n/locales/{zh-CN,en-US}.ts`、`server/internal/kanban/{service,task_store}.go`、
   `server/internal/api/{http,http_tasks}.go`。
@@ -2300,7 +2300,7 @@
 ### G-BO taskIcons 导出职责清单
 
 - **可见症状**：`taskIcons.tsx` 同时承载图标、任务样式和颜色工具，新增导出时难以看出模块范围是否扩大。
-- **根因与边界**：文件头列出所有导出并按职责分组，针对性测试将清单与真实导出对照。保留当前模块路径和所有导出行为，避免在调用方跨 task、workspace 与 shared view 的情况下做机械搬迁。
+- **根因与边界**：文件头列出所有导出并按职责分组，针对性测试将清单与真实导出对照。审计调用方后将任务呈现实现归入 `components/task`；`app/taskIcons.tsx` 保留兼容 facade，导出行为不变。
 - **针对性测试**：`web/tests/task-icons-inventory.test.mjs` → 文件头清单必须精确覆盖实际导出的函数与类型。
 - **边界**：只记录并验证模块职责，不改变图标、样式和颜色工具的实现。
 
@@ -2722,7 +2722,7 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 ### G-CK FileTree 纯色转换依赖迁入 shared
 
 - **可见症状**：FileTree 只为调用 `hexToRgbaApp` 就导入 `app/taskIcons.tsx`，使 view 依赖 app 层。
-- **根因与边界**：纯颜色转换放到 `shared/hexToRgba.ts`；app/taskIcons 保留原函数名并转发，其他消费者不需改路径。
+- **根因与边界**：纯颜色转换放到 `shared/hexToRgba.ts`；app/taskIcons 保留原函数名并转发，FileTree、session 等通用颜色消费者直接依赖 shared。
 - **针对性测试**：`web/tests/shared-hex-to-rgba.test.mjs` 与 FileTree dependency boundary test → 覆盖颜色行为、兼容 facade、FileTree 不再导入 app。
 - **边界**：短/长 hex、无效值回退及 rgba 字符串透传保持原行为。
 
@@ -2737,6 +2737,6 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 ### G-CM TaskBoardView 契约归位与 toolbar presenter
 
 - **可见症状**：TaskBoardView 有 645 行，并从 service/app implementation 文件导入任务、workspace、session 类型；模板 toolbar 与看板列渲染挤在同一个视图中。
-- **根因与边界**：类型契约归 shared 和 task domain；appStorage/service 旧入口保留 facade；模板筛选、菜单和刷新反馈提取到 `TaskBoardToolbar`。`app/taskIcons` 仍作为纯 SVG/CSS-in-JS 遗留资源入口，归属继续审计。
+- **根因与边界**：类型契约归 shared 和 task domain；appStorage/service 旧入口保留 facade；模板筛选、菜单和刷新反馈提取到 `TaskBoardToolbar`。任务呈现簇迁入 `components/task/taskIcons.tsx`，`app/taskIcons.tsx` 只保留兼容 facade，非任务颜色消费者直接使用 shared helper。
 - **针对性测试**：`web/tests/task-board-view-layering.test.mjs`、`task-board-view.test.mjs`、`task-card-parity.test.mjs`、`workspace-board.test.mjs` → 守住依赖方向、toolbar 接线、卡片数据契约与旧 facade。
 - **边界**：保持筛选 sentinel、断点、按钮事件顺序、刷新反馈时长与任务卡展示行为；主视图现为 400 行。

@@ -4,7 +4,8 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 
-const root = join(fileURLToPath(new URL("..", import.meta.url)), "src/app/taskIcons.tsx");
+const srcRoot = join(fileURLToPath(new URL("..", import.meta.url)), "src");
+const root = join(srcRoot, "components/task/taskIcons.tsx");
 
 test("taskIcons export inventory stays aligned with its public exports", () => {
   const source = readFileSync(root, "utf8");
@@ -18,4 +19,9 @@ test("taskIcons export inventory stays aligned with its public exports", () => {
     .map(([, name]) => name);
 
   assert.deepEqual([...listed].sort(), [...declared].sort());
+
+  const appFacade = readFileSync(join(srcRoot, "app/taskIcons.tsx"), "utf8");
+  assert.match(appFacade, /export \* from "\.\.\/components\/task\/taskIcons"/);
+  assert.doesNotMatch(source, /from ["']\.\.\/\.\.\/services\//);
+  assert.match(source, /from "\.\.\/\.\.\/shared\/nodePalette"/);
 });

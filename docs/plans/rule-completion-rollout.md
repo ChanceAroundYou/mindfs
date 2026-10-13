@@ -60,6 +60,8 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 - 已完成：`hexToRgbaApp` 纯算法迁入 shared，`taskIcons.tsx` 保留旧导出 facade，FileTree 删除最后一个 app/ 导入；frontend TODO 将 FileTree 的逻辑/view 审计单独销项。
 - 当前下一项：审计并拆分 `useActionBar` 与 `TaskBoardView` 的 logic/view 倒挂；然后继续 frontend 剩余硬线、Vitest/复用件测试以及 backend TODO。
 - 已完成：`useActionBar` 不再从 ModeSelector、TokenEditor、AttachmentsArea 导入类型，也不依赖混合 `styleHelpers`；契约与纯 helper 放 shared，responsive hook 放 hooks；candidate debounce 统一到 shared 并由 appStorage 保留兼容导出。全量逻辑拆分/行数硬线尚待另批处理。
-- 已完成：`TaskBoardView` 的响应式读取改用 hooks；任务、workspace、session 展示类型归入 shared，task template controls 使用 task domain view contract；`appStorage` 与 service 类型入口保留兼容再导出。模板菜单/刷新栏拆到 `TaskBoardToolbar`，主视图从 645 行降至 400 行。专项测试检查依赖入口、调用接线和兼容 facade；view 未导入 services 或 app 状态/逻辑，但 `app/taskIcons` 的历史呈现资产归属仍待评估，所以不勾完整逻辑/view 待办。硬线清单由 28 项降到 27 项。
+- 已完成：`TaskBoardView` 的响应式读取改用 hooks；任务、workspace、session 展示类型归入 shared，task template controls 使用 task domain view contract；`appStorage` 与 service 类型入口保留兼容再导出。模板菜单/刷新栏拆到 `TaskBoardToolbar`，主视图从 645 行降至 400 行。专项测试检查依赖入口、调用接线和兼容 facade；TaskBoardView 不导入 services/app 状态或逻辑；2026-10-14 进一步将任务图标与任务样式实现在 `components/task/taskIcons.tsx`，app 旧入口只保留兼容 facade，通用颜色调用直接使用 shared helper。
 - 已完成：将 `useActionBar` 的 editor change、candidate、发送/取消、键盘、粘贴与新会话 reset handler 集中到 `useActionBarHandlers`。父 hook 保留状态装配和模型同步，`useActionBar.ts` 从 722 行降到 451 行，新 hook 311 行；handler 时序与回调顺序原样保留。专项边界测试及 typecheck 通过，TODO 硬线清单从 29 项降到 28 项。
-- 当前下一项：审计 `app/taskIcons` 的所有消费者并决定其规范归属；随后继续 Vitest、复用件测试以及 backend TODO。
+- 当前下一项：继续审阅复用件清单并补齐测试，再迁移 Vitest；随后处理 backend TODO。
+
+- 已完成：审计 `app/taskIcons` 的 13 个消费者与全部导出，将呈现实现迁入 `components/task/taskIcons.tsx`，更新 task/workspace/shell 调用方；`app/taskIcons.tsx` 仅保留兼容 re-export，默认节点色改从 shared 读取，session/file 等通用颜色消费者直接依赖 `shared/hexToRgba`。更新导出清单测试、依赖方向测试和 upstream 登记，TaskBoardView 逻辑/view 待办销项。

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { getNodes } from "../../services/net/nodeRegistry";
-import { hexToRgbaApp } from "../../app/taskIcons";
+import { hexToRgba } from "../../shared/hexToRgba";
 import { resolveGroupColor } from "../../services/session/sessionGroupDisplay";
 import { useI18n } from "../../i18n/index";
 import { forkSessionDisplayName, parseForkSessionSource } from "./sessionListShared";
@@ -157,6 +157,6 @@ export function useSessionCard({
     cancelEditing,
     submitRename,
     syncing,
-    hexToRgbaApp,
+    hexToRgbaApp: hexToRgba,
   };
 }

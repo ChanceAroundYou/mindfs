@@ -15,7 +15,7 @@ import path from "node:path";
 
 const root = path.resolve(import.meta.dirname, "..");
 const card = fs.readFileSync(path.join(root, "src/components/TaskCardRows.tsx"), "utf8");
-const icons = fs.readFileSync(path.join(root, "src/app/taskIcons.tsx"), "utf8");
+const icons = fs.readFileSync(path.join(root, "src/components/task/taskIcons.tsx"), "utf8");
 const app = fs.readFileSync(path.join(root, "src/App.tsx"), "utf8");
 const realtime = fs.readFileSync(path.join(root, "src/app/useRealtimeEvents.ts"), "utf8");
 const zh = fs.readFileSync(path.join(root, "src/i18n/locales/zh-CN.ts"), "utf8");

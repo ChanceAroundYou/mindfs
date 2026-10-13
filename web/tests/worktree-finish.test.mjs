@@ -352,7 +352,7 @@ assert.match(app, /action === "finish-worktree"/, "App must handle the finish-wo
 // 收尾和重建是两个键，长在同一处但不是一回事：混起来会让人以为「重建」也把活合回去了。
 assert.match(panel, /<TaskFinishWorktreeIcon \/>/, "the panel must render the finish icon");
 assert.match(card, /<TaskFinishWorktreeIcon \/>/, "the card must render the finish icon");
-assert.match(read("src/app/taskIcons.tsx"), /export function TaskFinishWorktreeIcon\(\)/, "the finish icon must exist");
+assert.match(read("src/components/task/taskIcons.tsx"), /export function TaskFinishWorktreeIcon\(\)/, "the finish icon must exist");
 
 // ── 契约：接口与文案 ──
 assert.match(

@@ -1,6 +1,6 @@
 import React from "react";
 import { useI18n } from "../../i18n";
-import { PlusSmallIcon } from "../../app/taskIcons";
+import { PlusSmallIcon } from "../task/taskIcons";
 import type { WorkspaceProjectGroup } from "../../app/useWorkspaceBoard";
 import type { TaskTemplate } from "../../services/tasks";
 

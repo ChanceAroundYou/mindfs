@@ -13,15 +13,14 @@ const valueImports = [...view.matchAll(/^import[\s\S]*?;/gm)]
 test("TaskBoardView avoids runtime app/storage dependencies", () => {
   assert.doesNotMatch(view, /from ["'][^"']*services\//);
   const appImports = valueImports.filter((statement) => /from ["'][^"']*app\//.test(statement));
-  assert.equal(appImports.length, 1);
-  assert.match(appImports[0], /from "\.\.\/\.\.\/app\/taskIcons"/);
+  assert.equal(appImports.length, 0);
   assert.match(view, /from ["']\.\.\/\.\.\/hooks\/useResponsive["']/);
   assert.match(view, /from ["']\.\.\/\.\.\/shared\/taskTemplateConstants["']/);
   assert.match(view, /import type \{ KanbanTask, TaskTemplate \} from ["']\.\.\/\.\.\/shared\/taskTypes["']/);
   assert.match(view, /import type \{ WorkspaceBoard as WorkspaceBoardData, WorkspaceBoardFilter \} from ["']\.\.\/\.\.\/shared\/workspaceBoardTypes["']/);
   assert.match(view, /import type \{ SessionPresentationSummary \} from ["']\.\.\/\.\.\/shared\/sessionPresentationTypes["']/);
   assert.match(view, /import type \{ KanbanStageColumn, MoveKanbanAction, TaskSessionErrorDialog, TaskTemplateControls \} from "\.\/taskBoardTypes"/);
-  // taskIcons is a legacy presenter asset module: SVGs and CSS-in-JS only, no app state or data access.
+  // Task presentation assets live in the task view domain; the app facade is not imported here.
   assert.match(view, /<TaskBoardToolbar[\s\S]*?templateControls=\{templateControls\}/);
 });
 

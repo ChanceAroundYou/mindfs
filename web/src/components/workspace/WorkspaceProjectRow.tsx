@@ -1,7 +1,7 @@
 import React from "react";
 import { useI18n } from "../../i18n";
 import { useResponsive } from "../../hooks/useResponsive";
-import { TaskGroupChevronIcon } from "../../app/taskIcons";
+import { TaskGroupChevronIcon } from "../task/taskIcons";
 import type { SessionPresentationSummary } from "../../shared/sessionPresentationTypes";
 import type { WorkspaceProjectGroup, WorkspaceTaskItem } from "../../app/useWorkspaceBoard";
 import type { TaskCardAction, TaskSessionErrorDialog } from "../task/TaskCardRows";

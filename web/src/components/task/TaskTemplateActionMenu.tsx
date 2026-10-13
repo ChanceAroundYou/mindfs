@@ -1,6 +1,6 @@
 import React from "react";
 import { useI18n } from "../../i18n/index";
-import { HorizontalDotsIcon, DeleteIcon, EditPencilIcon, PlusSmallIcon, taskTemplateMenuItemStyle } from "../../app/taskIcons";
+import { HorizontalDotsIcon, DeleteIcon, EditPencilIcon, PlusSmallIcon, taskTemplateMenuItemStyle } from "./taskIcons";
 import type { TaskTemplate } from "../../services/tasks";
 
 export function TaskTemplateActionMenu({

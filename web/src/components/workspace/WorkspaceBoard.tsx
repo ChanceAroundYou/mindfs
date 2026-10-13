@@ -2,7 +2,7 @@ import React from "react";
 import { useI18n } from "../../i18n";
 import { useRefreshSpin } from "../../hooks";
 import { useResponsive } from "../../app/appMisc";
-import { SyncIcon } from "../../app/taskIcons";
+import { SyncIcon } from "../task/taskIcons";
 import type { WorkspaceBoard, WorkspaceBoardFilter, WorkspaceTaskItem } from "../../shared/workspaceBoardTypes";
 import type { TaskCardAction, TaskSessionErrorDialog } from "../task/TaskCardRows";
 import type { SessionPresentationSummary } from "../../shared/sessionPresentationTypes";
