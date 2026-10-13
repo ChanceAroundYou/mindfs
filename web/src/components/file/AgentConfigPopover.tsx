@@ -1,12 +1,10 @@
 import React from "react";
 import { ProviderModelSelect } from "../agent/ProviderModelSelect";
-import { AgentMenuList } from "../agent/AgentMenuList";
-import { AgentIcon } from "../agent/AgentIcon";
 import { useI18n } from "../../i18n/index";
-import { type AgentStatus } from "../../services/agents";
-import { type AgentAPIProvider, type AgentConfigBackup } from "../../services/agentConfig";
-import { RestartSpinner, TrashIcon } from "./icons";
+import type { AgentAPIProvider, AgentConfigBackup, AgentStatus } from "../../shared/agentTypes";
+import { TrashIcon } from "./icons";
 import { AgentConfigLineEditor } from "./AgentConfigLineEditor";
+import { AgentConfigAgentStep } from "./AgentConfigAgentStep";
 import { AgentLifecyclePopover } from "./AgentLifecyclePopover";
 import {
   agentConfigActionRowStyle, agentConfigFieldStyle, agentConfigHintStyle,
@@ -143,92 +141,16 @@ export function AgentConfigPopover({
       }}
     >
       {step === "agent" ? (
-        <div style={{ fontSize: "12px", fontWeight: 700, color: "var(--text-primary)" }}>
-          {agentTitle}
-        </div>
-      ) : null}
-      {step === "agent" ? (
-        <>
-          {busy ? (
-            <div style={agentConfigHintStyle}>{t("agentConfig.loading")}</div>
-          ) : agents.length === 0 ? (
-            <div style={agentConfigHintStyle}>{t("agentConfig.noInstalledAgents")}</div>
-          ) : (
-            <AgentMenuList
-              agents={agents}
-              selectedAgent={selectedAgent}
-              maxHeight="220px"
-              renderEnd={(agent) => {
-                const name = String(agent.last_config_selection?.name || "").trim();
-                const restarting = agent.name === restartingAgent;
-                if (flow !== "switch" || !onRestartAgent) {
-                  if (!name) {
-                    return null;
-                  }
-                  return (
-                    <span
-                      title={t("agentConfig.lastSelected", { name })}
-                      style={{
-                        maxWidth: "120px",
-                        minWidth: 0,
-                        flexShrink: 1,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                        fontSize: "11px",
-                        color: agent.name === selectedAgent ? "var(--accent-color)" : "var(--text-secondary)",
-                      }}
-                    >
-                      {name}
-                    </span>
-                  );
-                }
-                return (
-                  <>
-                    {name ? (
-                      <span
-                        title={t("agentConfig.lastSelected", { name })}
-                        style={{
-                          maxWidth: "86px",
-                          minWidth: 0,
-                          flexShrink: 1,
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                          fontSize: "11px",
-                          color: agent.name === selectedAgent ? "var(--accent-color)" : "var(--text-secondary)",
-                        }}
-                      >
-                        {name}
-                      </span>
-                    ) : null}
-                    <button
-                      type="button"
-                      disabled={busy || restartingAgent !== ""}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        void onRestartAgent(agent.name);
-                      }}
-                      style={{
-                        ...agentConfigSecondaryButtonStyle(busy || restartingAgent !== ""),
-                        padding: "2px 6px",
-                        minWidth: "36px",
-                        height: "18px",
-                        lineHeight: "12px",
-                        fontSize: "11px",
-                        borderRadius: "5px",
-                        flexShrink: 0,
-                      }}
-                    >
-                      {restarting ? <RestartSpinner /> : t("agentConfig.restart")}
-                    </button>
-                  </>
-                );
-              }}
-              onSelect={onChooseAgent}
-            />
-          )}
-        </>
+        <AgentConfigAgentStep
+          title={agentTitle}
+          flow={flow}
+          agents={agents}
+          busy={busy}
+          selectedAgent={selectedAgent}
+          restartingAgent={restartingAgent}
+          onRestartAgent={onRestartAgent}
+          onChooseAgent={onChooseAgent}
+        />
       ) : step === "confirm" ? (
         <>
           <div style={{ ...agentConfigHintStyle, color: "#dc2626" }}>

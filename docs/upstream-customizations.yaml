@@ -3282,7 +3282,7 @@ groups:
       - docs/upstream-customizations.yaml
       - web/tests/agent-docs.test.mjs
     anchors:
-      - docs/agent/rules/frontend/TODO.md:硬线 17 个
+      - docs/agent/rules/frontend/TODO.md:硬线 16 个
       - docs/plans/README.md:Rule completion rollout
       - web/tests/agent-docs.test.mjs:every plan is classified in the sole plans index
   - id: G-BZ
@@ -4096,3 +4096,34 @@ groups:
     anchors:
       - web/src/components/file/AgentLifecyclePopover.tsx:AgentLifecyclePopover
       - web/tests/agent-config-lifecycle-split.test.mjs:retains its compatibility export
+
+  - id: G-CY
+    title: Agent config agent selection step extraction
+    kind: arch
+    symptom: |
+      AgentConfigPopover remained above the 500-line hardline after lifecycle UI and styles moved out;
+      its agent selection list and restart actions were still embedded in the flow controller view.
+    why: |
+      Isolate the agent-selection presentation, use shared agent/config contracts, and keep the
+      legacy AgentConfigPopover facade compatible for FileTree consumers.
+    boundary: |
+      The new view receives selection/restart callbacks and status values. Flow transitions, selected
+      agent, busy state, and confirmation remain owned by AgentConfigPopover/use hooks.
+    tests:
+      - web/tests/agent-config-agent-step.test.mjs
+      - web/tests/agent-config-lifecycle-split.test.mjs
+      - web/tests/file-tree-header-overlays.test.mjs
+      - web/tests/source-map.mjs
+    files:
+      - web/src/components/file/AgentConfigPopover.tsx
+      - web/src/components/file/AgentConfigAgentStep.tsx
+      - web/tests/agent-config-agent-step.test.mjs
+      - web/tests/source-map.mjs
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/components/file/AgentConfigAgentStep.tsx:AgentConfigAgentStep
+      - web/tests/agent-config-agent-step.test.mjs:delegates agent selection

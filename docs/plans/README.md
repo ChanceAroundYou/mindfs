@@ -8,7 +8,7 @@ to resume their old TODOs or baselines.
 
 | Plan | Status | Next action |
 |---|---|---|
-| [Rule completion rollout](rule-completion-rollout.md) | Active | AgentConfigPopover 528 行；AgentLifecyclePopover 与样式簇已归位，主流程仍需继续拆分；前端硬线剩余 17 项。下一批把 agent 选择步骤提取后复核依赖边界。 |
+| [Rule completion rollout](rule-completion-rollout.md) | Active | AgentConfigPopover 450 行；agent 选择步骤独立，表单类型由 shared 提供；前端硬线剩余 16 项。下一批从当前文件实测与依赖审计中选择职责清晰的目标。 |
 
 ## Completed or superseded history
 

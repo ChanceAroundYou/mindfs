@@ -87,3 +87,5 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 - 下一项：按当前文件树继续处理前端硬线；后续复核候选名单行数与 reviewer checklist 的门禁覆盖。
 - 已完成：将混在 `AgentConfigPopover.tsx` 中的生命周期面板拆到 `AgentLifecyclePopover.tsx`，相关表单样式集中到 `agentConfigStyles.ts`；旧 `AgentConfigPopover` 路径继续导出 lifecycle 组件和 FileTree 使用的三项样式。Lifecycle 面板 167 行，主流程降到 528 行但仍高于 500，未从 TODO 销项；typecheck、header overlay 与兼容出口专项通过。
 - 下一项：从 AgentConfigPopover 提取 agent 选择步骤，完成到 500 行以下后再销项；同时守住 FileTree 的旧 facade。
+- 已完成：将 agent 选择步骤从 `AgentConfigPopover` 拆为 `AgentConfigAgentStep`，保留 agent 选择、最近配置提示、restart 按钮和 loading/empty 状态；`AgentStatus`、provider 与 backup 类型改从 shared 导入，view 不再直接 import service 类型。`AgentConfigPopover` 降到 450 行，前端硬线剩余 16 项；typecheck、命名、FileTree overlay 与 agent step 专项通过。
+- 下一项：从当前前端硬线列表选择下一批易于界定且能减少父职责的目标；之后完成 reviewer-checklist 自动门禁并开始 backend 单文件拆分。

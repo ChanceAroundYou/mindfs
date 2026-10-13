@@ -245,6 +245,7 @@
 | G-CV | SessionCard 溢出操作菜单提取 | 架构 | 见 §3.2 | 操作和确认继续通过既有父层回调，不改会话状态归属 |
 | G-CW | DefaultListView 排序菜单提取 | 架构 | 见 §3.2 | 排序值与弹层状态仍由目录视图控制器持有 |
 | G-CX | AgentConfig lifecycle 与样式拆分 | 架构 | 见 §3.2 | FileTree 继续使用旧 facade，生命周期动作归原 hooks |
+| G-CY | AgentConfig agent 选择步骤提取 | 架构 | 见 §3.2 | 表单流程状态与 restart/choose 动作仍经父 facade 管理 |
 
 > **G-D 已并入 G-F，G-M 已并入 G-AI**（改动面完全重合、无独立测试可守，单列只会制造空组）。
 
@@ -2828,4 +2829,11 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：AgentConfig 流程与生命周期管理 UI 同处大组件，FileTree overlay 也从该文件取共享按钮样式。
 - **根因与边界**：`AgentLifecyclePopover` 独立并从 shared agent types 取契约；style token/helper 移到 `agentConfigStyles.ts`。运行安装/更新的业务动作仍归 FileTree hook。
 - **针对性测试**：`agent-config-lifecycle-split.test.mjs` → 守住生命周期 UI、样式导出和旧 facade；`file-tree-header-overlays.test.mjs` → 守住 FileTree overlay 接线。
-- **边界**：AgentConfigPopover 主流程仍 528 行，尚未销掉前端硬线；旧调用路径与三项公开样式导出保持兼容。
+- **边界**：本组提交时主流程为 528 行；后续 G-CY 将它降至 450 行。旧调用路径与三项公开样式导出保持兼容。
+
+### G-CY AgentConfig agent 选择步骤提取
+
+- **可见症状**：生命周期 UI 移出后，`AgentConfigPopover` 仍超过 500 行，agent 清单、最近配置提示和 restart 控件仍嵌在流程组件里；view 还直接引用 service 类型。
+- **根因与边界**：agent 选择 UI 独立为 `AgentConfigAgentStep`，agent/provider/backup 类型直接依赖 shared；父组件继续管理当前步骤、选中值、busy 与确认流。
+- **针对性测试**：`agent-config-agent-step.test.mjs` → 守住 restart/choose 回调与列表状态；`file-tree-header-overlays.test.mjs` → 守住 FileTree facade 接线。
+- **边界**：保留最近配置文本、switch flow 的 restart 行为、loading/empty 状态；父组件现为 450 行。
