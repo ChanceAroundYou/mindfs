@@ -58,3 +58,23 @@ export const errorStyle: React.CSSProperties = {
   color: "var(--danger-color, #b42318)",
   whiteSpace: "pre-wrap",
 };
+
+/** 带边框的菜单按钮（12px 字号，8px 圆角）。 */
+export const menuButtonStyle: React.CSSProperties = {
+  border: "1px solid var(--border-color)",
+  borderRadius: 8,
+  background: "var(--content-bg, #fff)",
+  color: "var(--text-primary)",
+  cursor: "pointer",
+  fontSize: 12,
+  padding: "7px 10px",
+};
+
+/** 强调色策略按钮，基于 menuButtonStyle 换成 accent 色。 */
+export const strategyButtonStyle: React.CSSProperties = {
+  ...menuButtonStyle,
+  borderColor: "var(--accent-color)",
+  color: "var(--accent-color)",
+  padding: "4px 8px",
+  lineHeight: 1.2,
+};
