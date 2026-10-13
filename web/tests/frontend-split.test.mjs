@@ -70,7 +70,10 @@ test("session 服务根路径只保留 facade，领域实现归入 session/", as
     "sessionTerminalLayout", "sessionTree", "sessionTypes", "sessionWindow",
   ];
   for (const name of moved) {
-    assert.deepEqual(MODULES[`src/services/${name}.ts`], [`src/services/session/${name}.ts`], `${name} source-map path`);
+    const expected = name === "sessionConnectionManager"
+      ? ["src/services/session/sessionConnectionManager.ts", "src/services/session/sessionConnectionOutbound.ts"]
+      : [`src/services/session/${name}.ts`];
+    assert.deepEqual(MODULES[`src/services/${name}.ts`], expected, `${name} source-map path`);
   }
 
   const session = await importSrc("src/services/session.ts");

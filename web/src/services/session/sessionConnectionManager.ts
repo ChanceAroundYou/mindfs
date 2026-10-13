@@ -8,21 +8,9 @@
  * 需要把本文件的内容合回去（或重新拆分），否则 WS 连接管理会丢失。
  */
 import { wsURL } from "../net/base";
-import { estimateCommandTerminalCols } from "./sessionTerminalLayout";
 import { createRequestId } from "./sessionIdentifiers";
-import {
-  buildAnswerQuestionMessage,
-  buildCancelMessage,
-  buildPlanModeMessage,
-  buildQueueRemoveMessage,
-  buildQueueSendNowMessage,
-  buildQueueUpdateMessage,
-  buildSessionMessage,
-  buildSessionReadyMessage,
-  buildSlashCommandMessage,
-} from "./sessionOutbound";
-import { compactContext } from "./sessionContext";
-import type { PendingMessage, SessionServiceEvent, SessionType } from "./sessionTypes";
+import type { PendingMessage, SessionServiceEvent } from "./sessionTypes";
+import { SessionConnectionOutbound } from "./sessionConnectionOutbound";
 
 export interface SessionConnectionManagerHandlers {
   emit: (event: SessionServiceEvent) => void;
@@ -58,6 +46,7 @@ export class SessionConnectionManager {
   private readonly clientId: string;
   private readonly contextCache: Map<string, { selectionKey: string }>;
   private readonly handlers: SessionConnectionManagerHandlers;
+  private readonly outbound: SessionConnectionOutbound;
 
   constructor(
     clientId: string,
@@ -67,6 +56,13 @@ export class SessionConnectionManager {
     this.clientId = clientId;
     this.contextCache = contextCache;
     this.handlers = handlers;
+    this.outbound = new SessionConnectionOutbound(
+      () => Boolean(this.ws && this.ws.readyState === WebSocket.OPEN),
+      (message) => this.sendWSMessage(message),
+      () => this.ws?.readyState ?? null,
+      this.pendingMessages,
+      this.contextCache,
+    );
     if (typeof window !== "undefined") {
       window.addEventListener("online", () => this.scheduleLifecycleCheck());
       window.addEventListener("pageshow", () => this.scheduleLifecycleCheck());
@@ -416,6 +412,16 @@ export class SessionConnectionManager {
     return JSON.parse(raw);
   }
 
+  private resendPendingMessages() {
+    // 不判 socket：sendWSMessage 会为每一条返回 false（socket 关了就没有可发的），
+    // 而循环本身不改状态。
+    for (const pending of this.pendingMessages.values()) {
+      void this.sendWSMessage(pending.message).catch((err) => {
+        console.error("[Session] Failed to resend message:", err);
+      });
+    }
+  }
+
   private async sendWSMessage(
     message: Record<string, unknown>,
   ): Promise<boolean> {
@@ -427,177 +433,40 @@ export class SessionConnectionManager {
     return true;
   }
 
-  async sendMessage(
-    rootId: string,
-    sessionKey: string | undefined,
-    content: string,
-    type: SessionType,
-    agent: string,
-    model?: string,
-    agentMode?: string,
-    effort?: string,
-    fastService?: string,
-    context?: Record<string, unknown>,
-    shell?: string,
-    requestId = createRequestId("msg"),
-    newSessionWorktree?: {
-      create: boolean;
-      branchMode: "new" | "existing";
-      branch?: string;
-    },
-  ): Promise<boolean> {
-    // 这条守卫**必须留在调用方**：守卫之后要动两处状态（contextCache 经
-    // compactContext、pendingMessages），socket 已关时不该产生这两笔副作用。
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      console.warn("[session/send] blocked", {
-        requestId,
-        rootId,
-        sessionKey: sessionKey || null,
-        readyState: this.ws?.readyState ?? null,
-      });
-      return false;
-    }
-
-    const msg = buildSessionMessage({
-      requestId,
-      rootId,
-      sessionKey: sessionKey || undefined,
-      content,
-      type,
-      agent,
-      model,
-      agentMode,
-      effort,
-      fastService,
-      shell,
-      context: compactContext(this.contextCache, sessionKey, context),
-      // 只在命令类型下测宽：estimateCommandTerminalCols 会做 DOM 测量
-      // （querySelectorAll + getBoundingClientRect），普通聊天消息不该付这个代价。
-      terminalCols: type === "command" ? estimateCommandTerminalCols() : undefined,
-      newSessionWorktree,
-    });
-
-    this.pendingMessages.set(requestId, { id: requestId, message: msg });
-    return this.sendWSMessage(msg);
+  sendMessage(...args: Parameters<SessionConnectionOutbound["sendMessage"]>) {
+    return this.outbound.sendMessage(...args);
   }
 
-  async setPlanMode(
-    rootId: string,
-    sessionKey: string,
-    enabled: boolean,
-    requestId = createRequestId("plan"),
-  ): Promise<boolean> {
-    const msg = buildPlanModeMessage(rootId, sessionKey, enabled, requestId);
-    return msg ? this.sendWSMessage(msg) : false;
+  setPlanMode(...args: Parameters<SessionConnectionOutbound["setPlanMode"]>) {
+    return this.outbound.setPlanMode(...args);
   }
 
-  async runSlashCommand(
-    rootId: string,
-    sessionKey: string,
-    command: string,
-    agent: string,
-    model?: string,
-    agentMode?: string,
-    effort?: string,
-    fastService?: string,
-    requestId = createRequestId("slash"),
-  ): Promise<boolean> {
-    // 同 sendMessage：守卫之后要写 pendingMessages，所以不能下推到 sendWSMessage。
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      return false;
-    }
-    const msg = buildSlashCommandMessage({
-      requestId,
-      rootId,
-      sessionKey,
-      command,
-      agent,
-      model,
-      agentMode,
-      effort,
-      fastService,
-    });
-    if (!msg) return false;
-    this.pendingMessages.set(requestId, { id: requestId, message: msg });
-    return this.sendWSMessage(msg);
+  runSlashCommand(...args: Parameters<SessionConnectionOutbound["runSlashCommand"]>) {
+    return this.outbound.runSlashCommand(...args);
   }
 
-  private resendPendingMessages() {
-    // 不判 socket：sendWSMessage 会为每一条返回 false（socket 关了就没有可发的），
-    // 而循环本身不改状态。
-    for (const pending of this.pendingMessages.values()) {
-      void this.sendWSMessage(pending.message).catch((err) => {
-        console.error("[Session] Failed to resend message:", err);
-      });
-    }
+  cancelMessage(...args: Parameters<SessionConnectionOutbound["cancelMessage"]>) {
+    return this.outbound.cancelMessage(...args);
   }
 
-  async cancelMessage(rootId: string, sessionKey: string): Promise<boolean> {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      console.error("[Session] WebSocket not connected");
-      return false;
-    }
-    const msg = buildCancelMessage(rootId, sessionKey, `cancel-${Date.now()}`);
-    return msg ? this.sendWSMessage(msg) : false;
+  removeQueuedMessage(...args: Parameters<SessionConnectionOutbound["removeQueuedMessage"]>) {
+    return this.outbound.removeQueuedMessage(...args);
   }
 
-  async removeQueuedMessage(rootId: string, sessionKey: string, queueId: string): Promise<boolean> {
-    const msg = buildQueueRemoveMessage(rootId, sessionKey, queueId, `queue-remove-${Date.now()}`);
-    return msg ? this.sendWSMessage(msg) : false;
+  updateQueuedMessage(...args: Parameters<SessionConnectionOutbound["updateQueuedMessage"]>) {
+    return this.outbound.updateQueuedMessage(...args);
   }
 
-  async updateQueuedMessage(rootId: string, sessionKey: string, queueId: string, content: string): Promise<boolean> {
-    const msg = buildQueueUpdateMessage(
-      rootId,
-      sessionKey,
-      queueId,
-      content,
-      `queue-update-${Date.now()}`,
-    );
-    return msg ? this.sendWSMessage(msg) : false;
+  sendQueuedMessageNow(...args: Parameters<SessionConnectionOutbound["sendQueuedMessageNow"]>) {
+    return this.outbound.sendQueuedMessageNow(...args);
   }
 
-  async sendQueuedMessageNow(rootId: string, sessionKey: string, queueId: string): Promise<boolean> {
-    const msg = buildQueueSendNowMessage(
-      rootId,
-      sessionKey,
-      queueId,
-      `queue-send-now-${Date.now()}`,
-    );
-    return msg ? this.sendWSMessage(msg) : false;
+  answerQuestion(...args: Parameters<SessionConnectionOutbound["answerQuestion"]>) {
+    return this.outbound.answerQuestion(...args);
   }
 
-  async answerQuestion(
-    rootId: string,
-    sessionKey: string,
-    agent: string | undefined,
-    toolUseId: string,
-    answers: Record<string, string>,
-  ): Promise<boolean> {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      console.error("[Session] WebSocket not connected");
-      return false;
-    }
-    const msg = buildAnswerQuestionMessage(
-      rootId,
-      sessionKey,
-      agent,
-      toolUseId,
-      answers,
-      createRequestId("answer"),
-    );
-    return msg ? this.sendWSMessage(msg) : false;
+  markSessionReady(...args: Parameters<SessionConnectionOutbound["markSessionReady"]>) {
+    return this.outbound.markSessionReady(...args);
   }
 
-  // 挂载会话：服务端收到后一律回一帧 `session.stream{reset:true, events}`（整轮快照），
-  // 客户端先清空该会话的瞬时尾巴再照单重建。**没有 event_cursor** —— 不从客户端取进度，
-  // 也就没有「客户端缓存与服务端游标必须同步」这条维持不住的不变量。
-  async markSessionReady(rootId: string, sessionKey: string): Promise<boolean> {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      return false;
-    }
-    const msg = buildSessionReadyMessage(rootId, sessionKey, `ready-${Date.now()}`);
-    if (!msg) return false;
-    return this.sendWSMessage(msg);
-  }
 }

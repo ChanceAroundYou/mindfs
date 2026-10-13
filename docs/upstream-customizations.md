@@ -2977,3 +2977,10 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **根因与边界**：图片 source effect、受保护 blob 获取、object URL 创建/撤销及 fallback/图片呈现迁入 `MarkdownImage`；父 hook 原样传入 src/path/root/alt/title/width，并保留解析管线、链接导航、outline 和 hook API。
 - **针对性测试**：`markdown-viewer-split.test.mjs` → 守住父 hook 行数、接线与图片 URL 生命周期；`source-map.test.mjs`、`naming-convention.test.mjs` → 守住逻辑源码映射和组件命名规则。
 - **边界**：父 hook 实测 527→445 行，frontend 硬线 TODO 剩余 2 项；不改 markdown sanitizer、外链策略或 `MarkdownViewer` 消费者。
+
+### G-DU Session connection 出站命令职责拆分
+
+- **可见症状**：`SessionConnectionManager` 把 WebSocket 生命周期/重连状态与 session、queue、plan mode、slash-command、answer-question 出站命令混在一起，603 行超过前端硬线，改 payload 时难把命令行为与连接健康状态分开核对。
+- **根因与边界**：`SessionConnectionOutbound` 接收 socket-open 判据、传输回调、共享 pending map/context cache，负责原出站命令方法；manager 保留公开 API 的 typed delegator，并继续拥有 socket 状态、ack 删除、reconnect 计时和 pending resend。sendMessage 的 open 守卫仍先于 context 压缩/pending 写入。
+- **针对性测试**：`session-connection-outbound-split.test.mjs` → 守住父类行数、API 代理、pending ack/resend 归属及发送守卫顺序；`session-window.test.mjs` → 守住 probe/reconnect 状态；`source-map.test.mjs`、`frontend-split.test.mjs` → 守住源码映射与服务拆分目录契约。
+- **边界**：父类实测 603→472 行，frontend 硬线 TODO 剩余 1 项；不改公开方法参数、消息 payload 或重连行为。
