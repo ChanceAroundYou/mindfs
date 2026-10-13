@@ -3743,3 +3743,39 @@ groups:
       - web/src/shared/taskTemplateConstants.ts:TASK_TEMPLATE_ALL_FILTER
       - web/src/components/task/TaskBoardToolbar.tsx:TaskBoardToolbar
       - web/tests/task-board-view-layering.test.mjs:TaskBoard toolbar owns template-menu rendering
+
+  - id: G-CN
+    title: Frontend Vitest runner and reusable primitive coverage
+    kind: arch
+    symptom: |
+      Frontend rules specify Vitest, but the actual package and deploy gate ran only Node's built-in runner;
+      reusable model filtering and common icon semantics had no direct focused tests.
+    why: |
+      Install Vitest 2.1.9 for the current Vite 5 toolchain, route the unified npm test and deploy gate through
+      Vitest plus the source-mapped legacy Node lane, and add direct tests for reusable primitives.
+    boundary: |
+      Keep existing Node test assertions and preload behavior unchanged. Vitest owns new .test.ts files; legacy
+      .test.mjs files remain on the compatibility lane and migrate incrementally.
+    tests:
+      - web/tests/reusable-primitives.test.ts
+      - web/tests/deploy-web-assets.test.mjs
+    files:
+      - web/package.json
+      - web/package-lock.json
+      - web/vitest.config.ts
+      - web/tests/reusable-primitives.test.ts
+      - web/tests/deploy-web-assets.test.mjs
+      - web/src/shared/modelFiltering.ts
+      - scripts/deploy-all.sh
+      - .claude/skills/ship/SKILL.md
+      - docs/agent/rules/frontend/TODO.md
+      - docs/agent/rules/frontend/testing.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/package.json:test:vitest
+      - web/vitest.config.ts:include
+      - web/tests/reusable-primitives.test.ts:reusable frontend primitives
+      - scripts/deploy-all.sh:cd web && npm test

@@ -19,6 +19,8 @@ const deploy = read("scripts/deploy-all.sh");
 const installSh = read("scripts/install.sh");
 const makefile = read("Makefile");
 
+assert.match(deploy, /cd web && npm test/, "deploy-all must call the unified Vitest + legacy test chain");
+
 // 1) 装 web 资源时不得整目录删除。
 //    注意 uninstall 路径下的 `rm -rf "$share_dir"` 是合法的 —— 它删的是 share/mindfs，不是 web/，
 //    所以这里只匹配以 web 结尾的目标。

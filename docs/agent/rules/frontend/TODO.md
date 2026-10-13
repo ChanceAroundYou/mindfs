@@ -55,5 +55,5 @@ hooks/ (1): useSessionStream 648
 ## 测试与链路
 
 - [x] 新建 `web/tests/naming-convention.test.mjs`（文件名=主export、`.ts`无JSX、后缀语义）。
-- [ ] 前端测试栈切 Vitest（引依赖 + 改链路，独立项）。
-- [ ] 存量复用件补测。
+- [x] 前端测试栈引入 Vitest：`npm test` 先跑 Vitest 新测试，再跑带 source-map hooks 的 Node 兼容 lane；`deploy-all.sh` 走统一脚本。存量 `.mjs` 按触及时逐步迁。
+- [x] 存量复用件补测：新增模型筛选纯函数与通用图标语义测试；盘点结果记录在 active plan。

@@ -48,20 +48,22 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 - 已完成：agent config 流程 hook 直接依赖 agent 查询 service，`FileTree` 不再将 fetch 函数作为 context 透传；同时删除 `FileTree` 内陈旧的 agent config/WebPush/preferences service value imports。
 - 已完成：font size 的纯 region 类型、边界常量和步进算法迁入 `shared/fontSize.ts`；`fontSize` service 保留存储职责并再导出原 API，FileTree presenter 改用 shared 函数。
 - 已完成：发送快捷键类型、键盘事件解析、匹配与显示格式化迁入 `shared/sendShortcut.ts`；service 只保留 localStorage 读写并兼容再导出，FileTree view 不再依赖 `sendShortcut` service。
-- 当前下一项：继续 FileTree 拆分，清理剩余 view 对 services 的依赖与菜单组合职责，再按实测行数销减硬线清单。
+- 历史下一项（后续已更新）：继续 FileTree 拆分，清理剩余 view 对 services 的依赖与菜单组合职责，再按实测行数销减硬线清单。
 - 已完成：将 FileTree 设置菜单的呈现 JSX 提取到 `FileTreeSettingsMenu.tsx`；目录排序类型、选项与纯算法迁入 `shared/directorySort.ts`，原 preferences service 保留兼容 facade。`FileTree.tsx` 实测降至 702 行，仍超过硬线，继续拆分；没有提前销项。新增排序纯度、排序语义、facade 与依赖方向测试。
-- 当前下一项：继续拆分 FileTree 的 settings/menu 组合与其余 view 逻辑，按实际行数和依赖方向验证，不改变 App.tsx 组合根。
+- 历史下一项（后续已更新）：继续拆分 FileTree 的 settings/menu 组合与其余 view 逻辑，按实际行数和依赖方向验证，不改变 App.tsx 组合根。
 - 已完成：将 bootstrap readiness 订阅、node groups 查询及项目 tab accent 的节点颜色回退从 FileTree/view presenter 收入 colocated hooks；presenter 改收值，保留原始分组顺序与空态语义。专项 service-boundary 守卫已加入。
-- 当前下一项：审计 FileTree 剩余 `services/` 类型导入与职责混合，随后按同一层次规则继续处理 `useActionBar`。
+- 历史下一项（后续已更新）：审计 FileTree 剩余 `services/` 类型导入与职责混合，随后按同一层次规则继续处理 `useActionBar`。
 - 已完成：FileTree 和 `fileTreeTypes` 不再从 services 导入类型；agent 数据结构、新项目 meta union 进入 shared，agent/preferences service 保留旧类型导出。字号与快捷键类型也直接从 shared 引用。
-- 当前下一项：按 frontend TODO 继续 FileTree 职责拆分并复核硬线；达到验收条件后销项，再处理 `useActionBar` 和 `TaskBoardView` 的 logic/view 倒挂。
+- 历史下一项（后续已更新）：按 frontend TODO 继续 FileTree 职责拆分并复核硬线；达到验收条件后销项，再处理 `useActionBar` 和 `TaskBoardView` 的 logic/view 倒挂。
 - 已完成：将 FileTree header 菜单及账户、Agent config/lifecycle、session preference overlays presenter 提取到 `FileTreeHeaderOverlays.tsx`，状态与动作仍由 FileTree 持有。`FileTree.tsx` 从 701 行降至 489 行；硬线清单从 30 项更新为 29 项。针对性守卫检查 presenter 接线与保留的回调边界。
-- 当前下一项：继续审计 FileTree 余下 app/view 依赖并拆分 `useActionBar`、`TaskBoardView`；之后推进 Vitest 迁移与 reuse 测试，再处理 backend TODO。
+- 历史下一项（后续已更新）：继续审计 FileTree 余下 app/view 依赖并拆分 `useActionBar`、`TaskBoardView`；之后推进 Vitest 迁移与 reuse 测试，再处理 backend TODO。
 - 已完成：`hexToRgbaApp` 纯算法迁入 shared，`taskIcons.tsx` 保留旧导出 facade，FileTree 删除最后一个 app/ 导入；frontend TODO 将 FileTree 的逻辑/view 审计单独销项。
-- 当前下一项：审计并拆分 `useActionBar` 与 `TaskBoardView` 的 logic/view 倒挂；然后继续 frontend 剩余硬线、Vitest/复用件测试以及 backend TODO。
+- 历史下一项（后续已更新）：审计并拆分 `useActionBar` 与 `TaskBoardView` 的 logic/view 倒挂；然后继续 frontend 剩余硬线、Vitest/复用件测试以及 backend TODO。
 - 已完成：`useActionBar` 不再从 ModeSelector、TokenEditor、AttachmentsArea 导入类型，也不依赖混合 `styleHelpers`；契约与纯 helper 放 shared，responsive hook 放 hooks；candidate debounce 统一到 shared 并由 appStorage 保留兼容导出。全量逻辑拆分/行数硬线尚待另批处理。
 - 已完成：`TaskBoardView` 的响应式读取改用 hooks；任务、workspace、session 展示类型归入 shared，task template controls 使用 task domain view contract；`appStorage` 与 service 类型入口保留兼容再导出。模板菜单/刷新栏拆到 `TaskBoardToolbar`，主视图从 645 行降至 400 行。专项测试检查依赖入口、调用接线和兼容 facade；TaskBoardView 不导入 services/app 状态或逻辑；2026-10-14 进一步将任务图标与任务样式实现在 `components/task/taskIcons.tsx`，app 旧入口只保留兼容 facade，通用颜色调用直接使用 shared helper。
 - 已完成：将 `useActionBar` 的 editor change、candidate、发送/取消、键盘、粘贴与新会话 reset handler 集中到 `useActionBarHandlers`。父 hook 保留状态装配和模型同步，`useActionBar.ts` 从 722 行降到 451 行，新 hook 311 行；handler 时序与回调顺序原样保留。专项边界测试及 typecheck 通过，TODO 硬线清单从 29 项降到 28 项。
-- 当前下一项：继续审阅复用件清单并补齐测试，再迁移 Vitest；随后处理 backend TODO。
+- 当前下一项：继续将存量 Node 测试逐批迁入 Vitest；随后处理 backend TODO。
 
 - 已完成：审计 `app/taskIcons` 的 13 个消费者与全部导出，将呈现实现迁入 `components/task/taskIcons.tsx`，更新 task/workspace/shell 调用方；`app/taskIcons.tsx` 仅保留兼容 re-export，默认节点色改从 shared 读取，session/file 等通用颜色消费者直接依赖 `shared/hexToRgba`。更新导出清单测试、依赖方向测试和 upstream 登记，TaskBoardView 逻辑/view 待办销项。
+
+- 已完成：把 Vitest 2.1.9 接入 `web/package.json` 与锁文件；`npm test` 先跑 Vitest，再跑带 source-map/TS preload hook 的 120 个旧 Node 测试文件。`deploy-all.sh` 改用统一 `npm test`，ship 文档同步。新增 Vitest 复用件测试，覆盖 `filterAgentModels` 的查询语义与 shared 层纯度、ExitIcon/NoWorktreeIcon 的装饰语义和尺寸。当前 Vitest 5 项通过；旧 Node lane 263 项通过、4 项跳过。旧测试按触及时迁移，未伪称已全量转换。

@@ -18,9 +18,9 @@ bash scripts/deploy-all.sh --no-restart     # 只推产物+安装，不重启 wo
 ## 铁律（违反=部署了坏代码）
 
 1. **门禁不过不推**：`go test` / `tsc --noEmit` / `web npm test` 三项全绿才允许 push。脚本已内置，不要 `--skip`。
-   **web 测试必须带 hook，别裸跑 `node --test`**：源码守卫测试读的是**逻辑路径**，靠 `source-map-hook.mjs` 把
-   `fs.readFileSync` 重定向到移动/拆分后的物理文件。裸跑 `node --test tests/*.test.mjs` 会**假红 51 个**
-   （全是不存在的旧路径），`npm test` 才是 209/210（1 skip）。跑之前别被这个骗了。
+   **源码守卫 Node 旧测试必须通过 `npm test`**：测试读的是**逻辑路径**，旧 Node lane 需加载
+   `source-map-hook.mjs` 与 `ts-module-preload.mjs`。`npm test` 先跑 Vitest 新测试，再跑带 hook 的 Node
+   兼容测试；不要裸跑 `node --test tests/*.test.mjs`，会因旧逻辑路径映射缺失造成假红。
 2. **本机 restart 只能用户做**。本机是 **system** 单元（`/etc/systemd/system/mindfs.service`），`sudo systemctl restart mindfs` 会杀掉所有托管的 claude 子进程 —— **Agent 不得代劳**。脚本只装好二进制，最后把命令打出来给用户。
 3. **worker 侧可以直接重启**。`ssh wsl 'systemctl --user restart mindfs'` 与 `ssh fn 'systemctl --user restart mindfs'` 都是 user 单元，Agent 可直接执行。
 4. **WSL 与 fn 都没有源码库，永远别在 worker 上编译**。WSL 的 `~/projects/mindfs` 只剩 `.mindfs/` 数据目录；两个 worker 都只接收本机构建好的产物。去 worker 上 `make build` / `git pull` = 走错路了。
@@ -33,7 +33,7 @@ bash scripts/deploy-all.sh --no-restart     # 只推产物+安装，不重启 wo
 |---|---|---|
 | 0 | 查 `MERGE_HEAD`、确认在 `main` | ✓ 半截合并/错分支直接拒 |
 | 1 | （可选）`git add` 指定目录 + commit | ✓ |
-| 2 | `go test ./...` / `tsc --noEmit` / `npm test`（= 带 `--import` 两个 hook，见下） | ✓ 日志留 `/tmp/mindfs-*.log` |
+| 2 | `go test ./...` / `tsc --noEmit` / `npm test`（Vitest + 带两个 hook 的 Node 兼容 lane） | ✓ 日志留 `/tmp/mindfs-*.log` |
 | 3 | `git push origin main` | ✓ |
 | 4 | 本机 `make build && make install` | ✓ |
 | 5 | `tar` 打包产物 → `ssh wsl`、`ssh fn` 解包 → `install` → （默认）重启 → 回报版本号 | ✓ 版本号不一致直接停 |

@@ -165,7 +165,7 @@
 
 ---
 
-## 1. 总览（57 组，组 id 以 yaml 为准）
+## 1. 总览（92 组，组 id 以 yaml 为准）
 
 | 组 | 主题 | 性质 | 关键提交/切片举例 | 互斥边界 |
 |----|------|------|-------------------|----------|
@@ -233,6 +233,8 @@
 | G-BJ | 会话列表按实时活动时间排序 | 修复 | 见 §3.2 | 置顶/普通各自按最新活动倒序；流块推进临时 activity_at，服务端时间追上后收敛 |
 | G-BK | 会话模型选择与运行态一致性 | 修复 | `f7cc9af` | 发送前持久化选择模型；活跃会话模型以 runtime 为准 |
 | G-BL | 看板新建任务的 worktree 节点路由 | 修复 | 见 §3.2 | worktree 能力、分支查询与任务创建必须针对同一 nodeId::rootId |
+| G-CM | TaskBoardView 契约与任务呈现资源归位 | 架构 | 见 §3.2 | shared contracts + task presenter；app 旧路径只留兼容 facade |
+| G-CN | 前端 Vitest 运行链与复用件覆盖 | 测试 | 见 §3.2 | 新测试走 Vitest；旧 Node 源码守卫继续保留 preload hook |
 
 > **G-D 已并入 G-F，G-M 已并入 G-AI**（改动面完全重合、无独立测试可守，单列只会制造空组）。
 
@@ -2740,3 +2742,10 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **根因与边界**：类型契约归 shared 和 task domain；appStorage/service 旧入口保留 facade；模板筛选、菜单和刷新反馈提取到 `TaskBoardToolbar`。任务呈现簇迁入 `components/task/taskIcons.tsx`，`app/taskIcons.tsx` 只保留兼容 facade，非任务颜色消费者直接使用 shared helper。
 - **针对性测试**：`web/tests/task-board-view-layering.test.mjs`、`task-board-view.test.mjs`、`task-card-parity.test.mjs`、`workspace-board.test.mjs` → 守住依赖方向、toolbar 接线、卡片数据契约与旧 facade。
 - **边界**：保持筛选 sentinel、断点、按钮事件顺序、刷新反馈时长与任务卡展示行为；主视图现为 400 行。
+
+### G-CN 前端 Vitest 运行链与复用件覆盖
+
+- **可见症状**：长期规则要求 Vitest，但实际入口和部署门禁只跑 Node built-in runner；新复用件缺少直接语义测试，部署脚本也可能绕过统一测试链。
+- **根因与边界**：安装与锁定 Vitest 2.1.9（兼容当前 Vite 5），`npm test` 先运行 Vitest `.test.ts`，再运行带 source-map 与 TS preload 的旧 Node `.test.mjs`；`deploy-all.sh` 统一调用 `npm test`。新复用测试覆盖模型筛选纯逻辑与 common 图标可访问语义。
+- **针对性测试**：Vitest `web/tests/reusable-primitives.test.ts`；Node `web/tests/deploy-web-assets.test.mjs` 校验部署统一入口。
+- **边界**：不改既有测试断言或测试行为；120 个旧 `.mjs` 测试继续由兼容 lane 执行，后续触及时逐步迁移。

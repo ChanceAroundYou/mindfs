@@ -8,7 +8,7 @@ to resume their old TODOs or baselines.
 
 | Plan | Status | Next action |
 |---|---|---|
-| [Rule completion rollout](rule-completion-rollout.md) | Active | useActionBar controller 451 行；TaskBoardView 类型契约已迁出 app/services，toolbar 已拆分、主视图 400 行；TaskBoardView 呈现资产已归入 task domain；下一步审阅复用件覆盖并补测，再迁移 Vitest。 |
+| [Rule completion rollout](rule-completion-rollout.md) | Active | useActionBar controller 451 行；TaskBoardView 类型契约已迁出 app/services，toolbar 已拆分、主视图 400 行；TaskBoardView 呈现资产已归入 task domain；Vitest 主链与复用件首批测试已落地，下一步按触及节奏迁移旧 Node 测试。 |
 
 ## Completed or superseded history
 
