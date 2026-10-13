@@ -152,6 +152,7 @@ export const MODULES = {
     // 这一层整体（原 L281-950，连续区间）搬走。hook 调用顺序里只有 1 个 useRef
     // （sessionListReloadTimerRef）从第 2 层上移至此层，总数 258 不变。
     "src/app/useAppStateLayer.ts",
+    "src/app/useAppStateRefs.ts",
     // 2026-10-08 分层聚合（App.tsx → 1000 以内）第 2 层：会话域。
     "src/app/useAppSessionLayer.ts",
     "src/app/useAppSessionLayerTypes.ts",

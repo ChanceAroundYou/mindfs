@@ -2872,3 +2872,10 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **根因与边界**：参数契约进入 `useAppDomainLayerTypes.ts`，原模块保留 type re-export；原连续 hook 序列抽到 `useAppProjectManagement`，parent 继续组合插件、任务、bootstrap、realtime 与 derived 域。
 - **针对性测试**：`app-domain-layer-split.test.mjs` → 守住 500 行硬线、类型兼容出口、项目管理 hook 归属与 App 调用入口。
 - **边界**：hook 序列在 parent 原调用位置整体移动，不改变 action ref、managed-root 更新、节点失败通知、导航或 worktree 生命周期行为；父层现为 437 行。
+
+### G-DE App 状态层命令式 ref 集合拆分
+
+- **可见症状**：`useAppStateLayer` 同时声明会话、目录、插件、drawer、缓存等大量命令式 ref，混在状态层 hook 组装中，难以单独核对状态所有权和初始化顺序。
+- **根因与边界**：命令式 ref 与已有 session cache hook 初始化移至 `useAppStateRefs`；父层只在原位置接收 ref 集合，不改变 refs 名称、对象或后续写入点。
+- **针对性测试**：`web/tests/app-state-refs-split.test.mjs` → 守住父层接线、缓存与 refs 初始化顺序及文件滚动位置恢复。
+- **边界**：这是 `useAppStateLayer` 的分阶段拆分；父层当前仍 762 行，仍列在硬线 TODO，后续继续按状态域拆分。

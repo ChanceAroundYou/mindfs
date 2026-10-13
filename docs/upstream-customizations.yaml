@@ -4291,3 +4291,34 @@ groups:
     anchors:
       - web/src/app/useAppProjectManagement.ts:useAppProjectManagement
       - web/tests/app-domain-layer-split.test.mjs:delegates project management
+
+  - id: G-DE
+    title: App state layer imperative refs extracted
+    kind: arch
+    symptom: |
+      useAppStateLayer mixes session, directory, plugin, drawer, and cache refs into its state
+      declarations, making ownership and initialization order hard to review.
+    why: |
+      Move the imperative ref collection and existing session-cache hook initialization into a
+      focused state hook while retaining the original declaration and call order.
+    boundary: |
+      useAppStateRefs owns only the existing refs and session cache. useAppStateLayer calls it at
+      the same hook sequence position and keeps all consumers and mutations unchanged. This is an
+      intermediate split: the parent remains above the 500-line hard line and stays in TODO.
+    tests:
+      - web/tests/app-state-refs-split.test.mjs
+      - web/tests/source-map.test.mjs
+      - web/tests/naming-convention.test.mjs
+    files:
+      - web/src/app/useAppStateLayer.ts
+      - web/src/app/useAppStateRefs.ts
+      - web/tests/app-state-refs-split.test.mjs
+      - web/tests/source-map.mjs
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/app/useAppStateRefs.ts:useAppStateRefs
+      - web/tests/app-state-refs-split.test.mjs:delegates its ordered ref and session-cache ownership
