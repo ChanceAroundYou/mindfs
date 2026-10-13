@@ -2519,6 +2519,7 @@ groups:
       - docs/agent/rules/
       - docs/plans/README.md
       - docs/plans/agent-governance-and-repoint.md
+      - docs/plans/rule-completion-rollout.md
       - .claude/skills/upstream-merge/SKILL.md
       - web/tests/agent-docs.test.mjs
     anchors:

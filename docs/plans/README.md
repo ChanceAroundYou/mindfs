@@ -8,7 +8,7 @@ to resume their old TODOs or baselines.
 
 | Plan | Status | Next action |
 |---|---|---|
-| [Agent governance and task-38 repoint](agent-governance-and-repoint.md) | Active | Wait for user to restart the local systemd service, then repoint and verify. |
+| [Rule completion rollout](rule-completion-rollout.md) | Active | Extract common loading/empty/error UI after auditing current variants and consumers. |
 
 ## Completed or superseded history
 
@@ -22,6 +22,7 @@ to resume their old TODOs or baselines.
 | [App.tsx split lessons](app-tsx-split-lessons-and-next-plan.md) | Historical | Preserves lessons; proposed next steps and file counts are superseded. |
 | [Next-stage decision](next-stage-decision.md) | Executed / superseded | The proposal and session split were carried out; its original baseline is not current. |
 | [Worktree finish stage](worktree-finish-stage-plan.md) | Implemented | The described workflow landed; this document is the design and implementation record. |
+| [Agent governance and task-38 repoint](agent-governance-and-repoint.md) | Superseded 2026-10-14 by user direction | Governance work completed. The user explicitly discontinued task-38 repoint; do not resume that work from this historical plan. |
 
 ## Plan rules
 
