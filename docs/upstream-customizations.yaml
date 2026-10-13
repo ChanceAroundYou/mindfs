@@ -4355,3 +4355,35 @@ groups:
     anchors:
       - web/src/app/useAppRootSelection.ts:useAppRootSelection
       - web/tests/app-root-selection-split.test.mjs:keeps cross-node cleanup in its state hook
+
+  - id: G-DG
+    title: File and workspace state group extracted
+    kind: arch
+    symptom: |
+      useAppStateLayer combines directory editing/expansion, Git state, file viewer and plugin state,
+      project worktree tree state, and update state in one long state group.
+    why: |
+      Move the contiguous file/workspace state and its Git/project-tree hook composition into one
+      domain-specific hook while retaining state ownership and initialization order.
+    boundary: |
+      useAppFileWorkspaceState runs at the original hook sequence location. Ref mirrors, localStorage
+      state initialization, plugin query state, and refreshTaskWorktreeRef forwarding keep their
+      original ordering and values. App.tsx remains unchanged; parent still needs further splitting.
+    tests:
+      - web/tests/app-file-workspace-state.test.mjs
+      - web/tests/node-colors-and-workspace-preferences.test.mjs
+      - web/tests/source-map.test.mjs
+      - web/tests/naming-convention.test.mjs
+    files:
+      - web/src/app/useAppStateLayer.ts
+      - web/src/app/useAppFileWorkspaceState.ts
+      - web/tests/app-file-workspace-state.test.mjs
+      - web/tests/source-map.mjs
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/app/useAppFileWorkspaceState.ts:useAppFileWorkspaceState
+      - web/tests/app-file-workspace-state.test.mjs:delegates the contiguous file and workspace state group

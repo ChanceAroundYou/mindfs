@@ -8,7 +8,7 @@ to resume their old TODOs or baselines.
 
 | Plan | Status | Next action |
 |---|---|---|
-| [Rule completion rollout](rule-completion-rollout.md) | Active | `useAppStateLayer.ts` 从 816 降至 714 行；命令式 refs/cache 归 `useAppStateRefs`，跨节点 root 选择归 `useAppRootSelection`。硬线仍 13 项；继续拆状态域至父层低于 500 行。 |
+| [Rule completion rollout](rule-completion-rollout.md) | Active | `useAppStateLayer.ts` 从 816 降至 588 行；refs/cache、跨节点 root 选择及连续 file/workspace state group 已拆到专属 hooks。硬线仍 13 项；继续拆分父层至低于 500 行。 |
 
 ## Completed or superseded history
 

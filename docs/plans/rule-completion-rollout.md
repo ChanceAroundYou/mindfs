@@ -98,4 +98,5 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 - 下一项：重新实测并审阅 `useAppStateLayer` 的消费者、状态所有权和职责边界，再选定单一子职责继续拆分。
 - 当前进度：`useAppStateLayer` 中命令式 refs 与 session cache 初始化移到 `useAppStateRefs`，并在原 hook 序列位置调用，保留 refs 声明及 cache hook 的顺序。父层实测 816→762 行，仍超过硬线；专项结构守卫、命名门禁和 typecheck 通过。TODO 行数已同步，未提前销项。
 - 当前进度：跨节点 root 选择回调与清理逻辑移到 `useAppRootSelection`，父层仍在原位置创建回调；timer 与 Git 状态通过惰性 getter 保持原声明时序，既有节点路由断言改为检查实际逻辑模块。父层实测进一步从 762 降至 714 行；typecheck、全量 web 测试（279 通过、4 跳过）与专项结构测试通过。
+- 当前进度：将 `editDraftRequest` 到 update 状态之间连续的文件/工作区状态、Git hook 与 project-tree hook 整体迁入 `useAppFileWorkspaceState`；新 hook 在原调用位置运行，Ref 镜像赋值、localStorage 初始化与 `refreshTaskWorktreeRef` 转发顺序保持。父层从 714 降至 588 行，新增专项守卫。初次全量测试发现 source-map 别名仍指向未合并的父文件，已补齐逻辑模块映射并修正物理行数断言；最终全量 web 测试通过（280 通过、4 跳过），typecheck 与专项测试通过。
 - 下一项：继续按状态所有权拆分 `useAppStateLayer` 的 session、task 与 project/file state groups，保持父层低于 500 行之前不从硬线清单删除。
