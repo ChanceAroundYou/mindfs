@@ -61,4 +61,5 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 - 当前下一项：审计并拆分 `useActionBar` 与 `TaskBoardView` 的 logic/view 倒挂；然后继续 frontend 剩余硬线、Vitest/复用件测试以及 backend TODO。
 - 已完成：`useActionBar` 不再从 ModeSelector、TokenEditor、AttachmentsArea 导入类型，也不依赖混合 `styleHelpers`；契约与纯 helper 放 shared，responsive hook 放 hooks；candidate debounce 统一到 shared 并由 appStorage 保留兼容导出。全量逻辑拆分/行数硬线尚待另批处理。
 - 已完成：`TaskBoardView` 的响应式读取改用 hooks，任务模板筛选 sentinel 移入 shared 并由 appStorage 兼容再导出。专项测试守住这两项依赖改道；审计发现 view 仍有 type-only app/service 契约和历史 `app/taskIcons` 呈现入口，故未勾掉完整逻辑/view 待办。TaskBoardView 实测 645 行，硬线拆分仍待单独处理。
-- 当前下一项：拆分 `useActionBar.ts`（实测 722 行），随后把 TaskBoardView 的 type-only 契约迁出 app/services 并拆分视图；继续 Vitest、复用件和 backend TODO。
+- 已完成：将 `useActionBar` 的 editor change、candidate、发送/取消、键盘、粘贴与新会话 reset handler 集中到 `useActionBarHandlers`。父 hook 保留状态装配和模型同步，`useActionBar.ts` 从 722 行降到 451 行，新 hook 308 行；handler 时序与回调顺序原样保留。专项边界测试及 typecheck 通过，TODO 硬线清单从 29 项降到 28 项。
+- 当前下一项：把 TaskBoardView 的 type-only 契约迁出 app/services 并拆分 645 行视图；继续 Vitest、复用件和 backend TODO。

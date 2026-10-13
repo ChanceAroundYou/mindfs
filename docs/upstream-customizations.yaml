@@ -2676,6 +2676,7 @@ groups:
       - web/src/components/action/SessionRing.tsx
       - web/src/components/action/styleHelpers.ts
       - web/src/components/action/useActionBar.ts
+      - web/src/components/action/useActionBarHandlers.ts
       - web/src/components/action/useDisplayStatus.ts
       - web/src/components/action/useQueuedMessagesList.ts
       - web/src/components/action/useWorktreeState.ts
@@ -3279,7 +3280,7 @@ groups:
       - docs/upstream-customizations.yaml
       - web/tests/agent-docs.test.mjs
     anchors:
-      - docs/agent/rules/frontend/TODO.md:硬线 29 个
+      - docs/agent/rules/frontend/TODO.md:硬线 28 个
       - docs/plans/README.md:Rule completion rollout
       - web/tests/agent-docs.test.mjs:every plan is classified in the sole plans index
   - id: G-BZ
@@ -3638,6 +3639,7 @@ groups:
       debounce timing, resize behavior, and existing public re-exports. No send or upload behavior changes.
     tests:
       - web/tests/action-bar-layering.test.mjs
+      - web/tests/send-shortcut.test.mjs
     files:
       - web/src/shared/actionBarTypes.ts
       - web/src/shared/actionBarUtils.ts
@@ -3645,6 +3647,7 @@ groups:
       - web/src/components/action/actionTypes.ts
       - web/src/components/action/styleHelpers.ts
       - web/src/components/action/useActionBar.ts
+      - web/src/components/action/useActionBarHandlers.ts
       - web/src/components/action/useInputHistory.ts
       - web/src/components/action/useComposerEditorHeight.ts
       - web/src/components/action/usePendingAttachments.ts
@@ -3661,6 +3664,7 @@ groups:
       - web/src/components/workspace/WorkspaceProjectRow.tsx
       - web/src/app/appStorage.ts
       - web/tests/action-bar-layering.test.mjs
+      - web/tests/send-shortcut.test.mjs
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md

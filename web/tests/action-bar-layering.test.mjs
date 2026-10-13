@@ -39,3 +39,20 @@ test("ActionBar logic uses shared contracts and does not import view modules", (
   assert.match(styleFacade, /export \{ useResponsive \} from "\.\.\/\.\.\/hooks\/useResponsive"/);
   assert.match(appStorage, /export \{ CANDIDATE_FETCH_DEBOUNCE_MS \} from "\.\.\/shared\/actionBarUtils"/);
 });
+
+test("ActionBar handler flow is colocated and the controller meets the hard line", () => {
+  const controller = read("../src/components/action/useActionBar.ts");
+  const handlers = read("../src/components/action/useActionBarHandlers.ts");
+  const controllerLines = controller.split("\n").length;
+  const handlerLines = handlers.split("\n").length;
+
+  assert.ok(controllerLines <= 500, `useActionBar.ts is ${controllerLines} lines`);
+  assert.ok(handlerLines <= 500, `useActionBarHandlers.ts is ${handlerLines} lines`);
+  assert.match(controller, /useActionBarHandlers\(/);
+  assert.match(handlers, /export function useActionBarHandlers/);
+  assert.match(handlers, /parsePlanCommand/);
+  assert.match(handlers, /uploadFiles\(/);
+  assert.match(handlers, /matchesSendShortcut\(/);
+  assert.match(handlers, /appendPendingAttachments\(imageFiles\)/);
+  assert.doesNotMatch(handlers, /from ["'][^"']+\/(?:TokenEditor|ModeSelector|AttachmentsArea|ActionBar\.tsx)/);
+});

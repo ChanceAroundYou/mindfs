@@ -2729,9 +2729,9 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 ### G-CL ActionBar logic 类型与纯 helper 归位
 
 - **可见症状**：`useActionBar` 从 TokenEditor、ModeSelector、AttachmentsArea 和混合 `styleHelpers` 导入类型/工具；多个 view 与 logic 共用纯 helper 时需依赖该 view 文件。
-- **根因与边界**：ActionBar 类型及纯占位、状态、颜色、预览 helper 迁入 shared；`useResponsive` 独立归 hooks；旧类型出口继续 re-export。
-- **针对性测试**：`web/tests/action-bar-layering.test.mjs` → 覆盖 helper 的文案与时序契约、logic 不反向导入 view、旧类型 facade 和 debounce 单一来源。
-- **边界**：发送/上传时序不变；保持 SessionMode、TokenEditorHandle、PendingAttachment 结构和响应式断点行为。
+- **根因与边界**：ActionBar 类型及纯占位、状态、颜色、预览 helper 迁入 shared；`useResponsive` 独立归 hooks；发送、键盘、candidate 与附件 handler 抽到 `useActionBarHandlers`，controller 留状态和子 hook 编排；旧类型出口继续 re-export。
+- **针对性测试**：`web/tests/action-bar-layering.test.mjs`、`web/tests/send-shortcut.test.mjs` → 覆盖 helper 文案与时序、logic 不反向导入 view、handler 接线与硬线，以及快捷键发送路径。
+- **边界**：发送/上传时序不变；保持 SessionMode、TokenEditorHandle、PendingAttachment 结构和响应式断点行为。`useActionBar.ts` 当前 451 行，`useActionBarHandlers.ts` 311 行。
 
 
 ### G-CM TaskBoardView 依赖改由 shared 与 hooks 提供

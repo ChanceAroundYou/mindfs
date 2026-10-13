@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 
 const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 const actionBar = readFileSync(new URL("../src/components/action/ActionBar.tsx", import.meta.url), "utf8");
-const useActionBar = readFileSync(new URL("../src/components/action/useActionBar.ts", import.meta.url), "utf8");
+const actionBarHandlers = readFileSync(new URL("../src/components/action/useActionBarHandlers.ts", import.meta.url), "utf8");
 const fileTree = readFileSync(new URL("../src/components/FileTree.tsx", import.meta.url), "utf8");
 const shortcutService = readFileSync(new URL("../src/services/sendShortcut.ts", import.meta.url), "utf8");
 const shortcutShared = readFileSync(new URL("../src/shared/sendShortcut.ts", import.meta.url), "utf8");
@@ -39,12 +39,12 @@ assert.match(
 );
 assert.match(shortcutService, /formatSendShortcut[\s\S]*shared\/sendShortcut/);
 assert.match(
-  useActionBar,
-  /e\.key !== "Enter"[\s\S]*?matchesSendShortcut\(e\.nativeEvent, sendShortcut\)[\s\S]*?void handleSend\(\)/,
+  actionBarHandlers,
+  /e\.key !== "Enter"[\s\S]*?matchesSendShortcut\(e\.nativeEvent, normalizedSendShortcut\)[\s\S]*?void handleSend\(\)/,
   "non-Enter shortcuts should send from the message editor",
 );
 assert.match(
-  useActionBar,
-  /matchesSendShortcut\(event, sendShortcut\)[\s\S]*?void handleSend\(\)[\s\S]*?if \(event\?\.shiftKey\)/,
+  actionBarHandlers,
+  /matchesSendShortcut\(event, normalizedSendShortcut\)[\s\S]*?void handleSend\(\)[\s\S]*?if \(event\?\.shiftKey\)/,
   "Enter-based shortcuts should be handled once and before the newline behavior",
 );
