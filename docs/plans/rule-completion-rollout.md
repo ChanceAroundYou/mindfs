@@ -85,3 +85,5 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 - 下一项：继续前端硬线组件拆分；接近清空 frontend TODO 后复核目录/命名/层级规则与 reviewer checklist。
 - 已完成：将 `DefaultListViewMenu` 的排序展开按钮与 inherit/显式排序选项提取到 `DirectorySortMenu`，sort 值和弹层开关仍由原父组件持有；`DirectorySortControlValue` 随菜单 view contract 导出。父菜单从 585 行降至 457 行；typecheck、命名门禁及排序专项通过。硬线剩余 17 项。
 - 下一项：按当前文件树继续处理前端硬线；后续复核候选名单行数与 reviewer checklist 的门禁覆盖。
+- 已完成：将混在 `AgentConfigPopover.tsx` 中的生命周期面板拆到 `AgentLifecyclePopover.tsx`，相关表单样式集中到 `agentConfigStyles.ts`；旧 `AgentConfigPopover` 路径继续导出 lifecycle 组件和 FileTree 使用的三项样式。Lifecycle 面板 167 行，主流程降到 528 行但仍高于 500，未从 TODO 销项；typecheck、header overlay 与兼容出口专项通过。
+- 下一项：从 AgentConfigPopover 提取 agent 选择步骤，完成到 500 行以下后再销项；同时守住 FileTree 的旧 facade。

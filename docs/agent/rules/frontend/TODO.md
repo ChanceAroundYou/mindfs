@@ -32,7 +32,7 @@ app/ (11): useProjectLifecycle 885 · useAppSessionLayer 876
            useAppDomainLayer 864 · useAppStateLayer 816 · useSessionLifecycle 741
            useManagedRoots 709 · useSendMessage 686 · useAppViewComposition 661
            useSessionStreamCache 645 · useActionHandlers 611 · realtimeWsHandlers 570
-components/ (4): AgentConfigPopover 788 · SessionPane 682
+components/ (4): AgentConfigPopover 528 · SessionPane 682
            SessionViewer 646
            useMarkdownViewer 527
 services/ (1): sessionConnectionManager 603

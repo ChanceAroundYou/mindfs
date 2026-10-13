@@ -4065,3 +4065,34 @@ groups:
     anchors:
       - web/src/components/file/DirectorySortMenu.tsx:DirectorySortMenu
       - web/tests/directory-sort-menu.test.mjs:keeps inherit and explicit sorting
+
+  - id: G-CX
+    title: Agent config lifecycle panel and styles extraction
+    kind: arch
+    symptom: |
+      AgentConfigPopover combined configuration flow and lifecycle management UI, and inline styles
+      were shared with FileTree overlays through the same oversized module.
+    why: |
+      Separate the independently owned lifecycle view and consolidate its shared style contracts,
+      while preserving the legacy import path consumed by FileTree.
+    boundary: |
+      AgentLifecyclePopover remains a view with local description expansion; install/update action
+      execution stays in FileTree hooks. AgentConfigPopover remains the compatibility facade.
+    tests:
+      - web/tests/agent-config-lifecycle-split.test.mjs
+      - web/tests/file-tree-header-overlays.test.mjs
+      - web/tests/source-map.mjs
+    files:
+      - web/src/components/file/AgentConfigPopover.tsx
+      - web/src/components/file/AgentLifecyclePopover.tsx
+      - web/src/components/file/agentConfigStyles.ts
+      - web/tests/agent-config-lifecycle-split.test.mjs
+      - web/tests/source-map.mjs
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/components/file/AgentLifecyclePopover.tsx:AgentLifecyclePopover
+      - web/tests/agent-config-lifecycle-split.test.mjs:retains its compatibility export

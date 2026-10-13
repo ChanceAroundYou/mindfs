@@ -244,6 +244,7 @@
 | G-CU | DocumentViewer PDF 预览职责提取 | 架构 | 见 §3.2 | PDF canvas 有界渲染与跨格式错误语义保留 |
 | G-CV | SessionCard 溢出操作菜单提取 | 架构 | 见 §3.2 | 操作和确认继续通过既有父层回调，不改会话状态归属 |
 | G-CW | DefaultListView 排序菜单提取 | 架构 | 见 §3.2 | 排序值与弹层状态仍由目录视图控制器持有 |
+| G-CX | AgentConfig lifecycle 与样式拆分 | 架构 | 见 §3.2 | FileTree 继续使用旧 facade，生命周期动作归原 hooks |
 
 > **G-D 已并入 G-F，G-M 已并入 G-AI**（改动面完全重合、无独立测试可守，单列只会制造空组）。
 
@@ -2821,3 +2822,10 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **根因与边界**：排序展开按钮和 inherit/显式选项移入 `DirectorySortMenu`；`DefaultListView` 仍拥有 sort 值与 mode setter，其它菜单动作保持原组件。
 - **针对性测试**：`web/tests/directory-sort-menu.test.mjs` → 守住 inherit/选项选择、关闭顺序与展开语义；命名和逻辑映射门禁覆盖新文件归属。
 - **边界**：保留选项顺序、选中样式、全局继承选项和父级菜单关闭；父菜单现为 457 行。
+
+### G-CX AgentConfig lifecycle 与样式拆分
+
+- **可见症状**：AgentConfig 流程与生命周期管理 UI 同处大组件，FileTree overlay 也从该文件取共享按钮样式。
+- **根因与边界**：`AgentLifecyclePopover` 独立并从 shared agent types 取契约；style token/helper 移到 `agentConfigStyles.ts`。运行安装/更新的业务动作仍归 FileTree hook。
+- **针对性测试**：`agent-config-lifecycle-split.test.mjs` → 守住生命周期 UI、样式导出和旧 facade；`file-tree-header-overlays.test.mjs` → 守住 FileTree overlay 接线。
+- **边界**：AgentConfigPopover 主流程仍 528 行，尚未销掉前端硬线；旧调用路径与三项公开样式导出保持兼容。

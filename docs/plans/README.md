@@ -8,7 +8,7 @@ to resume their old TODOs or baselines.
 
 | Plan | Status | Next action |
 |---|---|---|
-| [Rule completion rollout](rule-completion-rollout.md) | Active | DefaultListViewMenu 457 行，排序子菜单独立且排序值/弹出状态仍由父组件持有；前端硬线剩余 17 项。下一批从当前实测硬线文件选 2–3 个，完成依赖审计后拆分。 |
+| [Rule completion rollout](rule-completion-rollout.md) | Active | AgentConfigPopover 528 行；AgentLifecyclePopover 与样式簇已归位，主流程仍需继续拆分；前端硬线剩余 17 项。下一批把 agent 选择步骤提取后复核依赖边界。 |
 
 ## Completed or superseded history
 
