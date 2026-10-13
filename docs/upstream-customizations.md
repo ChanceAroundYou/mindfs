@@ -2672,3 +2672,11 @@
 - **根因与边界**：查询由 `useAgentConfigFlowTransitions` 自行导入和调用，FileTree 只提供状态与 setter；同时清除该组件里未使用的 agent config、WebPush 和 preferences service imports。
 - **针对性测试**：`web/tests/file-tree-agent-config-flow.test.mjs` → 确认 FileTree 不再持有 agent 查询，transition hook 自己查询且不从 ctx 接收服务函数。
 - **边界**：不改查询时机、force 参数、节点路由和状态转换。
+
+
+### G-CE font size 纯逻辑移入 shared
+
+- **可见症状**：字号控件依赖 preferences service 才能访问字号步进算法与范围常量，view 的依赖跨过 service 边界。
+- **根因与边界**：将纯字号类型、边界和计算移入 `shared/fontSize.ts`；service 保留 localStorage 读写并重新导出旧 API，FileTree 改用 shared 入口。
+- **针对性测试**：`web/tests/shared-font-size.test.mjs` 和 `web/tests/font-size-preferences.test.mjs` → 检查纯计算、不可变返回、上下限、service facade，以及持久化与渲染契约。
+- **边界**：保留原步长、归一化、限幅、存储 key 与持久化行为。

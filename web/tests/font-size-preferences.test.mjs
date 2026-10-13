@@ -5,11 +5,12 @@ const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 const fileTree = readFileSync(new URL("../src/components/FileTree.tsx", import.meta.url), "utf8");
 const appShell = readFileSync(new URL("../src/layout/AppShell.tsx", import.meta.url), "utf8");
 const fontSizeService = readFileSync(new URL("../src/services/fontSize.ts", import.meta.url), "utf8");
+const fontSizeRules = readFileSync(new URL("../src/shared/fontSize.ts", import.meta.url), "utf8");
 const styles = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
 
 for (const region of ["fileSidebar", "main", "sessionSidebar"]) {
   assert.match(fileTree, new RegExp(`region: "${region}"`), `${region} should have its own menu control`);
-  assert.match(fontSizeService, new RegExp(`${region}: 1`), `${region} should default to 100%`);
+  assert.match(fontSizeRules, new RegExp(`${region}: 1`), `${region} should default to 100%`);
 }
 
 assert.match(
@@ -27,4 +28,5 @@ assert.match(
   /font-size: calc\(13px \* var\(--mindfs-font-scale, 1\)\) !important/,
   "region scaling should change text size without scaling icons or layout",
 );
-assert.match(fontSizeService, /FONT_SIZE_MIN = 0\.8[\s\S]*?FONT_SIZE_MAX = 1\.4[\s\S]*?FONT_SIZE_STEP = 0\.1/);
+assert.match(fontSizeRules, /FONT_SIZE_MIN = 0\.8[\s\S]*?FONT_SIZE_MAX = 1\.4[\s\S]*?FONT_SIZE_STEP = 0\.1/);
+assert.match(fontSizeService, /FONT_SIZE_MIN[\s\S]*shared\/fontSize/);

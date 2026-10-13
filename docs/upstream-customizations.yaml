@@ -3415,3 +3415,28 @@ groups:
     anchors:
       - web/src/components/file/useAgentConfigFlowTransitions.ts:fetchAgentCatalog
       - web/tests/file-tree-agent-config-flow.test.mjs:delegates agent-catalog requests
+  - id: G-CE
+    title: font size 纯逻辑移入 shared
+    kind: arch
+    symptom: |
+      FileTree view 为渲染字号控件直接依赖 preferences service 中的纯数据类型、边界常量和字号步进函数。
+    why: |
+      将无副作用的字号类型、边界与规范化算法放入 shared，service 继续负责 localStorage 并保留原导出 facade，
+      组件可以使用共享逻辑而不依赖 service 层。
+    boundary: |
+      保持原有步长、四舍五入和上下限，存储 key 与读写逻辑不变。
+    tests:
+      - web/tests/shared-font-size.test.mjs
+    files:
+      - web/src/shared/fontSize.ts
+      - web/src/services/prefs/fontSize.ts
+      - web/src/components/file/FileTree.tsx
+      - web/tests/shared-font-size.test.mjs
+      - web/tests/font-size-preferences.test.mjs
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/shared/fontSize.ts:changeFontSize
+      - web/src/services/prefs/fontSize.ts:changeFontSize,
+      - web/tests/shared-font-size.test.mjs:adjustment stays pure and clamps

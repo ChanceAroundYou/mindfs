@@ -74,8 +74,7 @@ import {
   shortcutFromKeyboardEvent,
   type SendShortcut,
 } from "../../services/prefs/sendShortcut";
-import { changeFontSize } from "../../services/prefs/fontSize";
-import { FONT_SIZE_MAX, FONT_SIZE_MIN, type FontSizeRegion } from "../../services/prefs/fontSize";
+import { changeFontSize, FONT_SIZE_MAX, FONT_SIZE_MIN, type FontSizeRegion } from "../../shared/fontSize";
 
 import {
   APPEARANCE_OPTIONS,
