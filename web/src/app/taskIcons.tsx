@@ -1,3 +1,23 @@
+/**
+ * Task and shared UI primitives used across the app.
+ *
+ * Export inventory (kept in sync by task-icons-inventory.test.mjs):
+ * Icons: ImportIcon, EditPencilIcon, HorizontalDotsIcon, PlusSmallIcon,
+ * CheckIconSmall, TaskCompleteIcon, TaskQueuedSpinnerIcon, TaskPauseIcon,
+ * TaskResumeIcon, TaskRebuildWorktreeIcon, TaskFinishWorktreeIcon,
+ * TaskSessionErrorIcon, TaskCancelIcon, DeleteIcon, TaskPlanAuxIcon,
+ * TaskExpandIcon, TaskGroupChevronIcon, RunNowIcon, SyncIcon,
+ * ChevronDownSmallIcon.
+ * Task styles: taskTemplateMenuItemStyle, taskCardSurfaceStyle,
+ * taskCardIconButtonStyle, taskAuxBadgeStyle, WorktreeTagState,
+ * taskWorktreeTagStyle, taskReplyPulseStyle.
+ * Color utility: hexToRgbaApp.
+ *
+ * INVENTORY-END
+ * This module remains in app/ while task UI, workspace UI, and shared views
+ * consume the same exports. Split it only when those ownership boundaries are
+ * clear enough to avoid creating another cross-domain dependency.
+ */
 import React from "react";
 import { type MessageKey } from "../i18n";
 import { type MessageParams } from "../i18n";

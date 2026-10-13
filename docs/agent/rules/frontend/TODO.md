@@ -9,7 +9,7 @@
       （`agentConfig.ts`/`agentMemory.ts`/`agents.ts`/`codexRateLimits.ts`）各收一处。
 - [x] 消除 `components/*` 直调 `app/*` hook 倒挂（`useBackNavigation`/`usePwaInstall`
       → `hooks/`，`useActionHandlers` 死 import 清除）。
-- [ ] `taskIcons.tsx`：清单型头注释，或图标下移。
+- [x] `taskIcons.tsx`：补充导出清单头注释，并由针对性测试校验清单与实际导出一致。
 
 ## 复用搬迁
 

@@ -2551,6 +2551,24 @@ groups:
       - 'server/internal/api/usecase/session_repoint.go:if agentSessionID != "" {'
       - server/internal/api/usecase/session_repoint_test.go:TestRepointSessionTargetsClaudeBindingInMultiAgentSession
 
+  - id: G-BO
+    title: taskIcons 导出职责清单
+    kind: docs
+    symptom: |
+      taskIcons.tsx 混合图标、任务样式与颜色工具，维护者难以判断模块边界，新增导出也容易让文件职责继续隐形扩张。
+    why: |
+      在模块顶部列出当前导出及其职责，并用针对性测试确保清单与实际导出一致；保留现有导入路径，避免无边界搬迁造成跨域调用 churn。
+    boundary: |
+      只增加 taskIcons 模块职责说明、同步测试和待办状态，不改变导出实现或运行行为。
+    tests:
+      - web/tests/task-icons-inventory.test.mjs
+    files:
+      - web/src/app/taskIcons.tsx
+      - docs/agent/rules/frontend/TODO.md
+    anchors:
+      - web/src/app/taskIcons.tsx:Export inventory
+      - web/tests/task-icons-inventory.test.mjs:taskIcons export inventory
+
   - id: G-BH
     title: 会话正文块流（Block 存储层 + 轮次身份 turn_id/turn_seq/native_* + S2a 双写 + S2b 读改走块流 + C1/C2 + S2d-2 主日志不再存正文 + S2e pending 身份改用 turn_id）
     kind: fix
