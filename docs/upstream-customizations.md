@@ -2970,3 +2970,10 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **根因与边界**：`useSessionViewerScrollState` 接管原 scroll refs/state/callback；scroll position/viewport 与 stickiness effects 在旧调用位置分别交给对应 hook；`useTargetSeqScroll` 保持原 refs 与调用点。时间线元数据的一次 O(n) 扫描移到纯 helper，动画 keyframes 保持同声明并归入现有 styles。
 - **针对性测试**：`session-viewer-scroll-split.test.mjs` → 守住物理行数、旧 hook 调用点、近底判断/用户索引与动画样式；`session-window.test.mjs`、`session-window-overlay-dedup.test.mjs`、`session-switch-flicker.test.mjs` → 守住窗口分页、overlay 去重与会话切换滚动；`source-map.test.mjs` → 守住逻辑源码映射。
 - **边界**：父组件实测 646→499 行，frontend 硬线 TODO 剩余 3 项；`SessionViewer` memo comparator、窗口数据与 `App.tsx` 均不变。
+
+### G-DT Markdown viewer 受保护图片职责拆分
+
+- **可见症状**：`useMarkdownViewer` 同时负责 markdown parse/render/outline/navigation 与受保护图片路径解析、blob 请求和 object URL 生命周期，超过前端硬线，图片资源清理难单独检查。
+- **根因与边界**：图片 source effect、受保护 blob 获取、object URL 创建/撤销及 fallback/图片呈现迁入 `MarkdownImage`；父 hook 原样传入 src/path/root/alt/title/width，并保留解析管线、链接导航、outline 和 hook API。
+- **针对性测试**：`markdown-viewer-split.test.mjs` → 守住父 hook 行数、接线与图片 URL 生命周期；`source-map.test.mjs`、`naming-convention.test.mjs` → 守住逻辑源码映射和组件命名规则。
+- **边界**：父 hook 实测 527→445 行，frontend 硬线 TODO 剩余 2 项；不改 markdown sanitizer、外链策略或 `MarkdownViewer` 消费者。

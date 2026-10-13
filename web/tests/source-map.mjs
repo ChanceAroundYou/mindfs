@@ -435,6 +435,11 @@ export const MODULES = {
   "src/components/MarkdownViewer.tsx": [
     "src/components/common/MarkdownViewer.tsx",
     "src/hooks/useMarkdownViewer.tsx",
+    "src/components/common/MarkdownImage.tsx",
+  ],
+  "src/hooks/useMarkdownViewer.tsx": [
+    "src/hooks/useMarkdownViewer.tsx",
+    "src/components/common/MarkdownImage.tsx",
   ],
   "src/components/DiagramPreview.tsx": ["src/components/common/DiagramPreview.tsx"],
   "src/components/DiagramPreview.css": ["src/components/common/DiagramPreview.tsx"],

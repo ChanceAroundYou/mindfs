@@ -3282,7 +3282,7 @@ groups:
       - docs/upstream-customizations.yaml
       - web/tests/agent-docs.test.mjs
     anchors:
-      - docs/agent/rules/frontend/TODO.md:硬线 3 个
+      - docs/agent/rules/frontend/TODO.md:硬线 2 个
       - docs/plans/README.md:Rule completion rollout
       - web/tests/agent-docs.test.mjs:every plan is classified in the sole plans index
   - id: G-BZ
@@ -4786,3 +4786,35 @@ groups:
     anchors:
       - web/src/components/session/useSessionViewerScroll.ts:export function useSessionViewerScrollState
       - web/tests/session-viewer-scroll-split.test.mjs:physical viewer stays below the hard line
+
+  - id: G-DT
+    title: Markdown viewer protected image resolution split
+    kind: arch
+    symptom: |
+      useMarkdownViewer combines markdown parsing/rendering and outline/navigation with protected image
+      path resolution, blob fetching, object URL state, and URL cleanup. It exceeds the frontend hard
+      line, and image resource lifecycle changes are difficult to review independently.
+    why: |
+      Give protected image loading its own common component while keeping markdown parser, file-link
+      navigation, outline state, and the useMarkdownViewer API in the cross-domain hook.
+    boundary: |
+      MarkdownImage owns the original source resolution effect, protected blob fetch, object URL
+      creation/revocation, and image/fallback rendering. useMarkdownViewer mounts it with the same src,
+      currentPath, root, alt/title/width values; all other rendering and navigation behavior is unchanged.
+    tests:
+      - web/tests/markdown-viewer-split.test.mjs
+      - web/tests/source-map.test.mjs
+      - web/tests/naming-convention.test.mjs
+    files:
+      - web/src/hooks/useMarkdownViewer.tsx
+      - web/src/components/common/MarkdownImage.tsx
+      - web/tests/markdown-viewer-split.test.mjs
+      - web/tests/source-map.mjs
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/components/common/MarkdownImage.tsx:export function MarkdownImage
+      - web/tests/markdown-viewer-split.test.mjs:markdown hook stays below the frontend hard line
