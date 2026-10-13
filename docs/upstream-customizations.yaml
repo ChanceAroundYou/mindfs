@@ -2570,6 +2570,39 @@ groups:
       - web/src/app/taskIcons.tsx:Export inventory
       - web/tests/task-icons-inventory.test.mjs:taskIcons export inventory
 
+  - id: G-BP
+    title: 前端 update 与 agent service 域归位
+    kind: arch
+    symptom: |
+      update 与 agent 服务实现散落在 services 根目录，无法遵循按域收拢的目录规则；逐步搬迁还可能破坏现有调用路径和源码守卫测试。
+    why: |
+      将实现归入 services/update 与 services/agent，根目录保留兼容 re-export 门面；同步 source-map 逻辑路径映射，避免消费者和既有源码测试因物理路径变化失效。
+    boundary: |
+      只调整前端 service 文件归属和相对 import，不改变 API、导出或运行行为。
+    tests:
+      - web/tests/service-domain-facades.test.mjs
+    files:
+      - docs/agent/rules/frontend/TODO.md
+      - web/src/services/update.ts
+      - web/src/services/update/update.ts
+      - web/src/services/appUpdate.ts
+      - web/src/services/update/appUpdate.ts
+      - web/src/services/androidUpdate.ts
+      - web/src/services/update/androidUpdate.ts
+      - web/src/services/agentConfig.ts
+      - web/src/services/agent/agentConfig.ts
+      - web/src/services/agentMemory.ts
+      - web/src/services/agent/agentMemory.ts
+      - web/src/services/agents.ts
+      - web/src/services/agent/agents.ts
+      - web/src/services/codexRateLimits.ts
+      - web/src/services/agent/codexRateLimits.ts
+      - web/tests/source-map.mjs
+    anchors:
+      - web/src/services/update.ts:export * from "./update/update"
+      - web/src/services/agents.ts:export * from "./agent/agents"
+      - web/tests/service-domain-facades.test.mjs:service domain root modules remain re-export facades
+
   - id: G-BH
     title: 会话正文块流（Block 存储层 + 轮次身份 turn_id/turn_seq/native_* + S2a 双写 + S2b 读改走块流 + C1/C2 + S2d-2 主日志不再存正文 + S2e pending 身份改用 turn_id）
     kind: fix

@@ -5,8 +5,8 @@
 ## 目录归位
 
 - [x] `services/` 建 `session/` 子目录，收拢根下 ~20 个 `session*.ts`，根留门面。
-- [ ] 更新簇（`update.ts`/`appUpdate.ts`/`androidUpdate.ts`）、agent 簇
-      （`agentConfig.ts`/`agentMemory.ts`/`agents.ts`/`codexRateLimits.ts`）各收一处。
+- [x] 更新簇（`update.ts`/`appUpdate.ts`/`androidUpdate.ts`）、agent 簇
+      （`agentConfig.ts`/`agentMemory.ts`/`agents.ts`/`codexRateLimits.ts`）分别归位到域目录，根保留门面。
 - [x] 消除 `components/*` 直调 `app/*` hook 倒挂（`useBackNavigation`/`usePwaInstall`
       → `hooks/`，`useActionHandlers` 死 import 清除）。
 - [x] `taskIcons.tsx`：补充导出清单头注释，并由针对性测试校验清单与实际导出一致。

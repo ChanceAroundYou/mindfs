@@ -214,6 +214,14 @@ export const MODULES = {
     "src/services/session/sessionTypes.ts",
     "src/services/session/sessionWindow.ts",
   ],
+  // Update and agent domains: legacy root paths remain public facades.
+  "src/services/update.ts": ["src/services/update.ts", "src/services/update/update.ts"],
+  "src/services/appUpdate.ts": ["src/services/appUpdate.ts", "src/services/update/appUpdate.ts"],
+  "src/services/androidUpdate.ts": ["src/services/androidUpdate.ts", "src/services/update/androidUpdate.ts"],
+  "src/services/agentConfig.ts": ["src/services/agentConfig.ts", "src/services/agent/agentConfig.ts"],
+  "src/services/agentMemory.ts": ["src/services/agentMemory.ts", "src/services/agent/agentMemory.ts"],
+  "src/services/agents.ts": ["src/services/agents.ts", "src/services/agent/agents.ts"],
+  "src/services/codexRateLimits.ts": ["src/services/codexRateLimits.ts", "src/services/agent/codexRateLimits.ts"],
   // P2 拆分：file.ts → services/file/（入口 shim 仍在原路径）
   "src/services/inputSession.ts": ["src/services/session/inputSession.ts"],
   "src/services/sessionDuration.ts": ["src/services/session/sessionDuration.ts"],

@@ -2304,6 +2304,13 @@
 - **针对性测试**：`web/tests/task-icons-inventory.test.mjs` → 文件头清单必须精确覆盖实际导出的函数与类型。
 - **边界**：只记录并验证模块职责，不改变图标、样式和颜色工具的实现。
 
+### G-BP 前端 update 与 agent service 域归位
+
+- **可见症状**：更新和 agent 服务实现散落在 `services/` 根目录，不符合按域收拢规则；物理搬迁若漏改映射，还会让源码守卫测试失效。
+- **根因与边界**：实现分别归入 `services/update/` 与 `services/agent/`，原根路径保留纯 re-export 门面。既有消费者继续使用旧公开路径，源码逻辑路径映射同时指向 facade 与实现。
+- **针对性测试**：`web/tests/service-domain-facades.test.mjs` → 7 个根入口都只 re-export 到存在的域实现。
+- **边界**：仅调整文件归属及实现内相对路径，不改变服务 API 或行为。
+
 
 ### 总体
 
