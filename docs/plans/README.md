@@ -8,7 +8,7 @@ to resume their old TODOs or baselines.
 
 | Plan | Status | Next action |
 |---|---|---|
-| [Rule completion rollout](rule-completion-rollout.md) | Active | `useAppStateLayer.ts` 已降至 498 行并从硬线清单销项；refs/cache、root selection、session/task setup 与 file/workspace state 均按域拆到专属 hooks。硬线剩余 10 项；`useSessionLifecycle` 已拆至 413 行，`useManagedRoots` 已拆至 479 行。下一步复核 `useSendMessage`。 |
+| [Rule completion rollout](rule-completion-rollout.md) | Active | `useAppStateLayer.ts` 已降至 498 行并从硬线清单销项；refs/cache、root selection、session/task setup 与 file/workspace state 均按域拆到专属 hooks。硬线剩余 9 项；`useSessionLifecycle` 为 404 行、`useManagedRoots` 为 480 行、`useSendMessage` 为 422 行。下一步复核并拆 `useAppViewComposition`。 |
 
 ## Completed or superseded history
 

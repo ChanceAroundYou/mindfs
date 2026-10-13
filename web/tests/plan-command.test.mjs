@@ -24,7 +24,7 @@ test("plan command helpers preserve input normalization and prefix behavior", ()
 
 test("app logic and shared plan helpers do not depend on view modules", () => {
   const root = new URL("../src/", import.meta.url);
-  for (const file of ["app/useSendMessage.ts", "app/useSessionLifecycle.ts", "app/useSessionSyncAction.ts", "app/useSessionListLoading.ts", "app/useManagedRootRename.ts", "app/useManagedRootsTypes.ts"]) {
+  for (const file of ["app/useSendMessage.ts", "app/prepareSendMessageTarget.ts", "app/useSendMessageSlashCommand.ts", "app/useSendMessageTypes.ts", "app/useSessionLifecycle.ts", "app/useSessionSyncAction.ts", "app/useSessionListLoading.ts", "app/useManagedRootRename.ts", "app/useManagedRootsTypes.ts"]) {
     const source = readFileSync(new URL(file, root), "utf8");
     assert.doesNotMatch(source, /from\s+["'][^"']*(?:components|layout)\//, file);
   }

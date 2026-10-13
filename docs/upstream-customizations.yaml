@@ -3282,7 +3282,7 @@ groups:
       - docs/upstream-customizations.yaml
       - web/tests/agent-docs.test.mjs
     anchors:
-      - docs/agent/rules/frontend/TODO.md:硬线 10 个
+      - docs/agent/rules/frontend/TODO.md:硬线 9 个
       - docs/plans/README.md:Rule completion rollout
       - web/tests/agent-docs.test.mjs:every plan is classified in the sole plans index
   - id: G-BZ
@@ -3303,6 +3303,7 @@ groups:
       - web/src/components/action/inputTransforms.ts
       - web/src/components/action/useActionBar.ts
       - web/src/app/useSendMessage.ts
+      - web/src/app/prepareSendMessageTarget.ts
       - web/src/app/useSessionLifecycle.ts
       - web/tests/plan-command.test.mjs
       - docs/agent/rules/frontend/TODO.md
@@ -3313,7 +3314,7 @@ groups:
     anchors:
       - web/src/shared/planCommand.ts:PLAN_COMMAND
       - web/tests/plan-command.test.mjs:app logic and shared plan helpers do not depend on view modules
-      - web/src/app/useSendMessage.ts:isPlanCommand
+      - web/src/app/prepareSendMessageTarget.ts:isPlanCommand
   - id: G-CA
     title: 项目添加状态类型移入 shared
     kind: arch
@@ -4525,3 +4526,45 @@ groups:
     anchors:
       - web/src/app/useManagedRootRename.ts:export function useManagedRootRename
       - web/tests/managed-roots-split.test.mjs:dedicated hook below the physical hard line
+
+  - id: G-DM
+    title: Send message orchestration split by preparation and transient commands
+    kind: arch
+    symptom: |
+      useSendMessage combines target/session preparation, transient /status and /login commands,
+      optimistic message updates, plugin/view context, transport dispatch, and failure convergence.
+      A sequencing regression can lose an optimistic session, duplicate pending state, or leave a
+      command result stuck in running status.
+    why: |
+      Give target preparation and transient slash-command handling dedicated owners while keeping the
+      ordinary optimistic-send and failure path in a coordinator below the frontend hard line.
+    boundary: |
+      prepareSendMessageTarget runs at the original start of handleSendMessage and preserves target
+      selection, pending/queue classification, agent option inheritance, and optimistic draft setup.
+      useSendMessageSlashCommand runs only for /status or /login and retains its cancellation/result
+      handling. The original SendMessageParams export remains available from useSendMessage.ts.
+      Ordinary message state updates, plugin context, transport, and failure rollback stay in
+      useSendMessage; App.tsx is unchanged.
+    tests:
+      - web/tests/send-message-split.test.mjs
+      - web/tests/new-session-auto-select.test.mjs
+      - web/tests/pending-single-source.test.mjs
+      - web/tests/plan-command.test.mjs
+      - web/tests/source-map.test.mjs
+    files:
+      - web/src/app/useSendMessage.ts
+      - web/src/app/prepareSendMessageTarget.ts
+      - web/src/app/useSendMessageSlashCommand.ts
+      - web/src/app/useSendMessageTypes.ts
+      - web/tests/send-message-split.test.mjs
+      - web/tests/plan-command.test.mjs
+      - web/tests/source-map.mjs
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/app/prepareSendMessageTarget.ts:export function prepareSendMessageTarget
+      - web/src/app/useSendMessageSlashCommand.ts:export function useSendMessageSlashCommand
+      - web/tests/send-message-split.test.mjs:coordinator below the physical hard line
