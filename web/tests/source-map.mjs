@@ -299,12 +299,14 @@ export const MODULES = {
   "src/components/ImageViewer.tsx": ["src/components/file/ImageViewer.tsx"],
   "src/components/DocumentViewer.tsx": ["src/components/file/DocumentViewer.tsx"],
   "src/components/CodeViewer.tsx": ["src/components/file/CodeViewer.tsx"],
+  // Markdown 渲染簇按「跨域复用」归位（2026-10-13，Tier 1 机械搬迁）：
+  // MarkdownViewer 被 session/stream/file 三域用 → common/；useMarkdownViewer 是跨域 hook → hooks/。
   "src/components/MarkdownViewer.tsx": [
-    "src/components/file/MarkdownViewer.tsx",
-    "src/components/file/useMarkdownViewer.tsx",
+    "src/components/common/MarkdownViewer.tsx",
+    "src/hooks/useMarkdownViewer.tsx",
   ],
-  "src/components/DiagramPreview.tsx": ["src/components/file/DiagramPreview.tsx"],
-  "src/components/DiagramPreview.css": ["src/components/file/DiagramPreview.css"],
+  "src/components/DiagramPreview.tsx": ["src/components/common/DiagramPreview.tsx"],
+  "src/components/DiagramPreview.css": ["src/components/common/DiagramPreview.css"],
   "src/components/DefaultListView.tsx": [
     "src/components/file/DefaultListView.tsx",
     "src/components/file/Breadcrumbs.tsx",
