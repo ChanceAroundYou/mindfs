@@ -105,4 +105,7 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 - 已完成（2026-10-14）：审阅 `useManagedRoots` 的 4 个直接消费者及 `useAppProjectManagement` 主组合入口；把近 170 行 root id/session/cache/tree key remap 抽到 `useManagedRootRename`，参数契约移至 `useManagedRootsTypes`。`applyManagedRootRename` 在原回调顺序处创建，ID/显示名分支与缓存键映射保持；父 hook 实测 709→480 行，硬线销项。App.tsx 不变；TypeScript 与专项测试通过；全量 web 测试通过（Vitest 5 + Node 兼容链路 283 通过、4 跳过）。
 - 已完成（2026-10-14）：复核 `useSendMessage` 的唯一消费者 `useAppSessionLayer`；会话目标解析/选项归一和 `/status`、`/login` 瞬时命令分别归 `prepareSendMessageTarget` 与 `useSendMessageSlashCommand`，参数契约移到 `useSendMessageTypes` 并由旧模块兼容再导出。父 hook 保留乐观消息、上下文/插件处理、发送和失败回滚顺序，实测 686→422 行；`App.tsx` 不变。专项与 TypeScript 通过；全量 web 测试通过（Vitest 5 + Node 兼容链路 284 通过、4 跳过）。
 - 已完成：`UseAppViewCompositionParams` 独立到 `useAppViewCompositionTypes.ts`，工作台筛选/折叠状态、live task 派生、跨节点 board hook 与 refresh ref 桥接归 `useAppWorkspaceBoardComposition`；原 hook 保留组合顺序，工作台刷新仍在原调用点装配，`App.tsx` 不变。父 hook 实测 665→433 行，硬线剩余 8 项；300–500 行软线实测 72 项。TypeScript、freshness/board 及 source-map 专项通过。
-- 下一项：继续拆 `useSessionStreamCache` 等剩余 8 个前端硬线，再全量完成规则门禁审计和 backend TODO。
+- 历史下一项（后续已更新）：继续拆 `useSessionStreamCache` 等前端硬线，再全量完成规则门禁审计和 backend TODO。
+
+- 已完成：`useSessionStreamCache` 的通用 cache upsert、运行时元信息解析及 agent chunk 身份合并归 `useSessionStreamRuntimeMeta`；`SessionRuntimeMeta` 独立到 type contract，原模块保留类型出口。父 hook 实测 645→473 行，硬线剩余 7 项、软线 73 项；其他 exchange merge 与 context-window 更新留在父层。专项 20 项通过、TypeScript 通过，source-map 映射与 upstream 登记完成。
+- 下一项：复核并拆 `useActionHandlers`；之后继续前端剩余硬线、规则门禁审计与 backend TODO。

@@ -3282,7 +3282,7 @@ groups:
       - docs/upstream-customizations.yaml
       - web/tests/agent-docs.test.mjs
     anchors:
-      - docs/agent/rules/frontend/TODO.md:硬线 8 个
+      - docs/agent/rules/frontend/TODO.md:硬线 7 个
       - docs/plans/README.md:Rule completion rollout
       - web/tests/agent-docs.test.mjs:every plan is classified in the sole plans index
   - id: G-BZ
@@ -4604,3 +4604,41 @@ groups:
     anchors:
       - web/src/app/useAppWorkspaceBoardComposition.ts:export function useAppWorkspaceBoardComposition
       - web/tests/app-view-composition-split.test.mjs:physical composition hook stays below the frontend hard line
+
+  - id: G-DO
+    title: Session stream cache split by runtime metadata responsibility
+    kind: arch
+    symptom: |
+      useSessionStreamCache combines shared cache upsert, runtime metadata resolution, agent stream
+      identity merging, role-specific exchange merges, and context-window projection. At 645 lines it
+      exceeds the frontend hard line and makes the most sensitive stream identity path hard to isolate.
+    why: |
+      Give cache upsert, runtime metadata resolution, and agent chunk merging one focused hook while
+      keeping the role-specific merge rules together in the cache coordinator.
+    boundary: |
+      useSessionStreamRuntimeMeta owns the existing debounced bump ref, generic upsert, metadata
+      candidate resolution, and agent chunk merge. SessionRuntimeMeta moves to a type contract and is
+      re-exported from useSessionStreamCache. The child hook is called at the original hook sequence
+      position. Thought/tool/todo/plan/compact merges and context-window propagation remain in the
+      parent; App.tsx and event identity behavior are unchanged.
+    tests:
+      - web/tests/session-stream-cache-split.test.mjs
+      - web/tests/message-mechanism-merges.test.mjs
+      - web/tests/claude-model-1m.test.mjs
+      - web/tests/session-duration.test.mjs
+      - web/tests/upstream-restore.test.mjs
+      - web/tests/source-map.test.mjs
+    files:
+      - web/src/app/useSessionStreamCache.ts
+      - web/src/app/useSessionStreamRuntimeMeta.ts
+      - web/src/app/sessionStreamCacheTypes.ts
+      - web/tests/session-stream-cache-split.test.mjs
+      - web/tests/source-map.mjs
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/app/useSessionStreamRuntimeMeta.ts:export function useSessionStreamRuntimeMeta
+      - web/tests/session-stream-cache-split.test.mjs:physical cache coordinator stays below the frontend hard line

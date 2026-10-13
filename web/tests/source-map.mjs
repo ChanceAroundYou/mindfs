@@ -35,6 +35,11 @@ export const WEB_ROOT = path.resolve(import.meta.dirname, "..");
  * 维护规则：文件移动/拆分时改这里，测试不动。
  */
 export const MODULES = {
+  "src/app/useSessionStreamCache.ts": [
+    "src/app/useSessionStreamCache.ts",
+    "src/app/useSessionStreamRuntimeMeta.ts",
+    "src/app/sessionStreamCacheTypes.ts",
+  ],
   "src/app/useAppStateLayer.ts": [
     "src/app/useAppStateLayer.ts",
     "src/app/useAppStateRefs.ts",

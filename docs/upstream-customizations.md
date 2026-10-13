@@ -2935,3 +2935,10 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **根因与边界**：参数契约移入 `useAppViewCompositionTypes`，旧模块保留类型再导出；`useAppWorkspaceBoardComposition` 接管既有工作台状态、state 派生 live task、board hook 与 refresh ref 写入。它在原 hook 序列位置、`useAppMainViewActions` 之前调用，`App.tsx` 与行为保持不变。
 - **针对性测试**：`app-view-composition-split.test.mjs` → 守住物理父 hook 行数、兼容类型出口、调用顺序、state 派生新鲜度和 refresh ref；`workspace-realtime-freshness.test.mjs`、`workspace-board.test.mjs` → 守住实时增量和看板契约；`source-map.test.mjs` → 守住逻辑源码映射。
 - **边界**：父 hook 实测 665→433 行，frontend 硬线 TODO 剩余 8 项；不改 `App.tsx`、节点路由、刷新频率或看板持久化语义。
+
+### G-DO 会话流缓存按 runtime metadata 职责拆分
+
+- **可见症状**：`useSessionStreamCache` 同时负责 cache upsert、runtime 元信息解析、agent 流身份合并、各类 exchange merge 与 context-window 投影，645 行超过前端硬线，最敏感的事件身份路径难单独核对。
+- **根因与边界**：`useSessionStreamRuntimeMeta` 接管原有防抖 bump ref、通用 upsert、runtime metadata 候选解析和 agent chunk 合并；`SessionRuntimeMeta` 移入 type contract，旧 hook 原样再导出。Thought/tool/todo/plan/compact merge 与 context-window 更新留在父 hook，新 hook 在原调用位置执行。
+- **针对性测试**：`session-stream-cache-split.test.mjs` → 守住父 hook 行数、旧类型出口、职责归属与 mindfs_id 合并；`message-mechanism-merges.test.mjs`、`claude-model-1m.test.mjs`、`session-duration.test.mjs`、`upstream-restore.test.mjs` → 守住流身份、模型元信息、事件时间和 userShell replay；`source-map.test.mjs` → 守住逻辑源码映射。
+- **边界**：父 hook 实测 645→473 行，frontend 硬线 TODO 剩余 7 项；`App.tsx`、事件顺序与其它 role 合并语义不变。
