@@ -2600,3 +2600,11 @@
 - **根因与边界**：将原 CSS 文本放入组件级 `<style>`，保留原有选择器、主题变量、媒体查询、伪元素、CodeMirror 内部选择器与安全区适配。移除 CSS 文件和 import，并将测试逻辑路径映射到组件源文件。样式仍是 CSS 规则文本，避免转成 React style 对象造成选择器能力或级联行为变化。
 - **针对性测试**：`web/tests/inline-component-styles.test.mjs` → 两组件样式常量与关键交互/主题选择器存在，独立 CSS 已删除，旧逻辑路径仍映射到组件。
 - **边界**：仅样式载体和源码映射改变，不改 DOM 交互、组件状态或 CSS 声明。
+
+
+### G-BV 实时文件变更事件职责拆分
+
+- **可见症状**：`useRealtimeEvents.ts` 同时包含 WebSocket 订阅、会话流处理、命令结果和文件/Git/目录缓存更新；文件事件改动需要在接近千行的 hook 中查找。
+- **根因与边界**：将文件变更批处理与单文件事件处理器迁入 `realtimeWsFileChangedHandlers.ts`，通过既有 `RealtimeEventsContext` 注入依赖；hook 仍负责组装和订阅。旧逻辑源映射纳入新模块。
+- **针对性测试**：`web/tests/realtime-file-change-handlers.test.mjs` → handler 的缓存失效、插件/Git/目录刷新契约仍在新模块，逻辑路径映射覆盖新模块，hook 将两处理器交给 WS 注册表。
+- **边界**：只移动文件变更事件实现，不改变事件字段、刷新条件、缓存或请求行为。

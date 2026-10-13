@@ -3170,3 +3170,31 @@ groups:
       - web/src/components/file/FileEditor.tsx:FILE_EDITOR_STYLES
       - web/src/components/common/DiagramPreview.tsx:DIAGRAM_PREVIEW_STYLES
       - web/tests/inline-component-styles.test.mjs:inline-component-styles.test.mjs
+
+  - id: G-BV
+    title: 实时文件变更事件职责拆分
+    kind: arch
+    symptom: |
+      useRealtimeEvents.ts 同时负责 WS 订阅、会话流、命令结果与文件/Git/目录刷新，文件事件维护
+      需要在接近千行的 hook 中定位。
+    why: |
+      将文件变更批处理和单文件事件处理器迁入 realtimeWsFileChangedHandlers.ts；通过既有
+      RealtimeEventsContext 注入状态与动作，useRealtimeEvents 继续负责 handler 组装和订阅。
+    boundary: |
+      只移动实现与 source-map 逻辑路径登记，不改变事件字段、刷新条件、缓存或请求行为。
+    tests:
+      - web/tests/realtime-file-change-handlers.test.mjs
+    files:
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+      - web/src/app/useRealtimeEvents.ts
+      - web/src/app/realtimeWsFileChangedHandlers.ts
+      - web/tests/source-map.mjs
+      - web/tests/realtime-file-change-handlers.test.mjs
+    anchors:
+      - web/src/app/realtimeWsFileChangedHandlers.ts:createRealtimeWsFileChangedHandlers
+      - web/src/app/useRealtimeEvents.ts:fileChangedHandlers
+      - web/tests/realtime-file-change-handlers.test.mjs:realtime-file-change-handlers.test.mjs

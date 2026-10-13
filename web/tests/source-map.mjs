@@ -42,6 +42,7 @@ export const MODULES = {
     "src/app/useRealtimeEvents.ts",
     "src/app/useRealtimeEventsContext.ts",
     "src/app/realtimeWsHandlers.ts",
+    "src/app/realtimeWsFileChangedHandlers.ts",
     "src/app/realtimeWsSessionMeta.ts",
     "src/app/realtimeWsUserMessage.ts",
     "src/app/realtimeWsSessionAccepted.ts",

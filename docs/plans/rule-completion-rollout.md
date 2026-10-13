@@ -8,7 +8,7 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 先检查 git 状态、分支、HEAD/upstream 基线、根 AGENTS.md、docs/agent/rules 全部 README/规则/TODO/reviewer-checklist、docs/plans/README.md 与唯一当前计划、相关源文件/消费者/测试脚本。保护开始时已有的用户改动；尤其不要纳入或覆盖未跟踪的 package-lock.json。所有行数、路径、消费者和验收基线以这次仓库实测为准，TODO 中旧行数只作线索。
 
 范围：
-1. Frontend TODO：services 的 update/agent 簇归位；loading/empty/error 复用组件；Utils/Helpers 大小写、类型和样式文件命名归一；指定 CSS 内联；33 个硬线大文件按职责拆分；6 项 logic→view 倒挂；测试栈迁移 Vitest；存量复用件补测。逐项对照当前 TODO，已完成项不得重复施工。
+1. Frontend TODO：services 的 update/agent 簇归位；loading/empty/error 复用组件；Utils/Helpers 大小写、类型和样式文件命名归一；指定 CSS 内联；31 个硬线大文件按职责拆分；6 项 logic→view 倒挂；测试栈迁移 Vitest；存量复用件补测。逐项对照当前 TODO，已完成项不得重复施工。
 2. Backend TODO：对超过 1500 行的非测试 Go 文件逐个按职责拆分，先从当前最大且风险可控者开始；落实 session.go、api/http.go 的拆分约束；审计 cli/cmd 与 server/cmd/mindfs-server 双入口，只在正确的发布入口修启动逻辑。
 3. 全量审阅 reviewer checklist 和长期规范：把能机械验证的长期规则加入现有门禁/针对性测试；逐条验证架构规则，不为打勾而改动正确实现。架构事实以 AGENTS.md 为准。
 
@@ -38,4 +38,5 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 - 已完成：审计 11 个类型文件与消费者；组件域唯一裸名 `components/action/types.ts` 改为 `actionTypes.ts`。目录隔离的 service 类型、i18n 跨域入口和其余 `xxxTypes.ts` 均按规则保留，并增加测试门禁。
 - 已完成：将混合图标 JSX 的 `composerStyles.tsx` 拆为纯样式 `composerStyles.ts` 与 `composerIcons.tsx`，更新消费者、源码逻辑映射和命名门禁；其余样式模块已使用 `*Styles.ts`。
 - 已完成：将 `FileEditor.css` 与 `DiagramPreview.css` 的 CSS 原文内联到对应组件 `<style>`，保留全局主题、媒体查询、伪元素、CodeMirror 后代选择器和安全区声明；删除独立 CSS 文件，source-map 旧逻辑路径改映射至组件，并增加针对性守卫。
-- 当前下一项：重新测量 33 个硬线文件，优先拆分最大且非组合根的组件/hooks；每次只处理 2–3 个。
+- 已完成：将 `useRealtimeEvents.ts` 的文件变更批处理与单文件事件（缓存失效、插件/Git/目录刷新）抽为 `realtimeWsFileChangedHandlers.ts`，更新旧逻辑路径映射并加专项守卫。清单行数实测为 31 个（原文“33”是计数错误；components 子项实际 17 个），已修正 TODO 与计划索引。
+- 当前下一项：继续拆分 `useRealtimeEvents.ts` 剩余会话/命令职责；当前文件 860 行，下一步先单独审计会话流与回合收尾依赖后抽离。
