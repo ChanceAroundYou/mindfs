@@ -306,6 +306,7 @@
 |------|------|------|
 | `bd52027` | `web/src/hooks/useSessionStream.ts:3行` | `message_done` 立即清流式标记，修“正在生成”卡住 |
 | `8bc5a43` | `server/internal/agent/claude/session.go:Interrupt 3s 超时` + `server/internal/api/ws.go:go handleCancel` | 单读 goroutine 异步派发 + 中断超时，修停止按钮失效 |
+| 2026-10-13 | `server/internal/agent/acp/process.go:CancelCurrentTurn` + `server/internal/agent/cancel_rpc_timeout_guard_test.go` | 补齐 acp 取消路径的 5s 超时（原为裸 `Background()`）；加源码守卫扫全部 Cancel/Interrupt 函数体，跨进程 RPC 必须带 `WithTimeout` |
 | `7f8a8c6` | `web/src/App.tsx` | 会话历史同步滞后（`loadSessions` 时序） |
 | `9df43e9` | `web/src/App.tsx:seq 守卫+pending draft` | `loadMultiProjectSessionGroups` 竞态守卫、pending→真实会话替换、多项目实时更新 |
 | `af0a37f` | `server/internal/api/stream_hub.go/ws.go` 辅助 hunk | `model_display_name` 重放与 `session.accepted` 乐观缓存（与 G-R 的探测 hunk 分离） |

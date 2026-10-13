@@ -329,6 +329,12 @@ groups:
       一个阻塞的 handler 冻结整条连接（停止按钮失效就是这么来的）。
       agent session 的 Interrupt 用了 context.Background()，CLI 不 ack 就永不返回，
       调用方必须加超时包装。
+      **取消路径上的每一处跨进程 RPC 都要带超时**（2026-10-13 补齐 acp）：claude 的
+      `stream.Interrupt(ctx)` 有 3s 超时（8bc5a43），而 acp 的 `conn.Cancel(ctx, ...)`
+      一直是裸 `context.Background()`——起草后端规范时靠 reviewer 自查命令才扫出来。
+      守卫 `cancel_rpc_timeout_guard_test.go` 扫描所有含 Cancel/Interrupt 的函数体，
+      只要出现跨进程调用（`.Interrupt(` / `.Cancel(`）就必须同时出现 `WithTimeout`；
+      codex 的 `CancelCurrentTurn` 只取消本地 context，不走 RPC，刻意不在列。
       `session_created_broadcast_test.go` 的 dialHub 另有一道**注册屏障**（2026-10-07）：
       `websocket.Dial` 只等到 101 握手就返回，而 `RegisterClient` 还在服务端 handler 里
       没跑完；少了这道屏障，紧跟的广播会打在空 hub 上被静默丢掉，测试挂在 3s 读超时上，
@@ -342,6 +348,8 @@ groups:
       - server/internal/api/stream_hub_user_message_test.go
       - server/internal/api/usecase/session_early_user_persist_test.go
       - server/internal/agent/types/types.go
+      - server/internal/agent/acp/process.go
+      - server/internal/agent/cancel_rpc_timeout_guard_test.go
       - web/src/hooks/useSessionStream.ts
       - web/src/app/useRealtimeEvents.ts
       - web/src/components/session/SessionViewer.tsx
@@ -349,9 +357,11 @@ groups:
       - server/internal/api/session_created_broadcast_test.go
       - server/internal/api/stream_hub_user_message_test.go
       - server/internal/api/usecase/session_early_user_persist_test.go
+      - server/internal/agent/cancel_rpc_timeout_guard_test.go
       - web/tests/user-message-persist-timing.test.mjs
     anchors:
       - server/internal/api/ws.go:go h.handle
+      - 'server/internal/agent/acp/process.go:CUSTOM(G-G)'
 
   - id: G-T
     title: 流式重放与正文正确性（快照重建协议）
