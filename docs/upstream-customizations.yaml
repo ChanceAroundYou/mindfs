@@ -3257,3 +3257,28 @@ groups:
       - web/src/app/realtimeWsSessionStream.ts:createRealtimeWsSessionStreamHandler
       - web/src/app/useRealtimeEvents.ts:handleSessionStreamDone
       - web/tests/realtime-session-stream-handler.test.mjs:realtime-session-stream-handler.test.mjs
+
+  - id: G-BY
+    title: 前端硬线待办按实测销项
+    kind: docs
+    symptom: |
+      useRealtimeEvents.ts 已降至 392 行、低于 500 行红线，但 frontend TODO 仍保留该事项，
+      并将硬线总数/目录分项记为过时数值。
+    why: |
+      按当前源码物理行数移除已达标项，修正 app 子项、总数与唯一 Active 计划索引，
+      使 TODO 只表示尚未完成的硬线工作。
+    boundary: |
+      只调整 TODO 与计划索引，不更改代码实现和长期规则。
+    tests:
+      - web/tests/agent-docs.test.mjs
+    files:
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+      - web/tests/agent-docs.test.mjs
+    anchors:
+      - docs/agent/rules/frontend/TODO.md:硬线 30 个
+      - docs/plans/README.md:拆分 frontend TODO 的 30 个硬线文件
+      - web/tests/agent-docs.test.mjs:every plan is classified in the sole plans index

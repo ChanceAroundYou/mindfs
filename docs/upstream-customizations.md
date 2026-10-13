@@ -2624,3 +2624,11 @@
 - **根因与边界**：把 `handleSessionStream` 主分支迁入 `realtimeWsSessionStream.ts`，通过现有 context 和回合收尾回调读写相同状态。`useRealtimeEvents` 保留 replay 目标、pending 收尾与订阅生命周期，尤其保留「队列续跑 / 是否重锚定 / 瞬时行何时退役」的原顺序。
 - **针对性测试**：`web/tests/realtime-session-stream-handler.test.mjs` → 节点过滤前的活动时间更新、节点过滤、消息块类型、compact、message_done/error 收尾契约仍在新模块；`session-list-merge.test.mjs`、`message-mechanism-merges.test.mjs` 和 `session-done-replay-no-reanchor.test.mjs` 继续验证相关状态行为。
 - **边界**：只移动 stream handler，不改事件分发、身份键、持久化、队列、缓存与回合重锚定时序。
+
+
+### G-BY 前端硬线待办按实测销项
+
+- **可见症状**：frontend TODO 仍把已降至 392 行的 `useRealtimeEvents.ts` 列作 >500 行硬线事项，且总数保留旧计数，执行者会误以为该项尚未完成。
+- **根因与边界**：按实际行数将该项从硬线列表移除，将 app 子项从 12 修正为 11、总项从 31 修正为 30，并同步 Active 计划索引。
+- **针对性测试**：`web/tests/agent-docs.test.mjs` → 唯一计划索引对所有计划分类、规则文档和计划链接可解析。
+- **边界**：只修正待办和计划索引的计数/状态，不改变代码或规则。
