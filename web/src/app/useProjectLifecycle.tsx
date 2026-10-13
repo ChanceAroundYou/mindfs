@@ -11,11 +11,12 @@ import { protectedJSON as apiProtectedJSON } from "../services/net/api";
 import { reportError } from "../services/net/error";
 import { getActiveNode, LOCAL_NODE_ID } from "../services/net/nodeRegistry";
 import { managedDirAddErrorMessage, type ManagedRootPayload } from "./appMisc";
-import { ProjectAddPopover } from "../components/file/ProjectAddPopover";
+import { ProjectAddLifecycleOverlay } from "../components/file/ProjectAddPopover";
 import type { GitHubImportState, ProjectAddMode } from "../shared/projectAddTypes";
 import { useI18n } from "../i18n";
 import { WorktreeLifecycleOverlays } from "../components/file/WorktreeLifecycleOverlays";
 import { useProjectDirectoryBrowser } from "./useProjectDirectoryBrowser";
+import { useProjectAddActions } from "./useProjectAddActions";
 
 type OpenDirPayload = { path: string; root: string; isRoot: boolean; forceDirectory?: boolean };
 
@@ -185,6 +186,25 @@ export function useProjectLifecycle({
     handleCreateWorktreeStart,
   });
 
+  const {
+    handleOpenProjectAdd,
+    handleOpenLocalProjectAdd,
+    handleOpenBlankProjectLocation,
+    handleOpenGitHubProjectAdd,
+    handleOpenWorktreeLocation,
+    handleSelectBlankProject,
+    handleGitHubImportStart,
+  } = useProjectAddActions({
+    creatingRootBusy,
+    projectAddNodeId,
+    setProjectAddNodeId,
+    setProjectAddMode,
+    setGitHubImportState,
+    openDirectoryPicker,
+    setWorktreeSwitchOpen,
+    handleCreateRootStart,
+  });
+
   const handleSwitchWorktreeStart = useCallback(() => {
     const rootID = currentRootIdRef.current;
     if (!rootID) {
@@ -235,48 +255,6 @@ export function useProjectLifecycle({
     }
     return undefined;
   }, [findManagedRootByPath, openManagedDir, refreshManagedRoots, switchingWorktreePath, t]);
-
-  const handleOpenProjectAdd = useCallback(() => {
-    if (creatingRootBusy) {
-      return;
-    }
-    setProjectAddMode("mode");
-  }, [creatingRootBusy]);
-
-  const handleOpenLocalProjectAdd = useCallback(() => {
-    // reset to active/local when opening
-    try { const n = getActiveNode(); if (n?.id) setProjectAddNodeId(n.id); } catch {}
-    void openDirectoryPicker("local");
-  }, [openDirectoryPicker]);
-
-  const handleOpenBlankProjectLocation = useCallback(() => {
-    void openDirectoryPicker("blank_location");
-  }, [openDirectoryPicker]);
-
-  const handleOpenGitHubProjectAdd = useCallback(() => {
-    void openDirectoryPicker("github_location");
-    setGitHubImportState((prev) => ({
-      ...prev,
-      parentPath: "",
-      taskId: "",
-      status: "",
-      message: "",
-      running: false,
-      submitting: false,
-      done: false,
-      error: "",
-    }));
-  }, [openDirectoryPicker]);
-
-  const handleOpenWorktreeLocation = useCallback(() => {
-    setWorktreeSwitchOpen(false);
-    void openDirectoryPicker("worktree_location");
-  }, [openDirectoryPicker]);
-
-  const handleSelectBlankProject = useCallback(() => {
-    setProjectAddMode(null);
-    handleCreateRootStart();
-  }, [handleCreateRootStart]);
 
   const handleCreateRootCancel = useCallback(() => {
     if (creatingRootBusy) {
@@ -394,100 +372,33 @@ export function useProjectLifecycle({
     worktreeBranchMode,
   ]);
 
-  const handleGitHubImportStart = useCallback(async () => {
-    const url = String(githubImportState.url || "").trim();
-    const parentPath = String(githubImportState.parentPath || "").trim();
-    if (
-      !url ||
-      !parentPath ||
-      githubImportState.running ||
-      githubImportState.submitting
-    ) {
-      return;
-    }
-    setGitHubImportState((prev) => ({
-      ...prev,
-      submitting: true,
-      done: false,
-      error: "",
-      taskId: "",
-      status: "",
-      message: "",
-    }));
-    try {
-      const targetImportNodeId = projectAddNodeId || getActiveNode()?.id || LOCAL_NODE_ID;
-      const payload = await apiProtectedJSON<any>(appPath("/api/imports/github", targetImportNodeId), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url, parent_path: parentPath }),
-      });
-      setGitHubImportState((prev) => ({
-        ...prev,
-        taskId: String(payload?.task_id || ""),
-        status: "pending",
-        message: t("projectAdd.cloning"),
-        submitting: false,
-        running: true,
-        done: false,
-        error: "",
-      }));
-    } catch (error) {
-      setGitHubImportState((prev) => ({
-        ...prev,
-        submitting: false,
-        running: false,
-        done: false,
-        error: error instanceof Error ? error.message : t("root.githubImportFailed"),
-      }));
-    }
-  }, [githubImportState.parentPath, githubImportState.running, githubImportState.submitting, githubImportState.url, projectAddNodeId, t]);
-
   const projectAddOverlay = projectAddMode ? (
-    <div ref={projectAddPopoverRef}>
-      <ProjectAddPopover
-        mode={projectAddMode}
-        onSelectMode={() => setProjectAddMode("mode")}
-        onSelectLocal={handleOpenLocalProjectAdd}
-        onSelectBlankLocation={handleOpenBlankProjectLocation}
-        onSelectGitHubLocation={handleOpenGitHubProjectAdd}
-        onSelectGitHub={handleOpenGitHubProjectAdd}
-        onSelectBlank={handleSelectBlankProject}
-        localState={localDirState}
-        selectedNodeId={projectAddNodeId}
-        onSelectedNodeChange={(id) => {
-          setProjectAddNodeId(id);
-          void loadLocalDirs("", id);
-        }}
-        onLocalNavigate={(path) => {
-          void loadLocalDirs(path, projectAddNodeId);
-        }}
-        onLocalSelect={handleLocalDirSelect}
-        onLocalAdd={() => {
-          void handleLocalDirAdd();
-        }}
-        localActionLabel={
-          projectAddMode === "local" ? t("projectAdd.add") : t("projectAdd.placeHere")
-        }
-        localDisabledAddedRoot={projectAddMode === "local"}
-        localBrowseOnly={
-          projectAddMode === "blank_location" ||
-          projectAddMode === "github_location" ||
-          projectAddMode === "worktree_location"
-        }
-        githubState={githubImportState}
-        onGitHubUrlChange={(value) =>
-          setGitHubImportState((prev) => ({
-            ...prev,
-            url: value,
-            error: "",
-            done: false,
-          }))
-        }
-        onGitHubImport={() => {
-          void handleGitHubImportStart();
-        }}
-      />
-    </div>
+    <ProjectAddLifecycleOverlay
+      popoverRef={projectAddPopoverRef}
+      mode={projectAddMode}
+      setMode={setProjectAddMode}
+      onSelectLocal={handleOpenLocalProjectAdd}
+      onSelectBlankLocation={handleOpenBlankProjectLocation}
+      onSelectGitHubLocation={handleOpenGitHubProjectAdd}
+      onSelectBlank={handleSelectBlankProject}
+      localState={localDirState}
+      selectedNodeId={projectAddNodeId}
+      onSelectedNodeChange={(id) => {
+        setProjectAddNodeId(id);
+        void loadLocalDirs("", id);
+      }}
+      onLocalNavigate={(path) => void loadLocalDirs(path, projectAddNodeId)}
+      onLocalSelect={handleLocalDirSelect}
+      onLocalAdd={() => void handleLocalDirAdd()}
+      githubState={githubImportState}
+      onGitHubUrlChange={(value) => setGitHubImportState((prev) => ({
+        ...prev,
+        url: value,
+        error: "",
+        done: false,
+      }))}
+      onGitHubImport={() => void handleGitHubImportStart(githubImportState)}
+    />
   ) : null;
 
   const worktreeOverlayProps = {

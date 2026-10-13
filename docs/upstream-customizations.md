@@ -2840,7 +2840,7 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 
 ### G-CZ 项目生命周期 worktree overlay 呈现拆分
 
-- **可见症状**：`useProjectLifecycle.tsx` 同时持有项目/ worktree 生命周期状态与创建、切换浮层的大段 JSX，职责难以分别复核。
+- **可见症状**：`useProjectLifecycle.tsx` 同时持有项目/worktree 生命周期状态与创建、切换浮层的大段 JSX，职责难以分别复核。
 - **根因与边界**：创建和切换 worktree overlay JSX 移到 `WorktreeLifecycleOverlays`，生命周期 hook 仍持有状态、数据加载和所有动作；保留 App 层原有的两个独立 render 出口。
 - **针对性测试**：`web/tests/worktree-lifecycle-overlays.test.mjs` → 确认 hook 接线、键盘提交/取消、加载/空态/错误顺序及当前/已管理/待加入 worktree 的标签语义。
 - **边界**：不改变点击关闭、创建/切换流程、节点路由、动作时序和 overlay 放置位置；`useProjectLifecycle.tsx` 从 885 降到 731 行，尚未从 TODO 销项。
@@ -2850,4 +2850,11 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：`useProjectLifecycle.tsx` 把本地目录浏览状态、节点路由请求、路径推导、选择和添加项目动作与 worktree 生命周期混在一起；目录状态类型也由 view 文件声明。
 - **根因与边界**：目录浏览职责抽到 `useProjectDirectoryBrowser`，`LocalDirItem`/`LocalDirBrowserState` 移到 shared；ProjectAddPopover 保留旧类型再导出，生命周期 hook 继续组合项目模式和 worktree 流程。
 - **针对性测试**：`project-add-path-browse.test.mjs` → 守住 nodeId 路由、目录添加/刷新/打开和已管理目录选择；`project-add-types.test.mjs` → 守住 shared 契约及旧导出。
-- **边界**：保留目录 API 参数、Windows/Unix 路径推导、空态/error/选择重置和刷新顺序；父 hook 实测 573 行，仍高于 500 行硬线。
+- **边界**：保留目录 API 参数、Windows/Unix 路径推导、空态/error/选择重置和刷新顺序；该批提交时父 hook 实测 571 行，仍高于 500 行硬线。
+
+### G-DB 项目添加 action 与 overlay 组合归位
+
+- **可见症状**：目录浏览已分离后，`useProjectLifecycle.tsx` 仍将项目添加模式回调、GitHub 导入请求与 popover 的 props/布局组合留在 worktree 生命周期 hook 中。
+- **根因与边界**：项目添加动作集中到 `useProjectAddActions`，原有 `ProjectAddPopover` 增加组合 overlay 入口；生命周期 hook 只向其传状态和回调，继续协调 root/worktree 创建。
+- **针对性测试**：`project-add-types.test.mjs` → 确认 GitHub 节点路由/提交状态及 view 回调接线；项目添加路径和类型测试继续守住目录浏览契约。
+- **边界**：保留 GitHub 请求条件、状态清理、节点路由、toast 文案、弹层 ref 与模式转换；`useProjectLifecycle.tsx` 实测 482 行，低于 500 行硬线。

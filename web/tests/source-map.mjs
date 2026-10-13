@@ -38,6 +38,7 @@ export const MODULES = {
   "src/app/useProjectLifecycle.tsx": [
     "src/app/useProjectLifecycle.tsx",
     "src/app/useProjectDirectoryBrowser.ts",
+    "src/app/useProjectAddActions.ts",
     "src/components/file/WorktreeLifecycleOverlays.tsx",
   ],
   // useRealtimeEvents 拆分：34 个 WS 事件处理器（957 行）→ realtimeWsHandlers.ts。

@@ -3282,7 +3282,7 @@ groups:
       - docs/upstream-customizations.yaml
       - web/tests/agent-docs.test.mjs
     anchors:
-      - docs/agent/rules/frontend/TODO.md:硬线 16 个
+      - docs/agent/rules/frontend/TODO.md:硬线 15 个
       - docs/plans/README.md:Rule completion rollout
       - web/tests/agent-docs.test.mjs:every plan is classified in the sole plans index
   - id: G-BZ
@@ -4193,3 +4193,36 @@ groups:
     anchors:
       - web/src/app/useProjectDirectoryBrowser.ts:useProjectDirectoryBrowser
       - web/tests/project-add-path-browse.test.mjs:project-add-path-browse ok
+
+  - id: G-DB
+    title: Project add actions and overlay composition extracted
+    kind: arch
+    symptom: |
+      After directory browsing was separated, useProjectLifecycle still contained project-add mode
+      actions, GitHub import requests, and the detailed ProjectAddPopover composition.
+    why: |
+      Separate project-add transitions and import behavior from root/worktree lifecycle management,
+      and keep the compatibility popover responsible for composing its own view contract.
+    boundary: |
+      Project add state remains in useProjectLifecycle. useProjectAddActions owns mode transitions and
+      GitHub import calls; ProjectAddLifecycleOverlay receives state and callbacks. Root/worktree
+      creation and App composition outputs remain unchanged.
+    tests:
+      - web/tests/project-add-types.test.mjs
+      - web/tests/project-add-path-browse.test.mjs
+      - web/tests/source-map.test.mjs
+      - web/tests/naming-convention.test.mjs
+    files:
+      - web/src/app/useProjectLifecycle.tsx
+      - web/src/app/useProjectAddActions.ts
+      - web/src/components/file/ProjectAddPopover.tsx
+      - web/tests/project-add-types.test.mjs
+      - web/tests/source-map.mjs
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/app/useProjectAddActions.ts:useProjectAddActions
+      - web/src/components/file/ProjectAddPopover.tsx:ProjectAddLifecycleOverlay

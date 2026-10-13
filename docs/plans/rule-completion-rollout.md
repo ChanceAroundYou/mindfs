@@ -91,4 +91,6 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 - 下一项：从当前前端硬线列表选择下一批易于界定且能减少父职责的目标；之后完成 reviewer-checklist 自动门禁并开始 backend 单文件拆分。
 - 当前进度（2026-10-14）：将 `useProjectLifecycle.tsx` 中 worktree 创建/切换 overlay JSX 提取到 `WorktreeLifecycleOverlays`；hook 保持状态、加载与动作，并保留创建/切换两个既有 render 出口。逻辑映射与专项结构守卫同步更新，父 hook 从 885 行降至 731 行，仍在硬线清单内。TypeScript 与专项映射/命名/overlay 测试通过。
 - 当前进度（2026-10-14）：目录浏览状态、路径推导、按节点读取目录、选择与添加项目动作归 `useProjectDirectoryBrowser`；浏览类型移入 shared，旧 view 类型出口兼容保留。`useProjectLifecycle.tsx` 降至 571 行，仍在硬线内；TypeScript 与项目添加/路径、layering 类型、命名和 source-map 专项测试通过。
-- 下一项：将项目添加 popover 的呈现组合从 `useProjectLifecycle` 移出，目标低于 500 行后才从硬线列表销项；不改 App 组合根。
+- 历史下一项（后续已完成）：将项目添加 popover 的呈现组合从 `useProjectLifecycle` 移出，达到 500 行以下后销项；不改 App 组合根。
+- 已完成：项目添加入口/方式选择/本地目录打开/GitHub 导入动作归 `useProjectAddActions`，popover 组合归同域 `ProjectAddLifecycleOverlay`；目录浏览和 worktree overlay 已在前两批拆出。`useProjectLifecycle.tsx` 从 571 降至 482 行，硬线从 16 减至 15；App 组合层出口与项目添加状态顺序保持不变。
+- 下一项：重新实测并审阅 `useAppSessionLayer` 的消费者、状态所有权和职责边界，再选定单一子职责继续拆分。

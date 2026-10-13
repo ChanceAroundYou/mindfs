@@ -383,3 +383,66 @@ export function ProjectAddPopover({
     />
   );
 }
+
+export function ProjectAddLifecycleOverlay({
+  popoverRef,
+  mode,
+  setMode,
+  onSelectLocal,
+  onSelectBlankLocation,
+  onSelectGitHubLocation,
+  onSelectBlank,
+  localState,
+  selectedNodeId,
+  onSelectedNodeChange,
+  onLocalNavigate,
+  onLocalSelect,
+  onLocalAdd,
+  githubState,
+  onGitHubUrlChange,
+  onGitHubImport,
+}: {
+  popoverRef: React.RefObject<HTMLDivElement | null>;
+  mode: ProjectAddMode;
+  setMode: (mode: ProjectAddMode | null) => void;
+  onSelectLocal: () => void;
+  onSelectBlankLocation: () => void;
+  onSelectGitHubLocation: () => void;
+  onSelectBlank: () => void;
+  localState: LocalDirBrowserState;
+  selectedNodeId: string;
+  onSelectedNodeChange: (id: string) => void;
+  onLocalNavigate: (path: string) => void;
+  onLocalSelect: (path: string) => void;
+  onLocalAdd: () => void;
+  githubState: GitHubImportState;
+  onGitHubUrlChange: (value: string) => void;
+  onGitHubImport: () => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <div ref={popoverRef}>
+      <ProjectAddPopover
+        mode={mode}
+        onSelectMode={() => setMode("mode")}
+        onSelectLocal={onSelectLocal}
+        onSelectBlankLocation={onSelectBlankLocation}
+        onSelectGitHubLocation={onSelectGitHubLocation}
+        onSelectGitHub={onSelectGitHubLocation}
+        onSelectBlank={onSelectBlank}
+        localState={localState}
+        selectedNodeId={selectedNodeId}
+        onSelectedNodeChange={onSelectedNodeChange}
+        onLocalNavigate={onLocalNavigate}
+        onLocalSelect={onLocalSelect}
+        onLocalAdd={onLocalAdd}
+        localActionLabel={mode === "local" ? t("projectAdd.add") : t("projectAdd.placeHere")}
+        localDisabledAddedRoot={mode === "local"}
+        localBrowseOnly={mode === "blank_location" || mode === "github_location" || mode === "worktree_location"}
+        githubState={githubState}
+        onGitHubUrlChange={onGitHubUrlChange}
+        onGitHubImport={onGitHubImport}
+      />
+    </div>
+  );
+}
