@@ -3282,7 +3282,7 @@ groups:
       - docs/upstream-customizations.yaml
       - web/tests/agent-docs.test.mjs
     anchors:
-      - docs/agent/rules/frontend/TODO.md:硬线 4 个
+      - docs/agent/rules/frontend/TODO.md:硬线 3 个
       - docs/plans/README.md:Rule completion rollout
       - web/tests/agent-docs.test.mjs:every plan is classified in the sole plans index
   - id: G-BZ
@@ -4747,3 +4747,42 @@ groups:
     anchors:
       - web/src/components/app/SessionMainContent.tsx:export function SessionMainContent
       - web/tests/session-pane-split.test.mjs:content coordinator also stays below the hard line
+
+  - id: G-DS
+    title: Session viewer scroll behavior split by state and timeline metadata
+    kind: arch
+    symptom: |
+      SessionViewer combines timeline composition with scroll anchoring, follow-to-bottom behavior,
+      visual viewport compensation, stickiness tracking, and user timeline metadata. The component
+      exceeds the frontend hard line; changing scroll behavior can silently break history prepend,
+      deep-link target scrolling, or the jump-to-latest affordance.
+    why: |
+      Give the scroll state and its ordered effects a focused hook, and move the one-pass timeline
+      metadata derivation to a small pure helper while keeping hook calls at their original positions.
+    boundary: |
+      useSessionViewerScrollState replaces the original scroll refs/state/callback block in place.
+      Scroll position/viewport effects and stickiness effect are invoked at their original locations;
+      useTargetSeqScroll keeps the same refs and call site. Timeline metadata remains O(n), keyframes
+      retain the same CSS declarations in sessionViewerStyles, and the memoized SessionViewer API is
+      unchanged.
+    tests:
+      - web/tests/session-viewer-scroll-split.test.mjs
+      - web/tests/session-window.test.mjs
+      - web/tests/session-window-overlay-dedup.test.mjs
+      - web/tests/session-switch-flicker.test.mjs
+      - web/tests/source-map.test.mjs
+    files:
+      - web/src/components/session/SessionViewer.tsx
+      - web/src/components/session/useSessionViewerScroll.ts
+      - web/src/components/session/buildTimelineItemMeta.ts
+      - web/src/components/session/sessionViewerStyles.ts
+      - web/tests/session-viewer-scroll-split.test.mjs
+      - web/tests/source-map.mjs
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/components/session/useSessionViewerScroll.ts:export function useSessionViewerScrollState
+      - web/tests/session-viewer-scroll-split.test.mjs:physical viewer stays below the hard line

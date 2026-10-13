@@ -380,6 +380,8 @@ export const MODULES = {
     "src/components/session/sessionViewerGrouping.ts",
     "src/components/session/sessionViewerAskUser.ts",
     "src/components/session/sessionViewerScroll.ts",
+    "src/components/session/useSessionViewerScroll.ts",
+    "src/components/session/buildTimelineItemMeta.ts",
   ],
   "src/components/ArchivedSessionsPanel.tsx": ["src/components/session/ArchivedSessionsPanel.tsx"],
   "src/components/ExternalSessionList.tsx": ["src/components/session/ExternalSessionList.tsx"],

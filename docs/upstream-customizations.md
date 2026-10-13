@@ -2963,3 +2963,10 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **根因与边界**：`SessionMainContent` 接管原主内容分支和优先级；插件信任 JSX 归 `PendingPluginTrustView`；props contract 归 `sessionPaneTypes` 并由旧路径再导出。外层保留原双 pane display predicate，并在同一内容槽渲染组合组件。
 - **针对性测试**：`session-pane-split.test.mjs` → 守住两个组合文件低于硬线、类型兼容出口、显隐和信任按钮接线；`main-content-view-memory.test.mjs`、`node-colors-and-workspace-preferences.test.mjs` → 守住视图状态与节点色契约；`source-map.test.mjs` → 守住逻辑源码映射。
 - **边界**：原 `SessionPane` 682→58 行，内容组合 458 行，frontend 硬线 TODO 剩余 4 项；不改 `App.tsx`、pane 显隐条件或视图优先级。
+
+### G-DS SessionViewer 按滚动状态与时间线元数据拆分
+
+- **可见症状**：`SessionViewer` 同时管理滚动锚定、自动跟随、visual viewport 补偿、stickiness 与用户时间线元数据，超过前端硬线；改滚动逻辑可能破坏翻页前插、深链定位或「回到最新」按钮。
+- **根因与边界**：`useSessionViewerScrollState` 接管原 scroll refs/state/callback；scroll position/viewport 与 stickiness effects 在旧调用位置分别交给对应 hook；`useTargetSeqScroll` 保持原 refs 与调用点。时间线元数据的一次 O(n) 扫描移到纯 helper，动画 keyframes 保持同声明并归入现有 styles。
+- **针对性测试**：`session-viewer-scroll-split.test.mjs` → 守住物理行数、旧 hook 调用点、近底判断/用户索引与动画样式；`session-window.test.mjs`、`session-window-overlay-dedup.test.mjs`、`session-switch-flicker.test.mjs` → 守住窗口分页、overlay 去重与会话切换滚动；`source-map.test.mjs` → 守住逻辑源码映射。
+- **边界**：父组件实测 646→499 行，frontend 硬线 TODO 剩余 3 项；`SessionViewer` memo comparator、窗口数据与 `App.tsx` 均不变。
