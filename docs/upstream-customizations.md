@@ -2865,3 +2865,10 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **根因与边界**：参数契约移至 `useAppSessionLayerTypes.ts`；session key/pending/lifecycle/metadata/multi-project/stream-cache 组合移至 `useAppSessionCore`；multi-project debounce/reply poll 移到 `useAppMultiProjectReload`，调用位置保持在原顺序上。父层保留功能组合，降至 474 行。
 - **针对性测试**：`web/tests/app-session-layer-split.test.mjs` → 守住父层硬线、核心 hook 责任组、multi-project reload 接线顺序与 App 层调用。
 - **边界**：只重组 hook 文件与契约，不改变子 hook 参数、状态/ref、debounce 时长或 App.tsx 组合根。
+
+### G-DD Domain layer 参数契约和项目管理组拆分
+
+- **可见症状**：`useAppDomainLayer.ts` 声明大段层间参数并组合 root 管理、action handler、bound-session 恢复、文件导航、项目删除及 project/worktree 生命周期，超过硬线。
+- **根因与边界**：参数契约进入 `useAppDomainLayerTypes.ts`，原模块保留 type re-export；原连续 hook 序列抽到 `useAppProjectManagement`，parent 继续组合插件、任务、bootstrap、realtime 与 derived 域。
+- **针对性测试**：`app-domain-layer-split.test.mjs` → 守住 500 行硬线、类型兼容出口、项目管理 hook 归属与 App 调用入口。
+- **边界**：hook 序列在 parent 原调用位置整体移动，不改变 action ref、managed-root 更新、节点失败通知、导航或 worktree 生命周期行为；父层现为 437 行。

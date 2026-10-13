@@ -3282,7 +3282,7 @@ groups:
       - docs/upstream-customizations.yaml
       - web/tests/agent-docs.test.mjs
     anchors:
-      - docs/agent/rules/frontend/TODO.md:硬线 14 个
+      - docs/agent/rules/frontend/TODO.md:硬线 13 个
       - docs/plans/README.md:Rule completion rollout
       - web/tests/agent-docs.test.mjs:every plan is classified in the sole plans index
   - id: G-BZ
@@ -4259,3 +4259,35 @@ groups:
     anchors:
       - web/src/app/useAppSessionLayer.ts:useAppSessionCore
       - web/tests/app-session-layer-split.test.mjs:delegates cohesive core
+
+  - id: G-DD
+    title: Domain layer params and project management group extracted
+    kind: arch
+    symptom: |
+      useAppDomainLayer exceeded the 500-line hard line while declaring its large shared contract and
+      composing root management, action routing, file navigation, and project/worktree lifecycle.
+    why: |
+      Move the public parameter contract to a types module and give the contiguous project/root
+      management hook group a focused composition module, preserving existing type consumers.
+    boundary: |
+      useAppProjectManagement owns the existing contiguous hook sequence from managed roots through
+      project lifecycle. useAppDomainLayer keeps later plugin, task, bootstrap, realtime, and derived
+      composition. The old parameter type export remains as a facade; App.tsx is unchanged.
+    tests:
+      - web/tests/app-domain-layer-split.test.mjs
+      - web/tests/source-map.test.mjs
+      - web/tests/naming-convention.test.mjs
+    files:
+      - web/src/app/useAppDomainLayer.ts
+      - web/src/app/useAppDomainLayerTypes.ts
+      - web/src/app/useAppProjectManagement.ts
+      - web/tests/app-domain-layer-split.test.mjs
+      - web/tests/source-map.mjs
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/app/useAppProjectManagement.ts:useAppProjectManagement
+      - web/tests/app-domain-layer-split.test.mjs:delegates project management

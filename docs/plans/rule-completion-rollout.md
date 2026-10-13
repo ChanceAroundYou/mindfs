@@ -94,4 +94,5 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 - 历史下一项（后续已完成）：将项目添加 popover 的呈现组合从 `useProjectLifecycle` 移出，达到 500 行以下后销项；不改 App 组合根。
 - 已完成：项目添加入口/方式选择/本地目录打开/GitHub 导入动作归 `useProjectAddActions`，popover 组合归同域 `ProjectAddLifecycleOverlay`；目录浏览和 worktree overlay 已在前两批拆出。`useProjectLifecycle.tsx` 从 571 降至 482 行，硬线从 16 减至 15；App 组合层出口与项目添加状态顺序保持不变。
 - 已完成：`UseAppSessionLayerParams` 独立到 `useAppSessionLayerTypes.ts`；共享 session key/pending/lifecycle/metadata/multi-project/stream-cache 编排归 `useAppSessionCore`，多项目 300ms reload 与 replying poll 在原调用位置归 `useAppMultiProjectReload`，保留 hook 顺序。父层实测从 876 降到 474 行，硬线从 15 减至 14；新增结构守卫并通过 typecheck 和专项 source-map/命名检查。
-- 下一项：重新实测并审阅 `useAppDomainLayer` 的消费者、状态所有权和职责边界，再选定单一子职责继续拆分。
+- 已完成：`UseAppDomainLayerParams` 移到 `useAppDomainLayerTypes.ts`，原模块保留类型 facade；连续的 root 管理、action handler、bound-session 导航、文件导航、项目删除与项目/worktree 生命周期装配归 `useAppProjectManagement`，调用顺序维持不变。父层降到 437 行，硬线从 14 减至 13；typecheck、source-map、命名和专项边界测试通过。
+- 下一项：重新实测并审阅 `useAppStateLayer` 的消费者、状态所有权和职责边界，再选定单一子职责继续拆分。

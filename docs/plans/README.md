@@ -8,7 +8,7 @@ to resume their old TODOs or baselines.
 
 | Plan | Status | Next action |
 |---|---|---|
-| [Rule completion rollout](rule-completion-rollout.md) | Active | `useAppSessionLayer.ts` 474 行，参数契约、session 核心编排和多项目刷新各归专属模块；硬线剩余 14 项。下一步重新实测并审阅 `useAppDomainLayer` 的消费者与职责边界。 |
+| [Rule completion rollout](rule-completion-rollout.md) | Active | `useAppDomainLayer.ts` 437 行，项目/root action 编排归 `useAppProjectManagement`，参数契约保留类型 facade；硬线剩余 13 项。下一步重新实测并审阅 `useAppStateLayer` 的消费者和职责边界。 |
 
 ## Completed or superseded history
 
