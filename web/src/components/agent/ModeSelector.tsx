@@ -1,10 +1,11 @@
+import type { SessionMode } from "../../shared/actionBarTypes";
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { ModeIcon } from "./ModeIcon";
 import { useI18n, type MessageKey } from "../../i18n/index";
 import { DEFAULT_NODE_COLOR } from "../../services/net/nodeRegistry";
 
-export type SessionMode = "chat" | "plugin" | "command";
+export type { SessionMode } from "../../shared/actionBarTypes";
 
 type ModeSelectorProps = {
   mode: SessionMode;

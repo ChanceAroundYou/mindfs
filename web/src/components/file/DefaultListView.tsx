@@ -10,7 +10,7 @@ import {
   formatCompactTime,
   formatCompactSize,
 } from "./listViewIcons";
-import { useResponsive } from "../action/styleHelpers";
+import { useResponsive } from "../../hooks/useResponsive";
 import {
   DIRECTORY_SORT_OPTIONS,
   type DirectorySortMode,

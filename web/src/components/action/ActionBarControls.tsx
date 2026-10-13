@@ -4,7 +4,7 @@ import { AgentSelector } from "../agent/AgentSelector";
 import { fetchAgents, restartAgent, type AgentStatus, type ShellStatus } from "../../services/agents";
 import { getRootNodeId } from "../../services/net/rootNode";
 import { getAgentDefaults, strip1MSuffix, resolveEffortOnSwitch, resolveLongContextOnSwitch } from "./modelUtils";
-import { appAccentHexToRgba } from "./styleHelpers";
+import { appAccentHexToRgba } from "../../shared/actionBarUtils";
 import { SessionRing } from "./SessionRing";
 import { ShellSelector } from "./ShellSelector";
 import { CancelIcon, PlusIcon, SendIcon, SpinnerIcon } from "./composerIcons";

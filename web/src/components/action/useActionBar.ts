@@ -3,17 +3,17 @@ import { fetchAgents, fetchShells, type AgentStatus } from "../../services/agent
 import { getRootNodeId } from "../../services/net/rootNode";
 import { reportError } from "../../services/net/error";
 import { fileTokenPath, formatFileToken, isUploadAbortError, uploadFiles, type UploadProgress } from "../../services/upload";
-import type { TokenEditorHandle } from "../editor/TokenEditor";
+import type { TokenEditorHandle } from "../../shared/actionBarTypes";
 import { useI18n, type MessageKey } from "../../i18n/index";
 import {
   appAccentHexToRgba,
   chatBlurPlaceholderKeys,
   IME_ENTER_GUARD_MS,
   modePlaceholderKeys,
-  useResponsive,
   wsStatusMeta,
-} from "./styleHelpers";
+} from "../../shared/actionBarUtils";
 import { useAppearanceSync } from "./useAppearanceSync";
+import { useResponsive } from "../../hooks/useResponsive";
 import { DEFAULT_NODE_COLOR } from "../../services/net/nodeRegistry";
 import { useCandidates } from "./useCandidates";
 import { useDisplayStatus } from "./useDisplayStatus";
@@ -35,8 +35,7 @@ import { parsePlanCommand, stripPlanCommandPrefix } from "../../shared/planComma
 import { matchesSendShortcut } from "../../services/prefs/sendShortcut";
 import type { ShellStatus } from "../../services/agents";
 import type { CandidateItem } from "../../services/candidates";
-import type { SessionMode } from "../agent/ModeSelector";
-import type { PendingAttachment } from "./AttachmentsArea";
+import type { SessionMode } from "../../shared/actionBarTypes";
 
 export function useActionBar(props: ActionBarProps) {
   const {

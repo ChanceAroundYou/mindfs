@@ -5,7 +5,7 @@ import { CodexRateLimitIndicator } from "../agent/CodexRateLimitIndicator";
 import { AgentMemoryIndicator } from "../agent/AgentMemoryIndicator";
 import { getRootNodeId } from "../../services/net/rootNode";
 import { useI18n } from "../../i18n";
-import { appAccentHexToRgba } from "./styleHelpers";
+import { appAccentHexToRgba } from "../../shared/actionBarUtils";
 import { type GitBranchesPayload } from "../../services/git";
 
 export function ComposerTopChips({

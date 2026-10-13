@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { useI18n } from "../../i18n";
 import { sessionService, type Session } from "../../services/session";
 import { recentQuickSwitchGroups, ringGesture } from "../../services/quickSwitch";
-import { appAccentHexToRgba } from "./styleHelpers";
+import { appAccentHexToRgba } from "../../shared/actionBarUtils";
 import type { SessionInfo } from "./actionTypes";
 
 type QuickSwitchGroup = ReturnType<typeof recentQuickSwitchGroups>[number];

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { fetchCandidates, type CandidateItem } from "../../services/candidates";
-import { CANDIDATE_FETCH_DEBOUNCE_MS } from "./styleHelpers";
+import { CANDIDATE_FETCH_DEBOUNCE_MS } from "../../shared/actionBarUtils";
 import { type ActiveToken } from "../editor/tokenEditorUtils";
 
 /** 候选下拉：按 activeToken 防抖拉取 + 键盘高亮态 + 自动滚到可见。 */

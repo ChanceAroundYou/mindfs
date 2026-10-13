@@ -1,6 +1,6 @@
 import React from "react";
 import { useI18n } from "../../i18n";
-import { useResponsive } from "../action/styleHelpers";
+import { useResponsive } from "../../hooks/useResponsive";
 import { TaskGroupChevronIcon } from "../../app/taskIcons";
 import type { SessionItem } from "../../app/appSession";
 import type { WorkspaceProjectGroup, WorkspaceTaskItem } from "../../app/useWorkspaceBoard";

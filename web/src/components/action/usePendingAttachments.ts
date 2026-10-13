@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { type PendingAttachment } from "./AttachmentsArea";
+import { type PendingAttachment } from "../../shared/actionBarTypes";
 import { buildPendingAttachment } from "./modelUtils";
 
 /** 待发送附件：预览 URL 生命周期（创建/移除/卸载时 revoke）内聚在这里。 */

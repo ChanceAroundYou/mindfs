@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { type TokenEditorHandle } from "../editor/TokenEditor";
+import { type TokenEditorHandle } from "../../shared/actionBarTypes";
 
 /** 单行高度：TokenEditor 单行时 contentEditable 高 44px。 */
 const SINGLE_LINE_HEIGHT = 44;

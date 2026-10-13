@@ -1,16 +1,12 @@
 import React from "react";
 import { CompactUploadProgress } from "../file/CompactUploadProgress";
 import { useI18n } from "../../i18n";
-import { appAccentHexToRgba, getSelectionPreview } from "./styleHelpers";
+import { appAccentHexToRgba, getSelectionPreview } from "../../shared/actionBarUtils";
 import { type AttachedFileContext } from "./actionTypes";
 import { type UploadProgress } from "../../services/upload";
 
-export type PendingAttachment = {
-  id: string;
-  file: File;
-  previewUrl?: string;
-  isImage: boolean;
-};
+import type { PendingAttachment } from "../../shared/actionBarTypes";
+export type { PendingAttachment } from "../../shared/actionBarTypes";
 
 export function AttachmentsArea({
   attachedFileContext,

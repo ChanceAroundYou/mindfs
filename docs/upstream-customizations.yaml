@@ -3624,3 +3624,49 @@ groups:
     anchors:
       - web/src/shared/hexToRgba.ts:hexToRgba
       - web/tests/shared-hex-to-rgba.test.mjs:preserves shorthand, fallback, and rgba pass-through
+  - id: G-CL
+    title: ActionBar logic consumes shared contracts and helpers
+    kind: arch
+    symptom: |
+      useActionBar imports editor, mode selector, attachment view types and a mixed style helper module; shared
+      placeholder/status helpers and responsive hooks are also coupled to that view-owned file.
+    why: |
+      Move action contracts and pure presentation helpers into shared, move responsive behavior to hooks, and keep
+      current view/service paths as compatibility type or utility facades where consumers rely on them.
+    boundary: |
+      Preserve action mode literals, editor handle signatures, attachment shape, placeholder/status strings, candidate
+      debounce timing, resize behavior, and existing public re-exports. No send or upload behavior changes.
+    tests:
+      - web/tests/action-bar-layering.test.mjs
+    files:
+      - web/src/shared/actionBarTypes.ts
+      - web/src/shared/actionBarUtils.ts
+      - web/src/hooks/useResponsive.ts
+      - web/src/components/action/actionTypes.ts
+      - web/src/components/action/styleHelpers.ts
+      - web/src/components/action/useActionBar.ts
+      - web/src/components/action/useInputHistory.ts
+      - web/src/components/action/useComposerEditorHeight.ts
+      - web/src/components/action/usePendingAttachments.ts
+      - web/src/components/action/ActionBar.tsx
+      - web/src/components/action/ActionBarControls.tsx
+      - web/src/components/action/AttachmentsArea.tsx
+      - web/src/components/action/ComposerTopChips.tsx
+      - web/src/components/action/SessionRing.tsx
+      - web/src/components/action/composerStyles.ts
+      - web/src/components/action/useCandidates.ts
+      - web/src/components/agent/ModeSelector.tsx
+      - web/src/components/editor/TokenEditor.tsx
+      - web/src/components/file/DefaultListView.tsx
+      - web/src/components/workspace/WorkspaceProjectRow.tsx
+      - web/src/app/appStorage.ts
+      - web/tests/action-bar-layering.test.mjs
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/shared/actionBarTypes.ts:PendingAttachment
+      - web/src/shared/actionBarUtils.ts:wsStatusMeta
+      - web/tests/action-bar-layering.test.mjs:ActionBar logic uses shared contracts

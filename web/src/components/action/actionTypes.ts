@@ -1,4 +1,4 @@
-import { type SessionMode } from "../agent/ModeSelector";
+import type { PendingAttachment, SessionMode, TokenEditorHandle, WSStatus } from "../../shared/actionBarTypes";
 import { type MessageKey } from "../../i18n";
 import { type SendShortcut } from "../../services/prefs/sendShortcut";
 import { type UploadProgress } from "../../services/upload";
@@ -34,9 +34,7 @@ export type QueuedMessageInfo = {
   created_at?: string;
 };
 
-export type WSStatus = "connecting" | "connected" | "reconnecting" | "disconnected";
-
-export type { SessionMode, MessageKey, SendShortcut, UploadProgress };
+export type { SessionMode, WSStatus, PendingAttachment, TokenEditorHandle, MessageKey, SendShortcut, UploadProgress };
 
 export type ActionBarProps = {
   status?: WSStatus;

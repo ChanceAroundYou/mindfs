@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { type TokenEditorHandle } from "../editor/TokenEditor";
+import { type TokenEditorHandle } from "../../shared/actionBarTypes";
 
 /** 输入历史（↑/↓）：草稿保底 + 替换编辑器文本时的 re-entrancy 守卫。 */
 export function useInputHistory({

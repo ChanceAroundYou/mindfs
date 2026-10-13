@@ -21,10 +21,11 @@ import {
   appAccentHexToRgba,
   chatBlurPlaceholderKeys,
   IME_ENTER_GUARD_MS,
-} from "./styleHelpers";
+} from "../../shared/actionBarUtils";
 import { DEFAULT_NODE_COLOR } from "../../services/net/nodeRegistry";
 import { type ActionBarProps, type AttachedFileContext, type QueuedMessageInfo, type SessionInfo, type WSStatus } from "./actionTypes";
 import { useActionBar } from "./useActionBar";
+import { useResponsive } from "../../hooks/useResponsive";
 
 export type {
   ActionBarProps,

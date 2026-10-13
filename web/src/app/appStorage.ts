@@ -33,7 +33,7 @@ export const TASK_TEMPLATE_SELECTION_STORAGE_KEY = "mindfs-task-template-selecti
 
 export const TASK_TEMPLATE_ALL_FILTER = "__all__";
 
-export const CANDIDATE_FETCH_DEBOUNCE_MS = 512;
+export { CANDIDATE_FETCH_DEBOUNCE_MS } from "../shared/actionBarUtils";
 
 export const FILE_TOKEN_PATTERN = /\[(?:read file|file):\s*[^\]]+\]/i;
 

@@ -14,7 +14,7 @@ import {
   type LexicalEditor,
   type TextNode,
 } from "lexical";
-import { TokenNode, $isTokenNode, $createTokenNode, createLabel, type TokenType } from "./TokenNode";
+import { TokenNode, $isTokenNode, $createTokenNode, createLabel } from "./TokenNode";
 import {
   $replaceWithPlainText,
   $replaceWithSerializedText,
@@ -26,16 +26,8 @@ import {
 import { EditorBridge } from "./EditorBridge";
 import type { BridgeOnChangePayload } from "./EditorBridge";
 
-export type CandidateType = TokenType | "slash_command" | "prompt" | "command";
-
-export type TokenEditorHandle = {
-  focus: () => void;
-  blur: () => void;
-  getHeight: () => number;
-  clear: () => void;
-  setText: (value: string) => void;
-  insertCandidate: (type: CandidateType, value: string) => void;
-};
+import type { CandidateType, TokenEditorHandle } from "../../shared/actionBarTypes";
+export type { CandidateType, TokenEditorHandle } from "../../shared/actionBarTypes";
 
 type TokenEditorProps = {
   placeholder: string;
