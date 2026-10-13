@@ -36,4 +36,5 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 - 已完成：新增 `AsyncStateMessage` 通用状态消息组件，迁移项目目录浏览、worktree 列表和定时任务列表的三态显示；保留每处原有布局和状态优先级。专项测试与 TypeScript 检查通过。
 - 已完成：核对 12 个 Utils/Helpers 文件的实际 JSX 与命名，将唯一违规的 `sessionCardUtils.tsx` 改为 `sessionCardHelpers.tsx`，同步三个消费者、复用文档和命名门禁。
 - 已完成：审计 11 个类型文件与消费者；组件域唯一裸名 `components/action/types.ts` 改为 `actionTypes.ts`。目录隔离的 service 类型、i18n 跨域入口和其余 `xxxTypes.ts` 均按规则保留，并增加测试门禁。
-- 当前下一项：核对并统一样式文件名，保持 CSS 及导出/导入行为不变。
+- 已完成：将混合图标 JSX 的 `composerStyles.tsx` 拆为纯样式 `composerStyles.ts` 与 `composerIcons.tsx`，更新消费者、源码逻辑映射和命名门禁；其余样式模块已使用 `*Styles.ts`。
+- 当前下一项：审计 FileEditor/DiagramPreview CSS 选择器和级联依赖，完成两处内联化并保留主题行为。

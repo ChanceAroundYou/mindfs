@@ -9,6 +9,7 @@ const panel = fs.readFileSync(path.join(root, "src/components/task/TaskDetailPan
 const panelHook = fs.readFileSync(path.join(root, "src/components/task/useTaskDetailPanel.ts"), "utf8");
 const stageEditor = fs.readFileSync(path.join(root, "src/components/task/StageEditor.tsx"), "utf8");
 const composer = fs.readFileSync(path.join(root, "src/components/action/composerStyles.tsx"), "utf8");
+const composerIcons = fs.readFileSync(path.join(root, "src/components/action/composerIcons.tsx"), "utf8");
 const composerHeight = fs.readFileSync(path.join(root, "src/components/action/useComposerEditorHeight.ts"), "utf8");
 const tasks = fs.readFileSync(path.join(root, "src/services/task/crud.ts"), "utf8");
 const app = fs.readFileSync(path.join(root, "src/app/useAppStateLayer.ts"), "utf8");
@@ -85,9 +86,10 @@ assert.match(
 );
 
 // 未执行阶段可删除；已执行的不给删除入口。
-// TaskDetailPanel 已归入 components/task/（见 tests/source-map.mjs），composerStyles 在
-// components/action/，所以新路径是 ../action/composerStyles。
-assert.match(panel, /import \{[^}]*TrashIcon[^}]*\} from "\.\.\/action\/composerStyles"/, "delete icon must come from the shared composerStyles set");
+// Styles and SVG components live in separate modules: styles stay in composerStyles.ts,
+// icons are imported from composerIcons.tsx.
+assert.match(panel, /import \{[^}]*TrashIcon[^}]*\} from "\.\.\/action\/composerIcons"/, "delete icon must come from the shared composerIcons set");
+assert.match(composerIcons, /export function TrashIcon/);
 assert.match(panel, /\{!executed && !isCurrent \? \(/, "TaskDetailPanel must offer delete only on unexecuted, non-current stages");
 assert.match(panelHook, /removeTaskStage\(task\.root_id, task\.id, index, nodeId\)/, "TaskDetailPanel must call removeTaskStage");
 assert.match(panel, /requestRemoveStage\(index\)/, "delete button must go through the confirm flow");

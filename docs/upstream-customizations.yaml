@@ -2684,6 +2684,36 @@ groups:
       - "web/tests/naming-convention.test.mjs:naming: component domain types use a domain-specific"
       - web/src/components/action/actionTypes.ts:export type ActionBarProps
 
+  - id: G-BT
+    title: composer 样式与图标职责分离
+    kind: arch
+    symptom: |
+      composerStyles.tsx 同时导出 React.CSSProperties 与 6 个 SVG 组件，样式模块被迫使用 TSX，违反 xxxStyles.ts 纯样式文件规则。
+    why: |
+      将样式保留在 composerStyles.ts，把 JSX 图标移到 composerIcons.tsx；按实际消费者切换图标导入，style-only 调用路径保持不变。
+    boundary: |
+      只分离样式与图标模块并加强命名测试，不更改图标 SVG、样式值、CSS 或交互。
+    tests:
+      - web/tests/task-stage-panel.test.mjs
+      - web/tests/naming-convention.test.mjs
+    files:
+      - docs/agent/rules/frontend/TODO.md
+      - docs/agent/rules/frontend/reviewer-checklist.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - web/src/components/action/composerStyles.ts
+      - web/src/components/action/composerIcons.tsx
+      - web/src/components/action/ActionBarControls.tsx
+      - web/src/components/task/TaskDetailPanel.tsx
+      - web/src/components/editor/PromptEditor.tsx
+      - web/tests/source-map.mjs
+      - web/tests/task-stage-panel.test.mjs
+      - web/tests/naming-convention.test.mjs
+    anchors:
+      - web/src/components/action/composerStyles.ts:composerContainerStyle
+      - web/src/components/action/composerIcons.tsx:TrashIcon
+      - "web/tests/naming-convention.test.mjs:naming: style modules use *Styles.ts"
+
   - id: G-BH
     title: 会话正文块流（Block 存储层 + 轮次身份 turn_id/turn_seq/native_* + S2a 双写 + S2b 读改走块流 + C1/C2 + S2d-2 主日志不再存正文 + S2e pending 身份改用 turn_id）
     kind: fix

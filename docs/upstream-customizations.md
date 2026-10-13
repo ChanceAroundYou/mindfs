@@ -2332,6 +2332,13 @@
 - **针对性测试**：`web/tests/naming-convention.test.mjs` → 组件域类型文件必须使用域名后缀。
 - **边界**：只改文件名和类型导入，不改类型结构与行为。
 
+### G-BT composer 样式与图标职责分离
+
+- **可见症状**：`composerStyles.tsx` 同时导出样式值和图标 JSX，样式文件被迫使用 TSX 后缀，调用方也从样式模块导入图标。
+- **根因与边界**：样式实现移入纯 TypeScript `composerStyles.ts`，六个 JSX 图标移入 `composerIcons.tsx`；调用方按用途分别导入，旧源码守卫逻辑路径映射到两份实现。
+- **针对性测试**：`web/tests/naming-convention.test.mjs` → 样式模块只能用 `*Styles.ts`；`web/tests/task-stage-panel.test.mjs` → TaskDetailPanel 图标来自图标模块、原共享样式约束仍在。
+- **边界**：只分离职责，不改变样式值、SVG 或 UI 行为。
+
 
 ### 总体
 

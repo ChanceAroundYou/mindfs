@@ -79,6 +79,13 @@ test("naming: component domain types use a domain-specific *Types.ts name", () =
   assert.deepEqual(violations, [], `component type filename violations:\n${violations.join("\n")}`);
 });
 
+test("naming: style modules use *Styles.ts and contain no JSX", () => {
+  const violations = walk(SRC)
+    .filter((f) => /Styles\.tsx$/.test(basename(f)))
+    .map((f) => `${f}: style modules must use *Styles.ts`);
+  assert.deepEqual(violations, [], `style filename violations:\n${violations.join("\n")}`);
+});
+
 test("naming: main export matches file name (components/hooks)", () => {
   // 存量多 export 文件白名单（见 .claude/rules/frontend/TODO.md 存量命名违规项）：
   // 这些文件导出多个同级组件/函数，无单一主 export，细拆是 file-size 规则的事。

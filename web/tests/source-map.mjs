@@ -214,6 +214,11 @@ export const MODULES = {
     "src/services/session/sessionTypes.ts",
     "src/services/session/sessionWindow.ts",
   ],
+  // Composer styles were split from their colocated SVG components.
+  "src/components/action/composerStyles.tsx": [
+    "src/components/action/composerStyles.ts",
+    "src/components/action/composerIcons.tsx",
+  ],
   // Update and agent domains: legacy root paths remain public facades.
   "src/services/update.ts": ["src/services/update.ts", "src/services/update/update.ts"],
   "src/services/appUpdate.ts": ["src/services/appUpdate.ts", "src/services/update/appUpdate.ts"],

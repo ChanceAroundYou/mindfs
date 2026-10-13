@@ -8,7 +8,7 @@ to resume their old TODOs or baselines.
 
 | Plan | Status | Next action |
 |---|---|---|
-| [Rule completion rollout](rule-completion-rollout.md) | Active | Normalize stylesheet file names while preserving import APIs and CSS behavior. |
+| [Rule completion rollout](rule-completion-rollout.md) | Active | Inline FileEditor.css and DiagramPreview.css after auditing selectors and cascade dependencies. |
 
 ## Completed or superseded history
 

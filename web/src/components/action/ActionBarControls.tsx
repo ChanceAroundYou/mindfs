@@ -7,7 +7,7 @@ import { getAgentDefaults, strip1MSuffix, resolveEffortOnSwitch, resolveLongCont
 import { appAccentHexToRgba } from "./styleHelpers";
 import { SessionRing } from "./SessionRing";
 import { ShellSelector } from "./ShellSelector";
-import { CancelIcon, PlusIcon, SendIcon, SpinnerIcon } from "./composerStyles";
+import { CancelIcon, PlusIcon, SendIcon, SpinnerIcon } from "./composerIcons";
 import type { PendingAttachment } from "./AttachmentsArea";
 import type { SessionInfo } from "./actionTypes";
 import type { MessageKey } from "../../i18n/index";

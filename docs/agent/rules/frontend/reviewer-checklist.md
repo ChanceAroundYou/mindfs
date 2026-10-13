@@ -13,7 +13,7 @@
 
 ## 黄灯（WARN，建议修后合）
 
-- [ ] 文件名 = 主 export 名；`Utils` 纯函数、`Helpers` 可含 JSX。
+- [ ] 文件名 = 主 export 名；`Utils` 不含 JSX、`Helpers` 可含 JSX；样式模块为 `*Styles.ts` 且不含 JSX。
 - [ ] 类型文件后缀统一：组件域内用 `<domain>Types.ts`，跨域服务类型放 `services/<domain>/types.ts` 或 `shared/`；样式文件用 `xxxStyles.ts` 复数。
 - [ ] 跨组件状态在四层组合持有，业务 hook 只有本地 UI 状态。
 - [ ] WS 更新为增量合并，无整体替换（`setX(data)` 整包替换要能解释）。
