@@ -3282,7 +3282,7 @@ groups:
       - docs/upstream-customizations.yaml
       - web/tests/agent-docs.test.mjs
     anchors:
-      - docs/agent/rules/frontend/TODO.md:硬线 21 个
+      - docs/agent/rules/frontend/TODO.md:硬线 20 个
       - docs/plans/README.md:Rule completion rollout
       - web/tests/agent-docs.test.mjs:every plan is classified in the sole plans index
   - id: G-BZ
@@ -3942,3 +3942,33 @@ groups:
     anchors:
       - web/src/components/account/LoginUpdateNotes.tsx:LoginUpdateNotes
       - web/tests/login-update-notes.test.mjs:login update notes keep their toggle
+
+  - id: G-CT
+    title: Git status branch selector extraction
+    kind: arch
+    symptom: |
+      GitStatusPanel exceeded the frontend 500-line hardline while mixing Git status presentation,
+      branch switching menu JSX, and commit/action controls.
+    why: |
+      Keep branch selection UI independently reviewable while preserving the existing hook as owner
+      of branch fetching and the parent panel as owner of open/switching state.
+    boundary: |
+      Extract only the branch trigger and list presentation. Branch fetch lifecycle remains in
+      useGitStatusPanel; the parent passes the selected branch and switch callback.
+    tests:
+      - web/tests/git-branch-selector.test.mjs
+      - web/tests/git-commit-ime.test.mjs
+      - web/tests/source-map.mjs
+    files:
+      - web/src/components/git/GitStatusPanel.tsx
+      - web/src/components/git/GitBranchSelector.tsx
+      - web/tests/git-branch-selector.test.mjs
+      - web/tests/source-map.mjs
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/components/git/GitBranchSelector.tsx:GitBranchSelector
+      - web/tests/git-branch-selector.test.mjs:delegates branch menu presentation

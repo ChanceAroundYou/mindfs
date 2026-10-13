@@ -20,6 +20,7 @@ import {
   GitIconButton,
 } from "./gitStatusIcons";
 import { useGitStatusPanel } from "./useGitStatusPanel";
+import { GitBranchSelector } from "./GitBranchSelector";
 
 type GitStatusPanelProps = {
   rootId?: string;
@@ -137,129 +138,30 @@ export function GitStatusPanel({
               </svg>
             </span>
             {status?.branch ? (
-              <div
-                ref={branchMenuRef}
-                className={compact ? "mindfs-git-branch-wrap mindfs-git-branch-wrap-compact" : "mindfs-git-branch-wrap"}
-                data-branch-tooltip={branchMenuOpen ? undefined : status.branch}
-                style={{ position: "relative", minWidth: 0, flex: "1 1 auto", maxWidth: "100%" }}
-              >
-                <button
-                  type="button"
-                  className="mindfs-git-branch-button"
-                  aria-label={`当前分支：${status.branch}`}
-                  onClick={() => {
-                    if (enableBranchMenu && rootId && onSwitchBranch) {
-                      setBranchMenuOpen((open) => !open);
-                    }
-                  }}
-                  disabled={!enableBranchMenu || !rootId || !onSwitchBranch}
-                  style={{
-                    border: "none",
-                    background: branchMenuOpen ? "rgba(15, 23, 42, 0.06)" : "transparent",
-                    color: "var(--text-primary)",
-                    borderRadius: "7px",
-                    padding: "3px 6px",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: "4px",
-                    width: "100%",
-                    cursor: enableBranchMenu && rootId && onSwitchBranch ? "pointer" : "default",
-                  }}
-                >
-                  <span className="mindfs-git-branch-label" style={{ fontSize: "12px", fontWeight: 600 }}>
-                    {status.branch}
-                  </span>
-                  {enableBranchMenu && onSwitchBranch ? (
-                    <svg
-                      width="12"
-                      height="12"
-                      viewBox="0 0 20 20"
-                      fill="currentColor"
-                      aria-hidden="true"
-                      style={{
-                        color: "var(--text-secondary)",
-                        flexShrink: 0,
-                        transform: branchMenuOpen ? "rotate(180deg)" : "rotate(0deg)",
-                        transition: "transform 0.15s",
-                      }}
-                    >
-                      <path
-                        fillRule="evenodd"
-                        d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 11.17l3.71-3.94a.75.75 0 1 1 1.08 1.04l-4.25 4.5a.75.75 0 0 1-1.08 0l-4.25-4.5a.75.75 0 0 1 .02-1.06"
-                        clipRule="evenodd"
-                      />
-                    </svg>
-                  ) : null}
-                </button>
-                {enableBranchMenu && branchMenuOpen ? (
-                  <div
-                    style={{
-                      position: "absolute",
-                      top: "calc(100% + 6px)",
-                      left: 0,
-                      minWidth: "180px",
-                      maxWidth: "260px",
-                      maxHeight: "260px",
-                      overflow: "auto",
-                      padding: "6px",
-                      borderRadius: "10px",
-                      border: "1px solid var(--border-color)",
-                      background: "var(--menu-bg)",
-                      boxShadow: "0 12px 30px rgba(15, 23, 42, 0.14)",
-                      zIndex: 25,
-                    }}
-                  >
-                    {branchesLoading ? (
-                      <div style={{ padding: "8px 10px", fontSize: "12px", color: "var(--text-secondary)" }}>{t("git.loading")}</div>
-                    ) : branches.length === 0 ? (
-                      <div style={{ padding: "8px 10px", fontSize: "12px", color: "var(--text-secondary)" }}>{t("git.noBranches")}</div>
-                    ) : branches.map((branch) => {
-                      const active = branch.name === status.branch;
-                      const busy = switchingBranch === branch.name;
-                      return (
-                        <button
-                          key={branch.name}
-                          type="button"
-                          title={branch.name}
-                          disabled={active || !!switchingBranch}
-                          onClick={async () => {
-                            setSwitchingBranch(branch.name);
-                            try {
-                              await onSwitchBranch?.(branch.name);
-                              setBranchMenuOpen(false);
-                            } finally {
-                              setSwitchingBranch("");
-                            }
-                          }}
-                          style={{
-                            width: "100%",
-                            border: "none",
-                            background: active ? "var(--selection-bg)" : "transparent",
-                            color: active ? "var(--accent-color)" : "var(--text-primary)",
-                            borderRadius: "8px",
-                            padding: "8px 10px",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "space-between",
-                            gap: "12px",
-                            textAlign: "left",
-                            cursor: active || switchingBranch ? "default" : "pointer",
-                            fontSize: "12px",
-                            opacity: switchingBranch && !busy ? 0.58 : 1,
-                          }}
-                        >
-                          <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                            {branch.name}
-                          </span>
-                          <span style={{ fontSize: "11px", color: "var(--text-secondary)", flexShrink: 0 }}>
-                            {busy ? "..." : active ? "✓" : ""}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                ) : null}
-              </div>
+              <GitBranchSelector
+                branch={status.branch}
+                compact={compact}
+                enabled={!!(enableBranchMenu && rootId && onSwitchBranch)}
+                menuRef={branchMenuRef}
+                isOpen={branchMenuOpen}
+                branches={branches}
+                loading={branchesLoading}
+                switchingBranch={switchingBranch}
+                onToggle={() => {
+                  if (enableBranchMenu && rootId && onSwitchBranch) {
+                    setBranchMenuOpen((open) => !open);
+                  }
+                }}
+                onSwitch={async (branchName) => {
+                  setSwitchingBranch(branchName);
+                  try {
+                    await onSwitchBranch?.(branchName);
+                    setBranchMenuOpen(false);
+                  } finally {
+                    setSwitchingBranch("");
+                  }
+                }}
+              />
             ) : null}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "1px", flex: "0 0 auto", minWidth: "fit-content" }}>

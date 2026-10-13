@@ -378,7 +378,7 @@ export const MODULES = {
   "src/components/ProjectAddPopover.tsx": ["src/components/file/ProjectAddPopover.tsx", "src/components/file/ProjectAddModePanel.tsx", "src/components/file/projectAddStyles.ts", "src/components/file/PathBreadcrumb.tsx"],
   "src/components/CompactUploadProgress.tsx": ["src/components/file/CompactUploadProgress.tsx"],
   "src/components/SymlinkBadge.tsx": ["src/components/file/SymlinkBadge.tsx"],
-  "src/components/GitStatusPanel.tsx": ["src/components/git/GitStatusPanel.tsx"],
+  "src/components/GitStatusPanel.tsx": ["src/components/git/GitStatusPanel.tsx", "src/components/git/GitBranchSelector.tsx"],
   "src/components/GitDiffViewer.tsx": [
     "src/components/git/GitDiffViewer.tsx",
     "src/components/git/useGitDiffViewer.ts",

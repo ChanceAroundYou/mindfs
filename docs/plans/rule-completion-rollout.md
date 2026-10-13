@@ -77,3 +77,5 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 - 下一项：继续按当前代码审阅剩余前端硬线文件，并开始复核后台 TODO 的真实行数基线。
 - 已完成：将 Login 更新说明折叠区提取为 `LoginUpdateNotes`；show/hide 状态、版本更新动作与数据仍由 Login/useLogin 持有。Login 从 513 行降至 463 行，source-map 与切换/文案守卫同步更新；TypeScript、专项和治理链接测试通过。硬线剩余 21 项。
 - 下一项：继续前端硬线拆分，并在进入 backend TODO 前按当前树重算后端文件清单及模块边界。
+- 已完成：将 `GitStatusPanel` 的分支按钮和分支列表提取到 `GitBranchSelector`；分支列表查询仍在现有 hook，切换 busy/open 状态由父面板持有。父组件从 532 行降至 434 行；TypeScript、Git 分支专项和 commit IME 测试通过。硬线剩余 20 项。
+- 下一项：继续剩余前端硬线文件；完成前端事项后，按当前文件系统基线复核 backend TODO。
