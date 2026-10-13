@@ -46,6 +46,10 @@ test("agent entrypoints import the shared instructions and indexes", () => {
   assert.ok(instructions.includes("docs/agent/rules/README.md"));
   assert.ok(instructions.includes("docs/plans/README.md"));
   assert.ok(read(".claude/rules/README.md").includes("docs/agent/rules/"));
+  const claudeSkill = read(".claude/skills/upstream-merge/SKILL.md");
+  assert.ok(claudeSkill.includes("sudo systemctl restart mindfs"));
+  assert.ok(!claudeSkill.includes("systemctl --user restart mindfs.service"));
+  assert.ok(!claudeSkill.includes("export PATH="));
 });
 
 test("agent rule and plan index links resolve", () => {

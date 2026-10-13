@@ -2519,11 +2519,13 @@ groups:
       - docs/agent/rules/
       - docs/plans/README.md
       - docs/plans/agent-governance-and-repoint.md
+      - .claude/skills/upstream-merge/SKILL.md
       - web/tests/agent-docs.test.mjs
     anchors:
       - AGENTS.md:Agent 指令入口与规范
       - docs/agent/rules/README.md:执行方式
       - docs/plans/README.md:Active
+      - .claude/skills/upstream-merge/SKILL.md:sudo systemctl restart mindfs
 
   - id: G-BN
     title: 多 agent 会话按指定 Claude binding repoint

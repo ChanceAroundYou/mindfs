@@ -2293,7 +2293,7 @@
 ### G-BM Agent 中立的规则入口与计划索引
 
 - **可见症状**：Codex、Claude Code、Gemini CLI 等 agent 可能加载不同入口，遗漏规范或依照过期计划执行；规则副本漂移后会产生相互矛盾的要求。
-- **根因与边界**：以 `AGENTS.md` 为共享操作/架构入口，`docs/agent/rules/` 为代码规范正文，工具入口只导入共用文件；`.claude/` 继续承载 Claude 专属 skills/runtime 配置。`docs/plans/README.md` 是唯一计划状态索引，历史计划不再隐式充当待办。
+- **根因与边界**：以 `AGENTS.md` 为共享操作/架构入口，`docs/agent/rules/` 为代码规范正文，工具入口只导入共用文件；`.claude/` 继续承载 Claude 专属 skills/runtime 配置。检查并修正上游合并 skill 中与仓库节点表冲突的 PATH 注入和本机 systemd 用户单元说明。`docs/plans/README.md` 是唯一计划状态索引，历史计划不再隐式充当待办。
 - **针对性测试**：`web/tests/agent-docs.test.mjs` → Claude/Gemini 入口导入共用规范与索引、规则和计划索引中的相对链接可达、每份计划都在唯一索引分类。
 - **边界**：规则文档的唯一来源与 agent 加载入口、计划索引维护。具体代码规范内容仍由对应规则文件负责。
 

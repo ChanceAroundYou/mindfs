@@ -77,7 +77,6 @@ Scope: fixup"`
 ### 4. 门禁（worktree 内，不过不接回）
 
 ```bash
-export PATH="/home/xiaokubao/.local/share/go/bin:$PATH"
 go vet ./... && go test ./...  # 含 server/internal/session -run TestManager
 ./web/node_modules/.bin/tsc --noEmit -p web/tsconfig.json
 node --test web/tests/*.test.mjs  # 18+，含 upstream-restore.test.mjs
@@ -110,12 +109,12 @@ git status --short --branch  # 确认 main 干净
 git fetch ../mindfs-merge-X HEAD:merge-X
 git merge --ff-only merge-X
 git branch -f merge-X main  # 对齐
-rm -f ../mindfs-merge-X/web/node_modules   # 先摘软链，避免 remove 时误伤
+unlink ../mindfs-merge-X/web/node_modules  # 先摘软链，避免 remove 时误伤
 git worktree remove ../mindfs-merge-X
 git branch -D local-main merge-X           # 清理临时分支（回滚锚点是 backup/main-pre-X）
 make install  # 覆盖 ~/.local/bin/mindfs + ~/.local/share/mindfs/web
-# 你侧
-systemctl --user restart mindfs.service
+# 本机由用户执行；本机是 system 单元，Agent 不得代为重启（见 AGENTS.md）
+sudo systemctl restart mindfs
 # 手测 5 项：⋮→空闲释放 72h / 星徽幻影冷抽屉 3 灰条 / 新项目 ~/.mindfs 切换 / 关联文件 +lines / 重连不丢 seq
 git push origin main  # 普通 push，双 parent 可 revert -m 1 <M>
 ```
