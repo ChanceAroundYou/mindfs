@@ -32,7 +32,7 @@ app/ (11): useProjectLifecycle 885 · useAppSessionLayer 876
            useAppDomainLayer 864 · useAppStateLayer 816 · useSessionLifecycle 741
            useManagedRoots 709 · useSendMessage 686 · useAppViewComposition 661
            useSessionStreamCache 645 · useActionHandlers 611 · realtimeWsHandlers 570
-components/ (17): FileTree 965 · AgentConfigPopover 788 · useActionBar 722 · SessionPane 682
+components/ (17): FileTree 702 · AgentConfigPopover 788 · useActionBar 722 · SessionPane 682
            SessionViewer 646 · TaskBoardView 645 · SessionCard 642 · DefaultListViewMenu 585
            ScheduledAgentTaskDialog 572 · AgentSelector 563 · DocumentViewer 537
            GitStatusPanel 532 · useMarkdownViewer 527 · ProjectAddPopover 527

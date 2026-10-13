@@ -1,6 +1,6 @@
 import type { AppearanceMode } from "../../shared/appearanceTypes";
 import type { Locale, MessageKey } from "../../i18n/index";
-import type { DirectorySortMode } from "../../services/prefs/directorySort";
+import type { DirectorySortMode } from "../../shared/directorySort";
 
 export const APPEARANCE_OPTIONS: Array<{ value: AppearanceMode; labelKey: MessageKey }> = [
   { value: "dark", labelKey: "appearance.dark" },

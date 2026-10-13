@@ -3466,3 +3466,35 @@ groups:
       - web/src/shared/sendShortcut.ts:shortcutFromKeyboardEvent
       - web/src/services/prefs/sendShortcut.ts:formatSendShortcut
       - web/tests/shared-send-shortcut.test.mjs:normalize, validate, match, and format
+  - id: G-CG
+    title: FileTree settings presenter and directory sort shared logic
+    kind: arch
+    symptom: |
+      FileTree embeds a large settings-menu JSX block, and the presenter imports directory sort options
+      through a preferences service even though sorting is pure shared logic.
+    why: |
+      Extract the cohesive settings presenter from the large FileTree view and make shared own directory
+      sort types, options, and algorithm; retain the old service path as a compatibility facade.
+    boundary: |
+      Keep menu state ownership and all labels/actions supplied by the caller. Preserve directory-first
+      ordering, locale-aware numeric name sorting, mtime/size ordering, and existing preference persistence.
+    tests:
+      - web/tests/shared-directory-sort.test.mjs
+    files:
+      - web/src/components/file/FileTree.tsx
+      - web/src/components/file/FileTreeSettingsMenu.tsx
+      - web/src/components/file/fileTreeTypes.ts
+      - web/src/components/file/fileTreeMenuOptions.ts
+      - web/src/shared/directorySort.ts
+      - web/src/services/prefs/directorySort.ts
+      - web/tests/source-map.mjs
+      - web/tests/shared-directory-sort.test.mjs
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/components/file/FileTreeSettingsMenu.tsx:FileTreeSettingsMenu
+      - web/src/shared/directorySort.ts:sortDirectoryEntries
+      - web/tests/shared-directory-sort.test.mjs:directory sorting stays pure

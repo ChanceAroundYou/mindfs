@@ -49,3 +49,5 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 - 已完成：font size 的纯 region 类型、边界常量和步进算法迁入 `shared/fontSize.ts`；`fontSize` service 保留存储职责并再导出原 API，FileTree presenter 改用 shared 函数。
 - 已完成：发送快捷键类型、键盘事件解析、匹配与显示格式化迁入 `shared/sendShortcut.ts`；service 只保留 localStorage 读写并兼容再导出，FileTree view 不再依赖 `sendShortcut` service。
 - 当前下一项：继续 FileTree 拆分，清理剩余 view 对 services 的依赖与菜单组合职责，再按实测行数销减硬线清单。
+- 已完成：将 FileTree 设置菜单的呈现 JSX 提取到 `FileTreeSettingsMenu.tsx`；目录排序类型、选项与纯算法迁入 `shared/directorySort.ts`，原 preferences service 保留兼容 facade。`FileTree.tsx` 实测降至 702 行，仍超过硬线，继续拆分；没有提前销项。新增排序纯度、排序语义、facade 与依赖方向测试。
+- 当前下一项：继续拆分 FileTree 的 settings/menu 组合与其余 view 逻辑，按实际行数和依赖方向验证，不改变 App.tsx 组合根。

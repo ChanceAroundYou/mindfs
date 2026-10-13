@@ -162,6 +162,7 @@ export const MODULES = {
   // P6 拆分：FileTree.tsx → + icons.tsx（图标子组件）
   "src/components/file/FileTree.tsx": [
     "src/components/file/FileTree.tsx",
+    "src/components/file/FileTreeSettingsMenu.tsx",
     "src/components/file/FileTreeRefreshButton.tsx",
     "src/components/file/useAgentConfigFlowTransitions.ts",
     "src/components/file/fileTreeTypes.ts",
@@ -329,6 +330,7 @@ export const MODULES = {
   "src/components/WorktreeBranchSelector.tsx": ["src/components/task/WorktreeBranchSelector.tsx"],
   "src/components/FileTree.tsx": [
     "src/components/file/FileTree.tsx",
+    "src/components/file/FileTreeSettingsMenu.tsx",
     "src/components/file/FileTreeRefreshButton.tsx",
     "src/components/file/useAgentConfigFlowTransitions.ts",
     "src/components/file/fileTreeTypes.ts",
@@ -451,6 +453,7 @@ export const MODULES = {
   "src/services/sendShortcut.ts": ["src/services/prefs/sendShortcut.ts"],
   "src/services/onboarding.ts": ["src/services/prefs/onboarding.ts"],
   "src/services/directorySort.ts": ["src/services/prefs/directorySort.ts"],
+  "src/shared/directorySort.ts": ["src/shared/directorySort.ts"],
   "src/services/storage.ts": ["src/services/prefs/storage.ts"],
   "src/services/context.ts": ["src/services/prefs/context.ts"],
   "src/services/scope.ts": ["src/shared/scope.ts"],

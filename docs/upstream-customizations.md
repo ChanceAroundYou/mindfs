@@ -2688,3 +2688,10 @@
 - **根因与边界**：将快捷键类型、解析、校验、匹配和格式化迁入 `shared/sendShortcut.ts`；service 只负责存取配置并继续再导出既有 API。
 - **针对性测试**：`web/tests/shared-send-shortcut.test.mjs`、`web/tests/send-shortcut.test.mjs` → 覆盖修饰键过滤、按键归一化、组合匹配、显示格式、持久化与 facade。
 - **边界**：保持 modifier 规则、键名与展示顺序及持久化 key 不变。
+
+### G-CG FileTree settings presenter 与目录排序 shared 逻辑
+
+- **可见症状**：大型 `FileTree.tsx` 同时内嵌设置菜单 JSX；纯目录排序选项和算法经 preferences service 暴露给 view。
+- **根因与边界**：将设置菜单 presenter 提取到 `FileTreeSettingsMenu.tsx`，将目录排序类型、选项与纯算法归入 `shared/directorySort.ts`；原 service 路径保留 facade。
+- **针对性测试**：`web/tests/shared-directory-sort.test.mjs` → 验证排序纯度、目录优先、排序模式、旧 facade 与 FileTree presenter 的 shared 依赖。
+- **边界**：菜单状态仍由调用方持有，排序偏好持久化和原有排序语义不变。

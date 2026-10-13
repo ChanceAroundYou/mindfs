@@ -15,8 +15,10 @@ test("font size adjustment stays pure and clamps to the shared bounds", () => {
 test("FileTree uses shared font-size behavior and the service facade preserves exports", () => {
   const root = new URL("../src/", import.meta.url);
   const view = rawReadFileSync(new URL("components/file/FileTree.tsx", root), "utf8");
+  const settings = rawReadFileSync(new URL("components/file/FileTreeSettingsMenu.tsx", root), "utf8");
   const service = rawReadFileSync(new URL("services/prefs/fontSize.ts", root), "utf8");
-  assert.match(view, /from "\.\.\/\.\.\/shared\/fontSize"/);
-  assert.doesNotMatch(view, /from "\.\.\/\.\.\/services\/prefs\/fontSize"/);
+  assert.match(settings, /from "\.\.\/\.\.\/shared\/fontSize"/);
+  assert.doesNotMatch(settings, /from "\.\.\/\.\.\/services\/prefs\/fontSize"/);
+  assert.doesNotMatch(view, /services\/prefs\/fontSize/);
   assert.match(service, /export \{[\s\S]*changeFontSize[\s\S]*\} from "\.\.\/\.\.\/shared\/fontSize"/);
 });

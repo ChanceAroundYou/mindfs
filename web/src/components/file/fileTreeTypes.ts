@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { DirectorySortMode, FileEntry } from "../../services/prefs/directorySort";
+import type { DirectorySortMode, FileEntry } from "../../shared/directorySort";
 import type { SendShortcut } from "../../services/prefs/sendShortcut";
 import type { FontSizePreferences } from "../../services/prefs/fontSize";
 
