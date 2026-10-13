@@ -3280,7 +3280,7 @@ groups:
       - web/tests/agent-docs.test.mjs
     anchors:
       - docs/agent/rules/frontend/TODO.md:硬线 30 个
-      - docs/plans/README.md:拆分 frontend TODO 的 30 个硬线文件
+      - docs/plans/README.md:Rule completion rollout
       - web/tests/agent-docs.test.mjs:every plan is classified in the sole plans index
   - id: G-BZ
     title: 将 plan 前缀逻辑移出 action view
@@ -3340,3 +3340,26 @@ groups:
       - web/src/shared/projectAddTypes.ts:ProjectAddMode
       - web/src/app/useRealtimeEventsContext.ts:shared/projectAddTypes
       - web/tests/project-add-types.test.mjs:app logic importing the view
+  - id: G-CB
+    title: 将新项目 meta 偏好更新移入 FileTree logic
+    kind: arch
+    symptom: |
+      FileTree JSX 内联调用 preferences service 并管理乐观更新、失败回滚与 busy 状态，view 同时承担业务副作用。
+    why: |
+      将新项目 meta 位置切换封装在 colocate preferences hook，保留原有更新前切换、失败恢复、请求完成清 busy 的行为，
+      让菜单 view 只触发动作。
+    boundary: |
+      仅移动新项目 meta 位置偏好更新；初始加载仍由 effects hook 负责，其它 FileTree 职责留待后续拆分。
+    tests:
+      - web/tests/file-tree-meta-location-action.test.mjs
+    files:
+      - web/src/components/file/FileTree.tsx
+      - web/src/components/file/useFileTreePreferences.ts
+      - web/tests/file-tree-meta-location-action.test.mjs
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/components/file/useFileTreePreferences.ts:toggleNewProjectMetaLocation
+      - web/tests/file-tree-meta-location-action.test.mjs:FileTree delegates new-project meta preference updates to its logic hook

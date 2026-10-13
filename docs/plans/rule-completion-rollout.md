@@ -43,4 +43,5 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 - 已完成：将主要 session stream 分支（节点/会话归属、活动时间、pending attach、消息块分发、compact 与结束/error 处理）抽为 `realtimeWsSessionStream.ts`；回合收尾与 replay 编排仍留在 hook，避免跨边界改变重锚定顺序。源码映射与针对性守卫同步更新，hook 从 1003 行逐步降至 392 行，低于 500 行硬线。
 - 已完成：`useSendMessage.ts` 的 plan 前缀逻辑迁入 `shared/planCommand.ts`，app hook 不再导入 action view helper；专项测试覆盖前缀检测、兼容返回值、剥离与拼装。`useSessionLifecycle.ts` 的未使用 `SessionViewer` import 已删除；TODO 将这两项依赖方向问题销项。
 - 已完成：`ProjectAddMode` 与 `GitHubImportState` 移入 `shared/projectAddTypes.ts`，`useRealtimeEvents`、其上下文与 WS handler 改为依赖共享类型；组件保留 type re-export 兼容现有 UI 消费者。专项测试守住依赖方向与 facade。
-- 当前下一项：继续拆分剩余硬线文件，并审计 FileTree 对 services 的直接依赖；logic/view 依赖方向仍有 3 项待处理。
+- 已完成：把「新项目 meta 位置」偏好更新从 `FileTree` JSX 移入 `useFileTreePreferences`，保留乐观更新、失败回滚和 busy 状态；增加针对性守卫，FileTree 仍有其它 services/import 与职责需继续拆分。
+- 当前下一项：继续 FileTree 拆分，先清理菜单/偏好职责和剩余 view 对 services 的调用，再按实测行数销减硬线清单。

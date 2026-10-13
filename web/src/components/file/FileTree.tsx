@@ -103,7 +103,6 @@ import {
   fetchNewProjectMetaLocationPreference,
   fetchSessionNamingPreference,
   updateIdleSessionResourceReleasePreference,
-  updateNewProjectMetaLocationPreference,
   updateSessionNamingPreference,
   type NewProjectMetaLocation,
 } from "../../services/prefs/preferences";
@@ -326,13 +325,14 @@ function FileTreeInner({
 
 
 
-  const { openSessionNaming, saveSessionNaming, openIdleSessionResourceRelease, openSendShortcut, saveSendShortcut, saveIdleSessionResourceRelease } = useFileTreePreferences({
+  const { openSessionNaming, saveSessionNaming, openIdleSessionResourceRelease, openSendShortcut, saveSendShortcut, saveIdleSessionResourceRelease, toggleNewProjectMetaLocation } = useFileTreePreferences({
     t, rootId, sendShortcut, sendShortcutDraft, onSendShortcutChange, agentConfigFlowVersion,
     setIdleReleaseOpen, setAgentConfigNotice, setAgentConfigFlow, setAgentLifecycleOpen, setIsMenuOpen,
     setSessionNamingOpen, setSessionNamingBusy, setSessionNamingError, setSessionNamingAgents,
     setSessionNamingAgent, setSessionNamingModel, setSessionNamingDisabled, sessionNamingAgent,
     sessionNamingBusy, sessionNamingDisabled, sessionNamingModel, setIdleReleaseBusy, setIdleReleaseError,
     setIdleReleaseHours, idleReleaseBusy, idleReleaseHours, setSendShortcutDraft, setSendShortcutError, setSendShortcutOpen,
+    newProjectMetaLocation, setNewProjectMetaLocation, newProjectMetaLocationBusy, setNewProjectMetaLocationBusy,
   });
 
   useAgentConfigSwitchRequest({ agentConfigSwitchRequest, rootId, t, setAgentLifecycleOpen, agentConfigFlowVersion, setAgentConfigNotice, setAgentConfigFlow, setAgentConfigStep, setAgentConfigAgent, setAgentConfigAddTab, setAgentConfigSwitchTab, setAgentConfigName, setAgentConfigFileSourcesBody, setAgentConfigEnvBody, setAgentAPIProviderName, setAgentAPIProviderBaseURL, setAgentAPIProviderAPIKey, setAgentConfigBackups, setAgentAPIProviders, setSelectedAgentConfigID, setSelectedAgentAPIProviderID, setAgentConfigSwitchSelection, setAgentConfigPreferredProviderIDs, setAgentConfigConfirmMessage, setAgentConfigError, setAgentConfigRestartingAgent, setIsMenuOpen, setAgentConfigBusy, setAgentConfigAgents });
@@ -766,17 +766,7 @@ function FileTreeInner({
               <button
                 type="button"
                 disabled={newProjectMetaLocationBusy}
-                onClick={() => {
-                  if (newProjectMetaLocationBusy) return;
-                  const previous = newProjectMetaLocation;
-                  const next = previous === "home" ? "project" : "home";
-                  setNewProjectMetaLocation(next);
-                  setNewProjectMetaLocationBusy(true);
-                  updateNewProjectMetaLocationPreference(next)
-                    .then(setNewProjectMetaLocation)
-                    .catch(() => setNewProjectMetaLocation(previous))
-                    .finally(() => setNewProjectMetaLocationBusy(false));
-                }}
+                onClick={() => { void toggleNewProjectMetaLocation(); }}
                 style={{
                   width: "100%",
                   border: "none",

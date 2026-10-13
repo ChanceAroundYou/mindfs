@@ -2648,3 +2648,11 @@
 - **根因与边界**：把 `ProjectAddMode` 和 `GitHubImportState` 放入 `shared/projectAddTypes.ts`；实时事件逻辑直接使用共享类型，Popover 保留类型再导出供原 UI 消费者使用。
 - **针对性测试**：`web/tests/project-add-types.test.mjs` → 确认 shared 类型不依赖 view/service，三个 realtime logic 模块均从 shared 导入，Popover 仍提供类型再导出。
 - **边界**：只移动类型定义，不改变字段、事件 payload 或项目创建行为。
+
+
+### G-CB 将新项目 meta 偏好更新移入 FileTree logic
+
+- **可见症状**：点击文件树菜单切换新项目 meta 位置时，view 直接调用 preferences service 并控制乐观更新和错误回滚。
+- **根因与边界**：将该动作移入 `useFileTreePreferences`，view 只触发 callback；保留先更新本地值、请求失败回滚、完成后清 busy 的顺序。
+- **针对性测试**：`web/tests/file-tree-meta-location-action.test.mjs` → 守住 JSX 不再调用 service，logic hook 负责请求、失败恢复与 busy 收尾。
+- **边界**：只移动新项目 meta 位置切换动作；其它 FileTree 逻辑与 service 引用待后续拆分。

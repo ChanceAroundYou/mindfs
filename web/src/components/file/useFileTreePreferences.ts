@@ -1,10 +1,10 @@
 import React from "react";
 import { fetchAgents } from "../../services/agents";
 import { getRootNodeId } from "../../services/net/rootNode";
-import { fetchIdleSessionResourceReleasePreference, fetchSessionNamingPreference, updateIdleSessionResourceReleasePreference, updateSessionNamingPreference } from "../../services/prefs/preferences";
+import { fetchIdleSessionResourceReleasePreference, fetchSessionNamingPreference, updateIdleSessionResourceReleasePreference, updateNewProjectMetaLocationPreference, updateSessionNamingPreference } from "../../services/prefs/preferences";
 
 export function useFileTreePreferences(ctx: any) {
-  const { t, rootId, sendShortcut, sendShortcutDraft, onSendShortcutChange, agentConfigFlowVersion, setIdleReleaseOpen, setAgentConfigNotice, setAgentConfigFlow, setAgentLifecycleOpen, setIsMenuOpen, setSessionNamingOpen, setSessionNamingBusy, setSessionNamingError, setSessionNamingAgents, setSessionNamingAgent, setSessionNamingModel, setSessionNamingDisabled, sessionNamingAgent, sessionNamingBusy, sessionNamingDisabled, sessionNamingModel, setIdleReleaseBusy, setIdleReleaseError, setIdleReleaseHours, idleReleaseBusy, idleReleaseHours, setSendShortcutDraft, setSendShortcutError, setSendShortcutOpen } = ctx;
+  const { t, rootId, sendShortcut, sendShortcutDraft, onSendShortcutChange, agentConfigFlowVersion, setIdleReleaseOpen, setAgentConfigNotice, setAgentConfigFlow, setAgentLifecycleOpen, setIsMenuOpen, setSessionNamingOpen, setSessionNamingBusy, setSessionNamingError, setSessionNamingAgents, setSessionNamingAgent, setSessionNamingModel, setSessionNamingDisabled, sessionNamingAgent, sessionNamingBusy, sessionNamingDisabled, sessionNamingModel, setIdleReleaseBusy, setIdleReleaseError, setIdleReleaseHours, idleReleaseBusy, idleReleaseHours, setSendShortcutDraft, setSendShortcutError, setSendShortcutOpen, newProjectMetaLocation, setNewProjectMetaLocation, newProjectMetaLocationBusy, setNewProjectMetaLocationBusy } = ctx;
 const openSessionNaming = React.useCallback(() => {
   setIdleReleaseOpen(false);
   agentConfigFlowVersion.current += 1;
@@ -103,5 +103,21 @@ const saveIdleSessionResourceRelease = React.useCallback(async () => {
     setIdleReleaseBusy(false);
   }
 }, [idleReleaseBusy, idleReleaseHours, t]);
-  return { openSessionNaming, saveSessionNaming, openIdleSessionResourceRelease, openSendShortcut, saveSendShortcut, saveIdleSessionResourceRelease };
+
+const toggleNewProjectMetaLocation = React.useCallback(async () => {
+  if (newProjectMetaLocationBusy) return;
+  const previous = newProjectMetaLocation;
+  const next = previous === "home" ? "project" : "home";
+  setNewProjectMetaLocation(next);
+  setNewProjectMetaLocationBusy(true);
+  try {
+    setNewProjectMetaLocation(await updateNewProjectMetaLocationPreference(next));
+  } catch {
+    setNewProjectMetaLocation(previous);
+  } finally {
+    setNewProjectMetaLocationBusy(false);
+  }
+}, [newProjectMetaLocation, newProjectMetaLocationBusy]);
+
+  return { openSessionNaming, saveSessionNaming, openIdleSessionResourceRelease, openSendShortcut, saveSendShortcut, saveIdleSessionResourceRelease, toggleNewProjectMetaLocation };
 }

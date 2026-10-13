@@ -8,7 +8,7 @@ to resume their old TODOs or baselines.
 
 | Plan | Status | Next action |
 |---|---|---|
-| [Rule completion rollout](rule-completion-rollout.md) | Active | 拆分 frontend TODO 的 30 个硬线文件，并继续清理 logic/view 依赖方向。 |
+| [Rule completion rollout](rule-completion-rollout.md) | Active | 继续 FileTree 的逻辑/view 拆分，再按实测前端 TODO 推进其余硬线文件。 |
 
 ## Completed or superseded history
 
