@@ -1,0 +1,184 @@
+import type { ExchangeAux } from "../services/session";
+import { normalizeToolCall, type TimelineItem } from "./sessionBlocks";
+import type { ExchangeLike } from "./sessionTimeline";
+import { stableTimelineID } from "./stableTimelineID";
+
+function assistantSegmentItem(
+  index: number,
+  ex: ExchangeLike,
+  content: string,
+  segmentIndex: number,
+  includeContextWindow: boolean,
+): TimelineItem | null {
+  if (!content) {
+    return null;
+  }
+  return {
+    // Content and timestamps change during streaming. Identity belongs to the
+    // exchange/segment, so React and virtual measurements survive each chunk.
+    id: `assistant:${index}:${segmentIndex}`,
+    type: "assistant_text",
+    content,
+    timestamp: ex.timestamp,
+    agent: ex.agent,
+    model: ex.model,
+    modelDisplayName: ex.model_display_name,
+    effort: ex.effort,
+    fastService: ex.fast_service,
+    seq: ex.seq,
+    contextWindow: includeContextWindow ? ex.context_window : undefined,
+    tokenUsage: includeContextWindow ? ex.token_usage : undefined,
+  };
+}
+
+export function buildAssistantTimeline(
+  ex: ExchangeLike,
+  index: number,
+  auxList: ExchangeAux[],
+): TimelineItem[] {
+  const content = ex.content || "";
+  if (!auxList.length) {
+    const single = assistantSegmentItem(index, ex, content, 0, true);
+    return single ? [single] : [];
+  }
+
+  const lines = content === "" ? [] : content.split("\n");
+  const totalLines = lines.length;
+  const out: TimelineItem[] = [];
+  const normalizedAux = auxList.map((aux, auxIndex) => ({
+    ...aux,
+    auxIndex,
+    line: Math.max(0, Math.min(totalLines, Number(aux.line || 0))),
+  }));
+  normalizedAux.sort((left, right) => {
+    if (left.line !== right.line) {
+      return left.line - right.line;
+    }
+    return left.auxIndex - right.auxIndex;
+  });
+
+  let emittedLines = 0;
+  let segmentIndex = 0;
+  for (const aux of normalizedAux) {
+    if (aux.line > emittedLines) {
+      const segment = assistantSegmentItem(
+        index,
+        ex,
+        lines.slice(emittedLines, aux.line).join("\n"),
+        segmentIndex,
+        false,
+      );
+      if (segment) {
+        out.push(segment);
+        segmentIndex += 1;
+      }
+      emittedLines = aux.line;
+    }
+    if (aux.thought) {
+      out.push({
+        id:
+          aux.thought_id ||
+          stableTimelineID(
+            "thought",
+            index * 1000 + segmentIndex,
+            aux.thought,
+            ex.timestamp,
+            ex.agent,
+          ),
+        type: "thought",
+        content: aux.thought,
+      });
+      segmentIndex += 1;
+    } else if (aux.plan) {
+      out.push({
+        id:
+          aux.plan.id ||
+          stableTimelineID(
+            "plan",
+            index * 1000 + segmentIndex,
+            aux.plan.content || "",
+            ex.timestamp,
+            ex.agent,
+          ),
+        type: "plan",
+        planUpdate: aux.plan,
+        timestamp: ex.timestamp,
+      });
+      segmentIndex += 1;
+    } else if (aux.todo) {
+      out.push({
+        id: stableTimelineID(
+          "todo",
+          index * 1000 + segmentIndex,
+          JSON.stringify(aux.todo),
+          ex.timestamp,
+          ex.agent,
+        ),
+        type: "todo",
+        todoUpdate: aux.todo,
+        timestamp: ex.timestamp,
+      });
+      segmentIndex += 1;
+    } else if (aux.compact) {
+      out.push({
+        id:
+          aux.compact.id ||
+          stableTimelineID(
+            "compact",
+            index * 1000 + segmentIndex,
+            JSON.stringify(aux.compact),
+            ex.timestamp,
+            ex.agent,
+          ),
+        type: "compact",
+        compactNotice: aux.compact,
+        timestamp: ex.timestamp,
+      });
+      segmentIndex += 1;
+    } else if (aux.toolcall) {
+      const normalizedTool = normalizeToolCall(aux.toolcall);
+      out.push({
+        id:
+          normalizedTool.callId ||
+          stableTimelineID(
+            "tool",
+            index * 1000 + segmentIndex,
+            JSON.stringify(normalizedTool),
+            ex.timestamp,
+            ex.agent,
+          ),
+        type: "tool",
+        toolCall: normalizedTool,
+      });
+      segmentIndex += 1;
+    }
+  }
+
+  if (emittedLines < totalLines) {
+    const segment = assistantSegmentItem(
+      index,
+      ex,
+      lines.slice(emittedLines).join("\n"),
+      segmentIndex,
+      true,
+    );
+    if (segment) {
+      out.push(segment);
+      segmentIndex += 1;
+    }
+  } else {
+    for (let i = out.length - 1; i >= 0; i -= 1) {
+      const item = out[i];
+      if (item.type === "assistant_text") {
+        out[i] = {
+          ...item,
+          contextWindow: ex.context_window,
+          tokenUsage: ex.token_usage,
+        };
+        break;
+      }
+    }
+  }
+
+  return out;
+}

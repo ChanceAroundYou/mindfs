@@ -49,6 +49,8 @@ function loadModule(relPath) {
       // 变成「测了一个假模块」。
       if (name === "./sessionBlocks") return loadModule("hooks/sessionBlocks.ts");
       if (name === "./sessionTimeline") return loadModule("hooks/sessionTimeline.ts");
+      if (name === "./sessionAssistantTimeline") return loadModule("hooks/sessionAssistantTimeline.ts");
+      if (name === "./stableTimelineID") return loadModule("hooks/stableTimelineID.ts");
       throw new Error(`unexpected require: ${name}`);
     },
     console,

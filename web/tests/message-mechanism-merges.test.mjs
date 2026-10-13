@@ -391,14 +391,15 @@ test("【红·⑮d】context_window 两处必须分工明确（按 exchange 优�
   //   · `buildAssistantTimeline` 贴的是**该 exchange 自己的** `context_window`（每轮真值）；
   //   · `applySessionContextWindow` 用**会话级** `context_window` 兜底，只在行上缺字段时填。
   // 删掉兜底会让「服务端早期没记 per-exchange 的那类行」永远没有 token 徽标。
-  const file = readFileSync(path.join(srcRoot, "hooks/sessionTimeline.ts"), "utf8");
+  const exchangeFile = readFileSync(path.join(srcRoot, "hooks/sessionAssistantTimeline.ts"), "utf8");
+  const fallbackFile = readFileSync(path.join(srcRoot, "hooks/sessionTimeline.ts"), "utf8");
   assert.match(
-    file,
+    exchangeFile,
     /contextWindow: ex\.context_window,/,
     "按 exchange 的那一路（优先级更高）missing",
   );
   assert.match(
-    file,
+    fallbackFile,
     /if \(\s*item\.contextWindow\?\.totalTokens &&\s*item\.contextWindow\?\.modelContextWindow\s*\) \{\s*\n\s*return items;/,
     "会话级兜底必须**只在缺失时**填 —— 不得覆盖按 exchange 的那份真值",
   );

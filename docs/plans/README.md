@@ -8,7 +8,7 @@ to resume their old TODOs or baselines.
 
 | Plan | Status | Next action |
 |---|---|---|
-| [Rule completion rollout](rule-completion-rollout.md) | Active | 前端硬线已清零；`useSessionStream` 648→128 行，纯时间线构建归 `sessionTimeline.ts`（526 行）。下一步复核 reviewer checklist 与 backend TODO，建立/运行后端大文件门禁。 |
+| [Rule completion rollout](rule-completion-rollout.md) | Active | 前端硬线按 500 行正式标准已清零；`useSessionStream` 648→128 行，时间线投影归 `sessionTimeline.ts`（332 行），assistant exchange 投影归 `sessionAssistantTimeline.ts`（184 行）。下一步审阅 reviewer checklist 与 backend TODO，落实可运行门禁和后端拆分。 |
 
 ## Completed or superseded history
 

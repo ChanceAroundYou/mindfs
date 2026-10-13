@@ -4864,9 +4864,10 @@ groups:
       Give exchange and block timeline projection a pure owner with focused regression tests while
       preserving the hook's stream subscription lifecycle and public TimelineItem import path.
     boundary: |
-      sessionTimeline owns exchange types and pure projection/grouping/settling helpers. useSessionStream
-      retains stream subscription, throttled streamVersion updates, and the same hook API; it re-exports
-      TimelineItem and groupConsecutiveToolCalls for existing consumers.
+      sessionTimeline owns base exchange/block projection, grouping, settling, and context-window fallback;
+      sessionAssistantTimeline owns assistant exchange segment projection. useSessionStream retains stream
+      subscription, throttled streamVersion updates, and the same hook API; it re-exports TimelineItem and
+      groupConsecutiveToolCalls for existing consumers. Every extracted module stays within 500 lines.
     tests:
       - web/tests/session-stream-timeline-split.test.mjs
       - web/tests/tool-card-grouping.test.mjs
@@ -4875,6 +4876,8 @@ groups:
     files:
       - web/src/hooks/useSessionStream.ts
       - web/src/hooks/sessionTimeline.ts
+      - web/src/hooks/sessionAssistantTimeline.ts
+      - web/src/hooks/stableTimelineID.ts
       - web/tests/session-stream-timeline-split.test.mjs
       - web/tests/tool-card-grouping.test.mjs
       - web/tests/session-timeline-seq.test.mjs
@@ -4887,4 +4890,4 @@ groups:
     anchors:
       - web/src/hooks/useSessionStream.ts:export function useSessionStream
       - web/src/hooks/sessionTimeline.ts:export function buildBaseTimeline
-      - web/tests/session-stream-timeline-split.test.mjs:hook remains below the frontend hard line
+      - web/tests/session-stream-timeline-split.test.mjs:hook stays within the frontend hard line
