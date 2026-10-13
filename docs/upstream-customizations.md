@@ -2998,3 +2998,9 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：`usecase/session.go` 将列表、跨根聚合、子会话展开、shell 补全、搜索排序与 session 创建、fork、实时流和取消流程混在同一 4,892 行文件中。
 - **根因与边界**：列表/搜索入口及私有 helper 原样移入 `session_list.go`（300 行）；公共输入/输出类型留在原文件。`session.go` 当前 4,602 行，仍高于 1,500 行硬线，后续按领域继续拆分，不在本批销掉 TODO。
 - **针对性测试**：`usecase_test.go` 的 multi-root 搜索全局限额/RootID、列表 AfterTime 和 archived-only 用例；整个 `go test ./server/internal/api/usecase/...` 通过。
+
+### G-DX Session usecase fork 与历史复制职责拆分
+
+- **可见症状**：`ForkSession` 与历史/块复制 helper 占据 `session.go` 400 余行，fork 分支和历史重建行为与 agent turn 编排混杂，修改 fork 时难以审阅。
+- **根因与边界**：`CreateSession`、`ForkSession`、fork target/model/name 解析和 legacy/block history copy 原样迁入 `session_fork.go`（426 行）；公共输入输出类型留在 `session.go`。主文件实测 4,189 行，backend TODO 继续保持未完成。
+- **针对性测试**：`server/internal/api/usecase/usecase_test.go` → 覆盖 fork/session usecase 契约；`go test ./server/internal/api/usecase/...` 通过。

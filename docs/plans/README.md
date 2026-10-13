@@ -8,7 +8,7 @@ to resume their old TODOs or baselines.
 
 | Plan | Status | Next action |
 |---|---|---|
-| [Rule completion rollout](rule-completion-rollout.md) | Active | 前端硬线按 500 行正式标准已清零。正在拆 `usecase/session.go`：列表/搜索职责已迁至 `session_list.go`（300 行），主文件 4602 行，完整 `make test` 已通过；下一批继续拆 session 生命周期/消息流，降至 1500 行以下后再销项 backend TODO。 |
+| [Rule completion rollout](rule-completion-rollout.md) | Active | 前端硬线按 500 行正式标准已清零。`usecase/session.go` 的列表/搜索已迁至 `session_list.go`（300 行），fork/历史复制已迁至 `session_fork.go`（426 行）；主文件 4189 行，仍高于 1500 行硬线，继续按领域拆分。 |
 
 ## Completed or superseded history
 
