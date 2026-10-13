@@ -3,6 +3,7 @@ import fs from "node:fs";
 
 const read = (file) => fs.readFileSync(new URL(`../src/${file}`, import.meta.url), "utf8");
 const nodeRegistry = read("services/net/nodeRegistry.ts");
+const nodePalette = read("shared/nodePalette.ts");
 const defaultList = read("components/file/DefaultListView.tsx");
 const fileTree = read("components/file/FileTree.tsx");
 const fileTreeEntries = read("components/file/fileTreeEntries.tsx");
@@ -18,7 +19,8 @@ const agentSelector = read("components/agent/AgentSelector.tsx");
 const mainViewSwitcher = read("components/shell/MainViewSwitcher.tsx");
 const rootBadgeStyle = read("shared/rootBadgeStyle.ts");
 
-assert.match(nodeRegistry, /PALETTE = \["#3b82f6", "#f59e0b", "#7c6bd6"/);
+assert.match(nodePalette, /PALETTE = \["#3b82f6", "#f59e0b", "#7c6bd6"/);
+assert.match(nodeRegistry, /export \{ DEFAULT_NODE_COLOR, PALETTE \} from "\.\.\/\.\.\/shared\/nodePalette"/);
 assert.match(nodeRegistry, /const PREVIOUS_PALETTE = \["#7c6bd6", "#c9b84a"/);
 assert.match(nodeRegistry, /const OLD_PALETTE = \["#6d5bcf", "#0ea5a0"/);
 // 当前调色板保护：已属于 PALETTE 的存储色（尤其 #7c6bd6）不得被迁移改写
@@ -68,7 +70,7 @@ for (const dead of ["--accent-hover", "--panel-focus-shadow", "--root-badge-bg",
 const accentValues = [...css.matchAll(/--accent-color:\s*([^;]+);/g)].map((m) => m[1].trim());
 assert.equal(accentValues.length, 5, "expected 5 theme blocks to define --accent-color");
 assert.ok(accentValues.every((v) => v === "#3b82f6"), `--accent-color must be #3b82f6 in every theme, got ${accentValues.join(", ")}`);
-assert.match(nodeRegistry, /DEFAULT_NODE_COLOR = PALETTE\[0\]/);
+assert.match(nodePalette, /DEFAULT_NODE_COLOR = PALETTE\[0\]/);
 // 选中底色与节点行选中底色同值：全中性灰，不随主题染蓝/金/绿
 assert.equal(
   [...css.matchAll(/--selection-bg:\s*([^;]+);/g)].map((m) => m[1].trim()).join("|"),

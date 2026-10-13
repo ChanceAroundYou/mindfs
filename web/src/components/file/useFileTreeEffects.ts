@@ -1,9 +1,8 @@
 import React from "react";
-import { bootstrapService } from "../../services/net/bootstrap";
 import { fetchIdleSessionResourceReleasePreference, fetchNewProjectMetaLocationPreference } from "../../services/prefs/preferences";
 
 export function useFileTreeEffects(ctx: any) {
-  const { creatingRootName, previousCreatingRootNameRef, createInputRef, setProtectedAPIReady, isUpdateNotesOpen, updateNotesRef, setIsUpdateNotesOpen, updateActionLabel, updateActionSummary, isMenuOpen, menuRef, setIsMenuOpen, sendShortcutOpen, sendShortcutPopoverRef, setSendShortcutOpen, protectedAPIReady, setIdleReleaseHours, setNewProjectMetaLocation } = ctx;
+  const { creatingRootName, previousCreatingRootNameRef, createInputRef, isUpdateNotesOpen, updateNotesRef, setIsUpdateNotesOpen, updateActionLabel, updateActionSummary, isMenuOpen, menuRef, setIsMenuOpen, sendShortcutOpen, sendShortcutPopoverRef, setSendShortcutOpen, protectedAPIReady, setIdleReleaseHours, setNewProjectMetaLocation } = ctx;
 React.useEffect(() => {
   if (!creatingRootName) {
     previousCreatingRootNameRef.current = creatingRootName;
@@ -16,12 +15,6 @@ React.useEffect(() => {
   }
   previousCreatingRootNameRef.current = creatingRootName;
 }, [creatingRootName]);
-
-React.useEffect(() => {
-  return bootstrapService.subscribe(() => {
-    setProtectedAPIReady(bootstrapService.canUseProtectedAPI());
-  });
-}, []);
 
 React.useEffect(() => {
   if (!isUpdateNotesOpen || typeof document === "undefined") {

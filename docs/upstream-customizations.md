@@ -2695,3 +2695,12 @@
 - **根因与边界**：将设置菜单 presenter 提取到 `FileTreeSettingsMenu.tsx`，将目录排序类型、选项与纯算法归入 `shared/directorySort.ts`；原 service 路径保留 facade。
 - **针对性测试**：`web/tests/shared-directory-sort.test.mjs` → 验证排序纯度、目录优先、排序模式、旧 facade 与 FileTree presenter 的 shared 依赖。
 - **边界**：菜单状态仍由调用方持有，排序偏好持久化和原有排序语义不变。
+
+### G-CH FileTree 服务读取归入 colocated logic
+
+- **可见症状**：FileTree 渲染时直接读取 bootstrap readiness 与 node registry；项目 tab/content presenter 接收 service 函数并执行分组、颜色回退。
+- **根因与边界**：将 bootstrap 订阅、节点分组和 tab accent 解析放入 colocated logic hooks，presenter 只接收 readiness、groups 和颜色值。
+- **针对性测试**：`web/tests/file-tree-service-boundaries.test.mjs` → 守住 view/presenter 不直接读取这些服务，hook 仍承担原服务读取。
+- **边界**：保持同步初始 readiness、bootstrap 更新、节点排序、颜色回退顺序和空项目展示行为。
+
+G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`，由 node registry service 保留原导出 facade；FileTree JSX presenter 直接使用 shared 常量。

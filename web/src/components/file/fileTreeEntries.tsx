@@ -1,8 +1,9 @@
 import React from "react";
-import type { FileEntry } from "../../services/prefs/directorySort";
+import type { FileEntry } from "../../shared/directorySort";
+import { DEFAULT_NODE_COLOR } from "../../shared/nodePalette";
 
 export function createRenderEntries(ctx: any) {
-  const { ChevronRight, DEFAULT_NODE_COLOR, DirectoryIconSlot, PROJECT_TREE_INDENT, PROJECT_TREE_ROOT_PADDING_LEFT,
+  const { ChevronRight, DirectoryIconSlot, PROJECT_TREE_INDENT, PROJECT_TREE_ROOT_PADDING_LEFT,
     activeSessionKey, childKeyFor, childrenByPath, createInputRef, creatingRootBusy, creatingRootExtraContent,
     creatingRootName, creatingRootSubmitOnBlur, expandedSet, fileMetas, hexToRgbaApp, onCreateRootCancel,
     onCreateRootNameChange, onCreateRootSubmit, onSelectDir, onSelectFile, onSelectRoot, onToggleDir, projectTreeTab,

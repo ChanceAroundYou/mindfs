@@ -3,12 +3,10 @@ import { rootBadgeStyle } from "../../shared/rootBadgeStyle";
 import { NodeBadgeHeader } from "../account/NodeBadgeHeader";
 import { ViewHeader } from "../../layout/ViewHeader";
 import { hexToRgbaApp } from "../../app/taskIcons";
-import { DEFAULT_NODE_COLOR } from "../../services/net/nodeRegistry";
 import {
   type FileEntry,
   sortDirectoryEntries,
 } from "../../shared/directorySort";
-import { bootstrapService } from "../../services/net/bootstrap";
 import { useI18n } from "../../i18n/index";
 import { useRefreshSpin } from "../../hooks/index";
 import { usePwaInstall } from "../../hooks/usePwaInstall";
@@ -24,10 +22,12 @@ import {
 } from "./fileTreeTypes";
 import { createRenderEntries } from "./fileTreeEntries";
 import { childEntryKey, filterVisibleEntries } from "./FileTreeEntryFilters";
-import { groupEntriesByNode } from "./FileTreeEntryFilters";
 import { useAgentConfigActions } from "./useAgentConfigActions";
 import { useAgentConfigFlowTransitions } from "./useAgentConfigFlowTransitions";
 import { FileTreeSettingsMenu } from "./FileTreeSettingsMenu";
+import { useFileTreeProtectedAPI } from "./useFileTreeProtectedAPI";
+import { useFileTreeProjectTabAccent } from "./useFileTreeProjectTabAccent";
+import { useFileTreeNodeGroups } from "./useFileTreeNodeGroups";
 import { formatProviderTestResult, isAgentConfigBackupConflict } from "./fileTreeAgentConfigUtils";
 import { useFileTreePreferences } from "./useFileTreePreferences";
 import { useFileTreeAppearance } from "./useFileTreeAppearance";
@@ -42,7 +42,6 @@ import { FileTreeSendShortcutPopover } from "./FileTreeSendShortcutPopover";
 import { FileTreeIdleReleasePopover } from "./FileTreeIdleReleasePopover";
 import { FileTreeProjectContent } from "./FileTreeProjectContent";
 import { FileTreeProjectTabs } from "./FileTreeProjectTabs";
-import { getNodes } from "../../services/net/nodeRegistry";
 import { NodeManagerPanel } from "../account/NodeManagerPanel";
 import { AccountPanel } from "../account/AccountPanel";
 import { scopeKey, treeKey } from "../../shared/scope";
@@ -196,9 +195,7 @@ function FileTreeInner({
   const [newProjectMetaLocationBusy, setNewProjectMetaLocationBusy] = React.useState(false);
   const { appearanceMode, changeAppearanceMode } = useFileTreeAppearance();
   const [isUpdateNotesOpen, setIsUpdateNotesOpen] = React.useState(false);
-  const [protectedAPIReady, setProtectedAPIReady] = React.useState(() =>
-    bootstrapService.canUseProtectedAPI(),
-  );
+  const protectedAPIReady = useFileTreeProtectedAPI();
   const [agentConfigFlow, setAgentConfigFlow] = React.useState<AgentConfigFlow | null>(null);
   const [agentConfigStep, setAgentConfigStep] = React.useState<AgentConfigStep>("agent");
   const [agentConfigAgents, setAgentConfigAgents] = React.useState<AgentStatus[]>([]);
@@ -250,10 +247,13 @@ function FileTreeInner({
     handleInstall,
   } = usePwaInstall(t);
 
+  const projectTabAccent = useFileTreeProjectTabAccent(rootColor, entries, rootId);
+  const nodeGroups = useFileTreeNodeGroups(entries);
+
   const hasFooterContent = !!updateActionLabel || !!updateActionHelp || !!footerTopContent || (isNativeApp && !!onGoHome) || shouldShowInstallButton || shouldShowInstallHelp;
 
   useFileTreeEffects({
-    creatingRootName, previousCreatingRootNameRef, createInputRef, setProtectedAPIReady,
+    creatingRootName, previousCreatingRootNameRef, createInputRef,
     isUpdateNotesOpen, updateNotesRef, setIsUpdateNotesOpen, updateActionLabel, updateActionSummary,
     isMenuOpen, menuRef, setIsMenuOpen, sendShortcutOpen, sendShortcutPopoverRef, setSendShortcutOpen,
     protectedAPIReady, setIdleReleaseHours, setNewProjectMetaLocation,
@@ -329,7 +329,7 @@ function FileTreeInner({
   );
 
   const renderEntries = createRenderEntries({
-    ChevronRight, DEFAULT_NODE_COLOR, DirectoryIconSlot, PROJECT_TREE_INDENT, PROJECT_TREE_ROOT_PADDING_LEFT,
+    ChevronRight, DirectoryIconSlot, PROJECT_TREE_INDENT, PROJECT_TREE_ROOT_PADDING_LEFT,
     activeSessionKey, childKeyFor, childrenByPath, createInputRef, creatingRootBusy, creatingRootExtraContent,
     creatingRootName, creatingRootSubmitOnBlur, expandedSet, fileMetas, hexToRgbaApp, onCreateRootCancel,
     onCreateRootNameChange, onCreateRootSubmit, onSelectDir, onSelectFile, onSelectRoot, onToggleDir, projectTreeTab,
@@ -346,7 +346,7 @@ function FileTreeInner({
         innerStyle={{ justifyContent: "space-between", gap: 0 }}
       >
         <div style={{ display: "flex", alignItems: "center", minWidth: 0, flex: "1 1 auto", maxWidth: "calc(100% - 56px)", marginRight: "6px" }}>
-          <FileTreeProjectTabs projectTreeTab={projectTreeTab} setProjectTreeTab={setProjectTreeTab} t={t} rootColor={rootColor} entries={entries} rootId={rootId} getNodes={getNodes} DEFAULT_NODE_COLOR={DEFAULT_NODE_COLOR} hexToRgbaApp={hexToRgbaApp} />
+          <FileTreeProjectTabs projectTreeTab={projectTreeTab} setProjectTreeTab={setProjectTreeTab} t={t} accentColor={projectTabAccent} hexToRgbaApp={hexToRgbaApp} />
         </div>
         <FileTreeRefreshButton handleRefreshClick={handleRefreshClick} setTreePressed={setTreePressed}
           t={t} treePressed={treePressed} treeRefreshing={treeRefreshing} />
@@ -684,7 +684,7 @@ function FileTreeInner({
         ) : null}
       </ViewHeader>
       <div style={{ padding: "8px", flex: 1, minHeight: 0, overflow: "auto", display: "flex", flexDirection: "column" }}>
-        <FileTreeProjectContent entries={entries} creatingRootName={creatingRootName} getNodes={getNodes} t={t} renderEntries={renderEntries} rootId={rootId} />
+        <FileTreeProjectContent groups={nodeGroups} creatingRootName={creatingRootName} t={t} renderEntries={renderEntries} rootId={rootId} />
       </div>
 <FileTreeFooter
         {...{ hasFooterContent, updateNotesRef, updateActionLabel, updateActionSummary, updateActionDisabled, updateActionBusy, updateActionHelp, isUpdateNotesOpen, setIsUpdateNotesOpen, onUpdateAction, footerTopContent, isNativeApp, onGoHome, shouldShowInstallButton, handleInstall, installLabel, shouldShowInstallHelp, installHelp, t }}

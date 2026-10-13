@@ -1,6 +1,6 @@
 import React from "react";
 
-export function FileTreeProjectTabs({ projectTreeTab, setProjectTreeTab, t, rootColor, entries, rootId, getNodes, DEFAULT_NODE_COLOR, hexToRgbaApp }: any) {
+export function FileTreeProjectTabs({ projectTreeTab, setProjectTreeTab, t, accentColor, hexToRgbaApp }: any) {
   return (
 <div
   role="tablist"
@@ -26,7 +26,7 @@ export function FileTreeProjectTabs({ projectTreeTab, setProjectTreeTab, t, root
   ] as const).map(([value, label], index) => {
     const active = projectTreeTab === value;
     const flexGrow = value === "related" ? 1.45 : value === "worktrees" ? 1.15 : 0.85;
-    const tabAccent = String(rootColor || "").trim() || String((entries as any[])?.[0] ? String(((entries as any[])[0] as any)?._nodeColor || "").trim() : "").trim() || String((() => { try { const ns = getNodes(); const cur = ns.find((n: any) => n.id === String(rootId || "").trim()) || ns[0]; return cur?.color || ""; } catch { return ""; } })()) || DEFAULT_NODE_COLOR;
+    const tabAccent = accentColor;
     return (
       <React.Fragment key={value}>
         {index > 0 ? (

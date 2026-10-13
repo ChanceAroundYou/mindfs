@@ -3498,3 +3498,42 @@ groups:
       - web/src/components/file/FileTreeSettingsMenu.tsx:FileTreeSettingsMenu
       - web/src/shared/directorySort.ts:sortDirectoryEntries
       - web/tests/shared-directory-sort.test.mjs:directory sorting stays pure
+  - id: G-CH
+    title: FileTree service reads belong to colocated logic hooks
+    kind: arch
+    symptom: |
+      FileTree reads bootstrap readiness and node registry state while rendering, and the project-tab/content presenters
+      receive service functions and perform service-backed grouping/color fallback themselves.
+    why: |
+      Move bootstrap subscription and node-registry reads into colocated logic hooks, then pass readiness, node groups,
+      and the resolved accent as values so the view and presenters stay service-agnostic.
+    boundary: |
+      Preserve synchronous initial readiness, bootstrap updates, node ordering, explicit/root-entry/node fallback colors,
+      and the existing empty-project rendering behavior.
+    tests:
+      - web/tests/file-tree-service-boundaries.test.mjs
+    files:
+      - web/src/components/file/FileTree.tsx
+      - web/src/components/file/FileTreeProjectContent.tsx
+      - web/src/components/file/FileTreeProjectTabs.tsx
+      - web/src/components/file/FileTreeEntryFilters.ts
+      - web/src/components/file/fileTreeEntries.tsx
+      - web/src/components/file/useFileTreeEffects.ts
+      - web/src/components/file/useFileTreeProtectedAPI.ts
+      - web/src/components/file/useFileTreeProjectTabAccent.ts
+      - web/src/components/file/useFileTreeNodeGroups.ts
+      - web/src/shared/nodePalette.ts
+      - web/src/services/net/nodeRegistry.ts
+      - web/tests/source-map.mjs
+      - web/tests/file-tree-service-boundaries.test.mjs
+      - web/tests/node-colors-and-workspace-preferences.test.mjs
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/components/file/useFileTreeProtectedAPI.ts:useFileTreeProtectedAPI
+      - web/src/components/file/useFileTreeProjectTabAccent.ts:useFileTreeProjectTabAccent
+      - web/src/components/file/useFileTreeNodeGroups.ts:useFileTreeNodeGroups
+      - web/src/shared/nodePalette.ts:DEFAULT_NODE_COLOR
+      - web/tests/file-tree-service-boundaries.test.mjs:delegates bootstrap and node-registry reads

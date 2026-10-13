@@ -1,4 +1,4 @@
-import type { FileEntry } from "../../services/prefs/directorySort";
+import type { FileEntry } from "../../shared/directorySort";
 export function childEntryKey(entry: FileEntry, entryRoot: string, nodeId: string, treeKey: (node: string, root: string, path: string) => string) {
   return entry.is_root ? treeKey(nodeId, entry.path, ".") : treeKey(nodeId, entryRoot, entry.path);
 }
