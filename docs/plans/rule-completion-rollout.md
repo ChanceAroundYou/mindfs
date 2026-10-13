@@ -71,3 +71,5 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 - 下一项：从剩余硬线文件选取 2–3 个，先核对外部消费者、符号和依赖方向，再拆分并验证；持续保持 App.tsx 组合根不变。
 - 已完成：将 `ProjectAddPopover` 的模式选择 JSX 提取为 `ProjectAddModePanel`，popover 外观进入同域 `projectAddStyles.ts`，父组件从 509 行降到 404 行。更新逻辑源映射并增加模式回调/标签守卫；TypeScript、项目添加专项测试及规则/计划链接门禁通过。硬线剩余 24 项。
 - 下一项：实测并审阅下一组超过 500 行的前端组件，核对调用者与依赖边界后继续拆分。
+- 已完成：将 `AgentSelector` 的触发按钮与小徽标展示提取为 `AgentSelectorTrigger`，打开/关闭与 submenu 初始化状态仍由 hook/controller 管理；旋转 keyframes 移到使用它的错误横幅。`AgentSelector.tsx` 从 563 行降至 496 行，新增结构守卫；typecheck 与 AgentSelector 专项测试通过。硬线剩余 23 项。
+- 下一项：从余下 23 项中根据当前代码审阅挑选一组职责清楚、风险可控的组件继续拆分。

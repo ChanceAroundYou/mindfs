@@ -1,5 +1,5 @@
 import React from "react";
-import { AgentIcon } from "./AgentIcon";
+import { AgentSelectorTrigger } from "./AgentSelectorTrigger";
 import { AgentSelectorErrorBanner } from "./AgentSelectorErrorBanner";
 import { AgentSelectorMenuHeader } from "./AgentSelectorMenuHeader";
 import {
@@ -82,15 +82,12 @@ export function AgentSelector(props: AgentSelectorProps) {
 
   return (
     <div ref={dropdownRef} data-onboarding={onboardingId} style={{ position: "relative" }}>
-      <style>{`
-        @keyframes agent-refresh-spin {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-      `}</style>
-      <button
-        type="button"
-        onMouseDown={(e) => e.preventDefault()}
+      <AgentSelectorTrigger
+        agent={agent}
+        compact={compact}
+        showChevron={showChevron}
+        warnUnavailable={rest.warnUnavailable}
+        buttonTitle={buttonTitle}
         onClick={() => {
           setViewportMenuPosition(null);
           setIsOpen((prev) => {
@@ -122,71 +119,7 @@ export function AgentSelector(props: AgentSelectorProps) {
             return next;
           });
         }}
-        title={buttonTitle}
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "4px",
-          padding: compact ? "4px 4px" : "6px 8px",
-          borderRadius: "12px",
-          border: "none",
-          background: "transparent",
-          cursor: "pointer",
-          fontSize: "16px",
-          transition: "background 0.2s",
-          outline: "none",
-          position: "relative",
-        }}
-        onMouseEnter={(e) => {
-          if (compact) e.currentTarget.style.background = "rgba(0,0,0,0.05)";
-        }}
-        onMouseLeave={(e) => {
-          if (compact) e.currentTarget.style.background = "transparent";
-        }}
-      >
-        <AgentIcon
-          agentName={agent}
-          style={{ width: "16px", height: "16px" }}
-        />
-        {showChevron ? (
-          <svg
-            width="12"
-            height="12"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-            style={{ color: "var(--text-secondary)" }}
-          >
-            <path d="m6 9 6 6 6-6" />
-          </svg>
-        ) : null}
-        {rest.warnUnavailable && (
-          <span
-            style={{
-              position: "absolute",
-              top: "3px",
-              right: "3px",
-              minWidth: "11px",
-              height: "11px",
-              padding: "0 2px",
-              borderRadius: "50%",
-              background: "#d97706",
-              color: "#fff",
-              fontSize: "9px",
-              lineHeight: "11px",
-              fontWeight: 700,
-              textAlign: "center",
-              boxShadow: "0 0 0 1px rgba(255,255,255,0.95)",
-            }}
-          >
-            !
-          </span>
-        )}
-      </button>
+      />
 
       {isOpen && (
         <AgentMenuPortal enabled={viewportMenu}>

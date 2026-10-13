@@ -237,6 +237,7 @@
 | G-CN | 前端 Vitest 运行链与复用件覆盖 | 测试 | 见 §3.2 | 新测试走 Vitest；旧 Node 源码守卫继续保留 preload hook |
 | G-CO | 前端 task view 硬线拆分 | 架构 | 见 §3.2 | scheduled-task 列表与卡片收尾按钮保持独立组件及原交互 |
 | G-CP | ProjectAdd 模式选择面板提取 | 架构 | 见 §3.2 | 三个模式入口的标签和选择回调继续由独立面板呈现 |
+| G-CQ | AgentSelector trigger 展示提取 | 架构 | 见 §3.2 | 触发按钮视觉保持，菜单状态变更继续归父 hook/controller |
 
 > **G-D 已并入 G-F，G-M 已并入 G-AI**（改动面完全重合、无独立测试可守，单列只会制造空组）。
 
@@ -2765,3 +2766,10 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **根因与边界**：模式选择 JSX 提取到 `ProjectAddModePanel`，共享 popover 样式归同域 `projectAddStyles.ts`；LocalPanel、GitHubPanel 与状态仍由原父组件持有。
 - **针对性测试**：`web/tests/project-add-types.test.mjs` → 守住三个模式标签与各自回调接线；`project-add-path-browse.test.mjs` → 守住目录浏览行为仍留在父模块。
 - **边界**：保留选择回调、文案 key、布局样式与目录浏览状态；父组件现为 404 行。
+
+### G-CQ AgentSelector trigger 展示提取
+
+- **可见症状**：`AgentSelector` 超过 500 行硬线，菜单状态、submenu 呈现与触发按钮 JSX 同在一个文件。
+- **根因与边界**：触发按钮、Agent 图标、下拉箭头、不可用徽标和紧凑悬停样式移入 `AgentSelectorTrigger`；打开/关闭与 submenu 初始化仍由父 controller 管理。旋转动画 keyframes 移到使用它的错误横幅。
+- **针对性测试**：`web/tests/agent-selector-trigger.test.mjs` → 守住呈现组件 props 与父状态边界；`claude-model-1m.test.mjs` → 确认模型别名与 submenu 语义仍在原路径。
+- **边界**：保持点击、鼠标按下焦点、compact hover、title、图标与 unavailable 标记；父组件现为 496 行。

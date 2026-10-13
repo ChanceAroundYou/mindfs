@@ -27,6 +27,12 @@ export function AgentSelectorErrorBanner({
                   boxSizing: "border-box",
                 }}
               >
+                <style>{`
+                  @keyframes agent-refresh-spin {
+                    from { transform: rotate(0deg); }
+                    to { transform: rotate(360deg); }
+                  }
+                `}</style>
                 <div
                   style={{
                     display: "flex",

@@ -3282,7 +3282,7 @@ groups:
       - docs/upstream-customizations.yaml
       - web/tests/agent-docs.test.mjs
     anchors:
-      - docs/agent/rules/frontend/TODO.md:硬线 24 个
+      - docs/agent/rules/frontend/TODO.md:硬线 23 个
       - docs/plans/README.md:Rule completion rollout
       - web/tests/agent-docs.test.mjs:every plan is classified in the sole plans index
   - id: G-BZ
@@ -3850,3 +3850,35 @@ groups:
     anchors:
       - web/src/components/file/ProjectAddModePanel.tsx:ProjectAddModePanel
       - web/tests/project-add-types.test.mjs:project-add mode panel keeps all three mode callbacks
+
+  - id: G-CQ
+    title: Agent selector trigger presentation extraction
+    kind: arch
+    symptom: |
+      AgentSelector exceeded the frontend 500-line hardline by mixing agent menu state,
+      submenu rendering, and the small trigger button presentation.
+    why: |
+      Isolate the trigger presentation for review while keeping menu state transitions and submenu
+      initialization in the existing controller owner.
+    boundary: |
+      Extract only the trigger button, agent icon, chevron, unavailable marker, and compact hover
+      presentation. The parent still owns open/close behavior; keyframes move to the error banner
+      that uses the restart animation.
+    tests:
+      - web/tests/agent-selector-trigger.test.mjs
+      - web/tests/claude-model-1m.test.mjs
+      - web/tests/source-map.mjs
+    files:
+      - web/src/components/agent/AgentSelector.tsx
+      - web/src/components/agent/AgentSelectorTrigger.tsx
+      - web/src/components/agent/AgentSelectorErrorBanner.tsx
+      - web/tests/agent-selector-trigger.test.mjs
+      - web/tests/source-map.mjs
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/components/agent/AgentSelectorTrigger.tsx:AgentSelectorTrigger
+      - web/tests/agent-selector-trigger.test.mjs:delegates its trigger presentation
