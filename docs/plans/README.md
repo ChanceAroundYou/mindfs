@@ -8,7 +8,7 @@ to resume their old TODOs or baselines.
 
 | Plan | Status | Next action |
 |---|---|---|
-| [Rule completion rollout](rule-completion-rollout.md) | Active | GitStatusPanel 434 行，分支菜单呈现独立且加载/切换状态仍在父 hook；前端硬线剩余 20 项。下一批从当前实测硬线文件选 2–3 个，完成依赖审计后拆分。 |
+| [Rule completion rollout](rule-completion-rollout.md) | Active | DocumentViewer 318 行，PDF 虚拟页渲染独立；前端硬线剩余 19 项。下一批从当前实测硬线文件选 2–3 个，完成依赖审计后拆分。 |
 
 ## Completed or superseded history
 

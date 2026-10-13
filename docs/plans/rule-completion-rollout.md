@@ -79,3 +79,5 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 - 下一项：继续前端硬线拆分，并在进入 backend TODO 前按当前树重算后端文件清单及模块边界。
 - 已完成：将 `GitStatusPanel` 的分支按钮和分支列表提取到 `GitBranchSelector`；分支列表查询仍在现有 hook，切换 busy/open 状态由父面板持有。父组件从 532 行降至 434 行；TypeScript、Git 分支专项和 commit IME 测试通过。硬线剩余 20 项。
 - 下一项：继续剩余前端硬线文件；完成前端事项后，按当前文件系统基线复核 backend TODO。
+- 已完成：将 PDF 页面虚拟化渲染及文档预览错误呈现/描述提取到 `PdfPreview`、`DocumentPreviewError`；`DocumentViewer` 保留格式分流、文件获取和 Word/Excel/PowerPoint 预览。原有视口范围、canvas 回收、DPR 上限和错误文案逻辑保持不变。父组件从 537 行降至 318 行，typecheck 与 PDF 专项通过；硬线剩余 19 项。
+- 下一项：继续剩余前端硬线，随后按当前实测重算后台文件清单并开始后端单文件拆分。

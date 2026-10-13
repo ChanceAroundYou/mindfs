@@ -360,7 +360,7 @@ export const MODULES = {
   "src/components/FileOperations.tsx": ["src/components/file/FileOperations.tsx"],
   "src/components/BinaryViewer.tsx": ["src/components/file/BinaryViewer.tsx"],
   "src/components/ImageViewer.tsx": ["src/components/file/ImageViewer.tsx"],
-  "src/components/DocumentViewer.tsx": ["src/components/file/DocumentViewer.tsx"],
+  "src/components/DocumentViewer.tsx": ["src/components/file/DocumentViewer.tsx", "src/components/file/PdfPreview.tsx", "src/components/file/DocumentPreviewError.tsx"],
   "src/components/CodeViewer.tsx": ["src/components/file/CodeViewer.tsx"],
   // Markdown 渲染簇按「跨域复用」归位（2026-10-13，Tier 1 机械搬迁）：
   // MarkdownViewer 被 session/stream/file 三域用 → common/；useMarkdownViewer 是跨域 hook → hooks/。

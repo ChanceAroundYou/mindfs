@@ -3282,7 +3282,7 @@ groups:
       - docs/upstream-customizations.yaml
       - web/tests/agent-docs.test.mjs
     anchors:
-      - docs/agent/rules/frontend/TODO.md:硬线 20 个
+      - docs/agent/rules/frontend/TODO.md:硬线 19 个
       - docs/plans/README.md:Rule completion rollout
       - web/tests/agent-docs.test.mjs:every plan is classified in the sole plans index
   - id: G-BZ
@@ -3972,3 +3972,34 @@ groups:
     anchors:
       - web/src/components/git/GitBranchSelector.tsx:GitBranchSelector
       - web/tests/git-branch-selector.test.mjs:delegates branch menu presentation
+
+  - id: G-CU
+    title: Document viewer PDF rendering extraction
+    kind: arch
+    symptom: |
+      DocumentViewer exceeded the frontend 500-line hardline while combining PDF page virtualization,
+      Office format previews, file loading, and shared error rendering.
+    why: |
+      Keep PDF canvas lifecycle and page-window rendering independently reviewable while preserving
+      the existing memory bound and error presentation across document formats.
+    boundary: |
+      Extract PDF rendering and the shared preview error component/formatter only. DocumentViewer
+      continues to own file retrieval and format dispatch; Word, Excel, and PowerPoint remain in place.
+    tests:
+      - web/tests/document-preview-view-split.test.mjs
+      - web/tests/document-preview.test.mjs
+      - web/tests/source-map.mjs
+    files:
+      - web/src/components/file/DocumentViewer.tsx
+      - web/src/components/file/PdfPreview.tsx
+      - web/src/components/file/DocumentPreviewError.tsx
+      - web/tests/document-preview-view-split.test.mjs
+      - web/tests/source-map.mjs
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/components/file/PdfPreview.tsx:PdfPreview
+      - web/tests/document-preview-view-split.test.mjs:delegates PDF virtualization

@@ -241,6 +241,7 @@
 | G-CR | TaskInline 候选菜单呈现提取 | 架构 | 见 §3.2 | 候选列表选择语义保留，查询与编辑状态继续归父组件 |
 | G-CS | Login 更新说明折叠区提取 | 架构 | 见 §3.2 | 展开状态和更新逻辑继续由登录控制器管理 |
 | G-CT | Git 状态分支选择器提取 | 架构 | 见 §3.2 | 分支获取由现有 hook 承担，开关与切换状态归父面板 |
+| G-CU | DocumentViewer PDF 预览职责提取 | 架构 | 见 §3.2 | PDF canvas 有界渲染与跨格式错误语义保留 |
 
 > **G-D 已并入 G-F，G-M 已并入 G-AI**（改动面完全重合、无独立测试可守，单列只会制造空组）。
 
@@ -2797,3 +2798,10 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **根因与边界**：分支按钮与候选列表提取为 `GitBranchSelector`；分支查询仍由 `useGitStatusPanel` 执行，父面板持有菜单开关和当前切换状态。
 - **针对性测试**：`web/tests/git-branch-selector.test.mjs` → 守住加载/空态、当前分支禁用与切换接线；`git-commit-ime.test.mjs` → 确认同一 Git 面板的提交输入仍保持原行为。
 - **边界**：保留分支顺序、错误后空态、切换期间禁用、当前分支高亮和关闭时机；父组件现为 434 行。
+
+### G-CU DocumentViewer PDF 预览职责提取
+
+- **可见症状**：`DocumentViewer` 超过 500 行，同时承载 PDF 页面虚拟化、Office 格式解析、取文件与错误显示。
+- **根因与边界**：PDF canvas/占位块生命周期移入 `PdfPreview`；统一错误组件和错误描述移入 `DocumentPreviewError`。文件取回及 Word/Excel/PowerPoint 分支仍由 `DocumentViewer` 管理。
+- **针对性测试**：`web/tests/document-preview-view-split.test.mjs` → 守住 PDF 页窗口、canvas 回收和 DPR 限制；`document-preview.test.mjs` → 守住页面范围算法。
+- **边界**：保持视口/resize 同步、滚动祖先查找、取消清理、错误文案和预览分派；父组件现为 318 行。
