@@ -18,7 +18,7 @@ import { useAppRootBindingSetters } from "./useAppRootBindingSetters";
 import { useAppSessionPins } from "./useAppSessionPins";
 import { useAppReplaceURLState } from "./useAppReplaceURLState";
 import { MainViewMode, isDirectorySortMode, readURLState, rootNodeKey } from "./appPath";
-import { useBackLayer } from "./useBackNavigation";
+import { useBackLayer } from "../hooks/useBackNavigation";
 import { AttachedFileContext, MultiProjectSessionGroup, PendingSend, SessionItem, SessionQueueItem, SlashCommandResult, ViewerSelection, WSStatus } from "./appSession";
 import { CANDIDATE_FETCH_DEBOUNCE_MS, DIRECTORY_SORT_OVERRIDES_STORAGE_KEY, TREE_SORT_STORAGE_KEY, loadPersistedFileScrollPositions } from "./appStorage";
 import { useSessionCache } from "./useSessionCache";

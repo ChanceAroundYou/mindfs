@@ -12,7 +12,7 @@ import { useAppSessionKeyState } from "./useAppSessionKeyState";
 import { useAppSessionReload } from "./useAppSessionReload";
 import { useAppBootstrapActions } from "./useAppBootstrapActions";
 import { useAppFormatDirectoryLoadError } from "./useAppFormatDirectoryLoadError";
-import { installBackNavigation } from "./useBackNavigation";
+import { installBackNavigation } from "../hooks/useBackNavigation";
 import { AttachedFileContext, MultiProjectSessionGroup, PendingSend, SessionItem, SlashCommandResult, WSStatus, toSessionItem } from "./appSession";
 import { MainViewMode, rootNodeKey } from "./appPath";
 import { useSendMessage } from "./useSendMessage";

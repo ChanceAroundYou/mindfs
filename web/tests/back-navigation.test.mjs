@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs";
 // 表现就是「侧滑/后退直接退出」。这些断言钉住修复后的行为。
 const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 const main = readFileSync(new URL("../src/main.tsx", import.meta.url), "utf8");
-const nav = readFileSync(new URL("../src/app/useBackNavigation.ts", import.meta.url), "utf8");
+const nav = readFileSync(new URL("../src/hooks/useBackNavigation.ts", import.meta.url), "utf8");
 const dialogHost = readFileSync(new URL("../src/components/DialogHost.tsx", import.meta.url), "utf8");
 const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
 

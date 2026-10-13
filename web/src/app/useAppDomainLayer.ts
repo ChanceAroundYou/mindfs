@@ -14,7 +14,7 @@ import { useAppDomainDerived } from "./useAppDomainDerived";
 import { useAppFileNavigation } from "./useAppFileNavigation";
 import { useAppPluginTrust } from "./useAppPluginTrust";
 import { useAppPluginRender } from "./useAppPluginRender";
-import { closeTopBackLayer, consumeViewHistoryEntry, hasBackLayer } from "./useBackNavigation";
+import { closeTopBackLayer, consumeViewHistoryEntry, hasBackLayer } from "../hooks/useBackNavigation";
 import { ManagedRootPayload, indexManagedRoots, mapManagedRootsToEntries, toPluginInput } from "./appMisc";
 import { MainViewMode, readURLState } from "./appPath";
 import { useActionHandlers } from "./useActionHandlers";

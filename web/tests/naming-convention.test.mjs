@@ -67,7 +67,7 @@ test("naming: main export matches file name (components/hooks)", () => {
   // 这些文件导出多个同级组件/函数，无单一主 export，细拆是 file-size 规则的事。
   // 白名单只放行存量，新增文件不在此列的一律按规则卡。
   const GRANDFATHERED = new Set([
-    "app/useBackNavigation.ts", // 导出 useBackLayer/registerBackLayer 等一组导航原语
+    "hooks/useBackNavigation.ts", // 导出 useBackLayer/registerBackLayer 等一组导航原语
     "components/agent/AgentSelectorParts.tsx", // AgentMenuPortal + 菜单常量簇
     "components/file/FileOperations.tsx", // FileMenuIcon/FileOperationItems/MoreMenuButton 等
     "components/common/MarkdownCodeBlocks.tsx", // MermaidBlock/MarkdownCodeBlock(+Memo)

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { dialogService, type DialogRequest } from "../../services/dialog";
-import { useBackLayer } from "../../app/useBackNavigation";
+import { useBackLayer } from "../../hooks/useBackNavigation";
 import { useI18n } from "../../i18n/index";
 
 /**
