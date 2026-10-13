@@ -3198,3 +3198,30 @@ groups:
       - web/src/app/realtimeWsFileChangedHandlers.ts:createRealtimeWsFileChangedHandlers
       - web/src/app/useRealtimeEvents.ts:fileChangedHandlers
       - web/tests/realtime-file-change-handlers.test.mjs:realtime-file-change-handlers.test.mjs
+
+  - id: G-BW
+    title: 实时 slash-command 事件职责拆分
+    kind: arch
+    symptom: |
+      useRealtimeEvents.ts 内嵌 slash-command chunk、login_notice、error、done 状态处理，
+      命令结果状态与会话实时处理耦合在同一大 hook 中。
+    why: |
+      将两个 slash-command handler 移入 realtimeWsSlashCommandHandlers.ts，由 hook 组装并传给
+      既有 WS handler 注册表；仍通过 RealtimeEventsContext 读取同一份依赖。
+    boundary: |
+      只移动事件处理代码，不改 request id 判定、结果状态、节点过滤或错误报告行为。
+    tests:
+      - web/tests/realtime-slash-command-handlers.test.mjs
+    files:
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+      - web/src/app/useRealtimeEvents.ts
+      - web/src/app/realtimeWsSlashCommandHandlers.ts
+      - web/tests/source-map.mjs
+      - web/tests/realtime-slash-command-handlers.test.mjs
+    anchors:
+      - web/src/app/realtimeWsSlashCommandHandlers.ts:createRealtimeWsSlashCommandHandlers
+      - web/src/app/useRealtimeEvents.ts:slashCommandHandlers
+      - web/tests/realtime-slash-command-handlers.test.mjs:realtime-slash-command-handlers.test.mjs

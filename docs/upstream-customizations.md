@@ -2608,3 +2608,11 @@
 - **根因与边界**：将文件变更批处理与单文件事件处理器迁入 `realtimeWsFileChangedHandlers.ts`，通过既有 `RealtimeEventsContext` 注入依赖；hook 仍负责组装和订阅。旧逻辑源映射纳入新模块。
 - **针对性测试**：`web/tests/realtime-file-change-handlers.test.mjs` → handler 的缓存失效、插件/Git/目录刷新契约仍在新模块，逻辑路径映射覆盖新模块，hook 将两处理器交给 WS 注册表。
 - **边界**：只移动文件变更事件实现，不改变事件字段、刷新条件、缓存或请求行为。
+
+
+### G-BW 实时 slash-command 事件职责拆分
+
+- **可见症状**：`useRealtimeEvents.ts` 在会话流处理之外还内嵌 slash-command chunk、登录通知、错误和完成状态逻辑，命令状态容易与会话状态变更混在一起。
+- **根因与边界**：将 slash-command 流/完成两个 handler 搬到 `realtimeWsSlashCommandHandlers.ts`，通过现有 context 获取节点、结果 setter、session root 解析和文案函数；订阅 hook 只负责组装。
+- **针对性测试**：`web/tests/realtime-slash-command-handlers.test.mjs` → chunk/login/error/done 与 request id 守卫在新模块，hook 和逻辑 source-map 均接入该模块。
+- **边界**：只移动事件处理代码，不改变 request id 判定、结果状态与报告行为。
