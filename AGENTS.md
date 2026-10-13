@@ -4,6 +4,17 @@ Go 后端 + React/TS 前端，Web 静态资源由后端 HTTP 服务。
 本机、WSL 与 fn 三个节点都由 systemd 管理：本机是 **system** 单元、监听 `127.0.0.1:7331`；
 WSL 是 **user** 单元、监听 `127.0.0.1:7331`；fn 是 **user** 单元、监听 `0.0.0.0:7331`。详见下方节点表。
 
+## Agent 指令入口与规范
+
+`AGENTS.md` 是项目共用的操作与架构事实源。Claude Code 的 `CLAUDE.md` 和 Gemini CLI 的 `GEMINI.md`
+导入本文件，并加载两个索引；新增工具适配器也应只导入这些共用文档，不复制规则正文。
+
+- 代码规范索引：[docs/agent/rules/README.md](docs/agent/rules/README.md)。按任务读取对应规则；前端/后端 TODO 是各自存量事项的唯一清单。
+- 执行计划索引：[docs/plans/README.md](docs/plans/README.md)。只有标为 Active 的计划可作为当前执行清单；其余是历史记录。
+- Claude 专属 skills、hooks、settings 与会话状态继续放在 `.claude/`；`.claude/rules/README.md` 仅为旧路径指引。
+- 若规则冲突：安全、权限、节点/部署边界以本文件为准；语言/模块代码约束以 `docs/agent/rules/` 为准；任务范围和验收以 Active 计划为准。具体任务提示可收紧范围，不能放宽仓库硬约束。
+- 做长任务时先确认相关规则和 Active 计划已加载；没有 Active 计划时，先建立任务清单并更新计划索引，再开始多阶段实现。
+
 ## 三个节点（别叫错）
 
 | 代号 | 实际是 | 主机名 / 用户 | 节点显示名 | mindfs 单元 | 监听 | 重启 |

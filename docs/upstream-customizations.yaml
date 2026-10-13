@@ -2499,6 +2499,31 @@ groups:
       - web/src/components/app/TaskInlineEditPanel.tsx:findTaskProjectRoot(taskInlineTargetRootId, taskInlineTargetNodeId
       - web/src/app/appStorage.ts:scopeKey(scopeNodeId, rootId)
       - web/src/app/useProjectTreeWorktrees.ts:targetNodeId
+  - id: G-BM
+    title: Agent 中立的规则入口与计划索引
+    kind: docs
+    symptom: |
+      不同 agent 可能加载不同规范或执行过期计划；同一规则被复制维护后会出现漂移。
+    why: |
+      以 AGENTS.md 为共享项目入口，docs/agent/rules 为代码规范唯一正文，工具专属入口只导入共享正文；
+      Claude 专属运行配置保留在 .claude。docs/plans/README.md 是唯一计划状态索引，计划遗漏登记时由测试失败。
+    boundary: |
+      只约束项目指令入口、规则正文的唯一来源和计划索引，不改变具体代码规范内容。
+    tests:
+      - web/tests/agent-docs.test.mjs
+    files:
+      - AGENTS.md
+      - CLAUDE.md
+      - GEMINI.md
+      - .claude/rules/
+      - docs/agent/rules/
+      - docs/plans/README.md
+      - web/tests/agent-docs.test.mjs
+    anchors:
+      - AGENTS.md:Agent 指令入口与规范
+      - docs/agent/rules/README.md:执行方式
+      - docs/plans/README.md:Active
+
   - id: G-BH
     title: 会话正文块流（Block 存储层 + 轮次身份 turn_id/turn_seq/native_* + S2a 双写 + S2b 读改走块流 + C1/C2 + S2d-2 主日志不再存正文 + S2e pending 身份改用 turn_id）
     kind: fix

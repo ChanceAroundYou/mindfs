@@ -50,6 +50,6 @@ hooks/ (1): useSessionStream 648
 
 ## 测试与链路
 
-- [ ] 新建 `web/tests/naming-convention.test.mjs`（文件名=主export、`.ts`无JSX、后缀语义）。
+- [x] 新建 `web/tests/naming-convention.test.mjs`（文件名=主export、`.ts`无JSX、后缀语义）。
 - [ ] 前端测试栈切 Vitest（引依赖 + 改链路，独立项）。
 - [ ] 存量复用件补测。

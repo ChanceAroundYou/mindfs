@@ -2283,6 +2283,14 @@
   - `web/tests/task-board-view.test.mjs`、`web/tests/workspace-board.test.mjs`、`web/tests/node-colors-and-workspace-preferences.test.mjs` → 共享任务面板接收并使用节点 ID，项目下拉/颜色和 worktree 分支请求都按节点区分。
 - **边界**：仅看板新建任务的项目身份路由与 worktree 选择/创建链路。已有任务的执行、收尾和 worktree 生命周期策略不变。
 
+### G-BM Agent 中立的规则入口与计划索引
+
+- **可见症状**：Codex、Claude Code、Gemini CLI 等 agent 可能加载不同入口，遗漏规范或依照过期计划执行；规则副本漂移后会产生相互矛盾的要求。
+- **根因与边界**：以 `AGENTS.md` 为共享操作/架构入口，`docs/agent/rules/` 为代码规范正文，工具入口只导入共用文件；`.claude/` 继续承载 Claude 专属 skills/runtime 配置。`docs/plans/README.md` 是唯一计划状态索引，历史计划不再隐式充当待办。
+- **针对性测试**：`web/tests/agent-docs.test.mjs` → Claude/Gemini 入口导入共用规范与索引、规则和计划索引中的相对链接可达、每份计划都在唯一索引分类。
+- **边界**：规则文档的唯一来源与 agent 加载入口、计划索引维护。具体代码规范内容仍由对应规则文件负责。
+
+
 ### 总体
 
 - **合理且必要**：G-B/C/E/F/G 的正确性与性能、G-N/O 的交互、G-P/Q 的“ID 不变/别名可变”语义、G-K 的前缀/代理基础设施，收益与改面匹配。

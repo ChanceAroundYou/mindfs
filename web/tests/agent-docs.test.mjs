@@ -1,0 +1,64 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+const read = (path) => readFileSync(join(ROOT, path), "utf8");
+
+function walkMarkdown(dir) {
+  const files = [];
+  for (const entry of readdirSync(join(ROOT, dir))) {
+    const path = join(dir, entry);
+    if (statSync(join(ROOT, path)).isDirectory()) files.push(...walkMarkdown(path));
+    else if (path.endsWith(".md")) files.push(path);
+  }
+  return files;
+}
+
+function brokenRelativeLinks(markdownFiles) {
+  const failures = [];
+  for (const file of markdownFiles) {
+    const text = read(file);
+    for (const [, target] of text.matchAll(/\]\(([^)]+)\)/g)) {
+      if (/^(?:https?:|mailto:|#)/i.test(target)) continue;
+      const path = target.split("#", 1)[0];
+      if (!path) continue;
+      if (!statSync(join(ROOT, dirname(file), path), { throwIfNoEntry: false })) {
+        failures.push(`${file}: ${target}`);
+      }
+    }
+  }
+  return failures;
+}
+
+test("agent entrypoints import the shared instructions and indexes", () => {
+  for (const file of ["CLAUDE.md", "GEMINI.md"]) {
+    const text = read(file);
+    for (const imported of ["@AGENTS.md", "@docs/agent/rules/README.md", "@docs/plans/README.md"]) {
+      assert.ok(text.includes(imported), `${file} must import ${imported}`);
+    }
+  }
+  const instructions = read("AGENTS.md");
+  assert.ok(instructions.includes("docs/agent/rules/README.md"));
+  assert.ok(instructions.includes("docs/plans/README.md"));
+  assert.ok(read(".claude/rules/README.md").includes("docs/agent/rules/"));
+});
+
+test("agent rule and plan index links resolve", () => {
+  const files = [
+    ...walkMarkdown("docs/agent/rules"),
+    "docs/plans/README.md",
+  ];
+  assert.deepEqual(brokenRelativeLinks(files), []);
+});
+
+test("every plan is classified in the sole plans index", () => {
+  const index = read("docs/plans/README.md");
+  const plans = readdirSync(join(ROOT, "docs/plans")).filter(
+    (name) => name.endsWith(".md") && name !== "README.md",
+  );
+  const missing = plans.filter((name) => !index.includes(`(${name})`));
+  assert.deepEqual(missing, [], "Unclassified plans must be added to docs/plans/README.md");
+});
