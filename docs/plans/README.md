@@ -8,7 +8,7 @@ to resume their old TODOs or baselines.
 
 | Plan | Status | Next action |
 |---|---|---|
-| [Rule completion rollout](rule-completion-rollout.md) | Active | TaskInlineEditPanel 473 行，候选菜单独立且输入状态仍在父面板；前端硬线剩余 22 项。下一批从当前实测硬线文件选 2–3 个，完成依赖审计后拆分。 |
+| [Rule completion rollout](rule-completion-rollout.md) | Active | Login 463 行，更新说明区独立且版本更新状态仍在父面板；前端硬线剩余 21 项。下一批从当前实测硬线文件选 2–3 个，完成依赖审计后拆分。 |
 
 ## Completed or superseded history
 

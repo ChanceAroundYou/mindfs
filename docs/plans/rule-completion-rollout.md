@@ -75,3 +75,5 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 - 下一项：从余下 23 项中根据当前代码审阅挑选一组职责清楚、风险可控的组件继续拆分。
 - 已完成：将 `TaskInlineEditPanel` 中的候选列表呈现提取为 `TaskInlineCandidateMenu`，候选查找/选择状态与输入/编辑行为仍由父面板和 app hook 持有。父面板从 516 行降至 473 行；TypeScript、候选菜单、task 面板接线与 worktree 节点作用域专项测试通过。硬线剩余 22 项。
 - 下一项：继续按当前代码审阅剩余前端硬线文件，并开始复核后台 TODO 的真实行数基线。
+- 已完成：将 Login 更新说明折叠区提取为 `LoginUpdateNotes`；show/hide 状态、版本更新动作与数据仍由 Login/useLogin 持有。Login 从 513 行降至 463 行，source-map 与切换/文案守卫同步更新；TypeScript、专项和治理链接测试通过。硬线剩余 21 项。
+- 下一项：继续前端硬线拆分，并在进入 backend TODO 前按当前树重算后端文件清单及模块边界。

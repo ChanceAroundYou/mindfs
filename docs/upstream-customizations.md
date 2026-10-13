@@ -239,6 +239,7 @@
 | G-CP | ProjectAdd 模式选择面板提取 | 架构 | 见 §3.2 | 三个模式入口的标签和选择回调继续由独立面板呈现 |
 | G-CQ | AgentSelector trigger 展示提取 | 架构 | 见 §3.2 | 触发按钮视觉保持，菜单状态变更继续归父 hook/controller |
 | G-CR | TaskInline 候选菜单呈现提取 | 架构 | 见 §3.2 | 候选列表选择语义保留，查询与编辑状态继续归父组件 |
+| G-CS | Login 更新说明折叠区提取 | 架构 | 见 §3.2 | 展开状态和更新逻辑继续由登录控制器管理 |
 
 > **G-D 已并入 G-F，G-M 已并入 G-AI**（改动面完全重合、无独立测试可守，单列只会制造空组）。
 
@@ -2781,3 +2782,10 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **根因与边界**：候选列表提取到 `TaskInlineCandidateMenu`；可见性、候选索引、DOM refs 与选中回调仍由父组件传入，候选查询和任务编辑状态不移动。
 - **针对性测试**：`web/tests/task-inline-candidate-menu.test.mjs` → 守住 @/#/命令显示、鼠标选择和高亮索引；task panel/node-scope tests → 守住父面板接线与 worktree 范围。
 - **边界**：保留绝对定位、窄屏高度、滚动、阻止 mousedown blur 和描述文本；父面板现为 473 行。
+
+### G-CS Login 更新说明折叠区提取
+
+- **可见症状**：`Login` 超过 500 行，节点管理、更新按钮与更新说明折叠内容混在一起。
+- **根因与边界**：更新说明的文案、后端升级提示和展开内容提取到 `LoginUpdateNotes`；展开状态、更新数据与下载动作仍由 Login/useLogin 持有。
+- **针对性测试**：`web/tests/login-update-notes.test.mjs` → 守住切换文案、升级提示、内容显隐和父状态接线。
+- **边界**：保持无说明时不渲染、notes 文本原样显示与现有颜色/间距；父组件现为 463 行。

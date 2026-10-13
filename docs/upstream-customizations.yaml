@@ -3282,7 +3282,7 @@ groups:
       - docs/upstream-customizations.yaml
       - web/tests/agent-docs.test.mjs
     anchors:
-      - docs/agent/rules/frontend/TODO.md:硬线 22 个
+      - docs/agent/rules/frontend/TODO.md:硬线 21 个
       - docs/plans/README.md:Rule completion rollout
       - web/tests/agent-docs.test.mjs:every plan is classified in the sole plans index
   - id: G-BZ
@@ -3913,3 +3913,32 @@ groups:
     anchors:
       - web/src/components/app/TaskInlineCandidateMenu.tsx:TaskInlineCandidateMenu
       - web/tests/task-inline-candidate-menu.test.mjs:delegates candidate rendering
+
+  - id: G-CS
+    title: Login update notes view extraction
+    kind: arch
+    symptom: |
+      Login exceeded the frontend 500-line hardline while mixing node management, update controls,
+      and the collapsible update-notes explanation.
+    why: |
+      Keep update notes presentation and its toggle/upgrade notice as a focused view while the
+      existing login hook remains the sole owner of open state and update data.
+    boundary: |
+      Extract only the notes disclosure. Update download behavior, node management, and all state
+      remain in Login/useLogin.
+    tests:
+      - web/tests/login-update-notes.test.mjs
+      - web/tests/source-map.mjs
+    files:
+      - web/src/components/account/Login.tsx
+      - web/src/components/account/LoginUpdateNotes.tsx
+      - web/tests/login-update-notes.test.mjs
+      - web/tests/source-map.mjs
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/components/account/LoginUpdateNotes.tsx:LoginUpdateNotes
+      - web/tests/login-update-notes.test.mjs:login update notes keep their toggle

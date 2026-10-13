@@ -1,6 +1,7 @@
 import React, { type ReactElement } from "react";
 import { useI18n } from "../../i18n/index";
 import { useLogin } from "./useLogin";
+import { LoginUpdateNotes } from "./LoginUpdateNotes";
 
 const LAUNCHER_BG =
   "radial-gradient(circle at top left, rgba(91, 125, 184, 0.07), transparent 22%), radial-gradient(circle at right 18%, rgba(148, 163, 184, 0.18), transparent 24%), linear-gradient(180deg, #f8fafc 0%, #edf2f7 100%)";
@@ -310,62 +311,11 @@ export function Login({ onOpenNode }: LoginProps): ReactElement {
                 {appUpdateText}
               </button>
             </div>
-            {appUpdateNotes ? (
-              <>
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "8px",
-                    flexWrap: "wrap",
-                  }}
-                >
-                  <button
-                    type="button"
-                    onClick={() => setAppUpdateNotesOpen((open) => !open)}
-                    style={{
-                      border: "none",
-                      background: "transparent",
-                      color: ACCENT,
-                      padding: 0,
-                      justifySelf: "start",
-                      fontSize: "12px",
-                      fontWeight: 600,
-                      cursor: "pointer",
-                    }}
-                  >
-                    {appUpdateNotesOpen ? t("login.hideUpdateNotes") : t("login.showUpdateNotes")}
-                  </button>
-                  <span
-                    style={{
-                      color: "#dc2626",
-                      fontSize: "12px",
-                      fontWeight: 700,
-                      lineHeight: 1.35,
-                    }}
-                  >
-                    {t("login.backendUpgradeRequired")}
-                  </span>
-                </div>
-                {appUpdateNotesOpen ? (
-                  <div
-                    style={{
-                      borderTop: `1px solid ${BORDER}`,
-                      paddingTop: "10px",
-                      color: MUTED,
-                      fontSize: "12px",
-                      lineHeight: 1.55,
-                      whiteSpace: "pre-wrap",
-                      wordBreak: "break-word",
-                      maxHeight: "180px",
-                      overflow: "auto",
-                    }}
-                  >
-                    {appUpdateNotes}
-                  </div>
-                ) : null}
-              </>
-            ) : null}
+            <LoginUpdateNotes
+              notes={appUpdateNotes}
+              open={appUpdateNotesOpen}
+              onToggle={() => setAppUpdateNotesOpen((open) => !open)}
+            />
           </div>
         ) : null}
 

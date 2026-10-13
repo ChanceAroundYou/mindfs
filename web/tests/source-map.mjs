@@ -401,7 +401,7 @@ export const MODULES = {
   "src/components/ProviderModelSelect.tsx": ["src/components/agent/ProviderModelSelect.tsx"],
   "src/components/ModeSelector.tsx": ["src/components/agent/ModeSelector.tsx"],
   "src/components/ModeIcon.tsx": ["src/components/agent/ModeIcon.tsx"],
-  "src/components/Login.tsx": ["src/components/account/Login.tsx"],
+  "src/components/Login.tsx": ["src/components/account/Login.tsx", "src/components/account/LoginUpdateNotes.tsx"],
   "src/components/AuthGate.tsx": ["src/components/account/AuthGate.tsx"],
   "src/components/AccountPanel.tsx": ["src/components/account/AccountPanel.tsx"],
   // NodeManagerPanel 拆分：探测/编辑/添加逻辑 → useNodeManagerPanel.ts。
