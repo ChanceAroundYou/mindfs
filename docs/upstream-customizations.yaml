@@ -3279,7 +3279,7 @@ groups:
       - docs/upstream-customizations.yaml
       - web/tests/agent-docs.test.mjs
     anchors:
-      - docs/agent/rules/frontend/TODO.md:硬线 30 个
+      - docs/agent/rules/frontend/TODO.md:硬线 29 个
       - docs/plans/README.md:Rule completion rollout
       - web/tests/agent-docs.test.mjs:every plan is classified in the sole plans index
   - id: G-BZ
@@ -3568,3 +3568,32 @@ groups:
       - web/src/shared/agentTypes.ts:AgentStatus
       - web/src/shared/preferencesTypes.ts:NewProjectMetaLocation
       - web/tests/file-tree-service-boundaries.test.mjs:FileTree view and props use shared contracts
+  - id: G-CJ
+    title: FileTree header menus and overlays extracted as presenter
+    kind: arch
+    symptom: |
+      FileTree still contains nearly half its source as header menus and management overlays after settings controls
+      were moved; its controller/view file remains above the 500-line hard limit.
+    why: |
+      Extract the menu and associated account, agent-config, lifecycle, and preference overlays into one cohesive
+      presenter while keeping all state ownership and actions in FileTree's controller.
+    boundary: |
+      Preserve menu close sequencing, overlay visibility, callbacks, event handlers, and view ordering. This extraction
+      brings FileTree under the 500-line hard line without moving app state or changing behavior.
+    tests:
+      - web/tests/file-tree-header-overlays.test.mjs
+      - web/tests/file-tree-meta-location-action.test.mjs
+      - web/tests/file-tree-service-boundaries.test.mjs
+    files:
+      - web/src/components/file/FileTree.tsx
+      - web/src/components/file/FileTreeHeaderOverlays.tsx
+      - web/tests/source-map.mjs
+      - web/tests/file-tree-header-overlays.test.mjs
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/components/file/FileTreeHeaderOverlays.tsx:FileTreeHeaderOverlays
+      - web/tests/file-tree-header-overlays.test.mjs:delegates its header menu and overlay presentation

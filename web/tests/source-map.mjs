@@ -163,6 +163,7 @@ export const MODULES = {
   "src/components/file/FileTree.tsx": [
     "src/components/file/FileTree.tsx",
     "src/components/file/FileTreeSettingsMenu.tsx",
+    "src/components/file/FileTreeHeaderOverlays.tsx",
     "src/components/file/FileTreeRefreshButton.tsx",
     "src/components/file/useAgentConfigFlowTransitions.ts",
     "src/components/file/fileTreeTypes.ts",
@@ -334,6 +335,7 @@ export const MODULES = {
   "src/components/FileTree.tsx": [
     "src/components/file/FileTree.tsx",
     "src/components/file/FileTreeSettingsMenu.tsx",
+    "src/components/file/FileTreeHeaderOverlays.tsx",
     "src/components/file/FileTreeRefreshButton.tsx",
     "src/components/file/useAgentConfigFlowTransitions.ts",
     "src/components/file/fileTreeTypes.ts",

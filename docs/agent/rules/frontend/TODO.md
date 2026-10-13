@@ -25,14 +25,14 @@
 - [x] 样式文件归一：将混合 JSX 图标的 `composerStyles.tsx` 拆为纯 `.ts` 的 `composerStyles.ts` 与 `composerIcons.tsx`；`fileTreeMenuStyles.ts` 原已符合规则。
 - [x] `FileEditor.css`、`DiagramPreview.css` 内联到组件的 `<style>` 字符串；保留伪类、媒体查询、CodeMirror 后代选择器和安全区规则。
 
-## 必拆文件（硬线 30 个，按"每次 2–3 个 + 一次构建"推进）
+## 必拆文件（硬线 29 个，按"每次 2–3 个 + 一次构建"推进）
 
 ```
 app/ (11): useProjectLifecycle 885 · useAppSessionLayer 876
            useAppDomainLayer 864 · useAppStateLayer 816 · useSessionLifecycle 741
            useManagedRoots 709 · useSendMessage 686 · useAppViewComposition 661
            useSessionStreamCache 645 · useActionHandlers 611 · realtimeWsHandlers 570
-components/ (17): FileTree 702 · AgentConfigPopover 788 · useActionBar 722 · SessionPane 682
+components/ (16): AgentConfigPopover 788 · useActionBar 722 · SessionPane 682
            SessionViewer 646 · TaskBoardView 645 · SessionCard 642 · DefaultListViewMenu 585
            ScheduledAgentTaskDialog 572 · AgentSelector 563 · DocumentViewer 537
            GitStatusPanel 532 · useMarkdownViewer 527 · ProjectAddPopover 527

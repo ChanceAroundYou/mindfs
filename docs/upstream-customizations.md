@@ -2711,3 +2711,10 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **根因与边界**：将 agent 与新项目 meta 类型放到 shared，已有 service 继续再导出；FileTree 与 props 类型统一改依赖 shared。
 - **针对性测试**：`web/tests/file-tree-service-boundaries.test.mjs` → 确认 FileTree 与类型契约没有 service import，并守住 service 仍提供原 API。
 - **边界**：类型结构与对外 service 导入路径不变，无运行时行为变化。
+
+### G-CJ FileTree header menus 与 overlays presenter 拆分
+
+- **可见症状**：settings presenter 独立后，FileTree 仍内嵌大型 header 菜单、账户面板、Agent 配置和生命周期浮层，控制文件仍超过 500 行。
+- **根因与边界**：将 header menu 与相关 overlay JSX 提取到 `FileTreeHeaderOverlays.tsx`；状态与业务动作继续由 FileTree controller 持有并作为 context 传入。
+- **针对性测试**：`web/tests/file-tree-header-overlays.test.mjs`、FileTree meta/service boundary tests → 守住 presenter 接线、原回调归属与 service 边界。
+- **边界**：保持菜单关闭顺序、浮层可见性、回调和渲染顺序；FileTree 实测 489 行。

@@ -55,3 +55,5 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 - 当前下一项：审计 FileTree 剩余 `services/` 类型导入与职责混合，随后按同一层次规则继续处理 `useActionBar`。
 - 已完成：FileTree 和 `fileTreeTypes` 不再从 services 导入类型；agent 数据结构、新项目 meta union 进入 shared，agent/preferences service 保留旧类型导出。字号与快捷键类型也直接从 shared 引用。
 - 当前下一项：按 frontend TODO 继续 FileTree 职责拆分并复核硬线；达到验收条件后销项，再处理 `useActionBar` 和 `TaskBoardView` 的 logic/view 倒挂。
+- 已完成：将 FileTree header 菜单及账户、Agent config/lifecycle、session preference overlays presenter 提取到 `FileTreeHeaderOverlays.tsx`，状态与动作仍由 FileTree 持有。`FileTree.tsx` 从 701 行降至 489 行；硬线清单从 30 项更新为 29 项。针对性守卫检查 presenter 接线与保留的回调边界。
+- 当前下一项：继续审计 FileTree 余下 app/view 依赖并拆分 `useActionBar`、`TaskBoardView`；之后推进 Vitest 迁移与 reuse 测试，再处理 backend TODO。
