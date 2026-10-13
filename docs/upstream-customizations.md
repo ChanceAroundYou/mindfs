@@ -2704,3 +2704,10 @@
 - **边界**：保持同步初始 readiness、bootstrap 更新、节点排序、颜色回退顺序和空项目展示行为。
 
 G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`，由 node registry service 保留原导出 facade；FileTree JSX presenter 直接使用 shared 常量。
+
+### G-CI FileTree props 类型契约迁入 shared
+
+- **可见症状**：FileTree 与 `fileTreeTypes` 仍从 agent/preferences service 导入类型；字号和发送快捷键的 props 类型也穿过 service facade。
+- **根因与边界**：将 agent 与新项目 meta 类型放到 shared，已有 service 继续再导出；FileTree 与 props 类型统一改依赖 shared。
+- **针对性测试**：`web/tests/file-tree-service-boundaries.test.mjs` → 确认 FileTree 与类型契约没有 service import，并守住 service 仍提供原 API。
+- **边界**：类型结构与对外 service 导入路径不变，无运行时行为变化。

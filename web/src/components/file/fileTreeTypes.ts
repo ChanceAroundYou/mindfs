@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import type { DirectorySortMode, FileEntry } from "../../shared/directorySort";
-import type { SendShortcut } from "../../services/prefs/sendShortcut";
-import type { FontSizePreferences } from "../../services/prefs/fontSize";
+import type { SendShortcut } from "../../shared/sendShortcut";
+import type { FontSizePreferences } from "../../shared/fontSize";
 
 // FileTree 的 props 契约与共享类型。单独成文件（2026-10-08）是为了让 App.tsx、
 // FileTreePanel.tsx、app/useProjectTree* 直接引用，不必经由 FileTree.tsx 这个

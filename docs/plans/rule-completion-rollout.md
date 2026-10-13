@@ -53,3 +53,5 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 - 当前下一项：继续拆分 FileTree 的 settings/menu 组合与其余 view 逻辑，按实际行数和依赖方向验证，不改变 App.tsx 组合根。
 - 已完成：将 bootstrap readiness 订阅、node groups 查询及项目 tab accent 的节点颜色回退从 FileTree/view presenter 收入 colocated hooks；presenter 改收值，保留原始分组顺序与空态语义。专项 service-boundary 守卫已加入。
 - 当前下一项：审计 FileTree 剩余 `services/` 类型导入与职责混合，随后按同一层次规则继续处理 `useActionBar`。
+- 已完成：FileTree 和 `fileTreeTypes` 不再从 services 导入类型；agent 数据结构、新项目 meta union 进入 shared，agent/preferences service 保留旧类型导出。字号与快捷键类型也直接从 shared 引用。
+- 当前下一项：按 frontend TODO 继续 FileTree 职责拆分并复核硬线；达到验收条件后销项，再处理 `useActionBar` 和 `TaskBoardView` 的 logic/view 倒挂。

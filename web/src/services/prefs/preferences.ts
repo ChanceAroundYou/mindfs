@@ -11,7 +11,8 @@ export type IdleSessionResourceReleasePreference = {
   hours: number;
 };
 
-export type NewProjectMetaLocation = "project" | "home";
+import type { NewProjectMetaLocation } from "../../shared/preferencesTypes";
+export type { NewProjectMetaLocation } from "../../shared/preferencesTypes";
 
 function normalizeNewProjectMetaLocation(value: unknown): NewProjectMetaLocation {
   const location = value && typeof value === "object" && "location" in value

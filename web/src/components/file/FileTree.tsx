@@ -59,9 +59,8 @@ import {
   type AgentConfigSwitchTab,
 } from "./AgentConfigPopover";
 import { AgentConfigLineEditor } from "./AgentConfigLineEditor";
-import type { AgentStatus } from "../../services/agents";
-import type { AgentAPIProvider, AgentConfigBackup } from "../../services/agentConfig";
-import type { NewProjectMetaLocation } from "../../services/prefs/preferences";
+import type { AgentAPIProvider, AgentConfigBackup, AgentStatus } from "../../shared/agentTypes";
+import type { NewProjectMetaLocation } from "../../shared/preferencesTypes";
 import { formatSendShortcut, shortcutFromKeyboardEvent, type SendShortcut } from "../../shared/sendShortcut";
 
 /** 把单模型测试结果格式化成一行简短文案（成功/延迟/错误/简短响应）。 */

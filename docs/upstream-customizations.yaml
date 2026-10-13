@@ -3536,4 +3536,35 @@ groups:
       - web/src/components/file/useFileTreeProjectTabAccent.ts:useFileTreeProjectTabAccent
       - web/src/components/file/useFileTreeNodeGroups.ts:useFileTreeNodeGroups
       - web/src/shared/nodePalette.ts:DEFAULT_NODE_COLOR
-      - web/tests/file-tree-service-boundaries.test.mjs:delegates bootstrap and node-registry reads
+      - web/tests/file-tree-service-boundaries.test.mjs:FileTree view and props use shared contracts
+  - id: G-CI
+    title: FileTree type contracts no longer point into services
+    kind: arch
+    symptom: |
+      FileTree and fileTreeTypes import agent, preference, font-size, and shortcut types from services,
+      coupling a component view contract to service implementation paths.
+    why: |
+      Move domain contract types into shared and keep the old service exports as compatibility facades,
+      so FileTree and its props types depend only on shared contracts.
+    boundary: |
+      Preserve the exact structural types and all existing service import paths for non-view consumers;
+      no runtime behavior changes.
+    tests:
+      - web/tests/file-tree-service-boundaries.test.mjs
+    files:
+      - web/src/shared/agentTypes.ts
+      - web/src/shared/preferencesTypes.ts
+      - web/src/services/agent/agents.ts
+      - web/src/services/agent/agentConfig.ts
+      - web/src/services/prefs/preferences.ts
+      - web/src/components/file/FileTree.tsx
+      - web/src/components/file/fileTreeTypes.ts
+      - web/tests/file-tree-service-boundaries.test.mjs
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/shared/agentTypes.ts:AgentStatus
+      - web/src/shared/preferencesTypes.ts:NewProjectMetaLocation
+      - web/tests/file-tree-service-boundaries.test.mjs:FileTree view and props use shared contracts

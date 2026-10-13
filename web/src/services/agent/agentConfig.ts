@@ -1,31 +1,8 @@
 import { appPath } from "../net/base";
 import { protectedJSON } from "../net/api";
 
-export type AgentConfigSource = {
-  sourcePath: string;
-  backupPath: string;
-};
-
-export type AgentConfigBackup = {
-  id: string;
-  agent: string;
-  name: string;
-  createdAt: string;
-  updatedAt: string;
-  sources?: AgentConfigSource[];
-  envKeys?: string[];
-};
-
-export type AgentAPIProvider = {
-  id: string;
-  name: string;
-  baseUrl: string;
-  protocols: string[];
-  modelFamilies: string[];
-  models?: string[];
-  createdAt: string;
-  updatedAt: string;
-};
+import type { AgentAPIProvider, AgentConfigBackup, AgentConfigSource } from "../../shared/agentTypes";
+export type { AgentAPIProvider, AgentConfigBackup, AgentConfigSource } from "../../shared/agentTypes";
 
 export type AgentConfigDefaults = {
   agent: string;
