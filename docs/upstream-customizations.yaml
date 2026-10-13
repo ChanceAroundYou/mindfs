@@ -2524,6 +2524,30 @@ groups:
       - docs/agent/rules/README.md:执行方式
       - docs/plans/README.md:Active
 
+  - id: G-BN
+    title: 多 agent 会话按指定 Claude binding repoint
+    kind: fix
+    symptom: |
+      同一个 MindFS 会话有 Claude 和 Codex 两个 binding 时，最新 exchange 来自 Codex 会令
+      RepointSession 错误拒绝明确指定的 Claude 转录 id，worktree 已删除后会话仍钉在失效路径。
+    why: |
+      显式 agent_session_id 代表目标 Claude 转录，不应由 InferAgentFromSession 的最新 exchange
+      覆盖。先按 Claude binding 反查，再验证显式 key 匹配；只关闭 Claude runtime，并只更换 Claude
+      binding 与其游标。Codex binding 保持不变，相关 worktree 归属在转录安全搬迁后持久化清除。
+    boundary: |
+      只修显式 Claude agent_session_id 在多 binding session 上的选择。仅传 key 仍选择当前 agent；
+      Codex 原生 transcript 的搬迁与重绑定不在范围内。
+    tests:
+      - server/internal/api/usecase/session_repoint_test.go
+      - server/internal/session/manager_repoint_binding_test.go
+      - server/internal/agent/claude/repoint_test.go
+    files:
+      - server/internal/api/usecase/session_repoint.go
+      - server/internal/api/usecase/session_repoint_test.go
+    anchors:
+      - 'server/internal/api/usecase/session_repoint.go:if agentSessionID != "" {'
+      - server/internal/api/usecase/session_repoint_test.go:TestRepointSessionTargetsClaudeBindingInMultiAgentSession
+
   - id: G-BH
     title: 会话正文块流（Block 存储层 + 轮次身份 turn_id/turn_seq/native_* + S2a 双写 + S2b 读改走块流 + C1/C2 + S2d-2 主日志不再存正文 + S2e pending 身份改用 turn_id）
     kind: fix

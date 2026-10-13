@@ -58,14 +58,21 @@ func (s *Service) RepointSession(ctx context.Context, in RepointSessionInput) (R
 	if err != nil {
 		return out, err
 	}
-	if key == "" {
-		// 脚本只知道 claude 的 session id，反查 mindfs 会话。
-		binding, err := manager.FindAgentBindingByAgentSession(ctx, "claude", agentSessionID)
+	// 显式给出的 agent_session_id 指定了要搬的 binding。一个 MindFS 会话可以先后
+	// 使用多个 agent；InferAgentFromSession 返回最近写入 exchange 的 agent，不一定是
+	// 这份 Claude 转录对应的 agent。不要因此误选另一个 binding。
+	selectedAgent := ""
+	if agentSessionID != "" {
+		selectedAgent = "claude"
+		binding, err := manager.FindAgentBindingByAgentSession(ctx, selectedAgent, agentSessionID)
 		if err != nil {
 			return out, err
 		}
 		if binding == nil {
 			return out, fmt.Errorf("no mindfs session bound to agent session id %q", agentSessionID)
+		}
+		if key != "" && key != binding.SessionKey {
+			return out, fmt.Errorf("agent session id %q is bound to session %q, not %q", agentSessionID, binding.SessionKey, key)
 		}
 		key = binding.SessionKey
 	}
@@ -73,7 +80,10 @@ func (s *Service) RepointSession(ctx context.Context, in RepointSessionInput) (R
 	if err != nil {
 		return out, err
 	}
-	agentName := session.InferAgentFromSession(current)
+	agentName := selectedAgent
+	if agentName == "" {
+		agentName = session.InferAgentFromSession(current)
+	}
 	if agentName == "" {
 		return out, errors.New("session has no agent binding")
 	}

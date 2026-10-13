@@ -2283,6 +2283,13 @@
   - `web/tests/task-board-view.test.mjs`、`web/tests/workspace-board.test.mjs`、`web/tests/node-colors-and-workspace-preferences.test.mjs` → 共享任务面板接收并使用节点 ID，项目下拉/颜色和 worktree 分支请求都按节点区分。
 - **边界**：仅看板新建任务的项目身份路由与 worktree 选择/创建链路。已有任务的执行、收尾和 worktree 生命周期策略不变。
 
+### G-BN 多 agent 会话按指定 Claude binding repoint
+
+- **可见症状**：同一个 MindFS 会话先后使用 Claude 和 Codex 时，Claude 转录仍在已删除的 worktree slug；按 Claude `agent_session_id` repoint 却报“only supported for codex”，会话无法按收尾流程搬回主 checkout。
+- **根因与边界**：`InferAgentFromSession` 返回最近写入 exchange 的 agent，不能代表脚本明确指定的 Claude 转录 binding。传入 `agent_session_id` 时先按 Claude binding 反查目标会话，校验显式 key 与 binding 同一，再只关闭 Claude 运行时、搬转录并在事务中更换该 binding 和末尾游标，然后持久化清除会话 worktree 归属；Codex binding 保持原样。
+- **针对性测试**：`server/internal/api/usecase/session_repoint_test.go` → 多 binding 下显式 Claude id 不被最近的 Codex exchange 覆盖；错误 key/id 组合被拒绝；临时转录端到端搬移确认新 binding 的游标指向 EOF、`agent_ctx_seq` 保留、Codex binding 不变。
+- **边界**：当调用方明确提供 Claude `agent_session_id` 时选择对应 Claude binding；仅传 session key 的调用仍根据当前 agent 判定，并拒绝不支持的 provider。Codex 自身转录格式的 repoint 不在本组范围。
+
 ### G-BM Agent 中立的规则入口与计划索引
 
 - **可见症状**：Codex、Claude Code、Gemini CLI 等 agent 可能加载不同入口，遗漏规范或依照过期计划执行；规则副本漂移后会产生相互矛盾的要求。
