@@ -3597,3 +3597,30 @@ groups:
     anchors:
       - web/src/components/file/FileTreeHeaderOverlays.tsx:FileTreeHeaderOverlays
       - web/tests/file-tree-header-overlays.test.mjs:delegates its header menu and overlay presentation
+  - id: G-CK
+    title: Move pure hex-to-rgba conversion into shared
+    kind: arch
+    symptom: |
+      FileTree imports app/taskIcons only for the pure hex-to-rgba color helper, creating a view-to-app dependency.
+    why: |
+      Put the side-effect-free color conversion in shared and preserve app/taskIcons' public helper as a facade,
+      so FileTree can complete its view dependency audit without changing other consumers.
+    boundary: |
+      Keep shorthand/full hex parsing, invalid-color fallback, rgba pass-through, and all existing app exports.
+    tests:
+      - web/tests/shared-hex-to-rgba.test.mjs
+      - web/tests/file-tree-service-boundaries.test.mjs
+    files:
+      - web/src/shared/hexToRgba.ts
+      - web/src/app/taskIcons.tsx
+      - web/src/components/file/FileTree.tsx
+      - web/tests/shared-hex-to-rgba.test.mjs
+      - web/tests/file-tree-service-boundaries.test.mjs
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/shared/hexToRgba.ts:hexToRgba
+      - web/tests/shared-hex-to-rgba.test.mjs:preserves shorthand, fallback, and rgba pass-through

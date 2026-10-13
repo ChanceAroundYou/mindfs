@@ -2718,3 +2718,10 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **根因与边界**：将 header menu 与相关 overlay JSX 提取到 `FileTreeHeaderOverlays.tsx`；状态与业务动作继续由 FileTree controller 持有并作为 context 传入。
 - **针对性测试**：`web/tests/file-tree-header-overlays.test.mjs`、FileTree meta/service boundary tests → 守住 presenter 接线、原回调归属与 service 边界。
 - **边界**：保持菜单关闭顺序、浮层可见性、回调和渲染顺序；FileTree 实测 489 行。
+
+### G-CK FileTree 纯色转换依赖迁入 shared
+
+- **可见症状**：FileTree 只为调用 `hexToRgbaApp` 就导入 `app/taskIcons.tsx`，使 view 依赖 app 层。
+- **根因与边界**：纯颜色转换放到 `shared/hexToRgba.ts`；app/taskIcons 保留原函数名并转发，其他消费者不需改路径。
+- **针对性测试**：`web/tests/shared-hex-to-rgba.test.mjs` 与 FileTree dependency boundary test → 覆盖颜色行为、兼容 facade、FileTree 不再导入 app。
+- **边界**：短/长 hex、无效值回退及 rgba 字符串透传保持原行为。

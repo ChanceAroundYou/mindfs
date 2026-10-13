@@ -2,7 +2,7 @@ import React, { memo } from "react";
 import { rootBadgeStyle } from "../../shared/rootBadgeStyle";
 import { NodeBadgeHeader } from "../account/NodeBadgeHeader";
 import { ViewHeader } from "../../layout/ViewHeader";
-import { hexToRgbaApp } from "../../app/taskIcons";
+import { hexToRgba as hexToRgbaApp } from "../../shared/hexToRgba";
 import {
   type FileEntry,
   sortDirectoryEntries,

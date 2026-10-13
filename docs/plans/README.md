@@ -8,7 +8,7 @@ to resume their old TODOs or baselines.
 
 | Plan | Status | Next action |
 |---|---|---|
-| [Rule completion rollout](rule-completion-rollout.md) | Active | 继续 FileTree 的逻辑/view 拆分；FileTree header overlays 已提取，实测 489 行、低于硬线；继续审计其 app/view 依赖并推进其余前端 TODO。 |
+| [Rule completion rollout](rule-completion-rollout.md) | Active | 继续 FileTree 的逻辑/view 拆分；FileTree header overlays 已提取并完成 app/service 依赖审计，实测 489 行；下一步审计 useActionBar 与 TaskBoardView。 |
 
 ## Completed or superseded history
 

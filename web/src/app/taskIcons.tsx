@@ -22,6 +22,7 @@ import React from "react";
 import { type MessageKey } from "../i18n";
 import { type MessageParams } from "../i18n";
 import { DEFAULT_NODE_COLOR } from "../services/net/nodeRegistry";
+import { hexToRgba } from "../shared/hexToRgba";
 
 export function ImportIcon() {
   return (
@@ -372,29 +373,8 @@ export function taskWorktreeTagStyle(state: WorktreeTagState): React.CSSProperti
 }
 
 // 无效 hex 的兜底色 = local 节点色。预先展开成 rgb 分量，避免递归解析。
-const DEFAULT_NODE_RGB = (() => {
-  const h = DEFAULT_NODE_COLOR.replace(/^#/, "");
-  return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16));
-})();
-
 export function hexToRgbaApp(hex: string, alpha: number): string {
-  const h = String(hex || "").trim().replace(/^#/, "");
-  const fallback = `rgba(${DEFAULT_NODE_RGB.join(", ")}, ${alpha})`;
-  if (h.length === 3) {
-    const r = parseInt(h[0] + h[0], 16);
-    const g = parseInt(h[1] + h[1], 16);
-    const b = parseInt(h[2] + h[2], 16);
-    if (Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b)) return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-    return fallback;
-  }
-  if (h.length === 6) {
-    const r = parseInt(h.slice(0, 2), 16);
-    const g = parseInt(h.slice(2, 4), 16);
-    const b = parseInt(h.slice(4, 6), 16);
-    if (Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b)) return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-  }
-  if (/^rgba?\(/.test(String(hex || ""))) return String(hex);
-  return fallback;
+  return hexToRgba(hex, alpha);
 }
 
 export function taskReplyPulseStyle(color?: string | null): React.CSSProperties {

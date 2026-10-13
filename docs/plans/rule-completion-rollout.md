@@ -57,3 +57,5 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 - 当前下一项：按 frontend TODO 继续 FileTree 职责拆分并复核硬线；达到验收条件后销项，再处理 `useActionBar` 和 `TaskBoardView` 的 logic/view 倒挂。
 - 已完成：将 FileTree header 菜单及账户、Agent config/lifecycle、session preference overlays presenter 提取到 `FileTreeHeaderOverlays.tsx`，状态与动作仍由 FileTree 持有。`FileTree.tsx` 从 701 行降至 489 行；硬线清单从 30 项更新为 29 项。针对性守卫检查 presenter 接线与保留的回调边界。
 - 当前下一项：继续审计 FileTree 余下 app/view 依赖并拆分 `useActionBar`、`TaskBoardView`；之后推进 Vitest 迁移与 reuse 测试，再处理 backend TODO。
+- 已完成：`hexToRgbaApp` 纯算法迁入 shared，`taskIcons.tsx` 保留旧导出 facade，FileTree 删除最后一个 app/ 导入；frontend TODO 将 FileTree 的逻辑/view 审计单独销项。
+- 当前下一项：审计并拆分 `useActionBar` 与 `TaskBoardView` 的 logic/view 倒挂；然后继续 frontend 剩余硬线、Vitest/复用件测试以及 backend TODO。

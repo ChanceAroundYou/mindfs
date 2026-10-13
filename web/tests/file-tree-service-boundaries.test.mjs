@@ -21,6 +21,7 @@ test("FileTree view and props use shared contracts; service reads stay in logic 
 
   assert.doesNotMatch(view, /from "[^"\n]*services\//);
   assert.doesNotMatch(viewTypes, /from "[^"\n]*services\//);
+  assert.doesNotMatch(view, /from "[^"\n]*app\//);
   assert.match(view, /useFileTreeProtectedAPI\(\)/);
   assert.match(view, /useFileTreeProjectTabAccent\(rootColor, entries, rootId\)/);
   assert.match(readiness, /bootstrapService\.subscribe/);
