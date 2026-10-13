@@ -3670,3 +3670,30 @@ groups:
       - web/src/shared/actionBarTypes.ts:PendingAttachment
       - web/src/shared/actionBarUtils.ts:wsStatusMeta
       - web/tests/action-bar-layering.test.mjs:ActionBar logic uses shared contracts
+  - id: G-CM
+    title: TaskBoardView uses shared template contract and responsive hook
+    kind: arch
+    symptom: |
+      TaskBoardView imports a responsive hook and a template filter sentinel through app-layer aggregator files,
+      obscuring its view dependencies and coupling it to app storage implementation.
+    why: |
+      Point the view at the hooks and shared layers directly, while preserving appStorage's existing public
+      export as a compatibility facade.
+    boundary: |
+      Keep the template filter sentinel value, responsive breakpoint behavior, and view output unchanged. The
+      remaining taskIcons import is a legacy presentation asset module containing SVG/CSS-in-JS only.
+    tests:
+      - web/tests/task-board-view-layering.test.mjs
+    files:
+      - web/src/shared/taskTemplateConstants.ts
+      - web/src/app/appStorage.ts
+      - web/src/components/task/TaskBoardView.tsx
+      - web/tests/task-board-view-layering.test.mjs
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/shared/taskTemplateConstants.ts:TASK_TEMPLATE_ALL_FILTER
+      - web/tests/task-board-view-layering.test.mjs:TaskBoardView avoids runtime app/storage dependencies

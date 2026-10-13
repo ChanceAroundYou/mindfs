@@ -2732,3 +2732,11 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **根因与边界**：ActionBar 类型及纯占位、状态、颜色、预览 helper 迁入 shared；`useResponsive` 独立归 hooks；旧类型出口继续 re-export。
 - **针对性测试**：`web/tests/action-bar-layering.test.mjs` → 覆盖 helper 的文案与时序契约、logic 不反向导入 view、旧类型 facade 和 debounce 单一来源。
 - **边界**：发送/上传时序不变；保持 SessionMode、TokenEditorHandle、PendingAttachment 结构和响应式断点行为。
+
+
+### G-CM TaskBoardView 依赖改由 shared 与 hooks 提供
+
+- **可见症状**：TaskBoardView 通过 app 聚合模块读取响应式 hook 和模板筛选标记，视图的依赖方向被 app storage/logic 路径掩盖。
+- **根因与边界**：响应式 hook 直接从 `hooks/` 导入；筛选 sentinel 移入 `shared/taskTemplateConstants.ts`，`appStorage` 继续兼容再导出。保留的 `app/taskIcons` 只含图标与样式呈现资源。
+- **针对性测试**：`web/tests/task-board-view-layering.test.mjs` → 确认 TaskBoardView 不依赖 app 状态/逻辑或 services，并保持 appStorage 原导出。
+- **边界**：筛选值、响应式断点、看板渲染和现有调用方 API 不变。

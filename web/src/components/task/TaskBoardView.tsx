@@ -1,7 +1,7 @@
 import React from "react";
 import { useI18n } from "../../i18n/index";
-import { useResponsive } from "../../app/appMisc";
-import { TASK_TEMPLATE_ALL_FILTER } from "../../app/appStorage";
+import { useResponsive } from "../../hooks/useResponsive";
+import { TASK_TEMPLATE_ALL_FILTER } from "../../shared/taskTemplateConstants";
 import { useRefreshSpin } from "../../hooks/index";
 import type { useTaskTemplates } from "../../app/useTaskTemplates";
 import type { KanbanTask, TaskTemplate } from "../../services/tasks";
@@ -22,11 +22,11 @@ import {
   SyncIcon,
   TaskExpandIcon,
   TaskGroupChevronIcon,
-  hexToRgbaApp,
   taskCardIconButtonStyle,
   taskCardSurfaceStyle,
   taskTemplateMenuItemStyle,
 } from "../../app/taskIcons";
+import { hexToRgba as hexToRgbaApp } from "../../shared/hexToRgba";
 
 /** 看板列（四块：未开始 / 执行中 / 待审核 / 已结束）。App 侧构造，本视图只渲染。 */
 export type KanbanStageColumn = {
