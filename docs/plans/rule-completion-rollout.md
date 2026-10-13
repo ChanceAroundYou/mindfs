@@ -108,4 +108,5 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 - 历史下一项（后续已更新）：继续拆 `useSessionStreamCache` 等前端硬线，再全量完成规则门禁审计和 backend TODO。
 
 - 已完成：`useSessionStreamCache` 的通用 cache upsert、运行时元信息解析及 agent chunk 身份合并归 `useSessionStreamRuntimeMeta`；`SessionRuntimeMeta` 独立到 type contract，原模块保留类型出口。父 hook 实测 645→473 行，硬线剩余 7 项、软线 73 项；其他 exchange merge 与 context-window 更新留在父层。专项 20 项通过、TypeScript 通过，source-map 映射与 upstream 登记完成。
-- 下一项：复核并拆 `useActionHandlers`；之后继续前端剩余硬线、规则门禁审计与 backend TODO。
+- 已完成：`useActionHandlers` 的 open_dir 目录加载流程归 `openDirectoryAction` 工厂，仍在父 hook 的 useMemo 对象中按原时机创建；完整参数契约和闭包引用、节点/根选择、树缓存、bound-session 恢复及失败状态均保持。父 hook 实测 611→409 行，硬线剩余 6 项、软线 74 项；TypeScript、全量测试（Vitest 5 + legacy 287 通过/4 跳过）与生产构建通过。
+- 下一项：复核并拆 `realtimeWsHandlers`；之后继续前端剩余硬线、规则门禁审计与 backend TODO。

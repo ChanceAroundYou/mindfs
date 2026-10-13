@@ -2942,3 +2942,10 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **根因与边界**：`useSessionStreamRuntimeMeta` 接管原有防抖 bump ref、通用 upsert、runtime metadata 候选解析和 agent chunk 合并；`SessionRuntimeMeta` 移入 type contract，旧 hook 原样再导出。Thought/tool/todo/plan/compact merge 与 context-window 更新留在父 hook，新 hook 在原调用位置执行。
 - **针对性测试**：`session-stream-cache-split.test.mjs` → 守住父 hook 行数、旧类型出口、职责归属与 mindfs_id 合并；`message-mechanism-merges.test.mjs`、`claude-model-1m.test.mjs`、`session-duration.test.mjs`、`upstream-restore.test.mjs` → 守住流身份、模型元信息、事件时间和 userShell replay；`source-map.test.mjs` → 守住逻辑源码映射。
 - **边界**：父 hook 实测 645→473 行，frontend 硬线 TODO 剩余 7 项；`App.tsx`、事件顺序与其它 role 合并语义不变。
+
+### G-DP Action handlers 按目录加载职责拆分
+
+- **可见症状**：`useActionHandlers` 把打开文件与目录/树导航组合在同一个大 memo 回调中，超过前端硬线；目录切根、树缓存、绑定会话恢复及错误状态难单独审阅。
+- **根因与边界**：原 `open_dir` callback body 搬到 `createOpenDirectoryAction`，接受既有完整参数面及 `isMobile`/翻译函数；父 hook 仍在原 `useMemo` 内创建它。打开文件 callback、参数契约、memo 依赖、根/节点路由、树缓存、绑定会话恢复和失败处理保持。
+- **针对性测试**：`action-handlers-split.test.mjs` → 守住物理父 hook 行数、参数兼容、memo 创建点、ref 自递归与失败状态；`main-content-view-memory.test.mjs` → 守住视图内存行为；`source-map.test.mjs` → 守住逻辑源码映射。
+- **边界**：父 hook 实测 611→409 行，frontend 硬线 TODO 剩余 6 项；不改 `App.tsx`、打开文件行为或目录导航语义。

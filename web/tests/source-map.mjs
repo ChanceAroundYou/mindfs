@@ -84,6 +84,7 @@ export const MODULES = {
     "src/app/useSendMessageSlashCommand.ts",
     "src/app/useSendMessageTypes.ts",
     "src/app/useActionHandlers.ts",
+    "src/app/openDirectoryAction.ts",
     "src/app/useSessionLifecycle.ts",
     "src/app/useSessionListLoading.ts",
     "src/app/useSessionSyncAction.ts",

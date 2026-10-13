@@ -3282,7 +3282,7 @@ groups:
       - docs/upstream-customizations.yaml
       - web/tests/agent-docs.test.mjs
     anchors:
-      - docs/agent/rules/frontend/TODO.md:硬线 7 个
+      - docs/agent/rules/frontend/TODO.md:硬线 6 个
       - docs/plans/README.md:Rule completion rollout
       - web/tests/agent-docs.test.mjs:every plan is classified in the sole plans index
   - id: G-BZ
@@ -4642,3 +4642,36 @@ groups:
     anchors:
       - web/src/app/useSessionStreamRuntimeMeta.ts:export function useSessionStreamRuntimeMeta
       - web/tests/session-stream-cache-split.test.mjs:physical cache coordinator stays below the frontend hard line
+
+  - id: G-DP
+    title: Action handlers split by directory loading responsibility
+    kind: arch
+    symptom: |
+      useActionHandlers combines file opening and directory/tree navigation in one large memoized
+      callback object, exceeding the frontend hard line. Directory root switching, cached tree reads,
+      bound-session restoration, and error state are difficult to review independently.
+    why: |
+      Give the open_dir flow a focused owner while preserving its callback creation point and ref-based
+      recursion into open_dir when a restored bound session needs a directory fallback.
+    boundary: |
+      createOpenDirectoryAction contains the original open_dir callback body and receives the existing
+      ActionHandlersParams plus isMobile and translator values. It is called inside the original
+      useMemo; the open file callback, full params contract, memo dependency list, root/node routing,
+      tree cache behavior, session restoration, and error handling remain unchanged.
+    tests:
+      - web/tests/action-handlers-split.test.mjs
+      - web/tests/main-content-view-memory.test.mjs
+      - web/tests/source-map.test.mjs
+    files:
+      - web/src/app/useActionHandlers.ts
+      - web/src/app/openDirectoryAction.ts
+      - web/tests/action-handlers-split.test.mjs
+      - web/tests/source-map.mjs
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/app/openDirectoryAction.ts:export function createOpenDirectoryAction
+      - web/tests/action-handlers-split.test.mjs:action handler coordinator stays below the frontend hard line
