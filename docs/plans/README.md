@@ -8,7 +8,7 @@ to resume their old TODOs or baselines.
 
 | Plan | Status | Next action |
 |---|---|---|
-| [Rule completion rollout](rule-completion-rollout.md) | Active | SessionCard 455 行，操作菜单独立且行为状态仍由卡片/hook 管理；前端硬线剩余 18 项。下一批从当前实测硬线文件选 2–3 个，完成依赖审计后拆分。 |
+| [Rule completion rollout](rule-completion-rollout.md) | Active | DefaultListViewMenu 457 行，排序子菜单独立且排序值/弹出状态仍由父组件持有；前端硬线剩余 17 项。下一批从当前实测硬线文件选 2–3 个，完成依赖审计后拆分。 |
 
 ## Completed or superseded history
 

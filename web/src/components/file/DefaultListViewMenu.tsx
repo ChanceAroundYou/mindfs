@@ -5,30 +5,9 @@ import {
   menuOverlayStyle,
   MoveFilePopover,
 } from "./FileOperations";
-import { DIRECTORY_SORT_OPTIONS } from "../../services/prefs/directorySort";
-import type { DirectorySortControlValue } from "./DefaultListView";
+import { DirectorySortMenu, type DirectorySortControlValue } from "./DirectorySortMenu";
 import { GitBranchMenuIcon } from "./listViewIcons";
 import type { MessageKey } from "../../i18n/index";
-
-const ChevronRight = ({ isOpen }: { isOpen: boolean }) => (
-  <svg
-    width="14"
-    height="14"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2.5"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    style={{
-      transform: isOpen ? "rotate(90deg)" : "rotate(0deg)",
-      transition: "transform 0.15s cubic-bezier(0.4, 0, 0.2, 1)",
-      color: isOpen ? "var(--text-primary)" : "#9ca3af",
-    }}
-  >
-    <polyline points="9 18 15 12 9 6" />
-  </svg>
-);
 
 export type DefaultListViewMenuProps = {
   isMenuOpen: boolean;
@@ -106,121 +85,14 @@ export function DefaultListViewMenu(props: DefaultListViewMenuProps) {
       <div
         style={moreMenuPopoverStyle}
       >
-        <button
-          type="button"
-          onClick={() => {
-            setIsSortMenuOpen((open) => !open);
-          }}
-          style={{
-            width: "100%",
-            border: "none",
-            background: "transparent",
-            color: "var(--text-primary)",
-            borderRadius: "8px",
-            padding: "8px 10px",
-            display: "flex",
-            alignItems: "center",
-            gap: "8px",
-            textAlign: "left",
-            cursor: "pointer",
-            fontSize: "12px",
-          }}
-          aria-expanded={isSortMenuOpen}
-        >
-          <span style={{ flex: 1 }}>{t("directory.currentSort")}</span>
-          <span
-            style={{ color: "var(--text-secondary)", fontSize: "11px" }}
-          >
-            {sortLabel(sortControlValue)}
-          </span>
-          <ChevronRight isOpen={isSortMenuOpen} />
-        </button>
-        {isSortMenuOpen ? (
-          <>
-            <button
-              type="button"
-              onClick={() => {
-                onSortModeChange?.("inherit");
-                setIsMenuOpen(false);
-                setIsSortMenuOpen(false);
-              }}
-              style={{
-                width: "100%",
-                border: "none",
-                background:
-                  sortControlValue === "inherit"
-                    ? "var(--selection-bg)"
-                    : "transparent",
-                color:
-                  sortControlValue === "inherit"
-                    ? "var(--accent-color)"
-                    : "var(--text-primary)",
-                borderRadius: "8px",
-                padding: "8px 10px",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                textAlign: "left",
-                cursor: "pointer",
-                fontSize: "12px",
-              }}
-            >
-              <span>{t("directory.followGlobal")}</span>
-              <span
-                style={{
-                  fontSize: "11px",
-                  opacity: sortControlValue === "inherit" ? 1 : 0,
-                }}
-              >
-                ✓
-              </span>
-            </button>
-            {DIRECTORY_SORT_OPTIONS.map((option) => {
-              const active = sortControlValue === option.value;
-              return (
-                <button
-                  key={option.value}
-                  type="button"
-                  onClick={() => {
-                    onSortModeChange?.(
-                      option.value as DirectorySortControlValue,
-                    );
-                    setIsMenuOpen(false);
-                    setIsSortMenuOpen(false);
-                  }}
-                  style={{
-                    width: "100%",
-                    border: "none",
-                    background: active
-                      ? "var(--selection-bg)"
-                      : "transparent",
-                    color: active
-                      ? "var(--accent-color)"
-                      : "var(--text-primary)",
-                    borderRadius: "8px",
-                    padding: "8px 10px",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    textAlign: "left",
-                    cursor: "pointer",
-                    fontSize: "12px",
-                  }}
-                >
-                  <span>{sortLabel(option.value as DirectorySortControlValue)}</span>
-                  <span
-                    style={{
-                      fontSize: "11px",
-                      opacity: active ? 1 : 0,
-                    }}
-                  >
-                    ✓
-                  </span>
-                </button>
-              );
-            })}
-          </>
-        ) : null}
+        <DirectorySortMenu
+          isOpen={isSortMenuOpen}
+          setIsOpen={setIsSortMenuOpen}
+          sortControlValue={sortControlValue}
+          onSortModeChange={onSortModeChange}
+          sortLabel={sortLabel}
+          closeMenu={() => setIsMenuOpen(false)}
+        />
         {/* 主视图切换已收敛到左栏底部的 MainViewSwitcher（唯一入口），此处不再显示模式字样 */}
         <div
           style={{

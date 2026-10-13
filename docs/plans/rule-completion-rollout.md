@@ -83,3 +83,5 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 - 下一项：继续剩余前端硬线，随后按当前实测重算后台文件清单并开始后端单文件拆分。
 - 已完成：将 `SessionCard` 的溢出操作入口与菜单抽到 `SessionCardOverflowMenu`；置顶、同步、重命名、归档、删除动作通过父卡片回调，卡片/hook 仍持有 menu、rename 状态。父组件从 642 行降至 455 行；typecheck、session archive、rename 与专项菜单测试通过。硬线剩余 18 项。
 - 下一项：继续前端硬线组件拆分；接近清空 frontend TODO 后复核目录/命名/层级规则与 reviewer checklist。
+- 已完成：将 `DefaultListViewMenu` 的排序展开按钮与 inherit/显式排序选项提取到 `DirectorySortMenu`，sort 值和弹层开关仍由原父组件持有；`DirectorySortControlValue` 随菜单 view contract 导出。父菜单从 585 行降至 457 行；typecheck、命名门禁及排序专项通过。硬线剩余 17 项。
+- 下一项：按当前文件树继续处理前端硬线；后续复核候选名单行数与 reviewer checklist 的门禁覆盖。

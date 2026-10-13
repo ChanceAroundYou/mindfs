@@ -3282,7 +3282,7 @@ groups:
       - docs/upstream-customizations.yaml
       - web/tests/agent-docs.test.mjs
     anchors:
-      - docs/agent/rules/frontend/TODO.md:硬线 18 个
+      - docs/agent/rules/frontend/TODO.md:硬线 17 个
       - docs/plans/README.md:Rule completion rollout
       - web/tests/agent-docs.test.mjs:every plan is classified in the sole plans index
   - id: G-BZ
@@ -4034,3 +4034,34 @@ groups:
     anchors:
       - web/src/components/session/SessionCardOverflowMenu.tsx:SessionCardOverflowMenu
       - web/tests/session-card-overflow-menu.test.mjs:session card keeps overflow actions
+
+  - id: G-CW
+    title: Default list directory sort menu extraction
+    kind: arch
+    symptom: |
+      DefaultListViewMenu exceeded the frontend 500-line hardline while mixing directory actions,
+      Git/worktree controls, and sort-mode selection.
+    why: |
+      Isolate directory sort selection as a focused view while keeping sort state and list visibility
+      with DefaultListView's existing owner.
+    boundary: |
+      Extract the current sort trigger and inherit/explicit option rows only. File operations, root
+      actions, and Git/worktree menu entries stay in DefaultListViewMenu.
+    tests:
+      - web/tests/directory-sort-menu.test.mjs
+      - web/tests/naming-convention.test.mjs
+      - web/tests/source-map.mjs
+    files:
+      - web/src/components/file/DefaultListView.tsx
+      - web/src/components/file/DefaultListViewMenu.tsx
+      - web/src/components/file/DirectorySortMenu.tsx
+      - web/tests/directory-sort-menu.test.mjs
+      - web/tests/source-map.mjs
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/components/file/DirectorySortMenu.tsx:DirectorySortMenu
+      - web/tests/directory-sort-menu.test.mjs:keeps inherit and explicit sorting

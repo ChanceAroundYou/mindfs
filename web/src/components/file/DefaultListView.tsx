@@ -21,7 +21,8 @@ import type { UploadProgress } from "../../services/upload";
 import { useI18n, type MessageKey } from "../../i18n/index";
 import { CompactUploadProgress } from "./CompactUploadProgress";
 
-export type DirectorySortControlValue = DirectorySortMode | "inherit";
+export type { DirectorySortControlValue } from "./DirectorySortMenu";
+import type { DirectorySortControlValue } from "./DirectorySortMenu";
 export type MainContentViewMode = "task-kanban" | "file-browser";
 
 const sortLabelKeys: Partial<Record<DirectorySortControlValue, MessageKey>> = {

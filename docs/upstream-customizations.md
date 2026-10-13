@@ -243,6 +243,7 @@
 | G-CT | Git 状态分支选择器提取 | 架构 | 见 §3.2 | 分支获取由现有 hook 承担，开关与切换状态归父面板 |
 | G-CU | DocumentViewer PDF 预览职责提取 | 架构 | 见 §3.2 | PDF canvas 有界渲染与跨格式错误语义保留 |
 | G-CV | SessionCard 溢出操作菜单提取 | 架构 | 见 §3.2 | 操作和确认继续通过既有父层回调，不改会话状态归属 |
+| G-CW | DefaultListView 排序菜单提取 | 架构 | 见 §3.2 | 排序值与弹层状态仍由目录视图控制器持有 |
 
 > **G-D 已并入 G-F，G-M 已并入 G-AI**（改动面完全重合、无独立测试可守，单列只会制造空组）。
 
@@ -2813,3 +2814,10 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **根因与边界**：菜单触发和动作列表提取到 `SessionCardOverflowMenu`；选中态、菜单开关、重命名草稿与动作执行仍归父卡片及列表回调所有。
 - **针对性测试**：`web/tests/session-card-overflow-menu.test.mjs` → 守住各动作、菜单文案和状态归属；`session-archive.test.mjs` 与 `fork-session-name.test.mjs` → 守住归档与改名链路。
 - **边界**：保持菜单顺序、置顶徽标、同步禁用、归档可选项与删除回调；父组件现为 455 行。
+
+### G-CW DefaultListView 排序菜单提取
+
+- **可见症状**：`DefaultListViewMenu` 超过 500 行，文件操作、项目/Git 菜单和目录排序子菜单混在一起。
+- **根因与边界**：排序展开按钮和 inherit/显式选项移入 `DirectorySortMenu`；`DefaultListView` 仍拥有 sort 值与 mode setter，其它菜单动作保持原组件。
+- **针对性测试**：`web/tests/directory-sort-menu.test.mjs` → 守住 inherit/选项选择、关闭顺序与展开语义；命名和逻辑映射门禁覆盖新文件归属。
+- **边界**：保留选项顺序、选中样式、全局继承选项和父级菜单关闭；父菜单现为 457 行。

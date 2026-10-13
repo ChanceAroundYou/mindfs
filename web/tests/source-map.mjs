@@ -373,8 +373,14 @@ export const MODULES = {
   "src/components/DiagramPreview.css": ["src/components/common/DiagramPreview.tsx"],
   "src/components/DefaultListView.tsx": [
     "src/components/file/DefaultListView.tsx",
+    "src/components/file/DefaultListViewMenu.tsx",
+    "src/components/file/DirectorySortMenu.tsx",
     "src/components/file/Breadcrumbs.tsx",
     "src/components/file/listViewIcons.tsx",
+  ],
+  "src/components/DefaultListViewMenu.tsx": [
+    "src/components/file/DefaultListViewMenu.tsx",
+    "src/components/file/DirectorySortMenu.tsx",
   ],
   "src/components/ProjectAddPopover.tsx": ["src/components/file/ProjectAddPopover.tsx", "src/components/file/ProjectAddModePanel.tsx", "src/components/file/projectAddStyles.ts", "src/components/file/PathBreadcrumb.tsx"],
   "src/components/CompactUploadProgress.tsx": ["src/components/file/CompactUploadProgress.tsx"],
