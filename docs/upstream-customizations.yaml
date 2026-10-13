@@ -3282,7 +3282,7 @@ groups:
       - docs/upstream-customizations.yaml
       - web/tests/agent-docs.test.mjs
     anchors:
-      - docs/agent/rules/frontend/TODO.md:硬线 19 个
+      - docs/agent/rules/frontend/TODO.md:硬线 18 个
       - docs/plans/README.md:Rule completion rollout
       - web/tests/agent-docs.test.mjs:every plan is classified in the sole plans index
   - id: G-BZ
@@ -4003,3 +4003,34 @@ groups:
     anchors:
       - web/src/components/file/PdfPreview.tsx:PdfPreview
       - web/tests/document-preview-view-split.test.mjs:delegates PDF virtualization
+
+  - id: G-CV
+    title: Session card overflow menu extraction
+    kind: arch
+    symptom: |
+      SessionCard exceeded the frontend 500-line hardline while mixing session row presentation,
+      rename editing, and pin/sync/archive/delete overflow actions.
+    why: |
+      Keep the contextual action menu independently reviewable while preserving SessionCard and its
+      hook as owners of selection, menu visibility, and rename state.
+    boundary: |
+      Extract only the overflow trigger and action menu. All user actions remain callbacks to the
+      existing card/list owners; action ordering and confirmation behavior remain unchanged.
+    tests:
+      - web/tests/session-card-overflow-menu.test.mjs
+      - web/tests/session-archive.test.mjs
+      - web/tests/fork-session-name.test.mjs
+      - web/tests/source-map.mjs
+    files:
+      - web/src/components/session/SessionCard.tsx
+      - web/src/components/session/SessionCardOverflowMenu.tsx
+      - web/tests/session-card-overflow-menu.test.mjs
+      - web/tests/source-map.mjs
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/components/session/SessionCardOverflowMenu.tsx:SessionCardOverflowMenu
+      - web/tests/session-card-overflow-menu.test.mjs:session card keeps overflow actions

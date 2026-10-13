@@ -289,6 +289,7 @@ export const MODULES = {
     "src/components/session/sessionListTypes.ts",
     "src/components/session/sessionListShared.tsx",
     "src/components/session/SessionCard.tsx",
+    "src/components/session/SessionCardOverflowMenu.tsx",
     "src/components/session/MultiProjectSessionList.tsx",
   ],
   "src/components/SessionViewer.tsx": [

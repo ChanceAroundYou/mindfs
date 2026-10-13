@@ -81,3 +81,5 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 - 下一项：继续剩余前端硬线文件；完成前端事项后，按当前文件系统基线复核 backend TODO。
 - 已完成：将 PDF 页面虚拟化渲染及文档预览错误呈现/描述提取到 `PdfPreview`、`DocumentPreviewError`；`DocumentViewer` 保留格式分流、文件获取和 Word/Excel/PowerPoint 预览。原有视口范围、canvas 回收、DPR 上限和错误文案逻辑保持不变。父组件从 537 行降至 318 行，typecheck 与 PDF 专项通过；硬线剩余 19 项。
 - 下一项：继续剩余前端硬线，随后按当前实测重算后台文件清单并开始后端单文件拆分。
+- 已完成：将 `SessionCard` 的溢出操作入口与菜单抽到 `SessionCardOverflowMenu`；置顶、同步、重命名、归档、删除动作通过父卡片回调，卡片/hook 仍持有 menu、rename 状态。父组件从 642 行降至 455 行；typecheck、session archive、rename 与专项菜单测试通过。硬线剩余 18 项。
+- 下一项：继续前端硬线组件拆分；接近清空 frontend TODO 后复核目录/命名/层级规则与 reviewer checklist。

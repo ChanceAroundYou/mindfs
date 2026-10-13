@@ -242,6 +242,7 @@
 | G-CS | Login 更新说明折叠区提取 | 架构 | 见 §3.2 | 展开状态和更新逻辑继续由登录控制器管理 |
 | G-CT | Git 状态分支选择器提取 | 架构 | 见 §3.2 | 分支获取由现有 hook 承担，开关与切换状态归父面板 |
 | G-CU | DocumentViewer PDF 预览职责提取 | 架构 | 见 §3.2 | PDF canvas 有界渲染与跨格式错误语义保留 |
+| G-CV | SessionCard 溢出操作菜单提取 | 架构 | 见 §3.2 | 操作和确认继续通过既有父层回调，不改会话状态归属 |
 
 > **G-D 已并入 G-F，G-M 已并入 G-AI**（改动面完全重合、无独立测试可守，单列只会制造空组）。
 
@@ -2805,3 +2806,10 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **根因与边界**：PDF canvas/占位块生命周期移入 `PdfPreview`；统一错误组件和错误描述移入 `DocumentPreviewError`。文件取回及 Word/Excel/PowerPoint 分支仍由 `DocumentViewer` 管理。
 - **针对性测试**：`web/tests/document-preview-view-split.test.mjs` → 守住 PDF 页窗口、canvas 回收和 DPR 限制；`document-preview.test.mjs` → 守住页面范围算法。
 - **边界**：保持视口/resize 同步、滚动祖先查找、取消清理、错误文案和预览分派；父组件现为 318 行。
+
+### G-CV SessionCard 溢出操作菜单提取
+
+- **可见症状**：`SessionCard` 超过 500 行，卡片行、重命名与置顶/同步/归档/删除菜单实现交织。
+- **根因与边界**：菜单触发和动作列表提取到 `SessionCardOverflowMenu`；选中态、菜单开关、重命名草稿与动作执行仍归父卡片及列表回调所有。
+- **针对性测试**：`web/tests/session-card-overflow-menu.test.mjs` → 守住各动作、菜单文案和状态归属；`session-archive.test.mjs` 与 `fork-session-name.test.mjs` → 守住归档与改名链路。
+- **边界**：保持菜单顺序、置顶徽标、同步禁用、归档可选项与删除回调；父组件现为 455 行。

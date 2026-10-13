@@ -8,7 +8,7 @@ to resume their old TODOs or baselines.
 
 | Plan | Status | Next action |
 |---|---|---|
-| [Rule completion rollout](rule-completion-rollout.md) | Active | DocumentViewer 318 行，PDF 虚拟页渲染独立；前端硬线剩余 19 项。下一批从当前实测硬线文件选 2–3 个，完成依赖审计后拆分。 |
+| [Rule completion rollout](rule-completion-rollout.md) | Active | SessionCard 455 行，操作菜单独立且行为状态仍由卡片/hook 管理；前端硬线剩余 18 项。下一批从当前实测硬线文件选 2–3 个，完成依赖审计后拆分。 |
 
 ## Completed or superseded history
 
