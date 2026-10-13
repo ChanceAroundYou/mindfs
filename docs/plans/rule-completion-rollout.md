@@ -100,4 +100,6 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 - 当前进度：跨节点 root 选择回调与清理逻辑移到 `useAppRootSelection`，父层仍在原位置创建回调；timer 与 Git 状态通过惰性 getter 保持原声明时序，既有节点路由断言改为检查实际逻辑模块。父层实测进一步从 762 降至 714 行；typecheck、全量 web 测试（279 通过、4 跳过）与专项结构测试通过。
 - 当前进度：将 `editDraftRequest` 到 update 状态之间连续的文件/工作区状态、Git hook 与 project-tree hook 整体迁入 `useAppFileWorkspaceState`；新 hook 在原调用位置运行，Ref 镜像赋值、localStorage 初始化与 `refreshTaskWorktreeRef` 转发顺序保持。父层从 714 降至 588 行，新增专项守卫。初次全量测试发现 source-map 别名仍指向未合并的父文件，已补齐逻辑模块映射并修正物理行数断言；最终全量 web 测试通过（280 通过、4 跳过），typecheck 与专项测试通过。
 - 发布复核发现：source-map alias 测试适配的最后两处物理文件读取未包含在 G-DG 提交，导致 ship 二进制版本标记为 dirty。相关改动仅是测试读取路径，现单独补充登记并提交，然后重新走干净构建和无重启发布确认。
+- 当前进度：将会话列表/pending/归档状态、会话选择与 drawer 状态、响应式侧栏/onboarding 状态、root scope 索引与 task template/candidate 初始化分别迁至 `useAppSessionListState`、`useAppSessionSelectionState`、`useAppResponsiveState`、`useAppRootScopeState`、`useAppTaskTemplateState`。各 hook 在原调用位置执行；常量字面量、pin hook、session template 加载和 candidate effect 顺序保持。`useAppStateLayer` 实测 588→498 行，已从硬线清单销项；typecheck、针对性测试与全量 web 测试通过（281 通过、4 跳过）。
+- 下一项：重新实测 `useSessionLifecycle` 的职责/消费者，按当前 hook 子流程拆分并验证，之后按清单继续处理其余前端与后端 TODO。
 - 下一项：继续按状态所有权拆分 `useAppStateLayer` 的 session、task 与 project/file state groups，保持父层低于 500 行之前不从硬线清单删除。

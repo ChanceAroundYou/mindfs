@@ -2900,3 +2900,10 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **根因与边界**：`app-state-refs-split` 与 `app-root-selection-split` 改用文件描述符读取物理父文件测行数；其它源码断言继续走逻辑映射，以覆盖合并后的职责行为。
 - **针对性测试**：`app-state-refs-split.test.mjs`、`app-root-selection-split.test.mjs` → 用物理父文件统计行数，同时保留逻辑模块接线与行为守卫。
 - **边界**：只调整测试读取方式，不改应用代码；保持 `useAppStateLayer` 的 588 行真实计数。
+
+### G-DJ App 状态层 session 与 root setup 按域拆分
+
+- **可见症状**：`useAppStateLayer` 仍内联会话列表/归档、选中会话、响应式壳层、root scope 和任务模板候选初始化，虽此前多个跨域组已抽出，父层仍超过 500 行。
+- **根因与边界**：上述职责分别归 `useAppSessionListState`、`useAppSessionSelectionState`、`useAppResponsiveState`、`useAppRootScopeState`、`useAppTaskTemplateState`；父层保留各 hook 的原调用顺序与返回字段。
+- **针对性测试**：`web/tests/app-state-domains-split.test.mjs` → 守住各职责归属、hook 顺序、session 常量字面量、pin 初始化及任务候选接线；source-map 与命名测试验证拆分映射和文件约定。
+- **边界**：不改 `App.tsx` 或 session/task/root 行为；`useAppStateLayer` 实测 498 行，硬线 TODO 销项。

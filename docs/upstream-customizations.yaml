@@ -3282,7 +3282,7 @@ groups:
       - docs/upstream-customizations.yaml
       - web/tests/agent-docs.test.mjs
     anchors:
-      - docs/agent/rules/frontend/TODO.md:硬线 13 个
+      - docs/agent/rules/frontend/TODO.md:硬线 12 个
       - docs/plans/README.md:Rule completion rollout
       - web/tests/agent-docs.test.mjs:every plan is classified in the sole plans index
   - id: G-BZ
@@ -4413,3 +4413,39 @@ groups:
     anchors:
       - web/tests/app-state-refs-split.test.mjs:readPhysical
       - web/tests/app-root-selection-split.test.mjs:readPhysical
+
+  - id: G-DJ
+    title: App state layer session and root setup grouped by domain
+    kind: arch
+    symptom: |
+      useAppStateLayer still contains session-list/archive state, selected-session and drawer state,
+      responsive shell state, root-scope indexing, and task-template/candidate setup, leaving it over
+      the 500-line hard line.
+    why: |
+      Give each cohesive state domain a dedicated hook and leave useAppStateLayer as the cross-domain
+      assembly point.
+    boundary: |
+      The five extracted hooks run at the original call positions. Session literals, pin initialization,
+      responsive state initialization, root scope callbacks, template loading, and candidate effects
+      retain their order and behavior. App.tsx remains unchanged.
+    tests:
+      - web/tests/app-state-domains-split.test.mjs
+      - web/tests/source-map.test.mjs
+      - web/tests/naming-convention.test.mjs
+    files:
+      - web/src/app/useAppStateLayer.ts
+      - web/src/app/useAppSessionListState.ts
+      - web/src/app/useAppSessionSelectionState.ts
+      - web/src/app/useAppResponsiveState.ts
+      - web/src/app/useAppRootScopeState.ts
+      - web/src/app/useAppTaskTemplateState.ts
+      - web/tests/app-state-domains-split.test.mjs
+      - web/tests/source-map.mjs
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/app/useAppRootScopeState.ts:useAppRootScopeState
+      - web/tests/app-state-domains-split.test.mjs:delegates session, responsive, root-scope, and task-template domains

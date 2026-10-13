@@ -2,31 +2,28 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { FileEditStore } from "../services/fileEditing";
 import { bootstrapService } from "../services/net/bootstrap";
 import { fetchEditableFile, saveTextFile } from "../services/file";
-import { scopeKey } from "../shared/scope";
 import { syncNodesFromServer } from "../services/net/nodeRegistry";
-import { fetchCandidates } from "../services/candidates";
 import { useI18n } from "../i18n";
 import { shouldAutoStartOnboarding } from "../services/prefs/onboarding";
-import { ManagedRootPayload, useResponsive } from "./appMisc";
 import { useAppRefSync } from "./useAppRefSync";
 import { useAppProjectDisplay } from "./useAppProjectDisplay";
 import { useAppRootBindingSetters } from "./useAppRootBindingSetters";
-import { useAppSessionPins } from "./useAppSessionPins";
 import { useAppReplaceURLState } from "./useAppReplaceURLState";
 import { MainViewMode } from "./appPath";
 import { useBackLayer } from "../hooks/useBackNavigation";
-import { MultiProjectSessionGroup, SessionItem, SlashCommandResult } from "./appSession";
-import { CANDIDATE_FETCH_DEBOUNCE_MS } from "./appStorage";
+import { SessionItem, SlashCommandResult } from "./appSession";
 import { getDirectorySortKey } from "./appUtils";
-import { firstAgentStage } from "./appTask";
 import { useAppStateRefs } from "./useAppStateRefs";
+import { useAppSessionListState } from "./useAppSessionListState";
+import { useAppSessionSelectionState } from "./useAppSessionSelectionState";
+import { useAppResponsiveState } from "./useAppResponsiveState";
+import { useAppRootScopeState } from "./useAppRootScopeState";
+import { useAppTaskTemplateState } from "./useAppTaskTemplateState";
 import { useAppRootSelection } from "./useAppRootSelection";
 import { useAppFileWorkspaceState } from "./useAppFileWorkspaceState";
 import { useCompletionSound } from "./useCompletionSound";
-import { useTaskTemplates } from "./useTaskTemplates";
 import { useTaskWorkspaceState } from "./useTaskWorkspaceState";
 import { useUiPreferences } from "./useUiPreferences";
-import { useTaskInlineCandidates } from "./useTaskInlineCandidates";
 import { useTaskBoard } from "./useTaskBoard";
 import { useTaskComposer } from "./useTaskComposer";
 import type { BootstrapState } from "../services/net/bootstrap";
@@ -64,135 +61,48 @@ export function useAppStateLayer(params: UseAppStateLayerParams) {
     pluginsTrustPendingByRootRef, didInitRef, managedRootsRequestRef, handleSelectSessionRef,
   } = useAppStateRefs();
 
-  const [sessions, setSessions] = useState<SessionItem[]>([]);
-  const sessionsRef = useRef<SessionItem[]>([]);
-  // 显式字面量类型：这两个常量会被 return 出去，对象属性位会把 true / 300 拓宽成 boolean / number，
-  // 而下游 useAppSessionLayer / useAppDomainLayer / useAppViewComposition 的签名按原 App 的推断写成
-  // true / 300，拓宽后会 TS2322。不要删掉这里的标注。
-  const multiProjectSessionsEnabled: true = true;
-  // session.created 现在是所有建会话路径的统一信号（看板/定时/子会话/fork），
-  // 一次动作可能连发好几条；合并 300ms 窗口内的多次重拉，避免逐节点扇出打爆接口。
-  const MULTI_PROJECT_RELOAD_DEBOUNCE_MS: 300 = 300;
-  const [multiProjectSessionGroups, setMultiProjectSessionGroups] = useState<MultiProjectSessionGroup[]>([]);
-  // 多项目分组的 ref 镜像：删除会话时要跨分组收集整棵子树，只看 sessionsRef 会漏掉
-  // 只存在于分组里的子会话（它们随后会被提升成顶层行，把面板撑爆）。
-  const multiProjectSessionGroupsRef = useRef<MultiProjectSessionGroup[]>([]);
-  const [multiProjectSessionsLoading, setMultiProjectSessionsLoading] = useState(false);
-  // 多项目列表全量重拉竞态守卫：只应用最后一次发起的请求结果，避免旧响应覆盖新数据
-  const multiProjectLoadSeqRef = useRef(0);
-  const [multiProjectPendingByKey, setMultiProjectPendingByKey] = useState<Record<string, boolean>>({});
-  const multiProjectPendingRef = useRef<Record<string, boolean>>({});
-  const { applyPinSnapshot } = useAppSessionPins();
-  const [syncingSessionKeys, setSyncingSessionKeys] = useState<Set<string>>(
-    () => new Set(),
-  );
-  // 归档区：默认不拉任何数据，面板底部的入口行只留摘要，点开才懒加载。
-  // 归档数据按项目分组存（面板和主列表一样按项目平铺），不进两棵列表 state。
-  const [archivedGroups, setArchivedGroups] = useState<MultiProjectSessionGroup[]>([]);
-  const [archiveOpen, setArchiveOpen] = useState(false);
-  const [archiveLoading, setArchiveLoading] = useState(false);
-  // 归档/取消归档后 +1，强制下面的懒加载 effect 重拉一次（否则摘要数字会停留在旧值）。
-  const [archiveReloadToken, setArchiveReloadToken] = useState(0);
-  const [hasMoreSessions, setHasMoreSessions] = useState(false);
-  const [loadingOlderSessions, setLoadingOlderSessions] = useState(false);
-  const [sessionListMode, setSessionListMode] = useState<"local" | "import">(
-    "local",
-  );
+  const {
+    sessions, setSessions, sessionsRef, multiProjectSessionsEnabled, MULTI_PROJECT_RELOAD_DEBOUNCE_MS,
+    multiProjectSessionGroups, setMultiProjectSessionGroups, multiProjectSessionGroupsRef,
+    multiProjectSessionsLoading, setMultiProjectSessionsLoading, multiProjectLoadSeqRef,
+    multiProjectPendingByKey, setMultiProjectPendingByKey, multiProjectPendingRef, applyPinSnapshot,
+    syncingSessionKeys, setSyncingSessionKeys, archivedGroups, setArchivedGroups, archiveOpen,
+    setArchiveOpen, archiveLoading, setArchiveLoading, archiveReloadToken, setArchiveReloadToken,
+    hasMoreSessions, setHasMoreSessions, loadingOlderSessions, setLoadingOlderSessions,
+    sessionListMode, setSessionListMode,
+  } = useAppSessionListState();
   const [availableAgents, setAvailableAgents] = useState<AgentStatus[]>([]);
   const [scheduledAgentDialogOpen, setScheduledAgentDialogOpen] = useState(false);
   const { kanbanTasks, setKanbanTasks, kanbanTaskCountItems, setKanbanTaskCountItems, taskDetailsById, setTaskDetailsById, taskFirstInputById, setTaskFirstInputById, taskSessionKeysById, setTaskSessionKeysById, taskRelatedFilesById, setTaskRelatedFilesById, taskDetailsByIdRef, workspaceBoardRefreshRef, taskSessionKeysByIdRef, selectedKanbanTaskId, setSelectedKanbanTaskId, expandedTaskInputIds, setExpandedTaskInputIds, overflowingTaskInputs, setOverflowingTaskInputs, collapsedTaskCompletionGroups, setCollapsedTaskCompletionGroups, collapsedKanbanColumns, setCollapsedKanbanColumns, taskInlineEdit, setTaskInlineEdit, taskSessionErrorDialog, setTaskSessionErrorDialog, taskInlineActiveToken, setTaskInlineActiveToken, taskInlineCandidates, setTaskInlineCandidates, taskInlineCandidateIndex, setTaskInlineCandidateIndex, taskInlineSaving, setTaskInlineSaving, taskInlineHelpKey, setTaskInlineHelpKey, taskInlineUploadProgress, setTaskInlineUploadProgress, directoryUploadProgress, setDirectoryUploadProgress, taskWorktreeBranches, setTaskWorktreeBranches, taskWorktreeBranchesLoading, setTaskWorktreeBranchesLoading, taskWorktreeBranchError, setTaskWorktreeBranchError, kanbanTasksLoading, setKanbanTasksLoading, kanbanLoadSeqRef, kanbanAbortRef, refreshTaskWorktreeRef, taskWorktreeBranchRequestRef, sessionListLoadSeqRef, sessionListAbortRef, listLoadErrorAtRef, taskInlineEditorRef, taskInlineCandidateItemRefs, taskInlineAttachmentInputRef, taskInlineUploadAbortRef, directoryUploadAbortRef, knownTaskWorktreePathsRef } = useTaskWorkspaceState();
-  const [selectedSession, setSelectedSession] = useState<SessionItem | null>(
-    null,
-  );
-  const [selectedSessionLoading, setSelectedSessionLoading] = useState(false);
-  const [drawerLoadingSessionByRoot, setDrawerLoadingSessionByRoot] = useState<
-    Record<string, string>
-  >({});
-  const [activeBoundSessionKey, setActiveBoundSessionKey] = useState<
-    string | null
-  >(null);
-  const [pendingPlanMode, setPendingPlanMode] = useState(false);
-  const [currentSession, setCurrentSession] = useState<SessionItem | null>(null);
-  const [cacheVersion, setCacheVersion] = useState(0);
-  const [slashCommandResults, setSlashCommandResults] = useState<
-    Record<string, SlashCommandResult>
-  >({});
-  const [copiedSlashCommandKeys, setCopiedSlashCommandKeys] = useState<
-    Record<string, true>
-  >({});
-  const [queueVersion, setQueueVersion] = useState(0);
-  const [interactionMode, setInteractionMode] = useState<"main" | "drawer">(
-    "main",
-  );
-  const [agentsVersion, setAgentsVersion] = useState(0);
-  const [codexRateLimitsRefreshToken, setCodexRateLimitsRefreshToken] = useState(0);
-  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
-  const { isMobile, isTablet } = useResponsive();
-  const [isLeftOpen, setIsLeftOpen] = useState(() => window.innerWidth >= 768);
-  const [isRightOpen, setIsRightOpen] = useState(
-    () => window.innerWidth >= 768,
-  );
-  const [onboardingOpen, setOnboardingOpen] = useState(false);
-  const [onboardingMainContentViewRoot, setOnboardingMainContentViewRoot] =
-    useState<string | null>(null);
-  const onboardingAutoStartRef = useRef(false);
-  const [currentRootId, setCurrentRootId] = useState<string | null>(null);
-  const currentRootIdRef = useRef<string | null>(null);
-  const [currentRootNodeId, setCurrentRootNodeId] = useState<string | null>(null);
-  const currentRootNodeIdRef = useRef<string | null>(null);
-  const managedRootByIdRef = useRef<Record<string, ManagedRootPayload>>({});
-  // 多节点同名项目的完整索引：nodeId::rootId → payload（byId 回退表只保留一份）
-  const managedRootByKeyRef = useRef<Record<string, ManagedRootPayload>>({});
-
-  const getNodeIdForRoot = useCallback((rootId: string): string | undefined => {
-    const rid = String(rootId || "").trim();
-    if (!rid) return undefined;
-    // 当前选中的项目优先按其选中节点路由，避免同名项目被多节点表覆盖到错误节点
-    if (rid === String(currentRootIdRef.current || "")) {
-      const nid = String(currentRootNodeIdRef.current || "").trim();
-      if (nid) return nid;
-    }
-    const entry = (managedRootByIdRef.current as Record<string, any>)[rid];
-    const nid = String(entry?._nodeId || "").trim();
-    return nid || undefined;
-  }, []);
-
-  // 按当前作用域解析复合键：当前根 → 选中节点；其他根 → 模块 map/裸回退
-  const scopedRootKey = useCallback(
-    (rootId: string): string =>
-      scopeKey(getNodeIdForRoot(String(rootId || "")) ?? "", String(rootId || "")),
-    [getNodeIdForRoot],
-  );
+  const {
+    selectedSession, setSelectedSession, selectedSessionLoading, setSelectedSessionLoading,
+    drawerLoadingSessionByRoot, setDrawerLoadingSessionByRoot, activeBoundSessionKey,
+    setActiveBoundSessionKey, pendingPlanMode, setPendingPlanMode, currentSession, setCurrentSession,
+    cacheVersion, setCacheVersion, slashCommandResults, setSlashCommandResults, copiedSlashCommandKeys,
+    setCopiedSlashCommandKeys, queueVersion, setQueueVersion, interactionMode, setInteractionMode,
+    agentsVersion, setAgentsVersion, codexRateLimitsRefreshToken, setCodexRateLimitsRefreshToken,
+    isDrawerOpen, setIsDrawerOpen,
+  } = useAppSessionSelectionState();
+  const {
+    isMobile, isTablet, isLeftOpen, setIsLeftOpen, isRightOpen, setIsRightOpen,
+    onboardingOpen, setOnboardingOpen, onboardingMainContentViewRoot,
+    setOnboardingMainContentViewRoot, onboardingAutoStartRef,
+  } = useAppResponsiveState();
+  const {
+    currentRootId, setCurrentRootId, currentRootIdRef, currentRootNodeId, setCurrentRootNodeId,
+    currentRootNodeIdRef, managedRootByIdRef, managedRootByKeyRef, getNodeIdForRoot, scopedRootKey,
+  } = useAppRootScopeState();
 
   const {
-    taskTemplateActionMenuRef,
-    taskCreateTemplateMenuRef,
-    taskTemplates,
-    taskTemplateDialogOpen,
-    setTaskTemplateDialogOpen,
-    taskTemplateDialogTemplate,
-    taskTemplateFilter,
-    setTaskTemplateFilter,
-    taskTemplateActionMenuOpen,
-    setTaskTemplateActionMenuOpen,
-    taskCreateTemplateMenuOpen,
-    setTaskCreateTemplateMenuOpen,
-    loadTaskTemplates,
-    openTaskTemplateEditor,
-    handleTaskTemplateSaved,
-    handleDeleteTaskTemplate,
-  } = useTaskTemplates({ currentRootId, scopedRootKey });
-
-  useEffect(() => {
-    if (!taskInlineEdit) return;
-    window.setTimeout(() => {
-      taskInlineEditorRef.current?.setText(taskInlineEdit.text || "");
-      // TokenEditor 的 setText 不再抢焦点（常驻挂载的编辑器会夺走整页焦点），开面板时自己聚焦。
-      taskInlineEditorRef.current?.focus();
-    }, 0);
-  }, [taskInlineEdit?.templateId]);
-
-  useTaskInlineCandidates({AbortController, CANDIDATE_FETCH_DEBOUNCE_MS, currentRootId, fetchCandidates, firstAgentStage, getNodeIdForRoot, setTaskInlineCandidateIndex, setTaskInlineCandidates, taskInlineActiveToken, taskInlineEdit, taskTemplateFilter, taskTemplates, useEffect});
+    taskTemplateActionMenuRef, taskCreateTemplateMenuRef, taskTemplates, taskTemplateDialogOpen,
+    setTaskTemplateDialogOpen, taskTemplateDialogTemplate, taskTemplateFilter, setTaskTemplateFilter,
+    taskTemplateActionMenuOpen, setTaskTemplateActionMenuOpen, taskCreateTemplateMenuOpen,
+    setTaskCreateTemplateMenuOpen, loadTaskTemplates, openTaskTemplateEditor,
+    handleTaskTemplateSaved, handleDeleteTaskTemplate,
+  } = useAppTaskTemplateState({
+    currentRootId, scopedRootKey, getNodeIdForRoot, taskInlineEdit, taskInlineEditorRef,
+    taskInlineActiveToken, setTaskInlineCandidateIndex, setTaskInlineCandidates,
+  });
 
   const [mainView, setMainView] = useState<MainViewMode>(() => "workspace");
   const workspaceOpen = mainView === "workspace";
