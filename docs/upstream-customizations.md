@@ -2858,3 +2858,10 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **根因与边界**：项目添加动作集中到 `useProjectAddActions`，原有 `ProjectAddPopover` 增加组合 overlay 入口；生命周期 hook 只向其传状态和回调，继续协调 root/worktree 创建。
 - **针对性测试**：`project-add-types.test.mjs` → 确认 GitHub 节点路由/提交状态及 view 回调接线；项目添加路径和类型测试继续守住目录浏览契约。
 - **边界**：保留 GitHub 请求条件、状态清理、节点路由、toast 文案、弹层 ref 与模式转换；`useProjectLifecycle.tsx` 实测 482 行，低于 500 行硬线。
+
+### G-DC 会话域聚合 hook 按职责拆分
+
+- **可见症状**：`useAppSessionLayer.ts` 同时声明 139 行公共参数类型，并串接 session lifecycle/pending/metadata、multi-project、stream cache、reply poll 等逻辑，超过硬线。
+- **根因与边界**：参数契约移至 `useAppSessionLayerTypes.ts`；session key/pending/lifecycle/metadata/multi-project/stream-cache 组合移至 `useAppSessionCore`；multi-project debounce/reply poll 移到 `useAppMultiProjectReload`，调用位置保持在原顺序上。父层保留功能组合，降至 474 行。
+- **针对性测试**：`web/tests/app-session-layer-split.test.mjs` → 守住父层硬线、核心 hook 责任组、multi-project reload 接线顺序与 App 层调用。
+- **边界**：只重组 hook 文件与契约，不改变子 hook 参数、状态/ref、debounce 时长或 App.tsx 组合根。

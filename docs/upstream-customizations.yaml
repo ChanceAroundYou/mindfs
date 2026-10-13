@@ -3282,7 +3282,7 @@ groups:
       - docs/upstream-customizations.yaml
       - web/tests/agent-docs.test.mjs
     anchors:
-      - docs/agent/rules/frontend/TODO.md:硬线 15 个
+      - docs/agent/rules/frontend/TODO.md:硬线 14 个
       - docs/plans/README.md:Rule completion rollout
       - web/tests/agent-docs.test.mjs:every plan is classified in the sole plans index
   - id: G-BZ
@@ -4226,3 +4226,36 @@ groups:
     anchors:
       - web/src/app/useProjectAddActions.ts:useProjectAddActions
       - web/src/components/file/ProjectAddPopover.tsx:ProjectAddLifecycleOverlay
+
+  - id: G-DC
+    title: Session aggregation split into typed core and multi-project reload hooks
+    kind: arch
+    symptom: |
+      useAppSessionLayer exceeded the 500-line hard line while declaring its large parameter contract
+      and composing session state, lifecycle, metadata, stream cache, and multi-project refresh hooks.
+    why: |
+      Keep the layer as a small composition boundary, move its public params contract into a types
+      module, and group related session core and multi-project reload behavior into sibling hooks.
+    boundary: |
+      Session key/pending/lifecycle/metadata/multi-project/session-stream composition moves together
+      to useAppSessionCore. The multi-project debounce/reply poll remains at its original hook-call
+      position in useAppSessionLayer via useAppMultiProjectReload. App.tsx remains unchanged.
+    tests:
+      - web/tests/app-session-layer-split.test.mjs
+      - web/tests/source-map.test.mjs
+      - web/tests/naming-convention.test.mjs
+    files:
+      - web/src/app/useAppSessionLayer.ts
+      - web/src/app/useAppSessionLayerTypes.ts
+      - web/src/app/useAppSessionCore.ts
+      - web/src/app/useAppMultiProjectReload.ts
+      - web/tests/app-session-layer-split.test.mjs
+      - web/tests/source-map.mjs
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/app/useAppSessionLayer.ts:useAppSessionCore
+      - web/tests/app-session-layer-split.test.mjs:delegates cohesive core

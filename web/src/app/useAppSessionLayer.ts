@@ -1,174 +1,34 @@
 import { useCallback, useEffect, useRef } from "react";
 import { sessionService } from "../services/session";
-import type { Session, SyncSessionResult } from "../services/session";
-import { scopeSessionKey, treeKey } from "../shared/scope";
+import { treeKey } from "../shared/scope";
 import { mergeSessionItems } from "../services/session/sessionListMerge";
 import { fetchAgents, restartAgent } from "../services/agents";
-import type { AgentStatus } from "../services/agents";
-import { ManagedRootPayload, SESSION_PAGE_SIZE } from "./appMisc";
-import { useAppRootResolution } from "./useAppRootResolution";
+import { SESSION_PAGE_SIZE } from "./appMisc";
 import { useAppSessionSelection } from "./useAppSessionSelection";
-import { useAppSessionKeyState } from "./useAppSessionKeyState";
 import { useAppSessionReload } from "./useAppSessionReload";
 import { useAppBootstrapActions } from "./useAppBootstrapActions";
 import { useAppFormatDirectoryLoadError } from "./useAppFormatDirectoryLoadError";
 import { installBackNavigation } from "../hooks/useBackNavigation";
-import { AttachedFileContext, MultiProjectSessionGroup, PendingSend, SessionItem, SlashCommandResult, WSStatus, toSessionItem } from "./appSession";
-import { MainViewMode, rootNodeKey } from "./appPath";
-import type { URLState } from "./appPath";
+import { toSessionItem } from "./appSession";
+import type { SessionItem } from "./appSession";
+import { rootNodeKey } from "./appPath";
 import { useSendMessage } from "./useSendMessage";
-import { useSessionLifecycle } from "./useSessionLifecycle";
 import { useExternalSessionImport } from "./useExternalSessionImport";
 import { useGitActions } from "./useGitActions";
 import { useSessionSearch } from "./useSessionSearch";
 import { useAppAgentActions } from "./useAppAgentActions";
-import { useSessionStreamCache } from "./useSessionStreamCache";
-import { useMultiProjectSessions } from "./useMultiProjectSessions";
 import { useSessionArchive } from "./useSessionArchive";
 import { useFileRefresh } from "./useFileRefresh";
 import { useArchiveSync } from "./useArchiveSync";
-import { useReplyingSessionPoll } from "./useReplyingSessionPoll";
-import { useSessionPending } from "./useSessionPending";
-import { useSessionMetadata } from "./useSessionMetadata";
 import { useSessionListActions } from "./useSessionListActions";
-import { FileEditStore } from "../services/fileEditing";
-import type { FileEntry } from "../services/prefs/directorySort";
-import type { FilePayload } from "../services/file";
-import type { GitDiffPayload } from "../services/git";
-import type { GitHistoryPayload, GitStatusPayload } from "../services/git";
-import type { MessageKey, MessageParams } from "../i18n";
-import { PluginManager } from "../plugins/manager";
-import type { UpdateState } from "../services/update";
-import type { UploadProgress } from "../services/upload";
+import { useAppSessionCore } from "./useAppSessionCore";
+import { useAppMultiProjectReload } from "./useAppMultiProjectReload";
+import type { UseAppSessionLayerParams } from "./useAppSessionLayerTypes";
 
 /**
  * 见 docs/plans/app-tsx-under-1000.md：分层聚合 hook。
  */
-export type UseAppSessionLayerParams = {
-  MULTI_PROJECT_RELOAD_DEBOUNCE_MS: 300;
-  applyPinSnapshot: <T extends { root_id?: string; pinned_at?: string | null; }>(items: T[], rootId: string) => T[];
-  archiveOpen: boolean;
-  archiveReloadToken: number;
-  attachedFileContext: AttachedFileContext | null;
-  boundSessionByRootRef: React.RefObject<Record<string, string | null>>;
-  cacheVersion: number;
-  cancelRequestedBySessionRef: React.RefObject<Record<string, boolean>>;
-  currentRootId: string | null;
-  currentRootIdRef: React.RefObject<string | null>;
-  currentRootNodeId: string | null;
-  currentRootNodeIdRef: React.RefObject<string | null>;
-  currentSessionRef: React.RefObject<SessionItem | null>;
-  didInitRef: React.RefObject<boolean>;
-  directoryUploadAbortRef: React.RefObject<AbortController | null>;
-  drawerOpenByRootRef: React.RefObject<Record<string, boolean>>;
-  drawerSessionByRootRef: React.RefObject<Record<string, SessionItem | null>>;
-  enforceSessionCacheBound: () => void;
-  file: FilePayload | null;
-  fileCursorRef: React.RefObject<number>;
-  fileEditStore: FileEditStore;
-  fileOpenRequestRef: React.RefObject<number>;
-  fileRef: React.RefObject<FilePayload | null>;
-  fileScrollPositionsRef: React.RefObject<Record<string, number>>;
-  getNodeIdForRoot: (rootId: string) => string | undefined;
-  gitDiff: GitDiffPayload | null;
-  handleSelectSessionRef: React.RefObject<((session: any, options?: { preserveTaskSelection?: boolean; preserveMainView?: boolean; }) => Promise<void>) | null>;
-  interactionModeRef: React.RefObject<"main" | "drawer">;
-  invalidTreeCacheKeysRef: React.RefObject<Set<string>>;
-  isMobile: boolean;
-  lastMainSessionSnapshotRef: React.RefObject<Session | null>;
-  listLoadErrorAtRef: React.RefObject<number>;
-  loadedSessionRef: React.RefObject<Record<string, boolean>>;
-  loadingOlderSessions: boolean;
-  loadingSessionRef: React.RefObject<Partial<Record<string, Promise<SyncSessionResult>>>>;
-  mainViewRef: React.RefObject<MainViewMode>;
-  managedRootByIdRef: React.RefObject<Record<string, ManagedRootPayload>>;
-  managedRootByKeyRef: React.RefObject<Record<string, ManagedRootPayload>>;
-  managedRootIdsRef: React.RefObject<Set<string>>;
-  multiProjectLoadSeqRef: React.RefObject<number>;
-  multiProjectPendingByKey: Record<string, boolean>;
-  multiProjectPendingRef: React.RefObject<Record<string, boolean>>;
-  multiProjectSessionGroupsRef: React.RefObject<MultiProjectSessionGroup[]>;
-  multiProjectSessionsEnabled: true;
-  notifyNodeLoadFailedRef: React.RefObject<(node: { id: string; name: string; }) => void>;
-  pendingBySessionRef: React.RefObject<Record<string, PendingSend>>;
-  pendingDraftRef: React.RefObject<PendingSend | null>;
-  pendingPlanMode: boolean;
-  pendingRequestRef: React.RefObject<Record<string, PendingSend>>;
-  pluginBypassRef: React.RefObject<boolean>;
-  pluginManagerRef: React.RefObject<PluginManager>;
-  pluginQuery: Record<string, string>;
-  pluginQueryRef: React.RefObject<Record<string, string>>;
-  refreshGitHistory: (rootID: string, options?: { force?: boolean; waitForIncremental?: boolean; }) => Promise<GitHistoryPayload | null>;
-  replaceURLState: (next: URLState) => void;
-  resetLocksForRootTransition: (targetRoot: string | null | undefined) => void;
-  resetSessionLockForRoot: (rootID: string | null | undefined) => void;
-  scopedRootKey: (rootId: string) => string;
-  selectRootNode: (rootId: string, nodeId?: string) => void;
-  selectedDirRef: React.RefObject<string | null>;
-  selectedSessionByRootRef: React.RefObject<Record<string, string | null>>;
-  selectedSessionRef: React.RefObject<SessionItem | null>;
-  sessionCacheAccessRef: React.RefObject<Record<string, number>>;
-  sessionCacheRef: React.RefObject<Record<string, Session>>;
-  sessionListAbortRef: React.RefObject<AbortController | null>;
-  sessionListLoadSeqRef: React.RefObject<number>;
-  sessionListMode: "local" | "import";
-  // 由 useAppStateLayer（状态/ref 层）持有并传入：该层的跨节点切换回调需要清掉它，见那里的注释。
-  sessionListReloadTimerRef: React.RefObject<number | null>;
-  sessionLoadFailureRef: React.RefObject<Record<string, { at: number; status: number; }>>;
-  sessionSearchTargetCounterRef: React.RefObject<number>;
-  sessions: SessionItem[];
-  sessionsRef: React.RefObject<SessionItem[]>;
-  setAgentsVersion: React.Dispatch<React.SetStateAction<number>>;
-  setArchiveLoading: React.Dispatch<React.SetStateAction<boolean>>;
-  setArchiveReloadToken: React.Dispatch<React.SetStateAction<number>>;
-  setArchivedGroups: React.Dispatch<React.SetStateAction<MultiProjectSessionGroup[]>>;
-  setAvailableAgents: React.Dispatch<React.SetStateAction<AgentStatus[]>>;
-  setBoundSessionForRoot: (rootID: string | null | undefined, key: string | null) => void;
-  setCacheVersion: React.Dispatch<React.SetStateAction<number>>;
-  setCurrentRootId: React.Dispatch<React.SetStateAction<string | null>>;
-  setDirectoryUploadProgress: React.Dispatch<React.SetStateAction<UploadProgress | null>>;
-  setDrawerOpenForRoot: (rootID: string | null | undefined, open: boolean) => void;
-  setDrawerSessionForRoot: (rootID: string | null | undefined, session: Session | SessionItem | null) => void;
-  setEntriesByPath: React.Dispatch<React.SetStateAction<Record<string, FileEntry[]>>>;
-  setExpanded: React.Dispatch<React.SetStateAction<string[]>>;
-  setFile: React.Dispatch<React.SetStateAction<FilePayload | null>>;
-  setGitDiff: React.Dispatch<React.SetStateAction<GitDiffPayload | null>>;
-  setGitStatus: React.Dispatch<React.SetStateAction<GitStatusPayload | null>>;
-  setGitStatusByRoot: React.Dispatch<React.SetStateAction<Record<string, GitStatusPayload | null>>>;
-  setHasMoreSessions: React.Dispatch<React.SetStateAction<boolean>>;
-  setInteractionMode: React.Dispatch<React.SetStateAction<"main" | "drawer">>;
-  setIsLeftOpen: React.Dispatch<React.SetStateAction<boolean>>;
-  setIsRightOpen: React.Dispatch<React.SetStateAction<boolean>>;
-  setLoadingOlderSessions: React.Dispatch<React.SetStateAction<boolean>>;
-  setMainDirectoryError: React.Dispatch<React.SetStateAction<string>>;
-  setMainEntries: React.Dispatch<React.SetStateAction<FileEntry[]>>;
-  setMultiProjectPendingByKey: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
-  setMultiProjectSessionGroups: React.Dispatch<React.SetStateAction<MultiProjectSessionGroup[]>>;
-  setMultiProjectSessionsLoading: React.Dispatch<React.SetStateAction<boolean>>;
-  setOnboardingMainContentViewRoot: React.Dispatch<React.SetStateAction<string | null>>;
-  setPendingPlanMode: React.Dispatch<React.SetStateAction<boolean>>;
-  setPluginQuery: React.Dispatch<React.SetStateAction<Record<string, string>>>;
-  setRelatedSelectedFileKey: React.Dispatch<React.SetStateAction<string>>;
-  setSelectedDir: React.Dispatch<React.SetStateAction<string | null>>;
-  setSelectedDirKey: React.Dispatch<React.SetStateAction<string | null>>;
-  setSelectedKanbanTaskId: React.Dispatch<React.SetStateAction<string>>;
-  setSelectedSession: React.Dispatch<React.SetStateAction<SessionItem | null>>;
-  setSelectedSessionLoading: React.Dispatch<React.SetStateAction<boolean>>;
-  setSessionListMode: React.Dispatch<React.SetStateAction<"local" | "import">>;
-  setSessions: React.Dispatch<React.SetStateAction<SessionItem[]>>;
-  setSlashCommandResults: React.Dispatch<React.SetStateAction<Record<string, SlashCommandResult>>>;
-  setSyncingSessionKeys: React.Dispatch<React.SetStateAction<Set<string>>>;
-  setUpdateState: React.Dispatch<React.SetStateAction<UpdateState>>;
-  setUpdateSubmitting: React.Dispatch<React.SetStateAction<boolean>>;
-  slashCommandResults: Record<string, SlashCommandResult>;
-  staleSessionKeysRef: React.RefObject<Set<string>>;
-  status: WSStatus;
-  suppressedAutoBindSessionByRootRef: React.RefObject<Record<string, string | null>>;
-  switchMainView: (mode: MainViewMode) => void;
-  t: (key: MessageKey, params?: MessageParams) => string;
-  treeFetchSeqRef: React.RefObject<Record<string, number>>;
-  updateState: UpdateState;
-};
+
 
 /**
  * 本层由 App.tsx 原样搬出，hook 调用顺序与搬出前逐字一致。
@@ -236,245 +96,21 @@ export function useAppSessionLayer(params: UseAppSessionLayerParams) {
   useEffect(() => installBackNavigation(), []);
 
 
-  const rootSessionKey = useCallback(
-    (rootId: string, sessionKey: string) =>
-      scopeSessionKey(getNodeIdForRoot(rootId) ?? "", rootId, sessionKey),
-    [getNodeIdForRoot],
-  );
-  const bumpCacheVersion = useCallback(() => setCacheVersion((v) => v + 1), []);
-  // 流式高频 bump 合并：30ms 窗口内多次 bump 只触发一次 setState（渲染 1 次而非 N 次）。
-  const bumpCacheVersionDebouncedRef = useRef<number | null>(null);
-  const bumpCacheVersionDebounced = useCallback(() => {
-    if (bumpCacheVersionDebouncedRef.current !== null) return;
-    bumpCacheVersionDebouncedRef.current = window.setTimeout(() => {
-      bumpCacheVersionDebouncedRef.current = null;
-      bumpCacheVersion();
-    }, 30);
-  }, [bumpCacheVersion]);
-  useEffect(
-    () => () => {
-      if (bumpCacheVersionDebouncedRef.current !== null) {
-        window.clearTimeout(bumpCacheVersionDebouncedRef.current);
-      }
-    },
-    [],
-  );
-  const applyPendingToMultiProjectGroups = useCallback(
-    (groups: MultiProjectSessionGroup[], pendingByKey: Record<string, boolean>) =>
-      groups.map((group) => ({
-        ...group,
-        sessions: group.sessions.map((session) => ({
-          ...(session as any),
-          pending: !!pendingByKey[rootSessionKey(group.rootId, session.key || session.session_key)],
-        }) as SessionItem),
-      })),
-    [rootSessionKey],
-  );
   const {
-    clearSlashCommandResultForSession,
-    setMultiProjectSessionPending,
-  } = useAppSessionKeyState({
-    rootSessionKey,
-    setSlashCommandResults,
-    setMultiProjectPendingByKey,
-    multiProjectPendingRef,
-    setMultiProjectSessionGroups,
-    applyPendingToMultiProjectGroups,
-  });
-  const { resolveRootForSessionKey } = useAppRootResolution({
-    currentRootIdRef,
-    sessionCacheRef,
-    rootSessionKey,
-    boundSessionByRootRef,
-    drawerSessionByRootRef,
-  });
-  const {
-    getSessionSnapshot,
-    resolvePendingForSession,
-
-    clearLocalPendingForSession,
-    markSessionStale,
-    clearSessionStale,
-    isSessionStale,
-  } = useSessionPending({
-    bumpCacheVersion,
-    cacheVersion,
-    currentRootIdRef,
-    drawerSessionByRootRef,
-    multiProjectPendingByKey,
-    multiProjectPendingRef,
-    pendingBySessionRef,
-    rootSessionKey,
-    scopedRootKey,
-    selectedSessionRef,
-    sessionCacheRef,
-    sessionLoadFailureRef,
-    setDrawerSessionForRoot,
-    setMultiProjectSessionPending,
-    setSelectedSession,
-    setSessions,
-    staleSessionKeysRef,
-  });
-
-
-  // 方案 C 重锚定序号：每次 restoreActiveSession 换窗时递增，viewer 按 _anchoredAt 一次性应用。
-  const anchorSeqRef = useRef(0);
-
-  const {
-    restoreActiveSession,
-    syncSessionHeaderFromListItem,
-    loadSessionsForRoot,
-    loadChildSessionsForParent,
-    handleSelectSession,
-    tryShowBoundSessionForRoot,
-    handleRenameSession,
-    handleSyncSession,
-  } = useSessionLifecycle({
-    anchorSeqRef,
-    applyPendingToMultiProjectGroups,
-    applyPinSnapshot,
-    boundSessionByRootRef,
-    bumpCacheVersion,
-    clearLocalPendingForSession,
-    clearSessionStale,
-    currentRootId,
-    currentRootIdRef,
-    currentRootNodeIdRef,
-    drawerSessionByRootRef,
-    enforceSessionCacheBound,
-    file,
-    fileCursorRef,
-    getNodeIdForRoot,
-    isSessionStale,
-    listLoadErrorAtRef,
-    loadedSessionRef,
-    loadingSessionRef,
-    mainViewRef,
-    multiProjectPendingRef,
-    pluginQuery,
-    replaceURLState,
-    resolvePendingForSession,
-    rootSessionKey,
-    scopedRootKey,
-    selectRootNode,
-    selectedSessionByRootRef,
-    selectedSessionRef,
-    sessionCacheAccessRef,
-    sessionCacheRef,
-    sessionListAbortRef,
-    sessionListLoadSeqRef,
-    sessionLoadFailureRef,
-    sessionSearchTargetCounterRef,
-    sessions,
-    setBoundSessionForRoot,
-    setCurrentRootId,
-    setDrawerOpenForRoot,
-    setDrawerSessionForRoot,
-    setFile,
-    setGitDiff,
-    setHasMoreSessions,
-    setInteractionMode,
-    setIsLeftOpen,
-    setIsRightOpen,
-    setMainEntries,
-    setMultiProjectSessionGroups,
-    setPluginQuery,
-    setSelectedDir,
-    setSelectedDirKey,
-    setSelectedKanbanTaskId,
-    setSelectedSession,
-    setSelectedSessionLoading,
-    setSessions,
-    setSyncingSessionKeys,
-    status,
-    switchMainView,
-  });
-
-  const {
-    updateSessionRelatedFilesForKey,
-    updateSessionRelatedWorktreeForKey,
-    updateSessionAgentForKey,
-    getInputSession,
-    handleSetPlanMode,
-  } = useSessionMetadata({
-    bumpCacheVersion,
-    currentRootIdRef,
-    drawerOpenByRootRef,
-    drawerSessionByRootRef,
-    lastMainSessionSnapshotRef,
-    rootSessionKey,
-    scopedRootKey,
-    selectedSessionRef,
-    sessionCacheRef,
-    sessions,
-    setDrawerSessionForRoot,
-    setPendingPlanMode,
-    setSelectedSession,
-    syncSessionHeaderFromListItem,
-    t,
-  });
-
-
-  const {
-    promotePendingSessionForRoot,
-    loadMultiProjectSessionGroups,
-    loadMoreMultiProjectSessions,
-  } = useMultiProjectSessions({
-    applyPendingToMultiProjectGroups,
-    applyPinSnapshot,
-    boundSessionByRootRef,
-    bumpCacheVersion,
-    currentRootIdRef,
-    currentRootNodeId,
-    drawerSessionByRootRef,
-    getNodeIdForRoot,
-    loadedSessionRef,
-    loadingSessionRef,
-    managedRootByIdRef,
-    managedRootByKeyRef,
-    multiProjectLoadSeqRef,
-    multiProjectPendingRef,
-    multiProjectSessionsEnabled,
-    notifyNodeLoadFailedRef,
-    rootSessionKey,
-    scopedRootKey,
-    selectRootNode,
-    selectedSessionByRootRef,
-    selectedSessionRef,
-    sessionCacheRef,
-    sessions,
-    setBoundSessionForRoot,
-    setDrawerSessionForRoot,
-    setMultiProjectSessionGroups,
-    setMultiProjectSessionPending,
-    setMultiProjectSessionsLoading,
-    setSelectedSession,
-    setSessions,
-  });
-
-  const {
-    resolveRuntimeMetaForSession,
-    appendAgentChunkForSession,
-    appendThoughtChunkForSession,
-    appendToolCallForSession,
-    appendTodoUpdateForSession,
-    appendPlanUpdateForSession,
-    appendCompactNoticeForSession,
-    attachContextWindowToLatestAssistant,
-  } = useSessionStreamCache({
-    sessionCacheRef,
-    rootSessionKey,
-    bumpCacheVersionDebounced,
-    currentSessionRef,
-    selectedSessionRef,
-    bumpCacheVersion,
-    currentRootIdRef,
-    drawerSessionByRootRef,
-    scopedRootKey,
-    setDrawerSessionForRoot,
-    setSelectedSession,
-    setSessions,
-  });
+    rootSessionKey, bumpCacheVersion, bumpCacheVersionDebounced, applyPendingToMultiProjectGroups,
+    clearSlashCommandResultForSession, setMultiProjectSessionPending, resolveRootForSessionKey,
+    getSessionSnapshot, resolvePendingForSession, clearLocalPendingForSession,
+    markSessionStale, clearSessionStale, isSessionStale,
+    restoreActiveSession, syncSessionHeaderFromListItem, loadSessionsForRoot,
+    loadChildSessionsForParent, handleSelectSession, tryShowBoundSessionForRoot,
+    handleRenameSession, handleSyncSession,
+    updateSessionRelatedFilesForKey, updateSessionRelatedWorktreeForKey,
+    updateSessionAgentForKey, getInputSession, handleSetPlanMode,
+    promotePendingSessionForRoot, loadMultiProjectSessionGroups, loadMoreMultiProjectSessions,
+    resolveRuntimeMetaForSession, appendAgentChunkForSession, appendThoughtChunkForSession,
+    appendToolCallForSession, appendTodoUpdateForSession, appendPlanUpdateForSession,
+    appendCompactNoticeForSession, attachContextWindowToLatestAssistant,
+  } = useAppSessionCore(params);
 
   const { formatDirectoryLoadError } = useAppFormatDirectoryLoadError({ t });
 
@@ -531,45 +167,8 @@ export function useAppSessionLayer(params: UseAppSessionLayerParams) {
 
 
 
-  const multiProjectReloadTimerRef = useRef<number | null>(null);
-
-  /**
-   * 合并窗口内多次「多项目会话重拉」为最后一次。
-   *
-   * 什么时候会连发：session.created 现在是**所有**建会话路径的统一信号了
-   * （看板任务、定时任务、子会话、fork），而一次看板动作可能连带建多个会话；
-   * agent 密集起子代理时更是一串 created。原来这些路径压根不发 created，所以
-   * 裸调 loadMultiProjectSessionGroups 不觉得多；统一信号一加，
-   * 每次 created 都会扇出一次 `/api/sessions?multi_root=1`（逐节点各一次），
-   * 密集建会话时能把接口打爆。
-   *
-   * 窗口取 300ms，与 scheduleSessionListReload 同一档：单个节点的
-   * `/api/sessions?multi_root=1` 实测 100–400ms，300ms 足够合并一串事件，
-   * 又短到用户感知不到延迟。
-   */
-  const scheduleMultiProjectSessionReload = useCallback(() => {
-    if (multiProjectReloadTimerRef.current !== null) {
-      window.clearTimeout(multiProjectReloadTimerRef.current);
-    }
-    multiProjectReloadTimerRef.current = window.setTimeout(() => {
-      multiProjectReloadTimerRef.current = null;
-      void loadMultiProjectSessionGroups();
-    }, MULTI_PROJECT_RELOAD_DEBOUNCE_MS);
-  }, [loadMultiProjectSessionGroups]);
-
-  // 卸载时清掉挂着的定时器：否则切走页面后还会打一次扇出
-  useEffect(
-    () => () => {
-      if (multiProjectReloadTimerRef.current !== null) {
-        window.clearTimeout(multiProjectReloadTimerRef.current);
-        multiProjectReloadTimerRef.current = null;
-      }
-    },
-    [],
-  );
-
-
-  const { refreshMultiProjectReplyingSessions } = useReplyingSessionPoll({
+  const { scheduleMultiProjectSessionReload, refreshMultiProjectReplyingSessions } = useAppMultiProjectReload({
+    MULTI_PROJECT_RELOAD_DEBOUNCE_MS,
     applyPendingToMultiProjectGroups,
     currentRootNodeIdRef,
     loadMultiProjectSessionGroups,
@@ -579,7 +178,6 @@ export function useAppSessionLayer(params: UseAppSessionLayerParams) {
     setMultiProjectPendingByKey,
     setMultiProjectSessionGroups,
   });
-
 
   const {
     sessionSearchOpen,
