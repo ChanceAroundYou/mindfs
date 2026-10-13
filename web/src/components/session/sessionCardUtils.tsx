@@ -17,6 +17,26 @@ export function formatTime(isoString: string, locale: Locale, justNow: string): 
   return new Intl.DateTimeFormat(locale, { year: "2-digit", month: "numeric" }).format(date);
 }
 
+export { iconButtonStyle, menuItemStyle, inlineActionStyle } from "../../shared/styles";
+
+export function ChevronLeftIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="m15 18-6-6 6-6" />
+    </svg>
+  );
+}
+
 export function renderHighlightedText(
   text: string,
   query?: string,
@@ -62,41 +82,6 @@ export function renderHighlightedText(
   return parts.length ? parts : source;
 }
 
-export function iconButtonStyle(withGap: boolean): React.CSSProperties {
-  return {
-    border: "none",
-    background: "transparent",
-    color: "var(--text-secondary)",
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: withGap ? "2px" : 0,
-    height: "28px",
-    minWidth: "28px",
-    borderRadius: "8px",
-    cursor: "pointer",
-    padding: withGap ? "0 6px" : 0,
-  };
-}
-
-export function ChevronLeftIcon() {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="m15 18-6-6 6-6" />
-    </svg>
-  );
-}
-
 export function SubSessionIcon({ color }: { color?: string }) {
   const c = String(color || "").trim() || "var(--accent-color)";
   return (
@@ -116,28 +101,3 @@ export function SubSessionIcon({ color }: { color?: string }) {
     </svg>
   );
 }
-
-export const menuItemStyle: React.CSSProperties = {
-  width: "100%",
-  border: "none",
-  background: "transparent",
-  color: "var(--text-primary)",
-  borderRadius: "8px",
-  padding: "8px 10px",
-  display: "flex",
-  alignItems: "center",
-  gap: "8px",
-  textAlign: "left",
-  cursor: "pointer",
-  fontSize: "12px",
-};
-
-export const inlineActionStyle: React.CSSProperties = {
-  border: "none",
-  background: "transparent",
-  color: "var(--text-secondary)",
-  cursor: "pointer",
-  padding: "2px 4px",
-  borderRadius: "4px",
-  fontSize: "11px",
-};

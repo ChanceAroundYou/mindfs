@@ -1,37 +1,11 @@
 import { SymlinkBadge } from "./SymlinkBadge";
 import type { FileEntry } from "../../services/prefs/directorySort";
+import { formatCompactSize, formatCompactTime } from "../../shared/datetime";
 
-// 列表项的紧凑时间/尺寸格式化与行内图标，从 DefaultListView 抽出。
+// 列表项的行内图标，从 DefaultListView 抽出。
+// 紧凑时间/尺寸格式化见 shared/datetime。
 
-export function formatCompactTime(value?: string): string {
-  if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  const now = new Date();
-  const sameYear = date.getFullYear() === now.getFullYear();
-  const month = `${date.getMonth() + 1}`.padStart(2, "0");
-  const day = `${date.getDate()}`.padStart(2, "0");
-  const hours = `${date.getHours()}`.padStart(2, "0");
-  const minutes = `${date.getMinutes()}`.padStart(2, "0");
-  if (sameYear) {
-    return `${month}-${day} ${hours}:${minutes}`;
-  }
-  return `${date.getFullYear()}-${month}-${day}`;
-}
-
-export function formatCompactSize(size?: number): string {
-  if (!size || size < 0) return "";
-  if (size < 1024) return `${size} B`;
-  const units = ["KB", "MB", "GB", "TB"];
-  let value = size / 1024;
-  let unitIndex = 0;
-  while (value >= 1024 && unitIndex < units.length - 1) {
-    value /= 1024;
-    unitIndex += 1;
-  }
-  const fractionDigits = value >= 100 ? 0 : value >= 10 ? 1 : 2;
-  return `${value.toFixed(fractionDigits).replace(/\.0+$|(\.\d*[1-9])0+$/, "$1")} ${units[unitIndex]}`;
-}
+export { formatCompactSize, formatCompactTime };
 
 export function FileEntryIcon({ entry }: { entry: FileEntry }) {
   const showSymlinkBadge = entry.is_dir && entry.is_symlink;
