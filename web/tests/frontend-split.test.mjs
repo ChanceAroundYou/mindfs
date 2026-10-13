@@ -9,10 +9,11 @@
 // 上游的单文件实现，导出面悄悄变了」—— 文件级 diff 看不出来，只有 import 后
 // 逐键比对才看得见。
 import assert from "node:assert/strict";
+import { readdirSync } from "node:fs";
 import { test } from "node:test";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { MODULES } from "./source-map.mjs";
+import { MODULES, rawReadFileSync } from "./source-map.mjs";
 
 const root = path.resolve(fileURLToPath(import.meta.url), "../..");
 const importSrc = (rel) => import(pathToFileURL(path.join(root, rel)).href);
@@ -49,6 +50,32 @@ test("拆分未引入导入环（子模块可独立加载）", async () => {
   await importSrc("src/services/task/index.ts");
   await importSrc("src/services/git/index.ts");
   await importSrc("src/services/file/index.ts");
+  await importSrc("src/services/session/sessionService.ts");
+});
+
+test("session 服务根路径只保留 facade，领域实现归入 session/", async () => {
+  const serviceRoot = path.join(root, "src/services");
+  const rootSessionFiles = readdirSync(serviceRoot).filter((name) => /^(inputSession|session.*)\.ts$/.test(name));
+  assert.deepEqual(rootSessionFiles, ["session.ts"], "services 根目录的 session 簇只应留下 session.ts facade");
+
+  const facade = rawReadFileSync(path.join(serviceRoot, "session.ts"), "utf8");
+  assert.match(facade, /export \* from ["']\.\/session\/sessionService["'];/);
+  assert.doesNotMatch(facade, /class SessionService|function |const sessionService\s*=/);
+
+  const moved = [
+    "inputSession", "sessionApi", "sessionCacheStore", "sessionCacheTypes",
+    "sessionConnectionManager", "sessionContext", "sessionDispatcher", "sessionDuration",
+    "sessionExchangeMerge", "sessionGroupDisplay", "sessionIdentifiers", "sessionIndexedDb",
+    "sessionListCache", "sessionListMerge", "sessionLock", "sessionOutbound",
+    "sessionTerminalLayout", "sessionTree", "sessionTypes", "sessionWindow",
+  ];
+  for (const name of moved) {
+    assert.deepEqual(MODULES[`src/services/${name}.ts`], [`src/services/session/${name}.ts`], `${name} source-map path`);
+  }
+
+  const session = await importSrc("src/services/session.ts");
+  assert.equal(typeof session.sessionService.connect, "function");
+  assert.equal(typeof session.getSessionWindow, "function");
 });
 
 test("source-map 把旧逻辑路径映射到全部物理文件", () => {

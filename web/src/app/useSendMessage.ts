@@ -41,8 +41,8 @@ import {
   shouldAutoSelectNewSession,
   toSessionItem,
 } from "../app/appSession";
-import { mergeSessionItems } from "../services/sessionListMerge";
-import { resolveLockedSessionKey } from "../services/sessionLock";
+import { mergeSessionItems } from "../services/session/sessionListMerge";
+import { resolveLockedSessionKey } from "../services/session/sessionLock";
 import { getViewModeSystemPrompt } from "../renderer/viewCatalog";
 
 /** handleSendMessage 的完整参数面：35 个闭包。 */

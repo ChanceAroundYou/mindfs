@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef } from "react";
 import { sessionService } from "../services/session";
-import type { Session } from "../services/session";
+import type { Session, SyncSessionResult } from "../services/session";
 import { scopeSessionKey, treeKey } from "../shared/scope";
-import { mergeSessionItems } from "../services/sessionListMerge";
+import { mergeSessionItems } from "../services/session/sessionListMerge";
 import { fetchAgents, restartAgent } from "../services/agents";
 import type { AgentStatus } from "../services/agents";
 import { ManagedRootPayload, SESSION_PAGE_SIZE } from "./appMisc";
@@ -15,6 +15,7 @@ import { useAppFormatDirectoryLoadError } from "./useAppFormatDirectoryLoadError
 import { installBackNavigation } from "../hooks/useBackNavigation";
 import { AttachedFileContext, MultiProjectSessionGroup, PendingSend, SessionItem, SlashCommandResult, WSStatus, toSessionItem } from "./appSession";
 import { MainViewMode, rootNodeKey } from "./appPath";
+import type { URLState } from "./appPath";
 import { useSendMessage } from "./useSendMessage";
 import { useSessionLifecycle } from "./useSessionLifecycle";
 import { useExternalSessionImport } from "./useExternalSessionImport";
@@ -34,6 +35,7 @@ import { FileEditStore } from "../services/fileEditing";
 import type { FileEntry } from "../services/prefs/directorySort";
 import type { FilePayload } from "../services/file";
 import type { GitDiffPayload } from "../services/git";
+import type { GitHistoryPayload, GitStatusPayload } from "../services/git";
 import type { MessageKey, MessageParams } from "../i18n";
 import { PluginManager } from "../plugins/manager";
 import type { UpdateState } from "../services/update";
@@ -77,7 +79,7 @@ export type UseAppSessionLayerParams = {
   listLoadErrorAtRef: React.RefObject<number>;
   loadedSessionRef: React.RefObject<Record<string, boolean>>;
   loadingOlderSessions: boolean;
-  loadingSessionRef: React.RefObject<Partial<Record<string, Promise<import("/home/xiaokubao/projects/mindfs/.worktree/task-35/web/src/services/sessionTypes").SyncSessionResult>>>>;
+  loadingSessionRef: React.RefObject<Partial<Record<string, Promise<SyncSessionResult>>>>;
   mainViewRef: React.RefObject<MainViewMode>;
   managedRootByIdRef: React.RefObject<Record<string, ManagedRootPayload>>;
   managedRootByKeyRef: React.RefObject<Record<string, ManagedRootPayload>>;
@@ -96,8 +98,8 @@ export type UseAppSessionLayerParams = {
   pluginManagerRef: React.RefObject<PluginManager>;
   pluginQuery: Record<string, string>;
   pluginQueryRef: React.RefObject<Record<string, string>>;
-  refreshGitHistory: (rootID: string, options?: { force?: boolean; waitForIncremental?: boolean; }) => Promise<import("/home/xiaokubao/projects/mindfs/.worktree/task-35/web/src/services/git").GitHistoryPayload | null>;
-  replaceURLState: (next: import("/home/xiaokubao/projects/mindfs/.worktree/task-35/web/src/app/appPath").URLState) => void;
+  refreshGitHistory: (rootID: string, options?: { force?: boolean; waitForIncremental?: boolean; }) => Promise<GitHistoryPayload | null>;
+  replaceURLState: (next: URLState) => void;
   resetLocksForRootTransition: (targetRoot: string | null | undefined) => void;
   resetSessionLockForRoot: (rootID: string | null | undefined) => void;
   scopedRootKey: (rootId: string) => string;
@@ -131,8 +133,8 @@ export type UseAppSessionLayerParams = {
   setExpanded: React.Dispatch<React.SetStateAction<string[]>>;
   setFile: React.Dispatch<React.SetStateAction<FilePayload | null>>;
   setGitDiff: React.Dispatch<React.SetStateAction<GitDiffPayload | null>>;
-  setGitStatus: React.Dispatch<React.SetStateAction<import("/home/xiaokubao/projects/mindfs/.worktree/task-35/web/src/services/git").GitStatusPayload | null>>;
-  setGitStatusByRoot: React.Dispatch<React.SetStateAction<Record<string, import("/home/xiaokubao/projects/mindfs/.worktree/task-35/web/src/services/git").GitStatusPayload | null>>>;
+  setGitStatus: React.Dispatch<React.SetStateAction<GitStatusPayload | null>>;
+  setGitStatusByRoot: React.Dispatch<React.SetStateAction<Record<string, GitStatusPayload | null>>>;
   setHasMoreSessions: React.Dispatch<React.SetStateAction<boolean>>;
   setInteractionMode: React.Dispatch<React.SetStateAction<"main" | "drawer">>;
   setIsLeftOpen: React.Dispatch<React.SetStateAction<boolean>>;

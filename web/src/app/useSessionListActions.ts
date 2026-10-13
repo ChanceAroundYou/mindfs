@@ -21,7 +21,7 @@ import { alertDialog, promptDialog } from "../services/dialog";
 import { ProtectedAPIError, protectedJSON as apiProtectedJSON } from "../services/net/api";
 import { reportError } from "../services/net/error";
 import { optimisticSessionPin, setSessionPin, writePins } from "../services/pins";
-import { collectSessionSubtreeKeys, type SessionTreeItem } from "../services/sessionTree";
+import { collectSessionSubtreeKeys, type SessionTreeItem } from "../services/session/sessionTree";
 import { expandKey, scopeKey } from "../shared/scope";
 import { dirnameOfPath } from "./appPath";
 import { invalidateFileCache, type FilePayload } from "../services/file";

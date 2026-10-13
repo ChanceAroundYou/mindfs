@@ -1,5 +1,5 @@
-import { scopeSessionKey } from "../shared/scope";
-import { currentUser } from "./net/authGate";
+import { scopeSessionKey } from "../../shared/scope";
+import { currentUser } from "../net/authGate";
 import type { CachedSessionListRecord, CachedSessionRecord } from "./sessionCacheTypes";
 
 const SESSION_CACHE_DB = "mindfs-session-cache";

@@ -29,8 +29,8 @@ import { useI18n } from "../i18n";
 import { protectedAPIReady } from "../services/net/api";
 import { getActiveNode, getNodeById, getNodes } from "../services/net/nodeRegistry";
 import { type MultiRootSessionGroup, type Session, sessionService } from "../services/session";
-import { resolveGroupColor } from "../services/sessionGroupDisplay";
-import { mergeSessionItems } from "../services/sessionListMerge";
+import { resolveGroupColor } from "../services/session/sessionGroupDisplay";
+import { mergeSessionItems } from "../services/session/sessionListMerge";
 
 export type UseMultiProjectSessionsParams = {
   applyPendingToMultiProjectGroups: (groups: MultiProjectSessionGroup[], pendingByKey: Record<string, boolean>) => any;

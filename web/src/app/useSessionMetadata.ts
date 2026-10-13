@@ -12,7 +12,7 @@ import { useCallback, useEffect, type MutableRefObject, type Dispatch, type SetS
 import { useI18n } from "../i18n";
 import { SessionItem } from "./appSession";
 import { useSessionCache } from "./useSessionCache";
-import { resolveInputSession } from "../services/inputSession";
+import { resolveInputSession } from "../services/session/inputSession";
 import { reportError } from "../services/net/error";
 import { type RelatedFile, type RelatedWorktree, type Session, sessionService } from "../services/session";
 

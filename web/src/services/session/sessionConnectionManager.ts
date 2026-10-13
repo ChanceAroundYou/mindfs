@@ -7,7 +7,7 @@
  * CUSTOM(G-BA)：上游没有这个拆分。合上游时若 session.ts 被整体覆盖，
  * 需要把本文件的内容合回去（或重新拆分），否则 WS 连接管理会丢失。
  */
-import { wsURL } from "./net/base";
+import { wsURL } from "../net/base";
 import { estimateCommandTerminalCols } from "./sessionTerminalLayout";
 import { createRequestId } from "./sessionIdentifiers";
 import {

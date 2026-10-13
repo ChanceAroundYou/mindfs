@@ -4,7 +4,7 @@
 
 ## 目录归位
 
-- [ ] `services/` 建 `session/` 子目录，收拢根下 ~20 个 `session*.ts`，根留门面。
+- [x] `services/` 建 `session/` 子目录，收拢根下 ~20 个 `session*.ts`，根留门面。
 - [ ] 更新簇（`update.ts`/`appUpdate.ts`/`androidUpdate.ts`）、agent 簇
       （`agentConfig.ts`/`agentMemory.ts`/`agents.ts`/`codexRateLimits.ts`）各收一处。
 - [x] 消除 `components/*` 直调 `app/*` hook 倒挂（`useBackNavigation`/`usePwaInstall`

@@ -6,11 +6,11 @@ import type {
   SessionListPayload,
   SessionSearchHit,
   ToolCall,
-} from "./session";
-import type { FetchSessionsOptions } from "./session";
-import { getRootNodeId } from "./net/rootNode";
-import { appURL } from "./net/base";
-import { protectedFetch, protectedJSON, withNodeRetry } from "./net/api";
+} from "./sessionTypes";
+import type { FetchSessionsOptions } from "./sessionTypes";
+import { getRootNodeId } from "../net/rootNode";
+import { appURL } from "../net/base";
+import { protectedFetch, protectedJSON, withNodeRetry } from "../net/api";
 
 // 会话的 HTTP 读写（从 services/session.ts 的 SessionService 里抽出，2026-10-07）。
 //

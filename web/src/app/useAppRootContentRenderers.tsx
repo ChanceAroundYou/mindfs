@@ -8,7 +8,7 @@ import type { ManagedRootPayload } from "./appMisc";
 import type { ActionHandlers } from "./useActionHandlers";
 import type { DirectorySortMode } from "../services/prefs/directorySort";
 import type { RelatedFileStat } from "../hooks/useRelatedFileStats";
-import type { RelatedWorktree } from "../services/sessionTypes";
+import type { RelatedWorktree } from "../services/session/sessionTypes";
 import type { GitHistoryItem, GitHistoryPayload, GitStatusItem, GitStatusPayload, GitWorktreeItem } from "../services/git";
 import type { KanbanTask } from "../services/tasks";
 

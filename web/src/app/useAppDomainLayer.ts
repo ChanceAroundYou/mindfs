@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { sessionService } from "../services/session";
-import type { QueuedUserMessage, RelatedFile } from "../services/session";
+import type { QueuedUserMessage, RelatedFile, RelatedWorktree, SyncSessionResult, TokenUsage } from "../services/session";
 import { bootstrapService } from "../services/net/bootstrap";
 import type { BootstrapState } from "../services/net/bootstrap";
 import { reportError } from "../services/net/error";
 import { setRootNodeMap } from "../services/net/rootNode";
-import { resolveLockedSessionKey } from "../services/sessionLock";
+import { resolveLockedSessionKey } from "../services/session/sessionLock";
 import { useAppPluginRenderEffects } from "./useAppPluginRenderEffects";
 import { useAppBootstrapEffects } from "./useAppBootstrapEffects";
 import { useAppBoundSessionDir } from "./useAppBoundSessionDir";
@@ -17,6 +17,7 @@ import { useAppPluginRender } from "./useAppPluginRender";
 import { closeTopBackLayer, consumeViewHistoryEntry, hasBackLayer } from "../hooks/useBackNavigation";
 import { ManagedRootPayload, indexManagedRoots, mapManagedRootsToEntries, toPluginInput } from "./appMisc";
 import { MainViewMode, readURLState } from "./appPath";
+import type { URLState } from "./appPath";
 import { useActionHandlers } from "./useActionHandlers";
 import { AttachedFileContext, MultiProjectSessionGroup, PendingSend, SessionItem, SlashCommandResult, ViewerSelection, WSStatus, hasSessionExchanges, sessionInputHistory, toSessionItem } from "./appSession";
 import { loadLastRootId, loadLastRootNodeId } from "./appStorage";
@@ -39,24 +40,26 @@ import type { DirectorySortMode, FileEntry } from "../services/prefs/directorySo
 import { FileEditStore } from "../services/fileEditing";
 import type { FilePayload } from "../services/file";
 import type { GitDiffPayload } from "../services/git";
+import type { GitHistoryItem, GitHistoryPayload, GitStatusItem, GitStatusPayload } from "../services/git";
 import type { KanbanTask, TaskDetail } from "../services/tasks";
 import type { MessageKey, MessageParams } from "../i18n";
 import type { PluginManager, PluginSourceBundle } from "../plugins/manager";
 import type { UpdateState } from "../services/update";
+import type { SessionRuntimeMeta } from "./useSessionStreamCache";
 
 /**
  * 见 docs/plans/app-tsx-under-1000.md：分层聚合 hook。
  */
 export type UseAppDomainLayerParams = {
   activeBoundSessionKey: string | null;
-  appendAgentChunkForSession: (rootID: string, sessionKey: string, content: string, runtimeHint?: import("/home/xiaokubao/projects/mindfs/.worktree/task-35/web/src/app/useSessionStreamCache").SessionRuntimeMeta, eventTimestamp?: string, mindfsID?: string) => void;
+  appendAgentChunkForSession: (rootID: string, sessionKey: string, content: string, runtimeHint?: SessionRuntimeMeta, eventTimestamp?: string, mindfsID?: string) => void;
   appendCompactNoticeForSession: (rootID: string, sessionKey: string, compactNotice: any, mindfsID?: string) => void;
   appendPlanUpdateForSession: (rootID: string, sessionKey: string, planUpdate: any, mindfsID?: string) => void;
   appendThoughtChunkForSession: (rootID: string, sessionKey: string, content: string, thoughtID?: string, mindfsID?: string) => void;
   appendTodoUpdateForSession: (rootID: string, sessionKey: string, todoUpdate: any, mindfsID?: string) => void;
   appendToolCallForSession: (rootID: string, sessionKey: string, toolCall: any, update: boolean, mindfsID?: string) => void;
   applyTaskDetails: (rootId: string, details: TaskDetail[], persist?: boolean) => void;
-  attachContextWindowToLatestAssistant: (rootID: string, sessionKey: string, contextWindow?: { totalTokens?: number; modelContextWindow?: number; }, tokenUsage?: import("/home/xiaokubao/projects/mindfs/.worktree/task-35/web/src/services/sessionTypes").TokenUsage) => void;
+  attachContextWindowToLatestAssistant: (rootID: string, sessionKey: string, contextWindow?: { totalTokens?: number; modelContextWindow?: number; }, tokenUsage?: TokenUsage) => void;
   bootstrapState: BootstrapState;
   boundSessionByRootRef: React.RefObject<Record<string, string | null>>;
   bumpCacheVersion: () => void;
@@ -87,7 +90,7 @@ export type UseAppDomainLayerParams = {
   getNodeIdForRoot: (rootId: string) => string | undefined;
   getSessionSnapshot: (rootId: string | null | undefined, session: Session | SessionItem | null | undefined) => any;
   gitDiff: GitDiffPayload | null;
-  gitStatus: import("/home/xiaokubao/projects/mindfs/.worktree/task-35/web/src/services/git").GitStatusPayload | null;
+  gitStatus: GitStatusPayload | null;
   handleImportedSessionConfirmed: (agentSessionID: string, agentName: string) => void;
   handleSelectSession: (session: any, options?: { preserveTaskSelection?: boolean; preserveMainView?: boolean; }) => Promise<void>;
   handleSelectSessionRef: React.RefObject<((session: any, options?: { preserveTaskSelection?: boolean; preserveMainView?: boolean; }) => Promise<void>) | null>;
@@ -106,7 +109,7 @@ export type UseAppDomainLayerParams = {
   loadSessionsForRoot: (rootID: string, options?: { beforeTime?: string; afterTime?: string; replace?: boolean; force?: boolean; }) => Promise<void>;
   loadTaskTemplates: () => Promise<void>;
   loadedSessionRef: React.RefObject<Record<string, boolean>>;
-  loadingSessionRef: React.RefObject<Partial<Record<string, Promise<import("/home/xiaokubao/projects/mindfs/.worktree/task-35/web/src/services/sessionTypes").SyncSessionResult>>>>;
+  loadingSessionRef: React.RefObject<Partial<Record<string, Promise<SyncSessionResult>>>>;
   mainDirectoryErrorRef: React.RefObject<string>;
   mainEntries: FileEntry[];
   mainEntriesRef: React.RefObject<FileEntry[]>;
@@ -124,7 +127,7 @@ export type UseAppDomainLayerParams = {
   nodeLoadFailuresRef: React.RefObject<{ id: string; name: string; }[]>;
   notifiedNodeFailuresRef: React.RefObject<Set<string>>;
   notifyNodeLoadFailedRef: React.RefObject<(node: { id: string; name: string; }) => void>;
-  openGitDiff: (rootID: string, item: import("/home/xiaokubao/projects/mindfs/.worktree/task-35/web/src/services/git").GitStatusItem, options?: { preserveRelatedSelection?: boolean; repoPath?: string; }) => Promise<void>;
+  openGitDiff: (rootID: string, item: GitStatusItem, options?: { preserveRelatedSelection?: boolean; repoPath?: string; }) => Promise<void>;
   optimisticDequeuedIdsRef: React.RefObject<Record<string, Set<string>>>;
   pendingBySessionRef: React.RefObject<Record<string, PendingSend>>;
   pendingDraftRef: React.RefObject<PendingSend | null>;
@@ -146,14 +149,14 @@ export type UseAppDomainLayerParams = {
   queueVersion: number;
   queuedMessagesBySessionRef: React.RefObject<Record<string, QueuedUserMessage[]>>;
   refreshCurrentFileContent: (rootID: string, changedPath: string) => Promise<void>;
-  refreshGitHistory: (rootID: string, options?: { force?: boolean; waitForIncremental?: boolean; }) => Promise<import("/home/xiaokubao/projects/mindfs/.worktree/task-35/web/src/services/git").GitHistoryPayload | null>;
-  refreshGitStatus: (rootID: string) => Promise<import("/home/xiaokubao/projects/mindfs/.worktree/task-35/web/src/services/git").GitStatusPayload | null>;
+  refreshGitHistory: (rootID: string, options?: { force?: boolean; waitForIncremental?: boolean; }) => Promise<GitHistoryPayload | null>;
+  refreshGitStatus: (rootID: string) => Promise<GitStatusPayload | null>;
   refreshMultiProjectReplyingSessions: () => Promise<void>;
   refreshTaskWorktree: (rootId: string, worktreePath: string, force?: boolean) => Promise<void>;
   refreshTreeDir: (rootID: string, dirPath: string, syncMain: boolean) => Promise<void>;
   refreshWorkspaceBoard: () => void;
   rememberCurrentFileScroll: () => void;
-  replaceURLState: (next: import("/home/xiaokubao/projects/mindfs/.worktree/task-35/web/src/app/appPath").URLState) => void;
+  replaceURLState: (next: URLState) => void;
   resetLocksForRootTransition: (targetRoot: string | null | undefined) => void;
   resolvePendingForSession: (rootID: string | null | undefined, sessionKey: string | null | undefined, fallback?: boolean) => boolean;
   resolveRootForSessionKey: (sessionKey: string) => string | null;
@@ -192,9 +195,9 @@ export type UseAppDomainLayerParams = {
   setExternalSessions: React.Dispatch<React.SetStateAction<SessionItem[]>>;
   setFile: React.Dispatch<React.SetStateAction<FilePayload | null>>;
   setGitDiff: React.Dispatch<React.SetStateAction<GitDiffPayload | null>>;
-  setGitHistory: React.Dispatch<React.SetStateAction<import("/home/xiaokubao/projects/mindfs/.worktree/task-35/web/src/services/git").GitHistoryPayload | null>>;
+  setGitHistory: React.Dispatch<React.SetStateAction<GitHistoryPayload | null>>;
   setGitHistoryExpandedByRoot: React.Dispatch<React.SetStateAction<Record<string, Record<string, boolean>>>>;
-  setGitStatus: React.Dispatch<React.SetStateAction<import("/home/xiaokubao/projects/mindfs/.worktree/task-35/web/src/services/git").GitStatusPayload | null>>;
+  setGitStatus: React.Dispatch<React.SetStateAction<GitStatusPayload | null>>;
   setGitStatusExpandedByRoot: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
   setInteractionMode: React.Dispatch<React.SetStateAction<"main" | "drawer">>;
   setIsDrawerOpen: React.Dispatch<React.SetStateAction<boolean>>;
@@ -241,7 +244,7 @@ export type UseAppDomainLayerParams = {
   tryShowBoundSessionForRoot: (rootID: string | null | undefined, options?: { pluginQuery?: Record<string, string>; closeLeftSidebar?: boolean; }) => Promise<boolean>;
   updateSessionAgentForKey: (rootID: string, sessionKey: string, agent: string, model?: string, agentMode?: string, effort?: string, fastService?: "" | "on" | "off", planMode?: boolean, shell?: string) => void;
   updateSessionRelatedFilesForKey: (rootID: string, sessionKey: string, relatedFiles: RelatedFile[]) => void;
-  updateSessionRelatedWorktreeForKey: (rootID: string, sessionKey: string, relatedWorktree: import("/home/xiaokubao/projects/mindfs/.worktree/task-35/web/src/services/sessionTypes").RelatedWorktree | null | undefined) => void;
+  updateSessionRelatedWorktreeForKey: (rootID: string, sessionKey: string, relatedWorktree: RelatedWorktree | null | undefined) => void;
   viewerSelection: ViewerSelection | null;
   viewerSelectionRef: React.RefObject<ViewerSelection | null>;
   workspaceOpenRef: React.RefObject<boolean>;

@@ -1,4 +1,4 @@
-import type { Session, SessionListPayload } from "./session";
+import type { Session, SessionListPayload } from "./sessionTypes";
 import {
   buildSessionListCacheKey,
   readCachedSessionList,

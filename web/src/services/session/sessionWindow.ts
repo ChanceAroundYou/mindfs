@@ -1,7 +1,7 @@
-import type { Session, SessionWindow, SessionWindowOptions, SyncSessionResult } from "./session";
+import type { Session, SessionWindow, SessionWindowOptions, SyncSessionResult } from "./sessionTypes";
 // sessionService 的实例仍住在 session.ts（那是整条 WS 传输的所在）。这里只在
 // **调用时**解引用，不在模块顶层碰它 —— 所以这条环是安全的。
-import { sessionService } from "./session";
+import { sessionService } from "../session";
 import { cloneSession, getCachedSession, saveCachedSession } from "./sessionCacheStore";
 import { appendSessionDelta, getSessionMaxSeq, toPersistentExchangeAux, withSessionMeta } from "./sessionExchangeMerge";
 

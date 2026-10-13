@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import { unscopedRootId } from "./appUtils";
 import type { SessionItem } from "./appSession";
-import type { Session } from "../services/sessionTypes";
+import type { Session } from "../services/session/sessionTypes";
 
 /**
  * 反查「某个裸会话键属于哪个项目」。

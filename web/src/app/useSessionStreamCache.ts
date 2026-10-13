@@ -2,7 +2,7 @@ import { useCallback, useRef } from "react";
 import type { Session, TokenUsage } from "../services/session";
 import type { Exchange, SessionItem } from "./appSession";
 import { normalizeFastService } from "./appTask";
-import { streamEventTimestamp } from "../services/sessionDuration";
+import { streamEventTimestamp } from "../services/session/sessionDuration";
 
 /**
  * 会话流写缓存内核。
