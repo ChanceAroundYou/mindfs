@@ -15,7 +15,7 @@ import { readFileSync } from "node:fs";
 // 排序本来就不需要它：瞬时行永远排在持久行之后（composeLoadedExchanges 的契约），
 // 数组顺序即时间顺序。`seq` 是「服务端窗口里的身份」，不该由位置反推。
 const stream = readFileSync(
-  new URL("../src/hooks/useSessionStream.ts", import.meta.url),
+  new URL("../src/hooks/sessionTimeline.ts", import.meta.url),
   "utf8",
 );
 const viewer = readFileSync(

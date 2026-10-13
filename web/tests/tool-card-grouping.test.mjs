@@ -48,6 +48,7 @@ function loadModule(relPath) {
       // 编译后没有 require，所以直接递归加载即可 —— 不桩它，免得桩错了让分组测试
       // 变成「测了一个假模块」。
       if (name === "./sessionBlocks") return loadModule("hooks/sessionBlocks.ts");
+      if (name === "./sessionTimeline") return loadModule("hooks/sessionTimeline.ts");
       throw new Error(`unexpected require: ${name}`);
     },
     console,
@@ -56,7 +57,7 @@ function loadModule(relPath) {
   return sandbox.exports;
 }
 
-const { groupConsecutiveToolCalls } = loadModule("hooks/useSessionStream.ts");
+const { groupConsecutiveToolCalls } = loadModule("hooks/sessionTimeline.ts");
 
 function tool(id, kind) {
   return { id, type: "tool", toolCall: { callId: id, kind, status: "complete" } };

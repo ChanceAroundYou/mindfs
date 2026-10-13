@@ -391,7 +391,7 @@ test("【红·⑮d】context_window 两处必须分工明确（按 exchange 优�
   //   · `buildAssistantTimeline` 贴的是**该 exchange 自己的** `context_window`（每轮真值）；
   //   · `applySessionContextWindow` 用**会话级** `context_window` 兜底，只在行上缺字段时填。
   // 删掉兜底会让「服务端早期没记 per-exchange 的那类行」永远没有 token 徽标。
-  const file = readFileSync(path.join(srcRoot, "hooks/useSessionStream.ts"), "utf8");
+  const file = readFileSync(path.join(srcRoot, "hooks/sessionTimeline.ts"), "utf8");
   assert.match(
     file,
     /contextWindow: ex\.context_window,/,

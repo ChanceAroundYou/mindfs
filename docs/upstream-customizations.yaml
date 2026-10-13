@@ -1816,12 +1816,12 @@ groups:
       - web/src/services/session/sessionService.ts:private windowInflight
       - web/src/services/session/sessionService.ts:export const SESSION_WINDOW_SIZE = 8;
       - web/src/app/useRealtimeEvents.ts:const relatedFilesRefreshTimers = useRef(new Map<string, number>());
-      - web/src/hooks/useSessionStream.ts:export function groupConsecutiveToolCalls
+      - web/src/hooks/sessionTimeline.ts:export function groupConsecutiveToolCalls
       - web/src/components/stream/ToolCallGroupCard.tsx:export const ToolCallGroupCard
       - 'server/internal/session/types.go:CUSTOM(G-AT)'
       - 'server/internal/session/manager.go:CUSTOM(G-AT)'
       - 'web/src/services/session/sessionService.ts:CUSTOM(G-AT)'
-      - 'web/src/hooks/useSessionStream.ts:CUSTOM(G-AT)'
+      - 'web/src/hooks/sessionTimeline.ts:CUSTOM(G-AT)'
       - 'web/src/components/session/SessionViewer.tsx:CUSTOM(G-AT)'
   - id: G-AU
     title: 会话拉取风暴与渲染主线程阻塞
@@ -3282,7 +3282,7 @@ groups:
       - docs/upstream-customizations.yaml
       - web/tests/agent-docs.test.mjs
     anchors:
-      - docs/agent/rules/frontend/TODO.md:硬线 1 个
+      - docs/agent/rules/frontend/TODO.md:硬线已清零
       - docs/plans/README.md:Rule completion rollout
       - web/tests/agent-docs.test.mjs:every plan is classified in the sole plans index
   - id: G-BZ
@@ -4852,3 +4852,39 @@ groups:
     anchors:
       - web/src/services/session/sessionConnectionOutbound.ts:export class SessionConnectionOutbound
       - web/tests/session-connection-outbound-split.test.mjs:connection manager stays below the frontend hard line
+
+  - id: G-DV
+    title: Session stream timeline projection split
+    kind: arch
+    symptom: |
+      useSessionStream combines React subscription/timer state with timeline projection, role
+      normalization, block/exchange merging, tool grouping, context-window fallback, and card cleanup.
+      Its 648-line size exceeds the frontend hard line and couples pure projection rules to React state.
+    why: |
+      Give exchange and block timeline projection a pure owner with focused regression tests while
+      preserving the hook's stream subscription lifecycle and public TimelineItem import path.
+    boundary: |
+      sessionTimeline owns exchange types and pure projection/grouping/settling helpers. useSessionStream
+      retains stream subscription, throttled streamVersion updates, and the same hook API; it re-exports
+      TimelineItem and groupConsecutiveToolCalls for existing consumers.
+    tests:
+      - web/tests/session-stream-timeline-split.test.mjs
+      - web/tests/tool-card-grouping.test.mjs
+      - web/tests/session-timeline-seq.test.mjs
+      - web/tests/message-mechanism-merges.test.mjs
+    files:
+      - web/src/hooks/useSessionStream.ts
+      - web/src/hooks/sessionTimeline.ts
+      - web/tests/session-stream-timeline-split.test.mjs
+      - web/tests/tool-card-grouping.test.mjs
+      - web/tests/session-timeline-seq.test.mjs
+      - web/tests/message-mechanism-merges.test.mjs
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/hooks/useSessionStream.ts:export function useSessionStream
+      - web/src/hooks/sessionTimeline.ts:export function buildBaseTimeline
+      - web/tests/session-stream-timeline-split.test.mjs:hook remains below the frontend hard line

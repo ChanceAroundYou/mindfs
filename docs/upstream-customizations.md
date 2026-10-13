@@ -2984,3 +2984,10 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **根因与边界**：`SessionConnectionOutbound` 接收 socket-open 判据、传输回调、共享 pending map/context cache，负责原出站命令方法；manager 保留公开 API 的 typed delegator，并继续拥有 socket 状态、ack 删除、reconnect 计时和 pending resend。sendMessage 的 open 守卫仍先于 context 压缩/pending 写入。
 - **针对性测试**：`session-connection-outbound-split.test.mjs` → 守住父类行数、API 代理、pending ack/resend 归属及发送守卫顺序；`session-window.test.mjs` → 守住 probe/reconnect 状态；`source-map.test.mjs`、`frontend-split.test.mjs` → 守住源码映射与服务拆分目录契约。
 - **边界**：父类实测 603→472 行，frontend 硬线 TODO 剩余 1 项；不改公开方法参数、消息 payload 或重连行为。
+
+### G-DV Session stream 时间线投影职责拆分
+
+- **可见症状**：`useSessionStream` 把 React 订阅/定时器状态与时间线投影、exchange/block 拼接、工具分组及 context-window 回退混在一起，648 行超过前端硬线，纯投影规则难以独立验证。
+- **根因与边界**：纯时间线规则和 exchange 类型归 `sessionTimeline.ts`；原 hook 保留订阅、节流 streamVersion 和公开 hook API，并从旧路径继续导出 `TimelineItem` 与 `groupConsecutiveToolCalls`。消费者的导入路径不变。
+- **针对性测试**：`session-stream-timeline-split.test.mjs` → 守住拆分边界、行数与兼容导出；`tool-card-grouping.test.mjs` → 守住工具折叠语义；`session-timeline-seq.test.mjs`、`message-mechanism-merges.test.mjs` → 守住持久 seq 与 context-window 优先级。
+- **边界**：原 hook 实测 648→128 行，纯 helper 526 行；stream 订阅、pending 闸门和事件顺序不变。

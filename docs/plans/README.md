@@ -8,7 +8,7 @@ to resume their old TODOs or baselines.
 
 | Plan | Status | Next action |
 |---|---|---|
-| [Rule completion rollout](rule-completion-rollout.md) | Active | `useAppStateLayer.ts` 已降至 498 行并从硬线清单销项；refs/cache、root selection、session/task setup 与 file/workspace state 均按域拆到专属 hooks。硬线剩余 1 项；`useAppViewComposition` 已拆为 433 行的组合 hook 与独立参数类型/工作台组合模块；`useSessionLifecycle` 为 404 行、`useManagedRoots` 为 480 行、`useSendMessage` 为 422 行。`useSessionStreamCache` 已拆至 473 行。`realtimeWsHandlers` 已拆至 426 行。`SessionPane` 已拆至 58 行壳层和 458 行内容组合。`SessionViewer` 已降至 499 行。`useMarkdownViewer` 已降至 445 行。`sessionConnectionManager` 已降至 472 行。下一步复核并拆 `useSessionStream`。 |
+| [Rule completion rollout](rule-completion-rollout.md) | Active | 前端硬线已清零；`useSessionStream` 648→128 行，纯时间线构建归 `sessionTimeline.ts`（526 行）。下一步复核 reviewer checklist 与 backend TODO，建立/运行后端大文件门禁。 |
 
 ## Completed or superseded history
 

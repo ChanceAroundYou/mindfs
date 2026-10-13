@@ -113,5 +113,6 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 - 已完成：`SessionPane` 主内容状态分流与文件/插件/目录视图组合迁入 `SessionMainContent`，插件信任内容迁入 `PendingPluginTrustView`，属性契约移入 `sessionPaneTypes` 并由原组件路径兼容再导出。父壳 682→58 行，内容组合 458 行，硬线剩余 4 项、软线 76 项；视图显隐与优先级不变。TypeScript、全量测试（Vitest 5 + legacy 289 通过/4 跳过）与生产构建通过。
 - 已完成：`SessionViewer` 的跟随滚动状态/回调与滚动位置、视口适配和 stickiness effects 归 `useSessionViewerScroll`，timeline user-index/timestamp 元数据归线性 helper；动画 keyframes 收到 session viewer styles。helper hook 在原状态/效果调用顺序位置运行，物理父组件 646→499 行，硬线剩余 3 项、软线 77 项。行为专项、TypeScript、全量测试（Vitest 5 + legacy 290 通过/4 跳过）与生产构建通过。
 - 已完成：受保护图片解析与 blob/object URL 生命周期归 `MarkdownImage`，`useMarkdownViewer` 保留解析、outline、渲染和链接导航编排，hook API 不变。父 hook 实测 527→445 行，硬线剩余 2 项、软线 78 项；TypeScript、全量测试（Vitest 5 + legacy 291 通过/4 跳过）、命名/source-map 专项与生产构建通过。
-- 已完成：WS 出站命令构造与发送归 `SessionConnectionOutbound`，manager 在旧 API 上保留薄代理；socket-open 守卫仍先于 context 压缩/pending 写入，pending ack 与 reconnect resend 留在 manager。父类实测 603→472 行，硬线剩余 1 项、软线 79 项；TypeScript/连接状态专项待全量验证后记录。
-- 下一项：复核并拆 `useSessionStream`；之后继续规则门禁审计与 backend TODO。
+- 已完成：WS 出站命令构造与发送归 `SessionConnectionOutbound`，manager 在旧 API 上保留薄代理；socket-open 守卫仍先于 context 压缩/pending 写入，pending ack 与 reconnect resend 留在 manager。父类实测 603→472 行，前端硬线剩余 1 项、软线 79 项；TypeScript、全量测试（Vitest 5 + legacy 292 通过/4 跳过）、生产构建及 upstream 门禁（1019 delta / 124 组）通过，提交 `7f32c1e` 已推送并 no-restart 安装。
+- 进行中：`useSessionStream` 的 React stream 状态订阅与定时器留在原 hook；时间线投影、exchange/block 拼接、分组和 context-window 回退迁入 `sessionTimeline.ts`。父 hook 648→128 行，helper 526 行；专项测试、TypeScript、全量测试（Vitest 5 + legacy 293 通过/4 跳过）和生产构建通过。
+- 下一项：完成本批全量前端检查、upstream 登记和 no-restart ship；之后审阅 reviewer checklist 与 backend TODO，并建立/运行后端大文件检查。

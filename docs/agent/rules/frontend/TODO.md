@@ -28,7 +28,7 @@
 ## 必拆文件（硬线 1 个，按"每次 2–3 个 + 一次构建"推进）
 
 ```
-hooks/ (1): useSessionStream 648
+硬线已清零。`useSessionStream` 648→128 行；纯时间线构建归 `sessionTimeline.ts`（526 行）。
 ```
 
 软线 300–500 共 79 个，记 TODO 触时再拆。
