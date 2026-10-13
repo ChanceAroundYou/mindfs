@@ -133,9 +133,7 @@ test("【红·④】overlay 只按角色类别和 mindfs_id 对账", () => {
   const cache = stripComments(
     readFileSync(path.join(srcRoot, "app", "useSessionStreamCache.ts"), "utf8"),
   );
-  const realtime = stripComments(
-    readFileSync(path.join(srcRoot, "app", "useRealtimeEvents.ts"), "utf8"),
-  );
+  const realtime = stripComments(readLogicalSource("src/app/useRealtimeEvents.ts"));
   const sessionService = stripComments(
     readFileSync(path.join(srcRoot, "services", "session", "sessionTypes.ts"), "utf8"),
   );
@@ -305,8 +303,7 @@ test("【红·⑨】composeLoadedExchanges 不得再按 compact 边界切瞬时�
 test("【红·⑨c】compact 分支不得清瞬时行（它的依据为假，且会丢掉本轮前半段）", () => {
   // 判据只看 **compact 分支内部**：`useRealtimeEvents` 里另有一处 `dropTransientExchanges`
   // 是合法的（收尾时对「不会重锚定的会话」清尾巴），不能一起数进来 —— 那条是必要清理。
-  const file = path.join(srcRoot, "app/useRealtimeEvents.ts");
-  const src = stripComments(readFileSync(file, "utf8"));
+  const src = stripComments(readLogicalSource("src/app/useRealtimeEvents.ts"));
   const start = src.indexOf('case "compact_notice"');
   assert.ok(start >= 0, "找不到 compact_notice 分支");
   const next = src.indexOf("case ", start + 10);

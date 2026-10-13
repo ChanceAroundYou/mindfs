@@ -141,7 +141,7 @@ const withUnknownNode = orderProjectGroupsByNode(
 assert.equal(JSON.stringify(withUnknownNode.map((group) => group._nodeId)), JSON.stringify(["home", "pc", "unknown"]));
 
 const realtimeSource = readSource("src/app/useRealtimeEvents.ts");
-const streamStart = realtimeSource.indexOf("const handleSessionStream = (payload: any) =>");
+const streamStart = realtimeSource.indexOf("export function createRealtimeWsSessionStreamHandler");
 const streamEnd = realtimeSource.indexOf("const ck = rootSessionKey(activeRoot, streamKey);", streamStart);
 const streamHandler = realtimeSource.slice(streamStart, streamEnd);
 assert.match(streamHandler, /event\?\.type && event\.type !== "message_done"[\s\S]*?activity_at: activityAt/);

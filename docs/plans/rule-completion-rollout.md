@@ -39,5 +39,6 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 - 已完成：将混合图标 JSX 的 `composerStyles.tsx` 拆为纯样式 `composerStyles.ts` 与 `composerIcons.tsx`，更新消费者、源码逻辑映射和命名门禁；其余样式模块已使用 `*Styles.ts`。
 - 已完成：将 `FileEditor.css` 与 `DiagramPreview.css` 的 CSS 原文内联到对应组件 `<style>`，保留全局主题、媒体查询、伪元素、CodeMirror 后代选择器和安全区声明；删除独立 CSS 文件，source-map 旧逻辑路径改映射至组件，并增加针对性守卫。
 - 已完成：将 `useRealtimeEvents.ts` 的文件变更批处理与单文件事件（缓存失效、插件/Git/目录刷新）抽为 `realtimeWsFileChangedHandlers.ts`，更新旧逻辑路径映射并加专项守卫。清单行数实测为 31 个（原文“33”是计数错误；components 子项实际 17 个），已修正 TODO 与计划索引。
-- 已完成：将 `useRealtimeEvents.ts` 的文件变更事件处理抽为 `realtimeWsFileChangedHandlers.ts`（G-BV），并将 slash-command chunk/login/error/done 处理抽为 `realtimeWsSlashCommandHandlers.ts`（G-BW）；更新旧逻辑路径映射及两组专项守卫。hook 从 1003 行逐步降至 670 行。
-- 当前下一项：继续拆分 `useRealtimeEvents.ts` 剩余会话流与回合收尾处理；先单独审计共享依赖与重锚定顺序，再按职责抽出模块。
+- 已完成：将 `useRealtimeEvents.ts` 的文件变更事件处理抽为 `realtimeWsFileChangedHandlers.ts`（G-BV），并将 slash-command chunk/login/error/done 处理抽为 `realtimeWsSlashCommandHandlers.ts`（G-BW）；更新旧逻辑路径映射及两组专项守卫。hook 从 1003 行逐步降至 392 行，低于 500 行硬线。
+- 已完成：将主要 session stream 分支（节点/会话归属、活动时间、pending attach、消息块分发、compact 与结束/error 处理）抽为 `realtimeWsSessionStream.ts`；回合收尾与 replay 编排仍留在 hook，避免跨边界改变重锚定顺序。源码映射与针对性守卫同步更新，hook 从 1003 行逐步降至 392 行，低于 500 行硬线。
+- 当前下一项：核对 31 项硬线清单中剩余文件，按职责选择下一批；随后推进 6 项 logic→view 依赖方向清理。

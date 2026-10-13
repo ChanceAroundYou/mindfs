@@ -44,6 +44,7 @@ export const MODULES = {
     "src/app/realtimeWsHandlers.ts",
     "src/app/realtimeWsFileChangedHandlers.ts",
     "src/app/realtimeWsSlashCommandHandlers.ts",
+    "src/app/realtimeWsSessionStream.ts",
     "src/app/realtimeWsSessionMeta.ts",
     "src/app/realtimeWsUserMessage.ts",
     "src/app/realtimeWsSessionAccepted.ts",

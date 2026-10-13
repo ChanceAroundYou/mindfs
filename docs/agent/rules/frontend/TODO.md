@@ -28,7 +28,7 @@
 ## 必拆文件（硬线 31 个，按"每次 2–3 个 + 一次构建"推进）
 
 ```
-app/ (12): useRealtimeEvents 670 · useProjectLifecycle 885 · useAppSessionLayer 876
+app/ (12): useRealtimeEvents 392 · useProjectLifecycle 885 · useAppSessionLayer 876
            useAppDomainLayer 864 · useAppStateLayer 816 · useSessionLifecycle 741
            useManagedRoots 709 · useSendMessage 686 · useAppViewComposition 661
            useSessionStreamCache 645 · useActionHandlers 611 · realtimeWsHandlers 570

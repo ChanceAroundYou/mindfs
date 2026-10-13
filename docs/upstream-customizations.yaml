@@ -3225,3 +3225,35 @@ groups:
       - web/src/app/realtimeWsSlashCommandHandlers.ts:createRealtimeWsSlashCommandHandlers
       - web/src/app/useRealtimeEvents.ts:slashCommandHandlers
       - web/tests/realtime-slash-command-handlers.test.mjs:realtime-slash-command-handlers.test.mjs
+
+  - id: G-BX
+    title: 实时 session stream 事件处理拆分
+    kind: arch
+    symptom: |
+      useRealtimeEvents.ts 混合 hook 订阅/replay、回合收尾与 session stream 块分发，近千行状态
+      逻辑难以独立审查，尤其 pending/compact/message_done/error 状态边界不集中。
+    why: |
+      将 handleSessionStream 主分支抽入 realtimeWsSessionStream.ts，通过 RealtimeEventsContext
+      和既有 handleSessionStreamDone 回调访问同一状态。hook 保留 replay、回合收尾和订阅生命周期。
+    boundary: |
+      仅移动 stream handler；事件身份、节点过滤、状态更新、队列续跑与重锚定顺序不变。
+    tests:
+      - web/tests/realtime-session-stream-handler.test.mjs
+      - web/tests/session-list-merge.test.mjs
+      - web/tests/message-mechanism-merges.test.mjs
+      - web/tests/session-done-replay-no-reanchor.test.mjs
+    files:
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+      - web/src/app/useRealtimeEvents.ts
+      - web/src/app/realtimeWsSessionStream.ts
+      - web/tests/source-map.mjs
+      - web/tests/realtime-session-stream-handler.test.mjs
+      - web/tests/session-list-merge.test.mjs
+      - web/tests/message-mechanism-merges.test.mjs
+    anchors:
+      - web/src/app/realtimeWsSessionStream.ts:createRealtimeWsSessionStreamHandler
+      - web/src/app/useRealtimeEvents.ts:handleSessionStreamDone
+      - web/tests/realtime-session-stream-handler.test.mjs:realtime-session-stream-handler.test.mjs

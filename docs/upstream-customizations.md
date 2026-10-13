@@ -2616,3 +2616,11 @@
 - **根因与边界**：将 slash-command 流/完成两个 handler 搬到 `realtimeWsSlashCommandHandlers.ts`，通过现有 context 获取节点、结果 setter、session root 解析和文案函数；订阅 hook 只负责组装。
 - **针对性测试**：`web/tests/realtime-slash-command-handlers.test.mjs` → chunk/login/error/done 与 request id 守卫在新模块，hook 和逻辑 source-map 均接入该模块。
 - **边界**：只移动事件处理代码，不改变 request id 判定、结果状态与报告行为。
+
+
+### G-BX 实时 session stream 事件处理拆分
+
+- **可见症状**：接近千行的 `useRealtimeEvents.ts` 同时承载 hook 订阅/replay、session 回合收尾和流式块分发，消息流状态契约难以单独审查。
+- **根因与边界**：把 `handleSessionStream` 主分支迁入 `realtimeWsSessionStream.ts`，通过现有 context 和回合收尾回调读写相同状态。`useRealtimeEvents` 保留 replay 目标、pending 收尾与订阅生命周期，尤其保留「队列续跑 / 是否重锚定 / 瞬时行何时退役」的原顺序。
+- **针对性测试**：`web/tests/realtime-session-stream-handler.test.mjs` → 节点过滤前的活动时间更新、节点过滤、消息块类型、compact、message_done/error 收尾契约仍在新模块；`session-list-merge.test.mjs`、`message-mechanism-merges.test.mjs` 和 `session-done-replay-no-reanchor.test.mjs` 继续验证相关状态行为。
+- **边界**：只移动 stream handler，不改事件分发、身份键、持久化、队列、缓存与回合重锚定时序。
