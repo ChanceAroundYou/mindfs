@@ -2680,3 +2680,11 @@
 - **根因与边界**：将纯字号类型、边界和计算移入 `shared/fontSize.ts`；service 保留 localStorage 读写并重新导出旧 API，FileTree 改用 shared 入口。
 - **针对性测试**：`web/tests/shared-font-size.test.mjs` 和 `web/tests/font-size-preferences.test.mjs` → 检查纯计算、不可变返回、上下限、service facade，以及持久化与渲染契约。
 - **边界**：保留原步长、归一化、限幅、存储 key 与持久化行为。
+
+
+### G-CF send shortcut 纯逻辑移入 shared
+
+- **可见症状**：文件树快捷键控件依赖偏好 service 才能识别按键和展示快捷键文本。
+- **根因与边界**：将快捷键类型、解析、校验、匹配和格式化迁入 `shared/sendShortcut.ts`；service 只负责存取配置并继续再导出既有 API。
+- **针对性测试**：`web/tests/shared-send-shortcut.test.mjs`、`web/tests/send-shortcut.test.mjs` → 覆盖修饰键过滤、按键归一化、组合匹配、显示格式、持久化与 facade。
+- **边界**：保持 modifier 规则、键名与展示顺序及持久化 key 不变。

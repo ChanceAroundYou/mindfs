@@ -3440,3 +3440,29 @@ groups:
       - web/src/shared/fontSize.ts:changeFontSize
       - web/src/services/prefs/fontSize.ts:changeFontSize,
       - web/tests/shared-font-size.test.mjs:adjustment stays pure and clamps
+  - id: G-CF
+    title: send shortcut 纯逻辑移入 shared
+    kind: arch
+    symptom: |
+      FileTree view 依赖 preferences service 来解析键盘事件并格式化快捷键，即使这些操作不读写持久化状态。
+    why: |
+      将快捷键类型与纯键盘/显示转换逻辑放在 shared，service 仅保留 localStorage 读写并维持原导出入口，
+      让 view 不再依赖偏好 service。
+    boundary: |
+      保留修饰键限制、按键归一化、组合匹配和显示顺序；持久化 key 与保存行为不变。
+    tests:
+      - web/tests/shared-send-shortcut.test.mjs
+      - web/tests/send-shortcut.test.mjs
+    files:
+      - web/src/shared/sendShortcut.ts
+      - web/src/services/prefs/sendShortcut.ts
+      - web/src/components/file/FileTree.tsx
+      - web/tests/shared-send-shortcut.test.mjs
+      - web/tests/send-shortcut.test.mjs
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/shared/sendShortcut.ts:shortcutFromKeyboardEvent
+      - web/src/services/prefs/sendShortcut.ts:formatSendShortcut
+      - web/tests/shared-send-shortcut.test.mjs:normalize, validate, match, and format

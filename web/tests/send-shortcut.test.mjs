@@ -6,6 +6,7 @@ const actionBar = readFileSync(new URL("../src/components/action/ActionBar.tsx",
 const useActionBar = readFileSync(new URL("../src/components/action/useActionBar.ts", import.meta.url), "utf8");
 const fileTree = readFileSync(new URL("../src/components/FileTree.tsx", import.meta.url), "utf8");
 const shortcutService = readFileSync(new URL("../src/services/sendShortcut.ts", import.meta.url), "utf8");
+const shortcutShared = readFileSync(new URL("../src/shared/sendShortcut.ts", import.meta.url), "utf8");
 const shortcutPopover = fileTree.slice(
   fileTree.indexOf("{sendShortcutOpen ? ("),
   fileTree.indexOf("{sessionNamingOpen ? ("),
@@ -32,10 +33,11 @@ assert.ok(
   "the send shortcut item should be the final sidebar menu setting",
 );
 assert.match(
-  shortcutService,
+  shortcutShared,
   /shortcut\.alt \|\| shortcut\.ctrl \|\| shortcut\.meta/,
   "send shortcuts should require a non-Shift modifier to avoid firing while typing",
 );
+assert.match(shortcutService, /formatSendShortcut[\s\S]*shared\/sendShortcut/);
 assert.match(
   useActionBar,
   /e\.key !== "Enter"[\s\S]*?matchesSendShortcut\(e\.nativeEvent, sendShortcut\)[\s\S]*?void handleSend\(\)/,

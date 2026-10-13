@@ -69,11 +69,7 @@ import { AgentConfigLineEditor } from "./AgentConfigLineEditor";
 import type { AgentStatus } from "../../services/agents";
 import type { AgentAPIProvider, AgentConfigBackup } from "../../services/agentConfig";
 import type { NewProjectMetaLocation } from "../../services/prefs/preferences";
-import {
-  formatSendShortcut,
-  shortcutFromKeyboardEvent,
-  type SendShortcut,
-} from "../../services/prefs/sendShortcut";
+import { formatSendShortcut, shortcutFromKeyboardEvent, type SendShortcut } from "../../shared/sendShortcut";
 import { changeFontSize, FONT_SIZE_MAX, FONT_SIZE_MIN, type FontSizeRegion } from "../../shared/fontSize";
 
 import {

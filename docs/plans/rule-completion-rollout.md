@@ -47,4 +47,5 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 - 已完成：FileTree 外观模式从 colocate `useFileTreeAppearance` 读取并持久化；view 只把选项交给 `onChange`。`AppearanceMode` 类型移到 `shared/appearanceTypes.ts` 并由 service facade 再导出，外观选项配置不再依赖 service 类型路径。
 - 已完成：agent config 流程 hook 直接依赖 agent 查询 service，`FileTree` 不再将 fetch 函数作为 context 透传；同时删除 `FileTree` 内陈旧的 agent config/WebPush/preferences service value imports。
 - 已完成：font size 的纯 region 类型、边界常量和步进算法迁入 `shared/fontSize.ts`；`fontSize` service 保留存储职责并再导出原 API，FileTree presenter 改用 shared 函数。
+- 已完成：发送快捷键类型、键盘事件解析、匹配与显示格式化迁入 `shared/sendShortcut.ts`；service 只保留 localStorage 读写并兼容再导出，FileTree view 不再依赖 `sendShortcut` service。
 - 当前下一项：继续 FileTree 拆分，清理剩余 view 对 services 的依赖与菜单组合职责，再按实测行数销减硬线清单。
