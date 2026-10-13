@@ -77,6 +77,7 @@ export const MODULES = {
     "src/components/app/TaskDetailPanelGate.tsx",
     "src/components/app/OnboardingGate.tsx",
     "src/components/app/TaskInlineEditPanel.tsx",
+    "src/components/app/TaskInlineCandidateMenu.tsx",
     "src/components/app/SessionSheet.tsx",
     "src/components/app/AppActionBar.tsx",
     "src/components/app/SessionPane.tsx",

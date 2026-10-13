@@ -3282,7 +3282,7 @@ groups:
       - docs/upstream-customizations.yaml
       - web/tests/agent-docs.test.mjs
     anchors:
-      - docs/agent/rules/frontend/TODO.md:硬线 23 个
+      - docs/agent/rules/frontend/TODO.md:硬线 22 个
       - docs/plans/README.md:Rule completion rollout
       - web/tests/agent-docs.test.mjs:every plan is classified in the sole plans index
   - id: G-BZ
@@ -3882,3 +3882,34 @@ groups:
     anchors:
       - web/src/components/agent/AgentSelectorTrigger.tsx:AgentSelectorTrigger
       - web/tests/agent-selector-trigger.test.mjs:delegates its trigger presentation
+
+  - id: G-CR
+    title: Task inline candidate menu extraction
+    kind: arch
+    symptom: |
+      TaskInlineEditPanel exceeded the frontend 500-line hardline and mixed candidate menu rows
+      with task creation and editor composition.
+    why: |
+      Keep candidate presentation and pointer-selection behavior in a focused view component while
+      leaving candidate lookup, active-token tracking, and task-edit state with the parent owner.
+    boundary: |
+      Extract the absolute-positioned candidate list only. The parent computes visibility and passes
+      the selected index, item refs, and selection handlers; no candidate data or interaction moves.
+    tests:
+      - web/tests/task-inline-candidate-menu.test.mjs
+      - web/tests/task-panel-unification.test.mjs
+      - web/tests/task-worktree-node-scope.test.mjs
+      - web/tests/source-map.mjs
+    files:
+      - web/src/components/app/TaskInlineEditPanel.tsx
+      - web/src/components/app/TaskInlineCandidateMenu.tsx
+      - web/tests/task-inline-candidate-menu.test.mjs
+      - web/tests/source-map.mjs
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/components/app/TaskInlineCandidateMenu.tsx:TaskInlineCandidateMenu
+      - web/tests/task-inline-candidate-menu.test.mjs:delegates candidate rendering

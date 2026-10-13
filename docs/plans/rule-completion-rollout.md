@@ -73,3 +73,5 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 - 下一项：实测并审阅下一组超过 500 行的前端组件，核对调用者与依赖边界后继续拆分。
 - 已完成：将 `AgentSelector` 的触发按钮与小徽标展示提取为 `AgentSelectorTrigger`，打开/关闭与 submenu 初始化状态仍由 hook/controller 管理；旋转 keyframes 移到使用它的错误横幅。`AgentSelector.tsx` 从 563 行降至 496 行，新增结构守卫；typecheck 与 AgentSelector 专项测试通过。硬线剩余 23 项。
 - 下一项：从余下 23 项中根据当前代码审阅挑选一组职责清楚、风险可控的组件继续拆分。
+- 已完成：将 `TaskInlineEditPanel` 中的候选列表呈现提取为 `TaskInlineCandidateMenu`，候选查找/选择状态与输入/编辑行为仍由父面板和 app hook 持有。父面板从 516 行降至 473 行；TypeScript、候选菜单、task 面板接线与 worktree 节点作用域专项测试通过。硬线剩余 22 项。
+- 下一项：继续按当前代码审阅剩余前端硬线文件，并开始复核后台 TODO 的真实行数基线。

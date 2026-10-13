@@ -238,6 +238,7 @@
 | G-CO | 前端 task view 硬线拆分 | 架构 | 见 §3.2 | scheduled-task 列表与卡片收尾按钮保持独立组件及原交互 |
 | G-CP | ProjectAdd 模式选择面板提取 | 架构 | 见 §3.2 | 三个模式入口的标签和选择回调继续由独立面板呈现 |
 | G-CQ | AgentSelector trigger 展示提取 | 架构 | 见 §3.2 | 触发按钮视觉保持，菜单状态变更继续归父 hook/controller |
+| G-CR | TaskInline 候选菜单呈现提取 | 架构 | 见 §3.2 | 候选列表选择语义保留，查询与编辑状态继续归父组件 |
 
 > **G-D 已并入 G-F，G-M 已并入 G-AI**（改动面完全重合、无独立测试可守，单列只会制造空组）。
 
@@ -2773,3 +2774,10 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **根因与边界**：触发按钮、Agent 图标、下拉箭头、不可用徽标和紧凑悬停样式移入 `AgentSelectorTrigger`；打开/关闭与 submenu 初始化仍由父 controller 管理。旋转动画 keyframes 移到使用它的错误横幅。
 - **针对性测试**：`web/tests/agent-selector-trigger.test.mjs` → 守住呈现组件 props 与父状态边界；`claude-model-1m.test.mjs` → 确认模型别名与 submenu 语义仍在原路径。
 - **边界**：保持点击、鼠标按下焦点、compact hover、title、图标与 unavailable 标记；父组件现为 496 行。
+
+### G-CR TaskInline 候选菜单呈现提取
+
+- **可见症状**：`TaskInlineEditPanel` 超过 500 行硬线，任务创建面板与候选列表行 JSX 混在一起。
+- **根因与边界**：候选列表提取到 `TaskInlineCandidateMenu`；可见性、候选索引、DOM refs 与选中回调仍由父组件传入，候选查询和任务编辑状态不移动。
+- **针对性测试**：`web/tests/task-inline-candidate-menu.test.mjs` → 守住 @/#/命令显示、鼠标选择和高亮索引；task panel/node-scope tests → 守住父面板接线与 worktree 范围。
+- **边界**：保留绝对定位、窄屏高度、滚动、阻止 mousedown blur 和描述文本；父面板现为 473 行。

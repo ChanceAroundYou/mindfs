@@ -59,6 +59,7 @@ import {
 } from "../../services/tasks";
 import { APP_DOCUMENT_TITLE, AppProps, CHILD_SESSION_PAGE_SIZE, MULTI_PROJECT_SESSION_LIMIT, ManagedRootPayload, SESSION_PAGE_SIZE } from "../../app/appMisc";
 import { TaskInlineEditState } from "../../app/appTask";
+import { TaskInlineCandidateMenu } from "./TaskInlineCandidateMenu";
 
 export interface TaskInlineEditPanelProps {
   DEFAULT_TASK_AGENT: any;
@@ -270,59 +271,15 @@ export function TaskInlineEditPanel(props: TaskInlineEditPanelProps) {
             >
                 {taskInlineEdit.createWorktree && taskInlineEdit.worktreeBranchMode === "new" && taskInlineEdit.canToggleWorktree && <input aria-label={t("task.newBranchName")} placeholder={t("task.newBranchName")} value={taskInlineEdit.worktreeBranch} onChange={e=>setTaskInlineEdit(prev=>prev?{...prev,worktreeBranch:e.target.value}:prev)} style={{margin:"8px 12px",padding:8}}/>}
                 <div style={{ padding: "12px", overflow: "visible", position: "relative", minHeight: 0, display: "flex", flexDirection: "column" }}>
-                  {taskInlineActiveToken && taskInlineCandidates.length > 0 ? (
-                    <div
-                      style={{
-                        position: "absolute",
-                        left: "12px",
-                        right: "12px",
-                        bottom: "calc(100% + 6px)",
-                        maxHeight: isMobile ? "min(42vh, 260px)" : "260px",
-                        overflowY: "auto",
-                        border: "1px solid var(--menu-border)",
-                        borderRadius: "8px",
-                        background: "var(--menu-bg)",
-                        boxShadow: "0 12px 28px rgba(15, 23, 42, 0.14)",
-                        zIndex: 2,
-                      }}
-                    >
-                      {taskInlineCandidates.map((candidate, index) => (
-                        <button
-                          key={`${candidate.type}:${candidate.name}`}
-                          ref={(node) => {
-                            taskInlineCandidateItemRefs.current[index] = node;
-                          }}
-                          type="button"
-                          onMouseDown={(event) => {
-                            event.preventDefault();
-                            applyTaskInlineCandidate(candidate);
-                          }}
-                          style={{
-                            width: "100%",
-                            border: "none",
-                            borderTop: index === 0 ? "none" : "1px solid var(--menu-divider)",
-                            background: index === taskInlineCandidateIndex ? "var(--menu-active-bg)" : "transparent",
-                            color: "var(--text-primary)",
-                            display: "flex",
-                            flexDirection: "column",
-                            alignItems: "flex-start",
-                            gap: "2px",
-                            padding: "9px 10px",
-                            textAlign: "left",
-                            cursor: "pointer",
-                          }}
-                          onMouseEnter={() => setTaskInlineCandidateIndex(index)}
-                        >
-                          <span style={{ fontSize: "13px", fontWeight: 700 }}>
-                            {candidate.type === "file" ? `@${candidate.name}` : candidate.type === "prompt" ? `#${candidate.name}` : candidate.type === "slash_command" ? `/${candidate.name}` : candidate.name}
-                          </span>
-                          {candidate.description ? (
-                            <span style={{ fontSize: "11px", color: "var(--text-secondary)" }}>{candidate.description}</span>
-                          ) : null}
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
+                  <TaskInlineCandidateMenu
+                    visible={!!taskInlineActiveToken}
+                    isMobile={isMobile}
+                    candidates={taskInlineCandidates}
+                    selectedIndex={taskInlineCandidateIndex}
+                    itemRefs={taskInlineCandidateItemRefs}
+                    onSelect={applyTaskInlineCandidate}
+                    onSelectedIndexChange={setTaskInlineCandidateIndex}
+                  />
                   {taskInlineEdit.previousInputs.length > 0 ? (
                     <div
                       style={{
