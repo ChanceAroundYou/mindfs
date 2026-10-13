@@ -70,7 +70,7 @@ test("naming: main export matches file name (components/hooks)", () => {
     "app/useBackNavigation.ts", // 导出 useBackLayer/registerBackLayer 等一组导航原语
     "components/agent/AgentSelectorParts.tsx", // AgentMenuPortal + 菜单常量簇
     "components/file/FileOperations.tsx", // FileMenuIcon/FileOperationItems/MoreMenuButton 等
-    "components/file/MarkdownCodeBlocks.tsx", // MermaidBlock/MarkdownCodeBlock(+Memo)
+    "components/common/MarkdownCodeBlocks.tsx", // MermaidBlock/MarkdownCodeBlock(+Memo)
     "components/session/SessionViewerAttachments.tsx", // 导出 AttachmentImage（单体，文件名待改）
     "components/session/SessionViewerAuxiliaryTimeline.tsx", // 导出 renderAuxiliaryTimelineItem
     "components/session/SessionViewerCards.tsx", // PlanUpdateCard/CompactNoticeCard/TodoUpdateCard 簇

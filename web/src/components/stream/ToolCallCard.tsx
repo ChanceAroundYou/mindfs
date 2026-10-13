@@ -1,5 +1,5 @@
 import React, { memo } from "react";
-import { MarkdownViewer } from "../file/MarkdownViewer";
+import { MarkdownViewer } from "../common/MarkdownViewer";
 import { useI18n } from "../../i18n";
 import { AnsiOutput } from "./toolCallRender";
 import { normalizeDisplayPath } from "./toolCallSections";

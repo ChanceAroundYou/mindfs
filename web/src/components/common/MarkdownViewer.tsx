@@ -1,6 +1,6 @@
 import React, { memo } from "react";
 import { useI18n } from "../../i18n/index";
-import { useMarkdownViewer } from "./useMarkdownViewer";
+import { useMarkdownViewer } from "../../hooks/useMarkdownViewer";
 
 function MarkdownViewerInner({
   content,

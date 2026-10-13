@@ -1,11 +1,6 @@
 import type { Locale } from "../../i18n/index";
 import type { ScheduledAgentTask } from "../../services/scheduledTasks";
 
-export {
-  menuButtonStyle,
-  strategyButtonStyle,
-} from "../../shared/styles";
-
 export type FormState = {
   name: string;
   enabled: boolean;

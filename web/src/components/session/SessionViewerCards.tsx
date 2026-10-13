@@ -1,5 +1,5 @@
 import React from "react";
-import { MarkdownViewer } from "../file/MarkdownViewer";
+import { MarkdownViewer } from "../common/MarkdownViewer";
 import type { TodoUpdate } from "../../services/session";
 
 export function PlanUpdateCard({ content, rootId }: { content: string; rootId?: string | null }) {
