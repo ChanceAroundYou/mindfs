@@ -37,7 +37,7 @@ import { type GitDiffPayload } from "../services/git";
 import { reportError } from "../services/net/error";
 import { type FileEntry } from "../services/prefs/directorySort";
 import { type Session, SESSION_WINDOW_SIZE, clearWindowedView, composeLoadedExchanges, getCachedSession, getCachedSessionList, getSessionWindow, isTransientExchange, saveCachedSessionList, sessionService, setWindowedView, syncSession } from "../services/session";
-import { mergeSessionItems } from "../services/sessionListMerge";
+import { mergeSessionItems } from "../services/session/sessionListMerge";
 
 export function useSessionLifecycle(params: UseSessionLifecycleParams) {
   const { t } = useI18n();

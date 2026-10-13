@@ -40,6 +40,7 @@ groups:
     files:
       - .gitignore
       - AGENTS.md
+      - .claude/rules/
       - docs/superpowers/
       - docs/main-view-switching-design.md
       - docs/message-change-history.md
@@ -61,7 +62,9 @@ groups:
       - docs/upstream-customizations.yaml
       - docs/workspace-design.md
       - release-notes.md
-    tests: []
+      - web/tests/naming-convention.test.mjs
+    tests:
+      - web/tests/naming-convention.test.mjs
 
   # ── 后端：HTTP / 安全 / 存储 ──────────────────────────────────────
   - id: G-B
@@ -93,7 +96,7 @@ groups:
       文件 raw 404 做 60s 缓存避免重试风暴，成功缓存 + 并发去重，
       @json-render 懒加载。上游没有这层，退回后大文件与失败重试都会拖垮前端。
     files:
-      - web/src/components/file/MarkdownViewer.tsx
+      - web/src/components/common/MarkdownViewer.tsx
       - web/src/services/file.ts
     tests:
       - web/tests/document-preview.test.mjs
@@ -219,12 +222,12 @@ groups:
       （G-D 原先单列，其改动面（FileTree/App/useRefreshSpin）与本组完全重合，
       且没有独立测试可守，故并入——保留 G-D 号仅作历史索引。）
     anchors:
-      - 'web/src/components/file/MarkdownCodeBlocks.tsx:MarkdownCodeBlockMemo'
+      - 'web/src/components/common/MarkdownCodeBlocks.tsx:MarkdownCodeBlockMemo'
     files:
       - web/src/App.tsx
       - web/src/components/FileTree.tsx
       - web/src/components/SessionList.tsx
-      - web/src/components/file/MarkdownViewer.tsx
+      - web/src/components/common/MarkdownViewer.tsx
       - web/src/renderer/
       - web/src/hooks/useSessionStream.ts
       - web/src/services/session.ts
@@ -329,6 +332,12 @@ groups:
       一个阻塞的 handler 冻结整条连接（停止按钮失效就是这么来的）。
       agent session 的 Interrupt 用了 context.Background()，CLI 不 ack 就永不返回，
       调用方必须加超时包装。
+      **取消路径上的每一处跨进程 RPC 都要带超时**（2026-10-13 补齐 acp）：claude 的
+      `stream.Interrupt(ctx)` 有 3s 超时（8bc5a43），而 acp 的 `conn.Cancel(ctx, ...)`
+      一直是裸 `context.Background()`——起草后端规范时靠 reviewer 自查命令才扫出来。
+      守卫 `cancel_rpc_timeout_guard_test.go` 扫描所有含 Cancel/Interrupt 的函数体，
+      只要出现跨进程调用（`.Interrupt(` / `.Cancel(`）就必须同时出现 `WithTimeout`；
+      codex 的 `CancelCurrentTurn` 只取消本地 context，不走 RPC，刻意不在列。
       `session_created_broadcast_test.go` 的 dialHub 另有一道**注册屏障**（2026-10-07）：
       `websocket.Dial` 只等到 101 握手就返回，而 `RegisterClient` 还在服务端 handler 里
       没跑完；少了这道屏障，紧跟的广播会打在空 hub 上被静默丢掉，测试挂在 3s 读超时上，
@@ -342,6 +351,8 @@ groups:
       - server/internal/api/stream_hub_user_message_test.go
       - server/internal/api/usecase/session_early_user_persist_test.go
       - server/internal/agent/types/types.go
+      - server/internal/agent/acp/process.go
+      - server/internal/agent/cancel_rpc_timeout_guard_test.go
       - web/src/hooks/useSessionStream.ts
       - web/src/app/useRealtimeEvents.ts
       - web/src/components/session/SessionViewer.tsx
@@ -349,9 +360,11 @@ groups:
       - server/internal/api/session_created_broadcast_test.go
       - server/internal/api/stream_hub_user_message_test.go
       - server/internal/api/usecase/session_early_user_persist_test.go
+      - server/internal/agent/cancel_rpc_timeout_guard_test.go
       - web/tests/user-message-persist-timing.test.mjs
     anchors:
       - server/internal/api/ws.go:go h.handle
+      - 'server/internal/agent/acp/process.go:CUSTOM(G-G)'
 
   - id: G-T
     title: 流式重放与正文正确性（快照重建协议）
@@ -378,7 +391,7 @@ groups:
       它是客户端发出消息时的乐观回声，服务端事件流里从来没有它，照判据清尾巴会让刚发出去的消息当场消失。
     files:
       - web/src/services/session.ts
-      - web/src/services/sessionDispatcher.ts
+      - web/src/services/session/sessionDispatcher.ts
       - web/src/app/useSessionStreamCache.ts
       - web/src/app/useRealtimeEvents.ts
       - web/src/shared/sessionOverlay.ts
@@ -403,8 +416,8 @@ groups:
       - server/internal/api/ws_test.go
     anchors:
       - server/internal/api/stream_hub.go:func buildSessionStreamBatchResponse
-      - web/src/services/session.ts:composeLoadedExchanges
-      - web/src/services/session.ts:isTransientExchange
+      - web/src/services/session/sessionExchangeMerge.ts:composeLoadedExchanges
+      - web/src/services/session/sessionExchangeMerge.ts:isTransientExchange
       - web/src/shared/sessionOverlay.ts:computeTailOverlay
 
   - id: G-W
@@ -808,9 +821,9 @@ groups:
       上游没有这些，退回上游实现会让列表在切项目/切节点时塌掉。
     files:
       - web/src/components/session/ArchivedSessionsPanel.tsx
-      - web/src/services/sessionListMerge.ts
-      - web/src/services/sessionTree.ts
-      - web/src/services/sessionGroupDisplay.ts
+      - web/src/services/session/sessionListMerge.ts
+      - web/src/services/session/sessionTree.ts
+      - web/src/services/session/sessionGroupDisplay.ts
       - web/src/app/useSessionSearch.ts
       - web/src/app/useSessionSidebarView.tsx
     tests:
@@ -856,7 +869,7 @@ groups:
       normalizeSessionLockKey 是锁定键的契约；上游的输入会话归属版本没有会话锁，
       换过去就破锁。
     files:
-      - web/src/services/sessionLock.ts
+      - web/src/services/session/sessionLock.ts
     tests:
       - web/tests/session-lock.test.mjs
 
@@ -1800,14 +1813,14 @@ groups:
       - server/internal/session/types.go:func lightCompactToolCall
       - server/internal/session/types.go:func dropEditRedundantMeta
       - server/internal/session/manager.go:CompactExchangeAuxLight(entry)
-      - web/src/services/session.ts:private windowInflight
-      - web/src/services/session.ts:export const SESSION_WINDOW_SIZE = 8;
+      - web/src/services/session/sessionService.ts:private windowInflight
+      - web/src/services/session/sessionService.ts:export const SESSION_WINDOW_SIZE = 8;
       - web/src/app/useRealtimeEvents.ts:const relatedFilesRefreshTimers = useRef(new Map<string, number>());
       - web/src/hooks/useSessionStream.ts:export function groupConsecutiveToolCalls
       - web/src/components/stream/ToolCallGroupCard.tsx:export const ToolCallGroupCard
       - 'server/internal/session/types.go:CUSTOM(G-AT)'
       - 'server/internal/session/manager.go:CUSTOM(G-AT)'
-      - 'web/src/services/session.ts:CUSTOM(G-AT)'
+      - 'web/src/services/session/sessionService.ts:CUSTOM(G-AT)'
       - 'web/src/hooks/useSessionStream.ts:CUSTOM(G-AT)'
       - 'web/src/components/session/SessionViewer.tsx:CUSTOM(G-AT)'
   - id: G-AU
@@ -1976,16 +1989,19 @@ groups:
       上游把文件放回扁平结构（components/*.tsx、services/*.ts 平铺）时，本地拆出的
       分域目录与 barrel shim 被整份覆盖：43 条源码正则断言（读的是旧逻辑路径）与
       barrel 重导出同时失效，会话/任务/文件/git 四域的模块边界消失，导入环与
-      「同一判定两处实现」这类重复悄悄回来（文件级 diff 看不出来）。
+      「同一判定两处实现」这类重复悄悄回来（文件级 diff 看不出来）。会话模块若重新散落在
+      services/ 根目录，目录职责退回扁平状态，facade 与实现边界也无法一眼辨认。
     why: |
       前端原为扁平巨文件结构：components/ 下 40+ 个 .tsx 平铺、services/ 下 20+ 个
       .ts 平铺，单文件最大 10472 行（App.tsx）。本地按域重组：
       components/{session,task,file,git,root,agent,account,shell,common}、
-      services/{net,platform,prefs,task,git,file}、shared/。
+      services/{net,platform,prefs,task,git,file,session}、shared/。
+      会话域实现归入 services/session/，根路径 services/session.ts 只重导出公开面。
       拆分策略是「机械搬移 + 旧路径 barrel 重导出，零行为变化」：原路径保留
       `export * from "./x/index"`，对外导出面不变；43 条源码正则断言由
       web/tests/source-map.mjs 统一读层兜住（逻辑路径 → 物理文件列表，readSource 拼接）。
-      session.ts 曾暂不拆分（VM 执行类测试依赖单文件自包含），2026-10-10 完成拆分：
+      session.ts 曾暂不拆分（VM 执行类测试依赖单文件自包含），2026-10-10 完成服务拆分，
+      本次再将会话域实现集中到 services/session/，根路径只保留 facade：
       WS 连接生命周期 + 消息收发搬进 sessionConnectionManager.ts（633 行），
       SessionService 只保留高层编排（479 行）。source-map.mjs 已登记新文件，
       session-core-unit.test.mjs 等源码正则断言零改动继续生效。
@@ -1993,6 +2009,9 @@ groups:
       - web/src/components/
       - web/src/services/
       - web/src/shared/
+      - web/src/hooks/useBackNavigation.ts
+      - web/src/hooks/useMarkdownViewer.tsx
+      - web/src/hooks/usePwaInstall.ts
       - web/tests/source-map.mjs
       - web/tests/source-map-hook.mjs
       - web/tests/ts-module-preload.mjs
@@ -2002,6 +2021,7 @@ groups:
     tests:
       - web/tests/frontend-split.test.mjs
       - web/tests/source-map.test.mjs
+      - web/tests/session-window-dedup.test.mjs
       # App.tsx 分层聚合（2026-10-08）把「重启 agent」的调用点搬进了
       # useAppSessionLayer，这条原本与上游同版的测试因此变成 delta：它现在断言的是
       # 「useAppSessionLayer 必须 import restartAgent」，而不是「App.tsx 必须 import」。
@@ -2374,7 +2394,7 @@ groups:
       - server/internal/api/usecase/session.go:persistUserTurnExchange
       - server/internal/api/usecase/session.go:exchangeIdentityRecorded
       - server/internal/session/manager.go:AddExchangeForAgentAtWithIdentityFactory
-      - web/src/services/sessionTypes.ts:agent_id
+      - web/src/services/session/sessionTypes.ts:agent_id
   - id: G-BJ
     title: 会话列表按实时活动时间排序
     kind: fix
@@ -2407,7 +2427,7 @@ groups:
       - web/src/app/appSession.ts
       - web/src/app/useRealtimeEvents.ts
       - web/src/components/session/SessionList.tsx
-      - web/src/services/sessionListMerge.ts
+      - web/src/services/session/sessionListMerge.ts
       - web/src/services/session.ts
       - web/tests/session-list-merge.test.mjs
       - web/tests/upstream-restore.test.mjs
@@ -2416,8 +2436,8 @@ groups:
       - server/internal/session/manager.go:LatestSessionUpdatedAt
       - server/internal/api/usecase/session.go:LatestSessionUpdatedAt
       - web/src/app/useRealtimeEvents.ts:handleSessionStream
-      - web/src/services/sessionListMerge.ts:orderProjectGroupsByNode
-      - web/src/services/sessionListMerge.ts:projectActivityTime
+      - web/src/services/session/sessionListMerge.ts:orderProjectGroupsByNode
+      - web/src/services/session/sessionListMerge.ts:projectActivityTime
   - id: G-BK
     title: 会话模型选择与运行态一致性
     kind: fix
@@ -2754,7 +2774,7 @@ groups:
       - server/internal/api/http.go:windowSeqsForExchanges
       - web/src/hooks/sessionBlocks.ts:buildAssistantTimelineFromBlocks
       - web/src/hooks/sessionBlocks.ts:blocksForSeq
-      - web/src/services/sessionExchangeMerge.ts:export function toPersistentBlocks(
+      - web/src/services/session/sessionExchangeMerge.ts:export function toPersistentBlocks(
 
   - id: G-BI
     title: 回合身份收敛为两个 id（turn_id/native_* → mindfs_id/agent_id）
@@ -2830,18 +2850,18 @@ groups:
       - web/tests/session-list-merge.test.mjs
       - web/tests/multi-account-partition.test.mjs
     files:
-      - web/src/services/sessionListMerge.ts
+      - web/src/services/session/sessionListMerge.ts
       - web/src/app/useRealtimeEvents.ts
       - web/src/app/useMultiProjectSessions.ts
       - web/src/components/session/useMultiProjectSessionList.ts
       - web/src/components/session/SessionCard.tsx
-      - web/src/services/sessionListCache.ts
-      - web/src/services/sessionIndexedDb.ts
-      - web/src/services/sessionCacheStore.ts
+      - web/src/services/session/sessionListCache.ts
+      - web/src/services/session/sessionIndexedDb.ts
+      - web/src/services/session/sessionCacheStore.ts
     anchors:
-      - web/src/services/sessionListMerge.ts:orderProjectGroupsByNode
-      - web/src/services/sessionListMerge.ts:sessionActivityAt
-      - web/src/services/sessionListMerge.ts:projectActivityTime
+      - web/src/services/session/sessionListMerge.ts:orderProjectGroupsByNode
+      - web/src/services/session/sessionListMerge.ts:sessionActivityAt
+      - web/src/services/session/sessionListMerge.ts:projectActivityTime
       - web/src/app/useRealtimeEvents.ts:handleSessionStream
       - server/internal/session/manager.go:LatestSessionUpdatedAt
 

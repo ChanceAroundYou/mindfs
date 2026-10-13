@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from "react";
-import { resolveLockedSessionKey } from "../services/sessionLock";
+import { resolveLockedSessionKey } from "../services/session/sessionLock";
 import { toPluginInput } from "./appMisc";
 import { sessionInputHistory, hasSessionExchanges, toSessionItem, type ViewerSelection } from "./appSession";
 import { useAppPluginRender } from "./useAppPluginRender";

@@ -17,7 +17,7 @@ import {
   inlineActionStyle,
 } from "./sessionCardUtils";
 import type { SessionItem } from "./sessionListTypes";
-import { sessionActivityAt } from "../../services/sessionListMerge";
+import { sessionActivityAt } from "../../services/session/sessionListMerge";
 import { useSessionCard } from "./useSessionCard";
 
 function SessionCard({

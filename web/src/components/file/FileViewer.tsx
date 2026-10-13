@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { MarkdownViewer } from "./MarkdownViewer";
+import { MarkdownViewer } from "../common/MarkdownViewer";
 import { CodeViewer } from "./CodeViewer";
 import { ImageViewer } from "./ImageViewer";
 import { BinaryViewer } from "./BinaryViewer";

@@ -1,6 +1,6 @@
 import React from "react";
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
-import { MarkdownViewer } from "../file/MarkdownViewer";
+import { MarkdownViewer } from "../common/MarkdownViewer";
 import { copyText } from "../../services/platform/clipboard";
 import { reportError } from "../../services/net/error";
 import { useI18n } from "../../i18n/index";

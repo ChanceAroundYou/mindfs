@@ -80,7 +80,8 @@
     **合并期间 main 又前进一个提交**，第二次 merge 是赶上的；`merge-tree --write-tree` 干跑预判**零冲突**。
 - **冲突化解原则：main 的单体形态不回流，一律落到本分支拆分后的归属文件**（用户明确要求
   「应该把所有的修改都挂入正确的位置 保持 app tsx 干净」）。四个冲突文件逐一：
-  - `services/session.ts`：保留 501 行 facade，**未**回退 main 的 2741 行单体。blocks 类型落在
+  - `services/session.ts`：保留根路径纯 facade，SessionService 实现在
+    `services/session/sessionService.ts`，**未**回退 main 的 2741 行单体。blocks 类型落在
     `sessionTypes.ts`、清洗判据 `toPersistentBlocks` 落在 `sessionExchangeMerge.ts`（「seq>0」
     这把尺仍只有一个实现文件，见 message-mechanisms 冲突①②）。
   - `components/session/SessionViewer.tsx`：保留 651 行，块流窗口态落在 `useSessionWindowing.ts` /
@@ -257,6 +258,10 @@
 | `c6fba4e` | `docs/superpowers/plans/2026-08-21-node-colors-project-header-workspace-preferences.md` + `specs/...design.md` | 节点主题色方案沉淀 |
 | `13365dc/4af6f89/0be192c` | `docs/superpowers/specs/2026-08-22-session-lock-and-draggable-chat-sheet-design.md` + `plans/...sheet.md` | 锁定与浮层设计/计划 |
 | `05726f4` | `docs/message-mechanisms.md` | 消息收发/渲染机制的清点与整合分析（112 个机制、14 条冲突、ADR）。**2026-10-10 更新**：原 `docs/message-mechanisms-plan.md`（G-T 线在 `2328f0e` 上的冻结计划，其代码未采用进 main —— canonical adapter / FIFO writer 留在 `canonical-turn-wip` 分支）**已删除**，计划部分由 `docs/session-blocks-plan.md` 接手；本文件只保留机制清点与冲突清单 |
+| 2026-10-13 | `.claude/rules/`（25 文件）+ `web/tests/naming-convention.test.mjs` | 前后端开发规范（长期规则 + TODO 分家、reviewer 清单），及命名守卫测试 |
+
+> `.claude/rules/` 是 fork 的工程约定（上游没有）。合上游后若整目录被删，规范与「哪条该留」的判据一并消失；`naming-convention.test.mjs` 是命名规则的可执行守卫（`.ts` 无 JSX、文件名=主 export 名、`Utils` 纯函数）。
+
 
 ### G-B HTTP 语义修正
 
@@ -306,6 +311,7 @@
 |------|------|------|
 | `bd52027` | `web/src/hooks/useSessionStream.ts:3行` | `message_done` 立即清流式标记，修“正在生成”卡住 |
 | `8bc5a43` | `server/internal/agent/claude/session.go:Interrupt 3s 超时` + `server/internal/api/ws.go:go handleCancel` | 单读 goroutine 异步派发 + 中断超时，修停止按钮失效 |
+| 2026-10-13 | `server/internal/agent/acp/process.go:CancelCurrentTurn` + `server/internal/agent/cancel_rpc_timeout_guard_test.go` | 补齐 acp 取消路径的 5s 超时（原为裸 `Background()`）；加源码守卫扫全部 Cancel/Interrupt 函数体，跨进程 RPC 必须带 `WithTimeout` |
 | `7f8a8c6` | `web/src/App.tsx` | 会话历史同步滞后（`loadSessions` 时序） |
 | `9df43e9` | `web/src/App.tsx:seq 守卫+pending draft` | `loadMultiProjectSessionGroups` 竞态守卫、pending→真实会话替换、多项目实时更新 |
 | `af0a37f` | `server/internal/api/stream_hub.go/ws.go` 辅助 hunk | `model_display_name` 重放与 `session.accepted` 乐观缓存（与 G-R 的探测 hunk 分离） |
@@ -1619,7 +1625,8 @@
   e2e 冒烟夹具（`e2e/conftest.py` + `e2e/test_app_smoke.py`，运行时安全网）。
 - 边界：**前端目录结构与文件拆分**。`components/` 下 40+ 个 `.tsx` 平铺 →
   `components/{session,task,file,git,root,agent,account,shell,common}`；
-  `services/` 下 20+ 个 `.ts` 平铺 → `services/{net,platform,prefs,task,git,file}`；
+  `services/` 下 20+ 个 `.ts` 平铺 → `services/{net,platform,prefs,task,git,file,session}`；
+  会话域实现归入 `services/session/`，根路径 `services/session.ts` 只重导出公开面；
   纯键工具 → `shared/`。`services/{task,git,file}.ts` 各拆成目录模块，
   原路径保留 barrel shim（`export * from "./x/index"`）。
   **拆分策略是「机械搬移 + 旧路径 barrel 重导出，零行为变化」**：对外导出面不变，
@@ -1628,10 +1635,11 @@
 - 可见症状（没有它会怎样）：上游把文件放回扁平结构（`components/*.tsx`、`services/*.ts`
   平铺）时，本地拆出的分域目录与 barrel shim 被整份覆盖 —— 43 条源码正则断言与
   barrel 重导出同时失效，会话/任务/文件/git 四域的模块边界消失，导入环与
-  「同一判定两处实现」这类重复悄悄回来（文件级 diff 看不出来）。
+  「同一判定两处实现」这类重复悄悄回来（文件级 diff 看不出来）。会话模块若重新散落在
+  `services/` 根目录，目录职责会退回扁平状态，facade 与实现边界也无法一眼辨认。
 - 理由：前端原为扁平巨文件结构，单文件最大 10472 行（`App.tsx`）。按域重组后
   模块边界 = 职责边界，是后续 App.tsx 拆分的地基。
-- 验证：`web/tests/frontend-split.test.mjs`（barrel 完整重导出 + 无导入环 +
+- 验证：`web/tests/frontend-split.test.mjs`（barrel 完整重导出 + session 域只留根 facade + 无导入环 +
   source-map 映射）、`web/tests/source-map.test.mjs`（读层完整性）、
   `web/tests/agent-lifecycle-restart.test.mjs`（分层后 `restartAgent` 的 import 落点）、
   `e2e/test_app_smoke.py`（Playwright 运行时冒烟，10 用例，**刻意不进常规门禁**）。

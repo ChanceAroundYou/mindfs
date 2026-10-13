@@ -13,7 +13,7 @@ import { rootBadgeButtonStyle } from "../../shared/rootBadgeStyle";
 import { copyText } from "../../services/platform/clipboard";
 import type { AgentStatus } from "../../services/agents";
 import { useI18n } from "../../i18n/index";
-import { formatSessionDuration } from "../../services/sessionDuration";
+import { formatSessionDuration } from "../../services/session/sessionDuration";
 import {
   computeTailOverlay,
   type OverlayExchange,

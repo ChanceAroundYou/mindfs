@@ -1,4 +1,4 @@
-import type { ExchangeAux, RelatedFile, Session, SessionBlock } from "./session";
+import type { ExchangeAux, RelatedFile, Session, SessionBlock } from "./sessionTypes";
 import type { CachedSessionListRecord, CachedSessionRecord } from "./sessionCacheTypes";
 import {
   buildSessionCacheKey,

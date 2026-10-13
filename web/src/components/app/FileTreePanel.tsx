@@ -43,7 +43,7 @@ import {
   type ProjectAddMode,
 } from "../file/ProjectAddPopover";
 import { MainViewMode, URLState } from "../../app/appPath";
-import { useActionHandlers, type ActionHandlers } from "../../app/useActionHandlers";
+import type { ActionHandlers } from "../../app/useActionHandlers";
 
 export interface FileTreePanelProps {
   actionHandlers: ActionHandlers;

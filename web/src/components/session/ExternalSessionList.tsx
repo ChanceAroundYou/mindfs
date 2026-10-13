@@ -1,6 +1,8 @@
 import React from "react";
 import type { SessionItem } from "./SessionList";
 import { useI18n, type Locale } from "../../i18n/index";
+import { ChevronLeftIcon, iconButtonStyle } from "./sessionCardUtils";
+import { emptyStyle, errorStyle } from "../../shared/styles";
 
 // CUSTOM(G-Q): 类型需被会话树/归档面板复用，故对外导出
 export type ExternalSessionListProps = {
@@ -257,7 +259,7 @@ function ExternalSessionCard({
   onToggleImport?: (session: SessionItem) => void;
 }) {
   const displayName = session.name || session.key || "External Session";
-  const subtitle = formatTime(session.updated_at || session.created_at || "", locale);
+  const subtitle = formatSessionTime(session.updated_at || session.created_at || "", locale);
 
   return (
     <div
@@ -351,11 +353,8 @@ function ExternalSessionCard({
   );
 }
 
-function externalSessionKey(session: SessionItem): string {
-  return String((session as any)?.agent_session_id || session.key || "").trim();
-}
-
-function formatTime(value: string | undefined, locale: Locale) {
+// 绝对时间 MM-DD HH:mm —— 与 sessionCardUtils.formatTime 的相对时间语义不同，故保持本地私有。
+function formatSessionTime(value: string | undefined, locale: Locale) {
   if (!value) return "";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
@@ -367,51 +366,8 @@ function formatTime(value: string | undefined, locale: Locale) {
   }).format(date);
 }
 
-const emptyStyle: React.CSSProperties = {
-  fontSize: "12px",
-  color: "var(--text-secondary)",
-  padding: "12px 8px",
-};
-
-const errorStyle: React.CSSProperties = {
-  ...emptyStyle,
-  color: "var(--danger-color, #b42318)",
-  whiteSpace: "pre-wrap",
-};
-
-function iconButtonStyle(withGap: boolean): React.CSSProperties {
-  return {
-    border: "none",
-    background: "transparent",
-    color: "var(--text-secondary)",
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: withGap ? "2px" : 0,
-    height: "28px",
-    minWidth: "28px",
-    borderRadius: "8px",
-    cursor: "pointer",
-    padding: withGap ? "0 6px" : 0,
-  };
-}
-
-function ChevronLeftIcon() {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="m15 18-6-6 6-6" />
-    </svg>
-  );
+function externalSessionKey(session: SessionItem): string {
+  return String((session as any)?.agent_session_id || session.key || "").trim();
 }
 
 function SpinnerIcon() {

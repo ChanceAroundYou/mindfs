@@ -54,20 +54,7 @@ export function taskToForm(task: ScheduledAgentTask): FormState {
   };
 }
 
-export const menuButtonStyle: React.CSSProperties = {
-  border: "1px solid var(--border-color)",
-  borderRadius: 8,
-  background: "var(--content-bg, #fff)",
-  color: "var(--text-primary)",
-  cursor: "pointer",
-  fontSize: 12,
-  padding: "7px 10px",
-};
-
-export const strategyButtonStyle: React.CSSProperties = {
-  ...menuButtonStyle,
-  borderColor: "var(--accent-color)",
-  color: "var(--accent-color)",
-  padding: "4px 8px",
-  lineHeight: 1.2,
-};
+export {
+  menuButtonStyle,
+  strategyButtonStyle,
+} from "../../shared/styles";

@@ -5,7 +5,7 @@ import { renderToolIcon } from "../stream/toolCallIcons";
 import { TurnTokenUsage, ContextWindowBadge } from "./SessionViewerTokenViews";
 import { AgentIcon } from "../agent/AgentIcon";
 import { ForkIcon } from "./AskUserQuestionCard";
-import { MarkdownViewer } from "../file/MarkdownViewer";
+import { MarkdownViewer } from "../common/MarkdownViewer";
 
 export function SessionViewerAssistantMessage(props: any) {
   const {

@@ -6,16 +6,16 @@ import rehypeKatex from "rehype-katex";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import Prism from "prismjs";
-import { openExternalURL } from "../../services/platform/platformNavigation";
-import { extractMarkdownOutline } from "../../shared/markdownOutline";
-import { MarkdownCodeBlockMemo, MermaidBlock, monoFontFamily } from "./MarkdownCodeBlocks";
+import { openExternalURL } from "../services/platform/platformNavigation";
+import { extractMarkdownOutline } from "../shared/markdownOutline";
+import { MarkdownCodeBlockMemo, MermaidBlock, monoFontFamily } from "../components/common/MarkdownCodeBlocks";
 import {
   resolveMarkdownHref,
   isExternalHref,
   isDirectImageSrc,
   normalizeMarkdownMathDelimiters,
-} from "./markdownUtils";
-import { fetchProofProtectedBlob } from "../../services/file";
+} from "../components/common/markdownUtils";
+import { fetchProofProtectedBlob } from "../services/file";
 import "prismjs/themes/prism.css";
 import "katex/dist/katex.min.css";
 import "prismjs/components/prism-javascript";

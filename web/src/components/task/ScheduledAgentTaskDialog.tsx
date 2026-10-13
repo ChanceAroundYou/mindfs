@@ -12,12 +12,9 @@ import {
   fieldStyle,
   taskIconButtonStyle,
 } from "./ScheduledCronEditor";
-import {
-  formatTime,
-  menuButtonStyle,
-  strategyButtonStyle,
-} from "./scheduledTaskUtils";
+import { formatTime } from "./scheduledTaskUtils";
 import { useScheduledAgentTaskDialog } from "./useScheduledAgentTaskDialog";
+import { menuButtonStyle, strategyButtonStyle } from "../../shared/styles";
 import type { AgentStatus } from "../../services/agents";
 
 type Props = {

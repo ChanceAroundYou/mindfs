@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { getNodes } from "../../services/net/nodeRegistry";
 import { hexToRgbaApp } from "../../app/taskIcons";
-import { resolveGroupColor } from "../../services/sessionGroupDisplay";
+import { resolveGroupColor } from "../../services/session/sessionGroupDisplay";
 import { useI18n } from "../../i18n/index";
 import { forkSessionDisplayName, parseForkSessionSource } from "./sessionListShared";
 import type { SessionItem } from "./sessionListTypes";

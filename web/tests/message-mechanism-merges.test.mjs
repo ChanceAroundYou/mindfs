@@ -64,7 +64,7 @@ function scanSrc(re) {
  * 只要它还在这一簇里就有效。
  */
 const mergeSrc = () =>
-  readFileSync(path.join(srcRoot, "services/sessionExchangeMerge.ts"), "utf8");
+  readFileSync(path.join(srcRoot, "services/session/sessionExchangeMerge.ts"), "utf8");
 const countOf = (re) => scanSrc(re).length;
 const where = (hits, n = 4) =>
   hits.slice(0, n).map((h) => `${h.file}:${h.line}`).join(" · ");
@@ -109,7 +109,7 @@ test("【红·②】瞬时/持久的判定只能有一处实现，两条路径�
   );
   assert.equal(
     rulers[0],
-    "src/services/sessionExchangeMerge.ts",
+    "src/services/session/sessionExchangeMerge.ts",
     `这把尺的归属文件变了（现在是 ${rulers[0]}）。它必须与 isTransientExchange 同文件 —— 判据和实现分家就会各自漂移。`,
   );
 });
@@ -137,7 +137,7 @@ test("【红·④】overlay 只按角色类别和 mindfs_id 对账", () => {
     readFileSync(path.join(srcRoot, "app", "useRealtimeEvents.ts"), "utf8"),
   );
   const sessionService = stripComments(
-    readFileSync(path.join(srcRoot, "services", "sessionTypes.ts"), "utf8"),
+    readFileSync(path.join(srcRoot, "services", "session", "sessionTypes.ts"), "utf8"),
   );
   assert.match(overlay, /mindfs_id/);
   assert.match(overlay, /roleCategory/);
@@ -376,7 +376,7 @@ test("【红·⑮c】selection 的去重必须**按会话**且**按完整 select
   //
   // 该钉的是它的**边界**（这两条错了就会丢上下文或误判相等）：
   // selection 去重已搬到 sessionContext.ts（2026-10-07）；守卫跟着实现走。
-  const file = readFileSync(path.join(srcRoot, "services/sessionContext.ts"), "utf8");
+  const file = readFileSync(path.join(srcRoot, "services/session/sessionContext.ts"), "utf8");
   assert.match(
     file,
     /if \(sessionKey\) \{\s*\n\s*const prev = contextCache\.get\(sessionKey\);/,
@@ -414,7 +414,7 @@ test("【红·⑮d】context_window 两处必须分工明确（按 exchange 优�
 // ─────────────────────────────────────────────────────────────────────────────
 test("【红·⑬】pendingStreams 必须有上限，且 push 路径要**用上**它", () => {
   // pendingStreams 与它的容量上限住在派发层，2026-10-08 随订阅登记搬进 sessionDispatcher.ts。
-  const file = readFileSync(path.join(srcRoot, "services/sessionDispatcher.ts"), "utf8");
+  const file = readFileSync(path.join(srcRoot, "services/session/sessionDispatcher.ts"), "utf8");
   // 判据分两段：常量存在 **且** push 处真的按它裁剪 —— 只看常量会被「定义了没用」骗过。
   assert.match(
     file,

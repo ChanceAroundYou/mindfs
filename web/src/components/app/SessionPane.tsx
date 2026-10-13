@@ -52,7 +52,7 @@ import {
 import { APP_DOCUMENT_TITLE, AppProps, CHILD_SESSION_PAGE_SIZE, MULTI_PROJECT_SESSION_LIMIT, ManagedRootPayload, SESSION_PAGE_SIZE } from "../../app/appMisc";
 import { MainViewMode, URLState } from "../../app/appPath";
 import { AttachedFileContext, Exchange, GitFileStat, MultiProjectSessionGroup, PendingSend, RelatedFileClickTarget, SessionItem, SessionMode, SessionQueueItem, SlashCommandResult, ViewerSelection, WSStatus } from "../../app/appSession";
-import { useActionHandlers, type ActionHandlers } from "../../app/useActionHandlers";
+import type { ActionHandlers } from "../../app/useActionHandlers";
 import type { ViewPlugin } from "../../plugins/manager";
 import type { PluginOutput } from "../../plugins/manager";
 import type { GitStatusPayload } from "../../services/git/types";

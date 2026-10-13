@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useSyncExternalStore } from "react";
 
 import { readPins, subscribePins } from "../services/pins";
-import { applyPinnedSnapshotToSessions as applyPinSnapshotRaw } from "../services/sessionListMerge";
+import { applyPinnedSnapshotToSessions as applyPinSnapshotRaw } from "../services/session/sessionListMerge";
 
 /**
  * 会话置顶覆盖层（2026-10-05 的「排序决策权只在这里」）。

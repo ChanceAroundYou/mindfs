@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import { sessionService, type Session } from "../services/session";
 import { reportError } from "../services/net/error";
-import { mergeSessionItems } from "../services/sessionListMerge";
+import { mergeSessionItems } from "../services/session/sessionListMerge";
 import { toSessionItem, type SessionItem, type SessionMode } from "./appSession";
 import type { MessageKey, MessageParams } from "../i18n/index";
 

@@ -1,4 +1,4 @@
-import { MarkdownViewer } from "../file/MarkdownViewer";
+import { MarkdownViewer } from "../common/MarkdownViewer";
 import { AnsiOutput, terminalFontFamily } from "./toolCallRender";
 
 export function basename(path: string): string {

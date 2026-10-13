@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 
-import { mergeSessionItems } from "../services/sessionListMerge";
+import { mergeSessionItems } from "../services/session/sessionListMerge";
 import { sessionService } from "../services/session";
 import { toSessionItem, type SessionItem } from "./appSession";
 

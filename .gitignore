@@ -6,6 +6,7 @@
 # 而 hook 在 web/、web/src/、web/tests/ 下也各建了一份状态目录。
 .claude/*
 !.claude/skills/
+!.claude/rules/
 .worktree/
 .mindfs/
 .specify/
@@ -42,3 +43,4 @@ harmony/entry/src/main/resources/rawfile/public/
 # 与上面的 .claude/* 配套：任意深度的 .claude 状态都忽略，但 skills 例外放行。
 **/.claude/*
 !**/.claude/skills/
+!**/.claude/rules/

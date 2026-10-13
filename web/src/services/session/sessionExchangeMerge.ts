@@ -1,4 +1,4 @@
-import type { ExchangeAux, Session, SessionBlock } from "./session";
+import type { ExchangeAux, Session, SessionBlock } from "./sessionTypes";
 
 // 「瞬时 vs 持久」的判据与 exchange 合并规则（从 services/session.ts 抽出，2026-10-07）。
 //

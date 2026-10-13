@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 
-import { shouldResetSessionLockForRootChange } from "../services/sessionLock";
+import { shouldResetSessionLockForRootChange } from "../services/session/sessionLock";
 import type { Session } from "../services/session";
 import { toSessionItem, type SessionItem } from "./appSession";
 

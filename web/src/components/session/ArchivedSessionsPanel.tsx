@@ -1,7 +1,7 @@
 import React from "react";
 import { MultiProjectSessionList } from "./SessionList";
 import type { ProjectSessionGroup, SessionItem } from "./SessionList";
-import { useBackLayer } from "../../app/useBackNavigation";
+import { useBackLayer } from "../../hooks/useBackNavigation";
 import { useI18n } from "../../i18n/index";
 
 /**

@@ -844,7 +844,13 @@ func (p *Process) CancelCurrentTurn(sessionKey string) error {
 	if sess == nil {
 		return nil
 	}
-	return p.conn.Cancel(context.Background(), acp.CancelNotification{
+	// CUSTOM(G-G): Cancel 是跨进程 RPC，对端卡住时会永久挂起（与 claude 后端的
+	// Interrupt 同形态，见 AGENTS.md「Interrupt 可能永久阻塞」）。上游此处是裸
+	// context.Background()，合上游时会被整体覆盖回去 —— 必须保留这个超时包装，
+	// 否则「停止按钮」在 ACP 后端上会挂死（守卫见 cancel_rpc_timeout_guard_test.go）。
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return p.conn.Cancel(ctx, acp.CancelNotification{
 		SessionId: sess.ID,
 	})
 }

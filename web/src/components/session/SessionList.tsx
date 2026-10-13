@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ViewHeader } from "../../layout/ViewHeader";
-import { pruneChildState } from "../../services/sessionTree";
+import { pruneChildState } from "../../services/session/sessionTree";
 import { useI18n } from "../../i18n/index";
 import { SessionCardMemo } from "./SessionCard";
 import { ChevronLeftIcon, iconButtonStyle } from "./sessionCardUtils";

@@ -19,7 +19,7 @@ import {
 } from "../../services/prefs/appearance";
 import { useI18n, type I18nContextValue, type Locale, type MessageKey } from "../../i18n/index";
 import { useRefreshSpin } from "../../hooks/index";
-import { usePwaInstall } from "../../app/usePwaInstall";
+import { usePwaInstall } from "../../hooks/usePwaInstall";
 import { FileTreeRefreshButton } from "./FileTreeRefreshButton";
 import {
   PROJECT_TREE_INDENT,

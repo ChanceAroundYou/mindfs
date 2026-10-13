@@ -12,7 +12,7 @@ import { useCallback, type MutableRefObject, type Dispatch, type SetStateAction 
 import { SessionItem, SessionQueueItem } from "./appSession";
 import { useSessionCache } from "./useSessionCache";
 import { sessionService, type Session } from "../services/session";
-import { resolveLockedSessionKey } from "../services/sessionLock";
+import { resolveLockedSessionKey } from "../services/session/sessionLock";
 
 export interface UseSessionQueueActionsParams {
   boundSessionByRootRef: MutableRefObject<Record<string, string | null>>;

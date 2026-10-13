@@ -31,8 +31,8 @@ import { confirmDialog } from "../services/dialog";
 import { type FilePayload } from "../services/file";
 import { reportError } from "../services/net/error";
 import { type Session, deleteCachedSession, deleteCachedSessionLists, sessionService } from "../services/session";
-import { mergeSessionItems } from "../services/sessionListMerge";
-import { type SessionTreeItem, collectSessionSubtreeKeys } from "../services/sessionTree";
+import { mergeSessionItems } from "../services/session/sessionListMerge";
+import { type SessionTreeItem, collectSessionSubtreeKeys } from "../services/session/sessionTree";
 
 export type UseSessionArchiveParams = {
   boundSessionByRootRef: MutableRefObject<Record<string, string | null>>;
