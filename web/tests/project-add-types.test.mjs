@@ -24,3 +24,14 @@ test("project-add state types are shared without app logic importing the view", 
   const view = read(new URL("../src/components/file/ProjectAddPopover.tsx", import.meta.url));
   assert.match(view, /export type \{ GitHubImportState, ProjectAddMode \} from "\.\.\/\.\.\/shared\/projectAddTypes"/);
 });
+
+test("project-add mode panel keeps all three mode callbacks in its view boundary", () => {
+  const panel = read(new URL("../src/components/file/ProjectAddModePanel.tsx", import.meta.url));
+  for (const key of ["projectAdd.blankProject", "projectAdd.localDirectory", "projectAdd.githubImport"]) {
+    assert.ok(panel.includes(`t("${key}")`), `mode panel keeps ${key}`);
+  }
+  for (const callback of ["onSelectBlankLocation", "onSelectLocal", "onSelectGitHubLocation"]) {
+    assert.match(panel, new RegExp(`onClick=\\{${callback}\\}`), `mode panel wires ${callback}`);
+  }
+  assert.match(panel, /export function ProjectAddModePanel/);
+});

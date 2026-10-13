@@ -69,3 +69,5 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 - 已完成：把 Vitest 2.1.9 接入 `web/package.json` 与锁文件；`npm test` 先跑 Vitest，再跑带 source-map/TS preload hook 的 120 个旧 Node 测试文件。`deploy-all.sh` 改用统一 `npm test`，ship 文档同步。新增 Vitest 复用件测试，覆盖 `filterAgentModels` 的查询语义与 shared 层纯度、ExitIcon/NoWorktreeIcon 的装饰语义和尺寸。当前 Vitest 5 项通过；旧 Node lane 263 项通过、4 项跳过。旧测试按触及时迁移，未伪称已全量转换。
 - 已完成：将定时 Agent 列表 JSX 从 `ScheduledAgentTaskDialog` 提取到 `ScheduledAgentTaskList`，其余表单状态留在 dialog；`ScheduledAgentTask` 类型迁入 shared 并由 service 兼容再导出。将任务卡 worktree 收尾按钮抽到 `TaskCardFinishButton`，动作类型归 task domain。两父组件现分别 370 与 470 行，frontend 硬线清单从 27 减至 25；更新源码逻辑映射和跟随职责边界的源码守卫。`npm run typecheck`、专项测试及全量 `npm test` 通过（旧 Node lane 263 通过、4 跳过；Vitest 5 通过）。
 - 下一项：从剩余硬线文件选取 2–3 个，先核对外部消费者、符号和依赖方向，再拆分并验证；持续保持 App.tsx 组合根不变。
+- 已完成：将 `ProjectAddPopover` 的模式选择 JSX 提取为 `ProjectAddModePanel`，popover 外观进入同域 `projectAddStyles.ts`，父组件从 509 行降到 404 行。更新逻辑源映射并增加模式回调/标签守卫；TypeScript、项目添加专项测试及规则/计划链接门禁通过。硬线剩余 24 项。
+- 下一项：实测并审阅下一组超过 500 行的前端组件，核对调用者与依赖边界后继续拆分。

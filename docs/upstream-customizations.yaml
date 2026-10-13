@@ -3282,7 +3282,7 @@ groups:
       - docs/upstream-customizations.yaml
       - web/tests/agent-docs.test.mjs
     anchors:
-      - docs/agent/rules/frontend/TODO.md:硬线 25 个
+      - docs/agent/rules/frontend/TODO.md:硬线 24 个
       - docs/plans/README.md:Rule completion rollout
       - web/tests/agent-docs.test.mjs:every plan is classified in the sole plans index
   - id: G-BZ
@@ -3819,3 +3819,34 @@ groups:
       - web/src/components/task/ScheduledAgentTaskList.tsx:ScheduledAgentTaskList
       - web/src/components/task/TaskCardFinishButton.tsx:TaskCardFinishButton
       - web/tests/task-card-parity.test.mjs:the finish button is extracted
+
+  - id: G-CP
+    title: Project-add mode panel extraction
+    kind: arch
+    symptom: |
+      ProjectAddPopover exceeded the frontend 500-line hardline by combining mode selection,
+      local directory browsing, and GitHub import views in one component.
+    why: |
+      Keep the mode-selection view independently reviewable while preserving the shared popover
+      layout and keeping browser/import state in the existing parent owner.
+    boundary: |
+      Extract only mode selection JSX and its repeated style object. LocalPanel and GitHubPanel
+      remain in ProjectAddPopover, and all selection callbacks continue to be passed from it.
+    tests:
+      - web/tests/project-add-types.test.mjs
+      - web/tests/project-add-path-browse.test.mjs
+      - web/tests/source-map.mjs
+    files:
+      - web/src/components/file/ProjectAddPopover.tsx
+      - web/src/components/file/ProjectAddModePanel.tsx
+      - web/src/components/file/projectAddStyles.ts
+      - web/tests/project-add-types.test.mjs
+      - web/tests/source-map.mjs
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/components/file/ProjectAddModePanel.tsx:ProjectAddModePanel
+      - web/tests/project-add-types.test.mjs:project-add mode panel keeps all three mode callbacks

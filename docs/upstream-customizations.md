@@ -236,6 +236,7 @@
 | G-CM | TaskBoardView 契约与任务呈现资源归位 | 架构 | 见 §3.2 | shared contracts + task presenter；app 旧路径只留兼容 facade |
 | G-CN | 前端 Vitest 运行链与复用件覆盖 | 测试 | 见 §3.2 | 新测试走 Vitest；旧 Node 源码守卫继续保留 preload hook |
 | G-CO | 前端 task view 硬线拆分 | 架构 | 见 §3.2 | scheduled-task 列表与卡片收尾按钮保持独立组件及原交互 |
+| G-CP | ProjectAdd 模式选择面板提取 | 架构 | 见 §3.2 | 三个模式入口的标签和选择回调继续由独立面板呈现 |
 
 > **G-D 已并入 G-F，G-M 已并入 G-AI**（改动面完全重合、无独立测试可守，单列只会制造空组）。
 
@@ -2757,3 +2758,10 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **根因与边界**：定时任务列表抽为 `ScheduledAgentTaskList`，收尾按钮抽为 `TaskCardFinishButton`；对话框状态与卡片动作判据仍由原父组件持有。`ScheduledAgentTask` 类型归 shared，service 继续兼容再导出。
 - **针对性测试**：`web/tests/async-state-message.test.mjs` → 确认定时任务列表继续使用 loading/empty/error 语义；`web/tests/task-card-parity.test.mjs` → 确认两个任务卡分支仍显示同一收尾动作。
 - **边界**：保持原有加载/空态优先级、收尾按钮动作与渲染顺序；父组件分别为 370 与 470 行。
+
+### G-CP ProjectAdd 模式选择面板提取
+
+- **可见症状**：`ProjectAddPopover` 超过 500 行硬线，同时承载模式选择、目录浏览与 GitHub 导入。
+- **根因与边界**：模式选择 JSX 提取到 `ProjectAddModePanel`，共享 popover 样式归同域 `projectAddStyles.ts`；LocalPanel、GitHubPanel 与状态仍由原父组件持有。
+- **针对性测试**：`web/tests/project-add-types.test.mjs` → 守住三个模式标签与各自回调接线；`project-add-path-browse.test.mjs` → 守住目录浏览行为仍留在父模块。
+- **边界**：保留选择回调、文案 key、布局样式与目录浏览状态；父组件现为 404 行。

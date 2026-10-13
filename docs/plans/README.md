@@ -8,7 +8,7 @@ to resume their old TODOs or baselines.
 
 | Plan | Status | Next action |
 |---|---|---|
-| [Rule completion rollout](rule-completion-rollout.md) | Active | ScheduledAgentTaskDialog 370 行、TaskCardRows 470 行，两个组件已低于 500 行硬线；剩余 25 项。下一批从当前实测硬线文件选 2–3 个，完成依赖审计后拆分。 |
+| [Rule completion rollout](rule-completion-rollout.md) | Active | ProjectAddPopover 404 行，模式选择 JSX 已归入独立 task view；剩余 24 项。下一批从当前实测硬线文件选 2–3 个，完成依赖审计后拆分。 |
 
 ## Completed or superseded history
 
