@@ -2893,3 +2893,10 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **根因与边界**：该连续状态组与 Git/project-tree hooks 一并迁入 `useAppFileWorkspaceState`，父层以同位置的一次调用接收原变量，Ref 镜像、localStorage 恢复、插件查询初始化和 worktree 刷新转发顺序保持。
 - **针对性测试**：`web/tests/app-file-workspace-state.test.mjs` → 守住职责接线、Git/tree hooks、目录 ref 镜像及 worktree 刷新转发；`node-colors-and-workspace-preferences.test.mjs` → 守住字面量类型与偏好契约；`source-map.test.mjs` → 守住逻辑模块映射。
 - **边界**：不改 `App.tsx`、服务调用或渲染数据；父层现为 588 行，仍留在硬线 TODO。
+
+### G-DH 拆分源码守卫的物理行数读取
+
+- **可见症状**：拆分后的 source-map 逻辑别名合并父层与子模块源码，直接用它统计父层长度会把子模块行数计入，导致硬线结构断言失真。
+- **根因与边界**：`app-state-refs-split` 与 `app-root-selection-split` 改用文件描述符读取物理父文件测行数；其它源码断言继续走逻辑映射，以覆盖合并后的职责行为。
+- **针对性测试**：`app-state-refs-split.test.mjs`、`app-root-selection-split.test.mjs` → 用物理父文件统计行数，同时保留逻辑模块接线与行为守卫。
+- **边界**：只调整测试读取方式，不改应用代码；保持 `useAppStateLayer` 的 588 行真实计数。

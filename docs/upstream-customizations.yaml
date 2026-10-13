@@ -4387,3 +4387,29 @@ groups:
     anchors:
       - web/src/app/useAppFileWorkspaceState.ts:useAppFileWorkspaceState
       - web/tests/app-file-workspace-state.test.mjs:delegates the contiguous file and workspace state group
+
+  - id: G-DH
+    title: Split layer size checks read the physical parent file
+    kind: docs
+    symptom: |
+      A source-map alias merges the state-layer parent and extracted modules, so line-count assertions
+      against the logical alias count child files as part of the parent and misreport the hard line.
+    why: |
+      Keep line-count evidence scoped to the physical parent while retaining merged logical reads for
+      behavior and responsibility assertions.
+    boundary: |
+      app-state-refs-split and app-root-selection-split open the parent file and read through its file
+      descriptor, bypassing source-map remapping for the physical line-count assertion only.
+    tests:
+      - web/tests/app-state-refs-split.test.mjs
+      - web/tests/app-root-selection-split.test.mjs
+      - web/tests/source-map.test.mjs
+    files:
+      - web/tests/app-state-refs-split.test.mjs
+      - web/tests/app-root-selection-split.test.mjs
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/tests/app-state-refs-split.test.mjs:readPhysical
+      - web/tests/app-root-selection-split.test.mjs:readPhysical
