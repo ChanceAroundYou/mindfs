@@ -2928,3 +2928,10 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **根因与边界**：目标会话解析、队列/pending 判定和新会话草稿准备归 `prepareSendMessageTarget`；瞬时 slash command 归 `useSendMessageSlashCommand`；普通消息乐观写入、上下文构建、发送和失败回滚仍归 `useSendMessage`。参数契约移到 `useSendMessageTypes`，原模块保留再导出。
 - **针对性测试**：`web/tests/send-message-split.test.mjs` → 守住父 hook 硬线、阶段顺序、契约兼容与职责归属；`new-session-auto-select.test.mjs`、`pending-single-source.test.mjs`、`plan-command.test.mjs` → 守住新会话选择、pending 唯一真相和计划模式前缀。
 - **边界**：请求参数、pending 写入/失败收敛、插件 view context 与 `App.tsx` 均不变；父 hook 实测 686→422 行。
+
+### G-DN App 视图组合按工作台职责拆分
+
+- **可见症状**：`useAppViewComposition` 同时组合会话/根内容视图与跨项目工作台状态、实时任务新鲜度、筛选/折叠持久化和刷新转发，超过前端硬线，工作台跨节点更新路径难以单独核对。
+- **根因与边界**：参数契约移入 `useAppViewCompositionTypes`，旧模块保留类型再导出；`useAppWorkspaceBoardComposition` 接管既有工作台状态、state 派生 live task、board hook 与 refresh ref 写入。它在原 hook 序列位置、`useAppMainViewActions` 之前调用，`App.tsx` 与行为保持不变。
+- **针对性测试**：`app-view-composition-split.test.mjs` → 守住物理父 hook 行数、兼容类型出口、调用顺序、state 派生新鲜度和 refresh ref；`workspace-realtime-freshness.test.mjs`、`workspace-board.test.mjs` → 守住实时增量和看板契约；`source-map.test.mjs` → 守住逻辑源码映射。
+- **边界**：父 hook 实测 665→433 行，frontend 硬线 TODO 剩余 8 项；不改 `App.tsx`、节点路由、刷新频率或看板持久化语义。

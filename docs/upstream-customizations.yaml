@@ -3282,7 +3282,7 @@ groups:
       - docs/upstream-customizations.yaml
       - web/tests/agent-docs.test.mjs
     anchors:
-      - docs/agent/rules/frontend/TODO.md:硬线 9 个
+      - docs/agent/rules/frontend/TODO.md:硬线 8 个
       - docs/plans/README.md:Rule completion rollout
       - web/tests/agent-docs.test.mjs:every plan is classified in the sole plans index
   - id: G-BZ
@@ -4568,3 +4568,39 @@ groups:
       - web/src/app/prepareSendMessageTarget.ts:export function prepareSendMessageTarget
       - web/src/app/useSendMessageSlashCommand.ts:export function useSendMessageSlashCommand
       - web/tests/send-message-split.test.mjs:coordinator below the physical hard line
+
+  - id: G-DN
+    title: App view composition split by workspace responsibility
+    kind: arch
+    symptom: |
+      useAppViewComposition combines session/root content rendering with cross-project board state,
+      realtime freshness derivation, persisted filters/collapse state, and refresh forwarding. It
+      exceeds the frontend hard line and makes it harder to verify the board's cross-node update path.
+    why: |
+      Keep the app view coordinator focused on composing view domains while giving workspace board
+      state and its freshness/refresh contract a focused owner; isolate the wide parameter type for reuse.
+    boundary: |
+      UseAppViewCompositionParams moves to useAppViewCompositionTypes with a compatibility type
+      re-export from the original module. useAppWorkspaceBoardComposition owns only the existing board
+      state, state-derived live task lookup, board hook call, and refresh ref assignment. It is invoked
+      at the original hook sequence position before useAppMainViewActions; App.tsx and board behavior
+      remain unchanged.
+    tests:
+      - web/tests/app-view-composition-split.test.mjs
+      - web/tests/workspace-realtime-freshness.test.mjs
+      - web/tests/workspace-board.test.mjs
+      - web/tests/source-map.test.mjs
+    files:
+      - web/src/app/useAppViewComposition.ts
+      - web/src/app/useAppViewCompositionTypes.ts
+      - web/src/app/useAppWorkspaceBoardComposition.ts
+      - web/tests/app-view-composition-split.test.mjs
+      - web/tests/source-map.mjs
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/app/useAppWorkspaceBoardComposition.ts:export function useAppWorkspaceBoardComposition
+      - web/tests/app-view-composition-split.test.mjs:physical composition hook stays below the frontend hard line

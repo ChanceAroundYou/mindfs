@@ -1,5 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { getActiveNode } from "../services/net/nodeRegistry";
+import React, { useCallback, useEffect } from "react";
 import { fetchTaskDetails } from "../services/tasks";
 import { useAppKanbanTaskPanel } from "./useAppKanbanTaskPanel";
 import { useAppRootContentRenderers } from "./useAppRootContentRenderers";
@@ -9,18 +8,16 @@ import { useAppSlashCommandResult } from "./useAppSlashCommandResult";
 import { useAppMainViewActions } from "./useAppMainViewActions";
 import { useAppWorkspaceActions } from "./useAppWorkspaceActions";
 import { GitFileStat, MultiProjectSessionGroup, SessionItem, SlashCommandResult } from "./appSession";
-import { loadWorkspaceCollapsed, loadWorkspaceFilter, saveWorkspaceCollapsed, saveWorkspaceFilter } from "./appStorage";
 import { ManagedRootPayload, shouldShowUpdateButton, updateButtonLabel, updateSummaryText } from "./appMisc";
 import { MainViewMode, buildFileScrollKey } from "./appPath";
 import type { URLState } from "./appPath";
-import { useWorkspaceBoard } from "./useWorkspaceBoard";
+import { useAppWorkspaceBoardComposition } from "./useAppWorkspaceBoardComposition";
 import { useSessionSidebarView } from "./useSessionSidebarView";
 import { useRootContentView } from "./useRootContentView";
 import { useProjectTreeActions } from "./useProjectTreeActions";
 import { usePluginThemeVars } from "./usePluginThemeVars";
 import { useSessionRelatedFiles } from "./useSessionRelatedFiles";
 import type { KanbanTask, TaskDetail, TaskTemplate } from "../services/tasks";
-import type { WorkspaceBoardFilter } from "./appStorage";
 import type { ActionHandlers } from "./useActionHandlers";
 import type { AgentStatus } from "../services/agents";
 import type { DirectorySortMode, FileEntry } from "../services/prefs/directorySort";
@@ -39,200 +36,9 @@ import type { UpdateState } from "../services/update";
 /**
  * 见 docs/plans/app-tsx-under-1000.md：分层聚合 hook。
  */
-export type UseAppViewCompositionParams = {
-  actionHandlers: ActionHandlers;
-  actionHandlersRef: React.RefObject<ActionHandlers>;
-  activeBoundSessionKey: string | null;
-  applyTaskDetails: (rootId: string, details: TaskDetail[], persist?: boolean) => void;
-  archiveLoading: boolean;
-  archiveOpen: boolean;
-  archivedGroups: MultiProjectSessionGroup[];
-  availableAgents: AgentStatus[];
-  boardSessionByKey: { [x: string]: SessionItem; };
-  boundSessionByRootRef: React.RefObject<Record<string, string | null>>;
-  cacheVersion: number;
-  closeSessionSearch: () => void;
-  collapsedKanbanColumns: Set<string>;
-  collapsedTaskCompletionGroups: Set<string>;
-  confirmingExternalImport: boolean;
-  currentRootId: string | null;
-  currentRootIdRef: React.RefObject<string | null>;
-  currentRootNodeId: string | null;
-  currentSession: SessionItem | null;
-  drawerSessionByRootRef: React.RefObject<Record<string, SessionItem | null>>;
-  enterImportMode: (agentName: string) => Promise<void>;
-  entriesByPathRef: React.RefObject<Record<string, FileEntry[]>>;
-  executeSessionSearch: () => void;
-  exitImportMode: () => void;
-  expandProjectTreeWorktree: (rootID: string, worktreePath: string) => Promise<void>;
-  expandedTaskInputIds: Set<string>;
-  expandedWorktreeByRoot: Record<string, string>;
-  externalFilterBound: boolean;
-  externalImportAgent: string;
-  externalSelectedKey: string;
-  externalSessions: SessionItem[];
-  externalSessionsError: string;
-  file: FilePayload | null;
-  fileCursorRef: React.RefObject<number>;
-  fileRef: React.RefObject<FilePayload | null>;
-  findManagedRootByPath: (path: string) => ManagedRootPayload | null;
-  getDisplayNodeColor: (rootId: string) => string | null;
-  getNodeIdForRoot: (rootId: string) => string | undefined;
-  getRootDisplayName: (rootId: string | null | undefined) => string;
-  getSessionSnapshot: (rootId: string | null | undefined, session: Session | SessionItem | null | undefined) => any;
-  gitDiff: GitDiffPayload | null;
-  gitFileStatsByPath: Record<string, GitFileStat>;
-  gitHistory: GitHistoryPayload | null;
-  gitHistoryByRoot: Record<string, GitHistoryPayload | null>;
-  gitHistoryExpandedByRoot: Record<string, Record<string, boolean>>;
-  gitHistoryLoading: boolean;
-  gitHistoryLoadingByRoot: Record<string, boolean>;
-  gitHistoryLoadingMore: boolean;
-  gitStatus: GitStatusPayload | null;
-  gitStatusByRoot: Record<string, GitStatusPayload | null>;
-  gitStatusExpandedByRoot: Record<string, boolean>;
-  gitStatusLoading: boolean;
-  gitStatusLoadingByRoot: Record<string, boolean>;
-  handleArchiveSession: (session: SessionItem, archived: boolean) => Promise<boolean>;
-  handleConfirmExternalImport: () => Promise<void>;
-  handleDeleteSession: (session: SessionItem) => Promise<void>;
-  handleDeleteTaskTemplate: (template: TaskTemplate) => Promise<void>;
-  handleForkAgentMessage: (rootID: string | null | undefined, sessionKey: string | null | undefined, seq: number) => Promise<void>;
-  handleGitCommit: (rootID: string, message: string) => Promise<void>;
-  handleGitDiscardItem: (rootID: string, item: GitStatusItem) => Promise<void>;
-  handleGitPull: (rootID: string) => Promise<void>;
-  handleGitPush: (rootID: string) => Promise<void>;
-  handleGitStageItem: (rootID: string, item: GitStatusItem) => Promise<void>;
-  handleGitUnstageItem: (rootID: string, item: GitStatusItem) => Promise<void>;
-  handleLoadOlderExternalSessions: () => Promise<void>;
-  handleLoadOlderSessions: () => Promise<void>;
-  handleMoveKanbanTask: (task: KanbanTask, action: "next" | "run-now" | "pause" | "resume" | "complete" | "cancel" | "delete-task" | "rebuild-worktree" | "finish-worktree") => Promise<void>;
-  handlePinSession: (session: SessionItem, pinned: boolean) => Promise<boolean>;
-  handleRenameSession: (session: SessionItem, nextName: string) => Promise<boolean>;
-  handleSearchQueryChange: (value: string) => void;
-  handleSelectKanbanTask: (task: KanbanTask) => void;
-  handleSelectSessionAndClose: (session: SessionItem) => void;
-  handleSyncSession: (session: SessionItem) => Promise<void>;
-  handleTaskSessionDrawerOpen: (sessionKey: string, rootOverride?: string | null, taskId?: string) => void;
-  hasMoreExternalSessions: boolean;
-  hasMoreSessions: boolean;
-  importMenuOpen: boolean;
-  importMenuRef: React.RefObject<HTMLDivElement | null>;
-  importingExternalSessionKeys: Set<string>;
-  interactionModeRef: React.RefObject<"main" | "drawer">;
-  kanbanTasks: KanbanTask[];
-  kanbanTasksLoading: boolean;
-  lastMainSessionSnapshotRef: React.RefObject<Session | null>;
-  loadChildSessionsForParent: (parent: SessionItem, options?: { beforeTime?: string; }) => Promise<{ hasMore: boolean; }>;
-  loadKanbanTasks: (rootId?: string | null, force?: boolean) => Promise<void>;
-  loadMoreGitHistory: (targetRootID?: string) => Promise<void>;
-  loadMoreMultiProjectSessions: (group: ProjectSessionGroup) => Promise<void>;
-  loadingExternalSessions: boolean;
-  loadingOlderExternalSessions: boolean;
-  loadingOlderSessions: boolean;
-  mainDirectoryErrorRef: React.RefObject<string>;
-  mainEntriesRef: React.RefObject<FileEntry[]>;
-  mainViewRef: React.RefObject<MainViewMode>;
-  managedRootByIdRef: React.RefObject<Record<string, ManagedRootPayload>>;
-  managedRootByKeyRef: React.RefObject<Record<string, ManagedRootPayload>>;
-  managedRootIds: string[];
-  multiProjectPendingByKey: Record<string, boolean>;
-  multiProjectSessionGroups: MultiProjectSessionGroup[];
-  multiProjectSessionsEnabled: true;
-  multiProjectSessionsLoading: boolean;
-  openGitCommitDiff: (rootID: string, commit: GitHistoryItem, item: GitStatusItem) => Promise<void>;
-  openGitDiff: (rootID: string, item: GitStatusItem, options?: { preserveRelatedSelection?: boolean; repoPath?: string; }) => Promise<void>;
-  openRelatedFileDiff: (rootID: string, file: RelatedFileClickTarget) => Promise<void>;
-  openSessionSearch: () => void;
-  openTaskCreateDialog: (template: TaskTemplate | null, targetRootId?: string, targetNodeId?: string) => void;
-  openTaskTemplateEditor: (template: TaskTemplate | null) => void;
-  pendingPluginTrust: { rootId: string; bundle: PluginSourceBundle; } | null;
-  pluginBypass: boolean;
-  pluginBypassRef: React.RefObject<boolean>;
-  pluginRender: { plugin: ViewPlugin; output: PluginOutput; error: string; } | { plugin: ViewPlugin; output: null; error: string; } | null;
-  pluginThemeVars: React.CSSProperties | null;
-  projectTreeTab: ProjectTreeTab;
-  refreshCurrentFileContent: (rootID: string, changedPath: string) => Promise<void>;
-  refreshGitHistory: (rootID: string, options?: { force?: boolean; waitForIncremental?: boolean; }) => Promise<GitHistoryPayload | null>;
-  refreshGitStatus: (rootID: string) => Promise<GitStatusPayload | null>;
-  refreshManagedRoots: () => Promise<void>;
-  refreshProjectTreeWorktrees: (root: string) => Promise<void>;
-  refreshTaskRelatedFiles: (root: string, taskId: string, sessionKeys: string[]) => Promise<void>;
-  refreshTreeDir: (rootID: string, dirPath: string, syncMain: boolean) => Promise<void>;
-  relatedSelectedFileKey: string;
-  replaceURLState: (next: URLState) => void;
-  rootSessionKey: (rootId: string, sessionKey: string) => string;
-  scopedRootKey: (rootId: string) => string;
-  selectedDirRef: React.RefObject<string | null>;
-  selectedExternalImportKeys: Set<string>;
-  selectedKanbanTask: KanbanTask | null;
-  selectedKanbanTaskId: string;
-  selectedKanbanTaskSessionSnapshot: any;
-  selectedSession: SessionItem | null;
-  selectedSessionLoading: boolean;
-  selectedSessionRef: React.RefObject<SessionItem | null>;
-  selectedSessionSnapshot: any;
-  sessionListMode: "local" | "import";
-  sessionSearchLoading: boolean;
-  sessionSearchOpen: boolean;
-  sessionSearchQuery: string;
-  sessionSearchResults: SessionItem[];
-  sessionSearchResultsMode: boolean;
-  sessions: SessionItem[];
-  setArchiveOpen: React.Dispatch<React.SetStateAction<boolean>>;
-  setCollapsedKanbanColumns: React.Dispatch<React.SetStateAction<Set<string>>>;
-  setCollapsedTaskCompletionGroups: React.Dispatch<React.SetStateAction<Set<string>>>;
-  setDrawerOpenForRoot: (rootID: string | null | undefined, open: boolean) => void;
-  setEditDraftRequest: React.Dispatch<React.SetStateAction<{ id: number; content: string; } | null>>;
-  setExpanded: React.Dispatch<React.SetStateAction<string[]>>;
-  setExpandedTaskInputIds: React.Dispatch<React.SetStateAction<Set<string>>>;
-  setExternalFilterBound: React.Dispatch<React.SetStateAction<boolean>>;
-  setExternalImportAgent: React.Dispatch<React.SetStateAction<string>>;
-  setExternalSelectedKey: React.Dispatch<React.SetStateAction<string>>;
-  setGitHistoryExpandedByRoot: React.Dispatch<React.SetStateAction<Record<string, Record<string, boolean>>>>;
-  setGitStatusExpandedByRoot: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
-  setImportMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
-  setInteractionMode: React.Dispatch<React.SetStateAction<"main" | "drawer">>;
-  setPluginBypass: React.Dispatch<React.SetStateAction<boolean>>;
-  setProjectTreeTabRequest: React.Dispatch<React.SetStateAction<{ tab: ProjectTreeTab; nonce: number; } | null>>;
-  setSelectedKanbanTaskId: React.Dispatch<React.SetStateAction<string>>;
-  setTaskCreateTemplateMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
-  setTaskRelatedFilesById: React.Dispatch<React.SetStateAction<Record<string, RelatedFile[]>>>;
-  setTaskSessionErrorDialog: React.Dispatch<React.SetStateAction<{ title: string; message: string; details: string[]; } | null>>;
-  setTaskTemplateActionMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
-  setTaskTemplateFilter: React.Dispatch<React.SetStateAction<string>>;
-  slashCommandResults: Record<string, SlashCommandResult>;
-  switchGitBranch: (rootID: string, branch: string) => Promise<void>;
-  switchMainView: (mode: MainViewMode) => void;
-  syncingSessionKeys: Set<string>;
-  t: (key: MessageKey, params?: MessageParams) => string;
-  taskCreateTemplateMenuOpen: boolean;
-  taskCreateTemplateMenuRef: React.RefObject<HTMLDivElement | null>;
-  taskDetailsById: Record<string, TaskDetail>;
-  taskFirstInputById: Record<string, string>;
-  taskRelatedFilesById: Record<string, RelatedFile[]>;
-  taskSessionKeysById: Record<string, string[]>;
-  taskSessionKeysByIdRef: React.RefObject<Record<string, string[]>>;
-  taskTemplateActionMenuOpen: boolean;
-  taskTemplateActionMenuRef: React.RefObject<HTMLDivElement | null>;
-  taskTemplateFilter: string;
-  taskTemplates: TaskTemplate[];
-  toggleAllExternalImportSelection: (checked: boolean) => void;
-  toggleExternalImportSelection: (session: SessionItem) => void;
-  toggleProjectTreeWorktree: (root: string, worktreePath: string) => Promise<void>;
-  toggleSessionSearch: () => void;
-  treeSortMode: DirectorySortMode;
-  updateSessionRelatedFilesForKey: (rootID: string, sessionKey: string, relatedFiles: RelatedFile[]) => void;
-  updateState: UpdateState;
-  updateSubmitting: boolean;
-  workspaceBoardRefreshRef: React.RefObject<(() => void) | null>;
-  workspaceOpen: boolean;
-  worktreeErrorByRoot: Record<string, string>;
-  worktreeItemsByRoot: Record<string, GitWorktreeItem[]>;
-  worktreeLoadingByRoot: Record<string, boolean>;
-  worktreeStatusByPath: Record<string, GitStatusPayload | null>;
-  worktreeStatusLoadingByPath: Record<string, boolean>;
-};
+export type { UseAppViewCompositionParams } from "./useAppViewCompositionTypes";
+import type { UseAppViewCompositionParams } from "./useAppViewCompositionTypes";
+
 
 /**
  * 本层由 App.tsx 原样搬出，hook 调用顺序与搬出前逐字一致。
@@ -461,51 +267,13 @@ export function useAppViewComposition(params: UseAppViewCompositionParams) {
   } = useAppKanbanStageColumns({
     kanbanTasks, t,
   });
-  // 跨项目工作台：按项目聚合的跨节点任务总览（扇出与建组都在 useWorkspaceBoard 内）。
-  // refreshToken 由刷新按钮驱动；WS 的高频推送靠 C1 放行的 task.updated 增量更新就地生效，
-  // 不驱动整包重拉（否则多节点扇出会被事件风暴打爆）。
-  const [workspaceBoardToken, setWorkspaceBoardToken] = useState(0);
-  const [workspaceFilter, setWorkspaceFilter] = useState<WorkspaceBoardFilter>(loadWorkspaceFilter);
-  const [workspaceCollapsedKeys, setWorkspaceCollapsedKeys] = useState<Set<string>>(loadWorkspaceCollapsed);
-  const toggleWorkspaceProject = useCallback((key: string) => {
-    setWorkspaceCollapsedKeys((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      saveWorkspaceCollapsed(next);
-      return next;
-    });
-  }, []);
-  const changeWorkspaceFilter = useCallback((filter: WorkspaceBoardFilter) => {
-    setWorkspaceFilter(filter);
-    saveWorkspaceFilter(filter);
-  }, []);
-  // 卡片的新鲜度取自 taskDetailsById（applyTaskDetails 的唯一落点）。
-  // 这里刻意由 state 派生而**不是**每次现读 ref：工作台那两个 useMemo 靠依赖变化
-  // 才重算，走 ref 的话 React 看不见任何变化 —— 整条新鲜度路径会静默失效
-  // （卡片照样纹丝不动，且没有任何报错可查）。useMemo 保住引用稳定，
-  // 又让它在 taskDetailsById 真变时换新身份。
-  const liveTasksById = useMemo(() => {
-    const out: Record<string, KanbanTask> = {};
-    for (const detail of Object.values(taskDetailsById)) {
-      if (detail?.task?.id) out[detail.task.id] = detail.task;
-    }
-    return out;
-  }, [taskDetailsById]);
-  const getLiveTask = useCallback((taskId: string) => liveTasksById[taskId], [liveTasksById]);
-  const workspaceBoard = useWorkspaceBoard({
-    enabled: workspaceOpen,
-    refreshToken: workspaceBoardToken,
-    managedRootIds,
-    getRootDisplayName,
-    getNodeColor: getDisplayNodeColor,
-    getLiveTask,
-    getNodeId: getNodeIdForRoot,
-    fallbackNodeId: getNodeIdForRoot(String(currentRootIdRef.current || "")) || String(getActiveNode()?.id || ""),
-    filter: workspaceFilter,
+  const {
+    workspaceBoard, workspaceFilter, changeWorkspaceFilter, workspaceCollapsedKeys,
+    toggleWorkspaceProject, setWorkspaceBoardToken,
+  } = useAppWorkspaceBoardComposition({
+    workspaceOpen, workspaceBoardRefreshRef, managedRootIds, getRootDisplayName,
+    getDisplayNodeColor, getNodeIdForRoot, currentRootIdRef, taskDetailsById,
   });
-  // 渲染时挂上去，早期调用点（卡片动作、WS 处理器）转发到它。见 workspaceBoardRefreshRef。
-  workspaceBoardRefreshRef.current = workspaceBoard.refresh;
   // 左下角四态切换器：只切面板 + 关掉悬浮框。
   // 会话选中与面板是正交的两条线——切面板一律不解除选中（面板不显示而已）。
   const { handleMainViewSwitcherChange, switchToRawFileView, switchToPluginView

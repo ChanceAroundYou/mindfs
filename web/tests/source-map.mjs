@@ -192,6 +192,8 @@ export const MODULES = {
     // 2026-10-08 分层聚合（App.tsx → 1000 以内）第 4 层：视图与渲染组合。
     // 这一层整体（L2276-2633，连续区间）搬走，hook 调用顺序与搬出前逐字一致。
     "src/app/useAppViewComposition.ts",
+    "src/app/useAppViewCompositionTypes.ts",
+    "src/app/useAppWorkspaceBoardComposition.ts",
     // 2026-10-08 分层聚合（App.tsx → 1000 以内）收尾：把 App() 的整段 JSX return
     // （原 L2635-2957，323 行）搬进 AppRootView。App.tsx 因此只剩四层调用 + 一次展开。
     "src/app/AppRootView.tsx",
