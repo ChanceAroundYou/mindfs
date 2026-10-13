@@ -2990,4 +2990,11 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：`useSessionStream` 把 React 订阅/定时器状态与时间线投影、exchange/block 拼接、工具分组及 context-window 回退混在一起，648 行超过前端硬线，纯投影规则难以独立验证。
 - **根因与边界**：时间线投影归 `sessionTimeline.ts`，assistant exchange segment 投影归 `sessionAssistantTimeline.ts`，稳定 ID 归 `stableTimelineID.ts`；原 hook 保留订阅、节流 streamVersion 和公开 hook API，并从旧路径继续导出 `TimelineItem` 与 `groupConsecutiveToolCalls`。三个实现模块分别为 332/184/18 行，消费者导入路径不变，均符合 500 行硬线。
 - **针对性测试**：`session-stream-timeline-split.test.mjs` → 守住拆分边界、行数与兼容导出；`tool-card-grouping.test.mjs` → 守住工具折叠语义；`session-timeline-seq.test.mjs`、`message-mechanism-merges.test.mjs` → 守住持久 seq 与 context-window 优先级。
-- **边界**：原 hook 实测 648→128 行，纯 helper 526 行；stream 订阅、pending 闸门和事件顺序不变。
+- **边界**：原 hook 实测 648→128 行，时间线/assistant/ID helper 分别 332/184/18 行；stream 订阅、pending 闸门和事件顺序不变。
+
+
+### G-DW Session usecase 列表与搜索职责拆分
+
+- **可见症状**：`usecase/session.go` 将列表、跨根聚合、子会话展开、shell 补全、搜索排序与 session 创建、fork、实时流和取消流程混在同一 4,892 行文件中。
+- **根因与边界**：列表/搜索入口及私有 helper 原样移入 `session_list.go`（300 行）；公共输入/输出类型留在原文件。`session.go` 当前 4,602 行，仍高于 1,500 行硬线，后续按领域继续拆分，不在本批销掉 TODO。
+- **针对性测试**：`usecase_test.go` 的 multi-root 搜索全局限额/RootID、列表 AfterTime 和 archived-only 用例；整个 `go test ./server/internal/api/usecase/...` 通过。

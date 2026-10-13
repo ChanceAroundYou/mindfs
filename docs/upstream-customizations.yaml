@@ -2221,6 +2221,7 @@ groups:
       - server/internal/session/manager.go
       - server/internal/api/http.go
       - server/internal/api/usecase/session.go
+      - server/internal/api/usecase/session_list.go
       - web/tests/session-window.test.mjs
     anchors:
       - server/internal/session/manager.go:readExchangeWindow
@@ -2231,7 +2232,7 @@ groups:
       - server/internal/session/manager.go:GetCommandShell
       - server/internal/session/manager.go:readAuxTailEntries
       - server/internal/api/http.go:handleSessionSync
-      - server/internal/api/usecase/session.go:fillCommandShells
+      - server/internal/api/usecase/session_list.go:fillCommandShells
 
   - id: G-BF
     title: Full 同步丢最新几轮（ctx_seq 切片恒空 + 时间地板被静默跳过）
@@ -2434,7 +2435,7 @@ groups:
       - web/tests/multi-account-partition.test.mjs
     anchors:
       - server/internal/session/manager.go:LatestSessionUpdatedAt
-      - server/internal/api/usecase/session.go:LatestSessionUpdatedAt
+      - server/internal/api/usecase/session_list.go:LatestSessionUpdatedAt
       - web/src/app/useRealtimeEvents.ts:handleSessionStream
       - web/src/services/session/sessionListMerge.ts:orderProjectGroupsByNode
       - web/src/services/session/sessionListMerge.ts:projectActivityTime
@@ -4891,3 +4892,31 @@ groups:
       - web/src/hooks/useSessionStream.ts:export function useSessionStream
       - web/src/hooks/sessionTimeline.ts:export function buildBaseTimeline
       - web/tests/session-stream-timeline-split.test.mjs:hook stays within the frontend hard line
+
+  - id: G-DW
+    title: Session usecase list and search split
+    kind: arch
+    symptom: |
+      usecase/session.go combines session listing, multi-root aggregation, child-session expansion,
+      command-shell hydration, and search ranking/mapping with session creation, fork, streaming, and
+      cancellation flows. Routine changes to listing behavior require navigating the 4,892-line file.
+    why: |
+      Keep list/search behavior in a focused usecase source file so its existing domain tests and
+      future changes can be reviewed without mixing session creation or live-turn orchestration.
+    boundary: |
+      archivedMode, ListSessions, ListMultiRootSessions, ListChildSessions, SearchSessions and their
+      private helpers move unchanged to session_list.go. Public input/output types remain in session.go.
+      The source file remains above the 1,500-line hard limit and stays active in backend TODO until
+      subsequent domain splits bring it under that limit.
+    tests:
+      - server/internal/api/usecase/usecase_test.go
+    files:
+      - server/internal/api/usecase/session.go
+      - server/internal/api/usecase/session_list.go
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - server/internal/api/usecase/session_list.go:func (s *Service) ListSessions
+      - server/internal/api/usecase/session_list.go:func (s *Service) SearchSessions
