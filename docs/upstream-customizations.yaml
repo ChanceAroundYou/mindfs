@@ -3282,7 +3282,7 @@ groups:
       - docs/upstream-customizations.yaml
       - web/tests/agent-docs.test.mjs
     anchors:
-      - docs/agent/rules/frontend/TODO.md:硬线 6 个
+      - docs/agent/rules/frontend/TODO.md:硬线 5 个
       - docs/plans/README.md:Rule completion rollout
       - web/tests/agent-docs.test.mjs:every plan is classified in the sole plans index
   - id: G-BZ
@@ -4675,3 +4675,38 @@ groups:
     anchors:
       - web/src/app/openDirectoryAction.ts:export function createOpenDirectoryAction
       - web/tests/action-handlers-split.test.mjs:action handler coordinator stays below the frontend hard line
+
+  - id: G-DQ
+    title: Realtime websocket task handlers split by task domain
+    kind: arch
+    symptom: |
+      realtimeWsHandlers combines session lifecycle and stream handling with task update, worktree
+      teardown, and deletion events. The task group carries cross-node filtering, live detail updates,
+      workspace refresh, and user-facing teardown results, making event registration difficult to audit.
+    why: |
+      Give the cohesive task event group one owner and remove its task-only fields from the session
+      websocket handler context without changing dispatch order or event behavior.
+    boundary: |
+      task.updated, task.finish_teardown, and task.deleted move verbatim into
+      createRealtimeWsTaskHandlers(ctx), spread at the same event table position after
+      session.user_message and before file.changed.batch. Only task-specific context fields are
+      removed from the parent destructuring; App.tsx and event semantics remain unchanged.
+    tests:
+      - web/tests/realtime-ws-task-handlers-split.test.mjs
+      - web/tests/task-card-parity.test.mjs
+      - web/tests/worktree-finish.test.mjs
+      - web/tests/workspace-realtime-freshness.test.mjs
+      - web/tests/source-map.test.mjs
+    files:
+      - web/src/app/realtimeWsHandlers.ts
+      - web/src/app/realtimeWsTaskHandlers.ts
+      - web/tests/realtime-ws-task-handlers-split.test.mjs
+      - web/tests/source-map.mjs
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/app/realtimeWsTaskHandlers.ts:export function createRealtimeWsTaskHandlers
+      - web/tests/realtime-ws-task-handlers-split.test.mjs:websocket handler factory stays below the frontend hard line

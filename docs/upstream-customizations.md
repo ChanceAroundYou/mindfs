@@ -2949,3 +2949,10 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **根因与边界**：原 `open_dir` callback body 搬到 `createOpenDirectoryAction`，接受既有完整参数面及 `isMobile`/翻译函数；父 hook 仍在原 `useMemo` 内创建它。打开文件 callback、参数契约、memo 依赖、根/节点路由、树缓存、绑定会话恢复和失败处理保持。
 - **针对性测试**：`action-handlers-split.test.mjs` → 守住物理父 hook 行数、参数兼容、memo 创建点、ref 自递归与失败状态；`main-content-view-memory.test.mjs` → 守住视图内存行为；`source-map.test.mjs` → 守住逻辑源码映射。
 - **边界**：父 hook 实测 611→409 行，frontend 硬线 TODO 剩余 6 项；不改 `App.tsx`、打开文件行为或目录导航语义。
+
+### G-DQ Realtime WS 按任务事件域拆分
+
+- **可见症状**：`realtimeWsHandlers` 同时处理 session 流与任务更新、worktree 清场、删除事件。任务组还包含跨节点过滤、详情增量、工作台刷新和收尾结果反馈，事件注册表难单独审阅。
+- **根因与边界**：`task.updated`、`task.finish_teardown`、`task.deleted` 原处理体归 `createRealtimeWsTaskHandlers(ctx)`，在原事件表位置（`session.user_message` 后、`file.changed.batch` 前）展开；父工厂只移除任务专属 context 解构字段。
+- **针对性测试**：`realtime-ws-task-handlers-split.test.mjs` → 守住父工厂物理行数、事件注册位置、节点隔离、工作台刷新和详情清理；`task-card-parity.test.mjs`、`worktree-finish.test.mjs`、`workspace-realtime-freshness.test.mjs` → 守住任务/收尾/实时行为；`source-map.test.mjs` → 守住逻辑源码映射。
+- **边界**：父 hook 实测 570→426 行，frontend 硬线 TODO 剩余 5 项；不改 `App.tsx`、WS 派发线程或业务行为。

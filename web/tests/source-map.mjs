@@ -60,10 +60,15 @@ export const MODULES = {
   // useRealtimeEvents 拆分：34 个 WS 事件处理器（957 行）→ realtimeWsHandlers.ts。
   // 它们都关闭在 hook 的 state/ref/ctx 上，靠 createRealtimeWsHandlers(ctx, local)
   // 把 10 个局部函数当参数传进去；hook 侧只剩「派发」这一件事。
+  "src/app/realtimeWsHandlers.ts": [
+    "src/app/realtimeWsHandlers.ts",
+    "src/app/realtimeWsTaskHandlers.ts",
+  ],
   "src/app/useRealtimeEvents.ts": [
     "src/app/useRealtimeEvents.ts",
     "src/app/useRealtimeEventsContext.ts",
     "src/app/realtimeWsHandlers.ts",
+    "src/app/realtimeWsTaskHandlers.ts",
     "src/app/realtimeWsFileChangedHandlers.ts",
     "src/app/realtimeWsSlashCommandHandlers.ts",
     "src/app/realtimeWsSessionStream.ts",
