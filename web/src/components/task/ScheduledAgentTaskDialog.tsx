@@ -1,22 +1,15 @@
 import React from "react";
-import { AgentIcon } from "../agent/AgentIcon";
-import { AsyncStateMessage } from "../common/AsyncStateMessage";
 import { AgentSelector } from "../agent/AgentSelector";
-import { renderToolIcon } from "../stream/toolCallIcons";
 import { has1MSuffix, resolveEffortOnSwitch, resolveLongContextOnSwitch, strip1MSuffix, with1MSuffix } from "../action/modelUtils";
 import { useI18n } from "../../i18n/index";
 import {
   CronEditor,
-  DeleteIcon,
-  RunNowIcon,
-  StopIcon,
   fieldStyle,
-  taskIconButtonStyle,
 } from "./ScheduledCronEditor";
-import { formatTime } from "./scheduledTaskUtils";
 import { useScheduledAgentTaskDialog } from "./useScheduledAgentTaskDialog";
 import { menuButtonStyle, strategyButtonStyle } from "../../shared/styles";
-import type { AgentStatus } from "../../services/agents";
+import type { AgentStatus } from "../../shared/agentTypes";
+import { ScheduledAgentTaskList } from "./ScheduledAgentTaskList";
 
 type Props = {
   open: boolean;
@@ -52,212 +45,6 @@ export function ScheduledAgentTaskDialog({
   } = useScheduledAgentTaskDialog({ open, rootId, agents });
 
   if (!open) return null;
-
-  const renderList = () => (
-    <>
-      {loading ? (
-        <AsyncStateMessage
-          kind="loading"
-          style={{
-            border: "1px solid var(--border-color)",
-            borderRadius: 8,
-            padding: 24,
-            color: "var(--text-secondary)",
-            textAlign: "center",
-            fontSize: 13,
-          }}
-        >
-          {t("common.loading")}
-        </AsyncStateMessage>
-      ) : tasks.length === 0 ? (
-        <AsyncStateMessage
-          kind="empty"
-          style={{
-            border: "1px dashed var(--border-color)",
-            borderRadius: 8,
-            padding: 24,
-            color: "var(--text-secondary)",
-            textAlign: "center",
-            fontSize: 13,
-          }}
-        >
-          {t("scheduled.empty")}
-        </AsyncStateMessage>
-      ) : (
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: 8,
-            maxHeight: "56vh",
-            overflow: "auto",
-          }}
-        >
-          {tasks.map((task) => (
-            <div
-              key={task.id}
-              style={{
-                border: "1px solid var(--border-color)",
-                borderRadius: 8,
-                padding: 12,
-                background: "var(--content-bg, #fff)",
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  gap: 12,
-                }}
-              >
-                <button
-                  type="button"
-                  onClick={() => startEdit(task)}
-                  style={{
-                    border: "none",
-                    background: "transparent",
-                    padding: 0,
-                    color: "var(--text-primary)",
-                    textAlign: "left",
-                    cursor: "pointer",
-                    minWidth: 0,
-                    flex: 1,
-                  }}
-                >
-                  <div
-                    style={{
-                      fontSize: 14,
-                      fontWeight: 700,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {task.name || t("scheduled.unnamedTask")}
-                  </div>
-                </button>
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 4,
-                    flexShrink: 0,
-                  }}
-                >
-                  <button
-                    type="button"
-                    title={t("scheduled.stop")}
-                    aria-label={t("scheduled.stopTask")}
-                    disabled={!task.enabled}
-                    onClick={() => {
-                      if (task.enabled) void toggleEnabled(task);
-                    }}
-                    style={{
-                      ...taskIconButtonStyle,
-                      color: task.enabled ? "#dc2626" : "var(--text-secondary)",
-                      opacity: task.enabled ? 1 : 0.5,
-                      cursor: task.enabled ? "pointer" : "not-allowed",
-                    }}
-                  >
-                    <StopIcon />
-                  </button>
-                  <button
-                    type="button"
-                    title={t("scheduled.runNow")}
-                    aria-label={t("scheduled.runNowTask")}
-                    disabled={runningTaskId === task.id}
-                    onClick={() => void runNow(task)}
-                    style={{
-                      ...taskIconButtonStyle,
-                      color: "var(--accent-color)",
-                      opacity: runningTaskId === task.id ? 0.6 : 1,
-                    }}
-                  >
-                    <RunNowIcon />
-                  </button>
-                  <button
-                    type="button"
-                    title={t("common.edit")}
-                    aria-label={t("scheduled.editTask")}
-                    onClick={() => startEdit(task)}
-                    style={taskIconButtonStyle}
-                  >
-                    {renderToolIcon("edit")}
-                  </button>
-                  <button
-                    type="button"
-                    title={t("common.delete")}
-                    aria-label={t("scheduled.deleteTask")}
-                    onClick={() => void remove(task)}
-                    style={{ ...taskIconButtonStyle, color: "#dc2626" }}
-                  >
-                    <DeleteIcon />
-                  </button>
-                </div>
-              </div>
-              <div
-                style={{
-                  marginTop: 6,
-                  display: "grid",
-                  gridTemplateColumns: "1fr 1fr",
-                  gap: 8,
-                  fontSize: 12,
-                  color: "var(--text-secondary)",
-                }}
-              >
-                <span
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 8,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  <span>{task.enabled ? t("scheduled.enabled") : t("scheduled.disabled")}</span>
-                  <span>{task.task_cron}</span>
-                  {task.new_session_cron ? (
-                    <span>{t("scheduled.newSessionCron", { cron: task.new_session_cron })}</span>
-                  ) : null}
-                  {task.running ? (
-                    <span style={{ color: "var(--accent-color)" }}>{t("scheduled.running")}</span>
-                  ) : null}
-                </span>
-                <span
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 4,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  <AgentIcon agentName={task.agent} size={14} />
-                  <span>{task.agent}</span>
-                </span>
-              </div>
-              <div
-                style={{
-                  marginTop: 10,
-                  display: "grid",
-                  gridTemplateColumns: "1fr 1fr",
-                  gap: 8,
-                  fontSize: 12,
-                  color: "var(--text-secondary)",
-                }}
-              >
-                <span>{t("scheduled.lastRun", { time: formatTime(task.last_run_at, locale, t("scheduled.neverRun")) })}</span>
-                <span>{t("scheduled.nextRun", { time: formatTime(task.next_run_at, locale, t("scheduled.neverRun")) })}</span>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </>
-  );
 
   const renderForm = () => (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -564,7 +351,18 @@ export function ScheduledAgentTaskDialog({
               {error}
             </div>
           ) : null}
-          {view === "list" ? renderList() : renderForm()}
+          {view === "list" ? (
+            <ScheduledAgentTaskList
+              tasks={tasks}
+              loading={loading}
+              runningTaskId={runningTaskId}
+              locale={locale}
+              onToggleEnabled={(task) => { if (task.enabled) void toggleEnabled(task); }}
+              onRunNow={(task) => { void runNow(task); }}
+              onEdit={startEdit}
+              onDelete={(task) => { void remove(task); }}
+            />
+          ) : renderForm()}
         </div>
       </div>
     </div>

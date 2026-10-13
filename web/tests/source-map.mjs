@@ -322,7 +322,10 @@ export const MODULES = {
   "src/components/AssociationView.tsx": ["src/components/session/AssociationView.tsx"],
   "src/components/TaskBoardView.tsx": ["src/components/task/TaskBoardView.tsx"],
   "src/components/TaskDetailPanel.tsx": ["src/components/task/TaskDetailPanel.tsx"],
-  "src/components/TaskCardRows.tsx": ["src/components/task/TaskCardRows.tsx"],
+  "src/components/TaskCardRows.tsx": [
+    "src/components/task/TaskCardRows.tsx",
+    "src/components/task/TaskCardFinishButton.tsx",
+  ],
   // main 新增后按领域归入 common/（TaskCardText 已被 main 当死代码删除）
   "src/components/FloatingScroll.tsx": ["src/components/common/FloatingScroll.tsx"],
   "src/components/TaskTemplateDialog.tsx": ["src/components/task/TaskTemplateDialog.tsx"],
@@ -330,6 +333,7 @@ export const MODULES = {
   "src/components/StageOptionsBar.tsx": ["src/components/task/StageOptionsBar.tsx"],
   "src/components/ScheduledAgentTaskDialog.tsx": [
     "src/components/task/ScheduledAgentTaskDialog.tsx",
+    "src/components/task/ScheduledAgentTaskList.tsx",
     "src/components/task/ScheduledCronEditor.tsx",
   ],
   "src/components/WorktreeBranchSelector.tsx": ["src/components/task/WorktreeBranchSelector.tsx"],

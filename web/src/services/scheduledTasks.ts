@@ -2,30 +2,8 @@ import { appPath, appendQuery } from "./net/base";
 import { getRootNodeId } from "./net/rootNode";
 import { protectedJSON } from "./net/api";
 
-export type ScheduledAgentTask = {
-  id: string;
-  root_id: string;
-  name: string;
-  enabled: boolean;
-  task_cron: string;
-  agent: string;
-  model?: string;
-  mode?: string;
-  effort?: string;
-  fast_service?: "" | "on" | "off";
-  prompt: string;
-  new_session_cron?: string;
-  session_key?: string;
-  last_run_at?: string;
-  last_success_at?: string;
-  last_error?: string;
-  last_session_reset_at?: string;
-  next_run_at?: string;
-  next_new_session_at?: string;
-  running?: boolean;
-  created_at: string;
-  updated_at: string;
-};
+import type { ScheduledAgentTask } from "../shared/scheduledTaskTypes";
+export type { ScheduledAgentTask } from "../shared/scheduledTaskTypes";
 
 export type ScheduledAgentTaskInput = {
   root_id: string;

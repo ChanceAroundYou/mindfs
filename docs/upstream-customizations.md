@@ -235,6 +235,7 @@
 | G-BL | 看板新建任务的 worktree 节点路由 | 修复 | 见 §3.2 | worktree 能力、分支查询与任务创建必须针对同一 nodeId::rootId |
 | G-CM | TaskBoardView 契约与任务呈现资源归位 | 架构 | 见 §3.2 | shared contracts + task presenter；app 旧路径只留兼容 facade |
 | G-CN | 前端 Vitest 运行链与复用件覆盖 | 测试 | 见 §3.2 | 新测试走 Vitest；旧 Node 源码守卫继续保留 preload hook |
+| G-CO | 前端 task view 硬线拆分 | 架构 | 见 §3.2 | scheduled-task 列表与卡片收尾按钮保持独立组件及原交互 |
 
 > **G-D 已并入 G-F，G-M 已并入 G-AI**（改动面完全重合、无独立测试可守，单列只会制造空组）。
 
@@ -2749,3 +2750,10 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **根因与边界**：安装与锁定 Vitest 2.1.9（兼容当前 Vite 5），`npm test` 先运行 Vitest `.test.ts`，再运行带 source-map 与 TS preload 的旧 Node `.test.mjs`；`deploy-all.sh` 统一调用 `npm test`。新复用测试覆盖模型筛选纯逻辑与 common 图标可访问语义。
 - **针对性测试**：Vitest `web/tests/reusable-primitives.test.ts`；Node `web/tests/deploy-web-assets.test.mjs` 校验部署统一入口。
 - **边界**：不改既有测试断言或测试行为；120 个旧 `.mjs` 测试继续由兼容 lane 执行，后续触及时逐步迁移。
+
+### G-CO 前端 task view 硬线拆分
+
+- **可见症状**：定时 Agent 对话框和任务卡超过前端 500 行硬线，列表状态消息、worktree 收尾按钮与父视图职责混在一起。
+- **根因与边界**：定时任务列表抽为 `ScheduledAgentTaskList`，收尾按钮抽为 `TaskCardFinishButton`；对话框状态与卡片动作判据仍由原父组件持有。`ScheduledAgentTask` 类型归 shared，service 继续兼容再导出。
+- **针对性测试**：`web/tests/async-state-message.test.mjs` → 确认定时任务列表继续使用 loading/empty/error 语义；`web/tests/task-card-parity.test.mjs` → 确认两个任务卡分支仍显示同一收尾动作。
+- **边界**：保持原有加载/空态优先级、收尾按钮动作与渲染顺序；父组件分别为 370 与 470 行。

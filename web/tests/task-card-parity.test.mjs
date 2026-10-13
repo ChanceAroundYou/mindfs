@@ -16,6 +16,7 @@ import { readFileSync } from "node:fs";
 // 闭合：那条保证「数据够」，这条保证「两侧用得一样」。
 
 const cardRows = readFileSync(new URL("../src/components/task/TaskCardRows.tsx", import.meta.url), "utf8");
+const finishButton = readFileSync(new URL("../src/components/task/TaskCardFinishButton.tsx", import.meta.url), "utf8");
 const board = readFileSync(new URL("../src/components/task/TaskBoardView.tsx", import.meta.url), "utf8");
 const taskRow = readFileSync(new URL("../src/components/workspace/WorkspaceTaskRow.tsx", import.meta.url), "utf8");
 const types = readFileSync(new URL("../src/shared/taskTypes.ts", import.meta.url), "utf8");
@@ -76,21 +77,22 @@ assert.match(
 // 用户原话：「只要还有 worktree 就必须有收尾键」。收尾键因此不能住在 !terminal
 // 分支里 —— 它现在由 FinishWorktreeButton 在两个分支各渲染一次。
 assert.match(
-  cardRows,
-  /function FinishWorktreeButton\(/,
+  finishButton,
+  /function TaskCardFinishButton\(/,
   "the finish button is extracted so both branches can render it without duplicating markup",
 );
 assert.equal(
-  (cardRows.match(/canFinishWorktree \? <FinishWorktreeButton/g) || []).length,
+  (cardRows.match(/canFinishWorktree \? <TaskCardFinishButton/g) || []).length,
   2,
   "the finish button must render in BOTH the non-terminal and the terminal branch",
 );
 // 终态分支里删除键仍在收尾键之后 —— 顺序反了会让「收尾」被挤出可视区。
 assert.match(
   cardRows,
-  /canFinishWorktree \? <FinishWorktreeButton[^>]*\/> : null\}\s*<button[\s\S]{0,400}?onMove\(task, "delete-task"\)/,
+  /canFinishWorktree \? <TaskCardFinishButton[^>]*\/> : null\}\s*<button[\s\S]{0,400}?onMove\(task, "delete-task"\)/,
   "in the terminal branch the finish key comes before delete",
 );
+assert.match(finishButton, /onMove\(task, "finish-worktree"\)/, "the extracted finish button preserves its action");
 
 // ── 6. 投影必须带上卡片读的每个 aux 标记 ────────────────────────────────────
 // 这是「看板有小图标、工作台没有」的根因：投影丢了 aux_flags。

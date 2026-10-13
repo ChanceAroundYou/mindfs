@@ -5,8 +5,8 @@ import {
   fetchScheduledAgentTasks,
   runScheduledAgentTask,
   updateScheduledAgentTask,
-  type ScheduledAgentTask,
 } from "../../services/scheduledTasks";
+import type { ScheduledAgentTask } from "../../shared/scheduledTaskTypes";
 import { useI18n } from "../../i18n/index";
 import { confirmDialog } from "../../services/dialog";
 import { emptyForm, taskToForm, type FormState } from "./scheduledTaskUtils";

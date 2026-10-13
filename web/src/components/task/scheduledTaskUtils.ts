@@ -1,5 +1,5 @@
 import type { Locale } from "../../i18n/index";
-import type { ScheduledAgentTask } from "../../services/scheduledTasks";
+import type { ScheduledAgentTask } from "../../shared/scheduledTaskTypes";
 
 export type FormState = {
   name: string;

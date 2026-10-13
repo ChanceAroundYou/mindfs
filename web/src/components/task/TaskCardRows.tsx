@@ -5,16 +5,16 @@ import { AgentIcon } from "../agent/AgentIcon";
 import { ModeIcon } from "../agent/ModeIcon";
 import { NoWorktreeIcon } from "../common/NoWorktreeIcon";
 import { renderToolIcon } from "../stream/toolCallIcons";
-import type { KanbanTask } from "../../services/tasks";
+import type { KanbanTask } from "../../shared/taskTypes";
 import type { SessionPresentationSummary } from "../../shared/sessionPresentationTypes";
-import type { TaskSessionErrorDialog } from "./taskBoardTypes";
-export type { TaskSessionErrorDialog } from "./taskBoardTypes";
+import type { TaskCardAction, TaskSessionErrorDialog } from "./taskBoardTypes";
+export type { TaskCardAction, TaskSessionErrorDialog } from "./taskBoardTypes";
+import { TaskCardFinishButton } from "./TaskCardFinishButton";
 import {
   DeleteIcon,
   RunNowIcon,
   TaskCancelIcon,
   TaskCompleteIcon,
-  TaskFinishWorktreeIcon,
   TaskPauseIcon,
   TaskPlanAuxIcon,
   TaskResumeIcon,
@@ -25,12 +25,6 @@ import {
   taskWorktreeTagStyle,
   type WorktreeTagState,
 } from "./taskIcons";
-
-/** 卡片能做的状态迁移。cancel 也在这儿：未结束的任务只剩这一个出口。 */
-// delete-task 不是状态迁移，是把卡片从板上拿走（服务端只删卡片，不碰 worktree / 会话）。
-// finish-worktree 也不是状态迁移：它把分支合回主干并拆掉 worktree（wt-finish 的
-// 服务端那一半），跑完之后任务本身的状态不变。
-export type TaskCardAction = "run-now" | "pause" | "resume" | "complete" | "cancel" | "delete-task" | "finish-worktree";
 
 /**
  * 「· + 内容」合成一个 flex item。
@@ -49,34 +43,6 @@ const taskMetaPairStyle: React.CSSProperties = {
   minWidth: 0,
 };
 
-/**
- * 收尾键。看板卡与工作台卡**两处都要它**（未终态 + 终态），抽成一个组件免得
- * 抄两遍 —— 抄两遍的话，改一处忘另一处就是「两边卡片不一致」的下一个来源。
- *
- * 放在执行键右边：两者是任务生命周期的两端（继续跑 / 跑完收掉），挨着才看得出
- * 这是一对。**收尾中也照样给**（2026-10-05）：那正是「agent 那半已经做完、只差
- * 机械清场」的时刻，后端会直接清场；换成转圈等于把唯一的出路藏起来。
- *
- * **终态也给**（2026-10-07）：任务跑完但 worktree 还留着没收，那正是收尾唯一
- * 有意义的时刻；服务端 reviveTerminalTask 会把它拉回 waiting_user 再让收尾段跑。
- */
-function FinishWorktreeButton({ task, onMove }: { task: KanbanTask; onMove: (task: KanbanTask, action: TaskCardAction) => void }) {
-  const { t } = useI18n();
-  return (
-    <button
-      type="button"
-      title={t("task.finishWorktree")}
-      aria-label={t("task.finishWorktree")}
-      onClick={(event) => {
-        event.stopPropagation();
-        onMove(task, "finish-worktree");
-      }}
-      style={taskCardIconButtonStyle("success")}
-    >
-      <TaskFinishWorktreeIcon />
-    </button>
-  );
-}
 
 export type TaskCardRowsProps = {
   task: KanbanTask;
@@ -421,7 +387,7 @@ export function TaskCardRows({
                   <RunNowIcon />
                 </button>
               ) : null}
-              {canFinishWorktree ? <FinishWorktreeButton task={task} onMove={onMove} /> : null}
+              {canFinishWorktree ? <TaskCardFinishButton task={task} onMove={onMove} /> : null}
               {canPause ? (
                 <button
                   type="button"
@@ -482,7 +448,7 @@ export function TaskCardRows({
             </>
           ) : (
             <>
-              {canFinishWorktree ? <FinishWorktreeButton task={task} onMove={onMove} /> : null}
+              {canFinishWorktree ? <TaskCardFinishButton task={task} onMove={onMove} /> : null}
               <button
                 type="button"
                 title={t("task.deleteTask")}

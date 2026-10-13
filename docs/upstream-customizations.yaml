@@ -1647,7 +1647,7 @@ groups:
       - server/internal/kanban/worktree_finish.go:type FinishWorktreeUserChanges
       - server/internal/api/http_tasks_finish_teardown.go:UserChanges []string
       - server/internal/gitview/worktree_finish.go:type MainCheckoutDirtyError
-      - web/src/components/task/TaskCardRows.tsx:function FinishWorktreeButton
+      - web/src/components/task/TaskCardFinishButton.tsx:function TaskCardFinishButton
       - web/src/components/task/TaskCardRows.tsx:const canComplete = !terminal && !stageRunning && !showAdvance;
       - web/src/components/task/useTaskDetailPanel.ts:const canCompleteTask = !terminal && !stageRunningNow && !canRunStageNow;
       - web/src/components/workspace/WorkspaceTaskRow.tsx:hideSessionError={task.status === "fail"}
@@ -3282,7 +3282,7 @@ groups:
       - docs/upstream-customizations.yaml
       - web/tests/agent-docs.test.mjs
     anchors:
-      - docs/agent/rules/frontend/TODO.md:硬线 27 个
+      - docs/agent/rules/frontend/TODO.md:硬线 25 个
       - docs/plans/README.md:Rule completion rollout
       - web/tests/agent-docs.test.mjs:every plan is classified in the sole plans index
   - id: G-BZ
@@ -3779,3 +3779,43 @@ groups:
       - web/vitest.config.ts:include
       - web/tests/reusable-primitives.test.ts:reusable frontend primitives
       - scripts/deploy-all.sh:cd web && npm test
+
+  - id: G-CO
+    title: Frontend task view hardline splits
+    kind: arch
+    symptom: |
+      ScheduledAgentTaskDialog and TaskCardRows exceeded the frontend 500-line hardline, mixing
+      list/button presentation into parent views and making changes harder to review safely.
+    why: |
+      Keep task-domain views within the repository's size and responsibility rules while preserving
+      the existing behavior and compatibility exports used by services and callers.
+    boundary: |
+      Extract only the scheduled-task list and worktree finish button; keep dialog state and task-card
+      action decisions in their current owners. Shared scheduled-task and task-card contracts live in
+      shared/task domain modules, with old service/component type paths re-exported where needed.
+    tests:
+      - web/tests/async-state-message.test.mjs
+      - web/tests/task-card-parity.test.mjs
+      - web/tests/source-map.mjs
+    files:
+      - web/src/components/task/ScheduledAgentTaskDialog.tsx
+      - web/src/components/task/ScheduledAgentTaskList.tsx
+      - web/src/components/task/TaskCardRows.tsx
+      - web/src/components/task/TaskCardFinishButton.tsx
+      - web/src/components/task/scheduledTaskUtils.ts
+      - web/src/components/task/taskBoardTypes.ts
+      - web/src/components/task/useScheduledAgentTaskDialog.ts
+      - web/src/services/scheduledTasks.ts
+      - web/src/shared/scheduledTaskTypes.ts
+      - web/tests/async-state-message.test.mjs
+      - web/tests/task-card-parity.test.mjs
+      - web/tests/source-map.mjs
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/components/task/ScheduledAgentTaskList.tsx:ScheduledAgentTaskList
+      - web/src/components/task/TaskCardFinishButton.tsx:TaskCardFinishButton
+      - web/tests/task-card-parity.test.mjs:the finish button is extracted

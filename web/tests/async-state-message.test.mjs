@@ -18,7 +18,7 @@ test("common async state component is reused in three list views", () => {
   for (const file of [
     "src/components/root/RootWorktreeContentView.tsx",
     "src/components/file/ProjectAddPopover.tsx",
-    "src/components/task/ScheduledAgentTaskDialog.tsx",
+    "src/components/task/ScheduledAgentTaskList.tsx",
   ]) {
     const source = read(file);
     assert.match(source, /AsyncStateMessage/);
