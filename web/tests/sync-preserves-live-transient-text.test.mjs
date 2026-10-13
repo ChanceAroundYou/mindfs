@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
+const app = readFileSync(new URL("../src/app/useSessionSyncAction.ts", import.meta.url), "utf8");
 const start = app.indexOf("const localTransientTail = (() => {");
 const end = app.indexOf("const normalized = {", start);
 const body = app.slice(start, end);

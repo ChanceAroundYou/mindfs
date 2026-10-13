@@ -2907,3 +2907,10 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **根因与边界**：上述职责分别归 `useAppSessionListState`、`useAppSessionSelectionState`、`useAppResponsiveState`、`useAppRootScopeState`、`useAppTaskTemplateState`；父层保留各 hook 的原调用顺序与返回字段。
 - **针对性测试**：`web/tests/app-state-domains-split.test.mjs` → 守住各职责归属、hook 顺序、session 常量字面量、pin 初始化及任务候选接线；source-map 与命名测试验证拆分映射和文件约定。
 - **边界**：不改 `App.tsx` 或 session/task/root 行为；`useAppStateLayer` 实测 498 行，硬线 TODO 销项。
+
+### G-DK Session lifecycle 按动作职责拆分
+
+- **可见症状**：`useSessionLifecycle` 同时处理会话恢复、列表分页/缓存、重命名和手动同步，超过前端 500 行硬线；手动同步若漏接缓存中的瞬时尾部，会让 ask 卡或正在输出的正文在点击同步后消失。
+- **根因与边界**：列表头同步、根会话列表与子会话分页归 `useSessionListLoading`；全量手动同步及瞬时尾部去重归 `useSessionSyncAction`。两个 hook 在旧 callback 组合位置调用，`useSessionLifecycle` 只保留恢复、选择和重命名编排。
+- **针对性测试**：`web/tests/session-lifecycle-split.test.mjs` → 守住父 hook 物理行数、组合顺序、子会话 node 标记与瞬时尾部归属；`session-list-merge.test.mjs`、`session-load-storm.test.mjs`、`sync-preserves-pending-ask-card.test.mjs`、`sync-preserves-live-transient-text.test.mjs` → 守住节点归并、并发列表读取、ask 卡与流式正文续接。
+- **边界**：不改 `App.tsx`、请求路由、列表合并、窗口恢复或同步时的去重规则；父 hook 实测 740→413 行。

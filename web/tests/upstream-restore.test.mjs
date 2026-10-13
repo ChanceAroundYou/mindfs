@@ -96,6 +96,7 @@ assert.doesNotMatch(claudeSession, /claudeModelSupportsEffortAt/, "5941a36 shoul
 // 瞬时尾巴再照单应用。它天然幂等，因此**不需要**任何客户端↔服务端的进度同步。
 // 下面这几条钉的就是这个新契约 —— 谁想把游标加回来，先读 docs/session-streaming-rework.md。
 const sessionLifecycle = readFileSync(new URL("../src/app/useSessionLifecycle.ts", import.meta.url), "utf8");
+const sessionListLoading = readFileSync(new URL("../src/app/useSessionListLoading.ts", import.meta.url), "utf8");
 assert.match(sessionLifecycle, /cachedBeforeSync/, "d36cc53 App restore should capture cachedBeforeSync");
 assert.match(streamHub, /payload\["reset"\] = true/, "挂载会话的快照帧必须带 reset:true，客户端据此清空瞬时尾巴");
 assert.match(streamHub, /buildSessionStreamBatchResponse\(rootID, sessionKey, step\.events, true\)/, "挂载首帧 = 快照（reset）");
@@ -119,15 +120,15 @@ assert.match(sessionDomainSvc, /export function composeLoadedExchanges/, "the lo
 assert.match(streamCache, /replaySnapshot === true/, "d36cc53 App should branch on replaySnapshot when coalescing userShell");
 
 // 8e7d857 — kanban/session-list cache loading (keep local nodeId/scopedRootKey + context_window)
-assert.match(sessionLifecycle, /getCachedSessionList/, "8e7d857 App should prefetch getCachedSessionList");
-assert.match(sessionLifecycle, /saveCachedSessionList/, "8e7d857 App should persist saveCachedSessionList");
+assert.match(sessionListLoading, /getCachedSessionList/, "8e7d857 App should prefetch getCachedSessionList");
+assert.match(sessionListLoading, /saveCachedSessionList/, "8e7d857 App should persist saveCachedSessionList");
 const multiProjectSessions = readFileSync(new URL("../src/app/useMultiProjectSessions.ts", import.meta.url), "utf8");
 assert.doesNotMatch(multiProjectSessions, /getCachedMultiRootSessionList|saveCachedMultiRootSessionList/, "multi-project lists must not render or persist a stale IndexedDB snapshot");
 assert.doesNotMatch(sessionSvc, /multiRootSessionListCacheKey|getCachedMultiRootSessionList|saveCachedMultiRootSessionList/, "retire the unused multi-project list cache API and key");
 const taskBoard = readFileSync(new URL("../src/app/useTaskBoard.ts", import.meta.url), "utf8");
 assert.match(taskBoard, /Promise\.all\(\[[\s\S]*?fetchTaskDetails\(targetRoot,[\s\S]*?(?:getNodeIdForRoot|resolveNodeId)\(targetRoot\)\)/, "8e7d857 loadKanbanTasks should fetch in parallel with nodeId");
-assert.match(sessionLifecycle, /const shouldReplace = options\?\.replace \|\|/, "8e7d857 App should share shouldReplace gate");
-assert.match(sessionLifecycle, /void saveCachedSessionList\(rootID, payload(?:,\s*[^)]+)?\);/, "8e7d857 App should save session-list after replace with context_window preserved");
+assert.match(sessionListLoading, /const shouldReplace = options\?\.replace \|\|/, "8e7d857 App should share shouldReplace gate");
+assert.match(sessionListLoading, /void saveCachedSessionList\(rootID, payload(?:,\s*[^)]+)?\);/, "8e7d857 App should save session-list after replace with context_window preserved");
 
 // single assertion for fileService raw 404 + blob dedup sanity (from 33c190/466b21e overlap covers 633c190 zone too)
 const fileCache = readFileSync(new URL("../src/services/file/cache.ts", import.meta.url), "utf8");

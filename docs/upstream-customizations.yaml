@@ -3282,7 +3282,7 @@ groups:
       - docs/upstream-customizations.yaml
       - web/tests/agent-docs.test.mjs
     anchors:
-      - docs/agent/rules/frontend/TODO.md:硬线 12 个
+      - docs/agent/rules/frontend/TODO.md:硬线 11 个
       - docs/plans/README.md:Rule completion rollout
       - web/tests/agent-docs.test.mjs:every plan is classified in the sole plans index
   - id: G-BZ
@@ -4449,3 +4449,44 @@ groups:
     anchors:
       - web/src/app/useAppRootScopeState.ts:useAppRootScopeState
       - web/tests/app-state-domains-split.test.mjs:delegates session, responsive, root-scope, and task-template domains
+
+  - id: G-DK
+    title: Session lifecycle separated by action ownership
+    kind: arch
+    symptom: |
+      useSessionLifecycle exceeds the frontend hard line while restore, list paging, rename, sync,
+      and selection flows share a single hook body; preserving transient exchanges during sync is
+      a visible chat continuity requirement.
+    why: |
+      Split list cache/paging and manual sync into cohesive hooks so each behavior has an explicit
+      owner and the lifecycle coordinator remains reviewable below the hard line.
+    boundary: |
+      useSessionListLoading owns list header synchronization, root list loading/cache, and child paging.
+      useSessionSyncAction owns full sync and reattaches only transient cached exchanges not present in
+      the synced snapshot. Both hooks are called at the former callback positions. App.tsx is unchanged.
+    tests:
+      - web/tests/session-lifecycle-split.test.mjs
+      - web/tests/session-list-merge.test.mjs
+      - web/tests/session-load-storm.test.mjs
+      - web/tests/sync-preserves-pending-ask-card.test.mjs
+      - web/tests/sync-preserves-live-transient-text.test.mjs
+      - web/tests/upstream-restore.test.mjs
+    files:
+      - web/src/app/useSessionLifecycle.ts
+      - web/src/app/useSessionListLoading.ts
+      - web/src/app/useSessionSyncAction.ts
+      - web/tests/session-lifecycle-split.test.mjs
+      - web/tests/session-list-merge.test.mjs
+      - web/tests/sync-preserves-pending-ask-card.test.mjs
+      - web/tests/sync-preserves-live-transient-text.test.mjs
+      - web/tests/upstream-restore.test.mjs
+      - web/tests/source-map.mjs
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/app/useSessionListLoading.ts:useSessionListLoading
+      - web/src/app/useSessionSyncAction.ts:useSessionSyncAction
+      - web/tests/session-lifecycle-split.test.mjs:delegates sync and list loading below the physical hard line

@@ -1,21 +1,14 @@
 /**
- * 会话生命周期与选择 —— A1a 簇（8 个单元，~900 行）。
- *
- * 覆盖：恢复活动会话、选中会话、同步/重命名会话、按根加载会话列表、
- * 绑定会话展示、子会话加载、列表项头同步。
- *
- * 同簇另有 3 个单元（handleDeleteSession / handleArchiveSession /
- * showBoundSessionOrRootDir）依赖 L3073 之后才声明的闭包，会破坏 TDZ 窗口，
- * 留待后续单独抽取。
- *
- * 做法：hook，参数面 UseSessionLifecycleParams 即完整契约；函数体逐字搬入
- * （保持源码正则断言可命中，配合 source-map 注册）。
+ * 会话生命周期协调器：恢复、选择和重命名留在本模块；列表加载与手动同步分别委托给同域 hook。
+ * `UseSessionLifecycleParams` 是 App session core 提供的跨 hook 契约。
  */
 import { useCallback, useMemo, type MutableRefObject, type Dispatch, type SetStateAction } from "react";
 import { CHILD_SESSION_PAGE_SIZE, useResponsive, waitForNextPaint } from "./appMisc";
 import { MainViewMode, URLState, buildDirectorySelectionKey } from "./appPath";
 import { Exchange, MultiProjectSessionGroup, SessionItem, WSStatus, toSessionItem } from "./appSession";
 import { useActionHandlers } from "./useActionHandlers";
+import { useSessionSyncAction } from "./useSessionSyncAction";
+import { useSessionListLoading } from "./useSessionListLoading";
 import { useCompletionSound } from "./useCompletionSound";
 import { useExternalSessionImport } from "./useExternalSessionImport";
 import { useGitActions } from "./useGitActions";
@@ -35,7 +28,7 @@ import type { UseSessionLifecycleParams } from "./useSessionLifecycleTypes";
 import { type GitDiffPayload } from "../services/git";
 import { reportError } from "../services/net/error";
 import { type FileEntry } from "../services/prefs/directorySort";
-import { type Session, SESSION_WINDOW_SIZE, clearWindowedView, composeLoadedExchanges, getCachedSession, getCachedSessionList, getSessionWindow, isTransientExchange, saveCachedSessionList, sessionService, setWindowedView, syncSession } from "../services/session";
+import { type Session, SESSION_WINDOW_SIZE, clearWindowedView, composeLoadedExchanges, getCachedSession, getCachedSessionList, getSessionWindow, saveCachedSessionList, sessionService, setWindowedView, syncSession } from "../services/session";
 import { mergeSessionItems } from "../services/session/sessionListMerge";
 
 export function useSessionLifecycle(params: UseSessionLifecycleParams) {
@@ -97,7 +90,6 @@ export function useSessionLifecycle(params: UseSessionLifecycleParams) {
     setSelectedSession,
     setSelectedSessionLoading,
     setSessions,
-    setSyncingSessionKeys,
     status,
     switchMainView,
   } = params;
@@ -301,193 +293,7 @@ export function useSessionLifecycle(params: UseSessionLifecycleParams) {
       rootSessionKey,
     ],
   );
-  const syncSessionHeaderFromListItem = useCallback(
-    (rootID: string, item: SessionItem | null | undefined) => {
-      const sessionKey = item?.key || item?.session_key || "";
-      const sessionName = typeof item?.name === "string" ? item.name : "";
-      if (!rootID || !sessionKey || !sessionName) return;
-
-      const cacheKey = rootSessionKey(rootID, sessionKey);
-      const cached = sessionCacheRef.current[cacheKey];
-      let changed = false;
-      if (cached && cached.name !== sessionName) {
-        sessionCacheRef.current[cacheKey] = {
-          ...(cached as any),
-          name: sessionName,
-          updated_at: item?.updated_at || cached.updated_at,
-        } as Session;
-        changed = true;
-      }
-
-      setSelectedSession((prev) => {
-        const prevKey = prev?.key || prev?.session_key;
-        const prevRoot =
-          (prev?.root_id as string | undefined) || currentRootIdRef.current;
-        if (!prev || prevKey !== sessionKey || prevRoot !== rootID) return prev;
-        if (prev.name === sessionName) return prev;
-        return {
-          ...(prev as any),
-          name: sessionName,
-          updated_at: item?.updated_at || prev.updated_at,
-        } as SessionItem;
-      });
-
-      const drawer = drawerSessionByRootRef.current[scopedRootKey(rootID)];
-      if (drawer?.key === sessionKey && drawer.name !== sessionName) {
-        setDrawerSessionForRoot(rootID, {
-          ...(drawer as any),
-          name: sessionName,
-          updated_at: item?.updated_at || drawer.updated_at,
-        } as Session);
-        changed = true;
-      }
-
-      if (changed) {
-        bumpCacheVersion();
-      }
-    },
-    [rootSessionKey, setDrawerSessionForRoot, bumpCacheVersion],
-  );
-  const loadSessionsForRoot = useCallback(
-    async (
-      rootID: string,
-      options?: {
-        beforeTime?: string;
-        afterTime?: string;
-        replace?: boolean;
-        force?: boolean;
-      },
-    ) => {
-      const _nid = getNodeIdForRoot(rootID);
-      const snapNode = String(_nid || "").trim();
-      const snapRoot = String(rootID || "").trim();
-      const seq = ++sessionListLoadSeqRef.current;
-      sessionListAbortRef.current?.abort();
-      const controller = new AbortController();
-      sessionListAbortRef.current = controller;
-      try {
-        const shouldReplace = options?.replace || (!options?.beforeTime && !options?.afterTime);
-        if (shouldReplace) {
-          const cached = await getCachedSessionList(rootID, _nid);
-          if (controller.signal.aborted || seq !== sessionListLoadSeqRef.current) { return; }
-          if ((String(getNodeIdForRoot(rootID) || "").trim()) !== snapNode) { return; }
-          if (cached && (options?.force || currentRootIdRef.current === rootID)) {
-            const cachedItems = [...cached.items, ...cached.pinnedItems]
-              .map((item) => toSessionItem(rootID, { ...(item as any), _nodeId: (item as any)._nodeId || snapNode }))
-              .filter((item): item is SessionItem => !!item);
-            setHasMoreSessions(cached.totalCount > cached.items.length);
-            setSessions(
-              applyPinSnapshot(
-                mergeSessionItems([], cachedItems),
-                rootID,
-              ),
-            );
-          }
-        }
-        const payload = await sessionService.fetchSessions(rootID, {
-          nodeId: _nid,
-          beforeTime: options?.beforeTime,
-          afterTime: options?.afterTime,
-        });
-        if (controller.signal.aborted || seq !== sessionListLoadSeqRef.current) { return; }
-        if ((String(getNodeIdForRoot(rootID) || "").trim()) !== snapNode) { return; }
-        if (String(currentRootIdRef.current || "").trim() !== snapRoot && !options?.force) { return; }
-        const next = [
-          ...payload.items,
-          ...payload.pinnedItems,
-        ].map((item) => toSessionItem(rootID, { ...(item as any), _nodeId: (item as any)._nodeId || snapNode })).filter((item): item is SessionItem => !!item);
-        // D3: 会话打标，便于切节点过滤与 key 隔离
-        if (!options?.force && currentRootIdRef.current !== rootID) return;
-        // 迟到覆盖已在 seq/snap 校验后再次用 currentRootId 守卫
-        if (!options?.force && String(currentRootIdRef.current || "").trim() !== snapRoot) return;
-        setHasMoreSessions(payload.totalCount > payload.items.length);
-        if (shouldReplace) {
-          // 服务端列表接口不含 context_window，全量重拉会把它清掉（WS message_done 已同步进本地列表）。
-          // 用 setSessions 回调继承旧列表的 context_window，避免徽标闪没。
-          setSessions((prev) => {
-            const prevContext = new Map(
-              prev
-                .filter((item) => item.context_window)
-                .map((item) => [
-                  String(item.key || item.session_key || ""),
-                  item.context_window,
-                ]),
-            );
-            const merged = mergeSessionItems([], next).map((item) => {
-              const itemKey = String(item.key || item.session_key || "");
-              const inherited = prevContext.get(itemKey);
-              return inherited
-                ? { ...item, context_window: inherited }
-                : item;
-            });
-            return applyPinSnapshot(merged, rootID);
-          });
-          void saveCachedSessionList(rootID, payload, _nid);
-          return;
-        }
-        setSessions((prev) =>
-          applyPinSnapshot(mergeSessionItems(prev, next), rootID),
-        );
-      } catch (err) {
-        if ((err as any)?.name === "AbortError") return;
-        if (controller.signal.aborted) return;
-        // 列表拉取失败不再静默：WS 抖动时列表会停留旧状态（2026-09-09 排查），
-        // 可见告警让用户知道需要手动同步；10s 冷却防断网期间刷屏。
-        if (Date.now() - listLoadErrorAtRef.current > 10000) {
-          listLoadErrorAtRef.current = Date.now();
-          reportError(
-            "session.list_load_failed",
-            String((err as Error)?.message || err),
-            { severity: "warning", recoverable: true },
-          );
-        }
-      }
-    },
-    [getNodeIdForRoot],
-  );
-  const loadChildSessionsForParent = useCallback(
-    async (
-      parent: SessionItem,
-      options?: { beforeTime?: string },
-    ): Promise<{ hasMore: boolean }> => {
-      const rootID =
-        (parent.root_id as string | undefined) || currentRootIdRef.current || "";
-      const parentKey = parent.key || parent.session_key || "";
-      if (!rootID || !parentKey) {
-        return { hasMore: false };
-      }
-      const childNodeId = (parent as any)?._nodeId || getNodeIdForRoot(rootID);
-      const items = await sessionService.fetchChildSessions(rootID, parentKey, {
-        beforeTime: options?.beforeTime,
-        limit: CHILD_SESSION_PAGE_SIZE,
-        nodeId: childNodeId,
-      });
-      // 响应体不带 _nodeId（那是前端传输级打标），必须在这里补：mergeSessionItems
-      // 按 `_nodeId::key` 归并，漏了会让这批子会话归到 `::key` 而既有条目是 `local::key`，
-      // 并存成一整批重复的 React key；重复 key 会让收起子会话时留下孤儿 DOM
-      // （实测展开 131 行只收到 55 行，且这批重复永久留在分组里）。
-      const next = items
-        .map((item) => toSessionItem(rootID, { ...(item as any), _nodeId: childNodeId }))
-        .filter((item): item is SessionItem => !!item);
-      if (currentRootIdRef.current === rootID && next.length > 0) {
-        setSessions((prev) => mergeSessionItems(prev, next));
-      }
-      if (next.length > 0) {
-        setMultiProjectSessionGroups((prev) =>
-          applyPendingToMultiProjectGroups(
-            prev.map((group) =>
-              group.rootId === rootID && (group as any)._nodeId === (parent as any)?._nodeId
-                ? { ...group, sessions: mergeSessionItems(group.sessions, next) }
-                : group,
-            ),
-            multiProjectPendingRef.current,
-          ),
-        );
-      }
-      return { hasMore: items.length >= CHILD_SESSION_PAGE_SIZE };
-    },
-    [applyPendingToMultiProjectGroups, mergeSessionItems],
-  );
+  const { syncSessionHeaderFromListItem, loadSessionsForRoot, loadChildSessionsForParent } = useSessionListLoading(params);
   const { handleSelectSession, tryShowBoundSessionForRoot } = useSessionSelection({
     ...params,
     isMobile,
@@ -583,149 +389,7 @@ export function useSessionLifecycle(params: UseSessionLifecycleParams) {
     },
     [bumpCacheVersion, rootSessionKey, setDrawerSessionForRoot],
   );
-  const handleSyncSession = useCallback(
-    async (session: SessionItem) => {
-      const sessionKey = session?.key || session?.session_key;
-      const rootID =
-        (session?.root_id as string | undefined) || currentRootIdRef.current;
-      if (!rootID || !sessionKey || sessionKey.startsWith("pending-")) return;
-
-      const cacheKey = rootSessionKey(rootID, sessionKey);
-      setSyncingSessionKeys((prev) => {
-        const next = new Set(prev);
-        next.add(cacheKey);
-        next.add(sessionKey);
-        return next;
-      });
-      try {
-        const result = await syncSession(rootID, sessionKey, { full: true, nodeId: String((session as any)?._nodeId || "") || getNodeIdForRoot(rootID) });
-        const synced = result.session;
-        if (!synced) {
-          reportError("session.sync_failed", t("session.syncFailed"));
-          return;
-        }
-        // 点「同步」必须保住「正在等待回答的 ask_user 卡」。
-        // 该卡是纯瞬时态：只存在于前端内存缓存（WS tool_call 追加的 seq=0 role=tool 条目）
-        // 与服务端内存（manager.pendingToolCalls）里，两边都不会经 HTTP 下发
-        // （session.Exchange 结构体没有 ToolCall 字段）。syncSession 以 IDB 缓存为 base，
-        // 而 IDB 里从来没有这些瞬时条目，于是同步后卡片凭空消失（实测 2026-09-12 症状 2）。
-        // 这里从内存缓存按 callId 去重后把它们合并回来；落盘后同一 callId 会出现在窗口 aux
-        // 中，SessionViewer 的 overlay 对账（windowToolCallIds）会自然让位，不会重复渲染。
-        // 同步会把整个会话的持久化交换灌回来（实测缓存 24 → 92），但**本轮尚未落盘的内容**
-        // 只存在于内存缓存的 seq=0 瞬时条目里。原先这里只保留 role=tool 一类，于是
-        // 「点同步的瞬间，正在流式输出的正文凭空消失，而 ask 卡还在」——2026-09-13 实测
-        // cacheBeforeTransient=4 只保住 1 条（keptToolTransient=1），丢掉的 3 条正是非 tool
-        // 的直播正文。
-        // 现在两类都保留，各按「同步结果里是否已有」去重：
-        //   · tool 条目按 callId（落盘后同一 callId 会出现在窗口 aux，SessionViewer 的
-        //     overlay 对账 windowToolCallIds 会自然让位，不会重复渲染）
-        //   · 其余条目按 role+内容（已持久化的轮次不会以 seq=0 形式被重复追加，这正是当初
-        //     只留 tool 想防的事；用内容比对同样防得住）
-        //
-        // **为什么这里不用 composeLoadedExchanges**：那条规则是「服务端回包只含已落盘行，
-        // 所以本地瞬时行无脑全留」。手动同步不同 —— 它把整个会话灌回来，刚落盘的那一轮
-        // 已经以**真实 seq** 出现在回包里，此时本地那几份 seq=0 的拷贝就成了陈旧副本，
-        // 再留就是同一段正文显示两遍。所以这条路径必须比对后剔除，判据也更强（callId 或
-        // role+内容）。两条规则形状不同是**有意的**，不是漏统一。
-        const localTransientTail = (() => {
-          const cachedExchanges = Array.isArray(
-            (sessionCacheRef.current[cacheKey] as any)?.exchanges,
-          )
-            ? ((sessionCacheRef.current[cacheKey] as any).exchanges as any[])
-            : [];
-          const present = new Set<string>();
-          const presentText = new Set<string>();
-          const syncedExchanges = Array.isArray((synced as any)?.exchanges)
-            ? ((synced as any).exchanges as any[])
-            : [];
-          for (const ex of syncedExchanges) {
-            const callId = `${(ex as any)?.toolCall?.callId || ""}`.trim();
-            if (callId) present.add(callId);
-            presentText.add(
-              `${String((ex as any)?.role || "").toLowerCase()}|${String(
-                (ex as any)?.content || "",
-              )}`,
-            );
-          }
-          const syncedAux = ((synced as any)?.exchange_aux || {}) as Record<
-            string,
-            any[]
-          >;
-          for (const items of Object.values(syncedAux)) {
-            for (const aux of items || []) {
-              const callId = `${(aux as any)?.toolcall?.callId || ""}`.trim();
-              if (callId) present.add(callId);
-            }
-          }
-          return cachedExchanges.filter((ex) => {
-            if (!isTransientExchange(ex)) return false;
-            const role = String((ex as any)?.role || "").toLowerCase();
-            if (role === "tool") {
-              const callId = `${(ex as any)?.toolCall?.callId || ""}`.trim();
-              return !callId || !present.has(callId);
-            }
-            const content = String((ex as any)?.content || "");
-            if (!content) return false;
-            return !presentText.has(`${role}|${content}`);
-          });
-        })();
-        const syncedExchanges = Array.isArray((synced as any)?.exchanges)
-          ? ((synced as any).exchanges as any[])
-          : [];
-        const normalized = {
-          ...(synced as any),
-          key: sessionKey,
-          exchanges: [...syncedExchanges, ...localTransientTail],
-        } as Session;
-        sessionCacheRef.current[cacheKey] = normalized;
-        loadedSessionRef.current[cacheKey] = true;
-        clearSessionStale(rootID, sessionKey);
-
-        const nextItem = toSessionItem(rootID, normalized);
-        if (nextItem) {
-          setSessions((prev) => mergeSessionItems(prev, [nextItem]));
-        }
-
-        setSelectedSession((prev) => {
-          const prevKey = prev?.key || prev?.session_key;
-          const prevRoot =
-            (prev?.root_id as string | undefined) || currentRootIdRef.current;
-          if (!prev || prevKey !== sessionKey || prevRoot !== rootID) {
-            return prev;
-          }
-          return toSessionItem(rootID, {
-            ...(prev as any),
-            ...(normalized as any),
-            key: sessionKey,
-            session_key: sessionKey,
-            root_id: rootID,
-          });
-        });
-
-        if (drawerSessionByRootRef.current[scopedRootKey(rootID)]?.key === sessionKey) {
-          setDrawerSessionForRoot(rootID, normalized);
-        }
-
-        bumpCacheVersion();
-      } catch {
-        reportError("session.sync_failed", t("session.syncFailed"));
-      } finally {
-        setSyncingSessionKeys((prev) => {
-          const next = new Set(prev);
-          next.delete(cacheKey);
-          next.delete(sessionKey);
-          return next;
-        });
-      }
-    },
-    [
-      bumpCacheVersion,
-      clearSessionStale,
-      mergeSessionItems,
-      rootSessionKey,
-      setDrawerSessionForRoot,
-    ],
-  );
+  const { handleSyncSession } = useSessionSyncAction(params);
 
   return {
     restoreActiveSession,

@@ -209,7 +209,7 @@ assert.ok(
 // 直接守住 App.tsx 里那处打标：子会话从 HTTP 拉回，响应体不带 _nodeId，
 // 漏了就会在分组里并存出重复 key（收起时收不掉）。这里读源码断言它还在。
 const appSource = fs.readFileSync(
-  path.resolve(import.meta.dirname, "../src/App.tsx"),
+  path.resolve(import.meta.dirname, "../src/app/useSessionListLoading.ts"),
   "utf8",
 );
 const childLoader = appSource.slice(
