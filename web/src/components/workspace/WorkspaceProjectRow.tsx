@@ -2,7 +2,7 @@ import React from "react";
 import { useI18n } from "../../i18n";
 import { useResponsive } from "../../hooks/useResponsive";
 import { TaskGroupChevronIcon } from "../../app/taskIcons";
-import type { SessionItem } from "../../app/appSession";
+import type { SessionPresentationSummary } from "../../shared/sessionPresentationTypes";
 import type { WorkspaceProjectGroup, WorkspaceTaskItem } from "../../app/useWorkspaceBoard";
 import type { TaskCardAction, TaskSessionErrorDialog } from "../task/TaskCardRows";
 import { WorkspaceTaskRow } from "./WorkspaceTaskRow";
@@ -47,7 +47,7 @@ export function WorkspaceProjectRow({
   onOpenProject: (rootId: string, nodeId: string) => void;
   onOpenTask: (item: WorkspaceTaskItem) => void;
   sessionKeysById: Record<string, string[]>;
-  sessionByKey: Record<string, SessionItem>;
+  sessionByKey: Record<string, SessionPresentationSummary>;
   getNodeColor: (rootId: string) => string | null;
   onMoveTask: (item: WorkspaceTaskItem, action: TaskCardAction) => void;
   onOpenSession: (sessionKey: string, rootId: string, taskId: string) => void;

@@ -18,7 +18,7 @@ import { readFileSync } from "node:fs";
 const cardRows = readFileSync(new URL("../src/components/task/TaskCardRows.tsx", import.meta.url), "utf8");
 const board = readFileSync(new URL("../src/components/task/TaskBoardView.tsx", import.meta.url), "utf8");
 const taskRow = readFileSync(new URL("../src/components/workspace/WorkspaceTaskRow.tsx", import.meta.url), "utf8");
-const types = readFileSync(new URL("../src/services/task/types.ts", import.meta.url), "utf8");
+const types = readFileSync(new URL("../src/shared/taskTypes.ts", import.meta.url), "utf8");
 const zh = readFileSync(new URL("../src/i18n/locales/zh-CN.ts", import.meta.url), "utf8");
 
 // ── 1. 两侧必须引用同一个卡片组件 ────────────────────────────────────────────

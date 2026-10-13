@@ -1501,7 +1501,7 @@ groups:
       - server/internal/api/http.go:r.Delete("/api/tasks/{id}"
       - web/src/services/task/crud.ts:export async function deleteTask
       - web/src/app/taskIcons.tsx:export function TaskCancelIcon
-      - web/src/components/task/TaskBoardView.tsx:"delete-task"
+      - web/src/components/task/TaskCardRows.tsx:"delete-task"
       - 'web/src/i18n/locales/zh-CN.ts:"task.deleteTask": "删除任务卡片"'
       - 'web/src/i18n/locales/zh-CN.ts:"task.cancelTask": "取消任务"'
   - id: G-BC
@@ -3280,7 +3280,7 @@ groups:
       - docs/upstream-customizations.yaml
       - web/tests/agent-docs.test.mjs
     anchors:
-      - docs/agent/rules/frontend/TODO.md:硬线 28 个
+      - docs/agent/rules/frontend/TODO.md:硬线 27 个
       - docs/plans/README.md:Rule completion rollout
       - web/tests/agent-docs.test.mjs:every plan is classified in the sole plans index
   - id: G-BZ
@@ -3675,24 +3675,44 @@ groups:
       - web/src/shared/actionBarUtils.ts:wsStatusMeta
       - web/tests/action-bar-layering.test.mjs:ActionBar logic uses shared contracts
   - id: G-CM
-    title: TaskBoardView uses shared template contract and responsive hook
+    title: TaskBoardView shared contracts and toolbar presenter
     kind: arch
     symptom: |
-      TaskBoardView imports a responsive hook and a template filter sentinel through app-layer aggregator files,
-      obscuring its view dependencies and coupling it to app storage implementation.
+      TaskBoardView was 645 lines and imported task/workspace/session types from service and app implementation
+      files, coupling a pure view to controller and persistence modules.
     why: |
-      Point the view at the hooks and shared layers directly, while preserving appStorage's existing public
-      export as a compatibility facade.
+      Move presentation contracts to shared and task-domain type modules, keep appStorage/service paths as
+      compatibility facades, and extract the template toolbar as a presenter with prop-driven callbacks.
     boundary: |
-      Keep the template filter sentinel value, responsive breakpoint behavior, and view output unchanged. The
-      remaining taskIcons import is a legacy presentation asset module containing SVG/CSS-in-JS only.
+      Keep task/status data, template filter sentinel, responsive breakpoints, event order, refresh timing, and
+      rendered markup semantics unchanged. The remaining taskIcons imports are legacy SVG/CSS-in-JS presentation
+      assets; their canonical location remains under review.
     tests:
       - web/tests/task-board-view-layering.test.mjs
+      - web/tests/task-board-view.test.mjs
+      - web/tests/task-card-parity.test.mjs
+      - web/tests/task-panel-unification.test.mjs
+      - web/tests/workspace-board.test.mjs
     files:
       - web/src/shared/taskTemplateConstants.ts
+      - web/src/shared/taskTypes.ts
+      - web/src/shared/sessionPresentationTypes.ts
+      - web/src/shared/workspaceBoardTypes.ts
+      - web/src/services/task/types.ts
       - web/src/app/appStorage.ts
+      - web/src/app/useWorkspaceBoard.ts
+      - web/src/components/task/taskBoardTypes.ts
       - web/src/components/task/TaskBoardView.tsx
+      - web/src/components/task/TaskBoardToolbar.tsx
+      - web/src/components/task/TaskCardRows.tsx
+      - web/src/components/workspace/WorkspaceBoard.tsx
+      - web/src/components/workspace/WorkspaceProjectRow.tsx
+      - web/src/components/workspace/WorkspaceTaskRow.tsx
+      - web/tests/source-map.mjs
+      - web/tests/task-card-parity.test.mjs
       - web/tests/task-board-view-layering.test.mjs
+      - web/tests/project-tree-refresh.test.mjs
+      - web/tests/session-list-node-failure.test.mjs
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -3700,4 +3720,5 @@ groups:
       - docs/upstream-customizations.yaml
     anchors:
       - web/src/shared/taskTemplateConstants.ts:TASK_TEMPLATE_ALL_FILTER
-      - web/tests/task-board-view-layering.test.mjs:TaskBoardView avoids runtime app/storage dependencies
+      - web/src/components/task/TaskBoardToolbar.tsx:TaskBoardToolbar
+      - web/tests/task-board-view-layering.test.mjs:TaskBoard toolbar owns template-menu rendering

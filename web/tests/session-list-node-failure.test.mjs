@@ -267,7 +267,7 @@ assert.match(
 
 // 工作台侧：失败节点要报出来。
 assert.match(
-  read("src/app/useWorkspaceBoard.ts"),
+  read("src/shared/workspaceBoardTypes.ts"),
   /unreachableNodes: Array<\{ id: string; name: string \}>;/,
   "the board must expose which nodes it could not reach",
 );

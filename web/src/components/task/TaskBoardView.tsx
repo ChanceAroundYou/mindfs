@@ -2,53 +2,30 @@ import React from "react";
 import { useI18n } from "../../i18n/index";
 import { useResponsive } from "../../hooks/useResponsive";
 import { TASK_TEMPLATE_ALL_FILTER } from "../../shared/taskTemplateConstants";
-import { useRefreshSpin } from "../../hooks/index";
-import type { useTaskTemplates } from "../../app/useTaskTemplates";
-import type { KanbanTask, TaskTemplate } from "../../services/tasks";
-import type { WorkspaceBoard as WorkspaceBoardData } from "../../app/useWorkspaceBoard";
-import type { WorkspaceBoardFilter } from "../../app/appStorage";
-import type { SessionItem } from "../../app/appSession";
+import type { KanbanTask, TaskTemplate } from "../../shared/taskTypes";
+import type { WorkspaceBoard as WorkspaceBoardData, WorkspaceBoardFilter } from "../../shared/workspaceBoardTypes";
+import type { SessionPresentationSummary } from "../../shared/sessionPresentationTypes";
+import type { KanbanStageColumn, MoveKanbanAction, TaskSessionErrorDialog, TaskTemplateControls } from "./taskBoardTypes";
+export type { KanbanStageColumn, TaskSessionErrorDialog } from "./taskBoardTypes";
 import { InlineTokenText } from "../common/InlineTokenText";
 import { FloatingScroll } from "../common/FloatingScroll";
 import { TaskCardRows } from "./TaskCardRows";
-import { TaskTemplateActionMenu } from "./TaskTemplateActionMenu";
-import { TaskCreateTemplateMenu } from "./TaskCreateTemplateMenu";
+import { TaskBoardToolbar } from "./TaskBoardToolbar";
 import { WorkspaceBoard } from "../workspace/WorkspaceBoard";
 import {
-  DeleteIcon,
-  EditPencilIcon,
-  HorizontalDotsIcon,
-  PlusSmallIcon,
-  SyncIcon,
   TaskExpandIcon,
   TaskGroupChevronIcon,
   taskCardIconButtonStyle,
   taskCardSurfaceStyle,
   taskTemplateMenuItemStyle,
 } from "../../app/taskIcons";
-import { hexToRgba as hexToRgbaApp } from "../../shared/hexToRgba";
-
-/** 看板列（四块：未开始 / 执行中 / 待审核 / 已结束）。App 侧构造，本视图只渲染。 */
-export type KanbanStageColumn = {
-  index: number;
-  name: string;
-  role: "user" | "agent";
-  tasks: KanbanTask[];
-  groups?: Array<{ key: string; name: string; tone: "success" | "danger" | "muted"; tasks: KanbanTask[] }>;
-};
-
-/** 任务会话报错弹窗内容。App 持有该状态（别处也会打开它），类型放这里共用。 */
-export type TaskSessionErrorDialog = { title: string; message: string; details: string[] };
-
-type MoveKanbanAction = "next" | "run-now" | "pause" | "resume" | "complete" | "cancel" | "delete-task" | "rebuild-worktree" | "finish-worktree";
 
 /**
  * 任务面板：无项目时是跨项目工作台（WorkspaceBoard），有项目时是项目内四块看板。
  *
  * 纯视图——数据与回调全由 App 传入。折叠/选中这类"看起来是本地的"状态其实 App 也要用
  * （详情面板、WS 回包），所以照样由 App 持有，组件内不新增状态。
- * 任务模板那一组（refs / 开合 / 模板表 / setter / 回调）整体走 templateControls 一个分组 prop：
- * 它们正好是 useTaskTemplates 的返回子集，用 Pick<ReturnType<…>> 取类型，上游改名会直接编译报错。
+ * 任务模板状态以 templateControls 整组传递；其 view contract 与 app hook 解耦，定义在 taskBoardTypes。
  */
 export function TaskBoardView({
   workspaceOpen,
@@ -113,7 +90,7 @@ export function TaskBoardView({
   setCollapsedKanbanColumns: React.Dispatch<React.SetStateAction<Set<string>>>;
   taskFirstInputById: Record<string, string>;
   taskSessionKeysById: Record<string, string[]>;
-  sessionByKey: Record<string, SessionItem>;
+  sessionByKey: Record<string, SessionPresentationSummary>;
   getDisplayNodeColor: (rootId: string) => string | null;
   handleSelectKanbanTask: (task: KanbanTask) => void;
   handleMoveKanbanTask: (task: KanbanTask, action: MoveKanbanAction) => Promise<void>;
@@ -121,37 +98,11 @@ export function TaskBoardView({
   handleTaskSessionDrawerOpen: (sessionKey: string, rootOverride?: string | null, taskId?: string) => void;
   setTaskSessionErrorDialog: React.Dispatch<React.SetStateAction<TaskSessionErrorDialog | null>>;
   loadKanbanTasks: (rootId?: string | null, force?: boolean) => Promise<void>;
-  templateControls: Pick<
-    ReturnType<typeof useTaskTemplates>,
-    | "taskTemplateActionMenuRef"
-    | "taskTemplateActionMenuOpen"
-    | "setTaskTemplateActionMenuOpen"
-    | "taskCreateTemplateMenuRef"
-    | "taskCreateTemplateMenuOpen"
-    | "setTaskCreateTemplateMenuOpen"
-    | "taskTemplates"
-    | "taskTemplateFilter"
-    | "setTaskTemplateFilter"
-    | "openTaskTemplateEditor"
-    | "handleDeleteTaskTemplate"
-  >;
+  templateControls: TaskTemplateControls;
 }) {
   const { t } = useI18n();
   const { isMobile } = useResponsive();
-  const kanbanRefreshSpin = useRefreshSpin(() => loadKanbanTasks(currentRootId));
-  const {
-    taskTemplateActionMenuRef,
-    taskTemplateActionMenuOpen,
-    setTaskTemplateActionMenuOpen,
-    taskCreateTemplateMenuRef,
-    taskCreateTemplateMenuOpen,
-    setTaskCreateTemplateMenuOpen,
-    taskTemplates,
-    taskTemplateFilter,
-    setTaskTemplateFilter,
-    openTaskTemplateEditor,
-    handleDeleteTaskTemplate,
-  } = templateControls;
+  const { taskTemplates, taskTemplateFilter } = templateControls;
   const isAllTaskTemplateFilter = taskTemplateFilter === TASK_TEMPLATE_ALL_FILTER;
   const selectedTaskTemplateForFilter = isAllTaskTemplateFilter ? null : taskTemplates.find((template) => template.id === taskTemplateFilter) || null;
 
@@ -198,211 +149,15 @@ export function TaskBoardView({
         minWidth: 0,
       }}
     >
-      <div
-        style={{
-          display: "flex",
-        alignItems: "center",
-          justifyContent: "space-between",
-          gap: 0,
-          padding: "0 0 8px",
-                    flexShrink: 0,
-        }}
-      >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "6px",
-          minWidth: 0,
-          flex: 1,
-        }}
-      >
-        <div
-          role="tablist"
-          data-onboarding="task-templates"
-          aria-label={t("task.templates")}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "2px",
-            overflowX: "auto",
-            padding: "3px",
-            borderRadius: "10px",
-            border: "1px solid rgba(100, 116, 139, 0.36)",
-            background: "rgba(148, 163, 184, 0.10)",
-            minWidth: 0,
-            scrollbarWidth: "none",
-          }}
-        >
-          {(() => {
-            const active = isAllTaskTemplateFilter;
-            const kanbanAllBg = getDisplayNodeColor(String(currentRootId || "")) || "var(--accent-color)";
-            return (
-              <button
-                type="button"
-                role="tab"
-                aria-selected={active}
-                onClick={() => {
-                  setTaskTemplateFilter(TASK_TEMPLATE_ALL_FILTER);
-                  setTaskTemplateActionMenuOpen(false);
-                }}
-                style={{
-                  border: "none",
-                  borderRadius: "6px",
-                  background: active ? kanbanAllBg : "transparent",
-                  color: active ? "#fff" : "var(--text-secondary)",
-                  padding: "3px 7px",
-                  fontSize: "11px",
-                  fontWeight: 700,
-                  lineHeight: "14px",
-                  cursor: "pointer",
-                  whiteSpace: "nowrap",
-                  boxShadow: active ? `0 1px 3px ${hexToRgbaApp(kanbanAllBg, 0.28)}` : "none",
-                }}
-              >
-                {t("task.all")}
-              </button>
-            );
-          })()}
-          {taskTemplates.length > 0 ? (
-            <span
-              aria-hidden="true"
-              style={{
-                width: "1px",
-                height: "16px",
-                background: "rgba(100, 116, 139, 0.32)",
-                margin: "0 1px",
-                    flexShrink: 0,
-              }}
-            />
-          ) : null}
-          {taskTemplates.map((template, index) => {
-            const templateId = template.id || "";
-            const active = selectedTaskTemplateForFilter?.id === templateId;
-            return (
-              <React.Fragment key={templateId || template.name}>
-                {index > 0 ? (
-                  <span
-                    aria-hidden="true"
-                    style={{
-                      width: "1px",
-                      height: "16px",
-                      background: "rgba(100, 116, 139, 0.32)",
-                      margin: "0 1px",
-                    flexShrink: 0,
-                    }}
-                  />
-                ) : null}
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={active}
-                  onClick={() => {
-                    setTaskTemplateFilter(templateId);
-                    setTaskTemplateActionMenuOpen(false);
-                  }}
-                  style={(() => {
-                    const bg = getDisplayNodeColor(String(currentRootId || "")) || "var(--accent-color)";
-                    return {
-                      border: "none",
-                      borderRadius: "6px",
-                      background: active ? bg : "transparent",
-                      color: active ? "#fff" : "var(--text-secondary)",
-                      padding: "3px 7px",
-                      fontSize: "11px",
-                      fontWeight: 700,
-                      lineHeight: "14px",
-                      cursor: "pointer",
-                      whiteSpace: "nowrap",
-                      boxShadow: active ? `0 1px 3px ${hexToRgbaApp(bg, 0.28)}` : "none",
-                    };
-                  })()}
-              >
-                <span>{template.name || t("task.unnamedTemplate")}</span>
-              </button>
-              </React.Fragment>
-            );
-          })}
-        </div>
-        <TaskTemplateActionMenu
-          open={taskTemplateActionMenuOpen}
-          onToggle={() => setTaskTemplateActionMenuOpen((open) => !open)}
-          selectedTaskTemplateForFilter={selectedTaskTemplateForFilter}
-          onCreateTemplate={() => {
-            setTaskTemplateActionMenuOpen(false);
-            openTaskTemplateEditor(null);
-          }}
-          onEditTemplate={() => {
-            if (!selectedTaskTemplateForFilter) return;
-            setTaskTemplateActionMenuOpen(false);
-            openTaskTemplateEditor(selectedTaskTemplateForFilter);
-          }}
-          onDeleteTemplate={() => {
-            if (!selectedTaskTemplateForFilter) return;
-            setTaskTemplateActionMenuOpen(false);
-            void handleDeleteTaskTemplate(selectedTaskTemplateForFilter);
-          }}
-        />
-      </div>
-      <button
-        type="button"
-        data-onboarding="task-refresh"
-        title={t("task.refresh")}
-        aria-label={t("task.refresh")}
-        onClick={() => void kanbanRefreshSpin.handleClick()}
-        onMouseDown={() => kanbanRefreshSpin.setPressed(true)}
-        onMouseUp={() => kanbanRefreshSpin.setPressed(false)}
-        onMouseLeave={() => kanbanRefreshSpin.setPressed(false)}
-        style={{
-          width: "22px",
-          height: "28px",
-          borderRadius: "8px",
-          border: "none",
-          background: "transparent",
-          color: "var(--text-color)",
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "flex-end",
-          cursor: "pointer",
-                    flexShrink: 0,
-          padding: 0,
-        }}
-      >
-        <span
-          data-task-refresh-visual
-          style={{
-            width: "18px",
-            height: "28px",
-            borderRadius: "8px",
-            background: kanbanRefreshSpin.pressed || kanbanRefreshSpin.refreshing ? "rgba(0, 0, 0, 0.06)" : "transparent",
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <SyncIcon
-            style={kanbanRefreshSpin.refreshing ? { animation: "mindfs-update-spin 0.8s linear infinite" } : undefined}
-          />
-        </span>
-      </button>
-      <TaskCreateTemplateMenu
-        open={taskCreateTemplateMenuOpen}
-        onTriggerClick={() => {
-          if (isAllTaskTemplateFilter) {
-            setTaskTemplateActionMenuOpen(false);
-            setTaskCreateTemplateMenuOpen((open) => !open);
-            return;
-          }
-          openTaskCreateDialog(selectedTaskTemplateForFilter);
-        }}
-        canCreate={isAllTaskTemplateFilter || !!selectedTaskTemplateForFilter}
-        taskTemplates={taskTemplates}
-        onCreateTask={(template) => {
-          setTaskCreateTemplateMenuOpen(false);
-          openTaskCreateDialog(template);
-        }}
+      <TaskBoardToolbar
+        currentRootId={currentRootId}
+        isAllTaskTemplateFilter={isAllTaskTemplateFilter}
+        selectedTaskTemplateForFilter={selectedTaskTemplateForFilter}
+        templateControls={templateControls}
+        getDisplayNodeColor={getDisplayNodeColor}
+        onRefresh={() => loadKanbanTasks(currentRootId)}
+        openTaskCreateDialog={openTaskCreateDialog}
       />
-    </div>
     {kanbanTasksLoading ? (
       <div style={{ padding: "12px", fontSize: "12px", color: "var(--text-secondary)" }}>{t("task.loading")}</div>
     ) : !isAllTaskTemplateFilter && !selectedTaskTemplateForFilter ? (

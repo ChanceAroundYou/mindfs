@@ -5,8 +5,10 @@ import { AgentIcon } from "../agent/AgentIcon";
 import { ModeIcon } from "../agent/ModeIcon";
 import { NoWorktreeIcon } from "../common/NoWorktreeIcon";
 import { renderToolIcon } from "../stream/toolCallIcons";
-import type { SessionItem } from "../../app/appSession";
 import type { KanbanTask } from "../../services/tasks";
+import type { SessionPresentationSummary } from "../../shared/sessionPresentationTypes";
+import type { TaskSessionErrorDialog } from "./taskBoardTypes";
+export type { TaskSessionErrorDialog } from "./taskBoardTypes";
 import {
   DeleteIcon,
   RunNowIcon,
@@ -47,8 +49,6 @@ const taskMetaPairStyle: React.CSSProperties = {
   minWidth: 0,
 };
 
-export type TaskSessionErrorDialog = { title: string; message: string; details: string[] };
-
 /**
  * 收尾键。看板卡与工作台卡**两处都要它**（未终态 + 终态），抽成一个组件免得
  * 抄两遍 —— 抄两遍的话，改一处忘另一处就是「两边卡片不一致」的下一个来源。
@@ -85,7 +85,7 @@ export type TaskCardRowsProps = {
   /** 正文是否渲染在两行之间。默认不渲染 —— 工作台只扫读，正文去项目看板看。 */
   children?: React.ReactNode;
   sessionKeys: string[];
-  sessionByKey: Record<string, SessionItem>;
+  sessionByKey: Record<string, SessionPresentationSummary>;
   getNodeColor: (rootId: string) => string | null;
   /** 没有就传 0/空串 —— 看板的「跳到这一列」是它自己的滚动行为 */
   onOpenSession: (sessionKey: string, rootId: string, taskId: string) => void;

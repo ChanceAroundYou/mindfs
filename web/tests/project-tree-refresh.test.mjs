@@ -10,7 +10,7 @@ const fileTree = readFileSync(new URL("../src/components/file/FileTree.tsx", imp
 const fileTreeTypes = readFileSync(new URL("../src/components/file/fileTreeTypes.ts", import.meta.url), "utf8");
 const fileTreeRefreshButton = readFileSync(new URL("../src/components/file/FileTreeRefreshButton.tsx", import.meta.url), "utf8");
 const fileService = readFileSync(new URL("../src/services/file.ts", import.meta.url), "utf8");
-const taskBoard = readFileSync(new URL("../src/components/task/TaskBoardView.tsx", import.meta.url), "utf8");
+const taskBoardToolbar = readFileSync(new URL("../src/components/task/TaskBoardToolbar.tsx", import.meta.url), "utf8");
 const taskCreateTemplateMenu = readFileSync(new URL("../src/components/task/TaskCreateTemplateMenu.tsx", import.meta.url), "utf8");
 
 assert.match(
@@ -83,7 +83,7 @@ assert.match(
 );
 // 2026-09 App.tsx 拆分：任务刷新/新建按钮搬到 components/TaskBoardView.tsx，契约随文件走。
 assert.match(
-  taskBoard,
+  taskBoardToolbar,
   /data-onboarding="task-refresh"[\s\S]*?width: "22px"[\s\S]*?data-task-refresh-visual[\s\S]*?width: "18px"/,
   "task refresh should use a compact hit area and centered feedback background",
 );

@@ -7,6 +7,9 @@
 import {  currentUser  } from "../services/net/authGate";
 import {  getRootNodeId  } from "../services/net/rootNode";
 import {  scopeKey, dirSelKey  } from "../shared/scope";
+import { WORKSPACE_FILTERS, type WorkspaceBoardFilter } from "../shared/workspaceBoardTypes";
+export { WORKSPACE_FILTERS } from "../shared/workspaceBoardTypes";
+export type { WorkspaceBoardFilter } from "../shared/workspaceBoardTypes";
 
 export const PLUGIN_QUERY_STORAGE_PREFIX = "vp-progress:";
 
@@ -216,9 +219,6 @@ export type TaskCreateWorktreePreference = {
 // 项目数一多就该靠「收窄」而不是「加层级」来扫读，所以这两项都要跨会话记住。
 export const WORKSPACE_FILTER_STORAGE_KEY = "mindfs-workspace-filter";
 export const WORKSPACE_COLLAPSED_STORAGE_KEY = "mindfs-workspace-collapsed";
-
-export const WORKSPACE_FILTERS = ["all", "active", "blocked"] as const;
-export type WorkspaceBoardFilter = (typeof WORKSPACE_FILTERS)[number];
 
 export function loadWorkspaceFilter(): WorkspaceBoardFilter {
   if (typeof window === "undefined") return "all";

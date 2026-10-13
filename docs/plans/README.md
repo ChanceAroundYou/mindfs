@@ -8,7 +8,7 @@ to resume their old TODOs or baselines.
 
 | Plan | Status | Next action |
 |---|---|---|
-| [Rule completion rollout](rule-completion-rollout.md) | Active | useActionBar handler 已抽为 colocated hook，controller 451 行；下一步继续 TaskBoardView 的 type-only 契约归位与视图拆分（645 行），再推进 Vitest 与复用件测试。 |
+| [Rule completion rollout](rule-completion-rollout.md) | Active | useActionBar controller 451 行；TaskBoardView 类型契约已迁出 app/services，toolbar 已拆分、主视图 400 行；先确认 legacy `app/taskIcons` 呈现资源边界，再推进复用件测试与 Vitest。 |
 
 ## Completed or superseded history
 

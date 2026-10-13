@@ -18,32 +18,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getNodes } from "../services/net/nodeRegistry";
 import { scopeKey } from "../shared/scope";
 import { fetchTasksOverview, type KanbanTask, type TaskOverviewItem } from "../services/tasks";
-
-/** 跨项目任务条 = 后端 TaskOverviewItem + 前端扇出时打的节点标（后端不返这个字段） */
-export type WorkspaceTaskItem = TaskOverviewItem & { nodeId: string };
-
-/** 工作台按项目聚合出的一组（一个项目一条） */
-export type WorkspaceProjectGroup = {
-  /** 复合键 scopeKey(nodeId, rootId) —— 同名项目跨节点不冲突 */
-  key: string;
-  rootId: string;
-  rootName: string;
-  nodeId: string;
-  /** 节点色；取不到时为 null（渲染层回退 var(--text-secondary)） */
-  color: string | null;
-  /** 当前筛选下这条任务行要显示什么；空则整组不渲染 */
-  tasks: WorkspaceTaskItem[];
-};
-
-export type WorkspaceBoard = {
-  projects: WorkspaceProjectGroup[];
-  loading: boolean;
-  /** 本轮拉取失败的节点（B3）：面板上要显式说「这些节点没拉到」，别让人以为任务没了 */
-  unreachableNodes: Array<{ id: string; name: string }>;
-  refresh: () => void;
-};
-
-export type WorkspaceBoardFilter = "all" | "active" | "blocked";
+import type { WorkspaceBoard, WorkspaceBoardFilter, WorkspaceProjectGroup, WorkspaceTaskItem } from "../shared/workspaceBoardTypes";
+export type { WorkspaceBoard, WorkspaceBoardFilter, WorkspaceProjectGroup, WorkspaceTaskItem } from "../shared/workspaceBoardTypes";
 
 const EMPTY_ITEMS: WorkspaceTaskItem[] = [];
 

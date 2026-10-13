@@ -276,6 +276,7 @@ export const MODULES = {
   // P2 拆分：tasks.ts → services/task/（入口 shim 仍在原路径）
   "src/services/tasks.ts": [
     "src/services/task/types.ts",
+    "src/shared/taskTypes.ts",
     "src/services/task/cache.ts",
     "src/services/task/templates.ts",
     "src/services/task/crud.ts",

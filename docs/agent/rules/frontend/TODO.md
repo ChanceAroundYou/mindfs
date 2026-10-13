@@ -25,15 +25,15 @@
 - [x] 样式文件归一：将混合 JSX 图标的 `composerStyles.tsx` 拆为纯 `.ts` 的 `composerStyles.ts` 与 `composerIcons.tsx`；`fileTreeMenuStyles.ts` 原已符合规则。
 - [x] `FileEditor.css`、`DiagramPreview.css` 内联到组件的 `<style>` 字符串；保留伪类、媒体查询、CodeMirror 后代选择器和安全区规则。
 
-## 必拆文件（硬线 28 个，按"每次 2–3 个 + 一次构建"推进）
+## 必拆文件（硬线 27 个，按"每次 2–3 个 + 一次构建"推进）
 
 ```
 app/ (11): useProjectLifecycle 885 · useAppSessionLayer 876
            useAppDomainLayer 864 · useAppStateLayer 816 · useSessionLifecycle 741
            useManagedRoots 709 · useSendMessage 686 · useAppViewComposition 661
            useSessionStreamCache 645 · useActionHandlers 611 · realtimeWsHandlers 570
-components/ (15): AgentConfigPopover 788 · SessionPane 682
-           SessionViewer 646 · TaskBoardView 645 · SessionCard 642 · DefaultListViewMenu 585
+components/ (14): AgentConfigPopover 788 · SessionPane 682
+           SessionViewer 646 · SessionCard 642 · DefaultListViewMenu 585
            ScheduledAgentTaskDialog 572 · AgentSelector 563 · DocumentViewer 537
            GitStatusPanel 532 · useMarkdownViewer 527 · ProjectAddPopover 527
            TaskInlineEditPanel 516 · Login 513 · TaskCardRows 504
@@ -47,7 +47,7 @@ hooks/ (1): useSessionStream 648
 
 - [x] `FileTree.tsx`：降到 489 行；view 与 props 类型不再依赖 services/app，服务查询由 colocated logic hooks 提供。
 - [x] `useActionBar.ts`：类型契约迁入 shared；纯展示 helper 归 shared，响应式 hook 归 hooks；logic 不再导入 view 文件。
-- [ ] `TaskBoardView.tsx`：响应式 hook 改由 `hooks/` 提供，模板过滤 sentinel 移入 `shared/`；仍需完成 type-only app/service 契约归位与 645 行视图拆分。`app/taskIcons` 是历史呈现资源入口，后续评估归属。
+- [ ] `TaskBoardView.tsx`：task/workspace/session 类型契约已归入 shared，模板控件有独立 view contract，toolbar 已提取，主视图 400 行且无 services/app 状态或逻辑依赖；仍需评估 `app/taskIcons` 纯呈现资源的归属并完成专项边界确认。
 - [x] `useRealtimeEvents.ts`：项目添加流程类型移入 `shared/projectAddTypes.ts`，实时 logic、事件上下文不再依赖 `ProjectAddPopover`。
 - [x] `useSendMessage.ts`：plan 前缀纯逻辑移至 `shared/planCommand.ts`，消除 app hook 对 action view 模块的依赖。
 - [x] `useSessionLifecycle.ts`：删除未使用的 `SessionViewer` import；当前 hook 不再依赖 view 模块。

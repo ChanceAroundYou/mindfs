@@ -3,10 +3,9 @@ import { useI18n } from "../../i18n";
 import { useRefreshSpin } from "../../hooks";
 import { useResponsive } from "../../app/appMisc";
 import { SyncIcon } from "../../app/taskIcons";
-import type { WorkspaceBoardFilter } from "../../app/appStorage";
-import type { WorkspaceBoard, WorkspaceTaskItem } from "../../app/useWorkspaceBoard";
+import type { WorkspaceBoard, WorkspaceBoardFilter, WorkspaceTaskItem } from "../../shared/workspaceBoardTypes";
 import type { TaskCardAction, TaskSessionErrorDialog } from "../task/TaskCardRows";
-import type { SessionItem } from "../../app/appSession";
+import type { SessionPresentationSummary } from "../../shared/sessionPresentationTypes";
 import { WorkspaceProjectRow } from "./WorkspaceProjectRow";
 import { WorkspaceQuickLaunch } from "./WorkspaceQuickLaunch";
 import type { TaskTemplate } from "../../services/tasks";
@@ -45,7 +44,7 @@ export type WorkspaceBoardProps = {
   /** 卡片上的会话错误入口要弹同一个错误面板（App 层那个） */
   onShowSessionError: (payload: TaskSessionErrorDialog) => void;
   taskSessionKeysById: Record<string, string[]>;
-  sessionByKey: Record<string, SessionItem>;
+  sessionByKey: Record<string, SessionPresentationSummary>;
   /** 新建任务：直接打开新建任务面板（面板自带「项目」下拉），不自己挑完再转一手 */
   templates: TaskTemplate[];
   onCreateTask: (rootId: string, nodeId: string, template: TaskTemplate) => void;

@@ -1,7 +1,7 @@
 import React from "react";
 import { useI18n } from "../../i18n";
 import { taskCardSurfaceStyle } from "../../app/taskIcons";
-import type { SessionItem } from "../../app/appSession";
+import type { SessionPresentationSummary } from "../../shared/sessionPresentationTypes";
 import type { KanbanTask } from "../../services/tasks";
 import { TaskCardRows, type TaskCardAction, type TaskSessionErrorDialog } from "../task/TaskCardRows";
 import type { WorkspaceTaskItem } from "../../app/useWorkspaceBoard";
@@ -30,7 +30,7 @@ export function WorkspaceTaskRow({
 }: {
   item: WorkspaceTaskItem;
   sessionKeysById: Record<string, string[]>;
-  sessionByKey: Record<string, SessionItem>;
+  sessionByKey: Record<string, SessionPresentationSummary>;
   getNodeColor: (rootId: string) => string | null;
   onOpen: (item: WorkspaceTaskItem) => void;
   onMove: (item: WorkspaceTaskItem, action: TaskCardAction) => void;

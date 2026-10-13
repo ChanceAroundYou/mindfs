@@ -2734,9 +2734,9 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **边界**：发送/上传时序不变；保持 SessionMode、TokenEditorHandle、PendingAttachment 结构和响应式断点行为。`useActionBar.ts` 当前 451 行，`useActionBarHandlers.ts` 311 行。
 
 
-### G-CM TaskBoardView 依赖改由 shared 与 hooks 提供
+### G-CM TaskBoardView 契约归位与 toolbar presenter
 
-- **可见症状**：TaskBoardView 通过 app 聚合模块读取响应式 hook 和模板筛选标记，视图的依赖方向被 app storage/logic 路径掩盖。
-- **根因与边界**：响应式 hook 直接从 `hooks/` 导入；筛选 sentinel 移入 `shared/taskTemplateConstants.ts`，`appStorage` 继续兼容再导出。保留的 `app/taskIcons` 只含图标与样式呈现资源。
-- **针对性测试**：`web/tests/task-board-view-layering.test.mjs` → 确认 TaskBoardView 不依赖 app 状态/逻辑或 services，并保持 appStorage 原导出。
-- **边界**：筛选值、响应式断点、看板渲染和现有调用方 API 不变。
+- **可见症状**：TaskBoardView 有 645 行，并从 service/app implementation 文件导入任务、workspace、session 类型；模板 toolbar 与看板列渲染挤在同一个视图中。
+- **根因与边界**：类型契约归 shared 和 task domain；appStorage/service 旧入口保留 facade；模板筛选、菜单和刷新反馈提取到 `TaskBoardToolbar`。`app/taskIcons` 仍作为纯 SVG/CSS-in-JS 遗留资源入口，归属继续审计。
+- **针对性测试**：`web/tests/task-board-view-layering.test.mjs`、`task-board-view.test.mjs`、`task-card-parity.test.mjs`、`workspace-board.test.mjs` → 守住依赖方向、toolbar 接线、卡片数据契约与旧 facade。
+- **边界**：保持筛选 sentinel、断点、按钮事件顺序、刷新反馈时长与任务卡展示行为；主视图现为 400 行。
