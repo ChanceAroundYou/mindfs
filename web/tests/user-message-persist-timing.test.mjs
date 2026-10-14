@@ -16,7 +16,7 @@ import { readFileSync } from "node:fs";
 // 这是一条**源码顺序**守卫：只有真正的前移才能满足它，补偿式的补丁改动过不了。
 
 const sessionGo = readFileSync(
-  new URL("../../server/internal/api/usecase/session.go", import.meta.url),
+  new URL("../../server/internal/api/usecase/session_send.go", import.meta.url),
   "utf8",
 );
 
@@ -24,7 +24,8 @@ const sessionGo = readFileSync(
 // SendMessage 主体（排除同名 helper 声明）：写入点要早于 agent 真正 SendMessage 的点。
 const bodyStart = sessionGo.indexOf("func (s *Service) SendMessage(");
 assert.ok(bodyStart >= 0, "SendMessage should be found");
-const bodyEnd = sessionGo.indexOf("\nfunc ", bodyStart + 1);
+const nextFunc = sessionGo.indexOf("\nfunc ", bodyStart + 1);
+const bodyEnd = nextFunc < 0 ? sessionGo.length : nextFunc;
 assert.ok(bodyEnd > bodyStart, "SendMessage body should be bounded");
 const body = sessionGo.slice(bodyStart, bodyEnd);
 

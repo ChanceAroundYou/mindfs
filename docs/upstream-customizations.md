@@ -3040,3 +3040,9 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：exchange identity 对账、importer/live 判重、用户 turn 提前落盘、MindFS turn ID 生成和 block 写入与 `SendMessage` 混在 `session.go`，身份回归会静默造成 turn 重复或缺失。
 - **根因与边界**：身份/正文比较、user turn 持久化、turn ID 和 block persistence helper 原样迁至 `session_turn_identity.go`（359 行）；`SendMessage` 调用顺序不变。父文件实测 2,706 行，backend TODO 继续未完成。
 - **针对性测试**：`session_identity_dedup_test.go`、`session_early_user_persist_test.go`、`session_blocks_write_test.go`、`exchange_repeat_test.go` → 守住 turn 身份、重发判重和块写入；完整 `make test` → 全仓 Go 测试门禁通过。
+
+### G-EE Session SendMessage 主流程职责拆分
+
+- **可见症状**：`SendMessage` 同时负责输入校验、turn 锁、user 持久化、runtime 初始化、agent 启动、流事件、工具/关联文件更新、结束清理，堆在超大 `session.go` 单个函数中。
+- **根因与边界**：`SendMessage` 方法体原样迁至 `session_send.go`（444 行），继续调用现有 turn identity/runtime helpers；方法签名、持久化/回调顺序、错误和取消语义不变。父文件实测 2,276 行，backend TODO 继续未完成。
+- **针对性测试**：`usecase_test.go`、`session_early_user_persist_test.go`、`session_identity_dedup_test.go` 和 `user-message-persist-timing.test.mjs` → 守住发送、user 先落盘和身份判重；完整 `make test` 通过。

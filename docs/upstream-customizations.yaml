@@ -2459,12 +2459,14 @@ groups:
       - server/internal/api/usecase/session_model_switch_test.go
     files:
       - server/internal/api/usecase/session.go
+      - server/internal/api/usecase/session_runtime.go
+      - server/internal/api/usecase/session_send.go
       - server/internal/api/usecase/usecase_test.go
       - server/internal/api/usecase/session_model_switch_test.go
     anchors:
       - server/internal/api/usecase/session.go:currentModelForRuntime
-      - server/internal/api/usecase/session.go:requestedModel := strings.TrimSpace(in.Model)
-      - server/internal/api/usecase/session.go:manager.UpdateModel(ctx, current, resolvedModel)
+      - server/internal/api/usecase/session_send.go:requestedModel := strings.TrimSpace(in.Model)
+      - server/internal/api/usecase/session_send.go:manager.UpdateModel(ctx, current, resolvedModel)
       - server/internal/api/usecase/session.go:currentModel := currentModelForRuntime(current, existing)
   - id: G-BL
     title: 看板新建任务的 worktree 节点路由
@@ -3110,9 +3112,10 @@ groups:
       - server/internal/api/usecase/session_model_switch_test.go
     files:
       - server/internal/api/usecase/session.go
+      - server/internal/api/usecase/session_send.go
     anchors:
       - server/internal/api/usecase/session.go:validateAgentModel
-      - server/internal/api/usecase/session.go:UpdateModel
+      - server/internal/api/usecase/session_send.go:UpdateModel
 
   - id: G-BL
     title: 看板新建任务的 worktree 节点路由
@@ -5129,3 +5132,35 @@ groups:
     anchors:
       - server/internal/api/usecase/session_turn_identity.go:func persistUserTurnExchange
       - server/internal/api/usecase/session_turn_identity.go:func exchangeAlreadyRecorded
+
+  - id: G-EE
+    title: Session SendMessage orchestration split
+    kind: arch
+    symptom: |
+      SendMessage handles request validation, turn locking, user persistence, runtime setup, agent
+      startup, event streaming, tool/related-file updates, finalization, and cleanup in a single large
+      function inside the already oversized session.go.
+    why: |
+      Isolate the central send orchestration for review and future decomposition without changing
+      sequencing, persistence, callback ordering, or cancellation/error behavior.
+    boundary: |
+      The SendMessage method body moves unchanged to session_send.go; it continues to call the existing
+      turn identity and runtime helpers. Public input/callback contract stays in session.go. Parent
+      remains 2,276 lines and backend TODO stays active.
+    tests:
+      - server/internal/api/usecase/usecase_test.go
+      - server/internal/api/usecase/session_early_user_persist_test.go
+      - server/internal/api/usecase/session_identity_dedup_test.go
+      - web/tests/user-message-persist-timing.test.mjs
+    files:
+      - server/internal/api/usecase/session.go
+      - server/internal/api/usecase/session_send.go
+      - web/tests/user-message-persist-timing.test.mjs
+      - docs/agent/rules/backend/TODO.md
+      - docs/agent/rules/backend/file-size.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - server/internal/api/usecase/session_send.go:func (s *Service) SendMessage
