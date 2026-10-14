@@ -6461,3 +6461,29 @@ groups:
     anchors:
       - web/src/shared/agentTypes.ts:export type AgentStatus
       - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+
+  - id: G-GW
+    title: Agent status types in action and session views
+    kind: arch
+    symptom: |
+      Action and session view components depend on the agent runtime service for the AgentStatus type.
+    why: |
+      Keep presentation contracts in shared/agentTypes while retaining unrelated runtime service dependencies.
+    boundary: |
+      ActionBar, SessionViewer, and SessionViewerTimeline use shared AgentStatus; prompts/session/error/clipboard
+      and node runtime service imports remain as needed. Three agent-service edges are removed.
+    tests:
+      - web/tests/reviewer-architecture-rules.test.mjs
+    files:
+      - web/src/components/action/ActionBar.tsx
+      - web/src/components/session/SessionViewer.tsx
+      - web/src/components/session/SessionViewerTimeline.tsx
+      - web/tests/fixtures/component-service-import-debt.json
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/shared/agentTypes.ts:export type AgentStatus
+      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"

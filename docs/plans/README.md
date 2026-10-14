@@ -8,7 +8,7 @@ to resume their old TODOs or baselines.
 
 | Plan | Status | Next action |
 |---|---|---|
-| [Rule completion rollout](rule-completion-rollout.md) | Active | 前端 500 行硬线已清零，`usecase/session.go` 实测 1455 行并已 ship。`manager.go` 的 search、exchange、aux、pending tool-call、agent binding、SQLite、list、alias、meta 行读写、related-files、exchange identity、lifecycle 与窗口读取职责分域；父文件实测 749 行，低于 800 行软线。`server/internal/api/http.go` 的 Git、file/directory 与 session handler 已按域下沉（当前 658 行，低于硬线；repoint handler 留原位未改）；`server/internal/agent/claude/session.go` 当前 1,076 行，已低于硬线；所有已列超线 Go 文件均已低于 1,500 行；后端必拆文件与双入口审计已完成；WS handler 同步派发改为全部异步并添加 AST 门禁。Markdown 链接、唯一 Active plan、Claude/Gemini 入口和 frontend 文件长度已有测试；reviewer coverage map 已落地；component→service 仍有 110 条历史边/64 个文件，受只减不增门禁约束，逐域迁移中。 |
+| [Rule completion rollout](rule-completion-rollout.md) | Active | 前端 500 行硬线已清零，`usecase/session.go` 实测 1455 行并已 ship。`manager.go` 的 search、exchange、aux、pending tool-call、agent binding、SQLite、list、alias、meta 行读写、related-files、exchange identity、lifecycle 与窗口读取职责分域；父文件实测 749 行，低于 800 行软线。`server/internal/api/http.go` 的 Git、file/directory 与 session handler 已按域下沉（当前 658 行，低于硬线；repoint handler 留原位未改）；`server/internal/agent/claude/session.go` 当前 1,076 行，已低于硬线；所有已列超线 Go 文件均已低于 1,500 行；后端必拆文件与双入口审计已完成；WS handler 同步派发改为全部异步并添加 AST 门禁。Markdown 链接、唯一 Active plan、Claude/Gemini 入口和 frontend 文件长度已有测试；reviewer coverage map 已落地；component→service 仍有 107 条历史边/64 个文件，受只减不增门禁约束，逐域迁移中。 |
 
 ## Completed or superseded history
 
