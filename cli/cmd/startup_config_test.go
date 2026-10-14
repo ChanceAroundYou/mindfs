@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -99,4 +100,49 @@ func TestUnknownRoleValuePassesThroughUnchanged(t *testing.T) {
 	if got := applyRole(cfg, map[string]bool{}); got != "nonsense" {
 		t.Fatalf("cli/cmd 应原样传递 role 由 app 归一化，却拿到 %q", got)
 	}
+}
+
+// 发布构建固定从 cli/cmd 进入；server/cmd/mindfs-server 只用于 dev-backend。
+// 该边界曾导致启动配置修在错误入口、单测绿但发布二进制不生效。
+func TestReleaseAndDevelopmentEntrypointsStaySeparated(t *testing.T) {
+	makefile, err := os.ReadFile(filepath.Join("..", "..", "Makefile"))
+	if err != nil {
+		t.Fatalf("read Makefile: %v", err)
+	}
+	text := string(makefile)
+	build := makeTargetBody(text, "build")
+	if !strings.Contains(build, "./cli/cmd") {
+		t.Fatalf("release build must use cli/cmd, got:\n%s", build)
+	}
+	if strings.Contains(build, "server/cmd/mindfs-server") {
+		t.Fatalf("release build must not use dev-only server/cmd entrypoint:\n%s", build)
+	}
+	devBackend := makeTargetBody(text, "dev-backend")
+	if !strings.Contains(devBackend, "./server/cmd/mindfs-server") {
+		t.Fatalf("dev-backend must use server/cmd/mindfs-server, got:\n%s", devBackend)
+	}
+	buildAll, err := os.ReadFile(filepath.Join("..", "..", "scripts", "build-all.sh"))
+	if err != nil {
+		t.Fatalf("read scripts/build-all.sh: %v", err)
+	}
+	if !strings.Contains(string(buildAll), "./cli/cmd") {
+		t.Fatal("release build-all must use cli/cmd")
+	}
+}
+
+func makeTargetBody(makefile, target string) string {
+	var lines []string
+	active := false
+	for _, line := range strings.Split(makefile, "\n") {
+		if !active {
+			active = strings.HasPrefix(line, target+":")
+			continue
+		}
+		if line == "" || strings.HasPrefix(line, "\t") || strings.HasPrefix(line, "#") {
+			lines = append(lines, line)
+			continue
+		}
+		break
+	}
+	return strings.Join(lines, "\n")
 }

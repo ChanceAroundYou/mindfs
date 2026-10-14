@@ -6220,3 +6220,28 @@ groups:
       - server/internal/gitview/gitview_history.go:func ListHistory
       - server/internal/gitview/gitview_history.go:func ReadRelatedFileStats
       - server/internal/gitview/gitview_history.go:func parseHistoryItems
+
+  - id: G-GN
+    title: Release and development entrypoint contract
+    kind: arch
+    symptom: |
+      Startup configuration fixed only in server/cmd can pass dev-backend tests while the release binary
+      remains unchanged because production builds use cli/cmd.
+    why: |
+      Make release and development entrypoint ownership mechanically verifiable so startup fixes and
+      configuration behavior remain in the binary users actually run.
+    boundary: |
+      make build and scripts/build-all.sh must use cli/cmd; make dev-backend uses server/cmd/mindfs-server.
+      A CLI package test reads Makefile/build-all to lock this split. Existing startup config behavior is unchanged.
+    tests:
+      - cli/cmd/startup_config_test.go
+    files:
+      - cli/cmd/startup_config_test.go
+      - docs/agent/rules/backend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - cli/cmd/startup_config_test.go:func TestReleaseAndDevelopmentEntrypointsStaySeparated
+      - cli/cmd/startup_config_test.go:func TestLoadStartupConfigReadsDefaultPath

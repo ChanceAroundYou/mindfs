@@ -3262,3 +3262,9 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：diff、commit history、related-file diff/stat 与 status/branch/worktree/action handlers 共处大型 gitview 文件，历史解析调整容易误触仓库状态和写操作。
 - **根因与边界**：`ReadDiff` 至 `ReadRelatedFileStats` 以及 `repoContext.commitExists` 至 `parseHistoryItems` 的只读 diff/history 实现与解析 helper 原样迁至 `gitview_history.go`（653 行）；路径映射、历史排序、commit/diff 选择和输出 shape 不变。父文件实测 933 行。
 - **针对性测试**：`server/internal/gitview/gitview_test.go` → 守住 diff/history/related-file diff 与 batch stats；`make test` → 全仓 Go 门禁。
+
+### G-GN Release and development entrypoint contract
+
+- **可见症状**：启动配置若只修在 `server/cmd/mindfs-server`，dev-backend 的测试会绿，但发布的 mindfs 二进制仍不生效。
+- **根因与边界**：明确 `make build` / `scripts/build-all.sh` 使用 `cli/cmd`，`make dev-backend` 使用 `server/cmd/mindfs-server`；新增 CLI 包测试读取 Makefile 与 build-all 脚本验证入口分工，缺省配置语义仍由 startup config tests 守住。
+- **针对性测试**：`cli/cmd/startup_config_test.go:TestReleaseAndDevelopmentEntrypointsStaySeparated` → 锁定发布/开发入口，其他 startup config tests → 锁定配置行为；`make test` → 全仓 Go 门禁。
