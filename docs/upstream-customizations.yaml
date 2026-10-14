@@ -2222,6 +2222,7 @@ groups:
     files:
       - server/internal/session/manager.go
       - server/internal/session/manager_exchanges.go
+      - server/internal/session/manager_aux_tail.go
       - server/internal/api/http.go
       - server/internal/api/usecase/session.go
       - server/internal/api/usecase/session_list.go
@@ -2232,8 +2233,8 @@ groups:
       - server/internal/session/manager_exchanges.go:mergeExchangeRecords
       - server/internal/session/manager_exchanges.go:readExchangeTail
       - server/internal/session/manager.go:countExchangeRecords
-      - server/internal/session/manager.go:GetCommandShell
-      - server/internal/session/manager.go:readAuxTailEntries
+      - server/internal/session/manager_aux_tail.go:GetCommandShell
+      - server/internal/session/manager_aux_tail.go:readAuxTailEntries
       - server/internal/api/http.go:handleSessionSync
       - server/internal/api/usecase/session_list.go:fillCommandShells
 
@@ -5348,3 +5349,32 @@ groups:
       - server/internal/session/manager_aux_reads.go:func (m *Manager) loadExchangeAux
       - server/internal/session/manager_aux_reads.go:func (m *Manager) readAuxWindowTail
       - server/internal/session/manager_aux_reads.go:func (m *Manager) readAuxTail
+
+  - id: G-EL
+    title: Session manager command shell bounded aux tail split
+    kind: arch
+    symptom: |
+      Command-session shell inference and its bounded aux-tail reader are embedded in manager.go,
+      apart from the aux read primitives they rely on and the list consumer they serve.
+    why: |
+      Keep the newest-shell lookup and its line-boundary-safe bounded scan together so list reads
+      retain their O(tail-hit) behavior without loading entire aux logs.
+    boundary: |
+      GetCommandShell, aux grouping, and readAuxTailEntries move unchanged to manager_aux_tail.go.
+      It continues to fall back to full aux loading only when tail reading is unavailable and keeps
+      the same shell inference predicate. Parent is 2,916 lines.
+    tests:
+      - server/internal/session/manager_aux_tail_test.go
+      - server/internal/api/usecase/usecase_test.go
+    files:
+      - server/internal/session/manager.go
+      - server/internal/session/manager_aux_tail.go
+      - docs/agent/rules/backend/TODO.md
+      - docs/agent/rules/backend/file-size.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - server/internal/session/manager_aux_tail.go:func (m *Manager) GetCommandShell
+      - server/internal/session/manager_aux_tail.go:func (m *Manager) readAuxTailEntries

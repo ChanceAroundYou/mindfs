@@ -1893,7 +1893,7 @@
      全量与增量从此共用一套合并语义。
   4. `readExchangeTail` 去掉 `seq<=baseSeq` 跳过，改为**返回全部解析结果**，去重交给
      `mergeExchangeRecords`。理由：这条路径在最热的读取路径上，同 seq 的更新必须看得见。
-  5. 新增 `Manager.GetCommandShell`：aux 尾部有界读（512KB 起步、4 倍增长），命中即停；
+  5. 新增 `Manager.GetCommandShell`（现位于 `manager_aux_tail.go`）：aux 尾部有界读（512KB 起步、4 倍增长），命中即停；
      `fillCommandShells` 改用它。判据仍是 `InferCommandShellFromAux`（最后一条
      `source=userShell`、`phase=final` 的 commandExecution）。
   6. `handleSessionSync` 改为与 `handleSessionGet` 同构：有 `windowMeta` 就按窗口内 seq 取
@@ -3082,3 +3082,9 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：aux JSONL 的全量读取、游标增量读取、窗口尾部反向扫描、seq 过滤和窗口轻压缩与 exchange、SQLite 实现混在父文件中；误改回退路径会让窗口读取变成整份 aux 解析或丢失懒加载载荷约定。
 - **根因与边界**：`loadExchangeAux`、窗口过滤、cursor-aware incremental read、全量/尾部读取及窗口尾扫描原样迁至 `manager_aux_reads.go`（274 行）。公开 wrapper 与 pending tool-call state 留在父文件；全量 fallback、轻压缩和 seq 过滤顺序不变。父文件实测 3,026 行。
 - **针对性测试**：`aux_window_tail_test.go`、`manager_window_test.go`、`manager_aux_tail_test.go` → 守住尾部窗口与全量结果等价、空文件/缺失文件、懒展开 payload 与不触发全量 aux 解析。
+
+### G-EL Session manager 命令 shell 有界 aux 尾读拆分
+
+- **可见症状**：命令会话列表标签需要取最新 `userShell` 状态；若读整个 aux 文件，列表每个命令会话都可能持锁扫描数 MB 数据。
+- **根因与边界**：`GetCommandShell`、aux seq 分组和行边界安全的 `readAuxTailEntries` 原样迁至 `manager_aux_tail.go`（120 行）。仍以尾部命中判断 shell，仅在尾读不可用时回退全量加载；父文件实测 2,916 行。
+- **针对性测试**：`manager_aux_tail_test.go` → 守住 bounded tail 命中与不触发全量 aux parse；`usecase_test.go` → 守住列表页 shell 标签推断接线。
