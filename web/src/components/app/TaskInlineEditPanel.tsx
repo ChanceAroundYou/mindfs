@@ -19,44 +19,12 @@ import React, {
   useState,
   useSyncExternalStore,
 } from "react";
-import {
-  buildGitDiffCacheSignature,
-  clearGitHistoryCache,
-  fetchGitDiff,
-  fetchGitRelatedFileDiff,
-  fetchGitBranches,
-  removeGitWorktree,
-  type GitBranchesPayload,
-  type GitDiffPayload,
-} from "../../services/git";
-import { fileTokenPath, formatFileToken, isUploadAbortError, uploadFiles, type UploadProgress } from "../../services/upload";
 import TokenEditor, { type TokenEditorHandle } from "../editor/TokenEditor";
-import { fetchAgents, restartAgent, type AgentStatus } from "../../services/agents";
-import { fetchCandidates, type CandidateItem } from "../../services/candidates";
-import {
-  beginTaskFinishWorktree,
-  createTask,
-  deleteTask,
-  deleteTaskTemplate,
-  // FinishWorktreeConflict 是 class 不是 type：下面要用 instanceof 分流
-  // （冲突要列文件清单，其它失败只报一句）。
-  FinishWorktreeConflict,
-  fetchTaskDetails,
-  fetchTaskTemplates,
-  getCachedTaskDetails,
-  getCachedTaskMeta,
-  moveTask,
-  pruneCachedTaskDetails,
-  rebuildTaskWorktree,
-  saveTaskTemplate,
-  upsertCachedTaskDetails,
-  type KanbanTask,
-  type StageRun,
-  type TaskDetail,
-  type TaskOverviewItem,
-  type StageTemplate,
-  type TaskTemplate,
-} from "../../services/tasks";
+import type { AgentStatus } from "../../shared/agentTypes";
+import type { CandidateItem } from "../../shared/candidateTypes";
+import type { GitBranchesPayload } from "../../shared/gitTypes";
+import type { UploadProgress } from "../../shared/uploadTypes";
+import type { KanbanTask, StageTemplate, TaskTemplate } from "../../shared/taskTypes";
 import { APP_DOCUMENT_TITLE, AppProps, CHILD_SESSION_PAGE_SIZE, MULTI_PROJECT_SESSION_LIMIT, ManagedRootPayload, SESSION_PAGE_SIZE } from "../../app/appMisc";
 import { TaskInlineEditState } from "../../app/appTask";
 import { TaskInlineCandidateMenu } from "./TaskInlineCandidateMenu";

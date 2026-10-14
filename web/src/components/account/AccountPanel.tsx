@@ -2,9 +2,6 @@ import React from "react";
 import { createPortal } from "react-dom";
 import { useI18n } from "../../i18n/index";
 import { Select } from "../common/Select";
-import { logout } from "../../services/net/authGate";
-import { confirmDialog } from "../../services/dialog";
-import { deleteAccount, setPrimaryAccount } from "../../services/accounts";
 import { useAccountPanel } from "./useAccountPanel";
 
 type AccountPanelProps = {
@@ -151,6 +148,9 @@ export function AccountPanel({ onClose, anchorRef }: AccountPanelProps): React.R
     run,
     submitPassword,
     submitNewAccount,
+    confirmDeleteAccount,
+    makePrimaryAccount,
+    signOut,
   } = useAccountPanel({ onClose, anchorRef });
 
   if (!box) return null;
@@ -199,8 +199,7 @@ export function AccountPanel({ onClose, anchorRef }: AccountPanelProps): React.R
                 type="button"
                 style={BUTTON_STYLE}
                 onClick={() => {
-                  logout();
-                  window.location.reload();
+                  signOut();
                 }}
               >
                 {t("account.signOut")}
@@ -353,17 +352,7 @@ export function AccountPanel({ onClose, anchorRef }: AccountPanelProps): React.R
                     marginLeft: "auto",
                     opacity: busy || account.primary ? 0.45 : 1,
                   }}
-                  onClick={() => {
-                    void confirmDialog({
-                      message: t("account.confirmDelete", { name: account.username }),
-                      danger: true,
-                    }).then((ok) => {
-                      if (!ok) return;
-                      return run(async () => {
-                        await deleteAccount(account.id);
-                      });
-                    });
-                  }}
+                  onClick={() => void confirmDeleteAccount(account)}
                 >
                   <TrashIcon />
                 </button>
@@ -375,11 +364,7 @@ export function AccountPanel({ onClose, anchorRef }: AccountPanelProps): React.R
                     disabled={busy}
                     title={t("account.makePrimaryHint")}
                     style={BUTTON_STYLE}
-                    onClick={() =>
-                      void run(async () => {
-                        await setPrimaryAccount(account.id);
-                      })
-                    }
+                    onClick={() => makePrimaryAccount(account.id)}
                   >
                     {t("account.makePrimary")}
                   </button>

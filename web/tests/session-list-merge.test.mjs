@@ -117,6 +117,8 @@ assert.equal(
 // 拆分后多项目列表的排序落在 useMultiProjectSessionList.ts（SessionList.tsx 只是壳）。
 const multiProjectHookSource = readSource("src/components/session/useMultiProjectSessionList.ts");
 assert.match(multiProjectHookSource, /orderProjectGroupsByNode\(/);
+assert.match(multiProjectHookSource, /const nodes = getNodes\(\)/);
+assert.match(multiProjectHookSource, /\bnodes,\n/);
 
 const projectGroups = [
   { rootId: "home-plain-old", _nodeId: "home", latestSessionTime: "2026-07-30T05:00:00.000Z", sessions: [] },

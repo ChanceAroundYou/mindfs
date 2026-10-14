@@ -22,7 +22,7 @@ import {
   chatBlurPlaceholderKeys,
   IME_ENTER_GUARD_MS,
 } from "../../shared/actionBarUtils";
-import { DEFAULT_NODE_COLOR } from "../../services/net/nodeRegistry";
+import { DEFAULT_NODE_COLOR } from "../../shared/nodePalette";
 import { type ActionBarProps, type AttachedFileContext, type QueuedMessageInfo, type SessionInfo, type WSStatus } from "./actionTypes";
 import { useActionBar } from "./useActionBar";
 import { useResponsive } from "../../hooks/useResponsive";
@@ -78,7 +78,7 @@ export function ActionBar(props: ActionBarProps) {
     effort, setEffort,
     fastService, setFastService,
     longContext, setLongContext,
-    agents, setAgents,
+    agents, setAgents, handleAgentRestart,
     shells, setShells,
     shell, setShell,
     serializedInput, setSerializedInput,
@@ -339,6 +339,7 @@ export function ActionBar(props: ActionBarProps) {
                 setFastService={setFastService}
                 setLongContext={setLongContext}
                 setAgents={setAgents}
+                onAgentRestart={handleAgentRestart}
                 isSelectedAgentUnavailable={isSelectedAgentUnavailable}
                 setAgentSelectorOpen={setAgentSelectorOpen}
                 shell={shell}

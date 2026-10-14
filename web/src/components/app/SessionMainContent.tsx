@@ -4,15 +4,6 @@ import { PendingPluginTrustView } from "./PendingPluginTrustView";
 
 // 从 App.tsx 抽出的渲染区域（机械搬移，JSX 逐字未改）。
 import { Renderer } from "../../renderer/Renderer";
-import {
-  fetchFile,
-  fetchEditableFile,
-  saveTextFile,
-  clearFileCacheForRoot,
-  clearFileMemoryCacheForView,
-  getCachedFile,
-  invalidateFileCache,
-} from "../../services/file";
 import type { FilePayload } from "../../shared/fileTypes";
 import { ViewHeader } from "../../layout/ViewHeader";
 import { ModeIcon } from "../agent/ModeIcon";
@@ -22,23 +13,6 @@ import { DefaultListView, type MainContentViewMode } from "../file/DefaultListVi
 import { getDirectorySortKey, normalizeComparableRootPath, normalizeTreeResponse, unscopedRootId } from "../../app/appUtils";
 import { accountScopedKey, loadGitDiffSideBySide, loadLastRootId, loadLastRootNodeId, loadMobileEnterKeySends, loadPersistedFileScrollPositions, loadPersistedPluginQuery, loadSidebarsSwapped, loadTaskCreateWorktreePreference, persistFileScrollPositions, persistPluginQuery, removeLocalStorageByPrefix, saveTaskCreateWorktreePreference } from "../../app/appStorage";
 import type { Dispatch, SetStateAction, RefObject, CSSProperties } from "react";
-import { FileEditStore, fileEditKey } from "../../services/fileEditing";
-import {
-  buildGitDiffCacheSignature,
-  clearGitHistoryCache,
-  fetchGitDiff,
-  fetchGitRelatedFileDiff,
-  fetchGitBranches,
-  removeGitWorktree,
-  type GitBranchesPayload,
-  type GitDiffPayload,
-} from "../../services/git";
-import {
-  DEFAULT_DIRECTORY_SORT_MODE,
-  type DirectorySortMode,
-  type FileEntry,
-} from "../../services/prefs/directorySort";
-import { fileTokenPath, formatFileToken, isUploadAbortError, uploadFiles, type UploadProgress } from "../../services/upload";
 import {
   PluginManager,
   loadPluginsFromSources,
@@ -59,7 +33,9 @@ import { AttachedFileContext, Exchange, GitFileStat, MultiProjectSessionGroup, P
 import type { ActionHandlers } from "../../app/useActionHandlers";
 import type { ViewPlugin } from "../../plugins/manager";
 import type { PluginOutput } from "../../plugins/manager";
-import type { GitStatusPayload } from "../../services/git/types";
+import type { GitDiffPayload, GitStatusPayload } from "../../shared/gitTypes";
+import type { DirectorySortMode, FileEntry } from "../../shared/directorySort";
+import type { UploadProgress } from "../../shared/uploadTypes";
 import type { WorkspaceBoard } from "../../app/useWorkspaceBoard";
 import { useI18n } from "../../i18n";
 import React, {

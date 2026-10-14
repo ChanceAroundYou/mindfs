@@ -1,5 +1,5 @@
 import React, { useId } from "react";
-import { DEFAULT_NODE_COLOR } from "../../services/net/nodeRegistry";
+import { DEFAULT_NODE_COLOR } from "../../shared/nodePalette";
 
 export type ModeIconType = "chat" | "plugin" | "command" | "task";
 

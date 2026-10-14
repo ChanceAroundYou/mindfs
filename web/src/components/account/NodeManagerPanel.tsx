@@ -1,10 +1,6 @@
 import React from "react";
 import { useI18n } from "../../i18n/index";
-import {
-  LOCAL_NODE_ID,
-  PALETTE,
-  type NodeConnection,
-} from "../../services/net/nodeRegistry";
+import { LOCAL_NODE_ID, PALETTE } from "../../shared/nodePalette";
 import { useNodeManagerPanel } from "./useNodeManagerPanel";
 
 // 挂载即"打开"（与它替换掉的 add/remove/edit 三个 popover 一致），外部点击由面板自己收。

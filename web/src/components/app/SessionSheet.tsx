@@ -3,7 +3,7 @@ import { BottomSheet } from "../shell/BottomSheet";
 import { SessionViewer } from "../session/SessionViewer";
 import { useI18n } from "../../i18n";
 import type { Dispatch, SetStateAction, RefObject } from "react";
-import { fetchAgents, restartAgent, type AgentStatus } from "../../services/agents";
+import type { AgentStatus } from "../../shared/agentTypes";
 import { APP_DOCUMENT_TITLE, AppProps, CHILD_SESSION_PAGE_SIZE, MULTI_PROJECT_SESSION_LIMIT, ManagedRootPayload, SESSION_PAGE_SIZE } from "../../app/appMisc";
 import { MainViewMode, URLState } from "../../app/appPath";
 import { AttachedFileContext, Exchange, GitFileStat, MultiProjectSessionGroup, PendingSend, RelatedFileClickTarget, SessionItem, SessionMode, SessionQueueItem, SlashCommandResult, ViewerSelection, WSStatus } from "../../app/appSession";

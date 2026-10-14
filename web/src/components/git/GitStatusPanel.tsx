@@ -1,7 +1,6 @@
 import React from "react";
 import type { GitStatusItem, GitStatusPayload } from "../../shared/gitTypes";
 import { useI18n } from "../../i18n/index";
-import { confirmDialog } from "../../services/dialog";
 import {
   renderStatusColor,
   renderLineStat,
@@ -85,8 +84,9 @@ export function GitStatusPanel({
     setSelectedActionPath,
     setHoveredActionPath,
     runPanelAction,
+    discardItem,
     submitCommit,
-  } = useGitStatusPanel({ rootId, onCommit });
+  } = useGitStatusPanel({ rootId, onCommit, t });
 
   if (!loading && (!status || status.available !== true)) {
     return null;
@@ -396,22 +396,7 @@ export function GitStatusPanel({
                     <GitIconButton
                       title={t("git.discardChanges")}
                       disabled={!onDiscardItem || !!actionBusy}
-                      onClick={() => {
-                        const runDiscard = () =>
-                          runPanelAction(`discard:${item.path}`, () => onDiscardItem?.(item));
-                        if (item.status !== "??") {
-                          return runDiscard();
-                        }
-                        void confirmDialog({
-                          message: t("git.confirmDeleteUntracked", { path: item.path }),
-                          danger: true,
-                        }).then((ok) => {
-                          if (ok) {
-                            return runDiscard();
-                          }
-                          return undefined;
-                        });
-                      }}
+                      onClick={() => void discardItem(item, onDiscardItem)}
                     >
                       <UndoIcon />
                     </GitIconButton>

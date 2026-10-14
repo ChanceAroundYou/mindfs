@@ -1,12 +1,10 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useI18n } from "../../i18n";
-import { sessionService, type Session } from "../../services/session";
-import { recentQuickSwitchGroups, ringGesture } from "../../services/quickSwitch";
+import type { Session } from "../../shared/sessionTypes";
+import { useSessionRingQuickSwitch, ringGesture } from "./useSessionRingQuickSwitch";
 import { appAccentHexToRgba } from "../../shared/actionBarUtils";
 import type { SessionInfo } from "./actionTypes";
-
-type QuickSwitchGroup = ReturnType<typeof recentQuickSwitchGroups>[number];
 
 /** 输入框右侧的会话环：点按打开会话抽屉，左拖到底新开会话，上拖拉出快捷切换面板。拖拽状态内聚在这里。 */
 export function SessionRing({
@@ -46,8 +44,7 @@ export function SessionRing({
   const [isDragging, setIsDragging] = useState(false);
   const dragStartRef = useRef({ x: 0, y: 0 });
   const [quickSwitchOpen, setQuickSwitchOpen] = useState(false);
-  const [quickSwitchLoading, setQuickSwitchLoading] = useState(false);
-  const [quickSwitchGroups, setQuickSwitchGroups] = useState<QuickSwitchGroup[]>([]);
+  const { loading: quickSwitchLoading, groups: quickSwitchGroups } = useSessionRingQuickSwitch(quickSwitchOpen);
   const [quickSwitchPos, setQuickSwitchPos] = useState({ left: 8, bottom: 64, width: 272, maxHeight: 400 });
   const rootRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -105,18 +102,6 @@ export function SessionRing({
   // 快捷切换面板：贴着输入框上沿展开，只取最近 3 个项目 × 每项目 3 条。
   useEffect(() => {
     if (!quickSwitchOpen) return;
-    let active = true;
-    setQuickSwitchLoading(true);
-    void sessionService
-      .fetchMultiRootSessions(3)
-      .then((items) => {
-        if (!active) return;
-        setQuickSwitchGroups(recentQuickSwitchGroups(items));
-        setQuickSwitchLoading(false);
-      })
-      .catch(() => {
-        if (active) setQuickSwitchLoading(false);
-      });
     const place = () => {
       const rect = rootRef.current?.closest('[data-onboarding="message-input"]')?.getBoundingClientRect();
       if (!rect) return;
@@ -147,7 +132,6 @@ export function SessionRing({
     document.addEventListener("pointerdown", outside);
     window.addEventListener("keydown", escape, true);
     return () => {
-      active = false;
       window.removeEventListener("resize", place);
       window.removeEventListener("scroll", place, true);
       document.removeEventListener("pointerdown", outside);

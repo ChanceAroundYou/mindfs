@@ -11,6 +11,7 @@ const { computeTailOverlay } = await import("../src/shared/sessionOverlay.ts");
 const sessionServiceDir = path.resolve(import.meta.dirname, "../src/services/session");
 const sharedSessionTypesPath = path.resolve(import.meta.dirname, "../src/shared/sessionTypes.ts");
 const sessionViewerPath = path.resolve(import.meta.dirname, "../src/components/session/SessionViewer.tsx");
+const sessionViewerProjectionPath = path.resolve(import.meta.dirname, "../src/components/session/useSessionViewerExchangeProjection.ts");
 const sessionWindowingPath = path.resolve(import.meta.dirname, "../src/components/session/useSessionWindowing.ts");
 const targetSeqScrollPath = path.resolve(import.meta.dirname, "../src/components/session/useTargetSeqScroll.ts");
 const viewerControlsPath = path.resolve(import.meta.dirname, "../src/components/session/SessionViewerFloatingControls.tsx");
@@ -25,7 +26,7 @@ const sessionSrc = [
     .map((name) => fs.readFileSync(path.join(sessionServiceDir, name), "utf8")),
   fs.readFileSync(sharedSessionTypesPath, "utf8"),
 ].join("\n");
-const viewerSrc = [sessionViewerPath, sessionWindowingPath, targetSeqScrollPath, viewerControlsPath].map((file) => fs.readFileSync(file, "utf8")).join("\n");
+const viewerSrc = [sessionViewerPath, sessionViewerProjectionPath, sessionWindowingPath, targetSeqScrollPath, viewerControlsPath].map((file) => fs.readFileSync(file, "utf8")).join("\n");
 // 剥掉注释后的代码视图：注释里提到某个坏写法是正常的（那通常正是在解释它为什么被删）。
 const stripComments = (src) => src.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
 const sessionCode = stripComments(sessionSrc);
@@ -256,7 +257,7 @@ assert.match(
 // 三条可见集来源共用同一个按 seq 去重的合并，纯拼接会把同一行渲染两遍。
 assert.match(
   viewerSrc,
-  /mergeSessionExchanges\(prev, winExchanges\)/,
+  /mergeVisibleExchanges\(prev, winExchanges\)/,
   "applyWindow must merge by seq, not concatenate (seed and window overlap)",
 );
 assert.match(

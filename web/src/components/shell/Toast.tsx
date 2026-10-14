@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useCallback } from "react";
-import { errorService, type AppError } from "../../services/net/error";
+import React from "react";
+import type { AppError } from "../../shared/errorTypes";
 import { useI18n } from "../../i18n/index";
+import { useToastErrors } from "../../hooks/useToastErrors";
 
 type ToastItem = {
   id: string;
@@ -9,56 +10,7 @@ type ToastItem = {
 };
 
 export function ToastContainer(): React.ReactElement {
-  const [toasts, setToasts] = useState<ToastItem[]>([]);
-
-  // Subscribe to errors
-  useEffect(() => {
-    const unsubscribe = errorService.subscribe((error) => {
-      // Only show non-fatal errors as toasts
-      if (error.severity === "fatal") return;
-
-      const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      const duration = error.severity === "error" ? 5000 : 3000;
-
-      setToasts((prev) => [
-        ...prev,
-        {
-          id,
-          error,
-          expiresAt: Date.now() + duration,
-        },
-      ]);
-    });
-
-    return unsubscribe;
-  }, []);
-
-  // Auto-remove expired toasts
-  useEffect(() => {
-    if (toasts.length === 0) return;
-
-    const timer = setInterval(() => {
-      const now = Date.now();
-      setToasts((prev) => prev.filter((t) => t.expiresAt > now));
-    }, 500);
-
-    return () => clearInterval(timer);
-  }, [toasts.length]);
-
-  const removeToast = useCallback((id: string) => {
-    setToasts((prev) => prev.filter((t) => t.id !== id));
-  }, []);
-
-  const handleRetry = useCallback(async (toast: ToastItem) => {
-    if (toast.error.retryAction) {
-      removeToast(toast.id);
-      try {
-        await toast.error.retryAction();
-      } catch (e) {
-        console.error("Retry failed:", e);
-      }
-    }
-  }, [removeToast]);
+  const { toasts, removeToast, handleRetry } = useToastErrors();
 
   if (toasts.length === 0) return <></>;
 

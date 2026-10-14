@@ -1,9 +1,4 @@
 // 从 App.tsx 抽出的渲染区域（机械搬移，JSX 逐字未改）。
-import {
-  completeOnboarding,
-  dismissOnboarding,
-  shouldAutoStartOnboarding,
-} from "../../services/prefs/onboarding";
 import { OnboardingTour } from "../shell/OnboardingTour";
 import type { Dispatch, SetStateAction } from "react";
 

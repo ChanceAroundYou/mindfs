@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ExitIcon } from "../common/ExitIcon";
 import { useI18n } from "../../i18n/index";
-import { fetchFile } from "../../services/file";
+import { useFileEditorReload } from "./useFileEditorReload";
 import type { FileEditSession, FileEditStoreContract, FilePayload } from "../../shared/fileTypes";
 import { CodeTextEditor } from "../editor/CodeTextEditor";
 
@@ -99,6 +99,7 @@ type Props = {
 };
 
 export function FileEditor({ actionsTarget, store, editKey, session, isVisible, onFileUpdated, onFileSaved, onExitError }: Props) {
+  const reloadFile = useFileEditorReload();
   const { t } = useI18n();
   const dialog = useRef<HTMLDialogElement>(null);
   const saveButton = useRef<HTMLButtonElement>(null);
@@ -133,7 +134,7 @@ export function FileEditor({ actionsTarget, store, editKey, session, isVisible, 
     store.patch(editKey, { leaving: true });
     setConfirmExit(false);
     try {
-      const file = await fetchFile({ rootId: session.rootId, path: session.path, readMode: "full", fresh: true, timeoutMs: 15000 });
+      const file = await reloadFile(session.rootId, session.path);
       if (!file) throw new Error(t("fileEditor.reloadFailed"));
       onFileUpdated(file);
     } catch (error) {

@@ -1,5 +1,5 @@
-import React, { memo, useEffect, useState } from "react";
-import { fetchProofProtectedBlob } from "../../services/file";
+import React, { memo } from "react";
+import { useProtectedBlobUrl } from "../../hooks/useProtectedBlobUrl";
 
 type ImageViewerProps = {
   path: string;
@@ -7,32 +7,7 @@ type ImageViewerProps = {
 };
 
 function ImageViewerInner({ path, root }: ImageViewerProps) {
-  const [url, setURL] = useState("");
-
-  useEffect(() => {
-    let cancelled = false;
-    let objectURL = "";
-    async function run() {
-      if (!root) return;
-      try {
-        const blob = await fetchProofProtectedBlob({ rootId: root, path });
-        if (cancelled) return;
-        objectURL = URL.createObjectURL(blob);
-        setURL(objectURL);
-      } catch {
-        if (!cancelled) {
-          setURL("");
-        }
-      }
-    }
-    void run();
-    return () => {
-      cancelled = true;
-      if (objectURL) {
-        URL.revokeObjectURL(objectURL);
-      }
-    };
-  }, [path, root]);
+  const url = useProtectedBlobUrl(root ? { rootId: root, path } : undefined);
   return (
     <div
       style={{

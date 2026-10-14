@@ -9,6 +9,10 @@ const viewer = readFileSync(
   new URL("../src/components/SessionViewer.tsx", import.meta.url),
   "utf8",
 );
+const projection = readFileSync(
+  new URL("../src/components/session/useSessionViewerExchangeProjection.ts", import.meta.url),
+  "utf8",
+);
 
 // ── 1. 组合出口必须按对象同一性去重（两来源共用同一个 exchange 对象时只渲染一次）──
 const composeStart = viewer.indexOf("const composedExchanges = useMemo(");
@@ -57,13 +61,10 @@ assert.equal(
 );
 
 // ── 2. 重锚定只许把持久化行装进窗口态 ────────────────────────────────
-const anchorStart = viewer.indexOf("const anchorExchanges = (Array.isArray((session as any)?.exchanges)");
-const anchorEnd = viewer.indexOf("applyWindow(", anchorStart);
-assert.ok(anchorStart >= 0 && anchorEnd > anchorStart, "anchor payload filter should be found");
+assert.match(viewer, /keepPersistedExchanges\(Array\.isArray\(\(session as any\)\?\.exchanges\)/);
 assert.match(
-  viewer.slice(anchorStart, anchorEnd),
-  // 契约（重锚定载荷只装持久行）不变，判据改走共用谓词 isPersistedSeq（2026-10-06）。
-  /\.filter\(\(ex\) => isPersistedSeq\(\(ex as any\)\?\.seq\)\)/,
+  projection,
+  /exchanges\.filter\(\(exchange\) => isPersistedSeq\(\(exchange as \{ seq\?: unknown \}\)\?\.seq\)\)/,
   "the re-anchor payload must drop seq=0 transient rows before installing a window",
 );
 

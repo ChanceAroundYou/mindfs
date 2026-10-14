@@ -1,5 +1,27 @@
 export type GitStatusCode = "M" | "A" | "D" | "R" | "??";
 
+export type GitDiffPayload = {
+  path: string;
+  display_path?: string;
+  old_path?: string;
+  status: GitStatusCode | string;
+  additions: number;
+  deletions: number;
+  content: string;
+  file_meta?: Array<{
+    source_session: string;
+    session_name?: string;
+    agent?: string;
+    created_at?: string;
+    updated_at?: string;
+    created_by?: string;
+  }>;
+  commit?: string;
+  base_head?: string;
+  target_head?: string;
+  source?: "worktree" | "commit" | "commit_range";
+};
+
 export type GitStatusItem = {
   path: string;
   display_path?: string;

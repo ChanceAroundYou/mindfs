@@ -2,7 +2,7 @@ import React from "react";
 import { useI18n } from "../../i18n/index";
 import { NodeBadgeHeader } from "../account/NodeBadgeHeader";
 import { ViewHeader } from "../../layout/ViewHeader";
-import { getNodes, PALETTE } from "../../services/net/nodeRegistry";
+import { PALETTE } from "../../shared/nodePalette";
 import { resolveGroupColor } from "../../shared/sessionGroupDisplay";
 import { SessionCardMemo } from "./SessionCard";
 import {
@@ -48,6 +48,7 @@ export function MultiProjectSessionList({
   const effectiveEmptyText = emptyText || t("sessionList.empty");
   const {
     pinnedProjects,
+    nodes,
     orderedGroups,
     sessionByKey,
     togglePinnedProject,
@@ -130,7 +131,7 @@ export function MultiProjectSessionList({
               const groupKey = groupScopeKey(group);
               const expanded = expandedProjects[groupKey] ?? groupDefaultExpanded(group);
               const pinned = !!pinnedProjects[groupKey];
-              const groupColor = String((group as any)._nodeColor || resolveGroupColor(group as any, {}, getNodes() as any) || PALETTE[0]);
+              const groupColor = String((group as any)._nodeColor || resolveGroupColor(group as any, {}, nodes as any) || PALETTE[0]);
               const topLevelSessions = topLevelSessionsForGroup(group.sessions);
               const sessions = expanded ? group.sessions : [];
               const rows = buildRows(sessions, group.rootId, groupNodeId);

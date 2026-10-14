@@ -3,9 +3,8 @@ import type { TimelineItem } from "../../hooks/useSessionStream";
 import type { AgentStatus } from "../../shared/agentTypes";
 import type { RelatedFile } from "../../shared/sessionTypes";
 import type { Locale, MessageKey } from "../../i18n/index";
-import { isPersistedSeq } from "../../services/session";
-import { savePrompt } from "../../services/prompts";
-import { reportError } from "../../services/net/error";
+import { useReportError } from "../../hooks/useReportError";
+import { useSessionViewerTimelineActions } from "./useSessionViewerTimelineActions";
 import { copyText } from "../../platform/clipboard";
 import { formatSessionDuration } from "../../shared/sessionDuration";
 import { SessionViewerThoughtItem } from "./SessionViewerThoughtItem";
@@ -54,6 +53,8 @@ export function SessionViewerTimeline({
   copyResetTimersRef, setSavedPromptKeys, setCopiedMessageKeys, t, themeColor,
   userMetaButtonStyle,
 }: SessionViewerTimelineProps) {
+  const reportError = useReportError();
+  const { isPersistedSeq, savePrompt } = useSessionViewerTimelineActions();
   const makePromptKey = (item: Extract<TimelineItem, { type: "user_text" | "assistant_text" }>) =>
     `${item.id}\n${item.timestamp || ""}\n${item.content || ""}`;
 

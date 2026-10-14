@@ -1,8 +1,7 @@
 import type { RefObject } from "react";
 import { ModeSelector, type SessionMode } from "../agent/ModeSelector";
 import { AgentSelector } from "../agent/AgentSelector";
-import { fetchAgents, restartAgent, type AgentStatus, type ShellStatus } from "../../services/agents";
-import { getRootNodeId } from "../../services/net/rootNode";
+import type { AgentStatus, ShellStatus } from "../../shared/agentTypes";
 import { getAgentDefaults, strip1MSuffix, resolveEffortOnSwitch, resolveLongContextOnSwitch } from "./modelUtils";
 import { appAccentHexToRgba } from "../../shared/actionBarUtils";
 import { SessionRing } from "./SessionRing";
@@ -47,6 +46,7 @@ export type ActionBarControlsProps = {
   setFastService: (fastService: "" | "on" | "off") => void;
   setLongContext: (enabled: boolean) => void;
   setAgents: (agents: AgentStatus[]) => void;
+  onAgentRestart: (agent: string) => Promise<void>;
   isSelectedAgentUnavailable: boolean;
   setAgentSelectorOpen: (open: boolean) => void;
   shell: string;
@@ -100,6 +100,7 @@ export function ActionBarControls(props: ActionBarControlsProps) {
     setFastService,
     setLongContext,
     setAgents,
+    onAgentRestart,
     isSelectedAgentUnavailable,
     setAgentSelectorOpen,
     shell,
@@ -182,12 +183,7 @@ export function ActionBarControls(props: ActionBarControlsProps) {
               onLongContextChange={(next) => setLongContext(!!next)}
               fastService={fastService}
               onFastServiceChange={(nextFastService) => setFastService(nextFastService || "")}
-              onAgentRestart={async (targetAgent) => {
-                const nid = getRootNodeId(currentRootId || "") as any;
-                await restartAgent(targetAgent, nid);
-                const items = await fetchAgents(true, nid);
-                setAgents(items);
-              }}
+              onAgentRestart={onAgentRestart}
               compact={true}
               warnUnavailable={isSelectedAgentUnavailable}
               defaultExpandOptions

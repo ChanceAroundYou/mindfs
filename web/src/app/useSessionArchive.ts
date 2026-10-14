@@ -32,7 +32,7 @@ import { type FilePayload } from "../services/file";
 import { reportError } from "../services/net/error";
 import { type Session, deleteCachedSession, deleteCachedSessionLists, sessionService } from "../services/session";
 import { mergeSessionItems } from "../services/session/sessionListMerge";
-import { type SessionTreeItem, collectSessionSubtreeKeys } from "../services/session/sessionTree";
+import { type SessionTreeItem, collectSessionSubtreeKeys } from "../shared/sessionTree";
 
 export type UseSessionArchiveParams = {
   boundSessionByRootRef: MutableRefObject<Record<string, string | null>>;

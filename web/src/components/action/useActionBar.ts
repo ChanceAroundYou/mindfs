@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { fetchAgents, fetchShells, type AgentStatus } from "../../services/agents";
+import { fetchAgents, fetchShells, restartAgent, type AgentStatus } from "../../services/agents";
 import { getRootNodeId } from "../../services/net/rootNode";
 import type { UploadProgress } from "../../services/upload";
 import type { TokenEditorHandle } from "../../shared/actionBarTypes";
@@ -357,6 +357,12 @@ export function useActionBar(props: ActionBarProps) {
     mode === "command" ? (isMobile ? 92 : 116) : isMobile ? 124 : 148,
   );
   const editorMinHeight = 44;
+  const handleAgentRestart = useCallback(async (targetAgent: string) => {
+    const nodeId = getRootNodeId(currentRootId || "");
+    await restartAgent(targetAgent, nodeId);
+    const nextAgents = await fetchAgents(true, nodeId);
+    setAgents(nextAgents);
+  }, [currentRootId]);
 
   return {
     mode, setMode,
@@ -367,6 +373,7 @@ export function useActionBar(props: ActionBarProps) {
     fastService, setFastService,
     longContext, setLongContext,
     agents, setAgents,
+    handleAgentRestart,
     shells, setShells,
     shell, setShell,
     serializedInput, setSerializedInput,

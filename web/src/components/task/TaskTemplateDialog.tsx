@@ -2,15 +2,10 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { StageEditor } from "./StageEditor";
 import { PanelShell, panelButtonStyle, panelIconButtonStyle } from "../shell/PanelShell";
 import { composerInputStyle } from "../action/composerStyles";
-import {
-  saveTaskTemplate,
-  type StageTemplate,
-  type TaskTemplate,
-  type TaskTemplateStage,
-} from "../../services/tasks";
 import type { AgentStatus } from "../../shared/agentTypes";
-import { reportError } from "../../services/net/error";
+import type { StageTemplate, TaskTemplate, TaskTemplateStage } from "../../shared/taskTypes";
 import { useI18n, type I18nContextValue } from "../../i18n/index";
+import { useTaskTemplateSave } from "../../hooks/useTaskTemplateSave";
 import { DEFAULT_TASK_AGENT, DEFAULT_TASK_MODEL } from "../../app/appTask";
 
 type TaskTemplateDialogProps = {
@@ -110,11 +105,20 @@ export function TaskTemplateDialog({ open, agents, template, onClose, onSaved, c
   // 打开那一刻的草稿快照。dirty 拿它和当前 draft 比 —— 不能每次渲染现算基线，
   // 那会把「刚打开」也判成有改动。
   const baselineRef = useRef("");
-  const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState("");
   const [openHelpKey, setOpenHelpKey] = useState("");
   // 模板归属：默认跟随已有草稿（编辑项目专用模板时保持勾上），新建则默认全局。
   const [scopeToCurrentProject, setScopeToCurrentProject] = useState(false);
+  const { saving, saveError, setSaveError, saveTask } = useTaskTemplateSave({
+    draft,
+    setDraft,
+    scopeToCurrentProject,
+    currentRootId,
+    onSaved,
+    onClose,
+    t,
+    normalizeStages,
+    cloneTemplate,
+  });
 
   useEffect(() => {
     if (!open) return;
@@ -183,36 +187,7 @@ export function TaskTemplateDialog({ open, agents, template, onClose, onSaved, c
     }));
   };
 
-  const saveTask = async () => {
-    if (!draft.name.trim()) {
-      reportError("task.action_failed", t("taskTemplate.taskTemplateNameRequired"));
-      return;
-    }
-    if (!draft.stages[0] || draft.stages[0].snapshot.role !== "user") {
-      reportError("task.action_failed", t("taskTemplate.firstStageMustBeUser"));
-      return;
-    }
-    setSaving(true);
-    setSaveError("");
-    try {
-      const saved = await saveTaskTemplate({
-        ...draft,
-        // 勾了就是本项目专用，没勾就是全局。空串而不是 undefined：
-        // 后端 normalizeTaskTemplate 会 TrimSpace，留 undefined 也一样归空。
-        root_id: scopeToCurrentProject ? (currentRootId || "") : "",
-        stages: normalizeStages(draft.stages),
-      });
-      setDraft(cloneTemplate(saved, t));
-      onSaved?.(saved);
-      onClose();
-    } catch (err) {
-      const message = String((err as Error)?.message || t("taskTemplate.taskTemplateSaveFailed"));
-      setSaveError(message);
-      reportError("task.action_failed", message);
-    } finally {
-      setSaving(false);
-    }
-  };
+
 
   return (
     <PanelShell

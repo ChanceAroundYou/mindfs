@@ -1,7 +1,7 @@
-import React, { useState } from "react";
-import { savePrompt, deletePrompt } from "../../services/prompts";
+import React from "react";
 import { useI18n } from "../../i18n";
 import type { CandidateItem } from "../../shared/candidateTypes";
+import { useCandidatePromptActions } from "../../hooks/useCandidatePromptActions";
 
 function candidateNameColor(candidateType: CandidateItem["type"], isDark: boolean): string {
   switch (candidateType) {
@@ -47,51 +47,25 @@ export function CandidateDropdown({
   onPromptFormClosed?: () => void;
 }) {
   const { t } = useI18n();
-  const [addingPrompt, setAddingPrompt] = useState(false);
-  const [newPromptText, setNewPromptText] = useState("");
-  const [savingPrompt, setSavingPrompt] = useState(false);
-  const [deletingPrompt, setDeletingPrompt] = useState("");
-  const [promptSaveError, setPromptSaveError] = useState("");
-
-  const cancelAddPrompt = () => {
-    if (savingPrompt) return;
-    setAddingPrompt(false);
-    setNewPromptText("");
-    setPromptSaveError("");
-    onPromptFormClosed?.();
-  };
-
-  const submitNewPrompt = async () => {
-    const text = newPromptText.trim();
-    if (!text || savingPrompt) return;
-    setSavingPrompt(true);
-    setPromptSaveError("");
-    try {
-      await savePrompt(text);
-      setAddingPrompt(false);
-      setNewPromptText("");
-      onPromptSaved();
-      onPromptFormClosed?.();
-    } catch (error) {
-      setPromptSaveError(String((error as Error)?.message || t("action.addPromptFailed")));
-    } finally {
-      setSavingPrompt(false);
-    }
-  };
-
-  const removePrompt = async (text: string) => {
-    if (deletingPrompt) return;
-    setDeletingPrompt(text);
-    setPromptSaveError("");
-    try {
-      await deletePrompt(text);
-      onPromptDeleted(text);
-    } catch (error) {
-      setPromptSaveError(String((error as Error)?.message || t("action.deletePromptFailed")));
-    } finally {
-      setDeletingPrompt("");
-    }
-  };
+  const {
+    addingPrompt,
+    setAddingPrompt,
+    newPromptText,
+    setNewPromptText,
+    savingPrompt,
+    deletingPrompt,
+    promptSaveError,
+    setPromptSaveError,
+    cancelAddPrompt,
+    submitNewPrompt,
+    removePrompt,
+  } = useCandidatePromptActions({
+    onPromptSaved,
+    onPromptDeleted,
+    onPromptFormClosed,
+    addErrorMessage: t("action.addPromptFailed"),
+    deleteErrorMessage: t("action.deletePromptFailed"),
+  });
 
   return (
     <div

@@ -14,6 +14,7 @@ const select = read("src/components/Select.tsx");
 const stageEditor = read("src/components/StageEditor.tsx");
 const stageOptions = read("src/components/StageOptionsBar.tsx");
 const panelShell = read("src/components/PanelShell.tsx");
+const panelCloseHook = read("src/hooks/usePanelShellClose.ts");
 const promptEditor = read("src/components/PromptEditor.tsx");
 // 新建任务面板（TaskInlineEditPanel）与 AppRootView 都不在虚拟 "src/App.tsx" 里，直接读真文件。
 const appRootView = read("src/app/AppRootView.tsx");
@@ -318,17 +319,17 @@ assert.match(
   "PanelShell must expose a dirty check so every panel shares one confirmation",
 );
 assert.match(
-  panelShell,
-  /const requestClose = useCallback\(\(\) => \{\s*\n\s*if \(!onClose\) return;\s*\n\s*if \(!hasUnsavedChanges\?\.\(\)\)/,
+  panelCloseHook,
+  /if \(!onClose\) return;\s*\n\s*if \(!hasUnsavedChanges\?\.\(\)\)/,
   "the guard must short-circuit straight to onClose when there is nothing to lose",
 );
 assert.match(
-  panelShell,
+  panelCloseHook,
   /confirmDialog\(\{\s*\n\s*message: t\("common\.discardChangesConfirm"\),/,
   "a dirty close must confirm before discarding",
 );
 assert.match(
-  panelShell,
+  panelCloseHook,
   /if \(ok\) onClose\(\);/,
   "the panel may only close after the user confirms discarding",
 );

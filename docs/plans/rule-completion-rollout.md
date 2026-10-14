@@ -114,7 +114,7 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 - 已完成：`SessionViewer` 的跟随滚动状态/回调与滚动位置、视口适配和 stickiness effects 归 `useSessionViewerScroll`，timeline user-index/timestamp 元数据归线性 helper；动画 keyframes 收到 session viewer styles。helper hook 在原状态/效果调用顺序位置运行，物理父组件 646→499 行，硬线剩余 3 项、软线 77 项。行为专项、TypeScript、全量测试（Vitest 5 + legacy 290 通过/4 跳过）与生产构建通过。
 - 已完成：受保护图片解析与 blob/object URL 生命周期归 `MarkdownImage`，`useMarkdownViewer` 保留解析、outline、渲染和链接导航编排，hook API 不变。父 hook 实测 527→445 行，硬线剩余 2 项、软线 78 项；TypeScript、全量测试（Vitest 5 + legacy 291 通过/4 跳过）、命名/source-map 专项与生产构建通过。
 - 已完成：WS 出站命令构造与发送归 `SessionConnectionOutbound`，manager 在旧 API 上保留薄代理；socket-open 守卫仍先于 context 压缩/pending 写入，pending ack 与 reconnect resend 留在 manager。父类实测 603→472 行，前端硬线剩余 1 项、软线 79 项；TypeScript、全量测试（Vitest 5 + legacy 292 通过/4 跳过）、生产构建及 upstream 门禁（1019 delta / 124 组）通过，提交 `7f32c1e` 已推送并 no-restart 安装。
-- 进行中：按正式 500 行硬线继续细拆 `useSessionStream`：React stream 状态订阅与定时器留在原 hook；时间线投影归 `sessionTimeline.ts`（332 行），assistant exchange 投影归 `sessionAssistantTimeline.ts`（184 行），稳定 ID 由 `stableTimelineID.ts` 提供。父 hook 648→128 行；专项测试、typecheck、全量测试（Vitest 5 + legacy 293 通过/4 跳过）和生产构建通过；upstream 门禁（1023 delta / 125 组）通过；提交 `db8d19b`、`c0b87b8` 已推送并 no-restart 安装。
+- 已完成：按正式 500 行硬线继续细拆 `useSessionStream`：React stream 状态订阅与定时器留在原 hook；时间线投影归 `sessionTimeline.ts`（332 行），assistant exchange 投影归 `sessionAssistantTimeline.ts`（184 行），稳定 ID 由 `stableTimelineID.ts` 提供。父 hook 648→128 行；专项测试、typecheck、全量测试（Vitest 5 + legacy 293 通过/4 跳过）和生产构建通过；upstream 门禁（1023 delta / 125 组）通过；提交 `db8d19b`、`c0b87b8` 已推送并 no-restart 安装。
 - 已完成（2026-10-14）：继续将 Claude subagent 路由（`session_subagents.go`，315 行）、AnswerQuestion/stream aux（`session_stream_events.go`，202 行）、agent event/path 投影（`session_agent_events.go`，209 行）和 model validation（`session_model_validation.go`，136 行）按职责拆出。`session.go` 从 2,276 降至 1,455 行，低于 1,500 行硬线；取消过期判断注释保留在原方法旁。相关 usecase 测试、全量 `make test`、upstream 门禁（1036 delta / 137 组）与 no-restart ship 均通过；提交 `48f7b8b`，三端安装 `v0.5.5-786-g48f7b8b`，无节点重启。
 - 已完成（2026-10-14）：`manager.go` 搜索入口与两个搜索测试文件已审阅；`Search`、搜索打分/排序、块流和旧 JSONL 搜索及 snippet helper 原样迁至 `manager_search.go`（322 行）。私有测试调用保持同包，无消费者/import 变更；session 包专项与全仓 `make test` 通过。父文件从 3,905 降至 3,593 行。upstream 门禁通过（1037 delta / 138 组）；`6224281` 已推送，no-restart ship 完成，三端安装 `v0.5.5-787-g6224281`，bundle 对账一致且未重启节点。
 - 已完成（2026-10-14）：主 exchange 增量读取路径及 JSONL 解析、按 seq 合并、游标推进原样迁至 `manager_exchanges.go`（315 行），连同 `exchangeFileCursor` 类型；相关 session 测试、全仓 `make test` 与 upstream 门禁通过（1038 delta / 139 组）。父文件从 3,593 降至 3,289 行；G-BG 的迁移锚点同步修正。提交 `0bbe846` 已推送，no-restart ship 完成，三端安装 `v0.5.5-788-g0bbe846`，bundle 对账一致且未重启节点。
@@ -134,12 +134,12 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 - 历史阶段记录：G-EX/G-EY/G-EZ 的早期拆分进度与行数基线已由下方验收记录取代；当前必拆清单以本计划末尾的最新实测为准。
 
 - 已完成（2026-10-14）：G-EX 的 `http_git.go` 已通过全仓 Go/TypeScript/web 与 upstream 门禁并 no-restart ship（`2def72a`，三端 `v0.5.5-802-g2def72a`，未重启）。
-- 进行中（2026-10-14）：项目文件树/文件操作、上传、目录增删改与 managed-dir response 迁至 `http_files.go`（574 行）；路由和 usecase 调用不变，API 包专项通过。父文件实测 2,036 行，仍高于 1,500 硬线；全仓门禁与发布待执行。
+- 已完成（2026-10-14）：项目文件树/文件操作、上传、目录增删改与 managed-dir response 迁至 `http_files.go`（574 行）；路由和 usecase 调用不变，API 包专项通过。当前 `http.go` 实测 652 行、`http_files.go` 实测 575 行，均低于 1,500 行硬线；全仓门禁已通过，upstream 与 no-restart ship 进入最终收尾。
 - 下一项：完成 G-EY 后继续将 session handler（规避 repoint handler）、静态资源服务和偏好/项目入口按域拆到父文件低于硬线；再处理其他 6 个大文件、双入口审计与 reviewer checklist 门禁。
 
 
 - 已完成（2026-10-14）：G-EY 文件/目录 handler 已通过全仓 Go、tsc、Vitest 5 + legacy 293 与 upstream 门禁（1052 delta / 154 组），提交 `9522fd5` 已推送并 no-restart 安装至三端（`v0.5.5-803-g9522fd5`），bundle 对账一致、无节点重启。
-- 进行中（2026-10-14）：session 列表/详情/同步/搜索/导入/rename/archive/delete 等 handlers 与 response/shell projection 迁至 `http_sessions.go`（1184 行）；`handleSessionRepoint` 留在 `http.go` 且未改。API 包专项及 session-window、conditional-response、user-message timing web 守卫通过；`http.go` 实测 867 行。全仓门禁、upstream 与 no-restart ship 待执行。
+- 已完成（2026-10-14）：session 列表/详情/同步/搜索/导入/rename/archive/delete 等 handlers 与 response/shell projection 迁至 `http_sessions.go`（1184 行）；`handleSessionRepoint` 留在 `http.go` 且未改。API 包专项及 session-window、conditional-response、user-message timing web 守卫通过；`http.go` 当前实测 652 行。全仓门禁已通过，upstream 与 no-restart ship 进入最终收尾。
 - 下一项：完成 G-EZ 后继续拆 `http.go` 剩余偏好、静态资源、local-dir/import 处理，使主文件成为 route/middleware facade；随后按当前大文件清单处理其余 6 个文件与 cli/server 双入口审计、reviewer checklist 门禁。
 
 
@@ -161,27 +161,76 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 - 已完成（2026-10-14）：G-GN 双入口审计增加测试守卫；`make test`、upstream（1065 delta / 168 组）及 ship Go/tsc/web（Vitest 5 + legacy 293）通过。提交 `6bc3d6c` 已推送并 no-restart 安装三端 `v0.5.5-817-g6bc3d6c`，bundle 一致、未重启。
 - 已完成（2026-10-14）：G-GO 落实 WS 单读 goroutine 规则：`handleWSRequest` 的 ping、plan-mode 与 queue handlers 改为 goroutine 派发；AST 测试锁定全部 handler。全仓 Go、ship Go/tsc/web（Vitest 5 + legacy 293）、upstream（1065 delta / 169 组）通过。提交 `bd0bd3a` 已推送并 no-restart 安装三端 `v0.5.5-818-gbd0bd3a`，bundle 一致，未重启。
 - 已完成（2026-10-14）：G-GP 新增规则入口、Active plan 唯一性与本地 Markdown 链接门禁；同时核对 `CLAUDE.md`/`GEMINI.md` 均导入 `AGENTS.md` 及共用索引。G-GP/G-GQ 全仓 Go、tsc、web（Vitest 5 + legacy 298）和 upstream 门禁（1068 delta / 171 组）通过；提交 `d1c3d90`、`ddf5690` 已推送并 no-restart 安装三端 `v0.5.5-820-gddf5690`，bundle 一致、未重启。
-- 进行中（2026-10-14）：frontend layering 长期规则的初始债务为 121 条、69 个文件。候选项契约已迁至 `web/src/shared/candidateTypes.ts`，三个组件不再依赖 service 类型；当前降至 118 条、68 个文件。`reviewer-architecture-rules.test.mjs` 以只减不增 manifest 禁止新增，并守住 500 行硬线；继续按域迁移、删减 manifest。
-- 进行中（2026-10-14）：AgentStatus 展示契约已有 `web/src/shared/agentTypes.ts`，另三个纯类型组件改为从 shared 导入；当前 component→service 债务降至 115 条、65 个文件。保留同一 service 的运行时请求导入在 allowlist 中，后续继续拆分。
-- 进行中（2026-10-14）：第二批三个纯类型消费者（AgentSelectorParts、PromptEditor、StageEditor）也改用 shared/agentTypes；当前债务降至 112 条、64 个文件。仍保留需要 fetch/restart 等运行时操作的 service 依赖。
-- 进行中（2026-10-14）：TaskDetailPanel 与 TaskTemplateDialog 的类型依赖也改用 shared/agentTypes；task service 运行时依赖保留，当前债务为 110 条、64 个文件。
-- 进行中（2026-10-14）：ActionBar、SessionViewer、SessionViewerTimeline 的 AgentStatus 改从 shared 导入；其他数据/请求服务边仍保留，当前债务为 107 条、64 个文件。
-- 进行中（2026-10-14）：RootRelatedContentView、TaskCreateTemplateMenu、TaskTemplateActionMenu 改从既有 `shared/taskTypes.ts` 引入纯任务类型；三个组件不再导入 task service，当前债务降至 104 条、61 个文件。
-- 进行中（2026-10-14）：TaskDetailPanel、WorkspaceTaskRow、WorkspaceQuickLaunch 改从 shared/taskTypes 导入类型，三处纯类型 task service 边和三个组件上的最后 service 依赖移除；当前债务为 101 条、58 个文件。
-- 进行中（2026-10-14）：PromptEditor、StageEditor、WorkspaceBoard 改从 shared/taskTypes 导入契约；对应三条 task service 导入边和三个组件的 service 依赖清除，当前债务降至 98 条、55 个文件。
-- 进行中（2026-10-14）：Git 展示契约（状态、分支、历史、worktree 等类型）集中在 `shared/gitTypes.ts`，service facade 兼容 re-export；GitBranchSelector、WorktreeLifecycleOverlays、ComposerTopChips 改从 shared 导入类型，债务降至 95 条、53 个文件。
-- 进行中（2026-10-14）：icons/listViewIcons 与 RootGitContentView 的 `FileEntry`/`DirectorySortMode` 类型引用改到既有 shared 模块，类型契约保持不变，债务降至 92 条、52 个文件。
-- 进行中（2026-10-14）：完整 session domain type module 移入 `shared/sessionTypes.ts`；原 `services/session/sessionTypes.ts` 保留内部兼容 re-export，公开 `services/session` facade 不变。六个纯类型组件边被删除，另外两个混合 runtime 文件也转为 shared 类型导入；当前债务 86 条、48 个文件。
-- 进行中（2026-10-14）：GitStatusPanel、RootGitContentView、RootWorktreeContentView 改从 shared/gitTypes 导入 Git 响应类型；最后两个视图不再有 service 导入，当前债务降至 83 条、46 个文件。
-- 进行中（2026-10-14）：`UploadProgress` 类型移入 `shared/uploadTypes.ts`，service 保持 re-export；AttachmentsArea 与 CompactUploadProgress 不再从 upload service 导入类型，债务降至 81 条、44 个文件。
-- 进行中（2026-10-14）：`ShellStatus` 与其他 agent status contract 一并归 `shared/agentTypes.ts`，agents service 继续 re-export；ShellSelector 移除唯一 service 类型依赖，债务降至 80 条、43 个文件。
-- 进行中（2026-10-14）：`FilePayload`、编辑器状态和 `FileEditStoreContract` 移入 `shared/fileTypes.ts`；file/fileEditing service 模块兼容 re-export 或继续提供 class 实现。CodeTextEditor 不再依赖 service，FileViewer 与 FileEditor 的纯类型边移除，债务降至 77 条、42 个文件。
-- 进行中（2026-10-14）：`DocumentPreviewKind` 和 `PdfPageLayout` 移入 `shared/documentPreviewTypes.ts`，service 继续兼容 re-export；DocumentViewer 移除类型 service 依赖，债务降至 76 条、42 个文件。
-- 进行中（2026-10-14）：DirectorySortMenu 的排序选项与类型直接从 `shared/directorySort.ts` 导入，移除其 services facade 依赖，债务降至 75 条、41 个文件。
-- 进行中（2026-10-14）：`copyText` 平台能力归到 `web/src/platform/clipboard.ts`，service 路径留兼容 re-export；四个组件和两个 app 调用点改用 platform 入口，组件依赖债务降至 71 条、40 个文件。
-- 进行中（2026-10-14）：纯 session duration/事件时间 helpers 移至 `shared/sessionDuration.ts`，services/session 留兼容门面；SessionViewer 与 Timeline 移除 service 依赖，源位置断言同步转到 shared，债务降至 69 条、40 个文件。
-- 进行中（2026-10-14）：补 reviewer checklist 自动覆盖映射；backend 已有 WS、Cancel timeout、AppContext、endpoint role 和文件长度测试；本批为 AppContext 使用面与生产 Go 文件硬线新增 guard。SQLite additive、回滚说明、人工架构判断仍由 reviewer checklist 标明。
+- 已完成（2026-10-14）：frontend layering 长期规则的初始债务为 121 条、69 个文件。候选项契约已迁至 `web/src/shared/candidateTypes.ts`，三个组件不再依赖 service 类型；当前降至 118 条、68 个文件。`reviewer-architecture-rules.test.mjs` 以只减不增 manifest 禁止新增，并守住 500 行硬线；继续按域迁移、删减 manifest。
+- 已完成（2026-10-14）：AgentStatus 展示契约已有 `web/src/shared/agentTypes.ts`，另三个纯类型组件改为从 shared 导入；当前 component→service 债务降至 115 条、65 个文件。保留同一 service 的运行时请求导入在 allowlist 中，后续继续拆分。
+- 已完成（2026-10-14）：第二批三个纯类型消费者（AgentSelectorParts、PromptEditor、StageEditor）也改用 shared/agentTypes；当前债务降至 112 条、64 个文件。仍保留需要 fetch/restart 等运行时操作的 service 依赖。
+- 已完成（2026-10-14）：TaskDetailPanel 与 TaskTemplateDialog 的类型依赖也改用 shared/agentTypes；task service 运行时依赖保留，当前债务为 110 条、64 个文件。
+- 已完成（2026-10-14）：ActionBar、SessionViewer、SessionViewerTimeline 的 AgentStatus 改从 shared 导入；其他数据/请求服务边仍保留，当前债务为 107 条、64 个文件。
+- 已完成（2026-10-14）：RootRelatedContentView、TaskCreateTemplateMenu、TaskTemplateActionMenu 改从既有 `shared/taskTypes.ts` 引入纯任务类型；三个组件不再导入 task service，当前债务降至 104 条、61 个文件。
+- 已完成（2026-10-14）：TaskDetailPanel、WorkspaceTaskRow、WorkspaceQuickLaunch 改从 shared/taskTypes 导入类型，三处纯类型 task service 边和三个组件上的最后 service 依赖移除；当前债务为 101 条、58 个文件。
+- 已完成（2026-10-14）：PromptEditor、StageEditor、WorkspaceBoard 改从 shared/taskTypes 导入契约；对应三条 task service 导入边和三个组件的 service 依赖清除，当前债务降至 98 条、55 个文件。
+- 已完成（2026-10-14）：Git 展示契约（状态、分支、历史、worktree 等类型）集中在 `shared/gitTypes.ts`，service facade 兼容 re-export；GitBranchSelector、WorktreeLifecycleOverlays、ComposerTopChips 改从 shared 导入类型，债务降至 95 条、53 个文件。
+- 已完成（2026-10-14）：icons/listViewIcons 与 RootGitContentView 的 `FileEntry`/`DirectorySortMode` 类型引用改到既有 shared 模块，类型契约保持不变，债务降至 92 条、52 个文件。
+- 已完成（2026-10-14）：完整 session domain type module 移入 `shared/sessionTypes.ts`；原 `services/session/sessionTypes.ts` 保留内部兼容 re-export，公开 `services/session` facade 不变。六个纯类型组件边被删除，另外两个混合 runtime 文件也转为 shared 类型导入；当前债务 86 条、48 个文件。
+- 已完成（2026-10-14）：GitStatusPanel、RootGitContentView、RootWorktreeContentView 改从 shared/gitTypes 导入 Git 响应类型；最后两个视图不再有 service 导入，当前债务降至 83 条、46 个文件。
+- 已完成（2026-10-14）：`UploadProgress` 类型移入 `shared/uploadTypes.ts`，service 保持 re-export；AttachmentsArea 与 CompactUploadProgress 不再从 upload service 导入类型，债务降至 81 条、44 个文件。
+- 已完成（2026-10-14）：`ShellStatus` 与其他 agent status contract 一并归 `shared/agentTypes.ts`，agents service 继续 re-export；ShellSelector 移除唯一 service 类型依赖，债务降至 80 条、43 个文件。
+- 已完成（2026-10-14）：`FilePayload`、编辑器状态和 `FileEditStoreContract` 移入 `shared/fileTypes.ts`；file/fileEditing service 模块兼容 re-export 或继续提供 class 实现。CodeTextEditor 不再依赖 service，FileViewer 与 FileEditor 的纯类型边移除，债务降至 77 条、42 个文件。
+- 已完成（2026-10-14）：`DocumentPreviewKind` 和 `PdfPageLayout` 移入 `shared/documentPreviewTypes.ts`，service 继续兼容 re-export；DocumentViewer 移除类型 service 依赖，债务降至 76 条、42 个文件。
+- 已完成（2026-10-14）：DirectorySortMenu 的排序选项与类型直接从 `shared/directorySort.ts` 导入，移除其 services facade 依赖，债务降至 75 条、41 个文件。
+- 已完成（2026-10-14）：`copyText` 平台能力归到 `web/src/platform/clipboard.ts`，service 路径留兼容 re-export；四个组件和两个 app 调用点改用 platform 入口，组件依赖债务降至 71 条、40 个文件。
+- 已完成（2026-10-14）：纯 session duration/事件时间 helpers 移至 `shared/sessionDuration.ts`，services/session 留兼容门面；SessionViewer 与 Timeline 移除 service 依赖，源位置断言同步转到 shared，债务降至 69 条、40 个文件。
+- 已完成（2026-10-14）：补 reviewer checklist 自动覆盖映射；backend 已有 WS、Cancel timeout、AppContext、endpoint role 和文件长度测试；本批为 AppContext 使用面与生产 Go 文件硬线新增 guard。SQLite additive、回滚说明、人工架构判断仍由 reviewer checklist 标明。
 
-- 进行中（2026-10-14）：纯 session group color resolver 移至 `shared/sessionGroupDisplay.ts`，service 路径保留兼容 re-export；MultiProjectSessionList 移除 service 依赖，债务降至 68 条、40 个文件。
+- 已完成（2026-10-14）：纯 session group color resolver 移至 `shared/sessionGroupDisplay.ts`，service 路径保留兼容 re-export；MultiProjectSessionList 移除 service 依赖，债务降至 68 条、40 个文件。
 
-- 进行中（2026-10-14）：纯 session list activity timestamp resolver 移至 `shared/sessionActivityAt.ts`，session merge service 保留兼容 re-export；SessionCard 移除 service 依赖，债务降至 67 条、39 个文件。
+- 已完成（2026-10-14）：纯 session list activity timestamp resolver 移至 `shared/sessionActivityAt.ts`，session merge service 保留兼容 re-export；SessionCard 移除 service 依赖，债务降至 67 条、39 个文件。
+
+- 已完成（2026-10-14）：session tree 的纯子树/展开态工具迁至 `shared/sessionTree.ts`，session service 保留兼容 re-export；应用状态 hooks 与列表组件改用 shared，SessionList 移除 service 依赖，债务降至 66 条、38 个文件。
+
+- 已完成（2026-10-14）：SessionMainContent 的 `GitStatusPayload` 与 DefaultListView 的 `UploadProgress` 直接从既有 `shared/gitTypes.ts`、`shared/uploadTypes.ts` 导入；两个组件各移除一个 service 类型边，契约无行为变化，债务降至 64 条、36 个文件。
+
+- 已完成（2026-10-14）：CandidateDropdown 的 prompt 保存/删除请求与相关状态移入 `useCandidatePromptActions`；组件通过 hook 调用，保留分别的失败文案、成功回调和表单关闭时机，移除 prompts service 依赖，债务降至 63 条、37 个文件。
+
+- 已完成（2026-10-14）：纯 PDF `visiblePageRange` 与 render margin 移至 `shared/documentPreview.ts`，document preview service 保留兼容 re-export；PdfPreview 和相关源码测试直连 shared，渲染窗口计算语义不变，债务降至 62 条、36 个文件。
+
+- 已完成（2026-10-14）：ActionBar、ModeIcon、ModeSelector 对 `DEFAULT_NODE_COLOR` 的展示常量依赖改由既有 `shared/nodePalette.ts` 满足；三处 nodeRegistry service 边移除，颜色值不变，债务降至 59 条。
+
+- 已完成（2026-10-14）：MarkdownImage 与 ImageViewer 的 proof-protected blob 获取和 object URL 生命周期移入 `useProtectedBlobUrl`，两个组件改用 hook，保留取消请求、失败回退与 URL 清理，移除 file service 边，债务降至 57 条、31 个文件。
+
+- 已完成（2026-10-14）：SessionViewer 中已无调用方的 `savePrompt` service import 移除；实际保存仍由 SessionViewerTimeline 的已使用路径提供，组件 service 边降至 56 条。
+
+- 已完成（2026-10-14）：MultiProjectSessionList 所需 node snapshot 由 `useMultiProjectSessionList` 逻辑 hook 提供，组件仅用 shared palette 与 resolver 展示颜色；移除唯一直接 nodeRegistry 边，债务降至 55 条、30 个文件。
+
+- 已完成（2026-10-14）：DefaultListView 的排序选项、排序函数和目录项契约直接从既有 `shared/directorySort.ts` 导入，移除其唯一 service 依赖，排序行为不变，债务降至 54 条、29 个文件。
+
+- 已完成（2026-10-14）：ToastContainer 的 errorService 订阅、自动过期与 retry 流程迁至 `useToastErrors`，Toast 展示所需的 `AppError` 契约归 `shared/errorTypes.ts` 并由 service 兼容 re-export；组件移除 service 边，提示级别、时长与重试行为不变，债务降至 53 条、28 个文件。
+
+- 已完成（2026-10-14）：DialogHost 的服务订阅、返回键语义与键盘确认逻辑迁至 `useDialogHost`；组件仅保留弹窗焦点与渲染，取消/确认结果不变，移除 dialog service 依赖边，债务降至 52 条、27 个文件。
+
+- 已完成（2026-10-14）：SessionViewer 的未使用 error import 删除；Timeline 与 SlashCommand 的错误报告经 `useReportError` 逻辑 hook 触发，组件移除 3 条 error service 边，错误码/文案和全局分发行为不变，债务降至 49 条、26 个文件。
+
+- 已完成（2026-10-14）：FileOperations 的 rename/delete dialog、文件操作请求与错误处理，以及 move 浏览/提交流程迁入 `useFileOperationActions`、`useFileOperationMove`；组件保留菜单与 LocalPanel 渲染，删除/改名/移动行为和请求竞态保护不变，移除 4 条 service 边，债务降至 45 条、25 个文件。
+
+- 已完成（2026-10-14）：PanelShell 的未保存修改确认迁至 `usePanelShellClose`；遮罩关闭、dirty guard、取消继续编辑和确认后关闭时序不变，组件移除 dialog service 边，债务降至 44 条、24 个文件。
+
+- 已完成（2026-10-14）：OnboardingGate 中被 props 覆盖或完全未使用的 onboarding service import 删除；实际回调继续由 props 提供，移除唯一 service 边，行为不变，债务降至 43 条、23 个文件。
+
+- 已完成（2026-10-14）：TaskTemplateDialog 的模板保存、验证、scope 写入与错误报告迁入 `useTaskTemplateSave`，表单组件保留草稿编辑和确认弹窗；项目 scope、首段 user 校验、错误码和成功回调顺序不变，移除 2 条 service 边，债务降至 41 条、22 个文件。
+- 已完成（2026-10-14）：AuthGate 的状态检查、登录请求、错误转换和卸载竞态保护迁入 colocated `useAuthGate`，保留页面级门帘/API 公开语义，移除 1 条 service 边，债务降至 40 条、21 个文件。
+- 已完成（2026-10-14）：ComposerTopChips 的 root→node 查询从视图移入 colocated `useRootNodeId`；节点映射仍在每次渲染读取以响应 realtime 更新，移除 1 条 service 边，债务降至 39 条、21 个文件。
+- 已完成（2026-10-14）：AccountPanel 的账户删除确认/请求、设主请求迁入已有 `useAccountPanel`；视图继续传入当前账户，成功刷新、错误显示与忙态沿用原 `run`，移除 4 条 service 边（含退出动作），债务降至 36 条、19 个文件。
+- 已完成（2026-10-14）：ActionBarControls 的 agent restart 请求从视图移到 `useActionBar` handler，经 ActionBar 回调传递；节点解析、重启和 agents 刷新顺序保持，移除 2 条 service 边，债务降至 34 条、18 个文件。
+- 已完成（2026-10-14）：SessionMainContent 中 4 组仅残留于 import 的 file、fileEditing、directorySort 与 upload service 依赖删除；所需纯类型改用 shared 模块，`GitDiffPayload` 仍从 git service types 导入。渲染逻辑未改，债务降至 30 条、18 个文件。
+- 已完成（2026-10-14）：AppActionBar 的 session 操作 imports 均只存在于 import 声明；删除死 runtime imports，`QueuedUserMessage` 与 `SendShortcut` 改从 shared types 导入，发送快捷键/会话行为不变，移除最后两条 service 边，债务降至 28 条、17 个文件。
+- 已完成（2026-10-14）：FileTreePanel 的 file 操作、font-size/send-shortcut 读写函数和 directory-sort 契约 service imports 均未在该组件使用；删除死 API imports，`FontSizePreferences`、`SendShortcut` 与目录项类型改由 shared 导入，实际状态仍由 props 驱动，债务降至 24 条、16 个文件。
+- 已完成（2026-10-14）：AgentIcon 的 appPath 资产 URL 解析与 SVG 请求缓存迁入 colocated `useCachedAgentIcon`；组件只保留 agent 名称映射与显示，保留部署前缀、缓存、失败回退和卸载取消语义，债务降至 23 条、15 个文件。
+- 已完成（2026-10-14）：SessionSheet、TaskDetailPanelGate 与 TaskInlineEditPanel 删除机械拆分遗留的 service imports；未使用的运行 API 一并移除，仍需的 Agent/Task/Candidate/Git/Upload 契约改由 shared types 导入，面板 props 和行为不变，债务降至 15 条、12 个文件。
+- 已完成（2026-10-14）：SessionRing 的快捷切换数据请求迁至 `useSessionRingQuickSwitch`，`Session` 类型改从 shared 导入，gesture/排序 service helper 由 colocated hook 适配并复用；加载、取消竞态和手势判定语义不变，债务降至 13 条、11 个文件。
+- 已完成（2026-10-14）：GitStatusPanel 未跟踪文件 discard 确认及 action busy 调用迁入已有 `useGitStatusPanel`；脏文件仍直接 discard，未跟踪文件仍先确认，取消不执行动作，债务降至 12 条、10 个文件。
+- 已完成（2026-10-14）：SessionViewerTimeline 的 prompt 保存服务和 persisted-seq 判定经 colocated `useSessionViewerTimelineActions` 提供；时间线 view 保留原渲染、提示保存结果与 fork 判定，移除 2 条 service 边，债务降至 10 条、9 个文件。
+- 已完成（2026-10-14）：SessionViewerAttachments 改用既有 `useProtectedBlobUrl` 加载受保护图片；hook 接受可选 nodeId，service 仍按 root registry 自动解析节点，旧对象 URL 清理、请求取消与失败 fallback 保持，移除 2 条 service 边，债务降至 8 条、8 个文件。
+- 已完成（2026-10-14）：FileViewer 移除机械拆分遗留、仅存在于 import 行的 FileEditStore/fileEditKey/MAX_EDITABLE_FILE_BYTES service import；编辑能力仍由 `useFileViewer` 提供，不改交互，债务降至 7 条、7 个文件。
+- 已完成（2026-10-14）：DocumentViewer 的受保护 blob 请求、取消竞态和预览错误转换迁入 colocated `useDocumentPreviewBlob`；纯错误描述归 shared 并由旧组件模块兼容 re-export，PDF 等预览语义不变，债务降至 6 条、6 个文件。
+- 已完成（2026-10-14）：NodeManagerPanel 改从 shared 导入节点标识/调色板；SessionMainContent 的 `GitDiffPayload` 契约归 `shared/gitTypes.ts` 并由 service types 兼容 re-export；ProjectAddPopover 的节点注册表读取移入 colocated hook，移除 3 条视图 service 边，债务降至 3 条、3 个文件。
+- 已完成待正式交付（2026-10-14）：FileEditor 的文件刷新、WebPushMenuItem 的订阅/测试通知状态机、SessionViewer 的持久行筛选与窗口合并均经 colocated hooks 调用；组件直接 service import allowlist 归零，门禁仍拒绝新增边。最终 `npm test` 312 通过、4 跳过、0 失败；`make test` 全部 Go 包通过；`npm run build` 通过（现有大 chunk 警告）。提交后待运行 upstream checker，再按 no-restart 路径正式 ship。

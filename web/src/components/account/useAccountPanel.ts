@@ -1,12 +1,15 @@
 import React from "react";
 import { useI18n } from "../../i18n/index";
-import { currentUser, type AuthUser } from "../../services/net/authGate";
+import { confirmDialog } from "../../services/dialog";
+import { currentUser, logout, type AuthUser } from "../../services/net/authGate";
 import {
   accountErrorKey,
   changePassword,
   createAccount,
+  deleteAccount,
   isAdminAccount,
   listAccounts,
+  setPrimaryAccount,
   type Account,
 } from "../../services/accounts";
 
@@ -177,6 +180,28 @@ export function useAccountPanel({ onClose, anchorRef }: UseAccountPanelOptions) 
     );
   };
 
+  const confirmDeleteAccount = async (account: Account) => {
+    const ok = await confirmDialog({
+      message: t("account.confirmDelete", { name: account.username }),
+      danger: true,
+    });
+    if (!ok) return;
+    await run(async () => {
+      await deleteAccount(account.id);
+    });
+  };
+
+  const makePrimaryAccount = (accountId: string) => {
+    void run(async () => {
+      await setPrimaryAccount(accountId);
+    });
+  };
+
+  const signOut = () => {
+    logout();
+    window.location.reload();
+  };
+
   return {
     rootRef,
     me,
@@ -206,5 +231,8 @@ export function useAccountPanel({ onClose, anchorRef }: UseAccountPanelOptions) 
     run,
     submitPassword,
     submitNewAccount,
+    confirmDeleteAccount,
+    makePrimaryAccount,
+    signOut,
   };
 }

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { getDocumentPreviewKind, visiblePageRange, PDF_RENDER_MARGIN_PX } from "../src/services/documentPreview.ts";
+import { getDocumentPreviewKind } from "../src/services/documentPreview.ts";
+import { visiblePageRange, PDF_RENDER_MARGIN_PX } from "../src/shared/documentPreview.ts";
 
 assert.equal(getDocumentPreviewKind(".PDF"), "pdf");
 assert.equal(getDocumentPreviewKind(".pdf"), "pdf");

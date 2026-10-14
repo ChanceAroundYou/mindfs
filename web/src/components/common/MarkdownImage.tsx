@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from "react";
-import { fetchProofProtectedBlob } from "../../services/file";
+import React from "react";
 import { isDirectImageSrc, resolveMarkdownHref } from "../common/markdownUtils";
+import { useProtectedBlobUrl } from "../../hooks/useProtectedBlobUrl";
 
 export function MarkdownImage({
   src = "",
@@ -17,55 +17,21 @@ export function MarkdownImage({
   currentPath?: string;
   root?: string;
 }) {
-  const [resolvedSrc, setResolvedSrc] = useState("");
-
-  useEffect(() => {
-    let cancelled = false;
-    let objectURL = "";
-
-    async function loadImage() {
-      const trimmedSrc = src.trim();
-      if (!trimmedSrc) {
-        setResolvedSrc("");
-        return;
-      }
-
-      if (isDirectImageSrc(trimmedSrc)) {
-        setResolvedSrc(trimmedSrc);
-        return;
-      }
-
-      if (!root) {
-        setResolvedSrc(trimmedSrc);
-        return;
-      }
-
-      try {
-        const resolvedPath = resolveMarkdownHref(currentPath, trimmedSrc);
-        if (!resolvedPath) {
-          setResolvedSrc("");
-          return;
-        }
-        const blob = await fetchProofProtectedBlob({ rootId: root, path: resolvedPath });
-        if (cancelled) return;
-        objectURL = URL.createObjectURL(blob);
-        setResolvedSrc(objectURL);
-      } catch {
-        if (!cancelled) {
-          setResolvedSrc("");
-        }
-      }
-    }
-
-    void loadImage();
-
-    return () => {
-      cancelled = true;
-      if (objectURL) {
-        URL.revokeObjectURL(objectURL);
-      }
-    };
-  }, [currentPath, root, src]);
+  const trimmedSrc = src.trim();
+  const directSrc = isDirectImageSrc(trimmedSrc);
+  const resolvedPath = trimmedSrc && root && !directSrc
+    ? resolveMarkdownHref(currentPath, trimmedSrc)
+    : "";
+  const protectedSrc = useProtectedBlobUrl(
+    root && resolvedPath ? { rootId: root, path: resolvedPath } : undefined,
+  );
+  const resolvedSrc = directSrc
+    ? trimmedSrc
+    : !root
+      ? trimmedSrc
+      : resolvedPath
+        ? protectedSrc
+        : "";
 
   if (!resolvedSrc) {
     return (

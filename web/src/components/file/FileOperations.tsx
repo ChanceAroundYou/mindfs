@@ -1,11 +1,9 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React from "react";
 import { useI18n } from "../../i18n/index";
-import { protectedJSON, ProtectedAPIError } from "../../services/net/api";
-import { appURL } from "../../services/net/base";
-import { reportError } from "../../services/net/error";
-import { alertDialog, confirmDialog, promptDialog } from "../../services/dialog";
 import { renderToolIcon } from "../stream/toolCallIcons";
-import { LocalPanel, type LocalDirBrowserState } from "./ProjectAddPopover";
+import { LocalPanel } from "./ProjectAddPopover";
+import { useFileOperationActions } from "../../hooks/useFileOperationActions";
+import { useFileOperationMove } from "../../hooks/useFileOperationMove";
 
 export function FileMenuIcon({ action }: { action: "download" | "edit" | "delete" | "rename" | "move" }) {
   let icon: React.ReactNode;
@@ -41,41 +39,7 @@ export function FileOperationItems({ root, path, onComplete, onMove }: {
   root: string; path: string; onComplete: () => void | Promise<void>; onMove: () => void;
 }) {
   const { t } = useI18n();
-  const [busy, setBusy] = useState(false);
-  const busyRef = useRef(false);
-  const submit = async (action: "delete" | "rename") => {
-    if (busyRef.current) return;
-    let name: string | undefined;
-    if (action === "rename") {
-      const currentName = path.replace(/\\/g, "/").split("/").pop() || "";
-      const input = await promptDialog({ message: t("fileOperation.namePrompt"), defaultValue: currentName });
-      if (input === null) return;
-      name = input.trim();
-      if (!name || name === "." || name === ".." || /[/\\\x00]/.test(name)) {
-        alertDialog(t("directory.invalidFileName"));
-        return;
-      }
-      if (name === currentName) return;
-    } else if (!await confirmDialog({ message: t("fileOperation.confirmDelete", { name: path }), danger: true })) {
-      return;
-    }
-    busyRef.current = true;
-    setBusy(true);
-    try {
-      await protectedJSON(appURL("/api/file/operation"), {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ root, path, action, name }),
-      });
-      await onComplete();
-    } catch (err) {
-      reportError("file.write_failed", err instanceof ProtectedAPIError && err.status === 409
-        ? t("directory.fileExists")
-        : err instanceof Error ? err.message : t("common.actionFailed", { action: t(`fileOperation.${action}`) }));
-    } finally {
-      busyRef.current = false;
-      setBusy(false);
-    }
-  };
+  const { busy, submit } = useFileOperationActions({ root, path, onComplete, t });
   return <>
     {(["delete", "rename", "move"] as const).map(value => <button key={value} type="button" role="menuitem" disabled={busy} style={{ ...fileMenuItemStyle, color: value === "delete" ? "#dc2626" : undefined }} onClick={() => {
       if (value === "move") onMove();
@@ -133,44 +97,6 @@ export function MoveFilePopover({ root, rootPath, path, onComplete }: {
   root: string; rootPath?: string; path: string; onComplete: () => void | Promise<void>;
 }) {
   const { t } = useI18n();
-  const request = useRef(0);
-  const busy = useRef(false);
-  const [dirs, setDirs] = useState<LocalDirBrowserState>({ path: "", items: [], loading: true, selectedPath: "", adding: false, error: "" });
-  const browse = useCallback(async (target: string) => {
-    if (busy.current) return;
-    const id = ++request.current;
-    setDirs(prev => ({ ...prev, loading: true, error: "" }));
-    try {
-      const result = await protectedJSON<Pick<LocalDirBrowserState, "path" | "parent" | "items" | "volumes">>(appURL("/api/local_dirs", new URLSearchParams({ path: target })));
-      if (id === request.current) setDirs({ ...result, loading: false, selectedPath: "", adding: false, error: "" });
-    } catch (err) {
-      if (id === request.current) setDirs(prev => ({ ...prev, loading: false, error: err instanceof Error ? err.message : String(err) }));
-    }
-  }, []);
-  useEffect(() => {
-    const parent = path.replace(/\\/g, "/").split("/").slice(0, -1).join("/");
-    const initialPath = /^(?:\/|[A-Za-z]:)/.test(path)
-      ? parent || "/"
-      : `${(rootPath || "").replace(/[\\/]+$/, "")}/${parent}`;
-    void browse(initialPath);
-    return () => { request.current += 1; };
-  }, [browse, path, rootPath]);
-  const submit = async () => {
-    if (busy.current || dirs.loading || dirs.error) return;
-    busy.current = true;
-    setDirs(prev => ({ ...prev, adding: true, error: "" }));
-    try {
-      await protectedJSON(appURL("/api/file/operation"), {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ root, path, action: "move", destination: dirs.path }),
-      });
-      await onComplete();
-    } catch (err) {
-      setDirs(prev => ({ ...prev, error: err instanceof Error ? err.message : String(err) }));
-    } finally {
-      busy.current = false;
-      setDirs(prev => ({ ...prev, adding: false }));
-    }
-  };
+  const { dirs, browse, submit } = useFileOperationMove({ root, rootPath, path, onComplete });
   return <LocalPanel localState={dirs} onLocalNavigate={target => void browse(target)} onLocalSelect={() => {}} onLocalAdd={() => void submit()} localActionLabel={t("fileOperation.moveHere")} localDisabledAddedRoot={false} localBrowseOnly />;
 }

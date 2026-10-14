@@ -3,7 +3,7 @@ import React, { useState, useRef, useEffect, useLayoutEffect, useCallback } from
 import { createPortal } from "react-dom";
 import { ModeIcon } from "./ModeIcon";
 import { useI18n, type MessageKey } from "../../i18n/index";
-import { DEFAULT_NODE_COLOR } from "../../services/net/nodeRegistry";
+import { DEFAULT_NODE_COLOR } from "../../shared/nodePalette";
 
 export type { SessionMode } from "../../shared/actionBarTypes";
 

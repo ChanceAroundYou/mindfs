@@ -13,13 +13,17 @@ import path from "node:path";
 
 const srcRoot = path.resolve(import.meta.dirname, "../src");
 const ring = fs.readFileSync(path.join(srcRoot, "components/action/SessionRing.tsx"), "utf8");
+const ringHook = fs.readFileSync(path.join(srcRoot, "components/action/useSessionRingQuickSwitch.ts"), "utf8");
 
 // 1. 组件从 services/quickSwitch 取判定，不自己写常量阈值
 assert.match(
   ring,
-  /from "\.\.\/\.\.\/services\/quickSwitch"/,
-  "SessionRing must import the shared gesture helper",
+  /from "\.\/useSessionRingQuickSwitch"/,
+  "SessionRing must consume its colocated logic hook",
 );
+assert.match(ringHook, /import \{ recentQuickSwitchGroups, ringGesture \} from "\.\.\/\.\.\/services\/quickSwitch"/);
+assert.match(ringHook, /sessionService\.fetchMultiRootSessions\(3\)/);
+assert.match(ring, /useSessionRingQuickSwitch\(quickSwitchOpen\)/);
 assert.doesNotMatch(
   ring,
   /DRAG_THRESHOLD\s*=/,

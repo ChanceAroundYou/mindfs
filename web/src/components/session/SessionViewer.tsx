@@ -8,9 +8,7 @@ import { ViewHeader } from "../../layout/ViewHeader";
 // 窗口取数（SESSION_WINDOW_SIZE / getSessionWindow / setWindowedView /
 // clearWindowedView / mergeSessionExchanges 的另一半）已随 2026-10-08 的拆分
 // 搬进 ./useSessionWindowing，这里只剩仍被重锚定与时间线用到的这几个。
-import { isPersistedSeq, mergeSessionExchanges, type ExchangeAux, type SessionBlock, type SessionWindowMeta } from "../../services/session";
-import { savePrompt } from "../../services/prompts";
-import { reportError } from "../../services/net/error";
+import type { ExchangeAux, SessionBlock, SessionWindowMeta } from "../../shared/sessionTypes";
 import { rootBadgeButtonStyle } from "../../shared/rootBadgeStyle";
 import { copyText } from "../../platform/clipboard";
 import type { AgentStatus } from "../../shared/agentTypes";
@@ -53,6 +51,7 @@ import { buildUserMetaButtonStyle, sessionViewerAnimationStyles } from "./sessio
 import { SessionViewerTimeline } from "./SessionViewerTimeline";
 import { useUserMessageSummaries } from "./useUserMessageSummaries";
 import { useRelatedFiles } from "./useRelatedFiles";
+import { useSessionViewerExchangeProjection } from "./useSessionViewerExchangeProjection";
 
 // CUSTOM(G-AT): tool_group 由时间线渲染器统一处理，保持 fork 的分组显示语义。
 
@@ -79,6 +78,7 @@ function SessionViewerInner({
   scrollContainerRef,
 }: SessionViewerProps) {
   const { locale, t } = useI18n();
+  const { mergeVisibleExchanges, keepPersistedExchanges } = useSessionViewerExchangeProjection();
   const [isMobile, setIsMobile] = useState(() => {
     if (typeof window === "undefined") {
       return false;
@@ -229,7 +229,7 @@ function SessionViewerInner({
         // keepOlder：窗口只覆盖 [minSeq, maxSeq]，比 minSeq 更老的首帧种子 / loadMore
         // 翻出来的历史必须保住 —— 整体替换会把它们扔掉，表现为「刚加载出来的历史闪一下
         // 又没了」，顶部哨兵再次可见又触发 loadMore，形成 40↔20 的无限抖动。
-        return mergeSessionExchanges(prev, winExchanges) as ExchangeArray;
+        return mergeVisibleExchanges(prev, winExchanges) as ExchangeArray;
       });
       setVisibleAux((prev) =>
         opts?.keepOlder ? { ...prev, ...winAux } : winAux,
@@ -252,7 +252,7 @@ function SessionViewerInner({
       });
       return true;
     },
-    [],
+      [mergeVisibleExchanges],
   );
 
   useSessionWindowing({
@@ -285,10 +285,9 @@ function SessionViewerInner({
     // [...incoming.filter(seq>0), ...localTransient]）。窗口态只能装持久化行 ——
     // 瞬时行归 overlay 管，混进窗口后 overlay 会再输出一遍，同一段正文渲染两次
     // （实测 2026-09-17：ask 触发后 ask 上下各一块同样的分析文本，重开会话必现）。
-    const anchorExchanges = (Array.isArray((session as any)?.exchanges)
+    const anchorExchanges = keepPersistedExchanges(Array.isArray((session as any)?.exchanges)
       ? ((session as any).exchanges as ExchangeArray)
-      : ([] as ExchangeArray)
-    ).filter((ex) => isPersistedSeq((ex as any)?.seq));
+      : ([] as ExchangeArray));
     applyWindow(
       {
         session: { ...(session as any), exchanges: anchorExchanges },
@@ -296,7 +295,7 @@ function SessionViewerInner({
       },
       { keepOlder: true },
     );
-  }, [session, sessionKey, applyWindow]);
+  }, [session, sessionKey, applyWindow, keepPersistedExchanges]);
 
   useEffect(() => {
     return () => {

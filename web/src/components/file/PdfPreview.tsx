@@ -2,9 +2,10 @@ import React, { useEffect, useRef, useState } from "react";
 import type { PDFDocumentLoadingTask, PDFDocumentProxy, PDFPageProxy } from "pdfjs-dist";
 import { useI18n } from "../../i18n/index";
 import type { MessageKey, MessageParams } from "../../i18n/types";
-import { visiblePageRange } from "../../services/documentPreview";
+import { visiblePageRange } from "../../shared/documentPreview";
 import type { PdfPageLayout } from "../../shared/documentPreviewTypes";
-import { DocumentPreviewError, describeDocumentPreviewError } from "./DocumentPreviewError";
+import { DocumentPreviewError } from "./DocumentPreviewError";
+import { describeDocumentPreviewError } from "../../shared/documentPreview";
 
 /** 往上找真正在滚动的祖先：谁的 overflow 是 auto/scroll 谁才是滚动容器。 */
 function findScrollParent(element: HTMLElement): HTMLElement | null {

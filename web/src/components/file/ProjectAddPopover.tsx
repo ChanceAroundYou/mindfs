@@ -1,5 +1,6 @@
 import React from "react";
-import { getNodes, LOCAL_NODE_ID } from "../../services/net/nodeRegistry";
+import { LOCAL_NODE_ID } from "../../shared/nodePalette";
+import { useProjectAddNodes } from "./useProjectAddNodes";
 import { useI18n } from "../../i18n/index";
 import { PathBreadcrumb } from "./PathBreadcrumb";
 import { AsyncStateMessage } from "../common/AsyncStateMessage";
@@ -76,7 +77,7 @@ export function LocalPanel({
   const actionCursor = !actionDisabled ? "pointer" : "not-allowed";
   const volumes = Array.isArray(localState.volumes) ? localState.volumes : [];
 
-  const nodes = getNodes();
+  const nodes = useProjectAddNodes();
   return (
     <div style={projectAddPopoverStyle}>
       {nodes.length > 1 && onSelectedNodeChange ? (

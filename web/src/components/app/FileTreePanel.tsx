@@ -11,31 +11,10 @@ import React, {
   useState,
   useSyncExternalStore,
 } from "react";
-import {
-  loadSendShortcut,
-  persistSendShortcut,
-  type SendShortcut,
-} from "../../services/prefs/sendShortcut";
-import {
-  loadFontSizePreferences,
-  persistFontSizePreferences,
-  type FontSizePreferences,
-} from "../../services/prefs/fontSize";
-import {
-  fetchFile,
-  fetchEditableFile,
-  saveTextFile,
-  clearFileCacheForRoot,
-  clearFileMemoryCacheForView,
-  getCachedFile,
-  invalidateFileCache,
-} from "../../services/file";
+import type { SendShortcut } from "../../shared/sendShortcut";
+import type { FontSizePreferences } from "../../shared/fontSize";
 import type { FilePayload } from "../../shared/fileTypes";
-import {
-  DEFAULT_DIRECTORY_SORT_MODE,
-  type DirectorySortMode,
-  type FileEntry,
-} from "../../services/prefs/directorySort";
+import type { DirectorySortMode, FileEntry } from "../../shared/directorySort";
 import {
   type GitHubImportState,
   type LocalDirBrowserState,

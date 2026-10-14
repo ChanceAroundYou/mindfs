@@ -1,6 +1,7 @@
 import React, { memo, useEffect, useRef, useState } from "react";
-import { fetchProofProtectedBlob } from "../../services/file";
-import { DocumentPreviewError as ErrorMessage, describeDocumentPreviewError as describeError } from "./DocumentPreviewError";
+import { DocumentPreviewError as ErrorMessage } from "./DocumentPreviewError";
+import { describeDocumentPreviewError as describeError } from "../../shared/documentPreview";
+import { useDocumentPreviewBlob } from "./useDocumentPreviewBlob";
 import { PdfPreview } from "./PdfPreview";
 import { useI18n } from "../../i18n/index";
 import type { DocumentPreviewKind } from "../../shared/documentPreviewTypes";
@@ -10,11 +11,6 @@ type DocumentViewerProps = {
   root?: string;
   kind: DocumentPreviewKind;
 };
-
-type PreviewState =
-  | { status: "loading" }
-  | { status: "ready"; blob: Blob }
-  | { status: "error"; detail?: string };
 
 function WordPreview({ blob }: { blob: Blob }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -286,24 +282,7 @@ function PowerPointPreview({ blob }: { blob: Blob }) {
 
 function DocumentViewerInner({ path, root, kind }: DocumentViewerProps) {
   const { t } = useI18n();
-  const [state, setState] = useState<PreviewState>({ status: "loading" });
-
-  useEffect(() => {
-    let cancelled = false;
-    setState({ status: "loading" });
-    if (!root) {
-      setState({ status: "error", detail: "no project" });
-      return undefined;
-    }
-    void fetchProofProtectedBlob({ rootId: root, path })
-      .then((blob) => {
-        if (!cancelled) setState({ status: "ready", blob });
-      })
-      .catch((err) => {
-        if (!cancelled) setState({ status: "error", detail: describeError(err) });
-      });
-    return () => { cancelled = true; };
-  }, [path, root]);
+  const state = useDocumentPreviewBlob(root, path);
 
   if (state.status === "loading") return <div className="document-preview-message">{t("fileViewer.previewLoading")}</div>;
   if (state.status === "error") return <ErrorMessage detail={state.detail} />;

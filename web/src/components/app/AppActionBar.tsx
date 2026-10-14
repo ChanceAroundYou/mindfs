@@ -10,12 +10,8 @@ import React, {
   useState,
   useSyncExternalStore,
 } from "react";
-import { SESSION_WINDOW_SIZE, clearCachedSessionsForRoot, clearWindowedView, composeLoadedExchanges, deleteCachedSession, deleteCachedSessionLists, getCachedSession, getCachedSessionList, getSessionWindow, isTransientExchange, saveCachedSessionList, sessionService, setCachedSessionRelatedFiles, setWindowedView, settlePendingAcks, syncSession, type QueuedUserMessage, type RelatedFile, type RelatedWorktree, type Session, type TokenUsage } from "../../services/session";
-import {
-  loadSendShortcut,
-  persistSendShortcut,
-  type SendShortcut,
-} from "../../services/prefs/sendShortcut";
+import type { QueuedUserMessage } from "../../shared/sessionTypes";
+import type { SendShortcut } from "../../shared/sendShortcut";
 import { APP_DOCUMENT_TITLE, AppProps, CHILD_SESSION_PAGE_SIZE, MULTI_PROJECT_SESSION_LIMIT, ManagedRootPayload, SESSION_PAGE_SIZE } from "../../app/appMisc";
 import { MainViewMode, URLState } from "../../app/appPath";
 import { AttachedFileContext, Exchange, GitFileStat, MultiProjectSessionGroup, PendingSend, RelatedFileClickTarget, SessionItem, SessionMode, SessionQueueItem, SlashCommandResult, ViewerSelection, WSStatus } from "../../app/appSession";

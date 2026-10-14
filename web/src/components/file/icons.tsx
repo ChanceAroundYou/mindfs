@@ -1,13 +1,6 @@
 import React from "react";
 import { useI18n } from "../../i18n/index";
-import {
-  getWebPushStatus,
-  sendWebPushTest,
-  subscribeWebPush,
-  unsubscribeWebPush,
-  webPushReasonLabel,
-  type WebPushStatus,
-} from "../../services/webPush";
+import { useWebPushMenu } from "./useWebPushMenu";
 import { SymlinkBadge } from "./SymlinkBadge";
 import type { FileEntry } from "../../shared/directorySort";
 
@@ -50,47 +43,7 @@ export function InfoIcon() {
 
 export function WebPushMenuItem() {
   const { t } = useI18n();
-  const [status, setStatus] = React.useState<WebPushStatus | null>(null);
-  const [busy, setBusy] = React.useState(false);
-  const [message, setMessage] = React.useState("");
-  const [expanded, setExpanded] = React.useState(false);
-
-  const refresh = React.useCallback(async () => {
-    try {
-      setStatus(await getWebPushStatus());
-    } catch (error) {
-      setStatus(null);
-      setMessage(error instanceof Error ? error.message : t("fileTree.notificationStatusFailed"));
-    }
-  }, []);
-
-  React.useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
-  const run = async (action: "subscribe" | "unsubscribe" | "test") => {
-    if (busy) return;
-    setBusy(true);
-    setMessage("");
-    try {
-      if (action === "subscribe") {
-        setStatus(await subscribeWebPush());
-      } else if (action === "unsubscribe") {
-        setStatus(await unsubscribeWebPush());
-      } else {
-        await sendWebPushTest();
-        setMessage(t("fileTree.notificationSent"));
-        await refresh();
-      }
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : t("fileTree.notificationActionFailed"));
-      await refresh();
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const disabledReason = webPushReasonLabel(status?.reason);
+  const { status, busy, message, expanded, setExpanded, run, disabledReason } = useWebPushMenu();
   const enabled = Boolean(status?.enabled && status.supported);
   const subscribed = Boolean(status?.subscribed);
   const label = subscribed ? t("fileTree.notificationEnabled") : t("fileTree.enableNotification");

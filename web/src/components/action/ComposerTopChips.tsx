@@ -3,10 +3,10 @@ import { WorktreeBranchSelector } from "../task/WorktreeBranchSelector";
 import { NoWorktreeIcon } from "../common/NoWorktreeIcon";
 import { CodexRateLimitIndicator } from "../agent/CodexRateLimitIndicator";
 import { AgentMemoryIndicator } from "../agent/AgentMemoryIndicator";
-import { getRootNodeId } from "../../services/net/rootNode";
 import { useI18n } from "../../i18n";
 import { appAccentHexToRgba } from "../../shared/actionBarUtils";
 import type { GitBranchesPayload } from "../../shared/gitTypes";
+import { useRootNodeId } from "./useRootNodeId";
 
 export function ComposerTopChips({
   planModeActive,
@@ -60,6 +60,7 @@ export function ComposerTopChips({
   onWorktreeBranchChange: (branchMode: "new" | "existing", branch: string) => void;
 }) {
   const { t } = useI18n();
+  const rootNodeId = useRootNodeId(currentRootId || "");
   const rgba = (alpha: number) => appAccentHexToRgba(accentHex, alpha);
   const hasBoundSession = !!currentSession;
 
@@ -87,7 +88,7 @@ export function ComposerTopChips({
           </>
         ) : null}
       </div>
-      <div style={{ pointerEvents: "auto" }}><AgentMemoryIndicator refreshToken={agentsVersion + codexRateLimitsRefreshToken} /><CodexRateLimitIndicator agent={agent} refreshToken={codexRateLimitsRefreshToken} nodeId={getRootNodeId(currentRootId || "") as any} /></div>
+      <div style={{ pointerEvents: "auto" }}><AgentMemoryIndicator refreshToken={agentsVersion + codexRateLimitsRefreshToken} /><CodexRateLimitIndicator agent={agent} refreshToken={codexRateLimitsRefreshToken} nodeId={rootNodeId} /></div>
     </div>
   );
 }

@@ -20,7 +20,7 @@ const mainViewSwitcher = read("components/shell/MainViewSwitcher.tsx");
 const rootBadgeStyle = read("shared/rootBadgeStyle.ts");
 
 assert.match(nodePalette, /PALETTE = \["#3b82f6", "#f59e0b", "#7c6bd6"/);
-assert.match(nodeRegistry, /export \{ DEFAULT_NODE_COLOR, PALETTE \} from "\.\.\/\.\.\/shared\/nodePalette"/);
+assert.match(nodeRegistry, /export \{ DEFAULT_NODE_COLOR, LOCAL_NODE_ID, PALETTE \} from "\.\.\/\.\.\/shared\/nodePalette"/);
 assert.match(nodeRegistry, /const PREVIOUS_PALETTE = \["#7c6bd6", "#c9b84a"/);
 assert.match(nodeRegistry, /const OLD_PALETTE = \["#6d5bcf", "#0ea5a0"/);
 // 当前调色板保护：已属于 PALETTE 的存储色（尤其 #7c6bd6）不得被迁移改写

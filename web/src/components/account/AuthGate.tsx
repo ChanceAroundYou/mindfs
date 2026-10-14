@@ -1,6 +1,6 @@
-import React, { useEffect, useRef, useState } from "react";
-import { currentUser, fetchAuthStatus, loginWithPassword } from "../../services/net/authGate";
+import React from "react";
 import { useI18n } from "../../i18n/index";
+import { useAuthGate } from "./useAuthGate";
 
 /**
  * 主页面登录闸门：没登录就只渲染一张登录卡片，App 完全不被挂载。
@@ -8,32 +8,7 @@ import { useI18n } from "../../i18n/index";
  */
 export function AuthGate({ children }: { children: React.ReactNode }) {
   const { t } = useI18n();
-  const [state, setState] = useState<"checking" | "locked" | "open">("checking");
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  const aliveRef = useRef(true);
-
-  useEffect(() => {
-    aliveRef.current = true;
-    // 登录态由前端自己持有：本地已有账户就直接放行，不必再问服务端
-    if (currentUser()) {
-      setState("open");
-      return () => {
-        aliveRef.current = false;
-      };
-    }
-    void fetchAuthStatus().then((status) => {
-      if (!aliveRef.current) {
-        return;
-      }
-      setState(status.required ? "locked" : "open");
-    });
-    return () => {
-      aliveRef.current = false;
-    };
-  }, []);
+  const { state, username, setUsername, password, setPassword, error, setError, busy, submit } = useAuthGate(t);
 
   if (state === "open") {
     return <>{children}</>;
@@ -43,44 +18,6 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   if (state === "checking") {
     return <div style={{ position: "fixed", inset: 0, background: "var(--mindfs-launcher-bg)" }} />;
   }
-
-  const submit = async () => {
-    const name = username.trim();
-    const secret = password;
-    if (!name) {
-      setError(t("login.usernameRequired"));
-      return;
-    }
-    if (!secret) {
-      setError(t("login.passwordRequired"));
-      return;
-    }
-    setBusy(true);
-    setError("");
-    try {
-      await loginWithPassword(name, secret);
-      if (aliveRef.current) {
-        setPassword("");
-        setState("open");
-      }
-    } catch (err) {
-      if (!aliveRef.current) {
-        return;
-      }
-      const code = err instanceof Error ? err.message : "";
-      if (code === "invalid_credentials") {
-        setError(t("login.invalidCredentials"));
-      } else if (code === "user_disabled") {
-        setError(t("login.userDisabled"));
-      } else {
-        setError(t("login.failed"));
-      }
-    } finally {
-      if (aliveRef.current) {
-        setBusy(false);
-      }
-    }
-  };
 
   const fieldStyle: React.CSSProperties = {
     width: "100%",

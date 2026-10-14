@@ -16,8 +16,8 @@ import {
   type DirectorySortMode,
   type FileEntry,
   sortDirectoryEntries,
-} from "../../services/prefs/directorySort";
-import type { UploadProgress } from "../../services/upload";
+} from "../../shared/directorySort";
+import type { UploadProgress } from "../../shared/uploadTypes";
 import { useI18n, type MessageKey } from "../../i18n/index";
 import { CompactUploadProgress } from "./CompactUploadProgress";
 

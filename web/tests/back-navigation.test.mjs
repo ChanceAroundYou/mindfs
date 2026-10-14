@@ -10,6 +10,7 @@ const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 const main = readFileSync(new URL("../src/main.tsx", import.meta.url), "utf8");
 const nav = readFileSync(new URL("../src/hooks/useBackNavigation.ts", import.meta.url), "utf8");
 const dialogHost = readFileSync(new URL("../src/components/DialogHost.tsx", import.meta.url), "utf8");
+const dialogHook = readFileSync(new URL("../src/hooks/useDialogHost.ts", import.meta.url), "utf8");
 const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
 
 // —— 分发器本身 ——
@@ -128,8 +129,8 @@ assert.match(
 );
 // 弹窗是最高的一层，走 dismiss（取消语义），不穿透到面板。
 assert.match(
-  dialogHost,
-  /useBackLayer\(!!request, \(\) => dialogService\.dismiss\(\)\);/,
+  dialogHook,
+  /useBackLayer\(!!request, dismiss\);/,
   "the dialog must be the topmost back layer and dismiss via its own cancel semantics",
 );
 

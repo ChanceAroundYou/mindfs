@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useState } from "react";
-import { confirmDialog } from "../../services/dialog";
+import React, { useEffect, useState } from "react";
+import { usePanelShellClose } from "../../hooks/usePanelShellClose";
 import { useI18n } from "../../i18n/index";
 
 /**
@@ -98,22 +98,8 @@ export function PanelShell({
   hasUnsavedChanges,
 }: PanelShellProps) {
   const { t } = useI18n();
-  // 关闭只有一条路：点遮罩。判定只写一遍，所以将来要加确认/拦截也只需改这里。
-  const requestClose = useCallback(() => {
-    if (!onClose) return;
-    if (!hasUnsavedChanges?.()) {
-      onClose();
-      return;
-    }
-    void confirmDialog({
-      message: t("common.discardChangesConfirm"),
-      confirmLabel: t("common.discardChanges"),
-      cancelLabel: t("common.keepEditing"),
-      danger: true,
-    }).then((ok) => {
-      if (ok) onClose();
-    });
-  }, [onClose, hasUnsavedChanges, t]);
+  // 关闭守卫和放弃确认由逻辑 hook 统一处理。
+  const requestClose = usePanelShellClose({ onClose, hasUnsavedChanges, t });
 
   // 跟着可视视口把可用高度写成 --panel-vh，面板据此上浮避让软键盘。
   // 必须用 visualViewport：键盘弹出时 layout 视口（100vh / dvh）纹丝不动，

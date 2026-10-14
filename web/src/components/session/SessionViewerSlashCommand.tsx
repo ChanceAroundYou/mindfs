@@ -2,7 +2,7 @@ import React from "react";
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 import { MarkdownViewer } from "../common/MarkdownViewer";
 import { copyText } from "../../platform/clipboard";
-import { reportError } from "../../services/net/error";
+import { useReportError } from "../../hooks/useReportError";
 import { useI18n } from "../../i18n/index";
 import type { RelatedFile } from "../../shared/sessionTypes";
 import type { SessionViewerProps } from "./sessionViewerTypes";
@@ -31,6 +31,7 @@ export function SessionViewerSlashCommandResult({
   themeColor: string;
 }) {
   const { t } = useI18n();
+  const reportError = useReportError();
 
   if (!slashCommandResult) {
     return null;

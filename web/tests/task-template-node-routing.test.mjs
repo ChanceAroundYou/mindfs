@@ -7,6 +7,7 @@ const read = (rel) => fs.readFileSync(path.join(root, rel), "utf8");
 
 const hook = read("src/app/useTaskTemplates.ts");
 const dialog = read("src/components/TaskTemplateDialog.tsx");
+const saveHook = read("src/hooks/useTaskTemplateSave.ts");
 const app = read("src/App.tsx");
 const runtime = read("src/services/runtime.ts");
 const services = read("src/services/tasks.ts");
@@ -41,7 +42,7 @@ assert.doesNotMatch(hook, /getNodeIdForRoot/, "the hook must not resolve node id
 // 编辑器保存同样不带节点；它带的是「限定到当前项目」这个作用域。
 assert.match(dialog, /currentRootId\?: string \| null;/, "TaskTemplateDialog scopes templates by project");
 assert.doesNotMatch(dialog, /nodeId/, "the dialog must not accept a nodeId");
-assert.match(dialog, /root_id: scopeToCurrentProject \? \(currentRootId \|\| ""\) : "",/, "saving must persist the project scope");
+assert.match(saveHook, /root_id: scopeToCurrentProject \? \(currentRootId \|\| ""\) : "",/, "saving must persist the project scope");
 assert.match(
   app,
   /onSaved=\{handleTaskTemplateSaved\}\s*\n\s*currentRootId=\{currentRootId\}/,

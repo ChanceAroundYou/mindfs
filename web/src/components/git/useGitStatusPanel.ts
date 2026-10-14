@@ -1,12 +1,16 @@
 import React, { useEffect, useRef, useState } from "react";
+import { confirmDialog } from "../../services/dialog";
 import { fetchGitBranches, type GitBranchItem } from "../../services/git";
+import type { GitStatusItem } from "../../shared/gitTypes";
+import type { MessageKey, MessageParams } from "../../i18n/index";
 
 type UseGitStatusPanelOptions = {
   rootId?: string;
   onCommit?: (message: string) => void | Promise<void>;
+  t: (key: MessageKey, options?: MessageParams) => string;
 };
 
-export function useGitStatusPanel({ rootId, onCommit }: UseGitStatusPanelOptions) {
+export function useGitStatusPanel({ rootId, onCommit, t }: UseGitStatusPanelOptions) {
   const branchMenuRef = useRef<HTMLDivElement | null>(null);
   const [branchMenuOpen, setBranchMenuOpen] = useState(false);
   const [branches, setBranches] = useState<GitBranchItem[]>([]);
@@ -85,6 +89,19 @@ export function useGitStatusPanel({ rootId, onCommit }: UseGitStatusPanelOptions
     });
   };
 
+  const discardItem = async (item: GitStatusItem, onDiscard?: (item: GitStatusItem) => void | Promise<void>) => {
+    const runDiscard = () => runPanelAction(`discard:${item.path}`, () => onDiscard?.(item));
+    if (item.status !== "??") {
+      await runDiscard();
+      return;
+    }
+    const ok = await confirmDialog({
+      message: t("git.confirmDeleteUntracked", { path: item.path }),
+      danger: true,
+    });
+    if (ok) await runDiscard();
+  };
+
   return {
     branchMenuRef,
     branchMenuOpen,
@@ -104,6 +121,7 @@ export function useGitStatusPanel({ rootId, onCommit }: UseGitStatusPanelOptions
     setSelectedActionPath,
     setHoveredActionPath,
     runPanelAction,
+    discardItem,
     submitCommit,
   };
 }

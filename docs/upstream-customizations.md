@@ -3418,3 +3418,201 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：SessionCard 只需选取会话列表的活动时间戳，却直接导入 session merge service。
 - **根因与边界**：纯 `sessionActivityAt` resolver 移到 `shared/sessionActivityAt.ts`；session merge service 兼容 re-export，时间戳比较及空值行为不变。SessionCard 改用 shared 入口，源码测试直接加载权威实现。
 - **针对性测试**：`web/tests/session-list-merge.test.mjs` → 守住 activity_at 与 updated_at 的优先级；`web/tests/reviewer-architecture-rules.test.mjs` → 守住组件 service 边只减不增；`npm run typecheck` → 守住类型与 facade。
+
+### G-HN Shared session tree utilities
+
+- **可见症状**：SessionList 为清理已删除会话的子树展开态而直接依赖 session service 子模块中的纯计算；应用 hooks 也绕经该 service 路径调用纯树工具。
+- **根因与边界**：`collectSessionSubtreeKeys`、`pruneChildState` 与数据契约整体迁至 `shared/sessionTree.ts`；旧 service 子路径只保留兼容 re-export。应用 hooks 与列表组件改用 shared，子树级联与展开态回收语义不变。
+- **针对性测试**：`web/tests/session-tree.test.mjs` → 守住子树收集、循环保护与失效展开态回收；`web/tests/reviewer-architecture-rules.test.mjs` → 守住组件 service 边只减不增；`npm run typecheck` → 守住 service facade 与 shared 契约。
+
+### G-HO Components import shared Git and upload contracts
+
+- **可见症状**：SessionMainContent 与 DefaultListView 只需要 Git 状态和上传进度类型，却分别从 Git/upload service 导入这些契约。
+- **根因与边界**：两个展示组件改从既有 `shared/gitTypes.ts` 与 `shared/uploadTypes.ts` 导入类型；service 与 Git runtime imports、Git 请求、上传行为均不变。
+- **针对性测试**：`web/tests/reviewer-architecture-rules.test.mjs` → 守住组件 service 边只减不增；`npm run typecheck` → 守住共享契约与组件类型。
+
+### G-HP Candidate prompt actions move to hook
+
+- **可见症状**：CandidateDropdown 同时渲染候选列表并直接管理 prompt 保存/删除请求、请求状态及错误文案。
+- **根因与边界**：保存/删除状态和请求流程移入 `useCandidatePromptActions`；组件保留表单与候选 UI。添加/删除各自的错误文案、保存成功与删除成功回调、取消时恢复焦点的时机保持不变。
+- **针对性测试**：`web/tests/candidate-prompt-actions-contract.test.mjs` → 守住请求和状态归 hook、成功回调及双错误文案；`web/tests/reviewer-architecture-rules.test.mjs` → 守住组件 service 边只减不增；`npm run typecheck` → 守住组件/hook 契约。
+
+### G-HQ Shared PDF visible page calculation
+
+- **可见症状**：PdfPreview 为计算虚拟化页面区间而依赖 document preview service。
+- **根因与边界**：纯 `visiblePageRange` 与 `PDF_RENDER_MARGIN_PX` 移至 `shared/documentPreview.ts`；service 保留兼容 re-export，文档种类识别、渲染窗口与页码回退行为不变。
+- **针对性测试**：`web/tests/document-preview.test.mjs` → 守住 PDF 页面区间计算边界；`web/tests/reviewer-architecture-rules.test.mjs` → 守住组件 service 边只减不增；`npm run typecheck` → 守住 shared 类型。
+
+### G-HR Components import shared default node color
+
+- **可见症状**：ActionBar、ModeIcon 与 ModeSelector 只为 fallback 色值导入 nodeRegistry runtime service。
+- **根因与边界**：三处 `DEFAULT_NODE_COLOR` 改从既有 `shared/nodePalette.ts` 导入；调色板定义与颜色选择行为不变，仍需 node registry 的组件不受影响。
+- **针对性测试**：`web/tests/reviewer-architecture-rules.test.mjs` → 守住组件 service 边只减不增；`npm run typecheck` → 守住 palette 导出契约。
+
+### G-HS Protected image fetches move to hook
+
+- **可见症状**：MarkdownImage 与 ImageViewer 将视图渲染和 proof-protected blob 请求、取消及 object URL 清理耦合在组件中。
+- **根因与边界**：请求与 object URL 生命周期移入 `useProtectedBlobUrl`，两个组件通过 hook 取得 URL；Markdown 直接图片/相对路径解析、失败占位和 URL 回收行为保持不变。
+- **针对性测试**：`web/tests/reviewer-architecture-rules.test.mjs` → 守住组件 service 边只减不增；`web/tests/markdown-viewer-split.test.mjs` → 守住 MarkdownImage 在 viewer 链中的接线；`npm run typecheck` → 守住 hook 调用契约。
+
+### G-HT Remove unused SessionViewer prompt import
+
+- **可见症状**：SessionViewer 保留一个从未使用的 prompts service import，制造虚假的组件 service 依赖边。
+- **根因与边界**：删除未使用 import 与 reviewed debt allowlist 项；SessionViewerTimeline 仍负责实际传递保存函数，运行行为不变。
+- **针对性测试**：`web/tests/reviewer-architecture-rules.test.mjs` → 守住组件 service 边只减不增；`npm run typecheck` → 守住实际引用完整性。
+
+### G-HU Multi-project list receives node snapshot from hook
+
+- **可见症状**：MultiProjectSessionList 为渲染项目节点色直接调用 nodeRegistry，而其关联逻辑 hook 已负责排序和读取节点列表。
+- **根因与边界**：node snapshot 由 `useMultiProjectSessionList` 返回给组件；组件继续用 shared palette 与纯 group color resolver，节点排序和颜色回退行为保持一致。
+- **针对性测试**：`web/tests/session-list-merge.test.mjs` → 守住逻辑 hook 的节点快照接线与项目排序；`web/tests/reviewer-architecture-rules.test.mjs` → 守住组件 service 边只减不增；`npm run typecheck` → 守住 hook 返回契约。
+
+### G-HV Default list imports shared directory sorting
+
+- **可见症状**：DefaultListView 为排序目录项和读取排序选项而通过 prefs service facade 导入纯展示排序能力。
+- **根因与边界**：排序函数、选项与目录项契约直接从既有 `shared/directorySort.ts` 导入；兼容 service facade 保留，排序模式与结果不变。
+- **针对性测试**：`web/tests/reviewer-architecture-rules.test.mjs` → 守住组件 service 边只减不增；`npm run typecheck` → 守住 shared 导出契约。
+
+### G-HW Toast error subscription moves to hook
+
+- **可见症状**：ToastContainer 同时订阅 error service、管理自动过期和 retry 状态，再渲染提示 UI。
+- **根因与边界**：订阅、提示队列、过期计时与 retry 流程迁至 `useToastErrors`；`AppError` 契约归 `shared/errorTypes.ts` 并由旧 error service re-export。提示级别过滤、错误/普通提示时长、重试与视觉样式保持不变。
+- **针对性测试**：`web/tests/toast-errors-hook.test.mjs` → 守住订阅过滤、时长、过期和 retry；`web/tests/task-card-parity.test.mjs` → 守住 Toast 视觉契约；`web/tests/reviewer-architecture-rules.test.mjs` → 守住组件 service 边只减不增。
+
+### G-HX Dialog host integration moves to hook
+
+- **可见症状**：DialogHost 同时订阅 dialog service、维护请求/输入状态、处理返回键与全局键盘事件，再渲染弹窗。
+- **根因与边界**：服务状态、取消/确认桥接、返回层注册及键盘处理迁至 `useDialogHost`；组件保留输入焦点和视图渲染，Esc/点外取消、Enter 确认、prompt 返回值语义不变。
+- **针对性测试**：`web/tests/dialog-host-hook.test.mjs` 与 `web/tests/back-navigation.test.mjs` → 守住服务桥接和顶层返回语义；`web/tests/dialog-lifecycle.test.mjs` → 守住取消/确认结算；架构门禁与 typecheck 守住分层及契约。
+
+### G-HY Session viewer error reporting uses hook
+
+- **可见症状**：SessionViewerTimeline 与 SessionViewerSlashCommand 将全局错误 service 直接带进消息展示/交互组件；SessionViewer 还保留未使用的 error import。
+- **根因与边界**：通用错误报告适配放进 `useReportError` hook，两个实际调用组件通过 hook 调用；删除未使用 import。错误码、翻译文案与全局错误分发不变。
+- **针对性测试**：`web/tests/report-error-hook.test.mjs` → 守住两个组件经 hook 报错且不直接依赖 service；架构门禁与 `npm run typecheck` 守住层级和契约。
+
+### G-HZ File operation flows move to hooks
+
+- **可见症状**：FileOperations 同时负责菜单渲染、delete/rename dialog 与请求、move 目录浏览/请求、请求忙态及冲突错误映射。
+- **根因与边界**：delete/rename 流程迁入 `useFileOperationActions`，move 浏览和提交迁入 `useFileOperationMove`；组件只编排菜单与 LocalPanel。非法文件名、确认顺序、并发/过期浏览响应保护、409 冲突文案和完成回调不变。
+- **针对性测试**：`web/tests/file-operation-hooks.test.mjs` → 守住服务调用归 hooks、move 请求和竞态 guard；架构门禁与 `npm run typecheck` 守住组件边界及 hook 参数。
+
+### G-IB Panel shell close guard moves to hook
+
+- **可见症状**：PanelShell 在共用遮罩/卡片渲染组件中直接调用 dialog service 执行未保存修改确认。
+- **根因与边界**：关闭守卫与放弃确认迁到 `usePanelShellClose`；PanelShell 仍处理遮罩点击和 UI。无脏内容直接关闭、取消继续编辑、确认后关闭的次序不变。
+- **针对性测试**：`web/tests/task-panel-unification.test.mjs` → 守住三类关闭结果和统一 dirty guard；`web/tests/reviewer-architecture-rules.test.mjs` → 守住组件 service 边只减不增。
+
+### G-IC Remove dead onboarding service imports
+
+- **可见症状**：OnboardingGate 留有三个未被使用的 service imports；完成/关闭动作实际都由同名 props 提供。
+- **根因与边界**：删除死 import 与 reviewed allowlist 项；OnboardingTour 调用的 props、步骤和关闭行为不变。
+- **针对性测试**：`web/tests/reviewer-architecture-rules.test.mjs` → 守住只减门禁；`npm run typecheck` → 确认 props 调用链仍完整。
+
+### G-ID Task template save moves to hook
+
+- **可见症状**：TaskTemplateDialog 同时维护表单草稿和模板保存请求、模板合法性校验及全局错误报告。
+- **根因与边界**：保存与错误处理迁入 `useTaskTemplateSave`，组件仍负责编辑草稿和表单展示。首段 user 校验、项目 scope、归一阶段、错误文案及保存成功后回调/关闭顺序保持不变。
+- **针对性测试**：`web/tests/task-template-save-hook.test.mjs` → 守住校验、scope payload 与成功回调顺序；架构门禁与 typecheck 守住组件边界和类型。
+
+### G-IE Auth gate behavior moves to colocated hook
+
+- **可见症状**：AuthGate 组件直接访问认证服务并维护请求状态、竞态保护和登录错误转换。
+- **根因与边界**：页面级登录门帘的状态、请求与登录副作用迁入 `useAuthGate`；视图继续渲染 checking/locked/open 三态和登录表单。登录仍是页面门帘，API 保持公开。
+- **针对性测试**：`web/tests/auth-gate-hook.test.mjs` → 守住现有账户放行、状态检查、卸载保护和错误码映射；架构门禁确认组件 service 边减少。
+
+### G-IF Composer root node lookup moves to hook
+
+- **可见症状**：ComposerTopChips 在 JSX 组件内直接读取全局项目节点映射，耦合 node registry service。
+- **根因与边界**：root→node 查询封装进 colocated `useRootNodeId`；每次渲染仍读取当前映射，确保 managed root realtime 更新能刷新传给 Codex 指示器的 node id。
+- **针对性测试**：`web/tests/reviewer-architecture-rules.test.mjs` → 守住组件 service 边只减不增；`npm run typecheck` 与前端构建守住 hook 使用契约。
+
+### G-IG Account panel mutations use colocated hook
+
+- **可见症状**：AccountPanel 的视图直接调用账户删除/设主 API、dialog service 和认证 service。
+- **根因与边界**：删除确认与账户变更请求交给已有 `useAccountPanel`；成功后的列表刷新、错误显示和 busy 状态继续复用同一 `run` 流程；退出仍清除登录态并立即刷新页面。视图只触发 hook action。
+- **针对性测试**：`web/tests/account-panel-actions.test.mjs` → 守住视图不直接调用三类 service、变更后刷新；账户相关现有用例、架构门禁与 typecheck 守住数据契约。
+
+### G-IH ActionBar agent restart flows through logic hook
+
+- **可见症状**：ActionBarControls 在 AgentSelector 回调里直接调用重启和 agents 查询 service，并自行写入 agent 状态。
+- **根因与边界**：重启/刷新顺序迁入 `useActionBar` 的 handler，通过 ActionBar callback 传递；仍按当前项目解析 node id，重启成功后强制刷新 agent 列表再更新状态。
+- **针对性测试**：`web/tests/claude-model-1m.test.mjs` → 守住 ActionBarControls 的模型行为未变；`web/tests/reviewer-architecture-rules.test.mjs` → 守住两条 service 边移除；typecheck 守住新回调契约。
+
+### G-II Remove dead SessionMainContent service imports
+
+- **可见症状**：SessionMainContent 带有多组从 App 机械拆分遗留、只在 import 行出现的 service 依赖。
+- **根因与边界**：删除未使用的 file/fileEditing/git operation/directorySort/upload imports；仍使用的目录项、排序、上传和 Git 状态类型从 shared 导入，`GitDiffPayload` 保留在 git service types。渲染与操作回调不变。
+- **针对性测试**：`web/tests/session-pane-split.test.mjs` → 守住视图拆分合同；`web/tests/reviewer-architecture-rules.test.mjs` → 守住删除的四条边不回流；typecheck 守住类型入口。
+
+### G-IJ Remove dead AppActionBar service imports
+
+- **可见症状**：AppActionBar 仍从 session service 导入一组不参与视图的缓存/同步 API，并从 sendShortcut service 导入未使用的读写函数。
+- **根因与边界**：这些 imports 是 App 拆分遗留；删除死 service API imports，`QueuedUserMessage`、`SendShortcut` 类型改从 shared 模块导入。ActionBar props 和快捷键运行时归属不变。
+- **针对性测试**：`web/tests/agent-docs-contract.test.mjs` → 入口/索引仍一致；架构门禁守住组件 service 边减少；typecheck 守住公开 props 类型。
+
+### G-IK Remove dead FileTreePanel service imports
+
+- **可见症状**：FileTreePanel 带有未使用的 file API、偏好读写函数和目录排序 service imports；运行状态本身由 props 提供。
+- **根因与边界**：删除死 service imports，`FontSizePreferences`、`SendShortcut`、`DirectorySortMode`、`FileEntry` 均从已有 shared 类型模块导入。实际状态、回调与面板 UI 不变。
+- **针对性测试**：`web/tests/file-tree-header-overlays.test.mjs` 与 `web/tests/file-tree-service-boundaries.test.mjs` → 守住 FileTree 呈现/分层；font-size/send-shortcut 现有测试及 typecheck 守住契约；架构门禁守住 service 边只减。
+
+### G-IL Agent icon asset loading moves to hook
+
+- **可见症状**：AgentIcon view 直接从 net service 取部署前缀 URL，并混合维护 SVG fetch/cache 生命周期。
+- **根因与边界**：资产路径解析、请求去重缓存、SVG data URL 转换、失败回退和卸载取消迁至 colocated `useCachedAgentIcon`；view 继续根据 agent 名称选择图标和展示尺寸。子路径部署 URL 语义保持。
+- **针对性测试**：`web/tests/agent-icon-hook.test.mjs` → 守住前缀解析、SVG 加载/回退及 view/service 边界；typecheck 与完整 build 守住 React hook 接线。
+
+### G-IM Remove stale service imports from task/session panels
+
+- **可见症状**：SessionSheet、TaskDetailPanelGate 与 TaskInlineEditPanel 从 service 导入的请求和缓存函数只出现在 import 声明里，业务数据由 props 提供。
+- **根因与边界**：删除未使用的 agents/tasks/candidates/git/upload service API；仍被 props 使用的类型改从 `shared/` 契约导入。面板数据、回调与运行行为不变。
+- **针对性测试**：`web/tests/task-panel-service-boundaries.test.mjs` → 守住三处视图只依赖 props/shared；`web/tests/task-panel-unification.test.mjs` 与 `web/tests/task-related-files.test.mjs` → 守住面板行为；架构门禁和 typecheck 守住边界。
+
+### G-IN Session ring quick switch uses colocated hook
+
+- **可见症状**：SessionRing 直接调用 session service 拉跨项目会话，并在 view 中组织请求状态；同时直接导入 quick switch service helper。
+- **根因与边界**：快速切换数据加载及取消竞态迁入 `useSessionRingQuickSwitch`；hook 适配现有 `recentQuickSwitchGroups` 和 `ringGesture`，Session 类型从 shared 导入。定位、外部关闭、Esc 和拖拽行为不变。
+- **针对性测试**：`web/tests/session-ring-gesture.test.mjs` → 守住手势归属、阈值 helper 和回调链；`web/tests/quick-switch.test.mjs` → 守住列表投影；架构门禁与 typecheck 守住 view/service 边界。
+
+### G-IO Git status discard confirmation uses logic hook
+
+- **可见症状**：GitStatusPanel view 直接调 dialog service 确认删除未跟踪文件，再自行编排 action busy 和 discard 回调。
+- **根因与边界**：确认与 discard action 编排迁入已有 `useGitStatusPanel`；已跟踪文件仍直接 discard，未跟踪文件确认后才执行，取消不执行；按钮呈现不变。
+- **针对性测试**：`web/tests/git-status-discard-hook.test.mjs` → 守住确认条件、action key 与 service 边界；架构门禁和 typecheck 守住 hook 接线。
+
+### G-IP Session timeline service actions use colocated hook
+
+- **可见症状**：SessionViewerTimeline 直接导入 prompt 保存和 persisted sequence 判定 service，同时负责向消息 presenter 传递这两项能力。
+- **根因与边界**：通过 `useSessionViewerTimelineActions` 提供既有 service 函数；时间线投影、保存成功/失败提示和 fork 按钮资格保持不变。
+- **针对性测试**：`web/tests/session-viewer-timeline-actions.test.mjs` → 守住 view 不直接依赖 services、hook 使用原服务实现；`web/tests/session-timeline-seq.test.mjs` → 守住持久消息判定；架构门禁守住边数。
+
+### G-IQ Session attachment images reuse protected blob hook
+
+- **可见症状**：SessionViewerAttachments 自己重复实现受保护 blob 请求、node registry 查询和 object URL 生命周期。
+- **根因与边界**：改用既有 `useProtectedBlobUrl` 统一请求和 URL 生命周期；hook 支持可选 nodeId，文件服务继续按 root registry 自动补全节点。图片显示、失败空态、卸载取消和 URL revoke 语义保持。
+- **针对性测试**：`web/tests/markdown-viewer-split.test.mjs` → 守住 protected blob hook 的请求/清理；架构门禁守住组件不再直连 file/node service；typecheck 守住 hook 参数。
+
+### G-IR Remove stale FileViewer editing service import
+
+- **可见症状**：FileViewer 从 fileEditing service 导入 store、key builder 和大小限制，但这些符号都只出现于 import 声明；组件通过 `useFileViewer` 获取实际编辑状态。
+- **根因与边界**：删除机械拆分遗留的死 import；编辑能力、文件大小限制和 UI 行为仍由现有 hook/props 驱动。
+- **针对性测试**：`web/tests/reviewer-architecture-rules.test.mjs` → 守住组件 service 边移除；`npm run typecheck` 与 file editor 测试守住实际编辑契约。
+
+### G-IS Document preview data loading uses colocated hook
+
+- **可见症状**：DocumentViewer 直接请求受保护文件并在渲染组件里维护取消竞态和错误转换。
+- **根因与边界**：请求生命周期迁入 `useDocumentPreviewBlob`；纯错误描述迁入 shared，原组件模块保留兼容导出。加载态、无项目错误、卸载取消和各格式预览行为保持。
+- **针对性测试**：`web/tests/document-preview-view-split.test.mjs` → 守住 view/hook/service 边界和取消/错误契约；`web/tests/document-preview.test.mjs` → 守住共享预览工具；架构门禁与 typecheck 守住 import 边。
+
+### G-IT Project and Git views use shared contracts and node logic hook
+
+- **可见症状**：ProjectAddPopover 和 NodeManagerPanel 的展示组件直接依赖节点注册 service；SessionMainContent 通过 service 模块导入 Git diff 类型。
+- **根因与边界**：节点注册表读取由 colocated hook 调用，节点 id/调色板和 Git diff 契约归 shared；service 模块保留 Git diff 类型 re-export。节点切换、颜色展示与 payload 字段不变。
+- **针对性测试**：`web/tests/project-add-node-boundary.test.mjs` → 守住三个组件的导入边界与 hook 接线；typecheck 守住 shared/service 兼容类型。
+
+### G-IU File and session service work moves behind logic hooks
+
+- **可见症状**：FileEditor、WebPushMenuItem 与 SessionViewer 直接导入文件、推送、会话 service，在展示组件中调用请求/投影逻辑。
+- **根因与边界**：文件重载、推送订阅/测试通知状态机、持久 exchange 筛选与合并由 colocated hooks 提供；页面动作顺序、通知文案、取消/失败反馈与窗口合并语义保持。
+- **针对性测试**：`web/tests/file-session-service-boundaries.test.mjs` → 守住 view/hook/service 边界；既有 session merge、file editor 与 WebPush 测试及 typecheck 守住行为契约。

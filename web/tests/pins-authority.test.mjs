@@ -27,6 +27,7 @@ function loadModule(relPath) {
     require: (name) => {
       if (name.includes("controlPlane")) return { controlPath: (p) => `/page${p}` };
       if (name.includes("api")) return { protectedJSON: async () => ({}) };
+      if (name.includes("sessionActivityAt")) return loadModule("shared/sessionActivityAt.ts");
       throw new Error(`unexpected require: ${name}`);
     },
     console,

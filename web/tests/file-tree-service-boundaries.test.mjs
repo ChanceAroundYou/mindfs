@@ -29,7 +29,7 @@ test("FileTree view and props use shared contracts; service reads stay in logic 
   assert.match(accent, /getNodes\(\)/);
   assert.match(entries, /from "\.\.\/\.\.\/shared\/nodePalette"/);
   assert.match(palette, /DEFAULT_NODE_COLOR = PALETTE\[0\]/);
-  assert.match(registry, /export \{ DEFAULT_NODE_COLOR, PALETTE \} from "\.\.\/\.\.\/shared\/nodePalette"/);
+  assert.match(registry, /export \{ DEFAULT_NODE_COLOR, LOCAL_NODE_ID, PALETTE \} from "\.\.\/\.\.\/shared\/nodePalette"/);
   assert.match(agentService, /export type \{[\s\S]*AgentStatus[\s\S]*\} from "\.\.\/\.\.\/shared\/agentTypes"/);
   assert.match(agentConfigService, /export type \{ AgentAPIProvider, AgentConfigBackup, AgentConfigSource \} from "\.\.\/\.\.\/shared\/agentTypes"/);
   assert.match(preferenceService, /export type \{ NewProjectMetaLocation \} from "\.\.\/\.\.\/shared\/preferencesTypes"/);

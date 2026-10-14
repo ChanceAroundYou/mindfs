@@ -1,6 +1,5 @@
-import React, { useEffect, useState } from "react";
-import { fetchProofProtectedBlob } from "../../services/file";
-import { getRootNodeId } from "../../services/net/rootNode";
+import React from "react";
+import { useProtectedBlobUrl } from "../../hooks/useProtectedBlobUrl";
 import type { UploadAttachment } from "./sessionViewerTypes";
 
 export function AttachmentImage({
@@ -12,33 +11,7 @@ export function AttachmentImage({
   path: string;
   name: string;
 }) {
-  const [url, setURL] = useState("");
-
-  useEffect(() => {
-    let cancelled = false;
-    let objectURL = "";
-    async function run() {
-      try {
-        const blob = await fetchProofProtectedBlob({ rootId, path, nodeId: String(getRootNodeId(rootId) || "").trim() || undefined });
-        if (cancelled) return;
-        objectURL = URL.createObjectURL(blob);
-        setURL(objectURL);
-      } catch {
-        if (!cancelled) {
-          setURL("");
-        }
-      }
-    }
-    if (rootId && path) {
-      void run();
-    }
-    return () => {
-      cancelled = true;
-      if (objectURL) {
-        URL.revokeObjectURL(objectURL);
-      }
-    };
-  }, [rootId, path]);
+  const url = useProtectedBlobUrl(rootId && path ? { rootId, path } : undefined);
 
   return (
     <img

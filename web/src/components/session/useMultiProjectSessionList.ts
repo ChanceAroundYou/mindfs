@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
-import { pruneChildState } from "../../services/session/sessionTree";
+import { pruneChildState } from "../../shared/sessionTree";
 import { type DirectorySortMode, sortDirectoryEntries } from "../../services/prefs/directorySort";
 import { getNodes, PALETTE } from "../../services/net/nodeRegistry";
 import { resolveGroupColor } from "../../shared/sessionGroupDisplay";
@@ -51,6 +51,7 @@ export function useMultiProjectSessionList({
   const [loadingChildren, setLoadingChildren] = useState<Record<string, boolean>>({});
   const [childrenHasMore, setChildrenHasMore] = useState<Record<string, boolean>>({});
   const [collapsedBaseCount, setCollapsedBaseCount] = useState<Record<string, number>>({});
+  const nodes = getNodes();
 
   useEffect(() => {
     void refreshPinsFromServer().catch(() => {
@@ -77,7 +78,6 @@ export function useMultiProjectSessionList({
     scopeKey(String((group as any)?._nodeId || "").trim(), group.rootId);
 
   const orderedGroups = useMemo(() => {
-    const nodes = getNodes();
     const orderByName = new Map(nodes.map((n, i) => [String(n.name), i] as const));
     const nodeKey = (group: ProjectSessionGroup): string => {
       const nid = String((group as any)?._nodeId || "").trim();
@@ -103,7 +103,7 @@ export function useMultiProjectSessionList({
       (group) => (pinnedProjects[groupScopeKey(group)] || 0) > 0,
       compareByProjectSort,
     );
-  }, [groups, pinnedProjects, projectSortMode]);
+  }, [groups, nodes, pinnedProjects, projectSortMode]);
 
   const togglePinnedProject = (group: ProjectSessionGroup) => {
     const key = groupScopeKey(group);
@@ -317,6 +317,7 @@ export function useMultiProjectSessionList({
   };
 
   return {
+    nodes,
     pinsSnapshot,
     pinnedProjects,
     orderedGroups,

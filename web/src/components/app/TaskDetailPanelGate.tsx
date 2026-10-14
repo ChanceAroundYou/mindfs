@@ -1,31 +1,8 @@
 // 从 App.tsx 抽出的渲染区域（机械搬移，JSX 逐字未改）。
 import { TaskDetailPanel } from "../task/TaskDetailPanel";
 import type { Dispatch, SetStateAction, RefObject } from "react";
-import { fetchAgents, restartAgent, type AgentStatus } from "../../services/agents";
-import {
-  beginTaskFinishWorktree,
-  createTask,
-  deleteTask,
-  deleteTaskTemplate,
-  // FinishWorktreeConflict 是 class 不是 type：下面要用 instanceof 分流
-  // （冲突要列文件清单，其它失败只报一句）。
-  FinishWorktreeConflict,
-  fetchTaskDetails,
-  fetchTaskTemplates,
-  getCachedTaskDetails,
-  getCachedTaskMeta,
-  moveTask,
-  pruneCachedTaskDetails,
-  rebuildTaskWorktree,
-  saveTaskTemplate,
-  upsertCachedTaskDetails,
-  type KanbanTask,
-  type StageRun,
-  type TaskDetail,
-  type TaskOverviewItem,
-  type StageTemplate,
-  type TaskTemplate,
-} from "../../services/tasks";
+import type { AgentStatus } from "../../shared/agentTypes";
+import type { KanbanTask, TaskDetail } from "../../shared/taskTypes";
 
 export interface TaskDetailPanelGateProps {
   applyTaskDetails: (rootId: string, details: TaskDetail[], persist?: boolean) => void;

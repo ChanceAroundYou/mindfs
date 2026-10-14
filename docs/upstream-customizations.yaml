@@ -854,7 +854,7 @@ groups:
     anchors:
       - 'web/src/components/shell/Toast.tsx:CUSTOM(G-AE)'
       - 'web/src/components/shell/ErrorBoundary.tsx:CUSTOM(G-AE)'
-      - 'web/src/components/file/FileOperations.tsx:promptDialog'
+      - 'web/src/hooks/useFileOperationActions.ts:promptDialog'
     files:
       - web/src/services/dialog.ts
       - web/src/components/shell/DialogHost.tsx
@@ -944,7 +944,7 @@ groups:
       in-flight map **刻意不设上限** —— 它们在 .finally 里就删了，加上限没有意义。
     anchors:
       - 'web/src/components/file/CodeViewer.tsx:CUSTOM(G-AH)'
-      - 'web/src/components/git/GitStatusPanel.tsx:confirmDialog'
+      - 'web/src/components/git/useGitStatusPanel.ts:confirmDialog'
       - 'web/src/components/git/GitHistoryPanel.tsx:color-mix(in srgb, var(--accent-color) 8%'
       - 'web/src/components/git/GitDiffViewer.tsx:rootBadgeButtonStyle'
       - 'web/src/services/upload.ts:getRootNodeId'
@@ -6927,8 +6927,10 @@ groups:
       activity_at versus updated_at precedence and empty-value behavior stay unchanged.
     tests:
       - web/tests/session-list-merge.test.mjs
+      - web/tests/pins-authority.test.mjs
       - web/tests/reviewer-architecture-rules.test.mjs
     files:
+      - web/tests/pins-authority.test.mjs
       - web/src/shared/sessionActivityAt.ts
       - web/src/services/session/sessionListMerge.ts
       - web/src/components/session/SessionCard.tsx
@@ -6943,3 +6945,915 @@ groups:
       - web/src/shared/sessionActivityAt.ts:export function sessionActivityAt
       - web/tests/session-list-merge.test.mjs:const activitySourcePath =
       - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+
+  - id: G-HN
+    title: Shared session tree utilities
+    kind: arch
+    symptom: |
+      SessionList imports pure child expansion cleanup from a session service submodule; app hooks also
+      route pure session-tree utilities through that service path.
+    why: |
+      Keep pure tree calculations in shared and preserve the historical service module as a compatibility facade.
+    boundary: |
+      collectSessionSubtreeKeys, pruneChildState, and their data contract move unchanged to shared/sessionTree.ts;
+      the service module re-exports them. App hooks and list components import shared directly.
+    tests:
+      - web/tests/session-tree.test.mjs
+      - web/tests/reviewer-architecture-rules.test.mjs
+    files:
+      - web/src/shared/sessionTree.ts
+      - web/src/services/session/sessionTree.ts
+      - web/src/app/useSessionListActions.ts
+      - web/src/app/useSessionArchive.ts
+      - web/src/components/session/SessionList.tsx
+      - web/src/components/session/useMultiProjectSessionList.ts
+      - web/tests/session-tree.test.mjs
+      - web/tests/fixtures/component-service-import-debt.json
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/shared/sessionTree.ts:export function collectSessionSubtreeKeys
+      - web/tests/session-tree.test.mjs:collectSessionSubtreeKeys
+      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+
+  - id: G-HO
+    title: Components import shared Git and upload contracts
+    kind: arch
+    symptom: |
+      SessionMainContent and DefaultListView import Git status and upload progress contracts through service modules.
+    why: |
+      Keep component contract imports on their existing shared type modules without changing runtime services.
+    boundary: |
+      GitStatusPayload and UploadProgress imports move to shared/gitTypes.ts and shared/uploadTypes.ts;
+      Git request and upload behavior remain unchanged.
+    tests:
+      - web/tests/reviewer-architecture-rules.test.mjs
+    files:
+      - web/src/components/app/SessionMainContent.tsx
+      - web/src/components/file/DefaultListView.tsx
+      - web/tests/fixtures/component-service-import-debt.json
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - 'web/src/components/app/SessionMainContent.tsx:import type { GitDiffPayload, GitStatusPayload } from "../../shared/gitTypes"'
+      - web/src/components/file/DefaultListView.tsx:import type { UploadProgress } from "../../shared/uploadTypes"
+      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+
+  - id: G-HP
+    title: Candidate prompt actions move to hook
+    kind: arch
+    symptom: |
+      CandidateDropdown combines candidate rendering with prompt save/delete requests, request state, and errors.
+    why: |
+      Keep service interactions and async action state in a logic hook, leaving the component responsible for rendering.
+    boundary: |
+      Prompt save/delete operations move to useCandidatePromptActions. Separate add/delete error messages,
+      success callbacks, and form close/focus timing remain unchanged.
+    tests:
+      - web/tests/candidate-prompt-actions-contract.test.mjs
+      - web/tests/reviewer-architecture-rules.test.mjs
+    files:
+      - web/src/hooks/useCandidatePromptActions.ts
+      - web/src/components/action/CandidateDropdown.tsx
+      - web/tests/candidate-prompt-actions-contract.test.mjs
+      - web/tests/fixtures/component-service-import-debt.json
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/hooks/useCandidatePromptActions.ts:await savePrompt(text)
+      - web/src/hooks/useCandidatePromptActions.ts:await deletePrompt(text)
+      - web/tests/candidate-prompt-actions-contract.test.mjs:candidate prompt actions contract ok
+
+  - id: G-HQ
+    title: Shared PDF visible page calculation
+    kind: arch
+    symptom: |
+      PdfPreview depends on the document preview service to calculate the visible virtualized page range.
+    why: |
+      Keep the pure PDF page-window calculation in shared while retaining the service compatibility facade.
+    boundary: |
+      visiblePageRange and PDF_RENDER_MARGIN_PX move to shared/documentPreview.ts; the service re-exports them.
+      Document kind detection and page window/fallback behavior remain unchanged.
+    tests:
+      - web/tests/document-preview.test.mjs
+      - web/tests/reviewer-architecture-rules.test.mjs
+    files:
+      - web/src/shared/documentPreview.ts
+      - web/src/services/documentPreview.ts
+      - web/src/components/file/PdfPreview.tsx
+      - web/tests/document-preview.test.mjs
+      - web/tests/fixtures/component-service-import-debt.json
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/shared/documentPreview.ts:export function visiblePageRange
+      - web/tests/document-preview.test.mjs:visiblePageRange, PDF_RENDER_MARGIN_PX
+      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+
+  - id: G-HR
+    title: Components import shared default node color
+    kind: arch
+    symptom: |
+      ActionBar, ModeIcon, and ModeSelector import nodeRegistry only to obtain the default display color.
+    why: |
+      Keep static palette values in shared and remove view-only dependencies on the node registry service.
+    boundary: |
+      DEFAULT_NODE_COLOR imports move to shared/nodePalette.ts; palette values and display behavior are unchanged.
+    tests:
+      - web/tests/reviewer-architecture-rules.test.mjs
+    files:
+      - web/src/components/action/ActionBar.tsx
+      - web/src/components/agent/ModeIcon.tsx
+      - web/src/components/agent/ModeSelector.tsx
+      - web/tests/fixtures/component-service-import-debt.json
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/components/action/ActionBar.tsx:import { DEFAULT_NODE_COLOR } from "../../shared/nodePalette"
+      - web/src/components/agent/ModeIcon.tsx:import { DEFAULT_NODE_COLOR } from "../../shared/nodePalette"
+      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+
+  - id: G-HS
+    title: Protected image fetches move to hook
+    kind: arch
+    symptom: |
+      MarkdownImage and ImageViewer couple rendering with protected blob requests, cancellation, and object URL cleanup.
+    why: |
+      Keep data fetching and asynchronous resource lifetime in a logic hook, leaving image components focused on display.
+    boundary: |
+      Protected blob fetching and object URL lifecycle move to useProtectedBlobUrl. Markdown URL resolution,
+      direct-image handling, failure fallback, cancellation, and URL revocation remain unchanged.
+    tests:
+      - web/tests/reviewer-architecture-rules.test.mjs
+      - web/tests/markdown-viewer-split.test.mjs
+    files:
+      - web/src/hooks/useProtectedBlobUrl.ts
+      - web/src/components/common/MarkdownImage.tsx
+      - web/src/components/file/ImageViewer.tsx
+      - web/tests/fixtures/component-service-import-debt.json
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/hooks/useProtectedBlobUrl.ts:export function useProtectedBlobUrl
+      - web/src/components/common/MarkdownImage.tsx:useProtectedBlobUrl(
+      - web/tests/markdown-viewer-split.test.mjs:MarkdownImage
+
+  - id: G-HT
+    title: Remove unused SessionViewer prompt import
+    kind: arch
+    symptom: |
+      SessionViewer retains an unused prompts service import and creates a false component service dependency.
+    why: |
+      Remove the dead import and reviewed debt entry while keeping the actual prompt-save call path in SessionViewerTimeline.
+    boundary: |
+      Only the unused import and allowlist entry are removed; runtime prompt save behavior is unchanged.
+    tests:
+      - web/tests/reviewer-architecture-rules.test.mjs
+    files:
+      - web/src/components/session/SessionViewer.tsx
+      - web/src/components/session/SessionViewerTimeline.tsx
+      - web/tests/fixtures/component-service-import-debt.json
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - 'web/src/components/session/useSessionViewerTimelineActions.ts:import { savePrompt }'
+      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+
+  - id: G-HU
+    title: Multi-project list receives node snapshot from hook
+    kind: arch
+    symptom: |
+      MultiProjectSessionList calls nodeRegistry directly for display colors even though its logic hook already
+      reads the node list for project ordering.
+    why: |
+      Keep node registry access in the logic hook and pass the existing node snapshot to the presentation component.
+    boundary: |
+      useMultiProjectSessionList returns the node snapshot; the component uses shared palette and resolver.
+      Node ordering and color fallback behavior remain unchanged.
+    tests:
+      - web/tests/session-list-merge.test.mjs
+      - web/tests/reviewer-architecture-rules.test.mjs
+    files:
+      - web/src/components/session/useMultiProjectSessionList.ts
+      - web/src/components/session/MultiProjectSessionList.tsx
+      - web/tests/session-list-merge.test.mjs
+      - web/tests/fixtures/component-service-import-debt.json
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/components/session/useMultiProjectSessionList.ts:const nodes = getNodes()
+      - web/src/components/session/MultiProjectSessionList.tsx:resolveGroupColor(group as any, {}, nodes as any)
+      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+
+  - id: G-HV
+    title: Default list imports shared directory sorting
+    kind: arch
+    symptom: |
+      DefaultListView imports pure directory sort functions, options, and contracts through the prefs service facade.
+    why: |
+      Keep display sorting and its contracts in the existing shared module while preserving the service facade.
+    boundary: |
+      DefaultListView imports shared/directorySort.ts directly; sorting mode and result behavior are unchanged.
+    tests:
+      - web/tests/reviewer-architecture-rules.test.mjs
+    files:
+      - web/src/components/file/DefaultListView.tsx
+      - web/tests/fixtures/component-service-import-debt.json
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/components/file/DefaultListView.tsx:from "../../shared/directorySort"
+      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+
+  - id: G-HW
+    title: Toast error subscription moves to hook
+    kind: arch
+    symptom: |
+      ToastContainer mixes error service subscription, expiry/retry state, and toast rendering.
+    why: |
+      Keep error event integration and asynchronous toast lifecycle in a logic hook; share the error contract.
+    boundary: |
+      Subscription, queue expiry, and retry move to useToastErrors; AppError moves to shared/errorTypes.ts
+      with a service compatibility re-export. Filtering, durations, retry behavior, and visual styling remain unchanged.
+    tests:
+      - web/tests/toast-errors-hook.test.mjs
+      - web/tests/task-card-parity.test.mjs
+      - web/tests/reviewer-architecture-rules.test.mjs
+    files:
+      - web/src/hooks/useToastErrors.ts
+      - web/src/shared/errorTypes.ts
+      - web/src/services/net/error.ts
+      - web/src/components/shell/Toast.tsx
+      - web/tests/toast-errors-hook.test.mjs
+      - web/tests/fixtures/component-service-import-debt.json
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/hooks/useToastErrors.ts:errorService.subscribe
+      - web/src/shared/errorTypes.ts:export type AppError =
+      - web/tests/toast-errors-hook.test.mjs:toast errors hook contract ok
+
+  - id: G-HX
+    title: Dialog host integration moves to hook
+    kind: arch
+    symptom: |
+      DialogHost mixes dialog service subscription, request/input state, back-layer registration, keyboard handling,
+      and modal rendering.
+    why: |
+      Keep dialog integration and request lifecycle in a logic hook while leaving the component focused on rendering.
+    boundary: |
+      Subscription, dismiss/resolve bridge, back layer, and keyboard handling move to useDialogHost;
+      focus management and modal UI remain in DialogHost. Cancel/confirm and prompt result semantics are unchanged.
+    tests:
+      - web/tests/dialog-host-hook.test.mjs
+      - web/tests/back-navigation.test.mjs
+      - web/tests/dialog-lifecycle.test.mjs
+      - web/tests/reviewer-architecture-rules.test.mjs
+    files:
+      - web/src/hooks/useDialogHost.ts
+      - web/src/components/shell/DialogHost.tsx
+      - web/tests/dialog-host-hook.test.mjs
+      - web/tests/back-navigation.test.mjs
+      - web/tests/fixtures/component-service-import-debt.json
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/hooks/useDialogHost.ts:useBackLayer(!!request, dismiss)
+      - web/src/components/shell/DialogHost.tsx:const { request, draft, setDraft, dismiss, resolve } = useDialogHost()
+      - web/tests/dialog-host-hook.test.mjs:dialog host hook contract ok
+
+  - id: G-HY
+    title: Session viewer error reporting uses hook
+    kind: arch
+    symptom: |
+      Session viewer timeline and slash-command components import the global error service directly;
+      SessionViewer also retains an unused error import.
+    why: |
+      Route component error reporting through a logic hook and remove dead service dependencies.
+    boundary: |
+      useReportError wraps the existing reportError API; error codes, messages, and global delivery remain unchanged.
+    tests:
+      - web/tests/report-error-hook.test.mjs
+      - web/tests/reviewer-architecture-rules.test.mjs
+    files:
+      - web/src/hooks/useReportError.ts
+      - web/src/components/session/SessionViewerTimeline.tsx
+      - web/src/components/session/SessionViewerSlashCommand.tsx
+      - web/src/components/session/SessionViewer.tsx
+      - web/tests/report-error-hook.test.mjs
+      - web/tests/fixtures/component-service-import-debt.json
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/hooks/useReportError.ts:reportError(code, message, options)
+      - web/src/components/session/SessionViewerTimeline.tsx:useReportError()
+      - web/tests/report-error-hook.test.mjs:report error hook contract ok
+
+  - id: G-HZ
+    title: File operation flows move to hooks
+    kind: arch
+    symptom: |
+      FileOperations combines menu rendering with delete/rename dialogs and requests, move-directory browsing,
+      request state, and conflict error mapping.
+    why: |
+      Keep file operation requests and async state in logic hooks while preserving the menu and LocalPanel UI.
+    boundary: |
+      Delete/rename flows move to useFileOperationActions and move browsing/submission move to useFileOperationMove.
+      Name validation, confirm order, stale browse response guard, 409 messaging, and completion callbacks remain unchanged.
+    tests:
+      - web/tests/file-operation-hooks.test.mjs
+      - web/tests/reviewer-architecture-rules.test.mjs
+    files:
+      - web/src/hooks/useFileOperationActions.ts
+      - web/src/hooks/useFileOperationMove.ts
+      - web/src/components/file/FileOperations.tsx
+      - web/tests/file-operation-hooks.test.mjs
+      - web/tests/fixtures/component-service-import-debt.json
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - "web/src/hooks/useFileOperationActions.ts:confirmDialog"
+      - 'web/src/hooks/useFileOperationMove.ts:action: "move", destination: dirs.path'
+      - "web/tests/file-operation-hooks.test.mjs:file operation hooks contract ok"
+
+  - id: G-IB
+    title: Panel shell close guard moves to hook
+    kind: arch
+    symptom: |
+      PanelShell directly calls the dialog service for unsaved-change confirmation inside the shared overlay component.
+    why: |
+      Keep close confirmation logic in a hook while leaving PanelShell responsible for shared modal presentation.
+    boundary: |
+      The dirty guard and discard confirmation move to usePanelShellClose. Clean close, cancel, and confirm timing remain unchanged.
+    tests:
+      - web/tests/task-panel-unification.test.mjs
+      - web/tests/reviewer-architecture-rules.test.mjs
+    files:
+      - web/src/hooks/usePanelShellClose.ts
+      - web/src/components/shell/PanelShell.tsx
+      - web/tests/task-panel-unification.test.mjs
+      - web/tests/fixtures/component-service-import-debt.json
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/hooks/usePanelShellClose.ts:confirmDialog({
+      - web/src/components/shell/PanelShell.tsx:usePanelShellClose({ onClose, hasUnsavedChanges, t })
+      - web/tests/task-panel-unification.test.mjs:the guard must short-circuit straight to onClose
+
+  - id: G-IC
+    title: Remove dead onboarding service imports
+    kind: arch
+    symptom: |
+      OnboardingGate retains unused onboarding service imports although the rendered callbacks are supplied by props.
+    why: |
+      Remove dead service edges without changing the prop-driven onboarding flow.
+    boundary: |
+      Only unused imports and the reviewed allowlist edge are removed; tour callbacks and step behavior remain unchanged.
+    tests:
+      - web/tests/reviewer-architecture-rules.test.mjs
+    files:
+      - web/src/components/app/OnboardingGate.tsx
+      - web/tests/fixtures/component-service-import-debt.json
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/components/app/OnboardingGate.tsx:import { OnboardingTour }
+      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+
+  - id: G-ID
+    title: Task template save moves to hook
+    kind: arch
+    symptom: |
+      TaskTemplateDialog mixes draft editing with template persistence, validation, and global error reporting.
+    why: |
+      Keep template persistence and save lifecycle in a logic hook while preserving the form component.
+    boundary: |
+      Save and error handling move to useTaskTemplateSave. First user-stage validation, project scope,
+      normalized stages, error messaging, success callback, and close order remain unchanged.
+    tests:
+      - web/tests/task-template-save-hook.test.mjs
+      - web/tests/task-template-node-routing.test.mjs
+      - web/tests/reviewer-architecture-rules.test.mjs
+    files:
+      - web/src/hooks/useTaskTemplateSave.ts
+      - web/src/components/task/TaskTemplateDialog.tsx
+      - web/tests/task-template-save-hook.test.mjs
+      - web/tests/task-template-node-routing.test.mjs
+      - web/tests/fixtures/component-service-import-debt.json
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/hooks/useTaskTemplateSave.ts:saveTaskTemplate({
+      - web/src/components/task/TaskTemplateDialog.tsx:useTaskTemplateSave({
+      - web/tests/task-template-save-hook.test.mjs:task template save hook contract ok
+
+  - id: G-IE
+    title: Auth gate behavior moves to colocated hook
+    kind: arch
+    symptom: |
+      AuthGate directly accesses authentication services and owns request state, race protection, and login error translation.
+    why: |
+      Keep the page-level login gate's asynchronous behavior in colocated logic while preserving its public-API semantics.
+    boundary: |
+      Existing-account bypass, auth status check, unmount protection, login validation, error mapping, and open/locked/checking states remain unchanged.
+    tests:
+      - web/tests/auth-gate-hook.test.mjs
+      - web/tests/reviewer-architecture-rules.test.mjs
+    files:
+      - web/src/components/account/AuthGate.tsx
+      - web/src/components/account/useAuthGate.ts
+      - web/tests/auth-gate-hook.test.mjs
+      - web/tests/fixtures/component-service-import-debt.json
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/components/account/useAuthGate.ts:loginWithPassword(name, password)
+      - web/src/components/account/AuthGate.tsx:useAuthGate(t)
+      - web/tests/auth-gate-hook.test.mjs:auth gate hook contract ok
+
+  - id: G-IF
+    title: Composer root node lookup moves to hook
+    kind: arch
+    symptom: |
+      ComposerTopChips reads the global project-to-node registry directly from its view.
+    why: |
+      Keep the view free of service access and colocate the node lookup with composer logic.
+    boundary: |
+      The hook reads the current mapping on each render so managed-root realtime updates remain visible to the Codex indicator.
+    tests:
+      - web/tests/reviewer-architecture-rules.test.mjs
+    files:
+      - web/src/components/action/ComposerTopChips.tsx
+      - web/src/components/action/useRootNodeId.ts
+      - web/tests/fixtures/component-service-import-debt.json
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/components/action/ComposerTopChips.tsx:useRootNodeId(currentRootId || "")
+      - web/src/components/action/useRootNodeId.ts:export function useRootNodeId
+
+  - id: G-IG
+    title: Account panel mutations use colocated hook
+    kind: arch
+    symptom: |
+      AccountPanel directly calls account mutation APIs and dialog/auth services from its view.
+    why: |
+      Keep account actions in the existing colocated logic hook while preserving the shared run, refresh, error, and busy lifecycle.
+    boundary: |
+      Delete confirmation, delete request, primary-account request, and logout move to useAccountPanel; logout still clears the account and reloads the page.
+    tests:
+      - web/tests/account-panel-actions.test.mjs
+      - web/tests/reviewer-architecture-rules.test.mjs
+    files:
+      - web/src/components/account/AccountPanel.tsx
+      - web/src/components/account/useAccountPanel.ts
+      - web/tests/account-panel-actions.test.mjs
+      - web/tests/fixtures/component-service-import-debt.json
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/components/account/useAccountPanel.ts:const confirmDeleteAccount = async
+      - web/src/components/account/useAccountPanel.ts:const makePrimaryAccount =
+      - web/src/components/account/AccountPanel.tsx:confirmDeleteAccount(account)
+
+  - id: G-IH
+    title: ActionBar agent restart flows through logic hook
+    kind: arch
+    symptom: |
+      ActionBarControls directly calls agent restart and fetch services from the AgentSelector callback and writes agent state.
+    why: |
+      Keep the request and state update in useActionBar logic while leaving the control view callback-driven.
+    boundary: |
+      Resolve the current root node, restart the target agent, force-refresh the agent list, then update state in the same order.
+    tests:
+      - web/tests/claude-model-1m.test.mjs
+      - web/tests/reviewer-architecture-rules.test.mjs
+    files:
+      - web/src/components/action/ActionBar.tsx
+      - web/src/components/action/ActionBarControls.tsx
+      - web/src/components/action/useActionBar.ts
+      - web/tests/fixtures/component-service-import-debt.json
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/components/action/useActionBar.ts:const handleAgentRestart = useCallback
+      - web/src/components/action/ActionBar.tsx:onAgentRestart={handleAgentRestart}
+      - web/src/components/action/ActionBarControls.tsx:onAgentRestart={onAgentRestart}
+
+  - id: G-II
+    title: Remove dead SessionMainContent service imports
+    kind: arch
+    symptom: |
+      SessionMainContent carries service dependencies left behind by the mechanical App split, with their symbols used only in import declarations.
+    why: |
+      Remove dead coupling and import data contracts from shared modules where their ownership is already shared.
+    boundary: |
+      Unused file, fileEditing, git operations, directorySort, and upload imports are removed; GitDiffPayload remains from git service types; rendering behavior stays unchanged.
+    tests:
+      - web/tests/session-pane-split.test.mjs
+      - web/tests/reviewer-architecture-rules.test.mjs
+    files:
+      - web/src/components/app/SessionMainContent.tsx
+      - web/tests/fixtures/component-service-import-debt.json
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/components/app/SessionMainContent.tsx:import type { DirectorySortMode, FileEntry } from "../../shared/directorySort"
+      - web/src/components/app/SessionMainContent.tsx:import type { UploadProgress } from "../../shared/uploadTypes"
+
+  - id: G-IJ
+    title: Remove dead AppActionBar service imports
+    kind: arch
+    symptom: |
+      AppActionBar imports session cache/sync APIs and send-shortcut readers/writers that are never used in the view.
+    why: |
+      Remove service coupling left behind by the App split and import its data contracts from shared modules.
+    boundary: |
+      Remove unused service symbols; QueuedUserMessage and SendShortcut remain the same types from shared modules. Runtime behavior and props remain unchanged.
+    tests:
+      - web/tests/agent-docs-contract.test.mjs
+      - web/tests/reviewer-architecture-rules.test.mjs
+    files:
+      - web/src/components/app/AppActionBar.tsx
+      - web/tests/fixtures/component-service-import-debt.json
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/components/app/AppActionBar.tsx:import type { QueuedUserMessage } from "../../shared/sessionTypes"
+      - web/src/components/app/AppActionBar.tsx:import type { SendShortcut } from "../../shared/sendShortcut"
+
+  - id: G-IK
+    title: Remove dead FileTreePanel service imports
+    kind: arch
+    symptom: |
+      FileTreePanel imports unused file APIs, preference readers/writers, and directory sorting contracts while runtime state arrives through props.
+    why: |
+      Remove dead service coupling and import presentation contracts from shared modules.
+    boundary: |
+      Remove unused service imports; font-size, send-shortcut, and directory types come from shared modules. State and view behavior remain props-driven.
+    tests:
+      - web/tests/file-tree-header-overlays.test.mjs
+      - web/tests/file-tree-service-boundaries.test.mjs
+      - web/tests/font-size-preferences.test.mjs
+      - web/tests/send-shortcut.test.mjs
+      - web/tests/reviewer-architecture-rules.test.mjs
+    files:
+      - web/src/components/app/FileTreePanel.tsx
+      - web/tests/fixtures/component-service-import-debt.json
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/components/app/FileTreePanel.tsx:import type { SendShortcut } from "../../shared/sendShortcut"
+      - web/src/components/app/FileTreePanel.tsx:import type { DirectorySortMode, FileEntry } from "../../shared/directorySort"
+
+  - id: G-IL
+    title: Agent icon asset loading moves to hook
+    kind: arch
+    symptom: |
+      AgentIcon view resolves deployment-prefixed URLs through net service and owns SVG fetch/cache lifecycle.
+    why: |
+      Keep asset URL resolution and asynchronous loading in colocated logic while preserving subpath deployments.
+    boundary: |
+      Agent-name mapping and presentation remain in the component; URL prefixing, request dedupe/cache, fallback, and unmount cancellation move to useCachedAgentIcon.
+    tests:
+      - web/tests/agent-icon-hook.test.mjs
+      - web/tests/reviewer-architecture-rules.test.mjs
+    files:
+      - web/src/components/agent/AgentIcon.tsx
+      - web/src/components/agent/useCachedAgentIcon.ts
+      - web/tests/agent-icon-hook.test.mjs
+      - web/tests/fixtures/component-service-import-debt.json
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/components/agent/AgentIcon.tsx:useCachedAgentIcon(icon?.src)
+      - web/src/components/agent/useCachedAgentIcon.ts:appPath(`/assets/agents/${fileName}`)
+
+  - id: G-IM
+    title: Remove stale service imports from task/session panels
+    kind: arch
+    symptom: |
+      SessionSheet, TaskDetailPanelGate, and TaskInlineEditPanel import request/cache functions that occur only in import declarations while their data and actions arrive through props.
+    why: |
+      Remove dead dependencies left by the App split and use shared contracts for view props.
+    boundary: |
+      Unused agents/tasks/candidates/git/upload APIs are removed; required Agent, Task, Candidate, Git, and Upload types come from shared modules. Panel behavior is unchanged.
+    tests:
+      - web/tests/task-panel-service-boundaries.test.mjs
+      - web/tests/task-panel-unification.test.mjs
+      - web/tests/task-related-files.test.mjs
+      - web/tests/reviewer-architecture-rules.test.mjs
+    files:
+      - web/src/components/app/SessionSheet.tsx
+      - web/src/components/app/TaskDetailPanelGate.tsx
+      - web/src/components/app/TaskInlineEditPanel.tsx
+      - web/tests/task-panel-service-boundaries.test.mjs
+      - web/tests/fixtures/component-service-import-debt.json
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/components/app/SessionSheet.tsx:import type { AgentStatus } from "../../shared/agentTypes"
+      - web/src/components/app/TaskDetailPanelGate.tsx:import type { KanbanTask, TaskDetail } from "../../shared/taskTypes"
+      - web/src/components/app/TaskInlineEditPanel.tsx:import type { CandidateItem } from "../../shared/candidateTypes"
+
+  - id: G-IN
+    title: Session ring quick switch uses colocated hook
+    kind: arch
+    symptom: |
+      SessionRing directly fetches multi-root sessions and owns request loading/cancellation state, while also importing service helpers.
+    why: |
+      Keep session loading in colocated logic and leave the ring view focused on gesture and panel presentation.
+    boundary: |
+      The hook loads and projects recent groups with cancellation protection; gesture helper semantics, positioning, outside close, and Esc behavior remain unchanged.
+    tests:
+      - web/tests/session-ring-gesture.test.mjs
+      - web/tests/quick-switch.test.mjs
+      - web/tests/reviewer-architecture-rules.test.mjs
+    files:
+      - web/src/components/action/SessionRing.tsx
+      - web/src/components/action/useSessionRingQuickSwitch.ts
+      - web/tests/session-ring-gesture.test.mjs
+      - web/tests/fixtures/component-service-import-debt.json
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/components/action/SessionRing.tsx:useSessionRingQuickSwitch(quickSwitchOpen)
+      - web/src/components/action/useSessionRingQuickSwitch.ts:sessionService.fetchMultiRootSessions(3)
+
+  - id: G-IO
+    title: Git status discard confirmation uses logic hook
+    kind: arch
+    symptom: |
+      GitStatusPanel view calls the dialog service to confirm untracked-file deletion and orchestrates the discard action busy state.
+    why: |
+      Keep confirmation and action orchestration in the existing colocated logic hook.
+    boundary: |
+      Tracked files discard directly; untracked files require confirmation; cancelling performs no action. Button presentation is unchanged.
+    tests:
+      - web/tests/git-status-discard-hook.test.mjs
+      - web/tests/reviewer-architecture-rules.test.mjs
+    files:
+      - web/src/components/git/GitStatusPanel.tsx
+      - web/src/components/git/useGitStatusPanel.ts
+      - web/tests/git-status-discard-hook.test.mjs
+      - web/tests/fixtures/component-service-import-debt.json
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/components/git/useGitStatusPanel.ts:const discardItem = async
+      - web/src/components/git/GitStatusPanel.tsx:discardItem(item, onDiscardItem)
+
+  - id: G-IP
+    title: Session timeline service actions use colocated hook
+    kind: arch
+    symptom: |
+      SessionViewerTimeline imports prompt persistence and persisted-sequence service functions into its renderer.
+    why: |
+      Keep the timeline view free of service imports and expose these existing domain actions through colocated logic.
+    boundary: |
+      The hook returns the same savePrompt and isPersistedSeq implementations; timeline rendering, prompt feedback, and fork eligibility stay unchanged.
+    tests:
+      - web/tests/session-viewer-timeline-actions.test.mjs
+      - web/tests/session-timeline-seq.test.mjs
+      - web/tests/reviewer-architecture-rules.test.mjs
+    files:
+      - web/src/components/session/SessionViewerTimeline.tsx
+      - web/src/components/session/useSessionViewerTimelineActions.ts
+      - web/tests/session-viewer-timeline-actions.test.mjs
+      - web/tests/fixtures/component-service-import-debt.json
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/components/session/SessionViewerTimeline.tsx:useSessionViewerTimelineActions()
+      - web/src/components/session/useSessionViewerTimelineActions.ts:return { isPersistedSeq, savePrompt }
+
+  - id: G-IQ
+    title: Session attachment images reuse protected blob hook
+    kind: arch
+    symptom: |
+      SessionViewerAttachments duplicates protected blob fetching, root-node lookup, and object URL lifecycle.
+    why: |
+      Reuse the existing protected-blob hook so cancellation, failure fallback, and URL cleanup have one owner.
+    boundary: |
+      Attachment images pass root/path to useProtectedBlobUrl; the file service keeps resolving nodeId from the root registry when omitted.
+    tests:
+      - web/tests/markdown-viewer-split.test.mjs
+      - web/tests/reviewer-architecture-rules.test.mjs
+    files:
+      - web/src/components/session/SessionViewerAttachments.tsx
+      - web/src/hooks/useProtectedBlobUrl.ts
+      - web/tests/markdown-viewer-split.test.mjs
+      - web/tests/fixtures/component-service-import-debt.json
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - "web/src/components/session/SessionViewerAttachments.tsx:useProtectedBlobUrl(rootId && path ? { rootId, path } : undefined)"
+      - "web/src/hooks/useProtectedBlobUrl.ts:fetchProofProtectedBlob(currentRequest)"
+
+  - id: G-IR
+    title: Remove stale FileViewer editing service import
+    kind: arch
+    symptom: |
+      FileViewer imports FileEditStore, fileEditKey, and the size limit from fileEditing but uses none of them in the component.
+    why: |
+      Remove dead coupling left after editing logic moved into useFileViewer.
+    boundary: |
+      Only the unused import is removed; editor state, file size gating, and UI behavior remain owned by the existing hook and props.
+    tests:
+      - web/tests/reviewer-architecture-rules.test.mjs
+      - web/tests/file-editing.test.mjs
+    files:
+      - web/src/components/file/FileViewer.tsx
+      - web/tests/fixtures/component-service-import-debt.json
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/components/file/FileViewer.tsx:import { useFileViewer, type FileViewerProps }
+
+  - id: G-IS
+    title: Document preview data loading uses colocated hook
+    kind: arch
+    symptom: |
+      DocumentViewer directly fetches protected file data and owns cancellation and error conversion alongside rendering.
+    why: |
+      Keep the preview view independent from service APIs and centralize the fetch lifecycle in a colocated logic hook.
+    boundary: |
+      useDocumentPreviewBlob preserves loading, missing-root, cancellation, and error behavior; preview rendering remains unchanged and the pure error formatter lives in shared with a compatibility re-export.
+    tests:
+      - web/tests/document-preview-view-split.test.mjs
+      - web/tests/document-preview.test.mjs
+      - web/tests/reviewer-architecture-rules.test.mjs
+    files:
+      - web/src/components/file/DocumentViewer.tsx
+      - web/src/components/file/DocumentPreviewError.tsx
+      - web/src/components/file/PdfPreview.tsx
+      - web/src/components/file/useDocumentPreviewBlob.ts
+      - web/src/shared/documentPreview.ts
+      - web/tests/document-preview-view-split.test.mjs
+      - web/tests/fixtures/component-service-import-debt.json
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - "web/src/components/file/DocumentViewer.tsx:useDocumentPreviewBlob(root, path)"
+      - "web/src/components/file/useDocumentPreviewBlob.ts:fetchProofProtectedBlob({ rootId: root, path })"
+
+  - id: G-IT
+    title: Project and Git views use shared contracts and node logic hook
+    kind: arch
+    symptom: |
+      NodeManagerPanel and ProjectAddPopover directly depend on node registry services, while SessionMainContent imports its Git diff contract through a service module.
+    why: |
+      Keep component views independent of services and place reusable node and Git contracts in shared modules.
+    boundary: |
+      Node values and rendering remain unchanged; ProjectAddPopover reads the same registry snapshot through a colocated hook, and the Git service types module re-exports the shared payload contract.
+    tests:
+      - web/tests/project-add-node-boundary.test.mjs
+      - web/tests/file-tree-service-boundaries.test.mjs
+      - web/tests/node-colors-and-workspace-preferences.test.mjs
+      - web/tests/reviewer-architecture-rules.test.mjs
+    files:
+      - web/src/shared/nodePalette.ts
+      - web/src/shared/gitTypes.ts
+      - web/src/services/net/nodeRegistry.ts
+      - web/src/services/git/types.ts
+      - web/src/components/account/NodeManagerPanel.tsx
+      - web/src/components/app/SessionMainContent.tsx
+      - web/src/components/file/ProjectAddPopover.tsx
+      - web/src/components/file/useProjectAddNodes.ts
+      - web/tests/project-add-node-boundary.test.mjs
+      - web/tests/file-tree-service-boundaries.test.mjs
+      - web/tests/node-colors-and-workspace-preferences.test.mjs
+      - web/tests/fixtures/component-service-import-debt.json
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/components/file/ProjectAddPopover.tsx:useProjectAddNodes()
+      - web/src/components/app/SessionMainContent.tsx:import type { GitDiffPayload, GitStatusPayload }
+
+  - id: G-IU
+    title: File and session service work moves behind logic hooks
+    kind: arch
+    symptom: |
+      FileEditor, WebPushMenuItem, and SessionViewer directly call file, push, and session service functions from view components.
+    why: |
+      Keep service work behind colocated logic hooks and keep UI components focused on rendering and user interaction.
+    boundary: |
+      File reload, push status/actions, persisted exchange filtering, and exchange merging preserve their existing request parameters, state transitions, feedback, and merge semantics.
+    tests:
+      - web/tests/file-session-service-boundaries.test.mjs
+      - web/tests/session-window.test.mjs
+      - web/tests/session-window-overlay-dedup.test.mjs
+      - web/tests/reviewer-architecture-rules.test.mjs
+    files:
+      - web/src/components/file/FileEditor.tsx
+      - web/src/components/file/useFileEditorReload.ts
+      - web/src/components/file/icons.tsx
+      - web/src/components/file/useWebPushMenu.ts
+      - web/src/components/session/SessionViewer.tsx
+      - web/src/components/session/useSessionViewerExchangeProjection.ts
+      - web/tests/file-session-service-boundaries.test.mjs
+      - web/tests/session-window.test.mjs
+      - web/tests/session-window-overlay-dedup.test.mjs
+      - web/tests/fixtures/component-service-import-debt.json
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/components/file/FileEditor.tsx:useFileEditorReload()
+      - web/src/components/file/icons.tsx:useWebPushMenu()
+      - web/src/components/session/SessionViewer.tsx:useSessionViewerExchangeProjection()

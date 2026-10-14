@@ -1,6 +1,5 @@
-import React, { useEffect, useRef, useState } from "react";
-import { dialogService, type DialogRequest } from "../../services/dialog";
-import { useBackLayer } from "../../hooks/useBackNavigation";
+import React, { useEffect, useRef } from "react";
+import { useDialogHost } from "../../hooks/useDialogHost";
 import { useI18n } from "../../i18n/index";
 
 /**
@@ -74,19 +73,9 @@ function actionButtonStyle(danger?: boolean): React.CSSProperties {
 }
 
 export function DialogHost(): React.ReactElement | null {
-  const [request, setRequest] = useState<DialogRequest | null>(null);
-  const [draft, setDraft] = useState("");
+  const { request, draft, setDraft, dismiss, resolve } = useDialogHost();
   const inputRef = useRef<HTMLInputElement | null>(null);
   const { t } = useI18n();
-
-  useEffect(() => dialogService.subscribe((next) => {
-    setRequest(next);
-    setDraft(next?.kind === "prompt" ? next.defaultValue || "" : "");
-  }), []);
-
-  // 弹窗是覆盖层里最高的一层：按返回/侧滑应该走 dismiss（取消语义），
-  // 而不是穿透到面板或视图栈。注册在 App 层之上，所以它天然在最上面。
-  useBackLayer(!!request, () => dialogService.dismiss());
 
   useEffect(() => {
     if (request?.kind === "prompt") {
@@ -95,30 +84,13 @@ export function DialogHost(): React.ReactElement | null {
     }
   }, [request]);
 
-  useEffect(() => {
-    if (!request) {
-      return;
-    }
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        dialogService.dismiss();
-        return;
-      }
-      if (event.key === "Enter" && request.kind === "confirm") {
-        event.preventDefault();
-        dialogService.resolve(true);
-      }
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [request]);
+
 
   if (!request) {
     return null;
   }
 
-  const cancel = () => dialogService.dismiss();
+  const cancel = dismiss;
   const isPrompt = request.kind === "prompt";
   const isAlert = request.kind === "alert";
   const confirmLabel = isPrompt
@@ -152,7 +124,7 @@ export function DialogHost(): React.ReactElement | null {
             onKeyDown={(event) => {
               if (event.key === "Enter") {
                 event.preventDefault();
-                dialogService.resolve(draft);
+                resolve(draft);
               }
             }}
             style={inputStyle}
@@ -170,14 +142,14 @@ export function DialogHost(): React.ReactElement | null {
             type="button"
             onClick={() => {
               if (isPrompt) {
-                dialogService.resolve(draft);
+                resolve(draft);
                 return;
               }
               if (isAlert) {
-                dialogService.resolve(true);
+                resolve(true);
                 return;
               }
-              dialogService.resolve(true);
+              resolve(true);
             }}
             style={actionButtonStyle(request.kind === "confirm" ? request.danger : false)}
           >
