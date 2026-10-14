@@ -3192,3 +3192,10 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：Claude model alias、1m suffix 归一、settings/env 合并、CLI model arg 选择与 model listing 混在 session turn/event 主文件，模型配置变更难和会话生命周期逻辑区分。
 - **根因与边界**：model alias/canonicalization、settings/env 解析、model arg 决策、隐藏模型过滤、model list/info/effort projection 原样迁至 `session_models.go`（406 行）；SDK 选项及 session 行为保持。父文件实测 2,682 行，仍高于硬线，继续拆分。
 - **针对性测试**：`server/internal/agent/claude/session_test.go` 与 `web/tests/upstream-restore.test.mjs` → 守住 alias/第三方模型透传、1m suffix、env/settings precedence 与 model listing 及 upstream-restore 断言位置；`make test` → 全仓 Go 门禁。
+
+
+### G-FC Claude session tool-call summary projection split
+
+- **可见症状**：Claude tool name/input 归一、path/execute/search/todo/task/list/ask-user/web-search 摘要和内容片段投影与主 turn 消费循环共处大型 `session.go`，工具卡字段变化难以按 tool 家族集中审阅。
+- **根因与边界**：`summarizeToolCall` 至 `cloneToolMeta` 的 tool-call summary/metadata projection helpers 原样迁至 `session_tool_summaries.go`（469 行）；调用时机、fallback metadata 和输出结构不变。父文件实测 2,222 行，仍高于硬线。
+- **针对性测试**：`server/internal/agent/claude/session_test.go` → 守住 execute 描述/title 回退、task/result summary 与 ask-user 结构；`make test` → 全仓 Go 门禁。
