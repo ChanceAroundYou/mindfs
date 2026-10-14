@@ -5935,3 +5935,34 @@ groups:
       - server/internal/agent/claude/session_tool_summaries.go:func summarizeTaskListToolCall
       - server/internal/agent/claude/session_tool_summaries.go:func summarizeAskUserToolCall
       - server/internal/agent/claude/session_tool_summaries.go:func cloneToolMeta
+
+
+  - id: G-FD
+    title: Claude session tool-result lifecycle and projection split
+    kind: arch
+    symptom: |
+      Pending tool-call state transitions, task tool result matching, and stdout/stderr/content normalization
+      are spread through the large Claude session event file, making lock and state contracts hard to audit.
+    why: |
+      Keep pending tool-call lifecycle and tool-result projection together so state transitions and result
+      shape changes can be reviewed independently from the streaming event consumer.
+    boundary: |
+      Pending tool-call lifecycle and tool-result matching/normalization/projection helpers move unchanged to
+      session_tool_results.go (486 lines). Lock scope, pending consumption timing, task-list status mapping,
+      and returned output shapes remain unchanged. Parent is 1,746 lines, still above the hardline.
+    tests:
+      - server/internal/agent/claude/session_test.go
+    files:
+      - server/internal/agent/claude/session.go
+      - server/internal/agent/claude/session_tool_results.go
+      - docs/agent/rules/backend/TODO.md
+      - docs/agent/rules/backend/file-size.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - server/internal/agent/claude/session_tool_results.go:func (s *session) trackPendingToolCall
+      - server/internal/agent/claude/session_tool_results.go:func (s *session) toolResultUpdate
+      - server/internal/agent/claude/session_tool_results.go:func taskListToolResultUpdate
+      - server/internal/agent/claude/session_tool_results.go:func summarizeGenericToolResultValue

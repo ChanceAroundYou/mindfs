@@ -3199,3 +3199,10 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：Claude tool name/input 归一、path/execute/search/todo/task/list/ask-user/web-search 摘要和内容片段投影与主 turn 消费循环共处大型 `session.go`，工具卡字段变化难以按 tool 家族集中审阅。
 - **根因与边界**：`summarizeToolCall` 至 `cloneToolMeta` 的 tool-call summary/metadata projection helpers 原样迁至 `session_tool_summaries.go`（469 行）；调用时机、fallback metadata 和输出结构不变。父文件实测 2,222 行，仍高于硬线。
 - **针对性测试**：`server/internal/agent/claude/session_test.go` → 守住 execute 描述/title 回退、task/result summary 与 ask-user 结构；`make test` → 全仓 Go 门禁。
+
+
+### G-FD Claude session tool-result lifecycle and projection split
+
+- **可见症状**：Claude pending tool-call 状态迁移、task tool 结果关联与 stdout/stderr/content 归一散落在大型 session event 文件中；修改结果映射时难以集中核对锁与状态契约。
+- **根因与边界**：pending tool-call 生命周期和 tool-result matching/normalization/projection helpers 原样迁至 `session_tool_results.go`（486 行）；锁范围、pending 消费时序、task list 状态映射与输出结构不变。父文件实测 1,746 行，仍高于硬线。
+- **针对性测试**：`server/internal/agent/claude/session_test.go` → 守住 pending tool-call 生命周期、TaskCreate/Update/List/Get 结果更新与通用结果摘要；`make test` → 全仓 Go 门禁。
