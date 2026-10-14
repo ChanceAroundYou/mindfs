@@ -3278,8 +3278,8 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 ### G-GP Agent documentation entry and plan link checks
 
 - **可见症状**：规则/计划入口、相对链接或 Claude/Gemini 工具导入目标失效时，agent 仍可能按错误规范或过期计划工作。
-- **根因与边界**：`agent-docs-contract.test.mjs` 验证 AGENTS/规则目录/计划索引的本地 Markdown 链接、唯一 Active 计划，以及 Claude/Gemini 对通用入口的导入关系；只校验存在性和入口契约，不验证外部链接可达性。
-- **针对性测试**：`web/tests/agent-docs-contract.test.mjs` → 入口链接、唯一 Active 计划和工具导入三项契约；`npm test` → web 全量门禁。
+- **根因与边界**：`agent-docs-contract.test.mjs` 验证 AGENTS/规则目录/计划索引的本地 Markdown 链接、最多一个 Active 计划（无执行中任务时允许为零），以及 Claude/Gemini 对通用入口的导入关系；只校验存在性和入口契约，不验证外部链接可达性。
+- **针对性测试**：`web/tests/agent-docs-contract.test.mjs` → 入口链接、Active 计划数量和工具导入三项契约；`npm test` → web 全量门禁。
 
 ### G-GQ Frontend reviewer architecture ratchets
 

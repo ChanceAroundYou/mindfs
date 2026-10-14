@@ -6,15 +6,14 @@ to resume their old TODOs or baselines.
 
 ## Active
 
-| Plan | Status | Next action |
-|---|---|---|
-| [Rule completion rollout](rule-completion-rollout.md) | Active | 前端/后端全量测试和前端生产构建已通过；组件 service import 清单归零。当前剩余工作是提交后运行 upstream-customization checker，并按 no-restart 路径正式 ship。 |
+当前没有执行中的计划。启动新的多阶段任务前，先建立计划并登记在此处。
 
 ## Completed or superseded history
 
 | Plan | Status | Current interpretation |
 |---|---|---|
 | [App.tsx under 1000](app-tsx-under-1000.md) | Completed 2026-10-09 | Final execution record; `App.tsx` is now a 16-line composition root. |
+| [Rule completion rollout](rule-completion-rollout.md) | Completed 2026-10-14 | Agent-neutral rules and plan entrypoints are verified; frontend and backend TODOs are complete; component-to-service imports are zero. Commit `84c0bada` passed all gates, upstream customization coverage, and no-restart ship to local/WSL/fn. No node was restarted. |
 | [App.tsx next split](app-tsx-next-split.md) | Completed 2026-10-08 | Historical phase record; its 2957-line baseline was superseded by the next plan. |
 | [Deep split phase 3](deep-split-phase3.md) | Completed / superseded | Historical target and execution record; do not use its 2026-10-07 baseline. |
 | [Deep split phase 2](deep-split-phase2.md) | Completed / superseded | Historical phase record. |

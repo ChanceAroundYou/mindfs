@@ -37,11 +37,13 @@ test("agent rules and plan index contain no broken local Markdown links", () => 
   assert.deepEqual(broken, [], `broken links:\n${broken.join("\n")}`);
 });
 
-test("plan index has exactly one valid Active plan", () => {
+test("plan index has at most one valid Active plan", () => {
   const index = readFileSync(path.join(root, "docs/plans/README.md"), "utf8");
   const active = [...index.matchAll(/^\|\s*\[([^\]]+)\]\(([^)]+)\)\s*\|\s*Active\s*\|/gm)];
-  assert.equal(active.length, 1, `expected one Active plan, found ${active.length}`);
-  assert.ok(existsSync(path.resolve(root, "docs/plans", active[0][2])), `missing Active plan ${active[0][2]}`);
+  assert.ok(active.length <= 1, `expected at most one Active plan, found ${active.length}`);
+  for (const [, , target] of active) {
+    assert.ok(existsSync(path.resolve(root, "docs/plans", target)), `missing Active plan ${target}`);
+  }
 });
 
 test("Claude and Gemini entry files point to the shared instruction and indexes", () => {

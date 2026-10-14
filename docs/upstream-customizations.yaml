@@ -6284,8 +6284,8 @@ groups:
     why: |
       Keep shared agent documentation entrypoints and the unique Active plan verifiable as repository tests.
     boundary: |
-      agent-docs-contract.test.mjs validates local links in AGENTS/rule docs/plan index, exactly one Active
-      plan, and Claude/Gemini imports of shared entry files. It checks local presence and entry contracts only.
+      agent-docs-contract.test.mjs validates local links in AGENTS/rule docs/plan index, at most one Active
+      plan (zero is valid when no work is underway), and Claude/Gemini imports of shared entry files. It checks local presence and entry contracts only.
     tests:
       - web/tests/agent-docs-contract.test.mjs
     files:
@@ -6297,7 +6297,7 @@ groups:
       - docs/upstream-customizations.yaml
     anchors:
       - web/tests/agent-docs-contract.test.mjs:test("agent rules and plan index contain no broken local Markdown links"
-      - web/tests/agent-docs-contract.test.mjs:test("plan index has exactly one valid Active plan"
+      - 'web/tests/agent-docs-contract.test.mjs:test("plan index has at most one valid Active plan"'
       - web/tests/agent-docs-contract.test.mjs:test("Claude and Gemini entry files point to the shared instruction and indexes"
 
   - id: G-GQ
