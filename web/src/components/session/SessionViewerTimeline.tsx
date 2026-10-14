@@ -7,7 +7,7 @@ import { isPersistedSeq } from "../../services/session";
 import { savePrompt } from "../../services/prompts";
 import { reportError } from "../../services/net/error";
 import { copyText } from "../../platform/clipboard";
-import { formatSessionDuration } from "../../services/session/sessionDuration";
+import { formatSessionDuration } from "../../shared/sessionDuration";
 import { SessionViewerThoughtItem } from "./SessionViewerThoughtItem";
 import { renderToolTimelineItem } from "./SessionViewerToolItem";
 import { renderAuxiliaryTimelineItem } from "./SessionViewerAuxiliaryTimeline";

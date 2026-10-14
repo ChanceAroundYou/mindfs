@@ -6853,3 +6853,32 @@ groups:
     anchors:
       - web/src/platform/clipboard.ts:export async function copyText
       - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+
+  - id: G-HK
+    title: Shared session duration helpers
+    kind: arch
+    symptom: |
+      Session viewer components import pure event-time and duration formatting helpers from the session service.
+    why: |
+      Make pure session presentation/time helpers available from shared while preserving the compatibility path.
+    boundary: |
+      streamEventTimestamp and formatSessionDuration move to shared/sessionDuration.ts; the service path
+      re-exports them and timestamp selection/label behavior remains unchanged.
+    tests:
+      - web/tests/session-duration.test.mjs
+      - web/tests/reviewer-architecture-rules.test.mjs
+    files:
+      - web/src/shared/sessionDuration.ts
+      - web/src/services/session/sessionDuration.ts
+      - web/src/components/session/SessionViewer.tsx
+      - web/src/components/session/SessionViewerTimeline.tsx
+      - web/tests/session-duration.test.mjs
+      - web/tests/fixtures/component-service-import-debt.json
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/shared/sessionDuration.ts:export function formatSessionDuration
+      - web/tests/session-duration.test.mjs:const sourcePath = path.resolve(import.meta.dirname, "../src/shared/sessionDuration.ts")

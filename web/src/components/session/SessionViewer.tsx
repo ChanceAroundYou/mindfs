@@ -15,7 +15,7 @@ import { rootBadgeButtonStyle } from "../../shared/rootBadgeStyle";
 import { copyText } from "../../platform/clipboard";
 import type { AgentStatus } from "../../shared/agentTypes";
 import { useI18n } from "../../i18n/index";
-import { formatSessionDuration } from "../../services/session/sessionDuration";
+import { formatSessionDuration } from "../../shared/sessionDuration";
 import {
   computeTailOverlay,
   type OverlayExchange,

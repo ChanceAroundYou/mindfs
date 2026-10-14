@@ -3400,3 +3400,9 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：Markdown/session views 与 app 调用方为复制文本而导入 services/platform，虽该模块实现的是浏览器/Native clipboard capability 而非数据 service。
 - **根因与边界**：实现迁到 `web/src/platform/clipboard.ts`；旧 `services/platform/clipboard.ts` 仅 re-export 兼容，Native bridge、Capacitor、execCommand 与 navigator fallback 顺序不变。组件和 app 调用方改用 platform 入口。
 - **针对性测试**：`web/tests/reviewer-architecture-rules.test.mjs` → 阻止组件 service 边增长；`npm test` → 守住旧路径兼容及复制调用行为。
+
+### G-HK Shared session duration helpers
+
+- **可见症状**：SessionViewer 和 Timeline 为显示单轮耗时而直接导入 session service 子模块。
+- **根因与边界**：纯时间戳归一与耗时格式化 helpers 移到 `shared/sessionDuration.ts`；旧 service 子路径兼容 re-export，流时间语义与标签格式不变，源码测试指向新的权威定义。
+- **针对性测试**：`web/tests/session-duration.test.mjs` → 守住时长阈值、无效时间处理与服务端事件时间优先；`web/tests/reviewer-architecture-rules.test.mjs` → 守住组件 service 边只减不增。

@@ -4,7 +4,7 @@ import path from "node:path";
 import ts from "typescript";
 import vm from "node:vm";
 
-const sourcePath = path.resolve(import.meta.dirname, "../src/services/sessionDuration.ts");
+const sourcePath = path.resolve(import.meta.dirname, "../src/shared/sessionDuration.ts");
 const streamCachePath = path.resolve(import.meta.dirname, "../src/app/useSessionStreamCache.ts");
 const source = fs.readFileSync(sourcePath, "utf8");
 const streamCacheSource = fs.readFileSync(streamCachePath, "utf8");
@@ -23,7 +23,7 @@ vm.runInNewContext(compiled, sandbox, { filename: sourcePath });
 
 const { formatSessionDuration } = sandbox.exports;
 const streamEventTimestamp = sandbox.exports.streamEventTimestamp;
-assert.equal(typeof streamEventTimestamp, "function", "sessionDuration must export streamEventTimestamp");
+assert.equal(typeof streamEventTimestamp, "function", "shared session duration helpers must export streamEventTimestamp");
 
 assert.equal(
   formatSessionDuration("2026-07-29T10:00:00.000Z", "2026-07-29T10:00:33.000Z"),
