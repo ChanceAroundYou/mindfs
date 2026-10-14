@@ -5873,3 +5873,35 @@ groups:
       - server/internal/api/http_frontend.go:func (h *HTTPHandler) serveStaticAsset
       - server/internal/api/http_frontend.go:func (h *HTTPHandler) serveFrontendIndex
       - server/internal/api/http_frontend.go:func pathForStaticAsset
+
+  - id: G-FB
+    title: Claude session model and configuration normalization split
+    kind: arch
+    symptom: |
+      Claude model alias/canonicalization, settings and environment resolution, CLI model argument
+      selection, hidden-model filtering, and model-list projection are mixed into session.go.
+    why: |
+      Keep model/config normalization and SDK model listing together so provider-specific model behavior
+      can be reviewed independently from session turn and stream lifecycle code.
+    boundary: |
+      Claude alias/canonicalization, 1m suffix helpers, settings/env parsing, model argument selection,
+      hidden model filtering, and ListModels projections move unchanged to session_models.go. Parent is
+      2,682 lines and remains above the 1,500 hardline.
+    tests:
+      - server/internal/agent/claude/session_test.go
+      - web/tests/upstream-restore.test.mjs
+    files:
+      - server/internal/agent/claude/session.go
+      - server/internal/agent/claude/session_models.go
+      - web/tests/upstream-restore.test.mjs
+      - docs/agent/rules/backend/TODO.md
+      - docs/agent/rules/backend/file-size.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - server/internal/agent/claude/session_models.go:func isClaudeAliasModel
+      - server/internal/agent/claude/session_models.go:func ClaudeEffectiveEnv
+      - server/internal/agent/claude/session_models.go:func ResolveClaudeModelArg
+      - server/internal/agent/claude/session_models.go:func (s *session) ListModels

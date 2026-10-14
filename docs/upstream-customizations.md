@@ -3185,3 +3185,10 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：静态资源清理/缓存头、index 缺失资源检测、fallback HTML、版本标识与 worker frontend 403 guard 混在 general `http.go`，部署前端资源问题难与路由和 session handler 分开审阅。
 - **根因与边界**：frontend/static handlers、index resource regex 与 cache/path/version/fallback helpers 原样迁至 `http_frontend.go`（218 行）；`/` 路由、静态资源可用角色判断和响应语义不变。父文件实测 658 行。
 - **针对性测试**：`server/internal/api/http_test.go` → 守住静态路径清理、index resource 与 cache fallback 行为；`server/internal/api/http_node_role_test.go` → 守住 worker frontend 403；`make test` → 全仓 Go 门禁。
+
+
+### G-FB Claude session model/config normalization split
+
+- **可见症状**：Claude model alias、1m suffix 归一、settings/env 合并、CLI model arg 选择与 model listing 混在 session turn/event 主文件，模型配置变更难和会话生命周期逻辑区分。
+- **根因与边界**：model alias/canonicalization、settings/env 解析、model arg 决策、隐藏模型过滤、model list/info/effort projection 原样迁至 `session_models.go`（406 行）；SDK 选项及 session 行为保持。父文件实测 2,682 行，仍高于硬线，继续拆分。
+- **针对性测试**：`server/internal/agent/claude/session_test.go` 与 `web/tests/upstream-restore.test.mjs` → 守住 alias/第三方模型透传、1m suffix、env/settings precedence 与 model listing 及 upstream-restore 断言位置；`make test` → 全仓 Go 门禁。

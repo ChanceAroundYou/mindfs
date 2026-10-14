@@ -27,7 +27,7 @@ const sessionDomainSvc = [
     .filter((n) => n.startsWith("session") && n.endsWith(".ts") && n !== "session.ts")
     .map((n) => readFileSync(new URL(`../src/services/${n}`, import.meta.url), "utf8")),
 ].join("\n");
-const claudeSession = readFileSync(new URL("../../server/internal/agent/claude/session.go", import.meta.url), "utf8");
+const claudeSession = readFileSync(new URL("../../server/internal/agent/claude/session_models.go", import.meta.url), "utf8");
 const streamHub = readFileSync(new URL("../../server/internal/api/stream_hub.go", import.meta.url), "utf8");
 
 // 3951aa4 — task→non-task relatedFiles: preserveTaskSelection + showAllFiles removal

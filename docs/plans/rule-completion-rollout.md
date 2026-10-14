@@ -131,8 +131,7 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 - 已完成（2026-10-14）：exchange turn identity/source/model/token-usage context contract、确定性 MindFS ID helper 与形状校验迁至 `manager_exchange_identity.go`；保留公开 API 和行写入/身份分配时序。全仓 `make test`、upstream 门禁（1048 delta / 150 组）及 no-restart ship 均通过，提交 `f9778ec` 已推送并安装至三端（`v0.5.5-799-gf9778ec`），未重启节点。
 - 已完成（2026-10-14）：session Close/Delete/Rename/Archive、session 属性更新、内部 close/delete、DB shutdown 生命周期实现迁至 `manager_lifecycle.go`（256 行）；worktree 归属和 repoint 方法未改。全仓 `make test`、upstream 门禁（1049 delta / 151 组）与 no-restart ship 均通过，提交 `6239722` 已推送并安装至三端（`v0.5.5-800-g6239722`），未重启节点。
 - 已完成（2026-10-14）：session window orchestration、冷缓存尾读、字节级记录计数、尾部解析与 seq lower-bound helper 迁至 `manager_window_reads.go`（193 行）；同时修正了长期 source-map 测试中已过期的 SessionViewer、session service、App 与 realtime 模块边界断言。`make test`、ship 门禁（Go、tsc、Vitest 5 + legacy 293）及 upstream 覆盖（1050 delta / 152 组）通过；提交 `dc72506` 已推送，三端安装 `v0.5.5-801-gdc72506`，未重启。manager 主文件实测 749 行。
-- 按当前工作区重算必拆清单：7 个 Go 非测试文件超过 1500 行，已更新 backend TODO 与 file-size 规则中的旧基线。当前：`server/internal/api/http.go` 中 Git status/diff/history/branch/action/worktree handlers 与 Git action decoder/response helper 已迁至 `http_git.go`（447 行）；handler 路由、handler 名和操作顺序不变，API 专项测试通过。父文件实测 2588 行，仍高于硬线；全仓门禁与 no-restart ship 待执行。
-- 下一项：完成 G-EX 验收后，继续按 session/static/file/dirs handler 域拆 `http.go`，直至低于 1500 行；再处理其他 6 个大文件、cli/server 双入口审计与 reviewer checklist 自动门禁。
+- 历史阶段记录：G-EX/G-EY/G-EZ 的早期拆分进度与行数基线已由下方验收记录取代；当前必拆清单以本计划末尾的最新实测为准。
 
 - 已完成（2026-10-14）：G-EX 的 `http_git.go` 已通过全仓 Go/TypeScript/web 与 upstream 门禁并 no-restart ship（`2def72a`，三端 `v0.5.5-802-g2def72a`，未重启）。
 - 进行中（2026-10-14）：项目文件树/文件操作、上传、目录增删改与 managed-dir response 迁至 `http_files.go`（574 行）；路由和 usecase 调用不变，API 包专项通过。父文件实测 2,036 行，仍高于 1,500 硬线；全仓门禁与发布待执行。
@@ -145,5 +144,6 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 
 
 - 已完成（2026-10-14）：G-EZ session handler 拆分通过全仓 Go、tsc、Vitest 5 + legacy 293 与 upstream 覆盖门禁（1053 delta / 155 组）；提交 `92ce95f` 已推送并 no-restart 安装至三端（`v0.5.5-804-g92ce95f`），未重启节点。
-- 进行中（2026-10-14）：静态资源/前端 index/404 fallback 与 cache header/version/resource-path helpers 迁至 `http_frontend.go`（218 行）；worker 静态资源角色守卫与路由出口保持。API 包专项通过，父 `http.go` 实测 658 行，低于 800 行软线。全仓门禁与 no-restart ship 待执行。
-- 下一项：完成 G-FA 验收后复核根 `http.go` 仅保留 route/middleware/未触碰的 repoint handler 是否符合分层规范，再继续其余 6 个 >1500 行文件、双入口审计与 reviewer checklist 自动门禁。
+- 已完成（2026-10-14）：静态资源、index 缺失资源检测、fallback/cache/version/path helpers 迁至 `http_frontend.go`；API 包和 worker-role tests、全仓 Go、TypeScript、Vitest 5 + legacy 293 及 upstream（1054 delta / 156 组）通过。提交 `238939b` 已推送，三端 no-restart 安装 `v0.5.5-805-g238939b`，bundle 对账一致、无重启；`http.go` 实测 658 行。
+- 按当前实测，剩余 6 个 >1500 行 Go 非测试文件：`agent/claude/session.go` 2682、`api/agent_api_provider.go` 2484、`kanban/service.go` 1989、`agent/codex/importer.go` 1887、`agent/codex/session.go` 1586、`gitview/gitview.go` 1575。下一项先拆 Claude model/config/alias 职责，再逐项执行剩余清单、双入口审计与 reviewer checklist 自动门禁。
+- 进行中（2026-10-14）：Claude model alias/env/settings/model-list 归一职责迁至 `agent/claude/session_models.go`（406 行）；model 解析、环境透传和列表行为不变。Claude package tests 通过；父 `session.go` 实测 2682 行；全仓门禁与 no-restart ship 待执行。
