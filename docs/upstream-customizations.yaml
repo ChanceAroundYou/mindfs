@@ -6539,3 +6539,29 @@ groups:
     anchors:
       - web/src/shared/taskTypes.ts:export type KanbanTask
       - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+
+  - id: G-GZ
+    title: Shared task contracts in editors and workspace board
+    kind: arch
+    symptom: |
+      Task editors and the workspace board import the task service facade for shared task types only.
+    why: |
+      Keep the presentation type contract in shared/taskTypes while runtime task operations remain in service/app.
+    boundary: |
+      PromptEditor, StageEditor, WorkspaceBoard import shared/taskTypes; their runtime and UI behavior do not
+      change and the component-service allowlist loses three edges and three files.
+    tests:
+      - web/tests/reviewer-architecture-rules.test.mjs
+    files:
+      - web/src/components/editor/PromptEditor.tsx
+      - web/src/components/task/StageEditor.tsx
+      - web/src/components/workspace/WorkspaceBoard.tsx
+      - web/tests/fixtures/component-service-import-debt.json
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/shared/taskTypes.ts:export type StageTemplate
+      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"

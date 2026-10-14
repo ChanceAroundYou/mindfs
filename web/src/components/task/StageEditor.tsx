@@ -5,7 +5,7 @@ import { has1MSuffix, resolveEffortOnSwitch, resolveLongContextOnSwitch, strip1M
 import { composerInputStyle } from "../action/composerStyles";
 import { useI18n } from "../../i18n/index";
 import { DEFAULT_TASK_AGENT } from "../../app/appTask";
-import type { StageTemplate } from "../../services/tasks";
+import type { StageTemplate } from "../../shared/taskTypes";
 import type { AgentStatus } from "../../shared/agentTypes";
 
 export type StageEditorProps = {

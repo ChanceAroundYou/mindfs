@@ -50,4 +50,4 @@
 
 ## 层级债务（持续清理）
 
-- [ ] `components/**/*.tsx` 到 `services/` 尚有 101 条 import 边、涉及 58 个文件（含 type-only 引用）。现由 `reviewer-architecture-rules.test.mjs` 的 reviewed allowlist 禁止新增、允许只减；逐域把数据/请求依赖移入 logic hooks，把共享类型移到 `shared/` 或 service types 门面，再删 allowlist。
+- [ ] `components/**/*.tsx` 到 `services/` 尚有 98 条 import 边、涉及 55 个文件（含 type-only 引用）。现由 `reviewer-architecture-rules.test.mjs` 的 reviewed allowlist 禁止新增、允许只减；逐域把数据/请求依赖移入 logic hooks，把共享类型移到 `shared/` 或 service types 门面，再删 allowlist。

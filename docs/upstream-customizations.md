@@ -3334,3 +3334,9 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：任务详情及工作台行/快捷启动组件仅需任务结构类型，却直接依赖 task service facade。
 - **根因与边界**：三个组件从既有 `shared/taskTypes.ts` 导入纯类型，TaskDetailPanel、WorkspaceTaskRow、WorkspaceQuickLaunch 不再依赖任何 service；数据请求仍留在 app/usecase 层，显示与请求行为不变。
 - **针对性测试**：`web/tests/reviewer-architecture-rules.test.mjs` → 守住组件 service 边只减不增；`npm run typecheck` → 守住类型解析。
+
+### G-GZ Shared task contracts in editors and workspace board
+
+- **可见症状**：PromptEditor、StageEditor 与 WorkspaceBoard 只使用任务类型，但组件仍通过 task service facade 取得这些类型。
+- **根因与边界**：三者改从 `shared/taskTypes.ts` 导入；实际任务 CRUD/运行继续留在 service/app 层，组件展示和编辑流程不变。
+- **针对性测试**：`web/tests/reviewer-architecture-rules.test.mjs` → 守住组件 service 边只减不增；`npm run typecheck` → 守住类型解析。

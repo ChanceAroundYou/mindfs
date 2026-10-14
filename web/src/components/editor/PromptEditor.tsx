@@ -5,7 +5,7 @@ import { composerEditorInsets, useComposerEditorHeight } from "../action/useComp
 import TokenEditor, { type TokenEditorHandle } from "./TokenEditor";
 import { PencilIcon, PlusIcon, SendIcon } from "../action/composerIcons";
 import { composerContainerStyle, composerIconButtonStyle, composerSendButtonStyle } from "../action/composerStyles";
-import type { StageRole } from "../../services/tasks";
+import type { StageRole } from "../../shared/taskTypes";
 import type { AgentStatus } from "../../shared/agentTypes";
 import { useI18n } from "../../i18n/index";
 

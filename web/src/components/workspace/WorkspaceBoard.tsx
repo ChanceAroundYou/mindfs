@@ -8,7 +8,7 @@ import type { TaskCardAction, TaskSessionErrorDialog } from "../task/TaskCardRow
 import type { SessionPresentationSummary } from "../../shared/sessionPresentationTypes";
 import { WorkspaceProjectRow } from "./WorkspaceProjectRow";
 import { WorkspaceQuickLaunch } from "./WorkspaceQuickLaunch";
-import type { TaskTemplate } from "../../services/tasks";
+import type { TaskTemplate } from "../../shared/taskTypes";
 import {
   workspaceEmptyTextStyle,
   workspaceFilterButtonStyle,
