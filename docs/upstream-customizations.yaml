@@ -6633,6 +6633,8 @@ groups:
       re-export and the public service facade/runtime behavior stay unchanged. Type-only UI imports use shared.
     tests:
       - web/tests/reviewer-architecture-rules.test.mjs
+      - web/tests/message-mechanism-merges.test.mjs
+      - web/tests/session-window.test.mjs
     files:
       - web/src/shared/sessionTypes.ts
       - web/src/services/session/sessionTypes.ts
@@ -6645,6 +6647,8 @@ groups:
       - web/src/components/session/SessionViewerTimeline.tsx
       - web/src/components/session/SessionViewerTokenViews.tsx
       - web/tests/fixtures/component-service-import-debt.json
+      - web/tests/message-mechanism-merges.test.mjs
+      - web/tests/session-window.test.mjs
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -6653,3 +6657,5 @@ groups:
     anchors:
       - web/src/shared/sessionTypes.ts:export type Session
       - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+      - web/tests/message-mechanism-merges.test.mjs:test("【红·④】overlay 只按角色类别和 mindfs_id 对账"
+      - web/tests/session-window.test.mjs:SessionWindowMeta type missing

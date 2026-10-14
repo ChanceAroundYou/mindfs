@@ -135,7 +135,7 @@ test("【红·④】overlay 只按角色类别和 mindfs_id 对账", () => {
   );
   const realtime = stripComments(readLogicalSource("src/app/useRealtimeEvents.ts"));
   const sessionService = stripComments(
-    readFileSync(path.join(srcRoot, "services", "session", "sessionTypes.ts"), "utf8"),
+    readFileSync(path.join(srcRoot, "shared", "sessionTypes.ts"), "utf8"),
   );
   assert.match(overlay, /mindfs_id/);
   assert.match(overlay, /roleCategory/);

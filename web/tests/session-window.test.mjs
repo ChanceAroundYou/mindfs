@@ -9,6 +9,7 @@ register("./ts-module-hook.mjs", import.meta.url);
 const { computeTailOverlay } = await import("../src/shared/sessionOverlay.ts");
 
 const sessionServiceDir = path.resolve(import.meta.dirname, "../src/services/session");
+const sharedSessionTypesPath = path.resolve(import.meta.dirname, "../src/shared/sessionTypes.ts");
 const sessionViewerPath = path.resolve(import.meta.dirname, "../src/components/session/SessionViewer.tsx");
 const sessionWindowingPath = path.resolve(import.meta.dirname, "../src/components/session/useSessionWindowing.ts");
 const targetSeqScrollPath = path.resolve(import.meta.dirname, "../src/components/session/useTargetSeqScroll.ts");
@@ -18,7 +19,12 @@ const managerWindowPath = path.resolve(import.meta.dirname, "../../server/intern
 const httpPath = path.resolve(import.meta.dirname, "../../server/internal/api/http.go");
 const httpSessionsPath = path.resolve(import.meta.dirname, "../../server/internal/api/http_sessions.go");
 
-const sessionSrc = fs.readdirSync(sessionServiceDir).filter((name) => name.endsWith(".ts")).map((name) => fs.readFileSync(path.join(sessionServiceDir, name), "utf8")).join("\n");
+const sessionSrc = [
+  ...fs.readdirSync(sessionServiceDir)
+    .filter((name) => name.endsWith(".ts"))
+    .map((name) => fs.readFileSync(path.join(sessionServiceDir, name), "utf8")),
+  fs.readFileSync(sharedSessionTypesPath, "utf8"),
+].join("\n");
 const viewerSrc = [sessionViewerPath, sessionWindowingPath, targetSeqScrollPath, viewerControlsPath].map((file) => fs.readFileSync(file, "utf8")).join("\n");
 // 剥掉注释后的代码视图：注释里提到某个坏写法是正常的（那通常正是在解释它为什么被删）。
 const stripComments = (src) => src.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");

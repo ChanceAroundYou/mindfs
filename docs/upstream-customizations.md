@@ -3357,4 +3357,4 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 
 - **可见症状**：session 视图组件需要 `Session`、`ToolCall`、`RelatedFile` 等纯领域类型，却从 session runtime facade 导入；类型模块内部又被多个实现文件共享。
 - **根因与边界**：完整 `sessionTypes.ts` 搬至 `shared/sessionTypes.ts`；原 service 内部路径留兼容 re-export，现有公开 service facade 的导出面与运行时行为不变。纯类型组件改用 shared，混合 runtime 组件只切换类型导入。
-- **针对性测试**：`web/tests/reviewer-architecture-rules.test.mjs` → 守住组件 service 边只减不增；`npm run typecheck` 与 `npm test` → 守住类型解析、service facade 和前端兼容测试。
+- **针对性测试**：`web/tests/reviewer-architecture-rules.test.mjs` → 守住组件 service 边只减不增；`web/tests/message-mechanism-merges.test.mjs` 与 `web/tests/session-window.test.mjs` → 从新 shared 路径验证身份字段和窗口契约；`npm run typecheck` 与 `npm test` → 守住类型解析、service facade 和前端兼容测试。
