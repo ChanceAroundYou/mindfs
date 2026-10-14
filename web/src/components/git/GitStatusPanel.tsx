@@ -1,5 +1,5 @@
 import React from "react";
-import { type GitStatusItem, type GitStatusPayload } from "../../services/git";
+import type { GitStatusItem, GitStatusPayload } from "../../shared/gitTypes";
 import { useI18n } from "../../i18n/index";
 import { confirmDialog } from "../../services/dialog";
 import {

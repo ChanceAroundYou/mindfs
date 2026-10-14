@@ -2,7 +2,7 @@ import React from "react";
 import { GitStatusPanel } from "../git/GitStatusPanel";
 import { AsyncStateMessage } from "../common/AsyncStateMessage";
 import { useI18n } from "../../i18n/index";
-import type { GitStatusItem, GitStatusPayload, GitWorktreeItem } from "../../services/git";
+import type { GitStatusItem, GitStatusPayload, GitWorktreeItem } from "../../shared/gitTypes";
 import type { RelatedWorktree } from "../../shared/sessionTypes";
 import type { ManagedRootPayload } from "../../app/appMisc";
 
