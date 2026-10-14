@@ -1,6 +1,6 @@
 # Frontend export and filename alignment
 
-Status: Active
+Status: Completed 2026-10-14
 
 ## Goal
 
@@ -38,3 +38,14 @@ Make frontend naming rules, their automated checks, and the existing source agre
 - Expanded AST review found two additional standalone component files whose only component export had a different name (`SessionViewerSlashCommand.tsx` and `Toast.tsx`); both are included in this cleanup.
 - The `.tsx` semantic scan found four files without JSX (`appMisc.tsx`, the `app/taskIcons` compatibility facade, the retired `NodeSwitcher` shim, and `EditorBridge`). They are changed to `.ts`, and the gate now checks both directions: `.ts` has no JSX and `.tsx` has JSX.
 - `AgentSelectorParts` mixed visible selector pieces with model-name/error parsing used by different consumers, so the pure functions moved to `agentSelectorUtils.ts`. The remaining five audited multi-export modules are cohesive responsibility families (Markdown code rendering, file-operation menus, session cards, token/context views, scheduled-task controls); they remain grouped and are not split solely to reduce export count.
+
+## Completion record
+
+- Aligned the naming rule, test rule, and reviewer checklist. The AST gate checks standalone component/hook entry names and the `.ts`/`.tsx` JSX contract without imposing a universal same-name-export requirement.
+- Renamed standalone components and render helper modules; moved browser-history primitives to `services/platform/backNavigation.ts` and retained React wiring in `hooks/useBackLayer.ts`.
+- Reviewed all ten originally listed modules plus additional AST findings. Five cohesive multi-export modules remain grouped by responsibility; no path-based exemption list was added.
+- `npm test`: 162 test files passed, 4 skipped; 324 tests passed, 5 skipped.
+- `npm run typecheck`: passed. `npm run build`: passed (Vite emitted its existing large-chunk advisory).
+- `make check-upstream`: passed; 1142 delta files covered by 228 groups.
+- Commits: `c889beb2`, `02817b0a`.
+- `web/src/App.tsx` was not changed. The pre-existing untracked root `package-lock.json` was left untouched.

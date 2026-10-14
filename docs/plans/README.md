@@ -6,15 +6,14 @@ to resume their old TODOs or baselines.
 
 ## Active
 
-| Plan | Goal |
-|---|---|
-| [Frontend export and filename alignment](frontend-export-naming.md) | Align frontend naming rules, AST gates, and source filenames without imposing one-export-per-file on responsibility modules. |
+No execution plan is currently active.
 
 ## Completed or superseded history
 
 | Plan | Status | Current interpretation |
 |---|---|---|
 | [Frontend test migration and rule hardening](frontend-test-rule-hardening.md) | Completed 2026-10-14 | All frontend tests use Vitest; frontend/backend rules and gates apply without path-based waivers. Full gates and upstream coverage passed; no-restart ship installed matching artifacts locally and on WSL/fn. No node was restarted. |
+| [Frontend export and filename alignment](frontend-export-naming.md) | Completed 2026-10-14 | Naming docs and AST gates now agree; standalone components/hooks match filenames, `.tsx` contains JSX, and `.ts` does not. Cohesive multi-export modules remain responsibility-named. Frontend tests, typecheck, build, and upstream coverage passed. |
 |---|---|---|
 | [App.tsx under 1000](app-tsx-under-1000.md) | Completed 2026-10-09 | Final execution record; `App.tsx` is now a small composition root. |
 | [Rule completion rollout](rule-completion-rollout.md) | Completed 2026-10-14 | Agent-neutral rules and plan entrypoints are verified; frontend and backend TODOs are complete; component-to-service imports are zero. Commit `84c0bada` passed all gates, upstream customization coverage, and no-restart ship to local/WSL/fn. No node was restarted. |
