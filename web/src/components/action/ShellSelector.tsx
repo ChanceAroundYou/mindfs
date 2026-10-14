@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { type ShellStatus } from "../../services/agents";
+import type { ShellStatus } from "../../shared/agentTypes";
 
 export function ShellSelector({
   shell,

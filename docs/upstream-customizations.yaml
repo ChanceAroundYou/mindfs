@@ -6713,3 +6713,29 @@ groups:
     anchors:
       - web/src/shared/uploadTypes.ts:export type UploadProgress
       - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+
+  - id: G-HF
+    title: Shared shell status contract
+    kind: arch
+    symptom: |
+      ShellSelector imports ShellStatus from the agent runtime service although it only renders the contract.
+    why: |
+      Keep shell status in the existing agent shared contract module and preserve the service export for callers.
+    boundary: |
+      ShellStatus is defined in shared/agentTypes.ts and re-exported from agents service; shell discovery and
+      selection behavior do not change, while ShellSelector removes its service import edge.
+    tests:
+      - web/tests/reviewer-architecture-rules.test.mjs
+    files:
+      - web/src/shared/agentTypes.ts
+      - web/src/services/agent/agents.ts
+      - web/src/components/action/ShellSelector.tsx
+      - web/tests/fixtures/component-service-import-debt.json
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/shared/agentTypes.ts:export type ShellStatus
+      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"

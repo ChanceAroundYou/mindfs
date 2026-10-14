@@ -3,18 +3,8 @@ import { protectedAPIReady, protectedJSON } from "../net/api";
 
 // Agent status service
 
-import type { AgentCommandInfo, AgentLastConfigSelection, AgentModeInfo, AgentModelInfo, AgentStatus } from "../../shared/agentTypes";
-export type { AgentCommandInfo, AgentLastConfigSelection, AgentModeInfo, AgentModelInfo, AgentStatus } from "../../shared/agentTypes";
-
-export type ShellStatus = {
-  id: string;
-  name?: string;
-  label: string;
-  command: string;
-  resolved_command?: string;
-  args?: string[];
-  default?: boolean;
-};
+import type { AgentCommandInfo, AgentLastConfigSelection, AgentModeInfo, AgentModelInfo, AgentStatus, ShellStatus } from "../../shared/agentTypes";
+export type { AgentCommandInfo, AgentLastConfigSelection, AgentModeInfo, AgentModelInfo, AgentStatus, ShellStatus } from "../../shared/agentTypes";
 
 const VALID_EFFORTS = ["low", "medium", "high", "xhigh", "max", "ultra"] as const;
 function normalizeEfforts(input: unknown): string[] | undefined {

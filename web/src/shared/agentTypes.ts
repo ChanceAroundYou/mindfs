@@ -79,3 +79,13 @@ export type AgentAPIProvider = {
   createdAt: string;
   updatedAt: string;
 };
+
+export type ShellStatus = {
+  id: string;
+  name?: string;
+  label: string;
+  command: string;
+  resolved_command?: string;
+  args?: string[];
+  default?: boolean;
+};

@@ -11,7 +11,6 @@
   "web/src/components/action/ComposerTopChips.tsx -> ../../services/net/rootNode",
   "web/src/components/action/SessionRing.tsx -> ../../services/quickSwitch",
   "web/src/components/action/SessionRing.tsx -> ../../services/session",
-  "web/src/components/action/ShellSelector.tsx -> ../../services/agents",
   "web/src/components/agent/AgentIcon.tsx -> ../../services/net/base",
   "web/src/components/agent/ModeIcon.tsx -> ../../services/net/nodeRegistry",
   "web/src/components/agent/ModeSelector.tsx -> ../../services/net/nodeRegistry",
