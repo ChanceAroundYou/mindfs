@@ -142,3 +142,8 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 - 已完成（2026-10-14）：G-EY 文件/目录 handler 已通过全仓 Go、tsc、Vitest 5 + legacy 293 与 upstream 门禁（1052 delta / 154 组），提交 `9522fd5` 已推送并 no-restart 安装至三端（`v0.5.5-803-g9522fd5`），bundle 对账一致、无节点重启。
 - 进行中（2026-10-14）：session 列表/详情/同步/搜索/导入/rename/archive/delete 等 handlers 与 response/shell projection 迁至 `http_sessions.go`（1184 行）；`handleSessionRepoint` 留在 `http.go` 且未改。API 包专项及 session-window、conditional-response、user-message timing web 守卫通过；`http.go` 实测 867 行。全仓门禁、upstream 与 no-restart ship 待执行。
 - 下一项：完成 G-EZ 后继续拆 `http.go` 剩余偏好、静态资源、local-dir/import 处理，使主文件成为 route/middleware facade；随后按当前大文件清单处理其余 6 个文件与 cli/server 双入口审计、reviewer checklist 门禁。
+
+
+- 已完成（2026-10-14）：G-EZ session handler 拆分通过全仓 Go、tsc、Vitest 5 + legacy 293 与 upstream 覆盖门禁（1053 delta / 155 组）；提交 `92ce95f` 已推送并 no-restart 安装至三端（`v0.5.5-804-g92ce95f`），未重启节点。
+- 进行中（2026-10-14）：静态资源/前端 index/404 fallback 与 cache header/version/resource-path helpers 迁至 `http_frontend.go`（218 行）；worker 静态资源角色守卫与路由出口保持。API 包专项通过，父 `http.go` 实测 658 行，低于 800 行软线。全仓门禁与 no-restart ship 待执行。
+- 下一项：完成 G-FA 验收后复核根 `http.go` 仅保留 route/middleware/未触碰的 repoint handler 是否符合分层规范，再继续其余 6 个 >1500 行文件、双入口审计与 reviewer checklist 自动门禁。

@@ -5843,3 +5843,33 @@ groups:
       - server/internal/api/http_sessions.go:func (h *HTTPHandler) handleSessionSync
       - server/internal/api/http_sessions.go:func (h *HTTPHandler) sessionResponse
       - server/internal/api/http.go:func (h *HTTPHandler) handleSessionRepoint
+
+  - id: G-FA
+    title: API HTTP static frontend serving split
+    kind: arch
+    symptom: |
+      Static asset serving, index-resource validation, fallback HTML, cache headers, release-version
+      checks, and worker frontend access guard are mixed into general http.go.
+    why: |
+      Keep static frontend delivery and worker/control role behavior together so deployment and asset
+      recovery changes can be reviewed independently from API routes and session handlers.
+    boundary: |
+      handleFrontend through pathForStaticAsset and indexResourceRefPattern move unchanged to
+      http_frontend.go. Route registration, static role guard, cache/fallback response behavior remain.
+      Parent is 658 lines.
+    tests:
+      - server/internal/api/http_test.go
+      - server/internal/api/http_node_role_test.go
+    files:
+      - server/internal/api/http.go
+      - server/internal/api/http_frontend.go
+      - docs/agent/rules/backend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - server/internal/api/http_frontend.go:func (h *HTTPHandler) handleFrontend
+      - server/internal/api/http_frontend.go:func (h *HTTPHandler) serveStaticAsset
+      - server/internal/api/http_frontend.go:func (h *HTTPHandler) serveFrontendIndex
+      - server/internal/api/http_frontend.go:func pathForStaticAsset

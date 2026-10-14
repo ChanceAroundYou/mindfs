@@ -3178,3 +3178,10 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：session list/search/import/read/sync/fork/name/pin/delete/archive handlers 与 session response/shell projection 混在 general `http.go`；修改同步或列表协议时难以集中审阅读写流程。
 - **根因与边界**：除 `handleSessionRepoint` 外的 session handlers、session response/list response 与 shell/title projection helpers 原样迁至 `http_sessions.go`（1,184 行）；repoint handler 留在 `http.go` 且未改，路由与调用顺序保持。父文件实测 867 行。
 - **针对性测试**：`http_window_test.go`、`http_session_message_test.go` → 守住窗口/session API 与消息路径；`session-window.test.mjs`、`conditional-request.test.mjs`、`user-message-persist-timing.test.mjs`、`session-archive.test.mjs` 与 `session-list-node-failure.test.mjs` → 守住 handler 窗口接线、条件响应、user 行落盘、归档解绑与列表 payload 语义；`make test` → 全仓 Go 门禁。
+
+
+### G-FA API HTTP static frontend serving split
+
+- **可见症状**：静态资源清理/缓存头、index 缺失资源检测、fallback HTML、版本标识与 worker frontend 403 guard 混在 general `http.go`，部署前端资源问题难与路由和 session handler 分开审阅。
+- **根因与边界**：frontend/static handlers、index resource regex 与 cache/path/version/fallback helpers 原样迁至 `http_frontend.go`（218 行）；`/` 路由、静态资源可用角色判断和响应语义不变。父文件实测 658 行。
+- **针对性测试**：`server/internal/api/http_test.go` → 守住静态路径清理、index resource 与 cache fallback 行为；`server/internal/api/http_node_role_test.go` → 守住 worker frontend 403；`make test` → 全仓 Go 门禁。
