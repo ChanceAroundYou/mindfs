@@ -1,9 +1,14 @@
 package api
 
 import (
+	"bytes"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -129,5 +134,73 @@ func TestRequestUserIDPrefersQuery(t *testing.T) {
 	r = httptest.NewRequest(http.MethodGet, "/api/dirs", nil)
 	if got := RequestUserID(r, provider); got != "u_primary" {
 		t.Fatalf("RequestUserID = %q, want u_primary", got)
+	}
+}
+
+func TestAPIAppContextAccessDoesNotGrowOrGetConstructedDirectly(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	accessLines := 0
+	for _, name := range files {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		content, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, line := range strings.Split(string(content), "\n") {
+			if strings.Contains(line, "h.AppContext") {
+				accessLines++
+			}
+			if regexp.MustCompile(`\b(?:&\s*)?AppContext\s*\{`).MatchString(line) {
+				t.Errorf("%s constructs AppContext directly; use the scoped workspace provider", name)
+			}
+		}
+	}
+	if accessLines > 188 {
+		t.Fatalf("h.AppContext appears on %d production API lines; the reviewed baseline is 188 and may only decrease", accessLines)
+	}
+}
+
+func TestProductionGoFilesStayBelowTheHardLine(t *testing.T) {
+	root := filepath.Join("..", "..", "..")
+	var violations []string
+	for _, dir := range []string{"cli", "server"} {
+		base := filepath.Join(root, dir)
+		err := filepath.WalkDir(base, func(file string, entry os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if entry.IsDir() {
+				if entry.Name() == "testdata" {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if !strings.HasSuffix(file, ".go") || strings.HasSuffix(file, "_test.go") {
+				return nil
+			}
+			content, err := os.ReadFile(file)
+			if err != nil {
+				return err
+			}
+			if bytes.Contains(content[:min(len(content), 200)], []byte("Code generated")) {
+				return nil
+			}
+			lines := bytes.Count(content, []byte{'\n'})
+			if lines > 1500 {
+				violations = append(violations, fmt.Sprintf("%s: %d lines", file, lines))
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(violations) > 0 {
+		t.Fatalf("production Go files exceed 1,500 lines:\n%s", strings.Join(violations, "\n"))
 	}
 }

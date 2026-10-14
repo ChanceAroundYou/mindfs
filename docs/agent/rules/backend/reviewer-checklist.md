@@ -33,3 +33,11 @@ grep -rn "func.*CancelCurrentTurn" server/internal --include="*.go" -A15 \
 # AppContext 直构造（应无输出）
 grep -rn "AppContext{" server/internal/api --include="*.go" | grep -v _test
 ```
+
+## 自动覆盖映射
+
+- ws handler 异步派发：`server/internal/api/ws_test.go:TestWSRequestHandlersAreDispatchedAsynchronously`（`make test`）。
+- Interrupt/Cancel 超时：`server/internal/agent/cancel_rpc_timeout_guard_test.go`（`make test`）。
+- `AppContext` 直接构造与访问面增长、Go 文件硬行数：`server/internal/api/workspace_test.go`（`make test`）。
+- 控制面/数据面端点表：`server/internal/nodeinfo/role_test.go`、`server/internal/api/http_node_role_test.go`（`make test`）。
+- SQLite 只增不改、回滚说明、新 handler/usecase 同批行为测试、错误构造与文件分域：仍需逐次 reviewer 人工核对。

@@ -29,3 +29,11 @@ grep -rn "from.*services/" web/src/components --include="*.tsx"
 # 行数红线
 find web/src -name "*.tsx" -o -name "*.ts" | xargs wc -l | awk '$1>500'
 ```
+
+## 自动覆盖映射
+
+- `.ts` 无 JSX、命名后缀与组件主 export：`web/tests/naming-convention.test.mjs`（`npm test`）。
+- component→service 依赖：`web/tests/reviewer-architecture-rules.test.mjs` 只允许 allowlist 旧边并持续减量（`npm test`）。
+- 前端 500 行硬线与已记录豁免：同一 reviewer architecture test（`npm test`）。
+- 逻辑/视图边界与 WS 增量行为：`web/tests/*layering*.test.mjs` 及对应 stream/cross-node 回归测试（`npm test`）。
+- 代码复用是否已有实现、跨组件状态归属与新复用件测试：仍需逐次 reviewer 人工核对。

@@ -6328,3 +6328,30 @@ groups:
     anchors:
       - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
       - web/tests/reviewer-architecture-rules.test.mjs:test("frontend source files stay under 500 lines outside documented exemptions"
+
+  - id: G-GR
+    title: Backend reviewer rule guards
+    kind: arch
+    symptom: |
+      h.AppContext usage can silently grow and oversized Go production files can return while the reviewer
+      checklist records the constraints without an executable regression gate.
+    why: |
+      Keep the reviewed API workspace dependency surface and backend hard file-size limit mechanically
+      verifiable as part of the existing Go test gate.
+    boundary: |
+      workspace_test.go scans production API sources, disallows direct AppContext literals, caps h.AppContext
+      occurrence lines at the reviewed 188 baseline, and scans cli/server to reject non-test, non-generated
+      Go files above 1,500 lines. Existing workspace behavior is unchanged.
+    tests:
+      - server/internal/api/workspace_test.go
+    files:
+      - server/internal/api/workspace_test.go
+      - docs/agent/rules/backend/reviewer-checklist.md
+      - docs/agent/rules/frontend/reviewer-checklist.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - server/internal/api/workspace_test.go:func TestAPIAppContextAccessDoesNotGrowOrGetConstructedDirectly
+      - server/internal/api/workspace_test.go:func TestProductionGoFilesStayBelowTheHardLine
