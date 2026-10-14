@@ -3058,3 +3058,9 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：`AnswerQuestion` 与工具 aux hydration、去重/状态合并及回复 chunk helper 挤在 `session.go`，问题回答路径和 stream 写盘语义难以分开检查。
 - **根因与边界**：`AnswerQuestion`、pending tool aux hydrate/dedupe/merge 与 response chunk helper 原样迁入 `session_stream_events.go`（202 行）；调用顺序和 tool 状态持久化策略不变。父文件实测 1,782 行，backend TODO 继续未完成。
 - **针对性测试**：`server/internal/api/usecase/usecase_test.go` → 守住工具 aux 合并/去重、回答和行号投影；完整 `make test` → 全仓 Go 测试门禁通过。
+
+### G-EH Session event 与 model validation 拆分并清除父文件硬线
+
+- **可见症状**：agent event 元数据提取、subagent 标题、affected path/diff path 转换、related-file 投影与 Claude model 支持验证混在 `session.go`；worktree→项目根映射和 provider model 规则难与主 turn 编排分开审阅，父文件超过 1,500 行硬线。
+- **根因与边界**：subagent metadata/title、event compaction、tool/diff/related-file path normalization 原样迁入 `session_agent_events.go`（209 行）；Claude alias 归一和 `validateAgentModel` 原样迁入 `session_model_validation.go`（136 行）。父文件实测 1,455 行；事件顺序、路径映射、模型错误语义和 cancel 生命周期不变。
+- **针对性测试**：`server/internal/api/usecase/usecase_test.go` → 守住 related-file/worktree 路径投影、Claude alias、`[1m]` 后缀及 provider 支持模型校验；相关 usecase 测试与全量 `make test` 已通过。

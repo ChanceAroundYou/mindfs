@@ -8,7 +8,7 @@ to resume their old TODOs or baselines.
 
 | Plan | Status | Next action |
 |---|---|---|
-| [Rule completion rollout](rule-completion-rollout.md) | Active | 前端硬线按 500 行正式标准已清零。`usecase/session.go` 的列表/搜索、fork 历史复制、会话读取/窗口/关联文件、生命周期/级联归档删除、prompt 构建、会话命名、runtime/model 解析、turn identity、SendMessage 分别迁至 `session_list.go`（300）、`session_fork.go`（426）、`session_read.go`（265）、`session_lifecycle.go`（252）、`session_prompt.go`（265）、`session_name.go`（197）、`session_runtime.go`（215）、`session_turn_identity.go`（359）、`session_send.go`（444）；主文件 1782 行；SendMessage 与 Claude subagent router 已迁出，AnswerQuestion/stream aux helpers 已迁至独立模块，继续拆至 1500 行以下。 |
+| [Rule completion rollout](rule-completion-rollout.md) | Active | 前端 500 行硬线已清零。`usecase/session.go` 的领域职责已拆至独立模块，含 agent event/path 与 model validation；主文件实测 1455 行，已低于 1500 行硬线。继续按 backend TODO 逐个处理其余超限文件，并完成 reviewer checklist 与可机械化门禁。 |
 
 ## Completed or superseded history
 
