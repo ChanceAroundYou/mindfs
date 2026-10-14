@@ -1,0 +1,202 @@
+package usecase
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"time"
+
+	agenttypes "mindfs/server/internal/agent/types"
+	"mindfs/server/internal/session"
+)
+
+func (s *Service) AnswerQuestion(ctx context.Context, in AnswerQuestionInput) error {
+	if err := s.ensureRegistry(); err != nil {
+		return err
+	}
+	sessionKey := strings.TrimSpace(in.SessionKey)
+	if sessionKey == "" {
+		return errors.New("session key required")
+	}
+	manager, err := s.Registry.GetSessionManager(in.RootID)
+	if err != nil {
+		return err
+	}
+	agentName := strings.TrimSpace(in.Agent)
+	if agentName == "" {
+		current, err := manager.Get(ctx, sessionKey, 0)
+		if err != nil {
+			return err
+		}
+		agentName = strings.TrimSpace(session.InferAgentFromSession(current))
+	}
+	if agentName == "" {
+		return errors.New("agent required")
+	}
+	pool := s.Registry.GetAgentPool()
+	if pool == nil {
+		return errors.New("agent pool unavailable")
+	}
+	sess, ok := pool.Get(agentPoolSessionKey(sessionKey, agentName))
+	if !ok {
+		return errors.New("agent session not found")
+	}
+	answer := agenttypes.AskUserAnswer{
+		ToolUseID: strings.TrimSpace(in.ToolUseID),
+		Answers:   in.Answers,
+	}
+	if err := manager.MarkPendingAskUserAnswered(ctx, sessionKey, answer.ToolUseID, answer.Answers, time.Now()); err != nil {
+		return err
+	}
+	if err := sess.AnswerQuestion(ctx, answer); err != nil {
+		return err
+	}
+	return nil
+}
+
+func currentAssistantLine(responseText string) int {
+	// Anchor auxiliary events after the last text line, before trailing empty
+	// lines that may be filled by subsequent chunks. Leave the response intact.
+	responseText = strings.TrimRight(responseText, "\n")
+	if responseText == "" {
+		return 0
+	}
+	return strings.Count(responseText, "\n") + 1
+}
+
+func hydratePendingToolCallAux(ctx context.Context, manager *session.Manager, sessionKey string, aux session.ExchangeAux) session.ExchangeAux {
+	if manager == nil || aux.ToolCall == nil || strings.TrimSpace(aux.ToolCall.CallID) == "" {
+		return aux
+	}
+	if aux.ToolCall.Kind != agenttypes.ToolKindAskUser {
+		return aux
+	}
+	latest, err := manager.GetFullToolCall(ctx, sessionKey, aux.ToolCall.CallID)
+	if err != nil || latest == nil {
+		return aux
+	}
+	if latest.Kind != agenttypes.ToolKindAskUser {
+		return aux
+	}
+	toolCall := *latest
+	aux.ToolCall = &toolCall
+	return aux
+}
+
+func dedupeExchangeAuxBuffer(items []session.ExchangeAux) []session.ExchangeAux {
+	if len(items) == 0 {
+		return nil
+	}
+	seenToolCallIDs := make(map[string]int, len(items))
+	seenPlanIDs := make(map[string]struct{}, len(items))
+	seenCompactIDs := make(map[string]struct{}, len(items))
+	seenTodo := false
+	out := make([]session.ExchangeAux, 0, len(items))
+	for i := len(items) - 1; i >= 0; i-- {
+		item := items[i]
+		callID := ""
+		if item.ToolCall != nil {
+			callID = strings.TrimSpace(item.ToolCall.CallID)
+		}
+		if callID != "" {
+			if existingIndex, exists := seenToolCallIDs[callID]; exists {
+				if out[existingIndex].ToolCall != nil {
+					merged := mergeBufferedToolCall(*item.ToolCall, *out[existingIndex].ToolCall)
+					out[existingIndex].ToolCall = &merged
+				}
+				continue
+			}
+			seenToolCallIDs[callID] = len(out)
+		}
+		isTodo := item.Todo != nil || (item.ToolCall != nil && item.ToolCall.Kind == agenttypes.ToolKindTodo)
+		if isTodo {
+			if seenTodo {
+				continue
+			}
+			seenTodo = true
+		}
+		if item.Plan != nil {
+			planID := strings.TrimSpace(item.Plan.ID)
+			if planID != "" {
+				if _, exists := seenPlanIDs[planID]; exists {
+					continue
+				}
+				seenPlanIDs[planID] = struct{}{}
+			}
+		}
+		if item.Compact != nil {
+			compactID := strings.TrimSpace(item.Compact.ID)
+			if compactID != "" {
+				if _, exists := seenCompactIDs[compactID]; exists {
+					continue
+				}
+				seenCompactIDs[compactID] = struct{}{}
+			}
+		}
+		out = append(out, item)
+	}
+	for left, right := 0, len(out)-1; left < right; left, right = left+1, right-1 {
+		out[left], out[right] = out[right], out[left]
+	}
+	return out
+}
+
+func shouldPersistToolCallAux(toolCall agenttypes.ToolCall) bool {
+	if toolCall.RawType != "claude_task" {
+		return true
+	}
+	return strings.TrimSpace(stringMeta(toolCall.Meta, "subtype")) != "task_progress"
+}
+
+func mergeBufferedToolCall(base, next agenttypes.ToolCall) agenttypes.ToolCall {
+	merged := base
+	if strings.TrimSpace(next.CallID) != "" {
+		merged.CallID = next.CallID
+	}
+	if strings.TrimSpace(next.Title) != "" {
+		merged.Title = next.Title
+	}
+	if strings.TrimSpace(next.Status) != "" {
+		merged.Status = next.Status
+	}
+	if next.Kind != "" {
+		merged.Kind = next.Kind
+	}
+	if len(next.Content) > 0 {
+		merged.Content = append([]agenttypes.ToolCallContentItem(nil), next.Content...)
+	}
+	if len(next.Locations) > 0 {
+		merged.Locations = append([]agenttypes.ToolCallLocation(nil), next.Locations...)
+	}
+	if strings.TrimSpace(next.RawType) != "" {
+		merged.RawType = next.RawType
+	}
+	if len(base.Meta) > 0 || len(next.Meta) > 0 {
+		merged.Meta = make(map[string]any, len(base.Meta)+len(next.Meta))
+		for key, value := range base.Meta {
+			merged.Meta[key] = value
+		}
+		for key, value := range next.Meta {
+			merged.Meta[key] = value
+		}
+		if stringMeta(base.Meta, "taskTool") == "TaskCreate" && stringMeta(next.Meta, "taskTool") == "TaskUpdate" {
+			merged.Meta["taskTool"] = "TaskCreate"
+		}
+	}
+	return merged
+}
+
+func appendResponseChunk(responseText, lastResponseUpdateType, chunk string) string {
+	if responseText != "" &&
+		(lastResponseUpdateType == string(agenttypes.EventTypeThoughtChunk) ||
+			lastResponseUpdateType == string(agenttypes.EventTypeToolCall) ||
+			lastResponseUpdateType == string(agenttypes.EventTypeToolUpdate) ||
+			lastResponseUpdateType == string(agenttypes.EventTypeTodoUpdate) ||
+			lastResponseUpdateType == string(agenttypes.EventTypePlanUpdate) ||
+			lastResponseUpdateType == string(agenttypes.EventTypeCompact)) &&
+		!strings.HasSuffix(responseText, "\n\n") &&
+		!strings.HasSuffix(responseText, "\n") {
+		responseText += "\n\n"
+	}
+	return responseText + chunk
+}

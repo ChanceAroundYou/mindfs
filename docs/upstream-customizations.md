@@ -3052,3 +3052,9 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：Claude synthetic subagent 创建、ref/key 归一、终态摘要、子会话事件路由和 synthetic Agent Session 实现与主 session turn pipeline 混在 `session.go`，父子会话行为难集中审阅。
 - **根因与边界**：router 生命周期/事件 helper 与 synthetic session 方法原样迁入 `session_subagents.go`（315 行）；事件注册和调用顺序不变。父文件实测 1,973 行，backend TODO 仍未完成。
 - **针对性测试**：`server/internal/api/usecase/usecase_test.go` → 守住 subagent 创建、任务通知摘要和 chunk 路由；完整 `make test` → 全仓 Go 测试门禁通过。
+
+### G-EG Session answer 与 stream aux helper 职责拆分
+
+- **可见症状**：`AnswerQuestion` 与工具 aux hydration、去重/状态合并及回复 chunk helper 挤在 `session.go`，问题回答路径和 stream 写盘语义难以分开检查。
+- **根因与边界**：`AnswerQuestion`、pending tool aux hydrate/dedupe/merge 与 response chunk helper 原样迁入 `session_stream_events.go`（202 行）；调用顺序和 tool 状态持久化策略不变。父文件实测 1,782 行，backend TODO 继续未完成。
+- **针对性测试**：`server/internal/api/usecase/usecase_test.go` → 守住工具 aux 合并/去重、回答和行号投影；完整 `make test` → 全仓 Go 测试门禁通过。

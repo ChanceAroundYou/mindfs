@@ -5193,3 +5193,31 @@ groups:
     anchors:
       - server/internal/api/usecase/session_subagents.go:func newClaudeSubagentRouter
       - server/internal/api/usecase/session_subagents.go:func (r *claudeSubagentRouter) Handle
+
+  - id: G-EG
+    title: Session answer and streamed aux helpers split
+    kind: arch
+    symptom: |
+      AnswerQuestion and its user-facing line placement coexist in session.go with stream-side tool aux
+      hydration, deduplication, state merging, and response chunk helpers used by SendMessage.
+    why: |
+      Keep answer routing and stream aux persistence rules together in a focused module with their
+      regression cases, separate from session lifecycle and active-turn orchestration.
+    boundary: |
+      AnswerQuestion, pending tool aux hydration/dedup/merge, and response chunk helpers move unchanged
+      to session_stream_events.go. Call order and tool status persistence policy stay unchanged. Parent
+      remains 1,782 lines and backend TODO stays active.
+    tests:
+      - server/internal/api/usecase/usecase_test.go
+    files:
+      - server/internal/api/usecase/session.go
+      - server/internal/api/usecase/session_stream_events.go
+      - docs/agent/rules/backend/TODO.md
+      - docs/agent/rules/backend/file-size.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - server/internal/api/usecase/session_stream_events.go:func (s *Service) AnswerQuestion
+      - server/internal/api/usecase/session_stream_events.go:func dedupeExchangeAuxBuffer
