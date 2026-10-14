@@ -3304,3 +3304,9 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：Agent 状态展示组件只需要读取 `AgentStatus`，却通过 `services/agents` 类型 facade 形成 UI 到运行时请求层的依赖。
 - **根因与边界**：`AgentMenuList`、`AgentSelectorErrorBanner`、`AgentSelectorMenuHeader` 改从既有 `shared/agentTypes.ts` 导入 `AgentStatus`；service 仍负责请求，组件行为不变，allowlist 删除三条依赖边。
 - **针对性测试**：`web/tests/reviewer-architecture-rules.test.mjs` → 守住组件 service 边只减不增；`npm run typecheck` → 守住类型解析。
+
+### G-GU Agent status types for editor and task views
+
+- **可见症状**：Agent selector、prompt editor 与阶段编辑器仅读取 Agent 状态，却从请求 service 导入类型。
+- **根因与边界**：三个组件直接引用 `shared/agentTypes.ts`；service 继续负责获取/重启行为，运行时语义不变，allowlist 再减少三条边。
+- **针对性测试**：`web/tests/reviewer-architecture-rules.test.mjs` → 守住组件 service 边只减不增；`npm run typecheck` → 守住类型解析。

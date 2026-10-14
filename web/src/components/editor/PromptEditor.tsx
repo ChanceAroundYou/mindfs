@@ -6,7 +6,7 @@ import TokenEditor, { type TokenEditorHandle } from "./TokenEditor";
 import { PencilIcon, PlusIcon, SendIcon } from "../action/composerIcons";
 import { composerContainerStyle, composerIconButtonStyle, composerSendButtonStyle } from "../action/composerStyles";
 import type { StageRole } from "../../services/tasks";
-import type { AgentStatus } from "../../services/agents";
+import type { AgentStatus } from "../../shared/agentTypes";
 import { useI18n } from "../../i18n/index";
 
 export type PromptEditorMode = "editable" | "readonly" | "done";

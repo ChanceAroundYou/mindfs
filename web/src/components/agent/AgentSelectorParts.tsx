@@ -1,6 +1,6 @@
 import React from "react";
 import { createPortal } from "react-dom";
-import type { AgentStatus } from "../../services/agents";
+import type { AgentStatus } from "../../shared/agentTypes";
 
 export function AgentMenuPortal({
   enabled,

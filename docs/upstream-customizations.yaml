@@ -6410,3 +6410,29 @@ groups:
     anchors:
       - web/src/shared/agentTypes.ts:export type AgentStatus
       - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+
+  - id: G-GU
+    title: Agent status types for editor and task views
+    kind: arch
+    symptom: |
+      Agent selector, prompt editor, and task stage editor use the request service module only for AgentStatus.
+    why: |
+      Keep AgentStatus in the shared contract layer and preserve service imports only for runtime operations.
+    boundary: |
+      AgentSelectorParts, PromptEditor, and StageEditor import AgentStatus from shared/agentTypes.ts;
+      runtime behavior is unchanged and the component-service manifest shrinks by three edges.
+    tests:
+      - web/tests/reviewer-architecture-rules.test.mjs
+    files:
+      - web/src/components/agent/AgentSelectorParts.tsx
+      - web/src/components/editor/PromptEditor.tsx
+      - web/src/components/task/StageEditor.tsx
+      - web/tests/fixtures/component-service-import-debt.json
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/shared/agentTypes.ts:export type AgentStatus
+      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"

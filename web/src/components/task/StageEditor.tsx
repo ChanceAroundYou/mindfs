@@ -6,7 +6,7 @@ import { composerInputStyle } from "../action/composerStyles";
 import { useI18n } from "../../i18n/index";
 import { DEFAULT_TASK_AGENT } from "../../app/appTask";
 import type { StageTemplate } from "../../services/tasks";
-import type { AgentStatus } from "../../services/agents";
+import type { AgentStatus } from "../../shared/agentTypes";
 
 export type StageEditorProps = {
   stage: StageTemplate;
