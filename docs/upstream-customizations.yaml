@@ -2936,6 +2936,7 @@ groups:
       - server/internal/agent/types/types.go
       - server/internal/api/usecase/session_blocks_backfill.go
       - server/internal/api/usecase/session_fork.go
+      - server/internal/api/usecase/session_read.go
       - server/internal/api/usecase/session_content_legacy_test.go
       - server/internal/session/user_turn_survives_test.go
       - server/internal/session/search_blocks_test.go
@@ -2984,13 +2985,13 @@ groups:
       - server/internal/session/types.go:CompactExchangeAux
       - server/internal/api/usecase/session_blocks_backfill.go:backfillTurnsFromWindow
       - server/internal/api/usecase/session_blocks_backfill.go:missingBlockSeqs
-      - server/internal/api/usecase/session.go:GetSessionBlocksWindow
+      - server/internal/api/usecase/session_read.go:GetSessionBlocksWindow
       - server/internal/api/usecase/session.go:persistTurnBlocks
       - server/internal/session/manager.go:AddExchangeForAgentAndGetSeq
       - server/internal/session/manager.go:AddExchangeForAgentAtWithIdentityFactory
       - server/internal/api/usecase/session_blocks_write_test.go:TestAssistantReasoningBlocksUseAllocatedSeqFromFreshSession
       - server/internal/api/usecase/session_fork.go:copyForkBlocks
-      - server/internal/api/usecase/session.go:GetSessionBlocksWindow
+      - server/internal/api/usecase/session_read.go:GetSessionBlocksWindow
       - server/internal/api/http.go:windowSeqsForExchanges
       - web/src/hooks/sessionBlocks.ts:buildAssistantTimelineFromBlocks
       - web/src/hooks/sessionBlocks.ts:blocksForSeq
@@ -4949,3 +4950,33 @@ groups:
     anchors:
       - server/internal/api/usecase/session_fork.go:func (s *Service) ForkSession
       - server/internal/api/usecase/session_fork.go:func copyForkHistory
+
+  - id: G-DY
+    title: Session usecase read/query split
+    kind: arch
+    symptom: |
+      Session read APIs, windowed aux/block queries, tool/context-window lookups, related-file
+      normalization, and legacy worktree path handling live inside the oversized session.go alongside
+      writes and live agent turns. Read-path fixes have to be reviewed across unrelated orchestration.
+    why: |
+      Give read/query behavior and its path-normalization helpers a focused owner while preserving
+      Service methods and their established API contracts.
+    boundary: |
+      GetSession, windowed aux/block reads, tool/context-window lookups, related-file reads/removal,
+      and related path normalization move unchanged to session_read.go. Public input/output types stay
+      in session.go; the parent remains 3,936 lines and backend TODO stays active.
+    tests:
+      - server/internal/api/usecase/usecase_test.go
+      - server/internal/api/http_window_test.go
+    files:
+      - server/internal/api/usecase/session.go
+      - server/internal/api/usecase/session_read.go
+      - docs/agent/rules/backend/TODO.md
+      - docs/agent/rules/backend/file-size.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - server/internal/api/usecase/session_read.go:func (s *Service) GetSession
+      - server/internal/api/usecase/session_read.go:func (s *Service) GetSessionBlocksWindow

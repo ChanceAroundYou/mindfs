@@ -13,7 +13,7 @@
 ## 必拆清单（>1500 非测试，实测；只列不改）
 
 ```
-usecase/session.go 4189 · session/manager.go 3905 · agent/claude/session.go 3074
+usecase/session.go 3936 · session/manager.go 3905 · agent/claude/session.go 3074
 api/http.go 3024 · api/agent_api_provider.go 2484 · kanban/service.go 1989
 agent/codex/importer.go 1887 · agent/codex/session.go 1586 · gitview/gitview.go 1575
 api/ws.go 1403 · agent/claude/importer.go 1398 · api/appcontext.go 1378

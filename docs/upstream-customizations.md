@@ -3004,3 +3004,9 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：`ForkSession` 与历史/块复制 helper 占据 `session.go` 400 余行，fork 分支和历史重建行为与 agent turn 编排混杂，修改 fork 时难以审阅。
 - **根因与边界**：`CreateSession`、`ForkSession`、fork target/model/name 解析和 legacy/block history copy 原样迁入 `session_fork.go`（426 行）；公共输入输出类型留在 `session.go`。主文件实测 4,189 行，backend TODO 继续保持未完成。
 - **针对性测试**：`server/internal/api/usecase/usecase_test.go` → 覆盖 fork/session usecase 契约；`go test ./server/internal/api/usecase/...` 通过。
+
+### G-DY Session usecase read/query 职责拆分
+
+- **可见症状**：会话读取 API、窗口 aux/block 查询、tool/context-window 查找、related-file 规范化与旧 worktree 路径处理都混在超大 `session.go`，读路径修复需同时穿过写入和实时 agent turn 编排。
+- **根因与边界**：这些读/查询方法及路径 helper 原样迁至 `session_read.go`（265 行）；公开输入/输出类型和 Service API 不变。父文件实测 3,936 行，backend TODO 继续未完成。
+- **针对性测试**：`usecase_test.go` 与 `http_window_test.go` → 守住会话窗口与读取契约；`go test ./server/internal/api/usecase/...` 通过。
