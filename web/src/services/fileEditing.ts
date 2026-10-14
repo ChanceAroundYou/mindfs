@@ -1,34 +1,7 @@
-import type { FilePayload } from "./file";
-import type { EditorState } from "@codemirror/state";
-import type { EditorView as CodeMirrorView } from "@codemirror/view";
+import type { EditableFile, EditorView, FileEditSession, FileEditStoreContract } from "../shared/fileTypes";
+export type { EditableFile, EditorView, FileEditSession, FileEditStoreContract } from "../shared/fileTypes";
 
 export const MAX_EDITABLE_FILE_BYTES = 1024 * 1024;
-export type EditableFile = FilePayload & { revision: string };
-export type EditorView = {
-  start: number;
-  end: number;
-  direction: "forward" | "backward" | "none";
-  top: number;
-  left: number;
-  // Immutable document/selection/history only; never retain an editor DOM instance.
-  editorState?: EditorState;
-  scrollSnapshot?: ReturnType<CodeMirrorView["scrollSnapshot"]>;
-};
-export type FileEditSession = {
-  rootId: string;
-  path: string;
-  text: string;
-  savedText: string;
-  source: string;
-  file?: EditableFile;
-  revision: string;
-  loading: boolean;
-  saving: boolean;
-  leaving: boolean;
-  error: string;
-  view: EditorView;
-};
-
 export function fileEditKey(rootId: string, path: string): string {
   return JSON.stringify([rootId, path]);
 }
@@ -49,7 +22,7 @@ export function serializeEditedText(source: string, text: string): string {
 // 这里补一条条数上限 + LRU 逐出：被逐出的会话下次打开会重新 load，代价是一次请求。
 const MAX_FILE_EDIT_SESSIONS = 8;
 
-export class FileEditStore {
+export class FileEditStore implements FileEditStoreContract {
   private sessions = new Map<string, FileEditSession>();
   private listeners = new Set<() => void>();
   private io: {

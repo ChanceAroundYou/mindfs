@@ -12,8 +12,8 @@ import {
   clearFileMemoryCacheForView,
   getCachedFile,
   invalidateFileCache,
-  type FilePayload,
 } from "../../services/file";
+import type { FilePayload } from "../../shared/fileTypes";
 import { ViewHeader } from "../../layout/ViewHeader";
 import { ModeIcon } from "../agent/ModeIcon";
 import { FileViewer } from "../file/FileViewer";

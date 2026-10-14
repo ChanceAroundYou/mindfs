@@ -8,7 +8,7 @@ import { rootBadgeButtonStyle } from "../../shared/rootBadgeStyle";
 import { useI18n } from "../../i18n/index";
 import { ViewHeader } from "../../layout/ViewHeader";
 
-import type { FilePayload } from "../../services/file";
+import type { FilePayload } from "../../shared/fileTypes";
 import { FileEditStore, fileEditKey, MAX_EDITABLE_FILE_BYTES } from "../../services/fileEditing";
 import { FileEditor } from "./FileEditor";
 import { FileOperationItems, FileMenuIcon, fileMenuItemStyle, MoreMenuButton, moreMenuPopoverStyle, menuOverlayStyle, MoveFilePopover } from "./FileOperations";

@@ -2,8 +2,8 @@ import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ExitIcon } from "../common/ExitIcon";
 import { useI18n } from "../../i18n/index";
-import { fetchFile, type FilePayload } from "../../services/file";
-import { type FileEditSession, type FileEditStore } from "../../services/fileEditing";
+import { fetchFile } from "../../services/file";
+import type { FileEditSession, FileEditStoreContract, FilePayload } from "../../shared/fileTypes";
 import { CodeTextEditor } from "../editor/CodeTextEditor";
 
 const FILE_EDITOR_STYLES = String.raw`.file-editor { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; color: var(--text-primary); }
@@ -89,7 +89,7 @@ const FILE_EDITOR_STYLES = String.raw`.file-editor { display: flex; flex-directi
 
 type Props = {
   actionsTarget: HTMLElement | null;
-  store: FileEditStore;
+  store: FileEditStoreContract;
   editKey: string;
   session: FileEditSession;
   isVisible: boolean;

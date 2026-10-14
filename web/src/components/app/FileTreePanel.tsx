@@ -29,8 +29,8 @@ import {
   clearFileMemoryCacheForView,
   getCachedFile,
   invalidateFileCache,
-  type FilePayload,
 } from "../../services/file";
+import type { FilePayload } from "../../shared/fileTypes";
 import {
   DEFAULT_DIRECTORY_SORT_MODE,
   type DirectorySortMode,

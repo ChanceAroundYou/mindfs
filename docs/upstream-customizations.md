@@ -3376,3 +3376,9 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：shell 选择器只需要显示 shell 选项，却从 agent service 导入类型。
 - **根因与边界**：`ShellStatus` 并入既有 `shared/agentTypes.ts`；agent service 兼容 re-export，shell discovery 和选择行为不变。
 - **针对性测试**：`web/tests/reviewer-architecture-rules.test.mjs` → 守住组件 service 边只减不增；`npm run typecheck` → 守住 service 类型兼容。
+
+### G-HG Shared file and editor contracts
+
+- **可见症状**：文件查看与编辑器视图依赖 `services/file`、`services/fileEditing` 取得 `FilePayload`、编辑会话和编辑 store 交互类型。
+- **根因与边界**：数据与编辑状态契约移入 `shared/fileTypes.ts`；service 保持 `FilePayload`、编辑类型 re-export，`FileEditStore` 类继续实现共享 contract。文件获取、编辑、缓存和保存流程不变。
+- **针对性测试**：`web/tests/reviewer-architecture-rules.test.mjs` → 守住组件 service 边只减不增；`npm run typecheck` 与 `npm test` → 守住类型、文件编辑以及兼容路径测试。

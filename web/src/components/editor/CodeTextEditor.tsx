@@ -2,12 +2,12 @@ import React, { useLayoutEffect, useRef, useState } from "react";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { useI18n } from "../../i18n";
-import type { FileEditSession, FileEditStore } from "../../services/fileEditing";
+import type { FileEditSession, FileEditStoreContract } from "../../shared/fileTypes";
 import { codeEditorAttributes, createCodeEditorState, editorContentAttributes, editorLanguage, editorReadOnly } from "./codeEditorState";
 import { codeLanguageForPath } from "./codeEditorLanguage";
 
 type Props = {
-  store: FileEditStore;
+  store: FileEditStoreContract;
   editKey: string;
   session: FileEditSession;
   isVisible: boolean;

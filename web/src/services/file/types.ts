@@ -1,22 +1,6 @@
 export type ReadMode = "full" | "incremental";
-
-export type FilePayload = {
-  revision?: string;
-  name: string;
-  path: string;
-  content: string;
-  encoding: string;
-  truncated: boolean;
-  next_cursor?: number;
-  size: number;
-  ext?: string;
-  mime?: string;
-  mtime?: string;
-  root?: string;
-  file_meta?: any[];
-  targetLine?: number;
-  targetColumn?: number;
-};
+import type { FilePayload } from "../../shared/fileTypes";
+export type { FilePayload } from "../../shared/fileTypes";
 
 export type FetchFileParams = {
   fresh?: boolean;

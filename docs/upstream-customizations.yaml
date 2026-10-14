@@ -6739,3 +6739,35 @@ groups:
     anchors:
       - web/src/shared/agentTypes.ts:export type ShellStatus
       - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+
+  - id: G-HG
+    title: Shared file and editor contracts
+    kind: arch
+    symptom: |
+      File view and editor components depend on file and file-editing services for data and editor contract types.
+    why: |
+      Put transport-independent file/editor contracts in shared while retaining service re-exports and runtime class.
+    boundary: |
+      FilePayload, FileEditSession, EditableFile, EditorView and FileEditStoreContract live in shared/fileTypes.ts;
+      file and fileEditing services consume/re-export types, and FileEditStore implements the shared contract.
+      File fetch/cache/edit behavior is unchanged.
+    tests:
+      - web/tests/reviewer-architecture-rules.test.mjs
+    files:
+      - web/src/shared/fileTypes.ts
+      - web/src/services/file/types.ts
+      - web/src/services/fileEditing.ts
+      - web/src/components/editor/CodeTextEditor.tsx
+      - web/src/components/file/FileEditor.tsx
+      - web/src/components/file/FileViewer.tsx
+      - web/src/components/app/FileTreePanel.tsx
+      - web/src/components/app/SessionMainContent.tsx
+      - web/tests/fixtures/component-service-import-debt.json
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/shared/fileTypes.ts:export interface FileEditStoreContract
+      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
