@@ -2236,7 +2236,7 @@ groups:
       - server/internal/session/manager_exchanges.go:mergeExchangeRecord
       - server/internal/session/manager_exchanges.go:mergeExchangeRecords
       - server/internal/session/manager_exchanges.go:readExchangeTail
-      - server/internal/session/manager.go:countExchangeRecords
+      - server/internal/session/manager_window_reads.go:countExchangeRecords
       - server/internal/session/manager_aux_tail.go:GetCommandShell
       - server/internal/session/manager_aux_tail.go:readAuxTailEntries
       - server/internal/api/http.go:handleSessionSync
@@ -5693,3 +5693,36 @@ groups:
       - server/internal/session/manager_lifecycle.go:func (m *Manager) Delete
       - server/internal/session/manager_lifecycle.go:func (m *Manager) SetArchived
       - server/internal/session/manager_lifecycle.go:func (m *Manager) deleteSessionUnsafe
+
+  - id: G-EW
+    title: Session manager exchange window reads split
+    kind: arch
+    symptom: |
+      Exchange window orchestration, in-memory slicing, cold-cache tail reads, JSONL record counting,
+      tail parsing, and seq lower-bound lookup are mixed into manager.go.
+    why: |
+      Keep hot/cold window equivalence and bounded-read mechanics together so pagination changes can be
+      reviewed against both cache and disk paths.
+    boundary: |
+      getSessionWindowUnsafe, sliceExchangeWindow, readExchangeWindow, countExchangeRecords,
+      tailExchangeWindow, and firstIndexWhereSeq move unchanged to manager_window_reads.go. Cache-first
+      behavior, cold-read fallback, and window semantics remain unchanged. Parent is 749 lines.
+    tests:
+      - server/internal/session/manager_window_test.go
+      - server/internal/session/manager_window_cold_test.go
+      - server/internal/session/manager_blocks_window_test.go
+      - web/tests/session-window.test.mjs
+    files:
+      - server/internal/session/manager.go
+      - server/internal/session/manager_window_reads.go
+      - web/tests/session-window.test.mjs
+      - docs/agent/rules/backend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - server/internal/session/manager_window_reads.go:func (m *Manager) getSessionWindowUnsafe
+      - server/internal/session/manager_window_reads.go:func (m *Manager) readExchangeWindow
+      - server/internal/session/manager_window_reads.go:func tailExchangeWindow
+      - server/internal/session/manager_window_reads.go:func firstIndexWhereSeq

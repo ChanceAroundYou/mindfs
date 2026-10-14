@@ -129,5 +129,6 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 - 已完成（2026-10-14）：meta 单行读取、binding 合并、upsert 参数序列化、row scan、归一化与共享 SQL row scanner 迁至 `manager_meta.go`（264 行）；全仓 `make test`、upstream 门禁（1046 delta / 148 组）与 no-restart ship 均通过，提交 `3cf40a1` 已推送并安装至三端（`v0.5.5-797-g3cf40a1`），未重启节点。
 - 已完成（2026-10-14）：session related-file 增删、输出文件记录与身份/路径归一 helper 迁至 `manager_related_files.go`（156 行）；`RecordRelatedWorktree`/`ClearRelatedWorktree` 保留原位，不改 repoint/worktree 生命周期。全仓 `make test`、upstream 门禁（1047 delta / 149 组）与 no-restart ship 均通过，提交 `d9f8209` 已推送并安装至三端（`v0.5.5-798-gd9f8209`），未重启节点。
 - 已完成（2026-10-14）：exchange turn identity/source/model/token-usage context contract、确定性 MindFS ID helper 与形状校验迁至 `manager_exchange_identity.go`；保留公开 API 和行写入/身份分配时序。全仓 `make test`、upstream 门禁（1048 delta / 150 组）及 no-restart ship 均通过，提交 `f9778ec` 已推送并安装至三端（`v0.5.5-799-gf9778ec`），未重启节点。
-- 进行中（2026-10-14）：session Close/Delete/Rename/Archive、session 属性更新、内部 close/delete、DB shutdown 生命周期实现迁至 `manager_lifecycle.go`（256 行）；worktree 归属和 repoint 方法未改。session 包专项通过，父文件实测 934 行；全仓门禁与 no-restart ship 待执行。
-- 下一项：完成 G-EV 验收后，核对 manager 剩余缓存/窗口编排的单文件边界，再处理其余 backend TODO 与 reviewer checklist 门禁。
+- 已完成（2026-10-14）：session Close/Delete/Rename/Archive、session 属性更新、内部 close/delete、DB shutdown 生命周期实现迁至 `manager_lifecycle.go`（256 行）；worktree 归属和 repoint 方法未改。全仓 `make test`、upstream 门禁（1049 delta / 151 组）与 no-restart ship 均通过，提交 `6239722` 已推送并安装至三端（`v0.5.5-800-g6239722`），未重启节点。
+- 进行中（2026-10-14）：session window orchestration、冷缓存尾读、字节级记录计数、尾部解析与 seq lower-bound helper 迁至 `manager_window_reads.go`（193 行）；保持缓存优先、cold-read fallback 与窗口定义不变。session 窗口专项通过，父文件实测 749 行；全仓门禁和 no-restart ship 待执行。
+- 下一项：完成 G-EW 验收后，复核 `manager.go` 剩余初始化/创建、写入编排与 facade 边界；之后继续处理其余 backend TODO 和 reviewer checklist 门禁。

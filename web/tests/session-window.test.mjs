@@ -1,8 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import ts from "typescript";
-import vm from "node:vm";
 // overlay 判定由 src/shared/sessionOverlay.ts 的纯函数实现。
 // 这里直接 import 真实现，避免再维护同构副本。
 
@@ -10,62 +8,21 @@ import { register } from "node:module";
 register("./ts-module-hook.mjs", import.meta.url);
 const { computeTailOverlay } = await import("../src/shared/sessionOverlay.ts");
 
-const sessionServicePath = path.resolve(import.meta.dirname, "../src/services/session.ts");
-const sessionViewerPath = path.resolve(import.meta.dirname, "../src/components/SessionViewer.tsx");
+const sessionServiceDir = path.resolve(import.meta.dirname, "../src/services/session");
+const sessionViewerPath = path.resolve(import.meta.dirname, "../src/components/session/SessionViewer.tsx");
+const sessionWindowingPath = path.resolve(import.meta.dirname, "../src/components/session/useSessionWindowing.ts");
+const targetSeqScrollPath = path.resolve(import.meta.dirname, "../src/components/session/useTargetSeqScroll.ts");
+const viewerControlsPath = path.resolve(import.meta.dirname, "../src/components/session/SessionViewerFloatingControls.tsx");
 const managerPath = path.resolve(import.meta.dirname, "../../server/internal/session/manager.go");
+const managerWindowPath = path.resolve(import.meta.dirname, "../../server/internal/session/manager_window_reads.go");
 const httpPath = path.resolve(import.meta.dirname, "../../server/internal/api/http.go");
 
-const sessionSrc = fs.readFileSync(sessionServicePath, "utf8");
-const viewerSrc = fs.readFileSync(sessionViewerPath, "utf8");
+const sessionSrc = fs.readdirSync(sessionServiceDir).filter((name) => name.endsWith(".ts")).map((name) => fs.readFileSync(path.join(sessionServiceDir, name), "utf8")).join("\n");
+const viewerSrc = [sessionViewerPath, sessionWindowingPath, targetSeqScrollPath, viewerControlsPath].map((file) => fs.readFileSync(file, "utf8")).join("\n");
 // 剥掉注释后的代码视图：注释里提到某个坏写法是正常的（那通常正是在解释它为什么被删）。
 const stripComments = (src) => src.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
 const sessionCode = stripComments(sessionSrc);
 const viewerCode = stripComments(viewerSrc);
-
-// session.ts 在 vm 里跑起来（只为拿到两个纯函数：mergeSessionExchanges 与模块私有的
-// toPersistentSession —— 断言行为，不断言源码形状）。六个 import 全桩掉：模块顶层不碰它们。
-//
-// toPersistentSession 是写路径内部函数、刻意不导出（没有第二个调用方）。测试在
-// transpile 前给源码补一行 export 来拿到它 —— 比把生产代码的可见性扩成「给测试看」干净。
-const SESSION_PRIVATE_PROBE = "\nexport const __toPersistentSession = toPersistentSession;\n";
-
-function loadSessionModule() {
-  const compiled = ts.transpileModule(sessionSrc + SESSION_PRIVATE_PROBE, {
-    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
-  }).outputText;
-  const modExports = {};
-  const sandbox = {
-    exports: modExports,
-    module: { exports: modExports },
-    require: (name) => {
-      if (name.includes("/base")) return { appURL: () => "", wsURL: () => "" };
-      if (name.includes("authGate")) return { currentUser: null };
-      if (name.includes("rootNode")) return { getRootNodeId: () => "" };
-      if (name.includes("/scope")) return { scopeSessionKey: (a, b) => `${a}::${b}` };
-      if (name.includes("/api")) return { protectedFetch: async () => ({}), protectedJSON: async () => ({}), withNodeRetry: (f) => f() };
-      // task-35 把 session.ts 拆成了 facade，测试仍按单体读源码文本，所以多出这几个兄弟
-      // 模块要桩掉。桩只为了让模块顶层求值通过：断言的两个纯函数
-      // （mergeSessionExchanges / 模块私有的 toPersistentSession）不走这些依赖。
-      // 兜底必须同时是「可裸调的函数」和「可 new 的构造器」（generateClientId /
-      // createRequestId 是裸调，SessionDispatcher / SessionConnectionManager 要 new）。
-      const stub = function () {};
-      if (/^\.\/session/.test(name)) {
-        return new Proxy({}, { get: (_t, prop) => (prop === "__esModule" ? true : stub) });
-      }
-      throw new Error(`unexpected require: ${name}`);
-    },
-    console,
-    URLSearchParams,
-    indexedDB: undefined,
-    window: undefined,
-    document: undefined,
-    fetch: async () => ({}),
-  };
-  vm.runInNewContext(compiled, sandbox, { filename: sessionServicePath });
-  // transpile 成 CommonJS 后是 `exports.foo = ...`，所以要 sandbox.exports
-  // —— 让它和 module.exports 指向同一对象，否则读 module.exports 什么都拿不到。
-  return modExports;
-}
 
 // 淘汰探针：喂 exchanges 进去，拿保留的 exchanges 出来。
 function buildEvictFrom(toPersistentSession) {
@@ -73,9 +30,10 @@ function buildEvictFrom(toPersistentSession) {
     toPersistentSession({ key: "probe", exchanges, exchange_aux: {} }).exchanges;
 }
 const managerSrc = fs.readFileSync(managerPath, "utf8");
+const managerWindowSrc = fs.readFileSync(managerWindowPath, "utf8");
 const httpSrc = fs.readFileSync(httpPath, "utf8");
 
-// ── session.ts 导出与隔离 ──────────────────────────────────────────────
+// ── session service/session domain 导出与隔离 ──────────────────────────────────────────────
 assert.match(sessionSrc, /export type SessionWindowMeta/, "SessionWindowMeta type missing");
 assert.match(sessionSrc, /export type SessionWindowOptions/, "SessionWindowOptions type missing");
 assert.match(sessionSrc, /async getSessionWindow\(/, "getSessionWindow method missing");
@@ -145,20 +103,20 @@ assert.match(viewerSrc, /windowMeta\.total/, "windowMeta.total usage missing");
 assert.match(managerSrc, /type SessionWindowMeta struct/, "manager.go SessionWindowMeta missing");
 assert.match(managerSrc, /func \(m \*Manager\) GetWindow/, "manager.go GetWindow missing");
 assert.match(managerSrc, /func \(m \*Manager\) GetExchangeAuxWindow/, "manager.go GetExchangeAuxWindow missing");
-assert.match(managerSrc, /func firstIndexWhereSeq/, "firstIndexWhereSeq helper missing");
-assert.match(managerSrc, /if limit <= 0 \{\s*\n\s*limit = 50/, "limit default 50 clamp missing");
-assert.match(managerSrc, /if limit > 200/, "limit >200 clamp missing");
-assert.match(managerSrc, /case latest > 0:/, "latest branch missing");
-assert.match(managerSrc, /case beforeSeq > 0:/, "beforeSeq branch missing");
+assert.match(managerWindowSrc, /func firstIndexWhereSeq/, "firstIndexWhereSeq helper missing");
+assert.match(managerWindowSrc, /if limit <= 0 \{\s*\n\s*limit = 50/, "limit default 50 clamp missing");
+assert.match(managerWindowSrc, /if limit > 200/, "limit >200 clamp missing");
+assert.match(managerWindowSrc, /case latest > 0:/, "latest branch missing");
+assert.match(managerWindowSrc, /case beforeSeq > 0:/, "beforeSeq branch missing");
 // hasMore 的语义是「是否还有更早的记录」。G-BG 把开窗拆成两条路（缓存切片 / 冷缓存尾部读），
 // 两条都必须各自算出 hasMore，且分别等于 start>0 与「解析到的条数>need」。
 assert.match(
-  managerSrc,
+  managerWindowSrc,
   /return all\[start:\], total, start > 0/,
   "hasMore computation (cached slice) missing",
 );
 assert.match(
-  managerSrc,
+  managerWindowSrc,
   /hasMore := len\(records\) > need/,
   "hasMore computation (cold tail read) missing",
 );
@@ -215,12 +173,13 @@ assert.equal(getSessionMaxSeq({ exchanges: [] }), 0);
 // 数据流：视图 = [窗口（唯一持久化源，只整体替换：init/翻页/重锚定）]
 //        + [overlay 尾巴（App 缓存 seq=0 瞬时尾部，只读派生）]。全流程无 seq 合并。
 // mergeWindowedTail 已删除；不得回归为 seq 过滤合并模型。
-const appSrc = fs.readFileSync(path.resolve(import.meta.dirname, "../src/App.tsx"), "utf8");
+const appDir = path.resolve(import.meta.dirname, "../src/app");
+const appSrc = fs.readdirSync(appDir).filter((name) => /\.tsx?$/.test(name)).map((name) => fs.readFileSync(path.join(appDir, name), "utf8")).join("\n");
 // 2026-09 App.tsx 拆分：WS 事件处理器整块搬到 app/useRealtimeEvents.ts，契约随文件走。
 // done 后的重锚定（F2）与 meta.updated 新 key 的 replace 重拉（F3）都在这批 handler 里，
 // 故这几条断言改读新文件；仍在 App 里的（_windowMeta 附加、锚点计数、reportError 冷却、
 // SESSION_WINDOW_SIZE）继续读 appSrc。
-const realtimeSrc = fs.readFileSync(path.resolve(import.meta.dirname, "../src/app/useRealtimeEvents.ts"), "utf8");
+const realtimeSrc = ["useRealtimeEvents.ts", "realtimeWsHandlers.ts", "realtimeWsSessionMeta.ts"].map((name) => fs.readFileSync(path.resolve(import.meta.dirname, "../src/app", name), "utf8")).join("\n");
 assert.ok(
   !fs.existsSync(path.resolve(import.meta.dirname, "../src/services/sessionWindowMerge.ts")),
   "sessionWindowMerge.ts must stay deleted",
@@ -339,7 +298,7 @@ assert.match(
 // 行为断言在上面的 composeLoadedExchanges 那组；这里只钉「两个分支都走同一条规则」
 // 以及「旧写法已彻底消失」。
 assert.equal(
-  (appSrc.match(/composeLoadedExchanges\(/g) || []).length,
+  (stripComments(appSrc).match(/composeLoadedExchanges\(/g) || []).length,
   2,
   "restoreActiveSession 的窗口分支与 fallback 分支都必须走同一个组装规则",
 );

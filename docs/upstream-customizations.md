@@ -3151,3 +3151,10 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：会话关闭/删除、重命名、归档、模型与运行属性更新以及 DB shutdown 生命周期实现与缓存/transcript 编排混在 manager 主文件，修改元数据生命周期时难以独立追踪持久化和清理顺序。
 - **根因与边界**：Close/Delete/Rename/Archive、模型/shell/plan/context-window 更新、内部 close/delete 与 Shutdown 原样迁至 `manager_lifecycle.go`（256 行）；worktree 归属和 repoint 实现不变。父文件实测 934 行。
 - **针对性测试**：`server/internal/session/manager_test.go` → 守住会话创建、重命名、归档、属性更新、删除时主日志/aux/块流清理与关闭行为；全仓 `make test` → 全仓 Go 测试门禁通过。
+
+
+### G-EW Session manager exchange window read split
+
+- **可见症状**：窗口分页、冷缓存尾读、JSONL 记录计数、尾部解析与 lower-bound 切片共同驻留 manager 主文件；改分页边界时难对照冷/热缓存路径。
+- **根因与边界**：窗口读取编排、内存切片、磁盘尾读、记录计数、尾部解析与 seq lower-bound helper 原样迁至 `manager_window_reads.go`（193 行）；缓存优先、冷读 fallback 与窗口定义保持。父文件实测 749 行。
+- **针对性测试**：`manager_window_test.go`、`manager_window_cold_test.go`、`manager_blocks_window_test.go` → 守住冷热窗口结果一致、尾部读取不触发全量解析与块流窗口语义；全仓 `make test` → Go 门禁通过。
