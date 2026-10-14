@@ -3034,3 +3034,9 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：agent session 重开判定、运行时 model reconcile、显示名解析、Claude 环境投影以及 mode/effort/fast-service 推断混在 `session.go` 的 send/stream 编排旁，运行时默认优先级难以集中审阅。
 - **根因与边界**：runtime reopen/model/display-name/environment 与 mode/effort/fast-service helper 原样迁入 `session_runtime.go`（215 行）；各 provider 的缺省值和覆盖顺序不变。父文件实测 3,052 行，backend TODO 继续未完成。
 - **针对性测试**：`server/internal/api/usecase/usecase_test.go` → 守住 model、mode、effort、fast-service 与 runtime reopen 决策；完整 `make test` → 全仓 Go 测试门禁通过。
+
+### G-ED Session turn identity 与持久化职责拆分
+
+- **可见症状**：exchange identity 对账、importer/live 判重、用户 turn 提前落盘、MindFS turn ID 生成和 block 写入与 `SendMessage` 混在 `session.go`，身份回归会静默造成 turn 重复或缺失。
+- **根因与边界**：身份/正文比较、user turn 持久化、turn ID 和 block persistence helper 原样迁至 `session_turn_identity.go`（359 行）；`SendMessage` 调用顺序不变。父文件实测 2,706 行，backend TODO 继续未完成。
+- **针对性测试**：`session_identity_dedup_test.go`、`session_early_user_persist_test.go`、`session_blocks_write_test.go`、`exchange_repeat_test.go` → 守住 turn 身份、重发判重和块写入；完整 `make test` → 全仓 Go 测试门禁通过。

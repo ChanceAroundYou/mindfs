@@ -2387,14 +2387,14 @@ groups:
       - server/internal/session/manager.go:IsMindFSIDShape
       - server/internal/session/types.go:func (e *Exchange) UnmarshalJSON
       - server/internal/session/blocks.go:func (b *Block) UnmarshalJSON
-      - server/internal/api/usecase/session.go:exchangeAgentKey
-      - server/internal/api/usecase/session.go:exchangeIdentityRecorded
+      - server/internal/api/usecase/session_turn_identity.go:exchangeAgentKey
+      - server/internal/api/usecase/session_turn_identity.go:exchangeIdentityRecorded
       - server/internal/api/stream_hub.go:AppendReplyEvent
       - web/src/shared/sessionOverlay.ts:computeTailOverlay
       - web/src/app/useSessionStreamCache.ts:appendAgentChunkForSession
       - server/internal/api/stream_hub.go:SetPendingUserAt
-      - server/internal/api/usecase/session.go:persistUserTurnExchange
-      - server/internal/api/usecase/session.go:exchangeIdentityRecorded
+      - server/internal/api/usecase/session_turn_identity.go:persistUserTurnExchange
+      - server/internal/api/usecase/session_turn_identity.go:exchangeIdentityRecorded
       - server/internal/session/manager.go:AddExchangeForAgentAtWithIdentityFactory
       - web/src/services/session/sessionTypes.ts:agent_id
   - id: G-BJ
@@ -2967,10 +2967,10 @@ groups:
       - server/internal/session/blocks.go:GroupBlocksBySeq
       - server/internal/session/manager.go:WithExchangeIdentity
       - server/internal/api/usecase/session.go:newMindFSID
-      - server/internal/api/usecase/session.go:exchangeAlreadyRecorded
-      - server/internal/api/usecase/session.go:exchangeIdentityRecorded
-      - server/internal/api/usecase/session.go:recordedUserExchangeTurnID
-      - server/internal/api/usecase/session.go:noteIdentitylessGuess
+      - server/internal/api/usecase/session_turn_identity.go:exchangeAlreadyRecorded
+      - server/internal/api/usecase/session_turn_identity.go:exchangeIdentityRecorded
+      - server/internal/api/usecase/session_turn_identity.go:recordedUserExchangeTurnID
+      - server/internal/api/usecase/session_turn_identity.go:noteIdentitylessGuess
       - server/internal/api/usecase/external_sessions.go:appendImportedExchange
       - server/internal/agent/acp/importer.go:messageIDOf
       - server/internal/agent/acp/importer.go:isUUIDShape
@@ -3041,7 +3041,7 @@ groups:
     anchors:
       - server/internal/session/types.go:UnmarshalJSON
       - server/internal/session/manager.go:NewMindFSID
-      - server/internal/api/usecase/session.go:recordedUserExchangeTurnID
+      - server/internal/api/usecase/session_turn_identity.go:recordedUserExchangeTurnID
       - web/src/shared/sessionOverlay.ts:computeTailOverlay
       - web/src/app/useSessionStreamCache.ts:hasSameMindFSID
 
@@ -5097,3 +5097,35 @@ groups:
     anchors:
       - server/internal/api/usecase/session_runtime.go:func resolveRuntimeModel
       - server/internal/api/usecase/session_runtime.go:func resolveRuntimeMode
+
+  - id: G-ED
+    title: Session turn identity and persistence split
+    kind: arch
+    symptom: |
+      Exchange identity reconciliation, importer-vs-live duplicate detection, early user-turn writes,
+      generated MindFS turn IDs, and block persistence are mixed into session.go beside SendMessage.
+      Identity regressions can silently duplicate or omit persisted turns.
+    why: |
+      Give the turn identity and persistence contract a focused owner with the existing identity,
+      resend, and block-write regression suite.
+    boundary: |
+      Exchange identity/content comparison, user-turn persistence, turn-ID generation, and block writes
+      move unchanged to session_turn_identity.go. SendMessage call order stays unchanged. session.go
+      remains 2,706 lines and backend TODO stays active.
+    tests:
+      - server/internal/api/usecase/session_identity_dedup_test.go
+      - server/internal/api/usecase/session_early_user_persist_test.go
+      - server/internal/api/usecase/session_blocks_write_test.go
+      - server/internal/api/usecase/exchange_repeat_test.go
+    files:
+      - server/internal/api/usecase/session.go
+      - server/internal/api/usecase/session_turn_identity.go
+      - docs/agent/rules/backend/TODO.md
+      - docs/agent/rules/backend/file-size.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - server/internal/api/usecase/session_turn_identity.go:func persistUserTurnExchange
+      - server/internal/api/usecase/session_turn_identity.go:func exchangeAlreadyRecorded
