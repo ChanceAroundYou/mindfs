@@ -1351,7 +1351,7 @@
   2. **edit 丢冗余 meta**（`types.go:CompactToolCall` + `dropEditRedundantMeta`）：edit **有**
      content（diff）时 `meta.input`（109 KB）/`meta.output`（21 KB）是同一份 diff 的原始形状，
      渲染从不读；edit **没有** content 时必须保留（那才是唯一详情来源）。
-  3. **窗口轻压缩**（`types.go:CompactExchangeAuxLight` + `manager.go:loadExchangeAuxWindow`）：
+  3. **窗口轻压缩**（`types.go:CompactExchangeAuxLight` + `manager_aux_reads.go:loadExchangeAuxWindow`）：
      在 2 之上把 edit/read/execute 的 `content` 也清空。折叠卡片只要 kind/title/status/locations；
      展开时 `ToolCallCard` 的 `needsRemoteDetails`（edit/read 走 `!hasContent`、execute 走
      `!hasExecuteOutput`）会触发 `GET /api/sessions/{key}/toolcalls/{callID}` 懒加载。
@@ -3076,3 +3076,9 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：主 exchange JSONL 的全量/尾部读取、重复 seq 合并、缓存游标推进和 append 写入与 session meta/binding 混在 `manager.go`，改热路径容易漏掉全量与增量两条路径共用的判重规则。
 - **根因与边界**：`exchangeFileCursor`、主日志加载、NUL 前缀修复、seq 合并、全量/增量读取、序列 helper、append 和游标推进原样迁入 `manager_exchanges.go`（315 行）。cache freshness 与 aux 读仍留在父文件，供后续单独拆分；主文件实测 3,289 行。
 - **针对性测试**：`manager_cursor_test.go`、`manager_incremental_merge_test.go`、`manager_duplicate_seq_test.go`、`manager_window_test.go`、`manager_window_cold_test.go`、`manager_test.go` → 守住游标恢复、尾部字段升级/重复 seq 判重、窗口冷读不触发全量解析、NUL 行修复和主日志读写行为。
+
+### G-EK Session manager aux 增量读与窗口尾读拆分
+
+- **可见症状**：aux JSONL 的全量读取、游标增量读取、窗口尾部反向扫描、seq 过滤和窗口轻压缩与 exchange、SQLite 实现混在父文件中；误改回退路径会让窗口读取变成整份 aux 解析或丢失懒加载载荷约定。
+- **根因与边界**：`loadExchangeAux`、窗口过滤、cursor-aware incremental read、全量/尾部读取及窗口尾扫描原样迁至 `manager_aux_reads.go`（274 行）。公开 wrapper 与 pending tool-call state 留在父文件；全量 fallback、轻压缩和 seq 过滤顺序不变。父文件实测 3,026 行。
+- **针对性测试**：`aux_window_tail_test.go`、`manager_window_test.go`、`manager_aux_tail_test.go` → 守住尾部窗口与全量结果等价、空文件/缺失文件、懒展开 payload 与不触发全量 aux 解析。

@@ -1763,7 +1763,7 @@ groups:
       edit 有 content（diff）时 `meta.input`（109 KB）与 `meta.output`（21 KB）是同一份
       diff 的原始形状，渲染从不读；保留其它 meta 键。edit **没有** content 时必须保留
       （那才是唯一详情来源）。
-      ③ **窗口轻压缩**（`CompactExchangeAuxLight` + `manager.go:loadExchangeAuxWindow`）：
+      ③ **窗口轻压缩**（`CompactExchangeAuxLight` + `manager_aux_reads.go:loadExchangeAuxWindow`）：
       在 ② 之上把 edit/read/execute 的 content 也清空。折叠卡片只要 kind/title/status/
       locations；展开时 `ToolCallCard` 的 `needsRemoteDetails`（edit/read 走 `!hasContent`、
       execute 走 `!hasExecuteOutput`）会触发 `GET /api/sessions/{key}/toolcalls/{callID}` 懒加载。
@@ -1786,6 +1786,7 @@ groups:
     files:
       - server/internal/session/types.go
       - server/internal/session/manager.go
+      - server/internal/session/manager_aux_reads.go
       - server/internal/session/compact_toolcall_test.go
       - server/internal/session/aux_window_tail_test.go
       - web/src/services/session.ts
@@ -1813,14 +1814,14 @@ groups:
       - server/internal/session/types.go:func CompactExchangeAuxLight
       - server/internal/session/types.go:func lightCompactToolCall
       - server/internal/session/types.go:func dropEditRedundantMeta
-      - server/internal/session/manager.go:CompactExchangeAuxLight(entry)
+      - server/internal/session/manager_aux_reads.go:CompactExchangeAuxLight(entry)
       - web/src/services/session/sessionService.ts:private windowInflight
       - web/src/services/session/sessionService.ts:export const SESSION_WINDOW_SIZE = 8;
       - web/src/app/useRealtimeEvents.ts:const relatedFilesRefreshTimers = useRef(new Map<string, number>());
       - web/src/hooks/sessionTimeline.ts:export function groupConsecutiveToolCalls
       - web/src/components/stream/ToolCallGroupCard.tsx:export const ToolCallGroupCard
       - 'server/internal/session/types.go:CUSTOM(G-AT)'
-      - 'server/internal/session/manager.go:CUSTOM(G-AT)'
+      - 'server/internal/session/manager_aux_reads.go:CUSTOM(G-AT)'
       - 'web/src/services/session/sessionService.ts:CUSTOM(G-AT)'
       - 'web/src/hooks/sessionTimeline.ts:CUSTOM(G-AT)'
       - 'web/src/components/session/SessionViewer.tsx:CUSTOM(G-AT)'
@@ -5316,3 +5317,34 @@ groups:
       - server/internal/session/manager_exchanges.go:func (m *Manager) loadExchanges
       - server/internal/session/manager_exchanges.go:func (m *Manager) readExchangeTail
       - server/internal/session/manager_exchanges.go:func (m *Manager) advanceExchangeCursorUnsafe
+
+  - id: G-EK
+    title: Session manager aux incremental and window reads split
+    kind: arch
+    symptom: |
+      Aux JSONL full reads, incremental cursor reads, window-tail scans, seq filtering, and compacted
+      window projections are mixed into manager.go with exchange lifecycle and SQLite code.
+    why: |
+      Keep aux read/fallback behavior together so windowed reads remain bounded and lazy tool payload
+      projection stays reviewable alongside its storage path.
+    boundary: |
+      loadExchangeAux, window filtering, cursor-aware incremental reads, full/tail readers, and reverse
+      bounded window-tail scanning move unchanged to manager_aux_reads.go. Public wrappers and pending
+      tool-call state remain in manager.go. Parent is 3,026 lines.
+    tests:
+      - server/internal/session/aux_window_tail_test.go
+      - server/internal/session/manager_window_test.go
+      - server/internal/session/manager_aux_tail_test.go
+    files:
+      - server/internal/session/manager.go
+      - server/internal/session/manager_aux_reads.go
+      - docs/agent/rules/backend/TODO.md
+      - docs/agent/rules/backend/file-size.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - server/internal/session/manager_aux_reads.go:func (m *Manager) loadExchangeAux
+      - server/internal/session/manager_aux_reads.go:func (m *Manager) readAuxWindowTail
+      - server/internal/session/manager_aux_reads.go:func (m *Manager) readAuxTail
