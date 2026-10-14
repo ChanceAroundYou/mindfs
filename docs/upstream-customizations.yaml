@@ -231,6 +231,7 @@ groups:
       - web/src/renderer/
       - web/src/hooks/useSessionStream.ts
       - web/src/services/session.ts
+      - web/src/shared/sessionTypes.ts
     tests:
       - web/tests/session-switch-flicker.test.mjs
       - web/tests/session-list-node-failure.test.mjs
@@ -2410,7 +2411,7 @@ groups:
       - server/internal/api/usecase/session_turn_identity.go:persistUserTurnExchange
       - server/internal/api/usecase/session_turn_identity.go:exchangeIdentityRecorded
       - server/internal/session/manager.go:AddExchangeForAgentAtWithIdentityFactory
-      - web/src/services/session/sessionTypes.ts:agent_id
+      - web/src/shared/sessionTypes.ts:agent_id
   - id: G-BJ
     title: 会话列表按实时活动时间排序
     kind: fix
