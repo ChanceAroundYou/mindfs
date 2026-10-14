@@ -6,20 +6,20 @@ to resume their old TODOs or baselines.
 
 ## Active
 
-| Plan | Goal | Status |
-|---|---|---|
-| [Frontend test migration and rule hardening](frontend-test-rule-hardening.md) | Migrate frontend tests to Vitest, reconcile rule docs, and remove rule-level exemptions. | Active |
+No execution plan is currently active.
 
 ## Completed or superseded history
 
 | Plan | Status | Current interpretation |
 |---|---|---|
-| [App.tsx under 1000](app-tsx-under-1000.md) | Completed 2026-10-09 | Final execution record; `App.tsx` is now a 16-line composition root. |
+| [Frontend test migration and rule hardening](frontend-test-rule-hardening.md) | Completed 2026-10-14 | All frontend tests use Vitest; frontend/backend rules and gates apply without path-based waivers. Full gates and upstream coverage passed; no-restart ship installed matching artifacts locally and on WSL/fn. No node was restarted. |
+|---|---|---|
+| [App.tsx under 1000](app-tsx-under-1000.md) | Completed 2026-10-09 | Final execution record; `App.tsx` is now a small composition root. |
 | [Rule completion rollout](rule-completion-rollout.md) | Completed 2026-10-14 | Agent-neutral rules and plan entrypoints are verified; frontend and backend TODOs are complete; component-to-service imports are zero. Commit `84c0bada` passed all gates, upstream customization coverage, and no-restart ship to local/WSL/fn. No node was restarted. |
-| [App.tsx next split](app-tsx-next-split.md) | Completed 2026-10-08 | Historical phase record; its 2957-line baseline was superseded by the next plan. |
+| [App.tsx next split](app-tsx-next-split.md) | Completed 2026-10-08 | Historical phase record; its original size baseline was superseded by the next plan. |
 | [Deep split phase 3](deep-split-phase3.md) | Completed / superseded | Historical target and execution record; do not use its 2026-10-07 baseline. |
 | [Deep split phase 2](deep-split-phase2.md) | Completed / superseded | Historical phase record. |
-| [Frontend split refactor](frontend-split-refactor.md) | Historical | Preserves execution details; its embedded TODO and line counts are stale. Use `docs/agent/rules/frontend/TODO.md` for remaining frontend cleanup. |
+| [Frontend split refactor](frontend-split-refactor.md) | Historical | Preserves execution details; its embedded TODO and measurements are historical. Use `docs/agent/rules/frontend/TODO.md` for current frontend tasks. |
 | [App.tsx split lessons](app-tsx-split-lessons-and-next-plan.md) | Historical | Preserves lessons; proposed next steps and file counts are superseded. |
 | [Next-stage decision](next-stage-decision.md) | Executed / superseded | The proposal and session split were carried out; its original baseline is not current. |
 | [Worktree finish stage](worktree-finish-stage-plan.md) | Implemented | The described workflow landed; this document is the design and implementation record. |
