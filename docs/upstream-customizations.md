@@ -3088,3 +3088,9 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：命令会话列表标签需要取最新 `userShell` 状态；若读整个 aux 文件，列表每个命令会话都可能持锁扫描数 MB 数据。
 - **根因与边界**：`GetCommandShell`、aux seq 分组和行边界安全的 `readAuxTailEntries` 原样迁至 `manager_aux_tail.go`（120 行）。仍以尾部命中判断 shell，仅在尾读不可用时回退全量加载；父文件实测 2,916 行。
 - **针对性测试**：`manager_aux_tail_test.go` → 守住 bounded tail 命中与不触发全量 aux parse；`usecase_test.go` → 守住列表页 shell 标签推断接线。
+
+### G-EM Session manager pending tool-call aux 状态拆分
+
+- **可见症状**：流式中的 tool-call 详情要先从内存 pending 状态返回，写盘后再从 aux 重建；ask-user 答案需合并到同一个调用。若锁或内存优先顺序漂移，展开中的工具卡会短暂丢详情，或已填写答案被覆盖。
+- **根因与边界**：`GetFullToolCall`、pending aux upsert/answer/clear、tool-call merge、pending lookup 与 clone helper 原样迁至 `manager_pending_aux.go`（192 行）。内存先查、磁盘回退、answers 累并和锁边界保持；aux append/path 与公开读 wrapper 留给后续批次。父文件实测 2,735 行。
+- **针对性测试**：`manager_test.go` → 守住 pending 优先于磁盘、clear 后 not-found、ask-user 多次回答累并及 tool-call aux 落盘读取。

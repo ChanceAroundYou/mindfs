@@ -5378,3 +5378,32 @@ groups:
     anchors:
       - server/internal/session/manager_aux_tail.go:func (m *Manager) GetCommandShell
       - server/internal/session/manager_aux_tail.go:func (m *Manager) readAuxTailEntries
+
+  - id: G-EM
+    title: Session manager pending tool-call aux state split
+    kind: arch
+    symptom: |
+      Pending live tool-call updates, ask-user answer merging, full tool-call lookup across pending and
+      persisted aux, and deep-copy/merge helpers are mixed into manager.go with session list and SQLite logic.
+    why: |
+      Keep the transient-to-persisted tool-call handoff and ask-user answer semantics in a focused
+      module, preserving the in-memory-first lookup behavior and lock boundaries.
+    boundary: |
+      GetFullToolCall, pending aux upsert/answer/clear, mergeToolCall, pending lookup, and clone helpers
+      move unchanged to manager_pending_aux.go. Aux JSONL append/path handling and wrapper methods remain
+      in manager.go for a separate batch. Parent is 2,735 lines.
+    tests:
+      - server/internal/session/manager_test.go
+    files:
+      - server/internal/session/manager.go
+      - server/internal/session/manager_pending_aux.go
+      - docs/agent/rules/backend/TODO.md
+      - docs/agent/rules/backend/file-size.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - server/internal/session/manager_pending_aux.go:func (m *Manager) GetFullToolCall
+      - server/internal/session/manager_pending_aux.go:func (m *Manager) MarkPendingAskUserAnswered
+      - server/internal/session/manager_pending_aux.go:func mergeToolCall
