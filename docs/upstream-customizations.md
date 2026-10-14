@@ -3322,3 +3322,9 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：ActionBar 和 session 时间线展示依赖 agent 状态类型，却从运行时 agent service 导入。
 - **根因与边界**：三个组件改从 `shared/agentTypes.ts` 导入 `AgentStatus`；仍需的 prompts/session/error/clipboard/node 服务边不变，只删掉 agent 类型依赖。
 - **针对性测试**：`web/tests/reviewer-architecture-rules.test.mjs` → 守住组件 service 边只减不增；`npm run typecheck` → 守住类型解析。
+
+### G-GX Shared task contracts in read-only views
+
+- **可见症状**：三个任务展示菜单/视图仅使用 `KanbanTask` 或 `TaskTemplate` 类型，却依赖 task service facade。
+- **根因与边界**：组件改从既有 `shared/taskTypes.ts` 导入纯类型；任务请求与业务操作仍由 task service 提供，展示行为不变，allowlist 删除三条边。
+- **针对性测试**：`web/tests/reviewer-architecture-rules.test.mjs` → 守住组件 service 边只减不增；`npm run typecheck` → 守住类型解析。

@@ -4,7 +4,7 @@ import { relatedFileStatKey } from "../../hooks/useRelatedFileStats";
 import type { RelatedFileStat, RelatedFileStatTarget } from "../../hooks/useRelatedFileStats";
 import { ManagedRootPayload } from "../../app/appMisc";
 import { GitFileStat, SessionItem } from "../../app/appSession";
-import type { KanbanTask } from "../../services/tasks";
+import type { KanbanTask } from "../../shared/taskTypes";
 
 /** 与 App 里 selectedSessionRelatedFileGroups 的 flatMap 结果同构。 */
 type RelatedFileEntry = RelatedFileStatTarget & {

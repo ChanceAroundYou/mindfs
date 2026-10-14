@@ -166,4 +166,5 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 - 进行中（2026-10-14）：第二批三个纯类型消费者（AgentSelectorParts、PromptEditor、StageEditor）也改用 shared/agentTypes；当前债务降至 112 条、64 个文件。仍保留需要 fetch/restart 等运行时操作的 service 依赖。
 - 进行中（2026-10-14）：TaskDetailPanel 与 TaskTemplateDialog 的类型依赖也改用 shared/agentTypes；task service 运行时依赖保留，当前债务为 110 条、64 个文件。
 - 进行中（2026-10-14）：ActionBar、SessionViewer、SessionViewerTimeline 的 AgentStatus 改从 shared 导入；其他数据/请求服务边仍保留，当前债务为 107 条、64 个文件。
+- 进行中（2026-10-14）：RootRelatedContentView、TaskCreateTemplateMenu、TaskTemplateActionMenu 改从既有 `shared/taskTypes.ts` 引入纯任务类型；三个组件不再导入 task service，当前债务降至 104 条、61 个文件。
 - 进行中（2026-10-14）：补 reviewer checklist 自动覆盖映射；backend 已有 WS、Cancel timeout、AppContext、endpoint role 和文件长度测试；本批为 AppContext 使用面与生产 Go 文件硬线新增 guard。SQLite additive、回滚说明、人工架构判断仍由 reviewer checklist 标明。

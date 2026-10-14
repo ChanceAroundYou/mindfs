@@ -6487,3 +6487,29 @@ groups:
     anchors:
       - web/src/shared/agentTypes.ts:export type AgentStatus
       - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+
+  - id: G-GX
+    title: Shared task contracts in read-only views
+    kind: arch
+    symptom: |
+      Read-only task views import the task service facade only for KanbanTask and TaskTemplate types.
+    why: |
+      Keep task presentation contracts in shared/taskTypes and reserve services for runtime data access.
+    boundary: |
+      RootRelatedContentView, TaskCreateTemplateMenu, and TaskTemplateActionMenu import types from
+      shared/taskTypes.ts; runtime task behavior is unchanged and three service edges are removed.
+    tests:
+      - web/tests/reviewer-architecture-rules.test.mjs
+    files:
+      - web/src/components/root/RootRelatedContentView.tsx
+      - web/src/components/task/TaskCreateTemplateMenu.tsx
+      - web/src/components/task/TaskTemplateActionMenu.tsx
+      - web/tests/fixtures/component-service-import-debt.json
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/shared/taskTypes.ts:export type KanbanTask
+      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
