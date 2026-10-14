@@ -177,4 +177,5 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 - 进行中（2026-10-14）：`ShellStatus` 与其他 agent status contract 一并归 `shared/agentTypes.ts`，agents service 继续 re-export；ShellSelector 移除唯一 service 类型依赖，债务降至 80 条、43 个文件。
 - 进行中（2026-10-14）：`FilePayload`、编辑器状态和 `FileEditStoreContract` 移入 `shared/fileTypes.ts`；file/fileEditing service 模块兼容 re-export 或继续提供 class 实现。CodeTextEditor 不再依赖 service，FileViewer 与 FileEditor 的纯类型边移除，债务降至 77 条、42 个文件。
 - 进行中（2026-10-14）：`DocumentPreviewKind` 和 `PdfPageLayout` 移入 `shared/documentPreviewTypes.ts`，service 继续兼容 re-export；DocumentViewer 移除类型 service 依赖，债务降至 76 条、42 个文件。
+- 进行中（2026-10-14）：DirectorySortMenu 的排序选项与类型直接从 `shared/directorySort.ts` 导入，移除其 services facade 依赖，债务降至 75 条、41 个文件。
 - 进行中（2026-10-14）：补 reviewer checklist 自动覆盖映射；backend 已有 WS、Cancel timeout、AppContext、endpoint role 和文件长度测试；本批为 AppContext 使用面与生产 Go 文件硬线新增 guard。SQLite additive、回滚说明、人工架构判断仍由 reviewer checklist 标明。

@@ -1,6 +1,6 @@
 import type { Dispatch, SetStateAction } from "react";
 import { useI18n } from "../../i18n/index";
-import { DIRECTORY_SORT_OPTIONS, type DirectorySortMode } from "../../services/prefs/directorySort";
+import { DIRECTORY_SORT_OPTIONS, type DirectorySortMode } from "../../shared/directorySort";
 
 export type DirectorySortControlValue = DirectorySortMode | "inherit";
 

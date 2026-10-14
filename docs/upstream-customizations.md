@@ -3388,3 +3388,9 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：文档查看组件只需预览种类和 PDF 页面布局类型，却依赖 document preview service。
 - **根因与边界**：两个类型移入 `shared/documentPreviewTypes.ts`，service 保持 re-export；PDF 页码范围计算和实际预览路径不变，DocumentViewer 移除 service 类型导入。
 - **针对性测试**：`web/tests/reviewer-architecture-rules.test.mjs` → 守住组件 service 边只减不增；`npm run typecheck` → 守住类型 facade。
+
+### G-HI Directory sort view imports shared module
+
+- **可见症状**：DirectorySortMenu 的排序选项与模式类型已由 shared 持有，组件却仍绕道 prefs service facade。
+- **根因与边界**：组件改从 `shared/directorySort.ts` 导入常量与类型；service facade 和排序行为未改。
+- **针对性测试**：`web/tests/reviewer-architecture-rules.test.mjs` → 守住组件 service 边只减不增；`npm run typecheck` → 守住组件与共享契约。

@@ -39,7 +39,6 @@
   "web/src/components/common/MarkdownImage.tsx -> ../../services/file",
   "web/src/components/file/DefaultListView.tsx -> ../../services/prefs/directorySort",
   "web/src/components/file/DefaultListView.tsx -> ../../services/upload",
-  "web/src/components/file/DirectorySortMenu.tsx -> ../../services/prefs/directorySort",
   "web/src/components/file/DocumentViewer.tsx -> ../../services/file",
   "web/src/components/file/FileEditor.tsx -> ../../services/file",
   "web/src/components/file/FileOperations.tsx -> ../../services/dialog",

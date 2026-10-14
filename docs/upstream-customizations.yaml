@@ -6798,3 +6798,27 @@ groups:
     anchors:
       - web/src/shared/documentPreviewTypes.ts:export type DocumentPreviewKind
       - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+
+  - id: G-HI
+    title: Directory sort view imports shared module
+    kind: arch
+    symptom: |
+      DirectorySortMenu imports shared directory sort options and type through the prefs service facade.
+    why: |
+      Point the view directly at the shared owner of its display contract and options.
+    boundary: |
+      DirectorySortMenu imports DIRECTORY_SORT_OPTIONS and DirectorySortMode from shared/directorySort.ts;
+      sorting logic and service compatibility are unchanged and one service edge/file is removed.
+    tests:
+      - web/tests/reviewer-architecture-rules.test.mjs
+    files:
+      - web/src/components/file/DirectorySortMenu.tsx
+      - web/tests/fixtures/component-service-import-debt.json
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/shared/directorySort.ts:export const DIRECTORY_SORT_OPTIONS
+      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
