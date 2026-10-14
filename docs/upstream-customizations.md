@@ -3213,3 +3213,10 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：Claude SDK partial/assistant/user/task/compact/auth 消息处理、ask-user 交互和 subagent/task 事件投影集中在 session 主文件，事件契约与会话主循环难以分开审阅。
 - **根因与边界**：`handlePartialAssistantMessage` 至 `taskType` 的消息处理、ask-user 与 subagent/task projection 连续职责段原样迁至 `session_messages.go`（684 行）；调用顺序、事件类型、锁和会话状态语义不变。父文件实测 1,076 行，低于硬线。
 - **针对性测试**：`server/internal/agent/claude/session_test.go` → 守住 SDK 消息到 MindFS event 的转换、ask-user 与 subagent/task 状态映射；`make test` → 全仓 Go 门禁。
+
+
+### G-FG Agent API provider configuration file helpers split
+
+- **可见症状**：API provider 写入 agent 配置时，JSON-like 解析、YAML/JSON 文件 I/O、模型表结构与 managed block 操作混在 provider handler 和 agent-specific apply 逻辑中，配置格式维护难以聚焦。
+- **根因与边界**：文件与配置映射 helpers 从 `firstModelOrDefault` 起原样迁至 `agent_api_provider_files.go`（449 行）；序列化格式、注释/引号/尾逗号归一和 managed sequence 语义不变。父 provider 文件实测 2,047 行，后续继续拆分。
+- **针对性测试**：`server/internal/api/agent_api_provider_test.go` 与 `server/internal/api/agent_api_provider_sync_test.go` → 守住 Codex TOML 与 provider 写入/同步、文件配置更新及模型投影；`make test` → 全仓 Go 门禁。

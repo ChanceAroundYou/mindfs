@@ -5998,3 +5998,35 @@ groups:
       - server/internal/agent/claude/session_messages.go:func (s *session) handleAssistantMessage
       - server/internal/agent/claude/session_messages.go:func (s *session) awaitAskUserQuestion
       - server/internal/agent/claude/session_messages.go:func (s *session) taskType
+
+
+  - id: G-FG
+    title: Agent API provider configuration file helpers split
+    kind: arch
+    symptom: |
+      JSON-like parsing, YAML/JSON file I/O, model table shaping, and managed block operations are mixed
+      into provider handlers and agent-specific apply logic, making configuration-format changes hard to audit.
+    why: |
+      Keep provider config serialization and file mapping in a focused module so format normalization and
+      managed-section behavior can be maintained independently from provider orchestration.
+    boundary: |
+      File/config helpers from firstModelOrDefault through parseSimpleEnv move unchanged to
+      agent_api_provider_files.go (449 lines). Serialization, comment/quote/trailing-comma normalization,
+      and managed sequence semantics remain unchanged. Parent remains 2,047 lines for subsequent splits.
+    tests:
+      - server/internal/api/agent_api_provider_test.go
+      - server/internal/api/agent_api_provider_sync_test.go
+    files:
+      - server/internal/api/agent_api_provider.go
+      - server/internal/api/agent_api_provider_files.go
+      - docs/agent/rules/backend/TODO.md
+      - docs/agent/rules/backend/file-size.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - server/internal/api/agent_api_provider_files.go:func firstModelOrDefault
+      - server/internal/api/agent_api_provider_files.go:func normalizeJSONLikeConfig
+      - server/internal/api/agent_api_provider_files.go:func readYAMLMap
+      - server/internal/api/agent_api_provider_files.go:func formatSimpleEnv

@@ -145,9 +145,10 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 
 - 已完成（2026-10-14）：G-EZ session handler 拆分通过全仓 Go、tsc、Vitest 5 + legacy 293 与 upstream 覆盖门禁（1053 delta / 155 组）；提交 `92ce95f` 已推送并 no-restart 安装至三端（`v0.5.5-804-g92ce95f`），未重启节点。
 - 已完成（2026-10-14）：静态资源、index 缺失资源检测、fallback/cache/version/path helpers 迁至 `http_frontend.go`；API 包和 worker-role tests、全仓 Go、TypeScript、Vitest 5 + legacy 293 及 upstream（1054 delta / 156 组）通过。提交 `238939b` 已推送，三端 no-restart 安装 `v0.5.5-805-g238939b`，bundle 对账一致、无重启；`http.go` 实测 658 行。
-- 按当前实测，剩余 5 个 >1500 行 Go 非测试文件：`api/agent_api_provider.go` 2484、`kanban/service.go` 1989、`agent/codex/importer.go` 1887、`agent/codex/session.go` 1586、`gitview/gitview.go` 1575。Claude model/config/alias 已由 G-FB 完成；之后按职责处理其余大文件、双入口审计与 reviewer checklist 自动门禁。
+- 按当前实测，剩余 5 个 >1500 行 Go 非测试文件：`api/agent_api_provider.go` 2047、`kanban/service.go` 1989、`agent/codex/importer.go` 1887、`agent/codex/session.go` 1586、`gitview/gitview.go` 1575。Claude model/config/alias 已由 G-FB 完成；之后按职责处理其余大文件、双入口审计与 reviewer checklist 自动门禁。
 - 已完成（2026-10-14）：Claude model alias/env/settings/model-list 归一职责迁至 `agent/claude/session_models.go`（406 行）；全仓 `make test`、ship Go/tsc/web 门禁（Vitest 5 + legacy 293）、upstream 覆盖（1055 delta / 157 组）通过。提交 `4eb12a3` 已推送并 no-restart 安装三端 `v0.5.5-806-g4eb12a3`，bundle 对账一致、未重启。
 
 - 已完成（2026-10-14）：G-FC Claude tool-call summary projection 已通过全仓 `make test`、ship Go/tsc/web 门禁（Vitest 5 + legacy 293）和 upstream 覆盖（1056 delta / 158 组）。提交 `b4c44f6` 已推送并 no-restart 安装三端 `v0.5.5-807-gb4c44f6`，bundle 对账一致，未重启。
 - 已完成（2026-10-14）：G-FD Claude pending tool-call 生命周期、结果归一及工具结果摘要拆分通过全仓 `make test`、ship Go/tsc/web（Vitest 5 + legacy 293）和 upstream 门禁（1057 delta / 159 组）。提交 `ae4a0b1` 已推送并 no-restart 安装三端 `v0.5.5-808-gae4a0b1`，bundle 对账一致，未重启。
-- 进行中（2026-10-14）：Claude SDK message handlers、ask-user 交互、subagent/task 状态投影迁至 `agent/claude/session_messages.go`（684 行）；事件调用顺序和 session 状态语义保持。Claude package tests 通过；父 `session.go` 实测 1,076 行，低于硬线。全仓门禁与 ship 待执行。
+- 已完成（2026-10-14）：G-FE Claude SDK message handlers、ask-user 交互、subagent/task 状态投影迁至 `agent/claude/session_messages.go`（684 行）；事件调用顺序和 session 状态语义保持。Claude package tests、全仓 `make test`、ship Go/tsc/web（Vitest 5 + legacy 293）和 upstream 门禁（1058 delta / 160 组）均通过。提交 `244c5cb` 已推送并 no-restart 安装三端 `v0.5.5-809-g244c5cb`，bundle 对账一致，未重启。
+- 进行中（2026-10-14）：agent API provider JSON/YAML 文件读写、JSON-like 归一、模型配置结构和 managed-block/sequence helpers 迁至 `agent_api_provider_files.go`（449 行）；序列化格式与现有配置迁移行为保持。API 包 tests 通过；父文件实测 2,047 行。全仓门禁与 ship 待执行。
