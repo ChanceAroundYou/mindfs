@@ -3028,3 +3028,9 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：标题生成的 agent 调用、偏好覆盖、会话元数据更新、候选清理/评分与 fallback 标题构造混在 `session.go` 的 send/turn 流程旁，命名规则难单独审阅。
 - **根因与边界**：`sessionNameRunner`、`SuggestSessionName`、fallback/prompt 生成和候选评分 helper 原样迁入 `session_name.go`（197 行）；输入契约、agent 偏好优先级和生成行为不变。父文件实测 3,256 行，backend TODO 继续未完成。
 - **针对性测试**：`usecase_test.go` → 守住命名评分/候选归一、agent runner 与无 agent 跳过行为；完整 `make test` → 全仓 Go 测试门禁通过。
+
+### G-EC Session runtime/model 解析职责拆分
+
+- **可见症状**：agent session 重开判定、运行时 model reconcile、显示名解析、Claude 环境投影以及 mode/effort/fast-service 推断混在 `session.go` 的 send/stream 编排旁，运行时默认优先级难以集中审阅。
+- **根因与边界**：runtime reopen/model/display-name/environment 与 mode/effort/fast-service helper 原样迁入 `session_runtime.go`（215 行）；各 provider 的缺省值和覆盖顺序不变。父文件实测 3,052 行，backend TODO 继续未完成。
+- **针对性测试**：`server/internal/api/usecase/usecase_test.go` → 守住 model、mode、effort、fast-service 与 runtime reopen 决策；完整 `make test` → 全仓 Go 测试门禁通过。

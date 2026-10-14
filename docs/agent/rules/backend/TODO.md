@@ -3,7 +3,7 @@
 ## 必拆文件（>1500 非测试，只列不改，每次 1 个 + `make test`）
 
 ```
-usecase/session.go 3256 · session/manager.go 3905 · agent/claude/session.go 3074
+usecase/session.go 3052 · session/manager.go 3905 · agent/claude/session.go 3074
 api/http.go 3024 · api/agent_api_provider.go 2484 · kanban/service.go 1989
 agent/codex/importer.go 1887 · agent/codex/session.go 1586 · gitview/gitview.go 1575
 api/ws.go 1403 · agent/claude/importer.go 1398 · api/appcontext.go 1378
