@@ -121,5 +121,6 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 - 已完成（2026-10-14）：aux 增量读取、窗口尾部扫描与全量 fallback 原样迁至 `manager_aux_reads.go`（274 行）；session 包专项与全仓 `make test` 通过，upstream 门禁通过（1039 delta / 140 组），并同步更新 G-AT 实现路径锚点。父文件从 3,289 降至 3,026 行；提交 `4efe558` 已推送，no-restart ship 完成，三端安装 `v0.5.5-789-g4efe558`，bundle 对账一致且未重启节点。
 - 已完成（2026-10-14）：`GetCommandShell` 有界尾读、分组和行边界安全 helper 原样迁至 `manager_aux_tail.go`（120 行），session 包/全仓测试及 upstream 门禁（1040 delta / 141 组）通过；G-BG 锚点同步迁移。提交 `9befc49` 已推送，no-restart ship 完成，三端安装 `v0.5.5-790-g9befc49`，bundle 对账一致且未重启节点。
 - 已完成（2026-10-14）：`GetFullToolCall`、pending tool-call upsert/answer/clear、tool-call merge 与 clone helper 原样迁至 `manager_pending_aux.go`（192 行）；全仓 `make test` 与 upstream 门禁（1041 delta / 142 组）通过。提交 `af7a400` 已推送，no-restart ship 完成，三端安装 `v0.5.5-791-gaf7a400`，bundle 对账一致且未重启节点。
-- 进行中（2026-10-14）：aux JSONL append 写入与路径校验 helper 原样并入 `manager_aux_reads.go`；session 包专项测试通过。父文件从 2,735 降至 2,702 行，新模块实测 309 行；全仓 `make test`、upstream 门禁和 no-restart ship 待执行。
-- 下一项：完成 G-EN 验收后，拆 agent binding 持久化/查询与 session meta/SQLite 初始化、迁移职责。之后处理其余 backend TODO，并审阅 reviewer checklist、落实可运行门禁。
+- 已完成（2026-10-14）：aux JSONL append 与路径校验 helper 原样并入 `manager_aux_reads.go`，相关全仓 `make test` 与 upstream 门禁（1041 delta / 143 组）通过。提交 `f84c304` 已推送，no-restart ship 完成，三端安装 `v0.5.5-792-gf84c304`，bundle 对账一致且未重启节点。
+- 进行中（2026-10-14）：agent state/binding upsert、cursor 查询与更新、binding 查找/确保及 SQL scan/upsert helper 迁至 `manager_agent_bindings.go`（258 行）。`RepointAgentBinding` 仍在原文件；session 包专项与全仓 `make test` 通过；upstream 门禁通过（1042 delta / 144 组），G-Q 对空 id 语义的锚点迁至新模块。父文件实测 2,456 行；no-restart ship 待执行。
+- 下一项：完成 G-EO 验收后，继续拆 session meta/SQLite 初始化、schema migration 与 row serialization，再处理 backend TODO 余项，并审阅 reviewer checklist、落实可运行门禁。

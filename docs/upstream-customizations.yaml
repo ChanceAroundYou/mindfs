@@ -497,7 +497,7 @@ groups:
     anchors:
       - 'web/src/components/session/ExternalSessionList.tsx:CUSTOM(G-Q)'
       - 'server/internal/agent/codex/importer.go:func cwdMatchesRoot('
-      - 'server/internal/session/manager.go:空 agent_session_id 表示「agent 已选定、尚无转录」'
+      - 'server/internal/session/manager_agent_bindings.go:空 agent_session_id 表示「agent 已选定、尚无转录」'
       - 'server/internal/session/types.go:func InferAgentFromSession'
     files:
       - server/internal/agent/claude/importer.go
@@ -509,6 +509,7 @@ groups:
       - server/internal/api/usecase/session.go
       - server/internal/api/session_created_broadcast_test.go
       - server/internal/session/manager.go
+      - server/internal/session/manager_agent_bindings.go
       - server/internal/session/types.go
       - server/internal/session/manager_test.go
       - web/src/components/session/ExternalSessionList.tsx
@@ -5406,6 +5407,38 @@ groups:
     anchors:
       - server/internal/session/manager_aux_reads.go:func (m *Manager) appendExchangeAux
       - server/internal/session/manager_aux_reads.go:func (m *Manager) auxPath
+
+  - id: G-EO
+    title: Session manager agent binding persistence and query split
+    kind: arch
+    symptom: |
+      Agent state/binding writes, external cursor persistence, binding lookup/ensure, and binding row
+      scan/upsert helpers are embedded in manager.go beside unrelated session lifecycle and storage logic.
+    why: |
+      Keep the agent-to-session binding contract and its SQLite operations together so agent inference,
+      external cursor continuity, and empty-id semantics are reviewable in one module.
+    boundary: |
+      UpdateAgentState, UpsertAgentBinding, external cursor update, binding lookup/ensure/list, and
+      binding scan/upsert helpers move unchanged to manager_agent_bindings.go. AgentBinding data shape,
+      SQL schema/constants, and the standalone RepointAgentBinding transaction remain unchanged.
+      Parent is 2,456 lines.
+    tests:
+      - server/internal/session/manager_test.go
+      - server/internal/session/manager_cursor_test.go
+      - server/internal/session/manager_cursor_migration_test.go
+    files:
+      - server/internal/session/manager.go
+      - server/internal/session/manager_agent_bindings.go
+      - docs/agent/rules/backend/TODO.md
+      - docs/agent/rules/backend/file-size.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - server/internal/session/manager_agent_bindings.go:func (m *Manager) UpdateAgentState
+      - server/internal/session/manager_agent_bindings.go:func (m *Manager) EnsureAgentBinding
+      - server/internal/session/manager_agent_bindings.go:func (m *Manager) UpdateExternalSessionCursor
 
   - id: G-EM
     title: Session manager pending tool-call aux state split
