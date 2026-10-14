@@ -3248,3 +3248,10 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：历史 Codex JSONL 导入中的 tool-call 输入识别、JavaScript wrapper 解析、patch/location 与 tool output 投影占据 importer 主文件大段代码，使 transcript scanning/import orchestration 难以审阅。
 - **根因与边界**：`parseImportedCodexToolCall` 至 `importedCodexAssistantLine` 的工具调用解析和输入/输出投影原样迁至 `importer_tool_calls.go`（850 行）；导入 exchange 输出和 tool matching 行为不变。父 `importer.go` 实测 1,047 行，低于硬线。
 - **针对性测试**：`server/internal/agent/codex/importer_test.go` → 守住工具识别、命令/patch 解析、工具结果与 assistant/user 输出；`make test` → 全仓 Go 门禁。
+
+
+### G-GL Codex session tool item projection split
+
+- **可见症状**：Codex session SDK tool item、dynamic/hook/image/collaboration 事件映射与内容/title 投影挤在会话事件消费文件中，新增工具类型容易影响 session turn 逻辑。
+- **根因与边界**：`mapToolItem` 至 `truncateRunes` 的 tool item mapping 和内容/title helpers 原样迁至 `session_tools.go`（433 行）；调用方、工具种类/status 与 event payload shape 不变。父 `session.go` 实测 1,164 行，低于硬线。
+- **针对性测试**：`server/internal/agent/codex/session_test.go` → 守住工具 item 映射、动态工具、hook/image/collaboration 内容与 status；`make test` → 全仓 Go 门禁。

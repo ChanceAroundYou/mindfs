@@ -6158,3 +6158,33 @@ groups:
       - server/internal/agent/codex/importer_tool_calls.go:func importedCodexWrappedTool
       - server/internal/agent/codex/importer_tool_calls.go:func parseImportedCodexPatch
       - server/internal/agent/codex/importer_tool_calls.go:func importedCodexToolOutput
+
+
+  - id: G-GL
+    title: Codex session tool item projection split
+    kind: arch
+    symptom: |
+      Codex SDK tool item mapping and dynamic/hook/image/collaboration content/title projection are mixed
+      into the session event consumer, coupling tool additions to turn handling.
+    why: |
+      Keep SDK tool item projection together so tool compatibility and presentation changes can be
+      reviewed independently from session turn and lifecycle behavior.
+    boundary: |
+      mapToolItem through truncateRunes move unchanged to session_tools.go (433 lines). Callers, tool kind/status,
+      and event payload shapes remain unchanged. Parent session.go is 1,164 lines, below the hardline.
+    tests:
+      - server/internal/agent/codex/session_test.go
+    files:
+      - server/internal/agent/codex/session.go
+      - server/internal/agent/codex/session_tools.go
+      - docs/agent/rules/backend/TODO.md
+      - docs/agent/rules/backend/file-size.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - server/internal/agent/codex/session_tools.go:func mapToolItem
+      - server/internal/agent/codex/session_tools.go:func mapDynamicToolCall
+      - server/internal/agent/codex/session_tools.go:func collabToolContent
+      - server/internal/agent/codex/session_tools.go:func truncateRunes
