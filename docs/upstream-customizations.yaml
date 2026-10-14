@@ -5758,3 +5758,37 @@ groups:
       - server/internal/api/http_git.go:func (h *HTTPHandler) handleGitRelatedFileStats
       - server/internal/api/http_git.go:func decodeGitActionRequest
       - server/internal/api/http_git.go:func (h *HTTPHandler) handleGitWorktreeRemove
+
+  - id: G-EY
+    title: API HTTP file and managed-directory handlers split
+    kind: arch
+    symptom: |
+      Tree/file/upload and managed-directory HTTP handlers, query parsing, and managed-root response
+      projection are mixed into the general http.go with session and Git handlers.
+    why: |
+      Keep project file and root HTTP boundaries together so route validation, filesystem dispatch, and
+      managed-root projection can be reviewed as one domain.
+    boundary: |
+      handleTree through managedDirResponse, including upload/query helpers, move unchanged to
+      http_files.go. Existing route registration, validation ordering, and usecase dispatch remain.
+      Parent is 2,036 lines and remains above the 1,500 hardline.
+    tests:
+      - server/internal/api/http_test.go
+      - server/internal/api/http_open_api_test.go
+      - server/internal/api/http_node_role_test.go
+      - web/tests/conditional-request.test.mjs
+    files:
+      - server/internal/api/http.go
+      - server/internal/api/http_files.go
+      - web/tests/conditional-request.test.mjs
+      - docs/agent/rules/backend/TODO.md
+      - docs/agent/rules/backend/file-size.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - server/internal/api/http_files.go:func (h *HTTPHandler) handleTree
+      - server/internal/api/http_files.go:func (h *HTTPHandler) handleUpload
+      - server/internal/api/http_files.go:func (h *HTTPHandler) handleAddDir
+      - server/internal/api/http_files.go:func managedDirResponse

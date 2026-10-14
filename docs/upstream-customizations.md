@@ -3164,3 +3164,10 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：Git 状态/差异/历史、分支操作、提交/暂存/丢弃、related-file diff 与 worktree handler 挤在 3,024 行 `http.go` 中，HTTP 文件路由与跨域文件/会话逻辑混杂。
 - **根因与边界**：Git handler 和仅供这些 handler 使用的请求解码/响应 helper 原样迁至 `http_git.go`（447 行）；`Routes` 内路由注册与 handler 名称不变，数据仍通过 usecase service 派发。父文件降至 2,588 行，仍需后续按域拆分。
 - **针对性测试**：`server/internal/api/http_git_related_files_stats_test.go` → 守住 Git related-file stats 的请求校验和路由注册；`make test` → 全仓 Go 门禁。
+
+
+### G-EY API HTTP file and managed-directory handlers split
+
+- **可见症状**：tree/file/upload 与 managed directory 增删改、路径解析及响应投影和 session/Git handler 混在 general `http.go`；项目文件端点的请求校验与文件系统边界难单独检查。
+- **根因与边界**：`handleTree`、`handleFile`、upload parser/closer、query parsers、directory handlers、managed-dir path/response helpers 原样迁至 `http_files.go`（574 行）；路由、校验顺序和 usecase dispatch 不变。父文件实测 2,036 行，仍高于硬线。
+- **针对性测试**：`http_test.go`、`http_open_api_test.go`、`http_node_role_test.go` → 守住文件树/目录路由、无鉴权契约与 worker 数据面访问；`make test` → 全仓 Go 门禁。

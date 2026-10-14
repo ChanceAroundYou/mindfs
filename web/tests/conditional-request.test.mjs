@@ -16,7 +16,8 @@ const repoRoot = path.resolve(root, "..");
 const api = fs.readFileSync(path.join(root, "src/services/api.ts"), "utf8");
 const http = fs.readFileSync(path.join(repoRoot, "server/internal/api/http.go"), "utf8");
 const httpGit = fs.readFileSync(path.join(repoRoot, "server/internal/api/http_git.go"), "utf8");
-const httpDomain = `${http}\n${httpGit}`;
+const httpFiles = fs.readFileSync(path.join(repoRoot, "server/internal/api/http_files.go"), "utf8");
+const httpDomain = `${http}\n${httpGit}\n${httpFiles}`;
 const httpTasks = fs.readFileSync(path.join(repoRoot, "server/internal/api/http_tasks.go"), "utf8");
 const helpers = fs.readFileSync(path.join(repoRoot, "server/internal/api/helpers.go"), "utf8");
 

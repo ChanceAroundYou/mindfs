@@ -133,3 +133,7 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 - 已完成（2026-10-14）：session window orchestration、冷缓存尾读、字节级记录计数、尾部解析与 seq lower-bound helper 迁至 `manager_window_reads.go`（193 行）；同时修正了长期 source-map 测试中已过期的 SessionViewer、session service、App 与 realtime 模块边界断言。`make test`、ship 门禁（Go、tsc、Vitest 5 + legacy 293）及 upstream 覆盖（1050 delta / 152 组）通过；提交 `dc72506` 已推送，三端安装 `v0.5.5-801-gdc72506`，未重启。manager 主文件实测 749 行。
 - 按当前工作区重算必拆清单：7 个 Go 非测试文件超过 1500 行，已更新 backend TODO 与 file-size 规则中的旧基线。当前：`server/internal/api/http.go` 中 Git status/diff/history/branch/action/worktree handlers 与 Git action decoder/response helper 已迁至 `http_git.go`（447 行）；handler 路由、handler 名和操作顺序不变，API 专项测试通过。父文件实测 2588 行，仍高于硬线；全仓门禁与 no-restart ship 待执行。
 - 下一项：完成 G-EX 验收后，继续按 session/static/file/dirs handler 域拆 `http.go`，直至低于 1500 行；再处理其他 6 个大文件、cli/server 双入口审计与 reviewer checklist 自动门禁。
+
+- 已完成（2026-10-14）：G-EX 的 `http_git.go` 已通过全仓 Go/TypeScript/web 与 upstream 门禁并 no-restart ship（`2def72a`，三端 `v0.5.5-802-g2def72a`，未重启）。
+- 进行中（2026-10-14）：项目文件树/文件操作、上传、目录增删改与 managed-dir response 迁至 `http_files.go`（574 行）；路由和 usecase 调用不变，API 包专项通过。父文件实测 2,036 行，仍高于 1,500 硬线；全仓门禁与发布待执行。
+- 下一项：完成 G-EY 后继续将 session handler（规避 repoint handler）、静态资源服务和偏好/项目入口按域拆到父文件低于硬线；再处理其他 6 个大文件、双入口审计与 reviewer checklist 门禁。
