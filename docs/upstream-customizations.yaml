@@ -5726,3 +5726,35 @@ groups:
       - server/internal/session/manager_window_reads.go:func (m *Manager) readExchangeWindow
       - server/internal/session/manager_window_reads.go:func tailExchangeWindow
       - server/internal/session/manager_window_reads.go:func firstIndexWhereSeq
+
+  - id: G-EX
+    title: API HTTP Git handlers split
+    kind: arch
+    symptom: |
+      Git status/diff/history/branch/action/related-file/worktree HTTP handlers and their request/response
+      helpers are mixed into the oversized general http.go file.
+    why: |
+      Keep the Git HTTP domain together while preserving the existing route table and usecase dispatch
+      boundary, making Git endpoint changes reviewable without navigating session/file handlers.
+    boundary: |
+      Git handlers from handleGitStatus through handleGitWorktreeRemove, gitActionRequest,
+      decodeGitActionRequest, and respondGitAction move unchanged to http_git.go. Routes and handler
+      names remain unchanged. Parent is 2,588 lines and remains over the 1,500 hardline.
+    tests:
+      - server/internal/api/http_git_related_files_stats_test.go
+      - web/tests/conditional-request.test.mjs
+    files:
+      - server/internal/api/http.go
+      - server/internal/api/http_git.go
+      - web/tests/conditional-request.test.mjs
+      - docs/agent/rules/backend/TODO.md
+      - docs/agent/rules/backend/file-size.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - server/internal/api/http_git.go:func (h *HTTPHandler) handleGitStatus
+      - server/internal/api/http_git.go:func (h *HTTPHandler) handleGitRelatedFileStats
+      - server/internal/api/http_git.go:func decodeGitActionRequest
+      - server/internal/api/http_git.go:func (h *HTTPHandler) handleGitWorktreeRemove

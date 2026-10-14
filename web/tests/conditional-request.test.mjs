@@ -15,6 +15,8 @@ const root = path.resolve(import.meta.dirname, "..");
 const repoRoot = path.resolve(root, "..");
 const api = fs.readFileSync(path.join(root, "src/services/api.ts"), "utf8");
 const http = fs.readFileSync(path.join(repoRoot, "server/internal/api/http.go"), "utf8");
+const httpGit = fs.readFileSync(path.join(repoRoot, "server/internal/api/http_git.go"), "utf8");
+const httpDomain = `${http}\n${httpGit}`;
 const httpTasks = fs.readFileSync(path.join(repoRoot, "server/internal/api/http_tasks.go"), "utf8");
 const helpers = fs.readFileSync(path.join(repoRoot, "server/internal/api/helpers.go"), "utf8");
 
@@ -50,7 +52,7 @@ for (const [needle, label] of [
   [/respondJSONConditional\(w, r, map\[string\]any\{"sessions": \[\]map\[string\]any\{\}\}\),?/, "replying-sessions 空响应"],
   [/respondJSONConditional\(w, r, map\[string\]any\{"sessions": payload\}\)/, "replying-sessions 正常响应"],
 ]) {
-  assert.match(http, needle, `${label} 必须走 respondJSONConditional`);
+  assert.match(httpDomain, needle, `${label} 必须走 respondJSONConditional`);
 }
 // http_tasks.go 的两个列表端点：模板库与看板任务。
 assert.equal(
@@ -59,7 +61,7 @@ assert.equal(
   "task-templates 与看板任务列表都必须走 respondJSONConditional（stages/events 不能瘦）",
 );
 assert.ok(
-  !/respondJSONList\(w, r, out\.Status\)/.test(http),
+  !/respondJSONList\(w, r, out\.Status\)/.test(httpDomain),
   "git status 绝不能用 respondJSONList —— dirty_count: 0 / clean: false 会被删掉",
 );
 assert.ok(

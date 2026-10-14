@@ -3158,3 +3158,9 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：窗口分页、冷缓存尾读、JSONL 记录计数、尾部解析与 lower-bound 切片共同驻留 manager 主文件；改分页边界时难对照冷/热缓存路径。
 - **根因与边界**：窗口读取编排、内存切片、磁盘尾读、记录计数、尾部解析与 seq lower-bound helper 原样迁至 `manager_window_reads.go`（193 行）；缓存优先、冷读 fallback 与窗口定义保持。父文件实测 749 行。
 - **针对性测试**：`manager_window_test.go`、`manager_window_cold_test.go`、`manager_blocks_window_test.go` → 守住冷热窗口结果一致、尾部读取不触发全量解析与块流窗口语义；全仓 `make test` → Go 门禁通过。
+
+### G-EX API HTTP Git handler 域拆分
+
+- **可见症状**：Git 状态/差异/历史、分支操作、提交/暂存/丢弃、related-file diff 与 worktree handler 挤在 3,024 行 `http.go` 中，HTTP 文件路由与跨域文件/会话逻辑混杂。
+- **根因与边界**：Git handler 和仅供这些 handler 使用的请求解码/响应 helper 原样迁至 `http_git.go`（447 行）；`Routes` 内路由注册与 handler 名称不变，数据仍通过 usecase service 派发。父文件降至 2,588 行，仍需后续按域拆分。
+- **针对性测试**：`server/internal/api/http_git_related_files_stats_test.go` → 守住 Git related-file stats 的请求校验和路由注册；`make test` → 全仓 Go 门禁。
