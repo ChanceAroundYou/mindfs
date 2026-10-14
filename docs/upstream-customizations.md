@@ -1331,7 +1331,7 @@
 
 ### G-AT 会话打开性能（窗口去重 / 载荷压缩 / 工具卡分组）（2026-10-07）
 
-- 来源：`server/internal/session/{types.go,manager.go}`、`web/src/services/{session.ts,pins.ts}`、
+- 来源：`server/internal/session/{types.go,manager.go,manager_session_list.go}`、`web/src/services/{session.ts,pins.ts}`、
   `web/src/app/useRealtimeEvents.ts`、`web/src/hooks/useSessionStream.ts`、
   `web/src/components/SessionViewer.tsx`、`web/src/components/stream/ToolCallGroupCard.tsx`（新增）。
 - 边界：**会话打开热路径（取窗 → 载荷 → 渲染）上的七条**，合上游时要么全留要么全弃。
@@ -3112,3 +3112,9 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：session DB 的惰性打开、schema 迁移顺序、旧 alias/fork 元数据归一和 DB link 文件路径共存于大 `manager.go`，持久化兼容性修复难集中审阅。
 - **根因与边界**：SQLite open 与测试注入点、`ensureSessionMetaDBUnsafe`、`openSessionMetaDB`、迁移/归一 helper、DB link 读写与 per-root user DB 路径原样迁至 `manager_sqlite.go`（297 行）。Schema SQL 常量、binding 事务和 row serialization 留在原处；父文件实测 2,174 行。
 - **针对性测试**：`session_db_migration_order_test.go`、`manager_cursor_migration_test.go`、`manager_test.go`、`manager_pinned_at_retired_test.go` → 守住迁移先后、外部 binding 游标列、DB link fallback、alias/fork 归一及 pinned_at 退役语义。
+
+### G-EQ Session manager list/meta 查询职责拆分
+
+- **可见症状**：列表 API、meta-only 查询、binding 填充、archived 过滤、最新更新时间聚合和 SQL 条件拼装挤在 `manager.go`；维护列表时容易误触正文读取或改变 pinned/archived 过滤语义。
+- **根因与边界**：`List`、`ListByKeys`、`Count`、`LatestSessionUpdatedAt`、`ListMetas` 与 meta query/filter helpers 原样迁至 `manager_session_list.go`（258 行）。Search 继续调用同包查询方法，SQL 条件、顺序、meta-only 行为不变；父文件实测 1,926 行。
+- **针对性测试**：`manager_test.go`、`manager_latest_updated_at_test.go`、`manager_search_test.go`、`manager_pinned_at_retired_test.go` → 守住列表/搜索 query、最新时间聚合、置顶只读 meta、archived 默认过滤和 key 顺序。

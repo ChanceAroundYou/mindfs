@@ -2427,6 +2427,7 @@ groups:
       - web/tests/session-list-merge.test.mjs
     files:
       - server/internal/session/manager.go
+      - server/internal/session/manager_session_list.go
       - server/internal/session/manager_latest_updated_at_test.go
       - server/internal/api/usecase/session.go
       - web/src/App.tsx
@@ -2439,7 +2440,7 @@ groups:
       - web/tests/upstream-restore.test.mjs
       - web/tests/multi-account-partition.test.mjs
     anchors:
-      - server/internal/session/manager.go:LatestSessionUpdatedAt
+      - server/internal/session/manager_session_list.go:LatestSessionUpdatedAt
       - server/internal/api/usecase/session_list.go:LatestSessionUpdatedAt
       - web/src/app/useRealtimeEvents.ts:handleSessionStream
       - web/src/services/session/sessionListMerge.ts:orderProjectGroupsByNode
@@ -3091,7 +3092,7 @@ groups:
       - web/src/services/session/sessionListMerge.ts:sessionActivityAt
       - web/src/services/session/sessionListMerge.ts:projectActivityTime
       - web/src/app/useRealtimeEvents.ts:handleSessionStream
-      - server/internal/session/manager.go:LatestSessionUpdatedAt
+      - server/internal/session/manager_session_list.go:LatestSessionUpdatedAt
 
   - id: G-BK
     title: 发送前落盘所选模型（回合内模型切换 + 内部别名拒收）
@@ -5472,6 +5473,39 @@ groups:
       - server/internal/session/manager_sqlite.go:func (m *Manager) ensureSessionMetaDBUnsafe
       - server/internal/session/manager_sqlite.go:func openSessionMetaDB
       - server/internal/session/manager_sqlite.go:func normalizeForkParentLinks
+
+  - id: G-EQ
+    title: Session manager metadata list and query split
+    kind: arch
+    symptom: |
+      Session list/meta queries, archived-aware filtering, binding fill, latest activity aggregation,
+      and SQL where construction coexist in manager.go with exchange and write orchestration.
+    why: |
+      Keep the session list query surface and its metadata-only performance boundary together so list
+      changes remain reviewable without traversing transcript and persistence code.
+    boundary: |
+      Public List/ListByKeys/Count/LatestSessionUpdatedAt/ListMetas and internal meta list/query,
+      binding fill, filter, and where helpers move unchanged to manager_session_list.go. Search keeps
+      calling the same package-private query method; SQL semantics and list ordering remain unchanged.
+      Parent is 1,926 lines.
+    tests:
+      - server/internal/session/manager_test.go
+      - server/internal/session/manager_latest_updated_at_test.go
+      - server/internal/session/manager_search_test.go
+      - server/internal/session/manager_pinned_at_retired_test.go
+    files:
+      - server/internal/session/manager.go
+      - server/internal/session/manager_session_list.go
+      - docs/agent/rules/backend/TODO.md
+      - docs/agent/rules/backend/file-size.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - server/internal/session/manager_session_list.go:func (m *Manager) ListByKeys
+      - server/internal/session/manager_session_list.go:func (m *Manager) listSessionMetasUnsafe
+      - server/internal/session/manager_session_list.go:func (m *Manager) LatestSessionUpdatedAt
 
   - id: G-EM
     title: Session manager pending tool-call aux state split

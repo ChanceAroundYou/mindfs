@@ -123,5 +123,6 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 - 已完成（2026-10-14）：`GetFullToolCall`、pending tool-call upsert/answer/clear、tool-call merge 与 clone helper 原样迁至 `manager_pending_aux.go`（192 行）；全仓 `make test` 与 upstream 门禁（1041 delta / 142 组）通过。提交 `af7a400` 已推送，no-restart ship 完成，三端安装 `v0.5.5-791-gaf7a400`，bundle 对账一致且未重启节点。
 - 已完成（2026-10-14）：aux JSONL append 与路径校验 helper 原样并入 `manager_aux_reads.go`，相关全仓 `make test` 与 upstream 门禁（1041 delta / 143 组）通过。提交 `f84c304` 已推送，no-restart ship 完成，三端安装 `v0.5.5-792-gf84c304`，bundle 对账一致且未重启节点。
 - 已完成（2026-10-14）：agent state/binding upsert、cursor 查询/更新、binding 查找/确保及 SQL scan/upsert helper 迁至 `manager_agent_bindings.go`（258 行）。session 包及全仓 `make test` 通过；upstream 门禁通过（1042 delta / 144 组），G-Q 对空 id 语义的锚点迁至新模块。提交 `4cea8dc` 已推送，no-restart ship 完成，三端安装 `v0.5.5-793-g4cea8dc`，bundle 对账一致且未重启节点。
-- 进行中（2026-10-14）：SQLite session DB 初始化/打开、schema migration、历史 alias/fork-link 归一和 DB link 文件 helper 迁至 `manager_sqlite.go`（297 行）；测试注入点随实现移动。session 包专项与全仓 `make test` 通过，父文件从 2,456 降至 2,174 行；upstream 门禁和 no-restart ship 待执行。
-- 下一项：完成 G-EP 验收后，继续拆 session meta 查询/回填、写入序列化与名称 alias 职责，再处理 backend TODO 余项，并审阅 reviewer checklist、落实可运行门禁。
+- 已完成（2026-10-14）：SQLite session DB 初始化/打开、schema migration、历史 alias/fork-link 归一和 DB link helper 迁至 `manager_sqlite.go`（297 行）；session 包及全仓测试通过。提交 `c161357` 已推送，upstream 门禁通过（1043 delta / 145 组），no-restart ship 完成，三端安装 `v0.5.5-794-gc161357`，bundle 对账一致且未重启节点。
+- 进行中（2026-10-14）：session 列表/计数/最新活动时间 API、meta 查询、binding 填充及 SQL 条件构造迁至 `manager_session_list.go`（258 行）。Search 调用仍走同包方法；session 包专项与全仓 `make test` 通过，G-BJ 锚点也迁到新模块。父文件实测 1,926 行；upstream 门禁和 no-restart ship 待执行。
+- 下一项：完成 G-EQ 验收后，继续拆 session meta upsert、alias/external-name 持久化与回填，再处理 backend TODO 余项，并审阅 reviewer checklist、落实可运行门禁。
