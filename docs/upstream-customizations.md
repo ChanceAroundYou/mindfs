@@ -3310,3 +3310,9 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：Agent selector、prompt editor 与阶段编辑器仅读取 Agent 状态，却从请求 service 导入类型。
 - **根因与边界**：三个组件直接引用 `shared/agentTypes.ts`；service 继续负责获取/重启行为，运行时语义不变，allowlist 再减少三条边。
 - **针对性测试**：`web/tests/reviewer-architecture-rules.test.mjs` → 守住组件 service 边只减不增；`npm run typecheck` → 守住类型解析。
+
+### G-GV Agent status types in task panels
+
+- **可见症状**：任务详情与模板对话框仍从 agent 请求 service 导入 AgentStatus，虽然这两个组件只需展示层类型。
+- **根因与边界**：两个组件改从 `shared/agentTypes.ts` 导入类型；task service 的运行时操作保持原路径与行为，allowlist 删除两条 agent service 边。
+- **针对性测试**：`web/tests/reviewer-architecture-rules.test.mjs` → 守住组件 service 边只减不增；`npm run typecheck` → 守住类型解析。

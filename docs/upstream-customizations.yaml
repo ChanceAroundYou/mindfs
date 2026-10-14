@@ -6436,3 +6436,28 @@ groups:
     anchors:
       - web/src/shared/agentTypes.ts:export type AgentStatus
       - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+
+  - id: G-GV
+    title: Agent status types in task panels
+    kind: arch
+    symptom: |
+      Task detail and template panels import the agent request service for AgentStatus display typing.
+    why: |
+      Keep shared display contracts separate from the task and agent runtime service imports.
+    boundary: |
+      TaskDetailPanel and TaskTemplateDialog import AgentStatus from shared/agentTypes.ts; task service
+      runtime operations remain unchanged and two reviewed agent-service edges are removed.
+    tests:
+      - web/tests/reviewer-architecture-rules.test.mjs
+    files:
+      - web/src/components/task/TaskDetailPanel.tsx
+      - web/src/components/task/TaskTemplateDialog.tsx
+      - web/tests/fixtures/component-service-import-debt.json
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/shared/agentTypes.ts:export type AgentStatus
+      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"

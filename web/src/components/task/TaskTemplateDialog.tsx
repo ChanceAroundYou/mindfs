@@ -8,7 +8,7 @@ import {
   type TaskTemplate,
   type TaskTemplateStage,
 } from "../../services/tasks";
-import type { AgentStatus } from "../../services/agents";
+import type { AgentStatus } from "../../shared/agentTypes";
 import { reportError } from "../../services/net/error";
 import { useI18n, type I18nContextValue } from "../../i18n/index";
 import { DEFAULT_TASK_AGENT, DEFAULT_TASK_MODEL } from "../../app/appTask";

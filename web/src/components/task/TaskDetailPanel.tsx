@@ -12,7 +12,7 @@ import { statusText, latestStageRun } from "./taskDetailUtils";
 import { pencilStyle, sessionIconButtonStyle, runIconButtonStyle, tagStyle } from "./taskDetailStyles";
 import { TaskDetailConfirmDialog } from "./TaskDetailConfirmDialog";
 import type { KanbanTask, StageTemplate, TaskDetail } from "../../services/tasks";
-import type { AgentStatus } from "../../services/agents";
+import type { AgentStatus } from "../../shared/agentTypes";
 import { taskStatusColor, isTerminalKanbanTask } from "../../app/appTask";
 import { DEFAULT_TASK_AGENT } from "../../app/appTask";
 import { DeleteIcon, RunNowIcon, TaskCompleteIcon, TaskFinishWorktreeIcon } from "./taskIcons";
