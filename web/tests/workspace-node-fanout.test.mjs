@@ -6,7 +6,9 @@ import { readFileSync, existsSync } from "node:fs";
 const board = readFileSync(new URL("../src/app/useWorkspaceBoard.ts", import.meta.url), "utf8");
 const tasks = readFileSync(new URL("../src/services/tasks.ts", import.meta.url), "utf8");
 const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
-const goService = readFileSync(new URL("../../server/internal/kanban/service.go", import.meta.url), "utf8");
+const goService = ["service.go", "service_tasks.go"]
+  .map((file) => readFileSync(new URL(`../../server/internal/kanban/${file}`, import.meta.url), "utf8"))
+  .join("\n");
 
 // 1) 扇出走 Promise.all，一个节点失败不阻塞其余（与 loadMultiProjectSessionGroups 同一形状）
 //    catch 分支还必须**记下失败的节点**：断联时 tasks 拉空，用户看到的是「任务凭空消失」，

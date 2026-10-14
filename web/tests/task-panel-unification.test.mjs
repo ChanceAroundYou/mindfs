@@ -22,7 +22,9 @@ const taskComposer = read("src/app/useTaskComposer.ts");
 const css = read("src/index.css");
 const boardView = read("src/components/TaskBoardView.tsx");
 const viteConfig = read("vite.config.ts");
-const serviceGo = fs.readFileSync(path.join(root, "../server/internal/kanban/service.go"), "utf8");
+const serviceGo = ["service.go", "service_tasks.go"]
+  .map((file) => fs.readFileSync(path.join(root, `../server/internal/kanban/${file}`), "utf8"))
+  .join("\n");
 const templateStore = fs.readFileSync(path.join(root, "../server/internal/kanban/template_store.go"), "utf8");
 
 // 三张面板深度统一：任务模板编辑（新建+编辑同一个组件）、任务详情、新建任务

@@ -3,7 +3,6 @@
 ## 必拆文件（>1500 非测试，只列不改；每次 1 个 + `make test`）
 
 ```
-kanban/service.go 1640 · agent/codex/importer.go 1887
 agent/codex/session.go 1586 · gitview/gitview.go 1575
 ```
 

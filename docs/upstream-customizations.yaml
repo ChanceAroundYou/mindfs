@@ -6094,3 +6094,36 @@ groups:
       - server/internal/kanban/service_execution.go:func (s *Service) runAgentStage
       - server/internal/kanban/service_execution.go:func (s *Service) finishTask
       - server/internal/kanban/service_execution.go:func (s *Service) recordTaskError
+
+
+  - id: G-GJ
+    title: Kanban task template and query service split
+    kind: arch
+    symptom: |
+      Stage/task template CRUD, task creation and snapshots, task list/detail, and cross-project overview
+      are mixed with state transitions and execution services.
+    why: |
+      Keep task initialization and query behavior together so template and overview changes can be reviewed
+      independently from task execution and lifecycle state transitions.
+    boundary: |
+      ListStageTemplates through GetTask move unchanged to service_tasks.go (228 lines). Template snapshots,
+      task numbering, overview skip-on-project-error and ordering semantics remain unchanged. Parent is
+      1,422 lines, below the 1,500 hardline.
+    tests:
+      - server/internal/kanban/service_test.go
+      - web/tests/task-panel-unification.test.mjs
+      - web/tests/workspace-node-fanout.test.mjs
+    files:
+      - server/internal/kanban/service.go
+      - server/internal/kanban/service_tasks.go
+      - docs/agent/rules/backend/TODO.md
+      - docs/agent/rules/backend/file-size.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - server/internal/kanban/service_tasks.go:func (s *Service) ListStageTemplates
+      - server/internal/kanban/service_tasks.go:func (s *Service) CreateTask
+      - server/internal/kanban/service_tasks.go:func (s *Service) Overview
+      - server/internal/kanban/service_tasks.go:func (s *Service) GetTask

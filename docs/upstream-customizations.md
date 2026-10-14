@@ -3234,3 +3234,10 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：任务阶段调度、agent 执行、prompt 值生成及成功/失败收尾与任务 CRUD、状态迁移和存储编排挤在同一 service 文件，修改阶段执行行为容易误触其他流程。
 - **根因与边界**：`executeTask` 至 `recordTaskError` 的 stage execution、agent dispatch、prompt projection 与 run completion/error persistence 原样迁至 `service_execution.go`（360 行）；执行顺序、状态/event、失败记录与 worktree/repoint 生命周期保持原位。父文件实测 1,640 行，后续继续拆分。
 - **针对性测试**：`server/internal/kanban/service_test.go` 与 `server/internal/kanban/worktree_finish_stage_test.go` → 守住阶段执行顺序、提示词和失败/等待状态；`make test` → 全仓 Go 门禁。
+
+
+### G-GJ Kanban task template and query service split
+
+- **可见症状**：阶段/任务模板 CRUD、任务创建与快照、列表/详情/跨项目 overview 混在状态转换和执行服务中，模板变更与任务查询难以独立审阅。
+- **根因与边界**：`ListStageTemplates` 至 `GetTask` 的模板、创建与读取职责原样迁至 `service_tasks.go`（228 行）；模板快照、任务编号、overview 单项目失败跳过和排序语义不变。父 `service.go` 实测 1,422 行，低于硬线。
+- **针对性测试**：`server/internal/kanban/service_test.go` → 守住模板 CRUD、创建快照、任务列表/详情/overview；`web/tests/task-panel-unification.test.mjs` 与 `web/tests/workspace-node-fanout.test.mjs` → Go 源守卫同时检查 facade 与 task/query 模块；`make test` → 全仓 Go 门禁。

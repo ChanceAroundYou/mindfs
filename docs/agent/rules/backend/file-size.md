@@ -13,7 +13,6 @@
 ## 必拆清单（>1500 非测试，按当前工作区实测）
 
 ```
-server/internal/kanban/service.go 1640
 server/internal/agent/codex/importer.go 1887
 server/internal/agent/codex/session.go 1586
 server/internal/gitview/gitview.go 1575
