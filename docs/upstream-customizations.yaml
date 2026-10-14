@@ -6914,3 +6914,32 @@ groups:
       - web/src/shared/sessionGroupDisplay.ts:export function resolveGroupColor
       - web/tests/session-group-display.test.mjs:const byKey =
       - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+
+  - id: G-HM
+    title: Shared session activity timestamp resolver
+    kind: arch
+    symptom: |
+      SessionCard imports a pure list activity timestamp resolver from the session merge service.
+    why: |
+      Keep the display-only timestamp resolver in shared while preserving the historical service facade.
+    boundary: |
+      sessionActivityAt moves to shared/sessionActivityAt.ts and the merge service re-exports it;
+      activity_at versus updated_at precedence and empty-value behavior stay unchanged.
+    tests:
+      - web/tests/session-list-merge.test.mjs
+      - web/tests/reviewer-architecture-rules.test.mjs
+    files:
+      - web/src/shared/sessionActivityAt.ts
+      - web/src/services/session/sessionListMerge.ts
+      - web/src/components/session/SessionCard.tsx
+      - web/tests/session-list-merge.test.mjs
+      - web/tests/fixtures/component-service-import-debt.json
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/shared/sessionActivityAt.ts:export function sessionActivityAt
+      - web/tests/session-list-merge.test.mjs:const activitySourcePath =
+      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"

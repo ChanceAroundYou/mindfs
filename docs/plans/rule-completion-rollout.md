@@ -183,3 +183,5 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 - 进行中（2026-10-14）：补 reviewer checklist 自动覆盖映射；backend 已有 WS、Cancel timeout、AppContext、endpoint role 和文件长度测试；本批为 AppContext 使用面与生产 Go 文件硬线新增 guard。SQLite additive、回滚说明、人工架构判断仍由 reviewer checklist 标明。
 
 - 进行中（2026-10-14）：纯 session group color resolver 移至 `shared/sessionGroupDisplay.ts`，service 路径保留兼容 re-export；MultiProjectSessionList 移除 service 依赖，债务降至 68 条、40 个文件。
+
+- 进行中（2026-10-14）：纯 session list activity timestamp resolver 移至 `shared/sessionActivityAt.ts`，session merge service 保留兼容 re-export；SessionCard 移除 service 依赖，债务降至 67 条、39 个文件。

@@ -3412,3 +3412,9 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：MultiProjectSessionList 为显示节点色而直接导入 session service 子模块中的纯函数。
 - **根因与边界**：纯 `resolveGroupColor` 及其数据契约移到 `shared/sessionGroupDisplay.ts`；旧 service 子路径保留兼容 re-export，节点色解析优先级不变。MultiProjectSessionList 改从 shared 导入，相关 app/hook 调用与源码测试也指向 shared。
 - **针对性测试**：`web/tests/session-group-display.test.mjs` → 守住复合键、节点 id/name 回退顺序；`web/tests/reviewer-architecture-rules.test.mjs` → 守住组件 service 边只减不增；`npm run typecheck` → 守住兼容 facade 与 shared 契约。
+
+### G-HM Shared session activity timestamp resolver
+
+- **可见症状**：SessionCard 只需选取会话列表的活动时间戳，却直接导入 session merge service。
+- **根因与边界**：纯 `sessionActivityAt` resolver 移到 `shared/sessionActivityAt.ts`；session merge service 兼容 re-export，时间戳比较及空值行为不变。SessionCard 改用 shared 入口，源码测试直接加载权威实现。
+- **针对性测试**：`web/tests/session-list-merge.test.mjs` → 守住 activity_at 与 updated_at 的优先级；`web/tests/reviewer-architecture-rules.test.mjs` → 守住组件 service 边只减不增；`npm run typecheck` → 守住类型与 facade。

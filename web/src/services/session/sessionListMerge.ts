@@ -1,3 +1,5 @@
+export { sessionActivityAt } from "../../shared/sessionActivityAt";
+
 export type PinAwareSessionItem = {
   key?: string;
   session_key?: string;
@@ -20,14 +22,6 @@ export function sessionActivityTime(
   item: Pick<PinAwareSessionItem, "updated_at" | "activity_at">,
 ): number {
   return Math.max(timeValue(item.updated_at), timeValue(item.activity_at));
-}
-
-export function sessionActivityAt(
-  item: Pick<PinAwareSessionItem, "updated_at" | "activity_at">,
-): string {
-  return timeValue(item.activity_at) > timeValue(item.updated_at)
-    ? String(item.activity_at || "")
-    : String(item.updated_at || "");
 }
 
 export function projectActivityTime(group: {

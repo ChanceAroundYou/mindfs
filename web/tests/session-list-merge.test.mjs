@@ -5,6 +5,15 @@ import ts from "typescript";
 import vm from "node:vm";
 import { readSource } from "./source-map.mjs";
 
+const activitySourcePath = path.resolve(import.meta.dirname, "../src/shared/sessionActivityAt.ts");
+const activitySource = fs.readFileSync(activitySourcePath, "utf8");
+const activityCompiled = ts.transpileModule(activitySource, {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
+}).outputText;
+const activitySandbox = { exports: {}, module: { exports: {} } };
+vm.runInNewContext(activityCompiled, activitySandbox, { filename: activitySourcePath });
+const { sessionActivityAt } = activitySandbox.exports;
+
 const sourcePath = path.resolve(import.meta.dirname, "../src/services/sessionListMerge.ts");
 const source = fs.readFileSync(sourcePath, "utf8");
 const compiled = ts.transpileModule(source, {
@@ -17,6 +26,10 @@ const compiled = ts.transpileModule(source, {
 const sandbox = {
   exports: {},
   module: { exports: {} },
+  require(specifier) {
+    if (specifier === "../../shared/sessionActivityAt") return activitySandbox.exports;
+    throw new Error(`Unexpected module import: ${specifier}`);
+  },
 };
 vm.runInNewContext(compiled, sandbox, { filename: sourcePath });
 
@@ -25,7 +38,6 @@ const {
   mergeSessionItems,
   orderProjectGroupsByNode,
   projectActivityTime,
-  sessionActivityAt,
 } = sandbox.exports;
 
 const merged = mergeSessionItems(

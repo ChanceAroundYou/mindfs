@@ -14,7 +14,7 @@ import {
   inlineActionStyle,
 } from "./sessionCardHelpers";
 import type { SessionItem } from "./sessionListTypes";
-import { sessionActivityAt } from "../../services/session/sessionListMerge";
+import { sessionActivityAt } from "../../shared/sessionActivityAt";
 import { useSessionCard } from "./useSessionCard";
 import { SessionCardOverflowMenu } from "./SessionCardOverflowMenu";
 
