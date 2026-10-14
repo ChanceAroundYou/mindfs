@@ -7529,7 +7529,7 @@ groups:
       - docs/upstream-customizations.yaml
     anchors:
       - web/src/components/agent/AgentIcon.tsx:useCachedAgentIcon(icon?.src)
-      - web/src/components/agent/useCachedAgentIcon.ts:appPath(`/assets/agents/${fileName}`)
+      - "web/src/components/agent/useCachedAgentIcon.ts:pageServerPath(`/assets/agents/${fileName}`)"
 
   - id: G-IM
     title: Remove stale service imports from task/session panels

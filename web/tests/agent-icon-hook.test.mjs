@@ -11,7 +11,8 @@ const hook = read("src/components/agent/useCachedAgentIcon.ts");
 
 assert.doesNotMatch(view, /services\//, "AgentIcon view should not depend on services");
 assert.match(view, /useCachedAgentIcon\(icon\?\.src\)/);
-assert.match(hook, /appPath\(`\/assets\/agents\/\$\{fileName\}`\)/, "asset URLs keep deployment-prefix routing");
+assert.match(hook, /pageServerPath\(`\/assets\/agents\/\$\{fileName\}`\)/, "agent icons must load from the page server, not the active node (worker has no static assets)");
+assert.doesNotMatch(hook, /appPath\(`\/assets\/agents\//, "asset URLs must not follow the active node");
 assert.match(hook, /loadIconOnce\(url\)/, "SVG fetch caching stays in logic");
 assert.match(hook, /if \(!cancelled\) setSrc\(url\)/, "failed SVG loads fall back to the asset URL");
 

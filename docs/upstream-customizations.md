@@ -3559,8 +3559,8 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 
 ### G-IL Agent icon asset loading moves to hook
 
-- **可见症状**：AgentIcon view 直接从 net service 取部署前缀 URL，并混合维护 SVG fetch/cache 生命周期。
-- **根因与边界**：资产路径解析、请求去重缓存、SVG data URL 转换、失败回退和卸载取消迁至 colocated `useCachedAgentIcon`；view 继续根据 agent 名称选择图标和展示尺寸。子路径部署 URL 语义保持。
+- **可见症状**：AgentIcon view 直接从 net service 取部署前缀 URL，并混合维护 SVG fetch/cache 生命周期；切到远端节点时 claude 等图标 403 丢图。
+- **根因与边界**：资产路径解析、请求去重缓存、SVG data URL 转换、失败回退和卸载取消迁至 colocated `useCachedAgentIcon`；view 继续根据 agent 名称选择图标和展示尺寸。子路径部署 URL 语义保持。**静态资源只在控制面（页面服务器）存在**：图标 URL 必须用 `pageServerPath` 打页面服务器，不能用 `appPath` 跟随选中节点（worker 按设计不服务静态资源，直接 403）。
 - **针对性测试**：`web/tests/agent-icon-hook.test.mjs` → 守住前缀解析、SVG 加载/回退及 view/service 边界；typecheck 与完整 build 守住 React hook 接线。
 
 ### G-IM Remove stale service imports from task/session panels

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { appPath } from "../../services/net/base";
+import { pageServerPath } from "../../services/net/base";
 
 const iconCache = new Map<string, string>();
 const inflight = new Map<string, Promise<string>>();
@@ -30,7 +30,9 @@ async function loadIconOnce(url: string): Promise<string> {
 }
 
 export function useCachedAgentIcon(fileName?: string): string | undefined {
-  const url = fileName ? appPath(`/assets/agents/${fileName}`) : undefined;
+  // 静态资源只在控制面（页面服务器）存在：appPath 跟随选中节点，切到远端时
+  // 打到 worker 上按设计 403。图标必须打页面服务器，见 pageServerPath 注释。
+  const url = fileName ? pageServerPath(`/assets/agents/${fileName}`) : undefined;
   const [src, setSrc] = useState<string | undefined>(() => {
     if (!url) return undefined;
     if (!url.endsWith(".svg")) return url;
