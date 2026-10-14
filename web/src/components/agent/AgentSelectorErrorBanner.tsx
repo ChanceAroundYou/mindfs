@@ -1,4 +1,4 @@
-import type { AgentStatus } from "../../services/agents";
+import type { AgentStatus } from "../../shared/agentTypes";
 import type { I18nContextValue } from "../../i18n/index";
 import { parseAgentErrorDetails, parseAgentErrorMessage } from "./AgentSelectorParts";
 

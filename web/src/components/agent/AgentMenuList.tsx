@@ -1,6 +1,6 @@
 import React from "react";
 import { AgentIcon } from "./AgentIcon";
-import type { AgentStatus } from "../../services/agents";
+import type { AgentStatus } from "../../shared/agentTypes";
 import { useI18n } from "../../i18n/index";
 
 type AgentMenuListProps = {

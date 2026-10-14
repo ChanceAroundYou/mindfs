@@ -3298,3 +3298,9 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：候选项仅用于前端展示与选择，但组件从 `services/candidates` 导入类型，导致 UI 层对数据请求服务产生不必要的结构依赖。
 - **根因与边界**：候选项联合类型和 `CandidateItem` 移至 `web/src/shared/candidateTypes.ts`；service 从 shared 导入并继续 re-export 以保持现有非组件消费者兼容。三个组件改为从 shared 导入，既有请求与选择行为不变。
 - **针对性测试**：`web/tests/reviewer-architecture-rules.test.mjs` → 禁止组件到 service 导入边新增并验证 allowlist 只减；`npm run typecheck` → 守住 TS 类型兼容。
+
+### G-GT Shared agent status contracts in views
+
+- **可见症状**：Agent 状态展示组件只需要读取 `AgentStatus`，却通过 `services/agents` 类型 facade 形成 UI 到运行时请求层的依赖。
+- **根因与边界**：`AgentMenuList`、`AgentSelectorErrorBanner`、`AgentSelectorMenuHeader` 改从既有 `shared/agentTypes.ts` 导入 `AgentStatus`；service 仍负责请求，组件行为不变，allowlist 删除三条依赖边。
+- **针对性测试**：`web/tests/reviewer-architecture-rules.test.mjs` → 守住组件 service 边只减不增；`npm run typecheck` → 守住类型解析。
