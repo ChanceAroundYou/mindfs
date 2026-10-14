@@ -8,7 +8,7 @@ to resume their old TODOs or baselines.
 
 | Plan | Status | Next action |
 |---|---|---|
-| [Rule completion rollout](rule-completion-rollout.md) | Active | 前端 500 行硬线已清零，`usecase/session.go` 实测 1455 行并已 ship。下一项拆 `server/internal/session/manager.go`：搜索实现已迁至 `manager_search.go`（322 行），父文件实测 3593 行；其余 manager 职责与 backend TODO、reviewer checklist 及机械化门禁继续逐项完成。 |
+| [Rule completion rollout](rule-completion-rollout.md) | Active | 前端 500 行硬线已清零，`usecase/session.go` 实测 1455 行并已 ship。`manager.go` 搜索实现已迁至 `manager_search.go`（322 行）；主 exchange 增量读取与游标逻辑正在迁至 `manager_exchanges.go`（315 行），父文件实测 3289 行。继续完成该批验收与其余 manager 职责，再处理 backend TODO、reviewer checklist 和机械门禁。 |
 
 ## Completed or superseded history
 

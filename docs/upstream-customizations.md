@@ -1866,11 +1866,11 @@
   1. **打开会话/切换会话时整个 root 停顿**：冷缓存开窗走 `readExchangesFull`，解析整份主日志
      且持 `m.mu`。实测 1.19MB/206 行 15.3ms；会话越大越久。前端每 ~1.7s 轮询一次窗口端点，
      等于每隔一秒多就有人把 root 锁住十几毫秒 —— 用户体感就是「同步后内容消失/界面卡住」。
-  2. **同 seq 的后续版本读不到**（`:2264` 的 `entry.Seq <= baseSeq { continue }`）：
+  2. **同 seq 的后续版本读不到**（`manager_exchanges.go:readExchangeTail` 曾按 `baseSeq` 跳过旧 seq）：
      tail 追加若含与已缓存 seq 相同的更新（更高 revision / 更完整），增量快路径会直接跳过它，
      页面继续显示旧内容；只有冷启动才碰巧看到对的。
-  3. **tail 内同 seq 重复吐**（`:2267` 的盲 `append`）：同一 seq 追加多行时窗口里出现重复条。
-  4. **完整性升级被误报成冲突**（`:2211`）：同 seq 的空占位被后来的完整回复覆盖时打
+  3. **tail 内同 seq 重复吐**（`manager_exchanges.go:loadExchanges` 曾盲 append）：同一 seq 追加多行时窗口里出现重复条。
+  4. **完整性升级被误报成冲突**（`manager_exchanges.go:mergeExchangeRecord`）：同 seq 的空占位被后来的完整回复覆盖时打
      `conflicting duplicate seq` 告警，污染日志 —— 空正文永不覆盖非空正文，只有「已有正文非空且与新正文不同」才算真冲突。
   5. **含超长行的会话整个搜不到**：搜索的 `bufio.Scanner` 上限写死 1MB，而主日志解析上限是
      `maxExchangeLineBytes`（64MB），任一单行 >1MB 都会让 `Search` 返回 `ErrTooLong`。
@@ -3070,3 +3070,9 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：`manager.go` 同时放着搜索入口、名称匹配排序、块流/旧 JSONL 正文扫描、命中打分和摘要截取；搜索语义与会话持久化及生命周期实现混在 3,593 行文件中。
 - **根因与边界**：`Search` 与全部 search-specific helpers 原样迁至 `manager_search.go`（322 行）。公开 API、同包私有测试调用、块流优先后回退旧日志的顺序、评分和错误行为不变；`manager.go` 仍有 3,593 行，继续按领域拆分。
 - **针对性测试**：`manager_search_test.go`、`search_blocks_test.go` → 守住超长 legacy JSONL 行、块流正文/推理命中、user 优先、seq 定位、工具元数据不参与搜索及 legacy fallback；session 包专项测试已通过。
+
+### G-EJ Session manager 主 exchange 游标与增量读取拆分
+
+- **可见症状**：主 exchange JSONL 的全量/尾部读取、重复 seq 合并、缓存游标推进和 append 写入与 session meta/binding 混在 `manager.go`，改热路径容易漏掉全量与增量两条路径共用的判重规则。
+- **根因与边界**：`exchangeFileCursor`、主日志加载、NUL 前缀修复、seq 合并、全量/增量读取、序列 helper、append 和游标推进原样迁入 `manager_exchanges.go`（315 行）。cache freshness 与 aux 读仍留在父文件，供后续单独拆分；主文件实测 3,289 行。
+- **针对性测试**：`manager_cursor_test.go`、`manager_incremental_merge_test.go`、`manager_duplicate_seq_test.go`、`manager_window_test.go`、`manager_window_cold_test.go`、`manager_test.go` → 守住游标恢复、尾部字段升级/重复 seq 判重、窗口冷读不触发全量解析、NUL 行修复和主日志读写行为。

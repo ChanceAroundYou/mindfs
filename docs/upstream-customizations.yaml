@@ -2220,15 +2220,16 @@ groups:
       - web/tests/session-window.test.mjs
     files:
       - server/internal/session/manager.go
+      - server/internal/session/manager_exchanges.go
       - server/internal/api/http.go
       - server/internal/api/usecase/session.go
       - server/internal/api/usecase/session_list.go
       - web/tests/session-window.test.mjs
     anchors:
       - server/internal/session/manager.go:readExchangeWindow
-      - server/internal/session/manager.go:mergeExchangeRecord
-      - server/internal/session/manager.go:mergeExchangeRecords
-      - server/internal/session/manager.go:readExchangeTail
+      - server/internal/session/manager_exchanges.go:mergeExchangeRecord
+      - server/internal/session/manager_exchanges.go:mergeExchangeRecords
+      - server/internal/session/manager_exchanges.go:readExchangeTail
       - server/internal/session/manager.go:countExchangeRecords
       - server/internal/session/manager.go:GetCommandShell
       - server/internal/session/manager.go:readAuxTailEntries
@@ -5281,3 +5282,37 @@ groups:
       - server/internal/session/manager_search.go:func (m *Manager) Search
       - server/internal/session/manager_search.go:func (m *Manager) searchSessionContent
       - server/internal/session/search_blocks_test.go:func TestSearchFindsTextThatOnlyLivesInBlocks
+
+  - id: G-EJ
+    title: Session manager exchange cursor and incremental read split
+    kind: arch
+    symptom: |
+      Main exchange log loading, full and tail JSONL parsing, duplicate-seq reconciliation, cache cursor
+      advancement, and append behavior are embedded in manager.go alongside session metadata and bindings.
+    why: |
+      Keep the hot exchange read/write path and its cursor invariants together so O(window)/incremental
+      behavior and duplicate sequence semantics can be reviewed without traversing the whole manager.
+    boundary: |
+      exchangeFileCursor, loadExchanges, exchange parsing/merge helpers, full/tail readers, sequence
+      helpers, appendExchange, and cursor advancement move unchanged to manager_exchanges.go. Cache
+      freshness and aux reads remain in manager.go for later focused batches. Parent is 3,289 lines.
+    tests:
+      - server/internal/session/manager_cursor_test.go
+      - server/internal/session/manager_incremental_merge_test.go
+      - server/internal/session/manager_duplicate_seq_test.go
+      - server/internal/session/manager_window_test.go
+      - server/internal/session/manager_window_cold_test.go
+      - server/internal/session/manager_test.go
+    files:
+      - server/internal/session/manager.go
+      - server/internal/session/manager_exchanges.go
+      - docs/agent/rules/backend/TODO.md
+      - docs/agent/rules/backend/file-size.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - server/internal/session/manager_exchanges.go:func (m *Manager) loadExchanges
+      - server/internal/session/manager_exchanges.go:func (m *Manager) readExchangeTail
+      - server/internal/session/manager_exchanges.go:func (m *Manager) advanceExchangeCursorUnsafe
