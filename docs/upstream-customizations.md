@@ -3124,3 +3124,9 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：手动标题需在会话重命名、外部 transcript 重导和列表回填间保持一致；若 alias/external-name 存储或空 id 守卫有分叉，标题会丢失或多个未启动会话串名。
 - **根因与边界**：session alias/external name upsert、agent session id 投影、alias 查找与批量/单条列表回填原样迁至 `manager_aliases.go`（188 行）。空 `agent_session_id` 仍被拒绝进入 external-name 映射，公开 API 与数据库结构不变；父文件实测 1,746 行。
 - **针对性测试**：`manager_test.go`、`manager_rename_compat_test.go` 和 usecase 测试 → 守住改名、外部名回填、删除后重导兼容与空 id 隔离。
+
+### G-ES Session manager metadata row 读写与归一职责拆分
+
+- **可见症状**：同一个 session meta row 同时由 `manager.go` 负责读、合并 bindings、写入和字段归一；schema 兼容修复容易只改一侧，产生列表信息丢失或重启后数据形状不同。
+- **根因与边界**：单行 metadata 查询、meta+bindings 投影、upsert、SQLite 参数序列化、scan、字段归一与共享 row scanner 原样迁至 `manager_meta.go`（264 行）。SQL schema 常量和缓存/transcript orchestration 不变；父文件实测 1,492 行，低于 1,500 硬线，继续朝 800 软线拆分。
+- **针对性测试**：`manager_test.go`、`manager_pinned_at_retired_test.go`、`manager_rename_compat_test.go`、`session_db_migration_order_test.go` → 守住 meta 字段往返、related worktree/文件归一、pinned_at 退役和数据库迁移顺序。

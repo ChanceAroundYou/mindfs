@@ -5541,6 +5541,40 @@ groups:
       - server/internal/session/manager_aliases.go:func (m *Manager) LookupAliasForAgent
       - server/internal/session/manager_aliases.go:func (m *Manager) applySessionNameAliasesUnsafe
 
+  - id: G-ES
+    title: Session manager metadata row read and write split
+    kind: arch
+    symptom: |
+      Session metadata SQL row decoding/normalization, single-row reads, binding projection, and upsert
+      serialization remain in manager.go beside cache, transcript, and lifecycle orchestration.
+    why: |
+      Keep the SQLite Session row contract and its JSON/time normalization together so metadata schema
+      changes can be reviewed against both read and write projection in one place.
+    boundary: |
+      getSessionMetaUnsafe, metadata-with-bindings projection, upsertSessionMetaUnsafe, argument
+      serialization, row scanner/decoder, normalization, and shared rowScanner/error helpers move
+      unchanged to manager_meta.go. SQL schema/constants and session loading/cache orchestration remain
+      unchanged. Parent is 1,492 lines, below the 1,500 hardline.
+    tests:
+      - server/internal/session/manager_test.go
+      - server/internal/session/manager_pinned_at_retired_test.go
+      - server/internal/session/manager_rename_compat_test.go
+      - server/internal/session/session_db_migration_order_test.go
+    files:
+      - server/internal/session/manager.go
+      - server/internal/session/manager_meta.go
+      - docs/agent/rules/backend/TODO.md
+      - docs/agent/rules/backend/file-size.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - server/internal/session/manager_meta.go:func (m *Manager) getSessionMetaUnsafe
+      - server/internal/session/manager_meta.go:func (m *Manager) upsertSessionMetaUnsafe
+      - server/internal/session/manager_meta.go:func scanSessionMetaRow
+      - server/internal/session/manager_meta.go:func normalizeSessionMeta
+
   - id: G-EM
     title: Session manager pending tool-call aux state split
     kind: arch
