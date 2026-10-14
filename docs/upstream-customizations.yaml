@@ -6030,3 +6030,36 @@ groups:
       - server/internal/api/agent_api_provider_files.go:func normalizeJSONLikeConfig
       - server/internal/api/agent_api_provider_files.go:func readYAMLMap
       - server/internal/api/agent_api_provider_files.go:func formatSimpleEnv
+
+
+  - id: G-GH
+    title: Agent API provider config application adapters split
+    kind: arch
+    symptom: |
+      Provider apply orchestration, Codex TOML merge, and multiple agent config writers are concentrated
+      in the API/provider entry file, so extending an agent config format is difficult to isolate.
+    why: |
+      Keep provider application and agent-specific config adapters together so protocol selection, write
+      order, and environment semantics can be reviewed independently from HTTP and provider persistence.
+    boundary: |
+      Generic apply orchestration, Codex TOML merge, agent adapters, and env update helpers move unchanged
+      from applyAgentAPIProvider up to probeAgentAPIProvider into agent_api_provider_apply.go (769 lines).
+      Provider selection, write order, and agent-specific env behavior remain unchanged. Parent is 1,291 lines.
+    tests:
+      - server/internal/api/agent_api_provider_test.go
+      - server/internal/api/agent_config_test.go
+      - server/internal/api/agent_api_provider_sync_test.go
+    files:
+      - server/internal/api/agent_api_provider.go
+      - server/internal/api/agent_api_provider_apply.go
+      - docs/agent/rules/backend/TODO.md
+      - docs/agent/rules/backend/file-size.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - server/internal/api/agent_api_provider_apply.go:func applyAgentAPIProvider
+      - server/internal/api/agent_api_provider_apply.go:func mergeCodexAPIProviderConfig
+      - server/internal/api/agent_api_provider_apply.go:func applyPiAPIProvider
+      - server/internal/api/agent_api_provider_apply.go:func writeAgentEnvConfig

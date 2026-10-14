@@ -3220,3 +3220,10 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：API provider 写入 agent 配置时，JSON-like 解析、YAML/JSON 文件 I/O、模型表结构与 managed block 操作混在 provider handler 和 agent-specific apply 逻辑中，配置格式维护难以聚焦。
 - **根因与边界**：文件与配置映射 helpers 从 `firstModelOrDefault` 起原样迁至 `agent_api_provider_files.go`（449 行）；序列化格式、注释/引号/尾逗号归一和 managed sequence 语义不变。父 provider 文件实测 2,047 行，后续继续拆分。
 - **针对性测试**：`server/internal/api/agent_api_provider_test.go` 与 `server/internal/api/agent_api_provider_sync_test.go` → 守住 Codex TOML 与 provider 写入/同步、文件配置更新及模型投影；`make test` → 全仓 Go 门禁。
+
+
+### G-GH Agent API provider config application adapters split
+
+- **可见症状**：provider 的 apply orchestration、Codex TOML 合并及多个 agent 配置写入适配集中在 API/provider 入口文件，扩展一种 agent 配置格式容易影响其他协议路径。
+- **根因与边界**：`applyAgentAPIProvider` 至 `probeAgentAPIProvider` 前的通用 apply、Codex TOML 合并、各 agent adapter 与 env 更新逻辑原样迁至 `agent_api_provider_apply.go`（769 行）；provider 选择、写入顺序、agent-specific env 语义不变。父文件实测 1,291 行。
+- **针对性测试**：`server/internal/api/agent_api_provider_test.go`、`server/internal/api/agent_config_test.go` 与 `server/internal/api/agent_api_provider_sync_test.go` → 守住协议应用、现有配置保留、env 清理/合并与批量同步；`make test` → 全仓 Go 门禁。
