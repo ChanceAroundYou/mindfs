@@ -51,7 +51,6 @@
   "web/src/components/file/icons.tsx -> ../../services/webPush",
   "web/src/components/git/GitStatusPanel.tsx -> ../../services/dialog",
   "web/src/components/session/MultiProjectSessionList.tsx -> ../../services/net/nodeRegistry",
-  "web/src/components/session/MultiProjectSessionList.tsx -> ../../services/session/sessionGroupDisplay",
   "web/src/components/session/SessionCard.tsx -> ../../services/session/sessionListMerge",
   "web/src/components/session/SessionList.tsx -> ../../services/session/sessionTree",
   "web/src/components/session/SessionViewer.tsx -> ../../services/net/error",

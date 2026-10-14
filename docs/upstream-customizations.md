@@ -3406,3 +3406,9 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：SessionViewer 和 Timeline 为显示单轮耗时而直接导入 session service 子模块。
 - **根因与边界**：纯时间戳归一与耗时格式化 helpers 移到 `shared/sessionDuration.ts`；旧 service 子路径兼容 re-export，流时间语义与标签格式不变，源码测试指向新的权威定义。
 - **针对性测试**：`web/tests/session-duration.test.mjs` → 守住时长阈值、无效时间处理与服务端事件时间优先；`web/tests/reviewer-architecture-rules.test.mjs` → 守住组件 service 边只减不增。
+
+### G-HL Shared session group display resolver
+
+- **可见症状**：MultiProjectSessionList 为显示节点色而直接导入 session service 子模块中的纯函数。
+- **根因与边界**：纯 `resolveGroupColor` 及其数据契约移到 `shared/sessionGroupDisplay.ts`；旧 service 子路径保留兼容 re-export，节点色解析优先级不变。MultiProjectSessionList 改从 shared 导入，相关 app/hook 调用与源码测试也指向 shared。
+- **针对性测试**：`web/tests/session-group-display.test.mjs` → 守住复合键、节点 id/name 回退顺序；`web/tests/reviewer-architecture-rules.test.mjs` → 守住组件 service 边只减不增；`npm run typecheck` → 守住兼容 facade 与 shared 契约。

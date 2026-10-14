@@ -3,7 +3,7 @@ import { useI18n } from "../../i18n/index";
 import { NodeBadgeHeader } from "../account/NodeBadgeHeader";
 import { ViewHeader } from "../../layout/ViewHeader";
 import { getNodes, PALETTE } from "../../services/net/nodeRegistry";
-import { resolveGroupColor } from "../../services/session/sessionGroupDisplay";
+import { resolveGroupColor } from "../../shared/sessionGroupDisplay";
 import { SessionCardMemo } from "./SessionCard";
 import {
   ArchiveHeaderButton,

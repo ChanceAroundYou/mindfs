@@ -181,3 +181,5 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 - 进行中（2026-10-14）：`copyText` 平台能力归到 `web/src/platform/clipboard.ts`，service 路径留兼容 re-export；四个组件和两个 app 调用点改用 platform 入口，组件依赖债务降至 71 条、40 个文件。
 - 进行中（2026-10-14）：纯 session duration/事件时间 helpers 移至 `shared/sessionDuration.ts`，services/session 留兼容门面；SessionViewer 与 Timeline 移除 service 依赖，源位置断言同步转到 shared，债务降至 69 条、40 个文件。
 - 进行中（2026-10-14）：补 reviewer checklist 自动覆盖映射；backend 已有 WS、Cancel timeout、AppContext、endpoint role 和文件长度测试；本批为 AppContext 使用面与生产 Go 文件硬线新增 guard。SQLite additive、回滚说明、人工架构判断仍由 reviewer checklist 标明。
+
+- 进行中（2026-10-14）：纯 session group color resolver 移至 `shared/sessionGroupDisplay.ts`，service 路径保留兼容 re-export；MultiProjectSessionList 移除 service 依赖，债务降至 68 条、40 个文件。

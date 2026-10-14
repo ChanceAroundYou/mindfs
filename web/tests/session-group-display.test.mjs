@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { resolveGroupColor } from "../src/services/sessionGroupDisplay.ts";
+import { resolveGroupColor } from "../src/shared/sessionGroupDisplay.ts";
 
 // byKey 命中：优先 nid::rid 复合键的 _nodeColor
 const byKey = {

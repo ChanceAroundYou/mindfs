@@ -6882,3 +6882,35 @@ groups:
     anchors:
       - web/src/shared/sessionDuration.ts:export function formatSessionDuration
       - web/tests/session-duration.test.mjs:const sourcePath = path.resolve(import.meta.dirname, "../src/shared/sessionDuration.ts")
+
+  - id: G-HL
+    title: Shared session group display resolver
+    kind: arch
+    symptom: |
+      MultiProjectSessionList imports a pure node-color display resolver from a session service submodule.
+    why: |
+      Keep pure session presentation logic in shared while preserving the historical service module path.
+    boundary: |
+      resolveGroupColor and its data contracts move to shared/sessionGroupDisplay.ts; the service subpath
+      re-exports them. Node color lookup precedence and fallback behavior remain unchanged.
+    tests:
+      - web/tests/session-group-display.test.mjs
+      - web/tests/reviewer-architecture-rules.test.mjs
+    files:
+      - web/src/shared/sessionGroupDisplay.ts
+      - web/src/services/session/sessionGroupDisplay.ts
+      - web/src/app/useMultiProjectSessions.ts
+      - web/src/components/session/MultiProjectSessionList.tsx
+      - web/src/components/session/useMultiProjectSessionList.ts
+      - web/src/components/session/useSessionCard.ts
+      - web/tests/session-group-display.test.mjs
+      - web/tests/fixtures/component-service-import-debt.json
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/shared/sessionGroupDisplay.ts:export function resolveGroupColor
+      - web/tests/session-group-display.test.mjs:const byKey =
+      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
