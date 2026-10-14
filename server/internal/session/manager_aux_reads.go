@@ -5,8 +5,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -271,4 +273,37 @@ func (m *Manager) readAuxTail(path string, offset int64, afterSeq int) ([]Exchan
 		return nil, false
 	}
 	return items, true
+}
+
+func (m *Manager) appendExchangeAux(key string, aux ExchangeAux) error {
+	path, err := m.auxPath(key)
+	if err != nil {
+		return err
+	}
+	payload, err := json.Marshal(aux)
+	if err != nil {
+		return err
+	}
+	file, err := m.root.OpenMetaFileAppend(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	if _, err := file.Write(append(payload, '\n')); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (m *Manager) auxPath(key string) (string, error) {
+	if strings.TrimSpace(m.root.MetaDir()) == "" {
+		return "", errors.New("managed dir required")
+	}
+	if key == "" {
+		return "", errors.New("session key required")
+	}
+	if strings.Contains(key, "..") || strings.ContainsRune(key, filepath.Separator) || strings.Contains(key, "/") {
+		return "", fmt.Errorf("invalid session key: %s", key)
+	}
+	return filepath.ToSlash(fmt.Sprintf(auxFileTpl, key)), nil
 }

@@ -3094,3 +3094,9 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：流式中的 tool-call 详情要先从内存 pending 状态返回，写盘后再从 aux 重建；ask-user 答案需合并到同一个调用。若锁或内存优先顺序漂移，展开中的工具卡会短暂丢详情，或已填写答案被覆盖。
 - **根因与边界**：`GetFullToolCall`、pending aux upsert/answer/clear、tool-call merge、pending lookup 与 clone helper 原样迁至 `manager_pending_aux.go`（192 行）。内存先查、磁盘回退、answers 累并和锁边界保持；aux append/path 与公开读 wrapper 留给后续批次。父文件实测 2,735 行。
 - **针对性测试**：`manager_test.go` → 守住 pending 优先于磁盘、clear 后 not-found、ask-user 多次回答累并及 tool-call aux 落盘读取。
+
+### G-EN Session manager aux JSONL 写入与路径 helper 归位
+
+- **可见症状**：aux 文件的 JSONL append 与 session key/path 校验留在 `manager.go`，读逻辑已在 aux 专属模块，后续存储修改需要跨文件寻找同一职责。
+- **根因与边界**：`appendExchangeAux` 与 `auxPath` 原样并入 `manager_aux_reads.go`；`AddExchangeAux` 的公开校验和 mutex 边界未改，exchange 主日志写入仍归 `manager_exchanges.go`。父文件实测 2,702 行。
+- **针对性测试**：`manager_test.go` → 守住 aux 正文/工具/plan/todo 存储、key 路径验证与读回行为。

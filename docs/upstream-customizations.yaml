@@ -5379,6 +5379,34 @@ groups:
       - server/internal/session/manager_aux_tail.go:func (m *Manager) GetCommandShell
       - server/internal/session/manager_aux_tail.go:func (m *Manager) readAuxTailEntries
 
+  - id: G-EN
+    title: Session manager aux append and path safety split
+    kind: arch
+    symptom: |
+      Aux JSONL append encoding and aux path validation remain in manager.go apart from the aux
+      read/fallback implementation, splitting one storage format across unrelated persistence code.
+    why: |
+      Keep aux path safety and append encoding with the aux read/store module so readers and writers
+      share one focused owner while preserving the existing session-key validation contract.
+    boundary: |
+      appendExchangeAux and auxPath move unchanged into manager_aux_reads.go. AddExchangeAux public
+      validation and locking remain unchanged in manager.go; exchange-log path/write remains in
+      manager_exchanges.go. Parent is 2,702 lines.
+    tests:
+      - server/internal/session/manager_test.go
+    files:
+      - server/internal/session/manager.go
+      - server/internal/session/manager_aux_reads.go
+      - docs/agent/rules/backend/TODO.md
+      - docs/agent/rules/backend/file-size.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - server/internal/session/manager_aux_reads.go:func (m *Manager) appendExchangeAux
+      - server/internal/session/manager_aux_reads.go:func (m *Manager) auxPath
+
   - id: G-EM
     title: Session manager pending tool-call aux state split
     kind: arch

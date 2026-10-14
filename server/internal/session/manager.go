@@ -2193,26 +2193,6 @@ func jsonlScanner(payload []byte) *bufio.Scanner {
 	return scanner
 }
 
-func (m *Manager) appendExchangeAux(key string, aux ExchangeAux) error {
-	path, err := m.auxPath(key)
-	if err != nil {
-		return err
-	}
-	payload, err := json.Marshal(aux)
-	if err != nil {
-		return err
-	}
-	file, err := m.root.OpenMetaFileAppend(path)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-	if _, err := file.Write(append(payload, '\n')); err != nil {
-		return err
-	}
-	return nil
-}
-
 func (m *Manager) exchangePath(key string) (string, error) {
 	if strings.TrimSpace(m.root.MetaDir()) == "" {
 		return "", errors.New("managed dir required")
@@ -2224,19 +2204,6 @@ func (m *Manager) exchangePath(key string) (string, error) {
 		return "", fmt.Errorf("invalid session key: %s", key)
 	}
 	return filepath.ToSlash(fmt.Sprintf(exchangeFileTpl, key)), nil
-}
-
-func (m *Manager) auxPath(key string) (string, error) {
-	if strings.TrimSpace(m.root.MetaDir()) == "" {
-		return "", errors.New("managed dir required")
-	}
-	if key == "" {
-		return "", errors.New("session key required")
-	}
-	if strings.Contains(key, "..") || strings.ContainsRune(key, filepath.Separator) || strings.Contains(key, "/") {
-		return "", fmt.Errorf("invalid session key: %s", key)
-	}
-	return filepath.ToSlash(fmt.Sprintf(auxFileTpl, key)), nil
 }
 
 func (m *Manager) ensureSessionMetaDBUnsafe() (*sql.DB, error) {
