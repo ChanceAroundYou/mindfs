@@ -3206,3 +3206,10 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：Claude pending tool-call 状态迁移、task tool 结果关联与 stdout/stderr/content 归一散落在大型 session event 文件中；修改结果映射时难以集中核对锁与状态契约。
 - **根因与边界**：pending tool-call 生命周期和 tool-result matching/normalization/projection helpers 原样迁至 `session_tool_results.go`（486 行）；锁范围、pending 消费时序、task list 状态映射与输出结构不变。父文件实测 1,746 行，仍高于硬线。
 - **针对性测试**：`server/internal/agent/claude/session_test.go` → 守住 pending tool-call 生命周期、TaskCreate/Update/List/Get 结果更新与通用结果摘要；`make test` → 全仓 Go 门禁。
+
+
+### G-FE Claude SDK message handling and subagent projection split
+
+- **可见症状**：Claude SDK partial/assistant/user/task/compact/auth 消息处理、ask-user 交互和 subagent/task 事件投影集中在 session 主文件，事件契约与会话主循环难以分开审阅。
+- **根因与边界**：`handlePartialAssistantMessage` 至 `taskType` 的消息处理、ask-user 与 subagent/task projection 连续职责段原样迁至 `session_messages.go`（684 行）；调用顺序、事件类型、锁和会话状态语义不变。父文件实测 1,076 行，低于硬线。
+- **针对性测试**：`server/internal/agent/claude/session_test.go` → 守住 SDK 消息到 MindFS event 的转换、ask-user 与 subagent/task 状态映射；`make test` → 全仓 Go 门禁。

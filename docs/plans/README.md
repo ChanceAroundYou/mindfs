@@ -8,7 +8,7 @@ to resume their old TODOs or baselines.
 
 | Plan | Status | Next action |
 |---|---|---|
-| [Rule completion rollout](rule-completion-rollout.md) | Active | 前端 500 行硬线已清零，`usecase/session.go` 实测 1455 行并已 ship。`manager.go` 的 search、exchange、aux、pending tool-call、agent binding、SQLite、list、alias、meta 行读写、related-files、exchange identity、lifecycle 与窗口读取职责分域；父文件实测 749 行，低于 800 行软线。`server/internal/api/http.go` 的 Git、file/directory 与 session handler 已按域下沉（当前 658 行，低于硬线；repoint handler 留原位未改）；下一项为 `server/internal/agent/claude/session.go`（当前 1746 行，model/config 与 tool-call summary/result 已拆）；之后处理剩余 5 个大文件、cli/server 双入口审计与 reviewer checklist 门禁。 |
+| [Rule completion rollout](rule-completion-rollout.md) | Active | 前端 500 行硬线已清零，`usecase/session.go` 实测 1455 行并已 ship。`manager.go` 的 search、exchange、aux、pending tool-call、agent binding、SQLite、list、alias、meta 行读写、related-files、exchange identity、lifecycle 与窗口读取职责分域；父文件实测 749 行，低于 800 行软线。`server/internal/api/http.go` 的 Git、file/directory 与 session handler 已按域下沉（当前 658 行，低于硬线；repoint handler 留原位未改）；下一项为 `server/internal/agent/claude/session.go`（当前 1746 行，model/config 与 tool-call summary/result 已拆）；之后处理剩余 5 个 >1500 行文件、cli/server 双入口审计与 reviewer checklist 门禁。 |
 
 ## Completed or superseded history
 

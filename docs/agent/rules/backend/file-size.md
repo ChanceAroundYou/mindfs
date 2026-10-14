@@ -13,7 +13,6 @@
 ## 必拆清单（>1500 非测试，按当前工作区实测）
 
 ```
-server/internal/agent/claude/session.go 1746
 server/internal/api/agent_api_provider.go 2484
 server/internal/kanban/service.go 1989
 server/internal/agent/codex/importer.go 1887

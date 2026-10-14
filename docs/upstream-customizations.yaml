@@ -5966,3 +5966,35 @@ groups:
       - server/internal/agent/claude/session_tool_results.go:func (s *session) toolResultUpdate
       - server/internal/agent/claude/session_tool_results.go:func taskListToolResultUpdate
       - server/internal/agent/claude/session_tool_results.go:func summarizeGenericToolResultValue
+
+
+  - id: G-FE
+    title: Claude SDK message handling and subagent projection split
+    kind: arch
+    symptom: |
+      Claude SDK partial/assistant/user/task/compact/auth message handling, ask-user interaction, and
+      subagent/task event projection are concentrated in the session main file, coupling event contracts
+      to the session consumer.
+    why: |
+      Keep SDK message-to-event handling and subagent/task projections together so event behavior can be
+      reviewed independently from session lifecycle and streaming orchestration.
+    boundary: |
+      Message handlers from handlePartialAssistantMessage through taskType, including ask-user and
+      subagent/task projections, move unchanged to session_messages.go (684 lines). Call order, event types,
+      lock scopes, and session state semantics remain unchanged. Parent is 1,076 lines.
+    tests:
+      - server/internal/agent/claude/session_test.go
+    files:
+      - server/internal/agent/claude/session.go
+      - server/internal/agent/claude/session_messages.go
+      - docs/agent/rules/backend/TODO.md
+      - docs/agent/rules/backend/file-size.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - server/internal/agent/claude/session_messages.go:func (s *session) handlePartialAssistantMessage
+      - server/internal/agent/claude/session_messages.go:func (s *session) handleAssistantMessage
+      - server/internal/agent/claude/session_messages.go:func (s *session) awaitAskUserQuestion
+      - server/internal/agent/claude/session_messages.go:func (s *session) taskType
