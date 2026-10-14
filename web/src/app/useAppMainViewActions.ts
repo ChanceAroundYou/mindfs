@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import { readURLState } from "./appPath";
-import { pushViewHistoryEntry } from "../hooks/useBackNavigation";
+import { pushViewHistoryEntry } from "../services/platform/backNavigation";
 import type { MainViewMode, URLState } from "./appPath";
 import type { ActionHandlers } from "./useActionHandlers";
 import type { FileEntry } from "../services/prefs/directorySort";

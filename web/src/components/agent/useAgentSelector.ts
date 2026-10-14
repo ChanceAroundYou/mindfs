@@ -6,10 +6,8 @@ import {
   AGENT_MENU_MAX_BODY_HEIGHT,
   AGENT_MENU_MIN_BODY_HEIGHT,
   AGENT_MODEL_SEARCH_THRESHOLD,
-  claudeModelBase,
-  isClaudeAliasModelName,
-  strip1MSuffix,
 } from "./AgentSelectorParts";
+import { claudeModelBase, isClaudeAliasModelName, strip1MSuffix } from "./agentSelectorUtils";
 
 export type AgentSelectorProps = {
   agent: string;

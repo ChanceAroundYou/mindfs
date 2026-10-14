@@ -22,7 +22,7 @@ import {
 } from "../services/file";
 import { copyText } from "../platform/clipboard";
 import { AppShell } from "../layout/AppShell";
-import { ToastContainer } from "../components/shell/Toast";
+import { ToastContainer } from "../components/shell/ToastContainer";
 import { DialogHost } from "../components/shell/DialogHost";
 import { BottomSheet } from "../components/shell/BottomSheet";
 import { ScheduledAgentTaskDialog } from "../components/task/ScheduledAgentTaskDialog";
@@ -47,7 +47,7 @@ import { SessionSheet } from "../components/app/SessionSheet";
 import { AppActionBar } from "../components/app/AppActionBar";
 import { SessionPane } from "../components/app/SessionPane";
 import { FileTreePanel } from "../components/app/FileTreePanel";
-import { renderRootSlashCommandResult } from "../app/renderRootSlashCommandResult";
+import { renderRootSlashCommandResult } from "../app/renderRootSlashCommandResultHelpers";
 import type { useAppStateLayer } from "./useAppStateLayer";
 import type { useAppSessionLayer } from "./useAppSessionLayer";
 import type { useAppDomainLayer } from "./useAppDomainLayer";

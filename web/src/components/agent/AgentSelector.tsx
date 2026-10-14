@@ -7,10 +7,9 @@ import {
   AgentMenuPortal,
   ModelMenuItem,
   SectionHeader,
-  hasAgentOptions,
-  parseAgentErrorMessage,
   sectionItemStyle,
 } from "./AgentSelectorParts";
+import { hasAgentOptions, parseAgentErrorMessage } from "./agentSelectorUtils";
 import { useAgentSelector } from "./useAgentSelector";
 import type { AgentSelectorProps } from "./useAgentSelector";
 

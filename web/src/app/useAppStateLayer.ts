@@ -10,7 +10,7 @@ import { useAppProjectDisplay } from "./useAppProjectDisplay";
 import { useAppRootBindingSetters } from "./useAppRootBindingSetters";
 import { useAppReplaceURLState } from "./useAppReplaceURLState";
 import { MainViewMode } from "./appPath";
-import { useBackLayer } from "../hooks/useBackNavigation";
+import { useBackLayer } from "../hooks/useBackLayer";
 import { SessionItem, SlashCommandResult } from "./appSession";
 import { getDirectorySortKey } from "./appUtils";
 import { useAppStateRefs } from "./useAppStateRefs";

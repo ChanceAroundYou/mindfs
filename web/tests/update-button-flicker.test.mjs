@@ -19,7 +19,7 @@ test("update-button-flicker", async () => {
 // 这条断言就是在那之前把它钉死。
 
 const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
-const misc = readFileSync(new URL("../src/app/appMisc.tsx", import.meta.url), "utf8");
+const misc = readFileSync(new URL("../src/app/appMisc.ts", import.meta.url), "utf8");
 
 // 1) 可��性必须以「WS 已连上」为前置门：连上时服务端已把真实状态推来，
 //    连上之前那份空初值不代表「无更新」，画出来就是凭空出现。

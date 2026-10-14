@@ -6,7 +6,9 @@ to resume their old TODOs or baselines.
 
 ## Active
 
-No execution plan is currently active.
+| Plan | Goal |
+|---|---|
+| [Frontend export and filename alignment](frontend-export-naming.md) | Align frontend naming rules, AST gates, and source filenames without imposing one-export-per-file on responsibility modules. |
 
 ## Completed or superseded history
 

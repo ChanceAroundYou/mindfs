@@ -7,7 +7,8 @@ import React, {
   useState,
   useSyncExternalStore,
 } from "react";
-import { closeTopBackLayer, consumeViewHistoryEntry, hasBackLayer, installBackNavigation, pushViewHistoryEntry, useBackLayer } from "../hooks/useBackNavigation";
+import { closeTopBackLayer, consumeViewHistoryEntry, hasBackLayer, installBackNavigation, pushViewHistoryEntry } from "../services/platform/backNavigation";
+import { useBackLayer } from "../hooks/useBackLayer";
 import { basenameOfPath, buildDirectorySelectionKey, buildFileScrollKey, buildURLSearch, comparableManagedRootPath, dirnameOfPath, isDirectorySortMode, joinDisplayPath, normalizeCursor, normalizePath, parentDirsOfFile, parseFileLocation, parsePluginQuery, readURLState, relativeDisplayPathFromRoot, rootNodeKey } from "./appPath";
 import type { Dispatch, SetStateAction, RefObject } from "react";
 import {

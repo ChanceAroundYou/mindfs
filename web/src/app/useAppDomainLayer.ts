@@ -12,7 +12,7 @@ import { useAppSessionSnapshots } from "./useAppSessionSnapshots";
 import { useAppDomainDerived } from "./useAppDomainDerived";
 import { useAppPluginTrust } from "./useAppPluginTrust";
 import { useAppPluginRender } from "./useAppPluginRender";
-import { closeTopBackLayer, consumeViewHistoryEntry, hasBackLayer } from "../hooks/useBackNavigation";
+import { closeTopBackLayer, consumeViewHistoryEntry, hasBackLayer } from "../services/platform/backNavigation";
 import { indexManagedRoots, mapManagedRootsToEntries, toPluginInput } from "./appMisc";
 import { readURLState } from "./appPath";
 import { AttachedFileContext, MultiProjectSessionGroup, PendingSend, SessionItem, SlashCommandResult, ViewerSelection, WSStatus, hasSessionExchanges, sessionInputHistory, toSessionItem } from "./appSession";

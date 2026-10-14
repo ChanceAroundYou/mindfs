@@ -10,7 +10,9 @@ test("back-navigation", async () => {
 // 表现就是「侧滑/后退直接退出」。这些断言钉住修复后的行为。
 const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 const main = readFileSync(new URL("../src/main.tsx", import.meta.url), "utf8");
-const nav = readFileSync(new URL("../src/hooks/useBackNavigation.ts", import.meta.url), "utf8");
+const nav = readFileSync(new URL("../src/services/platform/backNavigation.ts", import.meta.url), "utf8");
+const backLayerHook = readFileSync(new URL("../src/hooks/useBackLayer.ts", import.meta.url), "utf8");
+assert.match(backLayerHook, /registerBackLayer\(\{ close: \(\) => closeRef\.current\(\) \}\)/);
 const dialogHost = readFileSync(new URL("../src/components/DialogHost.tsx", import.meta.url), "utf8");
 const dialogHook = readFileSync(new URL("../src/hooks/useDialogHost.ts", import.meta.url), "utf8");
 const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
@@ -21,7 +23,7 @@ const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
 // 这是「侧滑还是直接退出」的直接原因：以前 switchMainView 全程 replaceState，
 // 浏览器历史永远只有一项，popstate 压根不触发，侧滑把应用直接带出去。
 // 覆层关掉之后能退视图，靠的就是这条 push 出来的记录。
-// pushState 住在 useBackNavigation.ts：它要同时维护计数器（Android 返回键靠它
+// pushState 住在 platform/backNavigation.ts：它要同时维护计数器（Android 返回键靠它
 // 判断有没有得退），放在 App.tsx 的 useCallback 里就得回传，徒增一层。
 assert.match(
   nav,

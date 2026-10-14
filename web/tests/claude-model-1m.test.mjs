@@ -11,7 +11,7 @@ const useActionBar = fs.readFileSync(path.join(root, "src/components/action/useA
 const actionBarControls = fs.readFileSync(path.join(root, "src/components/action/ActionBarControls.tsx"), "utf8");
 const modelUtils = fs.readFileSync(path.join(root, "src/components/action/modelUtils.ts"), "utf8");
 const selector = fs.readFileSync(path.join(root, "src/components/agent/AgentSelector.tsx"), "utf8");
-const selectorParts = fs.readFileSync(path.join(root, "src/components/agent/AgentSelectorParts.tsx"), "utf8");
+const selectorParts = fs.readFileSync(path.join(root, "src/components/agent/agentSelectorUtils.ts"), "utf8");
 const useAgentSelector = fs.readFileSync(path.join(root, "src/components/agent/useAgentSelector.ts"), "utf8");
 const streamCache = fs.readFileSync(path.join(root, "src/app/useSessionStreamCache.ts"), "utf8");
 

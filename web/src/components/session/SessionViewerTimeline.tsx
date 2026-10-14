@@ -8,8 +8,8 @@ import { useSessionViewerTimelineActions } from "./useSessionViewerTimelineActio
 import { copyText } from "../../platform/clipboard";
 import { formatSessionDuration } from "../../shared/sessionDuration";
 import { SessionViewerThoughtItem } from "./SessionViewerThoughtItem";
-import { renderToolTimelineItem } from "./SessionViewerToolItem";
-import { renderAuxiliaryTimelineItem } from "./SessionViewerAuxiliaryTimeline";
+import { renderToolTimelineItem } from "./sessionViewerToolTimelineHelpers";
+import { renderAuxiliaryTimelineItem } from "./sessionViewerAuxiliaryTimelineHelpers";
 import { SessionViewerUserMessage } from "./SessionViewerUserMessage";
 import { SessionViewerAssistantMessage } from "./SessionViewerAssistantMessage";
 import {

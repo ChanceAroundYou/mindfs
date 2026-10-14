@@ -2313,7 +2313,7 @@
 ### G-BO taskIcons 导出职责清单
 
 - **可见症状**：`taskIcons.tsx` 同时承载图标、任务样式和颜色工具，新增导出时难以看出模块范围是否扩大。
-- **根因与边界**：文件头列出所有导出并按职责分组，针对性测试将清单与真实导出对照。审计调用方后将任务呈现实现归入 `components/task`；`app/taskIcons.tsx` 保留兼容 facade，导出行为不变。
+- **根因与边界**：文件头列出所有导出并按职责分组，针对性测试将清单与真实导出对照。审计调用方后将任务呈现实现归入 `components/task`；`app/taskIcons.ts` 保留兼容 facade，导出行为不变。
 - **针对性测试**：`web/tests/task-icons-inventory.test.mjs` → 文件头清单必须精确覆盖实际导出的函数与类型。
 - **边界**：只记录并验证模块职责，不改变图标、样式和颜色工具的实现。
 
@@ -2734,7 +2734,7 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 
 ### G-CK FileTree 纯色转换依赖迁入 shared
 
-- **可见症状**：FileTree 只为调用 `hexToRgbaApp` 就导入 `app/taskIcons.tsx`，使 view 依赖 app 层。
+- **可见症状**：FileTree 只为调用 `hexToRgbaApp` 就导入 `app/taskIcons.ts`，使 view 依赖 app 层。
 - **根因与边界**：纯颜色转换放到 `shared/hexToRgba.ts`；app/taskIcons 保留原函数名并转发，FileTree、session 等通用颜色消费者直接依赖 shared。
 - **针对性测试**：`web/tests/shared-hex-to-rgba.test.mjs` 与 FileTree dependency boundary test → 覆盖颜色行为、兼容 facade、FileTree 不再导入 app。
 - **边界**：短/长 hex、无效值回退及 rgba 字符串透传保持原行为。
@@ -2750,7 +2750,7 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 ### G-CM TaskBoardView 契约归位与 toolbar presenter
 
 - **可见症状**：TaskBoardView 有 645 行，并从 service/app implementation 文件导入任务、workspace、session 类型；模板 toolbar 与看板列渲染挤在同一个视图中。
-- **根因与边界**：类型契约归 shared 和 task domain；appStorage/service 旧入口保留 facade；模板筛选、菜单和刷新反馈提取到 `TaskBoardToolbar`。任务呈现簇迁入 `components/task/taskIcons.tsx`，`app/taskIcons.tsx` 只保留兼容 facade，非任务颜色消费者直接使用 shared helper。
+- **根因与边界**：类型契约归 shared 和 task domain；appStorage/service 旧入口保留 facade；模板筛选、菜单和刷新反馈提取到 `TaskBoardToolbar`。任务呈现簇迁入 `components/task/taskIcons.tsx`，`app/taskIcons.ts` 只保留兼容 facade，非任务颜色消费者直接使用 shared helper。
 - **针对性测试**：`web/tests/task-board-view-layering.test.mjs`、`task-board-view.test.mjs`、`task-card-parity.test.mjs`、`workspace-board.test.mjs` → 守住依赖方向、toolbar 接线、卡片数据契约与旧 facade。
 - **边界**：保持筛选 sentinel、断点、按钮事件顺序、刷新反馈时长与任务卡展示行为；主视图现为 400 行。
 
@@ -3589,7 +3589,7 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 
 ### G-IQ Session attachment images reuse protected blob hook
 
-- **可见症状**：SessionViewerAttachments 自己重复实现受保护 blob 请求、node registry 查询和 object URL 生命周期。
+- **可见症状**：AttachmentImage 自己重复实现受保护 blob 请求、node registry 查询和 object URL 生命周期。
 - **根因与边界**：改用既有 `useProtectedBlobUrl` 统一请求和 URL 生命周期；hook 支持可选 nodeId，文件服务继续按 root registry 自动补全节点。图片显示、失败空态、卸载取消和 URL revoke 语义保持。
 - **针对性测试**：`web/tests/markdown-viewer-split.test.mjs` → 守住 protected blob hook 的请求/清理；架构门禁守住组件不再直连 file/node service；typecheck 守住 hook 参数。
 
@@ -3622,3 +3622,9 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：多个前端测试运行器会造成验证结果不一致；按路径或历史状态放行会让存量代码绕过新代码必须遵守的规则。
 - **根因与边界**：`npm test` 仅运行 Vitest。规则入口、reviewer 门禁、TODO、计划状态与机器登记共同描述同一套普遍适用的要求；任务提示不能豁免仓库规则。历史记录可保留当时的测量值，但不得作为当前基线。
 - **针对性测试**：`agent-docs-contract.test.mjs` → Vitest 唯一入口、ship 文档与规则/计划入口契约；`naming-convention.test.mjs` → 普遍适用的命名与后缀检查；`reviewer-architecture-rules.test.mjs` → 依赖边与文件大小守卫；`source-map.test.mjs` → 逻辑源码映射。为满足统一文件大小规则，本批从应用入口、任务样式与 locale 表中提取职责模块；`App.tsx` 组合根不变。
+
+### G-IW Frontend naming rules and standalone entry alignment
+
+- **可见症状**：命名文档声称已有“文件名 = 主 export”门禁，但测试没有实现；多个独立组件文件名不能反映主组件，返回导航 hook 与浏览器历史原语混放在 `hooks/`。
+- **根因与边界**：AST 门禁只约束独立组件和 hook 入口，职责模块仍可包含多个相关导出；同时保证 `.ts` 无 JSX、`.tsx` 有 JSX。AgentSelector 的纯模型/错误解析迁入 `agentSelectorUtils`；返回层 hook 留在 `hooks/useBackLayer.ts`，浏览器历史和层栈原语归 `services/platform/backNavigation.ts`。无 JSX 的工具、兼容 facade 和 shim 改为 `.ts`。其余经审阅的多导出文件按职责保留，不按导出数量拆分。
+- **针对性测试**：`naming-convention.test.mjs` → 独立组件/hook 主符号命名与既有后缀规则；`back-navigation.test.mjs` → 返回栈和视图历史行为；`claude-model-1m.test.mjs` → AgentSelector 模型别名解析；toast/session 组件测试与 source-map 测试 → 文件搬迁后原有契约仍生效；agent docs 测试 → Active 计划和 Markdown 链接一致。

@@ -6,7 +6,7 @@ import { copyText } from "../platform/clipboard";
 import { AttachedFileContext, Exchange, GitFileStat, MultiProjectSessionGroup, PendingSend, RelatedFileClickTarget, SessionItem, SessionMode, SessionQueueItem, SlashCommandResult, ViewerSelection, WSStatus } from "./appSession";
 import { useI18n } from "../i18n";
 
-export interface renderRootSlashCommandResultParams {
+export interface RenderRootSlashCommandResultParams {
   copiedSlashCommandKeys: Record<string, true>;
   copyText: typeof copyText;
   reportError: typeof reportError;
@@ -15,7 +15,7 @@ export interface renderRootSlashCommandResultParams {
   t: ReturnType<typeof useI18n>["t"];
 }
 
-export function renderRootSlashCommandResult(params: renderRootSlashCommandResultParams) {
+export function renderRootSlashCommandResult(params: RenderRootSlashCommandResultParams) {
   const copiedSlashCommandKeys = params.copiedSlashCommandKeys;
   const copyText = params.copyText;
   const reportError = params.reportError;

@@ -41,7 +41,7 @@ import {
 } from "./sessionViewerFormat";
 import type { ExchangeArray, SessionItem, SessionViewerProps } from "./sessionViewerTypes";
 import { useSessionWindowing } from "./useSessionWindowing";
-import { SessionViewerSlashCommandResult } from "./SessionViewerSlashCommand";
+import { SessionViewerSlashCommandResult } from "./SessionViewerSlashCommandResult";
 import { SessionViewerRelatedFiles } from "./SessionViewerRelatedFiles";
 import { SessionViewerHeader } from "./SessionViewerHeader";
 import { SessionViewerLoadingState } from "./SessionViewerLoadingState";

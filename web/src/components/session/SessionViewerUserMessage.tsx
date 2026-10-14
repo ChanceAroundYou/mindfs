@@ -1,5 +1,5 @@
 import React from "react";
-import { AttachmentImage } from "./SessionViewerAttachments";
+import { AttachmentImage } from "./AttachmentImage";
 import { InlineTokenText } from "../common/InlineTokenText";
 import { renderToolIcon } from "../stream/toolCallIcons";
 import { TurnTokenUsage, ContextWindowBadge } from "./SessionViewerTokenViews";

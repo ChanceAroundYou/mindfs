@@ -29,7 +29,7 @@ const appSupportModules = [
   "src/app/appPath.ts",
   "src/app/appSession.ts",
   "src/app/appTask.ts",
-  "src/app/appMisc.tsx",
+  "src/app/appMisc.ts",
 ].map(read);
 
 // 1) 账户参数必须由 base.ts 注入——它是全部 fetch / WS / 资源 URL 的唯一汇聚点。

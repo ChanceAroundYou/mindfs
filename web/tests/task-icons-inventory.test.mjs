@@ -22,7 +22,7 @@ test("taskIcons export inventory stays aligned with its public exports", () => {
 
   assert.deepEqual([...new Set(listed)].sort(), [...new Set(declared)].sort());
 
-  const appFacade = readFileSync(join(srcRoot, "app/taskIcons.tsx"), "utf8");
+  const appFacade = readFileSync(join(srcRoot, "app/taskIcons.ts"), "utf8");
   assert.match(appFacade, /export \* from "\.\.\/components\/task\/taskIcons"/);
   assert.doesNotMatch(source, /from ["']\.\.\/\.\.\/services\//);
   assert.match(source, /from "\.\.\/\.\.\/shared\/nodePalette"/);

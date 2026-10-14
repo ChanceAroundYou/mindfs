@@ -189,7 +189,7 @@ assert.match(
   "task actions get their own error code, not file.write_failed",
 );
 // Toast 不再显示错误码那一行。
-const toast = readFileSync(new URL("../src/components/shell/Toast.tsx", import.meta.url), "utf8");
+const toast = readFileSync(new URL("../src/components/shell/ToastContainer.tsx", import.meta.url), "utf8");
 assert.doesNotMatch(
   toast,
   /error\.code &&/,

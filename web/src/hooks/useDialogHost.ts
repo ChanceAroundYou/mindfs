@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { dialogService, type DialogRequest } from "../services/dialog";
-import { useBackLayer } from "./useBackNavigation";
+import { useBackLayer } from "./useBackLayer";
 
 export function useDialogHost() {
   const [request, setRequest] = useState<DialogRequest | null>(null);

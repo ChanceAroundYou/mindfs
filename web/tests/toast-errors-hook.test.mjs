@@ -5,7 +5,7 @@ import { test } from "vitest";
 
 test("toast-errors-hook", async () => {
 const hook = fs.readFileSync(path.resolve(import.meta.dirname, "../src/hooks/useToastErrors.ts"), "utf8");
-const toast = fs.readFileSync(path.resolve(import.meta.dirname, "../src/components/shell/Toast.tsx"), "utf8");
+const toast = fs.readFileSync(path.resolve(import.meta.dirname, "../src/components/shell/ToastContainer.tsx"), "utf8");
 
 assert.match(hook, /errorService\.subscribe/);
 assert.match(hook, /error\.severity === "fatal"/);

@@ -8,7 +8,7 @@ import { useAppSessionSelection } from "./useAppSessionSelection";
 import { useAppSessionReload } from "./useAppSessionReload";
 import { useAppBootstrapActions } from "./useAppBootstrapActions";
 import { useAppFormatDirectoryLoadError } from "./useAppFormatDirectoryLoadError";
-import { installBackNavigation } from "../hooks/useBackNavigation";
+import { installBackNavigation } from "../services/platform/backNavigation";
 import { toSessionItem } from "./appSession";
 import type { SessionItem } from "./appSession";
 import { rootNodeKey } from "./appPath";

@@ -1,6 +1,6 @@
 import type { AgentStatus } from "../../shared/agentTypes";
 import type { I18nContextValue } from "../../i18n/index";
-import { parseAgentErrorDetails, parseAgentErrorMessage } from "./AgentSelectorParts";
+import { parseAgentErrorDetails, parseAgentErrorMessage } from "./agentSelectorUtils";
 
 export type AgentSelectorErrorBannerProps = {
   errorAgentStatus: AgentStatus;

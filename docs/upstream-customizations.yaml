@@ -851,13 +851,13 @@ groups:
       本地用 DialogHost + services/dialog 的 promptDialog/alertDialog/confirmDialog
       替代所有系统弹窗，禁止在组件里直接用 window.*。
     anchors:
-      - 'web/src/components/shell/Toast.tsx:CUSTOM(G-AE)'
+      - 'web/src/components/shell/ToastContainer.tsx:CUSTOM(G-AE)'
       - 'web/src/components/shell/ErrorBoundary.tsx:CUSTOM(G-AE)'
       - 'web/src/hooks/useFileOperationActions.ts:promptDialog'
     files:
       - web/src/services/dialog.ts
       - web/src/components/shell/DialogHost.tsx
-      - web/src/components/shell/Toast.tsx
+      - web/src/components/shell/ToastContainer.tsx
       - web/src/components/shell/PanelShell.tsx
       - web/src/components/common/Select.tsx
       - web/src/components/shell/ErrorBoundary.tsx
@@ -1621,7 +1621,7 @@ groups:
       - web/src/components/task/TaskCardRows.tsx
       - web/src/components/task/TaskDetailPanel.tsx
       - web/src/components/workspace/WorkspaceTaskRow.tsx
-      - web/src/components/shell/Toast.tsx
+      - web/src/components/shell/ToastContainer.tsx
       - web/src/services/task/worktree.ts
       - web/src/services/task/types.ts
       - web/src/services/net/error.ts
@@ -2019,7 +2019,8 @@ groups:
       - web/src/components/
       - web/src/services/
       - web/src/shared/
-      - web/src/hooks/useBackNavigation.ts
+      - web/src/services/platform/backNavigation.ts
+      - web/src/hooks/useBackLayer.ts
       - web/src/hooks/useMarkdownViewer.tsx
       - web/src/hooks/usePwaInstall.ts
       - web/tests/source-map.mjs
@@ -3301,7 +3302,7 @@ groups:
       - docs/upstream-customizations.yaml
       - web/tests/agent-docs.test.mjs
     anchors:
-      - docs/agent/rules/frontend/TODO.md:目前没有待处理的一次性存量事项
+      - docs/agent/rules/frontend/TODO.md:当前 Active 计划
       - docs/plans/README.md:Rule completion rollout
       - web/tests/agent-docs.test.mjs:every plan is classified in the sole plans index
   - id: G-BZ
@@ -3733,7 +3734,6 @@ groups:
       - web/src/components/task/TaskBoardToolbar.tsx
       - web/src/components/task/taskIcons.tsx
       - web/src/app/taskIcons.tsx
-      - web/src/app/AppRootView.tsx
       - web/src/app/useSessionSidebarView.tsx
       - web/src/components/app/TaskSessionErrorDialog.tsx
       - web/src/components/session/useSessionCard.ts
@@ -6409,6 +6409,7 @@ groups:
       - web/tests/reviewer-architecture-rules.test.mjs
     files:
       - web/src/components/agent/AgentSelectorParts.tsx
+      - web/src/components/agent/agentSelectorUtils.ts
       - web/src/components/editor/PromptEditor.tsx
       - web/src/components/task/StageEditor.tsx
       - docs/agent/rules/frontend/TODO.md
@@ -6619,7 +6620,7 @@ groups:
       - web/src/components/session/AskUserQuestionCard.tsx
       - web/src/components/session/SessionViewer.tsx
       - web/src/components/session/SessionViewerCards.tsx
-      - web/src/components/session/SessionViewerSlashCommand.tsx
+      - web/src/components/session/SessionViewerSlashCommandResult.tsx
       - web/src/components/session/SessionViewerTimeline.tsx
       - web/src/components/session/SessionViewerTokenViews.tsx
       - web/tests/message-mechanism-merges.test.mjs
@@ -6808,10 +6809,10 @@ groups:
       - web/src/services/platform/clipboard.ts
       - web/src/components/common/MarkdownCodeBlocks.tsx
       - web/src/components/session/SessionViewer.tsx
-      - web/src/components/session/SessionViewerSlashCommand.tsx
+      - web/src/components/session/SessionViewerSlashCommandResult.tsx
       - web/src/components/session/SessionViewerTimeline.tsx
       - web/src/app/AppRootView.tsx
-      - web/src/app/renderRootSlashCommandResult.tsx
+      - web/src/app/renderRootSlashCommandResultHelpers.tsx
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -7164,7 +7165,7 @@ groups:
       - web/src/hooks/useToastErrors.ts
       - web/src/shared/errorTypes.ts
       - web/src/services/net/error.ts
-      - web/src/components/shell/Toast.tsx
+      - web/src/components/shell/ToastContainer.tsx
       - web/tests/toast-errors-hook.test.mjs
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
@@ -7223,7 +7224,7 @@ groups:
     files:
       - web/src/hooks/useReportError.ts
       - web/src/components/session/SessionViewerTimeline.tsx
-      - web/src/components/session/SessionViewerSlashCommand.tsx
+      - web/src/components/session/SessionViewerSlashCommandResult.tsx
       - web/src/components/session/SessionViewer.tsx
       - web/tests/report-error-hook.test.mjs
       - docs/agent/rules/frontend/TODO.md
@@ -7647,7 +7648,7 @@ groups:
     title: Session attachment images reuse protected blob hook
     kind: arch
     symptom: |
-      SessionViewerAttachments duplicates protected blob fetching, root-node lookup, and object URL lifecycle.
+      AttachmentImage duplicates protected blob fetching, root-node lookup, and object URL lifecycle.
     why: |
       Reuse the existing protected-blob hook so cancellation, failure fallback, and URL cleanup have one owner.
     boundary: |
@@ -7656,7 +7657,7 @@ groups:
       - web/tests/markdown-viewer-split.test.mjs
       - web/tests/reviewer-architecture-rules.test.mjs
     files:
-      - web/src/components/session/SessionViewerAttachments.tsx
+      - web/src/components/session/AttachmentImage.tsx
       - web/src/hooks/useProtectedBlobUrl.ts
       - web/tests/markdown-viewer-split.test.mjs
       - docs/agent/rules/frontend/TODO.md
@@ -7665,7 +7666,7 @@ groups:
       - docs/upstream-customizations.md
       - docs/upstream-customizations.yaml
     anchors:
-      - "web/src/components/session/SessionViewerAttachments.tsx:useProtectedBlobUrl(rootId && path ? { rootId, path } : undefined)"
+      - "web/src/components/session/AttachmentImage.tsx:useProtectedBlobUrl(rootId && path ? { rootId, path } : undefined)"
       - "web/src/hooks/useProtectedBlobUrl.ts:fetchProofProtectedBlob(currentRequest)"
 
   - id: G-IR
@@ -7838,3 +7839,94 @@ groups:
       - web/src/components/file/FileEditor.tsx:useFileEditorReload()
       - web/src/components/file/icons.tsx:useWebPushMenu()
       - web/src/components/session/SessionViewer.tsx:useSessionViewerExchangeProjection()
+
+  - id: G-IW
+    title: Frontend naming rules and standalone entry alignment
+    kind: arch
+    symptom: |
+      The naming docs claimed a main-export filename gate that did not exist, and several standalone
+      component/helper files did not describe their primary export; back-navigation hook and platform
+      primitives were mixed in the hooks directory.
+    why: |
+      Keep the naming contract enforceable and make file names and directory placement communicate
+      the primary component, hook, or responsibility without rejecting cohesive multi-export modules.
+    boundary: |
+      AST gates match standalone component and hook entries only. Pure AgentSelector parsing moves to
+      agentSelectorUtils; back-layer React wiring stays in useBackLayer while browser-history primitives
+      move to services/platform/backNavigation. Other multi-export modules remain grouped by responsibility.
+    tests:
+      - web/tests/naming-convention.test.mjs
+      - web/tests/back-navigation.test.mjs
+      - web/tests/claude-model-1m.test.mjs
+      - web/tests/report-error-hook.test.mjs
+      - web/tests/toast-errors-hook.test.mjs
+      - web/tests/task-card-parity.test.mjs
+      - web/tests/source-map.test.mjs
+      - web/tests/agent-docs.test.mjs
+      - web/tests/agent-docs-contract.test.mjs
+    files:
+      - web/src/app/AppRootView.tsx
+      - web/src/app/appMisc.tsx
+      - web/src/app/appMisc.ts
+      - web/src/app/taskIcons.tsx
+      - web/src/app/taskIcons.ts
+      - web/src/app/renderRootSlashCommandResult.tsx
+      - web/src/app/renderRootSlashCommandResultHelpers.tsx
+      - web/src/app/useAppDomainLayer.ts
+      - web/src/app/useAppMainViewActions.ts
+      - web/src/app/useAppSessionLayer.ts
+      - web/src/app/useAppStateLayer.ts
+      - web/src/app/usePopStateSync.ts
+      - web/src/components/agent/AgentSelector.tsx
+      - web/src/components/agent/AgentSelectorErrorBanner.tsx
+      - web/src/components/agent/AgentSelectorMenuHeader.tsx
+      - web/src/components/agent/AgentSelectorParts.tsx
+      - web/src/components/agent/agentSelectorUtils.ts
+      - web/src/components/agent/useAgentSelector.ts
+      - web/src/components/account/NodeSwitcher.tsx
+      - web/src/components/account/NodeSwitcher.ts
+      - web/src/components/editor/EditorBridge.tsx
+      - web/src/components/editor/EditorBridge.ts
+      - web/src/components/session/ArchivedSessionsPanel.tsx
+      - web/src/components/session/AttachmentImage.tsx
+      - web/src/components/session/SessionViewerAssistantMessage.tsx
+      - web/src/components/session/SessionViewerAttachments.tsx
+      - web/src/components/session/SessionViewerAuxiliaryTimeline.tsx
+      - web/src/components/session/SessionViewerSlashCommand.tsx
+      - web/src/components/session/SessionViewerSlashCommandResult.tsx
+      - web/src/components/session/SessionViewerTimeline.tsx
+      - web/src/components/session/SessionViewerToolItem.tsx
+      - web/src/components/session/SessionViewerUserMessage.tsx
+      - web/src/components/session/sessionViewerAuxiliaryTimelineHelpers.tsx
+      - web/src/components/session/sessionViewerToolTimelineHelpers.tsx
+      - web/src/components/shell/Toast.tsx
+      - web/src/components/shell/ToastContainer.tsx
+      - web/src/hooks/useBackLayer.ts
+      - web/src/hooks/useBackNavigation.ts
+      - web/src/hooks/useDialogHost.ts
+      - web/src/services/platform/backNavigation.ts
+      - web/tests/back-navigation.test.mjs
+      - web/tests/claude-model-1m.test.mjs
+      - web/tests/naming-convention.test.mjs
+      - web/tests/multi-account-partition.test.mjs
+      - web/tests/task-icons-inventory.test.mjs
+      - web/tests/shared-hex-to-rgba.test.mjs
+      - web/tests/update-button-flicker.test.mjs
+      - web/tests/report-error-hook.test.mjs
+      - web/tests/source-map.mjs
+      - web/tests/task-card-parity.test.mjs
+      - web/tests/toast-errors-hook.test.mjs
+      - docs/agent/rules/frontend/TODO.md
+      - docs/agent/rules/frontend/naming.md
+      - docs/agent/rules/frontend/reviewer-checklist.md
+      - docs/agent/rules/frontend/testing.md
+      - docs/plans/README.md
+      - docs/plans/frontend-export-naming.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/tests/naming-convention.test.mjs:test("standalone component entries use the exported component name"
+      - web/tests/naming-convention.test.mjs:test("standalone hook entries use the exported hook name"
+      - web/src/hooks/useBackLayer.ts:export function useBackLayer
+      - web/src/services/platform/backNavigation.ts:export function pushViewHistoryEntry
+      - docs/agent/rules/frontend/naming.md:export 数量或“没有同名 export”本身不构成违规

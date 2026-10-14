@@ -6,8 +6,8 @@ import {
   AGENT_MENU_MAX_BODY_HEIGHT,
   SectionHeader,
   SelectorChevron,
-  hasAgentOptions,
 } from "./AgentSelectorParts";
+import { hasAgentOptions } from "./agentSelectorUtils";
 
 export type AgentSelectorMenuHeaderProps = {
   agents: AgentStatus[];
