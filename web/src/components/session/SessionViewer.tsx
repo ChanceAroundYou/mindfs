@@ -423,12 +423,12 @@ function SessionViewerInner({
 
       {/* 滚动容器 */}
       <div style={{ flex: 1, minHeight: 0, minWidth: 0, position: "relative" }}>
-        <div ref={scrollRef} style={{ flex: 1, minHeight: 0, minWidth: 0, height: "100%", overflowY: "auto", overflowX: "hidden", position: "relative", WebkitOverflowScrolling: "touch" }}>
+        <div ref={scrollRef} style={{ flex: 1, minHeight: 0, minWidth: 0, height: "100%", overflowY: "auto", overflowX: "hidden", position: "relative", WebkitOverflowScrolling: "touch", scrollPaddingBottom: `${composerOverlayInset + 20}px` }}>
           <div style={{
             width: "100%",
             minWidth: 0,
             display: "block",
-            padding: "24px 16px",
+            padding: `24px 16px ${composerOverlayInset + 20}px`,
             boxSizing: "border-box",
             overflowX: "hidden",
           }} data-mindfs-session-content-width="1">

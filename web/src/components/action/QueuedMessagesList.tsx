@@ -24,7 +24,9 @@ export function QueuedMessagesList(props: QueuedMessagesListProps) {
         gap: "3px",
         // 移动端曾内缩 31px 给 ActionBar 里的侧栏切换按钮让位。那些按钮已搬进
         // 各视图的 ViewHeader，这里再内缩就只是让队列比输入框窄 31px —— 对齐输入框。
-        padding: "0 0 4px",
+        // 排队卡底与输入框顶的间隙：28px 按钮整颗露出需要 ≥8px（按钮半高 14px
+        // 让出 + 视觉间隙），4px 时 ✎ 下沿掉进输入条上沿被埋。maxHeight 分支不动。
+        padding: "0 0 8px",
         maxHeight: isMobile ? "116px" : "144px",
         overflowY: "auto",
         scrollbarWidth: "thin",

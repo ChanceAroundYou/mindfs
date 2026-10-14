@@ -3628,3 +3628,9 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：命名文档声称已有“文件名 = 主 export”门禁，但测试没有实现；多个独立组件文件名不能反映主组件，返回导航 hook 与浏览器历史原语混放在 `hooks/`。
 - **根因与边界**：AST 门禁只约束独立组件和 hook 入口，职责模块仍可包含多个相关导出；同时保证 `.ts` 无 JSX、`.tsx` 有 JSX。AgentSelector 的纯模型/错误解析迁入 `agentSelectorUtils`；返回层 hook 留在 `hooks/useBackLayer.ts`，浏览器历史和层栈原语归 `services/platform/backNavigation.ts`。无 JSX 的工具、兼容 facade 和 shim 改为 `.ts`。其余经审阅的多导出文件按职责保留，不按导出数量拆分。
 - **针对性测试**：`naming-convention.test.mjs` → 独立组件/hook 主符号命名与既有后缀规则；`back-navigation.test.mjs` → 返回栈和视图历史行为；`claude-model-1m.test.mjs` → AgentSelector 模型别名解析；toast/session 组件测试与 source-map 测试 → 文件搬迁后原有契约仍生效；agent docs 测试 → Active 计划和 Markdown 链接一致。
+
+### G-IX 排队卡/会话尾遮挡与 assistant 复制透传
+
+- **可见症状**：排队消息卡的 ✎/删除/立即发送按钮下半被输入条盖住；滚到底时最后一条 user 消息的复制等按钮被悬浮输入条挡住半颗；assistant 消息点复制完全没反应。
+- **根因与边界**：排队列表底只留 4px 间隙，28px 按钮下沿掉进输入条上沿；会话内容区底留白写死、未用 composerOverlayInset 派生且缺 scroll-padding-bottom；Timeline 分叉处 Assistant 缺 6 个 copy props，点击同步抛 TypeError 且无反馈。只改三处：排队列表底间隙 4px→8px；会话内容底留白与滚动 scroll-padding 由 composerOverlayInset 派生；Timeline 给 Assistant 补齐 copy props。不动 composer 高、不动按钮尺寸、不改 clipboard 链。
+- **针对性测试**：`web/tests/queued-overlay-and-copy.test.mjs` → A1 排队卡底间隙 ≥8px、A2 双断点同间隙、B1 会话底留白与 scroll-padding、C1 Timeline 给 Assistant 透传 6 个 copy props。
