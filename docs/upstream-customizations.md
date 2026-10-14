@@ -3064,3 +3064,9 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：agent event 元数据提取、subagent 标题、affected path/diff path 转换、related-file 投影与 Claude model 支持验证混在 `session.go`；worktree→项目根映射和 provider model 规则难与主 turn 编排分开审阅，父文件超过 1,500 行硬线。
 - **根因与边界**：subagent metadata/title、event compaction、tool/diff/related-file path normalization 原样迁入 `session_agent_events.go`（209 行）；Claude alias 归一和 `validateAgentModel` 原样迁入 `session_model_validation.go`（136 行）。父文件实测 1,455 行；事件顺序、路径映射、模型错误语义和 cancel 生命周期不变。
 - **针对性测试**：`server/internal/api/usecase/usecase_test.go` → 守住 related-file/worktree 路径投影、Claude alias、`[1m]` 后缀及 provider 支持模型校验；相关 usecase 测试与全量 `make test` 已通过。
+
+### G-EI Session manager 搜索职责拆分
+
+- **可见症状**：`manager.go` 同时放着搜索入口、名称匹配排序、块流/旧 JSONL 正文扫描、命中打分和摘要截取；搜索语义与会话持久化及生命周期实现混在 3,593 行文件中。
+- **根因与边界**：`Search` 与全部 search-specific helpers 原样迁至 `manager_search.go`（322 行）。公开 API、同包私有测试调用、块流优先后回退旧日志的顺序、评分和错误行为不变；`manager.go` 仍有 3,593 行，继续按领域拆分。
+- **针对性测试**：`manager_search_test.go`、`search_blocks_test.go` → 守住超长 legacy JSONL 行、块流正文/推理命中、user 优先、seq 定位、工具元数据不参与搜索及 legacy fallback；session 包专项测试已通过。

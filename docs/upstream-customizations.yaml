@@ -5251,3 +5251,33 @@ groups:
     anchors:
       - server/internal/api/usecase/session_agent_events.go:func normalizeAgentUpdatePaths
       - server/internal/api/usecase/session_agent_events.go:func relatedFileRecordPath
+
+  - id: G-EI
+    title: Session manager search responsibility split
+    kind: arch
+    symptom: |
+      Session search endpoint orchestration, name ranking, block and legacy JSONL content scanning,
+      hit scoring, and snippets are embedded in the 3,593-line manager.go implementation.
+    why: |
+      Keep search semantics and its storage reads together in a focused module so changes to search
+      behavior can be reviewed independently from session persistence and lifecycle code.
+    boundary: |
+      Search and its search-specific helpers move unchanged to manager_search.go. Public APIs,
+      same-package private test calls, block-first/legacy fallback ordering, scoring, and error
+      behavior stay unchanged. manager.go is 3,593 lines; further manager decomposition remains active.
+    tests:
+      - server/internal/session/manager_search_test.go
+      - server/internal/session/search_blocks_test.go
+    files:
+      - server/internal/session/manager.go
+      - server/internal/session/manager_search.go
+      - docs/agent/rules/backend/TODO.md
+      - docs/agent/rules/backend/file-size.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - server/internal/session/manager_search.go:func (m *Manager) Search
+      - server/internal/session/manager_search.go:func (m *Manager) searchSessionContent
+      - server/internal/session/search_blocks_test.go:func TestSearchFindsTextThatOnlyLivesInBlocks
