@@ -453,7 +453,7 @@
 | `f746124` | `web/src/components/SessionList.tsx` | 计数徽标移除、统一会话样式；`fork` 扁平收敛 |
 | `4c59fcf` | `server/internal/api/usecase/external_sessions.go:LookupAliasForAgent` + `web/src/components/SessionList.tsx:重命名按钮` | 导入前 `alias` 回放、末条用户消息 20 字短标题、内联 `✓/×` |
 | `ab8cfed` | `server/internal/session/manager.go:不再写 parent_session_key` + `server/app/server.go:启动归一化` + `server/internal/api/usecase/session.go` + `server/internal/agent/claude/session.go:external_name` | fork 完全独立、历史原子归一化、关联文件回流、外部名称按 `agent+agent_session_id` 落盘 |
-| 建会话即写 agent 绑定（`EnsureAgentBinding`） | `server/internal/session/manager.go:Create` / `manager_agent_bindings.go:EnsureAgentBinding/ensureAgentBindingUnsafe` + `server/internal/api/usecase/session.go:SendMessage` | **可见症状**：状态圆圈右下角的 agent 徽标（会话列表、看板任务卡片）在首轮跑完前只显示占位「AI」。原因：列表行是 meta-only 的（G-E），agent 只能由 `InferAgentFromSession` 的「`AgentCtxSeq` 兜底」推出，而它靠 `session_agent_bindings` 回填 —— 绑定原先**只在回合结束**时写。**为什么必须保留的这一条**：与 G-Q 的空 id 守卫是同一块改动面 —— 占位行 `agent_session_id=''`，靠 `upsertExternalSessionNameUnsafe`（空 id 直接 return）和 `lookupSessionAliasForAgentUnsafe`（空 id → not-found）挡住，否则两个都没跑过的同 agent 会话会按空 id 串成同一个别名。合上游时两者要么一起留、要么一起弃。占位行的 `agent_ctx_seq` 必须是 0：非 0 会被 `prependSwitchHint` 当成「已同步到此行」而吞掉 agent 切换提示 |
+| 建会话即写 agent 绑定（`EnsureAgentBinding`） | `server/internal/session/manager.go:Create` / `manager_agent_bindings.go:EnsureAgentBinding/ensureAgentBindingUnsafe` + `server/internal/api/usecase/session.go:SendMessage` | **可见症状**：状态圆圈右下角的 agent 徽标（会话列表、看板任务卡片）在首轮跑完前只显示占位「AI」。原因：列表行是 meta-only 的（G-E），agent 只能由 `InferAgentFromSession` 的「`AgentCtxSeq` 兜底」推出，而它靠 `session_agent_bindings` 回填 —— 绑定原先**只在回合结束**时写。**为什么必须保留的这一条**：与 G-Q 的空 id 守卫是同一块改动面 —— 占位行 `agent_session_id=''`，靠 `manager_aliases.go:upsertExternalSessionNameUnsafe`（空 id 直接 return）和 `lookupSessionAliasForAgentUnsafe`（空 id → not-found）挡住，否则两个都没跑过的同 agent 会话会按空 id 串成同一个别名。合上游时两者要么一起留、要么一起弃。占位行的 `agent_ctx_seq` 必须是 0：非 0 会被 `prependSwitchHint` 当成「已同步到此行」而吞掉 agent 切换提示 |
 | 多绑定会话取 ctx_seq 最大者（2026-10-07） | `server/internal/session/types.go:InferAgentFromSession` | **可见症状**：工作台上「大多数用 dsh 的任务没有 agent 徽标」。中途换过 agent 的会话有**两行**绑定，旧实现只处理 `len(AgentCtxSeq) == 1`，对双绑定一律返回空串 → `AgentIcon` 落回「AI」文字占位。而 dsh 恰恰都是在已有 claude 会话里中途切过去的，必然双绑定，所以「大多数 dsh」正好全是这种。判据用 `agent_ctx_seq`（会话的行数游标，`UpdateAgentState` 写的是 `len(Exchanges)`）：谁最大谁最后写过这一串 exchange。**平局（两个都还是 0，即切换后第一轮还没跑完）按名字定序** —— 不定序的话 map 遍历顺序会让同一个会话的徽标在两次列表刷新之间来回跳。只影响 meta-only 的列表路径：其它调用点都加载了 exchanges，走第一个分支（最后一轮 exchange 的 agent），行为不变 |
 
 **针对性测试（防覆盖，改动时同步维护）**
@@ -3118,3 +3118,9 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：列表 API、meta-only 查询、binding 填充、archived 过滤、最新更新时间聚合和 SQL 条件拼装挤在 `manager.go`；维护列表时容易误触正文读取或改变 pinned/archived 过滤语义。
 - **根因与边界**：`List`、`ListByKeys`、`Count`、`LatestSessionUpdatedAt`、`ListMetas` 与 meta query/filter helpers 原样迁至 `manager_session_list.go`（258 行）。Search 继续调用同包查询方法，SQL 条件、顺序、meta-only 行为不变；父文件实测 1,926 行。
 - **针对性测试**：`manager_test.go`、`manager_latest_updated_at_test.go`、`manager_search_test.go`、`manager_pinned_at_retired_test.go` → 守住列表/搜索 query、最新时间聚合、置顶只读 meta、archived 默认过滤和 key 顺序。
+
+### G-ER Session manager session alias 与 external-name 拆分
+
+- **可见症状**：手动标题需在会话重命名、外部 transcript 重导和列表回填间保持一致；若 alias/external-name 存储或空 id 守卫有分叉，标题会丢失或多个未启动会话串名。
+- **根因与边界**：session alias/external name upsert、agent session id 投影、alias 查找与批量/单条列表回填原样迁至 `manager_aliases.go`（188 行）。空 `agent_session_id` 仍被拒绝进入 external-name 映射，公开 API 与数据库结构不变；父文件实测 1,746 行。
+- **针对性测试**：`manager_test.go`、`manager_rename_compat_test.go` 和 usecase 测试 → 守住改名、外部名回填、删除后重导兼容与空 id 隔离。

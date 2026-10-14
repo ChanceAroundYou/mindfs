@@ -498,6 +498,8 @@ groups:
       - 'web/src/components/session/ExternalSessionList.tsx:CUSTOM(G-Q)'
       - 'server/internal/agent/codex/importer.go:func cwdMatchesRoot('
       - 'server/internal/session/manager_agent_bindings.go:空 agent_session_id 表示「agent 已选定、尚无转录」'
+      - 'server/internal/session/manager_aliases.go:func (m *Manager) upsertExternalSessionNameUnsafe'
+      - 'server/internal/session/manager_aliases.go:func (m *Manager) lookupSessionAliasForAgentUnsafe'
       - 'server/internal/session/types.go:func InferAgentFromSession'
     files:
       - server/internal/agent/claude/importer.go
@@ -510,6 +512,7 @@ groups:
       - server/internal/api/session_created_broadcast_test.go
       - server/internal/session/manager.go
       - server/internal/session/manager_agent_bindings.go
+      - server/internal/session/manager_aliases.go
       - server/internal/session/types.go
       - server/internal/session/manager_test.go
       - web/src/components/session/ExternalSessionList.tsx
@@ -5506,6 +5509,37 @@ groups:
       - server/internal/session/manager_session_list.go:func (m *Manager) ListByKeys
       - server/internal/session/manager_session_list.go:func (m *Manager) listSessionMetasUnsafe
       - server/internal/session/manager_session_list.go:func (m *Manager) LatestSessionUpdatedAt
+
+  - id: G-ER
+    title: Session manager alias and external-name persistence split
+    kind: arch
+    symptom: |
+      Session-local name aliases, agent/external-session name persistence, alias lookup, and list-time
+      alias projection are mixed into manager.go with transcript/cache operations.
+    why: |
+      Keep local naming, imported external names, and alias projection together so rename/import/fork
+      naming behavior and the empty external-id guard can be reviewed as one storage domain.
+    boundary: |
+      Alias upsert, external name upsert/lookup, agent session identity projection, and single/bulk
+      alias application move unchanged to manager_aliases.go. The empty agent_session_id guard and
+      existing SQLite schema/API remain unchanged. Parent is 1,746 lines.
+    tests:
+      - server/internal/session/manager_test.go
+      - server/internal/session/manager_rename_compat_test.go
+      - server/internal/api/usecase/usecase_test.go
+    files:
+      - server/internal/session/manager.go
+      - server/internal/session/manager_aliases.go
+      - docs/agent/rules/backend/TODO.md
+      - docs/agent/rules/backend/file-size.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - server/internal/session/manager_aliases.go:func (m *Manager) upsertExternalSessionNameUnsafe
+      - server/internal/session/manager_aliases.go:func (m *Manager) LookupAliasForAgent
+      - server/internal/session/manager_aliases.go:func (m *Manager) applySessionNameAliasesUnsafe
 
   - id: G-EM
     title: Session manager pending tool-call aux state split
