@@ -3274,3 +3274,9 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：单读 goroutine 同步调用 plan-mode 和 queue handler 时，session message 读取会等待其 storage/session work；后续 stop/queue 请求被堵在同一连接。
 - **根因与边界**：`handleWSRequest` 中原同步的 ping、plan-mode、queue remove/update/send-now handler 改为 goroutine dispatch；既有 `session.cancel` 同步取 active turn id 后异步执行的顺序保持。handler 的响应与业务行为不变。
 - **针对性测试**：`server/internal/api/ws_test.go:TestWSRequestHandlersAreDispatchedAsynchronously` → AST 检查 dispatch 内所有 `h.handle*` 都在 goroutine 中；`go test ./server/internal/api/...` 与 `make test` → 全仓 Go 门禁。
+
+### G-GP Agent documentation entry and plan link checks
+
+- **可见症状**：规则/计划入口、相对链接或 Claude/Gemini 工具导入目标失效时，agent 仍可能按错误规范或过期计划工作。
+- **根因与边界**：`agent-docs-contract.test.mjs` 验证 AGENTS/规则目录/计划索引的本地 Markdown 链接、唯一 Active 计划，以及 Claude/Gemini 对通用入口的导入关系；只校验存在性和入口契约，不验证外部链接可达性。
+- **针对性测试**：`web/tests/agent-docs-contract.test.mjs` → 入口链接、唯一 Active 计划和工具导入三项契约；`npm test` → web 全量门禁。
