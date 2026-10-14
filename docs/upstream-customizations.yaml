@@ -6245,3 +6245,31 @@ groups:
     anchors:
       - cli/cmd/startup_config_test.go:func TestReleaseAndDevelopmentEntrypointsStaySeparated
       - cli/cmd/startup_config_test.go:func TestLoadStartupConfigReadsDefaultPath
+
+  - id: G-GO
+    title: WebSocket request handler async dispatch
+    kind: fix
+    symptom: |
+      Synchronous plan-mode and queue handlers in the single websocket reader make subsequent session
+      messages and stop/queue requests wait for storage or session work on the same connection.
+    why: |
+      Preserve the single-reader architecture by dispatching every request handler asynchronously so one
+      handler cannot block receipt of later messages.
+    boundary: |
+      Synchronous ping, plan-mode, and queue remove/update/send-now calls in handleWSRequest now use goroutines.
+      Existing session.cancel still snapshots ActiveTurnID synchronously and dispatches cancellation asynchronously.
+      Handler response and business behavior are unchanged.
+    tests:
+      - server/internal/api/ws_test.go
+    files:
+      - server/internal/api/ws.go
+      - server/internal/api/ws_test.go
+      - docs/agent/rules/backend/reviewer-checklist.md
+      - docs/agent/rules/README.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - server/internal/api/ws_test.go:func TestWSRequestHandlersAreDispatchedAsynchronously
+      - server/internal/api/ws.go:func (h *WSHandler) handleWSRequest

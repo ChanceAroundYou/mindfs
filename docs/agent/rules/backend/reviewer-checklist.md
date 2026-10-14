@@ -4,7 +4,7 @@
 
 ## 红灯（BLOCK）
 
-- [ ] ws.go 新增 handler 有 `go` 异步派发（扫 `h.handleXxx(` 前有无 `go`）。
+- [ ] `ws.go` 的每个 request handler 都必须通过 goroutine 派发；AST 回归测试 `TestWSRequestHandlersAreDispatchedAsynchronously` 扫描 `handleWSRequest` 中全部 `h.handle*` 调用。
 - [ ] **Interrupt/Cancel 路径**无裸 `context.Background()`（必须 `WithTimeout` 包装）。
       注意：定时任务、后台轮询、进程生命周期等场景用 `Background()` 是合法的，不在本条约束内。
 - [ ] 无新增 `h.AppContext` 直构造（一处不改，188 处只减不增；新 handler 走 ScopedRouter）。

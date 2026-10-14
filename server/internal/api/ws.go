@@ -424,13 +424,13 @@ func (h *WSHandler) pushInitialGitHubImports(clientID string) {
 func (h *WSHandler) handleWSRequest(ctx context.Context, conn *websocket.Conn, clientID string, req WSRequest) {
 	switch req.Type {
 	case "ping":
-		h.handleWSPing(conn, clientID, req)
+		go h.handleWSPing(conn, clientID, req)
 	case "session.message":
 		go h.handleSessionMessage(ctx, conn, clientID, req)
 	case "session.slash_command.run":
 		go h.handleSessionSlashCommandRun(ctx, conn, clientID, req)
 	case "session.plan_mode.set":
-		h.handleSessionPlanModeSet(ctx, conn, clientID, req)
+		go h.handleSessionPlanModeSet(ctx, conn, clientID, req)
 	case "session.answer_question":
 		go h.handleSessionAnswerQuestion(ctx, conn, clientID, req)
 	case "session.ready":
@@ -449,11 +449,11 @@ func (h *WSHandler) handleWSRequest(ctx context.Context, conn *websocket.Conn, c
 		)
 		go h.handleSessionCancel(ctx, conn, clientID, req, targetTurnID)
 	case "session.queue.remove":
-		h.handleSessionQueueRemove(ctx, conn, clientID, req)
+		go h.handleSessionQueueRemove(ctx, conn, clientID, req)
 	case "session.queue.update":
-		h.handleSessionQueueUpdate(ctx, conn, clientID, req)
+		go h.handleSessionQueueUpdate(ctx, conn, clientID, req)
 	case "session.queue.send_now":
-		h.handleSessionQueueSendNow(ctx, conn, clientID, req)
+		go h.handleSessionQueueSendNow(ctx, conn, clientID, req)
 	default:
 		h.sendWSError(conn, clientID, req.ID, "method_not_found", "method not found")
 	}

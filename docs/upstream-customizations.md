@@ -3268,3 +3268,9 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：启动配置若只修在 `server/cmd/mindfs-server`，dev-backend 的测试会绿，但发布的 mindfs 二进制仍不生效。
 - **根因与边界**：明确 `make build` / `scripts/build-all.sh` 使用 `cli/cmd`，`make dev-backend` 使用 `server/cmd/mindfs-server`；新增 CLI 包测试读取 Makefile 与 build-all 脚本验证入口分工，缺省配置语义仍由 startup config tests 守住。
 - **针对性测试**：`cli/cmd/startup_config_test.go:TestReleaseAndDevelopmentEntrypointsStaySeparated` → 锁定发布/开发入口，其他 startup config tests → 锁定配置行为；`make test` → 全仓 Go 门禁。
+
+### G-GO WebSocket request handler async dispatch
+
+- **可见症状**：单读 goroutine 同步调用 plan-mode 和 queue handler 时，session message 读取会等待其 storage/session work；后续 stop/queue 请求被堵在同一连接。
+- **根因与边界**：`handleWSRequest` 中原同步的 ping、plan-mode、queue remove/update/send-now handler 改为 goroutine dispatch；既有 `session.cancel` 同步取 active turn id 后异步执行的顺序保持。handler 的响应与业务行为不变。
+- **针对性测试**：`server/internal/api/ws_test.go:TestWSRequestHandlersAreDispatchedAsynchronously` → AST 检查 dispatch 内所有 `h.handle*` 都在 goroutine 中；`go test ./server/internal/api/...` 与 `make test` → 全仓 Go 门禁。

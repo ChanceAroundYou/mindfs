@@ -2,6 +2,9 @@ package api
 
 import (
 	"context"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"strings"
 	"testing"
 	"time"
@@ -506,5 +509,55 @@ func TestReplayAfterClearYieldsEmptySnapshot(t *testing.T) {
 	}
 	if !step.live {
 		t.Fatal("清空后应直接进入 live（无重放内容可排空）")
+	}
+}
+
+func TestWSRequestHandlersAreDispatchedAsynchronously(t *testing.T) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "ws.go", nil, 0)
+	if err != nil {
+		t.Fatalf("parse ws.go: %v", err)
+	}
+	var dispatch *ast.FuncDecl
+	for _, decl := range file.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == "handleWSRequest" {
+			dispatch = fn
+			break
+		}
+	}
+	if dispatch == nil {
+		t.Fatal("handleWSRequest not found")
+	}
+	async := make(map[*ast.CallExpr]bool)
+	ast.Inspect(dispatch.Body, func(node ast.Node) bool {
+		goStmt, ok := node.(*ast.GoStmt)
+		if !ok {
+			return true
+		}
+		async[goStmt.Call] = true
+		return true
+	})
+	var handlers []string
+	ast.Inspect(dispatch.Body, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		selector, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok || selector.Sel == nil || !strings.HasPrefix(selector.Sel.Name, "handle") {
+			return true
+		}
+		receiver, ok := selector.X.(*ast.Ident)
+		if !ok || receiver.Name != "h" {
+			return true
+		}
+		handlers = append(handlers, selector.Sel.Name)
+		if !async[call] {
+			t.Errorf("%s must be dispatched in its own goroutine", selector.Sel.Name)
+		}
+		return true
+	})
+	if len(handlers) == 0 {
+		t.Fatal("no websocket request handlers found")
 	}
 }
