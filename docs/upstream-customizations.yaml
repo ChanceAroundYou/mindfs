@@ -6127,3 +6127,34 @@ groups:
       - server/internal/kanban/service_tasks.go:func (s *Service) CreateTask
       - server/internal/kanban/service_tasks.go:func (s *Service) Overview
       - server/internal/kanban/service_tasks.go:func (s *Service) GetTask
+
+
+  - id: G-GK
+    title: Codex importer tool-call projection split
+    kind: arch
+    symptom: |
+      Tool-call input/output recognition, JavaScript wrapper parsing, patch/location and tool output
+      projection consume a large part of the Codex transcript importer, coupling it to scan/import orchestration.
+    why: |
+      Keep Codex tool-call parsing and projection together so transcript compatibility changes can be
+      reviewed independently from session discovery and import cursor behavior.
+    boundary: |
+      parseImportedCodexToolCall through importedCodexAssistantLine move unchanged to
+      importer_tool_calls.go (850 lines). Imported exchange output and tool matching semantics remain unchanged.
+      Parent importer.go is 1,047 lines, below the 1,500 hardline.
+    tests:
+      - server/internal/agent/codex/importer_test.go
+    files:
+      - server/internal/agent/codex/importer.go
+      - server/internal/agent/codex/importer_tool_calls.go
+      - docs/agent/rules/backend/TODO.md
+      - docs/agent/rules/backend/file-size.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - server/internal/agent/codex/importer_tool_calls.go:func parseImportedCodexToolCall
+      - server/internal/agent/codex/importer_tool_calls.go:func importedCodexWrappedTool
+      - server/internal/agent/codex/importer_tool_calls.go:func parseImportedCodexPatch
+      - server/internal/agent/codex/importer_tool_calls.go:func importedCodexToolOutput

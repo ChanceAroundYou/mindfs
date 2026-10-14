@@ -3241,3 +3241,10 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：阶段/任务模板 CRUD、任务创建与快照、列表/详情/跨项目 overview 混在状态转换和执行服务中，模板变更与任务查询难以独立审阅。
 - **根因与边界**：`ListStageTemplates` 至 `GetTask` 的模板、创建与读取职责原样迁至 `service_tasks.go`（228 行）；模板快照、任务编号、overview 单项目失败跳过和排序语义不变。父 `service.go` 实测 1,422 行，低于硬线。
 - **针对性测试**：`server/internal/kanban/service_test.go` → 守住模板 CRUD、创建快照、任务列表/详情/overview；`web/tests/task-panel-unification.test.mjs` 与 `web/tests/workspace-node-fanout.test.mjs` → Go 源守卫同时检查 facade 与 task/query 模块；`make test` → 全仓 Go 门禁。
+
+
+### G-GK Codex importer tool-call projection split
+
+- **可见症状**：历史 Codex JSONL 导入中的 tool-call 输入识别、JavaScript wrapper 解析、patch/location 与 tool output 投影占据 importer 主文件大段代码，使 transcript scanning/import orchestration 难以审阅。
+- **根因与边界**：`parseImportedCodexToolCall` 至 `importedCodexAssistantLine` 的工具调用解析和输入/输出投影原样迁至 `importer_tool_calls.go`（850 行）；导入 exchange 输出和 tool matching 行为不变。父 `importer.go` 实测 1,047 行，低于硬线。
+- **针对性测试**：`server/internal/agent/codex/importer_test.go` → 守住工具识别、命令/patch 解析、工具结果与 assistant/user 输出；`make test` → 全仓 Go 门禁。
