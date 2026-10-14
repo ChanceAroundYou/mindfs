@@ -120,7 +120,7 @@ test("归档语义：只归档自己，子会话走删除", () => {
 
 test("归档 handler 用被删的子会话解绑任务", () => {
   // 子会话可能绑着别的任务，不解绑任务点进去就是空白（和 handleSessionDelete 同一套）。
-  const src = read("../server/internal/api/http.go");
+  const src = read("../server/internal/api/http_sessions.go");
   const start = src.indexOf("func (h *HTTPHandler) handleSessionArchive(");
   const body = src.slice(start, src.indexOf("\n}\n", start));
   assert.match(body, /out\.DeletedKeys/);

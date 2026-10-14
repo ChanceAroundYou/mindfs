@@ -363,6 +363,8 @@ groups:
       - server/internal/api/usecase/session_early_user_persist_test.go
       - server/internal/agent/cancel_rpc_timeout_guard_test.go
       - web/tests/user-message-persist-timing.test.mjs
+      - web/tests/session-archive.test.mjs
+      - web/tests/session-list-node-failure.test.mjs
     anchors:
       - server/internal/api/ws.go:go h.handle
       - 'server/internal/agent/acp/process.go:CUSTOM(G-G)'
@@ -2239,7 +2241,7 @@ groups:
       - server/internal/session/manager_window_reads.go:countExchangeRecords
       - server/internal/session/manager_aux_tail.go:GetCommandShell
       - server/internal/session/manager_aux_tail.go:readAuxTailEntries
-      - server/internal/api/http.go:handleSessionSync
+      - server/internal/api/http_sessions.go:handleSessionSync
       - server/internal/api/usecase/session_list.go:fillCommandShells
 
   - id: G-BF
@@ -2349,6 +2351,8 @@ groups:
       - web/tests/message-mechanism-merges.test.mjs
       - web/tests/e2e-message-behavior.test.mjs
       - web/tests/user-message-persist-timing.test.mjs
+      - web/tests/session-archive.test.mjs
+      - web/tests/session-list-node-failure.test.mjs
     files:
       - server/internal/session/types.go
       - server/internal/session/manager.go
@@ -2389,6 +2393,8 @@ groups:
       - web/tests/message-mechanism-merges.test.mjs
       - web/tests/e2e-message-behavior.test.mjs
       - web/tests/user-message-persist-timing.test.mjs
+      - web/tests/session-archive.test.mjs
+      - web/tests/session-list-node-failure.test.mjs
     anchors:
       - server/internal/session/manager_exchange_identity.go:NewMindFSID
       - server/internal/session/manager_exchange_identity.go:IsMindFSIDShape
@@ -3003,7 +3009,7 @@ groups:
       - server/internal/api/usecase/session_blocks_write_test.go:TestAssistantReasoningBlocksUseAllocatedSeqFromFreshSession
       - server/internal/api/usecase/session_fork.go:copyForkBlocks
       - server/internal/api/usecase/session_read.go:GetSessionBlocksWindow
-      - server/internal/api/http.go:windowSeqsForExchanges
+      - server/internal/api/http_sessions.go:windowSeqsForExchanges
       - web/src/hooks/sessionBlocks.ts:buildAssistantTimelineFromBlocks
       - web/src/hooks/sessionBlocks.ts:blocksForSeq
       - web/src/services/session/sessionExchangeMerge.ts:export function toPersistentBlocks(
@@ -5160,10 +5166,14 @@ groups:
       - server/internal/api/usecase/session_early_user_persist_test.go
       - server/internal/api/usecase/session_identity_dedup_test.go
       - web/tests/user-message-persist-timing.test.mjs
+      - web/tests/session-archive.test.mjs
+      - web/tests/session-list-node-failure.test.mjs
     files:
       - server/internal/api/usecase/session.go
       - server/internal/api/usecase/session_send.go
       - web/tests/user-message-persist-timing.test.mjs
+      - web/tests/session-archive.test.mjs
+      - web/tests/session-list-node-failure.test.mjs
       - docs/agent/rules/backend/TODO.md
       - docs/agent/rules/backend/file-size.md
       - docs/plans/README.md
@@ -5792,3 +5802,44 @@ groups:
       - server/internal/api/http_files.go:func (h *HTTPHandler) handleUpload
       - server/internal/api/http_files.go:func (h *HTTPHandler) handleAddDir
       - server/internal/api/http_files.go:func managedDirResponse
+
+  - id: G-EZ
+    title: API HTTP session handlers split, excluding repoint
+    kind: arch
+    symptom: |
+      Session list/search/import/read/sync/fork/name/pin/delete/archive handlers and their response/shell
+      projections remain mixed into general http.go.
+    why: |
+      Keep session read/write HTTP contracts together so window, synchronization, response projection, and
+      list behavior can be reviewed as a domain while preserving the explicit repoint out-of-scope boundary.
+    boundary: |
+      Session handlers except handleSessionRepoint, plus session response/list and shell/title projection
+      helpers, move unchanged to http_sessions.go. The repoint handler remains in http.go untouched; route
+      names and call order remain unchanged. Parent is 867 lines.
+    tests:
+      - server/internal/api/http_window_test.go
+      - server/internal/api/http_session_message_test.go
+      - web/tests/session-window.test.mjs
+      - web/tests/conditional-request.test.mjs
+      - web/tests/user-message-persist-timing.test.mjs
+      - web/tests/session-archive.test.mjs
+      - web/tests/session-list-node-failure.test.mjs
+    files:
+      - server/internal/api/http.go
+      - server/internal/api/http_sessions.go
+      - web/tests/session-window.test.mjs
+      - web/tests/conditional-request.test.mjs
+      - web/tests/user-message-persist-timing.test.mjs
+      - web/tests/session-archive.test.mjs
+      - web/tests/session-list-node-failure.test.mjs
+      - docs/agent/rules/backend/TODO.md
+      - docs/agent/rules/backend/file-size.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - server/internal/api/http_sessions.go:func (h *HTTPHandler) handleSessions
+      - server/internal/api/http_sessions.go:func (h *HTTPHandler) handleSessionSync
+      - server/internal/api/http_sessions.go:func (h *HTTPHandler) sessionResponse
+      - server/internal/api/http.go:func (h *HTTPHandler) handleSessionRepoint

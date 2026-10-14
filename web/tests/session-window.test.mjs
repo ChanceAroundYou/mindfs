@@ -16,6 +16,7 @@ const viewerControlsPath = path.resolve(import.meta.dirname, "../src/components/
 const managerPath = path.resolve(import.meta.dirname, "../../server/internal/session/manager.go");
 const managerWindowPath = path.resolve(import.meta.dirname, "../../server/internal/session/manager_window_reads.go");
 const httpPath = path.resolve(import.meta.dirname, "../../server/internal/api/http.go");
+const httpSessionsPath = path.resolve(import.meta.dirname, "../../server/internal/api/http_sessions.go");
 
 const sessionSrc = fs.readdirSync(sessionServiceDir).filter((name) => name.endsWith(".ts")).map((name) => fs.readFileSync(path.join(sessionServiceDir, name), "utf8")).join("\n");
 const viewerSrc = [sessionViewerPath, sessionWindowingPath, targetSeqScrollPath, viewerControlsPath].map((file) => fs.readFileSync(file, "utf8")).join("\n");
@@ -32,6 +33,8 @@ function buildEvictFrom(toPersistentSession) {
 const managerSrc = fs.readFileSync(managerPath, "utf8");
 const managerWindowSrc = fs.readFileSync(managerWindowPath, "utf8");
 const httpSrc = fs.readFileSync(httpPath, "utf8");
+const httpSessionsSrc = fs.readFileSync(httpSessionsPath, "utf8");
+const httpSessionContract = `${httpSrc}\n${httpSessionsSrc}`;
 
 // ── session service/session domain 导出与隔离 ──────────────────────────────────────────────
 assert.match(sessionSrc, /export type SessionWindowMeta/, "SessionWindowMeta type missing");
@@ -122,13 +125,13 @@ assert.match(
 );
 
 // ── 后端 http.go 契约 ──────────────────────────────────────────────────
-assert.match(httpSrc, /parsePositiveIntQuery\(r, "before_seq"\)/, "http.go before_seq parsing missing");
-assert.match(httpSrc, /parsePositiveIntQuery\(r, "latest"\)/, "http.go latest parsing missing");
-assert.match(httpSrc, /seq 与 before_seq\/latest 互斥/, "mutual exclusion error message missing");
-assert.match(httpSrc, /windowMeta \*session\.SessionWindowMeta/, "sessionResponse windowMeta param missing");
-assert.match(httpSrc, /window_meta/, "window_meta response missing");
-assert.match(httpSrc, /windowSeqs/, "windowSeqs aux filtering missing");
-assert.match(httpSrc, /handleSessionSync[\s\S]*?before_seq/, "handleSessionSync window wiring missing");
+assert.match(httpSessionsSrc, /parsePositiveIntQuery\(r, "before_seq"\)/, "http.go before_seq parsing missing");
+assert.match(httpSessionsSrc, /parsePositiveIntQuery\(r, "latest"\)/, "http.go latest parsing missing");
+assert.match(httpSessionsSrc, /seq 与 before_seq\/latest 互斥/, "mutual exclusion error message missing");
+assert.match(httpSessionsSrc, /windowMeta \*session\.SessionWindowMeta/, "sessionResponse windowMeta param missing");
+assert.match(httpSessionsSrc, /window_meta/, "window_meta response missing");
+assert.match(httpSessionsSrc, /windowSeqs/, "windowSeqs aux filtering missing");
+assert.match(httpSessionsSrc, /handleSessionSync[\s\S]*?before_seq/, "handleSessionSync window wiring missing");
 
 // ── 纯逻辑小验证：getSessionMinSeq / getSessionMaxSeq / windowedView 行为 ─
 // 通过内联实现验证语义（与源码同构）

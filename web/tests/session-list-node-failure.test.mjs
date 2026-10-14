@@ -22,6 +22,8 @@ const readRepo = (rel) => fs.readFileSync(path.resolve(import.meta.dirname, ".."
 
 const appcontext = readRepo("server/internal/api/appcontext.go");
 const http = readRepo("server/internal/api/http.go");
+const httpSessions = readRepo("server/internal/api/http_sessions.go");
+const httpSessionDomain = `${http}\n${httpSessions}`;
 const scheduled = readRepo("server/internal/scheduled/tasks.go");
 const api = read("src/services/api.ts");
 const realtime = read("src/app/useRealtimeEvents.ts");
@@ -67,19 +69,19 @@ assert.match(
 
 // 已有的 fork 路径仍要能用同一份 payload 构造（不重复造一份形状）。
 assert.match(
-  http,
+  httpSessionDomain,
   /func sessionListResponse\(s \*session\.Session, resolvedShell string\) map\[string\]any/,
   "the list-row payload must be a package-level function so AppContext can reuse it",
 );
 assert.match(
-  http,
+  httpSessionDomain,
   /Type: "session\.created",\s*\n\s*Payload: map\[string\]any\{\s*\n\s*"root_id": req\.RootID,\s*\n\s*"session": h\.sessionListResponse\(out\.Session\),/,
   "the fork path must keep emitting session.created with the same payload shape",
 );
 
 // 坑：AppContext 侧没有 HTTPHandler，shell 的解析必须能独立走。
 assert.match(
-  http,
+  httpSessionDomain,
   /func \(s \*AppContext\) ResolveCommandShell\(\) string/,
   "the command shell resolution must be reachable from AppContext, not only from HTTPHandler",
 );

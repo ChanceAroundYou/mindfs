@@ -17,19 +17,20 @@ const api = fs.readFileSync(path.join(root, "src/services/api.ts"), "utf8");
 const http = fs.readFileSync(path.join(repoRoot, "server/internal/api/http.go"), "utf8");
 const httpGit = fs.readFileSync(path.join(repoRoot, "server/internal/api/http_git.go"), "utf8");
 const httpFiles = fs.readFileSync(path.join(repoRoot, "server/internal/api/http_files.go"), "utf8");
-const httpDomain = `${http}\n${httpGit}\n${httpFiles}`;
+const httpSessions = fs.readFileSync(path.join(repoRoot, "server/internal/api/http_sessions.go"), "utf8");
+const httpDomain = `${http}\n${httpGit}\n${httpFiles}\n${httpSessions}`;
 const httpTasks = fs.readFileSync(path.join(repoRoot, "server/internal/api/http_tasks.go"), "utf8");
 const helpers = fs.readFileSync(path.join(repoRoot, "server/internal/api/helpers.go"), "utf8");
 
 // ── 服务端：列表端点必须走 respondJSONList（瘦身 + 协商）────────────
 // 三个已接的列表端点：会话列表（单项目 / multi_root）与任务总览。
 assert.match(
-  http,
+  httpDomain,
   /respondJSONList\(w, r, map\[string\]any\{\s*"items":\s*payload,/,
   "会话列表必须走 respondJSONList",
 );
 assert.match(
-  http,
+  httpDomain,
   /respondJSONList\(w, r, map\[string\]any\{"groups": groups\}\)/,
   "multi_root 会话列表必须走 respondJSONList",
 );
@@ -66,7 +67,7 @@ assert.ok(
   "git status 绝不能用 respondJSONList —— dirty_count: 0 / clean: false 会被删掉",
 );
 assert.ok(
-  !/respondJSONList\(w, r, map\[string\]any\{"sessions": payload\}\)/.test(http),
+  !/respondJSONList\(w, r, map\[string\]any\{"sessions": payload\}\)/.test(httpDomain),
   "replying-sessions 绝不能用 respondJSONList",
 );
 
@@ -75,18 +76,18 @@ assert.ok(
 // 必须走**只协商**的那条 —— 载荷里的 exchanges / exchange_aux / window_meta
 // 少一个键就是少一段对话。
 assert.match(
-  http,
+  httpDomain,
   /func \(h \*HTTPHandler\) handleSessionGet[\s\S]{0,4000}?respondJSONConditional\(w, r, h\.sessionResponse\(/,
   "单会话详情必须走 respondJSONConditional（1.14 MB × 1.7s 的轮询靠 304 压到零字节）",
 );
 assert.ok(
-  !/respondJSONList\(w, r, h\.sessionResponse\(/.test(http),
+  !/respondJSONList\(w, r, h\.sessionResponse\(/.test(httpDomain),
   "单会话详情绝不能用 respondJSONList —— 删空键会破坏 seq 增量与窗口语义",
 );
 // handleSessionSync（POST，写语义）同样回 sessionResponse，但它**不该**被条件化 ——
 // 所以这里只在该函数自己的区间里断言，而不是全文扫。
 {
-  const fn = http.slice(http.indexOf("func (h *HTTPHandler) handleSessionGet"));
+  const fn = httpDomain.slice(httpDomain.indexOf("func (h *HTTPHandler) handleSessionGet"));
   const body = fn.slice(0, fn.indexOf("\nfunc "));
   assert.ok(
     !/respondJSON\(w, http\.StatusOK/.test(body),

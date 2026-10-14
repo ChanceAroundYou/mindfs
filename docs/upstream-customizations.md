@@ -3171,3 +3171,10 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：tree/file/upload 与 managed directory 增删改、路径解析及响应投影和 session/Git handler 混在 general `http.go`；项目文件端点的请求校验与文件系统边界难单独检查。
 - **根因与边界**：`handleTree`、`handleFile`、upload parser/closer、query parsers、directory handlers、managed-dir path/response helpers 原样迁至 `http_files.go`（574 行）；路由、校验顺序和 usecase dispatch 不变。父文件实测 2,036 行，仍高于硬线。
 - **针对性测试**：`http_test.go`、`http_open_api_test.go`、`http_node_role_test.go` → 守住文件树/目录路由、无鉴权契约与 worker 数据面访问；`make test` → 全仓 Go 门禁。
+
+
+### G-EZ API HTTP session handlers split (repoint excluded)
+
+- **可见症状**：session list/search/import/read/sync/fork/name/pin/delete/archive handlers 与 session response/shell projection 混在 general `http.go`；修改同步或列表协议时难以集中审阅读写流程。
+- **根因与边界**：除 `handleSessionRepoint` 外的 session handlers、session response/list response 与 shell/title projection helpers 原样迁至 `http_sessions.go`（1,184 行）；repoint handler 留在 `http.go` 且未改，路由与调用顺序保持。父文件实测 867 行。
+- **针对性测试**：`http_window_test.go`、`http_session_message_test.go` → 守住窗口/session API 与消息路径；`session-window.test.mjs`、`conditional-request.test.mjs`、`user-message-persist-timing.test.mjs`、`session-archive.test.mjs` 与 `session-list-node-failure.test.mjs` → 守住 handler 窗口接线、条件响应、user 行落盘、归档解绑与列表 payload 语义；`make test` → 全仓 Go 门禁。

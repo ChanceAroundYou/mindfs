@@ -63,7 +63,7 @@ assert.ok(
 // ── 4. pendingUser 旁路已随「晚落盘」一起消失 ───────────────────────────────
 // 它的存在前提是「回合执行中读接口拿不到该行」；前提没了，旁路只会造成重复渲染。
 const httpGo = readFileSync(
-  new URL("../../server/internal/api/http.go", import.meta.url),
+  new URL("../../server/internal/api/http_sessions.go", import.meta.url),
   "utf8",
 );
 assert.ok(

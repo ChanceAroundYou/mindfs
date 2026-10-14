@@ -137,3 +137,8 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 - 已完成（2026-10-14）：G-EX 的 `http_git.go` 已通过全仓 Go/TypeScript/web 与 upstream 门禁并 no-restart ship（`2def72a`，三端 `v0.5.5-802-g2def72a`，未重启）。
 - 进行中（2026-10-14）：项目文件树/文件操作、上传、目录增删改与 managed-dir response 迁至 `http_files.go`（574 行）；路由和 usecase 调用不变，API 包专项通过。父文件实测 2,036 行，仍高于 1,500 硬线；全仓门禁与发布待执行。
 - 下一项：完成 G-EY 后继续将 session handler（规避 repoint handler）、静态资源服务和偏好/项目入口按域拆到父文件低于硬线；再处理其他 6 个大文件、双入口审计与 reviewer checklist 门禁。
+
+
+- 已完成（2026-10-14）：G-EY 文件/目录 handler 已通过全仓 Go、tsc、Vitest 5 + legacy 293 与 upstream 门禁（1052 delta / 154 组），提交 `9522fd5` 已推送并 no-restart 安装至三端（`v0.5.5-803-g9522fd5`），bundle 对账一致、无节点重启。
+- 进行中（2026-10-14）：session 列表/详情/同步/搜索/导入/rename/archive/delete 等 handlers 与 response/shell projection 迁至 `http_sessions.go`（1184 行）；`handleSessionRepoint` 留在 `http.go` 且未改。API 包专项及 session-window、conditional-response、user-message timing web 守卫通过；`http.go` 实测 867 行。全仓门禁、upstream 与 no-restart ship 待执行。
+- 下一项：完成 G-EZ 后继续拆 `http.go` 剩余偏好、静态资源、local-dir/import 处理，使主文件成为 route/middleware facade；随后按当前大文件清单处理其余 6 个文件与 cli/server 双入口审计、reviewer checklist 门禁。
