@@ -681,7 +681,6 @@ groups:
       - web/src/components/TaskTemplateDialog.tsx
       - web/src/components/task/ScheduledAgentTaskDialog.tsx
       - web/src/app/appTask.ts
-      - web/src/app/taskIcons.tsx
       - web/src/app/useTaskTemplates.ts
       - web/src/services/tasks.ts
     tests:
@@ -765,7 +764,6 @@ groups:
     files:
       - web/src/services/net/nodeRegistry.ts
       - web/src/hooks/useNodeRegistry.ts
-      - web/src/components/account/NodeSwitcher.tsx
       - web/src/components/account/NodeManagerPanel.tsx
       - web/src/components/account/NodeBadgeHeader.tsx
       - web/src/services/net/rootNode.ts
@@ -1424,7 +1422,6 @@ groups:
       - server/app/workspace.go
       - web/src/App.tsx
       - web/src/app/useRealtimeEvents.ts
-      - web/src/app/taskIcons.tsx
       - web/src/components/task/TaskCardRows.tsx
       - web/src/components/task/TaskDetailPanel.tsx
       - web/src/services/task/worktree.ts
@@ -1491,7 +1488,6 @@ groups:
       - server/internal/api/http.go
       - server/internal/api/http_tasks.go
       - web/src/App.tsx
-      - web/src/app/taskIcons.tsx
       - web/src/components/task/TaskBoardView.tsx
       - web/src/components/task/TaskCardRows.tsx
       - web/src/components/task/TaskDetailPanel.tsx
@@ -2583,7 +2579,6 @@ groups:
     tests:
       - web/tests/task-icons-inventory.test.mjs
     files:
-      - web/src/app/taskIcons.tsx
       - web/src/components/task/taskIcons.tsx
       - web/tests/task-icons-inventory.test.mjs
       - docs/agent/rules/frontend/TODO.md
@@ -3636,7 +3631,6 @@ groups:
       - web/tests/file-tree-service-boundaries.test.mjs
     files:
       - web/src/shared/hexToRgba.ts
-      - web/src/app/taskIcons.tsx
       - web/src/components/task/taskIcons.tsx
       - web/src/components/file/FileTree.tsx
       - web/tests/shared-hex-to-rgba.test.mjs
@@ -3733,7 +3727,6 @@ groups:
       - web/src/components/task/TaskBoardView.tsx
       - web/src/components/task/TaskBoardToolbar.tsx
       - web/src/components/task/taskIcons.tsx
-      - web/src/app/taskIcons.tsx
       - web/src/app/useSessionSidebarView.tsx
       - web/src/components/app/TaskSessionErrorDialog.tsx
       - web/src/components/session/useSessionCard.ts
@@ -7866,11 +7859,8 @@ groups:
       - web/tests/agent-docs-contract.test.mjs
     files:
       - web/src/app/AppRootView.tsx
-      - web/src/app/appMisc.tsx
       - web/src/app/appMisc.ts
-      - web/src/app/taskIcons.tsx
       - web/src/app/taskIcons.ts
-      - web/src/app/renderRootSlashCommandResult.tsx
       - web/src/app/renderRootSlashCommandResultHelpers.tsx
       - web/src/app/useAppDomainLayer.ts
       - web/src/app/useAppMainViewActions.ts
@@ -7883,26 +7873,18 @@ groups:
       - web/src/components/agent/AgentSelectorParts.tsx
       - web/src/components/agent/agentSelectorUtils.ts
       - web/src/components/agent/useAgentSelector.ts
-      - web/src/components/account/NodeSwitcher.tsx
       - web/src/components/account/NodeSwitcher.ts
-      - web/src/components/editor/EditorBridge.tsx
       - web/src/components/editor/EditorBridge.ts
       - web/src/components/session/ArchivedSessionsPanel.tsx
       - web/src/components/session/AttachmentImage.tsx
       - web/src/components/session/SessionViewerAssistantMessage.tsx
-      - web/src/components/session/SessionViewerAttachments.tsx
-      - web/src/components/session/SessionViewerAuxiliaryTimeline.tsx
-      - web/src/components/session/SessionViewerSlashCommand.tsx
       - web/src/components/session/SessionViewerSlashCommandResult.tsx
       - web/src/components/session/SessionViewerTimeline.tsx
-      - web/src/components/session/SessionViewerToolItem.tsx
       - web/src/components/session/SessionViewerUserMessage.tsx
       - web/src/components/session/sessionViewerAuxiliaryTimelineHelpers.tsx
       - web/src/components/session/sessionViewerToolTimelineHelpers.tsx
-      - web/src/components/shell/Toast.tsx
       - web/src/components/shell/ToastContainer.tsx
       - web/src/hooks/useBackLayer.ts
-      - web/src/hooks/useBackNavigation.ts
       - web/src/hooks/useDialogHost.ts
       - web/src/services/platform/backNavigation.ts
       - web/tests/back-navigation.test.mjs
