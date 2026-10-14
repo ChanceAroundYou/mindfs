@@ -1,6 +1,6 @@
 import type { RefObject } from "react";
 import { useI18n } from "../../i18n/index";
-import type { GitBranchItem } from "../../services/git";
+import type { GitBranchItem } from "../../shared/gitTypes";
 
 export type GitBranchSelectorProps = {
   branch: string;

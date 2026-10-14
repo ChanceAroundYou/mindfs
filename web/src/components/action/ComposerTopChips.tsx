@@ -6,7 +6,7 @@ import { AgentMemoryIndicator } from "../agent/AgentMemoryIndicator";
 import { getRootNodeId } from "../../services/net/rootNode";
 import { useI18n } from "../../i18n";
 import { appAccentHexToRgba } from "../../shared/actionBarUtils";
-import { type GitBranchesPayload } from "../../services/git";
+import type { GitBranchesPayload } from "../../shared/gitTypes";
 
 export function ComposerTopChips({
   planModeActive,

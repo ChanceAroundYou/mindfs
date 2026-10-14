@@ -6565,3 +6565,31 @@ groups:
     anchors:
       - web/src/shared/taskTypes.ts:export type StageTemplate
       - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+
+  - id: G-HA
+    title: Shared Git response contracts
+    kind: arch
+    symptom: |
+      Git presentation components import response types from the request service facade.
+    why: |
+      Keep transport-independent response contracts in shared while preserving service re-exports for compatibility.
+    boundary: |
+      Git response types move to shared/gitTypes.ts; GitDiffPayload remains in services/git/types.ts because
+      it composes the file cache payload. Three components import shared types and Git runtime behavior is unchanged.
+    tests:
+      - web/tests/reviewer-architecture-rules.test.mjs
+    files:
+      - web/src/shared/gitTypes.ts
+      - web/src/services/git/types.ts
+      - web/src/components/git/GitBranchSelector.tsx
+      - web/src/components/file/WorktreeLifecycleOverlays.tsx
+      - web/src/components/action/ComposerTopChips.tsx
+      - web/tests/fixtures/component-service-import-debt.json
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/shared/gitTypes.ts:export type GitStatusPayload
+      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"

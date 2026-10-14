@@ -1,5 +1,5 @@
 import React from "react";
-import type { GitBranchesPayload, GitWorktreeItem } from "../../services/git";
+import type { GitBranchesPayload, GitWorktreeItem } from "../../shared/gitTypes";
 import { Select } from "../common/Select";
 import { useI18n } from "../../i18n";
 

@@ -3340,3 +3340,9 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：PromptEditor、StageEditor 与 WorkspaceBoard 只使用任务类型，但组件仍通过 task service facade 取得这些类型。
 - **根因与边界**：三者改从 `shared/taskTypes.ts` 导入；实际任务 CRUD/运行继续留在 service/app 层，组件展示和编辑流程不变。
 - **针对性测试**：`web/tests/reviewer-architecture-rules.test.mjs` → 守住组件 service 边只减不增；`npm run typecheck` → 守住类型解析。
+
+### G-HA Shared Git response contracts
+
+- **可见症状**：Git 视图只消费后端响应类型，却通过 `services/git` 导入类型，表现层因此依赖请求门面。
+- **根因与边界**：纯响应契约集中到 `shared/gitTypes.ts`；service 类型模块继续 re-export 兼容旧消费者，`GitDiffPayload` 仍在 service 层组合缓存 payload。三个展示组件改从 shared 导入，Git 请求和缓存行为不变。
+- **针对性测试**：`web/tests/reviewer-architecture-rules.test.mjs` → 守住组件 service 边只减不增；`npm run typecheck` → 守住 service facade 与 shared 类型兼容。
