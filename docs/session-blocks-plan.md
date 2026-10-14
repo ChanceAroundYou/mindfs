@@ -1,3 +1,5 @@
+> **历史设计记录**：其中 Node `node --test` 限制和 runner hook 路径已过期；当前测试由 Vitest 唯一运行，规范见 `docs/agent/rules/frontend/testing.md`。
+
 # 会话正文块流方案（Blocks）
 
 > 2026-10-10 起。本文档是**唯一生效计划**。
@@ -367,7 +369,7 @@ S3 落地记录（2026-10-12）：删除会话读时投影、aux 重映射和审
 - `sessionResponse` 内联 `blocks`（只带 `windowSeqsForExchanges(exchanges)` 的 seq），
   `handleSessionGet` 与 `handleSessionSync` 两条路都带上。内联而不是让前端再发一次请求：
   窗口回包本来就是这一屏的唯一权威快照（§14 O3）。
-- 前端：新增 `web/src/hooks/sessionBlocks.ts`（纯函数、可被 `node --test` 直接 import）。
+- 前端：新增 `web/src/hooks/sessionBlocks.ts`（纯函数、由前端单元测试直接导入）。
   判定逻辑**必须**单独成 `.ts` —— `.tsx` 在 `node --test` 下导入不了（`ts-module-hook.mjs`
   的边界说明），住在 hook 里就只能靠源码文本断言。`TimelineItem` 的定义随之搬过去、
   从 `useSessionStream.ts` 转发，保持既有导入路径不变。

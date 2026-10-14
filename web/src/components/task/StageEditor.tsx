@@ -50,7 +50,7 @@ export type StageEditorProps = {
   editorRef?: React.Ref<import("../editor/TokenEditor").TokenEditorHandle>;
   mode?: "editable" | "readonly" | "done";
   onEdit?: () => void;
-  onSend?: () => void;
+  onSend?: (text: string) => void;
   onAttach?: () => void;
   sending?: boolean;
   sendDisabled?: boolean;

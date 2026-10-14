@@ -2,11 +2,8 @@
 //
 // 这一层必须测，因为它是**现场唯一的证据来源**：它要是静默失效（存储抛异常被吞、
 // 计数从 1 重来、采样撑爆 sessionStorage），以后所有人都会拿一份假数据下结论。
-import { register } from "node:module";
 import assert from "node:assert/strict";
-import test from "node:test";
-
-register("./ts-module-hook.mjs", import.meta.url);
+import { test } from "vitest";
 
 const { installReloadObserver, readReloadReport } = await import(
   "../src/services/reloadObserver.ts"

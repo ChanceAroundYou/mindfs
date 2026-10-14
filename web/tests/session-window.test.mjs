@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
+import fs from "./source-map-fs.mjs";
 import path from "node:path";
+import { test } from "vitest";
+
+test("session-window", async () => {
 // overlay 判定由 src/shared/sessionOverlay.ts 的纯函数实现。
 // 这里直接 import 真实现，避免再维护同构副本。
 
-import { register } from "node:module";
-register("./ts-module-hook.mjs", import.meta.url);
 const { computeTailOverlay } = await import("../src/shared/sessionOverlay.ts");
 
 const sessionServiceDir = path.resolve(import.meta.dirname, "../src/services/session");
@@ -342,7 +343,7 @@ assert.match(
 // 这条一旦坏了症状是「内容重复」，源码正则看不出来 —— 所以断言行为，不断言形状。
 //
 // task-35 拆分后 `mergeSessionExchanges` 住在 services/sessionExchangeMerge.ts
-// （session.ts 只是 re-export），所以走 ts-module-hook 的 import 而不是 vm 导出 ——
+// （session.ts 只是 re-export），所以走 Vitest 的动态 import 而不是 vm 导出 ——
 // 与文件顶部 `computeTailOverlay` 同一个先例：真实实现，不同构副本。
 const sessionMod = await import("../src/services/sessionExchangeMerge.ts");
 const mergeSessionExchanges = sessionMod.mergeSessionExchanges;
@@ -784,3 +785,4 @@ assert.deepEqual(
 );
 
 console.log("session-window.test.mjs: OK");
+});

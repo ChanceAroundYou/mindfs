@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
+import fs from "./source-map-fs.mjs";
 import path from "node:path";
+import { test } from "vitest";
 
+test("session-ring-gesture", async () => {
 // 蓝环的手势接线：SessionRing 必须真的走 quickSwitch 的 ringGesture，
 // 而不是自己在组件里另写一套阈值。
 //
@@ -66,3 +68,4 @@ assert.equal(
   false,
   "SessionQuickActions.tsx must stay deleted; its gesture lives in SessionRing now",
 );
+});

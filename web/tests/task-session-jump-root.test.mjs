@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync } from "./source-map-fs.mjs";
 import path from "node:path";
 import ts from "typescript";
 import vm from "node:vm";
+import { test } from "vitest";
 
+test("task-session-jump-root", async () => {
 // 工作台卡片「跳会话」的 root 归属（docs/upstream-customizations.yaml 的 G-Z）。
 // 症状：第二次点同一张卡片跳到「当前项目」下的同名空白会话（请求打到错误 root → 404）。
 // 根因：会话回包不带 root_id，前端把它写进缓存后，二次跳转时归属退化成 currentRoot。
@@ -125,3 +127,4 @@ assert.match(lifecycle, /root_id: resolvedRoot/, "window and sync cache writes m
 assert.match(selection, /root_id: targetRoot/, "handleSelectSession cache write must stamp root_id");
 
 console.log("task-session-jump-root.test.mjs ok");
+});

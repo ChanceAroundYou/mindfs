@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
+import fs from "./source-map-fs.mjs";
 import path from "node:path";
+import { test } from "vitest";
 
+test("auth-gate-hook", async () => {
 const root = path.resolve(import.meta.dirname, "..");
 const read = (rel) => fs.readFileSync(path.join(root, rel), "utf8");
 const hook = read("src/components/account/useAuthGate.ts");
@@ -18,3 +20,4 @@ assert.doesNotMatch(view, /services\/net\/authGate|fetchAuthStatus|loginWithPass
 assert.match(view, /useAuthGate\(t\)/, "the page gate delegates state and auth actions to its colocated logic hook");
 
 console.log("auth gate hook contract ok");
+});

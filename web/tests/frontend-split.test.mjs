@@ -9,17 +9,18 @@
 // 上游的单文件实现，导出面悄悄变了」—— 文件级 diff 看不出来，只有 import 后
 // 逐键比对才看得见。
 import assert from "node:assert/strict";
-import { readdirSync } from "node:fs";
-import { test } from "node:test";
+import { readdirSync } from "./source-map-fs.mjs";
+import { test } from "vitest";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { MODULES, rawReadFileSync } from "./source-map.mjs";
+import * as tasks from "../src/services/tasks.ts";
+import * as git from "../src/services/git.ts";
+import * as file from "../src/services/file.ts";
+import * as session from "../src/services/session.ts";
 
 const root = path.resolve(fileURLToPath(import.meta.url), "../..");
-const importSrc = (rel) => import(pathToFileURL(path.join(root, rel)).href);
-
 test("barrel shim 完整重导出原模块公开面", async () => {
-  const tasks = await importSrc("src/services/tasks.ts");
   for (const key of [
     "fetchTasksOverview", "createTask", "updateTaskStage", "deleteTask",
     "fetchTaskTemplates", "fetchTaskDetails", "addTaskStage", "moveTask",
@@ -27,7 +28,6 @@ test("barrel shim 完整重导出原模块公开面", async () => {
     assert.equal(typeof tasks[key], "function", `tasks.ts 应重导出 ${key}`);
   }
 
-  const git = await importSrc("src/services/git.ts");
   for (const key of [
     "fetchGitStatus", "fetchGitHistory", "commitDiffStorageKey",
     "normalizeGitStatusPayload", "normalizeGitActionPayload", "fetchGitDiff",
@@ -35,7 +35,6 @@ test("barrel shim 完整重导出原模块公开面", async () => {
     assert.equal(typeof git[key], "function", `git.ts 应重导出 ${key}`);
   }
 
-  const file = await importSrc("src/services/file.ts");
   for (const key of [
     "fetchFile", "getCachedFile", "invalidateFileCache",
     "fetchEditableFile", "saveTextFile", "fetchProofProtectedBlob",
@@ -47,10 +46,10 @@ test("barrel shim 完整重导出原模块公开面", async () => {
 test("拆分未引入导入环（子模块可独立加载）", async () => {
   // 逐个加载子模块：若有环，ESM 会抛错或拿到未初始化的绑定。
   // （只加载 .ts —— .tsx 含 JSX，Node 无法直接 import，由 typecheck 兜住。）
-  await importSrc("src/services/task/index.ts");
-  await importSrc("src/services/git/index.ts");
-  await importSrc("src/services/file/index.ts");
-  await importSrc("src/services/session/sessionService.ts");
+  await import("../src/services/task/index.ts");
+  await import("../src/services/git/index.ts");
+  await import("../src/services/file/index.ts");
+  await import("../src/services/session/sessionService.ts");
 });
 
 test("session 服务根路径只保留 facade，领域实现归入 session/", async () => {
@@ -76,7 +75,6 @@ test("session 服务根路径只保留 facade，领域实现归入 session/", as
     assert.deepEqual(MODULES[`src/services/${name}.ts`], expected, `${name} source-map path`);
   }
 
-  const session = await importSrc("src/services/session.ts");
   assert.equal(typeof session.sessionService.connect, "function");
   assert.equal(typeof session.getSessionWindow, "function");
 });

@@ -1,4 +1,4 @@
-// 会话分组显示的节点色解析与审计摘要（纯函数，无浏览器依赖，可被 node:test 直导）
+// 会话分组显示的节点色解析与审计摘要（纯函数，无浏览器依赖，由 Vitest 直接测试）
 // 右面板 MultiProjectSessionList 的颜色源是 group._nodeColor；缺失时渲染侧回退 PALETTE[0]（#3b82f6 蓝）。
 // 本模块统一解析链：byKey[nid::rid]._nodeColor → nodes 按 id → nodes 按 name → null（调用方决定回退）。
 

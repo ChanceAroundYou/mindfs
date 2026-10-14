@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync } from "./source-map-fs.mjs";
+import { test } from "vitest";
 
+test("update-button-flicker", async () => {
 // 底栏「更新」按钮的闪烁回归守卫。
 //
 // 与 PWA 安装按钮同源的一类问题：按钮的可见性依赖一个**迟到**的状态，而首帧那份
@@ -48,3 +50,4 @@ assert.match(
   /state\.auto_update_supported === true && state\.has_update === true/,
   "auto_update_supported 仍是必要条件（当前两端为 false，故按钮恒不显示）",
 );
+});

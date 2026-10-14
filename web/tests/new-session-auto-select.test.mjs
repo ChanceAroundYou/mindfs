@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
+import fs from "./source-map-fs.mjs";
 import path from "node:path";
 import ts from "typescript";
 import vm from "node:vm";
+import { test } from "vitest";
 
+test("new-session-auto-select", async () => {
 // 「没选中任何会话时新建并运行，不自动跳到新会话」的回归。
 //
 // 症状：主区停在空面板「从右侧会话列表选择一个会话开始对话」，agent 明明在跑。
@@ -163,3 +165,4 @@ assert.match(
   /if \(mainView === "chat" && !selectedSession\) \{/,
   "the main empty state is still driven purely by selectedSession",
 );
+});

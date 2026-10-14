@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
+import fs from "./source-map-fs.mjs";
 import path from "node:path";
+import { test } from "vitest";
 
+test("task-panel-service-boundaries", async () => {
 const root = path.resolve(import.meta.dirname, "..");
 const read = (rel) => fs.readFileSync(path.join(root, rel), "utf8");
 
@@ -18,3 +20,4 @@ assert.match(read("src/components/app/TaskInlineEditPanel.tsx"), /shared\/(agent
 assert.match(read("src/components/app/SessionSheet.tsx"), /shared\/agentTypes/);
 
 console.log("task panel service boundary contracts ok");
+});

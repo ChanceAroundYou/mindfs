@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
+import fs from "./source-map-fs.mjs";
 import path from "node:path";
+import { test } from "vitest";
 
+test("pending-recovery-on-resume", async () => {
 // 2026-10-10 分层聚合：这两个 effect 已从 App.tsx 搬进 useReplyingSessionPoll.ts。
 const pollSource = fs.readFileSync(
   path.resolve(import.meta.dirname, "../src/app/useReplyingSessionPoll.ts"),
@@ -20,3 +22,4 @@ assert.match(
 );
 
 console.log("pending-recovery-on-resume.test.mjs ok");
+});

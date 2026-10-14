@@ -1,6 +1,6 @@
-import { test } from "node:test";
+import { test } from "vitest";
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "./source-map-fs.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -11,6 +11,15 @@ function walkMarkdown(dir, out = []) {
     const file = path.join(dir, entry);
     if (statSync(file).isDirectory()) walkMarkdown(file, out);
     else if (file.endsWith(".md")) out.push(file);
+  }
+  return out;
+}
+
+function walkTestFiles(dir, out = []) {
+  for (const entry of readdirSync(dir)) {
+    const file = path.join(dir, entry);
+    if (statSync(file).isDirectory()) walkTestFiles(file, out);
+    else if (/\.test\.(?:mjs|ts)$/.test(file)) out.push(file);
   }
   return out;
 }
@@ -46,6 +55,15 @@ test("plan index has at most one valid Active plan", () => {
   }
 });
 
+test("frontend tests use Vitest as the only runner", () => {
+  const packageJSON = JSON.parse(readFileSync(path.join(root, "web/package.json"), "utf8"));
+  assert.match(packageJSON.scripts.test, /vitest run/);
+  assert.doesNotMatch(packageJSON.scripts.test, /node --test|test:legacy/);
+  for (const file of walkTestFiles(path.join(root, "web/tests"))) {
+    assert.doesNotMatch(readFileSync(file, "utf8"), /from\s+["']node:test["']/, `${file} imports node:test`);
+  }
+});
+
 test("Claude and Gemini entry files point to the shared instruction and indexes", () => {
   for (const file of ["CLAUDE.md", "GEMINI.md"]) {
     const text = readFileSync(path.join(root, file), "utf8");
@@ -56,3 +74,10 @@ test("Claude and Gemini entry files point to the shared instruction and indexes"
   }
 });
 
+
+
+test("ship instructions match the sole frontend test runner", () => {
+  const ship = readFileSync(path.join(root, ".claude/skills/ship/SKILL.md"), "utf8");
+  assert.match(ship, /`npm test`.*Vitest/s);
+  assert.doesNotMatch(ship, /node --test|node:test|source-map-hook|ts-module-preload|Node 兼容/);
+});

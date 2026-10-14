@@ -1,9 +1,16 @@
-// 添加项目弹窗的路径浏览回归：必须能上溯到 / 及以上（/mnt 等），且根目录不能丢失可点锚点。
-// 纯源码文本断言，不依赖构建产物。
 import assert from "node:assert";
-import fs from "node:fs";
+import fs from "./source-map-fs.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { test } from "vitest";
+
+test("project-add-path-browse", async () => {
+// 添加项目弹窗的路径浏览回归：必须能上溯到 / 及以上（/mnt 等），且根目录不能丢失可点锚点。
+// 纯源码文本断言，不依赖构建产物。
+
+
+
+
 
 const root = path.resolve(fileURLToPath(import.meta.url), "../..");
 const src = fs.readFileSync(path.join(root, "src/components/file/ProjectAddPopover.tsx"), "utf8");
@@ -31,3 +38,4 @@ assert.match(browserHook, /projectAddMode === "local" && target\.is_added_root/)
 assert.match(browserHook, /await refreshManagedRoots\(\)[\s\S]*?openManagedDir\([\s\S]*?loadLocalDirs\(localPath\)/);
 
 console.log("project-add-path-browse ok");
+});

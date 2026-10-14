@@ -1,6 +1,6 @@
 # 视图与功能分离（长期规则）
 
-四层结构（现状）：`App.tsx`（16 行组合根）→ `useAppStateLayer`（状态持有）
+四层结构：`App.tsx`（小型组合根）→ `useAppStateLayer`（状态持有）
 → `useAppSessionLayer`（会话装配）→ `useAppDomainLayer`（跨域接线）
 → `useAppViewComposition`（视图组装）→ `AppRootView.tsx`（壳层渲染）。
 

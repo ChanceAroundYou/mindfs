@@ -10,11 +10,11 @@
 // 为什么只有这一层能给证据：两个都是**真实时序**现象（done 与 pending 清理的竞态），
 // 单测层和源码契约层都够不到。
 //
-// 触发：MINDFS_E2E=1 node --test tests/e2e-pending-indicators.test.mjs
+// 触发：MINDFS_E2E=1 npm test --e2e-pending-indicators.test.mjs
 // 未设该变量时整文件跳过 —— 普通 `npm test` 不受影响。
 //
 // 成本：两轮真实回合，约 $0.22/次。
-import test from "node:test";
+import { test, onTestFinished } from "vitest";
 import assert from "node:assert/strict";
 import {
   ISO,
@@ -78,7 +78,7 @@ async function waitForServerReplying(uid, key, timeoutMs = 30000) {
   return false;
 }
 
-test("E2E：pending 指示器在回合结束后消失、运行中列表灯亮（隔离实例）", { skip: SKIP }, async (t) => {
+test.skipIf(!ENABLED)("E2E：pending 指示器在回合结束后消失、运行中列表灯亮（隔离实例）", async () => {
   assert.ok(await isoUp(), `隔离实例未就绪：${ISO.base} —— 先 bash scripts/mindfs-iso.sh start`);
   const { uid } = isoAccount();
 
@@ -133,7 +133,7 @@ test("E2E：pending 指示器在回合结束后消失、运行中列表灯亮（
 // 判据（服务端是「在不在跑」的真值源，UI 灯必须跟随它，无漏）：
 //   · 服务端报告在跑时，UI 灯必须亮（允许 1 次采样延迟）；
 //   · 接力期间至少观察到 2 次「在跑且灯亮」（A、B 各一次）。
-test("E2E：队列接力时下一轮仍亮灯（迟到 done 不误清）", { skip: SKIP }, async (t) => {
+test.skipIf(!ENABLED)("E2E：队列接力时下一轮仍亮灯（迟到 done 不误清）", async () => {
   assert.ok(await isoUp(), `隔离实例未就绪：${ISO.base} —— 先 bash scripts/mindfs-iso.sh start`);
   const { uid } = isoAccount();
 

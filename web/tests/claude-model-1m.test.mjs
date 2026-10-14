@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
+import fs from "./source-map-fs.mjs";
 import path from "node:path";
+import { test } from "vitest";
 
+test("claude-model-1m", async () => {
 const root = path.resolve(import.meta.dirname, "..");
 // model 帮助函数已拆到 action/modelUtils（2026-09 ActionBar 拆分），契约随文件走，内容不变。
 const actionBar = fs.readFileSync(path.join(root, "src/components/action/ActionBar.tsx"), "utf8");
@@ -46,3 +48,4 @@ assert.match(streamCache, /runtimeMeta\.model_display_name \|\| last\.model_disp
 assert.match(realtime, /payload\?\.model_display_name/, "App session.accepted must backfill realtime model_display_name");
 
 console.log("claude-model-1m-realtime-display.test.mjs: OK");
+});

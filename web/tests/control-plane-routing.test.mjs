@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
+import fs from "./source-map-fs.mjs";
 import path from "node:path";
+import { test } from "vitest";
 
+test("control-plane-routing", async () => {
 // 控制面 vs 数据面的分界：控制面请求必须打页面服务器（controlPath），
 // 数据面请求必须继续跟着选中节点走（appPath / appURL + nodeId）。
 //
@@ -58,3 +60,4 @@ assert.match(tasks, /export async function fetchTasksOverview\([\s\S]{0,300}?nod
   "the workspace board must keep fanning out across nodes");
 
 console.log("control-plane-routing.test.mjs: OK");
+});

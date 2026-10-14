@@ -59,7 +59,7 @@ func validKind(k string) bool {
 // runnableTestGlob 从 web/package.json 的 test 脚本里取出测试运行器实际使用的文件名 glob。
 //
 // 「文件在磁盘上」不等于「测试会跑」：web/tests/ 下曾有 .behavior.mjs 这类后缀，
-// 不匹配 `node --test tests/*.test.mjs`，于是它躺在清单里、永远不执行、也永远不会红
+// 不匹配运行器配置的测试文件 glob，于是它躺在清单里、永远不执行、也永远不会红
 // —— 一条退役后没人发现的死条目。glob 从 package.json 现读，改了运行器这里自动跟上。
 func runnableTestGlob(root string) string {
 	data, err := os.ReadFile(filepath.Join(root, "web", "package.json"))

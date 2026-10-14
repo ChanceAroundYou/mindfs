@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
-import { closeSync, openSync, readFileSync } from "node:fs";
+import { closeSync, openSync, readFileSync } from "./source-map-fs.mjs";
 import { resolve } from "node:path";
+import { test } from "vitest";
 
+test("session-pane-split", async () => {
 const root = new URL("../", import.meta.url);
 const readPhysical = (path) => {
   const fd = openSync(resolve(root.pathname, path), "r");
@@ -26,3 +28,4 @@ assert.match(trust, /onTrust/);
 assert.match(types, /export interface SessionPaneProps/);
 
 console.log("session-pane-split.test.mjs: OK");
+});

@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync } from "./source-map-fs.mjs";
+import { test } from "vitest";
 
+test("upstream-restore", async () => {
 const uploadSrc = readFileSync(new URL("../src/services/upload.ts", import.meta.url), "utf8");
 const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 const streamCache = readFileSync(new URL("../src/app/useSessionStreamCache.ts", import.meta.url), "utf8");
@@ -151,3 +153,4 @@ for (const [name, body] of [["git", app], ["worktree", app], ["related", app]]) 
 }
 
 console.log("upstream restore contracts OK");
+});

@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync } from "./source-map-fs.mjs";
+import { test } from "vitest";
 
+test("sync-preserves-live-transient-text", async () => {
 const app = readFileSync(new URL("../src/app/useSessionSyncAction.ts", import.meta.url), "utf8");
 const start = app.indexOf("const localTransientTail = (() => {");
 const end = app.indexOf("const normalized = {", start);
@@ -44,3 +46,4 @@ assert.match(
   /exchanges: \[\.\.\.syncedExchanges, \.\.\.localTransientTail\]/,
   "the transient tail must be appended to the synced exchanges",
 );
+});

@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { normalizePathForRoot, shouldRedirectToRelayNodes } from "../src/services/fileNavigation.ts";
+import { test } from "vitest";
 
+test("file-navigation", async () => {
 const root = "/Volumes/Extention/Users/csdc/project/mindfs";
 const external = "/Volumes/Extention/Users/csdc/.codex/backups/astra-skills-20260912-212006/REPORT.md";
 assert.equal(normalizePathForRoot(external, root), external);
@@ -19,3 +21,4 @@ for (const code of ["node_not_found", "node_offline", "connector_unavailable", "
   assert.equal(await shouldRedirectToRelayNodes(404, code, async () => { assert.fail("unnecessary probe"); }), true);
 }
 assert.equal(await shouldRedirectToRelayNodes(400, "", async () => { assert.fail("unnecessary probe"); }), false);
+});

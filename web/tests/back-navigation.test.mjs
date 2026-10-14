@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync } from "./source-map-fs.mjs";
+import { test } from "vitest";
 
+test("back-navigation", async () => {
 // 「返回上一级」的契约。以前这条链整根是断的：
 //   - Android 硬件返回键派发了 mindfs:android-back-request，但全项目零监听；
 //   - switchMainView 全程 replaceState，历史栈永远只有一条；
@@ -166,3 +168,4 @@ assert.match(
 );
 
 console.log("back-navigation.test.mjs: OK");
+});

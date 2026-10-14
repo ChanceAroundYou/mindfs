@@ -3,7 +3,9 @@ import {
   buildPluginTrustRecord,
   isPluginSnapshotTrusted,
 } from "../src/plugins/trust.ts";
+import { test } from "vitest";
 
+test("plugin-trust", async () => {
 const baseSnapshot = {
   rootPath: "/tmp/mindfs-demo",
   plugins: [
@@ -76,3 +78,4 @@ assert.equal(
   false,
   "different root path should not reuse trust",
 );
+});

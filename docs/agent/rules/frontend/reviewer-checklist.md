@@ -1,23 +1,17 @@
-# reviewer 执行指南（长期规则）
+# Reviewer 执行指南
 
-> 每次前端改动按本表打勾。任一红灯项不通过即挡合并。
+每次前端改动都必须完成本表。自动门禁失败或人工检查缺少要求的证据时，改动不得合并；没有按路径、历史状态或 reviewer 判断覆盖规则的机制。
 
-## 红灯（BLOCK，不通过即挡合并）
+## 必须检查
 
-- [ ] 无 `.ts` 文件含 JSX（`grep -l "<[A-Z]"` 扫 `shared/`、`services/`、`*Utils.ts`）。
-- [ ] view 不 import `services/`；迁移中的历史债务按 `web/tests/fixtures/component-service-import-debt.json` 只减不增，新增文件/边必须先通过 reviewer。
-- [ ] 无 logic 文件返回 JSX（`app/*.ts`、`hooks/*.ts` 无 `return (` JSX 块）。
-- [ ] 无第三份拷贝：新增逻辑先 `grep` 确认 `shared/`、`hooks/` 无现成实现。
-- [ ] 新复用件带测试：新进 `shared/` 的函数、新通用组件同批有 `web/tests/*.test.mjs`。
-- [ ] 改动文件行数：无新增 >500 文件；触及 300–500 文件时附拆分 TODO。
-
-## 黄灯（WARN，建议修后合）
-
-- [ ] 文件名 = 主 export 名；`Utils` 不含 JSX、`Helpers` 可含 JSX；样式模块为 `*Styles.ts` 且不含 JSX。
-- [ ] 类型文件后缀统一：组件域内用 `<domain>Types.ts`，跨域服务类型放 `services/<domain>/types.ts` 或 `shared/`；样式文件用 `xxxStyles.ts` 复数。
-- [ ] 跨组件状态在四层组合持有，业务 hook 只有本地 UI 状态。
-- [ ] WS 更新为增量合并，无整体替换（`setX(data)` 整包替换要能解释）。
-- [ ] 命名规范测试覆盖：改动涉及命名时 `naming-convention.test.mjs` 同步更新。
+- [ ] `.ts` 文件不含 JSX；视图不直接导入 `services/`；逻辑模块不返回 JSX。
+- [ ] 新逻辑复用前，确认 `shared/`、`hooks/` 中没有可直接复用的实现。
+- [ ] 新增共享函数或通用组件时，同批提供覆盖其行为的 Vitest 测试。
+- [ ] 源文件符合统一文件长度规则；命名、类型、样式和后缀符合对应规则。
+- [ ] 跨组件状态由组合层持有，局部 hook 只持有局部 UI 状态。
+- [ ] WebSocket 状态更新按标识增量合并；状态快照与增量事件使用不同的数据路径，不能用整体替换覆盖已知状态。
+- [ ] 检查用户可见行为、错误路径、账户与节点边界，并确认没有重复实现。
+- [ ] SQLite 变更记录回滚方式；新 handler/usecase 同批有行为测试。
 
 ## 快速自查命令
 
@@ -27,13 +21,12 @@ grep -rl "<[A-Za-z]" web/src/shared web/src/services --include="*.ts"
 # view 直调 services
 grep -rn "from.*services/" web/src/components --include="*.tsx"
 # 行数红线
-find web/src -name "*.tsx" -o -name "*.ts" | xargs wc -l | awk '$1>500'
+find web/src \( -name "*.tsx" -o -name "*.ts" \) -print0 | xargs -0 wc -l | awk '$1>500'
 ```
 
 ## 自动覆盖映射
 
 - `.ts` 无 JSX、命名后缀与组件主 export：`web/tests/naming-convention.test.mjs`（`npm test`）。
-- component→service 依赖：`web/tests/reviewer-architecture-rules.test.mjs` 只允许 allowlist 旧边并持续减量（`npm test`）。
-- 前端 500 行硬线与已记录豁免：同一 reviewer architecture test（`npm test`）。
-- 逻辑/视图边界与 WS 增量行为：`web/tests/*layering*.test.mjs` 及对应 stream/cross-node 回归测试（`npm test`）。
-- 代码复用是否已有实现、跨组件状态归属与新复用件测试：仍需逐次 reviewer 人工核对。
+- component→service 依赖与统一文件长度：`web/tests/reviewer-architecture-rules.test.mjs`（`npm test`）。
+- 逻辑/视图边界与 WebSocket 增量行为：对应 layering、stream 和跨节点回归测试（`npm test`）。
+- 复用检查、跨组件状态归属、用户可见行为和数据库回滚说明：reviewer 按本表检查并在变更说明中给出依据。

@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
+import fs from "./source-map-fs.mjs";
 import path from "node:path";
+import { test } from "vitest";
 
+test("intl-formatter-cache", async () => {
 /**
  * Intl 格式化器缓存的契约守卫（`Scope: G-AK`）。
  *
@@ -70,3 +72,4 @@ assert.match(
 );
 
 console.log("intl-formatter-cache.test.mjs: OK");
+});

@@ -3,7 +3,9 @@ import {
   mergeRelatedFileGroups,
   taskIdsForUpdatedSession,
 } from "../src/services/taskRelatedFiles.ts";
+import { test } from "vitest";
 
+test("task-related-files", async () => {
 const taskSessionKeysById = {
   "task-1": ["session-a", "session-b"],
   "task-2": ["session-c"],
@@ -48,3 +50,4 @@ assert.deepEqual(
   merged.map((file) => file.path),
   ["src/App.tsx", "README.md"],
 );
+});

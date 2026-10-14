@@ -21,7 +21,7 @@ cli/cmd/                发布二进制入口 + 启动配置（StartOptions.Role
 
 1. **请求走哪**：HTTP/WS 进 `api/` → 参数解析后调 `usecase/` → `usecase/` 调 `session/`/`kanban/` 等域包。
    handler 禁止直调 `manager.go` 细节，禁止跨域包直调。
-2. **账户走哪**：`h.AppContext` 一处不改（现 188 处），新增 handler 只从 `ScopedRouter` 拿本账户实例；
+2. **账户走哪**：新增 handler 只从 `ScopedRouter` 获取本账户实例；
    StreamHub 每账户独立，禁跨账户共享。
 3. **控制面/数据面**：`nodeinfo.ControlPlanePrefixes()` 是唯一判据；新增端点必须先定面，
    控制面走 `controlPath`，数据面跟 `nodeId`。`role_test.go` 钉住"数据面端点不在表内"。

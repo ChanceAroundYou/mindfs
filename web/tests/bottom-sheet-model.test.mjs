@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
+import fs from "./source-map-fs.mjs";
 import path from "node:path";
 import ts from "typescript";
 import vm from "node:vm";
+import { test } from "vitest";
 
+test("bottom-sheet-model", async () => {
 const webRoot = path.resolve(import.meta.dirname, "..");
 const sourcePath = path.resolve(webRoot, "src/services/bottomSheetModel.ts");
 const source = fs.readFileSync(sourcePath, "utf8");
@@ -69,3 +71,4 @@ assert.match(app, /<BottomSheet[\s\S]*contentRef=\{drawerScrollRef\}/);
 assert.match(app, /<SessionViewer[\s\S]*scrollContainerRef=\{drawerScrollRef\}/);
 
 console.log("drawer scroll handoff contracts OK");
+});

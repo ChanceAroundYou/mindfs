@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync } from "./source-map-fs.mjs";
+import { test } from "vitest";
 
+test("session-cache-strips-anchor-bookkeeping", async () => {
 // 落盘裁剪这一簇住在 sessionCacheStore.ts（2026-10-07 从 session.ts 抽出）。
 const session = readFileSync(new URL("../src/services/sessionCacheStore.ts", import.meta.url), "utf8");
 const persistBody = session.slice(
@@ -53,3 +55,4 @@ assert.doesNotMatch(
   /startsWith\("_"\)/,
   "stripping must not blanket-remove every underscore-prefixed field (_nodeId is still needed)",
 );
+});

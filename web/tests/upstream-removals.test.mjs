@@ -1,3 +1,10 @@
+import assert from "node:assert";
+import fs from "./source-map-fs.mjs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { test } from "vitest";
+
+test("upstream-removals", async () => {
 // 上游裁剪面的「复活检测」：这些文件是我们从上游删掉的（git status=D），
 // 合上游时最容易被上游版本静默带回来 —— 而带回来的东西在文件级 diff 里看不出来
 // （它只是"没差异了"），所以必须有一条直接看磁盘的测试钉住。
@@ -6,10 +13,10 @@
 //   1 被删文件复活       → 能力/UI 回来了，且当年删它们的理由（见 yaml 的 why）没人再看
 //   2 悬空引用           → 复活了一半，或本地代码又指回已删模块
 //   3 替代实现消失       → 删干净了但替代品丢了，功能整体归零（比复活更糟）
-import assert from "node:assert";
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+
+
+
+
 
 // 本测试跨出 web/ 看 server/ 与 cli/，故要的是仓库根（web/tests/ 往上三层）
 const root = path.resolve(fileURLToPath(import.meta.url), "../../..");
@@ -181,3 +188,4 @@ for (const [file, gone] of [
 }
 
 console.log(`✓ 上游裁剪面完整：${REMOVED.length} 个被删文件未复活、无悬空引用、替代实现在位`);
+});

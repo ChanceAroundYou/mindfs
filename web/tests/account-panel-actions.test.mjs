@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
+import fs from "./source-map-fs.mjs";
 import path from "node:path";
+import { test } from "vitest";
 
+test("account-panel-actions", async () => {
 const root = path.resolve(import.meta.dirname, "..");
 const read = (rel) => fs.readFileSync(path.join(root, rel), "utf8");
 const hook = read("src/components/account/useAccountPanel.ts");
@@ -18,3 +20,4 @@ assert.match(view, /signOut\(\)/);
 assert.doesNotMatch(view, /services\/(accounts|dialog|net\/authGate)/);
 
 console.log("account panel actions contract ok");
+});

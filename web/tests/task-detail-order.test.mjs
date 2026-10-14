@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
+import fs from "./source-map-fs.mjs";
 import path from "node:path";
 import ts from "typescript";
 import vm from "node:vm";
+import { test } from "vitest";
 
+test("task-detail-order", async () => {
 const sourcePath = path.resolve(import.meta.dirname, "../src/services/taskDetailOrder.ts");
 const source = fs.readFileSync(sourcePath, "utf8");
 const compiled = ts.transpileModule(source, {
@@ -54,3 +56,4 @@ assert.equal(
   true,
   "an equal-version full detail may enrich the current snapshot",
 );
+});

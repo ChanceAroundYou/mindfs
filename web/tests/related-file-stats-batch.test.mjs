@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
+import fs from "./source-map-fs.mjs";
 import path from "node:path";
+import { test } from "vitest";
 
+test("related-file-stats-batch", async () => {
 /**
  * 关联文件统计改批量接口的契约守卫（`Scope: G-AH`）。
  *
@@ -91,3 +93,4 @@ assert.match(
 );
 
 console.log("related-file-stats-batch.test.mjs: OK");
+});

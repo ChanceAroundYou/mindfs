@@ -1,3 +1,11 @@
+import assert from "node:assert/strict";
+import fs from "./source-map-fs.mjs";
+import path from "node:path";
+import ts from "typescript";
+import vm from "node:vm";
+import { test } from "vitest";
+
+test("tool-card-grouping", async () => {
 // 工具卡分组的契约（2026-10-07）。
 //
 // 背景：agent 一个回合里连开 100+ 个 edit/read/execute 是常态，逐个渲染
@@ -11,11 +19,11 @@
 //   3. ask_user 被折 → 答题卡消失，用户答不了
 //   4. 非 tool 项不断组 → 一条 thought 前后的 edit 被当成一组，时间线错位
 //   5. 分组丢了 toolCall → 展开组卡是空的
-import assert from "node:assert/strict";
-import fs from "node:fs";
-import path from "node:path";
-import ts from "typescript";
-import vm from "node:vm";
+
+
+
+
+
 
 const SRC = path.resolve(import.meta.dirname, "../src");
 
@@ -131,3 +139,4 @@ assert.equal(passthrough[0].type, "user_text");
 assert.equal(passthrough[1].type, "todo");
 
 console.log("tool-card-grouping: ok");
+});

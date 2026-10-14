@@ -4,11 +4,11 @@
 // **跨模块接线 + 真实时序 + 真后端回包** 的问题，三层单测都够不到。
 // 本文件钉的是「agent 行落盘后 N 秒内 pending 信号必须消失」这个最终用户可见的行为。
 //
-// 触发：MINDFS_E2E=1 node --test tests/e2e-pending-signal.test.mjs
+// 触发：MINDFS_E2E=1 npm test --e2e-pending-signal.test.mjs
 // 未设该变量时整文件跳过 —— 普通 `npm test` 不受影响。
 //
 // 成本：一轮真实回合实测 $0.112。本文件跑两轮（一轮建会话、一轮被观察），约 $0.22/次。
-import test from "node:test";
+import { test, onTestFinished } from "vitest";
 import assert from "node:assert/strict";
 import {
   ISO,
@@ -24,6 +24,12 @@ import {
 
 const ENABLED = process.env.MINDFS_E2E === "1";
 const SKIP = ENABLED ? false : "设 MINDFS_E2E=1 才跑；需要隔离实例：bash scripts/mindfs-iso.sh start";
+
+const runScenario = async (_name, optionsOrFn, maybeFn) => {
+  if (typeof optionsOrFn === "function") return optionsOrFn();
+  if (optionsOrFn?.skip) return;
+  return maybeFn?.();
+};
 
 /** pending 信号消失的超时阈值（宽松值，不跟具体修复方式绑死）。 */
 const PENDING_CLEAR_TIMEOUT_MS = 30_000;
@@ -62,7 +68,7 @@ function assertPendingCleared(signals, label) {
   );
 }
 
-test("E2E：pending 信号收敛（隔离实例）", { skip: SKIP }, async (t) => {
+test.skipIf(!ENABLED)("E2E：pending 信号收敛（隔离实例）", async () => {
   assert.ok(await isoUp(), `隔离实例未就绪：${ISO.base} —— 先 bash scripts/mindfs-iso.sh start`);
 
   // ── 夹具：一轮真回合建出会话 ──────────────────────────────────────────────
@@ -71,19 +77,19 @@ test("E2E：pending 信号收敛（隔离实例）", { skip: SKIP }, async (t) =
   assert.match(created.assistantText, /收到/, `第一轮没有得到助手的「收到」，帧：${created.frames.join(",")}`);
 
   const page = await launchBrowser({ tag: "pending-e2e" });
-  t.after(() => page.close());
+  onTestFinished(() => page.close());
   await login(page);
   await openSession(page, key);
 
   // ── 场景 1：冷启动 —— 会话已完成，不该有任何 pending 信号 ─────────────────
-  await t.test("冷启动：会话完成后无 pending 信号", async () => {
+  await runScenario("冷启动：会话完成后无 pending 信号", async () => {
     await sleep(8000); // 跑过两个轮询周期
     const signals = await pendingSignals(page);
     assertPendingCleared(signals, "冷启动");
   });
 
   // ── 场景 2：发一轮，等它落盘（= done 之后），pending 信号必须消失 ──────────
-  await t.test("agent 行落盘后 30s 内 pending 信号消失", async () => {
+  await runScenario("agent 行落盘后 30s 内 pending 信号消失", async () => {
     const agentRowsBefore = (await readExchanges(key)).filter(
       (e) => e.role === "agent" || e.role === "assistant",
     ).length;
@@ -121,7 +127,7 @@ test("E2E：pending 信号收敛（隔离实例）", { skip: SKIP }, async (t) =
   });
 
   // ── 场景 3：WS 断连丢 done 之后，pending 信号必须自己收敛 ─────────────────
-  await t.test("WS 断连 20s 后 pending 信号收敛", async () => {
+  await runScenario("WS 断连 20s 后 pending 信号收敛", async () => {
     // 记录所有 WS 实例，便于中途掐断（模拟「断连丢事件」）
     await page.send("Page.addScriptToEvaluateOnNewDocument", {
       source: `(() => {

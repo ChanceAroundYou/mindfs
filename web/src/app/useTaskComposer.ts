@@ -348,7 +348,7 @@ export function useTaskComposer(params: UseTaskComposerParams) {
       : prev);
   }, []);
 
-  const saveTaskInlineEdit = useCallback(async () => {
+  const saveTaskInlineEdit = useCallback(async (prompt: string) => {
 
     const edit = taskInlineEdit;
 
@@ -390,7 +390,7 @@ export function useTaskComposer(params: UseTaskComposerParams) {
 
       }
 
-      const payload = [edit.text.trim(), attachmentTokens].filter(Boolean).join("\n");
+      const payload = [prompt.trim(), attachmentTokens].filter(Boolean).join("\n");
 
       const root = findTaskProjectRoot(rootId, nodeId, managedRootByKeyRef.current, managedRootByIdRef.current);
 

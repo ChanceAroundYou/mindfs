@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { recentQuickSwitchGroups, ringGesture } from "../src/services/quickSwitch.ts";
+import { test } from "vitest";
 
+test("quick-switch", async () => {
 assert.equal(ringGesture(-40, 0), "new");
 assert.equal(ringGesture(0, -40), "switch");
 assert.equal(ringGesture(-55, -42), "new");
@@ -24,3 +26,4 @@ assert.deepEqual(result[0].items.map((item) => item.key), ["pinned-new", "a", "b
 assert.deepEqual(input, before, "Quick switch must not reorder the shared session lists");
 assert.deepEqual(recentQuickSwitchGroups([]), []);
 assert.equal(recentQuickSwitchGroups([group("only", "22")]).length, 1);
+});

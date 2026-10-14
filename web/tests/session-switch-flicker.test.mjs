@@ -11,9 +11,9 @@
 //
 // ⚠️ 别把它当成「切会话闪动」的完整防护。真正的防护在 session-window.test.mjs。
 import assert from "node:assert/strict";
-import fs from "node:fs";
+import fs from "./source-map-fs.mjs";
 import path from "node:path";
-import { test } from "node:test";
+import { test } from "vitest";
 
 const appPath = path.resolve(import.meta.dirname, "../src/App.tsx");
 const appSrc = fs.readFileSync(appPath, "utf8");

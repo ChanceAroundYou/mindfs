@@ -14,7 +14,7 @@
 // 所以本夹具**每轮 E2E 只跑一轮真回合**，之后靠 `appendSyntheticRows` 往 JSONL 追加
 // 合成行来造长会话 —— 追加的行既便宜又确定，而窗口/overlay 那些行为只依赖行数与 seq。
 import { spawn } from "node:child_process";
-import { readFileSync, appendFileSync, existsSync } from "node:fs";
+import { readFileSync, appendFileSync, existsSync } from "../source-map-fs.mjs";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 

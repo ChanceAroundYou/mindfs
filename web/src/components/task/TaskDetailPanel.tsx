@@ -327,7 +327,7 @@ export function TaskDetailPanel({ detail, agents, onClose, onOpenSession, onMove
                   resetKey={`${task.id}-${index}`}
                   mode={editing ? "editable" : (executed ? "done" : "readonly")}
                   onEdit={editing || executed ? undefined : () => requestEditStage(index)}
-                  onSend={editing && !executed ? () => void saveStage(index) : undefined}
+                  onSend={editing && !executed ? (text: string) => void saveStage(index, text) : undefined}
                   onAttach={editing ? () => stageAttachRef.current?.click() : undefined}
                   sending={saving}
                   sendDisabled={!editPrompt.trim()}

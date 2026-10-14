@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync } from "./source-map-fs.mjs";
+import { test } from "vitest";
 
+test("session-window-overlay-dedup", async () => {
 // 2026-09-17 实测 bug：ask 触发后，ask 上下各渲染一块同样的分析文本，重开会话必现。
 // 根因是「方案 C 重锚定」把 App 的整份缓存（持久化行 + 直播瞬时行 seq=0）当成窗口喂给
 // applyWindow，瞬时行于是同时进了窗口态和 overlay 两条来源；而 buildBaseTimeline 对
@@ -69,3 +71,4 @@ assert.match(
 );
 
 console.log("session-window-overlay-dedup: ok");
+});

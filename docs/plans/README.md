@@ -6,7 +6,9 @@ to resume their old TODOs or baselines.
 
 ## Active
 
-当前没有执行中的计划。启动新的多阶段任务前，先建立计划并登记在此处。
+| Plan | Goal | Status |
+|---|---|---|
+| [Frontend test migration and rule hardening](frontend-test-rule-hardening.md) | Migrate frontend tests to Vitest, reconcile rule docs, and remove rule-level exemptions. | Active |
 
 ## Completed or superseded history
 

@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
+import fs from "./source-map-fs.mjs";
 import path from "node:path";
+import { test } from "vitest";
 
+test("task-panel-unification", async () => {
 const root = path.resolve(import.meta.dirname, "..");
 const read = (rel) => fs.readFileSync(path.join(root, rel), "utf8");
 
@@ -510,7 +512,7 @@ assert.match(
 );
 assert.match(
   panel,
-  /onSend=\{editing && !executed \? \(\) => void saveStage\(index\) : undefined\}/,
+  /onSend=\{editing && !executed \? \(text: string\) => void saveStage\(index, text\) : undefined\}/,
   "an executed stage must not offer save",
 );
 assert.match(
@@ -658,3 +660,4 @@ for (const token of ["--status-ok", "--status-warn", "--status-bad"]) {
   const occurrences = css.split(`${token}:`).length - 1;
   assert.ok(occurrences >= 3, `${token} needs a light value plus both dark blocks, found ${occurrences}`);
 }
+});

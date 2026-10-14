@@ -1,3 +1,11 @@
+import assert from "node:assert/strict";
+import fs from "./source-map-fs.mjs";
+import path from "node:path";
+import ts from "typescript";
+import vm from "node:vm";
+import { test } from "vitest";
+
+test("pins-authority", async () => {
 // 置顶的契约（2026-10-05 起）：权威在**服务端主节点**，不是 localStorage。
 //
 // 这些测试守的每一条都对应一个具体的坏法：
@@ -6,11 +14,11 @@
 //   3. 持久化缓存层（localStorage）→ 制造「双份真相」，迟早分叉
 //   4. 快照只抹不盖 → worker 的列表永远没有置顶区
 //   5. 刷新依赖写空数组 → 切项目后看到的还是首次那份
-import assert from "node:assert/strict";
-import fs from "node:fs";
-import path from "node:path";
-import ts from "typescript";
-import vm from "node:vm";
+
+
+
+
+
 
 const SRC = path.resolve(import.meta.dirname, "../src");
 
@@ -260,3 +268,4 @@ assert.ok(
 );
 
 console.log("pins contract ok");
+});

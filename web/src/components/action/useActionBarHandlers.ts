@@ -168,7 +168,11 @@ export function useActionBarHandlers(params: UseActionBarHandlersParams) {
   }, [bumpPromptCandidateRefresh, setActiveCandidateIndex, setCandidates]);
 
   const handleSend = useCallback(async () => {
-    const messageText = serializedInput.trim();
+    // 编辑器内容经 onChange 异步进父 state，快打后立刻发送时闭包里的 serializedInput
+    // 还是旧值。发送入口同步从编辑器读最新文本，不依赖滞后 state。
+    const latestText = editorRef.current?.getSerializedText() ?? serializedInput;
+    if (latestText !== serializedInput) setSerializedInput(latestText);
+    const messageText = latestText.trim();
     if ((!messageText && pendingAttachments.length === 0) || !isConnected || sending || (mode !== "command" && !agent)) return;
     const planCommand = pendingAttachments.length === 0 ? parsePlanCommand(messageText) : null;
     if (planCommand !== null) {
@@ -241,7 +245,7 @@ export function useActionBarHandlers(params: UseActionBarHandlersParams) {
       setUploadProgress(null);
       if (!isMobile) requestAnimationFrame(() => editorRef.current?.focus());
     }
-  }, [agent, agentMode, clearPendingAttachments, createWorktree, currentRootId, currentRootIsGitRepo, currentSession, editorRef, effectiveModelForSend, effort, fastService, inputHistoryDraftRef, isConnected, isMobile, mode, onSendMessage, onSetPlanMode, pendingAttachments, planRootId, planSessionKey, resetEditorHeight, setActiveCandidateIndex, setActiveToken, setCandidates, setCreateWorktree, setInputHistoryIndex, setSending, setSerializedInput, setUploadProgress, setWorktreeBranch, setWorktreeBranchMode, shell, supportsEffort, supportsServiceTier, t, uploadAbortRef, worktreeBranch, worktreeBranchMode]);
+  }, [agent, agentMode, clearPendingAttachments, createWorktree, currentRootId, currentRootIsGitRepo, currentSession, editorRef, effectiveModelForSend, effort, fastService, inputHistoryDraftRef, isConnected, isMobile, mode, onSendMessage, onSetPlanMode, pendingAttachments, planRootId, planSessionKey, resetEditorHeight, serializedInput, setActiveCandidateIndex, setActiveToken, setCandidates, setCreateWorktree, setInputHistoryIndex, setSending, setSerializedInput, setUploadProgress, setWorktreeBranch, setWorktreeBranchMode, shell, supportsEffort, supportsServiceTier, t, uploadAbortRef, worktreeBranch, worktreeBranchMode]);
 
   const handleCancel = useCallback(async () => {
     const sessionKey = currentSession?.key;

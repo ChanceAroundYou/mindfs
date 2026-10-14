@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import test from "node:test";
-import fs from "node:fs";
+import { test } from "vitest";
+import fs from "./source-map-fs.mjs";
 import path from "node:path";
 
 // worktree 徽标的四种状态 + 收尾流程的整条反馈链。

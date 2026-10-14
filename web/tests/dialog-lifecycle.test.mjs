@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
+import fs from "./source-map-fs.mjs";
 import path from "node:path";
 import ts from "typescript";
 import vm from "node:vm";
+import { test } from "vitest";
 
+test("dialog-lifecycle", async () => {
 /**
  * 2026-09：弹窗曾经「点了确认也不消失」——服务只 resolve 了 promise，
  * 没把 null 推给宿主，宿主本地 state 于是永远停在旧请求上。
@@ -88,3 +90,4 @@ dialogService.resolve(true);
 assert.equal(seen.length, before, "没有弹窗时 resolve/dismiss 不应产生额外推送");
 
 console.log("dialog lifecycle OK");
+});

@@ -1,3 +1,9 @@
+import assert from "node:assert/strict";
+import fs from "./source-map-fs.mjs";
+import path from "node:path";
+import { test } from "vitest";
+
+test("related-files-debounce", async () => {
 // related-files 刷新的去抖（2026-10-07）。
 //
 // 症状（实测）：20 分钟内同一会话被拉了 74 次 `related-files`，呈每秒 4–6 个的
@@ -11,9 +17,9 @@
 // 闭包里，且依赖 window.setTimeout 与一个 ref；把它拆出来只为测试会打散这段
 // 「订阅器只派发」的结构（见该文件顶部注释）。这里改为钉住三个必须同时成立的
 // 形状，任一被上游合并冲掉都会红。
-import assert from "node:assert/strict";
-import fs from "node:fs";
-import path from "node:path";
+
+
+
 
 const src = fs.readFileSync(
   path.resolve(import.meta.dirname, "../src/app/useRealtimeEvents.ts"),
@@ -56,3 +62,4 @@ assert.doesNotMatch(
 );
 
 console.log("related-files-debounce: ok");
+});

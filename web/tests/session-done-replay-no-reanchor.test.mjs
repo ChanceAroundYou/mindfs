@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync } from "./source-map-fs.mjs";
+import { test } from "vitest";
 
+test("session-done-replay-no-reanchor", async () => {
 const app = readFileSync(new URL("../src/app/useRealtimeEvents.ts", import.meta.url), "utf8");
 // 契约三（状态机先于派发）住在 emitDecrypted 里 —— 2026-10-08 那轮拆分把它连同
 // 订阅登记一起搬进了 services/sessionDispatcher.ts，判据跟着实现走。
@@ -88,3 +90,4 @@ assert.doesNotMatch(
     "emitDecrypted 必须先 updateActiveStreamState 再 emit（否则监听者读到上一帧的流状态）",
   );
 }
+});

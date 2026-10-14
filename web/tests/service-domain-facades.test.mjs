@@ -1,6 +1,6 @@
-import { test } from "node:test";
+import { test } from "vitest";
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { existsSync } from "./source-map-fs.mjs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { rawReadFileSync } from "./source-map.mjs";

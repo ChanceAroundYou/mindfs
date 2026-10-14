@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync } from "./source-map-fs.mjs";
+import { test } from "vitest";
 
+test("sync-preserves-pending-ask-card", async () => {
 // handleSyncSession 由 useSessionLifecycle 编排，具体同步职责放在专用 hook.
 const lifecycle = readFileSync(
   new URL("../src/app/useSessionSyncAction.ts", import.meta.url),
@@ -54,3 +56,4 @@ assert.match(
   /toolcall\?\.callId/,
   "de-duplication should also look at the window aux's toolcall.callId",
 );
+});

@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync } from "./source-map-fs.mjs";
+import { test } from "vitest";
 
+test("main-content-view-memory", async () => {
 // 2026-09 App.tsx 拆分：顶层存储键/常量移到 app/appSupport.tsx，契约随文件走。
 // 2026-09 二次拆分：appSupport.tsx 拆成 appStorage / appPath / appSession / appTask / appMisc，
 // 各断言改为读符号真正所在的那个模块，契约随文件走。
@@ -235,3 +237,4 @@ assert.match(
   /preservePluginQuery: true,\s*\n\s*preserveMainView: !!state\.view && state\.view !== "files",/,
   "popstate deep-link restore must let the URL view win too",
 );
+});

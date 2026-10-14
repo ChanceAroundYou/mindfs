@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
+import fs from "./source-map-fs.mjs";
 import path from "node:path";
+import { test } from "vitest";
 
+test("task-template-node-routing", async () => {
 const root = path.resolve(import.meta.dirname, "..");
 const read = (rel) => fs.readFileSync(path.join(root, rel), "utf8");
 
@@ -163,3 +165,4 @@ assert.match(
   /import \{[^}]*getActiveNodeId[^}]*setActiveNodeId[^}]*\} from "\.\.\/services\/net\/nodeRegistry"/,
   "root selection must import the active-node setters/getter",
 );
+});

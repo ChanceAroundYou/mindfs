@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
+import fs from "./source-map-fs.mjs";
 import path from "node:path";
+import { test } from "vitest";
 
+test("task-cache-eviction", async () => {
 // 服务端删掉的任务不能永远留在客户端缓存里。
 //
 // 实测：手机上看得到 #11/#13，两台机器的库里都查不到它们，PC 节点也报
@@ -110,3 +112,4 @@ assert.match(
 );
 
 console.log("task-cache-eviction.test.mjs: OK");
+});

@@ -1,22 +1,19 @@
 # MindFS 开发规范
 
-> 长期规则（会被反复执行的约束）。一次性待办在各自的 `TODO.md`，做完即销。
-> 规范解释的是「怎么写代码」，架构事实（单读 goroutine、多账户分区、控制面/数据面）在
-> 仓库根 `AGENTS.md`——那是本规范的上游，冲突时以 `AGENTS.md` 为准。
+> 本目录是代码组织与开发流程规则的唯一正文。架构事实、安全边界与部署权限以仓库根 `AGENTS.md` 为准。
 
 | 目录 | 范围 | 索引 |
 |---|---|---|
-| `common/` | 两端通用（提交规范、fork 定制三件套） | 见下方 |
+| `common/` | 两端通用（提交规范、fork 定制） | 见下方 |
 | `frontend/` | `web/src` + `web/tests` | [README](frontend/README.md) |
 | `backend/` | `server/` + `cli/`（Go） | [README](backend/README.md) |
 
 ## common
 
-- [提交与 fork 定制](common/commit-and-customization.md) — Conventional Commits（中文）、
-  `Scope: G-X`、`docs/upstream-customizations.md` 三件套。**本项目最硬的约束。**
+- [提交与 fork 定制](common/commit-and-customization.md) — Conventional Commits（中文）、`Scope: G-X` 与 upstream customization 登记要求。
 
 ## 执行方式
 
-- **新代码**：强制遵守；命名、层级/复用源守卫、WS 异步派发和测试要求进入 `make test` / `npm test` 门禁；组件→service 存量边由 reviewed allowlist 只减不增。reviewer checklist 仍用于 SQLite 回滚、账户/控制面归属和变更范围等需人工判断项。
-- **存量**：按各 `TODO.md` 分批还，每批「2–3 个 + 一次构建/测试」，零行为变化。
-- **reviewer**：按各 `reviewer-checklist.md` 打勾，红灯挡合并。
+- 规则对新代码和存量代码统一适用；Active 计划可定义本次工作的范围与验收，不能豁免规则。
+- 自动门禁覆盖可机械判定的要求；Reviewer 清单覆盖需要结合行为或架构事实判断的要求。
+- 具体任务可以增加约束或缩小范围，不能降低仓库规则。

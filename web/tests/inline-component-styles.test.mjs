@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "./source-map-fs.mjs";
 import { MODULES } from "./source-map.mjs";
+import { test } from "vitest";
 
+test("inline-component-styles", async () => {
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 const fileEditor = read("src/components/file/FileEditor.tsx");
 const diagramPreview = read("src/components/common/DiagramPreview.tsx");
@@ -24,3 +26,4 @@ assert.deepEqual(MODULES["src/components/FileEditor.css"], ["src/components/file
 assert.deepEqual(MODULES["src/components/DiagramPreview.css"], ["src/components/common/DiagramPreview.tsx"]);
 
 console.log("inline-component-styles.test.mjs: OK");
+});

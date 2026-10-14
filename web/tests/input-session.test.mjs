@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { resolveInputSession } from "../src/services/inputSession.ts";
+import { test } from "vitest";
 
+test("input-session", async () => {
 const main = { key: "main", root_id: "project" };
 const drawer = { key: "drawer", root_id: "project" };
 assert.equal(resolveInputSession("project", false, main, drawer), main);
@@ -17,3 +19,4 @@ const legacy = { session_key: "legacy" };
 assert.equal(resolveInputSession("project", false, legacy, null), legacy);
 const pending = { key: "pending-1", root_id: "project" };
 assert.equal(resolveInputSession("project", true, main, pending), pending);
+});

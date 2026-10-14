@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "./source-map-fs.mjs";
+import { test } from "vitest";
 
+test("workspace-board", async () => {
 // 跨项目工作台的契约（docs/workspace-design.md）。
 // 项目内看板的契约在 task-board-view.test.mjs；扇出在 workspace-node-fanout.test.mjs；
 // 数据新鲜度在 workspace-realtime-freshness.test.mjs。
@@ -442,3 +444,4 @@ assert.match(
 );
 
 console.log("workspace-board.test.mjs: OK");
+});

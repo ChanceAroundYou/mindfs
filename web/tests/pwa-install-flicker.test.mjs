@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync } from "./source-map-fs.mjs";
+import { test } from "vitest";
 
+test("pwa-install-flicker", async () => {
 // PWA 安装按钮「闪一下再消失」的回归守卫。
 //
 // 背景：按钮的可见性依赖 beforeinstallprompt，而它每页面生命周期只派发一次、
@@ -140,3 +142,4 @@ assert.match(
 );
 // 7) localStorage 键不得改动（已装用户的历史标记要继续生效）。
 assert.match(service, /const INSTALLED_KEY = "mindfs-pwa-installed";/, "已安装标记的 localStorage 键保持不变");
+});

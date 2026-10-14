@@ -1,6 +1,6 @@
-import { test } from "node:test";
+import { test } from "vitest";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync } from "./source-map-fs.mjs";
 
 const sharedTypes = new URL("../src/shared/projectAddTypes.ts", import.meta.url);
 const read = (url) => readFileSync(url, "utf8");

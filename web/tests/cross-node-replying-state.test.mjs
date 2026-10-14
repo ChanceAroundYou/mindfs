@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
+import fs from "./source-map-fs.mjs";
 import path from "node:path";
 import ts from "typescript";
 import vm from "node:vm";
+import { test } from "vitest";
 
+test("cross-node-replying-state", async () => {
 // 跨节点「正在回复」状态（小蓝灯）刷新：跨节点丢状态 + 切节点全灭的回归。
 // 背景：蓝灯真值是 multiProjectPendingByKey（键 = scopeSessionKey(nodeId,root,key)），
 // 曾经只打**当前激活节点**，于是「在 PC 上看、任务跑在 Local」时 Local 的灯永远不亮。
@@ -136,3 +138,4 @@ assert.deepEqual(
 );
 
 console.log("cross-node-replying-state.test.mjs ok");
+});

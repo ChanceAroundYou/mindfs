@@ -6,7 +6,9 @@ import {
   buildUnifiedRows,
   getInlineDiffSegments,
 } from "../src/components/gitDiffModel.ts";
+import { test } from "vitest";
 
+test("git-diff-viewer", async () => {
 const insertedFieldDiff = [
   "@@ -1,5 +1,6 @@",
   " err := uc.SendMessage(msgCtx, usecase.SendMessageInput{",
@@ -135,3 +137,4 @@ assert.equal(
   insertedArgument.some((segment) => segment.kind === "ctx" && segment.text.includes("job.User.Content")),
   true,
 );
+});

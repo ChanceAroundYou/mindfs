@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync } from "./source-map-fs.mjs";
+import { test } from "vitest";
 
+test("send-shortcut", async () => {
 const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 const actionBar = readFileSync(new URL("../src/components/action/ActionBar.tsx", import.meta.url), "utf8");
 const actionBarHandlers = readFileSync(new URL("../src/components/action/useActionBarHandlers.ts", import.meta.url), "utf8");
@@ -48,3 +50,4 @@ assert.match(
   /matchesSendShortcut\(event, normalizedSendShortcut\)[\s\S]*?void handleSend\(\)[\s\S]*?if \(event\?\.shiftKey\)/,
   "Enter-based shortcuts should be handled once and before the newline behavior",
 );
+});

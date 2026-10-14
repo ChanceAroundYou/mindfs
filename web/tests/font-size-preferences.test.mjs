@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync } from "./source-map-fs.mjs";
+import { test } from "vitest";
 
+test("font-size-preferences", async () => {
 const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 const fileTree = readFileSync(new URL("../src/components/FileTree.tsx", import.meta.url), "utf8");
 const appShell = readFileSync(new URL("../src/layout/AppShell.tsx", import.meta.url), "utf8");
@@ -30,3 +32,4 @@ assert.match(
 );
 assert.match(fontSizeRules, /FONT_SIZE_MIN = 0\.8[\s\S]*?FONT_SIZE_MAX = 1\.4[\s\S]*?FONT_SIZE_STEP = 0\.1/);
 assert.match(fontSizeService, /FONT_SIZE_MIN[\s\S]*shared\/fontSize/);
+});

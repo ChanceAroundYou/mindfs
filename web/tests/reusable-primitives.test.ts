@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync } from "./source-map-fs.mjs";
 import { describe, expect, it } from "vitest";
 import { filterAgentModels } from "../src/shared/modelFiltering";
 import type { AgentModelInfo } from "../src/shared/agentTypes";

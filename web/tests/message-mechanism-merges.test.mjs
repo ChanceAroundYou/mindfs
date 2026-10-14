@@ -10,13 +10,13 @@
 // 凡是能**自动推导**的判据（死帧、重复点计数）就不硬编码清单 —— 硬编码的清单会随着代码
 // 演化变成谎话，而推导出来的不会。
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 // 两类读法分工明确（source-map.mjs 的 MODULES 会把逻辑路径读成「拼接视图」）：
 //   · readLogicalSource —— 按逻辑路径读拼接视图，给 App.tsx 这类已被拆散的模块用
 //     （`clearLocalPendingForSession` 现在住在 app/useSessionPending.ts，逻辑路径才找得到）；
 //   · readFileSync —— 未经 patch 的物理读，给「全仓只允许一个文件实现」这类断言用
 //     （拼接视图会把 src/services/session.ts 登记的兄弟模块内容再读一遍 → 同一处命中两次）。
-import { readdirSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "./source-map-fs.mjs";
 import { readSource as readLogicalSource, rawReadFileSync as readFileSync } from "./source-map.mjs";
 import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";

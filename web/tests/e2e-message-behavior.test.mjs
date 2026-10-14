@@ -4,12 +4,12 @@
 // **跨模块接线 + 真实时序 + 真后端回包**，三层单测都够不到。尤其第一条与第二条 ——
 // 用 户报的那个 bug（完成瞬间正文消失、切走再切回才恢复）**只有这一层能给证据**。
 //
-// 触发：MINDFS_E2E=1 node --test tests/e2e-message-behavior.test.mjs
+// 触发：MINDFS_E2E=1 npm test --e2e-message-behavior.test.mjs
 // 未设该变量时整文件跳过 —— 普通 `npm test` 不受影响（那一层已经有 18 条刻意的红）。
 //
 // 成本：一轮真实回合实测 $0.112。本文件**跑两轮**（一轮建会话、一轮被观察），约 $0.22/次。
 // 长会话靠往 JSONL 追加合成行造（不花钱、且确定）。
-import test from "node:test";
+import { test, onTestFinished } from "vitest";
 import assert from "node:assert/strict";
 import {
   ISO,
@@ -32,6 +32,12 @@ import {
 const ENABLED = process.env.MINDFS_E2E === "1";
 const SKIP = ENABLED ? false : "设 MINDFS_E2E=1 才跑；需要隔离实例：bash scripts/mindfs-iso.sh start";
 
+const runScenario = async (_name, optionsOrFn, maybeFn) => {
+  if (typeof optionsOrFn === "function") return optionsOrFn();
+  if (optionsOrFn?.skip) return;
+  return maybeFn?.();
+};
+
 const SESSION_WINDOW_SIZE = 20; // 与 services/session.ts 的常量一致
 
 /** 按可见文本点按钮（仓库无 playwright，这是最稳的 DOM 驱动方式）。 */
@@ -44,7 +50,7 @@ async function clickButtonByText(page, matcher) {
   })()`);
 }
 
-test("E2E：消息渲染行为（隔离实例）", { skip: SKIP }, async (t) => {
+test.skipIf(!ENABLED)("E2E：消息渲染行为（隔离实例）", async () => {
   assert.ok(await isoUp(), `隔离实例未就绪：${ISO.base} —— 先 bash scripts/mindfs-iso.sh start`);
 
   // ── 夹具：一轮真回合建出会话（空项目里 DOM 层建不出第一个会话）────────────────
@@ -61,13 +67,13 @@ test("E2E：消息渲染行为（隔离实例）", { skip: SKIP }, async (t) => 
   assert.equal((await readExchanges(key)).length, maxSeq + 30, "追加后库里行数不对");
 
   const page = await launchBrowser({ tag: "msg-e2e" });
-  t.after(() => page.close());
+  onTestFinished(() => page.close());
   await login(page);
   await openSession(page, key);
 
   let baseline = await dumpTimelineStable(page);
 
-  await t.test("冷启动：渲染窗口内的行，且末行是本轮助手行（协议半）", async () => {
+  await runScenario("冷启动：渲染窗口内的行，且末行是本轮助手行（协议半）", async () => {
     assert.ok(!baseline.err, `时间线读不到：${baseline.err}`);
     // 窗口 = 最新 20 条 → seq 从 lastSeq-19 到 lastSeq
     assert.equal(
@@ -82,7 +88,7 @@ test("E2E：消息渲染行为（隔离实例）", { skip: SKIP }, async (t) => 
     );
   });
 
-  await t.test("完成瞬间：不得塌成只剩用户行，且必须发起窗口重锚定", async () => {
+  await runScenario("完成瞬间：不得塌成只剩用户行，且必须发起窗口重锚定", async () => {
     const beforeDone = await dumpTimelineStable(page);
     const apiBefore = page.apiRequests.length;
 
@@ -158,7 +164,7 @@ test("E2E：消息渲染行为（隔离实例）", { skip: SKIP }, async (t) => 
     );
   });
 
-  await t.test("应用内切走再切回：项数与正文长度都不得下降", async () => {
+  await runScenario("应用内切走再切回：项数与正文长度都不得下降", async () => {
     const beforeSwitch = await dumpTimelineStable(page);
     assert.ok(beforeSwitch.count > 0, "切走前时间线是空的，后续断言无意义");
 
@@ -197,7 +203,7 @@ test("E2E：消息渲染行为（隔离实例）", { skip: SKIP }, async (t) => 
     );
   });
 
-  await t.test(
+  await runScenario(
     "跳转到较早消息后，尾部不得出现渲染空洞（冲突②）",
     {
       skip: "实际浏览器入口仍不可驱动；session-overlay-unit.test.mjs 覆盖窗口/缓存身份对账。",
@@ -207,7 +213,7 @@ test("E2E：消息渲染行为（隔离实例）", { skip: SKIP }, async (t) => 
     },
   );
 
-  await t.test("查库判据：区分「导入层写了两行」与「渲染层渲染两次」", async () => {
+  await runScenario("查库判据：区分「导入层写了两行」与「渲染层渲染两次」", async () => {
     // 判据工具本身也要有测试。线上真机复现时「同一段正文两遍」有两种成因，
     // 症状一样但层次不同：库里 2 行 → 写入/导入层重复；库里 1 行 → 渲染层把一行渲染了两次。
     //

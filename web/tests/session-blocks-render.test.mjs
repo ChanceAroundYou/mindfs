@@ -13,11 +13,8 @@
 //   4. 未知块类型让渲染炸掉（agent 加新类型时旧前端必须能活）
 //   5. context_window 贴错项 → 该轮的 token 徽标消失
 //   6. 有块流却仍去读 content → 双写期看不出问题，S2d 删掉 content 后正文全空
-import { register } from "node:module";
 import assert from "node:assert/strict";
-import test from "node:test";
-
-register("./ts-module-hook.mjs", import.meta.url);
+import { test } from "vitest";
 
 const {
   blockItemID,

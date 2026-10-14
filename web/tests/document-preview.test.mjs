@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { getDocumentPreviewKind } from "../src/services/documentPreview.ts";
 import { visiblePageRange, PDF_RENDER_MARGIN_PX } from "../src/shared/documentPreview.ts";
+import { test } from "vitest";
 
+test("document-preview", async () => {
 assert.equal(getDocumentPreviewKind(".PDF"), "pdf");
 assert.equal(getDocumentPreviewKind(".pdf"), "pdf");
 assert.equal(getDocumentPreviewKind("", "application/pdf"), "pdf");
@@ -70,3 +72,4 @@ assert.deepEqual(visiblePageRange([], 0, 800, GAP), { start: 0, end: -1 });
 }
 
 console.log("document-preview: ok");
+});

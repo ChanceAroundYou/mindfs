@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
+import fs from "./source-map-fs.mjs";
 import path from "node:path";
+import { test } from "vitest";
 
+test("css-variable-aliases", async () => {
 // 这些变量被各处引用，但**从未**在任何 CSS 里定义过。浏览器解析不出 var() 时会按
 // invalid at computed-value time 整条丢弃声明 —— 于是依赖它们的属性一直静默退化成
 // 「无颜色 / 透明」（曾导致任务面板禁用按钮没有灰底）。index.css 里的 :root 别名块
@@ -69,3 +71,4 @@ assert.deepEqual(
 );
 
 console.log("css-variable-aliases.test.mjs: OK");
+});

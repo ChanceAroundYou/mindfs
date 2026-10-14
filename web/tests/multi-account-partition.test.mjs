@@ -1,9 +1,16 @@
-// 多账户分区：每个请求/WS 必须带上当前账户，且只带给自己这台服务器。
-// 文本检查（仓库既有风格）+ 同源判定的行为复刻校验。
 import assert from "node:assert";
-import fs from "node:fs";
+import fs from "./source-map-fs.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { test } from "vitest";
+
+test("multi-account-partition", async () => {
+// 多账户分区：每个请求/WS 必须带上当前账户，且只带给自己这台服务器。
+// 文本检查（仓库既有风格）+ 同源判定的行为复刻校验。
+
+
+
+
 
 const root = path.resolve(fileURLToPath(import.meta.url), "../..");
 const read = (p) => fs.readFileSync(path.join(root, p), "utf8");
@@ -220,3 +227,4 @@ assert.ok(sameOrigin("", page), "空串（当前页）应解析为同机");
 assert.ok(!sameOrigin("https://other.example.com/mindfs/api/dirs", page), "绝对跨机地址应判跨机");
 
 console.log("multi-account-partition: ok");
+});

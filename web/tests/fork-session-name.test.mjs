@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
+import fs from "./source-map-fs.mjs";
 import ts from "typescript";
 import vm from "node:vm";
+import { test } from "vitest";
 
+test("fork-session-name", async () => {
 const source = fs.readFileSync("src/components/SessionList.tsx", "utf8");
 const ast = ts.createSourceFile("SessionList.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const declaration = ast.statements.find(
@@ -26,3 +28,4 @@ assert.equal(name("", fork, parent, "root"), "父会话#4");
 assert.equal(name("", fork, new Map(), "root"), "Fork#4");
 assert.equal(name("普通会话", null, parent, "root"), "普通会话");
 console.log("fork session names passed");
+});

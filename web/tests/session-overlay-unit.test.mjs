@@ -1,8 +1,5 @@
-import { register } from "node:module";
 import assert from "node:assert/strict";
-import test from "node:test";
-
-register("./ts-module-hook.mjs", import.meta.url);
+import { test } from "vitest";
 
 const { computeTailOverlay } = await import("../src/shared/sessionOverlay.ts");
 const row = (seq, role, content, mindfs_id) => ({ seq, role, content, mindfs_id });

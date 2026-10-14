@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
+import fs from "./source-map-fs.mjs";
 import path from "node:path";
 import ts from "typescript";
 import vm from "node:vm";
+import { test } from "vitest";
 
+test("scope-keys", async () => {
 // scope.ts 键格式合约：空节点 → 历史单节点格式（字节兼容）；非空节点 → 复合键；
 // 2 段/3 段键互不相等（无碰撞）；目录键与会话键分隔符不同。
 const root = path.resolve(import.meta.dirname, "..");
@@ -65,3 +67,4 @@ assert.ok(!scopeKey("", "mindfs").includes("::"));
 assert.ok(scopeKey("home", "mindfs").includes("::"));
 
 console.log("scope-keys.test.mjs ok");
+});

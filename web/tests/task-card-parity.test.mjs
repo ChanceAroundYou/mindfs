@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync } from "./source-map-fs.mjs";
+import { test } from "vitest";
 
+test("task-card-parity", async () => {
 // 看板卡与工作台卡必须是**同一张卡**（2026-10-07）。
 //
 // 两侧早就引用同一个组件 TaskCardRows.tsx，但数据不是同一份：项目看板拿完整任务，
@@ -238,3 +240,4 @@ assert.match(
   /export async function beginTaskFinishWorktree[\s\S]{0,1400}?throw new FinishWorktreeUserChanges/,
   "beginTaskFinishWorktree must convert its 409 into typed errors too — otherwise the file list is lost",
 );
+});

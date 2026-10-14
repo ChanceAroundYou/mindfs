@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync } from "./source-map-fs.mjs";
+import { test } from "vitest";
 
+test("project-tree-refresh", async () => {
 const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 const projectTreeActions = readFileSync(new URL("../src/app/useProjectTreeActions.ts", import.meta.url), "utf8");
 const fileRefresh = readFileSync(new URL("../src/app/useFileRefresh.ts", import.meta.url), "utf8");
@@ -118,3 +120,4 @@ assert.match(
   /if \(failedAt !== undefined\)[\s\S]*?Date\.now\(\) - failedAt < RAW_FILE_FAILURE_TTL_MS[\s\S]*?rawFileFailures\.delete\(cacheKey\)/,
   "expired raw 404 entries should be removed instead of accumulating",
 );
+});

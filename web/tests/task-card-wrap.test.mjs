@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync } from "./source-map-fs.mjs";
+import { test } from "vitest";
 
+test("task-card-wrap", async () => {
 // 任务卡排版在窄容器下的换行契约。
 //
 // 背景：卡片标题原来是一条 nowrap 的 flex 行，挤了编号/名字/阶段/状态/worktree 五项，
@@ -106,3 +108,4 @@ try {
   taskCardText = "";
 }
 assert.equal(taskCardText, "", "TaskCardText.tsx 死代码必须已删除");
+});

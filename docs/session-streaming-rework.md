@@ -422,7 +422,7 @@ JSONL 增量同步、`session_projection.go` 的读取投影折叠）。
    且不再出现 `data-session-seq="19"` 那条。
 2. **冷启动到等待 ask 的运行中会话**（就是 §0 那条）：助手正文完整 —— (a) 必要性的活证据。
 3. **控制台零 `onStream` TypeError**（提交 B 前后对比，今天是 3 次）。
-4. 门禁三项：`go test ./...` / `tsc --noEmit` / `node --test web/tests/*.test.mjs`。
+4. 门禁三项：`go test ./...` / `tsc --noEmit` / `npm test` (Vitest)。
 5. 新增单测：`reset` 幂等（同一批次连续应用两次，结果与一次相同）、
    seq=0 用户行不被清、`dropTransientExchanges` 的新谓词、**续投帧不带 reset**。
 

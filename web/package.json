@@ -9,9 +9,7 @@
     "build:android": "rimraf ../android/app/src/main/assets/public && VITE_APP_SHELL=1 vite build --outDir ../android/app/src/main/assets/public --emptyOutDir",
     "build:harmony": "rimraf ../harmony/entry/src/main/resources/rawfile/public && VITE_APP_SHELL=1 VITE_NATIVE_PLATFORM=harmony vite build --outDir ../harmony/entry/src/main/resources/rawfile/public --emptyOutDir",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "npm run test:vitest && npm run test:legacy",
-    "test:vitest": "vitest run --config ./vitest.config.ts",
-    "test:legacy": "node --test --import ./tests/source-map-hook.mjs --import ./tests/ts-module-preload.mjs tests/*.test.mjs",
+    "test": "vitest run --config ./vitest.config.ts",
     "preview": "vite preview"
   },
   "dependencies": {

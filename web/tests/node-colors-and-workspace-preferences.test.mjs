@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
+import fs from "./source-map-fs.mjs";
+import { test } from "vitest";
 
+test("node-colors-and-workspace-preferences", async () => {
 const read = (file) => fs.readFileSync(new URL(`../src/${file}`, import.meta.url), "utf8");
 const nodeRegistry = read("services/net/nodeRegistry.ts");
 const nodePalette = read("shared/nodePalette.ts");
@@ -109,3 +111,4 @@ assert.ok(
   appStateLayer.indexOf("taskCreateProjectOptions") > appStateLayer.indexOf("getDisplayNodeColor"),
   "taskCreateProjectOptions must be declared after getDisplayNodeColor (const is not hoisted)",
 );
+});

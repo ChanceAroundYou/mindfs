@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
+import fs from "./source-map-fs.mjs";
 import path from "node:path";
+import { test } from "vitest";
 
+test("conditional-request", async () => {
 /**
  * 列表载荷瘦身 + 条件请求（ETag/304）的契约守卫（`Scope: G-AN`）。
  *
@@ -173,3 +175,4 @@ assert.match(
 assert.match(api, /forgetConditionalResponse\(url\)/, "a response without ETag must clear the stale entry");
 
 console.log("conditional-request.test.mjs: OK");
+});

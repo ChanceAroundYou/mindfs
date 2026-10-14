@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync } from "./source-map-fs.mjs";
+import { test } from "vitest";
+
+test("session-stream-timeline-split", async () => {
 const root = new URL("../src/hooks/", import.meta.url);
 const hook = readFileSync(new URL("useSessionStream.ts", root), "utf8");
 const timeline = readFileSync(new URL("sessionTimeline.ts", root), "utf8");
@@ -20,3 +23,4 @@ assert.match(assistantTimeline, /export function buildAssistantTimeline\(/);
 assert.doesNotMatch(timeline, /from "react"/);
 assert.doesNotMatch(assistantTimeline, /from "react"/);
 console.log("session-stream-timeline-split.test.mjs: OK");
+});

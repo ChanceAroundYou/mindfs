@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync } from "./source-map-fs.mjs";
+import { test } from "vitest";
 
+test("workspace-realtime-freshness", async () => {
 // 工作台是跨项目视图，两个曾让它「看起来坏掉」的 bug 守在这里：
 //   1) 别的项目推送的 task.updated 被丢弃 → 在别处把任务点完成，工作台卡片不变
 //   2) 任务详情面板的节点路由写死当前项目 → 跨项目就地编辑打到错节点
@@ -127,3 +129,4 @@ assert.match(
 );
 
 console.log("workspace-realtime-freshness.test.mjs: OK");
+});

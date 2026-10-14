@@ -181,9 +181,9 @@ export function useTaskDetailPanel({
     } catch (err) { fail(err); } finally { setSaving(false); }
   };
 
-  const saveStage = async (index: number) => {
+  const saveStage = async (index: number, prompt: string) => {
     const original = stages[index];
-    if (!original || !editPrompt.trim()) return;
+    if (!original || !prompt.trim()) return;
     const run = latestStageRun(detail, index);
     if (run && String(run.status) !== "pending") return;
     const isAgent = editRole === "agent";
@@ -191,7 +191,7 @@ export function useTaskDetailPanel({
       ...original,
       name: editName,
       role: editRole,
-      prompt_template: editPrompt,
+      prompt_template: prompt,
       agent: isAgent ? editAgent : undefined,
       model: isAgent ? editModel : undefined,
       effort: isAgent ? editEffort : undefined,

@@ -7,11 +7,8 @@
 // 这里把「逻辑路径（测试里一直沿用的、相对 web/ 的路径）→ 当前物理文件列表」
 // 收敛成唯一一处。文件被移动或拆分时只改 `MODULES`，测试与断言都不用动。
 //
-// 两个消费方：
-//   · source-map-hook.mjs —— 预加载，patch `fs.readFileSync`，让所有既有读法
-//     （`fs.readFileSync` / 具名 `readFileSync` / `read()` 本地 helper / `new URL`）
-//     都自动走这张表；
-//   · ts-module-hook.mjs —— 让 `await import("../src/…")` 也能解析到移动后的物理文件。
+// 消费方：Vitest tests use source-map-fs.mjs for logical source reads;
+// vitest.config.ts resolves dynamic imports that target moved source modules.
 //
 // 注意：本文件刻意用 `createRequire` 取 `node:fs`，而不是 ESM `import fs from "node:fs"`。
 // 因为 ESM 具名导入是在 `node:fs` 的 ESM facade 建立时快照的，而 facade 一旦建立，
@@ -35,6 +32,32 @@ export const WEB_ROOT = path.resolve(import.meta.dirname, "..");
  * 维护规则：文件移动/拆分时改这里，测试不动。
  */
 export const MODULES = {
+  "src/main.tsx": [
+    "src/main.tsx",
+    "src/app/assetRecovery.ts",
+    "src/app/useNativeShellLifecycle.ts",
+    "src/app/nativeShellUtils.ts",
+  ],
+  "src/i18n/locales/en-US.ts": [
+    "src/i18n/locales/en-US.ts",
+    "src/i18n/locales/en-US-sessions.ts",
+    "src/i18n/locales/en-US-tasks.ts",
+    "src/i18n/locales/en-US-projects.ts",
+    "src/i18n/locales/en-US-agents.ts",
+    "src/i18n/locales/en-US-workspace.ts",
+  ],
+  "src/i18n/locales/zh-CN.ts": [
+    "src/i18n/locales/zh-CN.ts",
+    "src/i18n/locales/zh-CN-sessions.ts",
+    "src/i18n/locales/zh-CN-tasks.ts",
+    "src/i18n/locales/zh-CN-projects.ts",
+    "src/i18n/locales/zh-CN-agents.ts",
+    "src/i18n/locales/zh-CN-workspace.ts",
+  ],
+  "src/components/task/taskIcons.tsx": [
+    "src/components/task/taskIcons.tsx",
+    "src/components/task/taskStyles.ts",
+  ],
   "src/components/app/SessionPane.tsx": [
     "src/components/app/SessionPane.tsx",
     "src/components/app/SessionMainContent.tsx",
@@ -578,8 +601,7 @@ export function readSource(logical) {
  * 走 patch 后的读法会把 `src/services/session.ts` 的登记列表（已拼进
  * sessionExchangeMerge.ts 等）与它自己单独读的那份算成两处命中。
  *
- * 注意只能从这里取 —— `createRequire("node:fs")` 拿到的是同一份被 patch 的 CJS 导出，
- * 绕不过去（source-map 头部的 facade 注释说的就是这个陷阱）。
+ * 直接使用原始文件系统读取，避免逻辑路径映射改变物理文件扫描结果。
  */
 export const rawReadFileSync = originalReadFileSync;
 
@@ -608,7 +630,7 @@ export function toLogical(target) {
 }
 
 /**
- * 供 ts-module-hook 用：把「解析到逻辑路径、但物理文件已移动」的单文件模块
+ * 供 Vitest resolver 用：把「解析到逻辑路径、但物理文件已移动」的单文件模块
  * 重定向到新的物理路径（绝对、无扩展名）。多文件（被拆分的 barrel）不重定向 ——
  * 它们的入口 shim 仍在原路径，能被正常解析。
  */

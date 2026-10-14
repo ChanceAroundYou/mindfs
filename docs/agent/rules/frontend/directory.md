@@ -4,7 +4,7 @@
 web/src/
 ├── app/            应用编排：四层组合 hooks、跨域 handlers、AppRootView。禁纯 UI
 ├── components/
-│   ├── <domain>/   14 个域 UI + 强绑定 colocate hook。禁跨域复用件
+│   ├── <domain>/   按产品域组织 UI 与强绑定的 colocated hook；跨域复用件放 shared/ 或 hooks/
 │   ├── app/        壳层专属组装型纯展示组件（SessionPane/AppActionBar/SessionSheet/
 │   │               FileTreePanel/OnboardingGate/TaskInlineEditPanel/
 │   │               TaskDetailPanelGate/TaskSessionErrorDialog）。禁逻辑门

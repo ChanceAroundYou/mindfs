@@ -1,3 +1,11 @@
+import assert from "node:assert/strict";
+import fs from "./source-map-fs.mjs";
+import path from "node:path";
+import ts from "typescript";
+import vm from "node:vm";
+import { test } from "vitest";
+
+test("pins-refresh-dedup", async () => {
 // 置顶刷新的 in-flight 去重（2026-10-07）。
 //
 // 症状（实测）：每次切项目都打两个 `GET /api/pins`，20 分钟内 30 次。
@@ -6,11 +14,11 @@
 //
 // 契约：并发的 refreshPinsFromServer 共享同一个 Promise，只发一次；
 // 第一次结算后再调用必须重新发（去重不是缓存）。
-import assert from "node:assert/strict";
-import fs from "node:fs";
-import path from "node:path";
-import ts from "typescript";
-import vm from "node:vm";
+
+
+
+
+
 
 const SRC = path.resolve(import.meta.dirname, "../src");
 
@@ -73,3 +81,4 @@ release();
 await p3;
 
 console.log("pins-refresh-dedup: ok");
+});

@@ -1,6 +1,5 @@
-import assert from "node:assert/strict";
-import test from "node:test";
-import { readFileSync } from "node:fs";
+import { expect, test } from "vitest";
+import { readFileSync } from "./source-map-fs.mjs";
 import { findTaskProjectRoot, parseTaskProjectScopeKey, taskProjectScopeKey } from "../src/app/appTask.ts";
 
 const appTask = readFileSync(new URL("../src/app/appTask.ts", import.meta.url), "utf8");
@@ -17,31 +16,31 @@ test("task worktree root lookup is scoped by node when project IDs collide", () 
     [taskProjectScopeKey("same-project", "node-remote")]: remote,
   };
 
-  assert.equal(findTaskProjectRoot("same-project", "node-remote", byKey, byId), remote);
-  assert.equal(findTaskProjectRoot("same-project", "missing-node", byKey, byId), undefined);
-  assert.notEqual(
-    taskProjectScopeKey("same-project", "node-local"),
+  expect(findTaskProjectRoot("same-project", "node-remote", byKey, byId)).toBe(remote);
+  expect(findTaskProjectRoot("same-project", "missing-node", byKey, byId)).toBeUndefined();
+  expect(taskProjectScopeKey("same-project", "node-local")).not.toBe(
     taskProjectScopeKey("same-project", "node-remote"),
   );
 });
 
 test("project scope keys round trip root and node IDs", () => {
   const key = taskProjectScopeKey("same-project", "node-remote");
-  assert.deepEqual(parseTaskProjectScopeKey(key), { rootId: "same-project", nodeId: "node-remote" });
-  assert.deepEqual(parseTaskProjectScopeKey("local-project"), { rootId: "local-project", nodeId: "" });
+  expect(parseTaskProjectScopeKey(key)).toEqual({ rootId: "same-project", nodeId: "node-remote" });
+  expect(parseTaskProjectScopeKey("local-project")).toEqual({ rootId: "local-project", nodeId: "" });
 });
 
 test("workspace task creation carries the selected node through the shared dialog", () => {
-  assert.match(
-    useTaskComposer,
+  expect(useTaskComposer).toMatch(
     /const openTaskCreateDialog = useCallback\(\(template: TaskTemplate \| null, targetRootId\?: string, targetNodeId\?: string\)/,
   );
-  assert.match(appTask, /targetNodeId\?: string/);
-  assert.match(useTaskComposer, /findTaskProjectRoot\(rootId, nodeId,/);
-  assert.match(useTaskComposer, /edit\.targetNodeId \|\| getNodeIdForRoot\(rootId\)/);
-  assert.match(useTaskComposer, /createTask\([\s\S]{0,300}?nodeId,/);
-  assert.match(taskInlineEditPanel, /findTaskProjectRoot\(taskInlineTargetRootId, taskInlineTargetNodeId/);
-  assert.match(taskInlineEditPanel, /value=\{taskProjectScopeKey\(taskInlineTargetRootId, taskInlineTargetNodeId\)\}/);
-  assert.match(appStorage, /loadTaskCreateWorktreePreference\(rootId: string, nodeId\?: string\)/);
-  assert.match(appStorage, /saveTaskCreateWorktreePreference\(rootId: string, pref: TaskCreateWorktreePreference, nodeId\?: string\)/);
+  expect(appTask).toMatch(/targetNodeId\?: string/);
+  expect(useTaskComposer).toMatch(/findTaskProjectRoot\(rootId, nodeId,/);
+  expect(useTaskComposer).toMatch(/edit\.targetNodeId \|\| getNodeIdForRoot\(rootId\)/);
+  expect(useTaskComposer).toMatch(/createTask\([\s\S]{0,300}?nodeId,/);
+  expect(taskInlineEditPanel).toMatch(/findTaskProjectRoot\(taskInlineTargetRootId, taskInlineTargetNodeId/);
+  expect(taskInlineEditPanel).toMatch(/value=\{taskProjectScopeKey\(taskInlineTargetRootId, taskInlineTargetNodeId\)\}/);
+  expect(appStorage).toMatch(/loadTaskCreateWorktreePreference\(rootId: string, nodeId\?: string\)/);
+  expect(appStorage).toMatch(
+    /saveTaskCreateWorktreePreference\(rootId: string, pref: TaskCreateWorktreePreference, nodeId\?: string\)/,
+  );
 });

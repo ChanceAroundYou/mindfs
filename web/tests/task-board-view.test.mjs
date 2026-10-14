@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync } from "./source-map-fs.mjs";
+import { test } from "vitest";
 
+test("task-board-view", async () => {
 // 项目内四块看板的契约。跨项目工作台的契约已拆到 workspace-board.test.mjs。
 // 2026-09 App.tsx 拆分：项目看板搬到 components/TaskBoardView.tsx，契约随文件走。
 // 2026-10-07 f5c4e0d：components/ 按领域分域（action/file/session/git/task/common），路径跟着走。
@@ -419,3 +421,4 @@ assert.match(
 );
 
 console.log("task-board-view.test.mjs: OK");
+});

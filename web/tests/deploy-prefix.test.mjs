@@ -1,9 +1,16 @@
-// 部署前缀收口回归测试：文本检查“单一规范化真源”约定，并校验派生值。
-// 不依赖构建产物，纯 node/assert。
 import assert from "node:assert";
-import fs from "node:fs";
+import fs from "./source-map-fs.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { test } from "vitest";
+
+test("deploy-prefix", async () => {
+// 部署前缀收口回归测试：文本检查“单一规范化真源”约定，并校验派生值。
+// 不依赖构建产物，纯 node/assert。
+
+
+
+
 
 const root = path.resolve(fileURLToPath(import.meta.url), "../..");
 const read = (p) => fs.readFileSync(path.join(root, p), "utf8");
@@ -48,3 +55,4 @@ assert.strictEqual(normalizeBase("mindfs/"), "/mindfs");
 assert.strictEqual(normalizeBase("/x/y/"), "/x/y");
 
 console.log("deploy-prefix.test.mjs: OK");
+});

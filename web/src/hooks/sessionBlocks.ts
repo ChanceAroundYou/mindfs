@@ -1,9 +1,7 @@
 // 会话正文块 → 时间线（CUSTOM(G-BH)，方案 §3.2 / §7）。
 //
-// 为什么单独成模块：这里的判定（块序、类型映射、context_window 归属）是**行为**，
-// 需要能被 `node --test` 直接 import 跑（见 `tests/ts-module-hook.mjs` 的说明：
-// `.tsx` 导入不了，判定逻辑必须住在 `.ts` 里）。上游把这段逻辑内联在
-// `useSessionStream.ts` 里，那只能靠源码文本断言。
+// 为什么单独成模块：这里的判定（块序、类型映射、context_window 归属）是独立行为，
+// 由 Vitest 直接覆盖。上游把这段逻辑内联在 `useSessionStream.ts` 里，那只能靠源码文本断言。
 //
 // 为什么需要块流这条路：旧渲染器把「一轮正文」当成 `content` 字符串 + aux 按 `line`
 // 插入，于是**只产出 reasoning、没有 text 的轮次渲染成空**（实测 os 模型约 15% 的轮次）。

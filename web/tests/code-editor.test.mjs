@@ -4,7 +4,9 @@ import { undo, redo, undoDepth, redoDepth } from "@codemirror/commands";
 import { language, syntaxTree } from "@codemirror/language";
 import { createCodeEditorState, editorLanguage, editorReadOnly } from "../src/components/editor/codeEditorState.ts";
 import { codeLanguageForPath } from "../src/components/editor/codeEditorLanguage.ts";
+import { test } from "vitest";
 
+test("code-editor", async () => {
 for (const [path, name] of [
   ["main.ts", "TypeScript"], ["app.TSX", "TSX"], ["index.jsx", "JSX"],
   ["C:\\project\\main.go", "Go"], ["script.py", "Python"], ["config.json", "JSON"],
@@ -48,3 +50,4 @@ state = createCodeEditorState({ text: "reloaded", label: "File content", readOnl
 assert.equal(undoDepth(state), 0);
 assert.equal(state.facet(language), null);
 console.log("CodeMirror language and editing state tests passed");
+});

@@ -46,7 +46,7 @@ export interface TaskInlineEditPanelProps {
   managedRootByIdRef: RefObject<Record<string, ManagedRootPayload>>;
   getNodeIdForRoot: (rootId: string) => string | undefined;
   removeTaskInlineAttachment: (id: string) => void;
-  saveTaskInlineEdit: () => Promise<void>;
+  saveTaskInlineEdit: (text: string) => Promise<void>;
   setTaskInlineActiveToken: Dispatch<SetStateAction<{ type: "file" | "slash" | "prompt" | "command"; query: string; } | null>>;
   setTaskInlineCandidateIndex: Dispatch<SetStateAction<number>>;
   setTaskInlineCandidates: Dispatch<SetStateAction<CandidateItem[]>>;
@@ -338,7 +338,7 @@ export function TaskInlineEditPanel(props: TaskInlineEditPanelProps) {
                        chips 也在渲染，只是没告诉编辑器有这个按钮可点。
                        任务详情面板（TaskDetailPanel.tsx:445）早就这么传了。 */
                     onAttach={() => taskInlineAttachmentInputRef.current?.click()}
-                    onSend={() => void saveTaskInlineEdit()}
+                    onSend={(text: string) => void saveTaskInlineEdit(text)}
                     sending={taskInlineSaving}
                     sendDisabled={!taskInlineEdit.text.trim()}
                     placeholder={t("task.editPlaceholder")}

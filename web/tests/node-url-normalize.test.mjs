@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
+import fs from "./source-map-fs.mjs";
 import path from "node:path";
 import ts from "typescript";
 import vm from "node:vm";
+import { test } from "vitest";
 
+test("node-url-normalize", async () => {
 const root = path.resolve(import.meta.dirname, "..");
 const sourcePath = path.join(root, "src/services/net/nodeBase.ts");
 const source = fs.readFileSync(sourcePath, "utf8");
@@ -74,3 +76,4 @@ const rootContentView = fs.readFileSync(path.join(root, "src/app/useRootContentV
 assert.match(rootContentView, /useRelatedFileStats\(\s*relatedSessionRootId \|\| currentRootId,\s*selectedSessionRelatedFiles,\s*gitStatsRefreshKey,\s*relatedSessionNodeId,/, "App related-file stats must route by the related session's node");
 
 console.log("node-url-normalize.test.mjs: OK");
+});

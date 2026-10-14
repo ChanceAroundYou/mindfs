@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
+import fs from "./source-map-fs.mjs";
 import path from "node:path";
+import { test } from "vitest";
 
+test("git-cache-bounds", async () => {
 /**
  * git 客户端缓存上限的契约守卫（`Scope: G-AH`）。
  *
@@ -80,3 +82,4 @@ assert.match(source, /gitCommitDiffInflight\.delete\(/, "in-flight entries must 
 assert.match(source, /gitCommitFilesInflight\.delete\(/, "in-flight entries must be cleared in finally");
 
 console.log("git-cache-bounds.test.mjs: OK");
+});

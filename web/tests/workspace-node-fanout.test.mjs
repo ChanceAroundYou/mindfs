@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync } from "./source-map-fs.mjs";
+import { test } from "vitest";
 
+test("workspace-node-fanout", async () => {
 // 工作台必须能看到**所有节点**上的项目。后端 Overview() 遍历的是本节点的 roots，
 // 它不知道自己被哪个节点调用，所以跨节点只能由前端扇出 —— 这里钉住扇出的形状。
 const board = readFileSync(new URL("../src/app/useWorkspaceBoard.ts", import.meta.url), "utf8");
@@ -123,3 +125,4 @@ assert.ok(
 );
 
 console.log("workspace-node-fanout.test.mjs: OK");
+});

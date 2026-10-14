@@ -27,8 +27,6 @@ export class SessionDispatcher {
 
   private readonly getNodeId: () => string | null;
 
-  // 注：这里刻意不用 constructor parameter property —— Node 的 strip-only TS 模式
-  // （node --test 直接加载 .ts）不支持 `constructor(private readonly x: T)`，会 SyntaxError。
   constructor(getNodeId: () => string | null) {
     this.getNodeId = getNodeId;
   }

@@ -1,6 +1,6 @@
-import { test } from "node:test";
+import { test } from "vitest";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync } from "./source-map-fs.mjs";
 
 const view = readFileSync(new URL("../src/components/task/TaskBoardView.tsx", import.meta.url), "utf8");
 const storage = readFileSync(new URL("../src/app/appStorage.ts", import.meta.url), "utf8");

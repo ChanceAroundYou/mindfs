@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync } from "./source-map-fs.mjs";
+import { test } from "vitest";
 
+test("app-view-composition-split", async () => {
 const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
 const parentPath = new URL("../src/app/useAppViewComposition.ts", import.meta.url);
 const parent = readFileSync(parentPath, "utf8");
@@ -19,3 +21,4 @@ assert.match(workspace, /getNodeId: getNodeIdForRoot,[\s\S]*?fallbackNodeId: get
 assert.match(workspace, /workspaceBoardRefreshRef\.current = workspaceBoard\.refresh;/, "the board refresh bridge stays assigned during render");
 
 console.log("app-view-composition-split.test.mjs: OK");
+});

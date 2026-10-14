@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { FileEditStore, fileEditKey, editableText, serializeEditedText } from "../src/services/fileEditing.ts";
+import { test } from "vitest";
 
+test("file-editing", async () => {
 const key = fileEditKey("r", "a.txt");
 const fixture = (content = "\ufeff中文\r\n", revision = "v1") => ({ name: "a.txt", path: "a.txt", root: "r", content, revision, encoding: "utf-8", size: new TextEncoder().encode(content).length, truncated: false });
 let finishSave;
@@ -62,3 +64,4 @@ finishLoad();
 await opening;
 assert.equal(delayed.get(key).text, "new draft");
 console.log("file editing state tests passed");
+});

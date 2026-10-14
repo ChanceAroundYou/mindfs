@@ -403,7 +403,6 @@ groups:
       - server/internal/api/ws.go
       - server/internal/api/ws_test.go
       - web/tests/e2e/harness.mjs
-      - web/tests/ts-module-hook.mjs
     tests:
       - web/tests/session-window.test.mjs
       - web/tests/upstream-restore.test.mjs
@@ -837,7 +836,7 @@ groups:
     tests:
       - web/tests/session-list-merge.test.mjs
       - web/tests/session-tree.test.mjs
-      - web/tests/session-group-display.test.mjs
+      - web/tests/session-group-display.test.ts
       - web/tests/session-archive.test.mjs
       - web/tests/archived-panel.test.mjs
       - web/tests/session-duration.test.mjs
@@ -916,6 +915,7 @@ groups:
       - web/tests/no-system-dialogs.test.mjs
       - web/tests/session-ring-gesture.test.mjs
       - web/tests/send-shortcut.test.mjs
+      - web/tests/composer-send-flush.test.mjs
 
   # ── 前端：文件 / Git / 文档 ────────────────────────────────────
   - id: G-AH
@@ -1092,8 +1092,8 @@ groups:
     # 锚点改钉「fork 独有键还在不在」—— 这是 tsc 查不出的方向（整份 zh-CN 被上游版覆盖时，
     # 少的是我们的键，不是上游的键）。
     anchors:
-      - web/src/i18n/locales/zh-CN.ts:"account.primary"
-      - web/src/i18n/locales/en-US.ts:"account.primary"
+      - web/src/i18n/locales/zh-CN-workspace.ts:"account.primary"
+      - web/src/i18n/locales/en-US-workspace.ts:"account.primary"
 
   # ── 工程：脚本与流程 ────────────────────────────────────────────
   - id: G-AL
@@ -1462,7 +1462,7 @@ groups:
       - server/internal/api/http_tasks_finish_teardown.go:task.finish_teardown
       - server/internal/api/http_tasks_finish_teardown.go:func (s *AppContext) FinishWorktreeAndRepoint
       - server/app/workspace.go:WireSessionRunningProbe
-      - 'web/src/i18n/locales/zh-CN.ts:"task.worktreeFinishedLabel": "已收尾"'
+      - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.worktreeFinishedLabel": "已收尾"'
 
   - id: G-AQ
     title: 任务卡的三把键：完成兜底 / 取消 / 删除
@@ -1511,8 +1511,8 @@ groups:
       - web/src/services/task/crud.ts:export async function deleteTask
       - web/src/components/task/taskIcons.tsx:export function TaskCancelIcon
       - web/src/components/task/TaskCardRows.tsx:"delete-task"
-      - 'web/src/i18n/locales/zh-CN.ts:"task.deleteTask": "删除任务卡片"'
-      - 'web/src/i18n/locales/zh-CN.ts:"task.cancelTask": "取消任务"'
+      - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.deleteTask": "删除任务卡片"'
+      - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.cancelTask": "取消任务"'
   - id: G-BC
     title: 看板 / 工作台卡片统一（投影补齐 + 收尾键门控 + 完成键出口 + 收尾失败单通道）
     kind: fix
@@ -1662,10 +1662,10 @@ groups:
       - web/src/components/workspace/WorkspaceTaskRow.tsx:hideSessionError={task.status === "fail"}
       - web/src/services/task/worktree.ts:class FinishWorktreeDirty extends Error
       - web/src/services/net/error.ts:"task.action_failed"
-      - 'web/src/i18n/locales/zh-CN.ts:"task.finishWorktreeDirty": "主 checkout 有未提交改动，先提交或暂存后再收尾"'
-      - 'web/src/i18n/locales/zh-CN.ts:"error.task.actionFailed": "任务操作失败"'
-      - 'web/src/i18n/locales/zh-CN.ts:"task.finishWorktreeUserChanges": "合并已成功，但 worktree 里还有没提交的东西"'
-      - 'web/src/i18n/locales/zh-CN.ts:"task.finishWorktreeUserChangesHint": "代码已经合进主干了，只是目录还没拆。先提交或暂存这些改动，再点一次收尾即可。工具自己留下的临时目录（.claude/ .omc/ .mindfs/）不用你管，那部分会自己清。"'
+      - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.finishWorktreeDirty": "主 checkout 有未提交改动，先提交或暂存后再收尾"'
+      - 'web/src/i18n/locales/zh-CN-workspace.ts:"error.task.actionFailed": "任务操作失败"'
+      - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.finishWorktreeUserChanges": "合并已成功，但 worktree 里还有没提交的东西"'
+      - 'web/src/i18n/locales/zh-CN-tasks.ts:"task.finishWorktreeUserChangesHint": "代码已经合进主干了，只是目录还没拆。先提交或暂存这些改动，再点一次收尾即可。工具自己留下的临时目录（.claude/ .omc/ .mindfs/）不用你管，那部分会自己清。"'
   - id: G-AS
     title: ACP 提问：dsh 的 ask_user_question 走 elicitation
     kind: fix
@@ -2023,8 +2023,6 @@ groups:
       - web/src/hooks/useMarkdownViewer.tsx
       - web/src/hooks/usePwaInstall.ts
       - web/tests/source-map.mjs
-      - web/tests/source-map-hook.mjs
-      - web/tests/ts-module-preload.mjs
       - web/tests/vmLoadSource.mjs
       - web/src/index.tsx
       - e2e/
@@ -2671,7 +2669,7 @@ groups:
       - web/src/components/session/ExternalSessionList.tsx
       - web/tests/naming-convention.test.mjs
     anchors:
-      - "web/tests/naming-convention.test.mjs:naming: JSX render helpers use *Helpers.tsx instead of *Utils.tsx"
+      - "web/tests/naming-convention.test.mjs:test(\"JSX helpers use Helpers.tsx\""
       - web/src/components/session/sessionCardHelpers.tsx:renderHighlightedText
 
   - id: G-BS
@@ -2704,7 +2702,7 @@ groups:
       - web/src/components/action/useWorktreeState.ts
       - web/tests/naming-convention.test.mjs
     anchors:
-      - "web/tests/naming-convention.test.mjs:naming: component domain types use a domain-specific"
+      - "web/tests/naming-convention.test.mjs:test(\"component domain types use a domain-specific name\""
       - web/src/components/action/actionTypes.ts:export type ActionBarProps
 
   - id: G-BT
@@ -2735,7 +2733,7 @@ groups:
     anchors:
       - web/src/components/action/composerStyles.ts:composerContainerStyle
       - web/src/components/action/composerIcons.tsx:TrashIcon
-      - "web/tests/naming-convention.test.mjs:naming: style modules use *Styles.ts"
+      - "web/tests/naming-convention.test.mjs:test(\"style modules use Styles.ts and contain no JSX\""
 
   - id: G-BH
     title: 会话正文块流（Block 存储层 + 轮次身份 turn_id/turn_seq/native_* + S2a 双写 + S2b 读改走块流 + C1/C2 + S2d-2 主日志不再存正文 + S2e pending 身份改用 turn_id）
@@ -2832,9 +2830,7 @@ groups:
           旧渲染器的 lines/totalLines/emittedLines/clamp 全部消失（那套是「把 aux 按 line
           插进 content 字符串」的产物，块流下无意义）。项 id 用 block:<seq>:<pos>：
           (seq,pos) 在一个会话里唯一且**跨 revision 稳定**，同一块被补正时 React 与虚拟列表的
-          测量不重建（旧 id 含内容哈希，流式期每 chunk 换一次）。判定逻辑单独成 .ts 模块是因为
-          .tsx 在 node --test 下导入不了（见 web/tests/ts-module-hook.mjs 的边界说明），
-          住在 hook 里就只能靠源码文本断言。
+          测量不重建（旧 id 含内容哈希，流式期每 chunk 换一次）。判定逻辑单独成 .ts 模块，由 Vitest 直接覆盖；若内联在 hook 中，就只能靠源码文本断言。
       14) 块跟着 exchange_aux 走完**全部**缓存路径（services/session.ts + App.tsx）：
           toPersistentSession 只留还在 exchanges 里的 seq、withSessionMeta 与窗口锚定
           「按 seq 覆盖」、cloneSession 浅拷贝。漏掉任何一条都会让**首帧种子**退回旧格式 ——
@@ -3305,7 +3301,7 @@ groups:
       - docs/upstream-customizations.yaml
       - web/tests/agent-docs.test.mjs
     anchors:
-      - docs/agent/rules/frontend/TODO.md:硬线已清零
+      - docs/agent/rules/frontend/TODO.md:目前没有待处理的一次性存量事项
       - docs/plans/README.md:Rule completion rollout
       - web/tests/agent-docs.test.mjs:every plan is classified in the sole plans index
   - id: G-BZ
@@ -3772,14 +3768,11 @@ groups:
     title: Frontend Vitest runner and reusable primitive coverage
     kind: arch
     symptom: |
-      Frontend rules specify Vitest, but the actual package and deploy gate ran only Node's built-in runner;
-      reusable model filtering and common icon semantics had no direct focused tests.
+      Frontend rules specify Vitest and the package runner now uses Vitest; reusable model filtering and common icon semantics need focused tests.
     why: |
-      Install Vitest 2.1.9 for the current Vite 5 toolchain, route the unified npm test and deploy gate through
-      Vitest plus the source-mapped legacy Node lane, and add direct tests for reusable primitives.
+      Use Vitest with the existing frontend toolchain for the unified npm test and deploy gate, and add direct tests for reusable primitives.
     boundary: |
-      Keep existing Node test assertions and preload behavior unchanged. Vitest owns new .test.ts files; legacy
-      .test.mjs files remain on the compatibility lane and migrate incrementally.
+      The package test command runs Vitest for both .test.ts and .test.mjs files. Source contract tests use a shared logical-source reader; there is no Node test lane.
     tests:
       - web/tests/reusable-primitives.test.ts
       - web/tests/deploy-web-assets.test.mjs
@@ -3799,7 +3792,7 @@ groups:
       - docs/upstream-customizations.md
       - docs/upstream-customizations.yaml
     anchors:
-      - web/package.json:test:vitest
+      - web/package.json:vitest run
       - web/vitest.config.ts:include
       - web/tests/reusable-primitives.test.ts:reusable frontend primitives
       - scripts/deploy-all.sh:cd web && npm test
@@ -6304,21 +6297,15 @@ groups:
     title: Frontend reviewer architecture ratchets
     kind: arch
     symptom: |
-      Reviewer checklist layer-import and hard-line constraints rely on manual grep and can miss new
-      violations or be confused by the legacy source-map test hook.
+      Frontend layering and source-size requirements need a repeatable gate that scans physical source files.
     why: |
-      Turn structural reviewer red lights into repeatable tests while tracking existing layering debt
-      explicitly and allowing that debt only to shrink.
+      Keep frontend architecture constraints mechanically verifiable and apply them to all current and future source files.
     boundary: |
-      reviewer-architecture-rules.test.mjs checks physical TSX component-to-service import edges against the
-      reviewed 121-edge/69-file allowlist, rejecting any new edge; it also enforces the 500-line hard line
-      except for explicit file-size.md exemptions. It reads raw files without source-map remapping. Existing
-      imports remain an Active TODO to migrate, not a permanent rule exception.
+      reviewer-architecture-rules.test.mjs scans physical source files: component-to-service imports must be absent and every frontend source file must meet the shared hard limit. The scan reads physical files without source-map remapping.
     tests:
       - web/tests/reviewer-architecture-rules.test.mjs
     files:
       - web/tests/reviewer-architecture-rules.test.mjs
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/agent/rules/frontend/reviewer-checklist.md
       - docs/agent/rules/README.md
@@ -6327,22 +6314,19 @@ groups:
       - docs/upstream-customizations.md
       - docs/upstream-customizations.yaml
     anchors:
-      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
-      - web/tests/reviewer-architecture-rules.test.mjs:test("frontend source files stay under 500 lines outside documented exemptions"
+      - web/tests/reviewer-architecture-rules.test.mjs:test("components do not import services directly"
+      - web/tests/reviewer-architecture-rules.test.mjs:test("all frontend source files stay under 500 lines"
 
   - id: G-GR
     title: Backend reviewer rule guards
     kind: arch
     symptom: |
-      h.AppContext usage can silently grow and oversized Go production files can return while the reviewer
-      checklist records the constraints without an executable regression gate.
+      AppContext construction and Go source-size constraints need executable regression guards.
     why: |
       Keep the reviewed API workspace dependency surface and backend hard file-size limit mechanically
       verifiable as part of the existing Go test gate.
     boundary: |
-      workspace_test.go scans production API sources, disallows direct AppContext literals, caps h.AppContext
-      occurrence lines at the reviewed 188 baseline, and scans cli/server to reject non-test, non-generated
-      Go files above 1,500 lines. Existing workspace behavior is unchanged.
+      workspace_test.go disallows direct AppContext construction in API handlers and applies the shared Go file-size ceiling to all Go source files under cli/server, including tests and generated files. Existing workspace behavior is unchanged.
     tests:
       - server/internal/api/workspace_test.go
     files:
@@ -6354,8 +6338,9 @@ groups:
       - docs/upstream-customizations.md
       - docs/upstream-customizations.yaml
     anchors:
-      - server/internal/api/workspace_test.go:func TestAPIAppContextAccessDoesNotGrowOrGetConstructedDirectly
-      - server/internal/api/workspace_test.go:func TestProductionGoFilesStayBelowTheHardLine
+      - server/internal/api/workspace_test.go:func TestAPIHandlersDoNotConstructAppContextDirectly
+      - server/internal/api/workspace_test.go:func TestAllGoFilesStayBelowTheHardLine
+      - docs/agent/rules/backend/file-size.md:软线
 
   - id: G-GS
     title: Shared candidate contracts
@@ -6376,7 +6361,6 @@ groups:
       - web/src/components/action/ActionBar.tsx
       - web/src/components/action/CandidateDropdown.tsx
       - web/src/components/app/TaskInlineCandidateMenu.tsx
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -6384,7 +6368,7 @@ groups:
       - docs/upstream-customizations.yaml
     anchors:
       - web/src/shared/candidateTypes.ts:export type CandidateItem
-      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+      - web/tests/reviewer-architecture-rules.test.mjs:test("components do not import services directly"
 
   - id: G-GT
     title: Shared agent status contracts in views
@@ -6402,7 +6386,6 @@ groups:
       - web/src/components/agent/AgentMenuList.tsx
       - web/src/components/agent/AgentSelectorErrorBanner.tsx
       - web/src/components/agent/AgentSelectorMenuHeader.tsx
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -6410,7 +6393,7 @@ groups:
       - docs/upstream-customizations.yaml
     anchors:
       - web/src/shared/agentTypes.ts:export type AgentStatus
-      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+      - web/tests/reviewer-architecture-rules.test.mjs:test("components do not import services directly"
 
   - id: G-GU
     title: Agent status types for editor and task views
@@ -6428,7 +6411,6 @@ groups:
       - web/src/components/agent/AgentSelectorParts.tsx
       - web/src/components/editor/PromptEditor.tsx
       - web/src/components/task/StageEditor.tsx
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -6436,7 +6418,7 @@ groups:
       - docs/upstream-customizations.yaml
     anchors:
       - web/src/shared/agentTypes.ts:export type AgentStatus
-      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+      - web/tests/reviewer-architecture-rules.test.mjs:test("components do not import services directly"
 
   - id: G-GV
     title: Agent status types in task panels
@@ -6453,7 +6435,6 @@ groups:
     files:
       - web/src/components/task/TaskDetailPanel.tsx
       - web/src/components/task/TaskTemplateDialog.tsx
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -6461,7 +6442,7 @@ groups:
       - docs/upstream-customizations.yaml
     anchors:
       - web/src/shared/agentTypes.ts:export type AgentStatus
-      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+      - web/tests/reviewer-architecture-rules.test.mjs:test("components do not import services directly"
 
   - id: G-GW
     title: Agent status types in action and session views
@@ -6479,7 +6460,6 @@ groups:
       - web/src/components/action/ActionBar.tsx
       - web/src/components/session/SessionViewer.tsx
       - web/src/components/session/SessionViewerTimeline.tsx
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -6487,7 +6467,7 @@ groups:
       - docs/upstream-customizations.yaml
     anchors:
       - web/src/shared/agentTypes.ts:export type AgentStatus
-      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+      - web/tests/reviewer-architecture-rules.test.mjs:test("components do not import services directly"
 
   - id: G-GX
     title: Shared task contracts in read-only views
@@ -6505,7 +6485,6 @@ groups:
       - web/src/components/root/RootRelatedContentView.tsx
       - web/src/components/task/TaskCreateTemplateMenu.tsx
       - web/src/components/task/TaskTemplateActionMenu.tsx
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -6513,7 +6492,7 @@ groups:
       - docs/upstream-customizations.yaml
     anchors:
       - web/src/shared/taskTypes.ts:export type KanbanTask
-      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+      - web/tests/reviewer-architecture-rules.test.mjs:test("components do not import services directly"
 
   - id: G-GY
     title: Shared task contracts in workspace and detail views
@@ -6531,7 +6510,6 @@ groups:
       - web/src/components/task/TaskDetailPanel.tsx
       - web/src/components/workspace/WorkspaceTaskRow.tsx
       - web/src/components/workspace/WorkspaceQuickLaunch.tsx
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -6539,7 +6517,7 @@ groups:
       - docs/upstream-customizations.yaml
     anchors:
       - web/src/shared/taskTypes.ts:export type KanbanTask
-      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+      - web/tests/reviewer-architecture-rules.test.mjs:test("components do not import services directly"
 
   - id: G-GZ
     title: Shared task contracts in editors and workspace board
@@ -6557,7 +6535,6 @@ groups:
       - web/src/components/editor/PromptEditor.tsx
       - web/src/components/task/StageEditor.tsx
       - web/src/components/workspace/WorkspaceBoard.tsx
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -6565,7 +6542,7 @@ groups:
       - docs/upstream-customizations.yaml
     anchors:
       - web/src/shared/taskTypes.ts:export type StageTemplate
-      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+      - web/tests/reviewer-architecture-rules.test.mjs:test("components do not import services directly"
 
   - id: G-HA
     title: Shared Git response contracts
@@ -6585,7 +6562,6 @@ groups:
       - web/src/components/git/GitBranchSelector.tsx
       - web/src/components/file/WorktreeLifecycleOverlays.tsx
       - web/src/components/action/ComposerTopChips.tsx
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -6593,7 +6569,7 @@ groups:
       - docs/upstream-customizations.yaml
     anchors:
       - web/src/shared/gitTypes.ts:export type GitStatusPayload
-      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+      - web/tests/reviewer-architecture-rules.test.mjs:test("components do not import services directly"
 
   - id: G-HB
     title: Shared directory view contracts
@@ -6611,7 +6587,6 @@ groups:
       - web/src/components/file/icons.tsx
       - web/src/components/file/listViewIcons.tsx
       - web/src/components/root/RootGitContentView.tsx
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -6619,7 +6594,7 @@ groups:
       - docs/upstream-customizations.yaml
     anchors:
       - web/src/shared/directorySort.ts:export type FileEntry
-      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+      - web/tests/reviewer-architecture-rules.test.mjs:test("components do not import services directly"
 
   - id: G-HC
     title: Shared session domain contracts
@@ -6647,7 +6622,6 @@ groups:
       - web/src/components/session/SessionViewerSlashCommand.tsx
       - web/src/components/session/SessionViewerTimeline.tsx
       - web/src/components/session/SessionViewerTokenViews.tsx
-      - web/tests/fixtures/component-service-import-debt.json
       - web/tests/message-mechanism-merges.test.mjs
       - web/tests/session-window.test.mjs
       - docs/agent/rules/frontend/TODO.md
@@ -6657,7 +6631,7 @@ groups:
       - docs/upstream-customizations.yaml
     anchors:
       - web/src/shared/sessionTypes.ts:export type Session
-      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+      - web/tests/reviewer-architecture-rules.test.mjs:test("components do not import services directly"
       - web/tests/message-mechanism-merges.test.mjs:test("【红·④】overlay 只按角色类别和 mindfs_id 对账"
       - web/tests/session-window.test.mjs:SessionWindowMeta type missing
 
@@ -6677,7 +6651,6 @@ groups:
       - web/src/components/git/GitStatusPanel.tsx
       - web/src/components/root/RootGitContentView.tsx
       - web/src/components/root/RootWorktreeContentView.tsx
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -6685,7 +6658,7 @@ groups:
       - docs/upstream-customizations.yaml
     anchors:
       - web/src/shared/gitTypes.ts:export type GitStatusPayload
-      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+      - web/tests/reviewer-architecture-rules.test.mjs:test("components do not import services directly"
 
   - id: G-HE
     title: Shared upload progress contract
@@ -6704,7 +6677,6 @@ groups:
       - web/src/services/upload.ts
       - web/src/components/action/AttachmentsArea.tsx
       - web/src/components/file/CompactUploadProgress.tsx
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -6712,7 +6684,7 @@ groups:
       - docs/upstream-customizations.yaml
     anchors:
       - web/src/shared/uploadTypes.ts:export type UploadProgress
-      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+      - web/tests/reviewer-architecture-rules.test.mjs:test("components do not import services directly"
 
   - id: G-HF
     title: Shared shell status contract
@@ -6730,7 +6702,6 @@ groups:
       - web/src/shared/agentTypes.ts
       - web/src/services/agent/agents.ts
       - web/src/components/action/ShellSelector.tsx
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -6738,7 +6709,7 @@ groups:
       - docs/upstream-customizations.yaml
     anchors:
       - web/src/shared/agentTypes.ts:export type ShellStatus
-      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+      - web/tests/reviewer-architecture-rules.test.mjs:test("components do not import services directly"
 
   - id: G-HG
     title: Shared file and editor contracts
@@ -6762,7 +6733,6 @@ groups:
       - web/src/components/file/FileViewer.tsx
       - web/src/components/app/FileTreePanel.tsx
       - web/src/components/app/SessionMainContent.tsx
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -6770,7 +6740,7 @@ groups:
       - docs/upstream-customizations.yaml
     anchors:
       - web/src/shared/fileTypes.ts:export interface FileEditStoreContract
-      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+      - web/tests/reviewer-architecture-rules.test.mjs:test("components do not import services directly"
 
   - id: G-HH
     title: Shared document preview contracts
@@ -6789,7 +6759,6 @@ groups:
       - web/src/services/documentPreview.ts
       - web/src/components/file/DocumentViewer.tsx
       - web/src/components/file/PdfPreview.tsx
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -6797,7 +6766,7 @@ groups:
       - docs/upstream-customizations.yaml
     anchors:
       - web/src/shared/documentPreviewTypes.ts:export type DocumentPreviewKind
-      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+      - web/tests/reviewer-architecture-rules.test.mjs:test("components do not import services directly"
 
   - id: G-HI
     title: Directory sort view imports shared module
@@ -6813,7 +6782,6 @@ groups:
       - web/tests/reviewer-architecture-rules.test.mjs
     files:
       - web/src/components/file/DirectorySortMenu.tsx
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -6821,7 +6789,7 @@ groups:
       - docs/upstream-customizations.yaml
     anchors:
       - web/src/shared/directorySort.ts:export const DIRECTORY_SORT_OPTIONS
-      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+      - web/tests/reviewer-architecture-rules.test.mjs:test("components do not import services directly"
 
   - id: G-HJ
     title: Clipboard capability under platform
@@ -6844,7 +6812,6 @@ groups:
       - web/src/components/session/SessionViewerTimeline.tsx
       - web/src/app/AppRootView.tsx
       - web/src/app/renderRootSlashCommandResult.tsx
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -6852,7 +6819,7 @@ groups:
       - docs/upstream-customizations.yaml
     anchors:
       - web/src/platform/clipboard.ts:export async function copyText
-      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+      - web/tests/reviewer-architecture-rules.test.mjs:test("components do not import services directly"
 
   - id: G-HK
     title: Shared session duration helpers
@@ -6873,7 +6840,6 @@ groups:
       - web/src/components/session/SessionViewer.tsx
       - web/src/components/session/SessionViewerTimeline.tsx
       - web/tests/session-duration.test.mjs
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -6894,7 +6860,7 @@ groups:
       resolveGroupColor and its data contracts move to shared/sessionGroupDisplay.ts; the service subpath
       re-exports them. Node color lookup precedence and fallback behavior remain unchanged.
     tests:
-      - web/tests/session-group-display.test.mjs
+      - web/tests/session-group-display.test.ts
       - web/tests/reviewer-architecture-rules.test.mjs
     files:
       - web/src/shared/sessionGroupDisplay.ts
@@ -6903,8 +6869,6 @@ groups:
       - web/src/components/session/MultiProjectSessionList.tsx
       - web/src/components/session/useMultiProjectSessionList.ts
       - web/src/components/session/useSessionCard.ts
-      - web/tests/session-group-display.test.mjs
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -6912,8 +6876,8 @@ groups:
       - docs/upstream-customizations.yaml
     anchors:
       - web/src/shared/sessionGroupDisplay.ts:export function resolveGroupColor
-      - web/tests/session-group-display.test.mjs:const byKey =
-      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+      - web/tests/session-group-display.test.ts:describe("session group display color resolution"
+      - web/tests/reviewer-architecture-rules.test.mjs:test("components do not import services directly"
 
   - id: G-HM
     title: Shared session activity timestamp resolver
@@ -6935,7 +6899,6 @@ groups:
       - web/src/services/session/sessionListMerge.ts
       - web/src/components/session/SessionCard.tsx
       - web/tests/session-list-merge.test.mjs
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -6944,7 +6907,7 @@ groups:
     anchors:
       - web/src/shared/sessionActivityAt.ts:export function sessionActivityAt
       - web/tests/session-list-merge.test.mjs:const activitySourcePath =
-      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+      - web/tests/reviewer-architecture-rules.test.mjs:test("components do not import services directly"
 
   - id: G-HN
     title: Shared session tree utilities
@@ -6968,7 +6931,6 @@ groups:
       - web/src/components/session/SessionList.tsx
       - web/src/components/session/useMultiProjectSessionList.ts
       - web/tests/session-tree.test.mjs
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -6977,7 +6939,7 @@ groups:
     anchors:
       - web/src/shared/sessionTree.ts:export function collectSessionSubtreeKeys
       - web/tests/session-tree.test.mjs:collectSessionSubtreeKeys
-      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+      - web/tests/reviewer-architecture-rules.test.mjs:test("components do not import services directly"
 
   - id: G-HO
     title: Components import shared Git and upload contracts
@@ -6994,7 +6956,6 @@ groups:
     files:
       - web/src/components/app/SessionMainContent.tsx
       - web/src/components/file/DefaultListView.tsx
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -7003,7 +6964,7 @@ groups:
     anchors:
       - 'web/src/components/app/SessionMainContent.tsx:import type { GitDiffPayload, GitStatusPayload } from "../../shared/gitTypes"'
       - web/src/components/file/DefaultListView.tsx:import type { UploadProgress } from "../../shared/uploadTypes"
-      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+      - web/tests/reviewer-architecture-rules.test.mjs:test("components do not import services directly"
 
   - id: G-HP
     title: Candidate prompt actions move to hook
@@ -7022,7 +6983,6 @@ groups:
       - web/src/hooks/useCandidatePromptActions.ts
       - web/src/components/action/CandidateDropdown.tsx
       - web/tests/candidate-prompt-actions-contract.test.mjs
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -7051,7 +7011,6 @@ groups:
       - web/src/services/documentPreview.ts
       - web/src/components/file/PdfPreview.tsx
       - web/tests/document-preview.test.mjs
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -7060,7 +7019,7 @@ groups:
     anchors:
       - web/src/shared/documentPreview.ts:export function visiblePageRange
       - web/tests/document-preview.test.mjs:visiblePageRange, PDF_RENDER_MARGIN_PX
-      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+      - web/tests/reviewer-architecture-rules.test.mjs:test("components do not import services directly"
 
   - id: G-HR
     title: Components import shared default node color
@@ -7077,7 +7036,6 @@ groups:
       - web/src/components/action/ActionBar.tsx
       - web/src/components/agent/ModeIcon.tsx
       - web/src/components/agent/ModeSelector.tsx
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -7086,7 +7044,7 @@ groups:
     anchors:
       - web/src/components/action/ActionBar.tsx:import { DEFAULT_NODE_COLOR } from "../../shared/nodePalette"
       - web/src/components/agent/ModeIcon.tsx:import { DEFAULT_NODE_COLOR } from "../../shared/nodePalette"
-      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+      - web/tests/reviewer-architecture-rules.test.mjs:test("components do not import services directly"
 
   - id: G-HS
     title: Protected image fetches move to hook
@@ -7105,7 +7063,6 @@ groups:
       - web/src/hooks/useProtectedBlobUrl.ts
       - web/src/components/common/MarkdownImage.tsx
       - web/src/components/file/ImageViewer.tsx
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -7130,7 +7087,6 @@ groups:
     files:
       - web/src/components/session/SessionViewer.tsx
       - web/src/components/session/SessionViewerTimeline.tsx
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -7138,7 +7094,7 @@ groups:
       - docs/upstream-customizations.yaml
     anchors:
       - 'web/src/components/session/useSessionViewerTimelineActions.ts:import { savePrompt }'
-      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+      - web/tests/reviewer-architecture-rules.test.mjs:test("components do not import services directly"
 
   - id: G-HU
     title: Multi-project list receives node snapshot from hook
@@ -7158,7 +7114,6 @@ groups:
       - web/src/components/session/useMultiProjectSessionList.ts
       - web/src/components/session/MultiProjectSessionList.tsx
       - web/tests/session-list-merge.test.mjs
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -7167,7 +7122,7 @@ groups:
     anchors:
       - web/src/components/session/useMultiProjectSessionList.ts:const nodes = getNodes()
       - web/src/components/session/MultiProjectSessionList.tsx:resolveGroupColor(group as any, {}, nodes as any)
-      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+      - web/tests/reviewer-architecture-rules.test.mjs:test("components do not import services directly"
 
   - id: G-HV
     title: Default list imports shared directory sorting
@@ -7182,7 +7137,6 @@ groups:
       - web/tests/reviewer-architecture-rules.test.mjs
     files:
       - web/src/components/file/DefaultListView.tsx
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -7190,7 +7144,7 @@ groups:
       - docs/upstream-customizations.yaml
     anchors:
       - web/src/components/file/DefaultListView.tsx:from "../../shared/directorySort"
-      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+      - web/tests/reviewer-architecture-rules.test.mjs:test("components do not import services directly"
 
   - id: G-HW
     title: Toast error subscription moves to hook
@@ -7212,7 +7166,6 @@ groups:
       - web/src/services/net/error.ts
       - web/src/components/shell/Toast.tsx
       - web/tests/toast-errors-hook.test.mjs
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -7244,7 +7197,6 @@ groups:
       - web/src/components/shell/DialogHost.tsx
       - web/tests/dialog-host-hook.test.mjs
       - web/tests/back-navigation.test.mjs
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -7274,7 +7226,6 @@ groups:
       - web/src/components/session/SessionViewerSlashCommand.tsx
       - web/src/components/session/SessionViewer.tsx
       - web/tests/report-error-hook.test.mjs
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -7304,7 +7255,6 @@ groups:
       - web/src/hooks/useFileOperationMove.ts
       - web/src/components/file/FileOperations.tsx
       - web/tests/file-operation-hooks.test.mjs
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -7331,7 +7281,6 @@ groups:
       - web/src/hooks/usePanelShellClose.ts
       - web/src/components/shell/PanelShell.tsx
       - web/tests/task-panel-unification.test.mjs
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -7355,7 +7304,6 @@ groups:
       - web/tests/reviewer-architecture-rules.test.mjs
     files:
       - web/src/components/app/OnboardingGate.tsx
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -7363,7 +7311,7 @@ groups:
       - docs/upstream-customizations.yaml
     anchors:
       - web/src/components/app/OnboardingGate.tsx:import { OnboardingTour }
-      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+      - web/tests/reviewer-architecture-rules.test.mjs:test("components do not import services directly"
 
   - id: G-ID
     title: Task template save moves to hook
@@ -7384,7 +7332,6 @@ groups:
       - web/src/components/task/TaskTemplateDialog.tsx
       - web/tests/task-template-save-hook.test.mjs
       - web/tests/task-template-node-routing.test.mjs
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -7411,7 +7358,6 @@ groups:
       - web/src/components/account/AuthGate.tsx
       - web/src/components/account/useAuthGate.ts
       - web/tests/auth-gate-hook.test.mjs
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/rule-completion-rollout.md
       - docs/upstream-customizations.md
@@ -7435,7 +7381,6 @@ groups:
     files:
       - web/src/components/action/ComposerTopChips.tsx
       - web/src/components/action/useRootNodeId.ts
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/rule-completion-rollout.md
       - docs/upstream-customizations.md
@@ -7460,7 +7405,6 @@ groups:
       - web/src/components/account/AccountPanel.tsx
       - web/src/components/account/useAccountPanel.ts
       - web/tests/account-panel-actions.test.mjs
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/rule-completion-rollout.md
       - docs/upstream-customizations.md
@@ -7486,7 +7430,6 @@ groups:
       - web/src/components/action/ActionBar.tsx
       - web/src/components/action/ActionBarControls.tsx
       - web/src/components/action/useActionBar.ts
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -7511,7 +7454,6 @@ groups:
       - web/tests/reviewer-architecture-rules.test.mjs
     files:
       - web/src/components/app/SessionMainContent.tsx
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -7535,7 +7477,6 @@ groups:
       - web/tests/reviewer-architecture-rules.test.mjs
     files:
       - web/src/components/app/AppActionBar.tsx
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -7562,7 +7503,6 @@ groups:
       - web/tests/reviewer-architecture-rules.test.mjs
     files:
       - web/src/components/app/FileTreePanel.tsx
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -7588,7 +7528,6 @@ groups:
       - web/src/components/agent/AgentIcon.tsx
       - web/src/components/agent/useCachedAgentIcon.ts
       - web/tests/agent-icon-hook.test.mjs
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -7617,7 +7556,6 @@ groups:
       - web/src/components/app/TaskDetailPanelGate.tsx
       - web/src/components/app/TaskInlineEditPanel.tsx
       - web/tests/task-panel-service-boundaries.test.mjs
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -7645,7 +7583,6 @@ groups:
       - web/src/components/action/SessionRing.tsx
       - web/src/components/action/useSessionRingQuickSwitch.ts
       - web/tests/session-ring-gesture.test.mjs
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -7671,7 +7608,6 @@ groups:
       - web/src/components/git/GitStatusPanel.tsx
       - web/src/components/git/useGitStatusPanel.ts
       - web/tests/git-status-discard-hook.test.mjs
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -7698,7 +7634,6 @@ groups:
       - web/src/components/session/SessionViewerTimeline.tsx
       - web/src/components/session/useSessionViewerTimelineActions.ts
       - web/tests/session-viewer-timeline-actions.test.mjs
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -7724,7 +7659,6 @@ groups:
       - web/src/components/session/SessionViewerAttachments.tsx
       - web/src/hooks/useProtectedBlobUrl.ts
       - web/tests/markdown-viewer-split.test.mjs
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -7748,7 +7682,6 @@ groups:
       - web/tests/file-editing.test.mjs
     files:
       - web/src/components/file/FileViewer.tsx
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -7777,7 +7710,6 @@ groups:
       - web/src/components/file/useDocumentPreviewBlob.ts
       - web/src/shared/documentPreview.ts
       - web/tests/document-preview-view-split.test.mjs
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -7813,7 +7745,6 @@ groups:
       - web/tests/project-add-node-boundary.test.mjs
       - web/tests/file-tree-service-boundaries.test.mjs
       - web/tests/node-colors-and-workspace-preferences.test.mjs
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
@@ -7822,6 +7753,57 @@ groups:
     anchors:
       - web/src/components/file/ProjectAddPopover.tsx:useProjectAddNodes()
       - web/src/components/app/SessionMainContent.tsx:import type { GitDiffPayload, GitStatusPayload }
+
+  - id: G-IV
+    title: Vitest-only frontend tests and universal agent rules
+    kind: docs
+    symptom: |
+      Multiple frontend test runners and path-specific rule exceptions can make local results disagree
+      and allow stored code to bypass the same rules required of new code.
+    why: |
+      Keep a single frontend test command and one consistent set of repository rules for all stored and
+      future source files. Historical measurements remain in clearly historical records only.
+    boundary: |
+      npm test runs Vitest as the only frontend test runner. Rule entrypoints, reviewer checks, TODOs,
+      plan status, and the upstream customization registry describe and enforce the same exception-free
+      requirements; no task-level waiver overrides repository rules.
+    tests:
+      - web/tests/agent-docs-contract.test.mjs
+      - web/tests/naming-convention.test.mjs
+      - web/tests/reviewer-architecture-rules.test.mjs
+      - web/tests/source-map.test.mjs
+    files:
+      - web/package.json
+      - web/vitest.config.ts
+      - web/tests/
+      - web/src/main.tsx
+      - web/src/app/assetRecovery.ts
+      - web/src/app/nativeShellUtils.ts
+      - web/src/app/useNativeShellLifecycle.ts
+      - web/src/components/task/taskIcons.tsx
+      - web/src/components/task/taskStyles.ts
+      - web/src/i18n/locales/en-US.ts
+      - web/src/i18n/locales/en-US-agents.ts
+      - web/src/i18n/locales/en-US-projects.ts
+      - web/src/i18n/locales/en-US-sessions.ts
+      - web/src/i18n/locales/en-US-tasks.ts
+      - web/src/i18n/locales/en-US-workspace.ts
+      - web/src/i18n/locales/zh-CN.ts
+      - web/src/i18n/locales/zh-CN-agents.ts
+      - web/src/i18n/locales/zh-CN-projects.ts
+      - web/src/i18n/locales/zh-CN-sessions.ts
+      - web/src/i18n/locales/zh-CN-tasks.ts
+      - web/src/i18n/locales/zh-CN-workspace.ts
+      - docs/agent/rules/
+      - docs/plans/README.md
+      - docs/plans/frontend-test-rule-hardening.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/tests/agent-docs-contract.test.mjs:test("frontend tests use Vitest as the only runner"
+      - web/tests/naming-convention.test.mjs:test(".ts files contain no JSX"
+      - web/tests/reviewer-architecture-rules.test.mjs:test("components do not import services directly"
+      - web/tests/reviewer-architecture-rules.test.mjs:test("all frontend source files stay under 500 lines"
 
   - id: G-IU
     title: File and session service work moves behind logic hooks
@@ -7847,7 +7829,6 @@ groups:
       - web/tests/file-session-service-boundaries.test.mjs
       - web/tests/session-window.test.mjs
       - web/tests/session-window-overlay-dedup.test.mjs
-      - web/tests/fixtures/component-service-import-debt.json
       - docs/agent/rules/frontend/TODO.md
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md

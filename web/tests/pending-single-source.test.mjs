@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
+import fs from "./source-map-fs.mjs";
 import path from "node:path";
+import { test } from "vitest";
 
+test("pending-single-source", async () => {
 // pending 只有一个真相：`multiProjectPendingByKey`。**不再往会话对象上写 pending。**
 //
 // 背景（G-AY）：会话的「在不在回复」原先在前端有五份投影 —— 缓存 / 抽屉 / 选中 /
@@ -196,3 +198,4 @@ const pendingReaders = app + realtime + pendingHook + keyStateHook + relatedFile
 }
 
 console.log("pending-single-source.test.mjs: OK");
+});

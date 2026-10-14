@@ -20,6 +20,7 @@ import {
   $replaceWithSerializedText,
   expectedActiveTokenType,
   parseActiveToken,
+  serializeEditor,
   triggerChar,
   type ActiveToken,
 } from "./tokenEditorUtils";
@@ -158,6 +159,15 @@ const TokenEditor = forwardRef<TokenEditorHandle, TokenEditorProps>(function Tok
       if (keepFocus) {
         rootRef.current?.focus({ preventScroll: true });
       }
+    },
+    getSerializedText() {
+      const editor = editorRef.current;
+      if (!editor) return "";
+      let value = "";
+      editor.getEditorState().read(() => {
+        value = serializeEditor();
+      });
+      return value;
     },
     insertCandidate(type: CandidateType, value: string) {
       const editor = editorRef.current;

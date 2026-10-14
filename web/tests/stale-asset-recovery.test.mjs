@@ -1,8 +1,8 @@
 // 过期标签页自愈：只对带内容哈希的构建产物自动重载，且同一 URL 只重载一次。
 // 纯 node/assert，直接 import TS 源码（node 22 类型剥离）。
 import assert from "node:assert";
-import fs from "node:fs";
-import test from "node:test";
+import fs from "./source-map-fs.mjs";
+import { test } from "vitest";
 import {
   isVersionedAssetPath,
   shouldReloadForStaleAsset,

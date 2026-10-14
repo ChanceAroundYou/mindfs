@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
+import fs from "./source-map-fs.mjs";
 import path from "node:path";
+import { test } from "vitest";
 
+test("no-system-dialogs", async () => {
 const srcRoot = path.resolve(import.meta.dirname, "../src");
 
 /**
@@ -56,3 +58,4 @@ for (const locale of ["zh-CN.ts", "en-US.ts"]) {
 }
 
 console.log("no-system-dialogs source contracts OK");
+});

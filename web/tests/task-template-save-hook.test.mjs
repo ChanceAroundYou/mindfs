@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
+import fs from "./source-map-fs.mjs";
 import path from "node:path";
+import { test } from "vitest";
 
+test("task-template-save-hook", async () => {
 const hook = fs.readFileSync(path.resolve(import.meta.dirname, "../src/hooks/useTaskTemplateSave.ts"), "utf8");
 const dialog = fs.readFileSync(path.resolve(import.meta.dirname, "../src/components/task/TaskTemplateDialog.tsx"), "utf8");
 
@@ -15,3 +17,4 @@ assert.match(dialog, /useTaskTemplateSave\(/);
 assert.doesNotMatch(dialog, /services\/(?:tasks|net\/error)/);
 
 console.log("task template save hook contract ok");
+});

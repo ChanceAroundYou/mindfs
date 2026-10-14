@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
+import fs from "./source-map-fs.mjs";
 import path from "node:path";
 import ts from "typescript";
 import vm from "node:vm";
 import { readSource } from "./source-map.mjs";
+import { test } from "vitest";
 
+test("session-list-merge", async () => {
 const activitySourcePath = path.resolve(import.meta.dirname, "../src/shared/sessionActivityAt.ts");
 const activitySource = fs.readFileSync(activitySourcePath, "utf8");
 const activityCompiled = ts.transpileModule(activitySource, {
@@ -234,3 +236,4 @@ assert.ok(
   /toSessionItem\(rootID, \{ \.\.\.\(item as any\), _nodeId: childNodeId \}\)/.test(childLoader),
   "loadChildSessionsForParent 必须给子会话打 _nodeId，否则同一会话并存成重复 key、收起时留下孤儿 DOM",
 );
+});

@@ -1,3 +1,12 @@
+import assert from "node:assert/strict";
+import fs from "./source-map-fs.mjs";
+import path from "node:path";
+import ts from "typescript";
+import vm from "node:vm";
+import { withSourceFallback } from "./vmLoadSource.mjs";
+import { test } from "vitest";
+
+test("session-window-dedup", async () => {
 // 会话窗口拉取的 in-flight 去重（2026-10-07）。
 //
 // 症状（实测）：打开一个会话时，每个 sessionKey 在 `?latest=20` 的访问日志里
@@ -6,12 +15,12 @@
 //
 // 契约：同 (nodeId, rootId, sessionKey, beforeSeq, latest, limit) 的并发调用
 // 共享同一个 Promise，只发一次 HTTP；不同 nodeId / 不同参数必须各自发。
-import assert from "node:assert/strict";
-import fs from "node:fs";
-import path from "node:path";
-import ts from "typescript";
-import vm from "node:vm";
-import { withSourceFallback } from "./vmLoadSource.mjs";
+
+
+
+
+
+
 
 const SRC = path.resolve(import.meta.dirname, "../src");
 
@@ -101,3 +110,4 @@ release();
 await Promise.all([pa, pb, pc]);
 
 console.log("session-window-dedup: ok");
+});

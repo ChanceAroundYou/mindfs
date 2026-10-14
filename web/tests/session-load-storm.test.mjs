@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
+import fs from "./source-map-fs.mjs";
 import path from "node:path";
+import { test } from "vitest";
 
+test("session-load-storm", async () => {
 /**
  * 会话拉取风暴 + 渲染主线程阻塞的契约守卫（`Scope: G-AU`）。
  *
@@ -138,3 +140,4 @@ assert.doesNotMatch(
   /el\.addEventListener\("scroll", updateStickiness, \{ passive: true \}\);[\s\S]{0,400}querySelectorAll/,
   "the scroll handler must not run querySelectorAll on every scroll event",
 );
+});

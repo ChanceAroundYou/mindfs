@@ -39,7 +39,7 @@ export type PromptEditorProps = {
   onRestartAgent?: (agent: string) => void | Promise<void>;
   onAttach?: () => void;
   onEdit?: () => void;
-  onSend?: () => void;
+  onSend?: (text: string) => void;
   /** 编辑区上方的附加控件行（阶段选项：user 切换 / 自动进入下一段 / 会话复用…）。 */
   header?: React.ReactNode;
   /** 回车处理，返回 true 表示已消费（交给 TokenEditor 的 Enter 命令）。 */
@@ -104,6 +104,7 @@ export const PromptEditor = forwardRef<TokenEditorHandle, PromptEditorProps>(fun
     getHeight: () => editorRef.current?.getHeight() || 0,
     clear: () => editorRef.current?.clear(),
     setText: (text: string) => editorRef.current?.setText(text),
+    getSerializedText: () => editorRef.current?.getSerializedText() ?? value,
     insertCandidate: (type, val) => editorRef.current?.insertCandidate(type, val),
   }));
 
@@ -123,6 +124,14 @@ export const PromptEditor = forwardRef<TokenEditorHandle, PromptEditorProps>(fun
   const canSend = editable && !sending && !sendDisabled;
   const insets = composerEditorInsets(isMultiLine, 96);
 
+  // 发送入口同步从编辑器读最新文本：内容经 onChange 异步进父 state，
+  // 快打后立刻发送时父 value 还是旧值。按钮点击与回车共用这一条。
+  const flushAndSend = () => {
+    const latest = editorRef.current?.getSerializedText() ?? value;
+    onChange?.(latest);
+    onSend?.(latest);
+  };
+
   // 默认回车 = 发送（Shift+Enter 换行），与对话输入框一致；输入法组合中的回车放行。
   const isComposing = (event: KeyboardEvent | null) => {
     const native = event as (KeyboardEvent & { isComposing?: boolean; keyCode?: number }) | null | undefined;
@@ -132,7 +141,7 @@ export const PromptEditor = forwardRef<TokenEditorHandle, PromptEditorProps>(fun
     if (onEnter) return onEnter(event);
     if (isComposing(event) || event?.shiftKey) return false;
     event?.preventDefault();
-    if (canSend) onSend?.();
+    if (canSend) flushAndSend();
     return true;
   };
 
@@ -201,7 +210,9 @@ export const PromptEditor = forwardRef<TokenEditorHandle, PromptEditorProps>(fun
             type="button"
             disabled={!canSend}
             onMouseDown={(event) => event.preventDefault()}
-            onClick={onSend}
+            onClick={() => {
+              if (canSend) flushAndSend();
+            }}
             title={t("common.save")}
             aria-label={t("common.save")}
             style={composerSendButtonStyle({ enabled: canSend, variant: "panel", accent: accentColor })}

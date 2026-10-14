@@ -9,6 +9,7 @@ export type TokenEditorHandle = {
   getHeight: () => number;
   clear: () => void;
   setText: (value: string) => void;
+  getSerializedText: () => string;
   insertCandidate: (type: CandidateType, value: string) => void;
 };
 

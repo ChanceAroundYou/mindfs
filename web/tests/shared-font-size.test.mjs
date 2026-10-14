@@ -1,4 +1,4 @@
-import { test } from "node:test";
+import { test } from "vitest";
 import assert from "node:assert/strict";
 import { rawReadFileSync } from "./source-map.mjs";
 import { changeFontSize, DEFAULT_FONT_SIZE_PREFERENCES, FONT_SIZE_MAX, FONT_SIZE_MIN } from "../src/shared/fontSize.ts";

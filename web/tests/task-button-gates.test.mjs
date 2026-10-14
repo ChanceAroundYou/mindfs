@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import test from "node:test";
-import fs from "node:fs";
+import { test } from "vitest";
+import fs from "./source-map-fs.mjs";
 import path from "node:path";
 
 // 看板/工作台任务卡上推进类按钮的**给法**（2026-09 用户定的）。

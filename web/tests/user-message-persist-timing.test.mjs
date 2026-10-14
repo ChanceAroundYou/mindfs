@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync } from "./source-map-fs.mjs";
+import { test } from "vitest";
 
+test("user-message-persist-timing", async () => {
 // 2026-09-28 实测 bug：发完消息、agent 还在跑（已经出了几行）时，用户自己那条消息
 // 从对话列表消失；点「同步」也刷不回来；等 agent 跑完，它又自己出现了。
 //
@@ -87,3 +89,4 @@ assert.ok(
   !/func cloneUserExchange\(/.test(streamHubGo),
   "cloneUserExchange 只为把未落盘的 pending blob 转成 exchange，应删除",
 );
+});

@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
+import fs from "./source-map-fs.mjs";
 import path from "node:path";
 import ts from "typescript";
 import vm from "node:vm";
+import { test } from "vitest";
 
+test("long-context-inheritance", async () => {
 // 换模型时 1M / effort 被悄悄重置的回归守卫。
 //
 // 复现路径：模型下拉的 onSelect 传的是 models[].id，而探测端给的 id **不带 [1m] 后缀**
@@ -175,3 +177,4 @@ assert.match(
 );
 
 console.log("long-context-inheritance.test.mjs: OK");
+});

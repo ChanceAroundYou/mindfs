@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync } from "./source-map-fs.mjs";
+import { test } from "vitest";
 
+test("agent-lifecycle-restart", async () => {
 const fileTree = readFileSync(new URL("../src/components/FileTree.tsx", import.meta.url), "utf8");
 const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 const zhCN = readFileSync(new URL("../src/i18n/locales/zh-CN.ts", import.meta.url), "utf8");
@@ -86,3 +88,4 @@ assert.match(
   /onRestartAgent=\{handleRestartAgent\}/,
   "App should pass the restart handler to FileTree",
 );
+});

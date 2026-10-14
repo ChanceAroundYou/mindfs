@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
-import { closeSync, openSync, readFileSync } from "node:fs";
+import { closeSync, openSync, readFileSync } from "./source-map-fs.mjs";
 import { resolve } from "node:path";
+import { test } from "vitest";
 
+test("realtime-ws-task-handlers-split", async () => {
 const root = new URL("../", import.meta.url);
 const readPhysical = (path) => {
   const fd = openSync(resolve(root.pathname, path), "r");
@@ -22,3 +24,4 @@ assert.match(tasks, /refreshWorkspaceBoard\(\)/);
 assert.match(tasks, /pruneTaskDetails\(/);
 
 console.log("realtime-ws-task-handlers-split.test.mjs: OK");
+});

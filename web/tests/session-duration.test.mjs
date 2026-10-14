@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
+import fs from "./source-map-fs.mjs";
 import path from "node:path";
 import ts from "typescript";
 import vm from "node:vm";
+import { test } from "vitest";
 
+test("session-duration", async () => {
 const sourcePath = path.resolve(import.meta.dirname, "../src/shared/sessionDuration.ts");
 const streamCachePath = path.resolve(import.meta.dirname, "../src/app/useSessionStreamCache.ts");
 const source = fs.readFileSync(sourcePath, "utf8");
@@ -85,3 +87,4 @@ assert.equal(
 assert.equal(streamEventTimestamp({ timestamp: "" }, "2026-07-29T10:05:00.000Z"), "2026-07-29T10:05:00.000Z");
 assert.equal(streamEventTimestamp({ timestamp: "bad" }, "2026-07-29T10:05:00.000Z"), "2026-07-29T10:05:00.000Z");
 assert.equal(streamEventTimestamp({}, "2026-07-29T10:05:00.000Z"), "2026-07-29T10:05:00.000Z");
+});

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 import { extractMarkdownOutline } from "../src/components/markdownOutline.ts";
 
 test("extracts ATX and setext headings with levels and stable ids", () => {

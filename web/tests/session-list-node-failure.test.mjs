@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
+import fs from "./source-map-fs.mjs";
 import path from "node:path";
+import { test } from "vitest";
 
+test("session-list-node-failure", async () => {
 // 2026-10-02 三个缺陷的回归守卫：
 //
 //   B1 看板/定时任务新建的会话永不进对话列表 —— 根因是那些路径只广播 session.meta.updated，
@@ -283,3 +285,4 @@ assert.match(zh, /"task\.workspaceNodeUnreachable": "[^"]*\{names\}[^"]*"/, "zh-
 assert.match(en, /"task\.workspaceNodeUnreachable": "[^"]*\{names\}[^"]*"/, "en-US needs the workspace notice with a placeholder");
 
 console.log("session-list-node-failure.test.mjs: OK");
+});

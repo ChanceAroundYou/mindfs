@@ -3281,17 +3281,17 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **根因与边界**：`agent-docs-contract.test.mjs` 验证 AGENTS/规则目录/计划索引的本地 Markdown 链接、最多一个 Active 计划（无执行中任务时允许为零），以及 Claude/Gemini 对通用入口的导入关系；只校验存在性和入口契约，不验证外部链接可达性。
 - **针对性测试**：`web/tests/agent-docs-contract.test.mjs` → 入口链接、Active 计划数量和工具导入三项契约；`npm test` → web 全量门禁。
 
-### G-GQ Frontend reviewer architecture ratchets
+### G-GQ Frontend reviewer architecture guards
 
-- **可见症状**：reviewer checklist 的层级 import 与硬行数约束若只靠人工 grep，会因组件搬迁/source-map 逻辑路径或新增大文件而漏检。
-- **根因与边界**：新增 AST/source scan guard：实际 TSX 文件中的 component→service import 必须落在经审阅的 121 条历史边 allowlist（涉及 69 个文件）内，只允许删除；新增 edge 被挡。全 `web/src` 文件超过 500 行必须属于 file-size.md 已记录豁免（入口、i18n locale 数据、taskIcons 清单资源）；source scan 绕过测试 source-map hook，读取物理文件。
-- **针对性测试**：`web/tests/reviewer-architecture-rules.test.mjs` → 阻止新增 component→service 边并守住前端 500 行硬线及显式豁免；`npm test` → 新旧 web 测试链路。
+- **可见症状**：组件层重新直接依赖 service，或前端源码文件持续膨胀时，人工 review 可能漏掉回归。
+- **根因与边界**：`reviewer-architecture-rules.test.mjs` 扫描物理源码，要求组件到 service 的依赖边为零，并要求所有前端源码遵守统一硬上限；不再使用历史边 allowlist 或路径豁免。
+- **针对性测试**：`web/tests/reviewer-architecture-rules.test.mjs` → 守住零组件/service 依赖边与统一文件大小要求；`npm test` → Vitest 前端门禁。
 
 ### G-GR Backend reviewer rule guards
 
-- **可见症状**：`h.AppContext` 依赖面可静默膨胀，或超长 Go 文件重新出现，而 reviewer checklist 只记录原则不自动阻止回归。
-- **根因与边界**：`workspace_test.go` 读取 API 生产源码，禁止直接构造 `AppContext`、将 `h.AppContext` 出现行数锁在 188 以下；同文件遍历 `cli/` 与 `server/`，禁止非测试、非生成 Go 文件超过 1,500 行。现有 workspace/context 实例契约与代码行为不变。
-- **针对性测试**：`server/internal/api/workspace_test.go:TestAPIAppContextAccessDoesNotGrowOrGetConstructedDirectly`、`TestProductionGoFilesStayBelowTheHardLine` → 守住 AppContext 访问面与 Go 文件硬线；`make test` → 全仓 Go 门禁。
+- **可见症状**：API handler 直接构造账户级 `AppContext`，或 Go 源码文件持续膨胀时，reviewer checklist 可能无法阻止回归。
+- **根因与边界**：`workspace_test.go` 禁止 handler 直接构造 `AppContext`，并对 `cli/` 与 `server/` 下所有 Go 文件应用同一大小上限，包括测试与生成文件；不设路径或文件类型豁免。账户工作区行为不变。
+- **针对性测试**：`server/internal/api/workspace_test.go` 中的 AppContext 构造与 Go 文件大小守卫 → 守住统一约束；`make test` → 全仓 Go 门禁。
 
 ### G-GS Shared candidate contracts
 
@@ -3616,3 +3616,9 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：FileEditor、WebPushMenuItem 与 SessionViewer 直接导入文件、推送、会话 service，在展示组件中调用请求/投影逻辑。
 - **根因与边界**：文件重载、推送订阅/测试通知状态机、持久 exchange 筛选与合并由 colocated hooks 提供；页面动作顺序、通知文案、取消/失败反馈与窗口合并语义保持。
 - **针对性测试**：`web/tests/file-session-service-boundaries.test.mjs` → 守住 view/hook/service 边界；既有 session merge、file editor 与 WebPush 测试及 typecheck 守住行为契约。
+
+### G-IV Vitest-only frontend tests and universal agent rules
+
+- **可见症状**：多个前端测试运行器会造成验证结果不一致；按路径或历史状态放行会让存量代码绕过新代码必须遵守的规则。
+- **根因与边界**：`npm test` 仅运行 Vitest。规则入口、reviewer 门禁、TODO、计划状态与机器登记共同描述同一套普遍适用的要求；任务提示不能豁免仓库规则。历史记录可保留当时的测量值，但不得作为当前基线。
+- **针对性测试**：`agent-docs-contract.test.mjs` → Vitest 唯一入口、ship 文档与规则/计划入口契约；`naming-convention.test.mjs` → 普遍适用的命名与后缀检查；`reviewer-architecture-rules.test.mjs` → 依赖边与文件大小守卫；`source-map.test.mjs` → 逻辑源码映射。为满足统一文件大小规则，本批从应用入口、任务样式与 locale 表中提取职责模块；`App.tsx` 组合根不变。

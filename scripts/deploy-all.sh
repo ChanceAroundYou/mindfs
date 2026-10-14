@@ -86,8 +86,7 @@ ok "tsc 通过"
 ( cd web && npm test ) >/tmp/mindfs-web-test.log 2>&1 \
   || { tail -40 /tmp/mindfs-web-test.log >&2; die "web 测试失败，见 /tmp/mindfs-web-test.log"; }
 VITEST_COUNT="$(grep -oE 'Tests[[:space:]]+[0-9]+ passed' /tmp/mindfs-web-test.log | tail -1 | grep -oE '[0-9]+' | head -1 || true)"
-NODE_COUNT="$(grep -oE '^# pass [0-9]+' /tmp/mindfs-web-test.log | tail -1 | grep -oE '[0-9]+' || true)"
-ok "web 测试通过（Vitest ${VITEST_COUNT:-0} + Node 兼容链路 ${NODE_COUNT:-0}）"
+ok "web 测试通过（Vitest ${VITEST_COUNT:-0} 项通过）"
 
 # ── 3. 推送 ──
 step "推送到 origin"
@@ -137,7 +136,11 @@ systemctl --user is-active --quiet mindfs || { echo '$label 服务未 active'; e
     restart_line="echo '(按 --no-restart 跳过重启，产物已装好)'"
   fi
 
-  step "$label 安装并重启"
+  if [[ "$DO_RESTART" == "1" ]]; then
+    step "$label 安装并重启"
+  else
+    step "$label 安装（跳过重启）"
+  fi
   # 安装脚本直接用 heredoc 喂给远端 bash，不落临时文件 —— 两个 worker 各调一次，
   # 用 mktemp 就得自己管清理。$STAGE / $restart_line 本地展开，~ 留给远端展开。
   remote_out="$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$host" bash -s 2>&1 <<REMOTE

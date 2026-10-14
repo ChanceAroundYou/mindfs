@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync } from "./source-map-fs.mjs";
+import { test } from "vitest";
 
+test("session-timeline-seq", async () => {
 // 2026-10-06 — 「瞬时行不许按位置编造 seq」。
 //
 // 症状：会话切走再切回，ask 卡下面多出一整块正文，而且那块正文**自带工具卡**。
@@ -76,3 +78,4 @@ assert.match(
 );
 
 console.log("session timeline seq: ok");
+});

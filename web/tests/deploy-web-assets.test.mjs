@@ -1,3 +1,10 @@
+import assert from "node:assert";
+import fs from "./source-map-fs.mjs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { test } from "vitest";
+
+test("deploy-web-assets", async () => {
 // 部署脚本的 web 资产不变量（G-AL）。这些是 shell 里的约定 —— 没有编译器、没有类型系统
 // 看着它们，而它们跑在远端，坏了要等用户在开着页面的浏览器里撞上才算发现。
 //
@@ -7,10 +14,10 @@
 //   3 WSL 端重新编译/拉源码  → 两边版本号漂移（2026-10-06 起 WSL 只收产物）
 //   4 WSL 端收 web/dist      → 纯 worker 不服务前端，多推的几 MB 是纯负担（2026-10-07 起不再推）
 //   5 add 白名单漏根级文档   → 改了 AGENTS.md 跑 ship 后没被提交，工作区留脏、版本号挂 -dirty
-import assert from "node:assert";
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+
+
+
+
 
 const root = path.resolve(fileURLToPath(import.meta.url), "../../..");
 const read = (p) => fs.readFileSync(path.join(root, p), "utf8");
@@ -19,7 +26,7 @@ const deploy = read("scripts/deploy-all.sh");
 const installSh = read("scripts/install.sh");
 const makefile = read("Makefile");
 
-assert.match(deploy, /cd web && npm test/, "deploy-all must call the unified Vitest + legacy test chain");
+assert.match(deploy, /cd web && npm test/, "deploy-all must call the unified Vitest test suite");
 
 // 1) 装 web 资源时不得整目录删除。
 //    注意 uninstall 路径下的 `rm -rf "$share_dir"` 是合法的 —— 它删的是 share/mindfs，不是 web/，
@@ -75,3 +82,4 @@ for (const f of ["AGENTS.md", "README.md", "README.zh.md", "release-notes.md"]) 
 assert.ok(!addCmd.includes("config.json"), "config.json 不该进白名单（会被本机改 role，提交等于推本地配置）");
 
 console.log("✓ 部署脚本不变量成立：无 rm -rf web、TTL 两处一致(" + ttl + "d)、WSL 只收产物且不收 dist、add 白名单含根级文档");
+});

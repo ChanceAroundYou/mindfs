@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { closeSync, openSync, readFileSync } from "node:fs";
+import { closeSync, openSync, readFileSync } from "./source-map-fs.mjs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { test } from "node:test";
+import { test } from "vitest";
 
 const root = resolve(fileURLToPath(import.meta.url), "../..");
 const read = (path) => readFileSync(resolve(root, path), "utf8");

@@ -11,11 +11,8 @@
 //   · dropTransientExchanges   —— 退役瞬时行（done / compact / reset 三处调用）
 //   · mergeSessionExchanges    —— 按 seq 合并（persisted 的合并规则）
 //   · composeLoadedExchanges   —— 会话加载的**唯一**组装规则
-import { register } from "node:module";
 import assert from "node:assert/strict";
-import test from "node:test";
-
-register("./ts-module-hook.mjs", import.meta.url);
+import { test } from "vitest";
 
 const {
   isTransientExchange,

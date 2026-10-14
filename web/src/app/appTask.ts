@@ -3,8 +3,7 @@
  * 拆自 appSupport.tsx（2026-09 App.tsx 拆分）。
  */
 
-// 全是类型：写成 import type 是因为这里的纯函数要被 node --test 直接 import 跑
-// （tests/task-stage-panel.test.mjs），普通 import 会让 Node 去解析 ../i18n 这个目录而炸掉。
+// 类型依赖使用 import type，避免在运行时引入 i18n 与 task service 模块。
 import type { MessageKey, MessageParams } from "../i18n";
 import type { KanbanTask, StageRun, StageTemplate, TaskDetail, TaskTemplate } from "../services/tasks";
 import { scopeKey } from "../shared/scope";

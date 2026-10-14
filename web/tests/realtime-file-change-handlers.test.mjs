@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync } from "./source-map-fs.mjs";
 import { MODULES } from "./source-map.mjs";
+import { test } from "vitest";
 
+test("realtime-file-change-handlers", async () => {
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 const realtime = read("src/app/useRealtimeEvents.ts");
 const handlers = read("src/app/realtimeWsFileChangedHandlers.ts");
@@ -20,3 +22,4 @@ assert.ok(
 );
 
 console.log("realtime-file-change-handlers.test.mjs: OK");
+});

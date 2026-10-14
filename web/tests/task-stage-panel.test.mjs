@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import test from "node:test";
-import fs from "node:fs";
+import { test } from "vitest";
+import fs from "./source-map-fs.mjs";
 import path from "node:path";
 
 const root = path.resolve(import.meta.dirname, "..");
@@ -114,7 +114,7 @@ assert.match(
 );
 assert.match(
   promptEditor,
-  /if \(canSend\) onSend\?\.\(\);/,
+  /if \(canSend\) flushAndSend\(\);/,
   "Enter must send when the editor is editable and has text",
 );
 

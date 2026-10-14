@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import test from "node:test";
-import fs from "node:fs";
+import { test } from "vitest";
+import fs from "./source-map-fs.mjs";
 import path from "node:path";
 
 // 收尾（wt-finish 的服务端那一半）的接线契约。

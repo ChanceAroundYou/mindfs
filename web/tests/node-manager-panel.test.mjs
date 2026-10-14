@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
+import fs from "./source-map-fs.mjs";
 import path from "node:path";
+import { test } from "vitest";
 
+test("node-manager-panel", async () => {
 const root = path.resolve(import.meta.dirname, "..");
 const read = (rel) => fs.readFileSync(path.join(root, rel), "utf8");
 
@@ -73,3 +75,4 @@ assert.doesNotMatch(panel, /useState<NodeConnection\[\]>/, "面板不得把节�
 assert.match(panel, /addEventListener\("mindfs:nodes-changed"/, "面板必须订阅节点变化并强制重渲染");
 
 console.log("node-manager-panel.test.mjs: OK");
+});
