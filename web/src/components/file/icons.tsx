@@ -9,7 +9,7 @@ import {
   type WebPushStatus,
 } from "../../services/webPush";
 import { SymlinkBadge } from "./SymlinkBadge";
-import type { FileEntry } from "../../services/prefs/directorySort";
+import type { FileEntry } from "../../shared/directorySort";
 
 export const fileTreeMenuButtonStyle: React.CSSProperties = {
   width: "100%",

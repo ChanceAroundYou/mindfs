@@ -6593,3 +6593,29 @@ groups:
     anchors:
       - web/src/shared/gitTypes.ts:export type GitStatusPayload
       - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+
+  - id: G-HB
+    title: Shared directory view contracts
+    kind: arch
+    symptom: |
+      File and Git view components import FileEntry or DirectorySortMode from the directory preference service.
+    why: |
+      Keep presentation data types in the shared directory contract module and leave sorting behavior in services.
+    boundary: |
+      icons, listViewIcons, and RootGitContentView import types from shared/directorySort.ts; runtime sorting
+      behavior does not change and three component-service edges are removed.
+    tests:
+      - web/tests/reviewer-architecture-rules.test.mjs
+    files:
+      - web/src/components/file/icons.tsx
+      - web/src/components/file/listViewIcons.tsx
+      - web/src/components/root/RootGitContentView.tsx
+      - web/tests/fixtures/component-service-import-debt.json
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/shared/directorySort.ts:export type FileEntry
+      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"

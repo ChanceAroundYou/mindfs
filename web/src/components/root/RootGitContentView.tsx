@@ -9,7 +9,7 @@ import type {
   GitStatusPayload,
 } from "../../services/git";
 import { ManagedRootPayload } from "../../app/appMisc";
-import type { DirectorySortMode } from "../../services/prefs/directorySort";
+import type { DirectorySortMode } from "../../shared/directorySort";
 
 /**
  * 项目树「git」页签的内容：状态面板 + 历史面板。

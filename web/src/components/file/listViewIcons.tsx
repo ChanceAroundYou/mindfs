@@ -1,5 +1,5 @@
 import { SymlinkBadge } from "./SymlinkBadge";
-import type { FileEntry } from "../../services/prefs/directorySort";
+import type { FileEntry } from "../../shared/directorySort";
 import { formatCompactSize, formatCompactTime } from "../../shared/datetime";
 
 // 列表项的行内图标，从 DefaultListView 抽出。

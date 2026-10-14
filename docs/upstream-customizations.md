@@ -3346,3 +3346,9 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：Git 视图只消费后端响应类型，却通过 `services/git` 导入类型，表现层因此依赖请求门面。
 - **根因与边界**：纯响应契约集中到 `shared/gitTypes.ts`；service 类型模块继续 re-export 兼容旧消费者，`GitDiffPayload` 仍在 service 层组合缓存 payload。三个展示组件改从 shared 导入，Git 请求和缓存行为不变。
 - **针对性测试**：`web/tests/reviewer-architecture-rules.test.mjs` → 守住组件 service 边只减不增；`npm run typecheck` → 守住 service facade 与 shared 类型兼容。
+
+### G-HB Shared directory view contracts
+
+- **可见症状**：图标与 Git 项目视图只引用 `FileEntry`、`DirectorySortMode` 类型，却从目录排序 service 导入。
+- **根因与边界**：三个组件改从既有 `shared/directorySort.ts` 导入类型；目录排序常量与运行逻辑仍留在 service，视图行为不变。
+- **针对性测试**：`web/tests/reviewer-architecture-rules.test.mjs` → 守住组件 service 边只减不增；`npm run typecheck` → 守住类型解析。
