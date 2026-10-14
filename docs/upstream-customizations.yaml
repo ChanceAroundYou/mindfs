@@ -5663,3 +5663,33 @@ groups:
       - server/internal/session/manager_exchange_identity.go:func NewMindFSID
       - server/internal/session/manager_exchange_identity.go:func IsMindFSIDShape
       - server/internal/session/manager_exchange_identity.go:func WithExchangeIdentity
+
+  - id: G-EV
+    title: Session manager lifecycle operations split
+    kind: arch
+    symptom: |
+      Session close/delete/rename/archive, session property updates, cleanup, and DB shutdown lifecycle
+      operations remain in manager.go beside transcript/cache orchestration.
+    why: |
+      Keep the session metadata lifecycle and destructive cleanup ordering together so changes to
+      deletion, archive, and state mutation can be reviewed independently from exchange read paths.
+    boundary: |
+      Close/Delete/Rename/SetArchived, model/shell/plan/context-window updates, internal close/delete,
+      and Shutdown move unchanged to manager_lifecycle.go. Related-worktree ownership and repoint
+      methods remain untouched. Parent is 934 lines.
+    tests:
+      - server/internal/session/manager_test.go
+      - server/internal/session/manager_pinned_at_retired_test.go
+    files:
+      - server/internal/session/manager.go
+      - server/internal/session/manager_lifecycle.go
+      - docs/agent/rules/backend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - server/internal/session/manager_lifecycle.go:func (m *Manager) Close
+      - server/internal/session/manager_lifecycle.go:func (m *Manager) Delete
+      - server/internal/session/manager_lifecycle.go:func (m *Manager) SetArchived
+      - server/internal/session/manager_lifecycle.go:func (m *Manager) deleteSessionUnsafe

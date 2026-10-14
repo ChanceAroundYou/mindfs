@@ -3144,3 +3144,10 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：exchange 轮次身份、写入来源、模型显示名、token usage 的 context 传递与确定性 MindFS ID 生成/形状校验混在 manager 主文件，身份合同的读写约定难集中审阅。
 - **根因与边界**：context keys、`ExchangeIdentity`、With/读取 helper、UUIDv5 `NewMindFSID`、user turn id 与形状校验原样迁至 `manager_exchange_identity.go`；公开符号、调用点及 exchange 写入/分配时序不变。父文件实测后续记入计划。
 - **针对性测试**：`server/internal/api/usecase/session_blocks_write_test.go`、`server/internal/api/usecase/session_identity_dedup_test.go`、`server/internal/api/stream_hub_turn_identity_test.go`、`server/internal/session/manager_test.go` → 守住稳定 UUIDv5、轮次 identity 传递、live/import 来源以及模型与 usage 元数据。
+
+
+### G-EV Session manager lifecycle operation split
+
+- **可见症状**：会话关闭/删除、重命名、归档、模型与运行属性更新以及 DB shutdown 生命周期实现与缓存/transcript 编排混在 manager 主文件，修改元数据生命周期时难以独立追踪持久化和清理顺序。
+- **根因与边界**：Close/Delete/Rename/Archive、模型/shell/plan/context-window 更新、内部 close/delete 与 Shutdown 原样迁至 `manager_lifecycle.go`（256 行）；worktree 归属和 repoint 实现不变。父文件实测 934 行。
+- **针对性测试**：`server/internal/session/manager_test.go` → 守住会话创建、重命名、归档、属性更新、删除时主日志/aux/块流清理与关闭行为；全仓 `make test` → 全仓 Go 测试门禁通过。
