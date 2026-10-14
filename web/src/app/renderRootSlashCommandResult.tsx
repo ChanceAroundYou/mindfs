@@ -2,7 +2,7 @@ import type { Dispatch, RefObject, SetStateAction } from "react";
 
 // 从 App.tsx 抽出的纯函数（机械搬移，函数体逐字未改）。
 import { reportError } from "../services/net/error";
-import { copyText } from "../services/platform/clipboard";
+import { copyText } from "../platform/clipboard";
 import { AttachedFileContext, Exchange, GitFileStat, MultiProjectSessionGroup, PendingSend, RelatedFileClickTarget, SessionItem, SessionMode, SessionQueueItem, SlashCommandResult, ViewerSelection, WSStatus } from "./appSession";
 import { useI18n } from "../i18n";
 

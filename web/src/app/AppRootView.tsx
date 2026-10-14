@@ -20,7 +20,7 @@ import {
   getCachedFile,
   type FilePayload,
 } from "../services/file";
-import { copyText } from "../services/platform/clipboard";
+import { copyText } from "../platform/clipboard";
 import { AppShell } from "../layout/AppShell";
 import { ToastContainer } from "../components/shell/Toast";
 import { DialogHost } from "../components/shell/DialogHost";

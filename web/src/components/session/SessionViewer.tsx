@@ -12,7 +12,7 @@ import { isPersistedSeq, mergeSessionExchanges, type ExchangeAux, type SessionBl
 import { savePrompt } from "../../services/prompts";
 import { reportError } from "../../services/net/error";
 import { rootBadgeButtonStyle } from "../../shared/rootBadgeStyle";
-import { copyText } from "../../services/platform/clipboard";
+import { copyText } from "../../platform/clipboard";
 import type { AgentStatus } from "../../shared/agentTypes";
 import { useI18n } from "../../i18n/index";
 import { formatSessionDuration } from "../../services/session/sessionDuration";

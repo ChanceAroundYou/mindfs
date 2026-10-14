@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import Prism from "prismjs";
-import { copyText } from "../../services/platform/clipboard";
+import { copyText } from "../../platform/clipboard";
 import { useI18n } from "../../i18n/index";
 import { buildDiffCodeRows, type DiffCodeRow } from "../../shared/gitDiffModel";
 import { DiagramPreview } from "./DiagramPreview";

@@ -1,7 +1,7 @@
 import React from "react";
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 import { MarkdownViewer } from "../common/MarkdownViewer";
-import { copyText } from "../../services/platform/clipboard";
+import { copyText } from "../../platform/clipboard";
 import { reportError } from "../../services/net/error";
 import { useI18n } from "../../i18n/index";
 import type { RelatedFile } from "../../shared/sessionTypes";

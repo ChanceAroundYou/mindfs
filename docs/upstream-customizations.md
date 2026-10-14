@@ -3394,3 +3394,9 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：DirectorySortMenu 的排序选项与模式类型已由 shared 持有，组件却仍绕道 prefs service facade。
 - **根因与边界**：组件改从 `shared/directorySort.ts` 导入常量与类型；service facade 和排序行为未改。
 - **针对性测试**：`web/tests/reviewer-architecture-rules.test.mjs` → 守住组件 service 边只减不增；`npm run typecheck` → 守住组件与共享契约。
+
+### G-HJ Clipboard capability under platform
+
+- **可见症状**：Markdown/session views 与 app 调用方为复制文本而导入 services/platform，虽该模块实现的是浏览器/Native clipboard capability 而非数据 service。
+- **根因与边界**：实现迁到 `web/src/platform/clipboard.ts`；旧 `services/platform/clipboard.ts` 仅 re-export 兼容，Native bridge、Capacitor、execCommand 与 navigator fallback 顺序不变。组件和 app 调用方改用 platform 入口。
+- **针对性测试**：`web/tests/reviewer-architecture-rules.test.mjs` → 阻止组件 service 边增长；`npm test` → 守住旧路径兼容及复制调用行为。

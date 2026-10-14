@@ -6,7 +6,7 @@ import type { Locale, MessageKey } from "../../i18n/index";
 import { isPersistedSeq } from "../../services/session";
 import { savePrompt } from "../../services/prompts";
 import { reportError } from "../../services/net/error";
-import { copyText } from "../../services/platform/clipboard";
+import { copyText } from "../../platform/clipboard";
 import { formatSessionDuration } from "../../services/session/sessionDuration";
 import { SessionViewerThoughtItem } from "./SessionViewerThoughtItem";
 import { renderToolTimelineItem } from "./SessionViewerToolItem";

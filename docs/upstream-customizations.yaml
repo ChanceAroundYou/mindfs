@@ -6822,3 +6822,34 @@ groups:
     anchors:
       - web/src/shared/directorySort.ts:export const DIRECTORY_SORT_OPTIONS
       - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+
+  - id: G-HJ
+    title: Clipboard capability under platform
+    kind: arch
+    symptom: |
+      UI and app callers import the browser/Native clipboard capability from a service module.
+    why: |
+      Keep platform capabilities under the platform boundary while preserving the historical service path.
+    boundary: |
+      copyText implementation moves to web/src/platform/clipboard.ts; services/platform/clipboard.ts only
+      re-exports it. Clipboard fallback order and behavior remain unchanged; four component service edges shrink.
+    tests:
+      - web/tests/reviewer-architecture-rules.test.mjs
+    files:
+      - web/src/platform/clipboard.ts
+      - web/src/services/platform/clipboard.ts
+      - web/src/components/common/MarkdownCodeBlocks.tsx
+      - web/src/components/session/SessionViewer.tsx
+      - web/src/components/session/SessionViewerSlashCommand.tsx
+      - web/src/components/session/SessionViewerTimeline.tsx
+      - web/src/app/AppRootView.tsx
+      - web/src/app/renderRootSlashCommandResult.tsx
+      - web/tests/fixtures/component-service-import-debt.json
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/platform/clipboard.ts:export async function copyText
+      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
