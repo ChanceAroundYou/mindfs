@@ -5603,3 +5603,32 @@ groups:
       - server/internal/session/manager_pending_aux.go:func (m *Manager) GetFullToolCall
       - server/internal/session/manager_pending_aux.go:func (m *Manager) MarkPendingAskUserAnswered
       - server/internal/session/manager_pending_aux.go:func mergeToolCall
+
+  - id: G-ET
+    title: Session manager related-file recording split
+    kind: arch
+    symptom: |
+      Related-file deduplication, repo/head/path scoped removal, output file recording, and parent-session
+      propagation remain mixed into manager.go with session lifecycle and worktree ownership.
+    why: |
+      Keep the persisted related-file identity and parent/child propagation contract together so changes
+      to generated-file attribution can be reviewed without involving worktree ownership or repoint flows.
+    boundary: |
+      Add/remove/record related-file methods and related-file identity/path normalization move unchanged
+      to manager_related_files.go. RecordRelatedWorktree and ClearRelatedWorktree remain in manager.go;
+      repoint behavior is out of scope. Parent is 1,345 lines.
+    tests:
+      - server/internal/session/manager_test.go
+    files:
+      - server/internal/session/manager.go
+      - server/internal/session/manager_related_files.go
+      - docs/agent/rules/backend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - server/internal/session/manager_related_files.go:func (m *Manager) AddRelatedFile
+      - server/internal/session/manager_related_files.go:func (m *Manager) RemoveRelatedFileAtHead
+      - server/internal/session/manager_related_files.go:func (m *Manager) RecordRelatedOutputFile
+      - server/internal/session/manager_related_files.go:func relatedFileIdentity

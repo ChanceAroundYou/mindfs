@@ -126,5 +126,6 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 - 已完成（2026-10-14）：SQLite session DB 初始化/打开、schema migration、历史 alias/fork-link 归一和 DB link helper 迁至 `manager_sqlite.go`（297 行）；session 包及全仓测试通过。提交 `c161357` 已推送，upstream 门禁通过（1043 delta / 145 组），no-restart ship 完成，三端安装 `v0.5.5-794-gc161357`，bundle 对账一致且未重启节点。
 - 已完成（2026-10-14）：session 列表/计数/最新活动时间 API、meta 查询、binding 填充及 SQL 条件构造迁至 `manager_session_list.go`（258 行）。Search 调用仍走同包方法；session 包及全仓测试通过，G-BJ 锚点迁到新模块。提交 `62a93fd` 已推送，upstream 门禁通过（1044 delta / 146 组），no-restart ship 完成，三端安装 `v0.5.5-795-g62a93fd`，bundle 对账一致且未重启节点。
 - 已完成（2026-10-14）：session alias 与 external-name 持久化、identity 查找和单条/批量 alias 回填迁至 `manager_aliases.go`（188 行）；全仓测试与 upstream 门禁（1045 delta / 147 组）通过。提交 `508d47f` 已推送，no-restart ship 完成，三端安装 `v0.5.5-796-g508d47f`，bundle 对账一致且未重启节点。
-- 进行中（2026-10-14）：meta 单行读取、binding 合并、upsert 参数序列化、row scan、归一化与共享 SQL row scanner 迁至 `manager_meta.go`（264 行）；session 包专项测试通过。父文件实测 1,492 行，低于 1,500 硬线但仍高于 800 软线；全仓 `make test`、upstream 门禁和 no-restart ship 待执行。
-- 下一项：完成 G-ES 验收后，继续拆 related-files/worktree、session lifecycle 和 exchange identity context 职责，逐步逼近后端 800 行软线；之后处理其余 backend TODO，并审阅 reviewer checklist、落实可运行门禁。
+- 已完成（2026-10-14）：meta 单行读取、binding 合并、upsert 参数序列化、row scan、归一化与共享 SQL row scanner 迁至 `manager_meta.go`（264 行）；全仓 `make test`、upstream 门禁（1046 delta / 148 组）与 no-restart ship 均通过，提交 `3cf40a1` 已推送并安装至三端（`v0.5.5-797-g3cf40a1`），未重启节点。
+- 进行中（2026-10-14）：session related-file 增删、输出文件记录与身份/路径归一 helper 迁至 `manager_related_files.go`（156 行）；`RecordRelatedWorktree`/`ClearRelatedWorktree` 保留原位，不改 repoint/worktree 生命周期。session 包专项测试通过，父文件实测 1345 行；全仓门禁与发布待执行。
+- 下一项：完成 G-ET 验收后，按独立领域继续拆 session lifecycle 与 exchange identity context；之后处理其余 backend TODO，并审阅 reviewer checklist、落实可运行门禁。

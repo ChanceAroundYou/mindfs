@@ -3130,3 +3130,10 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：同一个 session meta row 同时由 `manager.go` 负责读、合并 bindings、写入和字段归一；schema 兼容修复容易只改一侧，产生列表信息丢失或重启后数据形状不同。
 - **根因与边界**：单行 metadata 查询、meta+bindings 投影、upsert、SQLite 参数序列化、scan、字段归一与共享 row scanner 原样迁至 `manager_meta.go`（264 行）。SQL schema 常量和缓存/transcript orchestration 不变；父文件实测 1,492 行，低于 1,500 硬线，继续朝 800 软线拆分。
 - **针对性测试**：`manager_test.go`、`manager_pinned_at_retired_test.go`、`manager_rename_compat_test.go`、`session_db_migration_order_test.go` → 守住 meta 字段往返、related worktree/文件归一、pinned_at 退役和数据库迁移顺序。
+
+
+### G-ET Session manager related-file 记录职责拆分
+
+- **可见症状**：会话相关文件去重、移除、输出产物登记和父子会话传播规则混在 manager 主文件，文件关联语义难以单独审阅。
+- **根因与边界**：`AddRelatedFile`、按 repo/head/path 移除、输出文件登记、父会话传播与身份/路径归一 helper 原样迁至 `manager_related_files.go`（156 行）；worktree 归属与清理方法留在原处，不涉及 repoint。父文件实测 1,345 行。
+- **针对性测试**：`manager_test.go` → 守住 repo/head/path 范围去重与删除、子会话文件传播、fork 不向源会话传播；全仓 `make test` → 全仓 Go 测试门禁通过。
