@@ -97,10 +97,7 @@
   "web/src/components/shell/Toast.tsx -> ../../services/net/error",
   "web/src/components/stream/ToolCallGroupCard.tsx -> ../../services/session",
   "web/src/components/task/StageEditor.tsx -> ../../services/tasks",
-  "web/src/components/task/TaskDetailPanel.tsx -> ../../services/tasks",
   "web/src/components/task/TaskTemplateDialog.tsx -> ../../services/net/error",
   "web/src/components/task/TaskTemplateDialog.tsx -> ../../services/tasks",
-  "web/src/components/workspace/WorkspaceBoard.tsx -> ../../services/tasks",
-  "web/src/components/workspace/WorkspaceQuickLaunch.tsx -> ../../services/tasks",
-  "web/src/components/workspace/WorkspaceTaskRow.tsx -> ../../services/tasks"
+  "web/src/components/workspace/WorkspaceBoard.tsx -> ../../services/tasks"
 ]

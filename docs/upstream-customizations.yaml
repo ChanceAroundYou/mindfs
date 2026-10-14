@@ -6513,3 +6513,29 @@ groups:
     anchors:
       - web/src/shared/taskTypes.ts:export type KanbanTask
       - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+
+  - id: G-GY
+    title: Shared task contracts in workspace and detail views
+    kind: arch
+    symptom: |
+      Task detail and workspace presentation components depend on the task service facade for types only.
+    why: |
+      Place shared task contracts in shared/taskTypes and keep the view layer free of service imports.
+    boundary: |
+      TaskDetailPanel, WorkspaceTaskRow, WorkspaceQuickLaunch import shared task types; all their service
+      edges are removed while runtime task loading and UI behavior remain unchanged.
+    tests:
+      - web/tests/reviewer-architecture-rules.test.mjs
+    files:
+      - web/src/components/task/TaskDetailPanel.tsx
+      - web/src/components/workspace/WorkspaceTaskRow.tsx
+      - web/src/components/workspace/WorkspaceQuickLaunch.tsx
+      - web/tests/fixtures/component-service-import-debt.json
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/shared/taskTypes.ts:export type KanbanTask
+      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"

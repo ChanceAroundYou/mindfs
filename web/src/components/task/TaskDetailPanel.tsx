@@ -11,7 +11,7 @@ import { useI18n } from "../../i18n/index";
 import { statusText, latestStageRun } from "./taskDetailUtils";
 import { pencilStyle, sessionIconButtonStyle, runIconButtonStyle, tagStyle } from "./taskDetailStyles";
 import { TaskDetailConfirmDialog } from "./TaskDetailConfirmDialog";
-import type { KanbanTask, StageTemplate, TaskDetail } from "../../services/tasks";
+import type { KanbanTask, StageTemplate, TaskDetail } from "../../shared/taskTypes";
 import type { AgentStatus } from "../../shared/agentTypes";
 import { taskStatusColor, isTerminalKanbanTask } from "../../app/appTask";
 import { DEFAULT_TASK_AGENT } from "../../app/appTask";

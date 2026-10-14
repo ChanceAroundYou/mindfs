@@ -3328,3 +3328,9 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：三个任务展示菜单/视图仅使用 `KanbanTask` 或 `TaskTemplate` 类型，却依赖 task service facade。
 - **根因与边界**：组件改从既有 `shared/taskTypes.ts` 导入纯类型；任务请求与业务操作仍由 task service 提供，展示行为不变，allowlist 删除三条边。
 - **针对性测试**：`web/tests/reviewer-architecture-rules.test.mjs` → 守住组件 service 边只减不增；`npm run typecheck` → 守住类型解析。
+
+### G-GY Shared task contracts in workspace and detail views
+
+- **可见症状**：任务详情及工作台行/快捷启动组件仅需任务结构类型，却直接依赖 task service facade。
+- **根因与边界**：三个组件从既有 `shared/taskTypes.ts` 导入纯类型，TaskDetailPanel、WorkspaceTaskRow、WorkspaceQuickLaunch 不再依赖任何 service；数据请求仍留在 app/usecase 层，显示与请求行为不变。
+- **针对性测试**：`web/tests/reviewer-architecture-rules.test.mjs` → 守住组件 service 边只减不增；`npm run typecheck` → 守住类型解析。

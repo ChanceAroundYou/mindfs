@@ -2,7 +2,7 @@ import React from "react";
 import { useI18n } from "../../i18n";
 import { taskCardSurfaceStyle } from "../task/taskIcons";
 import type { SessionPresentationSummary } from "../../shared/sessionPresentationTypes";
-import type { KanbanTask } from "../../services/tasks";
+import type { KanbanTask } from "../../shared/taskTypes";
 import { TaskCardRows, type TaskCardAction, type TaskSessionErrorDialog } from "../task/TaskCardRows";
 import type { WorkspaceTaskItem } from "../../app/useWorkspaceBoard";
 

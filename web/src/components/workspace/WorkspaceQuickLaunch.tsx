@@ -2,7 +2,7 @@ import React from "react";
 import { useI18n } from "../../i18n";
 import { PlusSmallIcon } from "../task/taskIcons";
 import type { WorkspaceProjectGroup } from "../../app/useWorkspaceBoard";
-import type { TaskTemplate } from "../../services/tasks";
+import type { TaskTemplate } from "../../shared/taskTypes";
 
 /**
  * 快速发起：工作台工具栏上的一个按钮，点开直接就是**新建任务面板本身**。
