@@ -2390,8 +2390,8 @@ groups:
       - web/tests/e2e-message-behavior.test.mjs
       - web/tests/user-message-persist-timing.test.mjs
     anchors:
-      - server/internal/session/manager.go:NewMindFSID
-      - server/internal/session/manager.go:IsMindFSIDShape
+      - server/internal/session/manager_exchange_identity.go:NewMindFSID
+      - server/internal/session/manager_exchange_identity.go:IsMindFSIDShape
       - server/internal/session/types.go:func (e *Exchange) UnmarshalJSON
       - server/internal/session/blocks.go:func (b *Block) UnmarshalJSON
       - server/internal/api/usecase/session_turn_identity.go:exchangeAgentKey
@@ -2975,7 +2975,7 @@ groups:
       - server/internal/session/blocks.go:readBlocksWindowTail
       - server/internal/session/blocks.go:CompactBlocksLight
       - server/internal/session/blocks.go:GroupBlocksBySeq
-      - server/internal/session/manager.go:WithExchangeIdentity
+      - server/internal/session/manager_exchange_identity.go:WithExchangeIdentity
       - server/internal/api/usecase/session.go:newMindFSID
       - server/internal/api/usecase/session_turn_identity.go:exchangeAlreadyRecorded
       - server/internal/api/usecase/session_turn_identity.go:exchangeIdentityRecorded
@@ -3050,7 +3050,7 @@ groups:
       - web/src/components/session/SessionViewer.tsx
     anchors:
       - server/internal/session/types.go:UnmarshalJSON
-      - server/internal/session/manager.go:NewMindFSID
+      - server/internal/session/manager_exchange_identity.go:NewMindFSID
       - server/internal/api/usecase/session_turn_identity.go:recordedUserExchangeTurnID
       - web/src/shared/sessionOverlay.ts:computeTailOverlay
       - web/src/app/useSessionStreamCache.ts:hasSameMindFSID
@@ -5632,3 +5632,34 @@ groups:
       - server/internal/session/manager_related_files.go:func (m *Manager) RemoveRelatedFileAtHead
       - server/internal/session/manager_related_files.go:func (m *Manager) RecordRelatedOutputFile
       - server/internal/session/manager_related_files.go:func relatedFileIdentity
+
+  - id: G-EU
+    title: Session manager exchange identity context split
+    kind: arch
+    symptom: |
+      Exchange turn identity/source/model/token-usage context propagation and deterministic MindFS ID
+      generation/shape validation are mixed into manager.go with exchange writing orchestration.
+    why: |
+      Keep the exchange row identity contract and its deterministic ID rules together so the live/import
+      writers and API identity consumers share one auditable implementation.
+    boundary: |
+      Context keys, ExchangeIdentity, context setters/readers, UUIDv5 NewMindFSID, user-turn ID derivation,
+      and identity shape validation move unchanged to manager_exchange_identity.go. Public symbols,
+      call sites, exchange allocation, and row write ordering remain unchanged. Parent is 1,179 lines.
+    tests:
+      - server/internal/api/usecase/session_blocks_write_test.go
+      - server/internal/api/usecase/session_identity_dedup_test.go
+      - server/internal/api/stream_hub_turn_identity_test.go
+      - server/internal/session/manager_test.go
+    files:
+      - server/internal/session/manager.go
+      - server/internal/session/manager_exchange_identity.go
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - server/internal/session/manager_exchange_identity.go:type ExchangeIdentity
+      - server/internal/session/manager_exchange_identity.go:func NewMindFSID
+      - server/internal/session/manager_exchange_identity.go:func IsMindFSIDShape
+      - server/internal/session/manager_exchange_identity.go:func WithExchangeIdentity

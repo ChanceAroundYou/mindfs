@@ -3137,3 +3137,10 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：会话相关文件去重、移除、输出产物登记和父子会话传播规则混在 manager 主文件，文件关联语义难以单独审阅。
 - **根因与边界**：`AddRelatedFile`、按 repo/head/path 移除、输出文件登记、父会话传播与身份/路径归一 helper 原样迁至 `manager_related_files.go`（156 行）；worktree 归属与清理方法留在原处，不涉及 repoint。父文件实测 1,345 行。
 - **针对性测试**：`manager_test.go` → 守住 repo/head/path 范围去重与删除、子会话文件传播、fork 不向源会话传播；全仓 `make test` → 全仓 Go 测试门禁通过。
+
+
+### G-EU Session manager exchange identity context contract 拆分
+
+- **可见症状**：exchange 轮次身份、写入来源、模型显示名、token usage 的 context 传递与确定性 MindFS ID 生成/形状校验混在 manager 主文件，身份合同的读写约定难集中审阅。
+- **根因与边界**：context keys、`ExchangeIdentity`、With/读取 helper、UUIDv5 `NewMindFSID`、user turn id 与形状校验原样迁至 `manager_exchange_identity.go`；公开符号、调用点及 exchange 写入/分配时序不变。父文件实测后续记入计划。
+- **针对性测试**：`server/internal/api/usecase/session_blocks_write_test.go`、`server/internal/api/usecase/session_identity_dedup_test.go`、`server/internal/api/stream_hub_turn_identity_test.go`、`server/internal/session/manager_test.go` → 守住稳定 UUIDv5、轮次 identity 传递、live/import 来源以及模型与 usage 元数据。
