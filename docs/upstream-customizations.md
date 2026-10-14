@@ -3227,3 +3227,10 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：provider 的 apply orchestration、Codex TOML 合并及多个 agent 配置写入适配集中在 API/provider 入口文件，扩展一种 agent 配置格式容易影响其他协议路径。
 - **根因与边界**：`applyAgentAPIProvider` 至 `probeAgentAPIProvider` 前的通用 apply、Codex TOML 合并、各 agent adapter 与 env 更新逻辑原样迁至 `agent_api_provider_apply.go`（769 行）；provider 选择、写入顺序、agent-specific env 语义不变。父文件实测 1,291 行。
 - **针对性测试**：`server/internal/api/agent_api_provider_test.go`、`server/internal/api/agent_config_test.go` 与 `server/internal/api/agent_api_provider_sync_test.go` → 守住协议应用、现有配置保留、env 清理/合并与批量同步；`make test` → 全仓 Go 门禁。
+
+
+### G-GI Kanban task stage execution split
+
+- **可见症状**：任务阶段调度、agent 执行、prompt 值生成及成功/失败收尾与任务 CRUD、状态迁移和存储编排挤在同一 service 文件，修改阶段执行行为容易误触其他流程。
+- **根因与边界**：`executeTask` 至 `recordTaskError` 的 stage execution、agent dispatch、prompt projection 与 run completion/error persistence 原样迁至 `service_execution.go`（360 行）；执行顺序、状态/event、失败记录与 worktree/repoint 生命周期保持原位。父文件实测 1,640 行，后续继续拆分。
+- **针对性测试**：`server/internal/kanban/service_test.go` 与 `server/internal/kanban/worktree_finish_stage_test.go` → 守住阶段执行顺序、提示词和失败/等待状态；`make test` → 全仓 Go 门禁。

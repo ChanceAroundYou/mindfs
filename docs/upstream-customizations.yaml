@@ -6063,3 +6063,34 @@ groups:
       - server/internal/api/agent_api_provider_apply.go:func mergeCodexAPIProviderConfig
       - server/internal/api/agent_api_provider_apply.go:func applyPiAPIProvider
       - server/internal/api/agent_api_provider_apply.go:func writeAgentEnvConfig
+
+
+  - id: G-GI
+    title: Kanban task stage execution split
+    kind: arch
+    symptom: |
+      Task stage scheduling, agent execution, prompt value generation, and success/failure finalization share
+      one service file with CRUD, state transitions, and storage orchestration.
+    why: |
+      Keep stage execution and run finalization together so workflow changes can be audited independently
+      from task mutation and storage behavior.
+    boundary: |
+      executeTask through recordTaskError move unchanged to service_execution.go (360 lines). Execution order,
+      status/events, failure persistence, and worktree/repoint lifecycle remain unchanged. Parent is 1,640 lines.
+    tests:
+      - server/internal/kanban/service_test.go
+      - server/internal/kanban/worktree_finish_stage_test.go
+    files:
+      - server/internal/kanban/service.go
+      - server/internal/kanban/service_execution.go
+      - docs/agent/rules/backend/TODO.md
+      - docs/agent/rules/backend/file-size.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - server/internal/kanban/service_execution.go:func (s *Service) executeTask
+      - server/internal/kanban/service_execution.go:func (s *Service) runAgentStage
+      - server/internal/kanban/service_execution.go:func (s *Service) finishTask
+      - server/internal/kanban/service_execution.go:func (s *Service) recordTaskError
