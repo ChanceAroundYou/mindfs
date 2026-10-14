@@ -6355,3 +6355,32 @@ groups:
     anchors:
       - server/internal/api/workspace_test.go:func TestAPIAppContextAccessDoesNotGrowOrGetConstructedDirectly
       - server/internal/api/workspace_test.go:func TestProductionGoFilesStayBelowTheHardLine
+
+  - id: G-GS
+    title: Shared candidate contracts
+    kind: arch
+    symptom: |
+      UI candidate data contracts are imported from the request service, coupling components to service modules.
+    why: |
+      Keep shared display and selection types in the shared contract layer while preserving the existing
+      service re-export for compatibility with non-component consumers.
+    boundary: |
+      CandidateType, CandidateItemType, and CandidateItem live in web/src/shared/candidateTypes.ts;
+      candidate request behavior is unchanged and component service import debt shrinks by three edges.
+    tests:
+      - web/tests/reviewer-architecture-rules.test.mjs
+    files:
+      - web/src/shared/candidateTypes.ts
+      - web/src/services/candidates.ts
+      - web/src/components/action/ActionBar.tsx
+      - web/src/components/action/CandidateDropdown.tsx
+      - web/src/components/app/TaskInlineCandidateMenu.tsx
+      - web/tests/fixtures/component-service-import-debt.json
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/shared/candidateTypes.ts:export type CandidateItem
+      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"

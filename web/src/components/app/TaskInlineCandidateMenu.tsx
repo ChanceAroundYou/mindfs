@@ -1,5 +1,5 @@
 import type { RefObject } from "react";
-import type { CandidateItem } from "../../services/candidates";
+import type { CandidateItem } from "../../shared/candidateTypes";
 
 export type TaskInlineCandidateMenuProps = {
   visible: boolean;

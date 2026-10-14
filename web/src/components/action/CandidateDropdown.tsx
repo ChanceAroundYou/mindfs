@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { savePrompt, deletePrompt } from "../../services/prompts";
 import { useI18n } from "../../i18n";
-import { type CandidateItem } from "../../services/candidates";
+import type { CandidateItem } from "../../shared/candidateTypes";
 
 function candidateNameColor(candidateType: CandidateItem["type"], isDark: boolean): string {
   switch (candidateType) {

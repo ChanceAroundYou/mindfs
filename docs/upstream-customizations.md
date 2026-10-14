@@ -3292,3 +3292,9 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：`h.AppContext` 依赖面可静默膨胀，或超长 Go 文件重新出现，而 reviewer checklist 只记录原则不自动阻止回归。
 - **根因与边界**：`workspace_test.go` 读取 API 生产源码，禁止直接构造 `AppContext`、将 `h.AppContext` 出现行数锁在 188 以下；同文件遍历 `cli/` 与 `server/`，禁止非测试、非生成 Go 文件超过 1,500 行。现有 workspace/context 实例契约与代码行为不变。
 - **针对性测试**：`server/internal/api/workspace_test.go:TestAPIAppContextAccessDoesNotGrowOrGetConstructedDirectly`、`TestProductionGoFilesStayBelowTheHardLine` → 守住 AppContext 访问面与 Go 文件硬线；`make test` → 全仓 Go 门禁。
+
+### G-GS Shared candidate contracts
+
+- **可见症状**：候选项仅用于前端展示与选择，但组件从 `services/candidates` 导入类型，导致 UI 层对数据请求服务产生不必要的结构依赖。
+- **根因与边界**：候选项联合类型和 `CandidateItem` 移至 `web/src/shared/candidateTypes.ts`；service 从 shared 导入并继续 re-export 以保持现有非组件消费者兼容。三个组件改为从 shared 导入，既有请求与选择行为不变。
+- **针对性测试**：`web/tests/reviewer-architecture-rules.test.mjs` → 禁止组件到 service 导入边新增并验证 allowlist 只减；`npm run typecheck` → 守住 TS 类型兼容。

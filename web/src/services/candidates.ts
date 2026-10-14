@@ -2,14 +2,8 @@ import { appURL } from "./net/base";
 import { getRootNodeId } from "./net/rootNode";
 import { protectedJSON } from "./net/api";
 
-export type CandidateType = "file" | "skill" | "prompt" | "command";
-export type CandidateItemType = CandidateType | "slash_command";
-
-export type CandidateItem = {
-  type: CandidateItemType;
-  name: string;
-  description?: string;
-};
+export type { CandidateItem, CandidateItemType, CandidateType } from "../shared/candidateTypes";
+import type { CandidateItem, CandidateType } from "../shared/candidateTypes";
 
 export async function fetchCandidates(params: {
   rootId: string;

@@ -2,7 +2,7 @@ import React from "react";
 import { ModeSelector, type SessionMode } from "../agent/ModeSelector";
 import { AgentSelector } from "../agent/AgentSelector";
 import { type AgentStatus } from "../../services/agents";
-import { type CandidateItem } from "../../services/candidates";
+import type { CandidateItem } from "../../shared/candidateTypes";
 import TokenEditor, { type TokenEditorHandle } from "../editor/TokenEditor";
 import { useI18n } from "../../i18n/index";
 import {
