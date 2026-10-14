@@ -3106,3 +3106,9 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：列表推断使用中的 agent、外部 transcript cursor 续读和 binding 反查都依赖 `session_agent_bindings`，但其读写散落在 `manager.go`，改 schema 或写入时序难以整体核验。
 - **根因与边界**：agent state/binding upsert、external cursor update、lookup/ensure/list 与 row scan/upsert helper 原样迁至 `manager_agent_bindings.go`（258 行）。数据类型、SQL schema 与写入语义不变；repoint 事务继续留在既有方法。父文件实测 2,456 行。
 - **针对性测试**：`manager_test.go` → 守住创建时绑定、agent 推断、空 transcript id 和幂等 ensure；`manager_cursor_test.go`、`manager_cursor_migration_test.go` → 守住外部游标字段与旧 schema 迁移。
+
+### G-EP Session manager SQLite 初始化与迁移职责拆分
+
+- **可见症状**：session DB 的惰性打开、schema 迁移顺序、旧 alias/fork 元数据归一和 DB link 文件路径共存于大 `manager.go`，持久化兼容性修复难集中审阅。
+- **根因与边界**：SQLite open 与测试注入点、`ensureSessionMetaDBUnsafe`、`openSessionMetaDB`、迁移/归一 helper、DB link 读写与 per-root user DB 路径原样迁至 `manager_sqlite.go`（297 行）。Schema SQL 常量、binding 事务和 row serialization 留在原处；父文件实测 2,174 行。
+- **针对性测试**：`session_db_migration_order_test.go`、`manager_cursor_migration_test.go`、`manager_test.go`、`manager_pinned_at_retired_test.go` → 守住迁移先后、外部 binding 游标列、DB link fallback、alias/fork 归一及 pinned_at 退役语义。

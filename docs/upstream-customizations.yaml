@@ -5440,6 +5440,39 @@ groups:
       - server/internal/session/manager_agent_bindings.go:func (m *Manager) EnsureAgentBinding
       - server/internal/session/manager_agent_bindings.go:func (m *Manager) UpdateExternalSessionCursor
 
+  - id: G-EP
+    title: Session manager SQLite initialization and migration split
+    kind: arch
+    symptom: |
+      Lazy SQLite opening, session schema setup, migration ordering, legacy name/fork normalization,
+      and DB link-file handling are embedded in manager.go beside runtime session/cache logic.
+    why: |
+      Keep session metadata DB startup and migration invariants together so per-root DB selection,
+      data migration ordering, and compatibility repair can be reviewed as one storage boundary.
+    boundary: |
+      SQLite open/test hooks, ensureSessionMetaDBUnsafe, openSessionMetaDB, schema migration helpers,
+      DB link read/write, and per-root user DB path resolution move unchanged to manager_sqlite.go.
+      Schema SQL constants, binding transaction behavior, and row serialization remain where they are.
+      Parent is 2,174 lines.
+    tests:
+      - server/internal/session/session_db_migration_order_test.go
+      - server/internal/session/manager_cursor_migration_test.go
+      - server/internal/session/manager_test.go
+      - server/internal/session/manager_pinned_at_retired_test.go
+    files:
+      - server/internal/session/manager.go
+      - server/internal/session/manager_sqlite.go
+      - docs/agent/rules/backend/TODO.md
+      - docs/agent/rules/backend/file-size.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - server/internal/session/manager_sqlite.go:func (m *Manager) ensureSessionMetaDBUnsafe
+      - server/internal/session/manager_sqlite.go:func openSessionMetaDB
+      - server/internal/session/manager_sqlite.go:func normalizeForkParentLinks
+
   - id: G-EM
     title: Session manager pending tool-call aux state split
     kind: arch
