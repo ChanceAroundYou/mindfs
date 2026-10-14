@@ -1,4 +1,5 @@
-export type DocumentPreviewKind = "pdf" | "word" | "excel" | "powerpoint";
+import type { DocumentPreviewKind, PdfPageLayout } from "../shared/documentPreviewTypes";
+export type { DocumentPreviewKind, PdfPageLayout } from "../shared/documentPreviewTypes";
 
 const DOCUMENT_EXTENSIONS: Record<DocumentPreviewKind, ReadonlySet<string>> = {
   pdf: new Set([".pdf"]),
@@ -19,13 +20,6 @@ export function getDocumentPreviewKind(ext: string, mime = ""): DocumentPreviewK
   if (normalizedMime.includes("presentationml")) return "powerpoint";
   return null;
 }
-
-/** 一页 PDF 在给定缩放下的 CSS 像素尺寸。 */
-export type PdfPageLayout = {
-  /** 1pt 下的页面尺寸（pdf.js getViewport({scale:1}) 的结果） */
-  width: number;
-  height: number;
-};
 
 /** 视口上下各多渲染一屏，避免快速滚动时白屏。 */
 export const PDF_RENDER_MARGIN_PX = 1200;

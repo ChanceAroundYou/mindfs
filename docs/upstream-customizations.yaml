@@ -6771,3 +6771,30 @@ groups:
     anchors:
       - web/src/shared/fileTypes.ts:export interface FileEditStoreContract
       - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+
+  - id: G-HH
+    title: Shared document preview contracts
+    kind: arch
+    symptom: |
+      DocumentViewer imports a preview kind contract from the preview calculation service.
+    why: |
+      Keep document preview view contracts in shared and retain a service re-export for compatibility.
+    boundary: |
+      DocumentPreviewKind and PdfPageLayout live in shared/documentPreviewTypes.ts; service calculation and
+      rendering behavior are unchanged. DocumentViewer removes its type-only service dependency.
+    tests:
+      - web/tests/reviewer-architecture-rules.test.mjs
+    files:
+      - web/src/shared/documentPreviewTypes.ts
+      - web/src/services/documentPreview.ts
+      - web/src/components/file/DocumentViewer.tsx
+      - web/src/components/file/PdfPreview.tsx
+      - web/tests/fixtures/component-service-import-debt.json
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/shared/documentPreviewTypes.ts:export type DocumentPreviewKind
+      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"

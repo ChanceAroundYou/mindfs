@@ -3,7 +3,7 @@ import { fetchProofProtectedBlob } from "../../services/file";
 import { DocumentPreviewError as ErrorMessage, describeDocumentPreviewError as describeError } from "./DocumentPreviewError";
 import { PdfPreview } from "./PdfPreview";
 import { useI18n } from "../../i18n/index";
-import { type DocumentPreviewKind } from "../../services/documentPreview";
+import type { DocumentPreviewKind } from "../../shared/documentPreviewTypes";
 
 type DocumentViewerProps = {
   path: string;
