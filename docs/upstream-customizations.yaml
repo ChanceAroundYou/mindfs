@@ -6298,3 +6298,33 @@ groups:
       - web/tests/agent-docs-contract.test.mjs:test("agent rules and plan index contain no broken local Markdown links"
       - web/tests/agent-docs-contract.test.mjs:test("plan index has exactly one valid Active plan"
       - web/tests/agent-docs-contract.test.mjs:test("Claude and Gemini entry files point to the shared instruction and indexes"
+
+  - id: G-GQ
+    title: Frontend reviewer architecture ratchets
+    kind: arch
+    symptom: |
+      Reviewer checklist layer-import and hard-line constraints rely on manual grep and can miss new
+      violations or be confused by the legacy source-map test hook.
+    why: |
+      Turn structural reviewer red lights into repeatable tests while tracking existing layering debt
+      explicitly and allowing that debt only to shrink.
+    boundary: |
+      reviewer-architecture-rules.test.mjs checks physical TSX component-to-service import edges against the
+      reviewed 121-edge/69-file allowlist, rejecting any new edge; it also enforces the 500-line hard line
+      except for explicit file-size.md exemptions. It reads raw files without source-map remapping. Existing
+      imports remain an Active TODO to migrate, not a permanent rule exception.
+    tests:
+      - web/tests/reviewer-architecture-rules.test.mjs
+    files:
+      - web/tests/reviewer-architecture-rules.test.mjs
+      - web/tests/fixtures/component-service-import-debt.json
+      - docs/agent/rules/frontend/TODO.md
+      - docs/agent/rules/frontend/reviewer-checklist.md
+      - docs/agent/rules/README.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+      - web/tests/reviewer-architecture-rules.test.mjs:test("frontend source files stay under 500 lines outside documented exemptions"

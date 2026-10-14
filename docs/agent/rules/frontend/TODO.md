@@ -47,3 +47,7 @@
 - [x] 新建 `web/tests/naming-convention.test.mjs`（文件名=主export、`.ts`无JSX、后缀语义）。
 - [x] 前端测试栈引入 Vitest：`npm test` 先跑 Vitest 新测试，再跑带 source-map hooks 的 Node 兼容 lane；`deploy-all.sh` 走统一脚本。存量 `.mjs` 按触及时逐步迁。
 - [x] 存量复用件补测：新增模型筛选纯函数与通用图标语义测试；盘点结果记录在 active plan。
+
+## 层级债务（持续清理）
+
+- [ ] `components/**/*.tsx` 到 `services/` 尚有 121 条 import 边、涉及 69 个文件（含 type-only 引用）。现由 `reviewer-architecture-rules.test.mjs` 的 reviewed allowlist 禁止新增、允许只减；逐域把数据/请求依赖移入 logic hooks，把共享类型移到 `shared/` 或 service types 门面，再删 allowlist。

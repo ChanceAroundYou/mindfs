@@ -161,4 +161,4 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 - 已完成（2026-10-14）：G-GN 双入口审计增加测试守卫；`make test`、upstream（1065 delta / 168 组）及 ship Go/tsc/web（Vitest 5 + legacy 293）通过。提交 `6bc3d6c` 已推送并 no-restart 安装三端 `v0.5.5-817-g6bc3d6c`，bundle 一致、未重启。
 - 已完成（2026-10-14）：G-GO 落实 WS 单读 goroutine 规则：`handleWSRequest` 的 ping、plan-mode 与 queue handlers 改为 goroutine 派发；AST 测试锁定全部 handler。全仓 Go、ship Go/tsc/web（Vitest 5 + legacy 293）、upstream（1065 delta / 169 组）通过。提交 `bd0bd3a` 已推送并 no-restart 安装三端 `v0.5.5-818-gbd0bd3a`，bundle 一致，未重启。
 - 已完成（2026-10-14）：G-GP 新增规则入口、Active plan 唯一性与本地 Markdown 链接门禁；同时核对 `CLAUDE.md`/`GEMINI.md` 均导入 `AGENTS.md` 及共用索引。`web/tests/agent-docs-contract.test.mjs` 通过 3 项入口/链接检查。
-- 进行中（2026-10-14）：审阅发现 frontend layering 长期规则仍有 121 条 `components/**/*.tsx -> services/` import 边、涉及 69 个文件（包含纯类型 import）；TODO 与 allowlist ratchet 已登记，先禁止增加并按域逐步消除。
+- 进行中（2026-10-14）：审阅发现 frontend layering 长期规则仍有 121 条 `components/**/*.tsx -> services/` import 边、涉及 69 个文件（包含纯类型 import）；TODO 与只减不增的 source guard 已登记，先禁止增加并按域逐步消除。

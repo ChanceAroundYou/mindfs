@@ -17,6 +17,6 @@
 
 ## 执行方式
 
-- **新代码**：强制遵守；命名、层级/复用源守卫、WS 异步派发和测试要求进入 `make test` / `npm test` 门禁；reviewer checklist 仍用于 SQLite 回滚、账户/控制面归属和变更范围等需人工判断项。
+- **新代码**：强制遵守；命名、层级/复用源守卫、WS 异步派发和测试要求进入 `make test` / `npm test` 门禁；组件→service 存量边由 reviewed allowlist 只减不增。reviewer checklist 仍用于 SQLite 回滚、账户/控制面归属和变更范围等需人工判断项。
 - **存量**：按各 `TODO.md` 分批还，每批「2–3 个 + 一次构建/测试」，零行为变化。
 - **reviewer**：按各 `reviewer-checklist.md` 打勾，红灯挡合并。
