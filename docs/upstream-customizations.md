@@ -3255,3 +3255,10 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：Codex session SDK tool item、dynamic/hook/image/collaboration 事件映射与内容/title 投影挤在会话事件消费文件中，新增工具类型容易影响 session turn 逻辑。
 - **根因与边界**：`mapToolItem` 至 `truncateRunes` 的 tool item mapping 和内容/title helpers 原样迁至 `session_tools.go`（433 行）；调用方、工具种类/status 与 event payload shape 不变。父 `session.go` 实测 1,164 行，低于硬线。
 - **针对性测试**：`server/internal/agent/codex/session_test.go` → 守住工具 item 映射、动态工具、hook/image/collaboration 内容与 status；`make test` → 全仓 Go 门禁。
+
+
+### G-GM Git view diff and history read model split
+
+- **可见症状**：diff、commit history、related-file diff/stat 与 status/branch/worktree/action handlers 共处大型 gitview 文件，历史解析调整容易误触仓库状态和写操作。
+- **根因与边界**：`ReadDiff` 至 `ReadRelatedFileStats` 以及 `repoContext.commitExists` 至 `parseHistoryItems` 的只读 diff/history 实现与解析 helper 原样迁至 `gitview_history.go`（653 行）；路径映射、历史排序、commit/diff 选择和输出 shape 不变。父文件实测 933 行。
+- **针对性测试**：`server/internal/gitview/gitview_test.go` → 守住 diff/history/related-file diff 与 batch stats；`make test` → 全仓 Go 门禁。

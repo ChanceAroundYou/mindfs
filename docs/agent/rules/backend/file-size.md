@@ -13,7 +13,7 @@
 ## 必拆清单（>1500 非测试，按当前工作区实测）
 
 ```
-server/internal/gitview/gitview.go 1575
+（当前无超过 1,500 行的非测试 Go 文件；按 `wc -l` 复核。）
 ```
 
 执行原则：每次 1 个 + `make test` 全绿；SQLite 相关先备回滚说明。

@@ -947,7 +947,7 @@ groups:
       - 'web/src/components/git/GitHistoryPanel.tsx:color-mix(in srgb, var(--accent-color) 8%'
       - 'web/src/components/git/GitDiffViewer.tsx:rootBadgeButtonStyle'
       - 'web/src/services/upload.ts:getRootNodeId'
-      - 'server/internal/gitview/gitview.go:func ReadRelatedFileStats'
+      - 'server/internal/gitview/gitview_history.go:func ReadRelatedFileStats'
       - 'server/internal/api/http.go:/api/git/related-files/stats'
     files:
       - web/src/components/file/CodeViewer.tsx
@@ -969,6 +969,7 @@ groups:
       - web/src/services/upload.ts
       - web/src/hooks/useRelatedFileStats.ts
       - server/internal/gitview/gitview.go
+      - server/internal/gitview/gitview_history.go
       - server/internal/gitview/gitview_test.go
       - server/internal/api/http_git_related_files_stats_test.go
       - web/tests/related-file-stats-batch.test.mjs
@@ -6188,3 +6189,34 @@ groups:
       - server/internal/agent/codex/session_tools.go:func mapDynamicToolCall
       - server/internal/agent/codex/session_tools.go:func collabToolContent
       - server/internal/agent/codex/session_tools.go:func truncateRunes
+
+
+  - id: G-GM
+    title: Git view diff and history read model split
+    kind: arch
+    symptom: |
+      Diff, commit history, related-file diff/stats, and their parsers share a large gitview file with
+      status/branch/worktree/action handlers, coupling read model changes to repository mutation paths.
+    why: |
+      Keep read-only diff/history implementation together so history and related-file behavior can be
+      reviewed independently from status and worktree actions.
+    boundary: |
+      ReadDiff through ReadRelatedFileStats and repoContext.commitExists through parseHistoryItems move
+      unchanged to gitview_history.go (653 lines). Path mapping, history ordering, commit/diff selection,
+      and result shapes remain unchanged. Parent gitview.go is 933 lines.
+    tests:
+      - server/internal/gitview/gitview_test.go
+    files:
+      - server/internal/gitview/gitview.go
+      - server/internal/gitview/gitview_history.go
+      - docs/agent/rules/backend/TODO.md
+      - docs/agent/rules/backend/file-size.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - server/internal/gitview/gitview_history.go:func ReadDiff
+      - server/internal/gitview/gitview_history.go:func ListHistory
+      - server/internal/gitview/gitview_history.go:func ReadRelatedFileStats
+      - server/internal/gitview/gitview_history.go:func parseHistoryItems
