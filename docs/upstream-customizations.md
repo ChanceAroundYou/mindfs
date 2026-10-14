@@ -3046,3 +3046,9 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：`SendMessage` 同时负责输入校验、turn 锁、user 持久化、runtime 初始化、agent 启动、流事件、工具/关联文件更新、结束清理，堆在超大 `session.go` 单个函数中。
 - **根因与边界**：`SendMessage` 方法体原样迁至 `session_send.go`（444 行），继续调用现有 turn identity/runtime helpers；方法签名、持久化/回调顺序、错误和取消语义不变。父文件实测 2,276 行，backend TODO 继续未完成。
 - **针对性测试**：`usecase_test.go`、`session_early_user_persist_test.go`、`session_identity_dedup_test.go` 和 `user-message-persist-timing.test.mjs` → 守住发送、user 先落盘和身份判重；完整 `make test` 通过。
+
+### G-EF Claude subagent 路由职责拆分
+
+- **可见症状**：Claude synthetic subagent 创建、ref/key 归一、终态摘要、子会话事件路由和 synthetic Agent Session 实现与主 session turn pipeline 混在 `session.go`，父子会话行为难集中审阅。
+- **根因与边界**：router 生命周期/事件 helper 与 synthetic session 方法原样迁入 `session_subagents.go`（315 行）；事件注册和调用顺序不变。父文件实测 1,973 行，backend TODO 仍未完成。
+- **针对性测试**：`server/internal/api/usecase/usecase_test.go` → 守住 subagent 创建、任务通知摘要和 chunk 路由；完整 `make test` → 全仓 Go 测试门禁通过。

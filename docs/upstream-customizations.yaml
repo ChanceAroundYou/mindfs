@@ -5164,3 +5164,32 @@ groups:
       - docs/upstream-customizations.yaml
     anchors:
       - server/internal/api/usecase/session_send.go:func (s *Service) SendMessage
+
+  - id: G-EF
+    title: Claude subagent session routing split
+    kind: arch
+    symptom: |
+      Claude synthetic subagent creation, key/ref resolution, terminal summaries, child event routing,
+      and the synthetic Agent Session implementation are embedded in session.go with the main turn
+      event pipeline.
+    why: |
+      Give subagent lifecycle and event routing a focused owner with existing regression tests, keeping
+      parent and child session behavior reviewable as a unit.
+    boundary: |
+      Claude subagent router construction/handlers/helpers and syntheticAgentSession methods move
+      unchanged to session_subagents.go. Event registration and caller order remain unchanged. The
+      parent remains 1,973 lines and backend TODO stays active.
+    tests:
+      - server/internal/api/usecase/usecase_test.go
+    files:
+      - server/internal/api/usecase/session.go
+      - server/internal/api/usecase/session_subagents.go
+      - docs/agent/rules/backend/TODO.md
+      - docs/agent/rules/backend/file-size.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - server/internal/api/usecase/session_subagents.go:func newClaudeSubagentRouter
+      - server/internal/api/usecase/session_subagents.go:func (r *claudeSubagentRouter) Handle
