@@ -318,6 +318,7 @@ groups:
       - server/internal/api/usecase/usecase_test.go
     tests:
       - server/internal/api/usecase/usecase_test.go
+      - web/tests/session-archive.test.mjs
     anchors:
       - server/internal/fs/registry.go:UpdateDisplayName
       - 'server/internal/api/usecase/fs.go:CUSTOM(G-P)'
@@ -4997,9 +4998,11 @@ groups:
       the existing usecase contracts. session.go remains 3,696 lines and backend TODO stays active.
     tests:
       - server/internal/api/usecase/usecase_test.go
+      - web/tests/session-archive.test.mjs
     files:
       - server/internal/api/usecase/session.go
       - server/internal/api/usecase/session_lifecycle.go
+      - web/tests/session-archive.test.mjs
       - docs/agent/rules/backend/TODO.md
       - docs/agent/rules/backend/file-size.md
       - docs/plans/README.md

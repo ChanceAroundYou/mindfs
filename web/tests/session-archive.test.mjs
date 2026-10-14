@@ -106,7 +106,7 @@ test("归档面板只拉顶级会话（子会话已在归档时被删，这里�
 
 test("归档语义：只归档自己，子会话走删除", () => {
   // 后端 ArchiveSession 的返回值带出「被删掉的子会话」，供 handler 解绑任务。
-  const src = read("../server/internal/api/usecase/session.go");
+  const src = read("../server/internal/api/usecase/session_lifecycle.go");
   const start = src.indexOf("func (s *Service) ArchiveSession(");
   assert.ok(start >= 0, "usecase 应有 ArchiveSession");
   const body = src.slice(start, src.indexOf("\n}\n", start));
