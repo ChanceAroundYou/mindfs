@@ -4980,3 +4980,32 @@ groups:
     anchors:
       - server/internal/api/usecase/session_read.go:func (s *Service) GetSession
       - server/internal/api/usecase/session_read.go:func (s *Service) GetSessionBlocksWindow
+
+  - id: G-DZ
+    title: Session usecase lifecycle and cascade split
+    kind: arch
+    symptom: |
+      Close/delete/archive/rename flows and recursive child cleanup are interleaved with prompt building
+      and agent turn orchestration in the oversized session.go. Destructive lifecycle behavior is hard
+      to review as one unit.
+    why: |
+      Give session lifecycle and resource cleanup a focused owner, preserving the shared subtree rules
+      used by delete and archive and the existing service API contracts.
+    boundary: |
+      CloseSession, DeleteSession, cascade/subtree helpers, ArchiveSession, active-turn cancellation,
+      and RenameSession move unchanged to session_lifecycle.go. Public input/output types stay beside
+      the existing usecase contracts. session.go remains 3,696 lines and backend TODO stays active.
+    tests:
+      - server/internal/api/usecase/usecase_test.go
+    files:
+      - server/internal/api/usecase/session.go
+      - server/internal/api/usecase/session_lifecycle.go
+      - docs/agent/rules/backend/TODO.md
+      - docs/agent/rules/backend/file-size.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - server/internal/api/usecase/session_lifecycle.go:func (s *Service) DeleteSession
+      - server/internal/api/usecase/session_lifecycle.go:func (s *Service) ArchiveSession
