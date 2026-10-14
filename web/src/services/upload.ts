@@ -1,5 +1,8 @@
 import { appURL } from "./net/base";
 import { getRootNodeId } from "./net/rootNode";
+import type { UploadProgress } from "../shared/uploadTypes";
+
+export type { UploadProgress } from "../shared/uploadTypes";
 
 export type UploadedFile = {
   path: string;
@@ -7,13 +10,6 @@ export type UploadedFile = {
   name: string;
   mime: string;
   size: number;
-};
-
-export type UploadProgress = {
-  loaded: number;
-  total: number;
-  percent: number;
-  speedBps: number;
 };
 
 type UploadResponse = {

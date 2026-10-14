@@ -3364,3 +3364,9 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：根项目 Git/worktree 视图依赖 `services/git` 仅为取得响应类型，因此纯展示组件仍连接请求模块。
 - **根因与边界**：GitStatusPanel、RootGitContentView、RootWorktreeContentView 改用 `shared/gitTypes.ts`；GitStatusPanel 的 dialog 操作依赖保留，其他 Git 请求与状态行为不变。
 - **针对性测试**：`web/tests/reviewer-architecture-rules.test.mjs` → 守住组件 service 边只减不增；`npm run typecheck` → 守住 shared 类型与 service re-export 兼容。
+
+### G-HE Shared upload progress contract
+
+- **可见症状**：上传进度组件只展示 `UploadProgress`，却从上传请求 service 导入类型。
+- **根因与边界**：上传进度契约移至 `shared/uploadTypes.ts`；upload service 继续 re-export 并使用此类型，XHR 上传和进度计算不变，两个展示组件移除 service 依赖。
+- **针对性测试**：`web/tests/reviewer-architecture-rules.test.mjs` → 守住组件 service 边只减不增；`npm run typecheck` → 守住上传类型 facade。

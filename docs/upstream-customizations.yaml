@@ -6686,3 +6686,30 @@ groups:
     anchors:
       - web/src/shared/gitTypes.ts:export type GitStatusPayload
       - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+
+  - id: G-HE
+    title: Shared upload progress contract
+    kind: arch
+    symptom: |
+      Upload progress view components import UploadProgress from the upload request service.
+    why: |
+      Make the progress display contract dependency-neutral while preserving the service re-export for compatibility.
+    boundary: |
+      UploadProgress lives in shared/uploadTypes.ts; services/upload re-exports and uses it, with no change to
+      upload transport/progress behavior. AttachmentsArea and CompactUploadProgress import from shared.
+    tests:
+      - web/tests/reviewer-architecture-rules.test.mjs
+    files:
+      - web/src/shared/uploadTypes.ts
+      - web/src/services/upload.ts
+      - web/src/components/action/AttachmentsArea.tsx
+      - web/src/components/file/CompactUploadProgress.tsx
+      - web/tests/fixtures/component-service-import-debt.json
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/shared/uploadTypes.ts:export type UploadProgress
+      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"

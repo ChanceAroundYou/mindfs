@@ -3,7 +3,7 @@ import { CompactUploadProgress } from "../file/CompactUploadProgress";
 import { useI18n } from "../../i18n";
 import { appAccentHexToRgba, getSelectionPreview } from "../../shared/actionBarUtils";
 import { type AttachedFileContext } from "./actionTypes";
-import { type UploadProgress } from "../../services/upload";
+import type { UploadProgress } from "../../shared/uploadTypes";
 
 import type { PendingAttachment } from "../../shared/actionBarTypes";
 export type { PendingAttachment } from "../../shared/actionBarTypes";

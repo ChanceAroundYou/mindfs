@@ -1,4 +1,4 @@
-import type { UploadProgress } from "../../services/upload";
+import type { UploadProgress } from "../../shared/uploadTypes";
 
 function formatUploadSpeed(bytesPerSecond: number): string {
   if (!Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) {
