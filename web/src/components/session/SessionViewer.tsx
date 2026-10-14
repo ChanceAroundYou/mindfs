@@ -3,7 +3,7 @@ import { useSessionStream, type TimelineItem } from "../../hooks/useSessionStrea
 import { useTargetSeqScroll } from "./useTargetSeqScroll";
 import { buildTimelineItemMeta } from "./buildTimelineItemMeta";
 import { useSessionViewerScrollPositionEffects, useSessionViewerScrollState, useSessionViewerStickinessEffect } from "./useSessionViewerScroll";
-import type { TodoUpdate } from "../../services/session";
+import type { TodoUpdate } from "../../shared/sessionTypes";
 import { ViewHeader } from "../../layout/ViewHeader";
 // 窗口取数（SESSION_WINDOW_SIZE / getSessionWindow / setWindowedView /
 // clearWindowedView / mergeSessionExchanges 的另一半）已随 2026-10-08 的拆分

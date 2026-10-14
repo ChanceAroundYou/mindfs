@@ -3,7 +3,7 @@ import { ToolCallCard } from "./ToolCallCard";
 import { renderToolIcon } from "./toolCallIcons";
 import { useI18n } from "../../i18n";
 import type { MessageKey } from "../../i18n";
-import type { ToolCall } from "../../services/session";
+import type { ToolCall } from "../../shared/sessionTypes";
 
 /**
  * 连续同类工具卡的折叠组卡（2026-10-07）。

@@ -6619,3 +6619,37 @@ groups:
     anchors:
       - web/src/shared/directorySort.ts:export type FileEntry
       - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"
+
+  - id: G-HC
+    title: Shared session domain contracts
+    kind: arch
+    symptom: |
+      Session UI imports domain types from the runtime service facade, and its implementation modules share
+      a type file nested under services.
+    why: |
+      Make session domain contracts available to UI and services from a dependency-neutral shared module.
+    boundary: |
+      sessionTypes.ts moves to shared/sessionTypes.ts; services/session/sessionTypes.ts remains a compatibility
+      re-export and the public service facade/runtime behavior stay unchanged. Type-only UI imports use shared.
+    tests:
+      - web/tests/reviewer-architecture-rules.test.mjs
+    files:
+      - web/src/shared/sessionTypes.ts
+      - web/src/services/session/sessionTypes.ts
+      - web/src/components/root/RootWorktreeContentView.tsx
+      - web/src/components/stream/ToolCallGroupCard.tsx
+      - web/src/components/session/AskUserQuestionCard.tsx
+      - web/src/components/session/SessionViewer.tsx
+      - web/src/components/session/SessionViewerCards.tsx
+      - web/src/components/session/SessionViewerSlashCommand.tsx
+      - web/src/components/session/SessionViewerTimeline.tsx
+      - web/src/components/session/SessionViewerTokenViews.tsx
+      - web/tests/fixtures/component-service-import-debt.json
+      - docs/agent/rules/frontend/TODO.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - web/src/shared/sessionTypes.ts:export type Session
+      - web/tests/reviewer-architecture-rules.test.mjs:test("component service imports only shrink from the reviewed legacy allowlist"

@@ -1,7 +1,7 @@
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 import type { TimelineItem } from "../../hooks/useSessionStream";
 import type { AgentStatus } from "../../shared/agentTypes";
-import type { RelatedFile } from "../../services/session";
+import type { RelatedFile } from "../../shared/sessionTypes";
 import type { Locale, MessageKey } from "../../i18n/index";
 import { isPersistedSeq } from "../../services/session";
 import { savePrompt } from "../../services/prompts";

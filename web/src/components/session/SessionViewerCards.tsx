@@ -1,6 +1,6 @@
 import React from "react";
 import { MarkdownViewer } from "../common/MarkdownViewer";
-import type { TodoUpdate } from "../../services/session";
+import type { TodoUpdate } from "../../shared/sessionTypes";
 
 export function PlanUpdateCard({ content, rootId }: { content: string; rootId?: string | null }) {
   return (

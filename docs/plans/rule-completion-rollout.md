@@ -171,4 +171,5 @@ Goal：以当前仓库为准，逐项落实 AGENTS.md、docs/agent/rules/ 和唯
 - 进行中（2026-10-14）：PromptEditor、StageEditor、WorkspaceBoard 改从 shared/taskTypes 导入契约；对应三条 task service 导入边和三个组件的 service 依赖清除，当前债务降至 98 条、55 个文件。
 - 进行中（2026-10-14）：Git 展示契约（状态、分支、历史、worktree 等类型）集中在 `shared/gitTypes.ts`，service facade 兼容 re-export；GitBranchSelector、WorktreeLifecycleOverlays、ComposerTopChips 改从 shared 导入类型，债务降至 95 条、53 个文件。
 - 进行中（2026-10-14）：icons/listViewIcons 与 RootGitContentView 的 `FileEntry`/`DirectorySortMode` 类型引用改到既有 shared 模块，类型契约保持不变，债务降至 92 条、52 个文件。
+- 进行中（2026-10-14）：完整 session domain type module 移入 `shared/sessionTypes.ts`；原 `services/session/sessionTypes.ts` 保留内部兼容 re-export，公开 `services/session` facade 不变。六个纯类型组件边被删除，另外两个混合 runtime 文件也转为 shared 类型导入；当前债务 86 条、48 个文件。
 - 进行中（2026-10-14）：补 reviewer checklist 自动覆盖映射；backend 已有 WS、Cancel timeout、AppContext、endpoint role 和文件长度测试；本批为 AppContext 使用面与生产 Go 文件硬线新增 guard。SQLite additive、回滚说明、人工架构判断仍由 reviewer checklist 标明。

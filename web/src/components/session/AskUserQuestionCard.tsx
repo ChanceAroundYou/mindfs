@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useI18n } from "../../i18n/index";
-import type { ToolCall } from "../../services/session";
+import type { ToolCall } from "../../shared/sessionTypes";
 import type { AskUserQuestionItem, SessionViewerProps } from "./sessionViewerTypes";
 
 export function getAskUserQuestions(toolCall: Partial<ToolCall>): AskUserQuestionItem[] {

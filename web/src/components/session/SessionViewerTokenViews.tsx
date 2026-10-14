@@ -1,5 +1,5 @@
 import React from "react";
-import type { TokenUsage } from "../../services/session";
+import type { TokenUsage } from "../../shared/sessionTypes";
 import { formatCompactTokenCount, formatContextWindowPercent, formatTurnTokenCount } from "./sessionViewerFormat";
 
 export function TurnTokenUsage({ usage }: { usage?: TokenUsage }) {
