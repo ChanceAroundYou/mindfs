@@ -5012,3 +5012,32 @@ groups:
     anchors:
       - server/internal/api/usecase/session_lifecycle.go:func (s *Service) DeleteSession
       - server/internal/api/usecase/session_lifecycle.go:func (s *Service) ArchiveSession
+
+  - id: G-EA
+    title: Session usecase prompt construction split
+    kind: arch
+    symptom: |
+      BuildPrompt and its prompt/catalog/switch-read construction helpers are mixed into session.go
+      alongside mutable send state and agent event handlers. Prompt text and plugin path behavior are
+      difficult to review separately from live turn logic.
+    why: |
+      Give pure prompt construction a focused owner while preserving BuildPrompt's public usecase API,
+      prompt ordering, metadata inclusion, and switch-read behavior.
+    boundary: |
+      BuildPrompt, switch-read prefix construction, user/plugin prompt composition, and prompt-only
+      helpers move unchanged to session_prompt.go. Input contract remains beside existing usecase types;
+      session.go remains 3,441 lines and backend TODO stays active.
+    tests:
+      - server/internal/api/usecase/usecase_test.go
+    files:
+      - server/internal/api/usecase/session.go
+      - server/internal/api/usecase/session_prompt.go
+      - docs/agent/rules/backend/TODO.md
+      - docs/agent/rules/backend/file-size.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - server/internal/api/usecase/session_prompt.go:func (s *Service) BuildPrompt
+      - server/internal/api/usecase/session_prompt.go:func buildPluginPrompt
