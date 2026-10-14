@@ -3022,3 +3022,9 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：`BuildPrompt`、switch-read 前缀、user/plugin prompt 拼装与插件输出约定和 send 状态、agent 事件处理混在 `session.go`，文本格式和路径选择难以单独审阅。
 - **根因与边界**：prompt API 与纯组装 helper 原样迁至 `session_prompt.go`（265 行）；`BuildPromptInput` 与调用契约不变，prompt 顺序、插件目录选择、reply tips、switch-read 行数规则不变。父文件实测 3,441 行，backend TODO 继续未完成。
 - **针对性测试**：`server/internal/api/usecase/usecase_test.go` → 守住 BuildPrompt 的 reply tips、plugin prompt 与首轮/switch-read 契约；完整 `make test` → 全仓 Go 测试门禁通过。
+
+### G-EB Session 命名生成与候选整理职责拆分
+
+- **可见症状**：标题生成的 agent 调用、偏好覆盖、会话元数据更新、候选清理/评分与 fallback 标题构造混在 `session.go` 的 send/turn 流程旁，命名规则难单独审阅。
+- **根因与边界**：`sessionNameRunner`、`SuggestSessionName`、fallback/prompt 生成和候选评分 helper 原样迁入 `session_name.go`（197 行）；输入契约、agent 偏好优先级和生成行为不变。父文件实测 3,256 行，backend TODO 继续未完成。
+- **针对性测试**：`usecase_test.go` → 守住命名评分/候选归一、agent runner 与无 agent 跳过行为；完整 `make test` → 全仓 Go 测试门禁通过。

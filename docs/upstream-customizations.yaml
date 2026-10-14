@@ -5041,3 +5041,31 @@ groups:
     anchors:
       - server/internal/api/usecase/session_prompt.go:func (s *Service) BuildPrompt
       - server/internal/api/usecase/session_prompt.go:func buildPluginPrompt
+
+  - id: G-EB
+    title: Session naming runner and candidate split
+    kind: arch
+    symptom: |
+      Session naming agent invocation, session metadata updates, candidate cleanup, scoring, and
+      fallback-name construction are mixed into session.go with send and turn persistence logic.
+    why: |
+      Give title generation and its text normalization/scoring a focused owner with existing regression
+      coverage while preserving agent selection and preference override behavior.
+    boundary: |
+      sessionNameRunner, SuggestSessionName, fallback/prompt construction, and candidate scoring helpers
+      move unchanged to session_name.go. Public input contract stays in session.go. The parent remains
+      3,256 lines and backend TODO stays active.
+    tests:
+      - server/internal/api/usecase/usecase_test.go
+    files:
+      - server/internal/api/usecase/session.go
+      - server/internal/api/usecase/session_name.go
+      - docs/agent/rules/backend/TODO.md
+      - docs/agent/rules/backend/file-size.md
+      - docs/plans/README.md
+      - docs/plans/rule-completion-rollout.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - server/internal/api/usecase/session_name.go:func (s *Service) SuggestSessionName
+      - server/internal/api/usecase/session_name.go:func normalizeSessionNameCandidate
