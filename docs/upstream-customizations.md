@@ -399,6 +399,9 @@
 | `2d814b2` | `web/src/services/nodeRegistry.ts:normalizeNodeURL` + `web/src/services/runtime.ts:prefix 归一` | 裸 origin 节点在 `/mindfs` 页面自动补前缀 |
 | `7a12971` | `web/src/services/rootNode.ts`、`session.ts:connect(ws,nodeId)/buildWSUrl`、`git.ts:fetchGit* nodeId`、`agents.ts/candidates.ts/codexRateLimits.ts/download.ts/file.ts/scheduledTasks.ts/tasks.ts/upload.ts`、`web/src/App.tsx:mapManagedRootsToEntries/_nodeId/_nodeColor + getNodeIdForRoot` | `appURL(...,nodeId)` 与 `rootNode` 映射打通跨节点会话/代理/文件/Git |
 | `3d3417a` | `web/src/services/scope.ts:scopeKey/treeKey`、`web/src/App.tsx/FileTree.tsx/SessionList.tsx/session.ts` 的 `scopeKey` 全链路 | 按 `nodeId:projectId` 隔离（与 G-S 的折叠 hunk 分离，此处仅键与路由） |
+| 2026-10-15 | `web/src/app/useAppSessionCore.ts` 复用 `appSession.ts:applyPendingToMultiProjectGroups` | **可见症状**：同一 root ID 位于多个节点时，实际在 PC 回复的会话列表蓝灯可能熄灭、切节点跳动或显示在本机副本。**为什么必须保留**：pending 轮询按实际请求节点写 `scopeSessionKey(nodeId, rootId, sessionKey)`；投影必须按 group 自身 `_nodeId` 读同一键，不能从 root ID 重新解析节点。 |
+
+**针对性测试**：`web/tests/cross-node-replying-state.test.mjs` — 同 root/session 在 home 与 pc 仅一侧 pending 时，只允许该节点分组点亮；同时钉住 core 必须复用 node-scoped shared projection。
 
 ### G-K 部署前缀与代理基础设施
 
@@ -548,6 +551,7 @@
 | `server/internal/api/ws_test.go` → `TestReplayAfterClearYieldsEmptySnapshot` | 回合清空后重新挂载拿到的是**空快照**（`collectReplayStep` 无事件且 `live`），不是上一轮的尾巴 |
 | `web/tests/session-overlay-unit.test.mjs` | overlay 的**行为**：`computeTailOverlay` 的 7 个分支。含 4 条【红】②③④⑭（A2 渲染空洞 / aux 与窗口脱节时卡片两边都不渲染 / 短回复落盘后显示两遍 / 只差空白的短用户消息显示两遍） |
 | `web/tests/e2e-message-behavior.test.mjs` + `tests/e2e/harness.mjs` + `scripts/mindfs-iso.sh` | **隔离实例 E2E**（`MINDFS_E2E=1` 才跑）：冷启动窗口 / **完成瞬间交接**（done 后必须发起窗口重锚定 + 项数不下降）/ 应用内切走切回 / 查库判据。不设环境变量时整文件跳过，普通 `npm test` 不受影响 |
+| `web/tests/e2e-stream-ownership.test.mjs` + `tests/e2e/harness.mjs:readBlocks` | **隔离实例 E2E**（`MINDFS_E2E=1` 才跑）：WS 建免费 command 会话 → 浏览器同抽屉再发一条 → 同一抽屉增长 → 刷新稳定 → 落盘块流含两轮内容。落盘断言走 `blocks`（方案 D1 后 `exchanges[].content` 不再写正文，走它会得「内容丢失」假阳性） |
 
 
 **验证记录**：
@@ -1474,6 +1478,8 @@
 > `pending` 决定，本地标记退化为「措辞 / 盒子」子状态；`SessionViewer` 的显示条件
 > 相应去掉 `|| isStreaming`。`pending-single-source.test.mjs` 加第 7 节钉住这两条
 > （把闸门改回裸导出，测试即红）。
+
+> **2026-10-15 补完生命周期边界**：`message_done` 只是 agent 消息边界，不能早于带 `MindFSID` 校验的 `session.done` 结束 viewer 的本地 streaming；否则后续辅助事件会造成状态灯 false→true 闪烁。`useSessionStream` 只在 `message_done` 清状态文字，仍由 `session.done` / error 终止；`use-session-stream.test.mjs` 覆盖该顺序与 pending 总闸门。
 
 - 来源：`web/src/App.tsx`（`multiProjectPendingByKey` 成为唯一真相；`setMultiProjectSessionPending`
   同步更新 ref 再 setState；三个读点 `getSessionSnapshot` / `resolvePendingForSession` /
@@ -2634,8 +2640,8 @@
 ### G-BX 实时 session stream 事件处理拆分
 
 - **可见症状**：接近千行的 `useRealtimeEvents.ts` 同时承载 hook 订阅/replay、session 回合收尾和流式块分发，消息流状态契约难以单独审查。
-- **根因与边界**：把 `handleSessionStream` 主分支迁入 `realtimeWsSessionStream.ts`，通过现有 context 和回合收尾回调读写相同状态。`useRealtimeEvents` 保留 replay 目标、pending 收尾与订阅生命周期，尤其保留「队列续跑 / 是否重锚定 / 瞬时行何时退役」的原顺序。
-- **针对性测试**：`web/tests/realtime-session-stream-handler.test.mjs` → 节点过滤前的活动时间更新、节点过滤、消息块类型、compact、message_done/error 收尾契约仍在新模块；`session-list-merge.test.mjs`、`message-mechanism-merges.test.mjs` 和 `session-done-replay-no-reanchor.test.mjs` 继续验证相关状态行为。
+- **根因与边界**：把 `handleSessionStream` 主分支迁入 `realtimeWsSessionStream.ts`，通过现有 context 和回合收尾回调读写相同状态。`useRealtimeEvents` 保留 replay 目标、pending 收尾与订阅生命周期，尤其保留「队列续跑 / 是否重锚定 / 瞬时行何时退役」的原顺序。未关联的 stream 只能投影到 payload 自己的 `(root_id, session_key)`，不能以先到顺序接管 pending draft、root binding 或 drawer；请求到真实 session 的接管仅由 `session.accepted.request_id` 关联。
+- **针对性测试**：`web/tests/realtime-session-stream-handler.test.mjs` → 节点过滤前的活动时间更新、节点过滤、消息块类型、compact、message_done/error 收尾契约仍在新模块；同时锁住 child/unknown stream 不得接管本地 draft、临时会话或 root binding。`session-list-merge.test.mjs`、`message-mechanism-merges.test.mjs` 和 `session-done-replay-no-reanchor.test.mjs` 继续验证相关状态行为。
 - **边界**：只移动 stream handler，不改事件分发、身份键、持久化、队列、缓存与回合重锚定时序。
 
 

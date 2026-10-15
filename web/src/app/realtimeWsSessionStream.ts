@@ -1,8 +1,7 @@
 import { mergeSessionItems } from "../services/session/sessionListMerge";
 import { streamEventTimestamp } from "../services/session/sessionDuration";
 import { reportError } from "../services/net/error";
-import type { Exchange, SessionItem } from "./appSession";
-import type { Session } from "../services/session";
+import type { SessionItem } from "./appSession";
 import type { RealtimeEventsContext } from "./useRealtimeEventsContext";
 
 /** 会话 stream 事件的归属、缓存投影与消息分发。 */
@@ -12,22 +11,18 @@ export function createRealtimeWsSessionStreamHandler(
 ) {
   const {
     refs: {
-      boundSessionByRootRef, currentRootIdRef,
-      currentRootNodeIdRef, drawerSessionByRootRef, pendingBySessionRef,
-      pendingDraftRef, selectedSessionRef, sessionCacheRef,
-      suppressedAutoBindSessionByRootRef,
+      currentRootIdRef, currentRootNodeIdRef, pendingBySessionRef,
     },
     setters: {
-      setBoundSessionForRoot, setCodexRateLimitsRefreshToken, setDrawerSessionForRoot,
-      setMultiProjectSessionGroups, setSessions,
+      setCodexRateLimitsRefreshToken, setMultiProjectSessionGroups, setSessions,
     },
     actions: {
       appendAgentChunkForSession, appendCompactNoticeForSession, appendPlanUpdateForSession,
       appendThoughtChunkForSession, appendTodoUpdateForSession, appendToolCallForSession,
       attachContextWindowToLatestAssistant, bumpCacheVersion, getNodeIdForRoot,
-      markSessionPending, promotePendingSessionForRoot, resolveRootForSessionKey,
+      markSessionPending, resolveRootForSessionKey,
     },
-    values: { rootSessionKey, scopedRootKey, t },
+    values: { rootSessionKey, t },
   } = ctx;
   const { handleSessionStreamDone } = local;
   return (payload: any) => {
@@ -93,101 +88,7 @@ export function createRealtimeWsSessionStreamHandler(
     }
     if (wsNid && curNid && wsNid !== curNid) return;
     const ck = rootSessionKey(activeRoot, streamKey);
-    let pending = pendingBySessionRef.current[ck];
-    if (!pending) {
-      const draft = pendingDraftRef.current;
-      if (
-        draft &&
-        draft.rootId === activeRoot &&
-        streamKey !==
-          (suppressedAutoBindSessionByRootRef.current[scopedRootKey(activeRoot)] || "")
-      ) {
-        pending = draft;
-        pendingBySessionRef.current[ck] = draft;
-        pendingDraftRef.current = null;
-        console.info("[session/stream] attach_pending_draft", { rootId: activeRoot, streamKey, requestId: draft.requestId, tempKey: draft.tempKey || null });
-      }
-    }
-    const boundKey = boundSessionByRootRef.current[scopedRootKey(activeRoot)] || "";
-    const suppressedAutoBindKey =
-      suppressedAutoBindSessionByRootRef.current[scopedRootKey(activeRoot)] || "";
-    if (
-      streamKey !== suppressedAutoBindKey &&
-      (!boundKey ||
-        (typeof boundKey === "string" && boundKey.startsWith("pending-")))
-    ) {
-      if (suppressedAutoBindKey && streamKey !== suppressedAutoBindKey) {
-        suppressedAutoBindSessionByRootRef.current[scopedRootKey(activeRoot)] = null;
-      }
-      setBoundSessionForRoot(activeRoot, streamKey);
-      if (pending) {
-        const pendingName =
-          (drawerSessionByRootRef.current[scopedRootKey(activeRoot)]?.key ===
-          pending.tempKey &&
-          typeof (drawerSessionByRootRef.current[scopedRootKey(activeRoot)] as any)?.name ===
-            "string"
-            ? ((drawerSessionByRootRef.current[scopedRootKey(activeRoot)] as any).name as string)
-            : "") ||
-          ((selectedSessionRef.current?.key ||
-            selectedSessionRef.current?.session_key) === pending.tempKey &&
-          (((selectedSessionRef.current?.root_id as string | undefined) ||
-            currentRootIdRef.current) === activeRoot) &&
-          typeof selectedSessionRef.current?.name === "string"
-            ? selectedSessionRef.current.name
-            : "") ||
-          t("session.new");
-        const userEx = {
-          role: "user",
-          content: pending.message,
-          timestamp: pending.timestamp,
-          model: pending.model,
-            mode: pending.agentMode,
-            effort: pending.effort,
-            fast_service: pending.fastService || "",
-            shell: pending.shell || "",
-        };
-        const cached =
-          sessionCacheRef.current[ck] ||
-          ({
-            key: streamKey,
-            type: pending.mode,
-            agent: pending.agent,
-            model: pending.model,
-              mode: pending.agentMode,
-              effort: pending.effort,
-              fast_service: pending.fastService || "",
-              shell: pending.shell || "",
-            name: pendingName,
-            created_at: pending.timestamp,
-            updated_at: pending.timestamp,
-            exchanges: [],
-          } as any);
-        const prevExchanges = Array.isArray((cached as any).exchanges)
-          ? ((cached as any).exchanges as Exchange[])
-          : [];
-        sessionCacheRef.current[ck] = {
-          ...(cached as any),
-          exchanges: prevExchanges.length > 0 ? prevExchanges : [userEx],
-          updated_at: new Date().toISOString(),
-        } as Session;
-        bumpCacheVersion();
-      }
-      const seeded = sessionCacheRef.current[ck];
-      if (seeded) {
-        // pending 不写在会话对象上（唯一真相是 multiProjectPendingByKey，由上面的
-        // markSessionPending 负责写入）。
-        setDrawerSessionForRoot(activeRoot, seeded);
-      }
-    }
-    if (pending?.tempKey) {
-      console.info("[session/stream] promote_pending", { rootId: activeRoot, tempKey: pending.tempKey, streamKey, requestId: pending.requestId });
-      promotePendingSessionForRoot(
-        activeRoot,
-        pending.tempKey,
-        streamKey,
-        sessionCacheRef.current[ck] || null,
-      );
-    }
+    const pending = pendingBySessionRef.current[ck];
     if (!event?.type) return;
     // message_chunk/thought_chunk 是最高频事件：首次进 pending 用幂等
     // markSessionPending（内部已在 pending 时只更新 ref 不 setState），

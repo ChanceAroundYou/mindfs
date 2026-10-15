@@ -768,6 +768,7 @@ groups:
       - web/src/components/account/NodeBadgeHeader.tsx
       - web/src/services/net/rootNode.ts
       - web/src/services/runtime.ts
+      - web/src/app/useAppSessionCore.ts
       - web/src/services/base.ts
       - web/src/main.tsx
     tests:
@@ -1944,6 +1945,7 @@ groups:
       同一个闸门也顺带治了它连带的两处：最后一条不显示时间戳、A/B 轮措辞错。
     tests:
       - web/tests/pending-single-source.test.mjs
+      - web/tests/use-session-stream.test.mjs
     files:
       - web/src/App.tsx
       - web/src/app/useRealtimeEvents.ts
@@ -3262,6 +3264,7 @@ groups:
       仅移动 stream handler；事件身份、节点过滤、状态更新、队列续跑与重锚定顺序不变。
     tests:
       - web/tests/realtime-session-stream-handler.test.mjs
+      - web/tests/e2e-stream-ownership.test.mjs
       - web/tests/session-list-merge.test.mjs
       - web/tests/message-mechanism-merges.test.mjs
       - web/tests/session-done-replay-no-reanchor.test.mjs

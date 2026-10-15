@@ -99,6 +99,21 @@ export async function readExchanges(key, rootId = "proj") {
   return Array.isArray(body.exchanges) ? body.exchanges : [];
 }
 
+/**
+ * 读会话的块流（正文载体）。
+ *
+ * 方案 D1 之后新写入的 `exchanges[].content` 一律为空，正文只在 `blocks` 里
+ * （`{seq: [...]}`，text 块的 `text`、tool_call 块的 `meta.command`/`meta.output`）。
+ * 断言落盘内容必须走这里，走 `content` 会得到「内容丢失」的假阳性。
+ */
+export async function readBlocks(key, rootId = "proj") {
+  const { uid } = isoAccount();
+  const r = await fetch(`${ISO.base}/api/sessions/${key}?root=${rootId}&user=${uid}`);
+  if (!r.ok) throw new Error(`读会话失败 HTTP ${r.status}`);
+  const body = await r.json();
+  return body.blocks && typeof body.blocks === "object" ? body.blocks : {};
+}
+
 /** 该会话的合成行标记 —— 搜索时必须唯一，否则跨会话会命中别的会话（实测踩过）。 */
 export function markerFor(key) {
   return `合成行-${String(key).slice(-6)}`;

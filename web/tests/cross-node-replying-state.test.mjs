@@ -81,6 +81,22 @@ const projected = applyPendingToMultiProjectGroups(groups, { "pc::go::s1": true 
 assert.equal(projected[0].sessions[0].pending, false, "home group must not inherit PC pending state");
 assert.equal(projected[1].sessions[0].pending, true, "PC group must read its node-scoped pending key");
 
+// 实际 App core 不得再按 rootId 反查节点；必须复用已验证的分组节点投影。
+const coreSource = fs.readFileSync(
+  path.resolve(import.meta.dirname, "..", "src/app/useAppSessionCore.ts"),
+  "utf8",
+);
+assert.match(
+  coreSource,
+  /import\s*\{[^}]*applyPendingToMultiProjectGroups[^}]*\}\s*from\s*["']\.\/appSession["']/,
+  "useAppSessionCore must reuse the shared node-scoped pending projection",
+);
+assert.doesNotMatch(
+  coreSource,
+  /const applyPendingToMultiProjectGroups = useCallback/,
+  "useAppSessionCore must not redefine pending projection with root-id resolution",
+);
+
 // ── 1. 节点作用域：同名项目在两个节点上的会话键必须互不相同 ───────────────
 const pcKey = scopeSessionKey("pc", "go", "s1");
 const homeKey = scopeSessionKey("home", "go", "s1");

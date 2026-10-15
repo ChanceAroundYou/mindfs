@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef } from "react";
 import { scopeSessionKey } from "../shared/scope";
-import type { MultiProjectSessionGroup, SessionItem } from "./appSession";
+import { applyPendingToMultiProjectGroups } from "./appSession";
 import type { UseAppSessionLayerParams } from "./useAppSessionLayerTypes";
 import { useAppRootResolution } from "./useAppRootResolution";
 import { useAppSessionKeyState } from "./useAppSessionKeyState";
@@ -65,17 +65,6 @@ export function useAppSessionCore(params: UseAppSessionLayerParams) {
       }
     },
     [],
-  );
-  const applyPendingToMultiProjectGroups = useCallback(
-    (groups: MultiProjectSessionGroup[], pendingByKey: Record<string, boolean>) =>
-      groups.map((group) => ({
-        ...group,
-        sessions: group.sessions.map((session) => ({
-          ...(session as any),
-          pending: !!pendingByKey[rootSessionKey(group.rootId, session.key || session.session_key)],
-        }) as SessionItem),
-      })),
-    [rootSessionKey],
   );
   const {
     clearSlashCommandResultForSession,
