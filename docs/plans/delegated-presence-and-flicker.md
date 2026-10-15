@@ -1,9 +1,12 @@
-# 委托态空心灯 + 切换闪烁（A 已落地；B/C 开工中）
+# 委托态空心灯 + 切换闪烁（A/B 已提交；C 已实现待提交）
 
-> 状态：**A（委托态空心灯）+ 切换首帧去闪已实现并提交**（`eafa86b3 feat(G-AY)`，`Scope: G-AY`，
-> 门禁全绿：前端 171 文件 / 349 用例、typecheck、build-web、`make test`、`make check-upstream` 1149/229）。
-> **B/C 根因已批准，按 TDD 实施中**，见 §四。
-> 日期：2026-10-15。约定的验收：隔离实例复现 + 落盘为准（刷新/切换一致）+ 全门禁 + fork 三件套（登记 + 针对性测试 + `Scope: G-X`）。
+> 状态：**A（委托态空心灯）+ 切换首帧去闪已实现并提交**（`eafa86b3 feat(G-AY)`，`Scope: G-AY`）；
+> **B（Claude 合成子代理可取消）已提交**（`da320483 fix(G-IZ)`，`Scope: G-IZ`）；
+> **C（AskUserQuestion 等回答空心灯）已按方向 b 实现，待完成登记与提交**，见 §四。
+> 日期：2026-10-16。约定的验收：隔离实例复现 + 落盘为准（刷新/切换一致）+ 全门禁 + fork 三件套（登记 + 针对性测试 + `Scope: G-X`）。
+> C 的真实 CLI 隔离探针已确认发出了 AskUserQuestion，却因当前 Claude SDK 适配未将该 finalized tool_use
+> 送入 MindFS（没有 tool_call/done）而卡在 agent 边界；这是 C 之外的既有适配缺口。C 的状态机与
+> HTTP 列表响应已由后端回归覆盖，门禁与隔离环境本身均已复核。
 
 ## 一、委托态（父闲 + 子在跑）—— 缺一态，不是闪烁
 
@@ -59,7 +62,7 @@
 
 修向（待批）：取消必须能按 key 杀死合成子会话并清其 pending（含 turnID 失配/无 activeTurn 的兜底）；`FinishAll` 或等价收尾必须覆盖跨 turn 残留孩子。注意只杀该 child，不碰父 turn。
 
-### C：父会话"更新一句→完成→几秒后又输出"，灯灭又亮 —— 主假设（证据支撑，待你确认一条行为）
+### C：父会话"更新一句→完成→几秒后又输出"，灯灭又亮 —— 已按方向 b 实现
 
 服务端日志时间线（`journalctl -u mindfs`，只读）：
 - 21:20:08 父新输入 → 21:20:20 `session.ask_user` webpush（4 个问题卡片已展示）→ tool_use 增量 → 21:22:40 `result success` + `[ws] session.done`（request=msg-c361…）→ 灯灭；
@@ -67,6 +70,9 @@
 
 主假设："看到的'完成→又跑'是**真 done，不是闪烁** —— AskUserQuestion 把一个逻辑任务切成了多个 turn：提问轮结束（done、灯灭）→ 你回答后起新轮（灯亮）。灯忠实反映了 turn 状态，但你的心理模型是任务级连续，所以觉得它'明明在跑却灭了'。"
 - 佐证：`AnswerQuestion`（`session_stream_events.go:13-55`）只做 `MarkPendingAskUserAnswered` + 转发答案给 agent，**不置 pending、不开新 turn**；若经卡片回答后 agent 续输出，那段输出是没有 turn 身份的"黑户输出"（灯不亮却有字，另一种迷惑）。而你这次是经 composer 回的 "ok"（`[agent/claude] input content="ok"`），走的是新 turn，所以是"灭→亮"形态。
-- 与 A 的区别：A 修的是"同 turn 内的假闪"，C 是"跨 turn 的真 done 但不符合任务直觉"。修向二选一（待你拍板）：(a) 提问等待期视为仍在跑（done 延后/pending 保持到答案落地）；(b) 保持 turn 语义，用委托态空心灯覆盖"等你回答"（前端已能表达"非跑非闲"）。
-
-请确认：C 你当时是**点了卡片回答、还是在输入框 typed ok**？这决定修 (a) 还是 (b)。B 可独立先修。
+- 与 A 的区别：A 修的是"同 turn 内的假闪"，C 是"跨 turn 的真 done 但不符合任务直觉"。
+- **用户已选方向 b**：保持 turn 语义，不把等待回答伪装成 running；新增 `awaiting` 为第四个纯派生态，优先级为 `running > awaiting > delegating > idle`，在列表、viewer header、底部等待指示器均以无动画空心灯表达「等你回答」。
+- 状态由后端 StreamHub 保存为 `AwaitingAnswer`，ask_user 的 `tool_call` 置位，完成 `tool_call_update`、卡片回答、或下一条用户 turn 清位；`ClearSessionPending` 只将它从 Active 降级，故能跨提问 turn 的 `session.done` 存活。它刻意不进入 `/api/replying-sessions` 或 pending 真相表：那两处的语义只能是实心「正在跑」，否则回答会被错误排队。
+- `/api/sessions` 列表项在 `sessionListResponse` 下发 `awaiting_answer`，前端白名单转换后由 `sessionPresence` 统一盖 presence，避免另起一张异步状态表而在刷新/切换时闪回。
+- 针对性回归：`server/internal/api/stream_hub_awaiting_test.go` 钉住 turn 结束降级、三条清位路径、HTTP 列表和事件接线；`web/tests/session-presence-awaiting.test.mjs` 钉住四态优先级、字段透传、三处视觉接线、双语键，以及 awaiting 不得进入 pending 轮询。
+- 隔离实例已通过端口、配置目录、项目列表和进程句柄自证；真实 Claude turn 的转录确有 AskUserQuestion tool_use，却未产生 SDK 的 finalized `AssistantMessage`/MindFS `tool_call`/`session.done`，180 秒后仍停在 agent 边界，不能用它判定 C 行为。这是 C 之前的 Claude SDK raw-event 适配缺口，未在本轮越界修改。

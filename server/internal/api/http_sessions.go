@@ -1038,7 +1038,16 @@ func commandShellField(s *session.Session, resolvedShell string) string {
 }
 
 func (h *HTTPHandler) sessionListResponse(s *session.Session) map[string]any {
-	return sessionListResponse(s, h.resolveCommandShell())
+	item := sessionListResponse(s, h.resolveCommandShell())
+	// 「有个 ask_user 提问还没回答」随列表项下发（只在为真时出现）。
+	//
+	// 刻意**不**走 /api/replying-sessions：那条通道喂的是 pending 真相表，进去就等于
+	// 点亮实心灯，而这里要表达的恰好是"不在跑、在等你"。列表项是"这条会话现在什么样"
+	// 的载体，跟着它走，前端不必再为这一个布尔值开第二条状态通道。
+	if s != nil && h.AppContext != nil && h.AppContext.GetSessionStreamHub().AwaitingAnswer(s.Key) {
+		item["awaiting_answer"] = true
+	}
+	return item
 }
 
 // resolveCommandShell 算出配置里解析出的默认 shell（command 类会话没显式指定时用）。

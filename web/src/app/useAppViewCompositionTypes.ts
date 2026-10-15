@@ -148,7 +148,7 @@ export type UseAppViewCompositionParams = {
   selectedSessionLoading: boolean;
   selectedSessionRef: React.RefObject<SessionItem | null>;
   selectedSessionSnapshot: any;
-  selectedSessionPresence?: "running" | "delegating" | "idle";
+  selectedSessionPresence?: "running" | "awaiting" | "delegating" | "idle";
   sessionListMode: "local" | "import";
   sessionSearchLoading: boolean;
   sessionSearchOpen: boolean;

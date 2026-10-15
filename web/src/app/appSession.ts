@@ -45,6 +45,8 @@ export type SessionItem = {
   pinned_at?: string | null;
   archived_at?: string | null;
   closed_at?: string;
+  /** 有个 ask_user 提问还没回答（服务端下发，喂空心灯 — 见 shared/sessionPresence.ts） */
+  awaiting_answer?: boolean;
   title?: string;
   agent_session_id?: string;
   context_window?: {
@@ -254,6 +256,10 @@ export function toSessionItem(
         : undefined,
     closed_at:
       typeof session?.closed_at === "string" ? session.closed_at : undefined,
+    // 「有个 ask_user 提问还没回答」由服务端随列表项下发（sessionListResponse）。
+    // 注意它**不**是 pending：pending 表达"在跑"（实心灯），它表达"在等你"（空心灯），
+    // 两者互斥。toSessionItem 是白名单构造器，漏了这行字段就被丢掉，灯永远算不出来。
+    awaiting_answer: session?.awaiting_answer === true,
     context_window:
       session?.context_window &&
       Number(session.context_window.totalTokens) > 0 &&

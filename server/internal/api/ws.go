@@ -494,6 +494,10 @@ func (h *WSHandler) handleSessionAnswerQuestion(ctx context.Context, conn *webso
 			}
 		}
 	}
+	// 卡片回答 = 提问有了答案 ⇒ 会话级的"等你回答"到此为止。上面那条只清看板任务的
+	// aux 标记（且要求会话挂了任务），会话空心灯走的是另一条通道，必须在这里单独清，
+	// 否则答完仍是一条空心灯挂在列表上。
+	h.AppContext.GetSessionStreamHub().MarkSessionAwaiting(rootID, key, "", false)
 	// 曾经在这里回一条 `session.answer_question.accepted`（带 req.ID 的回执）。已删除（2026-10-06）：
 	// 前端零消费 —— 它提交答案后靠在本地把卡片翻成「已回答」，不需要回执；而 `sendWSMessage`
 	// 也不做请求/响应配对（只对 `session.message` 这类做重发）。发一条只有空操作响应的消息

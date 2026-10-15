@@ -419,7 +419,7 @@ function SessionViewerInner({
       }}
     >
       {interactionMode === "drawer" ? null : (
-        <SessionViewerHeader interactionMode={interactionMode} rootId={rootId} rootColor={rootColor} rootDisplayName={rootDisplayName} displayName={displayName} isDelegating={!isAwaiting && presence === "delegating"} onRootClick={onRootClick} />
+        <SessionViewerHeader interactionMode={interactionMode} rootId={rootId} rootColor={rootColor} rootDisplayName={rootDisplayName} displayName={displayName} isDelegating={!isAwaiting && presence === "delegating"} isAwaitingAnswer={!isAwaiting && presence === "awaiting"} onRootClick={onRootClick} />
       )}
 
       {/* 滚动容器 */}
@@ -449,7 +449,7 @@ function SessionViewerInner({
               themeColor,
             })}
             <SessionViewerWaitingIndicator
-              isAwaiting={isAwaiting} isStreaming={isStreaming} isDelegating={!isAwaiting && presence === "delegating"}
+              isAwaiting={isAwaiting} isStreaming={isStreaming} isDelegating={!isAwaiting && presence === "delegating"} isAwaitingAnswer={!isAwaiting && presence === "awaiting"}
               streamStatusText={streamStatusText} rootColor={rootColor} t={t}
             />
 

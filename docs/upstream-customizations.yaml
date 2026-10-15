@@ -2051,6 +2051,56 @@ groups:
       - server/internal/api/usecase/session_subagents.go:return true
       - server/internal/api/usecase/session_send.go:defer claudeSubagents.FinishAll()
 
+  - id: G-JA
+    title: AskUserQuestion 等回答空心灯
+    kind: fix
+    symptom: |
+      Claude 在 AskUserQuestion 提问后该 turn 正常结束，列表灯却立刻熄灭；用户回答后
+      新 turn 又亮，视觉上像「任务完成又自己重启」，而非清晰地提示现在轮到用户回答。
+    why: |
+      pending 与 /api/replying-sessions 的语义只能是 Active 的实心「正在跑」，不能混入
+      已 done 的等待回答态。StreamHub 单独保存 AwaitingAnswer；在 turn 结束时降级保留，
+      只随 session list 下发 awaiting_answer，由前端四态 presence 渲染为空心灯。
+    boundary: |
+      ask_user 的等待回答生命周期与其视觉表达。不改变 turn/done 语义，不将 awaiting
+      写入 pending 真相表或 replying API；真实 Claude SDK 未上送 finalized tool_use 的
+      既有适配缺口不在本组处理。
+    tests:
+      - server/internal/api/stream_hub_awaiting_test.go
+      - web/tests/session-presence-awaiting.test.mjs
+    files:
+      - scripts/mindfs-iso.sh
+      - server/internal/api/appcontext.go
+      - server/internal/api/http_sessions.go
+      - server/internal/api/stream_hub.go
+      - server/internal/api/stream_hub_awaiting_test.go
+      - server/internal/api/ws.go
+      - web/src/app/appSession.ts
+      - web/src/app/useAppSessionView.tsx
+      - web/src/app/useAppViewCompositionTypes.ts
+      - web/src/components/session/SessionCard.tsx
+      - web/src/components/session/SessionViewer.tsx
+      - web/src/components/session/SessionViewerHeader.tsx
+      - web/src/components/session/SessionViewerWaitingIndicator.tsx
+      - web/src/components/session/sessionListTypes.ts
+      - web/src/components/session/sessionViewerTypes.ts
+      - web/src/i18n/locales/en-US-sessions.ts
+      - web/src/i18n/locales/zh-CN-sessions.ts
+      - web/src/shared/sessionPresence.ts
+      - web/tests/session-presence-awaiting.test.mjs
+      - docs/plans/delegated-presence-and-flicker.md
+      - docs/upstream-customizations.md
+      - docs/upstream-customizations.yaml
+    anchors:
+      - server/internal/api/stream_hub.go:func (h *StreamHub) MarkSessionAwaiting(
+      - server/internal/api/stream_hub.go:if state.AwaitingAnswer {
+      - server/internal/api/appcontext.go:func askUserStreamEvent(
+      - server/internal/api/http_sessions.go:item["awaiting_answer"] = true
+      - server/internal/api/ws.go:MarkSessionAwaiting(rootID, key, "", false)
+      - web/src/shared/sessionPresence.ts:export function getSessionPresence(
+      - "web/src/components/session/SessionCard.tsx:session.presence === \"awaiting\""
+      - "web/tests/session-presence-awaiting.test.mjs:test(\"awaiting-presence: 列表项上的 awaiting_answer 直接变成 awaiting 态\""
+
   - id: G-AZ
     title: 任务卡视觉件：待审核状态徽标 / 列框去除 / 浮动滚动条 / 工作台角标移除
     kind: feature

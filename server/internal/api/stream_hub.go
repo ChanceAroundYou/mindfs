@@ -61,6 +61,16 @@ type SessionPendingState struct {
 	// 清理时带上同一个 id 才生效 —— 见 ClearSessionPending。
 	// G-BI 起它沿用主日志行的 mindfs_id 表示（确定性 UUIDv5），不再有第二套编号。
 	MindFSID string
+	// AwaitingAnswer 表示「有一个 ask_user 提问还没被回答」。
+	//
+	// 它必须**活过回合结束**：AskUserQuestion 把一个逻辑任务切成两轮，提问轮 done
+	// 之后才是它该显示的时候（Agent 在等用户，不是任务结束）。所以回合结束时它
+	// 不是被删掉，而是把条目降级成「非 Active 但保留」——见 ClearSessionPending。
+	// 与之配套：它**不**参与 Active，于是 IsSessionReplying 为假、不进
+	// /api/replying-sessions（那是实心灯），只经 sessionListResponse 的
+	// awaiting_answer 字段表达成空心灯。
+	AwaitingAnswer bool
+	AwaitingCallID string
 }
 
 type ClientStreamStatus string
@@ -464,6 +474,10 @@ func (h *StreamHub) setPendingUserAt(rootID, sessionKey, sessionTitle, agent, mo
 	state.RootID = rootID
 	state.SessionTitle = strings.TrimSpace(sessionTitle)
 	state.Active = true
+	// 新的一轮开始了 ⇒ 上一轮的「等你回答」到此为止（用户已经在输入框回了，或者
+	// 卡片回答走了 ws 那条清位）。不清的话本轮 done 时会退化成"又一条在等回答"。
+	state.AwaitingAnswer = false
+	state.AwaitingCallID = ""
 	state.User = &PendingUserMessage{
 		Agent:            agent,
 		Model:            model,
@@ -505,6 +519,55 @@ func (h *StreamHub) IsSessionReplying(sessionKey string) bool {
 	defer h.mu.RUnlock()
 	state := h.pendingSessions[sessionKey]
 	return state != nil && state.Active
+}
+
+// MarkSessionAwaiting 记录/解除「有个 ask_user 提问还没回答」。
+//
+// 触发点是流事件本身（tool_call kind=ask_user 置位、tool_update complete 清位），
+// 以及「用户已经用别的方式回答/另起一轮」的那几个入口 —— 三条路都必须清，
+// 否则空心灯会永久挂在这条会话上（与 B 那类"清不掉的灯"是同一个坑）。
+func (h *StreamHub) MarkSessionAwaiting(rootID, sessionKey, callID string, awaiting bool) {
+	if blank(sessionKey) {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	state := h.pendingSessions[sessionKey]
+	if awaiting {
+		if state == nil {
+			// 提问事件理论上总在某一轮的 pending 条目里到达（回合先置 pending 才有
+			// stream），这里仍然兜一手：条目缺失时自建，RootID 留空即不进
+			// ListReplyingSessions（那里的 blank(RootID) 闸门），不会凭空点亮实心灯。
+			state = h.ensurePendingSessionLocked(sessionKey)
+			state.RootID = rootID
+			state.UpdatedAt = time.Now().UTC()
+		}
+		state.AwaitingAnswer = true
+		state.AwaitingCallID = strings.TrimSpace(callID)
+		return
+	}
+	if state == nil {
+		return
+	}
+	state.AwaitingAnswer = false
+	state.AwaitingCallID = ""
+	// 提问是这条条目的**最后一个**存在理由：回合早结束（Active=false）、没有排队
+	// 消息、提问也答完了 —— 那就该整条消失，否则它会一直挂在内存里。
+	if !state.Active && len(state.Queue) == 0 {
+		delete(h.pendingSessions, sessionKey)
+		h.clearReplayStatesForSessionLocked(sessionKey)
+	}
+}
+
+// AwaitingAnswer 报告这条会话是否在等用户回答（前端空心灯的唯一读数）。
+func (h *StreamHub) AwaitingAnswer(sessionKey string) bool {
+	if blank(sessionKey) {
+		return false
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	state := h.pendingSessions[sessionKey]
+	return state != nil && state.AwaitingAnswer
 }
 
 func cloneQueue(queue []QueuedUserMessage) []QueuedUserMessage {
@@ -716,6 +779,9 @@ func (h *StreamHub) SetPendingReply(rootID, sessionKey, sessionTitle string, min
 	state.RootID = rootID
 	state.SessionTitle = strings.TrimSpace(sessionTitle)
 	state.Active = true
+	// 同 setPendingUserAt：新回合开始即终结上一轮的"等回答"。
+	state.AwaitingAnswer = false
+	state.AwaitingCallID = ""
 	if state.UpdatedAt.IsZero() {
 		state.UpdatedAt = time.Now().UTC()
 	}
@@ -991,6 +1057,18 @@ func (h *StreamHub) ClearSessionPending(sessionKey string, turnID string) {
 	}
 	// 两侧都有身份且不一致 ⇒ 这是**别的回合**的 done，放弃（迟到/重复 done 的护栏）。
 	if turnID != "" && state.MindFSID != "" && state.MindFSID != turnID {
+		return
+	}
+	// 有未回答的提问 ⇒ 降级保留，不删：回合是结束了（灯不能再是实心），但 agent 在
+	// 等用户，这条会话远没到"全闲"。删掉就等于把"等你回答"和"任务做完"画成同一个样子，
+	// 那正是 C 要修的观感。
+	if state.AwaitingAnswer {
+		state.Active = false
+		state.User = nil
+		state.ReplyingList = nil
+		state.Summary = ""
+		state.UpdatedAt = time.Now().UTC()
+		h.clearReplayStatesForSessionLocked(sessionKey)
 		return
 	}
 	if len(state.Queue) > 0 {

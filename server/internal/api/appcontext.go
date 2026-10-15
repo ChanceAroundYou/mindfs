@@ -998,6 +998,7 @@ func (s *AppContext) BroadcastSessionUpdate(rootID, sessionKey string, update ag
 		return
 	}
 	s.updateTaskAuxFlagsFromEvent(rootID, sessionKey, event)
+	s.updateSessionAwaitingFromEvent(rootID, sessionKey, event)
 	s.notifyAskUserIfNeeded(rootID, sessionKey, event)
 	s.GetSessionStreamHub().BroadcastSessionStream(rootID, sessionKey, event)
 }
@@ -1013,6 +1014,9 @@ func (s *AppContext) BroadcastSessionError(rootID, sessionKey, message string) {
 func (s *AppContext) ClearTaskAuxFlagsForSession(rootID, sessionKey string) {
 	empty := ""
 	no := false
+	// 新一轮的用户消息已经在路上 ⇒ 上一轮的"等你回答"作废（这条入口覆盖的正是
+	// 用户在输入框直接回一句的情形：那时不一定有 tool_update complete 事件）。
+	s.GetSessionStreamHub().MarkSessionAwaiting(rootID, sessionKey, "", false)
 	s.updateTaskAuxFlagsForSession(rootID, sessionKey, kanban.TaskAuxFlagsPatch{
 		AskUserWaiting: &no,
 		HasPlan:        &no,
@@ -1112,8 +1116,63 @@ func (s *AppContext) notifyAskUserIfNeeded(rootID, sessionKey string, event *Str
 	s.notifyPayload(context.Background(), notify.EventID(payload), payload)
 }
 
+// askUserStreamEvent 从流事件里认出 ask_user 的生命周期节点：awaiting=true 是「提问
+// 刚刚发出」，false 是「提问已答完」。两个消费者（看板任务的 aux 标记、会话空心灯）
+// 共用它 —— 判据复制两份的话，"一个改对了另一个还是死的"必然再发生一次。
+//
+// ⚠️ event.Type 是 **StreamEvent** 的类型（updateToEvent 的产物），不是
+// agenttypes.EventType：同一个 tool_update 在流里叫 "tool_call_update"。早先这里按
+// agenttypes.EventTypeToolUpdate（"tool_update"）比较，分支永远不匹配 —— 任务卡上的
+// ask_user_waiting 只置位、清位是死代码。
+func askUserStreamEvent(event *StreamEvent) (callID string, awaiting bool, ok bool) {
+	if event == nil {
+		return "", false, false
+	}
+	switch event.Type {
+	case "tool_call":
+		toolCall, isToolCall := event.Data.(agenttypes.ToolCall)
+		if !isToolCall || toolCall.Kind != agenttypes.ToolKindAskUser {
+			return "", false, false
+		}
+		return toolCall.CallID, true, true
+	case "tool_call_update":
+		toolCall, isToolCall := event.Data.(agenttypes.ToolCall)
+		if !isToolCall || toolCall.Kind != agenttypes.ToolKindAskUser || strings.TrimSpace(toolCall.Status) != "complete" {
+			return "", false, false
+		}
+		return toolCall.CallID, false, true
+	}
+	return "", false, false
+}
+
+// updateSessionAwaitingFromEvent 把 ask_user 的生命周期镜像进 StreamHub（会话级的
+// "等你回答"）。
+//
+// 与 updateTaskAuxFlagsFromEvent 落点不同是有意的：那个写的是**看板任务**的 aux 标记
+// （只有任务卡读得到，且要求会话挂了任务），这里写的是**会话**的，喂前端空心灯。
+// 两条都留 —— 任务卡问的是"这个任务的流水卡在哪一步"，会话灯问的是"这条会话在等谁"。
+func (s *AppContext) updateSessionAwaitingFromEvent(rootID, sessionKey string, event *StreamEvent) {
+	if s == nil {
+		return
+	}
+	callID, awaiting, ok := askUserStreamEvent(event)
+	if !ok {
+		return
+	}
+	s.GetSessionStreamHub().MarkSessionAwaiting(rootID, sessionKey, callID, awaiting)
+}
+
 func (s *AppContext) updateTaskAuxFlagsFromEvent(rootID, sessionKey string, event *StreamEvent) {
 	if s == nil || event == nil {
+		return
+	}
+	if _, awaiting, ok := askUserStreamEvent(event); ok {
+		value := awaiting
+		eventType := "aux_ask_user_waiting"
+		if !awaiting {
+			eventType = "aux_ask_user_answered"
+		}
+		s.updateTaskAuxFlagsForSession(rootID, sessionKey, kanban.TaskAuxFlagsPatch{AskUserWaiting: &value}, eventType)
 		return
 	}
 	patch := kanban.TaskAuxFlagsPatch{}
@@ -1125,10 +1184,6 @@ func (s *AppContext) updateTaskAuxFlagsFromEvent(rootID, sessionKey string, even
 			return
 		}
 		switch toolCall.Kind {
-		case agenttypes.ToolKindAskUser:
-			value := true
-			patch.AskUserWaiting = &value
-			eventType = "aux_ask_user_waiting"
 		case agenttypes.ToolKindTask:
 			value := true
 			patch.HasTask = &value
@@ -1136,14 +1191,6 @@ func (s *AppContext) updateTaskAuxFlagsFromEvent(rootID, sessionKey string, even
 		default:
 			return
 		}
-	case string(agenttypes.EventTypeToolUpdate):
-		toolCall, ok := event.Data.(agenttypes.ToolCall)
-		if !ok || toolCall.Kind != agenttypes.ToolKindAskUser || strings.TrimSpace(toolCall.Status) != "complete" {
-			return
-		}
-		value := false
-		patch.AskUserWaiting = &value
-		eventType = "aux_ask_user_answered"
 	case string(agenttypes.EventTypePlanUpdate):
 		value := true
 		patch.HasPlan = &value

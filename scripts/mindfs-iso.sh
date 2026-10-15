@@ -104,7 +104,7 @@ cmd_start() {
     cd "$ISO_ROOT"
     XDG_CONFIG_HOME="$ISO_CFG" \
     MINDFS_STATIC_DIR="$WT_ROOT/web/dist" \
-    nohup "$ISO_BIN" -addr "127.0.0.1:$ISO_PORT" -no-relayer -web-push=false -foreground \
+    nohup "$ISO_BIN" -addr "127.0.0.1:$ISO_PORT" -web-push=false -foreground \
       -agent-config "$WT_ROOT/agents.json" >"$ISO_LOG" 2>&1 &
     echo $! > "$ISO_PID"
   )

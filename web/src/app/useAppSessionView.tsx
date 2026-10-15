@@ -10,7 +10,7 @@ import type { useSessionPending } from "./useSessionPending";
  */
 export type UseAppSessionViewParams = {
   selectedSessionSnapshot: ReturnType<ReturnType<typeof useSessionPending>["getSessionSnapshot"]>;
-  selectedSessionPresence?: "running" | "delegating" | "idle";
+  selectedSessionPresence?: "running" | "awaiting" | "delegating" | "idle";
   availableAgents: AgentStatus[];
   slashCommandResultForSession: (rootID: string | null | undefined, session: { key?: string; session_key?: string } | null | undefined) => SlashCommandResult | null;
   selectedSession: SessionItem | null;

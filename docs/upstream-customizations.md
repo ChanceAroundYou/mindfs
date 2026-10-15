@@ -3723,3 +3723,26 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
   attach 必须登记活跃轮次（不登记则取消被当「无活跃轮」丢弃）、取消必须发出终帧并关闭子会话
   且**保留已产生的正文**（钉住 `close()` 里 `done()` 早于 `cancel()`）、已关闭子代理的后续
   更新必须被吃掉、`FinishAll` 必须注销活跃轮次。
+
+### G-JA AskUserQuestion 等回答空心灯（2026-10-16）
+
+- **可见症状**：Claude 用 AskUserQuestion 问完一个问题后，提问 turn 的 `session.done` 会把实心
+  回复灯熄掉；用户在输入框回答后另一个 turn 再亮。用户看见的是「完成 → 几秒后又开始」，而不是
+  「轮到我回答」。
+- **为什么必须保留**：等待回答不是正在跑，不能塞进 `pending` 或 `/api/replying-sessions`——那会把
+  空心语义变成实心、并使回答被错误排队。`StreamHub.AwaitingAnswer` 在 done 时降级保留，只由会话
+  列表项的 `awaiting_answer` 下发；前端 `sessionPresence` 以 `running > awaiting > delegating > idle`
+  的单一优先级在列表、viewer 头部与底部渲染无动画空心灯。上游若删除此独立状态，提问轮一结束
+  灯就会重回误导性的全灭。
+- **边界**：只管 ask_user 的等待生命周期与视觉表达：tool_call 置位，tool_call_update 完成、卡片回答、
+  或新用户 turn 清位；不改 turn/done 语义，也不改 pending 真相表。隔离实例确认 Claude 的转录确有
+  tool_use，但当前 SDK 未把 finalized tool_use 送进 MindFS（没有 tool_call/done）；那条既有适配缺口
+  不在本组扩修。
+- **针对性测试**：
+  - `server/internal/api/stream_hub_awaiting_test.go` — 等待态必须跨 `ClearSessionPending` 存活、
+    三条清位路径、HTTP 列表字段和真实 StreamEvent 映射（`tool_call_update` 而非 agent 的 `tool_update`）
+    都必须正确。
+  - `web/tests/session-presence-awaiting.test.mjs` — 四态优先级、列表字段白名单透传、三处空心视觉接线、
+    中英文案，以及 awaiting 不得混进 replying polling。
+- **隔离入口**：`scripts/mindfs-iso.sh` 移除已从 CLI 删除的 `-no-relayer` 参数，确保验收实例能真正启动；
+  它仍以独立端口、`XDG_CONFIG_HOME`、项目目录和进程句柄保证不触碰线上服务。

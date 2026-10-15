@@ -1,15 +1,23 @@
 /**
- * 会话 presence 三态：自跑（实心）> 委托中（空心）> 全闲（灭）。
+ * 会话 presence 四态：自跑（实心）> 等回答（空心）> 委托中（空心）> 全闲（灭）。
  *
- * 背景：父会话把任务交给子代理后，父 turn 结束（pending 灭）但子仍在跑
- * （pending 亮）—— 只有亮/灭两态时父只能灭，误以为完成。新增 delegating
- * 表达「自己闲 + 任一后代在跑」。
+ * 背景一（delegating）：父会话把任务交给子代理后，父 turn 结束（pending 灭）但子仍在跑
+ * （pending 亮）—— 只有亮/灭两态时父只能灭，误以为完成。
+ *
+ * 背景二（awaiting）：AskUserQuestion 把一个逻辑任务切成两轮 —— 提问轮 done 时灯灭，
+ * 看着像任务结束，其实 agent 在等用户回答；答完起新轮灯又亮，"完成/运行"反复横跳。
+ * turn 语义不动，用空心灯把"在等你回答"表达出来。它与 delegating 同为空心、文案不同：
+ * 一个说"子代理在跑"，一个说"轮到你说话了"。
+ *
+ * 数据来源：delegating 由 pending 真相表 + 后代拓扑推导；awaiting 读会话列表项上的
+ * `awaiting_answer`（服务端在 ask_user 未回答时下发）。**刻意不让 awaiting 进 pending
+ * 真相表**：那张表喂的是实心灯，塞进去表达的就是相反的意思。
  *
  * fork 不算后代：后端 fork 的 parent_session_key 恒空（manager_test 钉死），
  * 这里再显式排除 source type=fork / fork_from 残留，前后端双保险。
  */
 
-export type SessionPresence = "running" | "delegating" | "idle";
+export type SessionPresence = "running" | "awaiting" | "delegating" | "idle";
 
 export type PresenceTreeItem = {
   key?: string;
@@ -17,6 +25,7 @@ export type PresenceTreeItem = {
   parent_session_key?: string;
   source?: string;
   fork_from?: string;
+  awaiting_answer?: boolean;
 };
 
 function presenceKeyOf(item: PresenceTreeItem): string {
@@ -36,8 +45,17 @@ function isForkItem(item: PresenceTreeItem): boolean {
   }
 }
 
-export function getSessionPresence(selfPending: boolean, descendantPending: boolean): SessionPresence {
+function awaitingAnswerOf(item: PresenceTreeItem): boolean {
+  return !!(item as any)?.awaiting_answer;
+}
+
+export function getSessionPresence(
+  selfPending: boolean,
+  descendantPending: boolean,
+  selfAwaitingAnswer = false,
+): SessionPresence {
   if (selfPending) return "running";
+  if (selfAwaitingAnswer) return "awaiting";
   if (descendantPending) return "delegating";
   return "idle";
 }
@@ -50,12 +68,14 @@ export function getSessionPresence(selfPending: boolean, descendantPending: bool
  */
 export function computePresenceByKey(items: PresenceTreeItem[]): Record<string, SessionPresence> {
   const pending: Record<string, boolean> = {};
+  const awaiting: Record<string, boolean> = {};
   const childrenByParent = new Map<string, string[]>();
   for (const item of items || []) {
     const key = presenceKeyOf(item);
     if (!key) continue;
     // fork 项自己仍要有 presence（它自己的 pending 由自己表达）；只是不算任何人的后代。
     pending[key] = !!(item as any)?.pending;
+    awaiting[key] = awaitingAnswerOf(item);
     if (isForkItem(item)) continue;
     const parent = String((item as any)?.parent_session_key || "").trim();
     if (!parent) continue;
@@ -84,7 +104,7 @@ export function computePresenceByKey(items: PresenceTreeItem[]): Record<string, 
   };
   const out: Record<string, SessionPresence> = {};
   for (const key of Object.keys(pending)) {
-    out[key] = getSessionPresence(pending[key], descendantRunning(key));
+    out[key] = getSessionPresence(pending[key], descendantRunning(key), awaiting[key]);
   }
   return out;
 }
@@ -116,9 +136,15 @@ export function presenceFromTree(
     const key = presenceKeyOf(item);
     if (key) pendingByKey[key] = !!(item as any)?.pending;
   }
+  // 本项的「等回答」也从同一份列表里读：调用方拿不到别的通道（列表项就是 awaiting_answer
+  // 的载体），而 own 缺失时按 false 处理 —— 列表里没有它，就没有可信的来源。
+  const selfAwaiting = awaitingAnswerOf(
+    (items || []).find((item) => presenceKeyOf(item) === String(selfKey || "").trim()) || ({} as PresenceTreeItem),
+  );
   return getSessionPresence(
     !!selfPending,
     hasRunningDescendant(selfKey, items || [], pendingByKey, (_rootId, sessionKey) => sessionKey, rootId),
+    selfAwaiting,
   );
 }
 

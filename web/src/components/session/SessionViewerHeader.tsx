@@ -3,9 +3,15 @@ import { ViewHeader } from "../../layout/ViewHeader";
 import { rootBadgeButtonStyle } from "../../shared/rootBadgeStyle";
 import { useI18n } from "../../i18n";
 
-export function SessionViewerHeader({ interactionMode, rootId, rootColor, rootDisplayName, displayName, isDelegating, onRootClick }: any) {
+export function SessionViewerHeader({ interactionMode, rootId, rootColor, rootDisplayName, displayName, isDelegating, isAwaitingAnswer, onRootClick }: any) {
   const { t } = useI18n();
   const accent = String(rootColor || "").trim() || "var(--accent-color)";
+  // 两档空心共用同一个灯形态，只有文案不同（等回答 = 轮到你说话；委托 = 等子代理）。
+  const hollowLabel = isAwaitingAnswer
+    ? t("session.awaitingAnswer")
+    : isDelegating
+      ? t("session.subagentRunning")
+      : "";
   return (
 <ViewHeader padding="0 16px" style={{ zIndex: 10 }}>
   <h1
@@ -44,11 +50,11 @@ export function SessionViewerHeader({ interactionMode, rootId, rootColor, rootDi
     >
       {displayName}
     </span>
-    {/* 委托中：与列表点、底部文案同一形态（空心、不闪），切会话不抖。 */}
-    {isDelegating ? (
+    {/* 委托中/等回答：与列表点、底部文案同一形态（空心、不闪），切会话不抖。 */}
+    {hollowLabel ? (
       <span
-        aria-label={t("session.subagentRunning")}
-        title={t("session.subagentRunning")}
+        aria-label={hollowLabel}
+        title={hollowLabel}
         style={{
           width: "8px",
           height: "8px",

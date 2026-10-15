@@ -388,10 +388,12 @@ function SessionCard({
                 animation: "spin 0.8s linear infinite",
               }}
             />
-          ) : session.presence === "delegating" ? (
+          ) : session.presence === "awaiting" || session.presence === "delegating" ? (
+            // 空心：不在跑，但也不是"全闲"。两档文案分开 —— 「等你回答」是让用户做事，
+            // 「子代理运行中」是让用户等，混成一句两边都会误读。
             <span
-              aria-label={t("sessionList.delegating")}
-              title={t("sessionList.delegating")}
+              aria-label={t(session.presence === "awaiting" ? "sessionList.awaitingAnswer" : "sessionList.delegating")}
+              title={t(session.presence === "awaiting" ? "sessionList.awaitingAnswer" : "sessionList.delegating")}
               style={{
                 width: "8px",
                 height: "8px",
