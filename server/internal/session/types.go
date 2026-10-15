@@ -71,6 +71,10 @@ type Session struct {
 	Exchanges         []Exchange               `json:"exchanges"`
 	RelatedFiles      []RelatedFile            `json:"related_files"`
 	RelatedWorktree   *RelatedWorktree         `json:"related_worktree,omitempty"`
+	// Aux 是会话行的内容徽标数据源（G-AD）：ask_user/plan/todo/task/error。
+	// 与任务行的 kanban.TaskAuxFlags 同名同义，但按会话落盘 —— 无 task_id 的
+	// 普通聊天会话也有这份数据（任务行 aux 只写给有 task_id 的会话）。
+	Aux               SessionAuxFlags           `json:"aux_flags"`
 	LastContextWindow agenttypes.ContextWindow `json:"last_context_window,omitempty"`
 	PinnedAt          *time.Time               `json:"pinned_at,omitempty"`
 	// ArchivedAt 非空 = 已归档。归档只是从主面板隐去，正文/链接都还在（能深链接打开、
@@ -421,6 +425,41 @@ type RelatedWorktree struct {
 	Branch    string    `json:"branch,omitempty"`
 	Head      string    `json:"head,omitempty"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// SessionAuxFlags 是会话行的内容徽标数据源（G-AD）：ask_user/plan/todo/task/error。
+// 与任务行的 kanban.TaskAuxFlags 同名同义，但按会话落盘 —— 无 task_id 的普通聊天
+// 会话也有这份数据（任务行 aux 只写给有 task_id 的会话，所以不能复用那张表）。
+type SessionAuxFlags struct {
+	AskUserWaiting bool   `json:"ask_user_waiting"`
+	HasPlan        bool   `json:"has_plan"`
+	HasTodos       bool   `json:"has_todos"`
+	HasTask        bool   `json:"has_task"`
+	SessionError   string `json:"session_error,omitempty"`
+}
+
+// SessionAuxFlagsPatch 是 UpdateSessionAuxFlags 的部分更新：nil = 不动。
+// 与 kanban.TaskAuxFlagsPatch 同构（跨域同义不同包，usecase 禁直调别域存储，
+// 所以镜像一份而不是 import kanban —— 见 layering.md 分层铁律）。
+type SessionAuxFlagsPatch struct {
+	AskUserWaiting *bool
+	HasPlan        *bool
+	HasTodos       *bool
+	HasTask        *bool
+	SessionError   *string
+}
+
+// AuxFlagsPayload 是 session.Aux 的列表/广播 payload 形状（G-AD）。
+// 三个构造点（sessionListResponse + 两处 session.meta.updated）共用它，
+// 字段增减只改一处 —— 以前 related_worktree 三处各写一遍，漏一处就是静默不一致。
+func (f SessionAuxFlags) AuxFlagsPayload() map[string]any {
+	return map[string]any{
+		"ask_user_waiting": f.AskUserWaiting,
+		"has_plan":         f.HasPlan,
+		"has_todos":        f.HasTodos,
+		"has_task":         f.HasTask,
+		"session_error":    f.SessionError,
+	}
 }
 
 // WorktreeMissing 报告会话的 worktree 归属是否已失效（目录被删了）。

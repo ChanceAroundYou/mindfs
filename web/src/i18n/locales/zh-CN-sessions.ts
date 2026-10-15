@@ -36,6 +36,7 @@ export const zhCNSessions = {
   "sessionList.sync": "同步",
   "sessionList.rename": "重命名",
   "sessionList.replying": "正在回复",
+  "sessionList.awaitingUser": "待用户回答",
   "sessionList.menu": "会话菜单",
   "sessionList.searchCurrentProject": "搜索当前项目会话",
   "sessionList.noSearchMatch": "未找到匹配会话",

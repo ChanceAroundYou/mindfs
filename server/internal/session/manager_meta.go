@@ -106,6 +106,11 @@ func sessionMetaUpsertArgs(session *Session) ([]any, error) {
 		session.Name,
 		string(relatedFilesJSON),
 		relatedWorktreeJSON,
+		boolToSQLiteInt(session.Aux.AskUserWaiting),
+		boolToSQLiteInt(session.Aux.HasPlan),
+		boolToSQLiteInt(session.Aux.HasTodos),
+		boolToSQLiteInt(session.Aux.HasTask),
+		strings.TrimSpace(session.Aux.SessionError),
 		session.LastContextWindow.TotalTokens,
 		session.LastContextWindow.ModelContextWindow,
 		archivedAt,
@@ -144,6 +149,11 @@ func scanSessionMetaRow(scanner rowScanner) (*Session, error) {
 		name                string
 		relatedFilesJSON    string
 		relatedWorktreeJSON string
+		auxAskUserWaiting   int
+		auxHasPlan          int
+		auxHasTodos         int
+		auxHasTask          int
+		auxSessionError     string
 		contextTotalTokens  int
 		contextModelWindow  int
 		archivedAtRaw       sql.NullString
@@ -164,6 +174,11 @@ func scanSessionMetaRow(scanner rowScanner) (*Session, error) {
 		&name,
 		&relatedFilesJSON,
 		&relatedWorktreeJSON,
+		&auxAskUserWaiting,
+		&auxHasPlan,
+		&auxHasTodos,
+		&auxHasTask,
+		&auxSessionError,
 		&contextTotalTokens,
 		&contextModelWindow,
 		&archivedAtRaw,
@@ -186,6 +201,13 @@ func scanSessionMetaRow(scanner rowScanner) (*Session, error) {
 		Name:             name,
 		Exchanges:        []Exchange{},
 		RelatedFiles:     []RelatedFile{},
+		Aux: SessionAuxFlags{
+			AskUserWaiting: auxAskUserWaiting != 0,
+			HasPlan:        auxHasPlan != 0,
+			HasTodos:       auxHasTodos != 0,
+			HasTask:        auxHasTask != 0,
+			SessionError:   strings.TrimSpace(auxSessionError),
+		},
 		LastContextWindow: agenttypes.ContextWindow{
 			TotalTokens:        contextTotalTokens,
 			ModelContextWindow: contextModelWindow,

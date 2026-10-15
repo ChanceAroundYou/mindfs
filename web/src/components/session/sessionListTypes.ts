@@ -1,5 +1,6 @@
 import type React from "react";
 import type { DirectorySortMode } from "../../services/prefs/directorySort";
+import type { RelatedWorktree, SessionAuxFlags } from "../../shared/sessionTypes";
 
 export type SessionType = "chat" | "plugin" | "command";
 
@@ -21,6 +22,13 @@ export type SessionItem = {
   archived_at?: string | null;
   closed_at?: string;
   pending?: boolean;
+  // 问号脉冲不另设字段：由 aux_flags.ask_user_waiting 驱动（见 SessionCard），
+  // 后端从不下发 awaiting_user，留字段只会养出第二个真相。
+  // aux_flags 是会话行的内容徽标数据源（G-AD，后端 session.SessionAuxFlags 同名）。
+  // related_worktree/worktree_missing 与后端列表 payload 同名（toSessionItem 透传）。
+  aux_flags?: SessionAuxFlags;
+  related_worktree?: RelatedWorktree | null;
+  worktree_missing?: boolean;
   related_files?: Array<{ path: string }>;
   search_seq?: number;
   search_snippet?: string;

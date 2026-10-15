@@ -47,6 +47,17 @@ export type RelatedWorktree = {
   updated_at?: string;
 };
 
+// SessionAuxFlags 是会话行的内容徽标数据源（G-AD），与后端 session.SessionAuxFlags
+// 同名同义：ask_user/plan/todo/task/error。两处 SessionItem（appSession.ts 与
+// components/session/sessionListTypes.ts）共用这一份，不许各自再定义一遍。
+export type SessionAuxFlags = {
+  ask_user_waiting?: boolean;
+  has_plan?: boolean;
+  has_todos?: boolean;
+  has_task?: boolean;
+  session_error?: string;
+};
+
 export type ExchangeAux = {
   seq: number;
   line: number;
@@ -104,6 +115,11 @@ export type Session = {
   };
   related_files?: RelatedFile[];
   related_worktree?: RelatedWorktree | null;
+  // worktree_missing 是派生状态（目录被删了）：后端按需计算、不落库（G-AD 列表透传）。
+  worktree_missing?: boolean;
+  // aux_flags 是会话行的内容徽标数据源（G-AD）：ask_user/plan/todo/task/error，
+  // toSessionItem 从列表 payload 透传、session.meta.updated 按 key 增量合并。
+  aux_flags?: SessionAuxFlags;
   pinned_at?: string | null;
   /** 持久化缓存截断标记：true 表示缓存只含最近 N 条 exchanges，读取方应全量拉取补段 */
   truncated?: boolean;

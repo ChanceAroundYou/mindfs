@@ -694,6 +694,15 @@
 
 - 来源：`sessionListMerge` / `sessionTree` / `sessionGroupDisplay` / `ArchivedSessionsPanel`。
 - 边界：合并、建树、分组显示都是纯函数（便于契约测试）；上游没有这层。
+- **会话行内容徽标（2026-10-15）**：可见症状是右侧会话列表只剩名字和时间 ——
+  有没有 worktree 看不出来，plan/todo/task/ask_user 进展和错误提示只有任务卡上有，
+  普通聊天会话的行上一片空白。`session.SessionAuxFlags` 按会话落盘（任务行 aux 只写给
+  有 task_id 的会话，普通聊天拿不到，所以不能复用那张表），三处 payload 共用
+  `AuxFlagsPayload()`，前端 `toSessionItem` 透传 + `session.meta.updated` 按 key 增量合并，
+  `SessionCard` 左侧按钮区渲染 `SessionStatusBadges`（图标/样式复用任务卡那套），
+  问号脉冲由 `aux_flags.ask_user_waiting` 驱动（`awaiting_user` 孤儿字段已删）。
+  必须保留的理由：这是会话行唯一的「内容进展」信号源；合上游冲掉任一环节
+  （存储列 / 镜像写入 / 三处 payload / 透传 / 渲染），徽标就静默全灭或半灭。
 
 ### G-AE UI 基础设施（自建对话框 / Toast / 面板外壳）
 
@@ -1348,7 +1357,8 @@
   3. 20 分钟内 related-files 被拉 **74 次**（每秒 4–6 个突发），`/api/pins` 被拉 **30 次**（每次切项目成对）。
   4. 单会话 389 张工具卡（单 seq 最多 189 张）同步渲染。
 - 七条（合上游后要按这些恢复，**不要按上游实现重写**）：
-  1. **窗口 in-flight 去重**（`session.ts:getSessionWindow`）：`windowInflight` 把同
+  1. **窗口 in-flight 去重**（`sessionWindowFetch.ts:fetchSessionWindow`，2026-10-15
+     从 `sessionService.ts` 抽出、类里只剩薄转发）：`windowInflight` 把同
      `(nodeId, rootId, sessionKey, beforeSeq, latest, limit)` 的并发调用合并成一个 Promise。
      键**必须含 `nodeId`** —— 同名项目跨节点是两个不同请求，合并等于串数据。
      在途表在 `finally` 里删，所以结算后再调用仍会重新发（**去重不是缓存**）。

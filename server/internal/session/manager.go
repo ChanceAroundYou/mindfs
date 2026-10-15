@@ -31,7 +31,7 @@ const (
 	// CUSTOM(G-X): 不再 SELECT/写入 pinned_at —— 置顶的唯一权威是主节点的 pins 表
 	// （server/internal/pins）。两处一起断：只断一半会留下「写进去但读不回」的假退役。
 	selectSessionSQL = `
-	SELECT key, type, parent_session_key, parent_tool_call_id, source, task_id, model, shell, plan_mode, name, related_files_json, related_worktree_json, last_context_window_total_tokens, last_context_window_model_context_window, archived_at, created_at, updated_at, closed_at
+	SELECT key, type, parent_session_key, parent_tool_call_id, source, task_id, model, shell, plan_mode, name, related_files_json, related_worktree_json, aux_ask_user_waiting, aux_has_plan, aux_has_todos, aux_has_task, aux_session_error, last_context_window_total_tokens, last_context_window_model_context_window, archived_at, created_at, updated_at, closed_at
 	FROM sessions`
 	deleteSessionSQL = `
 DELETE FROM sessions
@@ -41,8 +41,8 @@ DELETE FROM session_agent_bindings
 WHERE session_key = ?`
 	upsertSessionMetaSQL = `
 INSERT INTO sessions (
-		key, type, parent_session_key, parent_tool_call_id, source, task_id, model, shell, plan_mode, name, related_files_json, related_worktree_json, last_context_window_total_tokens, last_context_window_model_context_window, archived_at, created_at, updated_at, closed_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		key, type, parent_session_key, parent_tool_call_id, source, task_id, model, shell, plan_mode, name, related_files_json, related_worktree_json, aux_ask_user_waiting, aux_has_plan, aux_has_todos, aux_has_task, aux_session_error, last_context_window_total_tokens, last_context_window_model_context_window, archived_at, created_at, updated_at, closed_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(key) DO UPDATE SET
 	type = excluded.type,
 	parent_session_key = excluded.parent_session_key,
@@ -55,6 +55,11 @@ ON CONFLICT(key) DO UPDATE SET
 	name = excluded.name,
 	related_files_json = excluded.related_files_json,
 	related_worktree_json = excluded.related_worktree_json,
+	aux_ask_user_waiting = excluded.aux_ask_user_waiting,
+	aux_has_plan = excluded.aux_has_plan,
+	aux_has_todos = excluded.aux_has_todos,
+	aux_has_task = excluded.aux_has_task,
+	aux_session_error = excluded.aux_session_error,
 	last_context_window_total_tokens = excluded.last_context_window_total_tokens,
 	last_context_window_model_context_window = excluded.last_context_window_model_context_window,
 	archived_at = excluded.archived_at,
@@ -75,6 +80,11 @@ CREATE TABLE IF NOT EXISTS sessions (
 	name TEXT NOT NULL,
 	related_files_json TEXT NOT NULL,
 	related_worktree_json TEXT NOT NULL DEFAULT '',
+	aux_ask_user_waiting INTEGER NOT NULL DEFAULT 0,
+	aux_has_plan INTEGER NOT NULL DEFAULT 0,
+	aux_has_todos INTEGER NOT NULL DEFAULT 0,
+	aux_has_task INTEGER NOT NULL DEFAULT 0,
+	aux_session_error TEXT NOT NULL DEFAULT '',
 	last_context_window_total_tokens INTEGER NOT NULL DEFAULT 0,
 	last_context_window_model_context_window INTEGER NOT NULL DEFAULT 0,
 	pinned_at TEXT,
@@ -495,6 +505,45 @@ func (m *Manager) RecordRelatedWorktree(_ context.Context, key, rootID, path, br
 		return false, err
 	}
 	return true, nil
+}
+
+// UpdateSessionAuxFlags 部分更新会话行的内容徽标（G-AD）：nil = 该位不动。
+// 与 kanban.TaskStore.UpdateTaskAuxFlags 同构但互不调用 —— usecase 禁直调别域
+// 存储，任务行与会话行各写各的（见 layering.md 分层铁律）。清零就是全传
+// false + 空串的 patch（ClearTaskAuxFlagsForSession 那条调用链复用它）。
+func (m *Manager) UpdateSessionAuxFlags(_ context.Context, key string, patch SessionAuxFlagsPatch) error {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return errors.New("session key required")
+	}
+	if patch.AskUserWaiting == nil && patch.HasPlan == nil && patch.HasTodos == nil && patch.HasTask == nil && patch.SessionError == nil {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	session, err := m.getSessionUnsafe(key, 0)
+	if err != nil {
+		return err
+	}
+	if patch.AskUserWaiting != nil {
+		session.Aux.AskUserWaiting = *patch.AskUserWaiting
+	}
+	if patch.HasPlan != nil {
+		session.Aux.HasPlan = *patch.HasPlan
+	}
+	if patch.HasTodos != nil {
+		session.Aux.HasTodos = *patch.HasTodos
+	}
+	if patch.HasTask != nil {
+		session.Aux.HasTask = *patch.HasTask
+	}
+	if patch.SessionError != nil {
+		session.Aux.SessionError = strings.TrimSpace(*patch.SessionError)
+	}
+	if err := m.upsertSessionMetaUnsafe(session); err != nil {
+		return err
+	}
+	return nil
 }
 
 // ClearRelatedWorktree 解除会话与工作树的归属关系。

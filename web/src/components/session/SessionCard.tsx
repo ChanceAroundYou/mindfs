@@ -1,6 +1,8 @@
 import React, { memo } from "react";
 import { AgentIcon } from "../agent/AgentIcon";
 import { ModeIcon } from "../agent/ModeIcon";
+import { renderToolIcon } from "../stream/toolCallIcons";
+import { taskAuxBadgeStyle } from "../task/taskIcons";
 import { useI18n } from "../../i18n/index";
 import {
   shellBadgeLabel,
@@ -17,6 +19,7 @@ import type { SessionItem } from "./sessionListTypes";
 import { sessionActivityAt } from "../../shared/sessionActivityAt";
 import { useSessionCard } from "./useSessionCard";
 import { SessionCardOverflowMenu } from "./SessionCardOverflowMenu";
+import { SessionStatusBadges } from "./SessionStatusBadges";
 
 function SessionCard({
   session,
@@ -117,6 +120,15 @@ function SessionCard({
             }}
           >
             {isSubagent ? <SubSessionIcon color={effectiveNodeColor ? `color-mix(in srgb, ${effectiveNodeColor} 78%, var(--text-secondary))` : undefined} /> : <ModeIcon type={session.task_id ? "task" : session.type || "chat"} size={16} color={effectiveNodeColor || undefined} />}
+            {!isSubagent && session.aux_flags?.ask_user_waiting ? (
+              <span
+                aria-label={t("sessionList.awaitingUser")}
+                title={t("sessionList.awaitingUser")}
+                style={taskAuxBadgeStyle(true)}
+              >
+                {renderToolIcon("ask_user")}
+              </span>
+            ) : null}
             {!isSubagent && session.type === "command" ? (
               <span
                 title={session.shell || "shell"}
@@ -265,6 +277,14 @@ function SessionCard({
                 color: selected ? (effectiveNodeColor || "var(--accent-color)") : "var(--text-primary)",
               })}
             </span>
+            {!isSubagent ? (
+              <SessionStatusBadges
+                auxFlags={session.aux_flags}
+                relatedWorktree={session.related_worktree}
+                worktreeMissing={session.worktree_missing}
+                nodeColor={effectiveNodeColor || undefined}
+              />
+            ) : null}
             {snippet ? (
               <span
                 style={{

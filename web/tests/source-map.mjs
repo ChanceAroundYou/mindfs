@@ -308,6 +308,7 @@ export const MODULES = {
     "src/services/session/sessionTree.ts",
     "src/services/session/sessionTypes.ts",
     "src/services/session/sessionWindow.ts",
+    "src/services/session/sessionWindowFetch.ts",
   ],
   // Composer styles were split from their colocated SVG components.
   "src/components/action/composerStyles.tsx": [
