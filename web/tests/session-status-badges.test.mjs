@@ -97,20 +97,25 @@ assert.match(metaSource, /aux_flags:\s*payload\.session\.aux_flags !== undefined
 assert.match(metaSource, /worktree_missing:\s*typeof payload\.session\.worktree_missing === "boolean"/, "cache merge must overwrite worktree_missing only when the payload carries a boolean");
 
 // ── 4. 视图接线：SessionCard 左侧渲染徽标条 + 问号由 aux 驱动 ──
+// 问号与图标位住在 SessionCardIcon（2026-10-16 从 SessionCard 整块抽出，纯行数门禁），
+// 所以断言分两处读：徽标条看 SessionCard，图标位看 SessionCardIcon。
 const card = fs.readFileSync(path.resolve(import.meta.dirname, "../src/components/session/SessionCard.tsx"), "utf8");
+const icon = fs.readFileSync(path.resolve(import.meta.dirname, "../src/components/session/SessionCardIcon.tsx"), "utf8");
 assert.match(card, /<SessionStatusBadges/, "SessionCard must render the badge strip");
+assert.match(card, /<SessionWorktreeTag/, "SessionCard must render the green worktree tag");
+assert.match(card, /<SessionCardIcon/, "SessionCard must render the icon cell");
 assert.match(
-  card,
+  icon,
   /session\.aux_flags\?\.ask_user_waiting/,
   "the question-mark pulse is driven by aux_flags.ask_user_waiting",
 );
 assert.match(
-  card,
+  icon,
   /renderToolIcon\("ask_user"\)/,
   "the question-mark reuses the task card ask_user icon, not a bespoke SVG",
 );
 assert.match(
-  card,
+  icon,
   /taskAuxBadgeStyle\(true\)/,
   "the question-mark reuses taskAuxBadgeStyle(true) like the task card attention badge",
 );
@@ -123,10 +128,44 @@ const badges = fs.readFileSync(path.resolve(import.meta.dirname, "../src/compone
 assert.match(badges, /from "\.\.\/task\/taskIcons"/, "badge icons/styles reuse the task card set");
 assert.match(badges, /renderToolIcon\("todo"\)/, "todo icon reuses the stream tool icon");
 assert.match(badges, /renderToolIcon\("task"\)/, "task icon reuses the stream tool icon");
+
+// ── 6. 绿 worktree 标签：只活树显示 + 悬在名字左上方且不占流（用户 2026-10-16 定）──
+const tag = fs.readFileSync(path.resolve(import.meta.dirname, "../src/components/session/SessionWorktreeTag.tsx"), "utf8");
+assert.match(tag, /taskWorktreeTagStyle\("enabled"\)/, "the tag reuses the task card worktree tag style");
+assert.match(tag, /position: "absolute"/, "the tag must not occupy flow — the name and icons keep their places");
+assert.match(tag, /bottom: "100%"/, "the tag hangs above the session name, not below or beside it");
+assert.match(tag, /left: 0/, "the tag is left-aligned with the session name");
+// 判据只认活树：无 path = 没开过，worktreeMissing = 目录已删（已收尾），两者都不渲染。
+assert.match(tag, /Boolean\(path\) && !worktreeMissing/, "only a live worktree (path present, dir not deleted) renders the tag");
+assert.equal(tag.includes("NoWorktreeIcon"), false, "no-worktree and finished sessions show nothing at all");
+assert.equal(tag.includes("worktreeFinishedLabel"), false, "finished sessions show nothing at all");
+assert.equal(badges.includes("NoWorktreeIcon"), false, "the badge strip no longer carries the worktree tag");
+assert.equal(badges.includes("worktreeFinishedLabel"), false, "the badge strip no longer carries the worktree tag");
+// 徽标条空着就整块不渲染：空的 marginTop 会把只有名字的行顶高。
+assert.match(badges, /if \(badges\.length === 0\)/, "an empty badge strip renders nothing");
 assert.equal(badges.includes("from \"../../app/"), false, "view layer must not import app/");
 assert.equal(badges.includes("services/"), false, "view layer must not import services/");
 
-// ── 6. 后端三处 payload + 存储列（源码守卫，防静默回退）──
+// ── 7. 徽标尺寸：其他小图标缩到和 worktree 标签一样大（用户 2026-10-16）──
+const styles = fs.readFileSync(path.resolve(import.meta.dirname, "../src/components/task/taskStyles.ts"), "utf8");
+assert.match(
+  styles,
+  /export function taskAuxBadgeStyle[\s\S]{0,400}?width: "14px"/,
+  "the aux badge box shrinks to the 14px worktree tag",
+);
+assert.match(
+  styles,
+  /export function taskAuxIconScaleStyle[\s\S]{0,200}?transform: "scale\(0\.75\)"/,
+  "16px icons scale down to 12px inside the box",
+);
+// 缩放只能落在图标外面：attention 的脉冲动画自己就在动 transform（index.css 的
+// mindfs-task-ask-user-pulse），写进 taskAuxBadgeStyle 会被动画盖掉、问号跳回原尺寸。
+assert.match(badges, /taskAuxIconScaleStyle\(\)/, "the badge strip wraps its icons in the scale");
+assert.match(icon, /taskAuxIconScaleStyle\(\)/, "the question-mark badge wraps its icon in the scale");
+const taskRows = fs.readFileSync(path.resolve(import.meta.dirname, "../src/components/task/TaskCardRows.tsx"), "utf8");
+assert.match(taskRows, /taskAuxIconScaleStyle\(\)/, "the task card badge strip wraps its icons in the scale");
+
+// ── 8. 后端三处 payload + 存储列（源码守卫，防静默回退）──
 const list = fs.readFileSync(path.resolve(import.meta.dirname, "../../server/internal/api/http_sessions.go"), "utf8");
 assert.match(list, /"aux_flags":\s*s\.Aux\.AuxFlagsPayload\(\)/, "session list must carry aux_flags");
 const broadcast = fs.readFileSync(path.resolve(import.meta.dirname, "../../server/internal/api/appcontext.go"), "utf8");

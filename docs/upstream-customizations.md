@@ -703,6 +703,24 @@
   问号脉冲由 `aux_flags.ask_user_waiting` 驱动（`awaiting_user` 孤儿字段已删）。
   必须保留的理由：这是会话行唯一的「内容进展」信号源；合上游冲掉任一环节
   （存储列 / 镜像写入 / 三处 payload / 透传 / 渲染），徽标就静默全灭或半灭。
+- **绿 worktree 标签只认活树、悬在名字左上方（2026-10-16 用户定）**：可见症状是每行都挂
+  一个灰「无 worktree」标签（噪声），或标签挤在名字行右端、把名字和左右图标挤走。
+  规则三条：① 只有**有活树**（`related_worktree.path` 在且目录没被删）才渲染，
+  无树与已收尾一律不渲染 —— 「没有树」不是会话进展；② 标签绝对定位（`left:0; bottom:100%`，
+  基准是 SessionCard 里那个 `position:relative` 的名字按钮），与名字左对齐、悬在名字上方；
+  ③ 定位不占流，所以标签出不出现，会话名与左右两侧图标的位置一格都不动。
+  样式复用任务卡的 `taskWorktreeTagStyle("enabled")`，不另画一套。
+- **其他小图标缩到 worktree 标签大小（2026-10-16）**：可见症状是 18px 的 aux 徽标比
+  14px 的 worktree 标签大一圈，行里大小不一。`taskAuxBadgeStyle` 盒子 18→14、圆角 5→4，
+  16px 图标由 `taskAuxIconScaleStyle()`（`transform: scale(0.75)`）缩到 12px，
+  三处徽标（`SessionStatusBadges` / `SessionCardIcon` 的问号 / `TaskCardRows`）统一套用。
+  **缩放只能落在图标外面**：attention 的脉冲动画本身就是 `transform: scale(1→1.08)`
+  （`index.css` 的 `mindfs-task-ask-user-pulse`），写进 `taskAuxBadgeStyle` 会被动画盖掉，
+  问号会一边脉冲一边跳回原尺寸。
+- **`SessionCardIcon.tsx` 是行数门禁的产物（2026-10-16）**：会话行左侧图标位
+  （模式图标 + 等回答问号 / shell / agent 角标）从 `SessionCard.tsx` 整块抽出，
+  纯搬移零行为变化 —— 抽之前 SessionCard 492 行，离 500 的硬线只剩 8 行。
+  18px 的定位盒是三个绝对定位角标的基准，合上游时别顺手改盒子尺寸。
 
 ### G-AE UI 基础设施（自建对话框 / Toast / 面板外壳）
 

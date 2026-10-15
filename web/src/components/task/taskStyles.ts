@@ -63,17 +63,34 @@ export function taskCardIconButtonStyle(tone: "default" | "accent" | "success" |
 
 
 
+// 2026-10-16（用户要求「其他小图标再做小一号，和 worktree 差不多大」）：
+// 盒子 18→14、圆角 5→4，对齐 14px 高的 worktree 标签。
+//
+// 里面的图标是 14/15/16 三种固定尺寸的 SVG，且 renderToolIcon 那套还被工具卡共用
+// （不能改源头），所以缩小只能落在图标外面 —— 见 taskAuxIconScaleStyle，
+// 由各徽标调用点套一层。**不能**把缩放写在这里：attention 的脉冲动画本身就是
+// transform: scale(1→1.08)（index.css 的 mindfs-task-ask-user-pulse），
+// 动画会盖掉这里的 transform，问号会一边脉冲一边跳回原尺寸。
 export function taskAuxBadgeStyle(attention = false): React.CSSProperties {
   return {
-    width: "18px",
-    height: "18px",
+    width: "14px",
+    height: "14px",
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: "5px",
+    borderRadius: "4px",
     background: attention ? "rgba(239, 68, 68, 0.10)" : "transparent",
     color: "var(--text-secondary)",
     animation: attention ? "mindfs-task-ask-user-pulse 2.2s ease-in-out infinite" : "none",
+  };
+}
+
+// 徽标图标缩到盒子内（16px → 12px）。transform 不占流，盒子的 14px 布局宽度不变，
+// 相邻徽标与行高都不受影响。
+export function taskAuxIconScaleStyle(): React.CSSProperties {
+  return {
+    display: "inline-flex",
+    transform: "scale(0.75)",
   };
 }
 

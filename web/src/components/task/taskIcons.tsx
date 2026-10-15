@@ -9,8 +9,8 @@
  * TaskExpandIcon, TaskGroupChevronIcon, RunNowIcon, SyncIcon,
  * ChevronDownSmallIcon.
  * Task styles: taskTemplateMenuItemStyle, taskCardSurfaceStyle,
- * taskCardIconButtonStyle, taskAuxBadgeStyle, WorktreeTagState,
- * taskWorktreeTagStyle, taskReplyPulseStyle.
+ * taskCardIconButtonStyle, taskAuxBadgeStyle, taskAuxIconScaleStyle,
+ * WorktreeTagState, taskWorktreeTagStyle, taskReplyPulseStyle.
  *
  * INVENTORY-END
  * The app/taskIcons.tsx entry is a compatibility facade for older consumers.

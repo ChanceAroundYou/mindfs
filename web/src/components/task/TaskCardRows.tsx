@@ -20,6 +20,7 @@ import {
   TaskResumeIcon,
   TaskSessionErrorIcon,
   taskAuxBadgeStyle,
+  taskAuxIconScaleStyle,
   taskCardIconButtonStyle,
   taskReplyPulseStyle,
   taskWorktreeTagStyle,
@@ -358,7 +359,7 @@ export function TaskCardRows({
                   aria-label={badge.label}
                   style={taskAuxBadgeStyle(badge.attention)}
                 >
-                  {badge.icon}
+                  <span style={taskAuxIconScaleStyle()}>{badge.icon}</span>
                 </span>
               ))}
             </div>

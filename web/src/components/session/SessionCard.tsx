@@ -1,25 +1,19 @@
 import React, { memo } from "react";
-import { AgentIcon } from "../agent/AgentIcon";
-import { ModeIcon } from "../agent/ModeIcon";
-import { renderToolIcon } from "../stream/toolCallIcons";
-import { taskAuxBadgeStyle } from "../task/taskIcons";
 import { useI18n } from "../../i18n/index";
-import {
-  shellBadgeLabel,
-} from "./sessionListShared";
 import {
   formatTime,
   renderHighlightedText,
   iconButtonStyle,
   ChevronLeftIcon,
-  SubSessionIcon,
   inlineActionStyle,
 } from "./sessionCardHelpers";
 import type { SessionItem } from "./sessionListTypes";
 import { sessionActivityAt } from "../../shared/sessionActivityAt";
 import { useSessionCard } from "./useSessionCard";
+import { SessionCardIcon } from "./SessionCardIcon";
 import { SessionCardOverflowMenu } from "./SessionCardOverflowMenu";
 import { SessionStatusBadges } from "./SessionStatusBadges";
+import { SessionWorktreeTag } from "./SessionWorktreeTag";
 
 function SessionCard({
   session,
@@ -107,82 +101,12 @@ function SessionCard({
           transition: "all 0.15s ease",
         }}
       >
-        {!isSearchResult ? (
-          <span
-            style={{
-              position: "relative",
-              width: "18px",
-              height: "18px",
-              flexShrink: 0,
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            {isSubagent ? <SubSessionIcon color={effectiveNodeColor ? `color-mix(in srgb, ${effectiveNodeColor} 78%, var(--text-secondary))` : undefined} /> : <ModeIcon type={session.task_id ? "task" : session.type || "chat"} size={16} color={effectiveNodeColor || undefined} />}
-            {!isSubagent && session.aux_flags?.ask_user_waiting ? (
-              <span
-                aria-label={t("sessionList.awaitingUser")}
-                title={t("sessionList.awaitingUser")}
-                style={taskAuxBadgeStyle(true)}
-              >
-                {renderToolIcon("ask_user")}
-              </span>
-            ) : null}
-            {!isSubagent && session.type === "command" ? (
-              <span
-                title={session.shell || "shell"}
-                style={{
-                  position: "absolute",
-                  right: "-8px",
-                  bottom: "-4px",
-                  minWidth: 0,
-                  maxWidth: "26px",
-                  height: "auto",
-                  padding: "1px 3px",
-                  borderRadius: "5px",
-                  background: "#1d4ed8",
-                  border: "none",
-                  color: "#fff",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                  fontSize: "7px",
-                  fontWeight: 700,
-                  lineHeight: 1.1,
-                  letterSpacing: 0,
-                }}
-              >
-                {shellBadgeLabel(session.shell)}
-              </span>
-            ) : !isSubagent ? (
-              <span
-                style={{
-                  position: "absolute",
-                  right: "-2px",
-                  bottom: "-2px",
-                  width: "10px",
-                  height: "10px",
-                  borderRadius: "999px",
-                  background: "var(--content-bg, #fff)",
-                  border: "1px solid rgba(255,255,255,0.9)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  overflow: "hidden",
-                }}
-              >
-                <AgentIcon
-                  agentName={session.agent || ""}
-                  style={{ width: "10px", height: "10px", display: "block" }}
-                />
-              </span>
-            ) : null}
-          </span>
-        ) : null}
+        <SessionCardIcon
+          session={session}
+          isSubagent={isSubagent}
+          isSearchResult={isSearchResult}
+          nodeColor={effectiveNodeColor || undefined}
+        />
 
         {editing ? (
           <input
@@ -248,6 +172,8 @@ function SessionCard({
               padding: 0,
               cursor: "pointer",
               textAlign: "left",
+              // 绿 worktree 标签的定位基准（G-AD）：left:0 / bottom:100% = 名字左上方。
+              position: "relative",
               color: selected ? (effectiveNodeColor || "var(--accent-color)") : "var(--text-primary)",
             }}
             onMouseEnter={(e) => {
@@ -263,6 +189,7 @@ function SessionCard({
               }
             }}
           >
+            {!isSubagent ? <SessionWorktreeTag relatedWorktree={session.related_worktree} worktreeMissing={session.worktree_missing} /> : null}
             <span
               style={{
                 display: "block",
@@ -280,8 +207,6 @@ function SessionCard({
             {!isSubagent ? (
               <SessionStatusBadges
                 auxFlags={session.aux_flags}
-                relatedWorktree={session.related_worktree}
-                worktreeMissing={session.worktree_missing}
                 nodeColor={effectiveNodeColor || undefined}
               />
             ) : null}

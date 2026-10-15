@@ -1,35 +1,30 @@
 import React from "react";
 import { useI18n } from "../../i18n/index";
 import { renderToolIcon } from "../stream/toolCallIcons";
-import { NoWorktreeIcon } from "../common/NoWorktreeIcon";
 import {
   TaskPlanAuxIcon,
   TaskSessionErrorIcon,
   taskAuxBadgeStyle,
-  taskWorktreeTagStyle,
+  taskAuxIconScaleStyle,
 } from "../task/taskIcons";
-import type { RelatedWorktree, SessionAuxFlags } from "../../shared/sessionTypes";
+import type { SessionAuxFlags } from "../../shared/sessionTypes";
 
 /**
- * 会话行的内容徽标条（G-AD）：worktree 标签 + error/plan/todo/task 徽标。
+ * 会话行的 aux 徽标条（G-AD）：error/plan/todo/task，摆在名字下方。
  *
- * 数据源是 toSessionItem 透传的 aux_flags / related_worktree / worktree_missing，
- * 零徽标时只剩 worktree 标签（有没有 worktree 本身就是信息，见 TaskCardRows 同款）。
- *
- * ask_user 不在这里 —— 它就是图标与名字之间的脉冲问号（SessionCard 的 awaiting 位，
+ * worktree 标签**不在这里** —— 它绝对定位悬在会话名左上方，见 SessionWorktreeTag。
+ * ask_user 也不在这里 —— 它就是图标与名字之间的脉冲问号（SessionCard 的 awaiting 位，
  * 由 aux_flags.ask_user_waiting 驱动），再摆一个徽标等于同一信号响两遍。
- * 图标与样式全部复用任务卡那套（taskIcons + stream/toolCallIcons，会话域早有
- * SessionViewer* 引用 stream 图标的先例），不自己画第二套。
+ *
+ * 数据源是 toSessionItem 透传的 aux_flags。图标与样式全部复用任务卡那套
+ * （taskIcons + stream/toolCallIcons，会话域早有 SessionViewer* 引用 stream 图标的
+ * 先例），不自己画第二套。
  */
 export function SessionStatusBadges({
   auxFlags,
-  relatedWorktree,
-  worktreeMissing,
   nodeColor,
 }: {
   auxFlags?: SessionAuxFlags;
-  relatedWorktree?: RelatedWorktree | null;
-  worktreeMissing?: boolean;
   nodeColor?: string;
 }) {
   const { t } = useI18n();
@@ -50,17 +45,11 @@ export function SessionStatusBadges({
       : null,
   ].filter((item): item is { key: string; label: string; icon: React.ReactNode; attention: boolean } => Boolean(item));
 
-  const worktreePath = String(relatedWorktree?.path || "").trim();
-  // 会话没有任务的 worktree_built 位：path 在且目录没被删 = 有树；
-  // path 还在但目录已删 = 已收尾；本来就没 path = 没开过。
-  const worktreeState = !worktreePath || worktreeMissing ? (worktreePath ? "finished" : "none") : "enabled";
-  const worktreeTitle =
-    worktreeState === "finished"
-      ? t("task.worktreeFinishedTitle")
-      : worktreeState === "enabled"
-        ? t("task.worktreeTitle")
-        : t("task.noWorktreeTitle");
-
+  // 一个徽标都没有就整块不渲染：空的徽标条会带 marginTop 多撑一行，
+  // 把只有名字的会话行顶高。
+  if (badges.length === 0) {
+    return null;
+  }
   return (
     <span
       style={{
@@ -71,14 +60,6 @@ export function SessionStatusBadges({
         flexWrap: "wrap",
       }}
     >
-      <span
-        title={worktreeTitle}
-        aria-label={worktreeTitle}
-        style={{ ...taskWorktreeTagStyle(worktreeState), marginLeft: 0 }}
-      >
-        {worktreeState === "enabled" ? null : <NoWorktreeIcon />}
-        {worktreeState === "finished" ? t("task.worktreeFinishedLabel") : "worktree"}
-      </span>
       {badges.map((badge) => (
         <span
           key={badge.key}
@@ -86,7 +67,7 @@ export function SessionStatusBadges({
           aria-label={badge.key === "session-error" ? t("task.viewError") : badge.label}
           style={taskAuxBadgeStyle(badge.attention)}
         >
-          {badge.icon}
+          <span style={taskAuxIconScaleStyle()}>{badge.icon}</span>
         </span>
       ))}
     </span>
