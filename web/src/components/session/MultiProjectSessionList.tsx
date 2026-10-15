@@ -183,7 +183,7 @@ export function MultiProjectSessionList({
                       <PinIcon pinned={pinned} />
                     </button>
                   </div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: "2px", paddingTop: 0 }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "6px", paddingTop: 0 }}>
                     {rows.map((row) => {
                       if (row.type === "child-toggle") {
                         const stateKey = childStateKey(row.parent, group.rootId, groupNodeId);

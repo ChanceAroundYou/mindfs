@@ -390,7 +390,7 @@ export function SessionList({
             </div>
           ) : null
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
             {visibleSessions.map((row) => {
               if (row.type === "child-toggle") {
                 const loading = !!loadingChildren[row.parent.key];

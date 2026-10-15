@@ -849,6 +849,9 @@ groups:
       - web/src/components/session/SessionCardIcon.tsx
       - web/src/components/session/SessionWorktreeTag.tsx
       - web/src/components/session/SessionStatusBadges.tsx
+      - web/src/components/session/SessionList.tsx
+      - web/src/components/session/MultiProjectSessionList.tsx
+      - web/src/components/session/ExternalSessionList.tsx
       - web/src/components/task/taskStyles.ts
     anchors:
       # 绿 worktree 标签：只认活树 + 悬在名字左上方且不占流（2026-10-16）。
@@ -857,6 +860,8 @@ groups:
       # 小图标缩到 worktree 标签大小：盒子 14px + 图标 0.75 缩放。
       - 'web/src/components/task/taskStyles.ts:export function taskAuxIconScaleStyle'
       - 'web/src/components/session/SessionCardIcon.tsx:taskAuxIconScaleStyle'
+      # 会话行间距：三个列表容器各写一份字面量，必须同值（2026-10-16 由 2px 调大到 6px）。
+      - 'web/src/components/session/SessionList.tsx:flexDirection: "column", gap: "6px"'
     tests:
       - web/tests/session-list-merge.test.mjs
       - web/tests/session-tree.test.mjs

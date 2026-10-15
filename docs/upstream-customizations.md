@@ -710,6 +710,8 @@
   基准是 SessionCard 里那个 `position:relative` 的名字按钮），与名字左对齐、悬在名字上方；
   ③ 定位不占流，所以标签出不出现，会话名与左右两侧图标的位置一格都不动。
   样式复用任务卡的 `taskWorktreeTagStyle("enabled")`，不另画一套。
+  行间距 2026-10-16 由 2px 调到 6px（三个列表容器各写一份字面量，必须同值），
+  标签头顶的空隙同时从 18px 拉到 22px。
 - **其他小图标缩到 worktree 标签大小（2026-10-16）**：可见症状是 18px 的 aux 徽标比
   14px 的 worktree 标签大一圈，行里大小不一。`taskAuxBadgeStyle` 盒子 18→14、圆角 5→4，
   16px 图标由 `taskAuxIconScaleStyle()`（`transform: scale(0.75)`）缩到 12px，

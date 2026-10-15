@@ -145,6 +145,19 @@ assert.equal(badges.includes("worktreeFinishedLabel"), false, "the badge strip n
 assert.match(badges, /if \(badges\.length === 0\)/, "an empty badge strip renders nothing");
 assert.equal(badges.includes("from \"../../app/"), false, "view layer must not import app/");
 assert.equal(badges.includes("services/"), false, "view layer must not import services/");
+// 会话行间距在三个列表容器里各写一份字面量（2026-10-16 用户要求调大几个 px，
+// 顺带把 worktree 标签头顶的空隙从 18px 拉到 22px）。改一处漏两处 = 列表之间不一致。
+for (const listFile of ["SessionList", "MultiProjectSessionList", "ExternalSessionList"]) {
+  const list = fs.readFileSync(
+    path.resolve(import.meta.dirname, `../src/components/session/${listFile}.tsx`),
+    "utf8",
+  );
+  assert.match(
+    list,
+    /flexDirection: "column", gap: "6px"/,
+    `${listFile} 的会话行容器间距必须与另外两个列表一致`,
+  );
+}
 
 // ── 7. 徽标尺寸：其他小图标缩到和 worktree 标签一样大（用户 2026-10-16）──
 const styles = fs.readFileSync(path.resolve(import.meta.dirname, "../src/components/task/taskStyles.ts"), "utf8");
