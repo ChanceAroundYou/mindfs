@@ -21,6 +21,8 @@ export type SessionItem = {
   archived_at?: string | null;
   closed_at?: string;
   pending?: boolean;
+  /** 派生三态（自有 pending / 后代在跑 / 全闲），由列表一次性盖上 */
+  presence?: "running" | "delegating" | "idle";
   related_files?: Array<{ path: string }>;
   search_seq?: number;
   search_snippet?: string;

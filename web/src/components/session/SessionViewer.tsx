@@ -57,6 +57,7 @@ import { useSessionViewerExchangeProjection } from "./useSessionViewerExchangePr
 
 function SessionViewerInner({
   session,
+  presence = "idle",
   loading = false,
   slashCommandResult = null,
   rootId,
@@ -418,7 +419,7 @@ function SessionViewerInner({
       }}
     >
       {interactionMode === "drawer" ? null : (
-        <SessionViewerHeader interactionMode={interactionMode} rootId={rootId} rootColor={rootColor} rootDisplayName={rootDisplayName} displayName={displayName} onRootClick={onRootClick} />
+        <SessionViewerHeader interactionMode={interactionMode} rootId={rootId} rootColor={rootColor} rootDisplayName={rootDisplayName} displayName={displayName} isDelegating={!isAwaiting && presence === "delegating"} onRootClick={onRootClick} />
       )}
 
       {/* 滚动容器 */}
@@ -448,7 +449,7 @@ function SessionViewerInner({
               themeColor,
             })}
             <SessionViewerWaitingIndicator
-              isAwaiting={isAwaiting} isStreaming={isStreaming}
+              isAwaiting={isAwaiting} isStreaming={isStreaming} isDelegating={!isAwaiting && presence === "delegating"}
               streamStatusText={streamStatusText} rootColor={rootColor} t={t}
             />
 

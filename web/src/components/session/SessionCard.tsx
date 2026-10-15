@@ -388,6 +388,20 @@ function SessionCard({
                 animation: "spin 0.8s linear infinite",
               }}
             />
+          ) : session.presence === "delegating" ? (
+            <span
+              aria-label={t("sessionList.delegating")}
+              title={t("sessionList.delegating")}
+              style={{
+                width: "8px",
+                height: "8px",
+                borderRadius: "999px",
+                flexShrink: 0,
+                boxSizing: "border-box",
+                border: `1.5px solid ${effectiveNodeColor || "var(--accent-color)"}`,
+                background: "transparent",
+              }}
+            />
           ) : session.pending ? (
             <span
               aria-label={t("sessionList.replying")}

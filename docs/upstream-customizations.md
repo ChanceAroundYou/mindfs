@@ -1467,6 +1467,46 @@
   - `web/tests/workspace-board.test.mjs` — attention bar 必须不存在；taskRow wrapper 必须是 `<article>`
   - `web/tests/task-card-wrap.test.mjs` — `workspaceTaskNameStyle` 断言已移除
 
+### G-AY 委托态三态（空心灯）与切换首帧不闪（2026-10-15）
+
+> 与上面两条同属一个边界：**前端怎么表达「这个会话在不在跑」**。
+
+- 来源：`web/src/shared/sessionPresence.ts`（新增，纯函数）、
+  `web/src/components/session/SessionCard.tsx`、`web/src/components/session/SessionViewerHeader.tsx`、
+  `web/src/components/session/SessionViewerWaitingIndicator.tsx`、
+  `web/src/app/useAppSessionSnapshots.ts`、`web/src/app/useAppViewComposition.ts`、
+  `web/src/app/useSessionSelection.ts`、`web/src/hooks/useSessionStream.ts`、
+  `web/src/i18n/locales/{zh-CN,en-US}-sessions.ts`、`web/tests/session-presence.test.mjs`、
+  `web/tests/switch-no-flash.test.mjs`（后两者新增）。
+- 边界：**「在不在跑」只有亮/灭两态**以及**切换首帧用什么点亮**。上游若退回两态、
+  或退回「首帧信抽屉/列表项快照里的 pending」，两个可见症状都会立刻回来。
+- 可见症状（没有它会怎样）：
+  1. **父委托子代理时父灯灭**，看起来像已完成 —— 实际子孙还在跑。父的 `pending` 在它自己
+     的 turn 结束时就被清了（子代理是独立会话、独立 turn），于是列表点、viewer 底部文案、
+     viewer 头部三处一起说谎。现在父显示**空心**「子代理运行中」，优先级 自己跑 > 委托 > 闲。
+  2. **切会话闪一下**：`handleSelectSession` 首帧拿抽屉/会话项里的**陈旧** pending 点亮
+     「正在生成」，下一帧才被真相纠正 —— 先亮后灭。首帧改为只查真相表
+     （`resolvePendingForSession`，查不到按不在跑）。
+  3. **队列重放闪**：`SessionDispatcher` 保留 200 条 `pendingStreams` 供重放，
+     订阅瞬间会把**上一轮已结束**的流事件重放一遍；`useSessionStream` 的 `onStream`
+     原先无闸门直接置 `isStreaming=true`，于是又亮一下。现在 `onStream` 的置位同样收在
+     `sessionPending` 闸门下（与导出闸门同一个真相）。
+- 为什么要 `applyPresenceToItems` 而不是在卡片里算：卡片逐张各跑一次
+  `hasRunningDescendant` 会让列表渲染变成 O(n²)（流式期间 30ms 一次重渲染），
+  所以按列表算一次、盖到会话项上（与 `pending` 覆盖同一惯例）。
+  **且必须在 `useAppViewComposition` 盖**：单项目列表的会话项本身不保证带最新 `pending`
+  （5s 轮询只写多项目分组），所以那里顺手把 `pending` 也按真相表重投影一遍。
+- fork 不算后代：后端 fork 的 `parent_session_key` 恒空（`manager_test` 钉死），
+  纯函数里再显式排除 `source type=fork` / `fork_from` 残留，前后端双保险。
+- 针对性测试：
+  - `web/tests/session-presence.test.mjs` — 三态优先级、后代求交（fork 不算后代，
+    但 fork 项自己的 pending 仍由自己表达）、`computePresenceByKey` 一次算全表、
+    i18n 中英键同步、列表空心分支消费真实 `presence`（**挂假字段会红**）、
+    viewer 底部与头部都收到委托态、快照层从真相表算选中项。
+  - `web/tests/switch-no-flash.test.mjs` — 首帧不得由抽屉/会话项快照推导 pending、
+    必须经 `resolvePendingForSession`；`onStream` 体内必须有 `sessionPending` 闸门
+    （切片锚点钉在 handler 签名上，文件尾的导出闸门不算）。
+
 ### G-AY pending 纯派生：done 丢失时停止符号 /「正在思考」卡住（2026-10-07）
 
 > **2026-10-09 补完（最后一处漏网的投影）**：本次纯派生漏了 `useSessionStream` 的本地

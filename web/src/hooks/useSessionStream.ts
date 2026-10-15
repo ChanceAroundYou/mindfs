@@ -83,7 +83,7 @@ export function useSessionStream(
           setStreamStatusText("");
           setIsStreaming(false);
         } else {
-          setIsStreaming(true);
+          setIsStreaming(!!sessionPending);
         }
       },
       onDone: () => {

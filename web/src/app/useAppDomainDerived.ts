@@ -131,7 +131,7 @@ export function useAppDomainDerived({
   const pluginRendererKey = `${currentRootId || ""}:${file?.path || ""}:${fileCursorRef.current}:${JSON.stringify(pluginQuery)}`;
 
   const {
-    selectedSessionSnapshot, sessionByKey, boardSessionByKey, selectedKanbanTask,
+    selectedSessionSnapshot, selectedSessionPresence, sessionByKey, boardSessionByKey, selectedKanbanTask,
     selectedKanbanTaskSessionKey, selectedKanbanTaskSessionSnapshot,
   } = useAppSessionSnapshots({
     selectedSession, selectedSessionLoading, currentRootId, sessions,
@@ -163,5 +163,6 @@ export function useAppDomainDerived({
     actionBarInputHistory, actionBarQueuedMessages, actionBarSession, boardSessionByKey,
     canOpenSessionDrawer, detachedBoundSession, matchedPlugin, pluginRender, pluginRendererKey,
     pluginThemeVars, selectedKanbanTask, selectedKanbanTaskSessionSnapshot, selectedSessionSnapshot,
+    selectedSessionPresence,
   };
 }

@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import type { SessionItem, MultiProjectSessionGroup } from "./appSession";
 import type { KanbanTask, TaskDetail } from "../services/task/types";
 import type { useSessionPending } from "./useSessionPending";
+import { presenceFromTree, type SessionPresence } from "../shared/sessionPresence";
 
 /**
  * 会话快照与查找表：当前主视图选中的会话、当前 root 的会话索引、
@@ -46,6 +47,33 @@ export function useAppSessionSnapshots(params: UseAppSessionSnapshotsParams) {
     },
     [selectedSession, selectedSessionLoading, currentRootId, getSessionSnapshot],
   );
+
+  // 选中会话的委托态：父自己 pending 灭了、子孙还在跑 → 空心「子代理运行中」，
+  // 而不是误报完成。拓扑与运行态都在本层手上（分组含跨项目/跨节点会话），
+  // 不必为一个选中项另开数据通道。
+  const selectedSessionPresence: SessionPresence = useMemo(() => {
+    if (!selectedSession) return "idle";
+    const key = selectedSession.key || selectedSession.session_key || "";
+    if (!key) return "idle";
+    const selfPending = !!multiProjectPendingByKey[rootSessionKey(selectedSession.root_id || currentRootId || "", key)];
+    const tree: SessionItem[] = [];
+    for (const group of multiProjectSessionGroups) {
+      for (const item of group.sessions || []) {
+        tree.push({
+          ...item,
+          pending:
+            typeof (item as any)?.pending === "boolean"
+              ? (item as any).pending
+              : !!multiProjectPendingByKey[
+                  rootSessionKey(item.root_id || group.rootId, item.key || item.session_key || "")
+                ],
+        } as SessionItem);
+      }
+    }
+    const own = tree.find((item) => (item.key || item.session_key) === key);
+    if (!own) tree.push({ ...(selectedSession as any), pending: selfPending } as SessionItem);
+    return presenceFromTree(key, selfPending, tree, selectedSession.root_id || currentRootId || "");
+  }, [selectedSession, currentRootId, multiProjectSessionGroups, multiProjectPendingByKey, rootSessionKey]);
 
   const sessionByKey = useMemo(() => sessions.reduce<Record<string, SessionItem>>((acc, session) => {
     const key = session.key || session.session_key || "";
@@ -112,6 +140,7 @@ export function useAppSessionSnapshots(params: UseAppSessionSnapshotsParams) {
 
   return {
     selectedSessionSnapshot,
+    selectedSessionPresence,
     sessionByKey,
     boardSessionByKey,
     selectedKanbanTask,

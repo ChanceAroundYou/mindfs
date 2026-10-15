@@ -56,6 +56,7 @@ groups:
       - docs/plans/deep-split-phase3.md
       - docs/plans/app-tsx-next-split.md
       - docs/plans/app-tsx-under-1000.md
+      - docs/plans/delegated-presence-and-flicker.md
       - docs/session-flicker-root-cause.md
       - docs/session-streaming-rework.md
       - docs/upstream-customizations.md
@@ -1946,18 +1947,35 @@ groups:
     tests:
       - web/tests/pending-single-source.test.mjs
       - web/tests/use-session-stream.test.mjs
+      - web/tests/session-presence.test.mjs
+      - web/tests/switch-no-flash.test.mjs
     files:
       - web/src/App.tsx
       - web/src/app/useRealtimeEvents.ts
       - web/src/app/appSession.ts
       - web/src/hooks/useSessionStream.ts
       - web/src/components/session/SessionViewer.tsx
+      - web/src/shared/sessionPresence.ts
+      - web/src/components/session/SessionCard.tsx
+      - web/src/components/session/SessionViewerHeader.tsx
+      - web/src/components/session/SessionViewerWaitingIndicator.tsx
+      - web/src/app/useAppSessionSnapshots.ts
+      - web/src/app/useAppViewComposition.ts
+      - web/src/app/useSessionSelection.ts
     anchors:
       - web/src/app/useAppSessionKeyState.ts:const setMultiProjectSessionPending = useCallback(
       - web/src/app/useSessionPending.ts:const getSessionSnapshot = useCallback(
       - web/src/app/appSession.ts:mergeReplyingStateByNode
       - "web/src/hooks/useSessionStream.ts:isStreaming: isStreaming && !!sessionPending"
       - "web/src/components/session/SessionViewer.tsx:const isAwaiting = !!(session as any)?.pending;"
+      - web/src/shared/sessionPresence.ts:export function getSessionPresence(
+      - web/src/shared/sessionPresence.ts:export function computePresenceByKey(
+      - web/src/shared/sessionPresence.ts:export function applyPresenceToItems
+      - "web/src/components/session/SessionCard.tsx:session.presence === \"delegating\""
+      - "web/src/components/session/SessionViewerWaitingIndicator.tsx:const delegating = !isAwaiting && !isStreaming && !!isDelegating;"
+      - "web/src/hooks/useSessionStream.ts:setIsStreaming(!!sessionPending);"
+      - "web/src/app/useSessionSelection.ts:const preservePending = resolvePendingForSession(targetRoot, key, false);"
+      - "web/src/app/useAppViewComposition.ts:multiProjectPendingByKey[rootSessionKey(root, key)]"
 
   - id: G-AZ
     title: 任务卡视觉件：待审核状态徽标 / 列框去除 / 浮动滚动条 / 工作台角标移除

@@ -94,11 +94,9 @@ export function useSessionSelection(params: UseSessionSelectionParams) {
       if (!options?.preserveMainView) {
         switchMainView("chat");
       }
-      const currentDrawer = drawerSessionByRootRef.current[scopedRootKey(targetRoot)];
-      const preservePending =
-        currentDrawer?.key === key
-          ? !!(currentDrawer as any)?.pending
-          : !!(session as any)?.pending;
+      // 首帧 pending 只认真相表，不认抽屉/列表项上的陈旧快照 —— 切会话时那两份
+      // 可能还停在「上一轮在跑」上，先亮后灭就是可见的闪。查不到就按不在跑。
+      const preservePending = resolvePendingForSession(targetRoot, key, false);
       const searchTargetId =
         typeof session?.search_seq === "number"
           ? `${key}:${session.search_seq}:${++sessionSearchTargetCounterRef.current}`

@@ -6,7 +6,7 @@ to resume their old TODOs or baselines.
 
 ## Active
 
-No execution plan is currently active.
+| [Delegated presence and flicker](delegated-presence-and-flicker.md) | Active | Delegated-parent hollow presence + switch-flash fix in progress |
 
 ## Completed or superseded history
 

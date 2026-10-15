@@ -7,6 +7,7 @@
 import { normalizeFastService } from "./appTask";
 
 import { sessionKeyNodeId, scopeSessionKey } from "../shared/scope";
+import type { SessionPresence } from "../shared/sessionPresence";
 import {  QueuedUserMessage ,  RelatedFile ,  RelatedWorktree ,  Session ,  TokenUsage  } from "../services/session";
 
 export type SessionMode = "chat" | "plugin" | "command";
@@ -75,6 +76,8 @@ export type SessionItem = {
     token_usage?: TokenUsage;
   }>;
   pending?: boolean;
+  /** 派生三态（自有 pending / 后代在跑 / 全闲），由列表一次性盖上，见 shared/sessionPresence */
+  presence?: SessionPresence;
 };
 
 export type MultiProjectSessionGroup = {

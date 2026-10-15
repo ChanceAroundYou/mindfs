@@ -10,6 +10,7 @@ import type { useSessionPending } from "./useSessionPending";
  */
 export type UseAppSessionViewParams = {
   selectedSessionSnapshot: ReturnType<ReturnType<typeof useSessionPending>["getSessionSnapshot"]>;
+  selectedSessionPresence?: "running" | "delegating" | "idle";
   availableAgents: AgentStatus[];
   slashCommandResultForSession: (rootID: string | null | undefined, session: { key?: string; session_key?: string } | null | undefined) => SlashCommandResult | null;
   selectedSession: SessionItem | null;
@@ -42,7 +43,7 @@ export type UseAppSessionViewParams = {
  * 不该自己拼键。
  */
 export function useAppSessionView(params: UseAppSessionViewParams) {
-  const { selectedSessionSnapshot, availableAgents, slashCommandResultForSession, selectedSession, currentRootId, sessionViewerComposerOverlayInset, selectedSessionLoading, getRootDisplayName, getDisplayNodeColor, managedRootByIdRef, gitFileStatsByPath, handleSelectedSessionFileClick, actionHandlers, handleRemoveSessionRelatedFile, handleAskUserAnswer, handleEditUserMessage, handleForkAgentMessage } = params;
+  const { selectedSessionSnapshot, selectedSessionPresence = "idle", availableAgents, slashCommandResultForSession, selectedSession, currentRootId, sessionViewerComposerOverlayInset, selectedSessionLoading, getRootDisplayName, getDisplayNodeColor, managedRootByIdRef, gitFileStatsByPath, handleSelectedSessionFileClick, actionHandlers, handleRemoveSessionRelatedFile, handleAskUserAnswer, handleEditUserMessage, handleForkAgentMessage } = params;
 
   const sessionView = (
     <SessionViewer
@@ -54,6 +55,7 @@ export function useAppSessionView(params: UseAppSessionViewParams) {
       // 就是「完整对话 → 塌掉 → 慢慢补回来」。重挂载让可见集与会话同生共死。
       key={selectedSessionSnapshot?.key || "no-session"}
       session={selectedSessionSnapshot}
+      presence={selectedSessionPresence}
       agents={availableAgents}
       slashCommandResult={slashCommandResultForSession(
         selectedSession?.root_id || currentRootId,

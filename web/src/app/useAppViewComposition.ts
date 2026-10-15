@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect } from "react";
+import React, { useCallback, useEffect, useMemo } from "react";
 import { fetchTaskDetails } from "../services/tasks";
 import { useAppKanbanTaskPanel } from "./useAppKanbanTaskPanel";
 import { useAppRootContentRenderers } from "./useAppRootContentRenderers";
@@ -9,6 +9,7 @@ import { useAppMainViewActions } from "./useAppMainViewActions";
 import { useAppWorkspaceActions } from "./useAppWorkspaceActions";
 import { GitFileStat, MultiProjectSessionGroup, SessionItem, SlashCommandResult } from "./appSession";
 import { ManagedRootPayload, shouldShowUpdateButton, updateButtonLabel, updateSummaryText } from "./appMisc";
+import { applyPresenceToItems } from "../shared/sessionPresence";
 import { MainViewMode, buildFileScrollKey } from "./appPath";
 import type { URLState } from "./appPath";
 import { useAppWorkspaceBoardComposition } from "./useAppWorkspaceBoardComposition";
@@ -76,7 +77,7 @@ export function useAppViewComposition(params: UseAppViewCompositionParams) {
     refreshProjectTreeWorktrees, refreshTaskRelatedFiles, refreshTreeDir, relatedSelectedFileKey,
     replaceURLState, rootSessionKey, scopedRootKey, selectedDirRef,
     selectedExternalImportKeys, selectedKanbanTask, selectedKanbanTaskId, selectedKanbanTaskSessionSnapshot,
-    selectedSession, selectedSessionLoading, selectedSessionRef, selectedSessionSnapshot,
+    selectedSession, selectedSessionLoading, selectedSessionRef, selectedSessionSnapshot, selectedSessionPresence,
     sessionListMode, sessionSearchLoading, sessionSearchOpen, sessionSearchQuery,
     sessionSearchResults, sessionSearchResultsMode, sessions, setArchiveOpen,
     setCollapsedKanbanColumns, setCollapsedTaskCompletionGroups, setDrawerOpenForRoot, setEditDraftRequest,
@@ -92,6 +93,29 @@ export function useAppViewComposition(params: UseAppViewCompositionParams) {
     toggleSessionSearch, treeSortMode, updateSessionRelatedFilesForKey, updateState,
     updateSubmitting, workspaceBoardRefreshRef, workspaceOpen, worktreeErrorByRoot,
     worktreeItemsByRoot, worktreeLoadingByRoot, worktreeStatusByPath, worktreeStatusLoadingByPath } = params;
+
+  // 「委托中」三态在这条链上唯一一次算好、盖到列表项上（列表/头部/底部三处同源）。
+  // 放在这一层是因为只有这里有 pending 真相表：单项目列表的会话项本身不保证带
+  // 最新 pending（轮询只写分组），委托态若读项上的 pending 会永远算不出来。
+  // 逐张卡各算一遍是 O(n²)（流式期间 30ms 一次重渲染），故按列表算一次。
+  const sessionsWithPresence = useMemo(() => {
+    const projected = sessions.map((item) => {
+      const key = item.key || item.session_key || "";
+      const root = String((item as any).root_id || currentRootId || "");
+      const pending = !!multiProjectPendingByKey[rootSessionKey(root, key)];
+      return pending === !!item.pending ? item : ({ ...item, pending } as SessionItem);
+    });
+    return applyPresenceToItems(projected);
+  }, [sessions, currentRootId, multiProjectPendingByKey, rootSessionKey]);
+
+  const groupsWithPresence = useMemo(
+    () =>
+      multiProjectSessionGroups.map((group) => ({
+        ...group,
+        sessions: applyPresenceToItems(group.sessions || []),
+      })),
+    [multiProjectSessionGroups],
+  );
 
   const {
     handleSelectedSessionFileClick,
@@ -159,7 +183,7 @@ export function useAppViewComposition(params: UseAppViewCompositionParams) {
   const sessionViewerComposerOverlayInset: 20 = 20;
   const { sessionView
   } = useAppSessionView({
-    selectedSessionSnapshot, availableAgents, slashCommandResultForSession, selectedSession,
+    selectedSessionSnapshot, selectedSessionPresence, availableAgents, slashCommandResultForSession, selectedSession,
     currentRootId, sessionViewerComposerOverlayInset, selectedSessionLoading, getRootDisplayName,
     getDisplayNodeColor, managedRootByIdRef, gitFileStatsByPath, handleSelectedSessionFileClick,
     actionHandlers, handleRemoveSessionRelatedFile, handleAskUserAnswer, handleEditUserMessage,
@@ -386,7 +410,7 @@ export function useAppViewComposition(params: UseAppViewCompositionParams) {
     multiProjectSessionsEnabled,
     sessionSearchOpen,
     sessionSearchResultsMode,
-    multiProjectSessionGroups,
+    multiProjectSessionGroups: groupsWithPresence,
     activeBoundSessionKey,
     currentRootId,
     currentRootNodeId,
@@ -408,7 +432,7 @@ export function useAppViewComposition(params: UseAppViewCompositionParams) {
     loadMoreMultiProjectSessions,
     loadChildSessionsForParent,
     sessionSearchResults,
-    sessions,
+    sessions: sessionsWithPresence,
     sessionSearchQuery,
     sessionSearchLoading,
     toggleSessionSearch,

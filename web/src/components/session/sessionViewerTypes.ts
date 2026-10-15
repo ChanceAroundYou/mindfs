@@ -43,6 +43,8 @@ export type ExchangeArray = NonNullable<SessionItem["exchanges"]>;
 
 export type SessionViewerProps = {
   session: SessionItem | null;
+  /** 委托态：自己闲、后代在跑 → 空心「子代理运行中」（列表/头部/底部三处一致） */
+  presence?: "running" | "delegating" | "idle";
   loading?: boolean;
   slashCommandResult?: {
     sessionKey?: string;
