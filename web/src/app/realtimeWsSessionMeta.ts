@@ -1,7 +1,7 @@
 import type { RealtimeEventsContext } from "./useRealtimeEventsContext";
 import type { RealtimeWsHandlersLocal } from "./realtimeWsHandlers";
 import { normalizeFastService } from "./appTask";
-import { normalizeMode } from "./appSession";
+import { normalizeMode, normalizeSessionAuxFlags } from "./appSession";
 import type { SessionItem } from "./appSession";
 import type { RelatedWorktree, Session } from "../services/session";
 
@@ -99,6 +99,16 @@ export function createSessionMetaHandlers(
                 payload.session.related_worktree !== undefined
                   ? payload.session.related_worktree
                   : (cached as any).related_worktree,
+              // worktree_missing 与 aux_flags 都是服务端派生：payload 带才覆盖，
+              // 不带（旧广播/部分更新）沿用缓存 —— 与 related_worktree 同一合并语义。
+              worktree_missing:
+                typeof payload.session.worktree_missing === "boolean"
+                  ? payload.session.worktree_missing
+                  : (cached as any).worktree_missing,
+              aux_flags:
+                payload.session.aux_flags !== undefined
+                  ? normalizeSessionAuxFlags(payload.session.aux_flags)
+                  : (cached as any).aux_flags,
               pinned_at:
                 payload.session.pinned_at !== undefined
                   ? payload.session.pinned_at || undefined
@@ -161,6 +171,14 @@ export function createSessionMetaHandlers(
                       payload.session.related_worktree !== undefined
                         ? payload.session.related_worktree
                         : (prev as any).related_worktree,
+                    worktree_missing:
+                      typeof payload.session.worktree_missing === "boolean"
+                        ? payload.session.worktree_missing
+                        : (prev as any).worktree_missing,
+                    aux_flags:
+                      payload.session.aux_flags !== undefined
+                        ? normalizeSessionAuxFlags(payload.session.aux_flags)
+                        : (prev as any).aux_flags,
                     pinned_at:
                       payload.session.pinned_at !== undefined
                         ? payload.session.pinned_at || undefined

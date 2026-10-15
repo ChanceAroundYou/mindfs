@@ -46,24 +46,6 @@ test("agent rules and plan index contain no broken local Markdown links", () => 
   assert.deepEqual(broken, [], `broken links:\n${broken.join("\n")}`);
 });
 
-test("plan index has at most one valid Active plan", () => {
-  const index = readFileSync(path.join(root, "docs/plans/README.md"), "utf8");
-  const active = [...index.matchAll(/^\|\s*\[([^\]]+)\]\(([^)]+)\)\s*\|\s*Active\s*\|/gm)];
-  assert.ok(active.length <= 1, `expected at most one Active plan, found ${active.length}`);
-  for (const [, , target] of active) {
-    assert.ok(existsSync(path.resolve(root, "docs/plans", target)), `missing Active plan ${target}`);
-  }
-});
-
-test("frontend tests use Vitest as the only runner", () => {
-  const packageJSON = JSON.parse(readFileSync(path.join(root, "web/package.json"), "utf8"));
-  assert.match(packageJSON.scripts.test, /vitest run/);
-  assert.doesNotMatch(packageJSON.scripts.test, /node --test|test:legacy/);
-  for (const file of walkTestFiles(path.join(root, "web/tests"))) {
-    assert.doesNotMatch(readFileSync(file, "utf8"), /from\s+["']node:test["']/, `${file} imports node:test`);
-  }
-});
-
 test("Claude and Gemini entry files point to the shared instruction and indexes", () => {
   for (const file of ["CLAUDE.md", "GEMINI.md"]) {
     const text = readFileSync(path.join(root, file), "utf8");

@@ -36,8 +36,11 @@ export const zhCNSessions = {
   "sessionList.sync": "同步",
   "sessionList.rename": "重命名",
   "sessionList.replying": "正在回复",
+  // 三套文案并存，各服务不同视觉件，别合并成一个键：
+  // delegating/awaitingAnswer 喂灯态空心点；awaitingUser 喂 aux_flags 的问号徽标（G-AD）。
   "sessionList.delegating": "子代理运行中",
   "sessionList.awaitingAnswer": "等待你回答",
+  "sessionList.awaitingUser": "待用户回答",
   "sessionList.menu": "会话菜单",
   "sessionList.searchCurrentProject": "搜索当前项目会话",
   "sessionList.noSearchMatch": "未找到匹配会话",

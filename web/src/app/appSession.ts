@@ -8,6 +8,7 @@ import { normalizeFastService } from "./appTask";
 
 import { sessionKeyNodeId, scopeSessionKey } from "../shared/scope";
 import type { SessionPresence } from "../shared/sessionPresence";
+import type { SessionAuxFlags } from "../shared/sessionTypes";
 import {  QueuedUserMessage ,  RelatedFile ,  RelatedWorktree ,  Session ,  TokenUsage  } from "../services/session";
 
 export type SessionMode = "chat" | "plugin" | "command";
@@ -59,6 +60,10 @@ export type SessionItem = {
   search_match_type?: "name" | "user" | "reply";
   related_files?: RelatedFile[];
   related_worktree?: RelatedWorktree | null;
+  worktree_missing?: boolean;
+  // aux_flags 是会话行的内容徽标数据源（G-AD）：toSessionItem 从列表 payload 透传，
+  // 与 sessionListTypes.SessionItem 的同名字段同义（WS 增量另见 realtimeWsSessionMeta）。
+  aux_flags?: SessionAuxFlags;
   exchanges?: Array<{
     seq?: number;
     role?: string;
@@ -78,7 +83,7 @@ export type SessionItem = {
     token_usage?: TokenUsage;
   }>;
   pending?: boolean;
-  /** 派生三态（自有 pending / 后代在跑 / 全闲），由列表一次性盖上，见 shared/sessionPresence */
+  /** 派生四态（自有 pending / 等回答 / 后代在跑 / 全闲），由列表一次性盖上，见 shared/sessionPresence */
   presence?: SessionPresence;
 };
 
@@ -294,12 +299,37 @@ export function toSessionItem(
         : session?.related_worktree && typeof session.related_worktree === "object"
           ? session.related_worktree
           : undefined,
+    worktree_missing:
+      typeof session?.worktree_missing === "boolean" ? session.worktree_missing : undefined,
+    aux_flags: normalizeSessionAuxFlags(session?.aux_flags),
     pending: typeof session?.pending === "boolean" ? session.pending : undefined,
     // 多节点同名项目：记录会话归属节点，选择会话时按节点路由
     ...(typeof (session as any)?._nodeId === "string" && (session as any)._nodeId
       ? { _nodeId: (session as any)._nodeId as string }
       : {}),
   } as SessionItem;
+}
+
+// normalizeSessionAuxFlags 是 aux_flags 的唯一归一化点（G-AD）：toSessionItem 与
+// session.meta.updated 增量合并共用。布尔缺省 false、error 缺省空串；非对象输入
+// （历史 payload / 缓存）一律归一成空徽标，不抛错。
+export function normalizeSessionAuxFlags(value: unknown): SessionAuxFlags | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const raw = value as Record<string, unknown>;
+  const error = typeof raw.session_error === "string" ? raw.session_error.trim() : "";
+  const flags: SessionAuxFlags = {
+    ask_user_waiting: raw.ask_user_waiting === true,
+    has_plan: raw.has_plan === true,
+    has_todos: raw.has_todos === true,
+    has_task: raw.has_task === true,
+    ...(error ? { session_error: error } : {}),
+  };
+  if (!flags.ask_user_waiting && !flags.has_plan && !flags.has_todos && !flags.has_task && !error) {
+    return undefined;
+  }
+  return flags;
 }
 
 export type Exchange = {

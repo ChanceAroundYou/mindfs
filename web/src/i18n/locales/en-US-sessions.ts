@@ -36,8 +36,11 @@ export const enUSSessions = {
   "sessionList.sync": "Sync",
   "sessionList.rename": "Rename",
   "sessionList.replying": "Replying",
+  // 三套文案并存，各服务不同视觉件，别合并成一个键：
+  // delegating/awaitingAnswer 喂灯态空心点；awaitingUser 喂 aux_flags 的问号徽标（G-AD）。
   "sessionList.delegating": "Subagent running",
   "sessionList.awaitingAnswer": "Waiting for you",
+  "sessionList.awaitingUser": "Waiting for your answer",
   "sessionList.menu": "Session menu",
   "sessionList.searchCurrentProject": "Search current project sessions",
   "sessionList.noSearchMatch": "No matching sessions",

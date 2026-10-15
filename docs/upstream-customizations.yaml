@@ -833,6 +833,20 @@ groups:
       - web/src/services/session/sessionGroupDisplay.ts
       - web/src/app/useSessionSearch.ts
       - web/src/app/useSessionSidebarView.tsx
+      - server/internal/session/types.go
+      - server/internal/session/manager.go
+      - server/internal/session/manager_meta.go
+      - server/internal/session/manager_sqlite.go
+      - server/internal/api/appcontext.go
+      - server/internal/api/http_sessions.go
+      - server/internal/api/ws.go
+      - web/src/shared/sessionTypes.ts
+      - web/src/services/session/sessionService.ts
+      - web/src/app/appSession.ts
+      - web/src/app/realtimeWsSessionMeta.ts
+      - web/src/components/session/sessionListTypes.ts
+      - web/src/components/session/SessionCard.tsx
+      - web/src/components/session/SessionStatusBadges.tsx
     tests:
       - web/tests/session-list-merge.test.mjs
       - web/tests/session-tree.test.mjs
@@ -840,6 +854,9 @@ groups:
       - web/tests/session-archive.test.mjs
       - web/tests/archived-panel.test.mjs
       - web/tests/session-duration.test.mjs
+      - web/tests/session-status-badges.test.mjs
+      - server/internal/session/manager_session_aux_flags_test.go
+      - server/internal/api/http_session_aux_flags_test.go
 
   - id: G-AE
     title: UI 基础设施（自建对话框 / Toast / 面板外壳）
@@ -1761,7 +1778,8 @@ groups:
       （单 seq 最多 189 张）同步渲染。
     why: |
       七条各自独立的坏法，合起来才是「打开会话慢」：
-      ① **窗口去重**（`web/src/services/session.ts`）：`getSessionWindow` 用
+      ① **窗口去重**（`web/src/services/session/sessionWindowFetch.ts`，2026-10-15
+      从 `sessionService.ts` 抽出、类里只剩薄转发）：`fetchSessionWindow` 用
       `windowInflight` 把同 (nodeId, rootId, sessionKey, beforeSeq, latest, limit) 的
       并发调用合并成一个 Promise。键必须含 nodeId —— 同名项目跨节点是两个不同请求。
       在途表在 finally 里删，所以结算后再调用仍会重新发（去重不是缓存）。
@@ -1796,6 +1814,8 @@ groups:
       - server/internal/session/compact_toolcall_test.go
       - server/internal/session/aux_window_tail_test.go
       - web/src/services/session.ts
+      - web/src/services/session/sessionService.ts
+      - web/src/services/session/sessionWindowFetch.ts
       - web/src/app/useRealtimeEvents.ts
       - web/src/hooks/useSessionStream.ts
       - web/src/components/session/SessionViewer.tsx
@@ -1821,7 +1841,7 @@ groups:
       - server/internal/session/types.go:func lightCompactToolCall
       - server/internal/session/types.go:func dropEditRedundantMeta
       - server/internal/session/manager_aux_reads.go:CompactExchangeAuxLight(entry)
-      - web/src/services/session/sessionService.ts:private windowInflight
+      - web/src/services/session/sessionWindowFetch.ts:const windowInflight = new Map
       - web/src/services/session/sessionService.ts:export const SESSION_WINDOW_SIZE = 8;
       - web/src/app/useRealtimeEvents.ts:const relatedFilesRefreshTimers = useRef(new Map<string, number>());
       - web/src/hooks/sessionTimeline.ts:export function groupConsecutiveToolCalls
@@ -1829,6 +1849,7 @@ groups:
       - 'server/internal/session/types.go:CUSTOM(G-AT)'
       - 'server/internal/session/manager_aux_reads.go:CUSTOM(G-AT)'
       - 'web/src/services/session/sessionService.ts:CUSTOM(G-AT)'
+      - 'web/src/services/session/sessionWindowFetch.ts:CUSTOM(G-AT)'
       - 'web/src/hooks/sessionTimeline.ts:CUSTOM(G-AT)'
       - 'web/src/components/session/SessionViewer.tsx:CUSTOM(G-AT)'
   - id: G-AU
@@ -3449,7 +3470,7 @@ groups:
     anchors:
       - docs/agent/rules/frontend/TODO.md:目前没有待处理的一次性存量事项
       - docs/plans/README.md:Rule completion rollout
-      - web/tests/agent-docs.test.mjs:every plan is classified in the sole plans index
+      - web/tests/agent-docs.test.mjs:test("agent rule and plan index links resolve"
   - id: G-BZ
     title: 将 plan 前缀逻辑移出 action view
     kind: arch
@@ -6433,7 +6454,7 @@ groups:
       - docs/upstream-customizations.yaml
     anchors:
       - web/tests/agent-docs-contract.test.mjs:test("agent rules and plan index contain no broken local Markdown links"
-      - 'web/tests/agent-docs-contract.test.mjs:test("plan index has at most one valid Active plan"'
+      - 'web/tests/agent-docs-contract.test.mjs:test("Claude and Gemini entry files point to the shared instruction and indexes"'
       - web/tests/agent-docs-contract.test.mjs:test("Claude and Gemini entry files point to the shared instruction and indexes"
 
   - id: G-GQ
@@ -7944,7 +7965,7 @@ groups:
       - docs/upstream-customizations.md
       - docs/upstream-customizations.yaml
     anchors:
-      - web/tests/agent-docs-contract.test.mjs:test("frontend tests use Vitest as the only runner"
+      - web/tests/agent-docs-contract.test.mjs:test("ship instructions match the sole frontend test runner"
       - web/tests/naming-convention.test.mjs:test(".ts files contain no JSX"
       - web/tests/reviewer-architecture-rules.test.mjs:test("components do not import services directly"
       - web/tests/reviewer-architecture-rules.test.mjs:test("all frontend source files stay under 500 lines"

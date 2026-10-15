@@ -1019,6 +1019,7 @@ func sessionListResponse(s *session.Session, resolvedShell string) map[string]an
 		"name":                s.Name,
 		"related_worktree":    s.RelatedWorktree,
 		"worktree_missing":    s.RelatedWorktree.WorktreeMissing(),
+		"aux_flags":           s.Aux.AuxFlagsPayload(),
 		"pinned_at":           s.PinnedAt,
 		"archived_at":         s.ArchivedAt,
 		"created_at":          s.CreatedAt,
