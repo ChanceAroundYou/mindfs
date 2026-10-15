@@ -10,6 +10,19 @@ export type PinAwareSessionItem = {
   pinned_at?: string | null;
 };
 
+/**
+ * 项目/会话按活动时间重排的迟滞阈值（毫秒）。
+ *
+ * 两个都在进行的会话会每 100ms 交替推进 activity_at，若比较器按毫秒
+ * 直接比大小，列表会疯狂交替抖动。差距小于该阈值时视为"同时在跑"，
+ * 保持原有相对顺序（fallback 到稳定的 compareStable），不重排。
+ */
+export const ACTIVITY_REORDER_HYSTERESIS_MS = 30_000;
+
+function withinHysteresis(leftTime: number, rightTime: number): boolean {
+  return Math.abs(leftTime - rightTime) < ACTIVITY_REORDER_HYSTERESIS_MS;
+}
+
 function sessionKey(item: PinAwareSessionItem): string {
   return String(item.key || item.session_key || "");
 }
@@ -68,8 +81,12 @@ export function orderProjectGroupsByNode<T extends ProjectGroupActivity>(
   const compareWithinNode = (left: T, right: T): number => {
     const pinOrder = Number(isPinned(right)) - Number(isPinned(left));
     if (pinOrder !== 0) return pinOrder;
-    const recency = projectActivityTime(right) - projectActivityTime(left);
-    return recency !== 0 ? recency : compareStable(left, right);
+    const leftTime = projectActivityTime(left);
+    const rightTime = projectActivityTime(right);
+    if (!withinHysteresis(leftTime, rightTime) && rightTime !== leftTime) {
+      return rightTime - leftTime;
+    }
+    return compareStable(left, right);
   };
   const orderedKeys = [
     ...new Set(nodeOrder.map((key) => String(key || "").trim()).filter(Boolean)),
@@ -169,7 +186,7 @@ function compareSessionItems(left: PinAwareSessionItem, right: PinAwareSessionIt
   }
   const leftUpdated = sessionActivityTime(left);
   const rightUpdated = sessionActivityTime(right);
-  if (leftUpdated !== rightUpdated) {
+  if (rightUpdated !== leftUpdated && !withinHysteresis(leftUpdated, rightUpdated)) {
     return rightUpdated - leftUpdated;
   }
   return sessionKey(left).localeCompare(sessionKey(right));

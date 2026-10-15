@@ -3074,6 +3074,10 @@ groups:
          未配置的节点排最后且顺序稳定 —— 否则每台机器上线顺序一变，列表整排重洗。
       4) 退役多项目预渲染与其缓存键（`multiRootSessionListCacheKey`）：见上。
          单项目列表缓存仍按账户隔离，不动。
+      5) 活动时间重排加迟滞阈值（`ACTIVITY_REORDER_HYSTERESIS_MS = 30s`）：两个
+         都在跑的会话每 100ms 交替推进 activity_at，比较器按毫秒直接比大小会让
+         列表疯狂交替。差距小于阈值时视为同时在跑，保持稳定顺序、不重排；
+         阈值以上仍按活动倒序。阈值只抑抖动、不锁死顺序。
     boundary: |
       排序键与流事件如何推进它；多项目预渲染的退役。C1 补色、C2 逐组合并、
       `_unreachable` 三条定制全部保留。
@@ -3094,6 +3098,7 @@ groups:
       - web/src/services/session/sessionListMerge.ts:orderProjectGroupsByNode
       - web/src/services/session/sessionListMerge.ts:sessionActivityAt
       - web/src/services/session/sessionListMerge.ts:projectActivityTime
+      - web/src/services/session/sessionListMerge.ts:ACTIVITY_REORDER_HYSTERESIS_MS
       - web/src/app/useRealtimeEvents.ts:handleSessionStream
       - server/internal/session/manager_session_list.go:LatestSessionUpdatedAt
 
