@@ -1,4 +1,3 @@
-import { estimateCommandTerminalCols } from "./sessionTerminalLayout";
 import type { CachedSessionListRecord, CachedSessionRecord } from "./sessionCacheTypes";
 import { appURL, wsURL } from "../net/base";
 import { getRootNodeId } from "../net/rootNode";
@@ -35,6 +34,7 @@ import {
   buildSlashCommandMessage,
 } from "./sessionOutbound";
 import { appendSessionDelta, cloneExchangeAux, getSessionMaxSeq, toPersistentExchangeAux, withSessionMeta } from "./sessionExchangeMerge";
+import { fetchSessionWindow } from "./sessionWindowFetch";
 import { createRequestId, generateClientId } from "./sessionIdentifiers";
 export {
   getCachedSessionList,
@@ -74,18 +74,13 @@ import type {
   FetchExternalSessionsOptions,
   FetchSessionsOptions,
   MultiRootSessionGroup,
-  PendingMessage,
   RelatedFile,
   Session,
-  SessionEventHandler,
   SessionListPayload,
   SessionSearchHit,
-  SessionServiceEvent,
   SessionType,
   SessionWindow,
-  SessionWindowMeta,
   SessionWindowOptions,
-  StreamEvent,
   ToolCall,
 } from "./sessionTypes";
 export type {
@@ -118,28 +113,6 @@ export type {
 
 // Session service for managing agent sessions
 
-const commandTerminalFontSize = 12;
-const commandTerminalFontFamily =
-  '"Cascadia Mono", "Cascadia Code", Consolas, "Microsoft YaHei Mono", "Microsoft YaHei", "Noto Sans Mono CJK SC", monospace';
-
-function measureCommandTerminalCellWidth(): number {
-  if (typeof document === "undefined") return 7.25;
-  const probe = document.createElement("span");
-  probe.textContent = "mmmmmmmmmm";
-  probe.style.position = "fixed";
-  probe.style.left = "-9999px";
-  probe.style.top = "0";
-  probe.style.visibility = "hidden";
-  probe.style.pointerEvents = "none";
-  probe.style.whiteSpace = "pre";
-  probe.style.fontFamily = commandTerminalFontFamily;
-  probe.style.fontSize = `${commandTerminalFontSize}px`;
-  document.body.appendChild(probe);
-  const width = probe.getBoundingClientRect().width / 10;
-  probe.remove();
-  return width > 0 ? width : 7.25;
-}
-
 /**
  * 聊天消息窗口尺寸（首屏拉取条数 / 上翻步长）。会话窗口化的唯一尺寸来源：
  * SessionViewer 的 init `latest:`、首帧种子截断、loadMore 步长、targetSeq 取窗步长，
@@ -158,10 +131,6 @@ class SessionService {
   readonly dispatcher = new SessionDispatcher(() => this.nodeId);
   private readonly connection: SessionConnectionManager;
   private contextCache = new Map<string, { selectionKey: string }>();
-  // 窗口拉取的 in-flight 去重：打开会话时 restoreActiveSession 与 SessionViewer init
-  // 会各发一次 ?latest=20，并发时谁也拿不到对方的 ETag，两次都拉全量（实测日志里
-  // 同一秒两个 200）。这里把同参数的并发调用合并成同一个 promise。
-  private windowInflight = new Map<string, Promise<SessionWindow | null>>();
   private readonly clientId = this.generateClientId();
 
   constructor() {
@@ -270,59 +239,15 @@ class SessionService {
   }
 
   /**
-   * 窗口化拉取单段会话数据（方案 B）。before_seq/limit 取历史窗口，
-   * latest 取尾部窗口；互斥由后端校验。透传 nodeId（缺省按 root 解析）。
-   * 响应兼容顶层 `window_meta` 或嵌入 `session.window_meta`。
+   * 窗口化拉取单段会话数据（方案 B）。实现见 sessionWindowFetch.ts ——
+   * 类方法只做薄转发，调用方（sessionWindow.ts / hooks）零改动。
    */
   async getSessionWindow(
     rootId: string,
     sessionKey: string,
     opts?: SessionWindowOptions,
   ): Promise<SessionWindow | null> {
-    try {
-      const nodeId = opts?.nodeId || getRootNodeId(rootId);
-      const params = new URLSearchParams({ root: rootId });
-      if (typeof opts?.beforeSeq === "number" && opts.beforeSeq > 0) {
-        params.set("before_seq", String(opts.beforeSeq));
-      }
-      if (typeof opts?.latest === "number" && opts.latest > 0) {
-        params.set("latest", String(opts.latest));
-      }
-      const limit = Number(opts?.limit || 0);
-      if (limit > 0) {
-        params.set("limit", String(limit));
-      }
-      // CUSTOM(G-AT): 上游没有这层去重，同一次打开会话的两个并发调用会把几百 KB 的
-      // 窗口载荷各传一遍（实测每个 sessionKey 在 ?latest=N 日志里恰好出现两次）。
-      // in-flight 去重：同参数的并发窗口拉取合并成一次请求。
-      // 键含 nodeId —— 同名项目跨节点是两个不同的请求，不能互相顶掉。
-      const inflightKey = `${nodeId}::${rootId}::${sessionKey}::${opts?.beforeSeq || 0}::${opts?.latest || 0}::${limit}`;
-      const existing = this.windowInflight.get(inflightKey);
-      if (existing) {
-        return existing;
-      }
-      const promise = (async (): Promise<SessionWindow | null> => {
-        const raw = await protectedJSON<any>(
-          appURL(`/api/sessions/${encodeURIComponent(sessionKey)}`, params, nodeId),
-        );
-        const session = (raw?.session as Session | any) || (raw as Session | any);
-        const meta = (raw?.window_meta || session?.window_meta) as SessionWindowMeta;
-        if (!meta) {
-          console.error("[Session] getSessionWindow: missing window_meta", raw);
-          return null;
-        }
-        return { session, meta, raw };
-      })();
-      this.windowInflight.set(inflightKey, promise);
-      try {
-        return await promise;
-      } finally {
-        this.windowInflight.delete(inflightKey);
-      }
-    } catch (err) {
-      console.error("[Session] Failed to get session window:", err);
-      return null;
-    }
+    return fetchSessionWindow(rootId, sessionKey, opts);
   }
 
   // 显式别名：现有 getSession 的增量语义（?seq=N 取 seq>N），供流式尾部追加复用。

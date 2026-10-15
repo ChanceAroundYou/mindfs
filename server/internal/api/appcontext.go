@@ -905,6 +905,7 @@ func (s *AppContext) BroadcastSessionMetaUpdated(rootID string, sess *session.Se
 				"plan_mode":           sess.PlanMode,
 				"related_worktree":    sess.RelatedWorktree,
 				"worktree_missing":    sess.RelatedWorktree.WorktreeMissing(),
+				"aux_flags":           sess.Aux.AuxFlagsPayload(),
 				"updated_at":          sess.UpdatedAt,
 			},
 		},
@@ -1020,6 +1021,13 @@ func (s *AppContext) ClearTaskAuxFlagsForSession(rootID, sessionKey string) {
 		HasTask:        &no,
 		SessionError:   &empty,
 	}, "aux_flags_cleared")
+	s.updateSessionAuxFlags(rootID, sessionKey, session.SessionAuxFlagsPatch{
+		AskUserWaiting: &no,
+		HasPlan:        &no,
+		HasTodos:       &no,
+		HasTask:        &no,
+		SessionError:   &empty,
+	})
 }
 
 func (s *AppContext) UpdateTaskSessionErrorForSession(rootID, sessionKey, message string) {
@@ -1030,6 +1038,9 @@ func (s *AppContext) UpdateTaskSessionErrorForSession(rootID, sessionKey, messag
 	s.updateTaskAuxFlagsForSession(rootID, sessionKey, kanban.TaskAuxFlagsPatch{
 		SessionError: &trimmed,
 	}, "agent_session_error")
+	s.updateSessionAuxFlags(rootID, sessionKey, session.SessionAuxFlagsPatch{
+		SessionError: &trimmed,
+	})
 }
 
 // EndSessionTurn 是**回合的唯一终结器**：通知 → 广播 session.done → 按回合 mindfs_id 清 pending。
@@ -1156,6 +1167,7 @@ func (s *AppContext) updateTaskAuxFlagsFromEvent(rootID, sessionKey string, even
 		return
 	}
 	s.updateTaskAuxFlagsForSession(rootID, sessionKey, patch, eventType)
+	s.updateSessionAuxFlagsFromTaskPatch(rootID, sessionKey, patch)
 }
 
 func (s *AppContext) updateTaskAuxFlagsForSession(rootID, sessionKey string, patch kanban.TaskAuxFlagsPatch, eventType string) {
@@ -1177,6 +1189,34 @@ func (s *AppContext) updateTaskAuxFlagsForSession(rootID, sessionKey string, pat
 	if _, err := svc.UpdateTaskAuxFlags(context.Background(), rootID, sess.TaskID, patch, eventType); err != nil {
 		log.Printf("[kanban] task.aux_flags.update.error root=%s task=%s session=%s err=%v", rootID, sess.TaskID, sessionKey, err)
 	}
+}
+
+// updateSessionAuxFlags 写会话行的内容徽标（G-AD），与上面的任务行写入并列。
+// 区别只有守卫：会话行不要求 sess.TaskID —— 普通聊天会话也落盘。
+func (s *AppContext) updateSessionAuxFlags(rootID, sessionKey string, patch session.SessionAuxFlagsPatch) {
+	if s == nil {
+		return
+	}
+	manager, err := s.GetSessionManager(rootID)
+	if err != nil {
+		return
+	}
+	if err := manager.UpdateSessionAuxFlags(context.Background(), sessionKey, patch); err != nil {
+		log.Printf("[session] session.aux_flags.update.error root=%s session=%s err=%v", rootID, sessionKey, err)
+	}
+}
+
+// updateSessionAuxFlagsFromTaskPatch 把任务行 patch 同语义镜像到会话行。
+// 字段与 kanban.TaskAuxFlagsPatch 一一对应（同名同义），调用点与
+// updateTaskAuxFlagsForSession 并列，不改任务行语义。
+func (s *AppContext) updateSessionAuxFlagsFromTaskPatch(rootID, sessionKey string, patch kanban.TaskAuxFlagsPatch) {
+	s.updateSessionAuxFlags(rootID, sessionKey, session.SessionAuxFlagsPatch{
+		AskUserWaiting: patch.AskUserWaiting,
+		HasPlan:        patch.HasPlan,
+		HasTodos:       patch.HasTodos,
+		HasTask:        patch.HasTask,
+		SessionError:   patch.SessionError,
+	})
 }
 
 func (s *AppContext) notifyScheduled(rootID, taskID, taskName, sessionKey, summary, message string, success bool) {

@@ -336,6 +336,7 @@ func (h *WSHandler) broadcastSessionMetaUpdated(rootID string, sess *session.Ses
 				"plan_mode":           sess.PlanMode,
 				"related_worktree":    sess.RelatedWorktree,
 				"worktree_missing":    sess.RelatedWorktree.WorktreeMissing(),
+				"aux_flags":           sess.Aux.AuxFlagsPayload(),
 				"pinned_at":           sess.PinnedAt,
 				"updated_at":          sess.UpdatedAt,
 			},

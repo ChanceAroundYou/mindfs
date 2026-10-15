@@ -36,6 +36,7 @@ export const enUSSessions = {
   "sessionList.sync": "Sync",
   "sessionList.rename": "Rename",
   "sessionList.replying": "Replying",
+  "sessionList.awaitingUser": "Waiting for your answer",
   "sessionList.menu": "Session menu",
   "sessionList.searchCurrentProject": "Search current project sessions",
   "sessionList.noSearchMatch": "No matching sessions",
