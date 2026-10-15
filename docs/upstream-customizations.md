@@ -1467,9 +1467,10 @@
   - `web/tests/workspace-board.test.mjs` — attention bar 必须不存在；taskRow wrapper 必须是 `<article>`
   - `web/tests/task-card-wrap.test.mjs` — `workspaceTaskNameStyle` 断言已移除
 
-### G-AY 委托态三态（空心灯）与切换首帧不闪（2026-10-15）
+### G-IY 委托态三态（空心灯）与切换首帧不闪（2026-10-15）
 
-> 与上面两条同属一个边界：**前端怎么表达「这个会话在不在跑」**。
+> 与上面两条同属一个面（**会话在不在跑**），但本组管的是**表达形态**与**首帧读哪一份**；
+> 状态的存放方式仍归 G-AY。
 
 - 来源：`web/src/shared/sessionPresence.ts`（新增，纯函数）、
   `web/src/components/session/SessionCard.tsx`、`web/src/components/session/SessionViewerHeader.tsx`、
@@ -3680,3 +3681,45 @@ G-CH 还将默认节点强调色与调色板定义迁到 `shared/nodePalette.ts`
 - **可见症状**：排队消息卡的 ✎/删除/立即发送按钮下半被输入条盖住；滚到底时最后一条 user 消息的复制等按钮被悬浮输入条挡住半颗；assistant 消息点复制完全没反应。
 - **根因与边界**：排队列表底只留 4px 间隙，28px 按钮下沿掉进输入条上沿；会话内容区底留白写死、未用 composerOverlayInset 派生且缺 scroll-padding-bottom；Timeline 分叉处 Assistant 缺 6 个 copy props，点击同步抛 TypeError 且无反馈。只改三处：排队列表底间隙 4px→8px；会话内容底留白与滚动 scroll-padding 由 composerOverlayInset 派生；Timeline 给 Assistant 补齐 copy props。不动 composer 高、不动按钮尺寸、不改 clipboard 链。
 - **针对性测试**：`web/tests/queued-overlay-and-copy.test.mjs` → A1 排队卡底间隙 ≥8px、A2 双断点同间隙、B1 会话底留白与 scroll-padding、C1 Timeline 给 Assistant 透传 6 个 copy props。
+
+### G-IZ Claude 合成子代理可取消（停止按钮不再是空操作，2026-10-15）
+
+- **可见症状**：子会话（Claude `Task` 子代理）卡住不动、在会话列表里**永远亮着**「在回复」，
+  点停止按钮**完全没反应**（点几次都一样）；刷新、切换、等多久都不消失，只能重启服务。
+- **根因（2026-10-15 现场实测，journalctl + 会话库只读）**：
+  `1792065145-baadd0e7dbd9`（父 `1792047067-e7f430da1a1b`）的转录最后一行停在 20:09:42 之后再无输出，
+  但 `/api/replying-sessions` 到 20:30 仍报它 `replying`；日志里同一条 `[ws] session.cancel
+  root=xiaokubao session=1792065145-baadd0e7dbd9 target_turn=0` 出现了 **11 次**，全部静默返回。
+  三处叠加，缺一不可：
+  1. `claudeSubagentRouter.attach` **从不 registerActiveTurn**（对比 Codex 协作路径
+     `startSubagentSubscription` 有）。`Service.CancelSessionTurn` 拿到 `active == nil`
+     直接 `return nil` —— 静默"成功"。
+  2. 就算登记了也掐不动：`syntheticAgentSession.CancelCurrentTurn()` 无条件 `return nil`，
+     是第二个空操作。
+  3. 父轮收尾的 `FinishAll` 只遍历**本 turn 的 router**，而且原先既不是 defer、
+     也不注销活跃轮次；子代理一旦漏收，pending 再没有第二个出口。
+  于是 pending 只等 `MessageDone` 一条路，而 CLI 侧已死 —— 灯永久常亮。
+- **为什么必须保留**：这是「子代理是一等会话（有自己的 key、能在列表里被选中、能点停止）」
+  这一条产品约定的兑现点。上游只做父会话的取消，本组补的是**按子代理 key 取消**。
+  合上游时若 `CancelSessionTurn` 又回到「active==nil 就静默返回」、或 `attach` 不再登记，
+  症状立刻回来（停止按钮失灵 + 灯不灭）。
+- **改了什么**：
+  - `attach()` 建可取消上下文（`subagentSessionInput.Ctx`，零值退回 Background）、
+    `registerActiveTurn` + `setActiveTurnSession`，并把关闭函数注入 runtime。
+  - `syntheticAgentSession.CancelCurrentTurn()` 真正调用注入的关闭函数。
+  - `claudeSyntheticSubagent.close()` 成为**唯一收尾点**（幂等）：`done()` 落盘并发终帧 →
+    `cancel()` 掐订阅 → `unregisterActiveTurn`。顺序不可换：`done()` 用订阅上下文落盘，
+    先掐上下文会让子代理正文写不下去（灯灭了字也丢了，有测试钉住）。
+  - `Handle` 对**已关闭**子代理的更新改为**吃掉**（`return true`）而不是落回父会话 ——
+    否则取消之后父进程吐出的残余子代理输出会串进父会话正文（G-BX 是同一类串话）。
+  - 终帧挂成 `defer`：落盘失败也必发。落了盘却让灯永远亮着，用户看到的是「卡死」，
+    比丢一段正文更难查。
+  - `FinishAll` 改为 `defer`（本轮任何提前返回/panic 都收尾）。
+- **边界**：子代理的**生命周期归属与取消**。不碰父 turn（取消子代理不打断父的 CLI），
+  也不改 `session.cancel` 的 stale 门（`ActiveTurnID` 在读循环同步取证那条契约不变）。
+  合成子代理没有可中断的进程（输出来自父进程的 CLI 流），能掐的就是订阅本身 ——
+  这是设计限制，不是遗漏。
+- **针对性测试**：`server/internal/api/usecase/session_subagent_cancel_test.go` →
+  attach 必须登记活跃轮次（不登记则取消被当「无活跃轮」丢弃）、取消必须发出终帧并关闭子会话
+  且**保留已产生的正文**（钉住 `close()` 里 `done()` 早于 `cancel()`）、已关闭子代理的后续
+  更新必须被吃掉、`FinishAll` 必须注销活跃轮次。

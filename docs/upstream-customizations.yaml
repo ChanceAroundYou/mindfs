@@ -1947,14 +1947,52 @@ groups:
     tests:
       - web/tests/pending-single-source.test.mjs
       - web/tests/use-session-stream.test.mjs
-      - web/tests/session-presence.test.mjs
-      - web/tests/switch-no-flash.test.mjs
     files:
       - web/src/App.tsx
       - web/src/app/useRealtimeEvents.ts
       - web/src/app/appSession.ts
       - web/src/hooks/useSessionStream.ts
       - web/src/components/session/SessionViewer.tsx
+    anchors:
+      - web/src/app/useAppSessionKeyState.ts:const setMultiProjectSessionPending = useCallback(
+      - web/src/app/useSessionPending.ts:const getSessionSnapshot = useCallback(
+      - web/src/app/appSession.ts:mergeReplyingStateByNode
+      - "web/src/hooks/useSessionStream.ts:isStreaming: isStreaming && !!sessionPending"
+      - "web/src/components/session/SessionViewer.tsx:const isAwaiting = !!(session as any)?.pending;"
+
+  - id: G-IY
+    title: 委托态三态（空心灯）与切换首帧不闪
+    kind: fix
+    symptom: |
+      ① 父会话把活交给子代理后，父灯灭、子灯亮 —— 看起来像"已完成"，其实子孙还在跑，
+         于是用户去点父会话、误以为可以接着聊。
+      ② 切换会话时灯"亮一会又灭"、底部"正在生成"闪现一下再消失。
+      ③ 切到正在流式的会话瞬间，上一个早已结束的回合会被重放点亮一次。
+    why: |
+      与 G-AY 同一个"会话在不在跑"的面，但管的是**表达形态**与**首帧读哪一份**：
+      1) 只有亮/灭两态表达不了"我自己闲、但我的子孙在跑"。新增第三态：
+         presence = running(自己 pending) | delegating(自己闲 + 任一后代 pending) | idle。
+         优先级 自跑 > 委托 > 闲；委托显示**空心**灯（列表点 / viewer 头部点 / viewer 底部文案
+         "子代理运行中"三处同形态、无动画，所以不闪）。后代按 parent_session_key 收集，
+         **fork 不算后代**（后端 fork 的 parent_session_key 恒空，纯函数里再显式排除
+         source type=fork / fork_from）。
+      2) 拓扑与运行态必须**按列表算一次**再盖到会话项上（applyPresenceToItems，O(n)）：
+         每张卡片各跑一次 hasRunningDescendant 会让列表渲染变 O(n²)。
+         且盖章点必须是 useAppViewComposition —— 只有那层同时握着 pending 真相表；
+         顺手在那一层把单项目列表的 pending 也按真相表重投影（5s 轮询只写多项目分组）。
+      3) 首帧闪的根因是 handleSelectSession 用抽屉/列表项里的**陈旧快照**先点亮一帧，
+         下一帧才被真相纠正。首帧改为只查真相表（resolvePendingForSession）。
+      4) 重放闪的根因是 SessionDispatcher 为断线重连保留 200 条 pendingStreams，
+         订阅瞬间整份重放，而 useSessionStream 的 onStream 原先无闸门直接置 isStreaming。
+         该置位现在同样收在 sessionPending 闸门下（与导出的那个闸门同一个真相）。
+    boundary: |
+      "会话在不在跑"的**表达形态**（几态、长什么样）与**首帧从哪儿读**。
+      上游若退回两态、或退回"首帧信抽屉/列表项快照里的 pending"，三个可见症状立刻回来。
+      状态的存放方式不归本组，归 G-AY。
+    tests:
+      - web/tests/session-presence.test.mjs
+      - web/tests/switch-no-flash.test.mjs
+    files:
       - web/src/shared/sessionPresence.ts
       - web/src/components/session/SessionCard.tsx
       - web/src/components/session/SessionViewerHeader.tsx
@@ -1962,12 +2000,8 @@ groups:
       - web/src/app/useAppSessionSnapshots.ts
       - web/src/app/useAppViewComposition.ts
       - web/src/app/useSessionSelection.ts
+      - web/src/hooks/useSessionStream.ts
     anchors:
-      - web/src/app/useAppSessionKeyState.ts:const setMultiProjectSessionPending = useCallback(
-      - web/src/app/useSessionPending.ts:const getSessionSnapshot = useCallback(
-      - web/src/app/appSession.ts:mergeReplyingStateByNode
-      - "web/src/hooks/useSessionStream.ts:isStreaming: isStreaming && !!sessionPending"
-      - "web/src/components/session/SessionViewer.tsx:const isAwaiting = !!(session as any)?.pending;"
       - web/src/shared/sessionPresence.ts:export function getSessionPresence(
       - web/src/shared/sessionPresence.ts:export function computePresenceByKey(
       - web/src/shared/sessionPresence.ts:export function applyPresenceToItems
@@ -1976,6 +2010,46 @@ groups:
       - "web/src/hooks/useSessionStream.ts:setIsStreaming(!!sessionPending);"
       - "web/src/app/useSessionSelection.ts:const preservePending = resolvePendingForSession(targetRoot, key, false);"
       - "web/src/app/useAppViewComposition.ts:multiProjectPendingByKey[rootSessionKey(root, key)]"
+
+  - id: G-IZ
+    title: Claude 合成子代理可取消（停止按钮不再是空操作）
+    kind: fix
+    symptom: |
+      子会话（Claude Task 子代理）卡住不动、在会话列表里永远亮着「在回复」，点停止按钮
+      完全没反应（点几次都一样）；刷新、切换、等多久都不消失，只能重启服务。
+      实测：子会话 1792065145-baadd0e7dbd9 转录停在 20:09:42 后再无输出，
+      /api/replying-sessions 到 20:30 仍报 replying；同一条 [ws] session.cancel
+      target_turn=0 出现 11 次全部静默返回。
+    why: |
+      三处叠加，缺一不可：
+      1) claudeSubagentRouter.attach 从不 registerActiveTurn（Codex 协作路径有），
+         Service.CancelSessionTurn 拿到 active==nil 直接 return nil —— 静默"成功"；
+      2) syntheticAgentSession.CancelCurrentTurn() 无条件 return nil，第二个空操作；
+      3) 父轮收尾 FinishAll 只遍历本 turn 的 router，且原先不是 defer、也不注销活跃轮次。
+      于是 pending 只等 MessageDone 一条路，CLI 已死则灯永久常亮。
+      本组是「子代理是一等会话、能按自己的 key 被取消」这条产品约定的兑现点；上游只做
+      父会话取消，退回「active==nil 就静默返回」症状立刻回来。
+      改法：attach 建可取消上下文 + registerActiveTurn + setActiveTurnSession 并注入关闭函数；
+      CancelCurrentTurn 真正调用它；新增幂等的 close()（done() 落盘发终帧 → cancel() 掐订阅 →
+      unregisterActiveTurn，顺序不可换：先掐上下文会丢正文）；Handle 对已关闭子代理的更新
+      改为吃掉而不是落回父会话（否则取消后残余子代理输出串进父会话，同 G-BX）；
+      终帧挂 defer（落盘失败也必发，否则灯永远亮着）；FinishAll 改 defer。
+    boundary: |
+      子代理的生命周期归属与取消。不碰父 turn（取消子代理不打断父的 CLI），
+      也不改 session.cancel 的 stale 门（ActiveTurnID 在读循环同步取证那条契约不变）。
+      合成子代理没有可中断的进程（输出来自父进程的 CLI 流），能掐的只有订阅本身。
+    tests:
+      - server/internal/api/usecase/session_subagent_cancel_test.go
+    files:
+      - server/internal/api/usecase/session.go
+      - server/internal/api/usecase/session_subagents.go
+      - server/internal/api/usecase/session_send.go
+    anchors:
+      - server/internal/api/usecase/session.go:func (c *claudeSyntheticSubagent) close()
+      - server/internal/api/usecase/session.go:func (s *syntheticAgentSession) CancelCurrentTurn() error
+      - server/internal/api/usecase/session_subagents.go:registerActiveTurn(in.RootID, child.Key, cancel)
+      - server/internal/api/usecase/session_subagents.go:return true
+      - server/internal/api/usecase/session_send.go:defer claudeSubagents.FinishAll()
 
   - id: G-AZ
     title: 任务卡视觉件：待审核状态徽标 / 列框去除 / 浮动滚动条 / 工作台角标移除

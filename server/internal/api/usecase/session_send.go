@@ -176,6 +176,7 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 	}
 	lastResponseUpdateType := ""
 	claudeSubagents := newClaudeSubagentRouter(subagentSessionInput{
+		Ctx:         turnCtx,
 		RootID:      in.RootID,
 		Parent:      current,
 		Agent:       in.Agent,
@@ -188,6 +189,9 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 		OnCreated:   in.OnSubSessionCreated,
 		OnUpdate:    in.OnSubSessionUpdate,
 	})
+	// 收尾必须是 defer：本轮任何一条提前返回/panic 的路径漏掉它，都会留下一盏
+	// 永远亮着的子代理灯（用户看到"卡死"）。
+	defer claudeSubagents.FinishAll()
 	attachSessionUpdates := func(runtime agenttypes.Session) {
 		runtime.OnUpdate(func(update agenttypes.Event) {
 			update = normalizeAgentUpdatePaths(root, update)
@@ -356,7 +360,6 @@ func (s *Service) SendMessage(ctx context.Context, in SendMessageInput) error {
 		}
 	}
 	flushThought()
-	claudeSubagents.FinishAll()
 	if sendErr != nil && !isCanceledTurnError(sendErr) {
 		log.Printf("[session] turn.send.error root=%s session=%s agent=%s err=%v", in.RootID, current.Key, in.Agent, sendErr)
 	}

@@ -38,26 +38,31 @@ func (r *claudeSubagentRouter) Handle(ctx context.Context, update agenttypes.Eve
 		log.Printf("[subagent/claude] session.ensure.error root=%s parent=%s ref=%s err=%v", r.in.RootID, r.in.Parent.Key, ref.key(), err)
 		return false
 	}
-	if child == nil || child.closed {
+	if child == nil {
 		return false
+	}
+	if child.closed {
+		// 已关闭的子代理，更新仍属于它 —— 必须吃掉而不是落回父会话：取消或收尾之后
+		// 父进程可能还在吐这个子代理的残余输出，放行会让它串进父会话正文。
+		return true
 	}
 	child.runtime.emit(update)
 	if update.Type == agenttypes.EventTypeMessageDone {
-		child.closed = true
+		child.close()
 	}
 	return true
 }
 
+// FinishAll 收尾本轮派出去的所有子代理。close() 幂等，重复调用安全。
 func (r *claudeSubagentRouter) FinishAll() {
 	if r == nil {
 		return
 	}
 	for _, child := range r.children {
-		if child == nil || child.closed {
+		if child == nil {
 			continue
 		}
-		child.done()
-		child.closed = true
+		child.close()
 	}
 }
 
@@ -97,7 +102,7 @@ func (r *claudeSubagentRouter) handleSubagentTerminalSummary(ctx context.Context
 		})
 	}
 	child.runtime.emit(agenttypes.Event{Type: agenttypes.EventTypeMessageDone, SessionID: update.SessionID, Data: agenttypes.MessageDone{}})
-	child.closed = true
+	child.close()
 	_ = ctx
 	return true
 }
@@ -177,13 +182,28 @@ func (r *claudeSubagentRouter) find(ref claudeSubagentRef) *claudeSyntheticSubag
 func (r *claudeSubagentRouter) attach(child *session.Session, ref claudeSubagentRef) *claudeSyntheticSubagent {
 	runtime := &syntheticAgentSession{id: firstNonEmptyString(ref.ParentToolUseID, ref.TaskID, child.Key)}
 	in := r.in
-	done := attachBackgroundSessionUpdates(context.Background(), in, child, runtime)
+	parentCtx := in.Ctx
+	if parentCtx == nil {
+		parentCtx = context.Background()
+	}
+	ctx, cancel := context.WithCancel(parentCtx)
+	done := attachBackgroundSessionUpdates(ctx, in, child, runtime)
 	attached := &claudeSyntheticSubagent{
+		rootID:  in.RootID,
 		key:     child.Key,
 		child:   child,
 		runtime: runtime,
 		done:    done,
+		cancel:  cancel,
 	}
+	// 合成子代理也是一轮"在跑"：不登记的话 Service.CancelSessionTurn 会走
+	// active==nil 那条路静默返回 —— 表现就是停止按钮点了没反应。
+	runtime.cancel = func() error {
+		attached.close()
+		return nil
+	}
+	registerActiveTurn(in.RootID, child.Key, cancel)
+	setActiveTurnSession(in.RootID, child.Key, runtime)
 	r.children = append(r.children, attached)
 	return attached
 }
@@ -308,6 +328,8 @@ func claudeSubagentSessionName(ref claudeSubagentRef, source *agenttypes.ToolCal
 type syntheticAgentSession struct {
 	id       string
 	onUpdate func(agenttypes.Event)
+	// cancel 由 attach 注入，见 CancelCurrentTurn。
+	cancel func() error
 }
 
 func (s *syntheticAgentSession) ContextWindow(context.Context) (agenttypes.ContextWindow, error) {
