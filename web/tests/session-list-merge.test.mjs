@@ -95,6 +95,25 @@ const activeOrder = mergeSessionItems(
 assert.equal(JSON.stringify(activeOrder.map((item) => item.key)), JSON.stringify(["pinned-live", "pinned-old", "plain-live", "plain-old"]));
 assert.equal(sessionActivityAt(activeOrder[0]), "2026-07-30T14:00:00.000Z");
 
+// 两个都在跑的会话（活动差距 < 迟滞阈值）不得交替抖动：保持输入时的相对顺序。
+const duelingLive = mergeSessionItems(
+  [
+    { key: "live-a", updated_at: "2026-07-30T08:00:00.000Z", activity_at: "2026-07-30T15:00:10.000Z" },
+    { key: "live-b", updated_at: "2026-07-30T08:00:00.000Z", activity_at: "2026-07-30T15:00:05.000Z" },
+  ],
+  [],
+);
+assert.equal(JSON.stringify(duelingLive.map((item) => item.key)), JSON.stringify(["live-a", "live-b"]));
+// 差距拉开到阈值以上时，更新的必须排前面（迟滞只抑抖动，不锁死顺序）。
+const settledLive = mergeSessionItems(
+  [
+    { key: "live-a", updated_at: "2026-07-30T08:00:00.000Z", activity_at: "2026-07-30T15:01:00.000Z" },
+    { key: "live-b", updated_at: "2026-07-30T08:00:00.000Z", activity_at: "2026-07-30T15:00:00.000Z" },
+  ],
+  [],
+);
+assert.equal(JSON.stringify(settledLive.map((item) => item.key)), JSON.stringify(["live-a", "live-b"]));
+
 // A stale refresh cannot move activity backward; persisted updated_at catches up and clears the overlay.
 const refreshedLive = mergeSessionItems(activeOrder, [
   { key: "plain-live", updated_at: "2026-07-30T08:00:00.000Z" },
