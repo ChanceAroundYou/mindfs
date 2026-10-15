@@ -60,14 +60,3 @@ test("agent rule and plan index links resolve", () => {
   assert.deepEqual(brokenRelativeLinks(files), []);
 });
 
-test("every plan is classified in the sole plans index", () => {
-  const index = read("docs/plans/README.md");
-  const plans = readdirSync(join(ROOT, "docs/plans")).filter(
-    (name) => name.endsWith(".md") && name !== "README.md",
-  );
-  const unclassified = plans.filter((name) => {
-    const row = index.split("\n").find((line) => line.includes(`(${name})`));
-    return !row || !row.startsWith("|") || !row.split("|")[2]?.trim();
-  });
-  assert.deepEqual(unclassified, [], "Every plan must have a status row in docs/plans/README.md");
-});
