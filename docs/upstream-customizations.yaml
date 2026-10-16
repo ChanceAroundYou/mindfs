@@ -1130,13 +1130,13 @@ groups:
       - server/internal/kanban/worktree_finish_status.go:func (s *Service) PlanFinishWorktree
       - server/internal/kanban/worktree_finish_status.go:func (s *Service) TaskBusy
       - server/internal/kanban/worktree_finish_status.go:func (s *Service) TaskHasAgentStage
-      - server/internal/gitview/worktree_finish.go:func CanMergeCleanly
+      - server/internal/gitview/worktree_merge_feasibility.go:func CanMergeCleanly
       - server/internal/gitview/worktree_finish.go:type MainCheckoutDirtyError
-      - server/internal/gitview/worktree_finish.go:func MigrateWorktreeUploads
-      - server/internal/gitview/worktree_finish.go:func RemoveWorktreeDir
-      - server/internal/gitview/worktree_finish.go:func RemoveToolStateOnlyOrphanDirs
-      - server/internal/gitview/worktree_finish.go:func trackedDirtyPaths
-      - server/internal/gitview/worktree_finish.go:func MergeBranch
+      - server/internal/gitview/worktree_cleanup.go:func MigrateWorktreeUploads
+      - server/internal/gitview/worktree_cleanup.go:func RemoveWorktreeDir
+      - server/internal/gitview/worktree_cleanup.go:func RemoveToolStateOnlyOrphanDirs
+      - server/internal/gitview/worktree_remove.go:func trackedDirtyPaths
+      - server/internal/gitview/worktree_merge.go:func MergeBranch
       - server/internal/api/http_task_begin_finish.go:func (h *HTTPHandler) handleKanbanTaskBeginFinish
       - server/internal/api/http_task_begin_finish.go:func agentFallbackPlan
       - server/internal/api/http_task_begin_finish.go:func (h *HTTPHandler) respondFinishTeardownFailure
@@ -5994,6 +5994,12 @@ groups:
       - server/internal/agent/pool_idle_test.go
       - server/internal/agent/config_load_test.go
       - server/internal/api/usecase/fs_file_ops_test.go
+      # B10
+      - server/internal/gitview/worktree_merge.go
+      - server/internal/gitview/worktree_merge_feasibility.go
+      - server/internal/gitview/worktree_orphans.go
+      - server/internal/gitview/worktree_remove.go
+      - server/internal/gitview/worktree_cleanup.go
       # B9
       - server/internal/api/http_window_get_test.go
       - server/internal/api/http_window_sync_test.go
