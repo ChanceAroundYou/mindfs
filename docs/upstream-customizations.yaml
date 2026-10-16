@@ -5995,6 +5995,9 @@ groups:
       - server/internal/agent/config_load_test.go
       - server/internal/api/usecase/fs_file_ops_test.go
       # B9
+      - server/internal/api/agent_config_backup.go
+      - server/internal/api/agent_config_switch.go
+      - server/internal/api/agent_config_env.go
       - server/internal/api/http_task_templates.go
       - server/internal/api/http_task_stages.go
       - server/internal/api/http_task_overview.go
