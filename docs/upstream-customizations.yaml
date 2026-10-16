@@ -5914,6 +5914,21 @@ groups:
       - server/internal/fs/meta_dir_test.go
       - server/internal/fs/read_decode_test.go
       - server/internal/fs/entries_test.go
+      # B4
+      - server/internal/api/usecase/session_turn_registry.go
+      - server/internal/api/usecase/session_agent_open.go
+      - server/internal/api/usecase/session_recovery.go
+      - server/internal/api/usecase/session_command_shell.go
+      - server/internal/api/usecase/session_subagent_stream.go
+      - server/internal/api/usecase/session_subagent_synthetic.go
+      - server/internal/api/usecase/fs_git.go
+      - server/internal/api/usecase/fs_upload.go
+      - server/internal/api/usecase/fs_managed_dirs.go
+      - server/internal/api/usecase/candidates_registry.go
+      - server/internal/api/usecase/candidates.go
+      - server/internal/api/usecase/candidates_file_skill.go
+      - server/internal/api/usecase/external_sessions_sync.go
+      - server/internal/api/usecase/external_sessions_names.go
     anchors:
       - docs/agent/rules/backend/file-size.md:软线**：300 行
       - docs/plans/backend-file-size-300-500.md:B2
