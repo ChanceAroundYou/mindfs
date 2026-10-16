@@ -502,7 +502,7 @@ groups:
     anchors:
       - server/internal/pins/store.go:NeedsLegacySeed
       - web/src/services/pins.ts:controlPath
-      - server/internal/session/manager.go:CUSTOM(G-X)
+      - server/internal/session/manager_sql_statements.go:CUSTOM(G-X)
 
   - id: G-Y
     title: 看板模型重做（拒绝上游 task_groups 编排体系）
@@ -1664,7 +1664,7 @@ groups:
       - server/internal/api/usecase/session_list.go
       - web/tests/session-window.test.mjs
     anchors:
-      - server/internal/session/manager.go:readExchangeWindow
+      - server/internal/session/manager_window_reads.go:readExchangeWindow
       - server/internal/session/manager_exchanges.go:mergeExchangeRecord
       - server/internal/session/manager_exchanges.go:mergeExchangeRecords
       - server/internal/session/manager_exchanges.go:readExchangeTail
@@ -1781,7 +1781,7 @@ groups:
       - server/internal/api/stream_hub.go:SetPendingUserAt
       - server/internal/api/usecase/session_turn_identity.go:persistUserTurnExchange
       - server/internal/api/usecase/session_turn_identity.go:exchangeIdentityRecorded
-      - server/internal/session/manager.go:AddExchangeForAgentAtWithIdentityFactory
+      - server/internal/session/manager_exchange_write.go:AddExchangeForAgentAtWithIdentityFactory
       - web/src/shared/sessionTypes.ts:agent_id
   - id: G-BJ
     title: 会话列表按实时活动时间排序
@@ -2160,8 +2160,8 @@ groups:
       - server/internal/api/usecase/session_blocks_backfill.go:missingBlockSeqs
       - server/internal/api/usecase/session_read.go:GetSessionBlocksWindow
       - server/internal/api/usecase/session.go:persistTurnBlocks
-      - server/internal/session/manager.go:AddExchangeForAgentAndGetSeq
-      - server/internal/session/manager.go:AddExchangeForAgentAtWithIdentityFactory
+      - server/internal/session/manager_exchange_write.go:AddExchangeForAgentAndGetSeq
+      - server/internal/session/manager_exchange_write.go:AddExchangeForAgentAtWithIdentityFactory
       - server/internal/api/usecase/session_blocks_write_test.go:TestAssistantReasoningBlocksUseAllocatedSeqFromFreshSession
       - server/internal/api/usecase/session_fork.go:copyForkBlocks
       - server/internal/api/usecase/session_read.go:GetSessionBlocksWindow
@@ -3828,7 +3828,7 @@ groups:
       - server/internal/session/manager_duplicate_seq_test.go
       - server/internal/session/manager_window_test.go
       - server/internal/session/manager_window_cold_test.go
-      - server/internal/session/manager_test.go
+      - server/internal/session/manager_incremental_test.go
     files:
       - server/internal/session/manager.go
       - server/internal/session/manager_exchanges.go
