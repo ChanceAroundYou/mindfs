@@ -1,0 +1,155 @@
+package gitview
+
+import (
+	"context"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"golang.org/x/text/encoding/simplifiedchinese"
+)
+
+func TestDecodeGitDiffOutputDecodesGB18030Text(t *testing.T) {
+	source := "diff --git a/main.go b/main.go\n@@ -1 +1 @@\n-旧内容\n+新内容\n"
+	encoded, err := simplifiedchinese.GB18030.NewEncoder().Bytes([]byte(source))
+	if err != nil {
+		t.Fatalf("encode GB18030: %v", err)
+	}
+
+	got := decodeGitDiffOutput(encoded, ".go")
+	if got != source {
+		t.Fatalf("decoded diff = %q, want %q", got, source)
+	}
+}
+
+func TestReadRelatedFileDiffUsesNextCommitAfterBase(t *testing.T) {
+	root := initTestRepo(t)
+	writeTestFile(t, root, "note.txt", "before\n")
+	runTestGit(t, root, "add", "note.txt")
+	runTestGit(t, root, "commit", "-m", "initial")
+	base := strings.TrimSpace(runTestGit(t, root, "rev-parse", "HEAD"))
+
+	writeTestFile(t, root, "note.txt", "after\n")
+	runTestGit(t, root, "add", "note.txt")
+	runTestGit(t, root, "commit", "-m", "update")
+
+	diff, err := ReadRelatedFileDiff(context.Background(), root, base, "note.txt")
+	if err != nil {
+		t.Fatalf("ReadRelatedFileDiff: %v", err)
+	}
+	if diff.BaseHead != base {
+		t.Fatalf("BaseHead = %q, want %q", diff.BaseHead, base)
+	}
+	if diff.TargetHead == "" {
+		t.Fatal("TargetHead is empty")
+	}
+	if diff.Source != "commit_range" {
+		t.Fatalf("Source = %q, want commit_range", diff.Source)
+	}
+	if !strings.Contains(diff.Content, "-before") || !strings.Contains(diff.Content, "+after") {
+		t.Fatalf("diff content does not contain expected change:\n%s", diff.Content)
+	}
+}
+
+func TestReadRelatedFileDiffSkipsUntouchedCommits(t *testing.T) {
+	root := initTestRepo(t)
+	writeTestFile(t, root, "note.txt", "before\n")
+	runTestGit(t, root, "add", "note.txt")
+	runTestGit(t, root, "commit", "-m", "initial")
+	base := strings.TrimSpace(runTestGit(t, root, "rev-parse", "HEAD"))
+
+	// 记录的 base 与真正改动该文件的提交之间夹着无关提交是常态
+	// （实测库内 42/118 条关联文件因此报 400），基线解析必须跳过它们。
+	writeTestFile(t, root, "other.txt", "unrelated\n")
+	runTestGit(t, root, "add", "other.txt")
+	runTestGit(t, root, "commit", "-m", "unrelated")
+
+	writeTestFile(t, root, "note.txt", "after\n")
+	runTestGit(t, root, "add", "note.txt")
+	runTestGit(t, root, "commit", "-m", "update")
+	target := strings.TrimSpace(runTestGit(t, root, "rev-parse", "HEAD"))
+
+	diff, err := ReadRelatedFileDiff(context.Background(), root, base, "note.txt")
+	if err != nil {
+		t.Fatalf("ReadRelatedFileDiff: %v", err)
+	}
+	if diff.TargetHead != target {
+		t.Fatalf("TargetHead = %q, want %q", diff.TargetHead, target)
+	}
+	if diff.Source != "commit_range" {
+		t.Fatalf("Source = %q, want commit_range", diff.Source)
+	}
+	if !strings.Contains(diff.Content, "-before") || !strings.Contains(diff.Content, "+after") {
+		t.Fatalf("diff content does not contain expected change:\n%s", diff.Content)
+	}
+}
+
+func TestReadRelatedFileDiffEmptyWhenNothingChanged(t *testing.T) {
+	root := initTestRepo(t)
+	writeTestFile(t, root, "note.txt", "same\n")
+	runTestGit(t, root, "add", "note.txt")
+	runTestGit(t, root, "commit", "-m", "initial")
+	head := strings.TrimSpace(runTestGit(t, root, "rev-parse", "HEAD"))
+
+	// base 之后既没有提交碰过该文件、工作区也干净 —— 「没有变更可显示」不是客户端错误。
+	diff, err := ReadRelatedFileDiff(context.Background(), root, head, "note.txt")
+	if err != nil {
+		t.Fatalf("ReadRelatedFileDiff should not fail when nothing changed: %v", err)
+	}
+	if diff.Source != "none" {
+		t.Fatalf("Source = %q, want none", diff.Source)
+	}
+	if diff.Content != "" || diff.Additions != 0 || diff.Deletions != 0 {
+		t.Fatalf("expected an empty diff, got %+v", diff)
+	}
+}
+
+func TestReadRelatedFileDiffUsesWorktreeRoot(t *testing.T) {
+	root := initTestRepo(t)
+	writeTestFile(t, root, "note.txt", "base\n")
+	runTestGit(t, root, "add", "note.txt")
+	runTestGit(t, root, "commit", "-m", "initial")
+	runTestGit(t, root, "checkout", "-b", "task-1")
+	base := strings.TrimSpace(runTestGit(t, root, "rev-parse", "HEAD"))
+	runTestGit(t, root, "checkout", "-")
+
+	worktreeRoot := filepath.Join(root, ".worktree", "task-1")
+	runTestGit(t, root, "worktree", "add", worktreeRoot, "task-1")
+	writeTestFile(t, root, "note.txt", "main-only\n")
+	writeTestFile(t, worktreeRoot, "note.txt", "worktree-only\n")
+
+	diff, err := ReadRelatedFileDiff(context.Background(), worktreeRoot, base, "note.txt")
+	if err != nil {
+		t.Fatalf("ReadRelatedFileDiff: %v", err)
+	}
+	if diff.Source != "worktree" {
+		t.Fatalf("Source = %q, want worktree", diff.Source)
+	}
+	if !strings.Contains(diff.Content, "+worktree-only") {
+		t.Fatalf("diff content does not contain worktree change:\n%s", diff.Content)
+	}
+	if strings.Contains(diff.Content, "main-only") {
+		t.Fatalf("diff content used main worktree instead of task worktree:\n%s", diff.Content)
+	}
+}
+
+func TestReadRelatedFileDiffRejectsHeadOutsideCurrentHistory(t *testing.T) {
+	root := initTestRepo(t)
+	writeTestFile(t, root, "note.txt", "main\n")
+	runTestGit(t, root, "add", "note.txt")
+	runTestGit(t, root, "commit", "-m", "initial")
+	mainBranch := strings.TrimSpace(runTestGit(t, root, "branch", "--show-current"))
+	runTestGit(t, root, "checkout", "-b", "other")
+	writeTestFile(t, root, "note.txt", "other\n")
+	runTestGit(t, root, "commit", "-am", "other update")
+	otherHead := strings.TrimSpace(runTestGit(t, root, "rev-parse", "HEAD"))
+	runTestGit(t, root, "checkout", mainBranch)
+
+	_, err := ReadRelatedFileDiff(context.Background(), root, otherHead, "note.txt")
+	if err == nil {
+		t.Fatal("ReadRelatedFileDiff succeeded for head outside current history")
+	}
+	if !strings.Contains(err.Error(), "记录的提交不存在或不在当前分支历史中") {
+		t.Fatalf("error = %v", err)
+	}
+}
