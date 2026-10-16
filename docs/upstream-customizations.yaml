@@ -5995,6 +5995,10 @@ groups:
       - server/internal/agent/config_load_test.go
       - server/internal/api/usecase/fs_file_ops_test.go
       # B10
+      - server/internal/fs/shared_watcher.go
+      - server/internal/fs/shared_watcher_events.go
+      - server/internal/fs/shared_watcher_related.go
+      - server/internal/fs/shared_watcher_types.go
       - server/internal/gitview/gitview_test_helpers_test.go
       - server/internal/gitview/gitview_history_test.go
       - server/internal/gitview/gitview_repo_test.go
