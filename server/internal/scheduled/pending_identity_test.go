@@ -60,7 +60,6 @@ func TestScheduledPathCarriesTurnIdentity(t *testing.T) {
 	files := scheduledSourceFiles(t)
 	var joinedCode strings.Builder
 	sawEndSessionTurn := false
-	sawPendingIdentityMinted := false
 	for path, src := range files {
 		code := stripLineComments(src)
 		joinedCode.WriteString(code)
@@ -105,17 +104,26 @@ func TestScheduledPathCarriesTurnIdentity(t *testing.T) {
 		if strings.Contains(code, "EndSessionTurn(") {
 			sawEndSessionTurn = true
 		}
-		if strings.Contains(code, "session.MaxExchangeSeq(created.Exchanges) + 1") &&
-			strings.Contains(code, "session.NewMindFSID(\"\", fmt.Sprintf(\"%s|agent|%d\", created.Key, nextSeq))") {
-			sawPendingIdentityMinted = true
-		}
 	}
 
 	if !sawEndSessionTurn {
 		t.Fatal("本包源码里找不到 EndSessionTurn 调用 —— 收尾没走带身份的终结器")
 	}
-	if !sawPendingIdentityMinted {
-		t.Fatal("子会话 pending 必须按下一条 assistant seq 铸与落盘一致的 mindfs_id")
+
+	// 子会话的回合身份必须来自**单一来源** usecase.subagentTurnID()。
+	// 2026-10-16 之前这段 `MaxExchangeSeq+1 → NewMindFSID` 在 ws.go / appcontext.go /
+	// tasks.go 三处各抄一遍。收敛到共享函数的理由是：三条 attach 路径必须铸出同一种
+	// 形状的 id，否则某条路径会静默拿不到身份 —— 那正是 claude 认领分支此前的处境
+	// （子会话无人持有回合 ⇒ pending 永久残留，父会话被判成 delegating）。
+	// 所以断言从「这段字面必须出现在本文件」改为「本文件不得自己铸，且必须接收 id」。
+	// 这里用的是跨文件拼接后的 joinedCode 而不是循环末的 code：铸在哪一个文件是拆分
+	// 细节，只查最后一个文件会让守卫在多数文件上形同虚设。
+	if strings.Contains(joinedCode.String(), "session.NewMindFSID(") {
+		t.Fatal("本包又在自己铸子会话回合身份：请改用 usecase.subagentTurnID()，" +
+			"三处各自铸会让某条 attach 路径静默拿不到 id")
+	}
+	if !strings.Contains(joinedCode.String(), "turnID") {
+		t.Fatal("本包没有接收子会话回合身份：请把它交给置 pending 与收尾路径")
 	}
 }
 
