@@ -85,12 +85,16 @@
 | B2 叶包（agent/types、update、webpush、auth、fs、commandexec） | 完成 | `c92d597c` |
 | B3 session 包源 + 测试 | 完成 | `1ea6b593` / `219aaa8d` / `5ebbc50b` |
 | B4 api/usecase 源 | 完成 | 本次 |
-| B5 api/usecase 测试 | 待做 | — |
-| B6 kanban 源 + 测试 | 待做 | — |
+| B5 api/usecase 测试 | 完成 | 前两次提交 |
+| B6 kanban 源 + 测试 | 进行中 | — |
 | B7 agent 运行时源 | 待做 | — |
 | B8 agent 导入器 + 测试 | 待做 | — |
 | B9 api 源 + 测试（逐文件提交） | 待做 | — |
 | B10 收尾：全量门禁 + TODO 勾项 + 索引标 Completed | 待做 | — |
+
+B4/B5 记录：`usecase_test.go` 3207 → 11 个职责测试文件 + `usecase_test_helpers_test.go`
+（跨文件共享的假 registry/agent session），`external_sessions_test.go` 892 →
+import / names / ownership / sync 四个。测试函数零改动。
 
 B4 记录：`session.go` 1496 → `session.go` 339 + `session_turn_registry` 114 +
 `session_agent_open` 218 + `session_recovery` 142 + `session_command_shell` 294 +

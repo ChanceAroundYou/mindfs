@@ -41,11 +41,9 @@
 
 | 测试文件 | 行数 | 批次 |
 |---|---|---|
-| `server/internal/api/usecase/usecase_test.go` | 3207 | B5 |
 | `server/internal/kanban/service_test.go` | 3067 | B6 |
 | `server/internal/session/manager_test.go` | 1531 | B3 |
 | `server/internal/kanban/worktree_finish_test.go` | 1012 | B6 |
-| `server/internal/api/usecase/external_sessions_test.go` | 892 | B5 |
 | `server/internal/api/http_tasks_begin_finish_test.go` | 888 | B9 |
 | `server/internal/agent/acp/elicitation_test.go` | 786 | B7 |
 | `server/internal/gitview/worktree_finish_test.go` | 779 | B10 |
