@@ -86,8 +86,8 @@
 | B3 session 包源 + 测试 | 完成 | `1ea6b593` / `219aaa8d` / `5ebbc50b` |
 | B4 api/usecase 源 | 完成 | 本次 |
 | B5 api/usecase 测试 | 完成 | 前两次提交 |
-| B6 kanban 源 + 测试 | 进行中 | — |
-| B7 agent 运行时源 | 待做 | — |
+| B6 kanban 源 + 测试 | 完成 | 本次 |
+| B7 agent 运行时源 | 进行中 | — |
 | B8 agent 导入器 + 测试 | 待做 | — |
 | B9 api 源 + 测试（逐文件提交） | 待做 | — |
 | B10 收尾：全量门禁 + TODO 勾项 + 索引标 Completed | 待做 | — |

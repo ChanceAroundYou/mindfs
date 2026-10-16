@@ -576,7 +576,7 @@ groups:
       - server/internal/kanban/template_store.go:ListStageTemplates
       - server/internal/kanban/worktree_finish.go:FinishTaskWorktree
       # 存量 queued 必须被折进 pending：前端已按「不可能出现」删掉了该分支
-      - server/internal/kanban/task_store.go:UPDATE tasks SET status = 'pending' WHERE status = 'queued'
+      - server/internal/kanban/task_store_migrate.go:UPDATE tasks SET status = 'pending' WHERE status = 'queued'
 
   - id: G-Z
     title: 跨项目工作台
@@ -1127,9 +1127,9 @@ groups:
       - web/tests/task-board-view.test.mjs
     anchors:
       - server/internal/kanban/worktree_finish.go:func (s *Service) FinishTaskWorktree
-      - server/internal/kanban/worktree_finish.go:func (s *Service) PlanFinishWorktree
-      - server/internal/kanban/worktree_finish.go:func (s *Service) TaskBusy
-      - server/internal/kanban/worktree_finish.go:func (s *Service) TaskHasAgentStage
+      - server/internal/kanban/worktree_finish_status.go:func (s *Service) PlanFinishWorktree
+      - server/internal/kanban/worktree_finish_status.go:func (s *Service) TaskBusy
+      - server/internal/kanban/worktree_finish_status.go:func (s *Service) TaskHasAgentStage
       - server/internal/gitview/worktree_finish.go:func CanMergeCleanly
       - server/internal/gitview/worktree_finish.go:type MainCheckoutDirtyError
       - server/internal/gitview/worktree_finish.go:func MigrateWorktreeUploads
@@ -1140,9 +1140,9 @@ groups:
       - server/internal/api/http_tasks.go:func (h *HTTPHandler) handleKanbanTaskBeginFinish
       - server/internal/api/http_tasks.go:func agentFallbackPlan
       - server/internal/api/http_tasks.go:func (h *HTTPHandler) respondFinishTeardownFailure
-      - server/internal/kanban/service.go:ByRequest bool
-      - server/internal/kanban/service.go:canLeave := canAdvanceFromStage
-      - server/internal/kanban/worktree_finish.go:func (s *Service) PlanFinishWorktree
+      - server/internal/kanban/service_stage_edit.go:ByRequest bool
+      - server/internal/kanban/service_stage_edit.go:canLeave := canAdvanceFromStage
+      - server/internal/kanban/worktree_finish_status.go:func (s *Service) PlanFinishWorktree
       - server/internal/api/http_tasks_finish_teardown.go:task.finish_teardown
       - server/internal/api/http_tasks_finish_teardown.go:func (s *AppContext) FinishWorktreeAndRepoint
       - server/app/workspace.go:WireSessionRunningProbe
@@ -1172,7 +1172,7 @@ groups:
       - web/tests/task-panel-unification.test.mjs
       - web/tests/task-stage-panel.test.mjs
     anchors:
-      - server/internal/kanban/service.go:func (s *Service) DeleteTask(ctx context.Context, in MoveInput)
+      - server/internal/kanban/service_run_moves.go:func (s *Service) DeleteTask(ctx context.Context, in MoveInput)
       - server/internal/kanban/task_store.go:func (s *TaskStore) DeleteTask(ctx context.Context, id string)
       - server/internal/api/http.go:r.Delete("/api/tasks/{id}"
       - web/src/services/task/crud.ts:export async function deleteTask
@@ -5945,6 +5945,27 @@ groups:
       - server/internal/api/usecase/external_sessions_names_test.go
       - server/internal/api/usecase/external_sessions_import_test.go
       - server/internal/api/usecase/external_sessions_ownership_test.go
+      # B6
+      - server/internal/kanban/service_stage_edit.go
+      - server/internal/kanban/service_worktree.go
+      - server/internal/kanban/service_run_moves.go
+      - server/internal/kanban/service_state_moves.go
+      - server/internal/kanban/task_store_migrate.go
+      - server/internal/kanban/task_store_scan.go
+      - server/internal/kanban/task_store_write.go
+      - server/internal/kanban/worktree_finish_status.go
+      - server/internal/kanban/service_create_test.go
+      - server/internal/kanban/template_store_test.go
+      - server/internal/kanban/service_stage_edit_test.go
+      - server/internal/kanban/service_session_link_test.go
+      - server/internal/kanban/service_run_moves_test.go
+      - server/internal/kanban/service_agent_stage_test.go
+      - server/internal/kanban/service_lifecycle_test.go
+      - server/internal/kanban/service_worktree_test.go
+      - server/internal/kanban/service_worktree_state_test.go
+      - server/internal/kanban/worktree_finish_guard_test.go
+      - server/internal/kanban/worktree_finish_upload_test.go
+      - server/internal/kanban/worktree_finish_terminal_test.go
     anchors:
       - docs/agent/rules/backend/file-size.md:软线**：300 行
       - docs/plans/backend-file-size-300-500.md:B2
