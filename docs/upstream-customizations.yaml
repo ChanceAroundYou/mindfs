@@ -342,7 +342,7 @@ groups:
       - web/tests/e2e-message-behavior.test.mjs
       - server/internal/api/ws_test.go
     anchors:
-      - server/internal/api/stream_hub.go:func buildSessionStreamBatchResponse
+      - server/internal/api/stream_hub_build.go:func buildSessionStreamBatchResponse
       - web/src/services/session/sessionExchangeMerge.ts:composeLoadedExchanges
       - web/src/services/session/sessionExchangeMerge.ts:isTransientExchange
       - web/src/shared/sessionOverlay.ts:computeTailOverlay
@@ -1493,7 +1493,7 @@ groups:
       - web/tests/session-presence-awaiting.test.mjs
       - docs/plans/delegated-presence-and-flicker.md
     anchors:
-      - server/internal/api/stream_hub.go:func (h *StreamHub) MarkSessionAwaiting(
+      - server/internal/api/stream_hub_pending.go:func (h *StreamHub) MarkSessionAwaiting(
       - server/internal/api/stream_hub.go:if state.AwaitingAnswer {
       - server/internal/api/appcontext_notify.go:func askUserStreamEvent(
       - server/internal/api/http_sessions.go:item["awaiting_answer"] = true
@@ -1609,7 +1609,7 @@ groups:
       - web/src/App.tsx
     anchors:
       - server/internal/api/stream_hub.go:ClearSessionPending
-      - server/internal/api/stream_hub.go:PendingSessionSnapshot
+      - server/internal/api/stream_hub_types.go:PendingSessionSnapshot
       - server/internal/api/appcontext.go:EndSessionTurn
       - web/src/app/useReplyingSessionPoll.ts:const refreshMultiProjectReplyingSessions = useCallback(async () => {
 
@@ -1634,7 +1634,7 @@ groups:
     anchors:
       - server/internal/api/stream_hub.go:ClearSessionPending
       - server/internal/api/stream_hub.go:PendingTurnIDMatches
-      - server/internal/api/stream_hub.go:SetPendingReply
+      - server/internal/api/stream_hub_pending.go:SetPendingReply
       - server/internal/api/appcontext.go:EndSessionTurn
       - server/internal/api/appcontext.go:RunAgentStage
       - server/internal/api/ws_session_message.go:runSessionMessage
@@ -1778,7 +1778,7 @@ groups:
       - server/internal/api/stream_hub.go:AppendReplyEvent
       - web/src/shared/sessionOverlay.ts:computeTailOverlay
       - web/src/app/useSessionStreamCache.ts:appendAgentChunkForSession
-      - server/internal/api/stream_hub.go:SetPendingUserAt
+      - server/internal/api/stream_hub_pending.go:SetPendingUserAt
       - server/internal/api/usecase/session_turn_identity.go:persistUserTurnExchange
       - server/internal/api/usecase/session_turn_identity.go:exchangeIdentityRecorded
       - server/internal/session/manager_exchange_write.go:AddExchangeForAgentAtWithIdentityFactory
@@ -2146,8 +2146,8 @@ groups:
       - server/internal/api/usecase/external_sessions.go:appendImportedExchange
       - server/internal/agent/acp/importer.go:messageIDOf
       - server/internal/agent/acp/importer.go:isUUIDShape
-      - server/internal/api/stream_hub.go:SetPendingUserAt
-      - server/internal/api/stream_hub.go:nextPendingTurnIDLocked
+      - server/internal/api/stream_hub_pending.go:SetPendingUserAt
+      - server/internal/api/stream_hub_pending.go:nextPendingTurnIDLocked
       - server/internal/api/stream_hub.go:PendingTurnIDMatches
       - server/internal/api/stream_hub.go:ClearSessionPending
       - server/internal/api/appcontext.go:EndSessionTurn
@@ -5995,6 +5995,11 @@ groups:
       - server/internal/agent/config_load_test.go
       - server/internal/api/usecase/fs_file_ops_test.go
       # B9
+      - server/internal/api/stream_hub_types.go
+      - server/internal/api/stream_hub_build.go
+      - server/internal/api/stream_hub_pending.go
+      - server/internal/api/stream_hub_queue.go
+      - server/internal/api/stream_hub_replay.go
       - server/internal/api/ws_upgrade.go
       - server/internal/api/ws_broadcast.go
       - server/internal/api/ws_session_message.go
