@@ -9,34 +9,16 @@
 
 | 文件 | 行数 | 批次 |
 |---|---|---|
-| `server/internal/api/appcontext.go` | 1465 | B9 |
-| `server/internal/api/ws.go` | 1408 | B9 |
-| `server/internal/api/stream_hub.go` | 1302 | B9 |
-| `server/internal/api/agent_api_provider.go` | 1291 | B9 |
-| `server/internal/api/http_sessions.go` | 1192 | B9 |
 | `cli/cmd/mindfs.go` | 1059 | B10 |
-| `server/internal/api/http_tasks.go` | 1048 | B9 |
 | `server/internal/gitview/worktree_finish.go` | 1040 | B10 |
 | `server/internal/gitview/gitview.go` | 933 | B10 |
-| `server/internal/session/manager.go` | 797 | B3 |
-| `server/internal/api/agent_config.go` | 786 | B9 |
-| `server/internal/api/agent_api_provider_apply.go` | 769 | B9 |
-| `server/internal/session/blocks.go` | 720 | B3 |
 | `server/internal/scheduled/tasks.go` | 661 | B10 |
 | `server/internal/gitview/gitview_history.go` | 653 | B10 |
-| `server/internal/api/http.go` | 652 | B9 |
 | `server/internal/fs/shared_watcher.go` | 630 | B10 |
-| `server/internal/api/http_files.go` | 575 | B9 |
-| `server/internal/session/types.go` | 568 | B3 |
 
 | 测试文件 | 行数 | 批次 |
 |---|---|---|
-| `server/internal/session/manager_test.go` | 1531 | B3 |
-| `server/internal/api/http_tasks_begin_finish_test.go` | 888 | B9 |
 | `server/internal/gitview/worktree_finish_test.go` | 779 | B10 |
-| `server/internal/api/http_window_test.go` | 705 | B9 |
-| `server/internal/fs/fs_test.go` | 570 | B3 |
-| `server/internal/api/ws_test.go` | 563 | B9 |
 | `server/internal/gitview/gitview_test.go` | 517 | B10 |
 
 ## 软线区间（300–500）—— 下次动它时顺手拆

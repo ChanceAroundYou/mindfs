@@ -89,7 +89,7 @@
 | B6 kanban 源 + 测试 | 完成 | 本次 |
 | B7 agent 运行时源 + 测试 | 完成 | 本次 |
 | B8 agent 导入器 + 测试 | 完成 | `ac05bc52` |
-| B9 api 源 + 测试（逐文件提交） | 待做 | — |
+| B9 api 源 + 测试（逐文件提交） | 完成 | 逐文件提交 |
 | B10 收尾：全量门禁 + TODO 勾项 + 索引标 Completed | 待做 | — |
 
 B4/B5 记录：`usecase_test.go` 3207 → 11 个职责测试文件 + `usecase_test_helpers_test.go`
@@ -103,6 +103,19 @@ B4 记录：`session.go` 1496 → `session.go` 339 + `session_turn_registry` 114
 `candidates.go` 733 → `candidates.go` 217 + `candidates_registry` 202 +
 `candidates_file_skill` 334；`external_sessions.go` 778 → `external_sessions.go` 271 +
 `external_sessions_sync` 423 + `external_sessions_names` 102。
+
+B9 记录（每文件一次提交，单读 goroutine 约束）。`appcontext.go` 1465 → 7 个职责文件
+（roots / worktree / services / broadcast / notify / task_flags）；`ws.go` 1408 →
+upgrade / broadcast / session_message / session_queue / session_slash / turn_tracker；
+`stream_hub.go` 1302 → types / build / pending / queue / replay；
+`agent_api_provider.go` 1291 + `_apply.go` 769 → handlers / sync_ops / urls / names /
+caps / probe / modeltest + codex / env；`http_sessions.go` 1192 → list / detail / actions /
+external / command_shell；`http_tasks.go` 1048 → templates / stages / overview /
+begin_finish；`agent_config.go` 786 → backup / switch / env；`http.go` 652 →
+routes / preferences / local_cli；`http_files.go` 575 → query / managed_dirs。
+测试 `ws_test.go` 563、`http_tasks_begin_finish_test.go` 888、`http_window_test.go` 705
+同样按边界拆。`TestWSRequestHandlersAreDispatchedAsynchronously` 改为在
+`ws.go` / `ws_upgrade.go` 两个文件里查找 `handleWSRequest`，守卫不随拆分失效。
 
 B8 记录：`claude/importer.go` 1398 → `importer.go` 240 + `importer_subagents` 225 +
 `importer_files` 361 + `importer_transcript` 341 + `importer_exchange` 282；
