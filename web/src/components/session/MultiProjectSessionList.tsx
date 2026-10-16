@@ -211,6 +211,7 @@ export function MultiProjectSessionList({
                             showExpandIcon={!loadingChild && !row.expanded}
                             showCollapseIcon={!loadingChild && row.expanded}
                             marginLeft={SUB_SESSION_ICON_OFFSET}
+                            marginBottom="2px"
                             onClick={() => void handleChildToggle(row, group.sessions, group.rootId, groupNodeId)}
                             onCollapse={() =>
                               setExpandedChildren((prev) => ({

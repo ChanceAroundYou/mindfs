@@ -169,34 +169,40 @@ assert.equal(badges.includes("from \"../../app/"), false, "view layer must not i
 assert.equal(badges.includes("services/"), false, "view layer must not import services/");
 // 徽标最坏情况顶端在本行上方 4px，选中底色拓位顶端在上方 7px；2px 行距时
 // 前一行仍留有 8px 盒内下内边距 + 2px 外内边距，所以不会压到前一行正文。
-// 三个会话列表保持原来的 2px 行距，避免为绝对定位的徽标白占真实布局高度。
-for (const listFile of ["SessionList", "MultiProjectSessionList", "ExternalSessionList"]) {
-  const list = fs.readFileSync(
-    path.resolve(import.meta.dirname, `../src/components/session/${listFile}.tsx`),
-    "utf8",
-  );
-  assert.match(
-    list,
-    /flexDirection: "column", gap: "2px"/,
-    `${listFile} 的会话行容器间距必须与另外两个列表一致`,
-  );
-}
+// 单项目、外部列表和跨项目分组**内部**的会话行都是 2px；跨项目的项目分组
+// **之间**仍为 9px，不能被“回退会话行间距”误改。
+const singleList = fs.readFileSync(path.resolve(import.meta.dirname, "../src/components/session/SessionList.tsx"), "utf8");
+assert.match(singleList, /flexDirection: "column", gap: "2px"/, "单项目会话行间距保持 2px");
+const externalList = fs.readFileSync(path.resolve(import.meta.dirname, "../src/components/session/ExternalSessionList.tsx"), "utf8");
+assert.match(externalList, /flexDirection: "column", gap: "2px"/, "外部会话行间距保持 2px");
+const multiList = fs.readFileSync(path.resolve(import.meta.dirname, "../src/components/session/MultiProjectSessionList.tsx"), "utf8");
+assert.match(multiList, /flexDirection: "column", gap: "9px"/, "跨项目的项目分组间距保持 9px");
+assert.match(multiList, /flexDirection: "column", gap: "2px", paddingTop: TOP_BADGE_LIFT_PX/, "跨项目分组内部会话行间距保持 2px");
 // 列表顶端留白 ≥ 拓位高度（用户 2026-10-16「间距固定存在」）：第一行选中时底色要向上
 // 拓 TOP_BADGE_LIFT_PX 包住徽标，滚动容器按 padding box 裁剪，少 1px 就会被削平。
 // 绑同一个常量而不是写死数字：改拓位高度时这几处必须跟着走。
 // ExternalSessionList 不在其列 —— 它自己画行、不渲染 SessionCard，没有拓位可言。
-const multiList = fs.readFileSync(path.resolve(import.meta.dirname, "../src/components/session/MultiProjectSessionList.tsx"), "utf8");
 assert.match(
   multiList,
   /gap: "2px", paddingTop: TOP_BADGE_LIFT_PX/,
   "项目名与第一个会话之间必须有固定的借位留白，且随拓位高度同步",
 );
-const singleList = fs.readFileSync(path.resolve(import.meta.dirname, "../src/components/session/SessionList.tsx"), "utf8");
 assert.match(
   singleList,
   /padding: `\$\{TOP_BADGE_LIFT_PX\}px 8px 8px`/,
   "SessionList 顶端留白必须容得下向上拓展的底色",
 );
+
+const sharedList = fs.readFileSync(path.resolve(import.meta.dirname, "../src/components/session/sessionListShared.tsx"), "utf8");
+assert.match(sharedList, /marginBottom = "0"/, "toggle rows keep their existing spacing unless a caller opts in");
+assert.match(sharedList, /marginBottom,\n        border: "none"/, "the shared toggle row must apply the requested lower safety gap");
+for (const listFile of ["SessionList", "MultiProjectSessionList"]) {
+  const list = fs.readFileSync(
+    path.resolve(import.meta.dirname, `../src/components/session/${listFile}.tsx`),
+    "utf8",
+  );
+  assert.match(list, /marginLeft=\{SUB_SESSION_ICON_OFFSET\}\s+marginBottom="2px"/, `${listFile} gives only child-session toggles a 2px lower safety gap`);
+}
 
 // ── 7. 徽标尺寸：其他小图标缩到和 worktree 标签一样大（用户 2026-10-16）──
 const styles = fs.readFileSync(path.resolve(import.meta.dirname, "../src/components/task/taskStyles.ts"), "utf8");
@@ -233,6 +239,7 @@ assert.match(card, /background: rowBackground/, "the outer surface uses the sele
 assert.match(card, /borderRadius: "8px"/, "the outer surface has one coherent rounded outline");
 assert.match(card, /zIndex: -1/, "the surface stays behind the row content");
 assert.match(card, /isolation: "isolate"/, "the surface stacking stays inside its row");
+assert.match(card, /zIndex: menuOpen \? 1 : 0/, "an open overflow menu must elevate its row above later session siblings");
 assert.equal(card.includes('left: "-1px"'), false, "the old negative-pixel surface expansion must be gone");
 assert.equal(card.includes('bottom: "-1px"'), false, "the old negative-pixel surface expansion must be gone");
 assert.match(top, /export const TOP_BADGE_LIFT_PX/, "the lift height lives next to the row it covers");

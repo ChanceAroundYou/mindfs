@@ -415,6 +415,7 @@ export function SessionList({
                     showExpandIcon={!loading && !row.expanded}
                     showCollapseIcon={!loading && row.expanded}
                     marginLeft={SUB_SESSION_ICON_OFFSET}
+                    marginBottom="2px"
                     onClick={() => void handleChildToggle(row)}
                     onCollapse={() =>
                       // 整行点 = 收起。折叠基数已在展开那一刻钉好，这里不再动它 ——

@@ -11,6 +11,7 @@ export function ToggleRowButton({
   label,
   loading,
   marginLeft,
+  marginBottom = "0",
   showExpandIcon = false,
   showCollapseIcon = false,
   onClick,
@@ -19,6 +20,7 @@ export function ToggleRowButton({
   label: string;
   loading?: boolean;
   marginLeft: string;
+  marginBottom?: string;
   showExpandIcon?: boolean;
   showCollapseIcon?: boolean;
   onClick: () => void;
@@ -59,6 +61,7 @@ export function ToggleRowButton({
       style={{
         marginLeft,
         marginTop: "-2px",
+        marginBottom,
         border: "none",
         background: "transparent",
         color: "var(--text-primary)",

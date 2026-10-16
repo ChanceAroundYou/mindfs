@@ -92,6 +92,8 @@ function SessionCard({
         borderRadius: "8px",
         position: "relative",
         isolation: "isolate",
+        // 菜单是行内浮层；isolate 把它限制在本行层叠上下文时，打开的行必须压过后续兄弟行。
+        zIndex: menuOpen ? 1 : 0,
         // 子代理的折角回到名字前：保留原有 10px 子层级缩进，和普通会话图标位一起布局。
         paddingLeft: isSubagent ? "10px" : 0,
       }}
