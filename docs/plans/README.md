@@ -13,6 +13,7 @@ to resume their old TODOs or baselines.
 
 | Plan | Status | Current interpretation |
 |---|---|---|
+| [File size hard-line cleanup](file-size-hard-line-cleanup.md) | Completed 2026-10-16 | 4 个超硬线文件拆完（web/tests ×3 + codex importer），`file-size.md` 适用范围补上 `web/tests`，500 行门禁扩到 `.mjs` 并变异验证过。全门禁绿。 |
 | [Session header menu and repoint](session-header-menu-repoint.md) | Completed 2026-10-16 | ⋯ menu shipped + deployed (G-JB); gate fully green (go + tsc + 349 web tests + check-upstream). |
 | [Frontend test migration and rule hardening](frontend-test-rule-hardening.md) | Completed 2026-10-14 | All frontend tests use Vitest; frontend/backend rules and gates apply without path-based waivers. Full gates and upstream coverage passed; no-restart ship installed matching artifacts locally and on WSL/fn. No node was restarted. |
 | [Frontend export and filename alignment](frontend-export-naming.md) | Completed 2026-10-14 | Naming docs and AST gates now agree; standalone components/hooks match filenames, `.tsx` contains JSX, and `.ts` does not. Cohesive multi-export modules remain responsibility-named. Frontend tests, typecheck, build, and upstream coverage passed. |

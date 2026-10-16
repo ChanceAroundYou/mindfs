@@ -68,10 +68,10 @@
 
 | 症状 | 次数 | 每次判的根因一致吗 | 现有测试 |
 |---|---|---|---|
-| **「ask 卡下面多出一堆文本」/「ask 上下各一整块」** | ≥5（09-11、09-17×3、10-06） | **否**。09-11 判成导入 uuid 重复；09-17 三次是「窗口态 vs 瞬时 overlay 重叠」的三种形态（已含未让位 / 未重锚定 / 重锚定把瞬时行当窗口装）；10-06 换成「按位置合并 + `inferredSeq` 认领别人 aux」。**共同底层都是「同一轮两份表示，不知看哪份」** | `session-window.test.mjs` ⑦⑧⑨⑩、`session-window-overlay-dedup.test.mjs`、`session-timeline-seq.test.mjs` |
+| **「ask 卡下面多出一堆文本」/「ask 上下各一整块」** | ≥5（09-11、09-17×3、10-06） | **否**。09-11 判成导入 uuid 重复；09-17 三次是「窗口态 vs 瞬时 overlay 重叠」的三种形态（已含未让位 / 未重锚定 / 重锚定把瞬时行当窗口装）；10-06 换成「按位置合并 + `inferredSeq` 认领别人 aux」。**共同底层都是「同一轮两份表示，不知看哪份」** | `session-window-merge.test.mjs`（composeLoadedExchanges ①–⑧）、`session-window-cache.test.mjs`（身份 overlay）、`session-window-overlay-dedup.test.mjs`、`session-timeline-seq.test.mjs` |
 | **「文本a（含工具），ask，文本a（无工具）」** | 1（10-06） | 是（唯一）：`inferredSeq` 编造 seq ⇒ `exchange_aux["19"]` 被认领 | `session-timeline-seq.test.mjs` |
-| **「同一段正文两遍、越切越多」** | ≥4（09-10、09-11、10-06 行内 `aabb`、compact 堆积 1100+） | **否**。行内 `aabb`=重放重投递 + 无条件拼接；compact 堆积=seq=0 无清理出口；09-10=乐观项与窗口项；09-11=导入重复 | `session-window.test.mjs`（含 `mergeStreamedText===undefined` 反向断言）、`stream_hub_user_message_test.go` |
-| **「切回运行中会话塌成最后一条用户消息，再慢慢补回」** | ≥3（10-05、10-06 `858c3e7`、10-06 工作区） | **否（前几次都错）**。10-05 判成「未重挂载 / seed 未就绪」；`858c3e7` 更正为「丢在途内容，规则写 4 遍 3 遍错」；工作区再加「done 交接非原子 + 重锚定门恒假」。**前几次拿已结束会话复现 ⇒ 条件选错** | `session-switch-flicker.test.mjs`（其注释明确说它不是根因）、`session-window.test.mjs` ②、`session-done-replay-no-reanchor.test.mjs` |
+| **「同一段正文两遍、越切越多」** | ≥4（09-10、09-11、10-06 行内 `aabb`、compact 堆积 1100+） | **否**。行内 `aabb`=重放重投递 + 无条件拼接；compact 堆积=seq=0 无清理出口；09-10=乐观项与窗口项；09-11=导入重复 | `session-window-merge.test.mjs`（含 `mergeStreamedText===undefined` 反向断言）、`stream_hub_user_message_test.go` |
+| **「切回运行中会话塌成最后一条用户消息，再慢慢补回」** | ≥3（10-05、10-06 `858c3e7`、10-06 工作区） | **否（前几次都错）**。10-05 判成「未重挂载 / seed 未就绪」；`858c3e7` 更正为「丢在途内容，规则写 4 遍 3 遍错」；工作区再加「done 交接非原子 + 重锚定门恒假」。**前几次拿已结束会话复现 ⇒ 条件选错** | `session-switch-flicker.test.mjs`（其注释明确说它不是根因）、`session-window-merge.test.mjs`（composeLoadedExchanges ②）、`session-done-replay-no-reanchor.test.mjs` |
 | **「完成瞬间正文消失，只剩最后一条 user msg，切走再回来又刷出来」** | 1（10-06，真机复现） | 是：done 先无条件清尾巴、再用 `isSessionStreaming` 猜重锚定，门恒假 | `session-done-replay-no-reanchor.test.mjs` |
 | **「重放自持闭环」** | ≥2（09-13 18 次/秒、10-06 80 条 done/78 次 `?latest=20`） | 是：服务端补发 `done(replay:true)` + 客户端据此再重锚定 | `ws_test.go`（`TestDoneCarriesNoReplayReceipt` 等 4 条）、`session-done-replay-no-reanchor.test.mjs` |
 | **「点同步后正文 / ask 卡消失」** | ≥2（09-13×2） | 是：sync 以 IDB 为 base 重建，丢掉纯内存瞬时条目 | `sync-preserves-live-transient-text.test.mjs`、`sync-preserves-pending-ask-card.test.mjs` |

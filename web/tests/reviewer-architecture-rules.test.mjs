@@ -11,7 +11,7 @@ function walkSource(dir, out = []) {
   for (const entry of readdirSync(dir)) {
     const file = path.join(dir, entry);
     if (statSync(file).isDirectory()) walkSource(file, out);
-    else if (/\.tsx?$/.test(file)) out.push(file);
+    else if (/\.(tsx?|mjs)$/.test(file)) out.push(file);
   }
   return out;
 }
@@ -28,7 +28,10 @@ test("components do not import services directly", () => {
 });
 
 test("all frontend source files stay under 500 lines", () => {
-  const over = walkSource(path.join(root, "web/src"))
+  // web/tests 与 web/src 同属 file-size.md 的适用范围：守卫测试与源码映射表会随功能
+  // 一起长，不纳入就是给它们开一条无人看守的增长通道（2026-10-16 补上）。
+  const over = [path.join(root, "web/src"), path.join(root, "web/tests")]
+    .flatMap((dir) => walkSource(dir))
     .map((file) => [file, rawReadFileSync(file, "utf8").split("\n").length - 1])
     .filter(([, lines]) => lines > 500)
     .map(([file, lines]) => `${path.relative(root, file)}: ${lines}`);

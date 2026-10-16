@@ -4454,12 +4454,14 @@ groups:
     kind: arch
     symptom: "Tool-call input/output recognition, JavaScript wrapper parsing and patch/location and tool output projection consume a large part of the Codex transcript importer, coupling it to scan/import orchestration."
     why: "Codex tool-call parsing and projection belong together so transcript compatibility changes can be reviewed independently from session discovery and import cursor behavior."
-    boundary: "parseImportedCodexToolCall through importedCodexAssistantLine move unchanged to importer_tool_calls.go (850 lines); imported exchange output and tool matching semantics are unchanged. Parent importer.go is 1,047 lines, below the hardline."
+    boundary: "parseImportedCodexToolCall through importedCodexAssistantLine live in the codex package's importer_tool_call* files; imported exchange output and tool matching semantics are unchanged. 2026-10-16 hard-line cleanup split the 850-line file by tool (not by tool type): importer_tool_calls.go keeps the entry point and normalization including the type switch, importer_tool_call_javascript.go takes the JavaScript literal parser, importer_tool_call_output.go takes patch text and output projection. Same package: no signature, import path or data migration changes."
     tests:
       - server/internal/agent/codex/importer_test.go
     files:
       - server/internal/agent/codex/importer.go
       - server/internal/agent/codex/importer_tool_calls.go
+      - server/internal/agent/codex/importer_tool_call_javascript.go
+      - server/internal/agent/codex/importer_tool_call_output.go
       - docs/agent/rules/backend/TODO.md
       - docs/agent/rules/backend/file-size.md
       - docs/plans/README.md
@@ -4467,8 +4469,9 @@ groups:
     anchors:
       - server/internal/agent/codex/importer_tool_calls.go:func parseImportedCodexToolCall
       - server/internal/agent/codex/importer_tool_calls.go:func importedCodexWrappedTool
-      - server/internal/agent/codex/importer_tool_calls.go:func parseImportedCodexPatch
-      - server/internal/agent/codex/importer_tool_calls.go:func importedCodexToolOutput
+      - server/internal/agent/codex/importer_tool_call_javascript.go:func quoteImportedJavaScriptObjectKeys
+      - server/internal/agent/codex/importer_tool_call_output.go:func parseImportedCodexPatch
+      - server/internal/agent/codex/importer_tool_call_output.go:func importedCodexToolOutput
 
 
   - id: G-GL
@@ -5341,7 +5344,7 @@ groups:
     anchors:
       - web/src/hooks/usePanelShellClose.ts:confirmDialog({
       - web/src/components/shell/PanelShell.tsx:usePanelShellClose({ onClose, hasUnsavedChanges, t })
-      - web/tests/task-panel-unification.test.mjs:the guard must short-circuit straight to onClose
+      - web/tests/task-panel-options.test.mjs:the guard must short-circuit straight to onClose
 
   - id: G-IC
     title: Remove dead onboarding service imports
@@ -5751,6 +5754,7 @@ groups:
       - docs/agent/rules/
       - docs/plans/README.md
       - docs/plans/frontend-test-rule-hardening.md
+      - docs/plans/file-size-hard-line-cleanup.md
     anchors:
       - web/tests/agent-docs-contract.test.mjs:test("ship instructions match the sole frontend test runner"
       - web/tests/naming-convention.test.mjs:test(".ts files contain no JSX"
@@ -5879,7 +5883,7 @@ groups:
     kind: arch
     symptom: "后端规则是软 2000 / 硬 4000，前端是软 300 / 硬 500，同一目的两套数值差 6 倍；结果是 server/internal/api/usecase/session.go 1496 行、api/appcontext.go 1465 行这类「一个文件四五个不相干职责」的形态能长期存在。改造前存量 43 个源码 + 18 个测试文件超硬线。"
     why: "两条规则服务同一个目的（「一个文件一个职责，改哪读哪」），数值差 6 倍没有技术理由。软线的语义是判据（超过就判断职责边界并记录拆分安排），不是一次性清理项——与前端同区间 77 个文件的口径一致。合上游时 rules/plans 文档本身也会被整份覆盖，规则数值会被静默退回 2000/4000，而下游没人会注意到。"
-    boundary: "改后端规则数值（docs/agent/rules/backend/file-size.md）+ 存量的分批清理登记（docs/agent/rules/backend/TODO.md）+ 执行计划（docs/plans/backend-file-size-300-500.md）。全部为同包内移动或同包内新增文件：无签名变化、无 type 位置变化（跨文件同包可见）、无 import 路径变化、零数据迁移。agent/codex/importer_tool_calls.go 与 kanban/worktree_finish_stage.go 已论证过边界，本轮不再拆。"
+    boundary: "改后端规则数值（docs/agent/rules/backend/file-size.md）+ 存量的分批清理登记（docs/agent/rules/backend/TODO.md）+ 执行计划（docs/plans/backend-file-size-300-500.md）。全部为同包内移动或同包内新增文件：无签名变化、无 type 位置变化（跨文件同包可见）、无 import 路径变化、零数据迁移。agent/codex/importer_tool_calls.go 与 kanban/worktree_finish_stage.go 在 B1–B10 里论证过边界、当时未拆；其中 importer_tool_calls.go 已由当日晚的硬线清零轮拆开（见 G-GK），worktree_finish_stage.go 后来随 kanban 包拆分降到 299 行，两个例外都不再存在。"
     tests:
       - server/internal/auth/auth_test.go
       - server/internal/auth/resolve_live_test.go

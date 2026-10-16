@@ -2,24 +2,27 @@
 
 > 规则见 [file-size.md](file-size.md)：软 300 / 硬 500，覆盖 `server/` 与 `cli/` 的所有手写
 > Go 文件（**含测试**）。本文件是存量的唯一清单；新代码不进来 —— 新代码两条线立即适用。
-> 执行批次见 [Active 计划](../../../plans/backend-file-size-300-500.md)，每批清掉的文件在
-> 这里勾掉，不留「反正还有更差的」的借口。
+> 每清掉一批，在这里勾掉，不留「反正还有更差的」的借口。
 
-## 超硬线（>500）—— 按计划批次清
+## 超硬线（>500）—— 已清零（2026-10-16）
 
-| 文件 | 行数 | 批次 |
-|---|---|---|
-| `cli/cmd/mindfs.go` | 1059 | B10 |
-| `server/internal/gitview/worktree_finish.go` | 1040 | B10 |
-| `server/internal/gitview/gitview.go` | 933 | B10 |
-| `server/internal/scheduled/tasks.go` | 661 | B10 |
-| `server/internal/gitview/gitview_history.go` | 653 | B10 |
-| `server/internal/fs/shared_watcher.go` | 630 | B10 |
+`backend-file-size-300-500.md` 的 B1–B10 拆完全部存量；当天晚些的硬线清零轮又把最后两个
+例外也拆了。当前全仓无手写 Go 文件超过 500 行：
 
-| 测试文件 | 行数 | 批次 |
-|---|---|---|
-| `server/internal/gitview/worktree_finish_test.go` | 779 | B10 |
-| `server/internal/gitview/gitview_test.go` | 517 | B10 |
+| 文件 | 改造前 | 现在 | 去向 |
+|---|---|---|---|
+| `cli/cmd/mindfs.go` | 1059 | 331 | B10 拆成同包职责文件 |
+| `server/internal/gitview/worktree_finish.go` | 1040 | 78 | B10 → `worktree_merge.go` 等 |
+| `server/internal/gitview/gitview.go` | 933 | 314 | B10 |
+| `server/internal/scheduled/tasks.go` | 661 | 96 | B10 → `tasks_runner.go` |
+| `server/internal/gitview/gitview_history.go` | 653 | 1 | B10（只剩包声明） |
+| `server/internal/fs/shared_watcher.go` | 630 | 165 | B10 |
+| `server/internal/gitview/worktree_finish_test.go` | 779 | 50 | B10 |
+| `server/internal/gitview/gitview_test.go` | 517 | — | B10 已并入其它测试文件 |
+| `server/internal/agent/codex/importer_tool_calls.go` | 850 | 442 | 硬线清零轮拆成 `importer_tool_call_javascript.go` / `importer_tool_call_output.go` |
+| `server/internal/kanban/worktree_finish_stage.go` | 689 | 299 | 随 kanban 包拆分（B6）落地 |
+
+维护方式：新超线文件直接进本表并当批清掉，不要重建「批次」列 —— 批次是那轮改造的临时刻度。
 
 ## 软线区间（300–500）—— 下次动它时顺手拆
 
@@ -73,13 +76,15 @@
 
 ## 论证过边界、本轮及以后都不再拆
 
-- [~] `server/internal/agent/codex/importer_tool_calls.go`（850）—— G-GK 刚拆过：工具卡与
-      ask_user_question 的解析是一条**共享的**归一化链，按工具类型拆会把同一个 switch 切成
-      三份，改一种工具要同时动三个文件。硬线超了但再拆会推翻前一轮结论。
-      真要拆的前置是先把 `normalizeXxx` 抽成表驱动，那是独立一轮。
-- [~] `server/internal/kanban/worktree_finish_stage.go`（689）—— G-GI 刚拆过：阶段收尾的
-      「推进 → 清理 → 汇报」三步之间有隐含的顺序依赖（推进失败就不该清理），按步骤拆会把
-      guard 条件复制到两个文件。同上，超硬线但不再拆。
+（空 —— 2026-10-16 硬线清零轮后无此类条目。原先两条例外都已不再超线：
+
+- `server/internal/agent/codex/importer_tool_calls.go` 850 → 442。当年的结论是「按**工具类型**
+  拆会把同一个 switch 切成三份」，这条仍然成立，所以那个 switch 原样留着；拆的是**按工具**
+  切出的三块互不调用的代码（JS 字面量解析 / patch 文本与输出解析），见 G-GK。
+- `server/internal/kanban/worktree_finish_stage.go` 689 → 299，随 kanban 包拆分（B6）落地。
+
+要再拆 `importer_tool_calls.go` 的前置仍是把 `normalizeXxx` 抽成表驱动，那是独立一轮；
+现在它已在硬线内，不再有必须拆的压力。）
 
 ## 顺带发现的待办（与拆文件无关）
 

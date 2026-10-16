@@ -528,7 +528,7 @@ server/internal/api/canonical_turn_shadow_test.go → TestTerminalIsScopedToItsO
 
 `tailOverlay` 的判定原来住在 `SessionViewer.tsx` 的 `useMemo` 里，**因此测不了**。测试只能各自绕：
 
-- `tests/session-window.test.mjs:780` 写了一份「与 SessionViewer.tailOverlay **同构**」的副本，再对副本断言；
+- `tests/session-window-cache.test.mjs`（身份 overlay 一节）写了一份「与 SessionViewer.tailOverlay **同构**」的副本，再对副本断言；
 - `tests/session-window-overlay-dedup.test.mjs` 对 `composedExchanges` 那段源码做字符串手术（`useMemo(` → `return (`）再 `eval`。
 
 两份绕法都是**会漂移的副本** —— 冲突②③④⑭ 就是被副本挡住的：副本只复刻了作者关心的分支。
@@ -536,7 +536,7 @@ server/internal/api/canonical_turn_shadow_test.go → TestTerminalIsScopedToItsO
 现在：判定搬到 `src/components/sessionOverlay.ts`（逐字搬迁，两个阈值变成可选参数），
 SessionViewer 只做接线。随之：
 
-- 那份同构副本**已删除**，换成对真实现的薄适配器 —— `session-window.test.mjs` 里那 6 条
+- 那份同构副本**已删除**，换成对真实现的薄适配器 —— `session-window-cache.test.mjs` 里那 6 条
   断言（①窗口已含不重渲染 / ②流式不丢 / ③陈旧乐观拷贝让位 / ④真重复仍显示 /
   ⑤超出 latestSeq 保留 / ⑥未锚定不灌历史）从此跑在**真实现**上；
 - 6 条源码结构断言重定向到新文件（写法层照旧钉住）；
