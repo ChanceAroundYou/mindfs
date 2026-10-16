@@ -90,7 +90,7 @@
 | B7 agent 运行时源 + 测试 | 完成 | 本次 |
 | B8 agent 导入器 + 测试 | 完成 | `ac05bc52` |
 | B9 api 源 + 测试（逐文件提交） | 完成 | 逐文件提交 |
-| B10 收尾：全量门禁 + TODO 勾项 + 索引标 Completed | 待做 | — |
+| B10 收尾：全量门禁 + TODO 勾项 + 索引标 Completed | 完成 | 本次 |
 
 B4/B5 记录：`usecase_test.go` 3207 → 11 个职责测试文件 + `usecase_test_helpers_test.go`
 （跨文件共享的假 registry/agent session），`external_sessions_test.go` 892 →
@@ -103,6 +103,17 @@ B4 记录：`session.go` 1496 → `session.go` 339 + `session_turn_registry` 114
 `candidates.go` 733 → `candidates.go` 217 + `candidates_registry` 202 +
 `candidates_file_skill` 334；`external_sessions.go` 778 → `external_sessions.go` 271 +
 `external_sessions_sync` 423 + `external_sessions_names` 102。
+
+B10 记录：`gitview/worktree_finish.go` 1040 → 6 文件、`worktree_finish_test.go` 779
+→ 4 文件（31 个用例逐个核对零丢失）；`gitview/gitview.go` 933 → types / actions / status，
+`gitview_history.go` 653 → read / stats / parse，`gitview_test.go` 517 → history / repo /
+stats + 助手文件；`fs/shared_watcher.go` 630 → 4 文件；`scheduled/tasks.go` 661 →
+tasks / service / runner；`cli/cmd/mindfs.go` 1059 → startup / service_pid /
+service_control / managed_dirs / task_cli / open_target。
+拆分中发现两处**钉住文件名的源码守卫**必须跟着改，否则守卫失效：
+`ws_test.go` 的 `TestWSRequestHandlersAreDispatchedAsynchronously` 与
+`pending_identity_test.go` 的 `TestScheduledPathCarriesTurnIdentity`
+（后者已用变异验证：把 `EndSessionTurn` 的身份改成哨兵值仍报警，且报的是新文件名）。
 
 B9 记录（每文件一次提交，单读 goroutine 约束）。`appcontext.go` 1465 → 7 个职责文件
 （roots / worktree / services / broadcast / notify / task_flags）；`ws.go` 1408 →
@@ -127,6 +138,11 @@ B8 记录：`claude/importer.go` 1398 → `importer.go` 240 + `importer_subagent
 `sendCommandMessage(`、`appendImportedExchange(`）被误判成「单行声明」，
 导致跨 2..300 行的大段被吞进下一个声明的尾部。修法是单行判定加
 「不以 `(` 结尾」条件。
+
+**结论（2026-10-16）**：B1–B10 全部完成。改造前 43 个源码 + 18 个测试文件超硬线，
+现在只剩 `server/internal/agent/codex/importer_tool_calls.go`（850）—— 它在 §五 已论证
+不再拆（G-GK 刚拆过，按工具类型拆会把同一个归一化 switch 切成三份），登记在 TODO.md
+的「论证过边界、本轮及以后都不再拆」里。
 
 ## 六、验收
 
