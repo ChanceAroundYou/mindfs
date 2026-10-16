@@ -46,10 +46,7 @@ export function SessionCardTopBadges({
         pointerEvents: "none",
       }}
     >
-      <SessionWorktreeTag
-        relatedWorktree={session.related_worktree}
-        worktreeMissing={session.worktree_missing}
-      />
+      <SessionWorktreeTag worktreeActive={session.worktree_active} />
       {session.aux_flags?.ask_user_waiting ? (
         <span
           aria-label={t("sessionList.awaitingUser")}
@@ -72,7 +69,7 @@ export function hasSessionTopBadges(session: SessionItem, isSubagent: boolean): 
   if (isSubagent) {
     return false;
   }
-  if (isWorktreeActive(session.related_worktree, session.worktree_missing)) {
+  if (isWorktreeActive(session.worktree_active)) {
     return true;
   }
   if (session.aux_flags?.ask_user_waiting) {

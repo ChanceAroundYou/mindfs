@@ -110,6 +110,10 @@ export function createSessionMetaHandlers(
                 typeof payload.session.worktree_missing === "boolean"
                   ? payload.session.worktree_missing
                   : (cached as any).worktree_missing,
+              worktree_active:
+                typeof payload.session.worktree_active === "boolean"
+                  ? payload.session.worktree_active
+                  : (cached as any).worktree_active,
               aux_flags:
                 payload.session.aux_flags !== undefined
                   ? normalizeSessionAuxFlags(payload.session.aux_flags)
@@ -184,6 +188,10 @@ export function createSessionMetaHandlers(
                       typeof payload.session.worktree_missing === "boolean"
                         ? payload.session.worktree_missing
                         : (prev as any).worktree_missing,
+                    worktree_active:
+                      typeof payload.session.worktree_active === "boolean"
+                        ? payload.session.worktree_active
+                        : (prev as any).worktree_active,
                     aux_flags:
                       payload.session.aux_flags !== undefined
                         ? normalizeSessionAuxFlags(payload.session.aux_flags)

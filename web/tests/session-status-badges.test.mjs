@@ -74,10 +74,12 @@ const item = toSessionItem("root-1", {
   type: "chat",
   related_worktree: { root_id: "root-1", path: "/tmp/wt-1" },
   worktree_missing: false,
+  worktree_active: true,
   aux_flags: { ask_user_waiting: true, has_plan: true, has_todos: false, has_task: false, session_error: "" },
 });
 assert.ok(item, "toSessionItem must build the item");
 assert.equal(item.worktree_missing, false, "worktree_missing passes through");
+assert.equal(item.worktree_active, true, "worktree_active passes through (the green tag's only predicate)");
 assert.deepEqual(
   plain(item.aux_flags),
   { ask_user_waiting: true, has_plan: true, has_todos: false, has_task: false },
@@ -95,6 +97,7 @@ assert.equal(typeof meta.createSessionMetaHandlers, "function", "meta module mus
 const metaSource = fs.readFileSync(metaPath, "utf8");
 assert.match(metaSource, /aux_flags:\s*payload\.session\.aux_flags !== undefined/, "cache merge must overwrite aux_flags only when the payload carries it");
 assert.match(metaSource, /worktree_missing:\s*typeof payload\.session\.worktree_missing === "boolean"/, "cache merge must overwrite worktree_missing only when the payload carries a boolean");
+assert.match(metaSource, /worktree_active:\s*typeof payload\.session\.worktree_active === "boolean"/, "cache merge must overwrite worktree_active only when the payload carries a boolean");
 
 // ── 4. 视图接线：aux 徽标在名字上方一排，子代理折角回到名字前 ──
 // 2026-10-16 用户先要求「小状态图标都放到会话名上面」，随后同一天改主意：
@@ -146,8 +149,15 @@ assert.match(badges, /renderToolIcon\("task"\)/, "task icon reuses the stream to
 const tag = fs.readFileSync(path.resolve(import.meta.dirname, "../src/components/session/SessionWorktreeTag.tsx"), "utf8");
 assert.match(tag, /taskWorktreeTagStyle\("enabled"\)/, "the tag reuses the task card worktree tag style");
 assert.equal(tag.includes('position: "absolute"'), false, "the tag no longer positions itself — the top row owns placement now");
-// 判据只认活树：无 path = 没开过，worktreeMissing = 目录已删（已收尾），两者都不渲染。
-assert.match(tag, /Boolean\(path\) && !worktreeMissing/, "only a live worktree (path present, dir not deleted) renders the tag");
+// 判据只有后端能给（前端 stat 不了文件系统）：worktree_active = 路径在 + 目录还在
+// + 它**确实是** linked worktree（.git 是文件）。原先是前端拿 path 非空 + !worktree_missing
+// 自己判 —— 那只问「目录还在不在」，而主 checkout 的目录当然一直在。2026-10-16 实测
+// 14 条 related_worktree 里 13 条因此误亮（本项目主 checkout、别的仓库、乃至不是仓库的
+// ~/.claude）。行为守卫在 Go 侧：TestRelatedWorktreeActiveOnlyForLinkedWorktree。
+assert.match(tag, /return worktreeActive === true/, "the tag is driven by the server-derived worktree_active flag");
+assert.equal(tag.includes("relatedWorktree"), false, "the tag must not fall back to reading related_worktree.path itself");
+assert.equal(tag.includes("worktreeMissing"), false, "the tag must not fall back to the dir-exists predicate");
+assert.match(top, /isWorktreeActive\(session\.worktree_active\)/, "the top-row predicate and the tag share one source");
 assert.equal(tag.includes("NoWorktreeIcon"), false, "no-worktree and finished sessions show nothing at all");
 assert.equal(tag.includes("worktreeFinishedLabel"), false, "finished sessions show nothing at all");
 assert.equal(badges.includes("NoWorktreeIcon"), false, "the badge strip no longer carries the worktree tag");
@@ -254,6 +264,14 @@ const apiSources = fs
   .join("\n");
 const auxPayloadSites = apiSources.match(/"aux_flags":\s*\w+\.Aux\.AuxFlagsPayload\(\)/g) || [];
 assert.ok(auxPayloadSites.length >= 3, `列表 + appcontext 广播 + ws 广播三处 payload 都必须带 aux_flags，实际 ${auxPayloadSites.length} 处`);
+// worktree_active 同三处：漏一处就是「刚建好带 worktree 的会话在列表刷新前不亮灯」。
+const activePayloadSites = apiSources.match(/"worktree_active":\s*relatedWorktreeActive\(/g) || [];
+assert.ok(activePayloadSites.length >= 3, `列表 + appcontext 广播 + ws 广播三处 payload 都必须带 worktree_active，实际 ${activePayloadSites.length} 处`);
+assert.match(
+  apiSources,
+  /func relatedWorktreeActive\([\s\S]{0,600}?gitview\.IsWorktree\(wt\.Path\)/,
+  "worktree_active 必须由 linked-worktree 判据（.git 是文件）派生，不能退回「目录还在」",
+);
 const schema = fs.readFileSync(path.resolve(import.meta.dirname, "../../server/internal/session/manager_sqlite.go"), "utf8");
 for (const col of ["aux_ask_user_waiting", "aux_has_plan", "aux_has_todos", "aux_has_task", "aux_session_error"]) {
   assert.ok(schema.includes(col), `sqlite schema must carry ${col}`);

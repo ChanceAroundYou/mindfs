@@ -90,6 +90,7 @@ func (s *AppContext) BroadcastSessionMetaUpdated(rootID string, sess *session.Se
 				"plan_mode":           sess.PlanMode,
 				"related_worktree":    sess.RelatedWorktree,
 				"worktree_missing":    sess.RelatedWorktree.WorktreeMissing(),
+				"worktree_active":     relatedWorktreeActive(sess.RelatedWorktree),
 				"aux_flags":           sess.Aux.AuxFlagsPayload(),
 				"updated_at":          sess.UpdatedAt,
 			},

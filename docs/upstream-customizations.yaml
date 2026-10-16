@@ -670,8 +670,12 @@ groups:
       - server/internal/session/manager_meta.go
       - server/internal/session/manager_sqlite.go
       - server/internal/api/appcontext.go
+      - server/internal/api/appcontext_broadcast.go
+      - server/internal/api/appcontext_worktree.go
       - server/internal/api/http_sessions.go
+      - server/internal/api/http_sessions_list.go
       - server/internal/api/ws.go
+      - server/internal/api/ws_broadcast.go
       - web/src/shared/sessionTypes.ts
       - web/src/services/session/sessionService.ts
       - web/src/app/appSession.ts
@@ -688,8 +692,16 @@ groups:
       - web/src/components/session/ExternalSessionList.tsx
       - web/src/components/task/taskStyles.ts
     anchors:
-      # 绿 worktree 标签：只认活树；定位归上方那排，本组件不再自己绝对定位（2026-10-16）。
-      - 'web/src/components/session/SessionWorktreeTag.tsx:Boolean(path) && !worktreeMissing'
+      # 绿 worktree 标签：判据是后端派生的 worktree_active（路径在 + 目录还在 + `.git` 是**文件**，
+      # 即它确实是 linked worktree），前端 stat 不了文件系统，只能认这个字段。
+      # 2026-10-16 之前是前端自己判「path 非空 && !worktree_missing」——那只问目录还在不在，
+      # 主 checkout 的目录当然一直在：实测 14 条 related_worktree 里 13 条误亮
+      # （本项目主 checkout、别的仓库的主 checkout、乃至不是仓库的 ~/.claude）。
+      - 'web/src/components/session/SessionWorktreeTag.tsx:return worktreeActive === true'
+      - 'server/internal/api/appcontext_worktree.go:func relatedWorktreeActive'
+      - 'server/internal/api/http_sessions_list.go:"worktree_active":     relatedWorktreeActive(s.RelatedWorktree)'
+      # 定位归上方那排，本组件不再自己绝对定位（2026-10-16）。
+      - 'web/src/components/session/SessionWorktreeTag.tsx:taskWorktreeTagStyle("enabled")'
       # 名字上方仅放 worktree / 问号 / aux 状态；子代理折角是类型标识，固定留在名字前。
       - 'web/src/components/session/SessionCardTopBadges.tsx:if (isSubagent || !hasSessionTopBadges(session, isSubagent))'
       - 'web/src/components/session/SessionCardTopBadges.tsx:export const TOP_BADGE_LIFT_PX'
@@ -719,6 +731,9 @@ groups:
       - web/tests/session-status-badges.test.mjs
       - server/internal/session/manager_session_aux_flags_test.go
       - server/internal/api/http_session_aux_flags_test.go
+      # worktree_active 的行为守卫：真 linked worktree 必须亮，本项目/别的仓库的主 checkout、
+      # 非仓库目录、已删目录、指向文件的路径一律不亮（2026-10-16 那 13 条误亮的形状）。
+      - server/internal/api/helpers_test.go
 
   - id: G-AE
     title: UI 基础设施（自建对话框 / Toast / 面板外壳）

@@ -124,6 +124,15 @@ export type Session = {
   work_dir?: string;
   // worktree_missing 是派生状态（目录被删了）：后端按需计算、不落库（G-AD 列表透传）。
   worktree_missing?: boolean;
+  /**
+   * worktree_active 是绿色 worktree 标签的**唯一**判据：这个会话真的绑在一个活着的
+   * linked worktree 上（路径在 + 目录还在 + `.git` 是文件）。派生状态、不落库。
+   *
+   * 前端 stat 不了文件系统，所以判据只能由后端给。原先前端拿 related_worktree.path
+   * 非空 + !worktree_missing 自己判，主 checkout 的目录当然一直在 —— 2026-10-16 实测
+   * 14 条归属里 13 条误亮。别退回那个判据。
+   */
+  worktree_active?: boolean;
   // aux_flags 是会话行的内容徽标数据源（G-AD）：ask_user/plan/todo/task/error，
   // toSessionItem 从列表 payload 透传、session.meta.updated 按 key 增量合并。
   aux_flags?: SessionAuxFlags;

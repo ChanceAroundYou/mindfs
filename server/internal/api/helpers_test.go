@@ -13,6 +13,7 @@ import (
 
 	"mindfs/server/internal/apperr"
 	rootfs "mindfs/server/internal/fs"
+	"mindfs/server/internal/session"
 )
 
 func TestRespondErrorIncludesAppErrorFields(t *testing.T) {
@@ -182,6 +183,56 @@ func TestResolveRelatedWorktreeStillRecordsRealWorktree(t *testing.T) {
 	}
 	if got := strings.TrimSpace(match.Branch); got != "task-7" {
 		t.Fatalf("match.Branch = %q, want task-7", got)
+	}
+}
+
+// relatedWorktreeActive 是会话行绿色 worktree 标签的判据（G-AD）。2026-10-16 实测
+// 14 条 related_worktree 里 13 条误亮，全是「目录还在，但它不是 linked worktree」——
+// 这个测试逐个钉住那几类，外加真 worktree 的反向守卫。
+func TestRelatedWorktreeActiveOnlyForLinkedWorktree(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found")
+	}
+	root := t.TempDir()
+	runAPITestGit(t, root, "init")
+	runAPITestGit(t, root, "config", "user.email", "test@example.com")
+	runAPITestGit(t, root, "config", "user.name", "Test User")
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("base\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile README.md: %v", err)
+	}
+	runAPITestGit(t, root, "add", "README.md")
+	runAPITestGit(t, root, "commit", "-m", "initial")
+	runAPITestGit(t, root, "checkout", "-b", "task-9")
+	runAPITestGit(t, root, "checkout", "-")
+
+	worktreeRoot := filepath.Join(root, ".worktree", "task-9")
+	runAPITestGit(t, root, "worktree", "add", worktreeRoot, "task-9")
+
+	// 反向守卫：真 linked worktree（.git 是文件）必须亮。
+	if !relatedWorktreeActive(&session.RelatedWorktree{Path: worktreeRoot}) {
+		t.Fatalf("a real linked worktree (%s) must light the tag", worktreeRoot)
+	}
+
+	// 下面全是实测误亮过的形状：目录都在，都不是 linked worktree。
+	plainDir := t.TempDir()
+	siblingRepo := t.TempDir()
+	runAPITestGit(t, siblingRepo, "init")
+	cases := []struct {
+		name string
+		wt   *session.RelatedWorktree
+	}{
+		{"nil", nil},
+		{"空路径", &session.RelatedWorktree{Path: "  "}},
+		{"本项目主 checkout（.git 是目录）", &session.RelatedWorktree{Path: root}},
+		{"别的仓库的主 checkout", &session.RelatedWorktree{Path: siblingRepo}},
+		{"根本不是仓库的目录", &session.RelatedWorktree{Path: plainDir}},
+		{"目录已删的真 worktree", &session.RelatedWorktree{Path: filepath.Join(root, ".worktree", "gone")}},
+		{"路径指向文件", &session.RelatedWorktree{Path: filepath.Join(root, "README.md")}},
+	}
+	for _, tc := range cases {
+		if relatedWorktreeActive(tc.wt) {
+			t.Errorf("%s: relatedWorktreeActive = true, want false", tc.name)
+		}
 	}
 }
 

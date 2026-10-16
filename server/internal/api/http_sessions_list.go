@@ -261,6 +261,7 @@ func sessionListResponse(s *session.Session, resolvedShell string) map[string]an
 		"name":                s.Name,
 		"related_worktree":    s.RelatedWorktree,
 		"worktree_missing":    s.RelatedWorktree.WorktreeMissing(),
+		"worktree_active":     relatedWorktreeActive(s.RelatedWorktree),
 		"work_dir":            s.WorkDir,
 		"aux_flags":           s.Aux.AuxFlagsPayload(),
 		"pinned_at":           s.PinnedAt,

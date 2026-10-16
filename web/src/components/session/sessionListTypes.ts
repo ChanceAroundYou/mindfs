@@ -25,10 +25,12 @@ export type SessionItem = {
   // 问号脉冲不另设字段：由 aux_flags.ask_user_waiting 驱动（见 SessionCard），
   // 后端从不下发 awaiting_user，留字段只会养出第二个真相。
   // aux_flags 是会话行的内容徽标数据源（G-AD，后端 session.SessionAuxFlags 同名）。
-  // related_worktree/worktree_missing 与后端列表 payload 同名（toSessionItem 透传）。
+  // related_worktree/worktree_missing/worktree_active 与后端列表 payload 同名
+  // （toSessionItem 透传）。绿色 worktree 标签只认 worktree_active。
   aux_flags?: SessionAuxFlags;
   related_worktree?: RelatedWorktree | null;
   worktree_missing?: boolean;
+  worktree_active?: boolean;
   /** 派生四态（自己 pending / 等回答 / 后代在跑 / 全闲），由列表一次性盖上 */
   presence?: "running" | "awaiting" | "delegating" | "idle";
   related_files?: Array<{ path: string }>;

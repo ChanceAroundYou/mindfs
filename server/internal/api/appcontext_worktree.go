@@ -14,6 +14,7 @@ import (
 	"mindfs/server/internal/fs"
 	"mindfs/server/internal/gitview"
 	"mindfs/server/internal/kanban"
+	"mindfs/server/internal/session"
 )
 
 func (s *AppContext) CreateTaskWorktree(ctx context.Context, rootID, name, branchMode, branch string) (kanban.WorktreeInfo, error) {
@@ -143,6 +144,12 @@ func ensureTaskWorktreeExcluded(rootPath string) error {
 //
 // 判断用 ListWorktrees 自带的 Current（= 该路径就是这个 root 本身），不是自己比较
 // 路径字符串 —— Current 就是为此存在的，此前一直没有消费者。
+//
+// 2026-10-16 删掉了最后那个 ResolveRepositoryForPath 兜底出口：它只挡住「root 自己」，
+// 挡不住「**别的**仓库的主 checkout」—— 实测 latex 会话的归属被记成 /HBSN/python、
+// xiaokubao 会话被记成 ~/.claude（那根本不是仓库）。ListWorktrees 已经覆盖全部真
+// worktree（含 .worktree/ 下嵌套的），兜底出口没有任何一条是它才能记的。
+// 存量脏行由读侧 relatedWorktreeActive 兜住。
 func resolveRelatedWorktree(ctx context.Context, root fs.RootInfo, filePath string) (fs.RelatedWorktreeMatch, bool) {
 	cleanPath := cleanToolFilePath(filePath)
 	if cleanPath == "" {
@@ -182,22 +189,26 @@ func resolveRelatedWorktree(ctx context.Context, root fs.RootInfo, filePath stri
 	if bestPathLen >= 0 {
 		return best, true
 	}
-	if repo, err := gitview.ResolveRepositoryForPath(ctx, cleanPath); err == nil && strings.TrimSpace(repo.Path) != "" {
-		repoPath := filepath.Clean(repo.Path)
-		// 同一条边界，落在这个出口上：ResolveRepositoryForPath 会把普通仓库
-		// （包括 root 自己）也返回，那不是 worktree 归属，别记。
-		// 复用 pathInsideDir 而不是自己比字符串 —— 它解析过 symlink，
-		// root 配了软链时裸比会不相等。
-		if sameDirPath(repoPath, root.RootPath) {
-			return fs.RelatedWorktreeMatch{}, false
-		}
-		return fs.RelatedWorktreeMatch{
-			Path:    repoPath,
-			Head:    strings.TrimSpace(repo.Head),
-			Current: false,
-		}, true
-	}
 	return fs.RelatedWorktreeMatch{}, false
+}
+
+// relatedWorktreeActive 是会话行绿色 worktree 标签的判据（G-AD）：这个会话是不是真的
+// 绑在一个**活着的 linked worktree** 上。
+//
+// 不能只看 WorktreeMissing（= 目录还在不在）：主 checkout 的目录当然一直在，于是
+// 2026-10-16 实测 14 条 related_worktree 里 13 条误亮 —— 本项目主 checkout、别的仓库的
+// 主 checkout、乃至根本不是仓库的 ~/.claude。linked worktree 的判据是「.git 是**文件**」
+// （内容是 gitdir: 指向主仓库）：主 checkout 是目录，普通目录没有。复用
+// gitview.IsWorktree，不另写一份 stat。
+//
+// 这是**派生状态**，不落库：目录重建后下一次调用自动转 true，不需要迁移。删除写入侧
+// 兜底出口之前记下的存量脏行，也靠它读侧滤掉，不必清库。
+func relatedWorktreeActive(wt *session.RelatedWorktree) bool {
+	if wt == nil || strings.TrimSpace(wt.Path) == "" || wt.WorktreeMissing() {
+		return false
+	}
+	ok, err := gitview.IsWorktree(wt.Path)
+	return err == nil && ok
 }
 
 func cleanToolFilePath(path string) string {
@@ -208,11 +219,7 @@ func cleanToolFilePath(path string) string {
 	return filepath.Clean(path)
 }
 
-// sameDirPath 判两个目录是不是同一个（解析 symlink 之后比）。
-func sameDirPath(a, b string) bool {
-	return pathInsideDir(a, b) && pathInsideDir(b, a)
-}
-
+// pathInsideDir 判 path 是不是落在 dir 里（解析 symlink 之后比）。
 func pathInsideDir(path, dir string) bool {
 	path = filepath.Clean(path)
 	dir = filepath.Clean(strings.TrimSpace(dir))

@@ -103,6 +103,7 @@ func sessionMetaUpdatedPayload(sess *session.Session) map[string]any {
 		"plan_mode":           sess.PlanMode,
 		"related_worktree":    sess.RelatedWorktree,
 		"worktree_missing":    sess.RelatedWorktree.WorktreeMissing(),
+		"worktree_active":     relatedWorktreeActive(sess.RelatedWorktree),
 		"work_dir":            sess.WorkDir,
 		"aux_flags":           sess.Aux.AuxFlagsPayload(),
 		"pinned_at":           sess.PinnedAt,
