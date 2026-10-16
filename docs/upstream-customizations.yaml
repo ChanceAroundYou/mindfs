@@ -391,7 +391,7 @@ groups:
     why: "别名落服务端 SQLite（不是 localStorage）保证跨端一致；外部名称按 agent+agent_session_id 落盘；fork 完全独立、仅 fork 扁平为顶级；转录重复区块必须按条目 uuid 去重。agent 徽标：列表行是 meta-only 的，agent 只能由 InferAgentFromSession 的 AgentCtxSeq 兜底推出，故建会话时就要写一行占位绑定（agent_session_id='' 表示「agent 已选定、尚无转录」，agent_ctx_seq 必须写 0）。多绑定会话取 ctx_seq 最大的那个，平局按名字定序 —— 不定序的话 map 遍历顺序会让徽标在两次刷新之间来回跳。"
     anchors:
       - 'web/src/components/session/ExternalSessionList.tsx:CUSTOM(G-Q)'
-      - 'server/internal/agent/codex/importer.go:func cwdMatchesRoot('
+      - 'server/internal/agent/codex/importer_files.go:func cwdMatchesRoot('
       - 'server/internal/session/manager_agent_bindings.go:空 agent_session_id 表示「agent 已选定、尚无转录」'
       - 'server/internal/session/manager_aliases.go:func (m *Manager) upsertExternalSessionNameUnsafe'
       - 'server/internal/session/manager_aliases.go:func (m *Manager) lookupSessionAliasForAgentUnsafe'
@@ -5994,6 +5994,21 @@ groups:
       - server/internal/agent/pool_idle_test.go
       - server/internal/agent/config_load_test.go
       - server/internal/api/usecase/fs_file_ops_test.go
+      # B8
+      - server/internal/agent/claude/importer_subagents.go
+      - server/internal/agent/claude/importer_files.go
+      - server/internal/agent/claude/importer_transcript.go
+      - server/internal/agent/claude/importer_exchange.go
+      - server/internal/agent/claude/importer_transcript_test.go
+      - server/internal/agent/claude/importer_scan_test.go
+      - server/internal/agent/claude/importer_cursor_test.go
+      - server/internal/agent/codex/importer_files.go
+      - server/internal/agent/codex/importer_subagents.go
+      - server/internal/agent/codex/importer_transcript.go
+      - server/internal/agent/codex/importer_exchange.go
+      - server/internal/agent/codex/importer_transcript_test.go
+      - server/internal/agent/codex/importer_tool_calls_test.go
+      - server/internal/agent/codex/importer_scan_test.go
     anchors:
       - docs/agent/rules/backend/file-size.md:软线**：300 行
       - docs/plans/backend-file-size-300-500.md:B2

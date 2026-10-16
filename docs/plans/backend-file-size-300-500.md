@@ -88,7 +88,7 @@
 | B5 api/usecase 测试 | 完成 | 前两次提交 |
 | B6 kanban 源 + 测试 | 完成 | 本次 |
 | B7 agent 运行时源 + 测试 | 完成 | 本次 |
-| B8 agent 导入器 + 测试 | 进行中 | — |
+| B8 agent 导入器 + 测试 | 完成 | `ac05bc52` |
 | B9 api 源 + 测试（逐文件提交） | 待做 | — |
 | B10 收尾：全量门禁 + TODO 勾项 + 索引标 Completed | 待做 | — |
 
@@ -103,6 +103,12 @@ B4 记录：`session.go` 1496 → `session.go` 339 + `session_turn_registry` 114
 `candidates.go` 733 → `candidates.go` 217 + `candidates_registry` 202 +
 `candidates_file_skill` 334；`external_sessions.go` 778 → `external_sessions.go` 271 +
 `external_sessions_sync` 423 + `external_sessions_names` 102。
+
+B8 记录：`claude/importer.go` 1398 → `importer.go` 240 + `importer_subagents` 225 +
+`importer_files` 361 + `importer_transcript` 341 + `importer_exchange` 282；
+`codex/importer.go` 1047 → `importer.go` 236 + `importer_files` 294 +
+`importer_subagents` 124 + `importer_transcript` 296 + `importer_exchange` 147。
+测试按同边界拆（transcript / scan / cursor / tool_calls）。
 
 过程中发现解析器缺陷并修掉：`func f(` 形式的多行签名（如
 `sendCommandMessage(`、`appendImportedExchange(`）被误判成「单行声明」，
