@@ -72,7 +72,7 @@ groups:
     tests:
       - server/internal/api/http_test.go
     anchors:
-      - server/internal/api/http.go:handleTree
+      - server/internal/api/http_routes.go:handleTree
 
   - id: G-C
     title: Markdown / Mermaid 渲染与文件服务缓存
@@ -155,7 +155,7 @@ groups:
     files:
       - server/internal/session/manager.go
       - server/internal/session/types.go
-      - server/internal/session/manager_test.go
+      - server/internal/session/manager_incremental_test.go
       - server/internal/session/manager_cursor_test.go
       - server/internal/session/manager_cursor_migration_test.go
       - server/internal/session/manager_window_test.go
@@ -164,6 +164,10 @@ groups:
       - server/internal/fs/fs.go
       - server/internal/api/http_window_test.go
       - server/internal/api/usecase/exchange_repeat_test.go
+      - server/internal/fs/root.go
+      - server/internal/fs/meta_dir.go
+      - server/internal/fs/read_decode.go
+      - server/internal/fs/file_meta.go
     tests:
       - server/internal/session/manager_cursor_test.go
       - server/internal/session/manager_cursor_migration_test.go
@@ -228,6 +232,16 @@ groups:
       # 手工探针（对着 home/pc 两台真实服务跑），是 fork 新增文件故须登记；
       # 但它是 files 不是 tests —— tests 栏只列门禁真会执行的用例（见下方注释）。
       - web/tests/cross-machine-account.behavior.mjs
+      - server/internal/auth/store_persist.go
+      - server/internal/auth/store_query.go
+      - server/internal/auth/store_mutate.go
+      - server/internal/commandexec/long_shell.go
+      - server/internal/commandexec/long_shell_command.go
+      - server/internal/commandexec/long_shell_output.go
+      - server/internal/agent/pool.go
+      - server/internal/agent/pool_idle.go
+      - server/internal/agent/pool_open.go
+      - server/internal/agent/pool_config.go
     tests:
       - server/app/workspace_test.go
       - server/internal/api/workspace_test.go
@@ -259,7 +273,7 @@ groups:
       - web/tests/session-archive.test.mjs
     anchors:
       - server/internal/fs/registry.go:UpdateDisplayName
-      - 'server/internal/api/usecase/fs.go:CUSTOM(G-P)'
+      - 'server/internal/api/usecase/fs_managed_dirs.go:CUSTOM(G-P)'
 
   - id: G-G
     title: 会话生命周期与 WS 正确性
@@ -279,6 +293,13 @@ groups:
       - web/src/hooks/useSessionStream.ts
       - web/src/app/useRealtimeEvents.ts
       - web/src/components/session/SessionViewer.tsx
+      - server/internal/agent/types/session_type.go
+      - server/internal/agent/types/external_import.go
+      - server/internal/agent/types/model.go
+      - server/internal/agent/types/event.go
+      - server/internal/agent/types/toolcall.go
+      - server/internal/agent/types/turn.go
+      - server/internal/agent/types/import_input.go
     tests:
       - server/internal/api/session_created_broadcast_test.go
       - server/internal/api/stream_hub_user_message_test.go
@@ -288,8 +309,8 @@ groups:
       - web/tests/session-archive.test.mjs
       - web/tests/session-list-node-failure.test.mjs
     anchors:
-      - server/internal/api/ws.go:go h.handle
-      - 'server/internal/agent/acp/process.go:CUSTOM(G-G)'
+      - server/internal/api/ws_upgrade.go:go h.handle
+      - 'server/internal/agent/acp/process_lifecycle.go:CUSTOM(G-G)'
 
   - id: G-T
     title: 流式重放与正文正确性（快照重建协议）
@@ -321,7 +342,7 @@ groups:
       - web/tests/e2e-message-behavior.test.mjs
       - server/internal/api/ws_test.go
     anchors:
-      - server/internal/api/stream_hub.go:func buildSessionStreamBatchResponse
+      - server/internal/api/stream_hub_build.go:func buildSessionStreamBatchResponse
       - web/src/services/session/sessionExchangeMerge.ts:composeLoadedExchanges
       - web/src/services/session/sessionExchangeMerge.ts:isTransientExchange
       - web/src/shared/sessionOverlay.ts:computeTailOverlay
@@ -370,11 +391,11 @@ groups:
     why: "别名落服务端 SQLite（不是 localStorage）保证跨端一致；外部名称按 agent+agent_session_id 落盘；fork 完全独立、仅 fork 扁平为顶级；转录重复区块必须按条目 uuid 去重。agent 徽标：列表行是 meta-only 的，agent 只能由 InferAgentFromSession 的 AgentCtxSeq 兜底推出，故建会话时就要写一行占位绑定（agent_session_id='' 表示「agent 已选定、尚无转录」，agent_ctx_seq 必须写 0）。多绑定会话取 ctx_seq 最大的那个，平局按名字定序 —— 不定序的话 map 遍历顺序会让徽标在两次刷新之间来回跳。"
     anchors:
       - 'web/src/components/session/ExternalSessionList.tsx:CUSTOM(G-Q)'
-      - 'server/internal/agent/codex/importer.go:func cwdMatchesRoot('
+      - 'server/internal/agent/codex/importer_files.go:func cwdMatchesRoot('
       - 'server/internal/session/manager_agent_bindings.go:空 agent_session_id 表示「agent 已选定、尚无转录」'
       - 'server/internal/session/manager_aliases.go:func (m *Manager) upsertExternalSessionNameUnsafe'
       - 'server/internal/session/manager_aliases.go:func (m *Manager) lookupSessionAliasForAgentUnsafe'
-      - 'server/internal/session/types.go:func InferAgentFromSession'
+      - 'server/internal/session/types_infer.go:func InferAgentFromSession'
     files:
       - server/internal/agent/claude/importer.go
       - server/internal/agent/claude/importer_test.go
@@ -388,7 +409,7 @@ groups:
       - server/internal/session/manager_agent_bindings.go
       - server/internal/session/manager_aliases.go
       - server/internal/session/types.go
-      - server/internal/session/manager_test.go
+      - server/internal/session/manager_fork_test.go
       - web/src/components/session/ExternalSessionList.tsx
       - web/src/app/useExternalSessionImport.ts
       - web/tests/fork-session-name.test.mjs
@@ -397,7 +418,7 @@ groups:
       - server/internal/agent/codex/importer_test.go
       - server/internal/api/usecase/external_sessions_test.go
       - server/internal/api/session_created_broadcast_test.go
-      - server/internal/session/manager_test.go
+      - server/internal/session/manager_fork_test.go
       - web/tests/fork-session-name.test.mjs
 
   # G-AB（会话投影 session_projection.go + 审计 audit.go）已于 2026-10-12 随 main
@@ -419,6 +440,11 @@ groups:
       - server/internal/agent/claude/zz_replay_live_test.go
       - web/src/components/AgentSelector.tsx
       - web/src/components/AgentMenuList.tsx
+      - server/internal/agent/probe_types.go
+      - server/internal/agent/probe_status_query.go
+      - server/internal/agent/probe_status_caps.go
+      - server/internal/agent/probe_run.go
+      - server/internal/agent/probe_verify.go
     tests:
       - server/internal/agent/probe_models_test.go
       - server/internal/agent/claude/session_test.go
@@ -476,7 +502,7 @@ groups:
     anchors:
       - server/internal/pins/store.go:NeedsLegacySeed
       - web/src/services/pins.ts:controlPath
-      - server/internal/session/manager.go:CUSTOM(G-X)
+      - server/internal/session/manager_sql_statements.go:CUSTOM(G-X)
 
   - id: G-Y
     title: 看板模型重做（拒绝上游 task_groups 编排体系）
@@ -550,7 +576,7 @@ groups:
       - server/internal/kanban/template_store.go:ListStageTemplates
       - server/internal/kanban/worktree_finish.go:FinishTaskWorktree
       # 存量 queued 必须被折进 pending：前端已按「不可能出现」删掉了该分支
-      - server/internal/kanban/task_store.go:UPDATE tasks SET status = 'pending' WHERE status = 'queued'
+      - server/internal/kanban/task_store_migrate.go:UPDATE tasks SET status = 'pending' WHERE status = 'queued'
 
   - id: G-Z
     title: 跨项目工作台
@@ -767,8 +793,8 @@ groups:
       - 'web/src/components/git/GitHistoryPanel.tsx:color-mix(in srgb, var(--accent-color) 8%'
       - 'web/src/components/git/GitDiffViewer.tsx:rootBadgeButtonStyle'
       - 'web/src/services/upload.ts:getRootNodeId'
-      - 'server/internal/gitview/gitview_history.go:func ReadRelatedFileStats'
-      - 'server/internal/api/http.go:/api/git/related-files/stats'
+      - 'server/internal/gitview/gitview_history_stats.go:func ReadRelatedFileStats'
+      - 'server/internal/api/http_routes.go:/api/git/related-files/stats'
     files:
       - web/src/components/file/CodeViewer.tsx
       - web/src/components/DocumentViewer.tsx
@@ -790,7 +816,7 @@ groups:
       - web/src/hooks/useRelatedFileStats.ts
       - server/internal/gitview/gitview.go
       - server/internal/gitview/gitview_history.go
-      - server/internal/gitview/gitview_test.go
+      - server/internal/gitview/gitview_history_test.go
       - server/internal/api/http_git_related_files_stats_test.go
       - web/tests/related-file-stats-batch.test.mjs
       - web/tests/git-cache-bounds.test.mjs
@@ -801,7 +827,7 @@ groups:
       - web/tests/related-file-stats-batch.test.mjs
       - web/tests/git-cache-bounds.test.mjs
       - web/tests/node-url-normalize.test.mjs
-      - server/internal/gitview/gitview_test.go
+      - server/internal/gitview/gitview_history_test.go
       - server/internal/api/http_git_related_files_stats_test.go
 
   - id: G-AI
@@ -847,7 +873,7 @@ groups:
     symptom: "定时任务按错误的账户跑；提示词库跨账户串；更新按钮闪烁。"
     why: "定时任务与看板一样必须每账户一个实例（执行时用本账户的 session manager）；偏好是共享的（全账户），提示词/模板不共享；更新走主节点的控制面。"
     anchors:
-      - 'server/internal/webpush/service.go:CUSTOM(G-AJ)'
+      - 'server/internal/webpush/store.go:CUSTOM(G-AJ)'
       - 'server/internal/scheduled/tasks.go:BroadcastSessionCreated'
       - 'web/src/services/webPush.ts:controlPath("/api/web-push/'
       - 'web/src/components/agent/useCodexRateLimit.ts:fetchCodexRateLimits(agent, nodeId)'
@@ -866,6 +892,18 @@ groups:
       - web/src/services/codexRateLimits.ts
       - web/src/components/editor/PromptEditor.tsx
       - web/src/components/agent/CodexRateLimitIndicator.tsx
+      - server/internal/webpush/config.go
+      - server/internal/webpush/store.go
+      - server/internal/webpush/notify_payload.go
+      - server/internal/webpush/send.go
+      - server/internal/update/types.go
+      - server/internal/update/release_fetch.go
+      - server/internal/update/manifest.go
+      - server/internal/update/download.go
+      - server/internal/update/install.go
+      - server/internal/update/archive.go
+      - server/internal/update/version.go
+      - server/internal/update/webassets.go
     tests:
       - server/internal/preferences/store_test.go
       - server/internal/update/service_test.go
@@ -950,7 +988,7 @@ groups:
       - server/internal/api/helpers.go:func respondJSONList
       - server/internal/api/helpers.go:func respondJSONConditional
       - server/internal/api/http.go:respondJSONConditional
-      - server/internal/api/http_tasks.go:func projectOverviewTask
+      - server/internal/api/http_task_overview.go:func projectOverviewTask
       - web/src/services/net/api.ts:304
       - web/src/services/net/api.ts:conditionalRequestBytesMax
       - web/src/services/net/api.ts:rememberConditionalResponse
@@ -1057,6 +1095,9 @@ groups:
       # （web/src/services/launcherNodeSync.ts）已随 2026-10-08 那批删除。
       # 只能做文本级复活检测 —— 本仓库没有 ArkTS 构建环境，改它无法编译验证。
       - harmony/entry/src/main/ets/pages/Index.ets
+      - server/internal/agent/config_types.go
+      - server/internal/agent/config_shell.go
+      - server/internal/agent/config_defaults.go
     tests:
       - web/tests/upstream-removals.test.mjs
 
@@ -1094,22 +1135,22 @@ groups:
       - web/tests/task-board-view.test.mjs
     anchors:
       - server/internal/kanban/worktree_finish.go:func (s *Service) FinishTaskWorktree
-      - server/internal/kanban/worktree_finish.go:func (s *Service) PlanFinishWorktree
-      - server/internal/kanban/worktree_finish.go:func (s *Service) TaskBusy
-      - server/internal/kanban/worktree_finish.go:func (s *Service) TaskHasAgentStage
-      - server/internal/gitview/worktree_finish.go:func CanMergeCleanly
+      - server/internal/kanban/worktree_finish_status.go:func (s *Service) PlanFinishWorktree
+      - server/internal/kanban/worktree_finish_status.go:func (s *Service) TaskBusy
+      - server/internal/kanban/worktree_finish_status.go:func (s *Service) TaskHasAgentStage
+      - server/internal/gitview/worktree_merge_feasibility.go:func CanMergeCleanly
       - server/internal/gitview/worktree_finish.go:type MainCheckoutDirtyError
-      - server/internal/gitview/worktree_finish.go:func MigrateWorktreeUploads
-      - server/internal/gitview/worktree_finish.go:func RemoveWorktreeDir
-      - server/internal/gitview/worktree_finish.go:func RemoveToolStateOnlyOrphanDirs
-      - server/internal/gitview/worktree_finish.go:func trackedDirtyPaths
-      - server/internal/gitview/worktree_finish.go:func MergeBranch
-      - server/internal/api/http_tasks.go:func (h *HTTPHandler) handleKanbanTaskBeginFinish
-      - server/internal/api/http_tasks.go:func agentFallbackPlan
-      - server/internal/api/http_tasks.go:func (h *HTTPHandler) respondFinishTeardownFailure
-      - server/internal/kanban/service.go:ByRequest bool
-      - server/internal/kanban/service.go:canLeave := canAdvanceFromStage
-      - server/internal/kanban/worktree_finish.go:func (s *Service) PlanFinishWorktree
+      - server/internal/gitview/worktree_cleanup.go:func MigrateWorktreeUploads
+      - server/internal/gitview/worktree_cleanup.go:func RemoveWorktreeDir
+      - server/internal/gitview/worktree_cleanup.go:func RemoveToolStateOnlyOrphanDirs
+      - server/internal/gitview/worktree_remove.go:func trackedDirtyPaths
+      - server/internal/gitview/worktree_merge.go:func MergeBranch
+      - server/internal/api/http_task_begin_finish.go:func (h *HTTPHandler) handleKanbanTaskBeginFinish
+      - server/internal/api/http_task_begin_finish.go:func agentFallbackPlan
+      - server/internal/api/http_task_begin_finish.go:func (h *HTTPHandler) respondFinishTeardownFailure
+      - server/internal/kanban/service_stage_edit.go:ByRequest bool
+      - server/internal/kanban/service_stage_edit.go:canLeave := canAdvanceFromStage
+      - server/internal/kanban/worktree_finish_status.go:func (s *Service) PlanFinishWorktree
       - server/internal/api/http_tasks_finish_teardown.go:task.finish_teardown
       - server/internal/api/http_tasks_finish_teardown.go:func (s *AppContext) FinishWorktreeAndRepoint
       - server/app/workspace.go:WireSessionRunningProbe
@@ -1139,9 +1180,9 @@ groups:
       - web/tests/task-panel-unification.test.mjs
       - web/tests/task-stage-panel.test.mjs
     anchors:
-      - server/internal/kanban/service.go:func (s *Service) DeleteTask(ctx context.Context, in MoveInput)
+      - server/internal/kanban/service_run_moves.go:func (s *Service) DeleteTask(ctx context.Context, in MoveInput)
       - server/internal/kanban/task_store.go:func (s *TaskStore) DeleteTask(ctx context.Context, id string)
-      - server/internal/api/http.go:r.Delete("/api/tasks/{id}"
+      - server/internal/api/http_routes.go:r.Delete("/api/tasks/{id}"
       - web/src/services/task/crud.ts:export async function deleteTask
       - web/src/components/task/taskIcons.tsx:export function TaskCancelIcon
       - web/src/components/task/TaskCardRows.tsx:"delete-task"
@@ -1187,12 +1228,12 @@ groups:
       - web/tests/worktree-badge.test.mjs
       - web/tests/worktree-finish.test.mjs
     anchors:
-      - server/internal/api/http_tasks.go:func (h *HTTPHandler) handleKanbanTaskBeginFinish
-      - server/internal/api/http_tasks.go:func (h *HTTPHandler) teardownFinishWorktree
-      - server/internal/api/http_tasks.go:func projectOverviewTask
-      - server/internal/api/http_tasks.go:type overviewStageProjection
-      - server/internal/api/http_tasks.go:type overviewAuxFlags
-      - server/internal/api/http_tasks.go:func projectOverviewAuxFlags
+      - server/internal/api/http_task_begin_finish.go:func (h *HTTPHandler) handleKanbanTaskBeginFinish
+      - server/internal/api/http_task_begin_finish.go:func (h *HTTPHandler) teardownFinishWorktree
+      - server/internal/api/http_task_overview.go:func projectOverviewTask
+      - server/internal/api/http_task_overview.go:type overviewStageProjection
+      - server/internal/api/http_task_overview.go:type overviewAuxFlags
+      - server/internal/api/http_task_overview.go:func projectOverviewAuxFlags
       - server/internal/api/http_tasks.go:func (h *HTTPHandler) handleKanbanTaskFinishWorktree
       - server/internal/api/http_tasks_finish_teardown.go:type FinishTeardownReport
       - server/internal/kanban/worktree_finish.go:type FinishWorktreeDirty
@@ -1230,16 +1271,16 @@ groups:
       - server/internal/agent/acp/elicitation.go:func (p *Process) AnswerElicitation
       - server/internal/agent/acp/elicitation.go:func elicitationContent
       - server/internal/agent/acp/elicitation.go:func acpAskUserToolCall
-      - server/internal/agent/acp/process.go:func (c *mindfsClient) UnstableCreateElicitation
-      - 'server/internal/agent/acp/process.go:CUSTOM(G-AS)'
+      - server/internal/agent/acp/process_client.go:func (c *mindfsClient) UnstableCreateElicitation
+      - 'server/internal/agent/acp/process_lifecycle.go:CUSTOM(G-AS)'
       - 'server/internal/agent/acp/session.go:CUSTOM(G-AS)'
-      - server/internal/agent/acp/process.go:func acpClientCapabilities(agentName string) acp.ClientCapabilities
+      - server/internal/agent/acp/process_lifecycle.go:func acpClientCapabilities(agentName string) acp.ClientCapabilities
       - server/internal/agent/acp/session.go:func (s *session) AnswerQuestion
-      - server/internal/agent/acp/session_test.go:func TestConvertEventRetagsACPAskUserToolCard
+      - server/internal/agent/acp/session_event_test.go:func TestConvertEventRetagsACPAskUserToolCard
       - server/internal/agent/acp/elicitation_test.go:func TestElicitationContentMapsLabelsToOptionIndexes
-      - server/internal/agent/acp/elicitation_test.go:func TestAskUserRawInputAndElicitationMetaAgree
-      - server/internal/agent/acp/elicitation_test.go:func TestElicitationWireShape
-      - server/internal/agent/acp/elicitation_test.go:func TestACPClientCapabilitiesOnlyAdvertisesElicitationForDsh
+      - server/internal/agent/acp/elicitation_wire_test.go:func TestAskUserRawInputAndElicitationMetaAgree
+      - server/internal/agent/acp/elicitation_wire_test.go:func TestElicitationWireShape
+      - server/internal/agent/acp/elicitation_wire_test.go:func TestACPClientCapabilitiesOnlyAdvertisesElicitationForDsh
 
   - id: G-AR
     title: 移动端侧栏切换按钮移入主视图 header
@@ -1298,16 +1339,16 @@ groups:
       - web/tests/pins-refresh-dedup.test.mjs
       - web/tests/session-window.test.mjs
     anchors:
-      - server/internal/session/types.go:func CompactExchangeAuxLight
-      - server/internal/session/types.go:func lightCompactToolCall
-      - server/internal/session/types.go:func dropEditRedundantMeta
+      - server/internal/session/types_aux_compact.go:func CompactExchangeAuxLight
+      - server/internal/session/types_aux_compact.go:func lightCompactToolCall
+      - server/internal/session/types_aux_compact.go:func dropEditRedundantMeta
       - server/internal/session/manager_aux_reads.go:CompactExchangeAuxLight(entry)
       - web/src/services/session/sessionWindowFetch.ts:const windowInflight = new Map
       - web/src/services/session/sessionService.ts:export const SESSION_WINDOW_SIZE = 8;
       - web/src/app/useRealtimeEvents.ts:const relatedFilesRefreshTimers = useRef(new Map<string, number>());
       - web/src/hooks/sessionTimeline.ts:export function groupConsecutiveToolCalls
       - web/src/components/stream/ToolCallGroupCard.tsx:export const ToolCallGroupCard
-      - 'server/internal/session/types.go:CUSTOM(G-AT)'
+      - 'server/internal/session/types_aux_compact.go:CUSTOM(G-AT)'
       - 'server/internal/session/manager_aux_reads.go:CUSTOM(G-AT)'
       - 'web/src/services/session/sessionService.ts:CUSTOM(G-AT)'
       - 'web/src/services/session/sessionWindowFetch.ts:CUSTOM(G-AT)'
@@ -1338,12 +1379,12 @@ groups:
       # `gitview_test.go:TestX`，锚点格式套到了 tests 上，门禁直接判「测试不存在」。
       # 本文件里钉住的是 TestSamePathResolvesSymlinks /
       # TestValidateTargetDoesNotSelfBlockViaSymlink / TestListWorktreesCurrentViaSymlink。
-      - server/internal/gitview/gitview_test.go
-      - server/internal/gitview/gitview_test.go
+      - server/internal/gitview/gitview_repo_test.go
+      - server/internal/gitview/gitview_repo_test.go
     files:
       - server/internal/gitview/gitview.go
       - server/internal/gitview/worktree_finish.go
-      - server/internal/gitview/gitview_test.go
+      - server/internal/gitview/gitview_repo_test.go
   - id: G-AW
     title: 工作台移除 attention bar + 统一 task card wrapper
     kind: feature
@@ -1423,23 +1464,25 @@ groups:
     files:
       - server/internal/api/usecase/session.go
       - server/internal/api/usecase/session_subagents.go
+      - server/internal/api/usecase/session_subagent_synthetic.go
+      - server/internal/api/usecase/session_subagent_stream.go
       - server/internal/api/usecase/session_send.go
-      - server/internal/api/ws.go
+      - server/internal/api/ws_session_message.go
       - server/internal/api/appcontext.go
-      - server/internal/scheduled/tasks.go
+      - server/internal/scheduled/tasks_runner.go
     anchors:
-      - server/internal/api/usecase/session.go:func (c *claudeSyntheticSubagent) close()
-      - server/internal/api/usecase/session.go:func (s *syntheticAgentSession) CancelCurrentTurn() error
-      - server/internal/api/usecase/session.go:persistCtx := session.WithExchangeSource(context.Background(), session.ExchangeSourceLive)
-      - server/internal/api/usecase/session.go:func subagentTurnID(child *session.Session) string
-      - server/internal/api/usecase/session.go:c.in.OnSubAgentTurnFinished(c.key, c.turnID)
+      - server/internal/api/usecase/session_subagent_synthetic.go:func (c *claudeSyntheticSubagent) close()
+      - server/internal/api/usecase/session_subagent_synthetic.go:func (s *syntheticAgentSession) CancelCurrentTurn() error
+      - server/internal/api/usecase/session_subagent_synthetic.go:func subagentTurnID(child *session.Session) string
+      - server/internal/api/usecase/session_subagent_synthetic.go:c.in.OnSubAgentTurnFinished(c.key, c.turnID)
       - server/internal/api/usecase/session_subagents.go:registerActiveTurn(in.RootID, child.Key, cancel)
       - server/internal/api/usecase/session_subagents.go:in.OnSubAgentAttached(child, attached.turnID)
       - server/internal/api/usecase/session_subagents.go:func (r *claudeSubagentRouter) ensure(ctx context.Context, ref claudeSubagentRef, source *agenttypes.ToolCall) (*claudeSyntheticSubagent, error)
-      - "server/internal/api/ws.go:OnSubAgentAttached: func(child *session.Session, turnID string)"
-      - "server/internal/api/ws.go:OnSubAgentTurnFinished: func(sessionKey, id string)"
+      - "server/internal/api/ws_session_message.go:OnSubAgentAttached: func(child *session.Session, turnID string)"
+      - "server/internal/api/ws_session_message.go:OnSubAgentTurnFinished: func(sessionKey, id string)"
       - "server/internal/api/appcontext.go:OnSubAgentAttached: func(child *session.Session, turnID string)"
-      - "server/internal/scheduled/tasks.go:OnSubAgentAttached: func(child *session.Session, turnID string)"
+      - "server/internal/scheduled/tasks_runner.go:OnSubAgentAttached: func(child *session.Session, turnID string)"
+      - server/internal/api/usecase/session_subagent_stream.go:persistCtx := session.WithExchangeSource(context.Background(), session.ExchangeSourceLive)
       - server/internal/api/usecase/session_subagents.go:return true
       - server/internal/api/usecase/session_send.go:defer claudeSubagents.FinishAll()
 
@@ -1474,9 +1517,9 @@ groups:
       - web/tests/session-presence-awaiting.test.mjs
       - docs/plans/delegated-presence-and-flicker.md
     anchors:
-      - server/internal/api/stream_hub.go:func (h *StreamHub) MarkSessionAwaiting(
+      - server/internal/api/stream_hub_pending.go:func (h *StreamHub) MarkSessionAwaiting(
       - server/internal/api/stream_hub.go:if state.AwaitingAnswer {
-      - server/internal/api/appcontext.go:func askUserStreamEvent(
+      - server/internal/api/appcontext_notify.go:func askUserStreamEvent(
       - server/internal/api/http_sessions.go:item["awaiting_answer"] = true
       - server/internal/api/ws.go:MarkSessionAwaiting(rootID, key, "", false)
       - web/src/shared/sessionPresence.ts:export function getSessionPresence(
@@ -1590,7 +1633,7 @@ groups:
       - web/src/App.tsx
     anchors:
       - server/internal/api/stream_hub.go:ClearSessionPending
-      - server/internal/api/stream_hub.go:PendingSessionSnapshot
+      - server/internal/api/stream_hub_types.go:PendingSessionSnapshot
       - server/internal/api/appcontext.go:EndSessionTurn
       - web/src/app/useReplyingSessionPoll.ts:const refreshMultiProjectReplyingSessions = useCallback(async () => {
 
@@ -1615,10 +1658,10 @@ groups:
     anchors:
       - server/internal/api/stream_hub.go:ClearSessionPending
       - server/internal/api/stream_hub.go:PendingTurnIDMatches
-      - server/internal/api/stream_hub.go:SetPendingReply
+      - server/internal/api/stream_hub_pending.go:SetPendingReply
       - server/internal/api/appcontext.go:EndSessionTurn
       - server/internal/api/appcontext.go:RunAgentStage
-      - server/internal/api/ws.go:runSessionMessage
+      - server/internal/api/ws_session_message.go:runSessionMessage
       - server/internal/scheduled/tasks.go:SessionActivityBroadcaster
       - server/internal/agent/codex/session.go:handleStreamedEvents
 
@@ -1645,14 +1688,14 @@ groups:
       - server/internal/api/usecase/session_list.go
       - web/tests/session-window.test.mjs
     anchors:
-      - server/internal/session/manager.go:readExchangeWindow
+      - server/internal/session/manager_window_reads.go:readExchangeWindow
       - server/internal/session/manager_exchanges.go:mergeExchangeRecord
       - server/internal/session/manager_exchanges.go:mergeExchangeRecords
       - server/internal/session/manager_exchanges.go:readExchangeTail
       - server/internal/session/manager_window_reads.go:countExchangeRecords
       - server/internal/session/manager_aux_tail.go:GetCommandShell
       - server/internal/session/manager_aux_tail.go:readAuxTailEntries
-      - server/internal/api/http_sessions.go:handleSessionSync
+      - server/internal/api/http_sessions_detail.go:handleSessionSync
       - server/internal/api/usecase/session_list.go:fillCommandShells
 
   - id: G-BF
@@ -1669,8 +1712,8 @@ groups:
       - server/internal/api/usecase/external_sessions.go
     anchors:
       - server/internal/agent/claude/importer.go:readClaudeImportedExchangeLocators
-      - server/internal/api/usecase/external_sessions.go:SyncExternalSessionDelta
-      - server/internal/api/usecase/external_sessions.go:externalSessionDeltaAfterCtxSeq
+      - server/internal/api/usecase/external_sessions_sync.go:SyncExternalSessionDelta
+      - server/internal/api/usecase/external_sessions_sync.go:externalSessionDeltaAfterCtxSeq
 
   - id: G-BI
     title: 会话身份收敛为两套 id（mindfs_id + agent_id，NativeTurn/NativePrompt/NativeID 合并）
@@ -1705,7 +1748,12 @@ groups:
     files:
       - server/internal/session/types.go
       - server/internal/session/manager.go
-      - server/internal/session/blocks.go
+      - server/internal/session/blocks_type.go
+      - server/internal/session/blocks_store.go
+      - server/internal/session/blocks_window.go
+      - server/internal/session/blocks_parse.go
+      - server/internal/session/blocks_build.go
+      - server/internal/session/blocks_compact.go
       - server/internal/session/manager_identity_fields_test.go
       - server/internal/session/manager_native_identity_test.go
       - server/internal/session/blocks_build_test.go
@@ -1747,17 +1795,17 @@ groups:
     anchors:
       - server/internal/session/manager_exchange_identity.go:NewMindFSID
       - server/internal/session/manager_exchange_identity.go:IsMindFSIDShape
-      - server/internal/session/types.go:func (e *Exchange) UnmarshalJSON
-      - server/internal/session/blocks.go:func (b *Block) UnmarshalJSON
+      - server/internal/session/types_exchange.go:func (e *Exchange) UnmarshalJSON
+      - server/internal/session/blocks_type.go:func (b *Block) UnmarshalJSON
       - server/internal/api/usecase/session_turn_identity.go:exchangeAgentKey
       - server/internal/api/usecase/session_turn_identity.go:exchangeIdentityRecorded
       - server/internal/api/stream_hub.go:AppendReplyEvent
       - web/src/shared/sessionOverlay.ts:computeTailOverlay
       - web/src/app/useSessionStreamCache.ts:appendAgentChunkForSession
-      - server/internal/api/stream_hub.go:SetPendingUserAt
+      - server/internal/api/stream_hub_pending.go:SetPendingUserAt
       - server/internal/api/usecase/session_turn_identity.go:persistUserTurnExchange
       - server/internal/api/usecase/session_turn_identity.go:exchangeIdentityRecorded
-      - server/internal/session/manager.go:AddExchangeForAgentAtWithIdentityFactory
+      - server/internal/session/manager_exchange_write.go:AddExchangeForAgentAtWithIdentityFactory
       - web/src/shared/sessionTypes.ts:agent_id
   - id: G-BJ
     title: 会话列表按实时活动时间排序
@@ -1803,10 +1851,10 @@ groups:
       - server/internal/api/usecase/usecase_test.go
       - server/internal/api/usecase/session_model_switch_test.go
     anchors:
-      - server/internal/api/usecase/session.go:currentModelForRuntime
+      - server/internal/api/usecase/session_runtime.go:currentModelForRuntime
       - server/internal/api/usecase/session_send.go:requestedModel := strings.TrimSpace(in.Model)
       - server/internal/api/usecase/session_send.go:manager.UpdateModel(ctx, current, resolvedModel)
-      - server/internal/api/usecase/session.go:currentModel := currentModelForRuntime(current, existing)
+      - server/internal/api/usecase/session_agent_open.go:currentModel := currentModelForRuntime(current, existing)
   - id: G-BL
     title: 看板新建任务的 worktree 节点路由
     kind: fix
@@ -2051,7 +2099,12 @@ groups:
       - server/internal/api/kanban_turn_identity_guard_test.go
       - server/internal/scheduled/pending_identity_test.go
     files:
-      - server/internal/session/blocks.go
+      - server/internal/session/blocks_type.go
+      - server/internal/session/blocks_store.go
+      - server/internal/session/blocks_window.go
+      - server/internal/session/blocks_parse.go
+      - server/internal/session/blocks_build.go
+      - server/internal/session/blocks_compact.go
       - server/internal/session/blocks_build_test.go
       - server/internal/session/manager.go
       - server/internal/session/manager_duplicate_seq_test.go
@@ -2102,14 +2155,14 @@ groups:
       - web/tests/tool-card-grouping.test.mjs
       - web/tests/session-window.test.mjs
     anchors:
-      - server/internal/session/blocks.go:BuildTurnBlocks
-      - server/internal/session/blocks.go:ClearNativeIdentity
-      - server/internal/session/blocks.go:GetBlocksWindow
-      - server/internal/session/blocks.go:readBlocksWindowTail
-      - server/internal/session/blocks.go:CompactBlocksLight
-      - server/internal/session/blocks.go:GroupBlocksBySeq
+      - server/internal/session/blocks_build.go:BuildTurnBlocks
+      - server/internal/session/blocks_compact.go:ClearNativeIdentity
+      - server/internal/session/blocks_window.go:GetBlocksWindow
+      - server/internal/session/blocks_window.go:readBlocksWindowTail
+      - server/internal/session/blocks_compact.go:CompactBlocksLight
+      - server/internal/session/blocks_build.go:GroupBlocksBySeq
       - server/internal/session/manager_exchange_identity.go:WithExchangeIdentity
-      - server/internal/api/usecase/session.go:newMindFSID
+      - server/internal/api/usecase/session_turn_identity.go:newMindFSID
       - server/internal/api/usecase/session_turn_identity.go:exchangeAlreadyRecorded
       - server/internal/api/usecase/session_turn_identity.go:exchangeIdentityRecorded
       - server/internal/api/usecase/session_turn_identity.go:recordedUserExchangeTurnID
@@ -2117,26 +2170,26 @@ groups:
       - server/internal/api/usecase/external_sessions.go:appendImportedExchange
       - server/internal/agent/acp/importer.go:messageIDOf
       - server/internal/agent/acp/importer.go:isUUIDShape
-      - server/internal/api/stream_hub.go:SetPendingUserAt
-      - server/internal/api/stream_hub.go:nextPendingTurnIDLocked
+      - server/internal/api/stream_hub_pending.go:SetPendingUserAt
+      - server/internal/api/stream_hub_pending.go:nextPendingTurnIDLocked
       - server/internal/api/stream_hub.go:PendingTurnIDMatches
       - server/internal/api/stream_hub.go:ClearSessionPending
       - server/internal/api/appcontext.go:EndSessionTurn
       - server/internal/api/appcontext.go:RunAgentStage
-      - server/internal/api/ws.go:runSessionMessage
-      - server/internal/agent/acp/process.go:SendMessage
-      - server/internal/agent/types/types.go:WithPromptTurnID
-      - server/internal/session/types.go:CompactExchangeAux
+      - server/internal/api/ws_session_message.go:runSessionMessage
+      - server/internal/agent/acp/process_lifecycle.go:SendMessage
+      - server/internal/agent/types/turn.go:WithPromptTurnID
+      - server/internal/session/types_aux_compact.go:CompactExchangeAux
       - server/internal/api/usecase/session_blocks_backfill.go:backfillTurnsFromWindow
       - server/internal/api/usecase/session_blocks_backfill.go:missingBlockSeqs
       - server/internal/api/usecase/session_read.go:GetSessionBlocksWindow
-      - server/internal/api/usecase/session.go:persistTurnBlocks
-      - server/internal/session/manager.go:AddExchangeForAgentAndGetSeq
-      - server/internal/session/manager.go:AddExchangeForAgentAtWithIdentityFactory
+      - server/internal/api/usecase/session_turn_identity.go:persistTurnBlocks
+      - server/internal/session/manager_exchange_write.go:AddExchangeForAgentAndGetSeq
+      - server/internal/session/manager_exchange_write.go:AddExchangeForAgentAtWithIdentityFactory
       - server/internal/api/usecase/session_blocks_write_test.go:TestAssistantReasoningBlocksUseAllocatedSeqFromFreshSession
       - server/internal/api/usecase/session_fork.go:copyForkBlocks
       - server/internal/api/usecase/session_read.go:GetSessionBlocksWindow
-      - server/internal/api/http_sessions.go:windowSeqsForExchanges
+      - server/internal/api/http_sessions_detail.go:windowSeqsForExchanges
       - web/src/hooks/sessionBlocks.ts:buildAssistantTimelineFromBlocks
       - web/src/hooks/sessionBlocks.ts:blocksForSeq
       - web/src/services/session/sessionExchangeMerge.ts:export function toPersistentBlocks(
@@ -2155,14 +2208,19 @@ groups:
     files:
       - server/internal/session/types.go
       - server/internal/session/manager.go
-      - server/internal/session/blocks.go
+      - server/internal/session/blocks_type.go
+      - server/internal/session/blocks_store.go
+      - server/internal/session/blocks_window.go
+      - server/internal/session/blocks_parse.go
+      - server/internal/session/blocks_build.go
+      - server/internal/session/blocks_compact.go
       - server/internal/api/usecase/session.go
       - web/src/shared/sessionOverlay.ts
       - web/src/app/useSessionStreamCache.ts
       - web/src/app/realtimeWsUserMessage.ts
       - web/src/components/session/SessionViewer.tsx
     anchors:
-      - server/internal/session/types.go:UnmarshalJSON
+      - server/internal/session/types_exchange.go:UnmarshalJSON
       - server/internal/session/manager_exchange_identity.go:NewMindFSID
       - server/internal/api/usecase/session_turn_identity.go:recordedUserExchangeTurnID
       - web/src/shared/sessionOverlay.ts:computeTailOverlay
@@ -2207,7 +2265,7 @@ groups:
       - server/internal/api/usecase/session.go
       - server/internal/api/usecase/session_send.go
     anchors:
-      - server/internal/api/usecase/session.go:validateAgentModel
+      - server/internal/api/usecase/session_model_validation.go:validateAgentModel
       - server/internal/api/usecase/session_send.go:UpdateModel
 
   - id: G-BL
@@ -3794,7 +3852,7 @@ groups:
       - server/internal/session/manager_duplicate_seq_test.go
       - server/internal/session/manager_window_test.go
       - server/internal/session/manager_window_cold_test.go
-      - server/internal/session/manager_test.go
+      - server/internal/session/manager_incremental_test.go
     files:
       - server/internal/session/manager.go
       - server/internal/session/manager_exchanges.go
@@ -3856,7 +3914,7 @@ groups:
     why: "Aux path safety and append encoding belong with the aux read/store module so readers and writers share one owner while the session-key validation contract is preserved."
     boundary: "appendExchangeAux and auxPath move unchanged into manager_aux_reads.go; AddExchangeAux's public validation and locking stay in manager.go and the exchange-log path/write stays in manager_exchanges.go. The parent is 2,702 lines."
     tests:
-      - server/internal/session/manager_test.go
+      - server/internal/session/manager_incremental_test.go
     files:
       - server/internal/session/manager.go
       - server/internal/session/manager_aux_reads.go
@@ -3875,7 +3933,7 @@ groups:
     why: "The agent-to-session binding contract and its SQLite operations belong together so agent inference, external cursor continuity and empty-id semantics stay reviewable in one module."
     boundary: "UpdateAgentState, UpsertAgentBinding, external cursor update and the binding lookup/ensure/list/scan/upsert helpers move unchanged to manager_agent_bindings.go; the AgentBinding shape, SQL schema/constants and the standalone RepointAgentBinding transaction are unchanged. Parent is 2,456 lines."
     tests:
-      - server/internal/session/manager_test.go
+      - server/internal/session/manager_exchange_test.go
       - server/internal/session/manager_cursor_test.go
       - server/internal/session/manager_cursor_migration_test.go
     files:
@@ -3899,7 +3957,7 @@ groups:
     tests:
       - server/internal/session/session_db_migration_order_test.go
       - server/internal/session/manager_cursor_migration_test.go
-      - server/internal/session/manager_test.go
+      - server/internal/session/manager_db_test.go
       - server/internal/session/manager_pinned_at_retired_test.go
     files:
       - server/internal/session/manager.go
@@ -3920,7 +3978,7 @@ groups:
     why: "The session list query surface and its metadata-only performance boundary belong together so list changes stay reviewable without traversing transcript and persistence code."
     boundary: "Public List/ListByKeys/Count/LatestSessionUpdatedAt/ListMetas and the internal meta list/query, binding fill, filter and where helpers move unchanged to manager_session_list.go; Search keeps calling the same package-private query method and SQL semantics and ordering are unchanged. Parent is 1,926 lines."
     tests:
-      - server/internal/session/manager_test.go
+      - server/internal/session/manager_agent_binding_test.go
       - server/internal/session/manager_latest_updated_at_test.go
       - server/internal/session/manager_search_test.go
       - server/internal/session/manager_pinned_at_retired_test.go
@@ -3943,7 +4001,7 @@ groups:
     why: "Local naming, imported external names and alias projection belong together so rename/import/fork naming behavior and the empty external-id guard can be reviewed as one storage domain."
     boundary: "Alias upsert, external name upsert/lookup, agent session identity projection and single/bulk alias application move unchanged to manager_aliases.go; the empty agent_session_id guard and the existing SQLite schema/API are unchanged. Parent is 1,746 lines."
     tests:
-      - server/internal/session/manager_test.go
+      - server/internal/session/manager_db_test.go
       - server/internal/session/manager_rename_compat_test.go
       - server/internal/api/usecase/usecase_test.go
     files:
@@ -3965,7 +4023,7 @@ groups:
     why: "The SQLite Session row contract and its JSON/time normalization belong together so metadata schema changes can be reviewed against read and write projection in one place."
     boundary: "getSessionMetaUnsafe, the metadata-with-bindings projection, upsertSessionMetaUnsafe, argument serialization, the row scanner/decoder, normalization and the shared rowScanner/error helpers move unchanged to manager_meta.go; schema/constants and session loading/cache orchestration are unchanged. Parent is 1,492 lines, below the 1,500 hardline."
     tests:
-      - server/internal/session/manager_test.go
+      - server/internal/session/manager_list_test.go
       - server/internal/session/manager_pinned_at_retired_test.go
       - server/internal/session/manager_rename_compat_test.go
       - server/internal/session/session_db_migration_order_test.go
@@ -3989,7 +4047,7 @@ groups:
     why: "The transient-to-persisted tool-call handoff and ask-user answer semantics belong in a focused module that keeps the in-memory-first lookup behavior and lock boundaries."
     boundary: "GetFullToolCall, pending aux upsert/answer/clear, mergeToolCall, pending lookup and the clone helpers move unchanged to manager_pending_aux.go; aux JSONL append/path handling and the wrapper methods stay in manager.go for a separate batch. Parent is 2,735 lines."
     tests:
-      - server/internal/session/manager_test.go
+      - server/internal/session/manager_fork_test.go
     files:
       - server/internal/session/manager.go
       - server/internal/session/manager_pending_aux.go
@@ -4009,7 +4067,7 @@ groups:
     why: "The persisted related-file identity and the parent/child propagation contract belong together so generated-file attribution changes can be reviewed without involving worktree ownership or repoint flows."
     boundary: "The add/remove/record related-file methods and related-file identity/path normalization move unchanged to manager_related_files.go; RecordRelatedWorktree and ClearRelatedWorktree stay in manager.go and repoint behavior is out of scope. Parent is 1,345 lines."
     tests:
-      - server/internal/session/manager_test.go
+      - server/internal/session/manager_exchange_test.go
     files:
       - server/internal/session/manager.go
       - server/internal/session/manager_related_files.go
@@ -4032,7 +4090,7 @@ groups:
       - server/internal/api/usecase/session_blocks_write_test.go
       - server/internal/api/usecase/session_identity_dedup_test.go
       - server/internal/api/stream_hub_turn_identity_test.go
-      - server/internal/session/manager_test.go
+      - server/internal/session/manager_repair_test.go
     files:
       - server/internal/session/manager.go
       - server/internal/session/manager_exchange_identity.go
@@ -4051,7 +4109,7 @@ groups:
     why: "Session metadata lifecycle and destructive cleanup ordering belong together so deletion, archive and state mutation can be reviewed independently from exchange read paths."
     boundary: "Close/Delete/Rename/SetArchived, model/shell/plan/context-window updates, the internal close/delete and Shutdown move unchanged to manager_lifecycle.go; related-worktree ownership and repoint methods stay untouched. Parent is 934 lines."
     tests:
-      - server/internal/session/manager_test.go
+      - server/internal/session/manager_pending_test.go
       - server/internal/session/manager_pinned_at_retired_test.go
     files:
       - server/internal/session/manager.go
@@ -4134,8 +4192,8 @@ groups:
     anchors:
       - server/internal/api/http_files.go:func (h *HTTPHandler) handleTree
       - server/internal/api/http_files.go:func (h *HTTPHandler) handleUpload
-      - server/internal/api/http_files.go:func (h *HTTPHandler) handleAddDir
-      - server/internal/api/http_files.go:func managedDirResponse
+      - server/internal/api/http_managed_dirs.go:func (h *HTTPHandler) handleAddDir
+      - server/internal/api/http_managed_dirs.go:func managedDirResponse
 
   - id: G-EZ
     title: API HTTP session handlers split, excluding repoint
@@ -4164,9 +4222,9 @@ groups:
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
     anchors:
-      - server/internal/api/http_sessions.go:func (h *HTTPHandler) handleSessions
-      - server/internal/api/http_sessions.go:func (h *HTTPHandler) handleSessionSync
-      - server/internal/api/http_sessions.go:func (h *HTTPHandler) sessionResponse
+      - server/internal/api/http_sessions_list.go:func (h *HTTPHandler) handleSessions
+      - server/internal/api/http_sessions_detail.go:func (h *HTTPHandler) handleSessionSync
+      - server/internal/api/http_sessions_detail.go:func (h *HTTPHandler) sessionResponse
       - server/internal/api/http.go:func (h *HTTPHandler) handleSessionRepoint
 
   - id: G-FA
@@ -4273,10 +4331,10 @@ groups:
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
     anchors:
-      - server/internal/agent/claude/session_messages.go:func (s *session) handlePartialAssistantMessage
-      - server/internal/agent/claude/session_messages.go:func (s *session) handleAssistantMessage
+      - server/internal/agent/claude/session_messages_deltas.go:func (s *session) handlePartialAssistantMessage
+      - server/internal/agent/claude/session_messages_deltas.go:func (s *session) handleAssistantMessage
       - server/internal/agent/claude/session_messages.go:func (s *session) awaitAskUserQuestion
-      - server/internal/agent/claude/session_messages.go:func (s *session) taskType
+      - server/internal/agent/claude/session_messages_tasks.go:func (s *session) taskType
 
 
   - id: G-FG
@@ -4321,9 +4379,9 @@ groups:
       - docs/plans/rule-completion-rollout.md
     anchors:
       - server/internal/api/agent_api_provider_apply.go:func applyAgentAPIProvider
-      - server/internal/api/agent_api_provider_apply.go:func mergeCodexAPIProviderConfig
+      - server/internal/api/agent_api_provider_codex.go:func mergeCodexAPIProviderConfig
       - server/internal/api/agent_api_provider_apply.go:func applyPiAPIProvider
-      - server/internal/api/agent_api_provider_apply.go:func writeAgentEnvConfig
+      - server/internal/api/agent_api_provider_env.go:func writeAgentEnvConfig
 
 
   - id: G-GI
@@ -4424,7 +4482,7 @@ groups:
     why: "The read-only diff/history implementation belongs together so history and related-file behavior can be reviewed independently from status and worktree actions."
     boundary: "ReadDiff through ReadRelatedFileStats and repoContext.commitExists through parseHistoryItems move unchanged to gitview_history.go (653 lines); path mapping, history ordering, commit/diff selection and result shapes are unchanged. Parent gitview.go is 933 lines."
     tests:
-      - server/internal/gitview/gitview_test.go
+      - server/internal/gitview/gitview_stats_test.go
     files:
       - server/internal/gitview/gitview.go
       - server/internal/gitview/gitview_history.go
@@ -4433,10 +4491,10 @@ groups:
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
     anchors:
-      - server/internal/gitview/gitview_history.go:func ReadDiff
-      - server/internal/gitview/gitview_history.go:func ListHistory
-      - server/internal/gitview/gitview_history.go:func ReadRelatedFileStats
-      - server/internal/gitview/gitview_history.go:func parseHistoryItems
+      - server/internal/gitview/gitview_history_read.go:func ReadDiff
+      - server/internal/gitview/gitview_history_read.go:func ListHistory
+      - server/internal/gitview/gitview_history_stats.go:func ReadRelatedFileStats
+      - server/internal/gitview/gitview_history_read.go:func parseHistoryItems
 
   - id: G-GN
     title: Release and development entrypoint contract
@@ -4471,8 +4529,8 @@ groups:
       - docs/plans/README.md
       - docs/plans/rule-completion-rollout.md
     anchors:
-      - server/internal/api/ws_test.go:func TestWSRequestHandlersAreDispatchedAsynchronously
-      - server/internal/api/ws.go:func (h *WSHandler) handleWSRequest
+      - server/internal/api/ws_dispatch_test.go:func TestWSRequestHandlersAreDispatchedAsynchronously
+      - server/internal/api/ws_upgrade.go:func (h *WSHandler) handleWSRequest
 
   - id: G-GP
     title: Agent documentation entry and plan link checks
@@ -5797,3 +5855,270 @@ groups:
       - "web/src/components/session/SessionViewer.tsx:scrollPaddingBottom"
       - "web/src/components/session/SessionViewerTimeline.tsx:copyResetTimersRef"
       - "web/tests/queued-overlay-and-copy.test.mjs:C1: timeline passes copy props"
+
+  - id: G-IY
+    title: 后端文件长度规则对齐前端（软 300 / 硬 500）+ 存量分批拆分
+    kind: arch
+    symptom: "后端规则是软 2000 / 硬 4000，前端是软 300 / 硬 500，同一目的两套数值差 6 倍；结果是 server/internal/api/usecase/session.go 1496 行、api/appcontext.go 1465 行这类「一个文件四五个不相干职责」的形态能长期存在。改造前存量 43 个源码 + 18 个测试文件超硬线。"
+    why: "两条规则服务同一个目的（「一个文件一个职责，改哪读哪」），数值差 6 倍没有技术理由。软线的语义是判据（超过就判断职责边界并记录拆分安排），不是一次性清理项——与前端同区间 77 个文件的口径一致。合上游时 rules/plans 文档本身也会被整份覆盖，规则数值会被静默退回 2000/4000，而下游没人会注意到。"
+    boundary: "改后端规则数值（docs/agent/rules/backend/file-size.md）+ 存量的分批清理登记（docs/agent/rules/backend/TODO.md）+ 执行计划（docs/plans/backend-file-size-300-500.md）。全部为同包内移动或同包内新增文件：无签名变化、无 type 位置变化（跨文件同包可见）、无 import 路径变化、零数据迁移。agent/codex/importer_tool_calls.go 与 kanban/worktree_finish_stage.go 已论证过边界，本轮不再拆。"
+    tests:
+      - server/internal/auth/auth_test.go
+      - server/internal/auth/resolve_live_test.go
+    files:
+      - docs/agent/rules/backend/file-size.md
+      - docs/agent/rules/backend/TODO.md
+      - docs/plans/backend-file-size-300-500.md
+      # B2 拆出的新文件（各职责文件，源文件的 groups 已逐条登记，这里只登记
+      # 「拆分」这件事本身与规划产物）。
+      - server/internal/auth/store_persist.go
+      - server/internal/auth/store_query.go
+      - server/internal/auth/store_mutate.go
+      - server/internal/commandexec/long_shell_command.go
+      - server/internal/commandexec/long_shell_output.go
+      - server/internal/agent/pool_idle.go
+      - server/internal/agent/pool_open.go
+      - server/internal/agent/pool_config.go
+      - server/internal/agent/config_types.go
+      - server/internal/agent/config_shell.go
+      - server/internal/agent/config_defaults.go
+      - server/internal/agent/probe_types.go
+      - server/internal/agent/probe_status_query.go
+      - server/internal/agent/probe_status_caps.go
+      - server/internal/agent/probe_run.go
+      - server/internal/agent/probe_verify.go
+      - server/internal/agent/types/session_type.go
+      - server/internal/agent/types/external_import.go
+      - server/internal/agent/types/model.go
+      - server/internal/agent/types/event.go
+      - server/internal/agent/types/toolcall.go
+      - server/internal/agent/types/turn.go
+      - server/internal/agent/types/import_input.go
+      - server/internal/update/types.go
+      - server/internal/update/release_fetch.go
+      - server/internal/update/manifest.go
+      - server/internal/update/download.go
+      - server/internal/update/install.go
+      - server/internal/update/archive.go
+      - server/internal/update/version.go
+      - server/internal/update/webassets.go
+      - server/internal/webpush/config.go
+      - server/internal/webpush/store.go
+      - server/internal/webpush/notify_payload.go
+      - server/internal/webpush/send.go
+      - server/internal/fs/root.go
+      - server/internal/fs/meta_dir.go
+      - server/internal/fs/read_decode.go
+      - server/internal/fs/file_meta.go
+      # B3
+      - server/internal/session/types_exchange.go
+      - server/internal/session/types_aux_compact.go
+      - server/internal/session/types_infer.go
+      - server/internal/session/types_worktree.go
+      - server/internal/session/blocks_type.go
+      - server/internal/session/blocks_store.go
+      - server/internal/session/blocks_window.go
+      - server/internal/session/blocks_parse.go
+      - server/internal/session/blocks_build.go
+      - server/internal/session/blocks_compact.go
+      - server/internal/session/manager_paths.go
+      - server/internal/session/manager_exchange_write.go
+      - server/internal/session/manager_cache.go
+      - server/internal/session/manager_sql_statements.go
+      - server/internal/session/manager_repoint.go
+      - server/internal/session/manager_worktree_test.go
+      - server/internal/session/manager_list_test.go
+      - server/internal/session/manager_exchange_test.go
+      - server/internal/session/manager_incremental_test.go
+      - server/internal/session/manager_pending_test.go
+      - server/internal/session/manager_repair_test.go
+      - server/internal/session/manager_agent_binding_test.go
+      - server/internal/session/manager_fork_test.go
+      - server/internal/session/manager_db_test.go
+      - server/internal/fs/meta_dir_test.go
+      - server/internal/fs/read_decode_test.go
+      - server/internal/fs/entries_test.go
+      # B4
+      - server/internal/api/usecase/session_turn_registry.go
+      - server/internal/api/usecase/session_agent_open.go
+      - server/internal/api/usecase/session_recovery.go
+      - server/internal/api/usecase/session_command_shell.go
+      - server/internal/api/usecase/session_subagent_stream.go
+      - server/internal/api/usecase/session_subagent_synthetic.go
+      - server/internal/api/usecase/fs_git.go
+      - server/internal/api/usecase/fs_upload.go
+      - server/internal/api/usecase/fs_managed_dirs.go
+      - server/internal/api/usecase/candidates_registry.go
+      - server/internal/api/usecase/candidates.go
+      - server/internal/api/usecase/candidates_file_skill.go
+      - server/internal/api/usecase/external_sessions_sync.go
+      - server/internal/api/usecase/external_sessions_names.go
+      # B5 测试文件
+      - server/internal/api/usecase/fs_git_test.go
+      - server/internal/api/usecase/candidates_file_skill_test.go
+      - server/internal/api/usecase/candidates_registry_test.go
+      - server/internal/api/usecase/candidates_managed_dirs_test.go
+      - server/internal/api/usecase/session_lifecycle_test.go
+      - server/internal/api/usecase/session_command_shell_test.go
+      - server/internal/api/usecase/session_subagent_stream_test.go
+      - server/internal/api/usecase/session_turn_registry_test.go
+      - server/internal/api/usecase/session_search_test.go
+      - server/internal/api/usecase/session_prompt_test.go
+      - server/internal/api/usecase/session_recovery_test.go
+      - server/internal/api/usecase/usecase_test_helpers_test.go
+      - server/internal/api/usecase/external_sessions_names_test.go
+      - server/internal/api/usecase/external_sessions_import_test.go
+      - server/internal/api/usecase/external_sessions_ownership_test.go
+      # B6
+      - server/internal/kanban/service_stage_edit.go
+      - server/internal/kanban/service_worktree.go
+      - server/internal/kanban/service_run_moves.go
+      - server/internal/kanban/service_state_moves.go
+      - server/internal/kanban/task_store_migrate.go
+      - server/internal/kanban/task_store_scan.go
+      - server/internal/kanban/task_store_write.go
+      - server/internal/kanban/worktree_finish_status.go
+      - server/internal/kanban/service_create_test.go
+      - server/internal/kanban/template_store_test.go
+      - server/internal/kanban/service_stage_edit_test.go
+      - server/internal/kanban/service_session_link_test.go
+      - server/internal/kanban/service_run_moves_test.go
+      - server/internal/kanban/service_agent_stage_test.go
+      - server/internal/kanban/service_lifecycle_test.go
+      - server/internal/kanban/service_worktree_test.go
+      - server/internal/kanban/service_worktree_state_test.go
+      - server/internal/kanban/worktree_finish_guard_test.go
+      - server/internal/kanban/worktree_finish_upload_test.go
+      - server/internal/kanban/worktree_finish_terminal_test.go
+      # B7
+      - server/internal/agent/acp/process_client.go
+      - server/internal/agent/acp/process_lifecycle.go
+      - server/internal/agent/acp/process_prompt_state.go
+      - server/internal/agent/acp/process_session_state.go
+      - server/internal/agent/acp/process_model_mode.go
+      - server/internal/agent/acp/session_runtime.go
+      - server/internal/agent/acp/session_event.go
+      - server/internal/agent/acp/elicitation_wire_test.go
+      - server/internal/agent/acp/elicitation_reap_test.go
+      - server/internal/agent/acp/session_event_test.go
+      - server/internal/agent/acp/session_usage_test.go
+      - server/internal/agent/claude/session_open.go
+      - server/internal/agent/claude/session_ask_user.go
+      - server/internal/agent/claude/session_turn.go
+      - server/internal/agent/claude/session_message_loop.go
+      - server/internal/agent/claude/session_tool_names.go
+      - server/internal/agent/claude/session_messages_deltas.go
+      - server/internal/agent/claude/session_messages_tasks.go
+      - server/internal/agent/claude/session_task_test.go
+      - server/internal/agent/claude/session_models_test.go
+      - server/internal/agent/codex/session_open.go
+      - server/internal/agent/codex/session_events.go
+      - server/internal/agent/codex/session_ask_user.go
+      - server/internal/agent/codex/session_models.go
+      - server/internal/agent/pool_idle_test.go
+      - server/internal/agent/config_load_test.go
+      - server/internal/api/usecase/fs_file_ops_test.go
+      # B10
+      - cli/cmd/startup.go
+      - cli/cmd/service_pid.go
+      - cli/cmd/service_control.go
+      - cli/cmd/managed_dirs.go
+      - cli/cmd/task_cli.go
+      - cli/cmd/open_target.go
+      - server/internal/scheduled/tasks_runner.go
+      - server/internal/scheduled/tasks_service.go
+      - server/internal/fs/shared_watcher.go
+      - server/internal/fs/shared_watcher_events.go
+      - server/internal/fs/shared_watcher_related.go
+      - server/internal/fs/shared_watcher_types.go
+      - server/internal/gitview/gitview_test_helpers_test.go
+      - server/internal/gitview/gitview_history_test.go
+      - server/internal/gitview/gitview_repo_test.go
+      - server/internal/gitview/gitview_stats_test.go
+      - server/internal/gitview/gitview_history_read.go
+      - server/internal/gitview/gitview_history_stats.go
+      - server/internal/gitview/gitview_history_parse.go
+      - server/internal/gitview/gitview_types.go
+      - server/internal/gitview/gitview_actions.go
+      - server/internal/gitview/gitview_status.go
+      - server/internal/gitview/worktree_merge_test.go
+      - server/internal/gitview/worktree_merge_edge_test.go
+      - server/internal/gitview/worktree_feasibility_test.go
+      - server/internal/gitview/worktree_remove_test.go
+      - server/internal/gitview/worktree_merge.go
+      - server/internal/gitview/worktree_merge_feasibility.go
+      - server/internal/gitview/worktree_orphans.go
+      - server/internal/gitview/worktree_remove.go
+      - server/internal/gitview/worktree_cleanup.go
+      # B9
+      - server/internal/api/http_window_get_test.go
+      - server/internal/api/http_window_sync_test.go
+      - server/internal/api/http_window_blocks_test.go
+      - server/internal/api/http_routes.go
+      - server/internal/api/http_local_cli.go
+      - server/internal/api/http_preferences.go
+      - server/internal/api/http_query.go
+      - server/internal/api/http_managed_dirs.go
+      - server/internal/api/agent_config_backup.go
+      - server/internal/api/agent_config_switch.go
+      - server/internal/api/agent_config_env.go
+      - server/internal/api/http_task_templates.go
+      - server/internal/api/http_task_stages.go
+      - server/internal/api/http_task_overview.go
+      - server/internal/api/http_task_begin_finish.go
+      - server/internal/api/http_tasks_begin_finish_helpers_test.go
+      - server/internal/api/http_tasks_begin_finish_teardown_test.go
+      - server/internal/api/http_tasks_begin_finish_agent_test.go
+      - server/internal/api/http_sessions_list.go
+      - server/internal/api/http_sessions_detail.go
+      - server/internal/api/http_sessions_actions.go
+      - server/internal/api/http_sessions_external.go
+      - server/internal/api/http_sessions_command_shell.go
+      - server/internal/api/agent_api_provider_handlers.go
+      - server/internal/api/agent_api_provider_sync_ops.go
+      - server/internal/api/agent_api_provider_urls.go
+      - server/internal/api/agent_api_provider_names.go
+      - server/internal/api/agent_api_provider_caps.go
+      - server/internal/api/agent_api_provider_probe.go
+      - server/internal/api/agent_api_provider_modeltest.go
+      - server/internal/api/agent_api_provider_codex.go
+      - server/internal/api/agent_api_provider_env.go
+      - server/internal/api/stream_hub_types.go
+      - server/internal/api/stream_hub_build.go
+      - server/internal/api/stream_hub_pending.go
+      - server/internal/api/stream_hub_queue.go
+      - server/internal/api/stream_hub_replay.go
+      - server/internal/api/ws_upgrade.go
+      - server/internal/api/ws_broadcast.go
+      - server/internal/api/ws_session_message.go
+      - server/internal/api/ws_session_queue.go
+      - server/internal/api/ws_session_slash.go
+      - server/internal/api/ws_turn_tracker.go
+      - server/internal/api/ws_replay_test.go
+      - server/internal/api/ws_dispatch_test.go
+      - server/internal/api/ws_session_context_test.go
+      - server/internal/api/appcontext_broadcast.go
+      - server/internal/api/appcontext_notify.go
+      - server/internal/api/appcontext_roots.go
+      - server/internal/api/appcontext_services.go
+      - server/internal/api/appcontext_task_flags.go
+      - server/internal/api/appcontext_worktree.go
+      # B8
+      - server/internal/agent/claude/importer_subagents.go
+      - server/internal/agent/claude/importer_files.go
+      - server/internal/agent/claude/importer_transcript.go
+      - server/internal/agent/claude/importer_exchange.go
+      - server/internal/agent/claude/importer_transcript_test.go
+      - server/internal/agent/claude/importer_scan_test.go
+      - server/internal/agent/claude/importer_cursor_test.go
+      - server/internal/agent/codex/importer_files.go
+      - server/internal/agent/codex/importer_subagents.go
+      - server/internal/agent/codex/importer_transcript.go
+      - server/internal/agent/codex/importer_exchange.go
+      - server/internal/agent/codex/importer_transcript_test.go
+      - server/internal/agent/codex/importer_tool_calls_test.go
+      - server/internal/agent/codex/importer_scan_test.go
+    anchors:
+      - docs/agent/rules/backend/file-size.md:软线**：300 行
+      - docs/plans/backend-file-size-300-500.md:B2
+      - server/internal/session/types_aux_compact.go:CUSTOM(G-AT)

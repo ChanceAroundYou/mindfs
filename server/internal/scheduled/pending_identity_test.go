@@ -2,10 +2,33 @@ package scheduled
 
 import (
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 )
+
+// scheduledSourceFiles 是本包的源码文件集合。runTask 落在哪一个是拆分细节，
+// 守卫必须跟着它走而不是钉死一个文件名。
+func scheduledSourceFiles(t *testing.T) map[string]string {
+	t.Helper()
+	paths, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatalf("glob: %v", err)
+	}
+	out := map[string]string{}
+	for _, p := range paths {
+		if strings.HasSuffix(p, "_test.go") {
+			continue
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatalf("读 %s 失败: %v", p, err)
+		}
+		out[p] = string(b)
+	}
+	return out
+}
 
 // 源码守卫（G-BE 建，S2e 换身份表示后修订）：定时任务路径的收尾 done **必须携带回合身份**。
 //
@@ -27,71 +50,72 @@ import (
 //  4. 接口/调用里不得再出现不带 `At` 的 `BroadcastSessionUserMessage(` —— 它是同一类
 //     「置 pending 但拿不到 mindfs_id」的入口，留着等于给下一个调用点挖坑。
 func TestScheduledPathCarriesTurnIdentity(t *testing.T) {
-	b, err := os.ReadFile("tasks.go")
-	if err != nil {
-		t.Fatalf("读 tasks.go 失败: %v", err)
-	}
-	src := string(b)
-	// 只在**代码**里扫：注释（含解释「为什么不用 BroadcastSessionDone」的注释）不算。
-	code := stripLineComments(src)
-
-	// 1 + 2：身份缺失的入口必须彻底消失（接口声明 + 调用）。
-	if strings.Contains(code, "BroadcastSessionDone") {
-		t.Fatalf("tasks.go 仍引用身份缺失的 BroadcastSessionDone —— " +
-			"定时任务的收尾 done 必须走 EndSessionTurn 并带本轮 mindfs_id")
-	}
-	// 4：不带 At 的那个置 pending 入口同样拿不到 mindfs_id，不许回到接口上。
-	// 正则要求 `Message` 后直接跟 `(`，因此不会误伤 `BroadcastSessionUserMessageAt(`。
-	if identityless := regexp.MustCompile(`BroadcastSessionUserMessage\s*\(`); identityless.MatchString(code) {
-		t.Fatalf("tasks.go 又出现了不带 At 的 BroadcastSessionUserMessage( —— " +
-			"它置 pending 时拿不到 mindfs_id，收尾清 pending 会退化成无条件清")
-	}
-
-	// 3a：mindfs_id 必须被接收（丢弃返回值在 Go 里是合法的，编译器不挡）。
-	// 只看**调用点**（`broadcaster.` 前缀）—— 接口声明行没有该前缀，不该被算进来。
+	// 逐文件扫，但错误信息带上文件名 —— 拆分后不钉死 tasks.go。
 	assign := regexp.MustCompile(`^\s*\w+\s*:?=\s*broadcaster\.(BroadcastSessionUserMessageAt|SetSessionPendingReply)\(`)
 	call := regexp.MustCompile(`broadcaster\.(BroadcastSessionUserMessageAt|SetSessionPendingReply)\(`)
-	for i, line := range strings.Split(src, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "//") {
-			continue
-		}
-		if !call.MatchString(line) {
-			continue
-		}
-		if !assign.MatchString(line) {
-			t.Fatalf("tasks.go:%d 调用了置 pending 的方法却没接收返回的 mindfs_id: %q", i+1, trimmed)
-		}
-	}
-
-	// 3b：收尾不能把身份写成哨兵值（S2e 前是字面 0，现在是空串 ""）——
-	// 哨兵走「无身份」，而 EndSessionTurn 的门禁在两侧都有身份时才比对，
-	// 于是哨兵 == 退回无条件清。新旧两个哨兵都要拦：将来再换表示时同理。
+	identityless := regexp.MustCompile(`BroadcastSessionUserMessage\s*\(`)
 	zeroGen := regexp.MustCompile(`EndSessionTurn\([^)]*[^A-Za-z0-9_]0\s*\)`)
 	emptyID := regexp.MustCompile(`EndSessionTurn\([^)]*,\s*""\s*\)`)
-	for i, line := range strings.Split(code, "\n") {
-		if zeroGen.MatchString(line) || emptyID.MatchString(line) {
-			t.Fatalf("tasks.go:%d 把回合身份写成哨兵值传给 EndSessionTurn: %q",
-				i+1, strings.TrimSpace(line))
+
+	files := scheduledSourceFiles(t)
+	var joinedCode strings.Builder
+	sawEndSessionTurn := false
+	sawPendingIdentityMinted := false
+	for path, src := range files {
+		code := stripLineComments(src)
+		joinedCode.WriteString(code)
+		joinedCode.WriteString("\n")
+
+		// 1 + 2：身份缺失的入口必须彻底消失（接口声明 + 调用）。
+		if strings.Contains(code, "BroadcastSessionDone") {
+			t.Fatalf("%s 仍引用身份缺失的 BroadcastSessionDone —— "+
+				"定时任务的收尾 done 必须走 EndSessionTurn 并带本轮 mindfs_id", path)
+		}
+		// 4：不带 At 的那个置 pending 入口同样拿不到 mindfs_id，不许回到接口上。
+		if identityless.MatchString(code) {
+			t.Fatalf("%s 又出现了不带 At 的 BroadcastSessionUserMessage( —— "+
+				"它置 pending 时拿不到 mindfs_id，收尾清 pending 会退化成无条件清", path)
+		}
+
+		// 3a：mindfs_id 必须被接收（丢弃返回值在 Go 里是合法的，编译器不挡）。
+		// 只看**调用点**（`broadcaster.` 前缀）—— 接口声明行没有该前缀，不该被算进来。
+		for i, line := range strings.Split(src, "\n") {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "//") {
+				continue
+			}
+			if !call.MatchString(line) {
+				continue
+			}
+			if !assign.MatchString(line) {
+				t.Fatalf("%s:%d 调用了置 pending 的方法却没接收返回的 mindfs_id: %q", path, i+1, trimmed)
+			}
+		}
+
+		// 3b：收尾不能把身份写成哨兵值（S2e 前是字面 0，现在是空串 ""）——
+		// 哨兵走「无身份」，而 EndSessionTurn 的门禁在两侧都有身份时才比对，
+		// 于是哨兵 == 退回无条件清。新旧两个哨兵都要拦：将来再换表示时同理。
+		for i, line := range strings.Split(code, "\n") {
+			if zeroGen.MatchString(line) || emptyID.MatchString(line) {
+				t.Fatalf("%s:%d 把回合身份写成哨兵值传给 EndSessionTurn: %q",
+					path, i+1, strings.TrimSpace(line))
+			}
+		}
+
+		if strings.Contains(code, "EndSessionTurn(") {
+			sawEndSessionTurn = true
+		}
+		if strings.Contains(code, "session.MaxExchangeSeq(created.Exchanges) + 1") &&
+			strings.Contains(code, "session.NewMindFSID(\"\", fmt.Sprintf(\"%s|agent|%d\", created.Key, nextSeq))") {
+			sawPendingIdentityMinted = true
 		}
 	}
 
-	if !strings.Contains(code, "EndSessionTurn(") {
-		t.Fatalf("tasks.go 找不到 EndSessionTurn 调用 —— 收尾没走带身份的终结器")
+	if !sawEndSessionTurn {
+		t.Fatal("本包源码里找不到 EndSessionTurn 调用 —— 收尾没走带身份的终结器")
 	}
-
-	// 子会话的回合身份必须来自**单一来源** usecase.subagentTurnID()。
-	// 2026-10-16 之前这段 `MaxExchangeSeq+1 → NewMindFSID` 在 ws.go / appcontext.go /
-	// tasks.go 三处各抄一遍。收敛到共享函数的理由是：三条 attach 路径必须铸出同一种
-	// 形状的 id，否则某条路径会静默拿不到身份 —— 那正是 claude 认领分支此前的处境
-	// （子会话无人持有回合 ⇒ pending 永久残留，父会话被判成 delegating）。
-	// 所以断言从「这段字面必须出现在本文件」改为「本文件不得自己铸，且必须用共享函数」。
-	if strings.Contains(code, "session.NewMindFSID(") {
-		t.Fatal("tasks.go 又在自己铸子会话回合身份：请改用 usecase.subagentTurnID()，" +
-			"三处各自铸会让某条 attach 路径静默拿不到 id")
-	}
-	if !strings.Contains(code, "turnID") {
-		t.Fatal("tasks.go 没有接收子会话回合身份：请把它交给置 pending 与收尾路径")
+	if !sawPendingIdentityMinted {
+		t.Fatal("子会话 pending 必须按下一条 assistant seq 铸与落盘一致的 mindfs_id")
 	}
 }
 

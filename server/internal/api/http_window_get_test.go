@@ -1,0 +1,168 @@
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"mindfs/server/internal/fs"
+	"mindfs/server/internal/session"
+
+	"github.com/go-chi/chi/v5"
+)
+
+func newWindowTestApp(t *testing.T) (*AppContext, string, *session.Manager) {
+	t.Helper()
+	parent := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(parent, "project"), 0o755); err != nil {
+		t.Fatalf("MkdirAll project: %v", err)
+	}
+	registry := fs.NewRegistry(filepath.Join(parent, "registry.json"))
+	projectPath := filepath.Join(parent, "project")
+	dir, err := registry.Upsert(projectPath)
+	if err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	app := &AppContext{Dirs: registry}
+	manager, err := app.GetSessionManager(dir.ID)
+	if err != nil {
+		t.Fatalf("GetSessionManager: %v", err)
+	}
+	return app, dir.ID, manager
+}
+
+func doSessionGet(t *testing.T, h *HTTPHandler, rootID, key, query string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/api/sessions/"+key+"?root="+rootID+query, nil)
+	// inject chi param
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("key", key)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+	h.handleSessionGet(rec, req)
+	return rec
+}
+
+func TestHandleSessionGetWindowLatest(t *testing.T) {
+	app, rootID, manager := newWindowTestApp(t)
+	ctx := context.Background()
+	s, err := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, Name: "Win"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	for i := 0; i < 5; i++ {
+		if err := manager.AddExchangeForAgent(ctx, s, "user", "hi", "claude", "", "", ""); err != nil {
+			t.Fatalf("add exchange %d: %v", i, err)
+		}
+	}
+	// 5 exchanges seq 1..5
+	h := &HTTPHandler{AppContext: app}
+	rec := doSessionGet(t, h, rootID, s.Key, "&latest=2")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 body=%s", rec.Code, rec.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v body=%s", err, rec.Body.String())
+	}
+	meta, ok := body["window_meta"].(map[string]any)
+	if !ok {
+		t.Fatalf("window_meta missing: %s", rec.Body.String())
+	}
+	if int(meta["total"].(float64)) != 5 {
+		t.Fatalf("total = %v, want 5", meta["total"])
+	}
+	if !meta["hasMore"].(bool) {
+		t.Fatalf("hasMore false, want true")
+	}
+	exchanges, ok := body["exchanges"].([]any)
+	if !ok || len(exchanges) != 2 {
+		t.Fatalf("exchanges len = %d, want 2 body=%s", len(exchanges), rec.Body.String())
+	}
+}
+
+func TestHandleSessionGetBeforeSeq(t *testing.T) {
+	app, rootID, manager := newWindowTestApp(t)
+	ctx := context.Background()
+	s, _ := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, Name: "Win2"})
+	for i := 0; i < 6; i++ {
+		_ = manager.AddExchangeForAgent(ctx, s, "user", "hi", "claude", "", "", "")
+	}
+	h := &HTTPHandler{AppContext: app}
+	// before_seq=4 limit=2 → seq 2,3
+	rec := doSessionGet(t, h, rootID, s.Key, "&before_seq=4&limit=2")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var body map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &body)
+	exchanges := body["exchanges"].([]any)
+	if len(exchanges) != 2 {
+		t.Fatalf("exchanges len = %d, want 2", len(exchanges))
+	}
+	// verify seqs are 2 and 3 (first exchange seq 2)
+	first := exchanges[0].(map[string]any)
+	if int(first["seq"].(float64)) != 2 {
+		t.Fatalf("first seq = %v, want 2", first["seq"])
+	}
+	meta := body["window_meta"].(map[string]any)
+	if !meta["hasMore"].(bool) {
+		t.Fatalf("hasMore false, want true (still items before)")
+	}
+	// before_seq at beginning → empty window not error
+	rec2 := doSessionGet(t, h, rootID, s.Key, "&before_seq=1&limit=2")
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("before_seq=1 status = %d", rec2.Code)
+	}
+	var body2 map[string]any
+	_ = json.Unmarshal(rec2.Body.Bytes(), &body2)
+	if exs, ok := body2["exchanges"].([]any); !ok || len(exs) != 0 {
+		t.Fatalf("before_seq=1 exchanges = %v, want []", body2["exchanges"])
+	}
+}
+
+func TestHandleSessionGetMutualExclusion(t *testing.T) {
+	app, rootID, manager := newWindowTestApp(t)
+	ctx := context.Background()
+	s, _ := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, Name: "Win3"})
+	_ = manager.AddExchangeForAgent(ctx, s, "user", "hi", "claude", "", "", "")
+	h := &HTTPHandler{AppContext: app}
+	rec := doSessionGet(t, h, rootID, s.Key, "&seq=1&latest=2")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("mutual exclusion status = %d, want 400 body=%s", rec.Code, rec.Body.String())
+	}
+	rec2 := doSessionGet(t, h, rootID, s.Key, "&seq=1&before_seq=2")
+	if rec2.Code != http.StatusBadRequest {
+		t.Fatalf("seq+before_seq status = %d, want 400", rec2.Code)
+	}
+}
+
+func TestHandleSessionGetLimitClamp(t *testing.T) {
+	app, rootID, manager := newWindowTestApp(t)
+	ctx := context.Background()
+	s, _ := manager.Create(ctx, session.CreateInput{Type: session.TypeChat, Name: "Win4"})
+	for i := 0; i < 3; i++ {
+		_ = manager.AddExchangeForAgent(ctx, s, "user", "hi", "claude", "", "", "")
+	}
+	h := &HTTPHandler{AppContext: app}
+	// limit=999 should clamp to 200 and still succeed (returns all 3)
+	rec := doSessionGet(t, h, rootID, s.Key, "&latest=2&limit=999")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("limit clamp status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var body map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &body)
+	exchanges := body["exchanges"].([]any)
+	if len(exchanges) != 2 {
+		t.Fatalf("clamped latest=2 len=%d, want 2", len(exchanges))
+	}
+	// default limit (no limit param) should be 50
+	rec2 := doSessionGet(t, h, rootID, s.Key, "&latest=1")
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("default limit status = %d", rec2.Code)
+	}
+}

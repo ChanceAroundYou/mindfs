@@ -8,6 +8,7 @@ to resume their old TODOs or baselines.
 
 | [Delegated presence and flicker](delegated-presence-and-flicker.md) | Active | Delegated-parent hollow presence + switch-flash fix in progress |
 
+
 ## Completed or superseded history
 
 | Plan | Status | Current interpretation |
@@ -25,6 +26,7 @@ to resume their old TODOs or baselines.
 | [Next-stage decision](next-stage-decision.md) | Executed / superseded | The proposal and session split were carried out; its original baseline is not current. |
 | [Worktree finish stage](worktree-finish-stage-plan.md) | Implemented | The described workflow landed; this document is the design and implementation record. |
 | [Agent governance and task-38 repoint](agent-governance-and-repoint.md) | Superseded 2026-10-14 by user direction | Governance work completed. The user explicitly discontinued task-38 repoint; do not resume that work from this historical plan. |
+| [Backend file size 300/500 and folder reorg](backend-file-size-300-500.md) | Completed 2026-10-16 | 除 `codex/importer_tool_calls.go`（边界已论证，见 backend/TODO.md 的「不再拆」条目）外，后端 Go 文件（含测试）全部降到硬线 500 以内。B1–B10 完成；两处钉文件名的源码守卫改为扫包级并用变异验证过。 |
 
 ## Plan rules
 
